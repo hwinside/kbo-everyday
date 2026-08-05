@@ -9,11 +9,20 @@
  */
 
 import { chromium } from "playwright";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { computeDefenseRuns } from "./lib/defense-runs.mjs";
-import { validatePitcherSnapshot } from "./lib/stats-snapshot-guard.mjs";
+import {
+  validateBatterSnapshot,
+  validateDefenseRunsSnapshot,
+  validateDefenseSnapshot,
+  validatePitcherSnapshot,
+} from "./lib/stats-snapshot-guard.mjs";
+import { recoverPendingPromotion } from "./lib/atomic-promote.mjs";
+import { promoteStatsSnapshot } from "./lib/verified-promote.mjs";
+import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
+import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -48,132 +57,72 @@ function extractPlayerId(html) {
   return match ? match[1] : "";
 }
 
-async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
-  const current = await page.$eval(selector, (el) => el.value).catch(() => null);
-  if (current === value) return;
-
-  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
-  await page.selectOption(selector, value);
-
-  try {
-    await page.waitForFunction(
-      ({ selector, value, beforeFirstRow }) => {
-        const el = document.querySelector(selector);
-        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return !!el && el.value === value && firstRow !== beforeFirstRow;
-      },
-      { selector, value, beforeFirstRow },
-      { timeout: waitMs }
-    );
-  } catch {
-    await page.waitForTimeout(waitMs);
-  }
-
+/**
+ * 드롭다운(시즌·시리즈) 전환 — 확인된 전환만 성공으로 본다.
+ *
+ * ⚠︎ 종전에는 `waitForFunction` 타임아웃을 catch 한 뒤 **고정 대기만 하고 무확인으로
+ * 진행**했다(삼순 6차 지적). postback 이 유실되면 이전 시즌 표를 그대로 크롤해
+ * **데이터셋 전체가 다른 시즌**이 된다. 스냅샷 가드는 개수만 보므로 이걸 못 잡는다.
+ * oracle 과 동일한 fail-close 계약(`selectAndConfirm`)을 공유한다.
+ */
+async function changeSelectAndWait(page, selector, value) {
+  // 표 읽기는 공용 adapter 를 쓴다 — 또 따로 구현하면 계약이 갈라진다.
+  const adapter = createKboPageAdapter(page);
+  await selectAndConfirm(
+    createSelectAdapter(page, selector, async () => signatureOf(await adapter.scrapeTable())),
+    value,
+    { label: selector },
+  );
   await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
 }
 
-async function selectSeason(page) {
+// export: 게이트가 실제 함수를 직접 태울 수 있어야 한다(문자열 검사는 `if (false)` 위장을 못 잡는다).
+export async function selectSeason(page) {
   const seriesSelector = "select[name$='ddlSeries$ddlSeries']";
   const seasonSelector = "select[name$='ddlSeason$ddlSeason']";
 
   // Always use regular season for seasonal stat snapshots.
   const hasSeries = await page.$(seriesSelector);
   if (hasSeries) {
-    await changeSelectAndWait(page, seriesSelector, "0", 5000);
+    await changeSelectAndWait(page, seriesSelector, "0");
   }
 
-  await changeSelectAndWait(page, seasonSelector, SEASON, 8000);
+  await changeSelectAndWait(page, seasonSelector, SEASON);
 }
 
-async function sortTable(page, sortKey, waitMs = 5000) {
-  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+/**
+ * 정렬 전환 — 이것도 **확인된 교체만** 성공으로 본다.
+ *
+ * ⚠︎ 종전에는 타임아웃을 catch 하고 고정 대기 후 그냥 진행했다(select 와 같은 결손).
+ * 투수 수집은 ERA 기본정렬이 규정이닝 위주라, `GAME_CN` 정렬이 안 먹히면
+ * 불펜·마무리가 통째로 빠진다. 역시 개수 가드로는 안 잡히는 대량 유실이다.
+ */
+export async function sortTable(page, sortKey, { attempts = 3, polls = 10, pollIntervalMs = 500 } = {}) {
+  const adapter = createKboPageAdapter(page);
+  const before = signatureOf(await adapter.scrapeTable());
   const selector = `a[href="javascript:sort('${sortKey}');"]`;
-  const link = await page.$(selector);
-  if (!link) throw new Error(`Sort link not found: ${sortKey}`);
 
-  await link.click();
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const link = await page.$(selector);
+    if (!link) throw new Error(`Sort link not found: ${sortKey}`);
+    await link.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
 
-  try {
-    await page.waitForFunction(
-      ({ beforeFirstRow }) => {
-        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return firstRow !== beforeFirstRow;
-      },
-      { beforeFirstRow },
-      { timeout: waitMs }
-    );
-  } catch {
-    await page.waitForTimeout(waitMs);
+    for (let poll = 0; poll < polls; poll++) {
+      await page.waitForTimeout(pollIntervalMs);
+      const now = signatureOf(await adapter.scrapeTable());
+      if (now && now !== before) return;
+    }
   }
 
-  await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
-}
-
-async function scrapeTable(page) {
-  return page.$$eval("tbody tr", (rows) =>
-    rows.map((tr) => {
-      const cells = [...tr.querySelectorAll("td")];
-      return {
-        texts: cells.map((td) => td.textContent.trim()),
-        hrefs: cells.map((td) => {
-          const a = td.querySelector("a");
-          return a ? a.getAttribute("href") : "";
-        }),
-      };
-    })
+  throw new Error(
+    `sort_change_failed: ${sortKey} 정렬이 적용되지 않았다(재시도 ${attempts}회 소진)`
+    + ` — 정렬 전 목록을 수집하면 대상이 통째로 바뀜다`,
   );
 }
 
 async function scrapeAllPages(page) {
-  const allRows = [];
-  // 페이지 그룹 이동(btnNext) 시 동일 페이지가 재렌더돼 같은 행이 중복 수집되는 경우가 있다.
-  // 행 전체 시그니처(텍스트+링크 = 선수 고유)로 정확 중복만 제거 — 동명이인은 playerId 링크가 달라 보존.
-  const seen = new Set();
-  let pageNum = 1;
-
-  while (true) {
-    const rows = await scrapeTable(page);
-    if (rows.length === 0) break;
-    const fresh = rows.filter((r) => {
-      const sig = `${(r.texts || []).join("\u0001")}\u0002${(r.hrefs || []).join("\u0001")}`;
-      if (seen.has(sig)) return false;
-      seen.add(sig);
-      return true;
-    });
-    allRows.push(...fresh);
-    console.log(`    Page ${pageNum}: ${rows.length} rows (${fresh.length} new, total: ${allRows.length})`);
-
-    const targetPageText = String(pageNum + 1);
-    const nextVisibleBtn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
-    if (await nextVisibleBtn.count()) {
-      await nextVisibleBtn.click();
-      await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(1200);
-      pageNum++;
-      continue;
-    }
-
-    const nextGroupBtn = await page.$('a[id$="btnNext"]');
-    if (!nextGroupBtn) break;
-
-    const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
-      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
-    );
-
-    await nextGroupBtn.click();
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page.waitForTimeout(1200);
-
-    const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
-      links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
-    );
-
-    if (!afterPager || afterPager === beforePager) break;
-  }
-
-  return allRows;
+  return collectAllPages({ ...createKboPageAdapter(page), log: (line) => console.log(line) });
 }
 
 async function crawlBatterBasic1(page) {
@@ -237,6 +186,7 @@ async function crawlBatterBasic2(page) {
       slg: c[9] || ".000",
       obp: c[10] || ".000",
       ops: c[11] || ".000",
+      _playerId: extractPlayerId(r.hrefs[1] || ""),
     };
   });
 }
@@ -257,6 +207,7 @@ async function crawlRunner(page) {
       team: c[2] || "",
       sb: parseInt(c[5]) || 0,
       cs: parseInt(c[6]) || 0,
+      _playerId: extractPlayerId(r.hrefs[1] || ""),
     };
   });
 }
@@ -271,7 +222,7 @@ async function crawlPitcher(page) {
 
   // ERA 기본 정렬은 규정이닝 투수 위주라 불펜/마무리가 빠진다.
   // 전체 투수 목록을 얻기 위해 등판수(G) 기준으로 재정렬 후 전 페이지를 순회한다.
-  await sortTable(page, "GAME_CN", 6000);
+  await sortTable(page, "GAME_CN");
 
   const rows = await scrapeAllPages(page);
 
@@ -357,8 +308,28 @@ function parseIpToFloat(ip) {
   return Math.round(whole * 100) / 100;
 }
 
-async function main() {
+/**
+ * ⚠︎ export 이유: 게이트가 **실제 write 경로를 실행**해야 하기 때문이다.
+ * 소스 문자열 검사로는 `false && await promoteStatsSnapshot(...)` 처럼 호출을 통째 끊는
+ * 우회를 못 잡는다(merged main 에서 실제로 GREEN 이었다). 게이트가 main() 을 직접 돌려
+ * "검증기가 호출됐는가 / 검증 실패 시 산출물이 그대로인가" 를 행동으로 확인한다.
+ */
+export async function main() {
   console.log(`🏟️  KBO 스탯 크롤링 시작 (시즌: ${SEASON})`);
+
+  // ⚠︎ 어떤 데이터 read 보다 *먼저* 미완료 promote 를 복구한다.
+  //
+  // 종전에는 recoverPendingPromotion() 이 promoteAtomically() 진입 시점에 있었다.
+  // 그러면 크롤·기존 snapshot read·검증을 전부 끝낸 뒤에야 복구되므로,
+  // 직전 실행이 hard-exit 로 죽어 혼합 세대가 남은 상태에서 그대로 출발한다
+  // (= "항상 old 전체 또는 new 전체" 계약 위반, 삼순 5차 지적).
+  // 여기가 startup recovery 의 유일한 올바른 위치다.
+  const recovery = recoverPendingPromotion(CONSTANTS_DIR);
+  if (recovery.recovered) {
+    console.log(
+      `♻️  이전 실행의 미완료 promote 복구: ${recovery.restored.length}개 파일을 이전 세대로 되돌림`,
+    );
+  }
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
@@ -375,17 +346,63 @@ async function main() {
     const runner = await crawlRunner(page);
 
     // Merge batter data
+    //
+    // ⚠︎ 병합 키는 반드시 KBO playerId(canonical ID)다.
+    // 종전에는 `${name}|${team}`을 썼는데, 같은 팀 동명이인이 서로를 덮어써
+    // 한 명이 통째 사라졌다. 실측 결손: 키움 이주형이 둘(50167 외야수 / 51302 내야수)인데
+    // `stats-2026-batters.json`에 51302만 남아 50167의 타격 기록이 서비스에서 통째 사라졌다.
+    // 인원수 게이트(Δ≤10)로는 1명 실종이 절대 잡힐지 않는다.
+    // 투수 경로는 이미 playerId를 쓰고 있었고, 타자 경로만 이름+팀 키였다.
     console.log("\n🔗 타자 데이터 병합...");
     const batterMap = new Map();
 
-    for (const b of basic1) {
-      const key = `${b.name}|${b.team}`;
-      batterMap.set(key, { ...b });
+    /**
+     * canonical ID로만 병합한다. ID가 없는 행은 이름+팀으로 보정하되,
+     * 그 조합이 둘 이상이면(= 동명이인 모호) 추측하지 않고 fail-close 한다.
+     */
+    const ambiguousNameTeam = new Set();
+    {
+      const nameTeamCount = new Map();
+      for (const b of basic1) {
+        const nt = `${b.name}|${b.team}`;
+        nameTeamCount.set(nt, (nameTeamCount.get(nt) ?? 0) + 1);
+      }
+      for (const [nt, count] of nameTeamCount) if (count > 1) ambiguousNameTeam.add(nt);
     }
 
+    const nameTeamToId = new Map();
+    for (const b of basic1) {
+      const nt = `${b.name}|${b.team}`;
+      const id = String(b._playerId || "").trim();
+      if (!id) {
+        throw new Error(
+          `batter_identity_missing: ${nt} — KBO 행에 playerId 링크가 없어 canonical 병합 불가`,
+        );
+      }
+      if (batterMap.has(id)) {
+        throw new Error(`batter_identity_duplicate: playerId=${id} (${nt}) 행이 중복입니다`);
+      }
+      batterMap.set(id, { ...b });
+      if (!ambiguousNameTeam.has(nt)) nameTeamToId.set(nt, id);
+    }
+
+    /** 보조 페이지(Basic2/Runner) 행을 canonical ID로 해석. 모호하면 null. */
+    const resolveBatterKey = (row, source) => {
+      const id = String(row._playerId || "").trim();
+      if (id) return batterMap.has(id) ? id : null;
+      const nt = `${row.name}|${row.team}`;
+      if (ambiguousNameTeam.has(nt)) {
+        // 동명이인 — 추측해서 붙이면 엉뚝한 선수 기록이 오염된다.
+        throw new Error(
+          `batter_merge_ambiguous: ${source} \`${nt}\` 행에 playerId가 없고 동명이인이 있어 해석 불가`,
+        );
+      }
+      return nameTeamToId.get(nt) ?? null;
+    };
+
     for (const b2 of basic2) {
-      const key = `${b2.name}|${b2.team}`;
-      const existing = batterMap.get(key);
+      const key = resolveBatterKey(b2, "Basic2");
+      const existing = key ? batterMap.get(key) : null;
       if (existing) {
         Object.assign(existing, {
           bb: b2.bb,
@@ -401,8 +418,8 @@ async function main() {
     }
 
     for (const r of runner) {
-      const key = `${r.name}|${r.team}`;
-      const existing = batterMap.get(key);
+      const key = resolveBatterKey(r, "Runner");
+      const existing = key ? batterMap.get(key) : null;
       if (existing) {
         existing.sb = r.sb;
         existing.cs = r.cs;
@@ -410,10 +427,10 @@ async function main() {
     }
 
     // Sort by AVG desc and assign ranks + kboId
-    const batters = [...batterMap.values()]
-      .sort((a, b) => parseFloat(b.avg) - parseFloat(a.avg))
-      .map((b, i) => {
-        const kboId = b._playerId || findKboId(b.name, b.team);
+    const batters = [...batterMap.entries()]
+      .sort(([, a], [, b]) => parseFloat(b.avg) - parseFloat(a.avg))
+      .map(([canonicalId, b], i) => {
+        const kboId = canonicalId;
         delete b._playerId;
         return {
           rank: i + 1,
@@ -454,19 +471,59 @@ async function main() {
     // A transient pager skip can return a syntactically valid snapshot with one
     // complete 30-row page missing. Reject it before any stats/meta artifact is
     // written so a fresh timestamp can never bless a partial dataset.
-    let previousPitchers = [];
-    try {
-      previousPitchers = JSON.parse(readFileSync(pitcherPath, "utf-8"));
-    } catch {
-      // First-time season generation has no baseline; non-empty is still enforced.
-    }
-    validatePitcherSnapshot(previousPitchers, pitchers);
+    // ⚠︎ 종전에는 이 가드가 *투수에만* 걸려 있었다. 그래서 페이지네이션이 끊기면
+    // 타자·수비·수비runs는 무너진 채로 그대로 썰다.
+    // 실측 사고(2026-08-04): 수비 823행 → 30행(첫 페이지 한 장만 남음)으로 유실됐는데
+    // 아무 게이트도 발동하지 않고 정상 종료했다. 이제 네 데이터셋 전부에 건다.
+    const readPrevious = (path, fallback) => {
+      try {
+        return JSON.parse(readFileSync(path, "utf-8"));
+      } catch {
+        // First-time season generation has no baseline; non-empty is still enforced.
+        return fallback;
+      }
+    };
+    validatePitcherSnapshot(readPrevious(pitcherPath, []), pitchers);
+    validateBatterSnapshot(readPrevious(batterPath, []), batters);
+    validateDefenseSnapshot(readPrevious(defensePath, []), defense);
+    validateDefenseRunsSnapshot(readPrevious(defenseRunsPath, {}), defenseRuns);
 
-    writeFileSync(batterPath, JSON.stringify(batters, null, 2));
-    writeFileSync(pitcherPath, JSON.stringify(pitchers, null, 2));
-    writeFileSync(defensePath, JSON.stringify(defense, null, 2));
-    writeFileSync(defenseRunsPath, JSON.stringify(defenseRuns, null, 2));
-    writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    // 개수·델타 가드는 *값*을 보지 않는다. 곽빈 ERA를 99.99로 바꿔도 전 게이트가 GREEN이었고,
+    // 동명이인 병합 붕괴로 한 명이 통째 사라져도 Δ≤10 안이라 통과됐다.
+    // 그래서 쓰기 *직전*에 KBO 원본을 독립 재조회해 전 행·전 필드를 대조하고,
+    // 값 오염 1건 또는 행 누락/잉여 1건이라도 있으면 아무것도 쓰지 않고 죽는다.
+    // 검증 자체가 불가해도(수집 0행) 실패다 — 검증 불가를 통과로 취급하면 게이트가 아니다.
+    //
+    // 판정·예외는 라이브러리(assertSourceTruth)가 끝낸다. 호출자 쪽에 `if (failures.length)`
+    // 분기를 두면 한 줄로 무력화되는데 "호출이 존재하는가" 식 게이트는 그 상태에서도 GREEN이다
+    // (실제로 이 파일의 초기 구현이 그랬고, mutation으로 잡아 여기로 옮겼다).
+    console.log("\n🔎 원본 정합성 재대조(KBO 독립 재조회)...");
+
+    const artifacts = [
+      { path: batterPath, body: JSON.stringify(batters, null, 2) },
+      { path: pitcherPath, body: JSON.stringify(pitchers, null, 2) },
+      { path: defensePath, body: JSON.stringify(defense, null, 2) },
+      { path: defenseRunsPath, body: JSON.stringify(defenseRuns, null, 2) },
+      { path: metaPath, body: JSON.stringify(meta, null, 2) },
+    ];
+
+    // ⚠︎ 검증기(assertSourceTruth)는 promoteStatsSnapshot **내부에 고정**돼 있다 — caller 가
+    // 고를 수 없다. verifier 를 파라미터로 열어두면 `verify: async () => {}` 한 줄로
+    // 검증 0회가 되고, 문자열 게이트는 위장 필드만 있으면 GREEN 이었다(삼순 실증).
+    // 검증 입력도 caller 가 넘기지 않는다. **promote payload
+    // 에서 파생**해 검증기에 넣는다. 종전에는 caller 한 줄만 바꾸면 우회가 됐고
+    // (`false && await assertSourceTruth`, 옛 defenseRuns 스냅샷 검증) 전 게이트가 GREEN 이었다.
+    // 문자열 검사로는 같은 의미의 다른 표기를 끝없이 놓치므로, 구조로 막는다.
+    await promoteStatsSnapshot({
+      artifacts,
+      context: {
+        browser,
+        kboBase: KBO_BASE,
+        season: SEASON,
+        roster: readPrevious(join(CONSTANTS_DIR, "players-roster.json"), []),
+        foreignIdSource: readFileSync(join(CONSTANTS_DIR, "foreign-id-map.ts"), "utf-8"),
+      },
+    });
 
     console.log(`\n✅ 타자 ${batters.length}명 → ${batterPath}`);
     console.log(`✅ 투수 ${pitchers.length}명 → ${pitcherPath}`);
@@ -493,7 +550,11 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error("❌ 크롤링 실패:", e.message);
-  process.exit(1);
-});
+// 직접 실행일 때만 크롤한다. 게이트가 `selectSeason`·`sortTable` 을 import 해
+// 행동을 직접 검증해야 하는데, top-level 실행이면 import 만으로 크롤이 시작된다.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((e) => {
+    console.error("❌ 크롤링 실패:", e.message);
+    process.exit(1);
+  });
+}

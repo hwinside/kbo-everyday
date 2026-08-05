@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
-import Link from "next/link";
 import TeamBadge from "@/components/ui/TeamBadge";
+import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import LinkPreview from "@/components/community/LinkPreview";
 import type { Post } from "@/lib/types";
 import type { CommunitySourceLabel } from "@/lib/utils/community-board";
@@ -26,7 +26,7 @@ interface PostCardProps {
   onPollRetry?: () => void;
 }
 
-export default function PostCard({ post, onPress, playerLabel, sourceLabel, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
+export default function PostCard({ post, onPress, sourceLabel, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
   const isPoll = post.boardType === "poll";
   const [shareOpen, setShareOpen] = useState(false);
@@ -55,42 +55,23 @@ export default function PostCard({ post, onPress, playerLabel, sourceLabel, poll
       whileTap={{ scale: 0.98 }}
       transition={{ type: "spring", stiffness: 400, damping: 25 }}
     >
-      {/* Author info */}
-      <div className="flex items-center gap-3 min-w-0">
-        {playerLabel ? (
-          <TeamBadge teamId={playerLabel.teamId} playerName={playerLabel.playerName} />
-        ) : (
-          post.author?.myTeamId ? (
-            <Link
-              href={`/profile/${post.authorId}`}
-              aria-label={`${post.author.nickname || "익명"} 프로필 보기`}
-              onClick={(e) => e.stopPropagation()}
-              className="shrink-0 active:opacity-70 transition-opacity"
-            >
-              <TeamBadge teamId={post.author.myTeamId} />
-            </Link>
-          ) : null
-        )}
-        <Link
-          href={`/profile/${post.authorId}`}
-          onClick={(e) => e.stopPropagation()}
-          className="min-w-0 truncate text-base font-medium text-text-primary active:opacity-70 transition-opacity"
-        >
-          {post.author?.nickname ?? "익명"}
-        </Link>
-        {post.author?.grade === 'staff' && (
-          <span className='ml-1 px-1.5 py-0.5 text-[10px] font-bold bg-accent/20 text-accent rounded-full'>운영팀</span>
-        )}
-        <span className="ml-auto text-base text-text-tertiary whitespace-nowrap shrink-0">{timeAgo}</span>
-      </div>
+      <CommunityAuthorHeader
+        nickname={post.author?.nickname}
+        teamId={post.author?.myTeamId}
+        avatarUrl={post.author?.avatarUrl}
+        profileHref={`/profile/${post.authorId}`}
+        isStaff={post.author?.grade === "staff"}
+        meta={<span className="text-xs text-text-tertiary">{timeAgo}</span>}
+      />
 
-      {/* Source board */}
+      {/* 혼합 피드에서만: 작성자 응원팀과 별개인 글의 소속 */}
       {sourceLabel && (
-        <div className="mt-2">
+        <div className="mt-2 flex items-center gap-2" data-community-source-label>
+          <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
           {sourceLabel.teamId ? (
-            <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="xs" />
+            <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
           ) : (
-            <span className="inline-flex items-center rounded-full bg-bg-tertiary px-2 py-0.5 text-xs font-medium text-text-secondary">
+            <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
               {sourceLabel.text}
             </span>
           )}

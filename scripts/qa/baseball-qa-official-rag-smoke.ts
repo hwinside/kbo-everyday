@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 
 import {
   answerQuestion,
+  BLOCKED_ANSWER,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -228,7 +229,15 @@ checkAsync("공식 근거 있으면 rag로 답하고 출처가 붙는다", async
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "rag");
-  assert.ok(result.answer.includes("2026 공식야구규칙"), "출처 표기가 붙어야 한다");
+  // 출처는 **표시명만** 본문에 남는다 (하린아빠 2026-08-05 P0). tier1 은 `KBO 공식 자료`.
+  assert.ok(result.answer.includes("📄 출처: KBO 공식 자료"), "출처 표기가 붙어야 한다");
+  // 유저에게 나가면 안 되는 내부 메타 — 하나라도 새면 RED.
+  assert.doesNotMatch(result.answer, /crawled/i, "수집 사실을 화면에 적으면 안 된다");
+  assert.doesNotMatch(result.answer, /sha256:|rev\s/, "revision 은 내부 provenance 다");
+  assert.doesNotMatch(result.answer, /https?:\/\//, "전체 URL 은 본문에 노출하지 않는다");
+  assert.doesNotMatch(result.answer, /2026-08-01 기준/, "asOf 날짜는 유저가 볼 이유가 없다");
+  // 링크는 payload 로 간다 — 클라가 표시명에 앵커를 씌운다.
+  assert.equal(result.sourceUrl, OFFICIAL.canonicalUrl, "근거 링크는 payload 로 전달해야 한다");
   assert.ok(result.answer.includes("5.09"), "근거에 있는 숫자는 남아야 한다");
   assert.ok(!calls.includes("callLlm"), "공식 경로가 답했으면 일반 LLM을 다시 부르지 않는다");
 });
@@ -242,7 +251,35 @@ checkAsync("공식 근거로도 답을 못 만들면 unsure로 종결한다(일�
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "unsure");
+  assert.equal(result.answer, BLOCKED_ANSWER);
   assert.ok(!calls.includes("callLlm"), "LLM 호출 1회 계약 — 재호출 금지");
+});
+
+checkAsync("공식 RAG timeout은 exact fallback으로 수렴한다", async () => {
+  const { deps, calls } = makeDeps({
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async () => { throw new Error("timeout"); },
+  });
+  const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
+  assert.equal(result.source, "error");
+  assert.equal(result.answer, BLOCKED_ANSWER);
+  assert.ok(!calls.includes("callLlm"), "timeout 뒤 일반 LLM 재호출 금지");
+});
+
+checkAsync("일반 LLM timeout·무응답도 exact fallback으로 수렴한다", async () => {
+  for (const callLlm of [
+    async () => { throw new Error("timeout"); },
+    async () => ({ text: "", inputTokens: null, outputTokens: null }),
+  ]) {
+    const { deps } = makeDeps({
+      searchOfficialRag: async () => [],
+      callOfficialRagLlm: async () => { throw new Error("근거 0건에서 호출 금지"); },
+      callLlm,
+    });
+    const result = await answerQuestion("u1", "잔루만루가 뭔데", deps);
+    assert.equal(result.answer, BLOCKED_ANSWER);
+    assert.ok(["unsure", "error"].includes(result.source));
+  }
 });
 
 checkAsync("검색이 던져도 기능이 죽지 않는다 (기존 경로로 양보)", async () => {

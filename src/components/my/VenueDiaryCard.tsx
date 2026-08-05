@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Play, Plus, RefreshCw, Trophy, Pencil, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronDown, Play, Plus, RefreshCw, Trophy, Pencil, Trash2 } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import {
@@ -189,6 +189,9 @@ export default function VenueDiaryCard() {
   const [failed, setFailed] = useState(false);
   const [attendanceBusyId, setAttendanceBusyId] = useState<number | null>(null);
   const [attendanceMessage, setAttendanceMessage] = useState<string | null>(null);
+
+  // 경기별 기록 리스트는 세로 공간을 크게 먹어 기본 접힘. 유저가 펼칠 때만 렌더한다.
+  const [gamesOpen, setGamesOpen] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
   /** null 이 아니면 시트가 '경기 변경' 모드 — 고른 경기로 이 원장 행을 옮긴다. */
@@ -700,8 +703,22 @@ export default function VenueDiaryCard() {
         {/* 경기별 기록 */}
         {data && (
           <div className="px-5 pb-5">
-            <p className="mb-2 mt-1 px-1 text-[13px] font-extrabold text-text-secondary">경기별 기록</p>
-            {homeGames.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => setGamesOpen((v) => !v)}
+              aria-expanded={gamesOpen}
+              className="mb-2 mt-1 flex min-h-[44px] w-full items-center justify-between gap-2 rounded-2xl border border-border bg-bg-tertiary px-4 py-3 text-left active:opacity-90"
+            >
+              <span className="text-[13px] font-extrabold text-text-secondary">
+                경기별 기록
+                <span className="ml-1.5 font-bold text-text-tertiary">{homeGames.length}</span>
+              </span>
+              <ChevronDown
+                size={18}
+                className={`shrink-0 text-text-tertiary transition-transform ${gamesOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+            {!gamesOpen ? null : homeGames.length === 0 ? (
               <div className="rounded-2xl border border-border py-8 text-center">
                 <Trophy size={22} className="mx-auto text-text-tertiary" />
                 <p className="mt-2 text-sm font-medium text-text-secondary">아직 기록이 없어요</p>

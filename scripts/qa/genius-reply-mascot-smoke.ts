@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   BASEBALL_GENIUS_USER_ID,
   GENIUS_MASCOT_STATES,
+  MATCH_PATH_REPLY_KIND,
   geniusMascotSrc,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -38,8 +39,10 @@ function check(name: string, fn: () => void) {
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 
 // --- (A) 매핑 ---
-check("정상 답변 3경로(사전·캐시·LLM)는 answering", () => {
-  for (const p of ["dictionary", "cache", "llm"]) {
+check("정상 답변 4경로(사전·캐시·LLM·선수RAG)는 answering", () => {
+  // `rag` = 선수 서술형 질문을 수집 문서 근거로 답한 경로. 2026-08-04 운영 실측에서
+  // 이 경로가 `unavailable` 로 떨어져 정상 답변에 "모르겠어요" 표정이 붙었다.
+  for (const p of ["dictionary", "cache", "llm", "rag"]) {
     assert.equal(replyKindForMatchPath(p), "answer", p);
     assert.equal(mascotStateForReplyKind(replyKindForMatchPath(p)), "answering", p);
   }
@@ -69,19 +72,129 @@ check("payload 없는 과거 답변·미지 유형은 idle 폴백(오류/빈칸 
 
 // 서버가 실제로 내보내는 MatchPath 전체가 매핑에 덮여 있는가.
 // pipeline.ts 의 union 을 직접 읽는다 — 새 유형이 추가되면 여기서 잡힌다.
-check("서버 MatchPath 전체가 매핑에 덮여 있다(pending 제외)", () => {
+// ⚠️ 종전 게이트는 `replyKindForMatchPath(p)` 결과가 3종 중 하나인지만 봤다.
+// 그 함수는 모르는 값도 `unavailable` 로 폴백하므로 **미분류가 항상 통과**했다.
+// `rag` 사고가 이 false-green 을 그대로 통과한 이유다.
+// 이제 union 을 명시 열거 테이블(MATCH_PATH_REPLY_KIND)의 키와 직접 대조한다.
+check("서버 MatchPath 전체가 명시 분류돼 있다(pending 제외, 폴백 흡수 금지)", () => {
   const pipeline = read("src/lib/baseball-qa/pipeline.ts");
   const m = pipeline.match(/export type MatchPath =([\s\S]*?);/);
   assert.ok(m, "MatchPath union 을 찾지 못함");
   const paths = [...m[1].matchAll(/\|\s*"([a-z_]+)"/g)].map((x) => x[1]);
   assert.ok(paths.length >= 10, `MatchPath 파싱 실패(${paths.length}개만 찾음)`);
   // pending 은 다른 worker 가 이기고 이 worker 는 물러나는 경우라 쪽지 자체가 발송되지 않는다.
-  const uncovered = paths.filter((p) =>
-    p !== "pending" && !["answer", "ack", "unavailable"].includes(replyKindForMatchPath(p)));
-  assert.deepEqual(uncovered, [], `reply_kind 누락: ${uncovered.join(", ")}`);
+  const declared = paths.filter((p) => p !== "pending");
+  // ⚠️ `in` 이 아니라 **own-key** 로 판정한다(삼순 6차 P1). `in` 은 프로토타입 체인까지
+  // 훑기 때문에 `constructor`·`toString` 같은 이름이 union 에 생기면 테이블에 없어도
+  // "덮여 있다"고 통과한다 — 이 게이트 자체가 false-green 이 된다.
+  const uncovered = declared.filter(
+    (p) => !Object.prototype.hasOwnProperty.call(MATCH_PATH_REPLY_KIND, p),
+  );
+  assert.deepEqual(uncovered, [], `MATCH_PATH_REPLY_KIND 에 미분류: ${uncovered.join(", ")}`);
+  // 반대 방향 — 테이블에만 있고 서버 union 에 없는 죽은 키도 잡는다.
+  const stale = Object.keys(MATCH_PATH_REPLY_KIND).filter((p) => !declared.includes(p));
+  assert.deepEqual(stale, [], `서버 union 에 없는 죽은 분류: ${stale.join(", ")}`);
 });
 
-// --- (B) 자산 ---
+// 프로토타입 키가 분류를 뚫고 나오면 안 된다(삼순 6차 P1).
+//
+// `match_path` 는 서버 payload 로 들어오는 **외부 문자열**이다. 테이블을 그냥 인덱싱하면
+// `constructor` 는 `Object` 함수를, `__proto__` 는 프로토타입 객체를 돌려준다. 두 값 모두
+// `?? "unavailable"` 폴백에 안 걸리고 그대로 반환돼, `mascotStateForReplyKind()` 의 어느
+// 분기에도 안 걸려 `idle` 로 떨어진다 — "모르는 값은 unknown 표정"이라는 계약 위반이다.
+check("프로토타입 키를 match_path 로 받아도 unavailable/unknown 으로 fail-close 한다", () => {
+  for (const hostile of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+    const kind = replyKindForMatchPath(hostile);
+    assert.equal(kind, "unavailable", `${hostile} → unavailable 이어야 한다 (실제: ${String(kind)})`);
+    assert.equal(mascotStateForReplyKind(kind), "unknown",
+      `${hostile} 은 unknown 표정이어야 한다`);
+  }
+});
+
+// 질문에 **실제로 답한** 경로가 `unavailable`(=모르겠어요 표정)로 분류되면 RED.
+//
+// 판정은 소스 텍스트가 아니라 **런타임 값**으로 한다. pipeline 이 export 하는 고정
+// 문구 상수(`*_ANSWER`) 집합을 실제로 import 해서 "답이 아닌 문구"의 정답 집합을 만들고,
+// 로그로 실려나가는 answer 표현이 그 상수를 가리키는지 본다.
+//
+// ⚠️ 이 게이트가 종전에 두 번 뚫렸다:
+//  1) `answer: <expr>` 만 매칭해 shorthand `answer,` 를 쓰는 rag 경로를 통째로 놓쳤다.
+//  2) `/^[A-Z][A-Z0-9_]*$/` 로 대문자 식별자를 전부 거절 상수 취급해, 그 이름에 실제
+//     생성 답변을 담으면 오분류가 GREEN 이었다(삼순 반대가설 `SYNTHETIC_UPPER_ANSWER`).
+// 그래서 이름이 아니라 **실제 export 값**으로 판정하고, 어느 쪽으로도 확정할 수 없는
+// 표현은 추정하지 않고 fail-close 한다.
+check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는다(미지 표현 fail-close)", () => {
+  const pipeline = read("src/lib/baseball-qa/pipeline.ts");
+  // pipeline 이 실제로 export 하는 고정 문구 상수 이름 = 답이 아닌 문구.
+  // 고정 문구 상수는 pipeline 과 그 의존 모듈이 **export 하는 것만** 인정한다.
+  // 이름 패턴만 보고 판정하면 그 이름에 생성 답변을 담는 순간 뚫린다(삼순 반대가설).
+  const seasonRecord = read("src/lib/baseball-qa/stats/season-record.ts");
+  const canned = new Set([
+    ...[...pipeline.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*\n?\s*"/g)].map((m) => m[1]),
+    // 백틱 템플릿 리터럴도 고정 문구다(보간은 상수 시즌값뿐).
+    ...[...seasonRecord.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*\n?\s*["`]/g)].map((m) => m[1]),
+    // 값이 다른 상수를 재수출하는 경우(문자열 리터럴이 아님) — 원본이 고정 문구다.
+    ...[...pipeline.matchAll(/export const ([A-Z][A-Z0-9_]*_ANSWER)\s*=\s*([A-Z][A-Z0-9_]*)\s*;/g)].map((m) => m[1]),
+  ]);
+  assert.ok(canned.size >= 8, `고정 문구 상수 수집 실패(${canned.size}개): ${[...canned].join(", ")}`);
+  // 생성/조회된 실제 답변을 싣는 표현. 지역 `answer` 는 경로마다 의미가 달라
+  // (rag=생성값, blocked=고정문구 삼항식) 단독으로 신뢰하지 않고 아래에서 따로 판정한다.
+  const GENERATED = new Set(["hit.answer", "cached", "validated.answer"]);
+  // matchPath 가 리터럴이 아닌 호출부(`route`)와 지역 `answer` 를 쓰는 호출부는
+  // 등록제로 둔다. 새로 생기면 RED 로 세워 사람이 분류를 명시하게 한다.
+  const LOCAL_ANSWER_PATHS = new Map<string, "generated" | "canned">([
+    ["rag", "generated"],          // composeRagAnswer(...) 결과
+    ["blocked", "canned"],         // UNSUPPORTED_SEASON/UNTRUSTED_METRIC 삼항식
+    ["kbo_structured", "generated"], // 운영 DB 원값 렌더 결과
+  ]);
+  const NON_LITERAL = new Set(["route"]);
+
+  const answering = new Set<string>();
+  const unknown: string[] = [];
+  for (const call of pipeline.matchAll(
+    /matchPath:\s*(?:"([a-z_]+)"|([A-Za-z_$][\w$]*))\s*,\s*answer(?::\s*([^,]+))?\s*,/g,
+  )) {
+    const literal = call[1];
+    const identifier = call[2];
+    const expr = (call[3] ?? "answer").trim();
+    if (!literal) {
+      if (!NON_LITERAL.has(identifier)) unknown.push(`(비리터럴 matchPath) ${identifier}: ${expr}`);
+      continue;
+    }
+    if (expr === "null") continue;
+    if (canned.has(expr)) continue;
+    if (GENERATED.has(expr)) { answering.add(literal); continue; }
+    if (expr === "answer") {
+      const kind = LOCAL_ANSWER_PATHS.get(literal);
+      if (!kind) { unknown.push(`${literal}: 지역 answer(분류 미등록)`); continue; }
+      if (kind === "generated") answering.add(literal);
+      continue;
+    }
+    unknown.push(`${literal}: ${expr}`);
+  }
+
+  // `settle(answer, "kbo_structured", ...)` 처럼 log 를 헬퍼로 감싼 호출부도 같은 계약이다.
+  // 이 형태를 안 보면 실답변 경로가 통째로 게이트 밖으로 빠진다(실제로 kbo_structured 가 그랬다).
+  for (const call of pipeline.matchAll(/settle\(\s*([A-Za-z_$][\w$.]*)\s*,\s*"([a-z_]+)"/g)) {
+    const expr = call[1];
+    const path = call[2];
+    if (canned.has(expr)) continue;
+    if (expr === "answer" || GENERATED.has(expr)) { answering.add(path); continue; }
+    unknown.push(`${path}: settle(${expr})`);
+  }
+
+  assert.deepEqual(unknown, [],
+    `분류되지 않은 answer 표현(등록 필요): ${unknown.join(" | ")}`);
+
+  // 되묻기는 answer 도 unavailable 도 아닌 `picker` 여야 한다. `unavailable` 로 떨어지면
+  // 유저는 "어느 선수?" 질문을 받으면서 동시에 "모르겠어요" 표정을 보게 된다.
+  assert.equal(replyKindForMatchPath("player_picker"), "picker",
+    "player_picker 는 picker 로 분류돼야 한다");
+  assert.ok(answering.size >= 4, `실답변 경로 파싱 실패(${answering.size}개): ${[...answering].join(", ")}`);
+  const misclassified = [...answering].filter((p) => replyKindForMatchPath(p) === "unavailable");
+  assert.deepEqual(misclassified, [],
+    `답변을 내보내는데 '모르겠어요' 로 분류됨: ${misclassified.join(", ")}`);
+});// --- (B) 자산 ---
 const digests = new Map<string, string>();
 check("매핑이 가리키는 자산이 실제로 존재한다", () => {
   for (const s of GENIUS_MASCOT_STATES) {

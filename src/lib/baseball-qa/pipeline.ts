@@ -18,8 +18,27 @@ import {
   type RagEvidence,
   type RagPlayerCandidate,
 } from "./rag/retrieve";
+import { displayProvenanceOf } from "./genius-reply-provenance";
+import {
+  composeSeasonRecordAnswer,
+  isServedOnlyMetric,
+  RECORD_MISSING_ANSWER,
+  resolveSeasonRecord,
+  resolveSeasonRecordIntent,
+  UNSUPPORTED_SEASON_ANSWER,
+  UNTRUSTED_METRIC_ANSWER,
+  type SeasonRecordRow,
+} from "./stats/season-record";
+import { crossCheckServedAgainstDb } from "./stats/served-record";
+import {
+  composeTeamRecordAnswer,
+  resolveTeamRecord,
+  resolveTeamRecordIntent,
+  type TeamRecordFetchers,
+} from "./stats/team-record";
 import {
   BASEBALL_GENIUS_DAILY_LIMIT,
+  BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
@@ -29,14 +48,46 @@ export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
 export const MIN_QUESTION_LEN = BASEBALL_GENIUS_MIN_QUESTION_LENGTH;
 export const MAX_QUESTION_LEN = BASEBALL_GENIUS_MAX_QUESTION_LENGTH;
 
-export const BLOCKED_ANSWER = "야구 룰/용어에 대한 질문만 답할 수 있어요. 예: \"보크가 뭐야?\"";
+export const BLOCKED_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;
 // LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
 export const UNSURE_ANSWER =
   "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
+/**
+ * **지원 allowlist 밖 지표** 전용 안내.
+ *
+ * ⚠️ 이전 문구(`선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요 … 앱의 기록 탭`)는
+ * 하린아빠가 2026-08-04 18:26 에 **더 나오면 안 된다**고 명시했다. 이제 선수 서술형은
+ * RAG 가, 시즌 기록은 `kbo_structured` 가 실제로 답하기 때문에 "기록은 못 합니다"는
+ * **거짓말**이 됐다.
+ *
+ * 그럼 왜 이 문구가 아직 필요한가 — 운영 DB 실측(2026-08-04):
+ *   batter: avg games pa ab runs hits doubles triples hr tb rbi sac sf
+ *   pitcher: era games wins losses saves holds wpct ip h hr bb hbp so r er whip
+ * **도루(sb)·출루율·장타율·OPS 컬럼이 아예 없다.** allowlist 에 넣어도 가져올 값이 없고,
+ * LLM 에 넘기면 숫자를 지어낸다. 그래서 **못 답하는 것은 그대로 못 답한다고 말하되**,
+ * "기록 전반"이 아니라 **그 지표**만 못 답한다고 범위를 정확히 밝히고, 답할 수 있는
+ * 지표를 같이 안내해 유저가 다음 행동을 할 수 있게 한다.
+ */
 export const HISTORY_HOLD_ANSWER =
-  "선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요. 앱의 선수 페이지 / 기록 탭에서 정확한 기록을 볼 수 있어요!";
+  "그 기록은 아직 준비되지 않았어요. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
+  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 답해드릴 수 있어요! ⚾";
+
+/**
+ * **구단 단위 수치** 전용 fail-close 안내 (삼순 #1100 2차 P0-2).
+ *
+ * 왜 필요한가 — `LG 팀타율`·`두산베어스 홈런 몇 개`·`KIA 순위`는 구단 질문이라
+ * 답변 범위 안이지만, **팀 단위 집계를 담은 정본 DB 가 없다**. 그대로 generic LLM 으로
+ * 보내면 모델이 기억으로 숫자를 지어낸다(환각). 프롬프트의 근거없음 계약은 두 번째
+ * 방어선일 뿐이고, 첫 번째 방어선은 애초에 보내지 않는 것이다.
+ *
+ * 선수 미지원 지표(`HISTORY_HOLD_ANSWER`)와 같은 모양으로 **못 하는 것은 못 한다고 말하되**
+ * 답할 수 있는 범위를 같이 밝혀 유저가 다음 행동을 할 수 있게 한다.
+ */
+export const TEAM_STAT_HOLD_ANSWER =
+  "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어려워요. " +
+  "순위·팀 기록은 홈의 순위표에서 바로 보실 수 있고, 구단 이야기나 선수 기록은 제가 답해드릴게요! ⚾";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
   "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
@@ -45,6 +96,18 @@ export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
+// 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
+// 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
+export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`;
+
+/**
+ * 동명이인 picker 안내 문구.
+ *
+ * 클라이언트는 payload로 선택 카드를 렌더하지만, payload를 모르는 구버전·알림 미리보기는
+ * 이 텍스트만 보게 된다. 그래서 문구 단독으로도 상황이 전달되게 쓴다.
+ */
+export const PLAYER_PICKER_ANSWER =
+  "같은 이름의 선수가 여럿 있어요. 어느 선수를 말씀하시는 건가요?";
 
 /**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
@@ -94,9 +157,32 @@ export interface GlossaryEntry {
   answer: string;
 }
 
+/**
+ * 동명이인 picker 선택지 1개.
+ *
+ * 로스터 880명 중 32그룹 72명이 동명이인이고, 그중 7그룹은 **같은 팀에도** 동명이인이
+ * 있다(김민준·김태훈·김현수·박준영·이서준·이승현·이주형). 따라서 "팀"만으로는 몳 가리고
+ * 이름+팀+등번호까지 보여줘야 유저가 구분할 수 있다(이 3조합은 로스터에서 유일함을 실측).
+ * 최종 특정은 표시값이 아니라 `kboId`로 한다.
+ */
+export interface PlayerPickerOption {
+  kboId: string;
+  name: string;
+  team: string | null;
+  position: string | null;
+  backNo: string | null;
+}
+
 export interface PlayerRef {
   name: string;
   kboId: string;
+  /**
+   * 동명이인 picker 전용 보조 식별자. 선택지를 사람이 구분할 수 있게 보여주고,
+   * 재질의 문장에서 어느 선수인지 다시 해석하는 데 쓴다. 없으면(미주입) 기존 동작 그대로다.
+   */
+  team?: string | null;
+  position?: string | null;
+  backNo?: string | null;
 }
 
 export interface LlmResult {
@@ -111,7 +197,17 @@ export type QuestionRoute =
   | "blocked"
   | "context_missing"
   | "ack"
-  | "baseball_rule_term";
+  // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
+  // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
+  //
+  // ⚠️ 이 라벨로는 로그를 쓰지 않는다 — 성공은 `kbo_structured`, 실패는 `history_hold`/`error` 로
+  // 확정된다. 전부 기존 `match_path` 허용값이라 DB CHECK 확장·migration 이 필요 없다.
+  | "team_record"
+  | "baseball_rule_term"
+  // 룰베이스가 야구인지 아닌지 확정하지 못한 나머지 — 종결하지 않고 LLM 범위판정에 위임한다.
+  // 이 라벨로는 로그를 쓰지 않는다(아래 answerQuestion에서 dictionary/cache/llm/blocked/unsure 중
+  // 하나로 반드시 확정되므로 match_path CHECK 확장이 필요 없다).
+  | "llm_scope_gate";
 export type MatchPath =
   | "dictionary"
   | "cache"
@@ -124,6 +220,12 @@ export type MatchPath =
   | "ack"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
+  // 시즌 기록(수치)을 구조화 DB 원값으로 답한 경로. LLM·RAG·cache 미사용이라
+  // 생성답(llm)·근거답(rag)과 리스크가 전혀 다르다 — #983 모니터에서 분리 관측한다.
+  | "kbo_structured"
+  // 동명이인으로 선수를 특정하지 못해 선택지를 되물은 경로. 답변이 아니라 **되물기**라
+  // blocked와 같은 칸에 넣으면 #983 모니터에서 "못 답한 질문"으로 오집계된다.
+  | "player_picker"
   | "unsure"
   | "limited"
   | "error"
@@ -136,6 +238,17 @@ export interface QaResult {
   source: MatchPath;
   term?: string;
   remaining: number;
+  /**
+   * `source === "player_picker"` 일 때만 채워진다. 호출부(server.ts)가 DM payload 로 실어
+   * 클라이언트가 선택 카드를 렌더하게 한다.
+   */
+  pickerOptions?: PlayerPickerOption[];
+  /**
+   * 근거 문서 링크. `source === "rag"` 일 때만 채워진다.
+   * 본문에는 `📄 출처: 나무위키` 표시명만 있고, 호출부(server.ts)가 이 URL 을 payload 로 실어
+   * 클라가 그 문구에 하이퍼링크를 씌운다 (하린아빠 2026-08-05 P0).
+   */
+  sourceUrl?: string;
 }
 
 export interface QaDeps {
@@ -151,6 +264,48 @@ export interface QaDeps {
   searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /** 현재 출시 범위는 룰/용어만이다. 선수 RAG는 후속 출시에서 명시적으로 켠다. */
+  enablePlayerRag?: boolean;
+  /**
+   * 유저가 동명이인 picker에서 고른 kboId (재질의). 있으면 이름 매칭을 건너뛰고
+   * 이 선수로 확정한다. 로스터에 없는 id면 무시되어 기존 경로로 내려간다.
+   */
+  pickedPlayerKboId?: string | null;
+  /**
+   * picker 되물기 전용 quota 반납. 되물기는 답변이 아니므로 하루 한도를 깎지 않는다
+   * (하린아빠 승인 A안: picker 무료 · 선택 후 답변에서만 1개 차감).
+   * 미주입이면 반납 없이 동작한다 — 기존 호출부 계약 무변경.
+   */
+  releaseDaily?: (userId: string) => Promise<void>;
+  /**
+   * 시즌 기록 조회 (kbo_structured). **kboId exact** 로만 조회한다 — 이름 조회는
+   * 동명이인을 섞어버리므로 금지다(삼순 조건 ①). 미주입이면 기록 경로 자체가 비활성이라
+   * 기존 동작(서술형 RAG 또는 차단) 그대로다.
+   */
+  fetchSeasonRecord?: (
+    table: "batter" | "pitcher",
+    kboId: string,
+  ) => Promise<SeasonRecordRow[]>;
+  /**
+   * 도루·출루율·장타율·OPS 조회 (`SNAPSHOT_ONLY_BATTER_METRICS`).
+   *
+   * `player_stats_batter` 에는 이 컬럼들이 없고, 앱 화면이 실제로 쓰는 정본은
+   * `stats-2026-batters.json`(=`/api/stats` 반환값)이다. **봇이 앱과 다른 숫자를
+   * 말하는 것이 가장 나쁜 결과**이므로 화면과 같은 소스를 본다.
+   * 미주입이면 해당 지표 경로가 비활성이라 기존 동작 그대로다.
+   */
+  fetchServedRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
+  /**
+   * 구단 기록 조회 (kbo_structured — 팀 축).
+   *
+   * ⚠️ 종전에는 이 경로가 아예 없어서 `LG 지금 몇 위야?`가 고정 안내문으로 닫혔다.
+   * 근거는 "팀 집계 정본이 없다"였는데 **틀렸다** — `/api/standings`와 `/api/team-records`가
+   * 이미 앱 순위탭·팀기록탭에 그 값을 서빙하고 있다(하린아빠 2026-08-04 20:42 지적).
+   * 미주입이면 팀 기록 경로가 비활성이라 기존 동작 그대로다.
+   */
+  fetchTeamRecord?: TeamRecordFetchers;
+  /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
+  now?: () => number;
   /**
    * KBO 공식 간행물(tier1) 근거 검색 — 규칙·용어 질문용.
    *
@@ -204,17 +359,318 @@ const STAT_WORDS = [
   "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
   "홈런", "안타", "타점", "도루", "승", "승수", "패", "세이브", "홀드", "삼진", "기록", "스탯",
 ];
-const TEAM_WORDS = [
-  "기아", "두산", "롯데", "삼성", "한화", "키움", "엘지", "lg", "kt", "ssg", "nc",
-  "타이거즈", "베어스", "자이언츠", "라이온즈", "이글스", "히어로즈", "트윈스",
-  "위즈", "랜더스", "다이노스",
+/**
+ * KBO 10개 구단의 **canonical 식별자 ↔ 허용 alias** 쌍.
+ *
+ * 약칭(`lg`)과 별칭(`트윈스`)을 팀별로 묶어 둔다. 붙여 쓴 풀네임(`LG트윈스`)을
+ * 여기에 직접 열거하지 않는 이유는 가지수(띄어쓰기·영문·한글 조합)가 계속 늘고
+ * 빠진 조합이 조용히 뚫리기 때문이다 — 조합은 `mentionsTeam()` 이 계산한다.
+ *
+ * ⚠️ 팀별로 묶는 것이 핵심이다(삼순 1차 P0-2). 약칭·별칭을 평평한 두 배열로 두면
+ * `LG라이온즈`·`KIA베어스`·`두산트윈스` 같은 **존재하지 않는 구단**을 정본으로
+ * 인정하게 된다. 그런 오표기는 구단 지명이 아니므로 LLM 2차 가드로 내려보낸다.
+ *
+ * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
+ * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
+ */
+const TEAM_ALIASES: ReadonlyArray<{
+  readonly canonical: string;
+  /** `TEAMS` 의 teamId — `/api/standings`·`/api/team-records` 조인 키. */
+  readonly teamId: number;
+  readonly shorts: readonly string[];
+  readonly nicks: readonly string[];
+}> = [
+  { canonical: "LG", teamId: 1, shorts: ["lg", "엘지"], nicks: ["트윈스"] },
+  { canonical: "KIA", teamId: 6, shorts: ["kia", "기아"], nicks: ["타이거즈"] },
+  { canonical: "두산", teamId: 2, shorts: ["두산"], nicks: ["베어스"] },
+  { canonical: "롯데", teamId: 7, shorts: ["롯데"], nicks: ["자이언츠"] },
+  { canonical: "삼성", teamId: 8, shorts: ["삼성"], nicks: ["라이온즈"] },
+  { canonical: "한화", teamId: 9, shorts: ["한화"], nicks: ["이글스"] },
+  { canonical: "키움", teamId: 10, shorts: ["키움"], nicks: ["히어로즈"] },
+  { canonical: "KT", teamId: 3, shorts: ["kt"], nicks: ["위즈"] },
+  { canonical: "SSG", teamId: 4, shorts: ["ssg"], nicks: ["랜더스"] },
+  { canonical: "NC", teamId: 5, shorts: ["nc"], nicks: ["다이노스"] },
 ];
+const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
+
+/**
+ * 구단 지명 여부. 단일 토큰 매칭에 **같은 팀의** 약칭+별칭 결합형을 더한다.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-04 유저 제보 → 실측):
+ * 토큰화는 `LG트윈스의` 를 한 덩어리로 만들어 `lg` 와도 `트윈스` 와도 일치하지
+ * 않는다. 그래서 `LG 트윈스의 역사`(띄어쓰기)와 `LG트윈스의 역사`(붙여쓰기)가
+ * **서로 다른 답을 받았다**. 10개 구단 전부 동일.
+ *
+ * 조합 규칙은 두 층으로 좀게 둔다.
+ *  ① 약칭과 별칭이 **같은 팀**이어야 한다 — `LG라이온즈`는 구단이 아니다.
+ *  ② 남는 꺼리는 기존 문법 꺼리 폐쇄집합(`isGrammaticalTail`)으로만 분해되어야 한다 —
+ *    `두산베어스의` → 허용, `두산베어스키핑` 같은 어휘 밖 잔여물은 닫힌다.
+ * 둘 다 모두 "구단이 아니다"로 떨어지며, 그러면 차단이 아니라 LLM 2차 가드로 간다.
+ */
+/**
+ * 게이트 전용 래퍼 — 질문 문자열을 받아 구단 지명 여부를 돌려준다.
+ *
+ * `mentionsTeam()` 은 토큰 배열을 받으므로 게이트가 토큰화를 **직접 재현**해야 하는데,
+ * 그러면 게이트가 검증 대상의 전처리를 자기 손으로 다시 짜는 셈이라 토큰화가 바뀌어도
+ * 게이트는 조용히 GREEN 이 된다. 배포 경로와 같은 정규화·토큰화를 타도록 여기서 감싼다.
+ */
+export function mentionsTeamForGate(question: string): boolean {
+  return mentionsTeam(questionTokens(question.normalize("NFKC").toLowerCase()));
+}
+
+/**
+ * 질문이 지명한 구단의 **canonical 이름**을 돌려준다. 없으면 null.
+ *
+ * `mentionsTeam` 과 같은 판정 규칙을 쓴다 — 둘이 갈라지면 "구단이라고 판정했는데
+ * 어느 구단인지 모른다"는 모순이 생긴다. 두 구단 이상이 지명되면 null —
+ * `LG랑 두산 중 누가 높아?` 처럼 비교 질문을 한 팀 기록으로 답하면 동문서답이다.
+ */
+export function teamIdOfCanonical(canonical: string): number | null {
+  const entry = TEAM_ALIASES.find((team) => team.canonical === canonical);
+  return entry ? entry.teamId : null;
+}
+
+export function resolveMentionedTeam(question: string): string | null {
+  const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
+  const hits = new Set<string>();
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    const direct = [...shorts, ...nicks].some((word) => tokenMatches(tokens, word));
+    const combined = tokens.some((token) =>
+      shorts.some((short) => {
+        if (!token.startsWith(short)) return false;
+        const rest = token.slice(short.length);
+        return nicks.some((nick) =>
+          rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+      }));
+    if (direct || combined) hits.add(canonical);
+  }
+  return hits.size === 1 ? [...hits][0] : null;
+}
+
+function mentionsTeam(tokens: string[]): boolean {
+  if (TEAM_WORDS.some((word) => tokenMatches(tokens, word))) return true;
+  return tokens.some((token) =>
+    TEAM_ALIASES.some(({ shorts, nicks }) =>
+      shorts.some((short) => {
+        if (!token.startsWith(short)) return false;
+        const rest = token.slice(short.length);
+        // 같은 팀의 별칭만 인정한다 — 교차조합(`LG라이온즈`)은 구단이 아니다.
+        return nicks.some((nick) =>
+          rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+      })));
+}
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
   "도루", "병살", "태그", "세이프", "엔트리", "로스터", "피치클락", "abs", "시프트",
-  "규칙", "용어", "타율", "방어율", "평균자책", "기록", "스탯", "war",
+  "타율", "방어율", "평균자책", "기록", "스탯", "war",
 ];
+const RULE_TERM_HINT_WORDS = [
+  "잔루", "만루", "순위", "인필드플라이", "화이트볼", "너클볼", "포지션", "지명타자", "대타", "대주자",
+  "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
+];
+const GENERIC_RULE_TERM_HINTS = new Set(["순위", "포지션"]);
+const RULE_SCOPE_SIGNAL_WORDS = [
+  "규칙", "룰", "용어", "판정", "보크", "견제", "태그업", "마운드", "비디오판독",
+  "챌린지", "우천중단", "콜드게임", "연장전", "무승부", "순위결정", "체크스윙", "스트라이크", "아웃", "파울", "번트",
+  "도루", "병살", "세이프", "피치클락", "시프트", "볼넷", "낫아웃", "희생플라이", "교체",
+];
+const GENERIC_RULE_SCOPE_WORDS = new Set(["규칙", "룰", "용어", "판정", "교체"]);
+const RULE_ACTOR_WORDS = [
+  "감독", "코치", "매니저", "주장", "선수", "투수", "타자", "포수", "주자", "심판", "수비",
+  "지명타자", "대타", "대주자", "1루수", "2루수", "3루수", "유격수", "외야수", "내야수",
+];
+const RULE_TERM_INTENT =
+  /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금|바꾸|바뀌|변경|방문|항의|처리|정해/;
+const OUT_OF_SCOPE_INTENT =
+  /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
+
+/**
+ * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
+ *
+ * ⚠️ `누구`·`별명`·`역대`는 맥락 없이 보면 사적인 인물 질문이지만, 구단이 붙으면
+ * `LG트윈스 감독 누구야?`·`두산 별명이 뭐야?`·`삼성 역대 우승` 처럼 **구단 질문**이다.
+ * 하린아빠가 확정한 답변 범위(야구룰·구단·선수·기록) 안이므로 `blocked` 로 끝내면 틀린
+ * 안내다(삼순 #1100 1차 P0-1 실표본 `LG트윈스 감독 누구야?`).
+ *
+ * 반면 `날씨`·`주식`·`맛집`·`프롬프트` 등은 구단이 붙어도 여전히 범위 밖이다
+ * (`LG 경기장 근처 맛집`). 그래서 면제는 **인물·평가·역사 축만** 좀게 열어둔다.
+ */
+const TEAM_BOUND_IN_SCOPE_INTENT = /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악/;
+
+/**
+ * 범위 밖 의도 판정. 구단이 지명되면 인물·평가·역사 축은 면제한다.
+ */
+function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
+  if (!OUT_OF_SCOPE_INTENT.test(normalized)) return false;
+  if (!hasTeam) return true;
+  // 구단 질문이면 면제 패턴을 지우고 남는 것이 있는지로 다시 본다 —
+  // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
+  return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
+}
+const NAMED_STAT_QUERY =
+  /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+
+/**
+ * 구단 질문 중 **팀 단위 수치**를 묻는 것만 결정론적으로 가린다 (삼순 #1100 2차 P0-2).
+ *
+ * 지표어(`STAT_WORDS`)가 붙은 구단 질문이면서 값을 요구하는 의도(`몇`·`얼마`·`알려` 등)가
+ * 있거나, 지표어 자체가 팀 수치 전용 어휘(`팀타율`·`순위`)일 때만 해당된다.
+ *
+ * 왜 좁게 잡는가 — 구단 질문은 대부분 서술이고(`삼성 주장`·`LG의 역사`), 그건 답변 범위
+ * 안이다. 넓게 잡으면 구단 질문을 다시 과차단하는 P0-1 회귀가 된다.
+ */
+const TEAM_NUMERIC_STAT_WORDS = ["팀타율", "팀방어율", "팀평균자책", "팀홈런", "순위", "승률"];
+const NUMERIC_VALUE_ASK = /몇|얼마/;
+/**
+ * **값을 달라는 요청어**. 구체 지표어와 함께 나올 때만 수치 질문으로 본다.
+ *
+ * ⚠️ 지표어 단독으로 닫으면 `삼성 라이온즈 홈런 잘 치는 팀이야?` 같은 **서술·평가**
+ * 구단 질문까지 fail-close 된다 — P0-1(구단 과차단) 회귀다. 게이트가 실제로 잡았다.
+ */
+/**
+ * 구단+지표 질문 중 **수치가 아니라 서술·평가**를 묻는 신호.
+ *
+ * ⚠️ 방향을 뷘다(삼순 #1100 4차 P0-2). 종전에는 "요청어가 있으면 닫는다"로 두었는데
+ * 요청 표현은 끝없이 늘어난다 — `말해줘`·`어떻게 돼?`·`현황`·`은?` 가 전부 새었고,
+ * 그때마다 generic LLM 이 `홈런 999개, 99승 1패` 를 지어냈다. 열거형 allowlist 로는
+ * 수렴하지 않는다.
+ *
+ * 그래서 지금은 **구단+구체지표는 기본적으로 닫고**, 서술·평가 신호가 명시돈 때만 열어준다.
+ * 틀렸을 때 결과가 비대칭이기 때문이다 — 과차단은 "순위표에서 보세요" 안내지만,
+ * 누수는 **없는 숫자를 사실처럼 말하는** 것이다.
+ */
+const TEAM_DESCRIPTIVE_ASK =
+  /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*팀|유명|이야기|역사|유래|응원|분위기|성향|스타일|강점|약점|특징|소개/;
+
+/**
+ * **구체 지표어** — 이 단어가 구단과 함께 나오면 의문사(`몇`·`얼마`) 없이도 수치 질문이다.
+ *
+ * ⚠️ 왜 `STAT_WORDS` 전체를 쓰지 않는가 (삼순 #1100 3차 P0-2 + 2차 회귀 실측):
+ * `STAT_WORDS` 에는 `기록`·`스탯` 같은 **총칭어**가 섞여 있다. 총칭어까지 이 축에 넣으면
+ * `두산 기록 중 유명한 이야기 알려줘` 같은 서술형 구단 질문이 fail-close 로 끌려가
+ * P0-1(구단 과차단) 회귀가 된다 — 2차에서 실제로 그렇게 죽었다.
+ *
+ * 반대로 `홈런`·`팀 타율`·`승패` 는 총칭이 아니라 **값을 지목한 것**이다. `알려줘`·`보여줘`
+ * 처럼 의문사가 없어도 유저가 기대하는 건 숫자이고, 팀 단위 집계 정본이 없는 이상
+ * generic LLM 은 그 숫자를 지어낸다(삼순 실측: `LG 홈런 알려줘` → `source=llm` +
+ * `홈런 999개, 99승 1패` 통과). 그래서 의문사 유무와 무관하게 닫는다.
+ */
+const TEAM_CONCRETE_STAT_WORDS = [
+  "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc", "whip",
+  "홈런", "안타", "타점", "도루", "세이브", "홀드", "삼진", "볼넷", "실책",
+  // 승패 계열 — 삼순 4차 실표본이 여기서 대거 샜다(`전적`·`승리 수`·`패배`·`득점`).
+  "승", "승수", "승리", "패", "패수", "패배", "승패", "전적", "성적",
+  "득점", "실점", "득실점",
+];
+
+/**
+ * 구단 수치 질문인가 — 이제는 "닫을까"가 아니라 **"조회해서 답할까"** 의 판정이다.
+ *
+ * ⚠️ 판정 규칙을 `resolveTeamRecordIntent` 와 **하나로 묶는다**(SSOT).
+ * 라우팅은 `tokenMatches`, 조회는 regex 로 따로 가면 `LG 지금 몇 위야?`·
+ * `한화 평균자책점` 처럼 **라우팅은 안 잡히는데 조회는 되는** 질문이 generic LLM 으로
+ * 새어나간다(실측 3종). 두 규칙은 갈라지면 안 된다.
+ */
+function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: boolean): boolean {
+  // 서술·평가형은 먼저 뺀다 — `삼성 홈런 잘 치는 팀이야?` 는 숫자를 물은 게 아니다.
+  if (TEAM_DESCRIPTIVE_ASK.test(normalized)) return false;
+  // 조회 규칙 그대로. `unserved`(우승 횟수·상대전적)도 포함한다 — 답할 수 없는 값이지만
+  // **LLM 이 지어내게 둔다는 뜻은 아니다**. 안내로 명시 종결한다.
+  if (resolveTeamRecordIntent(normalized).kind !== "none") return true;
+  // 전용 어휘(`팀타율`)·구체 지표어는 토큰 단위로도 한 번 더 본다 — 붙여쓴 표기 대응.
+  if (TEAM_NUMERIC_STAT_WORDS.some((word) => tokenMatches(tokens, word))) return true;
+  if (TEAM_CONCRETE_STAT_WORDS.some((word) => tokenMatches(tokens, word))) return true;
+  // 남은 총칭어(`기록`·`스탯`)는 **값을 요구하는 의도**가 함께 있을 때만 수치 질문이다.
+  // 여기까지 닫으면 `두산 기록 중 유명한 이야기 알려줘` 같은 서술형이 과차단된다.
+  return hasStat && NUMERIC_VALUE_ASK.test(normalized);
+}
+
+/**
+ * `history_hold` 안내문을 질문 유형별로 갈라준다.
+ *
+ * 구단 수치에 "2026 시즌 타율·홈런을 답해드려요"(선수 지표 안내)를 내보내면 틀린 안내다 —
+ * 유저가 물은 건 팀 집계이고, 그건 순위표로 보내는 게 정확한 다음 행동이다.
+ */
+export function resolveHoldAnswer(question: string): string {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  return mentionsTeam(tokens) ? TEAM_STAT_HOLD_ANSWER : HISTORY_HOLD_ANSWER;
+}
+
+/**
+ * 현재 출시 범위인 야구 룰/용어 질문의 결정론적 경계.
+ *
+ * 범위 밖 질문을 provider 판정에 맡기면 `BASEBALL_RULE_TERM` 오판 한 번으로 일반 LLM 답과
+ * global cache가 생긴다. 따라서 선수·구단·평가/인물 질의는 먼저 닫고, 검수 사전 용어 또는
+ * 야구 규칙 신호 + 질문 의도가 함께 확인된 경우만 RAG/LLM/cache 경계 안으로 보낸다.
+ */
+export function isSupportedRuleTermQuestion(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+  players: PlayerRef[] = [],
+): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const compact = normalized.replace(/\s+/g, "");
+  const tokens = questionTokens(normalized);
+  if (
+    isTopicDismissal(question) ||
+    dismissesDetectedBaseballTerm(question, [...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS])
+  ) return false;
+  const exactGlossaryMatch = matchGlossary(glossary, question) !== null;
+  const mentionsRuleHint = RULE_TERM_HINT_WORDS.some((word) => mentionsSignalWord(tokens, word));
+  const mentionsSpecificRuleHint = RULE_TERM_HINT_WORDS.some((word) =>
+    !GENERIC_RULE_TERM_HINTS.has(word) && mentionsSignalWord(tokens, word)
+  );
+  const mentionsRuleScopeSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) => mentionsSignalWord(tokens, word));
+  const mentionsSpecificRuleSignal = RULE_SCOPE_SIGNAL_WORDS.some((word) =>
+    !GENERIC_RULE_SCOPE_WORDS.has(word) && mentionsSignalWord(tokens, word)
+  );
+  const mentionsRuleActor = RULE_ACTOR_WORDS.some((word) => mentionsSignalWord(tokens, word));
+  const mentionsRoleRule = compact.includes("역할") && (
+    mentionsRuleActor ||
+    /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
+  );
+  const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
+  const isOutOfScopeRequest =
+    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) || NAMED_STAT_QUERY.test(normalized);
+  const hasBaseballContext =
+    exactGlossaryMatch ||
+    mentionsSpecificRuleHint ||
+    mentionsSpecificRuleSignal ||
+    mentionsRoleRule ||
+    BASEBALL_WORDS.some((word) => mentionsSignalWord(tokens, word)) ||
+    mentionsTeam(tokens) ||
+    hasPlayerReference(tokens, players);
+
+  // 검수 사전의 실제 용어가 문장에 있으면 축약형(`잔루만루는`)도 용어 질문으로 인정한다.
+  // 일반 엔티티 단어가 아니라 132개 검수 용어 폐쇄집합에만 해당한다.
+  if (exactGlossaryMatch && !isOutOfScopeRequest) return true;
+  if (
+    mentionsRuleHint &&
+    hasBaseballContext &&
+    !hasPlayerReference(tokens, players) &&
+    !mentionsTeam(tokens) &&
+    !isOutOfScopeRequest
+  ) return true;
+
+  // 출시 경계는 부정어 denylist가 아니라 **룰/용어 양성 신호**로 연다. `투수`·`야구` 같은
+  // 일반 엔티티 단어만으로는 절대 열지 않으므로 연봉·티켓·가족 질문이 새 표현으로 바뀌어도
+  // provider/RAG/cache 앞에서 닫힌다. 선수·구단·감독은 보크/역할/마운드 방문 같은 양성
+  // 신호와 질문 의도가 함께 있을 때만 룰의 예시 주체로 허용한다.
+  if (
+    !isOutOfScopeRequest &&
+    hasBaseballContext &&
+    (mentionsRuleHint || mentionsRuleScopeSignal || mentionsRoleRule) &&
+    hasRuleIntent
+  ) return true;
+  if (hasPlayerReference(tokens, players)) return false;
+  if (mentionsTeam(tokens)) return false;
+  if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
+  if (NAMED_STAT_QUERY.test(normalized)) return false;
+  if (matchGlossary(glossary, question)) return true;
+  return false;
+}
 /**
  * 인젝션 지시부의 "명령형·연결형"만 잡는 꼬리 (삼순 4차 P0).
  * `(무시|잊)`처럼 어간만 보면 사용자의 회상형("규칙 잊었어 다시 알려줘")까지 인젝션으로
@@ -330,6 +786,137 @@ function tokenMatches(tokens: string[], word: string): boolean {
 }
 
 /**
+ * 야구 신호어의 토큰 경계 매칭 (삼순 12차 P0).
+ *
+ * `compact.includes("아웃")`은 `아웃도어`, `도루`는 `도루묵`, `세이프`는 `세이프티`,
+ * `번트`는 `번트케이크`까지 야구 신호로 오인해 범위 밖 질문을 provider/LLM/cache 로 흘렸다.
+ * 그래서 신호어는 토큰 경계에서만 인정한다. 다만 `잔루만루는` 같은 복합 축약형을 계속
+ * 살리기 위해, 토큰이 **야구 폐쇄 어휘만으로 완전히 분해될 때**에 한해 결합형도 허용한다.
+ * 어휘 밖 잔여물(`도어`·`묵`·`티`·`케이크`)이 남으면 매칭하지 않는다.
+ */
+const BASEBALL_VOCABULARY: readonly string[] = Array.from(new Set([
+  ...BASEBALL_WORDS,
+  ...RULE_TERM_HINT_WORDS,
+  ...RULE_SCOPE_SIGNAL_WORDS,
+  ...RULE_ACTOR_WORDS,
+].map((word) => word.toLowerCase())));
+
+function stripTokenSuffix(token: string): string[] {
+  const cores = [token];
+  for (const suffix of TOKEN_TRIM_SUFFIXES) {
+    if (token.length > suffix.length && token.endsWith(suffix)) {
+      cores.push(token.slice(0, token.length - suffix.length));
+    }
+  }
+  return cores;
+}
+
+/**
+ * 신호어 뒤에 붙을 수 있는 **문법 꺼리**의 폐쇄 집합.
+ *
+ * 경계 검사를 순수 토큰 일치로만 두면 `만루면`·`잔루만루가뭔데`처럼 조사·어미가 붙은
+ * 정상 질문까지 닫힌다. 반대로 아무 잔여물이나 허용하면 `아웃+도어`·`도루+묵`이 다시 새다.
+ * 그래서 잔여물은 이 폐쇄 문법 단위로 **완전히 분해될 때만** 허용한다.
+ * `도어`는 `도`+`어`로 쪼개지지 않고(`어`가 비문법 단위), `묵`·`티`·`케이크`도 없다.
+ */
+const GRAMMATICAL_TAIL_UNITS: readonly string[] = [
+  "은", "는", "이", "가", "을", "를", "에", "의", "도", "만", "과", "와",
+  "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "랑", "이랑", "나", "이나", "야", "이야", "요", "이에요", "예요",
+  "면", "이면", "라면", "이라면", "라서", "이라서", "라고", "이라고",
+  "이라는", "이란", "란", "인데", "인가", "일때", "일수", "이며",
+  "뭔데", "뭐야", "뭐", "뭔가요", "뭐예요", "뭐임", "무슨", "뜻",
+  // 서로 붙는 서술 꺼리(`보크하면`·`번트대면`·`도루했을`). 명사 연속(`도어`·`묵`·`케이크`)은
+  // 이 집합에 없으므로 범위 밖 합성어는 여전히 닫힌다.
+  "하", "해", "한", "할", "함", "하면", "해도", "하고", "하는", "했", "했을", "하기",
+  "되", "돼", "된", "될", "됨", "되면", "돼도", "되고", "되는", "됐", "되나", "되죠",
+  "이다", "이고", "이지", "지", "다면", "이라도", "라도", "대면", "인지", "인가요",
+];
+
+function isGrammaticalTail(rest: string): boolean {
+  if (rest.length === 0) return true;
+  return GRAMMATICAL_TAIL_UNITS.some((unit) =>
+    rest.startsWith(unit) && isGrammaticalTail(rest.slice(unit.length))
+  );
+}
+
+/**
+ * `core`가 폐쇄 야구 어휘(+문법 꺼리)로만 분해되며 그 조각에 `needle`이 포함되는지.
+ * `잔루만루가뭔데` = 잔루 + 만루 + (가뭔데) → 허용, `아웃도어` = 아웃 + (도어) → 차단.
+ */
+function decomposesWithNeedle(core: string, needle: string): boolean {
+  const seen = new Map<string, boolean>();
+  const walk = (rest: string, usedNeedle: boolean): boolean => {
+    if (usedNeedle && isGrammaticalTail(rest)) return true;
+    if (rest.length === 0) return false;
+    const key = `${rest}|${usedNeedle ? 1 : 0}`;
+    const cached = seen.get(key);
+    if (cached !== undefined) return cached;
+    let ok = false;
+    for (const word of BASEBALL_VOCABULARY) {
+      if (!rest.startsWith(word)) continue;
+      if (walk(rest.slice(word.length), usedNeedle || word === needle)) {
+        ok = true;
+        break;
+      }
+    }
+    seen.set(key, ok);
+    return ok;
+  };
+  return walk(core, false);
+}
+
+/**
+ * `순위 결정 규칙`처럼 복합 신호어(`순위결정`·`비디오판독`·`희생플라이`)를 띄어쓰면 단일
+ * 토큰으로 잡히지 않는다. 그래서 인접 토큰 창(최대 3)을 결합해서도 매칭한다. 결합은
+ * 연속된 토큰에만 적용되므로 `아웃도어`처럼 한 토큰 안에서 어휘 밖 잔여물이 남는
+ * 경우는 여전히 닫힌다.
+ */
+const MAX_SIGNAL_TOKEN_SPAN = 3;
+
+/**
+ * 결함주입 전용 스위치 (게이트 검증력 증명용).
+ *
+ * `BASEBALL_QA_MUTATE_SUBSTRING_SCOPE=1` 이면 토큰 경계 검사를 과거의 `includes()` 부분문자열
+ * 매칭으로 되돌린다. 이때 `아웃도어`·`도루묵`·`세이프티`·`번트케이크`가 다시 야구 질문으로
+ * 오인되어 actual matrix 가 RED 로 죽어야 한다. RED 가 안 나면 그 게이트는 false-green 이다.
+ * 운영 경로에는 영향이 없고(기본값 off), QA 프로세스에서만 사용한다.
+ */
+const MUTATE_SUBSTRING_SCOPE = process.env.BASEBALL_QA_MUTATE_SUBSTRING_SCOPE === "1";
+
+/**
+ * 2차 가드 결함주입 스위치 (게이트 검증력 증명용).
+ *
+ * 룰베이스가 못 가린 질문(`llm_scope_gate`)의 처리를 과거 두 상태로 되돌린다.
+ * 둘 다 actual matrix가 RED로 죽어야 이 경계를 진짜로 검증하고 있다는 증거가 된다.
+ *   `blocked` — #1091 이전 동작(미매칭 전부 차단). 사전 미수록 정상 룰 질문이 과차단된다.
+ *   `open`    — main 동작(미매칭 fail-open). 비야구 질문이 공식 RAG(tier1 조문)·global
+ *                cache 경계 안으로 들어간다(삼순 R1/R2 재현).
+ * 기본값 off — 운영 경로에는 영향이 없다.
+ */
+const MUTATE_SCOPE_GATE = process.env.BASEBALL_QA_MUTATE_SCOPE_GATE ?? "";
+
+function mentionsSignalWord(tokens: string[], word: string): boolean {
+  const needle = word.toLowerCase();
+  if (MUTATE_SUBSTRING_SCOPE) {
+    return tokens.join("").includes(needle);
+  }
+  for (let start = 0; start < tokens.length; start++) {
+    const span = Math.min(MAX_SIGNAL_TOKEN_SPAN, tokens.length - start);
+    for (let size = 1; size <= span; size++) {
+      const window = tokens.slice(start, start + size);
+      const head = window.slice(0, size - 1).join("");
+      const matched = stripTokenSuffix(window[size - 1]).some((tail) => {
+        const core = `${head}${tail}`;
+        return core === needle || decomposesWithNeedle(core, needle);
+      });
+      if (matched) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * 공백 포함 canonical 이름(roster 878명 중 28건, 예 "토다 나츠키")을 연속 토큰으로 매칭한다.
  * 단일 토큰 비교만 하면 이름이 질문에서 두 토큰으로 쪼개져 exact 미스 → history_hold를
  * 우회해 LLM으로 누수된다 (삼순 2차 P0). 토큰 단위 비교라 단어 경계는 그대로 지키고,
@@ -388,12 +975,35 @@ export function resolveRagPlayerCandidate(
   players: PlayerRef[],
 ): RagPlayerCandidate | null {
   if (!isDescriptivePlayerQuestion(question)) return null;
+  return resolveNamedPlayerCandidate(question, players);
+}
+
+/**
+ * 질문 의도와 무관하게 **이름으로 단일 선수가 특정되는가**만 본다.
+ *
+ * 서술형 게이트(`isDescriptivePlayerQuestion`)는 숫자·수치어가 있으면 거지하는데, 그건
+ * **tier2(나무위키) 서빙 조건**이지 선수 식별 조건이 아니다. 기록 질문(`문보경 올해 2루타
+ * 몇개칩어?`)은 수치어 때문에 그 게이트에 걸려 후보 자체가 안 잡혔고, 그래서 구조화 DB
+ * 경로까지 도달하지 못했다(게이트가 잡은 결함).
+ */
+export function resolveNamedPlayerCandidate(
+  question: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const matched = findPlayerReferences(tokens, players);
   const distinctIds = new Set(matched.map((player) => player.kboId));
   if (distinctIds.size !== 1) return null;
   const target = matched[0];
+  return buildCandidate(target, normalized, players);
+}
+
+function buildCandidate(
+  target: PlayerRef,
+  normalized: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
 
   // 토큰 매칭은 허용 조사 목록에 없는 결합형("문보경이랑")을 놓친다. history_hold에서는
   // 한 명만 걸려도 결과가 같지만, RAG는 "이 질문이 정말 한 선수만 가리키는가"가 정확도의 전제다.
@@ -414,9 +1024,129 @@ export function resolveRagPlayerCandidate(
     entityType: "player",
     entityId: target.kboId,
     name: target.name,
+    ...(target.team ? { team: target.team } : {}),
     sourceKey: `namu:player:${target.kboId}`,
   };
 }
+
+/** picker 선택지 상한. 로스터 최대 동명이인 그룹이 3명(김동현·김태훈 등)이라 여유를 둔 값. */
+export const PLAYER_PICKER_MAX_OPTIONS = 6;
+
+/**
+ * 동명이인으로 **선수를 특정하지 못한** 서술형 질문인지 판정하고, 그렇다면 선택지를 돌려준다.
+ *
+ * `resolveRagPlayerCandidate`는 후보 kboId가 2개 이상이면 null을 돌려 그대로 끝낸다. 그러면
+ * `김동현 어떤 선수야?`가 이유 설명 없이 차단 문구로 끝난다. 여기서는 대신 "어느 김동현인가"를
+ * 되묻고, 유저가 고른 kboId로 다시 특정해 답한다(하린아빠 2026-08-03 지시).
+ *
+ * ⚠️ 추측으로 한 명을 고르지 않는다. 낙업률 높은 선수를 기본값으로 잡으면 남의 문서로
+ * 답하는 사고가 조용히 나며, 유저는 그게 틀렸는지도 모른다. 모호하면 물어본다.
+ */
+export function resolvePlayerPickerOptions(
+  question: string,
+  players: PlayerRef[],
+  /**
+   * 서술형 게이트를 건너뛴지 여부. 기록 질문은 수치어 때문에 서술형 게이트에 걸리지만,
+   * 동명이인 모호성은 똑같이 존재한다 — 오히려 기록은 동명이인도 답할 수 있어
+   * (Production 실측: 72명 중 28명 타자기록 보유) picker 가 실제로 값을 한다.
+   */
+  allowNonDescriptive = false,
+): PlayerPickerOption[] | null {
+  if (!allowNonDescriptive && !isDescriptivePlayerQuestion(question)) return null;
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  const matched = findPlayerReferences(tokens, players);
+  if (matched.length === 0) return null;
+
+  // 서로 다른 **이름**이 여럿 걸렸다면 동명이인이 아니라 `A와 B 중 누가~` 같은 비교 질문이다.
+  // 그건 picker로 풀 문제가 아니므로 기존 차단 경로에 맡긴다.
+  const names = new Set(matched.map((player) => player.name));
+  if (names.size !== 1) return null;
+
+  const distinct = new Map<string, PlayerRef>();
+  for (const player of matched) distinct.set(player.kboId, player);
+  // 1명이면 모호하지 않다 — 기존 단일 후보 경로가 그대로 처리한다.
+  if (distinct.size < 2) return null;
+  // 상한을 넘으면 고르게 하는 것 자체가 의미가 없다 — 기존 차단으로 둘려보낸다.
+  if (distinct.size > PLAYER_PICKER_MAX_OPTIONS) return null;
+
+  // 다른 선수까지 같이 언급된 문장은 단일 엔티티 질문이 아니므로 picker 대상이 아니다.
+  const targetName = matched[0].name;
+  const mentionsOther = players.some((player) =>
+    player.name !== targetName &&
+    player.name.length >= 2 &&
+    normalized.includes(player.name.normalize("NFKC").toLowerCase()) &&
+    !targetName.includes(player.name));
+  if (mentionsOther) return null;
+
+  return [...distinct.values()]
+    .map((player) => ({
+      kboId: player.kboId,
+      name: player.name,
+      team: player.team ?? null,
+      position: player.position ?? null,
+      backNo: player.backNo ?? null,
+    }))
+    // 표시 순서를 kboId로 고정한다 — 로스터 파일 순서가 바뀌어도 같은 화면이 나오게.
+    .sort((left, right) => left.kboId.localeCompare(right.kboId));
+}
+
+/**
+ * picker 선택 뒤 재질의에서 온 kboId로 후보를 직접 구성한다.
+ *
+ * 이름 매칭을 건너뛰는 게 핵심이다 — 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가
+ * 무한히 반복된다. 유저가 명시적으로 고른 id만 신뢰하고, 로스터에 없는 id는 거절한다.
+ */
+export function isPickedPlayerAllowed(
+  question: string,
+  kboId: string,
+  players: PlayerRef[],
+): boolean {
+  // 원 질문에서 서버가 다시 계산한 picker 후보군에 속한 id만 허용한다.
+  // `allowNonDescriptive=true`는 기록 질문(수치어가 있어 descriptive 게이트 거부)도 포함한다.
+  const options = resolvePlayerPickerOptions(question, players, true);
+  return options?.some((option) => option.kboId === kboId) ?? false;
+}
+
+export function resolvePickedPlayerCandidate(
+  kboId: string,
+  players: PlayerRef[],
+): RagPlayerCandidate | null {
+  const target = players.find((player) => player.kboId === kboId);
+  if (!target) return null;
+  return {
+    entityType: "player",
+    entityId: target.kboId,
+    name: target.name,
+    ...(target.team ? { team: target.team } : {}),
+    sourceKey: `namu:player:${target.kboId}`,
+  };
+}
+
+/**
+ * 구단 답변 고유의 야구 신호어.
+ *
+ * ⚠️ 왜 필요한가 (삼순 #1100 3차 P0-1 실측):
+ * `hasBaseballSignal` 은 **LLM 답변 본문**의 최종 안전판이다. 그런데 신호어가 룰·용어
+ * 어휘(`BASEBALL_WORDS`)뿐이라, 프롬프트에서 구단을 열어줘도 정상 구단 답변이 여기서
+ * 다시 폐기됐다:
+ *   `LG 트윈스 감독은 염경엽입니다.`            → unsure
+ *   `LG 트윈스는 1990년 창단한 KBO 구단입니다.` → unsure
+ * 즉 라우터·프롬프트를 다 고쳐도 **유저는 여전히 차단 문구를 받는다**.
+ *
+ * 그래서 구단 답변에 자연스럽게 나타나는 신호를 여기 더한다. 어휘 범위를 무작정 넓히지
+ * 않고 **구단·리그 고유명사 축**만 여는다 — `날씨`·`맛집` 같은 범위밖 답변은 여전히
+ * 이 신호가 없어 걸러진다(문장에 구단명이 섞여도 NOT_BASEBALL sentinel 이 앞서 닫는다).
+ */
+/**
+ * 답변 본문이 **주제를 벗어난** 신호.
+ *
+ * 신호어 allowlist 를 넓히는 방향은 3차에 실패했다 — `리그` 를 넣었더니
+ * `리그 오브 레전드는 인기 게임입니다.` 가 통과했다(삼순 4차 P0-1).
+ * 그래서 완화 경로에서는 allowlist 가 아니라 **주제이탈 denylist** 로 닫는다.
+ */
+const ANSWER_OFF_TOPIC =
+  /게임|영화|드라마|예능|아이돌|맛집|음식|메뉴|레시피|요리|날씨|기온|주식|코인|부동산|여행|숙소|쇼핑|배송|스마트폰|노트북|갤럭시|프롬프트|비밀번호/;
 
 function hasBaseballSignal(value: string): boolean {
   const tokens = questionTokens(value);
@@ -424,6 +1154,60 @@ function hasBaseballSignal(value: string): boolean {
     ["경기", "공격", "수비", "주루", "득점", "홈플레이트", "마운드"].some((word) =>
       tokenMatches(tokens, word)
     );
+}
+
+/**
+ * 답변이 **원질문 맥락 안에서** 범위 안인가.
+ *
+ * ⚠️ 왜 질문을 같이 보는가 (삼순 #1100 4차 P0-1):
+ * 답변 문자열만 보면 양쪽으로 다 틀렸다.
+ *   `염경엽입니다.`                     → 정상 답변인데 신호어가 없어 폐기
+ *   `리그 오브 레전드는 인기 게임입니다.` → 비야구인데 `리그` 때문에 통과
+ * 답변은 짧을수록 자기 맥락을 안 담는다 — 맥락은 원질문이 가지고 있다.
+ *
+ * 계약:
+ *  ① 답변 자체가 야구면 통과 (기존 동작 불변).
+ *  ② 질문이 구단을 지명한 경우에만 완화하되, 답변에 주제이탈 신호가 없어야 한다.
+ *  ③ 질문 맥락이 없으면(미전달) 기존과 동일하게 fail-close 한다.
+ */
+export function answerInQuestionScope(question: string, answer: string): boolean {
+  if (hasBaseballSignal(answer)) return true;
+  if (!question) return false;
+  const questionTokensNorm = questionTokens(question.normalize("NFKC").toLowerCase());
+  if (!questionMentionsTeam(questionTokensNorm)) return false;
+  return !ANSWER_OFF_TOPIC.test(answer.normalize("NFKC").toLowerCase());
+}
+
+/**
+ * 질문측 구단 지명 판정 (`mentionsTeam` + 야구 어휘 결합형).
+ *
+ * `mentionsTeam` 은 약칭+별칭 결합(`삼성라이온즈`)까지만 인정한다. 그런데 유저는
+ * `삼성주장` 처럼 **구단+야구어를 붙여** 쓴다(오늘 실표본). 이런 토큰은 구단 지명으로
+ * 안 잡혀 validator 완화가 안 먹힌다.
+ *
+ * ⚠️ 그렇다고 `startsWith(약칭)` 만 보면 `삼성전자 주가` 같은 범위밖까지 구단 질문이 된다.
+ * 남는 꺼리가 **야구 폐쇄 어휘 + 문법 꺼리로만 분해**될 때만 인정한다:
+ *   `삼성주장`   = 삼성 + 주장(RULE_ACTOR_WORDS)  → 구단 질문 ⭕️
+ *   `삼성전자` = 삼성 + 전자(어휘 밖)          → 구단 질문 아님 ❌
+ */
+function questionMentionsTeam(tokens: string[]): boolean {
+  if (mentionsTeam(tokens)) return true;
+  return tokens.some((token) =>
+    TEAM_WORDS.some((word) => {
+      if (!token.startsWith(word) || token.length === word.length) return false;
+      return decomposesIntoBaseballVocabulary(token.slice(word.length));
+    }));
+}
+
+/** 남은 문자열이 야구 폐쇄 어휘(+문법 꺼리)로만 분해되는가. 빈 문자열은 인정하지 않는다. */
+function decomposesIntoBaseballVocabulary(rest: string): boolean {
+  if (rest.length === 0) return false;
+  for (const word of BASEBALL_VOCABULARY) {
+    if (!rest.startsWith(word)) continue;
+    if (isGrammaticalTail(rest.slice(word.length))) return true;
+    if (decomposesIntoBaseballVocabulary(rest.slice(word.length))) return true;
+  }
+  return false;
 }
 
 /**
@@ -448,47 +1232,89 @@ export function routeQuestion(
   if (isAckPhrase(question)) return "ack";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
-  const hasTeam = TEAM_WORDS.some((word) => tokenMatches(tokens, word));
-  if (hasStat && (hasPlayerReference(tokens, players) || hasTeam)) return "history_hold";
-  if (
-    HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word)) ||
-    // "순위"는 team-bound일 때만 실시간 기록 질의다. 전역 차단어로 두면
-    // "순위 결정 규칙 알려줘"처럼 팀 없는 룰 질문까지 history_hold로 과차단된다.
-    (hasTeam && /누구|언제|몇|기록|성적|역사|순위/.test(normalized))
-  ) {
-    return "history_hold";
+  const hasTeam = mentionsTeam(tokens);
+  // ── 기록 질문의 종착지 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1) ──────────
+  //
+  // ⚠️ 여기는 **선수 기록 중 지원 지표 밖**일 때만 `history_hold` 로 끝낸다.
+  //
+  // 답할 수 있는 지표(타율·방어율…)는 `answerQuestion` 앞단 `kbo_structured` 가 이미
+  // 가로채고, 서술형은 선수 RAG 가 가로챈다. 즉 여기까지 오는 선수 기록 질문은
+  // `도루`·`출루율`·`OPS` 처럼 **운영 DB 에 컬럼 자체가 없는** 지표다(실측 근거는
+  // `HISTORY_HOLD_ANSWER` 주석). LLM 에 넘기면 숫자를 지어내므로 넘기지 않는다.
+  //
+  // 반대로 **구단** 질문(`LG트윈스의 역사`·`삼성 주장`·`LG는 왜 못해?`)과 구단 인물
+  // 질문(`감독 누구야`)은 **더 이상 여기서 종결하지 않는다**. 구단은 하린아빠가
+  // 확정한 답변 범위(야구룰·구단·선수·기록) 안이므로 `history_hold`("못 답해요")나
+  // `blocked`("룰/용어만 답해요")로 끝내면 둘 다 틀린 안내다. 그대로 아래로 흘려
+  // LLM 2차 가드가 범위를 판정하고 답변을 생성하게 한다.
+  //
+  // ⚠️ 단, **수치 지표가 붙은 구단 질문**(`LG 팀타율`·`두산베어스 홈런 몇 개`)은 예외다.
+  // 구단 자체는 답변 범위 안이지만 팀 단위 집계 정본이 없어 generic LLM 이 숫자를
+  // 지어낸다(삼순 #1100 2차 P0-2). 선수 미지원 지표와 동일하게 fail-close 하되
+  // 안내문은 `TEAM_STAT_HOLD_ANSWER` 로 갈라진다(아래 `resolveHoldAnswer`).
+  //
+  // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
+  // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
+  if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
+  // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
+  // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
+  // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
+  // 실제 순위표/팀기록을 조회해 답하고, 조회 실패·미지원 지표만 fail-close 한다.
+  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) return "team_record";
+
+  const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
+  if (!supportedRuleTerm) {
+    // 기록/역사 어휘(통산·성적·시즌…)가 붙은 선수·수치 질문도 같은 이유로 지원 밖이다.
+    // 로스터에 없는 이름(`홍길동 통산 타율`)도 수치를 지어낼 수 있으므로 같은 칸이다.
+    //
+    // ⚠️ 단, **구단이 지명되면 이 분기에 들어오지 않는다**(`!hasTeam`). 구단 질문은
+    // 답변 범위 안이라 LLM 2차 가드가 답해야 하며, 근거 없는 수치를 말하지 않는 것은
+    // 프롬프트 계약이 다룬다(삼순 #1100 1차 P0-1).
+    if (
+      !hasTeam &&
+      (hasPlayerReference(tokens, players) || hasStat) &&
+      HISTORY_CONTEXT_WORDS.some((word) => normalized.includes(word))
+    ) {
+      return "history_hold";
+    }
   }
+
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
-  if (matchGlossary(glossary, question)) return "baseball_rule_term";
-  const mentionsGlossaryTerm = glossary.some((entry) =>
-    [entry.term, ...entry.aliases].some((name) => {
-      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
-      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
-    })
-  );
-  if (mentionsGlossaryTerm) return "baseball_rule_term";
-  if (BASEBALL_WORDS.some((word) => tokenMatches(tokens, word))) return "baseball_rule_term";
-  // 위 결정론적 선차단·선라우팅에 걸리지 않은 나머지는 LLM 판정에 맡긴다.
-  // 여기서 BASEBALL_WORDS 미매칭을 blocked로 fail-closed 하면 "잔루만루가 뭔데"처럼
-  // 붙여쓰기/사전 미수록인 정상 룰 질문이 LLM에 도달조차 못 하고 과차단된다.
-  // 비야구 방어는 LLM의 NOT_BASEBALL 판정 + validateLlmResponse 출력 가드가 맡는다.
-  return "baseball_rule_term";
+  if (supportedRuleTerm) return "baseball_rule_term";
+
+  // ⚠️ 선수·구단을 지명했다는 이유만으로 차단하지 않는다. tier2 선수 RAG가 확장된 뒤로
+  // `문보경 별명이 뭐야?` 같은 서술형 선수 질문은 근거로 답해야 하는 대상이다
+  // (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도 답변 되어야 해").
+  // 선수 경로는 answerQuestion 앞단의 resolveRagPlayerCandidate가 먼저 가로채 RAG로 보낸다.
+
+  // 기존 범위밖 의도 denylist는 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
+  // 열거해야 하는" 종류가 아니라 범위밖임이 문장 의도로 드러난 고정밀 패턴이라 발산하지
+  // 않는다(별명·누구·비교·역대·추천·날씨 등). 이걸까지 LLM에 묻면 토큰만 더 쓴다.
+  // ⚠️ `NAMED_STAT_QUERY` 는 `<이름> <지표>` 모양을 잡는다 — 그런데 구단명도 그 모양에
+  // 걸린다(`두산베어스 홈런 몇 개야?`). 구단은 확정 답변 범위 안이므로 여기서
+  // 차단하지 않고 LLM 2차 가드로 보낸다(삼순 #1100 1차 P0-1). 팀 stat DB 가 없어
+  // 근거없는 수치를 말하면 안 되는 건 LLM 프롬프트의 근거없음 계약이 다룬다.
+  // 선수명 + 지표(`기예기르모 에레디아가 타율 얼마야`)는 그대로 닫힌다.
+  if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && NAMED_STAT_QUERY.test(normalized))) {
+    return "blocked";
+  }
+
+  // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
+  // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
+  // 사전이 못 가린** 질문이다. 이걸 blocked로 종결하면 사전이 야구 어휘 전체를 커버해야만
+  // 정상 질문이 안 막히고, 커버리지를 넓히면 `아웃도어`⊃`아웃` 같은 누수가 다시 생긴다.
+  // 사전으로는 수렴하지 않는 싸움이므로 판정을 LLM에 넘긴다.
+  //
+  // 단, 과거처럼 그냥 열어주는(main의 `baseball_rule_term` 폴백) 것도 아니다. 그건 비야구
+  // 질문을 공식 RAG에 태워 무관한 KBO 조문이 근거로 붙게 만들었다(삼순 R1). 이 라벨은
+  // **RAG/tier1 경계 밖**에서 LLM 범위판정만 받는 별도 경로다 — 아래 answerQuestion 참조.
+  if (MUTATE_SCOPE_GATE === "blocked") return "blocked";
+  if (MUTATE_SCOPE_GATE === "open") return "baseball_rule_term";
+  return "llm_scope_gate";
 }
 
-/**
- * 이 질문이 **결정론적으로** 야구 질문임을 확인했는가.
- *
- * `routeQuestion`은 미매칭 질문을 과차단하지 않기 위해 마지막에 `baseball_rule_term`으로
- * **폴백**한다. 즉 비야구 질문도 이 라벨을 달고 내려오며, 비야구 판정은 LLM의
- * NOT_BASEBALL이 맡는 구조다.
- *
- * 공식 RAG를 그 폴백 질문에도 태우면 **비야구 질문이 blocked 대신 unsure로 바뀌고**,
- * 적대적 provider에서는 무관한 KBO 조문이 근거로 붙은 답이 나간다(삼순 R1 재현).
- * 그래서 공식 RAG는 **양성 야구 신호가 실제로 있을 때만** 탄다 — 폴백 질문은 종전대로
- * LLM 분류로 내려보낸다.
- */
 /**
  * "야구 얘기는 그만" 류 **주제 이탈 선언**.
  *
@@ -522,36 +1348,13 @@ function dismissesDetectedBaseballTerm(question: string, terms: readonly string[
   });
 }
 
-export function hasExplicitBaseballSignal(
-  question: string,
-  glossary: GlossaryEntry[] = [],
-): boolean {
-  const normalized = question.normalize("NFKC").toLowerCase();
-  const tokens = questionTokens(normalized);
-  // 주제 이탈 선언은 야구 토큰이 있어도 야구 질문이 아니다 — LLM 분류(NOT_BASEBALL)로 보낸다.
-  const detectedTerms = [
-    ...BASEBALL_WORDS,
-    ...glossary.flatMap((entry) => [entry.term, ...entry.aliases]),
-  ];
-  if (isTopicDismissal(question) || dismissesDetectedBaseballTerm(question, detectedTerms)) return false;
-  if (matchGlossary(glossary, question)) return true;
-  const mentionsGlossaryTerm = glossary.some((entry) =>
-    [entry.term, ...entry.aliases].some((name) => {
-      const normalizedName = name.normalize("NFKC").toLowerCase().trim();
-      return normalizedName.length >= 2 && tokenMatches(tokens, normalizedName);
-    })
-  );
-  if (mentionsGlossaryTerm) return true;
-  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word));
-}
-
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
 }
 
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
-export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
+export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
   let value: unknown;
   try {
     value = JSON.parse(raw.trim());
@@ -576,7 +1379,8 @@ export function validateLlmResponse(raw: string): ValidatedLlmAnswer {
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
     /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
-    !hasBaseballSignal(answer)
+    // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
+    !answerInQuestionScope(question, answer)
   ) {
     return { kind: "unsure" };
   }
@@ -610,6 +1414,104 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
  * 경로 분기는 질문만으로 결정되므로(서술형 + 단일 entity), 재처리가 같은 경로로 돌아오는 것은
  * 결정론적이다 — 저장된 결과를 어느 검증기로 읽을지가 모호해지지 않는다.
  */
+/**
+ * 시즌 기록(수치) 질문을 구조화 DB 로 답한다 (kbo_structured).
+ *
+ * 하린아빠 2026-08-03: "기록도 레퍼런스하는거야? 가령 문보경 올해 2루타 몇개 침어?"
+ *
+ * 나무위키(tier2) 숫자는 정본이 아니라 그걸로 답하면 안 되고(§12 수치 계약),
+ * 그렇다고 무조건 차단해도 안 된다. 그래서 운영 DB 의 최신 row 를 **원값 그대로** 낸다.
+ *
+ * 안전 계약 (삼순 조건 ①~④):
+ *   ① 조회는 항상 **kboId exact** — 이름 조회 금지(동명이인이 섞인다)
+ *   ② 올해(2026)만 — 작년·통산은 DB 에 row 가 없으므로 fail-close
+ *   ③ 허용 필드는 원값 렌더 — 타율을 hits/ab 로 재계산하지 않는다
+ *   ④ stale/row 0/row 2+/identity 불일치/비정상값 → 답변 금지 + 기준시각 표시
+ *
+ * **LLM · RAG · cache 를 전혀 쓰지 않는다.** 결정론적 조회 1회로 끝난다.
+ * 반환 null 은 "이 경로 대상이 아니다" — 호출부가 서술형 RAG 로 내려보낸다.
+ */
+async function answerSeasonRecordQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  candidate: RagPlayerCandidate,
+  remaining: number,
+  deps: QaDeps,
+  intentOverride?: ReturnType<typeof resolveSeasonRecordIntent>,
+): Promise<QaResult | null> {
+  const intent = intentOverride ?? resolveSeasonRecordIntent(question);
+  if (intent.kind === "none") return null;
+
+  const settle = async (answer: string, matchPath: MatchPath, source: MatchPath): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+    return { status: 200, answer, source, remaining };
+  };
+
+  // 신뢰할 수 없는 지표(pa/sac/sf)·지원 안 하는 시즌은 둘 다 **답변 거절**로 명시 종결한다.
+  // 조용히 서술형 RAG 로 흘리면 위키 숫자가 대신 나가버린다 — 정확히 막으려던 것이다.
+  if (intent.kind === "untrusted_metric") {
+    return settle(UNTRUSTED_METRIC_ANSWER, "blocked", "blocked");
+  }
+  if (intent.kind === "unsupported_season") {
+    return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+  }
+
+  // ── 소스 선택 ──────────────────────────────────────────────────────────────
+  // 도루·출루율·장타율·OPS 는 `player_stats_batter` 에 **컬럼이 없다**. 앱 화면이 쓰는
+  // 정본은 `stats-2026-batters.json`(=`/api/stats`)이라 그쪽을 본다
+  // (하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
+  //
+  // ⚠️ 두 소스를 섞는 이상 **한쪽만 갱신된 상태**가 위험하다. 봇이 앱과 다른 숫자를
+  // 말하는 게 최악이므로, 스냅샷으로 답할 때는 DB row 와 겹치는 지표를 교차검증하고
+  // 하나라도 어긋나면 답하지 않는다.
+  const useServed = intent.query.table === "batter" && isServedOnlyMetric(intent.query.metric);
+  if (useServed && !deps.fetchServedRecord) {
+    // 주입이 없으면 이 지표는 아직 답할 수 없다 — 없는 컬럼을 DB 에서 읽어 봐야 missing 이다.
+    return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+  }
+
+  let rows: SeasonRecordRow[];
+  try {
+    rows = useServed
+      ? await deps.fetchServedRecord!(candidate.entityId)
+      : await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
+  } catch {
+    // 조회 실패를 "기록 없음"으로 둔갑하지 않는다 — 재시도 가능한 실패다.
+    return settle(BLOCKED_ANSWER, "error", "error");
+  }
+
+  if (useServed) {
+    // 교차검증: 같은 선수의 DB row 와 겹치는 정수 지표가 전부 일치해야 한다.
+    // DB 조회가 실패하거나 행이 없으면 **확인 못 한 것**이므로 답하지 않는다.
+    let dbRows: SeasonRecordRow[] = [];
+    try {
+      dbRows = deps.fetchSeasonRecord
+        ? await deps.fetchSeasonRecord("batter", candidate.entityId)
+        : [];
+    } catch {
+      return settle(BLOCKED_ANSWER, "error", "error");
+    }
+    const cross = crossCheckServedAgainstDb(rows[0], dbRows);
+    if (cross.kind !== "ok") return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+  }
+
+  const outcome = resolveSeasonRecord(
+    rows,
+    intent.query,
+    candidate.entityId,
+    deps.now ? deps.now() : Date.now(),
+    candidate.name,
+    candidate.team ?? null,
+  );
+  if (outcome.kind === "ok") {
+    const answer = composeSeasonRecordAnswer(outcome);
+    return settle(answer, "kbo_structured", "kbo_structured");
+  }
+  // stale · missing · inconsistent — 전부 안내로 닫는다. 추정값을 내지 않는다.
+  return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+}
+
 async function answerPlayerDescriptiveQuestion(
   userId: string,
   question: string,
@@ -624,9 +1526,9 @@ async function answerPlayerDescriptiveQuestion(
     await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: BLOCKED_ANSWER, inputTokens: null, outputTokens: null });
     return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
   };
-  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+  const failCloseError = async (): Promise<QaResult> => {
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status, answer, source: "error", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
   };
 
   // 수요 기록은 ingestion 우선순위 신호일 뿐이라 실패해도 답변 경로를 막지 않는다.
@@ -655,14 +1557,14 @@ async function answerPlayerDescriptiveQuestion(
     try {
       state = await deps.getLlmState();
     } catch {
-      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      return failCloseError();
     }
     llm = state.result;
     if (!llm && state.started) {
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       // fence 경과: 공급자 응답/과금이 이미 발생했을 수 있다 — 자동 재호출 없이 종결한다.
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
   }
   if (!llm) {
@@ -671,7 +1573,7 @@ async function answerPlayerDescriptiveQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
-        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+        return failCloseError();
       }
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
@@ -687,8 +1589,11 @@ async function answerPlayerDescriptiveQuestion(
   const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") return failClose();
   const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-  return { status: 200, answer, source: "rag", remaining };
+  return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
 
 /**
@@ -726,9 +1631,9 @@ async function answerOfficialDocumentQuestion(
   if (!allowsNumericAnswer(evidence)) return null;
 
   // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
-  const failCloseError = async (status: number, answer: string): Promise<QaResult> => {
+  const failCloseError = async (): Promise<QaResult> => {
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status, answer, source: "error", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
   };
   let llm: LlmResult | null = null;
   if (deps.getLlmState) {
@@ -736,12 +1641,12 @@ async function answerOfficialDocumentQuestion(
     try {
       state = await deps.getLlmState();
     } catch {
-      return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+      return failCloseError();
     }
     llm = state.result;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
   }
   if (!llm) {
@@ -750,7 +1655,7 @@ async function answerOfficialDocumentQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
-        return failCloseError(503, "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.");
+        return failCloseError();
       }
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
@@ -758,7 +1663,7 @@ async function answerOfficialDocumentQuestion(
       llm = await deps.callOfficialRagLlm!(question, evidence);
     } catch {
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
-      return failCloseError(200, LLM_AMBIGUOUS_ANSWER);
+      return failCloseError();
     }
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
@@ -766,12 +1671,15 @@ async function answerOfficialDocumentQuestion(
   const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
   if (validated.kind !== "grounded") {
     // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNSURE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: BLOCKED_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
+  // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-  return { status: 200, answer, source: "rag", remaining };
+  return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
@@ -783,13 +1691,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   try {
     reservation = await deps.reserveDaily(userId, DAILY_LIMIT);
   } catch {
-    return { status: 503, answer: "지금은 질문 한도를 확인할 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining: 0 };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };
   }
   if (!reservation.allowed) {
     await deps.log({ userId, question, questionNorm, matchPath: "limited", answer: null, inputTokens: null, outputTokens: null });
     return {
       status: 429,
-      answer: `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`,
+      answer: LIMITED_ANSWER,
       source: "limited",
       remaining: 0,
     };
@@ -807,11 +1715,125 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       context = null;
     }
   }
-  const route = routeQuestion(question, glossary, players, context !== null);
-  if (route !== "baseball_rule_term") {
+  // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
+  // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
+  // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
+  // 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가 무한 반복된다.
+  const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId &&
+    isPickedPlayerAllowed(question, deps.pickedPlayerKboId, players)
+    ? resolvePickedPlayerCandidate(deps.pickedPlayerKboId, players)
+    : null;
+  // 기록(수치) 질문은 서술형 게이트에 걸리므로 이름 기반 후보를 따로 붙잡는다.
+  // 서술형 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가" 조건이 아니다.
+  const recordIntent = deps.fetchSeasonRecord
+    ? resolveSeasonRecordIntent(question)
+    : { kind: "none" as const };
+
+  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 2026 외 시즌은
+  // 어느 선수를 골라도 답할 수 없으므로 picker를 띄우는 것 자체가 불필요하다(삼순 P0-3).
+  // untrusted metric도 마찬가지 — 고른 뒤 거절하면 유저만 헛동작한다.
+  if (recordIntent.kind === "unsupported_season" || recordIntent.kind === "untrusted_metric") {
+    const answer = recordIntent.kind === "unsupported_season"
+      ? UNSUPPORTED_SEASON_ANSWER
+      : UNTRUSTED_METRIC_ANSWER;
+    await deps.log({
+      userId, question, questionNorm, matchPath: "blocked", answer,
+      inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer, source: "blocked", remaining };
+  }
+
+  const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
+    ? (resolveRagPlayerCandidate(question, players) ??
+      (recordIntent.kind !== "none" ? resolveNamedPlayerCandidate(question, players) : null))
+    : null);
+
+  // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
+  // ⚠️ **답변 전 단계**이므로 공식/선수 RAG·LLM·cache 어느 것도 소비하지 않는다.
+  // quota도 되돌려준다 — "어느 김동현이에요?"를 물어본 것만으로 하루 한도를 깎으면
+  // 동명이인 선수만 두 배를 내는 꼴이 된다. 반납은 이 분기에서만 일어난다.
+  if (!enabledPlayerCandidate && deps.enablePlayerRag) {
+    // 기록 질문도 picker 대상이다 — 오히려 동명이인은 서술형보다 기록을 더 잘 답한다
+    // (Production 실측: 동명이인 72명 중 28명이 타자기록 보유, 위키 chunks 는 0).
+    const options = resolvePlayerPickerOptions(question, players, recordIntent.kind !== "none");
+    if (options) {
+      if (deps.releaseDaily) {
+        try {
+          await deps.releaseDaily(userId);
+        } catch {
+          // 반납 실패는 유저가 1개 더 쓴 것일 뿐이다 — 되묻기 자체를 막지 않는다.
+        }
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: "player_picker",
+        answer: PLAYER_PICKER_ANSWER, inputTokens: null, outputTokens: null,
+      });
+      return {
+        status: 200,
+        answer: PLAYER_PICKER_ANSWER,
+        source: "player_picker",
+        remaining,
+        pickerOptions: options,
+      };
+    }
+  }
+
+  const route = enabledPlayerCandidate
+    ? "baseball_rule_term"
+    : routeQuestion(question, glossary, players, context !== null);
+  // `llm_scope_gate`는 종결 라우트가 아니라 **판정 위임**이다. 여기서 끝내지 않고 아래로 흘려보내되,
+  // 공식 RAG(②-a)·선수 RAG(②) 진입 조건은 그대로라서 tier1 조문에는 닿지 못한다.
+  // 결과적으로 이 라벨은 dictionary / cache / llm / blocked / unsure 중 하나로 반드시 확정되며,
+  // 스스로는 로그에 기록되지 않는다 (genius_question_logs CHECK 확장 불필요).
+  // 2차 가드 경로 여부. `true`면 사전·공식 RAG·선수 RAG·global cache를 전부 건너뛰고
+  // LLM 범위판정만 받는다. 특히 **cache read/write를 둘 다 끔는다** — 이 경로는 질문이
+  // 야구인지 아직 모르는 상태라, 과거에 쌀인 동일 정규화 키의 답을 그대로 내보내면
+  // 범위 밖 답변이 검증 없이 재노출된다(삼순 R2와 동일한 오염캐시 경로).
+  // ── 구단 기록 (kbo_structured — 팀 축) ────────────────────────────────────────
+  //
+  // ⚠️ 이 분기가 생긴 이유: 종전에는 `LG 지금 몇 위야?` 가 고정 안내문으로 닫혔다.
+  // 근거는 "팀 집계 정본이 없다" 였는데 **틀렸다**(하린아빠 2026-08-04 20:42 지적,
+  // production 실측 2026-08-05 01:2x): `/api/standings` 에 LG 3위 55승45패,
+  // `/api/team-records` 에 LG 팀타율 .270 · 홈런 92 · 도루 65 가 이미 서빙된다.
+  // 앱 순위탭·팀기록탭이 그대로 보여주는 값을 봇만 "못 답한다"고 하는 건 거짓말이다.
+  //
+  // 선수 기록과 **같은 계약**으로 답한다 — 조회한 원값 그대로, 계산·추정 없음,
+  // 없으면 답하지 않음, LLM 미경유. 조회 실패는 static 폴백 없이 fail-close 한다.
+  if (route === "team_record") {
+    const settleTeam = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    const intent = resolveTeamRecordIntent(question);
+    const canonicalTeam = resolveMentionedTeam(question);
+    // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
+    // 지어내지 않고 닫는다. `TEAM_STAT_HOLD_ANSWER` 는 "순위표에서 보세요" 안내다.
+    if (intent.kind !== "query" || !canonicalTeam || !deps.fetchTeamRecord) {
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
+    let standings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
+    let records: Awaited<ReturnType<TeamRecordFetchers["fetchTeamRecords"]>>;
+    try {
+      [standings, records] = await Promise.all([
+        deps.fetchTeamRecord.fetchStandings(),
+        deps.fetchTeamRecord.fetchTeamRecords(),
+      ]);
+    } catch {
+      // 조회 실패를 "기록 없음"으로 둔갓하지 않는다 — 재시도 가능한 실패다.
+      return settleTeam(BLOCKED_ANSWER, "error");
+    }
+    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings, records, teamIdOfCanonical);
+    if (outcome.kind === "ok") {
+      return settleTeam(composeTeamRecordAnswer(outcome), "kbo_structured");
+    }
+    return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+  }
+
+  const scopeGate = route === "llm_scope_gate";
+  if (route !== "baseball_rule_term" && !scopeGate) {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
-      route === "history_hold" ? HISTORY_HOLD_ANSWER :
+      route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? ACK_ANSWER :
       BLOCKED_ANSWER;
@@ -820,7 +1842,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   // ① 검수 사전 (토큰 0)
-  const hit = matchGlossary(glossary, question);
+  const hit = scopeGate ? null : matchGlossary(glossary, question);
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
@@ -837,7 +1859,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
   // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
   // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
-  if (deps.searchOfficialRag && deps.callOfficialRagLlm && hasExplicitBaseballSignal(question, glossary)) {
+  if (
+    !scopeGate &&
+    deps.searchOfficialRag &&
+    deps.callOfficialRagLlm &&
+    isSupportedRuleTermQuestion(question, glossary, players)
+  ) {
     const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;
   }
@@ -848,16 +1875,30 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 무시된다 — 실제로 `문보경 별명이 뭐야?` 에 preseed 캐시를 넣으면 source=cache 로
   // 재현됐다. 이 분기에 들어오면 **여기서 종결**한다: 근거가 있으면 rag 답변,
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
-  if (deps.searchRag && deps.callRagLlm) {
-    const candidate = resolveRagPlayerCandidate(question, players);
-    if (candidate) {
-      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, candidate, remaining, deps);
+  const playerCandidate = enabledPlayerCandidate;
+  if (playerCandidate) {
+    // ②-0 시즌 기록(수치) 질문은 위키가 아니라 **구조화 DB** 를 본다 (kbo_structured).
+    // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
+    // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
+    if (deps.fetchSeasonRecord) {
+      const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
+      const preferredTable = rosterPlayer?.position?.includes("투수") ? "pitcher" : "batter";
+      const boundIntent = resolveSeasonRecordIntent(question, preferredTable);
+      const record = await answerSeasonRecordQuestion(
+        userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
+      );
+      if (record) return record;
     }
+    if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
+      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, playerCandidate, remaining, deps);
+    }
+    await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: BLOCKED_ANSWER, inputTokens: null, outputTokens: null });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
   }
 
   // ③ 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다
   // — preseed된 동일 정규화 키가 있어도 맥락 없는 답으로 오염되면 안 된다 (spec §4.1 B5).
-  if (!context) {
+  if (!context && !scopeGate) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
       await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
@@ -879,7 +1920,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     } catch {
       // LLM 소비 여부를 모르는 채 진행하지 않는다 (재시도 가능한 실패).
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
     }
     llm = state.result;
     if (!llm && state.started) {
@@ -890,7 +1931,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // fence 경과: 이전 시도가 LLM 호출을 시작했지만 결과 저장 전에 죽은 ambiguous 창 —
       // 공급자 응답/과금이 이미 발생했을 수 있으므로 자동 재호출하지 않고 안내로 종결한다.
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 200, answer: LLM_AMBIGUOUS_ANSWER, source: "error", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
     }
   }
   if (!llm) {
@@ -901,7 +1942,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       } catch {
         // durable 고정에 실패하면 LLM을 호출하지 않는다 (재시도 가능, LLM 미소비).
         await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-        return { status: 503, answer: "지금은 답변을 가져올 수 없어요. 잠시 후 다시 시도해 주세요.", source: "error", remaining };
+        return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
       }
       if (!won) {
         // CAS 패배 — 동시 worker가 방금 winner가 됨. 답변 발송 없이 물러난다 (5차 P1).
@@ -913,13 +1954,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     } catch {
       // timeout/공급자 오류도 판정 불명확이다. 답변·캐시 없이 확인 질문으로 fail-close한다.
       await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: null, outputTokens: null });
-      return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+      return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
     }
     // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
-  const validated = validateLlmResponse(llm.text);
+  const validated = validateLlmResponse(llm.text, question);
   if (validated.kind === "blocked") {
     await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
@@ -927,11 +1968,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNSURE_ANSWER, source: "unsure", remaining };
+    return { status: 200, answer: BLOCKED_ANSWER, source: "unsure", remaining };
   }
 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
-  if (!context) await deps.setCache(questionNorm, validated.answer);
+  // 2차 가드 경로도 쓰지 않는다 — 읽지도 않으므로 써봐야 사장이고, 룰베이스가 못 가린
+  // 질문의 답을 공유 캐시에 쌓아두면 나중에 경계가 바뀌었을 때 회수할 수 없다.
+  if (!context && !scopeGate) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }
