@@ -2212,6 +2212,39 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   assert.ok(deepEvidence.some((row) => row.content.includes("문보물")),
     "질문과 가까운 chunk 가 상한 밖(index 60)에 있어도 근거로 올라와야 한다");
 
+  // 4-c) RPC 계약 — tier2 폐쇄집합 fail-close / 상한 clamp / entity 강제.
+  //   폐쇄집합 밖을 조용히 0행으로 돌려주면 "미수집 선수"와 구분되지 않아
+  //   배선 실수가 fail-close 로 위장된다. 그래서 예외여야 한다.
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "kbo_ebook", nearVector, 40],
+    ),
+    /unsupported source_kind/,
+    "tier1·미지 source_kind 는 조용한 0행이 아니라 예외여야 한다(fail-close)",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", null, nearVector, 40],
+    ),
+    /unsupported source_kind/,
+    "NULL source_kind 도 fail-close 대상이다",
+  );
+  // 상한 clamp — 상한 없는 정렬 조회는 query-guard 위반이다.
+  const clamped = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "69102", "namu_document", nearVector, 100000],
+  );
+  assert.ok(clamped.rows.length <= 50, `상한이 50 으로 clamp 되어야 한다(실측 ${clamped.rows.length})`);
+  // entity 강제 — 다른 선수 id 로는 이 선수 chunk 가 새지 않는다.
+  const foreign = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "00000", "namu_document", nearVector, 40],
+  );
+  assert.equal(foreign.rows.length, 0, "entity_id 를 함수 안에서 강제해야 한다");
+  console.log("PASS 선수 chunk 정렬 RPC — 질문벡터 정렬 / tier2 fail-close / 상한 clamp / entity 강제");
+
   // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
   const generationTwo = await claimSource("namu:player:69102");
