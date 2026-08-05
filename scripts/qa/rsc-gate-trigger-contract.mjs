@@ -79,6 +79,20 @@ function check(text) {
       pass.push(`baseline step 이 정확히 단일 명령: "${BASELINE_EXACT}"`);
     else
       fails.push(`baseline step 실행 라인이 정확히 "${BASELINE_EXACT}" 하나가 아니다 (실제: ${JSON.stringify(execLines)}) — || true·no-op 접미사에 뚫릴 수 있다`);
+
+    // ⚠️ run 만 보면 continue-on-error·if 로 무력화할 수 있다(삼순 NO-GO 6차):
+    // continue-on-error: true 면 budget exit20 이 무시되고, if: false 면 step 이 통째로 skip 된다.
+    const coe = baselineStep["continue-on-error"];
+    if (coe === true || coe === "true")
+      fails.push(`baseline step 에 continue-on-error: true — budget 실패(exit20)가 무시된다`);
+    else pass.push("baseline step continue-on-error 없음/false");
+
+    const cond = baselineStep["if"];
+    // if 는 없거나(항상 실행) 명시적으로 항상 참인 표현만 허용한다. 그 외는 skip 위험으로 본다.
+    const alwaysTrue = cond === undefined || cond === null
+      || `${cond}`.trim() === "true" || `${cond}`.trim() === "${{ always() }}" || `${cond}`.trim() === "always()";
+    if (alwaysTrue) pass.push("baseline step if 없음/항상 true");
+    else fails.push(`baseline step 에 if: ${JSON.stringify(cond)} — 조건에 따라 skip 될 수 있다(예: if:false 는 통째 skip)`);
   }
 
   return { fails, pass };
@@ -94,6 +108,21 @@ function run(label, text) {
 
 const text = readFileSync(WF, "utf8");
 
+function injectStepKey(text, stepName, keyLine) {
+  const lines = text.split("\n");
+  const out = [];
+  for (const ln of lines) {
+    out.push(ln);
+    const m = ln.match(/^(\s*)- name: /);
+    if (m && ln.includes(stepName)) {
+      // dash 뒤 매핑 키 들여쓰기 = dash indent + 2. (예: "      - name" → 8칸)
+      const indent = " ".repeat(m[1].length + 2);
+      out.push(indent + keyLine);
+    }
+  }
+  return out.join("\n");
+}
+
 if (process.argv.includes("--selftest")) {
   let bad = 0;
   const cases = [
@@ -101,6 +130,10 @@ if (process.argv.includes("--selftest")) {
     ["B. 모든 호출을 npm alias 로 되돌림", (t) =>
       t.replace(/node scripts\/qa\/rsc-prefetch-budget-gate\.mjs --require-browser/g,
                 "npm run qa:rsc-prefetch-budget:required")],
+    ["D. baseline step 에 continue-on-error: true", (t) =>
+      injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "continue-on-error: true")],
+    ["E. baseline step 에 if: false", (t) =>
+      injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "if: false")],
     ["B3. baseline step 에 `|| true` 접미사(includes 검사면 놓친다)", (t) => {
       const lines = t.split("\n");
       let inBaseline = false;
