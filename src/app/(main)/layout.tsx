@@ -24,11 +24,11 @@ export default function MainLayout({
       <main className="pb-tab-bar pt-safe">
         {children}
         <footer className="mx-auto max-w-lg px-5 pb-8 pt-6 text-center text-xs leading-6 text-text-tertiary">
-          <Link href="/terms" className="underline-offset-2 hover:text-text-secondary hover:underline">
+          <Link prefetch={false} href="/terms" className="underline-offset-2 hover:text-text-secondary hover:underline">
             이용약관
           </Link>
           <span className="mx-2 text-border">|</span>
-          <Link href="/privacy" className="underline-offset-2 hover:text-text-secondary hover:underline">
+          <Link prefetch={false} href="/privacy" className="underline-offset-2 hover:text-text-secondary hover:underline">
             개인정보처리방침
           </Link>
           <p className="mt-2">

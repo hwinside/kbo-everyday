@@ -273,7 +273,7 @@ function PostRow({ post }: { post: Post }) {
   const summary = summaryLine(post);
 
   return (
-    <Link
+    <Link prefetch={false}
       href={getPostDetailPath(post)}
       onClick={() => {
         // 홈 최신글에서 연 글 → 실제 뒤로가기(popstate)로 나올 때만 이 섹션으로 포커스
@@ -433,7 +433,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
     <section ref={sectionRef} className="scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 {sectionTitle}</h2>
-        <Link
+        <Link prefetch={false}
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
         >
@@ -473,7 +473,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
         <PenSquare size={16} /> 새 글 올리기
       </button>
 
-      <Link
+      <Link prefetch={false}
         href="/community/all-posts"
         className="mt-2 flex items-center justify-center gap-1 w-full py-2.5 rounded-xl bg-bg-secondary text-[13px] font-medium text-text-secondary active:scale-[0.99] transition-transform"
       >

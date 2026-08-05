@@ -319,7 +319,10 @@
     "qa:genius-rag-real-corpus": "tsx scripts/qa/genius-rag-real-corpus-probe.ts",
     "qa:genius-provenance-privacy": "tsx scripts/qa/genius-provenance-privacy-smoke.ts",
     "qa:static-asset-cache-headers": "node scripts/qa/static-asset-cache-headers-gate.mjs",
-    "qa:static-asset-cache-headers:selftest": "node scripts/qa/static-asset-cache-headers-gate.mjs --selftest"
+    "qa:static-asset-cache-headers:selftest": "node scripts/qa/static-asset-cache-headers-gate.mjs --selftest",
+    "qa:rsc-prefetch-budget": "node scripts/qa/rsc-prefetch-budget-gate.mjs",
+    "qa:rsc-prefetch-budget:required": "node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser",
+    "qa:rsc-prefetch-budget:selftest": "node scripts/qa/rsc-prefetch-budget-gate.mjs --selftest"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
