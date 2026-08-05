@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  UNCLEAR_ANSWER,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -243,7 +244,9 @@ checkAsync("공식 근거로도 답을 못 만들면 unsure로 종결한다(일�
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "unsure");
-  assert.equal(result.answer, BLOCKED_ANSWER);
+  // 공식 근거로 답을 못 만든 것뿐이다 — 룰 질문에 "야구 질문만 하라"고 답하면 안 된다.
+  assert.equal(result.answer, UNCLEAR_ANSWER);
+  assert.notEqual(result.answer, BLOCKED_ANSWER, "근거 부족에 범위밖 문구 금지");
   assert.ok(!calls.includes("callLlm"), "LLM 호출 1회 계약 — 재호출 금지");
 });
 
@@ -254,7 +257,9 @@ checkAsync("공식 RAG timeout은 exact fallback으로 수렴한다", async () =
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "error");
-  assert.equal(result.answer, BLOCKED_ANSWER);
+  // 룰 질문에 시스템 오류가 났을 뿐이다 — "야구 질문만 하라"고 답하면 안 된다.
+  assert.equal(result.answer, UNCLEAR_ANSWER);
+  assert.notEqual(result.answer, BLOCKED_ANSWER, "시스템 오류에 범위밖 문구 금지");
   assert.ok(!calls.includes("callLlm"), "timeout 뒤 일반 LLM 재호출 금지");
 });
 
@@ -269,7 +274,8 @@ checkAsync("일반 LLM timeout·무응답도 exact fallback으로 수렴한다",
       callLlm,
     });
     const result = await answerQuestion("u1", "잔루만루가 뭔데", deps);
-    assert.equal(result.answer, BLOCKED_ANSWER);
+    assert.equal(result.answer, UNCLEAR_ANSWER);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, "provider 실패에 범위밖 문구 금지");
     assert.ok(["unsure", "error"].includes(result.source));
   }
 });

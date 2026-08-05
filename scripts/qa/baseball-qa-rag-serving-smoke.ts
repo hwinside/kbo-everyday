@@ -22,6 +22,7 @@ import { vector } from "@electric-sql/pglite/vector";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  UNCLEAR_ANSWER,
   HISTORY_HOLD_ANSWER,
   resolveRagPlayerCandidate,
   type GlossaryEntry,
@@ -171,6 +172,11 @@ async function run(): Promise<void> {
     });
     const scoped = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(scoped.source, "blocked");
+    // ⚠️ 이 경로만 ① 범위밖 문구가 남는다. `enablePlayerRag:false` 는 production 설정이
+    // 아니라 구 출시범위 재현이고, 여기서는 `routeQuestion` 의 **결정론 denylist**
+    // (`별명` 의도)가 선차단해 라우팅 단계에서 끝난다. 그 denylist 경계 자체를 ②로
+    // 옮길지는 미답변 로그 라벨링 결과로 정한다(이 PR 범위 밖).
+    // production(enablePlayerRag:true)에서 같은 질문은 아래 RED 케이스처럼 ② 문구다.
     assert.equal(scoped.answer, BLOCKED_ANSWER);
     assert.equal(searchCalls, 0);
     assert.equal(llmCalls, 0);
@@ -184,7 +190,8 @@ async function run(): Promise<void> {
     const { deps, logs } = makeDeps({ searchRag: async () => [], callRagLlm: async () => { throw new Error("호출되면 안 됨"); } });
     const red = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(red.source, "blocked", `RED 재현 실패: source=${red.source}`);
-    assert.equal(red.answer, BLOCKED_ANSWER);
+    assert.equal(red.answer, UNCLEAR_ANSWER);
+    assert.notEqual(red.answer, BLOCKED_ANSWER, "근거 0건에 범위밖 문구 금지");
     assert.equal(logs.at(-1)?.matchPath, "blocked");
     console.log("RED  문보경 별명이 뭐야? → blocked (근거 0건)");
   }
@@ -251,7 +258,8 @@ async function run(): Promise<void> {
     });
     const uncovered = await answerQuestion("u1", "김도영 별명이 뭐야?", deps);
     assert.equal(uncovered.source, "blocked", `미커버 선수는 기존 경로로 떨어져야 한다 (실제: ${uncovered.source})`);
-    assert.equal(uncovered.answer, BLOCKED_ANSWER);
+    assert.equal(uncovered.answer, UNCLEAR_ANSWER);
+    assert.notEqual(uncovered.answer, BLOCKED_ANSWER, "미커버 선수에 범위밖 문구 금지");
     assert.doesNotMatch(uncovered.answer, /문학소년/, "남의 chunk로 답하면 안 된다");
     assert.equal(logs.at(-1)?.matchPath, "blocked");
     console.log("PASS 미커버 선수(김도영) → blocked (엉뚱한 chunk 서빙 없음)");
@@ -859,7 +867,8 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
       const result = await answerQuestion("u1", question, deps);
       const label = `${scenario.label} / ${question}`;
       assert.equal(result.source, "blocked", `${label}: 명시 fail-close가 아니라 source=${result.source}`);
-      assert.equal(result.answer, BLOCKED_ANSWER, label);
+      assert.equal(result.answer, UNCLEAR_ANSWER, label);
+      assert.notEqual(result.answer, BLOCKED_ANSWER, `${label}: 범위밖 문구 금지`);
       assert.equal(genericLlmCalls, 0, `${label}: generic LLM 호출이 0이 아니다(${genericLlmCalls})`);
       assert.equal(cache.size, 0, `${label}: cache write가 0이 아니다(${cache.size})`);
       assert.equal(logs.at(-1)?.matchPath, "blocked", label);
@@ -963,7 +972,8 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     });
     const ambiguous = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(ambiguous.source, "error");
-    assert.equal(ambiguous.answer, BLOCKED_ANSWER);
+    assert.equal(ambiguous.answer, UNCLEAR_ANSWER);
+    assert.notEqual(ambiguous.answer, BLOCKED_ANSWER, "시스템 오류에 범위밖 문구 금지");
     assert.equal(ragLlmCalls, 0, "ambiguous 창에서 RAG LLM을 재호출하면 안 된다");
   }
 

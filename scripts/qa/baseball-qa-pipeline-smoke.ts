@@ -35,6 +35,7 @@ import {
   RULE_TERM_SENTINEL,
   SERVICE_REDIRECT_ANSWER,
   UNSURE_ANSWER,
+  UNCLEAR_ANSWER,
   UNSURE_SENTINEL,
   validateLlmResponse,
   type GlossaryEntry,
@@ -1462,7 +1463,10 @@ async function verifyPipeline() {
       assert.equal(state.llmCalls, 0, `${input}: 범위 밖 LLM 0`);
     } else {
       assert.equal(result.source, "unsure", input);
-      assert.equal(result.answer, BLOCKED_ANSWER, input);
+      // 2026-08-05 하린아빠 지시: `unsure`는 "야구가 아니다"가 아니라 "우리가 이해 못했다"이다.
+      // 여기에 범위밖 문구를 내보내면 야구 질문을 한 유저에게 "야구 질문만 하라"고 답하게 된다.
+      assert.equal(result.answer, UNCLEAR_ANSWER, input);
+      assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: 이해 못함에 범위밖 문구 금지`);
       assert.equal(state.llmCalls, 1, `${input}: 지원 룰 질문 LLM 판정 경로 진입`);
     }
   }
@@ -1597,7 +1601,9 @@ async function verifyPipeline() {
     const state = freshState({ llmText });
     const result = await answerQuestion("u1", "잔루만루가 뭔데", makeDeps(state));
     assert.equal(result.source, "unsure", llmText);
-    assert.equal(result.answer, BLOCKED_ANSWER, llmText);
+    // 판정 불명확은 "야구가 아니다"가 아니라 "우리가 이해 못했다"이다 (하린아빠 2026-08-05).
+    assert.equal(result.answer, UNCLEAR_ANSWER, llmText);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${llmText}: 이해 못함에 범위밖 문구 금지`);
     assert.equal(state.llmCalls, 1, llmText);
     assert.equal(state.used, 1, llmText);
     assert.equal(state.cache.size, 0, llmText);
@@ -1607,7 +1613,8 @@ async function verifyPipeline() {
   const timeout = freshState({ llmThrows: true });
   const timeoutResult = await answerQuestion("u1", "잔루만루가 뭔데", makeDeps(timeout));
   assert.equal(timeoutResult.source, "unsure");
-  assert.equal(timeoutResult.answer, BLOCKED_ANSWER);
+  assert.equal(timeoutResult.answer, UNCLEAR_ANSWER);
+  assert.notEqual(timeoutResult.answer, BLOCKED_ANSWER, "provider 오류에 범위밖 문구 금지");
   assert.equal(timeout.llmCalls, 1);
   assert.equal(timeout.used, 1);
   assert.deepEqual(timeout.events, ["reserve", "llm"]);
@@ -1623,7 +1630,10 @@ async function verifyPipeline() {
     const result = await answerQuestion("u1", "야구 투구 규칙을 자세히 알려줘", makeDeps(state));
     assert.ok(["blocked", "unsure"].includes(result.source));
     assert.equal(state.cache.size, 0);
-    if (result.source === "unsure") assert.equal(result.answer, BLOCKED_ANSWER);
+    // 두 문구가 갈린다: LLM 이 명시 NOT_BASEBALL 로 판정한 것만 범위밖 문구,
+    // 판정 불명확(UNSURE·계약밖·파싱실패)은 "이해 못했다" 문구다 (하린아빠 2026-08-05).
+    if (result.source === "unsure") assert.equal(result.answer, UNCLEAR_ANSWER, llmText);
+    if (result.source === "blocked") assert.equal(result.answer, BLOCKED_ANSWER, llmText);
   }
 
   const limited = freshState({ used: DAILY_LIMIT });
@@ -1761,7 +1771,9 @@ async function verifyLlmStoreFailureFailClosed() {
   assert.equal(llmCalls, 1, "storeLlm 실패 재처리가 LLM을 재호출하면 안 됨 (4차 P1)");
   assert.equal(retry.status, 200);
   assert.equal(retry.source, "error");
-  assert.equal(retry.answer, BLOCKED_ANSWER);
+  // 시스템 오류도 "야구가 아니다"가 아니다 — 유저는 다시 물어보면 된다.
+  assert.equal(retry.answer, UNCLEAR_ANSWER);
+  assert.notEqual(retry.answer, BLOCKED_ANSWER, "시스템 오류에 범위밖 문구 금지");
   assert.equal(cache.size, 0, "ambiguous 경로는 캐시를 오염하면 안 됨");
 }
 
@@ -2895,7 +2907,7 @@ assert.equal(pitcherRows.length, 1, "fresh production process pitcher row");
  */
 async function verifyReplyKindMatchesActualPipelineOutcome() {
   const CANNED_ANSWERS = new Set<string>([
-    BLOCKED_ANSWER, UNSURE_ANSWER, SERVICE_REDIRECT_ANSWER, HISTORY_HOLD_ANSWER,
+    BLOCKED_ANSWER, UNCLEAR_ANSWER, UNSURE_ANSWER, SERVICE_REDIRECT_ANSWER, HISTORY_HOLD_ANSWER,
     CONTEXT_MISSING_ANSWER, ACK_ANSWER, LLM_AMBIGUOUS_ANSWER, PLAYER_PICKER_ANSWER, LIMITED_ANSWER,
     UNTRUSTED_METRIC_ANSWER, UNSUPPORTED_SEASON_ANSWER, RECORD_MISSING_ANSWER,
   ]);
