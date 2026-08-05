@@ -217,6 +217,10 @@ async function runOnce() {
     if (!idCheck.ok) { log(`HARNESS-FAIL ${idCheck.reason}`); return EXIT_HARNESS_FAILURE; }
     log(`  buildId ${expectedBuildId} 일치 (방금 빌드한 산출물을 측정)`);
     const m = await measure(chromium);
+    // 자기보호 훅: navLinks<4 경계가 회귀하면 workflow 가 잡아야 한다(삼순 NO-GO 4차 지적①).
+    // 이 env 로 불완전 렌더를 강제 주입하면, 아래 분기가 반드시 exit 30 을 내야 한다.
+    // 만약 누군가 이 분기를 exit 20 으로 바꾸면 workflow 의 `-eq 30` 검사가 실패한다.
+    if (process.env.RSC_GATE_FORCE_INCOMPLETE === "1") m.navLinks = 0;
     log(`  마운트된 내비 Link ${m.navLinks}/5`);
     // 불완전 렌더는 예산 판정 이전에 harness 실패로 처리한다. 페이지가 안 그려지면
     // _rsc 가 적게 잡혀 "예산 이내"로 오인될 수 있고, mutation 이 이걸 유효 RED 로

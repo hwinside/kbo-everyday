@@ -40,18 +40,21 @@ const REQUIRED_PATHS = [
 const DIRECT_CALL = "node scripts/qa/rsc-prefetch-budget-gate.mjs";
 const ALIAS_CALL = "npm run qa:rsc-prefetch-budget";
 
+/** required job 에서 budget 게이트를 실행하는 named step. 이 step 하나만 검사한다. */
+const BASELINE_STEP_NAME = "Run _rsc prefetch budget gate (fail-closed)";
+
 function loadWorkflow(text) {
   const doc = yaml.load(text);
   const on = doc.on ?? doc[true]; // 'on' 이 YAML 에서 boolean true 로 파싱될 수 있다
   const pr = on?.pull_request?.paths ?? [];
   const push = on?.push?.paths ?? [];
   const steps = doc.jobs?.["result-tone"]?.steps ?? [];
-  const runs = steps.map((s) => s.run ?? "").join("\n");
-  return { pr, push, runs };
+  const baselineStep = steps.find((s) => s.name === BASELINE_STEP_NAME) ?? null;
+  return { pr, push, baselineStep };
 }
 
 function check(text) {
-  const { pr, push, runs } = loadWorkflow(text);
+  const { pr, push, baselineStep } = loadWorkflow(text);
   const fails = [];
   const pass = [];
 
@@ -62,11 +65,17 @@ function check(text) {
     else fails.push(`paths 누락: ${req} (pr=${inPr}, push=${inPush}) — 이 파일 변경 시 게이트가 안 돈다`);
   }
 
-  if (runs.includes(DIRECT_CALL)) pass.push("budget 게이트를 스크립트로 직접 호출");
-  else fails.push(`budget 게이트 직접 호출(${DIRECT_CALL})이 workflow 에 없다`);
-
-  if (runs.includes(ALIAS_CALL) && !runs.includes(DIRECT_CALL))
-    fails.push(`npm alias(${ALIAS_CALL})로만 호출 — alias 바꿔치기 decoy 에 뚫린다`);
+  // ⚠️ 전체 step 을 join 해서 검색하면 baseline-only alias swap 을 놓친다(삼순 NO-GO 4차 지적②):
+  // mutation step 에 직접 호출이 남아 있어서 GREEN 이 된다. named baseline step 만 지목한다.
+  if (!baselineStep) {
+    fails.push(`named step "${BASELINE_STEP_NAME}" 을 찾을 수 없다 — 이름이 바뀌면 검사 대상이 사라진다`);
+  } else {
+    const run = baselineStep.run ?? "";
+    if (run.includes(DIRECT_CALL)) pass.push(`baseline step 이 스크립트를 직접 호출: "${BASELINE_STEP_NAME}"`);
+    else fails.push(`baseline step 이 budget 게이트를 직접 호출(${DIRECT_CALL})하지 않는다`);
+    if (run.includes(ALIAS_CALL))
+      fails.push(`baseline step 이 npm alias(${ALIAS_CALL})를 쓴다 — alias 바꿔치기 decoy 에 뚫린다`);
+  }
 
   return { fails, pass };
 }
@@ -85,9 +94,22 @@ if (process.argv.includes("--selftest")) {
   let bad = 0;
   const cases = [
     ["A. home glob 제거", (t) => t.replace(/^\s*- "src\/components\/home\/\*\*"\n/gm, "")],
-    ["B. budget 게이트 직접 호출을 npm alias 로 되돌림", (t) =>
+    ["B. 모든 호출을 npm alias 로 되돌림", (t) =>
       t.replace(/node scripts\/qa\/rsc-prefetch-budget-gate\.mjs --require-browser/g,
                 "npm run qa:rsc-prefetch-budget:required")],
+    ["B2. baseline step 만 npm alias 로 되돌림(전체 join 검색이면 놓친다)", (t) => {
+      // named baseline step 의 run 라인만 alias 로 교체. mutation step 은 그대로 둔다.
+      const lines = t.split("\n");
+      let inBaseline = false;
+      return lines.map((ln) => {
+        if (ln.includes("- name: Run _rsc prefetch budget gate (fail-closed)")) inBaseline = true;
+        else if (/^\s*- name:/.test(ln)) inBaseline = false;
+        if (inBaseline && ln.includes("node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser"))
+          return ln.replace("node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser",
+                            "npm run qa:rsc-prefetch-budget:required");
+        return ln;
+      }).join("\n");
+    }],
     ["C. 트리거 게이트 자기 자신 paths 제거", (t) =>
       t.replace(/^\s*- "scripts\/qa\/rsc-gate-trigger-contract\.mjs"\n/gm, "")],
   ];

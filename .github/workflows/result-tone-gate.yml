@@ -225,6 +225,30 @@ jobs:
         # 스크립트 경로를 직접 호출해 alias 를 신뢰 경계에서 제거한다.
         run: node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
 
+      - name: Prove incomplete render maps to harness failure (self-protect RED)
+        # 삼순 NO-GO 4차 지적①: `navLinks<4 → exit 30` 경계가 회귀하면 잡아야 한다.
+        # RSC_GATE_FORCE_INCOMPLETE=1 로 불완전 렌더를 강제하면 게이트는 반드시 exit 30
+        # (harness 실패)을 내야 한다. 만약 누군가 이 분기를 exit 20(RED)으로 바꾸면,
+        # 불완전 렌더가 유효 mutation RED 로 오인되므로 여기서 exit 30 이 아님을 잡는다.
+        env:
+          RSC_GATE_PORT: "3971"
+          RSC_GATE_FORCE_INCOMPLETE: "1"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+        run: |
+          set +e
+          node scripts/qa/rsc-prefetch-budget-gate.mjs --require-browser
+          code=$?
+          set -e
+          if [ "$code" -ne 30 ]; then
+            echo "::error::불완전 렌더가 exit 30(harness)이 아니라 exit $code 다 — navLinks<4 경계가 깨졌다"
+            exit 1
+          fi
+          echo "self-protect 확인: 불완전 렌더 → exit 30(harness), RED(20)로 오인 안 됨"
+
       - name: Prove rsc gate catches prefetch regression (mutation RED)
         # 소스에서 prefetch={false} 를 되돌리고 **재빌드**한 뒤 실브라우저로 측정한다.
         # 주석이 아니라 실제 렌더 트리의 Link 가 prefetch 를 다시 켜야만 RED 가 된다.
