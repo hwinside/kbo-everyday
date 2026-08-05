@@ -90,6 +90,70 @@ function assertNotCacheable(res: Response, label: string) {
   assert.equal(cc.noStore, true, `${label}: no-store 가 아님 (${cc.raw})`);
 }
 
+
+/**
+ * KBO Basic.aspx / Situation.aspx 의 **parser-valid** HTML fixture.
+ *
+ * 왜 필요한가(삼순 NO-GO 2026-08-06 5차): 앞선 자가복구 검사는 "복구" 응답으로
+ * `<html><body>recovered</body></html>` 를 줬는데, 그건 parser 가 basic=null·
+ * situation=빈 배열로 떨어뜨려 **여전히 degraded** 다. 즉 재조회만 증명하고
+ * 정상 데이터 노출·정상 bundle 의 full-TTL 재캐시는 전혀 안 태우는 false-green 이었다.
+ * 실제 parser 가 값을 뽑아내는 마크업이어야 복구를 증명할 수 있다.
+ */
+function row(cells: string[]): string {
+  return `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`;
+}
+function table(rows: string[][]): string {
+  return `<table>${rows.map(row).join("")}</table>`;
+}
+
+/** 포지션 줄 — handedness-parser 가 읽는 유일한 지점. */
+function profileHead(position: string): string {
+  return `<ul><li><strong>포지션: </strong><span class="p">${position}</span></li></ul>`;
+}
+
+/** 타자 Basic: t0[9]=HR, t0[11]=RBI / t1[12]=PH-BA */
+function hitterBasicHtml(): string {
+  const t0 = ["LG", "0.312", "100", "420", "380", "60", "119", "20", "2", "15", "188", "70", "5", "2", "3", "4"];
+  const t1 = ["40", "2", "5", "60", "8", "0.495", "0.380", "3", "71.4", "30", "0.875", "0.330", "0.250"];
+  return `<html><body>${profileHead("외야수(우투우타)")}${table([[], t0])}${table([[], t1])}</body></html>`;
+}
+
+/** 투수 Basic: t0[16]=HR / t1[4]=SO */
+function pitcherBasicHtml(): string {
+  const t0 = ["키움", "3.45", "25", "0", "0", "10", "6", "0", "0", "0.625", "600", "2400", "150.1", "140", "25", "3", "12"];
+  const t1 = ["2", "3", "45", "1", "130", "4", "0", "60", "58", "0", "1.23", "0.245", "15"];
+  return `<html><body>${profileHead("투수(우투)")}${table([[], t0])}${table([[], t1])}</body></html>`;
+}
+
+/**
+ * 타자 Situation: 6개 테이블 중 0(bases)/4(byHand)/5(byOuts)만 소비된다.
+ * byHand 의 `우투수` 행은 AB>=30(vsHand 임계)을 넘겨야 실제 라인이 만들어진다.
+ * 헤더 행("구분 …")도 실제 페이지처럼 넣어 parser 의 헤더 스킵 경로까지 태운다.
+ */
+function hitterSituationHtml(): string {
+  const head = ["구분", "AVG", "AB", "H", "2B", "3B", "HR", "RBI", "BB", "HBP", "SO", "GDP"];
+  const bases = table([head, ["주자없음", "0.300", "200", "60", "10", "1", "8", "8", "20", "2", "30", "3"]]);
+  const filler = table([head]);
+  const byHand = table([
+    head,
+    ["좌투수", "0.280", "120", "34", "5", "0", "4", "18", "12", "1", "20", "2"],
+    ["우투수", "0.325", "260", "85", "15", "2", "11", "52", "28", "4", "40", "6"],
+  ]);
+  const byOuts = table([head, ["2아웃", "0.290", "140", "41", "7", "1", "5", "25", "15", "2", "24", "3"]]);
+  return `<html><body>${bases}${filler}${filler}${filler}${byHand}${byOuts}</body></html>`;
+}
+
+/** 투수 Situation: 구분 | H | 2B | 3B | HR | BB | HBP | SO | WP | BK | AVG */
+function pitcherSituationHtml(): string {
+  const head = ["구분", "H", "2B", "3B", "HR", "BB", "HBP", "SO", "WP", "BK", "AVG"];
+  const rows = (label: string) => [label, "40", "6", "1", "3", "15", "2", "35", "1", "0", "0.250"];
+  const t = table([head, rows("주자없음")]);
+  const byHand = table([head, rows("좌타자"), rows("우타자")]);
+  const byOuts = table([head, rows("2아웃")]);
+  return `<html><body>${t}${table([head])}${table([head])}${table([head])}${byHand}${byOuts}</body></html>`;
+}
+
 async function main() {
   console.log("\n=== live-edge-cache-smoke ===\n");
 
@@ -634,25 +698,149 @@ async function main() {
         if (url.includes("HitterDetail") || url.includes("PitcherDetail")) {
           playerFetchCount++;
           if (!playerFetchOk) return new Response("down", { status: 503 });
-          return new Response("<html><body>recovered</body></html>", { status: 200 });
+          // ⚠️ **parser-valid** 마크업이어야 한다(삼순 NO-GO 5차).
+          //    `<html>recovered</html>` 같은 더미는 basic=null·situation=빈 배열로
+          //    떨어져 여전히 degraded → 재조회만 증명하고 실제 복구는 못 태운다.
+          const isBatterPage = url.includes("HitterDetail");
+          const isSituation = url.includes("Situation.aspx");
+          const html = isBatterPage
+            ? (isSituation ? hitterSituationHtml() : hitterBasicHtml())
+            : (isSituation ? pitcherSituationHtml() : pitcherBasicHtml());
+          return new Response(html, { status: 200 });
         }
         return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
       }) as typeof fetch;
 
       try {
-        // 1) 열화 상태로 1회 호출 → 부분열화 bundle 생성
-        await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        // 1) 열화 상태로 1회 호출 → 부분열화 bundle 생성 + empty 응답
+        const first = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const firstBody = (await first.json()) as { empty?: boolean };
         const afterFirst = playerFetchCount;
         assert.ok(afterFirst > 0, "선수 프로필 fetch 를 태우지 못함(픽스처 오류)");
+        assert.equal(firstBody.empty, true, "열화 상태인데 empty 가 아님(픽스처 오류)");
 
-        // 2) upstream 복구 후 재호출 → 캐시가 아니라 **재조회** 해야 한다.
+        // 2) upstream 복구 후 재호출 → 재조회 + **정상 데이터 노출** 이어야 한다.
         playerFetchOk = true;
         await new Promise((r) => setTimeout(r, 3100)); // 짧은 재시도 TTL 경과
-        await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const second = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const secondBody = (await second.json()) as {
+          empty?: boolean;
+          lines?: { vsHand?: unknown };
+        };
+        const afterSecond = playerFetchCount;
+
+        assert.ok(
+          afterSecond > afterFirst,
+          `열화 bundle 이 캐시에 박혀 재조회가 없다(fetch ${afterFirst} → ${afterSecond}) — upstream 복구 후에도 유저 화면이 계속 빈다`,
+        );
+        // 재조회만으로는 부족하다 — 실제로 유저에게 값이 보여야 복구다.
+        assert.equal(
+          secondBody.empty,
+          false,
+          "재조회는 했지만 여전히 empty — 유저 화면은 그대로 비어 있다(복구 아님)",
+        );
+        assert.ok(
+          secondBody.lines?.vsHand,
+          "복구 후에도 vsHand 라인이 없다 — parser-valid 복구를 증명하지 못함",
+        );
+
+        // 3) 즉시 3차 폴링 — 추가 fetch 0(캐시 HIT).
+        const third = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        await third.json();
+        assert.equal(
+          playerFetchCount,
+          afterSecond,
+          `정상 bundle 이 캐시되지 않았다(fetch ${afterSecond} → ${playerFetchCount})`,
+        );
+
+        // 4) ⚠️ 3초를 더 흘린 뒤 4차 폴링 — 여기서도 fetch 0 이어야 **full TTL** 이다.
+        //    3차만 보면 "3초 TTL"과 "1시간 TTL"이 구분되지 않아 검출력이 0이었다(자기적발:
+        //    정상 bundle 을 3초만 캐시하는 mutation 이 GREEN 으로 통과했다).
+        await new Promise((r) => setTimeout(r, 3100));
+        const fourth = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        await fourth.json();
+        assert.equal(
+          playerFetchCount,
+          afterSecond,
+          `정상 bundle 이 짧은 재시도 TTL 로 캐시됐다(3.1초 후 fetch ${afterSecond} → ${playerFetchCount}) — 복구 후에도 매 폴링이 upstream 을 두드린다`,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    },
+  );
+
+  await check(
+    "fetch 200 인데 parse 실패도 열화로 본다 — 1시간 박제 금지(actual)",
+    async () => {
+      // 삼순 NO-GO ②의 나머지 절반: upstream 이 200 을 주더라도 마크업이 바뀌어
+      // parser 가 값을 못 뽑으면 내용상 비어 있는 것이라 같은 열화다.
+      // fetch 실패만 degraded 로 치면 이 경우가 1시간 캐시돼 복구가 막힌다.
+      const roster = (await import("../../src/lib/constants/players-roster.json"))
+        .default as Array<{ name: string; position: string; team: string; kboId: string }>;
+      const { resolvePlayer } = await import("../../src/lib/utils/resolve-player");
+      const isUsable = (p: { name: string; kboId: string }) =>
+        /^[0-9]+$/.test(p.kboId) && resolvePlayer({ name: p.name }) !== null;
+      // 앞 검사와 캐시 키가 겹치면 안 되므로 다른 선수를 고른다.
+      const batters = roster.filter((p) => p.team === "LG" && p.position !== "투수" && isUsable(p));
+      const pitchers = roster.filter((p) => p.team === "키움" && p.position === "투수" && isUsable(p));
+      assert.ok(batters.length > 1 && pitchers.length > 1, "테스트 선수 부족");
+      const batterName = batters[1].name;
+      const pitcherName = pitchers[1].name;
+
+      // ⚠️ G_ID 는 `/^\d{8}[A-Z]{4}\d$/` 를 만족해야 payload 가 파싱된다(실측).
+      //    "PARSE1"(14자)·"PRS01"(영문4 아님) 둘 다 payload 를 null 로 떨어뜨려
+      //    fetchLiveGame 이 조기 반환 → loadProfile 을 아예 안 타고 게이트가 죽었다.
+      const gameId = "20260806PRSX1";
+      let parseOk = false;
+      let playerFetchCount = 0;
+
+      globalThis.fetch = (async (input: RequestInfo | URL) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("GetKboGameList")) {
+          return new Response(JSON.stringify({ game: [{
+            G_ID: gameId, GAME_STATE_SC: "2", AWAY_NM: "LG", HOME_NM: "키움",
+            GAME_TB_SC: "T", T_P_NM: batterName, B_P_NM: pitcherName,
+            GAME_INN_NO: 5, OUT_CN: 1, BALL_CN: 2, STRIKE_CN: 1, SR_ID: "1",
+          }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("HitterDetail") || url.includes("PitcherDetail")) {
+          playerFetchCount++;
+          // ⚠️ 항상 **200**. 다만 parseOk 이전에는 parser 가 못 읽는 마크업이다.
+          if (!parseOk) return new Response("<html><body>no tables here</body></html>", { status: 200 });
+          const isBatterPage = url.includes("HitterDetail");
+          const isSituation = url.includes("Situation.aspx");
+          return new Response(
+            isBatterPage
+              ? (isSituation ? hitterSituationHtml() : hitterBasicHtml())
+              : (isSituation ? pitcherSituationHtml() : pitcherBasicHtml()),
+            { status: 200 },
+          );
+        }
+        return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+      }) as typeof fetch;
+
+      try {
+        const first = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const firstBody = (await first.json()) as { empty?: boolean };
+        const afterFirst = playerFetchCount;
+        assert.ok(afterFirst > 0, "선수 프로필 fetch 를 태우지 못함(픽스처 오류)");
+        assert.equal(firstBody.empty, true, "parse 실패인데 empty 가 아님(픽스처 오류)");
+
+        // 마크업 복구 후 재폴링 → 재조회 + 정상 노출이어야 한다.
+        parseOk = true;
+        await new Promise((r) => setTimeout(r, 3100));
+        const second = await contextualRoute.GET(ctxReq(`gameId=${gameId}`));
+        const secondBody = (await second.json()) as { empty?: boolean };
 
         assert.ok(
           playerFetchCount > afterFirst,
-          `열화 bundle 이 캐시에 박혀 재조회가 없다(fetch ${afterFirst} → ${playerFetchCount}) — upstream 복구 후에도 유저 화면이 계속 빈다`,
+          `parse 실패 bundle 이 1시간 캐시에 박혔다(fetch ${afterFirst} → ${playerFetchCount}) — 마크업이 복구돼도 화면이 계속 빈다`,
+        );
+        assert.equal(
+          secondBody.empty,
+          false,
+          "재조회했지만 여전히 empty — parse 복구가 반영되지 않음",
         );
       } finally {
         globalThis.fetch = originalFetch;
