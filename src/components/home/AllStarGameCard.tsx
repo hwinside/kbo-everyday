@@ -63,7 +63,7 @@ export default function AllStarGameCard({ game, live }: AllStarGameCardProps) {
   const homeScore = live?.homeScore ?? game.homeScore ?? 0;
 
   return (
-    <Link
+    <Link prefetch={false}
       href={`/games/${game.id}`}
       className="relative block rounded-2xl p-3.5 overflow-hidden mb-3"
       style={{
