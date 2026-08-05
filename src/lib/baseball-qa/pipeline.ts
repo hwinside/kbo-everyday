@@ -13,10 +13,13 @@ import {
   allowsNumericAnswer,
   composeRagAnswer,
   isDescriptivePlayerQuestion,
+  RAG_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
+  type RagEntityCandidate,
   type RagEvidence,
   type RagPlayerCandidate,
+  type RagTeamCandidate,
 } from "./rag/retrieve";
 import { displayProvenanceOf } from "./genius-reply-provenance";
 import {
@@ -261,11 +264,22 @@ export interface QaDeps {
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
-  searchRag?: (candidate: RagPlayerCandidate, question: string) => Promise<RagEvidence[]>;
+  searchRag?: (candidate: RagEntityCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /**
+   * 구단 tier2 근거 재서술 호출. 선수 경로(`callRagLlm`)와 분리한 이유는
+   * 프롬프트가 다르기 때문이다 — 선수용은 숫자를 전면 금지해서 구단 서사의
+   * 창단 연도까지 거부한다. 수치 안전은 문구가 아니라 출력 가드가 강제한다.
+   */
+  callTeamRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
   /** 현재 출시 범위는 룰/용어만이다. 선수 RAG는 후속 출시에서 명시적으로 켠다. */
   enablePlayerRag?: boolean;
+  /**
+   * 구단 서술형·구단 미서빙 수치를 tier2 근거로 답하는 경로. 미배선이면 종전 동작
+   * (`llm_scope_gate` → generic LLM, 미서빙 수치는 `TEAM_STAT_HOLD_ANSWER`) 그대로다.
+   */
+  enableTeamRag?: boolean;
   /**
    * 유저가 동명이인 picker에서 고른 kboId (재질의). 있으면 이름 매칭을 건너뛰고
    * 이 선수로 확정한다. 로스터에 없는 id면 무시되어 기존 경로로 내려간다.
@@ -430,6 +444,44 @@ export function teamIdOfCanonical(canonical: string): number | null {
   return entry ? entry.teamId : null;
 }
 
+/**
+ * 구단 RAG 근거 검색 대상을 해석한다. 질문이 구단 하나를 특정해야 한다.
+ *
+ * `resolveMentionedTeam` 과 **같은 판정기**를 쓴다 — 둘이 갈라지면 "구단이라고 판정했는데
+ * 근거는 다른 구단에서 찾는" 사고가 난다. 두 구단 이상은 `resolveMentionedTeam` 이 이미
+ * null 을 돌려준다(비교 질문을 한 구단 문서로 답하면 동문서답이다).
+ *
+ * `entityId` 는 corpus 적재 귀속과 동일한 **teamId** 문자열이다(`namu:team:<teamId>`).
+ * 매니페스트(`namu-core-manifest.json`)와 `TEAM_ALIASES.teamId` 가 같은 번호를 쓰므로
+ * 여기서 별도 매핑표를 두지 않는다 — 둘을 이어주는 계약은 게이트가 실 corpus 로 고정한다.
+ */
+export function resolveRagTeamCandidate(question: string): RagTeamCandidate | null {
+  const canonical = resolveMentionedTeam(question);
+  if (canonical === null) return null;
+  const teamId = teamIdOfCanonical(canonical);
+  if (teamId === null) return null;
+
+  // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다. 그래서
+  // `LG랑 두산 중 누가 더 잘해?` 는 두산 **하나만** 지명된 것처럼 보인다.
+  // 팀기록 조회는 숫자 하나라 피해가 작지만, RAG 는 **한 구단 문서로 서술을 생성**하므로
+  // 비교 질문에 한쪽 문서만 읽으면 동문서답을 근거까지 달고 내보낸다.
+  // 선수 경로(`buildCandidate` 의 `mentionsOther`)와 같은 보수 규칙을 쓴다 —
+  // 조사와 무관하게 다른 구단의 약칭·별칭이 문자열로 등장하면 단일 entity 로 보지 않는다.
+  // 과탐지는 RAG 미서빙(기존 경로 유지)일 뿐이고, 놓치면 남의 문서로 답하는 사고다.
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
+    team.canonical !== canonical &&
+    [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
+  if (mentionsOtherTeam) return null;
+
+  return {
+    entityType: "team",
+    entityId: String(teamId),
+    name: canonical,
+    sourceKey: `namu:team:${teamId}`,
+  };
+}
+
 export function resolveMentionedTeam(question: string): string | null {
   const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
   const hits = new Set<string>();
@@ -584,6 +636,28 @@ function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: bo
   // 남은 총칭어(`기록`·`스탯`)는 **값을 요구하는 의도**가 함께 있을 때만 수치 질문이다.
   // 여기까지 닫으면 `두산 기록 중 유명한 이야기 알려줘` 같은 서술형이 과차단된다.
   return hasStat && NUMERIC_VALUE_ASK.test(normalized);
+}
+
+/**
+ * 구단 tier2 RAG 로 서빙해도 되는 질문인가 (서술형 축).
+ *
+ * `answerQuestion` 에서 이 판정을 통과한 질문만 구단 문서 근거를 읽는다.
+ *
+ * ⚠️ 수치 질문을 여기서 다시 막는 이유 — 방어가 이중이어야 한다.
+ * 상위 라우팅(`team_record`)이 수치 구단 질문을 가로채므로 이론상 여기까지
+ * 안 오지만, 라우팅 규칙이 한 줄만 바뀌어도 tier2 가 수치를 답하게 된다
+ * (§12 위반). 경로 의존이 아니라 **이 함수 단독으로도** 수치가 닫히게 둔다.
+ *
+ * 반대로 서술 의도를 allowlist 로 요구하지는 **않는다**. 구단 서술 질문은 표현이
+ * 무한해서(`LG 어때?`·`두산 어떤 팀이야`·`한화 암흑기`) 폐쇄집합을 쓰면
+ * 빠진 표현이 조용히 generic LLM 으로 새는데, 그랬 때 손해는 "근거 있는데 안 읽음"이다.
+ * 근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
+ */
+export function isTeamRagServableQuestion(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalized);
+  const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
+  return !isTeamNumericQuestion(normalized, tokens, hasStat);
 }
 
 /**
@@ -1682,6 +1756,129 @@ async function answerOfficialDocumentQuestion(
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
 
+/**
+ * 구단 질문을 **적재된 tier2 구단 문서 근거**로 답한다.
+ *
+ * 왜 필요한가 (2026-08-05 production 실측):
+ *   `genius_rag_serving_chunks` 에 `entity_type='team'` chunk 가 **71,531건** 적재돼 있는데
+ *   `LG 트윈스 역사 알려줘` 가 `source=llm` 로 나갔다. 즉 답이 맞아 보였던 것은
+ *   모델이 원래 알던 것이지 우리 근거를 읽은 게 아니었다. `searchRag` 가
+ *   `RagPlayerCandidate` 만 받고 team 후보를 만드는 코드가 아예 없었다(미배선).
+ *
+ * 경로 설계는 **공식문서 경로와 같은 양보 규칙**을 따른다(선수 경로와 다르다):
+ * 근거가 없으면 **fail-close 하지 않고 null** 을 돌려 기존 경로(LLM 범위판정 또는
+ * `TEAM_STAT_HOLD_ANSWER`)로 내려보낸다. 구단 서술은 지금도 LLM 이 답하는 정상 경로라
+ * 선수처럼 닫아버리면 **기능이 퇴행한다**(#1100 구단 과차단 회귀).
+ *
+ * 수치 계약(§12)은 그대로다:
+ *  - 우리가 **서빙하는** 수치(순위·승패·팀타율…)는 이 함수에 오지도 않는다 —
+ *    `kbo_structured` 가 먼저 정본으로 답한다.
+ *  - 서빙하지 **않는** 수치(우승 횟수 등)만 `allowNumbers=true` 로 오며,
+ *    그때도 `numericTokensGrounded` 가 근거에 적힌 토큰만 통과시킨다(계산·추정 불가).
+ *
+ * LLM durable 경계는 동일하다 — 경계를 지나면 이미 호출을 소비했으므로 null 을 돌려
+ * 기존 경로로 내려보내지 않고 여기서 종결한다.
+ */
+async function answerTeamRagQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  candidate: RagTeamCandidate,
+  remaining: number,
+  deps: QaDeps,
+  /**
+   * 유저가 **수치를 물은** 질문인가(우리가 서빙하지 않는 값 — 우승 횟수 등).
+   * 숫자 허용 여부가 아니라 **실패 시 안내문**을 가른다 — 수치 질문이면
+   * "순위표에서 보세요"가 정확한 안내고, 서술형이면 일반 안내다.
+   */
+  numericQuestion: boolean,
+): Promise<QaResult | null> {
+  if (!deps.enableTeamRag || !deps.searchRag || !deps.callTeamRagLlm) return null;
+
+  // 수요 기록은 ingestion 우선순위 신호일 뿐이라 실패해도 답변 경로를 막지 않는다.
+  if (deps.recordRagDemand) {
+    try {
+      await deps.recordRagDemand([candidate.sourceKey]);
+    } catch {
+      // 무시
+    }
+  }
+
+  let evidence: RagEvidence[];
+  try {
+    evidence = selectEvidence(await deps.searchRag(candidate, question));
+  } catch {
+    return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
+  }
+  if (evidence.length === 0) return null;
+  // 구단 문서는 tier2 다. tier1 이 이 경로로 새면 숫자 허용 계약이 어긋나므로 닫는다.
+  if (allowsNumericAnswer(evidence)) return null;
+
+  const failCloseError = async (): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
+  };
+
+  // ── durable LLM 경계 (선수·공식 경로와 동일 계약) ─────────────────────────
+  let llm: LlmResult | null = null;
+  if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
+    try {
+      state = await deps.getLlmState();
+    } catch {
+      return failCloseError();
+    }
+    llm = state.result;
+    if (!llm && state.started) {
+      if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      return failCloseError();
+    }
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
+      try {
+        won = await deps.acquireLlmStart();
+      } catch {
+        return failCloseError();
+      }
+      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+    }
+    try {
+      llm = await deps.callTeamRagLlm(question, evidence);
+    } catch {
+      // 경계를 이미 소비했을 수 있어 기존 경로로 내려보내지 않는다.
+      return failCloseError();
+    }
+    if (deps.storeLlm) await deps.storeLlm(llm);
+  }
+
+  // 숫자는 **근거 대조**로 다룬다(전면 금지 아님).
+  //
+  // ⚠️ 왜 서술형에도 대조 방식을 쓰는가: 구단 서사는 연도가 내용 자체라
+  // 전면 금지하면 `LG 트윈스는 1990년 창단했어요` 가 통째로 폐기된다(게이트 실측).
+  // §12 계약의 본질은 "지어낸 숫자 금지"고, 그건 `numericTokensGrounded` 가 근거
+  // 원문과 토큰 단위로 대조해 강제한다. 길이 상한은 tier2 기준(160자) 그대로 —
+  // 공식 조문용 320자를 물려받으면 프롬프트 문구와 검증이 어긋난다.
+  const validated = validateRagResponse(llm.text, {
+    numericEvidence: true,
+    evidence,
+    maxChars: RAG_ANSWER_MAX_CHARS,
+  });
+  if (validated.kind !== "grounded") {
+    // 근거로 답을 못 만들었다(근거 밖 숫자 포함). LLM 호출을 이미 썬으므로 재호출 없이 종결한다.
+    // 수치 질문이었으면 "순위표에서 보세요" 안내가 정확한 다음 행동이다.
+    const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : BLOCKED_ANSWER;
+    const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
+    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer, source: matchPath, remaining };
+  }
+  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  return { status: 200, answer, source: "rag", remaining, sourceUrl };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   const question = rawQuestion.trim();
   const questionNorm = normalizeQuestion(question);
@@ -1809,6 +2006,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
     // 지어내지 않고 닫는다. `TEAM_STAT_HOLD_ANSWER` 는 "순위표에서 보세요" 안내다.
     if (intent.kind !== "query" || !canonicalTeam || !deps.fetchTeamRecord) {
+      // ⚠️ 닫기 **전에** 적재된 구단 문서를 본다 (하린아빠 2026-08-05 "배선 연결").
+      //
+      // 여기 오는 건 우리가 서빙하지 않는 수치(`LG 우승 몇 번?`)다. 종전에는 무조건
+      // "자료가 없어요"로 닫혔는데, production 실측상 적재된 구단 문서에 그 서술이
+      // **있다**(삼성 원문 `통산 한국시리즈 우승 횟수는 총 8회`). 근거를 가진 채
+      // 모른다고 하는 것도 유저에겐 틀린 안내다.
+      //
+      // 정본이 아니므로 계약을 두 겹으로 건다: 근거에 적힌 숫자 토큰만 허용
+      // (`numericTokensGrounded`) + 출처 표기 강제. 계산·합산·추정은 프롬프트가 막고
+      // 출력 가드가 기계적으로 재확인한다. 근거가 없으면 종전 안내문 그대로다.
+      const teamCandidate = deps.enableTeamRag ? resolveRagTeamCandidate(question) : null;
+      if (teamCandidate) {
+        const ragAnswer = await answerTeamRagQuestion(
+          userId, question, questionNorm, teamCandidate, remaining, deps, true,
+        );
+        if (ragAnswer) return ragAnswer;
+      }
       return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
     }
     let standings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
@@ -1830,6 +2044,24 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   const scopeGate = route === "llm_scope_gate";
+
+  // ── 구단 tier2 RAG (적재된 나무위키 구단 문서 근거) ───────────────────────
+  //
+  // 위치가 계약이다. **`team_record`(kbo_structured) 뒤, generic LLM 앞**.
+  //  ① 우리가 서빙하는 수치(순위·승패·팀타율)는 위에서 이미 정본으로 답했다 —
+  //    tier2 가 그걸 덮어쓰면 §12 수치 계약 위반이다.
+  //  ② generic LLM 보다 앞이어야 적재한 71,531 chunk 가 실제로 읽힌다.
+  //    뒤에 두면 지금처럼 `source=llm` 로 끝나고 적재물은 영원히 안 읽힌다.
+  //
+  // 근거가 없으면 null → 기존 경로 그대로(공식문서 경로와 같은 양보 규칙).
+  const teamRagCandidate = deps.enableTeamRag ? resolveRagTeamCandidate(question) : null;
+  if (teamRagCandidate && isTeamRagServableQuestion(question)) {
+    const teamAnswer = await answerTeamRagQuestion(
+      userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
+    );
+    if (teamAnswer) return teamAnswer;
+  }
+
   if (route !== "baseball_rule_term" && !scopeGate) {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :

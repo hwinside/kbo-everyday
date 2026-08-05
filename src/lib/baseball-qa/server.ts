@@ -40,11 +40,12 @@ import {
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
+  RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
   type RagDocumentSourceKind,
+  type RagEntityCandidate,
   type RagEvidence,
   type RagEvidenceCandidate,
-  type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
@@ -146,7 +147,7 @@ interface RagOfficialChunkRow {
 export interface RagSearchRuntime {
   embed: typeof embedQuery;
   fetchBySourceKind: (
-    candidate: RagPlayerCandidate,
+    candidate: RagEntityCandidate,
     sourceKind: RagDocumentSourceKind,
     limit: number,
     /**
@@ -204,7 +205,7 @@ export function createProductionRagSearchRuntime(
 const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
 export async function searchRag(
-  candidate: RagPlayerCandidate,
+  candidate: RagEntityCandidate,
   question: string,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
 ): Promise<RagEvidence[]> {
@@ -231,6 +232,16 @@ async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<Ll
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
 async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
   return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+}
+
+/**
+ * 구단(tier2) 근거 전용 호출 — 프롬프트만 다르고 경계는 선수·공식 경로와 동일하다.
+ *
+ * 선수용 프롬프트를 재사용하지 않는다 — "선수 소개 도우미"로 자기규정한 모델은
+ * 구단 질문을 범위 밖으로 오판하고, 숫자 전면금지라 연도가 들어간 구단 서사를 전부 거부한다.
+ */
+async function callTeamRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT);
 }
 
 async function callRagLlmWithPrompt(
@@ -370,6 +381,11 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
     // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
     enablePlayerRag: true,
+    // 구단 RAG 개통 (하린아빠 2026-08-05 "배선 연결"). production 적재 실측:
+    // `genius_rag_sources` team 10/10 ready, `genius_rag_serving_chunks` entity_type=team 71,531건.
+    // 그런데 후보 생성 코드가 없어 한 건도 읽히지 않고 있었다(`LG 역사` → source=llm).
+    enableTeamRag: true,
+    callTeamRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
     releaseDaily: async (userId) => {
       // query-guard: bounded -- message_id 단위 멱등 단일 행 갱신 RPC.
