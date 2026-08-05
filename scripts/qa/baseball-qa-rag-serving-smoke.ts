@@ -2014,13 +2014,19 @@ async function verifyServingContractOnRealDb(): Promise<void> {
       },
     } as unknown as Parameters<typeof createProductionRagSearchRuntime>[0]);
     const probeVector = JSON.parse(embedding) as number[];
-    await probeRuntime.fetchBySourceKind(
-      { entityType: "player", entityId: "69102", name: "문보경" },
-      "namu_document",
-      RAG_CANDIDATE_LIMIT,
-      probeVector,
-    );
-    assert.equal(rpcCalls.length, 1, "production 후보 fetch 는 정렬 RPC 를 정확히 1회 호출해야 한다");
+    // 팩토리가 주입된 client 를 무시하고 모듈 전역 클라이언트로 우회하면 실네트워크를 타며
+    // 던진다. 그 예외를 그대로 터트리면 "네트워크 안 돼서 실패"로 보이고 검출력 증거가 안 된다.
+    // 삼킨 뒤 **호출 여부 자체**를 단언해, 우회 변종이 명확한 assertion 으로 RED 가 되게 한다.
+    await probeRuntime
+      .fetchBySourceKind(
+        { entityType: "player", entityId: "69102", name: "문보경" },
+        "namu_document",
+        RAG_CANDIDATE_LIMIT,
+        probeVector,
+      )
+      .catch(() => undefined);
+    assert.equal(rpcCalls.length, 1,
+      "production 후보 fetch 는 주입된 client 로 정렬 RPC 를 정확히 1회 호출해야 한다(무순서 절단·전역클라이언트 우회 금지)");
     assert.equal(rpcCalls[0].name, RAG_PLAYER_CHUNK_SEARCH_RPC);
     assert.equal(rpcCalls[0].args.p_entity_type, "player");
     assert.equal(rpcCalls[0].args.p_entity_id, "69102");
