@@ -92,20 +92,30 @@ export const RAG_CANDIDATE_LIMIT = 40;
  * entity 전체에 무순서 limit(40)을 걸면 Namu 41건 뒤의 Wikipedia 1건이 DB에서 이미
  * 사라져, 이후 source priority 정렬로는 복구할 수 없다. 실제 서버가 이 seam을 사용하고
  * PGlite 회귀도 같은 seam에 source_kind별 SELECT를 주입한다.
+ *
+ * ⚠️ source_kind 로 나누는 것만으로는 부족하다(2026-08-05 production 사고).
+ * 한 소스 안에서도 chunk 가 상한보다 많으면(문보경 나무위키 133건) **무순서 절단**이
+ * 정답 chunk 를 후보에서 통째로 날려버린다. 그래서 `fetchBySourceKind` 구현체는
+ * **질문 벡터 기준 상위 N**을 돌려줘야 하며, 그래서 queryVector 를 함께 넘긴다.
  */
 export async function searchSourcePriorityCandidates(
   fetchBySourceKind: (
     sourceKind: RagDocumentSourceKind,
     limit: number,
+    queryVector: number[],
   ) => Promise<RagEvidenceCandidate[]>,
   queryVector: number[],
-  orderBeforeLimit: (rows: RagEvidence[]) => RagEvidence[],
+  /**
+   * 유사도에 곱할 의도별 가중치(1.0 = 개입 없음).
+   * 순서 강제(hard sort)가 아니라 재점수화라, 더 가까운 반대편 근거는 살아남는다.
+   */
+  weightFor: (canonicalUrl: string) => number,
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
-    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT),
-    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT),
+    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
+    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
-  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, orderBeforeLimit);
+  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor);
 }
 /** 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(900자)보다 짧게 잡아 다중 근거를 허용한다. */
 export const RAG_EVIDENCE_MAX_CHARS = 600;
@@ -487,15 +497,25 @@ export function cosineSimilarity(left: number[], right: number[]): number {
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
-  orderBeforeLimit?: (rows: RagEvidence[]) => RagEvidence[],
+  /**
+   * 소스별 가중치. 생략하면 순수 유사도 순서.
+   *
+   * ⚠️ 예전에는 `orderBeforeLimit`(정렬된 배열을 통꺼 재배치)이었는데, 그러면 유사도가
+   * 무시되어 무관한 근거가 상위를 독점했다(삼순 P0). 지금은 **점수에 곱해** 재정렬한다.
+   */
+  weightFor?: (canonicalUrl: string) => number,
 ): RagEvidence[] {
-  const ranked = rows
+  return rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
-      return vector === null ? null : { row, score: cosineSimilarity(vector, queryVector) };
+      if (vector === null) return null;
+      const base = cosineSimilarity(vector, queryVector);
+      if (!(base > 0)) return null;
+      const weight = weightFor ? weightFor(row.canonicalUrl) : 1;
+      return { row, score: base * weight };
     })
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>
-      entry !== null && entry.score > 0)
+      entry !== null)
     .sort((left, right) => right.score - left.score)
     .map(({ row }) => ({
       content: row.content,
@@ -505,6 +525,6 @@ export function rankEvidenceByQuery(
       sectionPath: row.sectionPath,
       asOf: row.asOf,
       sourceGrade: row.sourceGrade,
-    }));
-  return (orderBeforeLimit ? orderBeforeLimit(ranked) : ranked).slice(0, RAG_EVIDENCE_LIMIT);
+    }))
+    .slice(0, RAG_EVIDENCE_LIMIT);
 }

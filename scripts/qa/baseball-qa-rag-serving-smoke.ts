@@ -86,9 +86,11 @@ import {
 import {
   fetchWikipediaDocument,
   isWikipediaDisambiguation,
-  orderTier2Evidence,
+  classifyTier2Intent,
   tier2SourceOf,
-  TIER2_SOURCE_PRIORITY,
+  tier2WeightForQuestion,
+  TIER2_INTENT_BOOST,
+  TIER2_SOURCES,
   WIKIPEDIA_API_URL,
 } from "../../src/lib/baseball-qa/rag/fetch-wikipedia";
 import { S2B_TARGET_PLAYERS, S2B_TARGET_SOURCE_KEYS, isS2bTargetSourceKey } from "../../src/lib/baseball-qa/rag/targets";
@@ -428,9 +430,30 @@ async function run(): Promise<void> {
       content: "위키피디아 기본 근거 — 충분히 긴 서술형 근거 문장입니다.",
       embedding: [0.95, Math.sqrt(1 - 0.95 * 0.95), 0],
     });
-    const priorityRanked = rankEvidenceByQuery(priorityRows, near, orderTier2Evidence);
-    assert.equal(tier2SourceOf(priorityRanked[0].canonicalUrl), "wikipedia", "최종 limit 전에 source priority를 적용해야 한다");
+    // 별명(팬덤) 질문이면 나무위키 가중 — 점수가 비슷할 때만 앞선다.
+    const priorityRanked = rankEvidenceByQuery(priorityRows, near, tier2WeightForQuestion("문보경 별명이 뭐야?"));
+    assert.equal(tier2SourceOf(priorityRanked[0].canonicalUrl), "namu", "팬덤 의도에서는 나무위키가 가중되어 앞선다");
     assert.equal(priorityRanked.length, RAG_EVIDENCE_LIMIT);
+    // ⚠️ 가중은 탈락이 아니다 — 훨씬 가까운 위키피디아는 팬덤 질문에서도 살아남아야 한다.
+    const farNamu = [0.30, 0.29, 0.28, 0.27].map((score, index) => ({
+      ...MOON_EVIDENCE,
+      canonicalUrl: `https://namu.wiki/w/문보경${index}`,
+      content: `무관한 나무위키 근거 ${index} — 충분히 긴 서술형 근거 문장입니다.`,
+      embedding: [score, Math.sqrt(1 - score * score), 0],
+    }));
+    farNamu.push({
+      ...MOON_EVIDENCE,
+      canonicalUrl: "https://ko.wikipedia.org/wiki/문보경",
+      content: "질문과 훨씬 가까운 위키피디아 근거 — 충분히 긴 서술형 근거 문장입니다.",
+      embedding: [0.99, Math.sqrt(1 - 0.99 * 0.99), 0],
+    });
+    const notStarved = rankEvidenceByQuery(farNamu, near, tier2WeightForQuestion("문보경 별명이 뭐야?"));
+    assert.equal(tier2SourceOf(notStarved[0].canonicalUrl), "wikipedia",
+      "가중치는 재점수화이지 순서 강제가 아니다 — 훨씬 가까운 근거가 이겨야 한다");
+    // 프로필 의도면 반대로 위키피디아가 가중된다.
+    const profileRanked = rankEvidenceByQuery(priorityRows, near, tier2WeightForQuestion("문보경 소속팀이 어디야?"));
+    assert.equal(tier2SourceOf(profileRanked[0].canonicalUrl), "wikipedia",
+      "프로필 의도에서는 위키피디아가 가중되어 앞선다");
     // 임베딩이 깨진 행은 근거가 되지 않는다.
     assert.equal(rankEvidenceByQuery([{ ...MOON_EVIDENCE, embedding: null }], near).length, 0);
     console.log("PASS 유사도 랭킹 + 손상 임베딩 배제");
@@ -994,8 +1017,18 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
   // wikipedia 확장본을 namu 전용으로 되돌렸는데, 이 스모크는 반대 순서로 적용해 통과했다).
   // 그래서 디렉터리를 실제로 읽어 사전순 그대로 적용한다.
   const migrationDir = path.join(process.cwd(), "supabase/migrations");
+  // ⚠️ 파일**명**으로만 골라내면 안 된다 (2026-08-05 자체 적발 false-green).
+  //   신규 RPC migration 을 `..._baseball_genius_player_chunk_search.sql` 로 두었더니
+  //   이름에 `rag` 가 없다는 이유로 적용 대상에서 통째로 빠졌고, 그 결과
+  //   "RPC 에서 ORDER BY 제거" mutation 이 GREEN 으로 통과했다(검출력 0).
+  //   따라서 **내용으로** 판별한다 — RAG 계약 테이블/함수를 건드리면 이름과 무관하게 적용한다.
+  //   판별 기준은 **하나로 통일**한다 — 밖에서 고르는 규칙과 안에서 검사하는 규칙이 다르면
+  //   그 틈으로 또 빠진다. RAG 스키마/함수를 실제로 건드리는 파일만 적용 대상이다.
+  const RAG_CONTRACT_SQL =
+    /genius_rag_sources|genius_rag_chunks|genius_rag_serving_chunks|claim_baseball_genius_rag|search_baseball_genius_player_chunks/;
   const allRag = readdirSync(migrationDir)
-    .filter((f) => f.endsWith(".sql") && /baseball_genius_rag/.test(f))
+    .filter((f) => f.endsWith(".sql"))
+    .filter((f) => RAG_CONTRACT_SQL.test(readFileSync(path.join(migrationDir, f), "utf8")))
     .sort(); // 기본 사전순 = 배포 적용 순서
 
   // PGlite 는 dm_messages 등 앱 전역 테이블을 갖고 있지 않다. RAG 계열 중에도
@@ -1006,7 +1039,7 @@ async function verifyScopedClaimOnRealDb(): Promise<void> {
   const ragMigrations: string[] = [];
   for (const f of allRag) {
     const sql = readFileSync(path.join(migrationDir, f), "utf8");
-    const touchesRagContract = /genius_rag_sources|genius_rag_chunks|claim_baseball_genius_rag/.test(sql);
+    const touchesRagContract = RAG_CONTRACT_SQL.test(sql);
     if (touchesRagContract) {
       ragMigrations.push(f);
       continue;
@@ -1258,32 +1291,47 @@ function verifyCrawlerBoundaryAndRateContract(): void {
 }
 
 /**
- * R3 — 위키피디아 tier2 **기본 소스** 계약 (하린아빠 지시: "위키피디아를 기본으로 하되").
- * 고정하는 것: 우선순위(wikipedia → namu) / 공식 API 경로 / 동음이의 거부 / identity 게이트 공유 /
- * revision 부재 시 fail-close.
+ * R3 — tier2 소스 계약. **전역 우선순위는 없고, 질문 의도별 가중만 있다.**
+ *
+ * 경위(2026-08-05): production 실측상 ko.wikipedia 문보경 문서는 본문 1문장뿐이라 별명·팬덤
+ * 서술이 없고, 그 빈 근거가 프롬프트 첫머리를 차지했다. 처음엔 전역 `namu → wikipedia`
+ * hard sort 로 뒤집었으나 삼순 P0 로 **폐기**했다 — 순서 강제는 (a) 프로필·소속 같은
+ * 공식 사실까지 위키피디아를 밀어내고 (b) 훨씬 가까운 위키피디아 근거를 무관한 나무위키 4건에
+ * 전부 탈락시켰다.
+ *
+ * 지금 고정하는 것: 소스 폐쇄집 / **의도별 가중(`tier2WeightForQuestion`, 유사도에 곱함)** /
+ * 가중이 탈락이 아님(더 가까운 반대편이 1위) / 공식 API 경로 / 동음이의 거부 / identity 게이트 공유 /
+ * revision 부재 시 fail-close. **수치 계약(§12)은 불변** — 둘 다 tier2라 숫자 정본이 아니다.
  */
 async function verifyWikipediaTier2Contract(): Promise<void> {
-  // (1) 우선순위 계약 — 충돌 시 위키피디아가 앞선다.
-  assert.deepEqual([...TIER2_SOURCE_PRIORITY], ["wikipedia", "namu"], "tier2 기본 소스는 위키피디아다");
+  // (1) 의도별 가중 계약 — 전역 hard sort 는 폐기됐다(삼순 P0).
+  assert.deepEqual([...TIER2_SOURCES], ["namu", "wikipedia"], "tier2 소스 폐쇄집합");
   assert.equal(tier2SourceOf("https://ko.wikipedia.org/wiki/문보경"), "wikipedia");
   assert.equal(tier2SourceOf("https://namu.wiki/w/문보경"), "namu");
   assert.equal(tier2SourceOf("https://example.com/x"), null);
 
-  const namuEvidence: RagEvidence = { ...MOON_EVIDENCE, canonicalUrl: "https://namu.wiki/w/문보경" };
-  const wikiEvidence: RagEvidence = {
-    ...MOON_EVIDENCE,
-    canonicalUrl: "https://ko.wikipedia.org/wiki/문보경",
-    revision: "revid:42169337",
-    content: "문보경은 대한민국의 야구 선수로 KBO 리그 LG 트윈스의 내야수로 활동하고 있다.",
-  };
-  const ordered = orderTier2Evidence([namuEvidence, wikiEvidence]);
-  assert.equal(tier2SourceOf(ordered[0].canonicalUrl), "wikipedia", "충돌 시 위키피디아 서술이 앞서야 한다");
-  // 안정 정렬 — 같은 소스 안에서는 유사도 순서가 보존된다.
-  const twoNamu = orderTier2Evidence([
-    { ...namuEvidence, content: "첫번째" },
-    { ...namuEvidence, content: "두번째" },
-  ]);
-  assert.deepEqual(twoNamu.map((row) => row.content), ["첫번째", "두번째"]);
+  // 의도 분류 — 팬덤/프로필/중립
+  assert.equal(classifyTier2Intent("문보경 별명이 뭐야?"), "fandom");
+  assert.equal(classifyTier2Intent("문보경 응원가 알려줘"), "fandom");
+  assert.equal(classifyTier2Intent("문보경 소속팀이 어디야?"), "profile");
+  assert.equal(classifyTier2Intent("문보경 데뷔 언제야?"), "profile");
+  assert.equal(classifyTier2Intent("문보경이 누구야?"), "neutral");
+  // 복합 질문은 팬덤 우선 — 위키피디아는 별명을 안 담기 때문이다.
+  assert.equal(classifyTier2Intent("문보경 소속이랑 별명 알려줘"), "fandom");
+
+  const namuUrl = "https://namu.wiki/w/문보경";
+  const wikiUrl = "https://ko.wikipedia.org/wiki/문보경";
+  const fandomWeight = tier2WeightForQuestion("문보경 별명이 뭐야?");
+  assert.equal(fandomWeight(namuUrl), TIER2_INTENT_BOOST, "팬덤 질문은 나무위키를 가중한다");
+  assert.equal(fandomWeight(wikiUrl), 1, "가중은 반대편을 깎지 않는다(탈락 없음)");
+  const profileWeight = tier2WeightForQuestion("문보경 소속팀이 어디야?");
+  assert.equal(profileWeight(wikiUrl), TIER2_INTENT_BOOST, "프로필 질문은 위키피디아를 가중한다");
+  assert.equal(profileWeight(namuUrl), 1);
+  const neutralWeight = tier2WeightForQuestion("문보경이 누구야?");
+  assert.equal(neutralWeight(namuUrl), 1, "중립 질문은 개입하지 않는다");
+  assert.equal(neutralWeight(wikiUrl), 1);
+  // boost 는 순서를 강제할 만큼 크면 안 된다 — 유사도 차이가 뚜렷하면 뒤집히지 않아야 한다.
+  assert.ok(TIER2_INTENT_BOOST < 1.5, "boost 가 너무 크면 사실상 hard sort 가 된다");
 
   // (2) 공식 API 경로 + 정직한 UA. 브라우저/위장 없음.
   assert.equal(WIKIPEDIA_API_URL, "https://ko.wikipedia.org/w/api.php");
@@ -1749,6 +1797,11 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     path.join(process.cwd(), "supabase/migrations/20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql"),
     "utf8",
   ));
+  // 선수 chunk 정렬 RPC — 이걸 적용해야 아래 후보 fetch 가 **배포되는 함수**를 탄다.
+  await db.exec(readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260805110000_baseball_genius_rag_player_chunk_search.sql"),
+    "utf8",
+  ));
 
   // resolver가 만드는 actual payload는 unresolved 상태에서도 candidate_urls/identity_fingerprint가
   // 모두 채워져야 하고, 같은 source_key의 신규 INSERT와 기존 UPDATE 둘 다 운영 스키마를 통과해야 한다.
@@ -1990,27 +2043,77 @@ async function verifyServingContractOnRealDb(): Promise<void> {
 
   process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
   process.env.SUPABASE_SERVICE_ROLE_KEY ??= "baseball-rag-serving-smoke-key";
-  const { searchRag: searchServerRag } = await import("../../src/lib/baseball-qa/server");
+  const {
+    searchRag: searchServerRag,
+    createProductionRagSearchRuntime,
+    RAG_PLAYER_CHUNK_SEARCH_RPC,
+  } = await import("../../src/lib/baseball-qa/server");
+
+  // ── production 배선 행동 결속 ────────────────────────────────────────────────
+  // 소스 정규식이 아니라 **배포되는 팩토리를 직접 실행**해, 그것이 정렬 RPC 를 질문
+  // 벡터와 함께 호출하는지를 확인한다. 무순서 `.from(...).limit(40)` 으로 되돌리면
+  // rpc 가 호출되지 않아 여기서 RED 가 난다(dead decoy 로 뚫을 수 없다).
+  {
+    const rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
+    const probeRuntime = createProductionRagSearchRuntime({
+      rpc: async (name: string, args: Record<string, unknown>) => {
+        rpcCalls.push({ name, args });
+        return { data: [], error: null };
+      },
+    } as unknown as Parameters<typeof createProductionRagSearchRuntime>[0]);
+    const probeVector = JSON.parse(embedding) as number[];
+    // 팩토리가 주입된 client 를 무시하고 모듈 전역 클라이언트로 우회하면 실네트워크를 타며
+    // 던진다. 그 예외를 그대로 터트리면 "네트워크 안 돼서 실패"로 보이고 검출력 증거가 안 된다.
+    // 삼킨 뒤 **호출 여부 자체**를 단언해, 우회 변종이 명확한 assertion 으로 RED 가 되게 한다.
+    await probeRuntime
+      .fetchBySourceKind(
+        { entityType: "player", entityId: "69102", name: "문보경" },
+        "namu_document",
+        RAG_CANDIDATE_LIMIT,
+        probeVector,
+      )
+      .catch(() => undefined);
+    assert.equal(rpcCalls.length, 1,
+      "production 후보 fetch 는 주입된 client 로 정렬 RPC 를 정확히 1회 호출해야 한다(무순서 절단·전역클라이언트 우회 금지)");
+    assert.equal(rpcCalls[0].name, RAG_PLAYER_CHUNK_SEARCH_RPC);
+    assert.equal(rpcCalls[0].args.p_entity_type, "player");
+    assert.equal(rpcCalls[0].args.p_entity_id, "69102");
+    assert.equal(rpcCalls[0].args.p_source_kind, "namu_document");
+    assert.equal(rpcCalls[0].args.p_limit, RAG_CANDIDATE_LIMIT);
+    // 정렬 기준이 **그 질문의 벡터**여야 한다 — 상수 벡터를 박아두면 정렬이 무의미해진다.
+    assert.deepEqual(JSON.parse(String(rpcCalls[0].args.p_query_embedding)), probeVector,
+      "정렬은 해당 질문 임베딩을 기준으로 해야 한다");
+    console.log("PASS production 배선 — 후보 fetch 가 질문벡터 정렬 RPC 를 실제로 호출한다");
+  }
+
   const serverFetchedKinds: RagDocumentSourceKind[] = [];
+  /** source_kind별 **DB 후보 행 수** — "DB 절단에서 소실되지 않는다"는 이 단계에서 판정한다. */
+  const serverCandidateCounts: Record<string, number> = {};
   const priorityEvidence = await searchServerRag(
     { entityType: "player", entityId: "69102", name: "문보경" },
     "문보경 별명이 뭐야?",
     {
       embed: async () => ({ ok: true, vector: JSON.parse(embedding) as number[] }),
-      fetchBySourceKind: async (candidate, sourceKind, limit) => {
+      fetchBySourceKind: async (candidate, sourceKind, limit, queryVector) => {
         assert.deepEqual(candidate, { entityType: "player", entityId: "69102", name: "문보경" });
         assert.equal(limit, RAG_CANDIDATE_LIMIT);
+        // 후보 선정 단계가 **질문 벡터를 실제로 받아** 정렬에 쓰는지 계약으로 고정한다.
+        // 이게 없으면 production 이 다시 무순서 LIMIT 으로 퇴화해도 게이트가 GREEN 이다.
+        assert.ok(Array.isArray(queryVector) && queryVector.length > 0,
+          "후보 fetch 가 질문 벡터를 받아야 한다(무순서 절단 금지)");
         serverFetchedKinds.push(sourceKind);
+        // ⚠️ 인라인 SQL 로 정렬을 다시 적으면 **migration 의 RPC 가 아니라 게이트 자기 SQL** 을
+        //   검증하게 된다. 실제로 2026-08-05 에 그 탓에 "RPC 에서 ORDER BY 제거" mutation 이
+        //   GREEN 으로 통과했다. 배포되는 바로 그 함수를 호출한다.
         const fetched = await db.query<{
           content: string; page_title: string; canonical_url: string; revision: string;
           section_path: string; as_of: string; source_grade: string; embedding: string;
         }>(
           `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
-             FROM public.genius_rag_serving_chunks
-            WHERE entity_type='player' AND entity_id='69102' AND source_kind=$1
-            LIMIT $2`,
-          [sourceKind, limit],
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
         );
+        serverCandidateCounts[sourceKind] = fetched.rows.length;
         return fetched.rows.map((row) => ({
           content: row.content,
           pageTitle: row.page_title,
@@ -2026,8 +2129,197 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   );
   assert.deepEqual(serverFetchedKinds, ["wikipedia_document", "namu_document"],
     "production server searchRag가 source-kind별 bounded fetch를 실행해야 한다");
-  assert.equal(tier2SourceOf(priorityEvidence[0].canonicalUrl), "wikipedia",
-    "production server searchRag에서 Namu 41건 뒤 Wikipedia가 DB 후보 절단으로 소실되면 안 된다");
+  // (a) DB 절단 계약 — Namu 41건이 있어도 Wikipedia 후보가 **DB 단계에서** 사라지지 않는다.
+  //     source_kind 별로 나누지 않고 entity 전체를 limit(40) 하면 여기가 0이 된다.
+  assert.ok((serverCandidateCounts.wikipedia_document ?? 0) > 0,
+    "Wikipedia 후보가 DB 절단으로 소실되면 안 된다(source_kind별 bounded fetch)");
+  assert.ok((serverCandidateCounts.namu_document ?? 0) > 0);
+  // (b) 우선순위 계약 — 최종 근거는 나무위키가 앞선다(2026-08-05 전환).
+  //     ⚠️ 근거 상한(RAG_EVIDENCE_LIMIT=4)이라 **Namu 고유사도 후보가 4건 이상이면
+  //     Wikipedia 는 최종 근거에서 밀려난다.** 이건 소실이 아니라 우선순위의 의도된 결과다
+  //     (둘 다 tier2 → 수치 정본이 아니고, 서술 품질은 나무위키가 앞선다).
+  assert.equal(tier2SourceOf(priorityEvidence[0].canonicalUrl), "namu",
+    "tier2 우선순위 전환 후 production searchRag 는 나무위키 근거를 먼저 둔다");
+  assert.ok(priorityEvidence.every((row) => tier2SourceOf(row.canonicalUrl) === "namu"),
+    "Namu 후보가 상한을 넘게 있으면 최종 근거는 Namu 로 차다(우선순위 적용 증거)");
+  // (c) 반대 방향 — Namu 가 빈약하면 Wikipedia 가 그대로 근거가 된다(제거한 게 아니다).
+  const wikiOnlyEvidence = await searchServerRag(
+    { entityType: "player", entityId: "69102", name: "문보경" },
+    "문보경 별명이 뭐야?",
+    {
+      embed: async () => ({ ok: true, vector: JSON.parse(embedding) as number[] }),
+      fetchBySourceKind: async (_candidate, sourceKind, limit, queryVector) => {
+        if (sourceKind === "namu_document") return [];
+        const fetched = await db.query<{
+          content: string; page_title: string; canonical_url: string; revision: string;
+          section_path: string; as_of: string; source_grade: string; embedding: string;
+        }>(
+          `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
+        );
+        return fetched.rows.map((row) => ({
+          content: row.content,
+          pageTitle: row.page_title,
+          canonicalUrl: row.canonical_url,
+          revision: row.revision,
+          sectionPath: row.section_path,
+          asOf: row.as_of,
+          sourceGrade: "tier2" as const,
+          embedding: row.embedding,
+        }));
+      },
+    },
+  );
+  assert.ok(wikiOnlyEvidence.length > 0
+    && wikiOnlyEvidence.every((row) => tier2SourceOf(row.canonicalUrl) === "wikipedia"),
+    "Namu 근거가 없으면 Wikipedia 가 그대로 근거가 된다(우선순위 전환은 제거가 아니다)");
+
+  // 4-b) **상한 초과 chunk 에서 무순서 절단 금지** (2026-08-05 문보물 사고 재발방지).
+  //   문보경 나무위키 chunk 는 production 에서 133건이고 정답('문보물')은 51번째였다.
+  //   무순서 LIMIT 40 이면 그 chunk 는 후보에조차 안 들어와 앱 코사인이 복구할 수 없다.
+  //   여기서는 상한 밖(index 60)에 **질문과 가장 가까운** chunk 를 심어, 정렬 조회가
+  //   그걸 실제로 집어오는지를 본다.
+  await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
+  const deepClaim = await claimSource("namu:player:69102");
+  // 질문 벡터(= embedding)와 멀리 떨어진 768차원 벡터. 차원이 틀리면 스키마가 거부한다.
+  const farVector = `[${Array.from({ length: RAG_EMBEDDING_DIM }, (_, index) => ((index + 3) % 7) / 10).join(",")}]`;
+  const nearVector = embedding;
+  for (let index = 0; index < 61; index += 1) {
+    const isTarget = index === 60;
+    await db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'player','69102','문보경','https://namu.wiki/w/x',
+        'deep-rev',$4,$5::integer,$6,'deep-doc',$7,'tier2',$8::timestamptz,
+        '2026-08-01'::date,$9::extensions.vector,'{}'::jsonb)`,
+      ["namu:player:69102", deepClaim.claim_token, deepClaim.claim_generation,
+       `깊은위치/${index}`, index,
+       isTarget
+         ? "중요한 순간마다 제 역할을 해주면 문보물이라는 별명으로 불리는 충분히 긴 서술형 근거 문장입니다."
+         : `무관한 경기 서술 ${index}번이며 별명과는 전혀 관계없는 경기 경과를 적은 충분히 긴 서술형 문장입니다.`,
+       `deep-${index}`, crawledAt, isTarget ? nearVector : farVector],
+    );
+  }
+  assert.equal((await db.query<{ ok: boolean }>(
+    "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'deep-rev','deep-doc',$4::timestamptz,now()+interval '30 days') AS ok",
+    ["namu:player:69102", deepClaim.claim_token, deepClaim.claim_generation, crawledAt],
+  )).rows[0].ok, true);
+
+  // RED 재현 — 무순서 LIMIT 40 은 정답(index 60)을 놀친다.
+  const unorderedCut = await db.query<{ content: string }>(
+    `SELECT content FROM public.genius_rag_serving_chunks
+      WHERE entity_type='player' AND entity_id='69102' AND source_kind='namu_document'
+      LIMIT 40`,
+  );
+  assert.equal(unorderedCut.rows.some((row) => row.content.includes("문보물")), false,
+    "RED 재현 실패: 무순서 LIMIT 40 은 깊은 정답 chunk 를 놀쳐야 한다");
+
+  const deepEvidence = await searchServerRag(
+    { entityType: "player", entityId: "69102", name: "문보경" },
+    "문보경 별명이 뭐야?",
+    {
+      embed: async () => ({ ok: true, vector: JSON.parse(nearVector) as number[] }),
+      fetchBySourceKind: async (_candidate, sourceKind, limit, queryVector) => {
+        // 배포되는 RPC 를 그대로 호출한다. 인라인 SQL 로 정렬을 재구현하면
+        // migration 의 ORDER BY 를 지워도 이 테스트가 GREEN 이 된다(실제로 그랬다).
+        const fetched = await db.query<{
+          content: string; page_title: string; canonical_url: string; revision: string;
+          section_path: string; as_of: string; source_grade: string; embedding: string;
+        }>(
+          `SELECT content,page_title,canonical_url,revision,section_path,as_of::text,source_grade,embedding::text
+             FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)`,
+          ["player", "69102", sourceKind, JSON.stringify(queryVector), limit],
+        );
+        return fetched.rows.map((row) => ({
+          content: row.content,
+          pageTitle: row.page_title,
+          canonicalUrl: row.canonical_url,
+          revision: row.revision,
+          sectionPath: row.section_path,
+          asOf: row.as_of,
+          sourceGrade: "tier2" as const,
+          embedding: row.embedding,
+        }));
+      },
+    },
+  );
+  assert.ok(deepEvidence.some((row) => row.content.includes("문보물")),
+    "질문과 가까운 chunk 가 상한 밖(index 60)에 있어도 근거로 올라와야 한다");
+
+  // 4-c) RPC 계약 — tier2 폐쇄집합 fail-close / 상한 clamp / entity 강제.
+  //   폐쇄집합 밖을 조용히 0행으로 돌려주면 "미수집 선수"와 구분되지 않아
+  //   배선 실수가 fail-close 로 위장된다. 그래서 예외여야 한다.
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "kbo_ebook", nearVector, 40],
+    ),
+    /unsupported source_kind/,
+    "tier1·미지 source_kind 는 조용한 0행이 아니라 예외여야 한다(fail-close)",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", null, nearVector, 40],
+    ),
+    /unsupported source_kind/,
+    "NULL source_kind 도 fail-close 대상이다",
+  );
+  // 상한 clamp — 상한 없는 정렬 조회는 query-guard 위반이다.
+  const clamped = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "69102", "namu_document", nearVector, 100000],
+  );
+  assert.ok(clamped.rows.length <= 50, `상한이 50 으로 clamp 되어야 한다(실측 ${clamped.rows.length})`);
+  // entity 강제 — 다른 선수 id 로는 이 선수 chunk 가 새지 않는다.
+  const foreign = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "00000", "namu_document", nearVector, 40],
+  );
+  assert.equal(foreign.rows.length, 0, "entity_id 를 함수 안에서 강제해야 한다");
+
+  // 4-d) 삼순 P1(2026-08-05) — 나머지 fail-close 4종을 **actual RPC reject** 로 고정한다.
+  //   직전까지는 migration 에만 있고 게이트가 안 태워서, 이 보호를 지워도 GREEN 이었다.
+  //   전부 "조용한 0행" 이 되면 미수집 선수와 구분이 안 돼 배선 실수가 fail-close 로 위장된다.
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["document", "69102", "namu_document", nearVector, 40],
+    ),
+    /unsupported entity_type/,
+    "entity_type 이 player 가 아니면 예외여야 한다(tier1 경로 혼입 차단)",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "   ", "namu_document", nearVector, 40],
+    ),
+    /entity_id is required/,
+    "공백 entity_id 는 예외여야 한다",
+  );
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "namu_document", null, 40],
+    ),
+    /query embedding is required/,
+    "NULL 질문벡터는 예외여야 한다(임베딩 실패를 조용한 0행으로 바꿀 수 없다)",
+  );
+  const zeroVector = `[${Array.from({ length: RAG_EMBEDDING_DIM }, () => 0).join(",")}]`;
+  await assert.rejects(
+    db.query(
+      "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["player", "69102", "namu_document", zeroVector, 40],
+    ),
+    /query embedding must be non-zero/,
+    "영벡터는 코사인이 정의되지 않아 정렬이 무의미해진다 — 예외여야 한다",
+  );
+  // 정상 벡터는 그대로 통과해야 한다(가드가 닫힌 경로까지 막지 않음을 고정).
+  const guardControl = await db.query<{ content: string }>(
+    "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+    ["player", "69102", "namu_document", nearVector, 40],
+  );
+  assert.ok(guardControl.rows.length > 0, "정상 입력은 fail-close 에 걸리지 않아야 한다");
+  console.log("PASS 선수 chunk 정렬 RPC — 질문벡터 정렬 / tier2·entity_type·entity_id·NULL·영벡터 fail-close / 상한 clamp / entity 강제");
 
   // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");
