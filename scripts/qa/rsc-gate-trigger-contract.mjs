@@ -49,13 +49,34 @@ function loadWorkflow(text) {
   const on = doc.on ?? doc[true]; // 'on' 이 YAML 에서 boolean true 로 파싱될 수 있다
   const pr = on?.pull_request?.paths ?? [];
   const push = on?.push?.paths ?? [];
-  const steps = doc.jobs?.["result-tone"]?.steps ?? [];
+  const job = doc.jobs?.["result-tone"] ?? {};
+  const steps = job.steps ?? [];
   const baselineStep = steps.find((s) => s.name === BASELINE_STEP_NAME) ?? null;
-  return { pr, push, baselineStep };
+  return {
+    pr, push, baselineStep,
+    jobIf: job["if"],
+    jobCoe: job["continue-on-error"],
+    // effective shell/working-directory 는 step → job defaults → workflow defaults 순으로 상속된다.
+    wfDefaultShell: doc.defaults?.run?.shell,
+    jobDefaultShell: job.defaults?.run?.shell,
+    wfDefaultWd: doc.defaults?.run?.["working-directory"],
+    jobDefaultWd: job.defaults?.run?.["working-directory"],
+  };
+}
+
+const CANONICAL_SHELLS = new Set(["bash", "sh", "pwsh", "powershell", "python", "cmd"]);
+function shellOk(v) { return v === undefined || CANONICAL_SHELLS.has(`${v}`.trim()); }
+// working-directory 는 없거나 repo 루트('.'만) 허용. 그 외는 direct-call 신뢰경계를 연다.
+function wdOk(v) { return v === undefined || `${v}`.trim() === "."; }
+function coeOk(v) { return v === undefined || v === false || `${v}`.trim() === "false"; }
+function ifAlwaysTrue(v) {
+  return v === undefined || v === null
+    || `${v}`.trim() === "true" || `${v}`.trim() === "${{ always() }}" || `${v}`.trim() === "always()";
 }
 
 function check(text) {
-  const { pr, push, baselineStep } = loadWorkflow(text);
+  const wf = loadWorkflow(text);
+  const { pr, push, baselineStep } = wf;
   const fails = [];
   const pass = [];
 
@@ -102,10 +123,31 @@ function check(text) {
     // run exact 를 유지한 채 실패를 삼킬 수 있다(삼순 NO-GO 7차).
     const CANONICAL_SHELLS = new Set(["bash", "sh", "pwsh", "powershell", "python", "cmd"]);
     const shell = baselineStep["shell"];
-    if (shell === undefined) pass.push("baseline step shell 없음(기본)");
-    else if (CANONICAL_SHELLS.has(`${shell}`.trim())) pass.push(`baseline step shell canonical: ${shell}`);
+    if (shellOk(shell)) pass.push(`baseline step shell ok: ${shell ?? "(기본)"}`);
     else fails.push(`baseline step shell=${JSON.stringify(shell)} — custom shell template(|| true·{0} 등)은 실패를 삼킬 수 있다`);
+
+    const stepWd = baselineStep["working-directory"];
+    if (wdOk(stepWd)) pass.push(`baseline step working-directory ok: ${stepWd ?? "(기본)"}`);
+    else fails.push(`baseline step working-directory=${JSON.stringify(stepWd)} — direct-call 신뢰경계를 연다`);
   }
+
+  // ── job-level 무력화 축(삼순 NO-GO 8차 ①) ──
+  // job.if: false 면 skipped job 이 required 여도 GitHub 공식상 Success 로 통과한다.
+  if (ifAlwaysTrue(wf.jobIf)) pass.push("job if 없음/항상 true");
+  else fails.push(`job if=${JSON.stringify(wf.jobIf)} — skipped job 은 required 여도 Success 로 false-green 이 된다`);
+  if (coeOk(wf.jobCoe)) pass.push("job continue-on-error 없음/false");
+  else fails.push(`job continue-on-error=${JSON.stringify(wf.jobCoe)} — job 실패가 무시된다`);
+
+  // ── 상속 shell/working-directory 축(삼순 NO-GO 8차 ②) ──
+  // step 이 undefined 여도 job/workflow defaults 가 상속돼 모든 run 실패를 삼킬 수 있다.
+  if (shellOk(wf.jobDefaultShell)) pass.push("job defaults shell ok");
+  else fails.push(`job defaults.run.shell=${JSON.stringify(wf.jobDefaultShell)} — 상속 shell 이 실패를 삼킨다`);
+  if (shellOk(wf.wfDefaultShell)) pass.push("workflow defaults shell ok");
+  else fails.push(`workflow defaults.run.shell=${JSON.stringify(wf.wfDefaultShell)} — 상속 shell 이 실패를 삼킨다`);
+  if (wdOk(wf.jobDefaultWd)) pass.push("job defaults working-directory ok");
+  else fails.push(`job defaults.run.working-directory=${JSON.stringify(wf.jobDefaultWd)} — direct-call 신뢰경계를 연다`);
+  if (wdOk(wf.wfDefaultWd)) pass.push("workflow defaults working-directory ok");
+  else fails.push(`workflow defaults.run.working-directory=${JSON.stringify(wf.wfDefaultWd)} — direct-call 신뢰경계를 연다`);
 
   return { fails, pass };
 }
@@ -119,6 +161,35 @@ function run(label, text) {
 }
 
 const text = readFileSync(WF, "utf8");
+
+function injectJobKey(text, keyLine) {
+  // jobs.result-tone: 아래 첫 매핑 키(runs-on)와 같은 들여쓰기로 삽입.
+  const lines = text.split("\n");
+  const out = [];
+  let done = false;
+  for (const ln of lines) {
+    out.push(ln);
+    if (!done && /^  result-tone:\s*$/.test(ln)) { out.push("    " + keyLine); done = true; }
+  }
+  return out.join("\n");
+}
+
+function injectWorkflowDefaultsShell(text, shellVal) {
+  // 최상위에 defaults.run.shell 삽입(name: 라인 뒤).
+  const lines = text.split("\n");
+  const out = [];
+  let done = false;
+  for (const ln of lines) {
+    out.push(ln);
+    if (!done && /^name:\s/.test(ln)) {
+      out.push("defaults:");
+      out.push("  run:");
+      out.push(`    shell: ${shellVal}`);
+      done = true;
+    }
+  }
+  return out.join("\n");
+}
 
 function injectStepKey(text, stepName, keyLine) {
   const lines = text.split("\n");
@@ -146,6 +217,12 @@ if (process.argv.includes("--selftest")) {
       injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "continue-on-error: true")],
     ["E. baseline step 에 if: false", (t) =>
       injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "if: false")],
+    ["H. job-level if: false (skipped job 은 Success 로 통과)", (t) =>
+      injectJobKey(t, "if: false")],
+    ["I. job-level continue-on-error: true", (t) =>
+      injectJobKey(t, "continue-on-error: true")],
+    ["J. workflow defaults.run.shell: bash {0} || true (상속 shell)", (t) =>
+      injectWorkflowDefaultsShell(t, "bash {0} || true")],
     ["F. baseline step 에 continue-on-error: ${{ true }} (expression-true)", (t) =>
       injectStepKey(t, "Run _rsc prefetch budget gate (fail-closed)", "continue-on-error: ${{ true }}")],
     ["G. baseline step 에 custom shell `bash {0} || true`", (t) =>
