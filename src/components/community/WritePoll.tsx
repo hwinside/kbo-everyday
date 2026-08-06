@@ -12,6 +12,7 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { createPoll, type PollOptionInput } from "@/lib/community/poll-client";
+import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
 
 /**
  * 커뮤니티 투표 작성 컴포저 (spec: specs/community-poll.md §6, S2).
@@ -94,9 +95,10 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   const [tagTeamSlugs, setTagTeamSlugs] = useState<string[]>([]);
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
-  // 게시글 최소 1팀 태그(2026-08-06). 직접 태그 외에 팀/선수 선지도 서버에서 team_tags 로 union 된다.
-  const hasTeamScope =
-    tagTeamSlugs.length > 0 || taggedPlayers.length > 0 || hasTeam || hasPlayer;
+  // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
+  // 팀/선수 선지가 서버에서 team_tags 로 union 되긴 하지만, 그건 파생이지 글쓴이의 명시적
+  // 공개범위 선택이 아니다 — 필수조건을 대신하지 않는다.
+  const hasTeamScope = hasRequiredTeamTag(tagTeamSlugs);
 
   // 설명 textarea 자동 세로 확장(엔터·긴 글 대응). content 변경·열림 시 height 재계산.
   // max(약 10줄) 도달 후에는 내부 스크롤 허용(overflow-y-auto) — cap 되었다고 스크롤까지
@@ -194,8 +196,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
       setError("한 투표에 팀과 선수를 함께 넣을 수 없어요");
       return null;
     }
-    // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06).
-    // 팀/선수 선지가 있으면 서버가 그 팀을 team_tags 에 union 하므로 그것도 스코프로 인정한다.
+    // 게시글은 명시적 team_tags 1개 이상 필수(하린아빠 2026-08-06 / 삼순 정정).
     if (!hasTeamScope) {
       setError("팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)");
       return null;

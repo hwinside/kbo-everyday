@@ -19,6 +19,8 @@ import { teamIdForKboId } from "@/lib/utils/player-roster";
  * 관여 팀 = team_tags(직접 선택) ∪ player_tags 선수들의 소속팀.
  * 올스타(101/102)는 정규 10구단이 아니므로 집합에서 제외한다 — 포함시키면
  * "10팀 전부" 판정이 흐트러진다.
+ *
+ * 표기 순서는 사용자가 고른 순서를 따른다(resolveScopeTeamIds 참고).
  */
 
 /** 정규 KBO 구단 수. TEAMS(올스타 제외)에서 파생 — 구단 수가 바뀌면 자동 추종. */
@@ -26,6 +28,16 @@ export const KBO_TEAM_COUNT = TEAMS.length;
 
 /** 4팀 이상일 때 배지로 직접 노출하는 팀 수. 나머지는 "외 n팀". */
 export const SCOPE_SHOWN_LIMIT = 3;
+
+/**
+ * 게시글 저장 조건 — **명시적 team_tags 1개 이상**(하린아빠 2026-08-06, 삼순 정정).
+ * 선수 태그의 소속팀은 이 필수조건을 대신하지 않는다 — 글쓴이가 공개범위를 직접
+ * 고르게 하는 게 목적이라, 선수를 골랐다는 이유로 자동 통과시키면 의도가 무너진다.
+ * 작성 화면 3종(일반·사진·투표)이 모두 이 함수를 써야 조건이 갈라지지 않는다.
+ */
+export function hasRequiredTeamTag(teamSlugs: readonly string[] | null | undefined): boolean {
+  return (teamSlugs ?? []).some((slug) => getTeamBySlug(String(slug)) !== undefined);
+}
 
 export type PostScope =
   /** 선수 태그 1명 (단일 팀) */
@@ -52,27 +64,33 @@ function parseTag(tag: string): { kboId: string; name: string } {
 }
 
 /**
- * 관여 팀 id 집합 — team_tags ∪ player_tags 소속팀. 올스타 제외.
- * 반환 순서는 구단 기본 순서(TEAMS)로 고정한다. 사용자가 고른 순서를 쓰면
- * 같은 글이 화면·기기마다 다른 팀을 앞에 보여줄 수 있다.
+ * 관여 팀 id 배열 — team_tags ∪ player_tags 소속팀. 올스타 제외.
+ *
+ * 순서 = **사용자가 고른 순서**(하린아빠 2026-08-06 확정).
+ *   ① 직접 선택한 team_tags 를 저장된 배열 순서 그대로 먼저
+ *   ② 선수 태그에서 파생된 팀을 뒤에 중복 제거해 붙임
+ * 화면 간 일관성은 이 함수를 모두가 공유해서 보장한다(같은 입력 → 같은 순서).
+ * 순서 정보가 없는 레거시 글은 저장 배열 순서 그대로 따른다.
  */
 export function resolveScopeTeamIds(post: ScopeInput): number[] {
-  const ids = new Set<number>();
+  const ordered: number[] = [];
+  const seen = new Set<number>();
+  const push = (tid: number | null | undefined) => {
+    if (tid == null || isAllStarTeamId(tid) || seen.has(tid)) return;
+    seen.add(tid);
+    ordered.push(tid);
+  };
 
+  // ① 직접 선택한 팀 — 저장된 배열 순서 = 사용자 선택 순서.
+  for (const slug of post.team_tags ?? []) push(getTeamBySlug(String(slug))?.id);
+
+  // ② 선수 태그 소속팀 — 뒤에 붙임.
   for (const tag of post.player_tags ?? []) {
     const { kboId } = parseTag(tag);
-    if (!kboId) continue;
-    const tid = teamIdForKboId(kboId);
-    if (tid != null && !isAllStarTeamId(tid)) ids.add(tid);
+    if (kboId) push(teamIdForKboId(kboId));
   }
 
-  for (const slug of post.team_tags ?? []) {
-    const tid = getTeamBySlug(String(slug))?.id;
-    if (tid != null && !isAllStarTeamId(tid)) ids.add(tid);
-  }
-
-  // 구단 기본 순서로 정렬(안정적 표기).
-  return TEAMS.filter((t) => ids.has(t.id)).map((t) => t.id);
+  return ordered;
 }
 
 /**

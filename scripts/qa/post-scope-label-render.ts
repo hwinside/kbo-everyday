@@ -145,11 +145,24 @@ async function main() {
   const s = (n: number) => TEAMS.slice(0, n).map((t) => t.slug);
   const shortName = (slug: string) => TEAMS.find((t) => t.slug === slug)!.shortName;
 
+  // 실제 로스터에서 해당 팀 선수 1명을 집어 태그 문자열로 만든다.
+  // 가짜 kboId 를 쓰면 teamIdForKboId 가 null 을 돌려 "선수 유래 팀" 경로를 아예 안 태운다.
+  const roster = (await import("../../src/lib/constants/players-roster.json"))
+    .default as { kboId: string; name: string; teamId: number }[];
+  const playerTagOfTeam = (teamId: number) => {
+    const p = roster.find((r) => r.teamId === teamId);
+    if (!p) throw new Error(`roster 에 teamId=${teamId} 선수가 없음 — fixture 재구성 필요`);
+    return `${p.kboId}:${p.name}`;
+  };
+
   // ── §1. 실제 커뮤니티 피드(PhotoFeed) 렌더 ────────────────────────────────
   // AuthProvider 없이 렌더한다 — useAuth 는 createContext 기본값(user/profile null)을
   // 반환하므로 비로그인 사용자가 피드를 보는 실제 경로와 같다.
   const PhotoFeed = (await import("../../src/components/community/PhotoFeed")).default;
 
+  // 사용자 선택 순서 보존을 검증하려면 입력 순서가 구단 기본 순서와 달라야 한다.
+  // 입력을 전부 기본 순서로 주면 "기본 순서로 정렬"하는 구현도 같이 통과해버린다.
+  const rev4 = [...s(4)].reverse();  // 뒤집은 4팀 선택
   const fixtures: { label: string; post: Fixture; expect: string }[] = [
     { label: "10팀 전부 → 전체구단 공개", post: { id: 1, team_tags: allSlugs }, expect: "전체구단 공개" },
     { label: "태그 없음 → 전체구단 공개", post: { id: 2 }, expect: "전체구단 공개" },
@@ -158,6 +171,18 @@ async function main() {
     { label: "3팀 → 팀 배지 3개(외 n팀 없음)", post: { id: 5, team_tags: s(3) }, expect: s(3).map(shortName).join(" ") },
     { label: "4팀 → 3팀 + 외 1팀", post: { id: 6, team_tags: s(4) }, expect: `${s(3).map(shortName).join(" ")} 외 1팀` },
     { label: "9팀 → 3팀 + 외 6팀", post: { id: 7, team_tags: s(9) }, expect: `${s(3).map(shortName).join(" ")} 외 6팀` },
+    {
+      // 하린아빠 확정(2026-08-06): 앞 3팀은 **사용자가 고른 순서**.
+      label: "선택 순서 보존(역순 4팀)",
+      post: { id: 8, team_tags: rev4 },
+      expect: `${rev4.slice(0, 3).map(shortName).join(" ")} 외 1팀`,
+    },
+    {
+      // 직접 선택 팀이 먼저, 선수 태그 유래 팀은 뒤에.
+      label: "직접 선택 우선, 선수 유래 팀은 뒤",
+      post: { id: 9, team_tags: [allSlugs[4]], player_tags: [playerTagOfTeam(1)] },
+      expect: `${shortName(allSlugs[4])} ${shortName(allSlugs[0])}`,
+    },
   ];
 
   const el = document.createElement("div");
@@ -267,7 +292,7 @@ async function main() {
   // 검출력이 없는 것이므로 통째로 실패시킨다.
   if (SELFTEST) {
     console.log("\n  [selftest] 결함주입 — 아래 항목은 RED 여야 정상");
-    const { resolvePostScope } = await import("../../src/lib/utils/post-scope");
+    const { resolvePostScope, hasRequiredTeamTag } = await import("../../src/lib/utils/post-scope");
     const mutations: { name: string; check: () => boolean }[] = [
       {
         name: "10팀을 9팀으로 줄이면 전체구단이 아님",
@@ -289,13 +314,26 @@ async function main() {
       },
       {
         // shown 은 teamId 배열이다. 슬러그로 다시 변환해 비교한다.
-        name: "선택 순서를 뒤집어도 shown 은 구단 기본 순서",
+        // 하린아빠 확정: 기본 순서가 아니라 **선택 순서** 보존.
+        name: "역순 입력이면 shown 도 역순(선택 순서 보존)",
         check: () => {
           const r = resolvePostScope({ team_tags: [...s(4)].reverse() });
           if (r.kind !== "teams") return false;
           const slugs = r.shown.map((id) => TEAMS.find((t) => t.id === id)!.slug);
-          return slugs.join(",") === s(3).join(",");
+          return slugs.join(",") === [...s(4)].reverse().slice(0, 3).join(",");
         },
+      },
+      {
+        name: "선수 태그 소속팀은 필수조건을 대신하지 않음",
+        check: () => !hasRequiredTeamTag([]),
+      },
+      {
+        name: "team_tags 1개면 필수조건 충족",
+        check: () => hasRequiredTeamTag(s(1)),
+      },
+      {
+        name: "알 수 없는 슬러그는 필수조건 미충족",
+        check: () => !hasRequiredTeamTag(["not-a-team"]),
       },
       {
         name: "태그 0개는 all",

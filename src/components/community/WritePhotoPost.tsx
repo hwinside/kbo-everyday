@@ -10,6 +10,7 @@ import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
 import TeamTagger from "./TeamTagger";
+import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
 import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -63,8 +64,9 @@ export default function WritePhotoPost({
   );
   const [teamSlugs, setTeamSlugs] = useState<string[]>(defaultTeamSlugs ?? []);
   const [hashtags, setHashtags] = useState<string[]>([]);
-  // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06). 선수 태그는 소속팀을 만드므로 함께 인정.
-  const hasTeamScope = teamSlugs.length > 0 || selectedPlayers.length > 0;
+  // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
+  // 선수 태그의 소속팀은 이 필수조건을 대신하지 않는다.
+  const hasTeamScope = hasRequiredTeamTag(teamSlugs);
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -227,8 +229,8 @@ export default function WritePhotoPost({
 
   async function handleSubmit() {
     if (media.length === 0 || submittingRef.current) return;
-    // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06). 선수 태그도 소속팀을 만들므로 허용.
-    if (teamSlugs.length === 0 && selectedPlayers.length === 0) return;
+    // 최소 1팀 태그 — 버튼 disabled 우회 방어.
+    if (!hasRequiredTeamTag(teamSlugs)) return;
     submittingRef.current = true;
     setSubmitting(true);
 
