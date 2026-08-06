@@ -9,6 +9,12 @@ import { readFileSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { preserveExistingRosterPlayers } from "./lib/roster-preservation.mjs";
+import {
+  buildTeamBaseline,
+  evaluateTeamCollection,
+  evaluateRosterCompletion,
+  formatCompletionFailure,
+} from "./lib/roster-crawl-completion.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -71,9 +77,15 @@ function parseKboBirthday(text) {
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
+/**
+ * 셀렉트를 바꾸고 표가 갱신될 때까지 기다린다.
+ * @returns {Promise<boolean>} 셀렉트가 *실제로* 요청값을 들고 있는지.
+ *   false 면 화면이 직전 팀 데이터일 수 있으므로 그 수집 결과를 신뢰하면 안 된다.
+ *   (기존 판은 timeout 시 조용히 진행해 직전 팀 표를 그대로 긁었다.)
+ */
 async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
   const current = await page.$eval(selector, (el) => el.value).catch(() => null);
-  if (current === value) return;
+  if (current === value) return true;
 
   const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
   await page.selectOption(selector, value);
@@ -93,6 +105,58 @@ async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
   }
   await page.waitForLoadState("networkidle").catch(() => {});
   await page.waitForTimeout(1000);
+
+  const settled = await page.$eval(selector, (el) => el.value).catch(() => null);
+  return settled === value;
+}
+
+/**
+ * 팀 1개를 완주 계약 아래에서 수집한다. 실패 사유가 있으면 bounded retry.
+ * 수집된 행은 판정이 ok 일 때만 반영한다 — 오염 데이터를 넣고 나중에 되돌리지 않는다.
+ */
+async function collectTeamWithContract({
+  page,
+  teamSel,
+  teamCode,
+  teamName,
+  teamId,
+  phase,
+  baseline,
+  applyRows,
+  maxAttempts = 3,
+}) {
+  let result = null;
+  let attempts = 0;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attempts = attempt;
+    // 재시도 전에는 필터를 비워 셀렉트 상태를 확실히 되돌린다.
+    if (attempt > 1) {
+      await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+      await page.waitForTimeout(1500);
+    }
+
+    const selectConfirmed = await changeSelectAndWait(page, teamSel, teamCode, 8000);
+    const rows = selectConfirmed ? await scrapeAllPages(page) : [];
+    const usable = rows.filter((r) => (r.texts[1] || "") && extractPlayerId(r.hrefs[1] || ""));
+
+    result = evaluateTeamCollection({
+      selectConfirmed,
+      collected: usable.length,
+      baseline,
+    });
+
+    if (result.ok) {
+      applyRows(usable, teamId, teamName);
+      console.log(`    → ${usable.length}명 (시도 ${attempt})`);
+      break;
+    }
+
+    console.log(`    ⚠️ ${teamName} 수집 판정 실패: ${result.reason} (${result.detail}) — 시도 ${attempt}/${maxAttempts}`);
+  }
+
+  await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+  return { teamName, phase, result, attempts };
 }
 
 async function scrapeAllPages(page) {
@@ -160,6 +224,8 @@ async function main() {
   page.setDefaultTimeout(30000);
 
   const allPlayers = new Map();
+  const teamBaseline = buildTeamBaseline(existingRoster);
+  const teamOutcomes = [];
 
   // Season selector IDs
   const seasonSel = "select[name$='ddlSeason$ddlSeason']";
@@ -177,26 +243,29 @@ async function main() {
 
   for (const [teamCode, teamName, teamId] of TEAMS) {
     console.log(`  ${teamName}...`);
-    await changeSelectAndWait(page, teamSel, teamCode, 8000);
-
-    const rows = await scrapeAllPages(page);
-    for (const r of rows) {
-      const name = r.texts[1] || "";
-      const playerId = extractPlayerId(r.hrefs[1] || "");
-      if (!name || !playerId) continue;
-
-      upsertScrapedPlayer(allPlayers, {
-        playerId,
-        name,
-        teamId,
+    teamOutcomes.push(
+      await collectTeamWithContract({
+        page,
+        teamSel,
+        teamCode,
         teamName,
-        position: existingFor(playerId)?.position || "야수",
-      });
-    }
-    console.log(`    → ${rows.length}명`);
-
-    // Reset team filter
-    await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+        teamId,
+        phase: "batters",
+        baseline: teamBaseline.get(teamId),
+        applyRows: (rows, tid, tname) => {
+          for (const r of rows) {
+            const playerId = extractPlayerId(r.hrefs[1] || "");
+            upsertScrapedPlayer(allPlayers, {
+              playerId,
+              name: r.texts[1] || "",
+              teamId: tid,
+              teamName: tname,
+              position: existingFor(playerId)?.position || "야수",
+            });
+          }
+        },
+      })
+    );
   }
 
   // ===== PITCHERS =====
@@ -211,26 +280,41 @@ async function main() {
 
   for (const [teamCode, teamName, teamId] of TEAMS) {
     console.log(`  ${teamName}...`);
-    await changeSelectAndWait(page, teamSel, teamCode, 8000);
-
-    const rows = await scrapeAllPages(page);
-    for (const r of rows) {
-      const name = r.texts[1] || "";
-      const playerId = extractPlayerId(r.hrefs[1] || "");
-      if (!name || !playerId) continue;
-
-      upsertScrapedPlayer(allPlayers, {
-        playerId,
-        name,
-        teamId,
+    teamOutcomes.push(
+      await collectTeamWithContract({
+        page,
+        teamSel,
+        teamCode,
         teamName,
-        position: "투수",
-      });
-    }
-    console.log(`    → ${rows.length}명`);
-
-    await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+        teamId,
+        phase: "pitchers",
+        // 투수 페이지 baseline 은 팀 전체 인원이 아니라 투수만이라 floor 만 적용한다.
+        baseline: undefined,
+        applyRows: (rows, tid, tname) => {
+          for (const r of rows) {
+            const playerId = extractPlayerId(r.hrefs[1] || "");
+            upsertScrapedPlayer(allPlayers, {
+              playerId,
+              name: r.texts[1] || "",
+              teamId: tid,
+              teamName: tname,
+              position: "투수",
+            });
+          }
+        },
+      })
+    );
   }
+
+  // 완주 계약: 한 팀이라도 실패하면 저장하지 않는다.
+  // 부분 수집을 정상 완주로 저장하던 결손이 `②-b roster 자동머지 보류` 의 근거였다.
+  const completion = evaluateRosterCompletion(teamOutcomes, TEAMS.length * 2);
+  if (!completion.complete) {
+    await browser.close();
+    console.error(`\n${formatCompletionFailure(completion)}`);
+    process.exit(1);
+  }
+  console.log(`\n✅ 수집 완주 계약 통과 — ${completion.summary}`);
 
   // ===== 상세페이지 보강 (등번호 + 생년월일) =====
   // 기록 페이지(HitterBasic/PitcherBasic)에는 등번호·생년월일이 없음.
