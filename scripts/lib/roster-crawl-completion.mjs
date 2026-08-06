@@ -7,48 +7,85 @@
  * 특정 팀이 통째로 사라져도 exit 0 이 됐다. 그래서 `roster 변경 = 사람이 봐야 함` 가드가
  * 필요했고, roster 는 콜업·말소로 거의 매일 바뀌므로 자동머지가 구조적으로 멈췄다.
  *
- * 이 모듈은 "수집이 완주했는가" 를 값이 아니라 *불변식*으로 판정한다.
+ * ── 2026-08-06 삼순 NO-GO 3건 반영 ─────────────────────────────
+ *
+ * ① baseline 축 오류 (actual crawl 영구 RED)
+ *    이전 판은 *전체 roster 인원*(투수 포함, 미출장 보존분 포함)을 baseline 으로 두고
+ *    *타자 phase 수집분*과 비교했다. 축이 다르므로 정상 크롤도 통과할 수 없다.
+ *    실측(2026-08-06 저장본): 전체 baseline×0.7 기준으로 10팀 전부 FAIL,
+ *    roster 를 phase 로 나눠도 5번 팀이 FAIL(rosterBat 43 vs statBat 26 — 기록 페이지는
+ *    *출장 기록이 있는 선수*만 내려주므로 roster 보다 항상 작다).
+ *    → baseline 은 같은 축, 즉 **직전 크롤이 저장한 같은 phase 의 팀별 수**로 잡는다.
+ *
+ * ② select 값만 보고 true (직전 팀 표 통과)
+ *    셀렉트 최종값 확인은 "요청이 반영됐다"는 증거일 뿐 "표가 그 팀 것"이라는 증거가 아니다.
+ *    KBO 기록 표에는 **팀명 컬럼**이 실재한다(실측 헤더: 순위·선수명·팀명·AVG…).
+ *    → 수집한 행의 팀명이 전부 요청 팀인지 **witness** 로 대조한다. 이게 주 판정이고
+ *      셀렉트 확인은 보조다.
+ *
+ * ③ quiet EOF·중복 ID·독립 set 안정성 미검증
+ *    → 페이저 완주 여부, 팀 내 playerId 중복(같은 페이지 반복 수집),
+ *      독립 재조회 set 동일성을 각각 판정한다.
+ *
  * 순수 함수만 두어 실제 크롤 없이 결함주입 테스트가 가능하다.
  */
 
-/** 팀별 최소 인원 — 1군+육성 합산 기록 페이지 기준. 이보다 적으면 수집 사고로 본다. */
+/** 팀별 최소 인원 — 기록 페이지 기준(출장 기록 보유자). 이보다 적으면 수집 사고로 본다. */
 export const TEAM_MIN_PLAYERS = 15;
 
-/** 팀별 baseline 대비 허용 감소 비율. 트레이드·대량 말소를 넘어서는 급락을 차단한다. */
+/** 같은 phase 직전 저장본 대비 허용 감소 비율. */
 export const TEAM_MAX_DROP_RATIO = 0.3;
 
 /** 팀 수집 1회 시도의 판정 사유. */
 export const TEAM_FAIL_REASONS = {
   SELECT_UNCONFIRMED: "select_unconfirmed",
+  WRONG_TEAM: "wrong_team",
+  PAGER_INCOMPLETE: "pager_incomplete",
+  DUPLICATE_IDS: "duplicate_ids",
   EMPTY: "empty",
   BELOW_FLOOR: "below_floor",
   DROP: "drop",
+  UNSTABLE: "unstable",
 };
 
 /**
- * 기존 roster 에서 팀별 인원 baseline 을 만든다.
- * baseline 이 없는 팀(첫 실행)은 undefined 로 남겨 drop 판정에서 제외한다.
+ * 같은 phase 의 직전 저장본에서 팀별 baseline 을 만든다.
+ *
+ * ⚠︎ roster 전체 인원을 쓰면 안 된다(삼순 NO-GO ①). 기록 페이지는 출장 기록이 있는
+ * 선수만 내려주므로 roster(미출장·군 복무 보존분 포함)와 축이 다르다.
+ *
+ * @param {Array<{kboId:string|number}>} statRows 직전 저장본의 같은 phase 스탯 행
+ * @param {Map<string, {teamId:number}>} rosterById kboId → roster 행
  */
-export function buildTeamBaseline(existingRoster) {
+export function buildPhaseBaseline(statRows, rosterById) {
   const baseline = new Map();
-  for (const p of existingRoster || []) {
-    if (p?.teamId == null) continue;
-    baseline.set(p.teamId, (baseline.get(p.teamId) || 0) + 1);
+  for (const row of statRows || []) {
+    const player = rosterById.get(String(row?.kboId));
+    if (!player || player.teamId == null) continue;
+    baseline.set(player.teamId, (baseline.get(player.teamId) || 0) + 1);
   }
   return baseline;
 }
 
 /**
  * 팀 1개 수집 결과를 판정한다.
+ *
  * @param {object} input
- * @param {boolean} input.selectConfirmed 팀 셀렉트가 요청값으로 실제 반영됐는지
- * @param {number} input.collected 이번 수집에서 이 팀으로 잡힌 선수 수
- * @param {number|undefined} input.baseline 기존 roster 의 이 팀 인원 (없으면 undefined)
- * @returns {{ ok: boolean, reason: string|null, detail: string }}
+ * @param {boolean} input.selectConfirmed 팀 셀렉트가 요청값으로 반영됐는지 (보조 증거)
+ * @param {string} input.requestedTeamName 요청한 팀명
+ * @param {string[]} input.observedTeamNames 수집 행에서 읽은 팀명들 (witness)
+ * @param {number} input.collected 유효 행 수
+ * @param {number} input.uniqueIds 유효 행의 서로 다른 playerId 수
+ * @param {boolean} input.pagerComplete 페이저를 끝까지 돌았는지 (quiet EOF 차단)
+ * @param {number|undefined} input.baseline 같은 phase 직전 저장본의 이 팀 수
  */
 export function evaluateTeamCollection({
   selectConfirmed,
+  requestedTeamName,
+  observedTeamNames,
   collected,
+  uniqueIds,
+  pagerComplete,
   baseline,
   minPlayers = TEAM_MIN_PLAYERS,
   maxDropRatio = TEAM_MAX_DROP_RATIO,
@@ -57,12 +94,51 @@ export function evaluateTeamCollection({
     return {
       ok: false,
       reason: TEAM_FAIL_REASONS.SELECT_UNCONFIRMED,
-      detail: "팀 셀렉트가 요청값으로 반영되지 않음 — 직전 팀 화면을 긁었을 수 있음",
+      detail: "팀 셀렉트가 요청값으로 반영되지 않음",
     };
   }
+
   if (!Number.isFinite(collected) || collected <= 0) {
     return { ok: false, reason: TEAM_FAIL_REASONS.EMPTY, detail: "수집 0명" };
   }
+
+  // ── 팀명 witness ──────────────────────────────────────────
+  // 셀렉트 값이 바뀌어도 표가 아직 직전 팀 것일 수 있다. 표 자체가 증인이다.
+  const names = observedTeamNames || [];
+  if (names.length === 0) {
+    return {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.WRONG_TEAM,
+      detail: "행에서 팀명을 읽지 못함 — witness 없이 통과시키지 않는다",
+    };
+  }
+  const foreign = [...new Set(names.filter((n) => n !== requestedTeamName))];
+  if (foreign.length > 0) {
+    return {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.WRONG_TEAM,
+      detail: `요청 ${requestedTeamName} 인데 표에 다른 팀 존재: ${foreign.join(",")}`,
+    };
+  }
+
+  // ── quiet EOF ─────────────────────────────────────────────
+  if (pagerComplete !== true) {
+    return {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.PAGER_INCOMPLETE,
+      detail: "페이저를 끝까지 돌지 못함 — 부분 페이지만 수집됐다",
+    };
+  }
+
+  // ── 중복 ID (같은 페이지 반복 수집) ────────────────────────
+  if (Number.isFinite(uniqueIds) && uniqueIds !== collected) {
+    return {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.DUPLICATE_IDS,
+      detail: `행 ${collected}개 중 고유 ID ${uniqueIds}개 — 같은 페이지를 반복 수집했다`,
+    };
+  }
+
   if (collected < minPlayers) {
     return {
       ok: false,
@@ -70,24 +146,50 @@ export function evaluateTeamCollection({
       detail: `수집 ${collected}명 < 최소 ${minPlayers}명`,
     };
   }
+
   if (Number.isFinite(baseline) && baseline > 0) {
     const allowed = Math.floor(baseline * (1 - maxDropRatio));
     if (collected < allowed) {
       return {
         ok: false,
         reason: TEAM_FAIL_REASONS.DROP,
-        detail: `수집 ${collected}명 < 허용 하한 ${allowed}명 (baseline ${baseline}, 허용 감소 ${Math.round(maxDropRatio * 100)}%)`,
+        detail: `수집 ${collected}명 < 허용 하한 ${allowed}명 (직전 저장본 ${baseline}, 허용 감소 ${Math.round(maxDropRatio * 100)}%)`,
       };
     }
   }
+
   return { ok: true, reason: null, detail: `수집 ${collected}명` };
+}
+
+/**
+ * 독립 재조회 2회의 playerId 집합이 동일한지 판정한다.
+ * KBO 는 같은 순간에도 조회마다 다른 행 집합을 주는 일이 있다(#1103 전다민 flapping).
+ * 흔들리는 판독을 정상 완주로 저장하면 그게 곧 오염이다.
+ */
+export function evaluateSetStability(firstIds, secondIds) {
+  const a = new Set(firstIds || []);
+  const b = new Set(secondIds || []);
+  const onlyA = [...a].filter((id) => !b.has(id));
+  const onlyB = [...b].filter((id) => !a.has(id));
+  if (onlyA.length === 0 && onlyB.length === 0) {
+    return { ok: true, reason: null, detail: `재조회 동일 (${a.size}명)` };
+  }
+  const diff = [
+    onlyA.length > 0 ? `1회차만 ${onlyA.slice(0, 5).join(",")}` : "",
+    onlyB.length > 0 ? `2회차만 ${onlyB.slice(0, 5).join(",")}` : "",
+  ]
+    .filter(Boolean)
+    .join(" / ");
+  return {
+    ok: false,
+    reason: TEAM_FAIL_REASONS.UNSTABLE,
+    detail: `재조회 집합 불일치 — ${diff}`,
+  };
 }
 
 /**
  * 전 팀 판정을 모아 완주 여부를 결정한다.
  * 한 팀이라도 실패하면 완주가 아니다 (fail-close).
- * @param {Array<{ teamName: string, phase: string, result: {ok:boolean, reason:string|null, detail:string}, attempts:number }>} teamOutcomes
- * @param {number} expectedTeamSlots 기대 슬롯 수 (팀 수 × phase 수)
  */
 export function evaluateRosterCompletion(teamOutcomes, expectedTeamSlots) {
   const failures = teamOutcomes.filter((o) => !o.result.ok);

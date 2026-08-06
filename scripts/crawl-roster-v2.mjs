@@ -10,8 +10,9 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { preserveExistingRosterPlayers } from "./lib/roster-preservation.mjs";
 import {
-  buildTeamBaseline,
+  buildPhaseBaseline,
   evaluateTeamCollection,
+  evaluateSetStability,
   evaluateRosterCompletion,
   formatCompletionFailure,
 } from "./lib/roster-crawl-completion.mjs";
@@ -128,27 +129,49 @@ async function collectTeamWithContract({
   let result = null;
   let attempts = 0;
 
+  /** 필터를 비운 뒤 다시 걸어 **독립적으로** 한 번 수집한다. */
+  const scrapeOnce = async () => {
+    const selectConfirmed = await changeSelectAndWait(page, teamSel, teamCode, 8000);
+    if (!selectConfirmed) return { selectConfirmed, usable: [], pagerComplete: false };
+    const { rows, pagerComplete } = await scrapeAllPages(page);
+    return { selectConfirmed, usable: toUsableRows(rows), pagerComplete };
+  };
+
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attempts = attempt;
-    // 재시도 전에는 필터를 비워 셀렉트 상태를 확실히 되돌린다.
-    if (attempt > 1) {
-      await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
-      await page.waitForTimeout(1500);
-    }
+    // 매 시도 전 필터를 비워 셀렉트 · 표 상태를 확실히 되돌린다.
+    await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+    await page.waitForTimeout(attempt > 1 ? 1500 : 500);
 
-    const selectConfirmed = await changeSelectAndWait(page, teamSel, teamCode, 8000);
-    const rows = selectConfirmed ? await scrapeAllPages(page) : [];
-    const usable = rows.filter((r) => (r.texts[1] || "") && extractPlayerId(r.hrefs[1] || ""));
+    const first = await scrapeOnce();
+    const ids = first.usable.map((r) => r.playerId);
 
     result = evaluateTeamCollection({
-      selectConfirmed,
-      collected: usable.length,
+      selectConfirmed: first.selectConfirmed,
+      requestedTeamName: teamName,
+      observedTeamNames: first.usable.map((r) => r.teamNameCell),
+      collected: first.usable.length,
+      uniqueIds: new Set(ids).size,
+      pagerComplete: first.pagerComplete,
       baseline,
     });
 
+    // 1차 판정을 통과했을 때만 독립 재조회로 집합 안정성을 본다.
+    // KBO 는 같은 순간에도 조회마다 다른 행 집합을 주는 일이 있다(#1103).
     if (result.ok) {
-      applyRows(usable, teamId, teamName);
-      console.log(`    → ${usable.length}명 (시도 ${attempt})`);
+      await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
+      await page.waitForTimeout(800);
+      const second = await scrapeOnce();
+      const stability = evaluateSetStability(
+        ids,
+        second.usable.map((r) => r.playerId)
+      );
+      if (!stability.ok) result = stability;
+    }
+
+    if (result.ok) {
+      applyRows(first.usable, teamId, teamName);
+      console.log(`    → ${first.usable.length}명 (시도 ${attempt}, 재조회 동일)`);
       break;
     }
 
@@ -159,6 +182,14 @@ async function collectTeamWithContract({
   return { teamName, phase, result, attempts };
 }
 
+/**
+ * 페이저를 끝까지 돌며 전 행을 수집한다.
+ *
+ * @returns {Promise<{rows: object[], pagerComplete: boolean, reason: string}>}
+ *   `pagerComplete=false` 는 **quiet EOF** — 중간에서 끊겼다는 뜻이다.
+ *   기존 판은 중간 0행과 정상 종료를 둘 다 `break` 로 똑같이 처리해
+ *   부분 수집을 완주로 오인했다.
+ */
 async function scrapeAllPages(page) {
   const allRows = [];
   let pageNum = 1;
@@ -176,7 +207,17 @@ async function scrapeAllPages(page) {
         };
       })
     );
-    if (rows.length === 0) break;
+
+    if (rows.length === 0) {
+      // 1페이지가 비었으면 그것만으로는 페이저 결손이 아니다(결과 없음).
+      // 수집 0명 자체는 팀 판정의 EMPTY 가 잡는다.
+      // 반면 2페이지 이후의 0행은 중간에서 끊긴 것이다.
+      return {
+        rows: allRows,
+        pagerComplete: pageNum === 1,
+        reason: pageNum === 1 ? "empty_first_page" : `blank_page_at_${pageNum}`,
+      };
+    }
     allRows.push(...rows);
 
     const targetPageText = String(pageNum + 1);
@@ -190,7 +231,8 @@ async function scrapeAllPages(page) {
     }
 
     const nextGroupBtn = await page.$('a[id$="btnNext"]');
-    if (!nextGroupBtn) break;
+    // 다음 페이지 버튼도 그룹 이동 버튼도 없다 = 정상 종료.
+    if (!nextGroupBtn) return { rows: allRows, pagerComplete: true, reason: "exhausted" };
 
     const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
       links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
@@ -201,11 +243,25 @@ async function scrapeAllPages(page) {
     const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
       links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
     );
-    if (!afterPager || afterPager === beforePager) break;
+    // 마지막 그룹에서는 btnNext 가 있어도 더 나아가지 않는다 = 정상 종료.
+    if (!afterPager || afterPager === beforePager) {
+      return { rows: allRows, pagerComplete: true, reason: "last_group" };
+    }
     pageNum++;
   }
+}
 
-  return allRows;
+/** 유효 행(선수명+playerId 보유)만 추려내고 팀명 witness 를 함께 넘긴다. */
+function toUsableRows(rows) {
+  const usable = [];
+  for (const r of rows) {
+    const name = r.texts[1] || "";
+    const playerId = extractPlayerId(r.hrefs[1] || "");
+    if (!name || !playerId) continue;
+    // KBO 기록 표 헤더 실측: 순위 · 선수명 · **팀명** · AVG …
+    usable.push({ playerId, name, teamNameCell: r.texts[2] || "" });
+  }
+  return usable;
 }
 
 function extractPlayerId(href) {
@@ -224,7 +280,22 @@ async function main() {
   page.setDefaultTimeout(30000);
 
   const allPlayers = new Map();
-  const teamBaseline = buildTeamBaseline(existingRoster);
+  // baseline 은 **같은 축**이어야 한다(삼순 NO-GO ①).
+  // 전체 roster 인원(투수·미출장 보존분 포함)을 타자 phase 수집분과 비교하면
+  // 정상 크롤도 통과할 수 없어 actual crawl 이 영구 RED 가 된다.
+  // 직전 저장본의 *같은 phase* 팀별 수를 기준으로 삼는다.
+  const readJsonSafe = (file) => {
+    try {
+      return JSON.parse(readFileSync(join(CONSTANTS_DIR, file), "utf-8"));
+    } catch {
+      return [];
+    }
+  };
+  const rosterById = new Map(existingRoster.map((p) => [String(p.kboId), p]));
+  const baselineByPhase = {
+    batters: buildPhaseBaseline(readJsonSafe("stats-2026-batters.json"), rosterById),
+    pitchers: buildPhaseBaseline(readJsonSafe("stats-2026-pitchers.json"), rosterById),
+  };
   const teamOutcomes = [];
 
   // Season selector IDs
@@ -251,7 +322,7 @@ async function main() {
         teamName,
         teamId,
         phase: "batters",
-        baseline: teamBaseline.get(teamId),
+        baseline: baselineByPhase.batters.get(teamId),
         applyRows: (rows, tid, tname) => {
           for (const r of rows) {
             const playerId = extractPlayerId(r.hrefs[1] || "");
@@ -288,8 +359,7 @@ async function main() {
         teamName,
         teamId,
         phase: "pitchers",
-        // 투수 페이지 baseline 은 팀 전체 인원이 아니라 투수만이라 floor 만 적용한다.
-        baseline: undefined,
+        baseline: baselineByPhase.pitchers.get(teamId),
         applyRows: (rows, tid, tname) => {
           for (const r of rows) {
             const playerId = extractPlayerId(r.hrefs[1] || "");
