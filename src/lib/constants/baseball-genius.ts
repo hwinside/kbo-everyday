@@ -140,7 +140,15 @@ export interface GeniusReplyPayload {
   match_path: string;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
-  /** picker가 가리키는 원 질문. 답변 도착 순서와 무관하게 exact 질문을 재처리한다. */
+  /**
+   * 이 답변이 대답한 **원 질문 쪽지 id**. 두 곳에서 쓴다.
+   *  ① picker: 답변 도착 순서와 무관하게 exact 질문을 재처리한다.
+   *  ② 품질 피드백(👍/👎): 어떤 질문에 대한 평가인지 exact 결속한다.
+   *
+   * ②를 위해 **모든 답변**에 싣는다. 답변 쪽지에서 `dedup_key` 문자열을 파싱해 역산하는
+   * 방법도 있지만 접두 규칙(`baseball-genius:` / `baseball-genius-picker:`)이 바뀌는 순간
+   * 조용히 깨진다 — 서버가 쓰는 구조화 필드가 SSOT다.
+   */
   question_message_id?: number;
   /**
    * 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고, 클라는 이 URL 로
@@ -211,6 +219,10 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // picker 라고 주장하면서 선택지가 없으면 렌더할 것이 없다 — 유효한 payload 가 아니다.
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
   if (obj.reply_kind === "picker" &&
+      (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // picker 가 아니어도 값이 실려 오면 형식을 검증한다 — 피드백이 이 값을 결속키로 쓰므로
+  // 깨진 값이 통과하면 잘못된 질문에 평가가 붙는다.
+  if (obj.reply_kind !== "picker" && obj.question_message_id !== undefined &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
