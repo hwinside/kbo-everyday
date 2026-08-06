@@ -40,7 +40,11 @@ const GENIUS = BASEBALL_GENIUS_USER_ID;
 check("A1 answer 에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer") === true);
 check("A2 picker 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "picker") === false);
 check("A3 ack 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "ack") === false);
-check("A4 unavailable 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable") === false);
+// 계약 변경(삼순 NO-GO ②): 종결 응답이면 unavailable 도 피드백 대상이다.
+check("A4 unavailable 에도 붙는다(종결 응답)", shouldShowFeedback(GENIUS, GENIUS, "unavailable") === true);
+check("A4-1 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack") === false);
+check("A4-2 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker") === false);
+check("A4-3 미지의 kind 는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "something_new") === false);
 check("A5 payload 없는 과거 답변에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, undefined) === false);
 check("A6 다른 발신자에는 안 붙는다", shouldShowFeedback("other-user", GENIUS, "answer") === false);
 check("A7 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null, GENIUS, "answer") === false);
@@ -196,7 +200,8 @@ await runNetworkContracts();
 if (SELFTEST) {
   // 결함주입: 검출력 증명. 각 축이 죽었을 때 실제로 RED 가 나는지 확인한다.
   const injected: string[] = [];
-  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable") === true) injected.push("A 축 무력");
+  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable") !== true) injected.push("A 축 무력(종결범위 축소)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "ack") === true) injected.push("A 축 무력(중간상태 유입)");
   if (nextRatingAfterClick(1, 1) !== null) injected.push("B 축 무력");
   console.log(
     injected.length === 0

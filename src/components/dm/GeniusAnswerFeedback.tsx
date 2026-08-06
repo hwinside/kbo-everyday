@@ -26,6 +26,7 @@ export default function GeniusAnswerFeedback({
       className="mt-2 flex items-center gap-1"
       data-testid="genius-answer-feedback"
       data-rating={rating === null ? "none" : String(rating)}
+      data-pending={pending ? "true" : "false"}
     >
       <button
         type="button"
@@ -35,13 +36,14 @@ export default function GeniusAnswerFeedback({
         aria-pressed={rating === 1}
         data-testid="genius-feedback-up"
         data-selected={rating === 1 ? "true" : "false"}
-        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
+        data-pending={pending ? "true" : "false"}
+        className={`flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
           rating === 1
             ? "bg-accent/20 text-accent"
             : "text-text-tertiary hover:bg-white/5 hover:text-text-secondary"
         }`}
       >
-        <ThumbsUp className="h-3.5 w-3.5" strokeWidth={rating === 1 ? 2.5 : 2} />
+        <ThumbsUp className="h-4 w-4" strokeWidth={rating === 1 ? 2.5 : 2} />
       </button>
       <button
         type="button"
@@ -51,13 +53,14 @@ export default function GeniusAnswerFeedback({
         aria-pressed={rating === -1}
         data-testid="genius-feedback-down"
         data-selected={rating === -1 ? "true" : "false"}
-        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
+        data-pending={pending ? "true" : "false"}
+        className={`flex h-11 w-11 min-h-[44px] min-w-[44px] items-center justify-center rounded-lg transition-colors disabled:opacity-40 ${
           rating === -1
             ? "bg-white/15 text-text-primary"
             : "text-text-tertiary hover:bg-white/5 hover:text-text-secondary"
         }`}
       >
-        <ThumbsDown className="h-3.5 w-3.5" strokeWidth={rating === -1 ? 2.5 : 2} />
+        <ThumbsDown className="h-4 w-4" strokeWidth={rating === -1 ? 2.5 : 2} />
       </button>
     </div>
   );

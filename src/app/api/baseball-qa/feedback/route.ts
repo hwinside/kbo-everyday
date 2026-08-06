@@ -13,6 +13,7 @@ import {
   BASEBALL_GENIUS_USER_ID,
   isGeniusReplyPayload,
 } from "@/lib/constants/baseball-genius";
+import { isFeedbackEligibleReplyKind } from "@/lib/baseball-qa/answer-feedback";
 
 export async function POST(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
@@ -54,9 +55,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "평가할 답변을 확인할 수 없습니다" }, { status: 403 });
   }
 
-  // 분석 결속용 메타. payload 가 없는 과거 답변은 NULL 로 남긴다 —
-  // 없는 값을 지어내지 않는다(그 답변이 어느 질문/경로였는지 실제로 모른다).
+  // ── 종결 응답 검증 (삼순 NO-GO ③) ──────────────────────────────────
+  // 발신자만 보면 야잘알봇이 보낸 **안내·시스템 메시지·ack·picker 중간상태**에도 POST 가
+  // 통과한다. UI 가 버튼을 안 그려도 API 를 직접 치면 그만이다 — 적재 계약을 깨는 오염이라
+  // **UI 와 같은 판정 함수**로 서버에서도 강제한다(계약 이중화 금지).
+  //
+  // 구 payload(=`type` 이 없거나 reply_kind 미기록) 도 여기서 막는다. 어느 질문·경로였는지
+  // 모르는 표는 분석에 못 쓰고, question_message_id 가 없으면 질문로그와 결속도 못 한다.
   const payload = isGeniusReplyPayload(message.payload) ? message.payload : null;
+  if (!payload || !isFeedbackEligibleReplyKind(payload.reply_kind)) {
+    return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
+  }
+  // 질문 쪽지 id 가 있어야 질문로그와 exact 결속이 된다. 없으면 수집해도 분석 불가라
+  // 받지 않는다(시간창 추정으로 지어내는 결속은 오적재를 만든다).
+  const questionMessageId = payload.question_message_id;
+  if (!Number.isSafeInteger(questionMessageId) || Number(questionMessageId) <= 0) {
+    return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
+  }
 
   // 같은 값 재클릭이면 취소, 다른 값이면 변경. 판정을 route 에서 SELECT→분기→WRITE 로
   // 하면 두 탭 동시 클릭에서 read-modify-write 경합이 난다. DB 단일 statement 로 넘긴다.
@@ -65,8 +80,9 @@ export async function POST(req: NextRequest) {
     .rpc("set_baseball_genius_answer_feedback", {
       p_user_id: verified.user.id,
       p_answer_message_id: Number(answerMessageId),
-      p_question_message_id: payload?.question_message_id ?? null,
-      p_match_path: payload?.match_path ?? null,
+      p_question_message_id: Number(questionMessageId),
+      p_match_path: payload.match_path ?? null,
+      p_reply_kind: payload.reply_kind,
       p_rating: rating,
     });
   if (rpcError) {

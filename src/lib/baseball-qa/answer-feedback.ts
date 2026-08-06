@@ -15,13 +15,42 @@ export type GeniusFeedbackRating = 1 | -1;
 export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
 
 /**
+ * 피드백을 받는 **종결 응답** reply_kind 폐쇄집합.
+ *
+ * 하린아빠 계약: "사용자 질문에 대해 낸 **모든 종결 응답**(answer/clarification/
+ * unavailable/blocked 포함)에 👍/👎. 안내·시스템 메시지·thinking/ack 중간상태는 제외."
+ *
+ * 운영 DB 실측(2026-08-06, 답변 1,093건):
+ *   answer      698  (llm·dictionary·cache·rag·kbo_structured)
+ *   unavailable 391  (blocked·unsure=되묻기·history_hold·limited·service_redirect)
+ *   ack           2  ← 순수 맞장구, 종결 응답 아님
+ *   picker        1  ← 중간상태(선택 대기), 종결 아님
+ *
+ * 즉 `answer` + `unavailable` 이 계약의 종결 응답과 정확히 대응한다
+ * (clarification=되묻기·blocked 는 이미 `unavailable` 에 들어 있다).
+ *
+ * ⚠️ 이전 구현은 `answer` 만 허용해 **391건(36%)을 무음 처리**했다. "못 답한 것"에
+ * 대한 불만이야말로 가장 중요한 신호라 계약에 넣은 것이다. 지표 오염은 수집을 막아서가 아니라
+ * `reply_kind` 를 같이 저장해 **후분석에서 분리**해 막는다.
+ */
+export const FEEDBACK_ELIGIBLE_REPLY_KINDS = ["answer", "unavailable"] as const;
+
+export type FeedbackEligibleReplyKind = (typeof FEEDBACK_ELIGIBLE_REPLY_KINDS)[number];
+
+/** 종결 응답인가 — UI·route 가 **같은** 이 함수를 쓴다(계약 이중화 금지). */
+export function isFeedbackEligibleReplyKind(
+  replyKind: string | null | undefined,
+): replyKind is FeedbackEligibleReplyKind {
+  return (
+    typeof replyKind === "string" &&
+    (FEEDBACK_ELIGIBLE_REPLY_KINDS as readonly string[]).includes(replyKind)
+  );
+}
+
+/**
  * 답변 쪽지에 피드백 버튼을 붙일 것인가.
  *
- * ⚠️ **답변(`answer`)에만 붙인다.** 되묻기(`picker`)·감사인사(`ack`)·미응답(`unavailable`)에
- * 붙이면 "답변 품질"이 아닌 것에 표가 쌓여 나중에 지표가 오염된다. 특히 `unavailable` 은
- * 유저가 👎를 누를 게 뻔한데, 그건 답변 품질이 아니라 미응답 자체의 문제라 별도 트랙이다.
- *
- * payload 가 없는 과거 답변도 제외한다 — 어느 경로였는지 모르는 표는 분석에 못 쓴다.
+ * payload 가 없는 과거 답변은 제외한다 — 어느 경로였는지 모르는 표는 분석에 못 쓴다.
  * (없는 값을 지어내지 않는다.)
  */
 export function shouldShowFeedback(
@@ -30,7 +59,7 @@ export function shouldShowFeedback(
   replyKind: string | null | undefined,
 ): boolean {
   if (senderId === null || senderId !== geniusUserId) return false;
-  return replyKind === "answer";
+  return isFeedbackEligibleReplyKind(replyKind);
 }
 
 /**

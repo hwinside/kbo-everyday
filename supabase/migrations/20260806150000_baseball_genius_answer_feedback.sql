@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS public.genius_answer_feedback (
   -- FK 를 걸지 않는 이유: match_path allowlist 는 앞으로도 확장되고, 과거 스냅샷이
   -- 새 CHECK 때문에 막히면 안 된다. 여기서는 관측값이지 제약 대상이 아니다.
   match_path text,
+  -- 응답 종류 스냅샷 (삼순 NO-GO ②). 피드백 대상은 `answer`(실답)과
+  -- `unavailable`(못 답함·되묻기·차단) 둘 다다. 둘을 같이 받되, **지표를 섞지 않게**
+  -- 여기 저장해 후분석에서 분리한다. "답변 품질 만족도"와 "못 답해서 불만"은 다른 지표다.
+  reply_kind text,
   -- 1 = 좋아요, -1 = 별로. 0(중립)은 만들지 않는다 — 취소는 행 삭제다.
   rating smallint NOT NULL CHECK (rating IN (1, -1)),
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -82,6 +86,7 @@ CREATE OR REPLACE FUNCTION public.set_baseball_genius_answer_feedback(
   p_answer_message_id bigint,
   p_question_message_id bigint,
   p_match_path text,
+  p_reply_kind text,
   p_rating smallint
 )
 RETURNS smallint
@@ -96,6 +101,18 @@ BEGIN
     RAISE EXCEPTION 'invalid rating: %', p_rating;
   END IF;
 
+  -- ---- same-key 직렬화 (삼순 NO-GO ④) ----
+  -- 이전 구현은 DELETE → (판정) → INSERT 사이에 경합 창이 있었다. 두 탭이 같은 키로
+  -- 동시에 들어오면 둘 다 DELETE 0건 → 둘 다 INSERT 로 가고, ON CONFLICT 가 한 쪽을
+  -- UPDATE 로 흥수해 **취소가 적용되지 않은 채 투표로 끝나는** 비결정적 결과가 나온다.
+  -- 동일 (user_id, answer_message_id) 트랜잭션을 advisory lock 으로 직렬화한다.
+  -- 트랜잭션 단위(_xact)라 함수 종료 시 자동 해제되고, 서로 다른 키는 대기하지 않는다.
+  -- 단일 bigint 오버로드를 쓴다. 2인자 형태는 (int, int) 라 bigint 메시지 id 를 못 받는다
+  -- (fresh DB 에서 42883 로 죽는 것을 실제 DB 검증에서 확인).
+  PERFORM pg_advisory_xact_lock(
+    hashtextextended(p_user_id::text || ':' || p_answer_message_id::text, 0)
+  );
+
   -- 같은 값 재클릭 = 취소. 행 자체를 지운다(중립 상태를 별도 값으로 남기지 않는다).
   DELETE FROM genius_answer_feedback
    WHERE user_id = p_user_id
@@ -108,29 +125,42 @@ BEGIN
 
   -- 신규 또는 변경. unique 제약이 사용자당 1표를 보장하므로 ON CONFLICT 로 흡수한다.
   INSERT INTO genius_answer_feedback (
-    user_id, answer_message_id, question_message_id, match_path, rating
+    user_id, answer_message_id, question_message_id, match_path, reply_kind, rating
   )
   VALUES (
-    p_user_id, p_answer_message_id, p_question_message_id, p_match_path, p_rating
+    p_user_id, p_answer_message_id, p_question_message_id, p_match_path, p_reply_kind, p_rating
   )
   ON CONFLICT (user_id, answer_message_id) DO UPDATE
     SET rating = EXCLUDED.rating,
         -- 결속 메타는 처음 값이 정본이다. 재투표가 NULL 로 덮어쓰지 않게 COALESCE.
         question_message_id = COALESCE(genius_answer_feedback.question_message_id, EXCLUDED.question_message_id),
         match_path = COALESCE(genius_answer_feedback.match_path, EXCLUDED.match_path),
+        reply_kind = COALESCE(genius_answer_feedback.reply_kind, EXCLUDED.reply_kind),
         updated_at = now();
 
   RETURN p_rating;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, smallint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM PUBLIC;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, smallint) FROM anon;
+    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, smallint) FROM authenticated;
+    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM authenticated;
+  END IF;
+END $$;
+
+-- service_role 에 EXECUTE 를 **명시적으로** 부여한다 (삼순 NO-GO ①).
+-- 위 `REVOKE ALL ... FROM PUBLIC` 은 service_role 이 PUBLIC 을 통해 상속받던 EXECUTE 까지
+-- 함께 걷어낸다. 기존 DB 는 함수 생성 전에 부여된 별도 권한이 남아 우연히 동작할 수 있지만,
+-- **fresh migrated DB 에서는 route 가 42501 로 죽는다.** 우연한 통과에 기대지 않고 명시한다.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    GRANT EXECUTE ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) TO service_role;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON public.genius_answer_feedback TO service_role;
   END IF;
 END $$;
