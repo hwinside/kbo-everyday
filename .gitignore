@@ -70,3 +70,6 @@ scripts/cutouts-v2/phase2-todo-backup-*.json
 scripts/cutouts-v2/phase2-todo-new-*.json
 .worktrees/
 scripts/hero/.daum-src/
+
+# 실기기 QA 산출물 (게이트 JSON·인벤토리 등) — 커밋 대상 아님
+.qa-artifacts/

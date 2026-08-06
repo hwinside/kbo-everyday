@@ -372,6 +372,31 @@ html.postdetail-open > body {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/*
+ * ===== Bottom safe area (system navigation bar) =====
+ * `pb-safe` was used at 13 call sites (DM composer, 시트 6종, ReportSheet …) but
+ * was NEVER defined — it is not a Tailwind utility, so every one of them was a
+ * no-op. On targetSdk 36 (Android 15+) edge-to-edge is mandatory: the WebView
+ * paints behind the system navigation bar, and with viewport-fit=cover the
+ * env() value does arrive (실기기 실측 48px) but nothing consumed it. Result:
+ * bottom-docked composers sat *behind* the 3-button nav bar (#cs 2026-08-06 P0).
+ *
+ * 덧셈(base + inset)이지 max() 가 아니다. max() 를 쓰면 inset 이 0 인 환경
+ * (데스크톱·제스처 내비)에서 base 가 var 기본값으로 통일돼 각 호출부의 고유
+ * 여백(py-3=12px, py-4=16px, p-5=20px)이 뭉개진다. 덧셈이면 inset 0 일 때
+ * 정확히 기존 여백으로 되돌아가므로 회귀가 0 이다.
+ *
+ * 호출부별 base 는 --pb-safe-base 로 지정한다. 기본값 1.25rem 은 `p-5` 시트
+ * 기준이고, py-3/py-4 호출부는 Tailwind arbitrary property 로 각자 넘긴다.
+ *
+ * Unlayered on purpose: Tailwind v4 emits `p-5` etc. inside `@layer utilities`,
+ * and unlayered rules outbid layered ones regardless of source order, so a
+ * `p-5 pb-safe` element resolves to the safe value.
+ */
+.pb-safe {
+  padding-bottom: calc(var(--pb-safe-base, 1.25rem) + env(safe-area-inset-bottom, 0px));
+}
+
 @keyframes slide-up {
   from { transform: translateY(100%); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }

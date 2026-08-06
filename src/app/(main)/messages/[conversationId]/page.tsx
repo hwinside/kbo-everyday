@@ -540,19 +540,19 @@ export default function DMChatPage() {
       {/* Input — 회신 불가 계정(클리퍼/긴급공지)은 입력창 비활성화 (자동 발송 전용, 하린아빠 확정).
           상대 확정 전에는 composer 미렌더 — 회신불가 판정 전 일반 입력창이 잠깐 뜨는 레이스 차단 */}
       {!otherResolved ? null : !otherId ? (
-        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe [--pb-safe-base:0.75rem] text-center text-sm text-text-tertiary">
           탈퇴한 사용자와의 대화는 읽기만 가능합니다.
         </div>
       ) : isNoReplyConv ? (
-        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe [--pb-safe-base:0.75rem] text-center text-sm text-text-tertiary">
           {noReplyBannerLabel(otherId)}
         </div>
       ) : isBlocked ? (
-        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe text-center text-sm text-text-tertiary">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe [--pb-safe-base:0.75rem] text-center text-sm text-text-tertiary">
           차단된 사용자에게 쪽지를 보낼 수 없습니다.
         </div>
       ) : (
-        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe">
+        <div className="px-5 py-3 border-t border-border bg-bg-secondary pb-safe [--pb-safe-base:0.75rem]">
           {sendError && (
             <p role="alert" className="mb-2 text-center text-xs text-red-500">{sendError}</p>
           )}
