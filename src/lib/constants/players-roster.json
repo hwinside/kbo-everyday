@@ -7918,5 +7918,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "김한결",
+    "kboId": "56540",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "62",
+    "team": "롯데",
+    "birthDate": "2006-07-24"
   }
 ]
