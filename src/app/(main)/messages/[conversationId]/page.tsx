@@ -335,10 +335,12 @@ export default function DMChatPage() {
       return next;
     });
     const { data: { session } } = await supabase.auth.getSession();
-    // 클릭 직전 상태를 같이 보낸다 — 서버가 이걸로만 취소를 판정하므로
-    // 재전송·두 탭 동일 클릭이 표를 뒤집지 않는다(멱등).
+    // **원하는 최종 상태**(optimistic)를 보낸다 — 서버가 "같은 값이면 취소"를 다시
+    // 판정하지 않으므로 재전송·두 탭 동일 클릭이 표를 뒤집지 않는다(멱등).
+    // 클릭 직전 상태는 CAS 비교값으로 함께 보낸다: 다른 탭이 먼저 바꿨으면 서버가
+    // 적용하지 않고 409 + 실제 상태를 돌려준다.
     const result = await submitGeniusFeedback(
-      answerMessageId, clicked, session?.access_token ?? null, fetch, previous ?? null,
+      answerMessageId, optimistic, session?.access_token ?? null, fetch, previous ?? null,
     );
     setFeedbackPending((prev) => {
       const next = new Set(prev);
@@ -347,7 +349,8 @@ export default function DMChatPage() {
     });
     setGeniusFeedback((prev) => {
       const next = { ...prev };
-      // 실패면 이전 값으로 되돌린다 — 안 눈리것을 눌린 것처럼 남기지 않는다.
+      // 서버가 SSOT다. 실패면 이전 값으로 되돌리고(안 눌린 것을 눌린 것처럼 남기지 않는다),
+      // 409 충돌이면 서버가 준 **실제** 값으로 맞춘다(내가 원한 값이 아니다).
       const settled = result.ok ? result.rating : previous;
       if (settled === null) delete next[answerMessageId];
       else next[answerMessageId] = settled;
@@ -479,15 +482,18 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
-            // 품질 피드백은 **RAG 로 근거를 가져와 답한 것에만** 붙인다
-            // (하린아빠 2026-08-06 16:36: "스모톡은 넣지마. 대화가 자연스러워지지 않아").
-            // 순수 생성답(llm)에 붙이면 스모톡마다 버튼이 뜬다. 판정은 공용 함수로 —
-            // 인라인이면 게이트가 실제 렌더 계약을 못 잡고, route 와 계약이 갈라진다.
+            // 품질 피드백은 **RAG·사전 근거로 답한 것에만** 붙인다
+            // (하린아빠 2026-08-06 16:36 "스몰톡은 넣지마" + 16:37 "사전에서 가져온 답변 추가").
+            // 순수 생성답(llm)에 붙이면 스몰톡마다 버튼이 뜬다. 질문 결속 id 가 없는 과거
+            // 답변도 여기서 걸러진다 — 안 그러면 눌러도 400 나는 버튼이 전량에 붙는다.
+            // 판정은 공용 함수로 — 인라인이면 게이트가 실제 렌더 계약을 못 잡고,
+            // route 와 계약이 갈라진다.
             const showFeedback = shouldShowFeedback(
               msg.sender_id,
               BASEBALL_GENIUS_USER_ID,
               geniusReply?.reply_kind,
               geniusReply?.match_path,
+              geniusReply?.question_message_id,
             );
             // 출처 표기 — 본문에는 `📄 출처: 나무위키` 표시명만 있고 링크는 payload 로 온다.
             // ⚠️ 이미 발송된 과거 답변은 본문에 `(전체URL) · rev crawled:… · … 기준` 이 그대로

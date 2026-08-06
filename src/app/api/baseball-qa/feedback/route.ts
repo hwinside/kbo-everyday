@@ -3,6 +3,9 @@
 // 범위는 **적재까지만**이다 — 이 route 는 답변 생성·라우팅·캐시를 한 줄도 건드리지 않는다.
 // 피드백을 캐시·사전·골든셋으로 승격하는 자동화 루프는 하린아빠 HOLD 상태다(2026-08-05 18:02).
 //
+// 대상은 **RAG/사전 근거로 답한 답변만**이다 (하린아빠 2026-08-06 16:36·16:37).
+// 스몰톡·인사·되묻기·미응답·근거 없는 LLM 생성답은 UI 에도 안 붙고 여기서도 400 으로 막힌다.
+//
 // 소유권 검증을 여기서 하는 이유: 테이블은 RLS 전면 차단(service_role 전용)이라
 // 클라가 직접 쓸 수 없다. 대신 "이 답변 쪽지가 정말 이 유저의 야잘알봇 대화 것인가"를
 // 서버가 확인해야 임의 message_id 로 남의 답변에 표를 던지는 것을 막는다.
@@ -20,22 +23,26 @@ export async function POST(req: NextRequest) {
   if (!verified) return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
 
   let answerMessageId: unknown;
-  let rating: unknown;
+  let desired: unknown;
   let expectedPrev: unknown;
   try {
-    ({ answerMessageId, rating, expectedPrev } = await req.json());
+    ({ answerMessageId, desired, expectedPrev } = await req.json());
   } catch {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
   if (!Number.isSafeInteger(answerMessageId) || Number(answerMessageId) <= 0) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
-  // 1 = 좋아요, -1 = 별로. 중립(0)은 없다 — 취소는 같은 값 재클릭이다.
-  if (rating !== 1 && rating !== -1) {
+  // **원하는 최종 상태**(set semantics). 1 = 좋아요, -1 = 별로, null = 취소.
+  // "같은 값이면 취소"를 서버가 다시 판정하지 않는다 — 그 판정이 재전송·두 탭에서
+  // 첫 저장을 두 번째 요청이 뒤집는 원인이었다(삼순 08-06 P0).
+  if (desired !== 1 && desired !== -1 && desired !== null) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
-  // 취소 판정 근거. 없거나(구 클라) 형식이 틀리면 NULL → 토글하지 않고 확정(set)한다.
-  // 모르는 상태에서 임의로 취소로 해석하면 유저 표를 지운다 — fail-safe 는 "확정" 쪽이다.
+  // CAS 비교값. 클라가 클릭 직전에 보고 있던 상태.
+  if (expectedPrev !== 1 && expectedPrev !== -1 && expectedPrev !== null && expectedPrev !== undefined) {
+    return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
+  }
   const expectedPrevValue: 1 | -1 | null =
     expectedPrev === 1 || expectedPrev === -1 ? expectedPrev : null;
 
@@ -60,45 +67,61 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "평가할 답변을 확인할 수 없습니다" }, { status: 403 });
   }
 
-  // ── 피드백 대상 검증 (삼순 NO-GO ③) ──────────────────────────────────
-  // 발신자만 보면 야잘알봇이 보낸 **스모톡 생성답·안내·ack·picker 중간상태**에도 POST 가
+  // ── 피드백 대상 검증 ─────────────────────────────────────────────────────────
+  // 발신자만 보면 야잘알봇이 보낸 **스몰톡 생성답·안내·ack·picker 중간상태**에도 POST 가
   // 통과한다. UI 가 버튼을 안 그려도 API 를 직접 치면 그만이다 — 적재 계약을 깨는 오염이라
   // **UI 와 같은 판정 함수**로 서버에서도 강제한다(계약 이중화 금지).
   //
-  // 대상은 RAG 로 근거를 가져와 답한 것뿐이다 (하린아빠 2026-08-06 16:36).
-  // 구 payload(=`type` 이 없거나 match_path 미기록) 도 여기서 막힌다 — 어느 경로였는지
-  // 모르는 표는 분석에 못 쓴다.
+  // 이 한 줄이 막는 것: llm(스몰톡)·cache·kbo_structured·unavailable·ack·picker,
+  // 그리고 질문 결속 id 가 없는 구 payload 전부.
   const payload = isGeniusReplyPayload(message.payload) ? message.payload : null;
-  if (!payload || !isFeedbackEligible(payload.reply_kind, payload.match_path)) {
+  if (
+    !payload ||
+    !isFeedbackEligible(payload.reply_kind, payload.match_path, payload.question_message_id)
+  ) {
     return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
   }
-  // 질문 쪽지 id.
-  //
-  // ⚠️ **필수로 강제하지 않는다** (삼순 2차 blocker ①). 운영 실측(2026-08-06):
-  // eligible 답변 1,096건 중 `question_message_id` 보유는 **0건**이다. qid 를 싣는 코드는
-  // 이번 배포분부터 적용되므로, 필수로 두면 **기존 대화창의 모든 답변이 400** 이 된다.
-  // 유저는 버튼을 누를 수 있는데 저장만 실패하는 상태다.
-  //
-  // 대신 **없으면 NULL 로 적재**한다. 없는 값을 시간창 추정으로 지어내지도 않고
-  // (오적재), 표 자체를 버리지도 않는다. 결속 가능 여부는 분석 시점에 qid IS NOT NULL 로
-  // 가른다 — "질문과 결속된 표"와 "답변 단위 표"는 둘 다 유용한 지표다.
-  const rawQuestionMessageId = payload.question_message_id;
-  const questionMessageId =
-    Number.isSafeInteger(rawQuestionMessageId) && Number(rawQuestionMessageId) > 0
-      ? Number(rawQuestionMessageId)
-      : null;
+  const questionMessageId = Number(payload.question_message_id);
 
-  // 같은 값 재클릭이면 취소, 다른 값이면 변경. 판정을 route 에서 SELECT→분기→WRITE 로
-  // 하면 두 탭 동시 클릭에서 read-modify-write 경합이 난다. DB 단일 statement 로 넘긴다.
+  // ── 질문 로그 exact 결속 (삼순 08-06 P0) ─────────────────────────────────────
+  // 피드백은 "이 질문에 대한 이 경로의 답변"에 붙어야 분석에 쓸 수 있다. 시간창 추정이
+  // 아니라 **행 단위 FK** 로 못박는다. (user_id, question_message_id, match_path) 로
+  // 조회해 **정확히 1행**일 때만 통과시킨다.
+  //
+  // 왜 0/N 을 fail-close 하는가:
+  //  · 0행 — 로그 없이 발송된 답변이다. 결속할 대상이 없으므로 표를 만들지 않는다.
+  //  · N행 — 어느 로그에 붙일지 결정할 근거가 없다. 임의로 고르면 오적재다.
+  // (picker → 재처리 흐름은 같은 messageId 로 `player_picker` 와 최종 경로 로그를 각각
+  //  남기지만 match_path 가 달라 이 조회에서는 1행으로 갈린다. 실측으로 확인했다.)
+  const { data: logRows, error: logError } = await supabaseAdmin
+    .from("genius_question_logs")
+    .select("id")
+    .eq("user_id", verified.user.id)
+    .eq("question_message_id", questionMessageId)
+    .eq("match_path", payload.match_path)
+    .limit(2); // query-guard: bounded -- 1행 기대, 2행 이상이면 모호로 거절하므로 2로 족하다.
+  if (logError) {
+    console.error("baseball-genius feedback log lookup failed:", logError.message);
+    return NextResponse.json({ error: "평가를 저장할 수 없습니다" }, { status: 503 });
+  }
+  if (!logRows || logRows.length !== 1) {
+    return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
+  }
+  const questionLogId = (logRows[0] as { id: string }).id;
+
+  // ── CAS 적용 ─────────────────────────────────────────────────────────────────
+  // 판정을 route 에서 SELECT→분기→WRITE 로 하면 두 탭 동시 클릭에서 read-modify-write
+  // 경합이 난다. DB 함수가 advisory lock 안에서 비교·적용까지 한다.
   // query-guard: bounded -- (user_id, answer_message_id) unique 단일 행 갱신 RPC.
-  const { data: finalRating, error: rpcError } = await supabaseAdmin
+  const { data: casResult, error: rpcError } = await supabaseAdmin
     .rpc("set_baseball_genius_answer_feedback", {
       p_user_id: verified.user.id,
       p_answer_message_id: Number(answerMessageId),
       p_question_message_id: questionMessageId,
-      p_match_path: payload.match_path ?? null,
+      p_question_log_id: questionLogId,
+      p_match_path: payload.match_path,
       p_reply_kind: payload.reply_kind,
-      p_rating: rating,
+      p_desired: desired,
       p_expected_prev: expectedPrevValue,
     });
   if (rpcError) {
@@ -106,11 +129,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "평가를 저장할 수 없습니다" }, { status: 503 });
   }
 
-  // 최종 상태를 그대로 돌려준다. null = 취소됨.
-  return NextResponse.json({
-    ok: true,
-    rating: finalRating === null || finalRating === undefined ? null : Number(finalRating),
-  });
+  const outcome = (casResult ?? {}) as { rating?: number | null; applied?: boolean };
+  const finalRating =
+    outcome.rating === 1 || outcome.rating === -1 ? outcome.rating : null;
+  // 충돌이면 409 + **실제 상태**. 클라가 그 값으로 화면을 맞춰야 UI 와 DB 가 갈라지지 않는다
+  // (직전 구현은 적용 실패를 성공 NULL 로 보고해 다른 탭의 표를 화면에서 지웠다).
+  if (outcome.applied !== true) {
+    return NextResponse.json(
+      { ok: false, conflict: true, rating: finalRating },
+      { status: 409 },
+    );
+  }
+  return NextResponse.json({ ok: true, rating: finalRating });
 }
 
 export async function GET(req: NextRequest) {

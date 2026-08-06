@@ -40,30 +40,37 @@ function check(name: string, condition: boolean, detail = "") {
 // 계약(하린아빠 2026-08-06 16:36): **RAG 로 근거를 가져와 답한 것에만** 붙인다.
 // 스모톡이 떨어지는 곳은 `answer/llm` 이라 reply_kind 만으로는 가를 수 없다.
 const GENIUS = BASEBALL_GENIUS_USER_ID;
-check("A1 RAG 답변에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") === true);
+check("A1 RAG 답변에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag", 4242) === true);
 // 사전 답변도 대상 (하린아빠 16:37 추가 지시) — 검수 사전에서 **가져온** 답이다.
-check("A1-1 dictionary 답변에도 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") === true);
+check("A1-1 dictionary 답변에도 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary", 4242) === true);
 // ↓ 운영 실측 상위 경로 중 제외 대상이 실제로 빠지는지 개별 확인 (llm 376 / cache 22)
-check("A2 llm(스모톡 경로)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === false);
-check("A4 cache(과거 llm 생성답)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "cache") === false);
-check("A5 kbo_structured 에는 안 붙는다(RAG 아님)", shouldShowFeedback(GENIUS, GENIUS, "answer", "kbo_structured") === false);
+check("A2 llm(스모톡 경로)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "llm", 4242) === false);
+check("A4 cache(과거 llm 생성답)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "cache", 4242) === false);
+// 삼순 4차: 운영 DB 원값도 "가져온 사실"이라 대상이다.
+check("A5 kbo_structured 답변에도 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "kbo_structured", 4242) === true);
+check("A5-1 unavailable/kbo_structured 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "kbo_structured", 4242) === false);
 // ↓ reply_kind 축이 살아 있는지. 운영에 unavailable/rag 가 실제 5건 있다.
-check("A6 unavailable/rag 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === false);
-check("A6-1 unavailable/dictionary 에도 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "dictionary") === false);
-check("A7 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack", "ack") === false);
-check("A8 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker", "player_picker") === false);
-check("A9 미지의 경로는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "answer", "something_new") === false);
-check("A10 payload 없는 과거 답변에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, undefined, undefined) === false);
-check("A11 match_path 만 없어도 제외", shouldShowFeedback(GENIUS, GENIUS, "answer", undefined) === false);
-check("A12 다른 발신자에는 안 붙는다", shouldShowFeedback("other-user", GENIUS, "answer", "rag") === false);
-check("A13 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null, GENIUS, "answer", "rag") === false);
+check("A6 unavailable/rag 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag", 4242) === false);
+check("A6-1 unavailable/dictionary 에도 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "dictionary", 4242) === false);
+check("A7 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack", "ack", 4242) === false);
+check("A8 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker", "player_picker", 4242) === false);
+check("A9 미지의 경로는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "answer", "something_new", 4242) === false);
+check("A10 payload 없는 과거 답변에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, undefined, undefined, undefined) === false);
+// 운영 답변 1,096건 전부 qid 가 없다 — 이 축이 죽으면 과거 답변 전량에 "눌러도 400" 버튼이 붙는다.
+check("A10-1 qid 없는 rag 답변에도 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag", undefined) === false);
+check("A10-2 qid 가 0/음수면 제외", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag", 0) === false && shouldShowFeedback(GENIUS, GENIUS, "answer", "rag", -1) === false);
+check("A11 match_path 만 없어도 제외", shouldShowFeedback(GENIUS, GENIUS, "answer", undefined, 4242) === false);
+check("A12 다른 발신자에는 안 붙는다", shouldShowFeedback("other-user", GENIUS, "answer", "rag", 4242) === false);
+check("A13 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null, GENIUS, "answer", "rag", 4242) === false);
 // UI 와 route 가 같은 함수를 쓰는지 — 계약 이중화는 두 곳이 갈라지는 순간 오적재다.
 check(
   "A14 route 판정 = UI 판정 (동일 함수)",
-  isFeedbackEligible("answer", "rag") === true &&
-  isFeedbackEligible("answer", "dictionary") === true &&
-  isFeedbackEligible("answer", "llm") === false &&
-  isFeedbackEligible("unavailable", "rag") === false,
+  isFeedbackEligible("answer", "rag", 4242) === true &&
+  isFeedbackEligible("answer", "dictionary", 4242) === true &&
+  isFeedbackEligible("answer", "kbo_structured", 4242) === true &&
+  isFeedbackEligible("answer", "llm", 4242) === false &&
+  isFeedbackEligible("unavailable", "rag", 4242) === false &&
+  isFeedbackEligible("answer", "rag", undefined) === false,
 );
 
 // ── B. 토글 규칙 ──────────────────────────────────────────────────────────────
@@ -181,7 +188,18 @@ check(
   "F4 user_id 를 요청 body 에서 받지 않는다",
   !/p_user_id:\s*(body|payload|req)/.test(routeSrc) && /p_user_id:\s*verified\.user\.id/.test(routeSrc),
 );
-check("F5 rating allowlist", /rating !== 1 && rating !== -1/.test(routeSrc));
+check(
+  "F5 desired allowlist (1 / -1 / null)",
+  /desired !== 1 && desired !== -1 && desired !== null/.test(routeSrc),
+);
+check(
+  "F6 expectedPrev allowlist",
+  /expectedPrev !== 1 && expectedPrev !== -1 && expectedPrev !== null/.test(routeSrc),
+);
+check(
+  "F7 CAS 충돌은 409 + 실제 상태",
+  /applied !== true/.test(routeSrc) && /status: 409/.test(routeSrc),
+);
 
 // ── G. 전송 실패가 조용히 성공으로 보이지 않는가 ─────────────────────────────
 // 실제 배포 함수를 stub fetch 로 실행한다(mock 모듈이 아니라 대상 함수 자체).
@@ -204,7 +222,7 @@ async function runNetworkContracts() {
     return okResponse;
   }, -1);
   check("B7 expectedPrev 를 body 에 실어 보낸다", sentBody.expectedPrev === -1);
-  check("B8 answerMessageId/rating 도 함께", sentBody.answerMessageId === 7 && sentBody.rating === -1);
+  check("B8 answerMessageId/desired 도 함께", sentBody.answerMessageId === 7 && sentBody.desired === -1);
 
   let sentDefault: Record<string, unknown> = {};
   await submitGeniusFeedback(7, 1, null, async (_url, init) => {
@@ -234,10 +252,11 @@ await runNetworkContracts();
 if (SELFTEST) {
   // 결함주입: 검출력 증명. 각 축이 죽었을 때 실제로 RED 가 나는지 확인한다.
   const injected: string[] = [];
-  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") !== true) injected.push("A 축 무력(RAG 답변 누락)");
-  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") !== true) injected.push("A 축 무력(사전 답변 누락)");
-  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === true) injected.push("A 축 무력(스모톡 유입)");
-  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === true) injected.push("A 축 무력(미응답 유입)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "rag", 4242) !== true) injected.push("A 축 무력(RAG 답변 누락)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary", 4242) !== true) injected.push("A 축 무력(사전 답변 누락)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "kbo_structured", 4242) !== true) injected.push("A 축 무력(구조화 답변 누락)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "llm", 4242) === true) injected.push("A 축 무력(스모톡 유입)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag", 4242) === true) injected.push("A 축 무력(미응답 유입)");
   if (nextRatingAfterClick(1, 1) !== null) injected.push("B 축 무력");
   console.log(
     injected.length === 0
