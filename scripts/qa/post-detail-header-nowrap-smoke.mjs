@@ -40,7 +40,13 @@ check("2행은 wrap + 메뉴 우측", /flex min-w-0 flex-wrap items-center gap-x
 check("프로필 링크 버블링 차단", (author.match(/onClick=\{stopCardNavigation\}/g) ?? []).length === 2);
 check("raw·https avatar + 로드 실패 fallback", /avatarUrl\.startsWith\("\/"\)/.test(avatars) && /avatarUrl\.startsWith\("https:\/\/"\)/.test(avatars) && /onError=\{\(\) => setFailedAvatarPath\(avatarPath\)\}/.test(author));
 check("PostCard 실제 공용 헤더+글소속", /<CommunityAuthorHeader[\s\S]*avatarUrl=\{post\.author\?\.avatarUrl\}/.test(card) && /data-community-source-label/.test(card));
-check("PhotoFeed poll·일반 모두 글소속", (feed.match(/data-community-source-label/g) ?? []).length >= 2 && /getPostSourceLabel\(post\)/.test(feed));
+// 2026-08-06: 피드 라벨이 board 기반 `getPostSourceLabel` → team_tags SSOT 기반 공개범위로 교체됐다.
+// 여전히 poll·일반 두 경로 모두 라벨 블록을 가져야 하고, 그 입력은 공용 변환(scopeInputForPost)을 타야 한다.
+check(
+  "PhotoFeed poll·일반 모두 공개범위 라벨",
+  (feed.match(/data-community-source-label/g) ?? []).length >= 2 &&
+    (feed.match(/<PostScopeBadge post=\{scopeInputForPost\(post\)\}/g) ?? []).length >= 2,
+);
 check("상세 실제 메타 컴포넌트 소비", /<PostDetailAuthorHeader[\s\S]*clickCount=\{post\.click_view_count\}/.test(detail) && /<DMButton/.test(detailHeader) && /<PostViewBadge/.test(detailHeader));
 check("댓글 시트 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind="sheet"[\s\S]*<CommunityAuthorHeader/.test(comments));
 check("상세 댓글 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind="detail"[\s\S]*<CommunityAuthorHeader/.test(detail));
