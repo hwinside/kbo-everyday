@@ -93,13 +93,14 @@ export async function POST(req: NextRequest) {
   //  · N행 — 어느 로그에 붙일지 결정할 근거가 없다. 임의로 고르면 오적재다.
   // (picker → 재처리 흐름은 같은 messageId 로 `player_picker` 와 최종 경로 로그를 각각
   //  남기지만 match_path 가 달라 이 조회에서는 1행으로 갈린다. 실측으로 확인했다.)
+  // query-guard: bounded -- (user_id, question_message_id, match_path) 로 1행을 기대하고 2행 이상은 모호로 거절하므로 limit 2 로 족하다.
   const { data: logRows, error: logError } = await supabaseAdmin
     .from("genius_question_logs")
     .select("id")
     .eq("user_id", verified.user.id)
     .eq("question_message_id", questionMessageId)
     .eq("match_path", payload.match_path)
-    .limit(2); // query-guard: bounded -- 1행 기대, 2행 이상이면 모호로 거절하므로 2로 족하다.
+    .limit(2);
   if (logError) {
     console.error("baseball-genius feedback log lookup failed:", logError.message);
     return NextResponse.json({ error: "평가를 저장할 수 없습니다" }, { status: 503 });
