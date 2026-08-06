@@ -24,6 +24,7 @@ import {
 import {
   nextRatingAfterClick,
   shouldShowFeedback,
+  isFeedbackEligible,
   submitGeniusFeedback,
   loadGeniusFeedback,
 } from "@/lib/baseball-qa/answer-feedback";
@@ -36,18 +37,31 @@ function check(name: string, condition: boolean, detail = "") {
 }
 
 // ── A. 노출 대상 판정 ─────────────────────────────────────────────────────────
+// 계약(하린아빠 2026-08-06 16:36): **RAG 로 근거를 가져와 답한 것에만** 붙인다.
+// 스모톡이 떨어지는 곳은 `answer/llm` 이라 reply_kind 만으로는 가를 수 없다.
 const GENIUS = BASEBALL_GENIUS_USER_ID;
-check("A1 answer 에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer") === true);
-check("A2 picker 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "picker") === false);
-check("A3 ack 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "ack") === false);
-// 계약 변경(삼순 NO-GO ②): 종결 응답이면 unavailable 도 피드백 대상이다.
-check("A4 unavailable 에도 붙는다(종결 응답)", shouldShowFeedback(GENIUS, GENIUS, "unavailable") === true);
-check("A4-1 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack") === false);
-check("A4-2 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker") === false);
-check("A4-3 미지의 kind 는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "something_new") === false);
-check("A5 payload 없는 과거 답변에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, undefined) === false);
-check("A6 다른 발신자에는 안 붙는다", shouldShowFeedback("other-user", GENIUS, "answer") === false);
-check("A7 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null, GENIUS, "answer") === false);
+check("A1 RAG 답변에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") === true);
+// ↓ 운영 실측 상위 경로 전부가 제외되는지 개별 확인 (분포: llm 376 / dictionary 281 / cache 22)
+check("A2 llm(스모톡 경로)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === false);
+check("A3 dictionary 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") === false);
+check("A4 cache(과거 llm 생성답)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "cache") === false);
+check("A5 kbo_structured 에는 안 붙는다(RAG 아님)", shouldShowFeedback(GENIUS, GENIUS, "answer", "kbo_structured") === false);
+// ↓ reply_kind 축이 살아 있는지. 운영에 unavailable/rag 가 실제 5건 있다.
+check("A6 unavailable/rag 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === false);
+check("A7 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack", "ack") === false);
+check("A8 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker", "player_picker") === false);
+check("A9 미지의 경로는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "answer", "something_new") === false);
+check("A10 payload 없는 과거 답변에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, undefined, undefined) === false);
+check("A11 match_path 만 없어도 제외", shouldShowFeedback(GENIUS, GENIUS, "answer", undefined) === false);
+check("A12 다른 발신자에는 안 붙는다", shouldShowFeedback("other-user", GENIUS, "answer", "rag") === false);
+check("A13 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null, GENIUS, "answer", "rag") === false);
+// UI 와 route 가 같은 함수를 쓰는지 — 계약 이중화는 두 곳이 갈라지는 순간 오적재다.
+check(
+  "A14 route 판정 = UI 판정 (동일 함수)",
+  isFeedbackEligible("answer", "rag") === true &&
+  isFeedbackEligible("answer", "llm") === false &&
+  isFeedbackEligible("unavailable", "rag") === false,
+);
 
 // ── B. 토글 규칙 ──────────────────────────────────────────────────────────────
 check("B1 미투표→👍", nextRatingAfterClick(null, 1) === 1);
@@ -217,8 +231,9 @@ await runNetworkContracts();
 if (SELFTEST) {
   // 결함주입: 검출력 증명. 각 축이 죽었을 때 실제로 RED 가 나는지 확인한다.
   const injected: string[] = [];
-  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable") !== true) injected.push("A 축 무력(종결범위 축소)");
-  if (shouldShowFeedback(GENIUS, GENIUS, "ack") === true) injected.push("A 축 무력(중간상태 유입)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") !== true) injected.push("A 축 무력(RAG 답변 누락)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === true) injected.push("A 축 무력(스모톡 유입)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === true) injected.push("A 축 무력(미응답 유입)");
   if (nextRatingAfterClick(1, 1) !== null) injected.push("B 축 무력");
   console.log(
     injected.length === 0

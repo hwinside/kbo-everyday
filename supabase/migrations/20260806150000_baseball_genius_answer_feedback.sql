@@ -36,9 +36,10 @@ CREATE TABLE IF NOT EXISTS public.genius_answer_feedback (
   -- FK 를 걸지 않는 이유: match_path allowlist 는 앞으로도 확장되고, 과거 스냅샷이
   -- 새 CHECK 때문에 막히면 안 된다. 여기서는 관측값이지 제약 대상이 아니다.
   match_path text,
-  -- 응답 종류 스냅샷 (삼순 NO-GO ②). 피드백 대상은 `answer`(실답)과
-  -- `unavailable`(못 답함·되묻기·차단) 둘 다다. 둘을 같이 받되, **지표를 섞지 않게**
-  -- 여기 저장해 후분석에서 분리한다. "답변 품질 만족도"와 "못 답해서 불만"은 다른 지표다.
+  -- 응답 종류 스냅샷. 현재 적재 대상은 `answer` + `match_path='rag'` 뿐이지만
+  -- (하린아빠 2026-08-06 16:36: RAG 답변에 한해서), 나중에 대상을 넓힐 때
+  -- **그때 그 표가 어떤 응답에 붙은 것인지** 구분할 수 있어야 하므로 같이 저장한다.
+  -- 이 값이 없으면 대상 확대 이후 과거 표와 신규 표를 분리할 근거가 사라진다.
   reply_kind text,
   -- 1 = 좋아요, -1 = 별로. 0(중립)은 만들지 않는다 — 취소는 행 삭제다.
   rating smallint NOT NULL CHECK (rating IN (1, -1)),

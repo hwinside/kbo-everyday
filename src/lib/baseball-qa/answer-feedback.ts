@@ -15,51 +15,75 @@ export type GeniusFeedbackRating = 1 | -1;
 export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
 
 /**
- * 피드백을 받는 **종결 응답** reply_kind 폐쇄집합.
+ * 피드백을 받는 **라우팅 경로**(match_path) 폐쇄집합.
  *
- * 하린아빠 계약: "사용자 질문에 대해 낸 **모든 종결 응답**(answer/clarification/
- * unavailable/blocked 포함)에 👍/👎. 안내·시스템 메시지·thinking/ack 중간상태는 제외."
+ * 하린아빠 2026-08-06 16:36 — 직전 계약을 **명시 변경**했다:
+ *   "스모톡은 넣지마. 대화가 자연스러워지지 않아. 모든 스모톡마다 저걸 넣기보다는
+ *    **RAG를 통해 정보를 가져와 답변한 것들에 한해서** 해"
  *
- * 운영 DB 실측(2026-08-06, 답변 1,093건):
- *   answer      698  (llm·dictionary·cache·rag·kbo_structured)
- *   unavailable 391  (blocked·unsure=되묻기·history_hold·limited·service_redirect)
- *   ack           2  ← 순수 맞장구, 종결 응답 아님
- *   picker        1  ← 중간상태(선택 대기), 종결 아님
+ * ⚠️ 이것은 삼순 NO-GO ②("종결응답 전체로 복구")를 하린아빠가 뒤집은 결과다.
+ * "못 답한 것에 대한 불만도 신호"라는 지적 자체는 틀리지 않았지만, 제품 판단은
+ * "대화가 부자연스러워지는 비용"을 더 크게 본다. **재제기 금지.**
  *
- * 즉 `answer` + `unavailable` 이 계약의 종결 응답과 정확히 대응한다
- * (clarification=되묻기·blocked 는 이미 `unavailable` 에 들어 있다).
+ * ── 왜 reply_kind 가 아니라 match_path 로 가르는가 ──
+ * `reply_kind === "answer"` 안에 근거 없는 순수 생성답(`llm`)이 같이 들어 있다.
+ * 스모톡이 떨어지는 곳이 바로 그 `llm` 이라, kind 만으로는 가를 수가 없다.
  *
- * ⚠️ 이전 구현은 `answer` 만 허용해 **391건(36%)을 무음 처리**했다. "못 답한 것"에
- * 대한 불만이야말로 가장 중요한 신호라 계약에 넣은 것이다. 지표 오염은 수집을 막아서가 아니라
- * `reply_kind` 를 같이 저장해 **후분석에서 분리**해 막는다.
+ * 운영 DB 실측 (2026-08-06, 발송된 답변 payload 1,100건):
+ *   answer/llm            376   순수 생성답, 근거 없음. **스모톡이 여기로 떨어진다** → 제외
+ *   answer/dictionary     281   사람이 직접 쓴 정의문. RAG 가 아니고 #1112 에서 폐기된 축 → 제외
+ *   unavailable/*         390   못 답한 경로 → 제외(하린아빠 지시)
+ *   answer/cache           22   과거 생성답의 캐시 → 제외(근거는 아래)
+ *   answer/rag             20   문서 근거를 검색해 답함 → **대상**
+ *   answer/kbo_structured   3   운영 DB 원값(순위표·팀기록). 정보를 가져오긴 하지만
+ *                               문서검색(RAG)이 아니다 → 일단 제외, 하린아빠 판단 대기
+ *   ack/picker              3   중간상태 → 제외
+ *
+ * `cache` 제외는 추측이 아니라 전수 확인이다: `deps.setCache` 는 pipeline.ts 에서
+ * **`llm` 경로 한 곳에서만** 호출된다(1977줄, grep 결과 1건). RAG 경로는 setCache 를
+ * 호출하지 않으므로 cache hit 은 정의상 **과거 LLM 생성답**이다. 근거 있는 답이 아니다.
+ *
+ * ⚠️ **좁게 시작하는 것이 안전하다.** 나중에 경로를 더하는 건 이 배열에 한 줄이지만,
+ * 이미 쌓인 오염된 표는 사후에 걷어낼 수 없다(어느 표가 오염인지 구분할 근거가 없다).
  */
-export const FEEDBACK_ELIGIBLE_REPLY_KINDS = ["answer", "unavailable"] as const;
+export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag"] as const;
 
-export type FeedbackEligibleReplyKind = (typeof FEEDBACK_ELIGIBLE_REPLY_KINDS)[number];
+export type FeedbackEligibleMatchPath = (typeof FEEDBACK_ELIGIBLE_MATCH_PATHS)[number];
 
-/** 종결 응답인가 — UI·route 가 **같은** 이 함수를 쓴다(계약 이중화 금지). */
-export function isFeedbackEligibleReplyKind(
+/**
+ * 피드백 대상인가 — UI·route 가 **같은** 이 함수를 쓴다(계약 이중화 금지, 삼순 NO-GO ③).
+ *
+ * 두 조건을 **모두** 요구한다:
+ *  ① `match_path` 가 RAG 경로다 — 근거를 가져와 답한 것만
+ *  ② `reply_kind === "answer"` 다 — 실제로 답변으로 나간 것만
+ *
+ * ②가 별도로 필요한 이유(실측 근거): 운영에 `unavailable/rag` 가 **5건** 있다.
+ * match_path 만 보고 붙이면 화면에 "모르겠어요"로 보이는 쪽지에 답변 품질 표가 붙는
+ * 오적재가 된다. 둘 다 건다.
+ */
+export function isFeedbackEligible(
   replyKind: string | null | undefined,
-): replyKind is FeedbackEligibleReplyKind {
-  return (
-    typeof replyKind === "string" &&
-    (FEEDBACK_ELIGIBLE_REPLY_KINDS as readonly string[]).includes(replyKind)
-  );
+  matchPath: string | null | undefined,
+): boolean {
+  if (replyKind !== "answer") return false;
+  if (typeof matchPath !== "string") return false;
+  return (FEEDBACK_ELIGIBLE_MATCH_PATHS as readonly string[]).includes(matchPath);
 }
 
 /**
  * 답변 쪽지에 피드백 버튼을 붙일 것인가.
  *
- * payload 가 없는 과거 답변은 제외한다 — 어느 경로였는지 모르는 표는 분석에 못 쓴다.
- * (없는 값을 지어내지 않는다.)
+ * payload 가 없는 과거 답변은 제외된다 — match_path 가 undefined 라 통과하지 못한다.
+ * 어느 경로였는지 모르는 표는 분석에 못 쓴다(없는 값을 지어내지 않는다).
  */
 export function shouldShowFeedback(
   senderId: string | null,
   geniusUserId: string,
   replyKind: string | null | undefined,
+  matchPath: string | null | undefined,
 ): boolean {
   if (senderId === null || senderId !== geniusUserId) return false;
-  return isFeedbackEligibleReplyKind(replyKind);
+  return isFeedbackEligible(replyKind, matchPath);
 }
 
 /**

@@ -35,11 +35,11 @@ const MUTATIONS = [
   },
   {
     id: "M3",
-    name: "route 검증 제거 (reply_kind / question_message_id)",
+    name: "route 대상 검증 제거 (reply_kind + match_path)",
     file: R("src/app/api/baseball-qa/feedback/route.ts"),
     apply: (s) =>
       s.replace(
-        /if \(!payload \|\| !isFeedbackEligibleReplyKind\(payload\.reply_kind\)\) \{[\s\S]*?\}\n/,
+        /if \(!payload \|\| !isFeedbackEligible\(payload\.reply_kind, payload\.match_path\)\) \{[\s\S]*?\}\n/,
         "",
       ),
     detector: "structure",
@@ -64,6 +64,20 @@ const MUTATIONS = [
     file: R("src/app/api/baseball-qa/feedback/route.ts"),
     apply: (s) => s.replace(/p_expected_prev: expectedPrevValue,\n/, ""),
     detector: "structure",
+  },
+  {
+    id: "M9",
+    name: "UI 가 match_path 를 판정에 안 넘김 (스모톡에도 버튼이 붙음)",
+    file: R("src/app/(main)/messages/[conversationId]/page.tsx"),
+    apply: (s) => s.replace(/\n\s*geniusReply\?\.match_path,\n(\s*\);)/, "\n$1"),
+    detector: "structure",
+  },
+  {
+    id: "M10",
+    name: "RAG allowlist 확대 (llm 유입)",
+    file: R("src/lib/baseball-qa/answer-feedback.ts"),
+    apply: (s) => s.replace(/= \["rag"\] as const;/, '= ["rag", "llm"] as const;'),
+    detector: "contract",
   },
   {
     id: "M5",
@@ -91,8 +105,8 @@ function runStructureChecks() {
   if (!/<GeniusAnswerFeedback\b/.test(page)) fails.push("M1: 답변 화면에 피드백 컴포넌트 결속 없음");
   if (!/GRANT EXECUTE ON FUNCTION[\s\S]*?TO service_role;/.test(mig))
     fails.push("M2: service_role EXECUTE grant 없음");
-  if (!/isFeedbackEligibleReplyKind\(payload\.reply_kind\)/.test(route))
-    fails.push("M3: route 에 reply_kind 검증 없음");
+  if (!/isFeedbackEligible\(payload\.reply_kind, payload\.match_path\)/.test(route))
+    fails.push("M3: route 에 대상 검증(reply_kind + match_path) 없음");
     if (!/pg_advisory_xact_lock/.test(mig)) fails.push("M4: same-key 직렬화 lock 없음");
   if (!/IF p_expected_prev IS NOT NULL AND p_expected_prev = p_rating THEN/.test(mig))
     fails.push("M6: expected_prev 멱등 판정 없음(재전송이 표를 뒤집음)");
@@ -103,6 +117,10 @@ function runStructureChecks() {
     fails.push("M8: qid 를 필수로 강제하면 legacy 답변이 전량 400");
   if (!/min-h-\[44px\]/.test(ui) || !/min-w-\[44px\]/.test(ui))
     fails.push("M5: 44px 터치 타깃 없음");
+  // 하린아빠 2026-08-06: RAG 답변에만 붙인다. UI 가 match_path 를 안 넘기면
+  // 판정이 undefined 로 떨어져 **전부 제외**되거나, 반대로 축이 통째로 죽는다.
+  if (!/shouldShowFeedback\([\s\S]{0,200}?geniusReply\?\.match_path,/.test(page))
+    fails.push("M9: UI 판정에 match_path 미전달 (RAG 한정 계약 무효)");
   return fails;
 }
 

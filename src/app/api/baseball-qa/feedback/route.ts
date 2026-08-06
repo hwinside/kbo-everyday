@@ -13,7 +13,7 @@ import {
   BASEBALL_GENIUS_USER_ID,
   isGeniusReplyPayload,
 } from "@/lib/constants/baseball-genius";
-import { isFeedbackEligibleReplyKind } from "@/lib/baseball-qa/answer-feedback";
+import { isFeedbackEligible } from "@/lib/baseball-qa/answer-feedback";
 
 export async function POST(req: NextRequest) {
   const verified = await getVerifiedUserFromRequest(req);
@@ -60,15 +60,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "평가할 답변을 확인할 수 없습니다" }, { status: 403 });
   }
 
-  // ── 종결 응답 검증 (삼순 NO-GO ③) ──────────────────────────────────
-  // 발신자만 보면 야잘알봇이 보낸 **안내·시스템 메시지·ack·picker 중간상태**에도 POST 가
+  // ── 피드백 대상 검증 (삼순 NO-GO ③) ──────────────────────────────────
+  // 발신자만 보면 야잘알봇이 보낸 **스모톡 생성답·안내·ack·picker 중간상태**에도 POST 가
   // 통과한다. UI 가 버튼을 안 그려도 API 를 직접 치면 그만이다 — 적재 계약을 깨는 오염이라
   // **UI 와 같은 판정 함수**로 서버에서도 강제한다(계약 이중화 금지).
   //
-  // 구 payload(=`type` 이 없거나 reply_kind 미기록) 도 여기서 막는다. 어느 질문·경로였는지
-  // 모르는 표는 분석에 못 쓰고, question_message_id 가 없으면 질문로그와 결속도 못 한다.
+  // 대상은 RAG 로 근거를 가져와 답한 것뿐이다 (하린아빠 2026-08-06 16:36).
+  // 구 payload(=`type` 이 없거나 match_path 미기록) 도 여기서 막힌다 — 어느 경로였는지
+  // 모르는 표는 분석에 못 쓴다.
   const payload = isGeniusReplyPayload(message.payload) ? message.payload : null;
-  if (!payload || !isFeedbackEligibleReplyKind(payload.reply_kind)) {
+  if (!payload || !isFeedbackEligible(payload.reply_kind, payload.match_path)) {
     return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
   }
   // 질문 쪽지 id.

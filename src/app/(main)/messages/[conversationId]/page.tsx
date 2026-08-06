@@ -479,12 +479,15 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
-            // 품질 피드백은 **실제 답변에만** 붙인다 — 되물기·인사·미응답에 붙이면 "답변 품질"이
-            // 아닌 것에 표가 쌓여 지표가 오염된다. 판정은 공용 함수로 — 인라인이면 게이트가 못 잡는다.
+            // 품질 피드백은 **RAG 로 근거를 가져와 답한 것에만** 붙인다
+            // (하린아빠 2026-08-06 16:36: "스모톡은 넣지마. 대화가 자연스러워지지 않아").
+            // 순수 생성답(llm)에 붙이면 스모톡마다 버튼이 뜬다. 판정은 공용 함수로 —
+            // 인라인이면 게이트가 실제 렌더 계약을 못 잡고, route 와 계약이 갈라진다.
             const showFeedback = shouldShowFeedback(
               msg.sender_id,
               BASEBALL_GENIUS_USER_ID,
               geniusReply?.reply_kind,
+              geniusReply?.match_path,
             );
             // 출처 표기 — 본문에는 `📄 출처: 나무위키` 표시명만 있고 링크는 payload 로 온다.
             // ⚠️ 이미 발송된 과거 답변은 본문에 `(전체URL) · rev crawled:… · … 기준` 이 그대로
