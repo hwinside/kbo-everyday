@@ -26,6 +26,7 @@
     "announcements",
     "api_fallback_events",
     "app_downloads",
+    "genius_answer_feedback",
     "genius_daily_usage",
     "genius_qa_cache",
     "genius_question_jobs",
@@ -524,6 +525,15 @@
     "api_fallback_alert_state": [
       [
         "api_name"
+      ]
+    ],
+    "genius_answer_feedback": [
+      [
+        "id"
+      ],
+      [
+        "user_id",
+        "answer_message_id"
       ]
     ]
   },

@@ -17,6 +17,7 @@ import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
+import GeniusAnswerFeedback from "@/components/dm/GeniusAnswerFeedback";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
   BASEBALL_GENIUS_NAME,
@@ -30,6 +31,13 @@ import {
   mascotStateForReplyKind,
 } from "@/lib/constants/baseball-genius";
 import { splitProvenanceForDisplay } from "@/lib/baseball-qa/genius-reply-provenance";
+import {
+  loadGeniusFeedback,
+  nextRatingAfterClick,
+  shouldShowFeedback,
+  submitGeniusFeedback,
+  type GeniusFeedbackRating,
+} from "@/lib/baseball-qa/answer-feedback";
 
 const REPORT_CATEGORIES = [
   { id: "spam", label: "스팸" },
@@ -173,6 +181,17 @@ export default function DMChatPage() {
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [reportDone, setReportDone] = useState(false);
 
+  // 답변 품질 피드백(👍/👎). 서버가 SSOT이고 여기는 표시 상태다.
+  // 대화 전환 시 초기화한다 — A 대화 표가 B 에 남으면 남의 답변에 눌린 것처럼 보인다.
+  const [geniusFeedback, setGeniusFeedback] = useState<Record<number, GeniusFeedbackRating>>({});
+  const [feedbackPending, setFeedbackPending] = useState<ReadonlySet<number>>(new Set());
+  const [feedbackConversationId, setFeedbackConversationId] = useState(conversationId);
+  if (feedbackConversationId !== conversationId) {
+    setFeedbackConversationId(conversationId);
+    setGeniusFeedback({});
+    setFeedbackPending(new Set());
+  }
+
   useEffect(() => {
     // 클리퍼 대화방은 최신 클리핑 카드가 세로로 길어 하단 착지 시 다시 올려 봐야 함
     // → 최신 메시지의 '상단'(인트로/헤더)에 포커스 (하린아빠 제보 7/12)
@@ -282,6 +301,62 @@ export default function DMChatPage() {
       setReportDetail("");
     }, 1500);
   }, [user, otherId, conversationId, reportCategory, reportDetail]);
+
+  // 화면에 그려진 답변들의 **내 표**를 복원한다. 이게 없으면 재접속마다 버튼이 미투표로
+  // 보여서 유저가 다시 누르고, 같은 값이면 **취소**되어 표가 사라진다.
+  const geniusAnswerIdsKey = messages
+    .filter((m) => m.sender_id === BASEBALL_GENIUS_USER_ID)
+    .map((m) => m.id)
+    .join(",");
+  useEffect(() => {
+    if (!isBaseballGeniusConv || !geniusAnswerIdsKey) return;
+    let cancelled = false;
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const ids = geniusAnswerIdsKey.split(",").map(Number).filter((n) => Number.isSafeInteger(n) && n > 0);
+      const ratings = await loadGeniusFeedback(ids, session?.access_token ?? null);
+      if (cancelled) return;
+      // 서버값을 병합한다 — 덮어쓰면 응답 대기 중 누른 낙관적 표가 지워진다.
+      setGeniusFeedback((prev) => ({ ...ratings, ...prev }));
+    })();
+    return () => { cancelled = true; };
+  }, [isBaseballGeniusConv, geniusAnswerIdsKey]);
+
+  const handleGeniusFeedback = useCallback(async (answerMessageId: number, clicked: GeniusFeedbackRating) => {
+    // 중복 클릭 차단 — 응답 전에 또 누르면 두 번째 요청이 첫 번째를 취소해버린다.
+    if (feedbackPending.has(answerMessageId)) return;
+    const previous = geniusFeedback[answerMessageId] ?? null;
+    const optimistic = nextRatingAfterClick(previous, clicked);
+    setFeedbackPending((prev) => new Set(prev).add(answerMessageId));
+    setGeniusFeedback((prev) => {
+      const next = { ...prev };
+      if (optimistic === null) delete next[answerMessageId];
+      else next[answerMessageId] = optimistic;
+      return next;
+    });
+    const { data: { session } } = await supabase.auth.getSession();
+    // **원하는 최종 상태**(optimistic)를 보낸다 — 서버가 "같은 값이면 취소"를 다시
+    // 판정하지 않으므로 재전송·두 탭 동일 클릭이 표를 뒤집지 않는다(멱등).
+    // 클릭 직전 상태는 CAS 비교값으로 함께 보낸다: 다른 탭이 먼저 바꿨으면 서버가
+    // 적용하지 않고 409 + 실제 상태를 돌려준다.
+    const result = await submitGeniusFeedback(
+      answerMessageId, optimistic, session?.access_token ?? null, fetch, previous ?? null,
+    );
+    setFeedbackPending((prev) => {
+      const next = new Set(prev);
+      next.delete(answerMessageId);
+      return next;
+    });
+    setGeniusFeedback((prev) => {
+      const next = { ...prev };
+      // 서버가 SSOT다. 실패면 이전 값으로 되돌리고(안 눌린 것을 눌린 것처럼 남기지 않는다),
+      // 409 충돌이면 서버가 준 **실제** 값으로 맞춘다(내가 원한 값이 아니다).
+      const settled = result.ok ? result.rating : previous;
+      if (settled === null) delete next[answerMessageId];
+      else next[answerMessageId] = settled;
+      return next;
+    });
+  }, [feedbackPending, geniusFeedback]);
 
   useEffect(() => {
     if (!authLoading && !user) router.replace("/messages");
@@ -407,6 +482,19 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
+            // 품질 피드백은 **RAG·사전 근거로 답한 것에만** 붙인다
+            // (하린아빠 2026-08-06 16:36 "스몰톡은 넣지마" + 16:37 "사전에서 가져온 답변 추가").
+            // 순수 생성답(llm)에 붙이면 스몰톡마다 버튼이 뜬다. 질문 결속 id 가 없는 과거
+            // 답변도 여기서 걸러진다 — 안 그러면 눌러도 400 나는 버튼이 전량에 붙는다.
+            // 판정은 공용 함수로 — 인라인이면 게이트가 실제 렌더 계약을 못 잡고,
+            // route 와 계약이 갈라진다.
+            const showFeedback = shouldShowFeedback(
+              msg.sender_id,
+              BASEBALL_GENIUS_USER_ID,
+              geniusReply?.reply_kind,
+              geniusReply?.match_path,
+              geniusReply?.question_message_id,
+            );
             // 출처 표기 — 본문에는 `📄 출처: 나무위키` 표시명만 있고 링크는 payload 로 온다.
             // ⚠️ 이미 발송된 과거 답변은 본문에 `(전체URL) · rev crawled:… · … 기준` 이 그대로
             // 남아 있다. 저장 행을 UPDATE 하지 않고 **표시 시점에** 잘라낸다(원본 보존·롤백 가능).
@@ -474,6 +562,13 @@ export default function DMChatPage() {
                           `📄 출처: ${provenance.label}`
                         )}
                       </p>
+                    ) : null}
+                    {showFeedback ? (
+                      <GeniusAnswerFeedback
+                        rating={geniusFeedback[msg.id] ?? null}
+                        pending={feedbackPending.has(msg.id)}
+                        onRate={(rating) => handleGeniusFeedback(msg.id, rating)}
+                      />
                     ) : null}
                     {pickerOptions ? (
                       <GeniusPlayerPicker
