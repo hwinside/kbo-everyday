@@ -416,6 +416,58 @@ check("필터 reset 실패를 fail-close 한다", () => {
   );
 });
 
+/* 삼순 NO-GO(3차) ① — 셀렉트 값만으로는 재조회를 증명하지 못한다.
+ * 종전 `changeSelectAndWait` 는 표 전이가 timeout 돼도 `settled === value` 만 보고 true 를
+ * 돌렸다. select 값은 브라우저가 즉시 반영하므로 서버 응답 없이도 항상 true 가 된다.
+ * 그러면 reset 이 실패해도 같은 팀 stale 표를 두 번 읽고 "집합 동일"로 통과한다.
+ * 실측: 이 페이지는 `Sys.WebForms.PageRequestManager` 기반 부분 포스트백이라
+ * (팀 전환 시 POST 1건 / `framenavigated` 0 / 컨테이너 `...udpContent`)
+ * `endRequest` 에포크로 응답 도착을 직접 셀 수 있다. */
+check("전이 증거가 없으면 changeSelectAndWait 가 false 를 돌린다", () => {
+  hasSrc(
+    /if \(!advanced\) return false;/,
+    "timeout 을 통과시키면 stale 표를 든 채 true 가 된다"
+  );
+  // 종전처럼 `settled === value` 만으로 돌아가면 안 된다.
+  const fn = /async function changeSelectAndWait[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  assert.ok(fn, "changeSelectAndWait 를 찾지 못했다");
+  assert.ok(
+    /const advanced = await page[\s\S]*?\.catch\(\(\) => false\)/.test(fn),
+    "전이 여부를 boolean 으로 받아 반영해야 한다"
+  );
+  assert.ok(
+    !/\} catch \{\s*\n\s*await page\.waitForTimeout\(waitMs\);/.test(fn),
+    "timeout 을 고정 대기로 삼키는 종전 경로가 남아 있다"
+  );
+});
+
+check("재조회 증거로 서버 응답 epoch 을 쓴다", () => {
+  hasSrc(/prm\.add_endRequest\(/, "PageRequestManager endRequest 훅이 없다");
+  hasSrc(
+    /return \(window\.__kboEpoch \?\? 0\) > epochBefore;/,
+    "epoch 증가를 전이 판정으로 써야 한다 — 표 변화만으로는 같은 결과 팀에서 오판한다"
+  );
+});
+
+/* 삼순 NO-GO(3차) ② — `while (true)` 에 상한이 없으면 한 pass 가 영원히 돌아
+ * 상위의 `maxAttempts = 3` 재시도까지 무효화된다. */
+check("페이지 순회에 상한이 있다", () => {
+  hasSrc(/MAX_PAGES_PER_TEAM/, "페이지 상한 상수가 없다");
+  hasSrc(
+    /if \(pageNum > MAX_PAGES_PER_TEAM\) \{[\s\S]{0,220}max_pages_exceeded_/,
+    "상한 초과를 fail-close 하지 않는다"
+  );
+});
+
+check("페이저 순환을 감지해 fail-close 한다", () => {
+  hasSrc(/const seenStates = new Set\(\);/, "방문 상태 집합이 없다");
+  hasSrc(
+    /if \(seenStates\.has\(pagerState\)\) \{[\s\S]{0,200}pager_cycle_at_/,
+    "같은 페이저 상태 재방문을 통과시키면 순환이 무한히 돌 수 있다"
+  );
+  hasSrc(/seenStates\.add\(pagerState\);/, "상태를 기록하지 않으면 감지가 무의미다");
+});
+
 /* 삼순 NO-GO(2차) 보완 중 dry-run 으로 발견한 페이저 상태 오염 — 정적 검사로는 안 보였다.
  * KBO 그리드는 팀 필터를 바꿔도 페이지 인덱스를 유지한다.
  * 실측(팀 순회 LG→두산→KIA): 두산 2페이지에서 끝난 뒤 KIA 로 전환 → KIA rows=0.
@@ -432,6 +484,43 @@ check("수집 시작 시에도 1페이지를 보장하고 실패면 fail-close �
   hasSrc(
     /if \(!\(await ensureFirstPage\(page\)\)\) \{[\s\S]{0,160}"cannot_reach_first_page"/,
     "scrapeAllPages 진입 시 1페이지 보장이 없거나 실패를 통과시킨다"
+  );
+});
+
+/* full dry-run(20슬롯)에서 드러난 추가 결함 — 표시상 `on` 은 서버 상태가 아니다.
+ * 실측(투수 페이지, LG→KT):
+ *   LG 2페이지 순회 → on=2 / 팀 필터 reset → **on=1 표시**인데 rows=0
+ *   그 상태에서 KT 선택 → rows=0 (KT 투수는 1페이지뿐인데도)
+ *   "1" 버튼을 명시적으로 클릭 → rows=23 ✅
+ * 즉 구판의 `on === "1"` 조기종료는 아무것도 안 하고 통과했고, 서버 내부 인덱스는 2 로
+ * 남아 단일 페이지 팀이 통째로 비었다. */
+check("ensureFirstPage 가 표시상 on 을 신뢰해 조기종료하지 않는다", () => {
+  const fn = /async function ensureFirstPage[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  assert.ok(fn, "ensureFirstPage 를 찾지 못했다");
+  assert.ok(
+    !/if \(on === null \|\| on === "1"\) return true;/.test(fn),
+    "표시가 1 이라고 조기종료하면 서버 인덱스가 2 로 남아 단일페이지 팀이 비게 된다"
+  );
+  assert.ok(
+    /await first\.click\(\)/.test(fn),
+    "항상 1번 버튼을 눌러 서버 상태를 강제로 맞춰야 한다"
+  );
+  assert.ok(
+    /__kboEpoch \?\? 0\) <= prev/.test(fn),
+    "1페이지 복귀도 서버 응답(epoch)으로 확인해야 한다"
+  );
+});
+
+// 진단이 가려지면 원인 추적이 느려진다 — KT 가 `empty` 로 찍혔지만 진짜 원인은 페이저였다.
+check("미완주를 empty 보다 먼저 보고한다 (진단 순서)", () => {
+  const r = evaluateTeamCollection(
+    okInput({ collected: 0, uniqueIds: 0, observedTeamNames: [], pagerComplete: false })
+  );
+  assert.equal(r.ok, false);
+  assert.equal(
+    r.reason,
+    TEAM_FAIL_REASONS.PAGER_INCOMPLETE,
+    "수집이 끝나지 않았는데 empty 로 보고하면 원인이 가려진다"
   );
 });
 

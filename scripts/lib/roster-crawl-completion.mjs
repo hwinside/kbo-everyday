@@ -98,6 +98,18 @@ export function evaluateTeamCollection({
     };
   }
 
+  // ⚠︎ 순서 주의 — 진단이 가려지면 안 된다.
+  // 종전에는 EMPTY 를 먼저 봐서, 실제 원인이 "페이저 미완주"여도 `empty` 로 보고됐다.
+  // full dry-run 에서 KT 가 `empty` 로 찍혔지만 진짜 원인은 페이지 인덱스 오염이었고,
+  // 그 때문에 원인 추적이 뒤늬다. 수집이 끝나지 않았다면 그걸 먼저 말한다.
+  if (pagerComplete !== true) {
+    return {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.PAGER_INCOMPLETE,
+      detail: "페이저를 끝까지 돌지 못함 — 부분 페이지만 수집됐다",
+    };
+  }
+
   if (!Number.isFinite(collected) || collected <= 0) {
     return { ok: false, reason: TEAM_FAIL_REASONS.EMPTY, detail: "수집 0명" };
   }
@@ -118,15 +130,6 @@ export function evaluateTeamCollection({
       ok: false,
       reason: TEAM_FAIL_REASONS.WRONG_TEAM,
       detail: `요청 ${requestedTeamName} 인데 표에 다른 팀 존재: ${foreign.join(",")}`,
-    };
-  }
-
-  // ── quiet EOF ─────────────────────────────────────────────
-  if (pagerComplete !== true) {
-    return {
-      ok: false,
-      reason: TEAM_FAIL_REASONS.PAGER_INCOMPLETE,
-      detail: "페이저를 끝까지 돌지 못함 — 부분 페이지만 수집됐다",
     };
   }
 

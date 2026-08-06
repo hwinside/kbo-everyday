@@ -85,28 +85,76 @@ function parseKboBirthday(text) {
  *   false 면 화면이 직전 팀 데이터일 수 있으므로 그 수집 결과를 신뢰하면 안 된다.
  *   (기존 판은 timeout 시 조용히 진행해 직전 팀 표를 그대로 긁었다.)
  */
+/**
+ * ASP.NET AJAX **응답 에포크** 카운터를 설치한다.
+ *
+ * 이 페이지는 UpdatePanel(`...udpContent`) 기반 **부분 포스트백**이다(실측:
+ * `Sys.WebForms.PageRequestManager` 존재, 팀 전환 시 POST 1건, `framenavigated` 0).
+ * 그래서 "서버 응답이 실제로 왔는가"를 `endRequest` 로 직접 셀 수 있다.
+ *
+ * ⚠︎ 이게 필요한 이유(삼순 NO-GO 3차 ①): 종전 `changeSelectAndWait` 는 표 전이가
+ * timeout 돼도 마지막에 `settled === value` 만 보고 true 를 돌렸다. select 값은
+ * 브라우저가 즉시 반영하므로 **서버 응답 없이도 항상 true** 가 된다.
+ * 그러면 reset 이 실패해도 같은 팀 stale 표를 두 번 읽고 "집합 동일"로 통과한다.
+ */
+async function installRequestEpoch(page) {
+  await page
+    .evaluate(() => {
+      if (window.__kboEpochInstalled) return;
+      const prm = window.Sys?.WebForms?.PageRequestManager?.getInstance?.();
+      if (!prm) return;
+      window.__kboEpoch = 0;
+      prm.add_endRequest(() => {
+        window.__kboEpoch = (window.__kboEpoch || 0) + 1;
+      });
+      window.__kboEpochInstalled = true;
+    })
+    .catch(() => {});
+  return page.evaluate(() => window.__kboEpochInstalled === true).catch(() => false);
+}
+
+/**
+ * 셀렉트를 바꾸고 **서버 응답이 실제로 도착할 때까지** 기다린다.
+ *
+ * @returns {Promise<boolean>} 전이가 증명됐는지. timeout 은 **false** 다(종전에는 true 였다).
+ *   증거 우선순위: ① epoch 증가(서버 응답 도착) ② epoch 미설치 시에만 표 변화 fallback.
+ *   표 변화만 쓰면 "생성 결과가 우연히 같은" 팀(예: 전체→롯데)에서 오판이 난다.
+ */
 async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
   const current = await page.$eval(selector, (el) => el.value).catch(() => null);
   if (current === value) return true;
 
+  const hasEpoch = await installRequestEpoch(page);
+  const epochBefore = hasEpoch
+    ? await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null)
+    : null;
   const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+
   await page.selectOption(selector, value);
 
-  try {
-    await page.waitForFunction(
-      ({ selector, value, beforeFirstRow }) => {
+  const advanced = await page
+    .waitForFunction(
+      ({ selector, value, beforeFirstRow, epochBefore }) => {
         const el = document.querySelector(selector);
+        if (!el || el.value !== value) return false;
+        if (epochBefore !== null) {
+          // 서버 응답이 한 번 더 끝난 것이 유일한 재조회 증거다.
+          return (window.__kboEpoch ?? 0) > epochBefore;
+        }
         const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return !!el && el.value === value && firstRow !== beforeFirstRow;
+        return firstRow !== beforeFirstRow;
       },
-      { selector, value, beforeFirstRow },
+      { selector, value, beforeFirstRow, epochBefore },
       { timeout: waitMs }
-    );
-  } catch {
-    await page.waitForTimeout(waitMs);
-  }
+    )
+    .then(() => true)
+    .catch(() => false);
+
   await page.waitForLoadState("networkidle").catch(() => {});
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(500);
+
+  // 전이 증거가 없으면 셀렉트 값과 무관하게 실패다 — stale 표를 들고 있을 수 있다.
+  if (!advanced) return false;
 
   const settled = await page.$eval(selector, (el) => el.value).catch(() => null);
   return settled === value;
@@ -270,31 +318,64 @@ async function waitForTableSettled(page, timeoutMs = 15000) {
  * 종전 크롤러는 이를 그대로 저장해 roster 가 조용히 비거나 중복됐다.
  */
 async function ensureFirstPage(page) {
-  for (let i = 0; i < 3; i++) {
+  const first = page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: /^1$/ }).first();
+  // 페이저 자체가 없으면 단일 페이지다.
+  if (!(await first.count())) return true;
+
+  // ⚠︎ 표시상 `on` 을 신뢰하면 안 된다 — dry-run 으로 확정한 결함.
+  //
+  // 실측(투수 페이지, LG→KT):
+  //   LG 2페이지 순회 후          → on=2
+  //   팀 필터 reset 후            → **on=1 표시**, pages=[1], rows=0
+  //   그 상태에서 KT 선택      → rows=0 (KT 투수는 1페이지뿐)
+  //   "1" 버튼을 명시적으로 클릭 → rows=23 ✅
+  //
+  // 즉 표시는 1이므로 구판 `on === "1"` 조기종료는 **아무것도 안 하고** 통과했고,
+  // 서버 내부 페이지 인덱스는 2 로 남아 단일 페이지 팀이 통째로 비었다.
+  // 그래서 **항상 1번 버튼을 눌러 서버 상태를 강제로 맞춘다.**
+  const hasEpoch = await installRequestEpoch(page);
+  const epochBefore = hasEpoch
+    ? await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null)
+    : null;
+
+  await first.click().catch(() => {});
+  await page.waitForLoadState("networkidle").catch(() => {});
+
+  if (epochBefore === null) {
+    // epoch 을 못 쓰면 검증 불가 — 고정 대기 후 표시로만 확인(약한 근거).
+    await page.waitForTimeout(1500);
     const on = await page
       .$eval('a[id*="ucPager_btnNo"].on', (a) => a.textContent?.trim())
       .catch(() => null);
-    // 페이저가 없거나(단일 페이지) 이미 1페이지면 끝.
-    if (on === null || on === "1") return true;
-
-    const first = page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: /^1$/ }).first();
-    if (!(await first.count())) return false;
-    await first.click();
-    await page.waitForLoadState("networkidle").catch(() => {});
-    await page
-      .waitForFunction(
-        () => document.querySelector('a[id*="ucPager_btnNo"].on')?.textContent?.trim() === "1",
-        undefined,
-        { timeout: 10000 }
-      )
-      .catch(() => {});
+    return on === null || on === "1";
   }
-  return false;
+
+  // 서버 응답이 실제로 끝나고 표시도 1페이지여야 한다.
+  return page
+    .waitForFunction(
+      (prev) => {
+        if ((window.__kboEpoch ?? 0) <= prev) return false;
+        const on = document.querySelector('a[id*="ucPager_btnNo"].on')?.textContent?.trim();
+        return on === undefined || on === "1";
+      },
+      epochBefore,
+      { timeout: 12000 }
+    )
+    .then(() => true)
+    .catch(() => false);
 }
+
+/**
+ * 한 팀의 페이지 순회 상한. KBO 기록 표는 한 팀당 30행/페이지로 최대 수십 명이므로
+ * 정상 순회는 2~3페이지면 끝난다. 20 은 넘치는 상한이고, 여기 닿으면 순회 자체가 고장이다.
+ */
+export const MAX_PAGES_PER_TEAM = 20;
 
 async function scrapeAllPages(page) {
   const allRows = [];
   let pageNum = 1;
+  // 같은 페이저 상태를 다시 방문하면 순회가 순환하고 있다는 뜻이다.
+  const seenStates = new Set();
 
   // 팀 전환 후에도 이전 팀의 페이지 인덱스가 남아 있다 — 반드시 1페이지로 맞춤다.
   if (!(await ensureFirstPage(page))) {
@@ -302,9 +383,32 @@ async function scrapeAllPages(page) {
   }
 
   while (true) {
+    // ⚠︎ 삼순 NO-GO 3차 ②: `while (true)` 에 상한이 없으면 한 pass 가 영원히 돌아
+    // 상위의 `maxAttempts = 3` 재시도까지 무효화된다(크론 자체가 멈춘다).
+    if (pageNum > MAX_PAGES_PER_TEAM) {
+      return { rows: allRows, pagerComplete: false, reason: `max_pages_exceeded_${MAX_PAGES_PER_TEAM}` };
+    }
     // 표가 안정되기 전에 읽으면 부분·빈 표를 수집한다.
     if (!(await waitForTableSettled(page))) {
       return { rows: allRows, pagerComplete: false, reason: `table_unsettled_at_${pageNum}` };
+    }
+
+    // 페이저 상태(현재 페이지 + 버튼 구성 + 첫행)가 이전에 본 것과 같으면 순환이다.
+    const pagerState = await page
+      .evaluate(() => {
+        const on = document.querySelector('a[id*="ucPager_btnNo"].on')?.textContent?.trim() || "-";
+        const nos = [...document.querySelectorAll('a[id*="ucPager_btnNo"]')]
+          .map((a) => a.textContent?.trim())
+          .join(",");
+        const first = document.querySelector("tbody tr")?.textContent?.trim() || "";
+        return `${on}|${nos}|${first}`;
+      })
+      .catch(() => null);
+    if (pagerState) {
+      if (seenStates.has(pagerState)) {
+        return { rows: allRows, pagerComplete: false, reason: `pager_cycle_at_${pageNum}` };
+      }
+      seenStates.add(pagerState);
     }
 
     const rows = await page.$$eval("tbody tr", (trs) =>
