@@ -115,7 +115,23 @@ async function installRequestEpoch(page, { timeoutMs = 10000 } = {}) {
         const prm = window.Sys?.WebForms?.PageRequestManager?.getInstance?.();
         if (!prm) return false;
         window.__kboEpoch = 0;
-        prm.add_endRequest(() => {
+        window.__kboEpochError = 0;
+        // ⚠︎ `endRequest` 는 성공 전용이 아니다 — 오류로 끝난 부분 포스트백도 발화한다.
+        // (MS: Working with PageRequestManager Events — EndRequestEventArgs.get_error())
+        // 오류까지 epoch 으로 세면 "서버가 응답했다"는 증거가 되지 못해,
+        // 실패한 reset/select/1번클릭 뒤에도 로컬 select 값·표시 `on` · 같은 팀 stale 표로
+        // 두 집합이 동일하게 통과할 수 있다. **오류 없는 응답만** 세서야 가설이 성립한다.
+        prm.add_endRequest((sender, args) => {
+          let failed = true; // 판단 불가는 실패 취급(fail-close)
+          try {
+            failed = args?.get_error?.() != null;
+          } catch {
+            failed = true;
+          }
+          if (failed) {
+            window.__kboEpochError = (window.__kboEpochError || 0) + 1;
+            return;
+          }
           window.__kboEpoch = (window.__kboEpoch || 0) + 1;
         });
         window.__kboEpochInstalled = true;

@@ -489,6 +489,40 @@ check("epoch 을 못 쓰면 전이 판정을 fail-close 한다 (약한 근거 �
   );
 });
 
+/* 삼순 NO-GO(5차) — `endRequest` 는 성공 전용이 아니다.
+ * MS 문서(Working with PageRequestManager Events)에 따르면 오류로 끝난 부분
+ * 포스트백도 `endRequest` 를 발화시키며 오류는 `EndRequestEventArgs.get_error()`
+ * 로 전달된다. 오류까지 epoch 으로 세면 "서버가 응답했다"가 증명되지 않아,
+ * 실패한 reset/select/1번클릭 뒤에도 로컬 select 값·표시 `on`·같은 팀 stale 표로
+ * 두 집합이 동일하게 통과할 수 있다 — 4차까지 막은 경로가 오류 응답으로 부활한다. */
+check("오류 없는 응답만 epoch 을 올린다", () => {
+  const fn = /async function installRequestEpoch[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  assert.ok(fn, "installRequestEpoch 를 찾지 못했다");
+
+  assert.ok(
+    /add_endRequest\(\(sender, args\) =>/.test(fn),
+    "endRequest 핸들러가 args 를 받지 않는다 — 오류 여부를 볼 수 없다"
+  );
+  assert.ok(
+    /args\?\.get_error\?\.\(\) != null/.test(fn),
+    "EndRequestEventArgs.get_error() 를 보지 않는다 — 실패한 포스트백도 epoch 을 올린다"
+  );
+  // 오류면 epoch 을 올리지 않고 빠져나와야 한다.
+  assert.ok(
+    /if \(failed\) \{[\s\S]{0,200}return;\n\s*\}/.test(fn),
+    "오류 응답에서 early-return 하지 않는다"
+  );
+  // get_error 자체가 터지면 판단 불가 → 실패 취급(fail-close).
+  assert.ok(
+    /\} catch \{\s*\n\s*failed = true;/.test(fn),
+    "get_error 호출 실패를 성공으로 취급한다 — 판단 불가는 fail-close 여야 한다"
+  );
+  assert.ok(
+    /let failed = true;/.test(fn),
+    "failed 초깃값이 false 면 예외 경로가 성공으로 샘다"
+  );
+});
+
 check("installRequestEpoch 가 PRM 을 기다렸다가 fail-close 한다", () => {
   const fn = /async function installRequestEpoch[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
   assert.ok(fn, "installRequestEpoch 를 찾지 못했다");
