@@ -19,7 +19,7 @@
  * 자체검증: npm run qa:post-scope-label:selftest  (결함주입 RED 확인)
  */
 import { JSDOM } from "jsdom";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://localhost:54321";
@@ -508,29 +508,20 @@ async function main() {
     );
   }
 
-  // 4-4. DB 경계 — 일반·사진글은 createPost() 가 브라우저에서 posts 에 직접 INSERT 한다.
-  // 서버 route 가 없으므로 우회 불가능한 지점은 DB 뿐이다(삼순 NO-GO 2026-08-06).
+  // 4-4. DB 경계는 **정규식이 아니라 실제 Postgres 행동**으로 검증한다.
+  //   종전 이 자리에 있던 소스 정규식 검사는 `['']`·`['not-a-team']` 이 통과하는 걸 못 잡았다
+  //   (삼순 NO-GO 2026-08-06 2차). 검증기가 대상 SQL 을 읽고 '문자열이 있나' 를 보는 방식은
+  //   그 SQL 이 무엇을 거절하는지에 대해 검출력이 0 이다.
+  //   → `scripts/qa/post-scope-db-trigger-integration.ts` (npm run qa:post-scope-db-trigger)
+  //   여기서는 그 게이트가 **prebuild 에 실제로 물려 있는지**만 확인한다(배선 누락 방지).
   {
-    const dir = resolve(process.cwd(), "supabase/migrations");
-    const files = readdirSync(dir).filter((f) => f.endsWith(".sql"));
-    const scopeMigration = files
-      .map((f) => readFileSync(resolve(dir, f), "utf8"))
-      .find((sql) => sql.includes("posts_require_team_scope"));
-    ok("§4 posts 공개범위 필수 migration 존재", !!scopeMigration);
+    const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    };
+    ok("§4 DB 경계 게이트 스크립트가 등록돼 있다", typeof pkg.scripts["qa:post-scope-db-trigger"] === "string");
     ok(
-      "§4 그 migration 이 posts BEFORE INSERT 트리거를 건다",
-      !!scopeMigration && /BEFORE INSERT ON public\.posts/.test(scopeMigration),
-    );
-    ok(
-      "§4 빈 team_tags 를 check_violation 으로 거절",
-      !!scopeMigration &&
-        /jsonb_array_length\(to_jsonb\(NEW\.team_tags\)\) = 0/.test(scopeMigration) &&
-        /check_violation/.test(scopeMigration),
-    );
-    // UPDATE 까지 막으면 신고·카운터 갱신이 죽는다 — INSERT 전용이어야 한다.
-    ok(
-      "§4 그 트리거는 UPDATE 를 건들지 않음",
-      !!scopeMigration && !/BEFORE INSERT OR UPDATE ON public\.posts/.test(scopeMigration),
+      "§4 DB 경계 게이트가 prebuild(required) 에 물려 있다",
+      (pkg.scripts.prebuild ?? "").includes("qa:post-scope-db-trigger"),
     );
   }
 
@@ -570,6 +561,11 @@ async function main() {
     console.error(`\n  실패 항목: ${failures.join(" / ")}`);
     process.exit(1);
   }
+  // ⚠️ **명시 종료 필수.** JSDOM 타이머와 supabase GoTrue 자동갱신 핸들이 살아있어
+  // 자연 종료를 기다리면 프로세스가 안 끝난다. 실제로 2026-08-06 exact 01ad5a10f 의 Vercel 배포가
+  // 이 게이트 출력("37 passed, 0 failed")을 끝으로 **next build 로 넘어가지 못하고** ERROR 로 죽었다.
+  // 로컬에서는 사람이 전진하니 안 보이고 CI 에서만 터지는 유형이라 더 위험하다.
+  process.exit(0);
 }
 
 main().catch((e) => {

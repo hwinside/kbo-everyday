@@ -6,9 +6,21 @@
 --   콘솔에서 supabase.from("posts").insert(...) 한 줄이면 우회된다.
 --   → 우회 불가능한 유일한 지점이 DB 다 (삼순 NO-GO 2026-08-06).
 --
--- 무엇을 막나:
---   신규 INSERT 에서 team_tags 가 비어 있으면 거절한다. "전체 구단 공개" 는 태그 없음이 아니라
---   **10개 팀 slug 를 모두 담은 글**로 저장되므로(작성 UI 의 '전체 선택'), 빈 배열은 언제나 미선택이다.
+-- 무엇을 검사하나 — **canonical KBO 구단 slug 가 1개 이상** (삼순 NO-GO 2026-08-06 2차):
+--   배열 길이만 보면 `['']`·`['not-a-team']`·`['{}']` 같은 쓰레기 값이 통과한다. 그러면
+--   DB 는 통과했는데 화면(`getTeamBySlug`)은 그 slug 를 못 찾아 팀 0개로 접혀
+--   "전체구단 공개"로 표시된다 — 즉 **가드를 통과한 채로 스펙이 깨진다**.
+--   그래서 여기서 실제 구단 slug 집합과 대조한다.
+--   집합은 `src/lib/constants/teams.ts` 의 TEAMS(10구단, 올스타 제외)와 동일해야 하며,
+--   그 exact 일치는 게이트(`qa:post-scope-db-trigger`)가 양방향으로 검증한다.
+--   올스타(allstar-nanum/allstar-dream)는 정규 구단이 아니라 `getTeamBySlug` 가 못 찾으므로
+--   여기서도 제외한다 — 앱과 DB 판정이 갈리면 안 된다.
+--
+-- 어떤 글에 적용하나 — **면제 목록에 없는 모든 board_type** (fail-close):
+--   면제: stadium(구장 좌석팁·후기 — 팀 피드 비노출, 작성 UI 에 팀 피커 자체가 없음)
+--         announcement/news(운영 브릿지 글 — is_hidden=true 로 피드에 안 뜨고 공개범위 개념이 없음)
+--   그 외(free/team/player/poll 및 **향후 신설될 board_type**)는 전부 필수다.
+--   반대로 "필수 목록"을 열거하면 새 board_type 이 조용히 우회하므로 면제를 열거한다.
 --
 -- 무엇을 안 막나 (의도적):
 --   * UPDATE — 기존 글 수정 경로는 태그를 건드리지 않는다. 여기서 막으면 신고·카운터 UPDATE 까지
@@ -27,14 +39,33 @@ RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = public
 AS $$
+DECLARE
+  v_tags      jsonb;
+  v_canonical int;
 BEGIN
-  -- jsonb 배열 / text[] 양쪽 스키마를 모두 견디게 개수로 판정한다.
-  IF NEW.team_tags IS NULL
-     OR jsonb_typeof(to_jsonb(NEW.team_tags)) <> 'array'
-     OR jsonb_array_length(to_jsonb(NEW.team_tags)) = 0 THEN
-    RAISE EXCEPTION 'post requires at least one team tag (public scope)'
+  -- 공개범위 라벨 대상이 아닌 글은 면제. 목록에 없는 board_type 은 전부 필수(fail-close).
+  IF NEW.board_type IN ('stadium', 'announcement', 'news') THEN
+    RETURN NEW;
+  END IF;
+
+  -- jsonb 배열 / text[] 양쪽 스키마를 모두 견디게 jsonb 로 정규화한다.
+  v_tags := to_jsonb(NEW.team_tags);
+  IF v_tags IS NULL OR jsonb_typeof(v_tags) <> 'array' THEN
+    RAISE EXCEPTION 'post requires at least one canonical KBO team tag (public scope)'
       USING ERRCODE = 'check_violation';
   END IF;
+
+  SELECT count(*) INTO v_canonical
+  FROM jsonb_array_elements_text(v_tags) AS t(slug)
+  WHERE t.slug IN (
+    'lg', 'doosan', 'kt', 'ssg', 'nc', 'kia', 'lotte', 'samsung', 'hanwha', 'kiwoom'
+  );
+
+  IF v_canonical = 0 THEN
+    RAISE EXCEPTION 'post requires at least one canonical KBO team tag (public scope)'
+      USING ERRCODE = 'check_violation';
+  END IF;
+
   RETURN NEW;
 END;
 $$;
