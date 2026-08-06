@@ -116,7 +116,7 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId, onR
           </div>
 
           {done ? (
-            <div className="py-10 text-center overflow-y-auto overscroll-contain">
+            <div className="py-10 pb-safe [--pb-safe-base:2.5rem] text-center overflow-y-auto overscroll-contain">
               <span className="text-4xl">✅</span>
               <p className="text-sm text-text-primary mt-2">신고가 접수되었습니다</p>
             </div>
@@ -124,7 +124,8 @@ export default function ReportSheet({ isOpen, onClose, targetType, targetId, onR
             <div
               data-report-scroll
               style={{ WebkitOverflowScrolling: "touch" }}
-              className="flex-1 min-h-0 overflow-y-scroll overscroll-contain px-5 py-4 pb-safe space-y-3"
+              // --pb-safe-base = py-4(1rem) — nav bar 가 없는 환경에서 기존 여백 그대로 유지
+              className="flex-1 min-h-0 overflow-y-scroll overscroll-contain px-5 py-4 pb-safe [--pb-safe-base:1rem] space-y-3"
             >
               {REASONS.map(r => (
                 <button

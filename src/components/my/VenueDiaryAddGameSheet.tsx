@@ -301,7 +301,7 @@ export default function VenueDiaryAddGameSheet({
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-3 pb-4 flex flex-col gap-2.5">
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-3 pb-safe [--pb-safe-base:1rem] flex flex-col gap-2.5">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-10 text-text-tertiary">
                 <Loader2 size={18} className="animate-spin" /> 경기를 불러오는 중…
