@@ -74,9 +74,24 @@ const MUTATIONS = [
   },
   {
     id: "M10",
-    name: "RAG allowlist 확대 (llm 유입)",
+    name: "allowlist 확대 (llm 유입 = 스몰톡에 버튼)",
     file: R("src/lib/baseball-qa/answer-feedback.ts"),
-    apply: (s) => s.replace(/= \["rag"\] as const;/, '= ["rag", "llm"] as const;'),
+    apply: (s) =>
+      s.replace(
+        /export const FEEDBACK_ELIGIBLE_MATCH_PATHS = \[[^\]]*\] as const;/,
+        'export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "dictionary", "llm"] as const;',
+      ),
+    detector: "contract",
+  },
+  {
+    id: "M11",
+    name: "allowlist 축소 (dictionary 누락 = 사전 답변 무음)",
+    file: R("src/lib/baseball-qa/answer-feedback.ts"),
+    apply: (s) =>
+      s.replace(
+        /export const FEEDBACK_ELIGIBLE_MATCH_PATHS = \[[^\]]*\] as const;/,
+        'export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag"] as const;',
+      ),
     detector: "contract",
   },
   {

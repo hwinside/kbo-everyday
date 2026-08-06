@@ -18,12 +18,17 @@ export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
  * 피드백을 받는 **라우팅 경로**(match_path) 폐쇄집합.
  *
  * 하린아빠 2026-08-06 16:36 — 직전 계약을 **명시 변경**했다:
- *   "스모톡은 넣지마. 대화가 자연스러워지지 않아. 모든 스모톡마다 저걸 넣기보다는
- *    **RAG를 통해 정보를 가져와 답변한 것들에 한해서** 해"
+ *   16:36 "스모톡은 넣지마. 대화가 자연스러워지지 않아. 모든 스모톡마다 저걸 넣기보다는
+ *          **RAG를 통해 정보를 가져와 답변한 것들에 한해서** 해"
+ *   16:37 "사전에서 가져온 답변 추가"
  *
  * ⚠️ 이것은 삼순 NO-GO ②("종결응답 전체로 복구")를 하린아빠가 뒤집은 결과다.
  * "못 답한 것에 대한 불만도 신호"라는 지적 자체는 틀리지 않았지만, 제품 판단은
  * "대화가 부자연스러워지는 비용"을 더 크게 본다. **재제기 금지.**
+ *
+ * 기준은 "생성"이 아니라 **"가져왔는가"** 다. `rag` 는 문서에서, `dictionary` 는
+ * 검수 사전에서 가져온다 — 둘 다 답의 출처가 있어 품질 판정이 의미를 갖는다.
+ * `llm` 은 모델이 지어낸 것이라 출처가 없고, 스모톡이 그리로 떨어진다.
  *
  * ── 왜 reply_kind 가 아니라 match_path 로 가르는가 ──
  * `reply_kind === "answer"` 안에 근거 없는 순수 생성답(`llm`)이 같이 들어 있다.
@@ -31,7 +36,7 @@ export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
  *
  * 운영 DB 실측 (2026-08-06, 발송된 답변 payload 1,100건):
  *   answer/llm            376   순수 생성답, 근거 없음. **스모톡이 여기로 떨어진다** → 제외
- *   answer/dictionary     281   사람이 직접 쓴 정의문. RAG 가 아니고 #1112 에서 폐기된 축 → 제외
+ *   answer/dictionary     281   검수 사전에서 가져온 정의문 → **대상** (하린아빠 16:37 추가 지시)
  *   unavailable/*         390   못 답한 경로 → 제외(하린아빠 지시)
  *   answer/cache           22   과거 생성답의 캐시 → 제외(근거는 아래)
  *   answer/rag             20   문서 근거를 검색해 답함 → **대상**
@@ -43,10 +48,12 @@ export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
  * **`llm` 경로 한 곳에서만** 호출된다(1977줄, grep 결과 1건). RAG 경로는 setCache 를
  * 호출하지 않으므로 cache hit 은 정의상 **과거 LLM 생성답**이다. 근거 있는 답이 아니다.
  *
- * ⚠️ **좁게 시작하는 것이 안전하다.** 나중에 경로를 더하는 건 이 배열에 한 줄이지만,
- * 이미 쌓인 오염된 표는 사후에 걷어낼 수 없다(어느 표가 오염인지 구분할 근거가 없다).
+ * ⚠️ 경로를 더하는 건 이 배열에 한 줄이지만, **이미 쌓인 오염된 표는 사후에 걷어낼 수
+ * 없다** (어느 표가 오염인지 구분할 근거가 없다). 그래서 대상 확대는 지시가 있을 때만 한다.
+ * `reply_kind`·`match_path` 를 행마다 저장하는 이유도 이것이다 — 확대 이후에도 과거 표와
+ * 신규 표를 분리해 읽을 수 있어야 한다.
  */
-export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag"] as const;
+export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "dictionary"] as const;
 
 export type FeedbackEligibleMatchPath = (typeof FEEDBACK_ELIGIBLE_MATCH_PATHS)[number];
 

@@ -41,13 +41,15 @@ function check(name: string, condition: boolean, detail = "") {
 // 스모톡이 떨어지는 곳은 `answer/llm` 이라 reply_kind 만으로는 가를 수 없다.
 const GENIUS = BASEBALL_GENIUS_USER_ID;
 check("A1 RAG 답변에는 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") === true);
-// ↓ 운영 실측 상위 경로 전부가 제외되는지 개별 확인 (분포: llm 376 / dictionary 281 / cache 22)
+// 사전 답변도 대상 (하린아빠 16:37 추가 지시) — 검수 사전에서 **가져온** 답이다.
+check("A1-1 dictionary 답변에도 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") === true);
+// ↓ 운영 실측 상위 경로 중 제외 대상이 실제로 빠지는지 개별 확인 (llm 376 / cache 22)
 check("A2 llm(스모톡 경로)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === false);
-check("A3 dictionary 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") === false);
 check("A4 cache(과거 llm 생성답)에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "answer", "cache") === false);
 check("A5 kbo_structured 에는 안 붙는다(RAG 아님)", shouldShowFeedback(GENIUS, GENIUS, "answer", "kbo_structured") === false);
 // ↓ reply_kind 축이 살아 있는지. 운영에 unavailable/rag 가 실제 5건 있다.
 check("A6 unavailable/rag 에는 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === false);
+check("A6-1 unavailable/dictionary 에도 안 붙는다", shouldShowFeedback(GENIUS, GENIUS, "unavailable", "dictionary") === false);
 check("A7 ack 은 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "ack", "ack") === false);
 check("A8 picker 는 중간상태라 제외", shouldShowFeedback(GENIUS, GENIUS, "picker", "player_picker") === false);
 check("A9 미지의 경로는 fail-close", shouldShowFeedback(GENIUS, GENIUS, "answer", "something_new") === false);
@@ -59,6 +61,7 @@ check("A13 내 쪽지(sender null)에는 안 붙는다", shouldShowFeedback(null
 check(
   "A14 route 판정 = UI 판정 (동일 함수)",
   isFeedbackEligible("answer", "rag") === true &&
+  isFeedbackEligible("answer", "dictionary") === true &&
   isFeedbackEligible("answer", "llm") === false &&
   isFeedbackEligible("unavailable", "rag") === false,
 );
@@ -232,6 +235,7 @@ if (SELFTEST) {
   // 결함주입: 검출력 증명. 각 축이 죽었을 때 실제로 RED 가 나는지 확인한다.
   const injected: string[] = [];
   if (shouldShowFeedback(GENIUS, GENIUS, "answer", "rag") !== true) injected.push("A 축 무력(RAG 답변 누락)");
+  if (shouldShowFeedback(GENIUS, GENIUS, "answer", "dictionary") !== true) injected.push("A 축 무력(사전 답변 누락)");
   if (shouldShowFeedback(GENIUS, GENIUS, "answer", "llm") === true) injected.push("A 축 무력(스모톡 유입)");
   if (shouldShowFeedback(GENIUS, GENIUS, "unavailable", "rag") === true) injected.push("A 축 무력(미응답 유입)");
   if (nextRatingAfterClick(1, 1) !== null) injected.push("B 축 무력");
