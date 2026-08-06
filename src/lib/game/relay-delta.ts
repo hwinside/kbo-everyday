@@ -18,6 +18,43 @@ export function inningKey(inn: InningRelay): string {
 }
 
 /**
+ * 클라이언트가 보낼 `since` 를 결정한다. **엣지 캐시 키 폭발 방지가 유일한 목적이다.**
+ *
+ * 문제: 엣지 캐시는 쿼리스트링을 포함한 URL 을 키로 쓴다. `since` 를 각 클라이언트의
+ * **로컬 보유 최대 이닝**으로 보내면 보유 상태가 제각각인 만큼 키가 갈라져
+ * 캐시 적중률이 무너진다(= 엣지를 켜도 origin 으로 계속 내려간다).
+ *
+ * 해법: `since` 를 **공유 canonical 값**인 현재 이닝(`canonicalInning`, game-live 가 준
+ * 값이라 같은 경기를 보는 모든 클라이언트가 동일)과 **일치할 때만** 보낸다.
+ * 그 결과 (경기, 이닝) 당 쿼리 모양은 정확히 2개로 고정된다:
+ *   1. `since=<canonicalInning>` — 따라잡은 정상 시청자 전원(동일 키 공유)
+ *   2. `since` 없음(full)   — 신규 진입 + 뒤처진 클라이언트(동일 키 공유)
+ * 시청자 수가 얼마든 키 수는 증가하지 않는다(시청자 무관 상수 경계).
+ *
+ * 부수효과로 **정확성도 좋아진다**: 이전에는 이닝이 뒤처진 클라이언트도 자기 localMax
+ * 기준 delta 를 받아 구멍이 다음 full self-heal(최대 10폴링) 까지 남았다. 이제는
+ * 뒤처지면 즉시 full 을 받아 그 폴링에서 복구된다.
+ *
+ * @returns 보내야 할 since 값. 0 이면 파라미터를 생략하고 full 을 요청한다는 뜻.
+ */
+export function resolveDeltaSince(params: {
+  /** 클라이언트가 현재 보유한 최대 이닝 번호. 없으면 0. */
+  localMaxInning: number;
+  /** game-live 가 준 공유 현재 이닝. 미확인이면 0. */
+  canonicalInning: number;
+  /** 주기적 self-heal 차례면 true — 무조건 full. */
+  wantFull: boolean;
+}): number {
+  const { localMaxInning, canonicalInning, wantFull } = params;
+  if (wantFull) return 0;
+  if (!Number.isFinite(localMaxInning) || localMaxInning <= 0) return 0;
+  if (!Number.isFinite(canonicalInning) || canonicalInning <= 0) return 0;
+  // canonical 과 다르면 뒤처졌거나(구멍) 앞서간 것(불일치) — 둘 다 full 로 자가복구.
+  if (Math.floor(localMaxInning) !== Math.floor(canonicalInning)) return 0;
+  return Math.floor(canonicalInning);
+}
+
+/**
  * 서버 delta 필터. since(클라가 보유한 최대 이닝 번호) 이상만 남기되, 직전 이닝(since-1)도
  * 포함해 방금 끝난 이닝에 지연 반영되는 play 를 놓치지 않는다. since<=0 이면 전체(full).
  */

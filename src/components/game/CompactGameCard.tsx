@@ -53,7 +53,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
   const showStarter = game.status === "scheduled" || game.status === "live";
 
   return (
-    <Link href={`/games/${game.id}`}>
+    <Link prefetch={false} href={`/games/${game.id}`}>
       <div className={`glass-card p-4 hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${myTeamId != null && (game.awayTeamId === myTeamId || game.homeTeamId === myTeamId) ? "border-l-[3px] border-l-accent" : ""}`}>
         {/* Status */}
         <div className="flex items-center justify-between mb-3">

@@ -541,6 +541,10 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
         answer: entry.answer,
         input_tokens: entry.inputTokens,
         output_tokens: entry.outputTokens,
+        // 질문 쪽지 id 로 로그를 exact 결속한다. 종전에는 (user, question_norm, created_at) 뿐이라
+        // 같은 질문을 두 번 하면 두 로그가 구분되지 않았고, 피드백을 붙이려면 시간창 추정을
+        // 해야 했다. 추정 결속은 오적재를 만든다.
+        question_message_id: messageId,
       });
       if (error) throw error;
     },
@@ -698,10 +702,13 @@ export async function processBaseballQaQuestion(input: {
     type: "baseball_genius_reply",
     reply_kind: replyKindForMatchPath(result.source),
     match_path: result.source,
+    // 모든 답변에 원 질문 id 를 실는다 — 품질 피드백(👍/👎)이 "어느 질문에 대한 평가인지"를
+    // exact 로 결속하려면 필요하다. 답변 쪽지에서 dedup_key 접두를 파싱해 역산하면
+    // 접두 규칙이 바뀌는 순간 조용히 깨진다.
+    question_message_id: messageId,
     // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
     ...(result.pickerOptions
       ? {
-        question_message_id: messageId,
         picker_options: result.pickerOptions.map((option) => ({
           kbo_id: option.kboId,
           name: option.name,

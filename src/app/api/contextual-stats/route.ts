@@ -47,6 +47,9 @@ import type {
 } from "@/lib/contextual-stats/types";
 import type { KboRawGame } from "@/types/api";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import {
+  NO_STORE_HEADERS,
+} from "@/lib/http/live-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -68,10 +71,26 @@ interface ProfileBundle {
   basic: BasicSeasonStats | null;
   situation: SituationTables;
   handedness: ReturnType<typeof parseHandedness>;
+  /**
+   * upstream 일부(basic/situation)를 못 받아 열화된 상태.
+   *
+   * 왜 필요한가(삼순 NO-GO 2026-08-06): 기존 캐시 판정은 `!empty` 였는데
+   * `empty` 는 "모든 줄이 null" 이라 **한 줄이라도 살아 있으면 false** 다.
+   * 즉 profile/box 일부 실패로 한 줄만 남은 부분열화 응답이 "정상"으로
+   * 분류돼 엣지에 5초 고정됐다. 열화 여부를 명시 bit 로 들고 올라간다.
+   */
+  degraded: boolean;
 }
 
 const profileCache = new Map<string, { bundle: ProfileBundle; expiresAt: number }>();
 const PROFILE_TTL_MS = 60 * 60 * 1000;
+/**
+ * 부분열화 bundle 의 짧은 재시도 TTL(삼순 NO-GO 2026-08-06 ②).
+ *
+ * 열화 bundle 을 1시간 캐시하면 upstream 이 복구돼도 다음 폴링이 재조회하지 않아
+ * 유저 화면이 계속 비어 있다. 3초면 다음 폴링 주기에 자연히 재시도된다.
+ */
+const PROFILE_DEGRADED_RETRY_MS = 3_000;
 
 function profileKey(role: "batter" | "pitcher", playerId: string): string {
   return `${role}:${playerId}`;
@@ -178,11 +197,26 @@ async function loadProfile(
 
   const handedness = basicHtml ? parseHandedness(basicHtml) : { bat: null, throws: null };
 
-  const bundle: ProfileBundle = { basic, situation, handedness };
-  // Upstream 전체 장애/timeout의 빈 결과를 1시간 캐시하면 복구 뒤에도 UI가 계속 비게 된다.
-  if (basicHtml !== null || situationHtml !== null) {
-    profileCache.set(key, { bundle, expiresAt: Date.now() + PROFILE_TTL_MS });
-  }
+  // 열화 판정은 **fetch 실패뿐 아니라 parse 실패도** 포함한다(삼순 NO-GO ②).
+  // basicHtml 을 받아왔어도 parse 가 null 이면 내용상 비어 있는 것이라 같은 열화다.
+  const situationEmpty =
+    situation.bases.length === 0 &&
+    situation.byHand.length === 0 &&
+    situation.byOuts.length === 0;
+  const degraded =
+    basicHtml === null || situationHtml === null || basic === null || situationEmpty;
+
+  const bundle: ProfileBundle = { basic, situation, handedness, degraded };
+
+  // ⚠️ 부분열화 bundle 을 1시간 캐시하면 다음 폴링이 재조회를 안 해서 자가복구가
+  //    막힌다(삼순 NO-GO ②). 완전 정상일 때만 full TTL 을 주고, 열화 상태는
+  //    짧은 재시도 TTL 만 준다 — 그래야 upstream 복구 직후 다음 폴링이 정상값을
+  //    가져온다. 재시도 TTL 을 0 이 아니라 짧게 두는 이유는 KBO 장애 중 매 폴링이
+  //    upstream 을 두드려 route deadline 을 태우는 것을 막기 위함이다.
+  profileCache.set(key, {
+    bundle,
+    expiresAt: Date.now() + (degraded ? PROFILE_DEGRADED_RETRY_MS : PROFILE_TTL_MS),
+  });
   return bundle;
 }
 
@@ -235,6 +269,8 @@ interface BoxSnapshot {
    * individual row even after the starter gave up multiple hits.
    */
   defendingTeamHits: number | null;
+  /** KBO 박스스코어를 못 받았거나 파싱 실패 = 열화(삼순 NO-GO 2026-08-06). */
+  degraded: boolean;
 }
 
 async function fetchBoxSnapshot(
@@ -255,16 +291,16 @@ async function fetchBoxSnapshot(
     },
     deadlineAtMs,
   );
-  if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null };
+  if (!res?.ok) return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   // Body-stall(헤더 200 후 본문 멈춤)도 catch+절대 deadline으로 null degrade — res.text()
   // reject가 Promise.all→route로 전파되어 500 나는 것 차단(삼순 재리뷰 blocker).
   const text = await readTextBeforeDeadline(res, deadlineAtMs);
-  if (text === null) return { batterIsPinch: false, defendingTeamHits: null };
+  if (text === null) return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   let parsed: { tables?: Array<{ rows?: Array<{ row: Array<{ Text: string }> }> }> };
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { batterIsPinch: false, defendingTeamHits: null };
+    return { batterIsPinch: false, defendingTeamHits: null, degraded: true };
   }
   const tables = parsed.tables ?? [];
 
@@ -326,7 +362,8 @@ async function fetchBoxSnapshot(
     }
   }
 
-  return { batterIsPinch, defendingTeamHits };
+  // 여기까지 왔으면 박스스코어를 실제로 받아 파싱했다 = 정상.
+  return { batterIsPinch, defendingTeamHits, degraded: false };
 }
 
 // ===== Route handler =====
@@ -359,7 +396,10 @@ function emptyResponse(gameId: string, context: GameContext): ContextualStatsRes
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
-    return NextResponse.json({ error: "gameId required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "gameId required" },
+      { status: 400, headers: NO_STORE_HEADERS },
+    );
   }
 
   const deadlineAtMs = Date.now() + CONTEXTUAL_DEADLINE_MS;
@@ -380,6 +420,7 @@ export async function GET(req: NextRequest) {
         pitcherName: null,
         batterIsPinch: false,
       }),
+      { headers: NO_STORE_HEADERS },
     );
   }
 
@@ -417,6 +458,7 @@ export async function GET(req: NextRequest) {
         pitcherName: null,
         batterIsPinch: false,
       }),
+      { headers: NO_STORE_HEADERS },
     );
   }
 
@@ -504,6 +546,15 @@ export async function GET(req: NextRequest) {
     Object.values(lines).every(v => v === null) &&
     Object.values(highlights).every(v => v === null);
 
+  // 부분열화 명시 bit(삼순 NO-GO 2026-08-06).
+  // `empty` 는 "모든 줄이 null" 이라 한 줄이라도 살아 있으면 false 다 → profile/box
+  // 일부 실패로 한 줄만 남은 응답이 "정상"으로 분류돼 엣지에 고정됐다.
+  // upstream 별 열화 bit 를 OR 로 올려 캐시 판정을 fail-close 시킨다.
+  const degraded =
+    boxSnapshot.degraded ||
+    (batterProfile?.degraded ?? false) ||
+    (pitcherProfile?.degraded ?? false);
+
   const response: ContextualStatsResponse = {
     gameId,
     context: ctx,
@@ -512,5 +563,13 @@ export async function GET(req: NextRequest) {
     fetchedAt: new Date().toISOString(),
     empty,
   };
-  return NextResponse.json(response);
+  // ⚠️ 이 route 는 **엣지 캐시 대상이 아니다**(삼순 NO-GO 2026-08-06 ①).
+  // relay 와 달리 동등한 route 내부 TTL 이 없어서, s-maxage 를 새로 붙이면
+  // 볼카운트·주자·현재 타석이 그 TTL 만큼 실제로 더 낡아진다 =
+  // "활성 유저 신선도 저하 0" 하드 제약 위반. 이 PR 이 5초를 붙였던 건 틀렸다.
+  //
+  // degraded 는 캐시 판정용으로는 더 이상 쓰이지 않지만, 부분열화를 내부 캐시에
+  // 넣지 않는 계약(loadProfile)의 근거로 계속 계산한다.
+  void degraded;
+  return NextResponse.json(response, { headers: NO_STORE_HEADERS });
 }

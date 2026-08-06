@@ -275,7 +275,7 @@ export default function PredictPage() {
                 <p className="text-sm text-text-tertiary">{selectedCategory.description}</p>
               </div>
 
-              <div className="overflow-y-auto flex-1 px-5 py-4">
+              <div className="overflow-y-auto flex-1 px-5 py-4 pb-safe [--pb-safe-base:1rem]">
                 {selectedCategory.type === "team" ? (
                   <div className="grid grid-cols-2 gap-3">
                     {TEAMS.map(team => {
