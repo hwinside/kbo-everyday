@@ -66,7 +66,10 @@ const BOTTOM_INSET_UTILS = ['pb-safe', 'pb-tab-bar'].filter(utilityConsumesBotto
 
 /** 하단 inset을 실제로 만들어내는 표기인가 (className 또는 inline style) */
 function hasRealBottomInset(source) {
-  // 임의값 표기: pb-[env(safe-area-inset-bottom...)] / pb-[calc(...env(...))]
+  // Tailwind 임의값 표기(pb + 대괄호 안에 env/calc).
+  // ⚠️ 이 파일은 Tailwind v4 auto source detection 의 스캔 대상이다.
+  // 주석에 유효해 보이는 클래스 리터럴을 쓰면 그걸 진짜 클래스로 생성하다
+  // CSS 파싱이 깨진다(실제로 이 PR 에서 CI 가 잡았다). 예시는 문장으로만 쓴다.
   if (/pb-\[[^\]]*safe-area-inset-bottom[^\]]*\]/.test(source)) return true;
   // inline style: paddingBottom: "max(env(safe-area-inset-bottom, 0px), 12px)"
   if (/paddingBottom[^,;}]*safe-area-inset-bottom/.test(source)) return true;
@@ -116,7 +119,7 @@ const undefinedInsetHits = [];
 for (const f of files) {
   const text = readFileSync(f, 'utf8');
   // `pb-safe`, `pt-safe-area`, `pb-safearea` … safe를 담은 padding 유틸 전반.
-  // 임의값 표기 `pb-[...]`는 Tailwind가 직접 생성하므로 제외.
+  // 대괄호 임의값 표기는 Tailwind 가 직접 생성하므로 제외.
   // CSS 커스텀 프로퍼티(`--pb-safe-base`)도 클래스가 아니다 — 앞글자가 `-` 나 `[` 면 제외.
   for (const m of text.matchAll(/(^|[^\w[-])(p[btlrxy]?-safe[\w-]*)\b/gm)) {
     const cls = m[2];
@@ -192,8 +195,8 @@ const EXEMPT = new Map([
  * 무지성하게 늘리면 게이트 검출력이 죽는다.
  */
 const DELEGATED_TO_CHILD = new Map([
-  ['src/components/profile/AvatarSelectSheet.tsx', 'L297/L400 하단 버튼바가 pb-[calc(16px+env(...))]'],
-  ['src/components/profile/NicknameEditSheet.tsx', 'L160 내부 래퍼가 pb-[calc(20px+env(...))]'],
+  ['src/components/profile/AvatarSelectSheet.tsx', 'L297/L400 하단 버튼바가 16px + 하단 inset 임의값 보정'],
+  ['src/components/profile/NicknameEditSheet.tsx', 'L160 내부 래퍼가 20px + 하단 inset 임의값 보정'],
 ]);
 
 const missingInset = [];
