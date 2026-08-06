@@ -208,6 +208,40 @@ export function evaluateRosterCompletion(teamOutcomes, expectedTeamSlots) {
   };
 }
 
+/**
+ * `endRequest` 응답 하나를 "재조회 증거로 썩는가"로 판정한다.
+ *
+ * 브라우저 안에서 돌던 판정을 **순수 함수로 뽑아낸** 이유:
+ * 페이지 컨텍스트 안에만 있으면 게이트가 소스 문자열만 보게 돼 실제 행동을
+ * 검증하지 못한다. 실제로 6차 NO-GO 가 그렇게 난 것이다 — 문자열로는
+ * "fail-close 한다"고 쓰여 있었지만 `args?.get_error?.()` 는 args 나 메서드가
+ * 없을 때 throw 가 아니라 `undefined` 를 돌려서 `undefined != null` → `false`,
+ * 즉 **성공으로 샐다**(fail-open).
+ *
+ * 행동 계약(삼순 확정 매트릭스):
+ *   get_error() === null / undefined → 성공   (success +1)
+ *   get_error() 가 Error         → 실패   (error +1)
+ *   args 가 없음               → 판단불가 → 실패
+ *   get_error 가 함수가 아님    → 판단불가 → 실패
+ *   get_error() 가 throw         → 판단불가 → 실패
+ *
+ * @returns {"success"|"error"}
+ */
+export function classifyEndRequest(args) {
+  // ⚠︎ 프로퍼티 접근까지 try 안에 두어야 한다.
+  // `typeof args.get_error` 를 try 밖에 두면 **throwing getter** 에서 예외가
+  // 그대로 전파돼 endRequest 핸들러 밖으로 터진다(오류 응답이 집계도 안 된다).
+  // 이건 mutation U3 를 돌려보다 발견했다 — 변이본이 원본보다 안전해서 잡혔다.
+  try {
+    if (args === null || args === undefined) return "error";
+    if (typeof args.get_error !== "function") return "error";
+    const err = args.get_error();
+    return err === null || err === undefined ? "success" : "error";
+  } catch {
+    return "error"; // 판단 불가는 실패 취급(fail-close)
+  }
+}
+
 /** 완주 실패를 사람이 읽을 수 있는 리포트로 만든다. */
 export function formatCompletionFailure(evaluation) {
   const lines = ["❌ roster_crawl_incomplete — 수집이 완주하지 않아 저장하지 않는다", ""];

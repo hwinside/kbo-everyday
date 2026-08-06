@@ -24,6 +24,7 @@ import {
   TEAM_MAX_DROP_RATIO,
   TEAM_FAIL_REASONS,
   buildPhaseBaseline,
+  classifyEndRequest,
   evaluateTeamCollection,
   evaluateSetStability,
   evaluateRosterCompletion,
@@ -495,31 +496,86 @@ check("epoch 을 못 쓰면 전이 판정을 fail-close 한다 (약한 근거 �
  * 로 전달된다. 오류까지 epoch 으로 세면 "서버가 응답했다"가 증명되지 않아,
  * 실패한 reset/select/1번클릭 뒤에도 로컬 select 값·표시 `on`·같은 팀 stale 표로
  * 두 집합이 동일하게 통과할 수 있다 — 4차까지 막은 경로가 오류 응답으로 부활한다. */
-check("오류 없는 응답만 epoch 을 올린다", () => {
+/* 삼순 NO-GO(6차) — 그리고 이 게이트가 놓친 이유.
+ *
+ * 5차 판은 소스 문자열로 `args?.get_error?.() != null` 를 확인하고
+ * "판단 불가는 fail-close" 라고 통과시켰다. 그러나 optional call 은
+ * args 나 메서드가 없을 때 throw 가 아니라 `undefined` 를 반환하므로
+ * `undefined != null` → `false`, 즉 **성공으로 샐다**(fail-open).
+ * 실측: args=null → false, get_error 없음 → false (둘 다 성공 취급).
+ *
+ * 문자열 검사는 "어떻게 쓰였나"를 볼 뿐 "어떻게 동작하나"를 보지 못한다.
+ * 그래서 판정을 `classifyEndRequest` 순수 함수로 뽑아내고, 여기서는
+ * **그 함수를 직접 호출해** 행동 매트릭스를 고정한다. 크롤러는 같은 함수를
+ * 페이지에 주입해 쓰므로, 이 테스트가 실제 배선된 판정을 검증한다. */
+check("endRequest 판정 행동 매트릭스 (오류 없는 응답만 성공)", () => {
+  // 정상 성공: 오류가 없다고 명시된 경우만 성공이다.
+  assert.equal(classifyEndRequest({ get_error: () => null }), "success", "null 오류는 성공이어야 한다");
+  assert.equal(classifyEndRequest({ get_error: () => undefined }), "success", "undefined 오류는 성공이어야 한다");
+
+  // 실제 오류.
+  assert.equal(
+    classifyEndRequest({ get_error: () => new Error("boom") }),
+    "error",
+    "Error 를 받고도 성공으로 세면 실패한 포스트백이 재조회 증거가 된다"
+  );
+
+  // 판단 불가 = fail-close. 이 세 줄이 6차 NO-GO 의 핵심이다.
+  assert.equal(classifyEndRequest(null), "error", "args 가 null 이면 판단 불가 → 실패여야 한다");
+  assert.equal(classifyEndRequest(undefined), "error", "args 가 undefined 이면 판단 불가 → 실패여야 한다");
+  assert.equal(classifyEndRequest({}), "error", "get_error 가 없으면 판단 불가 → 실패여야 한다");
+  assert.equal(
+    classifyEndRequest({ get_error: 123 }),
+    "error",
+    "get_error 가 함수가 아니면 판단 불가 → 실패여야 한다"
+  );
+  assert.equal(
+    classifyEndRequest({ get_error: () => { throw new Error("x"); } }),
+    "error",
+    "get_error 가 throw 하면 판단 불가 → 실패여야 한다"
+  );
+
+  // ⚠︎ 프로퍼티 **접근** 자체가 터지는 경우.
+  // mutation U3 를 돌려보고 발견했다 — `typeof args.get_error` 를 try 밖에 두면
+  // 예외가 endRequest 핸들러 밖으로 전파돼 오류 집계조차 못 한다.
+  // (변이본이 원본보다 안전해서 드러난 자체 결함이다.)
+  assert.equal(
+    classifyEndRequest({ get get_error() { throw new Error("getter"); } }),
+    "error",
+    "throwing getter 에서 예외가 새면 핸들러가 터져 오류 집계가 안 된다"
+  );
+});
+
+check("크롤러가 그 판정 함수를 실제로 페이지에 배선한다", () => {
   const fn = /async function installRequestEpoch[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
   assert.ok(fn, "installRequestEpoch 를 찾지 못했다");
 
-  assert.ok(
-    /add_endRequest\(\(sender, args\) =>/.test(fn),
-    "endRequest 핸들러가 args 를 받지 않는다 — 오류 여부를 볼 수 없다"
+  // 판정을 인라인으로 다시 쓰면 위 매트릭스 테스트가 헛돈다.
+  hasSrc(
+    /window\.__kboClassifyEndRequest = new Function/,
+    "판정 함수 원본을 페이지에 주입하지 않는다"
+  );
+  hasSrc(
+    /classifyEndRequest\.toString\(\)/,
+    "주입 소스가 lib 의 classifyEndRequest 가 아니면 테스트가 다른 코드를 검증하게 된다"
   );
   assert.ok(
-    /args\?\.get_error\?\.\(\) != null/.test(fn),
-    "EndRequestEventArgs.get_error() 를 보지 않는다 — 실패한 포스트백도 epoch 을 올린다"
-  );
-  // 오류면 epoch 을 올리지 않고 빠져나와야 한다.
-  assert.ok(
-    /if \(failed\) \{[\s\S]{0,200}return;\n\s*\}/.test(fn),
-    "오류 응답에서 early-return 하지 않는다"
-  );
-  // get_error 자체가 터지면 판단 불가 → 실패 취급(fail-close).
-  assert.ok(
-    /\} catch \{\s*\n\s*failed = true;/.test(fn),
-    "get_error 호출 실패를 성공으로 취급한다 — 판단 불가는 fail-close 여야 한다"
+    /const verdict = window\.__kboClassifyEndRequest\(args\);/.test(fn),
+    "endRequest 핸들러가 주입된 판정 함수를 쓰지 않는다"
   );
   assert.ok(
-    /let failed = true;/.test(fn),
-    "failed 초깃값이 false 면 예외 경로가 성공으로 샘다"
+    /if \(verdict !== "success"\) \{[\s\S]{0,200}return;\n\s*\}/.test(fn),
+    "success 가 아닌 응답에서 early-return 하지 않는다"
+  );
+  // 주입 실패는 검증 불가 → fail-close.
+  assert.ok(
+    /if \(!ready\) return false;/.test(fn),
+    "판정 함수 주입 실패를 통과시킨다 — 재조회 증거를 만들 수 없으므로 fail-close 여야 한다"
+  );
+  // optional call fail-open 이 다시 생기면 안 된다.
+  assert.ok(
+    !/args\?\.get_error\?\.\(\)/.test(crawlerSrc),
+    "optional call 판정이 남아 있다 — args/메서드 부재 시 undefined 를 돌려 성공으로 샘다"
   );
 });
 

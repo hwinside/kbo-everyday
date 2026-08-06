@@ -12,6 +12,7 @@ import { preserveExistingRosterPlayers } from "./lib/roster-preservation.mjs";
 import {
   TEAM_FAIL_REASONS,
   buildPhaseBaseline,
+  classifyEndRequest,
   evaluateTeamCollection,
   evaluateSetStability,
   evaluateRosterCompletion,
@@ -108,6 +109,18 @@ function parseKboBirthday(text) {
  */
 async function installRequestEpoch(page, { timeoutMs = 10000 } = {}) {
   const deadline = Date.now() + timeoutMs;
+  // 판정 함수 원본을 페이지에 주입한다(게이트가 테스트하는 그 함수 그대로).
+  await page
+    .evaluate((src) => {
+      // eslint-disable-next-line no-new-func
+      window.__kboClassifyEndRequest = new Function(`return (${src})`)();
+    }, classifyEndRequest.toString())
+    .catch(() => {});
+  const ready = await page
+    .evaluate(() => typeof window.__kboClassifyEndRequest === "function")
+    .catch(() => false);
+  // 판정 함수를 못 심었으면 재조회 증거를 만들 수 없다 → fail-close.
+  if (!ready) return false;
   for (;;) {
     const ok = await page
       .evaluate(() => {
@@ -121,14 +134,14 @@ async function installRequestEpoch(page, { timeoutMs = 10000 } = {}) {
         // 오류까지 epoch 으로 세면 "서버가 응답했다"는 증거가 되지 못해,
         // 실패한 reset/select/1번클릭 뒤에도 로컬 select 값·표시 `on` · 같은 팀 stale 표로
         // 두 집합이 동일하게 통과할 수 있다. **오류 없는 응답만** 세서야 가설이 성립한다.
+        //
+        // 판정 자체는 페이지에 주입된 `window.__kboClassifyEndRequest` 가 한다.
+        // 그 함수는 lib 의 `classifyEndRequest` 원본이고, 게이트가 **같은 함수를
+        // 직접 호출해** 행동 매트릭스를 검증한다 — 인라인으로 두면 게이트가 소스
+        // 문자열만 보게 돼서 6차 NO-GO(optional call fail-open)를 또 놓친다.
         prm.add_endRequest((sender, args) => {
-          let failed = true; // 판단 불가는 실패 취급(fail-close)
-          try {
-            failed = args?.get_error?.() != null;
-          } catch {
-            failed = true;
-          }
-          if (failed) {
+          const verdict = window.__kboClassifyEndRequest(args);
+          if (verdict !== "success") {
             window.__kboEpochError = (window.__kboEpochError || 0) + 1;
             return;
           }
