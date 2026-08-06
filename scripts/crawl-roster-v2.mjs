@@ -10,6 +10,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { preserveExistingRosterPlayers } from "./lib/roster-preservation.mjs";
 import {
+  TEAM_FAIL_REASONS,
   buildPhaseBaseline,
   evaluateTeamCollection,
   evaluateSetStability,
@@ -129,44 +130,70 @@ async function collectTeamWithContract({
   let result = null;
   let attempts = 0;
 
-  /** 필터를 비운 뒤 다시 걸어 **독립적으로** 한 번 수집한다. */
-  const scrapeOnce = async () => {
+  /**
+   * 필터를 비운 뒤 다시 걸어 **독립적으로** 한 번 수집하고, 그 회차 자체를 완전히 판정한다.
+   *
+   * ⚠︎ reset 결과를 버리면 안 된다(삼순 NO-GO 2). 비우기가 실패한 채로 진행하면
+   * `changeSelectAndWait` 가 현재값(이미 teamCode)에서 즉시 true 를 돌려줘
+   * "독립 재조회"가 사실은 **같은 표를 다시 읽는 것**이 된다.
+   */
+  const collectPass = async () => {
+    const resetOk = await changeSelectAndWait(page, teamSel, "", 5000).catch(() => false);
+    if (!resetOk) {
+      return {
+        usable: [],
+        verdict: {
+          ok: false,
+          reason: TEAM_FAIL_REASONS.SELECT_UNCONFIRMED,
+          detail: "필터 reset 실패 — 이전 팀 표를 그대로 재독할 수 있음",
+        },
+      };
+    }
+    await page.waitForTimeout(800);
+
+    // ⚠︎ 팀을 바꾸기 *전에* 페이저를 1페이지로 되돌린다.
+    // KBO 그리드는 팀 전환 시 페이지 인덱스를 유지하므로, 직전 팀을 2페이지까지
+    // 읽고 단일 페이지 팀으로 넘어가면 **빈 표**가 뜼다(dry-run 실측: KIA rows=0).
+    // 순회 순서에 따라 특정 팀만 사라지는 사고였고, 종전 크롤러는 그걸 그대로 저장했다.
+    await ensureFirstPage(page);
+
     const selectConfirmed = await changeSelectAndWait(page, teamSel, teamCode, 8000);
-    if (!selectConfirmed) return { selectConfirmed, usable: [], pagerComplete: false };
-    const { rows, pagerComplete } = await scrapeAllPages(page);
-    return { selectConfirmed, usable: toUsableRows(rows), pagerComplete };
+    const scraped = selectConfirmed
+      ? await scrapeAllPages(page)
+      : { rows: [], pagerComplete: false };
+    const usable = selectConfirmed ? toUsableRows(scraped.rows) : [];
+
+    // 매 회차가 자체적으로 team witness · pager · 중복 · floor · drop 을 전부 통과해야 한다.
+    const verdict = evaluateTeamCollection({
+      selectConfirmed,
+      requestedTeamName: teamName,
+      observedTeamNames: usable.map((r) => r.teamNameCell),
+      collected: usable.length,
+      uniqueIds: new Set(usable.map((r) => r.playerId)).size,
+      pagerComplete: scraped.pagerComplete,
+      baseline,
+    });
+    return { usable, verdict };
   };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     attempts = attempt;
-    // 매 시도 전 필터를 비워 셀렉트 · 표 상태를 확실히 되돌린다.
-    await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
-    await page.waitForTimeout(attempt > 1 ? 1500 : 500);
+    if (attempt > 1) await page.waitForTimeout(1500);
 
-    const first = await scrapeOnce();
-    const ids = first.usable.map((r) => r.playerId);
+    const first = await collectPass();
+    result = first.verdict;
 
-    result = evaluateTeamCollection({
-      selectConfirmed: first.selectConfirmed,
-      requestedTeamName: teamName,
-      observedTeamNames: first.usable.map((r) => r.teamNameCell),
-      collected: first.usable.length,
-      uniqueIds: new Set(ids).size,
-      pagerComplete: first.pagerComplete,
-      baseline,
-    });
-
-    // 1차 판정을 통과했을 때만 독립 재조회로 집합 안정성을 본다.
+    // 1차가 통과했을 때만 독립 재조회로 집합 안정성을 본다.
     // KBO 는 같은 순간에도 조회마다 다른 행 집합을 주는 일이 있다(#1103).
     if (result.ok) {
-      await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
-      await page.waitForTimeout(800);
-      const second = await scrapeOnce();
-      const stability = evaluateSetStability(
-        ids,
-        second.usable.map((r) => r.playerId)
-      );
-      if (!stability.ok) result = stability;
+      const second = await collectPass();
+      // 2차 자체 판정도 통과해야 한다 — ID 집합만 비교하면 2차의 팀 오염·부분수집을 못 본다.
+      result = second.verdict.ok
+        ? evaluateSetStability(
+            first.usable.map((r) => r.playerId),
+            second.usable.map((r) => r.playerId)
+          )
+        : second.verdict;
     }
 
     if (result.ok) {
@@ -190,11 +217,96 @@ async function collectTeamWithContract({
  *   기존 판은 중간 0행과 정상 종료를 둘 다 `break` 로 똑같이 처리해
  *   부분 수집을 완주로 오인했다.
  */
+/**
+ * 표가 **안정될 때까지** 기다린다. 행 수가 0이 아니고 연속 두 번 같아야 읽는다.
+ *
+ * ⚠︎ 필수 — dry-run 실측으로 발견한 결손. 셀렉트 전환 직후·페이저 클릭 직후에는
+ * ASP.NET 부분 포스트백이 끝나기 전 표가 **빈 상태 또는 절반만 렌더된 상태**로 있다.
+ * `networkidle` + 고정 대기만으로는 부족해, 실측에서 두산이 `10행/5고유`(같은 페이지 중복),
+ * KIA 가 `0행`으로 잡혔다. 같은 순간 독립 관측은 둘 다 30행/30고유였으므로
+ * KBO 문제가 아니라 읽는 시점의 문제다.
+ */
+async function waitForTableSettled(page, timeoutMs = 15000) {
+  const started = Date.now();
+  let last = null;
+  let stableHits = 0;
+  while (Date.now() - started < timeoutMs) {
+    // 행 수만 보면 부분 렌더가 우연히 같은 수로 멈춰 있을 때 "안정"으로 오인한다.
+    // 실측: 두산이 5행 상태로 잠시 멈춰 있다 30행으로 차는데, 그 5행을 읽어
+    // 같은 페이지를 두 번 수집(10행/5고유)하는 사고가 재현됐다.
+    // 그래서 행 수 + 첫행 + 끝행 텍스트를 함께 보고, 연속 3회 동일을 요구한다.
+    const sig = await page
+      .$$eval("tbody tr", (trs) => {
+        if (trs.length === 0) return "0|";
+        const first = trs[0].textContent?.trim() || "";
+        const last = trs[trs.length - 1].textContent?.trim() || "";
+        return `${trs.length}|${first}|${last}`;
+      })
+      .catch(() => null);
+
+    if (sig && !sig.startsWith("0|") && sig === last) {
+      stableHits++;
+      if (stableHits >= 3) return true;
+    } else {
+      stableHits = 0;
+    }
+    last = sig;
+    await page.waitForTimeout(400);
+  }
+  return false;
+}
+
+/**
+ * 수집 시작 전 페이저를 **1페이지로 되돌린다.**
+ *
+ * ⚠︎ 근본 결손 — dry-run 실측으로 확정. KBO 그리드는 팀 필터를 바꿔도
+ * **페이지 인덱스를 유지**한다. 그래서 A팀을 2페이지까지 읽고 B팀으로 전환하면
+ * B팀의 **2페이지**를 보게 된다. B팀이 1페이지뿐이면 빈 표(0행)가 나온다.
+ *
+ * 실측 기록(팀 순회 LG→두산→KIA):
+ *   두산 page2 클릭 후 → on=2
+ *   KIA select 후  → rows=0 pages=[1]   ← 빈 페이지
+ * 이게 `empty` / `duplicate_ids` 사고의 직접 원인이었고,
+ * 종전 크롤러는 이를 그대로 저장해 roster 가 조용히 비거나 중복됐다.
+ */
+async function ensureFirstPage(page) {
+  for (let i = 0; i < 3; i++) {
+    const on = await page
+      .$eval('a[id*="ucPager_btnNo"].on', (a) => a.textContent?.trim())
+      .catch(() => null);
+    // 페이저가 없거나(단일 페이지) 이미 1페이지면 끝.
+    if (on === null || on === "1") return true;
+
+    const first = page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: /^1$/ }).first();
+    if (!(await first.count())) return false;
+    await first.click();
+    await page.waitForLoadState("networkidle").catch(() => {});
+    await page
+      .waitForFunction(
+        () => document.querySelector('a[id*="ucPager_btnNo"].on')?.textContent?.trim() === "1",
+        undefined,
+        { timeout: 10000 }
+      )
+      .catch(() => {});
+  }
+  return false;
+}
+
 async function scrapeAllPages(page) {
   const allRows = [];
   let pageNum = 1;
 
+  // 팀 전환 후에도 이전 팀의 페이지 인덱스가 남아 있다 — 반드시 1페이지로 맞춤다.
+  if (!(await ensureFirstPage(page))) {
+    return { rows: allRows, pagerComplete: false, reason: "cannot_reach_first_page" };
+  }
+
   while (true) {
+    // 표가 안정되기 전에 읽으면 부분·빈 표를 수집한다.
+    if (!(await waitForTableSettled(page))) {
+      return { rows: allRows, pagerComplete: false, reason: `table_unsettled_at_${pageNum}` };
+    }
+
     const rows = await page.$$eval("tbody tr", (trs) =>
       trs.map((tr) => {
         const cells = [...tr.querySelectorAll("td")];
@@ -223,16 +335,51 @@ async function scrapeAllPages(page) {
     const targetPageText = String(pageNum + 1);
     const nextVisibleBtn = await page.locator('a[id*="ucPager_btnNo"]').filter({ hasText: targetPageText }).first();
     if (await nextVisibleBtn.count()) {
+      // 페이저 이동은 첫 행이 *실제로* 바뀌는 걸 확인해야 한다.
+      // 고정 대기만 하면 이전 페이지를 한 번 더 긁어 중복이 쌓인다(실측됨).
+      const beforeFirst = await page.locator("tbody tr").first().textContent().catch(() => "");
       await nextVisibleBtn.click();
       await page.waitForLoadState("networkidle").catch(() => {});
-      await page.waitForTimeout(1200);
+      // 첫 행이 *실제로* 바뀌고 페이저의 `on` 이 목표 페이지로 옴길 때까지 기다린다.
+      const advanced = await page
+        .waitForFunction(
+          ({ prev, target }) => {
+            const first = document.querySelector("tbody tr")?.textContent?.trim() || "";
+            const on = document.querySelector('a[id*="ucPager_btnNo"].on')?.textContent?.trim();
+            return first !== prev && on === target;
+          },
+          { prev: (beforeFirst || "").trim(), target: targetPageText },
+          { timeout: 12000 }
+        )
+        .then(() => true)
+        .catch(() => false);
+      // 페이지 전이가 확인 안 되면 같은 페이지를 다시 긁게 된다 — 중복 수집의 직접 원인.
+      if (!advanced) {
+        return { rows: allRows, pagerComplete: false, reason: `page_advance_failed_at_${pageNum + 1}` };
+      }
       pageNum++;
       continue;
     }
 
+    // 다음 페이지 버튼도 그룹 이동 버튼도 없다 = 명시적 끝.
     const nextGroupBtn = await page.$('a[id$="btnNext"]');
-    // 다음 페이지 버튼도 그룹 이동 버튼도 없다 = 정상 종료.
     if (!nextGroupBtn) return { rows: allRows, pagerComplete: true, reason: "exhausted" };
+
+    // btnNext 가 *비활성*이면 그것도 명시적 끝이다.
+    const nextDisabled = await nextGroupBtn.evaluate((a) => {
+      const cls = a.className || "";
+      const href = a.getAttribute("href") || "";
+      return (
+        /disabled|off\b/i.test(cls) ||
+        a.hasAttribute("disabled") ||
+        a.getAttribute("aria-disabled") === "true" ||
+        href === "" ||
+        href === "#" ||
+        href === "javascript:void(0)" ||
+        href === "javascript:;"
+      );
+    });
+    if (nextDisabled) return { rows: allRows, pagerComplete: true, reason: "next_disabled" };
 
     const beforePager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
       links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
@@ -243,9 +390,12 @@ async function scrapeAllPages(page) {
     const afterPager = await page.$$eval('a[id*="ucPager_btnNo"]', (links) =>
       links.map((a) => `${a.textContent?.trim()}:${a.className}`).join("|")
     );
-    // 마지막 그룹에서는 btnNext 가 있어도 더 나아가지 않는다 = 정상 종료.
+
+    // ⚠︎ 삼순 NO-GO 3: 활성 btnNext 를 눌렀는데 pager 가 그대로라면
+    // 그건 "끝에 도달"이 아니라 **전이 실패(stalled navigation)** 다.
+    // 종전에는 이걸 `last_group` 으로 정상 EOF 처리해 부분수집을 완주로 통과시켰다.
     if (!afterPager || afterPager === beforePager) {
-      return { rows: allRows, pagerComplete: true, reason: "last_group" };
+      return { rows: allRows, pagerComplete: false, reason: "stalled_navigation" };
     }
     pageNum++;
   }
@@ -323,15 +473,16 @@ async function main() {
         teamId,
         phase: "batters",
         baseline: baselineByPhase.batters.get(teamId),
+        // ⚠︎ rows 는 `toUsableRows` 산출물 — `{playerId, name, teamNameCell}` 이다.
+        // 원본 DOM 행(`hrefs`/`texts`)이 아니다.
         applyRows: (rows, tid, tname) => {
           for (const r of rows) {
-            const playerId = extractPlayerId(r.hrefs[1] || "");
             upsertScrapedPlayer(allPlayers, {
-              playerId,
-              name: r.texts[1] || "",
+              playerId: r.playerId,
+              name: r.name,
               teamId: tid,
               teamName: tname,
-              position: existingFor(playerId)?.position || "야수",
+              position: existingFor(r.playerId)?.position || "야수",
             });
           }
         },
@@ -360,12 +511,12 @@ async function main() {
         teamId,
         phase: "pitchers",
         baseline: baselineByPhase.pitchers.get(teamId),
+        // ⚠︎ rows 는 `toUsableRows` 산출물 — `{playerId, name, teamNameCell}` 이다.
         applyRows: (rows, tid, tname) => {
           for (const r of rows) {
-            const playerId = extractPlayerId(r.hrefs[1] || "");
             upsertScrapedPlayer(allPlayers, {
-              playerId,
-              name: r.texts[1] || "",
+              playerId: r.playerId,
+              name: r.name,
               teamId: tid,
               teamName: tname,
               position: "투수",
