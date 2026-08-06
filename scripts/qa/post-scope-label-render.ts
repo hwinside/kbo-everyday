@@ -19,7 +19,7 @@
  * 자체검증: npm run qa:post-scope-label:selftest  (결함주입 RED 확인)
  */
 import { JSDOM } from "jsdom";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://localhost:54321";
@@ -425,13 +425,114 @@ async function main() {
   ok("§4 팀 1개 선택하면 제출됨", submitCalls === 1, `submit ${submitCalls}회`);
   await act(async () => { root4.unmount(); });
 
-  // 4-3. 서버 write 경계 — /api/polls 가 파생 union **전에** 명시 teamTags 를 요구하는지.
-  // (union 뒤에 검사하면 선지 유래 팀이 채워져 항상 통과한다.)
-  const pollRoute = src("src/app/api/polls/route.ts");
-  const guardIdx = pollRoute.indexOf("teamTags.size === 0");
-  const unionIdx = pollRoute.indexOf("teamSlugsForPlayerTags(playerTags)");
-  ok("§4 /api/polls 명시 teamTags 필수 가드 존재", guardIdx !== -1);
-  ok("§4 그 가드가 선수팀 union 보다 앞", guardIdx !== -1 && unionIdx !== -1 && guardIdx < unionIdx);
+  // 4-3. 서버 write 경계 — /api/polls 를 **실제로 POST** 해서 경계를 확인한다.
+  //
+  // 이전 판본은 소스에서 `teamTags.size === 0` 의 위치만 봤다. 그건 두 가지를 놓쳤다:
+  //   ① 문자열이 있어도 그 Set 이 이미 선지 파생 팀을 담고 있으면 가드는 무의미하다
+  //     (삼순 2차 NO-GO — 순서만 앞이지 검사 대상이 틀렸다).
+  //   ② 가드 변수명을 바꾸면 문자열 검사는 조용히 무너진다.
+  // 따라서 route 핸들러를 직접 호출해 **응답 상태코드**로 판정한다.
+  {
+    const pollRoute = src("src/app/api/polls/route.ts");
+    // 명시 태그를 파생과 다른 집합으로 분리했는지(구조 계약).
+    ok(
+      "§4 /api/polls 명시 teamTags 를 파생과 별도 집합으로 검증",
+      /explicitTeamTags\.length === 0/.test(pollRoute),
+      "합쳐진 Set 크기로 보면 팀 선지만 있어도 통과한다",
+    );
+
+    // 실제 POST — 모듈을 로드해 핸들러를 호출한다.
+    // 인증은 admin 싱글턴의 auth.getUser 를 stub 해서 통과시킨다 — 우리가 보려는 건
+    // 토큰 검증이 아니라 그 다음의 공개범위 경계다. RPC 까지 가기 전에 400 으로 끝나야 정상.
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||= "qa-service-role-key";
+    const adminMod = await import("../../src/lib/supabase/admin");
+    const admin = adminMod.getSupabaseAdmin() as unknown as {
+      auth: { getUser: (t: string) => Promise<unknown> };
+      from: unknown;
+      rpc: unknown;
+    };
+    admin.auth.getUser = async () => ({
+      data: { user: { id: "00000000-0000-0000-0000-0000000000qa".slice(0, 36) } },
+      error: null,
+    });
+    // RPC 까지 도달하면 그건 경계를 통과했다는 뜻 — 실 DB 를 치지 않게 막고 표시만 남긴다.
+    admin.rpc = async () => ({ data: null, error: { code: "QA_STUB", message: "rpc stubbed" } });
+    const pollModule = (await import("../../src/app/api/polls/route")) as {
+      POST: (req: Request) => Promise<Response>;
+    };
+    const postPoll = async (body: unknown) => {
+      const res = await pollModule.POST(
+        new Request("http://localhost/api/polls", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: "Bearer qa-token" },
+          body: JSON.stringify(body),
+        }) as never,
+      );
+      return { status: res.status, text: await res.text() };
+    };
+    const teamOptionBody = {
+      title: "올해 우승팀은?",
+      closesAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      options: [
+        { kind: "team", refId: "lg" },
+        { kind: "team", refId: "doosan" },
+      ],
+      teamTags: [],
+    };
+    const denied = await postPoll(teamOptionBody);
+    ok(
+      "§4 팀 선지만 있고 명시 teamTags 가 비면 400",
+      denied.status === 400 && denied.text.includes("팀을 최소 1개"),
+      `status ${denied.status} / ${denied.text.slice(0, 80)}`,
+    );
+    const playerOnly = await postPoll({
+      title: "MVP 는?",
+      closesAt: new Date(Date.now() + 24 * 3600_000).toISOString(),
+      options: [
+        { kind: "player", refId: playerTagOfTeam(TEAMS[0].id).split(":")[0] },
+        { kind: "player", refId: playerTagOfTeam(TEAMS[1].id).split(":")[0] },
+      ],
+      teamTags: [],
+    });
+    ok(
+      "§4 선수 선지만 있고 명시 teamTags 가 비면 400",
+      playerOnly.status === 400,
+      `status ${playerOnly.status}`,
+    );
+    // 반대 방향 — 명시 태그가 있으면 이 경계에서 거절되지 않아야 한다(이후 단계에서 죽는 건 무관).
+    const allowed = await postPoll({ ...teamOptionBody, teamTags: ["lg"] });
+    ok(
+      "§4 명시 teamTags 가 있으면 공개범위 경계를 통과",
+      !(allowed.status === 400 && allowed.text.includes("팀을 최소 1개")),
+      `status ${allowed.status} / ${allowed.text.slice(0, 80)}`,
+    );
+  }
+
+  // 4-4. DB 경계 — 일반·사진글은 createPost() 가 브라우저에서 posts 에 직접 INSERT 한다.
+  // 서버 route 가 없으므로 우회 불가능한 지점은 DB 뿐이다(삼순 NO-GO 2026-08-06).
+  {
+    const dir = resolve(process.cwd(), "supabase/migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql"));
+    const scopeMigration = files
+      .map((f) => readFileSync(resolve(dir, f), "utf8"))
+      .find((sql) => sql.includes("posts_require_team_scope"));
+    ok("§4 posts 공개범위 필수 migration 존재", !!scopeMigration);
+    ok(
+      "§4 그 migration 이 posts BEFORE INSERT 트리거를 건다",
+      !!scopeMigration && /BEFORE INSERT ON public\.posts/.test(scopeMigration),
+    );
+    ok(
+      "§4 빈 team_tags 를 check_violation 으로 거절",
+      !!scopeMigration &&
+        /jsonb_array_length\(to_jsonb\(NEW\.team_tags\)\) = 0/.test(scopeMigration) &&
+        /check_violation/.test(scopeMigration),
+    );
+    // UPDATE 까지 막으면 신고·카운터 갱신이 죽는다 — INSERT 전용이어야 한다.
+    ok(
+      "§4 그 트리거는 UPDATE 를 건들지 않음",
+      !!scopeMigration && !/BEFORE INSERT OR UPDATE ON public\.posts/.test(scopeMigration),
+    );
+  }
 
   // ── §5. 결함주입 자체검증 ────────────────────────────────────────────────
   if (SELFTEST) {
