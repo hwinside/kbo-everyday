@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import PhotoFeed from "@/components/community/PhotoFeed";
 import { supabase } from "@/lib/supabase/client";
 import { toggleLike, type Post } from "@/lib/supabase/usePosts";
-import { getPostSourceLabel } from "@/lib/utils/community-board";
 
 type SortTab = "latest" | "hot";
 
@@ -66,11 +65,6 @@ export default function AllPhotosPage() {
       .sort((a, b) => b.like_count - a.like_count || new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [posts, sortTab, nowMs]);
 
-  const sourceLabels = useMemo(
-    () => Object.fromEntries(sortedPosts.map((post) => [post.id, getPostSourceLabel(post)])),
-    [sortedPosts],
-  );
-
   const handleLike = async (postId: number) => {
     try {
       await toggleLike(postId);
@@ -102,7 +96,7 @@ export default function AllPhotosPage() {
         </div>
       </div>
 
-      <PhotoFeed posts={sortedPosts} loading={loading} onLike={handleLike} sourceLabels={sourceLabels} />
+      <PhotoFeed posts={sortedPosts} loading={loading} onLike={handleLike} />
     </div>
   );
 }

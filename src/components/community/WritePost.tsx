@@ -193,6 +193,8 @@ export default function WritePost({
   async function handleSubmit() {
     if (!content.trim() || submittingRef.current) return; // 제목 제거 → 본문만 필수
     if (seatTipMode && !effectiveZone) return; // 구역 필수
+    // 최소 1팀 태그 — 버튼 disabled 우회(Enter 제출 등) 방어.
+    if (enableTags && !seatTipMode && teamSlugs.length === 0 && taggedPlayers.length === 0) return;
 
     submittingRef.current = true;
     setSubmitting(true);
@@ -235,7 +237,11 @@ export default function WritePost({
     reset();
   }
 
-  const canSubmit = content.trim() && (!seatTipMode || effectiveZone);
+  // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06). 선수 태그도 소속팀을 만드므로 허용.
+  // 좌석팁(seatTipMode)은 태그 피커 자체가 안 떴니 적용 제외.
+  const hasTeamScope = teamSlugs.length > 0 || taggedPlayers.length > 0;
+  const teamScopeOk = !enableTags || seatTipMode || hasTeamScope;
+  const canSubmit = content.trim() && (!seatTipMode || effectiveZone) && teamScopeOk;
 
   return (
     <AnimatePresence>
@@ -348,7 +354,11 @@ export default function WritePost({
                         prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
                       )
                     }
+                    onSetAll={setTeamSlugs}
                   />
+                  {!hasTeamScope && (
+                    <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).</p>
+                  )}
                   <PlayerTagger
                     game={null}
                     selectedPlayers={taggedPlayers}

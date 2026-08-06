@@ -94,6 +94,10 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   const [tagTeamSlugs, setTagTeamSlugs] = useState<string[]>([]);
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
+  // 게시글 최소 1팀 태그(2026-08-06). 직접 태그 외에 팀/선수 선지도 서버에서 team_tags 로 union 된다.
+  const hasTeamScope =
+    tagTeamSlugs.length > 0 || taggedPlayers.length > 0 || hasTeam || hasPlayer;
+
   // 설명 textarea 자동 세로 확장(엔터·긴 글 대응). content 변경·열림 시 height 재계산.
   // max(약 10줄) 도달 후에는 내부 스크롤 허용(overflow-y-auto) — cap 되었다고 스크롤까지
   // 막히지 않게 한다(삼순 지적). 254px ≈ max-h-64(256px) - 상하 경계.
@@ -190,6 +194,12 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
       setError("한 투표에 팀과 선수를 함께 넣을 수 없어요");
       return null;
     }
+    // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06).
+    // 팀/선수 선지가 있으면 서버가 그 팀을 team_tags 에 union 하므로 그것도 스코프로 인정한다.
+    if (!hasTeamScope) {
+      setError("팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)");
+      return null;
+    }
     for (const o of options) {
       if (o.kind === "etc" && !o.label.trim()) {
         setError("기타 선지의 내용을 입력해 주세요");
@@ -269,7 +279,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
             <h2 className="text-lg font-bold text-text-primary">투표 만들기</h2>
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || !hasTeamScope}
               className="text-sm font-semibold text-accent disabled:text-text-tertiary"
             >
               {submitting ? "등록 중..." : "등록"}
@@ -403,6 +413,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
                 <label className="block text-xs font-semibold text-text-tertiary mb-1.5">태그 (선택)</label>
                 <p className="text-[11px] text-text-tertiary mb-2">태그한 팀·선수 피드에도 이 투표가 노출돼요</p>
                 <TeamTagger
+                  onSetAll={setTagTeamSlugs}
                   selectedSlugs={tagTeamSlugs}
                   onToggle={(slug) =>
                     setTagTeamSlugs((prev) =>

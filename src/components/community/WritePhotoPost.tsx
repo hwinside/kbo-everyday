@@ -63,6 +63,8 @@ export default function WritePhotoPost({
   );
   const [teamSlugs, setTeamSlugs] = useState<string[]>(defaultTeamSlugs ?? []);
   const [hashtags, setHashtags] = useState<string[]>([]);
+  // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06). 선수 태그는 소속팀을 만드므로 함께 인정.
+  const hasTeamScope = teamSlugs.length > 0 || selectedPlayers.length > 0;
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -225,6 +227,8 @@ export default function WritePhotoPost({
 
   async function handleSubmit() {
     if (media.length === 0 || submittingRef.current) return;
+    // 게시글은 최소 1팀 태그 필수(하린아빠 2026-08-06). 선수 태그도 소속팀을 만들므로 허용.
+    if (teamSlugs.length === 0 && selectedPlayers.length === 0) return;
     submittingRef.current = true;
     setSubmitting(true);
 
@@ -534,11 +538,15 @@ export default function WritePhotoPost({
                       onSelect={setSelectedGame}
                     />
 
-                    {/* Team tagger — 사진 글도 팀 피드에 노출되도록 팀태그 부여 */}
+                    {/* Team tagger — 사진 글도 팀 피드에 노출되도록 팀태그 부여. 최소 1팀 필수(2026-08-06). */}
                     <TeamTagger
                       selectedSlugs={teamSlugs}
                       onToggle={handleTeamToggle}
+                      onSetAll={setTeamSlugs}
                     />
+                    {!hasTeamScope && (
+                      <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).</p>
+                    )}
 
                     {/* Player tagger */}
                     <PlayerTagger
@@ -611,7 +619,7 @@ export default function WritePhotoPost({
                   </button>
                   <button
                     onClick={handleSubmit}
-                    disabled={submitting}
+                    disabled={submitting || !hasTeamScope}
                     className="flex-1 rounded-xl bg-accent py-3.5 text-base font-semibold text-white disabled:opacity-40 transition-opacity flex items-center justify-center gap-2"
                   >
                     {submitting && <Loader2 size={18} className="animate-spin" />}
