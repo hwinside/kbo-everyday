@@ -177,6 +177,18 @@ export async function POST(request: NextRequest) {
       }
     }
   }
+  // 공개범위 필수 조건 — **명시적 teamTags 1개 이상**(하린아빠 2026-08-06).
+  // 선지에서 파생된 팀이나 선수 소속팀은 이 조건을 대신하지 않는다 — 글쓴이가 공개범위를
+  // 직접 고르게 하는 게 목적이라 파생으로 통과시키면 의도가 무너진다.
+  // 클라이언트 버튼 disabled 만으로는 직접 POST 를 막지 못하므로 서버가 경계다(삼순 NO-GO 2026-08-06).
+  // ⚠️ 파생 union 보다 **먼저** 검사해야 한다 — union 뒤에 보면 선지 유래 팀이 채워져 항상 통과한다.
+  if (teamTags.size === 0) {
+    return NextResponse.json(
+      { error: "팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)" },
+      { status: 400 },
+    );
+  }
+
   // 선수 태그의 소속팀 slug 도 team_tags 에 union (기존 createPost 동일 — 팀 피드 노출).
   for (const slug of teamSlugsForPlayerTags(playerTags)) teamTags.add(slug);
 

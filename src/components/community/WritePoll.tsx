@@ -407,12 +407,21 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
               </div>
             </div>
 
-            {/* 태그 설정 — 일반/사진글과 동일(팀 칩 + 선수 태그). 선지 파생 태그와 서버에서 union 돼
-                피드 노출을 결정(etc만 있는 투표도 원하는 팀/선수 피드에 노출 가능). */}
+            {/* 태그 설정 — 일반/사진글과 동일(팀 칩 + 선수 태그). 팀 태그는 공개범위라 필수,
+                선수 태그는 선택. 선지 파생 태그와 서버에서 union 돼 피드 노출을 결정한다. */}
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-text-tertiary mb-1.5">태그 (선택)</label>
-                <p className="text-[11px] text-text-tertiary mb-2">태그한 팀·선수 피드에도 이 투표가 노출돼요</p>
+                <label className="block text-xs font-semibold text-text-tertiary mb-1.5">
+                  공개범위 <span className="text-[#FF453A]">*</span>
+                </label>
+                <p className="text-[11px] text-text-tertiary mb-2">
+                  팀을 최소 1개 선택해주세요. 태그한 팀·선수 피드에 이 투표가 노출돼요
+                </p>
+                {!hasTeamScope && (
+                  <p className="text-xs text-[#FF453A] mb-2">
+                    팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).
+                  </p>
+                )}
                 <TeamTagger
                   onSetAll={setTagTeamSlugs}
                   selectedSlugs={tagTeamSlugs}

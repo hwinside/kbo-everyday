@@ -52,7 +52,14 @@ check("댓글 시트 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind
 check("상세 댓글 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind="detail"[\s\S]*<CommunityAuthorHeader/.test(detail));
 check("댓글 본문 50px 공용 정렬", /data-community-comment-body className="ml-\[50px\] min-w-0"/.test(commentRow));
 check("프로필 쿼리에 team/player tags", /created_at, team_tags, player_tags/.test(profile));
-check("프로필 actual row가 태그 resolver 소비", /<CommunityProfilePostRow/.test(profile) && /getPostSourceLabel\(post\)/.test(profileRow));
+// 2026-08-06: 프로필 글 목록 라벨도 board 기반 getPostSourceLabel → team_tags SSOT 기반 공개범위로 교체.
+// 검사 의도(페이지가 actual row 컴포넌트를 쓰고, 그 row 가 태그로 라벨을 계산한다)는 유지하고
+// 요구 대상만 새 배선으로 옮긴다. 삭제하면 row 가 라벨을 잃어도 통과하므로 조건은 유지.
+check(
+  "프로필 actual row가 태그 resolver 소비",
+  /<CommunityProfilePostRow/.test(profile) &&
+    /<PostScopeBadge post=\{scopeInputForPost\(post\)\}/.test(profileRow),
+);
 check("프로필 글 탭은 board_type별 상세 route", /getPostDetailHref\(post\)/.test(profileRow) && /onNavigate=\{\(href\) => router\.push\(href\)\}/.test(profile) && !/community\/players\/\$\{post\.board_id\}\/posts/.test(profile));
 check("상세 route resolver가 free·team·player 분기", /board_type === "player"[\s\S]*community\/players[\s\S]*board_type === "team"[\s\S]*community\/teams[\s\S]*community\/free/.test(sourceResolver));
 check("글소속 resolver는 player_tags 3명·team_tags·legacy 폴백", /post\.player_tags \?\? \[\]/.test(sourceResolver) && /외 \$\{names\.length - 2\}명/.test(sourceResolver) && /post\.team_tags \?\? \[\]/.test(sourceResolver) && /getCommunitySourceLabel\(post\.board_type, post\.board_id\)/.test(sourceResolver));

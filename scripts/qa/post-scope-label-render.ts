@@ -1,21 +1,22 @@
 /**
- * 글 공개범위 라벨 게이트 — 실제 피드 컴포넌트를 렌더해서 검증한다.
+ * 글 공개범위 라벨 게이트 — 실제 화면 컴포넌트를 렌더해서 검증한다.
  *
  * 스펙(하린아빠 2026-08-06):
  *   · 10팀 전부 / 팀 태그 없음  → "전체구단 공개"
  *   · 2~3팀                    → 각 팀 배지
- *   · 4~9팀                    → 앞 3팀 배지 + "외 n팀"
+ *   · 4~9팀                    → 앞 3팀 배지 + "외 n팀" (앞 3팀 = **사용자 선택 순서**)
  *   · 1팀 / 선수 1명           → 팀(+선수) 배지
- *   · 커뮤니티 피드와 홈 최신글이 **같은 규칙**
+ *   · 홈 최신글·커뮤니티 피드·프로필 글 목록이 **같은 규칙**
+ *   · 작성 시 **명시적 team_tags 1개 이상 필수** + "전체 선택" 옵션
  *
- * ⚠️ 이 게이트는 순수함수(resolvePostScope)만 부르지 않는다. 그렇게 하면 컴포넌트가
- * 그 함수를 안 써도(=화면이 안 고쳐져도) GREEN 이 된다 — 2026-08-04 하루에 5건 터진
- * false-green 과 같은 형태다. 그래서 실제 `PhotoFeed`(커뮤니티 피드)를 jsdom 에
- * 마운트해 DOM 텍스트를 읽고, 홈 최신글은 실제 `PostLabel` 경로가 쓰는 컴포넌트
- * (`PostScopeBadge` + `scopeInputForPost`)를 그대로 렌더해 대조한다.
+ * ⚠️ false-green 이력 (삼순 NO-GO 2026-08-06):
+ *   - §2 가 실제 `CommunityLatestPosts` 대신 배지를 직접 렌더해, 홈 배선을 끊어도 GREEN 이었다.
+ *   - §3/§4 가 문자열 존재만 검사해, 가드를 무력화하고 흔적만 남겨도 GREEN 이었다.
+ *   - fixture 가 전부 구단 기본 순서 입력이라, 기본 순서로 재정렬하는 잘못된 구현도 GREEN 이었다.
+ * 그래서 이 판본은 §1·§2 를 **실제 페이지/피드 컴포넌트 렌더**로, §4 를 **실제 제출 시도**로 바꾼다.
  *
  * 실행: npm run qa:post-scope-label
- * 자체검증: npm run qa:post-scope-label -- --selftest  (결함주입 시 RED 인지 확인)
+ * 자체검증: npm run qa:post-scope-label:selftest  (결함주입 RED 확인)
  */
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
@@ -79,7 +80,7 @@ type Fixture = {
   board_id?: string;
 };
 
-function feedPost(f: Fixture) {
+function feedRow(f: Fixture) {
   return {
     id: f.id,
     author_id: `author-${f.id}`,
@@ -98,19 +99,30 @@ function feedPost(f: Fixture) {
     player_tags: f.player_tags ?? [],
     team_tags: f.team_tags ?? [],
     hashtags: [],
-    nickname: `유저${f.id}`,
-    team_id: 1,
-    avatar_url: null,
-    grade: "member",
+    author_team_id_snapshot: 1,
     click_view_count: 0,
     impression_view_count: 0,
+    profiles: { nickname: `유저${f.id}`, team_id: 1, grade: "member", points: 0, avatar_url: null },
+  };
+}
+
+/** 피드 카드용 Post(useUnifiedFeed.mapRow 결과와 동형). */
+function feedPost(f: Fixture) {
+  const r = feedRow(f);
+  return {
+    ...r,
+    nickname: r.profiles.nickname,
+    team_id: r.profiles.team_id,
+    grade: r.profiles.grade,
+    avatar_url: null,
+    profiles: undefined,
   };
 }
 
 /**
- * 카드별 `공개범위` 라벨 블록의 칩 텍스트 목록을 공백 1칸으로 이은 문자열.
- * 배지를 여러 개 나열하면 textContent 가 "LG두산KT" 처럼 붙어버려 경계가 안 보인다.
- * 칩 단위로 읽어야 "3팀까지 각 팀 배지" 스펙을 제대로 검증한다.
+ * 카드별 `공개범위` 라벨 블록의 칩 텍스트를 공백 1칸으로 이은 문자열.
+ * 배지를 여러 개 나열하면 textContent 가 "LG두산KT"처럼 붙어 경계가 안 보인다.
+ * 칩 단위로 읽어야 "3팀까지 각 팀 배지" 스펙을 실제로 검증한다.
  */
 function scopeTextsFrom(root: HTMLElement): string[] {
   return Array.from(root.querySelectorAll("[data-community-source-label]")).map((block) => {
@@ -122,6 +134,49 @@ function scopeTextsFrom(root: HTMLElement): string[] {
     if (chips.length > 0) return chips.join(" ");
     return (host.textContent ?? "").replace(/\s+/g, " ").trim();
   });
+}
+
+/** 홈 최신글 compact 라벨 — 로고만 노출되므로 aria-label 을 우선 읽는다. */
+function homeScopeTexts(root: HTMLElement): string[] {
+  const links = Array.from(root.querySelectorAll("a[data-home-latest-row], a[href^='/community/']"));
+  const out: string[] = [];
+  for (const link of links) {
+    const badge = link.querySelector("span.inline-flex.items-center.gap-1.min-w-0");
+    if (!badge) continue;
+    const aria = badge.getAttribute("aria-label");
+    if (aria) { out.push(aria.replace(/,\s*/g, " ").replace(/\s+/g, " ").trim()); continue; }
+    const chips = Array.from(badge.children)
+      .map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    out.push(chips.length ? chips.join(" ") : (badge.textContent ?? "").replace(/\s+/g, " ").trim());
+  }
+  return out;
+}
+
+/**
+ * supabase 브라우저 클라이언트 stub — `posts` 조회만 fixture 로 응답한다.
+ * useUnifiedFeed 가 실제로 이 클라이언트를 통해 SELECT/필터/limit 을 조립하므로,
+ * 홈 컴포넌트를 통째로 렌더해도 네트워크 없이 돌아간다.
+ */
+function installSupabaseStub(rows: unknown[]) {
+  const selected: string[] = [];
+  const makeQuery = (table: string) => {
+    const q: Record<string, unknown> = {};
+    const chain = () => q;
+    for (const m of ["or", "eq", "in", "lt", "neq", "contains", "order", "limit", "gte", "lte", "not"]) {
+      q[m] = (...args: unknown[]) => {
+        if (m === "limit" || m === "order") { /* terminal-ish, still chainable */ }
+        void args;
+        return chain();
+      };
+    }
+    q.select = (cols: string) => { selected.push(`${table}:${cols}`); return chain(); };
+    // await 되는 지점: thenable 로 결과 반환.
+    q.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: table === "posts" ? rows : [], error: null }).then(res);
+    return q;
+  };
+  return { client: { from: (table: string) => makeQuery(table) }, selected };
 }
 
 async function main() {
@@ -136,17 +191,15 @@ async function main() {
     refresh: () => {}, prefetch: () => {},
   };
 
-  // TeamBadge 가 useTheme 을 쓰므로 실제 ThemeProvider 로 감싼다(모듈 목킹 금지 — 목킹하면
-  // 배지 렌더 경로 자체가 가짜가 돼 false-green 위험).
+  // TeamBadge 가 useTheme 을 쓰므로 실제 ThemeProvider 로 감싼다(목킹하면 배지 렌더 경로가 가짜가 됨).
   const { ThemeProvider } = await import("../../src/components/ThemeProvider");
-
   const { TEAMS } = await import("../../src/lib/constants/teams");
   const allSlugs = TEAMS.map((t) => t.slug);
   const s = (n: number) => TEAMS.slice(0, n).map((t) => t.slug);
   const shortName = (slug: string) => TEAMS.find((t) => t.slug === slug)!.shortName;
 
-  // 실제 로스터에서 해당 팀 선수 1명을 집어 태그 문자열로 만든다.
-  // 가짜 kboId 를 쓰면 teamIdForKboId 가 null 을 돌려 "선수 유래 팀" 경로를 아예 안 태운다.
+  // 선수 태그는 실제 로스터에서 뽑는다 — 가짜 kboId 면 teamIdForKboId 가 null 이라
+  // "선수 유래 팀" 경로를 아예 안 태운다.
   const roster = (await import("../../src/lib/constants/players-roster.json"))
     .default as { kboId: string; name: string; teamId: number }[];
   const playerTagOfTeam = (teamId: number) => {
@@ -155,14 +208,9 @@ async function main() {
     return `${p.kboId}:${p.name}`;
   };
 
-  // ── §1. 실제 커뮤니티 피드(PhotoFeed) 렌더 ────────────────────────────────
-  // AuthProvider 없이 렌더한다 — useAuth 는 createContext 기본값(user/profile null)을
-  // 반환하므로 비로그인 사용자가 피드를 보는 실제 경로와 같다.
-  const PhotoFeed = (await import("../../src/components/community/PhotoFeed")).default;
-
   // 사용자 선택 순서 보존을 검증하려면 입력 순서가 구단 기본 순서와 달라야 한다.
-  // 입력을 전부 기본 순서로 주면 "기본 순서로 정렬"하는 구현도 같이 통과해버린다.
-  const rev4 = [...s(4)].reverse();  // 뒤집은 4팀 선택
+  const rev4 = [...s(4)].reverse();
+
   const fixtures: { label: string; post: Fixture; expect: string }[] = [
     { label: "10팀 전부 → 전체구단 공개", post: { id: 1, team_tags: allSlugs }, expect: "전체구단 공개" },
     { label: "태그 없음 → 전체구단 공개", post: { id: 2 }, expect: "전체구단 공개" },
@@ -172,18 +220,26 @@ async function main() {
     { label: "4팀 → 3팀 + 외 1팀", post: { id: 6, team_tags: s(4) }, expect: `${s(3).map(shortName).join(" ")} 외 1팀` },
     { label: "9팀 → 3팀 + 외 6팀", post: { id: 7, team_tags: s(9) }, expect: `${s(3).map(shortName).join(" ")} 외 6팀` },
     {
-      // 하린아빠 확정(2026-08-06): 앞 3팀은 **사용자가 고른 순서**.
       label: "선택 순서 보존(역순 4팀)",
       post: { id: 8, team_tags: rev4 },
       expect: `${rev4.slice(0, 3).map(shortName).join(" ")} 외 1팀`,
     },
     {
-      // 직접 선택 팀이 먼저, 선수 태그 유래 팀은 뒤에.
       label: "직접 선택 우선, 선수 유래 팀은 뒤",
       post: { id: 9, team_tags: [allSlugs[4]], player_tags: [playerTagOfTeam(1)] },
       expect: `${shortName(allSlugs[4])} ${shortName(allSlugs[0])}`,
     },
+    {
+      // cross-board: 선수 페이지 피드에 뜨는 다팀 글. team_tags 가 조회에서 빠지면
+      // 선수 소속팀 1개로 축소돼 다른 화면과 어긋난다(삼순 NO-GO 2026-08-06).
+      label: "cross-board 다팀 글(선수 태그 + 4팀)",
+      post: { id: 10, team_tags: s(4), player_tags: [playerTagOfTeam(1)], board_type: "team", board_id: allSlugs[0] },
+      expect: `${s(3).map(shortName).join(" ")} 외 1팀`,
+    },
   ];
+
+  // ── §1. 실제 커뮤니티 피드(PhotoFeed) 렌더 ────────────────────────────────
+  const PhotoFeed = (await import("../../src/components/community/PhotoFeed")).default;
 
   const el = document.createElement("div");
   document.body.appendChild(el);
@@ -207,25 +263,23 @@ async function main() {
   });
 
   const texts = scopeTextsFrom(el as unknown as HTMLElement);
-  ok(
-    `§1 피드 카드 수 = ${fixtures.length}`,
-    texts.length === fixtures.length,
-    `실제 ${texts.length}개`,
-  );
+  ok(`§1 피드 카드 수 = ${fixtures.length}`, texts.length === fixtures.length, `실제 ${texts.length}개`);
   fixtures.forEach((f, i) => {
     ok(`§1 피드 ${f.label}`, texts[i] === f.expect, `기대 "${f.expect}" / 실제 "${texts[i]}"`);
   });
-
-  // 회귀 방지: 이전 라벨 문구가 남아있으면 안 된다.
-  const feedHtml = (el as unknown as HTMLElement).innerHTML;
-  ok("§1 피드에 옛 '글 소속' 라벨 없음", !feedHtml.includes("글 소속"));
+  ok("§1 피드에 옛 '글 소속' 라벨 없음", !(el as unknown as HTMLElement).innerHTML.includes("글 소속"));
 
   await act(async () => { root.unmount(); });
 
-  // ── §2. 홈 최신글(compact) 라벨 ──────────────────────────────────────────
-  // 홈은 좁아서 팀 배지를 로고만 표기한다 → 텍스트가 아닌 aria-label 로 검증한다.
-  const PostScopeBadge = (await import("../../src/components/community/PostScopeBadge")).default;
-  const { scopeInputForPost } = await import("../../src/lib/utils/post-scope-input");
+  // ── §2. 실제 홈 최신글(CommunityLatestPosts) 렌더 ─────────────────────────
+  // 이전 판본은 배지를 직접 렌더해 홈 배선을 끊어도 GREEN 이었다(삼순 NO-GO).
+  // 이제 홈 컴포넌트를 통째로 마운트하고 useUnifiedFeed 가 supabase stub 을 타게 한다.
+  const stub = installSupabaseStub(fixtures.map((f) => feedRow(f.post)));
+  const clientMod = await import("../../src/lib/supabase/client");
+  const originalFrom = (clientMod.supabase as unknown as { from: unknown }).from;
+  (clientMod.supabase as unknown as { from: unknown }).from = stub.client.from;
+
+  const CommunityLatestPosts = (await import("../../src/components/home/CommunityLatestPosts")).default;
 
   const el2 = document.createElement("div");
   document.body.appendChild(el2);
@@ -233,88 +287,167 @@ async function main() {
   await act(async () => {
     root2.render(
       React.createElement(
-        ThemeProvider,
-        null,
-        fixtures.map((f) =>
-          React.createElement(
-            "div",
-            { key: f.post.id, "data-fixture": String(f.post.id) },
-            React.createElement(PostScopeBadge as never, {
-              post: scopeInputForPost(feedPost(f.post) as never),
-              variant: "compact",
-            } as never),
-          ),
+        AppRouterContext.Provider,
+        { value: routerValue },
+        React.createElement(
+          ThemeProvider,
+          null,
+          React.createElement(CommunityLatestPosts as never, { myTeamId: null } as never),
         ),
       ),
     );
   });
-
-  fixtures.forEach((f) => {
-    const node = (el2 as unknown as HTMLElement).querySelector(`[data-fixture="${f.post.id}"]`)!;
-    const aria = node.querySelector("[aria-label]")?.getAttribute("aria-label");
-    const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-    // 다팀은 aria-label, 단일/전체는 텍스트로 검증(compact 에서도 텍스트가 남는다).
-    const actual = aria ? aria.replace(/,\s*/g, " ") : text;
-    ok(`§2 홈 ${f.label}`, actual === f.expect, `기대 "${f.expect}" / 실제 "${actual}"`);
-  });
-
-  await act(async () => { root2.unmount(); });
-
-  // ── §3. 소스 배선 — 홈/피드가 실제로 SSOT 를 통과하는가 ────────────────────
-  // (컴포넌트 렌더만 보면 "홈이 아직 옛 resolveLabel 을 쓰는" 회귀를 놓친다.)
-  const src = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
-  const home = src("src/components/home/CommunityLatestPosts.tsx");
-  const feed = src("src/components/community/PhotoFeed.tsx");
-
-  ok("§3 홈이 PostScopeBadge 사용", home.includes("PostScopeBadge"));
-  ok("§3 홈이 scopeInputForPost 사용", home.includes("scopeInputForPost"));
-  ok("§3 홈에 옛 resolveLabel 없음", !/function\s+resolveLabel/.test(home));
-  ok("§3 피드가 PostScopeBadge 사용", feed.includes("PostScopeBadge"));
-  ok("§3 피드가 scopeInputForPost 사용", feed.includes("scopeInputForPost"));
-  ok("§3 피드가 옛 getPostSourceLabel 미사용", !/getPostSourceLabel\s*\(/.test(feed));
-
-  // ── §4. 작성 화면 — 최소 1팀 태그 필수 + 전체 선택 옵션 ────────────────────
-  const tagger = src("src/components/community/TeamTagger.tsx");
-  ok("§4 TeamTagger 에 전체 선택 칩", tagger.includes("data-team-select-all"));
-
-  for (const file of [
-    "src/components/community/WritePost.tsx",
-    "src/components/community/WritePhotoPost.tsx",
-    "src/components/community/WritePoll.tsx",
-  ]) {
-    const body = src(file);
-    ok(`§4 ${file.split("/").pop()} 최소1팀 가드`, body.includes("hasTeamScope"));
-    ok(`§4 ${file.split("/").pop()} 전체 선택 연결`, body.includes("onSetAll"));
+  // 피드 로드는 effect 안의 async — settle 대기.
+  for (let i = 0; i < 20; i++) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   }
 
+  const homeTexts = homeScopeTexts(el2 as unknown as HTMLElement);
+  ok(
+    `§2 홈 카드 수 ≥ 1 (실제 컴포넌트 마운트 확인)`,
+    homeTexts.length > 0,
+    `홈이 카드를 하나도 렌더하지 않음 — 배선 끊김 또는 stub 부적합`,
+  );
+  // 홈은 기본 5개만 펼쳐 보여주므로(HOME_LATEST_COLLAPSED) 앞쪽 fixture 만 대조한다.
+  const homeCheckCount = Math.min(homeTexts.length, fixtures.length);
+  for (let i = 0; i < homeCheckCount; i++) {
+    ok(
+      `§2 홈 ${fixtures[i].label}`,
+      homeTexts[i] === fixtures[i].expect,
+      `기대 "${fixtures[i].expect}" / 실제 "${homeTexts[i]}"`,
+    );
+  }
+  ok("§2 홈이 옛 '크보팬' 라벨을 쓰지 않음", !homeTexts.some((t) => t === "크보팬"));
+
+  await act(async () => { root2.unmount(); });
+  (clientMod.supabase as unknown as { from: unknown }).from = originalFrom;
+
+  // ── §3. 선수 페이지 조회 컬럼 — team_tags 포함 ────────────────────────────
+  // 조회에서 빠지면 다팀 글이 선수 피드에서만 축소 표시된다(런타임에 안 터지고 조용히 틀림).
+  const src = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
+  const playerPage = src("src/app/(main)/community/players/[playerId]/page.tsx");
+  const colsLine = playerPage.match(/const cols = "([^"]+)"/)?.[1] ?? "";
+  ok("§3 선수 피드 조회에 team_tags 포함", colsLine.includes("team_tags"), `cols="${colsLine.slice(0, 60)}…"`);
+  ok("§3 선수 피드 조회에 player_tags 포함", colsLine.includes("player_tags"));
+
+  const profilePage = src("src/app/(main)/profile/[userId]/page.tsx");
+  ok("§3 프로필 글 목록 조회에 team_tags 포함", /select\([^)]*team_tags/.test(profilePage));
+
+  // ── §4. 작성 화면 — 실제 제출 시도로 가드 검증(문자열 존재 검사 아님) ──────
+  // 이전 판본은 `hasTeamScope` 문자열만 봐서, 가드를 무력화하고 이름만 남겨도 GREEN 이었다.
+  const { hasRequiredTeamTag } = await import("../../src/lib/utils/post-scope");
+  const TeamTagger = (await import("../../src/components/community/TeamTagger")).default;
+
+  // 4-1. 전체 선택 칩이 실제로 10팀을 넘겨주는지 — 클릭해서 콜백 인자를 본다.
+  let setAllArg: string[] | null = null;
+  const el3 = document.createElement("div");
+  document.body.appendChild(el3);
+  const root3 = createRoot(el3);
+  await act(async () => {
+    root3.render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(TeamTagger as never, {
+          selectedSlugs: [],
+          onToggle: () => {},
+          onSetAll: (v: string[]) => { setAllArg = v; },
+        } as never),
+      ),
+    );
+  });
+  const allChip = (el3 as unknown as HTMLElement).querySelector("[data-team-select-all]") as HTMLElement | null;
+  ok("§4 전체 선택 칩 렌더", !!allChip);
+  if (allChip) {
+    await act(async () => { allChip.click(); });
+  }
+  ok(
+    "§4 전체 선택 클릭 → 10팀 전부 전달",
+    Array.isArray(setAllArg) && (setAllArg as string[]).length === TEAMS.length,
+    `실제 ${(setAllArg as string[] | null)?.length ?? "null"}개`,
+  );
+  await act(async () => { root3.unmount(); });
+
+  // 4-2. WritePost 실제 마운트 — 팀 미선택 시 제출 콜백이 호출되지 않아야 한다.
+  const WritePost = (await import("../../src/components/community/WritePost")).default;
+  let submitCalls = 0;
+  const el4 = document.createElement("div");
+  document.body.appendChild(el4);
+  const root4 = createRoot(el4);
+  await act(async () => {
+    root4.render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(WritePost as never, {
+          isOpen: true,
+          onClose: () => {},
+          enableTags: true,
+          onSubmit: async () => { submitCalls += 1; },
+        } as never),
+      ),
+    );
+  });
+  const host4 = el4 as unknown as HTMLElement;
+  const textarea = host4.querySelector("textarea") as HTMLTextAreaElement | null;
+  ok("§4 WritePost 본문 입력 필드 렌더", !!textarea);
+  if (textarea) {
+    // React controlled input 에 값 주입 후 input 이벤트 발화.
+    const setter = Object.getOwnPropertyDescriptor(
+      (win.HTMLTextAreaElement as { prototype: object }).prototype,
+      "value",
+    )?.set;
+    await act(async () => {
+      setter?.call(textarea, "테스트 본문");
+      textarea.dispatchEvent(new (win.Event as typeof Event)("input", { bubbles: true }));
+    });
+  }
+  const submitBtn = Array.from(host4.querySelectorAll("button")).find((b) =>
+    /등록|게시|저장/.test(b.textContent ?? ""),
+  ) as HTMLButtonElement | undefined;
+  ok("§4 WritePost 제출 버튼 렌더", !!submitBtn);
+  if (submitBtn) {
+    await act(async () => { submitBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+  ok("§4 팀 미선택이면 제출되지 않음", submitCalls === 0, `submit ${submitCalls}회 호출됨`);
+
+  // 팀을 하나 고르면 제출된다 — 가드가 항상 막기만 하는 게 아님을 확인(반대 방향).
+  const teamChip = Array.from(host4.querySelectorAll("button")).find(
+    (b) => b.textContent?.trim() === shortName(allSlugs[0]) && !b.hasAttribute("data-team-select-all"),
+  ) as HTMLButtonElement | undefined;
+  ok("§4 팀 칩 렌더", !!teamChip);
+  if (teamChip && submitBtn) {
+    await act(async () => { teamChip.click(); });
+    await act(async () => { submitBtn.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  }
+  ok("§4 팀 1개 선택하면 제출됨", submitCalls === 1, `submit ${submitCalls}회`);
+  await act(async () => { root4.unmount(); });
+
+  // 4-3. 서버 write 경계 — /api/polls 가 파생 union **전에** 명시 teamTags 를 요구하는지.
+  // (union 뒤에 검사하면 선지 유래 팀이 채워져 항상 통과한다.)
+  const pollRoute = src("src/app/api/polls/route.ts");
+  const guardIdx = pollRoute.indexOf("teamTags.size === 0");
+  const unionIdx = pollRoute.indexOf("teamSlugsForPlayerTags(playerTags)");
+  ok("§4 /api/polls 명시 teamTags 필수 가드 존재", guardIdx !== -1);
+  ok("§4 그 가드가 선수팀 union 보다 앞", guardIdx !== -1 && unionIdx !== -1 && guardIdx < unionIdx);
+
   // ── §5. 결함주입 자체검증 ────────────────────────────────────────────────
-  // 게이트가 실제로 결함을 잡는지 확인한다. 여기서 기대 RED 가 안 나오면 게이트는
-  // 검출력이 없는 것이므로 통째로 실패시킨다.
   if (SELFTEST) {
-    console.log("\n  [selftest] 결함주입 — 아래 항목은 RED 여야 정상");
-    const { resolvePostScope, hasRequiredTeamTag } = await import("../../src/lib/utils/post-scope");
+    console.log("\n  [selftest] 순수 규칙 결함주입");
+    const { resolvePostScope } = await import("../../src/lib/utils/post-scope");
     const mutations: { name: string; check: () => boolean }[] = [
-      {
-        name: "10팀을 9팀으로 줄이면 전체구단이 아님",
-        check: () => resolvePostScope({ team_tags: s(9) }).kind !== "all",
-      },
+      { name: "10팀을 9팀으로 줄이면 전체구단이 아님", check: () => resolvePostScope({ team_tags: s(9) }).kind !== "all" },
       {
         name: "3팀은 overflow 0",
-        check: () => {
-          const r = resolvePostScope({ team_tags: s(3) });
-          return r.kind === "teams" && r.overflow === 0;
-        },
+        check: () => { const r = resolvePostScope({ team_tags: s(3) }); return r.kind === "teams" && r.overflow === 0; },
       },
       {
         name: "4팀은 shown 3 + overflow 1",
-        check: () => {
-          const r = resolvePostScope({ team_tags: s(4) });
-          return r.kind === "teams" && r.shown.length === 3 && r.overflow === 1;
-        },
+        check: () => { const r = resolvePostScope({ team_tags: s(4) }); return r.kind === "teams" && r.shown.length === 3 && r.overflow === 1; },
       },
       {
-        // shown 은 teamId 배열이다. 슬러그로 다시 변환해 비교한다.
-        // 하린아빠 확정: 기본 순서가 아니라 **선택 순서** 보존.
         name: "역순 입력이면 shown 도 역순(선택 순서 보존)",
         check: () => {
           const r = resolvePostScope({ team_tags: [...s(4)].reverse() });
@@ -323,22 +456,10 @@ async function main() {
           return slugs.join(",") === [...s(4)].reverse().slice(0, 3).join(",");
         },
       },
-      {
-        name: "선수 태그 소속팀은 필수조건을 대신하지 않음",
-        check: () => !hasRequiredTeamTag([]),
-      },
-      {
-        name: "team_tags 1개면 필수조건 충족",
-        check: () => hasRequiredTeamTag(s(1)),
-      },
-      {
-        name: "알 수 없는 슬러그는 필수조건 미충족",
-        check: () => !hasRequiredTeamTag(["not-a-team"]),
-      },
-      {
-        name: "태그 0개는 all",
-        check: () => resolvePostScope({}).kind === "all",
-      },
+      { name: "선수 태그 소속팀은 필수조건을 대신하지 않음", check: () => !hasRequiredTeamTag([]) },
+      { name: "team_tags 1개면 필수조건 충족", check: () => hasRequiredTeamTag(s(1)) },
+      { name: "알 수 없는 슬러그는 필수조건 미충족", check: () => !hasRequiredTeamTag(["not-a-team"]) },
+      { name: "태그 0개는 all", check: () => resolvePostScope({}).kind === "all" },
     ];
     for (const m of mutations) ok(`§5 ${m.name}`, m.check());
   }
