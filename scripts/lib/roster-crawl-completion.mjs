@@ -219,11 +219,19 @@ export function evaluateRosterCompletion(teamOutcomes, expectedTeamSlots) {
  * 즉 **성공으로 샐다**(fail-open).
  *
  * 행동 계약(삼순 확정 매트릭스):
- *   get_error() === null / undefined → 성공   (success +1)
- *   get_error() 가 Error         → 실패   (error +1)
- *   args 가 없음               → 판단불가 → 실패
- *   get_error 가 함수가 아님    → 판단불가 → 실패
- *   get_error() 가 throw         → 판단불가 → 실패
+ *   get_error() === null       → 성공   (success +1)
+ *   get_error() 가 Error       → 실패   (error +1)
+ *   get_error() === undefined  → 판단불가 → 실패
+ *   args 가 없음             → 판단불가 → 실패
+ *   get_error 가 함수가 아님  → 판단불가 → 실패
+ *   get_error() 가 throw       → 판단불가 → 실패
+ *   프로퍼티 접근이 throw       → 판단불가 → 실패
+ *
+ * `undefined` 를 성공에서 물리는 이유: 그건 "오류가 없다"가 **명시된** 값이
+ * 아니라 값이 없다는 신호다. \uc epoch 은 "서버가 정상 응답했다"는 유일한 근거라
+ * 모호한 값을 성공으로 세면 가설이 약해진다. 정상 ASP.NET 구현은 오류 없는 응답에
+ * `_error = null` 을 돌려주므로 이 제한은 정상 경로를 막지 않는다
+ * (dry-run 실측으로 확인: 20슬롯에서 epoch 성공 84 / 오류 0).
  *
  * @returns {"success"|"error"}
  */
@@ -236,7 +244,7 @@ export function classifyEndRequest(args) {
     if (args === null || args === undefined) return "error";
     if (typeof args.get_error !== "function") return "error";
     const err = args.get_error();
-    return err === null || err === undefined ? "success" : "error";
+    return err === null ? "success" : "error";
   } catch {
     return "error"; // 판단 불가는 실패 취급(fail-close)
   }

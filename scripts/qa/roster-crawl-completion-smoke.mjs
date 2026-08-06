@@ -509,9 +509,24 @@ check("epoch 을 못 쓰면 전이 판정을 fail-close 한다 (약한 근거 �
  * **그 함수를 직접 호출해** 행동 매트릭스를 고정한다. 크롤러는 같은 함수를
  * 페이지에 주입해 쓰므로, 이 테스트가 실제 배선된 판정을 검증한다. */
 check("endRequest 판정 행동 매트릭스 (오류 없는 응답만 성공)", () => {
-  // 정상 성공: 오류가 없다고 명시된 경우만 성공이다.
+  // 유일한 성공 — "오류가 없다"가 **명시된** 경우만.
   assert.equal(classifyEndRequest({ get_error: () => null }), "success", "null 오류는 성공이어야 한다");
-  assert.equal(classifyEndRequest({ get_error: () => undefined }), "success", "undefined 오류는 성공이어야 한다");
+
+  /* 삼순 NO-GO(7차) — `undefined` 를 성공으로 묶은 것이 fail-open 이었다.
+   * 그건 "오류 없음"이 명시된 값이 아니라 값이 없다는 신호 — 판단불가다.
+   * 더구나 6차에서 내가 이걸 테스트로 **계약까지 박아둑었다**(게이트가 결함을
+   * 고정시키는 가장 나쁜 형태). epoch 은 "서버가 정상 응답했다"는 유일한 근거라
+   * 모호한 값을 성공으로 세면 가설 자체가 약해진다. */
+  assert.equal(
+    classifyEndRequest({ get_error: () => undefined }),
+    "error",
+    "undefined 는 '오류 없음'이 명시된 값이 아니다 — 판단불가 → 실패여야 한다"
+  );
+  assert.equal(
+    classifyEndRequest({ get_error: () => {} }),
+    "error",
+    "암시적 undefined 반환(return 문 없음)도 판단불가다"
+  );
 
   // 실제 오류.
   assert.equal(
