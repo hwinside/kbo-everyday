@@ -109,16 +109,33 @@ try {
   const r2 = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint) AS r;`);
   ok("actual: 👍→👎 변경 → -1", Number(r2[0]?.r) === -1, JSON.stringify(r2));
 
-  const r3 = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint) AS r;`);
-  ok("actual: 같은 값 재클릭 → 취소(NULL)", r3[0]?.r === null, JSON.stringify(r3));
+  // ⚠️ 취소는 **클라가 보고 있던 값(expected_prev)** 을 같이 넘길 때만 성립한다.
+  // expected_prev 없이 같은 값이 또 오면 재전송으로 보고 확정(set)한다 — 멱등.
+  const rIdem = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint, NULL) AS r;`);
+  ok("② 재전송(expected_prev 없음) → 취소되지 않고 유지", Number(rIdem[0]?.r) === -1, JSON.stringify(rIdem));
+
+  const rIdem2 = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint, 1::smallint) AS r;`);
+  ok("② 다른 이전값 보고 클릭 → 확정(취소 아님)", Number(rIdem2[0]?.r) === -1, JSON.stringify(rIdem2));
+
+  const r3 = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint, -1::smallint) AS r;`);
+  ok("actual: 보고 있던 값 재클릭 → 취소(NULL)", r3[0]?.r === null, JSON.stringify(r3));
+
+  const r3b = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', -1::smallint, -1::smallint) AS r;`);
+  ok("② 취소 재전송도 NULL (멱등)", r3b[0]?.r === null, JSON.stringify(r3b));
 
   const cnt = await sql(`SELECT count(*)::int AS n FROM ${SCHEMA}.genius_answer_feedback WHERE user_id='${U}' AND answer_message_id=901;`);
   ok("actual: 취소 후 행 0 (중복 row 없음)", cnt[0]?.n === 0, JSON.stringify(cnt));
 
   // reply_kind 저장 확인 (② 후분석 분리 근거)
-  await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 902, 900, 'blocked', 'unavailable', -1::smallint);`);
+  await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 902, 900, 'blocked', 'unavailable', -1::smallint, NULL);`);
   const rk = await sql(`SELECT reply_kind, match_path FROM ${SCHEMA}.genius_answer_feedback WHERE answer_message_id=902;`);
   ok("② reply_kind 저장됨", rk[0]?.reply_kind === "unavailable", JSON.stringify(rk));
+
+  // ── ③ legacy: question_message_id 가 NULL 이어도 적재된다 ────────────────────
+  // 운영 실측상 eligible 답변 1,096건 전부 qid 가 없다. 여기서 막히면 기존 대화의
+  // 모든 답변이 400 이 된다(삼순 2차 blocker ①).
+  const rNull = await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 902, NULL, 'blocked', 'unavailable', 1::smallint, NULL) AS r;`);
+  ok("③ qid NULL 이어도 적재 성공(legacy)", Number(rNull[0]?.r) === 1, JSON.stringify(rNull));
 
   // ── ④ 동시성: 같은 키 병렬 호출이 직렬화되는가 ────────────────────────────
   // 같은 (user, answer) 로 👍 를 8번 동시에 던진다. 직렬화되면 토글이 순차 적용되어
@@ -126,7 +143,7 @@ try {
   const N = 8;
   const results = await Promise.allSettled(
     Array.from({ length: N }, () =>
-      sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', 1::smallint) AS r;`),
+      sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', 1::smallint, NULL) AS r;`),
     ),
   );
   const rejected = results.filter((r) => r.status === "rejected");
@@ -137,16 +154,16 @@ try {
     SELECT count(*)::int AS rows FROM ${SCHEMA}.genius_answer_feedback
     WHERE user_id='${U}' AND answer_message_id=901;
   `);
-  ok("④ 병렬 후에도 행 ≤1 (중복 row 0)", (dup[0]?.rows ?? 99) <= 1, JSON.stringify(dup));
+  ok("④ 병렬 8회 동일 클릭 후 정확히 1행 (중복 0, 취소로 뒤집히지 않음)", dup[0]?.rows === 1, JSON.stringify(dup));
 
   // rating 은 1 또는 없음 — 중간값이 남으면 안 된다
   const val = await sql(`SELECT rating FROM ${SCHEMA}.genius_answer_feedback WHERE user_id='${U}' AND answer_message_id=901;`);
-  ok("④ 최종 상태가 유효값", val.length === 0 || Number(val[0].rating) === 1, JSON.stringify(val));
+  ok("④ 최종 rating=1 유지", val.length === 1 && Number(val[0].rating) === 1, JSON.stringify(val));
 
   // ── invalid rating 은 거부되는가 ──────────────────────────────────────────
   let raised = false;
   try {
-    await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', 0::smallint);`);
+    await sql(`SELECT ${SCHEMA}.set_baseball_genius_answer_feedback('${U}'::uuid, 901, 900, 'llm', 'answer', 0::smallint, NULL);`);
   } catch { raised = true; }
   ok("rating=0 거부", raised);
 } finally {

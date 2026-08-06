@@ -87,7 +87,10 @@ CREATE OR REPLACE FUNCTION public.set_baseball_genius_answer_feedback(
   p_question_message_id bigint,
   p_match_path text,
   p_reply_kind text,
-  p_rating smallint
+  p_rating smallint,
+  -- 클라가 이번 클릭 **직전에 보고 있던** 상태. 재전송/두 탭 멱등성의 근거다.
+  -- NULL 이면 "상태를 모름" → 토글하지 않고 p_rating 으로 확정(set)한다.
+  p_expected_prev smallint DEFAULT NULL
 )
 RETURNS smallint
 LANGUAGE plpgsql
@@ -113,13 +116,22 @@ BEGIN
     hashtextextended(p_user_id::text || ':' || p_answer_message_id::text, 0)
   );
 
-  -- 같은 값 재클릭 = 취소. 행 자체를 지운다(중립 상태를 별도 값으로 남기지 않는다).
-  DELETE FROM genius_answer_feedback
-   WHERE user_id = p_user_id
-     AND answer_message_id = p_answer_message_id
-     AND rating = p_rating
-  RETURNING rating INTO v_existing;
-  IF FOUND THEN
+  -- ---- 멱등한 취소 판정 (삼순 2차 blocker ②) ----
+  -- 이전 구현은 "현재 저장값 == 클릭값이면 삭제"였다. 그래서 **같은 요청이 두 번 도달하면**
+  -- (네트워크 재전송, 두 탭이 같은 👍, 클라 retry) 첫 번째가 저장 → 두 번째가 그걸 보고
+  -- 취소로 뒤집었다. 사용자는 한 번 눌렀는데 표가 사라진다.
+  --
+  -- 취소는 **유저가 이미 그 값을 보고 있는 상태에서 다시 눌렀을 때**만 성립한다.
+  -- 그 사실은 서버가 알 수 없고 클라만 안다 → `p_expected_prev` 로 받는다.
+  --   · p_expected_prev = p_rating  → 유저가 보고 있던 값을 재클릭 = 취소
+  --   · 그 외(NULL 포함)            → 확정(set). 재전송이면 같은 값으로 수렴한다(멱등).
+  IF p_expected_prev IS NOT NULL AND p_expected_prev = p_rating THEN
+    DELETE FROM genius_answer_feedback
+     WHERE user_id = p_user_id
+       AND answer_message_id = p_answer_message_id
+       AND rating = p_rating
+    RETURNING rating INTO v_existing;
+    -- 이미 지워져 있어도(먼저 도착한 동일 취소 요청) 최종 상태는 같다 → NULL.
     RETURN NULL;
   END IF;
 
@@ -142,14 +154,14 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint, smallint) FROM PUBLIC;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
-    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM anon;
+    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint, smallint) FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) FROM authenticated;
+    REVOKE ALL ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint, smallint) FROM authenticated;
   END IF;
 END $$;
 
@@ -160,7 +172,7 @@ END $$;
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-    GRANT EXECUTE ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint) TO service_role;
+    GRANT EXECUTE ON FUNCTION public.set_baseball_genius_answer_feedback(uuid, bigint, bigint, text, text, smallint, smallint) TO service_role;
     GRANT SELECT, INSERT, UPDATE, DELETE ON public.genius_answer_feedback TO service_role;
   END IF;
 END $$;

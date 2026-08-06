@@ -335,7 +335,11 @@ export default function DMChatPage() {
       return next;
     });
     const { data: { session } } = await supabase.auth.getSession();
-    const result = await submitGeniusFeedback(answerMessageId, clicked, session?.access_token ?? null);
+    // 클릭 직전 상태를 같이 보낸다 — 서버가 이걸로만 취소를 판정하므로
+    // 재전송·두 탭 동일 클릭이 표를 뒤집지 않는다(멱등).
+    const result = await submitGeniusFeedback(
+      answerMessageId, clicked, session?.access_token ?? null, fetch, previous ?? null,
+    );
     setFeedbackPending((prev) => {
       const next = new Set(prev);
       next.delete(answerMessageId);

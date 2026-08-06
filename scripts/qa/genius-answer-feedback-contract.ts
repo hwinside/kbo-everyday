@@ -178,6 +178,23 @@ async function runNetworkContracts() {
   check("G2 취소 응답은 rating null", cancelled.ok === true && cancelled.rating === null);
 
   const thrown = await submitGeniusFeedback(1, 1, null, async () => { throw new Error("net"); });
+
+  // 멱등 계약: 클릭 직전 상태를 body 에 실어야 서버가 취소를 판정할 수 있다.
+  // 이게 빠지면 재전송·두 탭 동일 클릭이 표를 뒤집는다(삼순 2차 blocker ②).
+  let sentBody: Record<string, unknown> = {};
+  await submitGeniusFeedback(7, -1, null, async (_url, init) => {
+    sentBody = JSON.parse(String((init as RequestInit).body));
+    return okResponse;
+  }, -1);
+  check("B7 expectedPrev 를 body 에 실어 보낸다", sentBody.expectedPrev === -1);
+  check("B8 answerMessageId/rating 도 함께", sentBody.answerMessageId === 7 && sentBody.rating === -1);
+
+  let sentDefault: Record<string, unknown> = {};
+  await submitGeniusFeedback(7, 1, null, async (_url, init) => {
+    sentDefault = JSON.parse(String((init as RequestInit).body));
+    return okResponse;
+  });
+  check("B9 미지정이면 null (토글 아님 = 확정)", sentDefault.expectedPrev === null);
   check("G3 네트워크 예외도 ok:false", thrown.ok === false);
 
   const listResponse = {

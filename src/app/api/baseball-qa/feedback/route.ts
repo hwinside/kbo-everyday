@@ -21,8 +21,9 @@ export async function POST(req: NextRequest) {
 
   let answerMessageId: unknown;
   let rating: unknown;
+  let expectedPrev: unknown;
   try {
-    ({ answerMessageId, rating } = await req.json());
+    ({ answerMessageId, rating, expectedPrev } = await req.json());
   } catch {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
@@ -33,6 +34,10 @@ export async function POST(req: NextRequest) {
   if (rating !== 1 && rating !== -1) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
+  // 취소 판정 근거. 없거나(구 클라) 형식이 틀리면 NULL → 토글하지 않고 확정(set)한다.
+  // 모르는 상태에서 임의로 취소로 해석하면 유저 표를 지운다 — fail-safe 는 "확정" 쪽이다.
+  const expectedPrevValue: 1 | -1 | null =
+    expectedPrev === 1 || expectedPrev === -1 ? expectedPrev : null;
 
   // ── 소유권 검증 ──────────────────────────────────────────────────────────────
   // ① 그 쪽지가 야잘알봇 발신인가  ② 그 대화에 이 유저가 참여자인가
@@ -66,12 +71,21 @@ export async function POST(req: NextRequest) {
   if (!payload || !isFeedbackEligibleReplyKind(payload.reply_kind)) {
     return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
   }
-  // 질문 쪽지 id 가 있어야 질문로그와 exact 결속이 된다. 없으면 수집해도 분석 불가라
-  // 받지 않는다(시간창 추정으로 지어내는 결속은 오적재를 만든다).
-  const questionMessageId = payload.question_message_id;
-  if (!Number.isSafeInteger(questionMessageId) || Number(questionMessageId) <= 0) {
-    return NextResponse.json({ error: "평가할 수 없는 메시지입니다" }, { status: 400 });
-  }
+  // 질문 쪽지 id.
+  //
+  // ⚠️ **필수로 강제하지 않는다** (삼순 2차 blocker ①). 운영 실측(2026-08-06):
+  // eligible 답변 1,096건 중 `question_message_id` 보유는 **0건**이다. qid 를 싣는 코드는
+  // 이번 배포분부터 적용되므로, 필수로 두면 **기존 대화창의 모든 답변이 400** 이 된다.
+  // 유저는 버튼을 누를 수 있는데 저장만 실패하는 상태다.
+  //
+  // 대신 **없으면 NULL 로 적재**한다. 없는 값을 시간창 추정으로 지어내지도 않고
+  // (오적재), 표 자체를 버리지도 않는다. 결속 가능 여부는 분석 시점에 qid IS NOT NULL 로
+  // 가른다 — "질문과 결속된 표"와 "답변 단위 표"는 둘 다 유용한 지표다.
+  const rawQuestionMessageId = payload.question_message_id;
+  const questionMessageId =
+    Number.isSafeInteger(rawQuestionMessageId) && Number(rawQuestionMessageId) > 0
+      ? Number(rawQuestionMessageId)
+      : null;
 
   // 같은 값 재클릭이면 취소, 다른 값이면 변경. 판정을 route 에서 SELECT→분기→WRITE 로
   // 하면 두 탭 동시 클릭에서 read-modify-write 경합이 난다. DB 단일 statement 로 넘긴다.
@@ -80,10 +94,11 @@ export async function POST(req: NextRequest) {
     .rpc("set_baseball_genius_answer_feedback", {
       p_user_id: verified.user.id,
       p_answer_message_id: Number(answerMessageId),
-      p_question_message_id: Number(questionMessageId),
+      p_question_message_id: questionMessageId,
       p_match_path: payload.match_path ?? null,
       p_reply_kind: payload.reply_kind,
       p_rating: rating,
+      p_expected_prev: expectedPrevValue,
     });
   if (rpcError) {
     console.error("baseball-genius feedback failed:", rpcError.message);

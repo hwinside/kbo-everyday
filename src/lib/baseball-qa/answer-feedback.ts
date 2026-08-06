@@ -88,6 +88,14 @@ export async function submitGeniusFeedback(
   rating: GeniusFeedbackRating,
   accessToken: string | null,
   request: typeof fetch = fetch,
+  /**
+   * 이번 클릭 **직전에 유저가 보고 있던** 표. 취소 판정의 유일한 근거다.
+   *
+   * 서버가 "저장값 == 클릭값이면 취소"로 판정하면, 같은 요청이 두 번 도달할 때
+   * (재전송·두 탭·retry) 첫 번째 저장을 두 번째가 취소로 뒤집는다. 유저는 한 번
+   * 눌렀는데 표가 사라진다. 이전 상태는 클라만 알므로 같이 보낸다.
+   */
+  expectedPrev: GeniusFeedbackRating | null = null,
 ): Promise<FeedbackSubmitResult> {
   try {
     const response = await request("/api/baseball-qa/feedback", {
@@ -97,7 +105,7 @@ export async function submitGeniusFeedback(
         "Content-Type": "application/json",
         ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
-      body: JSON.stringify({ answerMessageId, rating }),
+      body: JSON.stringify({ answerMessageId, rating, expectedPrev }),
     });
     if (!response.ok) return { ok: false, rating: null };
     const body = (await response.json()) as { rating?: unknown };

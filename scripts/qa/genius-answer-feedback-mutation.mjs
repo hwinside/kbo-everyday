@@ -52,6 +52,20 @@ const MUTATIONS = [
     detector: "structure",
   },
   {
+    id: "M6",
+    name: "expected_prev 멱등 판정 제거 (재전송이 표를 뒤집음)",
+    file: R("supabase/migrations/20260806150000_baseball_genius_answer_feedback.sql"),
+    apply: (s) => s.replace(/IF p_expected_prev IS NOT NULL AND p_expected_prev = p_rating THEN/, "IF TRUE THEN"),
+    detector: "structure",
+  },
+  {
+    id: "M7",
+    name: "route 가 expectedPrev 를 안 넘김",
+    file: R("src/app/api/baseball-qa/feedback/route.ts"),
+    apply: (s) => s.replace(/p_expected_prev: expectedPrevValue,\n/, ""),
+    detector: "structure",
+  },
+  {
     id: "M5",
     name: "44px 터치 타깃 제거",
     file: R("src/components/dm/GeniusAnswerFeedback.tsx"),
@@ -79,9 +93,14 @@ function runStructureChecks() {
     fails.push("M2: service_role EXECUTE grant 없음");
   if (!/isFeedbackEligibleReplyKind\(payload\.reply_kind\)/.test(route))
     fails.push("M3: route 에 reply_kind 검증 없음");
-  if (!/Number\.isSafeInteger\(questionMessageId\)/.test(route))
-    fails.push("M3: route 에 question_message_id 검증 없음");
-  if (!/pg_advisory_xact_lock/.test(mig)) fails.push("M4: same-key 직렬화 lock 없음");
+    if (!/pg_advisory_xact_lock/.test(mig)) fails.push("M4: same-key 직렬화 lock 없음");
+  if (!/IF p_expected_prev IS NOT NULL AND p_expected_prev = p_rating THEN/.test(mig))
+    fails.push("M6: expected_prev 멱등 판정 없음(재전송이 표를 뒤집음)");
+  if (!/p_expected_prev: expectedPrevValue,/.test(route))
+    fails.push("M7: route 가 expectedPrev 를 RPC 에 안 넘김");
+  // legacy qid 필수화 회귀 방지 — 운영 eligible 1,096건 전부 qid 가 없다.
+  if (/Number\.isSafeInteger\(questionMessageId\)[\s\S]{0,120}status: 400/.test(route))
+    fails.push("M8: qid 를 필수로 강제하면 legacy 답변이 전량 400");
   if (!/min-h-\[44px\]/.test(ui) || !/min-w-\[44px\]/.test(ui))
     fails.push("M5: 44px 터치 타깃 없음");
   return fails;

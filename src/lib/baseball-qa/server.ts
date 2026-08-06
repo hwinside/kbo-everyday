@@ -3,6 +3,7 @@
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { normalizeQuestion } from "@/lib/baseball-qa/normalize";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
@@ -633,6 +634,18 @@ export async function processBaseballQaQuestion(input: {
         !isFollowupPhrase(question) && !isAckPhrase(question);
       if (tooShort || question.length > MAX_QUESTION_LEN) {
         result = { status: 200, answer: INVALID_QUESTION_ANSWER, source: "blocked", remaining: 0 };
+        // 길이 위반 안내도 **유저에게 나가는 종결 응답**이다. 로그를 남기지 않으면
+        // 그 답변에 달린 피드백이 질문로그와 결속되지 않는다 (삼순 2차 blocker ③).
+        // 로그 실패로 답변 자체를 막지는 않는다 — 안내는 이미 유저에게 필요한 값이다.
+        try {
+          await makeDeps(messageId, null).log({
+            userId, question, questionNorm: normalizeQuestion(question),
+            matchPath: "blocked", answer: INVALID_QUESTION_ANSWER,
+            inputTokens: null, outputTokens: null,
+          });
+        } catch (logError) {
+          console.error("baseball-genius invalid-question log failed:", (logError as Error).message);
+        }
       } else {
         // 선택은 job 행을 SSOT로 삼는다. 즉시 경로가 죽어 cron이 이어받아도 유저가 고른
         // 그 선수로 답하도록, 입력이 있으면 먼저 고정하고 없으면 저장된 값을 읽는다.
@@ -662,6 +675,17 @@ export async function processBaseballQaQuestion(input: {
     } catch (error) {
       console.error("baseball-genius pipeline failed:", (error as Error).message);
       result = { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };
+      // pipeline fallback 도 종결 응답으로 발송된다 → 같은 이유로 로그를 남긴다.
+      // 여기서 또 던지면 fallback 자체가 죽으므로 로그 실패는 삼키고 기록만 남긴다.
+      try {
+        await makeDeps(messageId, null).log({
+          userId, question, questionNorm: normalizeQuestion(question),
+          matchPath: "error", answer: BLOCKED_ANSWER,
+          inputTokens: null, outputTokens: null,
+        });
+      } catch (logError) {
+        console.error("baseball-genius fallback log failed:", (logError as Error).message);
+      }
       const { error: fallbackError } = await supabaseAdmin
         .from("genius_question_jobs")
         .update({
