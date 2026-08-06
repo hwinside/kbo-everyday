@@ -449,6 +449,56 @@ check("재조회 증거로 서버 응답 epoch 을 쓴다", () => {
   );
 });
 
+/* 삼순 NO-GO(4차) — epoch 을 못 쓰는 경로가 약한 근거로 빠져나가면 계약이 무효다.
+ *
+ * 3차 판에는 둘 다 폴백이 살아 있었다:
+ *   changeSelectAndWait: `epochBefore === null` 이면 **첫행 변화**로 통과
+ *   ensureFirstPage    : `epochBefore === null` 이면 **표시 `on`**만 보고 true
+ * 둘 다 브라우저 로컬 상태라 서버 응답 없이도 참이 될 수 있고,
+ * 그게 바로 KT 투수가 통째로 비었던 경로다.
+ * → epoch 미설치/실패는 **검증 불가 = fail-close** 여야 한다. */
+check("epoch 을 못 쓰면 전이 판정을 fail-close 한다 (약한 근거 폴백 금지)", () => {
+  const sel = /async function changeSelectAndWait[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  const first = /async function ensureFirstPage[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  assert.ok(sel && first, "대상 함수를 찾지 못했다");
+
+  for (const [name, fn] of [["changeSelectAndWait", sel], ["ensureFirstPage", first]]) {
+    assert.ok(
+      /if \(!\(await installRequestEpoch\(page\)\)\) return false;/.test(fn),
+      `${name}: epoch 훅 설치 실패를 fail-close 하지 않는다`
+    );
+    assert.ok(
+      /if \(epochBefore === null\) return false;/.test(fn),
+      `${name}: epoch 읽기 실패를 fail-close 하지 않는다`
+    );
+    // 약한 근거로 대체하는 분기가 다시 생기면 안 된다.
+    assert.ok(
+      !/epochBefore !== null/.test(fn),
+      `${name}: epoch 유무에 따른 분기가 남아 있다 — 폴백 경로가 부활했다`
+    );
+  }
+  // 표시 `on` 만 보고 1페이지라 단정하는 경로가 없어야 한다.
+  assert.ok(
+    !/return on === null \|\| on === "1";/.test(first),
+    "ensureFirstPage: 표시만 보는 약한 판정이 남아 있다"
+  );
+  // 첫행 변화 폴백도 안 된다(같은 팀 재선택이면 영원히 false, 부분렌더면 true).
+  assert.ok(
+    !/firstRow !== beforeFirstRow/.test(sel),
+    "changeSelectAndWait: 첫행 비교 폴백이 남아 있다"
+  );
+});
+
+check("installRequestEpoch 가 PRM 을 기다렸다가 fail-close 한다", () => {
+  const fn = /async function installRequestEpoch[\s\S]*?\n\}/.exec(crawlerSrc)?.[0] || "";
+  assert.ok(fn, "installRequestEpoch 를 찾지 못했다");
+  assert.ok(
+    /deadline/.test(fn) && /waitForTimeout/.test(fn),
+    "PRM 은 스크립트 로드 뒤에 생긴다 — 1회 호출로 단정하면 오판한다"
+  );
+  assert.ok(/return false;/.test(fn), "설치 실패를 false 로 말해야 한다");
+});
+
 /* 삼순 NO-GO(3차) ② — `while (true)` 에 상한이 없으면 한 pass 가 영원히 돌아
  * 상위의 `maxAttempts = 3` 재시도까지 무효화된다. */
 check("페이지 순회에 상한이 있다", () => {

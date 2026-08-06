@@ -97,20 +97,35 @@ function parseKboBirthday(text) {
  * 브라우저가 즉시 반영하므로 **서버 응답 없이도 항상 true** 가 된다.
  * 그러면 reset 이 실패해도 같은 팀 stale 표를 두 번 읽고 "집합 동일"로 통과한다.
  */
-async function installRequestEpoch(page) {
-  await page
-    .evaluate(() => {
-      if (window.__kboEpochInstalled) return;
-      const prm = window.Sys?.WebForms?.PageRequestManager?.getInstance?.();
-      if (!prm) return;
-      window.__kboEpoch = 0;
-      prm.add_endRequest(() => {
-        window.__kboEpoch = (window.__kboEpoch || 0) + 1;
-      });
-      window.__kboEpochInstalled = true;
-    })
-    .catch(() => {});
-  return page.evaluate(() => window.__kboEpochInstalled === true).catch(() => false);
+/**
+ * 서버 응답 epoch 훅 설치.
+ *
+ * 이것이 **유일한 재조회 증거**다. 표시값(select value, 페이저 `on`, 첫행 텍스트)은
+ * 전부 브라우저 로컬 상태라 서버가 응답하지 않아도 "바뀌었다"로 보일 수 있다.
+ *
+ * PRM 은 페이지 스크립트가 다 돌아야 생기므로 잠시 폴링해 기다린다.
+ * 그래도 없으면 **검증 불가 → fail-close** — 호출측이 약한 근거로 대체하지 않는다.
+ */
+async function installRequestEpoch(page, { timeoutMs = 10000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const ok = await page
+      .evaluate(() => {
+        if (window.__kboEpochInstalled) return true;
+        const prm = window.Sys?.WebForms?.PageRequestManager?.getInstance?.();
+        if (!prm) return false;
+        window.__kboEpoch = 0;
+        prm.add_endRequest(() => {
+          window.__kboEpoch = (window.__kboEpoch || 0) + 1;
+        });
+        window.__kboEpochInstalled = true;
+        return true;
+      })
+      .catch(() => false);
+    if (ok) return true;
+    if (Date.now() >= deadline) return false;
+    await page.waitForTimeout(250);
+  }
 }
 
 /**
@@ -124,27 +139,24 @@ async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
   const current = await page.$eval(selector, (el) => el.value).catch(() => null);
   if (current === value) return true;
 
-  const hasEpoch = await installRequestEpoch(page);
-  const epochBefore = hasEpoch
-    ? await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null)
-    : null;
-  const beforeFirstRow = await page.locator("tbody tr").first().textContent().catch(() => "");
+  // epoch 을 못 쓰면 재조회를 증명할 수단이 없다 → fail-close.
+  // 첫행 변화 폴백은 쓰지 않는다: 같은 팀을 다시 고르거나 결과가 같으면 영원히 false 이고,
+  // 반대로 부분 렌더만 으로도 true 가 돼 양쪽 모두 틀린다.
+  if (!(await installRequestEpoch(page))) return false;
+  const epochBefore = await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null);
+  if (epochBefore === null) return false;
 
   await page.selectOption(selector, value);
 
   const advanced = await page
     .waitForFunction(
-      ({ selector, value, beforeFirstRow, epochBefore }) => {
+      ({ selector, value, epochBefore }) => {
         const el = document.querySelector(selector);
         if (!el || el.value !== value) return false;
-        if (epochBefore !== null) {
-          // 서버 응답이 한 번 더 끝난 것이 유일한 재조회 증거다.
-          return (window.__kboEpoch ?? 0) > epochBefore;
-        }
-        const firstRow = document.querySelector("tbody tr")?.textContent?.trim() || "";
-        return firstRow !== beforeFirstRow;
+        // 서버 응답이 한 번 더 끝난 것이 유일한 재조회 증거다.
+        return (window.__kboEpoch ?? 0) > epochBefore;
       },
-      { selector, value, beforeFirstRow, epochBefore },
+      { selector, value, epochBefore },
       { timeout: waitMs }
     )
     .then(() => true)
@@ -333,22 +345,13 @@ async function ensureFirstPage(page) {
   // 즉 표시는 1이므로 구판 `on === "1"` 조기종료는 **아무것도 안 하고** 통과했고,
   // 서버 내부 페이지 인덱스는 2 로 남아 단일 페이지 팀이 통째로 비었다.
   // 그래서 **항상 1번 버튼을 눌러 서버 상태를 강제로 맞춘다.**
-  const hasEpoch = await installRequestEpoch(page);
-  const epochBefore = hasEpoch
-    ? await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null)
-    : null;
+  // 표시만으로는 서버 인덱스가 1로 돌아갔는지 알 수 없다 → epoch 없으면 fail-close.
+  if (!(await installRequestEpoch(page))) return false;
+  const epochBefore = await page.evaluate(() => window.__kboEpoch ?? 0).catch(() => null);
+  if (epochBefore === null) return false;
 
   await first.click().catch(() => {});
   await page.waitForLoadState("networkidle").catch(() => {});
-
-  if (epochBefore === null) {
-    // epoch 을 못 쓰면 검증 불가 — 고정 대기 후 표시로만 확인(약한 근거).
-    await page.waitForTimeout(1500);
-    const on = await page
-      .$eval('a[id*="ucPager_btnNo"].on', (a) => a.textContent?.trim())
-      .catch(() => null);
-    return on === null || on === "1";
-  }
 
   // 서버 응답이 실제로 끝나고 표시도 1페이지여야 한다.
   return page
