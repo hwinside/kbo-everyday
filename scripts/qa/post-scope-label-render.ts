@@ -189,6 +189,8 @@ function installSupabaseStub(rows: unknown[]) {
  */
 function installProjectingStub(rows: Record<string, unknown>[]) {
   const selected: string[] = [];
+  /** posts 조회가 몇 번 일어났는지 — reload() 가 실제로 두 번째 SELECT 를 냈는지 판정한다. */
+  const postsSelects: string[] = [];
   const project = (cols: string) => {
     // "a, b, profiles(x, y)" → 최상위 컬럼만 추출(괄호 안은 조인이므로 통째로 통과).
     const top = cols.replace(/\([^)]*\)/g, "").split(",").map((c) => c.trim()).filter(Boolean);
@@ -203,20 +205,33 @@ function installProjectingStub(rows: Record<string, unknown>[]) {
   const makeQuery = (table: string) => {
     const q: Record<string, unknown> = {};
     let projected: unknown[] = [];
+    const inserted: unknown[] = [];
     const chain = () => q;
     for (const m of ["or", "eq", "in", "lt", "neq", "contains", "order", "limit", "gte", "lte", "not"]) {
       q[m] = (...args: unknown[]) => { void args; return chain(); };
     }
-    q.select = (cols: string) => {
+    q.select = (cols?: string) => {
+      // ⚠️ `.insert(row).select().single()` 처럼 **인자 없는 select()** 도 있다.
+      //    컬럼 문자열을 전제하면 여기서 터진다(자체결함 이력). 조회 SELECT 만 투영 대상이다.
+      if (cols === undefined) return chain();
       selected.push(`${table}:${cols}`);
+      if (table === "posts") postsSelects.push(cols);
       projected = table === "posts" ? project(cols) : [];
       return chain();
     };
+    // createPost 가 실제로 도는 경로도 태운다(모듈 export 를 갈아끼우는 방식은
+    // ESM import 바인딩 때문에 안 먹는다 — 실제로 "로그인 필요"가 그대로 터졌다).
+    q.insert = (row: unknown) => { inserted.push(row); return chain(); };
+    q.single = () => chain();
+    q.maybeSingle = () => chain();
     q.then = (res: (v: unknown) => unknown) =>
-      Promise.resolve({ data: projected, error: null }).then(res);
+      Promise.resolve({
+        data: inserted.length > 0 ? { id: 999 } : projected,
+        error: null,
+      }).then(res);
     return q;
   };
-  return { from: (table: string) => makeQuery(table), selected };
+  return { from: (table: string) => makeQuery(table), selected, postsSelects };
 }
 
 async function main() {
@@ -620,6 +635,82 @@ async function main() {
       "§6 usePosts SELECT 에 team_tags 포함",
       stub6.selected.some((c) => c.startsWith("posts:") && c.includes("team_tags")),
       stub6.selected.find((c) => c.startsWith("posts:"))?.slice(0, 80),
+    );
+
+    // ── 6-1b. reload() 경로 ──────────────────────────────────────────────
+    //   ⚠️ 삼순 NO-GO 2026-08-07: 여기까지는 **최초 mount 만** 태운다.
+    //   `usePosts` 는 조회 SELECT 가 최초/`reload()` 두 벌로 **복제**돼 있어서,
+    //   reload 쪽에서만 team_tags 가 빠져도 위 검사는 전부 GREEN 이다.
+    //   reload 는 글 작성·수정·삭제 직후에 도는 경로 — 결손이 나면 "방금 쓴 내 글만
+    //   라벨이 틀리는" 형태로, 유저가 가장 먼저 보는 자리에서 터진다.
+    //   → 실제로 글쓰기를 완료시켜 reload() 를 호출하고, **두 번째** SELECT 결과가
+    //     카드 라벨까지 가는지 본다.
+    const beforeReloadSelects = stub6.postsSelects.length;
+
+    // reload 는 WritePost 의 onSubmit 끝에서 호출된다. UI 를 다 태우는 대신
+    // 그 콜백을 직접 실행해 reload 만 정확히 트리거한다(제출 가드는 §4 가 이미 검증).
+    //
+    // ⚠️ 자체결함 이력: 처음엔 `usePosts` 모듈의 `createPost` export 를 갈아끼웠는데
+    //    ESM import 바인딩이라 무효였고 실제로 "로그인 필요"가 그대로 터졌다.
+    //    → 모듈을 흉내내지 말고 **실제 createPost 를 태우되 인증만 stub** 한다.
+    //      insert 는 위 projecting stub 이 받는다.
+    const authMod = (clientMod6.supabase as unknown as {
+      auth: { getUser: unknown; getSession: unknown };
+    }).auth;
+    const realGetUser = authMod.getUser;
+    const realGetSession = authMod.getSession;
+    authMod.getUser = async () => ({ data: { user: { id: "qa-author" } }, error: null });
+    authMod.getSession = async () => ({ data: { session: null }, error: null });
+
+    // 렌더된 트리에서 WritePost 의 onSubmit 을 찾아 호출한다.
+    const findOnSubmit = (node: unknown): ((...a: unknown[]) => unknown) | null => {
+      const q: unknown[] = [node];
+      while (q.length) {
+        const n = q.shift() as Record<string, unknown> | null;
+        if (!n || typeof n !== "object") continue;
+        const props = n.memoizedProps as Record<string, unknown> | undefined;
+        const t = n.type as { name?: string } | undefined;
+        if (props && typeof props.onSubmit === "function" && t?.name === "WritePost") {
+          return props.onSubmit as (...a: unknown[]) => unknown;
+        }
+        if (n.child) q.push(n.child);
+        if (n.sibling) q.push(n.sibling);
+      }
+      return null;
+    };
+    const fiberKey = Object.keys(el6).find((k) => k.startsWith("__reactContainer$"));
+    const rootFiber = fiberKey ? (el6 as unknown as Record<string, unknown>)[fiberKey] : null;
+    // React 19: container 키에 HostRoot fiber 가 직접 들어있다. `.current` 가 있으면 그걸,
+    // 없으면 노드 자체를 루트로 삼는다(둘 다 지원해야 버전 차이에 안 깨진다).
+    const rootAny = rootFiber as Record<string, unknown> | null;
+    const onSubmit = rootAny ? findOnSubmit(rootAny.current ?? rootAny) : null;
+
+    ok("§6 reload 트리거 지점(WritePost.onSubmit) 확보", !!onSubmit, "찾지 못하면 reload 경로를 못 태운다");
+
+    if (onSubmit) {
+      await act(async () => { await onSubmit("공개범위 reload 검증 글", "reload 경로가 team_tags 를 실어오는지 확인한다", [], undefined, { teamTags: s(4), playerTags: [] }); });
+      for (let i = 0; i < 30; i++) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      }
+    }
+    authMod.getUser = realGetUser;
+    authMod.getSession = realGetSession;
+
+    ok(
+      "§6 reload() 가 실제로 두 번째 posts SELECT 를 낸다",
+      stub6.postsSelects.length > beforeReloadSelects,
+      `조회 수 ${beforeReloadSelects} → ${stub6.postsSelects.length}`,
+    );
+    ok(
+      "§6 reload SELECT 에 team_tags 포함",
+      stub6.postsSelects.slice(beforeReloadSelects).every((c) => c.includes("team_tags")),
+      stub6.postsSelects.slice(beforeReloadSelects)[0]?.slice(0, 80),
+    );
+    const afterReloadTexts = scopeTextsFrom(el6 as unknown as HTMLElement);
+    ok(
+      "§6 reload 후에도 4팀 글이 '3팀 + 외 1팀'",
+      afterReloadTexts.length > 0 && afterReloadTexts[0] === wiredExpect,
+      `기대 "${wiredExpect}" / 실제 "${afterReloadTexts[0]}" — reload SELECT 결손이면 여기서 전체구단 공개로 뒤집힌다`,
     );
 
     await act(async () => { root6.unmount(); });
