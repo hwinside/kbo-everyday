@@ -14,27 +14,50 @@
 /** 자동 roster/stats PR 의 브랜치 접두사 — 신규 생성 로직과 반드시 일치해야 한다. */
 export const AUTO_ROSTER_BRANCH_PREFIX = "auto/update-roster-stats-";
 
+/** Actions bot 저자 판별 — GITHUB_TOKEN 이 만든 PR(`github-actions[bot]` / `app/github-actions`). */
+export function isActionsBotAuthor(author) {
+  if (!author || author.is_bot !== true) return false;
+  const login = typeof author.login === "string" ? author.login : "";
+  return /github-actions/.test(login);
+}
+
 /**
- * 열린 PR 목록에서 close 대상(과거 자동 roster PR)을 고른다.
+ * 열린 PR 목록에서 close 대상(현재보다 **엄격히 더 오래된** 자동 roster PR)을 고른다.
  *
- * 규칙:
- *   - head 브랜치가 `auto/update-roster-stats-` 로 시작하는 자동 PR 만 대상.
- *   - 방금 만든 현재 브랜치(currentBranch)는 제외 — 자기 자신을 닫지 않는다.
- *   - 그 외(사람이 만든 브랜치, 다른 자동 트랙)는 절대 건드리지 않는다.
+ * ⚠︎ 삼순 CODE NO-GO(축③): 종전 판은 "현재 브랜치 외 모든 prefix PR" 을 닫아,
+ * 겹친 두 런 A/B 가 각자 PR 을 만든 뒤 **서로 상대의 신규 PR 을 닫는 경합**이 열렸다.
+ * 그래서 (a) workflow concurrency 직렬화 + (b) 여기서 current PR 의 createdAt 보다
+ * 엄격히 더 오래된 것만 닫도록 이중 잠근다. current PR/시각 확인 불가면 no-op.
  *
- * @param {Array<{number:number, headRefName:string}>} openPrs `gh pr list --state open` 산출물.
- * @param {string} currentBranch 방금 생성한 자동 PR 의 브랜치.
- * @returns {Array<{number:number, headRefName:string}>} close 할 PR 들.
+ * 규칙(전부 만족해야 close):
+ *   - head 브랜치가 `auto/update-roster-stats-` 접두사.
+ *   - current PR 과 번호가 다름(자기 자신 제외).
+ *   - createdAt 이 current PR 보다 **엄격히 과거**(created < currentCreated).
+ *   - 저자가 Actions bot(사람 PR 미포함 계약 강화).
+ *   - same-repo(cross-repo fork PR 제외).
+ *   - current PR 이 없거나 그 createdAt 을 못 읽으면 전체 no-op.
+ *
+ * @param {Array<{number:number, headRefName:string, createdAt:string, author?:object, isCrossRepository?:boolean}>} openPrs
+ * @param {{number:number, createdAt:string}|null|undefined} currentPr 방금 만든 자동 PR.
+ * @returns {Array} close 할 PR 들.
  */
-export function selectStaleAutoPrs(openPrs, currentBranch) {
+export function selectStaleAutoPrs(openPrs, currentPr) {
   if (!Array.isArray(openPrs)) return [];
+  // current PR/시각 확인 불가 → 안전하게 아무것도 안 닫는다.
+  if (!currentPr || typeof currentPr.number !== "number") return [];
+  const currentCreated = Date.parse(currentPr.createdAt);
+  if (!Number.isFinite(currentCreated)) return [];
+
   return openPrs.filter((pr) => {
-    const branch = pr?.headRefName;
-    if (typeof branch !== "string") return false;
-    if (!branch.startsWith(AUTO_ROSTER_BRANCH_PREFIX)) return false;
-    // 현재 브랜치는 제외 — currentBranch 가 비어 있으면(정체 불명) 안전하게 아무것도 안 닫는다.
-    if (!currentBranch) return false;
-    if (branch === currentBranch) return false;
+    if (!pr || typeof pr.number !== "number") return false;
+    const branch = pr.headRefName;
+    if (typeof branch !== "string" || !branch.startsWith(AUTO_ROSTER_BRANCH_PREFIX)) return false;
+    if (pr.number === currentPr.number) return false; // 자기 자신(번호 기준)
+    if (pr.isCrossRepository === true) return false; // fork PR 제외(same-repo only)
+    if (!isActionsBotAuthor(pr.author)) return false; // Actions bot 저자만
+    const created = Date.parse(pr.createdAt);
+    if (!Number.isFinite(created)) return false; // 시각 못 읽으면 제외
+    if (!(created < currentCreated)) return false; // 엄격히 더 오래된 것만
     return true;
   });
 }

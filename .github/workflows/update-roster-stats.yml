@@ -10,6 +10,13 @@ permissions:
   contents: write
   pull-requests: write
 
+# 삼순 CODE NO-GO(축③): 겹친 두 런이 각자 PR 을 만든 뒤 서로 상대 신규 PR 을 닫는 경합을
+# 막기 위해 런을 직렬화한다. cancel-in-progress:false — 진행 중인 크롤/머지를 죽이지 않고
+# 대기시켜 순차 실행한다(데이터 손실 방지).
+concurrency:
+  group: update-roster-stats
+  cancel-in-progress: false
+
 jobs:
   update:
     runs-on: ubuntu-latest

@@ -33,7 +33,7 @@ try {
     "--limit",
     "100",
     "--json",
-    "number,headRefName",
+    "number,headRefName,createdAt,author,isCrossRepository",
   ]);
   openPrs = JSON.parse(raw);
 } catch (e) {
@@ -41,7 +41,14 @@ try {
   process.exit(0); // 조회 실패는 신규 PR 흐름을 막지 않는다(best-effort 정리).
 }
 
-const stale = selectStaleAutoPrs(openPrs, currentBranch);
+// 방금 만든 current PR 을 브랜치로 찾는다 — 없거나 createdAt 미상이면 selectStaleAutoPrs 가 no-op.
+const currentPr = openPrs.find((p) => p?.headRefName === currentBranch) || null;
+if (!currentPr) {
+  console.error(`current PR(브랜치 ${currentBranch})을 열린 PR 목록에서 못 찾음 — 정리 건너뜀(no-op).`);
+  process.exit(0);
+}
+
+const stale = selectStaleAutoPrs(openPrs, currentPr);
 if (stale.length === 0) {
   console.log("정리할 과거 자동 roster PR 없음.");
   process.exit(0);
