@@ -47,6 +47,7 @@ import {
   type RagEvidence,
   type RagEvidenceCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
+import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
@@ -134,6 +135,8 @@ interface RagOfficialChunkRow {
   section_path: string;
   as_of: string;
   source_grade: string;
+  /** RPC 가 아직 안 돌려줄 수 있으므로 optional. 없으면 sanitizer 가 URL 로 판정한다. */
+  source_kind?: string;
 }
 
 /**
@@ -196,6 +199,10 @@ export function createProductionRagSearchRuntime(
         sectionPath: row.section_path,
         asOf: row.as_of,
         sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+        // ⚠️ `sanitizeEvidenceContent` 가 **나무위키 전용 정제를 이 값으로 한정**한다.
+        //   여기서 빠뜨리면 정제가 URL 추정으로 내려가고, 판정 불가 시 무변조가 되어
+        //   나무위키 광고가 근거로 살아난다(삼순 2026-08-07 9라운드 지적).
+        sourceKind: row.source_kind,
         embedding: row.embedding,
       }));
     },
@@ -300,6 +307,9 @@ async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
     asOf: row.as_of,
     // 계약상 tier1만 돌아오지만, 호출자(`allowsNumericAnswer`)가 다시 확인할 수 있게 실값을 싱는다.
     sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+    // 공식 문서는 나무위키가 아니므로 정제 대상이 아니다. RPC 가 값을 주면 그대로 쓰고,
+    // 안 주면 `kbo_ebook` 으로 고정한다 — 이 RPC 는 공식 e북만 반환하는 경로다.
+    sourceKind: (row.source_kind as RagSourceKind | undefined) ?? "kbo_ebook",
   }));
 }
 

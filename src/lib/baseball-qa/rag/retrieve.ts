@@ -645,11 +645,23 @@ const SINO_PLACES = "[십백천만억]";
  *     십이 · 이십 · 십팔 · 삼십사 · 이백 ✓   /   이사 · 사오 · 오육 ✗ (수 표기가 아님)
  *   자리수사를 **필수 성분**으로 요구해 오탐면을 구조적으로 없앴다.
  */
-//   ⚠️ **2음절 이상**을 요구한다. 자리수사 한 글자만으로 매칭하면 `백업`·`만루`·`억척`·
-//   `천천히` 가 전부 수치로 잡힌다(자체 검증 실측 4건). 수 표기는 최소 `digit+place`
-//   또는 `place+digit` 형태다 — `천천`(place+place)은 수 표기가 아니므로 안 걸린다.
-const SINO_COMPOUND =
-  `(?:${SINO_DIGITS}${SINO_PLACES}|${SINO_PLACES}${SINO_DIGITS})(?:${SINO_DIGITS}|${SINO_PLACES})*`;
+//   ⚠️ **2음절 이상 + 자리수사 1개 이상**을 요구한다.
+//   · 자리수사 한 글자만 보면 `백업`·`만루`·`억척` 이 죽는다.
+//   · `digit+place|place+digit` 2음절로만 두면 `백십`·`십만`(place+place)이 샌다
+//     (삼순 2026-08-07 9라운드 실측). 그래서 자리수사 위치를 고정하지 않는다.
+//   `이사`(digit+digit)는 자리수사가 없어 여전히 안 걸린다.
+const SINO_UNIT = `(?:${SINO_DIGITS}|${SINO_PLACES})`;
+const SINO_COMPOUND = `(?:${SINO_UNIT}+${SINO_PLACES}${SINO_UNIT}*|${SINO_PLACES}${SINO_UNIT}+)`;
+
+/**
+ * 서술격 조사 `이다` 의 활용형. 수사 뒤에 이게 붙으면 **그 자체가 수량 주장**이다.
+ *
+ * ⚠️ 삼순 9라운드: `우승은 열이에요`·`팔이에요` 가 통과했다. 수사가 어절 끝도 아니고
+ *   단위가 붙지도 않아 어느 축에도 안 걸렸다. 서술격 조사는 한국어에서 **닫힌 집합**이라
+ *   여기서만은 열거가 정당하다(단위·조사 일반과 달리 새 항목이 생기지 않는다).
+ */
+const COPULA_ENDINGS = ["이에요", "예요", "이었", "였", "입니다", "이다", "이야", "이네", "이랍니", "이지"]
+  .sort((a, b) => b.length - a.length).join("|");
 /** 단음절 한자 수사(낱자리 + 자리). 좁은 단위 또는 공백+단위와 함께일 때만 인정한다. */
 const SINO_NUMERAL_WORDS = `(?:${SINO_DIGITS}|${SINO_PLACES})`;
 
@@ -681,9 +693,18 @@ const KOREAN_NUMERIC_PATTERNS: RegExp[] = [
   new RegExp(
     `(?<![가-힣])(?:${NATIVE_FULL_NUMERALS}|${NATIVE_DET_NUMERALS})+\\s*(?:${ATTACHED_COUNTERS})`,
   ),
-  // ⑤ 한자 수사 **조합**(자리수사 필수) — 단위 유무와 무관하게 수 표기다.
-  //    `십팔회`·`이십년`·`십이 회`·`삼십사`. 자리수사를 요구하므로 `이사회` 는 안 걸린다.
-  new RegExp(`(?<![가-힣])${SINO_COMPOUND}`),
+  // ⑤ 한자 수사 **조합** + [공백] + 단위 — `십팔회`·`이십년`·`십이 회`·`백십 년`·`십만 명`.
+  //    ⚠️ 조합 단독 매칭은 폐기했다(삼순 9라운드). 단독으로 잡으면 `이만수 감독`(이+만+수)·
+  //    `이천 베어스 파크`(이+천) 같은 고유명사가 통째로 차단된다 — 실측 확인.
+  //    수 표기인지 아닌지는 **뒤따르는 것이 단위인가**로 가른다:
+  //      십만 `명` ✓ 수량   /   이만 `수`(사람 이름) ✗   /   이천 `베어스`(구장명) ✗
+  new RegExp(`(?<![가-힣])${SINO_COMPOUND}\\s*(?:${ATTACHED_COUNTERS})`),
+  // ⑤-b 수사 + **서술격 조사** — `열이에요`·`팔이에요`·`이십이었`.
+  //    단위가 없어도 `~이다` 가 붙으면 그 자체가 수량 주장이다.
+  //    `이만수`·`이천 베어스` 는 서술격이 아니므로 여기에도 안 걸린다.
+  new RegExp(
+    `(?<![가-힣])(?:${SINO_COMPOUND}|${SINO_UNIT}|${NATIVE_DET_NUMERALS}|${NATIVE_FULL_NUMERALS})(?:${COPULA_ENDINGS})`,
+  ),
   // ⑥ 한자 단음절 수사 + 좁은 단위(붙여쓰기 허용) — `팔회`·`영 회`·`삼연승`.
   new RegExp(`(?<![가-힣])${SINO_NUMERAL_WORDS}\\s*(?:${SINO_SINGLE_SAFE_COUNTERS})`),
   // ⑦ 한자 단음절 수사 + 넓은 단위 + **공백 필수** — `삼 점`·`오 타`.
@@ -933,6 +954,10 @@ export function rankEvidenceByQuery(
       sectionPath: row.sectionPath,
       asOf: row.asOf,
       sourceGrade: row.sourceGrade,
+      // ⚠️ 새 객체를 만들 때 `sourceKind` 를 빠뜨리면 하류 sanitizer 가 소스를 잃는다.
+      //   삼순 2026-08-07 9라운드 실측: 이 한 줄이 없어서 production 경로에서만
+      //   나무위키 판정이 URL 추정으로 떨어졌다(게이트는 직접 주입해 못 봤다).
+      sourceKind: row.sourceKind,
     }))
     .slice(0, RAG_EVIDENCE_LIMIT);
 }

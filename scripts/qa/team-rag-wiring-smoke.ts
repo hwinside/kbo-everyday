@@ -45,6 +45,7 @@ import {
   RAG_TEAM_SYSTEM_PROMPT,
   sanitizeEvidenceContent,
   selectEvidence,
+  rankEvidenceByQuery,
   shouldStripNamuChrome,
   stripNamuDocumentChrome,
   type RagEntityCandidate,
@@ -424,8 +425,15 @@ async function run(): Promise<void> {
       "LG 트윈스는 Ⅲ회 우승했어요.",
       "LG 트윈스는 ⑧회 우승했어요.",
       "LG 트윈스는 Ⅷ회 우승했어요.",
-      // 축12: 한자 수 조합(자리수사 포함) 단독 — 단위가 없어도 수 표기다.
+      // 축12: 한자 수 조합(자리수사 포함) + 단위.
       "LG 트윈스는 삼십사 년 역사를 가졌어요.",
+      // 축13: **place+place 조합** — 9라운드 삼순 지적. `digit+place|place+digit` 2음절만
+      //   받던 종전 규칙은 `백십`·`십만` 처럼 자리수사끼리 붙은 형태를 놓쳤다.
+      "LG 트윈스는 창단 백십 년이에요.",
+      "LG 트윈스는 관중이 십만 명이에요.",
+      // 축14: **수사 + 서술격 조사** — 단위도 어절 끝도 아니라 어느 축에도 안 걸렸다.
+      "LG 트윈스의 우승은 열이에요.",
+      "LG 트윈스의 우승은 팔이에요.",
     ]) {
       const { deps, logs } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -439,7 +447,7 @@ async function run(): Promise<void> {
         `한글 수사 수치가 rag 로 나갔다(삼순 반대가설 B): ${answer}`);
       assert.equal(logs.at(-1)?.matchPath, "unsure");
     }
-    ok("삼순 반대가설 B~F — 한글/비ASCII 수치 12축 단독 차단 (합성·서수·근사`여`·전각·로마·원문자 포함)");
+    ok("삼순 반대가설 B~G — 한글/비ASCII 수치 14축 단독 차단 (합성·서수·근사`여`·전각·로마·원문자·자리수사조합·서술격 포함)");
   }
 
   {
@@ -474,6 +482,12 @@ async function run(): Promise<void> {
       //   `천천히`(천+천) · `백업`(백) · `만루`(만) · `억척`(억)
       "만루 상황에 강한 구단이에요.",
       "억척스러운 팬덤을 가진 구단이에요.",
+      // 9라운드 삼순 지적 — 한자 수 조합을 **단독으로** 잡으면 고유명사가 죽는다.
+      //   `이만수`(이+만+수) 감독 · `이천`(이+천) 베어스 파크.
+      //   수 표기 여부는 **뒤따르는 것이 단위인가**로 가른다: 십만 `명` ✓ / 이만 `수` ✗
+      "이만수 감독이 이끌었어요.",
+      "이천 베어스 파크에서 훈련해요.",
+      "이만수 감독과 김성근 감독이 있었어요.",
     ]) {
       const { deps } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -486,7 +500,7 @@ async function run(): Promise<void> {
       assert.equal(result.source, "rag",
         `수치가 아닌 정상 구단 서술이 차단됐다(과차단): ${answer}`);
     }
-    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·열심히·이점·천천히·백업·이사회·만루·억척 통과");
+    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·열심히·이점·천천히·백업·이사회·만루·억척·이만수·이천 통과");
   }
 
   {
@@ -876,6 +890,71 @@ async function run(): Promise<void> {
       "selectEvidence 경로에서 나무위키 광고가 살아남았다");
 
     ok("나무위키 정제 범위 — source_kind 한정, tier1/위키피디아 무변조 + selectEvidence 배선 고정");
+  }
+
+  {
+    // ⑥ **production 배선 종단** — server RPC row → rank → selectEvidence 까지 sourceKind 가
+    //    살아서 흐르는가 (삼순 2026-08-07 9라운드 P0-3).
+    //
+    //    ⚠️ 앞 블록(§5)은 `selectEvidence()` 직전에 sourceKind 를 **직접 주입**해서
+    //    검증했다. 그래서 production 경로가 그 값을 도중에 버려도 GREEN 이었다.
+    //    실제로 두 군데서 버리고 있었다:
+    //      · `createProductionRagSearchRuntime` 의 row mapping (RPC 는 source_kind 를 주는데 안 실음)
+    //      · `rankEvidenceByQuery` 가 새 객체를 만들면서 필드 누락
+    //    여기서는 **배포되는 팩토리를 그대로 실행**해 RPC 응답부터 최종 근거까지 태운다.
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??= "team-rag-wiring-smoke-key";
+    const { createProductionRagSearchRuntime } = await import("../../src/lib/baseball-qa/server");
+
+    // 광고 3줄 + 본문. 나무위키로 판정되면 광고가 지워지고 본문만 남아야 한다.
+    const NAMU_ROW_CONTENT = [
+      "명품시계대출",
+      "blog.naver.com/nicewatch_kr",
+      "당일대출 가능",
+      "천보성 감독이 이끌었고 1997 시즌 한국시리즈에 진출한 구단이다.",
+    ].join("\n");
+
+    const unitVector = Array.from({ length: 8 }, (_, i) => (i === 0 ? 1 : 0));
+    const runtime = createProductionRagSearchRuntime({
+      rpc: async () => ({
+        data: [{
+          content: NAMU_ROW_CONTENT,
+          page_title: "LG 트윈스",
+          canonical_url: "https://namu.wiki/w/LG%20트윈스",
+          revision: "etag:lg",
+          section_path: "LG 트윈스/역사",
+          as_of: "2026-08-05",
+          source_grade: "tier2",
+          source_kind: "namu_document",
+          embedding: JSON.stringify(unitVector),
+        }],
+        error: null,
+      }),
+    } as unknown as Parameters<typeof createProductionRagSearchRuntime>[0]);
+
+    const rows = await runtime.fetchBySourceKind(
+      { entityType: "team", entityId: "1", name: "LG" } as never,
+      "namu_document",
+      4,
+      unitVector,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].sourceKind, "namu_document",
+      "server row mapping 이 source_kind 를 버렸다");
+
+    // rank → select 를 그대로 통과시켜, 중간 단계가 필드를 떨어뜨리지 않는지 본다.
+    const ranked = rankEvidenceByQuery(rows, unitVector);
+    assert.equal(ranked.length, 1);
+    assert.equal(ranked[0].sourceKind, "namu_document",
+      "rankEvidenceByQuery 가 sourceKind 를 버렸다(새 객체 생성 시 필드 누락)");
+
+    const finalEvidence = selectEvidence(ranked);
+    assert.equal(finalEvidence.length, 1, "정제 후 근거가 통째로 탈락했다");
+    assert.doesNotMatch(finalEvidence[0].content, /대출/,
+      "production 종단에서 나무위키 광고가 근거로 살아남았다");
+    assert.match(finalEvidence[0].content, /천보성 감독/, "광고 제거가 본문까지 먹었다");
+
+    ok("production 배선 종단 — RPC row → rank → selectEvidence 까지 source_kind 보존");
   }
 
   // 근거 상한을 쓰레기가 먹어치우지 않는지 — 위생 전후 '야구 본문' 확보량 비교.
