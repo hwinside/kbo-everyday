@@ -41,6 +41,7 @@ import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-
 import {
   RAG_EVIDENCE_MAX_CHARS,
   RAG_GROUNDED_SENTINEL,
+  RAG_TEAM_SYSTEM_PROMPT,
   sanitizeEvidenceContent,
   selectEvidence,
   stripNamuDocumentChrome,
@@ -358,6 +359,62 @@ async function run(): Promise<void> {
     assert.equal(calls.teamLlm.length, 1);
     assert.ok(!/\d/.test(result.answer.split("📄")[0]), "본문에 숫자가 남았다");
     ok("숫자 HOLD 는 서술형을 막지 않는다 — 숫자 없는 답변은 그대로 서빙");
+  }
+
+  {
+    // ④-5 삼순 반대가설 B — **한글 수사 수치**. 아라비아 숫자가 하나도 없다.
+    //     직전 exact 는 `/\d/` 만 봤기 때문에 이게 그대로 source=rag 로 나갔다.
+    //     19 PASS 가 못 본 이유는 내가 mock 답을 전부 아라비아 숫자로 만들어놨기 때문이다.
+    for (const answer of [
+      "삼성 라이온즈는 한국시리즈에서 여덟 번 우승했어요.",
+      "LG 트윈스는 세 번째 우승을 차지한 구단이에요.",
+      "LG 트윈스는 첫 해에 우승 두 번을 기록했어요.",
+    ]) {
+      const { deps, logs } = makeDeps({
+        callTeamRagLlm: async () => ({
+          text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer }),
+          inputTokens: 10,
+          outputTokens: 5,
+        }),
+      });
+      const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
+      assert.notEqual(result.source, "rag",
+        `한글 수사 수치가 rag 로 나갔다(삼순 반대가설 B): ${answer}`);
+      assert.equal(logs.at(-1)?.matchPath, "unsure");
+    }
+    ok("삼순 반대가설 B — 한글 수사 수치(여덟 번·세 번째·두 번)도 차단");
+  }
+
+  {
+    // ④-6 미서빙 수치 질문은 team RAG 를 **아예 호출하지 않는다** (삼순 P0-2 4라운드).
+    //     내가 "수치 질문은 team RAG 를 안 탄다"고 보고했는데 코드는 `team_record`
+    //     실패 분기에서 계속 호출하고 있었다. 여기서 호출 자체를 고정한다.
+    //     근거는 있는 상태(기본 searchRag)라, 우회가 되살아나면 즉시 RED 다.
+    for (const question of ["LG 우승 몇 번 했어?", "삼성 우승 몇 번 했어?", "한화 우승 횟수 알려줘"]) {
+      const { deps, logs, calls } = makeDeps();
+      const result = await answerQuestion("u1", question, deps);
+      assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
+        `${question}: 미서빙 수치 질문이 구단 근거를 조회했다`);
+      assert.equal(calls.teamLlm.length, 0,
+        `${question}: 미서빙 수치 질문이 구단 RAG LLM 을 소비했다`);
+      assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
+      assert.equal(logs.at(-1)?.matchPath, "history_hold");
+    }
+    ok("미서빙 수치 질문 — team RAG 호출 0회 (LLM·quota 미소비)");
+  }
+
+  {
+    // ④-7 프롬프트와 출력 가드가 **같은 계약**을 말해야 한다.
+    //     가드만 닫고 프롬프트가 "자료 숫자는 써라" 로 남아 있으면 모델 답이 매번
+    //     폐기돼 INSUFFICIENT 로 새고, 리뷰어도 계약을 오독한다(실제로 그랬다).
+    //     배포되는 상수 원문을 직접 읽는다 — 내 요약이 아니라 실제 문자열이다.
+    assert.ok(/숫자를 쓰지 않는다/.test(RAG_TEAM_SYSTEM_PROMPT),
+      "구단 프롬프트가 숫자 금지를 지시하지 않는다");
+    assert.ok(/한글 수사/.test(RAG_TEAM_SYSTEM_PROMPT),
+      "구단 프롬프트가 한글 수사 수치를 다루지 않는다");
+    assert.ok(!/자료에 그대로 적힌 값만/.test(RAG_TEAM_SYSTEM_PROMPT),
+      "구단 프롬프트에 종전 '숫자 허용' 지시가 남아 있다(가드와 모순)");
+    ok("프롬프트↔가드 계약 일치 — 배포 상수 원문 대조");
   }
 
   // ── ④-b 교차 chunk 조합도 당연히 거절 (숫자 HOLD 의 부분집합) ────────────

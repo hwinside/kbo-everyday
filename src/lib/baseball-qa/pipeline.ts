@@ -2024,13 +2024,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 정본이 아니므로 계약을 두 겹으로 건다: 근거에 적힌 숫자 토큰만 허용
       // (`numericTokensGrounded`) + 출처 표기 강제. 계산·합산·추정은 프롬프트가 막고
       // 출력 가드가 기계적으로 재확인한다. 근거가 없으면 종전 안내문 그대로다.
-      const teamCandidate = deps.enableTeamRag ? resolveRagTeamCandidate(question) : null;
-      if (teamCandidate) {
-        const ragAnswer = await answerTeamRagQuestion(
-          userId, question, questionNorm, teamCandidate, remaining, deps, true,
-        );
-        if (ragAnswer) return ragAnswer;
-      }
+      // ⚠️ 2026-08-07 (삼순 P0-2 4라운드): 여기서 team RAG 를 호출하던 것을 **제거**했다.
+      //
+      //   여기 오는 질문은 전부 "우리가 서빙하지 않는 **수치**"(`LG 우승 몇 번?`)다.
+      //   tier2 숫자 출력이 전면 HOLD 된 이상, 이 경로가 만들 수 있는 결과는 둘뿐이다:
+      //     · 숫자가 든 답 → 출력 가드가 폐기 → 결국 아래 안내문
+      //     · 숫자 없는 답 → 수치 질문에 수치가 없는 답 (유저에겐 동문서답)
+      //   즉 LLM 호출과 quota 만 태우고 결과는 같다. 게다가 가드에 구멍이 하나라도
+      //   생기면 그 순간 수치 질문이 tier2 숫자를 달고 나가는 통로가 된다.
+      //   호출 자체를 없애는 것이 유일하게 검증 가능한 형태다.
+      //
+      //   구단 **서술형** RAG 는 아래 llm_scope_gate 경로에 그대로 있다(#1110 목적).
+      //   수치를 다시 답하려면 tier2 가 아니라 구조화 정본을 붙여야 한다.
       return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
     }
     let standings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
