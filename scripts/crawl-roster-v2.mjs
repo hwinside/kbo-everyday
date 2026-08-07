@@ -215,12 +215,24 @@ async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
  */
 async function setupPhaseFilters(page, { seasonSel, seriesSel }) {
   const hasSeries = Boolean(await page.$(seriesSel));
-  // series 반환을 반드시 소비한다 — selector 부재면 false(긍정 확인 불가 → fail-close).
+  // 순서: season 먼저, series 나중(삼순 NO-GO 4차) — season postback 이 series 를 되돌릴 수
+  // 있으므로 series 를 마지막에 건다. 그래도 신뢰는 전이 성공이 아니라 최종 DOM 재확인으로만.
+  const seasonConfirmed = await changeSelectAndWait(page, seasonSel, "2026", 8000);
   const seriesConfirmed = hasSeries
     ? await changeSelectAndWait(page, seriesSel, "0", 5000)
     : false;
-  const seasonConfirmed = await changeSelectAndWait(page, seasonSel, "2026", 8000);
-  return phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed });
+  // 최종 DOM 상태를 두 값 함께 다시 읽는다 — 중간 postback 이 되돌렸는지 검증.
+  const finalSeason = await page.$eval(seasonSel, (el) => el.value).catch(() => null);
+  const finalSeries = hasSeries
+    ? await page.$eval(seriesSel, (el) => el.value).catch(() => null)
+    : null;
+  return phaseFiltersTrusted({
+    hasSeries,
+    seriesConfirmed,
+    seasonConfirmed,
+    finalSeason,
+    finalSeries,
+  });
 }
 
 /** season/series 전이 실패 시 phase 전 팀을 fail-close 하는 outcome. */

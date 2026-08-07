@@ -218,18 +218,33 @@ export function buildExpectedSlotKeys(teamIds, phases = ["batters", "pitchers"])
  *
  *   series 셀렉터 부재(hasSeries=false)  → false  (series=0 긍정 확인 불가 → fail-close)
  *   series 미확정(seriesConfirmed≠true) → false
- *   season 미확정(false/undefined 등)  → false
- *   셀 다 긍정 확인                    → true
+ *   season 미확정(seasonConfirmed≠true) → false
+ *   최종 DOM season≠2026 또는 series≠0 → false  (중간 postback 이 되돌렸다)
+ *   전부 통과                          → true
  *
- * ⚠︎ 삼순 NO-GO(3차): 종전 판은 hasSeries=false 를 **신뢰**로 처리해, series 셀렉터가
+ * ⚠︎ 삼순 NO-GO(3차): hasSeries=false 를 **신뢰**로 처리해, series 셀렉터가
  * 사라지거나 못 잡혀도 season 만 맞으면 default/비정규 표를 수집할 수 있었다(series=0
  * 확인 계약의 fail-open). KBO HitterBasic/PitcherBasic 은 ddlSeries 가 상시 존재하므로
  * (2026-08-07 실측) 부재는 페이지 붕괴 신호 → fail-close 가 정상 크롤을 막지 않는다.
+ *
+ * ⚠︎ 삼순 NO-GO(4차): series→season 순서에서 season postback 이 series 를 되돌려도
+ * 먼저 잡은 seriesConfirmed=true 가 stale 로 남아 통과했다. 전이 성공(순간 기록)만으로
+ * 신뢰하지 않고, 모든 셀렉트를 건 뒤 **최종 DOM 값 2개를 함께 재확인**해야 한다.
  */
-export function phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed }) {
+export function phaseFiltersTrusted({
+  hasSeries,
+  seriesConfirmed,
+  seasonConfirmed,
+  finalSeason,
+  finalSeries,
+}) {
   if (!hasSeries) return false;
   if (seriesConfirmed !== true) return false;
-  return seasonConfirmed === true;
+  if (seasonConfirmed !== true) return false;
+  // 전이 성공은 순간 기록이다 — 중간 postback 이 되돌렸는지는 최종 DOM 값으로만 판정한다.
+  if (finalSeason !== "2026") return false;
+  if (finalSeries !== "0") return false;
+  return true;
 }
 
 /**

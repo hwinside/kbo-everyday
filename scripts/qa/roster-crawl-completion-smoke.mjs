@@ -323,24 +323,48 @@ check("실패 리포트에 팀·사유·시도횟수가 남는다", () => {
 
 console.log("\n② series/season 전이 fail-close (삼순 NO-GO ①)");
 
+// 기본형: 모든 축이 통과하는 입력 — 각 테스트는 깨뜨릴 축 하나만 바꿜다.
+const okFilter = (over = {}) => ({
+  hasSeries: true,
+  seriesConfirmed: true,
+  seasonConfirmed: true,
+  finalSeason: "2026",
+  finalSeries: "0",
+  ...over,
+});
+
 // phaseFiltersTrusted 행동 계약 — season 전이 반환을 무시하면 이전 연도 표가 통과한다.
-check("series·season 모두 확정이면 신뢰", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: true }), true);
+check("series·season 모두 확정 + 최종 DOM 일치면 신뢰", () => {
+  assert.equal(phaseFiltersTrusted(okFilter()), true);
 });
 check("series 전이 실패면 불신뢰", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: false, seasonConfirmed: true }), false);
+  assert.equal(phaseFiltersTrusted(okFilter({ seriesConfirmed: false })), false);
 });
 // 이게 정확히 삼순 NO-GO ① — season 전이 실패를 무시하던 결함.
 check("season 전이 실패면 불신뢰(이전 연도 표 차단)", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: false }), false);
+  assert.equal(phaseFiltersTrusted(okFilter({ seasonConfirmed: false })), false);
 });
 check("season 미확정(undefined)은 fail-close", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: undefined }), false);
+  assert.equal(phaseFiltersTrusted(okFilter({ seasonConfirmed: undefined })), false);
 });
 // 삼순 NO-GO(3차): series 셀렉터 부재를 신뢰하면 default/비정규 표를 수집할 수 있다 → fail-close.
 check("series 셀렉터 부재(hasSeries=false)는 season 이 맞아도 fail-close", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: true }), false);
-  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: false, seasonConfirmed: true }), false);
+  // hasSeries 단독 검출: 다른 축(final 값 포함)을 전부 통과시키고 hasSeries 만 false 로 둔다.
+  // (실제 크롤러 배선은 hasSeries=false→finalSeries=null 이지만, 그 배선은 구조 pin 이 따로 지킨다.)
+  assert.equal(phaseFiltersTrusted(okFilter({ hasSeries: false })), false);
+  // 실제 배선 형태(finalSeries=null)도 fail-close.
+  assert.equal(phaseFiltersTrusted(okFilter({ hasSeries: false, seriesConfirmed: false, finalSeries: null })), false);
+});
+// 삼순 NO-GO(4차) 핵심: 전이는 성공했지만 season postback 이 series 를 되돌렸다(최종 DOM series≠0).
+check("최종 DOM series≠0 이면 fail-close(season postback 재설정 감지)", () => {
+  assert.equal(phaseFiltersTrusted(okFilter({ finalSeries: "1" })), false);
+});
+check("최종 DOM season≠2026 이면 fail-close(season 재설정 감지)", () => {
+  assert.equal(phaseFiltersTrusted(okFilter({ finalSeason: "2025" })), false);
+});
+check("최종 DOM 값이 null(읽기 실패)이면 fail-close", () => {
+  assert.equal(phaseFiltersTrusted(okFilter({ finalSeries: null })), false);
+  assert.equal(phaseFiltersTrusted(okFilter({ finalSeason: null })), false);
 });
 
 console.log("\n§5 실제 저장본 — 정상 데이터가 이 게이트를 통과하는가 (삼순 NO-GO ①)");
@@ -443,12 +467,28 @@ check("fail-close 가 저장(writeFileSync)보다 앞선다", () => {
 // 행동 검증은 위 phaseFiltersTrusted 테스트가, 배선 연결은 이 구조 가드가 맡는다.
 check("크롤러가 setupPhaseFilters 반환을 소비해 phase fail-close 한다", () => {
   assert.match(crawlerSrc, /async function setupPhaseFilters\(/, "setupPhaseFilters 헬퍼가 없다");
-  // setupPhaseFilters 가 순수함수 판정을 **그대로 반환**해야 한다 — `return true` 로 바꾸면 season 전이 실패가 샰다.
+  // setupPhaseFilters 가 순수함수 판정을 **그대로 반환**해야 한다 — `return true` 로 바꾸면 전이 실패가 샰다.
   assert.match(
     crawlerSrc,
-    /return phaseFiltersTrusted\(\{ hasSeries, seriesConfirmed, seasonConfirmed \}\);/,
-    "setupPhaseFilters 가 phaseFiltersTrusted 결과를 반환하지 않는다"
+    /return phaseFiltersTrusted\(\{[\s\S]{0,160}finalSeason,[\s\S]{0,40}finalSeries,[\s\S]{0,20}\}\);/,
+    "setupPhaseFilters 가 최종 DOM 값까지 phaseFiltersTrusted 에 넘기지 않는다"
   );
+  // 삼순 NO-GO(4차): season→series 적용 뒤 최종 DOM 두 값을 함께 재확인해야 한다.
+  assert.match(
+    crawlerSrc,
+    /const finalSeason = await page\.\$eval\(seasonSel/,
+    "최종 season DOM 재확인이 없다"
+  );
+  assert.match(
+    crawlerSrc,
+    /const finalSeries = hasSeries[\s\S]{0,60}page\.\$eval\(seriesSel/,
+    "최종 series DOM 재확인이 없다"
+  );
+  // season 을 series 보다 먼저 적용해야 한다(season postback 이 series 를 되돌리므로 series 를 마지막에).
+  const seasonIdx = crawlerSrc.indexOf('const seasonConfirmed = await changeSelectAndWait(page, seasonSel');
+  const seriesIdx = crawlerSrc.indexOf('const seriesConfirmed = hasSeries');
+  assert.ok(seasonIdx > 0 && seriesIdx > 0, "season/series 전이 배선이 없다");
+  assert.ok(seasonIdx < seriesIdx, "season 을 series 보다 먼저 적용해야 한다(순서 결함)");
   // series·season 전이 반환을 모두 실제 변수에 받아야 한다(반환 무시/하드코딩 방지).
   // 삼순 NO-GO(3차): season 만 pin 하면 seriesConfirmed 하드코딩을 못 잡는다.
   assert.match(
