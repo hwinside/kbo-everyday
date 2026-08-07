@@ -63,7 +63,17 @@ check(
 check("프로필 글 탭은 board_type별 상세 route", /getPostDetailHref\(post\)/.test(profileRow) && /onNavigate=\{\(href\) => router\.push\(href\)\}/.test(profile) && !/community\/players\/\$\{post\.board_id\}\/posts/.test(profile));
 check("상세 route resolver가 free·team·player 분기", /board_type === "player"[\s\S]*community\/players[\s\S]*board_type === "team"[\s\S]*community\/teams[\s\S]*community\/free/.test(sourceResolver));
 check("글소속 resolver는 player_tags 3명·team_tags·legacy 폴백", /post\.player_tags \?\? \[\]/.test(sourceResolver) && /외 \$\{names\.length - 2\}명/.test(sourceResolver) && /post\.team_tags \?\? \[\]/.test(sourceResolver) && /getCommunitySourceLabel\(post\.board_type, post\.board_id\)/.test(sourceResolver));
-check("collector snapshot은 실제 봇 프로필 team", /\.from\("profiles"\)[\s\S]*\.eq\("id", botUserId\)[\s\S]*authorTeamIdSnapshot = botProfile\?\.team_id \?\? null/.test(collector) && !/matchedPlayer[\s\S]*authorTeamIdSnapshot/.test(collector));
+// 2026-08-07: 봇은 응원팀이 없다. 봇 프로필 team_id 는 NOT NULL 을 채우려고 seed 가 박은 임의값(1=LG)이라
+// 그걸 작성자 배지로 쓰면 KIA 김도영 글이 "LG 팬"으로 보인다(하린아빠 지적). 이전 계약(봇 프로필 team)을
+// 요구하던 검사를 그대로 두면 게이트가 결함을 고정시킨다. 검사 의도(스냅샷이 임의값이 아니라 결정된
+// 출처에서 온다)는 유지하고 요구 대상만 새 배선(콘텐츠 팀 파생)으로 옮긴다.
+check(
+  "collector snapshot은 봇 프로필이 아니라 콘텐츠 팀 파생",
+  /const collectorTeam = resolveCollectorTeam\(/.test(collector) &&
+    /author_team_id_snapshot: collectorTeam\.id/.test(collector) &&
+    /team_tags: \[collectorTeam\.slug\]/.test(collector) &&
+    !/botProfile\?\.team_id/.test(collector),
+);
 check("게시글 프로필 조회 avatar_url", /profiles\(nickname, team_id, grade, points, avatar_url\)/.test(read("src/lib/supabase/usePosts.ts")));
 check("통합 피드 avatar select+map", /profiles\(nickname, team_id, grade, points, avatar_url\)/.test(unified) && /avatar_url: prof\?\.avatar_url/.test(unified));
 check("자유게시판 avatar map", /avatarUrl: p\.avatar_url \?\? null/.test(free));
