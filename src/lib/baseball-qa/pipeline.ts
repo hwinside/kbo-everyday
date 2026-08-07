@@ -99,6 +99,12 @@ export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
+// 대화 첫 턴 인사 — 질문이 아니라 대화 시작이다. 차단 문구를 보내면 문전박대가 된다.
+// ⚠️ ACK_ANSWER("도움이 됐다니 다행이에요")를 재사용하면 안 된다: `안녕` 에 그 문구가 나가면
+//    아무 도움도 준 적 없이 도움이 됐다고 말하는 꼴이라 대화가 어긋난다.
+//    같은 `ack` 경로를 타되 답변 문구만 갈린다.
+export const GREETING_ANSWER =
+  "안녕하세요! 야구 룰·용어부터 선수·구단 이야기까지 물어봐 주세요 ⚾";
 // 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
 // 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
 export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`;
@@ -137,7 +143,42 @@ function normalizeAck(value: string): string {
     .trim();
 }
 
+/**
+ * 단독 인사말 폐쇄집합 (2026-08-07, production 로그 실측).
+ *
+ * 왜 필요한가 — 최근 3일 답변불가 163건 중 **14건(8.6%)이 인사말**이고, 전기간 누적으로는
+ * `안녕` 단독이 **31회로 답변불가 1위**였다. 인사를 건네면 봇이
+ * `"야구 룰/용어에 대한 질문만 답할 수 있어요"` 를 되돌려줘서, 대화 첫 턴부터 문전박대를 맞는다.
+ *
+ * 왜 코드로 두는가 (2026-08-07 확정 원칙: "반대가설을 만들 수 없는 것만 코드로")
+ *   `안녕` 단독을 인사 아닌 무언가로 읽는 반례를 만들 수 없다. ACK 와 동일하게
+ *   **full-string 완전일치**만 잡으므로 `안녕 보크가 뭐야` 는 여기 안 걸리고 기존 판정으로 간다.
+ *
+ * ⚠️ 새 `match_path` 를 만들지 않고 `ack` 경로를 재사용한다.
+ *   둘 다 "질문이 아닌 대화 행위"라 라우팅 의미가 같고, 새 값을 만들면 CHECK migration +
+ *   피드백 allowlist + 마스코트 분류 + 게이트까지 4곳을 함께 등록해야 한다(team_rag 실측).
+ *   감사와 인사를 나눠 세야 할 때는 `question` 원문이 로그에 남으므로 사후 집계로 충분하다.
+ */
+const GREETING_PHRASES = [
+  "안녕", "안녕요", "안녕하세요", "안녕하십니까", "안녕하세용",
+  "안녕하셔요", "안녕하세", "안녕안녕", "안뇽", "안욘", "아뇽",
+  "하이", "하잉", "하이하이", "헬로", "헬로우",
+  "hi", "hello", "hey", "ㅎㅇ", "ㅎㅇㅎㅇ", "ㅎㅇ요",
+  "반가워", "반가워요", "반갑습니다", "반갑다",
+  "여보세요", "안녕히", "굿모닝", "좋은아침", "좋은 아침",
+] as const;
+
 const ACK_SET = new Set(ACK_PHRASES.map(normalizeAck));
+const GREETING_SET = new Set(GREETING_PHRASES.map(normalizeAck));
+
+/**
+ * 단독 인사말인지 (폐쇄집합 full-string 완전일치).
+ * `안녕 보크가 뭐야` 처럼 인사 뒤에 질문이 붙으면 여기 안 걸리고 정상 판정을 타 답변된다.
+ */
+export function isGreetingPhrase(question: string): boolean {
+  return GREETING_SET.has(normalizeAck(question));
+}
+
 
 /**
  * 단독 감사·확인 인사인지 (폐쇄집합 full-string 완전일치).
@@ -1310,7 +1351,7 @@ export function routeQuestion(
   // 단독 감사·확인 인사는 질문이 아니라 직전 답변에 대한 대화 행위다 — 차단 문구 대신 짧게 받는다.
   // 폐쇄집합 full-string 완전일치라 `고마워 근데 날씨 알려줘`처럼 새 요청이 붙으면 여기 걸리지
   // 않고 아래 기존 판정(비야구면 LLM NOT_BASEBALL → blocked)으로 그대로 내려간다.
-  if (isAckPhrase(question)) return "ack";
+  if (isAckPhrase(question) || isGreetingPhrase(question)) return "ack";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
@@ -2071,7 +2112,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
-      route === "ack" ? ACK_ANSWER :
+      route === "ack" ? (isGreetingPhrase(question) ? GREETING_ANSWER : ACK_ANSWER) :
       BLOCKED_ANSWER;
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer, source: route, remaining };
