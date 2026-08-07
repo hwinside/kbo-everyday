@@ -45,6 +45,7 @@ import {
   RAG_TEAM_SYSTEM_PROMPT,
   sanitizeEvidenceContent,
   selectEvidence,
+  shouldStripNamuChrome,
   stripNamuDocumentChrome,
   type RagEntityCandidate,
   type RagEvidence,
@@ -411,6 +412,20 @@ async function run(): Promise<void> {
       //   `이점`(利點)·`이번` 이 죽는다. 그래서 공백을 판별자로 쓴다.
       "LG 트윈스의 점수 차는 삼 점이었어요.",
       "LG 트윈스는 선수가 아홉 명이에요.",
+      // 축9: **관형형+완전형 연속 + 어미** — 8라운드 삼순 지적.
+      //   `열하나예요` 는 완전형 `하나` 가 앞의 `열` 때문에 앞 경계에 막혀 통과했다.
+      "LG 트윈스의 우승은 열하나예요.",
+      // 축10: **근사 수량 접미 `여`** — `십여 회` 는 그 자체가 수량 주장이다.
+      "LG 트윈스의 우승은 십여 회예요.",
+      "LG 트윈스는 이십여 년 역사를 가졌어요.",
+      // 축11: **비-ASCII 숫자 표기** — `/\d/` 는 ASCII 만 보므로 전부 통과했다.
+      //   전각·로마·원문자로 바꿔 쓰는 것만으로 우회가 됐다.
+      "LG 트윈스는 １９９０년에 창단했어요.",
+      "LG 트윈스는 Ⅲ회 우승했어요.",
+      "LG 트윈스는 ⑧회 우승했어요.",
+      "LG 트윈스는 Ⅷ회 우승했어요.",
+      // 축12: 한자 수 조합(자리수사 포함) 단독 — 단위가 없어도 수 표기다.
+      "LG 트윈스는 삼십사 년 역사를 가졌어요.",
     ]) {
       const { deps, logs } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -424,7 +439,7 @@ async function run(): Promise<void> {
         `한글 수사 수치가 rag 로 나갔다(삼순 반대가설 B): ${answer}`);
       assert.equal(logs.at(-1)?.matchPath, "unsure");
     }
-    ok("삼순 반대가설 B~E — 한글 수치 8축(고유어/서수/한자/합성/미등재어미/완전형+조사/영/단음절+공백) 단독 차단");
+    ok("삼순 반대가설 B~F — 한글/비ASCII 수치 12축 단독 차단 (합성·서수·근사`여`·전각·로마·원문자 포함)");
   }
 
   {
@@ -451,6 +466,14 @@ async function run(): Promise<void> {
       "이점이 많은 전력을 가진 구단이에요.",
       "천천히 성장한 구단이에요.",
       "백업 선수층이 두꺼운 구단이에요.",
+      // 8라운드 삼순 지적 — 한자 수사를 **나열**로 두면 수사가 아닌 한자어가 잡힌다.
+      //   `이사회` = 이+사+회. 자리수사(십·백·천…)를 필수 성분으로 요구해 닫았다.
+      "이사회에서 결정한 구단이에요.",
+      "구단 이사회가 열렸어요.",
+      // 자리수사 **한 글자**만으로 매칭하면 아래가 전부 죽는다(자체 검증 실측).
+      //   `천천히`(천+천) · `백업`(백) · `만루`(만) · `억척`(억)
+      "만루 상황에 강한 구단이에요.",
+      "억척스러운 팬덤을 가진 구단이에요.",
     ]) {
       const { deps } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -463,7 +486,7 @@ async function run(): Promise<void> {
       assert.equal(result.source, "rag",
         `수치가 아닌 정상 구단 서술이 차단됐다(과차단): ${answer}`);
     }
-    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·열심히·이점·천천히·백업 통과");
+    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·열심히·이점·천천히·백업·이사회·만루·억척 통과");
   }
 
   {
@@ -767,6 +790,92 @@ async function run(): Promise<void> {
     // 정상 근거는 그대로 선택된다.
     assert.equal(selectEvidence([LG_EVIDENCE]).length, 1);
     ok("광고 전용 chunk — 근거 탈락 (빈 근거 서빙 금지)");
+  }
+
+  {
+    // ⑤ 나무위키 전용 정제는 **나무위키 문서에만** 적용된다 (삼순 2026-08-07 8라운드).
+    //
+    //   ⚠️ 왜 위험했나: `BARE_DOMAIN_LINE` 앵커는 도메인 줄의 **앞뒤 1줄까지** 지운다.
+    //   공식 e북(tier1) 조문 사이에 출처 URL 한 줄이 섞이면 그 위아래 조문이 통째로
+    //   사라진다. 나무위키 근거가 안 씻기는 손해보다 공식 근거가 잘리는 손해가 크므로,
+    //   판정 불가일 때는 **적용하지 않는 쪽**이 기본값이다.
+    const OFFICIAL_LINES = [
+      "타자가 타격을 완료한 뒤 1루에 도달하면 안타로 기록한다.",
+      "kbo.co.kr/rule/2026",
+      "다만 야수의 실책으로 출루한 경우는 안타로 기록하지 않는다.",
+    ].join("\n");
+
+    // tier1 공식 근거: 도메인 줄이 있어도 **앞뒤 조문이 살아남아야** 한다.
+    const official = sanitizeEvidenceContent(OFFICIAL_LINES, {
+      sourceKind: "kbo_ebook",
+      canonicalUrl: "https://www.kbo.co.kr/rule/2026",
+    });
+    assert.match(official, /타격을 완료한 뒤 1루에 도달하면 안타/,
+      "공식 조문이 나무위키 광고 규칙에 잘렸다");
+    assert.match(official, /야수의 실책으로 출루한 경우는 안타로 기록하지 않는다/,
+      "도메인 줄 다음 조문이 나무위키 광고 규칙에 잘렸다");
+
+    // 위키피디아(tier2)도 나무위키가 아니므로 무변조여야 한다.
+    const wiki = sanitizeEvidenceContent(OFFICIAL_LINES, {
+      sourceKind: "wikipedia_document",
+      canonicalUrl: "https://ko.wikipedia.org/wiki/LG_트윈스",
+    });
+    assert.match(wiki, /야수의 실책으로 출루한 경우/, "위키피디아 본문이 나무위키 규칙에 잘렸다");
+
+    // 반대편: 같은 입력이라도 **나무위키 문서면** 광고 슬롯으로 보고 제거해야 한다.
+    //   이게 없으면 "전부 무변조" 로 바꾼 극단 변이도 위 단언을 GREEN 으로 만든다.
+    const namu = sanitizeEvidenceContent(
+      ["명품시계대출", "blog.naver.com/nicewatch_kr", "당일대출 가능", "천보성 감독이 이끌었다."].join("\n"),
+      { sourceKind: "namu_document", canonicalUrl: "https://namu.wiki/w/LG%20트윈스" },
+    );
+    assert.doesNotMatch(namu, /대출/, "나무위키 광고 슬롯이 제거되지 않았다");
+    assert.match(namu, /천보성 감독/, "광고 제거가 인접 본문까지 먹었다");
+
+    // sourceKind 가 없어도 canonicalUrl 호스트로 판정한다(레거시 호출 경로).
+    assert.equal(shouldStripNamuChrome({ canonicalUrl: "https://namu.wiki/w/LG" }), true);
+    assert.equal(shouldStripNamuChrome({ canonicalUrl: "https://www.kbo.co.kr/rule" }), false);
+    // 판정 불가 → 무변조(fail-safe). 나무위키가 아닌 것을 자르는 쪽이 더 위험하다.
+    assert.equal(shouldStripNamuChrome({}), false);
+    assert.equal(shouldStripNamuChrome({ canonicalUrl: "not-a-url" }), false);
+    // sourceKind 가 있으면 URL 보다 우선한다.
+    assert.equal(
+      shouldStripNamuChrome({ sourceKind: "kbo_ebook", canonicalUrl: "https://namu.wiki/w/X" }),
+      false,
+      "sourceKind 가 tier1 인데 URL 만 보고 나무위키 규칙을 적용했다",
+    );
+
+    // 🔴 여기까지는 sanitizeEvidenceContent 를 **직접** 부른 검증이라, 실제 서빙 경로가
+    //   source 를 안 넘겨도 GREEN 이 된다(자체 mutation M22 로 실측 확인).
+    //   그래서 실제 호출부인 selectEvidence 를 태워 **배선 자체**를 고정한다.
+    const selectedOfficial = selectEvidence([{
+      content: OFFICIAL_LINES,
+      pageTitle: "야구규칙",
+      canonicalUrl: "https://www.kbo.co.kr/rule/2026",
+      revision: "etag:rule",
+      sectionPath: "야구규칙/기록",
+      asOf: "2026-08-05",
+      sourceGrade: "tier1",
+      sourceKind: "kbo_ebook",
+    }]);
+    assert.equal(selectedOfficial.length, 1, "공식 근거가 통째로 탈락했다");
+    assert.match(selectedOfficial[0].content, /야수의 실책으로 출루한 경우/,
+      "selectEvidence 가 source 를 안 넘겨 공식 조문이 나무위키 규칙에 잘렸다");
+
+    const selectedNamu = selectEvidence([{
+      content: ["명품시계대출", "blog.naver.com/nicewatch_kr", "당일대출 가능", "천보성 감독이 이끌었다. 1997 시즌 한국시리즈에 진출했다."].join("\n"),
+      pageTitle: "LG 트윈스",
+      canonicalUrl: "https://namu.wiki/w/LG%20트윈스",
+      revision: "etag:lg",
+      sectionPath: "LG 트윈스/역사",
+      asOf: "2026-08-05",
+      sourceGrade: "tier2",
+      sourceKind: "namu_document",
+    }]);
+    assert.equal(selectedNamu.length, 1);
+    assert.doesNotMatch(selectedNamu[0].content, /대출/,
+      "selectEvidence 경로에서 나무위키 광고가 살아남았다");
+
+    ok("나무위키 정제 범위 — source_kind 한정, tier1/위키피디아 무변조 + selectEvidence 배선 고정");
   }
 
   // 근거 상한을 쓰레기가 먹어치우지 않는지 — 위생 전후 '야구 본문' 확보량 비교.

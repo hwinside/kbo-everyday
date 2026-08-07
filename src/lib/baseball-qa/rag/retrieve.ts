@@ -12,7 +12,11 @@
  *  - 서빙 답변에는 canonical source 링크 + revision/asOf를 붙인다.
  */
 
-import { canGroundNumericClaim, type SourceGrade } from "./contracts";
+import {
+  RagSourceKind,
+  canGroundNumericClaim,
+  type SourceGrade,
+} from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
 
 /**
@@ -36,6 +40,14 @@ export interface RagEvidence {
   sectionPath: string;
   asOf: string;
   sourceGrade: SourceGrade;
+  /**
+   * 이 근거가 어느 소스에서 왔는가. **나무위키 전용 정제를 한정하는 데 쓴다.**
+   *
+   * ⚠️ 없으면(레거시 호출) `canonicalUrl` 호스트로 판정한다 — 판정 불가면
+   *   정제를 **적용하지 않는다**(무변조 우선). 나무위키가 아닌 문서를 나무위키
+   *   규칙으로 자르는 쪽이 더 위험하기 때문이다(삼순 2026-08-07 8라운드).
+   */
+  sourceKind?: RagSourceKind;
 }
 
 export type RagDocumentSourceKind = "wikipedia_document" | "namu_document";
@@ -258,6 +270,33 @@ const BARE_DOMAIN_LINE =
  * 3줄 묶음이므로, **도메인 줄을 앵커로 잡아 앞뒤 1줄씩** 제거한다.
  * 제거 범위를 ±1 로 묶어 정상 본문 과삭제를 제한한다.
  */
+/**
+ * 이 근거에 **나무위키 전용 정제**를 적용해도 되는가.
+ *
+ * ⚠️ 삼순 2026-08-07 8라운드: 종전에는 소스 구분 없이 모든 근거에 나무위키 규칙을
+ *   먹였다. 그러면 tier1(KBO 공식 e북)·위키피디아 본문이 나무위키 광고 규칙에
+ *   잘려나갈 수 있다. 특히 `BARE_DOMAIN_LINE` 앵커는 **앞뒤 1줄씩** 함께 지우므로,
+ *   공식 조문에 출처 URL 한 줄이 섞이면 그 위아래 조문이 통째로 사라진다.
+ *
+ * 판정 순서:
+ *   ① `sourceKind` 가 있으면 그것만 믿는다(`namu_document` 일 때만 적용).
+ *   ② 없으면(레거시 호출) `canonicalUrl` 호스트가 나무위키인지 본다.
+ *   ③ 둘 다 판정 불가면 **적용하지 않는다** — 무변조가 기본값이다.
+ *      나무위키 근거가 안 씻기는 손해보다, 공식 근거가 잘리는 손해가 크다.
+ */
+export function shouldStripNamuChrome(evidence: {
+  sourceKind?: RagSourceKind;
+  canonicalUrl?: string;
+}): boolean {
+  if (evidence.sourceKind) return evidence.sourceKind === "namu_document";
+  const url = evidence.canonicalUrl ?? "";
+  try {
+    return new URL(url).hostname.toLowerCase().endsWith("namu.wiki");
+  } catch {
+    return false;
+  }
+}
+
 export function stripNamuDocumentChrome(lines: string[]): string[] {
   const drop = new Set<number>();
   lines.forEach((line, index) => {
@@ -274,7 +313,14 @@ export function stripNamuDocumentChrome(lines: string[]): string[] {
   return lines.filter((_, index) => !drop.has(index));
 }
 
-export function sanitizeEvidenceContent(raw: string): string {
+export function sanitizeEvidenceContent(
+  raw: string,
+  /**
+   * 이 근거의 출처. 주면 **나무위키 문서일 때만** 나무위키 크롬/광고 정제를 적용한다.
+   * 생략하면 종전처럼 적용한다 — 기존 호출부(회귀 게이트 등)의 동작을 바꾸지 않기 위함이다.
+   */
+  source?: { sourceKind?: RagSourceKind; canonicalUrl?: string },
+): string {
   const withoutFences = raw
     // 제어문자 제거 — 줄 단위 필터를 우회하는 숨은 개행/이스케이프를 막는다.
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, " ")
@@ -289,7 +335,10 @@ export function sanitizeEvidenceContent(raw: string): string {
   // ⚠️ 순서가 중요하다 — 크롬/광고 제거를 **먼저** 한다.
   //   기존 지시문 필터가 `www.` 줄을 이미 지워버리면 광고 슬롯의 앵커가 사라져
   //   제목·설명 두 줄이 그대로 살아남는다(실측된 오염 경로).
-  const kept = stripNamuDocumentChrome(rawLines)
+  //   단, 나무위키 전용 규칙은 **나무위키 문서에만** 적용한다(삼순 8라운드).
+  //   지시문 필터는 프롬프트 인젝션 방어라 소스와 무관하게 항상 적용한다.
+  const applyNamu = source === undefined || shouldStripNamuChrome(source);
+  const kept = (applyNamu ? stripNamuDocumentChrome(rawLines) : rawLines)
     .filter((line) => !EVIDENCE_INSTRUCTION_PATTERNS.some((pattern) => pattern.test(line)));
   return kept.join("\n").replace(/[ \t]+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
 }
@@ -307,7 +356,7 @@ export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
   const selected: RagEvidence[] = [];
   let lockedGrade: SourceGrade | null = null;
   for (const row of rows) {
-    const content = sanitizeEvidenceContent(row.content);
+    const content = sanitizeEvidenceContent(row.content, row);
     if (content.length < 20) continue;
     if (lockedGrade === null) lockedGrade = row.sourceGrade;
     else if (row.sourceGrade !== lockedGrade) continue;
@@ -583,8 +632,26 @@ const NATIVE_DET_NUMERALS = [
   "한", "두", "세", "서", "석", "네", "너", "넉", "열", "쉰", "스무",
 ].sort((a, b) => b.length - a.length).join("|");
 
-/** 한자 수사. `영`(0)은 삼순 6라운드 지적으로 추가했다. `공`(0)은 공격·공수와 겹쳐 뺀다. */
-const SINO_NUMERAL_WORDS = ["영", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구", "십", "백", "천"].join("|");
+/** 한자 **낱자리** 수사(0~9). `공`(0)은 공격·공수와 겹쳐 뺀다. */
+const SINO_DIGITS = "[영일이삼사오육칠팔구]";
+/** 한자 **자리** 수사. 두 음절 이상 조합은 반드시 이것을 포함해야 한다. */
+const SINO_PLACES = "[십백천만억]";
+/**
+ * 한자 수사 **조합**. 임의 나열이 아니라 한국어 수 표기 문법을 따른다.
+ *
+ * ⚠️ 종전처럼 `(?:일|이|…|천){2,}` 로 두면 수사가 아닌 한자어가 통째로 잡힌다 —
+ *   `이사회` = 이+사+회 가 실제로 과차단됐다(삼순 7라운드 지적, 실측 재현).
+ *   한국어에서 두 음절 이상 한자 수는 **반드시 자리수사(십·백·천…)를 포함**한다:
+ *     십이 · 이십 · 십팔 · 삼십사 · 이백 ✓   /   이사 · 사오 · 오육 ✗ (수 표기가 아님)
+ *   자리수사를 **필수 성분**으로 요구해 오탐면을 구조적으로 없앴다.
+ */
+//   ⚠️ **2음절 이상**을 요구한다. 자리수사 한 글자만으로 매칭하면 `백업`·`만루`·`억척`·
+//   `천천히` 가 전부 수치로 잡힌다(자체 검증 실측 4건). 수 표기는 최소 `digit+place`
+//   또는 `place+digit` 형태다 — `천천`(place+place)은 수 표기가 아니므로 안 걸린다.
+const SINO_COMPOUND =
+  `(?:${SINO_DIGITS}${SINO_PLACES}|${SINO_PLACES}${SINO_DIGITS})(?:${SINO_DIGITS}|${SINO_PLACES})*`;
+/** 단음절 한자 수사(낱자리 + 자리). 좁은 단위 또는 공백+단위와 함께일 때만 인정한다. */
+const SINO_NUMERAL_WORDS = `(?:${SINO_DIGITS}|${SINO_PLACES})`;
 
 /** 수사 뒤에 붙어 수량을 만드는 단위(넓은 집합). `단`(구단)·`장`(구장)은 제외. */
 const ATTACHED_COUNTERS = [
@@ -602,27 +669,44 @@ const SINO_SINGLE_SAFE_COUNTERS = ["연승", "연패", "번째", "회", "년", "
   .sort((a, b) => b.length - a.length).join("|");
 
 const KOREAN_NUMERIC_PATTERNS: RegExp[] = [
-  // ① 완전형 고유어 수사 — 뒤 경계 없음(`하나뿐`·`둘째로`·`여덟은`).
-  new RegExp(`(?<![가-힣])(?:${NATIVE_FULL_NUMERALS})`),
+  // ① 고유어 수사 연속 — **끝이 완전형**이면 뒤 경계를 요구하지 않는다.
+  //    `열하나예요` 처럼 관형형+완전형이 붙고 어미가 이어지면, 완전형만 단독으로
+  //    보던 종전 규칙은 앞의 `열` 때문에 앞 경계에 막혀 통과시켰다(삼순 7라운드 실측).
+  new RegExp(`(?<![가-힣])(?:${NATIVE_DET_NUMERALS}|${NATIVE_FULL_NUMERALS})*(?:${NATIVE_FULL_NUMERALS})`),
   // ② 서수 접두 `첫` — 뒤 경계 없음(`첫해`·`첫째`·`첫 우승`).
   /(?<![가-힣])첫/,
   // ③ 관형형·충돌형 수사가 **어절 끝**에 온 경우(`열`·`두` 로 끝나는 어절).
   new RegExp(`(?<![가-힣])(?:${NATIVE_DET_NUMERALS})(?![가-힣])`),
-  // ④ 고유어 수사(완전형·관형형 혼합) 연속 + [공백] + 단위 — `열두 번`·`스물두 번`·`여덟 번`.
+  // ④ 고유어 수사 연속 + [공백] + 단위 — `열두 번`·`스물두 번`·`여덟 번`.
   new RegExp(
     `(?<![가-힣])(?:${NATIVE_FULL_NUMERALS}|${NATIVE_DET_NUMERALS})+\\s*(?:${ATTACHED_COUNTERS})`,
   ),
-  // ⑤ 한자 수사 **2음절 이상** + [공백] + 넓은 단위 — `십팔회`·`이십년`·`십이 회`.
-  new RegExp(`(?<![가-힣])(?:${SINO_NUMERAL_WORDS}){2,}\\s*(?:${ATTACHED_COUNTERS})`),
-  // ⑥ 한자 **단음절** + 좁은 단위(붙여쓰기 허용) — `팔회`·`영 회`·`삼연승`.
-  new RegExp(`(?<![가-힣])(?:${SINO_NUMERAL_WORDS})\\s*(?:${SINO_SINGLE_SAFE_COUNTERS})`),
-  // ⑦ 한자 **단음절** + 넓은 단위 + **공백 필수** — `삼 점`·`오 타`.
-  //    공백을 요구해야 `이점`(利點)·`이번`·`오타니` 가 살아남는다(삼순 6라운드 P0-3 대응).
-  //    ⚠️ 단위 **뒤** 경계는 요구하지 않는다. 요구하면 `삼 점이었어요` 처럼 어미가
-  //    붙는 순간 빠져나간다(삼순 6라운드 지적을 자체 검증에서 재현). 여기서는
-  //    **공백** 자체가 이미 "수사로 읽어야 한다"는 판별자다.
-  new RegExp(`(?<![가-힣])(?:${SINO_NUMERAL_WORDS})\\s+(?:${ATTACHED_COUNTERS})`),
+  // ⑤ 한자 수사 **조합**(자리수사 필수) — 단위 유무와 무관하게 수 표기다.
+  //    `십팔회`·`이십년`·`십이 회`·`삼십사`. 자리수사를 요구하므로 `이사회` 는 안 걸린다.
+  new RegExp(`(?<![가-힣])${SINO_COMPOUND}`),
+  // ⑥ 한자 단음절 수사 + 좁은 단위(붙여쓰기 허용) — `팔회`·`영 회`·`삼연승`.
+  new RegExp(`(?<![가-힣])${SINO_NUMERAL_WORDS}\\s*(?:${SINO_SINGLE_SAFE_COUNTERS})`),
+  // ⑦ 한자 단음절 수사 + 넓은 단위 + **공백 필수** — `삼 점`·`오 타`.
+  //    공백이 판별자다. 붙여쓰기까지 허용하면 `이점`(利點)·`이번`·`오타니` 가 죽는다.
+  //    단위 **뒤** 경계는 요구하지 않는다(`삼 점이었어요` 가 어미로 새는 것을 막는다).
+  new RegExp(`(?<![가-힣])${SINO_NUMERAL_WORDS}\\s+(?:${ATTACHED_COUNTERS})`),
+  // ⑧ **근사 수량** 접미 — `십여 회`·`이십여 년`. `X여` 는 그 자체가 수량 주장이다.
+  new RegExp(`(?<![가-힣])(?:${SINO_COMPOUND}|${SINO_NUMERAL_WORDS})여`),
 ];
+
+/**
+ * 답변에 **숫자 문자**가 있는가 — ASCII 한정이 아니라 유니코드 숫자 전체.
+ *
+ * ⚠️ `/\d/` 는 ASCII `0-9` 만 본다. 삼순 7라운드 실측으로 아래가 전부 통과했다:
+ *   `１９９０년`(전각) · `Ⅲ회`(로마) · `⑧회`(원문자) · `Ⅷ회`
+ * `\p{N}` 은 Nd(십진)+Nl(수사문자)+No(원문자·분수)를 모두 포함하므로
+ * **표기 변형으로 우회하는 축을 통째로** 닫는다.
+ */
+const UNICODE_NUMERIC = /\p{N}/u;
+
+export function hasNumericCharacter(answer: string): boolean {
+  return UNICODE_NUMERIC.test(answer);
+}
 
 export function hasKoreanNumericExpression(answer: string): boolean {
   return KOREAN_NUMERIC_PATTERNS.some((re) => re.test(answer));
@@ -750,7 +834,7 @@ export function validateRagResponse(
     //   내보내지 않는다" 이므로 표기 방식과 무관하게 막아야 한다.
     //   `hasKoreanQuantityClaim` 은 수사+단위명사가 붙은 경우만 잡으므로
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
-    if (/\d/.test(answer) || hasKoreanNumericExpression(answer)) {
+    if (hasNumericCharacter(answer) || hasKoreanNumericExpression(answer)) {
       return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
