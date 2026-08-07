@@ -15,10 +15,32 @@
 import { createClient } from "@supabase/supabase-js";
 import * as fs from "fs";
 import * as path from "path";
+import { teamSlugsForPlayerTags } from "../src/lib/utils/player-roster";
 
 // ─── Config ───
 const SUPABASE_URL = process.env.SUPABASE_URL || "https://lbmbdjgsnenqjwjotoei.supabase.co";
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+/**
+ * seed 글의 공개범위(team_tags) — DB 트리거가 canonical 구단 slug 1개 이상을 요구한다
+ * (`20260807020000_posts_require_team_scope.sql`). board_type 면제는 없다(면제 자체가 우회로).
+ * seed 는 사람이 피커로 고르는 경로가 아니므로 board 에서 파생한다.
+ *   · team   → board_id 가 곧 구단 slug (대소문자 정규화)
+ *   · player → 그 선수의 소속팀 slug
+ *   · 그 외  → 특정 팀 소유가 아니므로 10팀 전부(= 전체구단 공개)
+ */
+function seedTeamTags(boardType: string, boardId: string): string[] {
+  const KBO = ["lg", "doosan", "kt", "ssg", "nc", "kia", "lotte", "samsung", "hanwha", "kiwoom"];
+  if (boardType === "team") {
+    const slug = String(boardId).toLowerCase();
+    return KBO.includes(slug) ? [slug] : KBO;
+  }
+  if (boardType === "player") {
+    const slug = teamSlugsForPlayerTags([String(boardId)])[0];
+    return slug ? [slug] : KBO;
+  }
+  return KBO;
+}
+
 const SEED_AUTHOR_ID = process.env.SEED_AUTHOR_ID;
 
 const SEED_DIR = path.resolve(
@@ -154,6 +176,7 @@ async function main() {
           title,
           content: body,
           image_urls: [],
+          team_tags: seedTeamTags(entry.boardType, entry.boardId),
         })
         .select("id")
         .single();

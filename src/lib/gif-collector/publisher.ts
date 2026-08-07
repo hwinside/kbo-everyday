@@ -39,6 +39,8 @@ import {
 } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
+import { getTeamBySlug } from "@/lib/constants/teams";
+import { teamSlugsForPlayerTags } from "@/lib/utils/player-roster";
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -359,6 +361,26 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const text = normalizeQueueTextForPost(row);
   const content = appendAttribution(text.sourceContent, row.source_url, sourceHtml);
 
+  // 공개범위(team_tags) — DB 트리거가 canonical 구단 slug 1개 이상을 요구한다
+  // (`20260807020000_posts_require_team_scope.sql`). 콜렉터 글은 사람이 피커로 고르는 게
+  // 아니라 매칭 결과(board)에서 파생해야 한다. 여기서 안 채우면 발행이 통째로 23514 로 죽는다.
+  //   · matched_board_type='team'   → board_id 가 곧 구단 slug
+  //   · matched_board_type='player' → 그 선수의 소속팀 slug (로스터 기준)
+  const collectorTeamSlugs =
+    row.matched_board_type === "team"
+      ? [getTeamBySlug(String(row.matched_board_id))?.slug].filter(
+          (s): s is string => typeof s === "string",
+        )
+      : teamSlugsForPlayerTags([String(row.matched_board_id)]);
+  if (collectorTeamSlugs.length === 0) {
+    // 로스터 미등록 선수·미상 구단이면 공개범위를 만들 수 없다. 임의 팀을 찍지 않고 철회한다
+    // (틀린 팀 피드에 노출되느니 발행을 멈추는 편이 안전하다).
+    return rejectAndReturn(
+      queueId,
+      `cannot resolve team scope for ${row.matched_board_type}/${row.matched_board_id}`,
+    );
+  }
+
   const postInsert: Record<string, unknown> = {
     author_id: botUserId,
     board_type: row.matched_board_type,
@@ -366,6 +388,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content_type: "photo",
     title: text.title,
     content,
+    team_tags: collectorTeamSlugs,
     author_team_id_snapshot: authorTeamIdSnapshot,
   };
   if (kind === "video") {

@@ -12,6 +12,7 @@ import LinkPreview from "./LinkPreview";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
+import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
 
 export interface SeatInfo {
   zone: string;
@@ -193,6 +194,8 @@ export default function WritePost({
   async function handleSubmit() {
     if (!content.trim() || submittingRef.current) return; // 제목 제거 → 본문만 필수
     if (seatTipMode && !effectiveZone) return; // 구역 필수
+    // 최소 1팀 태그 — 버튼 disabled 우회(Enter 제출 등) 방어.
+    if (enableTags && !seatTipMode && !hasRequiredTeamTag(teamSlugs)) return;
 
     submittingRef.current = true;
     setSubmitting(true);
@@ -235,7 +238,12 @@ export default function WritePost({
     reset();
   }
 
-  const canSubmit = content.trim() && (!seatTipMode || effectiveZone);
+  // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
+  // 선수 태그의 소속팀은 이 필수조건을 대신하지 않는다.
+  // 좌석팁(seatTipMode)은 태그 피커 자체가 안 떴니 적용 제외.
+  const hasTeamScope = hasRequiredTeamTag(teamSlugs);
+  const teamScopeOk = !enableTags || seatTipMode || hasTeamScope;
+  const canSubmit = content.trim() && (!seatTipMode || effectiveZone) && teamScopeOk;
 
   return (
     <AnimatePresence>
@@ -348,7 +356,11 @@ export default function WritePost({
                         prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
                       )
                     }
+                    onSetAll={setTeamSlugs}
                   />
+                  {!hasTeamScope && (
+                    <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).</p>
+                  )}
                   <PlayerTagger
                     game={null}
                     selectedPlayers={taggedPlayers}

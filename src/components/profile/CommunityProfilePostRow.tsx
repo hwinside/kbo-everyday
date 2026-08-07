@@ -2,8 +2,9 @@
 
 import { Heart, MessageCircle } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
-import TeamBadge from "@/components/ui/TeamBadge";
-import { getPostDetailHref, getPostSourceLabel } from "@/lib/utils/community-board";
+import PostScopeBadge from "@/components/community/PostScopeBadge";
+import { scopeInputForPost } from "@/lib/utils/post-scope-input";
+import { getPostDetailHref } from "@/lib/utils/community-board";
 
 export interface CommunityProfilePost {
   id: number;
@@ -26,7 +27,6 @@ export default function CommunityProfilePostRow({
   onNavigate: (href: string) => void;
   timeLabel: string;
 }) {
-  const sourceLabel = getPostSourceLabel(post);
   const href = getPostDetailHref(post);
   return (
     <GlassCard
@@ -35,15 +35,11 @@ export default function CommunityProfilePostRow({
       data-post-href={href}
       onClick={() => onNavigate(href)}
     >
+      {/* 공개범위 — 홈·피드와 동일한 규칙(post-scope SSOT). 프로필 글 목록도 active 소비 경로라
+          같이 통일한다 — 안 바꾸면 다팀 글이 여기서만 다른 배지를 달게 된다(삼순 NO-GO 2026-08-06). */}
       <div className="mb-2 flex min-w-0 items-center gap-2" data-community-source-label>
-        <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-        {sourceLabel.teamId ? (
-          <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
-        ) : (
-          <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-            {sourceLabel.text}
-          </span>
-        )}
+        <span className="shrink-0 text-[10px] text-text-tertiary">공개범위</span>
+        <PostScopeBadge post={scopeInputForPost(post)} variant="full" />
       </div>
       <p className="truncate text-sm font-medium text-text-primary">{post.title}</p>
       <div className="mt-1 flex items-center gap-4 text-xs text-text-tertiary">

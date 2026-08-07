@@ -7,12 +7,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, Maximize, MessageCircle, Minimize, MoreHorizontal, Share2, Volume2, VolumeX } from "lucide-react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { parseAttribution } from "@/lib/gif-collector/attribution";
-import TeamBadge from "@/components/ui/TeamBadge";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
+import PostScopeBadge from "@/components/community/PostScopeBadge";
+import { scopeInputForPost } from "@/lib/utils/post-scope-input";
 import type { Post } from "@/lib/supabase/usePosts";
 import { deletePost } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { getPostSourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
+import { type CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PostViewBadge from "@/components/community/PostViewBadge";
 import { usePostImpression } from "@/lib/community/usePostImpression";
@@ -46,6 +47,10 @@ interface PhotoFeedProps {
   boardType?: "team" | "player";
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
+  /**
+   * @deprecated 글 공개범위 배지는 2026-08-06부터 post-scope(team_tags SSOT) 기반으로 통일됐다.
+   * 호출부 호환을 위해 prop은 남겨둔다(렌더에는 사용되지 않음).
+   */
   sourceLabels?: Record<number, CommunitySourceLabel>;
   /**
    * controlled 좋아요 모드: 부모가 좋아요 상태를 소유(배치 프리페치 + optimistic + 롤백)할 때 주입.
@@ -831,7 +836,7 @@ export function HeartOverlay({ show }: { show: boolean }) {
   );
 }
 
-export default function PhotoFeed({ posts, loading, onLike, sourceLabels, likedIds }: PhotoFeedProps) {
+export default function PhotoFeed({ posts, loading, onLike, likedIds }: PhotoFeedProps) {
   const { user, profile } = useAuth();
   const canDeleteAnyPost = profile?.is_operator === true;
   const controlledLikes = likedIds !== undefined;
@@ -962,7 +967,6 @@ export default function PhotoFeed({ posts, loading, onLike, sourceLabels, likedI
         const isMine = !!user && post.author_id === user.id;
         const hasMedia = post.image_urls.length > 0 || (post.video_urls?.length ?? 0) > 0;
         const body = mergedBody(post);
-        const sourceLabel = sourceLabels ? getPostSourceLabel(post) : null;
 
         if (deletedIds.has(post.id)) return null;
 
@@ -984,18 +988,10 @@ export default function PhotoFeed({ posts, loading, onLike, sourceLabels, likedI
                   meta={<span className="text-xs text-text-tertiary">{timeAgo(post.created_at)}</span>}
                 />
 
-                {sourceLabel ? (
-                  <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
-                    <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-                    {sourceLabel.teamId ? (
-                      <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
-                    ) : (
-                      <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-                        {sourceLabel.text}
-                      </span>
-                    )}
-                  </div>
-                ) : null}
+                <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
+                  <span className="shrink-0 text-[10px] text-text-tertiary">공개범위</span>
+                  <PostScopeBadge post={scopeInputForPost(post)} variant="full" />
+                </div>
 
                 {/* 질문 + poll 카드 → 탭 시 상세 이동 */}
                 <Link href={`/community/free/${post.id}`} className="block px-5 pb-1 active:opacity-90">
@@ -1096,19 +1092,12 @@ export default function PhotoFeed({ posts, loading, onLike, sourceLabels, likedI
                 ) : null}
               />
 
-              {/* 혼합 피드에서만 작성자 응원팀과 별개인 콘텐츠 소속을 표시한다. */}
-              {sourceLabel ? (
-                <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
-                  <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-                  {sourceLabel.teamId ? (
-                    <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
-                  ) : (
-                    <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-                      {sourceLabel.text}
-                    </span>
-                  )}
-                </div>
-              ) : null}
+              {/* 글 공개범위 — 홈 최신글과 동일한 규칙(post-scope SSOT, 2026-08-06 하린아빠 지시).
+                  이전엔 board_type/board_id 기반 sourceLabel이라 같은 글이 화면마다 다른 배지를 달고 있었다. */}
+              <div className="flex items-center gap-2 px-5 pb-2" data-community-source-label>
+                <span className="shrink-0 text-[10px] text-text-tertiary">공개범위</span>
+                <PostScopeBadge post={scopeInputForPost(post)} variant="full" />
+              </div>
 
               {/* 본문 슬롯 — 미디어(카드 A) / 짧은 글(카드 B) / 긴 글(카드 C) 분기 */}
               {hasMedia ? (

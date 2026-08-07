@@ -67,7 +67,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
       // query-guard: bounded -- 게시판 목록은 최신 30개만 제공하는 의도된 단일 UI 페이지다.
       const { data } = await supabase
         .from("posts")
-        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)")
+        .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, seat_info, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)")
         .eq("board_type", boardType)
         .eq("board_id", boardId)
         .eq("content_type", contentType)
@@ -105,7 +105,7 @@ export function usePosts(boardType: string, boardId: string, contentType: "gener
     // query-guard: bounded -- 새로고침도 동일하게 최신 30개 단일 UI 페이지만 다시 읽는다.
     const { data } = await supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, seat_info, profiles(nickname, team_id, grade, points, avatar_url)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, seat_info, profiles(nickname, team_id, grade, points, avatar_url)")
       .eq("board_type", boardType)
       .eq("board_id", boardId)
       .eq("content_type", contentType)
