@@ -26,7 +26,15 @@ import playwright from "playwright";
 import { mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
+
+/**
+ * `--self-test-cleanup` 은 정리 로직만 결함주입하므로 DB·브라우저·자격증명이 필요 없다.
+ * `_env.mjs` 는 .env.local 이 없으면 import 시점에 process.exit(1) 하므로 동적으로만 불러온다.
+ * (그래야 CI 처럼 자격증명 없는 환경에서도 게이트를 돌릴 수 있다)
+ */
+const SELF_TEST = process.argv.includes("--self-test-cleanup");
+const env = SELF_TEST ? {} : await import("./_env.mjs");
+const { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } = env;
 
 const { chromium } = playwright;
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -57,9 +65,11 @@ const ALL_TEAMS = ["LG", "두산", "KT", "SSG", "NC", "KIA", "롯데", "삼성",
 /** 뷰어 프로필 팀 — 대상 3건 어느 팀과도 겹치지 않는 값이어야 뷰어 팀 누출을 잡는다. */
 const VIEWER_TEAM_ID = 2002;
 
-const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
-  auth: { autoRefreshToken: false, persistSession: false },
-});
+const admin = SELF_TEST
+  ? null
+  : createClient(SUPABASE_URL, SERVICE_ROLE, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
 
 const ts = () => new Date().toISOString().slice(11, 19);
 const log = (...a) => console.log(`[${ts()}]`, ...a);
@@ -254,37 +264,218 @@ async function main() {
 }
 
 /**
- * 정리 — fail-close. 삭제 반환 오류를 삼키지 않고, 삭제 후 auth/profile 잔존 0을 실제로 확인한다.
- * 잔존이 있으면 Production 에 QA 계정이 남는다는 뜻이라 실패로 처리한다.
+ * 정리 — fail-close.
+ *
+ * 원칙
+ *   · 단계마다 독립적으로 실패를 기록하고 **다음 단계·다음 계정 정리는 계속** 진행한다.
+ *     (중간에서 멈추면 뒤 계정이 Production 에 그대로 남는다)
+ *   · 삭제뿐 아니라 **확인 조회의 오류도 실패**로 친다. 조회가 안 되면 "잔존 0"을
+ *     증명한 게 아니라 모르는 상태다 — 모르는 것을 깨끗함으로 읽으면 잔여물을 놓친다.
+ *   · SDK 가 throw 하는 경우(네트워크·non-2xx)도 같은 취급.
  */
-async function teardown() {
-  let clean = true;
-  for (const uid of cleanupIds) {
-    const { error: pErr } = await admin.from("profiles").delete().eq("id", uid);
-    if (pErr) {
-      console.error(`  ❌ profile 삭제 실패 ${uid}: ${pErr.message}`);
-      clean = false;
+async function step(label, fn) {
+  try {
+    const { error } = (await fn()) ?? {};
+    if (error) {
+      console.error(`  ❌ ${label}: ${error.message}`);
+      return { ok: false };
     }
-    const { error: uErr } = await admin.auth.admin.deleteUser(uid);
-    if (uErr) {
-      console.error(`  ❌ auth 유저 삭제 실패 ${uid}: ${uErr.message}`);
-      clean = false;
+    return { ok: true };
+  } catch (e) {
+    console.error(`  ❌ ${label}: ${e.message}`);
+    return { ok: false };
+  }
+}
+
+/**
+ * 잔존 확인 — 조회 오류도 실패로 친다. 반환 { ok, present }.
+ *
+ * 단, "없다"를 오류로 알려주는 API 가 있다 — `auth.admin.getUserById` 는 삭제된 uid 에
+ * `User not found`(404) 를 돌려준다. 그건 정상 삭제의 증거지 장애가 아니므로
+ * `absentWhen` 으로 구분한다. 이걸 안 나누면 정상 정리가 매번 실패로 찍힌다(실측 확인).
+ */
+async function probe(label, fn, absentWhen = () => false) {
+  try {
+    const { data, error } = await fn();
+    if (error) {
+      if (absentWhen(error)) return { ok: true, present: false };
+      console.error(`  ❌ ${label} 확인 조회 실패(잔존 여부 미확정): ${error.message}`);
+      return { ok: false };
+    }
+    return { ok: true, data };
+  } catch (e) {
+    if (absentWhen(e)) return { ok: true, present: false };
+    console.error(`  ❌ ${label} 확인 조회 실패(잔존 여부 미확정): ${e.message}`);
+    return { ok: false };
+  }
+}
+
+/** 삭제된 유저 조회가 돌려주는 "없음" 신호. 그 외의 오류는 장애로 본다. */
+const isAuthUserAbsent = (e) =>
+  e?.status === 404 || /user not found/i.test(e?.message ?? "");
+
+/**
+ * @param client  주입 가능한 supabase admin — 기본값은 실제 클라이언트.
+ *                결함주입 자가검증이 **이 함수 그대로**를 태우기 위한 유일한 이유다
+ *                (검증기가 정리 로직을 재구현하면 대상이 죽어도 GREEN 이 된다).
+ * @param ids     정리 대상 uid 목록.
+ */
+async function teardown(client = admin, ids = cleanupIds) {
+  let clean = true;
+  for (const uid of ids) {
+    let userClean = true;
+
+    // ① 삭제 — 한 쪽이 실패해도 다른 쪽은 시도한다.
+    if (!(await step(`profile 삭제 ${uid}`, () => client.from("profiles").delete().eq("id", uid))).ok)
+      userClean = false;
+    if (!(await step(`auth 유저 삭제 ${uid}`, () => client.auth.admin.deleteUser(uid))).ok)
+      userClean = false;
+
+    // ② postcondition — 진짜 사라졌는지 다시 읽는다. 조회 오류도 실패다.
+    const profProbe = await probe(`profile ${uid}`, () =>
+      client.from("profiles").select("id").eq("id", uid).maybeSingle(),
+    );
+    if (!profProbe.ok) userClean = false;
+    else if (profProbe.data) {
+      console.error(`  ❌ profile 잔존 ${uid}`);
+      userClean = false;
     }
 
-    // postcondition — 진짜 사라졌는지 다시 읽어본다.
-    const { data: prof } = await admin.from("profiles").select("id").eq("id", uid).maybeSingle();
-    if (prof) {
-      console.error(`  ❌ profile 잔존 ${uid}`);
-      clean = false;
-    }
-    const { data: authUser } = await admin.auth.admin.getUserById(uid);
-    if (authUser?.user) {
+    const authProbe = await probe(
+      `auth 유저 ${uid}`,
+      () => client.auth.admin.getUserById(uid),
+      isAuthUserAbsent,
+    );
+    if (!authProbe.ok) userClean = false;
+    else if (authProbe.data?.user) {
       console.error(`  ❌ auth 유저 잔존 ${uid}`);
-      clean = false;
+      userClean = false;
     }
-    if (clean) log("cleaned up test user", uid.slice(0, 8));
+
+    if (userClean) log("cleaned up test user", uid.slice(0, 8));
+    else clean = false;
   }
   return clean;
+}
+
+/**
+ * 정리 로직 결함주입 자가검증 (`--self-test-cleanup`) — DB·브라우저 불필요.
+ *
+ * 정리가 fail-close 인지는 "정상 동작 1회"로 증명되지 않는다. 장애를 주입해도
+ * 깨끗함으로 통과하는지를 봐야 한다. 가짜 client 를 **실제 teardown 함수에** 주입해
+ * 대상 로직 그대로를 태운다(검증기가 정리 로직을 재구현하면 대상이 죽어도 GREEN 이다).
+ */
+async function selfTestCleanup() {
+  let pass = 0;
+  let fail = 0;
+  const t = (name, cond, detail) => {
+    console.log(`  ${cond ? "✅" : "❌"}  ${name}${cond || !detail ? "" : `  ${detail}`}`);
+    cond ? pass++ : fail++;
+  };
+
+  /** behavior: uid 별로 각 단계가 어떻게 응답할지 기술. */
+  const fake = (behavior, visited) => ({
+    from: () => ({
+      delete: () => ({
+        eq: async (_c, uid) => {
+          visited.push(`profileDelete:${uid}`);
+          return behavior[uid]?.profileDelete ?? {};
+        },
+      }),
+      select: () => ({
+        eq: (_c, uid) => ({
+          maybeSingle: async () => {
+            visited.push(`profileProbe:${uid}`);
+            return behavior[uid]?.profileProbe ?? { data: null };
+          },
+        }),
+      }),
+    }),
+    auth: {
+      admin: {
+        deleteUser: async (uid) => {
+          visited.push(`authDelete:${uid}`);
+          return behavior[uid]?.authDelete ?? {};
+        },
+        getUserById: async (uid) => {
+          visited.push(`authProbe:${uid}`);
+          const r = behavior[uid]?.authProbe;
+          if (r?.throws) throw r.throws;
+          return r ?? { data: { user: null }, error: null };
+        },
+      },
+    },
+  });
+
+  const NOT_FOUND = Object.assign(new Error("User not found"), { status: 404 });
+  const okUser = { authProbe: { error: NOT_FOUND } };
+
+  // ① 정상 경로는 GREEN 이어야 한다(과검진이 아님을 먼저 보장).
+  {
+    const visited = [];
+    const clean = await teardown(fake({ a: okUser, b: okUser }, visited), ["a", "b"]);
+    t("정상 정리는 true", clean === true);
+    t("정상에도 두 계정 모두 처리", visited.filter((v) => v.startsWith("authDelete")).length === 2);
+  }
+
+  // ② 삭제 오류 → 실패이면서도 **다음 계정 정리는 계속**돼야 한다.
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { profileDelete: { error: { message: "boom" } }, ...okUser }, b: okUser }, visited),
+      ["a", "b"],
+    );
+    t("삭제 오류 → false", clean === false);
+    t("삭제 오류여도 다음 계정 정리 진행", visited.includes("authDelete:b"), visited.join(","));
+  }
+
+  // ③ **확인 조회 오류**도 실패다(삼순 지적의 핵심). 잔존 여부 미확정을 깨끗함으로 읽지 않는다.
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { ...okUser, profileProbe: { error: { message: "probe down" } } } }, visited),
+      ["a"],
+    );
+    t("profile 확인 조회 오류 → false", clean === false);
+  }
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { authProbe: { error: { message: "service unavailable", status: 503 } } } }, visited),
+      ["a"],
+    );
+    t("auth 확인 조회 오류(non-404) → false", clean === false);
+  }
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { authProbe: { throws: new Error("ECONNRESET") } } }, visited),
+      ["a"],
+    );
+    t("auth 확인 조회 throw → false", clean === false);
+  }
+
+  // ④ 잔존이 실제로 남았으면 실패.
+  {
+    const visited = [];
+    const clean = await teardown(fake({ a: { ...okUser, profileProbe: { data: { id: "a" } } } }, visited), ["a"]);
+    t("profile 잔존 → false", clean === false);
+  }
+  {
+    const visited = [];
+    const clean = await teardown(fake({ a: { authProbe: { data: { user: { id: "a" } } } } }, visited), ["a"]);
+    t("auth 유저 잔존 → false", clean === false);
+  }
+
+  // ⑤ 404 "User not found" 는 정상 삭제의 증거다 — 이걸 장애로 치면 정상 정리가 매번 실패한다.
+  t("404/User not found 는 없음 신호", isAuthUserAbsent(NOT_FOUND) && !isAuthUserAbsent({ message: "boom" }));
+
+  console.log(`\n${fail === 0 ? "PASS" : "FAIL"} — ${pass} passed, ${fail} failed`);
+  return fail === 0;
+}
+
+if (process.argv.includes("--self-test-cleanup")) {
+  process.exit((await selfTestCleanup()) ? 0 : 1);
 }
 
 let ok = false;
