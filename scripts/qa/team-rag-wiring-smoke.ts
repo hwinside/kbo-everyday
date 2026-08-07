@@ -235,7 +235,7 @@ async function run(): Promise<void> {
   {
     const { deps, logs, calls } = makeDeps();
     const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
-    assert.equal(result.source, "rag", `구단 서술형이 rag 로 안 갔다: source=${result.source}`);
+    assert.equal(result.source, "team_rag", `구단 서술형이 team_rag 로 안 갔다: source=${result.source}`);
     assert.equal(calls.genericLlm, 0, "근거가 있으면 generic LLM 을 소비하지 않는다");
     assert.equal(calls.search.length, 1);
     assert.equal(calls.search[0].entityType, "team");
@@ -249,7 +249,7 @@ async function run(): Promise<void> {
       `tier2 답변 본문에 숫자가 남았다: ${result.answer}`);
     assert.match(result.answer, /📄 출처: 나무위키/, "tier2 근거는 출처가 붙어야 한다");
     assert.equal(result.sourceUrl, LG_EVIDENCE.canonicalUrl);
-    assert.equal(logs.at(-1)?.matchPath, "rag");
+    assert.equal(logs.at(-1)?.matchPath, "team_rag");
     ok("구단 서술형 — team 후보로 근거 조회 → source=rag + 출처 표기");
   }
 
@@ -257,7 +257,7 @@ async function run(): Promise<void> {
   {
     const { deps, calls } = makeDeps();
     const result = await answerQuestion("u1", "LG트윈스 창단 이야기 알려줘", deps);
-    assert.equal(result.source, "rag");
+    assert.equal(result.source, "team_rag");
     assert.equal(calls.search[0]?.entityId, "1");
     ok("붙여쓴 구단명 — 동일 근거 경로");
   }
@@ -313,8 +313,8 @@ async function run(): Promise<void> {
       },
     });
     const result = await answerQuestion("u1", "LG 우승 몇 번 했어?", deps);
-    assert.notEqual(result.source, "rag",
-      "한 문장 안 쉼표로 붙은 두 사실을 조합한 주장이 rag 로 나갔다(삼순 반대가설 A)");
+    assert.notEqual(result.source, "team_rag",
+      "한 문장 안 쉼표로 붙은 두 사실을 조합한 주장이 team_rag 로 나갔다(삼순 반대가설 A)");
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
     assert.equal(logs.at(-1)?.matchPath, "history_hold");
     ok("삼순 반대가설 A — 단일 문장 쉼표/접속사 조합 주장 거절");
@@ -332,7 +332,7 @@ async function run(): Promise<void> {
       }),
     });
     const result = await answerQuestion("u1", "삼성 우승 몇 번 했어?", deps);
-    assert.notEqual(result.source, "rag",
+    assert.notEqual(result.source, "team_rag",
       "근거에 적힌 숫자라도 tier2 는 내보내지 않는다(숫자 HOLD)");
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
     assert.equal(logs.at(-1)?.matchPath, "history_hold");
@@ -349,7 +349,7 @@ async function run(): Promise<void> {
       }),
     });
     const result = await answerQuestion("u1", "삼성 우승 몇 번 했어?", deps);
-    assert.notEqual(result.source, "rag", "근거 밖 숫자가 rag 답변으로 나갔다");
+    assert.notEqual(result.source, "team_rag", "근거 밖 숫자가 team_rag 답변으로 나갔다");
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
     assert.equal(logs.at(-1)?.matchPath, "history_hold");
     ok("미서빙 수치 환각 — 근거 밖 숫자는 답변 거절 후 안내");
@@ -360,7 +360,7 @@ async function run(): Promise<void> {
     //     이 단언이 없으면 "구단 RAG 통째로 끄기"로도 위 세 케이스가 GREEN 이 된다.
     const { deps, calls } = makeDeps();
     const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
-    assert.equal(result.source, "rag", "숫자 HOLD 가 서술형 경로까지 죽였다");
+    assert.equal(result.source, "team_rag", "숫자 HOLD 가 서술형 경로까지 죽였다");
     assert.equal(calls.teamLlm.length, 1);
     assert.ok(!/\d/.test(result.answer.split("📄")[0]), "본문에 숫자가 남았다");
     ok("숫자 HOLD 는 서술형을 막지 않는다 — 숫자 없는 답변은 그대로 서빙");
@@ -386,7 +386,7 @@ async function run(): Promise<void> {
         }),
       });
       const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
-      assert.notEqual(result.source, "rag", `숫자 문자가 rag 로 나갔다: ${answer}`);
+      assert.notEqual(result.source, "team_rag", `숫자 문자가 team_rag 로 나갔다: ${answer}`);
       assert.equal(logs.at(-1)?.matchPath, "unsure");
     }
     ok("유니코드 숫자 차단 — 아라비아·전각·로마·원문자 (tier2 의 유일한 결정론 가드)");
@@ -436,7 +436,7 @@ async function run(): Promise<void> {
         }),
       });
       const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
-      assert.equal(result.source, "rag",
+      assert.equal(result.source, "team_rag",
         `한글 수사 파서가 되살아났다(코드는 한글 수사를 막지 않는다): ${answer}`);
     }
     ok("한글 수사는 코드가 막지 않는다 — 파서 재추가 방지 + 야구 어휘 과차단 0");
@@ -565,8 +565,8 @@ async function run(): Promise<void> {
       },
     });
     const result = await answerQuestion("u1", "LG 우승 몇 번 했어?", deps);
-    assert.notEqual(result.source, "rag",
-      "여러 chunk 의 숫자를 조합한 주장이 rag 답변으로 나갔다");
+    assert.notEqual(result.source, "team_rag",
+      "여러 chunk 의 숫자를 조합한 주장이 team_rag 답변으로 나갔다");
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
     assert.equal(logs.at(-1)?.matchPath, "history_hold");
     ok("교차 chunk 조합 — 여러 근거를 이어붙인 수치 주장 거절");
@@ -597,13 +597,16 @@ async function run(): Promise<void> {
     const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
     assert.equal(calls.search.length, 0, "플래그 off 에서 구단 근거를 읽으면 안 된다");
     assert.equal(calls.teamLlm.length, 0);
-    assert.notEqual(result.source, "rag");
+    assert.notEqual(result.source, "team_rag");
     ok("enableTeamRag=false — 종전 동작 유지");
   }
 
   {
     // ⑥-b **kill-switch** — best-effort 정책이라 잔존 누수가 유저에게 보이면
-    //   재배포 없이 즉시 끌 수 있어야 한다(삼순 2026-08-07 12라운드).
+    //   빠르게 끌 수 있어야 한다(삼순 2026-08-07 12라운드).
+    //   ⚠️ 이건 "재배포 없이 즉시"가 아니라 **재배포형 rapid rollback** 이다.
+    //     Vercel env 변경은 기존 배포에 반영되지 않는다 — 재배포 1회(~2분)가 필요하다.
+    //     값어치는 코드 수정·리뷰·머지를 건너뛰는 데 있다(삼순 정정).
     //
     //   ⚠️ 상수 존재 검사가 아니라 **배포되는 함수를 실제로 실행**한다.
     //   `enableTeamRag: true` 하드코딩으로 되돌리면 여기서 RED 가 난다.
@@ -644,7 +647,7 @@ async function run(): Promise<void> {
       `server.ts 의 enableTeamRag 대입이 1곳이 아니다: ${JSON.stringify(teamRagAssignments)}`);
     assert.match(teamRagAssignments[0], /enableTeamRag:\s*teamRagEnabled\(\)/,
       `server.ts 가 kill-switch 대신 값을 하드코딩하고 있다: ${teamRagAssignments[0].trim()}`);
-    ok("kill-switch — TEAM_RAG_DISABLED 로 즉시 차단 / 미설정·오타는 fail-safe 유지 / 배선 결속");
+    ok("kill-switch — TEAM_RAG_DISABLED 로 재배포형 rapid rollback / 미설정·오타는 fail-safe 유지 / 배선 결속");
   }
 
   // ── ⑦ 서술/수치 판정기 단독 계약 (경로 의존 없는 이중 방어) ─────────────
@@ -701,7 +704,7 @@ async function run(): Promise<void> {
       assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
         "선수 질문을 구단 RAG 가 선점했다");
       assert.equal(calls.teamLlm.length, 0, "선수 질문에 구단 RAG LLM 을 소비했다");
-      assert.notEqual(result.source, "rag",
+      assert.notEqual(result.source, "team_rag",
         "구단 근거로 선수 질문을 답했다(근거는 있지만 동문서답이다)");
     }
 
@@ -714,7 +717,7 @@ async function run(): Promise<void> {
       assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
         "룰 질문을 구단 RAG 가 선점했다");
       assert.equal(calls.teamLlm.length, 0, "룰 질문에 구단 RAG LLM 을 소비했다");
-      assert.notEqual(result.source, "rag",
+      assert.notEqual(result.source, "team_rag",
         "구단 근거로 룰 질문을 답했다(tier1 조문이 정본이다)");
     }
 
@@ -723,7 +726,7 @@ async function run(): Promise<void> {
     {
       const { deps, calls } = makeDeps();
       const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
-      assert.equal(result.source, "rag", "역전 방지 때문에 구단 서술 경로까지 죽었다");
+      assert.equal(result.source, "team_rag", "역전 방지 때문에 구단 서술 경로까지 죽었다");
       assert.equal(calls.teamLlm.length, 1);
     }
     ok("라우팅 역전 금지 — 구단명이 붙은 blocked/service/선수/룰 질문을 선점하지 않는다");

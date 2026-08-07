@@ -10,6 +10,7 @@
     "qa:feed-scroll-restore": "tsx scripts/qa/feed-scroll-restore-smoke.ts",
     "qa:ui:feed-scroll-restore-auth": "node scripts/qa/ui-smoke-feed-scroll-restore-auth.mjs",
     "qa:photos-helper-signature": "tsx scripts/qa/photos-helper-signature.ts",
+    "qa:team-rag-audit": "tsx scripts/qa/team-rag-audit.ts",
     "qa:naver-existing-user": "tsx scripts/qa/naver-existing-user-lookup-smoke.ts",
     "qa:field-defense": "tsx scripts/qa/field-defense-boxscore-smoke.ts",
     "transcode:videos": "node scripts/transcode-videos.mjs",

@@ -2910,13 +2910,27 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
     updated_at: new Date(Date.now() - 3_600_000).toISOString(), doubles: 8,
   };
+  // 구단 서술형 근거 — 선수 근거와 **다른 문서**여야 경로가 섞이지 않는다.
+  const teamEvidence = [{
+    content: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단으로, MBC 청룡을 인수해 창단했다.",
+    pageTitle: "LG 트윈스", canonicalUrl: "https://namu.wiki/w/LG 트윈스", revision: "1",
+    sectionPath: "개요", asOf: "2026-01-01", sourceGrade: "tier2",
+  }];
   const richDeps = (state: MockState): QaDeps => ({
     ...makeDeps(state),
     enablePlayerRag: true,
+    // 구단 RAG 도 켠다 — `team_rag` 는 `rag` 에서 분리된 별도 경로라 probe 가 따로 필요하다
+    // (2026-08-07 감사 식별자 분리). 안 켜면 아래 probe 가 조용히 다른 경로로 떨어진다.
+    enableTeamRag: true,
     now: () => Date.now(),
-    searchRag: async () => evidence as never,
+    searchRag: async (candidate: { entityType?: string }) =>
+      (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
     callRagLlm: async () => ({
       text: '{"status":"GROUNDED","answer":"럭키보이라고 불려요."}',
+      inputTokens: 10, outputTokens: 5,
+    }),
+    callTeamRagLlm: async () => ({
+      text: '{"status":"GROUNDED","answer":"서울 연고 구단으로 MBC 청룡을 인수해 창단했어요."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,
@@ -2926,6 +2940,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   const probes: Array<{ question: string; deps: (s: MockState) => QaDeps; state?: Partial<MockState> }> = [
     { question: "보크가 뭐야?", deps: richDeps },                       // dictionary
     { question: "문보경 별명이 뭐야?", deps: richDeps },                // rag
+    { question: "LG 트윈스 역사 알려줘", deps: richDeps },              // team_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
     { question: "고마워", deps: richDeps },                                // ack

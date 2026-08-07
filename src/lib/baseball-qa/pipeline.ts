@@ -223,6 +223,13 @@ export type MatchPath =
   | "ack"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
+  // 구단 서술형 질문을 적재된 구단 문서 근거로 답한 경로.
+  //
+  // ⚠️ 왜 `rag` 와 분리하는가 (삼순 2026-08-07): 선수·공식문서·구단 RAG 가 전부
+  //   `match_path='rag'` 로 기록돼 **구단 답변만 뽑아낼 수가 없었다.** 그래서 출시 후
+  //   전수 감사(숫자 누수·과차단 실측)를 하겠다고 약속해 놓고 정작 쿼리를 못 짰다.
+  //   한글 수사 파서를 삭제한 뒤로는 감사가 **유일한 안전망**이라 식별자가 필수다.
+  | "team_rag"
   // 시즌 기록(수치)을 구조화 DB 원값으로 답한 경로. LLM·RAG·cache 미사용이라
   // 생성답(llm)·근거답(rag)과 리스크가 전혀 다르다 — #983 모니터에서 분리 관측한다.
   | "kbo_structured"
@@ -1883,8 +1890,9 @@ async function answerTeamRagQuestion(
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-  return { status: 200, answer, source: "rag", remaining, sourceUrl };
+  // `team_rag` 로 기록한다 — 선수·공식 RAG 와 섞이면 구단 전수 감사가 불가능하다.
+  await deps.log({ userId, question, questionNorm, matchPath: "team_rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  return { status: 200, answer, source: "team_rag", remaining, sourceUrl };
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
