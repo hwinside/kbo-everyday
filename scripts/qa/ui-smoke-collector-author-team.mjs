@@ -38,7 +38,17 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 
 /** 기대값 — 배지에 이 팀 shortName 이 `"<팀> 팬"` 으로 보여야 한다. */
 const CASES = [
-  { id: 4333, playerId: "52605", want: "KIA", note: "백필 대상(사고 재현 글, 김도영)" },
+  {
+    id: 4333,
+    playerId: "52605",
+    want: "KIA",
+    note: "백필 대상(사고 재현 글, 김도영)",
+    // 피드에서 이 글 카드를 집어내는 본문 지문(제목 = 본문).
+    feedText: "땀 흘리는 내 모습 멋있어",
+    // 카드 경계가 어긋나 *다른 글* 헤더를 읽는 경우를 잡는 판별자.
+    // (같은 게시판 상단 글도 "KIA 팬" 일 수 있어 팀명만으로는 구분이 안 된다)
+    author: "짤콜렉터",
+  },
   { id: 4095, playerId: "51528", want: "롯데", note: "백필 대상(손성빈)" },
   { id: 2107, playerId: "54944", want: "NC", note: "백필 제외 — 게시 당시 팀 보존(데이비슨)" },
 ];
@@ -204,20 +214,36 @@ async function main() {
     });
     await page.getByRole("button", { name: /게시판/ }).click();
 
-    const card = page.locator(`[data-post-id="${feedCase.id}"]`).first();
-    // 무한스크롤 — 카드가 나올 때까지 스크롤.
-    for (let i = 0; i < 12 && !(await card.count()); i++) {
+    // 본문 지문으로 카드를 찾는다. 무한스크롤이라 나올 때까지 내린다.
+    const anchor = page.getByText(feedCase.feedText, { exact: false }).first();
+    for (let i = 0; i < 12 && !(await anchor.count()); i++) {
       await page.mouse.wheel(0, 1600);
       await page.waitForTimeout(600);
     }
-    await card.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-
-    if (check(`피드에 #${feedCase.id} 카드 렌더`, await card.isVisible().catch(() => false))) {
-      const cardHeader = card.locator("[data-community-author-header]").first();
-      const cardText = (await cardHeader.innerText()).replace(/\s+/g, " ").trim();
-      log(`   card header: "${cardText}"`);
-      assertBadge(`피드 #${feedCase.id}`, cardText, feedCase.want);
-      await card.screenshot({ path: `${SHOT_DIR}/collector-author-feed-card.png` });
+    if (check(`피드에 #${feedCase.id} 글 렌더`, (await anchor.count()) > 0, `"${feedCase.feedText}" 미노출`)) {
+      // 그 글의 카드 경계를 조상으로 올라가며 찾는다.
+      // ⚠️ 조상 탐색은 쉽게 여러 글의 공통조상을 잡는다(#1122 에서 실제로 거짓 RED 발생).
+      // 그래서 "작성자 헤더를 정확히 1개 포함"을 경계 조건으로 강제하고,
+      // 못 찾으면 그냥 통과시키지 않고 실패로 둠다(fail-close).
+      const cardText = await anchor.evaluate((el) => {
+        let node = el;
+        for (let depth = 0; depth < 12 && node; depth++) {
+          const headers = node.querySelectorAll?.("[data-community-author-header]") ?? [];
+          if (headers.length === 1) return headers[0].innerText;
+          if (headers.length > 1) return null; // 공통조상까지 올라갔다 — 경계 실패
+          node = node.parentElement;
+        }
+        return null;
+      });
+      if (check(`피드 #${feedCase.id} 카드 경계 확보(작성자 헤더 1개)`, cardText != null)) {
+        const t = cardText.replace(/\s+/g, " ").trim();
+        log(`   card header: "${t}"`);
+        // 읽은 헤더가 **그 글의 것**인지 먼저 못박는다. 이게 없으면 경계가 어긋나
+        // 다른 글 헤더를 읽어도 팀명이 우연히 같아 GREEN 이 된다.
+        check(`피드 #${feedCase.id} 헤더가 그 글의 작성자(${feedCase.author})`, t.includes(feedCase.author), `실제: "${t}"`);
+        assertBadge(`피드 #${feedCase.id}`, t, feedCase.want);
+      }
+      await page.screenshot({ path: `${SHOT_DIR}/collector-author-feed-card.png` });
     }
 
     console.log(`\n${failCount === 0 ? "PASS" : "FAIL"} — ${passCount} passed, ${failCount} failed`);
