@@ -18,9 +18,11 @@ import {
   validateRagResponse,
   type RagEntityCandidate,
   type RagEvidence,
+  type RagNewsCandidate,
   type RagPlayerCandidate,
   type RagTeamCandidate,
 } from "./rag/retrieve";
+import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
 import {
   composeSeasonRecordAnswer,
@@ -91,6 +93,17 @@ export const HISTORY_HOLD_ANSWER =
 export const TEAM_STAT_HOLD_ANSWER =
   "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어려워요. " +
   "순위·팀 기록은 홈의 순위표에서 바로 보실 수 있고, 구단 이야기나 선수 기록은 제가 답해드릴게요! ⚾";
+
+/**
+ * 최신 소식을 물었는데 그 창의 기사 근거로 답을 못 만든 경우 (삼순 조건부 GO ②).
+ *
+ * ⚠️ `BLOCKED_ANSWER`를 쓰지 않는 이유: 기본 차단문은 "야구 룰/용어만 답할 수 있어요" 라고
+ * 말하는데, 그건 **거짓말이다** — 질문은 범위 안이었고 단지 그날 기사가 없었을 뿐이다.
+ * 유저가 다음에 뭐를 할 수 있는지(다른 날·다른 질문)를 남긴다.
+ */
+export const NEWS_UNAVAILABLE_ANSWER =
+  "그 시기 기사에서는 답드릴 만한 내용을 찾지 못했어요. " +
+  "기간을 조금 달리해서(예: ‘최근 LG 어때?’) 다시 물어보시면 찾아볼게요! ⚾";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
   "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
@@ -230,6 +243,13 @@ export type MatchPath =
   //   전수 감사(숫자 누수·과차단 실측)를 하겠다고 약속해 놓고 정작 쿼리를 못 짰다.
   //   한글 수사 파서를 삭제한 뒤로는 감사가 **유일한 안전망**이라 식별자가 필수다.
   | "team_rag"
+  // 최근 30일 구단 기사 근거로 답한 경로.
+  //
+  // ⚠️ `team_rag` 와 분리하는 이유는 `team_rag` 를 `rag` 에서 분리한 것과 같다 —
+  //   근거의 **수명이 다르다**. 문서는 수집 시점에 고정되지만 기사는 30일이 지나면 purge 된다.
+  //   같은 질문에 지난달과 오늘의 답이 다를 수 있다는 뜻이라, 오답 감사를 할 때 문서 경로와
+  //   섮이면 "근거가 사라졌는지" 와 "근거가 틀렸는지" 를 구분할 수 없다.
+  | "news_rag"
   // 시즌 기록(수치)을 구조화 DB 원값으로 답한 경로. LLM·RAG·cache 미사용이라
   // 생성답(llm)·근거답(rag)과 리스크가 전혀 다르다 — #983 모니터에서 분리 관측한다.
   | "kbo_structured"
@@ -287,6 +307,20 @@ export interface QaDeps {
    * (`llm_scope_gate` → generic LLM, 미서빙 수치는 `TEAM_STAT_HOLD_ANSWER`) 그대로다.
    */
   enableTeamRag?: boolean;
+  /**
+   * 최근 30일 구단 기사 근거 검색 (news_rag). 미배선이면 이 경로 자체가 비활성이라
+   * 기존 동작(team_rag → generic LLM) 그대로다.
+   *
+   * ⚠️ 빈 배열과 예외를 **구분해서** 던진다. 검색 실패를 "기사 없음"으로 둔갑하면
+   *   장애 중에 조용히 폴백해서 낙은 근거로 답하게 된다(삼순 ②).
+   */
+  searchNewsRag?: (candidate: RagNewsCandidate, question: string) => Promise<RagEvidence[]>;
+  /** 기사(tier2) 근거 전용 재서술 호출. 프롬프트만 다르고 경계는 선수·구단과 동일하다. */
+  callNewsRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /**
+   * 최근 기사 근거 경로 ON/OFF. 미지정이면 꺼진 것으로 본다 — 새 경로는 명시적으로 켜야 한다.
+   */
+  enableNewsRag?: boolean;
   /**
    * 유저가 동명이인 picker에서 고른 kboId (재질의). 있으면 이름 매칭을 건너뛰고
    * 이 선수로 확정한다. 로스터에 없는 id면 무시되어 기존 경로로 내려간다.
@@ -582,6 +616,14 @@ const NAMED_STAT_QUERY =
 const TEAM_NUMERIC_STAT_WORDS = ["팀타율", "팀방어율", "팀평균자책", "팀홈런", "순위", "승률"];
 const NUMERIC_VALUE_ASK = /몇|얼마/;
 /**
+ * 답이 **정의상 숫자**인 명사. 최근 기사 경로만 쓴다.
+ *
+ * 요청 표현을 열거하는 게 아니라 **물은 대상**을 열거한다 — 전자는 `#1100` 에서 수렴하지
+ * 않음이 입증됐고, 후자는 폐쇄집합이다(스코어·점수·경기결과). 기사 경로는 숫자 출력이
+ * 전면 HOLD 라 이 질문에 구조적으로 답할 수 없다.
+ */
+const NUMERIC_ANSWER_NOUNS = /스코어|점수|경기\s?결과|승부\s?결과/;
+/**
  * **값을 달라는 요청어**. 구체 지표어와 함께 나올 때만 수치 질문으로 본다.
  *
  * ⚠️ 지표어 단독으로 닫으면 `삼성 라이온즈 홈런 잘 치는 팀이야?` 같은 **서술·평가**
@@ -665,6 +707,77 @@ export function isTeamRagServableQuestion(question: string): boolean {
   const tokens = questionTokens(normalized);
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   return !isTeamNumericQuestion(normalized, tokens, hasStat);
+}
+
+/**
+ * 최근 기사(news_rag) 근거로 답할 질문인가 — 진입 판정 + 검색 창 산출.
+ *
+ * 삼순 조건부 GO ①: **단일 TEAM + 최신성 + 서술형** 세 가지가 동시에 맞을 때만 기사로 간다.
+ *  · 단일 TEAM — `resolveRagTeamCandidate` 와 **같은 판정기**를 쓴다. 두 구단 이상이면 null 이라
+ *    비교 질문에 한쪽 기사만 붙는 사고가 구조적으로 불가능하다.
+ *  · 최신성 — `fresh` 만 소유한다. `none`(시간 신호 없음)과 `out_of_window`(올해·이번 시즌)은
+ *    기존 경로가 소유한다 — 30일치로 `올해` 를 답하면 일부만 보고 전체를 말하는 것이다.
+ *  · 서술형 — `isTeamRagServableQuestion` 과 **같은 수치 판정기**를 재사용한다.
+ *    `어제 LG 몇 대 몇` 은 structured 가 소유하고, 기사는 수치를 말하지 않는다.
+ *    판정기를 복사하지 않는다 — 복사하면 한쪽만 고쳐졌을 때 조용히 갈라진다.
+ *
+ * @param nowMs 판정 기준 시각(ms). 게이트가 경계값을 주입한다.
+ */
+export function resolveRagNewsCandidate(question: string, nowMs: number): RagNewsCandidate | null {
+  // 수치 질문은 기사가 소유하지 않는다(삼순 ①). structured 가 먼저 답한다.
+  if (!isTeamRagServableQuestion(question)) return null;
+
+  const normalized = question.normalize("NFKC").toLowerCase();
+  // ⚠️ 값을 묻는 질문은 **어휘 열거 없이** 닫는다.
+  //
+  //   `isTeamRagServableQuestion` 은 지표어(`홈런`·`순위`)가 붙은 수치 질문만 가린다.
+  //   그러서 `어제 LG 몇 대 몇이었어?` 는 그 판정을 **통과한다** — `몇` 은 있는데
+  //   `STAT_WORDS` 토큰이 없어 `hasStat=false` 이기 때문이다(2026-08-08 실측).
+  //   삼순 ①이 명시한 바로 그 케이스다.
+  //
+  //   `스코어`·`점수`·`모두 몇 개` 식으로 어휘를 늘려 막으면 #1100 에서 이미 수렴하지
+  //   않음이 입증됐다(요청 표현은 끝없이 늘어난다). 대신 **구조적 사실**을 쓴다:
+  //   이 경로는 숫자 출력이 전면 HOLD 라 값을 물은 질문에 제대로 답할 수 **구조적으로 없다**.
+  //   들어가봐야 출력 가드가 폐기해 `unsure` 로 끝나고, 그 사이에 quota 와 LLM 호출만 태운다.
+  //   그러면서 structured·기존 경로가 답할 기회까지 가로채다 — 순이익이 음수다.
+  if (NUMERIC_VALUE_ASK.test(normalized)) return null;
+  // 같은 구조적 이유로 **답이 정의상 숫자인 명사**도 닫는다.
+  //
+  //   `어제 LG 스코어 알려줘` 는 `몇`·`얼마` 가 없어 위 가드를 통과하고, `스코어` 는
+  //   `STAT_WORDS` 에도 없어 `isTeamRagServableQuestion` 도 통과한다(2026-08-08 실측).
+  //   삼순 ①이 말한 "score 충돌" 가 정확히 이 구멍이다.
+  //
+  //   여기서도 요청 표현(`알려줘`·`몇 대 몇`·`어때`)을 열거하지 않는다 — #1100 에서 그 방식이
+  //   수렴하지 않음이 입증됐다. 대신 **명사 자체가 수치를 가리키는** 닫힌 집합만 둔다:
+  //   스코어·점수·경기 결과는 물어보는 순간 답이 숫자로 확정된다. 이 경로는 숫자를 못 내므로
+  //   들어오면 quota·LLM 호출만 태우고 반드시 `unsure` 로 끝난다.
+  if (NUMERIC_ANSWER_NOUNS.test(normalized)) return null;
+
+  const recency = resolveNewsRecency(question, nowMs);
+  if (recency.kind !== "fresh") return null;
+
+  // 단일 구단 판정은 team RAG 와 같은 함수를 쓴다 — 다른 구단 언급 감지(`mentionsOtherTeam`)까지
+  // 그대로 상속된다. 여기서 따로 구현하면 비교 질문 방어가 한쪽에만 남는다.
+  const teamCandidate = resolveRagTeamCandidate(question);
+  if (!teamCandidate) return null;
+  const teamId = Number(teamCandidate.entityId);
+  if (!Number.isInteger(teamId)) return null;
+
+  return {
+    entityType: "news",
+    teamId,
+    name: teamCandidate.name,
+    since: recency.since,
+    until: recency.until,
+  };
+}
+
+/**
+ * 최신성 질문이긴 한데 기사 보유창(30일) 밖인가.
+ * `올해 LG 어때?` 처럼 news 가 소유하면 **안 되는** 질문을 게이트가 직접 보기 위해 노출한다.
+ */
+export function newsRecencyIntentOf(question: string, nowMs: number): NewsRecencyIntent {
+  return resolveNewsRecency(question, nowMs);
 }
 
 /**
@@ -1895,6 +2008,97 @@ async function answerTeamRagQuestion(
   return { status: 200, answer, source: "team_rag", remaining, sourceUrl };
 }
 
+/**
+ * 최근 기사(news_rag) 근거로 답한다.
+ *
+ * 구단 문서 경로와 결정적으로 다른 점 하나: **이 함수는 null 을 돌려주지 않는다.**
+ *
+ * 삼순 조건부 GO ② — "fresh 근거 0·검색 오류면 team_rag/generic 폴백 금지, 명시 fail-close".
+ * 앞단이 이미 `이건 최신 질문이다` 라고 판정해서 여기 보냈는데, 근거가 없다고 기존 경로로
+ * 흘려보내면 다음 경로(team_rag → generic LLM)가 **한 달 전 문서나 모델 기억으로** 답한다.
+ * "어제 무슨 일 있었어?" 에 오래된 서술을 붙이는 건 틀린 답을 최신인 것처럼 파는 것이라,
+ * 모르면 모른다고 닫는 쪽이 유일하게 안전한 형태다.
+ *
+ * 따라서 반환타입이 `Promise<QaResult>` 다 — 타입 자체가 "양보 경로 없음" 을 강제한다.
+ */
+async function answerNewsRagQuestion(
+  userId: string,
+  question: string,
+  questionNorm: string,
+  candidate: RagNewsCandidate,
+  remaining: number,
+  deps: QaDeps,
+): Promise<QaResult> {
+  const settle = async (answer: string, matchPath: MatchPath, sourceUrl?: string): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+    return { status: 200, answer, source: matchPath, remaining, sourceUrl };
+  };
+
+  let evidence: RagEvidence[];
+  try {
+    evidence = selectEvidence(await deps.searchNewsRag!(candidate, question));
+  } catch {
+    // 검색 실패를 "기사 없음" 으로 둔갑하지 않는다. 재시도 가능한 실패라 error 다.
+    return settle(BLOCKED_ANSWER, "error");
+  }
+  if (evidence.length === 0) {
+    // 그 창에 기사가 없다. 과거 근거로 대신 답하지 않고 여기서 닫는다(삼순 ②).
+    return settle(NEWS_UNAVAILABLE_ANSWER, "unsure");
+  }
+  // 기사는 tier2 고정이다. tier1 이 이 경로로 새면 숫자 허용 계약이 어긋나므로 닫는다.
+  if (allowsNumericAnswer(evidence)) return settle(BLOCKED_ANSWER, "error");
+
+  // ── durable LLM 경계 (선수·공식·구단 경로와 동일 계약) ──────────────────
+  let llm: LlmResult | null = null;
+  if (deps.getLlmState) {
+    let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
+    try {
+      state = await deps.getLlmState();
+    } catch {
+      return settle(BLOCKED_ANSWER, "error");
+    }
+    llm = state.result;
+    if (!llm && state.started) {
+      if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      return settle(BLOCKED_ANSWER, "error");
+    }
+  }
+  if (!llm) {
+    if (deps.acquireLlmStart) {
+      let won = false;
+      try {
+        won = await deps.acquireLlmStart();
+      } catch {
+        return settle(BLOCKED_ANSWER, "error");
+      }
+      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+    }
+    try {
+      llm = await deps.callNewsRagLlm!(question, evidence);
+    } catch {
+      return settle(BLOCKED_ANSWER, "error");
+    }
+    if (deps.storeLlm) await deps.storeLlm(llm);
+  }
+
+  // 숫자는 구단 tier2 와 동일하게 전면 HOLD 다(`numericEvidence` 미지정 = 기본값 금지).
+  const validated = validateRagResponse(llm.text, { maxChars: RAG_ANSWER_MAX_CHARS });
+  if (validated.kind !== "grounded") {
+    await deps.log({
+      userId, question, questionNorm, matchPath: "unsure",
+      answer: NEWS_UNAVAILABLE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    });
+    return { status: 200, answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", remaining };
+  }
+  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  await deps.log({
+    userId, question, questionNorm, matchPath: "news_rag",
+    answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+  });
+  return { status: 200, answer, source: "news_rag", remaining, sourceUrl };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   const question = rawQuestion.trim();
   const questionNorm = normalizeQuestion(question);
@@ -2128,6 +2332,29 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 여전히 generic LLM(③) 보다는 앞이라, 적재한 71,531 chunk 는 정상적으로 읽힌다.
   //
   // 근거가 없으면 null → 기존 경로 그대로(공식문서 경로와 같은 양보 규칙).
+  // ── 최근 기사 RAG (news_rag) ────────────────────────────────────
+  //
+  // 위치가 계약이다(삼순 조건부 GO ①). 구단 문서 RAG **바로 앞**이면서, 그 앞의 것은 전부
+  // 그대로 살려둔다:
+  //  · 종결 라우트(blocked·service_redirect·ack…) — `어제 LG 앱 로그인 오류` 는 여전히 service_redirect
+  //  · 구단 기록(`team_record` 분기) — `어제 LG 몇 위였어?` 는 structured 가 먼저 받는다
+  //  · 검수 사전(①) — 사람이 검수한 답이 항상 우선
+  //  · 공식 문서(tier1) · 룰/용어(`baseball_rule_term`) — `어제 경기에서 보크가 뭐야?` 는 조문이 정본
+  //  · 선수 후보 존재 — 선수가 지명된 질문은 선수 경로가 소유한다
+  // 즉 기사는 "단일 구단 + 최신성 + 서술형" 이라는 좁은 교집합만 가져간다.
+  //
+  // ⚠️ 이 분기에 들어오면 **여기서 종결한다**(null 양보 없음). fresh 근거 0 · 검색 오류도
+  //   team_rag/generic 으로 내려보내지 않고 명시 fail-close 한다(삼순 ②).
+  //   `answerNewsRagQuestion` 의 반환타입이 `QaResult`(not `| null`)라 타입이 이걸 강제한다.
+  const newsRagCandidate =
+    deps.enableNewsRag && deps.searchNewsRag && deps.callNewsRagLlm &&
+    !enabledPlayerCandidate && route !== "baseball_rule_term"
+      ? resolveRagNewsCandidate(question, (deps.now ?? Date.now)())
+      : null;
+  if (newsRagCandidate) {
+    return answerNewsRagQuestion(userId, question, questionNorm, newsRagCandidate, remaining, deps);
+  }
+
   const teamRagCandidate =
     deps.enableTeamRag && !enabledPlayerCandidate && route !== "baseball_rule_term"
       ? resolveRagTeamCandidate(question)
