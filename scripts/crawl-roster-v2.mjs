@@ -16,6 +16,8 @@ import {
   evaluateTeamCollection,
   evaluateSetStability,
   evaluateRosterCompletion,
+  buildExpectedSlotKeys,
+  phaseFiltersTrusted,
   formatCompletionFailure,
 } from "./lib/roster-crawl-completion.mjs";
 
@@ -202,6 +204,41 @@ async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
 }
 
 /**
+ * phase 시작 전 series(정규시즌)·season(2026) 셀렉트를 건다.
+ *
+ * ⚠︎ 삼순 NO-GO ①: `changeSelectAndWait` 반환을 반드시 확인한다. 종전엔 반환을
+ * 버려 season 전이가 실패해도(이전 연도/default 표) 팀 루프를 그대로 돌았고,
+ * team witness 는 연도를 못 보므로 잘못된 연도 표 전체가 완주 계약을 통과했다.
+ * 판정은 순수함수 phaseFiltersTrusted() 에 위임한다(게이트가 행동을 직접 검증하도록).
+ *
+ * @returns {Promise<boolean>} 전이가 신뢰 가능하면 true. false 면 호출측이 phase 전체를 fail-close 해야 한다.
+ */
+async function setupPhaseFilters(page, { seasonSel, seriesSel }) {
+  const hasSeries = Boolean(await page.$(seriesSel));
+  let seriesConfirmed = true;
+  if (hasSeries) {
+    seriesConfirmed = await changeSelectAndWait(page, seriesSel, "0", 5000);
+  }
+  const seasonConfirmed = await changeSelectAndWait(page, seasonSel, "2026", 8000);
+  return phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed });
+}
+
+/** season/series 전이 실패 시 phase 전 팀을 fail-close 하는 outcome. */
+function phaseFilterFailureOutcome(teamName, teamId, phase) {
+  return {
+    teamName,
+    teamId,
+    phase,
+    attempts: 0,
+    result: {
+      ok: false,
+      reason: TEAM_FAIL_REASONS.SELECT_UNCONFIRMED,
+      detail: "season/series 전이 실패 — 이전 연도 표일 수 있어 phase 전체 fail-close",
+    },
+  };
+}
+
+/**
  * 팀 1개를 완주 계약 아래에서 수집한다. 실패 사유가 있으면 bounded retry.
  * 수집된 행은 판정이 ok 일 때만 반영한다 — 오염 데이터를 넣고 나중에 되돌리지 않는다.
  */
@@ -295,7 +332,7 @@ async function collectTeamWithContract({
   }
 
   await changeSelectAndWait(page, teamSel, "", 5000).catch(() => {});
-  return { teamName, phase, result, attempts };
+  return { teamName, teamId, phase, result, attempts };
 }
 
 /**
@@ -593,12 +630,18 @@ async function main() {
   console.log("\n📊 타자 크롤링...");
   await page.goto("https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx", { waitUntil: "networkidle" });
 
-  // Set series to regular season
-  const hasSeries = await page.$(seriesSel);
-  if (hasSeries) await changeSelectAndWait(page, seriesSel, "0", 5000);
-  await changeSelectAndWait(page, seasonSel, "2026", 8000);
+  // series(정규시즌)·season(2026) 셀렉트 — 전이 반환을 반드시 확인(삼순 NO-GO ①)
+  const battersFilterOk = await setupPhaseFilters(page, { seasonSel, seriesSel });
+  if (!battersFilterOk) {
+    console.warn("  ⚠️ 타자 season/series 전이 실패 — phase 전체 fail-close");
+  }
 
   for (const [teamCode, teamName, teamId] of TEAMS) {
+    if (!battersFilterOk) {
+      // 전이가 실패하면 이전 연도 표를 읽게 되므로 수집하지 않고 슬롯을 실패로 남긴다.
+      teamOutcomes.push(phaseFilterFailureOutcome(teamName, teamId, "batters"));
+      continue;
+    }
     console.log(`  ${teamName}...`);
     teamOutcomes.push(
       await collectTeamWithContract({
@@ -630,13 +673,16 @@ async function main() {
   console.log("\n📊 투수 크롤링...");
   await page.goto("https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx", { waitUntil: "networkidle" });
 
-  if (hasSeries) {
-    const hasSeries2 = await page.$(seriesSel);
-    if (hasSeries2) await changeSelectAndWait(page, seriesSel, "0", 5000);
+  const pitchersFilterOk = await setupPhaseFilters(page, { seasonSel, seriesSel });
+  if (!pitchersFilterOk) {
+    console.warn("  ⚠️ 투수 season/series 전이 실패 — phase 전체 fail-close");
   }
-  await changeSelectAndWait(page, seasonSel, "2026", 8000);
 
   for (const [teamCode, teamName, teamId] of TEAMS) {
+    if (!pitchersFilterOk) {
+      teamOutcomes.push(phaseFilterFailureOutcome(teamName, teamId, "pitchers"));
+      continue;
+    }
     console.log(`  ${teamName}...`);
     teamOutcomes.push(
       await collectTeamWithContract({
@@ -665,7 +711,12 @@ async function main() {
 
   // 완주 계약: 한 팀이라도 실패하면 저장하지 않는다.
   // 부분 수집을 정상 완주로 저장하던 결손이 `②-b roster 자동머지 보류` 의 근거였다.
-  const completion = evaluateRosterCompletion(teamOutcomes, TEAMS.length * 2);
+  // 개수가 아니라 phase×teamId 슬롯 key 집합으로 판정(삼순 NO-GO ②):
+  // 중복 슬롯 1개가 누락 슬롯을 메꿐는 사건까지 잡는다.
+  const completion = evaluateRosterCompletion(
+    teamOutcomes,
+    buildExpectedSlotKeys(TEAMS.map(([, , teamId]) => teamId))
+  );
   if (!completion.complete) {
     await browser.close();
     console.error(`\n${formatCompletionFailure(completion)}`);

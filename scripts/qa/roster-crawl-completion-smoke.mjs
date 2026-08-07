@@ -28,6 +28,9 @@ import {
   evaluateTeamCollection,
   evaluateSetStability,
   evaluateRosterCompletion,
+  buildSlotKey,
+  buildExpectedSlotKeys,
+  phaseFiltersTrusted,
   formatCompletionFailure,
 } from "../lib/roster-crawl-completion.mjs";
 
@@ -193,46 +196,109 @@ check("한쪽에만 있는 ID 도 unstable", () => {
 
 console.log("\n§4 완주 판정 — 한 슬롯이라도 비면 완주가 아니다");
 
-const okOutcome = (teamName, phase) => ({
-  teamName,
+const okOutcome = (teamId, phase) => ({
+  teamName: `T${teamId}`,
+  teamId,
   phase,
   attempts: 1,
   result: { ok: true, reason: null, detail: "수집 30명" },
 });
 
+// 슬롯 key 가 phase×teamId 로 만들어지므로, 테스트도 teamId 10개(1..10)로 예상 집합을 세운다.
+const TEST_TEAM_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const EXPECTED_KEYS = buildExpectedSlotKeys(TEST_TEAM_IDS);
+
 check("전 슬롯 성공이면 완주", () => {
   const outcomes = [];
   for (const phase of ["batters", "pitchers"]) {
-    for (let i = 0; i < 10; i++) outcomes.push(okOutcome(`T${i}`, phase));
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
   }
-  assert.equal(evaluateRosterCompletion(outcomes, 20).complete, true);
+  assert.equal(evaluateRosterCompletion(outcomes, EXPECTED_KEYS).complete, true);
 });
 
 // 없으면: 9팀만 돌고 끝난 런이 완주로 저장된다.
 check("슬롯이 모자라면 미완주", () => {
   const outcomes = [];
   for (const phase of ["batters", "pitchers"]) {
-    for (let i = 0; i < 9; i++) outcomes.push(okOutcome(`T${i}`, phase));
+    for (const id of TEST_TEAM_IDS.slice(0, 9)) outcomes.push(okOutcome(id, phase));
   }
-  const e = evaluateRosterCompletion(outcomes, 20);
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
   assert.equal(e.complete, false);
   assert.equal(e.missingSlots, 2);
+  assert.deepEqual(e.missingKeys.sort(), [buildSlotKey("batters", 10), buildSlotKey("pitchers", 10)].sort());
 });
 
 check("한 팀 실패면 나머지가 전부 성공이어도 미완주", () => {
   const outcomes = [];
   for (const phase of ["batters", "pitchers"]) {
-    for (let i = 0; i < 10; i++) outcomes.push(okOutcome(`T${i}`, phase));
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
   }
   outcomes[3] = {
-    teamName: "T3",
+    teamName: "T4",
+    teamId: 4,
     phase: "batters",
     attempts: 3,
     result: { ok: false, reason: TEAM_FAIL_REASONS.EMPTY, detail: "수집 0명" },
   };
-  const e = evaluateRosterCompletion(outcomes, 20);
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
   assert.equal(e.complete, false);
   assert.equal(e.failures.length, 1);
+});
+
+// 삼순 NO-GO ② 핵심: 중복 슬롯 1개가 누락 슬롯을 메꿐어 length 는 맞지만 실제로는 한 팀이 빠졌다.
+// 없으면: 개수만 보는 판이 이걸 complete=true 로 샜다.
+check("중복 슬롯이 누락 슬롯을 메꿐어도 — count 는 맞지만 미완주", () => {
+  const outcomes = [];
+  for (const phase of ["batters", "pitchers"]) {
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
+  }
+  // batters T10 슬롯을 batters T1 중복으로 교체 → 개수는 그대로 20, 그러나 T10 batters 누락.
+  const dupIdx = outcomes.findIndex((o) => o.phase === "batters" && o.teamId === 10);
+  outcomes[dupIdx] = okOutcome(1, "batters");
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
+  assert.equal(outcomes.length, EXPECTED_KEYS.length, "count 는 동일해야 함정(개수-only 판은 이걸 놓칩다)");
+  assert.equal(e.complete, false);
+  assert.deepEqual(e.duplicateKeys, [buildSlotKey("batters", 1)]);
+  assert.deepEqual(e.missingKeys, [buildSlotKey("batters", 10)]);
+});
+
+// 순수 중복(누락 없이 중복만) — duplicateKeys 검사가 **단독 검출자**인 케이스.
+// 이 테스트가 없으면 duplicateKeys 체크를 지워도 중복+누락 케이스를 missingKeys 가 대신 잡아 GREEN 이 된다.
+check("누락 없는 순수 중복도 미완주 (duplicateKeys 단독 검출)", () => {
+  const outcomes = [];
+  for (const phase of ["batters", "pitchers"]) {
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
+  }
+  // 전 슬롯 그대로 두고 batters T1 을 하나 더 밀어넣는다 → 누락 0, 중복 1, length=21.
+  outcomes.push(okOutcome(1, "batters"));
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
+  assert.equal(e.missingKeys.length, 0, "누락은 없어야 한다(그래야 duplicateKeys 가 단독 검출자다)");
+  assert.equal(e.complete, false);
+  assert.deepEqual(e.duplicateKeys, [buildSlotKey("batters", 1)]);
+});
+
+// 예상밖 슬롯(잘못된 teamId/phase)도 fail-close.
+check("예상밖 슬롯은 미완주", () => {
+  const outcomes = [];
+  for (const phase of ["batters", "pitchers"]) {
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
+  }
+  outcomes.push(okOutcome(999, "batters")); // 존재하지 않는 팀
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
+  assert.equal(e.complete, false);
+  assert.deepEqual(e.unexpectedKeys, [buildSlotKey("batters", 999)]);
+});
+
+// teamId 가 없는 outcome 은 undefined key 로 떨어져 fail-close(방어).
+check("teamId 누락 outcome 은 fail-close", () => {
+  const outcomes = [];
+  for (const phase of ["batters", "pitchers"]) {
+    for (const id of TEST_TEAM_IDS) outcomes.push(okOutcome(id, phase));
+  }
+  const idx = outcomes.findIndex((o) => o.phase === "batters" && o.teamId === 5);
+  outcomes[idx] = { teamName: "T5", phase: "batters", attempts: 1, result: { ok: true, reason: null, detail: "x" } };
+  const e = evaluateRosterCompletion(outcomes, EXPECTED_KEYS);
+  assert.equal(e.complete, false);
 });
 
 check("실패 리포트에 팀·사유·시도횟수가 남는다", () => {
@@ -240,18 +306,40 @@ check("실패 리포트에 팀·사유·시도횟수가 남는다", () => {
     [
       {
         teamName: "두산",
+        teamId: 2,
         phase: "batters",
         attempts: 3,
         result: { ok: false, reason: TEAM_FAIL_REASONS.EMPTY, detail: "수집 0명" },
       },
     ],
-    20
+    [buildSlotKey("batters", 2)]
   );
   const text = formatCompletionFailure(e);
   assert.match(text, /roster_crawl_incomplete/);
   assert.match(text, /두산/);
   assert.match(text, /empty/);
   assert.match(text, /시도 3회/);
+});
+
+console.log("\n② series/season 전이 fail-close (삼순 NO-GO ①)");
+
+// phaseFiltersTrusted 행동 계약 — season 전이 반환을 무시하면 이전 연도 표가 통과한다.
+check("series·season 모두 확정이면 신뢰", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: true }), true);
+});
+check("series 전이 실패면 불신뢰", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: false, seasonConfirmed: true }), false);
+});
+// 이게 정확히 삼순 NO-GO ① — season 전이 실패를 무시하던 결함.
+check("season 전이 실패면 불신뢰(이전 연도 표 차단)", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: false }), false);
+});
+check("season 미확정(undefined)은 fail-close", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: undefined }), false);
+});
+check("series 셀렉트 없으면 season 만으로 판정", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: true }), true);
+  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: false }), false);
 });
 
 console.log("\n§5 실제 저장본 — 정상 데이터가 이 게이트를 통과하는가 (삼순 NO-GO ①)");
@@ -348,6 +436,43 @@ check("fail-close 가 저장(writeFileSync)보다 앞선다", () => {
   const writeIdx = crawlerSrc.indexOf("writeFileSync(join(CONSTANTS_DIR");
   assert.ok(failIdx > 0 && writeIdx > 0);
   assert.ok(failIdx < writeIdx, "완주 판정이 저장보다 뒤에 있다 — 오염 데이터가 저장된다");
+});
+
+// 삼순 NO-GO ① (구조): 크롤러가 season/series 전이 반환을 소비해 fail-close 해야 한다.
+// 행동 검증은 위 phaseFiltersTrusted 테스트가, 배선 연결은 이 구조 가드가 맡는다.
+check("크롤러가 setupPhaseFilters 반환을 소비해 phase fail-close 한다", () => {
+  assert.match(crawlerSrc, /async function setupPhaseFilters\(/, "setupPhaseFilters 헬퍼가 없다");
+  // setupPhaseFilters 가 순수함수 판정을 **그대로 반환**해야 한다 — `return true` 로 바꾸면 season 전이 실패가 샰다.
+  assert.match(
+    crawlerSrc,
+    /return phaseFiltersTrusted\(\{ hasSeries, seriesConfirmed, seasonConfirmed \}\);/,
+    "setupPhaseFilters 가 phaseFiltersTrusted 결과를 반환하지 않는다"
+  );
+  // 전이 반환을 실제로 변수에 받아야 한다(반환 무시 방지).
+  assert.match(crawlerSrc, /const seasonConfirmed = await changeSelectAndWait\(page, seasonSel/);
+  // 두 phase 모두 반환을 변수로 받아 실패 시 슬롯을 fail-close outcome 으로 넣어야 한다.
+  assert.match(crawlerSrc, /const battersFilterOk = await setupPhaseFilters\(/);
+  assert.match(crawlerSrc, /const pitchersFilterOk = await setupPhaseFilters\(/);
+  assert.match(
+    crawlerSrc,
+    /if \(!battersFilterOk\)[\s\S]{0,200}phaseFilterFailureOutcome\(/,
+    "batters 전이 실패 시 fail-close outcome 을 안 넣는다"
+  );
+  assert.match(
+    crawlerSrc,
+    /if \(!pitchersFilterOk\)[\s\S]{0,200}phaseFilterFailureOutcome\(/,
+    "pitchers 전이 실패 시 fail-close outcome 을 안 넣는다"
+  );
+});
+
+// 삼순 NO-GO ② (구조): 크롤러가 개수가 아니라 key 집합으로 완주를 판정해야 한다.
+check("크롤러가 expected 슬롯 key 집합으로 완주 판정한다 (count 아님)", () => {
+  assert.match(crawlerSrc, /buildExpectedSlotKeys\(/, "key 집합 대신 개수를 쓰고 있다");
+  assert.doesNotMatch(
+    crawlerSrc,
+    /evaluateRosterCompletion\(\s*teamOutcomes\s*,\s*TEAMS\.length\s*\*\s*2\s*\)/,
+    "개수-only 호출이 남아 있다"
+  );
 });
 
 // 삼순 NO-GO ①. 없으면 actual crawl 이 영구 RED.

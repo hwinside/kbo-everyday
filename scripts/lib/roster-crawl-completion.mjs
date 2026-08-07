@@ -194,17 +194,76 @@ export function evaluateSetStability(firstIds, secondIds) {
  * 전 팀 판정을 모아 완주 여부를 결정한다.
  * 한 팀이라도 실패하면 완주가 아니다 (fail-close).
  */
-export function evaluateRosterCompletion(teamOutcomes, expectedTeamSlots) {
+/** 완주 슬롯의 정본 key — phase 와 teamId 의 조합 하나가 슬롯 하나다. */
+export function buildSlotKey(phase, teamId) {
+  return `${phase}::${teamId}`;
+}
+
+/** 기대 슬롯 key 전체 집합을 만든다(teamIds × phases). */
+export function buildExpectedSlotKeys(teamIds, phases = ["batters", "pitchers"]) {
+  const keys = [];
+  for (const phase of phases) {
+    for (const teamId of teamIds) keys.push(buildSlotKey(phase, teamId));
+  }
+  return keys;
+}
+
+/**
+ * phase 시작 전 series(정규시즌)·season(2026) 셀렉트 전이가 신뢰 가능한지 판정한다.
+ *
+ * ⚠︎ 삼순 NO-GO ①. 종전 크롤러는 `changeSelectAndWait(seasonSel, "2026")` 의 반환을
+ * **무시**했다. 전이가 실패하면(이전 연도/시리즈 표가 그대로) 팀 루프가 잘못된 연도
+ * 표를 읽는데, team witness 는 팀명만 보고 **연도는 못 본다**. 그래서 이전 연도 표
+ * 전체가 완주 계약을 통과할 수 있었다. → season 전이 실패는 phase 전체 fail-close.
+ *
+ *   hasSeries=true 인데 series 미확정  → false
+ *   season 미확정(false/undefined 등)  → false
+ *   그 외                              → true
+ */
+export function phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed }) {
+  if (hasSeries && seriesConfirmed !== true) return false;
+  return seasonConfirmed === true;
+}
+
+/**
+ * 완주 여부를 **개수가 아니라 슬롯 key 집합**으로 판정한다.
+ *
+ * ⚠︎ 삼순 NO-GO ②. 종전 판은 `teamOutcomes.length === expectedTeamSlots` 개수만 봤다.
+ * 그러면 한 팀을 두 번 수집(중복 슬롯)해 다른 팀 슬롯 누락을 메꿔도 length 가 맞아
+ * `complete=true` 로 샜다. 이제 phase×teamId key 로 누락·중복·예상밖을 각각 잡는다.
+ *
+ * @param {Array} teamOutcomes 각 원소는 {phase, teamId, result:{ok}} 를 가진다.
+ * @param {string[]} expectedSlotKeys buildExpectedSlotKeys() 산출물.
+ */
+export function evaluateRosterCompletion(teamOutcomes, expectedSlotKeys) {
+  const expected = new Set(expectedSlotKeys);
+  const seenCounts = new Map();
+  const unexpectedKeys = [];
+  for (const o of teamOutcomes) {
+    const key = buildSlotKey(o.phase, o.teamId);
+    seenCounts.set(key, (seenCounts.get(key) || 0) + 1);
+    if (!expected.has(key)) unexpectedKeys.push(key);
+  }
+  const duplicateKeys = [...seenCounts.entries()]
+    .filter(([, n]) => n > 1)
+    .map(([k]) => k);
+  const missingKeys = [...expected].filter((k) => !seenCounts.has(k));
   const failures = teamOutcomes.filter((o) => !o.result.ok);
-  const missing = expectedTeamSlots - teamOutcomes.length;
-  const complete = failures.length === 0 && missing === 0;
+  const complete =
+    failures.length === 0 &&
+    missingKeys.length === 0 &&
+    duplicateKeys.length === 0 &&
+    unexpectedKeys.length === 0;
   return {
     complete,
     failures,
-    missingSlots: missing > 0 ? missing : 0,
+    missingKeys,
+    duplicateKeys,
+    unexpectedKeys,
+    missingSlots: missingKeys.length, // 하위호환 — 개수만 필요한 소비자용
     summary: complete
-      ? `완주 ${teamOutcomes.length}/${expectedTeamSlots} 슬롯`
-      : `미완주 — 실패 ${failures.length}건, 미실행 ${Math.max(missing, 0)}슬롯`,
+      ? `완주 ${expected.size}/${expected.size} 슬롯`
+      : `미완주 — 실패 ${failures.length}건, 누락 ${missingKeys.length}, 중복 ${duplicateKeys.length}, 예상밖 ${unexpectedKeys.length}`,
   };
 }
 
@@ -257,8 +316,16 @@ export function formatCompletionFailure(evaluation) {
   for (const f of evaluation.failures) {
     lines.push(`  - ${f.phase}/${f.teamName}: ${f.result.reason} (${f.result.detail}, 시도 ${f.attempts}회)`);
   }
-  if (evaluation.missingSlots > 0) {
-    lines.push(`  - 미실행 슬롯 ${evaluation.missingSlots}개 — 루프가 중간에 끊겼다`);
+  if (evaluation.missingKeys?.length) {
+    lines.push(`  - 누락 슬롯 ${evaluation.missingKeys.length}개: ${evaluation.missingKeys.join(", ")}`);
+  }
+  if (evaluation.duplicateKeys?.length) {
+    lines.push(
+      `  - 중복 슬롯 ${evaluation.duplicateKeys.length}개: ${evaluation.duplicateKeys.join(", ")} — 한 슬롯을 두 번 수집해 누락 슬롯을 가렸다`
+    );
+  }
+  if (evaluation.unexpectedKeys?.length) {
+    lines.push(`  - 예상밖 슬롯 ${evaluation.unexpectedKeys.length}개: ${evaluation.unexpectedKeys.join(", ")}`);
   }
   return lines.join("\n");
 }
