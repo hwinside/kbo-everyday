@@ -807,6 +807,15 @@ function tokenIsNumeric(token: string, nextToken: string): boolean {
     const units = head.syllables >= 2 || head.native === "full" ? UNITS : SINGLE_SYLLABLE_UNITS;
     if (units.some((u) => rest.startsWith(u))) return true;
 
+    // **2음절 이상 완전형 고유어**는 수사로만 읽힌다 → 뒤에 무엇이 오든 수량이다.
+    //   `하나라고`·`하나씩`·`하나라도` 는 조사도 어미도 단위도 아니라 종전 규칙을
+    //   전부 빠져나갔다(삼순 12라운드 실측). `라고`·`씩` 을 조사 목록에 더하는 대응은
+    //   또 열거라, 애초에 **모호성이 없는 수사**는 나머지를 보지 않는 쪽이 옳다.
+    //
+    //   ⚠️ 1음절 완전형(`둘`·`셋`·`넷`)은 제외한다. 야구/일상 어휘의 첫 음절과 겹친다:
+    //     `셋업맨`(셋+업맨) · `넷플릭스`(넷+플릭스). 실측으로 확인하고 경계를 그었다.
+    if (head.native === "full" && head.syllables >= 2) return true;
+
     // 조사 결합. **단음절 수사에는 허용하지 않는다.**
     //   · 단음절 한자: `조만간`(조+만간)·`사는`(살다)·`오는`(오다)이 죽는다.
     //   · 단음절 관형형: 조사 `이` 때문에 `네`+`이버…`·`세`+`이브`가 죽는다(자체 실측).

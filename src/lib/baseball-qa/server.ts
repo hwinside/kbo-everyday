@@ -56,6 +56,27 @@ import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { tier2WeightForQuestion } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+/**
+ * 구단 RAG kill-switch.
+ *
+ * ⚠️ 왜 필요한가 (삼순 2026-08-07 12라운드): tier2 숫자 가드는 **best-effort** 정책으로
+ *   간다(하린아빠 승인). 즉 잔존 누수가 있을 수 있고, 그게 실제로 유저에게 보이면
+ *   **재배포 없이 즉시 끌 수 있어야** 한다. 종전처럼 `enableTeamRag: true` 로 하드코딩하면
+ *   끄는 데 코드 수정 → 리뷰 → 머지 → 배포가 필요해 대응이 늦는다.
+ *
+ * 끄는 법: Vercel 환경변수 `TEAM_RAG_DISABLED=1` 설정 후 재배포 없이 다음 요청부터 적용
+ *   (서버리스 함수는 콜드스타트마다 env 를 다시 읽는다. 즉시성이 필요하면 재배포로 강제).
+ *   끄면 구단 질문은 종전 경로(일반 LLM)로 내려간다 — 기능이 죽는 게 아니라 RAG 만 우회한다.
+ *
+ * ⚠️ **fail-safe 방향**: 값이 없거나 이상하면 **켜진 상태**를 유지한다. 이 스위치는
+ *   장애 대응용이지 기능 게이트가 아니므로, 오타 하나로 조용히 꺼지면 안 된다.
+ *   끄는 것은 명시적인 `1`/`true`/`yes`/`on` 일 때만이다.
+ */
+export function teamRagEnabled(): boolean {
+  const raw = (process.env.TEAM_RAG_DISABLED ?? "").trim().toLowerCase();
+  return !["1", "true", "yes", "on"].includes(raw);
+}
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 /** 프롬프트 SSOT는 gemini-request.ts — 실 provider 게이트가 같은 문자열을 import해 검증한다. */
 const SYSTEM_PROMPT = BASEBALL_QA_SYSTEM_PROMPT;
@@ -394,7 +415,7 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 구단 RAG 개통 (하린아빠 2026-08-05 "배선 연결"). production 적재 실측:
     // `genius_rag_sources` team 10/10 ready, `genius_rag_serving_chunks` entity_type=team 71,531건.
     // 그런데 후보 생성 코드가 없어 한 건도 읽히지 않고 있었다(`LG 역사` → source=llm).
-    enableTeamRag: true,
+    enableTeamRag: teamRagEnabled(),
     callTeamRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
     releaseDaily: async (userId) => {

@@ -28,6 +28,8 @@
  * 실행: npm run qa:team-rag-wiring
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   answerQuestion,
   isTeamRagServableQuestion,
@@ -465,6 +467,14 @@ async function run(): Promise<void> {
       //   그래서 fixture 를 실사용 형태로 바꾸고, 가드도 붙여쓰기 목록에서 뺐다.
       "LG 트윈스는 만 경기를 소화했어요.",
       "LG 트윈스는 만 안타를 기록했어요.",
+      // 축21: **완전형 고유어 + 조사·어미 아닌 것** — 12라운드 삼순 지적.
+      //   `하나라고`·`하나씩`·`하나라도` 는 조사도 어미도 단위도 아니라 전부 빠져나갔다.
+      //   `라고`·`씩` 을 조사 목록에 더하는 대응은 또 열거라, 애초에 모호성이 없는
+      //   2음절 이상 완전형은 **나머지를 보지 않는** 쪽으로 바꿨다.
+      "LG 트윈스의 우승은 하나라고 해요.",
+      "LG 트윈스는 우승컵을 하나씩 모았어요.",
+      "LG 트윈스는 우승이 하나라도 있어요.",
+      "LG 트윈스는 다섯씩 나눠 훈련해요.",
     ]) {
       const { deps, logs } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -478,7 +488,7 @@ async function run(): Promise<void> {
         `한글 수사 수치가 rag 로 나갔다(삼순 반대가설 B): ${answer}`);
       assert.equal(logs.at(-1)?.matchPath, "unsure");
     }
-    ok("삼순 반대가설 B~I — 한글/비ASCII 수치 20축 단독 차단 (수사 파서: 어간·조사·단위 분해)");
+    ok("삼순 반대가설 B~J — 한글/비ASCII 수치 21축 단독 차단 (수사 파서: 어간·조사·단위·완전형 분해)");
   }
 
   {
@@ -529,6 +539,10 @@ async function run(): Promise<void> {
       //   실제로 `네이버` 가 과차단돼 게이트가 RED 를 냈다.
       "세이브 기록이 많은 구단이에요.",
       "세이프 판정으로 이긴 구단이에요.",
+      // 12라운드 자체발견 — 완전형을 1음절까지 넓히면 야구/일상 어휘가 죽는다.
+      //   `셋업맨`(셋+업맨) · `넷플릭스`(넷+플릭스). 그래서 2음절 이상으로 경계를 그었다.
+      "셋업맨이 강한 구단이에요.",
+      "넷플릭스에서 다큐를 만든 구단이에요.",
     ]) {
       const { deps } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -541,7 +555,7 @@ async function run(): Promise<void> {
       assert.equal(result.source, "rag",
         `수치가 아닌 정상 구단 서술이 차단됐다(과차단): ${answer}`);
     }
-    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·열심히·이점·천천히·백업·이사회·만루·만족·조만간·억척·이만수·이천·세이브·세이프·네이버 통과");
+    ok("한글 수치 차단 과차단 방지 — 이승엽·이해·이번·오타니·이점·이사회·만루·만족·조만간·억척·이만수·이천·세이브·세이프·네이버·셋업맨·넷플릭스 등 통과");
   }
 
   {
@@ -677,6 +691,52 @@ async function run(): Promise<void> {
     assert.equal(calls.teamLlm.length, 0);
     assert.notEqual(result.source, "rag");
     ok("enableTeamRag=false — 종전 동작 유지");
+  }
+
+  {
+    // ⑥-b **kill-switch** — best-effort 정책이라 잔존 누수가 유저에게 보이면
+    //   재배포 없이 즉시 끌 수 있어야 한다(삼순 2026-08-07 12라운드).
+    //
+    //   ⚠️ 상수 존재 검사가 아니라 **배포되는 함수를 실제로 실행**한다.
+    //   `enableTeamRag: true` 하드코딩으로 되돌리면 여기서 RED 가 난다.
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??= "team-rag-wiring-smoke-key";
+    const { teamRagEnabled } = await import("../../src/lib/baseball-qa/server");
+    const saved = process.env.TEAM_RAG_DISABLED;
+    try {
+      // 끄는 값 — 명시적인 것만 인정한다.
+      for (const value of ["1", "true", "TRUE", "yes", "on", " 1 "]) {
+        process.env.TEAM_RAG_DISABLED = value;
+        assert.equal(teamRagEnabled(), false, `kill-switch 가 '${value}' 로 안 꺼진다`);
+      }
+      // fail-safe: 값이 없거나 이상하면 **켜진 상태**를 유지한다.
+      //   이 스위치는 장애 대응용이지 기능 게이트가 아니다 — 오타 하나로 조용히 꺼지면 안 된다.
+      for (const value of ["", "0", "false", "no", "off", "asdf", "  "]) {
+        process.env.TEAM_RAG_DISABLED = value;
+        assert.equal(teamRagEnabled(), true, `kill-switch 가 '${value}' 에 잘못 꺼졌다`);
+      }
+      delete process.env.TEAM_RAG_DISABLED;
+      assert.equal(teamRagEnabled(), true, "env 미설정이면 켜진 상태여야 한다");
+    } finally {
+      if (saved === undefined) delete process.env.TEAM_RAG_DISABLED;
+      else process.env.TEAM_RAG_DISABLED = saved;
+    }
+
+    // production 배선 결속 — server.ts 가 이 함수를 실제로 쓰는가.
+    //   하드코딩(`enableTeamRag: true`)으로 되돌리면 kill-switch 가 무력해지므로 고정한다.
+    //   ⚠️ 주석을 세면 거짓 RED 가 난다 — kill-switch 설명 주석 안에 종전 형태
+    //   `enableTeamRag: true` 가 인용돼 있어서 실제로 한 번 걸렸다(자체 실측).
+    //   정규식은 "존재"가 아니라 **그 대상**(코드 라인)을 집어야 한다.
+    const serverCodeLines = readFileSync(
+      path.join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+    const teamRagAssignments = serverCodeLines.filter((line) => /enableTeamRag\s*:/.test(line));
+    assert.equal(teamRagAssignments.length, 1,
+      `server.ts 의 enableTeamRag 대입이 1곳이 아니다: ${JSON.stringify(teamRagAssignments)}`);
+    assert.match(teamRagAssignments[0], /enableTeamRag:\s*teamRagEnabled\(\)/,
+      `server.ts 가 kill-switch 대신 값을 하드코딩하고 있다: ${teamRagAssignments[0].trim()}`);
+    ok("kill-switch — TEAM_RAG_DISABLED 로 즉시 차단 / 미설정·오타는 fail-safe 유지 / 배선 결속");
   }
 
   // ── ⑦ 서술/수치 판정기 단독 계약 (경로 의존 없는 이중 방어) ─────────────
