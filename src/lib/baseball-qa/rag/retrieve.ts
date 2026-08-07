@@ -515,6 +515,68 @@ export function numericTokensGrounded(
   return groundedAgainst(answer, evidence.map((row) => row.content).join("\n"));
 }
 
+/**
+ * tier2 답변에 **한글로 쓴 수치 표현**이 있는가 (보수적 fail-close).
+ *
+ * ⚠️ `hasKoreanQuantityClaim` 을 쓰면 안 된다 (삼순 2026-08-07 5라운드 실측).
+ *   그건 `KOREAN_NUMERALS + QUANTITY_COUNTERS` **둘 다** 맞아야 잡는 사전이라,
+ *   사전에 없는 조합이 전부 우회로가 된다. 실제로 이것들이 `\d` 없이 통과했다:
+ *     · `첫 우승을 차지한 구단이에요.`   → `우승` 이 counter 사전에 없다
+ *     · `창단 첫해에 우승했어요.`        → `해` 가 counter 사전에 없다
+ *     · `통산 팔회 우승을 기록했어요.`   → `팔` 이 numeral 사전에 없다
+ *
+ *   tier2 는 숫자를 **아예 안 내보내는** 계약이므로, "수치인지 아닌지"를 사전으로
+ *   맞히려 들지 않는다. 수치일 **가능성**이 보이면 차단한다. 과차단의 손해는
+ *   "근거 있는 답이 안내문으로 떨어짐"이고, 과소차단의 손해는 "지어낸 수치가
+ *   출처를 달고 서빙됨"이다. 후자가 훨씬 나쁘므로 전자를 택한다.
+ *
+ * 판정 축 3개:
+ *   ① 고유어 수사가 **독립 어절**로 등장 — `두 번`, `여덟 번`, `세` (뒤에 한글이
+ *      붙으면 수사가 아니다: `두산`·`세계`·`네이버` 는 잡지 않는다)
+ *   ② 서수 접두 `첫` — 뒤 경계를 요구하지 않는다(`첫해`·`첫째`·`첫 우승` 전부).
+ *      `첫사랑` 같은 오탐이 나도 tier2 답변에서는 차단이 안전한 쪽이다.
+ *   ③ 고유어/한자 수사 + 수량 단위가 **붙어서** 등장 — `팔회`·`삼연승`·`십년`·`두번`.
+ *      단위를 넓게 잡되 `단`(구단)·`장`(구장) 처럼 구단 서술에서 흔한 음절은 뺀다.
+ *      `구단`·`이닝` 같은 정상 어휘가 죽으면 이 경로 자체가 무의미해지기 때문이다.
+ */
+const NATIVE_NUMERAL_WORDS = [
+  "한", "두", "세", "서너", "네", "다섯", "여섯", "일곱", "여덟", "아홉", "열",
+  "스물", "서른", "마흔", "쉰", "예순", "일흔", "여든", "아흔",
+  "둘", "셋", "넷", "다섯째", "둘째", "셋째", "넷째",
+].sort((a, b) => b.length - a.length).join("|");
+
+/** 한자 수사. 단독으로는 조사·지시사와 겹치므로 **단위가 붙은 형태**로만 본다. */
+const SINO_NUMERAL_WORDS = ["일", "이", "삼", "사", "오", "육", "칠", "팔", "구", "십", "백", "천"].join("|");
+
+/** 수사에 **붙어서** 수량을 만드는 단위. `단`·`장` 등 구단 서술 상용 음절은 제외한다. */
+const ATTACHED_COUNTERS = [
+  "연승", "연패", "이닝", "번째", "번", "회", "차", "년", "해", "승", "패", "위", "점", "루", "타", "명", "개",
+].sort((a, b) => b.length - a.length).join("|");
+
+/** 수량 표현 뒤에 붙는 조사. 여기까지 한 덩어리로 봐야 `삼연승을` 이 잡힌다. */
+const TRAILING_PARTICLES = ["으로", "이나", "까지", "부터", "만에", "만의", "을", "를", "이", "가", "은", "는", "에", "의", "도", "만", "과", "와", "로", "째"]
+  .sort((a, b) => b.length - a.length).join("|");
+
+const KOREAN_NUMERIC_PATTERNS: RegExp[] = [
+  // ① 고유어 수사 독립 어절
+  new RegExp(`(?<![가-힣])(?:${NATIVE_NUMERAL_WORDS})(?![가-힣])`),
+  // ② 서수 접두 `첫`
+  /(?<![가-힣])첫/,
+  // ③ 수사 + 단위 결합.
+  //    ⚠️ 단위 **뒤에도** 경계를 요구한다. 없으면 `이승엽`(이+승+엽)이 수치로 잡힌다 —
+  //    한자 수사는 한 글자라 사람 이름·일반 명사와 겹치기 때문이다(자체 검증에서 실제로 잡혔다).
+  new RegExp(
+    `(?<![가-힣])(?:${NATIVE_NUMERAL_WORDS}|${SINO_NUMERAL_WORDS})(?:${ATTACHED_COUNTERS})` +
+    // 조사까지는 같은 수량 표현으로 본다(`삼연승을`). 조사를 빼먹으면 `삼연승을 기록했어요`
+    // 가 통과한다(자체 검증에서 실제로 놓쳤다).
+    `(?:${TRAILING_PARTICLES})?(?![가-힣])`,
+  ),
+];
+
+export function hasKoreanNumericExpression(answer: string): boolean {
+  return KOREAN_NUMERIC_PATTERNS.some((re) => re.test(answer));
+}
+
 /** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
 function hasKoreanQuantityClaim(answer: string): boolean {
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
@@ -637,7 +699,7 @@ export function validateRagResponse(
     //   내보내지 않는다" 이므로 표기 방식과 무관하게 막아야 한다.
     //   `hasKoreanQuantityClaim` 은 수사+단위명사가 붙은 경우만 잡으므로
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
-    if (/\d/.test(answer) || hasKoreanQuantityClaim(answer)) {
+    if (/\d/.test(answer) || hasKoreanNumericExpression(answer)) {
       return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {

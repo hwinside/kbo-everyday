@@ -40,6 +40,7 @@ import {
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 import {
   RAG_EVIDENCE_MAX_CHARS,
+  hasKoreanNumericExpression,
   RAG_GROUNDED_SENTINEL,
   RAG_TEAM_SYSTEM_PROMPT,
   sanitizeEvidenceContent,
@@ -362,13 +363,26 @@ async function run(): Promise<void> {
   }
 
   {
-    // ④-5 삼순 반대가설 B — **한글 수사 수치**. 아라비아 숫자가 하나도 없다.
-    //     직전 exact 는 `/\d/` 만 봤기 때문에 이게 그대로 source=rag 로 나갔다.
-    //     19 PASS 가 못 본 이유는 내가 mock 답을 전부 아라비아 숫자로 만들어놨기 때문이다.
+    // ④-5 삼순 반대가설 B/C — **한글로 쓴 수치**. 아라비아 숫자가 하나도 없다.
+    //
+    //     ⚠️ 5라운드 실측(삼순 지적): 아래 3개는 직전 exact 에서 전부 `grounded` 였다.
+    //       · `첫 우승`      → `우승` 이 counter 사전에 없어서 통과
+    //       · `창단 첫해`    → `해` 가 counter 사전에 없어서 통과
+    //       · `통산 팔회`    → `팔` 이 numeral 사전에 없어서 통과
+    //     그리고 내가 4라운드에 넣은 `첫 해에 우승 두 번` 은 **`첫 해` 가 아니라 뒤의
+    //     `두 번` 때문에** 차단되고 있었다 — 즉 그 케이스는 서수 접두를 검증하지 못했다.
+    //     그래서 각 축을 **단독으로** 태우는 fixture 로 바꾼다(다른 축이 대신 잡아주지 않게).
     for (const answer of [
+      // 축1: 고유어 수사 + 단위
       "삼성 라이온즈는 한국시리즈에서 여덟 번 우승했어요.",
       "LG 트윈스는 세 번째 우승을 차지한 구단이에요.",
-      "LG 트윈스는 첫 해에 우승 두 번을 기록했어요.",
+      // 축2: 서수 접두 `첫` 단독 (다른 수치 표현 없음)
+      "LG 트윈스는 첫 우승을 차지한 구단이에요.",
+      "LG 트윈스는 창단 첫해에 우승했어요.",
+      // 축3: 한자 수사 + 단위 (numeral 사전 밖)
+      "삼성 라이온즈는 통산 팔회 우승을 기록했어요.",
+      "LG 트윈스는 삼연승을 기록했어요.",
+      "LG 트윈스는 십년 만의 우승을 했어요.",
     ]) {
       const { deps, logs } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -382,7 +396,34 @@ async function run(): Promise<void> {
         `한글 수사 수치가 rag 로 나갔다(삼순 반대가설 B): ${answer}`);
       assert.equal(logs.at(-1)?.matchPath, "unsure");
     }
-    ok("삼순 반대가설 B — 한글 수사 수치(여덟 번·세 번째·두 번)도 차단");
+    ok("삼순 반대가설 B/C — 한글 수치 3축(고유어+단위 / 서수 첫 / 한자수사+단위) 단독 차단");
+  }
+
+  {
+    // ④-5b 과차단 반대편 — 숫자 표현이 아닌 정상 구단 서술은 그대로 서빙돼야 한다.
+    //
+    //     ⚠️ 이게 없으면 "한글이 섞이면 무조건 차단" 같은 극단 변이도 위 3축을 GREEN 으로
+    //     만든다. 실제로 자체 검증에서 `이승엽 선수가`(이+승) 가 한자수사+단위로 잡혀
+    //     과차단됐고, 뒤 경계를 넣어 고쳤다. 그 회귀를 여기 고정한다.
+    for (const answer of [
+      "LG 트윈스는 MBC 청룡을 인수해 창단한 서울 연고 구단이에요.",
+      "이승엽 선수가 활약한 구단이에요.",
+      "두산 베어스와 잠실야구장을 함께 쓰는 구단이에요.",
+      "세계적인 선수들이 거쳐간 구단이에요.",
+      "사직야구장을 홈으로 쓰는 구단이에요.",
+    ]) {
+      const { deps } = makeDeps({
+        callTeamRagLlm: async () => ({
+          text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer }),
+          inputTokens: 10,
+          outputTokens: 5,
+        }),
+      });
+      const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
+      assert.equal(result.source, "rag",
+        `수치가 아닌 정상 구단 서술이 차단됐다(과차단): ${answer}`);
+    }
+    ok("한글 수치 차단 과차단 방지 — 이승엽·두산·세계·사직 같은 정상 서술은 통과");
   }
 
   {
@@ -408,13 +449,46 @@ async function run(): Promise<void> {
     //     가드만 닫고 프롬프트가 "자료 숫자는 써라" 로 남아 있으면 모델 답이 매번
     //     폐기돼 INSUFFICIENT 로 새고, 리뷰어도 계약을 오독한다(실제로 그랬다).
     //     배포되는 상수 원문을 직접 읽는다 — 내 요약이 아니라 실제 문자열이다.
-    assert.ok(/숫자를 쓰지 않는다/.test(RAG_TEAM_SYSTEM_PROMPT),
-      "구단 프롬프트가 숫자 금지를 지시하지 않는다");
-    assert.ok(/한글 수사/.test(RAG_TEAM_SYSTEM_PROMPT),
-      "구단 프롬프트가 한글 수사 수치를 다루지 않는다");
+    // ⚠️ 문자열 존재 검사만으로는 불일치를 못 잡는다(삼순 5라운드 지적).
+    //   프롬프트가 `첫 우승` 을 예시로 금지해도 가드가 그걸 통과시키면 계약은 깨진 것이다.
+    //   그래서 **프롬프트가 금지 예시로 든 표현을 뽑아 실제 가드에 먹인다.**
+    //   프롬프트에 새 예시를 추가했는데 가드가 못 잡으면 여기서 RED 가 난다.
     assert.ok(!/자료에 그대로 적힌 값만/.test(RAG_TEAM_SYSTEM_PROMPT),
       "구단 프롬프트에 종전 '숫자 허용' 지시가 남아 있다(가드와 모순)");
-    ok("프롬프트↔가드 계약 일치 — 배포 상수 원문 대조");
+    //   ⚠️ 추출 범위를 잘못 잡으면 게이트가 거짓 RED 를 낸다(자체 검증에서 두 번 났다):
+    //     · 문서 전체 괄호 → `한국 프로야구(KBO)` 의 `KBO` 를 금지 예시로 오인
+    //     · 예시 줄 통째   → `→` **오른쪽**은 오히려 통과해야 하는 모범답인데 금지로 오인
+    //   그래서 두 축을 나눠 본다.
+    //
+    //   축1: `숫자를 쓰지 않는다` 줄의 괄호 안 예시는 **전부 차단**돼야 한다.
+    const bannedLine = RAG_TEAM_SYSTEM_PROMPT.split("\n")
+      .find((line) => /숫자를 쓰지 않는다/.test(line));
+    assert.ok(bannedLine, "프롬프트에 숫자 금지 지시가 없다");
+    const bannedExamples = [...bannedLine.matchAll(/[(（]([^)）]*)[)）]/g)]
+      .flatMap((m) => m[1].split(/\s*,\s*/))
+      .map((word) => word.trim())
+      .filter((word) => word.length > 0);
+    assert.ok(bannedExamples.length >= 3,
+      `프롬프트 금지 예시를 못 뽑았다: ${JSON.stringify(bannedExamples)}`);
+    for (const example of bannedExamples) {
+      assert.ok(/\d/.test(example) || hasKoreanNumericExpression(example),
+        `프롬프트가 금지한 표현을 가드가 통과시킨다(계약 불일치): ${example}`);
+    }
+
+    //   축2: `A → B` 재작성 예시. **왼쪽은 차단, 오른쪽은 통과**여야 한다.
+    //   오른쪽까지 막히면 프롬프트가 시킨 모범답을 가드가 폐기한다는 뜻이라
+    //   그 경로는 영원히 INSUFFICIENT 만 낸다.
+    const rewriteLine = RAG_TEAM_SYSTEM_PROMPT.split("\n").find((line) => line.includes("→"));
+    assert.ok(rewriteLine, "프롬프트에 재작성 예시가 없다");
+    const [before, after] = rewriteLine.split("→")
+      .map((side) => (side.match(/`([^`]+)`/)?.[1] ?? "").trim());
+    assert.ok(before && after, `재작성 예시 파싱 실패: ${rewriteLine}`);
+    assert.ok(/\d/.test(before) || hasKoreanNumericExpression(before),
+      `재작성 예시의 '고치기 전' 을 가드가 통과시킨다: ${before}`);
+    assert.ok(!/\d/.test(after) && !hasKoreanNumericExpression(after),
+      `재작성 예시의 '고친 후' 를 가드가 차단한다(모범답이 폐기됨): ${after}`);
+
+    ok(`프롬프트↔가드 계약 일치 — 금지예시 ${bannedExamples.length}종 차단 + 재작성 모범답 통과, 실제 가드로 대조`);
   }
 
   // ── ④-b 교차 chunk 조합도 당연히 거절 (숫자 HOLD 의 부분집합) ────────────
