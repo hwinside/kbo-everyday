@@ -33,8 +33,11 @@ function PostImpressionWrapper({
   children: React.ReactNode;
 }) {
   const ref = usePostImpression<HTMLDivElement>(postId);
+  // data-post-id — 피드에서 특정 글 카드를 집어내기 위한 QA 훅(`data-community-author-header` 와 같은 계열).
+  // 이게 없으면 QA 가 조상 탐색으로 카드 경계를 추정해야 하고, 그 추정은 피드 구조가
+  // 바뀔 때마다 조용히 엉뚱한 것을 검사하게 된다(false-green).
   return (
-    <div ref={ref} className={className}>
+    <div ref={ref} className={className} data-post-id={postId}>
       {children}
     </div>
   );

@@ -2,13 +2,20 @@
 /**
  * End-User QA: 콜렉터 글 작성자 배지 = 글 올리는 팀 (#1124)
  *
- * 전용 테스트 계정을 새로 만들어 실제 로그인 세션으로 Production 상세 페이지를 열고,
+ * 전용 테스트 계정을 새로 만들어 실제 로그인 세션으로 Production 상세/피드를 열고,
  * 작성자 헤더에 찍힌 팀 배지 텍스트를 눈에 보이는 그대로 읽는다.
  *
  * 대상 3건
  *   #4333 김도영(KIA)   — 백필 대상, LG → KIA 여야 한다 (사고 재현 글)
  *   #4095 손성빈(롯데)  — 백필 대상, LG → 롯데
  *   #2107 데이비슨      — 백필 제외(배포 이전 글). 게시 당시 NC 그대로 유지돼야 한다
+ *
+ * fail-close 원칙
+ *   · 로그인 상태를 **앱 레벨에서** 확인하지 못하면 그 자리에서 실패한다.
+ *     (토큰 주입만 확인하면 비로그인 공개 페이지로도 전부 PASS 한다 — 검출력 0)
+ *   · 피드 검사는 게시판 탭을 열고 **그 글 카드를 특정해서** 본다.
+ *     (body 전체에서 "LG 팬" 부재만 보면 카드가 안 그려져도 PASS 한다)
+ *   · 테스트 계정 정리는 삭제 반환 오류와 잔존 0을 모두 확인한다. 잔존이 있으면 exit 1.
  *
  * 사용법:
  *   node scripts/qa/ui-smoke-collector-author-team.mjs
@@ -29,13 +36,16 @@ mkdirSync(SHOT_DIR, { recursive: true });
 const HEADED = process.argv.includes("--headed");
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] || BASE;
 
-/** 기대값 — 배지에 이 팀 shortName 이 보여야 한다. */
+/** 기대값 — 배지에 이 팀 shortName 이 `"<팀> 팬"` 으로 보여야 한다. */
 const CASES = [
-  { id: 4333, path: "/community/players/52605/posts/4333", want: "KIA", note: "백필 대상(사고 재현 글, 김도영)" },
-  { id: 4095, path: "/community/players/51528/posts/4095", want: "롯데", note: "백필 대상(손성빈)" },
-  { id: 2107, path: "/community/players/54944/posts/2107", want: "NC", note: "백필 제외 — 게시 당시 팀 보존(데이비슨)" },
+  { id: 4333, playerId: "52605", want: "KIA", note: "백필 대상(사고 재현 글, 김도영)" },
+  { id: 4095, playerId: "51528", want: "롯데", note: "백필 대상(손성빈)" },
+  { id: 2107, playerId: "54944", want: "NC", note: "백필 제외 — 게시 당시 팀 보존(데이비슨)" },
 ];
 const ALL_TEAMS = ["LG", "두산", "KT", "SSG", "NC", "KIA", "롯데", "삼성", "한화", "키움"];
+
+/** 뷰어 프로필 팀 — 대상 3건 어느 팀과도 겹치지 않는 값이어야 뷰어 팀 누출을 잡는다. */
+const VIEWER_TEAM_ID = 2002;
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -48,10 +58,12 @@ let failCount = 0;
 const check = (name, cond, msg) => {
   console.log(`  ${cond ? "✅" : "❌"}  ${name}${cond || !msg ? "" : `  ${msg}`}`);
   cond ? passCount++ : failCount++;
+  return cond;
 };
 
 const STAMP = Date.now().toString(36);
 const email = `qa-collector-${STAMP}@keubo.fan`;
+const nickname = "qacol" + STAMP.slice(0, 8);
 const pw = "QaTest!" + STAMP;
 const cleanupIds = [];
 
@@ -63,11 +75,9 @@ async function seedUser() {
   });
   if (error) throw error;
   cleanupIds.push(data.user.id);
-  const { error: pErr } = await admin.from("profiles").insert({
-    id: data.user.id,
-    nickname: "qacol" + STAMP.slice(0, 8),
-    team_id: 2002, // 일부러 대상 3건 어느 팀과도 겹치지 않는 값 — 뷰어 팀이 배지에 새는지 함께 본다
-  });
+  const { error: pErr } = await admin
+    .from("profiles")
+    .insert({ id: data.user.id, nickname, team_id: VIEWER_TEAM_ID });
   if (pErr) throw new Error("profile insert failed: " + pErr.message);
 
   const r = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
@@ -112,68 +122,158 @@ async function injectSession(ctx, session) {
   );
 }
 
+/**
+ * 로그인 확인 — 토큰이 브라우저에 있는지(전제)와 **앱이 그 사용자로 렌더했는지**(본질)를 함께 본다.
+ * 앱 레벨 확인이 없으면 비로그인 공개 페이지로도 아래 검사가 전부 통과해 검출력이 0이 된다.
+ */
+async function verifyLoggedIn(page, userId) {
+  await page.goto(`${BASE_URL}/my`, { waitUntil: "networkidle", timeout: 45000 });
+
+  const storedUid = await page.evaluate((ref) => {
+    try {
+      const raw = window.localStorage.getItem(`sb-${ref}-auth-token`);
+      if (!raw) return null;
+      return JSON.parse(raw)?.user?.id ?? null;
+    } catch {
+      return null;
+    }
+  }, REF);
+  check("브라우저 세션 uid == 테스트 계정", storedUid === userId, `got ${storedUid}`);
+
+  // 앱이 실제로 그 프로필을 읽어 렌더했는가 — 마이페이지 닉네임.
+  const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+  const renderedAsUser = body.includes(nickname);
+  check("앱이 테스트 계정으로 렌더(마이페이지 닉네임)", renderedAsUser, `nickname "${nickname}" 미표시`);
+  // 비로그인 화면이면 회원가입 CTA 가 뜬다 — 그게 보이면 로그인 실패다.
+  check("비로그인 CTA 미노출", !body.includes("회원가입 / 로그인"));
+
+  await page.screenshot({ path: `${SHOT_DIR}/collector-author-login.png` });
+  return storedUid === userId && renderedAsUser;
+}
+
+/** 헤더 텍스트에서 기대 팀 배지 + 타팀 누출 부재를 함께 본다. */
+function assertBadge(label, text, want) {
+  check(`${label} 배지가 "${want} 팬"`, text.includes(`${want} 팬`), `실제: "${text}"`);
+  const leaked = ALL_TEAMS.filter((t) => t !== want && text.includes(`${t} 팬`));
+  check(`${label} 다른 구단 팬 배지 없음`, leaked.length === 0, `누출: ${leaked.join(",")}`);
+}
+
 async function main() {
   log("base:", BASE_URL);
   const session = await seedUser();
-  log("test user ready:", session.user.id.slice(0, 8));
+  log("test user ready:", session.user.id.slice(0, 8), nickname);
 
   const browser = await chromium.launch({ headless: !HEADED });
-  const ctx = await browser.newContext({ viewport: { width: 414, height: 896 } });
-  await injectSession(ctx, session);
-  const page = await ctx.newPage();
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 414, height: 896 } });
+    await injectSession(ctx, session);
+    const page = await ctx.newPage();
 
-  for (const c of CASES) {
-    log(`--- #${c.id} ${c.note}`);
-    await page.goto(BASE_URL + c.path, { waitUntil: "networkidle", timeout: 45000 });
-    const header = page.locator("[data-community-author-header]").first();
-    await header.waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+    // ── 0. 로그인 확인 (실패하면 이후 검사는 의미 없음 → 즉시 중단)
+    log("--- 로그인 확인");
+    if (!(await verifyLoggedIn(page, session.user.id))) {
+      console.log("\n로그인 확인 실패 — 이후 검사는 검출력이 없으므로 중단합니다.");
+      return false;
+    }
 
-    const visible = await header.isVisible().catch(() => false);
-    check(`#${c.id} 작성자 헤더 렌더`, visible);
-    if (!visible) continue;
+    // ── 1. 상세 3건
+    for (const c of CASES) {
+      log(`--- 상세 #${c.id} ${c.note}`);
+      await page.goto(`${BASE_URL}/community/players/${c.playerId}/posts/${c.id}`, {
+        waitUntil: "networkidle",
+        timeout: 45000,
+      });
+      const header = page.locator("[data-community-author-header]").first();
+      await header.waitFor({ state: "visible", timeout: 20000 }).catch(() => {});
+      if (!check(`#${c.id} 작성자 헤더 렌더`, await header.isVisible().catch(() => false))) continue;
 
-    const text = (await header.innerText()).replace(/\s+/g, " ").trim();
-    log(`   header: "${text}"`);
+      const text = (await header.innerText()).replace(/\s+/g, " ").trim();
+      log(`   header: "${text}"`);
+      assertBadge(`#${c.id}`, text, c.want);
+      await page.screenshot({ path: `${SHOT_DIR}/collector-author-${c.id}.png` });
+    }
 
-    // 기대 팀이 "<팀> 팬" 형태로 보인다.
-    check(`#${c.id} 배지가 "${c.want} 팬"`, text.includes(`${c.want} 팬`), `실제: "${text}"`);
-    // 다른 구단 이름이 배지로 새지 않는다 — 특히 봇 프로필 팀(LG).
-    const leaked = ALL_TEAMS.filter((t) => t !== c.want && text.includes(`${t} 팬`));
-    check(`#${c.id} 다른 구단 팬 배지 없음`, leaked.length === 0, `누출: ${leaked.join(",")}`);
+    // ── 2. 피드 — 게시판 탭을 열고 그 글 카드를 특정해서 본다.
+    //    상세만 고쳐지고 피드가 옛값을 그리는 상태를 배제하기 위한 검사이므로,
+    //    카드가 실제로 렌더됐다는 것 자체가 검사의 전제다(부재 = 실패).
+    const feedCase = CASES[0];
+    log(`--- 피드 #${feedCase.id} (선수 ${feedCase.playerId} 게시판 탭)`);
+    await page.goto(`${BASE_URL}/community/players/${feedCase.playerId}`, {
+      waitUntil: "networkidle",
+      timeout: 45000,
+    });
+    await page.getByRole("button", { name: /게시판/ }).click();
 
-    await page.screenshot({ path: `${SHOT_DIR}/collector-author-${c.id}.png` });
+    const card = page.locator(`[data-post-id="${feedCase.id}"]`).first();
+    // 무한스크롤 — 카드가 나올 때까지 스크롤.
+    for (let i = 0; i < 12 && !(await card.count()); i++) {
+      await page.mouse.wheel(0, 1600);
+      await page.waitForTimeout(600);
+    }
+    await card.waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
+
+    if (check(`피드에 #${feedCase.id} 카드 렌더`, await card.isVisible().catch(() => false))) {
+      const cardHeader = card.locator("[data-community-author-header]").first();
+      const cardText = (await cardHeader.innerText()).replace(/\s+/g, " ").trim();
+      log(`   card header: "${cardText}"`);
+      assertBadge(`피드 #${feedCase.id}`, cardText, feedCase.want);
+      await card.screenshot({ path: `${SHOT_DIR}/collector-author-feed-card.png` });
+    }
+
+    console.log(`\n${failCount === 0 ? "PASS" : "FAIL"} — ${passCount} passed, ${failCount} failed`);
+    return failCount === 0;
+  } finally {
+    await browser.close().catch(() => {});
   }
-
-  // 피드에서도 같은 값이 보이는지(상세만 고쳐진 게 아님) — 김도영 선수 게시판 목록.
-  log("--- 선수 게시판 피드");
-  await page.goto(`${BASE_URL}/community/players/52605`, { waitUntil: "networkidle", timeout: 45000 });
-  const feedText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-  check("피드에 LG 팬 배지 없음(김도영 게시판)", !feedText.includes("LG 팬"), "피드에 LG 팬 잔존");
-  await page.screenshot({ path: `${SHOT_DIR}/collector-author-feed.png`, fullPage: false });
-
-  await browser.close();
-  console.log(`\n${failCount === 0 ? "PASS" : "FAIL"} — ${passCount} passed, ${failCount} failed`);
-  return failCount === 0;
 }
 
+/**
+ * 정리 — fail-close. 삭제 반환 오류를 삼키지 않고, 삭제 후 auth/profile 잔존 0을 실제로 확인한다.
+ * 잔존이 있으면 Production 에 QA 계정이 남는다는 뜻이라 실패로 처리한다.
+ */
 async function teardown() {
+  let clean = true;
   for (const uid of cleanupIds) {
-    try {
-      await admin.from("profiles").delete().eq("id", uid);
-      await admin.auth.admin.deleteUser(uid);
-      log("cleaned up test user", uid.slice(0, 8));
-    } catch (e) {
-      console.error("cleanup failed:", e.message);
+    const { error: pErr } = await admin.from("profiles").delete().eq("id", uid);
+    if (pErr) {
+      console.error(`  ❌ profile 삭제 실패 ${uid}: ${pErr.message}`);
+      clean = false;
     }
+    const { error: uErr } = await admin.auth.admin.deleteUser(uid);
+    if (uErr) {
+      console.error(`  ❌ auth 유저 삭제 실패 ${uid}: ${uErr.message}`);
+      clean = false;
+    }
+
+    // postcondition — 진짜 사라졌는지 다시 읽어본다.
+    const { data: prof } = await admin.from("profiles").select("id").eq("id", uid).maybeSingle();
+    if (prof) {
+      console.error(`  ❌ profile 잔존 ${uid}`);
+      clean = false;
+    }
+    const { data: authUser } = await admin.auth.admin.getUserById(uid);
+    if (authUser?.user) {
+      console.error(`  ❌ auth 유저 잔존 ${uid}`);
+      clean = false;
+    }
+    if (clean) log("cleaned up test user", uid.slice(0, 8));
   }
+  return clean;
 }
 
 let ok = false;
+let cleaned = false;
 try {
   ok = await main();
 } catch (e) {
   console.error("\n[ERROR]", e.message);
 } finally {
-  await teardown();
+  try {
+    cleaned = await teardown();
+  } catch (e) {
+    console.error("[ERROR] teardown:", e.message);
+    cleaned = false;
+  }
 }
-process.exit(ok ? 0 : 1);
+if (!cleaned) console.error("테스트 계정 정리 실패 — Production 잔여물을 직접 확인하세요.");
+process.exit(ok && cleaned ? 0 : 1);
