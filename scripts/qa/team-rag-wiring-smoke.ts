@@ -19,8 +19,9 @@
  *   ① 구단 서술형 질문은 적재된 근거를 읽어 `source=rag` 로 답하고 출처를 붙인다.
  *   ② 우리가 **서빙하는** 수치(순위·승패·팀타율)는 여전히 `kbo_structured` 정본이 이긴다.
  *      tier2 가 그걸 덮으면 §12 수치 계약 위반이다.
- *   ③ 우리가 **서빙하지 않는** 수치(우승 횟수)는 근거가 있으면 답하되, 근거에 없는 숫자는
- *      출력 가드가 막고 안내문으로 닫는다.
+ *   ③ **tier2 숫자 출력은 전면 HOLD** (삼순 2026-08-07 P0-2). 근거에 적힌 숫자만 허용하는
+ *      토큰 대조로는 "근거가 그렇게 진술했는가"를 못 가린다 — chunk 단위·문장 단위 둘 다
+ *      반대가설이 나왔다. 선수 tier2 와 같은 계약(숫자 섞이면 폐기)으로 되돌렸다.
  *   ④ 근거 0건이면 fail-close 가 아니라 **기존 경로로 양보**한다(구단 과차단 회귀 금지 — #1100 P0-1).
  *   ⑤ 후보 해석이 `resolveMentionedTeam` 과 같은 판정기를 쓴다(두 구단 질문은 근거 검색 0회).
  *
@@ -133,14 +134,15 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
     },
     callTeamRagLlm: async (question, evidence) => {
       calls.teamLlm.push({ question, evidence });
-      // 근거에 적힌 값만 쓴다 — 삼성 근거는 `8회`, LG 근거는 `1990년`이 원문에 있다.
+      // ⚠️ tier2 숫자 HOLD 계약이라 모델도 숫자 없이 서술한다.
+      //   숫자가 섞인 답은 출력 가드가 폐기하므로, 그건 아래 전용 케이스에서 따로 본다.
       const usesSamsung = evidence.some((row) => row.pageTitle === "삼성 라이온즈");
       return {
         text: JSON.stringify({
           status: RAG_GROUNDED_SENTINEL,
           answer: usesSamsung
-            ? "삼성 라이온즈는 통산 한국시리즈 우승 8회를 기록했어요."
-            : "LG 트윈스는 1990년 창단해 그 해 한국시리즈에서 우승한 구단이에요.",
+            ? "삼성 라이온즈는 한국시리즈 우승 경험이 많은 구단이에요."
+            : "LG 트윈스는 MBC 청룡을 인수해 창단한 서울 연고 구단이에요.",
         }),
         inputTokens: 10,
         outputTokens: 5,
@@ -236,8 +238,9 @@ async function run(): Promise<void> {
     // LLM 에 넘어간 근거가 조회된 구단 문서여야 한다(빈 근거로 호출하는 변종 차단).
     assert.equal(calls.teamLlm[0].evidence.length, 1);
     assert.equal(calls.teamLlm[0].evidence[0].pageTitle, "LG 트윈스");
-    // 서술형 답변에 **근거에 있는 연도**가 남아야 한다 — 숫자 전면금지로 되돌리면 RED.
-    assert.match(result.answer, /1990년/, "근거에 적힌 연도는 답변에 남아야 한다");
+    // 답변 본문에 숫자가 없어야 한다(tier2 숫자 HOLD). 출처 표기는 본문 밖이라 제외한다.
+    assert.ok(!/\d/.test(result.answer.split("📄")[0]),
+      `tier2 답변 본문에 숫자가 남았다: ${result.answer}`);
     assert.match(result.answer, /📄 출처: 나무위키/, "tier2 근거는 출처가 붙어야 한다");
     assert.equal(result.sourceUrl, LG_EVIDENCE.canonicalUrl);
     assert.equal(logs.at(-1)?.matchPath, "rag");
@@ -266,29 +269,78 @@ async function run(): Promise<void> {
     ok("서빙 정본 수치 — kbo_structured 우선 / tier2 조회 0회");
   }
 
-  // ── ④ 미서빙 수치는 근거가 있으면 답하되 근거 밖 숫자는 막는다 ──────────
+  // ── ④ tier2 숫자 출력 전면 HOLD (삼순 2026-08-07 P0-2) ─────────────────
+  //
+  // ⚠️ 여기가 이번 라운드의 핵심 계약이다. 종전에는 "근거에 적힌 숫자면 통과"였는데,
+  //   그건 **근거가 그 관계를 진술했는가**를 못 가린다. 범위를 두 번 좁혔지만 두 번 다
+  //   반대가설이 나왔다:
+  //     · chunk 단위 → 한 chunk 안의 `1990년`·`3회` 를 조합한 새 주장이 통과
+  //     · 문장 단위 → `LG는 1990년 창단했고, 통산 우승은 3회다.` 한 문장이면 똑같이 통과
+  //   토큰 대조로 닫힐 문제가 아니라서, 선수 tier2 와 같은 계약(숫자 섞이면 폐기)으로 되돌린다.
+  //
+  //   아래 케이스들은 **삼순이 제시한 반대가설 원문 그대로**를 fixture 로 쓴다.
+  //   내가 만든 형태(마침표로 갈라놓은 두 문장)만 넣으면 같은 사고가 또 통과한다.
   {
-    const { deps, calls } = makeDeps();
-    const result = await answerQuestion("u1", "삼성 우승 몇 번 했어?", deps);
-    assert.equal(result.source, "rag", `미서빙 수치가 근거로 안 갔다: ${result.source}`);
-    assert.equal(calls.teamLlm.at(-1)?.evidence[0]?.pageTitle, "삼성 라이온즈");
-    assert.match(result.answer, /8회/, "근거에 적힌 값이 그대로 나와야 한다");
-    assert.match(result.answer, /📄 출처: 나무위키/);
-    ok("미서빙 수치 — 근거 있으면 답변 + 근거값 그대로 + 출처");
-  }
-
-  // 근거에 없는 숫자를 모델이 지어내면 답으로 인정하지 않는다.
-  {
+    // ④-1 삼순 반대가설 A — 한 문장 안에 쉼표/접속사로 두 사실이 붙어 있는 근거.
+    //     이 fixture 는 직전 exact(문장 단위 검사)에서 **통과했다**. 지금은 거절돼야 한다.
+    const COMMA_CHUNK: RagEvidence = {
+      ...LG_EVIDENCE,
+      content: "LG는 1990년 창단했고, 통산 우승은 3회다.",
+      sectionPath: "LG 트윈스/역사",
+    };
     const { deps, logs, calls } = makeDeps({
+      searchRag: async (candidate) => {
+        calls.search.push(candidate);
+        return candidate.entityType === "team" ? [COMMA_CHUNK] : [];
+      },
       callTeamRagLlm: async (question, evidence) => {
         calls.teamLlm.push({ question, evidence });
         return {
-          // 근거에는 8회뿐인데 12회라고 지어냈다.
-          text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 12회 우승했어요." }),
+          // 두 사실을 이어붙인 관계 주장. 숫자는 둘 다 근거 한 문장 안에 있다.
+          text: JSON.stringify({
+            status: RAG_GROUNDED_SENTINEL,
+            answer: "LG는 1990년에 3회째 우승했어요.",
+          }),
           inputTokens: 10,
           outputTokens: 5,
         };
       },
+    });
+    const result = await answerQuestion("u1", "LG 우승 몇 번 했어?", deps);
+    assert.notEqual(result.source, "rag",
+      "한 문장 안 쉼표로 붙은 두 사실을 조합한 주장이 rag 로 나갔다(삼순 반대가설 A)");
+    assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
+    assert.equal(logs.at(-1)?.matchPath, "history_hold");
+    ok("삼순 반대가설 A — 단일 문장 쉼표/접속사 조합 주장 거절");
+  }
+
+  {
+    // ④-2 근거에 **그대로 적힌** 숫자여도 tier2 면 내보내지 않는다.
+    //     종전 계약에서는 이게 정상 통과였다. HOLD 로 바뀐 것을 여기서 고정한다.
+    const { deps, logs } = makeDeps({
+      callTeamRagLlm: async () => ({
+        // 삼성 근거 원문에 `8회` 가 실제로 있다. 그래도 폐기돼야 한다.
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 8회 우승했어요." }),
+        inputTokens: 10,
+        outputTokens: 5,
+      }),
+    });
+    const result = await answerQuestion("u1", "삼성 우승 몇 번 했어?", deps);
+    assert.notEqual(result.source, "rag",
+      "근거에 적힌 숫자라도 tier2 는 내보내지 않는다(숫자 HOLD)");
+    assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
+    assert.equal(logs.at(-1)?.matchPath, "history_hold");
+    ok("tier2 숫자 HOLD — 근거에 적힌 값이어도 답변으로 안 나간다");
+  }
+
+  {
+    // ④-3 지어낸 숫자는 당연히 거절 (종전 계약도 유지).
+    const { deps, logs } = makeDeps({
+      callTeamRagLlm: async () => ({
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 12회 우승했어요." }),
+        inputTokens: 10,
+        outputTokens: 5,
+      }),
     });
     const result = await answerQuestion("u1", "삼성 우승 몇 번 했어?", deps);
     assert.notEqual(result.source, "rag", "근거 밖 숫자가 rag 답변으로 나갔다");
@@ -297,16 +349,22 @@ async function run(): Promise<void> {
     ok("미서빙 수치 환각 — 근거 밖 숫자는 답변 거절 후 안내");
   }
 
-  // ── ④-b 교차 chunk 조합 금지 — 단일 근거가 직접 진술한 사실만 (삼순 2026-08-05) ──
+  {
+    // ④-4 반대편 고정 — 숫자만 막는 것이지 **서술형 경로 자체를 죽이면 안 된다**.
+    //     이 단언이 없으면 "구단 RAG 통째로 끄기"로도 위 세 케이스가 GREEN 이 된다.
+    const { deps, calls } = makeDeps();
+    const result = await answerQuestion("u1", "삼성 어떤 팀이야?", deps);
+    assert.equal(result.source, "rag", "숫자 HOLD 가 서술형 경로까지 죽였다");
+    assert.equal(calls.teamLlm.length, 1);
+    assert.ok(!/\d/.test(result.answer.split("📄")[0]), "본문에 숫자가 남았다");
+    ok("숫자 HOLD 는 서술형을 막지 않는다 — 숫자 없는 답변은 그대로 서빙");
+  }
+
+  // ── ④-b 교차 chunk 조합도 당연히 거절 (숫자 HOLD 의 부분집합) ────────────
   //
-  // ⚠️ 왜 필요한가: 숫자 대조가 근거 4건을 `join("\n")` 으로 **한 덩어리로 합쳐** 보면,
-  //   서로 다른 chunk 의 숫자를 이어붙인 새 주장이 "근거에 있음"으로 통과한다.
-  //     A: "1994년 태평양 돌핀스를 꺾고 우승했다"
-  //     B: "통산 한국시리즈 우승 횟수는 총 8회다"
-  //     답: "1994년에 8번째 우승을 했어요"   ← 어느 근거도 이렇게 말한 적 없다
-  //   구단 corpus 는 연도·횟수 서술이 여러 문서에 흩어져 있어 이 조합 사고가 가장 잘 난다.
-  //   삼순 기준은 "단일 근거가 직접 진술한 역사 사실만 허용, 계산/추정 금지" 이므로
-  //   한 chunk 가 답의 수치 주장 **전부**를 담고 있을 때만 인정한다.
+  // ⚠️ 이 케이스는 종전 `requireSingleSource` 계약이 노렸던 것이다. 지금은 숫자 자체를
+  //   막으므로 자동으로 닫히지만, **회귀 감시용으로 남긴다** — 나중에 누가 숫자를 다시
+  //   열 때 이 케이스가 가장 먼저 깨져야 한다.
   {
     const YEAR_CHUNK: RagEvidence = {
       ...LG_EVIDENCE,
@@ -326,8 +384,6 @@ async function run(): Promise<void> {
       callTeamRagLlm: async (question, evidence) => {
         calls.teamLlm.push({ question, evidence });
         return {
-          // 두 chunk 의 숫자를 이어붙인 조합 주장. 각 숫자는 근거 어딘가에 있지만
-          // **한 근거가 이렇게 진술한 적은 없다**.
           text: JSON.stringify({
             status: RAG_GROUNDED_SENTINEL,
             answer: "LG 트윈스는 1994년에 통산 3회째 우승을 달성했어요.",
@@ -339,43 +395,10 @@ async function run(): Promise<void> {
     });
     const result = await answerQuestion("u1", "LG 우승 몇 번 했어?", deps);
     assert.notEqual(result.source, "rag",
-      "여러 chunk 의 숫자를 조합한 주장이 rag 답변으로 나갔다(단일 근거 직접 진술 계약 위반)");
+      "여러 chunk 의 숫자를 조합한 주장이 rag 답변으로 나갔다");
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER);
     assert.equal(logs.at(-1)?.matchPath, "history_hold");
-    ok("교차 chunk 조합 — 단일 근거가 진술하지 않은 수치 주장은 거절");
-  }
-
-  // 반대편 고정 — 한 chunk 가 수치 주장 전부를 담고 있으면 그대로 통과해야 한다.
-  // 이게 없으면 위 계약을 "숫자 전면 금지"로 과하게 조여도 GREEN 이 된다.
-  {
-    const SINGLE_CHUNK: RagEvidence = {
-      ...LG_EVIDENCE,
-      content: "LG 트윈스는 1990년 창단해 그 해 한국시리즈에서 우승했다.",
-      sectionPath: "LG 트윈스/1990년",
-    };
-    const { deps, calls } = makeDeps({
-      searchRag: async (candidate) => {
-        calls.search.push(candidate);
-        return candidate.entityType === "team" ? [SINGLE_CHUNK, SAMSUNG_TITLE_EVIDENCE] : [];
-      },
-      callTeamRagLlm: async (question, evidence) => {
-        calls.teamLlm.push({ question, evidence });
-        return {
-          // 수치(`1990년`)가 **첫 chunk 하나 안에** 전부 있다.
-          text: JSON.stringify({
-            status: RAG_GROUNDED_SENTINEL,
-            answer: "LG 트윈스는 1990년에 창단한 구단이에요.",
-          }),
-          inputTokens: 10,
-          outputTokens: 5,
-        };
-      },
-    });
-    const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
-    assert.equal(result.source, "rag",
-      "한 근거가 직접 진술한 수치까지 막으면 정상 구단 서사가 통째로 폐기된다");
-    assert.match(result.answer, /1990년/);
-    ok("단일 근거 직접 진술 — 그 chunk 안의 수치는 그대로 통과(과차단 금지)");
+    ok("교차 chunk 조합 — 여러 근거를 이어붙인 수치 주장 거절");
   }
 
   // ── ⑤ 근거 0건은 fail-close 가 아니라 양보 (#1100 P0-1 회귀 금지) ────────

@@ -499,41 +499,15 @@ export function numericTokensGrounded(
   options: NumericGroundingOptions = {},
 ): boolean {
   if (options.requireSingleSource) {
-    // 수치 주장이 아예 없으면 대조할 것도 없다(빈 근거로도 통과 — 아래 본 검사와 동일).
+    // ⚠️ 2026-08-07: 구단 tier2 는 이 경로를 더 이상 쓰지 않는다(숫자 전면 HOLD).
+    //   "근거에 그 숫자가 있다" 와 "근거가 그렇게 진술했다" 는 다르고, 후자는
+    //   토큰 대조로 닫히지 않는다(chunk 단위·문장 단위 둘 다 반대가설이 나왔다).
+    //   호출부가 사라졌지만 계약 자체는 공식 경로가 나중에 쓸 수 있으므로 남겨둔다.
+    //   단, 여기 의존해 숫자를 여는 신규 경로를 만들지 말 것 — 검증력이 부족하다.
     if (!/\d/.test(answer) && !hasKoreanQuantityClaim(answer)) return true;
-    // 한 chunk 가 답의 수치 주장 **전부**를 담고 있어야 한다. 여러 chunk 를 이어붙여
-    // 만든 주장은 근거가 직접 진술한 것이 아니므로 인정하지 않는다.
-    if (!evidence.some((row) => groundedAgainst(answer, row.content))) return false;
-    // ⚠️ chunk 단위만으로는 부족하다 (삼순 2026-08-07 P0-2).
-    //   위 검사는 "그 chunk 안에 숫자들이 **존재**하는가"만 본다. 그러면 한 chunk 안에
-    //   `1990년 창단`과 `통산 3회 우승`이 **따로** 적혀 있을 때
-    //   `1990년에 3회째 우승` 같은 **근거가 한 번도 하지 않은 주장**이 통과한다.
-    //   삼순 계약은 "단일 근거가 **직접 진술**" 이므로 문장 단위까지 좀힌다:
-    //   답의 한 문장이 잡는 수치 주장은 **근거의 한 문장**이 전부 담고 있어야 한다.
-    //   (답을 문장별로 나누므로 정상적인 여러 문장 답변은 과차단되지 않는다.)
-    const evidenceSentences = evidence.flatMap((row) => splitSentences(row.content));
-    return splitSentences(answer).every((line) => {
-      if (!/\d/.test(line) && !hasKoreanQuantityClaim(line)) return true;
-      return evidenceSentences.some((source) => groundedAgainst(line, source));
-    });
+    return evidence.some((row) => groundedAgainst(answer, row.content));
   }
   return groundedAgainst(answer, evidence.map((row) => row.content).join("\n"));
-}
-
-/**
- * 수치 직접진술 대조용 문장 분할.
- *
- * 마침표·물음표·느낌표·줄바꾸·불릿 경계로 자른다. 나무위키 본문은 한 문단에
- * 서로 다른 사실이 줄바꾸로 나열되는 경우가 많아 줄바꾸도 경계로 본다.
- * 경계를 넣게 잡을수록 조합 주장이 새므로 보수적으로 자른다.
- * 과분할의 손해는 "근거 있는 답을 거절"(→ 안내문)이고, 과소분할의 손해는
- * "지어낸 조합을 근거 달고 서빙"이다. 후자가 훨씬 나쁜 실패라 전자를 택한다.
- */
-function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?\u3002])\s+|[\n\r]+|\s*[\u00b7\u2022]\s*/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 /** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
