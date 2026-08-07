@@ -103,6 +103,9 @@ async function seed() {
       content_type: "general",
       title: "기사 댓글 신고 QA",
       content: "QA bridge",
+      // 공개범위 필수(20260807020000 트리거) — 무태그 seed 는 23514 로 거절된다.
+      // 기사 브릿지는 특정 팀 소유가 아니므로 운영 경로(news/discussion route)와 동일하게 10팀 전부.
+      team_tags: ["lg", "doosan", "kt", "ssg", "nc", "kia", "lotte", "samsung", "hanwha", "kiwoom"],
       is_hidden: true,
     })
     .select("id")

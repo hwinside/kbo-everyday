@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil } from "lucide-react";
 import PhotoFeed from "@/components/community/PhotoFeed";
@@ -12,7 +12,6 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { useUnifiedFeed } from "@/lib/supabase/useUnifiedFeed";
 import { createPost, toggleLike } from "@/lib/supabase/usePosts";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { getPostSourceLabel, type CommunitySourceLabel } from "@/lib/utils/community-board";
 import { useFeedScrollRestore } from "@/lib/community/useFeedScrollRestore";
 
 export default function AllPostsPage() {
@@ -51,11 +50,6 @@ export default function AllPostsPage() {
     [user, likedIds, setPostLiked],
   );
 
-  const sourceLabels = useMemo<Record<number, CommunitySourceLabel>>(
-    () => Object.fromEntries(posts.map((post) => [post.id, getPostSourceLabel(post)])),
-    [posts],
-  );
-
   // 무한 스크롤 — 하단 센티넬 진입 시 다음 페이지 로드.
   const sentinelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -89,7 +83,7 @@ export default function AllPostsPage() {
         <p className="text-sm text-text-tertiary">팀, 선수, 자유게시판 글을 한 번에 봅니다.</p>
       </div>
 
-      <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} sourceLabels={sourceLabels} />
+      <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} />
 
       {hasMore && (
         <div ref={sentinelRef} className="flex justify-center py-6 text-sm text-text-tertiary">

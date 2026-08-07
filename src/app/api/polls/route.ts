@@ -150,6 +150,12 @@ export async function POST(request: NextRequest) {
   // 선지에서 파생된 태그와 union(dedupe). 서버 canonical(teams.ts slug / roster kboId) 검증으로
   // 위조 태그 거부. etc만 있는 투표도 이 경로로 원하는 피드에 노출 가능.
   const seenPlayerKboIds = new Set(playerTags.map((t) => t.split(":")[0]));
+
+  // 명시적 공개범위(body.teamTags)를 **별도 집합**으로 검증한다.
+  // 위의 teamTags Set 은 이미 kind==='team' 선지에서 파생된 팀을 담고 있어서,
+  // 그 Set 의 크기로 필수조건을 보면 body.teamTags=[] 여도 팀 선지만 있으면 통과한다
+  // (삼순 NO-GO 2026-08-06). 따라서 파생과 섞이기 전의 순수 명시 태그를 따로 모은다.
+  const explicitTeamTags: string[] = [];
   if (Array.isArray(body.teamTags)) {
     for (const raw of body.teamTags as unknown[]) {
       const slug = typeof raw === "string" ? raw.trim() : "";
@@ -158,7 +164,7 @@ export async function POST(request: NextRequest) {
       if (!TEAM_BY_SLUG.has(slug)) {
         return NextResponse.json({ error: `알 수 없는 팀 태그입니다: ${slug}` }, { status: 400 });
       }
-      teamTags.add(slug);
+      explicitTeamTags.push(slug);
     }
   }
   if (Array.isArray(body.playerTags)) {
@@ -177,6 +183,21 @@ export async function POST(request: NextRequest) {
       }
     }
   }
+  // 공개범위 필수 조건 — **명시적 teamTags 1개 이상**(하린아빠 2026-08-06).
+  // 선지에서 파생된 팀이나 선수 소속팀은 이 조건을 대신하지 않는다 — 글쓴이가 공개범위를
+  // 직접 고르게 하는 게 목적이라 파생으로 통과시키면 의도가 무너진다.
+  // 클라이언트 버튼 disabled 만으로는 직접 POST 를 막지 못하므로 서버가 경계다.
+  // ⚠️ 합쳐진 teamTags Set 이 아니라 **explicitTeamTags** 를 봐야 한다 — Set 은 이미 팀 선지에서
+  // 파생된 값을 담고 있어서 body.teamTags=[] 여도 항상 통과한다(삼순 2차 NO-GO 2026-08-06).
+  if (explicitTeamTags.length === 0) {
+    return NextResponse.json(
+      { error: "팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)" },
+      { status: 400 },
+    );
+  }
+
+  // 명시 태그 union — 검증을 통과한 뒤에야 합친다.
+  for (const slug of explicitTeamTags) teamTags.add(slug);
   // 선수 태그의 소속팀 slug 도 team_tags 에 union (기존 createPost 동일 — 팀 피드 노출).
   for (const slug of teamSlugsForPlayerTags(playerTags)) teamTags.add(slug);
 

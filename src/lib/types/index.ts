@@ -53,6 +53,13 @@ export interface Post {
   isReported: boolean;
   createdAt: string;
   author?: PostAuthor;
+  /**
+   * 글 공개범위 SSOT 입력(post-scope). 카드가 부모가 주입한 라벨을 그리면 같은 글이 화면마다
+   * 다른 배지를 달게 된다 — 그래서 태그를 글에 실어 보내고 카드가 직접 계산한다.
+   * 누락(레거시 글)이면 `scopeInputForPost` 가 board_type/board_id 로 복원한다.
+   */
+  teamTags?: string[] | null;
+  playerTags?: string[] | null;
 }
 
 export interface PostAuthor {
