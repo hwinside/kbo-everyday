@@ -139,7 +139,10 @@ async function cleanup() {
 
   // 삭제 호출이 성공을 리턴해도 실제로 남았을 수 있다(RLS·캐스케이드 등).
   // 잔여물을 직접 조회해 0건을 확인하는 게 유일한 근거다.
-  const { data: leftPosts } = await admin.from("posts").select("id").like("title", `%QA-SCOPE-${STAMP}%`);
+  // query-guard: bounded -- 이번 실행이 만든 픽스처는 6건뿐이고 STAMP 로 이 런만 지정한다.
+  //   삭제가 완전하면 0건, 실패해도 상한이 그만큼이라 limit(20) 으로 충분하며 컬렉션이 자라지 않는다.
+  const { data: leftPosts } = await admin
+    .from("posts").select("id").like("title", `%QA-SCOPE-${STAMP}%`).limit(20);
   check("cleanup: QA 글 잔여물 0건", (leftPosts?.length ?? 0) === 0, `${leftPosts?.length}건 잔존`);
   if (userId) {
     const { data: leftUser } = await admin.auth.admin.getUserById(userId);
