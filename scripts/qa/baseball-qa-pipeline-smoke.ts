@@ -1,3 +1,4 @@
+// @crawl-managed-read: structural  (크롤 관리 데이터 파일을 구조·불변식 검증에만 사용 — 값 하드코딩 금지, 축② 순환참조 메타게이트)
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -600,7 +601,9 @@ for (const question of ["보크가 뭐야?", "잔루만루가 뭔데", "역할�
 
 // 삼순 2차 P0: 공백 포함 canonical 이름(roster 28건)은 연속 토큰으로 매칭되어야 한다.
 const spacedRosterNames = playersRoster.filter(({ name }) => /\s/.test(name));
-assert.equal(spacedRosterNames.length, 28, "공백 포함 canonical 이름 28건");
+// 개수(28)를 못박으면 콜업으로 공백 이름 선수가 하나만 늘어도 RED → 크롤 자동 업데이트 차단(순환참조).
+// 아래 for 루프가 각 공백 이름의 매칭을 실제로 검증하므로, 여기선 "존재"만 불변식으로 확인한다.
+assert.ok(spacedRosterNames.length >= 1, "공백 포함 canonical 이름이 존재해야 한다");
 for (const { name } of spacedRosterNames) {
   // 선수 지명이 인식되면 기록 질문이므로 `history_hold`. 매칭이 깨지면 선수 미지명 상태가 되어
   // 다른 라벨(`llm_scope_gate` 등)로 떨어지므로 이 단정은 여전히 "이름 매칭"을 검증한다.

@@ -1,3 +1,4 @@
+// @crawl-managed-read: structural  (크롤 관리 데이터 파일을 구조·불변식 검증에만 사용 — 값 하드코딩 금지, 축② 순환참조 메타게이트)
 /**
  * Smoke/regression for 뉴스클리핑 positive 제목 게이트 (hasClippingTitleSignal).
  *

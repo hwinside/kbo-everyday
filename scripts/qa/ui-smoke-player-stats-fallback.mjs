@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// @crawl-managed-read: structural  (크롤 관리 데이터 파일을 구조·불변식 검증에만 사용 — 값 하드코딩 금지, 축② 순환참조 메타게이트)
 /**
  * PR #1003: malformed Naver 200이 서버에서 static fallback으로 닫힌 뒤에도
  * 팀 선수 기록 화면이 빈 상태로 퇴화하지 않는지 390×844 실브라우저로 고정한다.
