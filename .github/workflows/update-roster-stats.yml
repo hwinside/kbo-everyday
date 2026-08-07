@@ -238,6 +238,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 신규 자동 PR 을 연 뒤, 머지되지 못하고 남은 과거 자동 roster PR 을 close 한다.
+      # (best-effort: 실패해도 신규 PR 흐름을 막지 않는다.) 선택 규칙은 순수함수가,
+      # close I/O 만 이 스크립트가 맡는다. 반드시 자동 브랜치 접두사로만 제한하고 현재 브랜치는 제외한다.
+      - name: Close stale auto roster PRs
+        if: steps.changes.outputs.changed == 'true' && steps.pr.outputs.branch != ''
+        run: node scripts/ci/close-stale-auto-roster-prs.mjs "$BRANCH"
+        env:
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Report validation failure after PR creation
         if: steps.changes.outputs.changed == 'true' && (steps.validate_roster.outcome == 'failure' || steps.validate_identity.outcome == 'failure' || steps.validate_photo.outcome == 'failure' || steps.validate_new_foreign_photo.outcome == 'failure')
         run: |
