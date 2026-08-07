@@ -49,7 +49,9 @@ export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
  * ⚠️ **좁게 시작하는 것이 안전하다.** 나중에 경로를 더하는 건 이 배열에 한 줄이지만,
  * 이미 쌓인 오염된 표는 사후에 걷어낼 수 없다(어느 표가 오염인지 구분할 근거가 없다).
  */
-export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "dictionary", "kbo_structured"] as const;
+// ⚠️ `team_rag` 를 빠뜨리면 구단 답변에서 피드백 버튼이 사라진다(#1118 회귀).
+//   2026-08-07 에 구단 경로를 `rag` 에서 분리하면서 여기도 함께 넓혔다.
+export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "team_rag", "dictionary", "kbo_structured"] as const;
 
 export type FeedbackEligibleMatchPath = (typeof FEEDBACK_ELIGIBLE_MATCH_PATHS)[number];
 

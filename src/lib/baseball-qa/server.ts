@@ -40,12 +40,14 @@ import {
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
+  RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
   type RagDocumentSourceKind,
+  type RagEntityCandidate,
   type RagEvidence,
   type RagEvidenceCandidate,
-  type RagPlayerCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
+import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
@@ -54,6 +56,36 @@ import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { tier2WeightForQuestion } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+/**
+ * 구단 RAG kill-switch.
+ *
+ * ⚠️ 왜 필요한가 (삼순 2026-08-07 12라운드): tier2 숫자 가드는 **best-effort** 정책으로
+ *   간다(하린아빠 승인). 즉 잔존 누수가 있을 수 있고, 그게 실제로 유저에게 보이면
+ *   **빠르게 끌 수 있어야** 한다. 종전처럼 `enableTeamRag: true` 로 하드코딩하면
+ *   끄는 데 코드 수정 → 리뷰 → 머지 → 배포가 필요해 대응이 늦는다.
+ *
+ * 끄는 법: Vercel 환경변수 `TEAM_RAG_DISABLED=1` 설정 → **재배포 1회**(~2분).
+ *
+ *   ⚠️ "재배포 없이 즉시"가 아니다(삼순 2026-08-07 정정, 내가 틀리게 썼던 부분).
+ *     Vercel env 변경은 **기존 배포에 반영되지 않는다** — 각 배포가 빌드 시점의 env 를
+ *     들고 있기 때문이다. 콜드스타트가 다시 읽어 갈 것이라는 내 설명은 사실이 아니었다.
+ *     그러니 이건 *즉시 스위치*가 아니라 **재배포형 rapid rollback**이다:
+ *     코드 수정·리뷰·머지를 건너뛰고 재배포만으로 끄는 것이 이 스위치의 값어치다.
+ *
+ *   무배포 즉시 차단이 필요하다면 DB/원격 런타임 플래그가 필요한데, 그건 답변 경로마다
+ *   조회가 하나 더 붙는 비용이라 별도 판단 사항으로 남긴다.
+ *
+ *   끄면 구단 질문은 종전 경로(일반 LLM)로 내려간다 — 기능이 죽는 게 아니라 RAG 만 우회한다.
+ *
+ * ⚠️ **fail-safe 방향**: 값이 없거나 이상하면 **켜진 상태**를 유지한다. 이 스위치는
+ *   장애 대응용이지 기능 게이트가 아니므로, 오타 하나로 조용히 꺼지면 안 된다.
+ *   끄는 것은 명시적인 `1`/`true`/`yes`/`on` 일 때만이다.
+ */
+export function teamRagEnabled(): boolean {
+  const raw = (process.env.TEAM_RAG_DISABLED ?? "").trim().toLowerCase();
+  return !["1", "true", "yes", "on"].includes(raw);
+}
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 /** 프롬프트 SSOT는 gemini-request.ts — 실 provider 게이트가 같은 문자열을 import해 검증한다. */
 const SYSTEM_PROMPT = BASEBALL_QA_SYSTEM_PROMPT;
@@ -133,6 +165,8 @@ interface RagOfficialChunkRow {
   section_path: string;
   as_of: string;
   source_grade: string;
+  /** RPC 가 아직 안 돌려줄 수 있으므로 optional. 없으면 sanitizer 가 URL 로 판정한다. */
+  source_kind?: string;
 }
 
 /**
@@ -146,7 +180,7 @@ interface RagOfficialChunkRow {
 export interface RagSearchRuntime {
   embed: typeof embedQuery;
   fetchBySourceKind: (
-    candidate: RagPlayerCandidate,
+    candidate: RagEntityCandidate,
     sourceKind: RagDocumentSourceKind,
     limit: number,
     /**
@@ -195,6 +229,10 @@ export function createProductionRagSearchRuntime(
         sectionPath: row.section_path,
         asOf: row.as_of,
         sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+        // ⚠️ `sanitizeEvidenceContent` 가 **나무위키 전용 정제를 이 값으로 한정**한다.
+        //   여기서 빠뜨리면 정제가 URL 추정으로 내려가고, 판정 불가 시 무변조가 되어
+        //   나무위키 광고가 근거로 살아난다(삼순 2026-08-07 9라운드 지적).
+        sourceKind: row.source_kind,
         embedding: row.embedding,
       }));
     },
@@ -204,7 +242,7 @@ export function createProductionRagSearchRuntime(
 const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
 export async function searchRag(
-  candidate: RagPlayerCandidate,
+  candidate: RagEntityCandidate,
   question: string,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
 ): Promise<RagEvidence[]> {
@@ -231,6 +269,16 @@ async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<Ll
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
 async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
   return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+}
+
+/**
+ * 구단(tier2) 근거 전용 호출 — 프롬프트만 다르고 경계는 선수·공식 경로와 동일하다.
+ *
+ * 선수용 프롬프트를 재사용하지 않는다 — "선수 소개 도우미"로 자기규정한 모델은
+ * 구단 질문을 범위 밖으로 오판하고, 숫자 전면금지라 연도가 들어간 구단 서사를 전부 거부한다.
+ */
+async function callTeamRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT);
 }
 
 async function callRagLlmWithPrompt(
@@ -289,6 +337,9 @@ async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
     asOf: row.as_of,
     // 계약상 tier1만 돌아오지만, 호출자(`allowsNumericAnswer`)가 다시 확인할 수 있게 실값을 싱는다.
     sourceGrade: row.source_grade === "tier1" ? ("tier1" as const) : ("tier2" as const),
+    // 공식 문서는 나무위키가 아니므로 정제 대상이 아니다. RPC 가 값을 주면 그대로 쓰고,
+    // 안 주면 `kbo_ebook` 으로 고정한다 — 이 RPC 는 공식 e북만 반환하는 경로다.
+    sourceKind: (row.source_kind as RagSourceKind | undefined) ?? "kbo_ebook",
   }));
 }
 
@@ -370,6 +421,11 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
     // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
     enablePlayerRag: true,
+    // 구단 RAG 개통 (하린아빠 2026-08-05 "배선 연결"). production 적재 실측:
+    // `genius_rag_sources` team 10/10 ready, `genius_rag_serving_chunks` entity_type=team 71,531건.
+    // 그런데 후보 생성 코드가 없어 한 건도 읽히지 않고 있었다(`LG 역사` → source=llm).
+    enableTeamRag: teamRagEnabled(),
+    callTeamRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
     releaseDaily: async (userId) => {
       // query-guard: bounded -- message_id 단위 멱등 단일 행 갱신 RPC.

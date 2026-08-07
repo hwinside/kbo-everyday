@@ -52,6 +52,9 @@ export const MATCH_PATH_REPLY_KIND = {
   cache: "answer",
   llm: "answer",
   rag: "answer",
+  // 구단 서술형 RAG. 선수 RAG 와 같은 "근거로 답한 것"이라 화면 취급은 동일하다.
+  // (경로를 나눈 이유는 감사 대상 분리이지 UI 분기가 아니다 — 2026-08-07)
+  team_rag: "answer",
   // 시즌 기록을 운영 DB 원값으로 돌려준 경로 — 이것도 답변이다.
   kbo_structured: "answer",
   // 감사·확인 인사
