@@ -194,6 +194,11 @@ export function usePlayerCommunity(userTeamId?: number) {
             avatar_url: prof?.avatar_url ?? undefined,
             click_view_count: p.click_view_count ?? 0,
             impression_view_count: p.impression_view_count ?? 0,
+            // 공개범위 SSOT 입력 — 이 매핑은 필드를 명시 나열하므로 여기서 빠지면
+            // SELECT 에 있어도 카드까지 안 간다. 다팀 글이 선수 보드 폴백으로
+            // 조용히 축소된다(삼순 NO-GO 2026-08-07).
+            team_tags: p.team_tags ?? undefined,
+            player_tags: p.player_tags ?? undefined,
           };
         })
       );

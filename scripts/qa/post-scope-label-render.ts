@@ -179,6 +179,46 @@ function installSupabaseStub(rows: unknown[]) {
   return { client: { from: (table: string) => makeQuery(table) }, selected };
 }
 
+/**
+ * **투영(projection) supabase stub** — SELECT 에 적힌 컬럼만 돌려준다.
+ *
+ * ⚠️ 이게 이번 판본의 핵심이다. 종전 stub 은 컬럼 목록을 기록만 하고 row 를 통째로 반환했다.
+ *   그래서 `usePosts` 의 SELECT 에서 `team_tags` 가 빠져 있어도 데이터가 그대로 흘러 GREEN 이었고,
+ *   실제 화면에서는 라벨이 `전체구단 공개` 로 폴백하고 있었다(삼순 NO-GO 2026-08-07).
+ *   조회 컬럼을 실제로 적용해야 query→map→card 중 **query 구간**이 게이트에 잡힌다.
+ */
+function installProjectingStub(rows: Record<string, unknown>[]) {
+  const selected: string[] = [];
+  const project = (cols: string) => {
+    // "a, b, profiles(x, y)" → 최상위 컬럼만 추출(괄호 안은 조인이므로 통째로 통과).
+    const top = cols.replace(/\([^)]*\)/g, "").split(",").map((c) => c.trim()).filter(Boolean);
+    const joins = Array.from(cols.matchAll(/(\w+)\s*\(/g)).map((m) => m[1]);
+    const keep = new Set([...top, ...joins]);
+    return rows.map((r) => {
+      const out: Record<string, unknown> = {};
+      for (const k of Object.keys(r)) if (keep.has(k)) out[k] = r[k];
+      return out;
+    });
+  };
+  const makeQuery = (table: string) => {
+    const q: Record<string, unknown> = {};
+    let projected: unknown[] = [];
+    const chain = () => q;
+    for (const m of ["or", "eq", "in", "lt", "neq", "contains", "order", "limit", "gte", "lte", "not"]) {
+      q[m] = (...args: unknown[]) => { void args; return chain(); };
+    }
+    q.select = (cols: string) => {
+      selected.push(`${table}:${cols}`);
+      projected = table === "posts" ? project(cols) : [];
+      return chain();
+    };
+    q.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: projected, error: null }).then(res);
+    return q;
+  };
+  return { from: (table: string) => makeQuery(table), selected };
+}
+
 async function main() {
   const React = (await import("react")).default;
   const { act } = await import("react");
@@ -523,6 +563,130 @@ async function main() {
       "§4 DB 경계 게이트가 prebuild(required) 에 물려 있다",
       (pkg.scripts.prebuild ?? "").includes("qa:post-scope-db-trigger"),
     );
+  }
+
+  // ── §6. query→map→card 실배선 (삼순 NO-GO 2026-08-07) ────────────────────
+  //
+  //   종전 게이트는 fixture 에 태그를 **직접 주입**해 카드만 태웠다. 그래서 조회(SELECT)와
+  //   매핑(map) 두 구간이 끊겨도 GREEN 이었고, 실제 화면에서는 라벨이 조용히
+  //   `전체구단 공개` 로 폴백하고 있었다. 여기서는 **투영 stub** 으로 SELECT 컬럼을 실제로
+  //   적용해 DB→hook→page→card 전 구간을 태운다.
+  //   판정 축: 4팀 태그 글이 "3팀 + 외 1팀" 으로 나와야 한다. 태그가 중간에 유실되면
+  //   board 폴백이 걸려 `전체구단 공개`(free) 또는 선수 소속 1팀(player)으로 축소된다.
+  console.log("\n[6] query→map→card 실배선");
+
+  const wiredFixture = { id: 501, team_tags: s(4), player_tags: [] as string[] };
+  const wiredExpect = `${s(3).map(shortName).join(" ")} 외 1팀`;
+
+  // 6-1. 자유게시판: usePosts(SELECT+map) → free/page(toPost) → PostList → PostCard
+  {
+    const stub6 = installProjectingStub([
+      { ...feedRow(wiredFixture), board_type: "free", board_id: "general", content_type: "general" },
+    ]);
+    const clientMod6 = await import("../../src/lib/supabase/client");
+    const orig6 = (clientMod6.supabase as unknown as { from: unknown }).from;
+    (clientMod6.supabase as unknown as { from: unknown }).from = stub6.from;
+
+    const FreeBoardPage = (await import("../../src/app/(main)/community/free/page")).default;
+    const el6 = document.createElement("div");
+    document.body.appendChild(el6);
+    const root6 = createRoot(el6);
+    await act(async () => {
+      root6.render(
+        React.createElement(
+          AppRouterContext.Provider,
+          { value: routerValue },
+          React.createElement(ThemeProvider, null, React.createElement(FreeBoardPage as never, {} as never)),
+        ),
+      );
+    });
+    for (let i = 0; i < 30; i++) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    }
+
+    const freeTexts = scopeTextsFrom(el6 as unknown as HTMLElement);
+    ok(
+      "§6 자유게시판이 카드를 렌더한다(실배선 확인)",
+      freeTexts.length > 0,
+      "카드 0개 — hook/page 배선 끊김 또는 stub 부적합",
+    );
+    ok(
+      "§6 자유게시판 4팀 글이 '3팀 + 외 1팀'",
+      freeTexts[0] === wiredExpect,
+      `기대 "${wiredExpect}" / 실제 "${freeTexts[0]}" — 중간 구간에서 태그가 유실되면 전체구단 공개로 폴백한다`,
+    );
+    // SELECT 자체에 컬럼이 있는지도 함께 남긴다(진단용 — 판정은 위 렌더 결과가 한다).
+    ok(
+      "§6 usePosts SELECT 에 team_tags 포함",
+      stub6.selected.some((c) => c.startsWith("posts:") && c.includes("team_tags")),
+      stub6.selected.find((c) => c.startsWith("posts:"))?.slice(0, 80),
+    );
+
+    await act(async () => { root6.unmount(); });
+    (clientMod6.supabase as unknown as { from: unknown }).from = orig6;
+  }
+
+  // 6-2. 최애선수 사진탭: usePlayerCommunity(SELECT+setPhotoPosts map) → PhotoFeed → PostCard
+  //   hook 을 실제로 돌려야 map 구간이 태워진다. renderHook 대신 소비 컴포넌트를 즉석에서 만든다.
+  {
+    const stub7 = installProjectingStub([
+      { ...feedRow({ ...wiredFixture, id: 502 }), board_type: "player", board_id: "53123", content_type: "photo" },
+    ]);
+    const clientMod7 = await import("../../src/lib/supabase/client");
+    const orig7 = (clientMod7.supabase as unknown as { from: unknown }).from;
+    (clientMod7.supabase as unknown as { from: unknown }).from = stub7.from;
+
+    const { usePlayerCommunity } = await import("../../src/hooks/usePlayerCommunity");
+    const PhotoFeedMod = (await import("../../src/components/community/PhotoFeed")).default;
+
+    const Harness = () => {
+      const c = usePlayerCommunity(1) as unknown as {
+        filteredPhotoPosts: unknown[];
+        setSelectedPlayer: (v: string) => void;
+        handleTabChange: (t: string) => void;
+      };
+      React.useEffect(() => {
+        c.setSelectedPlayer("53123");
+        c.handleTabChange("photo");
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      return React.createElement(PhotoFeedMod as never, {
+        posts: c.filteredPhotoPosts,
+        loading: false,
+        onLike: () => {},
+      } as never);
+    };
+
+    const el7 = document.createElement("div");
+    document.body.appendChild(el7);
+    const root7 = createRoot(el7);
+    await act(async () => {
+      root7.render(
+        React.createElement(
+          AppRouterContext.Provider,
+          { value: routerValue },
+          React.createElement(ThemeProvider, null, React.createElement(Harness)),
+        ),
+      );
+    });
+    for (let i = 0; i < 30; i++) {
+      await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    }
+
+    const photoTexts = scopeTextsFrom(el7 as unknown as HTMLElement);
+    ok(
+      "§6 최애선수 사진탭이 카드를 렌더한다(실배선 확인)",
+      photoTexts.length > 0,
+      "카드 0개 — hook 이 사진글을 못 실었다",
+    );
+    ok(
+      "§6 최애선수 사진탭 4팀 글이 '3팀 + 외 1팀'",
+      photoTexts[0] === wiredExpect,
+      `기대 "${wiredExpect}" / 실제 "${photoTexts[0]}" — setPhotoPosts 매핑이 태그를 버리면 선수 보드 1팀으로 축소된다`,
+    );
+
+    await act(async () => { root7.unmount(); });
+    (clientMod7.supabase as unknown as { from: unknown }).from = orig7;
   }
 
   // ── §5. 결함주입 자체검증 ────────────────────────────────────────────────
