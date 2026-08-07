@@ -373,20 +373,28 @@ async function selfTestCleanup() {
     cond ? pass++ : fail++;
   };
 
-  /** behavior: uid 별로 각 단계가 어떻게 응답할지 기술. */
+  /**
+   * behavior: uid 별로 각 단계가 어떻게 응답할지 기술.
+   * 모든 단계가 `{ throws }` 를 지원한다 — 삭제 단계의 throw 를 주입할 수 없으면
+   * `step()` 의 catch 가 죽어도 자가검증이 GREEN 이다(2026-08-08 삼순 지적).
+   */
+  const settle = (r, fallback) => {
+    if (r?.throws) throw r.throws;
+    return r ?? fallback;
+  };
   const fake = (behavior, visited) => ({
     from: () => ({
       delete: () => ({
         eq: async (_c, uid) => {
           visited.push(`profileDelete:${uid}`);
-          return behavior[uid]?.profileDelete ?? {};
+          return settle(behavior[uid]?.profileDelete, {});
         },
       }),
       select: () => ({
         eq: (_c, uid) => ({
           maybeSingle: async () => {
             visited.push(`profileProbe:${uid}`);
-            return behavior[uid]?.profileProbe ?? { data: null };
+            return settle(behavior[uid]?.profileProbe, { data: null });
           },
         }),
       }),
@@ -395,17 +403,21 @@ async function selfTestCleanup() {
       admin: {
         deleteUser: async (uid) => {
           visited.push(`authDelete:${uid}`);
-          return behavior[uid]?.authDelete ?? {};
+          return settle(behavior[uid]?.authDelete, {});
         },
         getUserById: async (uid) => {
           visited.push(`authProbe:${uid}`);
-          const r = behavior[uid]?.authProbe;
-          if (r?.throws) throw r.throws;
-          return r ?? { data: { user: null }, error: null };
+          return settle(behavior[uid]?.authProbe, { data: { user: null }, error: null });
         },
       },
     },
   });
+
+  /** 한 계정의 4단계가 전부 실행됐는지. */
+  const allSteps = (visited, uid) =>
+    [`profileDelete:${uid}`, `authDelete:${uid}`, `profileProbe:${uid}`, `authProbe:${uid}`].every((s) =>
+      visited.includes(s),
+    );
 
   const NOT_FOUND = Object.assign(new Error("User not found"), { status: 404 });
   const okUser = { authProbe: { error: NOT_FOUND } };
@@ -467,7 +479,32 @@ async function selfTestCleanup() {
     t("auth 유저 잔존 → false", clean === false);
   }
 
-  // ⑤ 404 "User not found" 는 정상 삭제의 증거다 — 이걸 장애로 치면 정상 정리가 매번 실패한다.
+  // ⑤ **삭제 단계 throw** — step() 의 catch 가 실제로 동작하는지.
+  //   이 fixture 가 없으면 catch 를 "throw → 성공 처리" 나 "중단"으로 망가뜨려도 자가검증이
+  //   그대로 GREEN 이다(2026-08-08 삼순 지적). 실패 여부만 아니라
+  //   ① 같은 계정의 후속 3단계 ② 다음 계정의 4단계가 모두 실행되는지까지 묶어 확인한다.
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { profileDelete: { throws: new Error("ECONNRESET") }, ...okUser }, b: okUser }, visited),
+      ["a", "b"],
+    );
+    t("profile 삭제 throw → false", clean === false);
+    t("profile 삭제 throw 어도 같은 계정 4단계 전부 실행", allSteps(visited, "a"), visited.join(","));
+    t("profile 삭제 throw 어도 다음 계정 4단계 전부 실행", allSteps(visited, "b"), visited.join(","));
+  }
+  {
+    const visited = [];
+    const clean = await teardown(
+      fake({ a: { authDelete: { throws: new Error("socket hang up") }, ...okUser }, b: okUser }, visited),
+      ["a", "b"],
+    );
+    t("auth 삭제 throw → false", clean === false);
+    t("auth 삭제 throw 어도 같은 계정 4단계 전부 실행", allSteps(visited, "a"), visited.join(","));
+    t("auth 삭제 throw 어도 다음 계정 4단계 전부 실행", allSteps(visited, "b"), visited.join(","));
+  }
+
+  // ⑥ 404 "User not found" 는 정상 삭제의 증거다 — 이걸 장애로 치면 정상 정리가 매번 실패한다.
   t("404/User not found 는 없음 신호", isAuthUserAbsent(NOT_FOUND) && !isAuthUserAbsent({ message: "boom" }));
 
   console.log(`\n${fail === 0 ? "PASS" : "FAIL"} — ${pass} passed, ${fail} failed`);
