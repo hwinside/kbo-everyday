@@ -39,6 +39,9 @@ export default function FreeBoardPage() {
     commentCount: p.comment_count,
     isReported: false,
     createdAt: p.created_at,
+    // 공개범위 SSOT — 카드가 직접 계산하도록 태그를 실어 보낸다(부모 주입 라벨 제거의 반대급부).
+    teamTags: p.team_tags ?? null,
+    playerTags: p.player_tags ?? null,
     author: {
       nickname: p.nickname || "익명",
       avatarUrl: p.avatar_url ?? null,

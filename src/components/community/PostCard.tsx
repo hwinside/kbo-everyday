@@ -5,6 +5,8 @@ import { motion } from "framer-motion";
 import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import LinkPreview from "@/components/community/LinkPreview";
+import PostScopeBadge from "@/components/community/PostScopeBadge";
+import { scopeInputForPost } from "@/lib/utils/post-scope-input";
 import type { Post } from "@/lib/types";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PollCardSlot from "@/components/community/PollCardSlot";
@@ -60,6 +62,22 @@ export default function PostCard({ post, onPress, pollSummary, pollLoaded, onPol
         isStaff={post.author?.grade === "staff"}
         meta={<span className="text-xs text-text-tertiary">{timeAgo}</span>}
       />
+
+      {/* 글 공개범위 — 홈 최신글·PhotoFeed·프로필과 **같은 SSOT**(post-scope, team_tags).
+          종전에는 부모가 board 기반 `sourceLabel` 을 주입했고, 그래서 같은 글이 화면마다
+          다른 배지를 달았다. 주입을 없애고 글 자체의 태그에서 계산한다(삼순 2026-08-07). */}
+      <div className="mt-2 flex items-center gap-2" data-community-source-label>
+        <span className="shrink-0 text-[10px] text-text-tertiary">공개범위</span>
+        <PostScopeBadge
+          post={scopeInputForPost({
+            team_tags: post.teamTags,
+            player_tags: post.playerTags,
+            board_type: post.boardType,
+            board_id: post.boardId,
+          })}
+          variant="full"
+        />
+      </div>
 
       {/* Title */}
       {post.title && (

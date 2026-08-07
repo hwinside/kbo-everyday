@@ -344,13 +344,60 @@ async function main() {
   ok("구장→팀 파생: 미상 구장은 빈 배열(임의 팀 금지)", teamSlugsForStadium("no-such-stadium").length === 0);
   ok("ALL_TEAM_SLUGS 는 정규 10구단", ALL_TEAM_SLUGS.length === 10 && !ALL_TEAM_SLUGS.some((s2) => s2.startsWith("allstar")));
 
+  // ⚠️ 여기서 `tryInsert()`(bootstrap superuser)를 쓰면 role 을 만들기만 하고 태우지 않는 것이라
+  //    "service_role GREEN" 이라는 이름만 붙은 false-green 이 된다(삼순 NO-GO 2026-08-07).
+  //    authenticated 축은 SET LOCAL ROLE 로 태워놓고 이 축만 superuser 로 돌렸던 게 실수였다.
+  //    → 실제 service_role 로 SET LOCAL ROLE 해서 태우고, tagged GREEN 과 untagged RED 를 함께 본다.
+  //    service_role 은 BYPASSRLS 지만 **트리거는 우회하지 못한다** — 그게 이 경계의 핵심이다.
+  await db.exec("GRANT SELECT, INSERT, UPDATE ON public.posts TO service_role");
+  await db.exec("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role");
+
+  /** 실제 service_role 로 INSERT 를 시도한다. null = 저장 성공. */
+  async function insertAsServiceRole(boardType: string, teamTags: unknown): Promise<string | null> {
+    await db.exec("BEGIN");
+    try {
+      await db.exec("SET LOCAL ROLE service_role");
+      await db.query(
+        `INSERT INTO public.posts (author_id, board_type, board_id, title, content, team_tags)
+         VALUES ($1, $2, 'b', 't', 'c', $3::jsonb)`,
+        [ATTACKER, boardType, teamTags === null ? null : JSON.stringify(teamTags)],
+      );
+      await db.exec("ROLLBACK");
+      return null;
+    } catch (e) {
+      await db.exec("ROLLBACK").catch(() => {});
+      return (e as { code?: string }).code ?? `NO_SQLSTATE:${(e as Error).message}`;
+    }
+  }
+
+  // service_role 이 실제로 적용됐는지 먼저 증명한다. 이게 없으면 아래 GREEN 이
+  // "service_role 로 통과"인지 "superuser 로 통과"인지 구분할 수 없다.
+  const whoami = await (async () => {
+    await db.exec("BEGIN");
+    await db.exec("SET LOCAL ROLE service_role");
+    const r = await db.query<{ r: string }>("SELECT current_user AS r");
+    await db.exec("ROLLBACK");
+    return r.rows[0]?.r;
+  })();
+  ok("service_role 이 실제로 적용된다(superuser 아님)", whoami === "service_role", `current_user=${whoami}`);
+
   for (const [label, bt, tags] of [
     ["구장 좌석팁(잠실 → LG·두산)", "stadium", jamsil],
     ["공지 브릿지(10팀 전부)", "announcement", ALL_TEAM_SLUGS],
     ["기사 브릿지(10팀 전부)", "news", ALL_TEAM_SLUGS],
   ] as Array<[string, string, string[]]>) {
-    const code = await tryInsert(db, { boardType: bt, teamTags: tags });
-    ok(`trusted writer GREEN: ${label}`, code === null, code ? `SQLSTATE ${code}` : undefined);
+    const code = await insertAsServiceRole(bt, tags);
+    ok(`service_role tagged GREEN: ${label}`, code === null, code ? `SQLSTATE ${code}` : undefined);
+  }
+
+  // 반대 방향 — trusted writer 라도 무태그는 막힌다. BYPASSRLS 가 트리거까지 뚫지 못함을 증명한다.
+  for (const bt of ["stadium", "announcement", "news"]) {
+    const code = await insertAsServiceRole(bt, []);
+    ok(
+      `service_role untagged RED: board_type='${bt}' 무태그 거절`,
+      code === CHECK_VIOLATION,
+      `SQLSTATE ${code ?? "성공(=BYPASSRLS 가 트리거까지 우회, 결함)"}`,
+    );
   }
 
   // ── ⑧ 트리거 순서 — 공개범위 에러가 poll 에러에 가려지지 않는다 ──────────
@@ -398,6 +445,89 @@ async function main() {
   ok("재적용 후에도 무태그 거절 유지", stillRejects === CHECK_VIOLATION, `SQLSTATE ${stillRejects ?? "성공(=결함)"}`);
 
   await db.close();
+
+  // ── ⑩ 쓰는 쪽 배선 — 면제 제거의 반대급부 ────────────────────────────────
+  //   면제를 없앴으므로 "쓰는 쪽이 태그를 채운다"가 실제 호출부에 배선돼 있어야 한다.
+  //   배선이 끊기면 그 화면의 글쓰기가 통째로 23514 로 죽는다 — 운영 사고 축이다.
+  //   ⚠️ 파일 전체를 정규식으로 훑으면 주석/무관한 위치의 문자열에도 걸려 검출력이 떨어진다.
+  //     그래서 **해당 INSERT/호출 인자 블록만 잘라내어** 그 안에 배선이 있는지 본다.
+  //     (`teamTags` 전달을 지우면 RED — 삼순 NO-GO 2026-08-07)
+  console.log("\n[10] 쓰는 쪽 배선 — 호출부가 실제로 태그를 채우는가");
+
+  /** 주어진 위치 이후 첫 `{` 부터 중괄호 균형이 맞는 지점까지 잘라낸다. */
+  function braceBlockAt(src: string, at: number): string | null {
+    const open = src.indexOf("{", at);
+    if (open < 0) return null;
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") {
+        depth -= 1;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * `posts` 테이블 대상 INSERT 의 인자 블록.
+   *
+   * ⚠️ 자체 결함 3연속 이력 — "무엇을 검사하는지" 특정에 실패하면 거짓 RED·거짓 GREEN 이 모두 난다:
+   *   1차: 파일의 첫 `.insert(` → QA 스크립트가 앞서 넣는 `profiles` 블록을 읽었다.
+   *   2차: 첫 `from("posts")` → seed-upload 의 **존재확인 SELECT** 블록을 읽었다.
+   *   3차: 이 함수 하나로 전부 처리하려 했으나 호출 형태가 달랐다 —
+   *         구장 페이지는 `createPost({...})`(클라 헬퍼), 콜렉터는 `postInsert` 변수를 먼저 만든다.
+   *   → 지금은 `.insert(` 를 앵커로 삼되 **앞쪽 근거리에 posts 테이블 지정이 있는지**로 대상을
+   *     확정하고, 형태가 다른 호출부는 각자 앵커를 명시한다(아래 wirings 의 3번째 항목).
+   */
+  function postsInsertArgBlock(src: string): string | null {
+    for (let at = src.indexOf(".insert("); at >= 0; at = src.indexOf(".insert(", at + 1)) {
+      const before = src.slice(Math.max(0, at - 300), at);
+      if (!/from\(\s*["'`]posts["'`]\s*\)/.test(before)) continue;
+      const block = braceBlockAt(src, at);
+      if (block) return block;
+    }
+    return null;
+  }
+
+  /** anchor 가 주어지면 그 지점의 블록을, 없으면 posts INSERT 블록을 돌려준다. */
+  function wiringBlock(file: string, anchor: string | null): string | null {
+    const src = readFileSync(resolve(file), "utf8");
+    if (anchor === null) return postsInsertArgBlock(src);
+    const at = src.indexOf(anchor);
+    return at < 0 ? null : braceBlockAt(src, at);
+  }
+
+  const wirings: Array<[string, string, string | null, RegExp]> = [
+    // 구장 페이지는 supabase 직접 INSERT 가 아니라 클라 헬퍼 `createPost()` 를 호출한다.
+    [
+      "구장 좌석팁·후기 → 구장에서 팀 파생",
+      "src/app/(main)/community/stadiums/[stadiumId]/page.tsx",
+      // ⚠️ 앵커는 **호출 시작점**이어야 한다. 객체 *내부*(예: `boardType: "stadium"`)를 앵커로 삼으면
+      //    "다음 `{`" 가 중첩 객체(`...(seatInfo ? { seatInfo } : {})`)를 잡아 배선을 못 본다(자체 결함 4차).
+      "await createPost(",
+      /teamTags:\s*teamSlugsForStadium\(/,
+    ],
+    ["공지 브릿지 → 10팀 전부", "src/app/api/admin/whats-new/route.ts", null, /team_tags:\s*ALL_TEAM_SLUGS/],
+    ["기사 브릿지 → 10팀 전부", "src/app/api/news/discussion/route.ts", null, /team_tags:\s*ALL_TEAM_SLUGS/],
+    // 콜렉터는 postInsert 객체를 먼저 만든 뒤 `.insert(postInsert)` 한다.
+    [
+      "짤·움짤 콜렉터 → board 에서 팀 파생",
+      "src/lib/gif-collector/publisher.ts",
+      "const postInsert: Record<string, unknown> =",
+      /team_tags:\s*collectorTeamSlugs/,
+    ],
+    ["댓글 CRUD QA seed", "scripts/qa/ui-smoke-comment-crud.mjs", null, /team_tags:\s*\[/],
+    ["기사 신고 QA seed", "scripts/qa/ui-smoke-news-comment-report.mjs", null, /team_tags:\s*\[/],
+    ["seed-posts", "scripts/seed-posts.ts", null, /team_tags:\s*seedTeamTags\(/],
+    ["seed-upload", "scripts/seed-upload.ts", null, /team_tags:\s*seedTeamTags\(/],
+  ];
+
+  for (const [label, file, anchor, want] of wirings) {
+    const block = wiringBlock(file, anchor);
+    ok(`배선 위치 확보: ${label}`, !!block, block ? undefined : "대상 블록을 찾지 못함");
+    ok(`배선 존재: ${label}`, !!block && want.test(block), want.source);
+  }
 
   console.log(`\n  ${pass} passed, ${fail} failed`);
   if (fail > 0) {

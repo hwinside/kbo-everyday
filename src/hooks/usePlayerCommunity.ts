@@ -31,6 +31,9 @@ interface SupabasePostRow {
   author_team_id_snapshot?: number | null;
   click_view_count?: number | null;
   impression_view_count?: number | null;
+  /** 공개범위 SSOT 입력 — 카드가 직접 계산하므로 조회 컬럼에 반드시 포함돼야 한다. */
+  team_tags?: string[] | null;
+  player_tags?: string[] | null;
   profiles?: SupabaseProfileJoin | SupabaseProfileJoin[] | null;
 }
 
@@ -87,7 +90,7 @@ export function usePlayerCommunity(userTeamId?: number) {
     // query-guard: bounded -- 선택한 관심선수 집합의 최신 일반글 50개만 보여주는 단일 UI 페이지다.
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, profiles(nickname, team_id, grade, avatar_url)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, team_tags, player_tags, profiles(nickname, team_id, grade, avatar_url)")
       .eq("board_type", "player")
       .eq("content_type", "general")
       .in("board_id", queryIds)
@@ -122,6 +125,9 @@ export function usePlayerCommunity(userTeamId?: number) {
             commentCount: p.comment_count,
             isReported: false,
             createdAt: p.created_at,
+            // 공개범위 SSOT — 카드가 직접 계산하도록 태그를 실어 보낸다.
+            teamTags: p.team_tags ?? null,
+            playerTags: p.player_tags ?? null,
             author: {
               nickname: prof?.nickname || "익명",
               avatarUrl: prof?.avatar_url ?? null,
@@ -146,7 +152,7 @@ export function usePlayerCommunity(userTeamId?: number) {
     // query-guard: bounded -- 선택한 관심선수 집합의 최신 사진글 50개만 보여주는 단일 UI 페이지다.
     let query = supabase
       .from("posts")
-      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, avatar_url)")
+      .select("id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, author_team_id_snapshot, click_view_count, impression_view_count, team_tags, player_tags, profiles(nickname, team_id, grade, avatar_url)")
       .eq("board_type", "player")
       .eq("content_type", "photo")
       .in("board_id", queryIds)
