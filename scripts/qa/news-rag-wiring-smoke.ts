@@ -38,6 +38,7 @@ import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-
 import {
   RAG_GROUNDED_SENTINEL,
   RAG_NEWS_SYSTEM_PROMPT,
+  RAG_TEAM_SYSTEM_PROMPT,
   selectEvidence,
   type RagEvidence,
   type RagNewsCandidate,
@@ -47,6 +48,7 @@ import {
   resolveNewsRecency,
 } from "../../src/lib/baseball-qa/rag/news-recency";
 import { gradeForSourceKind } from "../../src/lib/baseball-qa/rag/contracts";
+import { resolveTeamRecordIntent } from "../../src/lib/baseball-qa/stats/team-record";
 import { MATCH_PATH_REPLY_KIND, replyKindForMatchPath } from "../../src/lib/constants/baseball-genius";
 import { FEEDBACK_ELIGIBLE_MATCH_PATHS } from "../../src/lib/baseball-qa/answer-feedback";
 import { readFileSync, readdirSync } from "node:fs";
@@ -370,6 +372,94 @@ async function run(): Promise<void> {
     ok("모델 INSUFFICIENT — 폴백 0, 명시 fail-close");
   }
 
+  // ── ⑧-0 **실제 배포 seam** — server.ts 가 기사 전용 프롬프트를 보내는가 ──────
+  //
+  // 🔴 이 검사가 없어서 사고가 낟다(2026-08-08 삼순 P0-1).
+  //   배포 함수 `callNewsRagLlm()` 이 `RAG_TEAM_SYSTEM_PROMPT` 를 넘기고 있었는데,
+  //   게이트는 **상수 내용**(`RAG_NEWS_SYSTEM_PROMPT` 에 숫자 금지 문구가 있는가)과
+  //   **mock `callNewsRagLlm`** 만 봐서 GREEN 이었다. 상수는 잘 쓰여 있고 mock 은 내가 짜니
+  //   둘 다 통과하지만, **그 둘을 이어주는 배선**은 아무도 안 봤다.
+  //
+  //   그래서 여기서는 **배포되는 `makeDeps()` 를 그대로 실행**해 그가 준 함수를 호출하고,
+  //   실제 요청 body 의 `systemInstruction` 을 직접 읽는다. 모델에게 간 것만이 진실이다.
+  {
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+    process.env.SUPABASE_SERVICE_ROLE_KEY ??= "news-rag-wiring-smoke-key";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "news-rag-wiring-smoke-anon";
+    process.env.GEMINI_API_KEY ??= "news-rag-wiring-smoke-gemini";
+    const server = await import("../../src/lib/baseball-qa/server");
+    const wired = server.makeDeps(9_120_001) as QaDeps;
+
+    assert.equal(typeof wired.callNewsRagLlm, "function",
+      "production deps 에 callNewsRagLlm 이 없다 — 기사 경로가 통째로 비활성이다");
+    assert.equal(typeof wired.searchNewsRag, "function",
+      "production deps 에 searchNewsRag 가 없다 — 적재분이 사장된다");
+    assert.equal(wired.enableNewsRag, true, "production deps 에서 기사 경로가 꺼져 있다");
+
+    // 배포 함수가 실제로 보내는 systemInstruction 을 가로채서 읽는다.
+    const originalFetch = globalThis.fetch;
+    const captured: { systemPrompt: string; userText: string }[] = [];
+    globalThis.fetch = (async (_url: unknown, init?: { body?: string }) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      captured.push({
+        systemPrompt: body?.systemInstruction?.parts?.[0]?.text ?? "",
+        userText: body?.contents?.[0]?.parts?.[0]?.text ?? "",
+      });
+      return {
+        ok: true,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: '{"status":"GROUNDED","answer":"서술 답변이에요."}' }] } }],
+          usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+        }),
+      } as unknown as Response;
+    }) as typeof globalThis.fetch;
+    try {
+      await wired.callNewsRagLlm!("어제 LG 무슨 일 있었어?", [LG_YESTERDAY]);
+      assert.equal(captured.length, 1, "배포 함수가 LLM 을 호출하지 않았다");
+      assert.equal(captured[0].systemPrompt, RAG_NEWS_SYSTEM_PROMPT,
+        "배포되는 callNewsRagLlm 이 기사 전용 프롬프트를 안 보낸다(삼순 P0-1 재발)");
+      assert.notEqual(captured[0].systemPrompt, RAG_TEAM_SYSTEM_PROMPT,
+        "기사 경로가 구단 문서 프롬프트를 재사용하고 있다");
+      // 근거가 지시가 아니라 **데이터 블록**으로 갔는지도 같은 호출에서 확인한다.
+      assert.match(captured[0].userText, /<자료 시작/, "근거가 구획된 데이터 블록으로 안 갔다");
+      assert.ok(captured[0].userText.includes(LG_YESTERDAY.pageTitle),
+        "조회된 기사가 프롬프트에 안 실렸다");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    // 배선 결속 — 주석을 제외한 **코드 라인**에서만 대입을 센다(team RAG 게이트와 동일 이유).
+    const serverCodeLines = readFileSync(
+      path.join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8")
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line));
+    const newsAssignments = serverCodeLines.filter((line) => /enableNewsRag\s*:/.test(line));
+    assert.equal(newsAssignments.length, 1,
+      `server.ts 의 enableNewsRag 대입이 1곳이 아니다: ${JSON.stringify(newsAssignments)}`);
+    assert.match(newsAssignments[0], /enableNewsRag:\s*newsRagEnabled\(\)/,
+      `server.ts 가 kill-switch 대신 값을 하드코딩하고 있다: ${newsAssignments[0].trim()}`);
+
+    // kill-switch 도 **배포 함수를 실행**해 확인한다(상수 존재 검사 아님).
+    const saved = process.env.NEWS_RAG_DISABLED;
+    try {
+      for (const value of ["1", "true", "TRUE", "yes", "on", " 1 "]) {
+        process.env.NEWS_RAG_DISABLED = value;
+        assert.equal(server.newsRagEnabled(), false, `kill-switch 가 '${value}' 로 안 꺼진다`);
+      }
+      // fail-safe: 값이 없거나 이상하면 켜진 상태를 유지한다(오타로 조용히 꺼지면 안 된다).
+      for (const value of ["", "0", "false", "no", "off", "asdf", "  "]) {
+        process.env.NEWS_RAG_DISABLED = value;
+        assert.equal(server.newsRagEnabled(), true, `kill-switch 가 '${value}' 에 잘못 꺼졌다`);
+      }
+      delete process.env.NEWS_RAG_DISABLED;
+      assert.equal(server.newsRagEnabled(), true, "env 미설정이면 켜져 있어야 한다");
+    } finally {
+      if (saved === undefined) delete process.env.NEWS_RAG_DISABLED;
+      else process.env.NEWS_RAG_DISABLED = saved;
+    }
+    ok("실배선 seam — makeDeps 실행 · 실제 요청 systemInstruction 이 기사 프롬프트 · kill-switch 실행");
+  }
+
   // ── ⑧ 숫자 섞인 모델 답은 폐기된다 (tier2 숫자 HOLD) ────────────────────
   //
   // ⚠️ 근거에 **그 숫자가 실제로 적힌** 케이스여야 한다(2026-08-08 false-green 자체발견).
@@ -457,14 +547,27 @@ async function run(): Promise<void> {
       assert.equal(resolveRagNewsCandidate(question, NOW_MS), null,
         `지표어 수치 질문에 기사 후보가 생겼다: ${question}`);
     }
-    // (3) 답이 정의상 숫자인 명사 — `몇`도 지표어도 없어 앞 두 가드를 둘 다 통과한다.
+    // (3) 경기별 스코어 — 삼순 ①이 명시한 "score 충돌" 축.
+    //
+    // ⚠️ 이 문장들은 `몇`도 지표어도 없어 종전 판정기를 전부 빠져나갔고,
+    //   땅에 `team_rag` 가 받아 **"서울 연고 구단이에요" 를 출처까지 달고** 내보냈다
+    //   (2026-08-08 삼순 P0-2 실측). 동문서답 + 근거 부착은 못 답하는 것보다 나쁘다.
+    //
+    //   가드를 news 경로에만 두면 "news 만 안 가고 team_rag 로 간다" 로 끝난다 —
+    //   그게 정확히 삼순가 지적한 바다. 그래서 `resolveTeamRecordIntent` SSOT 에서
+    //   닫고, 그 판정을 공유하는 `isTeamRagServableQuestion` 이 **false** 가 되는지를 본다.
+    //   즉 구단 RAG·기사 RAG 가 동시에 닫힌다(종단 source 는 ⑨-c 에서 직접 확인).
     for (const question of [
       "어제 LG 스코어 알려줘", "어제 LG 점수 알려줘", "어제 LG 경기 결과 알려줘",
+      // 값 요구어가 아예 없는 형태 — `UNSERVED_VALUE_ASK` 동반 조건으로 두면 여기서 새다.
+      "어제 LG 스코어", "어제 LG 점수는?", "어제 LG 승부 결과", "어제 LG 몇대몇",
     ]) {
-      assert.equal(isTeamRagServableQuestion(question), true,
-        `이 질문은 지표어 판정을 통과해야 한다(그래서 전용 가드가 필요하다): ${question}`);
+      assert.equal(resolveTeamRecordIntent(question).kind, "unserved",
+        `스코어 질문이 SSOT 에서 미서빙으로 판정되지 않는다: ${question}`);
+      assert.equal(isTeamRagServableQuestion(question), false,
+        `스코어 질문을 구단 RAG 가 서술형으로 본다 — team_rag 로 새는 경로다: ${question}`);
       assert.equal(resolveRagNewsCandidate(question, NOW_MS), null,
-        `수치명사 질문에 기사 후보가 생겼다(삼순 ① score 충돌): ${question}`);
+        `스코어 질문에 기사 후보가 생겼다(삼순 ① score 충돌): ${question}`);
     }
     // 과차단 반대가설 — 지표어가 붙어도 **서술**이면 기사가 답해야 한다.
     //   이게 없으면 "전부 null 을 돌려주는" 구현도 위 assertion 을 전부 통과한다(검출력 0).

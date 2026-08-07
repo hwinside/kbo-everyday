@@ -126,6 +126,27 @@ const TEAM_UNSERVED_PATTERNS: ReadonlyArray<RegExp> = [
   /관중\s*수|연봉|연봉액|몸값|순자산|연종/,
 ];
 
+/**
+ * **경기별 스코어** — 값 요구어 없이도 무조건 미서빙으로 닫는다.
+ *
+ * 순위표·팀기록은 **시즌 집계**라 "어제 몇 대 몇" 을 답할 정본이 없다.
+ *
+ * ⚠️ 왜 `TEAM_UNSERVED_PATTERNS`(값 요구어 동반 조건) 와 분리했는가 — 2026-08-08 실측.
+ *   거기 넣었더니 `어제 LG 스코어`·`어제 LG 점수는?`·`어제 LG 승부 결과` 처럼
+ *   `몇`·`알려` 가 없는 문장이 `UNSERVED_VALUE_ASK` 를 못 넘어 그대로 새었고,
+ *   구단 문서 RAG 가 받아 **"서울 연고 구단이에요" 를 출처까지 달고** 내보냈다.
+ *   동문서답이 근거를 입은 형태라 그냥 못 답하는 것보다 나쁘다.
+ *
+ *   이 명사들은 **물은 순간 답이 숫자로 확정**된다 — 값 요구어가 없어도 마찬가지다.
+ *   그래서 조건을 걸지 않는다.
+ *
+ * ⚠️ 수치 가드를 경로별로 복사하지 않고 **이 SSOT 한 곳**에서 닫는다 —
+ *   `isTeamNumericQuestion` → `isTeamRagServableQuestion` 이 이 함수를 쓰므로
+ *   라우팅·구단 RAG·기사 RAG 가 한 번에 같은 판정을 받는다. 경로별 복사는 한쪽만
+ *   고쳤을 때 조용히 갈라진다(#1100 에서 이미 겪은 실패 모드).
+ */
+const TEAM_SCORE_PATTERN = /몇\s*대\s*몇|스코어|점수|경기\s*결과|승부\s*결과/;
+
 export type TeamRecordIntent =
   | { kind: "none" }
   /** 지표는 맞는데 앱이 그 값을 서빙하지 않는다 — 안내로 닫는다. */
@@ -146,6 +167,9 @@ export function resolveTeamRecordIntent(question: string): TeamRecordIntent {
   ) {
     return { kind: "unserved" };
   }
+
+  // 경기별 스코어는 값 요구어 없이도 닫는다(위 상수 주석 참조).
+  if (TEAM_SCORE_PATTERN.test(normalized)) return { kind: "unserved" };
 
   const hit = TEAM_PATTERNS.find((entry) => entry.pattern.test(normalized));
   if (!hit) return { kind: "none" };

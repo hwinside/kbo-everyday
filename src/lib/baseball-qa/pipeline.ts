@@ -616,14 +616,6 @@ const NAMED_STAT_QUERY =
 const TEAM_NUMERIC_STAT_WORDS = ["팀타율", "팀방어율", "팀평균자책", "팀홈런", "순위", "승률"];
 const NUMERIC_VALUE_ASK = /몇|얼마/;
 /**
- * 답이 **정의상 숫자**인 명사. 최근 기사 경로만 쓴다.
- *
- * 요청 표현을 열거하는 게 아니라 **물은 대상**을 열거한다 — 전자는 `#1100` 에서 수렴하지
- * 않음이 입증됐고, 후자는 폐쇄집합이다(스코어·점수·경기결과). 기사 경로는 숫자 출력이
- * 전면 HOLD 라 이 질문에 구조적으로 답할 수 없다.
- */
-const NUMERIC_ANSWER_NOUNS = /스코어|점수|경기\s?결과|승부\s?결과/;
-/**
  * **값을 달라는 요청어**. 구체 지표어와 함께 나올 때만 수치 질문으로 본다.
  *
  * ⚠️ 지표어 단독으로 닫으면 `삼성 라이온즈 홈런 잘 치는 팀이야?` 같은 **서술·평가**
@@ -741,17 +733,6 @@ export function resolveRagNewsCandidate(question: string, nowMs: number): RagNew
   //   들어가봐야 출력 가드가 폐기해 `unsure` 로 끝나고, 그 사이에 quota 와 LLM 호출만 태운다.
   //   그러면서 structured·기존 경로가 답할 기회까지 가로채다 — 순이익이 음수다.
   if (NUMERIC_VALUE_ASK.test(normalized)) return null;
-  // 같은 구조적 이유로 **답이 정의상 숫자인 명사**도 닫는다.
-  //
-  //   `어제 LG 스코어 알려줘` 는 `몇`·`얼마` 가 없어 위 가드를 통과하고, `스코어` 는
-  //   `STAT_WORDS` 에도 없어 `isTeamRagServableQuestion` 도 통과한다(2026-08-08 실측).
-  //   삼순 ①이 말한 "score 충돌" 가 정확히 이 구멍이다.
-  //
-  //   여기서도 요청 표현(`알려줘`·`몇 대 몇`·`어때`)을 열거하지 않는다 — #1100 에서 그 방식이
-  //   수렴하지 않음이 입증됐다. 대신 **명사 자체가 수치를 가리키는** 닫힌 집합만 둔다:
-  //   스코어·점수·경기 결과는 물어보는 순간 답이 숫자로 확정된다. 이 경로는 숫자를 못 내므로
-  //   들어오면 quota·LLM 호출만 태우고 반드시 `unsure` 로 끝난다.
-  if (NUMERIC_ANSWER_NOUNS.test(normalized)) return null;
 
   const recency = resolveNewsRecency(question, nowMs);
   if (recency.kind !== "fresh") return null;

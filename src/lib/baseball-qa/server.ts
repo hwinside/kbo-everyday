@@ -414,9 +414,15 @@ async function searchNewsRag(
     }));
 }
 
-/** 기사(tier2) 근거 전용 호출 — 프롬프트만 다르고 경계는 선수·구단·공식 경로와 동일하다. */
+/**
+ * 기사(tier2) 근거 전용 호출 — 프롬프트만 다르고 경계는 선수·구단·공식 경로와 동일하다.
+ *
+ * ⚠️ 구단 문서 프롬프트(`RAG_TEAM_SYSTEM_PROMPT`)를 재사용하지 않는다. 그쪽은 자기를
+ * "구단 소개 도우미"로 규정해 사건·경기 서술을 범위 밖으로 오판하고, 기사 발췌이 잘려 있다는
+ * 사실도 모른다(잘린 문장을 자기 지식으로 이어붙일 수 있다).
+ */
 async function callNewsRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT);
+  return callRagLlmWithPrompt(question, evidence, RAG_NEWS_SYSTEM_PROMPT);
 }
 
 /**
