@@ -2055,23 +2055,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   const scopeGate = route === "llm_scope_gate";
 
-  // ── 구단 tier2 RAG (적재된 나무위키 구단 문서 근거) ───────────────────────
-  //
-  // 위치가 계약이다. **`team_record`(kbo_structured) 뒤, generic LLM 앞**.
-  //  ① 우리가 서빙하는 수치(순위·승패·팀타율)는 위에서 이미 정본으로 답했다 —
-  //    tier2 가 그걸 덮어쓰면 §12 수치 계약 위반이다.
-  //  ② generic LLM 보다 앞이어야 적재한 71,531 chunk 가 실제로 읽힌다.
-  //    뒤에 두면 지금처럼 `source=llm` 로 끝나고 적재물은 영원히 안 읽힌다.
-  //
-  // 근거가 없으면 null → 기존 경로 그대로(공식문서 경로와 같은 양보 규칙).
-  const teamRagCandidate = deps.enableTeamRag ? resolveRagTeamCandidate(question) : null;
-  if (teamRagCandidate && isTeamRagServableQuestion(question)) {
-    const teamAnswer = await answerTeamRagQuestion(
-      userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
-    );
-    if (teamAnswer) return teamAnswer;
-  }
-
   if (route !== "baseball_rule_term" && !scopeGate) {
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
@@ -2109,6 +2092,40 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   ) {
     const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;
+  }
+
+  // ── 구단 tier2 RAG (적재된 나무위키 구단 문서 근거) ───────────────────────
+  //
+  // ⚠️ 위치가 계약이다. 삼순 2026-08-07 P0-1(라우팅 역전) 반영 — 종전에는 이 블록이
+  // **종결 라우트보다 먼저** 실행돼, 구단명이 붙었다는 이유만으로 다른 경로의 질문을
+  // 전부 선점할 수 있었다:
+  //   · `LG 날씨 알려줘`      → blocked 여야 하는데 team RAG 가 근거를 달고 답함
+  //   · `LG 앱 로그인 오류`   → service_redirect 여야 하는데 선점
+  //   · `LG 투수 보크 규칙`   → 공식 RAG(tier1 조문)여야 하는데 선점
+  //   · `LG 문보경 별명`      → 선수 RAG 여야 하는데 구단 문서로 답함
+  // 배선 게이트 17 PASS 는 이 반대경로를 한 번도 안 태워서 GREEN 이었다(false-green).
+  //
+  // 그래서 지금 위치는 **네 겹 뒤**다:
+  //  ① 종결 라우트(blocked·service_redirect·history_hold·context_missing·ack) 뒤 —
+  //    범위 밖·서비스 문의는 구단명이 붙어도 종전 안내가 정답이다.
+  //  ② 검수 사전(①) 뒤 — 사람이 검수한 답이 항상 우선이다.
+  //  ③ 룰/용어 질문(`baseball_rule_term`)은 **아예 제외** — tier1 공식 조문이 정본이고,
+  //    공식 근거가 없다고 구단 문서로 대신 답하면 `LG 투수 보크 규칙`에 LG 문서가
+  //    근거로 붙는다. 즉 구단 RAG 는 `llm_scope_gate`(룰로 분류되지 않은 구단 서술 축)
+  //    에서만 산다.
+  //  ④ 선수 후보가 **없을 때만** — 선수가 지명된 질문은 선수 경로가 소유한다.
+  // 여전히 generic LLM(③) 보다는 앞이라, 적재한 71,531 chunk 는 정상적으로 읽힌다.
+  //
+  // 근거가 없으면 null → 기존 경로 그대로(공식문서 경로와 같은 양보 규칙).
+  const teamRagCandidate =
+    deps.enableTeamRag && !enabledPlayerCandidate && route !== "baseball_rule_term"
+      ? resolveRagTeamCandidate(question)
+      : null;
+  if (teamRagCandidate && isTeamRagServableQuestion(question)) {
+    const teamAnswer = await answerTeamRagQuestion(
+      userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
+    );
+    if (teamAnswer) return teamAnswer;
   }
 
   // ② 선수 서술형 질문은 수집된 tier2 문서 근거로만 답한다 (S2b).

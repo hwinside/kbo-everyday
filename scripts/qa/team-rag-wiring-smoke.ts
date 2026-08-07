@@ -92,6 +92,10 @@ interface Calls {
   genericLlm: number;
   cacheReads: number;
   standingsFetches: number;
+  /** 공식 간행물(tier1) 근거 조회 횟수 — 룰/용어 경로가 살아있는지 본다. */
+  officialSearch: number;
+  /** 선수 RAG LLM 호출 횟수 — 선수 경로가 구단에 선점당하지 않았는지 본다. */
+  playerLlm: number;
 }
 
 function makeDeps(overrides: Partial<QaDeps> = {}): {
@@ -100,7 +104,10 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
   calls: Calls;
 } {
   const logs: { matchPath: string; answer: string | null }[] = [];
-  const calls: Calls = { search: [], teamLlm: [], genericLlm: 0, cacheReads: 0, standingsFetches: 0 };
+  const calls: Calls = {
+    search: [], teamLlm: [], genericLlm: 0, cacheReads: 0, standingsFetches: 0,
+    officialSearch: 0, playerLlm: 0,
+  };
   const deps: QaDeps = {
     enablePlayerRag: true,
     enableTeamRag: true,
@@ -139,7 +146,23 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
         outputTokens: 5,
       };
     },
-    callRagLlm: async () => { throw new Error("선수 RAG 는 이 게이트 대상이 아니다"); },
+    // ⚠️ 선수·공식 경로를 throw 로 막으면 "구단 RAG 가 그 경로를 선점했는가"를 아예 못 본다.
+    //   삼순 2026-08-07 P0-1 은 바로 그 반대경로가 게이트에 없어서 GREEN 이었던 건이라,
+    //   여기서는 **정상 동작하는 경로**로 두고 호출 횟수를 센다.
+    callRagLlm: async () => {
+      calls.playerLlm++;
+      return {
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "선수 경로 답변이에요." }),
+        inputTokens: 1,
+        outputTokens: 1,
+      };
+    },
+    searchOfficialRag: async () => { calls.officialSearch++; return []; },
+    callOfficialRagLlm: async () => ({
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변이에요." }),
+      inputTokens: 1,
+      outputTokens: 1,
+    }),
     reserveDaily: async () => ({ allowed: true, remaining: 19 }),
     log: async (entry) => { logs.push({ matchPath: entry.matchPath, answer: entry.answer }); },
     fetchTeamRecord: {
@@ -401,6 +424,69 @@ async function run(): Promise<void> {
     await answerQuestion("u1", "보크가 뭐야?", deps);
     assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0);
     ok("룰 질문 — 구단 근거 조회 0회");
+  }
+
+  // ── ⑧-b 라우팅 역전 금지 — 구단명이 붙었다고 남의 경로를 선점하면 안 된다 ──
+  //
+  // ⚠️ 삼순 2026-08-07 P0-1. 종전에는 team RAG 블록이 종결 라우트보다 **먼저**
+  //   실행돼, 구단명 하나만 붙어있으면 blocked·service_redirect·선수 RAG·공식 RAG
+  //   질문까지 전부 구단 문서로 답할 수 있었다.
+  //
+  //   그런데 이전 17 PASS 는 이 반대경로를 **한 번도 안 태워서** GREEN 이었다.
+  //   게이트가 자기가 만든 경로만 확인한 전형적인 false-green 이다.
+  //   그래서 여기서는 **구단명이 붙은 다른 경로 질문 4종**을 실제로 태워
+  //   `source` 와 구단 근거 조회 횟수를 둘 다 고정한다.
+  //
+  //   근거는 항상 있는 상태(`makeDeps` 기본 `searchRag` 는 team 이면 근거를 돌려준다)라,
+  //   순서가 되돌려지면 즉시 RED 가 된다.
+  {
+    const reversals: { question: string; source: string; label: string }[] = [
+      { question: "LG 날씨 알려줘", source: "blocked", label: "범위 밖" },
+      { question: "LG 앱 로그인 오류", source: "service_redirect", label: "서비스 문의" },
+    ];
+    for (const { question, source, label } of reversals) {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", question, deps);
+      assert.equal(result.source, source,
+        `${question}: ${label} 질문을 구단 RAG 가 선점했다 (source=${result.source})`);
+      assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
+        `${question}: 종결 라우트 질문인데 구단 근거를 조회했다`);
+      assert.equal(calls.teamLlm.length, 0, `${question}: 구단 RAG LLM 을 소비했다`);
+    }
+
+    // 선수가 지명된 질문은 선수 경로가 소유한다 — 구단 문서로 답하면 동문서답이다.
+    {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", "LG 문보경 별명이 뭐야?", deps);
+      assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
+        "선수 질문을 구단 RAG 가 선점했다");
+      assert.equal(calls.teamLlm.length, 0, "선수 질문에 구단 RAG LLM 을 소비했다");
+      assert.notEqual(result.source, "rag",
+        "구단 근거로 선수 질문을 답했다(근거는 있지만 동문서답이다)");
+    }
+
+    // 룰/용어 질문은 tier1 공식 조문 경로가 소유한다. 구단명이 붙어도 마찬가지다 —
+    // 공식 근거가 0건이라고 구단 문서로 대신 답하면 `LG 투수 보크 규칙`에
+    // LG 구단 문서가 근거로 붙는다.
+    {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", "LG 투수 보크 규칙이 뭐야?", deps);
+      assert.equal(calls.search.filter((c) => c.entityType === "team").length, 0,
+        "룰 질문을 구단 RAG 가 선점했다");
+      assert.equal(calls.teamLlm.length, 0, "룰 질문에 구단 RAG LLM 을 소비했다");
+      assert.notEqual(result.source, "rag",
+        "구단 근거로 룰 질문을 답했다(tier1 조문이 정본이다)");
+    }
+
+    // 반대편 고정 — 순서를 뒤로 미룬 것이 구단 서술 경로까지 죽이면 안 된다.
+    // 이 단언이 없으면 "team RAG 를 통째로 끄기"로도 위 4종이 GREEN 이 된다.
+    {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
+      assert.equal(result.source, "rag", "역전 방지 때문에 구단 서술 경로까지 죽었다");
+      assert.equal(calls.teamLlm.length, 1);
+    }
+    ok("라우팅 역전 금지 — 구단명이 붙은 blocked/service/선수/룰 질문을 선점하지 않는다");
   }
 
   // ── ⑧ 근거 위생 — 나무위키 광고·문서 크롬이 근거로 나가면 안 된다 ──────────
