@@ -144,6 +144,9 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
   // 등록제로 둔다. 새로 생기면 RED 로 세워 사람이 분류를 명시하게 한다.
   const LOCAL_ANSWER_PATHS = new Map<string, "generated" | "canned">([
     ["rag", "generated"],          // composeRagAnswer(...) 결과
+    // 구단 서술형 RAG. `rag` 와 같은 `composeRagAnswer(...)` 결과라 분류도 같다.
+    // 경로를 나눈 이유는 **감사 대상 분리**이지 화면 취급이 달라서가 아니다(2026-08-07).
+    ["team_rag", "generated"],
     ["blocked", "canned"],         // UNSUPPORTED_SEASON/UNTRUSTED_METRIC 삼항식
     ["kbo_structured", "generated"], // 운영 DB 원값 렌더 결과
   ]);
