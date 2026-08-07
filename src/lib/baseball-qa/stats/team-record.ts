@@ -147,6 +147,24 @@ const TEAM_UNSERVED_PATTERNS: ReadonlyArray<RegExp> = [
  */
 const TEAM_SCORE_PATTERN = /몇\s*대\s*몇|스코어|점수|경기\s*결과|승부\s*결과/;
 
+/**
+ * 경기별 스코어를 물었는가 — **서술 표현이 붙어도 사실이 변하지 않는** 판정.
+ *
+ * ⚠️ 왜 별도로 내보내는가 (2026-08-08 삼순 2차 NO-GO 실측).
+ *   `isTeamNumericQuestion` 은 `TEAM_DESCRIPTIVE_ASK`(`이야기`·`소개`·`유명`…)를 **먼저** 보고
+ *   `false` 로 빠져나간다. 그래서 `resolveTeamRecordIntent` 가 `unserved` 로 판정해도
+ *   그 호출에 도달하지 못해 우회된다:
+ *     `어제 LG 스코어 이야기해줘`      → news 경로
+ *     `어제 LG 몇 대 몇인지 이야기해줘` → team_rag
+ *
+ *   서술 표현은 **어조**일 뿐 물은 대상을 바꾸지 않는다 — "스코어 이야기해줘" 는
+ *   결국 "몇 대 몇이었는지 말해달라" 다. 답이 숫자로 확정되는 건 동일하므로
+ *   서술 예외보다 **앞서** 닫혀야 한다.
+ */
+export function isTeamScoreQuestion(question: string): boolean {
+  return TEAM_SCORE_PATTERN.test(question.normalize("NFKC").toLowerCase());
+}
+
 export type TeamRecordIntent =
   | { kind: "none" }
   /** 지표는 맞는데 앱이 그 값을 서빙하지 않는다 — 안내로 닫는다. */

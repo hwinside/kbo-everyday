@@ -580,6 +580,73 @@ async function run(): Promise<void> {
     ok("수치 가드 3겹(값요구·지표어·수치명사) — 후보 단계 직접 판정 / 서술형은 통과");
   }
 
+  // ── ⑨-c 스코어 질문의 **종단 source 와 호출 0/1** 직접 고정 (삼순 P0-2) ──
+  //
+  // ⚠️ ⑨-b 는 후보/판정기 단계만 본다. 그것만으로는 "news 만 안 가고 team_rag 로 간다"
+  //   를 못 잡는다 — 그게 정확히 2026-08-08 삼순 P0-2 였다:
+  //     `어제 LG 몇 대 몇이었어?` → team_rag → "서울 연고 구단이에요. 📄 출처: 나무위키"
+  //   동문서답이 근거를 입고 나가는 형태라 못 답하는 것보다 나쁘다.
+  //
+  //   그래서 여기서는 **유저가 실제로 받는 source 와 각 경로의 호출 횟수**를 고정한다.
+  //   구단 근거를 실제로 돌려주는 deps 로 태워야 의미가 있다 — 빈 배열을 주면
+  //   team_rag 가 양보해버려 결함이 감춰진다(내가 처음에 그렇게 측정해서 놓쳤다).
+  {
+    // ⚠️ 기본 `makeDeps()` 를 그대로 쓴다 — 이미 구단 근거를 돌려주고 호출도 센다(149줄).
+    //   여기서 `searchRag` 를 오버라이드하면 **카운터를 증가시키는 구현을 덮어써서**
+    //   `teamSearch` 가 항상 0 이 된다. 그러면 "구단 문서를 안 뒤졌다" 는 assertion 이
+    //   실제로는 아무것도 검증하지 못한다(게이트가 이 자체결함을 RED 로 잡아줬다).
+
+    for (const question of [
+      // 값 요구어가 있는 형태
+      "어제 LG 몇 대 몇이었어?", "어제 LG 스코어 알려줘", "어제 LG 점수 알려줘",
+      "어제 LG 경기 결과 알려줘", "어제 LG 몇대몇",
+      // 값 요구어가 없는 형태 — `UNSERVED_VALUE_ASK` 동반 조건으로 두면 여기서 샌다
+      "어제 LG 스코어", "어제 LG 점수는?", "어제 LG 승부 결과",
+      // 서술 표현이 붙은 형태 — `TEAM_DESCRIPTIVE_ASK` 가 먼저면 여기서 샌다(삼순 2차)
+      "어제 LG 스코어 이야기해줘", "어제 LG 몇 대 몇인지 이야기해줘",
+      "어제 LG 경기 결과 소개해줘", "어제 LG 점수 유명해?",
+    ]) {
+      const { deps, logs, calls } = makeDeps();
+      const result = await answerQuestion("u1", question, deps);
+      // 종단 source — 기사도 구단 문서도 아니어야 한다. 정본이 없으므로 안내가 정답이다.
+      assert.equal(result.source, "history_hold",
+        `스코어 질문의 종단 source 가 안내가 아니다: ${question} → ${result.source}`);
+      assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER,
+        `스코어 질문에 순위표 안내가 아닌 답이 나갔다: ${question} → ${result.answer}`);
+      // 호출 0 — 어느 근거 경로도 타지 않는다.
+      assert.equal(calls.news.length, 0, `스코어 질문이 기사 검색을 태웠다: ${question}`);
+      assert.equal(calls.newsLlm.length, 0, `스코어 질문이 기사 LLM 을 태웠다: ${question}`);
+      assert.equal(calls.teamSearch, 0, `스코어 질문이 구단 문서를 뒤졌다: ${question}`);
+      assert.equal(calls.teamLlm, 0, `스코어 질문이 구단 RAG LLM 을 태웠다: ${question}`);
+      assert.equal(calls.genericLlm, 0, `스코어 질문이 generic LLM 을 태웠다: ${question}`);
+      assert.equal(calls.cacheReads, 0, `스코어 질문이 캐시를 읽었다: ${question}`);
+      // 출처가 붙으면 안 된다 — 근거 없는 안내문에 출처가 달리는 게 P0-2 의 실제 피해였다.
+      assert.doesNotMatch(result.answer, /📄 출처/,
+        `스코어 안내문에 출처가 붙었다(동문서답 + 근거 부착): ${question}`);
+      assert.equal(result.sourceUrl, undefined, `스코어 안내문에 sourceUrl 이 실렸다: ${question}`);
+      assert.equal(logs.at(-1)?.matchPath, "history_hold");
+    }
+
+    // 과차단 반대가설 — 같은 deps 에서 **서술형 최신 질문**은 여전히 기사가 답해야 한다.
+    //   이게 없으면 "전부 history_hold 로 닫는" 구현도 위 assertion 을 전부 통과한다.
+    {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", "어제 LG 무슨 일 있었어?", deps);
+      assert.equal(result.source, "news_rag",
+        `서술형 최신 질문이 스코어 가드에 걸렸다: ${result.source}`);
+      assert.equal(calls.news.length, 1);
+    }
+    // 같은 deps 에서 **구단 서술 질문**도 여전히 team_rag 여야 한다(무회귀).
+    {
+      const { deps, calls } = makeDeps();
+      const result = await answerQuestion("u1", "LG 트윈스 역사 알려줘", deps);
+      assert.equal(result.source, "team_rag",
+        `구단 서술 질문이 스코어 가드에 걸렸다: ${result.source}`);
+      assert.equal(calls.teamSearch, 1);
+    }
+    ok("스코어 종단 — source=history_hold · news/team/generic/cache 호출 0 · 출처 미부착 / 서술형 무회귀");
+  }
+
   // ── ⑩ 우선순위 — 서비스 문의·룰·선수는 기사가 선점하지 않는다 ──────────
   {
     // 서비스 문의 — 최신성 + 구단명이 붙어도 service_redirect 다.

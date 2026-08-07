@@ -37,6 +37,7 @@ import {
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeTeamRecordAnswer,
+  isTeamScoreQuestion,
   resolveTeamRecord,
   resolveTeamRecordIntent,
   type TeamRecordFetchers,
@@ -666,6 +667,18 @@ const TEAM_CONCRETE_STAT_WORDS = [
  * 새어나간다(실측 3종). 두 규칙은 갈라지면 안 된다.
  */
 function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: boolean): boolean {
+  // ⚠️ 경기별 스코어는 **서술 예외보다 먼저** 닫는다 (2026-08-08 삼순 2차 NO-GO 실측).
+  //
+  //   종전에는 `TEAM_DESCRIPTIVE_ASK` 가 먼저라 `이야기`·`소개`·`유명` 이 붙으면 여기서
+  //   `false` 로 빠져나가 스코어 SSOT(`resolveTeamRecordIntent`) 에 닿지도 못했다:
+  //     `어제 LG 스코어 이야기해줘`      → news 경로 (실측)
+  //     `어제 LG 몇 대 몇인지 이야기해줘` → team_rag (실측)
+  //
+  //   서술 표현은 **어조**일 뿐 물은 대상을 바꾸지 않는다 — "스코어 이야기해줘" 는
+  //   결국 "몇 대 몇이었는지 말해달라" 다. 답이 숫자로 확정되는 건 마찬가지다.
+  //   반면 `삼성 홈런 잘 치는 팀이야?` 처럼 **지표어 + 서술**은 수치 질문이 아니므로
+  //   서술 예외는 그대로 둔다 — 순서만 바꿔 스코어만 앞으로 빼낸다.
+  if (isTeamScoreQuestion(normalized)) return true;
   // 서술·평가형은 먼저 뺀다 — `삼성 홈런 잘 치는 팀이야?` 는 숫자를 물은 게 아니다.
   if (TEAM_DESCRIPTIVE_ASK.test(normalized)) return false;
   // 조회 규칙 그대로. `unserved`(우승 횟수·상대전적)도 포함한다 — 답할 수 없는 값이지만
