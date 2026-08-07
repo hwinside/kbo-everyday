@@ -26,6 +26,16 @@ import { teamIdForKboId } from "@/lib/utils/player-roster";
 /** 정규 KBO 구단 수. TEAMS(올스타 제외)에서 파생 — 구단 수가 바뀌면 자동 추종. */
 export const KBO_TEAM_COUNT = TEAMS.length;
 
+/**
+ * 정규 10구단 slug 전체 = "전체구단 공개".
+ *
+ * 공지·기사 브리지처럼 **특정 팀이 없는 글을 서버가 대신 쓸 때** 쓴다.
+ * DB 트리거가 canonical slug 1개 이상을 요구하고 board_type 면제는 두지 않는다
+ * (면제를 두면 클라이언트가 그 board_type 을 골라 우회한다 — 삼순 NO-GO 2026-08-07).
+ * 하드코딩 대신 TEAMS 에서 파생해 구단이 늘어도 자동 추종한다.
+ */
+export const ALL_TEAM_SLUGS: string[] = TEAMS.map((t) => t.slug);
+
 /** 4팀 이상일 때 배지로 직접 노출하는 팀 수. 나머지는 "외 n팀". */
 export const SCOPE_SHOWN_LIMIT = 3;
 

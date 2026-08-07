@@ -1,3 +1,5 @@
+import { TEAMS } from "@/lib/constants/teams";
+
 export interface Stadium {
   id: string;
   name: string;
@@ -14,6 +16,25 @@ export interface Stadium {
 
 /** 구역 직접입력 옵션 라벨 */
 export const ZONE_CUSTOM_LABEL = "직접 입력";
+
+/**
+ * 구장 → 그 구장을 홈으로 쓰는 구단 slug 배열 (잠실이면 LG·두산 2팀).
+ *
+ * 구장 좌석팁·후기글은 작성 UI 에 팀 피커가 없지만, 공개범위는 모든 글의 필수 조건이다
+ * (`20260807020000_posts_require_team_scope.sql` — board_type 면제는 사용자가 고를 수 있는 값이라
+ * 그 자체가 우회로가 된다, 삼순 NO-GO 2026-08-07). 그래서 팀을 리스트에서 고르게 하는 대신
+ * **구장에서 파생**한다 — 잠실 좌석팁은 LG·두산 팬 모두에게 유용하므로 의미도 맞는다.
+ *
+ * 미상 구장은 **빈 배열**을 돌려준다. 임의 팀(예: lg)을 채우면 틀린 팀 피드에 글이 노출된다 —
+ * 그럴 바엔 DB 트리거가 거절해 작성이 실패하는 편이 안전하다.
+ */
+export function teamSlugsForStadium(stadiumId: string | null | undefined): string[] {
+  const stadium = STADIUMS.find((s) => s.id === stadiumId);
+  if (!stadium) return [];
+  return stadium.teamIds
+    .map((id) => TEAMS.find((t) => t.id === id)?.slug)
+    .filter((slug): slug is string => typeof slug === "string");
+}
 
 export const STADIUMS: Stadium[] = [
   {

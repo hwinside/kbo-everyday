@@ -15,16 +15,27 @@
  *   PGlite 는 외부 바이너리·자격증명이 필요 없어 Vercel prebuild(required)에서도 항상 돈다
  *   (`player-popularity-rpc-pg17.sh` 는 로컬 전용이라 CI 에서 SKIP 된다 — 같은 실수 반복 금지).
  *
+ * ⚠️ RLS/role 축 (삼순 NO-GO 2026-08-07):
+ *   직전 판본은 board_type 으로 stadium/announcement/news 를 **면제**했고, 게이트는 RLS·role 없는
+ *   자체 스캐폴딩에서 그 무태그 INSERT 를 오히려 GREEN 으로 기대했다. 그런데 posts 의 INSERT RLS 는
+ *   `Auth users create` = WITH CHECK (auth.uid() = author_id) 하나뿐이고 role 제한이 없다
+ *   (Production pg_policy 실측). board_type 은 **클라이언트가 고르는 값**이므로 일반 로그인 사용자가
+ *   `board_type:'stadium'` + `team_tags:[]` 로 직접 INSERT 하면 면제를 그대로 타고 우회한다.
+ *   → 면제를 제거했고, 이 게이트도 **실제 role + 실제 RLS 정책** 위에서 검증한다.
+ *     `authenticated` 로 SET ROLE + JWT claim 주입 → 정책이 실제로 평가되게 만든 뒤 INSERT 를 때린다.
+ *
  * 커버:
  *   ① 거절 — team_tags NULL / [] / [''] / ['   '] / ['not-a-team'] / ['allstar-nanum'] / 숫자·객체
  *   ② 통과 — 1팀 / 10팀 전부 / 비-canonical 섞여도 canonical 1개면 통과
  *   ③ slug 집합 exact — 트리거가 아는 slug 집합 == `TEAMS`(teams.ts) 집합. 양방향.
  *   ④ UPDATE 무영향 — 신고·카운터·본문 수정이 23514 로 죽지 않는다(태그 없는 레거시 행 포함)
- *   ⑤ 면제 board_type — stadium(좌석팁·후기) / announcement / news 브릿지는 태그 없이 통과
- *   ⑥ 미열거 board_type 은 fail-close — 신설 board_type 이 조용히 우회하지 않는다
- *   ⑦ 트리거 순서 — poll 글이 태그 없이 들어오면 poll 전용 에러가 아니라 **공개범위 에러**가 난다
- *      (`a_` prefix 계약. 실제 `20260727_community_poll.sql` 을 함께 적재해 확인)
- *   ⑧ 멱등 — migration 두 번 적용해도 트리거가 중복되지 않는다
+ *   ⑤ **RLS actual** — `authenticated` role + 실제 정책으로 board_type 전 타입 무태그 INSERT RED.
+ *      면제 우회(stadium/announcement/news)가 실제 role 에서 막히는지가 이 게이트의 핵심이다.
+ *   ⑥ **trusted writer GREEN** — service_role(BYPASSRLS)이 태그를 채우면 통과. 과잉 차단이 아님을 증명.
+ *   ⑦ 신설 board_type fail-close — 면제 목록이 없으므로 어떤 값이든 우회 불가
+ *   ⑧ 트리거 순서 — poll 글이 태그 없이 들어오면 poll 전용 에러가 아니라 **공개범위 에러**가 난다
+ *   ⑨ 멱등 — migration 두 번 적용해도 트리거가 중복되지 않는다
+ *   ⑩ 쓰는 쪽 계약 — 구장/공지/기사 호출부가 실제로 태그를 채우는지(면제 제거의 반대급부)
  *
  * 실행: npm run qa:post-scope-db-trigger
  */
@@ -32,6 +43,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { TEAMS } from "../../src/lib/constants/teams";
+import { ALL_TEAM_SLUGS } from "../../src/lib/utils/post-scope";
+import { teamSlugsForStadium } from "../../src/lib/constants/stadiums";
 
 let pass = 0;
 let fail = 0;
@@ -109,11 +122,25 @@ async function main() {
 
   const db = new PGlite();
 
-  // ── 스캐폴딩: 실제 스키마 중 이 트리거가 닿는 최소 부분만 ────────────────────
+  // ── 스캐폴딩: 실제 스키마 + **실제 role + 실제 RLS 정책** ──────────────────
+  //   RLS/role 없이 superuser 로만 INSERT 하면 "정책이 이걸 막는가"를 전혀 검증하지 못한다.
+  //   Supabase 의 auth.uid() 는 JWT claim 에서 읽으므로 동일 계약을 세워 정책이 실제로 평가되게 한다.
   await db.exec(`
+    CREATE ROLE anon NOLOGIN;
+    CREATE ROLE authenticated NOLOGIN;
+    CREATE ROLE service_role NOLOGIN BYPASSRLS;
+
     CREATE SCHEMA IF NOT EXISTS auth;
+    -- Supabase 와 동일: 요청 JWT claim 에서 uid 를 읽는다.
+    CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $fn$
+      SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::uuid
+    $fn$;
+
     CREATE TABLE auth.users (id uuid PRIMARY KEY);
-    INSERT INTO auth.users VALUES ('11111111-1111-4111-8111-111111111111');
+    INSERT INTO auth.users VALUES
+      ('11111111-1111-4111-8111-111111111111'),
+      ('22222222-2222-4222-8222-222222222222');
+
     CREATE TABLE public.posts (
       id            bigserial PRIMARY KEY,
       author_id     uuid NOT NULL REFERENCES auth.users(id),
@@ -128,6 +155,23 @@ async function main() {
       like_count    int DEFAULT 0,
       created_at    timestamptz DEFAULT now()
     );
+
+    ALTER TABLE public.posts ENABLE ROW LEVEL SECURITY;
+    GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+    GRANT SELECT, INSERT, UPDATE ON public.posts TO authenticated;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+    -- Production pg_policy 실측 그대로(2026-08-07 조회):
+    --   "Auth users create" : INSERT, WITH CHECK (auth.uid() = author_id), role 제한 없음
+    --   "Anyone can read posts" : SELECT USING (true)
+    --   "Authors update own" : UPDATE USING (auth.uid() = author_id)
+    -- 즉 board_type 에 대한 제약이 전혀 없다 → board_type 면제는 곧 우회로였다.
+    CREATE POLICY "Auth users create" ON public.posts
+      FOR INSERT WITH CHECK (auth.uid() = author_id);
+    CREATE POLICY "Anyone can read posts" ON public.posts
+      FOR SELECT USING (true);
+    CREATE POLICY "Authors update own" ON public.posts
+      FOR UPDATE USING (auth.uid() = author_id);
   `);
 
   // poll 계약을 **실제 파일 그대로** 올린다. 트리거 순서 주장(⑦)을 자기재구현 없이 검증하기 위함.
@@ -221,25 +265,98 @@ async function main() {
     ok(`레거시 무태그 행 UPDATE 통과: ${label}`, code === null, code ? `SQLSTATE ${code}` : undefined);
   }
 
-  // ── ⑤ 면제 board_type ─────────────────────────────────────────────────────
-  console.log("\n[5] 면제 board_type — 공개범위 개념이 없는 글");
-  for (const bt of ["stadium", "announcement", "news"]) {
-    const code = await tryInsert(db, { boardType: bt, teamTags: [] });
-    ok(`면제: board_type='${bt}' 는 태그 없이 통과`, code === null, code ? `SQLSTATE ${code}` : undefined);
+  // ── ⑤ RLS actual — authenticated role 로 직접 INSERT ─────────────────────
+  //   **이 게이트의 핵심.** 직전 판본은 stadium/announcement/news 를 board_type 으로 면제했는데,
+  //   board_type 은 클라이언트가 고르는 값이고 INSERT 정책엔 board_type 제약이 없다.
+  //   즉 면제 목록 자체가 우회로였다(삼순 NO-GO 2026-08-07).
+  //   superuser 로 INSERT 하면 RLS 를 건너뛰어 이 축을 전혀 증명하지 못하므로,
+  //   실제 `authenticated` role + JWT claim 으로 정책을 태운 뒤 판정한다.
+  console.log("\n[5] RLS actual — authenticated 직접 INSERT (면제 우회 차단)");
+  const ATTACKER = "11111111-1111-4111-8111-111111111111";
+
+  /** 실제 authenticated role + JWT claim 으로 INSERT 를 시도한다. null = 저장 성공(=우회). */
+  async function insertAsAuthenticated(boardType: string, teamTags: unknown): Promise<string | null> {
+    await db.exec("BEGIN");
+    try {
+      await db.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [ATTACKER]);
+      await db.exec("SET LOCAL ROLE authenticated");
+      await db.query(
+        `INSERT INTO public.posts (author_id, board_type, board_id, title, content, team_tags)
+         VALUES ($1, $2, 'b', 't', 'c', $3::jsonb)`,
+        [ATTACKER, boardType, teamTags === null ? null : JSON.stringify(teamTags)],
+      );
+      await db.exec("ROLLBACK");
+      return null;
+    } catch (e) {
+      await db.exec("ROLLBACK").catch(() => {});
+      return (e as { code?: string }).code ?? `NO_SQLSTATE:${(e as Error).message}`;
+    }
   }
 
-  // ── ⑥ 미열거 board_type 은 fail-close ─────────────────────────────────────
-  // "필수 목록"을 열거했다면 신설 board_type 이 조용히 우회한다. 면제를 열거했는지 행동으로 확인.
-  console.log("\n[6] 미열거 board_type fail-close");
-  for (const bt of ["free", "team", "player", "poll", "brand-new-board-type-2027"]) {
-    const code = await tryInsert(db, { boardType: bt, teamTags: [] });
-    ok(`필수: board_type='${bt}' 무태그 거절`, code === CHECK_VIOLATION, `SQLSTATE ${code ?? "성공(=결함)"}`);
+  // 정책이 실제로 평가되고 있는지 먼저 증명한다. 이게 통과하지 않으면 아래 RED 는
+  // "RLS 가 막았다"가 아니라 "role 설정이 잘못됐다"일 수 있다 — 게이트가 이유를 착각하면 안 된다.
+  const foreignAuthor = await insertAsAuthenticated("free", ["lg"]);
+  // 남의 author_id 로는 못 쓴다는 것 = 정책이 살아있다는 증거(42501 = RLS 위반).
+  await db.exec("BEGIN");
+  let policyAlive = "";
+  try {
+    await db.query("SELECT set_config('request.jwt.claim.sub', $1, true)", [ATTACKER]);
+    await db.exec("SET LOCAL ROLE authenticated");
+    await db.query(
+      `INSERT INTO public.posts (author_id, board_type, board_id, title, content, team_tags)
+       VALUES ('22222222-2222-4222-8222-222222222222', 'free', 'b', 't', 'c', '["lg"]'::jsonb)`,
+    );
+    policyAlive = "(성공 = 정책 미작동)";
+  } catch (e) {
+    policyAlive = (e as { code?: string }).code ?? "ERR";
+  }
+  await db.exec("ROLLBACK").catch(() => {});
+  ok("RLS 정책이 실제로 평가된다 — 남의 author_id INSERT 는 42501", policyAlive === "42501", `SQLSTATE ${policyAlive}`);
+  ok("정상 경로는 authenticated 로 저장된다 — 과잉 차단 아님", foreignAuthor === null, foreignAuthor ?? "");
+
+  // 본 판정: 면제였던 3타입을 포함해 **어떤 board_type 으로도** 무태그 저장 불가.
+  for (const bt of ["stadium", "announcement", "news", "free", "team", "player", "poll", "brand-new-2027"]) {
+    const code = await insertAsAuthenticated(bt, []);
+    ok(
+      `authenticated 우회 차단: board_type='${bt}' 무태그 INSERT 거절`,
+      code === CHECK_VIOLATION,
+      `SQLSTATE ${code ?? "성공(=우회 성립, 결함)"}`,
+    );
+  }
+  // 쓰레기 slug 로도 우회 불가(길이 검사였다면 여기서 뚫린다).
+  for (const bad of [[""], ["not-a-team"], ["allstar-nanum"]]) {
+    const code = await insertAsAuthenticated("stadium", bad);
+    ok(
+      `authenticated 우회 차단: stadium + ${JSON.stringify(bad)} 거절`,
+      code === CHECK_VIOLATION,
+      `SQLSTATE ${code ?? "성공(=결함)"}`,
+    );
   }
 
-  // ── ⑦ 트리거 순서 — 공개범위 에러가 poll 에러에 가려지지 않는다 ──────────
+  // ── ⑥ trusted writer GREEN ────────────────────────────────────────────────
+  //   면제를 없앤 대신 "쓰는 쪽이 태그를 채운다"가 성립해야 한다. 서버(service_role)가
+  //   구장→팀 파생 / 10팀 전부를 채우면 정상 저장돼야 한다. 이게 없으면 과잉 차단이다.
+  console.log("\n[6] trusted writer GREEN — 쓰는 쪽이 태그를 채우면 통과");
+  const jamsil = teamSlugsForStadium("jamsil");
+  ok("구장→팀 파생: 잠실 = LG·두산 2팀", JSON.stringify(jamsil) === JSON.stringify(["lg", "doosan"]), jamsil.join(","));
+  const gocheok = teamSlugsForStadium("gocheok");
+  ok("구장→팀 파생: 고척 = 키움 1팀", JSON.stringify(gocheok) === JSON.stringify(["kiwoom"]), gocheok.join(","));
+  ok("구장→팀 파생: 미상 구장은 빈 배열(임의 팀 금지)", teamSlugsForStadium("no-such-stadium").length === 0);
+  ok("ALL_TEAM_SLUGS 는 정규 10구단", ALL_TEAM_SLUGS.length === 10 && !ALL_TEAM_SLUGS.some((s2) => s2.startsWith("allstar")));
+
+  for (const [label, bt, tags] of [
+    ["구장 좌석팁(잠실 → LG·두산)", "stadium", jamsil],
+    ["공지 브릿지(10팀 전부)", "announcement", ALL_TEAM_SLUGS],
+    ["기사 브릿지(10팀 전부)", "news", ALL_TEAM_SLUGS],
+  ] as Array<[string, string, string[]]>) {
+    const code = await tryInsert(db, { boardType: bt, teamTags: tags });
+    ok(`trusted writer GREEN: ${label}`, code === null, code ? `SQLSTATE ${code}` : undefined);
+  }
+
+  // ── ⑧ 트리거 순서 — 공개범위 에러가 poll 에러에 가려지지 않는다 ──────────
   // `a_` prefix 계약. 순서가 뒤집히면 poll 전용 메시지가 먼저 나와, 작성자는 "왜 막혔는지"를
   // 잘못 안내받는다. 메시지 문자열로 판정한다(둘 다 SQLSTATE 는 23514 라 코드로는 구분 불가).
-  console.log("\n[7] 트리거 순서 — a_ prefix 계약");
+  console.log("\n[8] 트리거 순서 — a_ prefix 계약");
   let pollMsg = "";
   try {
     await db.query(
@@ -261,8 +378,8 @@ async function main() {
     `${trgName} vs poll_posts_edit_lock_trg`,
   );
 
-  // ── ⑧ 멱등 ────────────────────────────────────────────────────────────────
-  console.log("\n[8] 멱등");
+  // ── ⑨ 멱등 ────────────────────────────────────────────────────────────────
+  console.log("\n[9] 멱등");
   // 재적용이 **예외 없이** 끝나야 한다. DROP 대상 이름이 어긋나면 여기서 터진다 —
   // 그걸 크래시로 둘지 않고 실패 항목으로 기록해야 진단이 된다.
   let reapplyErr = "";

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { ALL_TEAM_SLUGS } from "@/lib/utils/post-scope";
 
 const SAFE_CTA_PATH = /^\/[A-Za-z0-9/_?=&%#.-]*$/;
 // 외부 CTA는 https URL만 허용(앱스토어 등). javascript:/http: 등은 차단.
@@ -45,6 +46,10 @@ async function ensureBridgePost(supabase: AdminClient, row: AnnouncementRow): Pr
       content_type: "general",
       title: row.title,
       content: row.summary || row.title,
+      // 공개범위 — 공지는 전체구단 대상이므로 10팀 전부. DB 트리거가 canonical slug 1개 이상을
+      // 요구하며 **board_type 면제는 없다** — board_type 은 클라이언트가 고르는 값이라 면제를 두면
+      // 그 자체가 우회로가 된다(삼순 NO-GO 2026-08-07). is_hidden=true 라 피드에는 안 뜼다.
+      team_tags: ALL_TEAM_SLUGS,
       is_hidden: true,
     })
     .select("id")

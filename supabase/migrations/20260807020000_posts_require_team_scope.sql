@@ -6,6 +6,18 @@
 --   콘솔에서 supabase.from("posts").insert(...) 한 줄이면 우회된다.
 --   → 우회 불가능한 유일한 지점이 DB 다 (삼순 NO-GO 2026-08-06).
 --
+-- ⚠️ **board_type 면제는 두지 않는다** (삼순 NO-GO 2026-08-07, 실측 확인):
+--   직전 판본은 stadium/announcement/news 를 면제했다. 그런데 posts 의 INSERT RLS 는
+--   `Auth users create` = WITH CHECK (auth.uid() = author_id) 하나뿐이고 role 제한도 없다
+--   (Production pg_policy 실측). 즉 board_type 은 **공격자가 고르는 값**이라, 일반 로그인
+--   사용자가 콘솔에서 `board_type:'stadium'` + `team_tags:[]` 로 INSERT 하면 면제를 그대로
+--   타고 무태그 글이 저장된다. "신설 board_type 대비 fail-close" 라고 설명했지만 정작
+--   **면제 목록 자체가 우회로**였다.
+--   → 면제 0개. 모든 글이 canonical 구단 slug 1개 이상을 가져야 한다. 예외 없음 = 우회 지점 없음.
+--   면제가 필요했던 글들은 *쓰는 쪽*에서 태그를 채운다(우회 가능한 DB 면제가 아니라, 데이터 생산):
+--     · 구장 좌석팁·후기 → 그 구장의 홈팀(`stadiums.ts` teamIds. 잠실이면 LG·두산 2팀)
+--     · announcement/news 브릿지 → 10팀 전부(= 전체구단 공개). 어차피 is_hidden=true 라 피드 비노출.
+--
 -- 무엇을 검사하나 — **canonical KBO 구단 slug 가 1개 이상** (삼순 NO-GO 2026-08-06 2차):
 --   배열 길이만 보면 `['']`·`['not-a-team']`·`['{}']` 같은 쓰레기 값이 통과한다. 그러면
 --   DB 는 통과했는데 화면(`getTeamBySlug`)은 그 slug 를 못 찾아 팀 0개로 접혀
@@ -15,12 +27,6 @@
 --   그 exact 일치는 게이트(`qa:post-scope-db-trigger`)가 양방향으로 검증한다.
 --   올스타(allstar-nanum/allstar-dream)는 정규 구단이 아니라 `getTeamBySlug` 가 못 찾으므로
 --   여기서도 제외한다 — 앱과 DB 판정이 갈리면 안 된다.
---
--- 어떤 글에 적용하나 — **면제 목록에 없는 모든 board_type** (fail-close):
---   면제: stadium(구장 좌석팁·후기 — 팀 피드 비노출, 작성 UI 에 팀 피커 자체가 없음)
---         announcement/news(운영 브릿지 글 — is_hidden=true 로 피드에 안 뜨고 공개범위 개념이 없음)
---   그 외(free/team/player/poll 및 **향후 신설될 board_type**)는 전부 필수다.
---   반대로 "필수 목록"을 열거하면 새 board_type 이 조용히 우회하므로 면제를 열거한다.
 --
 -- 무엇을 안 막나 (의도적):
 --   * UPDATE — 기존 글 수정 경로는 태그를 건드리지 않는다. 여기서 막으면 신고·카운터 UPDATE 까지
@@ -43,11 +49,6 @@ DECLARE
   v_tags      jsonb;
   v_canonical int;
 BEGIN
-  -- 공개범위 라벨 대상이 아닌 글은 면제. 목록에 없는 board_type 은 전부 필수(fail-close).
-  IF NEW.board_type IN ('stadium', 'announcement', 'news') THEN
-    RETURN NEW;
-  END IF;
-
   -- jsonb 배열 / text[] 양쪽 스키마를 모두 견디게 jsonb 로 정규화한다.
   v_tags := to_jsonb(NEW.team_tags);
   IF v_tags IS NULL OR jsonb_typeof(v_tags) <> 'array' THEN

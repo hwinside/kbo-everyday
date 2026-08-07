@@ -7,6 +7,7 @@ import {
 } from "@/lib/news/discussion";
 import { allowNewsDiscussionRequest } from "@/lib/news/discussion-rate-limit";
 import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
+import { ALL_TEAM_SLUGS } from "@/lib/utils/post-scope";
 
 function requesterKey(req: NextRequest): string {
   return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
@@ -74,6 +75,11 @@ export async function POST(req: NextRequest) {
       content_type: "general",
       title: input.title,
       content: input.canonicalUrl,
+      // 공개범위 — 기사 브리지는 특정 팀 소유가 아니므로 10팀 전부(= 전체구단 공개).
+      // DB 트리거가 canonical slug 1개 이상을 요구하며 **board_type 면제는 없다** —
+      // board_type 은 클라이언트가 고르는 값이라 면제 자체가 우회로다(삼순 NO-GO 2026-08-07).
+      // is_hidden=true 라 피드에는 안 뜼다.
+      team_tags: ALL_TEAM_SLUGS,
       is_hidden: true,
     })
     .select("id")
