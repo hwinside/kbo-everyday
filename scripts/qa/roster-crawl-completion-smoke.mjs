@@ -337,9 +337,10 @@ check("season 전이 실패면 불신뢰(이전 연도 표 차단)", () => {
 check("season 미확정(undefined)은 fail-close", () => {
   assert.equal(phaseFiltersTrusted({ hasSeries: true, seriesConfirmed: true, seasonConfirmed: undefined }), false);
 });
-check("series 셀렉트 없으면 season 만으로 판정", () => {
-  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: true }), true);
-  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: false }), false);
+// 삼순 NO-GO(3차): series 셀렉터 부재를 신뢰하면 default/비정규 표를 수집할 수 있다 → fail-close.
+check("series 셀렉터 부재(hasSeries=false)는 season 이 맞아도 fail-close", () => {
+  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: true, seasonConfirmed: true }), false);
+  assert.equal(phaseFiltersTrusted({ hasSeries: false, seriesConfirmed: false, seasonConfirmed: true }), false);
 });
 
 console.log("\n§5 실제 저장본 — 정상 데이터가 이 게이트를 통과하는가 (삼순 NO-GO ①)");
@@ -448,7 +449,15 @@ check("크롤러가 setupPhaseFilters 반환을 소비해 phase fail-close 한�
     /return phaseFiltersTrusted\(\{ hasSeries, seriesConfirmed, seasonConfirmed \}\);/,
     "setupPhaseFilters 가 phaseFiltersTrusted 결과를 반환하지 않는다"
   );
-  // 전이 반환을 실제로 변수에 받아야 한다(반환 무시 방지).
+  // series·season 전이 반환을 모두 실제 변수에 받아야 한다(반환 무시/하드코딩 방지).
+  // 삼순 NO-GO(3차): season 만 pin 하면 seriesConfirmed 하드코딩을 못 잡는다.
+  assert.match(
+    crawlerSrc,
+    /seriesConfirmed = hasSeries\s*\?\s*await changeSelectAndWait\(page, seriesSel, "0"/,
+    "crawler 가 series 전이 반환을 소비하지 않는다(하드코딩 fail-open)"
+  );
+  // selector 부재 시 false 로 떨어져야 한다.
+  assert.match(crawlerSrc, /:\s*false;/, "selector 부재를 false 로 내리지 않는다");
   assert.match(crawlerSrc, /const seasonConfirmed = await changeSelectAndWait\(page, seasonSel/);
   // 두 phase 모두 반환을 변수로 받아 실패 시 슬롯을 fail-close outcome 으로 넣어야 한다.
   assert.match(crawlerSrc, /const battersFilterOk = await setupPhaseFilters\(/);

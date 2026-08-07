@@ -216,12 +216,19 @@ export function buildExpectedSlotKeys(teamIds, phases = ["batters", "pitchers"])
  * 표를 읽는데, team witness 는 팀명만 보고 **연도는 못 본다**. 그래서 이전 연도 표
  * 전체가 완주 계약을 통과할 수 있었다. → season 전이 실패는 phase 전체 fail-close.
  *
- *   hasSeries=true 인데 series 미확정  → false
+ *   series 셀렉터 부재(hasSeries=false)  → false  (series=0 긍정 확인 불가 → fail-close)
+ *   series 미확정(seriesConfirmed≠true) → false
  *   season 미확정(false/undefined 등)  → false
- *   그 외                              → true
+ *   셀 다 긍정 확인                    → true
+ *
+ * ⚠︎ 삼순 NO-GO(3차): 종전 판은 hasSeries=false 를 **신뢰**로 처리해, series 셀렉터가
+ * 사라지거나 못 잡혀도 season 만 맞으면 default/비정규 표를 수집할 수 있었다(series=0
+ * 확인 계약의 fail-open). KBO HitterBasic/PitcherBasic 은 ddlSeries 가 상시 존재하므로
+ * (2026-08-07 실측) 부재는 페이지 붕괴 신호 → fail-close 가 정상 크롤을 막지 않는다.
  */
 export function phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed }) {
-  if (hasSeries && seriesConfirmed !== true) return false;
+  if (!hasSeries) return false;
+  if (seriesConfirmed !== true) return false;
   return seasonConfirmed === true;
 }
 

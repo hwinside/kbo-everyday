@@ -215,10 +215,10 @@ async function changeSelectAndWait(page, selector, value, waitMs = 8000) {
  */
 async function setupPhaseFilters(page, { seasonSel, seriesSel }) {
   const hasSeries = Boolean(await page.$(seriesSel));
-  let seriesConfirmed = true;
-  if (hasSeries) {
-    seriesConfirmed = await changeSelectAndWait(page, seriesSel, "0", 5000);
-  }
+  // series 반환을 반드시 소비한다 — selector 부재면 false(긍정 확인 불가 → fail-close).
+  const seriesConfirmed = hasSeries
+    ? await changeSelectAndWait(page, seriesSel, "0", 5000)
+    : false;
   const seasonConfirmed = await changeSelectAndWait(page, seasonSel, "2026", 8000);
   return phaseFiltersTrusted({ hasSeries, seriesConfirmed, seasonConfirmed });
 }
