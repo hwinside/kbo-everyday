@@ -29,7 +29,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, BASE } from "./_env.mjs";
@@ -45,18 +45,48 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 // ── Production 안전장치 (fail-closed) ──────────────────────────────────
 // `_env.mjs` 는 기본값으로 Production URL + service_role 을 준다. 이 스크립트는 계정과
 // 글을 **생성하고 지우므로**, 인자 없이 돌리면 아무 경고 없이 운영 DB 를 건드린다.
-// 대상이 Production 이면 명시적 동의를 요구한다(삼순 지적 2026-08-07).
-const PROD_HOSTS = ["keubo.fan", "www.keubo.fan", "kbo-everyday.vercel.app"];
+//
+// ⚠️ 자체결함 이력(삼순 NO-GO 2026-08-07 ①): 첫 판본은 **웹 주소(BASE_URL)만** 보고 판정했다.
+//   그러나 계정·글이 생기는 곳은 웹이 아니라 **DB** 이고, DB 는 `SUPABASE_URL` 이라 항상 운영이다.
+//   즉 `--base-url=http://localhost:3003` 을 주면 가드는 통과하는데 데이터는 그대로 운영에
+//   쌓인다 — 가드가 막아야 할 바로 그 일을 못 막았다.
+//   → **쓰기가 일어나는 대상(DB)을 주 판정축**으로 삼고, 웹은 보조로 둔다.
+//     둘 중 하나라도 운영이면 명시적 동의를 요구한다.
+const PROD_WEB_HOSTS = ["keubo.fan", "www.keubo.fan", "kbo-everyday.vercel.app"];
+const PROD_DB_REF = "lbmbdjgsnenqjwjotoei"; // 크보팬 운영 Supabase 프로젝트 ref
 const targetHost = (() => { try { return new URL(BASE_URL).host; } catch { return String(BASE_URL); } })();
-const isProduction = PROD_HOSTS.includes(targetHost);
-if (isProduction && !process.argv.includes("--allow-production")) {
+const dbRef = SUPABASE_URL?.match(/https:\/\/([a-z0-9]+)/)?.[1] ?? "";
+const webIsProd = PROD_WEB_HOSTS.includes(targetHost);
+const dbIsProd = dbRef === PROD_DB_REF;
+if ((webIsProd || dbIsProd) && !process.argv.includes("--allow-production")) {
   console.error(
-    `\n❌ 거부: 대상이 Production 입니다 (${targetHost}).\n` +
+    `\n❌ 거부: Production 을 대상으로 합니다.\n` +
+    `   · 웹  : ${targetHost} ${webIsProd ? "(운영)" : "(비운영)"}\n` +
+    `   · DB  : ${dbRef} ${dbIsProd ? "(운영)" : "(비운영)"}   ← 계정·글이 실제로 쌓이는 곳\n` +
     `   이 스크립트는 전용 테스트 계정과 글을 실제로 생성하고 지웁니다.\n` +
     `   의도한 것이 맞다면 --allow-production 을 붙이세요.\n` +
-    `   로컬 대상이라면: --base-url=http://localhost:3003\n`,
+    `   비운영으로 돌리려면 웹뿐 아니라 **DB 자격증명까지** 바꿔야 합니다\n` +
+    `   (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).\n`,
   );
   process.exit(2);
+}
+
+// ── 수동 게이트 계약: prebuild/required 에 들어가 있으면 안 된다 ──────────────
+// ⚠️ 삼순 NO-GO 2026-08-07 ④ — 직전 보고에 "미포함을 스크립트가 assert" 라고 썼지만
+//   실제로는 커밋 때 사람이 한 번 확인한 게 전부였다. **없는 안전장치를 있다고 보고했다.**
+//   이 스크립트는 실계정·실글을 만드므로 prebuild 에 섮이면 배포마다 운영 DB 에
+//   계정이 생긴다. 런타임에서 실제로 막는다.
+{
+  const pkgPath = resolve(__dirname, "../../package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  const inPrebuild = (pkg.scripts?.prebuild ?? "").includes("qa:ui:post-scope-label");
+  if (inPrebuild) {
+    console.error(
+      `\n❌ 거부: 이 게이트가 prebuild 에 등록돼 있습니다.\n` +
+      `   실계정·실글을 생성하므로 빌드마다 돌릴 수 없습니다. 수동 게이트로 유지하세요.\n`,
+    );
+    process.exit(2);
+  }
 }
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {
@@ -86,12 +116,34 @@ const SHORT = {
 let userId = null;
 const postIds = [];
 
+/**
+ * 전용 테스트 계정·글 정리.
+ *
+ * ⚠️ 삼순 NO-GO 2026-08-07 ② — 종전 판본은 삭제 오류를 통째로 삼켰다.
+ *   정리가 실패해도 "정리 완료" 를 찍고 전체 PASS 로 끝난다 — 운영 DB 에 QA 계정과
+ *   글이 쌓이는데도 모르게 된다. 이건 보고가 아니라 **검사 항목**이어야 한다.
+ *   → 각 삭제의 error 를 판정하고, 마지막에 **잔여물을 재조회**해 0건을 확인한다.
+ */
 async function cleanup() {
   log("정리 중…");
-  if (postIds.length) await admin.from("posts").delete().in("id", postIds);
+  if (postIds.length) {
+    const { error } = await admin.from("posts").delete().in("id", postIds);
+    check("cleanup: QA 글 삭제 성공", !error, error?.message);
+  }
   if (userId) {
-    await admin.from("profiles").delete().eq("id", userId);
-    await admin.auth.admin.deleteUser(userId);
+    const { error: pErr } = await admin.from("profiles").delete().eq("id", userId);
+    check("cleanup: QA 프로필 삭제 성공", !pErr, pErr?.message);
+    const { error: uErr } = await admin.auth.admin.deleteUser(userId);
+    check("cleanup: QA 계정 삭제 성공", !uErr, uErr?.message);
+  }
+
+  // 삭제 호출이 성공을 리턴해도 실제로 남았을 수 있다(RLS·캐스케이드 등).
+  // 잔여물을 직접 조회해 0건을 확인하는 게 유일한 근거다.
+  const { data: leftPosts } = await admin.from("posts").select("id").like("title", `%QA-SCOPE-${STAMP}%`);
+  check("cleanup: QA 글 잔여물 0건", (leftPosts?.length ?? 0) === 0, `${leftPosts?.length}건 잔존`);
+  if (userId) {
+    const { data: leftUser } = await admin.auth.admin.getUserById(userId);
+    check("cleanup: QA 계정 잔여물 0건", !leftUser?.user, `계정 ${userId} 잔존`);
   }
   log("정리 완료 (전용 테스트 계정 삭제)");
 }
@@ -268,14 +320,18 @@ async function main() {
     return out;
   });
   check("홈 최신글이 공개범위 배지를 렌더한다", homeScopes.length > 0, `배지 0개`);
+
+  // ⚠️ 삼순 NO-GO 2026-08-07 ③ — 종전 판본은 QA 글을 못 찾으면 `log` 만 찍고 넘어갔다.
+  //   그러면 홈 검증이 **0건인데 전체 PASS** 가 나온다(vacuous). 홈 배선이 통째로 끊겨도
+  //   이 게이트는 초록불이다. QA 글은 방금 만든 최신글이라 홈 최신글에 나오는 게 정상이다.
+  //   → 못 찾으면 FAIL. 각 case 도 "매칭되면 비교"가 아니라 **반드시 존재 + 값 일치**를 요구한다.
   const homeQa = homeScopes.filter((h) => h.title.includes(`QA-SCOPE-${STAMP}`));
-  if (homeQa.length > 0) {
-    for (const c of cases) {
-      const hit = homeQa.find((h) => h.title.includes(c.key));
-      if (hit) check(`홈 ${c.key} → "${c.expect}"`, hit.scope === c.expect, `실제 "${hit.scope}"`);
-    }
-  } else {
-    log("홈 최신글에 QA 글이 안 보임(다른 글에 밀림) — 홈 배지 렌더 자체는 위에서 확인함");
+  check("홈 최신글에 QA 글이 노출된다(검증 0건 방지)", homeQa.length > 0,
+    `QA 글 0건 — 홈 배선이 끊겼거나 최신글 목록에서 밀렸다`);
+  for (const c of cases) {
+    const hit = homeQa.find((h) => h.title.includes(c.key));
+    check(`홈 ${c.key} → "${c.expect}"`, !!hit && hit.scope === c.expect,
+      hit ? `실제 "${hit.scope}"` : "홈에서 해당 글을 못 찾음");
   }
   check("홈이 옛 '크보팬' 라벨을 안 쓴다", !homeScopes.some((h) => h.scope === "크보팬"),
     JSON.stringify(homeScopes.filter((h) => h.scope === "크보팬").slice(0, 2)));
