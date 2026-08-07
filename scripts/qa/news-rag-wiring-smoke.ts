@@ -644,7 +644,52 @@ async function run(): Promise<void> {
         `구단 서술 질문이 스코어 가드에 걸렸다: ${result.source}`);
       assert.equal(calls.teamSearch, 1);
     }
-    ok("스코어 종단 — source=history_hold · news/team/generic/cache 호출 0 · 출처 미부착 / 서술형 무회귀");
+
+    // ⚠️ **반대편 과차단** — 스코어 단어가 있어도 물은 대상이 다르면 열려야 한다.
+    //
+    //   2026-08-08 삼순 3차 NO-GO: `점수`·`경기 결과` 를 문맥 없이 substring 매칭했더니
+    //   아래 3문장이 전부 `history_hold` 로 닫혀 `official 0 · news 0` 이 됐다.
+    //   누수를 막으려다 반대로 민 것이다.
+    //
+    //   위 반대가설(`무슨 일 있었어?`·`LG 역사`)은 스코어 단어가 아예 없어서 이 회귀를
+    //   못 잡는다. **스코어 단어를 포함한 채** 열려야 하는 문장으로 고정해야 한다.
+    {
+      // (1) 물은 것이 `이유` — 숫자 없이 기사로 설명 가능한 최신 서술형.
+      //
+      // ⚠️ deps 를 오버라이드하지 않는다. 기본 makeDeps 의 `searchNewsRag` 가 호출을
+      //   세고 있어서 덮어쓰면 `calls.news` 가 항상 0 이 된다 — 같은 자체결함을
+      //   ⑨-c 에서 두 번 냈다(`searchRag`, 그리고 여기). 카운터를 가진 seam 은 건드리지 않는다.
+      {
+        const { deps, calls } = makeDeps();
+        const result = await answerQuestion("u1", "어제 LG가 점수를 못 낸 이유가 뭐야?", deps);
+        assert.equal(result.source, "news_rag",
+          `\`점수를 못 낸 이유\` 가 과차단됐다: ${result.source}`);
+        assert.equal(calls.news.length, 1, "이유 질문이 기사 검색을 안 탔다");
+      }
+      // (2) 물은 것이 `장면` — 역시 서술형.
+      {
+        const { deps, calls } = makeDeps();
+        const result = await answerQuestion("u1", "어제 LG 경기 결과를 바꾼 결정적 장면은?", deps);
+        assert.equal(result.source, "news_rag",
+          `\`경기 결과를 바꾼 장면\` 이 과차단됐다: ${result.source}`);
+        assert.equal(calls.news.length, 1, "장면 질문이 기사 검색을 안 탔다");
+      }
+      // (3) 물은 것이 `규칙` — tier1 공식 조문이 정본이다. 기사도 구단도 아니다.
+      //
+      // ⚠️ `searchOfficialRag` 를 오버라이드하지 않는다. 기본 makeDeps 구현이 이미
+      //   호출을 세고 있어서, 덮어쓰면 그 카운터가 죽어 assertion 이 무의미해진다
+      //   (⑨-c 첫 작성 때 `searchRag` 로 똑같은 자체결함을 냈다).
+      //   근거를 빈 배열로 돌려줘도 **공식 경로에 진입했는지**는 카운터로 확인된다.
+      {
+        const { deps, calls } = makeDeps();
+        const result = await answerQuestion("u1", "LG 경기에서 점수가 같으면 연장전 규칙은?", deps);
+        assert.ok(calls.officialSearch > 0,
+          `\`점수가 같으면 연장전 규칙\` 이 공식 문서 경로를 못 탔다: ${result.source}`);
+        assert.equal(calls.news.length, 0, "룰 질문이 기사 경로를 탔다");
+        assert.equal(calls.teamLlm, 0, "룰 질문이 구단 RAG 를 탔다");
+      }
+    }
+    ok("스코어 종단 — source=history_hold · 호출 0 · 출처 미부착 / 이유·장면·규칙은 열림(과차단 0)");
   }
 
   // ── ⑩ 우선순위 — 서비스 문의·룰·선수는 기사가 선점하지 않는다 ──────────
