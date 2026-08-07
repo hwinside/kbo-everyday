@@ -34,6 +34,8 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
+import { fetchAllByKeyset } from "../../src/lib/db/paginate";
+
 // ⚠️ `_env.mjs` 는 env 가 없으면 `process.exit(1)` 한다. 그래서 **top-level 로 두지 않는다** —
 //   두면 self-test 가 DB 자격증명 없이는 못 돌고, 결국 CI 에서 판정 로직을 못 지킨다.
 //   실제 감사(`main`)에서만 불러온다.
@@ -69,6 +71,20 @@ const PAGE_SIZE = 1000;
 const MAX_ROWS = 50_000;
 
 /**
+ * 상한 초과 판정 — **행을 읽기 전에**, 배열을 만들지 않고 count 만으로 판정한다.
+ *
+ * ⚠️ 종전에는 `verifyFullScan(expected, Array.from({length: expected}))` 로 불렀다.
+ *   상한 초과라서 어차피 RED 인 상황에서 그 배열부터 만들어 메모리를 먹었다(삼순 지적).
+ *   "깨끗하게 실패한다"는 것도 계약이다 — 실패 경로가 자원을 더 쓰면 안 된다.
+ */
+export function verifyRowBudget(expected: number): string[] {
+  if (expected > MAX_ROWS) {
+    return [`대상 ${expected}건이 상한 ${MAX_ROWS}건을 넘는다. --days 로 기간을 좁혀 나눠 돌린다.`];
+  }
+  return [];
+}
+
+/**
  * 전수 조회가 실제로 **전수**였는지 검증 — 순수 함수.
  *
  * ⚠️ 상한으로 자르고 통과시키면 "전수 감사 통과"라는 거짓 결론이 나온다.
@@ -76,11 +92,8 @@ const MAX_ROWS = 50_000;
  */
 export function verifyFullScan(expected: number, ids: number[]): string[] {
   const failures: string[] = [];
-  if (expected > MAX_ROWS) {
-    failures.push(
-      `대상 ${expected}건이 상한 ${MAX_ROWS}건을 넘는다. --days 로 기간을 좁혀 나눠 돌린다.`);
-    return failures;
-  }
+  const over = verifyRowBudget(expected);
+  if (over.length > 0) return over;
   if (ids.length !== expected) {
     failures.push(
       `전수 조회 실패: DB count ${expected}건 vs 조회 ${ids.length}건. ` +
@@ -91,6 +104,51 @@ export function verifyFullScan(expected: number, ids: number[]): string[] {
     failures.push(`페이지 경계에서 중복 ${ids.length - unique}건이 발생했다(정렬 키 문제).`);
   }
   return failures;
+}
+
+export interface LogRow {
+  id: number;
+  created_at: string;
+  question: string;
+  answer: string | null;
+}
+
+/**
+ * 감사 한 페이지의 쿼리를 구성한다 — **배포 경로가 실제로 쓰는 함수**다.
+ *
+ * ⚠️ 이 함수를 뽑은 이유(자체발견, 2026-08-07): self-test 가 소스 문자열을
+ *   정규식으로 검사하고 있었는데, **검사식 자체가 같은 파일 안에 있어서 자기 자신을
+ *   매칭**했다. keyset helper 를 지워도, cutoff 를 지워도 전부 GREEN 이었다(mutation 실측).
+ *   그래서 문자열이 아니라 **호출 결과**를 본다: fake 빌더를 넣고 어떤 조건이
+ *   실제로 걸리는지 기록한다. cutoff 를 빼면 여기서 RED 가 난다.
+ *
+ * growing table 계약:
+ *   · `lte(id, cutoffId)` — 감사 도중 들어오는 새 행을 모집단에서 제외해 count 와
+ *     읽기가 같은 모집단을 보게 한다.
+ *   · `order(id asc)` + `gt(id, cursor)` — offset 이 아닌 유일 키 커서로 이어 읽는다.
+ *     offset 은 삽입으로 경계 행이 밀려 조용히 누락된다.
+ */
+export function buildTeamRagPageQuery<Q extends {
+  select: (columns: string) => Q;
+  eq: (column: string, value: unknown) => Q;
+  gte: (column: string, value: unknown) => Q;
+  lte: (column: string, value: unknown) => Q;
+  gt: (column: string, value: unknown) => Q;
+  order: (column: string, options: { ascending: boolean }) => Q;
+  limit: (count: number) => Q;
+}>(
+  table: Q,
+  params: { since: string; cutoffId: number; cursor: number | null; limit: number },
+): Q {
+  let query = table
+    .select("id, created_at, question, answer")
+    .eq("match_path", "team_rag")
+    .gte("created_at", params.since)
+    .lte("id", params.cutoffId)
+    .order("id", { ascending: true })
+    .limit(params.limit);
+  if (params.cursor !== null) query = query.gt("id", params.cursor);
+  return query;
 }
 
 export interface AuditCounts {
@@ -150,46 +208,62 @@ async function main() {
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-  // ── ① 전체 count 를 **먼저** 잡는다 ────────────────────────────────────────
+  // ── ① 모집단을 **고정**한다 (stable cutoff) ───────────────────────────────
+  //
+  // ⚠️ 감사가 도는 동안에도 유저 질문은 계속 쌓인다. cutoff 없이 세고 읽으면
+  //   count 와 조회 대상이 서로 다른 모집단이 돼 "전수 대조"가 성립하지 않는다.
+  //   그래서 지금 시점의 최대 id 를 먼저 잡고, count 도 읽기도 **그 이하만** 본다.
+  // query-guard: bounded -- 단일 행(최대 id) 조회.
+  const { data: cutoffRow, error: cutoffError } = await supabase
+    .from("genius_question_logs")
+    .select("id")
+    .order("id", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (cutoffError) throw new Error(`cutoff 조회 실패: ${cutoffError.message}`);
+  const cutoffId: number = (cutoffRow as { id: number } | null)?.id ?? 0;
+
+  // ── ①-b 고정된 모집단의 전체 count ────────────────────────────────────────
   // 페이지네이션 결과와 대조할 기준값이다. 이게 없으면 "몇 건을 못 봤는지"를 알 수 없다.
   // query-guard: bounded -- head-only count, 행을 가져오지 않는다.
   const { count: totalCount, error: countError } = await supabase
     .from("genius_question_logs")
     .select("id", { count: "exact", head: true })
     .eq("match_path", "team_rag")
-    .gte("created_at", since);
+    .gte("created_at", since)
+    .lte("id", cutoffId);
   if (countError) throw new Error(`count 조회 실패: ${countError.message}`);
   const expected = totalCount ?? 0;
 
-  // 상한 초과는 읽기 전에 판정한다 — 자르고 통과시키지 않는다.
-  const overflow = verifyFullScan(expected, Array.from({ length: expected }, (_, i) => i));
-  if (expected > MAX_ROWS) {
+  // 상한 초과는 **행을 읽기 전에**, 배열도 만들지 않고 판정한다.
+  //   깨끗하게 실패하는 것도 계약이다 — 어차피 RED 인 상황에서 자원을 더 쓰면 안 된다.
+  const budget = verifyRowBudget(expected);
+  if (budget.length > 0) {
     console.log(`\n❌ 감사 실패`);
-    for (const f of overflow) console.log(`   · ${f}`);
+    for (const f of budget) console.log(`   · ${f}`);
     process.exit(1);
   }
 
-  // ── ② 페이지네이션으로 **전부** 읽는다 ────────────────────────────────────
-  type LogRow = { id: number; created_at: string; question: string; answer: string | null };
-  const rows: LogRow[] = [];
-  for (let from = 0; from < expected; from += PAGE_SIZE) {
-    // query-guard: bounded -- match_path 단일값 + 기간 한정 + range 페이지 상한.
-    //   `team_rag` 는 2026-08-07 에 `rag` 에서 분리한 구단 전용 식별자다. 이 분리가 없으면
-    //   선수·공식 RAG 가 섞여 구단만 뽑을 수 없다(그래서 감사가 실행 불가였다).
-    //   정렬은 `id` 로 한다 — `created_at` 은 동일 타임스탬프가 있으면 페이지 경계에서
-    //   행이 겹치거나 빠질 수 있다. count 대조가 그걸 잡아주지만 애초에 만들지 않는다.
-    const { data, error } = await supabase
-      .from("genius_question_logs")
-      .select("id, created_at, question, answer")
-      .eq("match_path", "team_rag")
-      .gte("created_at", since)
-      .order("id", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-    if (error) throw new Error(`로그 조회 실패(offset ${from}): ${error.message}`);
-    const page = (data ?? []) as LogRow[];
-    if (page.length === 0) break;
-    rows.push(...page);
-  }
+  // ── ② keyset 페이지네이션으로 **전부** 읽는다 ─────────────────────────────
+  //
+  // ⚠️ range(offset) 페이지네이션을 쓰면 안 된다(삼순 지적, CI `game-log-ledger` 실측).
+  //   `genius_question_logs` 는 growing table 이라 감사가 도는 동안에도 행이 들어온다.
+  //   offset 기반은 그 사이 삽입으로 **경계 행이 밀려 누락**될 수 있다 —
+  //   전수 감사에서 조용한 누락은 치명적이다(봤다고 착각하게 만든다).
+  //   그래서 ① `cutoffId` 로 상한 시점을 고정하고 ② 유일 키(`id`) 커서로 이어 읽는다.
+  //   두 장치가 같이 있어야 "읽는 동안 늘어나도 같은 모집단"이 보장된다.
+  const rows = await fetchAllByKeyset<LogRow, number>(
+    async (cursor, limit) => {
+      // query-guard: full-scan -- 고정 cutoffId 이하 team_rag 전수 감사. 유일 키 커서 + 페이지 상한.
+      const { data, error } = await buildTeamRagPageQuery(
+        supabase.from("genius_question_logs"),
+        { since, cutoffId, cursor, limit },
+      );
+      return { data: (data ?? []) as LogRow[], error };
+    },
+    (row) => row.id,
+    { pageSize: PAGE_SIZE, label: "team_rag 전수 감사" },
+  );
 
   // ── ③ 전수 검증 — self-test 와 **같은 순수 함수**로 판정한다 ──────────────
   const scanFailures = verifyFullScan(expected, rows.map((r) => r.id));
@@ -278,7 +352,45 @@ async function selfTest() {
   eq.ok(!UNICODE_NUMERIC.test(auditBody("창단했어요. 📄 출처: 나무위키 1990")),
     "출처 꼬리의 숫자가 누수로 오판된다");
 
-  // ⑤ 상한/페이지 상수 계약 — 상한 초과는 자르지 않고 실패해야 한다는 전제.
+  // ⑤ growing table 전수 계약 — **실제 쿼리 구성 함수를 태워** 검증한다.
+  //
+  //    ⚠️ 종전엔 소스 문자열을 정규식으로 검사했는데, 검사식이 같은 파일에 있어
+  //      **자기 자신을 매칭**해 keyset·cutoff 를 지워도 전부 GREEN 이었다(자체발견).
+  //      문자열이 아니라 호출 결과를 본다.
+  {
+    type Call = { method: string; args: unknown[] };
+    const calls: Call[] = [];
+    const fake = new Proxy({} as never, {
+      get: (_t, method: string) => (...args: unknown[]) => {
+        calls.push({ method, args });
+        return fake;
+      },
+    });
+
+    buildTeamRagPageQuery(fake, { since: "2026-08-01T00:00:00Z", cutoffId: 4242, cursor: 100, limit: 1000 });
+    const find = (m: string) => calls.filter((c) => c.method === m);
+
+    // stable cutoff — 감사 도중 들어온 행이 모집단을 흔들지 않게 한다.
+    eq.deepEqual(find("lte").map((c) => c.args), [["id", 4242]],
+      "stable cutoff(lte id) 가 사라졌다 — count 와 읽기가 다른 모집단을 본다");
+    // keyset 커서 — offset 이 아니어야 한다.
+    eq.deepEqual(find("gt").map((c) => c.args), [["id", 100]],
+      "keyset 커서(gt id)가 사라졌다 — offset 페이지네이션은 삽입으로 행을 누락시킨다");
+    eq.deepEqual(find("order").map((c) => c.args), [["id", { ascending: true }]],
+      "유일 키 오름차순 정렬이 아니다");
+    eq.deepEqual(find("limit").map((c) => c.args), [[1000]], "페이지 상한이 없다");
+    eq.deepEqual(find("eq").map((c) => c.args), [["match_path", "team_rag"]],
+      "구단 식별자 필터가 사라졌다(선수·공식 RAG 가 섞인다)");
+    eq.equal(find("range").length, 0, "range 페이지네이션이 되살아났다(growing table 에 금지)");
+
+    // 첫 페이지(cursor=null)에는 커서 조건이 없어야 한다 — 있으면 첫 행이 빠진다.
+    calls.length = 0;
+    buildTeamRagPageQuery(fake, { since: "2026-08-01T00:00:00Z", cutoffId: 4242, cursor: null, limit: 1000 });
+    eq.equal(find("gt").length, 0, "첫 페이지에 커서 조건이 붙었다(첫 행 누락)");
+    eq.equal(find("lte").length, 1, "첫 페이지에 cutoff 가 빠졌다");
+  }
+
+  // ⑤-b 상한/페이지 상수 계약 — 상한 초과는 자르지 않고 실패해야 한다는 전제.
   eq.ok(MAX_ROWS > PAGE_SIZE, "상한이 페이지 크기보다 작다");
   eq.ok(PAGE_SIZE >= 1000, "페이지 크기가 비합리적으로 작다");
 
@@ -294,11 +406,16 @@ async function selfTest() {
   const over = verifyFullScan(MAX_ROWS + 1, []);
   eq.equal(over.length, 1, "상한 초과가 통과했다");
   eq.match(over[0], /상한/);
+  //   ⑥-c2 상한 판정은 **행 배열 없이** count 만으로 된다(삼순: clean RED 전에 메모리 먹지 말 것).
+  //        ⚠️ 시그니처 검사(`verifyRowBudget.length`)는 쓰지 않는다 — 기본값 파라미터를
+  //          붙이면 length 가 그대로 1 이라 검출력이 0 이다(자체 실측). 행동만 본다.
+  eq.equal(verifyRowBudget(MAX_ROWS + 1).length, 1, "상한 초과가 budget 판정에서 통과했다");
+  eq.deepEqual(verifyRowBudget(MAX_ROWS), [], "상한 이내가 budget 판정에서 RED 로 잡혔다");
   //   ⑥-d 페이지 경계 중복(정렬 키 문제)도 잡는다.
   const dup = verifyFullScan(3, [1, 2, 2]);
   eq.ok(dup.some((f) => /중복/.test(f)), "페이지 중복이 통과했다");
 
-  console.log("✅ team-rag-audit self-test PASS (0건 RED / allow-empty / 누수 / 임계 / 본문추출 / 전수 5001·상한·중복)");
+  console.log("✅ team-rag-audit self-test PASS (0건 RED / allow-empty / 누수 / 임계 / 본문추출 / keyset·cutoff / 전수 5001·상한·중복)");
 }
 
 if (process.argv.includes("--self-test")) {
