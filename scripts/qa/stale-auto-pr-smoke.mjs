@@ -113,12 +113,24 @@ check("빈/비정상 입력은 빈 배열", () => {
   assert.deepEqual(selectStaleAutoPrs([pr({ number: 1, headRefName: undefined })], CUR), []);
 });
 
-check("isActionsBotAuthor 판별", () => {
+check("isActionsBotAuthor 판별(exact allowlist)", () => {
   assert.equal(isActionsBotAuthor({ login: "github-actions[bot]", is_bot: true }), true);
   assert.equal(isActionsBotAuthor({ login: "app/github-actions", is_bot: true }), true);
   assert.equal(isActionsBotAuthor({ login: "harinclaw", is_bot: false }), false);
-  assert.equal(isActionsBotAuthor({ login: "some-bot", is_bot: true }), false); // github-actions 아니면 제외
+  assert.equal(isActionsBotAuthor({ login: "some-bot", is_bot: true }), false);
+  // 삼순 NO-GO(축③-2): 부분일치 `/github-actions/` 는 유사 이름 bot 을 허용했다 → exact 만.
+  assert.equal(isActionsBotAuthor({ login: "evil-github-actions-x", is_bot: true }), false);
+  assert.equal(isActionsBotAuthor({ login: "github-actions", is_bot: true }), false); // [bot] 없는 유사형
   assert.equal(isActionsBotAuthor(null), false);
+});
+
+// 삼순 NO-GO(축③-2): isCrossRepository 누락(undefined)이 통과하던 fail-open — same-repo 긍정 확인.
+check("isCrossRepository 누락/undefined 는 닫지 않는다(same-repo 긍정 확인)", () => {
+  const noField = pr({ number: 60, headRefName: OLD1 });
+  delete noField.isCrossRepository;
+  assert.deepEqual(selectStaleAutoPrs([CUR, noField], CUR), []);
+  const undef = pr({ number: 61, headRefName: OLD1, isCrossRepository: undefined });
+  assert.deepEqual(selectStaleAutoPrs([CUR, undef], CUR), []);
 });
 
 console.log("\n§2 프로덕션 배선 — 워크플로가 실제로 이 정리를 태우는가");
@@ -158,6 +170,16 @@ check("close 스크립트가 createdAt·author·isCrossRepository 를 조회하�
   const closeSrc = readFileSync(join(PROJECT_ROOT, "scripts/ci/close-stale-auto-roster-prs.mjs"), "utf-8");
   assert.match(closeSrc, /number,headRefName,createdAt,author,isCrossRepository/, "이중잠금용 필드를 조회하지 않는다");
   assert.match(closeSrc, /find\(\(p\) => p\?\.headRefName === currentBranch\)/, "current PR 을 브랜치로 해석하지 않는다");
+});
+
+// 삼순 NO-GO(축③-1): 이 스모크가 prebuild 필수 게이트에 편입되지 않으면 orphan — 회귀를 못 잡는다.
+check("이 스모크가 package.json qa:stale-auto-pr + prebuild 체인에 편입된다", () => {
+  const pkg = JSON.parse(readFileSync(join(PROJECT_ROOT, "package.json"), "utf-8"));
+  assert.equal(pkg.scripts["qa:stale-auto-pr"], "node scripts/qa/stale-auto-pr-smoke.mjs", "qa:stale-auto-pr 스크립트가 없다");
+  assert.ok(
+    pkg.scripts.prebuild.includes("npm run qa:stale-auto-pr"),
+    "prebuild 체인에 qa:stale-auto-pr 이 없다(orphan — 필수 게이트 미편입)"
+  );
 });
 
 if (failures.length) {

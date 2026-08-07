@@ -14,11 +14,15 @@
 /** 자동 roster/stats PR 의 브랜치 접두사 — 신규 생성 로직과 반드시 일치해야 한다. */
 export const AUTO_ROSTER_BRANCH_PREFIX = "auto/update-roster-stats-";
 
-/** Actions bot 저자 판별 — GITHUB_TOKEN 이 만든 PR(`github-actions[bot]` / `app/github-actions`). */
+/** GITHUB_TOKEN 이 만든 PR 의 저자 login — exact allowlist(유사 이름 bot 차단). */
+export const ACTIONS_BOT_LOGINS = new Set(["github-actions[bot]", "app/github-actions"]);
+
+/** Actions bot 저자 판별 — is_bot 이며 login 이 exact allowlist 에 있어야 한다.
+ * ⚠︎ 삼순 NO-GO(축③-2): `/github-actions/` 부분일치는 `evil-github-actions-x` 같은 유사
+ * 이름 bot 도 통과시켜 fail-open 이다 → exact 문자열 allowlist 로 잠근다. */
 export function isActionsBotAuthor(author) {
   if (!author || author.is_bot !== true) return false;
-  const login = typeof author.login === "string" ? author.login : "";
-  return /github-actions/.test(login);
+  return ACTIONS_BOT_LOGINS.has(author.login);
 }
 
 /**
@@ -53,8 +57,10 @@ export function selectStaleAutoPrs(openPrs, currentPr) {
     const branch = pr.headRefName;
     if (typeof branch !== "string" || !branch.startsWith(AUTO_ROSTER_BRANCH_PREFIX)) return false;
     if (pr.number === currentPr.number) return false; // 자기 자신(번호 기준)
-    if (pr.isCrossRepository === true) return false; // fork PR 제외(same-repo only)
-    if (!isActionsBotAuthor(pr.author)) return false; // Actions bot 저자만
+    // ⚠︎ 삼순 NO-GO(축③-2): `!== true` 만 제외하면 isCrossRepository 누락(undefined)이 통과한다
+    // (fail-open). same-repo 를 **긍정 확인**(=== false)해야 fork/미상 모두 차단된다.
+    if (pr.isCrossRepository !== false) return false; // same-repo 긍정 확인만
+    if (!isActionsBotAuthor(pr.author)) return false; // Actions bot 저자만(exact allowlist)
     const created = Date.parse(pr.createdAt);
     if (!Number.isFinite(created)) return false; // 시각 못 읽으면 제외
     if (!(created < currentCreated)) return false; // 엄격히 더 오래된 것만
