@@ -1716,8 +1716,44 @@ function hasAnswerBaseballSignal(value: string): boolean {
  * 답변에 **야구를 확정하는 신호**가 있는가 — 고정밀 앵커 또는 KBO 구단명.
  * 한정 앵커(`선수`·`구단`)는 이 신호가 같이 있을 때만 인정된다.
  */
+/**
+ * **답변측 구단 신호** — 같은 팀의 약칭+별칭 쌍이 함께 나타날 때만 인정한다.
+ *
+ * ⚠️ 왜 질문용 `mentionsTeam` 을 쓰면 안 되는가 (삼순 2026-08-08 3차 P0, 실측 반증):
+ * `mentionsTeam` 은 **단독 약칭·별칭**도 구단으로 인정한다. 질문은 우리 봇에 온 것이라
+ * `LG` 한 마디가 구단을 뜻하지만, **답변 본문**은 그 전제가 없다:
+ *   `LG는 한국의 가전 기업입니다`   → 통과  (약칭 `lg`)
+ *   `기아는 자동차 회사입니다`     → 통과  (약칭 `기아`)
+ *   `이글스는 미국의 록 밴드입니다`  → 통과  (별칭 `이글스`)
+ * `삼성`·`롯데`·`한화`·`키움` 은 전부 실존 기업명이라 denylist 로는 막을 수 없다.
+ *
+ * 그래서 답변측은 **풀네임 쌍**을 요구한다. 띄어쓰기·붙여쓰기 둘 다 인정한다:
+ *   `LG 트윈스 감독은 …`  → 인정 (별도 토큰 쌍)
+ *   `lg트윈스의 역사는 …`  → 인정 (결합 토큰)
+ * 교차조합(`LG 라이온즈`)은 같은 팀이 아니므로 인정하지 않는다.
+ *
+ * 역사 구단(`SK 와이번즈`)처럼 현재 alias 표에 없는 이름은 여기서 안 잡히지만,
+ * 프롬프트가 첫 문장에 야구/KBO 문맥을 강제하므로 `kbo` 앵커로 산다.
+ */
+function answerMentionsTeam(tokens: string[]): boolean {
+  return TEAM_ALIASES.some(({ shorts, nicks }) => {
+    // ① 결합 토큰 — `lg트윈스`·`두산베어스의`
+    const joined = tokens.some((token) =>
+      shorts.some((short) => {
+        if (!token.startsWith(short)) return false;
+        const rest = token.slice(short.length);
+        return nicks.some((nick) =>
+          rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+      }));
+    if (joined) return true;
+    // ② 별도 토큰 쌍 — `LG 트윈스`. **같은 팀**의 약칭과 별칭이 모두 있어야 한다.
+    return shorts.some((short) => tokenMatches(tokens, short)) &&
+      nicks.some((nick) => tokenMatches(tokens, nick));
+  });
+}
+
 function hasBaseballAnchorOrTeam(value: string, tokens: string[]): boolean {
-  return hasAnswerBaseballSignal(value) || mentionsTeam(tokens);
+  return hasAnswerBaseballSignal(value) || answerMentionsTeam(tokens);
 }
 
 /**

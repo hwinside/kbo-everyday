@@ -602,6 +602,56 @@ async function verifyTeamAnswersSurviveFinalValidator() {
         `정상 야구 답변이 폐기됐다: ${answer}`);
     });
   }
+
+  // ── 답변측 **구단 신호**도 질문용과 분리한다 (삼순 2026-08-08 3차 P0) ────────
+  //
+  // ⚠️ 어휘를 분리하고도 구단 판정은 질문용 `mentionsTeam` 을 그대로 불렀다 — 같은 구조의
+  //   재사용이 한 줄 더 남아 있었다. `mentionsTeam` 은 **단독 약칭·별칭**도 구단으로 보므로:
+  //     `LG는 한국의 가전 기업입니다`  → 통과
+  //     `기아는 자동차 회사입니다`    → 통과
+  //     `이글스는 미국의 록 밴드입니다` → 통과
+  //   `삼성`·`롯데`·`한화`·`키움` 은 전부 실존 기업명이라 denylist 로는 못 막는다.
+  for (const answer of [
+    "LG는 한국의 가전 기업입니다",
+    "기아는 자동차 회사입니다",
+    "이글스는 미국의 록 밴드입니다",
+    "삼성은 반도체를 만듭니다",
+    "롯데는 과자 회사입니다",
+    "한화는 방산 기업입니다",
+  ]) {
+    await check(`구단 신호 분리 — 단독 약칭·별칭은 구단이 아니다 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), false,
+        `답변 구단 판정이 질문용 mentionsTeam 을 쓰고 있다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "야구 알려줘",
+      ).kind, "unsure", `비야구 답변이 유저에게 나갔다: ${answer}`);
+    });
+  }
+
+  // 반대 방향 — **10개 구단 풀네임은 전부 살아야** 한다. 띄어쓰기·붙여쓰기 둘 다.
+  //   이게 빠지면 "쌍을 요구하면 전부 닫힌다"는 퇴행을 게이트가 승인한다.
+  for (const answer of [
+    "LG 트윈스는 서울을 연고로 합니다.",
+    "lg트윈스의 역사는 1990년부터입니다.",
+    "KIA 타이거즈는 광주를 연고로 합니다.",
+    "두산 베어스는 서울을 연고로 합니다.",
+    "롯데 자이언츠는 부산 연고입니다.",
+    "삼성 라이온즈는 대구를 연고로 합니다.",
+    "한화 이글스는 대전 연고입니다.",
+    "키움 히어로즈는 고척을 쓰고 있습니다.",
+    "KT 위즈는 수원 연고입니다.",
+    "SSG 랜더스는 인천 연고입니다.",
+    "NC 다이노스는 창원 연고입니다.",
+    // 역사 구단은 alias 표에 없지만 프롬프트가 강제하는 `KBO` 앵커로 산다.
+    "SK 와이번즈는 KBO 구단이었습니다.",
+  ]) {
+    await check(`구단 신호 분리 — 풀네임은 통과 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), true,
+        `정상 구단 답변이 폐기됐다: ${answer}`);
+    });
+  }
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────

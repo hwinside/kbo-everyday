@@ -219,6 +219,19 @@ mutate_answer "M23 답변 validator 를 질문용 BASEBALL_WORDS 에 재연결" 
 mutate_answer "M24 일반어(구장·투구·주자·대타)를 단독 허용으로 되돌림" \
   perl -0pi -e 's/  "희생플라이", "태그업", "피치클락", "타율", "방어율", "평균자책", "대주자",/  "희생플라이", "태그업", "피치클락", "타율", "방어율", "평균자책", "대주자", "구장", "투구", "주자", "대타",/' src/lib/baseball-qa/pipeline.ts
 
+# M25 답변측 구단 판정을 **질문용 broad `mentionsTeam` 으로 재연결**한다 — 삼순 3차 P0 그 상태.
+#     `LG는 한국의 가전 기업입니다`·`기아는 자동차 회사입니다` 가 다시 통과한다.
+#     M23 과 같은 축이다 — "질문용 판정기 재사용"이 리팩토링으로 되살아나면 게이트가 잡는다.
+grep -q "answerMentionsTeam" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M25 대상(answerMentionsTeam)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate_answer "M25 답변측 구단 판정을 질문용 broad mentionsTeam 에 재연결" \
+  perl -0pi -e 's/  return hasAnswerBaseballSignal\(value\) \|\| answerMentionsTeam\(tokens\);/  return hasAnswerBaseballSignal(value) || mentionsTeam(tokens);/' src/lib/baseball-qa/pipeline.ts
+
+# M26 별도 토큰 쌍 인정을 제거한다 → `LG 트윈스`(띄어쓴 형태) 정상 답변이 폐기된다.
+#     과차단 방향도 게이트가 잡는지 본다 — "다 막으면 통과" 를 막는 축이다.
+mutate_answer "M26 별도 토큰 구단쌍 인정 제거 (풀네임 과차단)" \
+  perl -0pi -e 's/    return shorts\.some\(\(short\) => tokenMatches\(tokens, short\)\) &&\n      nicks\.some\(\(nick\) => tokenMatches\(tokens, nick\)\);/    return false;/' src/lib/baseball-qa/pipeline.ts
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "✅ 전 변이 RED — 게이트가 대상 로직을 실제로 지키고 있다"
