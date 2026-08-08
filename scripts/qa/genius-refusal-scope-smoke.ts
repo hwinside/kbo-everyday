@@ -34,11 +34,15 @@ import {
   SCOPE_GUIDE_ANSWER,
   CONTEXT_MISSING_ANSWER,
   SERVICE_REDIRECT_ANSWER,
+  NEWS_UNAVAILABLE_ANSWER,
   ACK_ANSWER,
+  NOT_BASEBALL_SENTINEL,
+  UNSURE_SENTINEL,
   type GlossaryEntry,
   type PlayerRef,
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
+import { RAG_GROUNDED_SENTINEL } from "../../src/lib/baseball-qa/rag/retrieve";
 import {
   ANSWER_PATH_SCOPE_WORD,
   MATCH_PATH_REPLY_KIND,
@@ -211,17 +215,52 @@ for (const q of OBSERVED_SCOPE_ASKS) {
       SCOPE_GUIDE_ANSWER,
       `되묻기/거절로 끝났다: ${result.answer}`,
     );
-    assert.equal(result.source, "ack", `source 가 ack 이 아니다: ${result.source}`);
+    // ⚠️ 자기 라벨로 기록돼야 한다 (삼순 2026-08-08 조건 ④). `ack` 에 접으면 범위 안내가
+    //   얼마나 나갔는지 사후에 셀 수가 없다 — 감사 분모가 사라진다.
+    assert.equal(result.source, "scope_guide", `source 가 scope_guide 가 아니다: ${result.source}`);
     assert.deepEqual(
       logs.map((l) => l.matchPath),
-      ["ack"],
-      `로그 match_path 가 ack 한 건이 아니다: ${JSON.stringify(logs)}`,
+      ["scope_guide"],
+      `로그 match_path 가 scope_guide 한 건이 아니다: ${JSON.stringify(logs)}`,
     );
     // 결정론 경로다 — 외부 호출이 없어야 한다.
     assert.equal(calls.llm, 0, "LLM 을 호출했다");
     assert.equal(calls.cache, 0, "캐시를 조회했다");
   });
 }
+
+check("과차단 0 — 한 글자 용어(`볼`·`야수`)를 꺼풀 조각으로 먹지 않는다", () => {
+  // 삼순 2026-08-08 조건 ② 실측 결함. 꺼풀 목록에 `야`·`수`·`볼` 같은 한 글자가 있고
+  // 그걸 **토큰 안 부분문자열**로 지웠더니, 사전에 실제로 있는 용어가 통째로 녹았다:
+  //   야수가 → [야][수] + 조사 `가` → "남은 게 없다" → 범위 되묻기로 오판
+  //   볼이   → [볼]      + 조사 `이` → 같은 방식으로 오판
+  // 운영 로그에 `야수가 뭐야`·`볼이 뭐야` 가 실제로 있다. 안내문이 덮으면 답을 못 받는다.
+  const realTerms = [
+    "볼", "볼이 뭐야?", "야수", "야수가 뭐야?", "야구에서 야수가 뭐야?",
+    "볼넷이 뭐야?", "야구에서 볼이 뭔가요?", "타수가 뭐야?",
+  ];
+  for (const q of realTerms) {
+    assert.equal(isScopeAskPhrase(q), false, `실제 야구 용어를 범위 되묻기로 먹었다: ${q}`);
+  }
+});
+
+{
+  // 종단으로도 확인한다 — 판정만 보면 뒤에서 덮이는 걸 못 본다(#1127 2차 NO-GO).
+  const { result } = await ask("야수가 뭐야?");
+  check("종단 — `야수가 뭐야?` 는 안내문이 아니라 답변 경로로 간다", () => {
+    assert.notEqual(result.answer, SCOPE_GUIDE_ANSWER, "범위 안내문이 용어 질문을 덮었다");
+    assert.notEqual(result.source, "scope_guide");
+  });
+}
+
+check("누락 0 — `프로야구 규칙` 도 범위 되묻기로 잡힌다", () => {
+  // 삼순 2026-08-08 조건 ② 실측 결함. 메타어를 **선언 순서**로 떼면 `프로야구` 에서
+  // `야구` 가 먼저 잘려 `프로` 라는 유령 잔여가 남고, 그 잔여가 "물은 대상이 있다"로
+  // 읽혀 판정이 뒤집혔다. 그래서 긴 어휘부터 떼도록 고정했다.
+  for (const q of ["프로야구 규칙", "프로야구 규칙 알려줘", "프로야구 룰 뭐가 있어?"]) {
+    assert.equal(isScopeAskPhrase(q), true, `범위 되묻기를 놓쳤다: ${q}`);
+  }
+});
 
 check("과차단 0 — 범위어를 포함한 진짜 질문은 안내문이 덮지 않는다", () => {
   // #1127 4차 NO-GO 의 `SCORE_CONTEXT_HEADS` 전역 substring 과차단과 같은 실수를 막는다.
@@ -280,9 +319,162 @@ check("범위 되묻기와 감사 인사는 서로 침범하지 않는다", () =
   });
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ③ 3분기 actual — 경로별로 `blocked / unsure / error` 가 **서로 다른 문구**로 끝난다
+//    (삼순 2026-08-08 조건 ①)
+//
+// 왜 필요한가 — 세 실패는 유저에게 완전히 다른 사실을 말한다:
+//   blocked = "그건 우리가 다루는 주제가 아니다"     (다시 물어도 소용없음)
+//   unsure  = "주제는 맞는데 답을 못 만들었다"       (다시 물으면 될 수 있음)
+//   error   = "우리 쪽이 고장났다"                   (우리 잘못이다)
+// 종전 코드는 셋을 전부 `BLOCKED_ANSWER` 한 문구로 보냈다. 야구 질문을 정확히 한 유저가
+// 우리 RPC 가 죽었다는 이유로 "저는 야구 이야기만 답해드릴 수 있어요" 를 받은 것이다.
+//
+// ⚠️ 라우팅이나 상수만 보지 않는다. **경로별로 실제 실패를 주입**해 `answerQuestion()` 이
+//    돌려준 문자열을 본다 — 뒤에서 덮이는 걸 못 보는 것이 #1127 2차 NO-GO 였다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 기사/구단 경로를 태우기 위한 최소 배선. 실패는 각 케이스가 주입한다. */
+function makeRagDeps(overrides: Partial<QaDeps>): QaDeps {
+  const { deps } = makeDeps();
+  return {
+    ...deps,
+    enableTeamRag: true,
+    enableNewsRag: true,
+    now: () => Date.parse("2026-08-08T03:00:00.000Z"),
+    searchRag: async () => [{
+      content: "LG 트윈스는 서울을 연고로 하는 구단이다.",
+      pageTitle: "LG 트윈스",
+      canonicalUrl: "https://namu.wiki/w/LG%20%ED%8A%B8%EC%9C%88%EC%8A%A4",
+      revision: "etag:lg", sectionPath: "LG 트윈스/역사", asOf: "2026-08-05",
+      sourceGrade: "tier2", sourceKind: "namu_document",
+    }],
+    callTeamRagLlm: async () => ({
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "구단 문서 답변이에요." }),
+      inputTokens: 1, outputTokens: 1,
+    }),
+    searchNewsRag: async () => [{
+      content: "젊은 타자들이 떠난 자리를 메우고 있다.",
+      pageTitle: "LG 젊은 타자들",
+      canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
+      revision: "article:x", sectionPath: "2026-08-07", asOf: "2026-08-07T09:44:00.000Z",
+      sourceGrade: "tier2", sourceKind: "news_article",
+    }],
+    callNewsRagLlm: async () => ({
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "기사 근거 답변이에요." }),
+      inputTokens: 1, outputTokens: 1,
+    }),
+    ...overrides,
+  } as QaDeps;
+}
+
+async function askWith(question: string, overrides: Partial<QaDeps>) {
+  const logs: { matchPath: string; answer: string | null }[] = [];
+  const deps = makeRagDeps({
+    ...overrides,
+    log: async (entry: { matchPath: string; answer: string | null }) => {
+      logs.push({ matchPath: entry.matchPath, answer: entry.answer });
+    },
+  } as Partial<QaDeps>);
+  const result = await answerQuestion("u-refusal-3way", question, deps);
+  return { result, logs };
+}
+
+check("3분기 문구가 서로 다르다 — 한 문구로 합치면 세 사실이 구분 불가", () => {
+  const distinct = new Set([BLOCKED_ANSWER, UNCLEAR_ANSWER, NEWS_UNAVAILABLE_ANSWER]);
+  assert.equal(distinct.size, 3, "blocked/unclear/news-unavailable 문구가 겹친다");
+});
+
+{
+  // generic 경로 — LLM 이 NOT_BASEBALL 로 **명시 판정**한 경우만 범위밖 문구다.
+  const { result, logs } = await askWith("오늘 날씨 어때?", {
+    callLlm: async () => ({
+      text: JSON.stringify({ status: NOT_BASEBALL_SENTINEL }), inputTokens: 1, outputTokens: 1,
+    }),
+  });
+  check("3분기 generic/blocked — NOT_BASEBALL 판정만 범위밖 문구", () => {
+    assert.equal(result.source, "blocked", `source: ${result.source}`);
+    assert.equal(result.answer, BLOCKED_ANSWER, `blocked 가 범위밖 문구가 아니다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "blocked");
+  });
+}
+
+{
+  // generic 경로 — 모델이 확신하지 못함. 주제 탓을 하면 안 된다.
+  const { result, logs } = await askWith("인필드 플라이 애매한 상황 알려줘", {
+    callLlm: async () => ({
+      text: JSON.stringify({ status: UNSURE_SENTINEL }), inputTokens: 1, outputTokens: 1,
+    }),
+  });
+  check("3분기 generic/unsure — 범위밖 문구가 아니라 이해못함 문구", () => {
+    assert.equal(result.source, "unsure", `source: ${result.source}`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER,
+      "모델이 확신 못한 것을 '야구 질문이 아니다'로 답했다");
+    assert.equal(result.answer, UNCLEAR_ANSWER, `unsure 문구가 아니다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "unsure");
+  });
+}
+
+{
+  // generic 경로 — 공급자 오류. 우리 잘못을 유저 질문 탓으로 돌리면 안 된다.
+  const { result, logs } = await askWith("인필드 플라이 알려줘", {
+    callLlm: async () => { throw new Error("provider down"); },
+  });
+  check("3분기 generic/error — 범위밖 문구가 아니라 이해못함 문구", () => {
+    assert.notEqual(result.answer, BLOCKED_ANSWER,
+      "공급자 오류를 '야구 질문이 아니다'로 답했다 — 우리 실패를 유저 탓으로 돌린다");
+    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "unsure");
+  });
+}
+
+{
+  // 구단 tier2 경로 — LLM 오류. 구단 질문을 정확히 한 유저다.
+  const { result, logs } = await askWith("LG 어떤 구단이야?", {
+    callTeamRagLlm: async () => { throw new Error("team llm down"); },
+  });
+  check("3분기 team_rag/error — 범위밖 문구가 아니라 이해못함 문구", () => {
+    assert.equal(result.source, "error", `source: ${result.source}`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER,
+      "구단 경로 오류를 '야구 질문이 아니다'로 답했다");
+    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "error");
+  });
+}
+
+{
+  // 기사 경로 — 검색 RPC 오류. 기사 미확보(unsure)와 **다른 문구**여야 장애가 안 감춰진다.
+  const { result, logs } = await askWith("어제 LG 무슨 일 있었어?", {
+    searchNewsRag: async () => { throw new Error("rpc down"); },
+  });
+  check("3분기 news_rag/error — 범위밖도 아니고 기사없음과도 구분된다", () => {
+    assert.equal(result.source, "error", `source: ${result.source}`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER,
+      "기사 검색 오류를 '야구 질문이 아니다'로 답했다");
+    assert.notEqual(result.answer, NEWS_UNAVAILABLE_ANSWER,
+      "검색 오류와 기사 0건이 같은 답을 낸다 — 장애가 조용히 정상처럼 보인다");
+    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "error");
+  });
+}
+
+{
+  // 기사 경로 — 그 창에 기사가 없음. 이건 정상 동작이고 전용 문구가 있다.
+  const { result, logs } = await askWith("어제 LG 무슨 일 있었어?", {
+    searchNewsRag: async () => [],
+  });
+  check("3분기 news_rag/unsure — 기사 미확보 전용 문구", () => {
+    assert.equal(result.source, "unsure", `source: ${result.source}`);
+    assert.equal(result.answer, NEWS_UNAVAILABLE_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER);
+    assert.equal(logs.at(-1)?.matchPath, "unsure");
+  });
+}
+
   console.log(
     `\n✅ genius refusal scope contract: ${pass} PASS ` +
-      `(SSOT 대조/문구 범위/예시/구범위 잔존 0/프롬프트 계약/종단 ${OBSERVED_SCOPE_ASKS.length}문장/경계/무회귀)`,
+      `(SSOT 대조/문구 범위/예시/구범위 잔존 0/프롬프트 계약/종단 ${OBSERVED_SCOPE_ASKS.length}문장/3분기 actual/경계/무회귀)`,
   );
 }
 

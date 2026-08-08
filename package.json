@@ -344,7 +344,8 @@
     "qa:post-scope-db-trigger": "tsx scripts/qa/post-scope-db-trigger-integration.ts",
     "qa:news-rag-wiring": "tsx scripts/qa/news-rag-wiring-smoke.ts",
     "qa:genius-refusal-scope": "tsx scripts/qa/genius-refusal-scope-smoke.ts",
-    "qa:genius-refusal-scope:mutations": "bash scripts/qa/genius-refusal-scope-mutations.sh"
+    "qa:genius-refusal-scope:mutations": "bash scripts/qa/genius-refusal-scope-mutations.sh",
+    "qa:genius-refusal-prompt-live": "tsx scripts/qa/genius-refusal-prompt-live-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

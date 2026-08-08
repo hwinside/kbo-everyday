@@ -149,7 +149,7 @@ export const LLM_AMBIGUOUS_ANSWER =
  */
 export const SCOPE_GUIDE_ANSWER =
   "제가 답해드릴 수 있는 건 이런 거예요 — 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 그리고 최근 소식이요. " +
-  "어떤 걸 물어볼지 고르셔도 되고(예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 언제 창단했어?\" " +
+  "어떤 걸 물어볼지 고르셔도 되고(예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" " +
   "\"김도영 타율\" \"요즘 삼성 어때?\"), 궁금한 걸 그냥 적어주셔도 찾아볼게요! ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
@@ -238,21 +238,45 @@ const SCOPE_META_WORDS = [
 /**
  * 의문문 꺼풀 — 물음의 **형식**일 뿐 물은 대상이 아니다.
  * 어미·조사는 아래 `isParticleOnly` 가 따로 처리하므로 여기엔 어간만 둔다.
+ *
+ * ⚠️ **두 칸으로 나눈 이유** (삼순 2026-08-08 조건 ② — `볼`·`야수` 과차단).
+ * 처음엔 한 목록을 통째로 `replace(/…/g)` 로 지웠는데, 한 글자 꺼풀(`야`·`수`·`볼`)이
+ * **야구 용어 안에서 조각으로 걸려** 진짜 질문을 통째로 녹였다:
+ *
+ *   야수가  → [야][수] + 조사 `가`  → "남은 게 없다" → 범위 되묻기로 오판
+ *   볼이    → [볼]     + 조사 `이`  → 같은 방식으로 오판
+ *
+ * `야수`·`볼`은 사전에 실제로 있는 용어다(운영 로그에도 `야수가 뭐야`가 있다).
+ * 그래서 **한 글자 꺼풀은 토큰 전체와 정확히 같을 때만** 꺼풀로 인정하고,
+ * 붙여쓰기 해체(`뭔가있어`)에는 두 글자 이상만 쓴다. 그리고 `볼`처럼 **용어와
+ * 충돌하는 한 글자는 아예 꺼풀에서 뺀다** — `볼 카운트`의 그 볼이다.
  */
-const SCOPE_ASK_FILLERS = [
-  "뭔가", "뭐가", "무엇", "뭔데", "뭐", "뭔",
+/** 붙여쓴 모양까지 해체하는 데 쓰는 꺼풀 (2자 이상만). */
+const SCOPE_ASK_FILLERS_MULTI = [
+  "뭔가요", "뭔가", "뭐가", "뭐야", "뭐예요", "무엇", "뭔데", "뭔지", "인가요", "일까",
   "어떤", "어떻게", "어떨",
   "알려줘", "알려주", "알려", "알아",
   "설명해줘", "설명해", "설명", "가르쳐줘", "가르쳐",
   "있을까", "있는지", "있어요", "있어", "있나", "있는",
-  "가능", "되나", "돼", "되",
+  "가능", "되나",
   "간단하게", "간단하개", "간단히", "간단", "간략히", "간략",
   "쉬운거", "쉬운", "쉬게", "자세히", "자세한",
-  "전부", "모두", "모든", "좀더", "좀", "더", "다",
-  "주세요", "주실", "해줘", "해", "할", "줘", "줄", "수", "봐", "볼", "야", "임",
+  "전부", "모두", "모든", "좀더",
+  "주세요", "주실", "해줘", "할까",
+];
+/**
+ * **토큰 전체와 같을 때만** 꺼풀로 치는 한 글자.
+ *
+ * ⚠️ 여기에 `볼`·`야`·`수`·`해` 같은 **용어 조각**을 넣지 않는다. 넣는 순간
+ * `볼이 뭐야?`·`야수가 뭐야?` 가 범위 안내문에 먹힌다(위 주석의 실측 사고).
+ * 한 글자는 어차피 단독으로 왔을 때만 의미가 있다 — `뭐 할 수 있어` 의 `할`·`수`.
+ */
+const SCOPE_ASK_FILLERS_SINGLE = [
+  "뭐", "뭔", "할", "수", "줘", "줄", "좀", "더", "다", "돼", "되",
 ];
 
 const SCOPE_META_SET = new Set(SCOPE_META_WORDS);
+const SCOPE_SINGLE_FILLER_SET = new Set(SCOPE_ASK_FILLERS_SINGLE);
 
 /**
  * 꺼풀을 **붙여쓴 모양까지** 벘겨내기 위한 정규식(긴 것 우선).
@@ -261,9 +285,19 @@ const SCOPE_META_SET = new Set(SCOPE_META_WORDS);
  * 토큰 단위 집합 비교만으로는 `뭔가있어` 를 놓친다(게이트가 실제로 잡았다).
  */
 const SCOPE_FILLER_RE = new RegExp(
-  [...SCOPE_ASK_FILLERS].sort((a, b) => b.length - a.length).join("|"),
+  [...SCOPE_ASK_FILLERS_MULTI].sort((a, b) => b.length - a.length).join("|"),
   "gu",
 );
+
+/**
+ * 메타어를 **긴 것부터** 떼어낸다.
+ *
+ * ⚠️ 삼순 2026-08-08 조건 ② — `프로야구 규칙` 누락. 선언 순서대로 떼면
+ * `프로야구` 에서 `야구` 가 먼저 잘려 **`프로` 라는 유령 잔여**가 남고,
+ * 그 잔여가 "물은 대상이 있다"로 읽혀 범위 되묻기 판정이 뒤집혔다.
+ * 잔여를 만들지 않으려면 부분문자열을 포함하는 긴 어휘를 먼저 떼야 한다.
+ */
+const SCOPE_META_WORDS_LONGEST_FIRST = [...SCOPE_META_WORDS].sort((a, b) => b.length - a.length);
 
 /** 조사 꼬리 — 긴 것 우선으로 써야 `에는` 이 `는` 으로 잘리지 않는다. */
 const PARTICLE_TAIL_RE =
@@ -310,7 +344,8 @@ export function isScopeAskPhrase(question: string): boolean {
     let token = raw;
     let matchedMeta = false;
     // 한 토큰이 메타어 여러 개를 붙인 경우(`야구룰`)를 벘겨낸다.
-    for (const meta of SCOPE_META_WORDS) {
+    // 긴 것부터 떼야 `프로야구` 가 `프로` + (야구) 로 쪼개지지 않는다.
+    for (const meta of SCOPE_META_WORDS_LONGEST_FIRST) {
       if (token.includes(meta)) {
         token = token.split(meta).join("");
         matchedMeta = true;
@@ -321,6 +356,9 @@ export function isScopeAskPhrase(question: string): boolean {
       sawMeta = true;
       continue;
     }
+    // 한 글자 꺼풀은 **토큰 전체와 같을 때만** 인정한다 (`뭐 할 수 있어` 의 `할`·`수`).
+    // 조각으로 허용하면 `야수가`·`볼이` 같은 용어가 통째로 녹는다.
+    if (SCOPE_SINGLE_FILLER_SET.has(token)) continue;
     // 꺼풀을 전부 떼어내고 남는 게 조사뿐이면 그 토큰은 "물음의 형식"일 뿐이다.
     if (isParticleOnly(token.replace(SCOPE_FILLER_RE, ""))) continue;
     // 범위어도 꺼풀도 아닌 무언가가 남았다 = 물은 대상이 있다 = 진짜 질문이다.
@@ -385,8 +423,8 @@ export type QuestionRoute =
   | "ack"
   // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`) — 질문이 아니라 우리 안내문에 대한 반응이다.
   //
-  // ⚠️ 이 라벨로 로그를 쓰지 않는다 — `match_path` 는 `ack` 으로 확정된다(기존 허용값).
-  // 그래서 DB CHECK 확장·migration 이 필요 없다.
+  // ⚠️ 이 라벨은 `match_path` 로도 **그대로** 기록된다(`MatchPath` 에 같은 이름이 있다).
+  // 그래서 DB CHECK 확장 migration 이 필요하다 — `20260808120000_*` 가 그것이다.
   | "scope_guide"
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
@@ -409,6 +447,16 @@ export type MatchPath =
   | "context_missing"
   // 단독 감사·확인 인사 — LLM/캐시 없이 결정론 응답 (#983 모니터에서 별도 라벨).
   | "ack"
+  // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`)에 범위 안내로 답한 경로.
+  //
+  // ⚠️ 왜 `ack` 에 섞지 않고 별도 라벨인가 (삼순 2026-08-08 조건 ④).
+  //   처음엔 migration 을 아끼려고 `ack` 으로 기록했는데, 그러면 **이 PR 이 고친 것을
+  //   측정할 수가 없다.** 감사 질문은 "범위 안내가 얼마나 나갔고, 그중 과차단은 몇 건인가"
+  //   인데 `ack`(감사 인사)와 한 칸에 들어가면 분모부터 만들 수 없다.
+  //   `question` 으로 구분하면 된다고 적었지만, 판정이 폐쇄집합이 아니라 **구조 판정**이라
+  //   질문 문자열을 열거할 수 없다 — 그 주석 자체가 틀렸다.
+  //   `team_rag`·`news_rag` 를 `rag` 에서 분리한 것과 같은 이유다: 감사 축이 다르면 라벨을 나눈다.
+  | "scope_guide"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
   // 구단 서술형 질문을 적재된 구단 문서 근거로 답한 경로.
@@ -2108,8 +2156,11 @@ async function answerTeamRagQuestion(
   if (allowsNumericAnswer(evidence)) return null;
 
   const failCloseError = async (): Promise<QaResult> => {
+    // ⚠️ 시스템 오류에 `BLOCKED_ANSWER` 를 쓰지 않는다 (삼순 2026-08-08 조건 ①).
+    //   유저는 구단 질문을 정확히 했는데 "저는 야구 이야기만 답해드릴 수 있어요" 를 받는다 —
+    //   우리 쪽 실패를 유저 질문 탓으로 돌리는 문구다. 다시 물으면 될 수 있으므로 ②로 간다.
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
-    return { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining };
+    return { status: 200, answer: UNCLEAR_ANSWER, source: "error", remaining };
   };
 
   // ── durable LLM 경계 (선수·공식 경로와 동일 계약) ─────────────────────────
@@ -2212,14 +2263,16 @@ async function answerNewsRagQuestion(
     evidence = selectEvidence(await deps.searchNewsRag!(candidate, question));
   } catch {
     // 검색 실패를 "기사 없음" 으로 둔갑하지 않는다. 재시도 가능한 실패라 error 다.
-    return settle(BLOCKED_ANSWER, "error");
+    // ⚠️ 문구도 `BLOCKED_ANSWER` 가 아니라 ② 다 (삼순 2026-08-08 조건 ①) — 우리 쪽 실패에
+    //   "야구 이야기만 답할 수 있어요" 를 보내면 유저 질문을 탓하는 것이 된다.
+    return settle(UNCLEAR_ANSWER, "error");
   }
   if (evidence.length === 0) {
     // 그 창에 기사가 없다. 과거 근거로 대신 답하지 않고 여기서 닫는다(삼순 ②).
     return settle(NEWS_UNAVAILABLE_ANSWER, "unsure");
   }
   // 기사는 tier2 고정이다. tier1 이 이 경로로 새면 숫자 허용 계약이 어긋나므로 닫는다.
-  if (allowsNumericAnswer(evidence)) return settle(BLOCKED_ANSWER, "error");
+  if (allowsNumericAnswer(evidence)) return settle(UNCLEAR_ANSWER, "error");
 
   // ── durable LLM 경계 (선수·공식·구단 경로와 동일 계약) ──────────────────
   let llm: LlmResult | null = null;
@@ -2228,12 +2281,12 @@ async function answerNewsRagQuestion(
     try {
       state = await deps.getLlmState();
     } catch {
-      return settle(BLOCKED_ANSWER, "error");
+      return settle(UNCLEAR_ANSWER, "error");
     }
     llm = state.result;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
-      return settle(BLOCKED_ANSWER, "error");
+      return settle(UNCLEAR_ANSWER, "error");
     }
   }
   if (!llm) {
@@ -2242,14 +2295,14 @@ async function answerNewsRagQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
-        return settle(BLOCKED_ANSWER, "error");
+        return settle(UNCLEAR_ANSWER, "error");
       }
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
       llm = await deps.callNewsRagLlm!(question, evidence);
     } catch {
-      return settle(BLOCKED_ANSWER, "error");
+      return settle(UNCLEAR_ANSWER, "error");
     }
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
@@ -2451,13 +2504,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "ack" ? ACK_ANSWER :
       route === "scope_guide" ? SCOPE_GUIDE_ANSWER :
       BLOCKED_ANSWER;
-    // 범위 되묻기는 `ack` 로 기록한다 — 새 `match_path` 값을 만들면 DB CHECK migration +
-    // reply_kind 열거 + 마스코트 매핑 + 게이트 4곳을 동시에 갱신해야 하고(#1110 실측),
-    // 의미상으로도 둘 다 "질문이 아닌 대화 행위에 결정론으로 답한 것"으로 같은 칸이다.
-    // 감사가 필요하면 `question` 으로 구분된다(폐쇄집합이라 정확히 열거된다).
-    const matchPath = route === "scope_guide" ? "ack" : route;
-    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
-    return { status: 200, answer, source: matchPath, remaining };
+    // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
+    //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
+    //   화면 취급(`reply_kind`)은 `ack` 과 같게 두어 마스코트·피드백 계약은 그대로다.
+    await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
+    return { status: 200, answer, source: route, remaining };
   }
 
   // ① 검수 사전 (토큰 0)

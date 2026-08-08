@@ -109,9 +109,11 @@ mutate "M10 꺼풀 정규식을 매칭 불가로" \
 mutate "M11 범위 안내를 LLM 경로로 흘림" \
   perl -0pi -e 's/  if \(isScopeAskPhrase\(question\)\) return "scope_guide";/  if (isScopeAskPhrase(question)) return "llm_scope_gate";/' src/lib/baseball-qa/pipeline.ts
 
-# M12 로그 match_path 를 허용값 밖으로 (DB CHECK 위반 → 운영에서 pipeline_failed)
-mutate "M12 scope_guide 를 match_path 로 그대로 기록" \
-  perl -0pi -e 's/const matchPath = route === "scope_guide" \? "ack" : route;/const matchPath = route;/' src/lib/baseball-qa/pipeline.ts
+# M12 감사 축을 도로 접는다 — `scope_guide` 를 `ack` 로 기록하면 범위 안내를 셀 수 없다
+#    (삼순 2026-08-08 조건 ④. DB CHECK 은 migration 이 열어놨으니 운영은 안 죽지만,
+#     대신 이 PR 이 고친 것을 사후에 측정할 방법이 사라진다.)
+mutate "M12 scope_guide 를 ack 으로 접어 기록" \
+  perl -0pi -e 's/await deps\.log\(\{ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null \}\);/await deps.log({ userId, question, questionNorm, matchPath: route === "scope_guide" ? "ack" : route, answer, inputTokens: null, outputTokens: null });/' src/lib/baseball-qa/pipeline.ts
 
 # M13 판정 프롬프트를 구계약으로 되돌린다 (unsure 42% 의 원인)
 # ⚠️ 자체 발견 2건: ①소스가 전각 물결(U+FF5E)이라 ASCII `~` 로 쓰면 치환이 no-op
@@ -137,6 +139,23 @@ mutate "M14 범위 안내문에서 예시 제거" \
 #   경계 계약을 실제로 건드린다.
 mutate "M15 감사 인사(고마워)를 범위 되묻기 집합에 포함" \
   perl -0pi -e 's/  "너", "니", "봇", "야잘알봇", "답변", "대답",/  "너", "니", "봇", "야잘알봇", "답변", "대답", "고마워", "감사",/' src/lib/baseball-qa/pipeline.ts
+
+# M16 한 글자 꺼풀을 다시 **조각 치환**으로 되돌린다 → `야수가`·`볼이` 가 통째로 녹아 과차단.
+#     (삼순 2026-08-08 조건 ② 의 그 결함. 이 PR 이 고친 것을 정확히 되돌리는 변이다.)
+grep -q "SCOPE_ASK_FILLERS_SINGLE" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M16 대상(SCOPE_ASK_FILLERS_SINGLE)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate "M16 한 글자 꺼풀을 부분문자열로 치환 (볼·야수 과차단 재현)" \
+  perl -0pi -e 's/    if \(SCOPE_SINGLE_FILLER_SET\.has\(token\)\) continue;/    token = token.split("야").join("").split("수").join("").split("볼").join("");/' src/lib/baseball-qa/pipeline.ts
+
+# M17 메타어를 **선언 순서**로 떼도록 되돌린다 → `프로야구` 가 `프로` 잔여를 남겨 누락.
+grep -q "SCOPE_META_WORDS_LONGEST_FIRST" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M17 대상(SCOPE_META_WORDS_LONGEST_FIRST)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate "M17 메타어를 선언 순서로 제거 (프로야구 규칙 누락 재현)" \
+  perl -0pi -e 's/    for \(const meta of SCOPE_META_WORDS_LONGEST_FIRST\) \{/    for (const meta of SCOPE_META_WORDS) {/' src/lib/baseball-qa/pipeline.ts
+
+# M18 시스템 오류를 다시 범위밖 문구로 되돌린다 (우리 실패를 유저 질문 탓으로 돌리는 그 사고)
+mutate "M18 오류 경로 문구를 BLOCKED 로 되돌림" \
+  perl -0pi -e 's/return settle\(UNCLEAR_ANSWER, "error"\);/return settle(BLOCKED_ANSWER, "error");/g' src/lib/baseball-qa/pipeline.ts
 
 echo
 if [ "$fail" -eq 0 ]; then
