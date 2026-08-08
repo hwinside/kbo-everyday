@@ -315,17 +315,45 @@ assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_h
 // ⚠️ 세 블록은 **한 묶음으로만 의미가 있다**. rescue 만 보면 가드를 통째로 지워도 GREEN,
 //    방어만 보면 종전처럼 룰 질문을 다 막아도 GREEN 이다.
 //
-// ① 룰·용어 질문은 지표어가 들어가도 이 가드로 닫히지 않는다.
-//    종전에는 `[가-힣]{2,12}` 가 이름 자리라 `루킹`·`만루`·`홀드와` 가 사람 이름 취급됐다.
+// ①-a **검증된 근거가 있는** 룰·용어 질문은 지표어가 들어가도 열린다.
+//    종전에는 `[가-힣]{2,12}` 가 이름 자리라 `만루`·`홀드와` 가 사람 이름 취급돼 닫혔다.
 for (const question of [
-  "루킹 삼진이 뭐야", "만루 홈런이 뭐야?", "홀드와 세이브의 차이가 뭐야?", "끝내기 안타",
-  "그라운드 홈런이 뭐야?", "타율과 출루율의 차이가 뭐야?", "세이브랑 홀드가 뭐야?",
-  "안타는 뭐고 홈런은 뭐에요?", "페어와 안타는 다른 건가요", "번트 삼진",
+  "만루 홈런이 뭐야?", "홀드와 세이브의 차이가 뭐야?", "끝내기 안타",
+  "타율과 출루율의 차이가 뭐야?", "세이브랑 홀드가 뭐야?",
+  "안타는 뭐고 홈런은 뭐에요?",
 ]) {
   const route = routeQuestion(question, seedEntries, players);
   assert.ok(
     ["baseball_rule_term", "llm_scope_gate"].includes(route),
-    `${question}: 룰·용어 질문을 선수 기록 요구로 오인하면 안 된다 (route=${route})`,
+    `${question}: 근거 있는 용어 질문을 선수 기록 요구로 오인하면 안 된다 (route=${route})`,
+  );
+}
+// ①-b **근거가 없는** `<X> <지표>` 는 정의 의도가 있어도 되묻기다 (삼순 2026-08-08 P0).
+//
+// ⚠️ 이게 `루킹 삼진이 뭐야` 와 `오타니 홈런이 뭐야` 의 관계다. 둘은 구조가 **완전히
+//   같다** — 미결속 head + 지표 + 정의 의도. 정의 의도로 용어 승격을 허용하면 후자가
+//   LLM 으로 새서 없는 선수의 지표를 설명한다. 가를 수 없으면 되묻는다.
+//
+// ⚠️ 이것은 종전 `blocked` 과차단으로의 회귀가 **아니다**: ①답이 아니라 되묻기이고
+//   ②안내대로 붙여 쓰면(`루킹삼진이 뭐야`) 실제로 열린다. 아래 ①-c 가 그걸 고정한다.
+for (const question of [
+  "루킹 삼진이 뭐야", "좌익수 홈런", "장내 홈런", "오타니 홈런이 뭐야",
+  // `페어` 는 사전 미수록이다. 정의 의도(`다른 건가`)만으로 열면 `오타니 홈런이 뭐야` 도
+  // 같이 열린다 — 근거가 없으면 둘을 가를 수 없다.
+  "페어와 안타는 다른 건가요",
+]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players), "stat_clarify",
+    `${question}: 근거 없는 <X> <지표> 는 되묻기로 종결해야 한다`,
+  );
+}
+// ①-c 되묻기 안내가 **실제로 통하는 길**인지 고정한다. 안내가 막다른 길이면 그건
+//     되묻기가 아니라 차단이다.
+for (const question of ["루킹삼진이 뭐야", "좌익수홈런이 뭐야", "장내홈런이 뭐야"]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    !["stat_clarify", "blocked"].includes(route),
+    `${question}: 안내대로 붙여 물었는데 또 막히면 안 된다 (route=${route})`,
   );
 }
 // ②-a 정상 룰 질문에 지표어가 **문장 중간에** 섞여도 되묻기로 끝내면 안 된다.
@@ -375,13 +403,69 @@ for (const question of ["홍길동은 홈런을 몇 개 쳤어?", "이대호가 
     `${question}: 존재 확인 불가 대상의 수치 요구는 되묻기`,
   );
 }
-//   ⓑ 문장 **선두** 매치일 때만 bare 로 본다.
-//      없으면 `그래서 이대호 홈런` 처럼 앞말이 붙은 문장까지 되묻기로 끝난다.
-for (const question of ["그래서 이대호 홈런", "아 그럼 홍길동 타점"]) {
+//   ⓑ **앞말이 담화 표지뿐이면 여전히 bare 다** (삼순 2026-08-08 P0, 계약 뒤집음).
+//
+//      ⚠️ 종전 계약은 정반대였다 — "선두 매치가 아니면 판단 범위 밖"이라 `그래서 이대호
+//        홈런` 이 통째로 빠져나갔고, 게이트가 그 우회를 **정상으로 박아두고** 있었다.
+//        `그래서`·`아 그럼` 은 새 정보를 더하지 않는다. 문장은 여전히 `<X> <지표>` 다.
+//
+//      위치(`m.index === 0`)가 아니라 **분해 가능성**으로 판정하므로 접두 표지가
+//      몇 개 붙든 열거에 없든 상관없다.
+for (const question of ["그래서 이대호 홈런", "아 그럼 홍길동 타점", "그럼 이대호 홈런"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 담화 표지가 앞에 붙어도 문장은 여전히 <X> <지표> 다`,
+  );
+}
+//   ⓑ-2 반대편 — **내용어**가 앞에 있으면 판단 범위 밖이다. 이게 없으면 위 계약이
+//        "앞말은 뭐가 오든 되묻기"로 번져 정상 룰 질문을 삼킨다.
+for (const question of ["선수 역할이 바뀌면 기록은", "감독이 역할을 바꾸면 어떻게 돼"]) {
   assert.equal(
     classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
     "none",
-    `${question}: 선두 매치가 아니면 이 가드의 판단 범위가 아니다`,
+    `${question}: 앞에 내용어가 있으면 <X> <지표> 문장이 아니다`,
+  );
+}
+//   ⓑ-3 **꼬리도 열거가 아니라 분해**로 본다. 종전 `REQUEST_TAILS` 열거에는 존대형이
+//        없어 `이대호 홈런 알려줘요`·`부탁해` 가 빠져나갔다 (삼순 P0).
+for (const question of [
+  "이대호 홈런 알려줘요", "이대호 홈런 부탁해", "이대호 홈런 알려주세요", "이승엽 홈런 어때",
+]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 요청 꼬리가 붙어도 문장은 여전히 <X> <지표> 다`,
+  );
+}
+//   ⓑ-4 **모든 매치를 본다**. 첫 `exec()` 만 보면 앞이 용어·뒤가 수치인 혼합형에서
+//        앞만 읽고 열어준다 (삼순 P0). 하나라도 되묻기면 문장 전체가 되묻기다.
+for (const question of ["루킹 삼진과 이대호 홈런 몇개", "만루 홈런이랑 이대호 홈런 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 혼합형은 fail-close — 나머지 절이 근거 없이 생성된다`,
+  );
+}
+//   ⓑ-4b **집계 우선순위가 계약이다.** 결속 엔티티와 미결속이 한 문장에 섞이면
+//        `entity_stat` 가 아니라 되묻기다. 우선순위를 뒤집으면 `김도영 홈런과 이대호 홈런
+//        몇개` 가 기록 경로로 열려 **이대호 쪽 숫자를 지어낸다** — 안전한 절 하나가
+//        위험한 절을 통과시키는 형태다.
+for (const question of ["김도영 홈런과 이대호 홈런 몇개", "문보경 타율이랑 오타니 홈런 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 결속+미결속 혼합은 안전한 쪽으로 접지 않는다`,
+  );
+}
+//   ⓑ-5 **정의 의도만으로는 용어로 승격하지 않는다** (삼순 P0).
+//        `루킹 삼진이 뭐야`(미수록 용어)와 `오타니 홈런이 뭐야`(미등록 인물)는 구조가
+//        같아서 의도로는 못 가른다. 근거가 있을 때만 연다.
+for (const question of ["오타니 홈런이 뭐야", "홍길동 타점 설명", "이승엽 홈런 뜻"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 정의 의도는 용어 근거가 아니다`,
   );
 }
 //   ⓒ 용어사전 어휘 예외 — `투수의 기록 용어` 처럼 지표어 앞이 야구 어휘면 용어 질문이다.
@@ -397,12 +481,76 @@ for (const question of [
     `${question}: 조사 결합 야구 어휘는 용어 질문이다`,
   );
 }
-//   ⓔ 정의 의도 — 사전에 없는 용어라도 정의를 물으면 용어 질문이다.
-for (const question of ["그라운드 홈런이 뭐야?", "페어 안타 차이", "혹시 삼진홈런이 모야?"]) {
+//   ⓔ **정의 의도는 용어 근거가 아니다** (삼순 2026-08-08 P0, 계약 뒤집음).
+//
+//      ⚠️ 종전 계약은 "사전에 없어도 정의를 물으면 용어"였다. 그런데 그 조건은
+//        `오타니 홈런이 뭐야`·`홍길동 타점 설명` 에도 **똑같이** 붙는다 — 미결속 head +
+//        지표 + 정의 의도. 구조가 같은 두 경우를 의도로는 가를 수 없고, 열어두면
+//        존재하지 않는 선수의 지표를 LLM 이 설명한다. 가를 수 없으면 되묻는다.
+//
+//      ⚠️ 이건 종전 `blocked` 과차단으로의 회귀가 아니다: 되묻기이고, 안내대로 붙여
+//        쓰면(`그라운드홈런이 뭐야?`) 열린다. 위 ①-c 가 그 길을 고정한다.
+//        띄어쓰기가 근거를 만드는 게 아니라, 붙여 쓰면 지표 정규식이 아예 안 걸려
+//        이 가드의 판단 대상에서 벗어나기 때문이다.
+for (const question of ["그라운드 홈런이 뭐야?", "페어 안타 차이"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 근거 없는 <X> <지표> 는 정의 의도가 있어도 되묻기다`,
+  );
+}
+//   ⓔ-2 반대편 — head 자체가 **사전 수록 용어**면 정의 의도와 무관하게 열린다.
+//        `혹시 삼진 홈런이 모야?` 의 `삼진` 은 사전에 있다. 근거가 판정 축이라는 것을
+//        양방향으로 고정한다(위 ⓔ가 "의도로는 안 연다", 여기가 "근거로는 연다").
+for (const question of ["만루 홈런이 뭐야?", "끝내기 안타"]) {
   assert.equal(
     classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
     "term_question",
-    `${question}: 정의 의도가 있으면 용어 질문이다`,
+    `${question}: 사전·어휘 근거가 있으면 열려야 한다`,
+  );
+}
+//   ⓔ-3 `<X>` 자리가 담화 표지면 이 가드의 판단 대상이 아니다 — 되묻기도 아니다.
+//        `혹시 삼진 홈런이 모야?` 는 `혹시`+`삼진` 이 먼저 매치돼 head 가 담화 표지가 된다.
+//        `<X>` 가 없으면 판단할 게 없으므로 손대지 않고 아래 라우팅으로 흘린다.
+//        ⚠️ 이게 누수가 아닌 이유: 뒤에 진짜 `<X> <지표>` 가 있으면 **다음 매치**가 잡는다.
+//          아래 ⓕ 가 그것을 고정한다.
+for (const question of ["혹시 삼진 홈런이 모야?", "그럼 삼진 어때"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "none",
+    `${question}: <X> 자리가 담화 표지면 판단 대상이 아니다`,
+  );
+}
+//   ⓔ-4 사전은 복합어를 **붙여서** 수록한다(`탈삼진`·`멀티안타`). 유저는 띄어 쓴다.
+//        그래서 `head + 지표` 결합형도 조회해야 근거를 찾는다.
+//        ⚠️ 아래 4종은 **결합형 조회가 유일하게 책임지는** 입력이다 — head 단독은 사전에도
+//          어휘집에도 없어서, 결합형 조회를 지우면 정상 용어 질문이 되묻기로 떨어진다.
+//          (`만루`·`끝내기` 등은 head 단독으로도 어휘집에 있어 이 축을 증명하지 못한다.)
+for (const question of ["탈 삼진", "장 타율", "멀티 안타", "내야 안타"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 사전 결합형 근거로 열려야 한다`,
+  );
+}
+//   ⓔ-5 head 배제 집합은 **지시 표현을 정확히** 담아야 한다.
+//
+//        ⚠️ `그럼 그것도 홈런이야?` 는 앞 대화를 받는 정상 룰 질문이다. head 가 `그것도`
+//          (지시어+조사)라 `<X>` 가 없으므로 이 가드의 판단 대상이 아니다 → `none`.
+//          일반 기능어 집합(`FUNCTION_UNITS`)에는 `그것` 이 없어 분해에 실패하고, 그러면
+//          지시어가 미결속 엔티티로 읽혀 **되묻기가 새로 생긴다**(과차단).
+//          즉 이 케이스는 전용 집합이 유일하게 책임지는 입력이다(mutation M13).
+assert.equal(
+  classifyNamedStat("그럼 그것도 홈런이야?".normalize("NFKC").toLowerCase(), seedEntries, players, false),
+  "none",
+  "그럼 그것도 홈런이야?: 지시어 head 는 판단 대상이 아니다(되묻기로 만들면 과차단)",
+);
+//   ⓕ 담화 표지가 앞 매치를 먹어도 **뒤 매치**는 그대로 잡힌다(전체 스캔의 실효 증명).
+for (const question of ["혹시 삼진 이대호 홈런 몇개", "그럼 삼진 홍길동 타점 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 앞 매치가 흡수돼도 뒤 <X> <지표> 는 잡혀야 한다`,
   );
 }
 
