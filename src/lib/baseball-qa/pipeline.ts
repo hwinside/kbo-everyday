@@ -497,6 +497,12 @@ export type QuestionRoute =
   // ⚠️ 이 라벨은 `match_path` 로도 **그대로** 기록된다(`MatchPath` 에 같은 이름이 있다).
   // 그래서 DB CHECK 확장 migration 이 필요하다 — `20260808120000_*` 가 그것이다.
   | "scope_guide"
+  // `<X> <지표>` bare 모호형 되묻기 (삼순 2026-08-08).
+  //
+  // ⚠️ 새 라벨을 만들지 않고 기존 `unsure` 를 쓴다. 이미 `MatchPath` 허용값이라
+  //   CHECK migration·피드백 allowlist·마스코트 분류를 새로 등록할 필요가 없고,
+  //   의미도 정확히 같다("무엇을 물었는지 특정하지 못함").
+  | "unsure"
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
   //
@@ -906,8 +912,133 @@ function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
   // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
   return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
 }
-const NAMED_STAT_QUERY =
-  /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+/**
+ * `<X> <지표>` 모양 문장의 **3분기 판정** (삼순 2026-08-08).
+ *
+ * ── 왜 정규식 하나로 두면 안 되는가 (인입 3,162건 전수 감사) ──────────────────────
+ *
+ * 종전 구현은 `[가-힣]{2,12} <지표>` 를 통째로 "선수 기록 요구"로 보고 `blocked` 로
+ * 끝냈다. 이름 자리에 한국어 아무 단어나 걸리므로 명백한 룰·용어 질문이 함께 죽었다 —
+ * 라우팅 즉시차단 108건 중 **72건(67%)**이 이 한 줄 때문이었다.
+ *
+ *     루킹 삼진이 뭐야         X=`루킹`
+ *     만루 홈런이 뭐야?        X=`만루`    ← 사전에 `만루홈런` 이 있는데도 차단
+ *     홀드와 세이브의 차이가 뭐야?  X=`홀드와`
+ *     끝내기 안타              X=`끝내기`  ← 사전 항목
+ *
+ * ── 폐기한 두 방향 ────────────────────────────────────────────────────────────
+ *
+ * ① **접미 필수화**(`몇`·`얼마` 를 필수로) — 72건이 풀리지만 `이대호 홈런`·`홍길동 홈런`
+ *    처럼 **접미 없는 수치 질문**이 통째로 열린다. 운영 DB 에 없는 인물이라 generic LLM 이
+ *    숫자를 지어낸다. 과차단은 안내로 끝나지만 누수는 없는 기록을 사실처럼 말하는 것이다.
+ * ② **한글 이름 모양 휴리스틱**(성씨 닫힌집합 + 2~4자) — `이대호`는 막지만 판정 근거가
+ *    "한국인 이름처럼 생겼다"는 추정이다. 반대가설을 만들 수 있는 축은 코드로 두지 않는다
+ *    (2026-08-07 확정 원칙). `장내`·`고척돔`이 성씨로 시작한다는 이유로 이름 취급된 것도
+ *    같은 결함의 발현이다.
+ *
+ * ── 채택: 추정하지 않고 **검증 가능한 것만** 본다 ──────────────────────────────
+ *
+ *   ① `entity_stat`  X 가 **DB 결속 엔티티**(로스터 등재 선수·구단)이고 수치 의도가 있다
+ *                    → 기존 기록 경로. 존재가 데이터로 확인되므로 추정이 아니다.
+ *   ② `term_question` X 가 **검증된 용어 근거**(검수 사전)이거나 문장에 **정의 의도**가 있다
+ *                    → 이 가드로 닫지 않는다. 용어 질문이다.
+ *   ③ `ambiguous`    둘 다 아닌 bare 모호형 → **되묻기**.
+ *
+ * ③이 핵심이다. `이대호 홈런`은 DB 에도 없고 용어도 아니라 **되묻기로 종결**된다 —
+ * LLM 으로 내려가지 않으므로 환각이 애초에 불가능하다. 종전의 `blocked`("야구 이야기만
+ * 답해드릴 수 있어요")보다 정확한 안내이기도 하다. 유저는 야구를 물었기 때문이다.
+ *
+ * ⚠️ 되묻기 라벨은 기존 `unsure` 를 쓴다. 이미 `MatchPath` 허용값이라 CHECK migration 이
+ *    필요 없고, 의미도 같다("무엇을 물었는지 특정 못 함").
+ */
+const NAMED_STAT_HEAD =
+  /([가-힣a-z0-9]{1,12})(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+
+/**
+ * **정의를 묻는 의도**. 있으면 용어 질문이다.
+ * ⚠️ `알려` 는 넣지 않는다 — `홍길동 타점 알려줘` 가 정의 질문으로 새어 환각 경계를 뚫는다.
+ */
+const TERM_DEFINITION_INTENT =
+  /뭐야|뭐예요|뭐에요|뭔데|뭔지|뭐라|무슨|무엇|뜻|의미|차이|설명|가르쳐|모야|머야|정확히|불러|부르는|인정|어떤\s*거|다른\s*건가/;
+
+export type NamedStatKind = "entity_stat" | "term_question" | "ambiguous" | "none";
+
+/**
+ * `<X> <지표>` 뒤에 붙는 **요청 꼬리**의 폐쇄집합.
+ * 이게 붙어도 문장은 여전히 `<X> <지표>` 그 자체다 — 새 정보를 더하지 않는다.
+ */
+const REQUEST_TAILS: readonly string[] = [
+  "어떻게돼", "어떻게", "주세요", "개야", "어때", "줘라", "주라", "줘", "개", "야",
+];
+
+/** 토큰 끝의 조사를 떼어낸 핵. `홀드와` → `홀드` */
+function stripNameParticle(token: string): string {
+  return token.replace(/(?:의|은|는|이|가|과|와|랑|도|만|에|에서)$/u, "");
+}
+
+/**
+ * `<X> <지표>` 문장을 3분기로 판정한다.
+ *
+ * ⚠️ 순서가 계약이다. ①DB 결속을 먼저 보고, ②용어 근거·정의 의도, ③나머지는 되묻기.
+ *   ②를 먼저 보면 `김도영 기록 뭐야` 처럼 선수 질문에 정의 의도가 섞였을 때 기록 경로를
+ *   벗어나 LLM 으로 샌다.
+ */
+export function classifyNamedStat(
+  normalized: string,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+  hasTeam: boolean,
+): NamedStatKind {
+  const m = NAMED_STAT_HEAD.exec(normalized);
+  if (!m) return "none";
+  const head = stripNameParticle(m[1]);
+  if (!head) return "none";
+
+  // ① DB 결속 엔티티 — 로스터 등재명(외국인 성만 쓴 경우 포함) 또는 구단
+  const isRosterEntity = players.some((p) => {
+    if (p.name === head) return true;
+    const parts = p.name.split(/\s+/u);
+    return parts.length > 1 && parts[parts.length - 1] === head;
+  });
+  // ⚠️ 수치 의도를 **요구하지 않는다**(2026-08-08 실측). `김도영 홈런` 처럼 bare 로 와도
+  //   `<로스터 선수> <지표>` 는 기록 질문이다. 종전 초안은 수치 요구 의도를 AND 로
+  //   걸었는데, 그러면 bare 형이 ③(되묻기)으로 떨어진다 — 라우팅은 앞단 분기가 가려줘서
+  //   결과가 같아 보였지만 판정 함수 자체는 틀린 답을 내고 있었다(게이트가 잡았다).
+  if (isRosterEntity || hasTeam) return "entity_stat";
+
+  // ② 검증된 용어 근거(검수 사전) 또는 정의 의도
+  if (matchGlossary(glossary, head) !== null) return "term_question";
+  if (BASEBALL_VOCABULARY.includes(head.toLowerCase())) return "term_question";
+  if (TERM_DEFINITION_INTENT.test(normalized)) return "term_question";
+
+  // ③ **bare 모호형**만 되묻는다.
+  //
+  // ⚠️ "나머지 전부"로 두면 안 된다(2026-08-08 실측). `선수 역할이 바뀌면 기록은` 처럼
+  //   문장 안에 지표어가 우연히 들어간 **정상 룰 질문**까지 되묻기로 끝났다 —
+  //   종전 `blocked` 를 `unsure` 로 바꾼 것일 뿐 과차단은 그대로다.
+  //   되묻기가 정당한 건 문장이 `<X> <지표>` 그 자체일 때다. 그 외에는 이 가드의
+  //   판단 범위가 아니므로 손대지 않고 아래 판정으로 흘린다.
+  //
+  // ⚠️ 단, **수치를 명시적으로 요구**하면(`몇`·`얼마`) 문장 길이와 무관하게 되묻는다.
+  //   `홍길동은 홈런을 몇 개 쳤어?` 는 bare 가 아니지만 존재를 확인할 수 없는 대상의
+  //   숫자를 요구하므로 LLM 으로 내려보내면 지어낸다.
+  if (/몇|얼마/.test(normalized)) return "ambiguous";
+  //
+  // bare = **문장이 `<X> <지표>` 로 시작**하고, 그 뒤에 남는 것이 조사·요청 꼬리뿐이다.
+  //   `이대호 도루 알려줘`  → 남는 것 `줘`        → bare
+  //   `선수 역할이 바뀌면 기록은` → 매치가 문장 중간에서 시작 → bare 아님(정상 룰 질문)
+  if (m.index !== 0) return "none";
+  // ⚠️ `m.index` 를 더해야 한다(2026-08-08 자체발견). 종전 초안은 `slice(m[0].length)` 였는데,
+  //   문장 중간 매치에서 엉뚱한 위치를 잘랐다. 위 선두 검사와 **두 결함이 서로를 가려**
+  //   mutation 이 잡지 못했다 — 선두 검사를 지워도 잘못된 slice 덕에 결과가 같았다.
+  let residue = normalized.slice(m.index + m[0].length).replace(/[?!.,~…\s]/gu, "");
+  for (const tail of REQUEST_TAILS) {
+    if (residue.startsWith(tail)) { residue = residue.slice(tail.length); break; }
+  }
+  if (residue.length === 0 || isParticleOnly(residue)) return "ambiguous";
+
+  return "none";
+}
 
 /**
  * 구단 질문 중 **팀 단위 수치**를 묻는 것만 결정론적으로 가린다 (삼순 #1100 2차 P0-2).
@@ -1124,8 +1255,15 @@ export function isSupportedRuleTermQuestion(
     /^(?:역할이바뀌면어떻게돼(?:요)?|역할과포지션차이가?뭐야(?:요)?|역할이?(?:뭐야|뭔가요|궁금해))[?!.]*$/.test(compact)
   );
   const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
+  // ⚠️ `ambiguous` 도 함께 제외한다(2026-08-08 실측). `entity_stat` 만 걸렀더니
+  //   `이대호 도루 알려줘` 가 여기서 `baseball_rule_term` 으로 승격돼 LLM 까지 내려갔다 —
+  //   `도루` 가 야구 어휘이고 `알려` 가 룰 의도라 조건이 둘 다 성립하기 때문이다.
+  //   되묻기로 끝내야 할 문장이 생성 경로로 새면 3분기를 만든 의미가 없다.
+  const namedStatKind = classifyNamedStat(normalized, glossary, players, mentionsTeam(tokens));
   const isOutOfScopeRequest =
-    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) || NAMED_STAT_QUERY.test(normalized);
+    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) ||
+    namedStatKind === "entity_stat" ||
+    namedStatKind === "ambiguous";
   const hasBaseballContext =
     exactGlossaryMatch ||
     mentionsSpecificRuleHint ||
@@ -1159,7 +1297,10 @@ export function isSupportedRuleTermQuestion(
   if (hasPlayerReference(tokens, players)) return false;
   if (mentionsTeam(tokens)) return false;
   if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
-  if (NAMED_STAT_QUERY.test(normalized)) return false;
+  {
+    const kind = classifyNamedStat(normalized, glossary, players, mentionsTeam(tokens));
+    if (kind === "entity_stat" || kind === "ambiguous") return false;
+  }
   if (matchGlossary(glossary, question)) return true;
   return false;
 }
@@ -2120,13 +2261,21 @@ export function routeQuestion(
   // 기존 범위밖 의도 denylist는 그대로 유지한다. 이건 신호어 사전처럼 "야구 어휘를 전부
   // 열거해야 하는" 종류가 아니라 범위밖임이 문장 의도로 드러난 고정밀 패턴이라 발산하지
   // 않는다(별명·누구·비교·역대·추천·날씨 등). 이걸까지 LLM에 묻면 토큰만 더 쓴다.
-  // ⚠️ `NAMED_STAT_QUERY` 는 `<이름> <지표>` 모양을 잡는다 — 그런데 구단명도 그 모양에
-  // 걸린다(`두산베어스 홈런 몇 개야?`). 구단은 확정 답변 범위 안이므로 여기서
-  // 차단하지 않고 LLM 2차 가드로 보낸다(삼순 #1100 1차 P0-1). 팀 stat DB 가 없어
-  // 근거없는 수치를 말하면 안 되는 건 LLM 프롬프트의 근거없음 계약이 다룬다.
-  // 선수명 + 지표(`기예기르모 에레디아가 타율 얼마야`)는 그대로 닫힌다.
-  if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && NAMED_STAT_QUERY.test(normalized))) {
-    return "blocked";
+  if (isOutOfScopeIntent(normalized, hasTeam)) return "blocked";
+
+  // ── `<X> <지표>` 3분기 (삼순 2026-08-08) ────────────────────────────────────
+  //
+  // 구단이 지명된 경우는 이미 위에서 `team_record` 로 위임됐으므로 여기 오지 않는다.
+  // 남은 것은 선수/용어/모호형이다. `classifyNamedStat` 주석에 근거가 있다.
+  if (!hasTeam) {
+    const namedStat = classifyNamedStat(normalized, glossary, players, hasTeam);
+    // DB 결속 엔티티 + 수치 의도 → 기록 경로. 지원 지표는 앞단 `kbo_structured` 가 이미
+    // 가로챘으므로 여기까지 온 것은 운영 DB 에 컬럼이 없는 지표다.
+    if (namedStat === "entity_stat") return "history_hold";
+    // bare 모호형 → 되묻는다. `이대호 홈런` 처럼 DB 에도 없고 용어도 아닌 문장은
+    // LLM 으로 내려보내지 않는다 — 존재하지 않는 기록을 지어내는 유일한 경로가 여기다.
+    if (namedStat === "ambiguous") return "unsure";
+    // `term_question` 은 아래로 흘려 용어 질문으로 처리한다.
   }
 
   // ── 미결속 실명 fail-close (2026-08-08 하린아빠 제보) ───────────────────────
@@ -2949,6 +3098,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         //   정작 문구가 없는" 모순이 되므로 그 경우 fail-close 한다.
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
+      route === "unsure" ? UNSURE_ANSWER :
       BLOCKED_ANSWER;
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.

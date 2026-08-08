@@ -26,6 +26,7 @@ import {
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
   isGreetingPhrase,
+  classifyNamedStat,
   TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
@@ -307,6 +308,120 @@ for (const question of ["김도영 타율 알려줘", "류현진 방어율 알�
 }
 // 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
 assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
+
+// ── `<X> <지표>` 3분기 계약 (삼순 2026-08-08 / 인입 3,162건 전수 감사) ──────────────
+//
+// ⚠️ 세 블록은 **한 묶음으로만 의미가 있다**. rescue 만 보면 가드를 통째로 지워도 GREEN,
+//    방어만 보면 종전처럼 룰 질문을 다 막아도 GREEN 이다.
+//
+// ① 룰·용어 질문은 지표어가 들어가도 이 가드로 닫히지 않는다.
+//    종전에는 `[가-힣]{2,12}` 가 이름 자리라 `루킹`·`만루`·`홀드와` 가 사람 이름 취급됐다.
+for (const question of [
+  "루킹 삼진이 뭐야", "만루 홈런이 뭐야?", "홀드와 세이브의 차이가 뭐야?", "끝내기 안타",
+  "그라운드 홈런이 뭐야?", "타율과 출루율의 차이가 뭐야?", "세이브랑 홀드가 뭐야?",
+  "안타는 뭐고 홈런은 뭐에요?", "페어와 안타는 다른 건가요", "번트 삼진",
+]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    ["baseball_rule_term", "llm_scope_gate"].includes(route),
+    `${question}: 룰·용어 질문을 선수 기록 요구로 오인하면 안 된다 (route=${route})`,
+  );
+}
+// ②-a 정상 룰 질문에 지표어가 **문장 중간에** 섞여도 되묻기로 끝내면 안 된다.
+//     되묻기가 정당한 건 문장이 `<X> <지표>` 그 자체일 때뿐이다.
+for (const question of ["선수 역할이 바뀌면 기록은", "감독 역할 변경 절차가 궁금해"]) {
+  assert.notEqual(
+    routeQuestion(question, seedEntries, players),
+    "unsure",
+    `${question}: 문장 중간 지표어를 bare 모호형으로 오인하면 안 된다`,
+  );
+}
+// ②-b 반대 방향 — DB 에 없는 대상의 수치 질문은 **LLM 으로 내려보내지 않는다**.
+//     여기가 뚫리면 존재하지 않는 기록을 generic LLM 이 지어낸다. 접미 유무와 무관해야 한다.
+//     ⚠️ `몇 개야` 형만 검사하면 이 경로를 통째로 놓친다(삼순 2026-08-08 지적).
+const LLM_REACHABLE = ["baseball_rule_term", "llm_scope_gate"];
+for (const question of [
+  "이대호 홈런", "이승엽 홈런", "최동원 방어율", "선동열 방어율",   // 은퇴 — 로스터에 없다
+  "홍길동 홈런", "김철수 타점", "박길동 도루", "가나다 홈런",       // 가공 인물
+  "김도용 홈런",                                                   // 오타로 만들어진 이름
+  "에레디아 타율", "디아즈 홈런",                                  // 외국인 성만
+  "이대호 도루 알려줘", "홍길동 타점 보여줘", "이승엽 홈런 어때",   // 요청 꼬리 변형
+  "오타니 홈런 몇개",                                              // 타 리그 선수
+]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    !LLM_REACHABLE.includes(route),
+    `${question}: DB 에 없는 대상의 수치 질문이 LLM 경로로 새면 안 된다 (route=${route})`,
+  );
+}
+// ③ 현역 로스터 선수는 기존 기록 경로(`history_hold`)를 그대로 탄다.
+for (const question of ["김도영 홈런", "구자욱 타율", "오지환 도루", "김도영 홈런 몇 개야"]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players),
+    "history_hold",
+    `${question}: 현역 선수 수치 질문은 history_hold`,
+  );
+}
+// ③-b mutation 이 뚫었던 축들 — 각 조건이 **유일하게 책임지는 입력**으로 고정한다.
+//     이 블록이 없으면 아래 조건들을 지워도 게이트가 GREEN 이다(2026-08-08 실측).
+//
+//   ⓐ 수치 명시 요구(`몇`·`얼마`)는 bare 가 아니어도 되묻는다.
+//      없으면 `홍길동은 홈런을 몇 개 쳤어?` 가 LLM 으로 내려가 숫자를 지어낸다.
+for (const question of ["홍길동은 홈런을 몇 개 쳤어?", "이대호가 홈런 몇 개 쳤나요"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 존재 확인 불가 대상의 수치 요구는 되묻기`,
+  );
+}
+//   ⓑ 문장 **선두** 매치일 때만 bare 로 본다.
+//      없으면 `그래서 이대호 홈런` 처럼 앞말이 붙은 문장까지 되묻기로 끝난다.
+for (const question of ["그래서 이대호 홈런", "아 그럼 홍길동 타점"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "none",
+    `${question}: 선두 매치가 아니면 이 가드의 판단 범위가 아니다`,
+  );
+}
+//   ⓒ 용어사전 어휘 예외 — `투수의 기록 용어` 처럼 지표어 앞이 야구 어휘면 용어 질문이다.
+//   ⓓ 조사 제거 — `기록에`·`주자는` 의 조사를 못 떼면 ⓒ가 통째로 무력해진다.
+for (const question of [
+  "투수의 기록 용어",
+  "기록에 삼진은 우리가 삼진 당한 거야?",
+  "파울팁이 포수 미트에 바로 잡히면 주자는 도루할 수 있어?",
+]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 조사 결합 야구 어휘는 용어 질문이다`,
+  );
+}
+//   ⓔ 정의 의도 — 사전에 없는 용어라도 정의를 물으면 용어 질문이다.
+for (const question of ["그라운드 홈런이 뭐야?", "페어 안타 차이", "혹시 삼진홈런이 모야?"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 정의 의도가 있으면 용어 질문이다`,
+  );
+}
+
+// ④ 판정 함수 직접 호출 — `routeQuestion` 만으로는 관측되지 않는 축을 고정한다.
+//    현역 선수는 앞단이 먼저 가로채므로 로스터 분기를 지워도 라우팅 결과가 안 바뀐다.
+for (const [question, expected] of [
+  ["네일 방어율 알려줘", "entity_stat"],
+  ["김도영 홈런", "entity_stat"],
+  ["만루 홈런이 뭐야?", "term_question"],
+  ["끝내기 안타", "term_question"],
+  ["이대호 홈런", "ambiguous"],
+  ["홍길동 타점 알려줘", "ambiguous"],
+  ["선수 역할이 바뀌면 기록은", "none"],
+] as const) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    expected,
+    `${question}: 3분기 판정`,
+  );
+}
 // ⚠️ **구단 서술** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
 // 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
 // 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
@@ -1650,15 +1765,21 @@ async function verifyPipeline() {
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
   }
 
-  // 미등록 선수 기록 질문도 룰 답변으로 새지 않는다. 선수사전 미등록이면 단일 LLM의
-  // NOT_BASEBALL 판정으로 차단하며 quota 1회 소비·cache write 0을 지킨다.
+  // 미등록 선수 기록 질문도 룰 답변으로 새지 않는다. LLM·cache 를 태우지 않고 종결한다.
+  //
+  // ⚠️ 2026-08-08 계약 변경: 라벨이 `blocked` → `unsure` 다 (삼순 3분기 설계).
+  //   차단 강도는 **한 글자도 안 바뀐다** — LLM 0 · cache 0 · quota 1 그대로다.
+  //   바뀐 건 유저가 보는 문구뿐이다. `오타니 홈런 몇개` 는 야구 질문이 맞는데
+  //   "야구 이야기만 답해드릴 수 있어요"(BLOCKED)를 보내는 건 틀린 안내다.
+  //   운영 DB 에 없는 대상이라 "무엇을 물었는지 특정 못 함"(UNSURE)이 정확하다.
   const unregisteredPlayer = freshState({ llmText: '{"status":"NOT_BASEBALL","answer":""}' });
   const unregisteredResult = await answerQuestion(
     "u1",
     "오타니 홈런 몇개",
     makeDeps(unregisteredPlayer),
   );
-  assert.equal(unregisteredResult.source, "blocked");
+  assert.equal(unregisteredResult.source, "unsure");
+  assert.equal(unregisteredResult.answer, UNSURE_ANSWER, "미등록 대상은 되묻기 문구");
   assert.equal(unregisteredPlayer.llmCalls, 0);
   assert.equal(unregisteredPlayer.used, 1);
   assert.deepEqual(unregisteredPlayer.events, ["reserve"]);
