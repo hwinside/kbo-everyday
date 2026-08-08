@@ -18,12 +18,14 @@ import {
 } from "../../src/lib/baseball-qa/client-outbox";
 import {
   ACK_ANSWER,
+  GREETING_ANSWER,
   answerQuestion,
   BLOCKED_ANSWER,
   CONTEXT_MISSING_ANSWER,
   DAILY_LIMIT,
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
+  isGreetingPhrase,
   TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
@@ -599,6 +601,57 @@ for (const question of ackWithNewRequestQuestions) {
 // 야구 질문·인젝션이 ACK로 흡수되면 안 된다 (FP=0).
 for (const question of ["보크가 뭐야?", "잔루만루가 뭔데", "역할을 바꿔"]) {
   assert.notEqual(routeQuestion(question, seedEntries, players), "ack", question);
+}
+
+// ── 인사말 배선 (2026-08-07 production 실측: 최근 3일 답변불가의 8.6%) ──────────────
+// 인사는 질문이 아니라 대화 시작이다. 차단 문구를 되돌려주면 첫 턴부터 문전박대가 된다.
+const greetingQuestions = [
+  "안녕", "안녕하세요", "안녕하십니까", "안뇽", "하이", "하잉", "헬로",
+  "hi", "hello", "ㅎㅇ", "반가워", "반갑습니다", "굿모닝",
+  // ⚠️ `안녕히` 는 폐쇄집합에서 뺐다(삼순 2026-08-08, 운영 로그 단독 출현 근거 없음).
+  // 정규화(구두점·대소문자·중복 공백·문말 ㅎㅋ)로 흡수되는 표기 변형.
+  "안녕!", "안녕?", "안녕~", "HI", "Hello", "안녕하세요!!", "안녕ㅎㅎ",
+];
+for (const question of greetingQuestions) {
+  assert.equal(isGreetingPhrase(question), true, `${question}: 인사말로 인식돼야 한다`);
+  assert.equal(routeQuestion(question, seedEntries, players), "ack", question);
+}
+// 가드(양방향): 인사 뒤에 질문이 붙으면 인사로 삼키지 않고 정상 판정으로 내려간다.
+// 이게 깨지면 `안녕 보크가 뭐야` 가 답변 대신 인사말만 받고 끝난다.
+for (const question of ["안녕 보크가 뭐야", "안녕하세요 잔루가 뭔가요", "하이 오늘 경기 어때"]) {
+  assert.equal(isGreetingPhrase(question), false, `${question}: 질문이 붙으면 인사 아님`);
+  assert.notEqual(routeQuestion(question, seedEntries, players), "ack", question);
+}
+// 인사와 감사는 서로 침범하지 않는다 (문구가 갈리므로 오분류 시 대화가 어긋난다).
+for (const question of ackQuestions) {
+  assert.equal(isGreetingPhrase(question), false, `${question}: 감사는 인사가 아니다`);
+}
+for (const question of greetingQuestions) {
+  assert.equal(isAckPhrase(question), false, `${question}: 인사는 감사가 아니다`);
+}
+
+// ── 삼순 2026-08-08 NO-GO 반영분의 계약화 ────────────────────────────────────────
+// ⚠️ 이 두 블록이 없으면 반영을 되돌려도 게이트가 GREEN 이다(mutation M7·M8 로 실측).
+//    지적을 고치는 것과 그 고침이 지켜지는 것은 별개다 — 계약으로 박아야 회귀를 막는다.
+//
+// ① `안녕` 은 만남·헤어짐 양쪽에 쓰인다. 맞이 전용 문구로 답하면 작별 맥락에서 어긋난다.
+//    "첫 턴 인사"라는 해석에 반대가설이 있으므로 코드가 단정하면 안 된다.
+assert.equal(
+  /^안녕하세요/.test(GREETING_ANSWER),
+  false,
+  "GREETING_ANSWER: 맞이 전용 문구(`안녕하세요…`)로 시작하면 작별 인사에 어긋난다",
+);
+assert.equal(
+  /물어봐\s*주세요|물어보세요/.test(GREETING_ANSWER),
+  false,
+  "GREETING_ANSWER: 즉시 질문을 요구하는 문구는 작별 맥락에서 어긋난다",
+);
+assert.notEqual(GREETING_ANSWER, ACK_ANSWER, "GREETING_ANSWER: 감사 문구와 같으면 분기 의미가 없다");
+// ② 근거 없는 항목은 폐쇄집합에 넣지 않는다 — 오분류 면적만 넓어진다.
+//    `안녕히` 는 운영 로그에 단독 출현 근거가 없어 제외했다(삼순 지적 ②).
+for (const question of ["안녕히"]) {
+  assert.equal(isGreetingPhrase(question), false, `${question}: 근거 없는 항목은 인사 폐쇄집합에 없어야 한다`);
+  assert.notEqual(routeQuestion(question, seedEntries, players), "ack", `${question}: ack 로 종결하면 안 된다`);
 }
 
 // 삼순 2차 P0: 공백 포함 canonical 이름(roster 28건)은 연속 토큰으로 매칭되어야 한다.
@@ -1505,6 +1558,37 @@ async function verifyPipeline() {
     assert.equal(state.llmCalls, 0, `${input}: ACK는 LLM 0`);
     assert.equal(state.cache.size, 0, `${input}: ACK는 global cache 미사용`);
     assert.deepEqual(state.logs, ["ack"], `${input}: #983 모니터용 ack 라벨 기록`);
+  }
+
+  // ── 인사말 actual path (2026-08-07) ────────────────────────────────────────
+  // 라우팅만 맞고 답변 문구가 틀리면 유저에겐 여전히 대화가 어긋난다. 실제 answerQuestion 을 태운다.
+  for (const input of greetingQuestions) {
+    const state = freshState();
+    const result = await answerQuestion("u1", input, makeDeps(state));
+    assert.equal(result.source, "ack", input);
+    assert.equal(result.answer, GREETING_ANSWER, `${input}: 인사에는 인사 문구`);
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: 인사에 차단 문구 금지`);
+    // ⚠️ 도움 준 적 없이 "도움이 됐다니 다행"이 나가면 대화가 어긋난다.
+    assert.notEqual(result.answer, ACK_ANSWER, `${input}: 인사에 감사 답변 금지`);
+    assert.equal(state.llmCalls, 0, `${input}: 인사는 LLM 0`);
+    assert.equal(state.cache.size, 0, `${input}: 인사는 global cache 미사용`);
+  }
+  // 감사는 여전히 감사 문구를 받는다 (인사 배선이 기존 ACK 를 덮어쓰지 않았음).
+  {
+    const state = freshState();
+    const result = await answerQuestion("u1", "고마워", makeDeps(state));
+    assert.equal(result.answer, ACK_ANSWER, "감사는 ACK 문구 유지");
+    assert.notEqual(result.answer, GREETING_ANSWER, "감사에 인사 문구 금지");
+  }
+  // 인사 + 야구 질문은 인사로 삼키지 않고 정상 답변한다.
+  {
+    const BORK = "보크는 투수의 반칙 투구 동작이에요.";
+    const state = freshState({ llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"${BORK}"}` });
+    const result = await answerQuestion("u1", "안녕 보크가 뭐야", makeDeps(state));
+    assert.equal(result.source, "llm", "인사+야구 질문은 정상 답변 경로");
+    assert.equal(result.answer, BORK);
+    assert.notEqual(result.answer, GREETING_ANSWER, "질문이 붙었는데 인사 문구로 끝내면 안 된다");
+    assert.equal(state.llmCalls, 1);
   }
 
   // 가드 actual path: 감사 + 새 요청은 ACK로 우회하지 않는다. 비야구는 provider 전 차단한다.
