@@ -51,7 +51,11 @@ export type GeniusFeedbackMap = Readonly<Record<number, GeniusFeedbackRating>>;
  */
 // ⚠️ `team_rag` 를 빠뜨리면 구단 답변에서 피드백 버튼이 사라진다(#1118 회귀).
 //   2026-08-07 에 구단 경로를 `rag` 에서 분리하면서 여기도 함께 넓혔다.
-export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "team_rag", "dictionary", "kbo_structured"] as const;
+//
+// ⚠️ `news_rag` 도 같은 이유로 들어있다(2026-08-08). 기사 근거 답변은 근거를 가져와 답한 것이라
+//   대상 조건(근거 기반)을 만족하며, 오히려 **표가 가장 필요한 경로**다 — 근거가 30일만
+//   살아있어 사후 재현이 안 되므로, 그때 받은 표가 유일한 품질 신호가 된다.
+export const FEEDBACK_ELIGIBLE_MATCH_PATHS = ["rag", "team_rag", "news_rag", "dictionary", "kbo_structured"] as const;
 
 export type FeedbackEligibleMatchPath = (typeof FEEDBACK_ELIGIBLE_MATCH_PATHS)[number];
 
