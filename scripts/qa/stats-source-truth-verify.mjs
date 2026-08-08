@@ -33,6 +33,28 @@ const defenseRuns = J(`${CONSTANTS}/player-defense-runs.json`);
 const roster = J(`${CONSTANTS}/players-roster.json`);
 const foreignIdSource = readFileSync(`${CONSTANTS}/foreign-id-map.ts`, "utf8");
 
+/* ── 행 불안정 원장 ─────────────────────────────────────────────
+ *
+ * ⚠︎ 이걸 안 읽으면 **이 PR 이 고치려던 정체가 그대로 재현된다**(삼순 P0).
+ * 크롤 내부 promote 경로는 payload 로 원장을 받지만, updater 가 PR 직전에 부르는
+ * 이 **독립 verifier** 는 별도 프로세스다. 여기서 `rowLedger` 를 안 넘기면
+ * `ledgerKeys = ∅` 이라 행 면제도 digest 정규화도 통째로 꺼진다.
+ *
+ * ⚠︎ 파일이 없으면 **fail-close** 다. "없으면 빈 원장으로 진행"으로 두면
+ * 원장 배선이 끊어져도 게이트가 조용히 종전 동작로 돌아가고, 그건 아무도 못 잡는다.
+ * (원장이 비어있는 건 정상이다 — 흔든 행이 없는 날. 없는 것과 비어있는 건 다르다.) */
+const ROW_LEDGER_PATH = `${CONSTANTS}/stats-${SEASON}-defense-row-ledger.json`;
+let rowLedger;
+try {
+  rowLedger = J(ROW_LEDGER_PATH);
+} catch (error) {
+  console.error(
+    `\n❌ row_ledger_missing: ${ROW_LEDGER_PATH} 를 읽지 못했다 — ${error?.message ?? error}`
+      + "\n   원장 없이 대조하면 원본 행 불안정 면제가 꺼져 거짓 불일치로 정체한다(fail-close).",
+  );
+  process.exit(1);
+}
+
 const failures = [];
 
 // ⚠︎ 대조 대상·판정은 크롤러와 **같은 함수**(assertSourceTruth)를 쓴다.
@@ -54,6 +76,9 @@ try {
     defenseRuns,
     roster,
     foreignIdSource,
+    // 크롤 내부 promote 경로와 **같은 입력**을 넘긴다.
+    // 이게 빠지면 두 경로가 서로 다른 계약을 가져 한쪽만 고친 꼴이 된다.
+    rowLedger,
     log: (line) => console.log(line.replace(/^ {4}/, "  ")),
   });
 } catch (error) {

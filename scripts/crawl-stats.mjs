@@ -22,6 +22,15 @@ import {
 import { recoverPendingPromotion } from "./lib/atomic-promote.mjs";
 import { promoteStatsSnapshot } from "./lib/verified-promote.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
+import {
+  MIN_CONFIRM_READS,
+  MISS_RUNS_BEFORE_DELETE,
+  classifyRowStability,
+  describeUnstableRows,
+  describeValueConflicts,
+  planRowSnapshot,
+  playerIdGroupOf,
+} from "./lib/source-row-stability.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +133,15 @@ export async function sortTable(page, sortKey, { attempts = 3, polls = 10, pollI
 async function scrapeAllPages(page) {
   return collectAllPages({ ...createKboPageAdapter(page), log: (line) => console.log(line) });
 }
+
+/**
+ * 수비 페이지 확인 조회 횟수. 하한은 lib 에서 가져온다 — 여기를 1 로 바꾸면 합집합이
+ * 곰 단일 관측이 되어 계약이 사라진다(값은 그대로인데 보호만 없어져 아무도 못 잡는다).
+ */
+const DEFENSE_CONFIRM_READS = MIN_CONFIRM_READS;
+
+/** 이번 런의 행 불안정 원장 — promote payload 에 함께 실려 오라클이 읽는다. */
+let defenseRowLedger = { label: "수비", reads: 0, rows: {} };
 
 async function crawlBatterBasic1(page) {
   console.log("\n📊 타자 Basic1 크롤링...");
@@ -260,18 +278,102 @@ async function crawlPitcher(page) {
   });
 }
 
-async function crawlDefense(page) {
-  console.log("\n📊 수비 크롤링...");
-  // GAME_CN 정렬로 출장기록 있는 전체 수비수 수집 (기본 정렬=수비이닝은 상위권만)
-  await page.goto(`${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`);
-  await page.waitForLoadState("networkidle");
-  await selectSeason(page);
+/** 수비 행 키 — 한 선수가 여러 포지션을 보므로 `(playerId, pos)` 복합키다. */
+function defenseKeyOfRaw(r) {
+  const id = extractPlayerId(r.hrefs?.[1] || "")
+    || findKboId(r.texts?.[1] || "", r.texts?.[2] || "");
+  return `${id}|${r.texts?.[3] ?? ""}`;
+}
 
-  const rows = await scrapeAllPages(page);
+/**
+ * 수비 크롤 — **확인 재조회 + baseline 결속**으로 산출물을 굳힌다.
+ *
+ * ⚠︎ 수비 페이지만 이렇게 한다. 2026-08-08 실측에서 행 존재가 조회마다 흔린 건
+ * 수비였다(rank 동률 최하위 구간, 전다민 54214 — 824↔825 반복).
+ *
+ * 한 번만 읽으면 그 회차의 운이 그대로 서빙 데이터가 된다 — 어제 있던 포지션 행이
+ * 오늘 사라졌다 내일 돌아오는 플리핑이 기록실·파생 WAR 보정에 그대로 노출된다.
+ *
+ * ⚠︎ 단순 합집합만으로는 부족하다(삼순 NO-GO 실증). N회 모두 운 나쁘게 빠지면
+ * 기존 행이 그대로 **삭제**되고, 개수 델타 가드(Δ≤10)도 1행 삭제는 못 잡으며,
+ * 오라클이 같은 회차를 보면 불일치가 없어 재조회 트리거조차 안 걸린다 — 양쪽 다 GREEN 인
+ * 채로 행이 사라진다. 그래서 직전 산출물(baseline)을 함께 보고,
+ * 이번 런 0회 관측은 **연속 2런**이 돼야 제거한다(`decideRowRetention`).
+ *
+ * 값 충돌(같​ key 가 회차별로 다른 값)은 last-write 로 삼키지 않고 그 자리에서 죽는다.
+ */
+async function crawlDefense(page, { baselineRows = [], previousLedger = { rows: {} } } = {}) {
+  console.log("\n📊 수비 크롤링...");
+  const observations = [];
+  const rawByKey = new Map();
+
+  for (let read = 1; read <= DEFENSE_CONFIRM_READS; read++) {
+    // GAME_CN 정렬로 출장기록 있는 전체 수비수 수집 (기본 정렬=수비이닝은 상위권만)
+    await page.goto(`${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`);
+    await page.waitForLoadState("networkidle");
+    await selectSeason(page);
+
+    const observed = await scrapeAllPages(page);
+    // 0행 관측은 "전부 사라졌다"가 아니라 수집 실패다. 합집합에 섮으면 조용히 무시된다.
+    if (observed.length === 0) {
+      throw new Error(
+        `defense_empty_observation: 수비 ${read}회차 0행 — 수집 실패를 합집합으로 숨길 수 없다`,
+      );
+    }
+    const cellsByKey = new Map();
+    for (const r of observed) {
+      const key = defenseKeyOfRaw(r);
+      cellsByKey.set(key, r.texts ?? []);
+      if (!rawByKey.has(key)) rawByKey.set(key, r);
+    }
+    observations.push(cellsByKey);
+    console.log(`    확인 조회 ${read}/${DEFENSE_CONFIRM_READS}: ${observed.length}행`);
+  }
+
+  const classified = classifyRowStability(observations);
+
+  // 같​ key 가 회차별로 다른 값이면 어느 쪽을 남겨도 충돌이 사라진다 — fail-close.
+  const conflictNote = describeValueConflicts("수비", classified.valueConflictKeys);
+  if (conflictNote) throw new Error(`defense_value_conflict: ${conflictNote}`);
+
+  const baselineByKey = new Map();
+  for (const row of baselineRows) {
+    baselineByKey.set(`${String(row.kboId ?? "").trim()}|${row.pos ?? ""}`, row);
+  }
+
+  const plan = planRowSnapshot({
+    baselineByKey,
+    classified,
+    previousLedger,
+    label: "수비",
+    // 흔리는 건 한 행이 아니라 같은 선수의 행 집합이다(전다민 54214 좌↔중).
+    // key 하나만 면제하면 교대의 반대 절반이 그대로 FAIL 한다(삼순 실증).
+    groupOf: playerIdGroupOf,
+  });
+
+  console.log(
+    `    합집합 ${rawByKey.size}행 · 안정 ${classified.stableKeys.size} · 불안정 ${classified.unstableKeys.size}`
+      + ` · 포함 ${plan.includeKeys.length} · 신규격리 ${plan.quarantinedKeys.length}`
+      + ` · baseline 보존 ${plan.heldKeys.length} · 제거 ${plan.deletedKeys.length}`,
+  );
+  const unstableNote = describeUnstableRows("수비", classified.unstableKeys, classified.union);
+  if (unstableNote) console.log(`    ⚠︎ ${unstableNote}`);
+  for (const key of plan.quarantinedKeys) {
+    console.log(`    ⚠︎ 수비: 신규 불안정 행 격리(canonical 미반영, 다음 런 재관측 시 승격) — ${key}`);
+  }
+  for (const key of plan.heldKeys) {
+    console.log(`    ⚠︎ 수비: baseline 행 보존(이번 런 0회 관측, 연속 ${plan.ledger.rows[key]?.missStreak}런) — ${key}`);
+  }
+  for (const key of plan.deletedKeys) {
+    console.log(`    ✖ 수비: baseline 행 제거(연속 ${MISS_RUNS_BEFORE_DELETE}런 미관측) — ${key}`);
+  }
+
+  // 원장은 산출물과 **같은 promote** 에 실려 오라클이 payload 에서 읽는다.
+  defenseRowLedger = plan.ledger;
 
   // 한 선수가 여러 포지션을 보면 포지션별로 행이 나뉜다 → 행 단위로 보존(포지션 보정용).
   // Columns: 순위(0) 선수명(1) 팀명(2) POS(3) G(4) GS(5) IP(6) E(7) PKO(8) PO(9) A(10) DP(11) FPCT(12) PB(13) SB(14) CS(15) CS%(16)
-  return rows.map((r) => {
+  const observedRows = [...rawByKey.values()].map((r) => {
     const c = r.texts;
     const name = c[1] || "";
     const team = c[2] || "";
@@ -294,6 +396,14 @@ async function crawlDefense(page) {
       cs: parseInt(c[15]) || 0,
     };
   });
+
+  // 신규 불안정 행은 canonical 직행 금지(격리) — 한 번 스쳐 보았다고 서빙에 올리지 않는다.
+  const includeKeys = new Set(plan.includeKeys);
+  const included = observedRows.filter((row) => includeKeys.has(`${row.kboId}|${row.pos}`));
+
+  // 아직 제거 기준에 미달한 baseline 행을 붙인다 — 이게 없으면 운 나쁘게 전 회차 빠진 행이
+  // 한 런에 사라진다(삼순 지적). baseline 행은 이미 출력 형식이므로 그대로 넣는다.
+  return [...included, ...plan.heldKeys.map((key) => baselineByKey.get(key))];
 }
 
 function parseIpToFloat(ip) {
@@ -451,13 +561,31 @@ export async function main() {
     // ===== PITCHERS =====
     const pitchers = await crawlPitcher(page);
 
-    // ===== DEFENSE ===== (예상 WAR 수비 runs 보정용, 포지션별 행)
-    const defense = await crawlDefense(page);
-
     // ===== SAVE =====
     const batterPath = join(CONSTANTS_DIR, `stats-${SEASON}-batters.json`);
     const pitcherPath = join(CONSTANTS_DIR, `stats-${SEASON}-pitchers.json`);
     const defensePath = join(CONSTANTS_DIR, `stats-${SEASON}-defense.json`);
+    const rowLedgerPath = join(CONSTANTS_DIR, `stats-${SEASON}-defense-row-ledger.json`);
+
+    const readJsonOr = (path, fallback) => {
+      try {
+        return JSON.parse(readFileSync(path, "utf-8"));
+      } catch {
+        // First-time season generation has no baseline; non-empty is still enforced below.
+        return fallback;
+      }
+    };
+
+    // ===== DEFENSE ===== (예상 WAR 수비 runs 보정용, 포지션별 행)
+    //
+    // ⚠︎ baseline 과 직전 원장을 함께 넘긴다. 이게 없으면 운 나쁘게 전 회차 빠진 기존 행이
+    // 한 런에 삭제된다(삼순 지적) — 개수 델타 가드도 1행은 못 잡는다.
+    // 직전 원장은 신규 intermittent 승격 판단에도 쓴다(지난 런에도 보였는가).
+    const defenseBaseline = readJsonOr(defensePath, []);
+    const defense = await crawlDefense(page, {
+      baselineRows: defenseBaseline,
+      previousLedger: readJsonOr(rowLedgerPath, { rows: {} }),
+    });
 
     // 수비 runs(RF-lite) 파생 → 기록실/예상 WAR 보정용
     const defenseRunsPath = join(CONSTANTS_DIR, `player-defense-runs.json`);
@@ -475,17 +603,10 @@ export async function main() {
     // 타자·수비·수비runs는 무너진 채로 그대로 썰다.
     // 실측 사고(2026-08-04): 수비 823행 → 30행(첫 페이지 한 장만 남음)으로 유실됐는데
     // 아무 게이트도 발동하지 않고 정상 종료했다. 이제 네 데이터셋 전부에 건다.
-    const readPrevious = (path, fallback) => {
-      try {
-        return JSON.parse(readFileSync(path, "utf-8"));
-      } catch {
-        // First-time season generation has no baseline; non-empty is still enforced.
-        return fallback;
-      }
-    };
+    const readPrevious = readJsonOr;
     validatePitcherSnapshot(readPrevious(pitcherPath, []), pitchers);
     validateBatterSnapshot(readPrevious(batterPath, []), batters);
-    validateDefenseSnapshot(readPrevious(defensePath, []), defense);
+    validateDefenseSnapshot(defenseBaseline, defense);
     validateDefenseRunsSnapshot(readPrevious(defenseRunsPath, {}), defenseRuns);
 
     // 개수·델타 가드는 *값*을 보지 않는다. 곽빈 ERA를 99.99로 바꿔도 전 게이트가 GREEN이었고,
@@ -505,6 +626,10 @@ export async function main() {
       { path: defensePath, body: JSON.stringify(defense, null, 2) },
       { path: defenseRunsPath, body: JSON.stringify(defenseRuns, null, 2) },
       { path: metaPath, body: JSON.stringify(meta, null, 2) },
+      // 미관측 연속횟수 — 산출물과 **같은 promote** 에 실어야 한다.
+      // 따로 쓰면 검증 실패로 산출물은 롤백됐는데 streak 만 올라가서,
+      // 다음 런에 살아있는 행을 "2런 연속 미관측"으로 오판해 지운다.
+      { path: rowLedgerPath, body: JSON.stringify(defenseRowLedger, null, 2) },
     ];
 
     // ⚠︎ 검증기(assertSourceTruth)는 promoteStatsSnapshot **내부에 고정**돼 있다 — caller 가

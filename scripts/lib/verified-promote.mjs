@@ -43,6 +43,16 @@ function parsePayload(artifacts) {
     pitchers: readJson("-pitchers.json"),
     defense: readJson("-defense.json"),
     defenseRuns: readJson("player-defense-runs.json"),
+    // 행 불안정 원장 — 크롤이 N회 관측해 알아낸 사실을 오라클이 읽을 수 있게 한다.
+    //
+    // ⚠︎ 이게 없으면 E2E 가 그대로 재정체된다(삼순 실증): 크롤이 baseline 행을 보존해도
+    // 오라클이 그 행을 N회 모두 못 보면 "우리에만 있음"으로 죽고, promote 와 원장이
+    // 함께 롤백돼 다음 런에도 똑같이 죽는다.
+    //
+    // ⚠︎ caller 주입이 아니라 **payload 파생**이다. context 로 넘기게 두면 한 줄로
+    // 빈 원장을 넣어 면제를 끌 수 있고(또는 무제한 면제를 넣을 수 있고),
+    // "호출이 존재하는가" 식 게이트는 그 상태에서도 GREEN 이다.
+    rowLedger: readJson("-row-ledger.json"),
   };
 }
 
@@ -56,8 +66,13 @@ async function runVerifiedPromote(artifacts, context, verify) {
   }
 
   const payload = parsePayload(artifacts);
+  // ⚠︎ rowLedger 는 "비어있음"이 정상이다(흔든 행이 없는 날). 비어있다고 죽이면
+  // 정상 런이 전부 죽는다. 다만 **존재 자체**는 필수다 — 없으면 크롤이 원장을 안 실은 것이고,
+  // 그러면 오라클은 면제 없이 판정해 이 PR 이 고치려던 사고가 그대로 재발한다.
   const missing = Object.entries(payload)
-    .filter(([, value]) => value === null || (Array.isArray(value) && value.length === 0))
+    .filter(([key, value]) => (key === "rowLedger"
+      ? value === null
+      : value === null || (Array.isArray(value) && value.length === 0)))
     .map(([key]) => key);
   if (missing.length) {
     throw new Error(

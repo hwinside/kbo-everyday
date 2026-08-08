@@ -303,6 +303,9 @@ console.log("atomic promote smoke: ALL assertions PASS");
     mk("stats-2026-pitchers.json", [{ kboId: "2" }]),
     mk("stats-2026-defense.json", [{ kboId: "3", pos: "유격수" }]),
     mk("player-defense-runs.json", { 3: 1.5 }),
+    // 행 불안정 원장도 같은 promote payload 에 실린다(2026-08-08).
+    // 비어있는 건 정상이지만 **없으면 실패**다 — 오라클이 면제 없이 판정하게 되기 때문.
+    mk("stats-2026-defense-row-ledger.json", { label: "수비", reads: 3, rows: {} }),
   ];
   for (const a of artifacts) writeFileSync(a.path, "OLD");
 
@@ -317,6 +320,25 @@ console.log("atomic promote smoke: ALL assertions PASS");
   assert.deepEqual(seen.defenseRuns, { 3: 1.5 }, "검증기는 promote payload 의 defenseRuns 를 받아야 한다");
   assert.deepEqual(seen.batters, [{ kboId: "1" }], "검증기는 promote payload 의 batters 를 받아야 한다");
   assert.equal(seen.season, "2026", "부가 context 는 그대로 전달된다");
+  assert.deepEqual(
+    seen.rowLedger,
+    { label: "수비", reads: 3, rows: {} },
+    "검증기는 promote payload 의 rowLedger 를 받아야 한다(caller 주입이 아니다)",
+  );
+
+  // ★ 원장이 payload 에 없으면 promote 자체가 거부된다.
+  // 이게 없으면 크롤이 원장을 안 실어도 조용히 넘어가고, 오라클은 면제 없이 판정해
+  // 행 불안정 정체가 그대로 재발한다(2026-08-08 삼순 실증).
+  await assert.rejects(
+    () => verifyThenPromote({
+      artifacts: artifacts.filter((a) => !a.path.endsWith("-row-ledger.json")),
+      verify: async () => {},
+      context: {},
+    }),
+    /verified_promote_payload_incomplete: rowLedger/,
+    "원장 없이는 promote 할 수 없다",
+  );
+  for (const a of artifacts) writeFileSync(a.path, a.body);
   for (const a of artifacts) {
     assert.equal(readFileSync(a.path, "utf8"), a.body, "검증 통과 시 promote 돼야 한다");
   }

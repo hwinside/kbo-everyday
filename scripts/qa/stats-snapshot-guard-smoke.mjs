@@ -263,6 +263,9 @@ for (const call of [
     defenseRuns: ourDefenseRuns,
     roster: ourRoster,
     foreignIdSource: ourForeignIdSource,
+    // 행 불안정 원장도 실제 계약대로 넘긴다(2026-08-08).
+    // 비어있는 건 정상(흔든 행이 없는 날)이고, 없으면 대조 자체가 fail-close 된다.
+    rowLedger: { label: "수비", reads: 3, rows: {} },
   };
 
   // 일치하면 통과해야 한다.

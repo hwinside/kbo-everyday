@@ -53,6 +53,9 @@ on:
       - "src/lib/constants/stats-*-batters.json"
       - "src/lib/constants/stats-*-pitchers.json"
       - "src/lib/constants/stats-*-defense.json"
+      # 행 불안정 원장 — 검증기가 읽는 새 입력(2026-08-08).
+      # 빠지면 원장만 바뀐 PR 이 게이트를 SKIP 하고 required check 가 초록으로 보인다.
+      - "src/lib/constants/stats-*-defense-row-ledger.json"
       - "src/lib/constants/player-defense-runs.json"
       - "src/lib/constants/players-roster.json"
       - "src/lib/constants/foreign-id-map.ts"
