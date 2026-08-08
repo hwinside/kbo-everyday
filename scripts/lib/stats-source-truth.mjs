@@ -4,29 +4,42 @@ import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagina
 import { createSelectAdapter, selectAndConfirm } from "./kbo-select.mjs";
 import {
   assertConfirmReads,
+  assertLedgerBounded,
   classifyRowStability,
   describeUnstableRows,
   describeValueConflicts,
+  ledgerKeySet,
   MIN_CONFIRM_READS,
 } from "./source-row-stability.mjs";
 
 export const SOURCE_DIGEST_MARKER = "KBO_SOURCE_DIGEST";
 
-/** 원본 전체 key/value를 순서 독립적인 SHA-256으로 접는다. */
-export function digestSourceMaps(labeledMaps) {
+/**
+ * 원본 전체 key/value를 순서 독립적인 SHA-256으로 접는다.
+ *
+ * `excludeKeys` 는 **원장에 등재된 불안정 행**이다. 그 행은 원본이 조회마다
+ * 줬다 안 줬다 하므로, 포함하면 digest 가 매 회차 달라져 freshness 의 안정 window 가
+ * 계속 reset 된다 — 원인을 고쳐도 게이트가 다른 이유로 정체한다(삼순 지적).
+ *
+ * ⚠︎ 제외는 그 key 의 **존재 여부**에만 적용된다. 나머지 전 행·전 필드는 그대로 들어가므로,
+ * 무관한 값이 바뀌면 digest 는 반드시 바뀜다. 전체를 지우면 digest 를 꺼버린 것과 같다.
+ */
+export function digestSourceMaps(labeledMaps, { excludeKeys } = {}) {
+  const excluded = excludeKeys ?? new Set();
   const hash = createHash("sha256");
   for (const label of Object.keys(labeledMaps).sort()) {
     hash.update(`\n##${label}\n`);
     const map = labeledMaps[label];
     for (const key of [...map.keys()].sort()) {
+      if (excluded.has(key)) continue;
       hash.update(`${key}\u0001${(map.get(key) ?? []).join("\u0002")}\n`);
     }
   }
   return hash.digest("hex");
 }
 
-export function emitSourceDigest(log, labeledMaps) {
-  const digest = digestSourceMaps(labeledMaps);
+export function emitSourceDigest(log, labeledMaps, options) {
+  const digest = digestSourceMaps(labeledMaps, options);
   log(`${SOURCE_DIGEST_MARKER}=${digest}`);
   return digest;
 }
@@ -170,7 +183,7 @@ export function mergeConfirmedJudgement({ initialResult, confirmedResult, confli
  * @param {object} input.initialResult 최초 판정 결과
  * @param {(opts:{priorObservations:Array}) => Promise<object>} input.collectConfirmed 확인 관측 수집기
  */
-export async function judgeWithConfirmation({ spec, initialResult, collectConfirmed, log = () => {} }) {
+export async function judgeWithConfirmation({ spec, initialResult, collectConfirmed, ledgerKeys, log = () => {} }) {
   const confirmed = await collectConfirmed({ priorObservations: [spec.kbo] });
 
   const unstableNote = confirmed.unstableKeys.size > 0
@@ -178,11 +191,19 @@ export async function judgeWithConfirmation({ spec, initialResult, collectConfir
     : null;
   if (unstableNote) log(`    ⚠︎ ${unstableNote}`);
 
-  // 재판정: 확인 관측의 union 을 원본으로 쓰고, 흔들린 키는 행 집합에서 제외한다.
+  /* 재판정: 확인 관측의 union 을 원본으로 쓰고, 흔들린 키는 행 집합에서 제외한다.
+   *
+   * ⚠︎ 이번 확인에서 관측된 불안정 키 **그리고** 크롤이 남긴 원장 키를 함께 면제한다.
+   * 원장을 빼면, 오라클이 확인 3회에서도 그 행을 모두 놓친 경우에 다시 죽는다 —
+   * 크롤은 보존했는데 오라클은 모르는 상태가 정확히 그 재정체 경로다.
+   */
+  const exempt = new Set(confirmed.unstableKeys);
+  for (const key of ledgerKeys ?? []) exempt.add(key);
+
   const rejudged = crossCheckDataset({
     ...spec,
     kbo: confirmed.union,
-    unstableKeys: confirmed.unstableKeys,
+    unstableKeys: exempt,
   });
 
   // 같은 key 가 회차마다 다른 값이면 불안정이 아니라 오염 후보라 fail-close 한다.
@@ -297,10 +318,24 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
  * 그래도 "호출이 존재하는가" 식 게이트는 GREEN이다(실제로 내 초기 구현이 그랬다).
  * 그래서 대조·판정·예외를 전부 여기서 끝낸다. 호출자는 이걸 부를 수만 있다.
  */
-export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, log = console.log }) {
+export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, rowLedger, log = console.log }) {
   const page = await browser.newPage();
   const failures = [];
   const unstableNotes = [];
+
+  /* ── 행 불안정 원장 ─────────────────────────────────────────
+   *
+   * 크롤이 N회 읽어 "이 행은 원본이 흔든다"를 알아내도, 오라클은 그걸 모른다.
+   * 오라클이 우연히 N회 모두 그 행을 놓치면 다시 "우리에만 있음"으로 죽고,
+   * promote 와 원장이 함께 롤백돼 다음 런에도 똑같이 죽는다(삼순 실증).
+   *
+   * 그래서 크롤의 관측 사실을 **산출물과 같은 promote payload** 에 실어 여기서 읽는다.
+   * ⚠︎ 원장은 **행 존재** 판정만 면제한다. 값 대조는 그대로 엄격하다.
+   */
+  const ledgerKeys = ledgerKeySet(rowLedger);
+  // 원장은 몇 행짜리 예외일 때만 유효하다. 통째로 부풀면 그건 면제가 아니라
+  // 행 집합 대조를 꺼버린 것이다 — 그 상태에서도 전 게이트는 GREEN 이므로 상한을 둔다.
+  assertLedgerBounded(rowLedger, defense?.length ?? 0, { label: "수비" });
   try {
     const kboPitchers = await collectKboPages(
       page, `${kboBase}/Record/Player/PitcherBasic/Basic1.aspx?sort=GAME_CN`, season,
@@ -321,14 +356,23 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
       page, `${kboBase}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`, season,
     );
 
-    // freshness 안정성은 실패 문구가 아니라 원본 전체 key/value 자체로 판정한다.
+    /* freshness 안정성은 실패 문구가 아니라 원본 전체 key/value 자체로 판정한다.
+     *
+     * ⚠︎ 원장 등재 키는 digest 에서 **제외**한다(삼순 지적). 그렇게 안 하면
+     * 좌/중 flapping 이 매 회차 digest 를 바꿔 freshness 의 180초 window 가 계속 reset 되고,
+     * 판정 자체가 끝나지 않는다 — 원인은 고쳤는데 게이트가 다른 이유로 정체한다.
+     *
+     * ⚠︎ 단, **값이 바뀌면 digest 는 반드시 바뀜다.** 제외하는 건 원장 등재 키의
+     * "있다/없다"뿐이고, 나머지 전 행·전 필드는 그대로 들어간다. 전체를 지우면
+     * 그건 digest 를 꺼버린 것과 같아진다.
+     */
     emitSourceDigest(log, {
       pitchers: kboPitchers,
       batters1: kboBatters1,
       batters2: kboBatters2,
       runner: kboRunner,
       defense: kboDefense,
-    });
+    }, { excludeKeys: ledgerKeys });
 
     for (const spec of [
       {
@@ -370,9 +414,15 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
         keyOf: (row) => `${String(row.kboId ?? "").trim()}|${row.pos ?? ""}`,
         url: `${kboBase}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`,
         keyOfSource: (id, tds) => `${id}|${tds[3] ?? ""}`,
+        // 원장은 수비 축에만 걸린다 — 행 존재가 흔들린다고 실측된 곳이 여기만이다.
+        useLedger: true,
       },
     ]) {
-      let result = crossCheckDataset(spec);
+      // 원장 등재 행은 **행 존재** 판정에서 바로 면제된다.
+      // 이게 없으면 크롤이 baseline 행을 보존해도 오라클이 그 행을 N회 모두 놓치면
+      // "우리에만 있음"으로 죽고, promote·원장이 함께 롤백돼 다음 런에도 똑같이 죽는다.
+      const ledgerForSpec = spec.useLedger ? ledgerKeys : undefined;
+      let result = crossCheckDataset({ ...spec, unstableKeys: ledgerForSpec });
 
       /* ── 행 집합 불일치 → 원본 행 불안정인지 확인 재조회 ──────────────
        *
@@ -397,6 +447,7 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
           spec,
           initialResult: result,
           log,
+          ledgerKeys: ledgerForSpec,
           // 최초 관측을 1회차로 산입한다 — 버리면 그 회차에만 보였던 key 가 증거에서 사라진다.
           collectConfirmed: ({ priorObservations }) =>
             collectKboPagesConfirmed(page, spec.url, season, {

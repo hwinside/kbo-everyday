@@ -26,9 +26,9 @@ import {
   MIN_CONFIRM_READS,
   MISS_RUNS_BEFORE_DELETE,
   classifyRowStability,
-  decideRowRetention,
   describeUnstableRows,
   describeValueConflicts,
+  planRowSnapshot,
 } from "./lib/source-row-stability.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
@@ -139,8 +139,8 @@ async function scrapeAllPages(page) {
  */
 const DEFENSE_CONFIRM_READS = MIN_CONFIRM_READS;
 
-/** 이번 런의 미관측 연속 횟수 — promote 페이로드에 함께 쓴다. */
-let defenseMissStreak = {};
+/** 이번 런의 행 불안정 원장 — promote payload 에 함께 실려 오라클이 읽는다. */
+let defenseRowLedger = { label: "수비", reads: 0, rows: {} };
 
 async function crawlBatterBasic1(page) {
   console.log("\n📊 타자 Basic1 크롤링...");
@@ -301,7 +301,7 @@ function defenseKeyOfRaw(r) {
  *
  * 값 충돌(같​ key 가 회차별로 다른 값)은 last-write 로 삼키지 않고 그 자리에서 죽는다.
  */
-async function crawlDefense(page, { baselineRows = [], previousMissStreak = {} } = {}) {
+async function crawlDefense(page, { baselineRows = [], previousLedger = { rows: {} } } = {}) {
   console.log("\n📊 수비 크롤링...");
   const observations = [];
   const rawByKey = new Map();
@@ -340,27 +340,32 @@ async function crawlDefense(page, { baselineRows = [], previousMissStreak = {} }
     baselineByKey.set(`${String(row.kboId ?? "").trim()}|${row.pos ?? ""}`, row);
   }
 
-  const retention = decideRowRetention({
+  const plan = planRowSnapshot({
     baselineByKey,
-    observedByKey: rawByKey,
-    seenCount: classified.seenCount,
-    previousMissStreak,
+    classified,
+    previousLedger,
+    label: "수비",
   });
 
   console.log(
     `    합집합 ${rawByKey.size}행 · 안정 ${classified.stableKeys.size} · 불안정 ${classified.unstableKeys.size}`
-      + ` · baseline 보존 ${retention.heldKeys.length} · 제거 ${retention.deletedKeys.length}`,
+      + ` · 포함 ${plan.includeKeys.length} · 신규격리 ${plan.quarantinedKeys.length}`
+      + ` · baseline 보존 ${plan.heldKeys.length} · 제거 ${plan.deletedKeys.length}`,
   );
   const unstableNote = describeUnstableRows("수비", classified.unstableKeys, classified.union);
   if (unstableNote) console.log(`    ⚠︎ ${unstableNote}`);
-  for (const key of retention.heldKeys) {
-    console.log(`    ⚠︎ 수비: baseline 행 보존(이번 런 0회 관측, 연속 ${retention.missStreak[key]}런) — ${key}`);
+  for (const key of plan.quarantinedKeys) {
+    console.log(`    ⚠︎ 수비: 신규 불안정 행 격리(canonical 미반영, 다음 런 재관측 시 승격) — ${key}`);
   }
-  for (const key of retention.deletedKeys) {
+  for (const key of plan.heldKeys) {
+    console.log(`    ⚠︎ 수비: baseline 행 보존(이번 런 0회 관측, 연속 ${plan.ledger.rows[key]?.missStreak}런) — ${key}`);
+  }
+  for (const key of plan.deletedKeys) {
     console.log(`    ✖ 수비: baseline 행 제거(연속 ${MISS_RUNS_BEFORE_DELETE}런 미관측) — ${key}`);
   }
 
-  defenseMissStreak = retention.missStreak;
+  // 원장은 산출물과 **같은 promote** 에 실려 오라클이 payload 에서 읽는다.
+  defenseRowLedger = plan.ledger;
 
   // 한 선수가 여러 포지션을 보면 포지션별로 행이 나뉜다 → 행 단위로 보존(포지션 보정용).
   // Columns: 순위(0) 선수명(1) 팀명(2) POS(3) G(4) GS(5) IP(6) E(7) PKO(8) PO(9) A(10) DP(11) FPCT(12) PB(13) SB(14) CS(15) CS%(16)
@@ -388,9 +393,13 @@ async function crawlDefense(page, { baselineRows = [], previousMissStreak = {} }
     };
   });
 
+  // 신규 불안정 행은 canonical 직행 금지(격리) — 한 번 스쳐 보았다고 서빙에 올리지 않는다.
+  const includeKeys = new Set(plan.includeKeys);
+  const included = observedRows.filter((row) => includeKeys.has(`${row.kboId}|${row.pos}`));
+
   // 아직 제거 기준에 미달한 baseline 행을 붙인다 — 이게 없으면 운 나쁘게 전 회차 빠진 행이
   // 한 런에 사라진다(삼순 지적). baseline 행은 이미 출력 형식이므로 그대로 넣는다.
-  return [...observedRows, ...retention.heldKeys.map((key) => baselineByKey.get(key))];
+  return [...included, ...plan.heldKeys.map((key) => baselineByKey.get(key))];
 }
 
 function parseIpToFloat(ip) {
@@ -552,7 +561,7 @@ export async function main() {
     const batterPath = join(CONSTANTS_DIR, `stats-${SEASON}-batters.json`);
     const pitcherPath = join(CONSTANTS_DIR, `stats-${SEASON}-pitchers.json`);
     const defensePath = join(CONSTANTS_DIR, `stats-${SEASON}-defense.json`);
-    const missStreakPath = join(CONSTANTS_DIR, `stats-${SEASON}-row-miss-streak.json`);
+    const rowLedgerPath = join(CONSTANTS_DIR, `stats-${SEASON}-defense-row-ledger.json`);
 
     const readJsonOr = (path, fallback) => {
       try {
@@ -565,12 +574,13 @@ export async function main() {
 
     // ===== DEFENSE ===== (예상 WAR 수비 runs 보정용, 포지션별 행)
     //
-    // ⚠︎ baseline 과 직전 미관측 연속횟수를 함께 넘긴다. 이게 없으면 운 나쁘게 전 회차
-    // 빠진 기존 행이 한 런에 삭제된다(삼순 지적) — 개수 델타 가드도 1행은 못 잡는다.
+    // ⚠︎ baseline 과 직전 원장을 함께 넘긴다. 이게 없으면 운 나쁘게 전 회차 빠진 기존 행이
+    // 한 런에 삭제된다(삼순 지적) — 개수 델타 가드도 1행은 못 잡는다.
+    // 직전 원장은 신규 intermittent 승격 판단에도 쓴다(지난 런에도 보였는가).
     const defenseBaseline = readJsonOr(defensePath, []);
     const defense = await crawlDefense(page, {
       baselineRows: defenseBaseline,
-      previousMissStreak: readJsonOr(missStreakPath, {}),
+      previousLedger: readJsonOr(rowLedgerPath, { rows: {} }),
     });
 
     // 수비 runs(RF-lite) 파생 → 기록실/예상 WAR 보정용
@@ -615,7 +625,7 @@ export async function main() {
       // 미관측 연속횟수 — 산출물과 **같은 promote** 에 실어야 한다.
       // 따로 쓰면 검증 실패로 산출물은 롤백됐는데 streak 만 올라가서,
       // 다음 런에 살아있는 행을 "2런 연속 미관측"으로 오판해 지운다.
-      { path: missStreakPath, body: JSON.stringify(defenseMissStreak, null, 2) },
+      { path: rowLedgerPath, body: JSON.stringify(defenseRowLedger, null, 2) },
     ];
 
     // ⚠︎ 검증기(assertSourceTruth)는 promoteStatsSnapshot **내부에 고정**돼 있다 — caller 가

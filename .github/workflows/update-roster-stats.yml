@@ -138,7 +138,7 @@ jobs:
             # 건드렸으면 PR은 생성하되 자동 머지는 보류한다 (#685 삼순 리뷰 Blocker 2)
             # reconcile과 inventory-only sync가 생성하는 data artifact만 허용한다.
             # API/validator 소스, workflow, migration은 내용 검증 없는 경로 allowlist로 열지 않는다.
-            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta)\.json)|data/baseball-qa/source-inventory\.json)$'
+            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta|defense-row-ledger)\.json)|data/baseball-qa/source-inventory\.json)$'
             CHANGED_FILES=$(git diff --cached --name-only)
             OFF_ALLOWLIST=$(echo "$CHANGED_FILES" | grep -Ev "$ALLOWLIST_RE" || true)
             if [ -n "$OFF_ALLOWLIST" ]; then

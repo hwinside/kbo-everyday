@@ -20,16 +20,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  LEDGER_MIN_ALLOWANCE,
   MIN_CONFIRM_READS,
   MISS_RUNS_BEFORE_DELETE,
   assertConfirmReads,
+  assertLedgerBounded,
   classifyRowStability,
-  decideRowRetention,
   describeUnstableRows,
   describeValueConflicts,
+  ledgerKeySet,
+  planRowSnapshot,
 } from "../lib/source-row-stability.mjs";
 import {
   crossCheckDataset,
+  digestSourceMaps,
   judgeWithConfirmation,
   mergeConfirmedJudgement,
 } from "../lib/stats-source-truth.mjs";
@@ -114,42 +118,111 @@ check("하한은 3회다", () => {
 
 console.log("\n▸ ★ 삼순 NO-GO 1 — baseline 결속(운 나쁘게 전 회차 빠져도 한 런에 못 지운다)");
 
+const plan = (input) => planRowSnapshot({ label: "수비", ...input });
+
 check("★ baseline 좌+중 / 이번 런 좌,좌,좌 → 중견수는 보존(삭제 아님)", () => {
-  const classified = classifyRowStability([readLeft(), readLeft(), readLeft()]);
-  const decision = decideRowRetention({
+  const decision = plan({
     baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
-    observedByKey: new Map([[LEFT, {}]]),
-    seenCount: classified.seenCount,
-    previousMissStreak: {},
+    classified: classifyRowStability([readLeft(), readLeft(), readLeft()]),
   });
   assert.deepEqual(decision.deletedKeys, [], "한 런 0회로는 지우지 않는다");
   assert.deepEqual(decision.heldKeys, [CENTER]);
-  assert.equal(decision.missStreak[CENTER], 1);
+  assert.equal(decision.ledger.rows[CENTER].missStreak, 1);
 });
 
 check(`연속 ${MISS_RUNS_BEFORE_DELETE}런 미관측이면 그때 제거한다`, () => {
-  const classified = classifyRowStability([readLeft(), readLeft(), readLeft()]);
-  const decision = decideRowRetention({
+  const decision = plan({
     baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
-    observedByKey: new Map([[LEFT, {}]]),
-    seenCount: classified.seenCount,
-    previousMissStreak: { [CENTER]: MISS_RUNS_BEFORE_DELETE - 1 },
+    classified: classifyRowStability([readLeft(), readLeft(), readLeft()]),
+    previousLedger: { rows: { [CENTER]: { observed: 0, missStreak: MISS_RUNS_BEFORE_DELETE - 1 } } },
   });
   assert.deepEqual(decision.deletedKeys, [CENTER]);
   assert.deepEqual(decision.heldKeys, []);
 });
 
 check("다시 관측되면 streak 가 리셋된다(보존도 삭제도 아님)", () => {
-  const classified = classifyRowStability([readBoth(), readBoth(), readBoth()]);
-  const decision = decideRowRetention({
+  const decision = plan({
     baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
-    observedByKey: new Map([[LEFT, {}], [CENTER, {}]]),
-    seenCount: classified.seenCount,
-    previousMissStreak: { [CENTER]: MISS_RUNS_BEFORE_DELETE - 1 },
+    classified: classifyRowStability([readBoth(), readBoth(), readBoth()]),
+    previousLedger: { rows: { [CENTER]: { observed: 0, missStreak: MISS_RUNS_BEFORE_DELETE - 1 } } },
   });
   assert.deepEqual(decision.deletedKeys, []);
   assert.deepEqual(decision.heldKeys, []);
-  assert.equal(decision.missStreak[CENTER], undefined, "streak 가 남으면 다음 런에 오삭제된다");
+  assert.equal(decision.ledger.rows[CENTER], undefined, "streak 가 남으면 다음 런에 오삭제된다");
+});
+
+console.log("\n▸ ★ 삼순 NO-GO 3-b — 신규 intermittent 는 canonical 직행 금지(격리)");
+
+check("★ 신규 `1/3` 행은 격리된다(산출물 미반영)", () => {
+  const decision = plan({
+    baselineByKey: new Map([[LEFT, {}]]),
+    classified: classifyRowStability([readLeft(), readBoth(), readLeft()]),
+  });
+  assert.deepEqual(decision.quarantinedKeys, [CENTER], "한 번 스쳐 본 신규 행을 서빙에 올리지 않는다");
+  assert.ok(!decision.includeKeys.includes(CENTER));
+  assert.ok(decision.ledger.rows[CENTER], "원장에는 남아 다음 런에 승격 판단한다");
+});
+
+check("★ 지난 런에도 보였던 intermittent 는 승격된다", () => {
+  const decision = plan({
+    baselineByKey: new Map([[LEFT, {}]]),
+    classified: classifyRowStability([readLeft(), readBoth(), readLeft()]),
+    previousLedger: { rows: { [CENTER]: { observed: 1, missStreak: 0 } } },
+  });
+  assert.deepEqual(decision.quarantinedKeys, []);
+  assert.ok(decision.includeKeys.includes(CENTER));
+});
+
+check("★ baseline 에 있던 intermittent 는 격리하지 않는다(기존 canonical 행)", () => {
+  const decision = plan({
+    baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    classified: classifyRowStability([readLeft(), readBoth(), readLeft()]),
+  });
+  assert.deepEqual(decision.quarantinedKeys, []);
+  assert.ok(decision.includeKeys.includes(CENTER));
+});
+
+console.log("\n▸ ★ 삼순 NO-GO 1-b — 원장이 오라클까지 전달돼야 E2E 가 끝난다");
+
+check("원장 key 집합이 뽑힌다", () => {
+  const decision = plan({
+    baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    classified: classifyRowStability([readLeft(), readBoth(), readLeft()]),
+  });
+  assert.deepEqual([...ledgerKeySet(decision.ledger)], [CENTER]);
+});
+
+check("★ 원장이 과대하면 면제가 아니라 fail-close (무제한 면제 방지)", () => {
+  const rows = {};
+  for (let i = 0; i < LEDGER_MIN_ALLOWANCE + 1; i++) rows[`k${i}`] = { observed: 1, missStreak: 0 };
+  assert.throws(
+    () => assertLedgerBounded({ rows }, 100, { label: "수비" }),
+    /row_stability_ledger_overflow/,
+  );
+});
+
+check("상한 이내면 통과한다", () => {
+  assert.equal(assertLedgerBounded({ rows: { a: {}, b: {} } }, 800, { label: "수비" }), 2);
+});
+
+console.log("\n▸ ★ 삼순 NO-GO 2 — digest 가 flapping 으로 매번 바뀌면 freshness window 가 안 차다");
+
+const digestOf = (defenseMap, exclude) =>
+  digestSourceMaps({ defense: defenseMap }, exclude ? { excludeKeys: exclude } : undefined);
+
+check("★ 원장 등재 행이 흔들어도 digest 는 동일하다", () => {
+  const exclude = new Set([CENTER]);
+  assert.equal(digestOf(readLeft(), exclude), digestOf(readBoth(), exclude));
+});
+
+check("★ 그러나 무관한 값이 바뀜면 digest 는 반드시 바뀜다(digest 를 꺼버린 게 아니다)", () => {
+  const exclude = new Set([CENTER]);
+  const changed = obs([[LEFT, cell("전다민", "좌익수", 7)]]);
+  assert.notEqual(digestOf(readLeft(), exclude), digestOf(changed, exclude));
+});
+
+check("제외가 없으면 flapping 이 digest 를 바꿔 window 가 reset 된다(종전 동작)", () => {
+  assert.notEqual(digestOf(readLeft()), digestOf(readBoth()));
 });
 
 console.log("\n▸ ★ 삼순 NO-GO 2 — 회차별 값 충돌은 first/last 로 삼키지 않는다");
@@ -381,22 +454,47 @@ check("크롤러 수비 경로가 확인 재조회 하한·baseline·값충돌�
   );
   assert.match(source, /defense_empty_observation/, "0행 회차 fail-close 가 있어야 한다");
   assert.match(source, /defense_value_conflict/, "회차별 값 충돌 fail-close 가 있어야 한다");
-  assert.match(source, /decideRowRetention/, "baseline 결속이 없으면 기존 행이 한 런에 사라진다");
+  assert.match(source, /planRowSnapshot/, "baseline 결속이 없으면 기존 행이 한 런에 사라진다");
   assert.match(source, /baselineRows:\s*defenseBaseline/, "baseline 을 실제로 넘겨야 한다");
 });
 
-check("★ miss streak 파일이 산출물과 **같은 promote payload** 에 실린다", () => {
-  // 자체발견: 단순 문자열 검사(`row-miss-streak`)로는 promote 에서 뺀 변이를 못 잡았다.
-  // 경로 상수는 파일 위쪽에 그대로 남아있어 정규식이 계속 맞았기 때문이다.
+check("★ 원장 파일이 산출물과 **같은 promote payload** 에 실린다", () => {
+  // 자체발견: 단순 문자열 검사로는 promote 에서 뺀 변이를 못 잡았다 —
+  // 경로 상수는 파일 위쪽에 그대로 남아있어 정규식이 계속 맞기 때문이다.
   // 그래서 artifacts 배열 안에 실제로 들어가는지를 본다.
   const source = readFileSync("scripts/crawl-stats.mjs", "utf8");
   const artifactsBlock = source.match(/const artifacts = \[([\s\S]*?)\n {4}\];/);
   assert.ok(artifactsBlock, "artifacts 배열을 찾지 못했다");
   assert.match(
     artifactsBlock[1],
-    /missStreakPath/,
-    "streak 를 따로 쓰면 검증 실패로 산출물만 롤백되고 streak 만 올라가, 다음 런에 살아있는 행을 지운다",
+    /rowLedgerPath/,
+    "원장을 따로 쓰면 검증 실패로 산출물만 롤백되고 원장만 올라간다",
   );
+});
+
+check("★ 오라클이 원장을 **payload 파생**으로 받는다(caller 주입 아님)", () => {
+  const source = readFileSync("scripts/lib/verified-promote.mjs", "utf8");
+  assert.match(
+    source,
+    /rowLedger:\s*readJson\("-row-ledger\.json"\)/,
+    "context 로 받으면 한 줄로 빈 원장·무제한 원장을 넣을 수 있다",
+  );
+  // 비어있는 원장은 정상이지만 아예 없는 건 실패다.
+  assert.match(source, /key === "rowLedger"/);
+});
+
+check("★ 원장 파일이 workflow allowlist 에 들어있다(없으면 첫 PR 이 무조건 auto-merge HOLD)", () => {
+  const workflow = readFileSync(".github/workflows/update-roster-stats.yml", "utf8");
+  const allowlist = workflow.match(/ALLOWLIST_RE='([^']+)'/);
+  assert.ok(allowlist, "ALLOWLIST_RE 를 찾지 못했다");
+  // 정규식을 직접 태운다 — 문자열 포함 검사는 괄호 위치가 틀려도 통과한다.
+  const re = new RegExp(allowlist[1]);
+  assert.ok(
+    re.test("src/lib/constants/stats-2026-defense-row-ledger.json"),
+    "원장 파일이 allowlist 밖이면 자동 머지가 영구히 보류된다",
+  );
+  assert.ok(re.test("src/lib/constants/stats-2026-defense.json"), "기존 항목 무회귀");
+  assert.ok(!re.test("src/app/page.tsx"), "allowlist 가 너무 넓어지면 안 된다");
 });
 
 check("오라클이 행 집합 실패일 때만 확인 재조회하고, 최초 관측을 산입한다", () => {
