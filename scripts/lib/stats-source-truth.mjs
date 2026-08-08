@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 import { computeDefenseRuns } from "./defense-runs.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./kbo-pagination.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./kbo-select.mjs";
+import {
+  assertConfirmReads,
+  classifyRowStability,
+  describeUnstableRows,
+  MIN_CONFIRM_READS,
+} from "./source-row-stability.mjs";
 
 export const SOURCE_DIGEST_MARKER = "KBO_SOURCE_DIGEST";
 
@@ -124,10 +130,40 @@ export async function collectKboDefensePages(page, url, season) {
   });
 }
 
-/** 한 데이터셋을 KBO 수집 결과와 행 집합 + 전 필드로 대조해 실패 목록을 돌려준다. */
-export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = true, keyOf }) {
+/**
+ * 같은 화면을 N회 독립 조회해 **행 존재 안정성**까지 판정한다.
+ *
+ * ⚠︎ 이 함수는 row-set 불일치가 이미 관측됐을 때만 부른다. 정상 런에서 매번 N배로
+ * 조회하면 게이트 비용이 그대로 N배가 되고, 그러면 게이트를 끄자는 압력이 생긴다.
+ * 확인 비용은 "의심스러울 때만" 낸다.
+ *
+ * reads 하한(`assertConfirmReads`)은 여기서 강제한다 — 1회 관측은 정의상 전부 stable 이라
+ * 종전과 같은 strict 판정이 되는데, union·stable 은 그럴듯하게 채워져 아무도 못 잡는다.
+ */
+export async function collectKboPagesConfirmed(page, url, season, { keyOf, reads } = {}) {
+  assertConfirmReads(reads);
+  const observations = [];
+  for (let i = 0; i < reads; i++) {
+    observations.push(await collectKboPages(page, url, season, { keyOf }));
+  }
+  return classifyRowStability(observations);
+}
+
+/**
+ * 한 데이터셋을 KBO 수집 결과와 행 집합 + 전 필드로 대조해 실패 목록을 돌려준다.
+ *
+ * `unstableKeys` 는 원본이 조회마다 줬다 안 줬다 한 키다(2026-08-08 전다민 54214 실측).
+ * 그 키는 **행 집합** 판정에서만 빠진다 — 값 대조는 그대로다. 흔들리는 건 행의 존재지
+ * 값이 아니고, 값까지 봐주면 그건 게이트를 지운 것이다.
+ */
+export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = true, keyOf, unstableKeys }) {
   const failures = [];
+  const unstable = unstableKeys ?? new Set();
   const fail = (message) => failures.push(message);
+  // 행 집합 실패만 따로 센다 — "확인 재조회를 할지"를 이걸로 결정하기 때문이다.
+  // 값 불일치는 재조회로 바뀌지 않으므로 포함하지 않는다.
+  let rowSetFailures = 0;
+  const failRowSet = (message) => { rowSetFailures++; failures.push(message); };
   const rowKey = keyOf ?? ((row) => String(row.kboId ?? row.playerId ?? "").trim());
 
   const byId = new Map();
@@ -144,13 +180,15 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
 
   if (checkRowSet) {
     for (const id of kbo.keys()) {
+      if (unstable.has(id)) continue; // 원본이 흔든 행 — 존재 여부로 판정하지 않는다
       if (!byId.has(id)) {
-        fail(`${label}: KBO에 있으나 우리 데이터에 없음 — playerId=${id} (${kbo.get(id)?.[1] ?? "?"})`);
+        failRowSet(`${label}: KBO에 있으나 우리 데이터에 없음 — playerId=${id} (${kbo.get(id)?.[1] ?? "?"})`);
       }
     }
     for (const id of byId.keys()) {
+      if (unstable.has(id)) continue;
       if (!kbo.has(id)) {
-        fail(`${label}: 우리 데이터에만 있음 — playerId=${id} (${byId.get(id)?.name})`);
+        failRowSet(`${label}: 우리 데이터에만 있음 — playerId=${id} (${byId.get(id)?.name})`);
       }
     }
   }
@@ -175,7 +213,7 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
     }
   }
 
-  return { failures, cells, ourRows: rows.length, kboRows: kbo.size };
+  return { failures, rowSetFailures, cells, ourRows: rows.length, kboRows: kbo.size };
 }
 
 /**
@@ -188,6 +226,7 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
 export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, log = console.log }) {
   const page = await browser.newPage();
   const failures = [];
+  const unstableNotes = [];
   try {
     const kboPitchers = await collectKboPages(
       page, `${kboBase}/Record/Player/PitcherBasic/Basic1.aspx?sort=GAME_CN`, season,
@@ -218,9 +257,27 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
     });
 
     for (const spec of [
-      { label: "투수", rows: pitchers, kbo: kboPitchers, columns: PITCHER_COLUMNS },
-      { label: "타자", rows: batters, kbo: kboBatters1, columns: BATTER_BASIC1_COLUMNS },
-      { label: "타자(추가지표)", rows: batters, kbo: kboBatters2, columns: BATTER_BASIC2_COLUMNS },
+      {
+        label: "투수",
+        rows: pitchers,
+        kbo: kboPitchers,
+        columns: PITCHER_COLUMNS,
+        url: `${kboBase}/Record/Player/PitcherBasic/Basic1.aspx?sort=GAME_CN`,
+      },
+      {
+        label: "타자",
+        rows: batters,
+        kbo: kboBatters1,
+        columns: BATTER_BASIC1_COLUMNS,
+        url: `${kboBase}/Record/Player/HitterBasic/Basic1.aspx?sort=GAME_CN`,
+      },
+      {
+        label: "타자(추가지표)",
+        rows: batters,
+        kbo: kboBatters2,
+        columns: BATTER_BASIC2_COLUMNS,
+        url: `${kboBase}/Record/Player/HitterBasic/Basic2.aspx?sort=GAME_CN`,
+      },
       // Runner 페이지에는 도루 기록이 있는 선수만 등장하므로 행 집합 대조는 하지 않는다.
       // 대신 등장하는 선수의 sb/cs 값은 반드시 일치해야 하고,
       // Runner 에 없는 선수는 아래에서 sb/cs = 0 인지 따로 확인한다.
@@ -237,9 +294,45 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
         kbo: kboDefense,
         columns: DEFENSE_COLUMNS,
         keyOf: (row) => `${String(row.kboId ?? "").trim()}|${row.pos ?? ""}`,
+        url: `${kboBase}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`,
+        keyOfSource: (id, tds) => `${id}|${tds[3] ?? ""}`,
       },
     ]) {
-      const result = crossCheckDataset(spec);
+      let result = crossCheckDataset(spec);
+
+      /* ── 행 집합 불일치 → 원본 행 불안정인지 확인 재조회 ──────────────
+       *
+       * 2026-08-08 실측: KBO 는 같은 URL 을 조회할 때마다 rank 동률 최하위 구간의 행을
+       * 줬다 안 줬다 한다(전다민 54214, 824↔825). 크롤이 한 번 읽어 산출물을 굳히므로,
+       * 그 뒤 오라클이 다른 회차를 읽으면 "실제로 다르다"가 안정적으로 재현된다.
+       * 재판독으로는 절대 안 풀린다 — 산출물은 이미 고정이기 때문이다.
+       *
+       * 그래서 행 집합 실패가 났을 때만 원본을 추가 관측해, 그 키가
+       * **매 회차 나오는 키인지**를 확인한다. 매번 나오면 진짜 불일치고,
+       * 회차마다 오락가락하면 원본이 흔든 것이다.
+       *
+       * ⚠︎ 값 대조는 이 경로에 없다. 흔들리는 건 행의 존재지 값이 아니다.
+       * ⚠︎ 정상 런에서는 rowSetFailures 가 0 이라 추가 조회가 0회다(비용 그대로).
+       */
+      if (result.rowSetFailures > 0 && spec.url) {
+        log(`    [${spec.label}] 행 집합 불일치 ${result.rowSetFailures}건 — 원본 행 안정성 확인 재조회 ${MIN_CONFIRM_READS}회`);
+        const confirmed = await collectKboPagesConfirmed(page, spec.url, season, {
+          keyOf: spec.keyOfSource,
+          reads: MIN_CONFIRM_READS,
+        });
+        if (confirmed.unstableKeys.size > 0) {
+          const note = describeUnstableRows(spec.label, confirmed.unstableKeys, confirmed.union);
+          log(`    ⚠︎ ${note}`);
+          unstableNotes.push(note);
+        }
+        // 재판정: 확인 관측의 union 을 원본으로 쓰고, 흔들린 키는 행 집합에서 제외한다.
+        result = crossCheckDataset({
+          ...spec,
+          kbo: confirmed.union,
+          unstableKeys: confirmed.unstableKeys,
+        });
+      }
+
       log(`    [${spec.label}] 우리 ${result.ourRows}행 / KBO ${result.kboRows}행 · ${result.cells}셀 대조`);
       failures.push(...result.failures);
     }

@@ -22,6 +22,7 @@ import {
 import { recoverPendingPromotion } from "./lib/atomic-promote.mjs";
 import { promoteStatsSnapshot } from "./lib/verified-promote.mjs";
 import { collectAllPages, createKboPageAdapter, signatureOf } from "./lib/kbo-pagination.mjs";
+import { MIN_CONFIRM_READS } from "./lib/source-row-stability.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +125,12 @@ export async function sortTable(page, sortKey, { attempts = 3, polls = 10, pollI
 async function scrapeAllPages(page) {
   return collectAllPages({ ...createKboPageAdapter(page), log: (line) => console.log(line) });
 }
+
+/**
+ * 수비 페이지 확인 조회 횟수. 하한은 lib 에서 가져온다 — 여기를 1 로 바꾸면 합집합이
+ * 곰 단일 관측이 되어 계약이 사라진다(값은 그대로인데 보호만 없어져 아무도 못 잡는다).
+ */
+const DEFENSE_CONFIRM_READS = MIN_CONFIRM_READS;
 
 async function crawlBatterBasic1(page) {
   console.log("\n📊 타자 Basic1 크롤링...");
@@ -260,14 +267,46 @@ async function crawlPitcher(page) {
   });
 }
 
+/**
+ * 수비 크롤 — **확인 재조회 후 합집합**으로 산출물을 굳힌다.
+ *
+ * ⚠︎ 수비 페이지만 이렇게 한다. 2026-08-08 실측에서 행 존재가 조회마다 흔린 건
+ * 수비였다(rank 동률 최하위 구간, 전달민—전다민 54214 — 824↔825 반복).
+ *
+ * 한 번만 읽으면 그 회차의 운이 그대로 서빙 데이터가 된다 — 어제 있던 포지션 행이
+ * 오늘 사라졌다 내일 돌아오는 플리핑이 기록실·파생 WAR 보정에 그대로 노출된다.
+ *
+ * 합집합이지만 **영욱 누적이 아니다**: 진짜 말소된 행은 다음 런에서 전 회차 부재로
+ * 관측되어 자연히 빠진다 — 직전 산출물을 전혀 참조하지 않기 때문이다.
+ */
 async function crawlDefense(page) {
   console.log("\n📊 수비 크롤링...");
-  // GAME_CN 정렬로 출장기록 있는 전체 수비수 수집 (기본 정렬=수비이닝은 상위권만)
-  await page.goto(`${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`);
-  await page.waitForLoadState("networkidle");
-  await selectSeason(page);
+  const rowsByKey = new Map();
 
-  const rows = await scrapeAllPages(page);
+  for (let read = 1; read <= DEFENSE_CONFIRM_READS; read++) {
+    // GAME_CN 정렬로 출장기록 있는 전체 수비수 수집 (기본 정렬=수비이닝은 상위권만)
+    await page.goto(`${KBO_BASE}/Record/Player/Defense/Basic.aspx?sort=GAME_CN`);
+    await page.waitForLoadState("networkidle");
+    await selectSeason(page);
+
+    const observed = await scrapeAllPages(page);
+    // 0행 관측은 "전부 사라졌다"가 아니라 수집 실패다. 합집합에 섮으면 조용히 무시된다.
+    if (observed.length === 0) {
+      throw new Error(
+        `defense_empty_observation: 수비 ${read}회차 0행 — 수집 실패를 합집합으로 숨길 수 없다`,
+      );
+    }
+    for (const r of observed) {
+      const id = extractPlayerId(r.hrefs?.[1] || "")
+        || findKboId(r.texts?.[1] || "", r.texts?.[2] || "");
+      rowsByKey.set(`${id}|${r.texts?.[3] ?? ""}`, r);
+    }
+    console.log(
+      `    확인 조회 ${read}/${DEFENSE_CONFIRM_READS}: ${observed.length}행 · 합집합 ${rowsByKey.size}행`,
+    );
+  }
+
+  const rows = [...rowsByKey.values()];
 
   // 한 선수가 여러 포지션을 보면 포지션별로 행이 나뉜다 → 행 단위로 보존(포지션 보정용).
   // Columns: 순위(0) 선수명(1) 팀명(2) POS(3) G(4) GS(5) IP(6) E(7) PKO(8) PO(9) A(10) DP(11) FPCT(12) PB(13) SB(14) CS(15) CS%(16)
