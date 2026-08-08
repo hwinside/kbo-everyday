@@ -71,11 +71,18 @@ export const BLOCKED_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;
  * 전부 ① 문구로 나갔다 — 야구 질문을 한 유저에게 "야구 질문만 하라"고 답한 꼴이다.
  */
 export const UNCLEAR_ANSWER = BASEBALL_GENIUS_UNCLEAR_ANSWER;
-// LLM이 야구 룰/용어인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
+// LLM이 야구 질문인지 확신하지 못한 경우 — 차단 문구가 아니라 확인 질문이다.
+//
+// ⚠️ 2026-08-08 문구 현행화 + 예시 추가. 운영 로그 실측(최근 3일 미답변 196건)에서
+// `야구 룰`·`야구 규칙`·`야구 룰 알려줘` 같은 **범위를 그대로 되물은** 질문이 16건이었다.
+// 봇이 "야구 룰 질문만 답할 수 있어요"라고 안내해 놓고 유저가 `야구 룰`이라고 치면
+// 다시 되묻기만 하니 유저는 다음에 뭘 해야 할지 알 수 없다. 되물을 때는 **무엇을 물으면
+// 되는지 실제 예시**를 준다.
 export const UNSURE_ANSWER =
-  "어떤 야구 룰/용어를 여쭤보신 걸까요? 조금만 더 자세히 적어주시면 정확히 답해드릴게요! ⚾";
+  "어떤 걸 여쭤보신 걸까요? 조금만 더 구체적으로 적어주시면 정확히 답해드릴게요. " +
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 요즘 어때?\" ⚾";
 export const SERVICE_REDIRECT_ANSWER =
-  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 룰/용어 질문을 도와드릴게요 ⚾";
+  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 이야기를 도와드릴게요 ⚾";
 /**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
@@ -123,10 +130,26 @@ export const NEWS_UNAVAILABLE_ANSWER =
   "기간을 조금 달리해서(예: ‘최근 LG 어때?’) 다시 물어보시면 찾아볼게요! ⚾";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
-  "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 야구 룰/용어를 한 번만 더 적어주시면 답해드릴게요! ⚾";
+  "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 걸 한 번만 더 적어주시면 답해드릴게요! ⚾";
 
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
+
+/**
+ * **범위 되묻기 안내** — `야구 룰`처럼 "뭔가 되느냐"를 물은 경우.
+ *
+ * 왜 되물지 않는가 — 이 질문은 **우리 안내문이 만든 질문**이다. 봇이 "야구 룰 질문만
+ * 답할 수 있어요"라고 말해놓고 유저가 `야구 룰`이라고 치면 다시 되묻는 건,
+ * 안내를 따른 사람을 벌주는 것이다(운영 로그 최근 3일 16건).
+ *
+ * ⚠️ 문구는 `ANSWER_PATH_SCOPE_WORD` SSOT 의 범위어를 **전부** 담는다 — 게이트가
+ * 대조하므로 새 답변 경로가 생기면 이 문구도 같이 늘어나야 빌드가 통과한다.
+ * 그리고 **바로 물을 수 있는 예시**를 같이 준다 — 범위만 나열하면 유저는 또 뭔가를
+ * 골라야 하고, 그 고르는 부담 때문에 그냥 나간다.
+ */
+export const SCOPE_GUIDE_ANSWER =
+  "제가 답해드릴 수 있는 건 이런 거예요 — 야구 룰·용어, 구단 이야기, 선수, 시즌 기록, 그리고 최근 소식까지요. " +
+  "예를 들어 \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 언제 창단했어?\" \"김도영 타율\" \"요즘 삼성 어때?\" 처럼 물어봐 주세요! ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
 // 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
@@ -175,6 +198,135 @@ const ACK_SET = new Set(ACK_PHRASES.map(normalizeAck));
  */
 export function isAckPhrase(question: string): boolean {
   return ACK_SET.has(normalizeAck(question));
+}
+
+/**
+ * **범위 되묻기**(메타 질문) 판정.
+ *
+ * 사고 — 봇이 `야구 룰·용어 질문만 답할 수 있어요` 라고 안내해 놓고, 유저가 그 안내를
+ * 그대로 따라 `야구 룰` 이라고 치면 다시 되물었다. 운영 로그 실측(최근 3일 미답변
+ * 196건) 중 **16건**이 이 모양이었다. 안내문을 따른 유저를 벌주는 꼴이다.
+ *
+ * ⚠️ **어휘 열거로 풀지 않는다.** 처음엔 문장을 폐쇄집합으로 적었는데, 게이트가 바로
+ * `야구 룰은 뭔가있어?`·`야구 룰 간단하개`(오타)를 놓치는 걸 잡았다. 유저의 문장은
+ * 무한히 변형되므로 열거하는 순간 지는 싸움이다(#1112 에서 사전을 손으로 채우다
+ * 접은 것과 같은 이유).
+ *
+ * 대신 **구조**로 판정한다: "범위어와 의문문 꺼풀을 걷어냈을 때 남는 게 없는가".
+ *
+ *   야구 룰은 뭔가 있어?      → [야구][룰][뭔가][있어]      → 남는 것 없음  → 범위 되묻기
+ *   야구 룰 중에 보크가 뭐야?  → [야구][룰][뭐야] + **보크**  → 남음        → 진짜 질문
+ *
+ * 즉 "무엇을 물었는가"가 비어 있을 때만 되묻기 대신 범위를 안내한다. 이 모양은
+ * 오타·어미·어순이 바뀜도 유지된다 — 새 표현마다 목록을 늘리지 않아도 된다.
+ *
+ * ⚠️ substring 으로 `야구 룰`을 잡지 않는다 — 그러면 진짜 용어 질문까지 안내문으로
+ *   덮는다(#1127 4차 NO-GO 의 `SCORE_CONTEXT_HEADS` 전역 substring 과차단과 같은 실수).
+ */
+
+/** 범위 자체를 가리키는 말 — 이것만 있으면 "뭔가 되느냐"를 물은 것이다. */
+const SCOPE_META_WORDS = [
+  "야구", "구야", "룰", "규칙", "용어", "kbo", "프로야구", "야구경기",
+  "너", "니", "봇", "야잘알봇", "답변", "대답",
+  // "뭐 물어볼 수 있어" 류 — 물음 그 자체를 대상으로 삼은 메타 질문이다.
+  // 꺼풀이 아니라 메타어로 둔다 — 이게 없으면 문장이 통째로 꺼풀만 남아
+  // "범위어가 없다"로 분류돼 안내문이 안 나간다.
+  "물어볼", "물어봐", "물어", "여쭤", "질문",
+];
+
+/**
+ * 의문문 꺼풀 — 물음의 **형식**일 뿐 물은 대상이 아니다.
+ * 어미·조사는 아래 `isParticleOnly` 가 따로 처리하므로 여기엔 어간만 둔다.
+ */
+const SCOPE_ASK_FILLERS = [
+  "뭔가", "뭐가", "무엇", "뭔데", "뭐", "뭔",
+  "어떤", "어떻게", "어떨",
+  "알려줘", "알려주", "알려", "알아",
+  "설명해줘", "설명해", "설명", "가르쳐줘", "가르쳐",
+  "있을까", "있는지", "있어요", "있어", "있나", "있는",
+  "가능", "되나", "돼", "되",
+  "간단하게", "간단하개", "간단히", "간단", "간략히", "간략",
+  "쉬운거", "쉬운", "쉬게", "자세히", "자세한",
+  "전부", "모두", "모든", "좀더", "좀", "더", "다",
+  "주세요", "주실", "해줘", "해", "할", "줘", "줄", "수", "봐", "볼", "야", "임",
+];
+
+const SCOPE_META_SET = new Set(SCOPE_META_WORDS);
+
+/**
+ * 꺼풀을 **붙여쓴 모양까지** 벘겨내기 위한 정규식(긴 것 우선).
+ *
+ * `뭔가있어`·`알려줄수있어` 처럼 띄어쓰기가 무너진 문장이 실제 로그에 많아,
+ * 토큰 단위 집합 비교만으로는 `뭔가있어` 를 놓친다(게이트가 실제로 잡았다).
+ */
+const SCOPE_FILLER_RE = new RegExp(
+  [...SCOPE_ASK_FILLERS].sort((a, b) => b.length - a.length).join("|"),
+  "gu",
+);
+
+/** 조사 꼬리 — 긴 것 우선으로 써야 `에는` 이 `는` 으로 잘리지 않는다. */
+const PARTICLE_TAIL_RE =
+  /(?:에는|에서|으로|부터|까지|처럼|만큼|밖에|이랑|하고|은|는|이|가|을|를|에|도|만|랑|과|와|의|로)$/u;
+
+/**
+ * 범위어·꺼풀을 떼고 남은 꺼데기가 **조사만**인지.
+ *
+ * 한국어는 `룰은`·`뭔가있어` 처럼 붙어 오기 때문에, 메타어/꺼풀을 도려낸 뒤에도
+ * `은`·`가` 같은 자수기가 남는다. 그걸 "남은 내용"으로 세면 `야구 룰은 뭔가있어?` 같은
+ * 명백한 범위 되묻기가 진짜 질문으로 오판된다(게이트가 실제로 잡은 결함).
+ */
+function isParticleOnly(residue: string): boolean {
+  let rest = residue;
+  while (rest) {
+    const next = rest.replace(PARTICLE_TAIL_RE, "");
+    if (next === rest) return false;
+    rest = next;
+  }
+  return true;
+}
+
+/**
+ * 범위 되묻기인지 — **구조 판정**(어휘 열거 아님).
+ *
+ * ⚠️ 이 함수가 `true` 를 돌려도 그것만으로 답이 바뀌지 않는다 — 안내문은
+ * `SCOPE_GUIDE_ANSWER` 가 담당하고, 그 문구는 `ANSWER_PATH_SCOPE_WORD` SSOT 와
+ * 게이트에서 대조된다. 범위가 늘면 문구도 같이 늘어나야 빌드가 통과한다.
+ */
+export function isScopeAskPhrase(question: string): boolean {
+  const normalized = normalizeAck(question).replace(/[?!.,~…]/gu, " ");
+  const rawTokens = normalized.split(/\s+/u).filter(Boolean);
+  if (rawTokens.length === 0) return false;
+
+  let sawMeta = false;
+  let sawRemainder = false;
+  for (const raw of rawTokens) {
+    // 붙여쓴 모양(`야구룰`·`야구규칙`)도 같은 판정을 받아야 한다.
+    //
+    // ⚠️ 여기서 조사를 먼저 떼지 않는다. 초기 구현은 `stripParticles(raw)` 를 거쳤는데
+    //   mutation 으로 그 함수를 통째로 무력화해도 15케이스 전수 결과가 동일했다
+    //   (= 반증 불가능한 죽은 코드). 아래 `isParticleOnly` 가 이미 자수기를 다 처리하므로
+    //   제거했다 — 검증할 수 없는 분기를 남기면 다음 사람이 그걸 계약으로 오독한다.
+    let token = raw;
+    let matchedMeta = false;
+    // 한 토큰이 메타어 여러 개를 붙인 경우(`야구룰`)를 벘겨낸다.
+    for (const meta of SCOPE_META_WORDS) {
+      if (token.includes(meta)) {
+        token = token.split(meta).join("");
+        matchedMeta = true;
+      }
+    }
+    if (matchedMeta) sawMeta = true;
+    if (SCOPE_META_SET.has(token)) {
+      sawMeta = true;
+      continue;
+    }
+    // 꺼풀을 전부 떼어내고 남는 게 조사뿐이면 그 토큰은 "물음의 형식"일 뿐이다.
+    if (isParticleOnly(token.replace(SCOPE_FILLER_RE, ""))) continue;
+    // 범위어도 꺼풀도 아닌 무언가가 남았다 = 물은 대상이 있다 = 진짜 질문이다.
+    sawRemainder = true;
+    break;
+  }
+  return sawMeta && !sawRemainder;
 }
 
 /** LLM 판정 계약 (spec: 야구 룰/용어 판정 3분기). */
@@ -230,6 +382,11 @@ export type QuestionRoute =
   | "blocked"
   | "context_missing"
   | "ack"
+  // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`) — 질문이 아니라 우리 안내문에 대한 반응이다.
+  //
+  // ⚠️ 이 라벨로 로그를 쓰지 않는다 — `match_path` 는 `ack` 으로 확정된다(기존 허용값).
+  // 그래서 DB CHECK 확장·migration 이 필요 없다.
+  | "scope_guide"
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
   //
@@ -1434,6 +1591,11 @@ export function routeQuestion(
   // 폐쇄집합 full-string 완전일치라 `고마워 근데 날씨 알려줘`처럼 새 요청이 붙으면 여기 걸리지
   // 않고 아래 기존 판정(비야구면 LLM NOT_BASEBALL → blocked)으로 그대로 내려간다.
   if (isAckPhrase(question)) return "ack";
+  // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`)는 질문이 아니라 **우리 안내문에 대한 반응**이다.
+  // 외부 조회 없이 결정론으로 닫는다 — `ack` 과 같은 자리에 두는 이유도 같다(둘 다 대화 행위).
+  // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
+  // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
+  if (isScopeAskPhrase(question)) return "scope_guide";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
@@ -2286,9 +2448,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? ACK_ANSWER :
+      route === "scope_guide" ? SCOPE_GUIDE_ANSWER :
       BLOCKED_ANSWER;
-    await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
-    return { status: 200, answer, source: route, remaining };
+    // 범위 되묻기는 `ack` 로 기록한다 — 새 `match_path` 값을 만들면 DB CHECK migration +
+    // reply_kind 열거 + 마스코트 매핑 + 게이트 4곳을 동시에 갱신해야 하고(#1110 실측),
+    // 의미상으로도 둘 다 "질문이 아닌 대화 행위에 결정론으로 답한 것"으로 같은 칸이다.
+    // 감사가 필요하면 `question` 으로 구분된다(폐쇄집합이라 정확히 열거된다).
+    const matchPath = route === "scope_guide" ? "ack" : route;
+    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+    return { status: 200, answer, source: matchPath, remaining };
   }
 
   // ① 검수 사전 (토큰 0)

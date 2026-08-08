@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# 거절·범위 안내 게이트의 **검출력 증명**.
+#
+# 게이트가 PASS 하는 것만으로는 아무것도 증명되지 않는다 — 대상 로직을 망가뜨렸을 때
+# RED 가 되어야 비로소 그 게이트가 무언가를 지키고 있다는 뜻이다.
+#
+# ⚠️ 복원은 `git checkout --` 을 쓰지 않는다(AGENTS.md P0). 파일 백업 → 복사로 되돌리고,
+#   매 변이마다 sha256 을 대조해 복원 실패 시 즉시 중단한다(#1127 에서 복원 누락이
+#   오염된 소스를 그대로 커밋시킨 사고가 있었다).
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+
+GATE="npx tsx scripts/qa/genius-refusal-scope-smoke.ts"
+FILES=(
+  "src/lib/baseball-qa/pipeline.ts"
+  "src/lib/constants/baseball-genius.ts"
+  "src/lib/baseball-qa/gemini-request.ts"
+)
+BACKUP_DIR="$(mktemp -d)"
+SHA_FILE="$BACKUP_DIR/.orig.sha"
+for f in "${FILES[@]}"; do
+  mkdir -p "$BACKUP_DIR/$(dirname "$f")"
+  cp "$f" "$BACKUP_DIR/$f"
+done
+# bash 3.2(맥 기본)에는 연관배열이 없다 — sha 목록을 파일로 들고 대조한다.
+shasum -a 256 "${FILES[@]}" > "$SHA_FILE"
+
+restore() {
+  for f in "${FILES[@]}"; do
+    cp "$BACKUP_DIR/$f" "$f"
+  done
+  # 복원 실패를 조용히 넘기면 오염된 소스가 그대로 커밋된다(#1127 실제 사고).
+  if ! shasum -a 256 -c "$SHA_FILE" >/dev/null 2>&1; then
+    echo "FATAL 복원 실패 (sha 불일치) — 중단한다"
+    exit 2
+  fi
+}
+trap restore EXIT
+
+fail=0
+mutate() {
+  local name="$1"; shift
+  "$@"
+  if $GATE >/dev/null 2>&1; then
+    echo "GREEN(검출실패) $name"
+    fail=1
+  else
+    echo "RED $name"
+  fi
+  restore
+}
+
+echo "=== genius refusal scope mutation RED 증명 ==="
+
+# M1 거절 문구를 구범위로 되돌린다 (이 PR 이 고친 그 사고)
+mutate "M1  거절 문구를 구범위(룰/용어만)로 되돌림" \
+  perl -0pi -e 's/저는 야구 이야기만 답해드릴 수 있어요[^"]*/야구 룰\/용어에 대한 질문만 답할 수 있어요. 예: /' src/lib/constants/baseball-genius.ts
+
+# M2 범위어 하나만 누락시킨다 (전부 지우는 것보다 잡기 어렵다)
+mutate "M2  거절 문구에서 범위어 '최근 소식' 만 제거" \
+  perl -0pi -e 's/, 최근 소식은 얼마든지/은 얼마든지/' src/lib/constants/baseball-genius.ts
+
+# M3 SSOT 표에서 news_rag 범위어를 지운다 → 문구는 그대로여도 대조가 무의미해진다
+mutate "M3  SSOT 표에서 news_rag 범위어 제거" \
+  perl -0pi -e 's/  news_rag: "최근 소식",\n//' src/lib/constants/baseball-genius.ts
+
+# M4 범위 안내 답변을 되묻기로 되돌린다 (라우팅은 살아있고 문구만 바뀜)
+mutate "M4  범위 안내를 UNCLEAR 되묻기로 교체" \
+  perl -0pi -e 's/route === "scope_guide" \? SCOPE_GUIDE_ANSWER :/route === "scope_guide" ? UNCLEAR_ANSWER :/' src/lib/baseball-qa/pipeline.ts
+
+# M5 라우팅 자체를 제거 (`야구 룰` 이 다시 unsure 로 떨어진다)
+mutate "M5  scope_guide 라우팅 제거" \
+  perl -0pi -e 's/  if \(isScopeAskPhrase\(question\)\) return "scope_guide";\n//' src/lib/baseball-qa/pipeline.ts
+
+# M6 판정을 항상 false — 라우팅 코드는 남아있지만 아무것도 안 잡는다
+mutate "M6  isScopeAskPhrase 상시 false" \
+  perl -0pi -e 's/  return sawMeta && !sawRemainder;/  return false;/' src/lib/baseball-qa/pipeline.ts
+
+# M7 판정을 상시 true — 과차단(진짜 질문까지 안내문으로 덮음). 반대 방향 검출력.
+mutate "M7  isScopeAskPhrase 상시 true (과차단)" \
+  perl -0pi -e 's/  return sawMeta && !sawRemainder;/  return true;/' src/lib/baseball-qa/pipeline.ts
+
+# M8 "남은 게 있는지" 검사를 지운다 = 사실상 substring 매칭으로 퇴화 → 과차단
+mutate "M8  잔여 토큰 검사 제거 (substring 퇴화)" \
+  perl -0pi -e 's/  return sawMeta && !sawRemainder;/  return sawMeta;/' src/lib/baseball-qa/pipeline.ts
+
+# M9 조사 처리를 무력화 → `룰은`·`뭐가있어` 의 자수기를 못 떼어 되묻기가 진짜 질문으로 보인다
+#
+# ⚠️ 처음엔 `stripParticles` 를 노렸는데 그 함수는 **반증 불가능한 죽은 코드**였다
+#   (통째로 무력화해도 15케이스 전수 결과 동일) → 소스에서 제거하고, 실제로 살아있는
+#   `isParticleOnly` 를 노린다. 변이가 no-op 이면 GREEN 은 "게이트가 못 잡았다"가
+#   아니라 "노린 코드가 없다"는 뜻이므로, 대상 존재부터 확인한다.
+grep -q "function isParticleOnly" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M9 대상(isParticleOnly)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate "M9  조사 잔여 판정(isParticleOnly) 무력화" \
+  perl -0pi -e 's/function isParticleOnly\(residue: string\): boolean \{/function isParticleOnly(residue: string): boolean {\n  return residue === "";/' src/lib/baseball-qa/pipeline.ts
+
+# M10 꺼풀 목록을 비운다 → 모든 문장에 잔여가 남아 안내문이 안 나간다
+mutate "M10 꺼풀 정규식을 매칭 불가로" \
+  perl -0pi -e 's/const SCOPE_FILLER_RE = new RegExp\(/const SCOPE_FILLER_RE = new RegExp("(?!)" ? "(?!)" : (/' src/lib/baseball-qa/pipeline.ts
+
+# M11 결정론 경로가 LLM 을 태우게 만든다 (토큰 낭비 + 문구 흔들림)
+mutate "M11 범위 안내를 LLM 경로로 흘림" \
+  perl -0pi -e 's/  if \(isScopeAskPhrase\(question\)\) return "scope_guide";/  if (isScopeAskPhrase(question)) return "llm_scope_gate";/' src/lib/baseball-qa/pipeline.ts
+
+# M12 로그 match_path 를 허용값 밖으로 (DB CHECK 위반 → 운영에서 pipeline_failed)
+mutate "M12 scope_guide 를 match_path 로 그대로 기록" \
+  perl -0pi -e 's/const matchPath = route === "scope_guide" \? "ack" : route;/const matchPath = route;/' src/lib/baseball-qa/pipeline.ts
+
+# M13 판정 프롬프트를 구계약으로 되돌린다 (unsure 42% 의 원인)
+# ⚠️ 자체 발견 2건: ①소스가 전각 물결(U+FF5E)이라 ASCII `~` 로 쓰면 치환이 no-op
+#   ②`-CSD` 를 주면 입력만 디코드되고 명령행 패턴은 바이트라 역시 no-op.
+#   변이 스크립트의 no-op 은 "게이트가 못 잡았다"로 위장된다 — RED 가 안 뜨면
+#   게이트를 의심하기 전에 치환이 실제로 일어났는지부터 본다.
+mutate "M13 판정 프롬프트를 룰/용어 한정으로 되돌림" \
+  perl -0pi -e 's/범위 안인지 확실하지 않으면/야구 룰\/용어인지 확실하지 않으면/' src/lib/baseball-qa/gemini-request.ts
+
+# M14 안내문에서 예시를 전부 제거 (범위만 나열하면 유저가 다음 행동을 못 한다)
+mutate "M14 범위 안내문에서 예시 제거" \
+  perl -0pi -e 's/"예를 들어[^;]*⚾";/"";/' src/lib/baseball-qa/pipeline.ts
+
+# M15 감사 인사를 범위 안내가 삼키게 만든다 (경계 침범).
+#
+# ⚠️ 처음엔 "scope_guide 를 ack 보다 앞에 둔다"로 썼는데 **동등변이**였다 — 두 집합이
+#   안 겹쳐서 순서를 바꿔도 결과가 같다. 순서가 아니라 **집합이 겹치게** 만들어야
+#   경계 계약을 실제로 건드린다.
+mutate "M15 감사 인사(고마워)를 범위 되묻기 집합에 포함" \
+  perl -0pi -e 's/  "너", "니", "봇", "야잘알봇", "답변", "대답",/  "너", "니", "봇", "야잘알봇", "답변", "대답", "고마워", "감사",/' src/lib/baseball-qa/pipeline.ts
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "✅ 전 변이 RED — 게이트가 대상 로직을 실제로 지키고 있다"
+else
+  echo "❌ GREEN(검출실패) 변이가 있다 — 게이트를 보강해야 한다"
+fi
+
+restore
+$GATE >/dev/null 2>&1 && echo "RESTORE-OK 원본 복원 후 게이트 GREEN" || { echo "FATAL 복원 후에도 RED"; exit 2; }
+exit "$fail"
