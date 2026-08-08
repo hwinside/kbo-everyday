@@ -274,42 +274,83 @@ console.log("\n▸ 결속(배선이 실제로 살아 있는가)");
 const workflow = readFileSync(WORKFLOW, "utf8");
 const crawler = readFileSync(CRAWLER, "utf8");
 
-/* ⚠︎ 삼순 3차 ① — **producer 와 consumer 가 같은 경로를 봐야 한다.**
+/* ⚠︎ producer 와 consumer 가 **같은 경로**를 봐야 한다. 여기서 두 번 틀렸다.
  *
- * 초안은 증거 경로를 `Crawl roster` **step 레벨** env 에 뒀다. 그러면 크롤은 증거를 쓰지만
- * 자동머지 판정 스텝에서는 env 가 비어 있어 언제나 `evidence_missing` 이 되고, 가드가
- * 영구 보류로 굳는다 — 즉 이 PR 이 아무것도 열지 못한다(삼순 실증, YAML 파싱으로 확인).
- * 그래서 job 레벨 env 하나를 SSOT 로 두고, 게이트는 **두 스텝이 같은 값을 본다**는 사실을
- * YAML 을 실제로 파싱해 확인한다(문자열 존재 검사로는 이 결손이 안 잡힌다). */
+ *   1차 결손: `Crawl roster` **step 레벨** env 에 뒀다 → 판정 스텝은 env 가 비어
+ *             언제나 `evidence_missing`, 가드가 영구 보류로 굳는다.
+ *   2차 결손: 그래서 `jobs.<job_id>.env` 로 올렸다 → **job 레벨 env 는 `runner`
+ *             context 를 허용하지 않는다.** 공식 Context availability:
+ *               jobs.<job_id>.env = github, needs, strategy, matrix, vars, secrets, inputs
+ *             `${{ runner.temp }}` 가 빈 문자열로 평가돼 경로가 `/roster-...json` 이 되고
+ *             쓰기 실패 → 역시 영구 보류다. 둘 다 "조용히 아무것도 열지 않는" 형태다.
+ *
+ * 확정 방식: setup 스텝이 셸에서 `$RUNNER_TEMP` 를 해석해 `$GITHUB_ENV` 에 넣는다.
+ * 이후 전 스텝이 같은 값을 본다. 게이트는 YAML 을 실제 파싱해 (a)어느 스코프가 값을
+ * 공급하는지 (b)그 스코프에서 그 context 가 **허용되는지**를 함께 본다. */
 const workflowDoc = yaml.load(workflow);
 const updateJob = workflowDoc?.jobs?.update;
 
 const stepsOf = (job) => (Array.isArray(job?.steps) ? job.steps : []);
-const findStep = (name) => stepsOf(updateJob).find((st) => String(st?.name ?? "").includes(name));
+const stepIndex = (name) =>
+  stepsOf(updateJob).findIndex((st) => String(st?.name ?? "").includes(name));
+const findStep = (name) => stepsOf(updateJob)[stepIndex(name)];
 
-/** 그 스텝이 실제로 보는 증거 경로(step env 가 있으면 그것, 없으면 job env). */
-const effectiveEvidencePath = (step) =>
-  step?.env?.[EVIDENCE_PATH_ENV] ?? updateJob?.env?.[EVIDENCE_PATH_ENV] ?? null;
+/**
+ * `jobs.<job_id>.env` 에서 허용되는 context 집합(공식 Context availability).
+ * `runner`·`job`·`steps`·`env` 는 **여기 없다** — job env 는 러너 배정 전에 평가된다.
+ */
+const JOB_ENV_ALLOWED_CONTEXTS = new Set([
+  "github", "needs", "strategy", "matrix", "vars", "secrets", "inputs",
+]);
 
-check("★ producer·consumer 가 **같은** 증거 경로를 본다(step 레벨 env 결손 차단)", () => {
-  const producer = findStep("Crawl roster");
-  const consumer = findStep("auto-merge");
-  assert.ok(producer, "Crawl roster 스텝을 찾지 못했다");
-  assert.ok(consumer, "자동머지 스텝을 찾지 못했다");
+const contextsUsedIn = (value) =>
+  [...String(value ?? "").matchAll(/\$\{\{\s*([A-Za-z_][A-Za-z0-9_-]*)\s*\./g)].map((m) => m[1]);
 
-  const producerPath = effectiveEvidencePath(producer);
-  const consumerPath = effectiveEvidencePath(consumer);
-  assert.ok(producerPath, "producer 가 증거 경로를 못 본다 — 증거가 아예 안 쓰인다");
-  assert.ok(
-    consumerPath,
-    "consumer 가 증거 경로를 못 본다 — 항상 evidence_missing 이 되어 가드가 영구 보류로 굳는다",
+check("★ job 레벨 env 가 허용되지 않는 context 를 쓰지 않는다(runner 등 → 빈 문자열)", () => {
+  const jobEnv = updateJob?.env ?? {};
+  const offenders = [];
+  for (const [name, value] of Object.entries(jobEnv)) {
+    for (const ctx of contextsUsedIn(value)) {
+      if (!JOB_ENV_ALLOWED_CONTEXTS.has(ctx)) offenders.push(`${name} uses ${ctx}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "job 레벨 env 에서는 그 context 가 빈 문자열로 평가돼 경로가 조용히 깨진다"
+      + ` — ${offenders.join(", ")}`,
   );
-  assert.equal(producerPath, consumerPath, "두 스텝이 다른 경로를 보면 증거가 전달되지 않는다");
 });
 
-check("★ 증거는 workspace 밖(runner.temp)에 쓴다 — allowlist·git diff 오염 금지", () => {
-  const path = effectiveEvidencePath(findStep("Crawl roster"));
-  assert.match(String(path), /runner\.temp/, "workspace 안에 쓰면 생성 데이터로 오인된다");
+check("★ 증거 경로를 $GITHUB_ENV 로 정의하는 setup 스텝이 크롤보다 **앞**에 있다", () => {
+  const setupIdx = stepIndex("Resolve roster completion evidence path");
+  const crawlIdx = stepIndex("Crawl roster");
+  assert.ok(setupIdx >= 0, "증거 경로 setup 스텝을 찾지 못했다");
+  assert.ok(crawlIdx >= 0, "Crawl roster 스텝을 찾지 못했다");
+  assert.ok(setupIdx < crawlIdx, "setup 이 크롤보다 뒤면 크롤 시점에 경로가 없다");
+
+  const run = String(stepsOf(updateJob)[setupIdx]?.run ?? "");
+  assert.match(run, new RegExp(`${EVIDENCE_PATH_ENV}=`), "증거 경로 변수를 정의하지 않는다");
+  assert.match(run, />>\s*"?\$GITHUB_ENV/, "$GITHUB_ENV 에 넣지 않으면 다음 스텝이 못 본다");
+  // 셸 변수여야 한다 — `${{ runner.temp }}` 는 step 안에서는 되지만 여기선 셸로 통일한다.
+  assert.match(run, /\$RUNNER_TEMP/, "workspace 밖(RUNNER_TEMP)에 써야 allowlist 를 오염시키지 않는다");
+});
+
+check("★ producer·consumer 가 그 값을 **덮어쓰지 않는다**(같은 경로를 본다)", () => {
+  for (const name of ["Crawl roster", "auto-merge"]) {
+    const step = findStep(name);
+    assert.ok(step, `${name} 스텝을 찾지 못했다`);
+    assert.equal(
+      step?.env?.[EVIDENCE_PATH_ENV],
+      undefined,
+      `${name} 가 증거 경로를 step env 로 재정의하면 두 스텝이 다른 경로를 볼 수 있다`,
+    );
+  }
+  assert.equal(
+    updateJob?.env?.[EVIDENCE_PATH_ENV],
+    undefined,
+    "job 레벨 재정의는 runner context 미허용 문제로 되돌아간다",
+  );
 });
 
 check("★ 크롤러가 증거를 **공용 생성기로만** 만든다(직접 조립 금지)", () => {
