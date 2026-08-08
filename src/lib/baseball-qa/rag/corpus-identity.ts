@@ -68,7 +68,16 @@ const CATEGORY_SCAN_CHARS = 1_200;
  */
 export function extractCorpusCategories(text: string): string {
   const head = text.slice(0, CATEGORY_SCAN_CHARS);
-  const matched = /분류([^\n]{0,300})/.exec(head);
+  // ⚠️ **길이 상한을 두지 않는다** (2026-08-09 실측 결함).
+  //   종전엔 `{0,300}` 이었는데, 분류가 긴 선수는 그 칸을 넘어간다:
+  //     `양의지` 분류 428자 — `대한민국의 남자 야구 선수` 가 300자 **밖**에 있어
+  //     `not_baseball_player_document` 로 거부됐다. 문서는 정확히 본인 문서다.
+  //   훈장·수상이 많은 **베테랑일수록** 분류가 길어져서, 하필 유명 선수가 버려졌다.
+  //
+  //   상한을 없애도 안전하다 — `[^\n]` 이므로 **줄바꿈에서 자연히 끝난다**. 분류는
+  //   한 줄이고 그 줄을 끝까지 읽는 것이 원래 의도였다. 스캔 범위는 `CATEGORY_SCAN_CHARS`
+  //   가 여전히 제한한다(본문 중간의 `분류` 글자를 잡지 않는다).
+  const matched = /분류([^\n]*)/.exec(head);
   return matched?.[1] ?? "";
 }
 
@@ -94,6 +103,55 @@ export function matchesBirthYear(categories: string, birthYear: string | undefin
   return years.has(birthYear);
 }
 
+/** 문서 인포박스의 완전한 생년월일. 분류 라인 뒤 `YYYY년 M월 D일` 로 적힌다. */
+export function extractDocumentBirthDate(
+  text: string,
+): { year: number; month: number; day: number } | undefined {
+  // ⚠️ `2002년 데뷔` 처럼 **연도만 있는 항목은 잡히지 않는다**(월·일까지 요구한다).
+  //   인포박스의 `출생` 항목이 문서 앞부분의 첫 완전 날짜다.
+  const matched = /((?:19|20)\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일/.exec(text.slice(0, 6_000));
+  if (!matched) return undefined;
+  return { year: Number(matched[1]), month: Number(matched[2]), day: Number(matched[3]) };
+}
+
+/**
+ * **해 경계 생년 불일치**가 빠른생일·음력 표기 차이로 설명되는가.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-09 실측 결함) — 생년 정확 일치만 보면 본인 문서가 거부된다:
+ *     최형우   문서 1984년 1월 18일    로스터 1983-12-16   (33일 차)
+ *     장성우   문서 1989년 12월 17일   로스터 1990-01-17   (31일 차)
+ *     김태혁   문서 1987년 12월 30일   로스터 1988-01-02   (3일 차)
+ *   세 명 모두 **같은 사람**이고, KBO 등록과 나무위키 분류가 서로 다른 기준
+ *   (반년 빨리 입학한 "빠른생일" · 음력 생일)을 쓴 것뿐이다.
+ *
+ * ⚠️ 그렇다고 "1년 차이는 허용"으로 느슨하게 하면 **동명이인 형제·부자를 섞는다**.
+ *   그래서 근거를 요구한다 — **둘 다 해 경계(12월 또는 1월)에 있고, 실제 날짜 간격이
+ *   60일 이내**일 때만 생년만 다른 동일인으로 본다. 달이 중간이면(예: 6월)
+ *   빠른생일로 설명되지 않으므로 그대로 거부한다.
+ *
+ * @param documentBirthDate 문서 본문에서 읽은 생년월일
+ * @param rosterBirthDate   로스터 `YYYY-MM-DD`
+ */
+export function isYearBoundaryBirthDate(
+  documentBirthDate: { year: number; month: number; day: number } | undefined,
+  rosterBirthDate: string | undefined,
+): boolean {
+  if (!documentBirthDate || !rosterBirthDate) return false;
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rosterBirthDate);
+  if (!parsed) return false;
+  const rosterYear = Number(parsed[1]);
+  const rosterMonth = Number(parsed[2]);
+  // 생년이 정확히 1년 차여야 한다. 2년 이상은 빠른생일로 설명되지 않는다.
+  if (Math.abs(documentBirthDate.year - rosterYear) !== 1) return false;
+  // 둘 다 해 경계에 있어야 한다 — 이게 빠른생일·음력의 서명이다.
+  const boundary = (month: number) => month === 12 || month === 1;
+  if (!boundary(documentBirthDate.month) || !boundary(rosterMonth)) return false;
+  // 실제 날짜 간격이 60일 이내여야 한다(달만 맞고 날짜가 멀면 다른 사람이다).
+  const docTime = Date.UTC(documentBirthDate.year, documentBirthDate.month - 1, documentBirthDate.day);
+  const rosterTime = Date.UTC(rosterYear, rosterMonth - 1, Number(parsed[3]));
+  return Math.abs(docTime - rosterTime) / 86_400_000 <= 60;
+}
+
 /**
  * corpus 루트 문서 1건의 신원 판정.
  *
@@ -103,6 +161,11 @@ export function matchesBirthYear(categories: string, birthYear: string | undefin
 export function verifyCorpusPlayerIdentity(input: {
   text: string;
   rosterBirthYear?: string;
+  /**
+   * 로스터 생년월일 `YYYY-MM-DD`. 있으면 **해 경계 빠른생일** 구제가 활성화된다.
+   * 없으면 종전과 똑같이 연도 정확 일치만 본다 — 없는 근거로 통과시키지 않는다.
+   */
+  rosterBirthDate?: string;
   seedName?: string;
   documentTitle?: string;
 }): CorpusIdentityVerdict {
@@ -125,7 +188,15 @@ export function verifyCorpusPlayerIdentity(input: {
     return { ok: false, status: "ambiguous", reason: "document_birth_year_absent" };
   }
   if (!birthMatch) {
-    return { ok: false, status: "rejected", reason: "birth_year_mismatch" };
+    // ⚠️ 거부 전에 **해 경계 빠른생일**을 한 번 더 본다 (2026-08-09 실측 결함).
+    //   최형우·장성우·김태혁은 본인 문서인데 KBO 등록과 나무위키 분류가 기준이 달라
+    //   연도가 1 차이로 어긋나 거부됐다. 단, 느슨하게 허용하면 동명이인 형제를 섞으므로
+    //   `isYearBoundaryBirthDate` 가 요구하는 근거(둘 다 12/1월 + 실제 간격 60일 이내)를
+    //   충족할 때만 구제한다. 근거가 없으면 종전대로 거부다(fail-close 유지).
+    const documentBirthDate = extractDocumentBirthDate(input.text);
+    if (!isYearBoundaryBirthDate(documentBirthDate, input.rosterBirthDate)) {
+      return { ok: false, status: "rejected", reason: "birth_year_mismatch" };
+    }
   }
 
   // 제목 대조 (삼순 NO-GO ①). 생년으로 걸러지지 않는 타인 문서 오귀속을 막는 마지막 방어선이다.

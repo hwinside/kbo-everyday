@@ -313,6 +313,7 @@
     "build:baseball-source-inventory:seed": "tsx scripts/baseball-qa/build-source-inventory.ts --emit-seed",
     "qa:baseball-rag-full-retention": "tsx scripts/qa/baseball-qa-rag-full-retention-smoke.ts",
     "qa:baseball-corpus-identity": "tsx scripts/qa/baseball-qa-corpus-identity-smoke.ts",
+    "qa:baseball-corpus-identity:mutations": "bash scripts/qa/corpus-identity-mutations.sh",
     "qa:baseball-corpus-loader": "tsx scripts/qa/baseball-qa-corpus-loader-smoke.ts",
     "qa:baseball-corpus-ledger-full-pg": "tsx scripts/qa/baseball-qa-corpus-ledger-full-pg.ts",
     "rag:load-corpus": "tsx scripts/baseball-qa/load-corpus-sources.ts",

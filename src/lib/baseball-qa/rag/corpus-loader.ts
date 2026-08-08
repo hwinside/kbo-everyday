@@ -289,6 +289,9 @@ export function buildCorpusSourcePlan(
     const identity = verifyCorpusPlayerIdentity({
       text: root.text,
       rosterBirthYear: player.birthDate?.slice(0, 4),
+      // ⚠️ 전체 날짜를 넘긴다 — 연도만 넘기면 빠른생일·음력 구제가 동작하지 않는다
+      //   (최형우·장성우·김태혁이 본인 문서인데 거부된 실측 결함, 2026-08-09).
+      rosterBirthDate: player.birthDate,
       seedName: root.entity,
       documentTitle: root.title,
     });
