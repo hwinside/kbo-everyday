@@ -998,63 +998,86 @@ const TERM_DEFINITION_INTENT =
 export type NamedStatKind = "entity_stat" | "term_question" | "ambiguous" | "none";
 
 /**
- * **기능어 단위**의 폐쇄집합 — 문장에 *새 정보를 더하지 않는* 조각들.
+ * 매치 주변 잔여에 **새 야구 정보가 있는가**.
  *
- * ⚠️ 종전에는 "매치가 문장 선두여야 한다"(`m.index !== 0`) + 꼬리 **열거**로 판정했다.
- *   그래서 `그럼 이대호 홈런`(접두)·`이대호 홈런 알려줘요`(열거에 없는 존대형)가 전부
- *   빠져나갔다(삼순 P0). 위치와 열거 대신 **분해 가능성**으로 판정한다:
- *   매치를 뺀 나머지가 이 단위들로 **완전히 분해되면** 문장은 여전히 `<X> <지표>` 그 자체다.
+ * ⚠️ 이것이 이 가드의 판정 축이다(삼순 2026-08-08 P0, 세 번째 재설계).
  *
- *   `선수 역할이 바뀌면 기록은` 의 앞부분 `선수 역할이` 는 `선수`·`역할` 이 이 집합에 없어
- *   분해되지 않는다 → bare 아님 → 이 가드가 손대지 않는다(정상 룰 질문 보호).
+ * 같은 실패를 세 번 했다:
+ *   ① `m.index !== 0`(위치)         → `그럼 이대호 홈런` 이 빠져나갔다
+ *   ② `REQUEST_TAILS`(꼬리 열거)     → `알려줘요`·`부탁해` 가 빠져나갔다
+ *   ③ `FUNCTION_UNITS`(기능어 열거)  → `알려주실래요`·`부탁드립니다` 가 빠져나갔다
+ * ③은 ②를 더 큰 열거로 바꾼 것일 뿐이었다. **한국어 존대·완곡 표현은 열거로 닫히지
+ * 않는다** — 어미 조합이 사실상 무한하고, 빠진 조합은 조용히 뚫린다.
+ *
+ * 그래서 축을 뒤집는다. "잔여가 기능어인가"(무한집합을 내가 관리)를 묻지 않고
+ * **"잔여에 새 야구 정보가 있는가"**(이미 있는 SSOT 가 답한다)를 묻는다:
+ *   · 야구 어휘집(`BASEBALL_VOCABULARY`) — 룰·용어·포지션·행위자
+ *   · 로스터(`players`)                 — 현역 선수명
+ *   · 지표어(`STAT_WORDS`)              — 또 다른 `<지표>`
+ * 하나도 없으면 그 잔여는 문장의 의미를 바꾸지 않는다 → 문장은 `<X> <지표>` 그 자체다.
+ *
+ * `알려주실래요`·`부탁드립니다`·`좀 알려주시면 감사하겠습니다` 는 야구 정보가 0이라
+ * **내가 아무것도 등록하지 않아도** bare 로 잡힌다. 반대로 `선수 역할이 바뀌면 기록은` 의
+ * `선수 역할이` 는 `선수`(행위자 어휘)를 담아 정상 룰 질문으로 보호된다.
+ *
+ * ⚠️ 토큰 경계로 본다. 부분문자열로 보면 `아웃도어`·`도루묵` 이 야구 정보로 오인된다
+ *   (기존 `GRAMMATICAL_TAIL_UNITS` 주석이 경고한 축과 같다).
  */
-const FUNCTION_UNITS: readonly string[] = [
-  // 담화 표지(접두)
-  "그럼", "그러면", "그래서", "그리고", "근데", "그런데", "이제", "혹시", "일단",
-  "아", "어", "음", "자", "저기", "그", "저", "좀", "한번", "다시", "또",
-  // 조사·어미
-  "은", "는", "이", "가", "을", "를", "에", "의", "도", "만", "과", "와", "랑",
-  // 조각을 잇는 연결 조사 — `만루 홈런이랑 이대호 홈런` 의 `이랑`.
-  "이랑", "이나", "나", "하고", "그리고", "이고", "고", "며", "이며",
-  "요", "야", "라", "나", "죠", "지", "네", "까", "니", "고",
-  // 요청 동사·꼬리
-  "알려", "보여", "가르쳐", "말해", "부탁", "주세요", "주라", "줘라", "줘", "주",
-  "해", "해줘", "하", "해주", "돼", "되", "어때", "어떻게", "개", "궁금",
-  // 의문사 — **엔티티가 아니다**(2026-08-08 게이트 실측). `안타는 뭐고 홈런은 뭐에요?` 에서
-  // `뭐고` 가 미결속 엔티티로 읽혀 정상 용어 질문이 되묻기로 끝났다.
-  "뭐", "뭔", "무슨", "무엇", "뜻", "의미", "차이", "설명", "어떤", "어느",
-  "왜", "언제", "어디", "누구", "몇", "얼마", "예요", "에요", "인가", "인지",
-];
+function carriesBaseballInformation(residue: string, players: PlayerRef[]): boolean {
+  const text = residue.replace(/[?!.,~…]/gu, " ").trim();
+  if (text.length === 0) return false;
+  for (const rawToken of text.split(/\s+/u)) {
+    if (!rawToken) continue;
+    for (const core of stripTokenSuffix(rawToken)) {
+      if (!core) continue;
+      for (const word of BASEBALL_VOCABULARY) {
+        if (core === word) return true;
+        if (core.startsWith(word) && isGrammaticalTail(core.slice(word.length))) return true;
+      }
+      for (const stat of STAT_WORDS) {
+        if (core === stat) return true;
+        if (core.startsWith(stat) && isGrammaticalTail(core.slice(stat.length))) return true;
+      }
+      for (const player of players) {
+        if (core === player.name) return true;
+        const parts = player.name.split(/\s+/u);
+        if (parts.length > 1 && core === parts[parts.length - 1]) return true;
+      }
+    }
+  }
+  return false;
+}
 
 /**
  * `<X>` 자리에 올 수 있지만 **엔티티일 수 없는** 지시어·의문사·연결 표지.
  *
- * ⚠️ `FUNCTION_UNITS` 보다 **좁다**. 요청 동사(`주`·`해`·`알려`)와 단독 담화 표지(`자`)를
- *   일부러 뺐다 — 그것들까지 넣으면 `주자` 같은 실제 야구 어휘가 쪼개진다.
+ * ⚠️ 이건 위 SSOT 역판정으로 대체할 수 없다. 지시어·의문사는 야구 정보가 0 이면서
+ *   동시에 **엔티티도 아니다** — `<X>` 자리가 비었다는 뜻이므로 판단 대상 자체가 없다.
+ *   좁은 폐쇄집합으로 두는 이유: 넓히면 `주자` 가 `주`+`자` 로 쪼개져 실제 야구 어휘가
+ *   사라진다(2026-08-08 게이트 실측).
  */
 const HEAD_NON_ENTITY_UNITS: readonly string[] = [
-  // 지시
+  // 인칭 대명사 — 사슬 경계 도입 후 드러난 축(2026-08-08 게이트 실측).
+  //   `기록에 삼진은 우리가 삼진 당한 거야?` 에서 두 번째 매치 head 가 `우리가` 인데,
+  //   사이 구간(`은 `)에 야구 정보가 없어 bare 로 잡혀 정상 룰 질문이 되묻기로 끝났다.
+  // ⚠️ 여기는 열거가 정당하다. 인칭 대명사는 **문법적으로 닫힌 부류**이고 head 자리는
+  //   토큰 하나다 — ③에서 폐기한 존대·완곡 어미(사실상 무한 조합)와 다른 축이다.
+  "우리들", "우리", "저희", "당신", "그들", "그분", "이분", "너", "내", "제", "니", "네",
   "그것", "이것", "저것", "그거", "이거", "저거", "그", "저", "이",
-  // 담화 표지
   "그러면", "그래서", "그리고", "그런데", "그럼", "근데", "혹시", "일단",
-  // 의문사
   "무엇", "무슨", "어떤", "어느", "언제", "어디", "누구", "얼마", "뭔지", "뭔가", "뭔데",
   "뭐라고", "뭐라", "뭐야", "뭐지", "뭐", "뭔", "왜", "몇",
-  // 연결·종결
   "이랑", "하고", "이고", "이며", "예요", "에요", "인가", "인지",
   "고", "랑", "며", "은", "는", "이", "가", "을", "를", "도", "만", "과", "와",
   "의", "에", "요", "야", "나",
 ];
 
 /**
- * **긴 단위 우선** 정렬. 순서가 계약이다 — 짧은 단위가 먼저 걸리면 긴 단위를 삼킨다.
- * `어때` 가 `어`(담화 표지) + `때`(미등록)로 쪼개져 분해 실패로 판정된 실측이 있다.
+ * **긴 단위 우선** 정렬. 순서가 계약이다 — 짧은 단위가 먼저 걸리면 긴 단위를 삼킨다
+ * (`어때` 가 `어`+`때` 로 쪼개져 분해 실패로 판정된 실측이 있다).
  */
-function longestFirst(units: readonly string[]): readonly string[] {
-  return [...units].sort((a, b) => b.length - a.length);
-}
-const FUNCTION_UNITS_LONGEST_FIRST = longestFirst(FUNCTION_UNITS);
-const HEAD_NON_ENTITY_LONGEST_FIRST = longestFirst(HEAD_NON_ENTITY_UNITS);
+const HEAD_NON_ENTITY_LONGEST_FIRST: readonly string[] =
+  [...HEAD_NON_ENTITY_UNITS].sort((a, b) => b.length - a.length);
 
 /** 주어진 단위 집합으로 완전히 분해되는가 — 하나라도 못 떼면 내용어가 남은 것이다. */
 function decomposesToUnits(text: string, units: readonly string[]): boolean {
@@ -1066,11 +1089,6 @@ function decomposesToUnits(text: string, units: readonly string[]): boolean {
     return false;
   }
   return true;
-}
-
-/** 앞뒤 잔여가 기능어로만 이루어졌는가. */
-function decomposesToFunctionUnits(text: string): boolean {
-  return decomposesToUnits(text, FUNCTION_UNITS_LONGEST_FIRST);
 }
 
 /** 토큰 끝의 조사를 떼어낸 핵. `홀드와` → `홀드` */
@@ -1093,7 +1111,6 @@ function classifyOneNamedStat(
   suffix: string,
   glossary: GlossaryEntry[],
   players: PlayerRef[],
-  hasTeam: boolean,
 ): NamedStatKind {
   const head = stripNameParticle(m[1]);
   const metric = m[2];
@@ -1105,9 +1122,14 @@ function classifyOneNamedStat(
     const parts = p.name.split(/\s+/u);
     return parts.length > 1 && parts[parts.length - 1] === head;
   });
+  // ⚠️ 구단 결속은 **이 매치의 head 로** 판정한다(삼순 2026-08-08 P0).
+  //   문장 전체의 `hasTeam` 을 쓰면 `LG 팀타율이랑 오타니 홈런` 에서 두 매치가 **둘 다**
+  //   결속으로 잡혀 미결속 절이 통과한다 — 안전한 절이 위험한 절을 태우는 형태다.
+  //   `hasTeam` 은 호출부가 넘긴 문장 단위 신호라 여기서는 참고만 하지 않고 버린다.
+  const isTeamEntity = mentionsTeam(questionTokens(head));
   // ⚠️ 수치 의도를 **요구하지 않는다**(2026-08-08 실측). `김도영 홈런` 처럼 bare 로 와도
   //   `<로스터 선수> <지표>` 는 기록 질문이다.
-  if (isRosterEntity || hasTeam) return "entity_stat";
+  if (isRosterEntity || isTeamEntity) return "entity_stat";
 
   // ② **검증된 용어 근거가 있을 때만** 용어로 연다 (삼순 P0).
   //
@@ -1144,8 +1166,10 @@ function classifyOneNamedStat(
   if (/몇|얼마/.test(normalized)) return "ambiguous";
   if (TERM_DEFINITION_INTENT.test(normalized)) return "ambiguous";
 
-  // bare = 인접 매치와의 사이가 **기능어로만** 분해된다 = 이 조각이 `<X> <지표>` 그 자체.
-  if (decomposesToFunctionUnits(prefix) && decomposesToFunctionUnits(suffix)) return "ambiguous";
+  // bare = 인접 매치와의 사이에 **새 야구 정보가 없다** = 이 조각이 `<X> <지표>` 그 자체.
+  if (!carriesBaseballInformation(prefix, players) && !carriesBaseballInformation(suffix, players)) {
+    return "ambiguous";
+  }
 
   // 문장 안에 지표어가 우연히 들어간 정상 룰 질문(`선수 역할이 바뀌면 기록은`).
   // 이 가드의 판단 범위가 아니므로 손대지 않는다.
@@ -1162,12 +1186,18 @@ function classifyOneNamedStat(
  * ⚠️ 집계는 **fail-close** 다: 하나라도 되묻기면 문장 전체가 되묻기다.
  *   섞인 문장은 어느 쪽으로 답해도 나머지 절이 근거 없이 생성된다.
  */
-export function classifyNamedStat(
+/**
+ * 문장 안의 **각 `<X> <지표>` 매치별 판정**. 집계 전 원자료다.
+ *
+ * 집계는 정보를 지운다 — `김도영 홈런과 이대호 홈런` 은 집계하면 `ambiguous` 하나지만,
+ * 실제로는 `entity_stat` 와 `ambiguous` 가 **섞인** 문장이다. 그 구분이 필요한 곳이 있다
+ * (`answerQuestion` 앞단 fail-close, 삼순 2026-08-08 P0).
+ */
+export function classifyNamedStatMatches(
   normalized: string,
   glossary: GlossaryEntry[],
   players: PlayerRef[],
-  hasTeam: boolean,
-): NamedStatKind {
+): NamedStatKind[] {
   NAMED_STAT_HEAD.lastIndex = 0;
   const matches: RegExpExecArray[] = [];
   let m: RegExpExecArray | null;
@@ -1176,9 +1206,9 @@ export function classifyNamedStat(
     // 빈 매치 무한루프 방어(정규식은 항상 1자 이상 소비하지만 계약으로 고정한다).
     if (m[0].length === 0) NAMED_STAT_HEAD.lastIndex += 1;
   }
-  if (matches.length === 0) return "none";
+  if (matches.length === 0) return [];
 
-  const kinds = matches.map((match, i) => {
+  return matches.map((match, i) => {
     const prevEnd = i === 0 ? 0 : matches[i - 1].index + matches[i - 1][0].length;
     const nextStart = i === matches.length - 1 ? normalized.length : matches[i + 1].index;
     return classifyOneNamedStat(
@@ -1186,9 +1216,25 @@ export function classifyNamedStat(
       match,
       normalized.slice(prevEnd, match.index),
       normalized.slice(match.index + match[0].length, nextStart),
-      glossary, players, hasTeam,
+      glossary, players,
     );
   });
+}
+
+export function classifyNamedStat(
+  normalized: string,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+  /**
+   * ⚠️ **의도적으로 쓰지 않는다**(삼순 2026-08-08 P0). 문장 단위 구단 신호를 매치마다
+   *   적용하면 `LG 팀타율이랑 오타니 홈런` 의 미결속 절이 결속으로 승격돼 통과한다.
+   *   구단 결속은 각 매치의 head 로 본다(`classifyOneNamedStat`).
+   *   인자는 기존 호출부 호환을 위해 남긴다.
+   */
+  _hasTeam?: boolean,
+): NamedStatKind {
+  const kinds = classifyNamedStatMatches(normalized, glossary, players);
+  if (kinds.length === 0) return "none";
   if (kinds.includes("ambiguous")) return "ambiguous";
   if (kinds.includes("entity_stat")) return "entity_stat";
   if (kinds.includes("term_question")) return "term_question";
@@ -3096,6 +3142,42 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       context = null;
     }
   }
+  // ── `<X> <지표>` 미결속 fail-close 를 **앞단에서** 종결한다 (삼순 2026-08-08 P0) ──
+  //
+  // ⚠️ `routeQuestion` 안에만 두면 계약이 end-to-end 로 성립하지 않는다. 아래 선수 후보·
+  //   기록 의도·구단 위임 경로가 **routeQuestion 보다 먼저** 가로채기 때문이다:
+  //     `김도영 홈런과 이대호 홈런 몇개`  → 현역 김도영이 걸려 기록/`history_hold` 로 선점
+  //     `LG 팀타율이랑 오타니 홈런`       → `team_record` 로 선점
+  //   그러면 helper 는 `ambiguous` 라고 판정했는데 유저는 미결속 절까지 섞인 답을 받는다.
+  //   "하나라도 미결속이면 되묻는다" 는 **여기서** 끝내야 실제 계약이 된다.
+  //
+  // ⚠️ 생성 경로 진입 전이다 — LLM·cache·RAG 어느 것도 소비하지 않는다.
+  // ⚠️ **혼합형에만** 적용한다. 순수 미결속(`이대호 홈런`·`홍길동 통산 타율`)은
+  //   `routeQuestion` 이 이미 안전하게 종결한다(`stat_clarify`·`history_hold` — 둘 다
+  //   생성 경로에 안 내려간다). 그걸 여기서 덮으면 `history_hold` 의 정확한 안내
+  //   (앱 기록 탭)가 사라진다 — 삼순 7차 P0-2 로 확정한 계약을 되돌리는 것이다.
+  //   앞단이 반드시 필요한 경우는 **결속 절이 미결속 절을 태우고 가는** 문장이다.
+  //
+  // ⚠️ `routeQuestion` 과 **같은 정규화**를 쓴다(`NFKC` + 소문자). 다르게 정규화하면
+  //   두 곳의 판정이 갈라져 "helper 는 되묻기인데 라우터는 통과" 가 되살아난다.
+  const routingNormalized = question.normalize("NFKC").toLowerCase();
+  const namedStatKinds = classifyNamedStatMatches(routingNormalized, glossary, players);
+  // ⚠️ 결속 신호는 **두 갈래**다. 매치로 잡히는 선수·구단(`entity_stat`)과, 매치로는
+  //   안 잡히지만 구단 경로가 답할 문장(`LG 팀타율이랑 오타니 홈런`)이다. 후자는 지표어가
+  //   `팀타율` 이라 `<X> <지표>` 정규식에 안 걸려 `entity_stat` 가 없다 — 그래도
+  //   `team_record` 가 앞단에서 답해버리므로 미결속 절이 그대로 실려 나간다.
+  //   그래서 문장 단위 구단 지명도 결속 신호로 함께 본다.
+  const hasBoundClause =
+    namedStatKinds.includes("entity_stat") || mentionsTeamForGate(question);
+  const mixedBoundAndUnbound = namedStatKinds.includes("ambiguous") && hasBoundClause;
+  if (mixedBoundAndUnbound) {
+    await deps.log({
+      userId, question, questionNorm, matchPath: "stat_clarify",
+      answer: STAT_CLARIFY_ANSWER, inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };
+  }
+
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
