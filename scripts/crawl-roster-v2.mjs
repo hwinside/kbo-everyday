@@ -20,6 +20,7 @@ import {
   phaseFiltersTrusted,
   formatCompletionFailure,
 } from "./lib/roster-crawl-completion.mjs";
+import { EVIDENCE_PATH_ENV, buildCompletionEvidence } from "./lib/roster-scope-trust.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..");
@@ -735,6 +736,23 @@ async function main() {
     process.exit(1);
   }
   console.log(`\n✅ 수집 완주 계약 통과 — ${completion.summary}`);
+
+  /* ── 완주 증거 기록(`②-b roster_scope` 가드 해제 근거) ─────────────
+   *
+   * 가드를 삭제하지 않고 **이 증거에 결속**한다. 증거가 없으면 워키프로는 종전대로
+   * 보류하므로, 다음에 이 계약이 무력화되면 자동머지가 **자동으로 다시 잠긴다**.
+   *
+   * ⚠︎ 증거는 완주 판정 **직후**에만 쓴다. 위의 `process.exit(1)` 경로를 지나면
+   * 이 지점에 도달하지 않으므로 "부분 수집인데 증거만 있는" 상태가 생기지 않는다. */
+  const evidencePath = process.env[EVIDENCE_PATH_ENV];
+  if (evidencePath) {
+    const expectedSlots = buildExpectedSlotKeys(TEAMS.map(([, , teamId]) => teamId)).length;
+    writeFileSync(
+      evidencePath,
+      JSON.stringify(buildCompletionEvidence({ completion, expectedSlots }), null, 2),
+    );
+    console.log(`   ↳ 완주 증거 기록: ${evidencePath}`);
+  }
 
   // ===== 상세페이지 보강 (등번호 + 생년월일) =====
   // 기록 페이지(HitterBasic/PitcherBasic)에는 등번호·생년월일이 없음.
