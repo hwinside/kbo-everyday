@@ -310,6 +310,34 @@ async function verifyTeamNumericAnswers() {
     });
   }
 
+  // ①-b **`팀` 대용어 축** (2026-08-08 회귀). `KIA 팀 타율 알려줘` 처럼 구단명과
+  //     지표어 사이에 `팀` 이 끼면 `<X> <지표>` 의 head 가 `팀` 이 돼 미결속으로 읽혔고,
+  //     혼합형 fail-close 가 **서빙 중인 구단 수치 질문을** 되묻기로 삼켰다.
+  //     위 servedCases 가 값을 고정하지만, **`팀` 이 끼는 모양을 여기서 따로 박는다** —
+  //     그래야 이 축이 다시 깨졌을 때 어느 계약이 깨졌는지 바로 읽힌다.
+  for (const [question, expected] of [
+    ["두산 팀 홈런 몇 개야", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 2)!.hr)],
+    ["한화 구단 순위 알려줘", `${standings.find((r) => r.teamId === 9)!.ranking}위`],
+  ] as Array<[string, string]>) {
+    await check(`팀 대용어 삽입형 "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runTeam(question);
+      assert.notEqual(source, "stat_clarify",
+        `${question}: 서빙 중인 구단 수치를 되물었다 — 답할 수 있는 것을 못 답한 형태`);
+      assert.equal(source, "kbo_structured", `${question}: source=${source}`);
+      assert.ok(answer?.includes(expected), `${question}: 서빙값 "${expected}" 이 답변에 없다 — "${answer}"`);
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다`);
+    });
+  }
+  // ①-c 반대편 — `팀` 을 **무조건 결속으로 읽으면** 구단이 없는 문장까지 수치로 답하게 된다.
+  //     지시 대상이 없거나(어느 팀?) 둘 이상이면(한 팀 숫자로 답하면 동문서답) 되물어야 한다.
+  for (const question of ["팀 타율 알려줘", "팀 홈런 몇 개야"]) {
+    await check(`구단 미지명 팀 수치는 되묻는다 "${question}"`, async () => {
+      const { source, llmCalls } = await runTeam(question);
+      assert.equal(source, "stat_clarify", `${question}: source=${source} — 어느 팀인지 모르는데 답했다`);
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다`);
+    });
+  }
+
   // ② 우리가 서빙하지 **않는** 팀 수치는 여전히 LLM 에 안 보낸다. 환각 축은 그대로 닫는다.
   for (const question of ["LG 우승 몇 번 했어?", "두산 상대전적 알려줘", "LG 관중 수 몇 명이야?", "삼성 연봉 총액 얼마야?"]) {
     await check(`미서빙 팀 수치 fail-close "${question}"`, async () => {

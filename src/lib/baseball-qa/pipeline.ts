@@ -788,6 +788,16 @@ const TEAM_ALIASES: ReadonlyArray<{
 const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
 
 /**
+ * `<X> <지표>` 에서 `<X>` 자리에 오지만 **자기 자신이 엔티티가 아니고 앞서 지명된
+ * 구단을 가리키는** 대용어.
+ *
+ * 왜 폐쇄집합인가 — 구단 수치 지표를 가리키는 한국어 대용어는 문법적으로 닫힌 부류다
+ * (`팀`·`구단`). 존대·완곡 어미처럼 무한 조합이 아니므로 열거가 정당하다.
+ * (동일 논거 — `HEAD_NON_ENTITY_UNITS` 의 인칭 대명사 축)
+ */
+const TEAM_ANAPHOR_HEADS: readonly string[] = ["팀", "구단"];
+
+/**
  * 구단 지명 여부. 단일 토큰 매칭에 **같은 팀의** 약칭+별칭 결합형을 더한다.
  *
  * ⚠️ 왜 필요한가 (2026-08-04 유저 제보 → 실측):
@@ -1130,6 +1140,29 @@ function classifyOneNamedStat(
   // ⚠️ 수치 의도를 **요구하지 않는다**(2026-08-08 실측). `김도영 홈런` 처럼 bare 로 와도
   //   `<로스터 선수> <지표>` 는 기록 질문이다.
   if (isRosterEntity || isTeamEntity) return "entity_stat";
+
+  // ①-b **`팀` 은 엔티티가 아니라 앞서 지명된 구단을 가리키는 대용어다** (2026-08-08 회귀).
+  //
+  //   `KIA 팀 타율 알려줘` 에서 정규식이 잡는 head 는 `KIA` 가 아니라 `팀` 이다
+  //   (지표어 바로 앞 토큰이므로). `팀` 은 로스터에도 구단 약칭·별칭에도 없어
+  //   ①에서 떨어지고, 사이 구간(`kia `)도 야구 어휘로 안 잡혀 bare `ambiguous` 가 됐다.
+  //   그 결과 `answerQuestion` 앞단 혼합형 fail-close 가 **구단 수치 질문을 통째로**
+  //   되묻기로 삼켰다 — 우리가 실제로 서빙하는 값인데 봇만 못 답하는 형태다
+  //   (게이트 `team-fullname-routing` 이 `source=stat_clarify` 로 잡은 회귀).
+  //
+  // ⚠️ 여기서만 **문장 단위 구단 신호**를 쓴다. 삼순 P0(문장 hasTeam 금지)의 근거는
+  //   `LG 팀타율이랑 오타니 홈런` 에서 **내용어 head**(`오타니`)가 남의 구단 신호를 타고
+  //   결속으로 승격되는 것이었다. `팀` 은 내용어가 아니라 지시 대상이 없는 대용어라
+  //   그 구멍을 되열지 않는다 — `오타니` 는 여전히 `ambiguous` 로 남는다.
+  //
+  // ⚠️ 구단이 **하나로 특정될 때만** 결속으로 본다(`resolveMentionedTeam`).
+  //   구단이 없으면(`팀 타율 알려줘`) 어느 팀인지 모르므로 되묻기가 정답이고,
+  //   둘 이상이면(`LG랑 두산 팀 타율`) 한 팀 숫자로 답하는 게 동문서답이다.
+  //   판정기는 실제 조회 경로가 쓰는 것과 같은 것을 쓴다 — 갈라지면 "결속이라 통과시켰는데
+  //   조회는 대상을 못 찾는" 사고가 난다.
+  if (TEAM_ANAPHOR_HEADS.includes(head)) {
+    return resolveMentionedTeam(normalized) !== null ? "entity_stat" : "ambiguous";
+  }
 
   // ② **검증된 용어 근거가 있을 때만** 용어로 연다 (삼순 P0).
   //
