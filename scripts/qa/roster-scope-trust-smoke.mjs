@@ -22,7 +22,10 @@ import {
   TRUST_DENY_REASONS,
   buildCompletionEvidence,
   decideRosterScopeTrust,
+  canonicalizeTeamTuples,
+  formatTeamTuples,
   parseProductionTeamIds,
+  parseProductionTeamTuples,
   resolveExpectedSlotCount,
 } from "../lib/roster-scope-trust.mjs";
 
@@ -44,6 +47,7 @@ const RUN_ENV = { GITHUB_RUN_ID: "12345", GITHUB_RUN_ATTEMPT: "1" };
  * 숫자를 여기 적으면 팀이 늘어난 날 게이트가 먼저 거짓 RED 를 낸다. */
 const TEAMS_SOURCE = readFileSync("src/lib/constants/teams.ts", "utf8");
 const PROD_SLOTS = resolveExpectedSlotCount(TEAMS_SOURCE);
+const PROD_TUPLES = parseProductionTeamTuples(TEAMS_SOURCE);
 
 const goodEvidence = {
   schema: EVIDENCE_SCHEMA,
@@ -54,13 +58,20 @@ const goodEvidence = {
   failures: 0,
   runId: "12345",
   runAttempt: "1",
+  teams: PROD_TUPLES,
 };
 
-const decide = (evidence, env = RUN_ENV, expectedSlotCount = PROD_SLOTS) =>
+const decide = (
+  evidence,
+  env = RUN_ENV,
+  expectedSlotCount = PROD_SLOTS,
+  expectedTeamTuples = PROD_TUPLES,
+) =>
   decideRosterScopeTrust({
     evidenceRaw: evidence === null ? null : JSON.stringify(evidence),
     env,
     expectedSlotCount,
+    expectedTeamTuples,
   });
 
 console.log("\n▸ 정상 경로 — 이번 런이 완주했으면 통과한다");
@@ -74,20 +85,20 @@ check("★ 이번 런 + 전 슬롯 완주 → trusted", () => {
 console.log("\n▸ ★ fail-close 축 — '판단 불가'는 전부 보류다");
 
 check("★ 증거 없음 → 보류(배선이 끊어지면 종전 동작으로 돌아간다)", () => {
-  const d = decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS });
+  const d = decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS , expectedTeamTuples: PROD_TUPLES });
   assert.equal(d.trusted, false);
   assert.equal(d.reason, TRUST_DENY_REASONS.EVIDENCE_MISSING);
 });
 
 check("빈 문자열도 증거가 아니다", () => {
   assert.equal(
-    decideRosterScopeTrust({ evidenceRaw: "   ", env: RUN_ENV, expectedSlotCount: PROD_SLOTS }).reason,
+    decideRosterScopeTrust({ evidenceRaw: "   ", env: RUN_ENV, expectedSlotCount: PROD_SLOTS , expectedTeamTuples: PROD_TUPLES }).reason,
     TRUST_DENY_REASONS.EVIDENCE_MISSING,
   );
 });
 
 check("파싱 불가 → 보류", () => {
-  const d = decideRosterScopeTrust({ evidenceRaw: "{not json", env: RUN_ENV, expectedSlotCount: PROD_SLOTS });
+  const d = decideRosterScopeTrust({ evidenceRaw: "{not json", env: RUN_ENV, expectedSlotCount: PROD_SLOTS , expectedTeamTuples: PROD_TUPLES });
   assert.equal(d.reason, TRUST_DENY_REASONS.EVIDENCE_UNPARSABLE);
 });
 
@@ -147,6 +158,85 @@ check("★ 정본을 해석하지 못하면 보류(모를 때 증거를 믿지 �
   );
 });
 
+console.log("\n▸ ★ 삼순 5차 — 개수가 아니라 `shortName↔teamId` **매핑**을 대조한다");
+
+/* ⚠︎ 개수 대조만으로는 못 잡는 사고: 크롤러 TEAMS 에서 KT(3)와 SSG(4)의 teamId 를
+ * 서로 바꾸면 여전히 10팀·20슬롯·완주이고 팀명 witness 도 통과한다(표의 팀명은 맞으니까).
+ * 그런데 산출물은 KT 선수가 teamId=4, SSG 선수가 teamId=3 으로 오염된다.
+ * validate-roster 도 팀명 유효성과 teamId 1..10 을 **따로** 보므로 이 swap 을 못 잡는다. */
+const swapTeamIds = (tuples, a, b) =>
+  tuples.map((t) => {
+    if (t.team === a) return { ...t, teamId: tuples.find((x) => x.team === b).teamId };
+    if (t.team === b) return { ...t, teamId: tuples.find((x) => x.team === a).teamId };
+    return t;
+  });
+
+check("★ KT↔SSG teamId swap → 보류(개수·완주는 그대로 통과하는 케이스)", () => {
+  const swapped = swapTeamIds(PROD_TUPLES, "KT", "SSG");
+  // 전제 확인: 이 변조는 수량 축을 전혀 건드리지 않는다.
+  assert.equal(swapped.length, PROD_TUPLES.length, "개수는 같아야 이 축의 의미가 산다");
+  assert.notEqual(formatTeamTuples(swapped), formatTeamTuples(PROD_TUPLES), "변조가 적용되지 않았다");
+
+  const d = decide({ ...goodEvidence, teams: swapped });
+  assert.equal(d.reason, TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH, d.detail);
+  assert.match(d.detail, /teamId 가 오염/);
+});
+
+check("★ 아무 두 팀을 바꿔도 보류(KT·SSG 특례가 아니다)", () => {
+  const [a, b] = [PROD_TUPLES[0].team, PROD_TUPLES[1].team];
+  const d = decide({ ...goodEvidence, teams: swapTeamIds(PROD_TUPLES, a, b) });
+  assert.equal(d.reason, TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH);
+});
+
+check("★ 매핑 필드가 없으면 보류(필드 누락이 검사 생략이 되면 안 된다)", () => {
+  const { teams, ...noTeams } = goodEvidence;
+  void teams;
+  assert.equal(decide(noTeams).reason, TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH);
+});
+
+check("★ 팀 하나가 빠져도 보류", () => {
+  const d = decide({ ...goodEvidence, teams: PROD_TUPLES.slice(1) });
+  assert.equal(d.reason, TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH);
+});
+
+check("★ 팀명이 바뀌어도 보류(id 는 같아도)", () => {
+  const renamed = PROD_TUPLES.map((t, i) => (i === 0 ? { ...t, team: "없는팀" } : t));
+  assert.equal(decide({ ...goodEvidence, teams: renamed }).reason, TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH);
+});
+
+check("순서만 다른 매핑은 정상이다(정규형 대조라 거짓 RED 없음)", () => {
+  const shuffled = [...PROD_TUPLES].reverse();
+  assert.equal(decide({ ...goodEvidence, teams: shuffled }).trusted, true);
+});
+
+check("★ 정본 매핑을 해석하지 못하면 보류", () => {
+  assert.equal(
+    decide(goodEvidence, RUN_ENV, PROD_SLOTS, null).reason,
+    TRUST_DENY_REASONS.SLOT_CONTRACT_UNRESOLVED,
+  );
+});
+
+check("★ 정본 tuple 파서가 실제 teams.ts 에서 KT:3 / SSG:4 를 뽑는다", () => {
+  const byTeam = new Map(PROD_TUPLES.map((t) => [t.team, t.teamId]));
+  assert.equal(byTeam.get("KT"), 3);
+  assert.equal(byTeam.get("SSG"), 4);
+  assert.equal(PROD_TUPLES.length, 10);
+});
+
+check("★ 정본 tuple 파서는 중복 id·중복 팀명을 통과시키지 않는다", () => {
+  const dupId = 'id: 1,\n  name: "A",\n  shortName: "A"\nid: 1,\n  name: "B",\n  shortName: "B"';
+  assert.equal(parseProductionTeamTuples(dupId), null, "중복 id");
+  const dupName = 'id: 1,\n  name: "A",\n  shortName: "A"\nid: 2,\n  name: "B",\n  shortName: "A"';
+  assert.equal(parseProductionTeamTuples(dupName), null, "중복 shortName");
+  assert.equal(parseProductionTeamTuples(null), null);
+});
+
+check("canonicalize 는 형식이 깨진 입력을 null 로 떨어뜨린다", () => {
+  assert.equal(canonicalizeTeamTuples([{ team: "", teamId: 1 }]), null);
+  assert.equal(canonicalizeTeamTuples([{ team: "LG", teamId: "1.5" }]), null);
+  assert.equal(canonicalizeTeamTuples("nope"), null);
+});
+
 check("★ 정본 파서가 실제 teams.ts 에서 10팀을 뽑는다", () => {
   const ids = parseProductionTeamIds(TEAMS_SOURCE);
   assert.ok(Array.isArray(ids), "정본 파싱 실패");
@@ -163,7 +253,9 @@ check("★ 정본이 깨지면 null(중복·미달을 통과시키지 않는다)
 console.log("\n▸ ★ 삼순 3차 ③ — 스키마 불일치는 fail-close");
 
 check("★ 스키마가 다르면 보류(같은 필드를 다른 뜻으로 읽는다)", () => {
-  const d = decide({ ...goodEvidence, schema: "roster-completion-evidence/2" });
+  // ⚠︎ 하드코딩한 "다른 스키마" 값은 다음 버전 올림에서 곧 **현재 값**이 되어 검사가 죽는다
+  // (실측: /2 로 올렸더니 이 케이스가 통과했다). 현재 값에서 파생시켜 항상 달라지게 만든다.
+  const d = decide({ ...goodEvidence, schema: `${EVIDENCE_SCHEMA}-not-this` });
   assert.equal(d.reason, TRUST_DENY_REASONS.SCHEMA_MISMATCH);
 });
 
@@ -177,6 +269,7 @@ check("생성기가 현재 스키마를 붙인다(생산자·소비자 합의)",
   const evidence = buildCompletionEvidence({
     completion: { complete: true, summary: "완주", failures: [], missingKeys: [] },
     expectedSlots: PROD_SLOTS,
+    teams: PROD_TUPLES,
     env: RUN_ENV,
   });
   assert.equal(evidence.schema, EVIDENCE_SCHEMA);
@@ -197,8 +290,9 @@ console.log("\n▸ ★ 증거 생성 — 크롤러가 만드는 payload 가 계�
 
 check("★ buildCompletionEvidence 출력이 그대로 trusted 가 된다(왕복)", () => {
   const evidence = buildCompletionEvidence({
-    completion: { complete: true, summary: "완주 20/20 슬롯", failures: [], missingKeys: [] },
-    expectedSlots: 20,
+    completion: { complete: true, summary: `완주 ${PROD_SLOTS} 슬롯`, failures: [], missingKeys: [] },
+    expectedSlots: PROD_SLOTS,
+    teams: PROD_TUPLES,
     env: RUN_ENV,
   });
   assert.equal(decide(evidence).trusted, true);
@@ -213,7 +307,49 @@ check("★ 미완주 상태로는 증거 자체를 만들 수 없다(호출 순�
   assert.throws(
     () => buildCompletionEvidence({
       completion: { complete: false, summary: "미완주 — 실패 1건", failures: [{}], missingKeys: ["bat|1"] },
-      expectedSlots: 20,
+      expectedSlots: PROD_SLOTS,
+      teams: PROD_TUPLES,
+      env: RUN_ENV,
+    }),
+    /roster_completion_evidence_refused/,
+  );
+});
+
+/* ⚠︎ 자체발견: 생성기의 teams 강제를 해제하는 변이(W2)가 GREEN 이었다.
+ * 소비자 쪽 tuple 대조가 잡아주긴 하지만, 그러면 **계약이 한 겹만 남는다** —
+ * 소비자 검사까지 같이 약해지는 변경에서 전부 통과하게 된다. 생산 지점의 거부도 못 박는다. */
+check("★ teams 매핑 없이는 증거를 만들 수 없다(생성 지점에서 거부)", () => {
+  assert.throws(
+    () => buildCompletionEvidence({
+      completion: { complete: true, summary: "완주", failures: [], missingKeys: [] },
+      expectedSlots: PROD_SLOTS,
+      env: RUN_ENV,
+    }),
+    /roster_completion_evidence_refused/,
+    "teams 누락을 통과시키면 개수만 신고하는 증거가 다시 생긴다",
+  );
+});
+
+check("★ teams 가 1팀 이하여도 거부(빈 배열이 백지수표가 되면 안 된다)", () => {
+  for (const teams of [[], [PROD_TUPLES[0]]]) {
+    assert.throws(
+      () => buildCompletionEvidence({
+        completion: { complete: true, summary: "완주", failures: [], missingKeys: [] },
+        expectedSlots: PROD_SLOTS,
+        teams,
+        env: RUN_ENV,
+      }),
+      /roster_completion_evidence_refused/,
+    );
+  }
+});
+
+check("★ 형식이 깨진 teams 도 생성 거부", () => {
+  assert.throws(
+    () => buildCompletionEvidence({
+      completion: { complete: true, summary: "완주", failures: [], missingKeys: [] },
+      expectedSlots: PROD_SLOTS,
+      teams: [{ team: "LG" }, { team: "KT", teamId: 3 }],
       env: RUN_ENV,
     }),
     /roster_completion_evidence_refused/,
@@ -221,12 +357,12 @@ check("★ 미완주 상태로는 증거 자체를 만들 수 없다(호출 순�
 });
 
 check("★ completion 이 없어도 거부한다(인자 누락이 백지수해가 되면 안 된다)", () => {
-  assert.throws(() => buildCompletionEvidence({ expectedSlots: 20, env: RUN_ENV }), /refused/);
+  assert.throws(() => buildCompletionEvidence({ expectedSlots: PROD_SLOTS, teams: PROD_TUPLES, env: RUN_ENV }), /refused/);
 });
 
 check("★ 증거가 쓰이지 않은 상황은 결국 보류로 이어진다(생성 거부 → evidence_missing)", () => {
   assert.equal(
-    decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS }).reason,
+    decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS , expectedTeamTuples: PROD_TUPLES }).reason,
     TRUST_DENY_REASONS.EVIDENCE_MISSING,
   );
 });
@@ -350,6 +486,24 @@ check("★ producer·consumer 가 그 값을 **덮어쓰지 않는다**(같은 �
     updateJob?.env?.[EVIDENCE_PATH_ENV],
     undefined,
     "job 레벨 재정의는 runner context 미허용 문제로 되돌아간다",
+  );
+});
+
+check("★ 크롤러가 정본과 같은 축의 매핑을 증거에 싣는다(개수만 신고 금지)", () => {
+  const call = crawler.match(/buildCompletionEvidence\(\{([\s\S]*?)\n {8}\}\)/);
+  assert.ok(call, "buildCompletionEvidence 호출을 찾지 못했다");
+  assert.match(call[1], /teams:/, "teams 매핑을 넘기지 않으면 생성기가 거부한다");
+});
+
+check("★ 정본 tuple 이 크롤러 TEAMS 와 실제로 일치한다(현재 상태 실측)", () => {
+  const block = crawler.match(/const TEAMS = \[([\s\S]*?)\];/);
+  assert.ok(block, "크롤러 TEAMS 를 찾지 못했다");
+  const crawlTuples = [...block[1].matchAll(/\["\w+",\s*"([^"]+)",\s*(\d+)\]/g)]
+    .map((m) => ({ team: m[1], teamId: Number(m[2]) }));
+  assert.equal(
+    formatTeamTuples(canonicalizeTeamTuples(crawlTuples)),
+    formatTeamTuples(PROD_TUPLES),
+    "크롤러 TEAMS 가 정본과 어긋나 있다 — 지금 상태로 돌면 teamId 가 오염된다",
   );
 });
 

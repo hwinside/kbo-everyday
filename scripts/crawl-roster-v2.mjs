@@ -749,7 +749,17 @@ async function main() {
     const expectedSlots = buildExpectedSlotKeys(TEAMS.map(([, , teamId]) => teamId)).length;
     writeFileSync(
       evidencePath,
-      JSON.stringify(buildCompletionEvidence({ completion, expectedSlots }), null, 2),
+      JSON.stringify(
+        buildCompletionEvidence({
+          completion,
+          expectedSlots,
+          // ⚠︎ 개수만 신고하면 KT↔SSG teamId swap 이 그대로 통과한다(삼순 5차).
+          // 이 후보는 **산출물에 실리는 바로 그 매핑**이다 — 소부자가 정본과 exact 대조한다.
+          teams: TEAMS.map(([, team, teamId]) => ({ team, teamId })),
+        }),
+        null,
+        2,
+      ),
     );
     console.log(`   ↳ 완주 증거 기록: ${evidencePath}`);
   }

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   EVIDENCE_PATH_ENV,
   decideRosterScopeTrust,
+  parseProductionTeamTuples,
   resolveExpectedSlotCount,
 } from "../lib/roster-scope-trust.mjs";
 
@@ -28,8 +29,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const TEAMS_SOURCE_PATH = join(HERE, "..", "..", "src", "lib", "constants", "teams.ts");
 
 let expectedSlotCount = null;
+let expectedTeamTuples = null;
 try {
-  expectedSlotCount = resolveExpectedSlotCount(readFileSync(TEAMS_SOURCE_PATH, "utf8"));
+  const teamsSource = readFileSync(TEAMS_SOURCE_PATH, "utf8");
+  expectedSlotCount = resolveExpectedSlotCount(teamsSource);
+  // ⚠︎ 수량만으로는 KT↔SSG teamId swap 을 못 잡는다 — 매핑 자체를 넘긴다(삼순 5차).
+  expectedTeamTuples = parseProductionTeamTuples(teamsSource);
 } catch (error) {
   console.error(`   production 팀 정본을 읽지 못했다 — ${TEAMS_SOURCE_PATH}: ${error?.message ?? error}`);
 }
@@ -47,7 +52,7 @@ if (path) {
   console.error(`   ${EVIDENCE_PATH_ENV} 가 설정되지 않았다 — 크롤 스텝의 env 배선을 확인하라`);
 }
 
-const decision = decideRosterScopeTrust({ evidenceRaw, expectedSlotCount });
+const decision = decideRosterScopeTrust({ evidenceRaw, expectedSlotCount, expectedTeamTuples });
 
 if (decision.trusted) {
   console.log(`✅ roster 범위 자동머지 허용 — ${decision.detail}`);

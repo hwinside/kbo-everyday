@@ -39,7 +39,7 @@ export const EVIDENCE_PATH_ENV = "ROSTER_COMPLETION_EVIDENCE";
  * ⚠︎ 생산자·소비자가 다른 버전을 보면 같은 필드 이름을 다른 뜻으로 읽는다.
  * 그건 "조용히 통과하는" 부류이므로 모르면 보류한다(삼순 지적 ③).
  */
-export const EVIDENCE_SCHEMA = "roster-completion-evidence/1";
+export const EVIDENCE_SCHEMA = "roster-completion-evidence/2";
 
 /** 보류 사유 — 로그·요약에 그대로 찍혀 원인이 구분된다. */
 export const TRUST_DENY_REASONS = {
@@ -50,7 +50,51 @@ export const TRUST_DENY_REASONS = {
   SLOT_MISMATCH: "slot_mismatch",
   SCHEMA_MISMATCH: "schema_mismatch",
   SLOT_CONTRACT_UNRESOLVED: "slot_contract_unresolved",
+  TEAM_TUPLE_MISMATCH: "team_tuple_mismatch",
 };
+
+/**
+ * 정본에서 `shortName ↔ id` **튜플**을 뽑는다.
+ *
+ * ⚠︎ 개수만 보면 못 잡는 사고가 있다(삼순 5차). 크롤러 `TEAMS` 에서 KT(3)와 SSG(4)의
+ * teamId 를 서로 바꿔도 여전히 10팀·20슬롯·완주이고 팀명 witness 도 통과한다
+ * (표의 팀명 자체는 맞으니까). 그런데 산출물은 KT 선수가 `teamId=4`, SSG 선수가
+ * `teamId=3` 으로 오염된다. `validate-roster` 도 팀명 유효성과 `teamId 1..10` 을
+ * **따로** 보므로 이 swap 을 못 잡는다.
+ *
+ * 그래서 수량이 아니라 **매핑 자체**를 대조한다.
+ */
+export function parseProductionTeamTuples(teamsSource) {
+  if (typeof teamsSource !== "string") return null;
+  const tuples = [];
+  const re = /id:\s*(\d+),\s*\n\s*name:\s*"[^"]+",\s*\n\s*shortName:\s*"([^"]+)"/g;
+  for (const m of teamsSource.matchAll(re)) {
+    tuples.push({ team: m[2], teamId: Number(m[1]) });
+  }
+  if (tuples.length < 2) return null;
+  // id·shortName 어느 쪽이든 중복이면 정본이 깨진 것 — 판정 불가로 둔다.
+  if (new Set(tuples.map((t) => t.teamId)).size !== tuples.length) return null;
+  if (new Set(tuples.map((t) => t.team)).size !== tuples.length) return null;
+  return canonicalizeTeamTuples(tuples);
+}
+
+/** 순서에 흔들리지 않게 `team` 기준으로 정렬한 정규형. */
+export function canonicalizeTeamTuples(tuples) {
+  if (!Array.isArray(tuples)) return null;
+  const out = [];
+  for (const t of tuples) {
+    const team = String(t?.team ?? "").trim();
+    const teamId = Number(t?.teamId);
+    if (!team || !Number.isInteger(teamId)) return null;
+    out.push({ team, teamId });
+  }
+  return out.sort((a, b) => (a.team < b.team ? -1 : a.team > b.team ? 1 : 0));
+}
+
+/** 대조·로그용 안정 문자열. */
+export function formatTeamTuples(tuples) {
+  return (tuples ?? []).map((t) => `${t.team}:${t.teamId}`).join(",");
+}
 
 /**
  * production 정본(`src/lib/constants/teams.ts`)에서 팀 id 집합을 **독립으로** 뽑는다.
@@ -88,7 +132,7 @@ export function resolveExpectedSlotCount(teamsSource) {
  * 이번 런의 부분 수집이 통과할 수 있다. 러너 temp 는 런마다 새로 뜨지만 그건
  * 실행 환경의 성질이지 우리 계약이 아니다 — 계약으로 박아 둔다.
  */
-export function buildCompletionEvidence({ completion, expectedSlots, env = process.env }) {
+export function buildCompletionEvidence({ completion, expectedSlots, teams, env = process.env }) {
   /* ⚠︎ 미완주에는 증거 자신을 만들지 않는다 — 호출 순서에 의지하지 않기 위해서다.
    *
    * 코드를 "완주 판정 다음에 부른다"로만 지키면, 다음 리펙터가 이 호출을 위로 올리는
@@ -101,8 +145,18 @@ export function buildCompletionEvidence({ completion, expectedSlots, env = proce
         + ` — ${completion?.summary ?? "(요약 없음)"}`,
     );
   }
+  /* ⚠︎ 팀 튜플 없이는 증거를 만들지 않는다. 없어도 통과하게 두면 tuple 대조가
+   * "필드가 없으니 생략"으로 조용하 꺼지고 개수만 보던 상태로 회계한다. */
+  const canonicalTeams = canonicalizeTeamTuples(teams);
+  if (!canonicalTeams || canonicalTeams.length < 2) {
+    throw new Error(
+      "roster_completion_evidence_refused: 팀 shortName↔teamId 튜플 없이는 증거를 만들지 않는다"
+        + " — 개수만으로는 ID swap 오염을 잡을 수 없다",
+    );
+  }
   return {
-    schema: "roster-completion-evidence/1",
+    schema: EVIDENCE_SCHEMA,
+    teams: canonicalTeams,
     complete: completion?.complete === true,
     summary: String(completion?.summary ?? ""),
     expectedSlots,
@@ -120,7 +174,12 @@ export function buildCompletionEvidence({ completion, expectedSlots, env = proce
  * @param {{ evidenceRaw?: string|null, env?: Record<string,string|undefined> }} input
  * @returns {{ trusted: boolean, reason: string|null, detail: string }}
  */
-export function decideRosterScopeTrust({ evidenceRaw, env = process.env, expectedSlotCount }) {
+export function decideRosterScopeTrust({
+  evidenceRaw,
+  env = process.env,
+  expectedSlotCount,
+  expectedTeamTuples,
+}) {
   const deny = (reason, detail) => ({ trusted: false, reason, detail });
 
   // ⚠︎ 정본 기대치를 모르는 상황은 통과시키지 않는다. "모를 때는 증거를 믿는다"로 두면
@@ -206,6 +265,30 @@ export function decideRosterScopeTrust({ evidenceRaw, env = process.env, expecte
     return deny(
       TRUST_DENY_REASONS.SLOT_MISMATCH,
       `수집 슬롯이 기대와 다르다 — ${observed}/${expected}`,
+    );
+  }
+
+  /* ★ 팀 매핑 exact 대조 — 수량이 아니라 **어느 팀이 어느 id 인가**를 본다.
+   * KT↔SSG id swap 은 개수·완주·팀명 witness 를 모두 통과하지만 산출물 teamId 를 오염시킨다. */
+  const canonicalExpected = canonicalizeTeamTuples(expectedTeamTuples);
+  if (!canonicalExpected || canonicalExpected.length < 2) {
+    return deny(
+      TRUST_DENY_REASONS.SLOT_CONTRACT_UNRESOLVED,
+      "production 정본에서 팀 shortName↔teamId 매핑을 해석하지 못했다",
+    );
+  }
+  const canonicalActual = canonicalizeTeamTuples(evidence.teams);
+  if (!canonicalActual) {
+    return deny(
+      TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH,
+      "증거에 팀 shortName↔teamId 매핑이 없거나 형식이 깨졌다",
+    );
+  }
+  if (formatTeamTuples(canonicalActual) !== formatTeamTuples(canonicalExpected)) {
+    return deny(
+      TRUST_DENY_REASONS.TEAM_TUPLE_MISMATCH,
+      "크롤 팀 매핑이 production 정본과 다르다 — 산출물 teamId 가 오염된다"
+        + ` (증거 ${formatTeamTuples(canonicalActual)} vs 정본 ${formatTeamTuples(canonicalExpected)})`,
     );
   }
   if (Number(evidence.failures) !== 0) {
