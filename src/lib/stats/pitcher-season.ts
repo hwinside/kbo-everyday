@@ -1,6 +1,6 @@
 import pitcherStatsJson from "@/lib/constants/stats-2026-pitchers.json";
 import { resolveRosterPlayer } from "@/lib/utils/player-roster";
-import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import { resolvePlayerIdentity, resolveRosterCandidates } from "@/lib/utils/resolve-player";
 import type { LineupSource } from "@/lib/source-snapshot";
 
 export type PitcherSeasonRow = {
@@ -22,8 +22,13 @@ export type PitcherSeasonRow = {
 export interface PitcherSeasonDeps {
   /** 시즌 투수 기록 테이블. */
   pitcherRows: PitcherSeasonRow[];
-  /** 이름+팀 → 로스터 선수(canonical kboId). */
+  /** 이름+팀 → 로스터 선수(canonical kboId). 동명이인이면 null(fail-close). */
   resolveRoster: (query: { name: string; teamId: number }) => { kboId: string } | null;
+  /**
+   * 이름+팀으로 걸리는 **모든** 후보. 동명이인일 때 역할(투수 기록 보유)로 좁히기 위해 쓴다.
+   * 없으면 좁히기를 시도하지 않는다(주입 안 한 테스트는 기존 의미론 그대로).
+   */
+  resolveRosterCandidates?: (query: { name: string; teamId: number }) => { kboId: string }[];
   /** canonical kboId → KBO 숫자 ID (외국인 역매핑). */
   toNumericId: (kboId: string) => string | undefined;
 }
@@ -36,6 +41,7 @@ export function normalizePitcherEra(value?: string | null): string | null {
 export function createPitcherSeasonResolver({
   pitcherRows,
   resolveRoster,
+  resolveRosterCandidates: resolveCandidates,
   toNumericId,
 }: PitcherSeasonDeps) {
   function lookupPitcherSeasonEra(kboId?: string): string | null {
@@ -51,20 +57,36 @@ export function createPitcherSeasonResolver({
     return normalizePitcherEra(row?.era);
   }
 
+  /**
+   * 이름+팀이 모호할 때(동명이인) **투수 기록 보유**라는 역할로 한 명을 확정한다.
+   *
+   * `resolveRoster` 는 모호하면 null 을 준다 — 배열 순서로 찍지 않기 위해서다(2026-08-08).
+   * 하지만 여기서 찾는 건 "선발 투수"이므로 후보 중 시즌 투수 기록이 있는 사람이 답이다.
+   * 실측 기준 7개 모호 그룹 중 4개가 이 규칙으로 갈린다.
+   * 좁혀도 복수면(둘 다 투수 기록 보유) **확정하지 않는다** — 틀린 ERA 를 보여주느니 "-" 가 낫다.
+   */
+  function resolvePitcherByRole(name: string, teamId: number): string | undefined {
+    const direct = resolveRoster({ name, teamId });
+    if (direct?.kboId) return direct.kboId;
+    if (!resolveCandidates) return undefined;
+
+    const withEra = resolveCandidates({ name, teamId }).filter(
+      (candidate) => lookupPitcherSeasonEra(candidate.kboId) !== null,
+    );
+    return withEra.length === 1 ? withEra[0].kboId : undefined;
+  }
+
   function resolveStarterPitcher(
     name: string,
     teamId: number,
     boxEra?: string | null,
     boxPitcherName?: string | null,
   ): { name: string; era: string; kboId?: string } {
-    const roster = name ? resolveRoster({ name, teamId }) : null;
-    const starterKboId = roster?.kboId;
-    const boxRoster = boxPitcherName
-      ? resolveRoster({ name: boxPitcherName, teamId })
-      : null;
+    const starterKboId = name ? resolvePitcherByRole(name, teamId) : undefined;
+    const boxKboId = boxPitcherName ? resolvePitcherByRole(boxPitcherName, teamId) : undefined;
     const boxMatchesStarter = Boolean(
       boxPitcherName && (
-        (roster?.kboId && boxRoster?.kboId === roster.kboId)
+        (starterKboId && boxKboId === starterKboId)
         || boxPitcherName.trim() === name.trim()
       ),
     );
@@ -123,6 +145,7 @@ export function createPitcherSeasonResolver({
 const productionResolver = createPitcherSeasonResolver({
   pitcherRows: pitcherStatsJson as PitcherSeasonRow[],
   resolveRoster: ({ name, teamId }) => resolveRosterPlayer({ name, teamId }),
+  resolveRosterCandidates: ({ name, teamId }) => resolveRosterCandidates({ name, teamId }),
   toNumericId: (kboId) => resolvePlayerIdentity(kboId)?.numericId,
 });
 

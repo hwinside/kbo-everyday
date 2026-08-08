@@ -230,21 +230,26 @@ function resolveInternal(
       ? Number(teamId)
       : null;
 
-  const byExactAndTeam = roster.find(
-    (p) =>
-      p.name === cleanName &&
-      ((numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
-        (cleanTeam && p.team === cleanTeam)),
-  );
-  if (byExactAndTeam) return toResolved(byExactAndTeam);
+  /* ⚠︎ 이름+팀으로 둘 이상이 걸리면 **고르지 않는다**(2026-08-08).
+   *
+   * 예전엔 `.find()` 로 배열에서 먼저 만나는 사람을 돌려줘다. 그러면 답이 **배열 순서**에
+   * 달려서, 크롤 순서가 바뀌는 날 조용히 다른 선수가 된다. 실측(#1130): 삼성 김태훈은
+   * 투수 62360 과 야수 65040 둘인데 roster 인덱스가 밀리면서 선발 ERA 가 3.65 → null 로 바뀜다.
+   * 틀린 숫자는 유저가 알아채지 못하므로, 모호하면 빈 값이 낫다 — fail-close.
+   *
+   * 역할로 좁힐 수 있는 호출자(예: 선발 ERA → 투수 기록 보유자)는
+   * `resolveRosterCandidates` 로 후보를 받아 직접 확정한다. */
+  const teamMatches = (p: RosterPlayer) =>
+    (numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
+    Boolean(cleanTeam && p.team === cleanTeam);
 
-  const byPartialAndTeam = roster.find(
-    (p) =>
-      nameLooseMatch(p.name, cleanName) &&
-      ((numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
-        (cleanTeam && p.team === cleanTeam)),
-  );
-  if (byPartialAndTeam) return toResolved(byPartialAndTeam);
+  const exactAndTeam = roster.filter((p) => p.name === cleanName && teamMatches(p));
+  if (exactAndTeam.length === 1) return toResolved(exactAndTeam[0]);
+  if (exactAndTeam.length > 1) return null; // 동명이인 — 배열 순서로 찍지 않는다
+
+  const partialAndTeam = roster.filter((p) => nameLooseMatch(p.name, cleanName) && teamMatches(p));
+  if (partialAndTeam.length === 1) return toResolved(partialAndTeam[0]);
+  if (partialAndTeam.length > 1) return null;
 
   // 표기 변형 alias — 팀 가드 일치 시에만 적용(팀 정보 없는 쿼리엔 미적용 → 오매칭 방지)
   const aliasId = NAME_ALIASES[cleanName];
@@ -266,6 +271,39 @@ function resolveInternal(
   if (partialMatches.length === 1) return toResolved(partialMatches[0]);
 
   return null;
+}
+
+/**
+ * 이름+팀으로 걸리는 **모든** 로스터 후보를 순서 그대로 돌려준다.
+ *
+ * `resolvePlayer` 는 모호하면 `null` 로 fail-close 한다(배열 순서로 찍지 않기 위해서다).
+ * 그런데 호출자가 역할을 알면 더 좁힐 수 있는 경우가 있다 — 예를 들어 "선발 투수의 ERA"
+ * 라면 후보 중 **투수 기록을 가진 사람**이 답이다. 그런 호출자만 이 함수로 후보를 받아
+ * 자기 도메인 지식으로 확정한다. 좁혀도 복수면 호출자도 fail-close 해야 한다.
+ *
+ * ⚠︎ 이 함수는 "아무나 하나" 를 주는 우회로가 아니다. 반환값에서 `[0]` 을 집으면
+ * 예전의 순서 의존 버그가 그대로 돌아온다.
+ */
+export function resolveRosterCandidates(
+  { name, teamId, team }: { name?: string | null; teamId?: number | string | null; team?: string | null },
+  roster: RosterPlayer[] = DEFAULT_ROSTER,
+): ResolvedPlayer[] {
+  const cleanName = name?.trim();
+  if (!cleanName) return [];
+
+  const cleanTeam = team?.trim();
+  const numericTeamId =
+    teamId !== undefined && teamId !== null && String(teamId).trim() ? Number(teamId) : null;
+  if (numericTeamId === null && !cleanTeam) return [];
+
+  const teamMatches = (p: RosterPlayer) =>
+    (numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
+    Boolean(cleanTeam && p.team === cleanTeam);
+
+  // exact 가 하나라도 있으면 exact 집합만 본다(부분매칭이 섞여 후보가 번지지 않게).
+  const exact = roster.filter((p) => p.name === cleanName && teamMatches(p));
+  if (exact.length > 0) return exact.map(toResolved);
+  return roster.filter((p) => nameLooseMatch(p.name, cleanName) && teamMatches(p)).map(toResolved);
 }
 
 /** 명시적인 이름의 alias. 신규 코드에서는 이 이름을 우선 사용한다. */

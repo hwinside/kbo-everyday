@@ -23,6 +23,7 @@ import {
   type PitcherSeasonRow,
 } from "../../src/lib/stats/pitcher-season";
 import { resolveRosterPlayer } from "../../src/lib/utils/player-roster";
+import { resolvePlayerIdentity, resolveRosterCandidates } from "../../src/lib/utils/resolve-player";
 import { FOREIGN_NUMERIC_TO_ALPHA } from "../../src/lib/constants/foreign-id-map";
 import {
   isLineupStarterProvenanceTrusted,
@@ -441,8 +442,17 @@ for (const p of rosterRows) {
   list.push(p);
   dupNames.set(p.name, list);
 }
+/* ⚠︎ 표본은 **팀 안에서 유일한** 이름만 쓴다.
+ * 같은 팀에 같은 이름이 둘이면(예: 삼성 김태훈 = 투수 62360 + 야수 65040) 이름+팀은
+ * 애초에 유일키가 아니라서 해석기가 fail-close 한다 — 그건 아래 §동명이인 절에서 따로 본다.
+ * 예전에는 그런 이름도 표본에 섞였고, 해석기가 배열에서 먼저 만나는 사람을 돌려주는 걸
+ * "정답"으로 굳히고 있었다(2026-08-08 #1130: 크롤 순서가 밀리자 ERA 가 3.65 → null). */
+const uniqueInTeam = (name: string, teamId: number) =>
+  rosterRows.filter((q) => q.name === name && q.teamId === teamId).length === 1;
 const dupSample = [...dupNames.values()].find(
-  (list) => new Set(list.map((p) => p.teamId)).size >= 2,
+  (list) =>
+    new Set(list.map((p) => p.teamId)).size >= 2
+    && list.every((p) => uniqueInTeam(p.name, p.teamId)),
 );
 assert.ok(
   dupSample,
@@ -458,6 +468,143 @@ for (const dup of dupSample!) {
     `동명이인 ${dup.name}은 팀 ${dup.teamId} 정본(${dup.kboId})으로 해석돼야 한다`,
   );
 }
+/* ★ 2026-08-08 #1130 — 이름+팀은 **유일키가 아니다**.
+ *
+ * 실측: 삼성(8)에 김태훈이 둘(투수 62360 ERA 3.65 / 야수 65040). 예전 해석기는 `.find()` 로
+ * 배열에서 먼저 만나는 사람을 돌려줬고, 크롤 순서가 밀리자(881명 중 684명 인덱스 변동)
+ * 야수가 앞으로 오면서 선발 ERA 가 조용히 null 이 됐다. 즉 **답이 배열 순서에 달려 있었다.**
+ *
+ * 새 계약:
+ *   (a) 이름+팀이 모호하면 해석기는 고르지 않는다 → null (fail-close)
+ *   (b) 역할로 좁힐 수 있으면(후보 중 투수 기록 보유자가 1명) 선발 ERA 는 그 사람으로 확정
+ *   (c) 좁혀도 복수면 "-" — 틀린 수치보다 빈 값이 낫다(유저는 틀린 걸 알아챌 수 없다)
+ *
+ * 표본은 전부 실 로스터에서 동적으로 고른다(특정 kboId 하드코딩 금지 — 로스터가 바뀌면 깨진다). */
+const ambiguousGroups = (() => {
+  const byNameTeam = new Map<string, { name: string; kboId: string; teamId: number }[]>();
+  for (const p of rosterRows) {
+    const key = `${p.name}::${p.teamId}`;
+    const list = byNameTeam.get(key) ?? [];
+    list.push(p);
+    byNameTeam.set(key, list);
+  }
+  return [...byNameTeam.values()].filter((list) => list.length > 1);
+})();
+assert.ok(
+  ambiguousGroups.length > 0,
+  "실 로스터에 이름+팀이 겹치는 그룹이 있어야 이 계약을 검증할 수 있다",
+);
+
+for (const group of ambiguousGroups) {
+  const { name, teamId } = group[0];
+
+  // (a) 해석기는 모호하면 고르지 않는다.
+  assert.equal(
+    resolveRosterPlayer({ name, teamId })?.kboId ?? null,
+    null,
+    `${name}(팀 ${teamId})은 이름+팀으로 유일하지 않으므로 배열 순서로 찍으면 안 된다`,
+  );
+
+  // 후보는 전부 보인다(좁히기의 재료).
+  const candidates = resolveRosterCandidates({ name, teamId });
+  assert.equal(
+    new Set(candidates.map((c) => c.kboId)).size,
+    group.length,
+    `${name}(팀 ${teamId}) 후보가 로스터 실제 인원과 일치해야 한다`,
+  );
+
+  const withEra = group.filter((p) => eraIds.has(String(p.kboId)));
+  const era = productionResolveStarter(name, teamId).era;
+  if (withEra.length === 1) {
+    // (b) 투수 기록 보유자가 하나면 그 사람으로 확정된다.
+    assert.equal(
+      era,
+      normalizePitcherEra(
+        eraRows.find((row) => String(row.kboId ?? row.playerId) === String(withEra[0].kboId))?.era,
+      ),
+      `${name}(팀 ${teamId})은 투수 기록 보유자 ${withEra[0].kboId}로 좁혀져야 한다`,
+    );
+  } else {
+    // (c) 좁힐 수 없으면 추측하지 않는다.
+    assert.equal(
+      era,
+      "-",
+      `${name}(팀 ${teamId})은 역할로도 좁힐 수 없으므로 추측하면 안 된다(후보 ${withEra.length}명)`,
+    );
+  }
+}
+
+/* ★ 실 로스터에 없는 형상은 fixture 로 직접 태운다.
+ *
+ * 위 루프는 **지금 로스터에 있는 모양**만 검증한다. 실측하니 (i)부분매칭이 팀 안에서 복수인
+ * 케이스, (ii)exact 와 부분매칭이 같은 팀에 섞이는 케이스가 현재 0건이라, 그 두 경로를
+ * 망가뜨리는 변이가 GREEN 으로 통과했다(자체 mutation X2·X3). 로스터는 매일 바뀌므로
+ * "지금 없다"는 안전이 아니다 — 형상을 고정 fixture 로 만들어 계약을 못 박는다. */
+{
+  const FIXTURE = [
+    { name: "라클란 웰스", kboId: "AQ100", teamId: 1, team: "LG", position: "투수", backNo: "1" },
+    { name: "카터 웰스", kboId: "AQ101", teamId: 1, team: "LG", position: "투수", backNo: "2" },
+    { name: "웰스", kboId: "AQ102", teamId: 2, team: "두산", position: "투수", backNo: "3" },
+    { name: "홍길동", kboId: "AQ103", teamId: 2, team: "두산", position: "투수", backNo: "4" },
+    { name: "김홍길동", kboId: "AQ104", teamId: 2, team: "두산", position: "투수", backNo: "5" },
+  ] as never;
+
+  // (i) 부분매칭이 팀 안에서 복수 — "웰스"는 LG 에서 두 명에 걸린다. 순서로 찍으면 안 된다.
+  assert.equal(
+    resolvePlayerIdentity({ name: "웰스", teamId: 1 }, FIXTURE)?.kboId ?? null,
+    null,
+    "부분매칭이 팀 안에서 복수면 해석하지 않는다(배열 순서 의존 금지)",
+  );
+  assert.equal(
+    resolveRosterCandidates({ name: "웰스", teamId: 1 }, FIXTURE).length,
+    2,
+    "부분매칭 후보는 전부 노출돼야 호출자가 역할로 좁힐 수 있다",
+  );
+
+  // (ii) exact 가 있으면 부분매칭은 섞이지 않는다 — "홍길동"(exact) vs "김홍길동"(suffix).
+  const mixed = resolveRosterCandidates({ name: "홍길동", teamId: 2 }, FIXTURE);
+  assert.deepEqual(
+    mixed.map((c) => c.kboId),
+    ["AQ103"],
+    "exact 가 있으면 후보는 exact 집합만 — 부분매칭이 섞이면 모호하지 않은 이름이 모호해진다",
+  );
+  assert.equal(
+    resolvePlayerIdentity({ name: "홍길동", teamId: 2 }, FIXTURE)?.kboId,
+    "AQ103",
+    "exact 유일 매칭은 부분매칭 때문에 흔들리면 안 된다",
+  );
+
+  // 팀이 다르면 여전히 갈린다(과도한 fail-close 가 아님).
+  assert.equal(
+    resolvePlayerIdentity({ name: "웰스", teamId: 2 }, FIXTURE)?.kboId,
+    "AQ102",
+    "팀으로 유일해지면 정상 해석된다",
+  );
+}
+
+/* ★ 순서 비의존 — 같은 로스터를 뒤집어도 답이 같아야 한다.
+ * 이게 이번 사고의 본질이다. 위 (a)~(c)만 있으면 "지금 순서에서 우연히 맞는" 상태를
+ * 계약으로 굳힐 수 있으므로, 순서를 실제로 뒤집어 대조한다. */
+{
+  const reversed = [...rosterRows].reverse();
+  const sampleNames = ambiguousGroups
+    .map((g) => g[0])
+    .concat(dupSample!)
+    .slice(0, 12);
+  for (const { name, teamId } of sampleNames) {
+    assert.equal(
+      resolveRosterCandidates({ name, teamId }, reversed as never).length,
+      resolveRosterCandidates({ name, teamId }).length,
+      `${name}(팀 ${teamId}) 후보 수가 배열 순서에 따라 달라지면 안 된다`,
+    );
+    assert.equal(
+      resolvePlayerIdentity({ name, teamId }, reversed as never)?.kboId ?? null,
+      resolvePlayerIdentity({ name, teamId })?.kboId ?? null,
+      `${name}(팀 ${teamId}) 해석 결과가 배열 순서에 따라 달라지면 안 된다`,
+    );
+  }
+}
+
 // 팀 분리가 실제로 갈라지는지 — 두 표본의 canonical ID가 서로 달라야 한다.
 const dupIds = new Set(
   dupSample!.map((dup) => resolveRosterPlayer({ name: dup.name, teamId: dup.teamId })?.kboId),
