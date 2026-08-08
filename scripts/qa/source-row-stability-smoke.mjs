@@ -11,20 +11,41 @@
  *
  * ②가 없으면 이 파일은 게이트를 지운 것과 같다. 그래서 "통과하는지"보다
  * **"여전히 죽는지"** 를 더 많이 검사한다.
+ *
+ * ── 2026-08-08 삼순 NO-GO 3건 반영 ──────────────────────────────
+ * 1. 하한이 2였을 때 `좌,좌` 우연이 그대로 통과했다 → N=3 + baseline 결속
+ * 2. union 이 first/last 중 하나만 남겨 회차별 값 충돌이 사라졌다 → valueConflictKeys
+ * 3. 재판정이 최초 관측·최초 failure 를 통째 교체했다 → 최초 포함 3회 + 비-row failure 보존
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   MIN_CONFIRM_READS,
+  MISS_RUNS_BEFORE_DELETE,
   assertConfirmReads,
   classifyRowStability,
+  decideRowRetention,
   describeUnstableRows,
+  describeValueConflicts,
 } from "../lib/source-row-stability.mjs";
-import { crossCheckDataset } from "../lib/stats-source-truth.mjs";
+import {
+  crossCheckDataset,
+  judgeWithConfirmation,
+  mergeConfirmedJudgement,
+} from "../lib/stats-source-truth.mjs";
 
 let passed = 0;
+const pending = [];
 const check = (label, fn) => {
-  fn();
+  const outcome = fn();
+  if (outcome && typeof outcome.then === "function") {
+    // async 검사를 동기처럼 받아 삼키면 rejection 이 무시돼 GREEN 이 된다.
+    pending.push(outcome.then(() => {
+      passed++;
+      console.log(`  ✓ ${label}`);
+    }));
+    return;
+  }
   passed++;
   console.log(`  ✓ ${label}`);
 };
@@ -36,44 +57,43 @@ const throws = (label, fn, pattern) => {
 
 /** KBO 원본 한 회차 = `key → 셀 배열`. 셀 1번이 이름, 3번이 포지션이다. */
 const obs = (entries) => new Map(entries);
-const cell = (name, pos, games) => ["1", name, "두산", pos, String(games), "", "1", "0", "0", "1", "0", "0", "1.000", "0", "0", "0"];
+const cell = (name, pos, games) =>
+  ["1", name, "두산", pos, String(games), "", "1", "0", "0", "1", "0", "0", "1.000", "0", "0", "0"];
+
+const LEFT = "54214|좌익수";
+const CENTER = "54214|중견수";
+const readLeft = () => obs([[LEFT, cell("전다민", "좌익수", 1)]]);
+const readBoth = () => obs([
+  [LEFT, cell("전다민", "좌익수", 1)],
+  [CENTER, cell("전다민", "중견수", 1)],
+]);
 
 console.log("\n▸ 관측 접기(classifyRowStability)");
 
 check("전 회차 공통 행 = stable", () => {
-  const result = classifyRowStability([
-    obs([["1|중견수", cell("가", "중견수", 1)]]),
-    obs([["1|중견수", cell("가", "중견수", 1)]]),
-  ]);
-  assert.deepEqual([...result.stableKeys], ["1|중견수"]);
+  const result = classifyRowStability([readBoth(), readBoth(), readBoth()]);
+  assert.deepEqual([...result.stableKeys].sort(), [LEFT, CENTER].sort());
   assert.equal(result.unstableKeys.size, 0);
 });
 
 check("일부 회차만 관측된 행 = unstable (전다민 824↔825 실측 형상)", () => {
-  const result = classifyRowStability([
-    obs([["54214|좌익수", cell("전다민", "좌익수", 1)]]),
-    obs([
-      ["54214|좌익수", cell("전다민", "좌익수", 1)],
-      ["54214|중견수", cell("전다민", "중견수", 1)],
-    ]),
-  ]);
-  assert.deepEqual([...result.stableKeys], ["54214|좌익수"]);
-  assert.deepEqual([...result.unstableKeys], ["54214|중견수"]);
+  const result = classifyRowStability([readLeft(), readBoth(), readLeft()]);
+  assert.deepEqual([...result.stableKeys], [LEFT]);
+  assert.deepEqual([...result.unstableKeys], [CENTER]);
   // union 에는 남는다 — 값 대조 대상이기 때문이다.
-  assert.ok(result.union.has("54214|중견수"));
+  assert.ok(result.union.has(CENTER));
+  assert.equal(result.seenCount.get(CENTER), 1);
 });
 
-throws(
-  "관측 0회 = 통과가 아니라 실패",
-  () => classifyRowStability([]),
-  /row_stability_no_observations/,
-);
+throws("관측 0회 = 통과가 아니라 실패", () => classifyRowStability([]), /row_stability_no_observations/);
 
 throws(
   "0행 회차 = '전부 불안정'이 아니라 수집 실패",
-  () => classifyRowStability([obs([["1|중견수", cell("가", "중견수", 1)]]), obs([])]),
+  () => classifyRowStability([readBoth(), obs([])]),
   /row_stability_empty_observation/,
 );
+
+console.log("\n▸ ★ 삼순 NO-GO 1 — 하한 2회로는 `좌,좌` 우연이 통과했다");
 
 throws(
   "1회 관측으로는 불안정을 판정할 수 없다",
@@ -81,18 +101,76 @@ throws(
   /row_stability_insufficient_reads/,
 );
 
-check("하한 이상은 통과", () => {
-  assert.equal(assertConfirmReads(MIN_CONFIRM_READS), MIN_CONFIRM_READS);
+throws(
+  "★ 2회도 부족하다 — `좌,좌` 를 뽑으면 중견수가 조용히 사라진다",
+  () => assertConfirmReads(2),
+  /row_stability_insufficient_reads/,
+);
+
+check("하한은 3회다", () => {
+  assert.equal(MIN_CONFIRM_READS, 3);
+  assert.equal(assertConfirmReads(3), 3);
 });
 
-check("불안정 요약은 조용히 넘기지 않고 문장을 남긴다", () => {
-  const note = describeUnstableRows(
-    "수비",
-    new Set(["54214|중견수"]),
-    obs([["54214|중견수", cell("전다민", "중견수", 1)]]),
-  );
-  assert.match(note, /54214\|중견수/);
-  assert.match(note, /전다민/);
+console.log("\n▸ ★ 삼순 NO-GO 1 — baseline 결속(운 나쁘게 전 회차 빠져도 한 런에 못 지운다)");
+
+check("★ baseline 좌+중 / 이번 런 좌,좌,좌 → 중견수는 보존(삭제 아님)", () => {
+  const classified = classifyRowStability([readLeft(), readLeft(), readLeft()]);
+  const decision = decideRowRetention({
+    baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    observedByKey: new Map([[LEFT, {}]]),
+    seenCount: classified.seenCount,
+    previousMissStreak: {},
+  });
+  assert.deepEqual(decision.deletedKeys, [], "한 런 0회로는 지우지 않는다");
+  assert.deepEqual(decision.heldKeys, [CENTER]);
+  assert.equal(decision.missStreak[CENTER], 1);
+});
+
+check(`연속 ${MISS_RUNS_BEFORE_DELETE}런 미관측이면 그때 제거한다`, () => {
+  const classified = classifyRowStability([readLeft(), readLeft(), readLeft()]);
+  const decision = decideRowRetention({
+    baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    observedByKey: new Map([[LEFT, {}]]),
+    seenCount: classified.seenCount,
+    previousMissStreak: { [CENTER]: MISS_RUNS_BEFORE_DELETE - 1 },
+  });
+  assert.deepEqual(decision.deletedKeys, [CENTER]);
+  assert.deepEqual(decision.heldKeys, []);
+});
+
+check("다시 관측되면 streak 가 리셋된다(보존도 삭제도 아님)", () => {
+  const classified = classifyRowStability([readBoth(), readBoth(), readBoth()]);
+  const decision = decideRowRetention({
+    baselineByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    observedByKey: new Map([[LEFT, {}], [CENTER, {}]]),
+    seenCount: classified.seenCount,
+    previousMissStreak: { [CENTER]: MISS_RUNS_BEFORE_DELETE - 1 },
+  });
+  assert.deepEqual(decision.deletedKeys, []);
+  assert.deepEqual(decision.heldKeys, []);
+  assert.equal(decision.missStreak[CENTER], undefined, "streak 가 남으면 다음 런에 오삭제된다");
+});
+
+console.log("\n▸ ★ 삼순 NO-GO 2 — 회차별 값 충돌은 first/last 로 삼키지 않는다");
+
+check("★ 같은 key 가 회차별로 다른 값이면 valueConflictKeys 에 잡힌다 (games 1↔999)", () => {
+  const result = classifyRowStability([
+    obs([[CENTER, cell("전다민", "중견수", 1)]]),
+    obs([[CENTER, cell("전다민", "중견수", 999)]]),
+    obs([[CENTER, cell("전다민", "중견수", 1)]]),
+  ]);
+  assert.deepEqual([...result.valueConflictKeys], [CENTER]);
+  // 충돌은 stable 여부와 무관하다 — 매 회차 나와도 값이 다르면 오염 후보다.
+  assert.ok(result.stableKeys.has(CENTER));
+  const note = describeValueConflicts("수비", result.valueConflictKeys);
+  assert.match(note, /fail-close/);
+});
+
+check("값이 같으면 충돌이 아니다", () => {
+  const result = classifyRowStability([readBoth(), readBoth(), readBoth()]);
+  assert.equal(result.valueConflictKeys.size, 0);
+  assert.equal(describeValueConflicts("수비", result.valueConflictKeys), null);
 });
 
 console.log("\n▸ 행 집합 판정(crossCheckDataset)");
@@ -112,11 +190,8 @@ check("불안정 행이 우리 쪽에 없어도 행 집합 실패가 아니다 (
   const result = crossCheckDataset({
     ...DEFENSE_SPEC,
     rows: [ours("54214", "좌익수")],
-    kbo: obs([
-      ["54214|좌익수", cell("전다민", "좌익수", 1)],
-      ["54214|중견수", cell("전다민", "중견수", 1)],
-    ]),
-    unstableKeys: new Set(["54214|중견수"]),
+    kbo: readBoth(),
+    unstableKeys: new Set([CENTER]),
   });
   assert.deepEqual(result.failures, []);
   assert.equal(result.rowSetFailures, 0);
@@ -126,8 +201,8 @@ check("불안정 행이 우리 쪽에만 있어도 실패가 아니다 (반대 �
   const result = crossCheckDataset({
     ...DEFENSE_SPEC,
     rows: [ours("54214", "좌익수"), ours("54214", "중견수")],
-    kbo: obs([["54214|좌익수", cell("전다민", "좌익수", 1)]]),
-    unstableKeys: new Set(["54214|중견수"]),
+    kbo: readLeft(),
+    unstableKeys: new Set([CENTER]),
   });
   assert.deepEqual(result.failures, []);
 });
@@ -137,7 +212,7 @@ check("★ 안정 행 누락은 여전히 실패다 (완화가 전체로 번지�
     ...DEFENSE_SPEC,
     rows: [],
     kbo: obs([["99999|포수", cell("타인", "포수", 1)]]),
-    unstableKeys: new Set(["54214|중견수"]),
+    unstableKeys: new Set([CENTER]),
   });
   assert.equal(result.rowSetFailures, 1);
   assert.match(result.failures[0], /KBO에 있으나 우리 데이터에 없음/);
@@ -147,8 +222,8 @@ check("★ 불안정 행이어도 값 불일치는 그대로 잡는다 (값 대�
   const result = crossCheckDataset({
     ...DEFENSE_SPEC,
     rows: [ours("54214", "중견수", 999)],
-    kbo: obs([["54214|중견수", cell("전다민", "중견수", 1)]]),
-    unstableKeys: new Set(["54214|중견수"]),
+    kbo: obs([[CENTER, cell("전다민", "중견수", 1)]]),
+    unstableKeys: new Set([CENTER]),
   });
   assert.equal(result.rowSetFailures, 0, "행 집합은 통과");
   assert.equal(result.failures.length, 1, "값은 잡혀야 한다");
@@ -159,7 +234,7 @@ check("★ unstableKeys 미지정이면 종전과 동일한 strict 판정", () =
   const result = crossCheckDataset({
     ...DEFENSE_SPEC,
     rows: [],
-    kbo: obs([["54214|중견수", cell("전다민", "중견수", 1)]]),
+    kbo: obs([[CENTER, cell("전다민", "중견수", 1)]]),
   });
   assert.equal(result.rowSetFailures, 1);
 });
@@ -168,15 +243,136 @@ check("rowSetFailures 는 값 불일치를 세지 않는다 (재조회 트리거
   const result = crossCheckDataset({
     ...DEFENSE_SPEC,
     rows: [ours("54214", "중견수", 7)],
-    kbo: obs([["54214|중견수", cell("전다민", "중견수", 1)]]),
+    kbo: obs([[CENTER, cell("전다민", "중견수", 1)]]),
   });
   assert.equal(result.failures.length, 1);
   assert.equal(result.rowSetFailures, 0);
 });
 
+console.log("\n▸ ★ 삼순 NO-GO 3 — 최초 관측·최초 failure 를 버리지 않는다");
+
+check("★ 행집합 실패 문장만 rowSetMessages 로 식별된다(값 실패는 보존 대상)", () => {
+  const result = crossCheckDataset({
+    ...DEFENSE_SPEC,
+    rows: [ours("54214", "중견수", 999)],
+    kbo: readBoth(),
+  });
+  const rowSet = result.failures.filter((line) => result.rowSetMessages.has(line));
+  const carried = result.failures.filter((line) => !result.rowSetMessages.has(line));
+  assert.equal(rowSet.length, 1, "좌익수 누락 = 행집합");
+  assert.match(rowSet[0], /좌익수/);
+  assert.equal(carried.length, 1, "games 999 = 값 실패, 재판정에서 살아남아야 한다");
+  assert.match(carried[0], /값 불일치/);
+});
+
+/* ⚠︎ 아래 세 개는 **병합 함수를 직접 호출**한다.
+ * 자체발견: 1차 스모크는 이 계약을 소스 문자열(`carriedFailures`, `describeValueConflicts`)로만
+ * 봤고, 그래서 `carriedFailures = []` · `if (false) failures.push(conflictNote)` 변이가 둘 다
+ * GREEN 이었다. 검증기가 대상 로직을 부르지 않으면 대상이 죽어도 GREEN 이다. */
+const initialWithValueFailure = () => ({
+  failures: ["수비: 값 불일치 playerId=54214(전다민) games ours=999 kbo=1", "수비: KBO에 있으나 우리 데이터에 없음 — playerId=54214|좌익수"],
+  rowSetMessages: new Set(["수비: KBO에 있으나 우리 데이터에 없음 — playerId=54214|좌익수"]),
+});
+
+check("★ 병합: 최초의 값 실패는 재판정 후에도 살아남는다", () => {
+  const merged = mergeConfirmedJudgement({
+    initialResult: initialWithValueFailure(),
+    confirmedResult: { failures: [] },
+    conflictNote: null,
+  });
+  assert.equal(merged.length, 1);
+  assert.match(merged[0], /값 불일치.*games ours=999/);
+});
+
+check("★ 병합: 최초의 행집합 실패는 버린다(그것만이 재조회로 바뀌는 판정이다)", () => {
+  const merged = mergeConfirmedJudgement({
+    initialResult: initialWithValueFailure(),
+    confirmedResult: { failures: [] },
+    conflictNote: null,
+  });
+  assert.ok(!merged.some((line) => /KBO에 있으나/.test(line)));
+});
+
+check("★ 병합: 값 충돌 note 는 반드시 최종 failure 에 들어간다(fail-close)", () => {
+  const note = "수비: 원본이 같은 key 에 회차별로 다른 값을 줬다 1건";
+  const merged = mergeConfirmedJudgement({
+    initialResult: { failures: [], rowSetMessages: new Set() },
+    confirmedResult: { failures: [] },
+    conflictNote: note,
+  });
+  assert.deepEqual(merged, [note]);
+});
+
+console.log("\n▸ ★ 확인 판정 전체 경로(judgeWithConfirmation) — 직접 호출");
+
+/* ⚠︎ 자체발견 2차: 병합 함수만 순수로 빼놓았더니, 그 함수에 **무엇을 넘기는가**를
+ * 소스 문자열로만 봐서 `conflictNote: null` 변이가 GREEN 이었다. 수집만 주입점으로 남기고
+ * 판정·병합 전체를 한 함수로 묶은 뒤, 게이트가 그걸 fake 수집기로 직접 태운다. */
+const fakeConfirm = (observations) => async ({ priorObservations }) =>
+  classifyRowStability([...priorObservations, ...observations]);
+
+check("★ alternating 좌/중 → 거짓 RED 가 사라진다(나머지 갱신은 통과)", async () => {
+  const spec = { ...DEFENSE_SPEC, rows: [ours("54214", "좌익수")], kbo: readBoth() };
+  const initialResult = crossCheckDataset(spec);
+  assert.equal(initialResult.rowSetFailures, 1, "최초엔 중견수 누락으로 RED 였다");
+  const { result } = await judgeWithConfirmation({
+    spec,
+    initialResult,
+    collectConfirmed: fakeConfirm([readLeft(), readBoth()]),
+  });
+  assert.deepEqual(result.failures, [], "흔들렸으므로 행집합 실패가 아니다");
+});
+
+check("★ 전체경로: 회차별 값 충돌(games 1↔999)은 fail-close 된다", async () => {
+  const spec = { ...DEFENSE_SPEC, rows: [ours("54214", "좌익수")], kbo: readBoth() };
+  const { result } = await judgeWithConfirmation({
+    spec,
+    initialResult: crossCheckDataset(spec),
+    collectConfirmed: fakeConfirm([
+      obs([[LEFT, cell("전다민", "좌익수", 999)], [CENTER, cell("전다민", "중견수", 1)]]),
+      readBoth(),
+    ]),
+  });
+  assert.ok(
+    result.failures.some((line) => /회차별로 다른 값/.test(line)),
+    "충돌을 삼키면 오염이 그대로 나간다",
+  );
+});
+
+check("★ 전체경로: 안정 행이 진짜로 빠졌으면 여전히 RED", async () => {
+  const spec = { ...DEFENSE_SPEC, rows: [], kbo: readBoth() };
+  const { result } = await judgeWithConfirmation({
+    spec,
+    initialResult: crossCheckDataset(spec),
+    collectConfirmed: fakeConfirm([readBoth(), readBoth()]),
+  });
+  assert.equal(result.failures.length, 2, "좌익수·중견수 둘 다 안정 행이다");
+  assert.ok(result.failures.every((line) => /KBO에 있으나/.test(line)));
+});
+
+check("★ 전체경로: 최초의 값 불일치는 재판정 뒤에도 살아남는다", async () => {
+  // 우리 쪽 중견수 games=999 (값 오염) + 좌익수는 우리에 없음(행집합)
+  const spec = { ...DEFENSE_SPEC, rows: [ours("54214", "중견수", 999)], kbo: readBoth() };
+  const initialResult = crossCheckDataset(spec);
+  assert.ok(initialResult.failures.some((line) => /값 불일치/.test(line)));
+  const { result } = await judgeWithConfirmation({
+    spec,
+    initialResult,
+    // 좌익수를 흔들리게 만들어 행집합은 해소되게 한다 — 값 실패만 남아야 한다.
+    collectConfirmed: fakeConfirm([
+      obs([[CENTER, cell("전다민", "중견수", 1)]]),
+      readBoth(),
+    ]),
+  });
+  assert.ok(
+    result.failures.some((line) => /값 불일치.*games ours=999/.test(line)),
+    "값 오염이 재판정에서 사라지면 안 된다",
+  );
+});
+
 console.log("\n▸ 결속(배선이 실제로 살아 있는가)");
 
-check("크롤러 수비 경로가 확인 재조회 하한에 결속돼 있다", () => {
+check("크롤러 수비 경로가 확인 재조회 하한·baseline·값충돌에 결속돼 있다", () => {
   const source = readFileSync("scripts/crawl-stats.mjs", "utf8");
   assert.match(
     source,
@@ -184,16 +380,37 @@ check("크롤러 수비 경로가 확인 재조회 하한에 결속돼 있다", 
     "수비 확인 횟수가 lib 하한과 분리되면 1회로 되돌릴 수 있다",
   );
   assert.match(source, /defense_empty_observation/, "0행 회차 fail-close 가 있어야 한다");
+  assert.match(source, /defense_value_conflict/, "회차별 값 충돌 fail-close 가 있어야 한다");
+  assert.match(source, /decideRowRetention/, "baseline 결속이 없으면 기존 행이 한 런에 사라진다");
+  assert.match(source, /baselineRows:\s*defenseBaseline/, "baseline 을 실제로 넘겨야 한다");
 });
 
-check("오라클이 행 집합 실패일 때만 확인 재조회한다", () => {
+check("★ miss streak 파일이 산출물과 **같은 promote payload** 에 실린다", () => {
+  // 자체발견: 단순 문자열 검사(`row-miss-streak`)로는 promote 에서 뺀 변이를 못 잡았다.
+  // 경로 상수는 파일 위쪽에 그대로 남아있어 정규식이 계속 맞았기 때문이다.
+  // 그래서 artifacts 배열 안에 실제로 들어가는지를 본다.
+  const source = readFileSync("scripts/crawl-stats.mjs", "utf8");
+  const artifactsBlock = source.match(/const artifacts = \[([\s\S]*?)\n {4}\];/);
+  assert.ok(artifactsBlock, "artifacts 배열을 찾지 못했다");
+  assert.match(
+    artifactsBlock[1],
+    /missStreakPath/,
+    "streak 를 따로 쓰면 검증 실패로 산출물만 롤백되고 streak 만 올라가, 다음 런에 살아있는 행을 지운다",
+  );
+});
+
+check("오라클이 행 집합 실패일 때만 확인 재조회하고, 최초 관측을 산입한다", () => {
   const source = readFileSync("scripts/lib/stats-source-truth.mjs", "utf8");
   assert.match(
     source,
     /result\.rowSetFailures\s*>\s*0/,
     "정상 런에서 무조건 N배 조회하면 게이트를 끄자는 압력이 생긴다",
   );
-  assert.match(source, /collectKboPagesConfirmed/);
+  assert.match(source, /priorObservations:\s*\[spec\.kbo\]/, "최초 관측을 버리면 증거가 사라진다");
+  assert.match(source, /carriedFailures/, "최초의 값 실패를 보존해야 한다");
+  assert.match(source, /describeValueConflicts/, "오라클도 값 충돌을 fail-close 해야 한다");
 });
+
+await Promise.all(pending);
 
 console.log(`\n✅ source row stability: ${passed} PASS`);

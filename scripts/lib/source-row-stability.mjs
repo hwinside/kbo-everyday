@@ -24,25 +24,41 @@
  * 즉 게이트가 **한 번의 운 나쁜 읽기를 영구 동결**하고 있었다.
  *
  * ── 계약 ────────────────────────────────────────────────────────
- * 원본을 N회(N>=2) 관측해 행 키를 세 갈래로 가른다.
+ * 원본을 N회(N>=3) 관측해 행 키를 세 갈래로 가른다.
  *
  *   - 전 회차 관측  → stable   : 행 집합 대조 대상. 없거나 남으면 **그대로 실패**다.
  *   - 일부 회차만   → unstable : 원본이 흔든 것. 행 집합 실패로 **세지 않는다**.
  *   - 0회          → 부재      : 애초에 union 에 없다.
  *
- * ⚠︎ 이건 완화가 아니다. 세 가지를 지킨다.
+ * ⚠︎ 이건 완화가 아니다. 네 가지를 지킨다.
  *   1) **값 대조는 손대지 않는다.** unstable 행이라도 관측된 회차의 필드값은
  *      그대로 엄격 비교한다. 흔들리는 건 "행의 존재"지 "값"이 아니다.
- *   2) 관측이 0회거나 0행이면 **안정이 아니라 실패**다. 수집 실패를 "다 안정"으로
- *      읽으면 그게 곧 false-green 이고, 이 파일 전체가 게이트를 지운 것과 같아진다.
- *   3) 관측 1회로는 unstable 을 만들 수 없다. 1회 관측은 정의상 전부 stable 이라
- *      종전과 정확히 같은 strict 판정이 된다 — 그래서 "2회 미만 금지"를 별도로 강제한다
- *      (`assertConfirmReads`). 이게 없으면 호출부에서 reads=1 한 줄로 계약이 사라지는데
+ *   2) 같은 key 가 회차마다 **다른 값**을 주면 그건 불안정이 아니라 오염 후보다.
+ *      first-write 든 last-write 든 하나를 남기면 충돌이 조용히 사라진다(삼순 지적).
+ *      `valueConflictKeys` 로 뽑아 호출자가 fail-close 하게 한다.
+ *   3) 관측이 0회거나 0행이면 **안정이 아니라 실패**다. 수집 실패를 "다 안정"으로
+ *      읽으면 그게 곧 false-green 이다.
+ *   4) 관측 1~2회로는 "매번 나온다"를 말할 수 없다. 하한을 코드로 강제한다
+ *      (`assertConfirmReads`). 하한이 없으면 호출부 한 줄로 계약이 사라지는데
  *      union·stable 은 여전히 그럴듯하게 채워져 아무도 못 잡는다.
+ *
+ * ⚠︎ 2026-08-08 삼순 NO-GO 반영: 하한이 2였을 때 실제로 뚫렸다.
+ * `좌,좌` 두 번을 뽑으면 중견수 행이 union 에서 빠져 **기존 행이 삭제**되고,
+ * 오라클도 `좌` 를 보면 row-set 불일치가 없어 재조회 트리거조차 안 걸린다
+ * — 양쪽 다 GREEN 인 채로 행이 사라진다. 하한을 3으로 올리고, 크롤 쪽은
+ * baseline 결속(`decideRowRetention`)까지 함께 둔다.
  */
 
-/** 확인 재조회 최소 횟수. 이보다 적으면 불안정을 **판정할 수 없다**(있다/없다 구분 불가). */
-export const MIN_CONFIRM_READS = 2;
+/** 확인 재조회 최소 횟수. 2회로는 `좌,좌` 우연이 그대로 통과한다(실측). */
+export const MIN_CONFIRM_READS = 3;
+
+/**
+ * baseline 에 있던 key 가 이번 런에서 0회 관측일 때, 몇 런 연속이어야 삭제하는가.
+ *
+ * ⚠︎ 한 런 `0/N` 만으로 지우면 안 된다 — 알려진 불안정 행이 운 나쁘게 N번 모두
+ * 빠질 수 있고, 그러면 이 PR 이 고치려던 "조용한 행 삭제"가 그대로 재발한다(삼순 지적).
+ */
+export const MISS_RUNS_BEFORE_DELETE = 2;
 
 /**
  * 확인 재조회 횟수 계약. 하한 미만이면 던진다.
@@ -61,10 +77,17 @@ export function assertConfirmReads(reads) {
 }
 
 /**
- * 관측 N회를 접어 행 키를 stable/unstable 로 가른다.
+ * 관측 N회를 접어 행 키를 stable/unstable 로 가르고, 값 충돌 key 를 함께 뽑는다.
  *
  * @param {Array<Map<string, string[]>>} observations 회차별 `key → 원본 셀 텍스트`
- * @returns {{ union: Map<string, string[]>, stableKeys: Set<string>, unstableKeys: Set<string>, reads: number }}
+ * @returns {{
+ *   union: Map<string, string[]>,
+ *   stableKeys: Set<string>,
+ *   unstableKeys: Set<string>,
+ *   valueConflictKeys: Set<string>,
+ *   seenCount: Map<string, number>,
+ *   reads: number,
+ * }}
  */
 export function classifyRowStability(observations) {
   if (!Array.isArray(observations) || observations.length === 0) {
@@ -75,6 +98,7 @@ export function classifyRowStability(observations) {
 
   const union = new Map();
   const seenCount = new Map();
+  const valueConflictKeys = new Set();
 
   for (const [index, observation] of observations.entries()) {
     if (!(observation instanceof Map)) {
@@ -88,7 +112,12 @@ export function classifyRowStability(observations) {
       );
     }
     for (const [key, value] of observation) {
-      if (!union.has(key)) union.set(key, value);
+      if (!union.has(key)) {
+        union.set(key, value);
+      } else if (!sameCells(union.get(key), value)) {
+        // 같은 key 인데 회차마다 값이 다르다. 어느 쪽을 남겨도 충돌이 사라진다.
+        valueConflictKeys.add(key);
+      }
       seenCount.set(key, (seenCount.get(key) ?? 0) + 1);
     }
   }
@@ -101,7 +130,30 @@ export function classifyRowStability(observations) {
     else unstableKeys.add(key);
   }
 
-  return { union, stableKeys, unstableKeys, reads };
+  return { union, stableKeys, unstableKeys, valueConflictKeys, seenCount, reads };
+}
+
+/** 셀 배열 동일성. 원본은 문자열 배열이므로 요소별 비교로 충분하다. */
+function sameCells(a, b) {
+  const left = a ?? [];
+  const right = b ?? [];
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (String(left[i]) !== String(right[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * 값 충돌을 실패 문장으로. 호출자는 이걸 **그대로 죽는 근거**로 쓴다.
+ */
+export function describeValueConflicts(label, valueConflictKeys, { limit = 10 } = {}) {
+  const keys = [...valueConflictKeys];
+  if (keys.length === 0) return null;
+  const shown = keys.slice(0, limit).join(", ");
+  const suffix = keys.length > limit ? ` 외 ${keys.length - limit}건` : "";
+  return `${label}: 원본이 같은 key 에 회차별로 다른 값을 줬다 ${keys.length}건 — ${shown}${suffix}`
+    + " (어느 회차를 남겨도 충돌이 사라지므로 fail-close)";
 }
 
 /**
@@ -117,4 +169,53 @@ export function describeUnstableRows(label, unstableKeys, union, { limit = 10 } 
   });
   const suffix = keys.length > limit ? ` 외 ${keys.length - limit}건` : "";
   return `${label}: 원본 행 불안정 ${keys.length}건 — ${shown.join(", ")}${suffix}`;
+}
+
+/**
+ * 크롤 쓰기 경로의 **행 유지 판정** — baseline 과 이번 관측을 함께 본다.
+ *
+ * ⚠︎ 관측만으로 산출물을 만들면(= baseline 미참조) `좌,좌,좌` 를 뽑은 런이 중견수 행을
+ * 조용히 지운다. 개수 델타 가드(Δ≤10)도 1행 삭제는 못 잡고, 오라클도 같은 회차를 보면
+ * 불일치가 없어 재조회조차 안 한다 — 양쪽 GREEN 인 채로 행이 사라진다(삼순 실증).
+ *
+ * 판정:
+ *   - 이번에 1회 이상 관측  → 유지(관측값 사용). 신규든 기존이든 같다.
+ *   - baseline 에 있고 0회  → **바로 지우지 않는다**. miss streak 를 올리고,
+ *     `MISS_RUNS_BEFORE_DELETE` 연속 런에서 0회일 때만 제거한다.
+ *   - baseline 에 없고 0회  → 애초에 없는 행이다.
+ *
+ * @param {object} input
+ * @param {Map<string, any>} input.baselineByKey 직전 산출물 `key → row`
+ * @param {Map<string, any>} input.observedByKey 이번 런 union `key → row`
+ * @param {Map<string, number>} input.seenCount 이번 런 key 별 관측 횟수
+ * @param {Record<string, number>} input.previousMissStreak 이전 런까지의 연속 미관측 횟수
+ * @returns {{ keptKeys: string[], deletedKeys: string[], heldKeys: string[], missStreak: Record<string, number> }}
+ */
+export function decideRowRetention({
+  baselineByKey,
+  observedByKey,
+  seenCount,
+  previousMissStreak = {},
+}) {
+  const keptKeys = [];
+  const deletedKeys = [];
+  const heldKeys = [];
+  const missStreak = {};
+
+  for (const key of observedByKey.keys()) {
+    keptKeys.push(key);
+  }
+
+  for (const key of baselineByKey.keys()) {
+    if ((seenCount.get(key) ?? 0) > 0) continue; // 이번에 봤으면 이미 kept
+    const streak = (previousMissStreak[key] ?? 0) + 1;
+    if (streak >= MISS_RUNS_BEFORE_DELETE) {
+      deletedKeys.push(key);
+    } else {
+      heldKeys.push(key);
+      missStreak[key] = streak;
+    }
+  }
+
+  return { keptKeys, deletedKeys, heldKeys, missStreak };
 }

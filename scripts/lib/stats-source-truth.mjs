@@ -6,6 +6,7 @@ import {
   assertConfirmReads,
   classifyRowStability,
   describeUnstableRows,
+  describeValueConflicts,
   MIN_CONFIRM_READS,
 } from "./source-row-stability.mjs";
 
@@ -131,6 +132,70 @@ export async function collectKboDefensePages(page, url, season) {
 }
 
 /**
+ * 확인 재조회 후 **재판정 병합** — 순수 함수.
+ *
+ * ⚠︎ 이걸 assertSourceTruth 안에 인라인으로 두면 게이트가 검증할 수가 없다.
+ * 실제로 1차 구현에서 `carriedFailures = []`, `if (false) failures.push(conflictNote)`
+ * 두 변이가 전부 GREEN 이었다 — 스모크가 소스 문자열만 봤기 때문이다.
+ * 병합 규칙을 다음 세 줄로 고정하고 게이트가 **직접 호출**해 행동을 본다.
+ *
+ *   1) 재판정 결과(흔들린 키 제외)를 쓴다
+ *   2) 최초 판정의 **비-행집합 failure**(값 불일치 등)는 그대로 살린다
+ *   3) 회차별 값 충돌은 fail-close 로 붙인다
+ *
+ * @returns {string[]} 최종 failure 목록
+ */
+export function mergeConfirmedJudgement({ initialResult, confirmedResult, conflictNote }) {
+  const rowSetMessages = initialResult.rowSetMessages ?? new Set();
+  // 최초 판정에서 행집합이 아닌 실패는 재조회로 바뀌지 않는다 — 버리면 증거가 사라진다.
+  const carried = (initialResult.failures ?? []).filter((line) => !rowSetMessages.has(line));
+  const merged = [...(confirmedResult.failures ?? [])];
+  for (const line of carried) {
+    if (!merged.includes(line)) merged.push(line);
+  }
+  if (conflictNote && !merged.includes(conflictNote)) merged.push(conflictNote);
+  return merged;
+}
+
+/**
+ * 확인 관측 → 재판정 → 병합까지의 **전체 경로**. 수집기를 주입받는다.
+ *
+ * ⚠︎ 이 경로를 assertSourceTruth 안에 인라인으로 두면 게이트가 못 태운다.
+ * 실측으로 2차 구현에서 `conflictNote: null` · `merged = []` 두 변이가 GREEN 이었다
+ * — 순수 병합 함수만 빼놓고 **그 함수에 뭐를 넘기는지**는 소스 문자열로만 봤기 때문이다.
+ * 수집만 주입점으로 남기고 판정·병합을 전부 여기서 끝낸다.
+ *
+ * @param {object} input
+ * @param {object} input.spec crossCheckDataset 스펙(+ kbo = 최초 관측)
+ * @param {object} input.initialResult 최초 판정 결과
+ * @param {(opts:{priorObservations:Array}) => Promise<object>} input.collectConfirmed 확인 관측 수집기
+ */
+export async function judgeWithConfirmation({ spec, initialResult, collectConfirmed, log = () => {} }) {
+  const confirmed = await collectConfirmed({ priorObservations: [spec.kbo] });
+
+  const unstableNote = confirmed.unstableKeys.size > 0
+    ? describeUnstableRows(spec.label, confirmed.unstableKeys, confirmed.union)
+    : null;
+  if (unstableNote) log(`    ⚠︎ ${unstableNote}`);
+
+  // 재판정: 확인 관측의 union 을 원본으로 쓰고, 흔들린 키는 행 집합에서 제외한다.
+  const rejudged = crossCheckDataset({
+    ...spec,
+    kbo: confirmed.union,
+    unstableKeys: confirmed.unstableKeys,
+  });
+
+  // 같은 key 가 회차마다 다른 값이면 불안정이 아니라 오염 후보라 fail-close 한다.
+  rejudged.failures = mergeConfirmedJudgement({
+    initialResult,
+    confirmedResult: rejudged,
+    conflictNote: describeValueConflicts(spec.label, confirmed.valueConflictKeys),
+  });
+
+  return { result: rejudged, unstableNote };
+}
+
+/**
  * 같은 화면을 N회 독립 조회해 **행 존재 안정성**까지 판정한다.
  *
  * ⚠︎ 이 함수는 row-set 불일치가 이미 관측됐을 때만 부른다. 정상 런에서 매번 N배로
@@ -140,10 +205,12 @@ export async function collectKboDefensePages(page, url, season) {
  * reads 하한(`assertConfirmReads`)은 여기서 강제한다 — 1회 관측은 정의상 전부 stable 이라
  * 종전과 같은 strict 판정이 되는데, union·stable 은 그럴듯하게 채워져 아무도 못 잡는다.
  */
-export async function collectKboPagesConfirmed(page, url, season, { keyOf, reads } = {}) {
+export async function collectKboPagesConfirmed(page, url, season, { keyOf, reads, priorObservations = [] } = {}) {
   assertConfirmReads(reads);
-  const observations = [];
-  for (let i = 0; i < reads; i++) {
+  // ⚠︎ 최초 관측을 버리면 안 된다(삼순 지적). 최초에만 보였던 key 가 증거에서 사라지고,
+  // 새 회차만으로 통째 교체하면 관측 모수가 줄어 불안정 판정도 느슬해진다.
+  const observations = [...priorObservations];
+  while (observations.length < reads) {
     observations.push(await collectKboPages(page, url, season, { keyOf }));
   }
   return classifyRowStability(observations);
@@ -163,7 +230,14 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
   // 행 집합 실패만 따로 센다 — "확인 재조회를 할지"를 이걸로 결정하기 때문이다.
   // 값 불일치는 재조회로 바뀌지 않으므로 포함하지 않는다.
   let rowSetFailures = 0;
-  const failRowSet = (message) => { rowSetFailures++; failures.push(message); };
+  // 재판정이 들어올 때 "무엇을 버려도 되는가"를 구분하려면 행집합 문장을 알아야 한다.
+  // 이게 없으면 보존 로직이 문장 접두사 추측으로 가고, 그러면 문구를 바꿔도 안 깨진다.
+  const rowSetMessages = new Set();
+  const failRowSet = (message) => {
+    rowSetFailures++;
+    rowSetMessages.add(message);
+    failures.push(message);
+  };
   const rowKey = keyOf ?? ((row) => String(row.kboId ?? row.playerId ?? "").trim());
 
   const byId = new Map();
@@ -213,7 +287,7 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
     }
   }
 
-  return { failures, rowSetFailures, cells, ourRows: rows.length, kboRows: kbo.size };
+  return { failures, rowSetFailures, rowSetMessages, cells, ourRows: rows.length, kboRows: kbo.size };
 }
 
 /**
@@ -315,22 +389,24 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
        * ⚠︎ 정상 런에서는 rowSetFailures 가 0 이라 추가 조회가 0회다(비용 그대로).
        */
       if (result.rowSetFailures > 0 && spec.url) {
-        log(`    [${spec.label}] 행 집합 불일치 ${result.rowSetFailures}건 — 원본 행 안정성 확인 재조회 ${MIN_CONFIRM_READS}회`);
-        const confirmed = await collectKboPagesConfirmed(page, spec.url, season, {
-          keyOf: spec.keyOfSource,
-          reads: MIN_CONFIRM_READS,
+        log(`    [${spec.label}] 행 집합 불일치 ${result.rowSetFailures}건 — 원본 행 안정성 확인(최초 관측 포함 총 ${MIN_CONFIRM_READS}회)`);
+
+        // 판정·병합은 judgeWithConfirmation 이 끝낸다 — 여기서 풀어 쓰면 변이를 못 잡는다.
+        // 이 경로가 넘기는 건 수집 방법뿐이다.
+        const judged = await judgeWithConfirmation({
+          spec,
+          initialResult: result,
+          log,
+          // 최초 관측을 1회차로 산입한다 — 버리면 그 회차에만 보였던 key 가 증거에서 사라진다.
+          collectConfirmed: ({ priorObservations }) =>
+            collectKboPagesConfirmed(page, spec.url, season, {
+              keyOf: spec.keyOfSource,
+              reads: MIN_CONFIRM_READS,
+              priorObservations,
+            }),
         });
-        if (confirmed.unstableKeys.size > 0) {
-          const note = describeUnstableRows(spec.label, confirmed.unstableKeys, confirmed.union);
-          log(`    ⚠︎ ${note}`);
-          unstableNotes.push(note);
-        }
-        // 재판정: 확인 관측의 union 을 원본으로 쓰고, 흔들린 키는 행 집합에서 제외한다.
-        result = crossCheckDataset({
-          ...spec,
-          kbo: confirmed.union,
-          unstableKeys: confirmed.unstableKeys,
-        });
+        if (judged.unstableNote) unstableNotes.push(judged.unstableNote);
+        result = judged.result;
       }
 
       log(`    [${spec.label}] 우리 ${result.ourRows}행 / KBO ${result.kboRows}행 · ${result.cells}셀 대조`);
