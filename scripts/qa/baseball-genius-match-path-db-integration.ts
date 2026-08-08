@@ -57,6 +57,12 @@ async function main() {
   // 구 개별 파일을 재적용하면 서로가 서로의 라벨을 지우는 순서 의존이 되살아난다.
   await db.exec(readMigration("20260804124500_baseball_genius_match_path_union.sql"));
   await db.exec(readMigration("20260804140000_baseball_genius_player_picker.sql"));
+  // 이후 감사 축을 나누며 라벨을 더한 migration 들. **운영 적용 순서 그대로** 얹는다 —
+  // 각각이 CHECK 를 통째로 재선언하므로, 하나라도 선행 라벨을 빠뜨리면 아래 전수 INSERT 가
+  // 23514 로 RED 가 된다(그게 이 게이트의 존재 이유다).
+  await db.exec(readMigration("20260807090000_baseball_genius_team_rag_audit.sql"));
+  await db.exec(readMigration("20260808040000_baseball_genius_news_rag_match_path.sql"));
+  await db.exec(readMigration("20260808120000_baseball_genius_scope_guide_match_path.sql"));
 
   await verifyFinalAllowlistIsExactUnion(db);
 
@@ -121,7 +127,7 @@ async function main() {
  * 새 migration 이 조용히 과거 라벨을 잃는다.
  *
  * 그래서 세 축으로 닫는다.
- *  ① 14개 허용 라벨을 **전부 실제 INSERT** — 하나라도 빠지면 23514 로 RED
+ *  ① 허용 라벨을 **전부 실제 INSERT** — 하나라도 빠지면 23514 로 RED
  *  ② 미지 라벨은 거부 — allowlist 가 통째로 열려버리는 반대 방향도 막는다
  *  ③ `pg_get_constraintdef` 로 최종 정의를 직접 읽어 **집합이 정확히 일치**하는지 대조 —
  *     라벨이 더 늘어난 것도 잡는다(의도한 확장이면 이 목록을 같이 고쳐야 한다).
@@ -137,9 +143,12 @@ const FINAL_MATCH_PATH_ALLOWLIST = [
   "kbo_structured",
   "limited",
   "llm",
+  "news_rag",
   "player_picker",
   "rag",
+  "scope_guide",
   "service_redirect",
+  "team_rag",
   "unsure",
 ] as const;
 

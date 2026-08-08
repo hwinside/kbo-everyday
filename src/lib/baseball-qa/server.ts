@@ -39,6 +39,8 @@ import {
   buildRagLlmRequest,
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
+  RAG_NEWS_CANDIDATE_LIMIT,
+  RAG_NEWS_SYSTEM_PROMPT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
@@ -46,6 +48,7 @@ import {
   type RagEntityCandidate,
   type RagEvidence,
   type RagEvidenceCandidate,
+  type RagNewsCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
@@ -343,6 +346,97 @@ async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
   }));
 }
 
+/** `search_baseball_genius_news_articles` RPC 반환 행 (snake_case SQL 시그니처). */
+interface RagNewsArticleRow {
+  article_key: string;
+  team_ids: number[];
+  title: string;
+  description: string;
+  content: string;
+  link: string;
+  original_link: string;
+  press_host: string | null;
+  published_at: string;
+}
+
+/**
+ * 최근 30일 구단 기사(tier2) 근거 검색 — "어제 무슨 일 있었어?" 용.
+ *
+ * 구단 문서 경로와 다른 점
+ *  ① **시간 창이 검색 술어의 일부**다. `p_published_after` 로 하한을 DB 에 넘기고,
+ *    상한(`until`)은 앱에서 걱러낸다 — RPC 가 하한만 받기 때문이다. 상한을 생략하면
+ *    `그저께` 에 어제·오늘 기사가 섞여 들어온다.
+ *  ② chunk 가 아니라 **기사 1건 = 근거 1건**이다. `pageTitle` 은 기사 제목,
+ *    `sectionPath` 는 발행일로 채워 프롬프트 자료 블록이 시점을 갖도록 한다.
+ *  ③ 정렬은 DB 가 pgvector 로 한다(공식 문서 경로와 동일). 앱은 재정렬하지 않는다 —
+ *    구단 문서처럼 소스가 여럿이 아니라 가중치를 줄 대상이 없다.
+ */
+async function searchNewsRag(
+  candidate: RagNewsCandidate,
+  question: string,
+): Promise<RagEvidence[]> {
+  const embedded = await embedQuery(question);
+  // ⚠️ 임베딩 실패를 빈 배열로 둘돔하지 않는다. 빈 배열은 파이프라인에서 "그날 기사 없음"으로
+  //   해석되는데, 실제로는 재시도 가능한 실패다. 둘을 섮으면 장애가 조용히 "기사 없음" 으로 보인다.
+  if (!embedded.ok) throw new Error("news rag: query embedding failed");
+  // query-guard: bounded -- RPC 가 p_limit 상한(50)을 강제하는 정렬 조회다.
+  const { data, error } = await supabaseAdmin.rpc("search_baseball_genius_news_articles", {
+    p_team_ids: [candidate.teamId],
+    p_query_embedding: JSON.stringify(embedded.vector),
+    p_limit: RAG_NEWS_CANDIDATE_LIMIT,
+    p_published_after: candidate.since.toISOString(),
+  });
+  if (error) throw error;
+  const untilMs = candidate.until.getTime();
+  return ((data ?? []) as RagNewsArticleRow[])
+    // 상한은 반열린 구간 [since, until) 이다 — 자정에 걸친 기사가 두 날에 동시에 속하지 않게.
+    .filter((row) => {
+      const publishedMs = Date.parse(row.published_at);
+      // 파싱 불가는 버린다 — 시점을 모르는 기사는 "어제" 근거가 될 수 없다.
+      return Number.isFinite(publishedMs) && publishedMs < untilMs;
+    })
+    .map((row) => ({
+      content: row.content,
+      pageTitle: row.title,
+      // 유저 노출 출처는 네이버 재송고 링크(`link`)다. 언론사 원문(`original_link`)은
+      // 호스트가 수백 개라 allowlist 폐쇄집합을 만들 수 없어 쓰지 않는다.
+      canonicalUrl: row.link,
+      // 기사는 rev 개념이 없다. 불변 식별자인 article_key 를 쓴다(감사·중복제거용 내부 메타).
+      revision: `article:${row.article_key}`,
+      // 프롬프트 자료 블록에 그대로 들어가는 값이라 **발행일**을 넣는다 —
+      // 모델이 여러 기사를 봄 때 언제 일인지 구분할 수 있게.
+      sectionPath: row.published_at.slice(0, 10),
+      asOf: row.published_at,
+      // 언론 기사는 수치 정본이 아니다 — tier2 고정(migration 계약 1).
+      sourceGrade: "tier2" as const,
+      // 나무위키 크롬/광고 정제가 기사 발췌에 적용되면 안 된다. 소스를 명시해 정제 범위를 닫는다.
+      sourceKind: "news_article" as RagSourceKind,
+    }));
+}
+
+/**
+ * 기사(tier2) 근거 전용 호출 — 프롬프트만 다르고 경계는 선수·구단·공식 경로와 동일하다.
+ *
+ * ⚠️ 구단 문서 프롬프트(`RAG_TEAM_SYSTEM_PROMPT`)를 재사용하지 않는다. 그쪽은 자기를
+ * "구단 소개 도우미"로 규정해 사건·경기 서술을 범위 밖으로 오판하고, 기사 발췌이 잘려 있다는
+ * 사실도 모른다(잘린 문장을 자기 지식으로 이어붙일 수 있다).
+ */
+async function callNewsRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_NEWS_SYSTEM_PROMPT);
+}
+
+/**
+ * 최근 기사 RAG kill-switch — 구단 RAG(`TEAM_RAG_DISABLED`)과 동일한 fail-safe 방향.
+ *
+ * 끄는 법: Vercel 환경변수 `NEWS_RAG_DISABLED=1` → **재배포 1회**. 즉시 스위치가 아니라
+ * 코드 수정·리뷰·머지를 건너뛰는 rapid rollback 이다(Vercel env 는 기존 배포에 반영되지 않는다).
+ * 끄면 최신 질문은 종전 경로(team_rag → generic LLM)로 내려간다.
+ */
+export function newsRagEnabled(): boolean {
+  const raw = (process.env.NEWS_RAG_DISABLED ?? "").trim().toLowerCase();
+  return !["1", "true", "yes", "on"].includes(raw);
+}
+
 /** baseball_genius_previous_turn RPC 반환 행 (snake_case SQL 시그니처). */
 interface PreviousTurnRowSql {
   question: string | null;
@@ -426,6 +520,12 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 그런데 후보 생성 코드가 없어 한 건도 읽히지 않고 있었다(`LG 역사` → source=llm).
     enableTeamRag: teamRagEnabled(),
     callTeamRagLlm,
+    // 최근 기사 RAG 개통. production 적재 실측(2026-08-08 14일 백필):
+    // `genius_news_articles` 2,438행 · embedding 2,438/2,438 · 서빙뷰 2,438건 · 커버리지 140/140칸 ok.
+    // 적재만 되고 조회 배선이 없으면 근거는 사장된다(#1110 구단 RAG 에서 이미 겪은 사고).
+    enableNewsRag: newsRagEnabled(),
+    searchNewsRag,
+    callNewsRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
     releaseDaily: async (userId) => {
       // query-guard: bounded -- message_id 단위 멱등 단일 행 갱신 RPC.

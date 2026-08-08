@@ -511,11 +511,13 @@ async function main() {
     ["공지 브릿지 → 10팀 전부", "src/app/api/admin/whats-new/route.ts", null, /team_tags:\s*ALL_TEAM_SLUGS/],
     ["기사 브릿지 → 10팀 전부", "src/app/api/news/discussion/route.ts", null, /team_tags:\s*ALL_TEAM_SLUGS/],
     // 콜렉터는 postInsert 객체를 먼저 만든 뒤 `.insert(postInsert)` 한다.
+    // 2026-08-07: 팀 파생을 resolveCollectorTeam 하나로 묶어 공개범위와 작성자 배지가 같은 값을 쓴다.
+    // 검사 의도(콜렉터가 board 에서 파생한 팀을 team_tags 에 채운다)는 그대로고 요구 대상만 새 심볼로.
     [
       "짤·움짤 콜렉터 → board 에서 팀 파생",
       "src/lib/gif-collector/publisher.ts",
       "const postInsert: Record<string, unknown> =",
-      /team_tags:\s*collectorTeamSlugs/,
+      /team_tags:\s*\[collectorTeam\.slug\]/,
     ],
     ["댓글 CRUD QA seed", "scripts/qa/ui-smoke-comment-crud.mjs", null, /team_tags:\s*\[/],
     ["기사 신고 QA seed", "scripts/qa/ui-smoke-news-comment-report.mjs", null, /team_tags:\s*\[/],

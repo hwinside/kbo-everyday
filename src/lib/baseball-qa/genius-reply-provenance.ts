@@ -15,6 +15,14 @@ export const PROVENANCE_LABELS = {
   namu: "나무위키",
   wikipedia: "위키피디아",
   official: "KBO 공식 자료",
+  /**
+   * 최근 기사 근거(news_rag).
+   *
+   * ⚠️ 언론사 이름을 쓰지 않는다. 우리가 가진 건 네이버 검색 API 가 준 **제목+발췌**이고,
+   * 링크도 네이버 재송고 주소다. `오신` 같은 언론사명을 붙이면 우리가 그 사의 기사 본문을
+   * 읽고 인용한 것처럼 보이는데, 본문은 수집하지 않는다(migration 계약 2).
+   */
+  news: "네이버 스포츠 기사",
 } as const;
 export type ProvenanceLabel = (typeof PROVENANCE_LABELS)[keyof typeof PROVENANCE_LABELS];
 
@@ -32,6 +40,14 @@ const ALLOWED_HOSTS: Readonly<Record<string, ProvenanceLabel>> = {
   "ja.wikipedia.org": PROVENANCE_LABELS.wikipedia,
   "www.koreabaseball.com": PROVENANCE_LABELS.official,
   "koreabaseball.com": PROVENANCE_LABELS.official,
+  // 기사 근거의 canonical 은 네이버 재송고 링크다(Production 적재 실측 2026-08-08:
+  // m.sports.naver.com 1,979 · n.news.naver.com 300 · m.entertain.naver.com 159).
+  // 언론사 원문 호스트(`original_link`)는 수백 개라 폐쇄집합이 아니므로 allowlist 에 넣지 않는다
+  // — 그쪽을 노출하려면 호스트마다 검증이 필요하고, 검증 없는 외부 주소를 앱이 앵커로 달면 안 된다.
+  "n.news.naver.com": PROVENANCE_LABELS.news,
+  "m.sports.naver.com": PROVENANCE_LABELS.news,
+  "sports.naver.com": PROVENANCE_LABELS.news,
+  "m.entertain.naver.com": PROVENANCE_LABELS.news,
 };
 
 /** 유저 노출용 출처 한 건 — 표시명과 링크뿐이다. 내부 메타는 담지 않는다. */

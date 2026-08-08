@@ -28,6 +28,7 @@
     "app_downloads",
     "genius_answer_feedback",
     "genius_daily_usage",
+    "genius_news_articles",
     "genius_qa_cache",
     "genius_question_jobs",
     "genius_question_logs",
@@ -135,11 +136,17 @@
     "baseball_terms",
     "channel_discovery_lock",
     "game_start_watchdog_config",
+    "genius_news_ingest_coverage",
     "push_dispatch_config",
     "team_rank_notify_state",
     "venue_cleanup_cursor"
   ],
   "uniqueKeySets": {
+    "admin_alert_state": [
+      [
+        "job_name"
+      ]
+    ],
     "admin_app_devices": [
       [
         "platform",
@@ -155,30 +162,6 @@
     "admin_auth_attempts": [
       [
         "ip_address"
-      ]
-    ],
-    "genius_daily_usage": [
-      [
-        "user_id",
-        "kst_day"
-      ]
-    ],
-    "genius_qa_cache": [
-      [
-        "id"
-      ],
-      [
-        "question_norm"
-      ]
-    ],
-    "genius_question_jobs": [
-      [
-        "message_id"
-      ]
-    ],
-    "genius_question_logs": [
-      [
-        "id"
       ]
     ],
     "admin_broadcast_recipients": [
@@ -239,6 +222,11 @@
         "user_id"
       ]
     ],
+    "api_fallback_alert_state": [
+      [
+        "api_name"
+      ]
+    ],
     "app_downloads": [
       [
         "platform",
@@ -289,10 +277,109 @@
         "fcm_token"
       ]
     ],
+    "game_event_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "game_lineup_notify_state": [
+      [
+        "game_id",
+        "team_id"
+      ]
+    ],
+    "game_notify_state": [
+      [
+        "game_id"
+      ]
+    ],
+    "game_start_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "event_type",
+        "token_id",
+        "token_hash"
+      ]
+    ],
+    "game_start_watchdog_config": [
+      [
+        "id"
+      ]
+    ],
+    "game_starter_notify_state": [
+      [
+        "game_id",
+        "team_id"
+      ]
+    ],
+    "game_starter_observation": [
+      [
+        "game_id"
+      ]
+    ],
+    "genius_answer_feedback": [
+      [
+        "id"
+      ],
+      [
+        "user_id",
+        "answer_message_id"
+      ]
+    ],
+    "genius_daily_usage": [
+      [
+        "user_id",
+        "kst_day"
+      ]
+    ],
+    "genius_news_ingest_coverage": [
+      [
+        "clip_date",
+        "team_id"
+      ]
+    ],
+    "genius_qa_cache": [
+      [
+        "id"
+      ],
+      [
+        "question_norm"
+      ]
+    ],
+    "genius_question_jobs": [
+      [
+        "message_id"
+      ]
+    ],
+    "genius_question_logs": [
+      [
+        "id"
+      ]
+    ],
+    "ios_widget_push_state": [
+      [
+        "game_id"
+      ]
+    ],
     "likes": [
       [
         "post_id",
         "user_id"
+      ]
+    ],
+    "lineup_confirm_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "team_id",
+        "event_type",
+        "token_id",
+        "token_hash"
       ]
     ],
     "live_activity_channel_subscriptions": [
@@ -307,6 +394,11 @@
       [
         "game_id",
         "environment"
+      ]
+    ],
+    "live_activity_game_push_state": [
+      [
+        "game_id"
       ]
     ],
     "live_activity_start_tokens": [
@@ -358,20 +450,6 @@
         "event_id"
       ]
     ],
-    "postgame_interview_jobs": [
-      [
-        "game_id"
-      ]
-    ],
-    "postgame_interviews": [
-      [
-        "id"
-      ],
-      [
-        "game_id",
-        "video_id"
-      ]
-    ],
     "player_stats_batter": [
       [
         "name",
@@ -389,11 +467,42 @@
         "kbo_id"
       ]
     ],
+    "postgame_interview_jobs": [
+      [
+        "game_id"
+      ]
+    ],
+    "postgame_interviews": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "video_id"
+      ]
+    ],
     "roster_snapshots": [
       [
         "snapshot_date",
         "team_id",
         "kbo_player_id"
+      ]
+    ],
+    "starter_announce_delivery_ledger": [
+      [
+        "id"
+      ],
+      [
+        "game_id",
+        "team_id",
+        "event_type",
+        "token_id",
+        "token_hash"
+      ]
+    ],
+    "team_rank_notify_state": [
+      [
+        "team_id"
       ]
     ],
     "urgent_notice_deliveries": [
@@ -418,6 +527,11 @@
         "user_id"
       ]
     ],
+    "venue_cleanup_cursor": [
+      [
+        "bucket"
+      ]
+    ],
     "watch_pings": [
       [
         "ping_date",
@@ -428,112 +542,6 @@
     "youtube_quota_ledger": [
       [
         "quota_date"
-      ]
-    ],
-    "admin_alert_state": [
-      [
-        "job_name"
-      ]
-    ],
-    "game_event_state": [
-      [
-        "game_id"
-      ]
-    ],
-    "game_notify_state": [
-      [
-        "game_id"
-      ]
-    ],
-    "game_start_watchdog_config": [
-      [
-        "id"
-      ]
-    ],
-    "game_start_delivery_ledger": [
-      [
-        "id"
-      ],
-      [
-        "game_id",
-        "event_type",
-        "token_id",
-        "token_hash"
-      ]
-    ],
-    "game_lineup_notify_state": [
-      [
-        "game_id",
-        "team_id"
-      ]
-    ],
-    "game_starter_notify_state": [
-      [
-        "game_id",
-        "team_id"
-      ]
-    ],
-    "game_starter_observation": [
-      [
-        "game_id"
-      ]
-    ],
-    "starter_announce_delivery_ledger": [
-      [
-        "id"
-      ],
-      [
-        "game_id",
-        "team_id",
-        "event_type",
-        "token_id",
-        "token_hash"
-      ]
-    ],
-    "lineup_confirm_delivery_ledger": [
-      [
-        "id"
-      ],
-      [
-        "game_id",
-        "team_id",
-        "event_type",
-        "token_id",
-        "token_hash"
-      ]
-    ],
-    "ios_widget_push_state": [
-      [
-        "game_id"
-      ]
-    ],
-    "live_activity_game_push_state": [
-      [
-        "game_id"
-      ]
-    ],
-    "team_rank_notify_state": [
-      [
-        "team_id"
-      ]
-    ],
-    "venue_cleanup_cursor": [
-      [
-        "bucket"
-      ]
-    ],
-    "api_fallback_alert_state": [
-      [
-        "api_name"
-      ]
-    ],
-    "genius_answer_feedback": [
-      [
-        "id"
-      ],
-      [
-        "user_id",
-        "answer_message_id"
       ]
     ]
   },
@@ -554,31 +562,33 @@
   "boundedRpcAllowlist": {
     "admin_telemetry_retention_run": "returns one retention execution summary object",
     "admin_venue_story_daily": "one aggregated row per KST day (slow-growing daily rollup), same pattern as admin_content_daily",
-    "claim_game_summary_generation": "claims one game and returns one monotonic generation token",
     "cast_poll_vote": "casts/replaces one user's poll ballot and returns void",
+    "claim_api_fallback_alert": "inserts one fallback event, atomically claims one alert lease, returns one boolean should_send",
+    "claim_game_summary_generation": "claims one game and returns one monotonic generation token",
+    "confirm_api_fallback_alert": "confirms one alert delivery (sets cooldown, clears lease, marks one event), returns void",
     "create_admin_broadcast_job": "creates one job and returns its id",
     "create_poll": "creates one poll (posts+poll_polls+poll_options) and returns one post id",
     "create_venue_story_v2": "creates one story and returns one row",
     "dead_letter_report_blind_notice": "state transition for one notice",
     "delete_any_chat_message": "deletes one message",
     "delete_own_chat_message": "deletes one message",
+    "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
     "finish_admin_broadcast_recipient": "state transition for one recipient",
     "increment_post_view": "increments one post counter",
-    "lookup_auth_user_id_by_email": "returns at most one auth.users UUID for one normalized email",
     "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
     "leaderboard_writing_rollup_refresh": "full snapshot recompute of the writing leaderboard rollup, returns void",
     "log_urgent_notice_error": "writes one delivery error",
+    "lookup_auth_user_id_by_email": "returns at most one auth.users UUID for one normalized email",
+    "nack_api_fallback_alert": "reschedules one alert attempt backoff by token owner, returns void/boolean",
+    "record_baseball_genius_news_coverage": "upserts at most one coverage row per team x clip_date (10 teams) and returns a single integer count",
     "record_venue_story_view": "records one dedupe view mark and bumps one daily counter, returns void",
     "record_youtube_quota": "writes one quota ledger entry",
     "replace_team_roster_day": "bounded replacement for one team and date",
     "report_venue_story": "creates one report",
     "reserve_youtube_quota": "returns one atomic quota decision",
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
+    "upsert_baseball_genius_news_articles": "upserts a jsonb batch (hard-capped at 500 rows inside the function) and returns exactly one summary row",
     "upsert_naver_identity": "upserts one authenticated identity",
-    "claim_api_fallback_alert": "inserts one fallback event, atomically claims one alert lease, returns one boolean should_send",
-    "confirm_api_fallback_alert": "confirms one alert delivery (sets cooldown, clears lease, marks one event), returns void",
-    "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
-    "nack_api_fallback_alert": "reschedules one alert attempt backoff by token owner, returns void/boolean",
     "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)"
   }
 }

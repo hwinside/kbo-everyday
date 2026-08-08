@@ -5,7 +5,9 @@ export type RagSourceKind =
   | "kbo_structured"
   | "namu_document"
   | "wikipedia_document"
-  | "kbo_ebook";
+  | "kbo_ebook"
+  // 최근 30일 구단 기사(네이버 검색 API 제목+발췌). 언론 기사는 수치 정본이 아니므로 tier2 다.
+  | "news_article";
 export type RagEntityType =
   | "record_category"
   | "league"
@@ -22,6 +24,9 @@ const SOURCE_GRADE_BY_KIND: Record<RagSourceKind, SourceGrade> = {
   kbo_ebook: "tier1",
   namu_document: "tier2",
   wikipedia_document: "tier2",
+  // ⚠️ tier2 고정. 기사에 적힌 스코어·기록 수치는 정본이 아니다 — 수치는 `kbo_structured`
+  //   가 먼저 답하고, 이 근거는 **서술**에만 쓴다(migration 20260805180000 계약 1).
+  news_article: "tier2",
 };
 
 export function gradeForSourceKind(kind: RagSourceKind): SourceGrade {
