@@ -221,6 +221,13 @@ export const MATCH_PATH_REPLY_KIND = {
   // 답하지 못한 경로
   blocked: "unavailable",
   unsure: "unavailable",
+  // `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로.
+  //
+  // ⚠️ 화면 취급은 `unsure` 와 **같다**(둘 다 답을 못 준 상태). 경로를 나눈 이유는
+  //   UI 분기가 아니라 **감사 축 분리**다 — `unsure` 는 LLM 까지 갔는데 확신 못 한 것이고
+  //   이것은 애초에 대상을 특정 못 한 것이라 원인도 처방도 다르다.
+  //   (`team_rag`·`news_rag`·`scope_guide` 를 나눈 것과 같은 이유.)
+  stat_clarify: "unavailable",
   limited: "unavailable",
   error: "unavailable",
   context_missing: "unavailable",

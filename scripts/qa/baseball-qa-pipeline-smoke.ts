@@ -40,6 +40,7 @@ import {
   SERVICE_REDIRECT_ANSWER,
   SYSTEM_ERROR_ANSWER,
   UNSURE_ANSWER,
+  STAT_CLARIFY_ANSWER,
   UNCLEAR_ANSWER,
   UNSURE_SENTINEL,
   validateLlmResponse,
@@ -332,7 +333,7 @@ for (const question of [
 for (const question of ["선수 역할이 바뀌면 기록은", "감독 역할 변경 절차가 궁금해"]) {
   assert.notEqual(
     routeQuestion(question, seedEntries, players),
-    "unsure",
+    "stat_clarify",
     `${question}: 문장 중간 지표어를 bare 모호형으로 오인하면 안 된다`,
   );
 }
@@ -1771,15 +1772,20 @@ async function verifyPipeline() {
   //   차단 강도는 **한 글자도 안 바뀐다** — LLM 0 · cache 0 · quota 1 그대로다.
   //   바뀐 건 유저가 보는 문구뿐이다. `오타니 홈런 몇개` 는 야구 질문이 맞는데
   //   "야구 이야기만 답해드릴 수 있어요"(BLOCKED)를 보내는 건 틀린 안내다.
-  //   운영 DB 에 없는 대상이라 "무엇을 물었는지 특정 못 함"(UNSURE)이 정확하다.
+  //   운영 DB 에 없는 대상이라 "그 선수를 못 찾겠다"(STAT_CLARIFY)가 정확하다.
+  //
+  // ⚠️ `unsure` 가 아니라 **전용 라벨**이다(삼순 2026-08-08). `unsure` 는 LLM 까지 갔는데
+  //   확신 못 한 경우라 원인 축이 다르다 — 한 칸에 두면 과차단 감사의 분모가 사라진다.
   const unregisteredPlayer = freshState({ llmText: '{"status":"NOT_BASEBALL","answer":""}' });
   const unregisteredResult = await answerQuestion(
     "u1",
     "오타니 홈런 몇개",
     makeDeps(unregisteredPlayer),
   );
-  assert.equal(unregisteredResult.source, "unsure");
-  assert.equal(unregisteredResult.answer, UNSURE_ANSWER, "미등록 대상은 되묻기 문구");
+  assert.equal(unregisteredResult.source, "stat_clarify");
+  assert.equal(unregisteredResult.answer, STAT_CLARIFY_ANSWER, "미등록 대상은 전용 되묻기 문구");
+  assert.notEqual(unregisteredResult.answer, UNSURE_ANSWER, "LLM 미확신 문구를 재사용하면 안 된다");
+  assert.deepEqual(unregisteredPlayer.logs, ["stat_clarify"], "로그도 전용 라벨");
   assert.equal(unregisteredPlayer.llmCalls, 0);
   assert.equal(unregisteredPlayer.used, 1);
   assert.deepEqual(unregisteredPlayer.events, ["reserve"]);
@@ -3131,6 +3137,9 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     SCOPE_GUIDE_ANSWER,
     // 시스템 오류 전용 문구도 마찬가지다.
     SYSTEM_ERROR_ANSWER,
+    // `<X> <지표>` 되묻기도 결정론 고정 문구다. 빠뜨리면 "생성답"으로 오분류돼
+    // reply_kind(`unavailable`) 대조가 RED 가 된다 — 게이트가 실제로 잡았다.
+    STAT_CLARIFY_ANSWER,
   ]);
 
   // 실제 유저 질문 → 실제 pipeline 실행. mock 은 외부 경계(LLM/DB)만 대신한다.
@@ -3216,6 +3225,9 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // 지원 allowlist 밖 지표(`도루`) — 기록 질문이지만 답할 수 없다. 선수 경로가 켜져 있어도
     // 여기로 와야 하고, 문구는 "룰/용어만"이 아니라 앱 기록 탭 안내여야 한다 (삼순 7차 P0-2).
     { question: "박해민 도루 몇 개야?", deps: (s) => makeDeps(s) },       // history_hold
+    // `<X> <지표>` 에서 X 를 운영 데이터로 특정 못 함 — LLM 으로 내려보내지 않고 되묻는다.
+    // 여기가 뚫리면 존재하지 않는 대상의 기록을 generic LLM 이 지어낸다.
+    { question: "이대호 홈런", deps: (s) => makeDeps(s) },                 // stat_clarify
     { question: "9회말 야구 룰에서 우천 중단은 어떻게 처리해?", deps: (s) => makeDeps(s) }, // llm
     {
       // 모델이 판정을 확신하지 못함 = 이해 못함(`unsure`). 우리 고장(`error`)과 다른 칸이다.

@@ -103,6 +103,20 @@ export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER;
 export const UNSURE_ANSWER =
   "어떤 걸 여쭤보신 걸까요? 조금만 더 구체적으로 적어주시면 정확히 답해드릴게요. " +
   "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 요즘 어때?\" ⚾";
+/**
+ * `<X> <지표>` 되묻기 전용 문구.
+ *
+ * ⚠️ `UNSURE_ANSWER`("어떤 걸 여쭤보신 걸까요?")를 재사용하지 않는다. 유저는 이미
+ *   **무엇을 물을지 정해서** 왔다(`이대호 홈런`). 되물어야 하는 건 "무엇"이 아니라
+ *   그 대상을 우리가 못 찾는다는 사실이다. 같은 문구를 보내면 유저는 자기가 질문을
+ *   덜 썼다고 오해하고 같은 문장을 반복한다.
+ *
+ * 왜 이 경로가 필요한가 — `이대호 홈런` 은 운영 DB 에 없는 대상이라 LLM 으로 내려보내면
+ * 없는 기록을 지어낸다. 되묻기로 종결해 생성 경로를 끊는다.
+ */
+export const STAT_CLARIFY_ANSWER =
+  "어떤 선수의 기록을 말씀하시는 걸까요? 지금은 현역 선수 기록만 찾아드릴 수 있어요. " +
+  "선수 이름을 정확히 적어주시면 확인해볼게요! ⚾";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 이야기를 도와드릴게요 ⚾";
 /**
@@ -497,12 +511,14 @@ export type QuestionRoute =
   // ⚠️ 이 라벨은 `match_path` 로도 **그대로** 기록된다(`MatchPath` 에 같은 이름이 있다).
   // 그래서 DB CHECK 확장 migration 이 필요하다 — `20260808120000_*` 가 그것이다.
   | "scope_guide"
-  // `<X> <지표>` bare 모호형 되묻기 (삼순 2026-08-08).
+  // `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로 (삼순 2026-08-08).
   //
-  // ⚠️ 새 라벨을 만들지 않고 기존 `unsure` 를 쓴다. 이미 `MatchPath` 허용값이라
-  //   CHECK migration·피드백 allowlist·마스코트 분류를 새로 등록할 필요가 없고,
-  //   의미도 정확히 같다("무엇을 물었는지 특정하지 못함").
-  | "unsure"
+  // ⚠️ 기존 `unsure` 에 접지 않는다. `unsure` 는 이미 **LLM 이 답을 확신 못 한 경우**다.
+  //   한 칸에 넣으면 "생성 품질 문제"와 "결속 데이터 부재 문제"가 섞여 분모가 사라진다.
+  //   `team_rag`·`news_rag`·`scope_guide` 를 나눈 것과 같은 축이다.
+  //   → `MatchPath` 에도 같은 이름이 있고 CHECK 확장 migration 이 필요하다
+  //     (`20260808200000_*`).
+  | "stat_clarify"
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
   //
@@ -568,6 +584,12 @@ export type MatchPath =
   // blocked와 같은 칸에 넣으면 #983 모니터에서 "못 답한 질문"으로 오집계된다.
   | "player_picker"
   | "unsure"
+  // `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로.
+  //
+  // ⚠️ `unsure` 와 화면 취급은 같지만(둘 다 못 답함) **원인 축이 다르다**:
+  //   `unsure` 는 LLM 까지 갔는데 확신 못 한 것, 이것은 애초에 대상을 특정 못 한 것이다.
+  //   원인도 처방도 달라 한 칸에 두면 과차단 감사의 분모를 만들 수 없다.
+  | "stat_clarify"
   | "limited"
   | "error"
   // LLM winner가 다른 worker — 이 worker는 답변 발송 없이 물러난다 (로그/DB 미기록).
@@ -1028,9 +1050,11 @@ export function classifyNamedStat(
   //   `이대호 도루 알려줘`  → 남는 것 `줘`        → bare
   //   `선수 역할이 바뀌면 기록은` → 매치가 문장 중간에서 시작 → bare 아님(정상 룰 질문)
   if (m.index !== 0) return "none";
-  // ⚠️ `m.index` 를 더해야 한다(2026-08-08 자체발견). 종전 초안은 `slice(m[0].length)` 였는데,
-  //   문장 중간 매치에서 엉뚱한 위치를 잘랐다. 위 선두 검사와 **두 결함이 서로를 가려**
-  //   mutation 이 잡지 못했다 — 선두 검사를 지워도 잘못된 slice 덕에 결과가 같았다.
+  // ⚠️ 매치 **끝 위치**에서 자른다(`m.index + m[0].length`). 2026-08-08 에 이 덧셈을
+  //   "선두 검사가 index===0 을 보장하니 no-op" 이라며 지웠다가 되돌렸다 — 지우면 위
+  //   선두 검사가 **동등변이가 된다**(mutation M8 이 GREEN 이 됐다).
+  //   문장 중간 매치에서 엉뚱한 위치를 잘라 residue 가 우연히 비지 않을 뿐이고,
+  //   그 우연이 선두 검사의 검증력을 삼킨다. 두 표현은 한 쌍으로만 검증 가능하다.
   let residue = normalized.slice(m.index + m[0].length).replace(/[?!.,~…\s]/gu, "");
   for (const tail of REQUEST_TAILS) {
     if (residue.startsWith(tail)) { residue = residue.slice(tail.length); break; }
@@ -2274,7 +2298,7 @@ export function routeQuestion(
     if (namedStat === "entity_stat") return "history_hold";
     // bare 모호형 → 되묻는다. `이대호 홈런` 처럼 DB 에도 없고 용어도 아닌 문장은
     // LLM 으로 내려보내지 않는다 — 존재하지 않는 기록을 지어내는 유일한 경로가 여기다.
-    if (namedStat === "ambiguous") return "unsure";
+    if (namedStat === "ambiguous") return "stat_clarify";
     // `term_question` 은 아래로 흘려 용어 질문으로 처리한다.
   }
 
@@ -3098,7 +3122,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         //   정작 문구가 없는" 모순이 되므로 그 경우 fail-close 한다.
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
-      route === "unsure" ? UNSURE_ANSWER :
+      route === "stat_clarify" ? STAT_CLARIFY_ANSWER :
       BLOCKED_ANSWER;
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.

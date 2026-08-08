@@ -63,6 +63,7 @@ async function main() {
   await db.exec(readMigration("20260807090000_baseball_genius_team_rag_audit.sql"));
   await db.exec(readMigration("20260808040000_baseball_genius_news_rag_match_path.sql"));
   await db.exec(readMigration("20260808120000_baseball_genius_scope_guide_match_path.sql"));
+  await db.exec(readMigration("20260808200000_baseball_genius_stat_clarify_match_path.sql"));
 
   await verifyFinalAllowlistIsExactUnion(db);
 
@@ -148,6 +149,7 @@ const FINAL_MATCH_PATH_ALLOWLIST = [
   "rag",
   "scope_guide",
   "service_redirect",
+  "stat_clarify",
   "team_rag",
   "unsure",
 ] as const;
