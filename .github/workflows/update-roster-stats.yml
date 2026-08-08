@@ -18,6 +18,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ⚠️ 증거 경로는 **$GITHUB_ENV 로 한 번만** 정의한다. 이유가 두 개다.
+      #
+      #   ① producer(크롤)와 consumer(자동머지 판정)가 반드시 **같은 경로**를 봐야 한다.
+      #      step 레벨 env 로 두면 크롤은 증거를 쓰지만 판정 스텝에서는 env 가 비어
+      #      항상 `evidence_missing` 이 되고 가드가 영구 보류로 굳는다.
+      #   ② 그렇다고 `jobs.<job_id>.env` 로 올릴 수도 없다 — job 레벨 env 는
+      #      `runner` context 를 **허용하지 않는다**(공식 Context availability:
+      #      jobs.<job_id>.env = github, needs, strategy, matrix, vars, secrets, inputs).
+      #      `${{ runner.temp }}` 는 빈 문자열로 평가돼 경로가 `/roster-...json` 이 되고
+      #      쓰기 실패 → 역시 영구 보류다.
+      #
+      # 그래서 step 안에서 셸 변수 $RUNNER_TEMP 로 해석해 $GITHUB_ENV 에 넣는다.
+      # 이후 모든 스텝이 같은 값을 본다. workspace 밖이라 allowlist·git diff 에 안 섞인다.
+      - name: Resolve roster completion evidence path
+        run: |
+          echo "ROSTER_COMPLETION_EVIDENCE=$RUNNER_TEMP/roster-completion-evidence.json" >> "$GITHUB_ENV"
+
       # 자동 머지 급변 가드용 기준값: 크롤 *이전*(= main 현재) roster/batters/pitchers 인원 수
       - name: Baseline counts (main)
         id: baseline
@@ -47,6 +64,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      # 완주 계약 증거를 남긴다(경로는 위 setup 스텝이 $GITHUB_ENV 에 넣은 값).
+      # 아래 `②-b roster_scope` 가드가 이 증거에 결속돼 있다 — 없으면 종전대로 보류다.
       - name: Crawl roster
         run: node scripts/crawl-roster-v2.mjs
 
@@ -156,29 +175,22 @@ jobs:
               echo "off_allowlist=false" >> $GITHUB_OUTPUT
             fi
 
-            # roster/사진/inventory 변경 감지 → 자동 머지 fail-close.
+            # roster/사진/inventory 변경 감지 → 자동 머지 보류 **후보**.
             #
-            # 배경(2026-08-04, 삼순 #1098): stats 경로는 KBO 원본 전수 대조 + 완주 계약 +
-            # 원자 promote 로 닫았지만, roster 크롤러(crawl-roster-v2.mjs)는 아직 고정 대기 후
-            # 페이지 번호만 올리고 그룹 pager 불변 시 조용히 종료한다(quiet EOF).
-            # 그 상태로 두면 roster/사진/inventory 변경도 `Δ≤10 + Vercel` 만으로 자동 머지된다.
-            # roster 경로가 후속 PR 로 닫힐 때까지, 해당 산출물이 바뀌면 사람이 본다.
+            # 배경(2026-08-04, 삼순 #1098): roster 크롤러가 셀렉트 변경 timeout 시
+            # 직전 팀 화면·빈 표를 그대로 스크레이프하고 조용히 정상 완주로 저장했다.
+            # 그래서 "roster 산출물이 바뀌면 사람이 본다"로 막아뒀다.
+            #
+            # 2026-08-08: 그 근거가 #1120(squash 2c391f336) 으로 닫혔다. 다만 가드를
+            # **삭제하지 않는다** — 삭제하면 완주 계약이 나중에 무력화될 때 자동머지가
+            # 조용히 다시 열린다. 대신 아래 `②-b` 에서 **이번 런의 완주 증거**에 결속해,
+            # 증거가 없거나 미완주면 종전 동작(보류)으로 되돌아가게 한다.
             ROSTER_SCOPE_RE='^(public/players/|src/lib/constants/(players-roster\.json|player-photos\.ts|foreign-nationality-pending\.json)|data/baseball-qa/source-inventory\.json)'
             ROSTER_SCOPE_FILES=$(echo "$CHANGED_FILES" | grep -E "$ROSTER_SCOPE_RE" || true)
             if [ -n "$ROSTER_SCOPE_FILES" ]; then
               echo "roster_scope_changed=true" >> $GITHUB_OUTPUT
-              echo "⚠️ roster/사진/inventory 변경 감지 — 자동 머지 보류 대상:"
+              echo "ℹ️ roster/사진/inventory 변경 감지 — 완주 증거로 판정한다:"
               echo "$ROSTER_SCOPE_FILES"
-              {
-                echo "## ⚠️ roster/사진/inventory 변경 — 자동 머지 보류"
-                echo ""
-                echo "roster 크롤러는 아직 완주 계약(bounded retry / quiet EOF 차단)이 없습니다."
-                echo "해당 산출물이 바뀐 PR 은 사람이 검토한 뒤 머지하세요."
-                echo ""
-                echo '```'
-                echo "$ROSTER_SCOPE_FILES"
-                echo '```'
-              } >> "$GITHUB_STEP_SUMMARY"
             else
               echo "roster_scope_changed=false" >> $GITHUB_OUTPUT
             fi
@@ -289,17 +301,25 @@ jobs:
             exit 1
           fi
 
-          # ②-b roster/사진/inventory 범위 가드 (삼순 #1098 — roster 완주 계약이 후속 PR 로 분리됨)
+          # ②-b roster/사진/inventory 범위 가드 — **이번 런의 완주 증거에 결속**
+          #
+          # 종전에는 roster 범위가 바뀌면 무조건 보류였다(#1098). 그 근거인 완주 계약
+          # 결손은 #1120 으로 닫혔으므로, 가드를 지우는 대신 조건을 바꾼다:
+          #   증거 있음 + 이번 런 + 전 슬롯 완주 → 통과
+          #   증거 없음 / 파싱 불가 / 다른 런 / 미완주 → **보류**(종전 동작)
+          # 판정은 순수 함수(scripts/lib/roster-scope-trust.mjs)가 하고, 여기서는
+          # 결과만 읽는다 — 조건을 셸에 흩뿌리면 다음 변경에서 또 새는 자리가 된다.
           if [ "${{ steps.changes.outputs.roster_scope_changed }}" = "true" ]; then
-            {
-              echo "## ⚠️ roster/사진/inventory 변경 — 자동 머지 보류"
-              echo ""
-              echo "PR: $PR_URL"
-              echo "roster 크롤러의 완주 계약(bounded retry / quiet EOF 차단)이 아직 없습니다."
-              echo "stats-only 변경일 때만 자동 머지합니다 — 이 PR 은 수동 검토 후 머지하세요."
-            } >> "$GITHUB_STEP_SUMMARY"
-            echo "❌ roster/사진/inventory 변경 — 자동 머지 보류: $PR_URL"
-            exit 1
+            if ! node scripts/ci/assert-roster-scope-trust.mjs; then
+              {
+                echo "## ⚠️ roster/사진/inventory 변경 — 자동 머지 보류"
+                echo ""
+                echo "PR: $PR_URL"
+                echo "이번 런의 roster 완주 증거를 확인할 수 없습니다 — 수동 검토 후 머지하세요."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "❌ roster 완주 증거 미확인 — 자동 머지 보류: $PR_URL"
+              exit 1
+            fi
           fi
 
           # ③ 데이터 급변 가드 (roster/batters/pitchers/defense/defense_runs 각 |Δ| > 10 보류 — 빈 배열 급락 포함 차단)
