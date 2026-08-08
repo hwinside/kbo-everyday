@@ -48,6 +48,7 @@ import {
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
+  BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
@@ -78,6 +79,11 @@ export const UNCLEAR_ANSWER = BASEBALL_GENIUS_UNCLEAR_ANSWER;
  * `임창규` → `혹시 임찬규 선수를 말씀하신 건가요?` (2026-08-08 하린아빠 제보).
  */
 export const NAME_SUGGEST_ANSWER = BASEBALL_GENIUS_NAME_SUGGEST_ANSWER;
+/**
+ * ⑤ 미결속 실명 — 로스터에 없고 가까운 후보도 없을 때(`오타니`·`홍길동`).
+ * 제안할 이름이 없어도 **생성은 막는다** — 그게 삼순 2026-08-08 P0 의 핵심이다.
+ */
+export const NAME_UNKNOWN_ANSWER = BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER;
 /**
  * ③ 시스템 오류 — **우리 쪽이 고장난** 경우 전용.
  *
@@ -1497,45 +1503,148 @@ const HANGUL_NAME = /^[\uac00-\ud7a3]{2,5}$/;
  *   `이승엽` → 5명 / `최동원` → 4명 / `선동열`·`오타니`·`홍길동` → 0명
  *   야구 일반명사(`야구장`·`감독님`·`심판진`·`불펜진`·`타격왕` 등) → 전부 0명
  *
- * ⚠️ 즉 이 가드는 `임창규` 계열만 닫고 `오타니`·`홍길동`처럼 이웃이 없는 이름은
- *   그대로 남는다. 그건 열거로 달지 못하는 별도 축이라 이 함수가 담당하지 않는다
- *   (어휘 열거로 자연어를 닫으려다 12라운드를 태운 적이 있다 — `hasNumericCharacter` 주석).
+ * ⚠️ 이 함수는 **제안할 이름**만 돌려준다. "생성을 막을지"는 `resolveUnboundName` 이
+ *   판정한다 — `오타니`·`홍길동`처럼 이웃이 없는 이름도 생성은 막아야 하기 때문이다
+ *   (삼순 2026-08-08: "미결속 실명 생성 0" 이 먼저고, 제안은 그 위의 편의다).
  */
 export function resolveNearMissPlayerName(
   question: string,
   players: PlayerRef[],
 ): string | null {
-  // ⚠️ **사람을 물은 문장일 때만** 교정을 제안한다 (2026-08-08 게이트가 잡은 오탐).
-  //   `세이프티 신발 어디서 사?` 에서 `어디서` 가 `어준서`(로스터)와 1음절 차라
-  //   쇼핑 질문이 "혹시 어준서 선수를?" 로 되돌아왔다. 사람 질문이 아니면 이름을
-  //   들이민는 것 자체가 새 오답이다.
-  //
-  //   판정은 **이미 배포된 계약을 그대로 재사용**한다(`isDescriptivePlayerQuestion` —
-  //   선수 RAG 진입 조건). 새 어휘 목록을 만들지 않는다 — 자연어를 열거로 닫으려다
-  //   12라운드를 태운 적이 있고(`hasNumericCharacter` 주석), 두 곳이 갈라지면
-  //   "제안은 하는데 그 이름으로 다시 물으면 못 답하는" 모순이 생긴다.
-  if (!isDescriptivePlayerQuestion(question)) return null;
-  const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
-  // 이미 어느 선수로든 결속되면 오타가 아니다 — 기존 경로가 처리한다.
-  if (hasPlayerReference(tokens, players)) return null;
-  // 단일 토큰 한글 이름만 대상이다(외국인 풀네임은 공백이 들어 장동 편집거리가 의미가 없다).
-  const rosterNames = [...new Set(players.map((p) => p.name))].filter((n) => HANGUL_NAME.test(n));
-  const rosterNameSet = new Set(rosterNames);
+  const unbound = resolveUnboundName(question, players);
+  return unbound?.suggestion ?? null;
+}
 
-  for (const rawToken of tokens) {
-    // ⚠️ 조사를 떼어낸 핵으로 본다. 안 떼면 `임창규는` 가 `임찬규` 와 편집거리 2 가 돼
-    //   같은 오타가 **조사 유무로 갈라진다**(실측: `임창규 어떤 선수야` 는 잡히고
-    //   `임창규는 어느 팀이야` 는 빠졌다). 기존 이름 매칭과 같은 조사 집합을 쓴다.
-    for (const token of stripTokenSuffix(rawToken)) {
-      if (!HANGUL_NAME.test(token)) continue;
-      if (rosterNameSet.has(token)) continue;
-      // 야구 어휘·지표어·구단명은 이름 후보가 아니다 — 우연히 한 글자 차이여도 교정하면 안 된다.
-      if (BASEBALL_VOCABULARY.includes(token)) continue;
-      if (STAT_WORDS.includes(token)) continue;
-      if (TEAM_WORDS.includes(token)) continue;
-      const candidates = rosterNames.filter((name) => isOneSyllableSwap(token, name));
-      if (candidates.length === 1) return candidates[0];
-    }
+/**
+ * **대명사·의문사·지시어** 폐쇄집합 — 사람 이름 후보에서 뺀다.
+ *
+ * ⚠️ 이건 "야구 어휘를 열거"하는 것과 다르다. 한국어 명사는 열린 부류라 열거하면 지지만,
+ *   대명사·의문사·지시어는 **문법이 정한 닫힌 부류**다(새 의문사가 생기지 않는다).
+ *   그래서 여기만 열거하고, 나머지는 `아래 성씨 결속`으로 판정한다.
+ *
+ *   실측 오탐(게이트가 잡음): `세이프티 신발 어디서 사?` 의 `어디서` 가 로스터 `어준서` 와
+ *   1음절 차라 쇼핑 질문에 선수 이름을 들이밀었다. 첫 어절 제약만으로는 못 막는다 —
+ *   `어디서 뛰는지 알려줘` 는 첫 어절이 그대로 `어디서` 다(삼순 2026-08-08 지적).
+ */
+const NON_NAME_FUNCTION_WORDS: ReadonlySet<string> = new Set([
+  "어디", "어디서", "어디에", "어디로", "어때", "어떤", "어떻게", "어느", "언제", "얼마",
+  "누구", "누가", "무슨", "무엇", "어째서",
+  "이거", "그거", "저거", "이것", "그것", "저것", "여기", "거기", "저기",
+  "이번", "저번", "지난", "요즘", "오늘", "내일", "어제", "올해", "작년",
+  "우리", "너희", "자기", "본인", "그때", "이제", "이런", "그런", "저런",
+  "이야기", "얘기", "이유", "정도", "진짜", "혹시", "그냥", "조금", "엄청",
+]);
+
+/**
+ * **사람을 가리키는 명사** 폐쇄집합 — "이 문장이 사람을 물었다"는 직접 증거.
+ *
+ * ⚠️ 왜 필요한가 (게이트가 잡은 오탐 — 다섯 번째):
+ *   `우천 취소 기준 알려줘` 의 첫 어절 `우천` 은 `우` 씨가 로스터에 있어 이름 모양을
+ *   통과하고, `알려줘` 때문에 서술형 판정까지 통과해 **우천 취소 룰 질문이 이름
+ *   되묻기로 샘다**. `알려줘`·`설명`·`대해서` 같은 범용어는 사람 신호가 아니다.
+ *
+ *   그래서 문장이 사람을 물었다는 걸 **둘 중 하나로** 요구한다:
+ *     ① 사람 명사가 문장에 있다(`선수`·`투수`·`누구`…) — 이 폐쇄집합
+ *     ② 첫 어절이 **주격·주제 조사**를 달고 있다(`임창규는 어느 팀이야`) — 문법 신호
+ *   조사는 문법이라 닫혀 있고, 사람 명사도 야구 맥락에서는 닫힌 부류다.
+ *
+ * ⚠️ 손해를 명시한다: `임창규 알려줘`처럼 **조사도 사람 명사도 없는** 문장은 못 막는다.
+ *   비대칭을 따른다 — 놓치면 지금과 같고(기존 경로), 잘못 잡으면 멀쩡한 룰 질문을 죽인다.
+ */
+const PERSON_REFERENCE_WORDS: readonly string[] = [
+  "선수", "투수", "타자", "야수", "내야수", "외야수", "포수", "감독", "코치",
+  "누구", "사람", "소개", "프로필", "포지션", "소속", "별명", "등번호",
+  "데뷔", "입단", "출신", "어느 팀", "어느팀", "무슨 팀", "무슨팀",
+];
+
+/** 주격·주제 조사 — `임창규**는** 어느 팀이야` 처럼 첫 어절이 문장의 주어임을 드러낸다. */
+const SUBJECT_PARTICLES = ["는", "은", "이", "가", "이란", "이라는"] as const;
+
+export type UnboundName = {
+  /** 질문에서 뽑힌, 로스터에 없는 이름 후보 */
+  token: string;
+  /** 한 글자만 다른 로스터 선수가 정확히 1명일 때 그 이름. 없으면 `null` */
+  suggestion: string | null;
+};
+
+/**
+ * 질문 머리의 **로스터에 없는 사람 이름**을 찾는다. 있으면 생성 경로로 내려보내지 않는다.
+ *
+ * ── 왜 필요한가 (2026-08-08 하린아빠 제보, Production 재현) ────────────────
+ *   `임창규 어떤 선수야`  →  route=llm_scope_gate  →  generic LLM 이
+ *   "임창규는 LG 트윈스의 주축 선수" 라고 **없는 사람을 실존으로 만들었다.**
+ *   결속된 근거가 0 인 상태에서 실명에 대해 생성이 일어난 것 자체가 P0 다.
+ *   유저는 그게 틀렸다는 걸 알 방법이 없다 — 수치 환각보다 나쁘다.
+ *
+ * ── 왜 near-miss(오타)만이 아니라 **미결속 이름 전체**인가 (삼순 2026-08-08) ──
+ *   초안은 "한 글자만 다른 선수가 1명" 일 때만 막았다. 그러면 `오타니 잘해?`·
+ *   `홍길동 어떤 선수야` 처럼 **이웃이 없는 이름은 그대로 generic LLM 으로 샌다** —
+ *   정작 제일 위험한 축(로스터 밖 실존 인물·완전 허구)이 열려 있었다.
+ *   그래서 판정을 뒤집는다: 막는 게 기본이고, 제안은 후보가 유일할 때만 얹는다.
+ *
+ * ── 무엇을 이름으로 보는가 (열거가 아니라 **데이터 결속**) ─────────────────
+ *   첫 글자가 **로스터 881명의 성씨 집합**에 있는 2~4음절 한글 토큰.
+ *   성씨 목록을 손으로 적지 않는다 — 로스터에서 파생하므로 로스터가 바뀌면 같이 바뀌고,
+ *   "우리가 아는 선수들과 같은 성씨를 가진 미지의 이름" 이라는 판정 의미가 정확하다.
+ *   (`임`창규 ← 임찬규 · `오`타니 ← 오지환 · `홍`길동 ← 홍창기 — 전부 성씨가 결속된다.)
+ *
+ * ── 왜 첫 어절만 보는가 (게이트가 잡은 team_rag 회귀) ────────────────────
+ *   문장 전체를 훑으면 `LG트윈스 창단 이야기 알려줘` 의 `이야기` 가 이름으로 잡혀
+ *   **구단 서술 질문이 통째로 죽는다**. 오타 난 이름을 물을 때 그 이름은 문장 머리에
+ *   온다(`임창규 어떤 선수야`·`임창규는 어느 팀이야`). 반면 일반명사가 우연히 걸리는
+ *   자리는 서술어가 모이는 문장 뒤쪽이다.
+ *   손해를 명시한다: `혹시 임창규 알아?` 처럼 앞에 말이 붙으면 못 잡는다. 받아들인다 —
+ *   놓치면 지금과 같고(기존 경로), 잘못 잡으면 멀쩡한 질문을 죽인다(새 결함).
+ */
+export function resolveUnboundName(
+  question: string,
+  players: PlayerRef[],
+): UnboundName | null {
+  // ⚠️ **사람을 물은 문장일 때만** 동작한다.
+  //   판정은 **이미 배포된 계약을 그대로 재사용**한다(`isDescriptivePlayerQuestion` —
+  //   선수 RAG 진입 조건). 새 어휘 목록을 만들지 않는다 — 두 곳이 갈라지면
+  //   "막아놓고 정작 그 이름으로 다시 물어도 못 답하는" 모순이 생긴다.
+  if (!isDescriptivePlayerQuestion(question)) return null;
+  const normalizedQuestion = question.normalize("NFKC").toLowerCase();
+  const tokens = questionTokens(normalizedQuestion);
+  // 이미 어느 선수로든 결속되면 이 함수의 대상이 아니다 — 기존 경로가 처리한다.
+  if (hasPlayerReference(tokens, players)) return null;
+
+  // ⚠️ **사람을 물었다는 직접 증거**를 요구한다 (게이트가 잡은 다섯 번째 오탐).
+  //   `isDescriptivePlayerQuestion` 은 `알려줘`·`설명` 같은 **범용어**로도 열리기 때문에
+  //   `우천 취소 기준 알려줘` 같은 룰 질문이 통과하고, 첫 어절 `우천` 은 `우` 씨가
+  //   로스터에 있어 이름 모양을 통과한다 → 룰 질문이 이름 되묻기로 샐다.
+  //   둘 중 하나를 요구한다: ① 사람 명사가 문장에 있거나 ② 첫 어절이 주격 조사를 달았거나.
+  const headRaw = tokens[0];
+  if (headRaw === undefined) return null;
+  const hasPersonWord = PERSON_REFERENCE_WORDS.some((word) => normalizedQuestion.includes(word));
+  const headHasSubjectParticle = SUBJECT_PARTICLES.some(
+    (particle) => headRaw.length > particle.length && headRaw.endsWith(particle),
+  );
+  if (!hasPersonWord && !headHasSubjectParticle) return null;
+  // 단일 토큰 한글 이름만 대상이다(외국인 풀네임은 공백이 들어가 토큰 비교가 성립하지 않는다).
+  const rosterNames = [...new Set(players.map((p) => p.name))].filter((n) => HANGUL_NAME.test(n));
+  if (rosterNames.length === 0) return null;
+  const rosterNameSet = new Set(rosterNames);
+  // 성씨 집합을 **로스터에서 파생**한다 — 손으로 적은 목록은 로스터와 갈라진다.
+  const rosterSurnames = new Set(rosterNames.map((name) => name[0]));
+
+  // ⚠️ 조사를 떼어낸 핵으로 본다. 안 떼면 `임창규는` 가 `임찬규` 와 길이가 달라
+  //   같은 이름이 **조사 유무로 갈라진다**. 기존 이름 매칭과 같은 조사 집합을 쓴다.
+  for (const token of stripTokenSuffix(headRaw)) {
+    if (!HANGUL_NAME.test(token)) continue;
+    if (token.length < 2 || token.length > 4) continue;
+    if (rosterNameSet.has(token)) continue;
+    if (!rosterSurnames.has(token[0])) continue;
+    if (NON_NAME_FUNCTION_WORDS.has(token)) continue;
+    // 야구 어휘·지표어·구단명은 이름 후보가 아니다.
+    if (BASEBALL_VOCABULARY.includes(token)) continue;
+    if (STAT_WORDS.includes(token)) continue;
+    if (TEAM_WORDS.includes(token)) continue;
+    // 제안은 **정확히 1명**일 때만. `이대호`(이민호·이주호·이채호 3명)처럼 여럿이면
+    //   아무나 고르는 게 새 오답이다 — 이름만 못 찾았다고 말하고 끝낸다.
+    const candidates = rosterNames.filter((name) => isOneSyllableSwap(token, name));
+    return { token, suggestion: candidates.length === 1 ? candidates[0] : null };
   }
   return null;
 }
@@ -2126,7 +2235,7 @@ export function routeQuestion(
   // ⚠️ 순서가 계약이다. **결속된 선수는 이미 위에서 전부 빠졌다**(`history_hold`·
   //   `hasPlayerReference` 분기 · 그리고 `answerQuestion` 앞단의 선수 RAG·기록 경로).
   //   즉 여기 오는 이름은 정의상 로스터에 없다.
-  if (resolveNearMissPlayerName(question, players) !== null) return "name_suggest";
+  if (resolveUnboundName(question, players) !== null) return "name_suggest";
 
   // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
   // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
@@ -2919,8 +3028,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const scopeGate = route === "llm_scope_gate";
 
   if (route !== "baseball_rule_term" && !scopeGate) {
-    const nearMissName = route === "name_suggest"
-      ? resolveNearMissPlayerName(question, players)
+    const unbound = route === "name_suggest"
+      ? resolveUnboundName(question, players)
       : null;
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
@@ -2928,19 +3037,39 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? (isGreetingPhrase(question) ? GREETING_ANSWER : ACK_ANSWER) :
       route === "scope_guide" ? SCOPE_GUIDE_ANSWER :
-      // 로스터에 없는 실명 → **생성 없이** 이름을 되묻는다.
+      // 미결속 실명 → **생성 없이** 끝난다. 후보가 유일하면 그 이름을 되묻고, 아니면
+      // 모른다고 말한다. 둘 다 모델이 아니라 **코드가 쓴 문장**이다.
       //
       // ⚠️ 후보를 여기서 다시 푸는 이유 — `routeQuestion` 은 라벨만 돌려주므로 문구에
       //   넣을 이름이 여기에 없다. 판정기는 **같은 함수**를 쓴다 — 둘이 갈라지면
-      //   "제안하기로 라우팅해놓고 정작 제안할 이름은 없는" 모순이 된다.
-      //   그 경우는 지어내지 않고 `UNCLEAR` 로 닫는다(fail-close).
-      route === "name_suggest" ? (nearMissName === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(nearMissName)) :
+      //   "막기로 라우팅해놓고 정작 문구는 없는" 모순이 된다. 그 경우 fail-close.
+      route === "name_suggest"
+        ? (unbound === null
+            ? UNCLEAR_ANSWER
+            : unbound.suggestion === null
+              ? NAME_UNKNOWN_ANSWER
+              : NAME_SUGGEST_ANSWER(unbound.suggestion))
+        :
       BLOCKED_ANSWER;
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
     //   화면 취급(`reply_kind`)은 `ack` 과 같게 두어 마스코트·피드백 계약은 그대로다.
+    // ⚠️ 미결속 이름 되묻기는 **하루 한도를 깎지 않는다**(삼순 2026-08-08 `typo quota 반환`).
+    //   유저는 답을 받지 못했고 이름을 고쳐 다시 물어야 한다 — 그 재질문까지 합쳐
+    //   2개를 깎으면 **오타 한 글자에 한도를 두 배로 물리는** 꼴이다.
+    //   같은 이유로 `player_picker` 도 이미 반납한다 — 되묻기는 답변이 아니다.
+    //   반납 실패는 유저가 1개 더 쓴 것일 뿐이라 되묻기 자체를 막지 않는다.
+    let quotaRemaining = remaining;
+    if (route === "name_suggest" && deps.releaseDaily) {
+      try {
+        await deps.releaseDaily(userId);
+        quotaRemaining = Math.min(DAILY_LIMIT, remaining + 1);
+      } catch {
+        // 반납 실패 — 차감된 채로 둔다. 지어낸 숫자를 보여주지 않는다.
+      }
+    }
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
-    return { status: 200, answer, source: route, remaining };
+    return { status: 200, answer, source: route, remaining: quotaRemaining };
   }
 
   // ① 검수 사전 (토큰 0)

@@ -346,6 +346,7 @@
     "qa:post-scope-db-trigger": "tsx scripts/qa/post-scope-db-trigger-integration.ts",
     "qa:news-rag-wiring": "tsx scripts/qa/news-rag-wiring-smoke.ts",
     "qa:genius-refusal-scope": "tsx scripts/qa/genius-refusal-scope-smoke.ts",
+    "qa:genius-unbound-name": "tsx scripts/qa/genius-unbound-name-smoke.ts",
     "qa:genius-refusal-scope:mutations": "bash scripts/qa/genius-refusal-scope-mutations.sh",
     "qa:genius-refusal-prompt-live": "tsx scripts/qa/genius-refusal-prompt-live-smoke.ts",
     "qa:source-row-stability": "node scripts/qa/source-row-stability-smoke.mjs"
