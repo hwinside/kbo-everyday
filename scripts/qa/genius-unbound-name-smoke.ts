@@ -144,18 +144,33 @@ async function main() {
   };
 
   // ── ① 실제 사고 재현: 생성 0 + 이름 되묻기 ────────────────────────────────
-  await checkAsync("`임창규 어떤 선수야` → 생성 0 · 임찬규 제안", async () => {
-    const { result, logs, calls } = await ask("임창규 어떤 선수야");
-    assert.equal(result.source, "name_suggest", `source=${result.source}`);
-    assert.equal(result.answer, NAME_SUGGEST_ANSWER("임찬규"), result.answer);
-    assert.deepEqual(logs, ["name_suggest"]);
-    assert.equal(calls.llm, 0, "generic LLM 이 불렸다 — 계약 위반");
-    assert.equal(calls.ragLlm, 0, "RAG LLM 이 불렸다");
-    assert.equal(calls.cacheRead, 0, "캐시를 읽었다 — 미결속 실명 답을 재사용하면 안 된다");
-    assert.equal(calls.cacheWrite, 0, "캐시에 썼다");
-    // 유저가 받은 문장에 **없는 사람에 대한 사실**이 하나도 없어야 한다.
-    assert.doesNotMatch(result.answer, /주축|선수예요|트윈스의/);
-  });
+  //
+  // ⚠️ `잘해?`·`주축 맞아?` 형태를 반드시 포함한다 (삼순 2026-08-08 P0-1).
+  //   이것들은 `별명`·`어떤 선수` 같은 서술 allowlist 에 없어 직전 구현에서
+  //   **그대로 generic LLM 으로 샐다** — 하린아빠 제보와 가장 가까운 형태인데 뚚렸다.
+  //   `임창규는 …` 은 조사 붙은 형태로, **같은 제안**이 나와야 한다(P0-2 핵 우선 판정).
+  for (const [question, label] of [
+    ["임창규 어떤 선수야", "서술 allowlist 안"],
+    ["임창규 잘해?", "서술 allowlist 밖 · 평가어"],
+    ["임창규 lg 주축 맞아?", "서술 allowlist 밖 · 사실확인"],
+    ["임창규는 어느 팀이야", "주격조사 · 핵 우선 판정"],
+  ] as const) {
+    await checkAsync(`\`${question}\` → 생성 0 · 임찬규 제안 (${label})`, async () => {
+      const { result, logs, calls } = await ask(question);
+      assert.equal(result.source, "name_suggest", `source=${result.source}`);
+      // ⚠️ 조사가 붙어도 **같은 제안**이 나와야 한다(삼순 P0-2).
+      //   raw 토큰을 먼저 보던 직전 구현은 `임창규는`(4음절)를 먼저 이름으로 확정해
+      //   길이가 달라 1음절 치환이 안 되고, 정확한 제안을 잃었다.
+      assert.equal(result.answer, NAME_SUGGEST_ANSWER("임찬규"), result.answer);
+      assert.deepEqual(logs, ["name_suggest"]);
+      assert.equal(calls.llm, 0, "generic LLM 이 불렸다 — 계약 위반");
+      assert.equal(calls.ragLlm, 0, "RAG LLM 이 불렸다");
+      assert.equal(calls.cacheRead, 0, "캐시를 읽었다 — 미결속 실명 답을 재사용하면 안 된다");
+      assert.equal(calls.cacheWrite, 0, "캐시에 썼다");
+      // 유저가 받은 문장에 **없는 사람에 대한 사실**이 하나도 없어야 한다.
+      assert.doesNotMatch(result.answer, /주축|선수예요|트윈스의/);
+    });
+  }
 
   // ── ② 삼순 P0: 이웃 없는 이름도 생성 0 (1차 구현이 놓친 축) ──────────────
   //   `오타니`(로스터 밖 실존 인물) · `홍길동`(허구) 둘 다 generic LLM 으로 새고 있었다.
@@ -165,6 +180,9 @@ async function main() {
     "이승엽 어떤 선수야",     // 은퇴 선수(로스터 없음)
     "이종범 소개해줘",         // 은퇴 선수
     "최동원 어떤 선수야",     // 작고 선수
+    "오타니 잘해?",             // ← 삼순 P0-1 필수 표본 (서술 allowlist 밖)
+    "홍길동 잘해?",             // ← 삼순 P0-1 필수 표본
+    "선동열 잘하나요?",         // ← 현역 로스터에 없는 성씨 + allowlist 밖
   ]) {
     await checkAsync(`\`${question}\` → 생성 0 · 모른다고 말한다`, async () => {
       const { result, logs, calls } = await ask(question);
@@ -228,6 +246,12 @@ async function main() {
       "진짜 어떤 선수가 잘해",
       "그냥 어떤 경기 재밌어",
       "혹시 어떤 규칙인지 알려줘",
+      // ⚠️ **성씨가 아닌 글자로 시작하는 3음절 명사** — 성씨 결속이 유일한 방어다.
+      //   이 축이 게이트에 없으면 성씨 검사를 통째로 지워도 GREEN 이다(mutation N-F 실측).
+      "떡볶이 어떤 선수가 좋아해",
+      "짜장면 어떤 선수가 좋아해",
+      "쌍둥이 어떤 선수야",
+      "튀김옷 어떤 선수가 좋아해",
     ];
     const misfires = NON_NAME_QUESTIONS
       .map((q) => [q, resolveUnboundName(q, players)] as const)
@@ -239,17 +263,39 @@ async function main() {
     );
   });
 
-  // ⚠️ 정직한 한계 — 성씨 결속이라 **현역 로스터에 없는 성씨**는 못 잡는다.
-  //   실측: `선동열` — `선` 씨가 현역 881명에 한 명도 없어 이름 후보가 되지 않는다.
-  //   이건 게이트가 감추지 않고 **명시해 고정한다** — 나중에 성씨 사전을 별도로 두는
-  //   선택을 할 때 이 줄이 근거가 된다(지금 열거하지 않는 이유는 성씨도 열린 부류이기 때문).
-  check("한계 명시 — 현역 로스터에 없는 성씨는 못 잡는다", () => {
+  // ⚠️ 삼순 2026-08-08 P0-1: 성씨를 **현역 로스터에서만** 파생하면 현역에 없는 성씨가
+  //   통째로 누수된다. `선동열`의 `선` 씨는 현역 881명에 한 명도 없고, 은퇴 선수·레전드는
+  //   유저가 제일 많이 물는 이름이다 — 정작 제일 위험한 구멍이었다.
+  //   지금은 `KOREAN_SURNAMES` 폐쇄집합과 합치므로 잡힌다. 그 사실을 고정한다.
+  check("현역 로스터에 없는 성씨도 막는다 (은퇴 선수·레전드)", () => {
     const rosterSurnames = new Set(
       players.filter((p) => !/\s/.test(p.name)).map((p) => p.name[0]),
     );
-    assert.ok(!rosterSurnames.has("선"), "전제가 바뀌었다 — `선` 씨가 로스터에 생겼다");
-    assert.equal(resolveUnboundName("선동열 어떤 선수야", players), null,
-      "한계가 변했으면 이 줄을 갱신하고 본문 주석도 고쳐야 한다");
+    assert.ok(!rosterSurnames.has("선"), "전제 확인 — `선` 씨는 현역 로스터에 없다");
+    const unbound = resolveUnboundName("선동열 어떤 선수야", players);
+    assert.notEqual(unbound, null, "로스터 밖 성씨가 그대로 샐다 — 삼순 P0-1 회귀");
+    assert.equal(unbound?.suggestion, null, "이웃이 없으니 제안은 없어야 한다");
+  });
+
+  // ── 삼순 P0-2 반대쌍: 일반명사 + 주제조사 는 이름이 아니다 ────────────
+  //   `김치는 어떤 사람이 만들었어?` — `김` 씨 + 주제조사 + `사람`(사람명사)라
+  //   세 조건을 전부 만족하는데도 이름이 아니다. 2음절 제외가 이걸 막는다.
+  check("일반명사 주어는 이름으로 오인하지 않는다 (삼순 P0-2)", () => {
+    const NOUN_SUBJECTS = [
+      "김치는 어떤 사람이 만들었어?",
+      "박수는 언제 나오는지 알려줘",
+      "고말은 어떤 선수가 받았어",
+      "안타는 누가 제일 많아",
+      "주치는 누가 말했어",
+    ];
+    const misfires = NOUN_SUBJECTS
+      .map((q) => [q, resolveUnboundName(q, players)] as const)
+      .filter(([, u]) => u !== null);
+    assert.deepEqual(
+      misfires.map(([q, u]) => `${q} → ${u?.token}`),
+      [],
+      "일반명사 주어를 사람 이름으로 오인했다",
+    );
   });
 
   check("로스터 전원 자기 질문 오탐 0", () => {
