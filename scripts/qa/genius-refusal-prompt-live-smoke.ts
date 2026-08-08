@@ -60,22 +60,35 @@ const AFTER_CONTEXT_LINES = [
 ];
 
 type Validator = (raw: string, question: string) => { kind: string; answer?: string | null };
+type RequestBuilder = (question: string, prompt?: string) => unknown;
+interface BeforeShape {
+  prompt: string;
+  validate: Validator;
+  buildRequest: RequestBuilder;
+  cleanup: () => void;
+}
 
 /**
- * `BEFORE_REF` 시점의 프롬프트·validator 를 **실제로 로드**한다.
+ * `BEFORE_REF` 시점의 프롬프트·request builder·validator 를 **전부 모듈로 로드**한다.
  *
  * ⚠️ 손으로 재구현하지 않는다. 재구현하면 "그때 코드가 이랬다" 는 내 기억을 검증하는 꼴이라,
  *   기억이 틀리면 게이트가 조용히 거짓말한다.
+ *
+ * ⚠️ 2026-08-08 삼순 P1 — 종전에는 구 프롬프트를 **regex 로 재조립**하고 request builder 는
+ *   아예 **현재 모듈**을 썼다. 그러면 before 가 "구 형상"이 아니라 "구 프롬프트 문자열을
+ *   현재 배선에 넣은 것"이 된다. 게다가 regex 파싱은 이스케이프·문자열 병합 형태가 바뀌면
+ *   조용히 부실해진다. 이제 둘 다 구 모듈에서 그대로 import 한다.
  *
  * ⚠️ 스냅샷을 `/tmp` 가 아니라 **원래 디렉터리 옆에** 떨어뜨린다 — 구 pipeline 이
  *   `./context`·`./rag/retrieve` 같은 상대 경로를 import 하기 때문이다. 다른 곳에 두면
  *   모듈 해석이 깨지고, 그 실패를 "구 코드가 원래 그랬다"로 오독하기 쉽다.
  *   `.gitignore` 에 등록돼 있고 finally 에서 지운다.
  */
-function loadBeforeShape(): { prompt: string; validate: Validator; cleanup: () => void } {
+function loadBeforeShape(): BeforeShape {
   const repoRoot = process.cwd();
   const dir = path.join(repoRoot, "src/lib/baseball-qa");
-  const snapshot = path.join(dir, `.before-snapshot.${process.pid}.ts`);
+  const pipelineSnap = path.join(dir, `.before-pipeline.${process.pid}.ts`);
+  const requestSnap = path.join(dir, `.before-request.${process.pid}.ts`);
 
   const beforePipeline = execFileSync(
     "git", ["show", `${BEFORE_REF}:src/lib/baseball-qa/pipeline.ts`],
@@ -102,27 +115,36 @@ function loadBeforeShape(): { prompt: string; validate: Validator; cleanup: () =
     );
   }
 
-  writeFileSync(snapshot, beforePipeline, "utf8");
-  const cleanup = () => { if (existsSync(snapshot)) rmSync(snapshot); };
+  writeFileSync(pipelineSnap, beforePipeline, "utf8");
+  writeFileSync(requestSnap, beforeRequest, "utf8");
+  const cleanup = () => {
+    for (const f of [pipelineSnap, requestSnap]) if (existsSync(f)) rmSync(f);
+  };
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mod = require(snapshot) as { validateLlmResponse: Validator };
-  assert.equal(typeof mod.validateLlmResponse, "function",
+  const pipelineMod = require(pipelineSnap) as { validateLlmResponse: Validator };
+  assert.equal(typeof pipelineMod.validateLlmResponse, "function",
     "구 pipeline 에서 validateLlmResponse 를 못 읽었다");
 
-  // 구 프롬프트는 구 gemini-request 소스에서 직접 뽑는다(모듈 로드 없이 문자열 평가 회피).
-  const promptMatch = beforeRequest.match(
-    /export const BASEBALL_QA_SYSTEM_PROMPT = \[([\s\S]*?)\]\.join\("\\n"\);/,
-  );
-  assert.ok(promptMatch, `${BEFORE_REF} 에서 구 프롬프트를 찾지 못했다`);
-  const prompt = [...promptMatch[1].matchAll(/^\s*(['"])((?:\\.|(?!\1).)*)\1,\s*$/gmu)]
-    .map((m) => m[2].replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\n/g, "\n"))
-    .join("\n");
-  assert.ok(prompt.length > 500, `구 프롬프트 파싱이 부실하다(${prompt.length}자)`);
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const requestMod = require(requestSnap) as {
+    BASEBALL_QA_SYSTEM_PROMPT: string;
+    buildBaseballQaGeminiRequest: RequestBuilder;
+  };
+  const prompt = requestMod.BASEBALL_QA_SYSTEM_PROMPT;
+  assert.equal(typeof prompt, "string", "구 gemini-request 에서 프롬프트를 못 읽었다");
+  assert.equal(typeof requestMod.buildBaseballQaGeminiRequest, "function",
+    "구 gemini-request 에서 buildBaseballQaGeminiRequest 를 못 읽었다");
+  assert.ok(prompt.length > 500, `구 프롬프트가 부실하다(${prompt.length}자)`);
   assert.ok(prompt.includes("너는 한국 프로야구(KBO) 도우미다."), "구 프롬프트 첫 줄이 없다");
   assert.notEqual(prompt, BASEBALL_QA_SYSTEM_PROMPT, "before/after 프롬프트가 동일하다");
 
-  return { prompt, validate: mod.validateLlmResponse, cleanup };
+  return {
+    prompt,
+    validate: pipelineMod.validateLlmResponse,
+    buildRequest: requestMod.buildBaseballQaGeminiRequest,
+    cleanup,
+  };
 }
 
 /**
@@ -193,7 +215,14 @@ function loadDotEnv(file: string) {
   }
 }
 
-async function callModel(apiKey: string, prompt: string, question: string): Promise<string> {
+/**
+ * ⚠️ `build` 를 인자로 받는다 (삼순 2026-08-08 P1). 종전에는 before/after 둘 다
+ *   **현재** `buildBaseballQaGeminiRequest` 를 썼다. 그러면 request 형상(generationConfig·
+ *   safety·schema)이 바뀐 경우 before 가 "구 형상"이 아니다. 각자의 builder 를 쓴다.
+ */
+async function callModel(
+  apiKey: string, prompt: string, question: string, build: RequestBuilder,
+): Promise<string> {
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}` +
     `:generateContent?key=${apiKey}`;
@@ -201,7 +230,7 @@ async function callModel(apiKey: string, prompt: string, question: string): Prom
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(buildBaseballQaGeminiRequest(question, prompt)),
+      body: JSON.stringify(build(question, prompt)),
       signal: AbortSignal.timeout(20000),
     });
     if (res.status === 429 || res.status >= 500) {
@@ -267,8 +296,11 @@ async function main() {
     const opened: string[] = [];
     const closed: string[] = [];
     for (const q of IN_SCOPE_SAMPLES) {
-      const b = evaluate(await callModel(apiKey, before.prompt, q), q, before.validate);
-      const a = evaluate(await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q), q, validateLlmResponse);
+      const b = evaluate(
+        await callModel(apiKey, before.prompt, q, before.buildRequest), q, before.validate);
+      const a = evaluate(
+        await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q, buildBaseballQaGeminiRequest),
+        q, validateLlmResponse);
       if (b.delivered) beforeDelivered += 1;
       if (a.delivered) afterDelivered += 1;
       const mark = !b.delivered && a.delivered ? "↑↑" : b.delivered && !a.delivered ? "↓↓" : "  ";
@@ -288,7 +320,9 @@ async function main() {
     console.log("\n=== ② 범위 밖 표본 — 답이 나가면 안 된다 ===");
     const leaked: string[] = [];
     for (const q of OUT_OF_SCOPE_SAMPLES) {
-      const a = evaluate(await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q), q, validateLlmResponse);
+      const a = evaluate(
+        await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q, buildBaseballQaGeminiRequest),
+        q, validateLlmResponse);
       if (a.delivered) leaked.push(`${q} → ${truncate(a.delivered)}`);
       console.log(`   ${a.status.padEnd(20)} ${a.delivered ? "❌ 답변 나감" : "차단"}  ${q}`);
     }
@@ -296,7 +330,9 @@ async function main() {
     console.log("\n=== ③ 적대 표본 (실모델) — 질문에 야구 신호가 있어도 답변이 범위 밖이면 차단 ===");
     const adversarialLeaked: string[] = [];
     for (const q of ADVERSARIAL_SAMPLES) {
-      const a = evaluate(await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q), q, validateLlmResponse);
+      const a = evaluate(
+        await callModel(apiKey, BASEBALL_QA_SYSTEM_PROMPT, q, buildBaseballQaGeminiRequest),
+        q, validateLlmResponse);
       if (a.delivered) adversarialLeaked.push(`${q} → ${truncate(a.delivered)}`);
       console.log(`   ${a.status.padEnd(20)} ${a.delivered ? "❌ 답변 나감" : "차단"}  ${q}`);
     }

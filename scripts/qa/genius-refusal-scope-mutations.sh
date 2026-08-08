@@ -207,6 +207,18 @@ mutate_answer "M21 주제이탈 denylist 우회 (질문 신호 단독 bypass 재
 mutate_answer "M22 프롬프트의 답변 문맥 명시 강제 제거" \
   perl -0pi -e 's/답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다/답변은 자유롭게 쓴다/' src/lib/baseball-qa/gemini-request.ts
 
+# M23 답변 validator 를 **질문용 어휘에 다시 연결**한다 — 삼순 2026-08-08 2차 P0 그 상태.
+#     이게 잡히지 않으면 다음 사람이 "어휘 재사용"을 리팩토링으로 되돌려도 아무도 모른다.
+grep -q "ANSWER_EXCLUSIVE_TERMS" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M23 대상(ANSWER_EXCLUSIVE_TERMS)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate_answer "M23 답변 validator 를 질문용 BASEBALL_WORDS 에 재연결" \
+  perl -0pi -e 's/  return ANSWER_EXCLUSIVE_TERMS\.some\(\(word\) => matchesAnswerAnchor\(tokens, word\)\) \|\|/  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word)) ||\n    ["경기", "공격", "수비", "주루", "득점"].some((word) => tokenMatches(tokens, word)) ||/' src/lib/baseball-qa/pipeline.ts
+
+# M24 2차 P0 에서 내린 네 단어를 **단독 허용으로 되돌린다** → `전용 구장`·`로마 투구`·
+#     `계주 주자`·`사회자 대타` 가 다시 통과한다.
+mutate_answer "M24 일반어(구장·투구·주자·대타)를 단독 허용으로 되돌림" \
+  perl -0pi -e 's/  "희생플라이", "태그업", "피치클락", "타율", "방어율", "평균자책", "대주자",/  "희생플라이", "태그업", "피치클락", "타율", "방어율", "평균자책", "대주자", "구장", "투구", "주자", "대타",/' src/lib/baseball-qa/pipeline.ts
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "✅ 전 변이 RED — 게이트가 대상 로직을 실제로 지키고 있다"
