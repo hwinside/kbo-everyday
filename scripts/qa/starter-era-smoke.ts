@@ -582,6 +582,101 @@ for (const group of ambiguousGroups) {
   );
 }
 
+/* ★ box ERA 는 identity 로만 채택된다 — 이름이 같다는 이유로 fail-close 를 열지 않는다.
+ *
+ * 삼순 지적(실증): `resolveStarterPitcher("박준영", 9, "9.99", "박준영")` 이 정체를 못 정했는데도
+ * `-` 가 아니라 `9.99` 를 노출했다. 위 (a)~(c) 로 `resolvePitcherByRole` 은 `undefined` 를 냈지만,
+ * 바로 다음 `boxPitcherName.trim() === name.trim()` 이름 비교 fallback 이 **다시 열어준** 것이다.
+ * 한화 박준영은 둘(52731·56709)이라 그 9.99 가 누구의 기록인지 알 수 없다 — 이름은 식별자가 아니다.
+ *
+ * live box 는 유저에게 바로 보이는 경로라, 이 우회가 남으면 이번 fail-close 계약 전체가 무의미해진다. */
+{
+  // (1) 실제 복수-투수 그룹 — 역할로도 좁힐 수 없는 그룹을 실 로스터에서 고른다.
+  const unresolvable = ambiguousGroups.filter(
+    (group) => group.filter((p) => eraIds.has(String(p.kboId))).length > 1,
+  );
+  assert.ok(
+    unresolvable.length > 0,
+    "역할로도 좁힐 수 없는 동명이인 그룹이 있어야 이 계약을 실 데이터로 검증할 수 있다",
+  );
+  for (const group of unresolvable) {
+    const { name, teamId } = group[0];
+    assert.equal(
+      productionResolveStarter(name, teamId, "9.99", name).era,
+      "-",
+      `${name}(팀 ${teamId})은 정체를 못 정했으므로 같은 이름의 box ERA 도 채택하면 안 된다`,
+    );
+  }
+
+  // (2) 고정 fixture — 로스터에서 그 형상이 사라져도 계약은 남는다.
+  const FIXTURE_ROWS: PitcherSeasonRow[] = [
+    { kboId: "DUP1", playerId: "DUP1", era: "1.11" },
+    { kboId: "DUP2", playerId: "DUP2", era: "2.22" },
+    { kboId: "SOLO", playerId: "SOLO", era: "3.33" },
+    { kboId: "HALF1", playerId: "HALF1", era: "4.44" }, // HALF2 는 기록 없음 → 역할로 갈린다
+  ];
+  const FIXTURE_PLAYERS = [
+    { name: "동명", kboId: "DUP1", teamId: 1 },
+    { name: "동명", kboId: "DUP2", teamId: 1 },
+    { name: "유일", kboId: "SOLO", teamId: 1 },
+    // 이름은 모호하지만 **역할로 좁혀지는** 형상(투수 기록 보유자가 하나뿐).
+    // 실 데이터의 김태훈(삼성) 이 이 모양이다.
+    { name: "반쪽", kboId: "HALF1", teamId: 1 },
+    { name: "반쪽", kboId: "HALF2", teamId: 1 },
+  ];
+  const { resolveStarterPitcher: fixtureResolve } = createPitcherSeasonResolver({
+    pitcherRows: FIXTURE_ROWS,
+    resolveRoster: ({ name, teamId }) => {
+      const hits = FIXTURE_PLAYERS.filter((p) => p.name === name && p.teamId === teamId);
+      return hits.length === 1 ? { kboId: hits[0].kboId } : null;
+    },
+    resolveRosterCandidates: ({ name, teamId }) =>
+      FIXTURE_PLAYERS.filter((p) => p.name === name && p.teamId === teamId),
+    toNumericId: (kboId) => kboId,
+  });
+
+  assert.equal(
+    fixtureResolve("동명", 1, "9.99", "동명").era,
+    "-",
+    "동명이인은 box 이름이 같아도 채택하지 않는다(이름은 식별자가 아니다)",
+  );
+  assert.equal(
+    fixtureResolve("동명", 1).era,
+    "-",
+    "동명이인은 box 가 없어도 추측하지 않는다",
+  );
+  assert.equal(
+    fixtureResolve("유일", 1, "9.99", "유일").era,
+    "9.99",
+    "identity 가 확정되면 box ERA 는 정상 채택된다(과도한 fail-close 아님)",
+  );
+  assert.equal(
+    fixtureResolve("유일", 1, "9.99", "동명").era,
+    "3.33",
+    "다른 사람의 box ERA 는 선발을 오염시키지 못한다 — 시즌 기록으로 떨어진다",
+  );
+  assert.equal(
+    fixtureResolve("유일", 1, "9.99", "__로스터에없음__").era,
+    "3.33",
+    "box 투수를 해석하지 못하면 채택하지 않는다",
+  );
+
+  /* ★ box 이름도 **선발과 같은 방식으로** 해석해야 한다.
+   * "반쪽" 은 이름+팀으로는 모호하지만 역할로 HALF1 이 확정된다. box 쪽만 역할 좁히기를
+   * 건너뛰면(=단순 resolveRoster) boxKboId 가 null 이 되어, identity 가 실제로 같은데도
+   * live box ERA 를 버리고 시즌 기록으로 떨어진다 — 조용한 신선도 손실이다(자체 mutation X9). */
+  assert.equal(
+    fixtureResolve("반쪽", 1, "9.99", "반쪽").era,
+    "9.99",
+    "역할로 좁혀지는 이름은 box 쪽도 같은 방식으로 해석해 identity 일치를 인정해야 한다",
+  );
+  assert.equal(
+    fixtureResolve("반쪽", 1).era,
+    "4.44",
+    "역할로 좁혀지면 시즌 기록도 그 사람 것으로 조회된다",
+  );
+}
+
 /* ★ 순서 비의존 — 같은 로스터를 뒤집어도 답이 같아야 한다.
  * 이게 이번 사고의 본질이다. 위 (a)~(c)만 있으면 "지금 순서에서 우연히 맞는" 상태를
  * 계약으로 굳힐 수 있으므로, 순서를 실제로 뒤집어 대조한다. */

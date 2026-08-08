@@ -84,12 +84,14 @@ export function createPitcherSeasonResolver({
   ): { name: string; era: string; kboId?: string } {
     const starterKboId = name ? resolvePitcherByRole(name, teamId) : undefined;
     const boxKboId = boxPitcherName ? resolvePitcherByRole(boxPitcherName, teamId) : undefined;
-    const boxMatchesStarter = Boolean(
-      boxPitcherName && (
-        (starterKboId && boxKboId === starterKboId)
-        || boxPitcherName.trim() === name.trim()
-      ),
-    );
+    /* ⚠︎ box ERA 는 **양쪽 identity 가 모두 확정되고 같을 때만** 채택한다.
+     *
+     * 예전엔 `boxPitcherName === name` 이름 비교 fallback 이 있었다. 그러면 위에서
+     * 동명이인이라 fail-close 한(=`undefined`) 상황을 **이름이 같다는 이유로 다시 열어준다.**
+     * 실측(삼순 지적): `resolveStarterPitcher("박준영", 9, "9.99", "박준영")` 이 정체를 못
+     * 정했는데도 `-` 가 아니라 `9.99` 를 노출했다 — 한화에 박준영이 둘(52731·52731 아닌 56709)이라
+     * 그 9.99 가 누구의 기록인지 알 수 없다. 이름은 식별자가 아니므로 근거로 쓰지 않는다. */
+    const boxMatchesStarter = Boolean(starterKboId && boxKboId && boxKboId === starterKboId);
     return {
       name,
       era:
