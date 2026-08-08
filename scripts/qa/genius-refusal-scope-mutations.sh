@@ -57,8 +57,14 @@ mutate "M1  거절 문구를 구범위(룰/용어만)로 되돌림" \
   perl -0pi -e 's/저는 야구 이야기만 답해드릴 수 있어요[^"]*/야구 룰\/용어에 대한 질문만 답할 수 있어요. 예: /' src/lib/constants/baseball-genius.ts
 
 # M2 범위어 하나만 누락시킨다 (전부 지우는 것보다 잡기 어렵다)
+#
+# ⚠️ 문구의 앞뒤 조사까지 패턴에 넣었더니 문구를 다듬는 순간 no-op 이 됐다(자체 발견).
+#   변이는 **범위어 그 자체**만 노려서 문구 표현과 무관하게 성립해야 한다.
+#   그래서 치환 전에 대상 존재를, 치환 후에 실제 변경을 각각 확인한다.
+grep -q "최근 소식" src/lib/constants/baseball-genius.ts || {
+  echo "FATAL M2 대상('최근 소식')이 문구에 없다 — 변이가 무의미하다"; exit 2; }
 mutate "M2  거절 문구에서 범위어 '최근 소식' 만 제거" \
-  perl -0pi -e 's/, 최근 소식은 얼마든지/은 얼마든지/' src/lib/constants/baseball-genius.ts
+  perl -0pi -e 's/(BASEBALL_GENIUS_FALLBACK_ANSWER =\s*\n\s*")([^"]*)/$1 . ($2 =~ s|, 최근 소식||r)/e' src/lib/constants/baseball-genius.ts
 
 # M3 SSOT 표에서 news_rag 범위어를 지운다 → 문구는 그대로여도 대조가 무의미해진다
 mutate "M3  SSOT 표에서 news_rag 범위어 제거" \
@@ -116,8 +122,13 @@ mutate "M13 판정 프롬프트를 룰/용어 한정으로 되돌림" \
   perl -0pi -e 's/범위 안인지 확실하지 않으면/야구 룰\/용어인지 확실하지 않으면/' src/lib/baseball-qa/gemini-request.ts
 
 # M14 안내문에서 예시를 전부 제거 (범위만 나열하면 유저가 다음 행동을 못 한다)
+#
+# ⚠️ 자체 발견 2건: ①문구 첫머리("예를 들어")를 앵커로 썼더니 문구를 다듬자 no-op
+#   ②백슬래시-따옴표를 셸·perl 양쪽에서 이스케이프하려다 패턴이 깨져 또 no-op.
+#   그래서 앵커는 **형태**(이스케이프된 따옴표 쌍)로 두고, 셸 인용 지옥을 피하려고
+#   `\x22`(따옴표) 16진 표기를 쓴다. 변이 후 실제 변경 여부를 직접 확인한다.
 mutate "M14 범위 안내문에서 예시 제거" \
-  perl -0pi -e 's/"예를 들어[^;]*⚾";/"";/' src/lib/baseball-qa/pipeline.ts
+  perl -0pi -e 's/(SCOPE_GUIDE_ANSWER =)(.*?);/my($a,$b)=($1,$2); $b =~ s{\\\x22[^\\\x22]*\\\x22}{}g; $a.$b.";"/es' src/lib/baseball-qa/pipeline.ts
 
 # M15 감사 인사를 범위 안내가 삼키게 만든다 (경계 침범).
 #
