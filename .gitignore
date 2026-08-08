@@ -73,3 +73,8 @@ scripts/hero/.daum-src/
 
 # 실기기 QA 산출물 (게이트 JSON·인벤토리 등) — 커밋 대상 아님
 .qa-artifacts/
+# 실모델 before/after 게이트가 런타임에 git show 로 꺼내 쓰는 구 pipeline 스냅샷.
+# 상대 import 를 살리려고 src 안에 떨어뜨렸다가 즉시 지운다 — 커밋 대상이 아니다.
+src/lib/baseball-qa/.before-snapshot.*.ts
+src/lib/baseball-qa/.before-pipeline.*.ts
+src/lib/baseball-qa/.before-request.*.ts

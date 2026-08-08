@@ -73,14 +73,12 @@ const LLM_ANSWER = "LG 트윈스는 서울을 연고로 하는 KBO 구단이에�
  */
 const TEAM_ANSWER_SAMPLES: ReadonlyArray<readonly [string, string]> = [
   ["LG트윈스 감독 누구야?", "LG 트윈스 감독은 염경엽입니다."],
-  // ⚠️ 축약형 — 삼순 4차 실표본. 답변 본문에 구단명조차 없다.
-  ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
-  ["LG트윈스 감독 누구야?", "염경엽입니다."],
   ["LG트윈스의 역사", "LG 트윈스는 1990년 창단한 KBO 구단입니다."],
   ["LG트윈스는 어떤 팀이야?", "LG 트윈스는 서울을 연고로 하는 프로야구단입니다."],
   ["두산베어스 홈구장이 어디야?", "두산 베어스의 홈구장은 잠실야구장입니다."],
   ["삼성 라이온즈 연고가 어디야?", "삼성 라이온즈는 대구를 연고로 합니다."],
-  ["삼성주장", "구자욱 선수입니다."],
+  // 프롬프트가 첫 문장에 야구/KBO 문맥을 강제하므로 provider 는 구단명을 담아 보낸다.
+  ["삼성주장", "삼성 라이온즈 주장은 구자욱 선수입니다."],
 ];
 
 interface RunState {
@@ -424,13 +422,273 @@ async function verifyTeamAnswersSurviveFinalValidator() {
     });
   }
 
-  // 맥락 미전달(기존 호출부)은 기존처럼 fail-close 해야 한다 — 완화가 기본값이 되면 안 된다.
+  // ── 축약 답변은 fail-close 한다 (계약 변경, 삼순 2026-08-08) ─────────────
+  //
+  // ⚠️ 종전 계약은 "질문이 구단을 지명했으면 답변은 주제이탈 denylist 로만 본다" 였다.
+  //   그래야 `염경엽입니다.` 같은 축약 답변이 살았다. 그런데 그 우회가 실제로 열려 있었다:
+  //     `LG 티켓 가격 알려줘` → `LG 홈경기 티켓은 1만원부터 시작해요.` → **통과**
+  //   `티켓`·`연봉`·`여자친구`·`세탁` 은 목록에 없고, 넣어도 다음 단어가 또 나온다.
+  //   양성 안전판을 불완전한 음성 목록으로 바꾸면 결국 다 열린다.
+  //
+  //   그래서 우회를 없애고, 축약 답변 문제는 **프롬프트로** 푼다 — 판정 프롬프트가
+  //   "첫 문장에서 야구/KBO 문맥을 밝히라" 고 강제하므로 provider 는
+  //   `LG 트윈스 감독은 염경엽입니다.` 로 보낸다(위 표본이 그 형태다).
+  //   그래도 문맥이 없으면 fail-close 를 유지한다 — 지어낸 답을 내보내는 것보다 낫다.
+  for (const [question, shortened] of [
+    ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
+    ["LG트윈스 감독 누구야?", "염경엽입니다."],
+    // 한정 앵커(`선수`) 단독도 닫힌다 — 삼순 2026-08-08 P0.
+    ["삼성주장", "구자욱 선수입니다."],
+  ] as const) {
+    await check(`축약 답변은 fail-close "${shortened}"`, () => {
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: shortened }),
+        question,
+      );
+      assert.equal(validated.kind, "unsure",
+        "야구 문맥이 없는 축약 답변은 통과시키지 않는다(질문 신호 단독 bypass 금지)");
+    });
+  }
+
+  // 그 fail-close 를 감수할 수 있는 근거 — 프롬프트가 문맥 명시를 **실제로** 강제한다.
+  // 이 계약이 빠지면 위 fail-close 는 그냥 기능 퇴행이 된다.
+  await check("프롬프트가 답변 첫 문장에 야구 문맥을 강제한다", () => {
+    assert.match(
+      BASEBALL_QA_SYSTEM_PROMPT,
+      /답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다/,
+      "축약 답변 fail-close 를 상쇄할 프롬프트 계약이 없다",
+    );
+  });
+
+  const { mentionsTeamForGate } = await import("../../src/lib/baseball-qa/pipeline");
+
+  // ── 앵커 단독 축 — 구단명이 **없는** 정상 답변 (자체발견 2026-08-08) ────────
+  //
+  // ⚠️ 이 축이 없어서 mutation M20(답변측 앵커 무력화)이 GREEN 이었다.
+  //   이 게이트의 표본은 전부 구단 질문이라 답변에 구단명이 들어 있고, 앵커가 통째로
+  //   죽어도 `mentionsTeam` 경로가 대신 통과시켰다. 즉 "앵커가 지키는 것"을 아무도 안 봤다.
+  //   구단명이 없고 **앵커만으로 살아야 하는** 답변을 따로 태운다.
+  for (const [question, answer] of [
+    ["야구에서 유격수는 왜 ss야", "유격수는 shortstop 의 약자로 ss 라고 표기해요."],
+    ["내야수가 뭐야?", "내야수는 1루수·2루수·3루수·유격수를 통틀어 부르는 말이에요."],
+    ["KBO가 뭐야?", "KBO는 한국야구위원회의 약자예요."],
+  ] as const) {
+    await check(`앵커 단독으로도 정상 답변이 산다 "${answer}"`, () => {
+      // ⚠️ 전제 확인 — 표본에 구단명이 있으면 `mentionsTeam` 경로가 대신 통과시켜
+      //   앵커 축이 검증되지 않는다(그게 M20 이 GREEN 이던 이유다).
+      assert.equal(mentionsTeamForGate(answer), false,
+        `이 표본에 구단명이 있으면 앵커 축을 검증하지 못한다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), question,
+      ).kind, "answer", `앵커만 있는 정상 답변이 폐기됐다: ${answer}`);
+    });
+  }
+
+  // 한정 앵커 계약을 **배포 함수로 직접** 확인한다 (게이트가 판정을 재구현하면
+  // 대상이 죽어도 GREEN 이다 — #1110 에서 실제로 겪은 false-green 유형).
+  await check("한정 앵커는 단독으로 인정되지 않는다 (배포 함수 직접 호출)", async () => {
+    const { isQualifiedOnlyAnchorAnswer } = await import("../../src/lib/baseball-qa/pipeline");
+    for (const answer of [
+      "박태환은 수영 선수입니다",
+      "FC 서울은 한국의 프로 구단입니다",
+      "김민재는 국가대표 선발 선수입니다",
+      "구자욱 선수입니다.",
+    ]) {
+      assert.equal(isQualifiedOnlyAnchorAnswer(answer), true,
+        `한정 앵커 단독으로 분류되지 않았다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "삼성 라이온즈 알려줘",
+      ).kind, "unsure", `한정 앵커 단독인데 통과했다: ${answer}`);
+    }
+    // 확정 신호가 같이 있으면 인정된다 — 이 완화가 통째로 닫히면 그것도 회귀다.
+    for (const answer of [
+      "삼성 라이온즈 주장은 구자욱 선수입니다.",
+      "KBO 리그 한화 이글스 소속의 내야수 문현빈 선수예요.",
+    ]) {
+      assert.equal(isQualifiedOnlyAnchorAnswer(answer), false,
+        `확정 신호가 있는데 한정 앵커 단독으로 봤다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "삼성 라이온즈 알려줘",
+      ).kind, "answer", `정상 답변이 폐기됐다: ${answer}`);
+    }
+  });
+
+  // 맥락 미전달(기존 호출부)도 동일하게 닫힌다.
   await check("질문 맥락 없으면 기존처럼 닫힌다", () => {
     const validated = validateLlmResponse(
       JSON.stringify({ status: "ANSWER", answer: "염경엽입니다." }),
     );
     assert.equal(validated.kind, "unsure", "맥락 없이 신호어 없는 답변을 통과시켰다");
   });
+
+  // ── 반대가설: 질문 신호만으로 답변 검증을 우회시키지 않는다 (삼순 2026-08-08) ──
+  //
+  // 아래는 전부 **질문에 구단·선수·야구 신호가 있는데 답변은 범위 밖**인 표본이다.
+  // 종전 완화 경로는 이걸 통과시켰다(`LG 티켓 가격` 실측).
+  for (const [question, bad] of [
+    ["문현빈 연봉 얼마야?", "문현빈의 연봉은 3억 원으로 알려져 있어요."],
+    ["문현빈 연봉 얼마야?", "문현빈 선수의 연봉은 3억 원이에요."],
+    ["김도영 여자친구 누구야?", "KIA 타이거즈 김도영 선수의 여자친구는 공개된 바 없어요."],
+    ["LG 티켓 가격 알려줘", "LG 홈경기 티켓은 1만원부터 시작해요."],
+    ["야구 유니폼 세탁법", "유니폼은 찬물에 중성세제로 손세탁하는 게 좋아요."],
+    ["리그 오브 레전드 알려줘", "리그 오브 레전드는 MOBA 장르입니다."],
+    // ⚠️ 삼순 2026-08-08 P0 — **denylist 단어를 피한** 적대 표본. 범용 앵커
+    //   (`선수`·`구단`·`선발`)를 단독 인정하면 전부 통과했다(실측). denylist 로는 못 닫는다:
+    //   `수영`·`FC 서울`·`국가대표` 를 목록에 다 적을 수 없기 때문이다.
+    //   그래서 한정 앵커는 고정밀 앵커·구단명과 **동시 등장할 때만** 인정한다.
+    ["박태환 알려줘", "박태환은 수영 선수입니다"],
+    ["FC 서울 알려줘", "FC 서울은 한국의 프로 구단입니다"],
+    ["김민재 알려줘", "김민재는 국가대표 선발 선수입니다"],
+    ["손흥민 알려줘", "손흥민은 국가대표 선수입니다"],
+    ["김도영 사생활 알려줘", "그 사생활은 공개되지 않았습니다"],
+  ] as const) {
+    await check(`질문 신호 단독 bypass 금지 "${bad}"`, () => {
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: bad }),
+        question,
+      );
+      assert.equal(validated.kind, "unsure",
+        "질문에 야구 신호가 있다는 이유로 범위밖 답변을 통과시켰다");
+    });
+  }
+
+  // ── 답변측 어휘를 **질문용 어휘와 분리**한다 (삼순 2026-08-08 2차 P0) ──────────
+  //
+  // ⚠️ 이 축이 없어서 실제로 새고 있었다. 답변 validator 가 질문용 `BASEBALL_WORDS` 와
+  //   범용 경기어(`경기`·`득점`·`수비`)를 그대로 재사용했다. 질문은 우리 봇에 온 것이라
+  //   야구 맥락이 전제되지만 **답변 본문은 그 전제가 없다**. 그래서 아래가 전부 통과했다:
+  //     `손흥민은 어제 경기에서 득점했습니다.`  ← `경기`·`득점`
+  //     `박태환은 올림픽 기록을 세운 …`          ← `기록`
+  //     `베이스 기타는 4현 악기로 …`             ← `베이스`
+  //     `김민재는 국가대표 수비의 핵심입니다.`   ← `수비`
+  //   2차에서 새 폐쇄어휘에도 일반어가 남아 있었다(삼순 실측):
+  //     `구장`·`투구`(투구 兜鍪)·`주자`(계주)·`대타`(사회자 대타)
+  //
+  // ⚠️ **denylist 로 막지 않는다.** `수영`·`계주`·`로마`·`행사` 를 다 적을 수 없다.
+  //   양성 어휘 자체가 답변 전용이어야 한다 — 그래서 배포 함수를 직접 호출해 고정한다.
+  for (const answer of [
+    "손흥민은 어제 경기에서 득점했습니다.",
+    "박태환은 올림픽 기록을 세운 수영 선수입니다.",
+    "베이스 기타는 4현 악기로 낮은 음역을 담당합니다.",
+    "김민재는 국가대표 수비의 핵심입니다.",
+    "서울월드컵경기장은 전용 구장입니다",
+    "고대 로마 병사의 투구는 금속입니다",
+    "계주 마지막 주자는 김민지입니다",
+    "박철수는 행사 사회자 대타입니다",
+  ]) {
+    await check(`답변 어휘 분리 — 비야구 답변 차단 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      // 배포 판정 함수를 직접 호출한다 — 게이트가 판정을 재구현하면 대상이 죽어도 GREEN 이다.
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), false,
+        `답변 검증이 질문용 어휘에 기대고 있다(비야구 답변 통과): ${answer}`);
+      // 종단도 같이 본다 — 판정 함수만 고치고 호출부가 안 물리면 유저에겐 그대로 나간다.
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "야구 알려줘",
+      ).kind, "unsure", `비야구 답변이 유저에게 나갔다: ${answer}`);
+    });
+  }
+
+  // 반대 방향 — 위 단어들이 **야구 문맥과 함께** 오면 그대로 살아야 한다.
+  // 이게 빠지면 "다 막으면 통과"가 되어 게이트가 기능 퇴행을 승인한다.
+  for (const answer of [
+    "잠실야구장은 LG 트윈스의 홈 구장입니다.",
+    "야구에서 대타는 타순을 대신하는 선수예요.",
+    "야구에서 투구 동작 중 반칙이 보크예요.",
+    "1루 주자가 도루를 시도했어요.",
+  ]) {
+    await check(`답변 어휘 분리 — 야구 문맥이면 통과 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), true,
+        `정상 야구 답변이 폐기됐다: ${answer}`);
+    });
+  }
+
+  // ── 답변측 **구단 신호**도 질문용과 분리한다 (삼순 2026-08-08 3차 P0) ────────
+  //
+  // ⚠️ 어휘를 분리하고도 구단 판정은 질문용 `mentionsTeam` 을 그대로 불렀다 — 같은 구조의
+  //   재사용이 한 줄 더 남아 있었다. `mentionsTeam` 은 **단독 약칭·별칭**도 구단으로 보므로:
+  //     `LG는 한국의 가전 기업입니다`  → 통과
+  //     `기아는 자동차 회사입니다`    → 통과
+  //     `이글스는 미국의 록 밴드입니다` → 통과
+  //   `삼성`·`롯데`·`한화`·`키움` 은 전부 실존 기업명이라 denylist 로는 못 막는다.
+  for (const answer of [
+    "LG는 한국의 가전 기업입니다",
+    "기아는 자동차 회사입니다",
+    "이글스는 미국의 록 밴드입니다",
+    "삼성은 반도체를 만듭니다",
+    "롯데는 과자 회사입니다",
+    "한화는 방산 기업입니다",
+  ]) {
+    await check(`구단 신호 분리 — 단독 약칭·별칭은 구단이 아니다 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), false,
+        `답변 구단 판정이 질문용 mentionsTeam 을 쓰고 있다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "야구 알려줘",
+      ).kind, "unsure", `비야구 답변이 유저에게 나갔다: ${answer}`);
+    });
+  }
+
+  // 반대 방향 — **10개 구단 풀네임은 전부 살아야** 한다. 띄어쓰기·붙여쓰기 둘 다.
+  //   이게 빠지면 "쌍을 요구하면 전부 닫힌다"는 퇴행을 게이트가 승인한다.
+  for (const answer of [
+    "LG 트윈스는 서울을 연고로 합니다.",
+    "lg트윈스의 역사는 1990년부터입니다.",
+    "KIA 타이거즈는 광주를 연고로 합니다.",
+    "두산 베어스는 서울을 연고로 합니다.",
+    "롯데 자이언츠는 부산 연고입니다.",
+    "삼성 라이온즈는 대구를 연고로 합니다.",
+    "한화 이글스는 대전 연고입니다.",
+    "키움 히어로즈는 고척을 쓰고 있습니다.",
+    "KT 위즈는 수원 연고입니다.",
+    "SSG 랜더스는 인천 연고입니다.",
+    "NC 다이노스는 창원 연고입니다.",
+    // 역사 구단은 alias 표에 없지만 프롬프트가 강제하는 `KBO` 앵커로 산다.
+    "SK 와이번즈는 KBO 구단이었습니다.",
+  ]) {
+    await check(`구단 신호 분리 — 풀네임은 통과 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), true,
+        `정상 구단 답변이 폐기됐다: ${answer}`);
+    });
+  }
+
+  // ── 별도 토큰 쌍은 **인접**해야 한다 (삼순 2026-08-08 4차 P0) ───────────────
+  //
+  // ⚠️ 쌍을 요구해도 "문장 어딘가에 약칭, 어딘가에 별칭" 이면 통과하는 구멍이 남아 있었다.
+  //   두 말이 **서로 다른 절**에 있어도 풀네임으로 오인한다(실측):
+  //     `LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다`
+  //     `삼성은 반도체 기업이고 라이온즈는 사자를 뜻합니다`
+  //   풀네임은 항상 한 덩어리로 쓰이므로 인접으로 좁혀도 위 정상 표본은 안 죽는다.
+  for (const answer of [
+    "LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다",
+    "삼성은 반도체 기업이고 라이온즈는 사자를 뜻합니다",
+    "기아는 자동차 회사이고 타이거즈는 호랑이입니다",
+    "한화는 방산 기업이고 이글스는 독수리를 말합니다",
+    "롯데는 과자 회사고 자이언츠는 거인이라는 뜻입니다",
+  ]) {
+    await check(`구단 쌍 인접성 — 교차절은 풀네임이 아니다 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), false,
+        `약칭·별칭이 떨어져 있는데 풀네임으로 인정했다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "야구 알려줘",
+      ).kind, "unsure", `비야구 답변이 유저에게 나갔다: ${answer}`);
+    });
+  }
+
+  // 인접성을 요구해도 **조사가 붙은 풀네임**은 살아야 한다(`LG의 트윈스는` 같은 형태).
+  for (const answer of [
+    "LG 트윈스는 서울을 연고로 합니다.",
+    "삼성 라이온즈의 연고는 대구입니다.",
+    "그 팀은 두산 베어스입니다.",
+  ]) {
+    await check(`구단 쌍 인접성 — 인접 풀네임은 통과 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), true,
+        `인접 풀네임이 폐기됐다: ${answer}`);
+    });
+  }
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────
