@@ -126,6 +126,71 @@ const TEAM_UNSERVED_PATTERNS: ReadonlyArray<RegExp> = [
   /관중\s*수|연봉|연봉액|몸값|순자산|연종/,
 ];
 
+/**
+ * **경기별 스코어** — 값 요구어 없이도 무조건 미서빙으로 닫는다.
+ *
+ * 순위표·팀기록은 **시즌 집계**라 "어제 몇 대 몇" 을 답할 정본이 없다.
+ *
+ * ⚠️ 왜 `TEAM_UNSERVED_PATTERNS`(값 요구어 동반 조건) 와 분리했는가 — 2026-08-08 실측.
+ *   거기 넣었더니 `어제 LG 스코어`·`어제 LG 점수는?`·`어제 LG 승부 결과` 처럼
+ *   `몇`·`알려` 가 없는 문장이 `UNSERVED_VALUE_ASK` 를 못 넘어 그대로 새었고,
+ *   구단 문서 RAG 가 받아 **"서울 연고 구단이에요" 를 출처까지 달고** 내보냈다.
+ *   동문서답이 근거를 입은 형태라 그냥 못 답하는 것보다 나쁘다.
+ *
+ *   이 명사들은 **물은 순간 답이 숫자로 확정**된다 — 값 요구어가 없어도 마찬가지다.
+ *   그래서 조건을 걸지 않는다.
+ *
+ * ⚠️ 수치 가드를 경로별로 복사하지 않고 **이 SSOT 한 곳**에서 닫는다 —
+ *   `isTeamNumericQuestion` → `isTeamRagServableQuestion` 이 이 함수를 쓰므로
+ *   라우팅·구단 RAG·기사 RAG 가 한 번에 같은 판정을 받는다. 경로별 복사는 한쪽만
+ *   고쳤을 때 조용히 갈라진다(#1100 에서 이미 겪은 실패 모드).
+ */
+const TEAM_SCORE_PATTERN = /몇\s*대\s*몇|스코어|점수|경기\s*결과|승부\s*결과/;
+
+/**
+ * 경기별 스코어를 물었는가 — **서술 표현이 붙어도 사실이 변하지 않는** 판정.
+ *
+ * ⚠️ 왜 별도로 내보내는가 (2026-08-08 삼순 2차 NO-GO 실측).
+ *   `isTeamNumericQuestion` 은 `TEAM_DESCRIPTIVE_ASK`(`이야기`·`소개`·`유명`…)를 **먼저** 보고
+ *   `false` 로 빠져나간다. 그래서 `resolveTeamRecordIntent` 가 `unserved` 로 판정해도
+ *   그 호출에 도달하지 못해 우회된다:
+ *     `어제 LG 스코어 이야기해줘`      → news 경로
+ *     `어제 LG 몇 대 몇인지 이야기해줘` → team_rag
+ *
+ *   서술 표현은 **어조**일 뿐 물은 대상을 바꾸지 않는다 — "스코어 이야기해줘" 는
+ *   결국 "몇 대 몇이었는지 말해달라" 다. 답이 숫자로 확정되는 건 동일하므로
+ *   서술 예외보다 **앞서** 닫혀야 한다.
+ */
+/**
+ * 스코어 **단어가 문맥으로만 쓰인** 질문 — 물은 대상이 스코어가 아니다.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-08 삼순 3차 NO-GO 실측).
+ *   `점수`·`경기 결과` 를 문맥 없이 substring 매칭했더니 반대편 과차단이 났다:
+ *     `어제 LG가 점수를 못 낸 이유가 뭐야?`      → history_hold (news 여야 함)
+ *     `어제 LG 경기 결과를 바꾼 결정적 장면은?`  → history_hold (news 여야 함)
+ *     `LG 경기에서 점수가 같으면 연장전 규칙은?` → history_hold (공식 룰이어야 함)
+ *   셋 다 `official 0 · news 0` 으로 근거 경로를 아예 안 탔다.
+ *
+ *   단어의 **존재**가 아니라 **질문의 대상**으로 갈라야 한다:
+ *     `점수 알려줘`        → 물은 것이 점수      → 답이 숫자   → 닫는다
+ *     `점수를 못 낸 이유`  → 물은 것이 이유      → 서술 가능   → 기사
+ *     `점수가 같으면 규칙` → 물은 것이 규칙      → 조문 정본   → 공식 문서
+ *
+ *   ⚠️ 요청 동사(`알려줘`·`이야기해줘`·`소개해줘`)는 여기 넣지 않는다 — 그건 어조일 뿐
+ *   물은 대상을 바꾸지 않는다(2차 NO-GO 에서 확인한 축). 진짜 의문 대상만 열거한다.
+ */
+const SCORE_CONTEXT_HEADS =
+  /이유|원인|왜|어째서|배경|장면|과정|흐름|의미|영향|비결|비하인드|분위기|평가|규칙|룰|규정|규약|어떻게\s*되나|어떻게\s*하나/;
+
+export function isTeamScoreQuestion(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  // `몇 대 몇` 은 표현 자체가 스코어를 묻는다 — 문맥 예외를 두지 않는다.
+  if (/몇\s*대\s*몇/.test(normalized)) return true;
+  if (!TEAM_SCORE_PATTERN.test(normalized)) return false;
+  // 스코어 단어가 있어도 **다른 의문 대상**이 함께 있으면 그쪽이 질문의 머리다.
+  return !SCORE_CONTEXT_HEADS.test(normalized);
+}
+
 export type TeamRecordIntent =
   | { kind: "none" }
   /** 지표는 맞는데 앱이 그 값을 서빙하지 않는다 — 안내로 닫는다. */
@@ -146,6 +211,14 @@ export function resolveTeamRecordIntent(question: string): TeamRecordIntent {
   ) {
     return { kind: "unserved" };
   }
+
+  // 경기별 스코어는 값 요구어 없이도 닫는다(위 상수 주석 참조).
+  //
+  // ⚠️ raw 패턴이 아니라 **문맥 판정을 거친 `isTeamScoreQuestion()`** 을 쓴다.
+  //   raw 패턴을 직접 쓰면 `점수를 못 낸 이유`·`점수가 같으면 연장전 규칙` 까지 닫혀
+  //   기사·공식 문서 경로가 죽는다(2026-08-08 삼순 3차 NO-GO 실측).
+  //   판정기는 한 곳이어야 한다 — 두 군데서 각자 판단하면 반드시 갈라진다.
+  if (isTeamScoreQuestion(normalized)) return { kind: "unserved" };
 
   const hit = TEAM_PATTERNS.find((entry) => entry.pattern.test(normalized));
   if (!hit) return { kind: "none" };

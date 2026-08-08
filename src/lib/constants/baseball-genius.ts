@@ -1,4 +1,5 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
+import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -74,6 +75,12 @@ export const MATCH_PATH_REPLY_KIND = {
   cache: "answer",
   llm: "answer",
   rag: "answer",
+  // 구단 서술형 RAG. 선수 RAG 와 같은 "근거로 답한 것"이라 화면 취급은 동일하다.
+  // (경로를 나눈 이유는 감사 대상 분리이지 UI 분기가 아니다 — 2026-08-07)
+  team_rag: "answer",
+  // 최근 30일 구단 기사 근거로 답한 경로. 화면 취급은 다른 RAG 와 동일하다
+  // (경로를 나눈 이유는 근거 수명이 30일로 유한해 감사 축을 분리해야 하기 때문이지 UI 분기가 아니다).
+  news_rag: "answer",
   // 시즌 기록을 운영 DB 원값으로 돌려준 경로 — 이것도 답변이다.
   kbo_structured: "answer",
   // 감사·확인 인사
@@ -162,8 +169,24 @@ export interface GeniusReplyPayload {
   match_path: string;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
-  /** picker가 가리키는 원 질문. 답변 도착 순서와 무관하게 exact 질문을 재처리한다. */
+  /**
+   * 이 답변이 대답한 **원 질문 쪽지 id**. 두 곳에서 쓴다.
+   *  ① picker: 답변 도착 순서와 무관하게 exact 질문을 재처리한다.
+   *  ② 품질 피드백(👍/👎): 어떤 질문에 대한 평가인지 exact 결속한다.
+   *
+   * ②를 위해 **모든 답변**에 싣는다. 답변 쪽지에서 `dedup_key` 문자열을 파싱해 역산하는
+   * 방법도 있지만 접두 규칙(`baseball-genius:` / `baseball-genius-picker:`)이 바뀌는 순간
+   * 조용히 깨진다 — 서버가 쓰는 구조화 필드가 SSOT다.
+   */
   question_message_id?: number;
+  /**
+   * 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고, 클라는 이 URL 로
+   * 그 문구에 앵커를 씨운다 (하린아빠 2026-08-05: "링크도 전문을 노출시키지 말고
+   * '출처: 나무위키'로만 표시하고 하이퍼링크를 다는 방식으로").
+   * 내부 메타(revision·crawledAt·asOf)는 여기 실지 않는다 — 유저가 볼 이유가 없고
+   * `crawled` 같은 단어는 수집 사실을 화면에 적는 것이라 위험하다.
+   */
+  source_url?: string;
 }
 
 /** picker 선택지 상한 — 서버·클라이 공유하는 계약. */
@@ -209,7 +232,7 @@ function isPickerOption(p: unknown): p is GeniusPickerOption {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown };
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown; source_url?: unknown };
   if (obj.type !== "baseball_genius_reply" || typeof obj.match_path !== "string") return false;
   if (
     obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
@@ -226,5 +249,14 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
   if (obj.reply_kind === "picker" &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // picker 가 아니어도 값이 실려 오면 형식을 검증한다 — 피드백이 이 값을 결속키로 쓰므로
+  // 깨진 값이 통과하면 잘못된 질문에 평가가 붙는다.
+  if (obj.reply_kind !== "picker" && obj.question_message_id !== undefined &&
+      (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
+  // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
+  // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.
+  if (obj.source_url !== undefined &&
+      (typeof obj.source_url !== "string" || resolveAllowedSource(obj.source_url) === null)) return false;
   return true;
 }

@@ -16,7 +16,7 @@ import Link from "next/link";
 import { ChevronLeft, MapPin, Ticket, UtensilsCrossed, Armchair, MessageCircle, PenLine, Car, TrainFront, Bus, CalendarDays, X } from "lucide-react";
 import StadiumCalendar from "@/components/stadium/StadiumCalendar";
 import GlassCard from "@/components/ui/GlassCard";
-import { STADIUMS } from "@/lib/constants/stadiums";
+import { STADIUMS, teamSlugsForStadium } from "@/lib/constants/stadiums";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 
 type Section = "info" | "food" | "seats" | "reviews" | "tickets";
@@ -473,6 +473,10 @@ export default function StadiumDetailPage() {
             content,
             imageUrls,
             contentType: "general",
+            // 공개범위 — 구장글은 팀 피커가 없으므로 그 구장의 홈팀에서 파생한다
+            // (잠실 → LG·두산). DB 면제로 비워두면 그 board_type 이 공격면이 된다 —
+            // board_type 은 클라이언트가 고르는 값이라 면제 자체가 우회로다(삼순 NO-GO 2026-08-07).
+            teamTags: teamSlugsForStadium(stadium?.id),
             ...(seatInfo ? { seatInfo } : {}),
           });
 

@@ -113,7 +113,9 @@ export default function PlayerBoardPage() {
   const loadFeed = useCallback(async () => {
     if (!playerName) return;
     setFeedLoading(true);
-    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)";
+    // team_tags 는 공개범위 라벨(post-scope SSOT)의 입력이다. 빠지면 다팀 글이 이 피드에서만
+    // 선수 소속팀 1개로 축소 표시돼 홈·전체·팀 피드와 어긋난다(삼순 NO-GO 2026-08-06).
+    const cols = "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)";
 
     // 1) 선수 게시판 직접 게시물 (글·사진 모두)
     const boardQuery = supabase

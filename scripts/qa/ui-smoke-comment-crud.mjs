@@ -150,6 +150,9 @@ async function main() {
       board_type: "team",
       board_id: "doosan",
       content_type: "general",
+      // 공개범위 필수(20260807020000 트리거) — 무태그 seed 는 23514 로 거절된다.
+      // 팀 보드 글이므로 그 보드의 팀을 그대로 태그한다.
+      team_tags: ["doosan"],
       comment_count: 0,
       like_count: 0,
     })

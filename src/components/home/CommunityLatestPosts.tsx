@@ -6,11 +6,12 @@ import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare, 
 import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
-import { getTeamBySlug, getTeamById } from "@/lib/constants/teams";
+import { getTeamById } from "@/lib/constants/teams";
 import { getTeamColor, getTeamBgColorById } from "@/lib/utils/team";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
-import { teamIdForKboId, resolveRosterPlayer } from "@/lib/utils/player-roster";
-import TeamBadge from "@/components/ui/TeamBadge";
+import PostScopeBadge from "@/components/community/PostScopeBadge";
+import { resolvePostScope } from "@/lib/utils/post-scope";
+import { scopeInputForPost } from "@/lib/utils/post-scope-input";
 import CommunityWriteFlow, { type WriteFlowMode } from "@/components/community/CommunityWriteFlow";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
 import type { Post } from "@/lib/supabase/usePosts";
@@ -62,83 +63,8 @@ function summaryLine(post: Post): string {
   return firstLine?.trim() ?? "";
 }
 
-type Label =
-  | { kind: "player"; teamId: number; name: string; kboId: string }
-  | { kind: "team"; teamId: number }
-  | { kind: "kbo" };
-
-/**
- * 글 소속 라벨 (하린아빠 스펙) — 작성자(닉네임) 대신 태그 기반으로 표기.
- *   · 선수 태그 1명          → 팀명 + 선수이름 (예: "LG 김현수")
- *   · 선수 태그 2명 이상(동팀) → 팀명
- *   · 팀이 둘 이상            → 크보팬 로고
- * player_tags("kboId:name")와 team_tags(슬러그)에서 관여 팀 집합을 만들어 분기한다.
- */
-function resolveLabel(post: Post): Label {
-  const players = (post.player_tags ?? [])
-    .map((tag) => {
-      const parts = String(tag).split(":");
-      return { kboId: parts[0], name: parts.slice(1).join(":").trim() };
-    })
-    .filter((p) => p.kboId);
-
-  const teamIds = new Set<number>();
-  for (const p of players) {
-    const tid = teamIdForKboId(p.kboId);
-    if (tid != null) teamIds.add(tid);
-  }
-  for (const slug of post.team_tags ?? []) {
-    const tid = getTeamBySlug(String(slug))?.id;
-    if (tid != null) teamIds.add(tid);
-  }
-
-  // 관여 팀이 둘 이상이면 특정 팀으로 묶을 수 없음 → 크보팬 로고.
-  if (teamIds.size >= 2) return { kind: "kbo" };
-
-  if (players.length === 1) {
-    const teamId = teamIdForKboId(players[0].kboId) ?? [...teamIds][0];
-    if (teamId != null && players[0].name)
-      return { kind: "player", teamId, name: players[0].name, kboId: players[0].kboId };
-    if (teamId != null) return { kind: "team", teamId };
-  }
-
-  if (teamIds.size === 1) return { kind: "team", teamId: [...teamIds][0] };
-
-  // 폴백: player_tags가 없거나 못 풀린 글(gif-collector 큐레이션 등)은 board/작성자 기준으로.
-  // (피드 deriveBrandContext와 동일 원칙 — 태그 없는 선수/팀 보드 글이 크보팬으로 떨어지던 회귀 수정)
-  if (post.board_type === "player") {
-    const rp = resolveRosterPlayer({ name: null, kboId: post.board_id });
-    if (rp?.teamId != null && rp.name)
-      return { kind: "player", teamId: rp.teamId, name: rp.name, kboId: String(post.board_id) };
-    if (rp?.teamId != null) return { kind: "team", teamId: rp.teamId };
-  }
-  if (post.board_type === "team") {
-    const teamId = getTeamBySlug(post.board_id)?.id;
-    if (teamId != null) return { kind: "team", teamId };
-  }
-  if (post.team_id != null) return { kind: "team", teamId: post.team_id };
-
-  return { kind: "kbo" };
-}
-
 function PostLabel({ post }: { post: Post }) {
-  const label = resolveLabel(post);
-  if (label.kind === "player") {
-    return <TeamBadge teamId={label.teamId} playerName={label.name} size="xs" />;
-  }
-  if (label.kind === "team") {
-    return <TeamBadge teamId={label.teamId} size="xs" />;
-  }
-  // 크보팬 로고 배지 (팀 다수/태그 없음).
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-bg-tertiary py-0.5 pl-0.5 pr-2 text-[10px] font-semibold text-text-secondary whitespace-nowrap shrink-0">
-      <span className="inline-flex shrink-0 items-center justify-center w-4 h-4 rounded-full overflow-hidden">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/icon-192.png" alt="크보팬" className="w-full h-full object-cover" />
-      </span>
-      크보팬
-    </span>
-  );
+  return <PostScopeBadge post={scopeInputForPost(post)} variant="compact" />;
 }
 
 type Thumb =
@@ -151,7 +77,7 @@ type Thumb =
 /**
  * 썸네일 우선순위 (하린아빠 스펙):
  *   사진글 사진 썸네일 > 라벨 분기(선수 히어로샷 / 팀 로고 / 크보팬 로고).
- * 라벨(resolveLabel)과 동일한 분기를 따라야 한다 — 라벨이 "크보팬"(다팀/무팀)인데
+ * 라벨(resolvePostScope)과 동일한 분기를 따라야 한다 — 라벨이 다팀/전체구단인데
  * 썸네일만 작성 보드 팀 로고가 뜨던 불일치 수정(하린아빠 #cs 제보). board_id가
  * 아니라 태그 기반 라벨을 SSOT로 삼는다.
  * 선수 히어로샷·팀 로고는 팀컬러 그라데이션 배경 위에 얹는다(선수페이지 동일).
@@ -161,20 +87,20 @@ function resolveThumb(post: Post): Thumb {
   const img = post.image_urls?.[0];
   if (img) return { kind: "image", src: img };
 
-  const label = resolveLabel(post);
-  if (label.kind === "player") {
-    const hero = HERO_APPROVED.has(label.kboId)
-      ? `/players-hero/${label.kboId}.webp`
-      : getPlayerPhotoByKboId(label.kboId);
-    if (hero) return { kind: "player", src: hero, teamId: label.teamId };
+  const scope = resolvePostScope(scopeInputForPost(post));
+  if (scope.kind === "player") {
+    const hero = HERO_APPROVED.has(scope.kboId)
+      ? `/players-hero/${scope.kboId}.webp`
+      : getPlayerPhotoByKboId(scope.kboId);
+    if (hero) return { kind: "player", src: hero, teamId: scope.teamId };
   }
 
-  if (label.kind === "team") {
-    const team = getTeamById(label.teamId);
+  if (scope.kind === "team") {
+    const team = getTeamById(scope.teamId);
     if (team) return { kind: "logo", src: team.logoPath, teamId: team.id };
   }
 
-  // label.kind === "kbo" (다팀/무팀) → 크보팬 로고 (라벨과 정합)
+  // 다팀(2~9팀) / 전체구단 → 크보팬 로고 (특정 구단 로고를 쓰면 라벨과 어긋난다)
   return { kind: "kbo" };
 }
 
@@ -273,7 +199,7 @@ function PostRow({ post }: { post: Post }) {
   const summary = summaryLine(post);
 
   return (
-    <Link
+    <Link prefetch={false}
       href={getPostDetailPath(post)}
       onClick={() => {
         // 홈 최신글에서 연 글 → 실제 뒤로가기(popstate)로 나올 때만 이 섹션으로 포커스
@@ -433,7 +359,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
     <section ref={sectionRef} className="scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 {sectionTitle}</h2>
-        <Link
+        <Link prefetch={false}
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
         >
@@ -473,7 +399,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
         <PenSquare size={16} /> 새 글 올리기
       </button>
 
-      <Link
+      <Link prefetch={false}
         href="/community/all-posts"
         className="mt-2 flex items-center justify-center gap-1 w-full py-2.5 rounded-xl bg-bg-secondary text-[13px] font-medium text-text-secondary active:scale-[0.99] transition-transform"
       >

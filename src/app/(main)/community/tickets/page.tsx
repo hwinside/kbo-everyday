@@ -114,7 +114,7 @@ export default function TicketBoardPage() {
           >
             <div className="absolute inset-0 bg-black/60" />
             <motion.div
-              className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 max-h-[85vh] overflow-y-auto"
+              className="relative w-full max-w-lg bg-bg-secondary rounded-t-2xl border-t border-border p-5 pb-safe max-h-[85vh] overflow-y-auto"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}

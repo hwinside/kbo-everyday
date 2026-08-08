@@ -230,7 +230,15 @@ checkAsync("공식 근거 있으면 rag로 답하고 출처가 붙는다", async
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "rag");
-  assert.ok(result.answer.includes("2026 공식야구규칙"), "출처 표기가 붙어야 한다");
+  // 출처는 **표시명만** 본문에 남는다 (하린아빠 2026-08-05 P0). tier1 은 `KBO 공식 자료`.
+  assert.ok(result.answer.includes("📄 출처: KBO 공식 자료"), "출처 표기가 붙어야 한다");
+  // 유저에게 나가면 안 되는 내부 메타 — 하나라도 새면 RED.
+  assert.doesNotMatch(result.answer, /crawled/i, "수집 사실을 화면에 적으면 안 된다");
+  assert.doesNotMatch(result.answer, /sha256:|rev\s/, "revision 은 내부 provenance 다");
+  assert.doesNotMatch(result.answer, /https?:\/\//, "전체 URL 은 본문에 노출하지 않는다");
+  assert.doesNotMatch(result.answer, /2026-08-01 기준/, "asOf 날짜는 유저가 볼 이유가 없다");
+  // 링크는 payload 로 간다 — 클라가 표시명에 앵커를 씌운다.
+  assert.equal(result.sourceUrl, OFFICIAL.canonicalUrl, "근거 링크는 payload 로 전달해야 한다");
   assert.ok(result.answer.includes("5.09"), "근거에 있는 숫자는 남아야 한다");
   assert.ok(!calls.includes("callLlm"), "공식 경로가 답했으면 일반 LLM을 다시 부르지 않는다");
 });

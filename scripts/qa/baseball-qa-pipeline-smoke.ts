@@ -2922,13 +2922,46 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
     updated_at: new Date(Date.now() - 3_600_000).toISOString(), doubles: 8,
   };
+  // 구단 서술형 근거 — 선수 근거와 **다른 문서**여야 경로가 섞이지 않는다.
+  const teamEvidence = [{
+    content: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단으로, MBC 청룡을 인수해 창단했다.",
+    pageTitle: "LG 트윈스", canonicalUrl: "https://namu.wiki/w/LG 트윈스", revision: "1",
+    sectionPath: "개요", asOf: "2026-01-01", sourceGrade: "tier2",
+  }];
+  // 최근 기사 근거 — 구단 문서와 **다른 소스**여야 경로가 섮이지 않는다.
+  // canonicalUrl 은 출처 allowlist 를 통과하는 네이버 재송고 링크다(production 적재 형식 그대로).
+  const newsEvidence = [{
+    content: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
+      "지난해 LG 트윈스는 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+    pageTitle: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
+    canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
+    revision: "article:2b1c9f", sectionPath: "2026-08-07",
+    asOf: "2026-08-07T09:44:00.000Z", sourceGrade: "tier2", sourceKind: "news_article",
+  }];
   const richDeps = (state: MockState): QaDeps => ({
     ...makeDeps(state),
     enablePlayerRag: true,
+    // 구단 RAG 도 켠다 — `team_rag` 는 `rag` 에서 분리된 별도 경로라 probe 가 따로 필요하다
+    // (2026-08-07 감사 식별자 분리). 안 켜면 아래 probe 가 조용히 다른 경로로 떨어진다.
+    enableTeamRag: true,
+    // 최근 기사 RAG 도 같은 이유로 켜다 — `news_rag` 는 `team_rag` 에서 분리된 별도 경로다
+    // (2026-08-08 감사 식별자 분리 — 근거 수명이 30일이라 문서 경로와 감사 축을 나눈다).
+    enableNewsRag: true,
     now: () => Date.now(),
-    searchRag: async () => evidence as never,
+    searchRag: async (candidate: { entityType?: string }) =>
+      (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
+    searchNewsRag: async () => newsEvidence as never,
     callRagLlm: async () => ({
       text: '{"status":"GROUNDED","answer":"럭키보이라고 불려요."}',
+      inputTokens: 10, outputTokens: 5,
+    }),
+    callTeamRagLlm: async () => ({
+      text: '{"status":"GROUNDED","answer":"서울 연고 구단으로 MBC 청룡을 인수해 창단했어요."}',
+      inputTokens: 10, outputTokens: 5,
+    }),
+    callNewsRagLlm: async () => ({
+      // 기사 tier2 는 숫자 전면 HOLD 라 모델도 숫자 없이 서술한다.
+      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있어요."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,
@@ -2938,6 +2971,8 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   const probes: Array<{ question: string; deps: (s: MockState) => QaDeps; state?: Partial<MockState> }> = [
     { question: "보크가 뭐야?", deps: richDeps },                       // dictionary
     { question: "문보경 별명이 뭐야?", deps: richDeps },                // rag
+    { question: "LG 트윈스 역사 알려줘", deps: richDeps },              // team_rag
+    { question: "어제 LG 무슨 일 있었어?", deps: richDeps },           // news_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
     { question: "고마워", deps: richDeps },                                // ack

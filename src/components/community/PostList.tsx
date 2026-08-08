@@ -5,14 +5,12 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import PostCard from "./PostCard";
 import type { Post } from "@/lib/types";
-import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import { fetchPollSummaries, type PollSummary } from "@/lib/community/poll-client";
 
 interface PostListProps {
   posts: Post[];
   /** 선수 게시판: post별 playerLabel 맵 (postId → {teamId, playerName}) */
   playerLabels?: Record<number, { teamId: number; playerName: string }>;
-  sourceLabels?: Record<number, CommunitySourceLabel>;
 }
 
 const container = {
@@ -25,7 +23,7 @@ const item = {
   show: { opacity: 1, y: 0, transition: { duration: 0.2 } },
 };
 
-export default function PostList({ posts, playerLabels, sourceLabels }: PostListProps) {
+export default function PostList({ posts, playerLabels }: PostListProps) {
   const router = useRouter();
 
   // 목록의 poll 글만 모아 요약을 배치 조회(배지·참여수·선지 미리보기). poll 이 없으면 no-op.
@@ -84,7 +82,6 @@ export default function PostList({ posts, playerLabels, sourceLabels }: PostList
           <PostCard
             post={post}
             playerLabel={playerLabels?.[post.id] ?? null}
-            sourceLabel={sourceLabels?.[post.id] ?? null}
             pollSummary={post.boardType === "poll" ? pollSummaries[post.id] ?? null : null}
             pollLoaded={post.boardType === "poll" ? pollResolved.has(post.id) : false}
             onPollRetry={() => retryPoll(post.id)}

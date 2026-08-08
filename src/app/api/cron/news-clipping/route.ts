@@ -3,6 +3,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import { NEWS_CLIPPER_BY_TEAM, NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import { buildTeamClipping, kstDateString } from "@/lib/news-clipping";
+import type { RawCandidateSink } from "@/lib/news-clipping";
+import { toNewsArticleRows } from "@/lib/baseball-qa/rag/news-articles";
+import { ingestNewsArticles, type TeamCollection } from "@/lib/baseball-qa/rag/news-ingest";
 import { mapWithConcurrency } from "@/lib/naver-news";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { formatStandingsTable } from "@/lib/ai/standings-guard";
@@ -300,10 +303,41 @@ export async function GET(req: NextRequest) {
   // 순위표 1회 조회 → 모든 팀 클리핑 프롬프트에 공통 근거로 주입 (순위 환각 방지)
   const standingsText = await loadStandingsText();
 
+  // 야잘알봇 RAG 근거 적재용 raw 후보 수집기 — 클리핑 필터 **이전** 단계에서 받는다.
+  // 네이버 추가 호출 0(이미 긁고 버리던 데이터). 발송 로직에는 영향을 주지 않는다.
+  // 수집이 실패한 팀도 행을 남긴다 — 사후에 "그날 기사 0건"과 "수집 실패"를 구분하기 위함.
+  const collections = new Map<number, TeamCollection>(
+    TEAMS.map((team) => [
+      team.id,
+      { teamId: team.id, rows: [], truncated: false, pagesFetched: 0, error: "not_collected" },
+    ]),
+  );
+  const collectRaw: RawCandidateSink = (teamId, items, meta) => {
+    try {
+      collections.set(teamId, {
+        teamId,
+        rows: toNewsArticleRows(items, teamId),
+        truncated: meta.truncated,
+        pagesFetched: meta.pagesFetched,
+      });
+    } catch (e) {
+      // 근거 적재는 부가기능이다. 여기서 던지면 그 팀 클리핑 발송까지 막힌다.
+      const message = (e as Error).message;
+      console.error(`[news-clipping] rag collect failed (team ${teamId}):`, message);
+      collections.set(teamId, {
+        teamId,
+        rows: [],
+        truncated: meta.truncated,
+        pagesFetched: meta.pagesFetched,
+        error: message,
+      });
+    }
+  };
+
   // 1) 팀별 클리핑 생성 (기사 0개/요약 불가 팀은 null → 미발송)
   const clippings = await mapWithConcurrency(TEAMS, BUILD_CONCURRENCY, async (team) => {
     try {
-      return await buildTeamClipping(team.id, team.shortName, team.name, standingsText);
+      return await buildTeamClipping(team.id, team.shortName, team.name, standingsText, collectRaw);
     } catch (e) {
       console.error(`[news-clipping] build failed (${team.shortName}):`, (e as Error).message);
       return null;
@@ -340,7 +374,15 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, clipDate, results });
+  // 3) 야잘알봇 근거 적재 — **발송이 끝난 뒤에**, 남은 예산 안에서만 돈다.
+  //
+  // 왜 순서가 중요한가
+  //   적재를 발송 앞에 두면 적재가 느리거나 막힐 때 그만큼 발송이 밀리고, maxDuration 에
+  //   걸리면 **쪽지가 아예 안 나간다**. 근거 적재는 부가기능이므로 유저 발송이 끝난 뒤에
+  //   돌리고, 그러고도 예산을 넘기면 스스로 멈춘다(ingestNewsArticles 는 throw 하지 않는다).
+  const ingested = await ingestNewsArticles(admin, [...collections.values()], clipDate);
+
+  return NextResponse.json({ ok: true, clipDate, results, ragIngest: ingested });
 }
 
 // 샘플 발송 — 특정 유저 1명에게만 클리핑 쪽지를 보낸다 (idempotency 선점/토글 필터 없음).

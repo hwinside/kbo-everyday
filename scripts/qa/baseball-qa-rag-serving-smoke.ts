@@ -209,10 +209,16 @@ async function run(): Promise<void> {
     const green = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(green.source, "rag", `GREEN 실패: source=${green.source}`);
     assert.match(green.answer, /문학소년/);
-    assert.match(green.answer, /출처:/);
-    assert.match(green.answer, /namu\.wiki/);
-    assert.match(green.answer, /rev etag:abc123/);
-    assert.match(green.answer, /2026-08-01 기준/);
+    // 출처는 **표시명만** 본문에 남는다 (하린아빠 2026-08-05 P0).
+    assert.match(green.answer, /📄 출처: 나무위키$/);
+    // ⚠️ 유저에게 나가면 안 되는 내부 메타 — 하나라도 새면 RED.
+    assert.doesNotMatch(green.answer, /crawled/i, "수집 사실을 화면에 적으면 안 된다");
+    assert.doesNotMatch(green.answer, /rev\s/, "revision 은 내부 provenance 다");
+    assert.doesNotMatch(green.answer, /기준/, "asOf 날짜는 유저가 볼 이유가 없다");
+    assert.doesNotMatch(green.answer, /https?:\/\//, "전체 URL 은 본문에 노출하지 않는다");
+    assert.doesNotMatch(green.answer, /namu\.wiki/, "도메인도 본문에 노출하지 않는다");
+    // 링크는 payload 로 간다 — 클라가 표시명에 앵커를 씌운다.
+    assert.equal(green.sourceUrl, MOON_EVIDENCE.canonicalUrl, "근거 링크는 payload 로 전달해야 한다");
     assert.equal(logs.at(-1)?.matchPath, "rag");
     console.log(`GREEN 문보경 별명이 뭐야? → rag\n      ${green.answer.replace(/\n+/g, " | ")}`);
   }
@@ -1457,10 +1463,12 @@ async function verifyBoundedNamuSubdocumentCrawl(): Promise<void> {
       "문보경", "문보경/선수 경력", "문보경/선수 경력/2024년",
     ], "sectionPath에 실제 계층 경로가 기록되어야 한다");
     assert.equal(fetchedUrls.some((url) => url.includes("최정")), false, "prefix 밖 문서를 fetch하면 안 된다");
-    assert.match(
+    // sectionPath 는 내부 provenance 로만 남는다 — 유저 노출 표기에는 표시명만 들어간다
+    // (하린아빠 2026-08-05 P0). 계층이 실제로 기록되는지는 위 documents 단언이 고정한다.
+    assert.doesNotMatch(
       composeRagAnswer("경력 답변입니다.", { ...MOON_EVIDENCE, sectionPath: crawl.documents[2].sectionPath }),
       /문보경\/선수 경력\/2024년/,
-      "계층 sectionPath가 최종 출처 표기에 보여야 한다",
+      "내부 sectionPath 가 유저 노출 출처 표기에 새면 안 된다",
     );
   }
 
@@ -1807,11 +1815,24 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     path.join(process.cwd(), "supabase/migrations/20260802010000_baseball_genius_rag_scoped_claim_wikipedia.sql"),
     "utf8",
   ));
-  // 선수 chunk 정렬 RPC — 이걸 적용해야 아래 후보 fetch 가 **배포되는 함수**를 탄다.
-  await db.exec(readFileSync(
-    path.join(process.cwd(), "supabase/migrations/20260805110000_baseball_genius_rag_player_chunk_search.sql"),
-    "utf8",
-  ));
+  // chunk 정렬 RPC — 이걸 적용해야 아래 후보 fetch 가 **배포되는 함수**를 탄다.
+  //
+  // ⚠️ 파일**명**을 하드코딩하지 않는다 (2026-08-05 자체 적발 false-green 재발 방지).
+  //   종전에는 `20260805110000_...player_chunk_search.sql` 한 줄을 명시 적용했는데,
+  //   그 RPC 를 **나중에 고치는 migration**(예: 구단 entity 확장)을 추가해도 이 게이트가
+  //   그걸 안 읽어서, 확장을 통째로 되돌리는 mutation 이 GREEN 으로 통과한다(검출력 0).
+  //   따라서 **내용으로** 골라 사전순(=배포 적용순)으로 전부 적용한다.
+  const chunkSearchDir = path.join(process.cwd(), "supabase/migrations");
+  const chunkSearchMigrations = readdirSync(chunkSearchDir)
+    .filter((file) => file.endsWith(".sql"))
+    .filter((file) =>
+      readFileSync(path.join(chunkSearchDir, file), "utf8")
+        .includes("FUNCTION public.search_baseball_genius_player_chunks"))
+    .sort();
+  assert.ok(chunkSearchMigrations.length > 0, "chunk 정렬 RPC migration 을 찾지 못했다");
+  for (const file of chunkSearchMigrations) {
+    await db.exec(readFileSync(path.join(chunkSearchDir, file), "utf8"));
+  }
 
   // resolver가 만드는 actual payload는 unresolved 상태에서도 candidate_urls/identity_fingerprint가
   // 모두 채워져야 하고, 같은 source_key의 신규 INSERT와 기존 UPDATE 둘 다 운영 스키마를 통과해야 한다.
@@ -1863,18 +1884,30 @@ async function verifyServingContractOnRealDb(): Promise<void> {
 
   const embedding = `[${Array.from({ length: RAG_EMBEDDING_DIM }, (_, index) => (index % 7) / 10).join(",")}]`;
   const crawledAt = "2026-08-01T00:00:00Z";
-  const insertSource = async (sourceKey: string, entityId: string, title: string) => {
+  const insertSource = async (
+    sourceKey: string,
+    entityId: string,
+    title: string,
+    // 구단 chunk 조회 계약을 같은 DB 에서 검증하려면 entity_type 을 주입할 수 있어야 한다.
+    entityType: "player" | "team" = "player",
+  ) => {
     await db.query(
       `INSERT INTO public.genius_rag_sources
         (source_key, source_kind, entity_type, entity_id, page_title, candidate_urls, canonical_url,
          resolution_status, source_grade, identity_fingerprint)
-       VALUES ($1,'namu_document','player',$2,$3,ARRAY['https://namu.wiki/w/x'],'https://namu.wiki/w/x',
+       VALUES ($1,'namu_document',$5,$2,$3,ARRAY['https://namu.wiki/w/x'],'https://namu.wiki/w/x',
          'resolved','tier2',$4)`,
-      [sourceKey, entityId, title, randomUUID()],
+      [sourceKey, entityId, title, randomUUID(), entityType],
     );
   };
   await insertSource("namu:player:69102", "69102", "문보경");
   await insertSource("namu:player:52605", "52605", "김도영");
+  // 구단 corpus — production 에 71,531 chunk 가 적재된 그 entity 축이다.
+  //
+  // ⚠️ teamId 는 **2(두산)** 를 쓴다. 1(LG)은 아래 owner 계약 fixture 가
+  //   (namu_document, team, '1') 을 이미 점유해 unique 충돌이 난다.
+  //   기존 fixture 를 덮어쓰면 canonical owner 검증이 같이 죽으므로 다른 구단을 쓴다.
+  await insertSource("namu:team:2", "2", "두산 베어스", "team");
 
   const claimSource = async (sourceKey: string) => {
     const claimed = await db.query<{ claim_token: string; claim_generation: number }>(
@@ -2006,8 +2039,9 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   const ranked = rankEvidenceByQuery(rows, JSON.parse(embedding) as number[]);
   assert.equal(ranked.length, 1);
   const finalAnswer = composeRagAnswer("문보경 선수의 별명은 문학소년이에요.", selectEvidence(ranked)[0]);
-  assert.match(finalAnswer, /출처: 문보경/);
-  assert.match(finalAnswer, /rev rev1/);
+  assert.match(finalAnswer, /📄 출처: 나무위키$/);
+  assert.doesNotMatch(finalAnswer, /rev\s|crawled|https?:\/\//i,
+    "실 DB 경로에서도 내부 메타가 본문에 새면 안 된다");
 
   // 4) source-priority bounded fetch — Namu 41건 뒤 Wikipedia 1건도 DB 절단 전에 보존한다.
   const wikipediaUrl = unresolvedSource.candidate_urls[0];
@@ -2330,6 +2364,101 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   );
   assert.ok(guardControl.rows.length > 0, "정상 입력은 fail-close 에 걸리지 않아야 한다");
   console.log("PASS 선수 chunk 정렬 RPC — 질문벡터 정렬 / tier2·entity_type·entity_id·NULL·영벡터 fail-close / 상한 clamp / entity 강제");
+
+  // 4-b) 구단(team) entity — **배포되는 RPC 를 직접** 태운다.
+  //
+  // ⚠️ 이 블록이 없으면 구단 배선은 **DB 에서 막힌 채** GREEN 이 난다.
+  //   production 실측(2026-08-05): `genius_rag_serving_chunks` 에 `entity_type='team'`
+  //   chunk 가 71,531건 적재돼 있는데, 조회 RPC 가
+  //   `IF p_entity_type IS DISTINCT FROM 'player' THEN RAISE EXCEPTION` 으로 닫혀 있어
+  //   앱이 team 후보를 만들어 넘겨도 DB 에서 즉시 예외로 죽었다.
+  //   즉 앱 쪽만 열면 유저에겐 그대로 안 보인다 — mock 게이트로는 이걸 못 잡는다.
+  {
+    const teamRagClaim = await claimSource("namu:team:2");
+    await db.query(
+      `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'team','2','두산 베어스','https://namu.wiki/w/x',
+        'team-rev',$4,0,$5,'team-doc','team-chunk','tier2',$6::timestamptz,
+        '2026-08-01'::date,$7::extensions.vector,'{}'::jsonb)`,
+      ["namu:team:2", teamRagClaim.claim_token, teamRagClaim.claim_generation, "두산 베어스/역사",
+       "두산 베어스는 서울을 연고로 하는 구단으로 한국시리즈 우승을 경험한 충분히 긴 서술형 근거 문장입니다.",
+       crawledAt, nearVector],
+    );
+    assert.equal((await db.query<{ ok: boolean }>(
+      "SELECT public.complete_baseball_genius_rag_source($1,$2,$3,'team-rev','team-doc',$4::timestamptz,now()+interval '30 days') AS ok",
+      ["namu:team:2", teamRagClaim.claim_token, teamRagClaim.claim_generation, crawledAt],
+    )).rows[0].ok, true);
+
+    // 핵심 계약 — RPC 가 team 을 **받아준다**. 폐쇄집합을 'player' 로 되돌리면
+    // `unsupported entity_type: team` 으로 예외가 나 여기서 RED 가 된다.
+    const teamRows = await db.query<{ content: string; page_title: string }>(
+      "SELECT content,page_title FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["team", "2", "namu_document", nearVector, RAG_CANDIDATE_LIMIT],
+    );
+    assert.ok(teamRows.rows.length > 0,
+      "구단 chunk 가 적재돼 있으면 배포 RPC 가 그걸 돌려줘야 한다(production 적재 71,531건이 사장되던 결손)");
+    assert.ok(teamRows.rows.some((row) => row.content.includes("한국시리즈")),
+      "구단 근거 본문이 그대로 나와야 한다");
+
+    // entity 강제는 team 에서도 살아있어야 한다 — 남의 구단 문서로 새면 안 된다.
+    const foreignTeam = await db.query<{ content: string }>(
+      "SELECT content FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+      ["team", "7", "namu_document", nearVector, RAG_CANDIDATE_LIMIT],
+    );
+    assert.equal(foreignTeam.rows.length, 0, "다른 teamId 로는 이 구단 chunk 가 새지 않아야 한다");
+
+    // 선수 chunk 가 team 조회에 섞이면 안 된다(entity_type 도 등가 필터여야 한다).
+    assert.equal(
+      teamRows.rows.some((row) => row.page_title.includes("문보경")), false,
+      "entity_type 가 등가 필터여야 선수 chunk 가 구단 조회에 섞이지 않는다",
+    );
+
+    // tier1 document 는 **여전히 거부**된다 — 폐쇄집합을 넘힌 게 아니라 한 칸만 늘렸다.
+    // 이게 뚫리면 "tier1 근거일 때만 숫자 허용"(§12) 계약이 깨진다.
+    await assert.rejects(
+      db.query(
+        "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+        ["document", "2", "namu_document", nearVector, 40],
+      ),
+      /unsupported entity_type/,
+      "tier1 document 는 이 경로로 새면 안 된다(전용 RPC 사용)",
+    );
+    await assert.rejects(
+      db.query(
+        "SELECT * FROM public.search_baseball_genius_player_chunks($1,$2,$3,$4,$5)",
+        ["league", "kbo", "namu_document", nearVector, 40],
+      ),
+      /unsupported entity_type/,
+      "폐쇄집합 밖 entity_type 은 조용한 0행이 아니라 예외여야 한다",
+    );
+
+    // production 배선 결속 — 배포되는 팩토리가 team 후보를 그대로 RPC 로 넘기는지.
+    // `entityType` 을 "player" 로 고정하는 변종이면 여기서 RED.
+    {
+      const { createProductionRagSearchRuntime: makeRuntime } =
+        await import("../../src/lib/baseball-qa/server");
+      const rpcCalls: { name: string; args: Record<string, unknown> }[] = [];
+      const probeRuntime = makeRuntime({
+        rpc: async (name: string, args: Record<string, unknown>) => {
+          rpcCalls.push({ name, args });
+          return { data: [], error: null };
+        },
+      } as unknown as Parameters<typeof makeRuntime>[0]);
+      await probeRuntime
+        .fetchBySourceKind(
+          { entityType: "team", entityId: "2", name: "두산", sourceKey: "namu:team:2" },
+          "namu_document",
+          RAG_CANDIDATE_LIMIT,
+          JSON.parse(nearVector) as number[],
+        )
+        .catch(() => undefined);
+      assert.equal(rpcCalls.length, 1, "구단 후보도 정렬 RPC 를 1회 호출해야 한다");
+      assert.equal(rpcCalls[0].args.p_entity_type, "team",
+        "entityType 을 player 로 고정하면 구단 corpus 에 영원히 닿지 못한다");
+      assert.equal(rpcCalls[0].args.p_entity_id, "2");
+    }
+
+    console.log("PASS 구단 chunk 조회 RPC — team 허용 / entity 등가강제 / tier1·league 거부 / production 후보 전달 actual");
+  }
 
   // 5) R4 다문서 generation — 서로 다른 revision/hash/crawledAt의 하위문서를 한 번에 atomic swap.
   await db.query("UPDATE public.genius_rag_sources SET ingestion_status='stale' WHERE source_key='namu:player:69102'");

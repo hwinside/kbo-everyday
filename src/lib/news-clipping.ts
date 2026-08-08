@@ -11,6 +11,7 @@ import type { NewsClippingPayload, NewsClippingArticle } from "@/types/news-clip
 import {
   TEAM_SEARCH,
   fetchNaverNews,
+  fetchNaverNewsPage,
   fetchThumbnailUrl,
   mapWithConcurrency,
 } from "@/lib/naver-news";
@@ -26,6 +27,23 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+/**
+ * 야잘알봇 RAG 적재용 raw 후보 싱크.
+ * 클리핑 필터를 통과하기 **전** 어제치 기사 전량을 받는다.
+ * 싱크가 예외를 던져도 클리핑 발송은 멈추지 않는다(호출측에서 fail-open) —
+ * 근거 적재는 부가기능이며 유저 발송을 깨뜨릴 사유가 아니다.
+ *
+ * `meta.truncated` 는 네이버 페이지 상한(2페이지)까지 다 받고도 마지막 항목이 여전히
+ * 어제치인 경우 — 즉 못 본 기사가 남았을 가능성 — 를 뜻한다. 사후에 "그날 근거가
+ * 없다" 와 "그날 근거를 다 못 가져왔다" 를 구분하기 위해 커버리지 원장에 기록한다.
+ */
+export interface RawCandidateMeta {
+  truncated: boolean;
+  pagesFetched: number;
+}
+
+export type RawCandidateSink = (teamId: number, items: NewsItem[], meta: RawCandidateMeta) => void;
 
 const MAX_PICKS = 5;
 // Gemini 입력 후보 상한 — 프롬프트 길이/비용 억제. 하루 팀 기사가 이보다 많으면
@@ -82,7 +100,12 @@ function rosterTitleNames(teamId: number): string[] {
 }
 
 /** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 + 클리핑 제목 게이트 */
-async function collectYesterdayCandidates(teamShort: string, teamId: number, yesterday: string): Promise<NewsItem[]> {
+async function collectYesterdayCandidates(
+  teamShort: string,
+  teamId: number,
+  yesterday: string,
+  onRawCandidates?: RawCandidateSink,
+): Promise<NewsItem[]> {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const mascot = fullName.split(/\s+/).pop() || null;
   const query = `프로야구 ${fullName}`;
@@ -97,6 +120,32 @@ async function collectYesterdayCandidates(teamShort: string, teamId: number, yes
     pages.push(items);
     const last = items[items.length - 1];
     if (!last || (pubDateToKstDate(last.pubDate) ?? "") < yesterday) break;
+  }
+
+  // 야잘알봇 RAG 적재 분기 — **야구 관련성 가드는 통과시키고, 카드 전용 필터만 우회**한다.
+  //
+  // 우회하는 것 (카드 품질 기준이라 근거로는 과하다)
+  //   · isPhotoArticle / isOtherTeamTitle / hasClippingTitleSignal
+  //     `선두 KT, 한화 12-1 완파…(종합)` 은 isOtherTeamTitle 에 걸려 카드에서 빠지지만
+  //     "어제 두산:LG 3피트 논란" 의 실제 근거 문장을 담고 있다(실측).
+  //
+  // 통과시키는 것 (근거 오염 방지 — 삼순 NO-GO)
+  //   · isTeamBaseballRelevant : 야구 관련성 + NON_BASEBALL_NEGATIVE 차단
+  //     이걸 건너뛰면 2026-07-19 실재 회귀(여자골프 기사 속 'LG 트윈스 김진성')가
+  //     그대로 RAG 원장에 들어가 야잘알봇이 골프 기사를 야구 근거로 인용한다.
+  //     카드에 안 나가니 눈에 안 띄고, 답변 품질만 조용히 썩는다.
+  if (onRawCandidates) {
+    const rawSeen = new Set<string>();
+    const raw = pages.flat().filter((item) => {
+      if (rawSeen.has(item.link)) return false;
+      rawSeen.add(item.link);
+      if (pubDateToKstDate(item.pubDate) !== yesterday) return false;
+      return isTeamBaseballRelevant(item.title, item.description, mascot);
+    });
+    // 마지막으로 받은 페이지의 끝까지 어제치면 그 뒤로 더 있었다는 뜻 — 상한 절단.
+    const lastItem = pages[pages.length - 1]?.[pages[pages.length - 1].length - 1];
+    const truncated = Boolean(lastItem) && (pubDateToKstDate(lastItem!.pubDate) ?? "") >= yesterday;
+    onRawCandidates(teamId, raw, { truncated, pagesFetched: pages.length });
   }
 
   const seen = new Set<string>();
@@ -245,6 +294,178 @@ async function selectAndSummarize(
 }
 
 /**
+ * 백필용 raw 후보 수집 — **발송과 무관**하다. 클리핑 로직을 한 줄도 타지 않는다.
+ *
+ * 왜 별도 함수인가
+ *   일일 cron 은 "어제 하루치" 만 본다(2페이지). 그래서 배포 직후에는 근거가 하루치뿐이고
+ *   창이 차기까지 그만큼 기다려야 한다. 야잘알봇 출시 판정을 그때까지 미룰 수 없다.
+ *
+ * 결과창 한계와 fan-out (2026-08-07 실측, 추정 아님)
+ *   네이버 검색은 `start` 상한이 1000 이라 **쿼리 하나당 최대 1,000건**이다. 그 1,000건이
+ *   며칠 치인지는 그 쿼리의 총 건수에 반비례한다:
+ *     · `프로야구 LG 트윈스`    total 460,259 → 07-29 (약 9일)   ❌
+ *     · `LG 트윈스 경기`        total 1,004,928 → 08-02          ❌
+ *     · `LG 트윈스 불펜`        total 85,027  → 07-13            ✅
+ *     · `LG 트윈스 부상`        total 85,805  → 07-09            ✅
+ *     · `프로야구 LG 트윈스 패배` total 20,628  → 04-01            ✅
+ *   즉 **좁은 쿼리일수록 과거로 깊이 들어간다.** 그래서 broad 쿼리로 먼저 긁고, 창을 다 못
+ *   덮은 팀만 좁은 쿼리를 순차로 더해 채운다(이미 닿은 팀은 추가 호출 0).
+ *
+ * ⚠️ 표기 주의 — 이것은 "N일 전수 기사" 가 아니라 **"N일 범위 확보"** 다.
+ *   좁은 쿼리는 그 키워드에 걸리는 기사만 가져오므로 그 날의 모든 기사가 아니다.
+ *   커버리지 원장에도 같은 의미로 기록한다.
+ */
+export const NAVER_BACKFILL_MAX_START = 901;
+
+/**
+ * 창을 못 덮었을 때 순서대로 추가 투입하는 좁은 쿼리 접미사.
+ * 총 건수가 적은(=깊이 들어가는) 것부터 놓아 최소 호출로 창을 채운다 — 위 실측 순서.
+ */
+export const BACKFILL_FANOUT_SUFFIXES = ["패배", "승리", "부상", "불펜", "타선", "감독"] as const;
+
+export interface BackfillDayResult {
+  /** KST YYYY-MM-DD */
+  clipDate: string;
+  items: NewsItem[];
+}
+
+export interface BackfillCollection {
+  days: BackfillDayResult[];
+  pagesFetched: number;
+  /** 마지막 쿼리까지 쓰고도 창을 다 못 덮었는가 — 그 아래 날짜는 근거가 없는 게 아니라 못 닿은 것. */
+  reachedApiLimit: boolean;
+  /** 실제로 닿은 가장 오래된 KST 날짜. 하나도 못 닿았으면 null. */
+  oldestReached: string | null;
+  /** 이 팀에 실제로 쓴 쿼리 수(broad 1 + fan-out N). 1이면 broad 하나로 충분했다는 뜻. */
+  queriesUsed: number;
+  /**
+   * 실제로 기사를 관측한 KST 날짜 집합.
+   * sparse 한 fan-out 쿼리는 며칠씩 건너뛰며 과거를 찍으므로, 여기 없는 날짜는
+   * "기사가 0건" 이 아니라 **"안 본 날"** 이다. 커버리지 원장이 둘을 구분하는 근거가 된다.
+   */
+  observedDays: Set<string>;
+  /** 예산이 끊어 수집을 중단했는가. true 면 이 팀의 결과는 **부분**이다. */
+  deadlineHit: boolean;
+}
+
+/**
+ * 쿼리 하나를 결과창 끝까지(또는 창을 덮을 때까지) 훑는다.
+ *
+ * 세 가지가 미묘하다 (전부 삼순 NO-GO 로 잡힌 실제 결함)
+ *   1. **relevance 가드는 여기서도 돈다.** 일일 sink 만 고치면 백필이 여자골프·증시 기사를
+ *      그대로 원장에 밀어넣는다. 백필은 한 번에 수천 건을 넣으므로 오염 규모가 더 크다.
+ *   2. **페이지 종료는 원응답 개수로 판정한다.** fetchNaverNews 는 비네이버 기사를 걸러내므로
+ *      100건 중 1건만 탈락해도 `items.length < 100` 이 되어 조기 종료했다.
+ *   3. **관측한 날짜를 기록한다.** sparse 한 fan-out 쿼리(예: `LG 트윈스 부상`)는 며칠씩
+ *      건너뛰며 과거를 찍는다. 건너뛴 날짜를 "기사 0건" 으로 두면 안 되고 "안 본 날" 이어야 한다.
+ */
+async function scanQuery(
+  query: string,
+  sinceDate: string,
+  untilDate: string,
+  mascot: string | null,
+  byDate: Map<string, NewsItem[]>,
+  seen: Set<string>,
+  observedDays: Set<string>,
+  deadlineAt: number,
+): Promise<{ pages: number; coveredWindow: boolean; oldest: string | null; deadlineHit: boolean }> {
+  let pages = 0;
+  let coveredWindow = false;
+  let oldest: string | null = null;
+
+  for (let start = 1; start <= NAVER_BACKFILL_MAX_START; start += 100) {
+    // **페이지 루프 안에서** 예산을 본다. 팀 시작 전에만 검사하면 한 팀이 일단 들어간 뒤
+    // 7쿼리 × 10페이지 × 8초 ≈ 560초를 계속 돌아 route maxDuration 을 넘긴다(삼순 NO-GO).
+    if (Date.now() >= deadlineAt) return { pages, coveredWindow, oldest, deadlineHit: true };
+    const { items, rawCount } = await fetchNaverNewsPage(query, start, 100);
+    pages += 1;
+    if (rawCount === 0) break;
+
+    for (const item of items) {
+      const day = pubDateToKstDate(item.pubDate);
+      if (!day) continue;
+      if (day > untilDate) continue; // 아직 요청 창에 못 들어온 최신 기사
+      if (day < sinceDate) {
+        // date desc 정렬이라 창보다 오래된 게 나오면 이 쿼리는 창을 다 덮은 것이다.
+        coveredWindow = true;
+        continue;
+      }
+      if (!oldest || day < oldest) oldest = day;
+      // 이 날짜의 기사를 실제로 눈으로 봤다 — 결과가 걸러져 0건이 되더라도 "본 날" 이다.
+      observedDays.add(day);
+      if (seen.has(item.link)) continue;
+      seen.add(item.link);
+      // 근거 오염 방지 — 일일 sink 와 동일한 가드를 백필에도 적용한다.
+      if (!isTeamBaseballRelevant(item.title, item.description, mascot)) continue;
+      const bucket = byDate.get(day);
+      if (bucket) bucket.push(item);
+      else byDate.set(day, [item]);
+    }
+
+    if (coveredWindow) break;
+    // **원응답**이 한 페이지를 못 채웠으면 이 쿼리는 고갈된 것이다.
+    // 필터 후 개수로 판정하면 비네이버 1건 탈락에도 조기 종료해 과거를 통째로 놓친다.
+    if (rawCount < 100) break;
+  }
+
+  return { pages, coveredWindow, oldest, deadlineHit: false };
+}
+
+export async function collectBackfillCandidates(
+  teamShort: string,
+  sinceDate: string,
+  untilDate: string,
+  /** 이 시각(epoch ms)을 넘기면 수집을 중단한다. 기본값은 사실상 무제한(테스트·수동 실행용). */
+  deadlineAt = Number.POSITIVE_INFINITY,
+): Promise<BackfillCollection> {
+  const fullName = TEAM_SEARCH[teamShort] || teamShort;
+  const mascot = fullName.split(/\s+/).pop() || null;
+
+  const byDate = new Map<string, NewsItem[]>();
+  const seen = new Set<string>();
+  // 실제로 기사를 본 날짜. 여기 없는 날짜는 "기사 0건" 이 아니라 "안 본 날" 이다.
+  const observedDays = new Set<string>();
+  let pagesFetched = 0;
+  let queriesUsed = 0;
+  let oldestReached: string | null = null;
+  let covered = false;
+  let deadlineHit = false;
+
+  // broad 쿼리 하나로 충분한 팀(기사량이 적은 팀)은 여기서 끝난다.
+  const queries = [`프로야구 ${fullName}`, ...BACKFILL_FANOUT_SUFFIXES.map((s) => `${fullName} ${s}`)];
+
+  for (const query of queries) {
+    // 쿼리 경계에서도 본다 — 마지막 페이지가 예산을 다 쓴 채 끝났을 수 있다.
+    if (Date.now() >= deadlineAt) { deadlineHit = true; break; }
+    const result = await scanQuery(
+      query, sinceDate, untilDate, mascot, byDate, seen, observedDays, deadlineAt,
+    );
+    pagesFetched += result.pages;
+    queriesUsed += 1;
+    if (result.oldest && (!oldestReached || result.oldest < oldestReached)) {
+      oldestReached = result.oldest;
+    }
+    if (result.deadlineHit) { deadlineHit = true; break; }
+    if (result.coveredWindow) {
+      covered = true;
+      break; // 창을 덮었으면 남은 fan-out 쿼리는 호출하지 않는다.
+    }
+  }
+
+  return {
+    days: [...byDate.entries()]
+      .map(([clipDate, items]) => ({ clipDate, items }))
+      .sort((a, b) => (a.clipDate < b.clipDate ? -1 : 1)),
+    pagesFetched,
+    reachedApiLimit: !covered,
+    oldestReached,
+    queriesUsed,
+    observedDays,
+    deadlineHit,
+  };
+}
+
+/**
  * 팀 하나의 클리핑 payload 생성.
  * 어제 기사 0개 또는 요약 가능 기사 0개면 null — 그 팀은 발송하지 않는다(빈 클리핑 금지).
  */
@@ -253,10 +474,11 @@ export async function buildTeamClipping(
   teamShort: string,
   teamName: string,
   standingsText: string | null = null,
+  onRawCandidates?: RawCandidateSink,
 ): Promise<NewsClippingPayload | null> {
   const yesterday = kstDateString(-1);
 
-  const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday);
+  const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday, onRawCandidates);
   if (candidates.length === 0) return null;
 
   const selection = await selectAndSummarize(teamName, yesterday, candidates, standingsText);

@@ -40,17 +40,40 @@ check("2행은 wrap + 메뉴 우측", /flex min-w-0 flex-wrap items-center gap-x
 check("프로필 링크 버블링 차단", (author.match(/onClick=\{stopCardNavigation\}/g) ?? []).length === 2);
 check("raw·https avatar + 로드 실패 fallback", /avatarUrl\.startsWith\("\/"\)/.test(avatars) && /avatarUrl\.startsWith\("https:\/\/"\)/.test(avatars) && /onError=\{\(\) => setFailedAvatarPath\(avatarPath\)\}/.test(author));
 check("PostCard 실제 공용 헤더+글소속", /<CommunityAuthorHeader[\s\S]*avatarUrl=\{post\.author\?\.avatarUrl\}/.test(card) && /data-community-source-label/.test(card));
-check("PhotoFeed poll·일반 모두 글소속", (feed.match(/data-community-source-label/g) ?? []).length >= 2 && /getPostSourceLabel\(post\)/.test(feed));
+// 2026-08-06: 피드 라벨이 board 기반 `getPostSourceLabel` → team_tags SSOT 기반 공개범위로 교체됐다.
+// 여전히 poll·일반 두 경로 모두 라벨 블록을 가져야 하고, 그 입력은 공용 변환(scopeInputForPost)을 타야 한다.
+check(
+  "PhotoFeed poll·일반 모두 공개범위 라벨",
+  (feed.match(/data-community-source-label/g) ?? []).length >= 2 &&
+    (feed.match(/<PostScopeBadge post=\{scopeInputForPost\(post\)\}/g) ?? []).length >= 2,
+);
 check("상세 실제 메타 컴포넌트 소비", /<PostDetailAuthorHeader[\s\S]*clickCount=\{post\.click_view_count\}/.test(detail) && /<DMButton/.test(detailHeader) && /<PostViewBadge/.test(detailHeader));
 check("댓글 시트 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind="sheet"[\s\S]*<CommunityAuthorHeader/.test(comments));
 check("상세 댓글 실제 공용 row 소비", /<CommunityCommentRow[\s\S]*kind="detail"[\s\S]*<CommunityAuthorHeader/.test(detail));
 check("댓글 본문 50px 공용 정렬", /data-community-comment-body className="ml-\[50px\] min-w-0"/.test(commentRow));
 check("프로필 쿼리에 team/player tags", /created_at, team_tags, player_tags/.test(profile));
-check("프로필 actual row가 태그 resolver 소비", /<CommunityProfilePostRow/.test(profile) && /getPostSourceLabel\(post\)/.test(profileRow));
+// 2026-08-06: 프로필 글 목록 라벨도 board 기반 getPostSourceLabel → team_tags SSOT 기반 공개범위로 교체.
+// 검사 의도(페이지가 actual row 컴포넌트를 쓰고, 그 row 가 태그로 라벨을 계산한다)는 유지하고
+// 요구 대상만 새 배선으로 옮긴다. 삭제하면 row 가 라벨을 잃어도 통과하므로 조건은 유지.
+check(
+  "프로필 actual row가 태그 resolver 소비",
+  /<CommunityProfilePostRow/.test(profile) &&
+    /<PostScopeBadge post=\{scopeInputForPost\(post\)\}/.test(profileRow),
+);
 check("프로필 글 탭은 board_type별 상세 route", /getPostDetailHref\(post\)/.test(profileRow) && /onNavigate=\{\(href\) => router\.push\(href\)\}/.test(profile) && !/community\/players\/\$\{post\.board_id\}\/posts/.test(profile));
 check("상세 route resolver가 free·team·player 분기", /board_type === "player"[\s\S]*community\/players[\s\S]*board_type === "team"[\s\S]*community\/teams[\s\S]*community\/free/.test(sourceResolver));
 check("글소속 resolver는 player_tags 3명·team_tags·legacy 폴백", /post\.player_tags \?\? \[\]/.test(sourceResolver) && /외 \$\{names\.length - 2\}명/.test(sourceResolver) && /post\.team_tags \?\? \[\]/.test(sourceResolver) && /getCommunitySourceLabel\(post\.board_type, post\.board_id\)/.test(sourceResolver));
-check("collector snapshot은 실제 봇 프로필 team", /\.from\("profiles"\)[\s\S]*\.eq\("id", botUserId\)[\s\S]*authorTeamIdSnapshot = botProfile\?\.team_id \?\? null/.test(collector) && !/matchedPlayer[\s\S]*authorTeamIdSnapshot/.test(collector));
+// 2026-08-07: 봇은 응원팀이 없다. 봇 프로필 team_id 는 NOT NULL 을 채우려고 seed 가 박은 임의값(1=LG)이라
+// 그걸 작성자 배지로 쓰면 KIA 김도영 글이 "LG 팬"으로 보인다(하린아빠 지적). 이전 계약(봇 프로필 team)을
+// 요구하던 검사를 그대로 두면 게이트가 결함을 고정시킨다. 검사 의도(스냅샷이 임의값이 아니라 결정된
+// 출처에서 온다)는 유지하고 요구 대상만 새 배선(콘텐츠 팀 파생)으로 옮긴다.
+check(
+  "collector snapshot은 봇 프로필이 아니라 콘텐츠 팀 파생",
+  /const collectorTeam = resolveCollectorTeam\(/.test(collector) &&
+    /author_team_id_snapshot: collectorTeam\.id/.test(collector) &&
+    /team_tags: \[collectorTeam\.slug\]/.test(collector) &&
+    !/botProfile\?\.team_id/.test(collector),
+);
 check("게시글 프로필 조회 avatar_url", /profiles\(nickname, team_id, grade, points, avatar_url\)/.test(read("src/lib/supabase/usePosts.ts")));
 check("통합 피드 avatar select+map", /profiles\(nickname, team_id, grade, points, avatar_url\)/.test(unified) && /avatar_url: prof\?\.avatar_url/.test(unified));
 check("자유게시판 avatar map", /avatarUrl: p\.avatar_url \?\? null/.test(free));

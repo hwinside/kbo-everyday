@@ -3,11 +3,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { Heart, MessageCircle, Play, Share2 } from "lucide-react";
-import TeamBadge from "@/components/ui/TeamBadge";
 import CommunityAuthorHeader from "@/components/community/CommunityAuthorHeader";
 import LinkPreview from "@/components/community/LinkPreview";
+import PostScopeBadge from "@/components/community/PostScopeBadge";
+import { scopeInputForPost } from "@/lib/utils/post-scope-input";
 import type { Post } from "@/lib/types";
-import type { CommunitySourceLabel } from "@/lib/utils/community-board";
 import ShareSheet, { type ShareSheetPost } from "@/components/community/ShareSheet";
 import PollCardSlot from "@/components/community/PollCardSlot";
 import type { PollSummary } from "@/lib/community/poll-client";
@@ -17,7 +17,6 @@ interface PostCardProps {
   onPress?: () => void;
   /** 선수 게시판: "LG 김진성" 같은 통합 레이블 (팀 뱃지 대체) */
   playerLabel?: { teamId: number; playerName: string } | null;
-  sourceLabel?: CommunitySourceLabel | null;
   /** board_type='poll' 일 때 목록 카드용 요약(배치 조회). 없으면 로딩/terminal 표시. */
   pollSummary?: PollSummary | null;
   /** 배치 요약 조회가 응답됐는지(응답했는데 summary 없으면 terminal). */
@@ -26,7 +25,7 @@ interface PostCardProps {
   onPollRetry?: () => void;
 }
 
-export default function PostCard({ post, onPress, sourceLabel, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
+export default function PostCard({ post, onPress, pollSummary, pollLoaded, onPollRetry }: PostCardProps) {
   const timeAgo = getTimeAgo(post.createdAt);
   const isPoll = post.boardType === "poll";
   const [shareOpen, setShareOpen] = useState(false);
@@ -64,19 +63,21 @@ export default function PostCard({ post, onPress, sourceLabel, pollSummary, poll
         meta={<span className="text-xs text-text-tertiary">{timeAgo}</span>}
       />
 
-      {/* 혼합 피드에서만: 작성자 응원팀과 별개인 글의 소속 */}
-      {sourceLabel && (
-        <div className="mt-2 flex items-center gap-2" data-community-source-label>
-          <span className="shrink-0 text-[10px] text-text-tertiary">글 소속</span>
-          {sourceLabel.teamId ? (
-            <TeamBadge teamId={sourceLabel.teamId} playerName={sourceLabel.playerName} size="sm" />
-          ) : (
-            <span className="min-w-0 truncate rounded-full bg-bg-tertiary px-2.5 py-1 text-sm font-bold text-text-primary">
-              {sourceLabel.text}
-            </span>
-          )}
-        </div>
-      )}
+      {/* 글 공개범위 — 홈 최신글·PhotoFeed·프로필과 **같은 SSOT**(post-scope, team_tags).
+          종전에는 부모가 board 기반 `sourceLabel` 을 주입했고, 그래서 같은 글이 화면마다
+          다른 배지를 달았다. 주입을 없애고 글 자체의 태그에서 계산한다(삼순 2026-08-07). */}
+      <div className="mt-2 flex items-center gap-2" data-community-source-label>
+        <span className="shrink-0 text-[10px] text-text-tertiary">공개범위</span>
+        <PostScopeBadge
+          post={scopeInputForPost({
+            team_tags: post.teamTags,
+            player_tags: post.playerTags,
+            board_type: post.boardType,
+            board_id: post.boardId,
+          })}
+          variant="full"
+        />
+      </div>
 
       {/* Title */}
       {post.title && (

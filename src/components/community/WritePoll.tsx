@@ -12,6 +12,7 @@ import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { createPoll, type PollOptionInput } from "@/lib/community/poll-client";
+import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
 
 /**
  * 커뮤니티 투표 작성 컴포저 (spec: specs/community-poll.md §6, S2).
@@ -93,6 +94,11 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   // 태그와 서버에서 union 된다(etc만 있는 투표도 원하는 피드에 노출 가능).
   const [tagTeamSlugs, setTagTeamSlugs] = useState<string[]>([]);
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
+
+  // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
+  // 팀/선수 선지가 서버에서 team_tags 로 union 되긴 하지만, 그건 파생이지 글쓴이의 명시적
+  // 공개범위 선택이 아니다 — 필수조건을 대신하지 않는다.
+  const hasTeamScope = hasRequiredTeamTag(tagTeamSlugs);
 
   // 설명 textarea 자동 세로 확장(엔터·긴 글 대응). content 변경·열림 시 height 재계산.
   // max(약 10줄) 도달 후에는 내부 스크롤 허용(overflow-y-auto) — cap 되었다고 스크롤까지
@@ -190,6 +196,11 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
       setError("한 투표에 팀과 선수를 함께 넣을 수 없어요");
       return null;
     }
+    // 게시글은 명시적 team_tags 1개 이상 필수(하린아빠 2026-08-06 / 삼순 정정).
+    if (!hasTeamScope) {
+      setError("팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)");
+      return null;
+    }
     for (const o of options) {
       if (o.kind === "etc" && !o.label.trim()) {
         setError("기타 선지의 내용을 입력해 주세요");
@@ -269,7 +280,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
             <h2 className="text-lg font-bold text-text-primary">투표 만들기</h2>
             <button
               onClick={handleSubmit}
-              disabled={submitting}
+              disabled={submitting || !hasTeamScope}
               className="text-sm font-semibold text-accent disabled:text-text-tertiary"
             >
               {submitting ? "등록 중..." : "등록"}
@@ -396,13 +407,23 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
               </div>
             </div>
 
-            {/* 태그 설정 — 일반/사진글과 동일(팀 칩 + 선수 태그). 선지 파생 태그와 서버에서 union 돼
-                피드 노출을 결정(etc만 있는 투표도 원하는 팀/선수 피드에 노출 가능). */}
+            {/* 태그 설정 — 일반/사진글과 동일(팀 칩 + 선수 태그). 팀 태그는 공개범위라 필수,
+                선수 태그는 선택. 선지 파생 태그와 서버에서 union 돼 피드 노출을 결정한다. */}
             <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-text-tertiary mb-1.5">태그 (선택)</label>
-                <p className="text-[11px] text-text-tertiary mb-2">태그한 팀·선수 피드에도 이 투표가 노출돼요</p>
+                <label className="block text-xs font-semibold text-text-tertiary mb-1.5">
+                  공개범위 <span className="text-[#FF453A]">*</span>
+                </label>
+                <p className="text-[11px] text-text-tertiary mb-2">
+                  팀을 최소 1개 선택해주세요. 태그한 팀·선수 피드에 이 투표가 노출돼요
+                </p>
+                {!hasTeamScope && (
+                  <p className="text-xs text-[#FF453A] mb-2">
+                    팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).
+                  </p>
+                )}
                 <TeamTagger
+                  onSetAll={setTagTeamSlugs}
                   selectedSlugs={tagTeamSlugs}
                   onToggle={(slug) =>
                     setTagTeamSlugs((prev) =>

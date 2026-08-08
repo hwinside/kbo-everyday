@@ -38,7 +38,13 @@ copy("src/components/community/CommunityCommentRow.tsx", "CommunityCommentRow.ts
 );
 copy("src/components/profile/CommunityProfilePostRow.tsx", "CommunityProfilePostRow.tsx", (source) => {
   if (process.env.POST_HEADER_MUTATE_PROFILE_SOURCE === "1") {
-    source = source.replace("const sourceLabel = getPostSourceLabel(post);", 'const sourceLabel = { text: "자유게시판" };');
+    // 2026-08-06: 프로필 라벨이 board 기반 getPostSourceLabel → team_tags SSOT 기반으로 교체됐다.
+    // 무효해진 구 문자열을 그대로 두면 mutation 이 no-op 이 돼 self-guard 가 무너진다.
+    // 새 배선(scopeInputForPost)을 끊어 라벨이 태그가 아닌 board 로 파생되게 만든다.
+    source = source.replace(
+      "post={scopeInputForPost(post)}",
+      "post={{ team_tags: [], player_tags: [] }}",
+    );
   }
   if (process.env.POST_HEADER_MUTATE_PROFILE_ROUTE === "1") {
     source = source.replace("const href = getPostDetailHref(post);", "const href = `/community/players/${post.board_id}/posts/${post.id}`;");
@@ -72,21 +78,21 @@ import Header from "./CommunityAuthorHeader";
 import CommentRow from "./CommunityCommentRow";
 import ProfileRow from "./CommunityProfilePostRow";
 import PostDetailAuthorHeader from "@/components/community/PostDetailAuthorHeader";
-import {getPostSourceLabel} from "@/lib/utils/community-board";
 const N=${JSON.stringify(testNickname)};
-const SOURCE={board_type:"free",board_id:"free",team_tags:["lg"],player_tags:["62415:박해민","53123:오스틴","69102:문보경"]};
-const LABEL=getPostSourceLabel(SOURCE);
-const BASE={id:991,boardType:"free",boardId:"free",authorId:"author",title:"실제 PostCard",content:"작성자 응원팀과 글 소속이 다른 fixture",imageUrls:[],videoUrls:[],likeCount:3,commentCount:2,isReported:false,createdAt:new Date().toISOString(),author:{nickname:N,avatarUrl:"/test-avatar.svg",myTeamId:2,grade:"staff",level:1,title:""}};
+// 프로필 글 목록은 2026-08-06부터 공개범위(post-scope SSOT) 라벨을 쓴다. 단일팀 fixture 로는
+// board 폴백과 결과가 같아 검출력이 없으므로, **4팀 태그** 로 "3팀 + 외 1팀" 경계를 태운다.
+const PROFILE_SCOPE={team_tags:["lg","doosan","kt","kia"],player_tags:[]};
+const BASE={id:991,boardType:"free",boardId:"free",authorId:"author",teamTags:["lg","doosan","kt","kia"],playerTags:[],title:"실제 PostCard",content:"작성자 응원팀과 글 소속이 다른 fixture",imageUrls:[],videoUrls:[],likeCount:3,commentCount:2,isReported:false,createdAt:new Date().toISOString(),author:{nickname:N,avatarUrl:"/test-avatar.svg",myTeamId:2,grade:"staff",level:1,title:""}};
 function Menu(){return <button className="p-1" aria-label="더보기">•••</button>}
 function CommentFixture({kind,isReply=false,avatarUrl}){return <section data-kind={kind} className="px-5 py-3"><CommentRow kind={kind==="detail-comment"?"detail":"sheet"} isReply={isReply} header={<Header nickname={N} teamId={2} avatarUrl={avatarUrl} profileHref="/profile/author" isStaff menu={<Menu/>} meta={<span className="shrink-0 text-xs text-text-tertiary">12시간 전 · 수정됨</span>}/>}><p className="mt-1 text-sm text-text-primary">실제 댓글 본문 정렬</p></CommentRow></section>}
 function App(){const[presses,setPresses]=useState(0);const[routes,setRoutes]=useState([]);return <ThemeProvider><main className="w-full bg-bg-primary">
-  <section data-kind="feed" className="mx-5 py-2"><PostCard post={BASE} sourceLabel={LABEL} onPress={()=>setPresses((n)=>n+1)}/><output data-parent-press>{presses}</output></section>
-  <section data-kind="poll" className="mx-5 py-2"><PostCard post={{...BASE,id:992,boardType:"poll",title:"투표 질문"}} sourceLabel={LABEL}/></section>
-  <section data-kind="dedicated" className="mx-5 py-2"><PostCard post={{...BASE,id:993}}/></section>
+  <section data-kind="feed" className="mx-5 py-2"><PostCard post={BASE} onPress={()=>setPresses((n)=>n+1)}/><output data-parent-press>{presses}</output></section>
+  <section data-kind="poll" className="mx-5 py-2"><PostCard post={{...BASE,id:992,boardType:"poll",title:"투표 질문"}}/></section>
+  <section data-kind="dedicated" className="mx-5 py-2"><PostCard post={{...BASE,id:993,teamTags:[],playerTags:[]}}/></section>
   <section data-kind="detail" className="px-5 py-4"><PostDetailAuthorHeader nickname={N} teamId={2} avatarUrl="preset:baseball" authorId="author" viewerId="viewer" isStaff timeLabel="12시간 전" isEdited clickCount={1234} impressionCount={5} menu={<Menu/>}/></section>
   <CommentFixture kind="detail-comment" avatarUrl="/broken-avatar.svg"/>
   <CommentFixture kind="sheet-comment" isReply avatarUrl={null}/>
-  <section data-kind="profile" className="mx-5 py-3"><ProfileRow post={{id:9,title:"프로필 글",board_type:"free",board_id:"free",like_count:1,comment_count:2,created_at:new Date().toISOString(),team_tags:SOURCE.team_tags,player_tags:SOURCE.player_tags}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"free:"+href])}/></section>
+  <section data-kind="profile" className="mx-5 py-3"><ProfileRow post={{id:9,title:"프로필 글",board_type:"free",board_id:"free",like_count:1,comment_count:2,created_at:new Date().toISOString(),team_tags:PROFILE_SCOPE.team_tags,player_tags:PROFILE_SCOPE.player_tags}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"free:"+href])}/></section>
   <section data-kind="profile-team" className="mx-5 py-3"><ProfileRow post={{id:10,title:"팀 글",board_type:"team",board_id:"lg",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"team:"+href])}/></section>
   <section data-kind="profile-player" className="mx-5 py-3"><ProfileRow post={{id:11,title:"선수 글",board_type:"player",board_id:"62415",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"player:"+href])}/></section>
   <section data-kind="profile-poll" className="mx-5 py-3"><ProfileRow post={{id:12,title:"투표 글",board_type:"poll",board_id:"free",like_count:0,comment_count:0,created_at:new Date().toISOString()}} timeLabel="오늘" onNavigate={(href)=>setRoutes((rows)=>[...rows,"poll:"+href])}/></section>
@@ -187,8 +193,13 @@ try {
         check(`${kind} 운영팀은 2행`, !probe.staffInRow1);
       }
       if (kind.endsWith("comment")) check(`${kind} 본문 50px 정렬`, probe.bodyMargin === 50, `${probe.bodyMargin}`);
-      if (kind === "feed" || kind === "poll") check(`${kind} 글 소속 3명`, /LG.*박해민\/오스틴 외 1명/.test(probe.source), probe.source);
-      if (kind === "dedicated" || kind.endsWith("comment")) check(`${kind} 글 소속 미노출`, !probe.hasSourceLabel);
+      if (kind === "feed" || kind === "poll") {
+        // PostCard 도 공개범위 SSOT(post-scope)를 쓴다 — 부모 주입 라벨 제거의 반대급부.
+        // 4팀 태그 → 앞 3팀(선택 순서) + "외 1팀". board 폴백으로 떨어지면 RED.
+        check(`${kind} 태그 기반 공개범위 3팀+외 1팀`, /LG.*두산.*KT.*외 1팀/.test(probe.source), probe.source);
+      }
+      if (kind === "dedicated") check("태그 0개는 전체구단 공개로 폴백", /전체구단/.test(probe.source), probe.source);
+      if (kind.endsWith("comment")) check(`${kind} 공개범위 미노출`, !probe.hasSourceLabel);
       if (kind === "feed") check("raw 시스템 아바타 이미지", probe.hasImage);
       if (kind === "detail-comment") check("이미지 로드 실패 이니셜 fallback", !probe.hasImage);
     }
@@ -198,7 +209,13 @@ try {
       source: (node.querySelector("[data-community-source-label]")?.textContent ?? "").replace(/\s+/g, " "),
     }));
     check("profile 가로 overflow 없음", !profile.overflow);
-    check("profile 태그 기반 글 소속 3명", /LG.*박해민\/오스틴 외 1명/.test(profile.source), profile.source);
+    // 공개범위 라벨(2026-08-06): 4팀 태그 → 앞 3팀(선택 순서) + "외 1팀".
+    // board 폴백으로 떨어지면 "자유게시판"/전체구단 이 돼 이 정규식이 RED 가 된다.
+    check(
+      "profile 태그 기반 공개범위 3팀+외 1팀",
+      /LG.*두산.*KT.*외 1팀/.test(profile.source),
+      profile.source,
+    );
 
     for (const kind of ["profile", "profile-team", "profile-player", "profile-poll"]) {
       await page.locator(`[data-kind="${kind}"] [data-community-profile-post-row]`).click();

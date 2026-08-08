@@ -39,6 +39,7 @@ import {
 } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
+import { resolveCollectorTeam } from "./collector-team";
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -341,15 +342,6 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     return rejectAndReturn(queueId, `all media uploads failed: ${mediaErrors.join("; ")}`);
   }
 
-  // 작성자 팀 스냅샷은 콘텐츠 소속팀이 아니라 실제 봇 프로필의 응원팀을 기록한다.
-  // 콘텐츠 팀/선수는 board + tags가 별도 `글 소속` 라벨을 담당한다.
-  const { data: botProfile } = await supabaseAdmin
-    .from("profiles")
-    .select("team_id")
-    .eq("id", botUserId)
-    .maybeSingle<{ team_id: number | null }>();
-  const authorTeamIdSnapshot = botProfile?.team_id ?? null;
-
   // content_type='photo' 고정 — 선수 사진탭/전체 사진탭이 'photo'로 필터링하기 때문.
   // 영상(움짤콜렉터)은 video_urls, 사진(짤콜렉터)은 image_urls에 담는다. 둘 다 content_type='photo'.
   const mediaUrls = uploaded.map((u) => u.publicUrl);
@@ -359,6 +351,21 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   const text = normalizeQueueTextForPost(row);
   const content = appendAttribution(text.sourceContent, row.source_url, sourceHtml);
 
+  // 공개범위(team_tags) — DB 트리거가 canonical 구단 slug 1개 이상을 요구한다
+  // (`20260807020000_posts_require_team_scope.sql`). 콜렉터 글은 사람이 피커로 고르는 게
+  // 아니라 매칭 결과(board)에서 파생해야 한다. 여기서 안 채우면 발행이 통째로 23514 로 죽는다.
+  //   · matched_board_type='team'   → board_id 가 곧 구단 slug
+  //   · matched_board_type='player' → 그 선수의 소속팀 slug (로스터 기준)
+  const collectorTeam = resolveCollectorTeam(row.matched_board_type, String(row.matched_board_id));
+  if (!collectorTeam) {
+    // 로스터 미등록 선수·미상 구단이면 공개범위를 만들 수 없다. 임의 팀을 찍지 않고 철회한다
+    // (틀린 팀 피드에 노출되느니 발행을 멈추는 편이 안전하다).
+    return rejectAndReturn(
+      queueId,
+      `cannot resolve team scope for ${row.matched_board_type}/${row.matched_board_id}`,
+    );
+  }
+
   const postInsert: Record<string, unknown> = {
     author_id: botUserId,
     board_type: row.matched_board_type,
@@ -366,7 +373,10 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     content_type: "photo",
     title: text.title,
     content,
-    author_team_id_snapshot: authorTeamIdSnapshot,
+    team_tags: [collectorTeam.slug],
+    // 작성자 배지도 같은 콘텐츠 팀에서 파생한다. 봇 프로필 team_id 를 쓰면 어떤 팀 글을 올리든
+    // 프로필에 박힌 한 팀(현재 LG)으로 찍힌다 — 2026-08-07 하린아빠 지적(KIA 김도영 글이 "LG 팬").
+    author_team_id_snapshot: collectorTeam.id,
   };
   if (kind === "video") {
     postInsert.video_urls = mediaUrls;
