@@ -306,6 +306,64 @@ async function run(): Promise<void> {
       "numeric_claim_ungrounded",
     );
     assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "https://example.com 참고" })).kind, "insufficient");
+
+    // ── 6-b. 사건 연도 예외 (2026-08-08 하린아빠 제보) ──────────────────────
+    //
+    // `임찬규 입단 시기` 가 근거를 가지고도 답변되지 않았다 — tier2 숫자 전면 HOLD 가
+    // 근거 문장에 적힌 `2011년` 까지 지우기 때문이다. 나무위키를 깁어놓고 그 내용을
+    // 우리 손으로 봉인 꼴이라, 사건 연도만 좀게 열었다.
+    //
+    // ⚠️ 이 블록은 그 구멍이 **딱 그만큼만** 열려 있는지 고정한다. 넓어지면 2026-08-07
+    //   삼순이 12라운드 끝에 닫은 "진술 관계를 토큰 대조로 못 가린다" 가 다시 열린다.
+    {
+      const debutEvidence = {
+        ...MOON_EVIDENCE,
+        content: "LG 트윈스 소속 우완 투수 임찬규는 2011년 LG 트윈스에 1차 지명으로 입단하여, 군복무 기간을 제외한 모든 시즌에 1군에서 활약한 프랜차이즈 투수다.",
+      };
+      const answered = (answer: string) => validateRagResponse(
+        JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer }),
+        { allowGroundedEventYear: true, evidence: [debutEvidence] },
+      );
+
+      // ① 근거 문장이 사건과 함께 적은 연도는 통과한다.
+      assert.equal(answered("임찬규 선수는 2011년 LG 트윈스에 입단했어요.").kind, "grounded",
+        "근거가 한 문장으로 말해둔 입단 연도를 막으면 나무위키를 깁은 의미가 없다");
+
+      // ② 삼순이 12라운드에 제시한 **반대가설**은 여전히 막힌다.
+      //   한 문장에 연도와 횟수가 같이 있어도 횟수가 남아 답변 전체가 폐기된다.
+      const foundedEvidence = { ...MOON_EVIDENCE, content: "LG는 1990년 창단했고, 통산 우승은 3회다." };
+      assert.equal(
+        validateRagResponse(
+          JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "LG는 1990년 창단했고 통산 우승은 3회예요." }),
+          { allowGroundedEventYear: true, evidence: [foundedEvidence] },
+        ).kind,
+        "insufficient",
+        "연도+횟수 조합문이 통과하면 tier2 숫자 HOLD 가 무너진다",
+      );
+
+      // ③ 근거에 없는 연도는 막는다(모델 기억 차단).
+      assert.equal(answered("임찬규 선수는 2015년에 입단했어요.").kind, "insufficient");
+      // ④ 연도 외 수치는 근거에 있어도 막는다(횟수·차수·등번호).
+      assert.equal(answered("임찬규 선수는 1차 지명으로 입단했어요.").kind, "insufficient");
+      // ⑤ 같은 연도라도 근거 문장에 사건어가 없으면 막는다.
+      const plainYear = { ...MOON_EVIDENCE, content: "임찬규는 2011년 좋은 활약을 했다." };
+      assert.equal(
+        validateRagResponse(
+          JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "임찬규 선수는 2011년 좋은 활약을 했어요." }),
+          { allowGroundedEventYear: true, evidence: [plainYear] },
+        ).kind,
+        "insufficient",
+      );
+      // ⑥ 플래그를 안 켜면 종전 계약 그대로다(기본값이 안전측임을 고정).
+      assert.equal(
+        validateRagResponse(
+          JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "임찬규 선수는 2011년 LG 트윈스에 입단했어요." }),
+          { evidence: [debutEvidence] },
+        ).kind,
+        "insufficient",
+      );
+      console.log("PASS 사건 연도 예외 — 근거 문장의 입단/데뷔 연도만 허용, 조합문·미근거·횟수는 차단");
+    }
     assert.equal(validateRagResponse(JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL })).kind, "insufficient");
     assert.equal(validateRagResponse(JSON.stringify({ status: "ANYTHING", answer: "예" })).kind, "insufficient");
     assert.equal(validateRagResponse("not json").kind, "insufficient");
