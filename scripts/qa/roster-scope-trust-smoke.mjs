@@ -360,4 +360,43 @@ check("allowlist 가드는 그대로 남아 있다", () => {
   assert.match(workflow, /off_allowlist/);
 });
 
+console.log("\n▸ ★ 의존성 선언 — hoist 우연에 기대지 않는다");
+
+/* ⚠︎ 삼순 지적: 이 게이트가 `js-yaml` 을 직접 import 하는데 root package.json 에는
+ * 선언이 없고 lock 에 **transitive**(eslint → @eslint/eslintrc)로만 있었다.
+ * 지금은 hoist 덕에 우연히 해석되지만, 상위 패키지가 그 의존을 떼거나 버전을 올리면
+ * clean install 에서 게이트가 **ERR_MODULE_NOT_FOUND 로 죽는다** — 계약이 사라지는 게 아니라
+ * 검증이 사라지는 쪽이라 더 위험하다. 그래서 직접 import 하는 패키지는 direct dep 으로 박는다. */
+check("★ 직접 import 하는 외부 패키지가 root package.json 에 선언돼 있다", () => {
+  const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+  const declared = new Set([
+    ...Object.keys(pkg.dependencies ?? {}),
+    ...Object.keys(pkg.devDependencies ?? {}),
+  ]);
+
+  const source = readFileSync("scripts/qa/roster-scope-trust-smoke.mjs", "utf8");
+  const specifiers = [...source.matchAll(/^import\s[^;]*?from\s+"([^"]+)";/gm)].map((m) => m[1]);
+  // 상대경로·node: 빌트인은 선언 대상이 아니다.
+  const bare = specifiers.filter((spec) => !spec.startsWith(".") && !spec.startsWith("node:"));
+  assert.ok(bare.length > 0, "bare import 를 추출하지 못했다 — 추출식이 깨졌다");
+
+  const undeclared = bare.filter((spec) => !declared.has(spec.split("/").slice(0, spec.startsWith("@") ? 2 : 1).join("/")));
+  assert.deepEqual(
+    undeclared,
+    [],
+    `direct dependency 로 선언되지 않은 import — transitive hoist 에 기대면 clean install 에서 게이트가 죽는다: ${undeclared.join(", ")}`,
+  );
+});
+
+check("★ lock 에도 root 직접 의존으로 박혀 있다(설치 재현성)", () => {
+  const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+  const rootDev = lock.packages?.[""]?.devDependencies ?? {};
+  const rootProd = lock.packages?.[""]?.dependencies ?? {};
+  assert.ok(
+    rootDev["js-yaml"] || rootProd["js-yaml"],
+    "lock 의 root 엔트리에 js-yaml 이 없다 — transitive 만으로는 재현되지 않는다",
+  );
+  assert.ok(lock.packages?.["node_modules/js-yaml"], "lock 에 js-yaml 설치 엔트리가 없다");
+});
+
 console.log(`\n✅ roster scope trust: ${passed} PASS`);
