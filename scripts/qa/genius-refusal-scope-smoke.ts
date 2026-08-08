@@ -35,6 +35,7 @@ import {
   CONTEXT_MISSING_ANSWER,
   SERVICE_REDIRECT_ANSWER,
   NEWS_UNAVAILABLE_ANSWER,
+  SYSTEM_ERROR_ANSWER,
   ACK_ANSWER,
   NOT_BASEBALL_SENTINEL,
   UNSURE_SENTINEL,
@@ -382,8 +383,17 @@ async function askWith(question: string, overrides: Partial<QaDeps>) {
 }
 
 check("3분기 문구가 서로 다르다 — 한 문구로 합치면 세 사실이 구분 불가", () => {
-  const distinct = new Set([BLOCKED_ANSWER, UNCLEAR_ANSWER, NEWS_UNAVAILABLE_ANSWER]);
-  assert.equal(distinct.size, 3, "blocked/unclear/news-unavailable 문구가 겹친다");
+  // ⚠️ 삼순 2026-08-08 지적 반영. 종전 검사는 `error` 자리에 `NEWS_UNAVAILABLE` 을 넣어
+  //   세 개인 척했다 — 정작 시스템 오류가 `UNCLEAR` 와 같은 문구여도 통과했으므로 공허했다.
+  //   세 사실은 blocked(주제 밖) / unsure(못 알아들음) / error(우리 고장) 다.
+  const three = { BLOCKED_ANSWER, UNCLEAR_ANSWER, SYSTEM_ERROR_ANSWER };
+  assert.equal(
+    new Set(Object.values(three)).size, 3,
+    `blocked/unclear/error 문구가 겹친다: ${JSON.stringify(three, null, 2)}`,
+  );
+  // 기사 미확보는 그 위에 얹힌 네 번째 사실이다 — error 와도 달라야 장애가 안 감춰진다.
+  assert.notEqual(NEWS_UNAVAILABLE_ANSWER, SYSTEM_ERROR_ANSWER);
+  assert.notEqual(NEWS_UNAVAILABLE_ANSWER, UNCLEAR_ANSWER);
 });
 
 {
@@ -421,11 +431,14 @@ check("3분기 문구가 서로 다르다 — 한 문구로 합치면 세 사실
   const { result, logs } = await askWith("인필드 플라이 알려줘", {
     callLlm: async () => { throw new Error("provider down"); },
   });
-  check("3분기 generic/error — 범위밖 문구가 아니라 이해못함 문구", () => {
+  check("3분기 generic/error — 시스템 오류 전용 문구", () => {
+    assert.equal(result.source, "error", `source: ${result.source}`);
     assert.notEqual(result.answer, BLOCKED_ANSWER,
       "공급자 오류를 '야구 질문이 아니다'로 답했다 — 우리 실패를 유저 탓으로 돌린다");
-    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
-    assert.equal(logs.at(-1)?.matchPath, "unsure");
+    assert.notEqual(result.answer, UNCLEAR_ANSWER,
+      "공급자 오류를 '질문을 못 알아들었다'로 답했다 — 유저가 멀쩡한 문장을 고쳐 쓴다");
+    assert.equal(result.answer, SYSTEM_ERROR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.equal(logs.at(-1)?.matchPath, "error");
   });
 }
 
@@ -434,11 +447,12 @@ check("3분기 문구가 서로 다르다 — 한 문구로 합치면 세 사실
   const { result, logs } = await askWith("LG 어떤 구단이야?", {
     callTeamRagLlm: async () => { throw new Error("team llm down"); },
   });
-  check("3분기 team_rag/error — 범위밖 문구가 아니라 이해못함 문구", () => {
+  check("3분기 team_rag/error — 시스템 오류 전용 문구", () => {
     assert.equal(result.source, "error", `source: ${result.source}`);
     assert.notEqual(result.answer, BLOCKED_ANSWER,
       "구단 경로 오류를 '야구 질문이 아니다'로 답했다");
-    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.notEqual(result.answer, UNCLEAR_ANSWER, "구단 경로 오류를 이해못함 문구로 답했다");
+    assert.equal(result.answer, SYSTEM_ERROR_ANSWER, `문구가 다르다: ${result.answer}`);
     assert.equal(logs.at(-1)?.matchPath, "error");
   });
 }
@@ -448,13 +462,14 @@ check("3분기 문구가 서로 다르다 — 한 문구로 합치면 세 사실
   const { result, logs } = await askWith("어제 LG 무슨 일 있었어?", {
     searchNewsRag: async () => { throw new Error("rpc down"); },
   });
-  check("3분기 news_rag/error — 범위밖도 아니고 기사없음과도 구분된다", () => {
+  check("3분기 news_rag/error — 범위밖도 기사없음도 이해못함도 아닌 전용 문구", () => {
     assert.equal(result.source, "error", `source: ${result.source}`);
     assert.notEqual(result.answer, BLOCKED_ANSWER,
       "기사 검색 오류를 '야구 질문이 아니다'로 답했다");
     assert.notEqual(result.answer, NEWS_UNAVAILABLE_ANSWER,
       "검색 오류와 기사 0건이 같은 답을 낸다 — 장애가 조용히 정상처럼 보인다");
-    assert.equal(result.answer, UNCLEAR_ANSWER, `문구가 다르다: ${result.answer}`);
+    assert.notEqual(result.answer, UNCLEAR_ANSWER, "기사 검색 오류를 이해못함 문구로 답했다");
+    assert.equal(result.answer, SYSTEM_ERROR_ANSWER, `문구가 다르다: ${result.answer}`);
     assert.equal(logs.at(-1)?.matchPath, "error");
   });
 }

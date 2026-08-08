@@ -73,9 +73,6 @@ const LLM_ANSWER = "LG 트윈스는 서울을 연고로 하는 KBO 구단이에�
  */
 const TEAM_ANSWER_SAMPLES: ReadonlyArray<readonly [string, string]> = [
   ["LG트윈스 감독 누구야?", "LG 트윈스 감독은 염경엽입니다."],
-  // ⚠️ 축약형 — 삼순 4차 실표본. 답변 본문에 구단명조차 없다.
-  ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
-  ["LG트윈스 감독 누구야?", "염경엽입니다."],
   ["LG트윈스의 역사", "LG 트윈스는 1990년 창단한 KBO 구단입니다."],
   ["LG트윈스는 어떤 팀이야?", "LG 트윈스는 서울을 연고로 하는 프로야구단입니다."],
   ["두산베어스 홈구장이 어디야?", "두산 베어스의 홈구장은 잠실야구장입니다."],
@@ -424,13 +421,71 @@ async function verifyTeamAnswersSurviveFinalValidator() {
     });
   }
 
-  // 맥락 미전달(기존 호출부)은 기존처럼 fail-close 해야 한다 — 완화가 기본값이 되면 안 된다.
+  // ── 축약 답변은 fail-close 한다 (계약 변경, 삼순 2026-08-08) ─────────────
+  //
+  // ⚠️ 종전 계약은 "질문이 구단을 지명했으면 답변은 주제이탈 denylist 로만 본다" 였다.
+  //   그래야 `염경엽입니다.` 같은 축약 답변이 살았다. 그런데 그 우회가 실제로 열려 있었다:
+  //     `LG 티켓 가격 알려줘` → `LG 홈경기 티켓은 1만원부터 시작해요.` → **통과**
+  //   `티켓`·`연봉`·`여자친구`·`세탁` 은 목록에 없고, 넣어도 다음 단어가 또 나온다.
+  //   양성 안전판을 불완전한 음성 목록으로 바꾸면 결국 다 열린다.
+  //
+  //   그래서 우회를 없애고, 축약 답변 문제는 **프롬프트로** 푼다 — 판정 프롬프트가
+  //   "첫 문장에서 야구/KBO 문맥을 밝히라" 고 강제하므로 provider 는
+  //   `LG 트윈스 감독은 염경엽입니다.` 로 보낸다(위 표본이 그 형태다).
+  //   그래도 문맥이 없으면 fail-close 를 유지한다 — 지어낸 답을 내보내는 것보다 낫다.
+  for (const [question, shortened] of [
+    ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
+    ["LG트윈스 감독 누구야?", "염경엽입니다."],
+  ] as const) {
+    await check(`축약 답변은 fail-close "${shortened}"`, () => {
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: shortened }),
+        question,
+      );
+      assert.equal(validated.kind, "unsure",
+        "야구 문맥이 없는 축약 답변은 통과시키지 않는다(질문 신호 단독 bypass 금지)");
+    });
+  }
+
+  // 그 fail-close 를 감수할 수 있는 근거 — 프롬프트가 문맥 명시를 **실제로** 강제한다.
+  // 이 계약이 빠지면 위 fail-close 는 그냥 기능 퇴행이 된다.
+  await check("프롬프트가 답변 첫 문장에 야구 문맥을 강제한다", () => {
+    assert.match(
+      BASEBALL_QA_SYSTEM_PROMPT,
+      /답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다/,
+      "축약 답변 fail-close 를 상쇄할 프롬프트 계약이 없다",
+    );
+  });
+
+  // 맥락 미전달(기존 호출부)도 동일하게 닫힌다.
   await check("질문 맥락 없으면 기존처럼 닫힌다", () => {
     const validated = validateLlmResponse(
       JSON.stringify({ status: "ANSWER", answer: "염경엽입니다." }),
     );
     assert.equal(validated.kind, "unsure", "맥락 없이 신호어 없는 답변을 통과시켰다");
   });
+
+  // ── 반대가설: 질문 신호만으로 답변 검증을 우회시키지 않는다 (삼순 2026-08-08) ──
+  //
+  // 아래는 전부 **질문에 구단·선수·야구 신호가 있는데 답변은 범위 밖**인 표본이다.
+  // 종전 완화 경로는 이걸 통과시켰다(`LG 티켓 가격` 실측).
+  for (const [question, bad] of [
+    ["문현빈 연봉 얼마야?", "문현빈의 연봉은 3억 원으로 알려져 있어요."],
+    ["문현빈 연봉 얼마야?", "문현빈 선수의 연봉은 3억 원이에요."],
+    ["김도영 여자친구 누구야?", "KIA 타이거즈 김도영 선수의 여자친구는 공개된 바 없어요."],
+    ["LG 티켓 가격 알려줘", "LG 홈경기 티켓은 1만원부터 시작해요."],
+    ["야구 유니폼 세탁법", "유니폼은 찬물에 중성세제로 손세탁하는 게 좋아요."],
+    ["리그 오브 레전드 알려줘", "리그 오브 레전드는 MOBA 장르입니다."],
+  ] as const) {
+    await check(`질문 신호 단독 bypass 금지 "${bad}"`, () => {
+      const validated = validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer: bad }),
+        question,
+      );
+      assert.equal(validated.kind, "unsure",
+        "질문에 야구 신호가 있다는 이유로 범위밖 답변을 통과시켰다");
+    });
+  }
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────

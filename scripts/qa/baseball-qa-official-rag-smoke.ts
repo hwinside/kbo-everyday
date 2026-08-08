@@ -22,6 +22,7 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   UNCLEAR_ANSWER,
+  SYSTEM_ERROR_ANSWER,
   type GlossaryEntry,
   type LlmResult,
   type PlayerRef,
@@ -265,9 +266,11 @@ checkAsync("공식 RAG timeout은 exact fallback으로 수렴한다", async () =
   });
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "error");
-  // 룰 질문에 시스템 오류가 났을 뿐이다 — "야구 질문만 하라"고 답하면 안 된다.
-  assert.equal(result.answer, UNCLEAR_ANSWER);
+  // 룰 질문에 시스템 오류가 났을 뿐이다 — "야구 질문만 하라"도, "못 알아들었다"도 아니다.
+  // 시스템 오류 전용 문구를 쓴다 (삼순 2026-08-08 ①).
+  assert.equal(result.answer, SYSTEM_ERROR_ANSWER);
   assert.notEqual(result.answer, BLOCKED_ANSWER, "시스템 오류에 범위밖 문구 금지");
+  assert.notEqual(result.answer, UNCLEAR_ANSWER, "시스템 오류를 이해못함 문구로 말하면 안 된다");
   assert.ok(!calls.includes("callLlm"), "timeout 뒤 일반 LLM 재호출 금지");
 });
 
@@ -282,7 +285,10 @@ checkAsync("일반 LLM timeout·무응답도 exact fallback으로 수렴한다",
       callLlm,
     });
     const result = await answerQuestion("u1", "잔루만루가 뭔데", deps);
-    assert.equal(result.answer, UNCLEAR_ANSWER);
+    // provider throw = 우리 고장(`error`) / 빈 응답 = 판정 불명확(`unsure`).
+    // 두 실패는 유저에게 다른 사실을 말해야 한다 (삼순 2026-08-08 ①).
+    const expected = result.source === "error" ? SYSTEM_ERROR_ANSWER : UNCLEAR_ANSWER;
+    assert.equal(result.answer, expected, `source=${result.source} 인데 문구가 다르다`);
     assert.notEqual(result.answer, BLOCKED_ANSWER, "provider 실패에 범위밖 문구 금지");
     assert.ok(["unsure", "error"].includes(result.source));
   }

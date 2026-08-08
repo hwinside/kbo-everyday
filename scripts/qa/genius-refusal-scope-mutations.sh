@@ -10,7 +10,17 @@
 set -uo pipefail
 cd "$(dirname "$0")/../.."
 
+# ⚠️ 게이트가 **둘**인 이유 (자체 발견 2026-08-08).
+#
+# 답변측 검증(`answerInQuestionScope`)은 refusal-scope 게이트가 안 태운다 — 그 게이트는
+# 거절 문구·라우팅 계약이 대상이고, 답변 폐기 축은 team-fullname-routing 게이트가 갖고 있다.
+# 그걸 모르고 M20~M22 를 refusal-scope 하나로만 판정했더니 전부 GREEN 이 떴고, 그건
+# "게이트가 못 잡았다"가 아니라 **내가 엉뚱한 게이트에 물었다**는 뜻이었다.
+#
+# 변이가 어느 계약을 건드리는지에 따라 판정 게이트를 붙인다. 둘 중 **하나라도 RED** 면
+# 그 변이는 잡힌 것이다(계약이 그 게이트에 있다는 뜻).
 GATE="npx tsx scripts/qa/genius-refusal-scope-smoke.ts"
+GATE_ANSWER="npx tsx scripts/qa/team-fullname-routing-smoke.ts"
 FILES=(
   "src/lib/baseball-qa/pipeline.ts"
   "src/lib/constants/baseball-genius.ts"
@@ -42,6 +52,20 @@ mutate() {
   local name="$1"; shift
   "$@"
   if $GATE >/dev/null 2>&1; then
+    echo "GREEN(검출실패) $name"
+    fail=1
+  else
+    echo "RED $name"
+  fi
+  restore
+}
+
+# 답변측 검증 계약(`answerInQuestionScope`·프롬프트 문맥 강제)을 건드리는 변이 전용.
+# 두 게이트 중 하나라도 RED 면 잡힌 것이다.
+mutate_answer() {
+  local name="$1"; shift
+  "$@"
+  if $GATE >/dev/null 2>&1 && $GATE_ANSWER >/dev/null 2>&1; then
     echo "GREEN(검출실패) $name"
     fail=1
   else
@@ -154,8 +178,34 @@ mutate "M17 메타어를 선언 순서로 제거 (프로야구 규칙 누락 재
   perl -0pi -e 's/    for \(const meta of SCOPE_META_WORDS_LONGEST_FIRST\) \{/    for (const meta of SCOPE_META_WORDS) {/' src/lib/baseball-qa/pipeline.ts
 
 # M18 시스템 오류를 다시 범위밖 문구로 되돌린다 (우리 실패를 유저 질문 탓으로 돌리는 그 사고)
-mutate "M18 오류 경로 문구를 BLOCKED 로 되돌림" \
-  perl -0pi -e 's/return settle\(UNCLEAR_ANSWER, "error"\);/return settle(BLOCKED_ANSWER, "error");/g' src/lib/baseball-qa/pipeline.ts
+#
+# ⚠️ 자체 발견: 처음엔 `settle(UNCLEAR_ANSWER, "error")` 를 노렸는데, 그 사이 오류 경로가
+#   `SYSTEM_ERROR_ANSWER` 로 바뀌어 **패턴이 소스에 없었다**. 치환이 안 일어나면 게이트는
+#   당연히 GREEN 이고, 그건 "검출 실패" 로 위장된다. 그래서 대상 존재부터 확인한다.
+grep -q "export const SYSTEM_ERROR_ANSWER" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M18 대상(SYSTEM_ERROR_ANSWER)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate "M18 오류 전용 문구를 BLOCKED 로 되돌림" \
+  perl -0pi -e 's/export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER;/export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;/' src/lib/baseball-qa/pipeline.ts
+
+# M19 시스템 오류와 이해못함을 **한 문구로 합친다** — 삼순 2026-08-08 ① 이 지적한 그 상태.
+#     유저는 우리 장애를 "질문을 못 알아들었다" 로 듣고 멀쩡한 문장을 고쳐 쓴다.
+mutate "M19 오류 문구를 UNCLEAR 와 동일하게 (3분기 → 2분기 퇴화)" \
+  perl -0pi -e 's/export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER;/export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_UNCLEAR_ANSWER;/' src/lib/baseball-qa/pipeline.ts
+
+# M20 답변측 고정밀 앵커를 지운다 → 구단·선수 정상 답변이 다시 폐기된다(이 PR 이 고친 병목).
+grep -q "ANSWER_SCOPE_ANCHORS" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M20 대상(ANSWER_SCOPE_ANCHORS)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
+mutate_answer "M20 답변측 앵커 무력화 (구단·선수 답변 재폐기)" \
+  perl -0pi -e 's/    ANSWER_SCOPE_ANCHORS\.some\(\(word\) => matchesAnswerAnchor\(tokens, word\)\);/    false;/' src/lib/baseball-qa/pipeline.ts
+
+# M21 주제이탈 denylist 를 **AND 가 아니라 무시**하게 만든다 → `LG 티켓 가격` 이 다시 통과.
+#     삼순이 반대가설로 제시한 그 경로다.
+mutate_answer "M21 주제이탈 denylist 우회 (질문 신호 단독 bypass 재현)" \
+  perl -0pi -e 's/  if \(ANSWER_OFF_TOPIC\.test\(normalized\)\) return false;//' src/lib/baseball-qa/pipeline.ts
+
+# M22 프롬프트의 야구 문맥 강제를 제거한다 → 축약 답변 fail-close 를 상쇄할 근거가 사라진다.
+mutate_answer "M22 프롬프트의 답변 문맥 명시 강제 제거" \
+  perl -0pi -e 's/답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다/답변은 자유롭게 쓴다/' src/lib/baseball-qa/gemini-request.ts
 
 echo
 if [ "$fail" -eq 0 ]; then
