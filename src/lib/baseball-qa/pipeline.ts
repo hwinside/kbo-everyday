@@ -885,8 +885,97 @@ function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
   // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
   return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
 }
-const NAMED_STAT_QUERY =
-  /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+/**
+ * `<이름> <지표>` 모양의 **선수 기록 질문** 판정.
+ *
+ * ── 왜 정규식 하나로 두지 않는가 (2026-08-08 인입 3,162건 전수 감사) ──────────────
+ *
+ * 종전 구현은 이름 자리를 `[가-힣]{2,12}` 로 두었다. 사람 이름을 잡으려는 자리인데
+ * **한국어 아무 단어나** 걸린다. 그 결과 명백한 룰·용어 질문이 "선수 기록 요구"로
+ * 오인돼 `blocked` 로 끝났다 — 감사에서 라우팅 즉시차단 108건 중 **72건(67%)**이
+ * 이 한 줄 때문이었다. 실표본:
+ *
+ *     루킹 삼진이 뭐야        head=`루킹`
+ *     만루 홈런이 뭐야?       head=`만루`   ← 사전에 `만루홈런` 항목이 있는데도 차단
+ *     홀드와 세이브의 차이가 뭐야? head=`홀드와`
+ *     끝내기 안타             head=`끝내기` ← 사전 항목
+ *     그라운드 홈런이 뭐야?    head=`그라운드`
+ *
+ * ── 왜 "접미 필수화"(`?` 삭제)로 풀지 않았는가 (삼순 NO-GO, 2026-08-08) ──────────
+ *
+ * 값 요구 접미(`몇`·`얼마`)를 필수로 만들면 72건이 한 번에 풀리지만, **접미 없는
+ * 수치 질문**이 통째로 열린다. 실측으로 확인했다:
+ *
+ *     이대호 홈런 / 이승엽 홈런   blocked → 열림   (은퇴 선수, 운영 DB 에 없음)
+ *     홍길동 홈런                blocked → 열림   (가공 인물)
+ *
+ * 열리면 generic LLM 이 숫자를 지어낸다. 과차단은 "못 알려드려요" 안내로 끝나지만
+ * 누수는 **없는 기록을 사실처럼 말하는** 것이라 결과가 비대칭이다.
+ *
+ * ── 그래서 이름 자리를 "사람 이름 모양"으로 좁힌다 ─────────────────────────────
+ *
+ * 반대가설을 만들 수 없는 축만 코드로 둔다(2026-08-07 확정 원칙):
+ *   ① 로스터 등재명이면 사람이다 — 이견의 여지가 없다.
+ *   ② 한국 성씨는 **닫힌 집합**이다. `성 1자 + 이름 1~3자` 는 은퇴·가공 인물까지
+ *      포함해 사람 이름 모양을 잡는다(`이대호`·`홍길동`이 여기서 방어된다).
+ *   ③ 야구 용어는 사람 이름이 아니다 — `타율`·`세이브`·`안타` 가 성씨로 시작해도
+ *      용어 사전에 있으면 이름이 아니다. 로스터와 용어 사전의 교집합은 **0** 이라
+ *      (실측) 이 예외가 실제 선수를 가릴 수 없다.
+ *
+ * ⚠️ 2자 외국인 등록명(`네일`·`올러`)은 ①로 잡힌다. 로스터에 없는 2자 외국인
+ *    (은퇴·이적)은 이 판정을 통과해 LLM 범위 가드로 내려간다 — 알려진 한계이고,
+ *    한국 성씨가 아닌 2자 토큰까지 이름으로 보면 룰 용어가 다시 통째로 막힌다.
+ */
+const NAMED_STAT_HEAD =
+  /([가-힣]{2,12})(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;
+
+/**
+ * 한국 성씨 **닫힌 집합**. 은퇴·가공 인물까지 이름 모양으로 잡기 위한 것이라
+ * 로스터에 의존하지 않는다(로스터는 현역만 담는다).
+ */
+const KOREAN_SURNAMES = new Set(
+  ("김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허유남심노하곽성차주우구민진지엄채원천방공현함변염여추도소석선설마길연위표명기반왕금옥육인맹제모탁국어은편용")
+    .split(""),
+);
+
+/** 토큰 끝의 조사를 떼어낸 핵. `홀드와` → `홀드` */
+function stripNameParticle(token: string): string {
+  return token.replace(/(?:의|은|는|이|가|과|와|랑|도|만|에|에서)$/u, "");
+}
+
+/**
+ * 지표어 앞 토큰이 **사람 이름 모양**인지.
+ * 이름이 아니면 그 문장은 선수 기록 질문이 아니므로 이 가드로 닫지 않는다.
+ */
+function looksLikePersonName(head: string, players: PlayerRef[]): boolean {
+  const core = stripNameParticle(head);
+  if (!core) return false;
+  // ③ 야구 용어는 사람 이름이 아니다 (로스터 ∩ 용어사전 = 0, 실측)
+  if (BASEBALL_VOCABULARY.includes(core.toLowerCase())) return false;
+  // ① 로스터 등재명(외국인 성만 쓴 경우 포함)
+  for (const p of players) {
+    if (p.name === core) return true;
+    const parts = p.name.split(/\s+/u);
+    if (parts.length > 1 && parts[parts.length - 1] === core) return true;
+  }
+  // ② 한국 성씨 + 총 2~4자
+  return core.length >= 2 && core.length <= 4 && KOREAN_SURNAMES.has(core[0]);
+}
+
+/**
+ * `<사람이름> <지표>` 형태의 선수 기록 질문인가.
+ *
+ * ⚠️ export 하는 이유 — 로스터 정확일치 분기는 `routeQuestion` 경유로는 **관측되지 않는다**.
+ *    현역 선수 수치 질문은 앞단 `history_hold` 가 먼저 가로채기 때문이다(실측: 로스터
+ *    881명 × 지표 13종 × 접미 11종 전수에서 이 분기를 지워도 판정이 한 건도 안 바뀐다).
+ *    분기를 지우면 `history_hold` 조건이 바뀌는 순간 조용히 뚫리므로 남기되, 게이트가
+ *    **함수를 직접 호출**해 검증한다 — 검증할 수 없는 분기를 남기지 않기 위해서다.
+ */
+export function isNamedStatQuery(normalized: string, players: PlayerRef[]): boolean {
+  const m = NAMED_STAT_HEAD.exec(normalized);
+  if (!m) return false;
+  return looksLikePersonName(m[1], players);
+}
 
 /**
  * 구단 질문 중 **팀 단위 수치**를 묻는 것만 결정론적으로 가린다 (삼순 #1100 2차 P0-2).
@@ -1104,7 +1193,7 @@ export function isSupportedRuleTermQuestion(
   );
   const hasRuleIntent = RULE_TERM_INTENT.test(normalized);
   const isOutOfScopeRequest =
-    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) || NAMED_STAT_QUERY.test(normalized);
+    isOutOfScopeIntent(normalized, mentionsTeam(tokens)) || isNamedStatQuery(normalized, players);
   const hasBaseballContext =
     exactGlossaryMatch ||
     mentionsSpecificRuleHint ||
@@ -1138,7 +1227,7 @@ export function isSupportedRuleTermQuestion(
   if (hasPlayerReference(tokens, players)) return false;
   if (mentionsTeam(tokens)) return false;
   if (OUT_OF_SCOPE_INTENT.test(normalized)) return false;
-  if (NAMED_STAT_QUERY.test(normalized)) return false;
+  if (isNamedStatQuery(normalized, players)) return false;
   if (matchGlossary(glossary, question)) return true;
   return false;
 }
@@ -2010,7 +2099,7 @@ export function routeQuestion(
   // 차단하지 않고 LLM 2차 가드로 보낸다(삼순 #1100 1차 P0-1). 팀 stat DB 가 없어
   // 근거없는 수치를 말하면 안 되는 건 LLM 프롬프트의 근거없음 계약이 다룬다.
   // 선수명 + 지표(`기예기르모 에레디아가 타율 얼마야`)는 그대로 닫힌다.
-  if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && NAMED_STAT_QUERY.test(normalized))) {
+  if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && isNamedStatQuery(normalized, players))) {
     return "blocked";
   }
 

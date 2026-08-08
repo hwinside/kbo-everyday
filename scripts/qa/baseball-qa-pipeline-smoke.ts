@@ -26,6 +26,7 @@ import {
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
   isGreetingPhrase,
+  isNamedStatQuery,
   TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
@@ -307,6 +308,108 @@ for (const question of ["김도영 타율 알려줘", "류현진 방어율 알�
 }
 // 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
 assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
+
+// ── `<이름> <지표>` 가드: 이름 자리가 사람 이름 모양일 때만 닫는다 ──────────────────
+// (2026-08-08 인입 3,162건 전수 감사 → 라우팅 즉시차단 108건 중 72건이 이 가드 오탐)
+//
+// ⚠️ 이 두 블록은 **한 쌍으로만 의미가 있다**. rescue 만 검사하면 가드를 통째로 지워도
+//    GREEN 이고, 방어만 검사하면 종전처럼 룰 질문을 다 막아도 GREEN 이다.
+//
+// ① 룰·용어 질문은 지표어가 들어가도 이 가드로 닫히지 않는다.
+//    종전에는 이름 자리가 `[가-힣]{2,12}` 라 `루킹`·`만루`·`홀드와` 가 사람 이름 취급됐다.
+for (const question of [
+  "루킹 삼진이 뭐야",
+  "만루 홈런이 뭐야?",          // 사전에 `만루홈런` 항목이 있는데도 차단되던 실표본
+  "홀드와 세이브의 차이가 뭐야?",
+  "끝내기 안타",                 // 사전 항목
+  "그라운드 홈런이 뭐야?",
+  "좌익수 홈런",
+  "타율과 출루율의 차이가 뭐야?",
+  "세이브랑 홀드가 뭐야?",
+  "안타는 뭐고 홈런은 뭐에요?",
+  "사이클링 홈런",
+  "번트 삼진",
+  "페어와 안타는 다른 건가요",
+]) {
+  assert.notEqual(
+    routeQuestion(question, seedEntries, players),
+    "blocked",
+    `${question}: 룰·용어 질문을 선수 기록 요구로 오인하면 안 된다`,
+  );
+}
+
+// ② 반대 방향 — **접미 없는 수치 질문**도 그대로 닫혀야 한다.
+//    여기가 뚫리면 운영 DB 에 없는 은퇴·가공 인물의 기록을 generic LLM 이 지어낸다.
+//    과차단은 안내로 끝나지만 누수는 없는 숫자를 사실처럼 말하는 것이라 결과가 비대칭이다.
+//    ⚠️ `몇`·`얼마` 가 붙은 형태만 검사하면 이 경로를 통째로 놓친다(삼순 2026-08-08).
+for (const question of [
+  // ⚠️ 은퇴 선수는 **로스터 실측으로만** 고른다. 처음엔 `박찬호`를 은퇴로 넣었는데
+  //    동명의 현역(KT)이 로스터에 있어 `history_hold` 였다 — 내 기대값이 틀린 거짓 RED였다.
+  "이대호 홈런", "이승엽 홈런", "최동원 방어율", "선동열 방어율", "이종범 도루",
+  "홍길동 홈런", "김철수 타점", "박길동 도루",                    // 가공 인물
+  "김도용 홈런",                                                  // 오타로 만들어진 이름
+  "에레디아 타율", "디아즈 홈런",                                 // 외국인 성만
+]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players),
+    "blocked",
+    `${question}: 접미 없는 수치 질문은 닫혀 있어야 한다`,
+  );
+}
+// 현역 로스터 선수는 기존대로 `history_hold`(전용 안내)로 간다 — 라벨이 다르므로 함께 고정한다.
+for (const question of ["김도영 홈런", "구자욱 타율", "오지환 도루"]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players),
+    "history_hold",
+    `${question}: 현역 선수 수치 질문은 history_hold`,
+  );
+}
+
+// ③ 판정 함수 직접 호출 — `routeQuestion` 만으로는 관측되지 않는 축을 고정한다.
+//    현역 선수는 앞단 `history_hold` 가 먼저 가로채서 이 가드까지 오지 않는다. 그래서
+//    로스터 분기를 지워도 라우팅 결과는 그대로다(= 라우팅 검사로는 못 잡는다).
+for (const question of ["네일 방어율", "올러 승수", "쿠싱 타율", "김도영 홈런", "에레디아 타율"]) {
+  assert.equal(
+    isNamedStatQuery(question.normalize("NFKC").toLowerCase(), players),
+    true,
+    `${question}: 선수 기록 질문으로 인식돼야 한다(로스터/외국인 성)`,
+  );
+}
+for (const question of ["루킹 삼진이 뭐야", "만루 홈런이 뭐야?", "좌익수 홈런", "끝내기 안타"]) {
+  assert.equal(
+    isNamedStatQuery(question.normalize("NFKC").toLowerCase(), players),
+    false,
+    `${question}: 룰·용어는 선수 기록 질문이 아니다`,
+  );
+}
+// ④ 이름 자리 길이 상한 — 성씨로 시작하는 **긴 명사**를 사람 이름으로 보면 안 된다.
+//    `고척스카이돔`(고)·`최상위권팀`(최)·`강속구투수`(강)가 여기 걸린다.
+for (const question of ["고척스카이돔 홈런", "최상위권팀 홈런", "강속구투수 삼진"]) {
+  assert.equal(
+    isNamedStatQuery(question.normalize("NFKC").toLowerCase(), players),
+    false,
+    `${question}: 성씨로 시작해도 4자를 넘으면 사람 이름이 아니다`,
+  );
+}
+// ⑤ 조사 제거가 살아 있어야 한다. `홀드와`·`타율과` 의 조사를 못 떼면 용어 예외가 무력해진다.
+for (const question of ["기록에 삼진은 우리가 삼진 당한 거야?", "4타수 4안타가 타율 1.000"]) {
+  assert.notEqual(
+    routeQuestion(question, seedEntries, players),
+    "blocked",
+    `${question}: 조사 결합 용어를 사람 이름으로 오인하면 안 된다`,
+  );
+}
+// ⑥ 용어 예외(사전 어휘는 사람 이름이 아니다)가 살아 있어야 한다.
+for (const question of [
+  "파울팁이 포수 미트에 바로 잡히면 주자는 도루할 수 있어?",
+  "공격팀 선수가 도루하면서 잔디 밟으면 아웃임?",
+]) {
+  assert.notEqual(
+    routeQuestion(question, seedEntries, players),
+    "blocked",
+    `${question}: 야구 용어가 지표어 앞에 와도 사람 이름이 아니다`,
+  );
+}
 // ⚠️ **구단 서술** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
 // 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
 // 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
