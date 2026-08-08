@@ -652,6 +652,43 @@ async function verifyTeamAnswersSurviveFinalValidator() {
         `정상 구단 답변이 폐기됐다: ${answer}`);
     });
   }
+
+  // ── 별도 토큰 쌍은 **인접**해야 한다 (삼순 2026-08-08 4차 P0) ───────────────
+  //
+  // ⚠️ 쌍을 요구해도 "문장 어딘가에 약칭, 어딘가에 별칭" 이면 통과하는 구멍이 남아 있었다.
+  //   두 말이 **서로 다른 절**에 있어도 풀네임으로 오인한다(실측):
+  //     `LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다`
+  //     `삼성은 반도체 기업이고 라이온즈는 사자를 뜻합니다`
+  //   풀네임은 항상 한 덩어리로 쓰이므로 인접으로 좁혀도 위 정상 표본은 안 죽는다.
+  for (const answer of [
+    "LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다",
+    "삼성은 반도체 기업이고 라이온즈는 사자를 뜻합니다",
+    "기아는 자동차 회사이고 타이거즈는 호랑이입니다",
+    "한화는 방산 기업이고 이글스는 독수리를 말합니다",
+    "롯데는 과자 회사고 자이언츠는 거인이라는 뜻입니다",
+  ]) {
+    await check(`구단 쌍 인접성 — 교차절은 풀네임이 아니다 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), false,
+        `약칭·별칭이 떨어져 있는데 풀네임으로 인정했다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "야구 알려줘",
+      ).kind, "unsure", `비야구 답변이 유저에게 나갔다: ${answer}`);
+    });
+  }
+
+  // 인접성을 요구해도 **조사가 붙은 풀네임**은 살아야 한다(`LG의 트윈스는` 같은 형태).
+  for (const answer of [
+    "LG 트윈스는 서울을 연고로 합니다.",
+    "삼성 라이온즈의 연고는 대구입니다.",
+    "그 팀은 두산 베어스입니다.",
+  ]) {
+    await check(`구단 쌍 인접성 — 인접 풀네임은 통과 "${answer}"`, async () => {
+      const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
+      assert.equal(answerInQuestionScope("야구 알려줘", answer), true,
+        `인접 풀네임이 폐기됐다: ${answer}`);
+    });
+  }
 }
 
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────

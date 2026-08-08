@@ -1199,12 +1199,15 @@ function questionTokens(value: string): string[] {
     .match(/[가-힣a-z0-9+]+/g) ?? [];
 }
 
-function tokenMatches(tokens: string[], word: string): boolean {
+/** 한 토큰이 그 단어인가(허용 조사 꼬리포함). `tokenMatches` 의 단일 토큰 버전. */
+function tokenIsWord(token: string, word: string): boolean {
   const needle = word.toLowerCase();
-  return tokens.some((token) => {
-    if (token === needle) return true;
-    return TOKEN_TRIM_SUFFIXES.some((suffix) => token === `${needle}${suffix}`);
-  });
+  if (token === needle) return true;
+  return TOKEN_TRIM_SUFFIXES.some((suffix) => token === `${needle}${suffix}`);
+}
+
+function tokenMatches(tokens: string[], word: string): boolean {
+  return tokens.some((token) => tokenIsWord(token, word));
 }
 
 /**
@@ -1735,20 +1738,48 @@ function hasAnswerBaseballSignal(value: string): boolean {
  * 역사 구단(`SK 와이번즈`)처럼 현재 alias 표에 없는 이름은 여기서 안 잡히지만,
  * 프롬프트가 첫 문장에 야구/KBO 문맥을 강제하므로 `kbo` 앵커로 산다.
  */
+/**
+ * 답변 토큰이 그 구단어인가. 질문 꼬리(`베어스는`)에 더해 **서술어 꼬리**도 허용한다.
+ *
+ * ⚠️ 자체 발견(2026-08-08) — 인접 쌍으로 좁히면서 `그 팀은 두산 베어스입니다.` 가 죽었다.
+ *   `입니다` 는 질문 꼬리 목록(`TOKEN_TRIM_SUFFIXES`)에 없다 — 그 목록은 **질문** 어절용이고
+ *   답변은 서술어로 끝나기 때문이다(`ANSWER_PREDICATE_TAILS` 가 같은 이유로 존재한다).
+ *   답변측 판정에만 더한다 — 질문측 `tokenMatches` 는 그대로 둔다.
+ */
+function answerTokenIsTeamWord(token: string, word: string): boolean {
+  if (tokenIsWord(token, word)) return true;
+  const needle = word.toLowerCase();
+  return ANSWER_PREDICATE_TAILS.some((tail) => token === `${needle}${tail}`);
+}
+
 function answerMentionsTeam(tokens: string[]): boolean {
   return TEAM_ALIASES.some(({ shorts, nicks }) => {
-    // ① 결합 토큰 — `lg트윈스`·`두산베어스의`
+    // ① 결합 토큰 — `lg트윈스`·`두산베어스의`·`두산베어스입니다`
     const joined = tokens.some((token) =>
       shorts.some((short) => {
         if (!token.startsWith(short)) return false;
         const rest = token.slice(short.length);
-        return nicks.some((nick) =>
-          rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
+        return nicks.some((nick) => {
+          if (!rest.startsWith(nick)) return false;
+          const tail = rest.slice(nick.length);
+          return isGrammaticalTail(tail) || ANSWER_PREDICATE_TAILS.includes(tail);
+        });
       }));
     if (joined) return true;
-    // ② 별도 토큰 쌍 — `LG 트윈스`. **같은 팀**의 약칭과 별칭이 모두 있어야 한다.
-    return shorts.some((short) => tokenMatches(tokens, short)) &&
-      nicks.some((nick) => tokenMatches(tokens, nick));
+    // ② 별도 토큰 쌍 — `LG 트윈스`. **서로 붙어 있을 때만** 인정한다.
+    //
+    // ⚠️ 종전에는 "문장 어딘가에 약칭이 있고 어딘가에 별칭이 있으면" 통과시켰다. 그러면
+    //   두 말이 **서로 다른 절**에 떨어져 있어도 풀네임으로 오인한다(삼순 2026-08-08 4차 P0):
+    //     `LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다`  → 통과했다
+    //     `삼성은 반도체 기업이고 라이온즈는 사자를 뜻합니다`  → 통과했다
+    //   풀네임은 항상 한 덩어리로 쓰이므로 인접으로 좁혀도 정상 답변은 안 죽는다
+    //   (`LG 트윈스 감독은 …`·`삼성 라이온즈는 대구를 …`).
+    return tokens.some((token, index) => {
+      const next = tokens[index + 1];
+      if (next === undefined) return false;
+      return shorts.some((short) => answerTokenIsTeamWord(token, short)) &&
+        nicks.some((nick) => answerTokenIsTeamWord(next, nick));
+    });
   });
 }
 

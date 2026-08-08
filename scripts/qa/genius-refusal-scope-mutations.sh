@@ -229,8 +229,18 @@ mutate_answer "M25 답변측 구단 판정을 질문용 broad mentionsTeam 에 �
 
 # M26 별도 토큰 쌍 인정을 제거한다 → `LG 트윈스`(띄어쓴 형태) 정상 답변이 폐기된다.
 #     과차단 방향도 게이트가 잡는지 본다 — "다 막으면 통과" 를 막는 축이다.
+#     ⚠️ 대상 문자열 존재를 먼저 확인한다 — 본문이 바뀜 때 변이가 조용히 no-op 이 되면
+#     그건 "게이트가 잡았다"가 아니라 아무것도 안 재었다는 뜻이다(이 PR 에서 실제로 겪음).
+grep -q "answerTokenIsTeamWord(token, short)" src/lib/baseball-qa/pipeline.ts || {
+  echo "FATAL M26 대상(별도 토큰 쌍 판정)이 소스에 없다 — 변이가 무의미하다"; exit 2; }
 mutate_answer "M26 별도 토큰 구단쌍 인정 제거 (풀네임 과차단)" \
-  perl -0pi -e 's/    return shorts\.some\(\(short\) => tokenMatches\(tokens, short\)\) &&\n      nicks\.some\(\(nick\) => tokenMatches\(tokens, nick\)\);/    return false;/' src/lib/baseball-qa/pipeline.ts
+  perl -0pi -e 's/      return shorts\.some\(\(short\) => answerTokenIsTeamWord\(token, short\)\) &&\n        nicks\.some\(\(nick\) => answerTokenIsTeamWord\(next, nick\)\);/      return false;/' src/lib/baseball-qa/pipeline.ts
+
+# M27 인접 조건을 **anywhere-pair 로 다시 넓힌다** — 삼순 4차 P0 그 상태.
+#     `LG는 가전 회사이고 트윈스는 쌈둥이라는 뜻입니다` 가 다시 통과한다.
+#     M25·M23 과 같은 축 — "판정을 다시 느슬하게" 되돌리는 리팩토링을 게이트가 막는다.
+mutate_answer "M27 구단쌍 인접성을 anywhere-pair 로 재확대" \
+  perl -0pi -e 's/    return tokens\.some\(\(token, index\) => \{\n      const next = tokens\[index \+ 1\];\n      if \(next === undefined\) return false;\n      return shorts\.some\(\(short\) => answerTokenIsTeamWord\(token, short\)\) &&\n        nicks\.some\(\(nick\) => answerTokenIsTeamWord\(next, nick\)\);\n    \}\);/    return shorts.some((short) => tokens.some((t) => answerTokenIsTeamWord(t, short))) \&\&\n      nicks.some((nick) => tokens.some((t) => answerTokenIsTeamWord(t, nick)));/' src/lib/baseball-qa/pipeline.ts
 
 echo
 if [ "$fail" -eq 0 ]; then
