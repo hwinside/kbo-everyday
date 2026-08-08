@@ -1522,32 +1522,20 @@ export function resolveNearMissPlayerName(
   const rosterNames = [...new Set(players.map((p) => p.name))].filter((n) => HANGUL_NAME.test(n));
   const rosterNameSet = new Set(rosterNames);
 
-  // ⚠️ **첫 어절만** 본다 (2026-08-08 게이트가 잡은 오탐 — 세 번째).
-  //   문장 전체를 훑으면 `LG트윈스 창단 이야기 알려줘` 의 `이야기` 가 로스터 `이준기` 와
-  //   1음절 차라 **구단 서술 질문이** "혹시 이준기 선수를?" 로 되돌아왔다(team_rag 회귀).
-  //   일반명사를 열거해 빼는 건 불가능하다 — 한국어 명사는 닫힌 부류가 아니다.
-  //
-  //   대신 **위치**로 좁힌다: 오타 난 이름을 물을 때 그 이름은 문장 머리에 온다
-  //   (`임창규 어떤 선수야` · `임창규는 어느 팀이야` · `임창규 알려줘`).
-  //   반면 일반명사가 우연히 걸리는 자리는 서술어가 모이는 문장 뒤쪽이다.
-  //
-  // ⚠️ 틀렸을 때의 비용이 비대칭이라 이쪽으로 기울인다: 여기서 놓치면 그저 기존 경로로
-  //   가지만(=지금과 같음), 잘못 잡으면 엉뚱한 이름을 들이민다(=새 오답).
-  //   손해를 명시한다: `혹시 임창규 알아?` 처럼 앞에 말이 붙으면 제안을 못 한다. 받아들인다.
-  const head = tokens[0];
-  if (head === undefined) return null;
-  // ⚠️ 조사를 떼어낸 핵으로 본다. 안 떼면 `임창규는` 가 `임찬규` 와 길이가 달라
-  //   같은 오타가 **조사 유무로 갈라진다**(실측: `임창규 어떤 선수야` 는 잡히고
-  //   `임창규는 어느 팀이야` 는 빠졌다). 기존 이름 매칭과 같은 조사 집합을 쓴다.
-  for (const token of stripTokenSuffix(head)) {
-    if (!HANGUL_NAME.test(token)) continue;
-    if (rosterNameSet.has(token)) continue;
-    // 야구 어휘·지표어·구단명은 이름 후보가 아니다 — 우연히 한 글자 차이여도 교정하면 안 된다.
-    if (BASEBALL_VOCABULARY.includes(token)) continue;
-    if (STAT_WORDS.includes(token)) continue;
-    if (TEAM_WORDS.includes(token)) continue;
-    const candidates = rosterNames.filter((name) => isOneSyllableSwap(token, name));
-    if (candidates.length === 1) return candidates[0];
+  for (const rawToken of tokens) {
+    // ⚠️ 조사를 떼어낸 핵으로 본다. 안 떼면 `임창규는` 가 `임찬규` 와 편집거리 2 가 돼
+    //   같은 오타가 **조사 유무로 갈라진다**(실측: `임창규 어떤 선수야` 는 잡히고
+    //   `임창규는 어느 팀이야` 는 빠졌다). 기존 이름 매칭과 같은 조사 집합을 쓴다.
+    for (const token of stripTokenSuffix(rawToken)) {
+      if (!HANGUL_NAME.test(token)) continue;
+      if (rosterNameSet.has(token)) continue;
+      // 야구 어휘·지표어·구단명은 이름 후보가 아니다 — 우연히 한 글자 차이여도 교정하면 안 된다.
+      if (BASEBALL_VOCABULARY.includes(token)) continue;
+      if (STAT_WORDS.includes(token)) continue;
+      if (TEAM_WORDS.includes(token)) continue;
+      const candidates = rosterNames.filter((name) => isOneSyllableSwap(token, name));
+      if (candidates.length === 1) return candidates[0];
+    }
   }
   return null;
 }
@@ -2432,10 +2420,7 @@ async function answerPlayerDescriptiveQuestion(
     if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
-  // 숫자는 tier2 계약대로 전면 HOLD 다. 단 **근거 문장이 직접 진술한 사건 연도**만 열어준다
-  // (`임찬규 입단 시기` → 근거 "2011년 LG 트윈스에 1차 지명으로 입단하여").
-  // 횟수·순위·금액은 그대로 닫힌다 — 상세 근거는 `allowGroundedEventYear` 주석.
-  const validated = validateRagResponse(llm.text, { allowGroundedEventYear: true, evidence });
+  const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") return failClose();
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
