@@ -319,10 +319,6 @@ export function crossCheckDataset({ label, rows, kbo, columns, checkRowSet = tru
  * 그래서 대조·판정·예외를 전부 여기서 끝낸다. 호출자는 이걸 부를 수만 있다.
  */
 export async function assertSourceTruth({ browser, kboBase, season, batters, pitchers, defense, defenseRuns, roster, foreignIdSource, rowLedger, log = console.log }) {
-  const page = await browser.newPage();
-  const failures = [];
-  const unstableNotes = [];
-
   /* ── 행 불안정 원장 ─────────────────────────────────────────
    *
    * 크롤이 N회 읽어 "이 행은 원본이 흔든다"를 알아내도, 오라클은 그걸 모른다.
@@ -332,10 +328,35 @@ export async function assertSourceTruth({ browser, kboBase, season, batters, pit
    * 그래서 크롤의 관측 사실을 **산출물과 같은 promote payload** 에 실어 여기서 읽는다.
    * ⚠︎ 원장은 **행 존재** 판정만 면제한다. 값 대조는 그대로 엄격하다.
    */
+  /* ⚠︎ 원장 미전달을 **여기서** 죽인다(삼순 P0, 2026-08-08).
+   *
+   * 크롤 내부 promote 는 payload 파생이라 항상 넘어오지만, updater 가 PR 직전에 부르는
+   * 독립 verifier 는 별도 프로세스다. 그쪽이 안 넘기면 `ledgerKeys = ∅` 이 돼
+   * 행 면제와 digest 정규화가 통째로 꺼지고 정체가 그대로 재현된다.
+   *
+   * caller 쪽에 "넘겼는가" 검사를 두면 그건 문자열 게이트라 한 줄 삭제에 GREEN 이다
+   * — 실측으로 Q1(rowLedger 미전달)·Q2(원장 경로 제거) 변이가 둘 다 GREEN 이었다.
+   * 그래서 계약을 대조 로직 안으로 옮겼다. 어느 경로로 들어오든 원장이 없으면 죽는다.
+   *
+   * 비어있는 원장은 정상이다(흔든 행이 없는 날). 없는 것과 비어있는 건 다르다. */
+  if (!rowLedger || typeof rowLedger !== "object"
+    || typeof rowLedger.rows !== "object" || rowLedger.rows === null) {
+    throw new Error(
+      "row_ledger_missing: 행 불안정 원장이 전달되지 않았다 — 원장 없이 대조하면"
+        + " 원본 행 불안정 면제와 digest 정규화가 모두 꺼져 거짓 불일치로 정체한다(fail-close)",
+    );
+  }
+
   const ledgerKeys = ledgerKeySet(rowLedger);
   // 원장은 몇 행짜리 예외일 때만 유효하다. 통째로 부풀면 그건 면제가 아니라
   // 행 집합 대조를 꺼버린 것이다 — 그 상태에서도 전 게이트는 GREEN 이므로 상한을 둔다.
   assertLedgerBounded(rowLedger, defense?.length ?? 0, { label: "수비" });
+
+  // ⚠︎ 입력 계약을 다 본 뒤에야 네트워크를 열어야 한다. 순서가 반대면 배선이 끊겼을 때
+  // 원인이 다른 실패(브라우저·페이지)로 가려져 진단이 엉뚱한 데로 간다.
+  const page = await browser.newPage();
+  const failures = [];
+  const unstableNotes = [];
   try {
     const kboPitchers = await collectKboPages(
       page, `${kboBase}/Record/Player/PitcherBasic/Basic1.aspx?sort=GAME_CN`, season,

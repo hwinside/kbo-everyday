@@ -32,6 +32,7 @@ import {
   planRowSnapshot,
 } from "../lib/source-row-stability.mjs";
 import {
+  assertSourceTruth,
   crossCheckDataset,
   digestSourceMaps,
   judgeWithConfirmation,
@@ -481,6 +482,51 @@ check("★ 오라클이 원장을 **payload 파생**으로 받는다(caller 주�
   );
   // 비어있는 원장은 정상이지만 아예 없는 건 실패다.
   assert.match(source, /key === "rowLedger"/);
+});
+
+console.log("\n▸ ★ 삼순 3차 P0 — 독립 verifier 경로에서 원장이 끊기면 E2E 가 그대로 재정체한다");
+
+/* ⚠︎ 자체발견 4차: "verifier 가 rowLedger 를 넘기는가"를 소스 문자열로만 보면
+ * Q1(`rowLedger,` 한 줄 삭제)·Q2(원장 경로 제거) 변이가 둘 다 GREEN 이었다(실측).
+ * 그래서 계약을 **대조 로직 안**으로 옮겼다 — 어느 경로로 들어오든 원장이 없으면 죽는다.
+ * 여기서는 그 행동을 **직접 호출**로 확인한다(문자열 검사 아님). */
+const truthInput = (extra) => ({
+  browser: { newPage: async () => { throw new Error("browser_should_not_open"); } },
+  kboBase: "https://example.invalid",
+  season: "2026",
+  batters: [], pitchers: [], defense: [], defenseRuns: {}, roster: [], foreignIdSource: "x",
+  log: () => {},
+  ...extra,
+});
+
+check("★ 원장이 안 넘오면 대조 자체가 fail-close 된다(배선이 끊어져도 조용히 종전 동작으로 돌아가지 않는다)", async () => {
+  await assert.rejects(() => assertSourceTruth(truthInput()), /row_ledger_missing/);
+});
+
+check("★ 검사는 브라우저를 열기 전에 끝난다(원인이 다른 실패로 가려지면 안 된다)", async () => {
+  await assert.rejects(
+    () => assertSourceTruth(truthInput()),
+    (error) => !/browser_should_not_open/.test(error.message),
+  );
+});
+
+check("비어있는 원장은 정상이다 — 과잉차단하지 않는다(흔든 행이 없는 날)", async () => {
+  await assert.rejects(
+    () => assertSourceTruth(truthInput({ rowLedger: { rows: {} } })),
+    (error) => {
+      assert.ok(!/row_ledger_missing/.test(error.message), "빈 원장을 죽이면 정상 런이 전부 죽는다");
+      return true;
+    },
+  );
+});
+
+check("★ 독립 verifier 가 원장을 읽고 넘긴다(updater 가 PR 직전에 부르는 경로)", () => {
+  const source = readFileSync("scripts/qa/stats-source-truth-verify.mjs", "utf8");
+  assert.match(source, /defense-row-ledger\.json/, "원장 파일을 읽어야 한다");
+  // assertSourceTruth 호출 인자 객체 안에 rowLedger 가 실리는지를 본다.
+  const callBlock = source.match(/await assertSourceTruth\(\{([\s\S]*?)\n {2}\}\);/);
+  assert.ok(callBlock, "assertSourceTruth 호출을 찾지 못했다");
+  assert.match(callBlock[1], /(^|\n)\s*rowLedger,/, "원장을 넘기지 않으면 ledgerKeys=∅ 로 면제가 꺼진다");
 });
 
 check("★ 원장 파일이 workflow allowlist 에 들어있다(없으면 첫 PR 이 무조건 auto-merge HOLD)", () => {
