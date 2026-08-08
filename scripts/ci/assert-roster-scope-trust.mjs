@@ -11,7 +11,28 @@
  */
 
 import { readFileSync } from "node:fs";
-import { EVIDENCE_PATH_ENV, decideRosterScopeTrust } from "../lib/roster-scope-trust.mjs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  EVIDENCE_PATH_ENV,
+  decideRosterScopeTrust,
+  resolveExpectedSlotCount,
+} from "../lib/roster-scope-trust.mjs";
+
+/* ── production 정본에서 기대 슬롯 수를 **독립으로** 계산한다 ──────────────
+ *
+ * 증거가 자기 기대치를 실고 오면 순환이다 — 크롤 대상 팀이 1팀으로 줄어도
+ * "1팀 중 1팀 완주"가 되어 9팀이 사라진 PR 이 자동머지된다(삼순 지적 ②).
+ * 읽지 못하면 통과가 아니라 보류다. */
+const HERE = dirname(fileURLToPath(import.meta.url));
+const TEAMS_SOURCE_PATH = join(HERE, "..", "..", "src", "lib", "constants", "teams.ts");
+
+let expectedSlotCount = null;
+try {
+  expectedSlotCount = resolveExpectedSlotCount(readFileSync(TEAMS_SOURCE_PATH, "utf8"));
+} catch (error) {
+  console.error(`   production 팀 정본을 읽지 못했다 — ${TEAMS_SOURCE_PATH}: ${error?.message ?? error}`);
+}
 
 const path = process.env[EVIDENCE_PATH_ENV];
 
@@ -26,7 +47,7 @@ if (path) {
   console.error(`   ${EVIDENCE_PATH_ENV} 가 설정되지 않았다 — 크롤 스텝의 env 배선을 확인하라`);
 }
 
-const decision = decideRosterScopeTrust({ evidenceRaw });
+const decision = decideRosterScopeTrust({ evidenceRaw, expectedSlotCount });
 
 if (decision.trusted) {
   console.log(`✅ roster 범위 자동머지 허용 — ${decision.detail}`);

@@ -15,6 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    # ⚠️ ROSTER_COMPLETION_EVIDENCE 는 **job 레벨**에 둔다 — producer(크롤 스텝)와
+    # consumer(자동머지 판정)가 반드시 같은 경로를 봐야 한다.
+    # step 레벨에 두면 크롤은 증거를 쓰지만 판정 스텝에서는 env 가 비어 있어
+    # 항상 `evidence_missing` 이 되고, 가드가 영구 보류로 굳는다(삼순 실증).
+    # workspace 밖(RUNNER_TEMP)이라 allowlist·git diff 에 섞이지 않는다.
+    env:
+      ROSTER_COMPLETION_EVIDENCE: ${{ runner.temp }}/roster-completion-evidence.json
+
     steps:
       - uses: actions/checkout@v4
 
@@ -47,12 +55,9 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
-      # ROSTER_COMPLETION_EVIDENCE: 완주 계약 통과 증거를 남길 경로.
+      # 완주 계약 증거를 남긴다(경로는 job 레벨 env — 판정 스텝과 같은 값이어야 한다).
       # 아래 `②-b roster_scope` 가드가 이 증거에 결속돼 있다 — 없으면 종전대로 보류다.
-      # 러너 workspace 밖(RUNNER_TEMP)에 두어 allowlist·git diff 에 섞이지 않게 한다.
       - name: Crawl roster
-        env:
-          ROSTER_COMPLETION_EVIDENCE: ${{ runner.temp }}/roster-completion-evidence.json
         run: node scripts/crawl-roster-v2.mjs
 
       - name: Normalize roster schema

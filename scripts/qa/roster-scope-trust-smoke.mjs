@@ -10,14 +10,20 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+// ⚠︎ 워크플로 YAML 은 문자열이 아니라 **파싱해서** 본다 — step/job env 스코프 결손은
+// 문자열 존재 검사로 안 잡힌다. 파서는 repo 에 이미 있는 js-yaml 을 쓴다.
+import yaml from "js-yaml";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   EVIDENCE_PATH_ENV,
+  EVIDENCE_SCHEMA,
   TRUST_DENY_REASONS,
   buildCompletionEvidence,
   decideRosterScopeTrust,
+  parseProductionTeamIds,
+  resolveExpectedSlotCount,
 } from "../lib/roster-scope-trust.mjs";
 
 let passed = 0;
@@ -33,20 +39,28 @@ const CRAWLER = "scripts/crawl-roster-v2.mjs";
 const CI_SCRIPT = "scripts/ci/assert-roster-scope-trust.mjs";
 
 const RUN_ENV = { GITHUB_RUN_ID: "12345", GITHUB_RUN_ATTEMPT: "1" };
+
+/* ⚠︎ 게이트도 기대 슬롯 수를 하드코딩하지 않는다 — 실제 production 정본에서 뽑는다.
+ * 숫자를 여기 적으면 팀이 늘어난 날 게이트가 먼저 거짓 RED 를 낸다. */
+const TEAMS_SOURCE = readFileSync("src/lib/constants/teams.ts", "utf8");
+const PROD_SLOTS = resolveExpectedSlotCount(TEAMS_SOURCE);
+
 const goodEvidence = {
-  schema: "roster-completion-evidence/1",
+  schema: EVIDENCE_SCHEMA,
   complete: true,
-  summary: "완주 20/20 슬롯",
-  expectedSlots: 20,
-  observedSlots: 20,
+  summary: `완주 ${PROD_SLOTS}/${PROD_SLOTS} 슬롯`,
+  expectedSlots: PROD_SLOTS,
+  observedSlots: PROD_SLOTS,
   failures: 0,
   runId: "12345",
   runAttempt: "1",
 };
-const decide = (evidence, env = RUN_ENV) =>
+
+const decide = (evidence, env = RUN_ENV, expectedSlotCount = PROD_SLOTS) =>
   decideRosterScopeTrust({
     evidenceRaw: evidence === null ? null : JSON.stringify(evidence),
     env,
+    expectedSlotCount,
   });
 
 console.log("\n▸ 정상 경로 — 이번 런이 완주했으면 통과한다");
@@ -54,26 +68,26 @@ console.log("\n▸ 정상 경로 — 이번 런이 완주했으면 통과한다"
 check("★ 이번 런 + 전 슬롯 완주 → trusted", () => {
   const d = decide(goodEvidence);
   assert.equal(d.trusted, true, d.detail);
-  assert.match(d.detail, /20\/20/);
+  assert.match(d.detail, new RegExp(`${PROD_SLOTS}\\/${PROD_SLOTS}`));
 });
 
 console.log("\n▸ ★ fail-close 축 — '판단 불가'는 전부 보류다");
 
 check("★ 증거 없음 → 보류(배선이 끊어지면 종전 동작으로 돌아간다)", () => {
-  const d = decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV });
+  const d = decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS });
   assert.equal(d.trusted, false);
   assert.equal(d.reason, TRUST_DENY_REASONS.EVIDENCE_MISSING);
 });
 
 check("빈 문자열도 증거가 아니다", () => {
   assert.equal(
-    decideRosterScopeTrust({ evidenceRaw: "   ", env: RUN_ENV }).reason,
+    decideRosterScopeTrust({ evidenceRaw: "   ", env: RUN_ENV, expectedSlotCount: PROD_SLOTS }).reason,
     TRUST_DENY_REASONS.EVIDENCE_MISSING,
   );
 });
 
 check("파싱 불가 → 보류", () => {
-  const d = decideRosterScopeTrust({ evidenceRaw: "{not json", env: RUN_ENV });
+  const d = decideRosterScopeTrust({ evidenceRaw: "{not json", env: RUN_ENV, expectedSlotCount: PROD_SLOTS });
   assert.equal(d.reason, TRUST_DENY_REASONS.EVIDENCE_UNPARSABLE);
 });
 
@@ -106,10 +120,72 @@ check("★ expectedSlots=0 → 보류('0개 중 0개 완주'로 계약이 비어
   assert.equal(d.reason, TRUST_DENY_REASONS.SLOT_MISMATCH);
 });
 
-check("★ 슬롯 수 불일치 → 보류(19/20)", () => {
-  const d = decide({ ...goodEvidence, observedSlots: 19 });
+console.log("\n▸ ★ 삼순 3차 ② — 증거가 자기 기대치를 실고 오는 순환을 막는다");
+
+/* ⚠︎ 이게 없으면 크롤 대상 팀이 1팀으로 줄어도 "1팀 중 1팀 완주" 로 통과한다.
+ * 9팀이 통째로 사라진 PR 이 자동머지되는 경로다. 소비자는 기대치를 정본에서 재구성한다. */
+check("★ 크롤 대상이 줄어 기대치를 낮게 신고하면 보류(정본 대조)", () => {
+  const shrunk = { ...goodEvidence, expectedSlots: 2, observedSlots: 2, summary: "완주 2/2 슬롯" };
+  const d = decide(shrunk);
   assert.equal(d.reason, TRUST_DENY_REASONS.SLOT_MISMATCH);
-  assert.match(d.detail, /19\/20/);
+  assert.match(d.detail, /production 정본과 다르다/);
+});
+
+check("★ 반대로 기대치를 높게 신고해도 보류(양방향)", () => {
+  const inflated = { ...goodEvidence, expectedSlots: PROD_SLOTS + 2, observedSlots: PROD_SLOTS + 2 };
+  assert.equal(decide(inflated).reason, TRUST_DENY_REASONS.SLOT_MISMATCH);
+});
+
+check("★ 정본을 해석하지 못하면 보류(모를 때 증거를 믿지 않는다)", () => {
+  assert.equal(
+    decide(goodEvidence, RUN_ENV, null).reason,
+    TRUST_DENY_REASONS.SLOT_CONTRACT_UNRESOLVED,
+  );
+  assert.equal(
+    decide(goodEvidence, RUN_ENV, 1).reason,
+    TRUST_DENY_REASONS.SLOT_CONTRACT_UNRESOLVED,
+  );
+});
+
+check("★ 정본 파서가 실제 teams.ts 에서 10팀을 뽑는다", () => {
+  const ids = parseProductionTeamIds(TEAMS_SOURCE);
+  assert.ok(Array.isArray(ids), "정본 파싱 실패");
+  assert.equal(ids.length, 10, `KBO 10팀이어야 한다 — actual ${ids.length}`);
+  assert.deepEqual([...ids].sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+});
+
+check("★ 정본이 깨지면 null(중복·미달을 통과시키지 않는다)", () => {
+  assert.equal(parseProductionTeamIds("  id: 1,\n  id: 1,\n"), null, "중복 id");
+  assert.equal(parseProductionTeamIds("  id: 1,\n"), null, "2팀 미달");
+  assert.equal(parseProductionTeamIds(null), null);
+});
+
+console.log("\n▸ ★ 삼순 3차 ③ — 스키마 불일치는 fail-close");
+
+check("★ 스키마가 다르면 보류(같은 필드를 다른 뜻으로 읽는다)", () => {
+  const d = decide({ ...goodEvidence, schema: "roster-completion-evidence/2" });
+  assert.equal(d.reason, TRUST_DENY_REASONS.SCHEMA_MISMATCH);
+});
+
+check("★ 스키마 필드 누락도 보류", () => {
+  const { schema, ...noSchema } = goodEvidence;
+  void schema;
+  assert.equal(decide(noSchema).reason, TRUST_DENY_REASONS.SCHEMA_MISMATCH);
+});
+
+check("생성기가 현재 스키마를 붙인다(생산자·소비자 합의)", () => {
+  const evidence = buildCompletionEvidence({
+    completion: { complete: true, summary: "완주", failures: [], missingKeys: [] },
+    expectedSlots: PROD_SLOTS,
+    env: RUN_ENV,
+  });
+  assert.equal(evidence.schema, EVIDENCE_SCHEMA);
+  assert.equal(decide(evidence).trusted, true);
+});
+
+check("★ 관측 슬롯이 기대보다 적으면 보류", () => {
+  const d = decide({ ...goodEvidence, observedSlots: PROD_SLOTS - 1 });
+  assert.equal(d.reason, TRUST_DENY_REASONS.SLOT_MISMATCH);
 });
 
 check("★ complete=true 인데 팀 실패가 남아 있으면 보류(플래그만 믿지 않는다)", () => {
@@ -150,7 +226,7 @@ check("★ completion 이 없어도 거부한다(인자 누락이 백지수해�
 
 check("★ 증거가 쓰이지 않은 상황은 결국 보류로 이어진다(생성 거부 → evidence_missing)", () => {
   assert.equal(
-    decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV }).reason,
+    decideRosterScopeTrust({ evidenceRaw: null, env: RUN_ENV, expectedSlotCount: PROD_SLOTS }).reason,
     TRUST_DENY_REASONS.EVIDENCE_MISSING,
   );
 });
@@ -198,15 +274,42 @@ console.log("\n▸ 결속(배선이 실제로 살아 있는가)");
 const workflow = readFileSync(WORKFLOW, "utf8");
 const crawler = readFileSync(CRAWLER, "utf8");
 
-check("★ 크롤 스텝이 증거 경로 env 를 주입한다", () => {
-  const step = workflow.match(/- name: Crawl roster\n([\s\S]*?)\n {6}- name:/);
-  assert.ok(step, "Crawl roster 스텝을 찾지 못했다");
-  assert.match(step[1], new RegExp(`${EVIDENCE_PATH_ENV}:`), "env 주입이 끊어졌다");
+/* ⚠︎ 삼순 3차 ① — **producer 와 consumer 가 같은 경로를 봐야 한다.**
+ *
+ * 초안은 증거 경로를 `Crawl roster` **step 레벨** env 에 뒀다. 그러면 크롤은 증거를 쓰지만
+ * 자동머지 판정 스텝에서는 env 가 비어 있어 언제나 `evidence_missing` 이 되고, 가드가
+ * 영구 보류로 굳는다 — 즉 이 PR 이 아무것도 열지 못한다(삼순 실증, YAML 파싱으로 확인).
+ * 그래서 job 레벨 env 하나를 SSOT 로 두고, 게이트는 **두 스텝이 같은 값을 본다**는 사실을
+ * YAML 을 실제로 파싱해 확인한다(문자열 존재 검사로는 이 결손이 안 잡힌다). */
+const workflowDoc = yaml.load(workflow);
+const updateJob = workflowDoc?.jobs?.update;
+
+const stepsOf = (job) => (Array.isArray(job?.steps) ? job.steps : []);
+const findStep = (name) => stepsOf(updateJob).find((st) => String(st?.name ?? "").includes(name));
+
+/** 그 스텝이 실제로 보는 증거 경로(step env 가 있으면 그것, 없으면 job env). */
+const effectiveEvidencePath = (step) =>
+  step?.env?.[EVIDENCE_PATH_ENV] ?? updateJob?.env?.[EVIDENCE_PATH_ENV] ?? null;
+
+check("★ producer·consumer 가 **같은** 증거 경로를 본다(step 레벨 env 결손 차단)", () => {
+  const producer = findStep("Crawl roster");
+  const consumer = findStep("auto-merge");
+  assert.ok(producer, "Crawl roster 스텝을 찾지 못했다");
+  assert.ok(consumer, "자동머지 스텝을 찾지 못했다");
+
+  const producerPath = effectiveEvidencePath(producer);
+  const consumerPath = effectiveEvidencePath(consumer);
+  assert.ok(producerPath, "producer 가 증거 경로를 못 본다 — 증거가 아예 안 쓰인다");
+  assert.ok(
+    consumerPath,
+    "consumer 가 증거 경로를 못 본다 — 항상 evidence_missing 이 되어 가드가 영구 보류로 굳는다",
+  );
+  assert.equal(producerPath, consumerPath, "두 스텝이 다른 경로를 보면 증거가 전달되지 않는다");
 });
 
 check("★ 증거는 workspace 밖(runner.temp)에 쓴다 — allowlist·git diff 오염 금지", () => {
-  const step = workflow.match(/- name: Crawl roster\n([\s\S]*?)\n {6}- name:/);
-  assert.match(step[1], /runner\.temp/, "workspace 안에 쓰면 생성 데이터로 오인된다");
+  const path = effectiveEvidencePath(findStep("Crawl roster"));
+  assert.match(String(path), /runner\.temp/, "workspace 안에 쓰면 생성 데이터로 오인된다");
 });
 
 check("★ 크롤러가 증거를 **공용 생성기로만** 만든다(직접 조립 금지)", () => {

@@ -28,8 +28,18 @@
  *           게이트(foreign-onboard-photo-gate 등)가 보고, 여기서 대신 보증하지 않는다.
  */
 
+import { buildExpectedSlotKeys } from "./roster-crawl-completion.mjs";
+
 /** 크롤러가 증거를 쓸 경로를 담는 환경변수. 미설정이면 크롤러는 증거를 쓰지 않는다. */
 export const EVIDENCE_PATH_ENV = "ROSTER_COMPLETION_EVIDENCE";
+
+/**
+ * 증거 스키마 식별자. 필드 의미가 바뀌면 여기를 올린다.
+ *
+ * ⚠︎ 생산자·소비자가 다른 버전을 보면 같은 필드 이름을 다른 뜻으로 읽는다.
+ * 그건 "조용히 통과하는" 부류이므로 모르면 보류한다(삼순 지적 ③).
+ */
+export const EVIDENCE_SCHEMA = "roster-completion-evidence/1";
 
 /** 보류 사유 — 로그·요약에 그대로 찍혀 원인이 구분된다. */
 export const TRUST_DENY_REASONS = {
@@ -38,7 +48,38 @@ export const TRUST_DENY_REASONS = {
   EVIDENCE_STALE: "evidence_stale",
   CRAWL_INCOMPLETE: "crawl_incomplete",
   SLOT_MISMATCH: "slot_mismatch",
+  SCHEMA_MISMATCH: "schema_mismatch",
+  SLOT_CONTRACT_UNRESOLVED: "slot_contract_unresolved",
 };
+
+/**
+ * production 정본(`src/lib/constants/teams.ts`)에서 팀 id 집합을 **독립으로** 뽑는다.
+ *
+ * ⚠︎ 이게 없으면 증거가 자기 기대치를 실고 오는 구조라 순환이 된다.
+ * 크롤러 `TEAMS` 가 1팀으로 줄어들어도 `expectedSlots=2, observedSlots=2` 로
+ * "전 슬롯 완주"가 되어 9팀이 통째로 사라진 PR 이 자동머지된다(삼순 지적 ②).
+ * 그래서 소비자는 기대치를 **생산자와 무관하게** 정본에서 재구성해 대조한다.
+ */
+export function parseProductionTeamIds(teamsSource) {
+  if (typeof teamsSource !== "string") return null;
+  const ids = [...teamsSource.matchAll(/^\s*id:\s*(\d+),/gm)].map((m) => Number(m[1]));
+  const unique = [...new Set(ids)];
+  // 파싱이 깨졌거나 중복이 섞였으면 판정 불가 — 통과시키지 않는다.
+  if (unique.length !== ids.length || unique.length < 2) return null;
+  return unique;
+}
+
+/**
+ * 기대 슬롯 수를 정본에서 계산한다(팀 × phase).
+ *
+ * phase 개수를 여기서 하드코딩하지 않는다 — 슬롯 key 생성기와 어긋나면
+ * 상수 둘이 엇갈리는 수자 싸움이 된다. 슬롯 key 를 실제로 만들어 센다.
+ */
+export function resolveExpectedSlotCount(teamsSource) {
+  const ids = parseProductionTeamIds(teamsSource);
+  if (!ids) return null;
+  return buildExpectedSlotKeys(ids).length;
+}
 
 /**
  * 크롤러가 남길 증거 payload.
@@ -79,8 +120,17 @@ export function buildCompletionEvidence({ completion, expectedSlots, env = proce
  * @param {{ evidenceRaw?: string|null, env?: Record<string,string|undefined> }} input
  * @returns {{ trusted: boolean, reason: string|null, detail: string }}
  */
-export function decideRosterScopeTrust({ evidenceRaw, env = process.env }) {
+export function decideRosterScopeTrust({ evidenceRaw, env = process.env, expectedSlotCount }) {
   const deny = (reason, detail) => ({ trusted: false, reason, detail });
+
+  // ⚠︎ 정본 기대치를 모르는 상황은 통과시키지 않는다. "모를 때는 증거를 믿는다"로 두면
+  // teams.ts 경로가 바뀐 순간 생산자 순환 구조로 조용히 되돌아간다.
+  if (!Number.isInteger(expectedSlotCount) || expectedSlotCount < 2) {
+    return deny(
+      TRUST_DENY_REASONS.SLOT_CONTRACT_UNRESOLVED,
+      `production 정본에서 기대 슬롯 수를 해석하지 못했다 — expectedSlotCount=${expectedSlotCount}`,
+    );
+  }
 
   if (typeof evidenceRaw !== "string" || evidenceRaw.trim() === "") {
     return deny(
@@ -100,6 +150,13 @@ export function decideRosterScopeTrust({ evidenceRaw, env = process.env }) {
   }
   if (!evidence || typeof evidence !== "object") {
     return deny(TRUST_DENY_REASONS.EVIDENCE_UNPARSABLE, "증거가 객체가 아니다");
+  }
+
+  if (evidence.schema !== EVIDENCE_SCHEMA) {
+    return deny(
+      TRUST_DENY_REASONS.SCHEMA_MISMATCH,
+      `증거 스키마가 다르다 — expected ${EVIDENCE_SCHEMA}, actual ${evidence.schema}`,
+    );
   }
 
   // ⚠︎ 런 결속을 먼저 본다. 다른 런의 증거는 내용이 아무리 좋아도 이번 런의 근거가 아니다.
@@ -134,6 +191,15 @@ export function decideRosterScopeTrust({ evidenceRaw, env = process.env }) {
     return deny(
       TRUST_DENY_REASONS.SLOT_MISMATCH,
       `기대 슬롯 수가 유효하지 않다 — expectedSlots=${evidence.expectedSlots}`,
+    );
+  }
+  // ★ 생산자가 신고한 기대치가 **정본과 같아야** 한다.
+  // 이 한 줄이 "슬롯을 줄여서 전부 완주했다고 말하는" 우회를 막는다.
+  if (expected !== expectedSlotCount) {
+    return deny(
+      TRUST_DENY_REASONS.SLOT_MISMATCH,
+      `기대 슬롯 수가 production 정본과 다르다 — 증거 ${expected}, 정본 ${expectedSlotCount}`
+        + " (크롤 대상 팀이 줄었거나 phase 가 빠졌다)",
     );
   }
   if (observed !== expected) {
