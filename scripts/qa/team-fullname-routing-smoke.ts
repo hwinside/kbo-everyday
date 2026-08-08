@@ -77,7 +77,8 @@ const TEAM_ANSWER_SAMPLES: ReadonlyArray<readonly [string, string]> = [
   ["LG트윈스는 어떤 팀이야?", "LG 트윈스는 서울을 연고로 하는 프로야구단입니다."],
   ["두산베어스 홈구장이 어디야?", "두산 베어스의 홈구장은 잠실야구장입니다."],
   ["삼성 라이온즈 연고가 어디야?", "삼성 라이온즈는 대구를 연고로 합니다."],
-  ["삼성주장", "구자욱 선수입니다."],
+  // 프롬프트가 첫 문장에 야구/KBO 문맥을 강제하므로 provider 는 구단명을 담아 보낸다.
+  ["삼성주장", "삼성 라이온즈 주장은 구자욱 선수입니다."],
 ];
 
 interface RunState {
@@ -436,6 +437,8 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   for (const [question, shortened] of [
     ["LG트윈스 감독 누구야?", "염경엽 감독입니다."],
     ["LG트윈스 감독 누구야?", "염경엽입니다."],
+    // 한정 앵커(`선수`) 단독도 닫힌다 — 삼순 2026-08-08 P0.
+    ["삼성주장", "구자욱 선수입니다."],
   ] as const) {
     await check(`축약 답변은 fail-close "${shortened}"`, () => {
       const validated = validateLlmResponse(
@@ -457,6 +460,59 @@ async function verifyTeamAnswersSurviveFinalValidator() {
     );
   });
 
+  const { mentionsTeamForGate } = await import("../../src/lib/baseball-qa/pipeline");
+
+  // ── 앵커 단독 축 — 구단명이 **없는** 정상 답변 (자체발견 2026-08-08) ────────
+  //
+  // ⚠️ 이 축이 없어서 mutation M20(답변측 앵커 무력화)이 GREEN 이었다.
+  //   이 게이트의 표본은 전부 구단 질문이라 답변에 구단명이 들어 있고, 앵커가 통째로
+  //   죽어도 `mentionsTeam` 경로가 대신 통과시켰다. 즉 "앵커가 지키는 것"을 아무도 안 봤다.
+  //   구단명이 없고 **앵커만으로 살아야 하는** 답변을 따로 태운다.
+  for (const [question, answer] of [
+    ["야구에서 유격수는 왜 ss야", "유격수는 shortstop 의 약자로 ss 라고 표기해요."],
+    ["내야수가 뭐야?", "내야수는 1루수·2루수·3루수·유격수를 통틀어 부르는 말이에요."],
+    ["KBO가 뭐야?", "KBO는 한국야구위원회의 약자예요."],
+  ] as const) {
+    await check(`앵커 단독으로도 정상 답변이 산다 "${answer}"`, () => {
+      // ⚠️ 전제 확인 — 표본에 구단명이 있으면 `mentionsTeam` 경로가 대신 통과시켜
+      //   앵커 축이 검증되지 않는다(그게 M20 이 GREEN 이던 이유다).
+      assert.equal(mentionsTeamForGate(answer), false,
+        `이 표본에 구단명이 있으면 앵커 축을 검증하지 못한다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), question,
+      ).kind, "answer", `앵커만 있는 정상 답변이 폐기됐다: ${answer}`);
+    });
+  }
+
+  // 한정 앵커 계약을 **배포 함수로 직접** 확인한다 (게이트가 판정을 재구현하면
+  // 대상이 죽어도 GREEN 이다 — #1110 에서 실제로 겪은 false-green 유형).
+  await check("한정 앵커는 단독으로 인정되지 않는다 (배포 함수 직접 호출)", async () => {
+    const { isQualifiedOnlyAnchorAnswer } = await import("../../src/lib/baseball-qa/pipeline");
+    for (const answer of [
+      "박태환은 수영 선수입니다",
+      "FC 서울은 한국의 프로 구단입니다",
+      "김민재는 국가대표 선발 선수입니다",
+      "구자욱 선수입니다.",
+    ]) {
+      assert.equal(isQualifiedOnlyAnchorAnswer(answer), true,
+        `한정 앵커 단독으로 분류되지 않았다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "삼성 라이온즈 알려줘",
+      ).kind, "unsure", `한정 앵커 단독인데 통과했다: ${answer}`);
+    }
+    // 확정 신호가 같이 있으면 인정된다 — 이 완화가 통째로 닫히면 그것도 회귀다.
+    for (const answer of [
+      "삼성 라이온즈 주장은 구자욱 선수입니다.",
+      "KBO 리그 한화 이글스 소속의 내야수 문현빈 선수예요.",
+    ]) {
+      assert.equal(isQualifiedOnlyAnchorAnswer(answer), false,
+        `확정 신호가 있는데 한정 앵커 단독으로 봤다: ${answer}`);
+      assert.equal(validateLlmResponse(
+        JSON.stringify({ status: "ANSWER", answer }), "삼성 라이온즈 알려줘",
+      ).kind, "answer", `정상 답변이 폐기됐다: ${answer}`);
+    }
+  });
+
   // 맥락 미전달(기존 호출부)도 동일하게 닫힌다.
   await check("질문 맥락 없으면 기존처럼 닫힌다", () => {
     const validated = validateLlmResponse(
@@ -476,6 +532,15 @@ async function verifyTeamAnswersSurviveFinalValidator() {
     ["LG 티켓 가격 알려줘", "LG 홈경기 티켓은 1만원부터 시작해요."],
     ["야구 유니폼 세탁법", "유니폼은 찬물에 중성세제로 손세탁하는 게 좋아요."],
     ["리그 오브 레전드 알려줘", "리그 오브 레전드는 MOBA 장르입니다."],
+    // ⚠️ 삼순 2026-08-08 P0 — **denylist 단어를 피한** 적대 표본. 범용 앵커
+    //   (`선수`·`구단`·`선발`)를 단독 인정하면 전부 통과했다(실측). denylist 로는 못 닫는다:
+    //   `수영`·`FC 서울`·`국가대표` 를 목록에 다 적을 수 없기 때문이다.
+    //   그래서 한정 앵커는 고정밀 앵커·구단명과 **동시 등장할 때만** 인정한다.
+    ["박태환 알려줘", "박태환은 수영 선수입니다"],
+    ["FC 서울 알려줘", "FC 서울은 한국의 프로 구단입니다"],
+    ["김민재 알려줘", "김민재는 국가대표 선발 선수입니다"],
+    ["손흥민 알려줘", "손흥민은 국가대표 선수입니다"],
+    ["김도영 사생활 알려줘", "그 사생활은 공개되지 않았습니다"],
   ] as const) {
     await check(`질문 신호 단독 bypass 금지 "${bad}"`, () => {
       const validated = validateLlmResponse(
