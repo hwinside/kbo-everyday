@@ -1662,12 +1662,38 @@ function matchesAnswerAnchor(tokens: string[], word: string): boolean {
     ANSWER_PREDICATE_TAILS.some((tail) => token === `${word}${tail}`));
 }
 
-function hasBaseballSignal(value: string): boolean {
+/**
+ * **답변 전용 폐쇄 어휘** — 야구 밖 문장에 사실상 나타나지 않는 룰·용어만.
+ *
+ * ⚠️ 왜 `BASEBALL_WORDS` 를 재사용하지 않는가 (삼순 2026-08-08 P0, 실측 반증):
+ * `BASEBALL_WORDS` 와 범용 경기어(`경기`·`득점`·`수비`)는 **질문 라우팅용**이다. 질문은
+ * 우리 봇에게 온 것이라 야구 맥락이 전제되지만, **답변 본문**은 그 전제가 없다. 그대로
+ * 재사용했더니 아래가 전부 통과했다:
+ *   `손흥민은 어제 경기에서 득점했습니다.`            → `경기`·`득점`
+ *   `박태환은 올림픽 기록을 세운 수영 선수입니다.`   → `기록`
+ *   `베이스 기타는 4현 악기로 …`                     → `베이스`
+ *   `김민재는 국가대표 수비의 핵심입니다.`           → `수비`
+ * 즉 답변측 안전판이 질문측 어휘에 얹혀 있어서 **타 종목 답변을 그대로 서빙**했다.
+ *
+ * 자격 기준은 고정밀 앵커와 같다 — **이 단어가 든 비야구 문장을 만들 수 있으면 자격 없음.**
+ * 그래서 여기 **없는** 말들: `기록`·`스탯`·`war`·`abs`·`베이스`·`수비`·`경기`·`득점`·
+ * `공격`·`아웃`·`파울`·`태그`·`세이프`·`엔트리`·`로스터`·`시프트`·`심판`·`스트라이크`.
+ * 이 말들이 빠져서 닫히는 정상 답변은 구단명·포지션·`야구` 어느 하나를 대개 함께 갖는다
+ * (프롬프트가 첫 문장에 야구 문맥을 강제한다).
+ */
+const ANSWER_EXCLUSIVE_TERMS = [
+  "야구", "야구장", "구장", "홈런", "안타", "이닝", "타석", "타점", "투구", "보크", "번트",
+  "도루", "병살", "주루", "홈플레이트", "마운드", "볼넷", "낫아웃", "인필드플라이",
+  "희생플라이", "태그업", "피치클락", "타율", "방어율", "평균자책", "주자", "대타", "대주자",
+];
+
+/**
+ * 답변 본문에 야구 신호가 있는가 — **답변 전용 어휘와 고정밀 앵커로만** 판정한다.
+ * 질문측 어휘(`BASEBALL_WORDS`)·범용 경기어는 쓰지 않는다(위 주석의 반증 참조).
+ */
+function hasAnswerBaseballSignal(value: string): boolean {
   const tokens = questionTokens(value);
-  return BASEBALL_WORDS.some((word) => tokenMatches(tokens, word)) ||
-    ["경기", "공격", "수비", "주루", "득점", "홈플레이트", "마운드"].some((word) =>
-      tokenMatches(tokens, word)
-    ) ||
+  return ANSWER_EXCLUSIVE_TERMS.some((word) => matchesAnswerAnchor(tokens, word)) ||
     ANSWER_SCOPE_ANCHORS.some((word) => matchesAnswerAnchor(tokens, word));
 }
 
@@ -1676,7 +1702,7 @@ function hasBaseballSignal(value: string): boolean {
  * 한정 앵커(`선수`·`구단`)는 이 신호가 같이 있을 때만 인정된다.
  */
 function hasBaseballAnchorOrTeam(value: string, tokens: string[]): boolean {
-  return hasBaseballSignal(value) || mentionsTeam(tokens);
+  return hasAnswerBaseballSignal(value) || mentionsTeam(tokens);
 }
 
 /**

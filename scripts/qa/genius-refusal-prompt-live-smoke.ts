@@ -51,7 +51,7 @@ import { validateLlmResponse } from "../../src/lib/baseball-qa/pipeline";
  * 배포 전 형상의 기준 커밋 — 이 PR 이 ⑤(answer-side 앵커·프롬프트 문맥 강제)를 넣기 **직전**.
  * ①~④ 는 이미 들어가 있는 상태라, 여기서 재는 것은 정확히 ⑤ 의 기여다.
  */
-const BEFORE_REF = "f5c30cf3f";
+const BEFORE_REF = "f5c30cf3f9635215490906c6b0a70f55519bdd4f";
 
 /** 이 PR 이 프롬프트에서 바꾼 두 가지. before prompt 는 배포본에서 이것만 되돌려 만든다. */
 const AFTER_CONTEXT_LINES = [
