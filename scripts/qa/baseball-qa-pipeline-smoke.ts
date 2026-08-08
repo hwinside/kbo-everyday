@@ -608,6 +608,7 @@ for (const question of ["보크가 뭐야?", "잔루만루가 뭔데", "역할�
 const greetingQuestions = [
   "안녕", "안녕하세요", "안녕하십니까", "안뇽", "하이", "하잉", "헬로",
   "hi", "hello", "ㅎㅇ", "반가워", "반갑습니다", "굿모닝",
+  // ⚠️ `안녕히` 는 폐쇄집합에서 뺐다(삼순 2026-08-08, 운영 로그 단독 출현 근거 없음).
   // 정규화(구두점·대소문자·중복 공백·문말 ㅎㅋ)로 흡수되는 표기 변형.
   "안녕!", "안녕?", "안녕~", "HI", "Hello", "안녕하세요!!", "안녕ㅎㅎ",
 ];
@@ -627,6 +628,30 @@ for (const question of ackQuestions) {
 }
 for (const question of greetingQuestions) {
   assert.equal(isAckPhrase(question), false, `${question}: 인사는 감사가 아니다`);
+}
+
+// ── 삼순 2026-08-08 NO-GO 반영분의 계약화 ────────────────────────────────────────
+// ⚠️ 이 두 블록이 없으면 반영을 되돌려도 게이트가 GREEN 이다(mutation M7·M8 로 실측).
+//    지적을 고치는 것과 그 고침이 지켜지는 것은 별개다 — 계약으로 박아야 회귀를 막는다.
+//
+// ① `안녕` 은 만남·헤어짐 양쪽에 쓰인다. 맞이 전용 문구로 답하면 작별 맥락에서 어긋난다.
+//    "첫 턴 인사"라는 해석에 반대가설이 있으므로 코드가 단정하면 안 된다.
+assert.equal(
+  /^안녕하세요/.test(GREETING_ANSWER),
+  false,
+  "GREETING_ANSWER: 맞이 전용 문구(`안녕하세요…`)로 시작하면 작별 인사에 어긋난다",
+);
+assert.equal(
+  /물어봐\s*주세요|물어보세요/.test(GREETING_ANSWER),
+  false,
+  "GREETING_ANSWER: 즉시 질문을 요구하는 문구는 작별 맥락에서 어긋난다",
+);
+assert.notEqual(GREETING_ANSWER, ACK_ANSWER, "GREETING_ANSWER: 감사 문구와 같으면 분기 의미가 없다");
+// ② 근거 없는 항목은 폐쇄집합에 넣지 않는다 — 오분류 면적만 넓어진다.
+//    `안녕히` 는 운영 로그에 단독 출현 근거가 없어 제외했다(삼순 지적 ②).
+for (const question of ["안녕히"]) {
+  assert.equal(isGreetingPhrase(question), false, `${question}: 근거 없는 항목은 인사 폐쇄집합에 없어야 한다`);
+  assert.notEqual(routeQuestion(question, seedEntries, players), "ack", `${question}: ack 로 종결하면 안 된다`);
 }
 
 // 삼순 2차 P0: 공백 포함 canonical 이름(roster 28건)은 연속 토큰으로 매칭되어야 한다.
