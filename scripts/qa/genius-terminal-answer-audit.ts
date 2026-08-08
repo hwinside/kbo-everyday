@@ -159,11 +159,23 @@ async function loadGlossaryFromDb(): Promise<GlossaryEntry[]> {
   return rows;
 }
 
+/** 한 번에 읽는 페이지 크기. */
+const PAGE = 1000;
+/**
+ * 페이지 상한. 이 감사는 **끝까지 읽어야** 의미가 있지만(전건 감사), 무한 페이저는
+ * 로그가 커지면 조용히 수십 분을 태운다. 상한을 두고, 상한에 닿으면 통과가 아니라
+ * **실패**로 알린다 — 조용히 잘린 표본으로 "결손 0" 을 보고하는 것이 가장 나쁘다.
+ */
+const MAX_PAGES = 50;
+
 /** 운영 로그의 인입 질문을 정규화 unique 로 뽑는다. */
 async function loadUniqueQuestions(): Promise<string[]> {
   const seen = new Map<string, string>();
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
+  let exhausted = false;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const from = page * PAGE;
+    // query-guard: bounded-page -- 감사 표본을 MAX_PAGES(=5만행)로 상한하고,
+    // 상한에 닿으면 아래에서 fail-close 한다(조용한 절단 금지).
     const { data, error } = await admin
       .from("genius_question_logs")
       .select("question")
@@ -177,8 +189,12 @@ async function loadUniqueQuestions(): Promise<string[]> {
       const key = q.replace(/\s+/gu, " ").toLowerCase();
       if (!seen.has(key)) seen.set(key, q);
     }
-    if (rows.length < PAGE) break;
+    if (rows.length < PAGE) { exhausted = true; break; }
   }
+  assert.ok(
+    exhausted,
+    `로그가 페이지 상한(${MAX_PAGES}×${PAGE}행)을 넘었다. 전건 감사가 아니므로 상한을 올리고 다시 돌려라`,
+  );
   return [...seen.values()];
 }
 
