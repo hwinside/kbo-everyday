@@ -29,6 +29,7 @@ import {
   describeUnstableRows,
   describeValueConflicts,
   planRowSnapshot,
+  playerIdGroupOf,
 } from "./lib/source-row-stability.mjs";
 import { createSelectAdapter, selectAndConfirm } from "./lib/kbo-select.mjs";
 
@@ -345,6 +346,9 @@ async function crawlDefense(page, { baselineRows = [], previousLedger = { rows: 
     classified,
     previousLedger,
     label: "수비",
+    // 흔리는 건 한 행이 아니라 같은 선수의 행 집합이다(전다민 54214 좌↔중).
+    // key 하나만 면제하면 교대의 반대 절반이 그대로 FAIL 한다(삼순 실증).
+    groupOf: playerIdGroupOf,
   });
 
   console.log(

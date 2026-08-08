@@ -30,6 +30,7 @@ import {
   describeValueConflicts,
   ledgerKeySet,
   planRowSnapshot,
+  playerIdGroupOf,
 } from "../lib/source-row-stability.mjs";
 import {
   assertSourceTruth,
@@ -68,6 +69,7 @@ const cell = (name, pos, games) =>
 const LEFT = "54214|좌익수";
 const CENTER = "54214|중견수";
 const readLeft = () => obs([[LEFT, cell("전다민", "좌익수", 1)]]);
+const readCenter = () => obs([[CENTER, cell("전다민", "중견수", 1)]]);
 const readBoth = () => obs([
   [LEFT, cell("전다민", "좌익수", 1)],
   [CENTER, cell("전다민", "중견수", 1)],
@@ -444,7 +446,127 @@ check("★ 전체경로: 최초의 값 불일치는 재판정 뒤에도 살아�
   );
 });
 
+console.log("\n▸ ★ 삼순 4차 P0 — 교대의 **반대 절반**(baseline 좌+중 / crawl 좌×3 / oracle 중×3)");
+
+/* ⚠︎ 단일 key 만 원장에 넣으면 이 절반이 그대로 살아있다.
+ *   crawl 이 `좌,좌,좌` 을 보면 중견수만 0회라 원장에 들어가고 좌익수는 3/3 stable 이라 빠진다.
+ *   그 뒤 oracle 이 `중,중,중` 을 뽑으면 좌익수가 "우리 데이터에만 있음"으로 FAIL.
+ * 흔리는 건 한 행이 아니라 같은 선수의 **행 집합**이므로 원장을 playerId 변동군으로 확장한다. */
+
+/** crawl → 원장 → oracle 까지 한 번에 태우는 종단 헬퍼. */
+const endToEnd = ({ baselineKeys, crawlReads, oracleKbo, ourRows }) => {
+  const plan = planRowSnapshot({
+    label: "수비",
+    baselineByKey: new Map(baselineKeys.map((key) => [key, {}])),
+    classified: classifyRowStability(crawlReads),
+    previousLedger: { rows: {} },
+    groupOf: playerIdGroupOf,
+  });
+  const spec = { ...DEFENSE_SPEC, rows: ourRows, kbo: oracleKbo };
+  return {
+    plan,
+    result: crossCheckDataset({ ...spec, unstableKeys: ledgerKeySet(plan.ledger) }),
+  };
+};
+
+check("★ baseline 좌+중 / crawl 좌×3 / oracle 중×3 → 종단 PASS(반대 절반이 닫힌다)", () => {
+  const { plan, result } = endToEnd({
+    baselineKeys: [LEFT, CENTER],
+    crawlReads: [readLeft(), readLeft(), readLeft()],
+    // crawl 이 좌익수만 봤으므로 산출물은 좌익수 + (baseline 보존된) 중견수
+    ourRows: [ours("54214", "좌익수"), ours("54214", "중견수")],
+    oracleKbo: readCenter(),
+  });
+  assert.ok(plan.ledger.rows[LEFT], "변동군 확장으로 좌익수도 원장에 들어가야 한다");
+  assert.deepEqual(result.failures, [], "교대의 반대 절반이 거짓 RED 를 만들면 안 된다");
+});
+
+check("★ 같은 player 여도 **값 오염**은 RED (변동군 면제가 값까지 번지지 않는다)", () => {
+  const { result } = endToEnd({
+    baselineKeys: [LEFT, CENTER],
+    crawlReads: [readLeft(), readLeft(), readLeft()],
+    ourRows: [ours("54214", "좌익수"), ours("54214", "중견수", 999)],
+    oracleKbo: readCenter(),
+  });
+  assert.ok(
+    result.failures.some((line) => /값 불일치.*games ours=999/.test(line)),
+    "면제는 행 존재만이다",
+  );
+});
+
+/* ⚠︎ 자체발견 5차: 위 두 개만 두었더니 대조 로직에서 **"우리 데이터에만 있음" 검사를
+ * 통째로 죽이는 변이(R4)가 GREEN** 이었다. 이 PR 이 완화한 방향이 바로 그쪽이라,
+ * 완화가 전체로 번졌을 때 잡을 장치가 없으면 **우리에만 있는 유령 행이 영원히 무사통과**된다.
+ * (예: KBO 가 행을 진짜로 지웠는데 우리는 계속 들고 있는 경우) */
+check("★ 원장 밖 행이 **우리에만** 있으면 RED (완화가 이 방향 전체로 번지지 않는다)", () => {
+  const STALE = "77777|1루수";
+  const { result } = endToEnd({
+    baselineKeys: [LEFT, CENTER],
+    crawlReads: [readLeft(), readLeft(), readLeft()],
+    // 77777 은 변동군과 무관한 유령 행 — KBO 가 안 주는데 우리만 들고 있다.
+    ourRows: [ours("54214", "좌익수"), ours("54214", "중견수"), { ...ours("77777", "1루수"), name: "유령선수" }],
+    oracleKbo: readCenter(),
+  });
+  assert.ok(
+    result.failures.some((line) => /우리 데이터에만 있음.*77777/.test(line)),
+    `유령 행을 못 잡으면 우리에만 있는 행이 영원히 무사통과된다. actual=${JSON.stringify(result.failures)}`,
+  );
+  assert.ok(result.rowSetFailures > 0, "행집합 실패로 세야 확인 재조회 트리거가 걸린다");
+  assert.equal(
+    result.failures.filter((line) => /54214/.test(line)).length, 0,
+    "변동군(54214)은 여전히 면제라 거짓 RED 가 섞이면 안 된다",
+  );
+});
+
+check("★ **무관한 안정 행 누락**은 RED (면제가 다른 선수로 번지지 않는다)", () => {
+  const OTHER = "99999|유격수";
+  const { result } = endToEnd({
+    baselineKeys: [LEFT, CENTER],
+    crawlReads: [readLeft(), readLeft(), readLeft()],
+    ourRows: [ours("54214", "좌익수"), ours("54214", "중견수")],
+    oracleKbo: obs([
+      [CENTER, cell("전다민", "중견수", 1)],
+      [OTHER, cell("다른선수", "유격수", 1)],
+    ]),
+  });
+  assert.ok(
+    result.failures.some((line) => /KBO에 있으나.*99999/.test(line)),
+    "변동군 밖 행은 그대로 엄격해야 한다",
+  );
+});
+
+check("변동군은 playerId 까지다 — 더 넓게 잡으면 면제가 무제한이 된다", () => {
+  assert.equal(playerIdGroupOf(LEFT), "54214");
+  assert.equal(playerIdGroupOf(CENTER), "54214");
+  assert.notEqual(playerIdGroupOf("99999|유격수"), "54214");
+});
+
+check("★ 상한 검사는 **확장된** 원장 기준이다(변동군이 번지면 면제가 아니라 실패)", () => {
+  // 한 선수가 포지션 12개로 흔리는 상황 = 원본이 광범위하게 이상하다.
+  const positions = ["포수", "1루수", "2루수", "3루수", "유격수", "좌익수",
+    "중견수", "우익수", "투수", "지명", "대타", "대주"];
+  const keys = positions.map((pos) => `54214|${pos}`);
+  const plan = planRowSnapshot({
+    label: "수비",
+    baselineByKey: new Map(keys.map((key) => [key, {}])),
+    classified: classifyRowStability([readLeft(), readLeft(), readLeft()]),
+    previousLedger: { rows: {} },
+    groupOf: playerIdGroupOf,
+  });
+  assert.throws(
+    () => assertLedgerBounded(plan.ledger, 20, { label: "수비" }),
+    /row_stability_ledger_overflow/,
+  );
+});
+
 console.log("\n▸ 결속(배선이 실제로 살아 있는가)");
+
+check("★ 크롤러가 원장을 **변동군**으로 결속한다(groupOf 없으면 반대 절반이 살아난다)", () => {
+  const source = readFileSync("scripts/crawl-stats.mjs", "utf8");
+  const call = source.match(/planRowSnapshot\(\{([\s\S]*?)\n {2}\}\)/);
+  assert.ok(call, "planRowSnapshot 호출을 찾지 못했다");
+  assert.match(call[1], /groupOf:\s*playerIdGroupOf/, "변동군 결속이 끊어졌다");
+});
 
 check("크롤러 수비 경로가 확인 재조회 하한·baseline·값충돌에 결속돼 있다", () => {
   const source = readFileSync("scripts/crawl-stats.mjs", "utf8");

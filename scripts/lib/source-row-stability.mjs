@@ -164,6 +164,7 @@ export function planRowSnapshot({
   classified,
   previousLedger = { rows: {} },
   label = "행",
+  groupOf,
 }) {
   const previousRows = previousLedger?.rows ?? {};
   const includeKeys = [];
@@ -200,6 +201,40 @@ export function planRowSnapshot({
     }
   }
 
+  /* ── 변동군 확장 ──────────────────────────────────────
+   *
+   * ⚠︎ 단일 key 만 원장에 넣으면 **교대의 반대 절반**이 그대로 살아있다(삼순 실증).
+   *
+   *   baseline `좌+중` / crawl 관측 `좌,좌,좌`
+   *     → 중견수만 0회라 원장에 들어가고, 좌익수는 3/3 stable 이라 빠진다.
+   *     → 그 뒤 오라클이 `중,중,중` 을 뽑으면 중견수는 면제되지만
+   *       **좌익수가 "우리 데이터에만 있음"으로 계속 FAIL** 한다.
+   *
+   * 흔리는 건 한 행이 아니라 같은 선수의 **행 집합 자체**다(전다민 54214: 좌↔중).
+   * 그래서 원장 예외를 단일 key 가 아니라 **playerId 변동군**으로 결속한다.
+   *
+   * ⚠︎ 확장은 여기(크롤)에서 끝낸다. 오라클은 여전히 key 집합만 읽으면 되고,
+   * 상한 검사(`assertLedgerBounded`)도 **확장된 원장** 기준으로 걸린다 — 변동군이
+   * 무제한으로 번지면 면제가 아니라 실패가 되어야 한다.
+   *
+   * ⚠︎ 확장도 **행 존재**만 면제한다. 같은 선수의 값 오염은 그대로 RED 다. */
+  if (typeof groupOf === "function") {
+    const flappingGroups = new Set();
+    for (const key of Object.keys(rows)) flappingGroups.add(groupOf(key));
+
+    const candidates = new Set([...baselineByKey.keys(), ...classified.seenCount.keys()]);
+    for (const key of candidates) {
+      if (Object.prototype.hasOwnProperty.call(rows, key)) continue;
+      if (!flappingGroups.has(groupOf(key))) continue;
+      // 변동군의 나머지 행. 이번 런에 몇 번 보였든 상관없이 존재 판정에서 면제된다.
+      rows[key] = {
+        observed: classified.seenCount.get(key) ?? 0,
+        missStreak: 0,
+        viaGroup: true,
+      };
+    }
+  }
+
   return {
     includeKeys,
     quarantinedKeys,
@@ -207,6 +242,15 @@ export function planRowSnapshot({
     deletedKeys,
     ledger: { label, reads: classified.reads, rows },
   };
+}
+
+/**
+ * 수비 행 key(`playerId|포지션`)에서 변동군(=playerId)을 뽑는다.
+ *
+ * ⚠︎ 군을 더 넓게 잡으면(예: 팀 단위) 면제가 무제한으로 번진다. 군은 **한 선수**가 상한이다.
+ */
+export function playerIdGroupOf(key) {
+  return String(key).split("|")[0];
 }
 
 /** 원장에 등재된 키 집합. 오라클이 행 존재 판정에서 면제할 대상이다. */
