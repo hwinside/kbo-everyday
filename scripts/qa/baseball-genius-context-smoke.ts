@@ -30,6 +30,7 @@ import {
   resolveRagTeamCandidate,
   isRosterVerifiableQuestion,
   isTeamEntryQuestion,
+  renderTeamEntryAnswer,
   rosterMembershipBlock,
   TEAM_ENTRY_UNAVAILABLE_ANSWER,
   teamEntryBlock,
@@ -1124,7 +1125,23 @@ async function verifyLlmDelegation() {
   assert.equal(isTeamEntryQuestion("기아 1군 선수"), true);
   assert.equal(isTeamEntryQuestion("기아 엔트리 알려줘"), true);
   assert.equal(isTeamEntryQuestion("기아 선수단 누구야"), true);
+  assert.equal(isTeamEntryQuestion("오늘 기아 1군 엔트리"), true);
   assert.equal(isTeamEntryQuestion("기아 타이거즈는 어떤 구단이야?"), false);
+  // 협착 반례 (삼순): 감독·스태프는 선수 명단이 아니고, 2군·퓨처스는 이 스냅샷 범위 밖.
+  assert.equal(isTeamEntryQuestion("기아 1군 감독 누구야?"), false);
+  assert.equal(isTeamEntryQuestion("기아 2군 선수단"), false);
+  assert.equal(isTeamEntryQuestion("기아 퓨처스 로스터"), false);
+  assert.equal(isTeamEntryQuestion("기아 1군 코치진 알려줘"), false);
+  // 미래 경계 (삼순 반례): 내일 날짜도 무효 — `-1` 완충 금지.
+  assert.equal(
+    teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-11", players: FULL_ENTRY }, NOW),
+    null, "내일 날짜 스냅샷이 통과했다",
+  );
+  // 최종 답변 문구 exact (삼순 반례: replace 수술로 `기준 기준)` 이중 표기 실측).
+  assert.equal(
+    renderTeamEntryAnswer("KIA", { snapshotDate: "2026-08-08", players: ["김도영", "양현종"] }),
+    "KIA 1군 등록 명단이에요 (KBO 공식 당일 등록, 2026-08-08 기준):\n김도영, 양현종",
+  );
   const kiaRoster = teamRosterBlock(kiaCandidate!, players);
   assert.ok(kiaRoster && kiaRoster.includes("김도영"), "구단 명단 블록에 현재 로스터 선수가 없다");
   // provenance (삼순 SSOT 정정): roster 는 현재 소속 SSOT 이지 1군 당일 등록 SSOT 가 아니다.
@@ -1148,7 +1165,13 @@ async function verifyLlmDelegation() {
   let directRagCalls = 0;
   const directDeps: QaDeps = {
     ...delegationDeps(directState),
-    enableTeamRag: true,
+    // kill-switch 분리 (삼순 반례): tier2 RAG 가 꺼져도 구조화 정본 직접 렌더는 살아야 한다.
+    enableTeamRag: false,
+    // news 선점 반례 (삼순): 최신성 어휘가 있어도 명단 정본은 기사가 아니다 — news 배선을
+    // 켜 두고 news LLM 이 호출되면 순서 결함이다.
+    enableNewsRag: true,
+    searchNewsRag: async () => { throw new Error("명단 질문이 news rag 로 샜다"); },
+    callNewsRagLlm: async () => { throw new Error("명단 질문이 news LLM 을 소비했다"); },
     now: () => Date.parse("2026-08-10T01:00:00+09:00"),
     searchRag: async () => KIA_EVIDENCE,
     fetchTeamEntry: async (teamId) => (teamId === 6
@@ -1156,7 +1179,7 @@ async function verifyLlmDelegation() {
       : null),
     callTeamRagLlm: async () => { directRagCalls += 1; throw new Error("명단 질문이 RAG 로 샜다"); },
   };
-  const directResult = await answerQuestion("u-entry", "기아 1군 선수", directDeps);
+  const directResult = await answerQuestion("u-entry", "오늘 기아 1군 엔트리", directDeps);
   assert.equal(directResult.source, "kbo_structured", `직접 렌더가 아니다: ${directResult.source}`);
   assert.ok(
     directResult.answer.includes("기아일군1") && directResult.answer.includes("2026-08-08"),

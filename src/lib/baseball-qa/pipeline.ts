@@ -2357,7 +2357,23 @@ export function rosterMembershipBlock(
  */
 export function isTeamEntryQuestion(question: string): boolean {
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  // 반례 협착 (삼순 2026-08-10): ①2군·퓨처스는 이 스냅샷의 범위 밖이다 — 1군 명단으로
+  // 답하면 오답이다. ②감독·코치·스태프·단장은 선수 명단 질문이 아니다.
+  if (/2군|이군|퓨처스/.test(normalized)) return false;
+  if (/감독|코치|스태프|단장|프런트/.test(normalized)) return false;
   return /1군|일군|엔트리|등록명단|선수단|로스터/.test(normalized);
+}
+
+/**
+ * 1군 명단 **답변 문구** 렌더 — 블록(프롬프트용)과 별개로 entry 에서 직접 조립한다.
+ * ⚠️ 종전에는 블록 문자열을 replace 로 수술했는데 `기준 기준)` 이중 표기가 실측됐다
+ *   (삼순 반례). 문자열 수술 금지 — 최종 문구는 exact 단위 테스트로 잠근다.
+ */
+export function renderTeamEntryAnswer(
+  teamCanonical: string,
+  entry: { snapshotDate: string; players: string[] },
+): string {
+  return `${teamCanonical} 1군 등록 명단이에요 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준):\n${entry.players.join(", ")}`;
 }
 
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
@@ -2383,7 +2399,9 @@ export function teamEntryBlock(
   const snapshotMs = Date.parse(`${entry.snapshotDate}T00:00:00+09:00`);
   if (!Number.isFinite(snapshotMs)) return null;
   const ageDays = (now.getTime() - snapshotMs) / 86_400_000;
-  if (ageDays > TEAM_ENTRY_MAX_AGE_DAYS || ageDays < -1) return null;
+  // 미래 경계 (삼순 반례): `-1` 완충을 두면 **내일 날짜**가 통과한다. 미래는 전부 무효 —
+  // KST 자정 기준이라 당일 스냅샷은 항상 ageDays ≥ 0 이다.
+  if (ageDays > TEAM_ENTRY_MAX_AGE_DAYS || ageDays < 0) return null;
   return `${candidate.name} 1군 등록 명단 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준): ${entry.players.join(", ")}`;
 }
 
@@ -3266,6 +3284,42 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ⚠️ 이 분기에 들어오면 **여기서 종결한다**(null 양보 없음). fresh 근거 0 · 검색 오류도
   //   team_rag/generic 으로 내려보내지 않고 명시 fail-close 한다(삼순 ②).
   //   `answerNewsRagQuestion` 의 반환타입이 `QaResult`(not `| null`)라 타입이 이걸 강제한다.
+  // ── 1군 명단 질문 → 직접 렌더 (draft 선례 · 삼순 blocker ③ + 반례 2건) ──────
+  // ① **news 보다 앞**이다 — `오늘 기아 1군 엔트리` 는 최신성 어휘 때문에 기사 경로가
+  //   선점하는데, 명단의 정본은 기사가 아니라 roster_snapshots 다.
+  // ② tier2 kill-switch(enableTeamRag)와 **분리**돼 있다 — 구조화 정본 조회는 RAG 가
+  //   아니므로 TEAM_RAG_DISABLED=1 이어도 살아 있어야 한다. 게이트는 배선(fetchTeamEntry)
+  //   존재 여부뿐이다.
+  const entryQuestionCandidate =
+    deps.fetchTeamEntry && !enabledPlayerCandidate && isTeamEntryQuestion(question)
+      ? resolveRagTeamCandidate(question)
+      : null;
+  if (entryQuestionCandidate) {
+    let teamEntry: { snapshotDate: string; players: string[] } | null = null;
+    const entryTeamId = Number(entryQuestionCandidate.entityId);
+    try {
+      teamEntry = Number.isSafeInteger(entryTeamId)
+        ? await deps.fetchTeamEntry!(entryTeamId)
+        : null;
+    } catch {
+      teamEntry = null;
+    }
+    // 유효성(완전성·freshness·미래 차단)은 블록 판정과 같은 함수로 본다 — 둘이 갈라지면
+    // "블록은 거른 명단을 답변은 내보내는" 모순이 생긴다.
+    const entryValid = teamEntryBlock(
+      entryQuestionCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date(),
+    ) !== null;
+    const answer = entryValid && teamEntry
+      ? renderTeamEntryAnswer(entryQuestionCandidate.name, teamEntry)
+      : TEAM_ENTRY_UNAVAILABLE_ANSWER;
+    const matchPath: MatchPath = entryValid ? "kbo_structured" : "blocked";
+    await deps.log({
+      userId, question, questionNorm, matchPath, answer,
+      inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer, source: matchPath, remaining };
+  }
+
   const newsRagCandidate =
     deps.enableNewsRag && deps.searchNewsRag && deps.callNewsRagLlm &&
     !enabledPlayerCandidate && route !== "baseball_rule_term"
@@ -3280,35 +3334,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       ? resolveRagTeamCandidate(question)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
-    // ── 1군 명단 질문 → 직접 렌더 (draft 선례 · 삼순 blocker ③) ─────────────
-    // RAG 재서술이 아니라 roster_snapshots 를 코드가 그대로 보여준다: 나무위키 출처가
-    // 붙지 않고, 숫자 사면도 필요 없다. entry 가 무효(조회실패·stale·미래·불완전)면
-    // 낡은/반쪽 명단 대신 명시적 "확인 불가"로 fail-close 한다 (draft 미보유와 같은 칸).
-    if (isTeamEntryQuestion(question)) {
-      let teamEntry: { snapshotDate: string; players: string[] } | null = null;
-      if (deps.fetchTeamEntry) {
-        const entryTeamId = Number(teamRagCandidate.entityId);
-        try {
-          teamEntry = Number.isSafeInteger(entryTeamId)
-            ? await deps.fetchTeamEntry(entryTeamId)
-            : null;
-        } catch {
-          teamEntry = null;
-        }
-      }
-      const entryBlock = teamEntryBlock(
-        teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date(),
-      );
-      const answer = entryBlock
-        ? `${entryBlock.replace(" (KBO 공식 당일 등록, ", "이에요 (KBO 공식 당일 등록, ").replace("): ", " 기준)\n")}`
-        : TEAM_ENTRY_UNAVAILABLE_ANSWER;
-      const matchPath: MatchPath = entryBlock ? "kbo_structured" : "blocked";
-      await deps.log({
-        userId, question, questionNorm, matchPath, answer,
-        inputTokens: null, outputTokens: null,
-      });
-      return { status: 200, answer, source: matchPath, remaining };
-    }
     // 구단 서술 질문 — RAG 재서술 (원계약 그대로: 로스터 블록 미주입·숫자 전면 HOLD).
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
