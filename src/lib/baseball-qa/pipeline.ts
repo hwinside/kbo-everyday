@@ -47,6 +47,7 @@ import {
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
+  BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
@@ -72,6 +73,15 @@ export const BLOCKED_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;
  * 전부 ① 문구로 나갔다 — 야구 질문을 한 유저에게 "야구 질문만 하라"고 답한 꼴이다.
  */
 export const UNCLEAR_ANSWER = BASEBALL_GENIUS_UNCLEAR_ANSWER;
+/**
+ * ④ 이름 교정 제안 — 로스터에 없는 실명이지만 한 글자만 다른 선수가 정확히 1명일 때.
+ * `임창규` → `혹시 임찬규 선수를 말씀하신 건가요?` (2026-08-08 하린아빠 제보).
+ */
+export const NAME_SUGGEST_ANSWER = BASEBALL_GENIUS_NAME_SUGGEST_ANSWER;
+/**
+ * ⑤ 미결속 실명 — 로스터에 없고 가까운 후보도 없을 때(`오타니`·`홍길동`).
+ * 제안할 이름이 없어도 **생성은 막는다** — 그게 삼순 2026-08-08 P0 의 핵심이다.
+ */
 /**
  * ③ 시스템 오류 — **우리 쪽이 고장난** 경우 전용.
  *
@@ -493,6 +503,8 @@ export type QuestionRoute =
   // ⚠️ 이 라벨로는 로그를 쓰지 않는다 — 성공은 `kbo_structured`, 실패는 `history_hold`/`error` 로
   // 확정된다. 전부 기존 `match_path` 허용값이라 DB CHECK 확장·migration 이 필요 없다.
   | "team_record"
+  // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
+  | "name_suggest"
   | "baseball_rule_term"
   // 룰베이스가 야구인지 아닌지 확정하지 못한 나머지 — 종결하지 않고 LLM 범위판정에 위임한다.
   // 이 라벨로는 로그를 쓰지 않는다(아래 answerQuestion에서 dictionary/cache/llm/blocked/unsure 중
@@ -518,6 +530,15 @@ export type MatchPath =
   //   질문 문자열을 열거할 수 없다 — 그 주석 자체가 틀렸다.
   //   `team_rag`·`news_rag` 를 `rag` 에서 분리한 것과 같은 이유다: 감사 축이 다르면 라벨을 나눈다.
   | "scope_guide"
+  // 로스터에 없는 실명을 받아 **생성 없이** 이름을 되물은 경로.
+  //
+  // ⚠️ 왜 `blocked`·`unsure` 에 섮지 않는가 — 세 문구가 유저에게 말하는 사실이 다르다.
+  //   `blocked` = "그건 우리 주제가 아니다"  → 야구 질문을 한 유저에게 거짓말이다
+  //   `unsure`  = "못 알아들었다"        → 우리는 누구를 말하는지 알면서 숨기는 것이다
+  //   `name_suggest` = "혹시 임찬규?"      → 유저가 바로 다음 행동을 할 수 있다
+  //   감사 축도 다르다: "오타 교정이 얼마나 나갔고 그중 오제안은 몇 건인가" 를 세려면
+  //   전용 라벨이 유일한 식별자다(`scope_guide` 를 `ack` 에서 분리한 것과 같은 축).
+  | "name_suggest"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
   // 구단 서술형 질문을 적재된 구단 문서 근거로 답한 경로.
@@ -1437,6 +1458,100 @@ function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
   return findPlayerReferences(tokens, players).length > 0;
 }
 
+export type UnboundName = {
+  /** 질문에서 뽑힌, 로스터에 없는 이름 오타 */
+  token: string;
+  /** 그 오타가 가리키는 현 로스터 선수 이름 */
+  suggestion: string;
+};
+
+/**
+ * **실측 오타 alias map** — 운영 로그에서 확인된 것만.
+ *
+ * ── 왜 규칙이 아니라 map 인가 (삼순 2026-08-09 최종 수렴안) ──────────────────
+ *
+ *   이 PR 에서 이름 판정 규칙을 여섯 번 바꿨다:
+ *     성씨 결속 → 첫 어절 → 담화 표지 → near-miss 무조건 → query-wide anchor
+ *     → candidate-local anchor
+ *   매번 반례가 하나 나오면 규칙을 하나 더 붙였고, 그때마다 새 반례가 나왔다.
+ *   마지막 전제("한국어 관형형 뒤에는 관형사가 안 온다")도 틀렸다 —
+ *   `우승한 그 선수 누구야?`·`우승한 어떤 선수야?` 는 자연스러운 문장이다.
+ *
+ *   ⚠️ **운영 로그 실측이 이 접근을 끝냈다.** genius_question_logs 3,297행
+ *   (unique 2,576) 에서 "답변 못 한 질문 × 로스터 이름과 1음절 차이" 를 전수로 뽑으니
+ *   69개 토큰이 나왔는데, 그중 **실제 사람 이름 오타는 2개뿐**이었다:
+ *
+ *      47회  보크  → 보스     "보크가 뭐냐고?"          ← 야구 용어
+ *      19회  주자  → 주권     "1루에 주자 있고…"        ← 야구 용어
+ *      19회  삼진  → 박진     "삼진으로 아웃됐음"        ← 야구 용어
+ *       5회  해줘  → 해치  /  5회 제일 → 네일  /  4회 페어 → 페덱
+ *       4회  어디서→ 어준서 /  3회 주루 → 주권  /  2회 규정 → 최정   …(66종)
+ *      ─────────────────────────────────────────────────────────
+ *       1회  임창규 → 임찬규   ← 하린아빠 제보 원형
+ *       1회  양혅종 → 양현종   ← 진짜 오타
+ *
+ *   즉 near-miss 로 열면 `보크가 뭐야` 에 "혹시 보스 선수를?" 이 **47번** 나갔을 것이다.
+ *   그리고 `보크가 뭐야` 는 조사형이라 어떤 anchor 규칙을 짜도 통과한다.
+ *   규칙으로는 닫히지 않는다는 게 데이터로 확정됐다.
+ *
+ * ── 계약 ──────────────────────────────────────────────────────────────────
+ *   • 여기 실린 것만 되묻는다. 규칙 추론 없음 → 오제안 구조적으로 0.
+ *   • 값(교정 대상)은 **현 로스터에 존재해야** 한다. 은퇴·이적으로 사라지면
+ *     fail-close 로 조용히 빠진다(없는 선수를 되묻지 않는다).
+ *   • 확장은 **운영 로그 실측**으로만. 지어낸 오타를 넣지 않는다.
+ *
+ * ⚠️ 일반화(로스터 밖 실존 인물·완전 허구 이름 차단)는 형태소/NER 이 필요하고
+ *   **별도 트랙**이다. 이 PR 은 그걸 하지 않는다 — 손해는 게이트에 actual 로 고정했다.
+ */
+//
+// ⚠️ **출처는 토큰만 남긴다.** 각 항목이 어느 질문에서 나왔는지는 적지 않는다 —
+//   비공개 user-generated 로그 원문을 repo 에 복제하면 안 된다(삼순 2026-08-09).
+//   확장할 때도 오타 토큰과 교정 대상만 옮겨 적는다.
+const MEASURED_TYPO_ALIASES: ReadonlyMap<string, string> = new Map([
+  // 하린아빠 제보 원형(match_path=llm) — generic LLM 이 없는 사람을 실존으로 만들었다.
+  ["임창규", "임찬규"],
+  // 운영 로그 실측 오타(match_path=llm).
+  ["양혅종", "양현종"],
+]);
+
+/**
+ * 질문 안의 **실측된 이름 오타**를 찾는다. 있으면 생성 없이 그 이름을 되묻는다.
+ *
+ * ── 왜 필요한가 (2026-08-08 하린아빠 제보, Production 재현) ────────────────
+ *   `임창규 어떤 선수야`  →  route=llm_scope_gate  →  generic LLM 이
+ *   "임창규는 LG 트윈스의 주축 선수" 라고 **없는 사람을 실존으로 만들었다.**
+ *   결속된 근거가 0 인 상태에서 실명에 대해 생성이 일어난 것 자체가 P0 다.
+ *   유저는 그게 틀렸다는 걸 알 방법이 없다 — 수치 환각보다 나쁘다.
+ *
+ * 판정은 위 `MEASURED_TYPO_ALIASES` 조회 하나다. 어투·위치·품사를 보지 않으므로
+ * `임창규 알려줘`·`혹시 임창규 어떤 선수야`·`임창규는 어느 팀이야` 가 전부 잡히고,
+ * 반대로 map 에 없는 `우승한`·`보크`·`자동차` 는 **구조적으로** 잡히지 않는다.
+ */
+export function resolveUnboundName(
+  question: string,
+  players: PlayerRef[],
+): UnboundName | null {
+  const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
+  const rosterNames = new Set(players.map((p) => p.name));
+
+  for (const raw of tokens) {
+    // 조사를 떼어낸 핵도 본다 — `임창규는 어느 팀이야`.
+    for (const token of stripTokenSuffix(raw)) {
+      const suggestion = MEASURED_TYPO_ALIASES.get(token);
+      if (suggestion === undefined) continue;
+      // ⚠️ **오타 키가 실존 선수 이름이면 되묻지 않는다.** 로스터는 매일 바뀐다 —
+      //   지금은 오타인 문자열이 내일 신인 이름일 수 있다. 그때 그 선수를 물은 유저에게
+      //   "혹시 다른 사람?" 이라고 되묻는 것은 이 PR 이 고치려던 결함의 거울상이다.
+      if (rosterNames.has(token)) continue;
+      // ⚠️ 교정 대상이 **지금** 로스터에 있어야 한다. 은퇴·이적하면 되묻지 않는다 —
+      //   없는 선수를 되묻는 것은 이 PR 이 고치려던 그 결함과 같은 종류다.
+      if (!rosterNames.has(suggestion)) continue;
+      return { token, suggestion };
+    }
+  }
+  return null;
+}
+
 /**
  * RAG 서빙 대상 선수를 해석한다. 답이 나오려면 **정확히 한 명**으로 좁혀져야 한다.
  *
@@ -2013,6 +2128,17 @@ export function routeQuestion(
   if (isOutOfScopeIntent(normalized, hasTeam) || (!hasTeam && NAMED_STAT_QUERY.test(normalized))) {
     return "blocked";
   }
+
+  // ── 미결속 실명 fail-close (2026-08-08 하린아빠 제보) ───────────────────────
+  //
+  // 여기를 넘어가면 `llm_scope_gate` → generic LLM 이다. 그 경로는 **근거를 안 본다** —
+  // 모델 기억으로 답한다. 실명이 거기 들어가면 존재하지 않는 사람을 실존으로 만들고
+  // 소속·위상까지 붙인다(Production 실측: `임창규` → "LG 트윈스의 주축 선수").
+  //
+  // ⚠️ 순서가 계약이다. **결속된 선수는 이미 위에서 전부 빠졌다**(`history_hold`·
+  //   `hasPlayerReference` 분기 · 그리고 `answerQuestion` 앞단의 선수 RAG·기록 경로).
+  //   즉 여기 오는 이름은 정의상 로스터에 없다.
+  if (resolveUnboundName(question, players) !== null) return "name_suggest";
 
   // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
   // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
@@ -2805,18 +2931,44 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const scopeGate = route === "llm_scope_gate";
 
   if (route !== "baseball_rule_term" && !scopeGate) {
+    const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
     const answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? (isGreetingPhrase(question) ? GREETING_ANSWER : ACK_ANSWER) :
       route === "scope_guide" ? SCOPE_GUIDE_ANSWER :
+      // 미결속 실명 → **생성 없이** 끝난다. 후보가 유일하면 그 이름을 되묻고, 아니면
+      // 모른다고 말한다. 둘 다 모델이 아니라 **코드가 쓴 문장**이다.
+      //
+      // ⚠️ 후보를 여기서 다시 푸는 이유 — `routeQuestion` 은 라벨만 돌려주므로 문구에
+      //   넣을 이름이 여기에 없다. 판정기는 **같은 함수**를 쓴다 — 둘이 갈라지면
+      //   "막기로 라우팅해놓고 정작 문구는 없는" 모순이 된다. 그 경우 fail-close.
+      route === "name_suggest"
+        // ⚠️ 판정기와 문구 생성이 **같은 함수**를 쓴다. 둘이 갈라지면 "막기로 라우팅해놓고
+        //   정작 문구가 없는" 모순이 되므로 그 경우 fail-close 한다.
+        ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
+        :
       BLOCKED_ANSWER;
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
     //   화면 취급(`reply_kind`)은 `ack` 과 같게 두어 마스코트·피드백 계약은 그대로다.
+    // ⚠️ 미결속 이름 되묻기는 **하루 한도를 깎지 않는다**(삼순 2026-08-08 `typo quota 반환`).
+    //   유저는 답을 받지 못했고 이름을 고쳐 다시 물어야 한다 — 그 재질문까지 합쳐
+    //   2개를 깎으면 **오타 한 글자에 한도를 두 배로 물리는** 꼴이다.
+    //   같은 이유로 `player_picker` 도 이미 반납한다 — 되묻기는 답변이 아니다.
+    //   반납 실패는 유저가 1개 더 쓴 것일 뿐이라 되묻기 자체를 막지 않는다.
+    let quotaRemaining = remaining;
+    if (route === "name_suggest" && deps.releaseDaily) {
+      try {
+        await deps.releaseDaily(userId);
+        quotaRemaining = Math.min(DAILY_LIMIT, remaining + 1);
+      } catch {
+        // 반납 실패 — 차감된 채로 둔다. 지어낸 숫자를 보여주지 않는다.
+      }
+    }
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
-    return { status: 200, answer, source: route, remaining };
+    return { status: 200, answer, source: route, remaining: quotaRemaining };
   }
 
   // ① 검수 사전 (토큰 0)
