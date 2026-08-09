@@ -2313,6 +2313,26 @@ async function replayStoredFinalResult(
   };
 }
 
+/**
+ * 선종결 fence (삼순 2026-08-10 4차 TOCTOU). front 가 null 을 본 뒤 다른 worker 가
+ * envelope 를 저장했는데, 이 worker 가 **LLM 경계에 닿기 전에** 종결하는 경로(검색 throw ·
+ * news 0건/throw · global cache hit)는 저장 final 을 다시 이길 수 있다. 그 종결 직전에
+ * 상태를 한 번 더 읽어 envelope 가 있으면 그것을 우선한다. 조회 실패는 pending 으로
+ * 물러난다 — 저장 여부를 모르는 채 다른 답을 발송하지 않는다.
+ */
+async function envelopeFence(
+  args: { userId: string; question: string; questionNorm: string; remaining: number; deps: QaDeps },
+): Promise<QaResult | null> {
+  if (!args.deps.getLlmState) return null;
+  let result: LlmResult | null;
+  try {
+    result = (await args.deps.getLlmState()).result;
+  } catch {
+    return { status: 202, answer: "", source: "pending", remaining: args.remaining };
+  }
+  return replayStoredFinalResult(result, args);
+}
+
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
 export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
   let value: unknown;
@@ -2658,6 +2678,9 @@ async function answerPlayerDescriptiveQuestion(
   } catch {
     // ⚠️ 검색 RPC 실패는 "근거가 없다" 가 아니라 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
     //   둘을 같은 칸에 넣으면 장애가 "근거 부족" 통계에 섞여 조용히 정상처럼 보인다.
+    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.
+    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
+    if (fenced) return fenced;
     return failCloseError();
   }
   // 미커버 선수(0행)·sanitize 뒤 남는 근거 없음 — **generic LLM 으로 양보한다** (null).
@@ -3002,10 +3025,16 @@ async function answerNewsRagQuestion(
     // 검색 실패를 "기사 없음" 으로 둔갑하지 않는다. 재시도 가능한 실패라 error 다.
     // ⚠️ 문구도 `BLOCKED_ANSWER` 가 아니라 ② 다 (삼순 2026-08-08 조건 ①) — 우리 쪽 실패에
     //   "야구 이야기만 답할 수 있어요" 를 보내면 유저 질문을 탓하는 것이 된다.
+    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.
+    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
+    if (fenced) return fenced;
     return settle(SYSTEM_ERROR_ANSWER, "error");
   }
   if (evidence.length === 0) {
     // 그 창에 기사가 없다. 과거 근거로 대신 답하지 않고 여기서 닫는다(삼순 ②).
+    // 선종결 fence (삼순 4차): unsure 발송 전에 envelope 가 생겼으면 그것을 우선한다.
+    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
+    if (fenced) return fenced;
     return settle(NEWS_UNAVAILABLE_ANSWER, "unsure");
   }
   // 기사는 tier2 고정이다. tier1 이 이 경로로 새면 숫자 허용 계약이 어긋나므로 닫는다.
@@ -3095,16 +3124,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   (player 2623→2655 · news 2995→3016 · generic cache 3520→3538 실측 지적).
   //   조회 실패는 신규 진행으로 두고, started/ambiguous 창은 종전대로 각 경계가 다룬다.
   if (deps.getLlmState) {
-    let replayResult: LlmResult | null = null;
+    let frontState: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
-      replayResult = (await deps.getLlmState()).result;
+      frontState = await deps.getLlmState();
     } catch {
       // 조회 실패를 null 로 두면 검색·캐시가 저장 답을 다시 이길 수 있다 (삼순 3차).
       // 답변 발송 없이 물러난다 — 저장 여부를 모르는 채 진행하지 않는다(fail-close).
       return { status: 202, answer: "", source: "pending", remaining };
     }
-    const frontReplayed = await replayStoredFinalResult(replayResult, { userId, question, questionNorm, remaining, deps });
+    const frontReplayed = await replayStoredFinalResult(frontState.result, { userId, question, questionNorm, remaining, deps });
     if (frontReplayed) return frontReplayed;
+    // full state 처리 (삼순 4차): started 인데 결과가 없는 창을 버리지 않는다 —
+    // winner 진행 중이면 물러나고(pending), fence 경과면 재호출 없이 error 로 닫는다.
+    if (!frontState.result && frontState.started) {
+      if (frontState.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+    }
   }
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
@@ -3531,6 +3567,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (!context && !scopeGate && !rosterBlock) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
+      // 선종결 fence (삼순 4차): 캐시 발송 전에 envelope 가 생겼으면 저장 final 이 우선이다.
+      const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
+      if (fenced) return fenced;
       await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
       return { status: 200, answer: cached, source: "cache", remaining };
     }

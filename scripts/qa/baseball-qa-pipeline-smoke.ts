@@ -1877,6 +1877,39 @@ async function verifyStoredEnvelopeReplayFrontOfExternalState() {
     assert.equal(retry.answer, first.answer);
     assert.equal(cache.size, 0, "cacheable drift — 비캐시 답이 재시도에서 global cache 로 샜다");
   }
+
+  // 축 ⑤ 선종결 전이 g3 (삼순 4차): front null → 다른 worker envelope 저장 → 이 worker 의
+  // global cache hit 선종결. fence 가 캐시 발송 직전 상태를 재확인해 envelope 를 우선한다.
+  {
+    const envelope: LlmResult = {
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "야구 룰에 따른 검증된 답변이에요.", source: "llm", cacheable: true } }),
+      inputTokens: 1, outputTokens: 1,
+    };
+    let stateCalls = 0;
+    let llmCalls = 0;
+    const logs: string[] = [];
+    const deps: QaDeps = {
+      loadGlossary: async () => seedEntries,
+      loadPlayers: async () => players,
+      getCache: async () => "예전에 저장된 오염 캐시 답이에요.",
+      setCache: async () => {},
+      callLlm: async () => { llmCalls++; throw new Error("호출 금지"); },
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: envelope, ownerActive: false };
+      },
+      storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
+      log: async (entry) => { logs.push(entry.matchPath); },
+    };
+    const fenced = await answerQuestion("u1", question, deps);
+    assert.equal(fenced.source, "llm", `cache-hit 선종결이 envelope 를 덮었다: ${fenced.source}`);
+    assert.equal(fenced.answer, "야구 룰에 따른 검증된 답변이에요.", "오염 캐시가 저장 final 을 이겼다");
+    assert.equal(llmCalls, 0);
+    assert.equal(logs.at(-1), "llm", "cache 가 로그에 남았다 — fence 이전에 종결됐다");
+  }
 }
 
 // 게이트 1 (삼순 4차 P1): callLlm 성공 → storeLlm(DB write) 실패/그 사이 crash 창에서도

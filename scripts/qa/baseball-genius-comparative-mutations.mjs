@@ -227,9 +227,25 @@ const MUTATIONS = [
     id: "N36 front 조회 throw 를 null 진행으로 회귀",
     file: PIPELINE,
     anchor: '      // 조회 실패를 null 로 두면 검색·캐시가 저장 답을 다시 이길 수 있다 (삼순 3차).\n      // 답변 발송 없이 물러난다 — 저장 여부를 모르는 채 진행하지 않는다(fail-close).\n      return { status: 202, answer: "", source: "pending", remaining };',
-    replacement: "      replayResult = null;",
+    replacement: "      frontState = { started: false, result: null, ownerActive: false };",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "front 조회 실패 시 검색·캐시가 저장 답을 이겨 최종 답이 바뀔 수 있다 (삼순 3차)",
+  },
+  {
+    id: "N37 player search-throw 선종결 fence 제거",
+    file: PIPELINE,
+    anchor: "    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.\n    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });\n    if (fenced) return fenced;\n    return failCloseError();",
+    replacement: "    return failCloseError();",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "front null → 중간 envelope → search throw 선종결이 저장 final 을 error 로 덮는다 (삼순 4차)",
+  },
+  {
+    id: "N38 generic cache-hit 선종결 fence 제거",
+    file: PIPELINE,
+    anchor: "      // 선종결 fence (삼순 4차): 캐시 발송 전에 envelope 가 생겼으면 저장 final 이 우선이다.\n      const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });\n      if (fenced) return fenced;",
+    replacement: "",
+    gate: "scripts/qa/baseball-qa-pipeline-smoke.ts",
+    why: "front null → 중간 envelope → cache hit 선종결이 저장 final 을 오염 캐시로 덮는다 (삼순 4차)",
   },
 ];
 

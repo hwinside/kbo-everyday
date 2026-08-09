@@ -1233,7 +1233,36 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(externalTouched, 0, `front 조회 실패 후 외부 상태를 소비했다(${externalTouched})`);
   }
 
-  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / TOCTOU 경계 재생 / front-throw pending / ambiguous fail-close / 양보 CAS 1회");
+  // (e-6) 선종결 전이 g1 (삼순 4차): front null → 다른 worker envelope 저장 → 이 worker 의
+  //   searchRag throw. 종전에는 경계 helper 앞에서 error 로 종결해 저장 final 을 덮었다 —
+  //   fence 가 종결 직전 상태를 재확인해 envelope 를 우선해야 한다.
+  {
+    const envelope: LlmResult = {
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불려요. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
+      inputTokens: 1, outputTokens: 1,
+    };
+    let stateCalls = 0;
+    const { deps, logs } = makeDeps({
+      // 1번째(front) = null → 검색 throw → 2번째(fence) = envelope.
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: envelope, ownerActive: false };
+      },
+      storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
+      searchRag: async () => { throw new Error("rpc down"); },
+      callRagLlm: async () => { throw new Error("호출 금지"); },
+      callLlm: async () => { throw new Error("호출 금지"); },
+    });
+    const fenced = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(fenced.source, "rag", `search-throw 선종결이 envelope 를 덮었다: ${fenced.source}`);
+    assert.match(fenced.answer, /문학소년/);
+    assert.equal(fenced.sourceUrl, "https://namu.wiki/w/문보경");
+    assert.equal(logs.at(-1)?.matchPath, "rag", "error 가 로그에 남았다 — fence 이전에 종결됐다");
+  }
+
+  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / TOCTOU 경계·선종결 fence / front-throw pending / ambiguous fail-close / 양보 CAS 1회");
 }
 
 /**

@@ -387,6 +387,36 @@ async function run(): Promise<void> {
     ok(`stored news + ${breakKind} — envelope 재생 (답·출처 동일, 공급자 재호출 0)`);
   }
 
+  // ── ⑥-c 선종결 전이 (삼순 2026-08-10 4차): front null → 다른 worker envelope 저장 →
+  //   이 worker 의 news 0건/throw 선종결. fence 가 종결 직전 상태를 재확인해 envelope 를
+  //   우선해야 한다 — 종전에는 unsure/error 가 저장 final 을 덮었다.
+  for (const breakKind of ["zero", "throw"] as const) {
+    const envelope: LlmResult = {
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "젊은 타자들이 홈런을 합작했어요. (출처: 네이버 스포츠 기사)", source: "news_rag", sourceUrl: "https://sports.naver.com/news/1" } }),
+      inputTokens: 1, outputTokens: 1,
+    };
+    let stateCalls = 0;
+    const { deps, logs, calls } = makeDeps({
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: envelope, ownerActive: false };
+      },
+      storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
+      searchNewsRag: breakKind === "zero"
+        ? async () => []
+        : async () => { throw new Error("rpc down"); },
+      callNewsRagLlm: async () => { throw new Error("호출 금지"); },
+    });
+    const fenced = await answerQuestion("u1", "어제 LG 무슨 일 있었어?", deps);
+    assert.equal(fenced.source, "news_rag", `${breakKind}: 선종결이 envelope 를 덮었다 (${fenced.source})`);
+    assert.equal(fenced.sourceUrl, "https://sports.naver.com/news/1", `${breakKind}: provenance 소실`);
+    assert.equal(calls.newsLlm.length, 0, `${breakKind}: 공급자를 호출했다`);
+    assert.equal(logs.at(-1)?.matchPath, "news_rag", `${breakKind}: unsure/error 가 로그에 남았다`);
+    ok(`선종결 전이 news + ${breakKind} — fence 가 envelope 우선 (덮어쓰기 0)`);
+  }
+
   // ── ⑦ 모델이 근거로 답을 못 만들면(INSUFFICIENT) 폴백 금지 ──────────────
   {
     const { deps, calls } = makeDeps({
