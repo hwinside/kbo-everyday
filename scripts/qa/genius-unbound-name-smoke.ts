@@ -7,21 +7,28 @@
  *     봇  : "임창규는 LG 트윈스의 주축 선수로…"
  *
  *   로스터 881명에 `임창규` 는 **없다**(`임찬규` kboId 61101, LG 만 있다).
- *   결속된 근거가 0 인 상태에서 generic LLM 이 받아 **존재하지 않는 사람을 실존으로
- *   만들고** 소속·위상까지 붙였다. 수치 환각보다 나쁘다 — 유저는 틀렸다는 걸 알 방법이 없다.
+ *   근거가 0 인 상태에서 generic LLM 이 **존재하지 않는 사람을 실존으로 만들고**
+ *   소속·위상까지 붙였다. 수치 환각보다 나쁘다 — 유저는 틀렸다는 걸 알 방법이 없다.
  *
- * ⚠️ 1차 구현이 틀렸던 지점 (삼순 2026-08-08 NO-GO)
- *   "한 글자만 다른 선수가 정확히 1명" 일 때만 막았다. 그러면 `오타니`·`홍길동`처럼
- *   **이웃이 없는 이름은 그대로 generic LLM 으로 샌다** — 정작 제일 위험한 축(로스터 밖
- *   실존 인물·완전 허구)이 열려 있었다. 그래서 판정을 뒤집었다:
- *     **막는 게 기본, 제안은 후보가 유일할 때만 얹는 편의.**
+ * ⚠️ **왜 규칙이 아니라 실측 alias map 인가** (삼순 2026-08-09 최종 수렴안)
+ *
+ *   이 PR 에서 이름 판정 규칙을 여섯 번 바꿨다:
+ *     성씨 결속 → 첫 어절 → 담화 표지 → near-miss 무조건 → query-wide anchor
+ *     → candidate-local anchor
+ *   반례가 하나 나오면 규칙을 하나 더 붙였고, 그때마다 새 반례가 나왔다.
+ *
+ *   **운영 로그 실측이 이 접근을 끝냈다.** genius_question_logs 3,297행(unique 2,576)
+ *   에서 "답변 못 한 질문 × 로스터 이름과 1음절 차이" 를 전수로 뽑으니 69개 토큰이
+ *   나왔는데 **실제 사람 이름 오타는 2개뿐**이었다. 나머지 67개는 전부 야구 용어·기능어다:
+ *     47회 보크→보스 · 19회 주자→주권 · 19회 삼진→박진 · 5회 해줘→해치 …
+ *   near-miss 로 열었다면 `보크가 뭐야` 에 "혹시 보스 선수를?" 이 47번 나갔을 것이다.
  *
  * 그래서 이 게이트는 문자열 존재를 보지 않는다(주석에도 걸린다 — #1127 M15 false-green).
- * **배포 `answerQuestion()` 을 실제로 호출**해서 네 가지를 본다:
- *   (a) 미결속 실명에 대해 `llm`·`ragLlm`·`cache` 호출이 **0** 인가 (생성 0)
- *   (b) 유저가 받는 문자열이 **코드가 쓴 두 문장 중 하나**인가 (제안 / 모름)
- *   (c) 되묻기가 **하루 한도를 깎지 않는가** (오타 한 글자에 quota 2개는 부당하다)
- *   (d) 결속된 선수·룰·구단 질문이 **무회귀**인가 (오탐 0)
+ * **배포 `answerQuestion()` 을 실제로 호출**해서 본다:
+ *   (a) 실측 오타에 대해 `llm`·`ragLlm`·`cache` 호출이 **0** 인가 (생성 0)
+ *   (b) 유저가 받는 문자열이 **코드가 쓴 문장**인가
+ *   (c) 되묻기가 **하루 한도를 깎지 않는가**
+ *   (d) map 에 없는 67개 실측 토큰이 **전부 오탐 0** 인가
  *
  * 실행: npm run qa:genius-unbound-name
  */
@@ -31,7 +38,6 @@ import {
   routeQuestion,
   resolveUnboundName,
   NAME_SUGGEST_ANSWER,
-  NAME_UNKNOWN_ANSWER,
   DAILY_LIMIT,
   type GlossaryEntry,
   type PlayerRef,
@@ -46,15 +52,9 @@ const failures: string[] = [];
 
 /**
  * ⚠️ **첫 실패에서 멈추지 않는다** (2026-08-09 mutation runner 가 드러낸 결손).
- *
- *   종전엔 assert 가 throw 하면 프로세스가 즉시 죽었다. 그러면 mutation 이 **목표 축과
- *   무관한 앞쪽 assertion** 에서 먼저 걸려, "게이트가 이 결함을 잡았다" 를 증명할 수 없다.
- *   실측: 성씨 결속(N-F)을 지웠는데 `임창규` 케이스가 먼저 깨져 죽었다 — 성씨 축이
- *   RED 인지 아닌지 알 수 없는 상태.
- *
- *   그래서 전건을 끝까지 돌려 **깨진 assertion 을 전부 모아** 출력한다. mutation runner 는
- *   그중 **자기가 기대한 문구**가 있는지로 판정한다(nonzero exit 만으로는 부족하다 —
- *   컴파일 오류로 죽은 것과 구분되지 않는다).
+ *   assert 가 throw 하면 프로세스가 즉시 죽어서, mutation 이 **목표 축과 무관한 앞쪽
+ *   assertion** 에서 먼저 걸린다 — 그러면 "게이트가 이 결함을 잡았다" 를 증명할 수 없다.
+ *   전건을 끝까지 돌려 깨진 assertion 을 전부 모은다.
  */
 function check(name: string, fn: () => void) {
   try {
@@ -92,7 +92,7 @@ interface Calls {
 }
 
 /**
- * 외부 의존을 **전부 카운트**한다. 이 PR 의 계약이 "생성 경로에 내려보내지 않는다" 이므로,
+ * 외부 의존을 **전부 카운트**한다. 계약이 "생성 경로에 내려보내지 않는다" 이므로,
  * 문구가 맞아도 LLM 을 한 번이라도 부르면 계약 위반이다(토큰·환각·지연 전부).
  *
  * ⚠️ 선수/구단 RAG 를 **켠 채로** 돌린다. 꺼두면 "RAG 가 꺼져서 안 불린 것" 과
@@ -124,7 +124,7 @@ function makeDeps(players: PlayerRef[]): { deps: QaDeps; logs: string[]; calls: 
     enableTeamRag: true,
     now: () => Date.now(),
     searchRag: async () => [{
-      content: "임찬규는 LG 트윈스의 프랜차이즈 투수로 판상 큰 사랑을 받는다고 알려져 있다.",
+      content: "임찬규는 LG 트윈스의 프랜차이즈 투수로 알려져 있다.",
       pageTitle: "임찬규", canonicalUrl: "https://namu.wiki/w/임찬규",
       revision: "1", sectionPath: "선수 경력", asOf: "2026-01-01", sourceGrade: "tier2",
     }] as never,
@@ -157,6 +157,104 @@ function makeDeps(players: PlayerRef[]): { deps: QaDeps; logs: string[]; calls: 
   return { deps, logs, calls };
 }
 
+/**
+ * **map 에 없는 실측 near-miss 토큰 67종** — `후보 토큰 → near-miss 대상` 쌍만.
+ *
+ * ⚠️ **원문을 넣지 않는다** (삼순 2026-08-09). 직전 판은 이 자리에 운영 로그
+ *   질문 원문 67개를 그대로 커밋했다. 직접 식별자가 안 보여도 **비공개 user-generated
+ *   로그를 repo fixture 로 복제하면 안 된다.** 게이트에 필요한 것은 토큰 쌍뿐이고,
+ *   N-B mutation(=near-miss 규칙 부활) 검출력도 토큰만으로 그대로 유지된다.
+ *
+ *   각 쌍은 "규칙으로 열었으면 이 토큰이 저 선수로 오제안됐다" 를 뜻한다.
+ *   47회 `보크`→`보스`, 19회 `주자`→`주권`, 19회 `삼진`→`박진` … 대부분 야구 용어다.
+ *   map 을 넓힐 때 이 중 하나라도 들어오면 이 게이트가 RED 로 잡는다.
+ *
+ *   ⚠️ 검사는 **합성 최소 문장**으로 한다. 토큰만 넣으면 실제 질문 모양을 안 태우므로
+ *   조사·서술어를 붙인 형태를 코드에서 만들어 돌린다(아래 `SYNTHETIC_FRAMES`).
+ */
+const MEASURED_NON_NAME_TOKENS: readonly (readonly [string, string])[] = [
+  ["보살", "보스"],
+  ["인정", "최정"],
+  ["주자", "주권"],
+  ["해주", "해치"],
+  ["해줘", "해치"],
+  ["해서", "해치"],
+  ["지금", "지현"],
+  ["보크", "보스"],
+  ["올해", "올러"],
+  ["일정", "최정"],
+  ["삼진", "박진"],
+  ["주루", "주권"],
+  ["어디서", "어준서"],
+  ["보통", "보스"],
+  ["아니라", "아빌라"],
+  ["천재니", "천재환"],
+  ["보는", "보스"],
+  ["원정", "최정"],
+  ["제일", "네일"],
+  ["불러", "올러"],
+  ["포일", "네일"],
+  ["섹스", "보스"],
+  ["주전", "주권"],
+  ["보쿠", "보스"],
+  ["이유를", "이유찬"],
+  ["해도", "해치"],
+  ["위치", "해치"],
+  ["네모", "네일"],
+  ["양쪽", "양현"],
+  ["테일링", "테일러"],
+  ["지난", "지현"],
+  ["지명", "지현"],
+  ["페어", "페덱"],
+  ["사진", "박진"],
+  ["지역", "지현"],
+  ["해야", "해치"],
+  ["해결", "해치"],
+  ["유령", "유민"],
+  ["지식", "지현"],
+  ["내일", "네일"],
+  ["허허", "허윤"],
+  ["한선수", "한준수"],
+  ["매일", "네일"],
+  ["설정", "최정"],
+  ["지면", "지현"],
+  ["보면", "보스"],
+  ["이유는", "이유찬"],
+  ["퀄스", "보스"],
+  ["카러스코", "카라스코"],
+  ["한경기", "한경빈"],
+  ["던진", "박진"],
+  ["이해가", "이해승"],
+  ["규정", "최정"],
+  ["지표", "지현"],
+  ["리버스", "리오스"],
+  ["달성한", "박성한"],
+  ["주는", "주권"],
+  ["펜스", "보스"],
+  ["강공", "강건"],
+  ["재치", "해치"],
+  ["이유가", "이유찬"],
+  ["세스", "보스"],
+  ["부정", "최정"],
+  ["판정", "최정"],
+  ["유형", "유민"],
+  ["강제", "강건"],
+  ["주행", "주권"],
+];
+
+/**
+ * 합성 질문 틀 — 지난 판들이 각각 뚫렸던 형태를 그대로 재현한다.
+ * (첫 어절 / 조사형 / 담화 표지 뒤 / 사람 명사 동반 / 평가 술어 / 구단 동반)
+ */
+const SYNTHETIC_FRAMES: readonly ((token: string) => string)[] = [
+  (t) => `${t} 어떤 선수야`,
+  (t) => `${t}는 어느 팀이야`,
+  (t) => `혹시 ${t} 알려줘`,
+  (t) => `${t} 소개해줘`,
+  (t) => `${t} 잘해?`,
+  (t) => `lg ${t} 주축 맞아?`,
+];
+
 async function main() {
   const players = await loadRosterPlayers();
   assert.ok(players.length > 100, `로스터가 ${players.length}명뿐이다 — SSOT 유실`);
@@ -168,28 +266,21 @@ async function main() {
   };
 
   // ── ① 실제 사고 재현: 생성 0 + 이름 되묻기 ────────────────────────────────
-  //
-  // ⚠️ `잘해?`·`주축 맞아?` 형태를 반드시 포함한다 (삼순 2026-08-08 P0-1).
-  //   이것들은 `별명`·`어떤 선수` 같은 서술 allowlist 에 없어 직전 구현에서
-  //   **그대로 generic LLM 으로 샐다** — 하린아빠 제보와 가장 가까운 형태인데 뚚렸다.
-  //   `임창규는 …` 은 조사 붙은 형태로, **같은 제안**이 나와야 한다(P0-2 핵 우선 판정).
+  //   판정이 alias 조회 하나라 **어투·위치를 보지 않는다**. 그래서 지난 판들이
+  //   차례로 놓쳤던 형태(`알려줘`·`혹시 …`·조사형·구단 동반)가 전부 잡힌다.
   for (const [question, label] of [
-    ["임창규 어떤 선수야", "사람 명사 anchor · 하린아빠 제보 원형"],
-    ["임창규는 어느 팀이야", "주격조사 anchor · 핵 우선 판정"],
-    ["임창규 소개해줘", "후보 바로 뒤 사람질의 서술어"],
-    ["임창규 알려줘", "후보 바로 뒤 사람질의 서술어"],
-    // ⚠️ 담화 표지가 앞에 붙은 형태 — 군말(닫힌 부류)만 건너뛴다.
-    //   건너뛰기를 지우면 `혹시` 가 머리를 차지해 그대로 generic LLM 으로 샌다.
-    //   문장 전체 스캔으로 대신하면 한국어 용언(`나왔지`·`우승한`)이 이름으로 먹힌다.
-    ["혹시 임창규 어떤 선수야", "담화 표지 뒤 · 첫 어절 아님"],
-    ["그 임창규 어떤 선수야", "담화 표지(지시관형사) 뒤"],
+    ["임창규 어떤 선수야", "하린아빠 제보 원형"],
+    ["임창규는 어느 팀이야", "주격조사 — 핵 우선 판정"],
+    ["임창규 소개해줘", "서술어"],
+    ["임창규 알려줘", "범용어(직전 판들이 놓쳤다)"],
+    ["혹시 임창규 어떤 선수야", "담화 표지 뒤 — 첫 어절 아님"],
+    ["임창규 lg 주축 맞아?", "구단 동반 — 직전 판의 명시적 손해였다"],
+    ["임창규 잘해?", "평가 술어 — 직전 판의 명시적 손해였다"],
+    ["임창규 언제 데뷔했어", "합성 — 붙여쓰기·조사 없는 형태"],
   ] as const) {
     await checkAsync(`\`${question}\` → 생성 0 · 임찬규 제안 (${label})`, async () => {
       const { result, logs, calls } = await ask(question);
       assert.equal(result.source, "name_suggest", `source=${result.source}`);
-      // ⚠️ 조사가 붙어도 **같은 제안**이 나와야 한다(삼순 P0-2).
-      //   raw 토큰을 먼저 보던 직전 구현은 `임창규는`(4음절)를 먼저 이름으로 확정해
-      //   길이가 달라 1음절 치환이 안 되고, 정확한 제안을 잃었다.
       assert.equal(result.answer, NAME_SUGGEST_ANSWER("임찬규"), result.answer);
       assert.deepEqual(logs, ["name_suggest"]);
       assert.equal(calls.llm, 0, "generic LLM 이 불렸다 — 계약 위반");
@@ -201,86 +292,73 @@ async function main() {
     });
   }
 
-  // ── ①-b 삼순 2026-08-09 필수 양성: 로스터 밖 실존 인물 (near-miss 유일) ────
-  //   `김연아`·`신동엽`·`이효리` 는 야구 선수가 아니지만 로스터 이름과 1음절 차이라
-  //   **이름 모양이라는 기계적 근거**가 있다. 근거가 있으면 막는다.
-  for (const [question, expected] of [
-    ["김연아 어떤 선수야", "김연주"],
-    ["신동엽 어떤 선수야", "신동건"],
-    ["이효리 어떤 선수야", "이의리"],
-    // 이름 자체가 조사 음절(`은`)로 끝나는 3음절 — 조사와 구분되지 않지만
-    // **첫 음절**이 다른 near-miss 라 근거가 성립한다(삼순 2026-08-09 fail-open 표본).
-    ["김하은 어떤 선수야", "서하은"],
-  ] as const) {
-    await checkAsync(`\`${question}\` → 생성 0 · ${expected} 제안 (로스터 밖 실존 인물)`, async () => {
-      const { result, logs, calls } = await ask(question);
-      assert.equal(result.source, "name_suggest", `source=${result.source}`);
-      assert.equal(result.answer, NAME_SUGGEST_ANSWER(expected), result.answer);
-      assert.deepEqual(logs, ["name_suggest"]);
-      assert.equal(calls.llm, 0, "generic LLM 이 불렸다");
-    });
-  }
+  // ── ①-b 두 번째 실측 오타 ─────────────────────────────────────────────────
+  await checkAsync("`기아 양혅종 어떤 선수야` → 생성 0 · 양현종 제안 (두 번째 실측 오타)", async () => {
+    const { result, logs, calls } = await ask("기아 양혅종 어떤 선수야");
+    assert.equal(result.source, "name_suggest", `source=${result.source}`);
+    assert.equal(result.answer, NAME_SUGGEST_ANSWER("양현종"), result.answer);
+    assert.deepEqual(logs, ["name_suggest"]);
+    assert.equal(calls.llm, 0, "generic LLM 이 불렸다");
+  });
 
-  // ── ② near-miss 가 **여럿**인 이름 → 아무나 제안하지 않고 모른다고 말한다 ──────
-  //   `이승엽`(5명)·`이종범`(4)·`최동원`(4) — 이름 모양 근거는 있지만 하나로 못 좁힌다.
-  for (const question of [
-    "이승엽 어떤 선수야",
-    "이종범 소개해줘",
-    "최동원 어떤 선수야",
-  ]) {
-    await checkAsync(`\`${question}\` → 생성 0 · 모른다고 말한다`, async () => {
-      const { result, logs, calls } = await ask(question);
-      // ⚠️ 제안할 이웃을 하나로 못 좁히면 **`name_unknown`** 이다 (삼순 2026-08-08 조건 ③).
-      //   `name_suggest` 와 한 칸에 두면 제안율의 분모가 오염돼 오제안율을 못 센다.
-      assert.equal(result.source, "name_unknown", `source=${result.source}`);
-      assert.equal(result.answer, NAME_UNKNOWN_ANSWER, result.answer);
-      assert.deepEqual(logs, ["name_unknown"]);
-      assert.equal(calls.llm, 0, "generic LLM 이 불렸다 — 이게 바로 삼순 P0 였다");
-      assert.equal(calls.ragLlm, 0);
-      assert.equal(calls.cacheRead, 0);
-      assert.equal(calls.cacheWrite, 0);
-    });
-  }
+  // ── ② 🔴 map 에 없는 실측 토큰 67종 — 전부 오탐 0 ──────────────────────────
+  //   이게 이 PR 의 핵심 증거다. 규칙(near-miss·성씨·anchor)으로 열었으면
+  //   `보크가 뭐야` 에 "혹시 보스 선수를?" 이 나갔다.
+  check("실측 near-miss 67종(map 밖) × 합성 6형태 오탐 0", () => {
+    const misfires: string[] = [];
+    for (const [token, target] of MEASURED_NON_NAME_TOKENS) {
+      for (const frame of SYNTHETIC_FRAMES) {
+        const question = frame(token);
+        const unbound = resolveUnboundName(question, players);
+        if (unbound !== null) misfires.push(`${question} → ${unbound.token}→${unbound.suggestion}(예상 오제안 ${target})`);
+      }
+    }
+    assert.deepEqual(misfires, [], "야구 용어·기능어를 사람 이름으로 오인했다");
+  });
+
+  // 전제 확인 — 이 토큰들이 **실제로 near-miss 를 갖는다**(그래서 규칙이면 뚫린다).
+  //   이게 없으면 위 테스트는 "애초에 후보가 아니라서" 통과한 것과 구분되지 않는다.
+  check("전제: 67종은 로스터와 1음절 차이가 실재한다", () => {
+    const swap = (a: string, b: string) => {
+      if (a.length !== b.length) return false;
+      let diff = 0;
+      for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) diff += 1;
+      return diff === 1;
+    };
+    const rosterNames = players.map((p) => p.name);
+    const broken = MEASURED_NON_NAME_TOKENS
+      .filter(([token, target]) => !swap(token, target) || !rosterNames.includes(target))
+      .map(([token, target]) => `${token}→${target}`);
+    assert.deepEqual(broken, [], "표본이 낡았다 — 로스터 변경으로 near-miss 관계가 깨졌다");
+  });
 
   // ── ②-b 🔴 **닫지 못한 구멍을 actual 로 고정한다** ─────────────────────────
-  //
-  //   로스터에 near-miss 가 **0명**인 이름(`오타니`·`홍길동`·`선동열`)은 여전히 막지
-  //   못한다. 이유를 숨기지 않는다 — 그 이름들과 `자동차`·`신인왕`·`치어리`·`떡볶이` 는
-  //   **구조가 완전히 같다**(3음절 + 성씨 글자 + 사람 명사 문장, near-miss 전부 0).
-  //   구분하려면 형태소/사전/NER 기반 proper-name 판정이 필요하고 그건 별도 트랙이다.
-  //   삼순 2026-08-09 (b) 비대칭에 따라 **근거 없으면 기존 경로로 둔다.**
-  //
-  //   ⚠️ 이 테스트는 "이게 옳다" 가 아니라 **"지금 여기까지다"** 를 고정하는 것이다.
-  //     나중에 proper-name 판정을 붙이면 이 기대값이 깨지고, 그때 의도적으로 고쳐야 한다.
+  //   map 에 없는 이름은 잡지 않는다 — 로스터 밖 실존 인물·완전 허구 포함.
+  //   일반화하려면 형태소/NER proper-name 판정이 필요하고 **별도 트랙**이다.
+  //   ⚠️ 이 테스트는 "이게 옳다" 가 아니라 **"지금 여기까지다"** 를 고정한다.
+  //     나중에 별도 트랙이 붙으면 이 기대값이 깨지고, 그때 의도적으로 고쳐야 한다.
   for (const question of [
-    "오타니 어떤 선수야",
-    "홍길동 어떤 선수야",
-    "선동열은 어떤 사람이야",
-    // ⚠️ 구단 anchor 만 있는 형태 — **삼순 2026-08-09 승인된 명시적 손해**.
-    //   구단은 후보와 무관해서 anchor 로 쓰면 `우승한 팀 lg트윈스 맞아?` 를 같이 연다.
-    "임창규 lg 주축 맞아?",
-    // ⚠️ `누구야` 는 이 판정 **이전 단계**(범위밖 denylist)가 `blocked` 로 먼저 종결한다.
-    //   순서를 바꾸는 건 이 PR 의 축이 아니라 손대지 않는다 — 현재 위치를 고정해 둔다.
-    "임창규 누구야",
-    // ⚠️ **평가 술어는 anchor 가 아니다** — 이것이 그 손해의 actual 이다.
-    //   `잘해`·`어때` 를 사람질의 서술어로 인정하면 `자동차 잘해?`·`고양이 어때?` 가
-    //   같은 구조로 들어온다(삼순 2026-08-09 과차단). 그래서 이 형태는 못 잡는다.
-    //   near-miss 근거(`임찬규`)가 있어도 anchor 가 없으면 열지 않는다 — 비대칭이다.
-    "임창규 잘해?",
-    "임창규 어때?",
+    "오타니 어떤 선수야",     // 로스터 밖 실존 인물
+    "홍길동 어떤 선수야",     // 완전 허구
+    "이승엽 어떤 선수야",     // 은퇴 선수
+    "선동열은 어떤 사람이야", // 은퇴 선수(현역에 없는 성씨)
+    "이대호 어떤 선수야",     // 은퇴 선수
   ]) {
-    await checkAsync(`\`${question}\` → 🔴 아직 막지 못한다 (near-miss 0 · 근거 없음)`, async () => {
+    await checkAsync(`\`${question}\` → 🔴 아직 막지 못한다 (map 밖 — 별도 트랙)`, async () => {
       const { result } = await ask(question);
-      assert.ok(result.source !== "name_suggest" && result.source !== "name_unknown",
-        `막혔다 — 그러면 \`자동차\`·\`신인왕\` 도 같이 막히고 있다는 뜻이다: ${result.source}`);
+      assert.notEqual(result.source, "name_suggest",
+        `막혔다 — map 에 없는데 잡혔다면 규칙 추론이 되살아난 것이다: ${result.source}`);
     });
   }
 
-  // ── ③ 제안은 후보가 **유일**할 때만 ──────────────────────────────────────
-  check("`이대호`(후보 3명) 는 아무나 제안하지 않는다", () => {
-    const unbound = resolveUnboundName("이대호 어떤 선수야", players);
-    assert.notEqual(unbound, null, "미결속 이름으로는 잡혀야 한다(생성은 막는다)");
-    assert.equal(unbound?.suggestion, null, `엉뚱한 이름을 제안했다: ${unbound?.suggestion}`);
+  // ── ③ 교정 대상은 **현 로스터에 있어야** 한다 ──────────────────────────────
+  check("교정 대상이 로스터에서 사라지면 되묻지 않는다 (fail-close)", () => {
+    const withoutTarget = players.filter((p) => p.name !== "임찬규");
+    assert.ok(withoutTarget.length === players.length - 1, "전제 확인 — 임찬규가 로스터에 있다");
+    assert.equal(
+      resolveUnboundName("임창규 어떤 선수야", withoutTarget), null,
+      "없는 선수를 되물었다 — 이 PR 이 고치려던 결함과 같은 종류다",
+    );
   });
 
   // ── ④ quota 반환 — 오타 한 글자에 한도 2개를 물리지 않는다 ────────────────
@@ -294,15 +372,14 @@ async function main() {
   // ── ⑤ 무회귀: 결속된 선수 · 룰 · 구단 ─────────────────────────────────────
   await checkAsync("결속된 선수(`임찬규`)는 그대로 RAG 로 답한다", async () => {
     const { result, calls } = await ask("임찬규 어떤 선수야");
-    assert.ok(result.source !== "name_suggest" && result.source !== "name_unknown",
-      `정상 선수를 되물었다: ${result.source}`);
+    assert.notEqual(result.source, "name_suggest", `정상 선수를 되물었다: ${result.source}`);
     assert.equal(calls.ragLlm, 1, "선수 RAG 가 안 불렸다");
   });
 
   await checkAsync("구단 서술 질문은 team_rag 로 간다", async () => {
     const { result } = await ask("LG트윈스 창단 이야기 알려줘");
-    assert.ok(result.source !== "name_suggest" && result.source !== "name_unknown",
-      `구단 질문이 이름 되묻기로 샜다 — \`이야기\`→\`이준기\` 오탐 회귀: ${result.source}`);
+    assert.notEqual(result.source, "name_suggest",
+      `구단 질문이 이름 되묻기로 샜다: ${result.source}`);
   });
 
   check("룰·일반 문장 오탐 0", () => {
@@ -312,51 +389,20 @@ async function main() {
       "우천 취소 기준 알려줘",
       "세이프티 신발 어디서 사?",
       "어디서 뛰는지 알려줘",
-      "어디서 경기하는지 알려줘",
       "이야기 좀 알려줘",
-      "이번 주 일정 알려줘",
-      "요즘 어떤 선수 잘해?",
-      "무슨 팀이 강해 알려줘",
-      "누구 소개해줘",
-      "그거 어떤 사람이야",
-      "여기 어떤 경기장이야",
-      "야구장 어디에 있는지 알려줘",
-      "이번에 어떤 규칙 바뀌었어",
       "저번에 어떤 선수 나왔지",
-      "우리 팀 어떤 선수 좋아",
-      "진짜 어떤 선수가 잘해",
-      "그냥 어떤 경기 재밌어",
-      "혹시 어떤 규칙인지 알려줘",
-      // ⚠️ near-miss 가 **0명**인 일반 명사 — `근거 요구`(N-H)가 유일한 방어다.
-      //   이 축이 없으면 near-miss 근거 검사를 지워도 GREEN 이다.
-      "떡볶이 어떤 선수가 좋아해",
-      "짜장면 어떤 선수가 좋아해",
-      "쌍둥이 어떤 선수야",
-      "튀김옷 어떤 선수가 좋아해",
-      "신인왕 누구야",
-      "자동차 보험 누구한테 물어봐",
-
-      // ⚠️ 아래 4개는 **near-miss 가 실제로 있는 일반어**다 (로스터 881명 실측).
-      //   각 줄이 서로 다른 방어축의 **유일한 증거**다 — 없으면 그 축을 지워도 GREEN 이다.
-      //
-      //   `우승한`(→우승완) : anchor 요구가 유일한 방어. 사람 명사·주격조사·구단이 전부 없다.
-      //                       삼순 2026-08-09 필수 음성 표본.
       "우승한 팀 어디야?",
-      // ⚠️ 삼순 2026-08-09 필수 음성 — **query-wide anchor 가 무효인 증거**.
-      //   문장 어딘가의 사람 명사/구단을 anchor 로 쓰면 이 둘이 그대로 뚫린다.
-      //   anchor 는 후보 **바로 옆**의 구조여야 한다. `우승한 선수`·`우승한 팀` 은
-      //   관형형이 명사에 직접 붙은 형태라 `임창규 어떤 선수`(관형사가 낀다)와 갈린다.
       "우승한 선수 누구야?",
+      "우승한 그 선수 누구야?",
+      "우승한 어떤 선수야?",
       "우승한 팀 lg트윈스 맞아?",
-      //   `우승한` + 평가 술어 : `잘해`·`어때` 를 사람 신호로 되돌리면 바로 뚫린다.
-      //                          삼순 2026-08-09 필수 음성 표본(`자동차 운전 잘해?` 축).
-      "우승한 팀 잘해?",
       "자동차 운전 잘해?",
-      //   `이야기`(→이준기) : 기능어 배제가 유일한 방어. anchor(`선수`)까지 갖췄다.
-      //                       이게 뚫리면 구단 서술 질문이 통째로 죽는다.
-      "이야기 어떤 선수야",
-      //   `장타율`(→장재율) : 지표어 배제가 유일한 방어. anchor(`선수`)까지 갖췄다.
+      "고양이는 잘해?",
+      "김치는 어떤 사람이 만들었어?",
+      "박수는 언제 쳐?",
+      "신인왕 누구야",
       "장타율 어떤 선수가 높아",
+      "이야기 어떤 선수야",
     ];
     const misfires = NON_NAME_QUESTIONS
       .map((q) => [q, resolveUnboundName(q, players)] as const)
@@ -368,57 +414,23 @@ async function main() {
     );
   });
 
-  // ⚠️ 삼순 2026-08-08 P0-1: 성씨를 **현역 로스터에서만** 파생하면 현역에 없는 성씨가
-  //   통째로 누수된다. `선동열`의 `선` 씨는 현역 881명에 한 명도 없고, 은퇴 선수·레전드는
-  //   유저가 제일 많이 물는 이름이다 — 정작 제일 위험한 구멍이었다.
-  //   지금은 `KOREAN_SURNAMES` 폐쇄집합과 합치므로 잡힌다. 그 사실을 고정한다.
-  // ⚠️ **성씨 결속은 폐기했다** (2026-08-09). 여기 있던 "현역에 없는 성씨도 막는다"
-  //   테스트는 성씨 판정을 전제로 한 계약이었는데, 그 판정이 `자동차`(`자` 씨)·
-  //   `신인왕`(`신` 씨)·`치어리`(`치` 씨)를 전부 통과시켜 과차단의 원인이었다
-  //   (삼순 2026-08-09). 지금은 **로스터 이름과의 1음절 차이**가 근거다.
-  //   그래서 판정 근거가 무엇인지를 직접 고정한다.
-  check("근거는 성씨가 아니라 **로스터 이름과의 1음절 차이**다", () => {
-    const rosterSurnames = new Set(
-      players.filter((p) => !/\s/.test(p.name)).map((p) => p.name[0]),
-    );
-    assert.ok(!rosterSurnames.has("선"), "전제 확인 — `선` 씨는 현역 로스터에 없다");
-
-    // 성씨가 있어도 near-miss 가 0이면 근거가 없다 → 막지 않는다(기존 경로).
-    for (const token of ["선동열", "오타니", "홍길동"]) {
-      assert.equal(
-        resolveUnboundName(`${token} 어떤 선수야`, players), null,
-        `${token}: near-miss 0인데 막았다 — 그러면 \`자동차\`·\`신인왕\` 도 막힌다`,
-      );
-    }
-    // 성씨 여부와 무관하게 near-miss 가 있으면 막는다.
-    assert.equal(resolveUnboundName("김연아 어떤 선수야", players)?.suggestion, "김연주");
-  });
-
-  // ── 삼순 P0-2 반대쌍: 일반명사 + 주제조사 는 이름이 아니다 ────────────
-  //   `김치는 어떤 사람이 만들었어?` — `김` 씨 + 주제조사 + `사람`(사람명사)라
-  //   세 조건을 전부 만족하는데도 이름이 아니다. 2음절 제외가 이걸 막는다.
-  check("일반명사 주어는 이름으로 오인하지 않는다 (삼순 P0-2)", () => {
-    const NOUN_SUBJECTS = [
-      "김치는 어떤 사람이 만들었어?",
-      "박수는 언제 나오는지 알려줘",
-      "고말은 어떤 선수가 받았어",
-      "안타는 누가 제일 많아",
-      "주치는 누가 말했어",
+  // ⚠️ 로스터는 매일 바뀐다 — 오늘의 오타 문자열이 내일 신인 이름일 수 있다.
+  //   그때도 되묻으면 이 PR 이 고치려던 결함의 **거울상**이 된다(실존 선수를 물었는데
+  //   "혹시 다른 사람?" 이라고 답하는 것). 그 방어를 실제 로스터를 조작해 확인한다.
+  check("오타 키가 실존 선수 이름이 되면 되묻지 않는다 (거울상 방어)", () => {
+    const withTypoAsRealPlayer = [
+      ...players,
+      { kboId: 999999, name: "임창규", team: "LG" } as PlayerRef,
     ];
-    const misfires = NOUN_SUBJECTS
-      .map((q) => [q, resolveUnboundName(q, players)] as const)
-      .filter(([, u]) => u !== null);
-    assert.deepEqual(
-      misfires.map(([q, u]) => `${q} → ${u?.token}`),
-      [],
-      "일반명사 주어를 사람 이름으로 오인했다",
+    assert.equal(
+      resolveUnboundName("임창규 어떤 선수야", withTypoAsRealPlayer), null,
+      "실존 선수를 오타로 취급해 되물었다 — 결함의 거울상이다",
     );
   });
 
   check("로스터 전원 자기 질문 오탐 0", () => {
     const misfires: string[] = [];
     for (const p of players) {
-      if (/\s/.test(p.name)) continue; // 외국인 풀네임은 토큰 비교 대상이 아니다
       const unbound = resolveUnboundName(`${p.name} 어떤 선수야`, players);
       if (unbound !== null) misfires.push(`${p.name} → ${unbound.token}`);
     }
@@ -426,21 +438,14 @@ async function main() {
   });
 
   // ── ⑥ 라벨 배선 ──────────────────────────────────────────────────────────
-  check("`name_suggest`·`name_unknown` 은 답변(`answer`)으로 분류되지 않는다", () => {
+  check("`name_suggest` 는 답변(`answer`)으로 분류되지 않는다", () => {
     // 우리는 아무 사실도 말하지 않았다 — 답변 감사 분자에 들어가면 성공률이 부풀려진다.
     assert.notEqual(MATCH_PATH_REPLY_KIND.name_suggest, "answer");
-    assert.notEqual(MATCH_PATH_REPLY_KIND.name_unknown, "answer");
   });
 
-  // ⚠️ **두 라벨이 실제로 갈라지는지**를 본다 (삼순 2026-08-08 조건 ③).
-  //   한쪽으로 병합해도 게이트가 GREEN 이면 감사 분리는 말뿐이다.
-  check("제안 가능 여부로 `name_suggest` / `name_unknown` 이 갈린다", () => {
+  check("routeQuestion 이 `name_suggest` 를 돌려준다", () => {
     assert.equal(routeQuestion("임창규 어떤 선수야", GLOSSARY, players), "name_suggest");
-    // near-miss 가 **여럿**이라 하나로 못 좁히는 경우 → `name_unknown`
-    assert.equal(routeQuestion("이승엽 어떤 선수야", GLOSSARY, players), "name_unknown",
-      "후보를 못 좁힌 이름이 name_unknown 으로 갈리지 않는다 — 감사 분모가 오염된다");
-    assert.equal(routeQuestion("최동원 어떤 선수야", GLOSSARY, players), "name_unknown");
-    assert.equal(routeQuestion("김하은 어떤 선수야", GLOSSARY, players), "name_suggest");
+    assert.equal(routeQuestion("기아 양혅종 어떤 선수야", GLOSSARY, players), "name_suggest");
   });
 
   if (failures.length > 0) {

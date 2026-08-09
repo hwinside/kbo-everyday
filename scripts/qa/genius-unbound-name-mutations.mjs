@@ -48,120 +48,76 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 const MUTATIONS = [
   {
     name: "N-A fail-close 제거 (원래 사고 재현)",
-    from: `  if (unboundName !== null) {
-    return unboundName.suggestion === null ? "name_unknown" : "name_suggest";
-  }`,
-    to: `  if (false && unboundName !== null) { return "name_suggest"; }`,
+    from: `  if (resolveUnboundName(question, players) !== null) return "name_suggest";`,
+    to: `  if (false) return "name_suggest";`,
     expect: "source=",
   },
   {
-    name: "N-B 후보 1명 제한 해제 (엉뚱한 이름 제안)",
-    from: `    return { token, suggestion: candidates.length === 1 ? candidates[0] : null };`,
-    to: `    return { token, suggestion: candidates[0] ?? null };`,
-    expect: "엉뚱한 이름을 제안했다",
+    name: "N-B alias map 을 near-miss 규칙으로 되돌리기 (`보크`→`보스` 47회 오제안)",
+    // 이 PR 이 폐기한 그 접근이다. 되살리면 운영 로그 67종이 통째로 오제안이 된다.
+    from: `      const suggestion = MEASURED_TYPO_ALIASES.get(token);
+      if (suggestion === undefined) continue;`,
+    to: `      const near = players.map((p) => p.name).filter((n) =>
+        n.length === token.length && [...n].filter((c, i) => c !== token[i]).length === 1);
+      const suggestion = near.length === 1 ? near[0] : undefined;
+      if (suggestion === undefined) continue;`,
+    expect: "야구 용어·기능어를 사람 이름으로 오인",
+  },
+  {
+    name: "N-C 조사 분해 제거 (`임창규는 어느 팀이야` 누수)",
+    from: `    for (const token of stripTokenSuffix(raw)) {`,
+    to: `    for (const token of [raw]) {`,
+    expect: "source=",
   },
   {
     name: "N-D quota 반납 제거 (오타에 한도 2배)",
-    from: `    if (isUnboundNameRoute && deps.releaseDaily) {`,
+    from: `    if (route === "name_suggest" && deps.releaseDaily) {`,
     to: `    if (false && deps.releaseDaily) {`,
     expect: "반납이 없다",
   },
   {
-    name: "N-E anchor 요구 제거 (룰 질문·일반 문장 누수)",
-    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;`,
-    to: `  if (false) return null;`,
-    expect: "오탐",
+    name: "N-E 로스터 존재 확인 제거 (없는 선수를 되묻는다)",
+    from: `      if (!rosterNames.has(suggestion)) continue;`,
+    to: `      if (false) continue;`,
+    expect: "없는 선수를 되물었다",
   },
   {
-    name: "N-E2 후보 뒤 사람질의 결속 제거 (`임창규 어떤 선수야` 누수)",
-    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;
-`,
-    to: `  if (!headHasSubjectParticle) return null;
-`,
+    name: "N-F 오타 키의 실존 선수 배제 제거 (결함의 거울상)",
+    from: `      if (rosterNames.has(token)) continue;`,
+    to: `      if (false) continue;`,
+    expect: "실존 선수를 오타로 취급해 되물었다",
+  },
+  {
+    name: "N-G alias 엔트리 삭제 (`임창규` 가 generic LLM 으로 간다)",
+    from: `  ["임창규", "임찬규"],`,
+    to: `  // MUT-NG`,
     expect: "source=",
   },
   {
-    name: "N-E3 🔴 anchor 를 질문 전체로 확대 (삼순 2026-08-09 필수 축)",
-    // query-wide anchor 로 되돌린다 — `우승한 선수 누구야?`·`우승한 팀 lg트윈스 맞아?` 가
-    // 문장 어딘가의 사람 명사/구단 때문에 다시 `우승완` 을 제안하게 된다.
-    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;`,
-    to: `  if (!headHasSubjectParticle && !followedByPersonQuery
-    && !PERSON_REFERENCE_WORDS.some((w) => normalizedQuestion.includes(w))
-    && !mentionsTeam(tokens)) return null;`,
-    expect: "오탐",
+    name: "N-H 두 번째 alias 삭제 (`양혅종` 누수)",
+    from: `  ["양혅종", "양현종"],`,
+    to: `  // MUT-NH`,
+    expect: "source=",
   },
   {
-    name: "N-E4 관형사 요구 제거 (`우승한 선수` 가 이름이 된다)",
-    // `임창규 어떤 선수` 와 `우승한 선수` 를 가르는 것은 **사이에 낀 관형사** 한 칸이다.
-    from: `    (following[0] !== undefined && NAME_QUERY_DETERMINERS.has(following[0])
-      && following[1] !== undefined
-      && PERSON_REFERENCE_WORDS.some((word) => following[1].startsWith(word)))`,
-    to: `    (following[0] !== undefined
-      && PERSON_REFERENCE_WORDS.some((word) => following[0].startsWith(word)))`,
-    expect: "오탐",
+    name: "N-I 문구 생성 fail-close 제거 (라우팅만 하고 문구가 없다)",
+    from: `        ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))`,
+    to: `        ? NAME_SUGGEST_ANSWER("")`,
+    expect: "answer",
   },
   {
-    name: "N-F 평가 술어를 사람질의 서술어로 되돌리기 (`자동차 잘해?` 과차단 축)",
-    from: `  "소개", "프로필", "알려줘",
-];`,
-    to: `  "소개", "프로필", "알려줘", "잘해", "잘하", "못해", "어때",
-];`,
-    // 이 변이는 `임창규 잘해?` 를 잡게 만든다 — 그런데 같은 구조로 `자동차 잘해?`·
-    // `고양이 어때?` 도 잡힌다. 그래서 "못 잡는다" 를 고정한 actual 이 깨지는 것이 RED 다.
-    expect: "막혔다",
-  },
-  {
-    name: "N-G 머리 어절 제약 제거 (용언이 이름으로 먹힌다)",
-    from: `  const cores = [...new Set(stripTokenSuffix(headRaw))].sort((a, b) => a.length - b.length);`,
-    to: `  const cores = [...new Set(tokens.flatMap((t) => stripTokenSuffix(t)))].sort((a, b) => a.length - b.length);`,
-    expect: "오탐",
-  },
-  {
-    name: "N-H near-miss 근거 요구 제거 (`자동차`·`신인왕` 이 이름)",
-    from: `    if (candidates.length === 0) continue;`,
-    to: `    if (false) continue;`,
-    expect: "오탐",
-  },
-  {
-    name: "N-K 음절 하한 완화 (`김치`·`안타` 가 이름 후보)",
-    from: `    if (token.length < 3 || token.length > 4) continue;`,
-    to: `    if (token.length < 2 || token.length > 4) continue;`,
-    expect: "오탐",
-  },
-  {
-    name: "N-L 기능어 분해형 배제 제거 (`저번에` 우회)",
-    from: `  if (cores.some((core) => NON_NAME_FUNCTION_WORDS.has(core))) return null;`,
-    to: `  if (false) return null;`,
-    expect: "오탐",
-  },
-  {
-    name: "N-M 담화 표지 건너뛰기 제거 (`혹시 …` 형태 판정 상실)",
-    from: `  const headIndex = tokens.findIndex((token) => !DISCOURSE_FILLERS.has(token));`,
-    to: `  const headIndex = tokens.length > 0 ? 0 : -1;`,
-    expect: "오탐",
-  },
-  {
-    name: "N-N 조사자리 차이 배제 제거 (`박수는`→`박수종`)",
-    from: `    if (!SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))) return candidates;
-    return candidates.filter((name) => name[name.length - 1] === token[token.length - 1]);`,
-    to: `    return candidates;`,
-    expect: "오탐",
-  },
-  {
-    name: "N-O `name_unknown` 라벨 병합 (감사 분모 오염)",
-    from: `    return unboundName.suggestion === null ? "name_unknown" : "name_suggest";`,
-    to: `    return "name_suggest";`,
-    expect: "name_unknown",
-  },
-  {
-    name: "N-P 야구 어휘 배제 제거 (지표어·구단어가 이름 후보)",
-    from: `    if (BASEBALL_VOCABULARY.includes(token) || STAT_WORDS.includes(token) || TEAM_WORDS.includes(token)) continue;`,
-    to: `    if (false) continue;`,
-    expect: "오탐",
+    name: "N-J 캐시 우회 제거 (미결속 실명 답이 캐시를 탄다)",
+    from: `  if (resolveUnboundName(question, players) !== null) return "name_suggest";
+`,
+    to: `
+`,
+    expect: "source=",
   },
 ];
 
-// N-J — **동등변이**로 판정해 제외했다 (검출 실패가 아니다).
+// (구 N-J 동등변이 메모는 삭제했다 — 그 축의 코드가 이 판에서 통째로 사라졌다.)
+// 아래는 낡은 메모다.
+// N-J-old — **동등변이**로 판정해 제외했었다.
 //
 //   "핵 우선 정렬(`a.length - b.length`)을 뒤집는" 변이를 넣었는데 게이트가 GREEN 이었다.
 //   원인을 파보니 게이트 결손이 아니라 **정렬이 이미 결과를 바꿀 수 없는 상태**였다:
