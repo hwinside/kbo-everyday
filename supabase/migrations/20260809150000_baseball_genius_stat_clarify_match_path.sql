@@ -13,6 +13,13 @@
 -- `team_rag`(2026-08-07)·`news_rag`·`scope_guide`(2026-08-08)를 나눈 것과 같은 축이다:
 -- 화면 취급이 같아도 **감사 축이 다르면 라벨을 나눈다**.
 --
+-- ⚠️ 타임스탬프 이력 (2026-08-09, 이 파일이 `20260808200000` 을 대체한다).
+--   원래 이 확장은 `20260808200000` 이었는데, 그 사이 main 에 머지·Production 적용된
+--   `20260808230000`(#1135, `name_suggest`)이 같은 CHECK 를 DROP+재정의한다. 구 타임스탬프를
+--   유지하면 적용 순서상 `stat_clarify` 가 나중 migration 에 덮여 **조용히 사라진다** —
+--   Vercel 빌드 게이트(`코드의 MatchPath 가 DB CHECK 에 없다`)가 실제로 잡은 결함이다.
+--   그래서 최신 CHECK 정의(#1135) 전체를 기준으로 그 위에 `stat_clarify` 만 더한다.
+--
 -- ⚠️ 이 CHECK 확장이 배포보다 늦으면 되묻기 INSERT 가 제약 위반(23514)으로 실패해
 --   job 이 통째로 failed 로 떨어진다(2026-08-03 `match_path='rag'` 미허용으로 선수질문이
 --   전량 pipeline_failed 났던 사고와 같은 축). migration 을 **먼저** 적용한다.
@@ -29,6 +36,8 @@ ALTER TABLE public.genius_question_logs
       'team_rag',
       'news_rag',
       'scope_guide',
+      -- 실측된 이름 오타를 받아 생성 없이 그 이름을 되물은 경로 (#1135).
+      'name_suggest',
       -- `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로.
       -- 화면 취급은 `unsure` 와 같지만(둘 다 못 답함) 원인 축이 다르다.
       'stat_clarify'

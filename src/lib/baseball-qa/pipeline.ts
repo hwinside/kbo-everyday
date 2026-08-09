@@ -523,7 +523,7 @@ export type QuestionRoute =
   //   한 칸에 넣으면 "생성 품질 문제"와 "결속 데이터 부재 문제"가 섞여 분모가 사라진다.
   //   `team_rag`·`news_rag`·`scope_guide` 를 나눈 것과 같은 축이다.
   //   → `MatchPath` 에도 같은 이름이 있고 CHECK 확장 migration 이 필요하다
-  //     (`20260808200000_*`).
+  //     (`20260809150000_*`).
   | "stat_clarify"
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
