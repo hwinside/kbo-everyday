@@ -1187,7 +1187,53 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(ragCalls, 1);
   }
 
-  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / ambiguous fail-close / 양보 CAS 1회");
+  // (e-4) TOCTOU 전이 — front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장한 경우,
+  //   경계 재조회가 envelope 를 raw 로 재검증하면 정상 final 이 unsure 로 덮인다 (삼순 3차).
+  //   경계도 공용 helper 로 envelope 를 인식해 그대로 재생해야 한다.
+  {
+    const envelope: LlmResult = {
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불려요. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
+      inputTokens: 1, outputTokens: 1,
+    };
+    let stateCalls = 0;
+    let overwrote = false;
+    const { deps } = makeDeps({
+      // 1번째(front) = null, 2번째(경계) = 다른 worker 가 저장한 envelope.
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: envelope, ownerActive: false };
+      },
+      acquireLlmStart: async () => false,
+      storeLlm: async () => { overwrote = true; },
+      searchRag: async () => [MOON_EVIDENCE],
+      callRagLlm: async () => { throw new Error("envelope 존재 시 공급자 재호출 금지"); },
+      callLlm: async () => { throw new Error("generic 호출 금지"); },
+    });
+    const raced = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(raced.source, "rag", `TOCTOU 전이에서 envelope 가 raw 재검증됐다: ${raced.source}`);
+    assert.match(raced.answer, /문학소년/);
+    assert.equal(raced.sourceUrl, "https://namu.wiki/w/문보경", "TOCTOU 전이가 provenance 를 잃었다");
+    assert.equal(overwrote, false, "TOCTOU 전이에서 final 이 재저장·덮어쓰기 됐다");
+  }
+  // (e-5) front 조회 throw = pending fail-close — null 진행이면 검색·캐시가 저장 답을 이긴다.
+  {
+    let externalTouched = 0;
+    const { deps } = makeDeps({
+      getLlmState: async () => { throw new Error("state db down"); },
+      searchRag: async () => { externalTouched++; return [MOON_EVIDENCE]; },
+      getCache: async () => { externalTouched++; return "오염 캐시"; },
+      callRagLlm: async () => { externalTouched++; throw new Error("호출 금지"); },
+      callLlm: async () => { externalTouched++; throw new Error("호출 금지"); },
+    });
+    const pending = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(pending.status, 202, `front 조회 실패가 pending 이 아니다: ${pending.status}`);
+    assert.equal(pending.source, "pending");
+    assert.equal(externalTouched, 0, `front 조회 실패 후 외부 상태를 소비했다(${externalTouched})`);
+  }
+
+  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / TOCTOU 경계 재생 / front-throw pending / ambiguous fail-close / 양보 CAS 1회");
 }
 
 /**

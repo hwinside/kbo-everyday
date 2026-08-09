@@ -215,6 +215,22 @@ const MUTATIONS = [
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
   },
+  {
+    id: "N35 경계 envelope 재인식 제거 (TOCTOU — raw 재검증 회귀)",
+    file: PIPELINE,
+    anchor: "    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });\n    if (boundaryReplayed) return boundaryReplayed;",
+    replacement: "",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "front null → 경계 envelope 전이에서 정상 final 이 unsure 로 재저장·덮어쓰기 된다 (삼순 3차)",
+  },
+  {
+    id: "N36 front 조회 throw 를 null 진행으로 회귀",
+    file: PIPELINE,
+    anchor: '      // 조회 실패를 null 로 두면 검색·캐시가 저장 답을 다시 이길 수 있다 (삼순 3차).\n      // 답변 발송 없이 물러난다 — 저장 여부를 모르는 채 진행하지 않는다(fail-close).\n      return { status: 202, answer: "", source: "pending", remaining };',
+    replacement: "      replayResult = null;",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "front 조회 실패 시 검색·캐시가 저장 답을 이겨 최종 답이 바뀔 수 있다 (삼순 3차)",
+  },
 ];
 
 function runSmoke(gate = "scripts/qa/baseball-genius-context-smoke.ts") {

@@ -2284,6 +2284,35 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
   };
 }
 
+/**
+ * 저장된 최종 응답 envelope 재생 — **front 와 5개 LLM 경계가 공용**한다 (삼순 2026-08-10
+ * 3차 TOCTOU). front 가 `result=null` 을 읽은 뒤 다른 worker 가 envelope 를 저장하면,
+ * 이 worker 의 경계 재조회가 envelope 를 raw 공급자 응답으로 검증해 정상 final 을
+ * `unsure` 로 재저장·덮어쓰기 했다. 경계도 같은 helper 로 envelope 를 반드시 인식한다.
+ */
+async function replayStoredFinalResult(
+  llm: LlmResult | null,
+  args: { userId: string; question: string; questionNorm: string; remaining: number; deps: QaDeps },
+): Promise<QaResult | null> {
+  if (!llm) return null;
+  const storedFinal = unpackStoredQaFinal(llm.text);
+  if (!storedFinal) return null;
+  const { userId, question, questionNorm, remaining, deps } = args;
+  // crash 복구 완결 — **원시점 cacheable** 일 때만 캐시를 마저 쓴다 (재시도 시점
+  // context/scope/roster 재계산 금지 — 비캐시 답이 global cache 로 샌다).
+  if (storedFinal.source === "llm" && storedFinal.cacheable === true) {
+    await deps.setCache(questionNorm, storedFinal.answer);
+  }
+  await deps.log({
+    userId, question, questionNorm, matchPath: storedFinal.source,
+    answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+  });
+  return {
+    status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+    ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+  };
+}
+
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
 export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
   let value: unknown;
@@ -2661,6 +2690,10 @@ async function answerPlayerDescriptiveQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
+    // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
+    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
+    if (boundaryReplayed) return boundaryReplayed;
     if (!llm && state.started) {
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
@@ -2749,6 +2782,10 @@ async function answerOfficialDocumentQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
+    // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
+    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
+    if (boundaryReplayed) return boundaryReplayed;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -2865,6 +2902,10 @@ async function answerTeamRagQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
+    // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
+    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
+    if (boundaryReplayed) return boundaryReplayed;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -2980,6 +3021,10 @@ async function answerNewsRagQuestion(
       return settle(SYSTEM_ERROR_ANSWER, "error");
     }
     llm = state.result;
+    // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
+    // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
+    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
+    if (boundaryReplayed) return boundaryReplayed;
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return settle(SYSTEM_ERROR_ANSWER, "error");
@@ -3054,24 +3099,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     try {
       replayResult = (await deps.getLlmState()).result;
     } catch {
-      replayResult = null;
+      // 조회 실패를 null 로 두면 검색·캐시가 저장 답을 다시 이길 수 있다 (삼순 3차).
+      // 답변 발송 없이 물러난다 — 저장 여부를 모르는 채 진행하지 않는다(fail-close).
+      return { status: 202, answer: "", source: "pending", remaining };
     }
-    const storedFinal = replayResult ? unpackStoredQaFinal(replayResult.text) : null;
-    if (replayResult && storedFinal) {
-      // crash 복구 완결 — **원시점 cacheable** 일 때만 캐시를 마저 쓴다. 재시도 시점
-      // context/scope/roster 재계산은 비캐시 답을 global cache 로 새게 한다 (삼순 2차).
-      if (storedFinal.source === "llm" && storedFinal.cacheable === true) {
-        await deps.setCache(questionNorm, storedFinal.answer);
-      }
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: replayResult.inputTokens, outputTokens: replayResult.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
+    const frontReplayed = await replayStoredFinalResult(replayResult, { userId, question, questionNorm, remaining, deps });
+    if (frontReplayed) return frontReplayed;
   }
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
@@ -3520,6 +3553,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
     }
     llm = state.result;
+    // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
+    // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
+    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
+    if (boundaryReplayed) return boundaryReplayed;
     if (!llm && state.started) {
       if (state.ownerActive) {
         // winner worker가 LLM 경계를 진행 중 — loser는 어떤 답변도 발송하지 않고 물러난다.
