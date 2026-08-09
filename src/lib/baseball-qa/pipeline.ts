@@ -5,9 +5,19 @@
 import {
   isFollowupPhrase,
   selectContextTurn,
+  selectDraftContextTurn,
   type ContextTurn,
   type PreviousTurnRow,
 } from "./context";
+import {
+  asksDraftDetail,
+  draftUnavailableReason,
+  isDraftFollowupGrammar,
+  isDraftQuestion,
+  parseDraftLabel,
+  renderDraftAnswer,
+  renderDraftUnavailable,
+} from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   allowsNumericAnswer,
@@ -478,6 +488,14 @@ export interface PlayerRef {
   team?: string | null;
   position?: string | null;
   backNo?: string | null;
+  /**
+   * KBO 공식 프로필 `lblDraft` **원문**(예 `11 LG 1라운드 2순위`).
+   *
+   * ⚠️ 여기 원문을 두고 해석은 `roster/draft.ts` 한 곳에서만 한다 — 파싱이 두 곳에
+   *   있으면 한쪽만 고쳐져 값이 갈린다.
+   * ⚠️ `""`(공식에 등록 없음)과 `undefined`(아직 안 긁음)는 **다른 상태**다.
+   */
+  draft?: string | null;
 }
 
 export interface LlmResult {
@@ -1575,6 +1593,23 @@ export function resolveRagPlayerCandidate(
  * 몇개칩어?`)은 수치어 때문에 그 게이트에 걸려 후보 자체가 안 잡혔고, 그래서 구조화 DB
  * 경로까지 도달하지 못했다(게이트가 잡은 결함).
  */
+/**
+ * 질문 문장에 **로스터 선수 이름이 하나라도 명시**돼 있는가 — 입단 후속 과결속 차단용.
+ *
+ * ⚠️ `resolveNamedPlayerCandidate === null` 과 다르다. resolve 는 복수 이름·동명이인도
+ *   null 을 주는데, 그건 "명시 엔티티 없음"이 아니라 "명시됐는데 모호함"이다. 모호한
+ *   질문이 직전 선수로 새면 엉뚱한 입단 연도가 확정 문장으로 나간다(삼순 2026-08-09).
+ *   방향은 보수적이다 — 과탐(이름 아닌 문자열을 이름으로 오인)은 후속 미결속 → 기존
+ *   경로 유지일 뿐이고, 미탐이 사고다. 정확 부분문자열만 보고 근접 매칭은 하지 않는다.
+ */
+export function mentionsAnyRosterName(question: string, players: PlayerRef[]): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return players.some((player) => {
+    const name = player.name?.normalize("NFKC").toLowerCase() ?? "";
+    return name.length >= 2 && normalized.includes(name);
+  });
+}
+
 export function resolveNamedPlayerCandidate(
   question: string,
   players: PlayerRef[],
@@ -2860,9 +2895,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 누수 경로는 종전과 동일(selectContextTurn 이 allowlist·TTL·본인 turn 만 통과).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
+  // 입단 후속 재결속(#1140)은 상시 로드된 같은 row 를 쓴다. 조건(입단 질문 + 명시 선수
+  // 엔티티 0 + 되묻기/지시어 문법)은 draft 전용 후보 계산에만 쓰인다 — 로드 gating 아님.
+  const draftFollowup = isDraftQuestion(question)
+    && !mentionsAnyRosterName(question, players)
+    && isDraftFollowupGrammar(question);
   if (deps.loadPreviousTurn) {
     try {
-      context = selectContextTurn(await deps.loadPreviousTurn());
+      const row = await deps.loadPreviousTurn();
+      // 글로벌 allowlist(2026-08-10 확장: 답변이 실린 모든 source + unsure)가 1차 자격.
+      // draft 후속은 전용 selector(rag·kbo_structured, 직전 "질문"에서 선수 재결속·답은
+      // 공식 필드 렌더)가 보조로 남는다 — 글로벌이 거른 row 도 draft 축은 살 수 있다.
+      context = selectContextTurn(row) ?? (draftFollowup ? selectDraftContextTurn(row) : null);
     } catch {
       context = null;
     }
@@ -2897,9 +2941,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer, source: "blocked", remaining };
   }
 
+  // ⚠️ 입단 질문은 서술형 게이트를 통과하지 못한다 — `몇 라운드 지명이야?` 처럼 수치어가
+  //   붙기 때문이다. 그 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가"
+  //   조건이 아니다(기록 질문이 같은 이유로 이미 예외다). 공식 필드로 답하는 경로라
+  //   이름만 단일하게 특정되면 충분하다.
+  // 입단 후속(`입단을 언제 했냐고?`)은 **직전 턴 질문**에서 선수를 받는다.
+  //   ⚠️ 직전 턴의 **답변**이 아니라 **질문**에서 푼다. 답변에는 다른 선수 이름이
+  //     섞일 수 있고(비교·언급), 그러면 엉뚱한 선수의 입단 연도를 확정 문장으로 낸다.
+  const draftContextCandidate = deps.enablePlayerRag && draftFollowup && context
+    ? resolveNamedPlayerCandidate(context.question, players)
+    : null;
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
-      (recordIntent.kind !== "none" ? resolveNamedPlayerCandidate(question, players) : null))
+      (recordIntent.kind !== "none" || isDraftQuestion(question)
+        ? resolveNamedPlayerCandidate(question, players)
+        : null) ??
+      draftContextCandidate)
     : null);
 
   // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
@@ -3148,6 +3205,38 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
   const playerCandidate = enabledPlayerCandidate;
   if (playerCandidate) {
+    // ②-00 입단(드래프트) 질문 — **KBO 공식 프로필 필드**로 코드가 답한다.
+    //
+    // ⚠️ 이건 tier2 숫자 HOLD 를 여는 것이 아니다(2026-08-09 삼순 설계 정정).
+    //   선수 tier2(나무위키) 문장에서 연도를 캐내면 같은 chunk 안 데뷔·이적·FA 와
+    //   구분할 수 없다 — #1110 에서 13커밋을 쌓았다 지운 그 반대가설이다.
+    //   반면 공식 `lblDraft`(`11 LG 1라운드 2순위`)는 **뜻이 하나뿐인 구조화 필드**라
+    //   그 반대가설이 성립하지 않는다. 그래서 파싱이 아니라 조회고, RAG·LLM·cache 를
+    //   한 번도 태우지 않는다.
+    //
+    //   공식값이 없으면 **지어내지 않고** 구체적으로 없다고 말한다(fail-close).
+    if (isDraftQuestion(question)) {
+      const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
+      const raw = rosterPlayer?.draft;
+      const draft = parseDraftLabel(raw, deps.now ? new Date(deps.now()) : new Date());
+      const answer = draft
+        ? renderDraftAnswer(playerCandidate.name, draft, {
+            // 질문이 다른 구단을 지목했으면 밝힌다 — `박병호는 키움에 언제 입단?` 에
+            // "2005년 LG 입단" 만 주면 유저는 키움 입단으로 읽는다(삼순 P0-3).
+            askedTeam: resolveMentionedTeam(question),
+            // 순번을 물었으면 순번을 답한다. 연도만 주면 질문에 답하지 않은 것이다.
+            wantsDetail: asksDraftDetail(question),
+          })
+        : renderDraftUnavailable(playerCandidate.name, draftUnavailableReason(raw));
+      // 공식 정본에서 온 값이므로 시즌 기록과 같은 칸(`kbo_structured`)에 기록한다.
+      // 값이 없어 닫은 경우는 답변이 아니므로 `blocked` 로 분리한다 — 감사 분모가 갈린다.
+      const matchPath: MatchPath = draft ? "kbo_structured" : "blocked";
+      await deps.log({
+        userId, question, questionNorm, matchPath, answer,
+        inputTokens: null, outputTokens: null,
+      });
+      return { status: 200, answer, source: matchPath, remaining };
+    }
     // ②-0 시즌 기록(수치) 질문은 위키가 아니라 **구조화 DB** 를 본다 (kbo_structured).
     // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
     // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
