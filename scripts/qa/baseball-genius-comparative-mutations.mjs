@@ -73,9 +73,30 @@ const MUTATIONS = [
   {
     id: "N20 근거 0건 양보 제거 (unsure 회귀)",
     file: PIPELINE,
-    anchor: "if (evidence.length === 0) return null;",
-    replacement: "if (evidence.length === 0) return failClose();",
+    anchor: "    return isRosterVerifiableQuestion(question) ? null : failClose();",
+    replacement: "    return failClose();",
     why: "chunk 미보유 로스터 선수(실측 최형우)의 정정·서술 질문이 전부 unsure 로 죽는다",
+  },
+  {
+    id: "N23 양보 협착 제거 (검증 불가 서술도 generic 으로 연다)",
+    file: PIPELINE,
+    anchor: "return isRosterVerifiableQuestion(question) ? null : failClose();",
+    replacement: "return null;",
+    why: "별명·학교·데뷔 서술이 근거 없이 모델 기억으로 생성된다 (삼순 P0-2 환각 통로)",
+  },
+  {
+    id: "N24 1군 명단 freshness 제거 (stale 스냅샷이 당일 명단으로 나간다)",
+    file: PIPELINE,
+    anchor: "if (ageDays > TEAM_ENTRY_MAX_AGE_DAYS || ageDays < -1) return null;",
+    replacement: "",
+    why: "며칠씩 묵은 명단이 '당일 등록' 라벨로 서빙된다",
+  },
+  {
+    id: "N25 인젝션 맥락 가드 제거 (인젝션 직전 턴이 프롬프트에 실린다)",
+    file: PIPELINE,
+    anchor: 'if (context && routeQuestion(context.question, glossary, players, false) === "blocked") {',
+    replacement: "if (false as boolean) {",
+    why: "unsure 로 떨어진 인젝션 문장이 다음 턴 LLM 프롬프트에 데이터로 주입된다",
   },
   // ── 프롬프트 계약 ───────────────────────────────────────────────────────
   {
@@ -151,7 +172,7 @@ const MUTATIONS = [
   {
     id: "N22 1군 명단 블록 미전달 (team rag)",
     file: PIPELINE,
-    anchor: "          teamEntryBlock(teamRagCandidate, teamEntry) ??\n            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
+    anchor: "          teamEntryBlock(teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date()) ??\n            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
     replacement: "          teamRosterBlock(teamRagCandidate, players) ?? undefined,",
     why: "roster_snapshots 를 조회해 놓고 프롬프트에 싣지 않는다 — SSOT 결속이 공약이 된다",
   },

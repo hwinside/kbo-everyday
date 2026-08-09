@@ -2282,6 +2282,18 @@ export interface RagLlmExtras {
 }
 
 /**
+ * roster 필드(팀·포지션·등번호)로 **완전히 검증 가능한** 질문인가 (삼순 2026-08-10 P0-2).
+ *
+ * 근거 0건 로스터 선수의 generic LLM 양보는 이 질문들로만 좁힌다 — 별명·학교·데뷔 같은
+ * 서술은 roster 로 검증할 수 없어 모델 기억 생성(환각 통로)이 되므로 fail-close 유지.
+ * 판정 입력은 roster 컬럼명이라는 **닫힌 집합**이라 룰이 맞다(열린 의도 분류가 아니다).
+ */
+export function isRosterVerifiableQuestion(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return /소속|어느팀|어디팀|무슨팀|어느구단|무슨구단|현재팀|포지션|등번호|몇번이야|백넘버/.test(normalized);
+}
+
+/**
  * 질문·직전 턴에 등장하는 로스터 선수의 **현재 소속** 블록 (축 D SSOT).
  *
  * ⚠️ 이건 룰 판정이 아니라 **닫힌 집합 조회**다 — 로스터 이름 881개와의 문자열 대조로
@@ -2328,11 +2340,24 @@ export function rosterMembershipBlock(
  * 당일 1군 등록 명단 블록 (`roster_snapshots` SSOT). 날짜 provenance 를 함께 싣는다 —
  * 스냅샷이 하루 이상 묵을 수 있으므로(우천·폭염 취소) 기준일을 모델·유저 모두 알아야 한다.
  */
+/**
+ * 1군 명단 스냅샷 신선도 상한 (일). 우천·폭염 취소로 며칠 비는 것은 정상이지만,
+ * 그 이상 묵은 스냅샷을 "당일 등록" 으로 내보내면 기준일 표기가 있어도 오답에 가깝다 —
+ * stale 이면 명단 자체를 버리고 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
+ */
+export const TEAM_ENTRY_MAX_AGE_DAYS = 7;
+
 export function teamEntryBlock(
   candidate: RagTeamCandidate,
   entry: { snapshotDate: string; players: string[] } | null,
+  now: Date = new Date(),
 ): string | null {
   if (!entry || entry.players.length === 0) return null;
+  // freshness — 파싱 불가 날짜도 stale 취급 (fail-close).
+  const snapshotMs = Date.parse(`${entry.snapshotDate}T00:00:00+09:00`);
+  if (!Number.isFinite(snapshotMs)) return null;
+  const ageDays = (now.getTime() - snapshotMs) / 86_400_000;
+  if (ageDays > TEAM_ENTRY_MAX_AGE_DAYS || ageDays < -1) return null;
   return `${candidate.name} 1군 등록 명단 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준): ${entry.players.join(", ")}`;
 }
 
@@ -2528,7 +2553,13 @@ async function answerPlayerDescriptiveQuestion(
   //   답한다(프로브 실측). 환각 축과도 다르다 — 여기 오는 후보는 정의상 **로스터 결속**
   //   선수라 실존이 보장되고(#1135 임창규 축은 미결속 실명), 수치는 프롬프트 계약이 막는다.
   //   LLM 경계는 아직 소비 전이므로(근거 검색은 경계 앞) 양보해도 이중 과금이 없다.
-  if (evidence.length === 0) return null;
+  //
+  // ⚠️ 양보는 **roster 로 검증 가능한 질문**(소속·포지션·등번호·정정)에만 연다
+  //   (삼순 P0-2). 별명·학교·데뷔 서술은 roster 로 검증 불가 = 모델 기억 생성 통로라
+  //   기존 fail-close 유지 — 양보 범위가 넓으면 근거 없는 인물 서술이 열린다.
+  if (evidence.length === 0) {
+    return isRosterVerifiableQuestion(question) ? null : failClose();
+  }
 
   // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
   let llm: LlmResult | null = null;
@@ -2941,6 +2972,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       const row = await deps.loadPreviousTurn();
       // 글로벌: LLM 프롬프트 맥락 주입용 (답변이 실린 모든 source + unsure).
       context = selectContextTurn(row);
+      // 인젝션 문장은 맥락으로도 싣지 않는다 (삼순 2026-08-10 — unsure 확장의 반례 축).
+      // unsure 턴이 자격을 얻으면서 "이전 지시 무시" 류가 unsure 로 떨어진 뒤 다음 턴의
+      // 프롬프트에 데이터로 실릴 수 있게 됐다. 현재 질문과 같은 인젝션 판정을 재사용한다.
+      if (context && routeQuestion(context.question, glossary, players, false) === "blocked") {
+        context = null;
+      }
       // draft 전용: 공식 필드 확정 렌더용 (더 좁은 allowlist, #1140 계약 유지).
       draftContext = draftFollowup ? selectDraftContextTurn(row) : null;
     } catch {
@@ -3244,7 +3281,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         //   1군 명단이 없을 때만 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
         rosterBlock: [
           rosterBlock,
-          teamEntryBlock(teamRagCandidate, teamEntry) ??
+          teamEntryBlock(teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date()) ??
             teamRosterBlock(teamRagCandidate, players) ?? undefined,
         ].filter(Boolean).join("\n") || undefined,
       },
