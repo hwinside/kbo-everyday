@@ -2237,20 +2237,19 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 /**
  * 문장 전체의 **canonical 명시 야구 엔티티 수** — 비교형 후속 판정(②)이 쓰는 SSOT.
  *
- * ⚠️ raw substring/run 휴리스틱이 아니다(삼순 2026-08-09 NO-GO 반영). **typed canonical
- *   span** 으로 계수한다 — 어떤 어휘가, 문장의 어느 구간에서, 어떤 규칙으로 매칭되는지가
- *   어휘 유형마다 정의된다:
+ * typed canonical span 계수(삼순 2026-08-09 확정, 3차 경계 반영):
  *
- *   • 검수 사전 term/alias — 한글은 부분문자열(조사가 직접 붙는다), ASCII alias 는
- *     단어 경계 + 공백 유연 매칭(`grand slam` ↔ `grand  slam`, `function` 안의 `nc` 불가).
- *   • 구단 — 한글 표기는 부분문자열, ASCII 약칭(lg·nc·kt·ssg·kia)은 **단어 경계 필수**.
- *     결합형(`엘지트윈스`)은 최장 일치로 1개가 되게 결합 span 을 함께 등록한다.
- *   • 로스터 선수 — 실명 부분문자열(≥2자). 선수도 명시 엔티티다(`김도영이랑 비슷해?`).
- *   • 룰 용어 힌트(generic 제외) — 한글 부분문자열.
+ *   • 검수 사전 term/alias · 로스터 선수 · 룰 용어 힌트(generic 제외) — 한글은 부분문자열,
+ *     ASCII 는 단어 경계. **다어절은 `\s*` 유연 매칭**이다(`기예르모 에레디아` 28명이
+ *     띄어쓰기 그대로 잡혀야 한다 — pattern 쪽 공백만 지우면 전원 0개가 된다).
+ *   • 구단 — 기존 `mentionsTeam` matcher 규약을 그대로 따른다: 약칭 뒤 한글 잔여는
+ *     **문법 꼬리(`isGrammaticalTail`) 또는 같은 팀 별칭**만 허용한다. `LG화학`·`NC소프트`
+ *     는 구단이 아니다. 단 잔여 자리에서 **다른 canonical span 이 시작**하면 각각 센다
+ *     (`LG한화` = 2 — 인접 비병합). 결합형은 optional-space 한 span 이다
+ *     (`엘지트윈스`·`LG 트윈스` 모두 1개).
+ *   • `BASEBALL_WORDS` 광역 신호어는 계수에 넣지 않는다.
  *
- *   겹치는 후보는 **최장 우선 비겹침**으로 고른다. 인접 span 을 합치지 않는다 —
- *   `LG한화` 는 2개다(과병합 금지, 삼순 반례). `만루홈런` 은 사전/힌트의 최장 일치가
- *   한 span 으로 잡아 1개다. `BASEBALL_WORDS` 광역 신호어는 계수에 넣지 않는다.
+ *   겹침은 최장 우선 비겹침으로 해소하고, 인접 span 은 합치지 않는다.
  */
 export function countCanonicalBaseballEntities(
   question: string,
@@ -2258,59 +2257,69 @@ export function countCanonicalBaseballEntities(
   players: PlayerRef[] = [],
 ): number {
   const normalized = question.normalize("NFKC").toLowerCase();
-  const spans: Array<{ start: number; end: number }> = [];
+  type SpanType = "team" | "other";
+  const spans: Array<{ start: number; end: number; type: SpanType }> = [];
+  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const isAsciiEdge = (part: string) => /^[a-z0-9]/.test(part) || /[a-z0-9]$/.test(part);
 
-  // 한글(및 혼합) 어휘 — 부분문자열 전 출현 수집. 조사가 직접 붙으므로 경계를 요구하지 않는다.
-  const addSubstringSpans = (word: string) => {
-    if (word.length < 2) return;
-    let from = 0;
-    for (;;) {
-      const index = normalized.indexOf(word, from);
-      if (index < 0) return;
-      spans.push({ start: index, end: index + word.length });
-      from = index + 1;
-    }
-  };
-  // ASCII 어휘 — 단어 경계 필수(`function` 안의 `nc` 를 구단으로 세지 않는다),
-  // 내부 공백은 유연 매칭(`grand slam` alias 가 실제 질문 표기와 일치하게).
-  const addAsciiSpans = (word: string) => {
-    const escaped = word.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
-    const pattern = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g");
-    for (const match of normalized.matchAll(pattern)) {
-      spans.push({ start: match.index, end: match.index + match[0].length });
-    }
-  };
-  const addWordSpans = (word: string) => {
+  /**
+   * 어휘 하나를 span 후보로 등록한다.
+   * 한글 조각은 부분문자열(조사가 직접 붙는다), ASCII 경계 조각은 단어 경계,
+   * 다어절/결합형은 조각 사이 `\s*`(붙여쓰기·띄어쓰기 모두 한 span).
+   */
+  const addSpans = (word: string, type: SpanType) => {
     const norm = word.normalize("NFKC").toLowerCase().trim();
-    if (norm.length < 2) return;
-    if (/^[a-z0-9][a-z0-9\s]*$/.test(norm)) addAsciiSpans(norm);
-    else addSubstringSpans(norm.replace(/\s+/g, ""));
+    if (norm.replace(/\s+/g, "").length < 2) return;
+    const parts = norm.split(/\s+/);
+    const body = parts.map(escapeRegExp).join("\\s*");
+    const lead = /^[a-z0-9]/.test(parts[0]) ? "(?<![a-z0-9])" : "";
+    const trailPart = parts[parts.length - 1];
+    const trail = /[a-z0-9]$/.test(trailPart) ? "(?![a-z0-9])" : "";
+    const pattern = new RegExp(`${lead}${body}${trail}`, "g");
+    for (const match of normalized.matchAll(pattern)) {
+      spans.push({ start: match.index, end: match.index + match[0].length, type });
+    }
   };
 
   for (const entry of glossary) {
-    for (const word of [entry.term, ...entry.aliases]) addWordSpans(word);
+    for (const word of [entry.term, ...entry.aliases]) addSpans(word, "other");
   }
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-    const names = [canonical, ...shorts, ...nicks];
-    for (const word of names) addWordSpans(word);
-    // 결합형(`엘지트윈스`·`lg트윈스`)은 최장 일치로 한 팀 = 한 span 이 되게 등록한다.
-    for (const base of [canonical, ...shorts]) {
-      for (const nick of nicks) addWordSpans(`${base}${nick}`);
+    for (const word of [canonical, ...shorts, ...nicks]) addSpans(word, "team");
+    // 같은 팀 결합형만 한 팀 = 한 span 이다 (`mentionsTeam` 과 동일 규약 — 교차조합 불허).
+    for (const base of new Set([canonical.toLowerCase(), ...shorts])) {
+      for (const nick of nicks) addSpans(`${base} ${nick}`, "team");
     }
   }
-  for (const player of players) addWordSpans(player.name ?? "");
+  for (const player of players) addSpans(player.name ?? "", "other");
   for (const word of RULE_TERM_HINT_WORDS) {
-    if (!GENERIC_RULE_TERM_HINTS.has(word)) addWordSpans(word);
+    if (!GENERIC_RULE_TERM_HINTS.has(word)) addSpans(word, "other");
   }
 
-  // 최장 우선 비겹침 선택 — 인접 span 은 **합치지 않고 각각 센다**(`LG한화` = 2).
+  // 최장 우선 비겹침 선택 — 인접 span 은 합치지 않고 각각 남긴다(`LG한화` = 2).
   spans.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
-  const chosen: Array<{ start: number; end: number }> = [];
+  const chosen: Array<{ start: number; end: number; type: SpanType }> = [];
   for (const span of spans) {
     if (chosen.some((other) => span.start < other.end && other.start < span.end)) continue;
     chosen.push(span);
   }
-  return chosen.length;
+
+  // 구단 span 은 `mentionsTeam` 규약으로 잔여를 검증한다: span 뒤 같은 토큰의 한글 잔여가
+  // ① 문법 꼬리이거나 ② 다른 선택 span 의 시작이어야 구단 지명이다. `LG화학` 은 어느 쪽도
+  // 아니라서 탈락하고, `LG한화` 는 ②로 둘 다 남는다.
+  const tokenTailAfter = (end: number): string => {
+    const rest = normalized.slice(end);
+    const match = /^[가-힣a-z0-9]+/.exec(rest);
+    return match ? match[0] : "";
+  };
+  const valid = chosen.filter((span) => {
+    if (span.type !== "team") return true;
+    const rest = tokenTailAfter(span.end);
+    if (rest.length === 0) return true;
+    if (isGrammaticalTail(rest)) return true;
+    return chosen.some((other) => other !== span && other.start === span.end);
+  });
+  return valid.length;
 }
 
 

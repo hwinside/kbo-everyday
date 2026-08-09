@@ -55,23 +55,41 @@ const MUTATIONS = [
   {
     id: "M6 ASCII 단어 경계 제거",
     file: PIPELINE,
-    anchor: 'const pattern = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g");',
-    replacement: 'const pattern = new RegExp(escaped, "g");',
-    why: "`function` 안의 `nc` 가 구단으로 세져 비야구 질문에 야구 맥락이 주입된다",
-  },
-  {
-    id: "M7 alias 공백 유연 매칭 제거",
-    file: PIPELINE,
-    anchor: '.join("\\\\s+");',
-    replacement: '.join("");',
-    why: "`grand slam이랑 보크 차이?` 가 보크 1개로 세져 자기완결에 맥락이 붙는다",
+    anchor: `    const lead = /^[a-z0-9]/.test(parts[0]) ? "(?<![a-z0-9])" : "";
+    const trailPart = parts[parts.length - 1];
+    const trail = /[a-z0-9]$/.test(trailPart) ? "(?![a-z0-9])" : "";`,
+    replacement: `    const lead = "";
+    const trailPart = parts[parts.length - 1];
+    const trail = "";`,
+    why: "ASCII 어휘가 단어 안 부분문자열로 잡힌다 (walkbalker 안의 balk)",
   },
   {
     id: "M8 roster 선수 계수 제거",
     file: PIPELINE,
-    anchor: 'for (const player of players) addWordSpans(player.name ?? "");',
+    anchor: 'for (const player of players) addSpans(player.name ?? "", "other");',
     replacement: ";",
     why: "`김도영이랑 비슷해?` 가 엔티티 0개가 되어 후속에서 빠진다",
+  },
+  {
+    id: "M10 구단 잔여 검증 제거 (LG화학이 구단으로 잡힘)",
+    file: PIPELINE,
+    anchor: "if (isGrammaticalTail(rest)) return true;",
+    replacement: "return true;",
+    why: "`LG화학이랑 비슷해?` 가 구단 1개로 세져 비야구 질문에 야구 맥락이 주입된다",
+  },
+  {
+    id: "M11 다어절 유연 매칭 제거 (조각을 붙여쓰기로만 결합 — grand slam alias 포함)",
+    file: PIPELINE,
+    anchor: 'const body = parts.map(escapeRegExp).join("\\\\s*");',
+    replacement: 'const body = parts.map(escapeRegExp).join("");',
+    why: "`기예르모 에레디아랑 비슷해?` 가 0개가 되어 후속에서 끊긴다",
+  },
+  {
+    id: "M12 결합형 span 등록 제거 (띄어쓰기 팀명이 2개로 갈라짐)",
+    file: PIPELINE,
+    anchor: "      for (const nick of nicks) addSpans(`${base} ${nick}`, \"team\");",
+    replacement: "      ;",
+    why: "`LG 트윈스랑 비슷해?` 가 2개로 세져 후속이 차단된다",
   },
   {
     id: "M9 인접 span 병합 회귀 (겹침 판정을 ≤ 로)",
