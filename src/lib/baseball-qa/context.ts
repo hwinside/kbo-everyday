@@ -2,8 +2,22 @@
 // 후속 질문("또 다른 경우는?")이 blocked로 떨어지던 버그를 exact 계약으로 해소한다.
 // DB 접근은 server.ts가 RPC로 수행하고, 여기서는 그 결과 1행을 순수 판정한다.
 
-/** 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed) */
-export const CONTEXT_SOURCE_ALLOWLIST = ["dictionary", "cache", "llm"] as const;
+/**
+ * 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed).
+ *
+ * ⚠️ 2026-08-10 확장 (E2E 실측): 종전 ["dictionary","cache","llm"] 은 RAG 이전 설계라
+ *   team_rag·rag 답변 뒤의 후속·정정("최형우는 현재 삼성 소속인데??", "언제?")이 전부
+ *   맥락 없음으로 끊겼다 — 00:53·00:57 캡처 사고의 절반이 이 목록이다.
+ *   답변이 실린 모든 source + unsure 를 자격으로 인정한다. unsure 를 넣는 이유:
+ *   봇이 못 알아들은 직후가 바로 유저가 고쳐 묻는 순간이고, 그때 필요한 것은 직전
+ *   **질문**(주제)이다 — unsure 답변 텍스트는 고정 문구라 오염 위험이 없다.
+ *   blocked(인젝션 시도)·limited·error·pending 은 계속 제외한다(fail-closed).
+ */
+export const CONTEXT_SOURCE_ALLOWLIST = [
+  "dictionary", "cache", "llm",
+  "rag", "team_rag", "news_rag", "official_rag", "kbo_structured",
+  "scope_guide", "ack", "unsure",
+] as const;
 
 /** TTL 기준 = 소스 turn의 answer DM created_at (B5). 600.000초 유효 / 600.001초 만료. */
 export const CONTEXT_TTL_MS = 600_000;
@@ -41,6 +55,40 @@ export function isFollowupPhrase(question: string): boolean {
   return FOLLOWUP_SET.has(normalizeFollowup(question));
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 비교형 후속 (2026-08-09 하린아빠 제보, Production 재현)
+//
+//   Q1 유저: `그랜드슬램이 뭐야?`      봇: (그랜드슬램 설명)
+//   Q2 유저: `만루홈런이랑 비슷한 거야?`  봇: ❌ 새 질문으로 끊겨 엉뚱한 답
+//
+// 정상 답은 "네, 주자가 만루일 때 친 홈런을 그랜드슬램이라고 해요" 다. 유저는 한 주제를
+// 이어서 묻고 있는데 우리가 대화를 끊었다.
+//
+// ── 왜 `FOLLOWUP_PHRASES` 로는 안 되는가 ──────────────────────────────────
+//   그 집합은 **full-string 완전일치**다(`또`·`왜`·`자세히`). 비교형은 문장 안에 새 용어를
+//   데리고 오므로 완전일치가 원리적으로 불가능하다. 문구를 몇 개 더 넣는 방식은
+//   `비슷한 거야`·`비슷해`·`비슷한가요`… 로 끝없이 벌어진다 — #1135 에서 규칙을 여섯 번
+//   갈아엎고 얻은 교훈이라 같은 실수를 하지 않는다.
+//
+// ── 그래서 어휘가 아니라 **구조**로 판정한다 (삼순 2026-08-09 판정 확정) ─────
+//   ① 비교 관계 표현이 있다        — 문법 부류라 닫힌 집합이다(어휘가 아니다)
+//   ② 문장 전체의 **canonical 명시 야구 엔티티가 정확히 하나**다
+//        (또는 엔티티 0개 + `그거/그것` 명시 지시어)
+//        → 비교는 피연산자가 둘이다. 명시 엔티티가 하나뿐이면 나머지 하나는
+//          **직전 턴에서 와야만** 문장이 성립한다. 엔티티가 둘 이상이면 문장 안에서
+//          이미 완결된 비교라 직전 턴이 필요 없다(자기완결).
+//   ③ 엔티티 판정은 호출자(pipeline)의 canonical SSOT(검수 사전·구단·룰 용어)에 위임한다.
+//        여기서 어휘를 새로 나열하지 않는다.
+//
+//   ⚠️ 왜 "비교 조사 수"가 아닌가 — 1차 구현이 그 축이었고 삼순 반례로 기각됐다:
+//     `그랜드슬램은 만루홈런이랑 비슷해?` 는 조사(`이랑`)가 1개지만 엔티티가 2개라
+//     자기완결이다. 조사 수는 피연산자 수의 증거가 되지 못한다.
+//
+//   `그랜드슬램하고 만루홈런 차이는?` 는 ②에서 걸린다(엔티티 2개 = 자기완결).
+//   `날씨랑 비슷해?` 는 ②에서 걸린다(엔티티 0 + 지시어 없음). `도루가 뭐야?` 는 ①에서 걸린다.
+//   `그거랑 만루홈런 차이?` 는 통과한다(엔티티 1 + 지시어 — 직전 턴이 있어야 완성된다).
+// ─────────────────────────────────────────────────────────────────────────────
+
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
 export interface PreviousTurnRow {
   /** 직전 user turn 질문 본문 */
@@ -65,14 +113,45 @@ export interface ContextTurn {
  * 직전 user turn 1행을 §4.1 B1~B3·B5 자격으로 판정한다.
  * 부적격이면 과거로 폴백하지 않고 맥락 없음(null)으로 종료한다 — 중간 turn은 barrier(B1).
  */
+/**
+ * 입단(드래프트) 후속 전용 source allowlist.
+ *
+ * ⚠️ **global allowlist(`CONTEXT_SOURCE_ALLOWLIST`)를 열지 않는다**(삼순 2026-08-09 P0-2).
+ *   일반 후속은 직전 "답변"을 LLM 맥락으로 주입하므로 rag 를 열면 근거 없는 후속 생성
+ *   통로가 된다. 반면 입단 후속은 직전 턴의 **질문에서 선수 이름만** 재결속하고 답은
+ *   공식 필드 코드 렌더로 낸다 — 직전 답변 본문을 생성에 쓰지 않으므로, 선수 질문이
+ *   실제로 도달하는 source(`rag` 선수 서술형, `kbo_structured` 기록·입단 직접답)까지
+ *   자격을 넓혀도 그 통로가 생기지 않는다.
+ *   `team_rag`·`news_rag` 는 넣지 않는다 — 선수 entity 재결속 대상이 아니다(삼순 지시).
+ */
+// ⚠️ 글로벌 allowlist 를 spread 로 상속하지 않는다 — 2026-08-10 글로벌 확장(team_rag·
+//   news_rag·unsure 등) 때 spread 가 이 목록까지 넓혀 "직전 team_rag 턴이 입단 확정
+//   문장의 재결속 근거가 되는" 회귀를 게이트가 실측으로 잡았다. 입단 재결속은 확정
+//   렌더(공식 필드)라 자격을 좁게 고정한다: 원 설계(사전·캐시·LLM) + rag·kbo_structured.
+export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
+  "dictionary", "cache", "llm", "rag", "kbo_structured",
+] as const;
+
 export function selectContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  return qualifyContextTurn(row, CONTEXT_SOURCE_ALLOWLIST);
+}
+
+/** 입단 후속 전용 — B1·B2·B5 barrier/TTL 은 동일, B3 allowlist 만 위 전용 집합이다. */
+export function selectDraftContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  return qualifyContextTurn(row, DRAFT_CONTEXT_SOURCE_ALLOWLIST);
+}
+
+function qualifyContextTurn(
+  row: PreviousTurnRow | null | undefined,
+  allowlist: readonly string[],
+): ContextTurn | null {
   // B1: 직전 user turn 자체가 없으면 맥락 없음 (새 대화 첫 질문 포함).
   if (!row) return null;
   const question = row.question?.trim() ?? "";
   const answer = row.answer?.trim() ?? "";
   if (question.length === 0 || answer.length === 0) return null;
   // B3: 자격은 job.source 축. allowlist 밖 값(blocked·error·unsure·limited·history_hold·신규값)은 제외.
-  if (!row.jobSource || !(CONTEXT_SOURCE_ALLOWLIST as readonly string[]).includes(row.jobSource)) {
+  if (!row.jobSource || !allowlist.includes(row.jobSource)) {
     return null;
   }
   // B2: 답변 DM이 실제 존재할 때만 소스 자격 (job이 completed여도 미발송이면 제외).
@@ -84,5 +163,11 @@ export function selectContextTurn(row: PreviousTurnRow | null | undefined): Cont
   if (answeredAtMs >= currentMs) return null;
   // B5: TTL 초과면 맥락 없음 (600.000초 유효 / 600.001초 만료).
   if (currentMs - answeredAtMs > CONTEXT_TTL_MS) return null;
+  // unsure 턴의 가치는 직전 **질문**(주제)이지 상용구 답변이 아니다. 상용구를 그대로 실으면
+  // 모델이 그 사과·얼버무림 톤을 이어받아 정정 질문에 비확정 답을 내는 게 실측됐다
+  // (2026-08-10 프로브: 상용구 4/6 → 중립 마커 6/6). 답변은 중립 마커로 치환한다.
+  if (row.jobSource === "unsure") {
+    return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)" };
+  }
   return { question, answer };
 }

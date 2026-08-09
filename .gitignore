@@ -78,3 +78,4 @@ scripts/hero/.daum-src/
 src/lib/baseball-qa/.before-snapshot.*.ts
 src/lib/baseball-qa/.before-pipeline.*.ts
 src/lib/baseball-qa/.before-request.*.ts
+scripts/qa/.llm-delegation-e2e-tmp.mts

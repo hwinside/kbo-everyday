@@ -1810,6 +1810,109 @@ async function verifyCrashIdempotentLlmAndQuota() {
   assert.equal(cache.size, 1);
 }
 
+// 삼순 2026-08-10 2차 회귀축 ③④ — envelope 재생은 route/search/cache 어떤 외부 상태보다
+// 앞이고, 캐시 복구는 **원시점 cacheable** 로만 한다.
+async function verifyStoredEnvelopeReplayFrontOfExternalState() {
+  const question = "우천 중단 되면 야구 경기 재개 룰이 어떻게 돼?";
+  const llmText = '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}';
+
+  // 축 ③ stored generic + preseed cache — 재생이 global cache 읽기보다 앞이다.
+  {
+    let stored: LlmResult | null = null;
+    let llmCalls = 0;
+    const mk = (getCache: QaDeps["getCache"], counter: { reads: number }): QaDeps => ({
+      loadGlossary: async () => seedEntries,
+      loadPlayers: async () => players,
+      getCache: async (key) => { counter.reads++; return getCache(key); },
+      setCache: async () => {},
+      callLlm: async () => { llmCalls++; return { text: llmText, inputTokens: 1, outputTokens: 1 }; },
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      log: async () => {},
+    });
+    const firstReads = { reads: 0 };
+    const first = await answerQuestion("u1", question, mk(async () => null, firstReads));
+    assert.equal(first.source, "llm");
+    assert.equal(llmCalls, 1);
+    const retryReads = { reads: 0 };
+    const retry = await answerQuestion("u1", question, mk(async () => "예전에 저장된 오염 캐시 답이에요.", retryReads));
+    assert.equal(retry.source, "llm", `preseed cache 가 재생을 이겼다: ${retry.source}`);
+    assert.equal(retry.answer, first.answer, "preseed cache 가 answer 를 바꿨다");
+    assert.equal(retryReads.reads, 0, `재생 전에 global cache 를 읽었다(${retryReads.reads})`);
+    assert.equal(llmCalls, 1, "재생이 LLM 을 재소비했다");
+  }
+
+  // 축 ④ cacheable drift — 원시점 비캐시(맥락 있음) 답은, 재시도 때 맥락이 사라져도
+  // global cache 로 새지 않는다 (재시도 시점 재계산 금지).
+  {
+    let stored: LlmResult | null = null;
+    const cache = new Map<string, string>();
+    const contextRow = {
+      question: "보크가 뭐야?",
+      answer: "보크는 투수의 반칙 동작이에요.",
+      jobSource: "llm",
+      answeredAt: new Date(Date.now() - 1_000).toISOString(),
+      currentCreatedAt: new Date().toISOString(),
+    };
+    const base = (withContext: boolean): QaDeps => ({
+      loadGlossary: async () => seedEntries,
+      loadPlayers: async () => players,
+      getCache: async () => null,
+      setCache: async (key, value) => { cache.set(key, value); },
+      callLlm: async () => ({ text: llmText, inputTokens: 1, outputTokens: 1 }),
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      log: async () => {},
+      ...(withContext ? { loadPreviousTurn: async () => contextRow } : {}),
+    });
+    const first = await answerQuestion("u1", question, base(true));
+    assert.equal(first.source, "llm");
+    assert.equal(cache.size, 0, "맥락 의존 답이 origin 에서 global cache 에 쓰였다");
+    const retry = await answerQuestion("u1", question, base(false));
+    assert.equal(retry.source, "llm");
+    assert.equal(retry.answer, first.answer);
+    assert.equal(cache.size, 0, "cacheable drift — 비캐시 답이 재시도에서 global cache 로 샜다");
+  }
+
+  // 축 ⑤ 선종결 전이 g3 (삼순 4차): front null → 다른 worker envelope 저장 → 이 worker 의
+  // global cache hit 선종결. fence 가 캐시 발송 직전 상태를 재확인해 envelope 를 우선한다.
+  {
+    const envelope: LlmResult = {
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "야구 룰에 따른 검증된 답변이에요.", source: "llm", cacheable: true } }),
+      inputTokens: 1, outputTokens: 1,
+    };
+    let stateCalls = 0;
+    let llmCalls = 0;
+    const logs: string[] = [];
+    const deps: QaDeps = {
+      loadGlossary: async () => seedEntries,
+      loadPlayers: async () => players,
+      getCache: async () => "예전에 저장된 오염 캐시 답이에요.",
+      setCache: async () => {},
+      callLlm: async () => { llmCalls++; throw new Error("호출 금지"); },
+      reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: envelope, ownerActive: false };
+      },
+      acquireLlmStart: async () => { throw new Error("envelope 존재 시 CAS 를 걸면 안 된다"); },
+      storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
+      log: async (entry) => { logs.push(entry.matchPath); },
+    };
+    const fenced = await answerQuestion("u1", question, deps);
+    assert.equal(fenced.source, "llm", `cache-hit 선종결이 envelope 를 덮었다: ${fenced.source}`);
+    assert.equal(fenced.answer, "야구 룰에 따른 검증된 답변이에요.", "오염 캐시가 저장 final 을 이겼다");
+    assert.equal(llmCalls, 0);
+    assert.equal(logs.at(-1), "llm", "cache 가 로그에 남았다 — fence 이전에 종결됐다");
+  }
+}
+
 // 게이트 1 (삼순 4차 P1): callLlm 성공 → storeLlm(DB write) 실패/그 사이 crash 창에서도
 // 동일 messageId의 LLM 소비는 1회여야 하고, 재처리는 자동 재호출 없이 fail-closed된다.
 async function verifyLlmStoreFailureFailClosed() {
@@ -1938,7 +2041,9 @@ async function verifyConcurrentLlmBoundaryRace() {
     answerQuestion("u1", question, deps),
     answerQuestion("u1", question, deps),
   ]);
-  assert.equal(stateReads, 2, "두 worker 모두 LLM 경계에 도달해 state를 읽어야 재현 조건이 맞음");
+  // worker 당 2회 — front replay(route/search/cache 앞, 삼순 2026-08-10 2차) 1회 +
+  // LLM 경계 1회. front 는 envelope 없음(신규 질문)이라 통과하고 경계가 CAS 를 다룬다.
+  assert.equal(stateReads, 4, "두 worker 모두 front replay + LLM 경계에서 state를 읽어야 재현 조건이 맞음");
   assert.equal(llmCalls, 1, "동일 messageId LLM 호출은 1회여야 함 (삼순 5차 P1)");
   assert.equal(quotaReserves, 1, "동시 진입에서도 quota 소비는 1이어야 함");
   const outcomes = [oldWorker, newDrainer];
@@ -3217,6 +3322,7 @@ async function main() {
   await verifyReplyKindMatchesActualPipelineOutcome();
   await verifyProductionSeasonRecordSeam();
   await verifyCrashIdempotentLlmAndQuota();
+  await verifyStoredEnvelopeReplayFrontOfExternalState();
   await verifyLlmStoreFailureFailClosed();
   await verifyConcurrentLlmBoundaryRace();
   await verifyStaleLeaseLlmCasWithPglite();
