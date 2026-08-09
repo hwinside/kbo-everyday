@@ -1155,7 +1155,39 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(genericCalls, 0, `드리프트 retry 가 generic 공급자를 호출했다(${genericCalls})`);
   }
 
-  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / ambiguous fail-close / 양보 CAS 1회");
+  // (e-3) stored rag + search throw (삼순 2차 회귀축 ①) — envelope 재생이 route/search 보다
+  //   앞이므로, 재시도 때 검색 RPC 가 터져도 저장된 rag 최종 답·출처가 그대로 나간다.
+  //   (종전에는 searchRag throw 가 state 조회 전에 error 로 종결해 저장 답을 덮었다.)
+  {
+    let stored: LlmResult | null = null;
+    let ragCalls = 0;
+    const mkOk = makeDeps({
+      getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      searchRag: async () => [MOON_EVIDENCE],
+      callRagLlm: async () => {
+        ragCalls++;
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+      },
+    }).deps;
+    const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mkOk);
+    assert.equal(first.source, "rag");
+    const mkThrow = makeDeps({
+      getLlmState: async () => ({ started: true, result: stored, ownerActive: false }),
+      storeLlm: async (r) => { stored = r; },
+      searchRag: async () => { throw new Error("rpc down"); },
+      callRagLlm: async () => { throw new Error("재호출 금지"); },
+      callLlm: async () => { throw new Error("generic 호출 금지"); },
+    }).deps;
+    const retry = await answerQuestion("u1", "문보경 별명이 뭐야?", mkThrow);
+    assert.equal(retry.source, "rag", `search throw 재시도가 저장 답을 덮었다: ${retry.source}`);
+    assert.equal(retry.answer, first.answer, "search throw 재시도가 answer 를 바꿨다");
+    assert.equal(retry.sourceUrl, first.sourceUrl, "search throw 재시도가 provenance 를 바꿨다");
+    assert.equal(ragCalls, 1);
+  }
+
+  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / ambiguous fail-close / 양보 CAS 1회");
 }
 
 /**

@@ -2255,6 +2255,9 @@ export interface StoredQaFinal {
   answer: string;
   source: MatchPath;
   sourceUrl?: string;
+  /** 원시점 캐시 가능 여부 (generic llm 만 true 가능). 재시도 시점 재계산 금지 —
+   * context/scope/roster 를 다시 계산하면 비캐시 답이 global cache 로 샌다 (삼순 2차). */
+  cacheable?: boolean;
 }
 export function packStoredQaFinal(final: StoredQaFinal, llm: LlmResult): LlmResult {
   return {
@@ -2277,6 +2280,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     answer: final.answer,
     source: final.source as MatchPath,
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
+    ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
   };
 }
 
@@ -2657,20 +2661,6 @@ async function answerPlayerDescriptiveQuestion(
       return failCloseError();
     }
     llm = state.result;
-    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
-    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
-    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
-    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
-    if (llm && storedFinal) {
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
     if (!llm && state.started) {
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
@@ -2759,20 +2749,6 @@ async function answerOfficialDocumentQuestion(
       return failCloseError();
     }
     llm = state.result;
-    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
-    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
-    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
-    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
-    if (llm && storedFinal) {
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -2889,20 +2865,6 @@ async function answerTeamRagQuestion(
       return failCloseError();
     }
     llm = state.result;
-    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
-    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
-    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
-    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
-    if (llm && storedFinal) {
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -3018,20 +2980,6 @@ async function answerNewsRagQuestion(
       return settle(SYSTEM_ERROR_ANSWER, "error");
     }
     llm = state.result;
-    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
-    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
-    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
-    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
-    if (llm && storedFinal) {
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return settle(SYSTEM_ERROR_ANSWER, "error");
@@ -3095,6 +3043,36 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
   }
   const remaining = reservation.remaining;
+
+  // ⚠️ durable 슬롯의 최종 응답 envelope 는 **route/search/cache 어떤 외부 상태보다 앞**
+  //   에서 1회 재생한다 (삼순 2026-08-10 P0 2차). 경계별 재생은 그 앞의 검색 throw ·
+  //   news 0건 종결 · global cache 선점이 저장된 최종 답을 다시 바꿀 수 있었다
+  //   (player 2623→2655 · news 2995→3016 · generic cache 3520→3538 실측 지적).
+  //   조회 실패는 신규 진행으로 두고, started/ambiguous 창은 종전대로 각 경계가 다룬다.
+  if (deps.getLlmState) {
+    let replayResult: LlmResult | null = null;
+    try {
+      replayResult = (await deps.getLlmState()).result;
+    } catch {
+      replayResult = null;
+    }
+    const storedFinal = replayResult ? unpackStoredQaFinal(replayResult.text) : null;
+    if (replayResult && storedFinal) {
+      // crash 복구 완결 — **원시점 cacheable** 일 때만 캐시를 마저 쓴다. 재시도 시점
+      // context/scope/roster 재계산은 비캐시 답을 global cache 로 새게 한다 (삼순 2차).
+      if (storedFinal.source === "llm" && storedFinal.cacheable === true) {
+        await deps.setCache(questionNorm, storedFinal.answer);
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: replayResult.inputTokens, outputTokens: replayResult.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
+  }
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
   // 직전 턴은 **항상** 로드한다 (하린아빠 2026-08-10 00:53 방향 확정 — 룰 최소화, LLM 위임).
@@ -3542,25 +3520,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
     }
     llm = state.result;
-    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
-    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
-    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
-    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
-    if (llm && storedFinal) {
-      // 재생도 crash 복구의 일부다 — 저장 후 setCache 단계에서 죽었으면 캐시 완결을
-      // 여기서 마저 한다 (조건은 신규 생성 경로와 동일: 맥락·2차가드·로스터 질문 제외).
-      if (storedFinal.source === "llm" && !context && !scopeGate && !rosterBlock) {
-        await deps.setCache(questionNorm, storedFinal.answer);
-      }
-      await deps.log({
-        userId, question, questionNorm, matchPath: storedFinal.source,
-        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      });
-      return {
-        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
-        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
-      };
-    }
     if (!llm && state.started) {
       if (state.ownerActive) {
         // winner worker가 LLM 경계를 진행 중 — loser는 어떤 답변도 발송하지 않고 물러난다.
@@ -3615,7 +3574,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
   // 2차 가드 경로도 쓰지 않는다 — 읽지도 않으므로 써봐야 사장이고, 룰베이스가 못 가린
   // 질문의 답을 공유 캐시에 쌓아두면 나중에 경계가 바뀌었을 때 회수할 수 없다.
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));
+  if (deps.storeLlm) {
+    await deps.storeLlm(packStoredQaFinal(
+      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock },
+      llm,
+    ));
+  }
   if (!context && !scopeGate && !rosterBlock) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };

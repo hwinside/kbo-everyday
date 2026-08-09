@@ -210,8 +210,8 @@ const MUTATIONS = [
   {
     id: "N34 generic 저장을 raw 로 회귀 (envelope 미결속)",
     file: PIPELINE,
-    anchor: 'if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));',
-    replacement: "if (deps.storeLlm) await deps.storeLlm(llm);",
+    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock },\n      llm,\n    ));',
+    replacement: "await deps.storeLlm(llm);",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
   },
