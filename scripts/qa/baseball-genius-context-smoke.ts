@@ -1121,13 +1121,20 @@ async function verifyLlmDelegation() {
   assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "not-a-date", players: FULL_ENTRY }, NOW), null);
   assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-20", players: FULL_ENTRY }, NOW), null, "미래 날짜가 통과했다");
   assert.ok(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-04", players: FULL_ENTRY }, NOW));
-  // 1군 명단 질문 판정 (닫힌 어휘) — 직접 렌더 분기의 SSOT.
+  // 1군 명단 질문 판정 — **full-string 닫힌 문법** (삼순 2차: 단어 존재 판정·제외어 열거 금지).
   assert.equal(isTeamEntryQuestion("기아 1군 선수"), true);
-  assert.equal(isTeamEntryQuestion("기아 엔트리 알려줘"), true);
-  assert.equal(isTeamEntryQuestion("기아 선수단 누구야"), true);
   assert.equal(isTeamEntryQuestion("오늘 기아 1군 엔트리"), true);
+  assert.equal(isTeamEntryQuestion("기아 1군 명단 알려줘"), true);
+  assert.equal(isTeamEntryQuestion("기아 1군 엔트리 누구야?"), true);
   assert.equal(isTeamEntryQuestion("기아 타이거즈는 어떤 구단이야?"), false);
-  // 협착 반례 (삼순): 감독·스태프는 선수 명단이 아니고, 2군·퓨처스는 이 스냅샷 범위 밖.
+  // 열린 서술 반례 (삼순 2차): 1군 단어가 있어도 명단 요청이 아니면 탈락 — full-string 문법.
+  assert.equal(isTeamEntryQuestion("기아 1군은 왜 못해?"), false);
+  assert.equal(isTeamEntryQuestion("기아 선수단 부상이 많아?"), false);
+  assert.equal(isTeamEntryQuestion("기아 로스터 운영이 왜 이래?"), false);
+  // 전체 선수단 ≠ 1군 엔트리 (삼순 2차): 선수단·로스터 단독은 이 분기의 답이 오답이다.
+  assert.equal(isTeamEntryQuestion("기아 선수단 누구야"), false);
+  assert.equal(isTeamEntryQuestion("기아 로스터 알려줘"), false);
+  // 감독·2군 반례 — full-string 문법이 자연히 거른다 (제외어 열거 아님).
   assert.equal(isTeamEntryQuestion("기아 1군 감독 누구야?"), false);
   assert.equal(isTeamEntryQuestion("기아 2군 선수단"), false);
   assert.equal(isTeamEntryQuestion("기아 퓨처스 로스터"), false);
@@ -1349,9 +1356,12 @@ async function verifyLlmDelegation() {
     detailBlock?.includes("포지션 내야수") && detailBlock.includes("등번호 5번"),
     `소속 블록에 포지션·등번호가 없다: ${detailBlock}`,
   );
-  // 판정 단위 — 입력은 roster 컬럼(닫힌 집합)이다.
+  // 판정 단위 — 소속만 연다 (삼순 2차 되닫기: 포지션·등번호는 SSOT 선언·출력 대조 부재,
+  // `몇번이야` 는 타순과 모호). 그 질문들은 근거 0건이면 기존대로 fail-close 다.
   assert.equal(isRosterVerifiableQuestion("최형우 소속이 어디야?"), true);
-  assert.equal(isRosterVerifiableQuestion("김도영 포지션 뭐야?"), true);
+  assert.equal(isRosterVerifiableQuestion("최형우는 어느 팀이야?"), true);
+  assert.equal(isRosterVerifiableQuestion("김도영 포지션 뭐야?"), false);
+  assert.equal(isRosterVerifiableQuestion("김도영 등번호 몇번이야?"), false);
   assert.equal(isRosterVerifiableQuestion("최형우 별명이 뭐야?"), false);
   assert.equal(isRosterVerifiableQuestion("최형우 어떤 선수야?"), false);
 

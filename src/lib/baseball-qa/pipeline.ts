@@ -2289,7 +2289,11 @@ export interface RagLlmExtras {
  */
 export function isRosterVerifiableQuestion(question: string): boolean {
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  return /소속|어느팀|어디팀|무슨팀|어느구단|무슨구단|현재팀|포지션|등번호|몇번이야|백넘버/.test(normalized);
+  // ⚠️ 소속만 연다 (삼순 2026-08-10 2차 되닫기). 포지션·등번호는 ①프롬프트 SSOT 선언이
+  //   소속만 커버하고 ②출력 숫자 대조가 없어 등번호가 모델 생성일 수 있으며 ③`몇번이야`
+  //   는 타순과 모호하다. 그 질문들은 근거 0건이면 기존대로 fail-close(unsure)다 —
+  //   블록의 포지션·등번호는 소속 답변의 보조 데이터로만 실린다.
+  return /소속|어느팀|어디팀|무슨팀|어느구단|무슨구단|현재팀/.test(normalized);
 }
 
 /**
@@ -2356,12 +2360,24 @@ export function rosterMembershipBlock(
  *   그대로 보여주는 질문에 생성 모델을 태울 이유가 없다.
  */
 export function isTeamEntryQuestion(question: string): boolean {
-  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  // 반례 협착 (삼순 2026-08-10): ①2군·퓨처스는 이 스냅샷의 범위 밖이다 — 1군 명단으로
-  // 답하면 오답이다. ②감독·코치·스태프·단장은 선수 명단 질문이 아니다.
-  if (/2군|이군|퓨처스/.test(normalized)) return false;
-  if (/감독|코치|스태프|단장|프런트/.test(normalized)) return false;
-  return /1군|일군|엔트리|등록명단|선수단|로스터/.test(normalized);
+  // ⚠️ 판정 방식 (삼순 2026-08-10 2차 협착): 단어 **존재**로 열린 의도를 판정하지 않는다 —
+  //   `기아 1군은 왜 못해?` 는 1군이 들어 있어도 명단 요청이 아니다. 제외어 열거도
+  //   금지(발산). 대신 **명시적 명단 요청 full-string 문법**으로 닫는다: 구단 언급을
+  //   지운 잔여 문장이 `1군 핵심어 + (명단 명사|요청 꼬리)` 로만 분해될 때만 참이다.
+  //   `선수단`·`로스터` 단독은 어휘에서 뺐다 — 전체 선수단(등록 91명)이지 1군 엔트리가
+  //   아니라서, 그 질문에 1군 명단을 주면 그 자체가 오답이다(삼순 지적).
+  const compact = question.normalize("NFKC").toLowerCase().replace(/[\s?!.~,]+/g, "");
+  // 구단 언급 제거 — 판정 대상은 "무엇을 요청했나" 뿐이다.
+  let rest = compact;
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    for (const word of [canonical.toLowerCase(), ...shorts, ...nicks]) {
+      rest = rest.split(word).join("");
+    }
+  }
+  // 닫힌 문법: (시점어)? + 1군 핵심 + (등록)? + (명단 명사 | 선수 (명단)?)? + (조사)? + (요청 꼬리)?
+  // 전부 선택적이지만 **full-string** 이므로 다른 서술(왜 못해·부상·운영 등)이 붙으면 탈락.
+  return /^(오늘|당일|현재|지금)?(의)?(1군|일군)(등록)?(엔트리|명단|선수들?(명단)?)?(은|는|이|가|좀|을|를)?(누구(야|예요|인가요)?|누가있(어|나요)?요?|알려줘|알려주세요|보여줘|보여주세요|뭐야|어떻게(돼|되나요))?$/.test(rest)
+    && /(1군|일군)/.test(rest);
 }
 
 /**
