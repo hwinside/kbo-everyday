@@ -232,20 +232,20 @@ const MUTATIONS = [
     why: "front 조회 실패 시 검색·캐시가 저장 답을 이겨 최종 답이 바뀔 수 있다 (삼순 3차)",
   },
   {
-    id: "N37 player search-throw 선종결 fence 제거",
+    id: "N37 player search-throw 선종결 CAS 결속 제거",
     file: PIPELINE,
-    anchor: "    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.\n    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });\n    if (fenced) return fenced;\n    return failCloseError();",
+    anchor: "    // 선종결 CAS 결속 (삼순 5차): error 발송도 durable 경계를 이긴 쪽만 한다.\n    return settleThroughDurableBoundary(\n      { answer: SYSTEM_ERROR_ANSWER, source: \"error\" }, null,\n      { userId, question, questionNorm, remaining, deps },\n    );",
     replacement: "    return failCloseError();",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
-    why: "front null → 중간 envelope → search throw 선종결이 저장 final 을 error 로 덮는다 (삼순 4차)",
+    why: "search throw 선종결이 durable 경계를 우회해 envelope/경합 worker 의 final 을 error 로 덮는다 (삼순 5차)",
   },
   {
-    id: "N38 generic cache-hit 선종결 fence 제거",
+    id: "N38 CAS 패배를 무시하고 발송 (competing 회귀)",
     file: PIPELINE,
-    anchor: "      // 선종결 fence (삼순 4차): 캐시 발송 전에 envelope 가 생겼으면 저장 final 이 우선이다.\n      const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });\n      if (fenced) return fenced;",
+    anchor: "  if (!won) return pending;",
     replacement: "",
-    gate: "scripts/qa/baseball-qa-pipeline-smoke.ts",
-    why: "front null → 중간 envelope → cache hit 선종결이 저장 final 을 오염 캐시로 덮는다 (삼순 4차)",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "2차 null 직후 다른 worker 가 CAS 를 이겨도 이 worker 가 답을 발송해 두 답이 갈린다 (삼순 5차 c2)",
   },
 ];
 

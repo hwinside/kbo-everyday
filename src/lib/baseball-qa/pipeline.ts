@@ -2314,23 +2314,64 @@ async function replayStoredFinalResult(
 }
 
 /**
- * 선종결 fence (삼순 2026-08-10 4차 TOCTOU). front 가 null 을 본 뒤 다른 worker 가
- * envelope 를 저장했는데, 이 worker 가 **LLM 경계에 닿기 전에** 종결하는 경로(검색 throw ·
- * news 0건/throw · global cache hit)는 저장 final 을 다시 이길 수 있다. 그 종결 직전에
- * 상태를 한 번 더 읽어 envelope 가 있으면 그것을 우선한다. 조회 실패는 pending 으로
- * 물러난다 — 저장 여부를 모르는 채 다른 답을 발송하지 않는다.
+ * 선종결을 durable LLM state 에 **원자 CAS 로 결속**해 발송한다 (삼순 2026-08-10 5차).
+ *
+ * 재조회는 fence 가 아니다 — 2차 조회가 null 인 직후 다른 worker 가 acquire·저장을 하면
+ * 여전히 두 답이 갈린다. 그래서 LLM 경계에 닿기 전에 종결하는 경로(검색 throw ·
+ * news 0건/throw · global cache hit)도 **같은 CAS(acquireLlmStart)** 를 통과한다:
+ *   · 저장 envelope 있음 → 그대로 재생 (재저장 0)
+ *   · legacy raw 있음 → 다른 worker 가 공급자를 이미 소비 — 물러남(pending), 재시도가
+ *     경계에서 그 raw 를 최종화한다
+ *   · started && !result → winner 진행 중이면 pending, fence 경과면 error (경계와 동일)
+ *   · 미시작 → CAS 를 건다. **이기면** envelope 를 먼저 저장하고 발송한다 — 이후 어떤
+ *     worker 도 CAS 를 이길 수 없으므로 경합 답이 생길 수 없다. **지면** pending —
+ *     winner 의 final 이 재시도에서 재생된다.
+ * 상태 조회/CAS 실패는 pending — 저장 여부를 모르는 채 다른 답을 발송하지 않는다.
  */
-async function envelopeFence(
+async function settleThroughDurableBoundary(
+  final: StoredQaFinal,
+  logAnswer: string | null,
   args: { userId: string; question: string; questionNorm: string; remaining: number; deps: QaDeps },
-): Promise<QaResult | null> {
-  if (!args.deps.getLlmState) return null;
-  let result: LlmResult | null;
+): Promise<QaResult> {
+  const { userId, question, questionNorm, remaining, deps } = args;
+  const pending: QaResult = { status: 202, answer: "", source: "pending", remaining };
+  const send = async (): Promise<QaResult> => {
+    await deps.log({
+      userId, question, questionNorm, matchPath: final.source,
+      answer: logAnswer, inputTokens: null, outputTokens: null,
+    });
+    return {
+      status: 200, answer: final.answer, source: final.source, remaining,
+      ...(final.sourceUrl ? { sourceUrl: final.sourceUrl } : {}),
+    };
+  };
+  // durable 배선이 없는 환경(단위 하니스 등)은 경합 자체가 없다 — 그대로 발송.
+  if (!deps.getLlmState || !deps.acquireLlmStart) return send();
+  let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
   try {
-    result = (await args.deps.getLlmState()).result;
+    state = await deps.getLlmState();
   } catch {
-    return { status: 202, answer: "", source: "pending", remaining: args.remaining };
+    return pending;
   }
-  return replayStoredFinalResult(result, args);
+  const replayed = await replayStoredFinalResult(state.result, args);
+  if (replayed) return replayed;
+  if (state.result) return pending;
+  if (state.started) {
+    if (state.ownerActive) return pending;
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+    return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+  }
+  let won = false;
+  try {
+    won = await deps.acquireLlmStart();
+  } catch {
+    return pending;
+  }
+  if (!won) return pending;
+  if (deps.storeLlm) {
+    await deps.storeLlm(packStoredQaFinal(final, { text: "", inputTokens: null, outputTokens: null }));
+  }
+  return send();
 }
 
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
@@ -2678,10 +2719,11 @@ async function answerPlayerDescriptiveQuestion(
   } catch {
     // ⚠️ 검색 RPC 실패는 "근거가 없다" 가 아니라 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
     //   둘을 같은 칸에 넣으면 장애가 "근거 부족" 통계에 섞여 조용히 정상처럼 보인다.
-    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.
-    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
-    if (fenced) return fenced;
-    return failCloseError();
+    // 선종결 CAS 결속 (삼순 5차): error 발송도 durable 경계를 이긴 쪽만 한다.
+    return settleThroughDurableBoundary(
+      { answer: SYSTEM_ERROR_ANSWER, source: "error" }, null,
+      { userId, question, questionNorm, remaining, deps },
+    );
   }
   // 미커버 선수(0행)·sanitize 뒤 남는 근거 없음 — **generic LLM 으로 양보한다** (null).
   //
@@ -3025,17 +3067,19 @@ async function answerNewsRagQuestion(
     // 검색 실패를 "기사 없음" 으로 둔갑하지 않는다. 재시도 가능한 실패라 error 다.
     // ⚠️ 문구도 `BLOCKED_ANSWER` 가 아니라 ② 다 (삼순 2026-08-08 조건 ①) — 우리 쪽 실패에
     //   "야구 이야기만 답할 수 있어요" 를 보내면 유저 질문을 탓하는 것이 된다.
-    // 선종결 fence (삼순 4차): error 발송 전에 envelope 가 생겼으면 그것을 우선한다.
-    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
-    if (fenced) return fenced;
-    return settle(SYSTEM_ERROR_ANSWER, "error");
+    // 선종결 CAS 결속 (삼순 5차): error 발송도 durable 경계를 이긴 쪽만 한다.
+    return settleThroughDurableBoundary(
+      { answer: SYSTEM_ERROR_ANSWER, source: "error" }, SYSTEM_ERROR_ANSWER,
+      { userId, question, questionNorm, remaining, deps },
+    );
   }
   if (evidence.length === 0) {
     // 그 창에 기사가 없다. 과거 근거로 대신 답하지 않고 여기서 닫는다(삼순 ②).
-    // 선종결 fence (삼순 4차): unsure 발송 전에 envelope 가 생겼으면 그것을 우선한다.
-    const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
-    if (fenced) return fenced;
-    return settle(NEWS_UNAVAILABLE_ANSWER, "unsure");
+    // 선종결 CAS 결속 (삼순 5차): unsure 발송도 durable 경계를 이긴 쪽만 한다.
+    return settleThroughDurableBoundary(
+      { answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure" }, NEWS_UNAVAILABLE_ANSWER,
+      { userId, question, questionNorm, remaining, deps },
+    );
   }
   // 기사는 tier2 고정이다. tier1 이 이 경로로 새면 숫자 허용 계약이 어긋나므로 닫는다.
   if (allowsNumericAnswer(evidence)) return settle(SYSTEM_ERROR_ANSWER, "error");
@@ -3567,11 +3611,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (!context && !scopeGate && !rosterBlock) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
-      // 선종결 fence (삼순 4차): 캐시 발송 전에 envelope 가 생겼으면 저장 final 이 우선이다.
-      const fenced = await envelopeFence({ userId, question, questionNorm, remaining, deps });
-      if (fenced) return fenced;
-      await deps.log({ userId, question, questionNorm, matchPath: "cache", answer: cached, inputTokens: null, outputTokens: null });
-      return { status: 200, answer: cached, source: "cache", remaining };
+      // 선종결 CAS 결속 (삼순 5차): 캐시 발송도 durable 경계를 이긴 쪽만 한다.
+      return settleThroughDurableBoundary(
+        { answer: cached, source: "cache" }, cached,
+        { userId, question, questionNorm, remaining, deps },
+      );
     }
   }
 

@@ -1250,6 +1250,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
           ? { started: false, result: null, ownerActive: false }
           : { started: true, result: envelope, ownerActive: false };
       },
+      acquireLlmStart: async () => { throw new Error("envelope 존재 시 CAS 를 걸면 안 된다"); },
       storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
       searchRag: async () => { throw new Error("rpc down"); },
       callRagLlm: async () => { throw new Error("호출 금지"); },
@@ -1262,7 +1263,73 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(logs.at(-1)?.matchPath, "rag", "error 가 로그에 남았다 — fence 이전에 종결됐다");
   }
 
-  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / search-throw 재생 / TOCTOU 경계·선종결 fence / front-throw pending / ambiguous fail-close / 양보 CAS 1회");
+  // (e-7) competing c1 (삼순 5차): 선종결 시점 상태가 started/null·ownerActive —
+  //   winner 가 경계 진행 중이다. error 를 발송하지 말고 pending 으로 물러나야 한다.
+  {
+    let stateCalls = 0;
+    const { deps, logs } = makeDeps({
+      getLlmState: async () => {
+        stateCalls += 1;
+        return stateCalls === 1
+          ? { started: false, result: null, ownerActive: false }
+          : { started: true, result: null, ownerActive: true };
+      },
+      acquireLlmStart: async () => { throw new Error("winner 진행 중엔 CAS 를 걸면 안 된다"); },
+      searchRag: async () => { throw new Error("rpc down"); },
+      callRagLlm: async () => { throw new Error("호출 금지"); },
+      callLlm: async () => { throw new Error("호출 금지"); },
+    });
+    const raced = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(raced.status, 202, `started/null 전이에서 pending 이 아니다: ${raced.status}`);
+    assert.equal(raced.source, "pending");
+    assert.equal(logs.length, 0, "pending 인데 로그가 남았다 — 답을 발송했다");
+  }
+  // (e-8) competing c2 (삼순 5차): 2차 조회 null 직후 다른 worker 가 CAS 를 이김 —
+  //   재조회는 fence 가 아니다. 이 worker 는 CAS 에서 져야 하고(pending), error 를
+  //   발송하면 winner 의 final 과 두 답이 갈린다.
+  {
+    let stateCalls = 0;
+    const { deps, logs } = makeDeps({
+      getLlmState: async () => {
+        stateCalls += 1;
+        return { started: false, result: null, ownerActive: false };
+      },
+      acquireLlmStart: async () => false,
+      searchRag: async () => { throw new Error("rpc down"); },
+      callRagLlm: async () => { throw new Error("호출 금지"); },
+      callLlm: async () => { throw new Error("호출 금지"); },
+    });
+    const lost = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(lost.status, 202, `CAS 패배에서 pending 이 아니다: ${lost.status}`);
+    assert.equal(lost.source, "pending");
+    assert.equal(logs.length, 0, "CAS 패배인데 답을 발송했다");
+    assert.ok(stateCalls >= 2, "선종결이 durable 경계를 거치지 않았다");
+  }
+  // (e-9) winner 측 (삼순 5차): CAS 를 이긴 선종결은 envelope 를 **먼저 저장**하고 발송 —
+  //   이후 재시도는 같은 error 답을 재생한다(두 답 분기 불가).
+  {
+    let stored: LlmResult | null = null;
+    let stateCalls = 0;
+    const { deps } = makeDeps({
+      getLlmState: async () => {
+        stateCalls += 1;
+        return { started: stored !== null, result: stored, ownerActive: false };
+      },
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      searchRag: async () => { throw new Error("rpc down"); },
+      callRagLlm: async () => { throw new Error("호출 금지"); },
+      callLlm: async () => { throw new Error("호출 금지"); },
+    });
+    const won = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(won.source, "error");
+    assert.ok(stored, "CAS 승리 선종결이 envelope 를 저장하지 않았다");
+    const replayedRetry = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
+    assert.equal(replayedRetry.source, "error", "재시도가 저장 final 과 다른 경로로 갔다");
+    assert.equal(replayedRetry.answer, won.answer, "재시도 답이 저장 final 과 다르다");
+  }
+
+  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / envelope 재생 / route-drift 무변형 / 선종결 CAS 결속(c1 pending·c2 패배·winner 저장) / front-throw pending / ambiguous fail-close");
 }
 
 /**

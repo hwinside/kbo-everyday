@@ -403,6 +403,7 @@ async function run(): Promise<void> {
           ? { started: false, result: null, ownerActive: false }
           : { started: true, result: envelope, ownerActive: false };
       },
+      acquireLlmStart: async () => { throw new Error("envelope 존재 시 CAS 를 걸면 안 된다"); },
       storeLlm: async () => { throw new Error("fence 재생은 재저장하지 않는다"); },
       searchNewsRag: breakKind === "zero"
         ? async () => []
