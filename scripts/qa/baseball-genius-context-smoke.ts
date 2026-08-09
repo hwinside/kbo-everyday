@@ -169,7 +169,18 @@ function verifyClosedSetContract() {
     assert.equal(isFollowupPhrase(open), false, `substring/open-ended 통과 금지: ${open}`);
   }
   // B3 allowlist는 정상 답변 3경로만.
-  assert.deepEqual([...CONTEXT_SOURCE_ALLOWLIST], ["dictionary", "cache", "llm"]);
+  assert.deepEqual(
+    [...CONTEXT_SOURCE_ALLOWLIST],
+    [
+      "dictionary", "cache", "llm",
+      "rag", "team_rag", "news_rag", "official_rag", "kbo_structured",
+      "scope_guide", "ack", "unsure",
+    ],
+  );
+  // RAG 답변 뒤 후속·정정이 끊기지 않는다 (00:53 캡처 사고 축).
+  assert.ok(selectContextTurn(eligibleTurn({ jobSource: "team_rag" })), "team_rag 턴이 맥락 자격이어야 함");
+  assert.ok(selectContextTurn(eligibleTurn({ jobSource: "unsure" })), "unsure 턴(봇이 못 알아들은 직후 정정)이 맥락 자격이어야 함");
+  assert.equal(selectContextTurn(eligibleTurn({ jobSource: "blocked" })), null, "blocked 체인은 계속 차단");
   assert.equal(CONTEXT_TTL_MS, 600_000);
 }
 
@@ -318,8 +329,10 @@ function verifySourceAllowlistFailClosed() {
   for (const source of CONTEXT_SOURCE_ALLOWLIST) {
     assert.ok(selectContextTurn(eligibleTurn({ jobSource: source })), `자격 source: ${source}`);
   }
+  // 2026-08-10 확장: 답변이 실린 모든 source + unsure(직전 질문이 곧 주제) 가 자격이다.
+  // blocked(인젝션 시도 체인 차단)·limited·error·pending 은 계속 fail-closed.
   for (const source of [
-    "blocked", "error", "unsure", "limited", "history_hold", "context_missing",
+    "blocked", "error", "limited", "history_hold", "context_missing",
     "pending", "some_new_future_source", "",
   ]) {
     assert.equal(
@@ -1135,6 +1148,23 @@ async function verifyLlmDelegation() {
     playerCaptured[0].context,
     { question: "그랜드슬램이 뭐야?", answer: "주자가 만루일 때 친 홈런을 그랜드슬램이라고 해요." },
     "player rag extras 에 직전 턴이 없다",
+  );
+
+  // ── 근거 0건 로스터 선수 → generic LLM 양보 (2026-08-10 E2E 실측 축) ────────
+  // 최형우(chunk 0행)의 정정 질문이 unsure 로 죽지 않고, roster 블록을 들고 generic 에 간다.
+  const yieldState = freshCtx(grandSlamTurn());
+  const yieldDeps: QaDeps = {
+    ...delegationDeps(yieldState),
+    enablePlayerRag: true,
+    searchRag: async () => [],
+    callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
+  };
+  const yieldResult = await answerQuestion("u-yield", "최형우 어떤 선수야?", yieldDeps);
+  assert.notEqual(yieldResult.source, "unsure", "근거 0건 로스터 선수가 unsure 로 죽었다");
+  assert.equal(yieldState.llmCalls, 1, "generic LLM 으로 양보되지 않았다");
+  assert.ok(
+    yieldState.llmRosterBlocks[0]?.includes("최형우: 삼성 소속"),
+    "양보된 generic 호출에 로스터 블록이 없다",
   );
 
   // ── 프롬프트 계약 앵커: 로스터 SSOT + 정정 인정 (배포 프롬프트 실물) ──────────

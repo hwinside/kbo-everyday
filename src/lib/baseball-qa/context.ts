@@ -2,8 +2,22 @@
 // 후속 질문("또 다른 경우는?")이 blocked로 떨어지던 버그를 exact 계약으로 해소한다.
 // DB 접근은 server.ts가 RPC로 수행하고, 여기서는 그 결과 1행을 순수 판정한다.
 
-/** 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed) */
-export const CONTEXT_SOURCE_ALLOWLIST = ["dictionary", "cache", "llm"] as const;
+/**
+ * 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed).
+ *
+ * ⚠️ 2026-08-10 확장 (E2E 실측): 종전 ["dictionary","cache","llm"] 은 RAG 이전 설계라
+ *   team_rag·rag 답변 뒤의 후속·정정("최형우는 현재 삼성 소속인데??", "언제?")이 전부
+ *   맥락 없음으로 끊겼다 — 00:53·00:57 캡처 사고의 절반이 이 목록이다.
+ *   답변이 실린 모든 source + unsure 를 자격으로 인정한다. unsure 를 넣는 이유:
+ *   봇이 못 알아들은 직후가 바로 유저가 고쳐 묻는 순간이고, 그때 필요한 것은 직전
+ *   **질문**(주제)이다 — unsure 답변 텍스트는 고정 문구라 오염 위험이 없다.
+ *   blocked(인젝션 시도)·limited·error·pending 은 계속 제외한다(fail-closed).
+ */
+export const CONTEXT_SOURCE_ALLOWLIST = [
+  "dictionary", "cache", "llm",
+  "rag", "team_rag", "news_rag", "official_rag", "kbo_structured",
+  "scope_guide", "ack", "unsure",
+] as const;
 
 /** TTL 기준 = 소스 turn의 answer DM created_at (B5). 600.000초 유효 / 600.001초 만료. */
 export const CONTEXT_TTL_MS = 600_000;

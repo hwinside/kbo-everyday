@@ -2420,7 +2420,7 @@ async function answerPlayerDescriptiveQuestion(
   remaining: number,
   deps: QaDeps,
   extras: RagLlmExtras = {},
-): Promise<QaResult> {
+): Promise<QaResult | null> {
   const failClose = async (): Promise<QaResult> => {
     // 근거로 답할 수 없는 선수 서술형 질문. 중요한 건 문구가 아니라 **여기서 끝난다**는
     // 것이다: generic LLM 호출도 cache write도 없다.
@@ -2454,8 +2454,17 @@ async function answerPlayerDescriptiveQuestion(
     //   둘을 같은 칸에 넣으면 장애가 "근거 부족" 통계에 섞여 조용히 정상처럼 보인다.
     return failCloseError();
   }
-  // 미커버 선수(0행)·sanitize 뒤 남는 근거 없음(오염근거) — 둘 다 여기서 명시 종결한다.
-  if (evidence.length === 0) return failClose();
+  // 미커버 선수(0행)·sanitize 뒤 남는 근거 없음 — **generic LLM 으로 양보한다** (null).
+  //
+  // ⚠️ 2026-08-10 방향 전환 (하린아빠 00:53 "LLM 기본 능력 최대 활용" + E2E 실측).
+  //   종전에는 여기서 unsure 로 명시 종결했다. 그 결과 chunk 0건인 로스터 선수(실측
+  //   최형우 72443 = 0행, 커버리지 54.8%의 나머지 절반)는 소속 정정("최형우는 현재 삼성
+  //   소속인데??")까지 전부 "질문을 정확히 이해하지 못했어요"를 받았다. generic 경로는
+  //   현재 소속 roster 블록 + 직전 턴 + 숫자 근거없음 계약을 갖고 있어 이 질문에 정확히
+  //   답한다(프로브 실측). 환각 축과도 다르다 — 여기 오는 후보는 정의상 **로스터 결속**
+  //   선수라 실존이 보장되고(#1135 임창규 축은 미결속 실명), 수치는 프롬프트 계약이 막는다.
+  //   LLM 경계는 아직 소비 전이므로(근거 검색은 경계 앞) 양보해도 이중 과금이 없다.
+  if (evidence.length === 0) return null;
 
   // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
   let llm: LlmResult | null = null;
@@ -3152,14 +3161,17 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       if (record) return record;
     }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
-      return answerPlayerDescriptiveQuestion(
+      const descriptive = await answerPlayerDescriptiveQuestion(
         userId, question, questionNorm, playerCandidate, remaining, deps,
         { context: context ?? undefined, rosterBlock },
       );
+      // null = 근거 0건 양보 — generic LLM(roster 블록·직전 턴·숫자 계약 보유)으로 내려간다.
+      if (descriptive) return descriptive;
+    } else {
+      // 선수 경로가 꺼져 있어 답을 못 만든 것 — 주제 밖이 아니라 근거 부족이다.
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
     }
-    // 선수 경로가 꺼져 있어 답을 못 만든 것 — 주제 밖이 아니라 근거 부족이다.
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: null, outputTokens: null });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
 
   // ③ 동일질문 캐시 (토큰 0). 맥락 의존 질문은 global 캐시를 read도 write도 하지 않는다

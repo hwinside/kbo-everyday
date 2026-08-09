@@ -70,6 +70,13 @@ const MUTATIONS = [
     replacement: "",
     why: "구단 명단 블록이 전 구단 선수를 담아 이적 선수(삼성 최형우)가 기아 명단에 남는다",
   },
+  {
+    id: "N20 근거 0건 양보 제거 (unsure 회귀)",
+    file: PIPELINE,
+    anchor: "if (evidence.length === 0) return null;",
+    replacement: "if (evidence.length === 0) return failClose();",
+    why: "chunk 미보유 로스터 선수(실측 최형우)의 정정·서술 질문이 전부 unsure 로 죽는다",
+  },
   // ── 프롬프트 계약 ───────────────────────────────────────────────────────
   {
     id: "N8 무관-무시 지시 제거 (generic)",
