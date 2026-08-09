@@ -42,15 +42,39 @@ import { MATCH_PATH_REPLY_KIND } from "../../src/lib/constants/baseball-genius";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 
 let pass = 0;
+const failures: string[] = [];
+
+/**
+ * ⚠️ **첫 실패에서 멈추지 않는다** (2026-08-09 mutation runner 가 드러낸 결손).
+ *
+ *   종전엔 assert 가 throw 하면 프로세스가 즉시 죽었다. 그러면 mutation 이 **목표 축과
+ *   무관한 앞쪽 assertion** 에서 먼저 걸려, "게이트가 이 결함을 잡았다" 를 증명할 수 없다.
+ *   실측: 성씨 결속(N-F)을 지웠는데 `임창규` 케이스가 먼저 깨져 죽었다 — 성씨 축이
+ *   RED 인지 아닌지 알 수 없는 상태.
+ *
+ *   그래서 전건을 끝까지 돌려 **깨진 assertion 을 전부 모아** 출력한다. mutation runner 는
+ *   그중 **자기가 기대한 문구**가 있는지로 판정한다(nonzero exit 만으로는 부족하다 —
+ *   컴파일 오류로 죽은 것과 구분되지 않는다).
+ */
 function check(name: string, fn: () => void) {
-  fn();
-  pass += 1;
-  console.log(`PASS ${name}`);
+  try {
+    fn();
+    pass += 1;
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failures.push(`${name} :: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(`FAIL ${name} :: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 async function checkAsync(name: string, fn: () => Promise<void>) {
-  await fn();
-  pass += 1;
-  console.log(`PASS ${name}`);
+  try {
+    await fn();
+    pass += 1;
+    console.log(`PASS ${name}`);
+  } catch (error) {
+    failures.push(`${name} :: ${error instanceof Error ? error.message : String(error)}`);
+    console.log(`FAIL ${name} :: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 const GLOSSARY: GlossaryEntry[] = [
@@ -154,6 +178,13 @@ async function main() {
     ["임창규 잘해?", "서술 allowlist 밖 · 평가어"],
     ["임창규 lg 주축 맞아?", "서술 allowlist 밖 · 사실확인"],
     ["임창규는 어느 팀이야", "주격조사 · 핵 우선 판정"],
+    // ⚠️ 담화 표지가 앞에 붙은 형태 (삼순 2026-08-09 fail-open).
+    //   직전 판은 **첫 어절만** 봐서 `혹시` 가 머리를 차지하면 그대로 generic LLM 으로 샜다.
+    //   문장 전체로 넓히면 한국어 용언(`나왔지`·`만들었어`·`우승한`)이 이름으로 먹히므로,
+    //   군말(닫힌 부류)만 건너뛴다. 이 표본이 그 축의 유일한 증거다.
+    ["혹시 임창규 알아?", "담화 표지 뒤 · 첫 어절 아님"],
+    ["그 임창규 어떤 선수야", "담화 표지(지시관형사) 뒤"],
+    ["임창규 알려줘", "사람 명사·조사 없음 · near-miss 단독"],
   ] as const) {
     await checkAsync(`\`${question}\` → 생성 0 · 임찬규 제안 (${label})`, async () => {
       const { result, logs, calls } = await ask(question);
@@ -186,9 +217,11 @@ async function main() {
   ]) {
     await checkAsync(`\`${question}\` → 생성 0 · 모른다고 말한다`, async () => {
       const { result, logs, calls } = await ask(question);
-      assert.equal(result.source, "name_suggest", `source=${result.source}`);
+      // ⚠️ 제안할 이웃이 없으면 **`name_unknown`** 이다 (삼순 2026-08-08 조건 ③).
+      //   `name_suggest` 와 한 칸에 두면 제안율의 분모가 오염돼 오제안율을 못 센다.
+      assert.equal(result.source, "name_unknown", `source=${result.source}`);
       assert.equal(result.answer, NAME_UNKNOWN_ANSWER, result.answer);
-      assert.deepEqual(logs, ["name_suggest"]);
+      assert.deepEqual(logs, ["name_unknown"]);
       assert.equal(calls.llm, 0, "generic LLM 이 불렸다 — 이게 바로 삼순 P0 였다");
       assert.equal(calls.ragLlm, 0);
       assert.equal(calls.cacheRead, 0);
@@ -214,14 +247,15 @@ async function main() {
   // ── ⑤ 무회귀: 결속된 선수 · 룰 · 구단 ─────────────────────────────────────
   await checkAsync("결속된 선수(`임찬규`)는 그대로 RAG 로 답한다", async () => {
     const { result, calls } = await ask("임찬규 어떤 선수야");
-    assert.notEqual(result.source, "name_suggest", "정상 선수를 되물었다");
+    assert.ok(result.source !== "name_suggest" && result.source !== "name_unknown",
+      `정상 선수를 되물었다: ${result.source}`);
     assert.equal(calls.ragLlm, 1, "선수 RAG 가 안 불렸다");
   });
 
   await checkAsync("구단 서술 질문은 team_rag 로 간다", async () => {
     const { result } = await ask("LG트윈스 창단 이야기 알려줘");
-    assert.notEqual(result.source, "name_suggest",
-      "구단 질문이 이름 되묻기로 샜다 — `이야기`→`이준기` 오탐 회귀");
+    assert.ok(result.source !== "name_suggest" && result.source !== "name_unknown",
+      `구단 질문이 이름 되묻기로 샜다 — \`이야기\`→\`이준기\` 오탐 회귀: ${result.source}`);
   });
 
   check("룰·일반 문장 오탐 0", () => {
@@ -309,16 +343,27 @@ async function main() {
   });
 
   // ── ⑥ 라벨 배선 ──────────────────────────────────────────────────────────
-  check("`name_suggest` 는 답변(`answer`)으로 분류되지 않는다", () => {
+  check("`name_suggest`·`name_unknown` 은 답변(`answer`)으로 분류되지 않는다", () => {
     // 우리는 아무 사실도 말하지 않았다 — 답변 감사 분자에 들어가면 성공률이 부풀려진다.
     assert.notEqual(MATCH_PATH_REPLY_KIND.name_suggest, "answer");
+    assert.notEqual(MATCH_PATH_REPLY_KIND.name_unknown, "answer");
   });
 
-  check("routeQuestion 이 `name_suggest` 를 돌려준다", () => {
+  // ⚠️ **두 라벨이 실제로 갈라지는지**를 본다 (삼순 2026-08-08 조건 ③).
+  //   한쪽으로 병합해도 게이트가 GREEN 이면 감사 분리는 말뿐이다.
+  check("제안 가능 여부로 `name_suggest` / `name_unknown` 이 갈린다", () => {
     assert.equal(routeQuestion("임창규 어떤 선수야", GLOSSARY, players), "name_suggest");
-    assert.equal(routeQuestion("오타니 어떤 선수야", GLOSSARY, players), "name_suggest");
+    assert.equal(routeQuestion("오타니 어떤 선수야", GLOSSARY, players), "name_unknown",
+      "이웃 없는 이름이 name_unknown 으로 갈리지 않는다 — 감사 분모가 오염된다");
+    assert.equal(routeQuestion("홍길동 어떤 선수야", GLOSSARY, players), "name_unknown");
+    assert.equal(routeQuestion("김하은 어떤 선수야", GLOSSARY, players), "name_suggest");
   });
 
+  if (failures.length > 0) {
+    console.error(`\n❌ genius-unbound-name FAIL (${failures.length}건):`);
+    for (const failure of failures) console.error(`  - ${failure}`);
+    process.exit(1);
+  }
   console.log(`\n✅ genius-unbound-name PASS (${pass} checks)`);
 }
 
