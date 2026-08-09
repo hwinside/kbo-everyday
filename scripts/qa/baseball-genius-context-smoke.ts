@@ -29,7 +29,9 @@ import {
   type QaDeps,
   resolveRagTeamCandidate,
   isRosterVerifiableQuestion,
+  isTeamEntryQuestion,
   rosterMembershipBlock,
+  TEAM_ENTRY_UNAVAILABLE_ANSWER,
   teamEntryBlock,
   teamRosterBlock,
   type RagLlmExtras,
@@ -1099,15 +1101,30 @@ async function verifyLlmDelegation() {
   assert.ok(kiaCandidate, "기아 후보 해석 실패");
   // 1군 명단 SSOT (roster_snapshots) — 날짜 provenance 포함, 빈 명단은 null (fail-close).
   const NOW = new Date("2026-08-10T01:00:00+09:00");
-  const entry = teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: ["김도영", "양현종"] }, NOW);
-  assert.ok(entry?.includes("1군 등록 명단") && entry.includes("2026-08-08") && entry.includes("김도영"));
+  // 완전성(삼순 blocker ①): 1군 엔트리는 20~40명 — 그 밖이면 크롤 부분 실패로 보고 버린다.
+  const FULL_ENTRY = Array.from({ length: 28 }, (_, i) => `기아일군${i + 1}`);
+  const entry = teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: FULL_ENTRY }, NOW);
+  assert.ok(entry?.includes("1군 등록 명단") && entry.includes("2026-08-08") && entry.includes("기아일군1"));
   assert.equal(teamEntryBlock(kiaCandidate!, null), null);
   assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: [] }, NOW), null);
-  // freshness — 7일 초과 stale·파싱 불가 날짜는 명단을 버린다 (기준일 표기가 있어도
-  // 낡은 명단을 "당일 등록" 으로 내보내는 쪽이 더 위험하다 → 전체 명단 fail-close 로).
-  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-01", players: ["김도영"] }, NOW), null);
-  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "not-a-date", players: ["김도영"] }, NOW), null);
-  assert.ok(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-04", players: ["김도영"] }, NOW));
+  assert.equal(
+    teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: FULL_ENTRY.slice(0, 12) }, NOW),
+    null, "반쪽 명단(<20명)이 통과했다",
+  );
+  assert.equal(
+    teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: [...FULL_ENTRY, ...FULL_ENTRY] }, NOW),
+    null, "과잉 명단(>40명)이 통과했다",
+  );
+  // freshness — stale(7일 초과)·파싱 불가·미래 날짜는 명단을 버린다.
+  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-01", players: FULL_ENTRY }, NOW), null);
+  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "not-a-date", players: FULL_ENTRY }, NOW), null);
+  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-20", players: FULL_ENTRY }, NOW), null, "미래 날짜가 통과했다");
+  assert.ok(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-04", players: FULL_ENTRY }, NOW));
+  // 1군 명단 질문 판정 (닫힌 어휘) — 직접 렌더 분기의 SSOT.
+  assert.equal(isTeamEntryQuestion("기아 1군 선수"), true);
+  assert.equal(isTeamEntryQuestion("기아 엔트리 알려줘"), true);
+  assert.equal(isTeamEntryQuestion("기아 선수단 누구야"), true);
+  assert.equal(isTeamEntryQuestion("기아 타이거즈는 어떤 구단이야?"), false);
   const kiaRoster = teamRosterBlock(kiaCandidate!, players);
   assert.ok(kiaRoster && kiaRoster.includes("김도영"), "구단 명단 블록에 현재 로스터 선수가 없다");
   // provenance (삼순 SSOT 정정): roster 는 현재 소속 SSOT 이지 1군 당일 등록 SSOT 가 아니다.
@@ -1125,62 +1142,63 @@ async function verifyLlmDelegation() {
     );
   }
 
-  // 종단: 구단 RAG 경로 — 스냅샷 근거와 함께 현재 명단·직전 턴이 extras 로 간다.
+  // ── 1군 명단 질문 → 직접 렌더 (삼순 blocker ③ 재설계: RAG 미경유·나무위키 출처 0) ──
+  const FULL_KIA_ENTRY = Array.from({ length: 28 }, (_, i) => `기아일군${i + 1}`);
+  const directState = freshCtx(null);
+  let directRagCalls = 0;
+  const directDeps: QaDeps = {
+    ...delegationDeps(directState),
+    enableTeamRag: true,
+    now: () => Date.parse("2026-08-10T01:00:00+09:00"),
+    searchRag: async () => KIA_EVIDENCE,
+    fetchTeamEntry: async (teamId) => (teamId === 6
+      ? { snapshotDate: "2026-08-08", players: FULL_KIA_ENTRY }
+      : null),
+    callTeamRagLlm: async () => { directRagCalls += 1; throw new Error("명단 질문이 RAG 로 샜다"); },
+  };
+  const directResult = await answerQuestion("u-entry", "기아 1군 선수", directDeps);
+  assert.equal(directResult.source, "kbo_structured", `직접 렌더가 아니다: ${directResult.source}`);
+  assert.ok(
+    directResult.answer.includes("기아일군1") && directResult.answer.includes("2026-08-08"),
+    "직접 렌더 답변에 명단·기준일이 없다",
+  );
+  assert.ok(!directResult.answer.includes("나무위키"), "정본 명단 답변에 나무위키 출처가 붙었다");
+  assert.equal(directRagCalls, 0, "명단 질문이 team rag LLM 을 소비했다");
+  assert.equal(directState.llmCalls, 0, "명단 질문이 generic LLM 을 소비했다");
+
+  // entry 무효(조회실패·stale·불완전·미래)면 낡은/반쪽 명단 대신 명시 "확인 불가" fail-close.
+  const holdState = freshCtx(null);
+  const holdResult = await answerQuestion("u-entry-hold", "기아 1군 선수", {
+    ...directDeps,
+    ...({} as Record<string, never>),
+    loadGlossary: async () => DELEGATION_GLOSSARY,
+    getCache: async () => null,
+    setCache: async () => {},
+    callLlm: async () => { throw new Error("명단 질문이 generic 으로 샜다"); },
+    loadPreviousTurn: async () => { holdState.previousTurnCalls++; return null; },
+    log: async (entry) => { holdState.logs.push(entry.matchPath); },
+    reserveDaily: async (_u, l) => ({ allowed: true, remaining: l - 1 }),
+    loadPlayers: async () => players,
+    fetchTeamEntry: async () => null,
+  });
+  assert.equal(holdResult.answer, TEAM_ENTRY_UNAVAILABLE_ANSWER, "entry 무효인데 확인 불가 안내가 아니다");
+  assert.equal(holdResult.source, "blocked", "entry 무효 종결 칸이 blocked 가 아니다");
+
+  // 구단 서술 질문은 RAG 원계약 그대로 — extras 는 직전 턴만, 로스터 블록 미주입.
   const teamCaptured: RagLlmExtras[] = [];
   const teamState = freshCtx(grandSlamTurn());
-  const teamDeps: QaDeps = {
+  const teamResult = await answerQuestion("u-team", "기아 타이거즈는 어떤 구단이야?", {
     ...delegationDeps(teamState),
     enableTeamRag: true,
     searchRag: async () => KIA_EVIDENCE,
-    // 1군 명단 SSOT 배선 (삼순 2026-08-10) — production 은 roster_snapshots 최신 스냅샷.
-    // ⚠️ entry 픽스처는 전체 명단과 **구분되는 이름**만 담는다 — 겹치면 전체 명단 제거
-    //   mutation 이 entry 블록 이름으로 GREEN 이 된다(실측 N4).
-    fetchTeamEntry: async (teamId) => (teamId === 6
-      ? { snapshotDate: "2026-08-08", players: ["양현종"] }
-      : null),
+    fetchTeamEntry: async () => { throw new Error("서술 질문이 1군 명단을 조회했다"); },
     callTeamRagLlm: async (_question, _evidence, extras) => {
       teamCaptured.push(extras ?? {});
       return { text: '{"status":"GROUNDED","answer":"광주 연고 구단이에요."}', inputTokens: 1, outputTokens: 1 };
     },
-  };
-  const teamResult = await answerQuestion("u-team", "기아 타이거즈는 어떤 구단이야?", teamDeps);
-  assert.equal(teamCaptured.length, 1, "team rag LLM 이 호출되지 않았다");
-  // authoritative facts 분리 (삼순): 1군 명단이 있으면 그것만 — 전체 91명 명단은 싣지 않는다.
-  const teamBlockText = teamCaptured[0].rosterBlock ?? "";
-  assert.ok(
-    teamBlockText.includes("1군 등록 명단") &&
-      teamBlockText.includes("2026-08-08") &&
-      teamBlockText.includes("양현종"),
-    "team rag extras 에 당일 1군 등록 명단(SSOT)이 없다",
-  );
-  assert.ok(
-    !teamBlockText.includes("현재 등록 선수"),
-    "1군 명단이 있는데 전체 등록 명단이 같이 실렸다 (모델 혼란 플래키 실측 축)",
-  );
-
-  // fallback: 1군 명단 미조회면 전체 등록 명단 + 구분 불가 라벨로 fail-close.
-  const fallbackCaptured: RagLlmExtras[] = [];
-  const fallbackState = freshCtx(null);
-  await answerQuestion("u-team-fb", "기아 타이거즈는 어떤 구단이야?", {
-    ...delegationDeps(fallbackState),
-    enableTeamRag: true,
-    searchRag: async () => KIA_EVIDENCE,
-    fetchTeamEntry: async () => null,
-    callTeamRagLlm: async (_question, _evidence, extras) => {
-      fallbackCaptured.push(extras ?? {});
-      return { text: '{"status":"GROUNDED","answer":"광주 연고 구단이에요."}', inputTokens: 1, outputTokens: 1 };
-    },
   });
-  const fbText = fallbackCaptured[0]?.rosterBlock ?? "";
-  assert.ok(
-    fbText.includes("현재 등록 선수") && fbText.includes("김도영") &&
-      fbText.includes("1군·2군 당일 등록 여부는 포함하지 않음"),
-    "1군 명단 미조회 fallback 에 전체 명단·구분 불가 라벨이 없다",
-  );
-  assert.ok(
-    !(teamCaptured[0].rosterBlock ?? "").split("현재 등록 선수")[1]?.includes("최형우"),
-    "이적한 선수가 구단 명단 블록에 남아 있다",
-  );
+  assert.equal(teamCaptured.length, 1, "team rag LLM 이 호출되지 않았다");
+  assert.equal(teamCaptured[0].rosterBlock, undefined, "서술 질문 RAG 에 로스터 블록이 실렸다 (원계약 위반)");
   assert.deepEqual(
     teamCaptured[0].context,
     { question: "그랜드슬램이 뭐야?", answer: "주자가 만루일 때 친 홈런을 그랜드슬램이라고 해요." },
@@ -1299,6 +1317,15 @@ async function verifyLlmDelegation() {
   });
   assert.equal(hallucinationResult.source, "unsure", "검증 불가 서술 질문이 generic 으로 샜다 (환각 통로)");
   assert.equal(hallucinationState.llmCalls, 0, "검증 불가 서술 질문이 generic LLM 을 소비했다");
+  // 양보 대상 질문(소속·포지션·등번호)의 데이터가 블록에 실려야 한다 (삼순 blocker ②) —
+  // 포지션 질문을 양보해 놓고 소속만 실으면 포지션은 모델 기억 생성이 된다.
+  const detailBlock = rosterMembershipBlock("김도영 포지션 뭐야?", null, [
+    { name: "김도영", kboId: "52605", team: "KIA", position: "내야수", backNo: "5" },
+  ]);
+  assert.ok(
+    detailBlock?.includes("포지션 내야수") && detailBlock.includes("등번호 5번"),
+    `소속 블록에 포지션·등번호가 없다: ${detailBlock}`,
+  );
   // 판정 단위 — 입력은 roster 컬럼(닫힌 집합)이다.
   assert.equal(isRosterVerifiableQuestion("최형우 소속이 어디야?"), true);
   assert.equal(isRosterVerifiableQuestion("김도영 포지션 뭐야?"), true);
@@ -1310,9 +1337,11 @@ async function verifyLlmDelegation() {
   assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("오류를 인정하며 정정한 사실을 답한다"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("<현재 로스터> 블록이 주어지면 그것이 선수의 현재 소속 구단의 유일한 정본"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("오류를 인정하며 로스터 기준으로 정정해 답한다"));
-  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("현재 선수단을 물으면 로스터 블록의 선수만 말한다"));
-  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("'1군 등록 명단' 블록이 있으면 그것이 당일 1군 엔트리의 유일한 정본"));
-  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("'1군 등록 명단' 블록이 없으면 1군·2군 구분은 확인할 수 없다고 밝히고"));
+  // 재설계(2026-08-10): 명단·소속은 직접 렌더/선수 경로가 담당 — team 프롬프트에는
+  // 로스터 지시가 없어야 한다(없는 블록을 참조하는 죽은 계약 금지). 대신 스냅샷 시점
+  // 한계 고지가 있어야 한다.
+  assert.ok(!RAG_TEAM_SYSTEM_PROMPT.includes("현재 로스터"), "team 프롬프트에 죽은 로스터 계약이 남아 있다");
+  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("현재 소속·현재 명단을 단정하지 않는다"));
   assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
 

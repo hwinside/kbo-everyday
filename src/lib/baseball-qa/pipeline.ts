@@ -24,7 +24,6 @@ import {
   composeRagAnswer,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
-  RAG_TEAM_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
   type RagEntityCandidate,
@@ -2326,7 +2325,14 @@ export function rosterMembershipBlock(
     if (seen.has(key)) continue;
     seen.add(key);
     // 동명이인은 두 줄 다 넣는다 — 어느 쪽인지 확정하는 건 룰이 아니라 모델·유저 맥락이다.
-    (inQuestion ? fromQuestion : fromContext).push(`${player.name}: ${player.team} 소속`);
+    // 포지션·등번호도 함께 싣는다 — 양보 대상 질문(소속·포지션·등번호)의 데이터가 블록에
+    // 없으면 모델 기억 생성이 된다 (삼순 blocker ②).
+    const detail = [
+      `${player.name}: ${player.team} 소속`,
+      player.position ? `포지션 ${player.position}` : null,
+      player.backNo ? `등번호 ${player.backNo}번` : null,
+    ].filter(Boolean).join(", ");
+    (inQuestion ? fromQuestion : fromContext).push(detail);
   }
   const lines = [...fromQuestion.slice(0, 8), ...fromContext.slice(0, 8)];
   return lines.length > 0 ? lines.join("\n") : null;
@@ -2341,6 +2347,23 @@ export function rosterMembershipBlock(
  * 스냅샷이 하루 이상 묵을 수 있으므로(우천·폭염 취소) 기준일을 모델·유저 모두 알아야 한다.
  */
 /**
+ * **1군 명단 질문**인가 — 단일 구단 + 엔트리 어휘(닫힌 집합). 이 질문은 RAG 재서술이
+ * 아니라 `roster_snapshots` 를 **코드가 직접 렌더**해 답한다 (draft `lblDraft` 선례).
+ *
+ * ⚠️ 왜 직접 렌더인가 (삼순 2026-08-10 blocker ③): RAG 경로에 명단 블록을 주입해
+ *   모델이 재서술하게 하면 ①답변에 나무위키 출처가 붙고(명단의 정본은 스냅샷인데)
+ *   ②"1군"의 숫자 1을 위한 사면이 tier2 숫자 HOLD 를 무르게 만든다. 정본 데이터를
+ *   그대로 보여주는 질문에 생성 모델을 태울 이유가 없다.
+ */
+export function isTeamEntryQuestion(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return /1군|일군|엔트리|등록명단|선수단|로스터/.test(normalized);
+}
+
+export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
+  "지금은 당일 1군 등록 명단을 확인할 수 없어요. 잠시 후 다시 물어봐 주세요.";
+
+/**
  * 1군 명단 스냅샷 신선도 상한 (일). 우천·폭염 취소로 며칠 비는 것은 정상이지만,
  * 그 이상 묵은 스냅샷을 "당일 등록" 으로 내보내면 기준일 표기가 있어도 오답에 가깝다 —
  * stale 이면 명단 자체를 버리고 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
@@ -2352,8 +2375,11 @@ export function teamEntryBlock(
   entry: { snapshotDate: string; players: string[] } | null,
   now: Date = new Date(),
 ): string | null {
-  if (!entry || entry.players.length === 0) return null;
-  // freshness — 파싱 불가 날짜도 stale 취급 (fail-close).
+  if (!entry) return null;
+  // 완전성 — 1군 엔트리는 구조적으로 20~40명이다. 그 밖이면 크롤 부분 실패로 보고
+  // 명단을 버린다(반쪽 명단을 "당일 등록"으로 내보내는 쪽이 더 위험하다). (삼순 blocker ①)
+  if (entry.players.length < 20 || entry.players.length > 40) return null;
+  // freshness — 파싱 불가·미래 날짜도 fail-close.
   const snapshotMs = Date.parse(`${entry.snapshotDate}T00:00:00+09:00`);
   if (!Number.isFinite(snapshotMs)) return null;
   const ageDays = (now.getTime() - snapshotMs) / 86_400_000;
@@ -2813,11 +2839,7 @@ async function answerTeamRagQuestion(
   // 재개 조건: 진술 관계를 검증할 수 있는 수단(구조화된 구단 연표 정본 등)이 생기면
   // 그때 숫자를 열면 된다. 휴리스틱으로는 다시 열지 않는다.
   const validated = validateRagResponse(llm.text, {
-    // 명단 답변(1군 등록 30명)은 160자를 넘는다 — 상한이 좁으면 모델이 전 명단을 들 때만
-    // 비결정적으로 폐기된다(2026-08-10 E2E 실측 too_long → unsure). 구단 경로는 320자.
-    maxChars: RAG_TEAM_ANSWER_MAX_CHARS,
-    // "1군" 의 `1` 이 tier2 숫자 금지에 걸리는 플래키 방지 — 1st-party 블록의 숫자만 허용.
-    firstPartyGroundingText: extras.rosterBlock,
+    maxChars: RAG_ANSWER_MAX_CHARS,
   });
   if (validated.kind !== "grounded") {
     // 근거로 답을 못 만들었다(근거 밖 숫자 포함 또는 여러 chunk 조합). 재호출 없이 종결한다.
@@ -3258,33 +3280,39 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       ? resolveRagTeamCandidate(question)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
-    // 1군 명단 SSOT = roster_snapshots (삼순 2026-08-10). 조회 실패는 null 로 두고
-    // 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다 — 지어내는 것보다 낫다.
-    let teamEntry: { snapshotDate: string; players: string[] } | null = null;
-    if (deps.fetchTeamEntry) {
-      const entryTeamId = Number(teamRagCandidate.entityId);
-      try {
-        teamEntry = Number.isSafeInteger(entryTeamId)
-          ? await deps.fetchTeamEntry(entryTeamId)
-          : null;
-      } catch {
-        teamEntry = null;
+    // ── 1군 명단 질문 → 직접 렌더 (draft 선례 · 삼순 blocker ③) ─────────────
+    // RAG 재서술이 아니라 roster_snapshots 를 코드가 그대로 보여준다: 나무위키 출처가
+    // 붙지 않고, 숫자 사면도 필요 없다. entry 가 무효(조회실패·stale·미래·불완전)면
+    // 낡은/반쪽 명단 대신 명시적 "확인 불가"로 fail-close 한다 (draft 미보유와 같은 칸).
+    if (isTeamEntryQuestion(question)) {
+      let teamEntry: { snapshotDate: string; players: string[] } | null = null;
+      if (deps.fetchTeamEntry) {
+        const entryTeamId = Number(teamRagCandidate.entityId);
+        try {
+          teamEntry = Number.isSafeInteger(entryTeamId)
+            ? await deps.fetchTeamEntry(entryTeamId)
+            : null;
+        } catch {
+          teamEntry = null;
+        }
       }
+      const entryBlock = teamEntryBlock(
+        teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date(),
+      );
+      const answer = entryBlock
+        ? `${entryBlock.replace(" (KBO 공식 당일 등록, ", "이에요 (KBO 공식 당일 등록, ").replace("): ", " 기준)\n")}`
+        : TEAM_ENTRY_UNAVAILABLE_ANSWER;
+      const matchPath: MatchPath = entryBlock ? "kbo_structured" : "blocked";
+      await deps.log({
+        userId, question, questionNorm, matchPath, answer,
+        inputTokens: null, outputTokens: null,
+      });
+      return { status: 200, answer, source: matchPath, remaining };
     }
+    // 구단 서술 질문 — RAG 재서술 (원계약 그대로: 로스터 블록 미주입·숫자 전면 HOLD).
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
-      {
-        context: context ?? undefined,
-        // 질문별 authoritative facts 분리 주입 (삼순 2026-08-10 SSOT 정정):
-        //   1군 명단(roster_snapshots)이 있으면 그것만 — 91명 전체 등록 명단을 함께 실으면
-        //   모델이 두 명단 사이에서 흔들려 INSUFFICIENT 로 새는 플래키가 실측됐다.
-        //   1군 명단이 없을 때만 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
-        rosterBlock: [
-          rosterBlock,
-          teamEntryBlock(teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date()) ??
-            teamRosterBlock(teamRagCandidate, players) ?? undefined,
-        ].filter(Boolean).join("\n") || undefined,
-      },
+      { context: context ?? undefined },
     );
     if (teamAnswer) return teamAnswer;
   }

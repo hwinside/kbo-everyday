@@ -43,13 +43,6 @@ const MUTATIONS = [
     why: "정정 질문(`최형우는 현재 삼성 소속인데??`)에 현재 소속 정본이 안 실린다",
   },
   {
-    id: "N4 구단 명단 블록 미전달 (team rag)",
-    file: PIPELINE,
-    anchor: "            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
-    replacement: "            undefined,",
-    why: "`기아 1군 선수` 가 스냅샷 문서의 과거 명단(이적한 최형우 포함)으로 답한다",
-  },
-  {
     id: "N5 player rag extras 미전달",
     file: PIPELINE,
     anchor: "llm = await deps.callRagLlm!(question, evidence, extras);",
@@ -98,6 +91,27 @@ const MUTATIONS = [
     replacement: "if (false as boolean) {",
     why: "unsure 로 떨어진 인젝션 문장이 다음 턴 LLM 프롬프트에 데이터로 주입된다",
   },
+  {
+    id: "N26 1군 명단 직접 렌더 분기 제거 (명단 질문이 RAG 로 샌다)",
+    file: PIPELINE,
+    anchor: "if (isTeamEntryQuestion(question)) {",
+    replacement: "if (false as boolean) {",
+    why: "`기아 1군 선수` 가 나무위키 재서술로 돌아가 출처 오표기·숫자 플래키가 재발한다",
+  },
+  {
+    id: "N27 1군 명단 완전성 가드 제거 (반쪽 명단이 나간다)",
+    file: PIPELINE,
+    anchor: "if (entry.players.length < 20 || entry.players.length > 40) return null;",
+    replacement: "",
+    why: "크롤 부분 실패의 12명짜리 명단이 '당일 등록' 으로 서빙된다 (삼순 blocker ①)",
+  },
+  {
+    id: "N28 소속 블록 상세(포지션·등번호) 제거",
+    file: PIPELINE,
+    anchor: "player.position ? `포지션 ${player.position}` : null,",
+    replacement: "null,",
+    why: "포지션 질문을 양보해 놓고 데이터를 안 실으면 모델 기억 생성이 된다 (삼순 blocker ②)",
+  },
   // ── 프롬프트 계약 ───────────────────────────────────────────────────────
   {
     id: "N8 무관-무시 지시 제거 (generic)",
@@ -142,39 +156,11 @@ const MUTATIONS = [
     why: "정정 발화가 INSUFFICIENT 로 도망간다",
   },
   {
-    id: "N14 명단 정본 지시 제거 (team rag)",
-    file: RETRIEVE,
-    anchor: '"현재 선수단을 물으면 로스터 블록의 선수만 말한다. 자료에만 있고 로스터에 없는 선수는 현재 소속으로 말하지 않는다.",',
-    replacement: "",
-    why: "`기아 1군 선수` 답에 이적한 선수가 남는다",
-  },
-  {
     id: "N15 무관-무시 지시 제거 (team rag)",
     file: RETRIEVE,
     anchor: '"<직전 대화> 블록이 주어지고 이번 질문이 그 주제의 후속이면 이어서 답한다. 무관한 새 질문이면 직전 대화는 무시한다.",',
     replacement: "",
     why: "구단 경로에서 무관한 직전 턴이 답을 오염시킨다",
-  },
-  {
-    id: "N19 1군 명단 정본 지시 제거 (team rag)",
-    file: RETRIEVE,
-    anchor: `"<현재 로스터> 안에 '1군 등록 명단' 블록이 있으면 그것이 당일 1군 엔트리의 유일한 정본이다. 1군 선수를 물으면 그 블록의 선수만, 기준일과 함께 답한다.",`,
-    replacement: "",
-    why: "1군 질문이 전체 등록 명단·스냅샷 문서로 답해진다 (삼순 SSOT 분리)",
-  },
-  {
-    id: "N21 1군 구분 불가 fail-close 지시 제거 (team rag)",
-    file: RETRIEVE,
-    anchor: `"'1군 등록 명단' 블록이 없으면 1군·2군 구분은 확인할 수 없다고 밝히고 전체 등록 명단 기준으로 답한다.",`,
-    replacement: "",
-    why: "스냅샷 미조회 시 전체 등록 명단이 1군으로 단정된다",
-  },
-  {
-    id: "N22 1군 명단 블록 미전달 (team rag)",
-    file: PIPELINE,
-    anchor: "          teamEntryBlock(teamRagCandidate, teamEntry, deps.now ? new Date(deps.now()) : new Date()) ??\n            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
-    replacement: "          teamRosterBlock(teamRagCandidate, players) ?? undefined,",
-    why: "roster_snapshots 를 조회해 놓고 프롬프트에 싣지 않는다 — SSOT 결속이 공약이 된다",
   },
   // ── 요청 빌더: 데이터 구획 ──────────────────────────────────────────────
   {
