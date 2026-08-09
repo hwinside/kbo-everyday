@@ -23,6 +23,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROSTER_PATH = join(__dirname, "..", "src/lib/constants/players-roster.json");
+// ⚠️ 입단 정보는 **별도 파일**이다. roster JSON 에 얹으면 상시 크롤(crawl-roster-v2)이
+//   고정 필드 목록으로 재조립할 때 통째로 날아간다(실측). roster 해시가 corpus census
+//   지문에 묶여 있는 것도 이유다 — 무관한 필드 추가가 그 게이트를 깨뜨린다.
+const DRAFT_PATH = join(__dirname, "..", "src/lib/constants/players-draft.json");
 
 const FORCE = process.argv.includes("--force");
 const limitArg = process.argv.indexOf("--limit");
@@ -67,9 +71,11 @@ async function fetchDraft(kboId, position) {
 
 async function main() {
   const roster = JSON.parse(readFileSync(ROSTER_PATH, "utf8"));
+  let draftMap = {};
+  try { draftMap = JSON.parse(readFileSync(DRAFT_PATH, "utf8")); } catch { draftMap = {}; }
   const targets = roster.filter((p) => {
     if (!/^\d+$/.test(String(p.kboId))) return false; // 외국인 FP/AQ 는 상세 id 체계가 다르다
-    return FORCE || p.draft === undefined;
+    return FORCE || draftMap[p.kboId] === undefined;
   }).slice(0, LIMIT);
 
   console.log(`대상 ${targets.length}명 / 전체 ${roster.length}명 (concurrency ${CONCURRENCY})`);
@@ -84,7 +90,7 @@ async function main() {
         const draft = await fetchDraft(player.kboId, player.position);
         if (draft === null) failed += 1;
         else {
-          player.draft = draft;
+          draftMap[player.kboId] = draft;
           if (draft.length > 0) filled += 1;
           else empty += 1;
         }
@@ -94,8 +100,9 @@ async function main() {
     }),
   );
 
-  // ⚠️ 원본은 trailing newline 이 **없다**(실측). 붙이면 무관한 1줄 diff 가 생긴다.
-  writeFileSync(ROSTER_PATH, JSON.stringify(roster, null, 2));
+  // roster 는 **건드리지 않는다**. 입단 정보 파일만 쓴다.
+  const sorted = Object.fromEntries(Object.keys(draftMap).sort().map((k) => [k, draftMap[k]]));
+  writeFileSync(DRAFT_PATH, `${JSON.stringify(sorted, null, 2)}\n`);
   console.log(`✅ 완료 — 값 ${filled} · 공백 ${empty} · 실패 ${failed}`);
 }
 

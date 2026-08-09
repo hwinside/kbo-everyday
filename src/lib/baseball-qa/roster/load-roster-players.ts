@@ -1,4 +1,5 @@
 import playersRoster from "@/lib/constants/players-roster.json";
+import playersDraft from "@/lib/constants/players-draft.json";
 import type { PlayerRef } from "@/lib/baseball-qa/pipeline";
 
 /**
@@ -24,9 +25,13 @@ export const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map((player) => ({
   team: player.team ?? null,
   position: player.position ?? null,
   backNo: player.backNo ?? null,
+  // ⚠️ **별도 파일**에서 온다(`players-draft.json`). roster JSON 에 넣지 않는 이유:
+  //   상시 크롤(`crawl-roster-v2.mjs`)이 roster 를 고정 필드 목록으로 재조립하므로
+  //   거기 얹으면 다음 크롤에 통째로 날아간다(실측 확인). 게다가 roster 파일 해시는
+  //   corpus census 지문에 묶여 있어, 무관한 필드 추가가 그 게이트를 깨뜨린다.
   // ⚠️ `?? null` 로 접지 않는다. `""`(공식에 입단 정보 없음)과 `undefined`(아직 안 긁음)를
   //   구분해야 "없다고 답한다" 와 "모른다" 가 갈린다.
-  draft: (player as { draft?: string }).draft,
+  draft: (playersDraft as Record<string, string>)[player.kboId],
 }));
 
 /** production `QaDeps.loadPlayers` 주입값. 게이트가 이 함수를 그대로 실행한다. */
