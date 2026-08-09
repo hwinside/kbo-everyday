@@ -22,19 +22,19 @@
  *   - **행별 base / current / transition** + 문서 원문 SHA-256.
  *     base 판정은 그 시점 구현을 **실제로 로드해서 실행**한다(재서술이 아니다).
  *
- * 실행(로컬, T7 corpus 필요):
- *   BASE_COMMIT=$(git merge-base HEAD origin/main)
- *   git show "$BASE_COMMIT":src/lib/baseball-qa/rag/corpus-identity.ts > /tmp/base-identity.ts
+ * 실행(로컬, T7 corpus 필요) — **커밋 SHA 만 넘긴다.** 구현 파일은 스크립트가 커밋에서 직접 꺼낸다:
  *   CORPUS=/Volumes/T7-Dev/reviews/runtime/namu-corpus-complete.jsonl \
- *   BASE_COMMIT="$BASE_COMMIT" BASE_IDENTITY=/tmp/base-identity.ts \
- *   [PREVIOUS_COMMIT=<sha> PREVIOUS_IDENTITY=/tmp/prev-identity.ts] \
+ *   BASE_COMMIT=$(git merge-base HEAD origin/main) \
+ *   [PREVIOUS_COMMIT=$(git rev-parse HEAD~1)] \
  *   npx tsx scripts/qa/corpus-identity-census.ts
  *
  * ⚠️ corpus(175MB)는 repo 에 없으므로 이 스크립트는 CI 게이트가 아니다. 산출물만 커밋되고,
  *   회귀 게이트는 이 산출물과 fixture 로 `qa:baseball-corpus-identity` 가 담당한다.
  */
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -63,16 +63,7 @@ function historicLabelOf(verdict: CorpusIdentityVerdict, rosterCandidates: numbe
   return "assigned";
 }
 
-async function loadIdentity(identityPath: string): Promise<{ fn: IdentityFn; sha: string }> {
-  const source = fs.readFileSync(identityPath);
-  // tsx 로 실행되므로 .ts 를 그대로 import 할 수 있다. 그 시점 구현을 **실제로 실행**해서
-  // 판정을 만든다 — 손으로 옮겨 적으면 그게 또 재현 불가능한 주장이 된다.
-  const loaded = (await import(path.resolve(identityPath))) as { verifyCorpusPlayerIdentity: IdentityFn };
-  if (typeof loaded.verifyCorpusPlayerIdentity !== "function") {
-    throw new Error(`identity 모듈에 verifyCorpusPlayerIdentity 가 없다: ${identityPath}`);
-  }
-  return { fn: loaded.verifyCorpusPlayerIdentity, sha: sha256(source) };
-}
+const IDENTITY_PATH = "src/lib/baseball-qa/rag/corpus-identity.ts";
 
 function requireCommitSha(value: string | undefined, name: string): string {
   if (!value || !/^[0-9a-f]{40}$/.test(value)) {
@@ -81,24 +72,62 @@ function requireCommitSha(value: string | undefined, name: string): string {
   return value;
 }
 
+/**
+ * **커밋에서 identity 구현을 직접 추출해 로드한다.**
+ *
+ * ⚠️ 왜 파일 경로를 안 받는가 (삼순 NO-GO 4차). 직전 판은 `BASE_COMMIT` 과 `BASE_IDENTITY` 를
+ *   따로 받았다. 그러면 `BASE_COMMIT=73623fc6f` + **중간 exact 파일** 조합도 그대로 통과한다 —
+ *   실제로 그렇게 잘못 넣어서 "main→현재" 라고 잘못 보고했다. 값만 고치고 구조를 두면 재발한다.
+ *
+ *   그래서 입력을 **커밋 SHA 하나로 줄였다.** 파일은 `git show <commit>:<path>` 로 이 스크립트가
+ *   직접 꺼낸다. 사람이 엉뚱한 파일을 넘길 통로 자체를 없앤 것이다.
+ */
+async function loadIdentityFromCommit(commit: string, label: string): Promise<{ fn: IdentityFn; sha: string }> {
+  let source: Buffer;
+  try {
+    source = execFileSync("git", ["show", `${commit}:${IDENTITY_PATH}`], { maxBuffer: 32 * 1024 * 1024 });
+  } catch (error) {
+    throw new Error(`${label}(${commit}) 에서 ${IDENTITY_PATH} 를 추출하지 못했다: ${String(error)}`);
+  }
+  // tsx 로 실행되므로 .ts 를 그대로 import 할 수 있다. 그 시점 구현을 **실제로 실행**해서
+  // 판정을 만든다 — 손으로 옮겨 적으면 그게 또 재현 불가능한 주장이 된다.
+  const extracted = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "corpus-identity-census-")),
+    `${label}-${commit.slice(0, 12)}.ts`,
+  );
+  fs.writeFileSync(extracted, source);
+  const loaded = (await import(extracted)) as { verifyCorpusPlayerIdentity: IdentityFn };
+  if (typeof loaded.verifyCorpusPlayerIdentity !== "function") {
+    throw new Error(`${label}(${commit}) 구현에 verifyCorpusPlayerIdentity 가 없다`);
+  }
+  return { fn: loaded.verifyCorpusPlayerIdentity, sha: sha256(source) };
+}
+
 async function main(): Promise<void> {
   const corpusPath = process.env.CORPUS;
   if (!corpusPath) throw new Error("CORPUS 환경변수에 corpus jsonl 경로를 지정해야 한다");
-  const baseIdentityPath = process.env.BASE_IDENTITY;
-  if (!baseIdentityPath) throw new Error("BASE_IDENTITY 환경변수에 PR base 의 corpus-identity.ts 경로를 지정해야 한다");
+  for (const removed of ["BASE_IDENTITY", "PREVIOUS_IDENTITY"]) {
+    if (process.env[removed]) {
+      throw new Error(
+        `${removed} 는 더 이상 받지 않는다 — 구현은 커밋에서 직접 추출한다(오입력 방지). 커밋 SHA 만 넘겨라`,
+      );
+    }
+  }
   const baseCommit = requireCommitSha(process.env.BASE_COMMIT, "BASE_COMMIT");
-  const previousIdentityPath = process.env.PREVIOUS_IDENTITY;
-  const previousCommit = previousIdentityPath
+  const previousCommit = process.env.PREVIOUS_COMMIT
     ? requireCommitSha(process.env.PREVIOUS_COMMIT, "PREVIOUS_COMMIT")
     : undefined;
+  if (previousCommit && previousCommit === baseCommit) {
+    throw new Error("PREVIOUS_COMMIT 이 BASE_COMMIT 과 같다 — 두 비교를 분리한 의미가 없다");
+  }
 
   const rosterRaw = fs.readFileSync("src/lib/constants/players-roster.json");
   const roster: Roster[] = JSON.parse(rosterRaw.toString("utf8"));
   const byName = new Map<string, Roster[]>();
   for (const player of roster) byName.set(player.name, [...(byName.get(player.name) ?? []), player]);
 
-  const base = await loadIdentity(baseIdentityPath);
-  const previous = previousIdentityPath ? await loadIdentity(previousIdentityPath) : undefined;
+  const base = await loadIdentityFromCommit(baseCommit, "base");
+  const previous = previousCommit ? await loadIdentityFromCommit(previousCommit, "previous") : undefined;
   const currentSha = sha256(fs.readFileSync("src/lib/baseball-qa/rag/corpus-identity.ts"));
   if (base.sha === currentSha) {
     throw new Error("base 와 current 구현이 동일하다 — before/after 대조가 성립하지 않는다");

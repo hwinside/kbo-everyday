@@ -564,6 +564,31 @@ function verifyCensusIntegrity(): void {
     );
     const previousAssigned = census.rows.filter((row) => (row.previous ?? "").startsWith("assigned")).length;
     assert.equal(previousAssigned, census.previousAssigned, "previousAssigned 가 행별 판정과 맞지 않는다");
+    // previous 도 base 와 **동일한 강도**로 검사한다 — 한쪽만 검사하면 그쪽으로 오염이 샌다.
+    const previousRecomputed: Record<string, number> = {};
+    for (const row of census.rows) {
+      assert.ok(row.previous !== undefined, `${row.entity}: previous 판정이 빠졌다`);
+      const fromAssigned = row.previous!.startsWith("assigned");
+      const toAssigned = row.current.startsWith("assigned");
+      const transition = fromAssigned === toAssigned
+        ? (fromAssigned ? "kept_assigned" : "kept_excluded")
+        : (toAssigned ? "gained" : "lost");
+      assert.equal(
+        row.previousTransition, transition,
+        `${row.entity}: previousTransition 라벨이 previous/current 와 안 맞는다`,
+      );
+      previousRecomputed[transition] = (previousRecomputed[transition] ?? 0) + 1;
+    }
+    assert.deepEqual(
+      previousRecomputed, census.previousTransitions,
+      "previousTransitions 집계가 행별 판정과 다르다",
+    );
+    assert.equal(
+      (census.previousAssigned ?? 0) + (census.previousTransitions?.gained ?? 0)
+        - (census.previousTransitions?.lost ?? 0),
+      census.currentAssigned,
+      "previous gained/lost 가 previous→current 차이를 설명하지 못한다",
+    );
   }
   const countAssigned = (key: "base" | "current") =>
     census.rows.filter((row) => row[key].startsWith("assigned")).length;
