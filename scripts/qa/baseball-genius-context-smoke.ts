@@ -1065,6 +1065,9 @@ async function verifyLlmDelegation() {
   assert.ok(kiaCandidate, "기아 후보 해석 실패");
   const kiaRoster = teamRosterBlock(kiaCandidate!, players);
   assert.ok(kiaRoster && kiaRoster.includes("김도영"), "구단 명단 블록에 현재 로스터 선수가 없다");
+  // provenance (삼순 SSOT 정정): roster 는 현재 소속 SSOT 이지 1군 당일 등록 SSOT 가 아니다.
+  // 블록 라벨이 구분 불가를 명시해야 `기아 1군 선수` 답이 1군을 단정하지 않는다.
+  assert.ok(kiaRoster!.includes("1군·2군 당일 등록 여부는 포함하지 않음"), "명단 블록에 provenance 라벨이 없다");
   assert.ok(!kiaRoster!.includes("최형우"), "이적한 선수(삼성 최형우)가 기아 명단에 남아 있다");
 
   // 종단: generic LLM 경로가 rosterBlock 을 받는다 (정정 발화 시나리오 ②).
@@ -1140,6 +1143,7 @@ async function verifyLlmDelegation() {
   assert.ok(RAG_SYSTEM_PROMPT.includes("<현재 로스터> 블록이 주어지면 그것이 선수의 현재 소속 구단의 유일한 정본"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("오류를 인정하며 로스터 기준으로 정정해 답한다"));
   assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("현재 선수단을 물으면 로스터 블록의 선수만 말한다"));
+  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("1군 엔트리를 물으면 그 구분은 확인할 수 없다고 밝히고"));
   assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
 

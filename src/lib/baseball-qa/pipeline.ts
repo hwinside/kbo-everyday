@@ -2282,7 +2282,10 @@ export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[
     .filter((player) => accepted.has((player.team ?? "").normalize("NFKC").toLowerCase()))
     .map((player) => player.name);
   if (names.length === 0) return null;
-  return `${canonical} 현재 등록 선수 (KBO 공식 로스터): ${names.join(", ")}`;
+  // ⚠️ provenance (삼순 2026-08-10 SSOT 정정): players-roster 는 **현재 소속** SSOT 이지
+  //   "1군 당일 등록 명단" SSOT 가 아니다. 1군 엔트리 데이터는 미보유이므로 라벨로
+  //   구분 불가를 명시하고, 프롬프트가 1군 질문에 fail-close(기준 밝히기)로 답하게 한다.
+  return `${canonical} 현재 등록 선수 (KBO 공식 로스터 기준 — 1군·2군 당일 등록 여부는 포함하지 않음): ${names.join(", ")}`;
 }
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
