@@ -441,6 +441,8 @@ async function main() {
   //   미지정이면 현재 max id 를 알려주고 **실패**한다 — 암묵 fresh cutoff 금지.
   const maxIdEnv = Number(process.env.AUDIT_MAX_ID ?? "0");
   if (!Number.isInteger(maxIdEnv) || maxIdEnv <= 0) {
+    // query-guard: bounded -- 현재 max id 한 행만 조회한다(limit 1). 결과는 안내용이고
+    // 이 분기는 바로 exit 1 로 끝난다 — 표본 적재는 위 loadQuestions 가 담당한다.
     const { data, error } = await admin
       .from("genius_question_logs")
       .select("id")
