@@ -3,6 +3,7 @@
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
 
 import {
+  isComparativeFollowup,
   isFollowupPhrase,
   selectContextTurn,
   type ContextTurn,
@@ -2110,6 +2111,12 @@ export function routeQuestion(
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
+  // 비교형 후속(`만루홈런이랑 비슷한 거야?`) — 문장 안에 비교 피연산자가 하나뿐이라
+  // 나머지 하나가 직전 턴에서 와야 성립한다. 판정 근거는 어휘가 아니라 구조다(context.ts).
+  // 맥락이 없으면 기존 후속과 **같은 칸**(되묻기)으로 닫는다 — 반쪽 문장에 답하지 않는다.
+  if (isComparativeFollowup(question, (stem) => isBaseballTermStem(stem, glossary))) {
+    return hasContext ? "baseball_rule_term" : "context_missing";
+  }
   if (supportedRuleTerm) return "baseball_rule_term";
 
   // ⚠️ 선수·구단을 지명했다는 이유만으로 차단하지 않는다. tier2 선수 RAG가 확장된 뒤로
@@ -2227,6 +2234,22 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 }
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
+/**
+ * 한 어간이 **야구 용어인가** — 비교형 후속 판정(③)이 쓰는 어휘 SSOT.
+ *
+ * ⚠️ 어휘를 새로 나열하지 않는다. 이미 있는 세 집합을 그대로 재사용한다:
+ *   `BASEBALL_WORDS` · `RULE_TERM_HINT_WORDS` · 검수 사전(glossary term/alias).
+ *   새 배열을 만들면 그 순간부터 SSOT 가 둘이 되고, 한쪽만 늘어나 판정이 갈린다.
+ */
+export function isBaseballTermStem(stem: string, glossary: GlossaryEntry[] = []): boolean {
+  const tokens = questionTokens(stem);
+  if (tokens.length === 0) return false;
+  if ([...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS].some((word) => mentionsSignalWord(tokens, word))) {
+    return true;
+  }
+  return matchGlossary(glossary, stem) !== null;
+}
+
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
   for (const entry of entries) {
@@ -2785,7 +2808,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
-  if (deps.loadPreviousTurn && isFollowupPhrase(question)) {
+  const comparativeFollowup = isComparativeFollowup(
+    question,
+    (stem) => isBaseballTermStem(stem, glossary),
+  );
+  if (deps.loadPreviousTurn && (isFollowupPhrase(question) || comparativeFollowup)) {
     try {
       context = selectContextTurn(await deps.loadPreviousTurn());
     } catch {

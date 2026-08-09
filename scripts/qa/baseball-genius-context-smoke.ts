@@ -16,6 +16,10 @@ import {
   normalizeFollowup,
   selectContextTurn,
   type PreviousTurnRow,
+  COMPARATIVE_PARTICLES,
+  COMPARATIVE_RELATION_STEMS,
+  comparativeParticleStems,
+  isComparativeFollowup,
 } from "../../src/lib/baseball-qa/context";
 import {
   answerQuestion,
@@ -27,6 +31,7 @@ import {
   type MatchPath,
   type PlayerRef,
   type QaDeps,
+  isBaseballTermStem,
 } from "../../src/lib/baseball-qa/pipeline";
 import { buildBaseballQaGeminiRequest } from "../../src/lib/baseball-qa/gemini-request";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
@@ -957,8 +962,119 @@ async function verifyRpcAcl() {
   await db.close();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 비교형 후속 (2026-08-09 하린아빠 제보, Production 재현)
+//
+//   Q1 `그랜드슬램이 뭐야?` → 봇 설명
+//   Q2 `만루홈런이랑 비슷한 거야?` → ❌ 새 질문으로 끊겨 엉뚱한 답이 나갔다.
+//
+// 판정 근거는 어휘가 아니라 **구조**다(피연산자가 하나뿐 = 자기완결이 아님).
+// 그래서 게이트도 "문구가 목록에 있는가"가 아니라 **배포 answerQuestion 의 종단 결과**와
+// **맥락 주입 여부**를 본다.
+// ─────────────────────────────────────────────────────────────────────────────
+const COMPARATIVE_GLOSSARY: GlossaryEntry[] = [
+  { term: "보크", aliases: ["balk"], answer: "보크는 투수의 반칙 투구 동작이에요." },
+  { term: "그랜드슬램", aliases: ["grand slam"], answer: "주자가 만루일 때 친 홈런이에요." },
+];
+
+function comparativeDeps(state: CtxState): QaDeps {
+  return { ...ctxDeps(state), loadGlossary: async () => COMPARATIVE_GLOSSARY };
+}
+
+/** 직전 턴이 `그랜드슬램` 설명이었던 상태 */
+function grandSlamTurn(overrides: Partial<PreviousTurnRow> = {}): PreviousTurnRow {
+  return eligibleTurn({
+    question: "그랜드슬램이 뭐야?",
+    answer: "주자가 만루일 때 친 홈런을 그랜드슬램이라고 해요.",
+    jobSource: "dictionary",
+    ...overrides,
+  });
+}
+
+async function verifyComparativeFollowup() {
+  // ── 양성: 비교형 후속은 직전 턴을 맥락으로 물고 간다 ────────────────────────
+  for (const question of [
+    "만루홈런이랑 비슷한 거야?",   // 하린아빠 제보 원형
+    "만루홈런하고 같은 거야?",     // 다른 비교 조사
+    "만루홈런이랑 차이가 뭐야?",   // 다른 비교 관계 표현
+    "홈런이랑 비슷한가요?",        // 존댓말 활용형 — 어간 판정이라 통과해야 한다
+  ]) {
+    const state = freshCtx(grandSlamTurn());
+    const result = await answerQuestion("u-cmp", question, comparativeDeps(state));
+    assert.equal(state.previousTurnCalls, 1, `${question}: 직전 턴을 조회하지 않았다`);
+    assert.equal(state.llmCalls, 1, `${question}: LLM 호출 수`);
+    assert.deepEqual(
+      state.llmContexts[0],
+      { question: grandSlamTurn().question, answer: grandSlamTurn().answer },
+      `${question}: 직전 턴이 맥락으로 주입되지 않았다 — 반쪽 문장에 답하게 된다`,
+    );
+    assert.equal(result.source, "llm", `${question}: source=${result.source}`);
+  }
+
+  // ── 반대축 ①: 자기완결 비교는 맥락 0 ──────────────────────────────────────
+  //   피연산자가 둘이면 직전 턴이 필요 없다. 여기서 맥락을 물면 무관한 주제가 섞인다.
+  for (const question of [
+    "키움이랑 한화랑 어디가 강해?",
+    "홈런이랑 안타랑 뭐가 달라?",
+  ]) {
+    const state = freshCtx(grandSlamTurn());
+    await answerQuestion("u-cmp", question, comparativeDeps(state));
+    assert.equal(state.previousTurnCalls, 0, `${question}: 자기완결 비교인데 맥락을 조회했다`);
+    assert.equal(state.llmContexts[0], undefined, `${question}: 맥락이 주입됐다`);
+  }
+
+  // ── 반대축 ②: 야구 용어가 아니면 맥락 0 ───────────────────────────────────
+  //   `날씨랑 비슷해?` 에 직전 야구 답변을 붙이면 범위 밖 질문이 야구 맥락을 얻는다.
+  for (const question of ["날씨랑 비슷해?", "사과랑 비슷해?"]) {
+    const state = freshCtx(grandSlamTurn());
+    await answerQuestion("u-cmp", question, comparativeDeps(state));
+    assert.equal(state.previousTurnCalls, 0, `${question}: 비야구 비교인데 맥락을 조회했다`);
+  }
+
+  // ── 반대축 ③: 비교 관계 표현이 없으면 맥락 0 ──────────────────────────────
+  for (const question of ["도루가 뭐야?", "만루홈런이랑 그랜드슬램 알려줘"]) {
+    const state = freshCtx(grandSlamTurn());
+    await answerQuestion("u-cmp", question, comparativeDeps(state));
+    assert.equal(state.previousTurnCalls, 0, `${question}: 비교 관계가 없는데 맥락을 조회했다`);
+  }
+
+  // ── 맥락이 없으면 되묻는다 (반쪽 문장에 답하지 않는다) ──────────────────────
+  {
+    const state = freshCtx(null);
+    const result = await answerQuestion("u-cmp", "만루홈런이랑 비슷한 거야?", comparativeDeps(state));
+    assert.equal(result.source, "context_missing", `source=${result.source}`);
+    assert.equal(result.answer, CONTEXT_MISSING_ANSWER);
+    assert.equal(state.llmCalls, 0, "맥락 없는 비교형에 LLM 을 불렀다");
+  }
+
+  // ── 직전 턴이 자격 미달(B3 allowlist 밖)이면 되묻는다 ──────────────────────
+  {
+    const state = freshCtx(grandSlamTurn({ jobSource: "blocked" }));
+    const result = await answerQuestion("u-cmp", "만루홈런이랑 비슷한 거야?", comparativeDeps(state));
+    assert.equal(result.source, "context_missing", `source=${result.source}`);
+    assert.equal(state.llmCalls, 0);
+  }
+
+  // ── 구조 판정 단위 검증 ───────────────────────────────────────────────────
+  const isTerm = (stem: string) => isBaseballTermStem(stem, COMPARATIVE_GLOSSARY);
+  assert.deepEqual(comparativeParticleStems("만루홈런이랑 비슷한 거야?"), ["만루홈런"]);
+  assert.deepEqual(comparativeParticleStems("키움이랑 한화랑 어디가 강해?"), ["키움", "한화"]);
+  assert.deepEqual(comparativeParticleStems("도루가 뭐야?"), []);
+  // 검수 사전 term 도 야구 용어 SSOT 다 — 사전만으로 판정되는 축이 살아있는지 본다.
+  assert.equal(isComparativeFollowup("그랜드슬램이랑 비슷한 거야?", isTerm), true);
+  // 1글자 어간은 버린다 — `사과` 가 `사`+`과(조사)` 로 오분해되면 안 된다.
+  assert.deepEqual(comparativeParticleStems("사과 비슷해?"), []);
+  // 집합은 문법 부류라 닫혀 있어야 한다 — 야구 어휘가 섞이면 발산의 시작이다.
+  for (const stem of COMPARATIVE_RELATION_STEMS) {
+    assert.ok(!/[가-힣]{2,}루|홈런|타자|투수/.test(stem), `야구 어휘가 섞였다: ${stem}`);
+  }
+  // `보다` 는 자기완결 문장을 만들어 근거가 약하므로 비교 조사에 없어야 한다.
+  assert.ok(!(COMPARATIVE_PARTICLES as readonly string[]).includes("보다"));
+}
+
 async function main() {
   verifyClosedSetContract();
+  await verifyComparativeFollowup();
   await verifyInjectionFailClosed();
   await verifyAcPipeline();
   verifySourceAllowlistFailClosed();
