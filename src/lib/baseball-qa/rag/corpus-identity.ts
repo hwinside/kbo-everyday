@@ -230,20 +230,48 @@ export function formatRosterBirthDateForDocument(rosterBirthDate: string): strin
 }
 
 /**
- * **로스터 등록일이 문서 안에 직접 적혀 있는가.**
+ * ⚠️ **등록 기준 관계 신호** — "이 날짜는 이 사람의 *등록* 생일이다"를 뜻하는 폐쇄집합.
  *
- * ⚠️ 왜 이 형태인가 (삼순 NO-GO ① 반영). 종전 구현은 `연도 ±1 · 12/1월 · 60일 이내`라는
- *   **일반 근접일 휴리스틱**이었다. 그건 근거가 아니라 우연의 허용치라서, 같은 이름의 다른
- *   야구선수가 해 경계 60일 안에 태어나면 제목·분류까지 같아 그대로 오귀속된다.
+ * 나무위키가 KBO 등록일과 문서 생일의 차이를 설명할 때 쓰는 표현이다(실측 원문):
+ *   최형우 `[빠른생일] 음력 생일로 출생신고를 했다 … [음력] 1983년 12월 16일`
+ *   장성우 `출생 신고를 한 달 늦게 해서 주민등록상 1990년 1월 17일생이다`
  *
- * 그래서 근접이 아니라 **관계**를 본다: 문서가 스스로 "이 사람의 등록 생일은 X"라고 적어야 한다.
- * 실측(선수 문서 원문):
- *   최형우  로스터 1983-12-16 → 문서 각주 `[음력] 1983년 12월 16일`            ✅ 적혀 있음
- *   장성우  로스터 1990-01-17 → 문서 각주 `출생 신고를 한 달 늦게 해서 주민등록상 1990년 1월 17일생` ✅
- *   김태혁  로스터 1988-01-02 → 문서에 이 날짜가 **없다**(본문은 `실제 생일은 87년 12월`뿐) ❌
+ * 이 신호가 **날짜와 같은 구간**에 있을 때만 동일인 근거로 인정한다. 그냥 본문 어딘가에
+ * 같은 날짜가 있는 건(경기 기록·타인 생일·데뷔일) 근거가 아니다.
+ */
+const BIRTH_REGISTRATION_RELATION_SIGNALS = [
+  "음력",
+  "양력",
+  "주민등록",
+  "출생신고",
+  "출생 신고",
+  "호적",
+  "빠른생일",
+  "빠른 생일",
+  "KBO 프로필",
+] as const;
+
+/**
+ * 날짜가 등장하는 **구간**. 나무위키 각주는 한 줄에 모여 있지만(최형우 `[음력] 1983년 12월 16일`),
+ * 서술형 각주는 앞뒤 줄로 번질 수 있어 바로 앞뒤 한 줄까지만 같은 구간으로 본다.
+ * 문단 전체를 구간으로 잡으면 무관한 서술이 근거로 둥들어온다.
+ */
+const BIRTH_RELATION_CONTEXT_LINES = 1;
+
+/**
+ * **문서가 로스터 등록일을 "등록 생일"로 명시하는가.**
  *
- * 김태혁은 통과시키지 않는다. 근거가 문서에 없으면 격리가 정답이고, 세 명을 다 살리려고
- * 규칙을 늘리면 그게 바로 종전의 휴리스틱 회귀다.
+ * ⚠️ 왜 이 형태인가 (삼순 NO-GO 2차 ①). 직전 구현은 `text.includes(등록일)` — 본문 전체에
+ *   그 날짜 문자열이 있기만 하면 통과시켰다. 선수 문서엔 날짜가 엄청나게 많다(경기일·이적일·
+ *   다른 선수 생일). 그러면 타인 문서가 우연히 그 날짜를 포함한다는 이유로 통과한다.
+ *
+ * 그래서 **관계 결속**을 요구한다: 날짜가 있는 구간이 `음력`·`주민등록상`·`출생 신고` 같은
+ * **등록 기준 관계 신호**를 함께 가져야 한다. 실측 원문에서 구제 대상 2명은 모두 충족한다:
+ *   최형우  253행 `[음력] 1983년 12월 16일`                                    ✅
+ *   장성우  338행 `출생 신고를 한 달 늦게 해서 주민등록상 1990년 1월 17일생이다` ✅
+ *   김태혁  로스터 등록일 자체가 문서에 없음                                   ❌ 격리 유지
+ *
+ * 김태혁을 살리려고 규칙을 늘리지 않는다 — 그게 바로 휴리스틱 회귀다.
  */
 export function documentStatesRosterBirthDate(
   text: string,
@@ -252,7 +280,15 @@ export function documentStatesRosterBirthDate(
   if (!rosterBirthDate) return false;
   const needle = formatRosterBirthDateForDocument(rosterBirthDate);
   if (!needle) return false;
-  return text.includes(needle);
+  const lines = text.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].includes(needle)) continue;
+    const segment = lines
+      .slice(Math.max(0, index - BIRTH_RELATION_CONTEXT_LINES), index + BIRTH_RELATION_CONTEXT_LINES + 1)
+      .join("\n");
+    if (BIRTH_REGISTRATION_RELATION_SIGNALS.some((signal) => segment.includes(signal))) return true;
+  }
+  return false;
 }
 
 /**

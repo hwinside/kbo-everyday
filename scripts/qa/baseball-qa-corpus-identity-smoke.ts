@@ -43,11 +43,42 @@ type FixtureDocument = {
   canonical: string;
   fetchedAt: string;
   sourceLength: number;
+  sourceSha256: string;
   text: string;
 };
 
+type FixtureFile = {
+  corpusFile: string;
+  corpusSha256: string;
+  corpusPhysicalLines: number;
+  documents: FixtureDocument[];
+};
+
+type CensusFile = {
+  corpusFile: string;
+  corpusSha256: string;
+  corpusPhysicalLines: number;
+  rosterFileSha256: string;
+  baseIdentitySha256: string;
+  currentIdentitySha256: string;
+  playerRootDocuments: number;
+  baseAssigned: number;
+  currentAssigned: number;
+  transitions: Record<string, number>;
+  rows: {
+    entity: string;
+    kboId: string | null;
+    documentSha256: string;
+    base: string;
+    current: string;
+    transition: string;
+  }[];
+};
+
 const fixturePath = path.join(process.cwd(), "scripts/qa/fixtures/corpus-identity-documents.json");
-const fixtures: { documents: FixtureDocument[] } = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+const censusPath = path.join(process.cwd(), "scripts/qa/fixtures/corpus-identity-census.json");
+const fixtures: FixtureFile = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+const census: CensusFile = JSON.parse(fs.readFileSync(censusPath, "utf8"));
 const byEntity = new Map(fixtures.documents.map((document) => [document.entity, document]));
 
 function document(entity: string): FixtureDocument {
@@ -289,6 +320,84 @@ function verifyRescueDoesNotOpenDoor(): void {
 }
 
 /**
+ * (6b) **등록일이 무관한 본문에 있는 경우** (삼순 NO-GO 2차 ①).
+ *
+ * 직전 구현은 `text.includes(등록일)` 이었다. 선수 문서엔 날짜가 수십 개다(경기일·이적일·
+ * 다른 선수 생일). 타인 문서가 우연히 그 날짜를 포함하면 그대로 통과했다.
+ *
+ * 아래 문서는 **실 corpus 원문에서 파생**시켰다 — 김태혁 문서(로스터 1988-01-02 가 원문에
+ * 없는 실측 케이스)의 본문 서술 줄에 그 날짜를 넣은 것이다. 등록 관계 신호가 없으므로
+ * 여전히 거부되어야 한다. 반대로 같은 자리에 관계 신호를 달아주면 통과해야 한다(과차단 없음).
+ */
+function verifyBirthDateRelationBinding(): void {
+  const 김태혁 = document("김태혁");
+  const rosterBirthDate = 김태혁.rosterBirthDate!;
+  const needle = formatRosterBirthDateForDocument(rosterBirthDate)!;
+  assert.equal(
+    김태혁.text.includes(needle), false,
+    "fixture 전제 붕괴: 김태혁 원문에 로스터 등록일이 없어야 이 축이 성립한다",
+  );
+
+  // ⚠️ 문서 어딘가에 관계 신호가 있고(`음력`), 등록일은 **그곳과 멀리 떨어진** 서술에 있다.
+  //   이렇게 둘을 떨어뜨려야 "관계 신호 구간"과 "문서 전체"를 구분한다 — 구간을 문서 전체로
+  //   넓히는 변이가 정확히 이 사이를 빠져나가기 때문이다(실측: 무작위 간격이면 그 변이가 GREEN 이었다).
+  // (a) 무관한 본문 서술에 등록일만 들어있는 경우 — 근거가 아니다.
+  const unrelated = [
+    "[음력] 이 문서에는 음력 표기 설명이 따로 있다.",
+    김태혁.text,
+    `이날 경기는 ${needle}에 열렸다.`,
+  ].join("\n");
+  assert.ok(unrelated.includes(needle), "fixture 전제 붕괴: 등록일이 본문에 들어가야 한다");
+  assert.ok(unrelated.includes("음력"), "fixture 전제 붕괴: 관계 신호가 문서 어딘가에 있어야 한다");
+  {
+    const lines = unrelated.split("\n");
+    const signalLine = lines.findIndex((line) => line.includes("음력"));
+    const dateLine = lines.findIndex((line) => line.includes(needle));
+    assert.ok(
+      Math.abs(signalLine - dateLine) > 2,
+      "fixture 전제 붕괴: 관계 신호와 날짜가 같은 구간에 있으면 이 축이 성립하지 않는다",
+    );
+  }
+  assert.equal(
+    documentStatesRosterBirthDate(unrelated, rosterBirthDate), false,
+    "무관한 본문의 같은 날짜를 등록 근거로 읽었다 — 관계 결속이 사라졌다",
+  );
+  assertRejected(
+    verifyCorpusPlayerIdentity({
+      text: unrelated,
+      rosterBirthYear: rosterBirthDate.slice(0, 4), rosterBirthDate,
+      seedName: 김태혁.entity, documentTitle: 김태혁.title,
+    }),
+    "rejected", "birth_year_mismatch",
+    "무관한 본문의 날짜로 생년 불일치 문서가 통과했다",
+  );
+
+  // (b) 같은 자리에 **등록 관계 신호**가 붙으면 근거로 인정한다 — 과차단이 아니라는 증명.
+  const related = `${김태혁.text}\n[음력] ${needle}`;
+  assert.equal(
+    documentStatesRosterBirthDate(related, rosterBirthDate), true,
+    "등록 관계 신호(음력)가 붙은 날짜를 근거로 안 잎었다 — 과차단이다",
+  );
+  const rescued = verifyCorpusPlayerIdentity({
+    text: related,
+    rosterBirthYear: rosterBirthDate.slice(0, 4), rosterBirthDate,
+    seedName: 김태혁.entity, documentTitle: 김태혁.title,
+  });
+  assert.equal(rescued.ok, true, `관계 신호가 있는데 거부됐다: ${JSON.stringify(rescued)}`);
+  if (rescued.ok) assert.equal(rescued.birthEvidence, "roster_date_stated_in_document");
+
+  // (c) 구제된 2명은 관계 신호가 실제로 같은 구간에 있다(실 원문).
+  for (const [entity, signal] of [["최형우", "음력"], ["장성우", "주민등록"]] as const) {
+    const fixture = document(entity);
+    const target = formatRosterBirthDateForDocument(fixture.rosterBirthDate!)!;
+    const line = fixture.text.split("\n").find((value) => value.includes(target));
+    assert.ok(line, `${entity}: 등록일 줄을 찾지 못했다`);
+    assert.ok(line!.includes(signal), `${entity}: 관계 신호 '${signal}' 가 같은 줄에 없다`);
+  }
+  ok("등록일 관계 결속 — 무관 본문 거부 / 관계 신호 인정 / 실원문 구간 확인");
+}
+
+/**
  * (7) **출생 clause 결속** (삼순 NO-GO ①).
  * 종전 코드는 앞 6,000자의 *첫 완전 날짜*를 맥락 없이 집었다. 등번호 이력·데뷔일·다른 선수
  * 날짜를 생일로 오인할 수 있다. 이제 `출생` 라벨 뒤만 읽는다.
@@ -374,9 +483,23 @@ function verifyTitleGate(): void {
   ok("제목 대조 — 타인 문서 격리 / 풀네임·표기차 허용");
 }
 
-/** (10) fixture 자체가 실 corpus 발췌인지 — 지어낸 문자열이 섞이면 여기서 막는다. */
+/**
+ * (10) **artifact 출처 결속** (삼순 NO-GO 2차 ②).
+ *
+ * fixture 와 census 가 **같은 corpus** 에서 나왔음을 해시로 증명한다. 둘 중 하나만 재생성하면
+ * 해시가 갈라져 여기서 RED 가 된다 — "어느 corpus 기준인지 모르게 되는" 상태를 차단한다.
+ * 문서별로도 원문 SHA-256 을 대조해 발췌본이 다른 판의 문서에서 왔는지 확인한다.
+ */
 function verifyFixtureProvenance(): void {
   assert.ok(fixtures.documents.length >= 18, `fixture 문서가 ${fixtures.documents.length}건뿐이다`);
+  assert.equal(
+    fixtures.corpusSha256, census.corpusSha256,
+    "fixture 와 census 의 corpus 해시가 다르다 — 두 artifact 가 같은 입력에서 나오지 않았다",
+  );
+  assert.equal(fixtures.corpusPhysicalLines, census.corpusPhysicalLines, "corpus 물리 행 수 불일치");
+  assert.equal(fixtures.corpusFile, census.corpusFile, "corpus 파일명 불일치");
+  assert.ok(/^[0-9a-f]{64}$/.test(census.corpusSha256), "corpus SHA-256 형식");
+  const censusByEntity = new Map(census.rows.map((row) => [row.entity, row]));
   for (const fixture of fixtures.documents) {
     assert.ok(/^https:\/\/namu\.wiki\/w\/\S+$/.test(fixture.canonical), `${fixture.entity}: canonical`);
     assert.ok(Number.isFinite(Date.parse(fixture.fetchedAt)), `${fixture.entity}: fetchedAt`);
@@ -387,12 +510,68 @@ function verifyFixtureProvenance(): void {
       `${fixture.entity}: title↔canonical 불일치 — 실 corpus 레코드가 아니다`,
     );
     assert.ok(fixture.why.length > 0, `${fixture.entity}: 선정 근거가 없다`);
+    const row = censusByEntity.get(fixture.entity);
+    assert.ok(row, `${fixture.entity}: census 에 없는 문서다`);
+    assert.equal(
+      fixture.sourceSha256, row!.documentSha256,
+      `${fixture.entity}: 원문 해시가 census 와 다르다 — 다른 판의 문서를 발췌했다`,
+    );
   }
-  ok(`fixture 출처 — 실 corpus 발췌 ${fixtures.documents.length}건`);
+  ok(`fixture 출처 — 실 corpus 발췌 ${fixtures.documents.length}건 · census 해시 일치`);
+}
+
+/**
+ * (11) **census before/after 정합성** (삼순 NO-GO 2차 ②).
+ *
+ * `156 → 395` 를 재현 가능하게 고정한다. 합계가 행별 판정과 맞는지, 전이 분류가 base/current
+ * 조합으로 설명되는지까지 검사한다. artifact 를 손으로 고치면 여기서 깨진다.
+ *
+ * ⚠️ `lost` 는 0 이어야 한다 — 이 PR 은 더 읽는 변경이지 더 막는 변경이 아니다.
+ *   lost 가 생기면 기존에 서빙되던 문서가 빠진다는 뜻이므로 멈춰야 한다.
+ */
+function verifyCensusIntegrity(): void {
+  assert.equal(census.rows.length, census.playerRootDocuments, "census 행 수와 선언된 문서 수가 다르다");
+  assert.notEqual(
+    census.baseIdentitySha256, census.currentIdentitySha256,
+    "base·current 구현 해시가 같다 — before/after 대조가 성립하지 않는다",
+  );
+  const countAssigned = (key: "base" | "current") =>
+    census.rows.filter((row) => row[key].startsWith("assigned")).length;
+  assert.equal(countAssigned("base"), census.baseAssigned, "baseAssigned 가 행별 판정과 맞지 않는다");
+  assert.equal(countAssigned("current"), census.currentAssigned, "currentAssigned 가 행별 판정과 맞지 않는다");
+  assert.ok(
+    census.currentAssigned > census.baseAssigned,
+    `이 PR 은 통과를 늘려야 한다: ${census.baseAssigned} → ${census.currentAssigned}`,
+  );
+
+  const recomputed: Record<string, number> = {};
+  for (const row of census.rows) {
+    const baseAssigned = row.base.startsWith("assigned");
+    const currentAssigned = row.current.startsWith("assigned");
+    const transition = baseAssigned === currentAssigned
+      ? (baseAssigned ? "kept_assigned" : "kept_excluded")
+      : (currentAssigned ? "gained" : "lost");
+    assert.equal(row.transition, transition, `${row.entity}: transition 라벨이 base/current 와 안 맞는다`);
+    recomputed[transition] = (recomputed[transition] ?? 0) + 1;
+  }
+  assert.deepEqual(recomputed, census.transitions, "transitions 집계가 행별 판정과 다르다");
+  assert.equal(census.transitions.lost ?? 0, 0, "기존에 통과하던 문서가 떨어졌다(lost > 0)");
+  assert.equal(
+    census.baseAssigned + (census.transitions.gained ?? 0), census.currentAssigned,
+    "gained 가 before→after 차이를 설명하지 못한다",
+  );
+
+  // 대표 전이 표본: listed 레이아웃 문서가 base 에서 `category_absent` 였다는 게 이 PR 의 핵심이다.
+  const 강준서 = census.rows.find((row) => row.entity === "강준서");
+  assert.ok(강준서, "census 에 강준서가 없다");
+  assert.equal(강준서!.base, "rejected:category_absent", "listed 문서가 base 에서 분류 부재가 아니었다");
+  assert.equal(강준서!.current, "assigned");
+  ok(`census 정합성 — assigned ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
 }
 
 function run(): void {
   verifyFixtureProvenance();
+  verifyCensusIntegrity();
   verifyBothLayouts();
   verifyLongCategoryBlock();
   verifyFlattenedFailClose();
@@ -402,6 +581,7 @@ function run(): void {
   //   구분되지 않는다(실측: 6개 변이가 같은 문구로 뭉쳤다).
   verifyBirthClauseBinding();
   verifyRescueDoesNotOpenDoor();
+  verifyBirthDateRelationBinding();
   verifyBirthMismatchCensus();
   verifyStructuralHelpers();
   verifyTitleGate();

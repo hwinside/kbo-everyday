@@ -13,10 +13,13 @@
  *   CORPUS=/Volumes/T7-Dev/reviews/runtime/namu-corpus-complete.jsonl \
  *   npx tsx scripts/qa/build-corpus-identity-fixtures.ts
  */
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import readline from "node:readline";
 
 import { verifyCorpusPlayerIdentity, formatRosterBirthDateForDocument } from "../../src/lib/baseball-qa/rag/corpus-identity";
+
+const sha256 = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 
 type Roster = { name: string; kboId: string; birthDate?: string };
 const roster: Roster[] = JSON.parse(
@@ -85,13 +88,20 @@ function assertSameVerdict(
 async function main(): Promise<void> {
   const corpusPath = process.env.CORPUS;
   if (!corpusPath) throw new Error("CORPUS 환경변수에 corpus jsonl 경로를 지정해야 한다");
+  // ⚠️ corpus 지문을 census 와 **동일한 방식**으로 계산한다(물리 행 전체 + "\n").
+  //   두 artifact 가 같은 입력에서 나왔음을 smoke 가 해시 대조로 확인한다(삼순 NO-GO 2차 ②).
+  const corpusHash = createHash("sha256");
+  let physicalLines = 0;
   const latest = new Map<string, { entity: string; title: string; canonical: string; fetchedAt: string; text: string }>();
   const stream = readline.createInterface({
     input: fs.createReadStream(corpusPath),
     crlfDelay: Infinity,
   });
   for await (const line of stream) {
-    if (line.trim().length === 0) continue;
+    if (line.length === 0) continue;
+    corpusHash.update(line);
+    corpusHash.update("\n");
+    physicalLines += 1;
     let record: any;
     try { record = JSON.parse(line); } catch { continue; }
     if (record.kind !== "player" || record.depth !== 1) continue;
@@ -121,6 +131,8 @@ async function main(): Promise<void> {
       canonical: doc.canonical,
       fetchedAt: doc.fetchedAt,
       sourceLength: doc.text.length,
+      // 원문 지문 — census 의 `documentSha256` 과 같은 값이어야 한다(발췄 전 원문 기준).
+      sourceSha256: sha256(doc.text),
       text,
     };
   });
@@ -128,7 +140,9 @@ async function main(): Promise<void> {
     "scripts/qa/fixtures/corpus-identity-documents.json",
     `${JSON.stringify({
       note: "실 corpus 원문 발췌. 발췌본과 원문의 신원 판정이 동일함을 build 스크립트가 검증한다.",
-      generatedFrom: corpusPath.split("/").pop(),
+      corpusFile: corpusPath.split("/").pop(),
+      corpusSha256: corpusHash.digest("hex"),
+      corpusPhysicalLines: physicalLines,
       documents,
     }, null, 1)}\n`,
   );
