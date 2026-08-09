@@ -27,8 +27,8 @@ const MUTATIONS = [
   {
     id: "M2 엔티티 ≥2 자기완결 차단 제거",
     file: CONTEXT,
-    anchor: "if (entityCount >= 2) return false;",
-    replacement: "if (entityCount >= 2) return true;",
+    anchor: "if (spans.length >= 2) return false;",
+    replacement: "if (spans.length >= 2) return true;",
     why: "삼순 반례(그랜드슬램은 만루홈런이랑 비슷해?)가 후속으로 오판돼 무관 맥락이 주입된다",
   },
   {
@@ -69,6 +69,20 @@ const MUTATIONS = [
     anchor: 'for (const player of players) addSpans(player.name ?? "", "other");',
     replacement: ";",
     why: "`김도영이랑 비슷해?` 가 엔티티 0개가 되어 후속에서 빠진다",
+  },
+  {
+    id: "M14 비야구 stem + 야구 엔티티 차단 제거",
+    file: CONTEXT,
+    anchor: "if (explicitNonBaseball.length >= 1 && spans.length >= 1) return false;",
+    replacement: "if (false) return false;",
+    why: "`애플이랑 한화 차이?` 가 후속으로 오판된다",
+  },
+  {
+    id: "M15 질문형 target 차단 제거",
+    file: CONTEXT,
+    anchor: "if (hasInterrogativeTarget && (spans.length >= 1 || explicitStems.length >= 1)) return false;",
+    replacement: "if (false) return false;",
+    why: "`한화랑 뭐가 비슷해?` 가 후속으로 오판된다",
   },
   {
     id: "M10 구단 잔여 검증 제거 (LG화학이 구단으로 잡힘)",
@@ -125,13 +139,15 @@ function runSmoke() {
 }
 
 let detected = 0;
+const failures = [];
 for (const mutation of MUTATIONS) {
   const original = readFileSync(mutation.file, "utf-8");
   if (!original.includes(mutation.anchor)) {
     // 앵커 부재 = 대상 코드가 바뀌었는데 runner 가 못 따라온 것. 검출 성공으로 세지 않는다.
     console.error(`❌ RUNNER 고장 — 앵커 부재: ${mutation.id}`);
     console.error(`   anchor: ${mutation.anchor}`);
-    process.exit(1);
+    failures.push(`anchor-missing: ${mutation.id}`);
+    continue;
   }
   try {
     writeFileSync(mutation.file, original.replace(mutation.anchor, mutation.replacement));
@@ -142,14 +158,21 @@ for (const mutation of MUTATIONS) {
       detected += 1;
     } else if (result.failed) {
       console.error(`❌ 검출 실패(비정상 종료만 있음, assertion 아님): ${mutation.id}`);
-      process.exit(1);
+      failures.push(`abnormal: ${mutation.id}`);
     } else {
       console.error(`❌ 검출 실패(GREEN): ${mutation.id} — 게이트가 이 축을 지키지 못한다`);
-      process.exit(1);
+      failures.push(`green: ${mutation.id}`);
     }
   } finally {
+    // ⚠️ 여기서 process.exit 을 부르면 finally 가 건너뛰어져 **변이가 파일에 남는다**
+    //   (2026-08-10 실측 — M13 GREEN 직후 exit 으로 context.ts 에 변이 잔류).
+    //   실패는 모아서 루프 밖에서 종료한다.
     writeFileSync(mutation.file, original);
   }
+}
+if (failures.length > 0) {
+  console.error(`❌ mutation 실패 ${failures.length}건: ${failures.join(", ")}`);
+  process.exit(1);
 }
 
 // 원복 확인 — 원복이 안 됐으면 이후 게이트 전부가 오염된다.

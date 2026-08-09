@@ -2114,7 +2114,7 @@ export function routeQuestion(
   // 비교형 후속(`만루홈런이랑 비슷한 거야?`) — 문장 안에 비교 피연산자가 하나뿐이라
   // 나머지 하나가 직전 턴에서 와야 성립한다. 판정 근거는 어휘가 아니라 구조다(context.ts).
   // 맥락이 없으면 기존 후속과 **같은 칸**(되묻기)으로 닫는다 — 반쪽 문장에 답하지 않는다.
-  if (isComparativeFollowup(question, (q) => countCanonicalBaseballEntities(q, glossary, players))) {
+  if (isComparativeFollowup(question, (q) => canonicalBaseballEntitySpans(q, glossary, players))) {
     return hasContext ? "baseball_rule_term" : "context_missing";
   }
   if (supportedRuleTerm) return "baseball_rule_term";
@@ -2256,6 +2256,18 @@ export function countCanonicalBaseballEntities(
   glossary: GlossaryEntry[] = [],
   players: PlayerRef[] = [],
 ): number {
+  return canonicalBaseballEntitySpans(question, glossary, players).length;
+}
+
+/**
+ * canonical 야구 엔티티 span (위치 포함) — typed operand 판정(context.ts)이 조사 stem 과
+ * 위치를 대조할 수 있게 좌표를 그대로 준다. 좌표계 = `NFKC·lowercase·공백 유지`.
+ */
+export function canonicalBaseballEntitySpans(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+  players: PlayerRef[] = [],
+): Array<{ start: number; end: number }> {
   const normalized = question.normalize("NFKC").toLowerCase();
   type SpanType = "team" | "other";
   const spans: Array<{ start: number; end: number; type: SpanType }> = [];
@@ -2319,7 +2331,7 @@ export function countCanonicalBaseballEntities(
     if (isGrammaticalTail(rest)) return true;
     return chosen.some((other) => other !== span && other.start === span.end);
   });
-  return valid.length;
+  return valid.map(({ start, end }) => ({ start, end }));
 }
 
 
@@ -2883,7 +2895,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   let context: ContextTurn | null = null;
   const comparativeFollowup = isComparativeFollowup(
     question,
-    (q) => countCanonicalBaseballEntities(q, glossary, players),
+    (q) => canonicalBaseballEntitySpans(q, glossary, players),
   );
   if (deps.loadPreviousTurn && (isFollowupPhrase(question) || comparativeFollowup)) {
     try {

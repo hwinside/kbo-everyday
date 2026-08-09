@@ -105,22 +105,91 @@ export function hasComparativeRelation(question: string): boolean {
 }
 
 /**
- * **비교형 후속**인가 — ①(관계 표현) + ②(엔티티 수) 를 전부 만족할 때만.
+ * 비교 조사 — 피연산자 stem 을 뽑는 용도다(판정 근거가 아니라 **operand 열거** 근거).
+ * `보다` 는 한 쪽만으로 자기완결 문장을 만들므로 넣지 않는다.
+ */
+export const COMPARATIVE_PARTICLES = ["이랑", "하고", "랑", "과", "와"] as const;
+
+/**
+ * 질문형 target — 비교의 상대가 **의문사로 명시**된 형태(`한화랑 뭐가 비슷해?`).
+ * 상대를 물었으니 직전 턴에서 받아올 자리가 없다 = 자기완결이다(삼순 2026-08-09 4차).
+ * `차이가 뭐야` 의 `뭐야` 는 target 이 아니라 술어이므로 집합에 넣지 않는다.
+ */
+export const INTERROGATIVE_OPERANDS = [
+  "누가", "누구", "어디가", "어디랑", "뭐가", "무엇이", "어느게", "어느팀",
+] as const;
+
+export interface ComparativeOperandStem {
+  start: number;
+  end: number;
+  text: string;
+}
+
+/**
+ * 비교 조사가 붙은 피연산자 stem 들 — **어휘 유형과 무관하게** 전부 연다.
+ * `한화랑 애플이랑` 에서 `애플` 은 야구 엔티티가 아니지만 명시 피연산자다.
+ * 위치(start/end)는 `NFKC·lowercase·공백 유지` 정규화 기준이다(엔티티 span 과 동일 좌표계).
+ */
+export function comparativeOperandStems(question: string): ComparativeOperandStem[] {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const stems: ComparativeOperandStem[] = [];
+  for (const match of normalized.matchAll(/[가-힣a-z0-9]+/g)) {
+    const token = match[0];
+    for (const particle of COMPARATIVE_PARTICLES) {
+      if (!token.endsWith(particle) || token.length <= particle.length) continue;
+      const stem = token.slice(0, token.length - particle.length);
+      // 1글자 stem 은 오분해다(`사과` → `사`+`과`).
+      if (stem.length < 2) break;
+      stems.push({ start: match.index, end: match.index + stem.length, text: stem });
+      break;
+    }
+  }
+  return stems;
+}
+
+/**
+ * **비교형 후속**인가 — ①관계 표현 + ②typed 비교 operand 판정(삼순 2026-08-09 4차 확정).
  *
- * @param countCanonicalEntities 문장 전체의 canonical 명시 야구 엔티티 수를 세는
- *   호출자의 SSOT(pipeline — 검수 사전·구단·룰 용어). 여기서 어휘를 새로 나열하지
- *   않기 위해 주입받는다. `BASEBALL_WORDS` 같은 광역 신호어는 피연산자로 세지 않는다.
+ * ⚠️ `canonical 야구 엔티티 1개 = 피연산자 1개` 전제는 틀렸다(삼순 정정). 피연산자는
+ *   야구 어휘가 아니어도 명시될 수 있다(`한화랑 애플이랑 비슷해?` 의 `애플`,
+ *   `LG화학이랑 한화랑 차이?` 의 `LG화학`). 그래서 **operand 를 typed 로 센다**:
+ *
+ *     • 비교 조사 stem — 어휘 유형 무관 전부 명시 피연산자 (지시어 stem 만 anaphoric)
+ *     • canonical 야구 엔티티 span — 조사 없이 놓인 대상(`그랜드슬램은 …`)도 피연산자
+ *     • 질문형 target(`뭐가`·`누가`) — 상대를 물었으면 받아올 자리가 없다
+ *
+ *   후속은 **명시 피연산자가 1개뿐이고 그것이 야구 엔티티이며**, 나머지 자리가
+ *   지시어이거나 생략됐을 때만 연다. 그 외는 전부 자기완결 = 맥락 0.
+ *
+ * @param getCanonicalEntitySpans 문장의 canonical 야구 엔티티 span(위치 포함)을 주는
+ *   호출자의 SSOT(pipeline — 검수 사전·구단·로스터·룰 용어). 좌표계는
+ *   `NFKC·lowercase·공백 유지` 로 operand stem 과 동일하다.
  */
 export function isComparativeFollowup(
   question: string,
-  countCanonicalEntities: (question: string) => number,
+  getCanonicalEntitySpans: (question: string) => Array<{ start: number; end: number }>,
 ): boolean {
   if (!hasComparativeRelation(question)) return false;
-  const entityCount = countCanonicalEntities(question);
-  // ② 엔티티 2개 이상 = 문장 안에서 완결된 비교 — 직전 턴을 붙이면 무관한 주제가 섞인다.
-  if (entityCount >= 2) return false;
-  // 엔티티 정확히 1개 = 피연산자 하나가 모자란다 → 직전 턴에서 와야 성립.
-  if (entityCount === 1) return true;
+  const spans = getCanonicalEntitySpans(question);
+  // 야구 엔티티 2개 이상 = 문장 안에서 완결된 비교.
+  if (spans.length >= 2) return false;
+  const stems = comparativeOperandStems(question);
+  const demonstratives = COMPARATIVE_DEMONSTRATIVES as readonly string[];
+  const explicitStems = stems.filter((stem) => !demonstratives.includes(stem.text));
+  // ⚠️ "명시 stem 2개면 차단" 가드는 두지 않는다 — mutation 실측으로 동등변이였다.
+  //   stem 2개가 전부 야구면 spans>=2 가, 야구+비야구 조합은 아래 규칙이, 비야구 2개는
+  //   최종 분기(spans==1 아님·지시어 없음)가 이미 닫는다. #1110 원칙대로 죽은 가드는 삭제.
+  // 비야구 명시 stem + 야구 엔티티 = 피연산자 둘 다 명시 — `한화랑 애플이랑 비슷해?`·`애플이랑 한화 차이?`.
+  const overlapsEntity = (stem: ComparativeOperandStem) =>
+    spans.some((span) => stem.start < span.end && span.start < stem.end);
+  const explicitNonBaseball = explicitStems.filter((stem) => !overlapsEntity(stem));
+  if (explicitNonBaseball.length >= 1 && spans.length >= 1) return false;
+  // 질문형 target 이 명시돼 있고 상대 피연산자도 명시돼 있으면 자기완결 — `한화랑 뭐가 비슷해?`.
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  const hasInterrogativeTarget = INTERROGATIVE_OPERANDS.some((word) => compact.includes(word));
+  if (hasInterrogativeTarget && (spans.length >= 1 || explicitStems.length >= 1)) return false;
+  // 야구 엔티티 1개 + 나머지 자리 생략/지시어 → 직전 턴에서 와야 성립.
+  if (spans.length === 1) return true;
   // 엔티티 0개는 명시 지시어(`그거랑 비슷해?`)가 직전 턴을 가리킬 때만 후속이다.
   return hasComparativeDemonstrative(question);
 }
