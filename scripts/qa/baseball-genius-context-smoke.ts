@@ -16,9 +16,9 @@ import {
   normalizeFollowup,
   selectContextTurn,
   type PreviousTurnRow,
-  COMPARATIVE_PARTICLES,
+  COMPARATIVE_DEMONSTRATIVES,
   COMPARATIVE_RELATION_STEMS,
-  comparativeParticleStems,
+  hasComparativeDemonstrative,
   isComparativeFollowup,
 } from "../../src/lib/baseball-qa/context";
 import {
@@ -31,7 +31,7 @@ import {
   type MatchPath,
   type PlayerRef,
   type QaDeps,
-  isBaseballTermStem,
+  countCanonicalBaseballEntities,
 } from "../../src/lib/baseball-qa/pipeline";
 import { buildBaseballQaGeminiRequest } from "../../src/lib/baseball-qa/gemini-request";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
@@ -997,7 +997,8 @@ async function verifyComparativeFollowup() {
     "만루홈런이랑 비슷한 거야?",   // 하린아빠 제보 원형
     "만루홈런하고 같은 거야?",     // 다른 비교 조사
     "만루홈런이랑 차이가 뭐야?",   // 다른 비교 관계 표현
-    "홈런이랑 비슷한가요?",        // 존댓말 활용형 — 어간 판정이라 통과해야 한다
+    "만루홈런이랑 비슷한가요?",   // 존댓말 활용형 — 관계 표현은 어간 판정이라 통과해야 한다
+    "그거랑 만루홈런 차이?",       // 삼순 필수 양성 — 명시 지시어 + 엔티티 1
   ]) {
     const state = freshCtx(grandSlamTurn());
     const result = await answerQuestion("u-cmp", question, comparativeDeps(state));
@@ -1011,11 +1012,15 @@ async function verifyComparativeFollowup() {
     assert.equal(result.source, "llm", `${question}: source=${result.source}`);
   }
 
-  // ── 반대축 ①: 자기완결 비교는 맥락 0 ──────────────────────────────────────
-  //   피연산자가 둘이면 직전 턴이 필요 없다. 여기서 맥락을 물면 무관한 주제가 섞인다.
+  // ── 반대축 ①: 자기완결 비교(명시 엔티티 ≥2)는 맥락 0 ─────────────────────
+  //   문장 안에 명시 엔티티가 둘이면 이미 완결된 비교다. 여기서 맥락을 물면 무관한 주제가 섞인다.
+  //   ⚠️ 삼순 반례 2건이 핵심 — 비교 조사는 1개지만 자기완결이다. "조사 수" 판정이면 여기서 무너진다.
   for (const question of [
+    "그랜드슬램은 만루홈런이랑 비슷해?",   // 삼순 반례 — 조사 1개·엔티티 2개
+    "그랜드슬램하고 만루홈런 차이는?",     // 삼순 반례 — 조사 1개·엔티티 2개
     "키움이랑 한화랑 어디가 강해?",
     "홈런이랑 안타랑 뭐가 달라?",
+    "보크랑 그랜드슬램이랑 뭐가 달라?",    // 사전 용어 엔티티 2개
   ]) {
     const state = freshCtx(grandSlamTurn());
     await answerQuestion("u-cmp", question, comparativeDeps(state));
@@ -1025,7 +1030,7 @@ async function verifyComparativeFollowup() {
 
   // ── 반대축 ②: 야구 용어가 아니면 맥락 0 ───────────────────────────────────
   //   `날씨랑 비슷해?` 에 직전 야구 답변을 붙이면 범위 밖 질문이 야구 맥락을 얻는다.
-  for (const question of ["날씨랑 비슷해?", "사과랑 비슷해?"]) {
+  for (const question of ["날씨랑 비슷해?", "사과랑 비슷해?", "야구랑 비슷해?"]) {
     const state = freshCtx(grandSlamTurn());
     await answerQuestion("u-cmp", question, comparativeDeps(state));
     assert.equal(state.previousTurnCalls, 0, `${question}: 비야구 비교인데 맥락을 조회했다`);
@@ -1055,21 +1060,33 @@ async function verifyComparativeFollowup() {
     assert.equal(state.llmCalls, 0);
   }
 
-  // ── 구조 판정 단위 검증 ───────────────────────────────────────────────────
-  const isTerm = (stem: string) => isBaseballTermStem(stem, COMPARATIVE_GLOSSARY);
-  assert.deepEqual(comparativeParticleStems("만루홈런이랑 비슷한 거야?"), ["만루홈런"]);
-  assert.deepEqual(comparativeParticleStems("키움이랑 한화랑 어디가 강해?"), ["키움", "한화"]);
-  assert.deepEqual(comparativeParticleStems("도루가 뭐야?"), []);
-  // 검수 사전 term 도 야구 용어 SSOT 다 — 사전만으로 판정되는 축이 살아있는지 본다.
-  assert.equal(isComparativeFollowup("그랜드슬램이랑 비슷한 거야?", isTerm), true);
-  // 1글자 어간은 버린다 — `사과` 가 `사`+`과(조사)` 로 오분해되면 안 된다.
-  assert.deepEqual(comparativeParticleStems("사과 비슷해?"), []);
+  // ── 구조 판정 단위 검증 — canonical 엔티티 수 축 ──────────────────────────
+  const countEntities = (q: string) => countCanonicalBaseballEntities(q, COMPARATIVE_GLOSSARY);
+  // 합성어는 1개다 — `만루`+`홈런` 을 각각 세면 제보 원형이 자기완결로 오판된다.
+  assert.equal(countEntities("만루홈런이랑 비슷한 거야?"), 1);
+  // 삼순 반례: 조사는 1개지만 엔티티는 2개 — 자기완결이다.
+  assert.equal(countEntities("그랜드슬램은 만루홈런이랑 비슷해?"), 2);
+  assert.equal(countEntities("키움이랑 한화랑 어디가 강해?"), 2);
+  // 공백으로 끊어진 두 용어는 합성어가 아니다(사전 용어 2개 = 자기완결).
+  assert.equal(countEntities("보크 그랜드슬램 차이?"), 2);
+  // 광역 신호어끼리는 붙어도 각각 피연산자가 아니다 — 합성어(만루홈런)와 다르다.
+  assert.equal(countEntities("도루 병살 차이?"), 0);
+  // 광역 신호어 단독은 피연산자가 아니다(삼순 명시) — `야구` 등.
+  assert.equal(countEntities("야구랑 비슷해?"), 0);
+  assert.equal(countEntities("사과랑 비슷해?"), 0);
+  // 명시 지시어 축 — 엔티티 1 + 지시어 / 엔티티 0 + 지시어 / 지시어 없음.
+  assert.equal(hasComparativeDemonstrative("그거랑 만루홈런 차이?"), true);
+  assert.equal(isComparativeFollowup("그거랑 비슷해?", countEntities), true);
+  assert.equal(isComparativeFollowup("뭐가 비슷해?", countEntities), false);
+  // 검수 사전 term 도 엔티티 SSOT 다 — 사전만으로 판정되는 축이 살아있는지 본다.
+  assert.equal(isComparativeFollowup("그랜드슬램이랑 비슷한 거야?", countEntities), true);
   // 집합은 문법 부류라 닫혀 있어야 한다 — 야구 어휘가 섞이면 발산의 시작이다.
   for (const stem of COMPARATIVE_RELATION_STEMS) {
     assert.ok(!/[가-힣]{2,}루|홈런|타자|투수/.test(stem), `야구 어휘가 섞였다: ${stem}`);
   }
-  // `보다` 는 자기완결 문장을 만들어 근거가 약하므로 비교 조사에 없어야 한다.
-  assert.ok(!(COMPARATIVE_PARTICLES as readonly string[]).includes("보다"));
+  for (const word of COMPARATIVE_DEMONSTRATIVES) {
+    assert.ok(/^(그|이)/.test(word) && word.length === 2, `지시어 집합에 이질물: ${word}`);
+  }
 }
 
 async function main() {

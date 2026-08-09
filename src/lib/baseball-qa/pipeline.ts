@@ -2114,7 +2114,7 @@ export function routeQuestion(
   // 비교형 후속(`만루홈런이랑 비슷한 거야?`) — 문장 안에 비교 피연산자가 하나뿐이라
   // 나머지 하나가 직전 턴에서 와야 성립한다. 판정 근거는 어휘가 아니라 구조다(context.ts).
   // 맥락이 없으면 기존 후속과 **같은 칸**(되묻기)으로 닫는다 — 반쪽 문장에 답하지 않는다.
-  if (isComparativeFollowup(question, (stem) => isBaseballTermStem(stem, glossary))) {
+  if (isComparativeFollowup(question, (q) => countCanonicalBaseballEntities(q, glossary))) {
     return hasContext ? "baseball_rule_term" : "context_missing";
   }
   if (supportedRuleTerm) return "baseball_rule_term";
@@ -2235,19 +2235,69 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /**
- * 한 어간이 **야구 용어인가** — 비교형 후속 판정(③)이 쓰는 어휘 SSOT.
+ * 문장 전체의 **canonical 명시 야구 엔티티 수** — 비교형 후속 판정(②)이 쓰는 SSOT.
  *
- * ⚠️ 어휘를 새로 나열하지 않는다. 이미 있는 세 집합을 그대로 재사용한다:
- *   `BASEBALL_WORDS` · `RULE_TERM_HINT_WORDS` · 검수 사전(glossary term/alias).
- *   새 배열을 만들면 그 순간부터 SSOT 가 둘이 되고, 한쪽만 늘어나 판정이 갈린다.
+ * ⚠️ 어휘를 새로 나열하지 않는다. 이미 있는 집합만 재사용한다:
+ *   검수 사전(glossary term/alias) · `TEAM_ALIASES` · `RULE_TERM_HINT_WORDS` · `BASEBALL_WORDS`.
+ *
+ * 계수 규칙 (삼순 2026-08-09 판정):
+ *   • 토큰 안에서 어휘 조각을 **앞에서부터 최장 일치**로 이어 붙인 연속 구간(run)이
+ *     엔티티 후보다. `만루홈런` = `만루`+`홈런` 연속 → 합성어 1개로 센다.
+ *     조사·공백은 run 을 끈으므로 `도루 병살` 은 2개로 센다.
+ *   • **단독 광역 신호어는 피연산자가 아니다** — `BASEBALL_WORDS`(야구·기록·홈런…)만으로
+ *     이뤄진 단일 조각 run 은 세지 않는다(삼순 명시). 합성어(조각 2개 이상)이거나
+ *     검수 사전·구단·룰 용어 힌트(generic 제외)에 직접 있는 조각만 엔티티다.
  */
-export function isBaseballTermStem(stem: string, glossary: GlossaryEntry[] = []): boolean {
-  const tokens = questionTokens(stem);
-  if (tokens.length === 0) return false;
-  if ([...BASEBALL_WORDS, ...RULE_TERM_HINT_WORDS].some((word) => mentionsSignalWord(tokens, word))) {
-    return true;
+export function countCanonicalBaseballEntities(
+  question: string,
+  glossary: GlossaryEntry[] = [],
+): number {
+  const normalizeWord = (word: string) => word.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  // 엔티티 자격이 있는 조각: 사전 term/alias · 구단(약칭·별칭·canonical) · 룰 용어 힌트(generic 제외)
+  const entitySegments = new Set<string>();
+  for (const entry of glossary) {
+    for (const word of [entry.term, ...entry.aliases]) {
+      const norm = normalizeWord(word);
+      if (norm.length >= 2) entitySegments.add(norm);
+    }
   }
-  return matchGlossary(glossary, stem) !== null;
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    for (const word of [canonical, ...shorts, ...nicks]) entitySegments.add(normalizeWord(word));
+  }
+  for (const word of RULE_TERM_HINT_WORDS) {
+    if (!GENERIC_RULE_TERM_HINTS.has(word)) entitySegments.add(normalizeWord(word));
+  }
+  // 광역 신호어: 합성어 재료로는 쓰이되(`만루홈런`의 `홈런`), 단독으로는 엔티티가 아니다.
+  const broadSegments = new Set<string>(BASEBALL_WORDS.map(normalizeWord));
+  const allSegments = [...entitySegments, ...broadSegments].sort((a, b) => b.length - a.length);
+
+  const tokens = question.normalize("NFKC").toLowerCase().match(/[가-힣a-z0-9]+/g) ?? [];
+  let count = 0;
+  for (const token of tokens) {
+    let i = 0;
+    while (i < token.length) {
+      // run 시작점 찾기: 현재 위치에서 최장 일치 조각이 있으면 run 을 이어붙인다.
+      const startMatch = allSegments.find((seg) => token.startsWith(seg, i));
+      if (!startMatch) {
+        i += 1;
+        continue;
+      }
+      let segments = 0;
+      let hasEntitySegment = false;
+      let j = i;
+      while (j < token.length) {
+        const match = allSegments.find((seg) => token.startsWith(seg, j));
+        if (!match) break;
+        segments += 1;
+        if (entitySegments.has(match)) hasEntitySegment = true;
+        j += match.length;
+      }
+      // 합성어(조각 ≥2)이거나, 단일 조각이라도 엔티티 자격 조각이면 1개로 센다.
+      if (segments >= 2 || hasEntitySegment) count += 1;
+      i = j;
+    }
+  }
+  return count;
 }
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
@@ -2810,7 +2860,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   let context: ContextTurn | null = null;
   const comparativeFollowup = isComparativeFollowup(
     question,
-    (stem) => isBaseballTermStem(stem, glossary),
+    (q) => countCanonicalBaseballEntities(q, glossary),
   );
   if (deps.loadPreviousTurn && (isFollowupPhrase(question) || comparativeFollowup)) {
     try {

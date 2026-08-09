@@ -56,16 +56,23 @@ export function isFollowupPhrase(question: string): boolean {
 //   `비슷한 거야`·`비슷해`·`비슷한가요`… 로 끝없이 벌어진다 — #1135 에서 규칙을 여섯 번
 //   갈아엎고 얻은 교훈이라 같은 실수를 하지 않는다.
 //
-// ── 그래서 어휘가 아니라 **구조**로 판정한다 (삼순 2026-08-09 합의) ─────────
+// ── 그래서 어휘가 아니라 **구조**로 판정한다 (삼순 2026-08-09 판정 확정) ─────
 //   ① 비교 관계 표현이 있다        — 문법 부류라 닫힌 집합이다(어휘가 아니다)
-//   ② 비교 조사를 단 토큰이 **정확히 하나**다
-//        → 비교는 피연산자가 둘인데 문장에 하나뿐이다. 나머지 하나는 **직전 턴에서 와야만**
-//          문장이 성립한다. 이게 "이 질문은 자기완결이 아니다" 의 구조적 증거다.
-//   ③ 그 하나가 야구 용어다        — 판정은 호출자(pipeline)의 기존 SSOT 어휘에 위임한다.
-//          여기서 어휘를 새로 나열하지 않는다.
+//   ② 문장 전체의 **canonical 명시 야구 엔티티가 정확히 하나**다
+//        (또는 엔티티 0개 + `그거/그것` 명시 지시어)
+//        → 비교는 피연산자가 둘이다. 명시 엔티티가 하나뿐이면 나머지 하나는
+//          **직전 턴에서 와야만** 문장이 성립한다. 엔티티가 둘 이상이면 문장 안에서
+//          이미 완결된 비교라 직전 턴이 필요 없다(자기완결).
+//   ③ 엔티티 판정은 호출자(pipeline)의 canonical SSOT(검수 사전·구단·룰 용어)에 위임한다.
+//        여기서 어휘를 새로 나열하지 않는다.
 //
-//   `키움이랑 한화랑 어디가 강해?` 는 ②에서 걸린다(피연산자 2개 = 자기완결).
-//   `날씨 비슷해?` 는 ③에서 걸린다. `도루가 뭐야?` 는 ①에서 걸린다.
+//   ⚠️ 왜 "비교 조사 수"가 아닌가 — 1차 구현이 그 축이었고 삼순 반례로 기각됐다:
+//     `그랜드슬램은 만루홈런이랑 비슷해?` 는 조사(`이랑`)가 1개지만 엔티티가 2개라
+//     자기완결이다. 조사 수는 피연산자 수의 증거가 되지 못한다.
+//
+//   `그랜드슬램하고 만루홈런 차이는?` 는 ②에서 걸린다(엔티티 2개 = 자기완결).
+//   `날씨랑 비슷해?` 는 ②에서 걸린다(엔티티 0 + 지시어 없음). `도루가 뭐야?` 는 ①에서 걸린다.
+//   `그거랑 만루홈런 차이?` 는 통과한다(엔티티 1 + 지시어 — 직전 턴이 있어야 완성된다).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -79,33 +86,16 @@ export const COMPARATIVE_RELATION_STEMS = [
 ] as const;
 
 /**
- * 비교 조사 (②). 두 대상을 잇는 조사만 둔다.
- *
- * ⚠️ `보다`(`홈런보다 큰가?`)는 **넣지 않는다.** 그건 비교 조사가 맞지만 한 쪽만 있어도
- *   자기완결인 문장을 만든다(`작년보다 나아?`). 여기서는 "피연산자가 모자란다" 를 근거로
- *   쓰므로, 근거가 약한 조사를 넣으면 판정 자체가 무너진다.
+ * 명시 지시어 (②의 보조축). `그거랑 비슷해?` 처럼 지시어가 직전 턴을 **명시적으로**
+ * 가리킬 때만 엔티티 0개를 허용한다. 지시어 없는 엔티티 0개(`뭐가 비슷해?`)는 무엇을
+ * 비교하자는 것인지조차 없으므로 후속으로 잡지 않는다.
  */
-export const COMPARATIVE_PARTICLES = ["이랑", "랑", "하고", "과", "와"] as const;
+export const COMPARATIVE_DEMONSTRATIVES = ["그거", "그것", "그게", "그건", "이거", "이것"] as const;
 
-/**
- * 비교 조사를 단 토큰들의 **어간**을 돌려준다. 조사가 없으면 빈 배열.
- *
- * ⚠️ 어간이 1글자면 버린다. `사과 비슷해?` 의 `사과` 는 `사`+`과` 로 갈라져 조사처럼
- *   보이는데, 1글자 어간을 인정하면 그런 오분해가 전부 통과한다.
- */
-export function comparativeParticleStems(question: string): string[] {
-  const tokens = question.normalize("NFKC").toLowerCase().match(/[가-힣a-z0-9+]+/g) ?? [];
-  const stems: string[] = [];
-  for (const token of tokens) {
-    for (const particle of COMPARATIVE_PARTICLES) {
-      if (!token.endsWith(particle) || token.length <= particle.length) continue;
-      const stem = token.slice(0, token.length - particle.length);
-      if (stem.length < 2) break;
-      stems.push(stem);
-      break; // 한 토큰은 조사 하나만 단다 — `이랑`/`랑` 중복 계수 방지
-    }
-  }
-  return stems;
+/** ②의 보조축 — 명시 지시어가 있는가 */
+export function hasComparativeDemonstrative(question: string): boolean {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return COMPARATIVE_DEMONSTRATIVES.some((word) => compact.includes(word));
 }
 
 /** ① 비교 관계 표현이 있는가 */
@@ -115,20 +105,24 @@ export function hasComparativeRelation(question: string): boolean {
 }
 
 /**
- * **비교형 후속**인가 — ①②③ 전부 만족할 때만.
+ * **비교형 후속**인가 — ①(관계 표현) + ②(엔티티 수) 를 전부 만족할 때만.
  *
- * @param isBaseballTerm 어간이 야구 용어인지 판정하는 호출자의 SSOT. 여기서 어휘를
- *   새로 나열하지 않기 위해 주입받는다(pipeline 의 기존 신호어 매칭을 그대로 쓴다).
+ * @param countCanonicalEntities 문장 전체의 canonical 명시 야구 엔티티 수를 세는
+ *   호출자의 SSOT(pipeline — 검수 사전·구단·룰 용어). 여기서 어휘를 새로 나열하지
+ *   않기 위해 주입받는다. `BASEBALL_WORDS` 같은 광역 신호어는 피연산자로 세지 않는다.
  */
 export function isComparativeFollowup(
   question: string,
-  isBaseballTerm: (stem: string) => boolean,
+  countCanonicalEntities: (question: string) => number,
 ): boolean {
   if (!hasComparativeRelation(question)) return false;
-  const stems = comparativeParticleStems(question);
-  // ② 피연산자가 정확히 하나 — 0이면 비교 대상이 없고, 2 이상이면 자기완결이다.
-  if (stems.length !== 1) return false;
-  return isBaseballTerm(stems[0]);
+  const entityCount = countCanonicalEntities(question);
+  // ② 엔티티 2개 이상 = 문장 안에서 완결된 비교 — 직전 턴을 붙이면 무관한 주제가 섞인다.
+  if (entityCount >= 2) return false;
+  // 엔티티 정확히 1개 = 피연산자 하나가 모자란다 → 직전 턴에서 와야 성립.
+  if (entityCount === 1) return true;
+  // 엔티티 0개는 명시 지시어(`그거랑 비슷해?`)가 직전 턴을 가리킬 때만 후속이다.
+  return hasComparativeDemonstrative(question);
 }
 
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
