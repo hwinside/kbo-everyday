@@ -1059,6 +1059,90 @@ function carriesBaseballInformation(residue: string, players: PlayerRef[]): bool
 }
 
 /**
+ * 잔여 한 조각의 **구조 판정** — 이 문장이 `<X> <지표>` 그 자체인지를 가른다.
+ *
+ * ⚠️ **음성 추론 폐기** (삼순 2026-08-08 P0, 네 번째 재설계).
+ *
+ *   직전 버전은 "잔여에 야구 SSOT 신호가 없으면 bare" 라는 음성 추론이었다.
+ *   그래서 승인된 반대쌍이 전부 되묻기로 죽었다:
+ *     `친구가 이대호 홈런 영상을 보내줬어`  — 서사문이지 기록 질문이 아니다
+ *     `유튜브에서 이대호 홈런 봤어`        — 맥락 서사
+ *     `이대호 홈런 영상 보여줘`           — 요청 대상이 지표가 아니라 영상이다
+ *   `영상`·`친구` 는 야구 정보가 0 이라 bare 로 오판됐다 — "야구 신호 없음" 이
+ *   "새 정보 없음" 을 함의하지 않는다는 게 음성 추론의 구멍이다.
+ *
+ *   그래서 bare 는 이제 **양성 증거로만** 성립한다. 잔여의 모든 토큰이 아래
+ *   **닫힌 부류**(문법적으로 유한한 집합 — 어미 열거와 다르다)로 설명될 때만 bare 다:
+ *     · 기능어·지시어·조사 (`HEAD_NON_ENTITY_UNITS` 분해)
+ *     · 요청 어간 (`RESIDUE_REQUEST_STEMS` — 어간은 소수의 닫힌 집합이고,
+ *       **접두 매칭**이라 존대·완곱 어미가 무한히 붙어도 전부 덮는다.
+ *       ③에서 폐기한 건 *어미* 열거였다 — `알려줘/알려주실래요/알려주시면` 은
+ *       어미로는 셈 수 없지만 어간 `알려` 하나로 닫힌다)
+ *     · 수치 요구 명사·감탄 표기 (`RESIDUE_BARE_TOKENS`)
+ *   그 외 토큰은 전부 **새 정보**다 → 문장은 `<X> <지표>` 가 아니므로 이 가드의
+ *   범위 밖(`none`)이다. 특히 두 부류는 그 자체로 서사 증거다:
+ *     · 과거 시제(받침 ㅅㅅ 음절 — 봤/줬/났/션/했…)  → 기록 *요청*은 과거형이 없다
+ *     · 처소 표지 `에서` 로 끝나는 명사(회사에서·유튜브에서)  → 맥락 서사
+ *   둘 다 한국어 형태론의 닫힌 부류라 열거가 아니라 구조 판정이다.
+ *
+ *   방향이 안전한 이유: 알 수 없는 토큰 → `none` 은 되묻기를 안 할 뿐이고,
+ *   그 문장은 기존 파이프라인(사전→범위게이트→…)이 이어받는다. 생성 경로의
+ *   수치 환각은 별도 P0(삼순·삼식 2026-08-08 합의)가 닫는다.
+ */
+type ResidueSignal = "bare" | "baseball" | "new_information";
+
+/** 요청 어간 — 접두 매칭. 어미가 아니라 어간이므로 닫힌 소집합이다. */
+const RESIDUE_REQUEST_STEMS: readonly string[] = [
+  "알려", "가르쳐", "갈쳐", "갈켜", "말해", "말씀", "설명", "얘기해", "이야기해",
+  "보여", "부탁", "궁금", "요청", "감사", "좀", "제발", "빨리", "빨로", "얼른",
+  // 보조 요청 어간. `NAMED_STAT_HEAD` 가 꼬리의 `알려/보여` 를 매치에 **삼키므로**
+  // 잔여는 `주실래요`·`주세요`·`줘` 로 시작한다(2026-08-09 즉석 검증 실측).
+  // 과거형(`줬…`)은 이 검사 앞의 ㅅㅅ 받침 판정이 먼저 잡으므로 서사와 안 섞인다.
+  "주", "줘", "줄", "달라", "다오",
+];
+
+/** 수치 요구 명사 — `<지표>` 의 값을 묻는다는 뜻이므로 bare 다. */
+const RESIDUE_BARE_TOKENS: readonly string[] = ["개수", "갟수", "수치", "숫자", "통계"];
+
+/** 감탄·웃음 표기(ㅋㅋ·ㅎㅎ·ㅠㅠ 등 자음/모음 단독 반복) — 정보 0. */
+const EMOTICON_TOKEN = /^[ㄱ-ㅎㅏ-ㅣ]+$/u;
+
+/**
+ * 과거 시제 음절(받침 ㅅㅅ) 포함 여부 — 한국어 과거형의 형태론적 불변량이다.
+ *
+ * ⚠️ ㅅㅅ 받침이지만 과거가 **아닌** 음절 둘은 제외한다(2026-08-09 즉석 검증 실측):
+ *   `겠`  의지·추측 — `감사하겠습니다` 가 서사로 오판돼 정중 요청이 되묻기에서 샐다.
+ *   `있`  존재·현재 — `기록 있어?` 는 현재 질문이다.
+ */
+function hasPastTenseSyllable(token: string): boolean {
+  for (const ch of token) {
+    if (ch === "겠" || ch === "있") continue;
+    const code = ch.codePointAt(0)!;
+    if (code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 === 20) return true;
+  }
+  return false;
+}
+
+function residueSignal(residue: string, players: PlayerRef[]): ResidueSignal {
+  if (carriesBaseballInformation(residue, players)) return "baseball";
+  const text = residue.replace(/[?!.,~…;"'“”‘’()\[\]]/gu, " ").trim();
+  if (text.length === 0) return "bare";
+  for (const token of text.split(/\s+/u)) {
+    if (!token) continue;
+    if (EMOTICON_TOKEN.test(token)) continue;
+    // 서사 증거 — 과거형·처소 표지는 요청 어간보다 먼저 본다(`보내줬어` 는
+    // `보여` 와 무관하지만 `보` 로 시작하는 유사 어간이 생길 때 오판을 막는다).
+    if (hasPastTenseSyllable(token)) return "new_information";
+    if (/에서는?$|에선$/u.test(token)) return "new_information";
+    if (RESIDUE_BARE_TOKENS.includes(stripNameParticle(token))) continue;
+    if (RESIDUE_REQUEST_STEMS.some((stem) => token.startsWith(stem))) continue;
+    if (decomposesToUnits(token, HEAD_NON_ENTITY_LONGEST_FIRST)) continue;
+    return "new_information";
+  }
+  return "bare";
+}
+
+/**
  * `<X>` 자리에 올 수 있지만 **엔티티일 수 없는** 지시어·의문사·연결 표지.
  *
  * ⚠️ 이건 위 SSOT 역판정으로 대체할 수 없다. 지시어·의문사는 야구 정보가 0 이면서
@@ -1199,13 +1283,19 @@ function classifyOneNamedStat(
   if (/몇|얼마/.test(normalized)) return "ambiguous";
   if (TERM_DEFINITION_INTENT.test(normalized)) return "ambiguous";
 
-  // bare = 인접 매치와의 사이에 **새 야구 정보가 없다** = 이 조각이 `<X> <지표>` 그 자체.
-  if (!carriesBaseballInformation(prefix, players) && !carriesBaseballInformation(suffix, players)) {
+  // bare 판정 — **양성 증거로만** 성립한다(삼순 2026-08-08 P0, 음성 추론 폐기).
+  //   · 잔여에 야구 정보          → 정상 룰 질문. 가드 범위 밖(none)
+  //   · 잔여에 새 정보(서사·미지 토큰) → `<X> <지표>` 가 문장의 전부가 아니다(none)
+  //   · 잔여가 요청·기능 구조뿐        → bare. 되묻는다(ambiguous)
+  const prefixSignal = residueSignal(prefix, players);
+  const suffixSignal = residueSignal(suffix, players);
+  if (prefixSignal === "bare" && suffixSignal === "bare") {
     return "ambiguous";
   }
 
-  // 문장 안에 지표어가 우연히 들어간 정상 룰 질문(`선수 역할이 바뀌면 기록은`).
-  // 이 가드의 판단 범위가 아니므로 손대지 않는다.
+  // 잔여가 야구 정보를 담은 정상 룰 질문(`선수 역할이 바뀌면 기록은`)이거나,
+  // 야구 밖 새 정보를 담은 서사·요청 문장(`친구가 이대호 홈런 영상을 보내줬어`).
+  // 둘 다 이 가드의 판단 범위가 아니므로 손대지 않는다.
   return "none";
 }
 

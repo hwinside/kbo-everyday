@@ -41,13 +41,14 @@ import "./_audit-env";
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import { createClient } from "@supabase/supabase-js";
 import {
   answerQuestion,
   type QaDeps,
   type MatchPath,
+  type PreviousTurnRow,
   BLOCKED_ANSWER,
   UNCLEAR_ANSWER,
   UNSURE_ANSWER,
@@ -127,11 +128,28 @@ const freshCounters = (): Counters => ({
  * production 형상 deps. **배선 플래그도 production 함수로 읽는다** — 여기서 `true` 로
  * 하드코딩하면 운영이 꺼져 있는데 감사만 켜져 있는 상태를 못 본다.
  */
-function prodDeps(counters: Counters): QaDeps {
+function prodDeps(counters: Counters, prev: PreviousTurnRow | null): QaDeps {
   return {
     loadGlossary,
     loadPlayers: loadRosterPlayers,
-    getCache: async (key) => { counters.cacheGet++; return null; },
+    // ⚠️ **무UPDATE read-only seam** (삼순 2026-08-08 P0-③). production `getCache` 는
+    //   조회 뒤 `hit_count` 를 UPDATE 한다 — 감사가 그대로 쓰면 전건 실행이 운영
+    //   카운터를 오염시킨다. 같은 테이블·같은 키로 answer 만 SELECT 하고 아무것도
+    //   쓰지 않는다. 항상 null 이던 종전 버전은 캐시 경로 자체를 감사에서 지웠다 —
+    //   유저가 실제로 받는 답(캐시 적중)을 재현하지 못했다.
+    getCache: async (questionNorm) => {
+      counters.cacheGet++;
+      const { data, error } = await admin
+        .from("genius_qa_cache")
+        .select("answer")
+        .eq("question_norm", questionNorm)
+        .maybeSingle();
+      if (error) throw error;
+      return (data?.answer as string | undefined) ?? null;
+    },
+    // 직전 turn 주입 (삼순 2026-08-08 P0-③) — raw 로그의 message/user 순서를 보존해
+    //   뽑은 직전 행이다. context 질문(`그럼 개는?`)이 실제와 같은 맥락으로 재현된다.
+    loadPreviousTurn: async () => prev,
     // ⚠️ 쓰기만 막고 **호출은 센다**. 캐시를 오염시키지 않으면서 누수를 관측한다.
     setCache: async () => { counters.cacheSet++; },
     callLlm: async (question, context) => {
@@ -181,7 +199,14 @@ const PAGE = 1000;
 /** 페이지 상한. 닿으면 통과가 아니라 **실패**다 — 잘린 표본으로 "결손 0" 은 최악이다. */
 const MAX_PAGES = 50;
 
-interface RawQuestion { question: string; count: number }
+interface RawQuestion {
+  question: string;
+  count: number;
+  /** 최초 요청 slice(id ≤ AUDIT_BASE_MAX_ID)에서의 빈도 — 분리 집계용(삼순 P0-③). */
+  baseCount: number;
+  /** 이 질문의 대표(최초) raw 행 직전에 같은 유저가 주고받은 turn. */
+  prev: PreviousTurnRow | null;
+}
 
 /**
  * 운영 로그 인입 질문을 **cutoff 로 고정**해 정규화 unique 로 뽑고, raw 빈도를 함께 센다.
@@ -189,34 +214,67 @@ interface RawQuestion { question: string; count: number }
  * ⚠️ cutoff 가 없으면 감사 중에 새 질문이 들어와 표본이 흔들리고, 보고한 수치를 나중에
  *   재현할 수 없다(삼순 지적). cutoff 시각과 표본 hash 를 결과에 남긴다.
  */
-async function loadQuestions(cutoffIso: string): Promise<{ unique: RawQuestion[]; rawTotal: number }> {
+async function loadQuestions(
+  maxId: number,
+  baseMaxId: number | null,
+): Promise<{ unique: RawQuestion[]; rawTotal: number; baseRawTotal: number }> {
   const freq = new Map<string, RawQuestion>();
   let rawTotal = 0;
+  let baseRawTotal = 0;
   let exhausted = false;
+  // 유저별 직전 turn — id 오름차순 순회로 message/user 순서를 보존한다(삼순 P0-③).
+  const lastByUser = new Map<string, { question: string; answer: string | null; matchPath: string | null; createdAt: string }>();
   for (let page = 0; page < MAX_PAGES; page += 1) {
     const from = page * PAGE;
     // query-guard: bounded-page -- MAX_PAGES 상한 + 상한 도달 시 아래에서 fail-close.
+    // ⚠️ cutoff 는 시각이 아니라 **고정 max id** 다. 시각 cutoff 는 재실행 때마다
+    //   경계 행이 흔들릴 수 있지만(동일 초 insert), id 경계는 결정론이다.
     const { data, error } = await admin
       .from("genius_question_logs")
-      .select("question")
-      .lte("created_at", cutoffIso)
+      .select("id, user_id, question, answer, match_path, created_at")
+      .lte("id", maxId)
       .order("id", { ascending: true })
       .range(from, from + PAGE - 1);
     assert.ok(!error, `로그 조회 실패: ${error?.message}`);
-    const rows = (data ?? []) as Array<{ question: string | null }>;
+    const rows = (data ?? []) as Array<{
+      id: number; user_id: string | null; question: string | null;
+      answer: string | null; match_path: string | null; created_at: string;
+    }>;
     for (const row of rows) {
       const q = (row.question ?? "").trim();
       if (!q) continue;
       rawTotal += 1;
+      const inBase = baseMaxId === null || row.id <= baseMaxId;
+      if (inBase) baseRawTotal += 1;
       const key = q.replace(/\s+/gu, " ").toLowerCase();
       const hit = freq.get(key);
-      if (hit) hit.count += 1;
-      else freq.set(key, { question: q, count: 1 });
+      if (hit) {
+        hit.count += 1;
+        if (inBase) hit.baseCount += 1;
+      } else {
+        const uid = row.user_id ?? "";
+        const last = uid ? lastByUser.get(uid) : undefined;
+        const prev: PreviousTurnRow | null = last
+          ? ({
+              question: last.question,
+              answer: last.answer,
+              jobSource: last.matchPath,
+              answeredAt: last.createdAt,
+              currentCreatedAt: row.created_at,
+            } as unknown as PreviousTurnRow)
+          : null;
+        freq.set(key, { question: q, count: 1, baseCount: inBase ? 1 : 0, prev });
+      }
+      if (row.user_id) {
+        lastByUser.set(row.user_id, {
+          question: q, answer: row.answer, matchPath: row.match_path, createdAt: row.created_at,
+        });
+      }
     }
     if (rows.length < PAGE) { exhausted = true; break; }
   }
   assert.ok(exhausted, `로그가 페이지 상한(${MAX_PAGES}×${PAGE})을 넘었다. 상한을 올려 다시 돌려라`);
-  return { unique: [...freq.values()], rawTotal };
+  return { unique: [...freq.values()], rawTotal, baseRawTotal };
 }
 
 /**
@@ -253,6 +311,8 @@ type Verdict = "PASS" | "WARN" | "FAIL";
 interface AuditRow {
   question: string;
   rawCount: number;
+  /** 최초 요청 slice 내 빈도(분리 집계용). */
+  baseCount: number;
   source: MatchPath;
   outcome: Outcome;
   answer: string;
@@ -322,7 +382,7 @@ async function runAudit(
     let source: MatchPath = "error";
     let answer = "";
     try {
-      const result = await answerQuestion("audit-user", item.question, prodDeps(counters));
+      const result = await answerQuestion("audit-user", item.question, prodDeps(counters, item.prev));
       source = result.source as MatchPath;
       answer = result.answer ?? "";
     } catch (err) {
@@ -331,6 +391,7 @@ async function runAudit(
     const base = {
       question: item.question,
       rawCount: item.count,
+      baseCount: item.baseCount,
       source,
       outcome: OUTCOME[source as Exclude<MatchPath, "pending">] ?? "unanswered",
       answer,
@@ -374,13 +435,34 @@ function summarize(label: string, rows: AuditRow[], rawTotal: number) {
 }
 
 async function main() {
-  const cutoffIso = new Date().toISOString();
-  const { unique, rawTotal } = await loadQuestions(cutoffIso);
+  // ⚠️ cutoff 는 **고정 입력**이다(삼순 2026-08-08 P0-③). 종전에는 실행 때마다
+  //   `new Date()` 를 찍어 보고한 수치를 나중에 재현할 수 없었다. 최초 실행이
+  //   기록한 max id 를 그대로 넘기면 같은 표본이 결정론적으로 다시 나온다.
+  //   미지정이면 현재 max id 를 알려주고 **실패**한다 — 암묵 fresh cutoff 금지.
+  const maxIdEnv = Number(process.env.AUDIT_MAX_ID ?? "0");
+  if (!Number.isInteger(maxIdEnv) || maxIdEnv <= 0) {
+    const { data, error } = await admin
+      .from("genius_question_logs")
+      .select("id")
+      .order("id", { ascending: false })
+      .limit(1);
+    assert.ok(!error, `max id 조회 실패: ${error?.message}`);
+    const currentMax = (data?.[0] as { id: number } | undefined)?.id ?? 0;
+    console.error("AUDIT_MAX_ID 미지정 — cutoff 는 고정 입력이어야 한다(재현성 계약).");
+    console.error(`현재 로그 max id = ${currentMax}. 예: AUDIT_MAX_ID=${currentMax} npm run qa:genius-terminal-audit`);
+    process.exit(1);
+  }
+  // 최초 요청 표본(raw 3,162)과 이후 추가분을 분리 집계한다(삼순 P0-③).
+  const baseMaxIdEnv = Number(process.env.AUDIT_BASE_MAX_ID ?? "0");
+  const baseMaxId = Number.isInteger(baseMaxIdEnv) && baseMaxIdEnv > 0 ? baseMaxIdEnv : null;
+  const { unique, rawTotal, baseRawTotal } = await loadQuestions(maxIdEnv, baseMaxId);
+  // ⚠️ 표본 hash 는 **raw 빈도를 결속**한다(삼순 P0-③) — 질문 목록이 같아도
+  //   분포가 다르면 다른 표본이다. 정렬해 순서 비결정성도 제거한다.
   const sampleHash = createHash("sha256")
-    .update(unique.map((u) => u.question).join("\n"))
+    .update(unique.map((u) => `${u.question.replace(/\s+/gu, " ").toLowerCase()}\u0000${u.count}`).sort().join("\n"))
     .digest("hex")
     .slice(0, 16);
-  console.log(`cutoff=${cutoffIso} · unique=${unique.length} · raw=${rawTotal} · sample=${sampleHash}`);
+  console.log(`maxId=${maxIdEnv}${baseMaxId ? ` · baseMaxId=${baseMaxId}` : ""} · unique=${unique.length} · raw=${rawTotal}${baseMaxId ? ` (최초 slice ${baseRawTotal} + 추가 ${rawTotal - baseRawTotal})` : ""} · sample=${sampleHash}`);
   assert.ok(unique.length >= 2000, `표본이 너무 적다(${unique.length}) — 조회가 끊겼을 수 있다`);
 
   // ⚠️ 표본 축소는 **디버깅 전용**이다. 축소 실행 결과를 "전건 감사" 로 보고하면
@@ -406,10 +488,55 @@ async function main() {
   console.log(`\n실행 ${elapsedSec}s · ${(sampled.length / Math.max(elapsedSec, 1)).toFixed(1)} q/s`);
   summarize("current (this branch)", rows, rawTotal);
 
+  // 최초 요청 slice 분리 집계 (삼순 P0-③) — superset 실행을 허용하되 보고 수치는
+  // 최초 표본과 추가분을 갈라 재현 대조가 가능하게 한다.
+  if (baseMaxId !== null) {
+    const baseRows = rows.filter((r) => r.baseCount > 0);
+    let baseWeighted = 0;
+    let baseFails = 0;
+    for (const r of baseRows) {
+      if (r.outcome === "answered") baseWeighted += r.baseCount;
+      if (r.verdict === "FAIL") baseFails += 1;
+    }
+    const added = rows.filter((r) => r.baseCount === 0);
+    console.log(`\n── 최초 slice(id≤${baseMaxId}) ── unique ${baseRows.length} · raw ${baseRawTotal} · raw가중 answered ${baseWeighted}/${baseRawTotal} ${((baseWeighted / Math.max(baseRawTotal, 1)) * 100).toFixed(1)}% · FAIL ${baseFails}`);
+    console.log(`── 추가분 ── unique ${added.length} · raw ${rawTotal - baseRawTotal}`);
+  }
+
   writeFileSync("/tmp/genius-terminal-audit.json", JSON.stringify({
-    cutoffIso, sampleHash, uniqueTotal: unique.length, rawTotal,
+    maxId: maxIdEnv, baseMaxId, sampleHash, uniqueTotal: unique.length, rawTotal, baseRawTotal,
     sampled: sampled.length, partial: limitEnv > 0, rows,
   }));
+
+  // ── base(origin/main) 동일하니스 대조 (삼순 P0-③) ──
+  // origin/main 체크아웃에서 **같은 AUDIT_MAX_ID** 로 이 스크립트를 돌려 만든 artifact 를
+  // `AUDIT_COMPARE=<path>` 로 넘기면 질문별 source/판정 변화를 대조한다.
+  // 판정 악화(regression)가 1건이라도 있으면 실패한다.
+  const comparePath = process.env.AUDIT_COMPARE;
+  if (comparePath) {
+    const baseArtifact = JSON.parse(readFileSync(comparePath, "utf8")) as {
+      sampleHash?: string; rows?: AuditRow[];
+    };
+    const baseBy = new Map((baseArtifact.rows ?? []).map((r) => [r.question, r]));
+    const rank = (v: Verdict) => (v === "PASS" ? 0 : v === "WARN" ? 1 : 2);
+    let changedSource = 0;
+    let regressed = 0;
+    let improved = 0;
+    for (const r of rows) {
+      const b = baseBy.get(r.question);
+      if (!b) continue;
+      if (b.source !== r.source) changedSource += 1;
+      if (rank(r.verdict) > rank(b.verdict)) {
+        regressed += 1;
+        console.log(`  판정 악화: [${b.verdict}→${r.verdict}] [${b.source}→${r.source}] ${r.question.slice(0, 60)}`);
+      } else if (rank(r.verdict) < rank(b.verdict)) improved += 1;
+    }
+    console.log(`\n── base 대조(${comparePath}) ── source 변경 ${changedSource} · 판정 악화 ${regressed} · 개선 ${improved}`);
+    if (baseArtifact.sampleHash && baseArtifact.sampleHash !== sampleHash) {
+      console.log(`⚠️ 표본 hash 불일치(base=${baseArtifact.sampleHash}, current=${sampleHash}) — 같은 AUDIT_MAX_ID 로 돌렸는지 확인하라`);
+    }
+    assert.equal(regressed, 0, `base 대비 판정 악화 ${regressed}건`);
+  }
 
   // ── 계약 ──
   const fails = rows.filter((r) => r.verdict === "FAIL");
