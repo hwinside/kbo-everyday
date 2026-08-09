@@ -17,7 +17,7 @@
  *
  *       lblDraft = `11 LG 1라운드 2순위`   (임찬규 61101)
  *                  `22 KIA 1차`           (김도영 52605)
- *                  `13 NC 특별 20순위`
+ *                  `05 LG 1차`            (박병호 75125 — 현재는 키움)
  *
  *   여기엔 데뷔·이적·FA 가 섞일 여지가 **구조적으로 없다**. 그 필드가 뜻하는 바가
  *   하나뿐이라 #1110 의 반대가설이 성립하지 않는다. 그래서 이건 파싱이 아니라 조회고,
@@ -25,6 +25,11 @@
  *
  *   ⚠️ 이 값은 **RAG 근거가 아니다.** 공식 필드에서 온 typed 값이며, 렌더도 코드가 한다
  *     (LLM·RAG·cache 를 태우지 않는다). 값이 없으면 지어내지 않고 fail-close 한다.
+ *
+ * ── 저장 위치 (2026-08-09 배포 게이트가 잡음) ──────────────────────────────
+ *   원문은 `src/lib/constants/players-draft.json` 에 둔다. roster JSON 에 얹으면
+ *   ① 상시 크롤(`crawl-roster-v2`)이 고정 필드 목록으로 재조립하며 날리고
+ *   ② roster 파일 해시가 corpus census 지문에 묶여 무관한 게이트를 깨뜨린다.
  */
 
 /** KBO 공식 `lblDraft` 에서 읽어낸 입단 정보 */
@@ -33,6 +38,14 @@ export interface DraftInfo {
   year: number;
   /** 입단 구단 표기 (공식 페이지 표기 그대로: `LG`·`KIA`·`NC` …) */
   team: string;
+  /**
+   * 지명 방식 원문 (`1라운드 2순위`·`1차`·`육성선수`·`자유선발` …).
+   *
+   * 실측 분포(846건): 라운드 표기 664 · `1차` 69 · `육성선수` 75 · `자유선발` 19.
+   * 형식이 여러 가지라 **해석하지 않고 원문 그대로** 보관한다 — 우리가 재서술하면
+   * 공식 표기와 달라진다.
+   */
+  detail: string;
 }
 
 /**
@@ -40,10 +53,22 @@ export interface DraftInfo {
  *
  * ⚠️ 임의의 세기 추정이 아니다. **KBO 는 1982년 출범**했으므로 입단 연도는 1982 이상이다.
  *   따라서 `82`~`99` 는 19xx, `00`~`81` 은 20xx 로 유일하게 결정된다 — 겹치는 해가 없다.
- *   (2081년까지 유효하다. 그 뒤를 걱정할 코드가 아니다.)
  */
 function expandTwoDigitYear(yy: number): number {
   return yy >= 82 ? 1900 + yy : 2000 + yy;
+}
+
+/**
+ * 미래 연도 상한. **현재 연도 + 1** 까지만 인정한다 (삼순 2026-08-09).
+ *
+ * ⚠️ 종전 구현은 `27`~`81` 을 2027~2081 로 그대로 받았다. 그러면 데이터 오류·오타가
+ *   "2055년에 입단했어요" 같은 확정 문장으로 나간다 — 공식값이라 더 믿게 된다.
+ *
+ * `+1` 인 이유: 신인 드래프트는 **전년도 가을**에 열려서 이듬해 입단으로 표기된다.
+ *   실측(2026-08-09): `26 한화 2라운드 13순위`(2007년생)가 이미 존재한다.
+ */
+function isPlausibleDraftYear(year: number, now: Date): boolean {
+  return year >= 1982 && year <= now.getFullYear() + 1;
 }
 
 /**
@@ -53,32 +78,75 @@ function expandTwoDigitYear(yy: number): number {
  *   반쪽 값을 돌려주면 호출부가 "있다" 로 착각하고 불완전한 문장을 내보낸다.
  *
  * 실측 형식(2026-08-09, KBO 공식):
- *   `11 LG 1라운드 2순위` · `22 KIA 1차` · `13 NC 특별 20순위`
- *   외국인·육성선수 등은 **빈 문자열**로 온다 → null.
+ *   `11 LG 1라운드 2순위` · `22 KIA 1차` · `13 NC 특별 20순위` · `24 두산 육성선수`
+ *   외국인·육성 일부는 **빈 문자열**로 온다 → null.
+ *
+ * @param now 미래 연도 판정 기준. 테스트가 시점을 고정할 수 있게 주입받는다.
  */
-export function parseDraftLabel(raw: string | null | undefined): DraftInfo | null {
+export function parseDraftLabel(
+  raw: string | null | undefined,
+  now: Date = new Date(),
+): DraftInfo | null {
   const value = (raw ?? "").trim();
   if (value.length === 0) return null;
-  // 앞부분 `<2자리 연도> <구단>` 만 계약이다. 뒤(라운드·순위·1차·특별)는 읽지 않는다 —
-  // 표기가 여러 가지고 우리가 답할 내용도 아니다.
-  const matched = /^(\d{2})\s+([A-Za-z가-힣]+)/.exec(value);
+  const matched = /^(\d{2})\s+([A-Za-z가-힣]+)\s*(.*)$/.exec(value);
   if (!matched) return null;
   const yy = Number(matched[1]);
   if (!Number.isInteger(yy)) return null;
   const year = expandTwoDigitYear(yy);
-  const team = matched[2].trim();
-  if (team.length === 0) return null;
-  return { year, team };
+  // 미래 연도는 데이터 오류다. 지어낸 확정 문장을 내보내느니 모른다고 한다.
+  if (!isPlausibleDraftYear(year, now)) return null;
+  // ⚠️ 구단명은 **정규식이 필수로 잡는다**(`[A-Za-z가-힣]+`). 여기서 다시 빈 문자열을
+  //   검사하던 가드는 도달 불가라 삭제했다(mutation D-F 가 동등변이로 드러냈다).
+  //   "부분 성공 금지"는 이 정규식이 유일한 방어축이므로, mutation 도 그 정규식을 태운다.
+  return { year, team: matched[2].trim(), detail: matched[3].trim() };
+}
+
+/** 지명 순번(라운드·순위·1차 …)을 묻는 질문인가 — 연도만 답하면 동문서답이다. */
+export function asksDraftDetail(question: string): boolean {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return /라운드|순위|순번|몇번째|지명방식|몇차/.test(compact);
 }
 
 /**
  * 유저에게 보여줄 한 문장. **코드가 만든다** — LLM 을 태우지 않는다.
  *
- * 공식 표기 구단명을 그대로 쓴다. 우리 앱 표기로 바꾸지 않는다 — 입단 당시 구단과
- * 현재 구단이 다를 수 있고(이적), 그때 우리 표기로 옮기면 사실이 바뀐다.
+ * ⚠️ 세 가지를 지킨다(삼순 2026-08-09 P0-3):
+ *   ① 공식 표기 구단명을 그대로 쓴다. 우리 앱 표기로 바꾸지 않는다 — 입단 당시 구단과
+ *      현재 구단이 다를 수 있고(이적), 그때 우리 표기로 옮기면 사실이 바뀐다.
+ *   ② 질문이 **다른 구단**을 지목했으면 그 사실을 밝힌다. `박병호는 키움에 언제 입단?`
+ *      에 "2005년에 LG 에 입단했어요" 만 주면 유저는 키움 입단으로 읽는다.
+ *   ③ 순번을 물었으면 순번을 답한다. 연도만 주면 질문에 답하지 않은 것이다.
+ *
+ * @param askedTeam 질문이 지목한 구단(우리 표기). 없으면 null.
  */
-export function renderDraftAnswer(playerName: string, draft: DraftInfo): string {
-  return `${playerName} 선수는 ${draft.year}년에 ${draft.team}에 입단했어요.`;
+export function renderDraftAnswer(
+  playerName: string,
+  draft: DraftInfo,
+  options: { askedTeam?: string | null; wantsDetail?: boolean } = {},
+): string {
+  const { askedTeam = null, wantsDetail = false } = options;
+  const detail = draft.detail.length > 0 ? ` ${draft.detail}` : "";
+  const head = wantsDetail && detail.length > 0
+    ? `${playerName} 선수는 ${draft.year}년 ${draft.team}${detail}로 입단했어요.`
+    : `${playerName} 선수는 ${draft.year}년에 ${draft.team}에 입단했어요.`;
+  // 질문이 지목한 구단과 입단 구단이 다르면 **오해를 남기지 않는다**.
+  if (askedTeam && !teamMatches(askedTeam, draft.team)) {
+    return `${head} ${askedTeam}에 입단한 건 아니에요.`;
+  }
+  return head;
+}
+
+/**
+ * 우리 앱 구단 표기와 공식 `lblDraft` 구단 표기가 같은 팀인가.
+ *
+ * ⚠️ 표기가 완전히 같지 않다(`KIA`/`기아`, `키움`/`넥센`). 지금 필요한 것은
+ *   "다른 팀인데 같다고 답하는 것"을 막는 일이므로, **모르면 다르다고 하지 않는다** —
+ *   판정 불가는 `true`(=경고문 생략)가 아니라 표기 정규화 후 문자열 비교로만 가른다.
+ */
+function teamMatches(a: string, b: string): boolean {
+  const norm = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return norm(a) === norm(b);
 }
 
 /**
@@ -86,9 +154,25 @@ export function renderDraftAnswer(playerName: string, draft: DraftInfo): string 
  *
  * "모르겠어요" 로 뭉개면 유저는 질문을 고쳐 다시 쓴다. 무엇이 없어서 못 답하는지를
  * 밝혀야 유저가 다음 행동을 정할 수 있다.
+ *
+ * ⚠️ `""`(공식이 빈값으로 준 것 = 등록 없음)과 `undefined`(우리가 아직 안 긁음)를
+ *   **구분해서** 말한다. 둘 다 "공식에 없다" 고 하면, 우리 수집 누락을 KBO 탓으로
+ *   돌리는 거짓 진술이 된다(삼순 2026-08-09).
  */
-export function renderDraftUnavailable(playerName: string): string {
-  return `${playerName} 선수의 입단 정보는 KBO 공식 기록에 등록돼 있지 않아 알려드릴 수 없어요.`;
+export function renderDraftUnavailable(
+  playerName: string,
+  reason: "not_registered" | "not_collected",
+): string {
+  return reason === "not_registered"
+    ? `${playerName} 선수의 입단 정보는 KBO 공식 기록에 등록돼 있지 않아 알려드릴 수 없어요.`
+    : `${playerName} 선수의 입단 정보는 아직 확인하지 못했어요. 조금 뒤에 다시 물어봐 주세요.`;
+}
+
+/** 원문 보관 상태 → 안내 사유. `undefined`(미수집)와 `""`(미등록)를 가른다. */
+export function draftUnavailableReason(
+  raw: string | null | undefined,
+): "not_registered" | "not_collected" {
+  return raw === undefined || raw === null ? "not_collected" : "not_registered";
 }
 
 /**
@@ -100,5 +184,5 @@ export function renderDraftUnavailable(playerName: string): string {
  */
 export function isDraftQuestion(question: string): boolean {
   const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  return /입단|드래프트|지명순위|몇순위|몇라운드/.test(compact);
+  return /입단|드래프트|지명순위|지명방식|몇순위|몇라운드|몇번째지명/.test(compact);
 }

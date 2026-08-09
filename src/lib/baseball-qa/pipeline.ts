@@ -9,6 +9,8 @@ import {
   type PreviousTurnRow,
 } from "./context";
 import {
+  asksDraftDetail,
+  draftUnavailableReason,
   isDraftQuestion,
   parseDraftLabel,
   renderDraftAnswer,
@@ -2799,7 +2801,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
-  if (deps.loadPreviousTurn && isFollowupPhrase(question)) {
+  // 입단 질문인데 문장에 이름이 없으면(`입단을 언제 했냐고?`) 직전 턴에서 선수를 받아야
+  // 성립한다. 후속 문법 폐쇄집합에는 없는 형태라 여기서 따로 연다(삼순 2026-08-09 P0-2).
+  const draftFollowup = isDraftQuestion(question)
+    && resolveNamedPlayerCandidate(question, players) === null;
+  if (deps.loadPreviousTurn && (isFollowupPhrase(question) || draftFollowup)) {
     try {
       context = selectContextTurn(await deps.loadPreviousTurn());
     } catch {
@@ -2838,11 +2844,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   붙기 때문이다. 그 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가"
   //   조건이 아니다(기록 질문이 같은 이유로 이미 예외다). 공식 필드로 답하는 경로라
   //   이름만 단일하게 특정되면 충분하다.
+  // 입단 후속(`입단을 언제 했냐고?`)은 **직전 턴 질문**에서 선수를 받는다.
+  //   ⚠️ 직전 턴의 **답변**이 아니라 **질문**에서 푼다. 답변에는 다른 선수 이름이
+  //     섞일 수 있고(비교·언급), 그러면 엉뚱한 선수의 입단 연도를 확정 문장으로 낸다.
+  const draftContextCandidate = deps.enablePlayerRag && draftFollowup && context
+    ? resolveNamedPlayerCandidate(context.question, players)
+    : null;
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
       (recordIntent.kind !== "none" || isDraftQuestion(question)
         ? resolveNamedPlayerCandidate(question, players)
-        : null))
+        : null) ??
+      draftContextCandidate)
     : null);
 
   // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
@@ -3096,10 +3109,17 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     //   공식값이 없으면 **지어내지 않고** 구체적으로 없다고 말한다(fail-close).
     if (isDraftQuestion(question)) {
       const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
-      const draft = parseDraftLabel(rosterPlayer?.draft);
+      const raw = rosterPlayer?.draft;
+      const draft = parseDraftLabel(raw, deps.now ? new Date(deps.now()) : new Date());
       const answer = draft
-        ? renderDraftAnswer(playerCandidate.name, draft)
-        : renderDraftUnavailable(playerCandidate.name);
+        ? renderDraftAnswer(playerCandidate.name, draft, {
+            // 질문이 다른 구단을 지목했으면 밝힌다 — `박병호는 키움에 언제 입단?` 에
+            // "2005년 LG 입단" 만 주면 유저는 키움 입단으로 읽는다(삼순 P0-3).
+            askedTeam: resolveMentionedTeam(question),
+            // 순번을 물었으면 순번을 답한다. 연도만 주면 질문에 답하지 않은 것이다.
+            wantsDetail: asksDraftDetail(question),
+          })
+        : renderDraftUnavailable(playerCandidate.name, draftUnavailableReason(raw));
       // 공식 정본에서 온 값이므로 시즌 기록과 같은 칸(`kbo_structured`)에 기록한다.
       // 값이 없어 닫은 경우는 답변이 아니므로 `blocked` 로 분리한다 — 감사 분모가 갈린다.
       const matchPath: MatchPath = draft ? "kbo_structured" : "blocked";
