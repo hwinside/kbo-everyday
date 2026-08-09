@@ -16,17 +16,18 @@ import type { PlayerRef } from "@/lib/baseball-qa/pipeline";
  * 그래서 주입값을 이 seam 으로 끌어내 게이트가 **실제 배포되는 함수를 그대로 실행**한다.
  * `createSeasonRecordFetcher` 와 같은 이유·같은 모양이다.
  */
-export const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map(
-  ({ name, kboId, team, position, backNo }) => ({
-    name,
-    kboId,
-    // 동명이인 picker 선택지를 사람이 구분하려면 팀·포지션·등번호까지 필요하다 —
-    // 같은 팀에도 동명이인이 있기 때문이다.
-    team: team ?? null,
-    position: position ?? null,
-    backNo: backNo ?? null,
-  }),
-);
+export const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map((player) => ({
+  name: player.name,
+  kboId: player.kboId,
+  // 동명이인 picker 선택지를 사람이 구분하려면 팀·포지션·등번호까지 필요하다 —
+  // 같은 팀에도 동명이인이 있기 때문이다.
+  team: player.team ?? null,
+  position: player.position ?? null,
+  backNo: player.backNo ?? null,
+  // ⚠️ `?? null` 로 접지 않는다. `""`(공식에 입단 정보 없음)과 `undefined`(아직 안 긁음)를
+  //   구분해야 "없다고 답한다" 와 "모른다" 가 갈린다.
+  draft: (player as { draft?: string }).draft,
+}));
 
 /** production `QaDeps.loadPlayers` 주입값. 게이트가 이 함수를 그대로 실행한다. */
 export async function loadRosterPlayers(): Promise<PlayerRef[]> {

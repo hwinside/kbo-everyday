@@ -8,6 +8,12 @@ import {
   type ContextTurn,
   type PreviousTurnRow,
 } from "./context";
+import {
+  isDraftQuestion,
+  parseDraftLabel,
+  renderDraftAnswer,
+  renderDraftUnavailable,
+} from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   allowsNumericAnswer,
@@ -478,6 +484,14 @@ export interface PlayerRef {
   team?: string | null;
   position?: string | null;
   backNo?: string | null;
+  /**
+   * KBO 공식 프로필 `lblDraft` **원문**(예 `11 LG 1라운드 2순위`).
+   *
+   * ⚠️ 여기 원문을 두고 해석은 `roster/draft.ts` 한 곳에서만 한다 — 파싱이 두 곳에
+   *   있으면 한쪽만 고쳐져 값이 갈린다.
+   * ⚠️ `""`(공식에 등록 없음)과 `undefined`(아직 안 긁음)는 **다른 상태**다.
+   */
+  draft?: string | null;
 }
 
 export interface LlmResult {
@@ -2820,9 +2834,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer, source: "blocked", remaining };
   }
 
+  // ⚠️ 입단 질문은 서술형 게이트를 통과하지 못한다 — `몇 라운드 지명이야?` 처럼 수치어가
+  //   붙기 때문이다. 그 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가"
+  //   조건이 아니다(기록 질문이 같은 이유로 이미 예외다). 공식 필드로 답하는 경로라
+  //   이름만 단일하게 특정되면 충분하다.
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
-      (recordIntent.kind !== "none" ? resolveNamedPlayerCandidate(question, players) : null))
+      (recordIntent.kind !== "none" || isDraftQuestion(question)
+        ? resolveNamedPlayerCandidate(question, players)
+        : null))
     : null);
 
   // 동명이인으로 선수를 특정 못 했으면 추측하지 않고 되묻는다 (하린아빠 2026-08-03).
@@ -3064,6 +3084,31 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 근거 0건·근거부족·오염근거는 generic LLM 0 / cache 0 으로 명시 fail-close 한다.
   const playerCandidate = enabledPlayerCandidate;
   if (playerCandidate) {
+    // ②-00 입단(드래프트) 질문 — **KBO 공식 프로필 필드**로 코드가 답한다.
+    //
+    // ⚠️ 이건 tier2 숫자 HOLD 를 여는 것이 아니다(2026-08-09 삼순 설계 정정).
+    //   선수 tier2(나무위키) 문장에서 연도를 캐내면 같은 chunk 안 데뷔·이적·FA 와
+    //   구분할 수 없다 — #1110 에서 13커밋을 쌓았다 지운 그 반대가설이다.
+    //   반면 공식 `lblDraft`(`11 LG 1라운드 2순위`)는 **뜻이 하나뿐인 구조화 필드**라
+    //   그 반대가설이 성립하지 않는다. 그래서 파싱이 아니라 조회고, RAG·LLM·cache 를
+    //   한 번도 태우지 않는다.
+    //
+    //   공식값이 없으면 **지어내지 않고** 구체적으로 없다고 말한다(fail-close).
+    if (isDraftQuestion(question)) {
+      const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
+      const draft = parseDraftLabel(rosterPlayer?.draft);
+      const answer = draft
+        ? renderDraftAnswer(playerCandidate.name, draft)
+        : renderDraftUnavailable(playerCandidate.name);
+      // 공식 정본에서 온 값이므로 시즌 기록과 같은 칸(`kbo_structured`)에 기록한다.
+      // 값이 없어 닫은 경우는 답변이 아니므로 `blocked` 로 분리한다 — 감사 분모가 갈린다.
+      const matchPath: MatchPath = draft ? "kbo_structured" : "blocked";
+      await deps.log({
+        userId, question, questionNorm, matchPath, answer,
+        inputTokens: null, outputTokens: null,
+      });
+      return { status: 200, answer, source: matchPath, remaining };
+    }
     // ②-0 시즌 기록(수치) 질문은 위키가 아니라 **구조화 DB** 를 본다 (kbo_structured).
     // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
     // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
