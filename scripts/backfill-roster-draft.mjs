@@ -64,7 +64,12 @@ async function fetchDraft(kboId, position) {
     if (!html) continue;
     // 이름이 안 잡히면 그 페이지 종류가 아니다 — 다음 경로로.
     if (!extractLabel(html, "lblName")) continue;
-    return extractLabel(html, "lblDraft") ?? "";
+    // ⚠️ markup drift fail-close (삼순 2026-08-09): lblName 은 잡히는데 lblDraft selector 가
+    //   안 잡히면 그건 "공식에 빈값"이 아니라 **마크업이 바뀐 것**이다. `?? ""` 로 미등록
+    //   확정하면 마크업 변경 하루 만에 전 로스터가 "등록 없음" 거짓 진술이 된다.
+    //   실제 빈 span(`<span id=..lblDraft></span>`)만 "" 이고, selector 미검출은 실패·재시도다.
+    const draft = extractLabel(html, "lblDraft");
+    return draft === null ? { kind: "markup_drift" } : { kind: "ok", draft };
   }
   return null; // 두 경로 모두 실패 = 조회 불가(다음 실행에서 재시도)
 }
@@ -79,7 +84,7 @@ async function main() {
   }).slice(0, LIMIT);
 
   console.log(`대상 ${targets.length}명 / 전체 ${roster.length}명 (concurrency ${CONCURRENCY})`);
-  let done = 0, filled = 0, empty = 0, failed = 0;
+  let done = 0, filled = 0, empty = 0, failed = 0, drifted = 0;
 
   const queue = [...targets];
   await Promise.all(
@@ -87,11 +92,13 @@ async function main() {
       for (;;) {
         const player = queue.shift();
         if (!player) return;
-        const draft = await fetchDraft(player.kboId, player.position);
-        if (draft === null) failed += 1;
-        else {
-          draftMap[player.kboId] = draft;
-          if (draft.length > 0) filled += 1;
+        const result = await fetchDraft(player.kboId, player.position);
+        if (result === null || result.kind === "markup_drift") {
+          failed += 1;
+          if (result?.kind === "markup_drift") drifted += 1;
+        } else {
+          draftMap[player.kboId] = result.draft;
+          if (result.draft.length > 0) filled += 1;
           else empty += 1;
         }
         done += 1;
@@ -103,7 +110,14 @@ async function main() {
   // roster 는 **건드리지 않는다**. 입단 정보 파일만 쓴다.
   const sorted = Object.fromEntries(Object.keys(draftMap).sort().map((k) => [k, draftMap[k]]));
   writeFileSync(DRAFT_PATH, `${JSON.stringify(sorted, null, 2)}\n`);
-  console.log(`✅ 완료 — 값 ${filled} · 공백 ${empty} · 실패 ${failed}`);
+  console.log(`완료 — 값 ${filled} · 공백 ${empty} · 실패 ${failed} (markup drift ${drifted})`);
+  // ⚠️ 부분 실패를 조용한 성공으로 만들지 않는다 — 성공분은 저장했으니 재실행이 이어받고,
+  //   exact key-set 게이트가 미수집 키를 잡는다. drift 는 마크업 대응 전까지 매회 실패다.
+  if (failed > 0) {
+    console.error(`❌ ${failed}명 조회 실패 — 저장은 완료, 재실행 필요${drifted > 0 ? ` (markup drift ${drifted}건: lblDraft selector 확인 필요)` : ""}`);
+    process.exit(1);
+  }
+  console.log("✅ 전원 수집 완료");
 }
 
 main().catch((error) => {

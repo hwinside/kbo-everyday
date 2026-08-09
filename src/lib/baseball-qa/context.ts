@@ -65,14 +65,41 @@ export interface ContextTurn {
  * 직전 user turn 1행을 §4.1 B1~B3·B5 자격으로 판정한다.
  * 부적격이면 과거로 폴백하지 않고 맥락 없음(null)으로 종료한다 — 중간 turn은 barrier(B1).
  */
+/**
+ * 입단(드래프트) 후속 전용 source allowlist.
+ *
+ * ⚠️ **global allowlist(`CONTEXT_SOURCE_ALLOWLIST`)를 열지 않는다**(삼순 2026-08-09 P0-2).
+ *   일반 후속은 직전 "답변"을 LLM 맥락으로 주입하므로 rag 를 열면 근거 없는 후속 생성
+ *   통로가 된다. 반면 입단 후속은 직전 턴의 **질문에서 선수 이름만** 재결속하고 답은
+ *   공식 필드 코드 렌더로 낸다 — 직전 답변 본문을 생성에 쓰지 않으므로, 선수 질문이
+ *   실제로 도달하는 source(`rag` 선수 서술형, `kbo_structured` 기록·입단 직접답)까지
+ *   자격을 넓혀도 그 통로가 생기지 않는다.
+ *   `team_rag`·`news_rag` 는 넣지 않는다 — 선수 entity 재결속 대상이 아니다(삼순 지시).
+ */
+export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
+  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured",
+] as const;
+
 export function selectContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  return qualifyContextTurn(row, CONTEXT_SOURCE_ALLOWLIST);
+}
+
+/** 입단 후속 전용 — B1·B2·B5 barrier/TTL 은 동일, B3 allowlist 만 위 전용 집합이다. */
+export function selectDraftContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  return qualifyContextTurn(row, DRAFT_CONTEXT_SOURCE_ALLOWLIST);
+}
+
+function qualifyContextTurn(
+  row: PreviousTurnRow | null | undefined,
+  allowlist: readonly string[],
+): ContextTurn | null {
   // B1: 직전 user turn 자체가 없으면 맥락 없음 (새 대화 첫 질문 포함).
   if (!row) return null;
   const question = row.question?.trim() ?? "";
   const answer = row.answer?.trim() ?? "";
   if (question.length === 0 || answer.length === 0) return null;
   // B3: 자격은 job.source 축. allowlist 밖 값(blocked·error·unsure·limited·history_hold·신규값)은 제외.
-  if (!row.jobSource || !(CONTEXT_SOURCE_ALLOWLIST as readonly string[]).includes(row.jobSource)) {
+  if (!row.jobSource || !allowlist.includes(row.jobSource)) {
     return null;
   }
   // B2: 답변 DM이 실제 존재할 때만 소스 자격 (job이 completed여도 미발송이면 제외).

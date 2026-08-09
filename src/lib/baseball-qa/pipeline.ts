@@ -5,12 +5,14 @@
 import {
   isFollowupPhrase,
   selectContextTurn,
+  selectDraftContextTurn,
   type ContextTurn,
   type PreviousTurnRow,
 } from "./context";
 import {
   asksDraftDetail,
   draftUnavailableReason,
+  isDraftFollowupGrammar,
   isDraftQuestion,
   parseDraftLabel,
   renderDraftAnswer,
@@ -1591,6 +1593,23 @@ export function resolveRagPlayerCandidate(
  * 몇개칩어?`)은 수치어 때문에 그 게이트에 걸려 후보 자체가 안 잡혔고, 그래서 구조화 DB
  * 경로까지 도달하지 못했다(게이트가 잡은 결함).
  */
+/**
+ * 질문 문장에 **로스터 선수 이름이 하나라도 명시**돼 있는가 — 입단 후속 과결속 차단용.
+ *
+ * ⚠️ `resolveNamedPlayerCandidate === null` 과 다르다. resolve 는 복수 이름·동명이인도
+ *   null 을 주는데, 그건 "명시 엔티티 없음"이 아니라 "명시됐는데 모호함"이다. 모호한
+ *   질문이 직전 선수로 새면 엉뚱한 입단 연도가 확정 문장으로 나간다(삼순 2026-08-09).
+ *   방향은 보수적이다 — 과탐(이름 아닌 문자열을 이름으로 오인)은 후속 미결속 → 기존
+ *   경로 유지일 뿐이고, 미탐이 사고다. 정확 부분문자열만 보고 근접 매칭은 하지 않는다.
+ */
+export function mentionsAnyRosterName(question: string, players: PlayerRef[]): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return players.some((player) => {
+    const name = player.name?.normalize("NFKC").toLowerCase() ?? "";
+    return name.length >= 2 && normalized.includes(name);
+  });
+}
+
 export function resolveNamedPlayerCandidate(
   question: string,
   players: PlayerRef[],
@@ -2801,13 +2820,26 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
-  // 입단 질문인데 문장에 이름이 없으면(`입단을 언제 했냐고?`) 직전 턴에서 선수를 받아야
-  // 성립한다. 후속 문법 폐쇄집합에는 없는 형태라 여기서 따로 연다(삼순 2026-08-09 P0-2).
+  // 입단 질문의 직전 턴 결속(삼순 2026-08-09 P0-2 + 과결속 차단). 세 조건 전부다:
+  //   ① 입단 질문이고
+  //   ② 문장에 **명시 선수 엔티티가 0개**다 — "이름을 못 풀었다(resolve=null)"가 아니다.
+  //      복수 이름·동명이인은 resolve=null 이지만 명시 엔티티가 있으므로 직전 턴으로
+  //      새면 안 된다(기존 picker·되묻기 경로가 담당한다).
+  //   ③ 되묻기 어미(`~했냐고?`) 또는 명시 지시어(`그 선수`) 문법이 있다 —
+  //      `KBO 드래프트 언제야?` 같은 무지칭 일반 질문은 후속이 아니다.
   const draftFollowup = isDraftQuestion(question)
-    && resolveNamedPlayerCandidate(question, players) === null;
+    && !mentionsAnyRosterName(question, players)
+    && isDraftFollowupGrammar(question);
   if (deps.loadPreviousTurn && (isFollowupPhrase(question) || draftFollowup)) {
     try {
-      context = selectContextTurn(await deps.loadPreviousTurn());
+      // ⚠️ 입단 후속은 **draft 전용 allowlist**(rag·kbo_structured 포함)로 자격을 본다.
+      //   global allowlist 를 열지 않는다 — 일반 후속은 직전 답변을 LLM 맥락으로 쓰므로
+      //   rag 를 열면 근거 없는 생성 통로가 되지만, 입단 후속은 직전 "질문"에서 선수만
+      //   재결속하고 답은 공식 필드 코드 렌더라 그 통로가 없다(context.ts 주석 참조).
+      const row = await deps.loadPreviousTurn();
+      context = isFollowupPhrase(question)
+        ? selectContextTurn(row)
+        : selectDraftContextTurn(row);
     } catch {
       context = null;
     }

@@ -98,6 +98,12 @@ jobs:
           FOREIGN_ONBOARD_WEBHOOK: ${{ secrets.FOREIGN_ONBOARD_WEBHOOK }}
         run: node scripts/reconcile-roster-from-stats.mjs
 
+      # 입단 정보 지속 결속(삼순 2026-08-09 #1140): roster 에 새로 들어온 선수의 lblDraft 를
+      # 채운다(멱등 — 이미 있는 키는 건너뜀). 이걸 안 돌리면 exact key-set 게이트가
+      # prebuild 에서 RED 를 내서 자동 PR 이 머지되지 않는다(fail-close).
+      - name: Backfill draft info for new roster entries
+        run: node scripts/backfill-roster-draft.mjs
+
       - name: Update player photos
         run: node scripts/update-player-photos.mjs
 
@@ -157,7 +163,7 @@ jobs:
             # 건드렸으면 PR은 생성하되 자동 머지는 보류한다 (#685 삼순 리뷰 Blocker 2)
             # reconcile과 inventory-only sync가 생성하는 data artifact만 허용한다.
             # API/validator 소스, workflow, migration은 내용 검증 없는 경로 allowlist로 열지 않는다.
-            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta|defense-row-ledger)\.json)|data/baseball-qa/source-inventory\.json)$'
+            ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|players-draft\.json|player-photos\.ts|player-defense-runs\.json|foreign-nationality-pending\.json|stats-2026-(batters|pitchers|defense|meta|defense-row-ledger)\.json)|data/baseball-qa/source-inventory\.json)$'
             CHANGED_FILES=$(git diff --cached --name-only)
             OFF_ALLOWLIST=$(echo "$CHANGED_FILES" | grep -Ev "$ALLOWLIST_RE" || true)
             if [ -n "$OFF_ALLOWLIST" ]; then
@@ -185,7 +191,7 @@ jobs:
             # **삭제하지 않는다** — 삭제하면 완주 계약이 나중에 무력화될 때 자동머지가
             # 조용히 다시 열린다. 대신 아래 `②-b` 에서 **이번 런의 완주 증거**에 결속해,
             # 증거가 없거나 미완주면 종전 동작(보류)으로 되돌아가게 한다.
-            ROSTER_SCOPE_RE='^(public/players/|src/lib/constants/(players-roster\.json|player-photos\.ts|foreign-nationality-pending\.json)|data/baseball-qa/source-inventory\.json)'
+            ROSTER_SCOPE_RE='^(public/players/|src/lib/constants/(players-roster\.json|players-draft\.json|player-photos\.ts|foreign-nationality-pending\.json)|data/baseball-qa/source-inventory\.json)'
             ROSTER_SCOPE_FILES=$(echo "$CHANGED_FILES" | grep -E "$ROSTER_SCOPE_RE" || true)
             if [ -n "$ROSTER_SCOPE_FILES" ]; then
               echo "roster_scope_changed=true" >> $GITHUB_OUTPUT

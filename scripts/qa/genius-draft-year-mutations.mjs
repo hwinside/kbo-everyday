@@ -16,6 +16,11 @@ import { copyFileSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 const TARGETS = {
   draft: "src/lib/baseball-qa/roster/draft.ts",
   pipeline: "src/lib/baseball-qa/pipeline.ts",
+  context: "src/lib/baseball-qa/context.ts",
+  backfill: "scripts/backfill-roster-draft.mjs",
+  reconcile: "scripts/reconcile-roster-from-stats.mjs",
+  workflow: ".github/workflows/update-roster-stats.yml",
+  draftjson: "src/lib/constants/players-draft.json",
 };
 
 const MUTATIONS = [
@@ -31,7 +36,7 @@ const MUTATIONS = [
     file: "draft",
     from: `  if (askedTeam && !teamMatches(askedTeam, draft.team)) {`,
     to: `  if (false) {`,
-    expect: "구단 불일치를 숨겼다",
+    expect: "구단 불일치 안내가 없다",
   },
   {
     name: "D-C 순번 렌더 제거 (`몇 라운드?` 에 연도만 답한다)",
@@ -70,17 +75,87 @@ const MUTATIONS = [
   {
     name: "D-G 입단 질문 판정 제거 (공식 경로에 도달하지 못한다)",
     file: "draft",
-    from: `  return /입단|드래프트|지명순위|지명방식|몇순위|몇라운드|몇번째지명/.test(compact);`,
-    to: `  return false;`,
+    from: `  if (/입단|드래프트/.test(compact)) return true;`,
+    to: `  if (false) return true;`,
     expect: "source=",
+  },
+  {
+    name: "D-G2 순위류 단독 차단 제거 (`지금 몇 순위야?` 가 입단 경로로 새기 시작한다)",
+    file: "draft",
+    from: `  return /지명/.test(withoutDh) && /라운드|순위|순번|몇번째|방식/.test(withoutDh);`,
+    to: `  return /지명|순위|라운드/.test(compact);`,
+    expect: "순위류 단독인데 드래프트로 오판",
   },
   {
     name: "D-H 입단 후속 맥락 조회 제거 (2턴이 끊긴다)",
     file: "pipeline",
     from: `  const draftFollowup = isDraftQuestion(question)
-    && resolveNamedPlayerCandidate(question, players) === null;`,
+    && !mentionsAnyRosterName(question, players)
+    && isDraftFollowupGrammar(question);`,
     to: `  const draftFollowup = false;`,
     expect: "직전 턴을 조회하지 않았다",
+  },
+  {
+    name: "D-K draft allowlist 확대 (team_rag·news_rag 까지 열린다)",
+    file: "context",
+    from: `export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
+  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured",
+] as const;`,
+    to: `export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
+  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured", "team_rag", "news_rag",
+] as const;`,
+    expect: "부적격 소스로 답했다",
+  },
+  {
+    name: "D-L 되묻기 문법 축 제거 (무지칭 일반 질문이 직전 선수로 샌다)",
+    file: "pipeline",
+    from: `    && isDraftFollowupGrammar(question);`,
+    to: `    && true;`,
+    expect: "직전 선수로 샜다",
+  },
+  {
+    name: "D-M 명시 이름 차단 제거 (복수·동명이인이 직전 선수로 샌다)",
+    file: "pipeline",
+    from: `    && !mentionsAnyRosterName(question, players)`,
+    to: `    && true`,
+    expect: "동명이인이 직전 선수로 샜다",
+  },
+  {
+    name: "D-N draft 전용 selector 회귀 (global allowlist 로 rag 후속이 끊긴다)",
+    file: "pipeline",
+    from: `      context = isFollowupPhrase(question)
+        ? selectContextTurn(row)
+        : selectDraftContextTurn(row);`,
+    to: `      context = selectContextTurn(row);`,
+    expect: "source=",
+  },
+  {
+    name: "D-O markup drift 를 공식 빈값으로 확정 (?? \"\" 회귀)",
+    file: "backfill",
+    from: `    return draft === null ? { kind: "markup_drift" } : { kind: "ok", draft };`,
+    to: `    return { kind: "ok", draft: draft ?? "" };`,
+    expect: "backfill markup drift fail-close 가 없다",
+  },
+  {
+    name: "D-P exact key-set — 키 1개 소실도 RED (90% 게이트와의 차이)",
+    file: "draftjson",
+    from: `  "61101": "11 LG 1라운드 2순위",`,
+    to: ``,
+    expect: "draft 미수집 키",
+  },
+  {
+    name: "D-Q reconcile 신규 온보딩 draft 기록 제거",
+    file: "reconcile",
+    from: `      draftAdditions[String(m.kboId)] = detail.draft.trim();`,
+    to: `      ;`,
+    expect: "reconcile 신규 온보딩 draft 기록이 없다",
+  },
+  {
+    name: "D-R workflow backfill 스텝 제거 (신규 선수 draft 가 채워지지 않는다)",
+    file: "workflow",
+    from: `        run: node scripts/backfill-roster-draft.mjs`,
+    to: `        run: echo skip`,
+    expect: "workflow 에 backfill 스텝이 없다",
   },
   {
     name: "D-I 후속 선수 결속 제거 (직전 턴이 있어도 못 답한다)",

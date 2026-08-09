@@ -131,8 +131,11 @@ export function renderDraftAnswer(
     ? `${playerName} 선수는 ${draft.year}년 ${draft.team}${detail}로 입단했어요.`
     : `${playerName} 선수는 ${draft.year}년에 ${draft.team}에 입단했어요.`;
   // 질문이 지목한 구단과 입단 구단이 다르면 **오해를 남기지 않는다**.
+  // ⚠️ 단 "그 구단에 입단한 건 아니다"라고 단정하지 않는다(삼순 2026-08-09) — 공식
+  //   `lblDraft` 는 **최초 지명**만 증명하고, 이후 이적으로 그 구단에 합류했을 수 있다
+  //   (박병호: 2005 LG 지명 → 현재 키움). 이 필드로 증명 못 하는 범위는 그렇다고 말한다.
   if (askedTeam && !teamMatches(askedTeam, draft.team)) {
-    return `${head} ${askedTeam}에 입단한 건 아니에요.`;
+    return `${head} 다만 ${askedTeam} 합류 시점은 공식 입단(최초 지명) 기록으로는 확인할 수 없어요.`;
   }
   return head;
 }
@@ -181,8 +184,31 @@ export function draftUnavailableReason(
  * ⚠️ 좁게 잡는다. 넓히면 `데뷔`·`이적`·`FA` 같은 **다른 사건**까지 이 경로로 끌려오는데,
  *   `lblDraft` 는 그 값들을 담고 있지 않다. 없는 사실을 공식값처럼 말하는 게 최악이다.
  *   `데뷔`는 입단과 연도가 다른 선수가 흔하다 — 의도적으로 제외한다.
+ *
+ * ⚠️ `몇순위`·`몇라운드` **단독은 드래프트 앵커가 아니다**(삼순 2026-08-09 P0-3).
+ *   `임찬규 지금 몇 순위야?` 는 현재 성적 얘기다. 순위류 표현은 `지명`·`드래프트`·`입단`
+ *   앵커가 같이 있을 때만 이 경로다. `지명타자`의 `지명`은 앵커가 아니므로 제거 후 판정한다.
  */
 export function isDraftQuestion(question: string): boolean {
   const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  return /입단|드래프트|지명순위|지명방식|몇순위|몇라운드|몇번째지명/.test(compact);
+  if (/입단|드래프트/.test(compact)) return true;
+  // `지명타자`(포지션)의 `지명`이 드래프트 앵커로 오인되지 않게 지우고 본다.
+  const withoutDh = compact.replace(/지명타자/g, "");
+  return /지명/.test(withoutDh) && /라운드|순위|순번|몇번째|방식/.test(withoutDh);
+}
+
+/**
+ * 이름 없는 입단 질문이 **직전 턴을 되묻는 문법**인가 (삼순 2026-08-09 후속 과결속 차단).
+ *
+ * ⚠️ "이름을 못 풀었다"는 후속의 근거가 아니다 — 이름이 아예 없는 일반 질문
+ *   (`KBO 드래프트 언제야?`)과 복수·동명이인 질문까지 직전 선수로 새면 오답이 된다.
+ *   그래서 **명시 되묻기 어미**(`~했냐고?`류 인용 어미) 또는 **명시 지시어**
+ *   (`그 선수`·`걔`)가 있을 때만 직전 턴 결속 후보다. 둘 다 닫힌 문법 부류다.
+ */
+export function isDraftFollowupGrammar(question: string): boolean {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  // 되묻기 인용 어미 — 문장 끝에서만 인정한다 (중간 인용은 새 진술일 수 있다).
+  if (/(냐고|다고|라고)(요)?[?!.]*$/.test(compact)) return true;
+  // 명시 지시어 — 사람을 가리키는 닫힌 집합만. `그` 단독은 과탐이라 넣지 않는다.
+  return /그선수|그사람|그분|걔/.test(compact);
 }

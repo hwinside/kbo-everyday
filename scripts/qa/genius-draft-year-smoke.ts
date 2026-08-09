@@ -24,6 +24,9 @@
  * 실행: npm run qa:genius-draft-year
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   answerQuestion,
   type GlossaryEntry,
@@ -40,6 +43,8 @@ import {
 } from "../../src/lib/baseball-qa/roster/draft";
 import { RAG_GROUNDED_SENTINEL } from "../../src/lib/baseball-qa/rag/retrieve";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 let pass = 0;
 const failures: string[] = [];
@@ -78,13 +83,19 @@ interface Calls {
   previousTurn: number;
 }
 
-/** 직전 턴 fixture — `answeredAt < currentCreatedAt`, TTL 안, source allowlist 안. */
-function previousTurnRow(question: string) {
+/**
+ * 직전 턴 fixture — `answeredAt < currentCreatedAt`, TTL 안.
+ *
+ * ⚠️ jobSource 기본값은 **실경로 값**이다(삼순 2026-08-09 P0-2). 선수 질문의 실제 직전
+ *   답은 서술형이면 `rag`, 기록·입단 직접답이면 `kbo_structured` 다. 종전 smoke 는
+ *   `"llm"` 으로 바꿔 끼워서 allowlist 불일치를 못 보는 false-green 이었다.
+ */
+function previousTurnRow(question: string, jobSource = "rag") {
   const now = Date.now();
   return {
     question,
     answer: "임찬규는 LG 트윈스의 프랜차이즈 투수예요.",
-    jobSource: "llm",
+    jobSource,
     answeredAt: new Date(now - 5_000).toISOString(),
     currentCreatedAt: new Date(now).toISOString(),
   };
@@ -266,18 +277,63 @@ async function main() {
   }
 
   // ── ③-b 🔴 2턴 후속: 이름 없는 입단 질문은 직전 턴에서 선수를 받는다 (삼순 P0-2) ──
-  await checkAsync("`입단을 언제 했냐고?` → 직전 턴 선수에 결속돼 2011년", async () => {
-    const { result, logs, calls } = await ask(
-      "입단을 언제 했냐고?", undefined, previousTurnRow("임찬규 어떤 선수야"),
-    );
-    assert.equal(calls.previousTurn, 1, "직전 턴을 조회하지 않았다 — 후속이 열리지 않았다");
-    assert.equal(result.source, "kbo_structured", `source=${result.source}`);
-    assert.match(result.answer, /임찬규/, result.answer);
-    assert.match(result.answer, /2011년/, result.answer);
-    assert.deepEqual(logs, ["kbo_structured"]);
-    assert.equal(calls.llm, 0, "generic LLM 이 불렸다");
-    assert.equal(calls.ragLlm, 0, "RAG LLM 이 불렸다");
+  // 실경로 소스 2종 — Q1 이 서술형(rag)이든 기록·입단 직접답(kbo_structured)이든 이어져야 한다.
+  for (const jobSource of ["rag", "kbo_structured"]) {
+    await checkAsync(`입단을 언제 했냐고? (직전 source=${jobSource}) → 직전 턴 선수에 결속돼 2011년`, async () => {
+      const { result, logs, calls } = await ask(
+        "입단을 언제 했냐고?", undefined, previousTurnRow("임찬규 어떤 선수야", jobSource),
+      );
+      assert.equal(calls.previousTurn, 1, "직전 턴을 조회하지 않았다 — 후속이 열리지 않았다");
+      assert.equal(result.source, "kbo_structured", `source=${result.source}`);
+      assert.match(result.answer, /임찬규/, result.answer);
+      assert.match(result.answer, /2011년/, result.answer);
+      assert.deepEqual(logs, ["kbo_structured"]);
+      assert.equal(calls.llm, 0, "generic LLM 이 불렸다");
+      assert.equal(calls.ragLlm, 0, "RAG LLM 이 불렸다");
+    });
+  }
+
+  // draft 전용 allowlist 는 **딱 두 값만** 넓힌다 — team_rag·news_rag·blocked 는 부적격.
+  //   (allowlist 확대 mutation 이 이 반례로 RED 가 된다)
+  for (const jobSource of ["team_rag", "news_rag", "blocked"]) {
+    await checkAsync(`직전 source=${jobSource} 는 입단 후속 자격이 없다 (fail-close)`, async () => {
+      const { result, calls } = await ask(
+        "입단을 언제 했냐고?", undefined, previousTurnRow("임찬규 어떤 선수야", jobSource),
+      );
+      assert.equal(calls.previousTurn, 1, "조회는 시도해야 한다");
+      assert.notEqual(result.source, "kbo_structured", `부적격 소스로 답했다: ${result.answer}`);
+      assert.doesNotMatch(result.answer, /2011년/, `부적격 소스에서 연도가 나왔다: ${result.answer}`);
+    });
+  }
+
+  // TTL 만료 직전 턴은 자격이 없다 — draft 전용 selector 도 B5 barrier 를 그대로 지킨다.
+  await checkAsync("TTL 만료 직전 턴은 입단 후속 자격이 없다", async () => {
+    const now = Date.now();
+    const stale = {
+      ...previousTurnRow("임찬규 어떤 선수야", "rag"),
+      answeredAt: new Date(now - 600_001).toISOString(),
+      currentCreatedAt: new Date(now).toISOString(),
+    };
+    const { result } = await ask("입단을 언제 했냐고?", undefined, stale);
+    assert.doesNotMatch(result.answer, /2011년/, `만료 맥락으로 답했다: ${result.answer}`);
   });
+
+  // ── 과결속 차단(삼순 2026-08-09): "이름을 못 풀었다" 는 후속의 근거가 아니다 ──
+  //   이름 없는 일반 질문·복수 이름·동명이인은 직전 선수로 새면 안 된다.
+  for (const question of [
+    "KBO 드래프트 언제야?",                    // 무지칭 일반 질문 — 되묻기 문법 없음
+    "임찬규랑 김도영 중에 누가 먼저 입단했어?", // 복수 이름 — 명시 엔티티 ≥1
+  ]) {
+    await checkAsync(`${question} → 직전 선수로 새지 않는다`, async () => {
+      const { result, calls } = await ask(
+        question, undefined, previousTurnRow("박병호 어떤 선수야", "rag"),
+      );
+      assert.doesNotMatch(result.answer, /박병호/, `직전 선수로 샜다: ${result.answer}`);
+      if (question.startsWith("KBO")) {
+        assert.equal(calls.previousTurn, 0, "무지칭 일반 질문인데 직전 턴을 조회했다");
+      }
+    });
+  }
 
   await checkAsync("직전 턴이 없으면 입단 후속에 답하지 않는다 (fail-close)", async () => {
     const { result, calls } = await ask("입단을 언제 했냐고?", undefined, null);
@@ -301,7 +357,10 @@ async function main() {
     assert.match(result.answer, /2005년/, result.answer);
     assert.match(result.answer, /LG/, result.answer);
     // 이 문장이 없으면 유저는 "키움에 2005년 입단" 으로 읽는다.
-    assert.match(result.answer, /키움에 입단한 건 아니에요/, `구단 불일치를 숨겼다: ${result.answer}`);
+    // ⚠️ "키움에 입단한 건 아니에요" 는 과단정이다(삼순) — draft 필드는 최초 지명만 증명하고
+    //   이후 이적 합류를 부정할 수 없다. 확인 불가 범위를 그대로 말해야 한다.
+    assert.match(result.answer, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없어요/, `구단 불일치 안내가 없다: ${result.answer}`);
+    assert.doesNotMatch(result.answer, /입단한 건 아니에요/, `이적 합류까지 부정하는 과단정: ${result.answer}`);
   });
 
   await checkAsync("질의 구단과 입단 구단이 같으면 군더더기를 붙이지 않는다", async () => {
@@ -354,6 +413,72 @@ async function main() {
     for (const q of ["임찬규 언제 데뷔했어", "임찬규 이적했어?", "임찬규 FA 언제야", "임찬규 방어율"]) {
       assert.equal(isDraftQuestion(q), false, `입단 질문이 아닌데 true: ${q}`);
     }
+    // ⚠️ 순위류 단독은 드래프트가 아니다(삼순 P0-3) — `지금 몇 순위`는 현재 성적 얘기다.
+    for (const q of ["임찬규 지금 몇 순위야?", "LG 몇 순위야", "몇 라운드까지 해?", "지명타자 순위 알려줘"]) {
+      assert.equal(isDraftQuestion(q), false, `순위류 단독인데 드래프트로 오판: ${q}`);
+    }
+  });
+
+  // ── 순위류 단독 종단 반례 — 입단 경로로 새지 않는다 ──────────────────────────
+  await checkAsync("`임찬규 지금 몇 순위야?` → 입단 답이 아니다", async () => {
+    const { result } = await ask("임찬규 지금 몇 순위야?");
+    assert.doesNotMatch(result.answer, /입단했어요/, `현재 순위 질문에 입단 답: ${result.answer}`);
+    assert.doesNotMatch(result.answer, /2011년/, `현재 순위 질문에 입단 연도: ${result.answer}`);
+  });
+
+  // ── 동명이인은 직전 턴으로도, 추측으로도 새지 않는다 ─────────────────────────
+  await checkAsync("동명이인 이름 입단 질문 → 직전 선수로 새지 않는다", async () => {
+    const dupPlayers: PlayerRef[] = [
+      ...players,
+      { kboId: "90001", name: "이승현", team: "삼성", position: "투수", backNo: "1" },
+      { kboId: "90002", name: "이승현", team: "롯데", position: "투수", backNo: "2" },
+    ];
+    // ⚠️ 되묻기 어미(했냐고)를 일부러 싣는다 — 문법 축이 아니라 **명시 이름 차단**이
+    //   이 반례의 유일한 방어축이 되게 해서, 그 축 제거 mutation(D-M)이 여기서 RED 가 난다.
+    const { result, calls } = await ask(
+      "이승현 입단 언제 했냐고?", dupPlayers, previousTurnRow("임찬규 어떤 선수야", "rag"),
+    );
+    // 명시 이름이 있으므로(모호할 뿐) 직전 선수(임찬규)로 결속되면 안 된다.
+    assert.doesNotMatch(result.answer, /임찬규/, `동명이인이 직전 선수로 샜다: ${result.answer}`);
+    assert.doesNotMatch(result.answer, /2011년/, result.answer);
+  });
+
+  // ── 지속 결속(삼순 2026-08-09): 상시 크롤·신규 온보딩에서 draft 가 살아남는 배선 ──
+  //   ① exact key-set — 90% 게이트는 수십 키가 빠져도 GREEN 이라 검출력이 없다.
+  //      roster 숫자 kboId 전원이 draft 파일에 **정확히** 있고, 고아 키도 없어야 한다.
+  check("exact key-set: roster 숫자 kboId ↔ players-draft.json 키가 정확히 일치", () => {
+    const rosterRaw = JSON.parse(readFileSync(join(ROOT, "src/lib/constants/players-roster.json"), "utf8")) as Array<{ kboId: string | number }>;
+    const draftRaw = JSON.parse(readFileSync(join(ROOT, "src/lib/constants/players-draft.json"), "utf8")) as Record<string, string>;
+    const numericIds = new Set(rosterRaw.map((r) => String(r.kboId)).filter((id) => /^\d+$/.test(id)));
+    const draftKeys = new Set(Object.keys(draftRaw));
+    const missing = [...numericIds].filter((id) => !draftKeys.has(id));
+    const orphan = [...draftKeys].filter((id) => !numericIds.has(id));
+    assert.equal(missing.length, 0, `draft 미수집 키 ${missing.length}건: ${missing.slice(0, 5).join(",")}`);
+    assert.equal(orphan.length, 0, `roster 에 없는 고아 키 ${orphan.length}건: ${orphan.slice(0, 5).join(",")}`);
+    // 값 형태도 계약이다 — undefined 는 이 파일에 존재할 수 없고, 문자열만 허용된다.
+    for (const [key, value] of Object.entries(draftRaw)) {
+      assert.equal(typeof value, "string", `${key} 값이 문자열이 아니다: ${typeof value}`);
+    }
+  });
+
+  //   ② 배선 존재 — reconcile 이 신규 선수 draft 를 기록하고, workflow 가 backfill 을 돌리고
+  //      allowlist·roster scope 에 draft 파일이 있어야 다음 자동 PR 에서 소실되지 않는다.
+  //      (existence 검사지만, 이 배선이 빠지면 exact key-set 이 다음 크롤에서 RED 가 되므로
+  //       두 게이트가 서로를 보완한다 — 문구가 아니라 소실 경로를 각각 닫는 축이다.)
+  check("지속 배선: reconcile draft 기록 + workflow backfill·allowlist 결속", () => {
+    const reconcile = readFileSync(join(ROOT, "scripts/reconcile-roster-from-stats.mjs"), "utf8");
+    assert.match(reconcile, /players-draft\.json/, "reconcile 이 draft 파일을 모른다");
+    assert.match(reconcile, /draftAdditions\[String\(m\.kboId\)\] = detail\.draft\.trim\(\)/, "reconcile 신규 온보딩 draft 기록이 없다");
+    const workflow = readFileSync(join(ROOT, ".github/workflows/update-roster-stats.yml"), "utf8");
+    assert.match(workflow, /backfill-roster-draft\.mjs/, "workflow 에 backfill 스텝이 없다");
+    const allowlistLine = workflow.split("\n").find((line) => line.includes("ALLOWLIST_RE="));
+    assert.ok(allowlistLine?.includes("players-draft\\.json"), "생성 allowlist 에 draft 파일이 없다 — 자동 PR 보류된다");
+    const scopeLine = workflow.split("\n").find((line) => line.includes("ROSTER_SCOPE_RE="));
+    assert.ok(scopeLine?.includes("players-draft\\.json"), "roster scope 에 draft 파일이 없다 — 자동 머지 보류된다");
+    const backfill = readFileSync(join(ROOT, "scripts/backfill-roster-draft.mjs"), "utf8");
+    // 주석이 아니라 **코드 실체**에 결속한다 — 문자열만 남고 로직이 죽으면 잡아야 한다.
+    assert.match(backfill, /return draft === null \? \{ kind: "markup_drift" \}/, "backfill markup drift fail-close 가 없다");
+    assert.doesNotMatch(backfill, /lblDraft"\) \?\? ""/, "selector 미검출을 공식 빈값으로 확정하는 ?? \"\" 가 남아 있다");
   });
 
   check("렌더 문장은 공식 표기 구단명을 그대로 쓴다", () => {
@@ -366,10 +491,11 @@ async function main() {
       renderDraftAnswer("임찬규", { year: 2011, team: "LG", detail: "1라운드 2순위" }, { wantsDetail: true }),
       "임찬규 선수는 2011년 LG 1라운드 2순위로 입단했어요.",
     );
-    assert.match(
-      renderDraftAnswer("박병호", { year: 2005, team: "LG", detail: "1차" }, { askedTeam: "키움" }),
-      /키움에 입단한 건 아니에요/,
-    );
+    // ⚠️ 과단정 금지(삼순 2026-08-09): draft 필드는 최초 지명만 증명한다 — 이후 이적
+    //   합류를 부정하면 안 된다. 확인 불가 범위를 그대로 말한다.
+    const mismatch = renderDraftAnswer("박병호", { year: 2005, team: "LG", detail: "1차" }, { askedTeam: "키움" });
+    assert.match(mismatch, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없어요/);
+    assert.doesNotMatch(mismatch, /입단한 건 아니에요/);
   });
 
   check("순번 질문 판정", () => {
