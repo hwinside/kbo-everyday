@@ -28,7 +28,6 @@ import {
   type PlayerRef,
   type QaDeps,
   resolveRagTeamCandidate,
-  isRosterVerifiableQuestion,
   isTeamEntryQuestion,
   renderTeamEntryAnswer,
   rosterMembershipBlock,
@@ -1328,7 +1327,6 @@ async function verifyLlmDelegation() {
     searchRag: async () => [],
     callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
   };
-  // 양보는 roster 검증 가능 질문(소속 정정)만 — P0-2 (삼순 2026-08-10).
   const yieldResult = await answerQuestion("u-yield", "최형우는 현재 삼성 라이온즈 소속인데??", yieldDeps);
   assert.notEqual(yieldResult.source, "unsure", "근거 0건 로스터 선수의 소속 질문이 unsure 로 죽었다");
   assert.equal(yieldState.llmCalls, 1, "generic LLM 으로 양보되지 않았다");
@@ -1336,17 +1334,22 @@ async function verifyLlmDelegation() {
     yieldState.llmRosterBlocks[0]?.includes("최형우: 삼성 소속"),
     "양보된 generic 호출에 로스터 블록이 없다",
   );
-  // 반례 — roster 로 검증 불가한 서술(별명·학교·데뷔)은 근거 0건이면 여전히 fail-close.
-  // 여기를 열면 모델 기억으로 인물 서술을 생성하는 환각 통로가 된다 (삼순 P0-2).
-  const hallucinationState = freshCtx(null);
-  const hallucinationResult = await answerQuestion("u-halluc", "최형우 별명이 뭐야?", {
-    ...delegationDeps(hallucinationState),
+  // 서술 질문(별명 등)도 **양보한다** — 입력 문법 게이트를 두지 않는다 (하린아빠 P0
+  // 2026-08-10 00:58 "룰베이스 무한도돌이표 절대 금지"). 실존은 로스터 결속이 보장하고,
+  // 모르는 서술은 프롬프트 계약이 "모른다" 로 답하게 한다. unsure 상용구가 더 나쁜 응답이다.
+  const descState = freshCtx(null);
+  const descResult = await answerQuestion("u-desc", "최형우 별명이 뭐야?", {
+    ...delegationDeps(descState),
     enablePlayerRag: true,
     searchRag: async () => [],
     callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
   });
-  assert.equal(hallucinationResult.source, "unsure", "검증 불가 서술 질문이 generic 으로 샜다 (환각 통로)");
-  assert.equal(hallucinationState.llmCalls, 0, "검증 불가 서술 질문이 generic LLM 을 소비했다");
+  assert.equal(descResult.source, "llm", "근거 0건 서술 질문이 generic 으로 양보되지 않았다");
+  assert.equal(descState.llmCalls, 1, "generic LLM 호출 수가 다르다");
+  assert.ok(
+    descState.llmRosterBlocks[0]?.includes("최형우"),
+    "양보된 서술 질문에 로스터 블록이 없다 — 블록 없는 양보는 모델 기억 생성이다",
+  );
   // 양보 대상 질문(소속·포지션·등번호)의 데이터가 블록에 실려야 한다 (삼순 blocker ②) —
   // 포지션 질문을 양보해 놓고 소속만 실으면 포지션은 모델 기억 생성이 된다.
   const detailBlock = rosterMembershipBlock("김도영 포지션 뭐야?", null, [
@@ -1356,14 +1359,13 @@ async function verifyLlmDelegation() {
     detailBlock?.includes("포지션 내야수") && detailBlock.includes("등번호 5번"),
     `소속 블록에 포지션·등번호가 없다: ${detailBlock}`,
   );
-  // 판정 단위 — 소속만 연다 (삼순 2차 되닫기: 포지션·등번호는 SSOT 선언·출력 대조 부재,
-  // `몇번이야` 는 타순과 모호). 그 질문들은 근거 0건이면 기존대로 fail-close 다.
-  assert.equal(isRosterVerifiableQuestion("최형우 소속이 어디야?"), true);
-  assert.equal(isRosterVerifiableQuestion("최형우는 어느 팀이야?"), true);
-  assert.equal(isRosterVerifiableQuestion("김도영 포지션 뭐야?"), false);
-  assert.equal(isRosterVerifiableQuestion("김도영 등번호 몇번이야?"), false);
-  assert.equal(isRosterVerifiableQuestion("최형우 별명이 뭐야?"), false);
-  assert.equal(isRosterVerifiableQuestion("최형우 어떤 선수야?"), false);
+  // ⚠️ 입력 문법 게이트는 **의도적으로 없다** (하린아빠 P0 2026-08-10 00:58 "룰베이스
+  // 무한도돌이표 절대 금지"). 상시 양보 계약은 위 소속 정정(u-yield)·서술(u-desc) 두
+  // 축이 잠근다. `~포지션 뭐야?`(사전 라우트)·`등번호 몇 번이야?`(기록 라우트)·팀 동시
+  // 언급 질문(team rag 라우트)은 양보 지점보다 앞의 기존 라우팅 축이라 여기서 다루지
+  // 않는다 — 그 라우트들의 품질은 별도 트랙(C 질문 정규화)이다.
+
+
 
   // ── 프롬프트 계약 앵커: 로스터 SSOT + 정정 인정 (배포 프롬프트 실물) ──────────
   assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("<현재 로스터> 블록이 함께 주어지면 그것이 선수의 현재 소속 구단에 대한 유일한 정본"));

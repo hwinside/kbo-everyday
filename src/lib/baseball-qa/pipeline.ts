@@ -2287,23 +2287,6 @@ export interface RagLlmExtras {
  * 서술은 roster 로 검증할 수 없어 모델 기억 생성(환각 통로)이 되므로 fail-close 유지.
  * 판정 입력은 roster 컬럼명이라는 **닫힌 집합**이라 룰이 맞다(열린 의도 분류가 아니다).
  */
-export function isRosterVerifiableQuestion(question: string): boolean {
-  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  // ⚠️ 소속만 연다 (삼순 2026-08-10 2차 되닫기). 포지션·등번호는 ①프롬프트 SSOT 선언이
-  //   소속만 커버하고 ②출력 숫자 대조가 없어 등번호가 모델 생성일 수 있으며 ③`몇번이야`
-  //   는 타순과 모호하다. 그 질문들은 근거 0건이면 기존대로 fail-close(unsure)다 —
-  //   블록의 포지션·등번호는 소속 답변의 보조 데이터로만 실린다.
-  return /소속|어느팀|어디팀|무슨팀|어느구단|무슨구단|현재팀/.test(normalized);
-}
-
-/**
- * 질문·직전 턴에 등장하는 로스터 선수의 **현재 소속** 블록 (축 D SSOT).
- *
- * ⚠️ 이건 룰 판정이 아니라 **닫힌 집합 조회**다 — 로스터 이름 881개와의 문자열 대조로
- *   "누구의 소속을 주입할까"만 고른다. 문장 의미 판단은 하지 않는다(LLM 몫).
- *   나무위키 스냅샷이 과거 소속("기아에 최형우")을 서술해도, 이 블록이 프롬프트에서
- *   현재 소속(삼성)을 정본으로 선언한다 (하린아빠 2026-08-10 00:53 캡처).
- */
 export function rosterMembershipBlock(
   question: string,
   context: ContextTurn | null,
@@ -2614,12 +2597,14 @@ async function answerPlayerDescriptiveQuestion(
   //   선수라 실존이 보장되고(#1135 임창규 축은 미결속 실명), 수치는 프롬프트 계약이 막는다.
   //   LLM 경계는 아직 소비 전이므로(근거 검색은 경계 앞) 양보해도 이중 과금이 없다.
   //
-  // ⚠️ 양보는 **roster 로 검증 가능한 질문**(소속·포지션·등번호·정정)에만 연다
-  //   (삼순 P0-2). 별명·학교·데뷔 서술은 roster 로 검증 불가 = 모델 기억 생성 통로라
-  //   기존 fail-close 유지 — 양보 범위가 넓으면 근거 없는 인물 서술이 열린다.
-  if (evidence.length === 0) {
-    return isRosterVerifiableQuestion(question) ? null : failClose();
-  }
+  // ⚠️ 양보 판정에 **입력 문법을 두지 않는다** (하린아빠 P0 2026-08-10 00:58 "룰베이스
+  //   무한도돌이표 절대 금지" — 소속·포지션·등번호 어휘 열거도, full-string 분해 문법도
+  //   전부 같은 도돌이표였다). 여기 오는 후보는 정의상 **로스터 결속** 선수라 실존이
+  //   보장되고(#1135 임창규 축은 미결속 실명), generic 경로는 현재 소속·포지션·등번호
+  //   roster 블록 + 직전 턴 + 숫자 근거없음 프롬프트 계약을 갖는다. 어떤 질문(정정·
+  //   복합·서술 포함)이든 LLM 이 블록 데이터 안에서 답하고, 모르는 건 모른다고 말하는
+  //   것이 unsure 상용구보다 낫다("잘못을 지적하니 모르겠다고 나오는 건 더 문제").
+  if (evidence.length === 0) return null;
 
   // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
   let llm: LlmResult | null = null;

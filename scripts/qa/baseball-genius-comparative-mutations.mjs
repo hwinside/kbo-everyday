@@ -64,20 +64,6 @@ const MUTATIONS = [
     why: "구단 명단 블록이 전 구단 선수를 담아 이적 선수(삼성 최형우)가 기아 명단에 남는다",
   },
   {
-    id: "N20 근거 0건 양보 제거 (unsure 회귀)",
-    file: PIPELINE,
-    anchor: "    return isRosterVerifiableQuestion(question) ? null : failClose();",
-    replacement: "    return failClose();",
-    why: "chunk 미보유 로스터 선수(실측 최형우)의 정정·서술 질문이 전부 unsure 로 죽는다",
-  },
-  {
-    id: "N23 양보 협착 제거 (검증 불가 서술도 generic 으로 연다)",
-    file: PIPELINE,
-    anchor: "return isRosterVerifiableQuestion(question) ? null : failClose();",
-    replacement: "return null;",
-    why: "별명·학교·데뷔 서술이 근거 없이 모델 기억으로 생성된다 (삼순 P0-2 환각 통로)",
-  },
-  {
     id: "N24 1군 명단 freshness 제거 (stale 스냅샷이 당일 명단으로 나간다)",
     file: PIPELINE,
     anchor: "if (ageDays > TEAM_ENTRY_MAX_AGE_DAYS || ageDays < 0) return null;",
@@ -134,11 +120,11 @@ const MUTATIONS = [
     why: "크롤 부분 실패의 12명짜리 명단이 '당일 등록' 으로 서빙된다 (삼순 blocker ①)",
   },
   {
-    id: "N28 소속 블록 상세(포지션·등번호) 제거",
+    id: "N28 0근거 상시 양보 제거 (unsure 상용구 회귀)",
     file: PIPELINE,
-    anchor: "player.position ? `포지션 ${player.position}` : null,",
-    replacement: "null,",
-    why: "포지션 질문을 양보해 놓고 데이터를 안 실으면 모델 기억 생성이 된다 (삼순 blocker ②)",
+    anchor: "  if (evidence.length === 0) return null;",
+    replacement: "  if (evidence.length === 0) return failClose();",
+    why: "chunk 0건 로스터 선수의 소속 정정·조회가 전부 '이해하지 못했어요' 로 돌아간다 (하린아빠 P0)",
   },
   // ── 프롬프트 계약 ───────────────────────────────────────────────────────
   {
