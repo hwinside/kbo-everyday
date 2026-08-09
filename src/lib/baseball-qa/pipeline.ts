@@ -2114,7 +2114,7 @@ export function routeQuestion(
   // 비교형 후속(`만루홈런이랑 비슷한 거야?`) — 문장 안에 비교 피연산자가 하나뿐이라
   // 나머지 하나가 직전 턴에서 와야 성립한다. 판정 근거는 어휘가 아니라 구조다(context.ts).
   // 맥락이 없으면 기존 후속과 **같은 칸**(되묻기)으로 닫는다 — 반쪽 문장에 답하지 않는다.
-  if (isComparativeFollowup(question, (q) => countCanonicalBaseballEntities(q, glossary))) {
+  if (isComparativeFollowup(question, (q) => countCanonicalBaseballEntities(q, glossary, players))) {
     return hasContext ? "baseball_rule_term" : "context_missing";
   }
   if (supportedRuleTerm) return "baseball_rule_term";
@@ -2237,68 +2237,82 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 /**
  * 문장 전체의 **canonical 명시 야구 엔티티 수** — 비교형 후속 판정(②)이 쓰는 SSOT.
  *
- * ⚠️ 어휘를 새로 나열하지 않는다. 이미 있는 집합만 재사용한다:
- *   검수 사전(glossary term/alias) · `TEAM_ALIASES` · `RULE_TERM_HINT_WORDS` · `BASEBALL_WORDS`.
+ * ⚠️ raw substring/run 휴리스틱이 아니다(삼순 2026-08-09 NO-GO 반영). **typed canonical
+ *   span** 으로 계수한다 — 어떤 어휘가, 문장의 어느 구간에서, 어떤 규칙으로 매칭되는지가
+ *   어휘 유형마다 정의된다:
  *
- * 계수 규칙 (삼순 2026-08-09 판정):
- *   • 토큰 안에서 어휘 조각을 **앞에서부터 최장 일치**로 이어 붙인 연속 구간(run)이
- *     엔티티 후보다. `만루홈런` = `만루`+`홈런` 연속 → 합성어 1개로 센다.
- *     조사·공백은 run 을 끈으므로 `도루 병살` 은 2개로 센다.
- *   • **단독 광역 신호어는 피연산자가 아니다** — `BASEBALL_WORDS`(야구·기록·홈런…)만으로
- *     이뤄진 단일 조각 run 은 세지 않는다(삼순 명시). 합성어(조각 2개 이상)이거나
- *     검수 사전·구단·룰 용어 힌트(generic 제외)에 직접 있는 조각만 엔티티다.
+ *   • 검수 사전 term/alias — 한글은 부분문자열(조사가 직접 붙는다), ASCII alias 는
+ *     단어 경계 + 공백 유연 매칭(`grand slam` ↔ `grand  slam`, `function` 안의 `nc` 불가).
+ *   • 구단 — 한글 표기는 부분문자열, ASCII 약칭(lg·nc·kt·ssg·kia)은 **단어 경계 필수**.
+ *     결합형(`엘지트윈스`)은 최장 일치로 1개가 되게 결합 span 을 함께 등록한다.
+ *   • 로스터 선수 — 실명 부분문자열(≥2자). 선수도 명시 엔티티다(`김도영이랑 비슷해?`).
+ *   • 룰 용어 힌트(generic 제외) — 한글 부분문자열.
+ *
+ *   겹치는 후보는 **최장 우선 비겹침**으로 고른다. 인접 span 을 합치지 않는다 —
+ *   `LG한화` 는 2개다(과병합 금지, 삼순 반례). `만루홈런` 은 사전/힌트의 최장 일치가
+ *   한 span 으로 잡아 1개다. `BASEBALL_WORDS` 광역 신호어는 계수에 넣지 않는다.
  */
 export function countCanonicalBaseballEntities(
   question: string,
   glossary: GlossaryEntry[] = [],
+  players: PlayerRef[] = [],
 ): number {
-  const normalizeWord = (word: string) => word.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  // 엔티티 자격이 있는 조각: 사전 term/alias · 구단(약칭·별칭·canonical) · 룰 용어 힌트(generic 제외)
-  const entitySegments = new Set<string>();
-  for (const entry of glossary) {
-    for (const word of [entry.term, ...entry.aliases]) {
-      const norm = normalizeWord(word);
-      if (norm.length >= 2) entitySegments.add(norm);
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const spans: Array<{ start: number; end: number }> = [];
+
+  // 한글(및 혼합) 어휘 — 부분문자열 전 출현 수집. 조사가 직접 붙으므로 경계를 요구하지 않는다.
+  const addSubstringSpans = (word: string) => {
+    if (word.length < 2) return;
+    let from = 0;
+    for (;;) {
+      const index = normalized.indexOf(word, from);
+      if (index < 0) return;
+      spans.push({ start: index, end: index + word.length });
+      from = index + 1;
     }
+  };
+  // ASCII 어휘 — 단어 경계 필수(`function` 안의 `nc` 를 구단으로 세지 않는다),
+  // 내부 공백은 유연 매칭(`grand slam` alias 가 실제 질문 표기와 일치하게).
+  const addAsciiSpans = (word: string) => {
+    const escaped = word.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+");
+    const pattern = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "g");
+    for (const match of normalized.matchAll(pattern)) {
+      spans.push({ start: match.index, end: match.index + match[0].length });
+    }
+  };
+  const addWordSpans = (word: string) => {
+    const norm = word.normalize("NFKC").toLowerCase().trim();
+    if (norm.length < 2) return;
+    if (/^[a-z0-9][a-z0-9\s]*$/.test(norm)) addAsciiSpans(norm);
+    else addSubstringSpans(norm.replace(/\s+/g, ""));
+  };
+
+  for (const entry of glossary) {
+    for (const word of [entry.term, ...entry.aliases]) addWordSpans(word);
   }
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-    for (const word of [canonical, ...shorts, ...nicks]) entitySegments.add(normalizeWord(word));
-  }
-  for (const word of RULE_TERM_HINT_WORDS) {
-    if (!GENERIC_RULE_TERM_HINTS.has(word)) entitySegments.add(normalizeWord(word));
-  }
-  // 광역 신호어: 합성어 재료로는 쓰이되(`만루홈런`의 `홈런`), 단독으로는 엔티티가 아니다.
-  const broadSegments = new Set<string>(BASEBALL_WORDS.map(normalizeWord));
-  const allSegments = [...entitySegments, ...broadSegments].sort((a, b) => b.length - a.length);
-
-  const tokens = question.normalize("NFKC").toLowerCase().match(/[가-힣a-z0-9]+/g) ?? [];
-  let count = 0;
-  for (const token of tokens) {
-    let i = 0;
-    while (i < token.length) {
-      // run 시작점 찾기: 현재 위치에서 최장 일치 조각이 있으면 run 을 이어붙인다.
-      const startMatch = allSegments.find((seg) => token.startsWith(seg, i));
-      if (!startMatch) {
-        i += 1;
-        continue;
-      }
-      let segments = 0;
-      let hasEntitySegment = false;
-      let j = i;
-      while (j < token.length) {
-        const match = allSegments.find((seg) => token.startsWith(seg, j));
-        if (!match) break;
-        segments += 1;
-        if (entitySegments.has(match)) hasEntitySegment = true;
-        j += match.length;
-      }
-      // 합성어(조각 ≥2)이거나, 단일 조각이라도 엔티티 자격 조각이면 1개로 센다.
-      if (segments >= 2 || hasEntitySegment) count += 1;
-      i = j;
+    const names = [canonical, ...shorts, ...nicks];
+    for (const word of names) addWordSpans(word);
+    // 결합형(`엘지트윈스`·`lg트윈스`)은 최장 일치로 한 팀 = 한 span 이 되게 등록한다.
+    for (const base of [canonical, ...shorts]) {
+      for (const nick of nicks) addWordSpans(`${base}${nick}`);
     }
   }
-  return count;
+  for (const player of players) addWordSpans(player.name ?? "");
+  for (const word of RULE_TERM_HINT_WORDS) {
+    if (!GENERIC_RULE_TERM_HINTS.has(word)) addWordSpans(word);
+  }
+
+  // 최장 우선 비겹침 선택 — 인접 span 은 **합치지 않고 각각 센다**(`LG한화` = 2).
+  spans.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
+  const chosen: Array<{ start: number; end: number }> = [];
+  for (const span of spans) {
+    if (chosen.some((other) => span.start < other.end && other.start < span.end)) continue;
+    chosen.push(span);
+  }
+  return chosen.length;
 }
+
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
@@ -2860,7 +2874,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   let context: ContextTurn | null = null;
   const comparativeFollowup = isComparativeFollowup(
     question,
-    (q) => countCanonicalBaseballEntities(q, glossary),
+    (q) => countCanonicalBaseballEntities(q, glossary, players),
   );
   if (deps.loadPreviousTurn && (isFollowupPhrase(question) || comparativeFollowup)) {
     try {

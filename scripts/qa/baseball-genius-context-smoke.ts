@@ -999,6 +999,7 @@ async function verifyComparativeFollowup() {
     "만루홈런이랑 차이가 뭐야?",   // 다른 비교 관계 표현
     "만루홈런이랑 비슷한가요?",   // 존댓말 활용형 — 관계 표현은 어간 판정이라 통과해야 한다
     "그거랑 만루홈런 차이?",       // 삼순 필수 양성 — 명시 지시어 + 엔티티 1
+    "김도영이랑 비슷해?",          // 삼순 반례 반영 — roster 선수도 명시 엔티티다 (엔티티 1)
   ]) {
     const state = freshCtx(grandSlamTurn());
     const result = await answerQuestion("u-cmp", question, comparativeDeps(state));
@@ -1021,6 +1022,8 @@ async function verifyComparativeFollowup() {
     "키움이랑 한화랑 어디가 강해?",
     "홈런이랑 안타랑 뭐가 달라?",
     "보크랑 그랜드슬램이랑 뭐가 달라?",    // 사전 용어 엔티티 2개
+    "grand slam이랑 보크 차이?",           // 삼순 반례 — ASCII alias 공백 매칭 (엔티티 2개)
+    "LG한화 차이?",                        // 삼순 반례 — 인접 구단 과병합 금지 (엔티티 2개)
   ]) {
     const state = freshCtx(grandSlamTurn());
     await answerQuestion("u-cmp", question, comparativeDeps(state));
@@ -1030,7 +1033,8 @@ async function verifyComparativeFollowup() {
 
   // ── 반대축 ②: 야구 용어가 아니면 맥락 0 ───────────────────────────────────
   //   `날씨랑 비슷해?` 에 직전 야구 답변을 붙이면 범위 밖 질문이 야구 맥락을 얻는다.
-  for (const question of ["날씨랑 비슷해?", "사과랑 비슷해?", "야구랑 비슷해?"]) {
+  //   `function이랑 비슷해?` 는 ASCII 경계 축이다 — `nc` 부분문자열을 구단으로 세면 안 된다(삼순 반례).
+  for (const question of ["날씨랑 비슷해?", "사과랑 비슷해?", "야구랑 비슷해?", "function이랑 비슷해?"]) {
     const state = freshCtx(grandSlamTurn());
     await answerQuestion("u-cmp", question, comparativeDeps(state));
     assert.equal(state.previousTurnCalls, 0, `${question}: 비야구 비교인데 맥락을 조회했다`);
@@ -1061,7 +1065,7 @@ async function verifyComparativeFollowup() {
   }
 
   // ── 구조 판정 단위 검증 — canonical 엔티티 수 축 ──────────────────────────
-  const countEntities = (q: string) => countCanonicalBaseballEntities(q, COMPARATIVE_GLOSSARY);
+  const countEntities = (q: string) => countCanonicalBaseballEntities(q, COMPARATIVE_GLOSSARY, players);
   // 합성어는 1개다 — `만루`+`홈런` 을 각각 세면 제보 원형이 자기완결로 오판된다.
   assert.equal(countEntities("만루홈런이랑 비슷한 거야?"), 1);
   // 삼순 반례: 조사는 1개지만 엔티티는 2개 — 자기완결이다.
@@ -1074,6 +1078,14 @@ async function verifyComparativeFollowup() {
   // 광역 신호어 단독은 피연산자가 아니다(삼순 명시) — `야구` 등.
   assert.equal(countEntities("야구랑 비슷해?"), 0);
   assert.equal(countEntities("사과랑 비슷해?"), 0);
+  // typed span 축(삼순 4종): ASCII 경계 · alias 공백 · roster 선수 · 인접 비병합.
+  assert.equal(countEntities("function이랑 비슷해?"), 0);
+  assert.equal(countEntities("NC랑 비슷해?"), 1);
+  assert.equal(countEntities("grand slam이랑 보크 차이?"), 2);
+  assert.equal(countEntities("김도영이랑 비슷해?"), 1);
+  assert.equal(countEntities("LG한화 차이?"), 2);
+  // 결합형은 한 팀 = 1개다 — `엘지`+`트윈스` 를 따로 세면 한 팀 언급이 자기완결로 오판된다.
+  assert.equal(countEntities("엘지트윈스랑 비슷해?"), 1);
   // 명시 지시어 축 — 엔티티 1 + 지시어 / 엔티티 0 + 지시어 / 지시어 없음.
   assert.equal(hasComparativeDemonstrative("그거랑 만루홈런 차이?"), true);
   assert.equal(isComparativeFollowup("그거랑 비슷해?", countEntities), true);
