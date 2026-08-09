@@ -24,6 +24,7 @@ import {
   composeRagAnswer,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
+  RAG_TEAM_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
   type RagEntityCandidate,
@@ -640,6 +641,14 @@ export interface QaDeps {
   searchNewsRag?: (candidate: RagNewsCandidate, question: string) => Promise<RagEvidence[]>;
   /** 기사(tier2) 근거 전용 재서술 호출. 프롬프트만 다르고 경계는 선수·구단과 동일하다. */
   callNewsRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  /**
+   * KBO 공식 **당일 1군 등록 명단** 조회 (`roster_snapshots` 최신 snapshot_date).
+   *
+   * ⚠️ SSOT 분리 (삼순 2026-08-10): `players-roster.json` 은 **현재 소속** SSOT 일 뿐
+   *   1군 등록 SSOT 가 아니다. `기아 1군 선수` 는 이 명단이 정본이다.
+   *   미주입·조회 실패면 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
+   */
+  fetchTeamEntry?: (teamId: number) => Promise<{ snapshotDate: string; players: string[] } | null>;
   /**
    * 최근 기사 근거 경로 ON/OFF. 미지정이면 꺼진 것으로 본다 — 새 경로는 명시적으로 켜야 한다.
    */
@@ -2285,21 +2294,29 @@ export function rosterMembershipBlock(
   context: ContextTurn | null,
   players: PlayerRef[],
 ): string | null {
-  const haystack = [question, context?.question ?? "", context?.answer ?? ""]
+  // ⚠️ **질문에 등장한 선수가 항상 먼저다** (2026-08-10 E2E 실측 결함).
+  //   직전 턴 답변이 구단 명단(선수 10명+)이면 상한이 그 이름들로 차서 정작 질문의
+  //   선수(최형우) 줄이 탈락했고, 모델은 남은 KIA 줄들에 끌려 "KIA 소속, 삼성 아님"
+  //   으로 **역정정**했다. 현재 질문 매치 → 직전 턴 매치 순으로 넣고 상한도 분리한다.
+  const questionHay = question.normalize("NFKC").toLowerCase();
+  const contextHay = [context?.question ?? "", context?.answer ?? ""]
     .join("\n").normalize("NFKC").toLowerCase();
-  const lines: string[] = [];
+  const fromQuestion: string[] = [];
+  const fromContext: string[] = [];
   const seen = new Set<string>();
   for (const player of players) {
     const name = (player.name ?? "").normalize("NFKC").toLowerCase();
     if (name.length < 2 || !player.team) continue;
-    if (!haystack.includes(name)) continue;
+    const inQuestion = questionHay.includes(name);
+    const inContext = !inQuestion && contextHay.includes(name);
+    if (!inQuestion && !inContext) continue;
     const key = `${player.name}:${player.team}`;
     if (seen.has(key)) continue;
     seen.add(key);
     // 동명이인은 두 줄 다 넣는다 — 어느 쪽인지 확정하는 건 룰이 아니라 모델·유저 맥락이다.
-    lines.push(`${player.name}: ${player.team} 소속`);
-    if (lines.length >= 8) break;
+    (inQuestion ? fromQuestion : fromContext).push(`${player.name}: ${player.team} 소속`);
   }
+  const lines = [...fromQuestion.slice(0, 8), ...fromContext.slice(0, 8)];
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
@@ -2307,6 +2324,18 @@ export function rosterMembershipBlock(
  * 해당 구단의 현재 로스터 명단 블록 — 구단 RAG(스냅샷 문서) 답변이 "현재 선수단"을
  * 물었을 때 과거 명단을 옮기지 않도록 정본 명단을 함께 준다 (축 D).
  */
+/**
+ * 당일 1군 등록 명단 블록 (`roster_snapshots` SSOT). 날짜 provenance 를 함께 싣는다 —
+ * 스냅샷이 하루 이상 묵을 수 있으므로(우천·폭염 취소) 기준일을 모델·유저 모두 알아야 한다.
+ */
+export function teamEntryBlock(
+  candidate: RagTeamCandidate,
+  entry: { snapshotDate: string; players: string[] } | null,
+): string | null {
+  if (!entry || entry.players.length === 0) return null;
+  return `${candidate.name} 1군 등록 명단 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준): ${entry.players.join(", ")}`;
+}
+
 export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[]): string | null {
   const canonical = candidate.name;
   const entry = TEAM_ALIASES.find((team) => team.canonical === canonical);
@@ -2753,7 +2782,11 @@ async function answerTeamRagQuestion(
   // 재개 조건: 진술 관계를 검증할 수 있는 수단(구조화된 구단 연표 정본 등)이 생기면
   // 그때 숫자를 열면 된다. 휴리스틱으로는 다시 열지 않는다.
   const validated = validateRagResponse(llm.text, {
-    maxChars: RAG_ANSWER_MAX_CHARS,
+    // 명단 답변(1군 등록 30명)은 160자를 넘는다 — 상한이 좁으면 모델이 전 명단을 들 때만
+    // 비결정적으로 폐기된다(2026-08-10 E2E 실측 too_long → unsure). 구단 경로는 320자.
+    maxChars: RAG_TEAM_ANSWER_MAX_CHARS,
+    // "1군" 의 `1` 이 tier2 숫자 금지에 걸리는 플래키 방지 — 1st-party 블록의 숫자만 허용.
+    firstPartyGroundingText: extras.rosterBlock,
   });
   if (validated.kind !== "grounded") {
     // 근거로 답을 못 만들었다(근거 밖 숫자 포함 또는 여러 chunk 조합). 재호출 없이 종결한다.
@@ -2895,20 +2928,24 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 누수 경로는 종전과 동일(selectContextTurn 이 allowlist·TTL·본인 turn 만 통과).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
-  // 입단 후속 재결속(#1140)은 상시 로드된 같은 row 를 쓴다. 조건(입단 질문 + 명시 선수
-  // 엔티티 0 + 되묻기/지시어 문법)은 draft 전용 후보 계산에만 쓰인다 — 로드 gating 아님.
+  let draftContext: ContextTurn | null = null;
+  // 입단 후속 재결속(#1140)은 상시 로드된 같은 row 를 쓰되 **전용 selector 로만** 자격을
+  // 본다 — 글로벌 allowlist(확장판)가 통과시킨 row 라도 draft 재결속 자격(rag·
+  // kbo_structured, 직전 "질문"에서 선수 재결속, 답은 공식 필드 렌더)은 별도다.
+  // 둘을 섞으면 news_rag 직전 턴이 입단 후속의 확정 문장 근거가 된다(게이트 실측 RED).
   const draftFollowup = isDraftQuestion(question)
     && !mentionsAnyRosterName(question, players)
     && isDraftFollowupGrammar(question);
   if (deps.loadPreviousTurn) {
     try {
       const row = await deps.loadPreviousTurn();
-      // 글로벌 allowlist(2026-08-10 확장: 답변이 실린 모든 source + unsure)가 1차 자격.
-      // draft 후속은 전용 selector(rag·kbo_structured, 직전 "질문"에서 선수 재결속·답은
-      // 공식 필드 렌더)가 보조로 남는다 — 글로벌이 거른 row 도 draft 축은 살 수 있다.
-      context = selectContextTurn(row) ?? (draftFollowup ? selectDraftContextTurn(row) : null);
+      // 글로벌: LLM 프롬프트 맥락 주입용 (답변이 실린 모든 source + unsure).
+      context = selectContextTurn(row);
+      // draft 전용: 공식 필드 확정 렌더용 (더 좁은 allowlist, #1140 계약 유지).
+      draftContext = draftFollowup ? selectDraftContextTurn(row) : null;
     } catch {
       context = null;
+      draftContext = null;
     }
   }
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
@@ -2948,8 +2985,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 입단 후속(`입단을 언제 했냐고?`)은 **직전 턴 질문**에서 선수를 받는다.
   //   ⚠️ 직전 턴의 **답변**이 아니라 **질문**에서 푼다. 답변에는 다른 선수 이름이
   //     섞일 수 있고(비교·언급), 그러면 엉뚱한 선수의 입단 연도를 확정 문장으로 낸다.
-  const draftContextCandidate = deps.enablePlayerRag && draftFollowup && context
-    ? resolveNamedPlayerCandidate(context.question, players)
+  const draftContextCandidate = deps.enablePlayerRag && draftFollowup && draftContext
+    ? resolveNamedPlayerCandidate(draftContext.question, players)
     : null;
   const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
@@ -3184,14 +3221,32 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       ? resolveRagTeamCandidate(question)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
+    // 1군 명단 SSOT = roster_snapshots (삼순 2026-08-10). 조회 실패는 null 로 두고
+    // 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다 — 지어내는 것보다 낫다.
+    let teamEntry: { snapshotDate: string; players: string[] } | null = null;
+    if (deps.fetchTeamEntry) {
+      const entryTeamId = Number(teamRagCandidate.entityId);
+      try {
+        teamEntry = Number.isSafeInteger(entryTeamId)
+          ? await deps.fetchTeamEntry(entryTeamId)
+          : null;
+      } catch {
+        teamEntry = null;
+      }
+    }
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
       {
         context: context ?? undefined,
-        // 구단 질문에는 선수 소속 블록에 더해 **해당 구단의 현재 명단**을 준다 —
-        // "기아 1군 선수" 를 스냅샷 문서의 과거 명단으로 답하지 않게 (축 D).
-        rosterBlock: [rosterBlock, teamRosterBlock(teamRagCandidate, players) ?? undefined]
-          .filter(Boolean).join("\n") || undefined,
+        // 질문별 authoritative facts 분리 주입 (삼순 2026-08-10 SSOT 정정):
+        //   1군 명단(roster_snapshots)이 있으면 그것만 — 91명 전체 등록 명단을 함께 실으면
+        //   모델이 두 명단 사이에서 흔들려 INSUFFICIENT 로 새는 플래키가 실측됐다.
+        //   1군 명단이 없을 때만 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close 한다.
+        rosterBlock: [
+          rosterBlock,
+          teamEntryBlock(teamRagCandidate, teamEntry) ??
+            teamRosterBlock(teamRagCandidate, players) ?? undefined,
+        ].filter(Boolean).join("\n") || undefined,
       },
     );
     if (teamAnswer) return teamAnswer;

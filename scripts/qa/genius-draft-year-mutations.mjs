@@ -93,16 +93,18 @@ const MUTATIONS = [
     && !mentionsAnyRosterName(question, players)
     && isDraftFollowupGrammar(question);`,
     to: `  const draftFollowup = false;`,
-    expect: "직전 턴을 조회하지 않았다",
+    // 상시 로드 구조(2026-08-10)에서 조회는 항상 1회다 — 결함의 증상은 "조회 없음"이
+    // 아니라 **재결속 실패로 unsure 로 떨어지는 것**이다. 기대 문구를 실제 증상으로 맞춘다.
+    expect: "결속돼 2011년 :: source=unsure",
   },
   {
     name: "D-K draft allowlist 확대 (team_rag·news_rag 까지 열린다)",
     file: "context",
     from: `export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
-  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured",
+  "dictionary", "cache", "llm", "rag", "kbo_structured",
 ] as const;`,
     to: `export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
-  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured", "team_rag", "news_rag",
+  "dictionary", "cache", "llm", "rag", "kbo_structured", "team_rag", "news_rag",
 ] as const;`,
     expect: "부적격 소스로 답했다",
   },
@@ -123,10 +125,8 @@ const MUTATIONS = [
   {
     name: "D-N draft 전용 selector 회귀 (global allowlist 로 rag 후속이 끊긴다)",
     file: "pipeline",
-    from: `      context = isFollowupPhrase(question)
-        ? selectContextTurn(row)
-        : selectDraftContextTurn(row);`,
-    to: `      context = selectContextTurn(row);`,
+    from: `      draftContext = draftFollowup ? selectDraftContextTurn(row) : null;`,
+    to: `      draftContext = draftFollowup ? selectContextTurn(row) : null;`,
     expect: "source=",
   },
   {
@@ -167,8 +167,8 @@ const MUTATIONS = [
   {
     name: "D-J 직전 턴의 답변에서 선수를 푼다 (엉뚱한 선수로 결속)",
     file: "pipeline",
-    from: `    ? resolveNamedPlayerCandidate(context.question, players)`,
-    to: `    ? resolveNamedPlayerCandidate(context.answer, players)`,
+    from: `    ? resolveNamedPlayerCandidate(draftContext.question, players)`,
+    to: `    ? resolveNamedPlayerCandidate(draftContext.answer, players)`,
     expect: "엉뚱한 선수로 결속됐다",
   },
 ];

@@ -124,8 +124,12 @@ export interface ContextTurn {
  *   자격을 넓혀도 그 통로가 생기지 않는다.
  *   `team_rag`·`news_rag` 는 넣지 않는다 — 선수 entity 재결속 대상이 아니다(삼순 지시).
  */
+// ⚠️ 글로벌 allowlist 를 spread 로 상속하지 않는다 — 2026-08-10 글로벌 확장(team_rag·
+//   news_rag·unsure 등) 때 spread 가 이 목록까지 넓혀 "직전 team_rag 턴이 입단 확정
+//   문장의 재결속 근거가 되는" 회귀를 게이트가 실측으로 잡았다. 입단 재결속은 확정
+//   렌더(공식 필드)라 자격을 좁게 고정한다: 원 설계(사전·캐시·LLM) + rag·kbo_structured.
 export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
-  ...CONTEXT_SOURCE_ALLOWLIST, "rag", "kbo_structured",
+  "dictionary", "cache", "llm", "rag", "kbo_structured",
 ] as const;
 
 export function selectContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
@@ -159,5 +163,11 @@ function qualifyContextTurn(
   if (answeredAtMs >= currentMs) return null;
   // B5: TTL 초과면 맥락 없음 (600.000초 유효 / 600.001초 만료).
   if (currentMs - answeredAtMs > CONTEXT_TTL_MS) return null;
+  // unsure 턴의 가치는 직전 **질문**(주제)이지 상용구 답변이 아니다. 상용구를 그대로 실으면
+  // 모델이 그 사과·얼버무림 톤을 이어받아 정정 질문에 비확정 답을 내는 게 실측됐다
+  // (2026-08-10 프로브: 상용구 4/6 → 중립 마커 6/6). 답변은 중립 마커로 치환한다.
+  if (row.jobSource === "unsure") {
+    return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)" };
+  }
   return { question, answer };
 }

@@ -330,7 +330,11 @@ async function main() {
       );
       assert.doesNotMatch(result.answer, /박병호/, `직전 선수로 샜다: ${result.answer}`);
       if (question.startsWith("KBO")) {
-        assert.equal(calls.previousTurn, 0, "무지칭 일반 질문인데 직전 턴을 조회했다");
+        // 2026-08-10 구조 변경: 직전 턴은 **항상** 로드된다(LLM 위임 — 관련성 판단은
+        // 프롬프트 몫). 그래서 계약은 "조회 0회"가 아니라 **재결속 0**이다 — 무지칭
+        // 일반 질문이 직전 선수의 확정 입단 문장(kbo_structured)으로 새지 않아야 한다.
+        assert.equal(calls.previousTurn, 1, "상시 로드 구조에서 조회는 1회다");
+        assert.notEqual(result.source, "kbo_structured", `무지칭 질문이 직전 선수로 결속됐다: ${result.answer}`);
       }
     });
   }

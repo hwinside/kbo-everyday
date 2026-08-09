@@ -298,6 +298,34 @@ async function callTeamRagLlm(
   return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
 }
 
+/**
+ * KBO 공식 당일 1군 등록 명단 (`roster_snapshots` 최신 snapshot_date).
+ * 1군 명단 SSOT (삼순 2026-08-10) — `players-roster.json`(현재 소속 SSOT)과 분리.
+ * 실패·빈 결과는 null — 파이프라인이 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close.
+ */
+async function fetchTeamEntry(
+  teamId: number,
+): Promise<{ snapshotDate: string; players: string[] } | null> {
+  // query-guard: bounded -- 최신 snapshot_date 1행
+  const { data: latest, error: latestError } = await supabaseAdmin
+    .from("roster_snapshots")
+    .select("snapshot_date")
+    .eq("team_id", teamId)
+    .order("snapshot_date", { ascending: false })
+    .limit(1);
+  if (latestError || !latest?.[0]?.snapshot_date) return null;
+  const snapshotDate = latest[0].snapshot_date as string;
+  // query-guard: bounded -- 당일 1군 엔트리는 팀당 최대 30여 명이다 (상한 60)
+  const { data: rows, error: rowsError } = await supabaseAdmin
+    .from("roster_snapshots")
+    .select("player_name")
+    .eq("team_id", teamId)
+    .eq("snapshot_date", snapshotDate)
+    .limit(60);
+  if (rowsError || !rows || rows.length === 0) return null;
+  return { snapshotDate, players: rows.map((row) => row.player_name as string) };
+}
+
 async function callRagLlmWithPrompt(
   question: string,
   evidence: RagEvidence[],
@@ -538,6 +566,7 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 그런데 후보 생성 코드가 없어 한 건도 읽히지 않고 있었다(`LG 역사` → source=llm).
     enableTeamRag: teamRagEnabled(),
     callTeamRagLlm,
+    fetchTeamEntry,
     // 최근 기사 RAG 개통. production 적재 실측(2026-08-08 14일 백필):
     // `genius_news_articles` 2,438행 · embedding 2,438/2,438 · 서빙뷰 2,438건 · 커버리지 140/140칸 ok.
     // 적재만 되고 조회 배선이 없으면 근거는 사장된다(#1110 구단 RAG 에서 이미 겪은 사고).

@@ -23,8 +23,8 @@ const MUTATIONS = [
   {
     id: "N1 직전 턴 상시 로드 제거",
     file: PIPELINE,
-    anchor: "let context: ContextTurn | null = null;\n  if (deps.loadPreviousTurn) {",
-    replacement: "let context: ContextTurn | null = null;\n  if (false as boolean && deps.loadPreviousTurn) {",
+    anchor: "  if (deps.loadPreviousTurn) {\n    try {\n      const row = await deps.loadPreviousTurn();",
+    replacement: "  if (false as boolean && deps.loadPreviousTurn) {\n    try {\n      const row = await deps.loadPreviousTurn!();",
     why: "후속 질문(`만루홈런이랑 비슷한 거야?`·`언제부터 그랬어?`)이 직전 턴 없이 끊긴다",
   },
   {
@@ -38,15 +38,15 @@ const MUTATIONS = [
   {
     id: "N3 소속 블록 매칭 무력화",
     file: PIPELINE,
-    anchor: "if (!haystack.includes(name)) continue;",
+    anchor: "if (!inQuestion && !inContext) continue;",
     replacement: "continue;",
     why: "정정 질문(`최형우는 현재 삼성 소속인데??`)에 현재 소속 정본이 안 실린다",
   },
   {
     id: "N4 구단 명단 블록 미전달 (team rag)",
     file: PIPELINE,
-    anchor: "rosterBlock: [rosterBlock, teamRosterBlock(teamRagCandidate, players) ?? undefined]",
-    replacement: "rosterBlock: [rosterBlock, undefined]",
+    anchor: "            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
+    replacement: "            undefined,",
     why: "`기아 1군 선수` 가 스냅샷 문서의 과거 명단(이적한 최형우 포함)으로 답한다",
   },
   {
@@ -135,11 +135,25 @@ const MUTATIONS = [
     why: "구단 경로에서 무관한 직전 턴이 답을 오염시킨다",
   },
   {
-    id: "N19 1군 구분 fail-close 지시 제거 (team rag)",
+    id: "N19 1군 명단 정본 지시 제거 (team rag)",
     file: RETRIEVE,
-    anchor: '"로스터 블록은 전체 등록 선수 기준이며 1군·2군 당일 등록 여부는 담고 있지 않다. 1군 엔트리를 물으면 그 구분은 확인할 수 없다고 밝히고 전체 등록 명단 기준으로 답한다.",',
+    anchor: `"<현재 로스터> 안에 '1군 등록 명단' 블록이 있으면 그것이 당일 1군 엔트리의 유일한 정본이다. 1군 선수를 물으면 그 블록의 선수만, 기준일과 함께 답한다.",`,
     replacement: "",
-    why: "1군 엔트리 SSOT 미보유인데 전체 등록 명단을 1군으로 단정해 답한다 (삼순 SSOT 정정)",
+    why: "1군 질문이 전체 등록 명단·스냅샷 문서로 답해진다 (삼순 SSOT 분리)",
+  },
+  {
+    id: "N21 1군 구분 불가 fail-close 지시 제거 (team rag)",
+    file: RETRIEVE,
+    anchor: `"'1군 등록 명단' 블록이 없으면 1군·2군 구분은 확인할 수 없다고 밝히고 전체 등록 명단 기준으로 답한다.",`,
+    replacement: "",
+    why: "스냅샷 미조회 시 전체 등록 명단이 1군으로 단정된다",
+  },
+  {
+    id: "N22 1군 명단 블록 미전달 (team rag)",
+    file: PIPELINE,
+    anchor: "          teamEntryBlock(teamRagCandidate, teamEntry) ??\n            teamRosterBlock(teamRagCandidate, players) ?? undefined,",
+    replacement: "          teamRosterBlock(teamRagCandidate, players) ?? undefined,",
+    why: "roster_snapshots 를 조회해 놓고 프롬프트에 싣지 않는다 — SSOT 결속이 공약이 된다",
   },
   // ── 요청 빌더: 데이터 구획 ──────────────────────────────────────────────
   {

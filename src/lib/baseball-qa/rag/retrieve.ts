@@ -192,6 +192,15 @@ export const RAG_ANSWER_MAX_CHARS = 160;
  */
 export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 320;
 
+/**
+ * 구단(tier2) 답변 상한 — 명단 답변용으로 공식 경로와 같은 320자.
+ *
+ * ⚠️ 2026-08-10 E2E 실측: 1군 등록 명단(30명) 답변이 240자를 넘겨 기존 160자 상한에서
+ *   `too_long` → INSUFFICIENT → unsure 로 **비결정적으로** 폐기됐다(모델이 명단을 일부만
+ *   들면 통과, 전부 들면 폐기). 명단은 유저가 물은 내용 그 자체라 자르는 쪽이 오답이다.
+ */
+export const RAG_TEAM_ANSWER_MAX_CHARS = 320;
+
 export const RAG_GROUNDED_SENTINEL = "GROUNDED";
 export const RAG_INSUFFICIENT_SENTINEL = "INSUFFICIENT";
 
@@ -476,7 +485,8 @@ export const RAG_TEAM_SYSTEM_PROMPT = [
   // 실사고: `기아 1군 선수` → 이적한 최형우를 현재 소속으로 서술). 명단의 정본은 로스터다.
   "<현재 로스터> 블록이 주어지면 현재 소속 선수 명단·개별 선수의 현재 소속은 그 블록이 유일한 정본이다.",
   "현재 선수단을 물으면 로스터 블록의 선수만 말한다. 자료에만 있고 로스터에 없는 선수는 현재 소속으로 말하지 않는다.",
-  "로스터 블록은 전체 등록 선수 기준이며 1군·2군 당일 등록 여부는 담고 있지 않다. 1군 엔트리를 물으면 그 구분은 확인할 수 없다고 밝히고 전체 등록 명단 기준으로 답한다.",
+  "<현재 로스터> 안에 '1군 등록 명단' 블록이 있으면 그것이 당일 1군 엔트리의 유일한 정본이다. 1군 선수를 물으면 그 블록의 선수만, 기준일과 함께 답한다.",
+  "'1군 등록 명단' 블록이 없으면 1군·2군 구분은 확인할 수 없다고 밝히고 전체 등록 명단 기준으로 답한다.",
   "<직전 대화> 블록이 주어지고 이번 질문이 그 주제의 후속이면 이어서 답한다. 무관한 새 질문이면 직전 대화는 무시한다.",
   "유저가 직전 답의 오류를 지적하면 INSUFFICIENT로 도망가지 않고, <현재 로스터>·자료로 확인되는 범위에서 인정하고 정정한다.",
   // ⚠️ 2026-08-07 (삼순 P0-2 4라운드): 종전에는 "자료에 적힌 값만 쓴다" 였다.
@@ -487,7 +497,7 @@ export const RAG_TEAM_SYSTEM_PROMPT = [
   "연도·횟수·순위·기록처럼 수치가 답의 핵심이면 그 부분은 빼고 서술하거나, 뺄 수 없으면 INSUFFICIENT로 판정한다.",
   "예: `1990년 MBC 청룡을 인수해 창단했다` → `MBC 청룡을 인수해 창단했다` 로 쓴다.",
   "답변은 자료를 그대로 옆기지 말고 한국어 존댓말 한두 문장으로 다시 서술한다.",
-  `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
+  `답변은 ${RAG_TEAM_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
 ].join("\n");
 
@@ -795,6 +805,16 @@ export interface ValidateRagOptions {
    * (2026-08-07 정정: 종전 "구단은 숫자를 대조 방식으로 허용하되" 는 옛 계약이다.)
    */
   maxChars?: number;
+  /**
+   * **1st-party 정본 블록**(당일 1군 등록 명단·현재 소속 로스터) 텍스트.
+   *
+   * ⚠️ 2026-08-10 E2E 실측: 모델이 "1군 등록 명단" 이라고 쓰는 순간 `1` 이 tier2 숫자
+   *   전면 금지에 걸려 `numeric_claim_ungrounded` 로 답이 폐기됐다 — "일군" 으로 쓰면
+   *   통과라 **표기 선택에 따라 비결정적으로** 죽는 플래키였다. 이 블록은 위키가 아니라
+   *   우리 DB 정본이므로, 여기 등장하는 숫자 토큰(1군·기준일)은 지어낸 수치가 아니다.
+   *   tier2 근거(위키)의 숫자 금지는 그대로 유지된다 — 허용 집합은 이 블록의 토큰뿐이다.
+   */
+  firstPartyGroundingText?: string;
 }
 
 export function validateRagResponse(
@@ -826,6 +846,25 @@ export function validateRagResponse(
   //  - tier1 근거(KBO 공식 간행물): 숫자를 허용하되 **근거에 적힌 숫자만** 허용한다.
   //    모델이 지어낸 수치는 tier1 근거를 달고 나가면 더 위험하므로 기계 대조로 막는다.
   if (!options.numericEvidence) {
+    // 1st-party 정본 블록에 등장한 숫자 토큰만 **사면**한다 — 그 외 계약은 기존과 동일.
+    //
+    // ⚠️ 여기서 검사를 더하지 않는다 (2026-08-10 실측 2건):
+    //   · 모델이 "1군" 이라 쓰면 숫자 가드, "일군" 이라 쓰면 통과 — 표기 선택에 따른
+    //     플래키의 정체가 이 `1` 이었다. 블록(정본)에 있는 숫자는 지어낸 수치가 아니다.
+    //   · 처음엔 한글 수사 검사(hasKoreanQuantityClaim)를 얹었는데 선수명 **네일**이
+    //     `네(수사)+일(단위)` 로 오인돼 30명 명단 답변이 전부 죽었다. 원 계약(숫자 문자만
+    //     검사)에 없던 검사를 이 분기에만 더하면 사면이 아니라 강화가 된다.
+    if (options.firstPartyGroundingText) {
+      // 사면 방식: 블록에 있는 숫자 토큰을 지운 잔여 문자열에 **원 검사를 그대로** 돌린다.
+      // 검사를 재구현하면 전각 숫자(１９８５) 같은 원 검사의 커버리지를 잃는다
+      // (team-rag-wiring 게이트 실측 — `\d` 는 전각을 못 잡는다).
+      const grounded = new Set(options.firstPartyGroundingText.match(/\d+/g) ?? []);
+      const stripped = answer.replace(/\d+/g, (token) => (grounded.has(token) ? "" : token));
+      if (hasNumericCharacter(stripped)) {
+        return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
+      }
+      return { kind: "grounded", answer };
+    }
     // ⚠️ `/\d/` 만으로는 부족하다 (삼순 2026-08-07 P0-2 4라운드).
     //   `여덟 번`·`세 번째` 처럼 **한글 수사로 쓴 수치 주장**은 아라비아 숫자가 하나도
     //   없어서 그대로 통과했다. tier2 숫자 HOLD 의 취지는 "지어낸 수치 관계를 근거 달고

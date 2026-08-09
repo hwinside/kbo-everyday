@@ -29,6 +29,7 @@ import {
   type QaDeps,
   resolveRagTeamCandidate,
   rosterMembershipBlock,
+  teamEntryBlock,
   teamRosterBlock,
   type RagLlmExtras,
 } from "../../src/lib/baseball-qa/pipeline";
@@ -179,7 +180,11 @@ function verifyClosedSetContract() {
   );
   // RAG 답변 뒤 후속·정정이 끊기지 않는다 (00:53 캡처 사고 축).
   assert.ok(selectContextTurn(eligibleTurn({ jobSource: "team_rag" })), "team_rag 턴이 맥락 자격이어야 함");
-  assert.ok(selectContextTurn(eligibleTurn({ jobSource: "unsure" })), "unsure 턴(봇이 못 알아들은 직후 정정)이 맥락 자격이어야 함");
+  const unsureTurn = selectContextTurn(eligibleTurn({ jobSource: "unsure" }));
+  assert.ok(unsureTurn, "unsure 턴(봇이 못 알아들은 직후 정정)이 맥락 자격이어야 함");
+  // 상용구 답변은 중립 마커로 치환된다 — 모델이 얼버무림 톤을 이어받는 오염 실측(6/6 vs 4/6).
+  assert.equal(unsureTurn!.answer, "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)");
+  assert.equal(unsureTurn!.question, "보크가 어떤 경우?", "unsure 턴의 질문은 원문 유지");
   assert.equal(selectContextTurn(eligibleTurn({ jobSource: "blocked" })), null, "blocked 체인은 계속 차단");
   assert.equal(CONTEXT_TTL_MS, 600_000);
 }
@@ -1072,10 +1077,30 @@ async function verifyLlmDelegation() {
   }, players);
   assert.ok(ctxBlock && ctxBlock.includes("최형우: 삼성 소속"), "직전 턴의 선수를 로스터 블록이 놓쳤다");
   assert.equal(rosterMembershipBlock("보크가 뭐야?", null, players), null, "선수 없는 질문에 블록이 나왔다");
+  // 질문 선수 우선 (2026-08-10 E2E 실측 역정정 결함): 직전 턴이 구단 명단(9명)으로 붐벼도
+  // 질문의 최형우 줄이 탈락하거나 뒤로 밀리면 모델이 명단 쪽 구단으로 끌려간다.
+  const crowd = Array.from({ length: 9 }, (_, i) => ({
+    name: `기아선수${i + 1}`, kboId: `9000${i}`, team: "KIA",
+  })) as PlayerRef[];
+  const crowdedBlock = rosterMembershipBlock(
+    "최형우는 현재 삼성 라이온즈 소속인데??",
+    { question: "기아 1군 선수", answer: crowd.map((c) => c.name).join(", ") },
+    [...crowd, ...players],
+  );
+  assert.ok(crowdedBlock, "붐빈 맥락에서 블록이 비었다");
+  assert.ok(
+    crowdedBlock!.split("\n")[0].includes("최형우: 삼성 소속"),
+    `질문의 선수가 첫 줄이 아니다: ${crowdedBlock}`,
+  );
 
   // 단위: 구단 명단 블록 — 배포 후보 해석기(resolveRagTeamCandidate)를 그대로 태운다.
   const kiaCandidate = resolveRagTeamCandidate("기아 타이거즈는 어떤 구단이야?");
   assert.ok(kiaCandidate, "기아 후보 해석 실패");
+  // 1군 명단 SSOT (roster_snapshots) — 날짜 provenance 포함, 빈 명단은 null (fail-close).
+  const entry = teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: ["김도영", "양현종"] });
+  assert.ok(entry?.includes("1군 등록 명단") && entry.includes("2026-08-08") && entry.includes("김도영"));
+  assert.equal(teamEntryBlock(kiaCandidate!, null), null);
+  assert.equal(teamEntryBlock(kiaCandidate!, { snapshotDate: "2026-08-08", players: [] }), null);
   const kiaRoster = teamRosterBlock(kiaCandidate!, players);
   assert.ok(kiaRoster && kiaRoster.includes("김도영"), "구단 명단 블록에 현재 로스터 선수가 없다");
   // provenance (삼순 SSOT 정정): roster 는 현재 소속 SSOT 이지 1군 당일 등록 SSOT 가 아니다.
@@ -1100,6 +1125,12 @@ async function verifyLlmDelegation() {
     ...delegationDeps(teamState),
     enableTeamRag: true,
     searchRag: async () => KIA_EVIDENCE,
+    // 1군 명단 SSOT 배선 (삼순 2026-08-10) — production 은 roster_snapshots 최신 스냅샷.
+    // ⚠️ entry 픽스처는 전체 명단과 **구분되는 이름**만 담는다 — 겹치면 전체 명단 제거
+    //   mutation 이 entry 블록 이름으로 GREEN 이 된다(실측 N4).
+    fetchTeamEntry: async (teamId) => (teamId === 6
+      ? { snapshotDate: "2026-08-08", players: ["양현종"] }
+      : null),
     callTeamRagLlm: async (_question, _evidence, extras) => {
       teamCaptured.push(extras ?? {});
       return { text: '{"status":"GROUNDED","answer":"광주 연고 구단이에요."}', inputTokens: 1, outputTokens: 1 };
@@ -1107,9 +1138,37 @@ async function verifyLlmDelegation() {
   };
   const teamResult = await answerQuestion("u-team", "기아 타이거즈는 어떤 구단이야?", teamDeps);
   assert.equal(teamCaptured.length, 1, "team rag LLM 이 호출되지 않았다");
+  // authoritative facts 분리 (삼순): 1군 명단이 있으면 그것만 — 전체 91명 명단은 싣지 않는다.
+  const teamBlockText = teamCaptured[0].rosterBlock ?? "";
   assert.ok(
-    teamCaptured[0].rosterBlock?.includes("김도영"),
-    "team rag extras 에 현재 구단 명단이 없다",
+    teamBlockText.includes("1군 등록 명단") &&
+      teamBlockText.includes("2026-08-08") &&
+      teamBlockText.includes("양현종"),
+    "team rag extras 에 당일 1군 등록 명단(SSOT)이 없다",
+  );
+  assert.ok(
+    !teamBlockText.includes("현재 등록 선수"),
+    "1군 명단이 있는데 전체 등록 명단이 같이 실렸다 (모델 혼란 플래키 실측 축)",
+  );
+
+  // fallback: 1군 명단 미조회면 전체 등록 명단 + 구분 불가 라벨로 fail-close.
+  const fallbackCaptured: RagLlmExtras[] = [];
+  const fallbackState = freshCtx(null);
+  await answerQuestion("u-team-fb", "기아 타이거즈는 어떤 구단이야?", {
+    ...delegationDeps(fallbackState),
+    enableTeamRag: true,
+    searchRag: async () => KIA_EVIDENCE,
+    fetchTeamEntry: async () => null,
+    callTeamRagLlm: async (_question, _evidence, extras) => {
+      fallbackCaptured.push(extras ?? {});
+      return { text: '{"status":"GROUNDED","answer":"광주 연고 구단이에요."}', inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  const fbText = fallbackCaptured[0]?.rosterBlock ?? "";
+  assert.ok(
+    fbText.includes("현재 등록 선수") && fbText.includes("김도영") &&
+      fbText.includes("1군·2군 당일 등록 여부는 포함하지 않음"),
+    "1군 명단 미조회 fallback 에 전체 명단·구분 불가 라벨이 없다",
   );
   assert.ok(
     !(teamCaptured[0].rosterBlock ?? "").split("현재 등록 선수")[1]?.includes("최형우"),
@@ -1150,6 +1209,48 @@ async function verifyLlmDelegation() {
     "player rag extras 에 직전 턴이 없다",
   );
 
+  // ── 삼순 지정 2턴 고정 ①: team_rag 답변 뒤 정정 (실연쇄 — dictionary 아님) ──
+  // Q1 `기아 1군 선수`(source=team_rag) → Q2 최형우 정정. 직전 Q/A 가 LLM 에 주입돼야 한다.
+  const chainState = freshCtx(eligibleTurn({
+    question: "기아 1군 선수",
+    answer: "기아 타이거즈에는 양현종, 김선빈 등이 소속되어 있습니다.",
+    jobSource: "team_rag",
+  }));
+  const chainDeps: QaDeps = {
+    ...delegationDeps(chainState),
+    enablePlayerRag: true,
+    searchRag: async () => [], // 최형우 chunk 0건 (Production 실측) → generic 양보
+    callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
+  };
+  await answerQuestion("u-chain", "최형우는 현재 삼성 라이온즈 소속인데??", chainDeps);
+  assert.equal(chainState.llmCalls, 1, "team_rag 연쇄 정정이 generic LLM 에 도달하지 않았다");
+  assert.deepEqual(
+    chainState.llmContexts[0],
+    { question: "기아 1군 선수", answer: "기아 타이거즈에는 양현종, 김선빈 등이 소속되어 있습니다." },
+    "team_rag 직전 턴이 정정 질문의 맥락으로 주입되지 않았다",
+  );
+  assert.ok(
+    chainState.llmRosterBlocks[0]?.includes("최형우: 삼성 소속"),
+    "정정 질문에 현재 소속 정본이 없다",
+  );
+
+  // ── 삼순 지정 2턴 고정 ②: kbo_structured(입단 확정답) 뒤 `언제?` ────────────
+  // Q1 `임찬규는 언제 어느팀에 입단했어?`(source=kbo_structured) → Q2 `언제?`.
+  // `언제?` 는 룰 후속 집합에 없는 열린 입력 — LLM 이 직전 Q/A 로 잇는다 (확장 allowlist).
+  const draftChain = freshCtx(eligibleTurn({
+    question: "임찬규는 언제 어느팀에 입단했어?",
+    answer: "임찬규 선수는 2011년 LG에 입단했어요.",
+    jobSource: "kbo_structured",
+  }));
+  await answerQuestion("u-when", "언제?", delegationDeps(draftChain));
+  assert.equal(draftChain.previousTurnCalls, 1, "`언제?` 가 직전 턴을 로드하지 않았다");
+  assert.equal(draftChain.llmCalls, 1, "`언제?` 가 LLM 에 도달하지 않았다");
+  assert.deepEqual(
+    draftChain.llmContexts[0],
+    { question: "임찬규는 언제 어느팀에 입단했어?", answer: "임찬규 선수는 2011년 LG에 입단했어요." },
+    "kbo_structured 직전 턴이 `언제?` 의 맥락으로 주입되지 않았다",
+  );
+
   // ── 근거 0건 로스터 선수 → generic LLM 양보 (2026-08-10 E2E 실측 축) ────────
   // 최형우(chunk 0행)의 정정 질문이 unsure 로 죽지 않고, roster 블록을 들고 generic 에 간다.
   const yieldState = freshCtx(grandSlamTurn());
@@ -1173,7 +1274,8 @@ async function verifyLlmDelegation() {
   assert.ok(RAG_SYSTEM_PROMPT.includes("<현재 로스터> 블록이 주어지면 그것이 선수의 현재 소속 구단의 유일한 정본"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("오류를 인정하며 로스터 기준으로 정정해 답한다"));
   assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("현재 선수단을 물으면 로스터 블록의 선수만 말한다"));
-  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("1군 엔트리를 물으면 그 구분은 확인할 수 없다고 밝히고"));
+  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("'1군 등록 명단' 블록이 있으면 그것이 당일 1군 엔트리의 유일한 정본"));
+  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("'1군 등록 명단' 블록이 없으면 1군·2군 구분은 확인할 수 없다고 밝히고"));
   assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
   assert.ok(RAG_SYSTEM_PROMPT.includes("무관한 새 질문이면 직전 대화는 무시한다"));
 
