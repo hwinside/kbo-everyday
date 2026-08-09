@@ -15,6 +15,7 @@
  *   4. 생년 불일치 실 corpus 전건 9명의 판정을 그대로 고정한다.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -59,12 +60,19 @@ type CensusFile = {
   corpusSha256: string;
   corpusPhysicalLines: number;
   rosterFileSha256: string;
+  /** PR base(merge-base) 커밋. 이 PR 안의 중간 커밋이 아니다. */
+  baseCommit: string;
   baseIdentitySha256: string;
   currentIdentitySha256: string;
   playerRootDocuments: number;
   baseAssigned: number;
   currentAssigned: number;
   transitions: Record<string, number>;
+  /** 선택: 이 PR 안의 직전 exact 와의 비교. base 비교와 섞이면 안 된다. */
+  previousCommit?: string;
+  previousIdentitySha256?: string;
+  previousAssigned?: number;
+  previousTransitions?: Record<string, number>;
   rows: {
     entity: string;
     kboId: string | null;
@@ -72,6 +80,8 @@ type CensusFile = {
     base: string;
     current: string;
     transition: string;
+    previous?: string;
+    previousTransition?: string;
   }[];
 };
 
@@ -531,10 +541,30 @@ function verifyFixtureProvenance(): void {
  */
 function verifyCensusIntegrity(): void {
   assert.equal(census.rows.length, census.playerRootDocuments, "census 행 수와 선언된 문서 수가 다르다");
+  // ⚠️ base 는 **PR base 커밋**이어야 한다 (삼순 NO-GO 3차).
+  //   직전 판은 이 PR 안의 중간 커밋을 base 로 썼고, 그래서 숫자가 "main→현재" 가 아니라
+  //   "중간 broken exact→현재" 였다. 커밋 SHA 를 artifact 에 박아 사후 확인이 가능하게 한다.
+  assert.ok(
+    /^[0-9a-f]{40}$/.test(census.baseCommit),
+    `baseCommit 이 40자리 커밋 SHA 가 아니다: ${census.baseCommit}`,
+  );
   assert.notEqual(
     census.baseIdentitySha256, census.currentIdentitySha256,
     "base·current 구현 해시가 같다 — before/after 대조가 성립하지 않는다",
   );
+  // 중간 exact 비교는 **있어도 되지만 base 비교와 섞이면 안 된다.**
+  if (census.previousCommit !== undefined || census.previousTransitions !== undefined) {
+    assert.ok(
+      /^[0-9a-f]{40}$/.test(census.previousCommit ?? ""),
+      "previousCommit 이 40자리 커밋 SHA 가 아니다",
+    );
+    assert.notEqual(
+      census.previousCommit, census.baseCommit,
+      "previousCommit 과 baseCommit 이 같다 — 두 비교를 분리한 의미가 없다",
+    );
+    const previousAssigned = census.rows.filter((row) => (row.previous ?? "").startsWith("assigned")).length;
+    assert.equal(previousAssigned, census.previousAssigned, "previousAssigned 가 행별 판정과 맞지 않는다");
+  }
   const countAssigned = (key: "base" | "current") =>
     census.rows.filter((row) => row[key].startsWith("assigned")).length;
   assert.equal(countAssigned("base"), census.baseAssigned, "baseAssigned 가 행별 판정과 맞지 않는다");
@@ -566,7 +596,14 @@ function verifyCensusIntegrity(): void {
   assert.ok(강준서, "census 에 강준서가 없다");
   assert.equal(강준서!.base, "rejected:category_absent", "listed 문서가 base 에서 분류 부재가 아니었다");
   assert.equal(강준서!.current, "assigned");
-  ok(`census 정합성 — assigned ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
+  // census 의 로스터 지문이 현재 repo 로스터와 같아야 한다 — 로스터가 바뀌면 성씨·생년 파생이
+  // 달라지므로 census 를 재생성해야 한다.
+  assert.equal(
+    createHash("sha256").update(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"))).digest("hex"),
+    census.rosterFileSha256,
+    "census 의 rosterFileSha256 이 현재 로스터 파일과 다르다 — census 를 재생성해야 한다",
+  );
+  ok(`census 정합성 — base(${census.baseCommit.slice(0, 9)}) ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
 }
 
 function run(): void {
