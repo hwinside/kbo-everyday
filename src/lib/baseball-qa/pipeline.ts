@@ -3,7 +3,6 @@
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
 
 import {
-  isComparativeFollowup,
   isFollowupPhrase,
   selectContextTurn,
   type ContextTurn,
@@ -592,20 +591,20 @@ export interface QaDeps {
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
-  callLlm: (question: string, context?: ContextTurn) => Promise<LlmResult>;
+  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string) => Promise<LlmResult>;
   /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
   searchRag?: (candidate: RagEntityCandidate, question: string) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
-  callRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  callRagLlm?: (question: string, evidence: RagEvidence[], extras?: RagLlmExtras) => Promise<LlmResult>;
   /**
    * 구단 tier2 근거 재서술 호출. 선수 경로(`callRagLlm`)와 분리한 이유는
    * 프롬프트가 다르기 때문이다 — 선수용은 숫자를 전면 금지해서 구단 서사의
    * 창단 연도까지 거부한다. 수치 안전은 문구가 아니라 출력 가드가 강제한다.
    */
-  callTeamRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  callTeamRagLlm?: (question: string, evidence: RagEvidence[], extras?: RagLlmExtras) => Promise<LlmResult>;
   /** 현재 출시 범위는 룰/용어만이다. 선수 RAG는 후속 출시에서 명시적으로 켠다. */
   enablePlayerRag?: boolean;
   /**
@@ -2111,12 +2110,10 @@ export function routeQuestion(
   // 후속 문법(폐쇄집합 full-string 일치) + 새 야구 엔티티/주제 신호 부재일 때만 직전 토픽 연장.
   // 소스 turn이 없으면 차단이 아니라 되묻기로 종료한다 (spec §4.1 B4, §4.3 AC2·AC3·AC4).
   if (isFollowupPhrase(question)) return hasContext ? "baseball_rule_term" : "context_missing";
-  // 비교형 후속(`만루홈런이랑 비슷한 거야?`) — 문장 안에 비교 피연산자가 하나뿐이라
-  // 나머지 하나가 직전 턴에서 와야 성립한다. 판정 근거는 어휘가 아니라 구조다(context.ts).
-  // 맥락이 없으면 기존 후속과 **같은 칸**(되묻기)으로 닫는다 — 반쪽 문장에 답하지 않는다.
-  if (isComparativeFollowup(question, (q) => canonicalBaseballEntitySpans(q, glossary, players))) {
-    return hasContext ? "baseball_rule_term" : "context_missing";
-  }
+  // ⚠️ 비교형 후속(`만루홈런이랑 비슷한 거야?`)을 룰 문법으로 판정하지 않는다.
+  //   R1~R4 네 라운드 동안 계수기→typed span→typed operand 로 문법을 키웠지만 열린
+  //   한국어 입력은 룰로 닫히지 않았다(하린아빠 2026-08-10 00:53 방향 확정 — 룰 최소화,
+  //   LLM 위임). 직전 턴은 항상 로드해 LLM 프롬프트에 주고, 관련성 판단은 모델이 한다.
   if (supportedRuleTerm) return "baseball_rule_term";
 
   // ⚠️ 선수·구단을 지명했다는 이유만으로 차단하지 않는다. tier2 선수 RAG가 확장된 뒤로
@@ -2234,106 +2231,59 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 }
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
-/**
- * 문장 전체의 **canonical 명시 야구 엔티티 수** — 비교형 후속 판정(②)이 쓰는 SSOT.
- *
- * typed canonical span 계수(삼순 2026-08-09 확정, 3차 경계 반영):
- *
- *   • 검수 사전 term/alias · 로스터 선수 · 룰 용어 힌트(generic 제외) — 한글은 부분문자열,
- *     ASCII 는 단어 경계. **다어절은 `\s*` 유연 매칭**이다(`기예르모 에레디아` 28명이
- *     띄어쓰기 그대로 잡혀야 한다 — pattern 쪽 공백만 지우면 전원 0개가 된다).
- *   • 구단 — 기존 `mentionsTeam` matcher 규약을 그대로 따른다: 약칭 뒤 한글 잔여는
- *     **문법 꼬리(`isGrammaticalTail`) 또는 같은 팀 별칭**만 허용한다. `LG화학`·`NC소프트`
- *     는 구단이 아니다. 단 잔여 자리에서 **다른 canonical span 이 시작**하면 각각 센다
- *     (`LG한화` = 2 — 인접 비병합). 결합형은 optional-space 한 span 이다
- *     (`엘지트윈스`·`LG 트윈스` 모두 1개).
- *   • `BASEBALL_WORDS` 광역 신호어는 계수에 넣지 않는다.
- *
- *   겹침은 최장 우선 비겹침으로 해소하고, 인접 span 은 합치지 않는다.
- */
-export function countCanonicalBaseballEntities(
-  question: string,
-  glossary: GlossaryEntry[] = [],
-  players: PlayerRef[] = [],
-): number {
-  return canonicalBaseballEntitySpans(question, glossary, players).length;
+/** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
+export interface RagLlmExtras {
+  context?: ContextTurn;
+  rosterBlock?: string;
 }
 
 /**
- * canonical 야구 엔티티 span (위치 포함) — typed operand 판정(context.ts)이 조사 stem 과
- * 위치를 대조할 수 있게 좌표를 그대로 준다. 좌표계 = `NFKC·lowercase·공백 유지`.
+ * 질문·직전 턴에 등장하는 로스터 선수의 **현재 소속** 블록 (축 D SSOT).
+ *
+ * ⚠️ 이건 룰 판정이 아니라 **닫힌 집합 조회**다 — 로스터 이름 881개와의 문자열 대조로
+ *   "누구의 소속을 주입할까"만 고른다. 문장 의미 판단은 하지 않는다(LLM 몫).
+ *   나무위키 스냅샷이 과거 소속("기아에 최형우")을 서술해도, 이 블록이 프롬프트에서
+ *   현재 소속(삼성)을 정본으로 선언한다 (하린아빠 2026-08-10 00:53 캡처).
  */
-export function canonicalBaseballEntitySpans(
+export function rosterMembershipBlock(
   question: string,
-  glossary: GlossaryEntry[] = [],
-  players: PlayerRef[] = [],
-): Array<{ start: number; end: number }> {
-  const normalized = question.normalize("NFKC").toLowerCase();
-  type SpanType = "team" | "other";
-  const spans: Array<{ start: number; end: number; type: SpanType }> = [];
-  const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const isAsciiEdge = (part: string) => /^[a-z0-9]/.test(part) || /[a-z0-9]$/.test(part);
-
-  /**
-   * 어휘 하나를 span 후보로 등록한다.
-   * 한글 조각은 부분문자열(조사가 직접 붙는다), ASCII 경계 조각은 단어 경계,
-   * 다어절/결합형은 조각 사이 `\s*`(붙여쓰기·띄어쓰기 모두 한 span).
-   */
-  const addSpans = (word: string, type: SpanType) => {
-    const norm = word.normalize("NFKC").toLowerCase().trim();
-    if (norm.replace(/\s+/g, "").length < 2) return;
-    const parts = norm.split(/\s+/);
-    const body = parts.map(escapeRegExp).join("\\s*");
-    const lead = /^[a-z0-9]/.test(parts[0]) ? "(?<![a-z0-9])" : "";
-    const trailPart = parts[parts.length - 1];
-    const trail = /[a-z0-9]$/.test(trailPart) ? "(?![a-z0-9])" : "";
-    const pattern = new RegExp(`${lead}${body}${trail}`, "g");
-    for (const match of normalized.matchAll(pattern)) {
-      spans.push({ start: match.index, end: match.index + match[0].length, type });
-    }
-  };
-
-  for (const entry of glossary) {
-    for (const word of [entry.term, ...entry.aliases]) addSpans(word, "other");
+  context: ContextTurn | null,
+  players: PlayerRef[],
+): string | null {
+  const haystack = [question, context?.question ?? "", context?.answer ?? ""]
+    .join("\n").normalize("NFKC").toLowerCase();
+  const lines: string[] = [];
+  const seen = new Set<string>();
+  for (const player of players) {
+    const name = (player.name ?? "").normalize("NFKC").toLowerCase();
+    if (name.length < 2 || !player.team) continue;
+    if (!haystack.includes(name)) continue;
+    const key = `${player.name}:${player.team}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // 동명이인은 두 줄 다 넣는다 — 어느 쪽인지 확정하는 건 룰이 아니라 모델·유저 맥락이다.
+    lines.push(`${player.name}: ${player.team} 소속`);
+    if (lines.length >= 8) break;
   }
-  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-    for (const word of [canonical, ...shorts, ...nicks]) addSpans(word, "team");
-    // 같은 팀 결합형만 한 팀 = 한 span 이다 (`mentionsTeam` 과 동일 규약 — 교차조합 불허).
-    for (const base of new Set([canonical.toLowerCase(), ...shorts])) {
-      for (const nick of nicks) addSpans(`${base} ${nick}`, "team");
-    }
-  }
-  for (const player of players) addSpans(player.name ?? "", "other");
-  for (const word of RULE_TERM_HINT_WORDS) {
-    if (!GENERIC_RULE_TERM_HINTS.has(word)) addSpans(word, "other");
-  }
-
-  // 최장 우선 비겹침 선택 — 인접 span 은 합치지 않고 각각 남긴다(`LG한화` = 2).
-  spans.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
-  const chosen: Array<{ start: number; end: number; type: SpanType }> = [];
-  for (const span of spans) {
-    if (chosen.some((other) => span.start < other.end && other.start < span.end)) continue;
-    chosen.push(span);
-  }
-
-  // 구단 span 은 `mentionsTeam` 규약으로 잔여를 검증한다: span 뒤 같은 토큰의 한글 잔여가
-  // ① 문법 꼬리이거나 ② 다른 선택 span 의 시작이어야 구단 지명이다. `LG화학` 은 어느 쪽도
-  // 아니라서 탈락하고, `LG한화` 는 ②로 둘 다 남는다.
-  const tokenTailAfter = (end: number): string => {
-    const rest = normalized.slice(end);
-    const match = /^[가-힣a-z0-9]+/.exec(rest);
-    return match ? match[0] : "";
-  };
-  const valid = chosen.filter((span) => {
-    if (span.type !== "team") return true;
-    const rest = tokenTailAfter(span.end);
-    if (rest.length === 0) return true;
-    if (isGrammaticalTail(rest)) return true;
-    return chosen.some((other) => other !== span && other.start === span.end);
-  });
-  return valid.map(({ start, end }) => ({ start, end }));
+  return lines.length > 0 ? lines.join("\n") : null;
 }
 
+/**
+ * 해당 구단의 현재 로스터 명단 블록 — 구단 RAG(스냅샷 문서) 답변이 "현재 선수단"을
+ * 물었을 때 과거 명단을 옮기지 않도록 정본 명단을 함께 준다 (축 D).
+ */
+export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[]): string | null {
+  const canonical = candidate.name;
+  const entry = TEAM_ALIASES.find((team) => team.canonical === canonical);
+  if (!entry) return null;
+  // 로스터 team 필드는 약칭(`LG`·`KIA`…)이다 — canonical/약칭 어느 쪽과도 맞춘다.
+  const accepted = new Set([canonical, ...entry.shorts].map((word) => word.normalize("NFKC").toLowerCase()));
+  const names = players
+    .filter((player) => accepted.has((player.team ?? "").normalize("NFKC").toLowerCase()))
+    .map((player) => player.name);
+  if (names.length === 0) return null;
+  return `${canonical} 현재 등록 선수 (KBO 공식 로스터): ${names.join(", ")}`;
+}
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
@@ -2466,6 +2416,7 @@ async function answerPlayerDescriptiveQuestion(
   candidate: RagPlayerCandidate,
   remaining: number,
   deps: QaDeps,
+  extras: RagLlmExtras = {},
 ): Promise<QaResult> {
   const failClose = async (): Promise<QaResult> => {
     // 근거로 답할 수 없는 선수 서술형 질문. 중요한 건 문구가 아니라 **여기서 끝난다**는
@@ -2531,7 +2482,7 @@ async function answerPlayerDescriptiveQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callRagLlm!(question, evidence);
+      llm = await deps.callRagLlm!(question, evidence, extras);
     } catch {
       // 공급자 호출 실패도 우리 쪽 고장이다 — 근거는 이미 찾았다.
       return failCloseError();
@@ -2672,6 +2623,7 @@ async function answerTeamRagQuestion(
    * "순위표에서 보세요"가 정확한 안내고, 서술형이면 일반 안내다.
    */
   numericQuestion: boolean,
+  extras: RagLlmExtras = {},
 ): Promise<QaResult | null> {
   if (!deps.enableTeamRag || !deps.searchRag || !deps.callTeamRagLlm) return null;
 
@@ -2728,7 +2680,7 @@ async function answerTeamRagQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callTeamRagLlm(question, evidence);
+      llm = await deps.callTeamRagLlm(question, evidence, extras);
     } catch {
       // 경계를 이미 소비했을 수 있어 기존 경로로 내려보내지 않는다.
       return failCloseError();
@@ -2890,20 +2842,21 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const remaining = reservation.remaining;
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
-  // 맥락 조회는 후속 문법일 때만 — 일반 질문은 기존 경로 그대로다 (spec §4.1 B4).
+  // 직전 턴은 **항상** 로드한다 (하린아빠 2026-08-10 00:53 방향 확정 — 룰 최소화, LLM 위임).
+  // "이 질문이 후속인가"는 열린 자연어 판정이라 룰로 닫히지 않는다 — 관련성 판단은
+  // LLM 프롬프트("무관하면 무시")가 한다. DB 1회 조회 비용은 무시 가능하고,
+  // 누수 경로는 종전과 동일(selectContextTurn 이 allowlist·TTL·본인 turn 만 통과).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
-  const comparativeFollowup = isComparativeFollowup(
-    question,
-    (q) => canonicalBaseballEntitySpans(q, glossary, players),
-  );
-  if (deps.loadPreviousTurn && (isFollowupPhrase(question) || comparativeFollowup)) {
+  if (deps.loadPreviousTurn) {
     try {
       context = selectContextTurn(await deps.loadPreviousTurn());
     } catch {
       context = null;
     }
   }
+  // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
+  const rosterBlock = rosterMembershipBlock(question, context, players) ?? undefined;
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
@@ -3164,6 +3117,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
+      {
+        context: context ?? undefined,
+        // 구단 질문에는 선수 소속 블록에 더해 **해당 구단의 현재 명단**을 준다 —
+        // "기아 1군 선수" 를 스냅샷 문서의 과거 명단으로 답하지 않게 (축 D).
+        rosterBlock: [rosterBlock, teamRosterBlock(teamRagCandidate, players) ?? undefined]
+          .filter(Boolean).join("\n") || undefined,
+      },
     );
     if (teamAnswer) return teamAnswer;
   }
@@ -3189,7 +3149,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       if (record) return record;
     }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
-      return answerPlayerDescriptiveQuestion(userId, question, questionNorm, playerCandidate, remaining, deps);
+      return answerPlayerDescriptiveQuestion(
+        userId, question, questionNorm, playerCandidate, remaining, deps,
+        { context: context ?? undefined, rosterBlock },
+      );
     }
     // 선수 경로가 꺼져 있어 답을 못 만든 것 — 주제 밖이 아니라 근거 부족이다.
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: null, outputTokens: null });
@@ -3250,7 +3213,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     try {
-      llm = await deps.callLlm(question, context ?? undefined);
+      llm = await deps.callLlm(question, context ?? undefined, rosterBlock);
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
       //   종전에는 `unsure`(판정 불명확)로 접었는데, 그러면 유저는 "질문을 못 알아들었다" 를

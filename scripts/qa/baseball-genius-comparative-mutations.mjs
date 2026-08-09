@@ -1,116 +1,153 @@
-// 비교형 후속 판정 mutation runner — PR #1139
+// LLM 위임 계약 mutation runner — PR #1139 (2026-08-10 방향 확정: 룰 최소화, LLM 위임)
 //
 // 판정축을 하나씩 죽여서 게이트(baseball-genius-context-smoke)가 RED 를 내는지 확인한다.
-// 게이트가 어떤 축 제거에도 GREEN 이면 그 게이트는 그 축을 지키지 못하는 것이다.
+// 축: A(직전 턴 상시 로드·LLM 주입) · D(현재 소속 roster SSOT 데이터 주입) ·
+//     프롬프트 계약(무관-무시·로스터 정본·정정 인정) · 요청 빌더(데이터 구획).
 //
-// ⚠️ 운영 규칙 (2026-08-09 #1137 교훈 반영):
+// ⚠️ 운영 규칙 (2026-08-09 #1137 교훈 + 2026-08-10 finally 원복 교훈):
 //   • 원복은 in-memory 백업 → 파일 재작성. `git checkout --` 는 쓰지 않는다(P0).
 //   • 앵커가 없으면 "검출 성공"이 아니라 **runner 고장**으로 실패시킨다.
 //   • 아무 nonzero exit 을 RED 로 세지 않는다 — AssertionError 마커가 있어야 검출이다.
-//     (컴파일 오류·모듈 로드 실패는 검출이 아니라 mutation 자체의 부작용이다)
+//   • 루프 안 process.exit 금지 — finally 원복을 건너뛰어 변이가 파일에 남는다(실측).
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../..");
-const CONTEXT = path.join(root, "src/lib/baseball-qa/context.ts");
 const PIPELINE = path.join(root, "src/lib/baseball-qa/pipeline.ts");
+const GEMINI = path.join(root, "src/lib/baseball-qa/gemini-request.ts");
+const RETRIEVE = path.join(root, "src/lib/baseball-qa/rag/retrieve.ts");
 
 const MUTATIONS = [
+  // ── 축 A: 직전 턴 상시 로드 + LLM 주입 ──────────────────────────────────
   {
-    id: "M1 비교 관계 표현 축 제거",
-    file: CONTEXT,
-    anchor: "return COMPARATIVE_RELATION_STEMS.some((stem) => compact.includes(stem));",
-    replacement: "return false;",
-    why: "관계 표현 판정이 죽으면 양성 4형태 전부 후속으로 안 잡힌다",
-  },
-  {
-    id: "M2 엔티티 ≥2 자기완결 차단 제거",
-    file: CONTEXT,
-    anchor: "if (spans.length >= 2) return false;",
-    replacement: "if (spans.length >= 2) return true;",
-    why: "삼순 반례(그랜드슬램은 만루홈런이랑 비슷해?)가 후속으로 오판돼 무관 맥락이 주입된다",
-  },
-  {
-    id: "M3 명시 지시어 축 제거",
-    file: CONTEXT,
-    anchor: "return hasComparativeDemonstrative(question);",
-    replacement: "return false;",
-    why: "`그거랑 비슷해?` 가 후속에서 빠진다",
-  },
-  {
-    id: "M4 최장 우선 선택 제거 (짧은 조각이 먼저 잡힘)",
+    id: "N1 직전 턴 상시 로드 제거",
     file: PIPELINE,
-    anchor: "spans.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);",
-    replacement: "spans.sort((a, b) => (a.end - a.start) - (b.end - b.start) || a.start - b.start);",
-    why: "`만루홈런`/`엘지트윈스` 가 조각으로 갈라져 계수가 갈린다",
+    anchor: "let context: ContextTurn | null = null;\n  if (deps.loadPreviousTurn) {",
+    replacement: "let context: ContextTurn | null = null;\n  if (false as boolean && deps.loadPreviousTurn) {",
+    why: "후속 질문(`만루홈런이랑 비슷한 거야?`·`언제부터 그랬어?`)이 직전 턴 없이 끊긴다",
   },
   {
-    id: "M5 광역 신호어 계수 편입",
+    id: "N2 generic LLM 에 context 미전달",
     file: PIPELINE,
-    anchor: "for (const word of RULE_TERM_HINT_WORDS) {",
-    replacement: "for (const word of [...RULE_TERM_HINT_WORDS, ...BASEBALL_WORDS]) {",
-    why: "`야구랑 비슷해?` 가 피연산자를 얻어 후속으로 오판된다",
+    anchor: "llm = await deps.callLlm(question, context ?? undefined, rosterBlock);",
+    replacement: "llm = await deps.callLlm(question, undefined, rosterBlock);",
+    why: "직전 턴을 로드해 놓고 LLM 프롬프트에 싣지 않으면 후속 결속이 조용히 죽는다",
   },
+  // ── 축 D: 현재 소속 roster SSOT ─────────────────────────────────────────
   {
-    id: "M6 ASCII 단어 경계 제거",
+    id: "N3 소속 블록 매칭 무력화",
     file: PIPELINE,
-    anchor: `    const lead = /^[a-z0-9]/.test(parts[0]) ? "(?<![a-z0-9])" : "";
-    const trailPart = parts[parts.length - 1];
-    const trail = /[a-z0-9]$/.test(trailPart) ? "(?![a-z0-9])" : "";`,
-    replacement: `    const lead = "";
-    const trailPart = parts[parts.length - 1];
-    const trail = "";`,
-    why: "ASCII 어휘가 단어 안 부분문자열로 잡힌다 (walkbalker 안의 balk)",
+    anchor: "if (!haystack.includes(name)) continue;",
+    replacement: "continue;",
+    why: "정정 질문(`최형우는 현재 삼성 소속인데??`)에 현재 소속 정본이 안 실린다",
   },
   {
-    id: "M8 roster 선수 계수 제거",
+    id: "N4 구단 명단 블록 미전달 (team rag)",
     file: PIPELINE,
-    anchor: 'for (const player of players) addSpans(player.name ?? "", "other");',
-    replacement: ";",
-    why: "`김도영이랑 비슷해?` 가 엔티티 0개가 되어 후속에서 빠진다",
+    anchor: "rosterBlock: [rosterBlock, teamRosterBlock(teamRagCandidate, players) ?? undefined]",
+    replacement: "rosterBlock: [rosterBlock, undefined]",
+    why: "`기아 1군 선수` 가 스냅샷 문서의 과거 명단(이적한 최형우 포함)으로 답한다",
   },
   {
-    id: "M14 비야구 stem + 야구 엔티티 차단 제거",
-    file: CONTEXT,
-    anchor: "if (explicitNonBaseball.length >= 1 && spans.length >= 1) return false;",
-    replacement: "if (false) return false;",
-    why: "`애플이랑 한화 차이?` 가 후속으로 오판된다",
-  },
-  {
-    id: "M15 질문형 target 차단 제거",
-    file: CONTEXT,
-    anchor: "if (hasInterrogativeTarget && (spans.length >= 1 || explicitStems.length >= 1)) return false;",
-    replacement: "if (false) return false;",
-    why: "`한화랑 뭐가 비슷해?` 가 후속으로 오판된다",
-  },
-  {
-    id: "M10 구단 잔여 검증 제거 (LG화학이 구단으로 잡힘)",
+    id: "N5 player rag extras 미전달",
     file: PIPELINE,
-    anchor: "if (isGrammaticalTail(rest)) return true;",
-    replacement: "return true;",
-    why: "`LG화학이랑 비슷해?` 가 구단 1개로 세져 비야구 질문에 야구 맥락이 주입된다",
+    anchor: "llm = await deps.callRagLlm!(question, evidence, extras);",
+    replacement: "llm = await deps.callRagLlm!(question, evidence);",
+    why: "선수 서술 답변이 직전 턴·현재 소속 없이 스냅샷만으로 생성된다",
   },
   {
-    id: "M11 다어절 유연 매칭 제거 (조각을 붙여쓰기로만 결합 — grand slam alias 포함)",
+    id: "N6 team rag extras 미전달",
     file: PIPELINE,
-    anchor: 'const body = parts.map(escapeRegExp).join("\\\\s*");',
-    replacement: 'const body = parts.map(escapeRegExp).join("");',
-    why: "`기예르모 에레디아랑 비슷해?` 가 0개가 되어 후속에서 끊긴다",
+    anchor: "llm = await deps.callTeamRagLlm(question, evidence, extras);",
+    replacement: "llm = await deps.callTeamRagLlm(question, evidence);",
+    why: "구단 답변이 직전 턴·현재 명단 없이 스냅샷만으로 생성된다",
   },
   {
-    id: "M12 결합형 span 등록 제거 (띄어쓰기 팀명이 2개로 갈라짐)",
+    id: "N7 이적 선수가 구단 명단에 남음 (팀 필터 제거)",
     file: PIPELINE,
-    anchor: "      for (const nick of nicks) addSpans(`${base} ${nick}`, \"team\");",
-    replacement: "      ;",
-    why: "`LG 트윈스랑 비슷해?` 가 2개로 세져 후속이 차단된다",
+    anchor: ".filter((player) => accepted.has((player.team ?? \"\").normalize(\"NFKC\").toLowerCase()))",
+    replacement: "",
+    why: "구단 명단 블록이 전 구단 선수를 담아 이적 선수(삼성 최형우)가 기아 명단에 남는다",
+  },
+  // ── 프롬프트 계약 ───────────────────────────────────────────────────────
+  {
+    id: "N8 무관-무시 지시 제거 (generic)",
+    file: GEMINI,
+    anchor: '"단, 이번 질문이 직전 대화와 무관한 새 주제면 직전 대화는 완전히 무시하고 이번 질문만 답한다.",',
+    replacement: "",
+    why: "상시 주입된 직전 턴이 무관 질문까지 오염시킨다 — 이 지시가 룰 판정을 대체하는 안전판이다",
   },
   {
-    id: "M9 인접 span 병합 회귀 (겹침 판정을 ≤ 로)",
-    file: PIPELINE,
-    anchor: "if (chosen.some((other) => span.start < other.end && other.start < span.end)) continue;",
-    replacement: "if (chosen.some((other) => span.start <= other.end && other.start <= span.end)) continue;",
-    why: "`LG한화 차이?` 가 1개로 병합돼 자기완결 질문에 맥락이 붙는다",
+    id: "N9 후속-연결 지시 제거 (generic)",
+    file: GEMINI,
+    anchor: "\"이번 질문이 '언제?', '몇 순위?', '그거랑 비슷해?' 처럼 혼자서는 뜻이 안 되는 짧은 후속이면 직전 대화의 주제에 이어서 답한다.\",",
+    replacement: "",
+    why: "짧은 후속이 새 질문으로 오판된다 (00:57 캡처 `언제?` 실사고 축)",
+  },
+  {
+    id: "N10 로스터 정본 지시 제거 (generic)",
+    file: GEMINI,
+    anchor: '"<현재 로스터> 블록이 함께 주어지면 그것이 선수의 현재 소속 구단에 대한 유일한 정본이다.",',
+    replacement: "",
+    why: "모델 기억·문서의 과거 소속이 현재 소속으로 답해진다",
+  },
+  {
+    id: "N11 정정 인정 지시 제거 (generic)",
+    file: GEMINI,
+    anchor: '"지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 오류를 인정하며 정정한 사실을 답한다.",',
+    replacement: "",
+    why: "유저가 오류를 지적하면 모르겠다로 도망간다 (00:53 지적 축)",
+  },
+  {
+    id: "N12 로스터 정본 지시 제거 (player rag)",
+    file: RETRIEVE,
+    anchor: '"<현재 로스터> 블록이 주어지면 그것이 선수의 현재 소속 구단의 유일한 정본이다.",',
+    replacement: "",
+    why: "스냅샷 소속이 현재 소속으로 답해진다",
+  },
+  {
+    id: "N13 정정 인정 지시 제거 (player rag)",
+    file: RETRIEVE,
+    anchor: '"지적이 <현재 로스터>로 확인되면 GROUNDED로 판정하고, 오류를 인정하며 로스터 기준으로 정정해 답한다.",',
+    replacement: "",
+    why: "정정 발화가 INSUFFICIENT 로 도망간다",
+  },
+  {
+    id: "N14 명단 정본 지시 제거 (team rag)",
+    file: RETRIEVE,
+    anchor: '"현재 선수단을 물으면 로스터 블록의 선수만 말한다. 자료에만 있고 로스터에 없는 선수는 현재 소속으로 말하지 않는다.",',
+    replacement: "",
+    why: "`기아 1군 선수` 답에 이적한 선수가 남는다",
+  },
+  {
+    id: "N15 무관-무시 지시 제거 (team rag)",
+    file: RETRIEVE,
+    anchor: '"<직전 대화> 블록이 주어지고 이번 질문이 그 주제의 후속이면 이어서 답한다. 무관한 새 질문이면 직전 대화는 무시한다.",',
+    replacement: "",
+    why: "구단 경로에서 무관한 직전 턴이 답을 오염시킨다",
+  },
+  // ── 요청 빌더: 데이터 구획 ──────────────────────────────────────────────
+  {
+    id: "N16 RAG 요청에서 로스터 구획 제거",
+    file: RETRIEVE,
+    anchor: "if (extras.rosterBlock) {",
+    replacement: "if (false as boolean) {",
+    why: "지시는 있는데 데이터가 안 실린다 — 프롬프트 계약이 공약이 된다",
+  },
+  {
+    id: "N17 RAG 요청에서 직전 대화 구획 제거",
+    file: RETRIEVE,
+    anchor: "if (extras.context) {",
+    replacement: "if (false as boolean) {",
+    why: "RAG 경로 후속·정정이 직전 턴 없이 생성된다",
+  },
+  {
+    id: "N18 generic 요청에서 로스터 블록 제거",
+    file: GEMINI,
+    anchor: "const finalQuestion = rosterBlock",
+    replacement: "const finalQuestion = false",
+    why: "generic 경로에 현재 소속 데이터가 안 실린다",
   },
 ];
 
@@ -150,7 +187,9 @@ for (const mutation of MUTATIONS) {
     continue;
   }
   try {
-    writeFileSync(mutation.file, original.replace(mutation.anchor, mutation.replacement));
+    // 같은 계약 문구가 한 파일에 여러 번 있을 수 있다(선수·구단 프롬프트). 한 곳만 바꾸면
+    // 다른 곳 앵커가 살아서 GREEN 이 된다(2026-08-10 N15 실측) — 전 occurrence 를 바꾼다.
+    writeFileSync(mutation.file, original.split(mutation.anchor).join(mutation.replacement));
     const result = runSmoke();
     const assertionRed = result.failed && /ERR_ASSERTION|AssertionError/.test(result.output);
     if (assertionRed) {
@@ -184,4 +223,4 @@ if (failures.length > 0) {
   }
 }
 
-console.log(`✅ comparative-followup mutation PASS (${detected}/${MUTATIONS.length} 전부 RED)`);
+console.log(`✅ llm-delegation mutation PASS (${detected}/${MUTATIONS.length} 전부 RED)`);

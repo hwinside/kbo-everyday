@@ -15,6 +15,7 @@ import {
   type LlmResult,
   type QaDeps,
   type QaResult,
+  type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
 import {
   isFollowupPhrase,
@@ -37,6 +38,7 @@ import {
 } from "@/lib/baseball-qa/gemini-request";
 import {
   buildRagLlmRequest,
+  RAG_SYSTEM_PROMPT,
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_NEWS_CANDIDATE_LIMIT,
@@ -123,12 +125,16 @@ async function loadGlossary(): Promise<GlossaryEntry[]> {
   return entries;
 }
 
-async function callLlm(question: string, context?: ContextTurn): Promise<LlmResult> {
+async function callLlm(
+  question: string,
+  context?: ContextTurn,
+  rosterBlock?: string,
+): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context)),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock)),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
@@ -265,8 +271,12 @@ export async function searchRag(
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
-async function callRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence);
+async function callRagLlm(
+  question: string,
+  evidence: RagEvidence[],
+  extras?: RagLlmExtras,
+): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, undefined, extras);
 }
 
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
@@ -280,23 +290,31 @@ async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Pr
  * 선수용 프롬프트를 재사용하지 않는다 — "선수 소개 도우미"로 자기규정한 모델은
  * 구단 질문을 범위 밖으로 오판하고, 숫자 전면금지라 연도가 들어간 구단 서사를 전부 거부한다.
  */
-async function callTeamRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT);
+async function callTeamRagLlm(
+  question: string,
+  evidence: RagEvidence[],
+  extras?: RagLlmExtras,
+): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_TEAM_SYSTEM_PROMPT, extras);
 }
 
 async function callRagLlmWithPrompt(
   question: string,
   evidence: RagEvidence[],
   systemPrompt?: string,
+  extras?: RagLlmExtras,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      systemPrompt
-        ? buildRagLlmRequest(question, evidence, systemPrompt)
-        : buildRagLlmRequest(question, evidence),
+      buildRagLlmRequest(
+        question,
+        evidence,
+        systemPrompt ?? RAG_SYSTEM_PROMPT,
+        { context: extras?.context, rosterBlock: extras?.rosterBlock },
+      ),
     ),
     signal: AbortSignal.timeout(15000),
   });
