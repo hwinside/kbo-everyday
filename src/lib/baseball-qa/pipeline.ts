@@ -1602,6 +1602,35 @@ const DISCOURSE_FILLERS: ReadonlySet<string> = new Set([
   "혹시", "그", "저기", "음", "아", "근데", "그런데", "그리고", "참", "저", "야", "아니",
 ]);
 
+/**
+ * `<이름> **어떤** 선수` 처럼 이름과 사람 명사 **사이에 오는 관형사** 폐쇄집합.
+ *
+ * ⚠️ 이 한 칸이 이름과 용언 관형형을 가른다(삼순 2026-08-09):
+ *     `임창규 어떤 선수야`  → 이름 + 관형사 + 사람명사
+ *     `우승한 선수 누구야?` → 관형형 + 사람명사 (사이가 비어 있다)
+ *   한국어 관형형(`-ㄴ/은/한/던`)은 꾸미는 명사에 **직접** 붙는다. 그래서 사이에
+ *   관형사가 끼면 앞의 것은 관형형이 아니다.
+ */
+const NAME_QUERY_DETERMINERS: ReadonlySet<string> = new Set([
+  "어떤", "무슨", "어느", "그", "이", "저",
+]);
+
+/**
+ * 후보 **바로 뒤**에 와서 "이 사람이 누구냐" 를 묻는 서술어 폐쇄집합.
+ *
+ * `임창규 소개해줘`·`임창규 누구야` 처럼 관형사 없이 바로 오는 형태를 잡는다.
+ * ⚠️ 평가 술어(`잘해`·`어때`)는 넣지 않는다 — 사람에만 붙지 않는다(`자동차 운전 잘해?`).
+ */
+const PERSON_QUERY_PREDICATES: readonly string[] = [
+  "소개", "프로필", "알려줘",
+];
+
+// ⚠️ `누구` 는 **의도적으로 빼 두었다.** `임창규 누구야` 는 이 판정에 닿기 전에
+//   범위밖 denylist(`isOutOfScopeIntent`)가 먼저 `blocked` 로 종결한다(게이트 실측).
+//   여기에 넣어봐야 도달하지 않는 죽은 가지다. 그 순서 자체는 이 PR 의 축 밖이라
+//   건드리지 않는다 — 다만 `blocked`("주제가 아니다")가 야구 질문자에게 정확한
+//   답인지는 별도로 볼 문제다.
+
 /** 주격·주제 조사 — `임창규**는** 어느 팀이야` 처럼 첫 어절이 문장의 주어임을 드러낸다. */
 const SUBJECT_PARTICLES = ["는", "은", "이", "가", "이란", "이라는"] as const;
 
@@ -1706,26 +1735,38 @@ export function resolveUnboundName(
     return candidates.filter((name) => name[name.length - 1] === token[token.length - 1]);
   };
 
-  // ── anchor: **이 문장이 사람을 물었다는 근거** ─────────────────────────────
+  // ── anchor: **후보 바로 옆의 구조적 결속** ────────────────────────────────
   //
-  //   ⚠️ 직전 판은 축1(unique near-miss)을 anchor 없이 무조건 fail-close 했다.
-  //     그러면 near-miss 가 우연히 유일한 **일반 단어**가 그대로 이름이 된다:
-  //       `우승한 팀 어디야?` → `우승한` → `우승완` 제안   ← 삼순 2026-08-09 실측
-  //     내가 `작년에 우승한 …` 으로만 확인하고 넘어간 것이 오판이었다. `작년에` 가
-  //     머리를 차지해 피한 것뿐이라 **위치 은폐**였지 결속이 아니었다.
+  //   ⚠️ query-wide anchor 는 무효다 (삼순 2026-08-09). 직전 판은 "문장 어딘가에
+  //     사람 명사나 구단이 있으면" 을 anchor 로 썼는데, 그 조건은 **후보와 아무 관계가
+  //     없다**. 실측 누수:
+  //       `우승한 선수 누구야?`        → `선수` 가 있어서 anchor 성립 → `우승완` 제안
+  //       `우승한 팀 LG트윈스 맞아?`   → 구단이 있어서 anchor 성립 → `우승완` 제안
+  //     내가 넣은 음성 `우승한 팀 어디야?` 는 anchor 자체가 없어 이 누수를 못 봤다.
   //
-  //   anchor 는 둘 중 하나 — **둘 다 닫힌 부류**다:
-  //     ① 사람 명사가 문장에 있다(`선수`·`투수`·`누구`·`소개`…). 평가 술어는 제외했다
-  //        (`잘해`·`어때` 는 사람에만 붙지 않는다 — `자동차 운전 잘해?`).
-  //     ② 머리 어절이 **주격·주제 조사**를 달았다(`임창규는 어느 팀이야`).
-  //        용언 활용형(`우승한`·`나왔지`)은 이 조사를 달지 않는다.
-  //     ③ 문장이 **구단을 지명**했다(`임창규 lg 주축 맞아?`). 구단 alias 는 폐쇄집합이고,
-  //        구단을 붙여 묻는 대상은 사람 아니면 그 구단 자신인데 구단명 자체는 아래
-  //        `TEAM_WORDS` 배제로 이미 후보에서 빠진다.
+  //   그래서 anchor 를 **후보에 붙은 구조**로만 인정한다:
+  //     ① 후보가 주격·주제 조사를 달았다 — `임창규는 어느 팀이야`
+  //        용언 관형형(`우승한`·`나왔지`)은 이 조사를 달지 않는다.
+  //     ② 후보 **바로 뒤**가 폐쇄형 사람질의다 — `임창규 어떤 선수`·`임창규 소개해줘`
+  //        관형형은 뒤에 명사가 **직접** 온다(`우승한 선수`·`우승한 팀`). 이름은
+  //        `어떤`·`무슨` 같은 관형사를 사이에 두거나 서술어가 바로 온다.
+  //        이 한 칸 차이가 관형형과 이름을 가른다.
+  //
+  //   ⚠️ **명시적 손해** (삼순 2026-08-09 승인): `임창규 lg 주축 맞아?` 는 이제 못 잡는다.
+  //     구단 anchor 는 후보와 무관해서 `우승한 팀 LG트윈스 맞아?` 를 같이 열어버린다.
   const headHasSubjectParticle = SUBJECT_PARTICLES.some(
     (particle) => headRaw.length > particle.length && headRaw.endsWith(particle),
   );
-  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;
+  const following = tokens.slice(headIndex + 1);
+  const followedByPersonQuery =
+    // `임창규 어떤 선수야` — 관형사 + 사람 명사. 관형형(`우승한 선수`)에는 이 관형사가 없다.
+    (following[0] !== undefined && NAME_QUERY_DETERMINERS.has(following[0])
+      && following[1] !== undefined
+      && PERSON_REFERENCE_WORDS.some((word) => following[1].startsWith(word)))
+    // `임창규 소개해줘`·`임창규 누구야` — 사람을 묻는 서술어가 후보 바로 뒤에 온다.
+    || (following[0] !== undefined
+      && PERSON_QUERY_PREDICATES.some((word) => following[0].startsWith(word)));
+  if (!headHasSubjectParticle && !followedByPersonQuery) return null;
 
   // ── 이름이라는 근거 = **near-miss 가 하나라도 있다** ────────────────────────
   //

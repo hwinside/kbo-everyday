@@ -68,31 +68,47 @@ const MUTATIONS = [
   },
   {
     name: "N-E anchor 요구 제거 (룰 질문·일반 문장 누수)",
-    from: `  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;`,
+    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;`,
     to: `  if (false) return null;`,
     expect: "오탐",
   },
   {
-    name: "N-E2 사람 명사 anchor 제거 (`임창규 어떤 선수야` 누수)",
-    from: `  const hasPersonWord = PERSON_REFERENCE_WORDS.some((word) => normalizedQuestion.includes(word));`,
-    to: `  const hasPersonWord = false;`,
-    expect: "source=",
-  },
-  {
-    name: "N-E3 구단 anchor 제거 (`임창규 lg 주축 맞아?` 누수)",
-    from: `  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;
+    name: "N-E2 후보 뒤 사람질의 결속 제거 (`임창규 어떤 선수야` 누수)",
+    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;
 `,
-    to: `  if (!hasPersonWord && !headHasSubjectParticle) return null;
+    to: `  if (!headHasSubjectParticle) return null;
 `,
     expect: "source=",
   },
   {
-    name: "N-F 평가 술어를 사람 신호로 되돌리기 (`자동차 운전 잘해?` 과차단)",
-    from: `  "에이스", "은퇴", "이적", "트레이드", "연봉", "생년",
-];`,
-    to: `  "에이스", "은퇴", "이적", "트레이드", "연봉", "생년", "잘해", "잘하", "못해", "어때",
-];`,
+    name: "N-E3 🔴 anchor 를 질문 전체로 확대 (삼순 2026-08-09 필수 축)",
+    // query-wide anchor 로 되돌린다 — `우승한 선수 누구야?`·`우승한 팀 lg트윈스 맞아?` 가
+    // 문장 어딘가의 사람 명사/구단 때문에 다시 `우승완` 을 제안하게 된다.
+    from: `  if (!headHasSubjectParticle && !followedByPersonQuery) return null;`,
+    to: `  if (!headHasSubjectParticle && !followedByPersonQuery
+    && !PERSON_REFERENCE_WORDS.some((w) => normalizedQuestion.includes(w))
+    && !mentionsTeam(tokens)) return null;`,
     expect: "오탐",
+  },
+  {
+    name: "N-E4 관형사 요구 제거 (`우승한 선수` 가 이름이 된다)",
+    // `임창규 어떤 선수` 와 `우승한 선수` 를 가르는 것은 **사이에 낀 관형사** 한 칸이다.
+    from: `    (following[0] !== undefined && NAME_QUERY_DETERMINERS.has(following[0])
+      && following[1] !== undefined
+      && PERSON_REFERENCE_WORDS.some((word) => following[1].startsWith(word)))`,
+    to: `    (following[0] !== undefined
+      && PERSON_REFERENCE_WORDS.some((word) => following[0].startsWith(word)))`,
+    expect: "오탐",
+  },
+  {
+    name: "N-F 평가 술어를 사람질의 서술어로 되돌리기 (`자동차 잘해?` 과차단 축)",
+    from: `  "소개", "프로필", "알려줘",
+];`,
+    to: `  "소개", "프로필", "알려줘", "잘해", "잘하", "못해", "어때",
+];`,
+    // 이 변이는 `임창규 잘해?` 를 잡게 만든다 — 그런데 같은 구조로 `자동차 잘해?`·
+    // `고양이 어때?` 도 잡힌다. 그래서 "못 잡는다" 를 고정한 actual 이 깨지는 것이 RED 다.
+    expect: "막혔다",
   },
   {
     name: "N-G 머리 어절 제약 제거 (용언이 이름으로 먹힌다)",
