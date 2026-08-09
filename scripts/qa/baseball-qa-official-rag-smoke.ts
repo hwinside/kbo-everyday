@@ -32,9 +32,11 @@ import {
   allowsNumericAnswer,
   evidenceGrade,
   numericTokensGrounded,
+  RAG_GENERAL_SENTINEL,
   RAG_GROUNDED_SENTINEL,
   RAG_OFFICIAL_ANSWER_MAX_CHARS,
   RAG_OFFICIAL_SYSTEM_PROMPT,
+  numericTokensSubsetOf,
   selectEvidence,
   validateRagResponse,
   type RagEvidence,
@@ -416,6 +418,101 @@ checkAsync("정상 룰 질문은 여전히 공식 RAG 를 탄다 (과잉 차단 
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(officialSearches, 1);
   assert.equal(result.source, "rag");
+});
+
+
+// ── GENERAL 3상 판정 (2026-08-10 unsure 함정 제거) ─────────────────────────────
+// 재현: `지명 타자의 DH 약자`·`ph 포지션`·`잔루만루`·`wRC+ 해석` 이 공식 경로에 빨려
+// 들어간 뒤 INSUFFICIENT → unsure 하드 종결. GENERAL 은 같은 한 번의 호출에 "일반
+// 야구 지식으로 답한다" 출구를 연다. 숫자는 질문 밖 토큰을 기계 폐기한다.
+
+check("GENERAL: generalFallback 옵션이 있으면 일반 지식 답변을 수용한다", () => {
+  const v = validateRagResponse(
+    JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "야구에서 PH는 대타를 뜻하는 용어입니다." }),
+    { numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "야구 포지션 중에 ph가 뭐야?" } },
+  );
+  assert.equal(v.kind, "general");
+});
+
+check("GENERAL: 옵션이 없으면 종전대로 폐기한다 (경로별 opt-in)", () => {
+  const v = validateRagResponse(
+    JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "야구에서 PH는 대타입니다." }),
+    { numericEvidence: true, evidence: [OFFICIAL] },
+  );
+  assert.equal(v.kind, "insufficient");
+});
+
+check("GENERAL 숫자 계약: 질문에 있는 숫자 되받기는 허용", () => {
+  const v = validateRagResponse(
+    JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "야구에서 wRC+ 88은 리그 평균보다 조금 낮은 타격 생산력을 뜻합니다." }),
+    { numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "wRC+가 88정도인데 가치는?" } },
+  );
+  assert.equal(v.kind, "general");
+});
+
+check("GENERAL 숫자 계약: 룰 어휘 정수(0~12)는 허용 — 1루·2루·3루", () => {
+  const v = validateRagResponse(
+    JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "야구에서 잔루만루는 1루, 2루, 3루에 주자가 있는 채 이닝이 끝난 상황입니다." }),
+    { numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "잔루만루가 뭐야?" } },
+  );
+  assert.equal(v.kind, "general");
+});
+
+check("GENERAL 숫자 계약: 질문 밖 연도·기록치는 기계 폐기", () => {
+  for (const bad of ["한국 야구는 1982년에 출범했습니다.", "그 선수는 홈런 56개를 쳤습니다.", "타율 0.312 정도면 최상위권입니다."]) {
+    const v = validateRagResponse(
+      JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: bad }),
+      { numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "잔루만루가 뭐야?" } },
+    );
+    assert.equal(v.kind, "insufficient", `허용되면 안 되는 답이 통과: ${bad}`);
+    assert.equal((v as { reason: string }).reason, "numeric_not_in_question");
+  }
+});
+
+check("numericTokensSubsetOf: 토큰 단위 대조 — 82가 882 안에 있다고 통과하지 않는다", () => {
+  // ⚠️ 13 이상만 반례가 된다 — 0~12 는 룰 어휘(1~3루·9이닝·연장 12회)로 허용된다.
+  assert.equal(numericTokensSubsetOf("82개나 됩니다", "882점"), false);
+  assert.equal(numericTokensSubsetOf("88 정도입니다", "88점"), true);
+  assert.equal(numericTokensSubsetOf("9이닝 동안", "이닝이 뭐야"), true);
+  assert.equal(numericTokensSubsetOf("숫자가 없는 답", "아무 질문"), true);
+});
+
+check("깨진 \\u escape 는 기계 강등 후 재파싱한다 (실측: ph 정답이 malformed 로 통째 폐기)", () => {
+  const broken = '{"status":"GENERAL","answer":"PH\\ub2n4 대타를 뜻합니다"}';
+  const v = validateRagResponse(broken, {
+    numericEvidence: true, evidence: [OFFICIAL], generalFallback: { question: "ph가 뭐야?" },
+  });
+  assert.equal(v.kind, "general", "escape 강등 재파싱이 동작해야 한다");
+});
+
+check("공식 프롬프트가 GENERAL 3상 계약을 선언한다", () => {
+  assert.ok(RAG_OFFICIAL_SYSTEM_PROMPT.includes(RAG_GENERAL_SENTINEL));
+  assert.ok(RAG_OFFICIAL_SYSTEM_PROMPT.includes("숫자를 쓰지 않는다"));
+});
+
+checkAsync("파이프라인: 공식 경로 GENERAL 은 unsure 가 아니라 llm 답변으로 종결한다", async () => {
+  const { deps } = makeDeps({
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async () => ({
+      text: JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "야구에서 지명타자 DH는 Designated Hitter의 약자입니다." }),
+      inputTokens: 1, outputTokens: 1,
+    }),
+  });
+  const result = await answerQuestion("u1", "지명 타자의 DH 는 뭐의 약자야?", deps);
+  assert.equal(result.source, "llm", `unsure 함정 회귀: source=${result.source}`);
+  assert.notEqual(result.answer, UNCLEAR_ANSWER);
+});
+
+checkAsync("파이프라인: 공식 경로 GENERAL 답의 질문 밖 숫자는 여전히 unsure fail-close", async () => {
+  const { deps } = makeDeps({
+    searchOfficialRag: async () => [OFFICIAL],
+    callOfficialRagLlm: async () => ({
+      text: JSON.stringify({ status: RAG_GENERAL_SENTINEL, answer: "그 선수는 2019년에 홈런 44개를 쳤습니다." }),
+      inputTokens: 1, outputTokens: 1,
+    }),
+  });
+  const result = await answerQuestion("u1", "지명 타자의 DH 는 뭐의 약자야?", deps);
+  assert.equal(result.source, "unsure", "지어낸 수치가 GENERAL 로 새면 안 된다");
 });
 
 (async () => {

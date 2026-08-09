@@ -603,6 +603,20 @@ for (const question of ["보크가 뭐야?", "잔루만루가 뭔데", "역할�
   assert.notEqual(routeQuestion(question, seedEntries, players), "ack", question);
 }
 
+// ── 반응어 배선 (2026-08-10 하린아빠 캡처: `ㅇㅋ` 가 범위 안내를 받았다) ─────────────
+// 직전 답변을 수긍하는 반응어는 감사 인사와 같은 대화 행위다. full-string 완전일치만
+// 잡으므로 `ㅇㅋ 근데 보크는?` 같은 복합문은 안 걸린다.
+const reactionQuestions = ["ㅇㅋ", "ㅇㅋㅇㅋ", "오케이", "오키", "ok", "OK", "okay", "ㅇㅇ", "넵", "네", "응", "굿", "굿굿", "ㅇㅋ!"];
+for (const question of reactionQuestions) {
+  assert.equal(isAckPhrase(question), true, `${question}: 반응어는 ack 이어야 한다`);
+  assert.equal(routeQuestion(question, seedEntries, players), "ack", question);
+}
+// 가드(양방향): 부정어·순수 구두점·질문이 붙은 반응어는 ack 로 삼키지 않는다.
+// `ㄴㄴ` 는 수긍이 아니고, `??` 는 normalizeAck 가 빈 문자열로 접는 축이라 집합에 없어야 한다.
+for (const question of ["ㄴㄴ", "??", "ㅋㅋ", "ㅇㅋ 근데 보크가 뭐야", "네 그럼 잔루는 뭔데"]) {
+  assert.equal(isAckPhrase(question), false, `${question}: ack 로 삼키면 안 된다`);
+}
+
 // ── 인사말 배선 (2026-08-07 production 실측: 최근 3일 답변불가의 8.6%) ──────────────
 // 인사는 질문이 아니라 대화 시작이다. 차단 문구를 되돌려주면 첫 턴부터 문전박대가 된다.
 const greetingQuestions = [
