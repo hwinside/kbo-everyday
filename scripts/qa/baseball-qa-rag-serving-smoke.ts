@@ -1093,7 +1093,69 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(casCalls, 1, `generic 양보 호출의 CAS 소비 수(${casCalls})`);
   }
 
-  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 재사용 / ambiguous fail-close / 근거 0건은 CAS 미소비");
+  // (e) route-drift 양방향 replay (삼순 2026-08-10 P0) — durable 슬롯에는 최종 응답
+  //     envelope 가 결속돼 저장되고, 재처리는 evidence 가 뒤바뀌어 경로가 드리프트해도
+  //     공급자 재호출 0 · answer/source/provenance 동일로 그대로 재생한다.
+  // e-1: 근거 0건 → generic 저장 → retry 때 근거가 "생겨도" generic 답 그대로.
+  {
+    let stored: LlmResult | null = null;
+    let genericCalls = 0;
+    let ragCalls = 0;
+    const mk = (rows: RagEvidence[]): QaDeps => makeDeps({
+      getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      searchRag: async () => rows,
+      callRagLlm: async () => {
+        ragCalls++;
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라 불려요." }), inputTokens: 1, outputTokens: 1 };
+      },
+      callLlm: async () => {
+        genericCalls++;
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }), inputTokens: 1, outputTokens: 1 };
+      },
+    }).deps;
+    const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([]));
+    assert.equal(first.source, "llm");
+    assert.equal(genericCalls, 1);
+    const drifted = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([MOON_EVIDENCE]));
+    assert.equal(drifted.source, "llm", `generic→rag 드리프트가 source 를 바꿨다: ${drifted.source}`);
+    assert.equal(drifted.answer, first.answer, "generic→rag 드리프트가 answer 를 바꿨다");
+    assert.equal(genericCalls, 1, `드리프트 retry 가 generic 공급자를 재호출했다(${genericCalls})`);
+    assert.equal(ragCalls, 0, `드리프트 retry 가 rag 공급자를 호출했다(${ragCalls})`);
+  }
+  // e-2: 근거 있음 → rag 저장(출처 포함) → retry 때 근거가 "사라져도" rag 답·출처 그대로.
+  {
+    let stored: LlmResult | null = null;
+    let genericCalls = 0;
+    let ragCalls = 0;
+    const mk = (rows: RagEvidence[]): QaDeps => makeDeps({
+      getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+      acquireLlmStart: async () => true,
+      storeLlm: async (r) => { stored = r; },
+      searchRag: async () => rows,
+      callRagLlm: async () => {
+        ragCalls++;
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+      },
+      callLlm: async () => {
+        genericCalls++;
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }), inputTokens: 1, outputTokens: 1 };
+      },
+    }).deps;
+    const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([MOON_EVIDENCE]));
+    assert.equal(first.source, "rag");
+    assert.equal(ragCalls, 1);
+    assert.ok(first.sourceUrl, "rag 답에 provenance 가 없다");
+    const drifted = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([]));
+    assert.equal(drifted.source, "rag", `rag→generic 드리프트가 source 를 바꿨다: ${drifted.source}`);
+    assert.equal(drifted.answer, first.answer, "rag→generic 드리프트가 answer 를 바꿨다");
+    assert.equal(drifted.sourceUrl, first.sourceUrl, "드리프트가 provenance 를 바꿨다");
+    assert.equal(ragCalls, 1, `드리프트 retry 가 rag 공급자를 재호출했다(${ragCalls})`);
+    assert.equal(genericCalls, 0, `드리프트 retry 가 generic 공급자를 호출했다(${genericCalls})`);
+  }
+
+  console.log("PASS RAG durable 경계 — messageId당 호출 1회 / 재처리 envelope 재생 / route-drift 양방향 무변형 / ambiguous fail-close / 양보 CAS 1회");
 }
 
 /**

@@ -198,11 +198,28 @@ const MUTATIONS = [
     replacement: "const finalQuestion = false",
     why: "generic 경로에 현재 소속 데이터가 안 실린다",
   },
+  // ── durable envelope 결속 (삼순 2026-08-10 P0 route-drift) — 게이트는 serving smoke ──
+  {
+    id: "N33 envelope 재생 무력화 (재처리가 raw 를 현재 경로 validator 로 재해석)",
+    file: PIPELINE,
+    anchor: '  if (!row || typeof row !== "object" || row[STORED_QA_FINAL_MARKER] !== true) return null;',
+    replacement: "  return null;",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "generic↔RAG route-drift retry 에서 정상 저장 답이 다른 validator 로 접혀 바뀐다",
+  },
+  {
+    id: "N34 generic 저장을 raw 로 회귀 (envelope 미결속)",
+    file: PIPELINE,
+    anchor: 'if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));',
+    replacement: "if (deps.storeLlm) await deps.storeLlm(llm);",
+    gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
+  },
 ];
 
-function runSmoke() {
+function runSmoke(gate = "scripts/qa/baseball-genius-context-smoke.ts") {
   try {
-    execFileSync("npx", ["tsx", "scripts/qa/baseball-genius-context-smoke.ts"], {
+    execFileSync("npx", ["tsx", gate], {
       cwd: root,
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
@@ -239,7 +256,7 @@ for (const mutation of MUTATIONS) {
     // 같은 계약 문구가 한 파일에 여러 번 있을 수 있다(선수·구단 프롬프트). 한 곳만 바꾸면
     // 다른 곳 앵커가 살아서 GREEN 이 된다(2026-08-10 N15 실측) — 전 occurrence 를 바꾼다.
     writeFileSync(mutation.file, original.split(mutation.anchor).join(mutation.replacement));
-    const result = runSmoke();
+    const result = runSmoke(mutation.gate);
     const assertionRed = result.failed && /ERR_ASSERTION|AssertionError/.test(result.output);
     if (assertionRed) {
       console.log(`RED  ${mutation.id} — ${mutation.why}`);

@@ -2239,6 +2239,47 @@ export interface ValidatedLlmAnswer {
   answer?: string;
 }
 
+/**
+ * durable `llm_text` 슬롯에 **최종 응답 envelope** 를 결속해 저장한다 (삼순 2026-08-10 P0).
+ *
+ * 왜: 슬롯 하나를 RAG/generic 이 공용하는데 재처리는 현재 evidence 로 경로를 다시 고른다.
+ * `0건→generic 저장→retry 때 근거 생성` 이면 RAG validator 가 `ANSWER` 를 insufficient 로,
+ * 반대면 generic validator 가 `GROUNDED` 를 unsure 로 접어 **정상 저장 답이 바뀐다**.
+ * 그래서 raw 공급자 텍스트가 아니라 검증·조립까지 끝난 최종 응답(answer/source/sourceUrl)을
+ * 저장하고, 재처리는 경로 무관하게 그대로 재생한다 — 공급자 재호출 0 · 답 동일.
+ * 저장 시점은 검증 직후다(순수 CPU 구간) — 호출~저장 사이 crash 는 종전과 동일하게
+ * started fence 가 ambiguous 로 fail-close 한다(재호출 없음).
+ */
+const STORED_QA_FINAL_MARKER = "__qa_final_v1";
+export interface StoredQaFinal {
+  answer: string;
+  source: MatchPath;
+  sourceUrl?: string;
+}
+export function packStoredQaFinal(final: StoredQaFinal, llm: LlmResult): LlmResult {
+  return {
+    text: JSON.stringify({ [STORED_QA_FINAL_MARKER]: true, final }),
+    inputTokens: llm.inputTokens,
+    outputTokens: llm.outputTokens,
+  };
+}
+export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
+  let row: Record<string, unknown>;
+  try {
+    row = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (!row || typeof row !== "object" || row[STORED_QA_FINAL_MARKER] !== true) return null;
+  const final = row.final as Record<string, unknown> | undefined;
+  if (!final || typeof final.answer !== "string" || typeof final.source !== "string") return null;
+  return {
+    answer: final.answer,
+    source: final.source as MatchPath,
+    ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
+  };
+}
+
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
 export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
   let value: unknown;
@@ -2616,6 +2657,20 @@ async function answerPlayerDescriptiveQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
+    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
+    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
+    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
+    if (llm && storedFinal) {
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
     if (!llm && state.started) {
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
@@ -2639,16 +2694,19 @@ async function answerPlayerDescriptiveQuestion(
       // 공급자 호출 실패도 우리 쪽 고장이다 — 근거는 이미 찾았다.
       return failCloseError();
     }
-    // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-close되어 재호출이 없다.
-    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   const validated = validateRagResponse(llm.text);
-  if (validated.kind !== "grounded") return failClose();
+  if (validated.kind !== "grounded") {
+    // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
+    return failClose();
+  }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl }, llm));
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -2701,6 +2759,20 @@ async function answerOfficialDocumentQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
+    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
+    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
+    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
+    if (llm && storedFinal) {
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -2722,12 +2794,12 @@ async function answerOfficialDocumentQuestion(
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
       return failCloseError();
     }
-    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
   if (validated.kind !== "grounded") {
     // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
@@ -2735,6 +2807,7 @@ async function answerOfficialDocumentQuestion(
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl }, llm));
   await deps.log({ userId, question, questionNorm, matchPath: "rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -2816,6 +2889,20 @@ async function answerTeamRagQuestion(
       return failCloseError();
     }
     llm = state.result;
+    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
+    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
+    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
+    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
+    if (llm && storedFinal) {
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return failCloseError();
@@ -2837,7 +2924,6 @@ async function answerTeamRagQuestion(
       // 경계를 이미 소비했을 수 있어 기존 경로로 내려보내지 않는다.
       return failCloseError();
     }
-    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   // ⚠️ tier2 숫자 출력 **전면 HOLD** (삼순 2026-08-07 P0-2, 3라운드 끝에 내린 결론).
@@ -2868,11 +2954,13 @@ async function answerTeamRagQuestion(
     //   질문을 탓하는 말이다.
     const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : UNCLEAR_ANSWER;
     const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: matchPath }, llm));
     await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer, source: matchPath, remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "team_rag", sourceUrl }, llm));
   // `team_rag` 로 기록한다 — 선수·공식 RAG 와 섞이면 구단 전수 감사가 불가능하다.
   await deps.log({ userId, question, questionNorm, matchPath: "team_rag", answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer, source: "team_rag", remaining, sourceUrl };
@@ -2930,6 +3018,20 @@ async function answerNewsRagQuestion(
       return settle(SYSTEM_ERROR_ANSWER, "error");
     }
     llm = state.result;
+    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
+    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
+    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
+    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
+    if (llm && storedFinal) {
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
     if (!llm && state.started) {
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       return settle(SYSTEM_ERROR_ANSWER, "error");
@@ -2950,12 +3052,12 @@ async function answerNewsRagQuestion(
     } catch {
       return settle(SYSTEM_ERROR_ANSWER, "error");
     }
-    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   // 숫자는 구단 tier2 와 동일하게 전면 HOLD 다(`numericEvidence` 미지정 = 기본값 금지).
   const validated = validateRagResponse(llm.text, { maxChars: RAG_ANSWER_MAX_CHARS });
   if (validated.kind !== "grounded") {
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure" }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure",
       answer: NEWS_UNAVAILABLE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
@@ -2964,6 +3066,7 @@ async function answerNewsRagQuestion(
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "news_rag", sourceUrl }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "news_rag",
     answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
@@ -3439,6 +3542,25 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
     }
     llm = state.result;
+    // ⚠️ 저장 결과에 최종 응답 envelope 가 결속돼 있으면 **그대로 재생**한다 (삼순
+    //   2026-08-10 P0 route-drift). 재처리가 evidence 를 다시 조회해 경로를 새로 고르면
+    //   정상 저장 답이 다른 경로의 validator 로 재해석돼 바뀐다.
+    const storedFinal = llm ? unpackStoredQaFinal(llm.text) : null;
+    if (llm && storedFinal) {
+      // 재생도 crash 복구의 일부다 — 저장 후 setCache 단계에서 죽었으면 캐시 완결을
+      // 여기서 마저 한다 (조건은 신규 생성 경로와 동일: 맥락·2차가드·로스터 질문 제외).
+      if (storedFinal.source === "llm" && !context && !scopeGate && !rosterBlock) {
+        await deps.setCache(questionNorm, storedFinal.answer);
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: storedFinal.source,
+        answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return {
+        status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
+        ...(storedFinal.sourceUrl ? { sourceUrl: storedFinal.sourceUrl } : {}),
+      };
+    }
     if (!llm && state.started) {
       if (state.ownerActive) {
         // winner worker가 LLM 경계를 진행 중 — loser는 어떤 답변도 발송하지 않고 물러난다.
@@ -3474,17 +3596,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
     }
-    // 저장 실패는 throw로 전파 — 재처리는 위 ambiguous 경로로 fail-closed되어 재호출이 없다.
-    if (deps.storeLlm) await deps.storeLlm(llm);
   }
 
   const validated = validateLlmResponse(llm.text, question);
   if (validated.kind === "blocked") {
+    // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: BLOCKED_ANSWER, source: "blocked" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
   }
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
@@ -3492,6 +3615,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
   // 2차 가드 경로도 쓰지 않는다 — 읽지도 않으므로 써봐야 사장이고, 룰베이스가 못 가린
   // 질문의 답을 공유 캐시에 쌓아두면 나중에 경계가 바뀌었을 때 회수할 수 없다.
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));
   if (!context && !scopeGate && !rosterBlock) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
