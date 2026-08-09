@@ -56,17 +56,9 @@ const MUTATIONS = [
   },
   {
     name: "N-B 후보 1명 제한 해제 (엉뚱한 이름 제안)",
-    from: `    return candidates.length === 1 ? candidates[0] : null;`,
-    to: `    return candidates[0] ?? null;`,
+    from: `    return { token, suggestion: candidates.length === 1 ? candidates[0] : null };`,
+    to: `    return { token, suggestion: candidates[0] ?? null };`,
     expect: "엉뚱한 이름을 제안했다",
-  },
-  {
-    name: "N-C 축1(near-miss) 제거 — 표현 무관 fail-close 상실",
-    from: `    const suggestion = uniqueNearMiss(token);
-    if (suggestion === null) continue;`,
-    to: `    const suggestion = uniqueNearMiss(token);
-    if (suggestion === null || true) continue;`,
-    expect: "source=",
   },
   {
     name: "N-D quota 반납 제거 (오타에 한도 2배)",
@@ -75,15 +67,31 @@ const MUTATIONS = [
     expect: "반납이 없다",
   },
   {
-    name: "N-E 축2 사람 신호 요구 제거 (룰 질문 누수)",
-    from: `  if (!hasPersonWord) return null;`,
+    name: "N-E anchor 요구 제거 (룰 질문·일반 문장 누수)",
+    from: `  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;`,
     to: `  if (false) return null;`,
     expect: "오탐",
   },
   {
-    name: "N-F 성씨 결속 제거 (아무 3음절이나 이름)",
-    from: `    if (!surnames.has(token[0])) return false;`,
-    to: `    if (false) return false;`,
+    name: "N-E2 사람 명사 anchor 제거 (`임창규 어떤 선수야` 누수)",
+    from: `  const hasPersonWord = PERSON_REFERENCE_WORDS.some((word) => normalizedQuestion.includes(word));`,
+    to: `  const hasPersonWord = false;`,
+    expect: "source=",
+  },
+  {
+    name: "N-E3 구단 anchor 제거 (`임창규 lg 주축 맞아?` 누수)",
+    from: `  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;
+`,
+    to: `  if (!hasPersonWord && !headHasSubjectParticle) return null;
+`,
+    expect: "source=",
+  },
+  {
+    name: "N-F 평가 술어를 사람 신호로 되돌리기 (`자동차 운전 잘해?` 과차단)",
+    from: `  "에이스", "은퇴", "이적", "트레이드", "연봉", "생년",
+];`,
+    to: `  "에이스", "은퇴", "이적", "트레이드", "연봉", "생년", "잘해", "잘하", "못해", "어때",
+];`,
     expect: "오탐",
   },
   {
@@ -93,22 +101,15 @@ const MUTATIONS = [
     expect: "오탐",
   },
   {
-    name: "N-H 한국 성씨 폐쇄집합 제거 (은퇴 선수 누수)",
-    from: `  const surnames = new Set([...KOREAN_SURNAMES, ...rosterNames.map((name) => name[0])]);`,
-    to: `  const surnames = new Set(rosterNames.map((name) => name[0]));`,
-    expect: "현역 로스터에 없는 성씨",
-  },
-  {
-    name: "N-I 축2 조사형 배제 제거 (`김치는` 이 이름)",
-    from: `    if (SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))) continue;
-    if (!isNameShaped(token)) continue;`,
-    to: `    if (!isNameShaped(token)) continue;`,
+    name: "N-H near-miss 근거 요구 제거 (`자동차`·`신인왕` 이 이름)",
+    from: `    if (candidates.length === 0) continue;`,
+    to: `    if (false) continue;`,
     expect: "오탐",
   },
   {
     name: "N-K 음절 하한 완화 (`김치`·`안타` 가 이름 후보)",
-    from: `    if (token.length < 3 || token.length > 4) return false;`,
-    to: `    if (token.length < 2 || token.length > 4) return false;`,
+    from: `    if (token.length < 3 || token.length > 4) continue;`,
+    to: `    if (token.length < 2 || token.length > 4) continue;`,
     expect: "오탐",
   },
   {
@@ -118,16 +119,16 @@ const MUTATIONS = [
     expect: "오탐",
   },
   {
-    name: "N-M 담화 표지 건너뛰기 제거 (`혹시 임창규 알아?` 누수)",
+    name: "N-M 담화 표지 건너뛰기 제거 (`혹시 …` 형태 판정 상실)",
     from: `  const headIndex = tokens.findIndex((token) => !DISCOURSE_FILLERS.has(token));`,
     to: `  const headIndex = tokens.length > 0 ? 0 : -1;`,
-    expect: "source=",
+    expect: "오탐",
   },
   {
-    name: "N-N 축1 조사자리 차이 배제 제거 (`박수는`→`박수종`)",
-    from: `    if (SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))
-      && token[token.length - 1] !== suggestion[suggestion.length - 1]) continue;`,
-    to: `    if (false) continue;`,
+    name: "N-N 조사자리 차이 배제 제거 (`박수는`→`박수종`)",
+    from: `    if (!SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))) return candidates;
+    return candidates.filter((name) => name[name.length - 1] === token[token.length - 1]);`,
+    to: `    return candidates;`,
     expect: "오탐",
   },
   {
@@ -135,6 +136,12 @@ const MUTATIONS = [
     from: `    return unboundName.suggestion === null ? "name_unknown" : "name_suggest";`,
     to: `    return "name_suggest";`,
     expect: "name_unknown",
+  },
+  {
+    name: "N-P 야구 어휘 배제 제거 (지표어·구단어가 이름 후보)",
+    from: `    if (BASEBALL_VOCABULARY.includes(token) || STAT_WORDS.includes(token) || TEAM_WORDS.includes(token)) continue;`,
+    to: `    if (false) continue;`,
+    expect: "오탐",
   },
 ];
 

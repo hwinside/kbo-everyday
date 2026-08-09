@@ -1568,26 +1568,26 @@ const PERSON_REFERENCE_WORDS: readonly string[] = [
   "누구", "사람", "소개", "프로필", "포지션", "소속", "별명", "등번호",
   "데뷔", "입단", "출신", "어느 팀", "어느팀", "무슨 팀", "무슨팀",
   "에이스", "은퇴", "이적", "트레이드", "연봉", "생년",
-  // 사람의 **기량**을 묻는 술어. `선동열 잘하나요?` 처럼 명사 신호가 없는 형태를 잡는다.
-  "잘해", "잘하", "못해",
 ];
 
 /**
- * ⚠️ **평가 술어(`잘해`·`어때`)를 사람 신호에서 뺀 이유** (삼순 2026-08-09 반대축).
+ * ⚠️ **평가 술어를 사람 신호에서 뺀다** — 그리고 여기 적힌 대로 실제로 뺐다.
  *
- *   직전 판은 `임창규 잘해?` 를 잡으려고 `잘해`·`어때`·`주축` 을 사람 신호에 넣었다.
- *   그런데 그 술어는 **사람에만 붙지 않는다.** 실측 결과 반대축이 열렸다:
- *     `자동차는 어때?`   → `자동차`(3음절) + `자` 씨 + 평가어  → 이름 되묻기
- *     `고양이는 잘해?`   → `고양이`(3음절) + `고` 씨 + 평가어  → 이름 되묻기
+ *   `잘해`·`어때`·`주축` 은 **사람에만 붙지 않는다.** 실측 반대축(삼순 2026-08-09):
+ *     `자동차는 어때?`    → `자동차`(3음절) + `자` 씨 + 평가어  → 이름 되묻기
+ *     `고양이는 잘해?`    → `고양이`(3음절) + `고` 씨 + 평가어  → 이름 되묻기
+ *     `자동차 운전 잘해?` → 같은 축
  *   구조가 `임창규 잘해?` 와 **완전히 같아서** 술어로는 구분되지 않는다.
  *
- *   그래서 술어를 빼고, `임창규 잘해?` 는 **다른 축**으로 잡는다 —
- *   `임창규` 는 로스터에 이웃이 정확히 하나(`임찬규`)이고 문장에 다른 도메인 결속이
- *   없다. 즉 `resolveUnboundName` 의 축1(near-miss)이 표현과 무관하게 잡는다.
- *   `자동차`·`고양이` 는 이웃이 0명이라 축1에 안 걸린다. **이게 진짜 구분선이다.**
+ * ⚠️ 직전 판은 이 주석에 "뺐다" 고 적어놓고 `잘해/잘하/못해` 를 다시 넣어둔 채로
+ *   보고했다(삼순 2026-08-09 지적). 주석이 코드의 증거가 아니다 —
+ *   그래서 아래 `PERSON_REFERENCE_WORDS ∩ 이 배열 = ∅` 을 게이트가 검사한다.
+ *
+ *   대가: `임창규 잘해?` 는 잡히지 않는다. 삼순이 제시한 (b) 비대칭을 택한 결과다 —
+ *   놓치면 기존 경로이고, 잘못 잡으면 멀쩡한 질문을 죽인다.
  */
 const PERSON_PREDICATE_WORDS_INTENTIONALLY_EXCLUDED = [
-  "어때", "어떨", "주축", "유망", "실력", "활약", "부진", "나이",
+  "잘해", "잘하", "못해", "어때", "어떨", "주축", "유망", "실력", "활약", "부진", "나이",
 ] as const;
 
 /**
@@ -1604,36 +1604,6 @@ const DISCOURSE_FILLERS: ReadonlySet<string> = new Set([
 
 /** 주격·주제 조사 — `임창규**는** 어느 팀이야` 처럼 첫 어절이 문장의 주어임을 드러낸다. */
 const SUBJECT_PARTICLES = ["는", "은", "이", "가", "이란", "이라는"] as const;
-
-/**
- * **한국 성씨** 폐쇄집합 — 현역 로스터에 없는 성씨까지 덮는다.
- *
- * ⚠️ 왜 로스터 파생만으로 부족한가 (삼순 2026-08-08 P0-1):
- *   직전 구현은 성씨를 현역 로스터 881명에서만 뽑았다(86종). 그러면 `선동열`의
- *   `선` 씨처럼 **지금 현역에 없는 성씨가 통째로 누수된다** — 은퇴 선수·레전드는
- *   유저가 제일 많이 물을 이름인데 거기서 모델이 생성을 해버린다.
- *
- *   성씨는 **사회적으로 닫힌 부류**다(새 성씨가 생기지 않는다). 그래서 열거가 안전하고,
- *   로스터 파생과 **합집합**으로 쓴다 — 로스터가 새 성씨를 데려오면(외국인 음차 등)
- *   그것도 자동으로 포함된다.
- *
- * 출처: 통계청 인구주택총조사 성씨 목록 중 **단음절 한글 성씨** 전수.
- */
-const KOREAN_SURNAMES: ReadonlySet<string> = new Set([
-  "가", "간", "갈", "감", "강", "강전", "개", "견", "경", "계", "고", "곡", "공", "곽", "관", "광",
-  "교", "구", "국", "궁", "권", "그", "금", "기", "길", "김", "나", "난", "남", "낭", "내", "노",
-  "녕", "다", "단", "담", "당", "대", "덩", "도", "돈", "동", "두", "둘", "드", "등", "라", "낙",
-  "란", "남", "랭", "려", "로", "뢰", "륙", "류", "리", "린", "마", "만", "망", "매", "맹", "명",
-  "모", "목", "묘", "무", "묵", "문", "미", "민", "밀", "박", "반", "발", "방", "배", "백", "범",
-  "변", "병", "복", "봉", "부", "빈", "빙", "사", "삼", "상", "서", "석", "선", "설", "섬", "성",
-  "소", "송", "쇄", "수", "순", "숭", "승", "시", "신", "심", "씨", "아", "안", "애", "야", "양",
-  "어", "엄", "여", "연", "염", "옆", "예", "오", "옥", "온", "옳", "옹", "왕", "요", "용", "우",
-  "욱", "운", "원", "위", "유", "육", "윤", "은", "음", "응", "이", "익", "인", "임", "입", "자",
-  "장", "저", "적", "전", "점", "정", "제", "조", "좁", "종", "좌", "주", "준", "즐", "증", "지",
-  "진", "차", "찬", "참", "창", "채", "천", "초", "총", "최", "추", "춘", "태", "택", "토", "통",
-  "팡", "편", "평", "포", "표", "품", "풍", "피", "필", "하", "학", "한", "함", "해", "허", "현",
-  "형", "호", "홍", "화", "환", "황", "후", "훈", "휘", "흥",
-]);
 
 export type UnboundName = {
   /** 질문에서 뽑힌, 로스터에 없는 이름 후보 */
@@ -1691,8 +1661,11 @@ export function resolveUnboundName(
   const rosterNames = [...new Set(players.map((p) => p.name))].filter((n) => HANGUL_NAME.test(n));
   if (rosterNames.length === 0) return null;
   const rosterNameSet = new Set(rosterNames);
-  // 성씨 = 한국 성씨 폐쇄집합 ∪ 현역 로스터 파생(외국인 음차 등 새 글자가 들어와도 따라간다).
-  const surnames = new Set([...KOREAN_SURNAMES, ...rosterNames.map((name) => name[0])]);
+  // ⚠️ **성씨 결속은 near-miss 근거로 흡수됐다** (2026-08-09).
+  //   종전엔 "첫 글자가 한국 성씨인 3~4음절" 을 이름 모양으로 봤는데, 그 판정은
+  //   `자동차`(`자` 씨)·`신인왕`(`신` 씨)·`치어리`(`치` 씨)를 전부 통과시킨다.
+  //   지금은 **로스터 이름과 1음절 차이** 를 근거로 쓰므로 성씨 판정이 필요 없다 —
+  //   near-miss 가 있다는 것 자체가 "로스터 이름들과 같은 모양" 이라는 더 강한 증거다.
 
   // ── 이름이 올 수 있는 자리 (닫힌 부류로 고정) ─────────────────────────────
   //
@@ -1718,63 +1691,72 @@ export function resolveUnboundName(
   // 분해형 중 하나라도 기능어면 그 어절은 이름이 아니다(`저번에`→`저번`).
   if (cores.some((core) => NON_NAME_FUNCTION_WORDS.has(core))) return null;
 
-  const isNameShaped = (token: string): boolean => {
-    if (!HANGUL_NAME.test(token)) return false;
-    // 3~4음절만. 2음절은 `김치`·`박수` 같은 일반명사가 너무 많다.
-    if (token.length < 3 || token.length > 4) return false;
-    if (rosterNameSet.has(token)) return false;
-    if (!surnames.has(token[0])) return false;
-    if (NON_NAME_FUNCTION_WORDS.has(token)) return false;
-    // 야구 어휘·지표어·구단명은 이름 후보가 아니다.
-    if (BASEBALL_VOCABULARY.includes(token)) return false;
-    if (STAT_WORDS.includes(token)) return false;
-    if (TEAM_WORDS.includes(token)) return false;
-    return true;
-  };
-  const uniqueNearMiss = (token: string): string | null => {
+  /**
+   * 이 토큰과 **같은 길이·1음절 차이**인 로스터 이름들.
+   *
+   * ⚠️ 개수가 이 함수의 **유일한 proper-name 근거**다(아래 축2 설명 참조).
+   */
+  const nearMissNames = (token: string): string[] => {
     const candidates = rosterNames.filter((name) => isOneSyllableSwap(token, name));
-    return candidates.length === 1 ? candidates[0] : null;
+    // ⚠️ **차이나는 음절이 조사 자리 그 자체이면 근거가 아니다** (게이트가 잡은 오탐).
+    //   `박수는 언제 쳐?` 의 `박수는` 은 로스터 `박수종` 과 1음절 차이인데, 그 1음절이
+    //   하필 **끝의 조사 `는`** 이다. "일반명사 + 조사" 가 "이름 + 다른 끝음절" 로 보인
+    //   것뿐이라 near-miss 가 우연이다. `김하은`→`서하은` 은 **첫 음절**이 달라 무관하다.
+    if (!SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))) return candidates;
+    return candidates.filter((name) => name[name.length - 1] === token[token.length - 1]);
   };
 
-  // ── 축1: unique near-miss — **표현과 무관하게** fail-close ──────────────────
-  //   로스터 선수 하나와 정확히 1음절만 다르면 어투·명사 신호를 보지 않고 막는다
-  //   (삼순 2026-08-09 조건 ①). `임창규 알려줘`·`혹시 임창규 알아?`·`임창규 잘해?`·
-  //   `임창규 lg 주축 맞아?` 가 전부 여기서 잡힌다.
+  // ── anchor: **이 문장이 사람을 물었다는 근거** ─────────────────────────────
   //
-  //   ⚠️ 조사가 붙은 raw 형태도 본다. `김하은 어떤 선수야` 의 `김하은` 은 이름 자체가
-  //     조사 음절(`은`)로 끝나 아래 이름 모양 판정에서 빠지는데, 로스터 `서하은` 과
-  //     1음절 차이라 여기서 잡힌다(삼순 2026-08-09 fail-open 표본).
+  //   ⚠️ 직전 판은 축1(unique near-miss)을 anchor 없이 무조건 fail-close 했다.
+  //     그러면 near-miss 가 우연히 유일한 **일반 단어**가 그대로 이름이 된다:
+  //       `우승한 팀 어디야?` → `우승한` → `우승완` 제안   ← 삼순 2026-08-09 실측
+  //     내가 `작년에 우승한 …` 으로만 확인하고 넘어간 것이 오판이었다. `작년에` 가
+  //     머리를 차지해 피한 것뿐이라 **위치 은폐**였지 결속이 아니었다.
+  //
+  //   anchor 는 둘 중 하나 — **둘 다 닫힌 부류**다:
+  //     ① 사람 명사가 문장에 있다(`선수`·`투수`·`누구`·`소개`…). 평가 술어는 제외했다
+  //        (`잘해`·`어때` 는 사람에만 붙지 않는다 — `자동차 운전 잘해?`).
+  //     ② 머리 어절이 **주격·주제 조사**를 달았다(`임창규는 어느 팀이야`).
+  //        용언 활용형(`우승한`·`나왔지`)은 이 조사를 달지 않는다.
+  //     ③ 문장이 **구단을 지명**했다(`임창규 lg 주축 맞아?`). 구단 alias 는 폐쇄집합이고,
+  //        구단을 붙여 묻는 대상은 사람 아니면 그 구단 자신인데 구단명 자체는 아래
+  //        `TEAM_WORDS` 배제로 이미 후보에서 빠진다.
+  const headHasSubjectParticle = SUBJECT_PARTICLES.some(
+    (particle) => headRaw.length > particle.length && headRaw.endsWith(particle),
+  );
+  if (!hasPersonWord && !headHasSubjectParticle && !mentionsTeam(tokens)) return null;
+
+  // ── 이름이라는 근거 = **near-miss 가 하나라도 있다** ────────────────────────
+  //
+  //   ⚠️ 삼순 2026-08-09 (b) 비대칭. "이웃이 0명인 이름" 축은 근거가 하나도 없다 —
+  //     `오타니`·`홍길동` 과 `자동차`·`신인왕`·`치어리` 는 구조가 완전히 같다
+  //     (3음절 + 성씨 글자 + 사람 명사 문장). 실측 near-miss 수:
+  //       오타니 0 · 홍길동 0 · 선동열 0 │ 자동차 0 · 신인왕 0 · 치어리 0 · 떡볶이 0
+  //     구분하려면 형태소/사전/NER 이 필요하고, 그건 이 PR 의 검증 표면 밖이다.
+  //     그래서 **근거 없으면 기존 경로로 둔다.**
+  //
+  //   반대로 near-miss 가 있으면 그 토큰은 로스터 이름들과 **같은 모양**이라는
+  //   기계적 근거가 된다:
+  //       임창규 1(임찬규) · 김하은 1(서하은) · 김연아 1 · 신동엽 1 · 이효리 1
+  //       이대호 3 · 이종범 4 · 최동원 4 · 이승엽 5
+  //
+  //   ⇒ 1명 → 그 이름을 되묻는다(`name_suggest`)
+  //     2명 이상 → 아무나 고르는 게 새 오답이므로 못 찾았다고만 한다(`name_unknown`)
+  //     0명 → **막지 않는다**(기존 경로). 이 손해는 아래에 명시한다.
+  //
+  //   ⚠️ 남는 구멍을 숨기지 않는다: `오타니 어떤 선수야`·`홍길동 어떤 선수야` 처럼
+  //     **로스터에 이웃이 전혀 없는 이름**은 여전히 generic LLM 으로 간다.
+  //     닫으려면 proper-name 판정(형태소/NER)이 필요하다 — 별도 트랙이다.
   for (const token of cores) {
     if (!HANGUL_NAME.test(token)) continue;
     if (token.length < 3 || token.length > 4) continue;
     if (rosterNameSet.has(token)) continue;
+    // 야구 어휘·지표어·구단명은 이름 후보가 아니다.
     if (BASEBALL_VOCABULARY.includes(token) || STAT_WORDS.includes(token) || TEAM_WORDS.includes(token)) continue;
-    const suggestion = uniqueNearMiss(token);
-    if (suggestion === null) continue;
-    // ⚠️ **차이나는 음절이 조사 자리 그 자체이면 이름이 아니다** (게이트가 잡은 오탐).
-    //   `박수는 언제 쳐?` 의 `박수는` 은 로스터 `박수종` 과 1음절 차이인데, 그 1음절이
-    //   하필 **끝의 조사 `는`** 이다. 즉 "일반명사 + 조사" 가 "이름 + 다른 끝음절" 로
-    //   보이는 것뿐이라 near-miss 가 우연이다(`박수`·`안타`·`감독` 전부 같은 함정).
-    //   반대로 `김하은`→`서하은` 은 **첫 음절**이 달라 조사와 무관하다 — 그건 진짜 이름이다.
-    if (SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))
-      && token[token.length - 1] !== suggestion[suggestion.length - 1]) continue;
-    return { token, suggestion };
-  }
-
-  // ── 축2: 이웃 없는 이름 — **사람 명사가 있을 때만** fail-close ───────────────
-  //   `오타니`·`홍길동` 처럼 near-miss 가 0명인 이름은 구조만으로는 `자동차`·`떡볶이` 와
-  //   구분되지 않는다. 그래서 사람 신호(`선수`·`투수`·`누구`·`잘해`…)를 요구한다.
-  //
-  //   ⚠️ `어때`·`주축` 은 사람 신호에서 뺐다 — `자동차는 어때?` 가 같은 구조로 통과했다
-  //     (삼순 2026-08-09 과차단). 그래서 `임창규 lg 주축 맞아?` 는 이 축이 아니라
-  //     축1(near-miss)이 잡는다.
-  if (!hasPersonWord) return null;
-  for (const token of cores) {
-    // 조사가 붙은 형태 그대로는 이름이 아니다 — 진짜 이름은 조사를 떼어낸 핵이다.
-    if (SUBJECT_PARTICLES.some((particle) => token.endsWith(particle))) continue;
-    if (!isNameShaped(token)) continue;
-    // 제안은 **정확히 1명**일 때만(위 축1에서 이미 처리됐으므로 여기 오면 0명 또는 2명 이상).
-    return { token, suggestion: uniqueNearMiss(token) };
+    const candidates = nearMissNames(token);
+    if (candidates.length === 0) continue;
+    return { token, suggestion: candidates.length === 1 ? candidates[0] : null };
   }
   return null;
 }
