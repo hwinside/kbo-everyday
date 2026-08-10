@@ -222,6 +222,12 @@ const ACK_PHRASES = [
   "ㄳ", "ㄱㅅ", "땡큐", "땡스", "thx", "thanks", "thank you",
   "잘 알겠어", "잘 알겠어요", "알겠어", "알겠어요", "알겠습니다",
   "이해했어", "이해했어요", "이해됐어", "이해됐어요",
+  // 반응어 (2026-08-10 하린아빠 캡처 — `ㅇㅋ` 가 범위 안내를 받았다). 직전 답변을
+  // 수긍하는 대화 행위라 감사 인사와 같은 칸이다. full-string 완전일치만 잡으므로
+  // `ㅇㅋ 근데 보크는?` 같은 복합문은 여기 안 걸린다. 반대가설 없는 폐쇄집합.
+  // ⚠️ 넣지 않는 것: `ㄴㄴ`(부정어 — 수긍이 아니다), `ㅋㅋ`·`ㅎㅎ`(normalizeAck 가 말몸 ㅋ/ㅎ 를
+  // 전부 벗겨 **빈 문자열**이 된다 — 빈 문자열을 집합에 넣으면 `??` 같은 순수 구두점도 ack 으로 접힌다).
+  "ㅇㅋ", "ㅇㅋㅇㅋ", "오케이", "오키", "ok", "okay", "ㅇㅇ", "넵", "네", "응", "굿", "굿굿",
 ] as const;
 
 /** 앞뒤 공백 제거 · 중복 공백 축약 · 문말 구두점 제거 · 소문자 · NFC */
@@ -2874,9 +2880,19 @@ async function answerOfficialDocumentQuestion(
     }
   }
 
-  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence });
+  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence, generalFallback: { question } });
+  // GENERAL — 공식 간행물에 답이 없어 일반 야구 지식으로 답했다 (2026-08-10 unsure 함정 제거).
+  //   종전에는 여기서 무조건 unsure 하드 종결이었다 — 그 결과 `지명 타자의 DH 약자`·
+  //   `잔루만루`·`ph 포지션`·`wRC+ 해석` 같은 정상 질문이 전부 "이해 못함"을 받았다.
+  //   이 답은 근거 없는 생성답이므로 기존 generic 경로와 같은 자격(`llm`)으로 기록하고
+  //   출처는 붙이지 않는다. 숫자는 validate 단계가 질문 밖 토큰을 기계 폐기했다.
+  if (validated.kind === "general") {
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: validated.answer, source: "llm", remaining };
+  }
   if (validated.kind !== "grounded") {
-    // 공식 근거로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
+    // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
