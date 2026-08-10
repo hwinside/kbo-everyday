@@ -43,6 +43,13 @@ const MUTATIONS = [
     to: "if (false) {",
   },
   {
+    name: "m12 데뷔 bounded 범위 검출 제거 — 데뷔 후 3년이 전 커리어로 축소 (삼순 4차 재현)",
+    file: SEASON,
+    from: "const recentRange = /최근\\d+/.test(rest) || debutBoundedRange;",
+    to: "const recentRange = /최근\\d+/.test(rest);",
+    smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
+  },
+  {
     name: "m1 identity 대조 제거 — 다른 선수 기록이 그대로 나간다",
     file: PIPELINE,
     from: "if (!record || record.playerName !== candidate.name) {",

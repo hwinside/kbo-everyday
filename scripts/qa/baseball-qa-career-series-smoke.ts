@@ -296,6 +296,11 @@ checkAsync("파이프라인: 동치 축소형 전부 blocked 종단 — fetch/LL
     "최형우 작년까지 홈런 몇 개야",
     "최형우 작년과 현재 타율 비교해줘",
     "최형우 작년보다 지금 타율이 좋아?",
+    // bounded 데뷔 범위 (삼순 4차 P0): full-career 동치가 아니다 — 전 커리어 시리즈로
+    // 축소되면 안 되고 blocked + 전 호출 0 이어야 한다.
+    "최형우 데뷔 후 3년 타율 추이",
+    "최형우 입단 첫 3시즌 홈런 추이",
+    "최형우 데뷔 이후 3년 홈런 추이",
   ];
   for (const q of equivalents) {
     let careerFetches = 0;

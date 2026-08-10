@@ -169,11 +169,23 @@ interface TemporalScan {
 function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
-  // 데뷔 결속 스팬(`데뷔시점부터 현재까지`·`데뷔 이후`)은 전 커리어와 동치다 — 범위가
-  // 아니라 시리즈 질의의 수식이므로 참조·범위표지 집계 **전에** 통째로 소거한다.
-  // (`현재`를 참조로 세면서 캡처 exact 가 범위로 오판되는 것을 구조로 방지.)
-  rest = rest.replace(/(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터)?(?:현재|지금|올해|오늘)?(?:까지)?/g, "\u0000");
-  const recentRange = /최근\d+/.test(rest);
+  // bounded 데뷔 범위(`데뷔 후 3년`·`입단 첫 3시즌`)는 full-career 동치가 아니라
+  // **지원하지 않는 부분 범위**다 (삼순 4차 P0) — 소거 전에 먼저 검출해 fail-close 로
+  // 보낸다. 소거를 먼저 하면 이 신호가 지워져 전 커리어 시리즈로 오답한다.
+  const debutBoundedRange =
+    /(?:데뷔|입단)(?:시점|초|직후)?(?:이래|이후|부터|첫|후)?\d+(?:년|시즌)/.test(rest);
+  // full-career 동치 스팬만 엄격히 소거한다: 연결어(부터/이래/이후)가 **필수**다.
+  // 뒤 요소가 전부 optional 이면 bare `데뷔/입단` 까지 지워져(삼순 4차 P0) bounded
+  // 범위 질문이 전 커리어로 축소된다. 소거 대상은 `데뷔시점부터 현재까지`(캡처 exact)·
+  // `데뷔 이래` 류 — 범위가 아니라 시리즈 질의의 수식이므로 참조·범위표지 집계 전에
+  // 통째로 소거해, `현재` 를 참조로 세면서 범위로 오판하는 것을 구조로 방지한다.
+  if (!debutBoundedRange) {
+    rest = rest.replace(
+      /(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터)(?:현재|지금|올해|오늘)?(?:까지)?/g,
+      "\u0000",
+    );
+  }
+  const recentRange = /최근\d+/.test(rest) || debutBoundedRange;
   const explicitYearSet = new Set(
     [...rest.matchAll(/(?:19|20)\d{2}/g)].map((match) => Number(match[0])),
   );
