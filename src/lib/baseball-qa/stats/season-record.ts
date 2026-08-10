@@ -175,45 +175,32 @@ interface TemporalScan {
 function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
-  // ── 데뷔/입단 한정의 구조 분류 (삼순 5차 — 개별 regex 덧대기가 아니라 스코프로) ──
-  // bounded(`데뷔 후 첫 3년`)가 최우선: 숫자 범위가 보이면 연결어가 있어도 부분 범위다.
-  // full_origin 은 연결어(이래/이후/부터/후)가 **필수** — 데뷔 기점 전체 = 전 커리어 동치.
-  // 그 외(단일 `데뷔 시즌`·`입단 첫해`·bare `데뷔`)는 전부 other — 현재시즌·전 커리어
-  // 어느 쪽으로도 축소하지 않고 fail-close 한다.
+  // ── 데뷔/입단 한정 — A′ 폐쇄집합 (삼순 10차 확정, 예문 사냥 종료) ──────────
+  // 지원은 원 캡처 축 하나뿐이다: 데뷔 기점 + 명시적 series(연도별/추이…) 또는
+  // 명시적 통산어. 그 밖의 모든 `데뷔/입단` 상대 표현(서수·수사·명명형·bounded·
+  // bare — `첫해`·`두 번째 시즌`·`마지막 시즌`·`후 3년` 전부)은 분기 하나로
+  // other(fail-close) 한다. 어떤 표현인지 판정하지 않는다 — 허용 목록 밖이면 거절.
+  // 더 자연스러운 상대시점 이해는 별도 트랙(제한 AST + career row 환산) 몫이다.
   let debutScope: "none" | "full_origin" | "other" = "none";
   if (/데뷔|입단/.test(rest)) {
-    const connector = /(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)/.exec(rest);
-    if (connector) {
-      // ── 구조 판정 (삼순 9차 — 서수/명명형 열거 금지) ──────────────────────
-      // bounded span(`데뷔 후 3년`·`첫 3년`)도 별도 분기 없이 이 판정이 흡수한다 —
-      // 잔여에 `년/시즌` 단위가 남으므로 other. (종전 숫자 bounded 분기는 중복이라 제거)
-      // full_origin(전 커리어 동치)은 연결어 뒤 잔여에 **시간 단위 selector 가 하나도
-      // 남지 않을 때만** 성립한다. `데뷔 후 두 시즌`·`열한 번째 시즌`·`마지막 시즌`
-      // 처럼 잔여에 시즌/경기/타석/등판/년(도) — 또는 서수·명명형 수식이 붙은 해 —
-      // 가 남으면 specific/bounded 시점 질의이므로 other 로 fail-close 한다.
-      // 어떤 서수(두/열한/마지막…)인지는 판정하지 않는다 — 단위의 실재만 본다.
-      let after = rest.slice(connector.index + connector[0].length);
-      // series 표지(시즌별/연도별/…별 + 추이)는 시간 단위가 아니라 커리어 시계열
-      // 요청이다 — 소거 후 판정해야 `데뷔 후 시즌별 홈런 추이` 가 series 로 남는다.
-      after = after.replace(/(?:시즌별|연도별|년도별|경기별|월별|추이)/g, "\u0000");
-      // full-origin 스팬의 cutoff (`… 현재까지`)도 단위가 아니다.
-      after = after.replace(/(?:현재|지금|올해|오늘)까지/g, "\u0000");
-      // `해` 는 동사(말해/대해)와 동철이라 단독으론 못 세고, 시간 단위로 쓰일 때의
-      // 구조(수식 표지 직후)만 인정한다: 첫해·N째 해·N번째 해·마지막 해.
-      const unitLeft = /(?:시즌|경기|타석|등판|년도?)|(?:첫|째|번째|마지막)해/.test(after);
-      if (unitLeft) {
-        debutScope = "other";
-      } else {
-        debutScope = "full_origin";
-        // full-origin 스팬은 참조·범위표지 집계 **전에** 통째로 소거한다 — `현재까지` 를
-        // 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
-        rest = rest.replace(
-          /(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)(?:현재|지금|올해|오늘)?(?:까지)?/g,
-          "\u0000",
-        );
-      }
+    const seriesReq = SERIES_WORDS.some((word) => spaced.includes(word));
+    const careerReq = CAREER_TOTAL_WORDS.some((word) => spaced.includes(word));
+    // 허용 분기 안에서도 bounded 한정이 끼면 거절한다 (`데뷔 후 3년 타율 추이` 는
+    // 전체 시계열이 아니라 첫 3년 요청) — series/cutoff/데뷔 스팬을 소거한 잔여에
+    // 시간 단위가 남는지만 본다(9차 구조 잔여검사 재사용, 열거 아님).
+    let probe = rest.replace(/(?:시즌별|연도별|년도별|추이)/g, "\u0000");
+    probe = probe.replace(/(?:현재|지금|올해|오늘)까지/g, "\u0000");
+    probe = probe.replace(/(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터|후)?/g, "\u0000");
+    const unitLeft = /(?:시즌|경기|타석|등판|년도?)|(?:첫|째|번째|마지막)해/.test(probe);
+    if ((seriesReq || careerReq) && !unitLeft) {
+      debutScope = "full_origin";
+      // 데뷔 스팬(연결어·cutoff 포함)은 참조·범위표지 집계 **전에** 통째로 소거한다 —
+      // `현재까지` 를 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
+      rest = rest.replace(
+        /(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)?(?:현재|지금|올해|오늘)?(?:까지)?/g,
+        "\u0000",
+      );
     } else {
-      // 연결어 없는 bare 언급(`데뷔 시즌`·`입단 첫해`) — 축소 금지, fail-close.
       debutScope = "other";
     }
   }
@@ -446,8 +433,11 @@ export function resolveSeasonRecordIntent(
   //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
   //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
   const scan = scanTemporalRefs(question);
-  // ⓪ 데뷔/입단 한정 중 full-origin(전 커리어 동치)이 아닌 것 전부 — 단일 데뷔 시즌·
-  //   bounded N년·bare 언급은 현재시즌으로도 전 커리어로도 축소하지 않는다 (삼순 5차).
+  // ⓪-a 월별/경기별 축 — 우리 정본은 연도별 테이블뿐이다. 월·경기 단위 시계열은
+  //   서빙 데이터가 없으므로 어느 쪽으로도 축소하지 않고 fail-close (삼순 10차).
+  if (/월별|경기별/.test(scan.spaced)) return { kind: "unsupported_season" };
+  // ⓪ 데뷔/입단 한정 중 A′ 폐쇄집합(명시 series/통산) 밖 전부 — 서수·수사·명명형·
+  //   bounded·bare 를 가리지 않고 현재시즌으로도 전 커리어로도 축소하지 않는다.
   if (scan.debutScope === "other") return { kind: "unsupported_season" };
   // ① 최근 N<단위> 범위 — 단위 무관(경기·년·시즌·일·주…). 연도별 테이블로 답할 수 없다.
   if (scan.recentRange) return { kind: "unsupported_season" };
@@ -470,9 +460,10 @@ export function resolveSeasonRecordIntent(
     if (scan.refTotal > 0) return { kind: "unsupported_season" };
     return { kind: "career", query, span: { type: "series" } };
   }
-  if (scan.careerWord || scan.debutScope === "full_origin") {
-    // `데뷔 이래 홈런 몇 개` — full-origin 은 통산 누계와 동치다 (삼순 5차: 소거 후
-    // 현재시즌으로 축소되던 결함). 명시 통산어와 같은 경로로만 해석한다.
+  if (scan.careerWord) {
+    // 명시 통산어(통산/커리어/역대…)만 career total 이다. A′(삼순 10차)에서
+    // full_origin 은 항상 명시 series/통산어와 동반되므로 별도 disjunct 는 죽은
+    // 코드다 — `데뷔 이래 홈런`(통산어 없음)은 이제 ⓪에서 fail-close 된다.
     if (scan.refTotal > 0) return { kind: "unsupported_season" };
     return { kind: "career", query, span: { type: "career" } };
   }

@@ -53,12 +53,16 @@ const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
 // ── 1. 파서 — 기계 추출 fixture (실존: 최형우 72443 / 임찬규 61101) ────────────
-check("full-origin 데뷔 한정 = 통산 동치 (삼순 5차: 현재시즌 축소 금지)", () => {
+check("A′ 폐쇄집합 (삼순 10차): 데뷔 상대 표현은 명시 series/통산 없이는 전부 fail-close", () => {
+  // 종전 5차의 "full-origin = 통산 동치" 를 A′ 가 대체한다 — 명시적 통산어·series 표지
+  // 없이 `데뷔 이래/후` 만으로는 통산으로 축소하지 않는다(예문 사냥 종료, 폐쇄집합).
   for (const q of ["최형우 데뷔 이래 홈런 몇 개야?", "최형우 데뷔 후 홈런 몇 개 쳤어?", "최형우 입단 이후 안타 몇 개야?"]) {
     const intent = resolveSeasonRecordIntent(q, "batter");
-    assert.equal(intent.kind, "career", `${q} → ${intent.kind}`);
-    assert.equal((intent as { span: { type: string } }).span.type, "career", q);
+    assert.equal(intent.kind, "unsupported_season", `${q} → ${intent.kind}`);
   }
+  // 명시적 통산어가 있으면 career total 유지 (허용 집합 양성).
+  const total = resolveSeasonRecordIntent("최형우 통산 홈런 몇 개야?", "batter");
+  assert.equal(total.kind, "career");
 });
 check("타자 fixture: 최형우 시리즈+통산이 그대로 읽힌다", () => {
   const rec = parseCareerTotalsHtml(BATTER_HTML, SEASON);
@@ -339,6 +343,15 @@ checkAsync("파이프라인: 동치 축소형 전부 blocked 종단 — fetch/LL
     "최형우 데뷔 후 두 시즌 홈런",
     "최형우 데뷔 후 열한 번째 시즌 타율",
     "최형우 데뷔 후 마지막 시즌 홈런",
+    // A′ 폐쇄집합 (삼순 10차): 명시 series/통산 없는 full-origin 표현도, 허용 분기에
+    // bounded 가 낀 것도, 월별/경기별 축도 전부 fail-close — 예문 사냥 종료.
+    "최형우 데뷔 이래 홈런 몇 개야?",
+    "최형우 데뷔 후 홈런 몇 개 쳤어?",
+    "최형우 데뷔 후 두 해 타율",
+    "최형우 데뷔 후 두 시즌 타율 추이",
+    "최형우 월별 홈런 알려줘",
+    "최형우 데뷔 후 경기별 타율",
+    "최형우 올해 월별 타율 추이",
   ];
   for (const q of equivalents) {
     let careerFetches = 0;
