@@ -39,6 +39,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const ROSTER_PATH = path.join(ROOT, "src/lib/constants/players-roster.json");
+// 입단 정보는 roster 와 분리 보관한다(크롤 재조립·census 해시 격리 — backfill-roster-draft.mjs 참조).
+const DRAFT_PATH = path.join(ROOT, "src/lib/constants/players-draft.json");
 const BATTERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-batters.json");
 const PITCHERS_PATH = path.join(ROOT, "src/lib/constants/stats-2026-pitchers.json");
 const FOREIGN_MAP_PATH = path.join(ROOT, "src/lib/constants/foreign-id-map.ts");
@@ -263,6 +265,7 @@ async function main() {
   console.log(`🔧 reconcile: roster 미등록 선수 ${missing.length}명 발견(stats+등록명단) → KBO 상세 보강 시도`);
   const onboarded = [];
   const failed = [];
+  const draftAdditions = {}; // 신규 온보딩 선수의 lblDraft 원문 — players-draft.json 에 병합
   const foreignPendingNew = []; // 신규 외국인(숫자 직결 온보딩) 중 국적 미등록 — 알림 대상
   for (const m of missing) {
     const teamId = TEAM_TO_ID[m.team];
@@ -279,6 +282,13 @@ async function main() {
       birthDate: detail.birthDate || null,
     };
     onboarded.push(entry);
+    // 입단 정보 지속 결속(삼순 2026-08-09): 신규 온보딩 선수의 lblDraft 를 draft 파일에도
+    // 기록한다. 기록하지 않으면 exact key-set 게이트(genius-draft-year-smoke)가 RED 를 내고,
+    // 그 전까지 이 선수의 입단 질문은 "아직 확인 못 함"으로 남는다.
+    // detail.draft === null(조회 실패)이면 쓰지 않는다 — workflow 의 backfill 스텝이 재시도한다.
+    if (detail.draft !== null && detail.draft !== undefined) {
+      draftAdditions[String(m.kboId)] = detail.draft.trim();
+    }
     if (verbose) console.log(`  + ${entry.name} (${entry.kboId}, ${entry.team}, ${entry.position}, No.${entry.backNo}, ${entry.birthDate})`);
 
     // A안: 신규 외국인은 숫자 id로 그대로 온보딩(페이지·사진 자동). 단 국적(국기)은
@@ -315,6 +325,17 @@ async function main() {
 
   const next = [...roster, ...onboarded];
   fs.writeFileSync(ROSTER_PATH, JSON.stringify(next, null, 2) + (hadTrailingNL ? "\n" : ""));
+  // 입단 정보 병합 저장 — 기존 키는 건드리지 않고 신규만 더한다(재실행 안전).
+  if (Object.keys(draftAdditions).length > 0) {
+    let draftMap = {};
+    try { draftMap = JSON.parse(fs.readFileSync(DRAFT_PATH, "utf8")); } catch { draftMap = {}; }
+    for (const [kboId, draft] of Object.entries(draftAdditions)) {
+      if (!Object.prototype.hasOwnProperty.call(draftMap, kboId)) draftMap[kboId] = draft;
+    }
+    const sortedDraft = Object.fromEntries(Object.keys(draftMap).sort().map((k) => [k, draftMap[k]]));
+    fs.writeFileSync(DRAFT_PATH, JSON.stringify(sortedDraft, null, 2) + "\n");
+    console.log(`  ↳ players-draft.json 에 신규 ${Object.keys(draftAdditions).length}명 입단 정보 병합`);
+  }
   console.log(`✅ reconcile: roster 에 ${onboarded.length}명 온보딩 완료 (${roster.length} → ${next.length})`);
   console.log(`   ${onboarded.map((e) => `${e.name}(${e.kboId})`).join(", ")}`);
   console.log("   사진은 후속 update-player-photos 스텝이 자동 다운로드/맵 재생성합니다.");
