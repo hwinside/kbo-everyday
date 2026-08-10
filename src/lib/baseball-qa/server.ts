@@ -55,6 +55,7 @@ import {
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
@@ -608,6 +609,11 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
      * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
      */
     fetchTeamRecord: createTeamRecordFetchers(),
+    /**
+     * 한국시리즈 MVP 수상 정본 (`SeriesPrize.aspx`). 우승 기여·KS MVP 질문은
+     * generic LLM 위임 금지 축(삼순 2026-08-10) — 정본 조회로만 답한다.
+     */
+    fetchSeriesPrizeHtml: createSeriesPrizeHtmlFetcher(),
     searchOfficialRag,
     callOfficialRagLlm,
     recordRagDemand: async (sourceKeys) => {

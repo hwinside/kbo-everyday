@@ -146,6 +146,25 @@ async function servedBuildIdMatches(expected) {
   }
 }
 
+// ── 날짜 비의존 fixture (2026-08-10, 월요일 false-RED 실측) ─────────────────
+// 월요일(경기 없는 날)은 홈에 경기 카드가 0장이라 mutation C(TodayGamesSection
+// prefetch={true})가 no-op → "게이트 false-green" 으로 workflow 가 죽었다(8/10 3건).
+// 홈 클라이언트(useHomeInit)는 mount 시 `/api/games?date=오늘` 을 재조회해
+// games.length>0 이면 SSR 초기값을 교체하므로, 브라우저 route 가로채기로 고정 5경기
+// fixture 를 서빙하면 실제 스케줄과 무관하게 카드 5장이 항상 렌더된다.
+// 프로덕션 코드 변경 0 — 게이트의 측정 환경만 결정론화한다.
+const FIXTURE_GAMES = [
+  ["20260810LTLG0", 1, 7], ["20260810OBKT0", 3, 2], ["20260810WOSS0", 4, 10],
+  ["20260810HHSK0", 5, 9], ["20260810HTSS0", 8, 6],
+].map(([gameId, homeTeamId, awayTeamId], i) => ({
+  gameId, homeTeamId, awayTeamId,
+  time: "18:30", stadium: "잠실", homeScore: 5, awayScore: 3,
+  status: "final", inning: null,
+  awayStarterName: null, homeStarterName: null,
+  winPitcher: null, losePitcher: null, broadcastChannels: undefined,
+  _i: i,
+}));
+
 /** 실브라우저로 홈 로드 + 스크롤 3왕복 동안 `_rsc` 요청을 센다. */
 async function measure(chromium) {
   const base = `http://localhost:${PORT}`;
@@ -153,6 +172,14 @@ async function measure(chromium) {
   try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await ctx.newPage();
+    // `/api/games` 를 고정 fixture 로 가로챈다 — 경기 없는 날에도 카드가 렌더되도록.
+    await page.route("**/api/games*", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ games: FIXTURE_GAMES }),
+      }),
+    );
     const rsc = [];
     page.on("request", (r) => {
       const u = r.url();
@@ -172,8 +199,12 @@ async function measure(chromium) {
     const navLinks = await page.evaluate(() =>
       ["/standings", "/players", "/teams", "/games", "/my"]
         .filter((h) => !!document.querySelector(`a[href="${h}"]`)).length);
+    // 경기 카드 Link 실재 확인 — mutation C 의 측정 대상. fixture 주입으로 항상 5장이
+    // 렌더돼야 하고, 0장이면 카드 미렌더 상태의 측정이라 무효다(월요일 no-op 재발 방지).
+    const gameLinks = await page.evaluate(
+      () => document.querySelectorAll('a[href^="/games/2026"]').length);
     await ctx.close();
-    return { load, scroll, navLinks, paths: rsc };
+    return { load, scroll, navLinks, gameLinks, paths: rsc };
   } finally {
     await browser.close();
   }
@@ -225,6 +256,13 @@ async function runOnce() {
     // 불완전 렌더는 예산 판정 이전에 harness 실패로 처리한다. 페이지가 안 그려지면
     // _rsc 가 적게 잡혀 "예산 이내"로 오인될 수 있고, mutation 이 이걸 유효 RED 로
     // 세면 검증력이 무너진다(삼순 NO-GO 3차 지적①).
+    log(`  마운트된 경기 카드 Link ${m.gameLinks}장 (fixture 5경기 주입)`);
+    // 카드 0장이면 mutation C 가 no-op 이 되는 무효 측정이다 — 예산 판정 전에 harness
+    // 실패로 분리한다(navLinks 와 같은 원칙, 전용 marker 로 구분).
+    if (m.gameLinks < 1) {
+      log(`  HARNESS-FAIL[RSC_NO_GAME_CARDS] 경기 카드 Link 0장 — fixture 주입 실패, 측정 무효`);
+      return EXIT_HARNESS_FAILURE;
+    }
     if (m.navLinks < 4) {
       // 전용 marker: workflow self-protect 스텝이 "아무 exit 30"이 아니라 바로 이 분기가
       // 탔음을 확인하도록 고정 토큰을 찍는다(삼순 NO-GO 5차 지적②).
