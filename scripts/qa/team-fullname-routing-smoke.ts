@@ -329,12 +329,27 @@ async function verifyTeamNumericAnswers() {
     });
   }
   // ①-c 반대편 — `팀` 을 **무조건 결속으로 읽으면** 구단이 없는 문장까지 수치로 답하게 된다.
-  //     지시 대상이 없거나(어느 팀?) 둘 이상이면(한 팀 숫자로 답하면 동문서답) 되물어야 한다.
+  //     지시 대상이 없으면(어느 팀?) `kbo_structured` 조회로 답해선 안 된다.
+  //     2026-08-10 재설계: 결정론 되묻기 대신 LLM 위임 + statNumericGuard 다 —
+  //     모델이 어느 팀인지 되묻고, 그래도 숫자를 단정하면 게이트가 되묻기로 교체한다.
   for (const question of ["팀 타율 알려줘", "팀 홈런 몇 개야"]) {
-    await check(`구단 미지명 팀 수치는 되묻는다 "${question}"`, async () => {
-      const { source, llmCalls } = await runTeam(question);
-      assert.equal(source, "stat_clarify", `${question}: source=${source} — 어느 팀인지 모르는데 답했다`);
-      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다`);
+    await check(`구단 미지명 팀 수치 — 조회 금지 + 환각 차단 "${question}"`, async () => {
+      // 위임 성립 확인 (조회로 답하지 않는다)
+      const { source } = await runTeam(question);
+      assert.notEqual(source, "kbo_structured", `${question}: 어느 팀인지 모르는데 조회로 답했다`);
+      // 환각 방향 — 지어낸 숫자는 게이트가 되묻기로 교체한다
+      const state: RunState = { llmCalls: 0, logs: [] };
+      const deps: QaDeps = {
+        ...teamDeps(state),
+        callLlm: async () => {
+          state.llmCalls += 1;
+          return { text: '{"status":"ANSWER","answer":"야구 기록으로 팀 타율은 0.299예요."}', inputTokens: 1, outputTokens: 1 };
+        },
+      };
+      const guarded = await answerQuestion("u-team-gate", question, deps);
+      assert.equal(guarded.source as MatchPath, "stat_clarify", `${question}: 지어낸 숫자가 통과했다 (source=${guarded.source})`);
+      assert.ok(!(guarded.answer ?? "").includes("0.299"), `${question}: 지어낸 숫자가 답에 남았다`);
+      assert.equal(state.llmCalls, 1, `${question}: 위임이 성립해야 한다`);
     });
   }
 

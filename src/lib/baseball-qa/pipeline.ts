@@ -22,6 +22,7 @@ import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   allowsNumericAnswer,
   composeRagAnswer,
+  numericTokensSubsetOf,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
@@ -541,14 +542,9 @@ export type QuestionRoute =
   // ⚠️ 이 라벨은 `match_path` 로도 **그대로** 기록된다(`MatchPath` 에 같은 이름이 있다).
   // 그래서 DB CHECK 확장 migration 이 필요하다 — `20260808120000_*` 가 그것이다.
   | "scope_guide"
-  // `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로 (삼순 2026-08-08).
-  //
-  // ⚠️ 기존 `unsure` 에 접지 않는다. `unsure` 는 이미 **LLM 이 답을 확신 못 한 경우**다.
-  //   한 칸에 넣으면 "생성 품질 문제"와 "결속 데이터 부재 문제"가 섞여 분모가 사라진다.
-  //   `team_rag`·`news_rag`·`scope_guide` 를 나눈 것과 같은 축이다.
-  //   → `MatchPath` 에도 같은 이름이 있고 CHECK 확장 migration 이 필요하다
-  //     (`20260809150000_*`).
-  | "stat_clarify"
+  // ⚠️ `stat_clarify` 는 **라우트가 아니라 라벨이다** (2026-08-10 재설계). 미결속 `<X> <지표>` 는
+  //   generic LLM 으로 위임되고, 혼합형 앞단 fail-close 와 숫자 게이트 위반만
+  //   `stat_clarify` 를 source/match_path 로 기록한다 — `MatchPath` 쪽 주석 참조.
   // 구단 수치 질문 — 종결 라우트가 아니라 **조회 위임**이다. `answerQuestion` 이 순위표·팀기록을
   // 조회해 답하고, 미지원 지표·조회 실패만 fail-close 한다.
   //
@@ -1024,164 +1020,8 @@ function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
 const NAMED_STAT_HEAD =
   /([가-힣a-z0-9]{1,12})(?:의|은|는|이|가)?\s+(타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/g;
 
-/**
- * **정의를 묻는 의도**.
- *
- * ⚠️ 이것만으로는 **용어로 승격하지 않는다**(삼순 2026-08-08 P0). 종전에는 정의 의도가
- *   있으면 열었는데, `오타니 홈런이 뭐야`·`홍길동 타점 설명` 이 그대로 LLM/RAG 로 샜다.
- *   `루킹 삼진이 뭐야` 와 구조가 **완전히 같아서**(둘 다 미결속 head + 지표 + 정의 의도)
- *   의도만으로는 두 경우를 가를 수 없다. 가를 수 없으면 되묻는다.
- *
- *   지금 이 상수는 **되묻기 문구를 고르는 데만** 쓴다(용어 쪽으로 물어봤는지).
- */
-const TERM_DEFINITION_INTENT =
-  /뭐야|뭐예요|뭐에요|뭔데|뭔지|뭐라|무슨|무엇|뜻|의미|차이|설명|가르쳐|모야|머야|정확히|불러|부르는|인정|어떤\s*거|다른\s*건가/;
-
 export type NamedStatKind = "entity_stat" | "term_question" | "ambiguous" | "none";
 
-/**
- * 매치 주변 잔여에 **새 야구 정보가 있는가**.
- *
- * ⚠️ 이것이 이 가드의 판정 축이다(삼순 2026-08-08 P0, 세 번째 재설계).
- *
- * 같은 실패를 세 번 했다:
- *   ① `m.index !== 0`(위치)         → `그럼 이대호 홈런` 이 빠져나갔다
- *   ② `REQUEST_TAILS`(꼬리 열거)     → `알려줘요`·`부탁해` 가 빠져나갔다
- *   ③ `FUNCTION_UNITS`(기능어 열거)  → `알려주실래요`·`부탁드립니다` 가 빠져나갔다
- * ③은 ②를 더 큰 열거로 바꾼 것일 뿐이었다. **한국어 존대·완곡 표현은 열거로 닫히지
- * 않는다** — 어미 조합이 사실상 무한하고, 빠진 조합은 조용히 뚫린다.
- *
- * 그래서 축을 뒤집는다. "잔여가 기능어인가"(무한집합을 내가 관리)를 묻지 않고
- * **"잔여에 새 야구 정보가 있는가"**(이미 있는 SSOT 가 답한다)를 묻는다:
- *   · 야구 어휘집(`BASEBALL_VOCABULARY`) — 룰·용어·포지션·행위자
- *   · 로스터(`players`)                 — 현역 선수명
- *   · 지표어(`STAT_WORDS`)              — 또 다른 `<지표>`
- * 하나도 없으면 그 잔여는 문장의 의미를 바꾸지 않는다 → 문장은 `<X> <지표>` 그 자체다.
- *
- * `알려주실래요`·`부탁드립니다`·`좀 알려주시면 감사하겠습니다` 는 야구 정보가 0이라
- * **내가 아무것도 등록하지 않아도** bare 로 잡힌다. 반대로 `선수 역할이 바뀌면 기록은` 의
- * `선수 역할이` 는 `선수`(행위자 어휘)를 담아 정상 룰 질문으로 보호된다.
- *
- * ⚠️ 토큰 경계로 본다. 부분문자열로 보면 `아웃도어`·`도루묵` 이 야구 정보로 오인된다
- *   (기존 `GRAMMATICAL_TAIL_UNITS` 주석이 경고한 축과 같다).
- */
-function carriesBaseballInformation(residue: string, players: PlayerRef[]): boolean {
-  const text = residue.replace(/[?!.,~…]/gu, " ").trim();
-  if (text.length === 0) return false;
-  for (const rawToken of text.split(/\s+/u)) {
-    if (!rawToken) continue;
-    for (const core of stripTokenSuffix(rawToken)) {
-      if (!core) continue;
-      for (const word of BASEBALL_VOCABULARY) {
-        if (core === word) return true;
-        if (core.startsWith(word) && isGrammaticalTail(core.slice(word.length))) return true;
-      }
-      for (const stat of STAT_WORDS) {
-        if (core === stat) return true;
-        if (core.startsWith(stat) && isGrammaticalTail(core.slice(stat.length))) return true;
-      }
-      for (const player of players) {
-        if (core === player.name) return true;
-        const parts = player.name.split(/\s+/u);
-        if (parts.length > 1 && core === parts[parts.length - 1]) return true;
-      }
-    }
-  }
-  return false;
-}
-
-/**
- * 잔여 한 조각의 **구조 판정** — 이 문장이 `<X> <지표>` 그 자체인지를 가른다.
- *
- * ⚠️ **음성 추론 폐기** (삼순 2026-08-08 P0, 네 번째 재설계).
- *
- *   직전 버전은 "잔여에 야구 SSOT 신호가 없으면 bare" 라는 음성 추론이었다.
- *   그래서 승인된 반대쌍이 전부 되묻기로 죽었다:
- *     `친구가 이대호 홈런 영상을 보내줬어`  — 서사문이지 기록 질문이 아니다
- *     `유튜브에서 이대호 홈런 봤어`        — 맥락 서사
- *     `이대호 홈런 영상 보여줘`           — 요청 대상이 지표가 아니라 영상이다
- *   `영상`·`친구` 는 야구 정보가 0 이라 bare 로 오판됐다 — "야구 신호 없음" 이
- *   "새 정보 없음" 을 함의하지 않는다는 게 음성 추론의 구멍이다.
- *
- *   그래서 bare 는 이제 **양성 증거로만** 성립한다. 잔여의 모든 토큰이 아래
- *   **닫힌 부류**(문법적으로 유한한 집합 — 어미 열거와 다르다)로 설명될 때만 bare 다:
- *     · 기능어·지시어·조사 (`HEAD_NON_ENTITY_UNITS` 분해)
- *     · 요청 어간 (`RESIDUE_REQUEST_STEMS` — 어간은 소수의 닫힌 집합이고,
- *       **접두 매칭**이라 존대·완곱 어미가 무한히 붙어도 전부 덮는다.
- *       ③에서 폐기한 건 *어미* 열거였다 — `알려줘/알려주실래요/알려주시면` 은
- *       어미로는 셈 수 없지만 어간 `알려` 하나로 닫힌다)
- *     · 수치 요구 명사·감탄 표기 (`RESIDUE_BARE_TOKENS`)
- *   그 외 토큰은 전부 **새 정보**다 → 문장은 `<X> <지표>` 가 아니므로 이 가드의
- *   범위 밖(`none`)이다. 특히 두 부류는 그 자체로 서사 증거다:
- *     · 과거 시제(받침 ㅅㅅ 음절 — 봤/줬/났/션/했…)  → 기록 *요청*은 과거형이 없다
- *     · 처소 표지 `에서` 로 끝나는 명사(회사에서·유튜브에서)  → 맥락 서사
- *   둘 다 한국어 형태론의 닫힌 부류라 열거가 아니라 구조 판정이다.
- *
- *   방향이 안전한 이유: 알 수 없는 토큰 → `none` 은 되묻기를 안 할 뿐이고,
- *   그 문장은 기존 파이프라인(사전→범위게이트→…)이 이어받는다. 생성 경로의
- *   수치 환각은 별도 P0(삼순·삼식 2026-08-08 합의)가 닫는다.
- */
-type ResidueSignal = "bare" | "baseball" | "new_information";
-
-/** 요청 어간 — 접두 매칭. 어미가 아니라 어간이므로 닫힌 소집합이다. */
-const RESIDUE_REQUEST_STEMS: readonly string[] = [
-  "알려", "가르쳐", "갈쳐", "갈켜", "말해", "말씀", "설명", "얘기해", "이야기해",
-  "보여", "부탁", "궁금", "요청", "감사", "좀", "제발", "빨리", "빨로", "얼른",
-  // 보조 요청 어간. `NAMED_STAT_HEAD` 가 꼬리의 `알려/보여` 를 매치에 **삼키므로**
-  // 잔여는 `주실래요`·`주세요`·`줘` 로 시작한다(2026-08-09 즉석 검증 실측).
-  // 과거형(`줬…`)은 이 검사 앞의 ㅅㅅ 받침 판정이 먼저 잡으므로 서사와 안 섞인다.
-  "주", "줘", "줄", "달라", "다오",
-  // 평가 의문 어간 — `이승엽 홈런 어때` 는 지표의 값/평을 묻는 bare 요청이다
-  // (Vercel 빌드 스모크가 잡은 회귀, 2026-08-09). 의문 서술 어간도 닫힌 부류다.
-  "어때", "어떠", "어떻", "어떤가", "어떠한", "어떻게", "어떘", "어땐",
-];
-
-/**
- * 수치 요구 명사·담화 감탄사 — 문장에 새 정보를 더하지 않는 닫힌 부류.
- * 감탄사(`아 그럼 홍길동 타점`)는 담화 표지다 — 빌드 스모크가 잡은 회귀(2026-08-09).
- */
-const RESIDUE_BARE_TOKENS: readonly string[] = [
-  "개수", "갟수", "수치", "숫자", "통계",
-  "아", "어", "오", "음", "흠", "헐", "와", "캐", "엥", "앗", "아하", "오호", "자", "그케",
-];
-
-/** 감탄·웃음 표기(ㅋㅋ·ㅎㅎ·ㅠㅠ 등 자음/모음 단독 반복) — 정보 0. */
-const EMOTICON_TOKEN = /^[ㄱ-ㅎㅏ-ㅣ]+$/u;
-
-/**
- * 과거 시제 음절(받침 ㅅㅅ) 포함 여부 — 한국어 과거형의 형태론적 불변량이다.
- *
- * ⚠️ ㅅㅅ 받침이지만 과거가 **아닌** 음절 둘은 제외한다(2026-08-09 즉석 검증 실측):
- *   `겠`  의지·추측 — `감사하겠습니다` 가 서사로 오판돼 정중 요청이 되묻기에서 샐다.
- *   `있`  존재·현재 — `기록 있어?` 는 현재 질문이다.
- */
-function hasPastTenseSyllable(token: string): boolean {
-  for (const ch of token) {
-    if (ch === "겠" || ch === "있") continue;
-    const code = ch.codePointAt(0)!;
-    if (code >= 0xac00 && code <= 0xd7a3 && (code - 0xac00) % 28 === 20) return true;
-  }
-  return false;
-}
-
-function residueSignal(residue: string, players: PlayerRef[]): ResidueSignal {
-  if (carriesBaseballInformation(residue, players)) return "baseball";
-  const text = residue.replace(/[?!.,~…;"'“”‘’()\[\]]/gu, " ").trim();
-  if (text.length === 0) return "bare";
-  for (const token of text.split(/\s+/u)) {
-    if (!token) continue;
-    if (EMOTICON_TOKEN.test(token)) continue;
-    // 서사 증거 — 과거형·처소 표지는 요청 어간보다 먼저 본다(`보내줬어` 는
-    // `보여` 와 무관하지만 `보` 로 시작하는 유사 어간이 생길 때 오판을 막는다).
-    if (hasPastTenseSyllable(token)) return "new_information";
-    if (/에서는?$|에선$/u.test(token)) return "new_information";
-    if (RESIDUE_BARE_TOKENS.includes(stripNameParticle(token))) continue;
-    if (RESIDUE_REQUEST_STEMS.some((stem) => token.startsWith(stem))) continue;
-    if (decomposesToUnits(token, HEAD_NON_ENTITY_LONGEST_FIRST)) continue;
-    return "new_information";
-  }
-  return "bare";
-}
 
 /**
  * `<X>` 자리에 올 수 있지만 **엔티티일 수 없는** 지시어·의문사·연결 표지.
@@ -1313,31 +1153,22 @@ function classifyOneNamedStat(
   //   섞은 일반 집합을 쓰면 같은 함정이 되살아난다(`GRAMMATICAL_TAIL_UNITS` 주석의 `도어`).
   if (decomposesToUnits(head, HEAD_NON_ENTITY_LONGEST_FIRST)) return "none";
 
-  // ③ 근거가 없다. 되묻기로 종결할지, 이 가드의 범위 밖으로 흘릴지 가른다.
+  // ③ 근거가 없다 — **미결속**. 여기서 판정을 멈춘다 (2026-08-10 하린아빠 방향 확정).
   //
-  // ⚠️ **명시적 요구**가 있으면 문장 모양과 무관하게 되묻는다. 두 가지가 대칭이다:
-  //     수치 요구  `홍길동은 홈런을 몇 개 쳤어?`  → 없는 숫자를 지어낸다
-  //     정의 요구  `오타니 홈런이 뭐야`          → 없는 대상의 지표를 설명하며 지어낸다
-  //   종전에는 정의 요구를 **용어 승격 근거**로 썼는데, `루킹 삼진이 뭐야` 와 구조가
-  //   완전히 같아서(둘 다 미결속 head + 지표 + 정의 의도) 두 경우를 가를 수 없었다.
-  //   가를 수 없으면 답하지 않고 되묻는다 (삼순 2026-08-08 P0).
-  if (/몇|얼마/.test(normalized)) return "ambiguous";
-  if (TERM_DEFINITION_INTENT.test(normalized)) return "ambiguous";
-
-  // bare 판정 — **양성 증거로만** 성립한다(삼순 2026-08-08 P0, 음성 추론 폐기).
-  //   · 잔여에 야구 정보          → 정상 룰 질문. 가드 범위 밖(none)
-  //   · 잔여에 새 정보(서사·미지 토큰) → `<X> <지표>` 가 문장의 전부가 아니다(none)
-  //   · 잔여가 요청·기능 구조뿐        → bare. 되묻는다(ambiguous)
-  const prefixSignal = residueSignal(prefix, players);
-  const suffixSignal = residueSignal(suffix, players);
-  if (prefixSignal === "bare" && suffixSignal === "bare") {
-    return "ambiguous";
-  }
-
-  // 잔여가 야구 정보를 담은 정상 룰 질문(`선수 역할이 바뀌면 기록은`)이거나,
-  // 야구 밖 새 정보를 담은 서사·요청 문장(`친구가 이대호 홈런 영상을 보내줬어`).
-  // 둘 다 이 가드의 판단 범위가 아니므로 손대지 않는다.
-  return "none";
+  //   종전에는 잔여(prefix/suffix)를 룰 문법(요청 어간·감탄사·과거 시제 받침·처소 표지)으로
+  //   분석해 bare(되묻기)/서사(범위 밖)를 갈랐다. 같은 실패가 네 번 반복됐다 — 위치 판정 →
+  //   꼬리 열거 → 기능어 열거 → 닫힌 부류 열거. 매 회귀마다 부류가 자랐고(`어때`·`아` 추가가
+  //   마지막), **열린 자연어는 열거로 닫히지 않는다**는 것이 #1139→#1142 에서 확정된 교훈이다.
+  //
+  //   그래서 잔여 분석을 전부 폐기한다. 미결속 `<X> <지표>` 는 서사든 요청이든 전부
+  //   `ambiguous` = **LLM 위임**이다 (`answerQuestion` 의 statNumericGuard):
+  //     · 서사(`친구가 이대호 홈런 영상을 보내줬어`)  → LLM 이 자연스럽게 받는다.
+  //       룰이 문장 유형을 미리 가릴 필요가 없다 — 판정 주체가 LLM 으로 바뀌었기 때문이다.
+  //     · 기록 요청(`이대호 홈런 몇개`)               → LLM 은 근거가 없다. 프롬프트가
+  //       수치 단정을 금지하고 되묻게 하며, 그래도 새 숫자가 나오면 **기계 게이트**
+  //       (`numericTokensSubsetOf`: 답 숫자 ⊆ 질문 숫자)가 되묻기로 fail-close 한다.
+  //   판정은 룰이 아니라 기계 게이트가 닫으므로, 여기에는 더 이상 열거가 자랄 자리가 없다.
+  return "ambiguous";
 }
 
 /**
@@ -2652,15 +2483,17 @@ export function routeQuestion(
   // ── `<X> <지표>` 3분기 (삼순 2026-08-08) ────────────────────────────────────
   //
   // 구단이 지명된 경우는 이미 위에서 `team_record` 로 위임됐으므로 여기 오지 않는다.
-  // 남은 것은 선수/용어/모호형이다. `classifyNamedStat` 주석에 근거가 있다.
+  // 남은 것은 선수/용어/미결속이다. `classifyNamedStat` 주석에 근거가 있다.
   if (!hasTeam) {
     const namedStat = classifyNamedStat(normalized, glossary, players, hasTeam);
     // DB 결속 엔티티 + 수치 의도 → 기록 경로. 지원 지표는 앞단 `kbo_structured` 가 이미
     // 가로챘으므로 여기까지 온 것은 운영 DB 에 컬럼이 없는 지표다.
     if (namedStat === "entity_stat") return "history_hold";
-    // bare 모호형 → 되묻는다. `이대호 홈런` 처럼 DB 에도 없고 용어도 아닌 문장은
-    // LLM 으로 내려보내지 않는다 — 존재하지 않는 기록을 지어내는 유일한 경로가 여기다.
-    if (namedStat === "ambiguous") return "stat_clarify";
+    // `ambiguous`(미결속)는 더 이상 여기서 되묻기로 종결하지 않는다 (2026-08-10 방향 전환 —
+    //   문장 유형(서사/요청) 판정은 열린 자연어라 룰로 닫히지 않는다).
+    //   아래로 흘려 `name_suggest`(실명 교정) → `llm_scope_gate`(generic LLM) 순서를 탄다.
+    //   수치 환각은 `answerQuestion` 의 statNumericGuard(답 숫자 ⊆ 질문 숫자, 위반 시
+    //   `stat_clarify` fail-close)가 기계적으로 닫는다.
     // `term_question` 은 아래로 흘려 용어 질문으로 처리한다.
   }
 
@@ -3730,11 +3563,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   "하나라도 미결속이면 되묻는다" 는 **여기서** 끝내야 실제 계약이 된다.
   //
   // ⚠️ 생성 경로 진입 전이다 — LLM·cache·RAG 어느 것도 소비하지 않는다.
-  // ⚠️ **혼합형에만** 적용한다. 순수 미결속(`이대호 홈런`·`홍길동 통산 타율`)은
-  //   `routeQuestion` 이 이미 안전하게 종결한다(`stat_clarify`·`history_hold` — 둘 다
-  //   생성 경로에 안 내려간다). 그걸 여기서 덮으면 `history_hold` 의 정확한 안내
-  //   (앱 기록 탭)가 사라진다 — 삼순 7차 P0-2 로 확정한 계약을 되돌리는 것이다.
-  //   앞단이 반드시 필요한 경우는 **결속 절이 미결속 절을 태우고 가는** 문장이다.
+  // ⚠️ **혼합형에만** 적용한다 (2026-08-10 재설계 후에도 유지 — 판정이 전부 구조다:
+  //   결속 = 로스터/구단 조회, 미결속 = 그 조회 실패. 열린 언어 판정이 없다).
+  //   순수 미결속(`이대호 홈런`)은 generic LLM 으로 위임되고 statNumericGuard 가 닫는다.
+  //   혼합형만 앞단 결정론 되묻기로 남긴 이유: `team_record`·기록 경로가 routeQuestion 보다
+  //   먼저 결속 절을 가로채 답해버리면, 미결속 절이 답 없이 실려 나가는 것을 LLM 게이트가
+  //   볼 기회조차 없다 — 앞단이 반드시 필요한 경우는 **결속 절이 미결속 절을 태우고 가는** 문장이다.
   //
   // ⚠️ `routeQuestion` 과 **같은 정규화**를 쓴다(`NFKC` + 소문자). 다르게 정규화하면
   //   두 곳의 판정이 갈라져 "helper 는 되묻기인데 라우터는 통과" 가 되살아난다.
@@ -3755,6 +3589,16 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     });
     return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };
   }
+  // ── statNumericGuard (2026-08-10 재설계) ─────────────────────────────────────
+  //
+  // 순수 미결속 `<X> <지표>` 는 여기서 막지 않고 generic LLM 으로 위임한다. 대신 그 답의
+  // 숫자를 기계 게이트로 검사한다 — 답 숫자 토큰 ⊆ 질문 숫자 토큰(#1142 GENERAL 과 같은
+  // strict subset 계약, `numericTokensSubsetOf`). 위반이면 `stat_clarify` fail-close.
+  //   · 서사(`친구가 이대호 홈런 영상을 보내줬어`) → LLM 이 자연 응대, 새 숫자 없음 → 통과
+  //   · 기록 요청(`이대호 홈런 몇개`) → LLM 이 근거 없이 숫자를 내면 → 게이트가 되묻기로 교체
+  // 문장 유형(서사/요청) 판정을 룰로 하지 않기 위해 판정 주체를 LLM 으로 옮긴 것이므로,
+  // 이 플래그 계산은 **구조**(엔티티 결속 실패)만 본다.
+  const statNumericGuard = namedStatKinds.includes("ambiguous");
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
@@ -3925,7 +3769,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         //   정작 문구가 없는" 모순이 되므로 그 경우 fail-close 한다.
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
-      route === "stat_clarify" ? STAT_CLARIFY_ANSWER :
       BLOCKED_ANSWER;
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
@@ -4225,16 +4068,30 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
 
+  // ── statNumericGuard 기계 게이트 (2026-08-10 재설계) ─────────────────────────
+  //
+  // 미결속 `<X> <지표>` 위임 답변의 숫자는 질문에 있던 숫자만 허용한다(strict subset —
+  // #1142 GENERAL 과 같은 계약·같은 판정기). 질문 밖 숫자가 하나라도 나오면 근거 없는
+  // 기록 수치로 보고 되묻기로 교체한다. 저장도 되묻기로 한다 — 위반 답을 저장하면
+  // 재시도 replay 가 게이트를 우회한다.
+  if (statNumericGuard && !numericTokensSubsetOf(validated.answer, question)) {
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: "stat_clarify", answer: STAT_CLARIFY_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };
+  }
+
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
   // 2차 가드 경로도 쓰지 않는다 — 읽지도 않으므로 써봐야 사장이고, 룰베이스가 못 가린
   // 질문의 답을 공유 캐시에 쌓아두면 나중에 경계가 바뀌었을 때 회수할 수 없다.
+  // statNumericGuard 답변도 캐시하지 않는다 — 게이트 통과 여부는 이 질문·이 답 조합의
+  // 성질이지 질문 하나의 성질이 아니다.
   if (deps.storeLlm) {
     await deps.storeLlm(packStoredQaFinal(
-      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock },
+      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },
       llm,
     ));
   }
-  if (!context && !scopeGate && !rosterBlock) await deps.setCache(questionNorm, validated.answer);
+  if (!context && !scopeGate && !rosterBlock && !statNumericGuard) await deps.setCache(questionNorm, validated.answer);
   await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }
