@@ -472,6 +472,7 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   `약자 풀이(DH·PH), 용어·복합어 설명(잔루만루), 지표 해석(wRC+ 88이 평균 대비 어느 정도인지, 수비 중요 포지션에서 WAR이 높은 선수의 가치) 같은 질문이 전부 ②에 해당한다.`,
   `③ 야구 질문이 아니거나 ${RAG_GENERAL_SENTINEL} 로도 정확히 답할 수 없으면 ${RAG_INSUFFICIENT_SENTINEL}.`,
   `${RAG_GENERAL_SENTINEL} 답변에서는 숫자를 쓰지 않는다. 단 질문에 이미 적힌 숫자를 되받아 해석하는 것은 허용한다.`,
+  `루 이름도 숫자 없이 쓴다 — '1루, 2루, 3루에 주자' 대신 '모든 베이스에 주자가 있는'처럼 서술한다.`,
   `${RAG_GENERAL_SENTINEL} 답변에서 특정 선수·구단의 성적 수치, 순위, 연도는 절대 단정하지 않는다 — 개념과 의미만 설명한다.`,
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 두세 문장 이내로 다시 서술한다.",
   `답변은 ${RAG_OFFICIAL_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
@@ -735,18 +736,12 @@ export function numericTokensSubsetOf(answer: string, baseText: string): boolean
   const tokens = answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [];
   if (tokens.length === 0) return true;
   const baseTokens = new Set(baseText.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []);
-  return tokens.every((token) => {
-    if (baseTokens.has(token)) return true;
-    // 룰 어휘 숫자 허용 (2026-08-10 실측: `잔루만루` 정답이 "1루, 2루, 3루" 때문에 폐기됐다).
-    //   야구 룰 설명은 작은 정수가 어휘의 일부다 — 1~3루, 3아웃, 4볼, 2스트라이크,
-    //   9이닝, 연장 12회(KBO 상한). 반면 지어낸 기록·연도·비율은 전부 그 밖이다
-    //   (연도 4자리, 홈런 개수 2자리 이상, 타율·ERA 는 소수점). 그래서 경계는
-    //   **소수점 없는 정수 0~12** — 자의적 임계가 아니라 KBO 경기 구조(이닝·연장 상한)에서 온다.
-    //   이 범위의 오남용(예: "WAR이 5야" 단정)은 프롬프트 계약(성적 단정 금지)이 막는다.
-    if (token.includes(".")) return false;
-    const value = Number(token);
-    return Number.isInteger(value) && value >= 0 && value <= 12;
-  });
+  // ⚠️ strict subset 만 허용한다 — 예외 없음 (삼순 2026-08-10 NO-GO ①).
+  //   초안의 "정수 0~12 룰 어휘 허용"은 `WAR이 5`·`홈런 5개`를 통과시켰고,
+  //   `5,000개`는 콤마 분할된 토큰 `5`·`000`이 각각 범위 안이라 통과했다 —
+  //   "질문 밖 숫자 금지" 계약이 깨진다. 루 이름(1루·2루·3루)은 숫자 허용이 아니라
+  //   프롬프트가 숫자 없는 서술("모든 베이스에 주자가 남은 채")로 풀게 한다.
+  return tokens.every((token) => baseTokens.has(token));
 }
 
 /** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
@@ -867,15 +862,11 @@ export function validateRagResponse(
   try {
     value = JSON.parse(raw.trim());
   } catch {
-    // Gemini 가 JSON mime 모드에서도 드물게 깨진 `\u` escape 를 내보낸다 (2026-08-10 실측:
-    // `ph 포지션` 정답이 `\ub2n4` 로 깨져 통채로 폐기됐다). 깨진 escape 만 기계적으로
-    // 정상 문자로 강등하고 재시도한다 — 의미 복원이 아니라 파서 생존이 목적이며,
-    // 그래도 안 되면 종전처럼 insufficient 로 fail-close 한다.
-    try {
-      value = JSON.parse(raw.trim().replace(/\\u(?![0-9a-fA-F]{4})/g, "u"));
-    } catch {
-      return { kind: "insufficient", reason: "malformed_json" };
-    }
+    // ⚠️ 깨진 `\u` escape 강등 재파싱을 하지 않는다 (삼순 2026-08-10 NO-GO ②).
+    //   `\u` 를 `u` 로 바꾸면 파서는 살지만 답변 본문이 손상된 채(`PH\ub2n4`→`PHub2n4`)
+    //   유저에게 그대로 발송된다. 무손실 복구가 아니므로 malformed 는 fail-close 가 맞다
+    //   (Gemini 글리치는 드물고, 그 1회는 unsure 안내로 재질문을 받는 쪽이 손상 발송보다 낫다).
+    return { kind: "insufficient", reason: "malformed_json" };
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { kind: "insufficient", reason: "malformed_json" };
