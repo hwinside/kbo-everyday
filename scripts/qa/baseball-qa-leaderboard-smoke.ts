@@ -109,8 +109,10 @@ check("generic 상한 320 + 성의 지시 (200자 계약 폐기)", () => {
 const RAG_PLAYERS = [
   { kboId: "55555", name: "맛자욱", team: "LG", position: "내야수" },
 ] as unknown as PlayerRef[];
+// ⚠️ deterministic 답(FULL_ANSWER)의 **모든 사실은 이 근거 안에 있어야 한다** (삼순
+// 3차: 근거 밖 사실을 정답으로 고정하면 게이트가 환각을 승인하는 셈이다).
 const RAG_EVIDENCE = [{
-  content: "맛자욱은 먹방 예능에서 보여준 먹성 때문에 팬들이 맛자욱이라는 별명을 붙였다고 알려져 있다. 데뷔 초 방송 출연 이후 응원단이 먼저 부르기 시작했고 본인도 마음에 들어해 정착했다.",
+  content: "맛자욱은 먹방 예능에서 보여준 남다른 먹성 때문에 팬들이 맛자욱이라는 별명을 붙였다고 알려져 있다. 데뷔 초 방송 출연이 화제가 된 뒤 응원단이 먼저 부르기 시작했고, 홈 경기 응원가에도 등장하면서 널리 퍼졌다. 본인도 그 별명을 마음에 들어해 인터뷰에서 직접 언급했으며 지금까지 정착했다.",
   pageTitle: "맛자욱", canonicalUrl: "https://namu.wiki/w/맛자욱", revision: "1",
   sectionPath: "별명", asOf: "2026-01-01", sourceGrade: "tier2",
 }];

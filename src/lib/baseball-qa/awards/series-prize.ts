@@ -88,12 +88,27 @@ const KS_MVP_DIRECT = /한국\s*시리즈.*(mvp|엠브이피|최우수)|(mvp|엠
 /**
  * 우승 기여·주역을 묻는 모양 (`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?`).
  *
- * ⚠️ 협착 계약 (삼순 2026-08-10 P0 — `/우승/` 과포착): KS MVP 는 **한국시리즈 우승**의
- * proxy 다. `준우승`(우승이 아님)·`정규시즌/페넌트/리그 우승`(다른 타이틀 — KS MVP 와
- * 무관)이 섞이면 이 정본으로 답하면 안 된다 → null 로 물러나 기존 경로에 맡긴다.
+ * ⚠️ 양성 결속 계약 (삼순 2026-08-10 3차 — denylist 금지): KS MVP proxy 로 허용되는
+ * 모양은 정확히 두 가지뿐이다.
+ *   (a) `한국시리즈/코시` 를 직접 지목한 우승 기여 질문
+ *   (b) **구단 지목 + 무한정 `우승`** (원 사고 형태 `작년 LG우승 기여자`) — KBO 구단의
+ *       무한정 "우승" 은 한국시리즈 우승을 뜻한다.
+ * 그 밖은 전부 물러난다(null → 기존 경로). 특히 **다른 대회·타이틀 문맥이 하나라도
+ * 보이면** (a)(b) 를 만족해도 구조적으로 물러난다 — `아시안게임 우승`·`국가대표`·
+ * `준우승`·`정규시즌 우승` 을 KS MVP 로 바꿔 답하는 것이 원 결함이다.
  */
 const CHAMPION_WORD = /우승/;
-const NOT_KS_CHAMPION = /준\s*우승|정규\s*(?:시즌|리그)|페넌트|리그\s*우승|전반기|후반기|와일드\s*카드|플레이\s*오프\s*우승/;
+const KS_WORD = /한국\s*시리즈|코시|한시\s*리즈|korean\s*series/;
+/** KS 가 아닌 대회·타이틀 문맥 — 하나라도 보이면 이 정본 밖. */
+const OTHER_COMPETITION = new RegExp(
+  [
+    "준\\s*우승", "정규\\s*(?:시즌|리그)", "페넌트", "리그\\s*우승", "전반기", "후반기",
+    "와일드\\s*카드", "\\bwc\\b", "플레이\\s*오프", "\\bpo\\b", "포스트\\s*시즌", "가을\\s*야구",
+    "아시안\\s*게임", "아시아드", "올림픽", "국가\\s*대표", "국대", "\\bwbc\\b", "프리미어\\s*12",
+    "월드\\s*시리즈", "일본\\s*시리즈", "메이저", "\\bmlb\\b", "\\bnpb\\b",
+    "퓨처스", "2군", "시범\\s*경기", "올스타",
+  ].join("|"),
+);
 const CONTRIB_WORD = /기여|공헌|주역|일등\s*공신|이끌|만들/;
 const PERSON_ASK = /누구|누가|사람|선수/;
 
@@ -105,14 +120,15 @@ export type SeriesPrizeIntent = "ks_mvp" | "champion_contrib" | null;
  */
 export function resolveSeriesPrizeIntent(question: string): SeriesPrizeIntent {
   const normalized = question.normalize("NFKC").toLowerCase();
+  // 다른 대회·타이틀 문맥이 보이면 직접 지목형이라도 물러난다 (`아시안게임에서 우승한
+  // 국가대표 중 한국시리즈 MVP 출신` 같은 혼합 질문을 정본 단답으로 오답하지 않기 위함).
+  if (OTHER_COMPETITION.test(normalized)) return null;
   if (KS_MVP_DIRECT.test(normalized)) return "ks_mvp";
-  if (
-    CHAMPION_WORD.test(normalized) &&
-    !NOT_KS_CHAMPION.test(normalized) &&
-    CONTRIB_WORD.test(normalized) &&
-    PERSON_ASK.test(normalized)
-  ) {
-    return "champion_contrib";
+  if (CHAMPION_WORD.test(normalized) && CONTRIB_WORD.test(normalized) && PERSON_ASK.test(normalized)) {
+    // 양성 결속: (a) KS 직접 지목, 또는 (b) 구단 지목 + 무한정 우승.
+    if (KS_WORD.test(normalized) || resolvePrizeTeamMention(question) !== null) {
+      return "champion_contrib";
+    }
   }
   return null;
 }

@@ -111,10 +111,17 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
   {
-    name: "s7 협착 제거 — 준우승·정규시즌 우승까지 KS MVP 로 과포착 (삼순 P0 재현)",
+    name: "s7 타 대회 차단 제거 — 아시안게임·준우승·정규시즌까지 KS MVP 로 과포착 (삼순 P0 재현)",
     file: PRIZE,
-    from: "!NOT_KS_CHAMPION.test(normalized) &&",
+    from: "if (OTHER_COMPETITION.test(normalized)) return null;",
     to: "",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s11 양성 결속 제거 — 무한정 우승(구단 없음)까지 KS MVP proxy 로 확대 (denylist 회귀)",
+    file: PRIZE,
+    from: "if (KS_WORD.test(normalized) || resolvePrizeTeamMention(question) !== null) {",
+    to: "if (true) {",
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
   {

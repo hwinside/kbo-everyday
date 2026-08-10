@@ -70,10 +70,23 @@ check("의도·연도 판정", () => {
   assert.equal(resolveSeriesPrizeIntent("작년 LG우승에 가장 큰 기여를 한 사람은 누구야?"), "champion_contrib");
   assert.equal(resolveSeriesPrizeIntent("보크가 뭐야?"), null);
   assert.equal(resolveSeriesPrizeIntent("우승 상금이 얼마야?"), null, "기여 어휘 없는 우승 질문은 대상 아님");
-  // 협착 반대축 (삼순 P0 — `/우승/` 과포착): KS 우승이 아닌 타이틀은 이 정본 밖이다.
+  // 양성 결속 반대축 (삼순 3차 P0 — denylist 금지): 허용 모양은 (a) KS 직접 지목,
+  // (b) 구단+무한정 우승뿐. 다른 대회 문맥이 보이면 (a)(b) 여도 물러난다.
   assert.equal(resolveSeriesPrizeIntent("작년 준우승에 가장 기여한 선수는 누구야?"), null, "준우승은 우승이 아니다");
   assert.equal(resolveSeriesPrizeIntent("작년 정규시즌 우승에 기여한 선수 누구야?"), null, "정규시즌 우승은 KS MVP 와 무관");
   assert.equal(resolveSeriesPrizeIntent("작년 페넌트레이스 우승 주역은 누구야?"), null);
+  assert.equal(resolveSeriesPrizeIntent("작년 아시안게임 우승 주역 선수는 누구야?"), null, "타 대회 우승");
+  // 구단·KS 가 섞여 있어도 타 대회 문맥이 보이면 물러난다 — 양성 결속만으로는 이 모양을
+  // 못 막으므로 OTHER_COMPETITION 차단선이 단독으로 load-bearing 이다.
+  assert.equal(resolveSeriesPrizeIntent("작년 기아 아시안게임 우승 주역 누구야?"), null, "구단+타 대회");
+  assert.equal(resolveSeriesPrizeIntent("작년 LG 준우승에 기여한 선수 누구야?"), null, "구단+준우승");
+  assert.equal(resolveSeriesPrizeIntent("작년 삼성 정규시즌 우승 주역은 누구?"), null, "구단+정규시즌");
+  assert.equal(resolveSeriesPrizeIntent("작년 국가대표 우승에 기여한 선수 누구?"), null, "국가대표 문맥");
+  assert.equal(resolveSeriesPrizeIntent("플레이오프 우승 주역 누구야?"), null, "PO");
+  assert.equal(resolveSeriesPrizeIntent("와일드카드 우승 기여 선수?"), null, "WC");
+  assert.equal(resolveSeriesPrizeIntent("작년 우승 주역이 누구야?"), null, "구단 미지목 무한정 우승은 proxy 밖 — 기존 경로로");
+  assert.equal(resolveSeriesPrizeIntent("작년 LG 한국시리즈 우승 주역 누구야?"), "champion_contrib", "(a) KS 직접 지목");
+  assert.equal(resolveSeriesPrizeIntent("작년 LG우승에 가장 큰 기여를 한 사람은 누구야?"), "champion_contrib", "(b) 구단+무한정 우승 (원 사고 형태)");
   assert.equal(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", NOW_DATE), 2025);
   assert.equal(resolveSeriesPrizeYear("재작년 한국시리즈 MVP는?", NOW_DATE), 2024);
   assert.equal(resolveSeriesPrizeYear("2019년 한국시리즈 MVP 누구야?", NOW_DATE), 2019);
@@ -173,8 +186,13 @@ checkAsync("붙여쓰기 `한화우승` 도 전제 정정된다 (원 사고 형�
   assert.ok(r.answer.includes("한화") && r.answer.includes("아니라"), `붙여쓰기 전제 정정 누락: ${r.answer}`);
   assert.ok(r.answer.includes("김현수"), r.answer);
 });
-checkAsync("협착 종단: 준우승·정규시즌 우승 질문은 KS MVP 로 답하지 않는다 (삼순 P0)", async () => {
-  for (const q of ["작년 준우승에 가장 기여한 선수는 누구야?", "작년 정규시즌 우승에 기여한 선수 누구야?"]) {
+checkAsync("협착 종단: 준우승·정규시즌·아시안게임·국대 질문은 KS MVP 로 답하지 않는다 (삼순 P0)", async () => {
+  for (const q of [
+    "작년 준우승에 가장 기여한 선수는 누구야?",
+    "작년 정규시즌 우승에 기여한 선수 누구야?",
+    "작년 아시안게임 우승 주역 선수는 누구야?",
+    "작년 국가대표 우승에 기여한 선수 누구?",
+  ]) {
     let fetches = 0;
     const { deps } = makeDeps(async () => { fetches++; return FIXTURE; });
     const r = await answerQuestion("u1", q, deps);
