@@ -1168,17 +1168,20 @@ async function verifyPipeline() {
       assert.equal(resolveSeasonRecordIntent(input).kind, "none", `${input}: 합성어 오분류 금지`);
     }
 
-    // 모든 명시 연도 != 2026 + 지난 시즌/통산은 generic fail-close.
+    // ⚠️ 계약 갱신 (2026-08-10 하린아빠 캐처 `연도별 타율 추이`): 과거 연도·통산은
+    // 더 이상 "준비 중" fail-close 가 아니다 — KBO 공식 연도별 테이블(Total.aspx)을
+    // 조회해 답한다(career). 상세 계약은 baseball-qa-career-series-smoke.ts 가 고정한다.
+    // 미래 연도만 종전대로 fail-close 다.
     for (const input of [
       "문보경 2019년 홈런 몇 개야?",
-      "문보경 2027년 홈런 몇 개야?",
       "문보경 지난 시즌 홈런 몇 개야?",
       "문보경 전 시즌 홈런 몇 개야?",
       "문보경 이전 시즌 홈런 몇 개야?",
       "문보경 통산 홈런 몇 개야?",
     ]) {
-      assert.equal(resolveSeasonRecordIntent(input).kind, "unsupported_season", `${input}: 2026 외 차단`);
+      assert.equal(resolveSeasonRecordIntent(input).kind, "career", `${input}: 공식 연도별 조회로 전환`);
     }
+    assert.equal(resolveSeasonRecordIntent("문보경 2027년 홈런 몇 개야?").kind, "unsupported_season", "미래 연도는 여전히 차단");
     assert.equal(resolveSeasonRecordIntent("문보경 2026년 홈런 몇 개야?").kind, "query", "2026 명시 허용");
     // ⚠️ 장타율은 2026-08-04 부터 **지원 지표**다(스냅샷 소스). 계약의 본질은
     // "장타율을 `avg`(타율)로 오답하지 않는다" 이므로 그 축은 그대로 두고 기대값만 바꾼다.

@@ -126,6 +126,20 @@ const UNSUPPORTED_SEASON_WORDS = [
   "통산", "커리어", "역대", "생애", "누적",
 ];
 
+/**
+ * 연도별 시리즈 의도 (2026-08-10 하린아빠 캐처: `최형우의 연도별 타율 추이`).
+ * ⚠️ 열린 언어 재진입이 아니다 — 이 단어들은 기록 질문의 시점 한정어로 폐쇄적이고,
+ * 놀치면 기존 경로(올해 단답)로 내려가 틀린 답이 아니라 좁은 답이 된다(fail-open 안전).
+ */
+const SERIES_WORDS = ["연도별", "년도별", "시즌별", "해마다", "매년", "추이"];
+const CAREER_TOTAL_WORDS = ["통산", "커리어", "역대", "생애", "누적"];
+/** 상대 과거 시즌어 → 몇 해 전인가. */
+const RELATIVE_PAST_SEASONS: ReadonlyArray<readonly [string, number]> = [
+  ["지지난해", 2], ["재작년", 2],
+  ["작년", 1], ["지난해", 1], ["지난시즌", 1], ["지난 시즌", 1],
+  ["전시즌", 1], ["전 시즌", 1], ["이전시즌", 1], ["이전 시즌", 1],
+];
+
 function normalize(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 }
@@ -169,12 +183,20 @@ export interface SeasonRecordQuery {
   kind: "count" | "rate" | "raw";
 }
 
+/** 과거·통산·연도별은 KBO 공식 연도별 테이블(career-series)을 본다. */
+export type CareerSpan =
+  | { type: "series" }
+  | { type: "career" }
+  | { type: "year"; year: number };
+
 export type SeasonRecordIntent =
   | { kind: "none" }
   /** 신뢰할 수 없는 지표(pa/sac/sf) — 명시적으로 답변 거절. */
   | { kind: "untrusted_metric" }
-  /** 지원하지 않는 시즌(작년·통산) — fail-close. */
+  /** 지원하지 않는 시즌(미래 연도 등) — fail-close. */
   | { kind: "unsupported_season" }
+  /** 연도별 시리즈·통산·과거 시즌 — KBO 공식 Total.aspx 조회. */
+  | { kind: "career"; query: SeasonRecordQuery; span: CareerSpan }
   | { kind: "query"; query: SeasonRecordQuery };
 
 /**
@@ -292,23 +314,45 @@ export function resolveSeasonRecordIntent(
   // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
   // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
   if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };
-  // 과거 시즌 차단은 지원 metric 수치 질문에만 적용한다. `작년에 별명이 뭐였어?` 같은
-  // 선수 서술형은 기존 RAG로 내려보내야 한다.
-  if (hasUnsupportedSeason(question)) return { kind: "unsupported_season" };
   const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
   const def = metrics[best.metric as keyof typeof metrics] as {
     label: string;
     kind: SeasonRecordQuery["kind"];
   };
-  return {
-    kind: "query",
-    query: {
-      table: best.table,
-      metric: best.metric,
-      label: def.label,
-      kind: def.kind,
-    },
+  const query: SeasonRecordQuery = {
+    table: best.table,
+    metric: best.metric,
+    label: def.label,
+    kind: def.kind,
   };
+
+  // ── 시점 판정 (2026-08-10 캐처: `연도별 타율 추이`가 올해 단일값으로 오답) ──────
+  // 종전에는 통산·과거 시즌을 "준비 중" fail-close 로 닫았다. 정본이 없어서가 아니라
+  // KBO 공식 연도별 테이블(Total.aspx)을 안 보고 있었던 것 — 이제 그 정본으로 답한다.
+  const spaced = normalizeWithSpaces(question);
+  if (SERIES_WORDS.some((word) => spaced.includes(word))) {
+    return { kind: "career", query, span: { type: "series" } };
+  }
+  if (CAREER_TOTAL_WORDS.some((word) => spaced.includes(word))) {
+    return { kind: "career", query, span: { type: "career" } };
+  }
+  for (const [word, delta] of RELATIVE_PAST_SEASONS) {
+    if (spaced.includes(word)) {
+      return { kind: "career", query, span: { type: "year", year: SUPPORTED_SEASON - delta } };
+    }
+  }
+  // 명시 연도: 과거는 공식 테이블 조회, 미래는 여전히 fail-close.
+  const explicitYears = [...spaced.matchAll(/(?:19|20)\d{2}(?:\s*년|\s*시즌)?/g)]
+    .map((match) => Number(match[0].match(/\d{4}/)?.[0]))
+    .filter((year) => year !== SUPPORTED_SEASON);
+  if (explicitYears.length > 0) {
+    const year = explicitYears[0];
+    if (explicitYears.length > 1 || year > SUPPORTED_SEASON || year < 1982) {
+      return { kind: "unsupported_season" };
+    }
+    return { kind: "career", query, span: { type: "year", year } };
+  }
+  return { kind: "query", query };
 }
 
 /** 명시적으로 올해를 지목했는가. 시즌 표현이 아예 없으면 현재 시즌으로 본다. */
