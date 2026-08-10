@@ -53,14 +53,20 @@ const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
 // ── 1. 파서 — 기계 추출 fixture (실존: 최형우 72443 / 임찬규 61101) ────────────
-check("A′ 폐쇄집합 (삼순 10차): 데뷔 상대 표현은 명시 series/통산 없이는 전부 fail-close", () => {
-  // 종전 5차의 "full-origin = 통산 동치" 를 A′ 가 대체한다 — 명시적 통산어·series 표지
-  // 없이 `데뷔 이래/후` 만으로는 통산으로 축소하지 않는다(예문 사냥 종료, 폐쇄집합).
-  for (const q of ["최형우 데뷔 이래 홈런 몇 개야?", "최형우 데뷔 후 홈런 몇 개 쳤어?", "최형우 입단 이후 안타 몇 개야?"]) {
+check("literal A′ (삼순 10차 frozen contract): canonical span+annual series 인접만 허용", () => {
+  // `데뷔|입단` 은 canonical span 에 annual series 표지가 문자 그대로 인접할 때만
+  // full-origin series 다. careerReq·unitLeft 류 자연어 추론 없음 — 인접 밖은 전부 거절.
+  for (const q of [
+    "최형우 데뷔 이래 홈런 몇 개야?",
+    "최형우 데뷔 후 홈런 몇 개 쳤어?",
+    "최형우 입단 이후 안타 몇 개야?",
+    "최형우 데뷔 통산 홈런", // 통산어가 있어도 데뷔 언급이 canonical 밖이면 거절
+    "최형우 데뷔 후 3년 연도별 타율", // series 표지가 있어도 사이에 끼면 인접이 아니다
+  ]) {
     const intent = resolveSeasonRecordIntent(q, "batter");
     assert.equal(intent.kind, "unsupported_season", `${q} → ${intent.kind}`);
   }
-  // 명시적 통산어가 있으면 career total 유지 (허용 집합 양성).
+  // 데뷔 언급 없는 명시적 통산어는 career total 유지 (허용 집합 양성).
   const total = resolveSeasonRecordIntent("최형우 통산 홈런 몇 개야?", "batter");
   assert.equal(total.kind, "career");
 });

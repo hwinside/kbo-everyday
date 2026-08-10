@@ -132,6 +132,12 @@ const UNSUPPORTED_SEASON_WORDS = [
  * 놀치면 기존 경로(올해 단답)로 내려가 틀린 답이 아니라 좁은 답이 된다(fail-open 안전).
  */
 const SERIES_WORDS = ["연도별", "년도별", "시즌별", "해마다", "매년", "추이"];
+/**
+ * literal A′ frozen contract (삼순 10차): 데뷔/입단이 full-origin series 로 해석되는
+ * **유일한** 문자 형태. 이 인접 패턴 밖은 전부 fail-close — 확장·추론 금지.
+ */
+const CANONICAL_DEBUT_SERIES =
+  /(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터|후)(?:(?:현재|지금|올해|오늘)까지)?(?:연도별|년도별|시즌별)/;
 const CAREER_TOTAL_WORDS = ["통산", "커리어", "역대", "생애", "누적"];
 /** 상대 과거 시즌어 → 몇 해 전인가. */
 const RELATIVE_PAST_SEASONS: ReadonlyArray<readonly [string, number]> = [
@@ -175,31 +181,21 @@ interface TemporalScan {
 function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
-  // ── 데뷔/입단 한정 — A′ 폐쇄집합 (삼순 10차 확정, 예문 사냥 종료) ──────────
-  // 지원은 원 캡처 축 하나뿐이다: 데뷔 기점 + 명시적 series(연도별/추이…) 또는
-  // 명시적 통산어. 그 밖의 모든 `데뷔/입단` 상대 표현(서수·수사·명명형·bounded·
-  // bare — `첫해`·`두 번째 시즌`·`마지막 시즌`·`후 3년` 전부)은 분기 하나로
-  // other(fail-close) 한다. 어떤 표현인지 판정하지 않는다 — 허용 목록 밖이면 거절.
-  // 더 자연스러운 상대시점 이해는 별도 트랙(제한 AST + career row 환산) 몫이다.
+  // ── 데뷔/입단 한정 — literal A′ (삼순 10차 frozen contract) ─────────────────
+  // 자연어 추론(careerReq·unitLeft·잔여검사) 없음. `데뷔|입단` 은 **원 캡처의
+  // canonical span 에 annual series 표지가 문자 그대로 인접**할 때만 full_origin:
+  //   (데뷔|입단)(시점|초)?(이래|이후|부터|후)((현재|지금|올해|오늘)까지)?(연도별|년도별|시즌별)
+  // 이 literal 패턴 밖의 모든 데뷔/입단 언급(이래/후 bare·통산어 동반·서수·수사·
+  // 명명형·bounded·`후 3년 … 추이` 등 사이에 무엇이든 끼는 형태)은 분기 하나로
+  // other(fail-close). 상대시점 자연어는 별도 트랙(제한 AST + career row 환산) 몫이다.
   let debutScope: "none" | "full_origin" | "other" = "none";
   if (/데뷔|입단/.test(rest)) {
-    const seriesReq = SERIES_WORDS.some((word) => spaced.includes(word));
-    const careerReq = CAREER_TOTAL_WORDS.some((word) => spaced.includes(word));
-    // 허용 분기 안에서도 bounded 한정이 끼면 거절한다 (`데뷔 후 3년 타율 추이` 는
-    // 전체 시계열이 아니라 첫 3년 요청) — series/cutoff/데뷔 스팬을 소거한 잔여에
-    // 시간 단위가 남는지만 본다(9차 구조 잔여검사 재사용, 열거 아님).
-    let probe = rest.replace(/(?:시즌별|연도별|년도별|추이)/g, "\u0000");
-    probe = probe.replace(/(?:현재|지금|올해|오늘)까지/g, "\u0000");
-    probe = probe.replace(/(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터|후)?/g, "\u0000");
-    const unitLeft = /(?:시즌|경기|타석|등판|년도?)|(?:첫|째|번째|마지막)해/.test(probe);
-    if ((seriesReq || careerReq) && !unitLeft) {
+    if (CANONICAL_DEBUT_SERIES.test(rest)) {
       debutScope = "full_origin";
-      // 데뷔 스팬(연결어·cutoff 포함)은 참조·범위표지 집계 **전에** 통째로 소거한다 —
-      // `현재까지` 를 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
-      rest = rest.replace(
-        /(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)?(?:현재|지금|올해|오늘)?(?:까지)?/g,
-        "\u0000",
-      );
+      // canonical span 은 참조·범위표지 집계 **전에** 통째로 소거한다 — `현재까지` 를
+      // 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
+      // series 표지는 spaced 기준 seriesWord 검출로 이미 확보되므로 함께 소거해도 된다.
+      rest = rest.replace(new RegExp(CANONICAL_DEBUT_SERIES.source, "g"), "\u0000");
     } else {
       debutScope = "other";
     }
