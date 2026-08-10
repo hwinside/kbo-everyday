@@ -63,7 +63,7 @@ const MUTATIONS = [
   {
     name: "s2 연도 범위 검증 제거 — 오염 연도 통과",
     file: PRIZE,
-    from: "if (year < KBO_FIRST_YEAR || year > now.getUTCFullYear() + 1) return null;",
+    from: "if (year < KBO_FIRST_YEAR || year > kstYear(now) + 1) return null;",
     to: "",
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
@@ -110,6 +110,34 @@ const MUTATIONS = [
     to: "",
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
+  {
+    name: "s7 협착 제거 — 준우승·정규시즌 우승까지 KS MVP 로 과포착 (삼순 P0 재현)",
+    file: PRIZE,
+    from: "!NOT_KS_CHAMPION.test(normalized) &&",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s8 미개최/미확정 분리 제거 — 1985 에 '시즌이 끝나면' 오안내 (삼순 P1 재현)",
+    file: PRIZE,
+    from: "if (year >= nowYear) {",
+    to: "if (true) {",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s9 KST 보정 제거 — UTC 연도 회귀로 자정 경계에서 작년이 1년 어긋남 (삼순 P1 재현)",
+    file: PRIZE,
+    from: "return new Date(now.getTime() + 9 * 60 * 60 * 1000).getUTCFullYear();",
+    to: "return now.getUTCFullYear();",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s10 붙여쓰기 팀 해석 제거 — 한화우승 전제 정정 소실 (삼순 P1 재현)",
+    file: PIPELINE,
+    from: "resolvePrizeTeamMention(question), kstYear(now),",
+    to: "null, kstYear(now),",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
 ];
 
 let red = 0;
@@ -130,16 +158,24 @@ for (const m of MUTATIONS) {
     );
   }
   writeFileSync(m.file, mutated);
-  let failed = false;
+  let out = "";
+  let exitFail = false;
   try {
-    execSync(`npx tsx ${m.smoke}`, { stdio: "pipe", timeout: 300000 });
-  } catch {
-    failed = true;
+    out = execSync(`npx tsx ${m.smoke}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 300000 });
+  } catch (error) {
+    exitFail = true;
+    out = `${error.stdout ?? ""}${error.stderr ?? ""}`;
   }
   writeFileSync(m.file, original);
-  if (failed) {
+  // RED = smoke 가 **의도한 FAIL 마커**를 찍고 요약행까지 도달했다 (삼순 2026-08-10 B5:
+  // 컴파일 오류·러너 고장 같은 아무 nonzero exit 를 검출로 세면 검증력이 0이다).
+  const intended = /\nFAIL /.test(`\n${out}`) && out.includes("FAIL=") && exitFail;
+  if (intended) {
     console.log(`RED  ${m.name}`);
     red++;
+  } else if (exitFail) {
+    console.log(`MISS ${m.name} — 프로세스는 죽었지만 의도한 FAIL 마커가 아니다 (러너/컴파일 고장)`);
+    misses.push(m.name);
   } else {
     console.log(`MISS ${m.name} — 결함이 통과했다 (검출력 0)`);
     misses.push(m.name);

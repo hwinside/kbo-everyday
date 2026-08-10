@@ -24,7 +24,10 @@ import {
   type PlayerRef,
 } from "../../src/lib/baseball-qa/pipeline";
 import {
+  kstYear,
   parseSeriesPrize,
+  renderSeriesPrizeAnswer,
+  resolvePrizeTeamMention,
   resolveSeriesPrizeIntent,
   resolveSeriesPrizeYear,
 } from "../../src/lib/baseball-qa/awards/series-prize";
@@ -67,10 +70,37 @@ check("의도·연도 판정", () => {
   assert.equal(resolveSeriesPrizeIntent("작년 LG우승에 가장 큰 기여를 한 사람은 누구야?"), "champion_contrib");
   assert.equal(resolveSeriesPrizeIntent("보크가 뭐야?"), null);
   assert.equal(resolveSeriesPrizeIntent("우승 상금이 얼마야?"), null, "기여 어휘 없는 우승 질문은 대상 아님");
+  // 협착 반대축 (삼순 P0 — `/우승/` 과포착): KS 우승이 아닌 타이틀은 이 정본 밖이다.
+  assert.equal(resolveSeriesPrizeIntent("작년 준우승에 가장 기여한 선수는 누구야?"), null, "준우승은 우승이 아니다");
+  assert.equal(resolveSeriesPrizeIntent("작년 정규시즌 우승에 기여한 선수 누구야?"), null, "정규시즌 우승은 KS MVP 와 무관");
+  assert.equal(resolveSeriesPrizeIntent("작년 페넌트레이스 우승 주역은 누구야?"), null);
   assert.equal(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", NOW_DATE), 2025);
   assert.equal(resolveSeriesPrizeYear("재작년 한국시리즈 MVP는?", NOW_DATE), 2024);
   assert.equal(resolveSeriesPrizeYear("2019년 한국시리즈 MVP 누구야?", NOW_DATE), 2019);
   assert.equal(resolveSeriesPrizeYear("한국시리즈 MVP 누구야?", NOW_DATE), null);
+  // KST 자정 경계 (삼순 P1): KST 2027-01-01 00:30 = UTC 2026-12-31 15:30. UTC 연도로
+  // 계산하면 `작년`=2025 로 1년 어긋난다 — KST 기준 2026 이어야 한다.
+  const boundary = new Date(Date.UTC(2026, 11, 31, 15, 30));
+  assert.equal(kstYear(boundary), 2027);
+  assert.equal(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", boundary), 2026);
+});
+check("붙여쓰기 팀 해석 — 수상표 표기 결속 폐쇄 alias (삼순 P1 원 사고 형태)", () => {
+  assert.equal(resolvePrizeTeamMention("작년 한화우승에 기여한 선수는?"), "한화");
+  assert.equal(resolvePrizeTeamMention("작년 LG우승에 가장 큰 기여를 한 사람은?"), "LG");
+  assert.equal(resolvePrizeTeamMention("작년 엘지 우승 주역"), "LG");
+  // 복수 구단이 걸리면 전제 판정 불가 — 틀린 정정 금지.
+  assert.equal(resolvePrizeTeamMention("LG와 한화 중 어디가 우승했어?"), null);
+  assert.equal(resolvePrizeTeamMention("작년 우승 주역"), null);
+});
+check("역사 결측 분리 — 1985 미개최 ≠ 올해 미확정 (삼순 P1)", () => {
+  const rows = parseSeriesPrize(FIXTURE, NOW_DATE);
+  assert.ok(rows);
+  assert.equal(rows.find((r) => r.year === 1985)?.koreanSeries, null, "fixture 실측: 1985 는 `-` 행");
+  const past = renderSeriesPrizeAnswer(rows, "ks_mvp", 1985, null, kstYear(NOW_DATE));
+  assert.ok(past.answer.includes("열리지 않아"), past.answer);
+  assert.ok(!past.answer.includes("시즌이 끝나면"), "과거 미개최에 미래형 안내는 오안내");
+  const current = renderSeriesPrizeAnswer(rows, "ks_mvp", 2026, null, kstYear(NOW_DATE));
+  assert.ok(current.answer.includes("아직") && current.answer.includes("시즌이 끝나면"), current.answer);
 });
 
 // ── 2. 종단 (answerQuestion) — LLM·RAG·cache 0 ──────────────────────────────
@@ -136,6 +166,21 @@ checkAsync("비우승 전제 정정: 작년 한화 우승 → LG 였다고 바�
   const r = await answerQuestion("u1", "작년 한화 우승에 가장 큰 기여를 한 선수는 누구야?", deps);
   assert.ok(r.answer.includes("한화") && r.answer.includes("아니라"), `전제 정정 누락: ${r.answer}`);
   assert.ok(r.answer.includes("LG") && r.answer.includes("김현수"), r.answer);
+});
+checkAsync("붙여쓰기 `한화우승` 도 전제 정정된다 (원 사고 형태, 삼순 P1)", async () => {
+  const { deps } = makeDeps(fixtureFetcher);
+  const r = await answerQuestion("u1", "작년 한화우승에 가장 큰 기여를 한 선수는 누구야?", deps);
+  assert.ok(r.answer.includes("한화") && r.answer.includes("아니라"), `붙여쓰기 전제 정정 누락: ${r.answer}`);
+  assert.ok(r.answer.includes("김현수"), r.answer);
+});
+checkAsync("협착 종단: 준우승·정규시즌 우승 질문은 KS MVP 로 답하지 않는다 (삼순 P0)", async () => {
+  for (const q of ["작년 준우승에 가장 기여한 선수는 누구야?", "작년 정규시즌 우승에 기여한 선수 누구야?"]) {
+    let fetches = 0;
+    const { deps } = makeDeps(async () => { fetches++; return FIXTURE; });
+    const r = await answerQuestion("u1", q, deps);
+    assert.equal(fetches, 0, `${q} — 수상 정본을 조회하면 안 된다`);
+    assert.ok(!r.answer.includes("김현수"), `${q} — KS MVP 로 바꿔 답하면 안 된다: ${r.answer}`);
+  }
 });
 checkAsync("시점어 없는 KS MVP 질문 → 가장 최근 확정 연도(2025)", async () => {
   const { deps } = makeDeps(fixtureFetcher);

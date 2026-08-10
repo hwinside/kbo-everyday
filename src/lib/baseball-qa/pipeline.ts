@@ -20,8 +20,10 @@ import {
 } from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  kstYear,
   parseSeriesPrize,
   renderSeriesPrizeAnswer,
+  resolvePrizeTeamMention,
   resolveSeriesPrizeIntent,
   resolveSeriesPrizeYear,
 } from "./awards/series-prize";
@@ -3459,7 +3461,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         return settlePrize(resolveHoldAnswer(question), "history_hold");
       }
       const rendered = renderSeriesPrizeAnswer(
-        prizeRows, prizeIntent, resolveSeriesPrizeYear(question, now), resolveMentionedTeam(question),
+        prizeRows, prizeIntent, resolveSeriesPrizeYear(question, now),
+        // 붙여쓰기(`한화우승`) 해석 + 수상표 표기 결속 — 이 경로 전용 폐쇄 alias.
+        resolvePrizeTeamMention(question), kstYear(now),
       );
       return settlePrize(rendered.answer, rendered.grounded ? "kbo_structured" : "history_hold");
     }

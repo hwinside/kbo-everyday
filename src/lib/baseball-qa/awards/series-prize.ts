@@ -28,6 +28,14 @@ export interface SeriesPrizeRow {
 /** KBO 리그 원년. 이 범위 밖 연도가 보이면 파싱이 깨진 것이다. */
 const KBO_FIRST_YEAR = 1982;
 
+/**
+ * KST 기준 연도. `getUTCFullYear()` 를 그대로 쓰면 KST 1/1 00:00~08:59 에 `작년` 이
+ * 1년 어긋난다 (삼순 P1) — 서비스 시간대는 KST 하나뿐이므로 여기서 고정한다.
+ */
+export function kstYear(now: Date): number {
+  return new Date(now.getTime() + 9 * 60 * 60 * 1000).getUTCFullYear();
+}
+
 /** 페이지 신원 마커 — 이게 없으면 KBO 수상 페이지가 아니다 (리다이렉트·에러 페이지 방어). */
 const PAGE_MARKER = "한국시리즈";
 const HEADER_MARKER_ALLSTAR = "올스타전";
@@ -55,7 +63,7 @@ export function parseSeriesPrize(html: string, now: Date = new Date()): SeriesPr
     if (!/^\d{4}$/.test(yearText)) continue;
     const year = Number(yearText);
     // 연도 범위 검증 — 원년 이전이나 미래 연도가 보이면 파싱 전체를 버린다.
-    if (year < KBO_FIRST_YEAR || year > now.getUTCFullYear() + 1) return null;
+    if (year < KBO_FIRST_YEAR || year > kstYear(now) + 1) return null;
     const ks = cells[2];
     if (ks.length === 3 && ks.every((v) => v === "-")) {
       rows.push({ year, koreanSeries: null });
@@ -77,8 +85,15 @@ export function parseSeriesPrize(html: string, now: Date = new Date()): SeriesPr
 
 /** 한국시리즈 MVP 를 직접 묻는 모양 (`작년 한국시리즈 MVP 누구야?`). */
 const KS_MVP_DIRECT = /한국\s*시리즈.*(mvp|엠브이피|최우수)|(mvp|엠브이피).*한국\s*시리즈|코시.*(mvp|엠브이피)/;
-/** 우승 기여·주역을 묻는 모양 (`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?`). */
-const CHAMPION_CONTRIB = /우승/;
+/**
+ * 우승 기여·주역을 묻는 모양 (`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?`).
+ *
+ * ⚠️ 협착 계약 (삼순 2026-08-10 P0 — `/우승/` 과포착): KS MVP 는 **한국시리즈 우승**의
+ * proxy 다. `준우승`(우승이 아님)·`정규시즌/페넌트/리그 우승`(다른 타이틀 — KS MVP 와
+ * 무관)이 섞이면 이 정본으로 답하면 안 된다 → null 로 물러나 기존 경로에 맡긴다.
+ */
+const CHAMPION_WORD = /우승/;
+const NOT_KS_CHAMPION = /준\s*우승|정규\s*(?:시즌|리그)|페넌트|리그\s*우승|전반기|후반기|와일드\s*카드|플레이\s*오프\s*우승/;
 const CONTRIB_WORD = /기여|공헌|주역|일등\s*공신|이끌|만들/;
 const PERSON_ASK = /누구|누가|사람|선수/;
 
@@ -91,7 +106,12 @@ export type SeriesPrizeIntent = "ks_mvp" | "champion_contrib" | null;
 export function resolveSeriesPrizeIntent(question: string): SeriesPrizeIntent {
   const normalized = question.normalize("NFKC").toLowerCase();
   if (KS_MVP_DIRECT.test(normalized)) return "ks_mvp";
-  if (CHAMPION_CONTRIB.test(normalized) && CONTRIB_WORD.test(normalized) && PERSON_ASK.test(normalized)) {
+  if (
+    CHAMPION_WORD.test(normalized) &&
+    !NOT_KS_CHAMPION.test(normalized) &&
+    CONTRIB_WORD.test(normalized) &&
+    PERSON_ASK.test(normalized)
+  ) {
     return "champion_contrib";
   }
   return null;
@@ -105,11 +125,43 @@ export function resolveSeriesPrizeYear(question: string, now: Date): number | nu
   const normalized = question.normalize("NFKC").toLowerCase();
   const explicit = normalized.match(/(19[89]\d|20\d{2})\s*년/);
   if (explicit) return Number(explicit[1]);
-  const year = now.getUTCFullYear();
+  const year = kstYear(now);
   if (/재작년|지지난\s*해/.test(normalized)) return year - 2;
   if (/작년|지난\s*해|지난해/.test(normalized)) return year - 1;
   if (/올해|올\s*시즌|금년/.test(normalized)) return year;
   return null;
+}
+
+/**
+ * 질문이 지목한 구단 → 수상표 표기(`LG`·`KIA`·`한화`…). 파이프라인의 토큰 기반
+ * resolveMentionedTeam 은 `한화우승` 붙여쓰기(원 사고 형태)를 못 자르고, canonical
+ * 표기도 수상표와 다를 수 있어 전제 비교가 어긋난다 (삼순 P1) — 이 경로 전용으로
+ * **수상표 표기에 결속된 폐쇄 alias** 를 compact 부분열로 판정한다. 2개 이상 걸리면
+ * 전제 판정 불가로 null (틀린 정정 금지).
+ */
+const PRIZE_TEAM_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ["엘지", "LG"], ["lg", "LG"], ["트윈스", "LG"],
+  ["기아", "KIA"], ["kia", "KIA"], ["타이거즈", "KIA"], ["해태", "해태"],
+  ["삼성", "삼성"], ["라이온즈", "삼성"],
+  ["두산", "두산"], ["베어스", "두산"], ["ob", "OB"],
+  ["한화", "한화"], ["이글스", "한화"], ["빙그레", "빙그레"],
+  ["롯데", "롯데"], ["자이언츠", "롯데"],
+  ["키움", "키움"], ["히어로즈", "키움"], ["넥센", "넥센"],
+  ["ssg", "SSG"], ["랜더스", "SSG"], ["sk", "SK"], ["와이번스", "SK"],
+  ["엔씨", "NC"], ["nc", "NC"], ["다이노스", "NC"],
+  ["케이티", "KT"], ["kt", "KT"], ["위즈", "KT"],
+  ["현대", "현대"], ["유니콘스", "현대"],
+];
+
+export function resolvePrizeTeamMention(question: string): string | null {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  const hits = new Set<string>();
+  for (const [alias, table] of PRIZE_TEAM_ALIASES) {
+    if (compact.includes(alias)) hits.add(table);
+  }
+  // SSG 가 걸리면 부분열 SK 도 걸린다 — 상위 표기가 있으면 부분열 표기는 지운다.
+  if (hits.has("SSG")) hits.delete("SK");
+  return hits.size === 1 ? [...hits][0] : null;
 }
 
 export interface SeriesPrizeAnswer {
@@ -130,6 +182,7 @@ export function renderSeriesPrizeAnswer(
   intent: Exclude<SeriesPrizeIntent, null>,
   askedYear: number | null,
   mentionedTeam: string | null,
+  nowYear: number,
 ): SeriesPrizeAnswer {
   const year = askedYear ?? rows.find((row) => row.koreanSeries !== null)?.year ?? null;
   if (year === null) {
@@ -140,7 +193,12 @@ export function renderSeriesPrizeAnswer(
     return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않아요. 다른 연도를 물어봐 주세요!`, grounded: false };
   }
   if (!row.koreanSeries) {
-    return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+    // 같은 `-` 라도 뜻이 갈린다 (삼순 P1): 현재 시즌은 "아직 미확정", 과거 연도는
+    // 한국시리즈 미개최(1985 삼성 전·후기 통합우승 등) — "시즌이 끝나면" 은 오안내다.
+    if (year >= nowYear) {
+      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+    }
+    return { answer: `${year}년에는 한국시리즈가 열리지 않아 한국시리즈 MVP가 없어요.`, grounded: true };
   }
   const w = row.koreanSeries;
   const who = `${w.name} 선수(${w.team}, ${w.position})`;
