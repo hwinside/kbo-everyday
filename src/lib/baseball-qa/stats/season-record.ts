@@ -155,6 +155,12 @@ interface TemporalScan {
   readonly refTotal: number;
   /** 최근 N<단위> (단위 무관 — `최근 3년`·`최근 10경기` 모두). */
   readonly recentRange: boolean;
+  /**
+   * 데뷔/입단 한정의 **구조 분류** (삼순 5차 — regex 덧대기 금지):
+   * none = 언급 없음 · full_origin = 데뷔 기점 전체(전 커리어 동치, career 로만 해석) ·
+   * other = 그 외 전부(단일 데뷔 시즌·bounded N년·bare 언급) — 축소 금지, fail-close.
+   */
+  readonly debutScope: "none" | "full_origin" | "other";
   /** 시점 토큰을 소거한 잔여 문자열에 남은 범위 표지(까지·이후·이전·부터·~). */
   readonly rangeMarker: boolean;
   readonly seriesWord: boolean;
@@ -169,23 +175,28 @@ interface TemporalScan {
 function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
-  // bounded 데뷔 범위(`데뷔 후 3년`·`입단 첫 3시즌`)는 full-career 동치가 아니라
-  // **지원하지 않는 부분 범위**다 (삼순 4차 P0) — 소거 전에 먼저 검출해 fail-close 로
-  // 보낸다. 소거를 먼저 하면 이 신호가 지워져 전 커리어 시리즈로 오답한다.
-  const debutBoundedRange =
-    /(?:데뷔|입단)(?:시점|초|직후)?(?:이래|이후|부터|첫|후)?\d+(?:년|시즌)/.test(rest);
-  // full-career 동치 스팬만 엄격히 소거한다: 연결어(부터/이래/이후)가 **필수**다.
-  // 뒤 요소가 전부 optional 이면 bare `데뷔/입단` 까지 지워져(삼순 4차 P0) bounded
-  // 범위 질문이 전 커리어로 축소된다. 소거 대상은 `데뷔시점부터 현재까지`(캡처 exact)·
-  // `데뷔 이래` 류 — 범위가 아니라 시리즈 질의의 수식이므로 참조·범위표지 집계 전에
-  // 통째로 소거해, `현재` 를 참조로 세면서 범위로 오판하는 것을 구조로 방지한다.
-  if (!debutBoundedRange) {
-    rest = rest.replace(
-      /(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터)(?:현재|지금|올해|오늘)?(?:까지)?/g,
-      "\u0000",
-    );
+  // ── 데뷔/입단 한정의 구조 분류 (삼순 5차 — 개별 regex 덧대기가 아니라 스코프로) ──
+  // bounded(`데뷔 후 첫 3년`)가 최우선: 숫자 범위가 보이면 연결어가 있어도 부분 범위다.
+  // full_origin 은 연결어(이래/이후/부터/후)가 **필수** — 데뷔 기점 전체 = 전 커리어 동치.
+  // 그 외(단일 `데뷔 시즌`·`입단 첫해`·bare `데뷔`)는 전부 other — 현재시즌·전 커리어
+  // 어느 쪽으로도 축소하지 않고 fail-close 한다.
+  let debutScope: "none" | "full_origin" | "other" = "none";
+  if (/데뷔|입단/.test(rest)) {
+    if (/(?:데뷔|입단)[^]{0,8}?\d+(?:년|시즌)/.test(rest)) {
+      debutScope = "other";
+    } else if (/(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)/.test(rest)) {
+      debutScope = "full_origin";
+      // full-origin 스팬은 참조·범위표지 집계 **전에** 통째로 소거한다 — `현재까지` 를
+      // 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
+      rest = rest.replace(
+        /(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)(?:현재|지금|올해|오늘)?(?:까지)?/g,
+        "\u0000",
+      );
+    } else {
+      debutScope = "other";
+    }
   }
-  const recentRange = /최근\d+/.test(rest) || debutBoundedRange;
+  const recentRange = /최근\d+/.test(rest);
   const explicitYearSet = new Set(
     [...rest.matchAll(/(?:19|20)\d{2}/g)].map((match) => Number(match[0])),
   );
@@ -216,6 +227,7 @@ function scanTemporalRefs(question: string): TemporalScan {
     explicitYear: refTotal === 1 && explicitYearSet.size === 1 ? [...explicitYearSet][0] : null,
     refTotal,
     recentRange,
+    debutScope,
     rangeMarker: /까지|이후|이전|부터|[~∼]/.test(rest),
     seriesWord: SERIES_WORDS.some((word) => spaced.includes(word)),
     careerWord: CAREER_TOTAL_WORDS.some((word) => spaced.includes(word)),
@@ -413,6 +425,9 @@ export function resolveSeasonRecordIntent(
   //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
   //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
   const scan = scanTemporalRefs(question);
+  // ⓪ 데뷔/입단 한정 중 full-origin(전 커리어 동치)이 아닌 것 전부 — 단일 데뷔 시즌·
+  //   bounded N년·bare 언급은 현재시즌으로도 전 커리어로도 축소하지 않는다 (삼순 5차).
+  if (scan.debutScope === "other") return { kind: "unsupported_season" };
   // ① 최근 N<단위> 범위 — 단위 무관(경기·년·시즌·일·주…). 연도별 테이블로 답할 수 없다.
   if (scan.recentRange) return { kind: "unsupported_season" };
   // ② 시점 참조 2개 이상 = 비교·범위 질의 (`작년과 올해`·`작년과 재작년`·`2025년과 2026년`).
@@ -434,7 +449,9 @@ export function resolveSeasonRecordIntent(
     if (scan.refTotal > 0) return { kind: "unsupported_season" };
     return { kind: "career", query, span: { type: "series" } };
   }
-  if (scan.careerWord) {
+  if (scan.careerWord || scan.debutScope === "full_origin") {
+    // `데뷔 이래 홈런 몇 개` — full-origin 은 통산 누계와 동치다 (삼순 5차: 소거 후
+    // 현재시즌으로 축소되던 결함). 명시 통산어와 같은 경로로만 해석한다.
     if (scan.refTotal > 0) return { kind: "unsupported_season" };
     return { kind: "career", query, span: { type: "career" } };
   }

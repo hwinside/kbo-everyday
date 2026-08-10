@@ -45,8 +45,22 @@ const MUTATIONS = [
   {
     name: "m12 데뷔 bounded 범위 검출 제거 — 데뷔 후 3년이 전 커리어로 축소 (삼순 4차 재현)",
     file: SEASON,
-    from: "const recentRange = /최근\\d+/.test(rest) || debutBoundedRange;",
-    to: "const recentRange = /최근\\d+/.test(rest);",
+    from: 'if (/(?:데뷔|입단)[^]{0,8}?\\d+(?:년|시즌)/.test(rest)) {',
+    to: "if (false) {",
+    smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
+  },
+  {
+    name: "m13 debutScope other fail-close 제거 — 데뷔 시즌/bare 데뷔가 축소 (삼순 5차 재현)",
+    file: SEASON,
+    from: 'if (scan.debutScope === "other") return { kind: "unsupported_season" };',
+    to: "",
+    smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
+  },
+  {
+    name: "m14 full_origin career 동치 제거 — 데뷔 이래 홈런이 현재시즌으로 축소 (삼순 5차 재현)",
+    file: SEASON,
+    from: 'if (scan.careerWord || scan.debutScope === "full_origin") {',
+    to: "if (scan.careerWord) {",
     smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
   },
   {

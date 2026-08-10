@@ -53,6 +53,13 @@ const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
 // ── 1. 파서 — 기계 추출 fixture (실존: 최형우 72443 / 임찬규 61101) ────────────
+check("full-origin 데뷔 한정 = 통산 동치 (삼순 5차: 현재시즌 축소 금지)", () => {
+  for (const q of ["최형우 데뷔 이래 홈런 몇 개야?", "최형우 데뷔 후 홈런 몇 개 쳤어?", "최형우 입단 이후 안타 몇 개야?"]) {
+    const intent = resolveSeasonRecordIntent(q, "batter");
+    assert.equal(intent.kind, "career", `${q} → ${intent.kind}`);
+    assert.equal((intent as { span: { type: string } }).span.type, "career", q);
+  }
+});
 check("타자 fixture: 최형우 시리즈+통산이 그대로 읽힌다", () => {
   const rec = parseCareerTotalsHtml(BATTER_HTML, SEASON);
   assert.ok(rec, "파싱 실패");
@@ -299,8 +306,13 @@ checkAsync("파이프라인: 동치 축소형 전부 blocked 종단 — fetch/LL
     // bounded 데뷔 범위 (삼순 4차 P0): full-career 동치가 아니다 — 전 커리어 시리즈로
     // 축소되면 안 되고 blocked + 전 호출 0 이어야 한다.
     "최형우 데뷔 후 3년 타율 추이",
+    "최형우 데뷔 후 첫 3년 타율 추이",
     "최형우 입단 첫 3시즌 홈런 추이",
     "최형우 데뷔 이후 3년 홈런 추이",
+    // 단일 데뷔 시즌·bare 데뷔 언급 (삼순 5차): 현재시즌으로도 전 커리어로도 축소 금지.
+    "최형우 데뷔 시즌 홈런 몇 개야?",
+    "최형우 입단 첫해 타율 알려줘",
+    "최형우 데뷔 홈런 기록 알려줘",
   ];
   for (const q of equivalents) {
     let careerFetches = 0;
