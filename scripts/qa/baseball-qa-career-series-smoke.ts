@@ -164,6 +164,31 @@ check("연도 2개 이상 명시는 fail-close (범위 질의는 지원 안 함)
   assert.equal(resolveSeasonRecordIntent("최형우 2019년이랑 2020년 타율").kind, "unsupported_season");
 });
 
+// ── 4-b. 좋은 한정이 넓은 시점어를 이긴다 (삼순 2026-08-10 NO-GO 3축 반대축) ──
+check("범위·최근 N 한정은 시리즈로 축소하지 않고 fail-close (축 ①)", () => {
+  // bare `추이` 가 먼저 잡으면 `최근 10경기` 가 전 커리어로 바뀝다 — 축소 오답.
+  assert.equal(resolveSeasonRecordIntent("최형우 최근 10경기 타율 추이 알려줘").kind, "unsupported_season");
+  assert.equal(resolveSeasonRecordIntent("최형우 2019~2020 연도별 타율").kind, "unsupported_season");
+});
+check("최고/커리어하이·cutoff 는 통산으로 축소하지 않는다 (축 ②)", () => {
+  // 통산 = 전 기간 **평균/누계**다. 극값(최고 타율)은 다른 값이며 정본 조회가 아니다.
+  assert.equal(resolveSeasonRecordIntent("최형우 역대 최고 타율이 몇이야?").kind, "unsupported_season");
+  assert.equal(resolveSeasonRecordIntent("최형우 커리어하이 타율은?").kind, "unsupported_season");
+  // cutoff 부분합은 현재 통산 행(올해 포함)과 다른 값이다.
+  assert.equal(resolveSeasonRecordIntent("최형우 2025년까지 통산 홈런").kind, "unsupported_season");
+  assert.equal(resolveSeasonRecordIntent("최형우 작년까지 통산 안타").kind, "unsupported_season");
+});
+check("올해 포함 복수 연도 비교도 fail-close — 2026 선제거 둘감 금지 (축 ③)", () => {
+  // 종전에는 filter 가 2026을 먼저 지워 `2025+2026 비교` 가 2025 단일값으로 둘갓했다.
+  assert.equal(resolveSeasonRecordIntent("최형우 2025년과 2026년 타율 비교해줘").kind, "unsupported_season");
+  assert.equal(resolveSeasonRecordIntent("최형우 2026년이랑 2025년 홈런 비교").kind, "unsupported_season");
+});
+check("무회귀: 정상 시리즈·통산·단일 연도는 그대로 답한다", () => {
+  assert.equal(resolveSeasonRecordIntent("최형우 연도별 타율 추이 알려줘").kind, "career");
+  assert.equal(resolveSeasonRecordIntent("최형우 통산 타율 얼마야?").kind, "career");
+  assert.equal(resolveSeasonRecordIntent("최형우 2019년 홈런 몇 개야?").kind, "career");
+});
+
 // ── 5. fetcher seam — 게이트가 실제 배포 함수를 실행한다 ─────────────────────
 checkAsync("factory: fixture HTML 주입 → 같은 파서 경로로 파싱", async () => {
   const urls: string[] = [];

@@ -329,7 +329,37 @@ export function resolveSeasonRecordIntent(
   // ── 시점 판정 (2026-08-10 캐처: `연도별 타율 추이`가 올해 단일값으로 오답) ──────
   // 종전에는 통산·과거 시즌을 "준비 중" fail-close 로 닫았다. 정본이 없어서가 아니라
   // KBO 공식 연도별 테이블(Total.aspx)을 안 보고 있었던 것 — 이제 그 정본으로 답한다.
+  //
+  // ⚠️ 우선순위 계약 (삼순 2026-08-10 NO-GO 3축): **좁은 한정이 넓은 시점어를 이긴다.**
+  //   지원하지 않는 좁은 한정(최근 N경기·연도 범위·최고/하이·cutoff)이 붙어 있는데
+  //   넓은 시점어(추이·통산)를 먼저 잡으면 전 커리어/현재 통산으로 **축소 오답**이 된다.
+  //   미지원 한정은 축소하지 말고 fail-close 다.
   const spaced = normalizeWithSpaces(question);
+  const compactQ = spaced.replace(/\s+/g, "");
+  // ①-a 최근 N경기·N일·N타석 같은 **범위 한정** — 연도별 테이블로 답할 수 없다.
+  if (/최근\s*\d+\s*(?:경기|게임|타석|이닝|일|주)/.test(spaced)) {
+    return { kind: "unsupported_season" };
+  }
+  // ①-b 명시 연도를 **시점어보다 먼저** 계산한다. `2019~2020 연도별 타율` 은 연도 범위가
+  //   본질이고 "연도별" 은 수식이다 — 시리즈로 잡으면 전 커리어 축소 오답.
+  //   filter 로 올해를 먼저 지우면 `2025년과 2026년 비교` 가 단일 연도로 둔갑하므로
+  //   (삼순 축 ③) **지우기 전 전체 집합**으로 복수 여부를 판정한다.
+  const allExplicitYears = [...spaced.matchAll(/(?:19|20)\d{2}(?:\s*년|\s*시즌)?/g)]
+    .map((match) => Number(match[0].match(/\d{4}/)?.[0]));
+  const hasYearRange = /(?:19|20)\d{2}\s*[~\-–부]/.test(spaced) && allExplicitYears.length >= 1;
+  if (allExplicitYears.length > 1 || hasYearRange) {
+    return { kind: "unsupported_season" };
+  }
+  // ①-c 최고/최저(커리어하이) — 통산 **평균**과 다른 값이다. 연도별 테이블에서 극값을
+  //   고르는 것은 규정타석·표본 판정이 필요해 정본 조회가 아니다 → fail-close.
+  if (/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(spaced)) {
+    return { kind: "unsupported_season" };
+  }
+  // ①-d cutoff(`2025년까지 통산`·`작년까지`) — 현재 통산 행은 올해를 포함하므로
+  //   다른 값이다. 부분합은 정본에 없다 → fail-close.
+  if (/까지/.test(compactQ) && (CAREER_TOTAL_WORDS.some((word) => spaced.includes(word)) || allExplicitYears.length > 0)) {
+    return { kind: "unsupported_season" };
+  }
   if (SERIES_WORDS.some((word) => spaced.includes(word))) {
     return { kind: "career", query, span: { type: "series" } };
   }
@@ -341,16 +371,14 @@ export function resolveSeasonRecordIntent(
       return { kind: "career", query, span: { type: "year", year: SUPPORTED_SEASON - delta } };
     }
   }
-  // 명시 연도: 과거는 공식 테이블 조회, 미래는 여전히 fail-close.
-  const explicitYears = [...spaced.matchAll(/(?:19|20)\d{2}(?:\s*년|\s*시즌)?/g)]
-    .map((match) => Number(match[0].match(/\d{4}/)?.[0]))
-    .filter((year) => year !== SUPPORTED_SEASON);
-  if (explicitYears.length > 0) {
-    const year = explicitYears[0];
-    if (explicitYears.length > 1 || year > SUPPORTED_SEASON || year < 1982) {
+  // 명시 연도: 과거는 공식 테이블 조회, 미래는 여전히 fail-close. 복수 연도는 위 ①-b 에서
+  // 이미 닫혔으므로 여기는 0개 또는 1개다.
+  const explicitYear = allExplicitYears.find((year) => year !== SUPPORTED_SEASON);
+  if (explicitYear !== undefined) {
+    if (explicitYear > SUPPORTED_SEASON || explicitYear < 1982) {
       return { kind: "unsupported_season" };
     }
-    return { kind: "career", query, span: { type: "year", year } };
+    return { kind: "career", query, span: { type: "year", year: explicitYear } };
   }
   return { kind: "query", query };
 }

@@ -15,7 +15,31 @@ const CAREER = "src/lib/baseball-qa/stats/career-series.ts";
 const SEASON_RECORD = "src/lib/baseball-qa/stats/season-record.ts";
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 
+const SEASON = "src/lib/baseball-qa/stats/season-record.ts";
+
 const MUTATIONS = [
+  {
+    name: "m8 범위·최근N fail-close 제거 — 최근 10경기가 전 커리어로 축소",
+    file: SEASON,
+    from: `if (/최근\\s*\\d+\\s*(?:경기|게임|타석|이닝|일|주)/.test(spaced)) {
+    return { kind: "unsupported_season" };
+  }`,
+    to: "",
+  },
+  {
+    name: "m9 최고/커리어하이 fail-close 제거 — 통산 평균으로 축소",
+    file: SEASON,
+    from: `if (/최고|최저|최악|커리어\\s*하이|하이라이트|베스트|기록\\s*경신/.test(spaced)) {
+    return { kind: "unsupported_season" };
+  }`,
+    to: "",
+  },
+  {
+    name: "m10 복수 연도 선판정 제거 — 2025+2026 비교가 단일값으로 둔갑",
+    file: SEASON,
+    from: "if (allExplicitYears.length > 1 || hasYearRange) {",
+    to: "if (false) {",
+  },
   {
     name: "m1 identity 대조 제거 — 다른 선수 기록이 그대로 나간다",
     file: PIPELINE,
