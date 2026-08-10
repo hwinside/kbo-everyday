@@ -353,7 +353,8 @@
     "qa:genius-unbound-name:mutations": "node scripts/qa/genius-unbound-name-mutations.mjs",
     "qa:genius-refusal-scope:mutations": "bash scripts/qa/genius-refusal-scope-mutations.sh",
     "qa:genius-refusal-prompt-live": "tsx scripts/qa/genius-refusal-prompt-live-smoke.ts",
-    "qa:source-row-stability": "node scripts/qa/source-row-stability-smoke.mjs"
+    "qa:source-row-stability": "node scripts/qa/source-row-stability-smoke.mjs",
+    "qa:genius-sincerity-live": "tsx scripts/qa/baseball-qa-sincerity-live-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
