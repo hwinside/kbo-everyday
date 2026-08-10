@@ -66,7 +66,7 @@ async function fetchRealEvidence(): Promise<RagEvidence[]> {
     `?select=content,page_title,canonical_url,revision,section_path,as_of` +
     `&page_title=eq.${encodeURIComponent("문보경")}` +
     `&content=ilike.${encodeURIComponent("*별명*")}` +
-    `&limit=4`;
+    `&order=chunk_index.asc&limit=6`;
   const res = await fetch(url, {
     headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
     signal: AbortSignal.timeout(15000),
