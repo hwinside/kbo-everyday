@@ -57,6 +57,23 @@ check("리더보드 질문 판정 (캡처 exact 포함)", () => {
     assert.equal(routeQuestion(q, [], PLAYERS), "llm_scope_gate", q);
   }
 });
+// ── 1-b. 인물·평가·역사 축 denylist 삭제 (2026-08-10 캐처: `작년 LG우승에 가장 큰 기여를 한 사람은 누구야?`) ──
+check("야구 인물 질문은 차단이 아니라 LLM 위임이다 (캐처 exact 포함)", () => {
+  for (const q of [
+    "작년 LG우승에 가장 큰 기여를 한 사람은 누구야?", // `LG우승` 결합 토큰이라 팀 인식도 안 되던 모양
+    "작년 한국시리즈 MVP 누구야?",
+    "LG트윈스 감독 누구야?",
+    "역대 최고의 타자는 누구야?",
+  ]) {
+    assert.equal(routeQuestion(q, [], []), "llm_scope_gate", q);
+  }
+});
+check("진짜 범위밖 어휘는 여전히 차단된다 (denylist 축소 방향 안전팬)", () => {
+  for (const q of ["LG 경기장 근처 맛집 추천해줘", "오늘 저녁 메뉴 추천", "날씨 어때?"]) {
+    assert.equal(routeQuestion(q, [], []), "blocked", q);
+  }
+});
+
 check("무회귀: 선수 지명·수치 없는 질문은 리더보드가 아니다", () => {
   // 선수 지명 통산은 종전 라우트(선수 기록 경로/hold) 그대로 — 위임 대상 아님.
   assert.equal(routeQuestion("최형우 통산 타율 알려줘", [], PLAYERS), "history_hold");

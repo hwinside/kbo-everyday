@@ -926,8 +926,15 @@ const RULE_ACTOR_WORDS = [
 ];
 const RULE_TERM_INTENT =
   /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금|바꾸|바뀌|변경|방문|항의|처리|정해/;
+// ⚠️ 2026-08-10 하린아빠 캡처(`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?` →
+// "야구 이야기만 답해드릴 수 있어요")로 **인물·평가·역사 축을 denylist 에서 삭제**했다.
+// `누구`·`역대`·`비교`·`최고` 는 범위밖 의도가 아니라 **야구 질문의 핵심 의문사**다 —
+// 한국시리즈 MVP·우승 주역·역대 순위가 전부 이 축에 걸려 차단됐다. 이 denylist 는
+// 고정밀(틀릴 여지가 없는 어휘)일 때만 존재 가치가 있고, 인물 축은 고정밀이 아니었다.
+// 범위 판정은 llm_scope_gate 가 하고(룰 최소화·LLM 위임, 00:53 방향 확정), 실명 환각은
+// name_suggest 가드가, 수치 환각은 프롬프트 근거없음 계약이 각각 이미 막는다.
 const OUT_OF_SCOPE_INTENT =
-  /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
+  /추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
 
 /**
  * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
@@ -940,17 +947,13 @@ const OUT_OF_SCOPE_INTENT =
  * 반면 `날씨`·`주식`·`맛집`·`프롬프트` 등은 구단이 붙어도 여전히 범위 밖이다
  * (`LG 경기장 근처 맛집`). 그래서 면제는 **인물·평가·역사 축만** 좀게 열어둔다.
  */
-const TEAM_BOUND_IN_SCOPE_INTENT = /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악/;
-
 /**
- * 범위 밖 의도 판정. 구단이 지명되면 인물·평가·역사 축은 면제한다.
+ * 범위 밖 의도 판정. 인물·평가·역사 축이 denylist 에서 빠지면서 팀 면제 로직도
+ * 함께 사라졌다 — 남은 어휘(날씨·주식·맛집…)는 구단이 붙어도 범위 밖이다
+ * (`LG 경기장 근처 맛집 추천`). 시그니처는 호출부 안정성을 위해 유지한다.
  */
-function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
-  if (!OUT_OF_SCOPE_INTENT.test(normalized)) return false;
-  if (!hasTeam) return true;
-  // 구단 질문이면 면제 패턴을 지우고 남는 것이 있는지로 다시 본다 —
-  // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
-  return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
+function isOutOfScopeIntent(normalized: string, _hasTeam: boolean): boolean {
+  return OUT_OF_SCOPE_INTENT.test(normalized);
 }
 const NAMED_STAT_QUERY =
   /[가-힣]{2,12}(?:의|은|는|이|가)?\s+(?:타율|방어율|평균자책|출루율|장타율|홈런|안타|타점|도루|승수|세이브|홀드|삼진|기록|스탯)\s*(?:몇|얼마|알려|보여|기록)?/;

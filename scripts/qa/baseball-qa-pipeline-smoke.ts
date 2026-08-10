@@ -362,21 +362,22 @@ for (const question of ruleTermRoutingQuestions) {
 // 좁히면 정상 룰 질문 과차단이 생겨 사전만으로는 수렴하지 않기 때문이다.
 // ⚠️ 이 라벨은 "열어준다"는 뜻이 아니다 — 공식 RAG/tier1 경계 밖이며, 아래 end-to-end
 // 검증에서 실제 결과가 blocked로 닫히는지·조문 근거가 안 붙는지를 함께 태운다.
-// ① 고정밀 범위밖 의도(추천·누구·비교·역대·날씨…)와 ② 선수·구단 지명은 계속 결정론적으로
-// 닫는다. 둘 다 폐쇄집합/고정 패턴이라 신호어 사전처럼 무한히 넓혀야 하는 종류가 아니고,
-// 여기까지 LLM에 물으면 토큰만 더 쓴다.
+// ① 고정밀 범위밖 의도(추천·날씨·맛집…)만 결정론적으로 닫는다. 인물·평가·역사 축
+// (`누구`·`별명`·`역대`·`비교`)은 2026-08-10 denylist 에서 삭제 — `작년 LG우승에 가장
+// 큰 기여를 한 사람은 누구야?`·`한국시리즈 MVP 누구야?` 가 전부 걸려 차단되던 실표본.
+// 그 축은 야구 질문의 핵심 의문사라 고정밀이 아니었고, 범위 판정은 llm_scope_gate 가 한다.
 for (const question of [
   "볼만한 영화 추천해줘", "아웃백 메뉴 추천해줘", "루이비통 가방 추천해줘",
-  "문보경 별명이 뭐야",
 ]) {
   assert.equal(routeQuestion(question, seedEntries, players), "blocked", question);
 }
-// ⚠️ team-bound `누구`(감독·주장)는 더 이상 `blocked` 가 아니다 (삼순 #1100 1차 P0-1).
-// `누구`는 맥락 없이 보면 사적 인물 질문이라 denylist 에 있지만, 구단이 붙으면
-// `LG트윈스 감독 누구야?` 처럼 **구단 질문**이고, 구단은 확정 답변 범위 안이다.
+// 별명 질문은 결정론 차단이 아니라 위임이다. production 에선 answerQuestion 앞단의
+// 선수 RAG 가 먼저 가로채고, 여기(라우터 fallback)로 오면 LLM 범위판정을 받는다.
+assert.equal(routeQuestion("문보경 별명이 뭐야", seedEntries, players), "llm_scope_gate");
 assert.equal(routeQuestion("LG 트윈스 감독 누구야?", seedEntries, players), "llm_scope_gate");
-// 단, 구단이 붙어도 날씨·맛집·추천 같은 축은 여전히 범위 밖이다 — 면제를
-// 인물·평가·역사 축으로만 좀게 열었는지 확인한다(면제가 넘치면 과소차단이 된다).
+// 캡처 exact — 인물 축 삭제로 열리는 야구 질문.
+assert.equal(routeQuestion("작년 LG우승에 가장 큰 기여를 한 사람은 누구야?", seedEntries, players), "llm_scope_gate");
+// 단, 구단이 붙어도 날씨·맛집·추천 같은 축은 여전히 범위 밖이다.
 assert.equal(routeQuestion("LG 경기장 근처 맛집 추천해줘", seedEntries, players), "blocked");
 assert.equal(routeQuestion("두산 경기 날씨 어때?", seedEntries, players), "blocked");
 // 반면 ③ 둘 다 안 걸리는 "모르겠는" 질문은 blocked로 종결하지 않고 LLM 범위판정에 위임한다.
@@ -862,14 +863,15 @@ async function verifyPipeline() {
   //   · 기록/역사(감독·순위·통산 등) → `history_hold` "기록은 아직 어려워요, 앱 기록 탭에서"
   // 그래서 기대 라벨/문구를 입력별로 명시한다. 하나로 뭉쳐두면 기록 질문에 틀린 안내가
   // 나가도 게이트가 통과한다.
+  // ⚠️ 2026-08-10 계약 축소: 인물·평가·역사 축(`별명`·`누가 더`·`역대 최고`)은 결정론
+  // 종결에서 **빠졌다** — `작년 LG우승에 가장 큰 기여를 한 사람은 누구야?` 가 이 축에
+  // 걸려 차단된 실표본(하린아빠 12:10 캡처). 그 질문들은 llm_scope_gate 위임으로 가고
+  // (라우팅 계약은 위 routeQuestion 단정 + qa:baseball-leaderboard 가 종단까지 감싼다),
+  // 여기 남는 것은 진짜 범위밖 고정밀 어휘(추천·요리…)뿐이다.
   const deterministicClosures: Array<[string, "blocked" | "history_hold"]> = [
-    ["문보경 별명이 뭐야?", "blocked"],
-    ["김도영과 문보경 중 누가 더 잘해?", "blocked"],
     ["보크 관련 영화 추천해줘", "blocked"],
     ["아웃도어 브랜드 추천해줘", "blocked"],
     ["도루묵 요리법 알려줘", "blocked"],
-    // 팀 없는 `역대 최고`는 주관 비교라 여전히 범위 밖이다.
-    ["역대 최고 투수는 누구야?", "blocked"],
   ];
   // ⚠️ 구단이 지명된 인물·별칭·평가 질문은 이 결정론 종결에서 **빠졌다**
   // (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1). `LG트윈스 감독 누구야?`·
@@ -1040,10 +1042,12 @@ async function verifyPipeline() {
     assert.equal(forgedResult.source, "player_picker", "위조 id는 무시하고 다시 되물는다");
 
     // ⑤ 비교 질문은 picker 대상이 아니다 — 서로 다른 이름 2명은 동명이인이 아니다.
+    // 계약 갱신 (2026-08-10): 인물·평가 축 denylist 삭제로 결정론 차단(blocked)이 아니라
+    // llm_scope_gate 위임으로 종결된다 — LLM 이 범위를 판정하고 답한다.
     const compare = freshState();
     const compareResult = await answerQuestion("u1", "김도영과 문보경 중 누가 더 잘해?", ragDeps(compare));
     assert.notEqual(compareResult.source, "player_picker", "비교 질문은 picker 아님");
-    assert.equal(compareResult.source, "blocked", "비교 질문은 기존대로 차단");
+    assert.equal(compareResult.source, "llm", "비교 질문은 LLM 위임으로 종결");
 
     // ⑥ 수치·기록 질문은 tier2(나무위키) 서빙 금지 계약 그대로다 — 위키 숫자는 정본이 아니다.
     // 단 `fetchSeasonRecord` 미주입(= 기록 경로 비활성) 일 때의 계약이고,

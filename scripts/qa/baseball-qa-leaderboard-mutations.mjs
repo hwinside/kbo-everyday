@@ -35,6 +35,12 @@ const MUTATIONS = [
     to: "export const RAG_ANSWER_MAX_CHARS = 160;",
   },
   {
+    name: "m6 인물 축 denylist 복원 — 우승 기여자 질문이 다시 차단",
+    file: PIPELINE,
+    from: "const OUT_OF_SCOPE_INTENT =\n  /추천|",
+    to: "const OUT_OF_SCOPE_INTENT =\n  /누구|추천|",
+  },
+  {
     name: "m5 tier2 성의 지시 제거",
     file: RETRIEVE,
     from: "\"단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다.\",",
