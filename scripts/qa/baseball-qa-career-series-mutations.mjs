@@ -50,9 +50,16 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
   },
   {
+    name: "m16 서수 동치(번째) 흡수 제거 — 데뷔 후 첫 번째 시즌이 career total 로 축소 (삼순 7차 재현)",
+    file: SEASON,
+    from: "/(?:데뷔|입단)[^]{0,10}?첫(?:번째)?(?:해|시즌|경기|타석|등판|년도?)/",
+    to: "/(?:데뷔|입단)[^]{0,8}?첫(?:해|시즌|경기|타석|등판)/",
+    smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
+  },
+  {
     name: "m15 single 마커 선차단 제거 — 입단 후 첫해가 career total 로 축소 (삼순 6차 재현)",
     file: SEASON,
-    from: '} else if (/(?:데뷔|입단)[^]{0,8}?첫(?:해|시즌|경기|타석|등판)/.test(rest)) {',
+    from: '} else if (/(?:데뷔|입단)[^]{0,10}?첫(?:번째)?(?:해|시즌|경기|타석|등판|년도?)/.test(rest)) {',
     to: "} else if (false) {",
     smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
   },
