@@ -23,6 +23,7 @@ import {
   allowsNumericAnswer,
   composeRagAnswer,
   isDescriptivePlayerQuestion,
+  numericTokensSubsetOf,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
@@ -743,6 +744,19 @@ const SERVICE_WORDS = [
   "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "오류", "에러", "건의",
   "피드백", "알림", "쪽지", "업데이트", "결제", "계정",
 ];
+/**
+ * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
+ *
+ * 시점어(통산·역대·올타임) + 정체성 의문(1위·누구·최다·최고) 둘 다 있어야 한다.
+ * 폐쇄집합 어휘고, 놓치면 기존 hold 경로로 내려가 틀린 답이 아니라 좁은 답이 된다.
+ */
+const CAREER_LEADERBOARD_SCOPE = /통산|역대|올타임/;
+const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
+export function isCareerLeaderboardAsk(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
+}
+
 const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
   "지난해", "작년", "올해",
@@ -2132,6 +2146,15 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
+  // ── 리그 통산·역대 순위 질문 (2026-08-10 하린아빠 캡처: `통산 안타 기록 1위는 누구야?`) ──
+  // 선수·구단 지명 없이 "리그에서 누가 1위냐"를 묻는 모양이다. KBO 공식 웹에는 통산
+  // 누적 리더보드 구조화 테이블이 없다(2026-08-10 기록실 전수 실측 — 역대 섹션은
+  // 단일시즌 10걸·연도별 수위타자·구단성적뿐). 그래서 정본 조회 대신 generic LLM 으로
+  // 위임해 **이름/순위까지만** 답하게 한다 — 수치는 아래 LLM 종결부의 기계 가드
+  // (질문 토큰 strict subset)가 막는다. "준비 안 됨" 차단보다 좁은 정답이 낫다.
+  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+    return "llm_scope_gate";
+  }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
@@ -3702,6 +3725,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+  }
+
+  // 리그 통산 순위 답변의 수치 기계 가드 (2026-08-10) — 프롬프트가 "이름만"을 지시하지만
+  // 보장은 기계 대조가 한다. 통산 누적치는 정본 조회가 없으므로 모델이 기억으로 쓴
+  // 숫자(예: 2,504안타)는 검증 불가 — 질문 밖 숫자가 있으면 보류로 닫는다.
+  if (scopeGate && isCareerLeaderboardAsk(question) && !numericTokensSubsetOf(validated.answer, question)) {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
