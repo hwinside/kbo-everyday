@@ -285,6 +285,41 @@ checkAsync("파이프라인: identity 불일치는 blocked (다른 선수 기록
   const result = await answerQuestion("u1", "최형우 통산 타율 얼마야?", deps);
   assert.equal(result.source, "blocked");
 });
+checkAsync("파이프라인: 동치 축소형 전부 blocked 종단 — fetch/LLM/RAG/cache 0 (삼순 3차 table-driven)", async () => {
+  // intent 단정만으로는 파이프라인이 이 판정을 쓰는지 보장되지 않는다 — answerQuestion
+  // 종단에서 blocked + 모든 데이터 경로 0회를 table-driven 으로 고정한다.
+  const equivalents = [
+    "최형우 최근 3년 타율 추이 알려줘",
+    "최형우 2019년 이후 타율 추이",
+    "최형우 작년과 올해 타율 비교해줘",
+    "최형우 작년과 재작년 타율 비교",
+    "최형우 작년까지 홈런 몇 개야",
+    "최형우 작년과 현재 타율 비교해줘",
+    "최형우 작년보다 지금 타율이 좋아?",
+  ];
+  for (const q of equivalents) {
+    let careerFetches = 0;
+    let llmCalls = 0;
+    let ragSearches = 0;
+    let cacheReads = 0;
+    let cacheWrites = 0;
+    const { deps } = makeDeps({
+      fetchCareerRecord: (async () => { careerFetches++; return []; }) as never,
+      fetchSeasonRecord: (async () => { careerFetches++; return []; }) as never,
+      callLlm: async () => { llmCalls++; return { text: "{}", inputTokens: 1, outputTokens: 1 }; },
+      callRagLlm: async () => { llmCalls++; return { text: "{}", inputTokens: 1, outputTokens: 1 }; },
+      searchRag: async () => { ragSearches++; return [] as never; },
+      getCache: async () => { cacheReads++; return null; },
+      setCache: async () => { cacheWrites++; },
+    });
+    const result = await answerQuestion("u1", q, deps);
+    assert.equal(result.source, "blocked", `${q}: 축소 답 대신 blocked 여야 한다 — ${result.answer}`);
+    assert.equal(careerFetches, 0, `${q}: 기록 fetch 0`);
+    assert.equal(llmCalls, 0, `${q}: LLM 0`);
+    assert.equal(ragSearches, 0, `${q}: RAG 0`);
+    assert.equal(cacheReads + cacheWrites, 0, `${q}: cache 0`);
+  }
+});
 checkAsync("파이프라인: 폐쇄집합 밖 지표(통산 OPS)는 blocked", async () => {
   const fetcher = createCareerRecordFetcher(async () => BATTER_HTML, () => Date.UTC(SEASON, 7, 10));
   const { deps } = makeDeps({ fetchCareerRecord: fetcher });

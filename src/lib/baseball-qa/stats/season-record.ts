@@ -169,6 +169,10 @@ interface TemporalScan {
 function scanTemporalRefs(question: string): TemporalScan {
   const spaced = normalizeWithSpaces(question);
   let rest = spaced.replace(/\s+/g, "");
+  // 데뷔 결속 스팬(`데뷔시점부터 현재까지`·`데뷔 이후`)은 전 커리어와 동치다 — 범위가
+  // 아니라 시리즈 질의의 수식이므로 참조·범위표지 집계 **전에** 통째로 소거한다.
+  // (`현재`를 참조로 세면서 캡처 exact 가 범위로 오판되는 것을 구조로 방지.)
+  rest = rest.replace(/(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터)?(?:현재|지금|올해|오늘)?(?:까지)?/g, "\u0000");
   const recentRange = /최근\d+/.test(rest);
   const explicitYearSet = new Set(
     [...rest.matchAll(/(?:19|20)\d{2}/g)].map((match) => Number(match[0])),
@@ -185,7 +189,9 @@ function scanTemporalRefs(question: string): TemporalScan {
     }
   }
   let currentRefs = 0;
-  for (const word of ["이번시즌", "올시즌", "올해", "금년"]) {
+  // `현재/지금/현시즌` 도 현재 시점 참조다 (삼순 3차: `작년과 현재 비교` 가 refTotal=1 로
+  // 작년 단일값 축소). 긴 토큰 먼저 — `현시즌` 소거 후 잔여에서 `현재` 를 세지 않도록.
+  for (const word of ["이번시즌", "올시즌", "현시즌", "올해", "금년", "현재", "지금"]) {
     while (rest.includes(word)) {
       rest = rest.replace(word, "\u0000");
       currentRefs += 1;
