@@ -136,6 +136,9 @@ check("연도별·추이 → career series (캡처 exact 2건)", () => {
   for (const q of [
     "최형우의 연도별 타율 추이가 어떻게 돼?",
     "최형우의 데뷔시점부터 현재까지 연도별 타율이 각각 어떻게 돼?",
+    // 구조 판정(삼순 9차) 과차단 방지 양성: series 표지(시즌별)는 시간 단위 selector 가
+    // 아니다 — 연결어 뒤에 있어도 other 로 닫히면 안 되고 career series 로 남아야 한다.
+    "최형우 데뷔 후 시즌별 홈런 추이",
   ]) {
     const intent = resolveSeasonRecordIntent(q);
     assert.equal(intent.kind, "career", q);
@@ -330,6 +333,12 @@ checkAsync("파이프라인: 동치 축소형 전부 blocked 종단 — fetch/LL
     "최형우 데뷔 후 두 번째 시즌 홈런 몇 개야?",
     "최형우 입단 후 둘째 해 타율",
     "최형우 데뷔 후 2번째 시즌 홈런",
+    // 구조 판정 (삼순 9차): 열거가 아니라 "연결어 뒤 잔여에 시간 단위 selector 가
+    // 남는가" 로 닫는다 — 서수 표지 없는 수사(두 시즌)·열거 밖 서수(열한 번째)·
+    // 명명형(마지막 시즌)까지 전부 other fail-close 여야 한다.
+    "최형우 데뷔 후 두 시즌 홈런",
+    "최형우 데뷔 후 열한 번째 시즌 타율",
+    "최형우 데뷔 후 마지막 시즌 홈런",
   ];
   for (const q of equivalents) {
     let careerFetches = 0;
