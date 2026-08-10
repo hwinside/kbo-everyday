@@ -210,7 +210,8 @@ const MUTATIONS = [
   {
     id: "N34 generic 저장을 raw 로 회귀 (envelope 미결속)",
     file: PIPELINE,
-    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock },\n      llm,\n    ));',
+    // 2026-08-10 #1132: cacheable 에 !statNumericGuard 가 추가돼 앵커 원문 갱신 (앵커 부재 = 러너 fail-close 실측).
+    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },\n      llm,\n    ));',
     replacement: "await deps.storeLlm(llm);",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
