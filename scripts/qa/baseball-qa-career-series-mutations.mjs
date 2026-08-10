@@ -19,25 +19,27 @@ const SEASON = "src/lib/baseball-qa/stats/season-record.ts";
 
 const MUTATIONS = [
   {
-    name: "m8 범위·최근N fail-close 제거 — 최근 10경기가 전 커리어로 축소",
+    name: "m8 최근N 범위 fail-close 제거 — 최근 3년/10경기가 전 커리어로 축소",
     file: SEASON,
-    from: `if (/최근\\s*\\d+\\s*(?:경기|게임|타석|이닝|일|주)/.test(spaced)) {
-    return { kind: "unsupported_season" };
-  }`,
+    from: 'if (scan.recentRange) return { kind: "unsupported_season" };',
     to: "",
   },
   {
-    name: "m9 최고/커리어하이 fail-close 제거 — 통산 평균으로 축소",
+    name: "m9 극값(최고/커리어하이) fail-close 제거 — 통산 평균으로 축소",
     file: SEASON,
-    from: `if (/최고|최저|최악|커리어\\s*하이|하이라이트|베스트|기록\\s*경신/.test(spaced)) {
-    return { kind: "unsupported_season" };
-  }`,
+    from: "if (/최고|최저|최악|커리어\\s*하이|하이라이트|베스트|기록\\s*경신/.test(scan.spaced)) {",
+    to: "if (false) {",
+  },
+  {
+    name: "m10 복수 시점 참조 판정 제거 — 작년과 올해 비교가 단일값으로 둔갑",
+    file: SEASON,
+    from: 'if (scan.refTotal > 1) return { kind: "unsupported_season" };',
     to: "",
   },
   {
-    name: "m10 복수 연도 선판정 제거 — 2025+2026 비교가 단일값으로 둔갑",
+    name: "m11 범위 표지(까지·이후·부터) 결속 제거 — 작년까지가 작년 단일값으로 축소",
     file: SEASON,
-    from: "if (allExplicitYears.length > 1 || hasYearRange) {",
+    from: "if (scan.rangeMarker && (scan.refTotal > 0 || scan.careerWord)) {",
     to: "if (false) {",
   },
   {

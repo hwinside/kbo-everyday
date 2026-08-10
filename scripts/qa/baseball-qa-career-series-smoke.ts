@@ -164,11 +164,28 @@ check("연도 2개 이상 명시는 fail-close (범위 질의는 지원 안 함)
   assert.equal(resolveSeasonRecordIntent("최형우 2019년이랑 2020년 타율").kind, "unsupported_season");
 });
 
-// ── 4-b. 좋은 한정이 넓은 시점어를 이긴다 (삼순 2026-08-10 NO-GO 3축 반대축) ──
-check("범위·최근 N 한정은 시리즈로 축소하지 않고 fail-close (축 ①)", () => {
-  // bare `추이` 가 먼저 잡으면 `최근 10경기` 가 전 커리어로 바뀝다 — 축소 오답.
+// ── 4-b. 시점 참조 전수 추출 → 복수/범위면 fail-close (삼순 2026-08-10 2차 NO-GO) ──
+// exact 정규식 덧대기가 아니라 scanTemporalRefs 가 구조로 강제한다 — 동치 표현이 같이 닫힌다.
+check("범위·최근 N 한정은 단위 무관 fail-close (축 ① + 2차 반대축)", () => {
+  // bare `추이` 가 먼저 잡으면 `최근 N` 이 전 커리어로 바뀝다 — 축소 오답.
   assert.equal(resolveSeasonRecordIntent("최형우 최근 10경기 타율 추이 알려줘").kind, "unsupported_season");
+  // 2차 반대축: 단위가 `년/시즌` 이어도 막힌다 (종전 단위 열거의 구멍).
+  assert.equal(resolveSeasonRecordIntent("최형우 최근 3년 타율 추이").kind, "unsupported_season");
   assert.equal(resolveSeasonRecordIntent("최형우 2019~2020 연도별 타율").kind, "unsupported_season");
+  // 범위 표지(이후·부터)가 연도에 붙으면 구간 질의다.
+  assert.equal(resolveSeasonRecordIntent("최형우 2019년 이후 타율 추이").kind, "unsupported_season");
+  assert.equal(resolveSeasonRecordIntent("최형우 2019년부터 타율").kind, "unsupported_season");
+});
+check("상대연도끼리·상대+현재 복수 참조도 fail-close (2차 반대축 — 숨은 단일값 축소 금지)", () => {
+  // 종전엔 숫자 연도만 복수 판정 → `작년과 올해` 가 작년 단일값으로 축소됐다.
+  assert.equal(resolveSeasonRecordIntent("최형우 작년과 올해 타율 비교해줘").kind, "unsupported_season");
+  // `재작년`⊃`작년` 부분열 — 긴 토큰 선소거로 2개로 센다.
+  assert.equal(resolveSeasonRecordIntent("최형우 작년과 재작년 타율 비교").kind, "unsupported_season");
+});
+check("cutoff는 상대연도에도 결속된다 (2차 반대축 — `작년까지`가 작년 단일값으로 축소 금지)", () => {
+  assert.equal(resolveSeasonRecordIntent("최형우 작년까지 홈런 몇 개").kind, "unsupported_season");
+  // 단일 시점 + 시리즈어 모순 조합도 축소하지 않는다.
+  assert.equal(resolveSeasonRecordIntent("최형우 작년 타율 추이").kind, "unsupported_season");
 });
 check("최고/커리어하이·cutoff 는 통산으로 축소하지 않는다 (축 ②)", () => {
   // 통산 = 전 기간 **평균/누계**다. 극값(최고 타율)은 다른 값이며 정본 조회가 아니다.
