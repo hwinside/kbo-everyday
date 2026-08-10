@@ -125,6 +125,20 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
   {
+    name: "s12 복수·범위·역대 fail-close 제거 — 2024년과 2025년이 첫 값 단일답으로 축소 (삼순 4차 재현)",
+    file: PIPELINE,
+    from: 'if (prizeYear.kind === "ambiguous") {',
+    to: "if (false) {",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s13 범위표지 검출 제거 — 역대/이후/최근N 이 최신 단일답으로 축소 (삼순 4차 재현)",
+    file: PRIZE,
+    from: 'return { kind: "ambiguous" };',
+    to: 'return { kind: "latest" };',
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
     name: "s8 미개최/미확정 분리 제거 — 1985 에 '시즌이 끝나면' 오안내 (삼순 P1 재현)",
     file: PRIZE,
     from: "if (year >= nowYear) {",

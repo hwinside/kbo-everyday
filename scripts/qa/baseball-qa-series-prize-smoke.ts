@@ -87,15 +87,27 @@ check("의도·연도 판정", () => {
   assert.equal(resolveSeriesPrizeIntent("작년 우승 주역이 누구야?"), null, "구단 미지목 무한정 우승은 proxy 밖 — 기존 경로로");
   assert.equal(resolveSeriesPrizeIntent("작년 LG 한국시리즈 우승 주역 누구야?"), "champion_contrib", "(a) KS 직접 지목");
   assert.equal(resolveSeriesPrizeIntent("작년 LG우승에 가장 큰 기여를 한 사람은 누구야?"), "champion_contrib", "(b) 구단+무한정 우승 (원 사고 형태)");
-  assert.equal(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", NOW_DATE), 2025);
-  assert.equal(resolveSeriesPrizeYear("재작년 한국시리즈 MVP는?", NOW_DATE), 2024);
-  assert.equal(resolveSeriesPrizeYear("2019년 한국시리즈 MVP 누구야?", NOW_DATE), 2019);
-  assert.equal(resolveSeriesPrizeYear("한국시리즈 MVP 누구야?", NOW_DATE), null);
+  assert.deepEqual(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", NOW_DATE), { kind: "year", year: 2025 });
+  assert.deepEqual(resolveSeriesPrizeYear("재작년 한국시리즈 MVP는?", NOW_DATE), { kind: "year", year: 2024 });
+  assert.deepEqual(resolveSeriesPrizeYear("2019년 한국시리즈 MVP 누구야?", NOW_DATE), { kind: "year", year: 2019 });
+  assert.deepEqual(resolveSeriesPrizeYear("올해 한국시리즈 MVP는?", NOW_DATE), { kind: "year", year: 2026 });
+  assert.deepEqual(resolveSeriesPrizeYear("한국시리즈 MVP 누구야?", NOW_DATE), { kind: "latest" });
+  // 복수·범위·역대 (삼순 4차 P0): 첫 값 단일답 축소 금지 — 전부 ambiguous fail-close.
+  for (const q of [
+    "2024년과 2025년 한국시리즈 MVP 알려줘",
+    "작년과 올해 한국시리즈 MVP 누구야?",
+    "역대 한국시리즈 MVP 알려줘",
+    "2019년 이후 한국시리즈 MVP 전부 알려줘",
+    "최근 5년 한국시리즈 MVP",
+    "연도별 한국시리즈 MVP",
+  ]) {
+    assert.deepEqual(resolveSeriesPrizeYear(q, NOW_DATE), { kind: "ambiguous" }, q);
+  }
   // KST 자정 경계 (삼순 P1): KST 2027-01-01 00:30 = UTC 2026-12-31 15:30. UTC 연도로
   // 계산하면 `작년`=2025 로 1년 어긋난다 — KST 기준 2026 이어야 한다.
   const boundary = new Date(Date.UTC(2026, 11, 31, 15, 30));
   assert.equal(kstYear(boundary), 2027);
-  assert.equal(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", boundary), 2026);
+  assert.deepEqual(resolveSeriesPrizeYear("작년 한국시리즈 MVP 누구야?", boundary), { kind: "year", year: 2026 });
 });
 check("붙여쓰기 팀 해석 — 수상표 표기 결속 폐쇄 alias (삼순 P1 원 사고 형태)", () => {
   assert.equal(resolvePrizeTeamMention("작년 한화우승에 기여한 선수는?"), "한화");
@@ -198,6 +210,22 @@ checkAsync("협착 종단: 준우승·정규시즌·아시안게임·국대 질�
     const r = await answerQuestion("u1", q, deps);
     assert.equal(fetches, 0, `${q} — 수상 정본을 조회하면 안 된다`);
     assert.ok(!r.answer.includes("김현수"), `${q} — KS MVP 로 바꿔 답하면 안 된다: ${r.answer}`);
+  }
+});
+checkAsync("복수·범위·역대 종단: 정본 조회 0회 + 단일답 축소 금지 (삼순 4차 P0)", async () => {
+  for (const q of [
+    "2024년과 2025년 한국시리즈 MVP 알려줘",
+    "작년과 올해 한국시리즈 MVP 누구야?",
+    "역대 한국시리즈 MVP 알려줘",
+    "2019년 이후 한국시리즈 MVP 전부 알려줘",
+    "최근 5년 한국시리즈 MVP",
+  ]) {
+    let fetches = 0;
+    const { deps, c } = makeDeps(async () => { fetches++; return FIXTURE; });
+    const r = await answerQuestion("u1", q, deps);
+    assert.equal(fetches, 0, `${q} — 수상 정본을 조회하면 안 된다`);
+    assert.equal(c.llm, 0, `${q} — LLM 0`);
+    assert.ok(!r.answer.includes("김현수") && !r.answer.includes("김선빈"), `${q} — 단일답 축소 금지: ${r.answer}`);
   }
 });
 checkAsync("시점어 없는 KS MVP 질문 → 가장 최근 확정 연도(2025)", async () => {

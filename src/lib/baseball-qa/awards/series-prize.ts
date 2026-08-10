@@ -133,19 +133,52 @@ export function resolveSeriesPrizeIntent(question: string): SeriesPrizeIntent {
   return null;
 }
 
+/** 연도 해석 결과 — 단일 확정 / 무지정(최근 확정 연도) / 복수·범위·역대(판정 불가). */
+export type SeriesPrizeYearResolution =
+  | { readonly kind: "year"; readonly year: number }
+  | { readonly kind: "latest" }
+  | { readonly kind: "ambiguous" };
+
 /**
- * 질문의 대상 연도. 상대 시점어(작년·올해·재작년)와 명시 연도만 인정하고,
- * 시점어가 없으면 null — 호출부가 "가장 최근 확정 연도"로 해석한다(정본에서 결정론).
+ * 질문의 대상 연도를 **구조적으로** 해석한다 (삼순 4차 P0 — 첫 값만 고르면
+ * `2024년과 2025년`→2024 단일답, `작년과 올해`→작년 단일답, `역대`→최신 단일답으로
+ * 축소된다). 시점 참조를 전부 세어 복수·범위·역대는 `ambiguous` 로 fail-close 하고,
+ * 호출부는 **정본 조회 전에** 물러난다. 단일 참조만 연도로 확정하며, 참조가 없으면
+ * `latest`(가장 최근 확정 연도 — 정본에서 결정론).
  */
-export function resolveSeriesPrizeYear(question: string, now: Date): number | null {
-  const normalized = question.normalize("NFKC").toLowerCase();
-  const explicit = normalized.match(/(19[89]\d|20\d{2})\s*년/);
-  if (explicit) return Number(explicit[1]);
+export function resolveSeriesPrizeYear(question: string, now: Date): SeriesPrizeYearResolution {
+  let rest = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  // 범위·집합 표지: 하나라도 보이면 단일 연도 단답 자체가 성립하지 않는다.
+  if (/역대|최근\d+|이후|이전|부터|까지|매년|연도별|모두|전부|각각|씩|[~∼]/.test(rest)) {
+    return { kind: "ambiguous" };
+  }
+  const explicitYears = new Set(
+    [...rest.matchAll(/(19[89]\d|20\d{2})(?:년|시즌)/g)].map((m) => Number(m[1])),
+  );
+  rest = rest.replace(/(19[89]\d|20\d{2})(?:년|시즌)/g, "\u0000");
   const year = kstYear(now);
-  if (/재작년|지지난\s*해/.test(normalized)) return year - 2;
-  if (/작년|지난\s*해|지난해/.test(normalized)) return year - 1;
-  if (/올해|올\s*시즌|금년/.test(normalized)) return year;
-  return null;
+  let pastYear: number | null = null;
+  let pastRefs = 0;
+  for (const [word, delta] of [["지지난해", 2], ["재작년", 2], ["지난해", 1], ["작년", 1]] as const) {
+    while (rest.includes(word)) {
+      rest = rest.replace(word, "\u0000");
+      pastRefs += 1;
+      pastYear = year - delta;
+    }
+  }
+  let currentRefs = 0;
+  for (const word of ["이번시즌", "올시즌", "올해", "금년"]) {
+    while (rest.includes(word)) {
+      rest = rest.replace(word, "\u0000");
+      currentRefs += 1;
+    }
+  }
+  const refTotal = explicitYears.size + pastRefs + currentRefs;
+  if (refTotal > 1) return { kind: "ambiguous" };
+  if (explicitYears.size === 1) return { kind: "year", year: [...explicitYears][0] };
+  if (pastRefs === 1 && pastYear !== null) return { kind: "year", year: pastYear };
+  if (currentRefs === 1) return { kind: "year", year };
+  return { kind: "latest" };
 }
 
 /**

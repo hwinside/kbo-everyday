@@ -1,20 +1,29 @@
 /**
- * 야잘알봇 성의(답변 길이·충실도) 실 provider 게이트 (삼순 2026-08-10 3차).
+ * 야잘알봇 성의(답변 길이·충실도) 실 provider 게이트 (삼순 2026-08-10 4차 재작성).
  *
- * deterministic smoke(leaderboard)는 파이프라인이 LLM 답을 자르지 않고 서빙하는지만
- * 고정할 수 있다 — "이유·배경 질문에 두세 문장으로 충분히" 라는 **행동 개선** 자체는
- * 배포되는 그 RAG_SYSTEM_PROMPT + 그 요청 빌더(buildRagLlmRequest)로 실제 Gemini 를
- * 호출하고, 근거도 production genius_rag_chunks 실 데이터를 써야 검증된다.
+ * 3차 지적: raw Gemini 만 호출하면 `answerQuestion`/최종 서빙(320 상한·출처·검증 게이트)
+ * 을 우회하고, 400자 상한·`문장≥2 || 길이≥100` 항진 단정은 계약이 아니다.
+ *
+ * 그래서 이 게이트는 **production 파이프라인에 실 provider 를 주입**한다:
+ *  - `answerQuestion` 종단 실행 (검증·상한·출처 표기 전부 production 코드).
+ *  - `callRagLlm` = 배포 코드와 동일한 `buildRagLlmRequest` + `RAG_SYSTEM_PROMPT` 로
+ *    실제 Gemini 호출 (mock 답 주입 없음).
+ *  - 근거 = production `genius_rag_chunks` 실 데이터 (문보경 별명 chunk).
+ *  - 판정 = 최종 서빙 결과의 source·본문 길이(320 = BASEBALL_GENIUS_MAX_ANSWER_LENGTH)·
+ *    출처 표기.
  *
  * 키·DB 접근이 없으면 조용한 SKIP 이 아니라 **명시적 실패(exit 1)** 다.
- *
- * 실행: npm run qa:genius-sincerity-live
+ * 실행: npm run qa:genius-sincerity-live (네트워크·시크릿 필요 — PR checks 밖 수동 게이트)
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 import { BASEBALL_QA_GEMINI_MODEL } from "../../src/lib/baseball-qa/gemini-request";
 import { buildRagLlmRequest, RAG_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/rag/retrieve";
+import { answerQuestion } from "../../src/lib/baseball-qa/pipeline";
+import type { QaDeps, RagEvidence, RagLlmExtras } from "../../src/lib/baseball-qa/pipeline";
+import type { PlayerRef } from "../../src/lib/baseball-qa/roster/load-roster-players";
 
 function loadDotEnv(file: string) {
   if (!existsSync(file)) return;
@@ -41,21 +50,20 @@ if (!GEMINI_API_KEY || !SUPABASE_URL || !SERVICE_KEY) {
   process.exit(1);
 }
 
-interface EvidenceRow {
+interface ChunkRow {
   content: string;
   page_title: string;
   canonical_url: string;
   revision: string | null;
   section_path: string;
   as_of: string | null;
-  source_grade: string | null;
 }
 
 /** production 실근거: 문보경 나무위키 chunk 중 별명 서술 상위 4건. */
-async function fetchRealEvidence(): Promise<EvidenceRow[]> {
+async function fetchRealEvidence(): Promise<RagEvidence[]> {
   const url =
     `${SUPABASE_URL}/rest/v1/genius_rag_chunks` +
-    `?select=content,page_title,canonical_url,revision,section_path,as_of,source_grade` +
+    `?select=content,page_title,canonical_url,revision,section_path,as_of` +
     `&page_title=eq.${encodeURIComponent("문보경")}` +
     `&content=ilike.${encodeURIComponent("*별명*")}` +
     `&limit=4`;
@@ -64,10 +72,25 @@ async function fetchRealEvidence(): Promise<EvidenceRow[]> {
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`supabase REST ${res.status}`);
-  return (await res.json()) as EvidenceRow[];
+  const rows = (await res.json()) as ChunkRow[];
+  return rows.map((row) => ({
+    content: row.content,
+    pageTitle: row.page_title,
+    canonicalUrl: row.canonical_url,
+    revision: row.revision ?? "1",
+    sectionPath: row.section_path,
+    asOf: row.as_of ?? "2026-01-01",
+    sourceGrade: "tier2" as const,
+    sourceKind: "namu_document",
+  })) as unknown as RagEvidence[];
 }
 
-async function callGemini(body: unknown): Promise<string> {
+/** 배포 코드와 동일한 요청 빌더·프롬프트로 실제 Gemini 를 호출한다 (mock 없음). */
+async function realCallRagLlm(question: string, evidence: RagEvidence[], extras?: RagLlmExtras) {
+  const body = buildRagLlmRequest(question, evidence, RAG_SYSTEM_PROMPT, {
+    context: extras?.context,
+    rosterBlock: extras?.rosterBlock,
+  });
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const res = await fetch(url, {
@@ -82,77 +105,91 @@ async function callGemini(body: unknown): Promise<string> {
     }
     if (!res.ok) throw new Error(`Gemini ${res.status}`);
     const data = await res.json();
-    return (
-      data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text ?? ""
-    );
+    const text: string =
+      data.candidates?.[0]?.content?.parts?.find((p: { text?: string }) => p.text)?.text ?? "";
+    return {
+      text,
+      inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+      outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+    };
   }
   throw new Error("Gemini 재시도 소진");
 }
 
-function sentenceCount(text: string): number {
-  return (text.match(/[다요죠]\s*[.!?]|[.!?](?=\s|$)/g) ?? []).length;
+const PLAYERS = [
+  { kboId: "51868", name: "문보경", team: "LG", position: "내야수" },
+] as unknown as PlayerRef[];
+
+function makeLiveDeps(evidence: RagEvidence[]): QaDeps {
+  let stored: unknown = null;
+  let started = false;
+  return {
+    loadGlossary: async () => [],
+    loadPlayers: async () => PLAYERS,
+    getCache: async () => null,
+    setCache: async () => {},
+    enablePlayerRag: true,
+    searchRag: async () => evidence,
+    callRagLlm: realCallRagLlm,
+    callLlm: async () => { throw new Error("선수 RAG 질문에서 generic LLM 금지"); },
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+    log: async () => {},
+    getLlmState: async () => ({ started, result: stored, ownerActive: false }),
+    acquireLlmStart: async () => { started = true; return true; },
+    storeLlm: async (r: unknown) => { stored = r; },
+  } as unknown as QaDeps;
+}
+
+/** 최종 답에서 출처 표기를 뗀 본문 — production 상한(320)은 본문에 걸린다. */
+function bodyOf(answer: string): string {
+  const idx = answer.indexOf("\n\n📄");
+  return idx >= 0 ? answer.slice(0, idx) : answer;
 }
 
 (async () => {
-  const rows = await fetchRealEvidence();
-  assert.ok(rows.length >= 2, `실근거 부족: ${rows.length}건 — 게이트 판정 불가는 실패다`);
-  const evidence = rows.map((row) => ({
-    content: row.content,
-    pageTitle: row.page_title,
-    canonicalUrl: row.canonical_url,
-    revision: row.revision ?? "1",
-    sectionPath: row.section_path,
-    asOf: row.as_of ?? "2026-01-01",
-    sourceGrade: "tier2" as const,
-  }));
+  const evidence = await fetchRealEvidence();
+  assert.ok(evidence.length >= 2, `실근거 부족: ${evidence.length}건 — 게이트 판정 불가는 실패다`);
 
   let pass = 0;
   const failures: string[] = [];
-
-  // ① 이유·배경형 — 두세 문장으로 충분히. 한 문장 성의없는 단답이면 FAIL.
-  {
-    const raw = await callGemini(
-      buildRagLlmRequest("문보경 별명이 생긴 이유가 뭐야?", evidence as never, RAG_SYSTEM_PROMPT),
-    );
-    try {
-      const parsed = JSON.parse(raw) as { status?: string; answer?: string };
-      assert.equal(parsed.status, "GROUNDED", `status=${parsed.status} raw=${raw.slice(0, 120)}`);
-      const answer = parsed.answer ?? "";
-      // "충분히" 의 실체는 분량이다 — 실측에서 모델이 정보 밀도 높은 한 문장(129자)으로
-      // 답하기도 하므로 문장 수 단독 단정은 과하다. 분량 하한 + (복문 또는 2문장) 로 판정.
-      assert.ok(answer.length >= 100, `이유·배경 답이 너무 짧다(${answer.length}자): ${answer}`);
-      assert.ok(answer.length <= 400, `상한 초과(${answer.length}자)`);
-      assert.ok(
-        sentenceCount(answer) >= 2 || answer.length >= 100,
-        `성의 부족(${answer.length}자·${sentenceCount(answer)}문장): ${answer}`,
-      );
-      pass += 1;
-      console.log(`PASS 이유·배경형 충분한 답변 (${answer.length}자, ${sentenceCount(answer)}문장)`);
-    } catch (e) {
-      failures.push(`이유·배경형 :: ${(e as Error).message}`);
-      console.log(`FAIL 이유·배경형 :: ${(e as Error).message}`);
-    }
+  async function run(name: string, fn: () => Promise<void>) {
+    try { await fn(); pass += 1; console.log(`PASS ${name}`); }
+    catch (e) { failures.push(name); console.log(`FAIL ${name} :: ${(e as Error).message}`); }
   }
 
-  // ② 단순 사실형 — 짧게 종결. 이유·배경형과 같은 장문이 나오면 프롬프트 길이 지시가 죽은 것.
-  {
-    const raw = await callGemini(
-      buildRagLlmRequest("문보경 별명이 뭐야?", evidence as never, RAG_SYSTEM_PROMPT),
+  // ① 이유·배경형 — 최종 서빙 종단: RAG 로 답하고, 본문이 성의 하한(100자) 이상,
+  //    production 상한(320) 이하, 출처 표기 포함. 실패 시 blocked/unsure 로 새는 것까지 잡힌다.
+  await run("이유·배경형: answerQuestion 종단 — 성의 하한·320 상한·출처", async () => {
+    const result = await answerQuestion("live-u1", "문보경 별명이 생긴 이유가 뭐야?", makeLiveDeps(evidence));
+    assert.equal(result.status, 200);
+    assert.ok(
+      result.source !== "blocked" && result.source !== "error" && result.source !== "unsure",
+      `RAG 실답이어야 한다: source=${result.source} answer=${result.answer.slice(0, 120)}`,
     );
-    try {
-      const parsed = JSON.parse(raw) as { status?: string; answer?: string };
-      assert.equal(parsed.status, "GROUNDED", `status=${parsed.status} raw=${raw.slice(0, 120)}`);
-      const answer = parsed.answer ?? "";
-      assert.ok(answer.length > 0 && answer.length <= 200, `단순 사실형이 과장문(${answer.length}자): ${answer}`);
-      pass += 1;
-      console.log(`PASS 단순 사실형 간결 답변 (${answer.length}자)`);
-    } catch (e) {
-      failures.push(`단순 사실형 :: ${(e as Error).message}`);
-      console.log(`FAIL 단순 사실형 :: ${(e as Error).message}`);
-    }
-  }
+    const body = bodyOf(result.answer);
+    assert.ok(body.length >= 100, `이유·배경 답이 성의 하한(100자) 미만(${body.length}자): ${body}`);
+    assert.ok(
+      body.length <= BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
+      `본문이 production 상한(${BASEBALL_GENIUS_MAX_ANSWER_LENGTH}) 초과(${body.length}자)`,
+    );
+    assert.ok(result.answer.includes("출처"), `출처 표기 누락: ${result.answer.slice(-60)}`);
+    console.log(`   ↳ source=${result.source} 본문 ${body.length}자`);
+  });
 
-  console.log(`\nbaseball QA sincerity live: PASS=${pass} FAIL=${failures.length}`);
+  // ② 단순 사실형 — 같은 종단에서 과장문이 아니어야 한다 (길이 지시가 죽으면 여기가 잡는다).
+  await run("단순 사실형: answerQuestion 종단 — 간결(≤200자)·320 상한", async () => {
+    const result = await answerQuestion("live-u2", "문보경 별명이 뭐야?", makeLiveDeps(evidence));
+    assert.equal(result.status, 200);
+    assert.ok(
+      result.source !== "blocked" && result.source !== "error" && result.source !== "unsure",
+      `RAG 실답이어야 한다: source=${result.source} answer=${result.answer.slice(0, 120)}`,
+    );
+    const body = bodyOf(result.answer);
+    assert.ok(body.length > 0 && body.length <= 200, `단순 사실형이 과장문(${body.length}자): ${body}`);
+    console.log(`   ↳ source=${result.source} 본문 ${body.length}자`);
+  });
+
+  console.log(`\nbaseball QA sincerity live: PASS=*** FAIL=${failures.length}`);
   if (failures.length > 0) process.exitCode = 1;
 })().catch((e) => {
   console.error(`FAIL runner :: ${(e as Error).message}`);

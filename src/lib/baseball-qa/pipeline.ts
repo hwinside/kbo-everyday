@@ -3444,6 +3444,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
         return { status: 200 as const, answer, source: matchPath, remaining };
       };
+      // 복수 연도·범위·역대는 단일 연도 단답이 성립하지 않는다 (삼순 4차 P0:
+      // `2024년과 2025년`→2024 단일답 축소 금지) — **정본 조회 전에** fail-close.
+      const prizeYear = resolveSeriesPrizeYear(question, deps.now ? new Date(deps.now()) : new Date());
+      if (prizeYear.kind === "ambiguous") {
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
       if (!deps.fetchSeriesPrizeHtml) {
         return settlePrize(resolveHoldAnswer(question), "history_hold");
       }
@@ -3461,7 +3467,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         return settlePrize(resolveHoldAnswer(question), "history_hold");
       }
       const rendered = renderSeriesPrizeAnswer(
-        prizeRows, prizeIntent, resolveSeriesPrizeYear(question, now),
+        prizeRows, prizeIntent, prizeYear.kind === "year" ? prizeYear.year : null,
         // 붙여쓰기(`한화우승`) 해석 + 수상표 표기 결속 — 이 경로 전용 폐쇄 alias.
         resolvePrizeTeamMention(question), kstYear(now),
       );
