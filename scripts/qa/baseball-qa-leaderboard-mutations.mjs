@@ -125,6 +125,27 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
   },
   {
+    name: "s14 bare 연도 추출 제거 — 2024 한국시리즈 MVP가 최신으로 축소 (삼순 5차 재현)",
+    file: PRIZE,
+    from: "[...rest.matchAll(/(19[89]\\d|20\\d{2})/g)].map((m) => Number(m[1])),",
+    to: "[...rest.matchAll(/(19[89]\\d|20\\d{2})(?:년|시즌)/g)].map((m) => Number(m[1])),",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s15 상대 시점어 전 집계 제거 — 지난시즌·내년 참조 소실로 단일값 축소 (삼순 5차 재현)",
+    file: PRIZE,
+    from: '["지난시즌", -1], ["지난해", -1], ["작년", -1], ["직전시즌", -1], ["전시즌", -1],',
+    to: '["지난해", -1], ["작년", -1],',
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
+    name: "s16 미래 연도 미확정 분기 제거 — 내년이 기록 미보유 오안내로 (삼순 5차 재현)",
+    file: PRIZE,
+    from: "if (nowYear <= year) {",
+    to: "if (false) {",
+    smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",
+  },
+  {
     name: "s12 복수·범위·역대 fail-close 제거 — 2024년과 2025년이 첫 값 단일답으로 축소 (삼순 4차 재현)",
     file: PIPELINE,
     from: 'if (prizeYear.kind === "ambiguous") {',

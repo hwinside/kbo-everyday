@@ -152,32 +152,39 @@ export function resolveSeriesPrizeYear(question: string, now: Date): SeriesPrize
   if (/역대|최근\d+|이후|이전|부터|까지|매년|연도별|모두|전부|각각|씩|[~∼]/.test(rest)) {
     return { kind: "ambiguous" };
   }
+  // 명시 연도는 접미사 **없이** 추출한다 (삼순 5차 — `2024 한국시리즈 MVP`·
+  // `2024-2025` 가 무참조→최신으로 축소되던 결함). 이 경로 질문에서 4자리 수의
+  // 다른 해석(등번호 등)은 없고, 오탐이 나도 fail-close(ambiguous) 쪽이라 안전하다.
   const explicitYears = new Set(
-    [...rest.matchAll(/(19[89]\d|20\d{2})(?:년|시즌)/g)].map((m) => Number(m[1])),
+    [...rest.matchAll(/(19[89]\d|20\d{2})/g)].map((m) => Number(m[1])),
   );
-  rest = rest.replace(/(19[89]\d|20\d{2})(?:년|시즌)/g, "\u0000");
+  rest = rest.replace(/(19[89]\d|20\d{2})(?:년|시즌)?/g, "\u0000");
   const year = kstYear(now);
-  let pastYear: number | null = null;
-  let pastRefs = 0;
-  for (const [word, delta] of [["지지난해", 2], ["재작년", 2], ["지난해", 1], ["작년", 1]] as const) {
-    while (rest.includes(word)) {
-      rest = rest.replace(word, "\u0000");
-      pastRefs += 1;
-      pastYear = year - delta;
+  // 상대 시점어는 과거·현재·미래를 **전부** 센다 (삼순 5차 — `지난 시즌과 올 시즌` 이
+  // 지난시즌을 못 세어 올해 단일값으로, `내년` 이 최신으로 축소되던 결함).
+  let relYear: number | null = null;
+  let relRefs = 0;
+  const countRel = (words: ReadonlyArray<readonly [string, number]>) => {
+    for (const [word, delta] of words) {
+      while (rest.includes(word)) {
+        rest = rest.replace(word, "\u0000");
+        relRefs += 1;
+        relYear = year + delta;
+      }
     }
-  }
-  let currentRefs = 0;
-  for (const word of ["이번시즌", "올시즌", "올해", "금년"]) {
-    while (rest.includes(word)) {
-      rest = rest.replace(word, "\u0000");
-      currentRefs += 1;
-    }
-  }
-  const refTotal = explicitYears.size + pastRefs + currentRefs;
+  };
+  // 긴 토큰 먼저 — `지지난시즌` 소거 후 잔여에서 `지난시즌` 을 다시 세지 않도록.
+  countRel([
+    ["지지난시즌", -2], ["지지난해", -2], ["재작년", -2],
+    ["지난시즌", -1], ["지난해", -1], ["작년", -1], ["직전시즌", -1], ["전시즌", -1],
+    ["내후년", 2], ["다다음시즌", 2],
+    ["내년", 1], ["다음시즌", 1], ["다음해", 1], ["명년", 1],
+    ["이번시즌", 0], ["올시즌", 0], ["현시즌", 0], ["올해", 0], ["금년", 0],
+  ]);
+  const refTotal = explicitYears.size + relRefs;
   if (refTotal > 1) return { kind: "ambiguous" };
   if (explicitYears.size === 1) return { kind: "year", year: [...explicitYears][0] };
-  if (pastRefs === 1 && pastYear !== null) return { kind: "year", year: pastYear };
-  if (currentRefs === 1) return { kind: "year", year };
+  if (relRefs === 1 && relYear !== null) return { kind: "year", year: relYear };
   return { kind: "latest" };
 }
 
@@ -239,6 +246,11 @@ export function renderSeriesPrizeAnswer(
   }
   const row = rows.find((r) => r.year === year);
   if (!row) {
+    // 미래(올해 포함) 연도는 "기록 미보유"가 아니라 "아직 미확정"이다 — `내년 한국시리즈
+    // MVP` 에 과거 기록·다른 연도 안내로 답하면 오안내다 (삼순 5차 미래 참조 축).
+    if (nowYear <= year) {
+      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+    }
     return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않아요. 다른 연도를 물어봐 주세요!`, grounded: false };
   }
   if (!row.koreanSeries) {

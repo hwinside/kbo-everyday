@@ -91,6 +91,10 @@ check("의도·연도 판정", () => {
   assert.deepEqual(resolveSeriesPrizeYear("재작년 한국시리즈 MVP는?", NOW_DATE), { kind: "year", year: 2024 });
   assert.deepEqual(resolveSeriesPrizeYear("2019년 한국시리즈 MVP 누구야?", NOW_DATE), { kind: "year", year: 2019 });
   assert.deepEqual(resolveSeriesPrizeYear("올해 한국시리즈 MVP는?", NOW_DATE), { kind: "year", year: 2026 });
+  // 접미사 없는 명시 연도·상대 미래·지난시즌 (삼순 5차 — 무참조→최신 축소 금지).
+  assert.deepEqual(resolveSeriesPrizeYear("2024 한국시리즈 MVP 누구야?", NOW_DATE), { kind: "year", year: 2024 });
+  assert.deepEqual(resolveSeriesPrizeYear("내년 한국시리즈 MVP는?", NOW_DATE), { kind: "year", year: 2027 });
+  assert.deepEqual(resolveSeriesPrizeYear("지난 시즌 한국시리즈 MVP 누구야?", NOW_DATE), { kind: "year", year: 2025 });
   assert.deepEqual(resolveSeriesPrizeYear("한국시리즈 MVP 누구야?", NOW_DATE), { kind: "latest" });
   // 복수·범위·역대 (삼순 4차 P0): 첫 값 단일답 축소 금지 — 전부 ambiguous fail-close.
   for (const q of [
@@ -100,6 +104,11 @@ check("의도·연도 판정", () => {
     "2019년 이후 한국시리즈 MVP 전부 알려줘",
     "최근 5년 한국시리즈 MVP",
     "연도별 한국시리즈 MVP",
+    // 접미사 없는 복수·구간·혼합 (삼순 5차): 전 참조 집계로 닫혀야 한다.
+    "2024-2025 한국시리즈 MVP 알려줘",
+    "2024 2025 한국시리즈 MVP",
+    "지난 시즌과 올 시즌 한국시리즈 MVP 알려줘",
+    "작년과 내년 한국시리즈 MVP",
   ]) {
     assert.deepEqual(resolveSeriesPrizeYear(q, NOW_DATE), { kind: "ambiguous" }, q);
   }
@@ -179,6 +188,18 @@ checkAsync("반대축: 재작년 → 김선빈(KIA) — 연도 결정이 값을 
   const r = await answerQuestion("u1", "재작년 한국시리즈 MVP는 누구였어?", deps);
   assert.ok(r.answer.includes("김선빈") && r.answer.includes("KIA"), r.answer);
   assert.ok(!r.answer.includes("김현수"), "다른 연도 값 혼입 금지");
+});
+checkAsync("내년(2027) — 최신으로 축소하지 않고 미확정 안내 (삼순 5차 미래 참조 축)", async () => {
+  const { deps, c } = makeDeps(fixtureFetcher);
+  const r = await answerQuestion("u1", "내년 한국시리즈 MVP는 누구야?", deps);
+  assert.ok(!r.answer.includes("김현수") && !r.answer.includes("2025"), `미래를 최신으로 축소 금지: ${r.answer}`);
+  assert.ok(r.answer.includes("2027") && r.answer.includes("정해지지 않았"), r.answer);
+  assert.equal(c.llm, 0);
+});
+checkAsync("접미사 없는 명시 연도 — 2024 한국시리즈 MVP → 김선빈 (삼순 5차)", async () => {
+  const { deps } = makeDeps(fixtureFetcher);
+  const r = await answerQuestion("u1", "2024 한국시리즈 MVP 누구야?", deps);
+  assert.ok(r.answer.includes("김선빈") && r.answer.includes("2024"), r.answer);
 });
 checkAsync("올해(2026) 미확정 — 지어내지 않고 미정 안내", async () => {
   const { deps } = makeDeps(fixtureFetcher);

@@ -162,9 +162,9 @@ function bodyOf(answer: string): string {
   await run("이유·배경형: answerQuestion 종단 — 성의 하한·320 상한·출처", async () => {
     const result = await answerQuestion("live-u1", "문보경 별명이 생긴 이유가 뭐야?", makeLiveDeps(evidence));
     assert.equal(result.status, 200);
-    assert.ok(
-      result.source !== "blocked" && result.source !== "error" && result.source !== "unsure",
-      `RAG 실답이어야 한다: source=${result.source} answer=${result.answer.slice(0, 120)}`,
+    assert.equal(
+      result.source, "rag",
+      `RAG 실답이어야 한다 (삼순 5차: 배제 나열이 아니라 양성 고정): source=${result.source} answer=${result.answer.slice(0, 120)}`,
     );
     const body = bodyOf(result.answer);
     assert.ok(body.length >= 100, `이유·배경 답이 성의 하한(100자) 미만(${body.length}자): ${body}`);
@@ -180,9 +180,9 @@ function bodyOf(answer: string): string {
   await run("단순 사실형: answerQuestion 종단 — 간결(≤200자)·320 상한", async () => {
     const result = await answerQuestion("live-u2", "문보경 별명이 뭐야?", makeLiveDeps(evidence));
     assert.equal(result.status, 200);
-    assert.ok(
-      result.source !== "blocked" && result.source !== "error" && result.source !== "unsure",
-      `RAG 실답이어야 한다: source=${result.source} answer=${result.answer.slice(0, 120)}`,
+    assert.equal(
+      result.source, "rag",
+      `RAG 실답이어야 한다 (삼순 5차: 배제 나열이 아니라 양성 고정): source=${result.source} answer=${result.answer.slice(0, 120)}`,
     );
     const body = bodyOf(result.answer);
     assert.ok(body.length > 0 && body.length <= 200, `단순 사실형이 과장문(${body.length}자): ${body}`);
