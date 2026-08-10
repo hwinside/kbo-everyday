@@ -184,6 +184,11 @@ function scanTemporalRefs(question: string): TemporalScan {
   if (/데뷔|입단/.test(rest)) {
     if (/(?:데뷔|입단)[^]{0,8}?\d+(?:년|시즌)/.test(rest)) {
       debutScope = "other";
+    } else if (/(?:데뷔|입단)[^]{0,8}?첫(?:해|시즌|경기|타석|등판)/.test(rest)) {
+      // `입단 후 첫해 타율`·`데뷔 후 첫 시즌 홈런` (삼순 6차) — 연결어 `후` 가 있어도
+      // 뒤에 single 마커(첫해·첫 시즌…)가 오면 단일 데뷔시즌 질의다. full-origin 판정
+      // **전에** 닫아야 career total 로 축소되지 않는다. bounded(숫자)와 같은 우선순위 층.
+      debutScope = "other";
     } else if (/(?:데뷔|입단)(?:시점|초|첫해|시즌)?(?:이래|이후|부터|후)/.test(rest)) {
       debutScope = "full_origin";
       // full-origin 스팬은 참조·범위표지 집계 **전에** 통째로 소거한다 — `현재까지` 를

@@ -50,6 +50,13 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
   },
   {
+    name: "m15 single 마커 선차단 제거 — 입단 후 첫해가 career total 로 축소 (삼순 6차 재현)",
+    file: SEASON,
+    from: '} else if (/(?:데뷔|입단)[^]{0,8}?첫(?:해|시즌|경기|타석|등판)/.test(rest)) {',
+    to: "} else if (false) {",
+    smoke: "scripts/qa/baseball-qa-career-series-smoke.ts",
+  },
+  {
     name: "m13 debutScope other fail-close 제거 — 데뷔 시즌/bare 데뷔가 축소 (삼순 5차 재현)",
     file: SEASON,
     from: 'if (scan.debutScope === "other") return { kind: "unsupported_season" };',
