@@ -8,7 +8,9 @@ export const BASEBALL_GENIUS_NAME = "야잘알봇";
 /** 하린아빠 확정 대기 중인 권장 기본값(spec §8). */
 export const BASEBALL_GENIUS_DAILY_LIMIT = 20;
 export const BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE = false;
-export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 200;
+// 320 = tier1/tier2 RAG 상한과 동일 (2026-08-10 성의 계약 — 유형별 목표는 프롬프트가,
+// 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약 그대로면 adaptive-length 미완").
+export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;
 export const BASEBALL_GENIUS_MIN_QUESTION_LENGTH = 2;
 export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
 /**

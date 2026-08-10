@@ -1,0 +1,182 @@
+/**
+ * KBO 공식 한국시리즈 MVP 수상 정본 조회 (`/Player/Awards/SeriesPrize.aspx`).
+ *
+ * 왜 이 축인가 (삼순 2026-08-10 NO-GO 반영): `작년 LG우승에 가장 큰 기여를 한 사람은
+ * 누구야?` 를 generic LLM 에 위임하면 모델이 오지환·박동원 등 다른 실존 선수를 확신해서
+ * 말해도 어떤 가드도 못 잡는다 — 이름은 숫자 가드 밖이고, `answerInQuestionScope` 는
+ * 야구 신호만 본다. 그런데 이 질문에는 **정본이 있다**: KBO 공식 수상 현황 페이지가
+ * 연도별 한국시리즈 MVP 를 구조화 테이블로 서빙한다(2025 = 김현수·LG·외야수 실측).
+ * `lblDraft` 입단연도 축과 같은 원리 — 뜻이 하나뿐인 구조화 필드의 **조회**라 파싱
+ * 반대가설이 성립하지 않고, LLM·RAG·cache 를 태우지 않는다.
+ *
+ * fail-close 계약: 신원 마커·헤더·연도 범위·행 구조 중 하나라도 어긋나면 전체 거부(null).
+ * 미배선·조회 실패·연도 미보유는 지어내지 않고 좁은 안내로 닫는다.
+ */
+
+export interface SeriesPrizeWinner {
+  readonly name: string;
+  readonly team: string;
+  readonly position: string;
+}
+
+export interface SeriesPrizeRow {
+  readonly year: number;
+  /** 한국시리즈 MVP. 시즌 미종료·미수상 연도는 null (`-` 행). */
+  readonly koreanSeries: SeriesPrizeWinner | null;
+}
+
+/** KBO 리그 원년. 이 범위 밖 연도가 보이면 파싱이 깨진 것이다. */
+const KBO_FIRST_YEAR = 1982;
+
+/** 페이지 신원 마커 — 이게 없으면 KBO 수상 페이지가 아니다 (리다이렉트·에러 페이지 방어). */
+const PAGE_MARKER = "한국시리즈";
+const HEADER_MARKER_ALLSTAR = "올스타전";
+
+const NAME_RE = /^[가-힣]{2,12}$/;
+const TEAM_RE = /^[가-힣A-Za-z]{2,8}$/;
+
+function cleanCell(cell: string): string[] {
+  const spans = [...cell.matchAll(/<span[^>]*>([^<]*)<\/span>/g)].map((m) => m[1].trim());
+  if (spans.length > 0) return spans;
+  const text = cell.replace(/<[^>]+>/g, " ").trim();
+  return text.length > 0 ? text.split(/\s+/) : [];
+}
+
+/**
+ * 수상 테이블 파싱. 어떤 이상이라도 있으면 **전체 거부(null)** — 부분 결과를 믿지 않는다.
+ */
+export function parseSeriesPrize(html: string, now: Date = new Date()): SeriesPrizeRow[] | null {
+  if (!html.includes(PAGE_MARKER) || !html.includes(HEADER_MARKER_ALLSTAR)) return null;
+  const rows: SeriesPrizeRow[] = [];
+  for (const tr of html.match(/<tr>[\s\S]*?<\/tr>/g) ?? []) {
+    const cells = [...tr.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/g)].map((m) => cleanCell(m[1]));
+    if (cells.length !== 3) continue; // 헤더(2단 rowspan)·다른 구획은 건너뛴다
+    const yearText = cells[0].join("");
+    if (!/^\d{4}$/.test(yearText)) continue;
+    const year = Number(yearText);
+    // 연도 범위 검증 — 원년 이전이나 미래 연도가 보이면 파싱 전체를 버린다.
+    if (year < KBO_FIRST_YEAR || year > now.getUTCFullYear() + 1) return null;
+    const ks = cells[2];
+    if (ks.length === 3 && ks.every((v) => v === "-")) {
+      rows.push({ year, koreanSeries: null });
+      continue;
+    }
+    // 수상자 셀은 (선수·구단·포지션) 3값이어야 하고 형식이 어긋나면 전체 거부.
+    if (ks.length !== 3 || !NAME_RE.test(ks[0]) || !TEAM_RE.test(ks[1]) || !NAME_RE.test(ks[2])) {
+      return null;
+    }
+    rows.push({ year, koreanSeries: { name: ks[0], team: ks[1], position: ks[2] } });
+  }
+  if (rows.length === 0) return null;
+  // 연도 내림차순 + 중복 없음 — 테이블 구조가 바뀌면 여기서 걸린다.
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i].year >= rows[i - 1].year) return null;
+  }
+  return rows;
+}
+
+/** 한국시리즈 MVP 를 직접 묻는 모양 (`작년 한국시리즈 MVP 누구야?`). */
+const KS_MVP_DIRECT = /한국\s*시리즈.*(mvp|엠브이피|최우수)|(mvp|엠브이피).*한국\s*시리즈|코시.*(mvp|엠브이피)/;
+/** 우승 기여·주역을 묻는 모양 (`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?`). */
+const CHAMPION_CONTRIB = /우승/;
+const CONTRIB_WORD = /기여|공헌|주역|일등\s*공신|이끌|만들/;
+const PERSON_ASK = /누구|누가|사람|선수/;
+
+export type SeriesPrizeIntent = "ks_mvp" | "champion_contrib" | null;
+
+/**
+ * 이 정본이 답할 수 있는 질문인가. 판정 입력이 **폐쇄집합**(수상 타이틀·우승 기여 어휘)
+ * 이라 룰이 맞다 — 열린 의도 분류가 아니다 (2026-08-10 룰 최소화 기조와 상충하지 않음).
+ */
+export function resolveSeriesPrizeIntent(question: string): SeriesPrizeIntent {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  if (KS_MVP_DIRECT.test(normalized)) return "ks_mvp";
+  if (CHAMPION_CONTRIB.test(normalized) && CONTRIB_WORD.test(normalized) && PERSON_ASK.test(normalized)) {
+    return "champion_contrib";
+  }
+  return null;
+}
+
+/**
+ * 질문의 대상 연도. 상대 시점어(작년·올해·재작년)와 명시 연도만 인정하고,
+ * 시점어가 없으면 null — 호출부가 "가장 최근 확정 연도"로 해석한다(정본에서 결정론).
+ */
+export function resolveSeriesPrizeYear(question: string, now: Date): number | null {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const explicit = normalized.match(/(19[89]\d|20\d{2})\s*년/);
+  if (explicit) return Number(explicit[1]);
+  const year = now.getUTCFullYear();
+  if (/재작년|지지난\s*해/.test(normalized)) return year - 2;
+  if (/작년|지난\s*해|지난해/.test(normalized)) return year - 1;
+  if (/올해|올\s*시즌|금년/.test(normalized)) return year;
+  return null;
+}
+
+export interface SeriesPrizeAnswer {
+  readonly answer: string;
+  /** 정본 값으로 답했으면 true — 로그 라벨(kbo_structured)이 갈린다. */
+  readonly grounded: boolean;
+}
+
+/**
+ * 정본 행으로 답변 렌더. 값이 없거나 연도가 범위 밖이면 지어내지 않고 좁은 안내.
+ *
+ * @param mentionedTeam 질문이 지목한 구단 canonical (`LG`·`한화`…). 수상 구단과 다르면
+ *   **전제를 정정**한다 — `작년 한화 우승에 기여한 선수?` 에 김현수만 주면 유저는
+ *   한화 우승으로 읽는다 (입단연도 축의 askedTeam 계약과 같은 원리).
+ */
+export function renderSeriesPrizeAnswer(
+  rows: SeriesPrizeRow[],
+  intent: Exclude<SeriesPrizeIntent, null>,
+  askedYear: number | null,
+  mentionedTeam: string | null,
+): SeriesPrizeAnswer {
+  const year = askedYear ?? rows.find((row) => row.koreanSeries !== null)?.year ?? null;
+  if (year === null) {
+    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없어요. 조금 뒤에 다시 물어봐 주세요!", grounded: false };
+  }
+  const row = rows.find((r) => r.year === year);
+  if (!row) {
+    return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않아요. 다른 연도를 물어봐 주세요!`, grounded: false };
+  }
+  if (!row.koreanSeries) {
+    return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+  }
+  const w = row.koreanSeries;
+  const who = `${w.name} 선수(${w.team}, ${w.position})`;
+  // 전제 정정 — 질문이 지목한 구단과 실제 수상(우승) 구단이 다르면 먼저 바로잡는다.
+  const premiseFix = mentionedTeam && mentionedTeam !== w.team
+    ? `${year}년 한국시리즈 우승은 ${mentionedTeam}이(가) 아니라 ${w.team}이었어요. `
+    : "";
+  if (intent === "ks_mvp") {
+    return { answer: `${premiseFix}${year}년 한국시리즈 MVP는 ${who}예요.`, grounded: true };
+  }
+  return {
+    answer:
+      `${premiseFix}기준에 따라 다를 수 있지만, ${year}년 한국시리즈 MVP 기준으로는 ${who}가 우승의 주역으로 꼽혀요. ` +
+      "시즌 전체 기여는 타율·홈런·WAR 같은 어떤 스탯을 기준으로 보느냐에 따라 달라질 수 있어요.",
+    grounded: true,
+  };
+}
+
+const SERIES_PRIZE_URL = "https://www.koreabaseball.com/Player/Awards/SeriesPrize.aspx";
+
+/**
+ * production `QaDeps.fetchSeriesPrizeHtml` 주입값 factory (fetch-season-record 와 같은 seam).
+ * 테스트가 이 함수를 직접 실행해 URL·헤더 계약을 검증할 수 있게 분리한다.
+ */
+export function createSeriesPrizeHtmlFetcher(
+  fetchImpl: typeof fetch = fetch,
+): () => Promise<string> {
+  return async () => {
+    const res = await fetchImpl(SERIES_PRIZE_URL, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; keubo-fan-bot)" },
+      // 수상 정보는 연 단위로만 바뀐다 — 재검증 주기를 길게 잡아 원본 부하를 줄인다.
+      next: { revalidate: 21600 },
+    } as RequestInit);
+    if (!res.ok) throw new Error(`series prize fetch failed: ${res.status}`);
+    return res.text();
+  };
+}
+
+export { SERIES_PRIZE_URL };

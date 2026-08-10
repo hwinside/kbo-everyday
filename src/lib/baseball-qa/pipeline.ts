@@ -20,6 +20,12 @@ import {
 } from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  parseSeriesPrize,
+  renderSeriesPrizeAnswer,
+  resolveSeriesPrizeIntent,
+  resolveSeriesPrizeYear,
+} from "./awards/series-prize";
+import {
   allowsNumericAnswer,
   composeRagAnswer,
   isDescriptivePlayerQuestion,
@@ -697,6 +703,14 @@ export interface QaDeps {
    * 미주입이면 팀 기록 경로가 비활성이라 기존 동작 그대로다.
    */
   fetchTeamRecord?: TeamRecordFetchers;
+  /**
+   * 한국시리즈 MVP 수상 정본 HTML 조회 (`SeriesPrize.aspx`).
+   *
+   * 우승 기여·KS MVP 질문은 generic LLM 이 오래된 이름을 확신해서 내보내는 오답을
+   * 어떤 가드도 못 잡는다(삼순 2026-08-10) — 정본 조회로만 답한다.
+   * 미주입이면 해당 질문은 fail-close(hold)로 닫힌다. LLM 폴백은 없다.
+   */
+  fetchSeriesPrizeHtml?: () => Promise<string>;
   /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
   now?: () => number;
   /**
@@ -747,8 +761,12 @@ const SERVICE_WORDS = [
 /**
  * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
  *
- * 시점어(통산·역대·올타임) + 정체성 의문(1위·누구·최다·최고) 둘 다 있어야 한다.
- * 폐쇄집합 어휘고, 놓치면 기존 hold 경로로 내려가 틀린 답이 아니라 좁은 답이 된다.
+ * ⚠️ 이 질문 부류는 **generic LLM 위임 금지**다 (삼순 2026-08-10 NO-GO). 숫자 가드는
+ * 통과해도 모델이 오래된 이름(손아섭)을 확신해서 내보내는 오답을 못 막는다 — 실제로
+ * KBO 개인 통산행 기준 통산 안타 1위는 최형우(2,695+)로 이미 바뀌어 있었다.
+ * KBO 공식 웹에는 통산 누적 리더보드 구조화 테이블도 없다(기록실 전수 실측). 그래서
+ * 기준일 있는 공식 큐레이션/물질화 테이블이 생기기 전까지 **기존 fail-close(hold)** 를
+ * 유지한다 — 이 predicate 는 위임용이 아니라 그 fail-close 를 명시하는 식별자다.
  */
 const CAREER_LEADERBOARD_SCOPE = /통산|역대|올타임/;
 const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
@@ -2149,14 +2167,12 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
-  // ── 리그 통산·역대 순위 질문 (2026-08-10 하린아빠 캡처: `통산 안타 기록 1위는 누구야?`) ──
-  // 선수·구단 지명 없이 "리그에서 누가 1위냐"를 묻는 모양이다. KBO 공식 웹에는 통산
-  // 누적 리더보드 구조화 테이블이 없다(2026-08-10 기록실 전수 실측 — 역대 섹션은
-  // 단일시즌 10걸·연도별 수위타자·구단성적뿐). 그래서 정본 조회 대신 generic LLM 으로
-  // 위임해 **이름/순위까지만** 답하게 한다 — 수치는 아래 LLM 종결부의 기계 가드
-  // (질문 토큰 strict subset)가 막는다. "준비 안 됨" 차단보다 좁은 정답이 낫다.
+  // ── 리그 통산·역대 순위 질문 — fail-close 유지 (삼순 2026-08-10 NO-GO) ──
+  // generic LLM 이름 단답은 stale 오답(모델이 확신하는 옛 1위)을 못 막고, KBO 공식
+  // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
+  // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
   if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "llm_scope_gate";
+    return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
@@ -3415,6 +3431,40 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   const scopeGate = route === "llm_scope_gate";
 
+  // ── 한국시리즈 MVP·우승 기여 질문 — KBO 공식 수상 정본 (2026-08-10 삼순 NO-GO 반영) ──
+  // generic LLM 위임 금지 축: 이름은 숫자 가드 밖이라 모델이 다른 실존 선수를 확신해서
+  // 말해도 못 잡는다. 정본(`SeriesPrize.aspx` 구조화 테이블)이 있으므로 조회로만 답하고,
+  // 미배선·조회 실패·파싱 이상은 지어내지 않고 fail-close 한다. LLM·RAG·cache 불사용.
+  if (scopeGate || route === "baseball_rule_term") {
+    const prizeIntent = resolveSeriesPrizeIntent(question);
+    if (prizeIntent) {
+      const settlePrize = async (answer: string, matchPath: MatchPath) => {
+        await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+        return { status: 200 as const, answer, source: matchPath, remaining };
+      };
+      if (!deps.fetchSeriesPrizeHtml) {
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
+      let prizeHtml: string;
+      try {
+        prizeHtml = await deps.fetchSeriesPrizeHtml();
+      } catch {
+        // 조회 실패는 "기록 없음"이 아니다 — 재시도 가능한 실패로 알린다.
+        return settlePrize(SYSTEM_ERROR_ANSWER, "error");
+      }
+      const now = deps.now ? new Date(deps.now()) : new Date();
+      const prizeRows = parseSeriesPrize(prizeHtml, now);
+      if (!prizeRows) {
+        // 파싱 이상 = 정본 확신 불가 — 지어내지 않고 hold 로 닫는다.
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
+      const rendered = renderSeriesPrizeAnswer(
+        prizeRows, prizeIntent, resolveSeriesPrizeYear(question, now), resolveMentionedTeam(question),
+      );
+      return settlePrize(rendered.answer, rendered.grounded ? "kbo_structured" : "history_hold");
+    }
+  }
+
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
     const answer =
@@ -3728,15 +3778,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
-  }
-
-  // 리그 통산 순위 답변의 수치 기계 가드 (2026-08-10) — 프롬프트가 "이름만"을 지시하지만
-  // 보장은 기계 대조가 한다. 통산 누적치는 정본 조회가 없으므로 모델이 기억으로 쓴
-  // 숫자(예: 2,504안타)는 검증 불가 — 질문 밖 숫자가 있으면 보류로 닫는다.
-  if (scopeGate && isCareerLeaderboardAsk(question) && !numericTokensSubsetOf(validated.answer, question)) {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
