@@ -53,6 +53,14 @@ import {
   UNTRUSTED_METRIC_ANSWER,
   type SeasonRecordRow,
 } from "./stats/season-record";
+import {
+  CAREER_METRIC_COLUMNS,
+  composeCareerSeriesAnswer,
+  composeCareerTotalAnswer,
+  composeCareerYearAnswer,
+  type CareerRecord,
+  type CareerRecordFetcher,
+} from "./stats/career-series";
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeTeamRecordAnswer,
@@ -696,6 +704,13 @@ export interface QaDeps {
    * 미주입이면 해당 지표 경로가 비활성이라 기존 동작 그대로다.
    */
   fetchServedRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
+  /**
+   * 연도별·통산·과거 시즌 기록 조회 — KBO 공식 선수 상세 `Total.aspx` (2026-08-10 캐처:
+   * `연도별 타율 추이`가 올해 단일값으로 오답). 공식 구조화 테이블 조회라 draft
+   * `lblDraft` 와 같은 축이다 — 문장 파싱이 아니므로 tier2 숫자 HOLD 를 열지 않는다.
+   * 미주입이면 해당 질문은 RECORD_MISSING 으로 fail-close.
+   */
+  fetchCareerRecord?: CareerRecordFetcher;
   /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
@@ -2674,6 +2689,38 @@ async function answerSeasonRecordQuestion(
     return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
   }
 
+  // ── 연도별·통산·과거 시즌: KBO 공식 연도별 테이블 (2026-08-10 캐처) ────────────
+  // 단답 가능한 질문(통산·특정 연도)은 단답, 시리즈는 전 연도를 충분히 길게 —
+  // 하린아빠 2026-08-10 지시. 렌더는 코드가 한다(LLM·RAG·cache 불사용).
+  if (intent.kind === "career") {
+    const column = CAREER_METRIC_COLUMNS[intent.query.table][intent.query.metric];
+    // 폐쇄집합 밖 지표(obp·slg·ops·war·wrc+…)는 공식 테이블에 컬럼이 없거나 우리가
+    // 파생 계산하는 값이다 — 과거 시즌에 재적용하면 검증 불가라 답하지 않는다.
+    // 미배선·미지원 지표는 종전 "준비 중" 안내가 정확하다 — RECORD_MISSING("올 시즌
+    // 기록을 못 찾았어요")은 과거·통산 질문에 엉뚱한 안내다.
+    if (!column || !deps.fetchCareerRecord) {
+      return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+    }
+    let record: CareerRecord | null;
+    try {
+      record = await deps.fetchCareerRecord(intent.query.table, candidate.entityId);
+    } catch {
+      return settle(SYSTEM_ERROR_ANSWER, "error", "error");
+    }
+    // identity 대조 — 페이지 선수명이 후보와 다르면 잗못된 선수의 기록이다(답하면 안 된다).
+    if (!record || record.playerName !== candidate.name) {
+      return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    }
+    const answer =
+      intent.span.type === "series"
+        ? composeCareerSeriesAnswer(candidate.name, intent.query.label, column, record)
+        : intent.span.type === "career"
+          ? composeCareerTotalAnswer(candidate.name, intent.query.label, column, record)
+          : composeCareerYearAnswer(candidate.name, intent.query.label, column, intent.span.year, record);
+    if (!answer) return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    return settle(answer, "kbo_structured", "kbo_structured");
+  }
+
   // ── 소스 선택 ──────────────────────────────────────────────────────────────
   // 도루·출루율·장타율·OPS 는 `player_stats_batter` 에 **컬럼이 없다**. 앱 화면이 쓰는
   // 정본은 `stats-2026-batters.json`(=`/api/stats`)이라 그쪽을 본다
@@ -3296,13 +3343,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     ? resolveSeasonRecordIntent(question)
     : { kind: "none" as const };
 
-  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 2026 외 시즌은
+  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 답 못 할 질문은
   // 어느 선수를 골라도 답할 수 없으므로 picker를 띄우는 것 자체가 불필요하다(삼순 P0-3).
   // untrusted metric도 마찬가지 — 고른 뒤 거절하면 유저만 헛동작한다.
-  if (recordIntent.kind === "unsupported_season" || recordIntent.kind === "untrusted_metric") {
-    const answer = recordIntent.kind === "unsupported_season"
-      ? UNSUPPORTED_SEASON_ANSWER
-      : UNTRUSTED_METRIC_ANSWER;
+  // career(연도별·통산·과거)는 2026-08-10 부터 답변 가능하므로 picker 대상이되,
+  // 조회 배선(fetchCareerRecord)이 없는 환경에서는 골라도 못 답하므로 같은 이유로
+  // picker 앞에서 종전 안내로 닫는다(헛동작 방지 계약 유지).
+  if (
+    recordIntent.kind === "unsupported_season" ||
+    recordIntent.kind === "untrusted_metric" ||
+    (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+  ) {
+    const answer = recordIntent.kind === "untrusted_metric"
+      ? UNTRUSTED_METRIC_ANSWER
+      : UNSUPPORTED_SEASON_ANSWER;
     await deps.log({
       userId, question, questionNorm, matchPath: "blocked", answer,
       inputTokens: null, outputTokens: null,

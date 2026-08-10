@@ -55,6 +55,7 @@ import {
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
@@ -601,6 +602,12 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
      * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
      */
     fetchServedRecord: createServedRecordFetcher(),
+    /**
+     * 연도별·통산·과거 시즌 — KBO 공식 선수 상세 `Total.aspx` (2026-08-10 캐처:
+     * `최형우 연도별 타율 추이`가 올해 단일값으로 오답). 공식 구조화 테이블 조회라
+     * draft `lblDraft` 와 같은 축 — 여기도 seam factory(게이트가 실제 배포 함수 실행).
+     */
+    fetchCareerRecord: createCareerRecordFetcher(),
     /**
      * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
      *

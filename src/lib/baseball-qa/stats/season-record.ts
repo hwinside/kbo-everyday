@@ -126,8 +126,116 @@ const UNSUPPORTED_SEASON_WORDS = [
   "통산", "커리어", "역대", "생애", "누적",
 ];
 
+/**
+ * 연도별 시리즈 의도 (2026-08-10 하린아빠 캐처: `최형우의 연도별 타율 추이`).
+ * ⚠️ 열린 언어 재진입이 아니다 — 이 단어들은 기록 질문의 시점 한정어로 폐쇄적이고,
+ * 놀치면 기존 경로(올해 단답)로 내려가 틀린 답이 아니라 좁은 답이 된다(fail-open 안전).
+ */
+const SERIES_WORDS = ["연도별", "년도별", "시즌별", "해마다", "매년", "추이"];
+/**
+ * literal A′ frozen contract (삼순 10차): 데뷔/입단이 full-origin series 로 해석되는
+ * **유일한** 문자 형태. 이 인접 패턴 밖은 전부 fail-close — 확장·추론 금지.
+ */
+const CANONICAL_DEBUT_SERIES =
+  /(?:데뷔|입단)(?:시점|초)?(?:이래|이후|부터|후)(?:(?:현재|지금|올해|오늘)까지)?(?:연도별|년도별|시즌별)/;
+const CAREER_TOTAL_WORDS = ["통산", "커리어", "역대", "생애", "누적"];
+/** 상대 과거 시즌어 → 몇 해 전인가. */
+const RELATIVE_PAST_SEASONS: ReadonlyArray<readonly [string, number]> = [
+  ["지지난해", 2], ["재작년", 2],
+  ["작년", 1], ["지난해", 1], ["지난시즌", 1], ["지난 시즌", 1],
+  ["전시즌", 1], ["전 시즌", 1], ["이전시즌", 1], ["이전 시즌", 1],
+];
+
 function normalize(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+}
+
+/** 시점 참조 전수 스캔 결과 — selector 는 이 구조만 보고 결정한다. */
+interface TemporalScan {
+  readonly spaced: string;
+  /** 과거 상대어(작년=1·재작년=2…) — 참조가 정확히 1개일 때만 non-null. */
+  readonly pastDelta: number | null;
+  /** 명시 연도 — distinct 가 정확히 1개일 때만 non-null. */
+  readonly explicitYear: number | null;
+  /** 명시연도(distinct)+상대연도+현재어 총 참조 수. */
+  readonly refTotal: number;
+  /** 최근 N<단위> (단위 무관 — `최근 3년`·`최근 10경기` 모두). */
+  readonly recentRange: boolean;
+  /**
+   * 데뷔/입단 한정의 **구조 분류** (삼순 5차 — regex 덧대기 금지):
+   * none = 언급 없음 · full_origin = 데뷔 기점 전체(전 커리어 동치, career 로만 해석) ·
+   * other = 그 외 전부(단일 데뷔 시즌·bounded N년·bare 언급) — 축소 금지, fail-close.
+   */
+  readonly debutScope: "none" | "full_origin" | "other";
+  /** 시점 토큰을 소거한 잔여 문자열에 남은 범위 표지(까지·이후·이전·부터·~). */
+  readonly rangeMarker: boolean;
+  readonly seriesWord: boolean;
+  readonly careerWord: boolean;
+}
+
+/**
+ * 시점 참조를 **소거 방식**으로 센다. 긴 토큰부터 소거해야 `재작년`⊃`작년` 같은 부분열
+ * 중복 집계가 없고(`작년과 재작년` = 2), `이전시즌`(지원 상대어)을 소거한 뒤에 남는
+ * `이전`(범위 표지)만 range 로 판정할 수 있다.
+ */
+function scanTemporalRefs(question: string): TemporalScan {
+  const spaced = normalizeWithSpaces(question);
+  let rest = spaced.replace(/\s+/g, "");
+  // ── 데뷔/입단 한정 — literal A′ (삼순 10차 frozen contract) ─────────────────
+  // 자연어 추론(careerReq·unitLeft·잔여검사) 없음. `데뷔|입단` 은 **원 캡처의
+  // canonical span 에 annual series 표지가 문자 그대로 인접**할 때만 full_origin:
+  //   (데뷔|입단)(시점|초)?(이래|이후|부터|후)((현재|지금|올해|오늘)까지)?(연도별|년도별|시즌별)
+  // 이 literal 패턴 밖의 모든 데뷔/입단 언급(이래/후 bare·통산어 동반·서수·수사·
+  // 명명형·bounded·`후 3년 … 추이` 등 사이에 무엇이든 끼는 형태)은 분기 하나로
+  // other(fail-close). 상대시점 자연어는 별도 트랙(제한 AST + career row 환산) 몫이다.
+  let debutScope: "none" | "full_origin" | "other" = "none";
+  if (/데뷔|입단/.test(rest)) {
+    if (CANONICAL_DEBUT_SERIES.test(rest)) {
+      debutScope = "full_origin";
+      // canonical span 은 참조·범위표지 집계 **전에** 통째로 소거한다 — `현재까지` 를
+      // 참조·cutoff 로 세면서 범위로 오판하는 것을 구조로 방지 (캡처 exact).
+      // series 표지는 spaced 기준 seriesWord 검출로 이미 확보되므로 함께 소거해도 된다.
+      rest = rest.replace(new RegExp(CANONICAL_DEBUT_SERIES.source, "g"), "\u0000");
+    } else {
+      debutScope = "other";
+    }
+  }
+  const recentRange = /최근\d+/.test(rest);
+  const explicitYearSet = new Set(
+    [...rest.matchAll(/(?:19|20)\d{2}/g)].map((match) => Number(match[0])),
+  );
+  rest = rest.replace(/(?:19|20)\d{2}(?:년|시즌)?/g, "\u0000");
+  const pastDeltas: number[] = [];
+  for (const [word, delta] of [
+    ["지지난해", 2], ["재작년", 2],
+    ["이전시즌", 1], ["전시즌", 1], ["지난시즌", 1], ["지난해", 1], ["작년", 1],
+  ] as const) {
+    while (rest.includes(word)) {
+      rest = rest.replace(word, "\u0000");
+      pastDeltas.push(delta);
+    }
+  }
+  let currentRefs = 0;
+  // `현재/지금/현시즌` 도 현재 시점 참조다 (삼순 3차: `작년과 현재 비교` 가 refTotal=1 로
+  // 작년 단일값 축소). 긴 토큰 먼저 — `현시즌` 소거 후 잔여에서 `현재` 를 세지 않도록.
+  for (const word of ["이번시즌", "올시즌", "현시즌", "올해", "금년", "현재", "지금"]) {
+    while (rest.includes(word)) {
+      rest = rest.replace(word, "\u0000");
+      currentRefs += 1;
+    }
+  }
+  const refTotal = explicitYearSet.size + pastDeltas.length + currentRefs;
+  return {
+    spaced,
+    pastDelta: refTotal === 1 && pastDeltas.length === 1 ? pastDeltas[0] : null,
+    explicitYear: refTotal === 1 && explicitYearSet.size === 1 ? [...explicitYearSet][0] : null,
+    refTotal,
+    recentRange,
+    debutScope,
+    rangeMarker: /까지|이후|이전|부터|[~∼]/.test(rest),
+    seriesWord: SERIES_WORDS.some((word) => spaced.includes(word)),
+    careerWord: CAREER_TOTAL_WORDS.some((word) => spaced.includes(word)),
+  };
 }
 
 function normalizeWithSpaces(value: string): string {
@@ -169,12 +277,20 @@ export interface SeasonRecordQuery {
   kind: "count" | "rate" | "raw";
 }
 
+/** 과거·통산·연도별은 KBO 공식 연도별 테이블(career-series)을 본다. */
+export type CareerSpan =
+  | { type: "series" }
+  | { type: "career" }
+  | { type: "year"; year: number };
+
 export type SeasonRecordIntent =
   | { kind: "none" }
   /** 신뢰할 수 없는 지표(pa/sac/sf) — 명시적으로 답변 거절. */
   | { kind: "untrusted_metric" }
-  /** 지원하지 않는 시즌(작년·통산) — fail-close. */
+  /** 지원하지 않는 시즌(미래 연도 등) — fail-close. */
   | { kind: "unsupported_season" }
+  /** 연도별 시리즈·통산·과거 시즌 — KBO 공식 Total.aspx 조회. */
+  | { kind: "career"; query: SeasonRecordQuery; span: CareerSpan }
   | { kind: "query"; query: SeasonRecordQuery };
 
 /**
@@ -292,23 +408,72 @@ export function resolveSeasonRecordIntent(
   // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
   // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
   if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };
-  // 과거 시즌 차단은 지원 metric 수치 질문에만 적용한다. `작년에 별명이 뭐였어?` 같은
-  // 선수 서술형은 기존 RAG로 내려보내야 한다.
-  if (hasUnsupportedSeason(question)) return { kind: "unsupported_season" };
   const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
   const def = metrics[best.metric as keyof typeof metrics] as {
     label: string;
     kind: SeasonRecordQuery["kind"];
   };
-  return {
-    kind: "query",
-    query: {
-      table: best.table,
-      metric: best.metric,
-      label: def.label,
-      kind: def.kind,
-    },
+  const query: SeasonRecordQuery = {
+    table: best.table,
+    metric: best.metric,
+    label: def.label,
+    kind: def.kind,
   };
+
+  // ── 시점 판정 (2026-08-10 캐처: `연도별 타율 추이`가 올해 단일값으로 오답) ──────
+  // 종전에는 통산·과거 시즌을 "준비 중" fail-close 로 닫았다. 정본이 없어서가 아니라
+  // KBO 공식 연도별 테이블(Total.aspx)을 안 보고 있었던 것 — 이제 그 정본으로 답한다.
+  //
+  // ⚠️ selector 계약 (삼순 2026-08-10 2차 NO-GO — exact 정규식 덧대기 금지):
+  //   시점 참조(명시연도·상대연도·현재·최근범위·cutoff)를 **먼저 전부 추출**하고,
+  //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
+  //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
+  const scan = scanTemporalRefs(question);
+  // ⓪-a 월별/경기별 축 — 우리 정본은 연도별 테이블뿐이다. 월·경기 단위 시계열은
+  //   서빙 데이터가 없으므로 어느 쪽으로도 축소하지 않고 fail-close (삼순 10차).
+  if (/월별|경기별/.test(scan.spaced)) return { kind: "unsupported_season" };
+  // ⓪ 데뷔/입단 한정 중 A′ 폐쇄집합(명시 series/통산) 밖 전부 — 서수·수사·명명형·
+  //   bounded·bare 를 가리지 않고 현재시즌으로도 전 커리어로도 축소하지 않는다.
+  if (scan.debutScope === "other") return { kind: "unsupported_season" };
+  // ① 최근 N<단위> 범위 — 단위 무관(경기·년·시즌·일·주…). 연도별 테이블로 답할 수 없다.
+  if (scan.recentRange) return { kind: "unsupported_season" };
+  // ② 시점 참조 2개 이상 = 비교·범위 질의 (`작년과 올해`·`작년과 재작년`·`2025년과 2026년`).
+  //   단일값으로 축소하면 오답이다.
+  if (scan.refTotal > 1) return { kind: "unsupported_season" };
+  // ③ cutoff·범위 표지(까지·이후·이전·부터·~)가 시점 참조/통산어에 붙으면 부분합·구간
+  //   질의다 — 현재 통산 행(올해 포함)·단일 연도와 다른 값이라 fail-close.
+  if (scan.rangeMarker && (scan.refTotal > 0 || scan.careerWord)) {
+    return { kind: "unsupported_season" };
+  }
+  // ④ 최고/최저(커리어하이) — 통산 **평균/누계**와 다른 극값이다. 규정타석 판정이 필요해
+  //   정본 조회가 아니다 → fail-close.
+  if (/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced)) {
+    return { kind: "unsupported_season" };
+  }
+  // ⑤ 여기부터 시점 참조는 0개 또는 1개다.
+  if (scan.seriesWord) {
+    // `작년 추이` 처럼 단일 시점+시리즈는 모순 조합 — 축소하지 않고 닫는다.
+    if (scan.refTotal > 0) return { kind: "unsupported_season" };
+    return { kind: "career", query, span: { type: "series" } };
+  }
+  if (scan.careerWord) {
+    // 명시 통산어(통산/커리어/역대…)만 career total 이다. A′(삼순 10차)에서
+    // full_origin 은 항상 명시 series/통산어와 동반되므로 별도 disjunct 는 죽은
+    // 코드다 — `데뷔 이래 홈런`(통산어 없음)은 이제 ⓪에서 fail-close 된다.
+    if (scan.refTotal > 0) return { kind: "unsupported_season" };
+    return { kind: "career", query, span: { type: "career" } };
+  }
+  if (scan.pastDelta !== null) {
+    return { kind: "career", query, span: { type: "year", year: SUPPORTED_SEASON - scan.pastDelta } };
+  }
+  if (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON) {
+    if (scan.explicitYear > SUPPORTED_SEASON || scan.explicitYear < 1982) {
+      return { kind: "unsupported_season" };
+    }
+    return { kind: "career", query, span: { type: "year", year: scan.explicitYear } };
+  }
+  // 현재 시즌 지목(올해) 또는 시점 표현 없음 → 기존 현재 시즌 경로.
+  return { kind: "query", query };
 }
 
 /** 명시적으로 올해를 지목했는가. 시즌 표현이 아예 없으면 현재 시즌으로 본다. */
