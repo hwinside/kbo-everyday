@@ -57,8 +57,15 @@ export const EXIT_PASS = 0;
 export const EXIT_BUDGET_EXCEEDED = 20;
 export const EXIT_HARNESS_FAILURE = 30;
 
-const RSC_BUDGET_LOAD = 6;
-const RSC_BUDGET_SCROLL = 10;
+// 2026-08-11 예산 갱신(홈→경기상세 체감 16초 개선, prefetch 부분 복원):
+// 핵심 동선 3곳(MyTeamHero·TodayGamesSection·CompactGameCard 의 /games/* 링크)만
+// prefetch 를 되살렸다. fixture 5경기 실측: 홈 로드 3건 / 스크롤 3왕복 11건 / 고유 6경로.
+// 나머지 13곳(prefetch={false})은 유지 — 전면 복원(56건) 회귀는 여전히 RED 여야 한다.
+// 실측 분산: 로드 직후 건수는 뷰포트 prefetch 발화 타이밍에 따라 3~11건으로 흔들린다
+// (고유 경로는 6개로 동일, _rsc 캐시키 차이로 중복 요청 발생). 두 예산 모두 12로 고정 —
+// 전면 복원(56건) 회귀는 여전히 확실히 RED, 복원 3곳의 정상 범위는 GREEN.
+const RSC_BUDGET_LOAD = 12;
+const RSC_BUDGET_SCROLL = 12;
 const PORT = Number(process.env.RSC_GATE_PORT || 3199);
 
 const REQUIRE_BROWSER = process.argv.includes("--require-browser");

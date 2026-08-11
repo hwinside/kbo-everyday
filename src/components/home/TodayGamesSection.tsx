@@ -39,7 +39,7 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
   const myTeamBg = isMyGame && myTeamId ? `${getTeamBgColorById(myTeamId)}12` : undefined;
 
   return (
-    <Link prefetch={false} href={`/games/${game.id}`}>
+    <Link href={`/games/${game.id}`}>
       <div
         className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-bg-secondary/60 hover:bg-bg-tertiary transition-colors"
         style={myTeamBg ? { background: myTeamBg } : undefined}

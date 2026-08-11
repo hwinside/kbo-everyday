@@ -69,7 +69,7 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
 
   return (
     <div className={embedded ? "" : "mb-3"}>
-      <Link prefetch={false} href={`/games/${myTeamGame.id}`}>
+      <Link href={`/games/${myTeamGame.id}`}>
         <div
           className="relative rounded-2xl p-3.5 overflow-hidden myteam-card"
           style={{ ['--team-bg' as string]: getTeamBgColor(myTeam) }}
