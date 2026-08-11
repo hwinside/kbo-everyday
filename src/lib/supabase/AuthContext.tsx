@@ -159,7 +159,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const prevId = localStorage.getItem('kbo-auth-uid');
           if (prevId && prevId !== session.user.id) {
-            ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+            ['kbo-my-team', 'kbo-onboarding-status', 'kbo-favorite-players'].forEach(k => localStorage.removeItem(k));
             sessionStorage.clear();
           }
           localStorage.setItem('kbo-auth-uid', session.user.id);
@@ -184,7 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             const prevId = localStorage.getItem('kbo-auth-uid');
             if (prevId && prevId !== session.user.id) {
-              ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+              ['kbo-my-team', 'kbo-onboarding-status', 'kbo-favorite-players'].forEach(k => localStorage.removeItem(k));
               sessionStorage.clear();
             }
             localStorage.setItem('kbo-auth-uid', session.user.id);
@@ -232,7 +232,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch { /* ignore */ }
         // 계정 전환 시 이전 계정 localStorage 잔존 방지
         try {
-          const keysToRemove = ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'];
+          const keysToRemove = ['kbo-my-team', 'kbo-onboarding-status', 'kbo-favorite-players'];
           keysToRemove.forEach(k => localStorage.removeItem(k));
           // welcome toast / gads conversion 등 session 키도 정리
           sessionStorage.clear();

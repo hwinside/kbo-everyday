@@ -1,5 +1,6 @@
 import { useState, useEffect, startTransition } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { readSessionCookieUserId } from "@/lib/supabase/local-session";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
@@ -70,13 +71,23 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   // 온보딩을 끝낸 기기는 localStorage 값이 SSOT 이므로 마운트 즐시 그린다.
   // profile 도착 후에는 기존 effect 가 그대로 재조정한다(localTeamId 우선 규칙 동일).
   // 온보딩 미완료(team_selected 등) 상태는 건드리지 않는다 — 기존 분기 유지.
+  //
+  // 계정 귀속 가드(삼순 리뷰 #1154 NO-GO ①): 계정 전환 직후에는 localStorage 가
+  // 이전 계정 것일 수 있다. 세션 쿠키를 동기 판독해 ①비로그인(쿠키 없음)이거나
+  // ②쿠키 user id == kbo-auth-uid(로컬 데이터 주인)일 때만 즐시 그린다.
+  // 불일치·파싱 실패는 fail-close(기존 인증 흐름 대기) — 오표시 0 이 속도보다 우선.
   useEffect(() => {
     const saved = getMyTeamId();
     const status = getOnboardingStatus();
-    if (saved && (status === "completed" || status === "skipped")) {
-      setMyTeam(saved);
-      setFavPlayers(getFavoritePlayers());
+    if (!saved || !(status === "completed" || status === "skipped")) return;
+    const cookieUid = readSessionCookieUserId();
+    if (cookieUid !== null) {
+      // 세션 쿠키가 있다 → 로컬 데이터 주인과 일치할 때만 즐시 렌더.
+      const owner = localStorage.getItem("kbo-auth-uid");
+      if (cookieUid === "unknown" || !owner || owner !== cookieUid) return;
     }
+    setMyTeam(saved);
+    setFavPlayers(getFavoritePlayers());
   }, []);
 
   // 로그인 후 1회 환영 토스트 + 환영 DM
