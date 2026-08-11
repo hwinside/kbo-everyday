@@ -1,80 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { SignJWT, importPKCS8 } from "jose";
+import { ga4Report, getGa4AccessToken } from "@/lib/admin/ga4";
 
 async function verifyPin(req: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(req);
 }
-
-/**
- * Get OAuth2 access token using service account JWT
- * (Replaces @google-analytics/data SDK to avoid bundle size issues on Vercel)
- */
-async function getAccessToken(): Promise<string> {
-  let rawJson: string;
-
-  // Support base64-encoded key (recommended for Vercel env)
-  const b64 = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64;
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-
-  if (b64) {
-    rawJson = Buffer.from(b64, "base64").toString("utf-8");
-  } else if (raw) {
-    rawJson = raw;
-  } else {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_KEY not set");
-  }
-
-  const creds = JSON.parse(rawJson);
-  const privateKey = (creds.private_key as string).replace(/\\n/g, "\n");
-
-  const now = Math.floor(Date.now() / 1000);
-  const key = await importPKCS8(privateKey, "RS256");
-  const jwt = await new SignJWT({
-    iss: creds.client_email,
-    sub: creds.client_email,
-    scope: "https://www.googleapis.com/auth/analytics.readonly",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600,
-  })
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-    .sign(key);
-
-  const res = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-  });
-  if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
-  const data = await res.json();
-  return data.access_token;
-}
-
-async function ga4Report(
-  accessToken: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const propertyId = process.env.GA4_PROPERTY_ID;
-  const res = await fetch(
-    `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    },
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`GA4 API ${res.status}: ${err}`);
-  }
-  return res.json();
-}
-
-const PROPERTY_ID = () => process.env.GA4_PROPERTY_ID;
 
 // GA4 "20260405" → "04/05"
 function fmtGa4Date(d: string): string {
@@ -110,7 +40,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const accessToken = await getAccessToken();
+    const accessToken = await getGa4AccessToken();
 
     if (type === "dau") {
       // Daily active users + pageviews for last 30 days
