@@ -17,6 +17,9 @@ import {
   type QaResult,
   type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
+import type { TodayGameStarters } from "@/lib/baseball-qa/pipeline";
+import { adaptTodayStarters } from "@/lib/baseball-qa/pipeline";
+import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
   isFollowupPhrase,
   type ContextTurn,
@@ -369,6 +372,16 @@ async function callTeamRagLlm(
  * 1군 명단 SSOT (삼순 2026-08-10) — `players-roster.json`(현재 소속 SSOT)과 분리.
  * 실패·빈 결과는 null — 파이프라인이 전체 등록 명단 + "1군 구분 불가" 고지로 fail-close.
  */
+/**
+ * 오늘 경기별 선발 매치업 — `/api/games` 와 같은 소스(fetchGamesUserFacing)를 직접 호출한다.
+ * HTTP 자기호출이 아니라 같은 함수다 — 라우트 캐시·배포 경계에 의존하지 않는다.
+ * 실패는 throw 로 올린다 — 파이프라인이 "경기 없음"과 구분해 fail-close 한다.
+ */
+async function fetchTodayStarters(dateYyyymmdd: string): Promise<TodayGameStarters[]> {
+  const { games, kboGameIds } = await fetchGamesUserFacingWithMeta(dateYyyymmdd);
+  return adaptTodayStarters(games, kboGameIds);
+}
+
 async function fetchTeamEntry(
   teamId: number,
 ): Promise<{ snapshotDate: string; players: string[] } | null> {
@@ -636,6 +649,8 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     enableTeamRag: teamRagEnabled(),
     callTeamRagLlm,
     fetchTeamEntry,
+    // 오늘 선발 매치업 (2026-08-11 ① A안) — 앱이 이미 서빙하는 경기 데이터 그대로, LLM·RAG·cache 0.
+    fetchTodayStarters,
     // 최근 기사 RAG 개통. production 적재 실측(2026-08-08 14일 백필):
     // `genius_news_articles` 2,438행 · embedding 2,438/2,438 · 서빙뷰 2,438건 · 커버리지 140/140칸 ok.
     // 적재만 되고 조회 배선이 없으면 근거는 사장된다(#1110 구단 RAG 에서 이미 겪은 사고).

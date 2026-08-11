@@ -306,6 +306,7 @@
     "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
     "qa:genius-glossary-map": "tsx scripts/qa/genius-glossary-map-smoke.ts",
     "qa:genius-glossary-map-live": "tsx scripts/qa/genius-glossary-map-live-smoke.ts",
+    "qa:genius-today-starters": "tsx scripts/qa/genius-today-starters-smoke.ts",
     "qa:baseball-qa-live": "tsx scripts/qa/baseball-qa-classifier-live-smoke.ts",
     "qa:baseball-genius-context": "tsx scripts/qa/baseball-genius-context-smoke.ts",
     "qa:baseball-genius-context:mutations": "node scripts/qa/baseball-genius-comparative-mutations.mjs",
