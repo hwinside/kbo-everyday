@@ -647,7 +647,10 @@ export interface QaDeps {
    * 않으므로 crash 재처리 시 재호출될 수 있지만, 유저 가시 결과는 사전 답변(결정론)이라
    * 중복 노출·분기 불일치가 생기지 않는다. 비용만 문제고, 후보 있을 때만 타서 상한이 있다.
    */
-  mapGlossaryDefinition?: (question: string, candidateTerms: string[]) => Promise<string | null>;
+  mapGlossaryDefinition?: (
+    question: string,
+    candidateTerms: string[],
+  ) => Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }>;
   /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
@@ -2644,8 +2647,11 @@ export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[
  * 여기서 하지 않고 LLM(mapGlossaryDefinition)에 넘긴다.
  *
  * 한 글자 alias(예: `r`)는 우연 포함이 너무 쉬워 제외한다(길이 ≥ 2). 긴 용어부터 반환해
- * `40-40 클럽` 질문에서 `40-40`보다 정본 term 이 앞에 오게 한다. 상한 5개 — 후보가 그보다
- * 많으면 질문이 이미 단일 정의 질문이 아니다.
+ * `40-40 클럽` 질문에서 `40-40`보다 정본 term 이 앞에 오게 한다.
+ *
+ * 후보가 5개를 **초과하면 빈 배열** — 그 질문은 단일 정의 질문이 아니므로 매퍼를
+ * 아예 태우지 않는다(삼순 2026-08-11: 종전 slice(0,5)는 "초과면 비단일" 주석과 모순 —
+ * 상위 5개만 남기면 비단일 질문을 단일처럼 위장시킨다).
  */
 export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string): GlossaryEntry[] {
   const key = normalizeKey(question);
@@ -2663,7 +2669,8 @@ export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string)
       break;
     }
   }
-  return found.sort((a, b) => b.len - a.len).slice(0, 5).map((f) => f.entry);
+  if (found.length > 5) return [];
+  return found.sort((a, b) => b.len - a.len).map((f) => f.entry);
 }
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
@@ -3623,40 +3630,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
   }
 
-  // ①-b 사전 정의 질문 LLM 매핑 (C 질문 정규화, 2026-08-11 하린아빠 제보).
-  //
-  // `유격수 포지션이 뭐야?` 는 사전에 `유격수`가 있는데도 exact 매칭이 잎여어 때문에 놆쳐
-  // unsure 로 끕났다(production 실측). 잎여어를 어미/조사 열거로 닫으면 또 열린 언어 핑퐁이다
-  // (M90: 열린 집합은 LLM 위임). 그래서 분업한다:
-  //   · 후보 추출 = 결정론 (질문이 사전 폐쇄집합의 용어를 글자 그대로 포함하는가)
-  //   · 의도 판정 = LLM (그 용어의 뜻을 묻는 질문인가) — 반환값이 후보 밖이면 버린다
-  //   · 서빙 = 사람이 검수한 사전 답변 그대로 (생성문 0)
-  // 순서가 계약이다: 사전(①) 바로 뒤 = 공식 RAG·구단 RAG·generic LLM 보다 앞. 검수된 답이
-  // 항상 우선이라는 ①의 기존 계약을 그대로 상속한다. 선수 지문·구단 수치·기록 질문은 이
-  // 지점까지 내려오기 전에 각자 전용 경로가 이미 소유했다(team_record·player candidate).
-  // scopeGate 질문도 태운다 — `도루뜕` 류 붙임 질문은 룰로 분류되지 않아 scope gate 로
-  // 오는데, 서빙문은 검수된 정의뿐이라 범위 밖 답변이 나갈 경로가 구조적으로 없다.
-  if (deps.mapGlossaryDefinition) {
-    const candidates = glossaryCandidatesIn(glossary, question);
-    if (candidates.length > 0) {
-      let mapped: string | null = null;
-      try {
-        mapped = await deps.mapGlossaryDefinition(question, candidates.map((c) => c.term));
-      } catch {
-        mapped = null; // 매퍼 장애는 기존 경로로 양보한다 — 새 경로가 기존 답변을 죽이면 안 된다.
-      }
-      // fail-close: 반환값은 반드시 후보 집합 안의 term 이어야 한다. LLM 이 후보 밖
-      // 문자열(환각·유사어)을 줘도 서빙되지 않는다.
-      const mappedEntry = mapped === null
-        ? null
-        : candidates.find((c) => c.term === mapped) ?? null;
-      if (mappedEntry) {
-        await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: mappedEntry.answer, inputTokens: null, outputTokens: null });
-        return { status: 200, answer: mappedEntry.answer, source: "dictionary", term: mappedEntry.term, remaining };
-      }
-    }
-  }
-
   // ②-a 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거를 **global 캐시보다 먼저** 시도한다.
   //
   // 순서가 바뀐 이유(삼순 R2): `genius_qa_cache`에는 tier1 적재 이전에 일반 LLM이 생성해 썻은
@@ -3836,6 +3809,70 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 선수 경로가 꺼져 있어 답을 못 만든 것 — 주제 밖이 아니라 근거 부족이다.
       await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: null, outputTokens: null });
       return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    }
+  }
+
+  // ②-z 사전 정의 질문 LLM 매핑 (C 질문 정규화, 2026-08-11 하린아빠 제보).
+  //
+  // `유격수 포지션이 뭐야?` 는 사전에 `유격수`가 있는데도 exact 매칭이 잉여어 때문에 놓쳐
+  // unsure 로 끝났다(production 실측). 잉여어를 어미/조사 열거로 닫으면 또 열린 언어 핑퐁이다
+  // (M90: 열린 집합은 LLM 위임). 그래서 분업한다:
+  //   · 후보 추출 = 결정론 (질문이 사전 폐쇄집합의 용어를 글자 그대로 포함하는가)
+  //   · 의도 판정 = LLM (그 용어의 뜻을 묻는 질문인가) — 반환값이 후보 밖이면 버린다
+  //   · 서빙 = 사람이 검수한 사전 답변 그대로 (생성문 0)
+  //
+  // ⚠️ 위치가 계약이다 (삼순 2026-08-11 NO-GO ②축): 공식 RAG·구단/기사 RAG·선수 기록·
+  //   1군 명단 등 **모든 전용 경로가 양보한 뒤**, stale 캐시·generic LLM **앞**이다.
+  //   종전엔 사전(①) 바로 뒤라 응용·비교·선수 질문을 사전 단답으로 선점할 수 있었다.
+  //   여기서는 전용 경로가 전부 지나갔으므로 남은 경쟁자는 옛 생성답 캐시와 generic 뿐이고,
+  //   검수 사전 답변은 그 둘보다 항상 우선이다.
+  // ⚠️ 선수 언급 질문은 태우지 않는다 — 결속(enabledPlayerCandidate)뿐 아니라 **로스터
+  //   이름 포함 자체**를 가드한다(닫힌 집합 멤버십 — 룰 핑퐁 아님). 결속은 조사·어질 구성에
+  //   따라 실패할 수 있고(`김도영 유격수 수비 장면 이야기해줘` 실측 — 미결속), 그때 용어
+  //   정의를 주면 선수 질문이 사전 단답으로 오답된다(삼순 선점 반례 축).
+  // scopeGate 질문은 태운다 — `도루뜻` 류 붙임 질문은 룰로 분류되지 않아 scope gate 로
+  //   오는데, 서빙문은 검수된 정의뿐이라 범위 밖 답변이 나갈 경로가 구조적으로 없다.
+  const questionMentionsRosterPlayer = (() => {
+    const key = normalizeKey(question);
+    return players.some((player) => {
+      const nameKey = normalizeKey(player.name);
+      return nameKey.length >= 2 && key.includes(nameKey);
+    });
+  })();
+  if (deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer) {
+    const candidates = glossaryCandidatesIn(glossary, question);
+    if (candidates.length > 0) {
+      let mapped: { term: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
+      try {
+        mapped = await deps.mapGlossaryDefinition(question, candidates.map((c) => c.term));
+      } catch {
+        mapped = null; // 매퍼 장애는 기존 경로로 양보한다 — 새 경로가 기존 답변을 죽이면 안 된다.
+      }
+      // fail-close: 반환값은 반드시 후보 집합 안의 term 이어야 한다. LLM 이 후보 밖
+      // 문자열(환각·유사어)을 줘도 서빙되지 않는다.
+      const mappedEntry = mapped?.term == null
+        ? null
+        : candidates.find((c) => c.term === mapped!.term) ?? null;
+      if (mappedEntry) {
+        // 관측 계약 (삼순 ④축): 매퍼도 LLM 호출이다 — 토큰을 로그에 기록해 비용을 가시화한다.
+        await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: mappedEntry.answer, inputTokens: mapped?.inputTokens ?? null, outputTokens: mapped?.outputTokens ?? null });
+        return { status: 200, answer: mappedEntry.answer, source: "dictionary", term: mappedEntry.term, remaining };
+      }
+      // 매핑 실패(null·장애·후보 밖)로 아래 경로가 이어지면, 이 질문의 최종 로그 행에
+      // 매퍼 토큰을 **합산**한다 — null 뒤 generic 까지 2콜이 되는 비용을 숨기지 않는다.
+      const mapperIn = mapped?.inputTokens ?? null;
+      const mapperOut = mapped?.outputTokens ?? null;
+      if (mapperIn !== null || mapperOut !== null) {
+        const baseLog = deps.log;
+        deps = {
+          ...deps,
+          log: (entry) => baseLog({
+            ...entry,
+            inputTokens: (entry.inputTokens ?? 0) + (mapperIn ?? 0),
+            outputTokens: (entry.outputTokens ?? 0) + (mapperOut ?? 0),
+          }),
+        };
+      }
     }
   }
 

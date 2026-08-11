@@ -158,15 +158,20 @@ async function callLlm(
  * 버리므로(fail-close) 모델 오판의 최대 피해는 "검수된 정의문이 불필요한 질문에 나감"이다.
  * 생성문이 유저에게 나가는 경로는 없다 — 서빙되는 답은 항상 사람이 검수한 사전 answer 다.
  */
-async function mapGlossaryDefinition(
+export async function mapGlossaryDefinition(
   question: string,
   candidateTerms: string[],
-): Promise<string | null> {
+): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const systemPrompt = [
     "너는 KBO 야구 용어 사전의 질문 분류기다.",
-    "아래 후보 용어 목록 중, 사용자의 질문이 그 용어 자체의 뜻·정의·설명을 묻는 것이면 그 용어를 고른다.",
-    "특정 선수·구단의 기록 수치를 묻거나, 용어가 문장에 스쳐 지나갈 뿐이면 고르지 않는다.",
+    "아래 후보 용어 목록 중, 사용자의 질문이 **그 용어 자체의 뜻·정의**를 묻는 것일 때만 그 용어를 고른다.",
+    "다음은 정의 질문이 아니므로 반드시 null 이다:",
+    "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
+    "· 두 용어의 비교·차이 질문 (예: 유격수와 2루수 차이가 뭐야? — 한 용어의 정의문으로 답할 수 없다)",
+    "· 특정 선수·구단의 기록 수치나 오늘·특정 경기의 조회 질문 (예: 오늘 유격수 누구야?)",
+    "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
+    "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
     '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
   ].join("\n");
   const res = await fetch(GEMINI_URL, {
@@ -188,16 +193,25 @@ async function mapGlossaryDefinition(
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
+  // 관측 계약 (삼순 2026-08-11 ④축): 매퍼도 LLM 호출이다 — 토큰을 파이프라인으로 돌려
+  // 로그에 기록되게 한다(매핑 성공 시 그 행에, 실패 시 후속 경로 행에 합산).
+  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
+  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
   const text: string =
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null; // malformed 는 매핑 실패 — 기존 경로로 양보한다 (#1142 malformed fail-close 계약과 동일 축).
+    // malformed 는 매핑 실패 — 기존 경로로 양보한다 (#1142 malformed fail-close 계약과 동일 축).
+    return { term: null, inputTokens, outputTokens };
   }
   const term = (parsed as { term?: unknown })?.term;
-  return typeof term === "string" && term.length > 0 ? term : null;
+  return {
+    term: typeof term === "string" && term.length > 0 ? term : null,
+    inputTokens,
+    outputTokens,
+  };
 }
 
 /** genius_rag_serving_chunks 서빙 행 (snake_case SQL 시그니처). */
