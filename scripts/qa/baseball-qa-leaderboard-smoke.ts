@@ -31,6 +31,10 @@ import {
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
+import {
+  SERVED_BATTER_FULL_ENTRY_IDS,
+  validateServedBatterPayload,
+} from "../../src/lib/baseball-qa/stats/served-record";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -84,10 +88,13 @@ check("진짜 범위밖 어휘는 여전히 차단된다 (denylist 축소 방향
 });
 
 /** 리그 전체 규모의 2026 current rows 표본(기본 300행) — 빈/부분 응답 fail-close 계약의 양성 쪽. */
-function makeCurrentRows(count = 300, updatedAt = "2026-08-11T14:00:00Z") {
-  return Array.from({ length: count }, (_, index) => ({
-    kbo_id: String(60000 + index), player_key: String(60000 + index),
-    name: `현역${index}`, team: "팀", hits: index % 150, updated_at: updatedAt,
+function makeCurrentRows(updatedAt = "2026-08-11T14:00:00Z") {
+  return SERVED_BATTER_FULL_ENTRY_IDS.map((id, index) => ({
+    kbo_id: id, player_key: id,
+    name: id === "77532" ? "손아섭" : id === "72443" ? "최형우" : `현역${index}`,
+    team: id === "77532" ? "두산" : id === "72443" ? "삼성" : "팀",
+    hits: id === "77532" ? 35 : id === "72443" ? 109 : index % 150,
+    updated_at: updatedAt,
   }));
 }
 function makeBaselineSnapshot() {
@@ -104,11 +111,7 @@ function makeBaselineSnapshot() {
 
 check("기준선 + 올시즌 증분이 현재 통산 1위를 뒤집어 계산한다 (+출처 표기)", () => {
   const snapshot = makeBaselineSnapshot();
-  const current = [
-    ...makeCurrentRows(300),
-    { kbo_id: "77532", player_key: "77532", name: "손아섭", team: "두산", hits: 35, updated_at: "2026-08-11T14:00:00Z" },
-    { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", hits: 109, updated_at: "2026-08-11T14:00:00Z" },
-  ];
+  const current = makeCurrentRows();
   const result = resolveCareerLeaderboard(snapshot, current as never, "2026-08-11T14:00:00Z", { metric: "hits", label: "안타" }, new Date("2026-08-11T15:00:00Z"));
   assert.equal(result?.leaders[0].name, "최형우");
   assert.equal(result?.leaders[0].total, 2695);
@@ -122,7 +125,19 @@ check("P0: 유효 기준선 + 빈/부분 currentRows 는 fail-close (2025값 단
   const snapshot = makeBaselineSnapshot();
   const now = new Date("2026-08-11T15:00:00Z");
   assert.equal(resolveCareerLeaderboard(snapshot, [], "2026-08-11T14:00:00Z", intent, now), null, "빈 currentRows");
-  assert.equal(resolveCareerLeaderboard(snapshot, makeCurrentRows(40) as never, "2026-08-11T14:00:00Z", intent, now), null, "부분 currentRows(40행)");
+  assert.equal(resolveCareerLeaderboard(snapshot, makeCurrentRows().slice(0, 100) as never, "2026-08-11T14:00:00Z", intent, now), null, "임의 100행 currentRows");
+  const missingLeader = makeCurrentRows().filter((row) => row.kbo_id !== "72443");
+  assert.equal(resolveCareerLeaderboard(snapshot, missingLeader as never, "2026-08-11T14:00:00Z", intent, now), null, "known full-entry ID 1개 누락");
+});
+
+check("P0: /api/stats envelope type/count + known full-entry ID coverage 계약", () => {
+  const rows = makeCurrentRows().map((row) => ({ ...row, kboId: row.kbo_id }));
+  assert.equal(validateServedBatterPayload({ stats: rows, type: "batter", count: rows.length })?.length, rows.length);
+  assert.equal(validateServedBatterPayload({ stats: rows, type: "pitcher", count: rows.length }), null, "type 변형");
+  assert.equal(validateServedBatterPayload({ stats: rows, type: "batter", count: rows.length - 1 }), null, "count 불일치");
+  assert.equal(validateServedBatterPayload({ stats: rows.slice(0, 100), type: "batter", count: 100 }), null, "임의 100행");
+  const missingKnownId = rows.filter((row) => row.kboId !== SERVED_BATTER_FULL_ENTRY_IDS[0]);
+  assert.equal(validateServedBatterPayload({ stats: missingKnownId, type: "batter", count: missingKnownId.length }), null, "known ID 누락");
 });
 
 check("P0: current 컬럼 원타입 변형(hits '109' 문자열·필드 누락)은 fail-close", () => {
@@ -130,12 +145,12 @@ check("P0: current 컬럼 원타입 변형(hits '109' 문자열·필드 누락)�
   const snapshot = makeBaselineSnapshot();
   const now = new Date("2026-08-11T15:00:00Z");
   const stringTyped = [
-    ...makeCurrentRows(300),
+    ...makeCurrentRows().filter((row) => row.kbo_id !== "72443"),
     { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", hits: "109", updated_at: "2026-08-11T14:00:00Z" },
   ];
   assert.equal(resolveCareerLeaderboard(snapshot, stringTyped as never, "2026-08-11T14:00:00Z", intent, now), null, "문자열 hits");
   const missing = [
-    ...makeCurrentRows(300),
+    ...makeCurrentRows().filter((row) => row.kbo_id !== "72443"),
     { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", updated_at: "2026-08-11T14:00:00Z" },
   ];
   assert.equal(resolveCareerLeaderboard(snapshot, missing as never, "2026-08-11T14:00:00Z", intent, now), null, "hits 필드 누락");
@@ -148,6 +163,7 @@ check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 
     "통산 안타 상위 10명 누구야?",
     "통산 안타 top10 알려줘",
     "통산 안타 3위 누구야?",
+    "통산 안타 최다 10명 알려줘", // 삼순 2차 NO-GO exact
     // ⚠️ 아래 두 표본은 각각 rankTokens 폐쇄·범위 표지 폐쇄를 **단독으로** 무너뜨린다.
     // 표지 없는 복수 순위(1위 2위)는 rankTokens 만, 1위+부터는 범위 표지만 잡는다 —
     // 하나가 빠져도 다른 가드가 가려 mutation 검출력이 0이 되는 것을 막는 쌍이다.
@@ -167,7 +183,7 @@ check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", ()
     schemaVersion: 1, throughSeason: 2025, rowCount: rows.length, rows,
     source: { url: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx", seasonValue: "9999", sortKey: "HIT_CN", order: "DESC" },
   };
-  const fullCurrent = makeCurrentRows(300);
+  const fullCurrent = makeCurrentRows();
   assert.equal(resolveCareerLeaderboard({}, fullCurrent as never, "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "empty baseline");
   assert.equal(resolveCareerLeaderboard(valid, fullCurrent as never, "2026-08-09T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "stale");
   assert.equal(resolveCareerLeaderboard(valid, [

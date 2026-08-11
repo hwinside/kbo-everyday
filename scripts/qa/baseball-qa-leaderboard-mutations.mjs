@@ -13,6 +13,7 @@ const RETRIEVE = "src/lib/baseball-qa/rag/retrieve.ts";
 const CONSTANTS = "src/lib/constants/baseball-genius.ts";
 const PRIZE = "src/lib/baseball-qa/awards/series-prize.ts";
 const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
+const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 
 const MUTATIONS = [
   {
@@ -69,9 +70,30 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m6 빈/부분 currentRows fail-close 제거 — 2025값으로 현재 순위 단정 (삼순 P0 재현)",
+    name: "m6 known full-entry current coverage 제거 — 리더 빠진 임의 100행으로 2025값 단정",
     file: CAREER_LEADERBOARD,
-    from: "if (currentRows.length < CURRENT_MIN_ROWS) return null;",
+    from: "if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => currentById.has(id))) return null;",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6b /api/stats type 계약 제거 — pitcher payload를 batter 통산에 혼합",
+    file: SERVED_RECORD,
+    from: 'if (payload.type !== "batter" || !Number.isInteger(payload.count)) return null;',
+    to: 'if (!Number.isInteger(payload.count)) return null;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6c /api/stats count 계약 제거 — 선언 count와 실제 rows 불일치 통과",
+    file: SERVED_RECORD,
+    from: "if (!rows || payload.count !== rows.length) return null;",
+    to: "if (!rows) return null;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6d /api/stats known full-entry coverage 제거 — 임의 100행 payload 통과",
+    file: SERVED_RECORD,
+    from: "if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => ids.has(id))) return null;",
     to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
@@ -97,7 +119,7 @@ const MUTATIONS = [
   {
     name: "m8b 범위 표지 폐쇄 제거 — 부터/까지/상위/top 이 단일 1위로 오매칭",
     file: CAREER_LEADERBOARD,
-    from: 'if (/부터|까지|사이|상위|톱|top\\d*|순위권|랭킹|누구누구|~|-\\d+위/.test(normalized)) return null;',
+    from: 'if (/부터|까지|사이|상위|톱|top\\d*|순위권|랭킹|누구누구|몇명|\\d+(?:명|개|선수)|~|-\\d+위/.test(normalized)) return null;',
     to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },

@@ -1,5 +1,8 @@
 import baselineJson from "../../../../data/baseball-qa/kbo-career-hitter-through-2025.json";
-import { fetchServedBatterSnapshot } from "./served-record";
+import {
+  fetchServedBatterSnapshot,
+  SERVED_BATTER_FULL_ENTRY_IDS,
+} from "./served-record";
 import { STATS_STALE_MS, type SeasonRecordRow } from "./season-record";
 
 const CAREER_SOURCE_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx";
@@ -48,16 +51,9 @@ export function resolveCareerLeaderboardIntent(question: string): CareerLeaderbo
   // 범위·복수 순위 요청 폐쇄: 1 이외의 `N위` 토큰 또는 범위 표지가 있으면 단일 1위 질문이 아니다.
   const rankTokens = normalized.match(/\d+위/g) ?? [];
   if (rankTokens.some((token) => token !== "1위")) return null;
-  if (/부터|까지|사이|상위|톱|top\d*|순위권|랭킹|누구누구|~|-\d+위/.test(normalized)) return null;
+  if (/부터|까지|사이|상위|톱|top\d*|순위권|랭킹|누구누구|몇명|\d+(?:명|개|선수)|~|-\d+위/.test(normalized)) return null;
   return { metric: "hits", label: "안타" };
 }
-
-/**
- * 2026 스냅샷 최소 전수성 계약 — `/api/stats?type=batter&full=1` 은 리그 전체 타자 행이다.
- * 빈 배열/일부만 온 응답을 "증분 0"으로 읽으면 2025 값으로 현재 순위를 단정하는 오답이 된다
- * (삼순 P0). 시즐 중 실측 700행+ — 100행 미만은 전수 응답으로 볼 수 없어 fail-close 한다.
- */
-export const CURRENT_MIN_ROWS = 100;
 
 function validSnapshot(value: unknown): value is BaselineSnapshot {
   const s = value as Partial<BaselineSnapshot>;
@@ -85,8 +81,8 @@ export function resolveCareerLeaderboard(
   if (!Number.isFinite(updatedMs) || now.getTime() - updatedMs > STATS_STALE_MS || updatedMs > now.getTime() + 5 * 60_000) {
     return null;
   }
-  // 빈/부분 2026 스냅샷 fail-close — 유효한 기준선이어도 현재치 없이는 답하지 않는다.
-  if (currentRows.length < CURRENT_MIN_ROWS) return null;
+  // 빈/부분 2026 스냅샷 fail-close — 행수 하한은 리더를 뺀 임의 N행도 통과한다.
+  // 실제 full=1 merge 입력인 static ID 전집합을 모두 포함해야 현재 스냅샷으로 인정한다.
   const currentById = new Map<string, SeasonRecordRow>();
   for (const row of currentRows) {
     const id = String(row.kbo_id ?? row.player_key ?? "");
@@ -98,6 +94,7 @@ export function resolveCareerLeaderboard(
     }
     currentById.set(id, row);
   }
+  if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => currentById.has(id))) return null;
   const ranked = snapshot.rows.map((base) => {
     const current = currentById.get(base.kboId);
     if (current && current.name !== base.name) return null;

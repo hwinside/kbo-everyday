@@ -1,4 +1,5 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
+import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -29,9 +30,37 @@ const SERVED_STATS_TIMEOUT_MS = 3_000;
 
 interface ServedStatsResponse {
   stats?: Array<Record<string, unknown>>;
+  type?: unknown;
+  count?: unknown;
   updatedAt?: string;
   source?: string;
   runnerSource?: string;
+}
+
+/**
+ * `full=1` 완전성의 정본 — mergeFullEntry 에 실제로 투입되는 2026 static 선수 ID 전집합.
+ * 단순 행수 하한(예: 100)은 리더를 뺀 임의 100행도 통과시킨다. 이 집합 전부가 payload 에
+ * 있어야 "리그 전체 current snapshot" 으로 인정한다(삼순 #1159 2차 NO-GO).
+ */
+export const SERVED_BATTER_FULL_ENTRY_IDS: readonly string[] = Object.freeze(
+  (batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),
+);
+
+/** `/api/stats?type=batter&full=1` envelope + known full-entry ID coverage 계약. */
+export function validateServedBatterPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
+  if (payload.type !== "batter" || !Number.isInteger(payload.count)) return null;
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) return null;
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const id = typeof row.kboId === "string" || typeof row.kboId === "number"
+      ? String(row.kboId)
+      : "";
+    if (!id || ids.has(id)) return null;
+    ids.add(id);
+  }
+  if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => ids.has(id))) return null;
+  return rows;
 }
 
 /**
@@ -65,8 +94,8 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
     clearTimeout(timer);
   }
 
-  const rows = Array.isArray(payload.stats) ? payload.stats : null;
-  if (!rows) throw new Error("served stats payload has no stats array");
+  const rows = validateServedBatterPayload(payload);
+  if (!rows) throw new Error("served stats payload violates batter/full completeness contract");
   const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
   if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
     throw new Error("served stats payload has no usable updatedAt");
