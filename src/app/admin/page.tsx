@@ -85,6 +85,12 @@ interface JobsResponse {
   data: { id: number; status: string }[];
 }
 
+interface ActiveUsersResponse {
+  dau: number;
+  wau: number;
+  mau: number;
+}
+
 interface DauResponse {
   daily: { date: string; activeUsers: number; pageViews: number }[];
   dau: number;
@@ -107,6 +113,7 @@ interface OverviewData {
   feedback: FeedbackResponse;
   jobs: JobsResponse;
   ga4Dau: DauResponse | null;
+  activeUsers: ActiveUsersResponse | null;
   ga4Pages: PagesResponse | null;
   ga4Cohort: CohortResponse | null;
 }
@@ -442,9 +449,10 @@ export default function AdminOverviewPage() {
       fetchGA4<DauResponse>("dau"),
       fetchGA4<PagesResponse>("pages"),
       fetchGA4<CohortResponse>("cohort"),
+      apiFetch<ActiveUsersResponse>("/api/admin/active-users").catch(() => null),
     ])
-      .then(([users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort]) => {
-        setData({ users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort });
+      .then(([users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort, activeUsers]) => {
+        setData({ users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort, activeUsers });
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -534,12 +542,15 @@ export default function AdminOverviewPage() {
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
 
-  /* ── GA4 DAU/WAU/MAU KPIs ── */
-  const ga4Kpis: KpiDef[] = data?.ga4Dau
+  /* ── DAU/WAU/MAU KPIs — 자체 집계(앱+웹, admin_traffic_daily_visitors) 우선,
+     수집 장애 시에만 GA4로 폴백해 카드가 비지 않게 한다 ── */
+  const activeSrc = data?.activeUsers ?? data?.ga4Dau ?? null;
+  const isOwnMetric = !!data?.activeUsers;
+  const ga4Kpis: KpiDef[] = activeSrc
     ? [
-        { label: "DAU (오늘)", value: data.ga4Dau.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
-        { label: "WAU (7일)", value: data.ga4Dau.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
-        { label: "MAU (30일)", value: data.ga4Dau.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+        { label: isOwnMetric ? "DAU (오늘·앱+웹)" : "DAU (오늘·GA4)", value: activeSrc.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
+        { label: isOwnMetric ? "WAU (7일·앱+웹)" : "WAU (7일·GA4)", value: activeSrc.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
+        { label: isOwnMetric ? "MAU (30일·앱+웹)" : "MAU (30일·GA4)", value: activeSrc.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
       ]
     : [];
 
