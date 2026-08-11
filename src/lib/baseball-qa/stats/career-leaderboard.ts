@@ -4,6 +4,7 @@ import {
   SERVED_BATTER_FULL_ENTRY_IDS,
 } from "./served-record";
 import { STATS_STALE_MS, type SeasonRecordRow } from "./season-record";
+import { canonicalKboId } from "@/lib/utils/resolve-player";
 
 const CAREER_SOURCE_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx";
 
@@ -38,20 +39,20 @@ export type CareerLeaderboardFetcher = (
   now?: Date,
 ) => Promise<CareerLeaderboardAnswer | null>;
 
-/** 첫 수직 슬라이스: 공식 통산 순위 질문 중 **단일 1위**만 닫힌 구조로 잡는다.
+/** 첫 수직 슬라이스: 공식 통산 순위 질문 중 **단일 1위 positive grammar**만 지원한다.
  *
- * ⚠️ `1위부터 10위까지` 같은 범위형은 `includes("1위")` 에 걸려 *1위 한 명만* 오답으로
- * 나간다(삼순 1차 NO-GO). Top N 은 이 슬라이스 범위 밖 — 범위·복수 순위 흔적이 하나라도
- * 보이면 null 로 fail-close 해 history_hold 로 보낸다. */
+ * 범위형 표현을 하나씩 denylist에 더하면 `최다 두 명` 같은 새 표현이 계속 뚫린다(삼순 3차
+ * NO-GO). 그래서 지원 문법 자체를 ① `1위[는/가] 누구/알려` 또는 ② `최다/선두 ... 누구/누가`
+ * 두 구조로 닫고, 그 밖의 모든 표현은 Top N 슬라이스가 열릴 때까지 history_hold로 보낸다. */
 export function resolveCareerLeaderboardIntent(question: string): CareerLeaderboardIntent | null {
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
   const temporal = ["통산", "역대", "커리어", "누적"].some((word) => normalized.includes(word));
-  const rankAsk = normalized.includes("1위") || normalized.includes("최다") || normalized.includes("선두");
-  if (!temporal || !rankAsk || !normalized.includes("안타")) return null;
-  // 범위·복수 순위 요청 폐쇄: 1 이외의 `N위` 토큰 또는 범위 표지가 있으면 단일 1위 질문이 아니다.
-  const rankTokens = normalized.match(/\d+위/g) ?? [];
-  if (rankTokens.some((token) => token !== "1위")) return null;
-  if (/부터|까지|사이|상위|톱|top\d*|순위권|랭킹|누구누구|몇명|\d+(?:명|개|선수)|~|-\d+위/.test(normalized)) return null;
+  if (!temporal || !normalized.includes("안타")) return null;
+
+  const explicitFirst = /1위(?:는|가|를)?(?:누구|누가|누군|알려)/.test(normalized) || /1위[?？]?$/.test(normalized);
+  // `최다 두 명`처럼 leader와 의문사 사이에 수량어가 끼면 이 positive grammar와 불일치한다.
+  const singularLeader = /(?:최다|선두)(?:안타)?(?:는|가|를)?(?:누구|누가|누군)/.test(normalized);
+  if (!explicitFirst && !singularLeader) return null;
   return { metric: "hits", label: "안타" };
 }
 
@@ -96,13 +97,14 @@ export function resolveCareerLeaderboard(
   }
   if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => currentById.has(id))) return null;
   const ranked = snapshot.rows.map((base) => {
-    const current = currentById.get(base.kboId);
+    const canonicalId = canonicalKboId(base.kboId);
+    const current = currentById.get(canonicalId);
     if (current && current.name !== base.name) return null;
     // delta 는 위 루프에서 원타입 검증을 통과한 값만 온다 — 이중 가드를 두면
     // mutation 이 서로를 가려 검출력이 0이 된다(단일 권위 가드 원칙).
     const delta = current == null ? 0 : (current[intent.metric] as number);
     return {
-      kboId: base.kboId,
+      kboId: canonicalId,
       name: base.name,
       team: (current?.team as string | null | undefined) || base.team,
       total: base[intent.metric] + delta,

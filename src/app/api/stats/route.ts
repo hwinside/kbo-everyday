@@ -9,7 +9,7 @@ import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
-import { mergeFullEntry } from "@/lib/stats/full-entry";
+import { mergeFullEntry, oldestFullEntryTimestamp } from "@/lib/stats/full-entry";
 import {
   fetchNaverPlayerStats,
   type NaverPlayerStat,
@@ -606,6 +606,18 @@ export async function GET(req: NextRequest) {
       stats = applyRunnerStats(stats, current.runnerMap);
     }
     const now = new Date().toISOString();
+    const currentUpdatedAt = current.runnerSource === "static-fallback"
+      ? current.runnerUpdatedAt
+      : now;
+    const staticGeneratedAt = statsType === "pitcher"
+      ? statsMeta.pitchersGeneratedAt
+      : statsMeta.battersGeneratedAt;
+    // full=1은 live 목록에 static 비규정 엔트리를 합친 응답이다. runner가 live여도
+    // static 생성시각을 숨기고 `now`만 내보내면 봇의 stale 가드가 우회된다.
+    const updatedAt = full
+      ? oldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])
+      : currentUpdatedAt;
+    if (!updatedAt) throw new Error("stats response has invalid component freshness");
     const result: StatsResult = {
       stats,
       type,
@@ -617,10 +629,7 @@ export async function GET(req: NextRequest) {
             ? "live+static-runner-fallback"
             : "live",
       // 혼합 응답은 가장 오래된 구성요소 시각을 대표 freshness로 노출한다.
-      updatedAt:
-        current.runnerSource === "static-fallback"
-          ? current.runnerUpdatedAt
-          : now,
+      updatedAt,
       ...(current.runnerSource
         ? {
             runnerSource: current.runnerSource,

@@ -18,6 +18,7 @@
  *  4. 길이 계약: RAG(선수·구단·뉴스) 320 + 성의 지시, generic 320 + 성의 지시.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   answerQuestion,
   routeQuestion,
@@ -36,6 +37,8 @@ import {
   validateServedBatterPayload,
 } from "../../src/lib/baseball-qa/stats/served-record";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
+import { oldestFullEntryTimestamp } from "../../src/lib/stats/full-entry";
+import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 import {
   RAG_ANSWER_MAX_CHARS,
   RAG_OFFICIAL_ANSWER_MAX_CHARS,
@@ -138,6 +141,32 @@ check("P0: /api/stats envelope type/count + known full-entry ID coverage 계약"
   assert.equal(validateServedBatterPayload({ stats: rows.slice(0, 100), type: "batter", count: 100 }), null, "임의 100행");
   const missingKnownId = rows.filter((row) => row.kboId !== SERVED_BATTER_FULL_ENTRY_IDS[0]);
   assert.equal(validateServedBatterPayload({ stats: missingKnownId, type: "batter", count: missingKnownId.length }), null, "known ID 누락");
+  // 운영 실형태: static 숫자 54400과 full 응답 FP006은 같은 선수여야 coverage가 닫힌다.
+  assert.equal(canonicalKboId("54400"), "FP006");
+  assert.ok(SERVED_BATTER_FULL_ENTRY_IDS.includes("FP006"));
+  assert.ok(!SERVED_BATTER_FULL_ENTRY_IDS.includes("54400"));
+});
+
+check("P0: baseline 숫자 외국인 ID와 current canonical 영문 ID를 같은 선수로 결합", () => {
+  const snapshot = makeBaselineSnapshot();
+  snapshot.rows[0] = { kboId: "54400", name: "외국인표본", team: "팀", hits: 3000 };
+  const current = makeCurrentRows().map((row) => row.kbo_id === "FP006"
+    ? { ...row, name: "외국인표본", hits: 10 }
+    : row);
+  const result = resolveCareerLeaderboard(snapshot, current as never, "2026-08-11T14:00:00Z", { metric: "hits", label: "안타" }, new Date("2026-08-11T15:00:00Z"));
+  assert.equal(result?.leaders[0].kboId, "FP006");
+  assert.equal(result?.leaders[0].total, 3010);
+});
+
+check("P0: full=1 freshness는 live now가 아니라 static 포함 가장 오래된 구성시각", () => {
+  assert.equal(
+    oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", "2026-08-10T20:21:46.603Z"]),
+    "2026-08-10T20:21:46.603Z",
+  );
+  assert.equal(oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", undefined]), null, "구성시각 누락 fail-close");
+  const routeSource = readFileSync("src/app/api/stats/route.ts", "utf8");
+  assert.match(routeSource, /const updatedAt = full\s*\? oldestFullEntryTimestamp\(\[currentUpdatedAt, staticGeneratedAt\]\)/);
+  assert.match(routeSource, /statsMeta\.battersGeneratedAt/);
 });
 
 check("P0: current 컬럼 원타입 변형(hits '109' 문자열·필드 누락)은 fail-close", () => {
@@ -164,6 +193,7 @@ check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 
     "통산 안타 top10 알려줘",
     "통산 안타 3위 누구야?",
     "통산 안타 최다 10명 알려줘", // 삼순 2차 NO-GO exact
+    "통산 안타 최다 두 명 알려줘", // 삼순 3차 NO-GO exact
     // ⚠️ 아래 두 표본은 각각 rankTokens 폐쇄·범위 표지 폐쇄를 **단독으로** 무너뜨린다.
     // 표지 없는 복수 순위(1위 2위)는 rankTokens 만, 1위+부터는 범위 표지만 잡는다 —
     // 하나가 빠져도 다른 가드가 가려 mutation 검출력이 0이 되는 것을 막는 쌍이다.

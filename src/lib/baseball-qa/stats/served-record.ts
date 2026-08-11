@@ -1,4 +1,5 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
+import { canonicalKboId } from "@/lib/utils/resolve-player";
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import type { SeasonRecordRow } from "./season-record";
 
@@ -43,7 +44,7 @@ interface ServedStatsResponse {
  * 있어야 "리그 전체 current snapshot" 으로 인정한다(삼순 #1159 2차 NO-GO).
  */
 export const SERVED_BATTER_FULL_ENTRY_IDS: readonly string[] = Object.freeze(
-  (batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),
+  (batterStats2026 as Array<Record<string, unknown>>).map((row) => canonicalKboId(row.kboId as string | number | null)),
 );
 
 /** `/api/stats?type=batter&full=1` envelope + known full-entry ID coverage 계약. */
@@ -54,7 +55,7 @@ export function validateServedBatterPayload(payload: ServedStatsResponse): Array
   const ids = new Set<string>();
   for (const row of rows) {
     const id = typeof row.kboId === "string" || typeof row.kboId === "number"
-      ? String(row.kboId)
+      ? canonicalKboId(row.kboId)
       : "";
     if (!id || ids.has(id)) return null;
     ids.add(id);
@@ -106,8 +107,8 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
       ...row,
       war: calcBatterSaberFromStats(row)?.WAR ?? null,
       wrc_plus: calcBatterSaberFromStats(row)?.wRC_plus ?? null,
-      player_key: String(row.kboId ?? ""),
-      kbo_id: String(row.kboId ?? ""),
+      player_key: canonicalKboId(row.kboId as string | number | null),
+      kbo_id: canonicalKboId(row.kboId as string | number | null),
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
       updated_at: servedAt,

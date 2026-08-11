@@ -14,6 +14,8 @@ const CONSTANTS = "src/lib/constants/baseball-genius.ts";
 const PRIZE = "src/lib/baseball-qa/awards/series-prize.ts";
 const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
 const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
+const FULL_ENTRY = "src/lib/stats/full-entry.ts";
+const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
   {
@@ -98,6 +100,34 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
+    name: "m6e static numeric→canonical ID 정규화 제거 — FP006 운영 payload 상시 거절",
+    file: SERVED_RECORD,
+    from: '(batterStats2026 as Array<Record<string, unknown>>).map((row) => canonicalKboId(row.kboId as string | number | null)),',
+    to: '(batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6f baseline numeric→canonical ID 정규화 제거 — 외국인 current와 결합 실패",
+    file: CAREER_LEADERBOARD,
+    from: 'const canonicalId = canonicalKboId(base.kboId);',
+    to: 'const canonicalId = base.kboId;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6g oldest component freshness 계산 반전 — full=1이 최신 now로 stale 우회",
+    file: FULL_ENTRY,
+    from: 'item.ms < oldest.ms ? item : oldest',
+    to: 'item.ms > oldest.ms ? item : oldest',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6h route static 생성시각 결속 제거 — full=1이 live now만 노출",
+    file: STATS_ROUTE,
+    from: 'oldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])',
+    to: 'oldestFullEntryTimestamp([currentUpdatedAt, currentUpdatedAt])',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
     name: "m7 current 원타입 계약 제거 — 문자열 '109'/필드 누락이 그대로 합산",
     file: CAREER_LEADERBOARD,
     from: `    const raw = row[intent.metric];
@@ -109,18 +139,17 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m8 범위형 폐쇄 제거 — '1위부터 10위'가 1위 한 명 오답으로 (삼순 1차 NO-GO 재현)",
+    name: "m8 단일 1위 positive grammar 제거 — 1위부터 10위가 단일답으로",
     file: CAREER_LEADERBOARD,
-    from: `  const rankTokens = normalized.match(/\\d+위/g) ?? [];
-  if (rankTokens.some((token) => token !== "1위")) return null;`,
-    to: "",
+    from: 'const explicitFirst = /1위(?:는|가|를)?(?:누구|누가|누군|알려)/.test(normalized) || /1위[?？]?$/.test(normalized);',
+    to: 'const explicitFirst = normalized.includes("1위");',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m8b 범위 표지 폐쇄 제거 — 부터/까지/상위/top 이 단일 1위로 오매칭",
+    name: "m8b 최다/선두 singular positive grammar 제거 — 최다 두 명이 단일답으로",
     file: CAREER_LEADERBOARD,
-    from: 'if (/부터|까지|사이|상위|톱|top\\d*|순위권|랭킹|누구누구|몇명|\\d+(?:명|개|선수)|~|-\\d+위/.test(normalized)) return null;',
-    to: "",
+    from: 'const singularLeader = /(?:최다|선두)(?:안타)?(?:는|가|를)?(?:누구|누가|누군)/.test(normalized);',
+    to: 'const singularLeader = normalized.includes("최다") || normalized.includes("선두");',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
