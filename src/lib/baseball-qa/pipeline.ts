@@ -672,6 +672,12 @@ export interface QaDeps {
    */
   fetchTeamEntry?: (teamId: number) => Promise<{ snapshotDate: string; players: string[] } | null>;
   /**
+   * 오늘(KST) 경기별 선발 매치업 조회 — `/api/games` 가 쓰는 같은 소스
+   * (`fetchGamesUserFacing`). 미주입이면 이 경로 자체가 비활성이라 기존 동작 그대로다.
+   * 조회 실패는 throw 로 구분해 던진다 — "경기 없음"으로 둥갑하면 장애 중 거짓 안내가 나간다.
+   */
+  fetchTodayStarters?: (dateYyyymmdd: string) => Promise<TodayGameStarters[]>;
+  /**
    * 최근 기사 근거 경로 ON/OFF. 미지정이면 꺼진 것으로 본다 — 새 경로는 명시적으로 켜야 한다.
    */
   enableNewsRag?: boolean;
@@ -2578,6 +2584,97 @@ export function renderTeamEntryAnswer(
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
   "지금은 당일 1군 등록 명단을 확인할 수 없어요. 잠시 후 다시 물어봐 주세요.";
 
+// ── 오늘 선발 매치업 (2026-08-11 하린아빠 제보 ① · 삼순 A안 확정) ────────────────
+//
+// `오늘 선발 투수 알려줘` 가 llm_scope_gate → generic LLM → unsure("질문을 이해하지
+// 못했어요") 로 끕났다(production 실측). 앱은 `/api/games` 로 경기별 선발을 이미
+// 서빙하고 있다 — 보유한 구조화 데이터를 봇만 못 답하는 건 거짓말이다(삼순 B안 반려 근거).
+//
+// 계약 (1군 명단과 같은 축):
+//  · 직접 렌더 — 정본 데이터를 그대로 보여주는 질문에 생성 모델을 태우지 않는다
+//    (LLM·RAG·cache 0). match_path 는 정본 조회와 같은 칸(kbo_structured).
+//  · 판정은 열린 의도가 아니라 **full-string 폐쇄 문법** — `isTeamEntryQuestion` 과 동일
+//    방식. 지원 범위는 (오늘|금일) + 선발 조합뿐이고(A′ 폐쇄집합 축소), `어제 선발`·
+//    `다음주 로테이션`·`선발 잘 던질까` 는 이 경로가 소유하지 않는다(기존 경로로 양보).
+//  · 미발표·경기 없음은 `불확실` 이 아니라 사실대로 안내한다(삼순 계약).
+//  · 조회 실패는 "경기 없음"으로 둥갑하지 않는다 — 재시도 가능한 실패로 알린다.
+
+/** `fetchTodayStarters` 가 돌려주는 경기별 선발 정보 (정본: /api/games 와 같은 소스). */
+export interface TodayGameStarters {
+  awayName: string;
+  homeName: string;
+  awayStarterName: string;
+  homeStarterName: string;
+  time: string;
+  stadium: string;
+  status: string;
+}
+
+/**
+ * 오늘 선발 질문 판정 — full-string 폐쇄 문법 (열린 의도 판정 금지, M90 계약).
+ *
+ * 구단 언급을 지운 잔여 문장이 `(오늘|금일) + 선발 + (명사|요청 꼬리)?` 로만 분해될 때만
+ * 참이다. 시점어(오늘|금일)는 필수다 — 무일자 `선발 누구야` 까지 열면 `어제 선발`·
+ * `다음 경기 선발` 과의 경계를 어미 열거로 그어야 한다(발산). 오늘 밖 시점은 전부
+ * 기존 경로가 소유한다.
+ */
+export function resolveTodayStartersIntent(
+  question: string,
+): { team: string | null } | null {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/[\s?!.~,]+/g, "");
+  if (!/(오늘|금일)/.test(compact) || !compact.includes("선발")) return null;
+  let rest = compact;
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    for (const word of [canonical.toLowerCase().replace(/\s+/g, ""), ...shorts, ...nicks]) {
+      rest = rest.split(word).join("");
+    }
+  }
+  const grammar =
+    /^(오늘|금일)(의)?(경기)?(우리팀|우리)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$/;
+  if (!grammar.test(rest)) return null;
+  return { team: resolveMentionedTeam(question) };
+}
+
+export const TODAY_NO_GAMES_ANSWER =
+  "오늘은 예정된 KBO 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!";
+export const STARTER_TBD = "미발표";
+
+/** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
+function teamMatchesGameName(canonical: string, gameName: string): boolean {
+  const entry = TEAM_ALIASES.find((team) => team.canonical === canonical);
+  if (!entry) return false;
+  const accepted = new Set(
+    [canonical, ...entry.shorts].map((word) => word.normalize("NFKC").toLowerCase()),
+  );
+  return accepted.has(gameName.normalize("NFKC").toLowerCase());
+}
+
+/**
+ * 오늘 선발 답변 직접 렌더. 미발표 선발은 지어내지 않고 `미발표` 로 표기한다 —
+ * 빈 문자열을 숨기면 "발표됐는데 봇이 모른다"와 "아직 발표 안 됨"을 유저가 구분 못 한다.
+ */
+export function renderTodayStartersAnswer(
+  games: TodayGameStarters[],
+  team: string | null,
+): string {
+  const rows = team === null
+    ? games
+    : games.filter((game) =>
+        teamMatchesGameName(team, game.awayName) || teamMatchesGameName(team, game.homeName));
+  if (rows.length === 0) {
+    return team === null
+      ? TODAY_NO_GAMES_ANSWER
+      : `오늘은 ${team} 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!`;
+  }
+  const lines = rows.map((game) => {
+    const away = game.awayStarterName.trim() || STARTER_TBD;
+    const home = game.homeStarterName.trim() || STARTER_TBD;
+    return `· ${game.awayName} ${away} vs ${game.homeName} ${home} (${game.time} ${game.stadium})`;
+  });
+  const header = team === null ? "오늘의 선발 매치업이에요 ⚾" : `오늘 ${team} 경기 선발이에요 ⚾`;
+  return `${header}\n${lines.join("\n")}`;
+}
+
 /**
  * 1군 명단 스냅샷 신선도 상한 (일). 우천·폭염 취소로 며칠 비는 것은 정상이지만,
  * 그 이상 묵은 스냅샷을 "당일 등록" 으로 내보내면 기준일 표기가 있어도 오답에 가깝다 —
@@ -3641,6 +3738,36 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ② tier2 kill-switch(enableTeamRag)와 **분리**돼 있다 — 구조화 정본 조회는 RAG 가
   //   아니므로 TEAM_RAG_DISABLED=1 이어도 살아 있어야 한다. 게이트는 배선(fetchTeamEntry)
   //   존재 여부뿐이다.
+  // ── 오늘 선발 매치업 → 직접 렌더 (2026-08-11 ① · 삼순 A안) ──────────────────
+  // 위치 계약: 1군 명단 블록과 같은 이유로 **news RAG 보다 앞** — `오늘` 은 최신성
+  // 어휘라 기사 경로가 선점하는데, 선발의 정본은 기사가 아니라 경기 데이터다.
+  // 선수 지문 질문(`임찬규 오늘 선발이야?`)은 선수 경로 소유 — !enabledPlayerCandidate.
+  const startersIntent =
+    deps.fetchTodayStarters && !enabledPlayerCandidate
+      ? resolveTodayStartersIntent(question)
+      : null;
+  if (startersIntent && deps.fetchTodayStarters) {
+    const settleStarters = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    const now = deps.now ? new Date(deps.now()) : new Date();
+    // KST 당일 — UTC 기준으로 날짜를 자르면  00시~09시 사이에 전날 경기가 "오늘"이 된다.
+    const kst = new Date(now.getTime() + 9 * 3_600_000);
+    const dateYyyymmdd = kst.toISOString().slice(0, 10).replace(/-/g, "");
+    let games: TodayGameStarters[];
+    try {
+      games = await deps.fetchTodayStarters(dateYyyymmdd);
+    } catch {
+      // 조회 실패를 "경기 없음"으로 둥갑하지 않는다 (team_record 와 같은 계약).
+      return settleStarters(SYSTEM_ERROR_ANSWER, "error");
+    }
+    return settleStarters(
+      renderTodayStartersAnswer(games, startersIntent.team),
+      "kbo_structured",
+    );
+  }
+
   const entryQuestionCandidate =
     deps.fetchTeamEntry && !enabledPlayerCandidate && isTeamEntryQuestion(question)
       ? resolveRagTeamCandidate(question)
