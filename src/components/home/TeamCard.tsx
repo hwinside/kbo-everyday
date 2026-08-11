@@ -266,7 +266,9 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
     return () => { cancelled = true; };
   }, [team.id, refreshNonce]);
 
-  if (loaded && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
+  // 경기 링크는 fan-out 결과와 독립이다. team-card 가 빈 응답/실패여도 gameSlot 이 있으면
+  // 카드 자체를 유지해 MY TEAM 경기 진입 동선을 없애지 않는다.
+  if (loaded && !gameSlot && !data?.standing && !data?.nextGame && !data?.recentForm?.length) return null;
 
   const streak = formatStreak(data?.standing?.streak ?? null);
   const st = data?.standing;
@@ -283,6 +285,10 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
         <ChevronRight size={18} className="text-text-tertiary -ml-1" />
         <span className="ml-auto text-[10px] font-bold text-white px-1.5 py-0.5 rounded-md" style={{ background: accent }}>MY TEAM</span>
       </Link>
+
+      {/* 경기 링크는 TeamCard fan-out(순위·선수·로스터) 완료와 무관한 홈 초기 데이터다.
+          loaded 바깥에서 먼저 렌더해 MY TEAM → 경기상세 클릭 가능 시점을 늦추지 않는다. */}
+      {gameSlot && <div className="mb-4 border-b border-border/40 pb-3.5">{gameSlot}</div>}
 
       {!loaded ? (
         <div className="h-24 animate-pulse rounded-xl bg-bg-secondary" />
@@ -319,8 +325,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             </div>
           )}
 
-          {/* 2. 경기 카드 (임베드) */}
-          {gameSlot && <div className="mt-4 border-t border-border/40 pt-3.5">{gameSlot}</div>}
+          {/* 2. 경기 카드는 TeamCard fan-out과 무관하므로 loaded 바깥에서 먼저 렌더 */}
 
           {/* 3. 그래프 — 좌(전체높이) 순위변동(Y축 1~10위 라벨·빗금) + 우(상하) 타율/방어율 */}
           {rg && (
