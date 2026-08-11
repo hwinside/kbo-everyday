@@ -63,6 +63,11 @@ import {
 } from "./stats/career-series";
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
+  composeCareerLeaderboardAnswer,
+  resolveCareerLeaderboardIntent,
+  type CareerLeaderboardFetcher,
+} from "./stats/career-leaderboard";
+import {
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
   resolveTeamRecord,
@@ -544,6 +549,8 @@ export type QuestionRoute =
   // ⚠️ 이 라벨로는 로그를 쓰지 않는다 — 성공은 `kbo_structured`, 실패는 `history_hold`/`error` 로
   // 확정된다. 전부 기존 `match_path` 허용값이라 DB CHECK 확장·migration 이 필요 없다.
   | "team_record"
+  // KBO 공식 통산 기준선 + 당해 시즌 스냅샷으로 결정론 조회한다. 이 라벨 자체로는 로그를 쓰지 않는다.
+  | "career_leaderboard"
   // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
   | "name_suggest"
   | "baseball_rule_term"
@@ -735,6 +742,8 @@ export interface QaDeps {
    * 미주입이면 해당 질문은 RECORD_MISSING 으로 fail-close.
    */
   fetchCareerRecord?: CareerRecordFetcher;
+  /** 리그 통산 순위 — 전년도 말 공식 기준선 + 앱의 당해 시즌 최종 스냅샷. */
+  fetchCareerLeaderboard?: CareerLeaderboardFetcher;
   /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
@@ -2217,12 +2226,11 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
-  // ── 리그 통산·역대 순위 질문 — fail-close 유지 (삼순 2026-08-10 NO-GO) ──
-  // generic LLM 이름 단답은 stale 오답(모델이 확신하는 옛 1위)을 못 막고, KBO 공식
-  // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
-  // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
+  // ── 리그 통산·역대 순위 질문 — 공식 구조화 조회 위임 ──
+  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음"
+  // 전제는 오판이었다. generic LLM 은 여전히 금지하고, 닫힌 지표 intent 만 구조화 조회한다.
   if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "history_hold";
+    return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
@@ -3642,6 +3650,25 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `/api/team-records` 에 LG 팀타율 .270 · 홈런 92 · 도루 65 가 이미 서빙된다.
   // 앱 순위탭·팀기록탭이 그대로 보여주는 값을 봇만 "못 답한다"고 하는 건 거짓말이다.
   //
+  // ── KBO 리그 통산 순위 (전년도 말 기준선 + 당해 시즌 증분) ───────────────────
+  if (route === "career_leaderboard") {
+    const intent = resolveCareerLeaderboardIntent(question);
+    const settleCareerLeaderboard = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    if (!intent || !deps.fetchCareerLeaderboard) {
+      return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
+    }
+    try {
+      const result = await deps.fetchCareerLeaderboard(intent, deps.now ? new Date(deps.now()) : new Date());
+      if (!result) return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
+      return settleCareerLeaderboard(composeCareerLeaderboardAnswer(result), "kbo_structured");
+    } catch {
+      return settleCareerLeaderboard(SYSTEM_ERROR_ANSWER, "error");
+    }
+  }
+
   // 선수 기록과 **같은 계약**으로 답한다 — 조회한 원값 그대로, 계산·추정 없음,
   // 없으면 답하지 않음, LLM 미경유. 조회 실패는 static 폴백 없이 fail-close 한다.
   if (route === "team_record") {

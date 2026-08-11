@@ -12,17 +12,32 @@ const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const RETRIEVE = "src/lib/baseball-qa/rag/retrieve.ts";
 const CONSTANTS = "src/lib/constants/baseball-genius.ts";
 const PRIZE = "src/lib/baseball-qa/awards/series-prize.ts";
+const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
 
 const MUTATIONS = [
   {
-    name: "m1 리더보드 fail-close 제거 — generic LLM 위임 부활 (stale 이름 오답 통로)",
+    name: "m1 통산 구조화 조회 제거 — exact 질문이 다시 hold 로 회귀",
     file: PIPELINE,
     from: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "history_hold";
+    return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
   }`,
     to: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "llm_scope_gate";
+    return "history_hold";
   }`,
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1b 올시즌 증분 제거 — 작년 1위가 그대로 나가는 stale 회귀",
+    file: CAREER_LEADERBOARD,
+    from: "total: base[intent.metric] + delta,",
+    to: "total: base[intent.metric],",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1c stale 가드 제거 — 하루 넘은 올시즌 값으로 최신 통산을 단정",
+    file: CAREER_LEADERBOARD,
+    from: "now.getTime() - updatedMs > STATS_STALE_MS || ",
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

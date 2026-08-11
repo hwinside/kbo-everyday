@@ -1,18 +1,18 @@
 /**
- * 리그 통산·역대 순위 fail-close + 범위밖 denylist 인물 축 삭제 + 답변 성의(길이) 계약.
+ * 리그 통산·역대 순위 공식 구조화 조회 + 범위밖 denylist 인물 축 삭제 + 답변 성의(길이) 계약.
  *
  * 배경 (2026-08-10 하린아빠 캡처 + 삼순 NO-GO):
  *  - `통산 안타 기록 1위는 누구야?` 를 generic LLM 에 위임하면 숫자 가드를 피해도
  *    **오래된 이름을 확신해서 내보내는 오답**(손아섭 — 실제 1위는 최형우)을 못 잡는다.
- *    KBO 공식 웹에는 대조할 통산 누적 리더보드 정본도 없다 → **fail-close(hold) 유지**.
- *    기준일 있는 공식 큐레이션/물질화 테이블은 별도 트랙이다.
+ *    2026-08-11 실측으로 `BasicTotal.aspx` 통산 정본이 확인됐다. 전년도 말 기준선에
+ *    당해 시즌 스냅샷을 더해 현재 통산값을 결정론적으로 계산한다.
  *  - `작년 LG우승에 가장 큰 기여를 한 사람은 누구야?` 가 denylist `누구` 축에 걸려
  *    전면 차단 → 인물·평가·역사 축을 denylist 에서 삭제(범위 판정은 LLM 위임).
  *  - `맛자욱 별명` 단답 → tier1·tier2·generic 전 경로 길이 계약: 유형별 목표(단순=짧게,
  *    이유·배경=충분히) + 안전 상한(RAG 320 / generic 320).
  *
  * 고정하는 계약:
- *  1. 리더보드 질문(시점어+정체성 의문+지표, 선수·구단 미지명)은 history_hold fail-close.
+ *  1. 지원 리더보드 질문은 kbo_structured, 미지원 지표는 history_hold fail-close.
  *  2. 인물·평가·역사 의문사는 결정론 차단이 아니라 LLM 범위판정 위임.
  *  3. 진짜 범위밖 어휘(맛집·날씨·추천…)는 여전히 차단.
  *  4. 길이 계약: RAG(선수·구단·뉴스) 320 + 성의 지시, generic 320 + 성의 지시.
@@ -26,6 +26,11 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
+import {
+  composeCareerLeaderboardAnswer,
+  resolveCareerLeaderboard,
+  resolveCareerLeaderboardIntent,
+} from "../../src/lib/baseball-qa/stats/career-leaderboard";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -46,14 +51,16 @@ const PLAYERS = [
   { kboId: "72443", name: "최형우", team: "삼성", position: "외야수" },
 ] as unknown as PlayerRef[];
 
-// ── 1. 리더보드 = fail-close (generic LLM 위임 금지, 삼순 2026-08-10 NO-GO) ──
-check("리더보드 질문은 hold 로 닫힌다 — stale 이름 오답을 LLM 에 맡기지 않는다", () => {
-  for (const q of [
-    "통산 안타 기록 1위는 누구야?",
-    "역대 홈런 1위 누구야?",
-    "통산 최다 안타는 누가 갖고 있어?",
-    "역대 최고 타율은 누구야?", // 단일시즌 최고기록 정본 존재 축 — generic 강등 금지
-  ]) {
+// ── 1. 리더보드 = 공식 구조화 조회, 미지원 지표는 fail-close ──
+check("통산 안타 1위는 공식 구조화 조회로 위임한다", () => {
+  for (const q of ["통산 안타 기록 1위는 누구야?", "통산 최다 안타는 누가 갖고 있어?"]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.deepEqual(resolveCareerLeaderboardIntent(q), { metric: "hits", label: "안타" });
+    assert.equal(routeQuestion(q, [], PLAYERS), "career_leaderboard", q);
+  }
+});
+check("아직 스냅샷 계약이 없는 통산 지표는 LLM 대신 hold 유지", () => {
+  for (const q of ["역대 홈런 1위 누구야?", "역대 최고 타율은 누구야?"]) {
     assert.equal(isCareerLeaderboardAsk(q), true, q);
     assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
   }
@@ -74,6 +81,43 @@ check("진짜 범위밖 어휘는 여전히 차단된다 (denylist 축소 방향
   for (const q of ["LG 경기장 근처 맛집 추천해줘", "오늘 저녁 메뉴 추천", "날씨 어때?"]) {
     assert.equal(routeQuestion(q, [], []), "blocked", q);
   }
+});
+
+check("기준선 + 올시즌 증분이 현재 통산 1위를 뒤집어 계산한다", () => {
+  const rows = Array.from({ length: 100 }, (_, index) => ({
+    kboId: String(70000 + index), name: `선수${index}`, team: "팀", hits: Math.max(0, 2500 - index),
+  }));
+  rows[0] = { kboId: "77532", name: "손아섭", team: "두산", hits: 2618 };
+  rows[1] = { kboId: "72443", name: "최형우", team: "삼성", hits: 2586 };
+  const snapshot = {
+    schemaVersion: 1, throughSeason: 2025, rowCount: rows.length, rows,
+    source: { url: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx", seasonValue: "9999", sortKey: "HIT_CN", order: "DESC" },
+  };
+  const result = resolveCareerLeaderboard(snapshot, [
+    { kbo_id: "77532", player_key: "77532", name: "손아섭", team: "두산", hits: 35, updated_at: "2026-08-11T14:00:00Z" },
+    { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", hits: 109, updated_at: "2026-08-11T14:00:00Z" },
+  ], "2026-08-11T14:00:00Z", { metric: "hits", label: "안타" }, new Date("2026-08-11T15:00:00Z"));
+  assert.equal(result?.leaders[0].name, "최형우");
+  assert.equal(result?.leaders[0].total, 2695);
+  assert.ok(composeCareerLeaderboardAnswer(result!).includes("2,695안타"));
+});
+check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", () => {
+  const intent = { metric: "hits", label: "안타" } as const;
+  const rows = Array.from({ length: 100 }, (_, index) => ({
+    kboId: String(70000 + index), name: `선수${index}`, team: "팀", hits: 2500 - index,
+  }));
+  const valid = {
+    schemaVersion: 1, throughSeason: 2025, rowCount: rows.length, rows,
+    source: { url: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx", seasonValue: "9999", sortKey: "HIT_CN", order: "DESC" },
+  };
+  assert.equal(resolveCareerLeaderboard({}, [], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "empty");
+  assert.equal(resolveCareerLeaderboard(valid, [], "2026-08-09T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "stale");
+  assert.equal(resolveCareerLeaderboard(valid, [
+    { kbo_id: "70000", player_key: "70000", name: "선수0", team: "팀", hits: 1, updated_at: "2026-08-11T14:00:00Z" },
+    { kbo_id: "70000", player_key: "70000", name: "선수0", team: "팀", hits: 1, updated_at: "2026-08-11T14:00:00Z" },
+  ], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "duplicate identity");
+  const swapped = { ...valid, rows: rows.map((row, index) => index === 0 ? { ...row, hits: "2500" } : row) };
+  assert.equal(resolveCareerLeaderboard(swapped, [], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "H column type swap");
 });
 
 check("무회귀: 선수 지명·시점어 없는 질문은 리더보드가 아니다", () => {
@@ -144,6 +188,26 @@ function ragDeps(llmAnswer: string): { deps: QaDeps; counters: { llm: number } }
 }
 const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
+
+checkAsync("E2E: 캡처 exact가 history_hold/LLM이 아니라 kbo_structured로 종결된다", async () => {
+  let genericLlm = 0;
+  const deps = {
+    loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
+    getCache: async () => null, setCache: async () => {},
+    callLlm: async () => { genericLlm++; throw new Error("통산 정본 질문은 LLM 금지"); },
+    fetchCareerLeaderboard: async () => ({
+      metric: "hits", label: "안타", asOf: "2026-08-11T14:00:00Z", baselineThroughSeason: 2025,
+      sourceUrl: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
+      leaders: [{ kboId: "72443", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
+    }),
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+  } as unknown as QaDeps;
+  const result = await answerQuestion("u1", "통산 안타 기록 1위는 누구야?", deps);
+  assert.equal(result.source, "kbo_structured");
+  assert.ok(result.answer.includes("최형우(삼성)"));
+  assert.ok(result.answer.includes("2,695안타"));
+  assert.equal(genericLlm, 0);
+});
 
 const FULL_ANSWER =
   "맛자욱이라는 별명은 먹방 예능에서 보여준 남다른 먹성 때문에 팬들이 붙여준 거예요. " +

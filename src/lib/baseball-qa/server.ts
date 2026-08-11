@@ -59,6 +59,7 @@ import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
 import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
+import { createCareerLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-leaderboard";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
@@ -690,6 +691,8 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
      * draft `lblDraft` 와 같은 축 — 여기도 seam factory(게이트가 실제 배포 함수 실행).
      */
     fetchCareerRecord: createCareerRecordFetcher(),
+    /** 리그 통산 순위 — 2025년 말 공식 기준선 + 앱의 2026 최종 스냅샷. */
+    fetchCareerLeaderboard: createCareerLeaderboardFetcher(),
     /**
      * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
      *

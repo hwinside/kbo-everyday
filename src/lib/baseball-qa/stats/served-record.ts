@@ -44,7 +44,13 @@ interface ServedStatsResponse {
  * 실패·비정상 응답은 예외로 던진다. 호출부가 "조회 실패"로 처리해 답변하지 않는다 —
  * 여기서 static 으로 폴백하면 위에 적은 4 vs 0 불일치가 그대로 되살아난다.
  */
-export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {
+export interface ServedBatterSnapshot {
+  rows: SeasonRecordRow[];
+  updatedAt: string;
+}
+
+/** 앱의 최종 타자 스냅샷을 한 번만 읽는다. 선수별·리그 통산 조회가 같은 정본을 공유한다. */
+export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
   let payload: ServedStatsResponse;
@@ -61,18 +67,14 @@ export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecord
 
   const rows = Array.isArray(payload.stats) ? payload.stats : null;
   if (!rows) throw new Error("served stats payload has no stats array");
-  // 응답 시각이 없으면 stale 판정을 할 수 없다 — 신선도 불명인 값을 최신인 척 답하지 않는다.
   const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
   if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
     throw new Error("served stats payload has no usable updatedAt");
   }
-
-  // 2행 이상이면 그대로 넘겨 `resolveSeasonRecord` 가 inconsistent 로 fail-close 한다.
-  return rows
-    .filter((row) => String(row.kboId ?? "") === kboId)
-    .map((row) => ({
+  return {
+    updatedAt: servedAt,
+    rows: rows.map((row) => ({
       ...row,
-      // WAR·wRC+는 저장 칼럼이 아니라 **화면과 같은 공용 helper**로 파생한다.
       war: calcBatterSaberFromStats(row)?.WAR ?? null,
       wrc_plus: calcBatterSaberFromStats(row)?.wRC_plus ?? null,
       player_key: String(row.kboId ?? ""),
@@ -80,7 +82,14 @@ export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecord
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
       updated_at: servedAt,
-    })) as SeasonRecordRow[];
+    })) as SeasonRecordRow[],
+  };
+}
+
+export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {
+  const snapshot = await fetchServedBatterSnapshot();
+  // 2행 이상이면 그대로 넘겨 `resolveSeasonRecord` 가 inconsistent 로 fail-close 한다.
+  return snapshot.rows.filter((row) => String(row.kbo_id ?? "") === kboId);
 }
 
 /**
