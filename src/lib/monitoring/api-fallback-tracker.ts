@@ -246,10 +246,12 @@ export async function trackApiDegradation(
     const row = firstRow<{ should_send: boolean; attempt_token: string | null }>(data);
     if (!row || row.should_send !== true || !row.attempt_token) return;
 
-    // 이 인스턴스가 전역 claim 승자(= 경보 담당) → 회복 시 복구 알림 1회 대상으로 등록.
-    // 전송 실패해도 outbox/drainer가 경보를 이어받으므로 등록은 should_send 기준.
-    pendingRecoveryNotice.add(apiName);
-    await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
+    // 복구 알림 등록은 반드시 **경보 전송 confirm 이후** (삼순 Blocker 2).
+    // should_send 시점에 등록하면 전송 실패 → 복구 시 ✅가 먼저 나가고 drainer의
+    // 🚨가 나중에 가는 순서 역전이 생긴다. 전송 실패분은 outbox/drainer가 이어받지만
+    // 그 경우 복구 알림은 생략된다(best-effort 계약 유지).
+    const delivered = await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
+    if (delivered) pendingRecoveryNotice.add(apiName);
   } catch (err) {
     console.error(
       "[API Degradation] unexpected error:",
@@ -310,8 +312,8 @@ async function deliverAndSettle(
   options: { statusCode?: number; errorMessage?: string },
   policy: DegradationAlertPolicy,
   token: string,
-): Promise<void> {
-  await settleAttempt(apiName, reason, options, policy, token);
+): Promise<boolean> {
+  return settleAttempt(apiName, reason, options, policy, token);
 }
 
 /**

@@ -1338,7 +1338,12 @@ export async function GET(req: NextRequest) {
     const { response, anyInningDegraded } = await shared;
     // 이 인스턴스가 직전에 경보를 보냈다면(전역 claim 승자) 복구 알림을 1회 보낸다.
     // 경보 이력이 없는 인스턴스는 in-memory 체크 1회로 즉시 반환(비용 0).
-    await markApiRecovered("naver-relay");
+    // ⚠️ degraded(last-good 대체) 200은 복구가 아니다 — 일부 이닝이 여전히
+    // 실패 중이므로 완전 정상(!anyInningDegraded)일 때만 복구로 처리한다
+    // (삼순 Blocker 1: 장애 중 ✅ 오보 방지).
+    if (!anyInningDegraded) {
+      await markApiRecovered("naver-relay");
+    }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.
     return NextResponse.json(toDeltaResponse(response, sinceInning), {
