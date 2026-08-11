@@ -991,6 +991,24 @@ function setCachedResponse(key: string, data: GameRelayResponse): void {
 }
 
 export async function GET(req: NextRequest) {
+  // 임시 진단: 내부(Node 함수발) 경유 시 edge 프록시의 실제 egress IP·리전 확인
+  // (근본원인 확정 후 제거)
+  if (req.nextUrl.searchParams.get("proxyDebug") === "1") {
+    const proxy = naverProxyBase();
+    if (!proxy) {
+      return NextResponse.json({ error: "no proxy base" }, { status: 500 });
+    }
+    const res = await fetch(`${proxy}?gameId=20260101ZZZZ0000&kind=debug`, {
+      headers: NAVER_RELAY_HEADERS,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+    const body = await res.text();
+    return new NextResponse(body, {
+      status: res.status,
+      headers: NO_STORE_HEADERS,
+    });
+  }
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json(

@@ -31,6 +31,25 @@ export async function GET(request: NextRequest) {
   if (!GAME_ID_RE.test(gameId)) {
     return NextResponse.json({ error: "invalid gameId" }, { status: 400 });
   }
+  if (kind === "debug") {
+    // 임시 진단: 이 엣지 함수 호출의 실제 egress IP·리전 확인용 (근본원인 확정 후 제거)
+    try {
+      const ipRes = await fetch("https://api64.ipify.org?format=json", {
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      const ip = (await ipRes.json()) as { ip?: string };
+      return NextResponse.json({
+        region: process.env.VERCEL_REGION ?? "unknown",
+        egressIp: ip.ip ?? null,
+      });
+    } catch {
+      return NextResponse.json({
+        region: process.env.VERCEL_REGION ?? "unknown",
+        egressIp: null,
+      });
+    }
+  }
   if (kind !== "relay" && kind !== "record") {
     return NextResponse.json({ error: "invalid kind" }, { status: 400 });
   }
