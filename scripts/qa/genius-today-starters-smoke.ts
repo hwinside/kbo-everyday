@@ -12,6 +12,7 @@
  */
 import assert from "node:assert/strict";
 import {
+  adaptTodayStarters,
   answerQuestion,
   renderTodayStartersAnswer,
   resolveTodayStartersIntent,
@@ -83,6 +84,42 @@ async function main() {
     "오늘 엘지 키움 선발 누구야",  // 복수 구단 한글 표기
   ]) {
     assert.equal(resolveTodayStartersIntent(q), null, `소유하면 안 됨: ${q}`);
+  }
+
+  // ── adapter actual: fetchGamesUserFacingWithMeta → adaptTodayStarters 다리 (삼순 2차 NO-GO) ──
+  // 손으로 만든 fixture가 아니라 **배포 어댑터 함수 자체**를 실행해 starterSourceOk 파생을 고정한다.
+  {
+    const raw = [
+      { gameId: "20260811HHOB0", awayName: "한화", homeName: "두산", awayStarterName: "왕옌청", homeStarterName: "곽빈", time: "19:00", stadium: "잠실", status: "scheduled" },
+      { gameId: "20260811KTNC0", awayName: "KT", homeName: "NC", awayStarterName: "", homeStarterName: "라일리", time: "19:00", stadium: "창원", status: "scheduled" },
+      { gameId: "20260811LTSK0", awayName: "롯데", homeName: "SSG", awayStarterName: "", homeStarterName: "", time: "18:30", stadium: "문학", status: "scheduled" },
+    ];
+    // ① KBO 조회 실패(null) → 전 경기 확인 불가. 빈 선발이 미발표로 위장될 경로가 없다.
+    {
+      const adapted = adaptTodayStarters(raw, null);
+      assert.ok(adapted.every((g) => g.starterSourceOk === false), "kboGameIds=null인데 sourceOk=true");
+      const rendered = renderTodayStartersAnswer(adapted, null);
+      assert.ok(!rendered.includes("미발표"), "소스 전체 장애가 미발표로 위장됐다");
+      assert.ok(rendered.includes("확인할 수 없어요"));
+    }
+    // ② 부분 누락: KBO 응답에 있던 경기만 true.
+    {
+      const adapted = adaptTodayStarters(raw, new Set(["20260811HHOB0", "20260811KTNC0"]));
+      assert.deepEqual(adapted.map((g) => g.starterSourceOk), [true, true, false]);
+      const rendered = renderTodayStartersAnswer(adapted, null);
+      assert.ok(rendered.includes("한화 왕옌청 vs 두산 곽빈"));
+      assert.ok(rendered.includes("KT 미발표 vs NC 라일리")); // 소스 정상 + 빈값 = 진짜 미발표
+      assert.ok(rendered.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없어요"));
+    }
+    // ③ 전체 정상 + 빈 선발 → true/미발표 (진짜 미발표는 미발표로 남는다).
+    {
+      const adapted = adaptTodayStarters(raw, new Set(raw.map((g) => g.gameId)));
+      assert.ok(adapted.every((g) => g.starterSourceOk === true));
+      const rendered = renderTodayStartersAnswer(adapted, null);
+      assert.ok(rendered.includes("KT 미발표 vs NC 라일리"));
+      assert.ok(rendered.includes("롯데 미발표 vs SSG 미발표"));
+      assert.ok(!rendered.includes("확인할 수 없어요"));
+    }
   }
 
   // ── 렌더: 원값 그대로·미발표 표기·팀 필터 ──────────────────────────

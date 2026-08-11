@@ -2655,6 +2655,39 @@ export function resolveTodayStartersIntent(
   return { team: resolveMentionedTeam(question) };
 }
 
+/**
+ * `fetchGamesUserFacingWithMeta` 결과 → TodayGameStarters 순수 어댑터 (삼순 #1147 2차: actual 테스트
+ * 대상으로 쓰기 위해 env 의존 없는 pipeline 에 둔다 — server.ts 는 이 함수에 위임만 한다).
+ *
+ * 선발 출처 가용성 규칙 (삼순 P0): Naver 선발명은 항상 빈값이므로, KBO 조회가
+ * 실패(kboGameIds === null)했거나 이 경기가 KBO 응답에 없으면(부분 누락) 빈 선발은
+ * `미발표`가 아니라 확인 불가다 — starterSourceOk=false 로 내려 렌더가 fail-close 한다.
+ */
+export function adaptTodayStarters(
+  games: ReadonlyArray<{
+    gameId: string;
+    awayName: string;
+    homeName: string;
+    awayStarterName?: string | null;
+    homeStarterName?: string | null;
+    time?: string | null;
+    stadium?: string | null;
+    status?: string | null;
+  }>,
+  kboGameIds: ReadonlySet<string> | null,
+): TodayGameStarters[] {
+  return games.map((game) => ({
+    awayName: game.awayName,
+    homeName: game.homeName,
+    awayStarterName: game.awayStarterName ?? "",
+    homeStarterName: game.homeStarterName ?? "",
+    time: game.time ?? "",
+    stadium: game.stadium ?? "",
+    status: game.status ?? "",
+    starterSourceOk: kboGameIds !== null && kboGameIds.has(game.gameId),
+  }));
+}
+
 export const TODAY_NO_GAMES_ANSWER =
   "오늘은 예정된 KBO 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!";
 export const STARTER_TBD = "미발표";
