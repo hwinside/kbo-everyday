@@ -109,12 +109,31 @@ export function extractGameSeq(naverGameId: string | undefined): string {
   return /^[0-3]$/.test(raw) ? raw : "0";
 }
 
-function mapStatus(g: NaverScheduleGame): KboGame["status"] {
+/**
+ * Naver STARTED 조기 오표기 방어(테스트용 export) — 예정시각(KST) 전 + 0:0 이면 아직 경기전.
+ * 실측 2026-08-11 18:24: Naver 가 LGWO 를 STARTED "1회초"로 내려줬으나 KBO 공식은 경기전,
+ * Naver 상세 record 도 전부 0(타석/투구/중계 없음). 실제 KBO 경기는 예정시각 전에 시작하지
+ * 않으므로, 예정시각 도달 전의 STARTED 는 원본 플래그 선반영으로 보고 scheduled 를 유지한다.
+ * 득점이 이미 있으면(0:0 아님) 진행 중 증거가 있으므로 가드를 적용하지 않는다.
+ * gameDateTime 은 KST 로컬 문자열("2026-08-11T19:00:00")이라 +09:00 을 명시해 파싱한다
+ * (Vercel UTC 런타임에서 로컬 해석 시 9시간 오차). 파싱 불가(형식 변화)면 가드를 끄고
+ * 기존 동작(live)으로 둔다 — 가드는 방어층이지 판정 SSOT 가 아니다.
+ */
+export function isPrematureStarted(g: NaverScheduleGame, now: Date): boolean {
+  if ((g.statusCode ?? "") !== "STARTED") return false;
+  if (!g.gameDateTime) return false;
+  const scheduledMs = Date.parse(`${g.gameDateTime}+09:00`);
+  if (!Number.isFinite(scheduledMs)) return false;
+  if (now.getTime() >= scheduledMs) return false;
+  return (g.awayTeamScore ?? 0) === 0 && (g.homeTeamScore ?? 0) === 0;
+}
+
+function mapStatus(g: NaverScheduleGame, now: Date = new Date()): KboGame["status"] {
   const sc = g.statusCode ?? "";
   if (g.cancel || g.suspended || sc === "CANCEL" || sc === "POSTPONE") return "cancelled";
   // 종료: RESULT(결과 확정) + ENDED(경기 종료 직후, 2026-07-29 21:09 실응답 두산-SSG 실측).
   if (sc === "RESULT" || sc === "ENDED") return "final";
-  if (sc === "STARTED") return "live";
+  if (sc === "STARTED") return isPrematureStarted(g, now) ? "scheduled" : "live";
   return "scheduled";
 }
 
@@ -124,13 +143,14 @@ function mapStatus(g: NaverScheduleGame): KboGame["status"] {
  * gameId 에서 보존(더블헤더 충돌 방지). 팀/날짜는 응답 필드 직접 사용.
  * (실측: KBO G_ID·Naver gameId 모두 away+home 순서, 예 `20260729WOLG0`.)
  */
-export function mapNaverGameToKbo(g: NaverScheduleGame, date: string): KboGame {
+export function mapNaverGameToKbo(g: NaverScheduleGame, date: string, now: Date = new Date()): KboGame {
   const awayCode = g.awayTeamCode ?? "";
   const homeCode = g.homeTeamCode ?? "";
   const seq = extractGameSeq(g.gameId);
-  const status = mapStatus(g);
+  const status = mapStatus(g, now);
   // statusInfo "N회초"/"N회말" 에서 이닝/초말을 뽑는다(live·final 공통). 없으면 0/초.
-  const inningMatch = (g.statusInfo ?? "").match(/(\d+)회(초|말)/);
+  // scheduled 는 이닝을 노출하지 않는다(조기 STARTED 가드로 강등된 "1회초" 셀 활성화 방지).
+  const inningMatch = status !== "scheduled" ? (g.statusInfo ?? "").match(/(\d+)회(초|말)/) : null;
   const inning = inningMatch ? parseInt(inningMatch[1], 10) : 0;
   const isTop = inningMatch ? inningMatch[2] === "초" : true;
   const broadcastChannels = decodeBroadcast(g.broadChannel);
