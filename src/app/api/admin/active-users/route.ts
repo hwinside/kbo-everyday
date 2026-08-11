@@ -30,6 +30,8 @@ export async function GET(req: NextRequest) {
     if (!TREND_PERIODS.has(period)) {
       return NextResponse.json({ error: "Invalid period" }, { status: 400 });
     }
+    // query-guard: bounded -- admin_traffic_trend는 집계 결과만 반환: today=시간대 최대
+    // 24행, 7d/30d=최대 30행, cumulative=수집일수(하루 1행, 연 최대 366행) 상한.
     const { data, error } = await supabase.rpc("admin_traffic_trend", {
       p_period: period,
     });
@@ -48,6 +50,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // query-guard: bounded -- admin_active_visitors는 KPI 집계 단일 행(dau/wau/mau/total)만 반환.
   const { data, error } = await supabase.rpc("admin_active_visitors");
   if (error) return supabaseErrorResponse(error as PostgrestError);
 

@@ -92,13 +92,6 @@ interface ActiveUsersResponse {
   total: number;
 }
 
-interface DauResponse {
-  daily: { date: string; activeUsers: number; pageViews: number }[];
-  dau: number;
-  wau: number;
-  mau: number;
-}
-
 interface PagesResponse {
   pages: { path: string; views: number }[];
 }
@@ -113,7 +106,6 @@ interface OverviewData {
   stats: StatsResponse;
   feedback: FeedbackResponse;
   jobs: JobsResponse;
-  ga4Dau: DauResponse | null;
   activeUsers: ActiveUsersResponse | null;
   ga4Pages: PagesResponse | null;
   ga4Cohort: CohortResponse | null;
@@ -206,16 +198,21 @@ function TrafficTrendCard({ metric }: { metric: "dau" | "pv" }) {
 function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: TrendPeriod }) {
   const [series, setSeries] = useState<TrendResponse["series"] | null>(null);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    // 자체 집계(앱+웹) 추이 — GA4가 아닌 우리 텔레메트리 기준.
+    // 자체 집계(앱+웹) 추이 — GA4가 아닌 우리 텔레메트리 기준. 조회 실패는 빈
+    // 데이터("수집 전")와 구분되는 실패 상태로 표기한다 (fail-close, GA4 대체 금지).
     apiFetch<TrendResponse>(`/api/admin/active-users?period=${period}`)
       .then((r) => {
         if (alive) setSeries(r.series);
       })
       .catch(() => {
-        if (alive) setSeries([]);
+        if (alive) {
+          setFailed(true);
+          setSeries([]);
+        }
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -252,6 +249,11 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
       {loading ? (
         <div className="flex justify-center py-16">
           <Loader2 className="w-5 h-5 animate-spin text-[#636366]" />
+        </div>
+      ) : failed ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#FF453A]">
+          <AlertTriangle className="w-8 h-8" />
+          <p className="text-sm">자체 집계 조회 실패 — GA4로 대체하지 않습니다</p>
         </div>
       ) : chartData.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
@@ -448,13 +450,13 @@ export default function AdminOverviewPage() {
       apiFetch<StatsResponse>("/api/admin/stats?days=30"),
       apiFetch<FeedbackResponse>("/api/admin/feedback"),
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
-      fetchGA4<DauResponse>("dau"),
       fetchGA4<PagesResponse>("pages"),
       fetchGA4<CohortResponse>("cohort"),
+      // 자체 집계 실패 시 null → fail-close 표시. GA4로 대체하지 않는다(지표 정의가 다름).
       apiFetch<ActiveUsersResponse>("/api/admin/active-users").catch(() => null),
     ])
-      .then(([users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort, activeUsers]) => {
-        setData({ users, content, stats, feedback, jobs, ga4Dau, ga4Pages, ga4Cohort, activeUsers });
+      .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers]) => {
+        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers });
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -510,14 +512,6 @@ export default function AdminOverviewPage() {
   // 크롤러 실패: API에서 오늘 KST 기준 에러만 반환
   const crawlerErrors = data?.jobs?.data?.length ?? 0;
 
-  /* ── traffic chart data (fallback to admin_daily_stats if no GA4) ── */
-  const statsData = data?.stats?.data ?? [];
-  const fallbackChartData = statsData.map((s) => ({
-    date: s.date.slice(5),
-    UV: s.uv,
-    PV: s.pv,
-  }));
-
   /* ── recent feedback (3) ── */
   const recentFeedback = (data?.feedback?.data ?? []).slice(0, 3);
 
@@ -544,24 +538,14 @@ export default function AdminOverviewPage() {
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
 
-  /* ── DAU/WAU/MAU KPIs — 자체 집계(앱+웹, admin_traffic_daily_visitors) 우선,
-     수집 장애 시에만 GA4로 폴백해 카드가 비지 않게 한다 ── */
-  const activeSrc = data?.activeUsers ?? data?.ga4Dau ?? null;
-  const isOwnMetric = !!data?.activeUsers;
-  const ga4Kpis: KpiDef[] = activeSrc
+  /* ── DAU/WAU/MAU/누적 KPI — 자체 집계(앱+웹) 단일 소스. 조회 실패 시 GA4 폴백
+     없이 실패로 표기한다(fail-close) — 소스가 바뀌면 지표 정의가 바뀌기 때문 ── */
+  const activeKpis: KpiDef[] = data?.activeUsers
     ? [
-        { label: isOwnMetric ? "DAU (오늘·앱+웹)" : "DAU (오늘·GA4)", value: activeSrc.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
-        { label: isOwnMetric ? "WAU (7일·앱+웹)" : "WAU (7일·GA4)", value: activeSrc.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
-        { label: isOwnMetric ? "MAU (30일·앱+웹)" : "MAU (30일·GA4)", value: activeSrc.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
-        ...(data?.activeUsers
-          ? [
-              {
-                label: "누적 방문자 (앱+웹)",
-                value: data.activeUsers.total,
-                icon: <TrendingUp className="w-4 h-4 text-[#BF5AF2]" />,
-              },
-            ]
-          : []),
+        { label: "DAU (오늘·앱+웹)", value: data.activeUsers.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
+        { label: "WAU (7일·앱+웹)", value: data.activeUsers.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
+        { label: "MAU (30일·앱+웹)", value: data.activeUsers.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+        { label: "누적 방문자 (앱+웹)", value: data.activeUsers.total, icon: <TrendingUp className="w-4 h-4 text-[#BF5AF2]" /> },
       ]
     : [];
 
@@ -580,44 +564,25 @@ export default function AdminOverviewPage() {
         ))}
       </div>
 
-      {/* DAU/WAU/MAU/누적 — 자체 집계(앱+웹), 수집 장애 시 GA4 폴백 */}
-      {ga4Kpis.length > 0 && (
-        <div className={`grid gap-3 ${ga4Kpis.length === 4 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}>
-          {ga4Kpis.map((k) => (
+      {/* DAU/WAU/MAU/누적 — 자체 집계(앱+웹). 실패 시 fail-close (GA4 폴백 금지) */}
+      {activeKpis.length > 0 ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {activeKpis.map((k) => (
             <KpiCard key={k.label} {...k} />
           ))}
         </div>
+      ) : (
+        <div className="glass-card p-4 flex items-center gap-2 text-sm text-[#FF453A]">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          <span>자체 집계 DAU/WAU/MAU 조회 실패 — GA4로 대체하지 않습니다 (지표 정의 상이). 새로고침하거나 /api/admin/active-users 오류를 확인하세요.</span>
+        </div>
       )}
 
-      {/* DAU / PV trend — separate cards, each with its own period toggle + Y축 */}
-      {data?.activeUsers || data?.ga4Dau ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <TrafficTrendCard metric="dau" />
-          <TrafficTrendCard metric="pv" />
-        </div>
-      ) : (
-        <div className="glass-card p-5">
-          <h2 className="text-lg font-semibold mb-4">일별 트래픽 추이 (30일)</h2>
-          {fallbackChartData.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-3 text-[#636366]">
-              <BarChart3 className="w-10 h-10" />
-              <p className="text-sm">데이터 수집 전</p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={320}>
-              <LineChart data={fallbackChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="date" stroke="#636366" fontSize={12} />
-                <YAxis stroke="#636366" fontSize={12} />
-                <Tooltip {...chartTooltipStyle} />
-                <Legend />
-                <Line type="monotone" dataKey="UV" stroke="#6366F1" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="PV" stroke="#30D158" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
-      )}
+      {/* DAU / PV trend — 자체 집계, 카드별 기간 토글(당일/7일/30일/누적) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <TrafficTrendCard metric="dau" />
+        <TrafficTrendCard metric="pv" />
+      </div>
 
       {/* Popular Pages + Cohort row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
