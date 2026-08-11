@@ -3,6 +3,7 @@
 // STARTED "1회초"(0:0) 로 내려줌. KBO 공식 GetKboGameList 는 동시각 5경기 전부 경기전(state=1),
 // Naver 상세 record 도 전부 0. → 예정시각 전 + 0:0 STARTED 는 scheduled 로 강등해야 한다.
 import { isPrematureStarted, mapNaverGameToKbo } from "../../src/lib/crawler/naver-games";
+import { naverGameToRaw } from "../../src/lib/notifications/kbo-live-games";
 
 let failures = 0;
 function check(name: string, cond: boolean) {
@@ -76,6 +77,16 @@ check(
   mapNaverGameToKbo({ ...lgwoPremature, statusCode: "RESULT", statusInfo: "9회말", homeTeamScore: 3 }, "20260811", at1900).status ===
     "final",
 );
+
+// ── 3) 잠금화면(Live Activity)·위젯 경로 — 경기 30분 전 프리게임 카드와 충돌 없음 ──
+// 알림/LA/안드로이드 위젯은 fetchKboLiveGames → naverGameToRaw 의 GAME_STATE_SC 로 판정한다.
+// 조기 STARTED 가 가드로 scheduled 강등되면 state "1"(예정) 유지 → T-30 프리게임 카드가
+// 그대로 노출되고 live 시작 오발화되지 않는다(하린아빠 8/11 18:27 지시 축).
+const rawPremature = naverGameToRaw(mapNaverGameToKbo(lgwoPremature, "20260811", at1824));
+check("LA 경로: 조기 STARTED → GAME_STATE_SC \"1\"(예정, 프리게임 카드 유지)", rawPremature.GAME_STATE_SC === "1");
+check("LA 경로: 조기 STARTED 이닝 0(라이브 프레임 미전환)", rawPremature.GAME_INN_NO === 0);
+const rawLive = naverGameToRaw(mapNaverGameToKbo(lgwoPremature, "20260811", at1900));
+check("LA 경로: 예정시각 도달 후 GAME_STATE_SC \"2\"(live 전환 무회귀)", rawLive.GAME_STATE_SC === "2");
 
 if (failures > 0) {
   console.error(`\n${failures} failure(s)`);
