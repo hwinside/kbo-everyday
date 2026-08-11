@@ -89,6 +89,7 @@ interface ActiveUsersResponse {
   dau: number;
   wau: number;
   mau: number;
+  total: number;
 }
 
 interface DauResponse {
@@ -175,7 +176,7 @@ interface TrendResponse {
 
 function TrafficTrendCard({ metric }: { metric: "dau" | "pv" }) {
   const [period, setPeriod] = useState<TrendPeriod>("7d");
-  const title = metric === "dau" ? "DAU 추이" : "PV 추이";
+  const title = metric === "dau" ? "DAU 추이 (앱+웹)" : "PV 추이 (앱+웹)";
 
   return (
     <div className="glass-card p-5">
@@ -208,7 +209,8 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
 
   useEffect(() => {
     let alive = true;
-    apiFetch<TrendResponse>(`/api/admin/analytics?type=trend&period=${period}`)
+    // 자체 집계(앱+웹) 추이 — GA4가 아닌 우리 텔레메트리 기준.
+    apiFetch<TrendResponse>(`/api/admin/active-users?period=${period}`)
       .then((r) => {
         if (alive) setSeries(r.series);
       })
@@ -229,8 +231,8 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
   const lineName = isDau ? (isCumulative ? "누적 방문자" : "DAU") : isCumulative ? "누적 PV" : "PV";
   const caption = isCumulative
     ? isDau
-      ? "런칭 이후 누적 순 방문자 (중복 제외)"
-      : "런칭 이후 누적 페이지뷰"
+      ? "자체 집계 시작(26.6.25) 이후 누적 순 방문자 (중복 제외)"
+      : "자체 집계 시작(26.6.25) 이후 누적 페이지뷰"
     : period === "today"
       ? isDau
         ? "오늘 시간대별 활성 사용자"
@@ -551,6 +553,15 @@ export default function AdminOverviewPage() {
         { label: isOwnMetric ? "DAU (오늘·앱+웹)" : "DAU (오늘·GA4)", value: activeSrc.dau, icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
         { label: isOwnMetric ? "WAU (7일·앱+웹)" : "WAU (7일·GA4)", value: activeSrc.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
         { label: isOwnMetric ? "MAU (30일·앱+웹)" : "MAU (30일·GA4)", value: activeSrc.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
+        ...(data?.activeUsers
+          ? [
+              {
+                label: "누적 방문자 (앱+웹)",
+                value: data.activeUsers.total,
+                icon: <TrendingUp className="w-4 h-4 text-[#BF5AF2]" />,
+              },
+            ]
+          : []),
       ]
     : [];
 
@@ -569,9 +580,9 @@ export default function AdminOverviewPage() {
         ))}
       </div>
 
-      {/* GA4 DAU/WAU/MAU */}
+      {/* DAU/WAU/MAU/누적 — 자체 집계(앱+웹), 수집 장애 시 GA4 폴백 */}
       {ga4Kpis.length > 0 && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className={`grid gap-3 ${ga4Kpis.length === 4 ? "grid-cols-2 md:grid-cols-4" : "grid-cols-3"}`}>
           {ga4Kpis.map((k) => (
             <KpiCard key={k.label} {...k} />
           ))}
@@ -579,7 +590,7 @@ export default function AdminOverviewPage() {
       )}
 
       {/* DAU / PV trend — separate cards, each with its own period toggle + Y축 */}
-      {data?.ga4Dau ? (
+      {data?.activeUsers || data?.ga4Dau ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <TrafficTrendCard metric="dau" />
           <TrafficTrendCard metric="pv" />
