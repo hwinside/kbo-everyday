@@ -173,7 +173,7 @@ BEGIN
   ELSIF p_period IN ('7d', '30d') THEN
     v_days := CASE WHEN p_period = '30d' THEN 30 ELSE 7 END;
     RETURN QUERY
-    SELECT to_char(d.day_kst, 'MM/DD') AS label,
+    SELECT to_char(d.day_kst, 'YYYY-MM-DD') AS label,
            count(DISTINCT d.visitor_id)::bigint AS users,
            sum(d.pv)::bigint AS pv
     FROM admin_traffic_daily_visitors d
@@ -194,7 +194,7 @@ BEGIN
       FROM admin_traffic_daily_stats s
       WHERE s.day_kst < v_today
     )
-    SELECT to_char(days.day, 'MM/DD') AS label,
+    SELECT to_char(days.day, 'YYYY-MM-DD') AS label,
            sum(COALESCE(newbies.n, 0)) OVER (ORDER BY days.day)::bigint AS users,
            sum(days.p) OVER (ORDER BY days.day)::bigint AS pv
     FROM days

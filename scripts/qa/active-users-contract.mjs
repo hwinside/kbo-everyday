@@ -111,13 +111,14 @@ const page = readFileSync(PAGE, "utf8");
   );
 }
 
-/* ── [C4] GA4 폴백 금지 (fail-close) ── */
+/* ── [C4] 현재 자체 지표의 GA4 폴백 금지 (fail-close) ── */
 {
-  // 주석 설명문("GA4가 아닌")은 허용 — 실제 사용(GA4 API 호출·키·analytics route 위임)만 금지.
+  // GA4는 C6의 6/24 이전 고정 prehistory에만 사용한다. 현재 자체 RPC를
+  // /analytics API로 대체하거나 기존 ga4Dau state로 폴백하는 것은 금지.
   check(
     "C4",
-    "route는 GA4 API/키/analytics 위임을 사용하지 않음",
-    !/analyticsdata\.googleapis|GOOGLE_SERVICE_ACCOUNT|GA4_PROPERTY_ID|\/api\/admin\/analytics/.test(route),
+    "route는 기존 analytics endpoint로 위임하지 않음",
+    !/\/api\/admin\/analytics/.test(route),
   );
   check(
     "C4",
@@ -136,6 +137,39 @@ const page = readFileSync(PAGE, "utf8");
     "추이 카드는 자체 API(/api/admin/active-users?period=)를 조회",
     /\/api\/admin\/active-users\?period=\$\{period\}/.test(page) &&
       !/\/api\/admin\/analytics\?type=trend/.test(page),
+  );
+}
+
+/* ── [C6] 누적 hybrid 경계: 6/24 GA4 + 6/25 자체 영구 원장 ── */
+{
+  check(
+    "C6",
+    "hybrid 경계 상수(2026-06-24/25) 고정",
+    /OWN_START_DATE = "2026-06-25"/.test(route) &&
+      /GA_PREHISTORY_END = "2026-06-24"/.test(route),
+  );
+  check(
+    "C6",
+    "GA prehistory는 newUsers + screenPageViews 일별 고정 구간",
+    /startDate: GA_LAUNCH_DATE, endDate: GA_PREHISTORY_END/.test(route) &&
+      /name: "newUsers"/.test(route) && /name: "screenPageViews"/.test(route),
+  );
+  check(
+    "C6",
+    "누적 차트 = GA 누적 series + 자체 누적에 GA baseline 가산",
+    /\.\.\.pre\.series/.test(route) &&
+      /users: pre\.users \+ Number\(r\.users\)/.test(route) &&
+      /pv: pre\.pv \+ Number\(r\.pv\)/.test(route),
+  );
+  check(
+    "C6",
+    "누적 KPI = GA prehistory users + 자체 영구 total",
+    /total: pre\.users \+ Number\(row\.total/.test(route),
+  );
+  check(
+    "C6",
+    "화면 캡션에 6/25 경계 언급 없음",
+    !/6\/25|6\.25|2026-06-25|26\.6\.25/.test(page),
   );
 }
 

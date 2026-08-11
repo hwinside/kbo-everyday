@@ -228,8 +228,8 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
   const lineName = isDau ? (isCumulative ? "누적 방문자" : "DAU") : isCumulative ? "누적 PV" : "PV";
   const caption = isCumulative
     ? isDau
-      ? "자체 집계 시작(26.6.25) 이후 누적 순 방문자 (중복 제외)"
-      : "자체 집계 시작(26.6.25) 이후 누적 페이지뷰"
+      ? "누적 방문자"
+      : "누적 페이지뷰"
     : period === "today"
       ? isDau
         ? "오늘 시간대별 활성 사용자"
