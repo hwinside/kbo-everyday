@@ -1300,6 +1300,23 @@ export function classifyNamedStatMatches(
   });
 }
 
+/**
+ * 미결속 `<X> <지표>` 가드(statNumericGuard)가 이 질문을 소유하는가.
+ *
+ * ⚠️ `answerQuestion` 의 가드 계산과 **같은 함수**다 (삼순 2026-08-11 #1132 재리뷰 P0).
+ *   #1148 사전 매퍼는 이 판정이 true 인 질문을 결정론적으로 건너뛴다 — 매퍼가
+ *   `dictionary` 로 선반환하면 종단 숫자 게이트를 통째로 우회하기 때문이다.
+ *   live 게이트가 재구현 없이 소유권을 실측하려고 export 한다(검증기 재구현 금지 교훈).
+ */
+export function statGuardOwnsQuestion(
+  question: string,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  return classifyNamedStatMatches(normalized, glossary, players).includes("ambiguous");
+}
+
 export function classifyNamedStat(
   normalized: string,
   glossary: GlossaryEntry[],
@@ -3899,7 +3916,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   · 기록 요청(`이대호 홈런 몇개`) → LLM 이 근거 없이 숫자를 내면 → 게이트가 되묻기로 교체
   // 문장 유형(서사/요청) 판정을 룰로 하지 않기 위해 판정 주체를 LLM 으로 옮긴 것이므로,
   // 이 플래그 계산은 **구조**(엔티티 결속 실패)만 본다.
-  const statNumericGuard = namedStatKinds.includes("ambiguous");
+  const statNumericGuard = statGuardOwnsQuestion(question, glossary, players);
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
@@ -4188,9 +4205,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   같은 판정기를 쓰므로 두 경로의 소유 경계가 갈라질 수 없다.
   const questionMentionsTeam = mentionedTeamCanonicals(question).length > 0;
   const startersOwned = resolveTodayStartersIntent(question) !== null;
+  // ⚠️ 미결속 `<X> <지표>`(statNumericGuard) 질문도 태우지 않는다 (삼순 2026-08-11 #1132 재리뷰 P0) —
+  //   `이대호 홈런 몇개` 는 기록 요청인데 지표어(`홈런`)로 사전 후보가 생긴다. 매퍼가 후보를
+  //   선택하면 `dictionary` 로 선반환해 종단 statNumericGuard(답 숫자 ⊆ 질문 숫자)를 통째로
+  //   우회한다 — 가드 소유 질문은 매퍼를 결정론적으로 건너뛰어 합성 우회를 닫는다.
   if (
     deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
-    !questionMentionsTeam && !startersOwned
+    !questionMentionsTeam && !startersOwned && !statNumericGuard
   ) {
     const candidates = glossaryCandidatesIn(glossary, question);
     if (candidates.length > 0) {

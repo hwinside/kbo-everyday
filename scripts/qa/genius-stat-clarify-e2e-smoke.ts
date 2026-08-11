@@ -201,6 +201,45 @@ async function main() {
     });
   }
 
+  // ── (D) #1148 매퍼 합성 우회 차단 (삼순 2026-08-11 재리뷰 P0) ───────────────────
+  //
+  //   #1148 사전 매퍼는 generic LLM 앞에서 `dictionary` 로 선반환한다. 지표어(`홈런`)가
+  //   사전에 있고 매퍼가 그 term 을 (오판으로) 골라버리면, 기록 질문이 종단
+  //   statNumericGuard 를 통째로 우회해 용어 정의로 오답한다. 계약:
+  //     · 가드 소유 질문에서는 **매퍼 호출 0** (결정론 스킵 — 악의적 매퍼도 무해화)
+  //     · 환각 stub 은 여전히 `stat_clarify` 로 교체된다 (우회 경로 부재 증명)
+  {
+    const HR_GLOSSARY: GlossaryEntry[] = [
+      ...GLOSSARY,
+      { term: "홈런", aliases: ["홈런"], answer: "타자가 친 공이 담장을 넘어가 한 번에 득점하는 안타예요." },
+    ];
+    for (const q of ["이대호 홈런 몇개", "오타니 홈런이 뭐야"]) {
+      const { deps, calls } = makeDeps(FABRICATED);
+      let mapperCalls = 0;
+      const adversarial = {
+        ...(deps as unknown as Record<string, unknown>),
+        loadGlossary: async () => HR_GLOSSARY,
+        // 악의적 매퍼 — 무조건 `홈런`을 고른다. 호출되면 그 자체가 계약 위반이다.
+        mapGlossaryDefinition: async () => {
+          mapperCalls += 1;
+          return { term: "홈런", inputTokens: 1, outputTokens: 1 };
+        },
+      } as unknown as QaDeps;
+      const result = await answerQuestion("u-stat-clarify-gate", q, adversarial);
+      check(`매퍼 합성 우회 차단 — "${q}" (악의적 매퍼+홈런 사전) → ${result.source}`, () => {
+        assert.equal(mapperCalls, 0, `가드 소유 질문에서 매퍼가 ${mapperCalls}회 호출됐다: ${q}`);
+        assert.notEqual(result.source, "dictionary", `기록 질문이 사전 정의로 서빙됐다: ${q}`);
+        assert.ok(!/374|0\.312/.test(result.answer ?? ""), `지어낸 숫자가 유저에게 도달했다: ${result.answer}`);
+        // LLM 까지 갔다면(위임 성립) 환각 stub 은 반드시 게이트 교체 문구다.
+        if (calls.llm > 0) {
+          assert.equal(result.source, "stat_clarify", `가드가 환각 답을 통과시켰다(${result.source}): ${q}`);
+          assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+        }
+        assert.equal(calls.cacheSet, 0, `가드 소유 질문 답이 캐시에 쓰였다: ${q}`);
+      });
+    }
+  }
+
   console.log(`\n${pass} checks PASS — 미결속 <X> <지표> LLM 위임 + 기계 숫자 게이트 계약 성립`);
 }
 

@@ -248,6 +248,15 @@ const MUTATIONS = [
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "2차 null 직후 다른 worker 가 CAS 를 이겨도 이 worker 가 답을 발송해 두 답이 갈린다 (삼순 5차 c2)",
   },
+  // ── #1148×#1132 합성 우회 (삼순 2026-08-11 재리뷰 P0) ─────────────────────
+  {
+    id: "N39 statNumericGuard 매퍼 스킵 제거 (사전 선반환이 숫자 게이트 우회)",
+    file: PIPELINE,
+    anchor: "    !questionMentionsTeam && !startersOwned && !statNumericGuard",
+    replacement: "    !questionMentionsTeam && !startersOwned",
+    gate: "scripts/qa/genius-stat-clarify-e2e-smoke.ts",
+    why: "가드 소유 질문(`이대호 홈런 몇개`)에서 매퍼가 dictionary 로 선반환해 종단 statNumericGuard 를 통째로 우회한다 (삼순 재리뷰 P0)",
+  },
 ];
 
 function runSmoke(gate = "scripts/qa/baseball-genius-context-smoke.ts") {
