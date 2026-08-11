@@ -33,13 +33,25 @@ const GAMES: TodayGameStarters[] = [
   { awayName: "삼성", homeName: "KIA", awayStarterName: "원태인", homeStarterName: "네일", time: "18:30", stadium: "광주", status: "cancelled", starterSourceOk: true },
 ];
 
-interface State { fetches: string[]; games: TodayGameStarters[]; throws: boolean; llmCalls: number; logs: string[]; cacheWrites: number }
+interface State { fetches: string[]; games: TodayGameStarters[]; throws: boolean; llmCalls: number; logs: string[]; cacheWrites: number; mapperCalls: number }
 function fresh(overrides: Partial<State> = {}): State {
-  return { fetches: [], games: GAMES, throws: false, llmCalls: 0, logs: [], cacheWrites: 0, ...overrides };
+  return { fetches: [], games: GAMES, throws: false, llmCalls: 0, logs: [], cacheWrites: 0, mapperCalls: 0, ...overrides };
 }
+// production 형 glossary (삼순 #1148 NO-GO ①축 — false-green 해소):
+// 종전에는 glossary 가 비어 있고 mapper 도 없어, ①-b 매퍼가 선발 질문을 선점해도
+// 이 smoke 는 GREEN 이었다. 실제 사전처럼 `선발·투수` 후보가 생기는 구성으로 바꾸고
+// 매퍼 호출 0회를 actual 로 고정한다 — owner 가드 제거 변종은 여기서 RED 난다.
+const PROD_LIKE_GLOSSARY = [
+  { term: "선발 투수", aliases: ["선발", "선발투수", "starting pitcher"], answer: "경기를 첫 타자부터 시작하는 투수예요." },
+  { term: "투수", aliases: ["pitcher"], answer: "마운드에서 공을 던지는 선수예요." },
+];
 function makeDeps(state: State): QaDeps {
   return {
-    loadGlossary: async () => [],
+    loadGlossary: async () => PROD_LIKE_GLOSSARY,
+    mapGlossaryDefinition: async () => {
+      state.mapperCalls++;
+      return { term: "선발 투수", inputTokens: 1, outputTokens: 1 };
+    },
     loadPlayers: async () => [],
     getCache: async () => null,
     setCache: async () => { state.cacheWrites++; },
@@ -150,8 +162,21 @@ async function main() {
     assert.ok(result.answer.includes("왕옌청"));
     assert.equal(state.llmCalls, 0);
     assert.equal(state.cacheWrites, 0);
+    // 삼순 #1148 NO-GO ①축: production 형 glossary 후보(`선발`·`투수`)가 있어도
+    // ①-b 매퍼가 선발 소유 질문을 선점하지 않는다 — 매퍼 0회가 actual 이다.
+    assert.equal(state.mapperCalls, 0, "선발 소유 질문에 ①-b 매퍼가 호출됐다");
     assert.deepEqual(state.logs, ["kbo_structured"]);
     assert.deepEqual(state.fetches, ["20260811"]); // UTC(0810)가 아니라 KST(0811)
+  }
+  // 팀 지정 선발 질문도 동일 — 구단 가드·선발 가드 둘 다 이 질문을 매퍼에서 장씨한다.
+  {
+    const state = fresh();
+    const result = await answerQuestion("u1", "오늘 LG 선발 누구야?", makeDeps(state));
+    assert.equal(result.source, "kbo_structured");
+    assert.ok(result.answer.includes("카라스코"));
+    assert.ok(!result.answer.includes("한화"));
+    assert.equal(state.mapperCalls, 0, "팀 지정 선발 질문에 ①-b 매퍼가 호출됐다");
+    assert.equal(state.llmCalls, 0);
   }
   // 조회 실패 → error fail-close ("경기 없음" 둔갑 금지)
   {

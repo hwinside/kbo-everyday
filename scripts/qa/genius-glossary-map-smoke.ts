@@ -150,6 +150,27 @@ async function main() {
     assert.equal(state.calls.length, 0, "선수 결속 질문에 매퍼가 호출됐다");
   }
 
+  // ── 구단 소유 질문은 매퍼를 태우지 않는다 (삼순 #1148 NO-GO ②축) ─────────
+  // `LG 유격수 누구야?`·`KIA 도루 몇 개야?` — 글자 포함 후보(유격수·도루)가 생겨도
+  // 구단 경로 소유다. 결정론 가드(mentionedTeamCanonicals)가 선점을 차단해야 한다
+  // — 프롬프트 배제는 확률적이라 계약이 아니다.
+  for (const teamQuestion of ["LG 유격수 누구야?", "KIA 도루 몇 개야?", "한화 도루 순위 알려줘"]) {
+    const state = freshState({ reply: "도루" });
+    const result = await answerQuestion("u1", teamQuestion, makeDeps(state));
+    assert.notEqual(result.source, "dictionary", `${teamQuestion}: 구단 질문이 사전 정의로 오답됐다`);
+    assert.equal(state.calls.length, 0, `${teamQuestion}: 구단 질문에 매퍼가 호출됐다`);
+  }
+
+  // ── 오늘 선발 소유 질문은 매퍼를 태우지 않는다 (삼순 #1148 NO-GO ①축) ─────
+  // ①-b 가 #1147 구조화 경로보다 앞이므로 같은 소유 판정기로 건너뛴다 —
+  // 글자 포함 후보(`선발…`)가 생겨도 매퍼 0회여야 한다.
+  for (const startersQuestion of ["오늘 선발 투수 알려줘", "오늘 LG 선발 누구야?"]) {
+    const state = freshState({ reply: "유격수" });
+    const result = await answerQuestion("u1", startersQuestion, makeDeps(state));
+    assert.notEqual(result.source, "dictionary", `${startersQuestion}: 선발 질문이 사전 정의로 오답됐다`);
+    assert.equal(state.calls.length, 0, `${startersQuestion}: 선발 질문에 매퍼가 호출됐다`);
+  }
+
   // ── fail-close: 후보 밖 반환(환각)은 버린다 ────────────────────────
   {
     const state = freshState({ reply: "삼진" }); // 후보에 없는 용어
@@ -183,6 +204,37 @@ async function main() {
     const state = freshState({ reply: "유격수" });
     await answerQuestion("u1", "9회말 승부치기 규칙 알려줘", makeDeps(state));
     assert.equal(state.calls.length, 0); // 후보 0 → 호출 0
+  }
+
+  // ── 위치 계약 (2026-08-11 production 재현 반례 — 합산 QA 실측 FAIL 2건) ─────────
+  // 공식 RAG 가 근거를 찾으면 durable LLM 경계를 소비하고 general/unsure 로 **종결**한다.
+  // 매퍼가 그 뒤에 있으면 정의 질문이 영원히 사전에 도달하지 못한다(production 실측:
+  // `유격수 포지션이 뭐야?`→unsure-settle, `도루뜻`→general-settle). 검수 사전이
+  // 공식 RAG 생성답보다 우선이라는 ① 계약이 fuzzy 매칭에도 적용되어야 한다.
+  {
+    const officialEvidence = {
+      content: "유격수는 2루와 3루 사이에 위치하는 내야수를 말한다.",
+      pageTitle: "2026 공식야구규칙",
+      canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      revision: "sha256:deadbeef",
+      sectionPath: "수비 위치",
+      asOf: "2026-08-01",
+      sourceGrade: "tier1" as const,
+    };
+    for (const [question, reply] of [
+      ["유격수 포지션이 뭐야?", "유격수"],
+      ["도루뜻", "도루"],
+    ] as const) {
+      const state = freshState({ reply });
+      const deps = makeDeps(state);
+      let officialCalls = 0;
+      deps.searchOfficialRag = async () => { officialCalls++; return [officialEvidence]; };
+      // 공식 RAG LLM 은 unsure 로 종결하려 든다 — 재이전(매퍼가 뒤일 때)이면 이 settle 이 이긴다.
+      deps.callOfficialRagLlm = async () => ({ text: '{"status":"UNSURE","answer":""}', inputTokens: 9, outputTokens: 9 });
+      const result = await answerQuestion("u1", question, deps);
+      assert.equal(result.source, "dictionary", `${question}: 공식 RAG settle 이 검수 사전을 이겼다 (${result.source})`);
+      assert.equal(officialCalls, 0, `${question}: 매퍼 승리 전에 공식 RAG 가 호출됐다`);
+    }
   }
 
   // ── P1 거절 문구 갱신 계약 (#1143 지원 반영) ────────────────────────
