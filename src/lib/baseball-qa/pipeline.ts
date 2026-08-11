@@ -3819,7 +3819,19 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return nameKey.length >= 2 && key.includes(nameKey);
     });
   })();
-  if (deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer) {
+  // ⚠️ 구단 언급 질문도 태우지 않는다 (삼순 2026-08-11 #1148 NO-GO ②축) — `LG 유격수 누구야?`·
+  //   `KIA 도루 몇 개야?` 는 구단 경로(team_rag·기록)가 소유하는 질문인데 글자 포함
+  //   후보(`유격수`·`도루`)는 생긴다. 프롬프트 배제는 확률적 방어라 선점 차단은
+  //   결정론 가드로 닫는다(구단 canonical = 닫힌 집합 멤버십 — 룰 핑퐁 아님).
+  // ⚠️ 오늘 선발 질문도 태우지 않는다 (같은 NO-GO ①축) — ①-b 가 #1147 구조화 경로보다
+  //   앞이므로, 소유 판정기(resolveTodayStartersIntent)가 잡는 질문은 여기서 건너뛴다.
+  //   같은 판정기를 쓰므로 두 경로의 소유 경계가 갈라질 수 없다.
+  const questionMentionsTeam = mentionedTeamCanonicals(question).length > 0;
+  const startersOwned = resolveTodayStartersIntent(question) !== null;
+  if (
+    deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
+    !questionMentionsTeam && !startersOwned
+  ) {
     const candidates = glossaryCandidatesIn(glossary, question);
     if (candidates.length > 0) {
       let mapped: { term: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
