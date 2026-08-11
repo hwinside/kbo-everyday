@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 const MIGRATION = "supabase/migrations/20260811230000_admin_active_visitors.sql";
 const ROUTE = "src/app/api/admin/active-users/route.ts";
 const PAGE = "src/app/admin/page.tsx";
+const HYBRID = "src/lib/admin/active-users-hybrid.ts";
 
 const failures = [];
 const passes = [];
@@ -32,6 +33,7 @@ function check(id, desc, ok, detail = "") {
 const sql = readFileSync(MIGRATION, "utf8");
 const route = readFileSync(ROUTE, "utf8");
 const page = readFileSync(PAGE, "utf8");
+const hybrid = readFileSync(HYBRID, "utf8");
 
 /* ── [C1] 집계 경계 ── */
 {
@@ -145,8 +147,8 @@ const page = readFileSync(PAGE, "utf8");
   check(
     "C6",
     "hybrid 경계 상수(2026-06-24/25) 고정",
-    /OWN_START_DATE = "2026-06-25"/.test(route) &&
-      /GA_PREHISTORY_END = "2026-06-24"/.test(route),
+    /OWN_START_DATE = "2026-06-25"/.test(hybrid) &&
+      /GA_PREHISTORY_END = "2026-06-24"/.test(hybrid),
   );
   check(
     "C6",
@@ -157,14 +159,15 @@ const page = readFileSync(PAGE, "utf8");
   check(
     "C6",
     "누적 차트 = GA 누적 series + 자체 누적에 GA baseline 가산",
-    /\.\.\.pre\.series/.test(route) &&
-      /users: pre\.users \+ Number\(r\.users\)/.test(route) &&
-      /pv: pre\.pv \+ Number\(r\.pv\)/.test(route),
+    /mergeCumulativeSeries\(/.test(route) &&
+      /users: baseline\.users \+ r\.users/.test(hybrid) &&
+      /pv: baseline\.pv \+ r\.pv/.test(hybrid),
   );
   check(
     "C6",
-    "누적 KPI = GA prehistory users + 자체 영구 total",
-    /total: pre\.users \+ Number\(row\.total/.test(route),
+    "누적 KPI는 GA를 섞지 않고 자체 영구 total 유지",
+    /total: Number\(row\.total \?\? 0\)/.test(route) &&
+      !/total: pre\.users \+/.test(route),
   );
   check(
     "C6",
