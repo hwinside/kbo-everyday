@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   markApiRecovered,
   trackApiDegradation,
@@ -782,6 +782,19 @@ const NAVER_RELAY_ALERT_POLICY: DegradationAlertPolicy = {
   leaseSeconds: 60,
 };
 
+/**
+ * 응답 후 실행(best-effort). Next 요청 컨텍스트에서는 after()로 응답 flush 뒤에
+ * 돌고, 요청 컨텍스트 밖(qa 게이트가 GET을 직접 호출)에서는 after()가 throw하므로
+ * fire-and-forget으로 대체한다. 둘 다 응답을 블로킹하지 않는다는 계약은 동일.
+ */
+function runAfterResponse(cb: () => Promise<void>): void {
+  try {
+    after(cb);
+  } catch {
+    void cb().catch(() => undefined);
+  }
+}
+
 /** 업스트림 실패를 GET 레벨로 전달하는 typed error — single-flight 공유 안전. */
 class RelayUpstreamError extends Error {
   constructor(
@@ -1346,8 +1359,9 @@ export async function GET(req: NextRequest) {
     // (삼순 Blocker 1: 장애 중 ✅ 오보 방지).
     if (!anyInningDegraded) {
       // scope=gameId: 경보를 유발한 바로 그 경기가 정상으로 돌아왔을 때만 복구로
-      // 인정한다(삼순 2차 ③: 다른 경기의 정상 200이 전역 ✅를 보내는 오보 차단).
-      await markApiRecovered("naver-relay", gameId);
+      // 인정한다(삼순 2차 ③). 응답 후 실행 — Telegram 최대 8초 timeout이
+      // 복구 직후 첫 사용자 응답을 막지 않게 한다(삼순 3차 ②).
+      runAfterResponse(() => markApiRecovered("naver-relay", gameId));
     }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.

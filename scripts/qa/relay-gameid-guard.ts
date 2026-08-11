@@ -17,14 +17,23 @@
  *      순서로 실경로를 태워, ✅가 drainer의 🚨보다 먼저 나가지 않음을 고정
  *   9) 복구 scope 계약(삼순 2차 ③): game A 경보 후 game B 정상 200은 ✅ 미발송,
  *      game A 정상 200에서만 ✅ 1회
+ *  10) bounded jitter 계약(삼순 3차 ③): 고정 random/fake timer로
+ *      0~min(interval, 2s) 범위·초기 cleanup 시 fetch 0회·interval 1회 시작 고정
+ *  11) 복구 알림 비동기 계약(삼순 3차 ②): Telegram이 지연돼도 GET 응답은
+ *      먼저 끝난다(응답 경로가 전송 완료를 기다리지 않음)
  *
  * 실행: npm run qa:relay-gameid-guard  (network 불필요 — fetch는 스텁, prebuild 결속)
  */
 
-// 라우트 import 전에 supabase client 생성용 env 주입 (스모크 공통 패턴)
-process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://stub.supabase.co";
-process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "stub-anon-key";
-process.env.SUPABASE_SERVICE_ROLE_KEY ||= "stub-service-key";
+// 라우트 import 전에 supabase env를 **강제로** stub으로 고정한다(삼순 3차 ①:
+// `||=`는 실제 Supabase env가 있는 Vercel/CI에서 real URL을 그대로 두어 fetch
+// 스텁(stub.supabase.co만 인식)을 못 타고 [8]이 깨진다). 이 게이트는 hermetic —
+// 어떤 env가 주입돼 도 외부 네트워크에 닿지 않는다.
+process.env.NEXT_PUBLIC_SUPABASE_URL = "https://stub.supabase.co";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "stub-anon-key";
+process.env.SUPABASE_SERVICE_ROLE_KEY = "stub-service-key";
+process.env.TELEGRAM_BOT_TOKEN = "stub-telegram-token";
+process.env.TELEGRAM_CHAT_ID = "0";
 
 import { NextRequest } from "next/server";
 
@@ -189,7 +198,6 @@ async function main() {
     }) as typeof fetch;
 
     const tracker = await import("../../src/lib/monitoring/api-fallback-tracker");
-    process.env.TELEGRAM_BOT_TOKEN ||= "stub-telegram-token";
 
     console.log("[5] single-flight: 동일 key 동시 요청 → 업스트림 1회");
     inning1Calls = 0;
@@ -333,6 +341,108 @@ async function main() {
         !tracker._hasPendingRecoveryForTest("naver-relay"),
       `status=${aClean.status}, recovery=${telegramOkCount("recovery")}회`,
     );
+    // markApiRecovered는 after() 경유(응답 후)이지만 qa 컨텍스트에서는 fire-and-forget
+    // 폴백이라 비동기로 셸다 — 위 [9] 판정 전 flush가 필요하면 microtask 대기.
+
+    console.log("[10] bounded jitter 계약: 범위·cleanup·interval 1회 시작");
+    const { scheduleJitteredRelayPolling, RELAY_POLL_MAX_JITTER_MS } = await import(
+      "../../src/lib/hooks/useGameRelay"
+    );
+    // fake timer: 예약만 기록하고 수동으로 fire 한다.
+    type FakeTimer = { cb: () => void; ms: number; cleared: boolean; kind: "timeout" | "interval" };
+    const timers: FakeTimer[] = [];
+    const fakeSetTimeout = ((cb: () => void, ms: number) => {
+      const t: FakeTimer = { cb, ms, cleared: false, kind: "timeout" };
+      timers.push(t);
+      return t as unknown as ReturnType<typeof setTimeout>;
+    }) as (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    const fakeClear = ((t: unknown) => {
+      (t as FakeTimer).cleared = true;
+    }) as (t: ReturnType<typeof setTimeout>) => void;
+    const fakeSetInterval = ((cb: () => void, ms: number) => {
+      const t: FakeTimer = { cb, ms, cleared: false, kind: "interval" };
+      timers.push(t);
+      return t as unknown as ReturnType<typeof setInterval>;
+    }) as (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
+
+    // (a) random=1.0, interval=30000 → jitter = min(30000, 2000) = 2000 (상한 고정)
+    let fetchCalls = 0;
+    timers.length = 0;
+    const sched1 = scheduleJitteredRelayPolling({
+      fetchRelay: () => fetchCalls++,
+      interval: 30000,
+      random: () => 1,
+      setTimeoutFn: fakeSetTimeout,
+      clearTimeoutFn: fakeClear,
+      setIntervalFn: fakeSetInterval,
+      clearIntervalFn: fakeClear,
+    });
+    check("jitter 상한 = min(interval, 2000)", sched1.jitterMs === RELAY_POLL_MAX_JITTER_MS,
+      `jitterMs=${sched1.jitterMs}`);
+    // (b) random=0.5, interval=1000 → jitter = 0.5 * min(1000, 2000) = 500 (interval이 더 작을 때)
+    const sched2 = scheduleJitteredRelayPolling({
+      fetchRelay: () => fetchCalls++,
+      interval: 1000,
+      random: () => 0.5,
+      setTimeoutFn: fakeSetTimeout,
+      clearTimeoutFn: fakeClear,
+      setIntervalFn: fakeSetInterval,
+      clearIntervalFn: fakeClear,
+    });
+    check("interval < 2s면 interval이 상한", sched2.jitterMs === 500, `jitterMs=${sched2.jitterMs}`);
+    sched2.cleanup();
+    // (c) jitter fire 전 cleanup → fetch 0회, interval 미시작
+    check("fire 전 cleanup → fetch 0회", fetchCalls === 0, `${fetchCalls}회`);
+    check(
+      "fire 전 cleanup → jitter timer 해제됨",
+      timers.filter((t) => t.kind === "timeout").every((t, i) => (i === 1 ? t.cleared : true)),
+      JSON.stringify(timers.map((t) => ({ kind: t.kind, cleared: t.cleared }))),
+    );
+    // (d) jitter fire → 즉시 fetch 1회 + interval 정확히 1개 시작
+    const jitterTimer1 = timers.find((t) => t.kind === "timeout" && !t.cleared);
+    check("jitter timer 예약됨", !!jitterTimer1, "예약 없음");
+    jitterTimer1!.cb();
+    const intervals = timers.filter((t) => t.kind === "interval" && !t.cleared);
+    check("fire → 즉시 fetch 1회", fetchCalls === 1, `${fetchCalls}회`);
+    check("fire → interval 정확히 1개 시작(interval 값 유지)",
+      intervals.length === 1 && intervals[0].ms === 30000,
+      JSON.stringify(intervals.map((t) => t.ms)));
+    // (e) fire 후 cleanup → interval도 해제
+    sched1.cleanup();
+    check("fire 후 cleanup → interval 해제", intervals[0].cleared === true, "interval 미해제");
+
+    console.log("[11] 복구 알림 비동기: Telegram 지연이 GET 응답을 막지 않는다");
+    // pending 주입 + Telegram을 영원히 지연시키는 모드로 전환 → GET이 먼저 끝나야 한다.
+    tracker._setPendingRecoveryForTest("naver-relay", true, "20260811DFRD0");
+    let telegramResolve: (() => void) | null = null;
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("api.telegram.org")) {
+        // 응답을 무기한 보류 — GET이 이걸 기다리면 아래 race에서 GET이 지지 않는다.
+        await new Promise<void>((resolve) => {
+          telegramResolve = resolve;
+        });
+        return new Response('{"ok":true}', { status: 200 });
+      }
+      return (prevFetch as typeof fetch)(input as RequestInfo, init);
+    }) as typeof fetch;
+    upstreamMode = { currentInning: 1, failInnings: new Set() };
+    const deferredGet = relayRoute.GET(
+      new NextRequest("http://localhost/api/game-relay?gameId=20260811DFRD0"),
+    );
+    const raced = await Promise.race([
+      deferredGet.then((r) => ({ kind: "get" as const, status: r.status })),
+      new Promise<{ kind: "timeout" }>((r) => setTimeout(() => r({ kind: "timeout" }), 3000)),
+    ]);
+    check(
+      "Telegram 보류 중에도 GET 먼저 완료(응답 비블로킹)",
+      raced.kind === "get" && raced.status === 200,
+      JSON.stringify(raced),
+    );
+    // 보류 해제해 리소스 정리
+    if (telegramResolve !== null) (telegramResolve as () => void)();
+    globalThis.fetch = prevFetch;
   } finally {
     globalThis.fetch = realFetch;
   }
