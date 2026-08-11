@@ -22,9 +22,14 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 
 const GAMES: TodayGameStarters[] = [
-  { awayName: "한화", homeName: "두산", awayStarterName: "왕옌청", homeStarterName: "곽빈", time: "19:00", stadium: "잠실", status: "scheduled" },
-  { awayName: "LG", homeName: "키움", awayStarterName: "카라스코", homeStarterName: "안우진", time: "19:00", stadium: "고척", status: "scheduled" },
-  { awayName: "KT", homeName: "NC", awayStarterName: "", homeStarterName: "라일리", time: "19:00", stadium: "창원", status: "scheduled" },
+  { awayName: "한화", homeName: "두산", awayStarterName: "왕옌청", homeStarterName: "곽빈", time: "19:00", stadium: "잠실", status: "scheduled", starterSourceOk: true },
+  { awayName: "LG", homeName: "키움", awayStarterName: "카라스코", homeStarterName: "안우진", time: "19:00", stadium: "고척", status: "scheduled", starterSourceOk: true },
+  // 진짜 미발표: KBO 소스는 살아있으나(이 경기가 KBO 응답에 있음) 선발명이 빈값.
+  { awayName: "KT", homeName: "NC", awayStarterName: "", homeStarterName: "라일리", time: "19:00", stadium: "창원", status: "scheduled", starterSourceOk: true },
+  // 소스 장애: KBO enrich 실패/부분 누락 — 빈 선발을 미발표로 위장하면 안 된다(삼순 P0).
+  { awayName: "롯데", homeName: "SSG", awayStarterName: "", homeStarterName: "", time: "18:30", stadium: "문학", status: "scheduled", starterSourceOk: false },
+  // 취소 경기: 매치업이 아니라 취소를 명시해야 한다(삼순 ③축).
+  { awayName: "삼성", homeName: "KIA", awayStarterName: "원태인", homeStarterName: "네일", time: "18:30", stadium: "광주", status: "cancelled", starterSourceOk: true },
 ];
 
 interface State { fetches: string[]; games: TodayGameStarters[]; throws: boolean; llmCalls: number; logs: string[]; cacheWrites: number }
@@ -72,6 +77,10 @@ async function main() {
     "선발투수가 뭐야?",            // 정의 — 사전 축
     "오늘 선발 잘 던질까?",        // 예측 서술 — full-string 탈락
     "오늘 경기 결과 알려줘",       // 선발 아님
+    "오늘 우리팀 선발 누구야?",    // 사용자 팀 결속 없음 — 전체 답변은 질문과 다른 답 (삼순 ②축)
+    "오늘 우리 선발 알려줘",       // 동일 축
+    "오늘 LG 두산 선발 알려줘",    // 복수 구단 — 해석 모호, 소유 금지 (삼순 ②축)
+    "오늘 엘지 키움 선발 누구야",  // 복수 구단 한글 표기
   ]) {
     assert.equal(resolveTodayStartersIntent(q), null, `소유하면 안 됨: ${q}`);
   }
@@ -80,12 +89,20 @@ async function main() {
   {
     const all = renderTodayStartersAnswer(GAMES, null);
     assert.ok(all.includes("한화 왕옌청 vs 두산 곽빈"));
-    assert.ok(all.includes("KT 미발표 vs NC 라일리")); // 빈 선발은 지어내지 않고 미발표
+    assert.ok(all.includes("KT 미발표 vs NC 라일리")); // 소스 정상 + 빈 선발 = 진짜 미발표
+    // 소스 장애 경기: 미발표 위장 금지 — 확인 불가로 fail-close (삼순 P0).
+    assert.ok(all.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없어요"));
+    assert.ok(!all.includes("롯데 미발표"), "소스 장애가 미발표로 위장됐다");
+    // 취소 경기: 매치업·시간 대신 취소 명시 (삼순 ③축).
+    assert.ok(all.includes("삼성 vs KIA — 취소"));
+    assert.ok(!all.includes("삼성 원태인"), "취소 경기가 정상 매치업처럼 렌더됐다");
     const lg = renderTodayStartersAnswer(GAMES, "LG");
     assert.ok(lg.includes("LG 카라스코 vs 키움 안우진"));
     assert.ok(!lg.includes("한화")); // 팀 지정 시 해당 경기만
     assert.equal(renderTodayStartersAnswer([], null), TODAY_NO_GAMES_ANSWER);
-    assert.ok(renderTodayStartersAnswer(GAMES, "삼성").includes("삼성 경기가 없어요"));
+    // 팀 지정 + 취소도 취소로 명시된다("경기 없음" 아님).
+    assert.ok(renderTodayStartersAnswer(GAMES, "삼성").includes("삼성 vs KIA — 취소"));
+    assert.ok(renderTodayStartersAnswer(GAMES.slice(0, 3), "삼성").includes("삼성 경기가 없어요"));
   }
 
   // ── 종단: LLM·cache 0 · kbo_structured · KST 날짜 ───────────────────

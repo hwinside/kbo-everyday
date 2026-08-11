@@ -18,7 +18,7 @@ import {
   type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
 import type { TodayGameStarters } from "@/lib/baseball-qa/pipeline";
-import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
+import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
   isFollowupPhrase,
   type ContextTurn,
@@ -313,7 +313,20 @@ async function callTeamRagLlm(
  * 실패는 throw 로 올린다 — 파이프라인이 "경기 없음"과 구분해 fail-close 한다.
  */
 async function fetchTodayStarters(dateYyyymmdd: string): Promise<TodayGameStarters[]> {
-  const games = await fetchGamesUserFacing(dateYyyymmdd);
+  const { games, kboGameIds } = await fetchGamesUserFacingWithMeta(dateYyyymmdd);
+  return adaptTodayStarters(games, kboGameIds);
+}
+
+/**
+ * 순수 어댑터 (테스트용 export). 선발 출처 가용성 규칙 (삼순 #1147 P0):
+ * Naver 선발명은 항상 빈값이므로, KBO 조회가 실패(kboGameIds === null)했거나 이 경기가
+ * KBO 응답에 없으면(부분 누락) 빈 선발은 `미발표`가 아니라 확인 불가다 —
+ * starterSourceOk=false 로 내려 렌더가 해당 경기를 fail-close 한다.
+ */
+export function adaptTodayStarters(
+  games: Awaited<ReturnType<typeof fetchGamesUserFacingWithMeta>>["games"],
+  kboGameIds: Set<string> | null,
+): TodayGameStarters[] {
   return games.map((game) => ({
     awayName: game.awayName,
     homeName: game.homeName,
@@ -322,6 +335,7 @@ async function fetchTodayStarters(dateYyyymmdd: string): Promise<TodayGameStarte
     time: game.time ?? "",
     stadium: game.stadium ?? "",
     status: game.status ?? "",
+    starterSourceOk: kboGameIds !== null && kboGameIds.has(game.gameId),
   }));
 }
 

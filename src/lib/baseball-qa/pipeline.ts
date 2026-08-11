@@ -916,6 +916,15 @@ export function resolveRagTeamCandidate(question: string): RagTeamCandidate | nu
 }
 
 export function resolveMentionedTeam(question: string): string | null {
+  const hits = mentionedTeamCanonicals(question);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * 질문이 언급한 구단 canonical 전체. `resolveMentionedTeam`(단일 결속)과 판정기를 공유한다 —
+ * 소비자가 "0개(전체)"와 "2개 이상(모호)"를 구분해야 할 때 이것을 쓴다(삼순 #1147 복수팀 축).
+ */
+export function mentionedTeamCanonicals(question: string): string[] {
   const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
   const hits = new Set<string>();
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
@@ -929,7 +938,7 @@ export function resolveMentionedTeam(question: string): string | null {
       }));
     if (direct || combined) hits.add(canonical);
   }
-  return hits.size === 1 ? [...hits][0] : null;
+  return [...hits];
 }
 
 function mentionsTeam(tokens: string[]): boolean {
@@ -2608,6 +2617,12 @@ export interface TodayGameStarters {
   time: string;
   stadium: string;
   status: string;
+  /**
+   * 선발 출처(KBO enrich) 가용 여부. Naver 선발명은 항상 빈값이므로, KBO 조회가 실패했거나
+   * 이 경기가 KBO 응답에 없었다면 빈 선발은 `미발표`가 아니라 **확인 불가**다 — 구분 없이
+   * 미발표로 바꾸면 KBO timeout 을 "아직 발표 안 됨"으로 거짓 안내한다(삼순 #1147 P0).
+   */
+  starterSourceOk: boolean;
 }
 
 /**
@@ -2623,14 +2638,19 @@ export function resolveTodayStartersIntent(
 ): { team: string | null } | null {
   const compact = question.normalize("NFKC").toLowerCase().replace(/[\s?!.~,]+/g, "");
   if (!/(오늘|금일)/.test(compact) || !compact.includes("선발")) return null;
+  // 복수 구단 언급은 소유하지 않는다 (삼순 #1147 ②축): `오늘 LG 두산 선발` 을 전체 5경기로
+  // 답하면 묻지 않은 경기까지 섞인다. 해석 불확실 → 기존 경로 양보(fail-close 방향).
+  if (mentionedTeamCanonicals(question).length >= 2) return null;
   let rest = compact;
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
     for (const word of [canonical.toLowerCase().replace(/\s+/g, ""), ...shorts, ...nicks]) {
       rest = rest.split(word).join("");
     }
   }
+  // `우리팀/우리` 는 소유하지 않는다 (삼순 #1147 ②축): 사용자의 응원팀 결속이 없는 채
+  // 전체 경기를 답하면 질문과 다른 답이다. 결속 배선 전까지 기존 경로로 양보한다.
   const grammar =
-    /^(오늘|금일)(의)?(경기)?(우리팀|우리)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$/;
+    /^(오늘|금일)(의)?(경기)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$/;
   if (!grammar.test(rest)) return null;
   return { team: resolveMentionedTeam(question) };
 }
@@ -2667,6 +2687,14 @@ export function renderTodayStartersAnswer(
       : `오늘은 ${team} 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!`;
   }
   const lines = rows.map((game) => {
+    // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).
+    if (game.status === "cancelled") {
+      return `· ${game.awayName} vs ${game.homeName} — 취소 (${game.stadium})`;
+    }
+    // 선발 출처(KBO) 장애 경기는 fail-close — 빈값을 `미발표`로 위장하지 않는다 (삼순 P0).
+    if (!game.starterSourceOk) {
+      return `· ${game.awayName} vs ${game.homeName} — 선발 정보를 지금 확인할 수 없어요 (${game.time} ${game.stadium})`;
+    }
     const away = game.awayStarterName.trim() || STARTER_TBD;
     const home = game.homeStarterName.trim() || STARTER_TBD;
     return `· ${game.awayName} ${away} vs ${game.homeName} ${home} (${game.time} ${game.stadium})`;
