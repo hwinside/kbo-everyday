@@ -153,6 +153,70 @@ async function callLlm(
   };
 }
 
+/**
+ * 검수 사전 정의 질문 매핑 (C 질문 정규화 — pipeline `mapGlossaryDefinition` seam 구현).
+ *
+ * 입력 후보는 파이프라인이 결정론으로 추출한 "질문에 실제로 들어있는 사전 용어"뿐이고,
+ * 출력은 그 폐쇄집합 안의 term 하나 또는 null 이다. 호출부(pipeline)가 후보 밖 반환을
+ * 버리므로(fail-close) 모델 오판의 최대 피해는 "검수된 정의문이 불필요한 질문에 나감"이다.
+ * 생성문이 유저에게 나가는 경로는 없다 — 서빙되는 답은 항상 사람이 검수한 사전 answer 다.
+ */
+export async function mapGlossaryDefinition(
+  question: string,
+  candidateTerms: string[],
+): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const systemPrompt = [
+    "너는 KBO 야구 용어 사전의 질문 분류기다.",
+    "아래 후보 용어 목록 중, 사용자의 질문이 **그 용어 자체의 뜻·정의**를 묻는 것일 때만 그 용어를 고른다.",
+    "다음은 정의 질문이 아니므로 반드시 null 이다:",
+    "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
+    "· 두 용어의 비교·차이 질문 (예: 유격수와 2루수 차이가 뭐야? — 한 용어의 정의문으로 답할 수 없다)",
+    "· 특정 선수·구단의 기록 수치나 오늘·특정 경기의 조회 질문 (예: 오늘 유격수 누구야?)",
+    "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
+    "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
+    '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
+  ].join("\n");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{
+        role: "user",
+        parts: [{ text: `후보 용어: ${JSON.stringify(candidateTerms)}\n질문: ${question}` }],
+      }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 64,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  // 관측 계약 (삼순 2026-08-11 ④축): 매퍼도 LLM 호출이다 — 토큰을 파이프라인으로 돌려
+  // 로그에 기록되게 한다(매핑 성공 시 그 행에, 실패 시 후속 경로 행에 합산).
+  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
+  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  const text: string =
+    data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // malformed 는 매핑 실패 — 기존 경로로 양보한다 (#1142 malformed fail-close 계약과 동일 축).
+    return { term: null, inputTokens, outputTokens };
+  }
+  const term = (parsed as { term?: unknown })?.term;
+  return {
+    term: typeof term === "string" && term.length > 0 ? term : null,
+    inputTokens,
+    outputTokens,
+  };
+}
+
 /** genius_rag_serving_chunks 서빙 행 (snake_case SQL 시그니처). */
 interface RagServingChunkRow {
   content: string;
@@ -571,6 +635,9 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
     loadPlayers: loadRosterPlayers,
     callLlm,
+    // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
+    // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
+    mapGlossaryDefinition,
     searchRag,
     callRagLlm,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도

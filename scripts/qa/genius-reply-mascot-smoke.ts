@@ -139,7 +139,9 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
   assert.ok(canned.size >= 8, `고정 문구 상수 수집 실패(${canned.size}개): ${[...canned].join(", ")}`);
   // 생성/조회된 실제 답변을 싣는 표현. 지역 `answer` 는 경로마다 의미가 달라
   // (rag=생성값, blocked=고정문구 삼항식) 단독으로 신뢰하지 않고 아래에서 따로 판정한다.
-  const GENERATED = new Set(["hit.answer", "cached", "validated.answer"]);
+  // `mappedEntry.answer` = 사전 정의 LLM 매핑(②-z)이 서빙하는 검수 사전 답변 — `hit.answer` 와
+  // 같은 dictionary 답변이다 (2026-08-11 C 질문 정규화).
+  const GENERATED = new Set(["hit.answer", "cached", "validated.answer", "mappedEntry.answer"]);
   // matchPath 가 리터럴이 아닌 호출부(`route`)와 지역 `answer` 를 쓰는 호출부는
   // 등록제로 둔다. 새로 생기면 RED 로 세워 사람이 분류를 명시하게 한다.
   const LOCAL_ANSWER_PATHS = new Map<string, "generated" | "canned">([
