@@ -56,8 +56,10 @@ export async function trackFallback(
     errorMessage: options?.errorMessage,
   };
 
-  // Supabase 영구 저장 (비동기, 실패해도 알림은 계속)
-  saveToSupabase(event).catch(err => {
+  // Supabase 영구 저장 — 반드시 await 한다. fire-and-forget은 응답 반환 직후
+  // 서버리스 freeze로 insert가 유실된다(2026-08-11 실측: "Failed to save to
+  // Supabase: fetch failed" — 장애 중 이벤트 공백으로 진단 지연). 실패해도 계속.
+  await saveToSupabase(event).catch(err => {
     console.error("[API Fallback] Failed to save to Supabase:", err.message);
   });
 
@@ -244,6 +246,9 @@ export async function trackApiDegradation(
     const row = firstRow<{ should_send: boolean; attempt_token: string | null }>(data);
     if (!row || row.should_send !== true || !row.attempt_token) return;
 
+    // 이 인스턴스가 전역 claim 승자(= 경보 담당) → 회복 시 복구 알림 1회 대상으로 등록.
+    // 전송 실패해도 outbox/drainer가 경보를 이어받으므로 등록은 should_send 기준.
+    pendingRecoveryNotice.add(apiName);
     await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
   } catch (err) {
     console.error(
@@ -395,6 +400,56 @@ export async function sendDegradationTelegramAlert(
     console.error("[API Degradation] Telegram send failed — NACK(재시도):", error);
     return false;
   }
+}
+
+// ============================================================================
+// 복구 알림 (best-effort, 2026-08-11 실질 요구사항: 경보 후 "다시 정상"을 알 수 있게)
+//
+// 설계: 전역 claim 승자 인스턴스만 pendingRecoveryNotice에 등록되므로 복구 알림도
+// 쿨다운 창당 최대 1회다. 그 인스턴스가 재활용 전에 죽으면 복구 알림은 생략될 수
+// 있다(best-effort 명시). 경보 자체는 durable(outbox)하므로 정확성에 영향 없음.
+// ============================================================================
+
+const pendingRecoveryNotice = new Set<string>();
+
+/**
+ * 성공 경로에서 호출: 이 인스턴스가 직전에 경보를 보냈으면 복구 알림을 1회 보낸다.
+ * 경보 이력이 없으면 in-memory 체크 1회로 즉시 반환(핫패스 비용 0).
+ */
+export async function markApiRecovered(apiName: string): Promise<void> {
+  if (!pendingRecoveryNotice.has(apiName)) return;
+  pendingRecoveryNotice.delete(apiName);
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠
+  if (!botToken) return;
+  const message = `✅ 외부 API 복구\n\n**${apiName}** 정상 응답 확인\n\n시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    // 복구 알림은 best-effort — 실패해도 서비스 경로에 영향 없음. 재등록하지 않는다
+    // (다음 경보 사이클에서 다시 기회가 생김).
+    console.error("[API Recovery] Telegram send failed:", error);
+  }
+}
+
+/** 테스트 전용: 복구 알림 대기 상태 주입/조회. */
+export function _setPendingRecoveryForTest(apiName: string, pending: boolean): void {
+  if (pending) pendingRecoveryNotice.add(apiName);
+  else pendingRecoveryNotice.delete(apiName);
+}
+export function _hasPendingRecoveryForTest(apiName: string): boolean {
+  return pendingRecoveryNotice.has(apiName);
 }
 
 /**

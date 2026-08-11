@@ -28,6 +28,7 @@
     "qa:genius-answer-feedback": "tsx scripts/qa/genius-answer-feedback-contract.ts",
     "qa:genius-answer-feedback:selftest": "tsx scripts/qa/genius-answer-feedback-contract.ts --selftest",
     "qa:team-fullname-routing": "tsx scripts/qa/team-fullname-routing-smoke.ts",
+    "qa:relay-gameid-guard": "tsx scripts/qa/relay-gameid-guard.ts",
     "qa:team-rag-wiring": "tsx scripts/qa/team-rag-wiring-smoke.ts",
     "qa:genius-served-metrics": "tsx scripts/qa/genius-served-metrics-smoke.ts",
     "qa:genius-reply-payload-db": "tsx scripts/qa/genius-reply-payload-db-integration.ts",

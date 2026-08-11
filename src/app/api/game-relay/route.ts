@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { trackFallback } from "@/lib/monitoring/api-fallback-tracker";
+import {
+  markApiRecovered,
+  trackApiDegradation,
+  type DegradationAlertPolicy,
+} from "@/lib/monitoring/api-fallback-tracker";
 import { isAllStarGameId } from "@/lib/constants/teams";
+import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import {
@@ -766,6 +771,40 @@ const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
 /**
+ * naver-relay 경보 정책 — durable claim RPC 기반. 기존 in-memory 경보는 서버리스
+ * 인스턴스별 쿨다운이라 장애 중 인스턴스마다 재발송됐다(2026-08-11 19:00~19:30
+ * 경보 3회 체감 원인). claim RPC는 count/cooldown을 DB에서 원자 판정 → 전역 30분 1회.
+ */
+const NAVER_RELAY_ALERT_POLICY: DegradationAlertPolicy = {
+  windowMinutes: 5,
+  threshold: 3,
+  cooldownMinutes: 30,
+  leaseSeconds: 60,
+};
+
+/** 업스트림 실패를 GET 레벨로 전달하는 typed error — single-flight 공유 안전. */
+class RelayUpstreamError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: Record<string, unknown>,
+  ) {
+    super(String(body.error ?? "relay_upstream_error"));
+    this.name = "RelayUpstreamError";
+  }
+}
+
+/**
+ * Single-flight: 같은 (naverGameId, inningHint)의 동시 fresh 요청은 업스트림
+ * fetch 1회를 공유한다. 경기 동시 시작(콜드 burst) 때 같은 인스턴스에 몰린 N개
+ * 폴링이 네이버로 N배 증폭되는 것을 차단한다(2026-08-11 19:00 cold burst 재발 방지).
+ * delta(since)는 공유 결과에서 호출자별로 파생되므로 응답 의미는 불변.
+ */
+const inflightFresh = new Map<
+  string,
+  Promise<{ response: GameRelayResponse; anyInningDegraded: boolean }>
+>();
+
+/**
  * In-memory response cache (module-level, persists for the lambda warm period
  * ~5–15min). The relay-bridged celebration path on the client polls at 3s
  * cadence; without caching, N concurrent viewers of the same game would mean
@@ -955,6 +994,15 @@ export async function GET(req: NextRequest) {
       { status: 400, headers: NO_STORE_HEADERS },
     );
   }
+  // canonical 형식이 아니면 업스트림 도달 전 400 fail-close. 네이버식 긴 ID가
+  // 들어오면 toNaverGameId가 연도를 이중으로 붙여 자기유발 404가 난다
+  // (2026-08-11 오판 사고 재발 방지 — src/lib/game/game-id.ts 주석 참조).
+  if (!isCanonicalKboGameId(gameId)) {
+    return NextResponse.json(
+      { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
+      { status: 400, headers: NO_STORE_HEADERS },
+    );
+  }
 
   // 클라이언트에서 현재 이닝을 힌트로 전달 (네이버 API의 inn이 부정확할 때 대비)
   const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
@@ -986,6 +1034,15 @@ export async function GET(req: NextRequest) {
     });
   }
 
+  // fresh 경로 — 본문은 buildFresh 클로저로 묶어 single-flight로 공유한다.
+  // 실패는 RelayUpstreamError로만 나가며(경보는 내부에서 1회 기록) GET 말미에서
+  // 상태코드/바디로 변환된다.
+  // arrow 함수여야 함: 호이스팅되는 function 선언은 앞선 gameId null-narrowing을
+  // 잎어버려 타입이 깨진다(const narrowing은 생성 시점 이후 클로저에만 보존).
+  const buildFresh = async (): Promise<{
+    response: GameRelayResponse;
+    anyInningDegraded: boolean;
+  }> => {
   try {
     // First, fetch inning 1 to get the current inning number
     const firstRes = await fetch(
@@ -1000,18 +1057,18 @@ export async function GET(req: NextRequest) {
     );
 
     if (!firstRes.ok) {
-      await trackFallback("naver-relay", "http-error", {
+      await trackApiDegradation("naver-relay", "http-error", {
         statusCode: firstRes.status,
-        errorMessage: `HTTP ${firstRes.status} ${firstRes.statusText}`,
-      });
+        errorMessage: `HTTP ${firstRes.status} ${firstRes.statusText} (gameId=${gameId}, inning=1)`,
+      }, NAVER_RELAY_ALERT_POLICY);
       // inning-1 fetch failed = we have no current-inning info and no relays.
       // Return non-2xx so the client's useGameRelay (setData only on res.ok)
       // keeps its existing relay data and celebration trigger source instead of
       // being wiped to an empty 200 (which blanks the UI and stalls celebrations).
-      return NextResponse.json(
-        { error: "relay_upstream_http_error" },
-        { status: 503, headers: NO_STORE_HEADERS },
-      );
+      throw new RelayUpstreamError(503, {
+        error: "relay_upstream_http_error",
+        upstreamStatus: firstRes.status,
+      });
     }
 
     const firstData = (await firstRes.json()) as NaverRelayResponse;
@@ -1028,12 +1085,16 @@ export async function GET(req: NextRequest) {
     // This lets resolveInningWithSnapshot tell "failed → keep last-good" apart
     // from "succeeded but empty → adopt".
     const inningPromises: Promise<NaverTextRelay[] | null>[] = [];
+    // 경보 계측 분리용: 이닝별 실패 종류 기록 (timeout / HTTP<status> / schema-empty / network).
+    // 기존에는 전부 "timeout (cold/evicted)"으로 뭉개 기록돼 진단이 불가했다(2026-08-11).
+    const inningFailures: string[] = [];
 
     // Use the already-fetched inning 1 data. A malformed 200 (result present but
     // textRelays missing / not an array) is a schema failure, NOT a legit empty
     // inning — resolve to null so the snapshot/unrecoverable path applies instead
     // of silently shrinking inning 1 to [] (which flips game-wide cumIdx).
     const firstRelaysRaw = firstData.result?.textRelayData?.textRelays;
+    if (!Array.isArray(firstRelaysRaw)) inningFailures.push("inn1:schema-empty");
     inningPromises.push(
       Promise.resolve(
         Array.isArray(firstRelaysRaw) ? firstRelaysRaw : null,
@@ -1063,13 +1124,27 @@ export async function GET(req: NextRequest) {
             // failure, not a legit empty inning → null so the snapshot path
             // applies. `?? []` would have shrunk this inning and flipped cumIdx.
             const relays = data?.result?.textRelayData?.textRelays;
-            return Array.isArray(relays) ? relays : null;
+            if (!Array.isArray(relays)) {
+              inningFailures.push(`inn${i}:schema-empty`);
+              return null;
+            }
+            return relays;
           })
           // Failure (timeout / HTTP not-ok / network / schema) → null so the
           // resolver falls back to this inning's last-good snapshot instead of
           // dropping its plays (which would renumber game-wide cumIdx and
-          // duplicate celebrations on recovery).
-          .catch(() => null)
+          // duplicate celebrations on recovery). 실패 종류는 계측용으로 기록.
+          .catch((e: unknown) => {
+            const err = e as Error;
+            const kind =
+              err?.name === "TimeoutError"
+                ? "timeout"
+                : err?.message?.startsWith("HTTP")
+                  ? err.message.replace(/\s+/g, "")
+                  : "network";
+            inningFailures.push(`inn${i}:${kind}`);
+            return null;
+          })
       );
     }
 
@@ -1104,13 +1179,23 @@ export async function GET(req: NextRequest) {
     // non-2xx instead so the client keeps its existing relay data (celebration
     // IDs stay stable) and retries on the next 3s poll. Nothing is cached.
     if (anyInningUnrecoverable) {
-      await trackFallback("naver-relay", "timeout", {
-        errorMessage: "inning fetch failed with no last-good snapshot (cold/evicted)",
+      // 실패 종류를 분리 계측해 경보가 "무슨 실패인지"를 담는다. 기존에는 전부
+      // timeout으로 기록돼 HTTP 404·스키마 공백까지 "timeout (cold/evicted)"로
+      // 보였다(2026-08-11 진단 지연 원인).
+      const reason: "timeout" | "http-error" | "schema-error" | "network-error" =
+        inningFailures.some((f) => f.includes(":timeout"))
+          ? "timeout"
+          : inningFailures.some((f) => f.includes(":HTTP"))
+            ? "http-error"
+            : inningFailures.some((f) => f.includes(":schema-empty"))
+              ? "schema-error"
+              : "network-error";
+      await trackApiDegradation("naver-relay", reason, {
+        errorMessage: `no last-good snapshot (cold/evicted) gameId=${gameId} failures=[${inningFailures.join(",") || "unknown"}]`,
+      }, NAVER_RELAY_ALERT_POLICY);
+      throw new RelayUpstreamError(503, {
+        error: "relay_upstream_unrecoverable",
       });
-      return NextResponse.json(
-        { error: "relay_upstream_unrecoverable" },
-        { status: 503, headers: NO_STORE_HEADERS },
-      );
     }
 
     // Combine all text relays with global newest-first ordering. Keeping
@@ -1209,10 +1294,10 @@ export async function GET(req: NextRequest) {
     // 엣지 캐시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다
     // (부분 실패 시 last-good 을 내보내되 캐시에는 올리지 않는 계약).
-    return NextResponse.json(toDeltaResponse(response, sinceInning), {
-      headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
-    });
+    return { response, anyInningDegraded };
   } catch (e) {
+    // buildFresh 내부에서 이미 경보·분류를 끝낸 typed error는 그대로 전파.
+    if (e instanceof RelayUpstreamError) throw e;
     const error = e as Error;
     let reason: "timeout" | "http-error" | "schema-error" | "network-error" = "network-error";
     if (error.name === "TimeoutError" || error.message?.includes("timeout")) {
@@ -1223,17 +1308,53 @@ export async function GET(req: NextRequest) {
       reason = "schema-error";
     }
 
-    await trackFallback("naver-relay", reason, {
-      errorMessage: error.message,
-    });
+    await trackApiDegradation("naver-relay", reason, {
+      errorMessage: `${error.message} (gameId=${gameId})`,
+    }, NAVER_RELAY_ALERT_POLICY);
 
-    // Any uncaught failure (inning-1 timeout/network, JSON parse, etc.) returns
-    // non-2xx — NOT an empty 200. An empty 200 would wipe the client's existing
+    // Any uncaught failure (inning-1 timeout/network, JSON parse, etc.) surfaces
+    // as non-2xx — NOT an empty 200. An empty 200 would wipe the client's existing
     // relay data (setData only fires on res.ok) and blank the celebration
     // trigger source; non-2xx keeps the last good data and retries next poll.
+    throw new RelayUpstreamError(503, { error: `relay_upstream_${reason}` });
+  }
+  }
+
+  // Single-flight: 이미 진행 중인 동일 (naverGameId, inningHint) fresh 작업이 있으면
+  // 그 promise를 공유하고, 없으면 리더로서 생성한다. 완료/실패 시 맵에서 제거해
+  // 다음 폴링은 새 업스트림 시도를 하게 한다(실패 고정 방지).
+  let shared = inflightFresh.get(cacheKey);
+  if (!shared) {
+    shared = buildFresh();
+    inflightFresh.set(cacheKey, shared);
+    void shared
+      .catch(() => undefined)
+      .finally(() => {
+        inflightFresh.delete(cacheKey);
+      });
+  }
+
+  try {
+    const { response, anyInningDegraded } = await shared;
+    // 이 인스턴스가 직전에 경보를 보냈다면(전역 claim 승자) 복구 알림을 1회 보낸다.
+    // 경보 이력이 없는 인스턴스는 in-memory 체크 1회로 즉시 반환(비용 0).
+    await markApiRecovered("naver-relay");
+    // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
+    // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.
+    return NextResponse.json(toDeltaResponse(response, sinceInning), {
+      headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
+    });
+  } catch (e) {
+    if (e instanceof RelayUpstreamError) {
+      return NextResponse.json(e.body, {
+        status: e.status,
+        headers: NO_STORE_HEADERS,
+      });
+    }
+    // buildFresh가 모든 예외를 RelayUpstreamError로 정규화하므로 여기는 방어적 최후단.
     return NextResponse.json(
-      { error: `relay_upstream_${reason}` },
-      { status: 503, headers: NO_STORE_HEADERS },
+      { error: "relay_internal_error" },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
