@@ -72,16 +72,31 @@ export const CAREER_LEADERBOARD_METRIC_WORDS = [
 ] as const;
 
 /**
- * 순위 요구 표지. 지표 어휘를 못 알아봐도 **순위를 묻는 형태 자체**로 리더보드임이 확정된다.
- * 열거되지 않은 새 지표(`통산 폭투 1위`)가 generic LLM 으로 새는 구멍을 형태로 막는다.
- *
- * ⚠️ `많` 축(삼순 7차 P0): 순위를 서수로 묻지 않고 **수량 비교**로 묻는 형태가 실사용의 다수다
- * (`누가 제일 많아?`·`누가 많이 던졌어?`). `제일많`·`가장많`은 모두 `많` 을 포함하므로 한 글자로
- * 닫는다. 반대로 `가장`·`제일` 을 **단독**으로 넣지 않는 이유는 `역대 가장 멋진 선수` 같은
- * 주관 평가까지 hold 로 끌고 와 답변 범위를 좁히기 때문이다 — 그 축은 LLM 범위 판정이 맞다.
- * `상위` 는 `상위 10명` 처럼 서수(`\d+위`)가 없는 범위 요청을 잡는다.
+ * 순위 요구 표지 ①: **서수형**. `통산 폭투 1위` 처럼 등수를 직접 지목한다.
+ * 지표 어휘를 못 알아봐도 이 형태 자체로 리더보드임이 확정된다.
  */
-const CAREER_RANK_MARKER = /\d+\s*위|최다|선두|상위|톱\d+|top\d+|많/;
+const CAREER_RANK_ORDINAL = /\d+\s*위|최다|선두|톱\s*\d+|top\s*\d+/;
+
+/**
+ * 순위 요구 표지 ②: **수량 비교형**. 등수를 안 쓰고 "누가 제일 많냐"로 묻는 형태가 실사용의 다수다.
+ *
+ * ⚠️ `많` 한 글자 전역 매칭은 과차단이다(삼순 9차 P0). `누적 피로가 많으면 구속이 떨어져?`·
+ * `커리어가 긴 투수는 부상이 많아?` 처럼 **리더보드가 아닌 서술형 질문**까지 hold 로 끌고 와
+ * 답변 범위를 깎는다. 그래서 `많` 을 단독으로 보지 않고 **리더보드형 완전문법**으로만 인정한다:
+ *   ⓐ `누가…많`   — 주어가 "누구"인 수량 비교 (`누가 제일 많아`·`누가 많이 던졌어`)
+ *   ⓑ `많은 <사람 단위>` — 지목 대상이 사람인 명사구 (`제일 많은 선수`·`많은 타자`)
+ *   ⓒ `상위 N(명|인)` — 서수 없는 범위 요청 (`상위 10명`)
+ * ⓐ 의 간격 상한은 `제일`·`가장`·`많이` 같은 부사 한둘만 끼는 실제 형태를 덮되,
+ * 문장을 건너뛰어 엉뚱한 절의 `많` 에 붙지 않을 만큼만 둔다.
+ *
+ * `가장`·`제일` 을 **단독** 표지로 넣지 않는 이유도 같다 — `역대 가장 멋진 선수` 같은
+ * 주관 평가는 LLM 범위 판정이 맞다.
+ */
+const CAREER_RANK_QUANTITY = /누가.{0,6}많|많은\s*(선수|타자|투수|사람|이)|상위\s*\d+\s*(명|인)/;
+
+function hasCareerRankMarker(normalized: string): boolean {
+  return CAREER_RANK_ORDINAL.test(normalized) || CAREER_RANK_QUANTITY.test(normalized);
+}
 
 /**
  * 통산 리더보드 질문인가 — **미지원 지표까지 포함해** hold 로 닫아야 하는 범위.
@@ -99,7 +114,7 @@ const CAREER_RANK_MARKER = /\d+\s*위|최다|선두|상위|톱\d+|top\d+|많/;
 export function isCareerLeaderboardHoldScope(question: string): boolean {
   const normalized = compactCareerQuestion(question);
   if (!CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => normalized.includes(word))) return false;
-  if (CAREER_RANK_MARKER.test(normalized)) return true;
+  if (hasCareerRankMarker(normalized)) return true;
   return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));
 }
 
