@@ -39,20 +39,26 @@ export type CareerLeaderboardFetcher = (
   now?: Date,
 ) => Promise<CareerLeaderboardAnswer | null>;
 
-/** 첫 수직 슬라이스: 공식 통산 순위 질문 중 **단일 1위 positive grammar**만 지원한다.
+/** 첫 수직 슬라이스: 질문 **전체를 consume하는 안타+단일 1위 positive grammar**만 지원한다.
  *
- * 범위형 표현을 하나씩 denylist에 더하면 `최다 두 명` 같은 새 표현이 계속 뚫린다(삼순 3차
- * NO-GO). 그래서 지원 문법 자체를 ① `1위[는/가] 누구/알려` 또는 ② `최다/선두 ... 누구/누가`
- * 두 구조로 닫고, 그 밖의 모든 표현은 Top N 슬라이스가 열릴 때까지 history_hold로 보낸다. */
+ * 부분문자열 매칭은 `안타 1위는 누구고 2위는?`의 앞 절만 먹거나, `홈런 1위는? 안타도`
+ * 에서 다른 절의 안타를 지표로 오결속한다(삼순 4차 NO-GO). 끝 문장부호만 제거한 전체 문자열이
+ * 아래 두 폐쇄 문법 중 하나와 완전히 일치할 때만 지원한다. */
 export function resolveCareerLeaderboardIntent(question: string): CareerLeaderboardIntent | null {
-  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  const temporal = ["통산", "역대", "커리어", "누적"].some((word) => normalized.includes(word));
-  if (!temporal || !normalized.includes("안타")) return null;
-
-  const explicitFirst = /1위(?:는|가|를)?(?:누구|누가|누군|알려)/.test(normalized) || /1위[?？]?$/.test(normalized);
-  // `최다 두 명`처럼 leader와 의문사 사이에 수량어가 끼면 이 positive grammar와 불일치한다.
-  const singularLeader = /(?:최다|선두)(?:안타)?(?:는|가|를)?(?:누구|누가|누군)/.test(normalized);
-  if (!explicitFirst && !singularLeader) return null;
+  const normalized = question
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim()
+    .replace(/[?!？！.,。]+$/g, "")
+    .replace(/\s+/g, "");
+  const temporal = "(?:통산|역대|커리어|누적)";
+  const who = "(?:누구(?:야|인가|인가요|예요)?|누가|누군(?:데|가요)?|알려(?:줘|주세요)?)";
+  const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}$`);
+  const singularLeader = new RegExp(
+    `^${temporal}(?:최다안타|안타최다|안타선두)(?:기록)?(?:는|가|를)?` +
+    `(?:${who}|누가(?:갖고있어|보유하고있어))$`,
+  );
+  if (!explicitFirst.test(normalized) && !singularLeader.test(normalized)) return null;
   return { metric: "hits", label: "안타" };
 }
 

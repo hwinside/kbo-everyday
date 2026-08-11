@@ -128,6 +128,13 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
+    name: "m6i 미래 구성시각 선검증 제거 — min(now,futureStatic)이 now로 오염을 숨김",
+    file: FULL_ENTRY,
+    from: " || item.ms > nowMs + 5 * 60_000",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
     name: "m7 current 원타입 계약 제거 — 문자열 '109'/필드 누락이 그대로 합산",
     file: CAREER_LEADERBOARD,
     from: `    const raw = row[intent.metric];
@@ -139,17 +146,24 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m8 단일 1위 positive grammar 제거 — 1위부터 10위가 단일답으로",
+    name: "m8 전체질의 consume 종단 앵커 제거 — 1위/2위 복수절 앞부분만 먹음",
     file: CAREER_LEADERBOARD,
-    from: 'const explicitFirst = /1위(?:는|가|를)?(?:누구|누가|누군|알려)/.test(normalized) || /1위[?？]?$/.test(normalized);',
-    to: 'const explicitFirst = normalized.includes("1위");',
+    from: 'const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}$`);',
+    to: 'const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}`);',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m8b 최다/선두 singular positive grammar 제거 — 최다 두 명이 단일답으로",
+    name: "m8b 최다 singular positive grammar 우회 — 최다 두 명을 단일답으로",
     file: CAREER_LEADERBOARD,
-    from: 'const singularLeader = /(?:최다|선두)(?:안타)?(?:는|가|를)?(?:누구|누가|누군)/.test(normalized);',
-    to: 'const singularLeader = normalized.includes("최다") || normalized.includes("선두");',
+    from: "if (!explicitFirst.test(normalized) && !singularLeader.test(normalized)) return null;",
+    to: 'if (!explicitFirst.test(normalized) && !singularLeader.test(normalized) && !normalized.includes("최다")) return null;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8c 지표-순위 결속 제거 — 홈런 1위 절 뒤 안타를 오결속",
+    file: CAREER_LEADERBOARD,
+    from: "if (!explicitFirst.test(normalized) && !singularLeader.test(normalized)) return null;",
+    to: 'if (!explicitFirst.test(normalized) && !singularLeader.test(normalized) && !(normalized.includes("1위") && normalized.includes("안타"))) return null;',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

@@ -158,12 +158,18 @@ check("P0: baseline 숫자 외국인 ID와 current canonical 영문 ID를 같은
   assert.equal(result?.leaders[0].total, 3010);
 });
 
-check("P0: full=1 freshness는 live now가 아니라 static 포함 가장 오래된 구성시각", () => {
+check("P0: full=1 freshness는 모든 구성시각 검증 후 가장 오래된 시각", () => {
+  const now = new Date("2026-08-12T01:00:00Z");
   assert.equal(
-    oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", "2026-08-10T20:21:46.603Z"]),
+    oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", "2026-08-10T20:21:46.603Z"], now),
     "2026-08-10T20:21:46.603Z",
   );
-  assert.equal(oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", undefined]), null, "구성시각 누락 fail-close");
+  assert.equal(oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", undefined], now), null, "구성시각 누락 fail-close");
+  assert.equal(
+    oldestFullEntryTimestamp(["2026-08-12T01:00:00Z", "2026-08-13T01:00:00Z"], now),
+    null,
+    "미래 static을 min 계산으로 숨기면 안 된다",
+  );
   const routeSource = readFileSync("src/app/api/stats/route.ts", "utf8");
   assert.match(routeSource, /const updatedAt = full\s*\? oldestFullEntryTimestamp\(\[currentUpdatedAt, staticGeneratedAt\]\)/);
   assert.match(routeSource, /statsMeta\.battersGeneratedAt/);
@@ -194,6 +200,8 @@ check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 
     "통산 안타 3위 누구야?",
     "통산 안타 최다 10명 알려줘", // 삼순 2차 NO-GO exact
     "통산 안타 최다 두 명 알려줘", // 삼순 3차 NO-GO exact
+    "통산 안타 1위는 누구고 2위는 누구야?", // 삼순 4차 NO-GO: 부분절 consume 금지
+    "통산 홈런 1위는 누구야? 안타도 궁금해", // 삼순 4차 NO-GO: 타 지표 절의 안타 오결속 금지
     // ⚠️ 아래 두 표본은 각각 rankTokens 폐쇄·범위 표지 폐쇄를 **단독으로** 무너뜨린다.
     // 표지 없는 복수 순위(1위 2위)는 rankTokens 만, 1위+부터는 범위 표지만 잡는다 —
     // 하나가 빠져도 다른 가드가 가려 mutation 검출력이 0이 되는 것을 막는 쌍이다.
