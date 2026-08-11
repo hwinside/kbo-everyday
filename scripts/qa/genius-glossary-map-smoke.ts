@@ -185,6 +185,37 @@ async function main() {
     assert.equal(state.calls.length, 0); // 후보 0 → 호출 0
   }
 
+  // ── 위치 계약 (2026-08-11 production 재현 반례 — 합산 QA 실측 FAIL 2건) ─────────
+  // 공식 RAG 가 근거를 찾으면 durable LLM 경계를 소비하고 general/unsure 로 **종결**한다.
+  // 매퍼가 그 뒤에 있으면 정의 질문이 영원히 사전에 도달하지 못한다(production 실측:
+  // `유격수 포지션이 뭐야?`→unsure-settle, `도루뜻`→general-settle). 검수 사전이
+  // 공식 RAG 생성답보다 우선이라는 ① 계약이 fuzzy 매칭에도 적용되어야 한다.
+  {
+    const officialEvidence = {
+      content: "유격수는 2루와 3루 사이에 위치하는 내야수를 말한다.",
+      pageTitle: "2026 공식야구규칙",
+      canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      revision: "sha256:deadbeef",
+      sectionPath: "수비 위치",
+      asOf: "2026-08-01",
+      sourceGrade: "tier1" as const,
+    };
+    for (const [question, reply] of [
+      ["유격수 포지션이 뭐야?", "유격수"],
+      ["도루뜻", "도루"],
+    ] as const) {
+      const state = freshState({ reply });
+      const deps = makeDeps(state);
+      let officialCalls = 0;
+      deps.searchOfficialRag = async () => { officialCalls++; return [officialEvidence]; };
+      // 공식 RAG LLM 은 unsure 로 종결하려 든다 — 재이전(매퍼가 뒤일 때)이면 이 settle 이 이긴다.
+      deps.callOfficialRagLlm = async () => ({ text: '{"status":"UNSURE","answer":""}', inputTokens: 9, outputTokens: 9 });
+      const result = await answerQuestion("u1", question, deps);
+      assert.equal(result.source, "dictionary", `${question}: 공식 RAG settle 이 검수 사전을 이겼다 (${result.source})`);
+      assert.equal(officialCalls, 0, `${question}: 매퍼 승리 전에 공식 RAG 가 호출됐다`);
+    }
+  }
+
   // ── P1 거절 문구 갱신 계약 (#1143 지원 반영) ────────────────────────
   assert.ok(!UNSUPPORTED_SEASON_ANSWER.includes("아직 준비 중"), "낡은 미지원 안내가 남아있다");
   assert.ok(UNSUPPORTED_SEASON_ANSWER.includes("통산"), "통산 지원 안내 누락");
