@@ -56,6 +56,9 @@ export async function GET(request: NextRequest) {
       const echoRes = await fetch("https://httpbin.org/headers", {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+          // 오버라이드 가능성 실측: Vercel이 자동 부착하는 Forwarded를 우리 값으로 덮을 수 있는가
+          Forwarded: "for=1.2.3.4",
+          "X-Forwarded-For": "5.6.7.8",
         },
         cache: "no-store",
         signal: AbortSignal.timeout(8000),
