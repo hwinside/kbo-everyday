@@ -64,6 +64,7 @@ import {
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeCareerLeaderboardAnswer,
+  isCareerLeaderboardHoldScope,
   isCareerLeaderboardQuestion,
   resolveCareerLeaderboardIntent,
   type CareerLeaderboardFetcher,
@@ -2227,18 +2228,16 @@ export function routeQuestion(
   // ── 리그 통산·역대 순위 질문 — 공식 구조화 조회 위임 ──
   // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음"
   // 전제는 오판이었다. generic LLM 은 여전히 금지하고, 닫힌 지표 intent 만 구조화 조회한다.
-  // ⚠️ `hasStat` 만으로는 `안타기록` 같은 합성 토큰이 안 잡혀 범위형 질문이 아래
-  // `NAMED_STAT_QUERY` → blocked 로 샐(삼순 1차 NO-GO 재현 exact). 누적 지표 어휘가
-  // 보이면 합성어여도 통산 순위 질문으로 본다. 주관 평가(`역대 최고의 타자`)는
-  // 지표 어휘가 없어 여전히 llm_scope_gate 로 내려간다.
-  const mentionsCareerMetric =
-    /안타|홈런|도루|타점|득점|삼진|세이브|홀드|완봉|완투|출루율|장타율|타율/.test(normalized);
+  // ⚠️ hold 범위를 `hasStat`(선수 개인 기록축 토큰 목록)으로 판정하면 `통산 다승 1위`
+  // 처럼 그 목록에 없는 지표 alias 가 llm_scope_gate 로 샌다(삼순 5차 P0). 판정은
+  // `career-leaderboard` 안의 **닫힌 지표 SSOT + 순위 표지 형태**가 단독으로 책임진다.
+  // 지표도 순위 표지도 없는 주관 평가(`역대 최고의 타자`)는 여기서 빠져 LLM 범위 판정으로 간다.
   if (!hasTeam && !hasPlayerReference(tokens, players)) {
     // 지원 intent를 넓은 scope/ask보다 먼저 직접 결속한다. 이렇게 해야
     // `intent != null ⇒ career_leaderboard`가 구조적으로 성립하고 라우터 SSOT drift가 없다.
     const careerIntent = resolveCareerLeaderboardIntent(question);
     if (careerIntent) return "career_leaderboard";
-    if ((hasStat || mentionsCareerMetric) && isCareerLeaderboardQuestion(question)) return "history_hold";
+    if (isCareerLeaderboardHoldScope(question)) return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.

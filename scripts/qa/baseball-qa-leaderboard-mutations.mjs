@@ -40,6 +40,27 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
+    name: "m1d 닫힌 지표 SSOT 축소(`다승` 제거) — 미열거 alias 가 generic LLM 으로 샌다",
+    file: CAREER_LEADERBOARD,
+    from: '"다승", "승수",',
+    to: '"승수",',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e 순위 표지 폐쇄 제거 — SSOT 에 없는 새 지표의 순위 질문이 샌다",
+    file: CAREER_LEADERBOARD,
+    from: "const CAREER_RANK_MARKER = /\\d+\\s*위|최다|선두|톱\\d+|top\\d+/;",
+    to: "const CAREER_RANK_MARKER = /(?!)/;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1f hold 판정을 옛 hasStat 축으로 회귀 — 지표 목록 밖 alias 미포착",
+    file: PIPELINE,
+    from: "    if (isCareerLeaderboardHoldScope(question)) return \"history_hold\";",
+    to: "    if (hasStat && isCareerLeaderboardQuestion(question)) return \"history_hold\";",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
     name: "m2 인물 축 denylist 복원 — 우승 기여자 질문이 다시 차단",
     file: PIPELINE,
     from: "const OUT_OF_SCOPE_INTENT =\n  /추천|",
@@ -128,6 +149,20 @@ const MUTATIONS = [
     file: FULL_ENTRY,
     from: " || item.ms > nowMs + 5 * 60_000",
     to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6j GET catch 의 handler 결속 제거 — 옛 인라인 fallback 이 freshness 를 우회",
+    file: STATS_ROUTE,
+    from: "    return handleStatsGetFailure(e, season, type);",
+    to: `    if (season === "2026" || season === "current") {
+      const fb = type === "pitcher"
+        ? (pitcherStats2026 as unknown as PlayerStat[])
+        : (batterStats2026 as unknown as PlayerStat[]);
+      const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
+      return NextResponse.json({ stats: fb, type, count: fb.length, season: 2026, source: "fallback", updatedAt: fbAt });
+    }
+    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });`,
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

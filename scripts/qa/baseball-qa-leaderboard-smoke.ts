@@ -41,7 +41,7 @@ import {
   oldestFullEntryTimestamp,
   StatsFreshnessContractError,
 } from "../../src/lib/stats/full-entry";
-import { handleStatsGetFailure } from "../../src/app/api/stats/route";
+import { GET as statsGET, handleStatsGetFailure } from "../../src/app/api/stats/route";
 import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -81,6 +81,35 @@ check("아직 스냅샷 계약이 없는 통산 지표는 LLM 대신 hold 유지
   for (const q of ["역대 홈런 1위 누구야?", "역대 최고 타율은 누구야?"]) {
     assert.equal(isCareerLeaderboardAsk(q), true, q);
     assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
+});
+// ⚠️ 삼순 5차 P0: `STAT_WORDS`(선수 개인 기록축 토큰)에 없는 지표 alias 가 hold 조건을
+// 통째로 건너뛰고 generic LLM 으로 새면, 숫자 가드로도 못 막는 **이름 단답 환각**이 난다.
+// 아래 두 축은 서로를 가리지 않는다 — 지표 어휘 축(순위 표지 없음)과 순위 표지 축(미열거 지표).
+check("P0: 닫힌 지표 SSOT — 미지원 통산 지표 alias 는 순위 표지 없이도 hold", () => {
+  for (const q of [
+    "통산 다승 누가 제일 많아?",   // `STAT_WORDS` 미포함 alias (삼순 exact 축)
+    "역대 이닝 누가 많이 던졌어?",
+    "통산 실책 누가 많아?",
+    "역대 볼넷 누가 많아?",
+    "통산 세이브 누가 많아?",
+  ]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
+});
+check("P0: 순위 표지 형태 — 목록에 없는 새 지표도 순위를 물으면 hold", () => {
+  for (const q of [
+    "통산 폭투 1위 누구야?",        // 지표 SSOT 에 없는 어휘 — 형태로만 잡힌다
+    "역대 견제사 최다 누구야?",
+    "통산 끝내기 선두 누구야?",
+  ]) {
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
+});
+check("무회귀: 지표도 순위 표지도 없는 주관 평가는 hold 가 아니라 LLM 범위 판정", () => {
+  for (const q of ["역대 최고의 타자는 누구야?", "역대 가장 멋진 선수 누구야?"]) {
+    assert.equal(routeQuestion(q, [], []), "llm_scope_gate", q);
   }
 });
 
@@ -324,6 +353,35 @@ checkAsync("GET 경계: freshness 계약 오류는 fallback 200으로 우회하�
   const body = await response.json();
   assert.equal(body.stats.length, 0);
   assert.notEqual(body.source, "fallback");
+});
+
+checkAsync("GET call-site 실결속: 실패 경로가 handler를 통과해 freshness를 검증한다", async () => {
+  // 삼순 5차 P1: handler 직접 호출만 검증하면 GET catch 가 handler 결속을 잃어도 GREEN 이다.
+  // 여기서는 **실제 GET** 을 태운다 — fetch 를 죽여 catch 로 보내고, 시계를 static 생성시각
+  // 이전으로 얼려 fallback 구성시각을 `미래`로 만든다. 결속이 살아 있으면 500 fail-close.
+  const realFetch = globalThis.fetch;
+  const RealDate = globalThis.Date;
+  const frozen = new RealDate("2020-01-01T00:00:00Z").getTime();
+  globalThis.fetch = (async () => { throw new Error("network down"); }) as unknown as typeof fetch;
+  class FrozenDate extends RealDate {
+    constructor(...args: ConstructorParameters<DateConstructor>) {
+      if (args.length === 0) super(frozen);
+      else super(...(args as [string]));
+    }
+    static now(): number { return frozen; }
+  }
+  globalThis.Date = FrozenDate as unknown as DateConstructor;
+  try {
+    const req = { nextUrl: new URL("https://keubo.fan/api/stats?type=batter&season=2026") };
+    const response = await statsGET(req as never);
+    assert.equal(response.status, 500, "미래 구성시각 fallback 이 200 으로 새면 안 된다");
+    const body = await response.json();
+    assert.equal(body.stats.length, 0);
+    assert.notEqual(body.source, "fallback");
+  } finally {
+    globalThis.fetch = realFetch;
+    globalThis.Date = RealDate;
+  }
 });
 
 checkAsync("E2E: 캡처 exact가 history_hold/LLM이 아니라 kbo_structured로 종결된다", async () => {

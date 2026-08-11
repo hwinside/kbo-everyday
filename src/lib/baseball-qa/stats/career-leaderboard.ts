@@ -60,6 +60,43 @@ export function isCareerLeaderboardQuestion(question: string): boolean {
   return hasTemporal && /1위|누구|누가|최다|최고|선두|알려/.test(normalized);
 }
 
+/**
+ * 통산 리더보드로 물을 수 있는 **누적 기록 지표의 닫힌 SSOT**.
+ *
+ * ⚠️ 이 목록은 라우터가 아니라 여기 한 곳에만 있다(삼순 5차 P0). `STAT_WORDS` 는
+ * 선수 개인 기록 축의 토큰 매칭용이라 `다승`·`이닝`·`실책` 같은 통산 표현이 없고,
+ * 라우터에 별도 regex 를 두면 두 목록이 조용히 어긋난다.
+ */
+export const CAREER_LEADERBOARD_METRIC_WORDS = [
+  // 타자 누적
+  "안타", "홈런", "타점", "득점", "도루", "도루자", "루타", "2루타", "3루타", "이루타", "삼루타",
+  "볼넷", "사사구", "사구", "몸에맞는공", "희생번트", "희생플라이", "병살", "출장", "경기출장",
+  // 투수 누적
+  "다승", "승수", "승리", "패전", "이닝", "세이브", "홀드", "탈삼진", "삼진", "완봉", "완투",
+  "자책점", "피안타", "피홈런", "선발등판", "등판",
+  // 수비·비율
+  "실책", "타율", "방어율", "평균자책", "출루율", "장타율", "ops", "war", "wrc",
+] as const;
+
+/**
+ * 순위 요구 표지. 지표 어휘를 못 알아봐도 **순위를 묻는 형태 자체**로 리더보드임이 확정된다.
+ * 열거되지 않은 새 지표(`통산 폭투 1위`)가 generic LLM 으로 새는 구멍을 형태로 막는다.
+ */
+const CAREER_RANK_MARKER = /\d+\s*위|최다|선두|톱\d+|top\d+/;
+
+/**
+ * 통산 리더보드 질문인가 — **미지원 지표까지 포함해** hold 로 닫아야 하는 범위.
+ *
+ * `역대 최고의 타자는 누구야?` 처럼 지표도 순위 표지도 없는 **주관 평가**는 여기서 빠져
+ * LLM 범위 판정으로 내려간다(숫자 환각 리스크가 없는 축).
+ */
+export function isCareerLeaderboardHoldScope(question: string): boolean {
+  if (!isCareerLeaderboardQuestion(question)) return false;
+  const normalized = compactCareerQuestion(question);
+  if (CAREER_RANK_MARKER.test(normalized)) return true;
+  return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));
+}
+
 /** 첫 수직 슬라이스: 질문 **전체를 consume하는 안타+단일 1위 positive grammar**만 지원한다.
  *
  * 부분문자열 매칭은 `안타 1위는 누구고 2위는?`의 앞 절만 먹거나, `홈런 1위는? 안타도`
