@@ -766,6 +766,18 @@ const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
 /**
+ * 2026-08-11 네이버가 Vercel(icn1) egress 발 relay 요청만 404로 선별 차단.
+ * (같은 IP·같은 UA의 schedule API는 200 → UA 단독 원인 아님, IP+bot UA 조합
+ * WAF 룰 가능성 배제용 1차 완화) 브라우저 시그니처로 통일 — 외부 API 헤더는
+ * 정책 변경 시 1곳만 고치도록 상수로 중앙화한다.
+ */
+const NAVER_RELAY_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+  Referer: "https://m.sports.naver.com/",
+} as const;
+
+/**
  * In-memory response cache (module-level, persists for the lambda warm period
  * ~5–15min). The relay-bridged celebration path on the client polls at 3s
  * cadence; without caching, N concurrent viewers of the same game would mean
@@ -991,9 +1003,7 @@ export async function GET(req: NextRequest) {
     const firstRes = await fetch(
       `${NAVER_API_BASE}/${naverGameId}/relay?inning=1`,
       {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-        },
+        headers: NAVER_RELAY_HEADERS,
         cache: "no-store",
         signal: AbortSignal.timeout(10000),
       }
@@ -1043,9 +1053,7 @@ export async function GET(req: NextRequest) {
     for (let i = 2; i <= maxInning; i++) {
       inningPromises.push(
         fetch(`${NAVER_API_BASE}/${naverGameId}/relay?inning=${i}`, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-          },
+          headers: NAVER_RELAY_HEADERS,
           cache: "no-store",
           // Bound each per-inning fetch so a single slow/hung Naver upstream
           // can't stall the whole Promise.all — that stall was the tail cause
@@ -1077,7 +1085,7 @@ export async function GET(req: NextRequest) {
     const recordPromise = fetch(
       `${NAVER_API_BASE}/${naverGameId}/record`,
       {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)" },
+        headers: NAVER_RELAY_HEADERS,
         cache: "no-store",
         // Same bound as per-inning fetches: record API is only used for
         // pitcher/batter names+stats, not celebration firing, so a hung
