@@ -16,6 +16,11 @@ import {
 // 있는 것으로 실측 확인했다.
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
+// 2026-08-11 네이버가 relay 엔드포인트를 Vercel icn1(AWS 서울) egress 대역만 404로
+// 선별 차단 (프리뷰 실측: 브라우저 UA+Referer로도 동일 404 → IP 차단 확정).
+// 도쿄 리전으로 이 라우트만 이동해 차단 대역을 우회한다. schedule API는 icn1에서도
+// 200이라 다른 라우트는 그대로 둔다.
+export const preferredRegion = "hnd1";
 
 // ===== Types =====
 
