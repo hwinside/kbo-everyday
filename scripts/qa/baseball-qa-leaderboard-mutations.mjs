@@ -18,10 +18,10 @@ const MUTATIONS = [
   {
     name: "m1 통산 구조화 조회 제거 — exact 질문이 다시 hold 로 회귀",
     file: PIPELINE,
-    from: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+    from: `if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
     return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
   }`,
-    to: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+    to: `if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
     return "history_hold";
   }`,
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
@@ -66,6 +66,53 @@ const MUTATIONS = [
     file: CONSTANTS,
     from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;",
     to: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 200;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6 빈/부분 currentRows fail-close 제거 — 2025값으로 현재 순위 단정 (삼순 P0 재현)",
+    file: CAREER_LEADERBOARD,
+    from: "if (currentRows.length < CURRENT_MIN_ROWS) return null;",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m7 current 원타입 계약 제거 — 문자열 '109'/필드 누락이 그대로 합산",
+    file: CAREER_LEADERBOARD,
+    from: `    const raw = row[intent.metric];
+    if (raw === undefined || raw === null || typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+      return null;
+    }
+    currentById.set(id, row);`,
+    to: "    currentById.set(id, row);",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8 범위형 폐쇄 제거 — '1위부터 10위'가 1위 한 명 오답으로 (삼순 1차 NO-GO 재현)",
+    file: CAREER_LEADERBOARD,
+    from: `  const rankTokens = normalized.match(/\\d+위/g) ?? [];
+  if (rankTokens.some((token) => token !== "1위")) return null;`,
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8b 범위 표지 폐쇄 제거 — 부터/까지/상위/top 이 단일 1위로 오매칭",
+    file: CAREER_LEADERBOARD,
+    from: 'if (/부터|까지|사이|상위|톱|top\\d*|순위권|랭킹|누구누구|~|-\\d+위/.test(normalized)) return null;',
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m9 합성 지표 토큰 라우팅 제거 — '안타기록' 범위형이 blocked 로 회귀",
+    file: PIPELINE,
+    from: "if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {",
+    to: "if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m10 출처 표기 제거 — 답변에서 공식 출처·기준 연도 소실",
+    file: CAREER_LEADERBOARD,
+    from: "\\n\ud83d\udcc4 출처: KBO 공식 기록실(${result.baselineThroughSeason}년 말 통산) + 크보팬 2026 시즌 기록",
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

@@ -83,23 +83,80 @@ check("진짜 범위밖 어휘는 여전히 차단된다 (denylist 축소 방향
   }
 });
 
-check("기준선 + 올시즌 증분이 현재 통산 1위를 뒤집어 계산한다", () => {
+/** 리그 전체 규모의 2026 current rows 표본(기본 300행) — 빈/부분 응답 fail-close 계약의 양성 쪽. */
+function makeCurrentRows(count = 300, updatedAt = "2026-08-11T14:00:00Z") {
+  return Array.from({ length: count }, (_, index) => ({
+    kbo_id: String(60000 + index), player_key: String(60000 + index),
+    name: `현역${index}`, team: "팀", hits: index % 150, updated_at: updatedAt,
+  }));
+}
+function makeBaselineSnapshot() {
   const rows = Array.from({ length: 100 }, (_, index) => ({
     kboId: String(70000 + index), name: `선수${index}`, team: "팀", hits: Math.max(0, 2500 - index),
   }));
   rows[0] = { kboId: "77532", name: "손아섭", team: "두산", hits: 2618 };
   rows[1] = { kboId: "72443", name: "최형우", team: "삼성", hits: 2586 };
-  const snapshot = {
+  return {
     schemaVersion: 1, throughSeason: 2025, rowCount: rows.length, rows,
     source: { url: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx", seasonValue: "9999", sortKey: "HIT_CN", order: "DESC" },
   };
-  const result = resolveCareerLeaderboard(snapshot, [
+}
+
+check("기준선 + 올시즌 증분이 현재 통산 1위를 뒤집어 계산한다 (+출처 표기)", () => {
+  const snapshot = makeBaselineSnapshot();
+  const current = [
+    ...makeCurrentRows(300),
     { kbo_id: "77532", player_key: "77532", name: "손아섭", team: "두산", hits: 35, updated_at: "2026-08-11T14:00:00Z" },
     { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", hits: 109, updated_at: "2026-08-11T14:00:00Z" },
-  ], "2026-08-11T14:00:00Z", { metric: "hits", label: "안타" }, new Date("2026-08-11T15:00:00Z"));
+  ];
+  const result = resolveCareerLeaderboard(snapshot, current as never, "2026-08-11T14:00:00Z", { metric: "hits", label: "안타" }, new Date("2026-08-11T15:00:00Z"));
   assert.equal(result?.leaders[0].name, "최형우");
   assert.equal(result?.leaders[0].total, 2695);
-  assert.ok(composeCareerLeaderboardAnswer(result!).includes("2,695안타"));
+  const answer = composeCareerLeaderboardAnswer(result!);
+  assert.ok(answer.includes("2,695안타"));
+  assert.ok(answer.includes("출처") && answer.includes("KBO 공식 기록실"), `답변에 출처 표기가 있어야 한다: ${answer}`);
+});
+
+check("P0: 유효 기준선 + 빈/부분 currentRows 는 fail-close (2025값 단정 금지)", () => {
+  const intent = { metric: "hits", label: "안타" } as const;
+  const snapshot = makeBaselineSnapshot();
+  const now = new Date("2026-08-11T15:00:00Z");
+  assert.equal(resolveCareerLeaderboard(snapshot, [], "2026-08-11T14:00:00Z", intent, now), null, "빈 currentRows");
+  assert.equal(resolveCareerLeaderboard(snapshot, makeCurrentRows(40) as never, "2026-08-11T14:00:00Z", intent, now), null, "부분 currentRows(40행)");
+});
+
+check("P0: current 컬럼 원타입 변형(hits '109' 문자열·필드 누락)은 fail-close", () => {
+  const intent = { metric: "hits", label: "안타" } as const;
+  const snapshot = makeBaselineSnapshot();
+  const now = new Date("2026-08-11T15:00:00Z");
+  const stringTyped = [
+    ...makeCurrentRows(300),
+    { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", hits: "109", updated_at: "2026-08-11T14:00:00Z" },
+  ];
+  assert.equal(resolveCareerLeaderboard(snapshot, stringTyped as never, "2026-08-11T14:00:00Z", intent, now), null, "문자열 hits");
+  const missing = [
+    ...makeCurrentRows(300),
+    { kbo_id: "72443", player_key: "72443", name: "최형우", team: "삼성", updated_at: "2026-08-11T14:00:00Z" },
+  ];
+  assert.equal(resolveCareerLeaderboard(snapshot, missing as never, "2026-08-11T14:00:00Z", intent, now), null, "hits 필드 누락");
+});
+
+check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 hold 로 내려간다", () => {
+  for (const q of [
+    "통산 안타기록 기준으로 현재까지 1위부터 10위까지가 누구누구야?", // 하린아빠 exact
+    "통산 안타 1위부터 5위 알려줘",
+    "통산 안타 상위 10명 누구야?",
+    "통산 안타 top10 알려줘",
+    "통산 안타 3위 누구야?",
+    // ⚠️ 아래 두 표본은 각각 rankTokens 폐쇄·범위 표지 폐쇄를 **단독으로** 무너뜨린다.
+    // 표지 없는 복수 순위(1위 2위)는 rankTokens 만, 1위+부터는 범위 표지만 잡는다 —
+    // 하나가 빠져도 다른 가드가 가려 mutation 검출력이 0이 되는 것을 막는 쌍이다.
+    "통산 안타 1위 2위 누구야?",
+    "통산 안타 1위부터 알려줘",
+  ]) {
+    assert.equal(resolveCareerLeaderboardIntent(q), null, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
 });
 check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", () => {
   const intent = { metric: "hits", label: "안타" } as const;
@@ -110,14 +167,16 @@ check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", ()
     schemaVersion: 1, throughSeason: 2025, rowCount: rows.length, rows,
     source: { url: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx", seasonValue: "9999", sortKey: "HIT_CN", order: "DESC" },
   };
-  assert.equal(resolveCareerLeaderboard({}, [], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "empty");
-  assert.equal(resolveCareerLeaderboard(valid, [], "2026-08-09T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "stale");
+  const fullCurrent = makeCurrentRows(300);
+  assert.equal(resolveCareerLeaderboard({}, fullCurrent as never, "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "empty baseline");
+  assert.equal(resolveCareerLeaderboard(valid, fullCurrent as never, "2026-08-09T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "stale");
   assert.equal(resolveCareerLeaderboard(valid, [
+    ...fullCurrent,
     { kbo_id: "70000", player_key: "70000", name: "선수0", team: "팀", hits: 1, updated_at: "2026-08-11T14:00:00Z" },
     { kbo_id: "70000", player_key: "70000", name: "선수0", team: "팀", hits: 1, updated_at: "2026-08-11T14:00:00Z" },
-  ], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "duplicate identity");
+  ] as never, "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "duplicate identity");
   const swapped = { ...valid, rows: rows.map((row, index) => index === 0 ? { ...row, hits: "2500" } : row) };
-  assert.equal(resolveCareerLeaderboard(swapped, [], "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "H column type swap");
+  assert.equal(resolveCareerLeaderboard(swapped, fullCurrent as never, "2026-08-11T14:00:00Z", intent, new Date("2026-08-11T15:00:00Z")), null, "H column type swap");
 });
 
 check("무회귀: 선수 지명·시점어 없는 질문은 리더보드가 아니다", () => {

@@ -2229,7 +2229,13 @@ export function routeQuestion(
   // ── 리그 통산·역대 순위 질문 — 공식 구조화 조회 위임 ──
   // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음"
   // 전제는 오판이었다. generic LLM 은 여전히 금지하고, 닫힌 지표 intent 만 구조화 조회한다.
-  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+  // ⚠️ `hasStat` 만으로는 `안타기록` 같은 합성 토큰이 안 잡혀 범위형 질문이 아래
+  // `NAMED_STAT_QUERY` → blocked 로 샐(삼순 1차 NO-GO 재현 exact). 누적 지표 어휘가
+  // 보이면 합성어여도 통산 순위 질문으로 본다. 주관 평가(`역대 최고의 타자`)는
+  // 지표 어휘가 없어 여전히 llm_scope_gate 로 내려간다.
+  const mentionsCareerMetric =
+    /안타|홈런|도루|타점|득점|삼진|세이브|홀드|완봉|완투|출루율|장타율|타율/.test(normalized);
+  if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
     return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
