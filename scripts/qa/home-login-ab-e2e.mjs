@@ -37,6 +37,9 @@ const AUTH_DELAY_MS = Number(getArg("--auth-delay") || 0);
 // 만료 토큰 재진입(S1E): 앱 재실행의 실제 조건 — access token 은 만료, refresh 로 복원.
 // supabase-js 가 refresh 네트워크를 끝내야 세션이 서는 경로를 재현한다(auth-delay 와 조합).
 const EXPIRED = process.argv.includes("--expired");
+// 감시자 검출력 셀프테스트: pending 없이 로컬 A 만 두면(비로그인) A 카드가 렌더되므로
+// 감시자가 정상이라면 반드시 wrongSeen=true 가 떠야 한다(= RED 증명용).
+const S3_SELFTEST = process.argv.includes("--s3-detector-selftest");
 
 function getArg(name) {
   const i = process.argv.indexOf(name);
@@ -88,10 +91,23 @@ async function upsertProfile(env, id, nickname, teamId) {
   if (r.status >= 300) fail(`profiles upsert 실패(${r.status}): ${r.text.slice(0, 200)}`);
 }
 
+/**
+ * 테스트 계정 삭제 — fail-close(삼순 리뷰 #1154 2차 ③): 삭제 결과를 검증(auth GET 404
+ * + profiles 0행)하고 재시도한다. 잔존이면 false 를 돌려 테스트 전체를 FAIL 로 묶는다.
+ */
 async function deleteUser(env, id) {
-  await sb(env, `/rest/v1/profiles?id=eq.${id}`, { method: "DELETE" });
-  const r = await sb(env, `/auth/v1/admin/users/${id}`, { method: "DELETE" });
-  if (r.status >= 300) console.error(`⚠️ 테스트 유저 삭제 실패(${r.status}) id=${id} — 수동 정리 필요`);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await sb(env, `/rest/v1/profiles?id=eq.${id}`, { method: "DELETE" });
+    await sb(env, `/auth/v1/admin/users/${id}`, { method: "DELETE" });
+    const chk = await sb(env, `/auth/v1/admin/users/${id}`, { method: "GET" });
+    const prof = await sb(env, `/rest/v1/profiles?id=eq.${id}&select=id`, { method: "GET" });
+    const authGone = chk.status === 404 || !chk.json?.id;
+    const profGone = Array.isArray(prof.json) && prof.json.length === 0;
+    if (authGone && profGone) return true;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  console.error(`E2E-FAIL 테스트 계정 잔존 id=${id} — 삭제 검증 3회 실패`);
+  return false;
 }
 
 async function signIn(env, email, password) {
@@ -178,6 +194,9 @@ async function newPage(ctx) {
 //   즉시 통과(false-green)한다 → 반드시 **실함수**를 넘긴다.
 // - 조상 탐색이 body/html 까지 올라가면 전체 DOM 을 뒤져 전체 경기 현황 카드까지
 //   잡힌다 → body 미만으로 제한.
+// 팀 id → shortName (src/lib/constants/teams.ts 와 동일 — 카드 헤더 텍스트 감시용)
+const TEAM_SHORT = { 1: "LG", 2: "두산", 3: "KT", 4: "SSG", 5: "NC", 6: "KIA", 7: "롯데", 8: "삼성", 9: "한화", 10: "키움" };
+
 // 카드 경계 판정: "MY TEAM" 배지에서 올라가며 **게임 앵커가 처음 나타나는 조상**을
 // 카드 경계로 본다. TeamCard 는 게임 앵커가 정확히 1개, 전역 래퍼는 오늘 경기 수만큼
 // 있으므로 "그 경계의 앵커 집합이 정확히 {href} 인가"로 판정하면 전역 오인이 없다.
@@ -340,12 +359,15 @@ async function main() {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       await ctx.addCookies(sessionCookies(env, sessB));
       const page = await newPage(ctx);
-      await page.addInitScript(([teamId, uid, wrongHref]) => {
+      await page.addInitScript(([teamId, uid, wrongName, rightName]) => {
         localStorage.setItem("kbo-my-team", String(teamId));
         localStorage.setItem("kbo-onboarding-status", "completed");
         localStorage.setItem("kbo-favorite-players", JSON.stringify([{ kboId: "99999", name: "테스트선수" }]));
         localStorage.setItem("kbo-auth-uid", uid);
-        // A 팀 카드가 순간이라도 나타나는지 전 구간 감시 (오표시 0 계약)
+        // 오표시 0 계약 — 앵커가 아니라 **팀 헤더 자체**를 첫 mutation 부터 감시한다
+        // (삼순 2차 ②: TeamCard 는 API 완료 전에도 팀명·로고·MY TEAM 헤더를 먼저 그린다).
+        // "MY TEAM" 배지에서 올라가 팀명이 처음 등장하는 레벨(=카드 헤더 스코프)에서
+        // 이전 계정 팀명만 보이면 오표시로 기록한다.
         window.__WRONG_TEAM_SEEN = false;
         const check = () => {
           const spans = Array.from(document.querySelectorAll("span"))
@@ -353,18 +375,26 @@ async function main() {
           for (const s of spans) {
             let el = s.parentElement;
             for (let i = 0; i < 12 && el && el !== document.body && el !== document.documentElement; i++) {
-              const anchors = [...el.querySelectorAll('a[href^="/games/"]')].map((a) => a.getAttribute("href"));
-              if (anchors.length > 0) {
-                const uniq = [...new Set(anchors)];
-                if (uniq.length === 1 && uniq[0] === wrongHref) window.__WRONG_TEAM_SEEN = true;
+              const t = el.textContent || "";
+              const hasWrong = t.includes(wrongName);
+              const hasRight = t.includes(rightName);
+              if (hasWrong || hasRight) {
+                if (hasWrong && !hasRight) window.__WRONG_TEAM_SEEN = true;
                 break;
               }
               el = el.parentElement;
             }
           }
         };
-        new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
-      }, [teamA, aId, hrefA]);
+        // MutationObserver 는 document-start 타이밍/예외에 취약하다(2026-08-11 selftest 에서
+        // 무검출 실측) — 오류를 캡처하고 50ms 폴링을 병행해 검출을 보장한다.
+        window.__OBS_ERR = null;
+        try {
+          check();
+          new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) { window.__OBS_ERR = String(e && e.message); }
+        setInterval(check, 50);
+      }, [teamA, aId, TEAM_SHORT[teamA], TEAM_SHORT[teamB]]);
       await page.goto(`http://localhost:${PORT}/`, { waitUntil: "commit", timeout: 90000 });
       const okB = await page.waitForFunction(myteamAnchorPredicate, hrefB, { timeout: 60000 })
         .then(() => true).catch(() => false);
@@ -401,11 +431,76 @@ async function main() {
       console.log("S2 계정 전환(A→B): 이전 팀 오표시 0 · B팀 카드 렌더 · kbo-favorite-players 정리 · kbo-auth-uid=B 확인");
       await ctx.close();
     }
+    // ── S3: iOS Safari pending-session 경로 (무쿠키 + kbo-pending-session=B + 로컬 A)
+    //    삼순 2차 ①: 쿠키 없음=비로그인 판정이 이 경로를 놓치면 pending B 복원 중
+    //    로컬 A 를 선렌더한다. 가드가 pending 을 fail-close 해야 오표시 0. ────────
+    {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await newPage(ctx);
+      await page.addInitScript(([teamId, uid, pending, wrongName, rightName]) => {
+        localStorage.setItem("kbo-my-team", String(teamId));
+        localStorage.setItem("kbo-onboarding-status", "completed");
+        localStorage.setItem("kbo-auth-uid", uid);
+        if (pending) sessionStorage.setItem("kbo-pending-session", pending);
+        window.__SEEN_LOG = [];
+        window.__WRONG_TEAM_SEEN = false;
+        const check = () => {
+          const spans = Array.from(document.querySelectorAll("span"))
+            .filter((s) => s.textContent && s.textContent.trim() === "MY TEAM");
+          for (const s of spans) {
+            let el = s.parentElement;
+            for (let i = 0; i < 12 && el && el !== document.body && el !== document.documentElement; i++) {
+              const t = el.textContent || "";
+              const hasWrong = t.includes(wrongName);
+              const hasRight = t.includes(rightName);
+              if (hasWrong || hasRight) {
+                window.__SEEN_LOG.push({ t: Date.now(), w: hasWrong, r: hasRight, depth: i });
+                if (hasWrong && !hasRight) window.__WRONG_TEAM_SEEN = true;
+                break;
+              }
+              el = el.parentElement;
+            }
+          }
+        };
+        // MutationObserver 는 document-start 타이밍/예외에 취약하다(2026-08-11 selftest 에서
+        // 무검출 실측) — 오류를 캡처하고 50ms 폴링을 병행해 검출을 보장한다.
+        window.__OBS_ERR = null;
+        try {
+          check();
+          new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) { window.__OBS_ERR = String(e && e.message); }
+        setInterval(check, 50);
+      }, [teamA, aId, S3_SELFTEST ? "" : JSON.stringify({ access_token: sessB.access_token, refresh_token: sessB.refresh_token }), TEAM_SHORT[teamA], TEAM_SHORT[teamB]]);
+      await page.goto(`http://localhost:${PORT}/`, { waitUntil: "commit", timeout: 90000 });
+      if (S3_SELFTEST) {
+        // 검출력 증명: 비로그인 + 로컬 A → A 카드가 렌더되고 감시자가 잡아야 한다.
+        await page.waitForFunction(myteamAnchorPredicate, hrefA, { timeout: 60000 })
+          .catch(() => fail("S3-selftest: A 카드 미렌더"));
+        const seen = await page.evaluate(() => ({ wrong: window.__WRONG_TEAM_SEEN, log: window.__SEEN_LOG.slice(0, 5) }));
+        console.log(`S3-selftest: wrongSeen=${seen.wrong} log=${JSON.stringify(seen.log)}`);
+        if (!seen.wrong) fail("S3-selftest: 감시자가 A 팀 헤더를 못 잡음 — 검출력 없음(false-green)");
+        await ctx.close();
+        console.log(`buildId=${buildId} — S3 감시자 검출력 확인(RED 정상)`);
+        return;
+      }
+      const okB3 = await page.waitForFunction(myteamAnchorPredicate, hrefB, { timeout: 60000 })
+        .then(() => true).catch(() => false);
+      if (!okB3) fail("S3: pending-session 복원 후 B 팀 카드 미렌더");
+      const wrongSeen3 = await page.evaluate(() => window.__WRONG_TEAM_SEEN);
+      if (wrongSeen3) fail("S3: pending-session 복원 중 이전 계정(A) 팀 헤더가 렌더됨 — 오표시 발생");
+      const uid3 = await page.evaluate(() => localStorage.getItem("kbo-auth-uid"));
+      if (uid3 !== bId) fail(`S3: kbo-auth-uid 가 B 로 갱신 안 됨 (${uid3})`);
+      console.log("S3 pending-session(무쿠키) 경로: 오표시 0 · B팀 카드 렌더 · uid=B 확인");
+      await ctx.close();
+    }
+
     console.log(`buildId=${buildId} latency=${LATENCY_MS}ms authDelay=${AUTH_DELAY_MS}ms — 전 시나리오 PASS`);
   } finally {
     try { if (browser) await browser.close(); } catch { /* ignore */ }
-    if (aId) await deleteUser(env, aId);
-    if (bId) await deleteUser(env, bId);
+    // cleanup 잔존 = 테스트 실패 (fail-close)
+    const aGone = aId ? await deleteUser(env, aId) : true;
+    const bGone = bId ? await deleteUser(env, bId) : true;
+    if (!aGone || !bGone) process.exitCode = 1;
     await stopServer(server);
   }
 }
