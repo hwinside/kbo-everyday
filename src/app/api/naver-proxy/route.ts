@@ -50,6 +50,25 @@ export async function GET(request: NextRequest) {
       });
     }
   }
+  if (kind === "echo") {
+    // 임시 진단: 외부 upstream이 실제로 받는 요청 헤더 확인 (근본원인 확정 후 제거)
+    try {
+      const echoRes = await fetch("https://httpbin.org/headers", {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = await echoRes.text();
+      return new NextResponse(body, {
+        status: echoRes.status,
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      });
+    } catch (e) {
+      return NextResponse.json({ error: String(e) }, { status: 504 });
+    }
+  }
   if (kind !== "relay" && kind !== "record") {
     return NextResponse.json({ error: "invalid kind" }, { status: 400 });
   }
