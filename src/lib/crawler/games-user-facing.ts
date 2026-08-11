@@ -80,10 +80,29 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
  * 총 소요 ≈ max(Naver ~30ms, KBO enrich ≤1.5s). KBO 열화여도 홈은 ≤1.5s 안에 수렴.
  */
 export async function fetchGamesUserFacing(date: string): Promise<KboGame[]> {
+  return (await fetchGamesUserFacingWithMeta(date)).games;
+}
+
+/**
+ * 경기목록 + 소스 가용성 메타. `kboGameIds` = KBO 조회가 성공했을 때 그 응답에 들어있던
+ * gameId 집합, KBO 조회 실패면 null.
+ *
+ * 왜 필요한가 (삼순 2026-08-11 #1147 P0): Naver 선발명은 항상 빈값이라, KBO enrich 가
+ * 죽으면 결과 경기의 선발이 빈 것이 "아직 발표 안 됨"인지 "소스 장애"인지 구분되지 않는다.
+ * 이 메타가 없으면 소비자(야잘알봇 선발 매치업)가 KBO timeout 을 `미발표`로 거짓 안내하게 된다.
+ * 홈/기존 경로는 games 만 쓰므로 동작 불변.
+ */
+export async function fetchGamesUserFacingWithMeta(
+  date: string,
+): Promise<{ games: KboGame[]; kboGameIds: Set<string> | null }> {
   const [naverR, kboR] = await Promise.allSettled([
     fetchNaverGames(date, undefined, { timeoutMs: USER_FACING_NAVER_TIMEOUT_MS }),
     fetchKboGamesOnly(date, "0,1,3,4,5,7,9", { timeoutMs: KBO_ENRICH_TIMEOUT_MS }),
   ]);
+
+  const kboGameIds = kboR.status === "fulfilled"
+    ? new Set(kboR.value.map((g) => g.gameId))
+    : null;
 
   // 모든 반환 경로를 mergeKboEnrichment 로 통일해 gameId 유일성 불변식을 공통 적용한다
   // (삼순 P1: base===[] / Naver 실패 직접 반환이 dedupe 를 우회하던 것 차단).
@@ -91,12 +110,12 @@ export async function fetchGamesUserFacing(date: string): Promise<KboGame[]> {
     const base = naverR.value;
     const kbo = kboR.status === "fulfilled" ? kboR.value : [];
     // Naver 가 빈데 KBO 에 경기 있으면 Naver 오탐 가능 → KBO 전체 사용(안전망). dedupe 는 merge 가.
-    if (base.length === 0 && kbo.length > 0) return mergeKboEnrichment([], kbo);
+    if (base.length === 0 && kbo.length > 0) return { games: mergeKboEnrichment([], kbo), kboGameIds };
     // KBO enrich + KBO-only union + dedupe(mergeKboEnrichment 내부).
-    return mergeKboEnrichment(base, kbo);
+    return { games: mergeKboEnrichment(base, kbo), kboGameIds };
   }
 
   // Naver 실패 → KBO 폴백(전체 데이터, dedupe 정규화). KBO 도 실패면 원래 Naver 에러로 throw.
-  if (kboR.status === "fulfilled") return mergeKboEnrichment([], kboR.value);
+  if (kboR.status === "fulfilled") return { games: mergeKboEnrichment([], kboR.value), kboGameIds };
   throw (naverR as PromiseRejectedResult).reason ?? new Error("games fetch failed (Naver+KBO)");
 }

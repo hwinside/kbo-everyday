@@ -160,32 +160,34 @@ async function run(): Promise<void> {
   // 동명이인(양현종)은 목록에서 격리되어야 한다 (§12).
   assert.equal(S2B_TARGET_PLAYERS.some((player) => player.name === "양현종"), false);
 
-  // 현재 출시 범위는 룰/용어다. 선수 코퍼스가 READY여도 명시 플래그 없이는
-  // 검색·일반 LLM·캐시를 전부 우회하고 exact 범위 안내로 닫혀야 한다.
+  // 선수 RAG 플래그 OFF(구 출시범위 재현)여도 검색·RAG LLM·캐시는 계속 0이어야 한다.
+  // ⚠️ 계약 갱신 (2026-08-10): 종전에는 routeQuestion 의 결정론 denylist(`별명` 인물 축)가
+  // 선차단해 blocked 로 닫혔지만, 인물·평가·역사 축을 denylist 에서 삭제하면서
+  // (`작년 LG우승 기여자 누구야?` 실표본 차단 사고) 이 경로는 **llm_scope_gate 위임**이
+  // 됐다 — 범위 판정을 LLM 이 하고, RAG 자산(검색·근거 LLM·캐시)은 여전히 안 탄다.
   {
     let searchCalls = 0;
-    let llmCalls = 0;
+    let ragLlmCalls = 0;
+    let genericLlmCalls = 0;
     let cacheReads = 0;
     const { deps, logs } = makeDeps({
       enablePlayerRag: false,
       searchRag: async () => { searchCalls++; return [MOON_EVIDENCE]; },
-      callRagLlm: async () => { llmCalls++; throw new Error("현재 범위에서 호출 금지"); },
-      callLlm: async () => { llmCalls++; throw new Error("현재 범위에서 호출 금지"); },
+      callRagLlm: async () => { ragLlmCalls++; throw new Error("플래그 OFF — 호출 금지"); },
+      callLlm: async () => {
+        genericLlmCalls++;
+        return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "문보경 선수는 LG 트윈스 팬들 사이에서 곰돌이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+      },
       getCache: async () => { cacheReads++; return "오염 캐시"; },
     });
     const scoped = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
-    assert.equal(scoped.source, "blocked");
-    // ⚠️ 이 경로만 ① 범위밖 문구가 남는다. `enablePlayerRag:false` 는 production 설정이
-    // 아니라 구 출시범위 재현이고, 여기서는 `routeQuestion` 의 **결정론 denylist**
-    // (`별명` 의도)가 선차단해 라우팅 단계에서 끝난다. 그 denylist 경계 자체를 ②로
-    // 옮길지는 미답변 로그 라벨링 결과로 정한다(이 PR 범위 밖).
-    // production(enablePlayerRag:true)에서 같은 질문은 아래 RED 케이스처럼 ② 문구다.
-    assert.equal(scoped.answer, BLOCKED_ANSWER);
-    assert.equal(searchCalls, 0);
-    assert.equal(llmCalls, 0);
-    assert.equal(cacheReads, 0);
-    assert.equal(logs.at(-1)?.matchPath, "blocked");
-    console.log("PASS 현재 출시 범위 — 선수 질문 exact fallback / RAG·LLM·cache 0");
+    assert.equal(scoped.source, "llm", scoped.answer);
+    assert.equal(searchCalls, 0, "플래그 OFF — RAG 검색 금지");
+    assert.equal(ragLlmCalls, 0, "플래그 OFF — 근거 LLM 금지");
+    assert.equal(genericLlmCalls, 1, "범위 판정은 LLM 위임");
+    assert.equal(cacheReads, 0, "scope gate 는 캐시를 읽지 않는다 (오염 재노출 방지)");
+    assert.equal(logs.at(-1)?.matchPath, "llm");
+    console.log("PASS 플래그 OFF — RAG 자산 0 + 인물 질문은 LLM 위임 (denylist 인물 축 삭제)");
   }
 
   // ── 1. 근거 0건: generic LLM 으로 상시 양보한다 (2026-08-10 하린아빠 P0) ─────

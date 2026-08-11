@@ -20,6 +20,14 @@ import {
 } from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  kstYear,
+  parseSeriesPrize,
+  renderSeriesPrizeAnswer,
+  resolvePrizeTeamMention,
+  resolveSeriesPrizeIntent,
+  resolveSeriesPrizeYear,
+} from "./awards/series-prize";
+import {
   allowsNumericAnswer,
   composeRagAnswer,
   numericTokensSubsetOf,
@@ -45,6 +53,14 @@ import {
   UNTRUSTED_METRIC_ANSWER,
   type SeasonRecordRow,
 } from "./stats/season-record";
+import {
+  CAREER_METRIC_COLUMNS,
+  composeCareerSeriesAnswer,
+  composeCareerTotalAnswer,
+  composeCareerYearAnswer,
+  type CareerRecord,
+  type CareerRecordFetcher,
+} from "./stats/career-series";
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeTeamRecordAnswer,
@@ -647,6 +663,24 @@ export interface QaDeps {
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn, rosterBlock?: string) => Promise<LlmResult>;
   /**
+   * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
+   *
+   * 열린 언어(잎여어·붙임·오탈자: `유격수 포지션이 뭐야?`·`도루뜕`)를 룰로 닫지 않고
+   * LLM 에 위임한다(M90 계약). 단, 판정의 입출력은 둘 다 폐쇄집합이다:
+   *   · 입력 후보 = 질문 안에 실제로 들어있는 사전 용어만 (결정론 추출, `glossaryCandidatesIn`)
+   *   · 출력 = 그 후보 안의 term 하나 또는 null. 후보 밖 반환은 호출부가 버린다(fail-close).
+   * 그래서 LLM 오판의 최대 피해는 "검수된 정의문이 필요 없는 질문에 나감"이며,
+   * 지어낸 내용이 나갈 경로는 구조적으로 없다. 미주입이면 이 단계 자체가 비활성(기존 동작).
+   *
+   * ⚠️ durable 단일-LLM 계약(getLlmState/acquireLlmStart) 밖의 호출이다 — 결과를 저장하지
+   * 않으므로 crash 재처리 시 재호출될 수 있지만, 유저 가시 결과는 사전 답변(결정론)이라
+   * 중복 노출·분기 불일치가 생기지 않는다. 비용만 문제고, 후보 있을 때만 타서 상한이 있다.
+   */
+  mapGlossaryDefinition?: (
+    question: string,
+    candidateTerms: string[],
+  ) => Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
@@ -685,6 +719,12 @@ export interface QaDeps {
    */
   fetchTeamEntry?: (teamId: number) => Promise<{ snapshotDate: string; players: string[] } | null>;
   /**
+   * 오늘(KST) 경기별 선발 매치업 조회 — `/api/games` 가 쓰는 같은 소스
+   * (`fetchGamesUserFacing`). 미주입이면 이 경로 자체가 비활성이라 기존 동작 그대로다.
+   * 조회 실패는 throw 로 구분해 던진다 — "경기 없음"으로 둥갑하면 장애 중 거짓 안내가 나간다.
+   */
+  fetchTodayStarters?: (dateYyyymmdd: string) => Promise<TodayGameStarters[]>;
+  /**
    * 최근 기사 근거 경로 ON/OFF. 미지정이면 꺼진 것으로 본다 — 새 경로는 명시적으로 켜야 한다.
    */
   enableNewsRag?: boolean;
@@ -718,6 +758,13 @@ export interface QaDeps {
    */
   fetchServedRecord?: (kboId: string) => Promise<SeasonRecordRow[]>;
   /**
+   * 연도별·통산·과거 시즌 기록 조회 — KBO 공식 선수 상세 `Total.aspx` (2026-08-10 캐처:
+   * `연도별 타율 추이`가 올해 단일값으로 오답). 공식 구조화 테이블 조회라 draft
+   * `lblDraft` 와 같은 축이다 — 문장 파싱이 아니므로 tier2 숫자 HOLD 를 열지 않는다.
+   * 미주입이면 해당 질문은 RECORD_MISSING 으로 fail-close.
+   */
+  fetchCareerRecord?: CareerRecordFetcher;
+  /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
    * ⚠️ 종전에는 이 경로가 아예 없어서 `LG 지금 몇 위야?`가 고정 안내문으로 닫혔다.
@@ -726,6 +773,14 @@ export interface QaDeps {
    * 미주입이면 팀 기록 경로가 비활성이라 기존 동작 그대로다.
    */
   fetchTeamRecord?: TeamRecordFetchers;
+  /**
+   * 한국시리즈 MVP 수상 정본 HTML 조회 (`SeriesPrize.aspx`).
+   *
+   * 우승 기여·KS MVP 질문은 generic LLM 이 오래된 이름을 확신해서 내보내는 오답을
+   * 어떤 가드도 못 잡는다(삼순 2026-08-10) — 정본 조회로만 답한다.
+   * 미주입이면 해당 질문은 fail-close(hold)로 닫힌다. LLM 폴백은 없다.
+   */
+  fetchSeriesPrizeHtml?: () => Promise<string>;
   /** 기록 stale 판정 기준 시각 (테스트 주입). 기본값 `Date.now()`. */
   now?: () => number;
   /**
@@ -773,6 +828,23 @@ const SERVICE_WORDS = [
   "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "오류", "에러", "건의",
   "피드백", "알림", "쪽지", "업데이트", "결제", "계정",
 ];
+/**
+ * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
+ *
+ * ⚠️ 이 질문 부류는 **generic LLM 위임 금지**다 (삼순 2026-08-10 NO-GO). 숫자 가드는
+ * 통과해도 모델이 오래된 이름(손아섭)을 확신해서 내보내는 오답을 못 막는다 — 실제로
+ * KBO 개인 통산행 기준 통산 안타 1위는 최형우(2,695+)로 이미 바뀌어 있었다.
+ * KBO 공식 웹에는 통산 누적 리더보드 구조화 테이블도 없다(기록실 전수 실측). 그래서
+ * 기준일 있는 공식 큐레이션/물질화 테이블이 생기기 전까지 **기존 fail-close(hold)** 를
+ * 유지한다 — 이 predicate 는 위임용이 아니라 그 fail-close 를 명시하는 식별자다.
+ */
+const CAREER_LEADERBOARD_SCOPE = /통산|역대|올타임/;
+const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
+export function isCareerLeaderboardAsk(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase();
+  return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
+}
+
 const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
   "지난해", "작년", "올해",
@@ -901,6 +973,15 @@ export function resolveRagTeamCandidate(question: string): RagTeamCandidate | nu
 }
 
 export function resolveMentionedTeam(question: string): string | null {
+  const hits = mentionedTeamCanonicals(question);
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/**
+ * 질문이 언급한 구단 canonical 전체. `resolveMentionedTeam`(단일 결속)과 판정기를 공유한다 —
+ * 소비자가 "0개(전체)"와 "2개 이상(모호)"를 구분해야 할 때 이것을 쓴다(삼순 #1147 복수팀 축).
+ */
+export function mentionedTeamCanonicals(question: string): string[] {
   const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
   const hits = new Set<string>();
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
@@ -914,7 +995,7 @@ export function resolveMentionedTeam(question: string): string | null {
       }));
     if (direct || combined) hits.add(canonical);
   }
-  return hits.size === 1 ? [...hits][0] : null;
+  return [...hits];
 }
 
 function mentionsTeam(tokens: string[]): boolean {
@@ -952,8 +1033,15 @@ const RULE_ACTOR_WORDS = [
 ];
 const RULE_TERM_INTENT =
   /뭐|뭔|무엇|뜻|설명|알려|규칙|룰|용어|어떻게|언제|몇\s*번|해야|할\s*수|가능|되나|돼|되죠|괜찮|차이|절차|경우|궁금|바꾸|바뀌|변경|방문|항의|처리|정해/;
+// ⚠️ 2026-08-10 하린아빠 캡처(`작년 LG우승에 가장 큰 기여를 한 사람은 누구야?` →
+// "야구 이야기만 답해드릴 수 있어요")로 **인물·평가·역사 축을 denylist 에서 삭제**했다.
+// `누구`·`역대`·`비교`·`최고` 는 범위밖 의도가 아니라 **야구 질문의 핵심 의문사**다 —
+// 한국시리즈 MVP·우승 주역·역대 순위가 전부 이 축에 걸려 차단됐다. 이 denylist 는
+// 고정밀(틀릴 여지가 없는 어휘)일 때만 존재 가치가 있고, 인물 축은 고정밀이 아니었다.
+// 범위 판정은 llm_scope_gate 가 하고(룰 최소화·LLM 위임, 00:53 방향 확정), 실명 환각은
+// name_suggest 가드가, 수치 환각은 프롬프트 근거없음 계약이 각각 이미 막는다.
 const OUT_OF_SCOPE_INTENT =
-  /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악|추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
+  /추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
 
 /**
  * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
@@ -966,17 +1054,13 @@ const OUT_OF_SCOPE_INTENT =
  * 반면 `날씨`·`주식`·`맛집`·`프롬프트` 등은 구단이 붙어도 여전히 범위 밖이다
  * (`LG 경기장 근처 맛집`). 그래서 면제는 **인물·평가·역사 축만** 좀게 열어둔다.
  */
-const TEAM_BOUND_IN_SCOPE_INTENT = /별명|누구|누가\s*더|더\s*잘|비교|역대|최고|최악/;
-
 /**
- * 범위 밖 의도 판정. 구단이 지명되면 인물·평가·역사 축은 면제한다.
+ * 범위 밖 의도 판정. 인물·평가·역사 축이 denylist 에서 빠지면서 팀 면제 로직도
+ * 함께 사라졌다 — 남은 어휘(날씨·주식·맛집…)는 구단이 붙어도 범위 밖이다
+ * (`LG 경기장 근처 맛집 추천`). 시그니처는 호출부 안정성을 위해 유지한다.
  */
-function isOutOfScopeIntent(normalized: string, hasTeam: boolean): boolean {
-  if (!OUT_OF_SCOPE_INTENT.test(normalized)) return false;
-  if (!hasTeam) return true;
-  // 구단 질문이면 면제 패턴을 지우고 남는 것이 있는지로 다시 본다 —
-  // `LG 경기장 맛집 추천` 처럼 면제부와 범위밖이 섞여 있으면 여전히 범위 밖이다.
-  return OUT_OF_SCOPE_INTENT.test(normalized.replace(new RegExp(TEAM_BOUND_IN_SCOPE_INTENT, "g"), ""));
+function isOutOfScopeIntent(normalized: string, _hasTeam: boolean): boolean {
+  return OUT_OF_SCOPE_INTENT.test(normalized);
 }
 /**
  * `<X> <지표>` 모양 문장의 **3분기 판정** (삼순 2026-08-08).
@@ -2437,6 +2521,13 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
+  // ── 리그 통산·역대 순위 질문 — fail-close 유지 (삼순 2026-08-10 NO-GO) ──
+  // generic LLM 이름 단답은 stale 오답(모델이 확신하는 옛 1위)을 못 막고, KBO 공식
+  // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
+  // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
+  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+    return "history_hold";
+  }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
@@ -2834,6 +2925,149 @@ export function renderTeamEntryAnswer(
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
   "지금은 당일 1군 등록 명단을 확인할 수 없어요. 잠시 후 다시 물어봐 주세요.";
 
+// ── 오늘 선발 매치업 (2026-08-11 하린아빠 제보 ① · 삼순 A안 확정) ────────────────
+//
+// `오늘 선발 투수 알려줘` 가 llm_scope_gate → generic LLM → unsure("질문을 이해하지
+// 못했어요") 로 끕났다(production 실측). 앱은 `/api/games` 로 경기별 선발을 이미
+// 서빙하고 있다 — 보유한 구조화 데이터를 봇만 못 답하는 건 거짓말이다(삼순 B안 반려 근거).
+//
+// 계약 (1군 명단과 같은 축):
+//  · 직접 렌더 — 정본 데이터를 그대로 보여주는 질문에 생성 모델을 태우지 않는다
+//    (LLM·RAG·cache 0). match_path 는 정본 조회와 같은 칸(kbo_structured).
+//  · 판정은 열린 의도가 아니라 **full-string 폐쇄 문법** — `isTeamEntryQuestion` 과 동일
+//    방식. 지원 범위는 (오늘|금일) + 선발 조합뿐이고(A′ 폐쇄집합 축소), `어제 선발`·
+//    `다음주 로테이션`·`선발 잘 던질까` 는 이 경로가 소유하지 않는다(기존 경로로 양보).
+//  · 미발표·경기 없음은 `불확실` 이 아니라 사실대로 안내한다(삼순 계약).
+//  · 조회 실패는 "경기 없음"으로 둥갑하지 않는다 — 재시도 가능한 실패로 알린다.
+
+/** `fetchTodayStarters` 가 돌려주는 경기별 선발 정보 (정본: /api/games 와 같은 소스). */
+export interface TodayGameStarters {
+  awayName: string;
+  homeName: string;
+  awayStarterName: string;
+  homeStarterName: string;
+  time: string;
+  stadium: string;
+  status: string;
+  /**
+   * 선발 출처(KBO enrich) 가용 여부. Naver 선발명은 항상 빈값이므로, KBO 조회가 실패했거나
+   * 이 경기가 KBO 응답에 없었다면 빈 선발은 `미발표`가 아니라 **확인 불가**다 — 구분 없이
+   * 미발표로 바꾸면 KBO timeout 을 "아직 발표 안 됨"으로 거짓 안내한다(삼순 #1147 P0).
+   */
+  starterSourceOk: boolean;
+}
+
+/**
+ * 오늘 선발 질문 판정 — full-string 폐쇄 문법 (열린 의도 판정 금지, M90 계약).
+ *
+ * 구단 언급을 지운 잔여 문장이 `(오늘|금일) + 선발 + (명사|요청 꼬리)?` 로만 분해될 때만
+ * 참이다. 시점어(오늘|금일)는 필수다 — 무일자 `선발 누구야` 까지 열면 `어제 선발`·
+ * `다음 경기 선발` 과의 경계를 어미 열거로 그어야 한다(발산). 오늘 밖 시점은 전부
+ * 기존 경로가 소유한다.
+ */
+export function resolveTodayStartersIntent(
+  question: string,
+): { team: string | null } | null {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/[\s?!.~,]+/g, "");
+  if (!/(오늘|금일)/.test(compact) || !compact.includes("선발")) return null;
+  // 복수 구단 언급은 소유하지 않는다 (삼순 #1147 ②축): `오늘 LG 두산 선발` 을 전체 5경기로
+  // 답하면 묻지 않은 경기까지 섞인다. 해석 불확실 → 기존 경로 양보(fail-close 방향).
+  if (mentionedTeamCanonicals(question).length >= 2) return null;
+  let rest = compact;
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    for (const word of [canonical.toLowerCase().replace(/\s+/g, ""), ...shorts, ...nicks]) {
+      rest = rest.split(word).join("");
+    }
+  }
+  // `우리팀/우리` 는 소유하지 않는다 (삼순 #1147 ②축): 사용자의 응원팀 결속이 없는 채
+  // 전체 경기를 답하면 질문과 다른 답이다. 결속 배선 전까지 기존 경로로 양보한다.
+  const grammar =
+    /^(오늘|금일)(의)?(경기)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$/;
+  if (!grammar.test(rest)) return null;
+  return { team: resolveMentionedTeam(question) };
+}
+
+/**
+ * `fetchGamesUserFacingWithMeta` 결과 → TodayGameStarters 순수 어댑터 (삼순 #1147 2차: actual 테스트
+ * 대상으로 쓰기 위해 env 의존 없는 pipeline 에 둔다 — server.ts 는 이 함수에 위임만 한다).
+ *
+ * 선발 출처 가용성 규칙 (삼순 P0): Naver 선발명은 항상 빈값이므로, KBO 조회가
+ * 실패(kboGameIds === null)했거나 이 경기가 KBO 응답에 없으면(부분 누락) 빈 선발은
+ * `미발표`가 아니라 확인 불가다 — starterSourceOk=false 로 내려 렌더가 fail-close 한다.
+ */
+export function adaptTodayStarters(
+  games: ReadonlyArray<{
+    gameId: string;
+    awayName: string;
+    homeName: string;
+    awayStarterName?: string | null;
+    homeStarterName?: string | null;
+    time?: string | null;
+    stadium?: string | null;
+    status?: string | null;
+  }>,
+  kboGameIds: ReadonlySet<string> | null,
+): TodayGameStarters[] {
+  return games.map((game) => ({
+    awayName: game.awayName,
+    homeName: game.homeName,
+    awayStarterName: game.awayStarterName ?? "",
+    homeStarterName: game.homeStarterName ?? "",
+    time: game.time ?? "",
+    stadium: game.stadium ?? "",
+    status: game.status ?? "",
+    starterSourceOk: kboGameIds !== null && kboGameIds.has(game.gameId),
+  }));
+}
+
+export const TODAY_NO_GAMES_ANSWER =
+  "오늘은 예정된 KBO 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!";
+export const STARTER_TBD = "미발표";
+
+/** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
+function teamMatchesGameName(canonical: string, gameName: string): boolean {
+  const entry = TEAM_ALIASES.find((team) => team.canonical === canonical);
+  if (!entry) return false;
+  const accepted = new Set(
+    [canonical, ...entry.shorts].map((word) => word.normalize("NFKC").toLowerCase()),
+  );
+  return accepted.has(gameName.normalize("NFKC").toLowerCase());
+}
+
+/**
+ * 오늘 선발 답변 직접 렌더. 미발표 선발은 지어내지 않고 `미발표` 로 표기한다 —
+ * 빈 문자열을 숨기면 "발표됐는데 봇이 모른다"와 "아직 발표 안 됨"을 유저가 구분 못 한다.
+ */
+export function renderTodayStartersAnswer(
+  games: TodayGameStarters[],
+  team: string | null,
+): string {
+  const rows = team === null
+    ? games
+    : games.filter((game) =>
+        teamMatchesGameName(team, game.awayName) || teamMatchesGameName(team, game.homeName));
+  if (rows.length === 0) {
+    return team === null
+      ? TODAY_NO_GAMES_ANSWER
+      : `오늘은 ${team} 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!`;
+  }
+  const lines = rows.map((game) => {
+    // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).
+    if (game.status === "cancelled") {
+      return `· ${game.awayName} vs ${game.homeName} — 취소 (${game.stadium})`;
+    }
+    // 선발 출처(KBO) 장애 경기는 fail-close — 빈값을 `미발표`로 위장하지 않는다 (삼순 P0).
+    if (!game.starterSourceOk) {
+      return `· ${game.awayName} vs ${game.homeName} — 선발 정보를 지금 확인할 수 없어요 (${game.time} ${game.stadium})`;
+    }
+    const away = game.awayStarterName.trim() || STARTER_TBD;
+    const home = game.homeStarterName.trim() || STARTER_TBD;
+    return `· ${game.awayName} ${away} vs ${game.homeName} ${home} (${game.time} ${game.stadium})`;
+  });
+  const header = team === null ? "오늘의 선발 매치업이에요 ⚾" : `오늘 ${team} 경기 선발이에요 ⚾`;
+  return `${header}\n${lines.join("\n")}`;
+}
+
 /**
  * 1군 명단 스냅샷 신선도 상한 (일). 우천·폭염 취소로 며칠 비는 것은 정상이지만,
  * 그 이상 묵은 스냅샷을 "당일 등록" 으로 내보내면 기준일 표기가 있어도 오답에 가깝다 —
@@ -2874,6 +3108,41 @@ export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[
   //   "1군 당일 등록 명단" SSOT 가 아니다. 1군 엔트리 데이터는 미보유이므로 라벨로
   //   구분 불가를 명시하고, 프롬프트가 1군 질문에 fail-close(기준 밝히기)로 답하게 한다.
   return `${canonical} 현재 등록 선수 (KBO 공식 로스터 기준 — 1군·2군 당일 등록 여부는 포함하지 않음): ${names.join(", ")}`;
+}
+
+/**
+ * 질문 안에 실제로 들어있는 검수 사전 용어 후보 (C 질문 정규화의 결정론 절반).
+ *
+ * exact 매칭(matchGlossary)이 놆치는 건 잎여어가 붙은 경우(`유격수 포지션이 뭐야?`)다.
+ * 여기서는 반대로 "질문이 사전 용어를 포함하는가"만 본다 — 사전 132여 개는 닫힌 집합이라
+ * 멤버십 검사는 룰 핑퐁이 아니다. "그 용어의 뜻을 묻는 질문인가"는 열린 언어 판정이므로
+ * 여기서 하지 않고 LLM(mapGlossaryDefinition)에 넘긴다.
+ *
+ * 한 글자 alias(예: `r`)는 우연 포함이 너무 쉬워 제외한다(길이 ≥ 2). 긴 용어부터 반환해
+ * `40-40 클럽` 질문에서 `40-40`보다 정본 term 이 앞에 오게 한다.
+ *
+ * 후보가 5개를 **초과하면 빈 배열** — 그 질문은 단일 정의 질문이 아니므로 매퍼를
+ * 아예 태우지 않는다(삼순 2026-08-11: 종전 slice(0,5)는 "초과면 비단일" 주석과 모순 —
+ * 상위 5개만 남기면 비단일 질문을 단일처럼 위장시킨다).
+ */
+export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string): GlossaryEntry[] {
+  const key = normalizeKey(question);
+  if (!key) return [];
+  const seen = new Set<string>();
+  const found: { entry: GlossaryEntry; len: number }[] = [];
+  for (const entry of entries) {
+    for (const name of [entry.term, ...entry.aliases]) {
+      const nameKey = normalizeKey(name);
+      if (nameKey.length < 2) continue;
+      if (!key.includes(nameKey)) continue;
+      if (seen.has(entry.term)) break;
+      seen.add(entry.term);
+      found.push({ entry, len: nameKey.length });
+      break;
+    }
+  }
+  if (found.length > 5) return [];
+  return found.sort((a, b) => b.len - a.len).map((f) => f.entry);
 }
 
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
@@ -2943,6 +3212,38 @@ async function answerSeasonRecordQuestion(
   }
   if (intent.kind === "unsupported_season") {
     return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+  }
+
+  // ── 연도별·통산·과거 시즌: KBO 공식 연도별 테이블 (2026-08-10 캐처) ────────────
+  // 단답 가능한 질문(통산·특정 연도)은 단답, 시리즈는 전 연도를 충분히 길게 —
+  // 하린아빠 2026-08-10 지시. 렌더는 코드가 한다(LLM·RAG·cache 불사용).
+  if (intent.kind === "career") {
+    const column = CAREER_METRIC_COLUMNS[intent.query.table][intent.query.metric];
+    // 폐쇄집합 밖 지표(obp·slg·ops·war·wrc+…)는 공식 테이블에 컬럼이 없거나 우리가
+    // 파생 계산하는 값이다 — 과거 시즌에 재적용하면 검증 불가라 답하지 않는다.
+    // 미배선·미지원 지표는 종전 "준비 중" 안내가 정확하다 — RECORD_MISSING("올 시즌
+    // 기록을 못 찾았어요")은 과거·통산 질문에 엉뚱한 안내다.
+    if (!column || !deps.fetchCareerRecord) {
+      return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+    }
+    let record: CareerRecord | null;
+    try {
+      record = await deps.fetchCareerRecord(intent.query.table, candidate.entityId);
+    } catch {
+      return settle(SYSTEM_ERROR_ANSWER, "error", "error");
+    }
+    // identity 대조 — 페이지 선수명이 후보와 다르면 잗못된 선수의 기록이다(답하면 안 된다).
+    if (!record || record.playerName !== candidate.name) {
+      return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    }
+    const answer =
+      intent.span.type === "series"
+        ? composeCareerSeriesAnswer(candidate.name, intent.query.label, column, record)
+        : intent.span.type === "career"
+          ? composeCareerTotalAnswer(candidate.name, intent.query.label, column, record)
+          : composeCareerYearAnswer(candidate.name, intent.query.label, column, intent.span.year, record);
+    if (!answer) return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    return settle(answer, "kbo_structured", "kbo_structured");
   }
 
   // ── 소스 선택 ──────────────────────────────────────────────────────────────
@@ -3613,13 +3914,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     ? resolveSeasonRecordIntent(question)
     : { kind: "none" as const };
 
-  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 2026 외 시즌은
+  // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 답 못 할 질문은
   // 어느 선수를 골라도 답할 수 없으므로 picker를 띄우는 것 자체가 불필요하다(삼순 P0-3).
   // untrusted metric도 마찬가지 — 고른 뒤 거절하면 유저만 헛동작한다.
-  if (recordIntent.kind === "unsupported_season" || recordIntent.kind === "untrusted_metric") {
-    const answer = recordIntent.kind === "unsupported_season"
-      ? UNSUPPORTED_SEASON_ANSWER
-      : UNTRUSTED_METRIC_ANSWER;
+  // career(연도별·통산·과거)는 2026-08-10 부터 답변 가능하므로 picker 대상이되,
+  // 조회 배선(fetchCareerRecord)이 없는 환경에서는 골라도 못 답하므로 같은 이유로
+  // picker 앞에서 종전 안내로 닫는다(헛동작 방지 계약 유지).
+  if (
+    recordIntent.kind === "unsupported_season" ||
+    recordIntent.kind === "untrusted_metric" ||
+    (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+  ) {
+    const answer = recordIntent.kind === "untrusted_metric"
+      ? UNTRUSTED_METRIC_ANSWER
+      : UNSUPPORTED_SEASON_ANSWER;
     await deps.log({
       userId, question, questionNorm, matchPath: "blocked", answer,
       inputTokens: null, outputTokens: null,
@@ -3750,6 +4058,48 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   const scopeGate = route === "llm_scope_gate";
 
+  // ── 한국시리즈 MVP·우승 기여 질문 — KBO 공식 수상 정본 (2026-08-10 삼순 NO-GO 반영) ──
+  // generic LLM 위임 금지 축: 이름은 숫자 가드 밖이라 모델이 다른 실존 선수를 확신해서
+  // 말해도 못 잡는다. 정본(`SeriesPrize.aspx` 구조화 테이블)이 있으므로 조회로만 답하고,
+  // 미배선·조회 실패·파싱 이상은 지어내지 않고 fail-close 한다. LLM·RAG·cache 불사용.
+  if (scopeGate || route === "baseball_rule_term") {
+    const prizeIntent = resolveSeriesPrizeIntent(question);
+    if (prizeIntent) {
+      const settlePrize = async (answer: string, matchPath: MatchPath) => {
+        await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+        return { status: 200 as const, answer, source: matchPath, remaining };
+      };
+      // 복수 연도·범위·역대는 단일 연도 단답이 성립하지 않는다 (삼순 4차 P0:
+      // `2024년과 2025년`→2024 단일답 축소 금지) — **정본 조회 전에** fail-close.
+      const prizeYear = resolveSeriesPrizeYear(question, deps.now ? new Date(deps.now()) : new Date());
+      if (prizeYear.kind === "ambiguous") {
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
+      if (!deps.fetchSeriesPrizeHtml) {
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
+      let prizeHtml: string;
+      try {
+        prizeHtml = await deps.fetchSeriesPrizeHtml();
+      } catch {
+        // 조회 실패는 "기록 없음"이 아니다 — 재시도 가능한 실패로 알린다.
+        return settlePrize(SYSTEM_ERROR_ANSWER, "error");
+      }
+      const now = deps.now ? new Date(deps.now()) : new Date();
+      const prizeRows = parseSeriesPrize(prizeHtml, now);
+      if (!prizeRows) {
+        // 파싱 이상 = 정본 확신 불가 — 지어내지 않고 hold 로 닫는다.
+        return settlePrize(resolveHoldAnswer(question), "history_hold");
+      }
+      const rendered = renderSeriesPrizeAnswer(
+        prizeRows, prizeIntent, prizeYear.kind === "year" ? prizeYear.year : null,
+        // 붙여쓰기(`한화우승`) 해석 + 수상표 표기 결속 — 이 경로 전용 폐쇄 alias.
+        resolvePrizeTeamMention(question), kstYear(now),
+      );
+      return settlePrize(rendered.answer, rendered.grounded ? "kbo_structured" : "history_hold");
+    }
+  }
+
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
     const answer =
@@ -3796,6 +4146,86 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
+  }
+
+  // ①-b 사전 정의 질문 LLM 매핑 (C 질문 정규화, 2026-08-11 하린아빠 제보).
+  //
+  // `유격수 포지션이 뭐야?` 는 사전에 `유격수`가 있는데도 exact 매칭이 잉여어 때문에 놓쳐
+  // unsure 로 끝났다(production 실측). 잉여어를 어미/조사 열거로 닫으면 또 열린 언어 핑퐁이다
+  // (M90: 열린 집합은 LLM 위임). 그래서 분업한다:
+  //   · 후보 추출 = 결정론 (질문이 사전 폐쇄집합의 용어를 글자 그대로 포함하는가)
+  //   · 의도 판정 = LLM (그 용어의 뜻을 묻는 질문인가) — 반환값이 후보 밖이면 버린다
+  //   · 서빙 = 사람이 검수한 사전 답변 그대로 (생성문 0)
+  //
+  // ⚠️ 위치 확정 (2026-08-11 production 실측으로 재이동): 사전(①) 바로 뒤 = 공식 RAG 앞.
+  //   "전용 경로 뒤" 배치는 production 에서 정의 질문 자체를 죽였다 — 공식 RAG 가 근거를
+  //   찾으면 durable LLM 경계를 소비하고 general(`도루뜻`→llm)·unsure(`유격수 포지션이
+  //   뭐야?`→"이해 못함") 로 **종결**해 매퍼까지 내려오지 않는다(합산 QA 실측, 두 케이스
+  //   모두 검수 사전 답 대신 생성답/거절이 나감). 검수된 사전 답변은 공식 RAG 생성답보다
+  //   우선이라는 ①의 계약이 fuzzy 매칭에도 그대로 적용되어야 한다.
+  //   선점 방어는 위치가 아니라 **가드가 담당한다**: 선수 결속·로스터 이름 포함 질문 미호출
+  //   + 프롬프트의 응용/비교/조회 배제(실-provider 게이트가 보크 응용·유격수vs2루수 비교·
+  //   오늘 유격수 조회 5반례를 null 로 고정, 11/11).
+  // ⚠️ 선수 언급 질문은 태우지 않는다 — 결속(enabledPlayerCandidate)뿐 아니라 **로스터
+  //   이름 포함 자체**를 가드한다(닫힌 집합 멤버십 — 룰 핑퐁 아님). 결속은 조사·어질 구성에
+  //   따라 실패할 수 있고(`김도영 유격수 수비 장면 이야기해줘` 실측 — 미결속), 그때 용어
+  //   정의를 주면 선수 질문이 사전 단답으로 오답된다(삼순 선점 반례 축).
+  // scopeGate 질문은 태운다 — `도루뜻` 류 붙임 질문은 룰로 분류되지 않아 scope gate 로
+  //   오는데, 서빙문은 검수된 정의뿐이라 범위 밖 답변이 나갈 경로가 구조적으로 없다.
+  const questionMentionsRosterPlayer = (() => {
+    const key = normalizeKey(question);
+    return players.some((player) => {
+      const nameKey = normalizeKey(player.name);
+      return nameKey.length >= 2 && key.includes(nameKey);
+    });
+  })();
+  // ⚠️ 구단 언급 질문도 태우지 않는다 (삼순 2026-08-11 #1148 NO-GO ②축) — `LG 유격수 누구야?`·
+  //   `KIA 도루 몇 개야?` 는 구단 경로(team_rag·기록)가 소유하는 질문인데 글자 포함
+  //   후보(`유격수`·`도루`)는 생긴다. 프롬프트 배제는 확률적 방어라 선점 차단은
+  //   결정론 가드로 닫는다(구단 canonical = 닫힌 집합 멤버십 — 룰 핑퐁 아님).
+  // ⚠️ 오늘 선발 질문도 태우지 않는다 (같은 NO-GO ①축) — ①-b 가 #1147 구조화 경로보다
+  //   앞이므로, 소유 판정기(resolveTodayStartersIntent)가 잡는 질문은 여기서 건너뛴다.
+  //   같은 판정기를 쓰므로 두 경로의 소유 경계가 갈라질 수 없다.
+  const questionMentionsTeam = mentionedTeamCanonicals(question).length > 0;
+  const startersOwned = resolveTodayStartersIntent(question) !== null;
+  if (
+    deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
+    !questionMentionsTeam && !startersOwned
+  ) {
+    const candidates = glossaryCandidatesIn(glossary, question);
+    if (candidates.length > 0) {
+      let mapped: { term: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
+      try {
+        mapped = await deps.mapGlossaryDefinition(question, candidates.map((c) => c.term));
+      } catch {
+        mapped = null; // 매퍼 장애는 기존 경로로 양보한다 — 새 경로가 기존 답변을 죽이면 안 된다.
+      }
+      // fail-close: 반환값은 반드시 후보 집합 안의 term 이어야 한다. LLM 이 후보 밖
+      // 문자열(환각·유사어)을 줘도 서빙되지 않는다.
+      const mappedEntry = mapped?.term == null
+        ? null
+        : candidates.find((c) => c.term === mapped!.term) ?? null;
+      if (mappedEntry) {
+        // 관측 계약 (삼순 ④축): 매퍼도 LLM 호출이다 — 토큰을 로그에 기록해 비용을 가시화한다.
+        await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: mappedEntry.answer, inputTokens: mapped?.inputTokens ?? null, outputTokens: mapped?.outputTokens ?? null });
+        return { status: 200, answer: mappedEntry.answer, source: "dictionary", term: mappedEntry.term, remaining };
+      }
+      // 매핑 실패(null·장애·후보 밖)로 아래 경로가 이어지면, 이 질문의 최종 로그 행에
+      // 매퍼 토큰을 **합산**한다 — null 뒤 generic 까지 2콜이 되는 비용을 숨기지 않는다.
+      const mapperIn = mapped?.inputTokens ?? null;
+      const mapperOut = mapped?.outputTokens ?? null;
+      if (mapperIn !== null || mapperOut !== null) {
+        const baseLog = deps.log;
+        deps = {
+          ...deps,
+          log: (entry) => baseLog({
+            ...entry,
+            inputTokens: (entry.inputTokens ?? 0) + (mapperIn ?? 0),
+            outputTokens: (entry.outputTokens ?? 0) + (mapperOut ?? 0),
+          }),
+        };
+      }
+    }
   }
 
   // ②-a 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거를 **global 캐시보다 먼저** 시도한다.
@@ -3862,6 +4292,36 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ② tier2 kill-switch(enableTeamRag)와 **분리**돼 있다 — 구조화 정본 조회는 RAG 가
   //   아니므로 TEAM_RAG_DISABLED=1 이어도 살아 있어야 한다. 게이트는 배선(fetchTeamEntry)
   //   존재 여부뿐이다.
+  // ── 오늘 선발 매치업 → 직접 렌더 (2026-08-11 ① · 삼순 A안) ──────────────────
+  // 위치 계약: 1군 명단 블록과 같은 이유로 **news RAG 보다 앞** — `오늘` 은 최신성
+  // 어휘라 기사 경로가 선점하는데, 선발의 정본은 기사가 아니라 경기 데이터다.
+  // 선수 지문 질문(`임찬규 오늘 선발이야?`)은 선수 경로 소유 — !enabledPlayerCandidate.
+  const startersIntent =
+    deps.fetchTodayStarters && !enabledPlayerCandidate
+      ? resolveTodayStartersIntent(question)
+      : null;
+  if (startersIntent && deps.fetchTodayStarters) {
+    const settleStarters = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    const now = deps.now ? new Date(deps.now()) : new Date();
+    // KST 당일 — UTC 기준으로 날짜를 자르면  00시~09시 사이에 전날 경기가 "오늘"이 된다.
+    const kst = new Date(now.getTime() + 9 * 3_600_000);
+    const dateYyyymmdd = kst.toISOString().slice(0, 10).replace(/-/g, "");
+    let games: TodayGameStarters[];
+    try {
+      games = await deps.fetchTodayStarters(dateYyyymmdd);
+    } catch {
+      // 조회 실패를 "경기 없음"으로 둥갑하지 않는다 (team_record 와 같은 계약).
+      return settleStarters(SYSTEM_ERROR_ANSWER, "error");
+    }
+    return settleStarters(
+      renderTodayStartersAnswer(games, startersIntent.team),
+      "kbo_structured",
+    );
+  }
+
   const entryQuestionCandidate =
     deps.fetchTeamEntry && !enabledPlayerCandidate && isTeamEntryQuestion(question)
       ? resolveRagTeamCandidate(question)
