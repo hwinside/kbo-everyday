@@ -1050,7 +1050,13 @@ export async function GET(req: NextRequest) {
       // keeps its existing relay data and celebration trigger source instead of
       // being wiped to an empty 200 (which blanks the UI and stalls celebrations).
       return NextResponse.json(
-        { error: "relay_upstream_http_error" },
+        {
+          error: "relay_upstream_http_error",
+          // 진단용: 내부 프록시 경유 시 업스트림 상태와 프록시 실행 리전을 노출해
+          // 차단 리전 회귀(icn1 재진입)를 운영 중 즉시 식별한다.
+          upstreamStatus: firstRes.status,
+          proxyRegion: firstRes.headers.get("x-proxy-region"),
+        },
         { status: 503, headers: NO_STORE_HEADERS },
       );
     }

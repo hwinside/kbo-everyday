@@ -59,6 +59,8 @@ export async function GET(request: NextRequest) {
       headers: {
         "content-type": res.headers.get("content-type") ?? "application/json",
         "cache-control": "no-store",
+        // 진단용: 이 edge 함수가 실제로 어느 리전에서 실행됐는지 (icn1이면 차단권)
+        "x-proxy-region": process.env.VERCEL_REGION ?? "unknown",
       },
     });
   } catch (e) {
