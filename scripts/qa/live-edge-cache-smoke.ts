@@ -614,7 +614,7 @@ async function main() {
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       installRelayUpstream({ currentInning: 6 });
       try {
-        const first = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        const first = await relayRoute.GET(makeReq("gameId=20260806AGEX1"));
         assert.equal(first.status, 200, "사전 상태 구성 실패");
         assert.equal(
           parseCacheControl(first).sMaxAge,
@@ -624,7 +624,7 @@ async function main() {
 
         // ① 0.6초 소비 → 남은 ~1.4초 → s-maxage 는 1 로 줄어야 한다.
         await sleep(650);
-        const midHit = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        const midHit = await relayRoute.GET(makeReq("gameId=20260806AGEX1"));
         assert.equal(midHit.status, 200, `HIT 경로 200 아님: ${midHit.status}`);
         const midCc = parseCacheControl(midHit);
         assert.equal(
@@ -635,7 +635,7 @@ async function main() {
 
         // ② 1.3초 소비 → 남은 0.7초(<1s) → 캐시 금지로 fail-close.
         await sleep(700);
-        const lateHit = await relayRoute.GET(makeReq("gameId=20260806AGE1"));
+        const lateHit = await relayRoute.GET(makeReq("gameId=20260806AGEX1"));
         assert.equal(lateHit.status, 200, `HIT 경로 200 아님: ${lateHit.status}`);
         assertNotCacheable(lateHit, "남은 수명 1초 미만 HIT");
       } finally {
@@ -872,7 +872,7 @@ async function main() {
       // = "활성 유저 신선도 저하 0" 하드 제약 위반. 정상 200 을 실제로 태워 확인한다.
       const liveRoute = await import("../../src/app/api/game-live/route");
       const { NextRequest: NR } = await import("next/server");
-      const gameId = "20260806FRESH1";
+      const gameId = "20260806FRSH1";
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = String(input instanceof Request ? input.url : input);
         if (url.includes("GetKboGameList")) {

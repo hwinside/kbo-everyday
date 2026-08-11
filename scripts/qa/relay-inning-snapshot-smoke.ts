@@ -214,18 +214,23 @@ async function main() {
     "(2) malformed textRelays(Array.isArray 아님)를 null(=failure)로 분류",
     /Array\.isArray\(\s*(?:relays|firstRelaysRaw)\s*\)\s*\?\s*(?:relays|firstRelaysRaw)\s*:\s*null/.test(routeSrc0),
   );
+  // 2026-08-11 relay 관측성 PR: 실패 경로가 직접 NextResponse 503 반환 대신
+  // RelayUpstreamError(503, body) 를 throw 하고 GET 말미에서 그 status 로 응답한다.
+  // 계약(실패 = non-2xx, empty 200 금지)은 동일 — 검사식만 새 구조를 따라간다.
   check(
     "(1) firstRes non-ok → non-2xx(503) (empty 200 아님)",
-    /if\s*\(\s*!firstRes\.ok\s*\)\s*\{[\s\S]*?status:\s*503[\s\S]*?\}/.test(routeSrc0),
+    /if\s*\(\s*!firstRes\.ok\s*\)\s*\{[\s\S]*?throw new RelayUpstreamError\(503,[\s\S]*?\}/.test(routeSrc0),
   );
   check(
     "(1) outer catch(timeout/network/JSON) → non-2xx(503) (empty 200 아님)",
-    /catch\s*\(e\)[\s\S]*?status:\s*503[\s\S]*?\}\s*\}/.test(routeSrc0) &&
+    /throw new RelayUpstreamError\(503,\s*\{\s*error:\s*`relay_upstream_\$\{reason\}`\s*\}\)/.test(routeSrc0) &&
+      // GET 말미가 typed error 를 그 status 그대로 응답으로 변환하는 배선 확인
+      /e instanceof RelayUpstreamError[\s\S]*?status:\s*e\.status/.test(routeSrc0) &&
       !/catch\s*\(e\)[\s\S]*?innings:\s*\[\][\s\S]*?status:\s*200/.test(routeSrc0),
   );
   check(
     "(d) anyInningUnrecoverable → non-2xx(503) 단락 + publish/cache 안 함",
-    /if\s*\(\s*anyInningUnrecoverable\s*\)\s*\{[\s\S]*?status:\s*503[\s\S]*?\}/.test(routeSrc0),
+    /if\s*\(\s*anyInningUnrecoverable\s*\)\s*\{[\s\S]*?throw new RelayUpstreamError\(503,[\s\S]*?relay_upstream_unrecoverable[\s\S]*?\}/.test(routeSrc0),
   );
   // 클라(useGameRelay)가 non-2xx 를 기존 data 유지로 처리하는지 계약 고정
   const hookSrc = readFileSync(resolve(here0, "../../src/lib/hooks/useGameRelay.ts"), "utf8");
