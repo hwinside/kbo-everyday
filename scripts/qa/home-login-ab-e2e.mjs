@@ -101,8 +101,10 @@ async function deleteUser(env, id) {
     await sb(env, `/auth/v1/admin/users/${id}`, { method: "DELETE" });
     const chk = await sb(env, `/auth/v1/admin/users/${id}`, { method: "GET" });
     const prof = await sb(env, `/rest/v1/profiles?id=eq.${id}&select=id`, { method: "GET" });
-    const authGone = chk.status === 404 || !chk.json?.id;
-    const profGone = Array.isArray(prof.json) && prof.json.length === 0;
+    // 정확히 404 만 삭제 성공으로 인정(삼순 3차 ②) — 500/401/non-JSON 은 "모름"이지
+    // "삭제됨"이 아니다. profiles 도 200 + 빈 배열을 요구한다.
+    const authGone = chk.status === 404;
+    const profGone = prof.status === 200 && Array.isArray(prof.json) && prof.json.length === 0;
     if (authGone && profGone) return true;
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -491,6 +493,56 @@ async function main() {
       const uid3 = await page.evaluate(() => localStorage.getItem("kbo-auth-uid"));
       if (uid3 !== bId) fail(`S3: kbo-auth-uid 가 B 로 갱신 안 됨 (${uid3})`);
       console.log("S3 pending-session(무쿠키) 경로: 오표시 0 · B팀 카드 렌더 · uid=B 확인");
+      await ctx.close();
+    }
+
+    // ── S4: OAuth hash 복원 경로 (무쿠키 + URL `#access_token=…`(B) + 로컬 A)
+    //    삼순 3차 ①: 완료 사용자 OAuth 의 실제 fallback 은 HashSessionRestore.setSession().
+    //    쿠키 유실 시 cookie=null 을 guest 로 보면 이전 A 를 선렌더한다 — fail-close 검증. ─
+    {
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await newPage(ctx);
+      await page.addInitScript(([teamId, uid, wrongName, rightName]) => {
+        localStorage.setItem("kbo-my-team", String(teamId));
+        localStorage.setItem("kbo-onboarding-status", "completed");
+        localStorage.setItem("kbo-auth-uid", uid);
+        window.__WRONG_TEAM_SEEN = false;
+        window.__SEEN_LOG = [];
+        const check = () => {
+          const spans = Array.from(document.querySelectorAll("span"))
+            .filter((s) => s.textContent && s.textContent.trim() === "MY TEAM");
+          for (const s of spans) {
+            let el = s.parentElement;
+            for (let i = 0; i < 12 && el && el !== document.body && el !== document.documentElement; i++) {
+              const t = el.textContent || "";
+              const hasWrong = t.includes(wrongName);
+              const hasRight = t.includes(rightName);
+              if (hasWrong || hasRight) {
+                window.__SEEN_LOG.push({ t: Date.now(), w: hasWrong, r: hasRight, depth: i });
+                if (hasWrong && !hasRight) window.__WRONG_TEAM_SEEN = true;
+                break;
+              }
+              el = el.parentElement;
+            }
+          }
+        };
+        window.__OBS_ERR = null;
+        try {
+          check();
+          new MutationObserver(check).observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) { window.__OBS_ERR = String(e && e.message); }
+        setInterval(check, 50);
+      }, [teamA, aId, TEAM_SHORT[teamA], TEAM_SHORT[teamB]]);
+      const hashUrl = `http://localhost:${PORT}/#access_token=${encodeURIComponent(sessB.access_token)}&refresh_token=${encodeURIComponent(sessB.refresh_token)}&token_type=bearer`;
+      await page.goto(hashUrl, { waitUntil: "commit", timeout: 90000 });
+      const okB4 = await page.waitForFunction(myteamAnchorPredicate, hrefB, { timeout: 60000 })
+        .then(() => true).catch(() => false);
+      if (!okB4) fail("S4: hash 복원 후 B 팀 카드 미렌더");
+      const wrongSeen4 = await page.evaluate(() => window.__WRONG_TEAM_SEEN);
+      if (wrongSeen4) fail("S4: hash 복원 중 이전 계정(A) 팀 헤더가 렌더됨 — 오표시 발생");
+      const uid4 = await page.evaluate(() => localStorage.getItem("kbo-auth-uid"));
+      if (uid4 !== bId) fail(`S4: kbo-auth-uid 가 B 로 갱신 안 됨 (${uid4})`);
+      console.log("S4 OAuth hash(무쿠키) 경로: 오표시 0 · B팀 카드 렌더 · uid=B 확인");
       await ctx.close();
     }
 

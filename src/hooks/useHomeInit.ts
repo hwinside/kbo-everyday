@@ -1,6 +1,6 @@
 import { useState, useEffect, startTransition } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { readSessionCookieUserId } from "@/lib/supabase/local-session";
+import { isAuthBootstrapPending, readSessionCookieUserId } from "@/lib/supabase/local-session";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
@@ -82,12 +82,9 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     const saved = getMyTeamId();
     const status = getOnboardingStatus();
     if (!saved || !(status === "completed" || status === "skipped")) return;
-    // iOS Safari fallback(삼순 리뷰 #1154 2차 ①): 쿠키가 안 붙어도 sessionStorage
-    // `kbo-pending-session` 으로 다른 계정 세션을 복원할 수 있다(AuthContext 2차 경로).
-    // 복원 전에는 주인을 확인할 수 없으므로 pending 이 있으면 fail-close.
-    try {
-      if (sessionStorage.getItem("kbo-pending-session")) return;
-    } catch { /* SSR safety */ }
+    // 인증 부트스트랩(pending-session 또는 OAuth hash 복원) 진행 중에는 주인을
+    // 확인할 수 없으므로 fail-close(삼순 리뷰 #1154 2차 ①·3차 ① — hash 경로 포함).
+    if (isAuthBootstrapPending()) return;
     const cookieUid = readSessionCookieUserId();
     if (cookieUid !== null) {
       // 세션 쿠키가 있다 → 로컬 데이터 주인과 일치할 때만 즐시 렌더.
@@ -195,26 +192,22 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   // 온보딩 초기화
   useEffect(() => {
     if (loading) return;
-    // iOS Safari pending-session 복원 중에는 어떤 분기도 타지 않는다(삼순 리뷰 #1154
-    // 2차 ①). 복원 전에 loading 이 먼저 false 가 되면 saved 분기가 이전 계정의
-    // localStorage 팀을 그려 오표시가 난다(S3 장애주입 RED 실측). pending 이 사라지면
-    // (setSession 성공/실패 모두 1회성 제거) nonce 로 이 effect 를 재실행한다.
-    try {
-      if (typeof window !== "undefined" && sessionStorage.getItem("kbo-pending-session")) {
-        const timer = setInterval(() => {
-          if (!sessionStorage.getItem("kbo-pending-session")) {
-            clearInterval(timer);
-            setPendingSessionNonce((n) => n + 1);
-          }
-        }, 200);
-        // 안전망: 복원이 멈춰도 10초 후에는 재실행해 홈이 빈 상태로 굳지 않게 한다.
-        const stop = setTimeout(() => {
+    // 인증 부트스트랩(pending-session 또는 OAuth hash 복원) 중에는 어떤 분기도 타지
+    // 않는다(삼순 리뷰 #1154 2차 ①·3차 ①). 복원 전에 loading 이 먼저 false 가 되면
+    // saved 분기가 이전 계정의 localStorage 팀을 그려 오표시가 난다(S3/S4 장애주입
+    // RED 실측). marker 는 복원 성공/실패 모두 1회성 제거되므로(주석: local-session.ts)
+    // 사라질 때까지 200ms 폴링하다 nonce 로 재실행한다. 시간 상한은 두지 않는다 —
+    // marker 가 영구 잔존하는 상태는 인증 부트스트랩 자체가 죽은 상태라 홈 렌더를
+    // 재개하지 않는 것이 fail-close(오표시 0 우선) 계약이다(삼순 3차 ③: 설명·동작 일치).
+    if (isAuthBootstrapPending()) {
+      const timer = setInterval(() => {
+        if (!isAuthBootstrapPending()) {
           clearInterval(timer);
           setPendingSessionNonce((n) => n + 1);
-        }, 10000);
-        return () => { clearInterval(timer); clearTimeout(stop); };
-      }
-    } catch { /* SSR safety */ }
+        }
+      }, 200);
+      return () => clearInterval(timer);
+    }
     startTransition(() => {
       setShowPlayerSetupCTA(false);
 

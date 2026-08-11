@@ -17,6 +17,27 @@
  * - string(id) = 세션 쿠키의 user id
  * - "unknown"  = 세션 쿠키는 있는데 파싱 실패 → 호출부는 fail-close(즉시 렌더 포기)
  */
+/**
+ * 인증 부트스트랩(비동기 세션 복원)이 진행 중인가 — 공통 marker.
+ * 이 동안에는 localStorage 기반 즐시 렌더를 하면 안 된다(이전 계정 오표시 위험):
+ * - iOS Safari fallback ①: sessionStorage `kbo-pending-session` → AuthContext.syncSession 이
+ *   setSession 으로 복원 후 1회성 제거(성공/실패 모두).
+ * - OAuth callback fallback ②: URL hash `#access_token=…&refresh_token=…` →
+ *   HashSessionRestore 가 setSession 후 replaceState 로 hash 제거.
+ * 둘 다 완료 시점에 marker 가 사라지므로 "사라질 때까지 fail-close" 가 안전 계약이다.
+ */
+export function isAuthBootstrapPending(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (sessionStorage.getItem("kbo-pending-session")) return true;
+  } catch { /* SSR/차단 환경 */ }
+  try {
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token")) return true;
+  } catch { /* ignore */ }
+  return false;
+}
+
 export function readSessionCookieUserId(): string | null | "unknown" {
   if (typeof document === "undefined") return null;
   try {
