@@ -634,6 +634,21 @@ export interface QaDeps {
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn, rosterBlock?: string) => Promise<LlmResult>;
   /**
+   * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
+   *
+   * 열린 언어(잎여어·붙임·오탈자: `유격수 포지션이 뭐야?`·`도루뜕`)를 룰로 닫지 않고
+   * LLM 에 위임한다(M90 계약). 단, 판정의 입출력은 둘 다 폐쇄집합이다:
+   *   · 입력 후보 = 질문 안에 실제로 들어있는 사전 용어만 (결정론 추출, `glossaryCandidatesIn`)
+   *   · 출력 = 그 후보 안의 term 하나 또는 null. 후보 밖 반환은 호출부가 버린다(fail-close).
+   * 그래서 LLM 오판의 최대 피해는 "검수된 정의문이 필요 없는 질문에 나감"이며,
+   * 지어낸 내용이 나갈 경로는 구조적으로 없다. 미주입이면 이 단계 자체가 비활성(기존 동작).
+   *
+   * ⚠️ durable 단일-LLM 계약(getLlmState/acquireLlmStart) 밖의 호출이다 — 결과를 저장하지
+   * 않으므로 crash 재처리 시 재호출될 수 있지만, 유저 가시 결과는 사전 답변(결정론)이라
+   * 중복 노출·분기 불일치가 생기지 않는다. 비용만 문제고, 후보 있을 때만 타서 상한이 있다.
+   */
+  mapGlossaryDefinition?: (question: string, candidateTerms: string[]) => Promise<string | null>;
+  /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
@@ -2620,6 +2635,37 @@ export function teamRosterBlock(candidate: RagTeamCandidate, players: PlayerRef[
   return `${canonical} 현재 등록 선수 (KBO 공식 로스터 기준 — 1군·2군 당일 등록 여부는 포함하지 않음): ${names.join(", ")}`;
 }
 
+/**
+ * 질문 안에 실제로 들어있는 검수 사전 용어 후보 (C 질문 정규화의 결정론 절반).
+ *
+ * exact 매칭(matchGlossary)이 놆치는 건 잎여어가 붙은 경우(`유격수 포지션이 뭐야?`)다.
+ * 여기서는 반대로 "질문이 사전 용어를 포함하는가"만 본다 — 사전 132여 개는 닫힌 집합이라
+ * 멤버십 검사는 룰 핑퐁이 아니다. "그 용어의 뜻을 묻는 질문인가"는 열린 언어 판정이므로
+ * 여기서 하지 않고 LLM(mapGlossaryDefinition)에 넘긴다.
+ *
+ * 한 글자 alias(예: `r`)는 우연 포함이 너무 쉬워 제외한다(길이 ≥ 2). 긴 용어부터 반환해
+ * `40-40 클럽` 질문에서 `40-40`보다 정본 term 이 앞에 오게 한다. 상한 5개 — 후보가 그보다
+ * 많으면 질문이 이미 단일 정의 질문이 아니다.
+ */
+export function glossaryCandidatesIn(entries: GlossaryEntry[], question: string): GlossaryEntry[] {
+  const key = normalizeKey(question);
+  if (!key) return [];
+  const seen = new Set<string>();
+  const found: { entry: GlossaryEntry; len: number }[] = [];
+  for (const entry of entries) {
+    for (const name of [entry.term, ...entry.aliases]) {
+      const nameKey = normalizeKey(name);
+      if (nameKey.length < 2) continue;
+      if (!key.includes(nameKey)) continue;
+      if (seen.has(entry.term)) break;
+      seen.add(entry.term);
+      found.push({ entry, len: nameKey.length });
+      break;
+    }
+  }
+  return found.sort((a, b) => b.len - a.len).slice(0, 5).map((f) => f.entry);
+}
+
 export function matchGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
   const index = new Map<string, GlossaryEntry>();
   for (const entry of entries) {
@@ -3575,6 +3621,40 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
+  }
+
+  // ①-b 사전 정의 질문 LLM 매핑 (C 질문 정규화, 2026-08-11 하린아빠 제보).
+  //
+  // `유격수 포지션이 뭐야?` 는 사전에 `유격수`가 있는데도 exact 매칭이 잎여어 때문에 놆쳐
+  // unsure 로 끕났다(production 실측). 잎여어를 어미/조사 열거로 닫으면 또 열린 언어 핑퐁이다
+  // (M90: 열린 집합은 LLM 위임). 그래서 분업한다:
+  //   · 후보 추출 = 결정론 (질문이 사전 폐쇄집합의 용어를 글자 그대로 포함하는가)
+  //   · 의도 판정 = LLM (그 용어의 뜻을 묻는 질문인가) — 반환값이 후보 밖이면 버린다
+  //   · 서빙 = 사람이 검수한 사전 답변 그대로 (생성문 0)
+  // 순서가 계약이다: 사전(①) 바로 뒤 = 공식 RAG·구단 RAG·generic LLM 보다 앞. 검수된 답이
+  // 항상 우선이라는 ①의 기존 계약을 그대로 상속한다. 선수 지문·구단 수치·기록 질문은 이
+  // 지점까지 내려오기 전에 각자 전용 경로가 이미 소유했다(team_record·player candidate).
+  // scopeGate 질문도 태운다 — `도루뜕` 류 붙임 질문은 룰로 분류되지 않아 scope gate 로
+  // 오는데, 서빙문은 검수된 정의뿐이라 범위 밖 답변이 나갈 경로가 구조적으로 없다.
+  if (deps.mapGlossaryDefinition) {
+    const candidates = glossaryCandidatesIn(glossary, question);
+    if (candidates.length > 0) {
+      let mapped: string | null = null;
+      try {
+        mapped = await deps.mapGlossaryDefinition(question, candidates.map((c) => c.term));
+      } catch {
+        mapped = null; // 매퍼 장애는 기존 경로로 양보한다 — 새 경로가 기존 답변을 죽이면 안 된다.
+      }
+      // fail-close: 반환값은 반드시 후보 집합 안의 term 이어야 한다. LLM 이 후보 밖
+      // 문자열(환각·유사어)을 줘도 서빙되지 않는다.
+      const mappedEntry = mapped === null
+        ? null
+        : candidates.find((c) => c.term === mapped) ?? null;
+      if (mappedEntry) {
+        await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: mappedEntry.answer, inputTokens: null, outputTokens: null });
+        return { status: 200, answer: mappedEntry.answer, source: "dictionary", term: mappedEntry.term, remaining };
+      }
+    }
   }
 
   // ②-a 규칙·용어 질문은 KBO 공식 간행물(tier1) 근거를 **global 캐시보다 먼저** 시도한다.

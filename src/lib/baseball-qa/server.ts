@@ -150,6 +150,56 @@ async function callLlm(
   };
 }
 
+/**
+ * 검수 사전 정의 질문 매핑 (C 질문 정규화 — pipeline `mapGlossaryDefinition` seam 구현).
+ *
+ * 입력 후보는 파이프라인이 결정론으로 추출한 "질문에 실제로 들어있는 사전 용어"뿐이고,
+ * 출력은 그 폐쇄집합 안의 term 하나 또는 null 이다. 호출부(pipeline)가 후보 밖 반환을
+ * 버리므로(fail-close) 모델 오판의 최대 피해는 "검수된 정의문이 불필요한 질문에 나감"이다.
+ * 생성문이 유저에게 나가는 경로는 없다 — 서빙되는 답은 항상 사람이 검수한 사전 answer 다.
+ */
+async function mapGlossaryDefinition(
+  question: string,
+  candidateTerms: string[],
+): Promise<string | null> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const systemPrompt = [
+    "너는 KBO 야구 용어 사전의 질문 분류기다.",
+    "아래 후보 용어 목록 중, 사용자의 질문이 그 용어 자체의 뜻·정의·설명을 묻는 것이면 그 용어를 고른다.",
+    "특정 선수·구단의 기록 수치를 묻거나, 용어가 문장에 스쳐 지나갈 뿐이면 고르지 않는다.",
+    '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
+  ].join("\n");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{
+        role: "user",
+        parts: [{ text: `후보 용어: ${JSON.stringify(candidateTerms)}\n질문: ${question}` }],
+      }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 64,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  const text: string =
+    data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null; // malformed 는 매핑 실패 — 기존 경로로 양보한다 (#1142 malformed fail-close 계약과 동일 축).
+  }
+  const term = (parsed as { term?: unknown })?.term;
+  return typeof term === "string" && term.length > 0 ? term : null;
+}
+
 /** genius_rag_serving_chunks 서빙 행 (snake_case SQL 시그니처). */
 interface RagServingChunkRow {
   content: string;
@@ -558,6 +608,9 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
     loadPlayers: loadRosterPlayers,
     callLlm,
+    // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
+    // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
+    mapGlossaryDefinition,
     searchRag,
     callRagLlm,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도

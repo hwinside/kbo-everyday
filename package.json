@@ -304,6 +304,7 @@
     "qa:venue-diary-games-fold:required": "VENUE_DIARY_FOLD_REQUIRE_BROWSER=1 node scripts/qa/venue-diary-games-fold.mjs",
     "qa:venue-diary-viewer-chrome:required": "VENUE_DIARY_VIEWER_REQUIRE_BROWSER=1 node scripts/qa/venue-diary-viewer-chrome.mjs",
     "qa:baseball-qa": "tsx scripts/qa/baseball-qa-pipeline-smoke.ts",
+    "qa:genius-glossary-map": "tsx scripts/qa/genius-glossary-map-smoke.ts",
     "qa:baseball-qa-live": "tsx scripts/qa/baseball-qa-classifier-live-smoke.ts",
     "qa:baseball-genius-context": "tsx scripts/qa/baseball-genius-context-smoke.ts",
     "qa:baseball-genius-context:mutations": "node scripts/qa/baseball-genius-comparative-mutations.mjs",
