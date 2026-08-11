@@ -12,11 +12,12 @@ export function mergeCumulativeSeries(
   own: TrendPoint[],
 ): { date: string; users: number; pv: number }[] {
   if (ga.length === 0) throw new Error("GA4 prehistory returned no rows");
-  if (own.some((r) => r.date < OWN_START_DATE)) {
-    throw new Error("internal cumulative series crossed GA4 boundary");
+  if (own.length === 0) throw new Error("internal cumulative series returned no rows");
+  if (ga.at(-1)?.date !== GA_PREHISTORY_END) {
+    throw new Error("GA4 prehistory is missing exact boundary day");
   }
-  if (ga.some((r) => r.date > GA_PREHISTORY_END)) {
-    throw new Error("GA4 prehistory crossed internal boundary");
+  if (own[0]?.date !== OWN_START_DATE) {
+    throw new Error("internal cumulative series is missing exact start day");
   }
 
   let previous = "";

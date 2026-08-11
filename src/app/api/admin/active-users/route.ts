@@ -11,7 +11,7 @@ import {
 } from "@/lib/admin/active-users-hybrid";
 
 // 자체 집계 활성 사용자 (앱+웹 통합).
-// - ?period 없음: KPI (당일/7일/30일은 자체 DISTINCT, 누적은 아래 hybrid)
+// - ?period 없음: KPI 4개 모두 자체 DISTINCT/영구 원장 (GA4 미혼합)
 // - ?period=today|7d|30d: 자체 추이 (시간대별/일별 전역 DISTINCT)
 // - ?period=cumulative: 2026-06-24까지 GA4, 06-25부터 자체 영구 원장을
 //   이어 붙인다. 화면에는 경계를 노출하지 않고 산식은 코드/PR에만 남긴다.
@@ -68,9 +68,6 @@ async function loadGaPrehistory(): Promise<GaPrehistory> {
         pv,
       };
     });
-    if (series.at(-1)?.date !== GA_PREHISTORY_END) {
-      throw new Error("GA4 prehistory is missing boundary day");
-    }
     return { series };
   })();
   gaPrehistoryPromise = pending;

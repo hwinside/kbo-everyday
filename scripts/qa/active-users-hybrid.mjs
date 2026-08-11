@@ -19,17 +19,22 @@ assert.deepEqual(mergeCumulativeSeries(ga, own), [
 
 assert.throws(() => mergeCumulativeSeries([], own), /no rows/);
 assert.throws(
-  () => mergeCumulativeSeries(ga, [{ date: "2026-06-24", users: 1, pv: 1 }]),
-  /crossed GA4 boundary/,
+  () => mergeCumulativeSeries(ga.slice(0, 1), own),
+  /missing exact boundary day/,
 );
 assert.throws(
-  () => mergeCumulativeSeries([{ date: "2026-06-25", users: 1, pv: 1 }], own),
-  /crossed internal boundary/,
+  () => mergeCumulativeSeries(ga, own.slice(1)),
+  /missing exact start day/,
+);
+assert.throws(
+  () => mergeCumulativeSeries(ga, []),
+  /internal cumulative series returned no rows/,
 );
 assert.throws(
   () => mergeCumulativeSeries([
     { date: "2026-06-24", users: 1, pv: 1 },
     { date: "2026-06-23", users: 2, pv: 2 },
+    { date: "2026-06-24", users: 3, pv: 3 },
   ], own),
   /invalid or unordered/,
 );
@@ -38,4 +43,4 @@ assert.throws(
   /values are invalid/,
 );
 
-console.log("active-users hybrid: PASS (정상 경계 병합 + 빈/경계/날짜/수치 fail-close 5축)");
+console.log("active-users hybrid: PASS (정상 6/24→6/25 병합 + 양쪽 경계누락/빈/순서/수치 fail-close 7축)");
