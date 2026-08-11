@@ -46,6 +46,12 @@ const CURATED_INTERVIEW_CHANNELS: InterviewChannel[] = [
     teamId: null,
     dedicatedInterviewChannel: true,
   },
+  {
+    channelId: "UCYKUMtgU-lfM7PnclPkFXfQ",
+    name: "위닝트윈스",
+    sourceKind: "curated",
+    teamId: 1,
+  },
 ];
 
 export const APPROVED_INTERVIEW_CHANNELS: readonly InterviewChannel[] = [
@@ -118,6 +124,7 @@ export function titleMatchesGameDate(title: string, gameDate: string): boolean {
     new RegExp(`(?:^|\\D)${yyyy}[./-]${mm}[./-]${dd}(?!\\d)`),
     new RegExp(`(?:^|\\D)${yy}[./-]${mm}[./-]${dd}(?!\\d)`),
     new RegExp(`(?:^|\\D)${yy}${monthRaw}${dayRaw}(?!\\d)`),
+    new RegExp(`(?:^|\\D)${monthRaw}${dayRaw}(?!\\d)`),
     new RegExp(`(?:^|\\D)${mm}[./-]${dd}[./-]${yy}(?!\\d)`),
     new RegExp(`[([]\\s*${mm}[./]${dd}\\s*[)\\]]`),
     new RegExp(`(?:^|\\D)${mm}월\\s*${dd}일`),
