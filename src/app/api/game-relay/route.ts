@@ -1060,6 +1060,7 @@ export async function GET(req: NextRequest) {
       await trackApiDegradation("naver-relay", "http-error", {
         statusCode: firstRes.status,
         errorMessage: `HTTP ${firstRes.status} ${firstRes.statusText} (gameId=${gameId}, inning=1)`,
+        scope: gameId,
       }, NAVER_RELAY_ALERT_POLICY);
       // inning-1 fetch failed = we have no current-inning info and no relays.
       // Return non-2xx so the client's useGameRelay (setData only on res.ok)
@@ -1192,6 +1193,7 @@ export async function GET(req: NextRequest) {
               : "network-error";
       await trackApiDegradation("naver-relay", reason, {
         errorMessage: `no last-good snapshot (cold/evicted) gameId=${gameId} failures=[${inningFailures.join(",") || "unknown"}]`,
+        scope: gameId,
       }, NAVER_RELAY_ALERT_POLICY);
       throw new RelayUpstreamError(503, {
         error: "relay_upstream_unrecoverable",
@@ -1310,6 +1312,7 @@ export async function GET(req: NextRequest) {
 
     await trackApiDegradation("naver-relay", reason, {
       errorMessage: `${error.message} (gameId=${gameId})`,
+      scope: gameId,
     }, NAVER_RELAY_ALERT_POLICY);
 
     // Any uncaught failure (inning-1 timeout/network, JSON parse, etc.) surfaces
@@ -1342,7 +1345,9 @@ export async function GET(req: NextRequest) {
     // 실패 중이므로 완전 정상(!anyInningDegraded)일 때만 복구로 처리한다
     // (삼순 Blocker 1: 장애 중 ✅ 오보 방지).
     if (!anyInningDegraded) {
-      await markApiRecovered("naver-relay");
+      // scope=gameId: 경보를 유발한 바로 그 경기가 정상으로 돌아왔을 때만 복구로
+      // 인정한다(삼순 2차 ③: 다른 경기의 정상 200이 전역 ✅를 보내는 오보 차단).
+      await markApiRecovered("naver-relay", gameId);
     }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.

@@ -225,7 +225,7 @@ function firstRow<T>(data: unknown): T | null {
 export async function trackApiDegradation(
   apiName: string,
   reason: FallbackEvent["reason"],
-  options: { statusCode?: number; errorMessage?: string },
+  options: { statusCode?: number; errorMessage?: string; scope?: string },
   policy: DegradationAlertPolicy,
 ): Promise<void> {
   try {
@@ -251,7 +251,14 @@ export async function trackApiDegradation(
     // 🚨가 나중에 가는 순서 역전이 생긴다. 전송 실패분은 outbox/drainer가 이어받지만
     // 그 경우 복구 알림은 생략된다(best-effort 계약 유지).
     const delivered = await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
-    if (delivered) pendingRecoveryNotice.add(apiName);
+    if (delivered) {
+      // scope(예: gameId) 단위로 묶는다 — 경보를 유발한 scope가 정상으로 돌아왔을
+      // 때만 복구로 인정(삼순 2차 ③: game A 경보 후 game B 정상 200이 즉시 ✅를
+      // 보내는 오보 차단). scope 미지정 경보는 "*"로 등록돼 임의 성공이 복구다.
+      const scopes = pendingRecoveryNotice.get(apiName) ?? new Set<string>();
+      scopes.add(options.scope ?? "*");
+      pendingRecoveryNotice.set(apiName, scopes);
+    }
   } catch (err) {
     console.error(
       "[API Degradation] unexpected error:",
@@ -412,19 +419,26 @@ export async function sendDegradationTelegramAlert(
 // 있다(best-effort 명시). 경보 자체는 durable(outbox)하므로 정확성에 영향 없음.
 // ============================================================================
 
-const pendingRecoveryNotice = new Set<string>();
+const pendingRecoveryNotice = new Map<string, Set<string>>();
 
 /**
- * 성공 경로에서 호출: 이 인스턴스가 직전에 경보를 보냈으면 복구 알림을 1회 보낸다.
- * 경보 이력이 없으면 in-memory 체크 1회로 즉시 반환(핫패스 비용 0).
+ * 성공 경로에서 호출: 이 인스턴스가 직전에 경보를 보냈고 **그 경보의 scope**가
+ * 정상으로 돌아왔을 때만 복구 알림을 1회 보낸다(삼순 2차 ③: 다른 scope의 정상
+ * 응답이 전역 ✅를 보내는 오보 차단). 경보 이력이 없으면 in-memory 체크로 즉시 반환.
  */
-export async function markApiRecovered(apiName: string): Promise<void> {
-  if (!pendingRecoveryNotice.has(apiName)) return;
-  pendingRecoveryNotice.delete(apiName);
+export async function markApiRecovered(apiName: string, scope = "*"): Promise<void> {
+  const scopes = pendingRecoveryNotice.get(apiName);
+  if (!scopes || scopes.size === 0) return;
+  // 경보 scope와 일치하거나, scope 미지정("*") 경보만 복구 대상.
+  const matched = scopes.has(scope) ? scope : scopes.has("*") ? "*" : null;
+  if (matched === null) return;
+  scopes.delete(matched);
+  if (scopes.size === 0) pendingRecoveryNotice.delete(apiName);
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠
   if (!botToken) return;
-  const message = `✅ 외부 API 복구\n\n**${apiName}** 정상 응답 확인\n\n시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}`;
+  const scopeText = matched === "*" ? "" : ` (${matched})`;
+  const message = `✅ 외부 API 복구\n\n**${apiName}**${scopeText} 정상 응답 확인\n\n시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}`;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -446,12 +460,23 @@ export async function markApiRecovered(apiName: string): Promise<void> {
 }
 
 /** 테스트 전용: 복구 알림 대기 상태 주입/조회. */
-export function _setPendingRecoveryForTest(apiName: string, pending: boolean): void {
-  if (pending) pendingRecoveryNotice.add(apiName);
-  else pendingRecoveryNotice.delete(apiName);
+export function _setPendingRecoveryForTest(
+  apiName: string,
+  pending: boolean,
+  scope = "*",
+): void {
+  if (pending) {
+    const scopes = pendingRecoveryNotice.get(apiName) ?? new Set<string>();
+    scopes.add(scope);
+    pendingRecoveryNotice.set(apiName, scopes);
+  } else {
+    pendingRecoveryNotice.delete(apiName);
+  }
 }
-export function _hasPendingRecoveryForTest(apiName: string): boolean {
-  return pendingRecoveryNotice.has(apiName);
+export function _hasPendingRecoveryForTest(apiName: string, scope?: string): boolean {
+  const scopes = pendingRecoveryNotice.get(apiName);
+  if (!scopes || scopes.size === 0) return false;
+  return scope ? scopes.has(scope) : true;
 }
 
 /**

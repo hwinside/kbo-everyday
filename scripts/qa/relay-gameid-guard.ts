@@ -13,6 +13,10 @@
  *   6) 실패 후 재시도: 실패 promise가 맵에 박제되지 않고 다음 요청은 새 업스트림 시도
  *   7) 복구 알림 게이트: degraded 200에서는 복구 미발송(삼순 Blocker 1),
  *      완전 정상에서 1회만 발송(중복 금지)
+ *   8) NACK 순서 계약(삼순 2차 ②): claim→alert 전송 실패(NACK)→정상 200→drainer
+ *      순서로 실경로를 태워, ✅가 drainer의 🚨보다 먼저 나가지 않음을 고정
+ *   9) 복구 scope 계약(삼순 2차 ③): game A 경보 후 game B 정상 200은 ✅ 미발송,
+ *      game A 정상 200에서만 ✅ 1회
  *
  * 실행: npm run qa:relay-gameid-guard  (network 불필요 — fetch는 스텁, prebuild 결속)
  */
@@ -104,18 +108,62 @@ async function main() {
     // 최소 유효 스키마: textRelays 배열(빈 배열 = 정당한 빈 이닝). 이닝별 실패/지연/
     // 텔레그램 인터셉트를 한 스텁에서 제어한다.
     let inning1Calls = 0;
-    let telegramCalls = 0;
     let upstreamMode: {
       currentInning: number;
       failInnings: Set<number>;
       failAll?: boolean;
       delayMs?: number;
     } = { currentInning: 1, failInnings: new Set() };
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
+    // 텔레그램: 성공/실패 전환 + 본문 종류(🚨 열화 vs ✅ 복구) 순서 기록
+    let telegramMode: "ok" | "fail" = "ok";
+    const telegramLog: Array<{ ok: boolean; kind: "alert" | "recovery" }> = [];
+    const telegramOkCount = (kind: "alert" | "recovery") =>
+      telegramLog.filter((t) => t.ok && t.kind === kind).length;
+    // supabase RPC(claim/nack/confirm/drain) 스텁 — durable 경보 경로를 실제로 태운다.
+    const rpcState = {
+      shouldSend: false,
+      nackCalls: 0,
+      confirmCalls: 0,
+      drainRows: [] as Array<Record<string, unknown>>,
+    };
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       if (url.includes("api.telegram.org")) {
-        telegramCalls++;
-        return new Response('{"ok":true}', { status: 200 });
+        const body = String(init?.body ?? (input instanceof Request ? await input.clone().text() : ""));
+        const kind: "alert" | "recovery" = body.includes("\uc5f4\ud654") ? "alert" : "recovery";
+        const ok = telegramMode === "ok";
+        telegramLog.push({ ok, kind });
+        return new Response(ok ? '{"ok":true}' : '{"ok":false}', { status: ok ? 200 : 500 });
+      }
+      if (url.includes("stub.supabase.co")) {
+        if (url.includes("claim_api_fallback_alert")) {
+          return new Response(
+            JSON.stringify([
+              rpcState.shouldSend
+                ? { should_send: true, attempt_token: `tok-${Date.now()}` }
+                : { should_send: false, attempt_token: null },
+            ]),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url.includes("nack_api_fallback_alert")) {
+          rpcState.nackCalls++;
+          return new Response("null", { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("confirm_api_fallback_alert")) {
+          rpcState.confirmCalls++;
+          return new Response("true", { status: 200, headers: { "Content-Type": "application/json" } });
+        }
+        if (url.includes("drain_api_fallback_alerts")) {
+          const rows = rpcState.drainRows;
+          rpcState.drainRows = [];
+          return new Response(JSON.stringify(rows), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        // api_fallback_events insert 등 기타 supabase 호출은 성공 처리
+        return new Response("[]", { status: 201, headers: { "Content-Type": "application/json" } });
       }
       if (!url.includes("api-gw.sports.naver.com")) {
         throw new Error("unexpected network call in qa gate: " + url);
@@ -170,7 +218,7 @@ async function main() {
     console.log("[7] 복구 알림: degraded에서는 미발송, 완전 정상에서 1회만");
     // 사전: 이 인스턴스가 경보를 보낸 상태를 주입
     tracker._setPendingRecoveryForTest("naver-relay", true);
-    telegramCalls = 0;
+    telegramLog.length = 0;
     // last-good 스냅샷 확보: currentInning=3 성공 GET (hint 0)
     upstreamMode = { currentInning: 3, failInnings: new Set() };
     // ⚠️ pending 상태에서 성공 GET이 바로 복구를 쇘버리면 degraded 검사를 못 하므로
@@ -189,8 +237,8 @@ async function main() {
     check("degraded 응답도 200(last-good 대체)", degraded.status === 200, `got ${degraded.status}`);
     check(
       "degraded 200에서는 복구 미발송(pending 유지)",
-      tracker._hasPendingRecoveryForTest("naver-relay") === true && telegramCalls === 0,
-      `pending=${tracker._hasPendingRecoveryForTest("naver-relay")}, telegram=${telegramCalls}회`,
+      tracker._hasPendingRecoveryForTest("naver-relay") === true && telegramOkCount("recovery") === 0,
+      `pending=${tracker._hasPendingRecoveryForTest("naver-relay")}, recovery=${telegramOkCount("recovery")}회`,
     );
     // 완전 정상: 복구 1회 발송
     upstreamMode = { currentInning: 3, failInnings: new Set() };
@@ -200,8 +248,8 @@ async function main() {
     check("완전 정상 200", clean1.status === 200, `got ${clean1.status}`);
     check(
       "복구 알림 1회 발송 + pending 해제",
-      tracker._hasPendingRecoveryForTest("naver-relay") === false && telegramCalls === 1,
-      `pending=${tracker._hasPendingRecoveryForTest("naver-relay")}, telegram=${telegramCalls}회`,
+      tracker._hasPendingRecoveryForTest("naver-relay") === false && telegramOkCount("recovery") === 1,
+      `pending=${tracker._hasPendingRecoveryForTest("naver-relay")}, recovery=${telegramOkCount("recovery")}회`,
     );
     // 재발송 금지: 또 성공해도 추가 발송 없음
     const clean2 = await relayRoute.GET(
@@ -209,8 +257,81 @@ async function main() {
     );
     check(
       "중복 발송 없음(복구 1회 계약)",
-      clean2.status === 200 && telegramCalls === 1,
-      `status=${clean2.status}, telegram=${telegramCalls}회`,
+      clean2.status === 200 && telegramOkCount("recovery") === 1,
+      `status=${clean2.status}, recovery=${telegramOkCount("recovery")}회`,
+    );
+
+    console.log("[8] NACK 순서 계약: claim→전송 실패(NACK)→정상 200→drainer 🚨");
+    telegramLog.length = 0;
+    // claim 승자이지만 텔레그램 전송 실패 → NACK → pending 미등록이어야 한다
+    rpcState.shouldSend = true;
+    telegramMode = "fail";
+    await tracker.trackApiDegradation(
+      "naver-relay",
+      "http-error",
+      { errorMessage: "gate: alert fail path", scope: "20260811NACK0" },
+      { windowMinutes: 5, threshold: 1, cooldownMinutes: 30, leaseSeconds: 60 },
+    );
+    check("전송 실패 시 NACK 호출", rpcState.nackCalls >= 1, `${rpcState.nackCalls}회`);
+    check(
+      "전송 실패 시 pending 미등록(✅ 선행 불가 근거)",
+      tracker._hasPendingRecoveryForTest("naver-relay") === false,
+      "pending이 등록되어 있음",
+    );
+    // 정상 200이 와도 ✅는 나가면 안 된다(경보가 아직 안 나갔으므로)
+    rpcState.shouldSend = false;
+    upstreamMode = { currentInning: 1, failInnings: new Set() };
+    const nackClean = await relayRoute.GET(
+      new NextRequest("http://localhost/api/game-relay?gameId=20260811NACK0"),
+    );
+    check(
+      "경보 미전송 상태의 정상 200 → ✅ 미발송",
+      nackClean.status === 200 && telegramOkCount("recovery") === 0,
+      `status=${nackClean.status}, recovery=${telegramOkCount("recovery")}회`,
+    );
+    // drainer가 outbox를 이어받아 🚨를 보낸다 — 이 시점이 첫 성공 전송이어야 한다
+    telegramMode = "ok";
+    rpcState.drainRows = [
+      {
+        api_name: "naver-relay",
+        attempt_token: "tok-drain-1",
+        reason: "http-error",
+        error_message: "gate: drained alert",
+      },
+    ];
+    const drained = await tracker.drainApiFallbackAlerts({ leaseSeconds: 60 });
+    check("drainer가 🚨 재전송", drained.sent === 1, JSON.stringify(drained));
+    const firstOk = telegramLog.find((t) => t.ok);
+    check(
+      "첫 성공 전송이 🚨(✅ 선행 역전 없음)",
+      firstOk?.kind === "alert" && telegramOkCount("recovery") === 0,
+      JSON.stringify(telegramLog),
+    );
+
+    console.log("[9] 복구 scope 계약: A 경보 후 B 정상은 ✅ 금지, A 정상에서만 ✅");
+    telegramLog.length = 0;
+    // game A(AAAA0) scope 경보가 나간 상태를 주입
+    tracker._setPendingRecoveryForTest("naver-relay", true, "20260811AAAA0");
+    upstreamMode = { currentInning: 1, failInnings: new Set() };
+    const bClean = await relayRoute.GET(
+      new NextRequest("http://localhost/api/game-relay?gameId=20260811BBBB0"),
+    );
+    check(
+      "game B 정상 200 → ✅ 미발송 + A pending 유지",
+      bClean.status === 200 &&
+        telegramOkCount("recovery") === 0 &&
+        tracker._hasPendingRecoveryForTest("naver-relay", "20260811AAAA0"),
+      `status=${bClean.status}, recovery=${telegramOkCount("recovery")}회`,
+    );
+    const aClean = await relayRoute.GET(
+      new NextRequest("http://localhost/api/game-relay?gameId=20260811AAAA0"),
+    );
+    check(
+      "game A 정상 200 → ✅ 1회 + pending 해제",
+      aClean.status === 200 &&
+        telegramOkCount("recovery") === 1 &&
+        !tracker._hasPendingRecoveryForTest("naver-relay"),
+      `status=${aClean.status}, recovery=${telegramOkCount("recovery")}회`,
     );
   } finally {
     globalThis.fetch = realFetch;
