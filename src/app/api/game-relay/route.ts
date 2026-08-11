@@ -16,11 +16,6 @@ import {
 // 있는 것으로 실측 확인했다.
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
-// 2026-08-11 네이버가 relay 엔드포인트를 Vercel icn1(AWS 서울) egress 대역만 404로
-// 선별 차단 (프리뷰 실측: 브라우저 UA+Referer로도 동일 404 → IP 차단 확정).
-// 도쿄 리전으로 이 라우트만 이동해 차단 대역을 우회한다. schedule API는 icn1에서도
-// 200이라 다른 라우트는 그대로 둔다.
-export const preferredRegion = "hnd1";
 
 // ===== Types =====
 
@@ -771,16 +766,47 @@ const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
 /**
- * 2026-08-11 네이버가 Vercel(icn1) egress 발 relay 요청만 404로 선별 차단.
- * (같은 IP·같은 UA의 schedule API는 200 → UA 단독 원인 아님, IP+bot UA 조합
- * WAF 룰 가능성 배제용 1차 완화) 브라우저 시그니처로 통일 — 외부 API 헤더는
- * 정책 변경 시 1곳만 고치도록 상수로 중앙화한다.
+ * 2026-08-11 P0: 네이버가 relay 엔드포인트만 Vercel icn1(AWS 서울) egress 대역에
+ * 404로 선별 차단 (프리뷰 실측: 브라우저 UA+Referer로도 동일 404 → IP 차단 확정,
+ * hnd1 edge egress는 200). Node 서버리스는 Pro 플랜에서 icn1 단일 리전 고정이라
+ * relay/record fetch를 자체 edge 프록시(/api/naver-proxy, hnd1/sin1)로 우회한다.
+ * 로컬 dev(VERCEL_URL 없음)는 네이버 직접 호출 유지.
  */
 const NAVER_RELAY_HEADERS = {
-  "User-Agent":
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-  Referer: "https://m.sports.naver.com/",
+  "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
+  // Vercel 프리뷰 배포는 SSO 보호가 걸려 있어 내부(자기 배포) fetch에 자동화
+  // 바이패스 헤더가 필요하다. 프로덕션 custom domain(keubo.fan)은 비보호라 무해.
+  ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+    ? {
+        "x-vercel-protection-bypass":
+          process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+      }
+    : {}),
 } as const;
+
+function naverProxyBase(): string | null {
+  if (process.env.VERCEL_ENV === "production") {
+    return "https://keubo.fan/api/naver-proxy";
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/api/naver-proxy`;
+  }
+  return null;
+}
+
+function naverRelayUrl(naverGameId: string, inning: number): string {
+  const proxy = naverProxyBase();
+  return proxy
+    ? `${proxy}?gameId=${naverGameId}&kind=relay&inning=${inning}`
+    : `${NAVER_API_BASE}/${naverGameId}/relay?inning=${inning}`;
+}
+
+function naverRecordUrl(naverGameId: string): string {
+  const proxy = naverProxyBase();
+  return proxy
+    ? `${proxy}?gameId=${naverGameId}&kind=record`
+    : `${NAVER_API_BASE}/${naverGameId}/record`;
+}
 
 /**
  * In-memory response cache (module-level, persists for the lambda warm period
@@ -1006,7 +1032,7 @@ export async function GET(req: NextRequest) {
   try {
     // First, fetch inning 1 to get the current inning number
     const firstRes = await fetch(
-      `${NAVER_API_BASE}/${naverGameId}/relay?inning=1`,
+      naverRelayUrl(naverGameId, 1),
       {
         headers: NAVER_RELAY_HEADERS,
         cache: "no-store",
@@ -1057,7 +1083,7 @@ export async function GET(req: NextRequest) {
 
     for (let i = 2; i <= maxInning; i++) {
       inningPromises.push(
-        fetch(`${NAVER_API_BASE}/${naverGameId}/relay?inning=${i}`, {
+        fetch(naverRelayUrl(naverGameId, i), {
           headers: NAVER_RELAY_HEADERS,
           cache: "no-store",
           // Bound each per-inning fetch so a single slow/hung Naver upstream
@@ -1088,7 +1114,7 @@ export async function GET(req: NextRequest) {
 
     // Fetch record API in parallel for accurate pitcher/batter stats with names
     const recordPromise = fetch(
-      `${NAVER_API_BASE}/${naverGameId}/record`,
+      naverRecordUrl(naverGameId),
       {
         headers: NAVER_RELAY_HEADERS,
         cache: "no-store",
