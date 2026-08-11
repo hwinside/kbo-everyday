@@ -71,3 +71,5 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// build-bump: preview env 반영용 (2026-08-11)
