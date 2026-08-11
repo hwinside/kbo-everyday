@@ -16,6 +16,11 @@ import {
 // 있는 것으로 실측 확인했다.
 // Vercel 서버리스에서 캐시 방지 (라이브 데이터는 항상 최신이어야 함)
 export const dynamic = "force-dynamic";
+// 2026-08-11 P0: 네이버 relay 차단 우회 — edge 런타임으로 유저 요청의 국내 IP가
+// Forwarded로 실려 나가게 한다(상세는 NAVER_RELAY_HEADERS 위 주석). 리전은 실측으로
+// 검증된 hnd1을 우선으로 고정한다.
+export const runtime = "edge";
+export const preferredRegion = ["hnd1", "sin1"];
 
 // ===== Types =====
 
@@ -766,46 +771,27 @@ const NAVER_API_BASE =
   "https://api-gw.sports.naver.com/schedule/games";
 
 /**
- * 2026-08-11 P0: 네이버가 relay 엔드포인트만 Vercel icn1(AWS 서울) egress 대역에
- * 404로 선별 차단 (프리뷰 실측: 브라우저 UA+Referer로도 동일 404 → IP 차단 확정,
- * hnd1 edge egress는 200). Node 서버리스는 Pro 플랜에서 icn1 단일 리전 고정이라
- * relay/record fetch를 자체 edge 프록시(/api/naver-proxy, hnd1/sin1)로 우회한다.
- * 로컬 dev(VERCEL_URL 없음)는 네이버 직접 호출 유지.
+ * 2026-08-11 P0: 네이버가 relay/record 엔드포인트를 "유효 클라이언트가 데이터센터
+ * IP인 요청"에 404로 선별 차단하기 시작했다. 실측 근거:
+ * - icn1 Node 함수 직접 fetch(헤더 위장 포함) → 404
+ * - edge 함수는 Vercel이 아웃바운드에 `Forwarded: for=<직전 호출자 IP>`를 자동
+ *   부착한다(httpbin 에코 실측). 같은 hnd1 edge·같은 egress IP에서 호출자가
+ *   국내 일반 IP면 200, 내부(람다 AWS IP)면 404 → 네이버는 Forwarded의 유효
+ *   클라이언트를 본다.
+ * 따라서 이 라우트를 edge 런타임으로 전환해 유저 요청이 직접 때리게 하면
+ * Forwarded에 실제 유저(국내) IP가 실려 통과한다. 서버발 호출(game-relay-events
+ * 인프로세스 import·warmup cron)은 여전히 차단 대상이며 별도 트랙으로 다룬다.
  */
 const NAVER_RELAY_HEADERS = {
   "User-Agent": "Mozilla/5.0 (compatible; KboEveryday/1.0)",
-  // Vercel 프리뷰 배포는 SSO 보호가 걸려 있어 내부(자기 배포) fetch에 자동화
-  // 바이패스 헤더가 필요하다. 프로덕션 custom domain(keubo.fan)은 비보호라 무해.
-  ...(process.env.VERCEL_AUTOMATION_BYPASS_SECRET
-    ? {
-        "x-vercel-protection-bypass":
-          process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
-      }
-    : {}),
 } as const;
 
-function naverProxyBase(): string | null {
-  if (process.env.VERCEL_ENV === "production") {
-    return "https://keubo.fan/api/naver-proxy";
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api/naver-proxy`;
-  }
-  return null;
-}
-
 function naverRelayUrl(naverGameId: string, inning: number): string {
-  const proxy = naverProxyBase();
-  return proxy
-    ? `${proxy}?gameId=${naverGameId}&kind=relay&inning=${inning}`
-    : `${NAVER_API_BASE}/${naverGameId}/relay?inning=${inning}`;
+  return `${NAVER_API_BASE}/${naverGameId}/relay?inning=${inning}`;
 }
 
 function naverRecordUrl(naverGameId: string): string {
-  const proxy = naverProxyBase();
-  return proxy
-    ? `${proxy}?gameId=${naverGameId}&kind=record`
-    : `${NAVER_API_BASE}/${naverGameId}/record`;
+  return `${NAVER_API_BASE}/${naverGameId}/record`;
 }
 
 /**
@@ -991,24 +977,6 @@ function setCachedResponse(key: string, data: GameRelayResponse): void {
 }
 
 export async function GET(req: NextRequest) {
-  // 임시 진단: 내부(Node 함수발) 경유 시 edge 프록시의 실제 egress IP·리전 확인
-  // (근본원인 확정 후 제거)
-  if (req.nextUrl.searchParams.get("proxyDebug") === "1") {
-    const proxy = naverProxyBase();
-    if (!proxy) {
-      return NextResponse.json({ error: "no proxy base" }, { status: 500 });
-    }
-    const res = await fetch(`${proxy}?gameId=20260101ZZZZ0000&kind=debug`, {
-      headers: NAVER_RELAY_HEADERS,
-      cache: "no-store",
-      signal: AbortSignal.timeout(10000),
-    });
-    const body = await res.text();
-    return new NextResponse(body, {
-      status: res.status,
-      headers: NO_STORE_HEADERS,
-    });
-  }
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json(
@@ -1070,10 +1038,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           error: "relay_upstream_http_error",
-          // 진단용: 내부 프록시 경유 시 업스트림 상태와 프록시 실행 리전을 노출해
-          // 차단 리전 회귀(icn1 재진입)를 운영 중 즉시 식별한다.
+          // 진단용: 차단 재발/확장을 운영 중 즉시 식별하기 위해 업스트림 상태를 남긴다.
           upstreamStatus: firstRes.status,
-          proxyRegion: firstRes.headers.get("x-proxy-region"),
         },
         { status: 503, headers: NO_STORE_HEADERS },
       );
