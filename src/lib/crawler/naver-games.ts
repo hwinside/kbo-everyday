@@ -125,7 +125,12 @@ export function isPrematureStarted(g: NaverScheduleGame, now: Date): boolean {
   const scheduledMs = Date.parse(`${g.gameDateTime}+09:00`);
   if (!Number.isFinite(scheduledMs)) return false;
   if (now.getTime() >= scheduledMs) return false;
-  return (g.awayTeamScore ?? 0) === 0 && (g.homeTeamScore ?? 0) === 0;
+  // 선조건: 양팀 스코어가 finite 일 때만 가드 판정(삼순 NO-GO blocker 반영).
+  // 결측/null 을 `?? 0` 으로 삼켜 premature 처리하면 STARTED 의 스코어 결측이
+  // scheduled 로 위장돼 isRawNaverGameSane 의 finite-score fail-close 를 우회한다.
+  // 결측은 가드 off → live 경로 유지 → 기존 fail-close 가 그대로 잡는다.
+  if (!Number.isFinite(g.awayTeamScore) || !Number.isFinite(g.homeTeamScore)) return false;
+  return g.awayTeamScore === 0 && g.homeTeamScore === 0;
 }
 
 function mapStatus(g: NaverScheduleGame, now: Date = new Date()): KboGame["status"] {

@@ -45,6 +45,17 @@ check(
   isPrematureStarted({ ...lgwoPremature, awayTeamScore: 1 }, at1824) === false,
 );
 check("READY 는 premature 판정 대상 아님", isPrematureStarted({ ...lgwoPremature, statusCode: "READY" }, at1824) === false);
+// 삼순 NO-GO blocker 회귀: 스코어 결측/null 은 `?? 0` 으로 premature 처리하면 안 된다 —
+// scheduled 위장 시 isRawNaverGameSane 의 STARTED finite-score fail-close 를 우회하므로
+// 결측은 가드 off(live 경로 유지) → 기존 fail-close 가 잡는다.
+check(
+  "away 스코어 결측(undefined) 시 가드 off(fail-close 우회 금지)",
+  isPrematureStarted({ ...lgwoPremature, awayTeamScore: undefined }, at1824) === false,
+);
+check(
+  "home 스코어 null 시 가드 off(fail-close 우회 금지)",
+  isPrematureStarted({ ...lgwoPremature, homeTeamScore: null as unknown as number }, at1824) === false,
+);
 check(
   "gameDateTime 결측 시 가드 off(기존 동작 유지, fail-open)",
   isPrematureStarted({ ...lgwoPremature, gameDateTime: undefined }, at1824) === false,
