@@ -29,6 +29,8 @@ import {
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 import {
   composeCareerLeaderboardAnswer,
+  isCareerLeaderboardHoldScope,
+  isCareerLeaderboardQuestion,
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
@@ -99,6 +101,28 @@ check("P0: 닫힌 지표 SSOT — 미지원 통산 지표 alias 는 순위 표�
     assert.equal(isCareerLeaderboardAsk(q), true, q);
     assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
   }
+});
+// ⚠️ 삼순 8차 P0 — **marker-only**: 의문사(`누구`·`알려`)가 하나도 없고 표지만 있는 형태.
+// 종전 앞단 prefilter(ask regex)가 이걸 탈락시켜 generic LLM 으로 샜다. 아래 표본에는
+// `1위|누구|누가|최다|최고|선두|알려` 를 **한 글자도 넣지 않는다** — 넣으면 옛 prefilter 가
+// 대신 통과시켜 단일 계약이 깨져도 GREEN 이 된다(직전 exact 의 실제 false-green 원인).
+check("P0: marker-only (의문사 없음) — 표지만으로 hold 에 결속된다", () => {
+  for (const q of [
+    "통산 끝내기 상위 10명",        // 삼순 exact
+    "통산 폭투 제일 많은 선수",     // 삼순 exact
+    "역대 견제사 많은 선수",        // 삼순 exact
+    "통산 안타 상위 10명",
+    "역대 홈런 많은 타자",
+  ]) {
+    for (const forbidden of ["1위", "누구", "누가", "최다", "최고", "선두", "알려"]) {
+      assert.ok(!q.includes(forbidden), `표본에 옛 prefilter 어휘가 섞이면 false-green: ${q}`);
+    }
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
+});
+check("P0: prefilter/hold 는 물리적으로 같은 함수다 (drift 불가)", () => {
+  assert.equal(isCareerLeaderboardQuestion, isCareerLeaderboardHoldScope);
 });
 check("P0: 순위 표지 형태 — 목록에 없는 새 지표도 순위를 물으면 hold", () => {
   for (const q of [

@@ -55,6 +55,20 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
+    name: "m1g 앞단 prefilter 재도입 — ask regex drift 로 marker-only 가 generic LLM 으로 샌다",
+    file: CAREER_LEADERBOARD,
+    from: "export function isCareerLeaderboardHoldScope(question: string): boolean {\n  const normalized = compactCareerQuestion(question);",
+    to: "export function isCareerLeaderboardHoldScope(question: string): boolean {\n  const normalized = compactCareerQuestion(question);\n  if (!/1위|누구|누가|최다|최고|선두|알려/.test(normalized)) return false;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1h prefilter 별칭 분리 — 이름만 다른 두 판정이 생겨 다시 drift",
+    file: CAREER_LEADERBOARD,
+    from: "export const isCareerLeaderboardQuestion = isCareerLeaderboardHoldScope;",
+    to: "export const isCareerLeaderboardQuestion = (question: string): boolean =>\n  CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => compactCareerQuestion(question).includes(word)) &&\n  /1위|누구|누가|최다|최고|선두|알려/.test(compactCareerQuestion(question));",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
     name: "m1e2 수량 비교 표지(`많`) 제거 — `누가 제일 많아?` 형태가 generic LLM 으로 샌다",
     file: CAREER_LEADERBOARD,
     from: "|top\\d+|많/;",

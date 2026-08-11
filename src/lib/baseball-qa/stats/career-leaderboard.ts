@@ -53,13 +53,6 @@ function compactCareerQuestion(question: string): string {
     .replace(/\s+/g, "");
 }
 
-/** 미지원 지표까지 포함한 넓은 리더보드 scope — 지원 여부는 resolve intent가 결정한다. */
-export function isCareerLeaderboardQuestion(question: string): boolean {
-  const normalized = compactCareerQuestion(question);
-  const hasTemporal = CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => normalized.includes(word));
-  return hasTemporal && /1위|누구|누가|최다|최고|선두|알려/.test(normalized);
-}
-
 /**
  * 통산 리더보드로 물을 수 있는 **누적 기록 지표의 닫힌 SSOT**.
  *
@@ -93,15 +86,28 @@ const CAREER_RANK_MARKER = /\d+\s*위|최다|선두|상위|톱\d+|top\d+|많/;
 /**
  * 통산 리더보드 질문인가 — **미지원 지표까지 포함해** hold 로 닫아야 하는 범위.
  *
- * `역대 최고의 타자는 누구야?` 처럼 지표도 순위 표지도 없는 **주관 평가**는 여기서 빠져
+ * ⚠️ **단일 계약**이다(삼순 8차 P0). 종전에는 앞단에 별도 ask regex
+ * (`1위|누구|누가|최다|최고|선두|알려`) 를 prefilter 로 두고 지표·표지를 뒤에서 봤는데,
+ * 두 목록이 어긋나 `통산 끝내기 상위 10명`·`통산 폭투 제일 많은 선수`·`역대 견제사 많은 선수`
+ * 처럼 **의문사 없이 표지만 있는** 질문이 앞단에서 탈락해 generic LLM 으로 샜다.
+ * ask 축을 늘려 맞추는 대신 **없앤다** — 판정은 `temporal + (지표 SSOT | 순위·수량 표지)`
+ * 한 줄이고, 이 함수 하나가 라우터·게이트·prefilter 전부의 유일한 계약이다.
+ *
+ * `역대 최고의 타자는 누구야?` 처럼 지표도 표지도 없는 **주관 평가**는 여기서 빠져
  * LLM 범위 판정으로 내려간다(숫자 환각 리스크가 없는 축).
  */
 export function isCareerLeaderboardHoldScope(question: string): boolean {
-  if (!isCareerLeaderboardQuestion(question)) return false;
   const normalized = compactCareerQuestion(question);
+  if (!CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => normalized.includes(word))) return false;
   if (CAREER_RANK_MARKER.test(normalized)) return true;
   return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));
 }
+
+/**
+ * 넓은 리더보드 scope. **hold scope 와 같은 함수다** — 이름만 다른 두 판정이 존재하면
+ * 다시 drift 가 난다(위 주석의 실측 사고). 재수출로 물리적으로 하나임을 강제한다.
+ */
+export const isCareerLeaderboardQuestion = isCareerLeaderboardHoldScope;
 
 /** 첫 수직 슬라이스: 질문 **전체를 consume하는 안타+단일 1위 positive grammar**만 지원한다.
  *
