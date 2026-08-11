@@ -37,7 +37,11 @@ import {
   validateServedBatterPayload,
 } from "../../src/lib/baseball-qa/stats/served-record";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
-import { oldestFullEntryTimestamp } from "../../src/lib/stats/full-entry";
+import {
+  oldestFullEntryTimestamp,
+  StatsFreshnessContractError,
+} from "../../src/lib/stats/full-entry";
+import { handleStatsGetFailure } from "../../src/app/api/stats/route";
 import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -59,10 +63,17 @@ const PLAYERS = [
 ] as unknown as PlayerRef[];
 
 // ── 1. 리더보드 = 공식 구조화 조회, 미지원 지표는 fail-close ──
-check("통산 안타 1위는 공식 구조화 조회로 위임한다", () => {
-  for (const q of ["통산 안타 기록 1위는 누구야?", "통산 최다 안타는 누가 갖고 있어?"]) {
+check("intent 양성 전수는 라우터와 동일 SSOT로 구조화 경로에 결속된다", () => {
+  for (const q of [
+    "통산 안타 기록 1위는 누구야?",
+    "통산 최다 안타는 누가 갖고 있어?",
+    "커리어 안타 1위 알려줘",
+    "누적 안타 1위 알려줘",
+    "통산 안타 선두 알려줘",
+    "올타임 안타 1위 누구야",
+  ]) {
     assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.deepEqual(resolveCareerLeaderboardIntent(q), { metric: "hits", label: "안타" });
+    assert.deepEqual(resolveCareerLeaderboardIntent(q), { metric: "hits", label: "안타" }, q);
     assert.equal(routeQuestion(q, [], PLAYERS), "career_leaderboard", q);
   }
 });
@@ -171,7 +182,7 @@ check("P0: full=1 freshness는 모든 구성시각 검증 후 가장 오래된 �
     "미래 static을 min 계산으로 숨기면 안 된다",
   );
   const routeSource = readFileSync("src/app/api/stats/route.ts", "utf8");
-  assert.match(routeSource, /const updatedAt = full\s*\? oldestFullEntryTimestamp\(\[currentUpdatedAt, staticGeneratedAt\]\)/);
+  assert.match(routeSource, /const updatedAt = full\s*\? requireOldestFullEntryTimestamp\(\[currentUpdatedAt, staticGeneratedAt\]\)/);
   assert.match(routeSource, /statsMeta\.battersGeneratedAt/);
 });
 
@@ -301,6 +312,19 @@ function ragDeps(llmAnswer: string): { deps: QaDeps; counters: { llm: number } }
 }
 const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
+
+checkAsync("GET 경계: freshness 계약 오류는 fallback 200으로 우회하지 않는다", async () => {
+  const response = handleStatsGetFailure(
+    new StatsFreshnessContractError(),
+    "2026",
+    "batter",
+    new Date("2026-08-12T01:00:00Z"),
+  );
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.equal(body.stats.length, 0);
+  assert.notEqual(body.source, "fallback");
+});
 
 checkAsync("E2E: 캡처 exact가 history_hold/LLM이 아니라 kbo_structured로 종결된다", async () => {
   let genericLlm = 0;

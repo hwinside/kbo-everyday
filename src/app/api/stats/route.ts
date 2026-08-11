@@ -9,7 +9,12 @@ import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
-import { mergeFullEntry, oldestFullEntryTimestamp } from "@/lib/stats/full-entry";
+import {
+  mergeFullEntry,
+  oldestFullEntryTimestamp,
+  requireOldestFullEntryTimestamp,
+  StatsFreshnessContractError,
+} from "@/lib/stats/full-entry";
 import {
   fetchNaverPlayerStats,
   type NaverPlayerStat,
@@ -570,6 +575,35 @@ async function fetchCurrentStats(
   }
 }
 
+export function handleStatsGetFailure(
+  error: unknown,
+  season: string,
+  type: string,
+  now = new Date(),
+): NextResponse {
+  // freshness 계약 실패는 "크롤 실패"가 아니다. 같은 오염 static을 fallback 200으로
+  // 다시 내보내면 fail-close가 무효화된다(삼순 #1159 5차 NO-GO).
+  if (error instanceof StatsFreshnessContractError) {
+    return NextResponse.json({ error: error.message, stats: [] }, { status: 500 });
+  }
+  // 크롤링 실패 시 static JSON fallback (빈화면 방지). 단 fallback 자체의 구성시각도
+  // 동일 freshness 계약을 통과해야 하며 미래/invalid면 500 fail-close 한다.
+  if (season === "2026" || season === "current") {
+    const fallback = type === "pitcher"
+      ? (pitcherStats2026 as unknown as PlayerStat[])
+      : (batterStats2026 as unknown as PlayerStat[]);
+    const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
+    const validFbAt = oldestFullEntryTimestamp([fbAt], now);
+    if (!validFbAt) {
+      return NextResponse.json({ error: "stats fallback has invalid freshness", stats: [] }, { status: 500 });
+    }
+    return NextResponse.json({
+      stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: validFbAt,
+    });
+  }
+  return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500 });
+}
+
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
@@ -615,9 +649,8 @@ export async function GET(req: NextRequest) {
     // full=1은 live 목록에 static 비규정 엔트리를 합친 응답이다. runner가 live여도
     // static 생성시각을 숨기고 `now`만 내보내면 봇의 stale 가드가 우회된다.
     const updatedAt = full
-      ? oldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])
+      ? requireOldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])
       : currentUpdatedAt;
-    if (!updatedAt) throw new Error("stats response has invalid component freshness");
     const result: StatsResult = {
       stats,
       type,
@@ -640,14 +673,6 @@ export async function GET(req: NextRequest) {
     setCache(cacheKey, result);
     return NextResponse.json(result);
   } catch (e: unknown) {
-    // 크롤링 실패 시 static JSON fallback (빈화면 방지)
-    if (season === "2026" || season === "current") {
-      const fallback = type === "pitcher"
-        ? (pitcherStats2026 as unknown as PlayerStat[])
-        : (batterStats2026 as unknown as PlayerStat[]);
-      const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
-      return NextResponse.json({ stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: fbAt });
-    }
-    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });
+    return handleStatsGetFailure(e, season, type);
   }
 }

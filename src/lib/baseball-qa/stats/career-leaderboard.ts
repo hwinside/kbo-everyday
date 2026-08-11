@@ -39,19 +39,35 @@ export type CareerLeaderboardFetcher = (
   now?: Date,
 ) => Promise<CareerLeaderboardAnswer | null>;
 
+/** 라우터와 intent resolver가 공유하는 유일한 시점어 SSOT. */
+export const CAREER_LEADERBOARD_TEMPORAL_WORDS = [
+  "통산", "역대", "커리어", "누적", "올타임",
+] as const;
+
+function compactCareerQuestion(question: string): string {
+  return question
+    .normalize("NFKC")
+    .toLowerCase()
+    .trim()
+    .replace(/[?!？！.,。]+$/g, "")
+    .replace(/\s+/g, "");
+}
+
+/** 미지원 지표까지 포함한 넓은 리더보드 scope — 지원 여부는 resolve intent가 결정한다. */
+export function isCareerLeaderboardQuestion(question: string): boolean {
+  const normalized = compactCareerQuestion(question);
+  const hasTemporal = CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => normalized.includes(word));
+  return hasTemporal && /1위|누구|누가|최다|최고|선두|알려/.test(normalized);
+}
+
 /** 첫 수직 슬라이스: 질문 **전체를 consume하는 안타+단일 1위 positive grammar**만 지원한다.
  *
  * 부분문자열 매칭은 `안타 1위는 누구고 2위는?`의 앞 절만 먹거나, `홈런 1위는? 안타도`
  * 에서 다른 절의 안타를 지표로 오결속한다(삼순 4차 NO-GO). 끝 문장부호만 제거한 전체 문자열이
  * 아래 두 폐쇄 문법 중 하나와 완전히 일치할 때만 지원한다. */
 export function resolveCareerLeaderboardIntent(question: string): CareerLeaderboardIntent | null {
-  const normalized = question
-    .normalize("NFKC")
-    .toLowerCase()
-    .trim()
-    .replace(/[?!？！.,。]+$/g, "")
-    .replace(/\s+/g, "");
-  const temporal = "(?:통산|역대|커리어|누적)";
+  const normalized = compactCareerQuestion(question);
+  const temporal = `(?:${CAREER_LEADERBOARD_TEMPORAL_WORDS.join("|")})`;
   const who = "(?:누구(?:야|인가|인가요|예요)?|누가|누군(?:데|가요)?|알려(?:줘|주세요)?)";
   const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}$`);
   const singularLeader = new RegExp(

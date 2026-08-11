@@ -19,14 +19,10 @@ const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
   {
-    name: "m1 통산 구조화 조회 제거 — exact 질문이 다시 hold 로 회귀",
+    name: "m1 intent 직접결속 제거 — 양성 intent가 history_hold로 회귀",
     file: PIPELINE,
-    from: `if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
-  }`,
-    to: `if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "history_hold";
-  }`,
+    from: '    if (careerIntent) return "career_leaderboard";',
+    to: '    if (careerIntent) return "history_hold";',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -123,8 +119,8 @@ const MUTATIONS = [
   {
     name: "m6h route static 생성시각 결속 제거 — full=1이 live now만 노출",
     file: STATS_ROUTE,
-    from: 'oldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])',
-    to: 'oldestFullEntryTimestamp([currentUpdatedAt, currentUpdatedAt])',
+    from: 'requireOldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])',
+    to: 'requireOldestFullEntryTimestamp([currentUpdatedAt, currentUpdatedAt])',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -167,10 +163,17 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m9 합성 지표 토큰 라우팅 제거 — '안타기록' 범위형이 blocked 로 회귀",
-    file: PIPELINE,
-    from: "if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {",
-    to: "if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {",
+    name: "m9 temporal SSOT 올타임 제거 — resolver와 라우터 양성이 drift",
+    file: CAREER_LEADERBOARD,
+    from: '  "통산", "역대", "커리어", "누적", "올타임",',
+    to: '  "통산", "역대", "커리어", "누적",',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m9b freshness 계약 오류 분리 제거 — GET catch가 static fallback 200으로 우회",
+    file: STATS_ROUTE,
+    from: '  if (error instanceof StatsFreshnessContractError) {',
+    to: '  if (false && error instanceof StatsFreshnessContractError) {',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

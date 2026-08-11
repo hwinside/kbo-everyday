@@ -64,6 +64,7 @@ import {
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeCareerLeaderboardAnswer,
+  isCareerLeaderboardQuestion,
   resolveCareerLeaderboardIntent,
   type CareerLeaderboardFetcher,
 } from "./stats/career-leaderboard";
@@ -818,11 +819,8 @@ const SERVICE_WORDS = [
  * 기준일 있는 공식 큐레이션/물질화 테이블이 생기기 전까지 **기존 fail-close(hold)** 를
  * 유지한다 — 이 predicate 는 위임용이 아니라 그 fail-close 를 명시하는 식별자다.
  */
-const CAREER_LEADERBOARD_SCOPE = /통산|역대|올타임/;
-const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
 export function isCareerLeaderboardAsk(question: string): boolean {
-  const normalized = question.normalize("NFKC").toLowerCase();
-  return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
+  return isCareerLeaderboardQuestion(question);
 }
 
 const HISTORY_CONTEXT_WORDS = [
@@ -2235,8 +2233,12 @@ export function routeQuestion(
   // 지표 어휘가 없어 여전히 llm_scope_gate 로 내려간다.
   const mentionsCareerMetric =
     /안타|홈런|도루|타점|득점|삼진|세이브|홀드|완봉|완투|출루율|장타율|타율/.test(normalized);
-  if ((hasStat || mentionsCareerMetric) && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return resolveCareerLeaderboardIntent(question) ? "career_leaderboard" : "history_hold";
+  if (!hasTeam && !hasPlayerReference(tokens, players)) {
+    // 지원 intent를 넓은 scope/ask보다 먼저 직접 결속한다. 이렇게 해야
+    // `intent != null ⇒ career_leaderboard`가 구조적으로 성립하고 라우터 SSOT drift가 없다.
+    const careerIntent = resolveCareerLeaderboardIntent(question);
+    if (careerIntent) return "career_leaderboard";
+    if ((hasStat || mentionsCareerMetric) && isCareerLeaderboardQuestion(question)) return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.

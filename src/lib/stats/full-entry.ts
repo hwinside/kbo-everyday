@@ -17,6 +17,13 @@ const canonId = (id: string | number | undefined): string => canonicalKboId(id);
  * full=1 응답은 live + static(비규정 엔트리) + runner 보정의 혼합물이다. 응답 freshness는
  * `now`가 아니라 **가장 오래된 구성요소 시각**이어야 stale 가드가 우회되지 않는다.
  */
+export class StatsFreshnessContractError extends Error {
+  constructor(message = "stats response has invalid component freshness") {
+    super(message);
+    this.name = "StatsFreshnessContractError";
+  }
+}
+
 export function oldestFullEntryTimestamp(
   values: readonly (string | null | undefined)[],
   now = new Date(),
@@ -34,6 +41,15 @@ export function oldestFullEntryTimestamp(
     parsed.some((item) => typeof item.value !== "string" || !Number.isFinite(item.ms) || item.ms > nowMs + 5 * 60_000)
   ) return null;
   return parsed.reduce((oldest, item) => item.ms < oldest.ms ? item : oldest).value as string;
+}
+
+export function requireOldestFullEntryTimestamp(
+  values: readonly (string | null | undefined)[],
+  now = new Date(),
+): string {
+  const value = oldestFullEntryTimestamp(values, now);
+  if (!value) throw new StatsFreshnessContractError();
+  return value;
 }
 
 /**
