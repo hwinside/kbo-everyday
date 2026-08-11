@@ -11,6 +11,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
 import type { Root } from "react-dom/client";
@@ -70,6 +71,47 @@ class MemoryStorage {
 function response(status: number) {
   return new Response(null, { status });
 }
+
+function assertMissedRealtimeRecoveryWiring(source: string) {
+  assert.match(
+    source,
+    /if \(attempt\.completed\.length > 0\) \{[\s\S]*?syncBaseballQaRepliesRef\.current\(\);[\s\S]*?\}/,
+    "HTTP 성공 뒤 DB 정본 재조회 배선이 있어야 한다",
+  );
+  assert.match(
+    source,
+    /setInterval\(\(\) => \{[\s\S]*?syncBaseballQaRepliesRef\.current\(\);[\s\S]*?processBaseballQaOutbox\(\);[\s\S]*?\}, 3000\)/,
+    "Realtime 누락·HTTP 장기대기용 3초 강제 동기화가 있어야 한다",
+  );
+  assert.match(
+    source,
+    /entry\.conversationId === conversationId && !entry\.awaitingPlayerPick/,
+    "강제 동기화는 현재 대화의 미완료 질문에만 결속되어야 한다",
+  );
+  assert.match(
+    source,
+    /requestLoad\(\(\) => loadMessages\("merge"\)\)/,
+    "강제 동기화는 기존 single-flight 메시지 재조회를 재사용해야 한다",
+  );
+}
+
+test("HTTP 성공 뒤 Realtime INSERT를 놓쳐도 exact 답변을 강제 재조회한다", () => {
+  const source = readFileSync("src/lib/supabase/useDM.ts", "utf8");
+  assertMissedRealtimeRecoveryWiring(source);
+
+  assert.throws(
+    () => assertMissedRealtimeRecoveryWiring(
+      source.replace("if (attempt.completed.length > 0) {", "if (false) {"),
+    ),
+    /HTTP 성공 뒤 DB 정본 재조회/,
+    "성공 직후 재조회 배선을 죽이면 게이트가 RED여야 한다",
+  );
+  assert.throws(
+    () => assertMissedRealtimeRecoveryWiring(source.replace("setInterval", "setTimeout")),
+    /3초 강제 동기화/,
+    "주기 강제 동기화를 죽이면 게이트가 RED여야 한다",
+  );
+});
 
 test("연속 질문은 messageId별 waiting/failed 상태를 독립 유지한다", async () => {
   const storage = new MemoryStorage();

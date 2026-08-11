@@ -211,6 +211,9 @@ export function useDMChat(conversationId: string) {
   const [geniusReplyStates, setGeniusReplyStates] =
     useState<BaseballQaReplyStates>({});
   const processingBaseballQaRef = useRef(false);
+  // HTTP 성공과 답변 Realtime INSERT는 서로 다른 전달 경로다. INSERT를 놓쳐도
+  // exact 답변을 다시 읽어 typing을 종료할 수 있게 현재 대화 재조회를 연결한다.
+  const syncBaseballQaRepliesRef = useRef<() => void>(() => {});
   const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
   const observedBaseballQaPickerIdsRef = useRef(new Set<number>());
   /**
@@ -284,10 +287,15 @@ export function useDMChat(conversationId: string) {
       );
       setGeniusReplyStates(getBaseballQaReplyStates(queued, retrying));
       const { data: { session } } = await supabase.auth.getSession();
-      await attemptBaseballQaOutbox(
+      const attempt = await attemptBaseballQaOutbox(
         window.localStorage,
         session?.access_token ?? null,
       );
+      if (attempt.completed.length > 0) {
+        // 200은 서버 답변 발송 완료를 뜻하지만 Realtime INSERT 관측을 보장하지 않는다.
+        // 성공 직후 DB 정본을 다시 읽어 놓친 답변을 즉시 회수한다.
+        syncBaseballQaRepliesRef.current();
+      }
       setGeniusReplyStates(getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)));
     } finally {
       processingBaseballQaRef.current = false;
@@ -308,11 +316,14 @@ export function useDMChat(conversationId: string) {
   }, [user, processBaseballQaOutbox]);
 
   useEffect(() => {
-    if (!Object.values(geniusReplyStates).some((state) => state === "waiting")) return;
-    const timer = window.setTimeout(() => {
+    if (!Object.values(geniusReplyStates).some((state) => state !== "failed")) return;
+    const timer = window.setInterval(() => {
+      // 요청이 응답 대기에서 멈추거나 Realtime만 빠진 경우에도 3초마다 DB 정본을 확인한다.
+      // 현재 대화가 아닌 outbox 항목은 아래 ref callback에서 건너뛴다.
+      syncBaseballQaRepliesRef.current();
       void processBaseballQaOutbox();
     }, 3000);
-    return () => window.clearTimeout(timer);
+    return () => window.clearInterval(timer);
   }, [geniusReplyStates, processBaseballQaOutbox]);
 
   const retryBaseballQa = useCallback((messageId: number) => {
@@ -438,6 +449,20 @@ export function useDMChat(conversationId: string) {
     healthy: realtimeHealthy,
     intervalMs: DM_CHAT_POLL_MS,
   });
+
+  useIsomorphicLayoutEffect(() => {
+    syncBaseballQaRepliesRef.current = () => {
+      if (typeof window === "undefined") return;
+      const hasPendingCurrentConversation = readBaseballQaOutbox(window.localStorage).some(
+        (entry) => entry.conversationId === conversationId && !entry.awaitingPlayerPick,
+      );
+      if (!hasPendingCurrentConversation) return;
+      requestLoad(() => loadMessages("merge"));
+    };
+    return () => {
+      syncBaseballQaRepliesRef.current = () => {};
+    };
+  }, [conversationId, loadMessages, requestLoad]);
 
   // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
   // single-flight 대기 중 대화가 또 바뀌면 generation 가드가 실행 자체를 건너뛴다.
