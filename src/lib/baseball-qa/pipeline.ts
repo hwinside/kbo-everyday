@@ -652,6 +652,23 @@ export interface QaDeps {
     candidateTerms: string[],
   ) => Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }>;
   /**
+   * 질문 1차 LLM 정규화 (2026-08-11 하린아빠 착수 지시).
+   *
+   * 오탈자·붙여쓰기(`김도영홈런몇개`)는 결정론 경로(기록·사전·구단)의 문자열 매칭을 비껴가
+   * residual(generic LLM/unsure)로 떨어진다. 열린 표기 변이는 룰로 닫히지 않으므로(M90 계약)
+   * 교정은 LLM 에 위임하되, 발동·수용은 answerQuestion 쪽 폐쇄 조건이 감싼다
+   * (발동 = residual 만 · 수용 = 길이/숫자보존/실변경/재라우팅 non-blocked).
+   * 표기 교정만 반환한다 — 의미 변경·단어 대체·숫자 변경은 프롬프트 금지 + 코드 가드 이중이다.
+   * 미주입이면 이 단계 자체가 비활성(기존 동작). text=null 은 "교정할 것 없음"이다.
+   *
+   * ⚠️ durable 단일-LLM 계약 밖의 호출이다(mapGlossaryDefinition 과 같은 축) — 결과를 저장하지
+   * 않으므로 crash 재처리 시 재호출될 수 있지만, 수용 실패는 원문 진행이라 유저 가시 분기
+   * 불일치가 생기지 않는다. 비용만 문제고 residual 에서만 타서 상한이 있다.
+   */
+  normalizeQuestionLlm?: (
+    question: string,
+  ) => Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
@@ -788,6 +805,12 @@ export interface QaDeps {
     userId: string;
     question: string;
     questionNorm: string;
+    /**
+     * LLM 정규화가 **수용된** 질문에서만 채워진다. question(원문)과 나란히 기록해
+     * "정규화가 얼마나 발동했고 오교정이 몇 건인가" 감사를 가능하게 한다 —
+     * 원문을 덮어쓰면 그 감사는 분모부터 만들 수 없다.
+     */
+    questionNormalized?: string | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -3458,9 +3481,21 @@ async function answerNewsRagQuestion(
   return { status: 200, answer, source: "news_rag", remaining, sourceUrl };
 }
 
+/**
+ * 정규화 수용 가드 ③ — 숫자 시퀀스 보존.
+ *
+ * 교정 전후의 숫자 run(연속 숫자) 나열이 **순서까지 정확히** 같아야 한다. `30-30`·`2011년`이
+ * 교정 중에 바뀌면 이후 모든 수치 경로(기록·연도 selector)가 유저가 묻지 않은 값을 조회한다.
+ * `\p{N}` 판정은 반대가설이 없는 폐쇄 가드다(2026-08-07 확정 원칙).
+ */
+export function digitSequencesMatch(a: string, b: string): boolean {
+  const runs = (s: string) => (s.normalize("NFKC").match(/\p{N}+/gu) ?? []).join(",");
+  return runs(a) === runs(b);
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
-  const question = rawQuestion.trim();
-  const questionNorm = normalizeQuestion(question);
+  let question = rawQuestion.trim();
+  let questionNorm = normalizeQuestion(question);
 
   // KST 일자 버킷 원자 예약. DB 오류도 fail-closed하여 LLM에 진입하지 않는다.
   let reservation: { allowed: boolean; remaining: number };
@@ -3506,6 +3541,63 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
+
+  // ── 질문 1차 LLM 정규화 (2026-08-11 하린아빠 착수 지시) ──────────────────────
+  //
+  // 발동 = routeQuestion 이 어떤 전용 라우트도 확정하지 못한 residual(`llm_scope_gate`)뿐이다.
+  //   이미 답이 되는 질문(ack·사전·기록·구단·차단·이름제안…)은 정규화 자체가 안 탄다 —
+  //   비용 0·회귀 0. `blocked` 도 발동 대상이 아니다 — 차단은 보안 fail-close 라
+  //   LLM 출력으로 열어주지 않는다(인젝션을 "교정"해 재라우팅하는 우회를 만들지 않는다).
+  // 수용 = 폐쇄 조건 전부 통과할 때만: ①비어있지 않고 ②길이 상한 안이고 ③숫자 시퀀스가
+  //   원문과 정확히 같고 ④원문과 문자열이 실제로 다르고 ⑤재라우팅이 blocked 가 아닐 때.
+  //   ⚠️ ④은 raw 비교다 — normalizeKey 비교로 하면 **띄어쓰기만 고친 교정**(이 기능의 주
+  //   사용사례)이 "무변경"으로 죽는다(실 provider 게이트 실측: `김도영홈런몇개` 교정이
+  //   전량 미수용). 라우팅·토큰화는 공백에 민감하므로 공백 변경은 실질 변경이다.
+  //   캐시 키(normalizeQuestion)는 공백 비민감이라 동일 질문의 키 분산도 생기지 않는다.
+  //   하나라도 어긋나면 원문 그대로 진행한다(fail-open — 교정 실패가 기존 동작을 죽이면 안 된다).
+  // 이 지점(직전 턴 로드·전용 경로 계산 **앞**)이 계약이다 — 뒤로 옮기면 기록·draft·선발 등
+  //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
+  if (deps.normalizeQuestionLlm && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+    let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
+    try {
+      norm = await deps.normalizeQuestionLlm(question);
+    } catch {
+      norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
+    }
+    const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
+    const accepted =
+      candidate.length > 0 &&
+      candidate.length <= question.length * 2 + 10 &&
+      digitSequencesMatch(question, candidate) &&
+      candidate !== question &&
+      routeQuestion(candidate, glossary, players, false) !== "blocked";
+    // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
+    // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
+    // 고정하고 정규화문을 별도 필드(questionNormalized)로 남긴다 — 원문 없이는
+    // "얼마나 발동했고 오교정이 몇 건인가" 감사를 분모부터 만들 수 없다.
+    const normIn = norm?.inputTokens ?? null;
+    const normOut = norm?.outputTokens ?? null;
+    if (accepted || normIn !== null || normOut !== null) {
+      const baseLog = deps.log;
+      const originalQuestion = question;
+      const acceptedText = accepted ? candidate : null;
+      deps = {
+        ...deps,
+        log: (entry) => baseLog({
+          ...entry,
+          question: originalQuestion,
+          questionNormalized: acceptedText,
+          inputTokens: (entry.inputTokens ?? 0) + (normIn ?? 0),
+          outputTokens: (entry.outputTokens ?? 0) + (normOut ?? 0),
+        }),
+      };
+    }
+    if (accepted) {
+      question = candidate;
+      questionNorm = normalizeQuestion(candidate);
+    }
+  }
+
   // 직전 턴은 **항상** 로드한다 (하린아빠 2026-08-10 00:53 방향 확정 — 룰 최소화, LLM 위임).
   // "이 질문이 후속인가"는 열린 자연어 판정이라 룰로 닫히지 않는다 — 관련성 판단은
   // LLM 프롬프트("무관하면 무시")가 한다. DB 1회 조회 비용은 무시 가능하고,
