@@ -64,6 +64,21 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   const [todayGames, setTodayGames] = useState<HomeGame[]>(options?.initialGames ?? []);
   const [isPreseason, setIsPreseason] = useState(options?.initialIsPreseason ?? false);
 
+  // 로컬 마이팀 즐시 렌더 (2026-08-11 #infra 서비스 속도 트랙):
+  // 아래 온보딩 초기화 effect 는 `if (loading) return` 로 인증 확인(세션 복원→
+  // profile 페치)이 끝나야 돌아서, 그동안 MY TEAM 카드가 비어 있었다(실기기 수 초).
+  // 온보딩을 끝낸 기기는 localStorage 값이 SSOT 이므로 마운트 즐시 그린다.
+  // profile 도착 후에는 기존 effect 가 그대로 재조정한다(localTeamId 우선 규칙 동일).
+  // 온보딩 미완료(team_selected 등) 상태는 건드리지 않는다 — 기존 분기 유지.
+  useEffect(() => {
+    const saved = getMyTeamId();
+    const status = getOnboardingStatus();
+    if (saved && (status === "completed" || status === "skipped")) {
+      setMyTeam(saved);
+      setFavPlayers(getFavoritePlayers());
+    }
+  }, []);
+
   // 로그인 후 1회 환영 토스트 + 환영 DM
   useEffect(() => {
     if (user && profile?.nickname) {
