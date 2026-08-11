@@ -15,6 +15,7 @@ const PRIZE = "src/lib/baseball-qa/awards/series-prize.ts";
 const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
 const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
+const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
@@ -139,9 +140,11 @@ const MUTATIONS = [
   },
   {
     name: "m6e static numeric→canonical ID 정규화 제거 — FP006 운영 payload 상시 거절",
-    file: SERVED_RECORD,
-    from: '(batterStats2026 as Array<Record<string, unknown>>).map((row) => canonicalKboId(row.kboId as string | number | null)),',
-    to: '(batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),',
+    file: FULL_ENTRY_ROSTER,
+    from: `  (batterStats2026 as Array<Record<string, unknown>>).map((row) =>
+    canonicalKboId(row.kboId as string | number | null),
+  ),`,
+    to: '  (batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

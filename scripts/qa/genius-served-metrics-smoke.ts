@@ -69,8 +69,26 @@ const SERVER_SRC = readFileSync(
   "utf8",
 );
 
-/** `/api/stats` 응답 형태 그대로. 실제 production payload 키를 쓴다. */
-function servedPayload(rows: Array<Record<string, unknown>>, updatedAt = new Date().toISOString()) {
+/** `/api/stats` 응답 형태 그대로. 실제 production payload 키를 쓴다.
+ *
+ * ⚠️ full=1 응답은 **리그 전체 명단**이어야 완전성 계약을 통과한다(#1159). 1~2행짜리
+ * 픽스처는 운영에서 존재할 수 없는 형태라 그대로 두면 계약이 아니라 픽스처를 검증하게 된다.
+ * `overrides` 로 준 행만 갈아끼우고 나머지는 실제 명단으로 채운다. */
+function servedPayload(
+  overrides: Array<Record<string, unknown>>,
+  updatedAt = new Date().toISOString(),
+) {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const row of STATIC_ROWS as unknown as Array<Record<string, unknown>>) {
+    byId.set(String(row.kboId), row);
+  }
+  const extras: Array<Record<string, unknown>> = [];
+  for (const row of overrides) {
+    const id = String(row.kboId);
+    if (byId.has(id)) byId.set(id, row);
+    else extras.push(row);
+  }
+  const rows = [...byId.values(), ...extras];
   return {
     stats: rows,
     type: "batter",
@@ -79,6 +97,10 @@ function servedPayload(rows: Array<Record<string, unknown>>, updatedAt = new Dat
     runnerSource: "live",
     updatedAt,
   };
+}
+/** 완전성 계약 자체를 깨는 픽스처(운영에서는 부분 응답 = 조회 실패). */
+function partialPayload(rows: Array<Record<string, unknown>>, updatedAt = new Date().toISOString()) {
+  return { stats: rows, type: "batter", count: rows.length, source: "live", runnerSource: "live", updatedAt };
 }
 
 type FetchStub = (input: unknown, init?: unknown) => Promise<Response>;
@@ -200,14 +222,28 @@ async function main() {
     );
     assert.deepEqual(rows, []);
   });
-  await check("같은 kboId 가 2행이면 그대로 넘겨 fail-close 시킨다", async () => {
-    const rows = await withFetch(
-      async () => jsonResponse(servedPayload([servedRow, { ...servedRow }])),
-      () => fetchServedBatterRows(subject.kboId),
+  await check("같은 kboId 가 2행이면 답하지 않는다 (payload 단계 fail-close)", async () => {
+    // #1159 이후 중복 identity 는 payload 완전성 계약에서 먼저 거절된다 —
+    // 종전(행을 넘겨 resolveSeasonRecord 가 inconsistent) 보다 더 앞에서 닫히지만
+    // 계약의 뜻은 같다: **중복이면 답하지 않는다**.
+    await assert.rejects(
+      () => withFetch(
+        async () => jsonResponse({
+          ...servedPayload([servedRow]),
+          stats: [...servedPayload([servedRow]).stats, { ...servedRow }],
+          count: servedPayload([servedRow]).stats.length + 1,
+        }),
+        () => fetchServedBatterRows(subject.kboId),
+      ),
+      "중복 identity payload 로 값을 돌려줬다",
     );
-    assert.equal(rows.length, 2);
+    // 하류 판정기도 종전 계약을 그대로 유지한다(중복 행 → inconsistent).
+    const dup = [servedRow, { ...servedRow }].map((row) => ({
+      ...row, kbo_id: subject.kboId, player_key: subject.kboId,
+      name: subject.name, team: subject.team, updated_at: new Date().toISOString(),
+    }));
     const outcome = resolveSeasonRecord(
-      rows,
+      dup as never,
       { table: "batter", metric: "sb", label: "도루", kind: "count" },
       subject.kboId,
       Date.now(),
@@ -216,13 +252,22 @@ async function main() {
     );
     assert.equal(outcome.kind, "inconsistent");
   });
+  await check("부분 응답(리그 전체가 아님)은 조회 실패로 닫는다 (#1159 완전성)", async () => {
+    await assert.rejects(
+      () => withFetch(
+        async () => jsonResponse(partialPayload([servedRow])),
+        () => fetchServedBatterRows(subject.kboId),
+      ),
+      "1행짜리 부분 응답으로 값을 돌려줬다",
+    );
+  });
 
   // ── ④ 조회 실패는 fail-close — static 폴백 금지 ─────────────────────────
   for (const [label, stub] of [
     ["HTTP 500", async () => jsonResponse({}, 500)],
-    ["stats 배열 없음", async () => jsonResponse({ updatedAt: new Date().toISOString() })],
-    ["updatedAt 없음", async () => jsonResponse({ stats: [servedRow] })],
-    ["updatedAt 파싱 불가", async () => jsonResponse({ stats: [servedRow], updatedAt: "nope" })],
+    ["stats 배열 없음", async () => jsonResponse({ updatedAt: new Date().toISOString(), type: "batter", count: 0 })],
+    ["updatedAt 없음", async () => jsonResponse({ ...servedPayload([servedRow]), updatedAt: undefined })],
+    ["updatedAt 파싱 불가", async () => jsonResponse({ ...servedPayload([servedRow]), updatedAt: "nope" })],
     ["네트워크 실패", async () => { throw new Error("network down"); }],
   ] as Array<[string, FetchStub]>) {
     await check(`${label} → 예외(static 으로 폴백하지 않는다)`, async () => {

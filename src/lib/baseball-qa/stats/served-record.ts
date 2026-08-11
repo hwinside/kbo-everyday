@@ -1,6 +1,6 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
-import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
+import { FULL_ENTRY_BATTER_IDS } from "@/lib/stats/full-entry-roster";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -39,13 +39,14 @@ interface ServedStatsResponse {
 }
 
 /**
- * `full=1` 완전성의 정본 — mergeFullEntry 에 실제로 투입되는 2026 static 선수 ID 전집합.
+ * `full=1` 완전성의 정본 — mergeFullEntry 에 실제로 투입되는 2026 선수 ID 전집합.
  * 단순 행수 하한(예: 100)은 리더를 뺀 임의 100행도 통과시킨다. 이 집합 전부가 payload 에
  * 있어야 "리그 전체 current snapshot" 으로 인정한다(삼순 #1159 2차 NO-GO).
+ *
+ * ⚠️ **명단만** `full-entry-roster` 에서 가져온다. 이 모듈은 값의 정본을 `/api/stats` 로
+ * 못박은 자리라 static JSON 을 직접 읽지 않는다(삼순 #1100 3차 P0-3, 이주형 sb 4 vs 0).
  */
-export const SERVED_BATTER_FULL_ENTRY_IDS: readonly string[] = Object.freeze(
-  (batterStats2026 as Array<Record<string, unknown>>).map((row) => canonicalKboId(row.kboId as string | number | null)),
-);
+export const SERVED_BATTER_FULL_ENTRY_IDS = FULL_ENTRY_BATTER_IDS;
 
 /** `/api/stats?type=batter&full=1` envelope + known full-entry ID coverage 계약. */
 export function validateServedBatterPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
