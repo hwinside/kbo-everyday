@@ -116,7 +116,8 @@ export const INVALID_QUESTION_ANSWER =
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
 
-async function loadGlossary(): Promise<GlossaryEntry[]> {
+// 실-provider 게이트(genius-question-normalize-live)가 파이프라인과 같은 입력으로 판정하도록 export.
+export async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
     return glossaryCache.entries;
   }
@@ -880,9 +881,11 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
         user_id: entry.userId,
         question: entry.question,
         question_norm: entry.questionNorm,
-        // LLM 정규화가 수용된 행에만 채워진다 — question(원문)과 나란히 남아
-        // 발동률·오교정 감사의 분모가 된다 (migration 20260811210000).
+        // LLM 정규화 관측 (migration 20260811210000): 교정문은 수용 행에만, status 는
+        // 정규화가 호출된 모든 행에 채워진다 — null 만으로는 미호출·거절·오류를 구분할 수
+        // 없어 발동률·오교정 감사의 분모를 못 만든다(삼순 2026-08-11 1차 ④).
         question_normalized: entry.questionNormalized ?? null,
+        question_normalize_status: entry.normalizeStatus ?? null,
         match_path: entry.matchPath,
         answer: entry.answer,
         input_tokens: entry.inputTokens,

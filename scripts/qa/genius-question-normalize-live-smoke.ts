@@ -7,9 +7,12 @@
  * (digitSequencesMatch·normalizeKey 실변경·길이 상한)를 그대로 태운다.
  *
  * 계약:
- *  · 양성 반복: 붙여쓰기·오탈자 질문이 3회 연속, 가드 통과하는 교정문으로 돌아온다.
- *  · 반대편: 이미 정상 표기인 질문은 null 또는 키 동일(무의미 교정)로 수렴한다 —
- *    즉 파이프라인 수용 가드 기준 "미수용"이어야 한다. 의미가 바뀐 출력은 실패다.
+ *  · 수용 판정은 배포 SSOT(`evaluateNormalizedCandidate`) 그대로 — production 사전·로스터를
+ *    로드해 파이프라인과 같은 입력으로 판정한다. mustInclude 류 자체 재구현 판정은
+ *    반대 의미·타 선수 추가를 못 잡는 false-green 이라 쓰지 않는다(삼순 1차 지적 축).
+ *  · 양성 반복: 붙여쓰기 질문이 3회 연속 `accepted_surface`(문자 구성 동일 = 드리프트
+ *    구조적 불가)로 수용된다.
+ *  · 반대편: 이미 정상 표기인 질문은 SSOT 기준 미수용으로 수렴한다.
  *  · 숫자 포함 질문의 교정문은 숫자 시퀀스가 정확히 보존된다.
  *  · 키가 없으면 조용한 SKIP 이 아니라 명시적 실패(exit 1).
  *
@@ -40,47 +43,49 @@ loadDotEnv(resolve(process.cwd(), ".env.local"));
 async function main() {
   assert.ok(process.env.GEMINI_API_KEY, "GEMINI_API_KEY 필요 — 이 게이트는 SKIP 하지 않는다");
   // env 주입 후에 로드해야 server.ts 모듈 초기화가 산다.
-  const { normalizeQuestionLlm } = await import("../../src/lib/baseball-qa/server");
-  const { digitSequencesMatch } = await import("../../src/lib/baseball-qa/pipeline");
+  const { normalizeQuestionLlm, loadGlossary } = await import("../../src/lib/baseball-qa/server");
+  const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
+  const { digitSequencesMatch, evaluateNormalizedCandidate } = await import("../../src/lib/baseball-qa/pipeline");
 
-  /** 파이프라인 수용 가드와 동일 판정 (blocked 재라우팅 축은 mock smoke 가 담당). */
-  function accepted(question: string, text: string | null): string | null {
+  // 판정 입력을 파이프라인과 동일하게 — production 사전 + 배포 로스터 로더.
+  const [glossary, players] = await Promise.all([loadGlossary(), loadRosterPlayers()]);
+  assert.ok(glossary.length >= 100, `사전 로드 실패: ${glossary.length}`);
+  assert.ok(players.length >= 500, `로스터 로드 실패: ${players.length}`);
+
+  /** 배포 SSOT 판정 그대로 — 재구현 금지(검증기가 대상과 갈라지면 false-green). */
+  function verdictOf(question: string, text: string | null) {
     const candidate = typeof text === "string" ? text.trim() : "";
-    if (
-      candidate.length > 0 &&
-      candidate.length <= question.length * 2 + 10 &&
-      digitSequencesMatch(question, candidate) &&
-      candidate !== question
-    ) return candidate;
-    return null;
+    if (candidate.length === 0) return { accepted: false, status: "no_change" as const, candidate };
+    const v = evaluateNormalizedCandidate(question, candidate, glossary, players);
+    return { ...v, candidate };
   }
 
   let pass = 0;
   let fail = 0;
   const report: string[] = [];
 
-  // ── 양성: 붙여쓰기·오탈자 → 가드 통과 교정 (3회 연속) ─────────────────────
-  const positives: { question: string; mustInclude: string[] }[] = [
-    { question: "김도영홈런몇개", mustInclude: ["김도영", "홈런"] },
-    { question: "야구장잔디는천연잔디야인조야", mustInclude: ["잔디"] },
-    { question: "수비시프트제한이언제부터야", mustInclude: ["시프트"] },
+  // ── 양성: 붙여쓰기 → accepted_surface 3회 연속 ────────────────────────────
+  // surface 는 문자 구성 동일이라 "반대 의미·타 선수 추가" false-green 이 구조적으로 없다.
+  const positives = [
+    "김도영홈런몇개",
+    "야구장잔디는천연잔디야인조야",
+    "수비시프트제한이언제부터야",
   ];
-  for (const p of positives) {
+  for (const q of positives) {
     for (let round = 1; round <= 3; round++) {
-      const out = await normalizeQuestionLlm(p.question);
-      const acc = accepted(p.question, out.text);
-      const contentOk = acc !== null && p.mustInclude.every((w) => acc.includes(w));
-      if (contentOk) {
+      const out = await normalizeQuestionLlm(q);
+      const v = verdictOf(q, out.text);
+      if (v.accepted && v.status === "accepted_surface") {
         pass++;
-        report.push(`PASS 양성 r${round}: ${p.question} → ${acc}`);
+        report.push(`PASS 양성 r${round} [${v.status}]: ${q} → ${v.candidate}`);
       } else {
         fail++;
-        report.push(`FAIL 양성 r${round}: ${p.question} → ${JSON.stringify(out.text)} (수용=${acc})`);
+        report.push(`FAIL 양성 r${round} [${v.status}]: ${q} → ${JSON.stringify(out.text)}`);
       }
     }
   }
 
-  // ── 반대편: 정상 표기는 미수용으로 수렴 ──────────────────────────────────
+  // ── 반대편: 정상 표기는 SSOT 기준 미수용으로 수렴 ────────────────────────
   const negatives = [
     "김도영 홈런 몇 개야?",
     "보크가 뭐야?",
@@ -88,13 +93,13 @@ async function main() {
   ];
   for (const q of negatives) {
     const out = await normalizeQuestionLlm(q);
-    const acc = accepted(q, out.text);
-    if (acc === null) {
+    const v = verdictOf(q, out.text);
+    if (!v.accepted) {
       pass++;
-      report.push(`PASS 반대편(미수용): ${q}`);
+      report.push(`PASS 반대편(미수용 ${v.status}): ${q}`);
     } else {
       fail++;
-      report.push(`FAIL 반대편(수용됨): ${q} → ${acc}`);
+      report.push(`FAIL 반대편(수용됨 ${v.status}): ${q} → ${v.candidate}`);
     }
   }
 

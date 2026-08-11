@@ -811,6 +811,12 @@ export interface QaDeps {
      * 원문을 덮어쓰면 그 감사는 분모부터 만들 수 없다.
      */
     questionNormalized?: string | null;
+    /**
+     * 정규화 단계가 **호출된** 질문에서만 채워진다(미발동 = 미설정).
+     * accepted_surface / accepted_entity / rejected / no_change / error —
+     * null 만으로는 미호출·거절·오류를 구분할 수 없어 발동률 감사가 불가하다(삼순 1차 ④).
+     */
+    normalizeStatus?: NormalizeStatus | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -3493,6 +3499,68 @@ export function digitSequencesMatch(a: string, b: string): boolean {
   return runs(a) === runs(b);
 }
 
+/** 정규화 관측 상태 — 미호출(null)·교정없음·거절·장애를 분리해야 발동률·오교정 감사가 가능하다 (삼순 1차 ④). */
+export type NormalizeAcceptStatus = "accepted_surface" | "accepted_entity" | "rejected";
+export type NormalizeStatus = NormalizeAcceptStatus | "no_change" | "error";
+
+/** 로스터 이름 언급 집합 (normalizeKey 기준 substring) — Tier B 엔티티 불변 대조용. */
+function rosterMentionKeys(text: string, players: PlayerRef[]): Set<string> {
+  const key = normalizeKey(text);
+  const out = new Set<string>();
+  for (const p of players) {
+    const nameKey = normalizeKey(p.name);
+    if (nameKey.length >= 2 && key.includes(nameKey)) out.add(nameKey);
+  }
+  return out;
+}
+
+/**
+ * 정규화 후보 수용 판정 SSOT (삼순 2026-08-11 1차 NO-GO 반영).
+ *
+ * "표기만 교정·의미/엔티티 불변"을 프롬프트(확률)가 아니라 코드(결정론)로 잠그는 2층 구조다:
+ *
+ *  Tier A `accepted_surface` — 공백·문장부호만 다름(normalizeKey 동일).
+ *    문자 구성이 같으므로 의미·엔티티 드리프트가 **구조적으로 불가능**하다 → 자동 수용.
+ *  Tier B `accepted_entity` — 문자 구성이 바뀌는 오탈자 교정. 폐쇄 조건 세 개를 전부 통과할 때만:
+ *    ① 로스터 이름 언급 집합 불변 — 선수 추가·삭제·교체 금지(`김도영홈런몇개 → 문보경 홈런 몇 개야?` 차단).
+ *       이름 오타 구제도 여기서 거절된다 — 그건 name_suggest(되묻기)가 소유한 경로다(#1135,
+ *       근접 실명 오탐 lesson: 편집거리 1은 한국어 일반명사와 충돌한다).
+ *    ② 구단 canonical 집합 불변 — 구단 추가·삭제·교체 금지.
+ *    ③ 교정 결과가 폐쇄집합(검수 사전 용어·구단·로스터)에 착지 — 아무 알려진 어휘에도 닿지 않는
+ *       재작문(`보끈가모야 → 고마워`)은 거절. 용어 착지의 최대 피해는 검수된 사전 답변이
+ *       부적합 질문에 나가는 것이며, 지어낸 문장이 근거로 둘감하는 경로는 없다.
+ *
+ *  공통 가드(둠 다 적용): 비어있지 않음 · 길이 상한 · 숫자 시퀀스 정확 보존 · raw 실변경 ·
+ *  재라우팅 non-blocked. 파이프라인·mock 게이트·실-provider 게이트가 전부 이 함수 하나를 쓴다 —
+ *  판정을 각자 재구현하면 검증기가 대상과 갈라져 false-green 이 된다(삼순 live mustInclude 지적 축).
+ */
+export function evaluateNormalizedCandidate(
+  question: string,
+  candidate: string,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+): { accepted: boolean; status: NormalizeAcceptStatus } {
+  const rejected = { accepted: false, status: "rejected" as const };
+  if (candidate.length === 0) return rejected;
+  if (candidate.length > question.length * 2 + 10) return rejected;
+  if (!digitSequencesMatch(question, candidate)) return rejected;
+  if (candidate === question) return rejected;
+  if (routeQuestion(candidate, glossary, players, false) === "blocked") return rejected;
+  if (normalizeKey(candidate) === normalizeKey(question)) {
+    return { accepted: true, status: "accepted_surface" };
+  }
+  const qRoster = rosterMentionKeys(question, players);
+  const cRoster = rosterMentionKeys(candidate, players);
+  if (qRoster.size !== cRoster.size || [...qRoster].some((k) => !cRoster.has(k))) return rejected;
+  const qTeams = mentionedTeamCanonicals(question).slice().sort().join("|");
+  const cTeams = mentionedTeamCanonicals(candidate).slice().sort().join("|");
+  if (qTeams !== cTeams) return rejected;
+  const landsInClosedSet =
+    glossaryCandidatesIn(glossary, candidate).length > 0 || cRoster.size > 0 || cTeams.length > 0;
+  if (!landsInClosedSet) return rejected;
+  return { accepted: true, status: "accepted_entity" };
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   let question = rawQuestion.trim();
   let questionNorm = normalizeQuestion(question);
@@ -3548,13 +3616,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   이미 답이 되는 질문(ack·사전·기록·구단·차단·이름제안…)은 정규화 자체가 안 탄다 —
   //   비용 0·회귀 0. `blocked` 도 발동 대상이 아니다 — 차단은 보안 fail-close 라
   //   LLM 출력으로 열어주지 않는다(인젝션을 "교정"해 재라우팅하는 우회를 만들지 않는다).
-  // 수용 = 폐쇄 조건 전부 통과할 때만: ①비어있지 않고 ②길이 상한 안이고 ③숫자 시퀀스가
-  //   원문과 정확히 같고 ④원문과 문자열이 실제로 다르고 ⑤재라우팅이 blocked 가 아닐 때.
-  //   ⚠️ ④은 raw 비교다 — normalizeKey 비교로 하면 **띄어쓰기만 고친 교정**(이 기능의 주
-  //   사용사례)이 "무변경"으로 죽는다(실 provider 게이트 실측: `김도영홈런몇개` 교정이
-  //   전량 미수용). 라우팅·토큰화는 공백에 민감하므로 공백 변경은 실질 변경이다.
-  //   캐시 키(normalizeQuestion)는 공백 비민감이라 동일 질문의 키 분산도 생기지 않는다.
-  //   하나라도 어긋나면 원문 그대로 진행한다(fail-open — 교정 실패가 기존 동작을 죽이면 안 된다).
+  // 수용 = `evaluateNormalizedCandidate`(SSOT) 판정만 따른다 — Tier A(공백·부호만, 드리프트
+  //   구조적 불가) / Tier B(오탈자: 로스터·구단 엔티티 불변 + 폐쇄집합 착지) 2층.
+  //   "표기만 교정·의미/엔티티 불변"은 프롬프트 약속이 아니라 이 코드 가드가 계약이다
+  //   (삼순 1차 NO-GO P0: `보끈가모야→고마워`·`김도영→문보경` 드리프트 반례 반영).
+  //   탈락·장애·null 은 전부 원문 그대로 진행한다(fail-open — 교정 실패가 기존 동작을 죽이면 안 된다).
   // 이 지점(직전 턴 로드·전용 경로 계산 **앞**)이 계약이다 — 뒤로 옮기면 기록·draft·선발 등
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
   if (deps.normalizeQuestionLlm && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
@@ -3565,19 +3631,26 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
     }
     const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
-    const accepted =
-      candidate.length > 0 &&
-      candidate.length <= question.length * 2 + 10 &&
-      digitSequencesMatch(question, candidate) &&
-      candidate !== question &&
-      routeQuestion(candidate, glossary, players, false) !== "blocked";
+    // 관측 상태는 미호출(null)·교정없음·거절·장애를 구분해 기록한다 — `question_normalized`
+    // null 만으로는 발동률을 주장할 수 없다(삼순 1차 ④).
+    let normStatus: NormalizeStatus;
+    let accepted = false;
+    if (norm === null) {
+      normStatus = "error";
+    } else if (candidate.length === 0) {
+      normStatus = "no_change";
+    } else {
+      const verdict = evaluateNormalizedCandidate(question, candidate, glossary, players);
+      accepted = verdict.accepted;
+      normStatus = verdict.status;
+    }
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
     // 고정하고 정규화문을 별도 필드(questionNormalized)로 남긴다 — 원문 없이는
     // "얼마나 발동했고 오교정이 몇 건인가" 감사를 분모부터 만들 수 없다.
     const normIn = norm?.inputTokens ?? null;
     const normOut = norm?.outputTokens ?? null;
-    if (accepted || normIn !== null || normOut !== null) {
+    {
       const baseLog = deps.log;
       const originalQuestion = question;
       const acceptedText = accepted ? candidate : null;
@@ -3587,6 +3660,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
           ...entry,
           question: originalQuestion,
           questionNormalized: acceptedText,
+          normalizeStatus: normStatus,
           inputTokens: (entry.inputTokens ?? 0) + (normIn ?? 0),
           outputTokens: (entry.outputTokens ?? 0) + (normOut ?? 0),
         }),
