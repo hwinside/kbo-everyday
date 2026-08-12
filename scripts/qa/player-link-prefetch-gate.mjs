@@ -37,6 +37,8 @@ const MANIFEST = [
   ["src/components/game/MatchupCard.tsx", 2],
   ["src/components/game/AllStarEntryRoster.tsx", 1],
   ["src/components/game/PostgameInterviewSection.tsx", 1],
+  ["src/components/home/TeamCard.tsx", 2],
+  ["src/app/(main)/my-team/page.tsx", 2],
 ];
 
 function* walk(dir) {

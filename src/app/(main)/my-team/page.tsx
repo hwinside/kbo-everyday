@@ -145,7 +145,7 @@ export default function MyTeamPage() {
 
           {/* SP */}
           <div className="mb-3">
-            <Link href={getPlayerHref("케이시 켈리", team.id)}>
+            <Link href={getPlayerHref("케이시 켈리", team.id)} prefetch={false}>
               <GlassCard pressable className="!p-4">
                 <div className="flex items-center gap-4">
                   <div
@@ -173,7 +173,7 @@ export default function MyTeamPage() {
           {/* Batting Order */}
           <div className="space-y-2">
             {STARTING_LINEUP.map(({ order, player }) => (
-              <Link key={player.id} href={getPlayerHref(player.name, team.id)}>
+              <Link key={player.id} href={getPlayerHref(player.name, team.id)} prefetch={false}>
                 <GlassCard pressable className="!p-3">
                   <div className="flex items-center gap-4">
                     <span className="w-5 text-center text-base font-bold text-text-tertiary">
