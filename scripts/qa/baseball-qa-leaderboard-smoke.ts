@@ -28,12 +28,18 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 import {
+  CAREER_LEADERBOARD_METRIC_WORDS,
   composeCareerLeaderboardAnswer,
   isCareerLeaderboardHoldScope,
   isCareerLeaderboardQuestion,
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
+import {
+  KBO_OFFICIAL_GENERAL_TERMS,
+  KBO_OFFICIAL_METRIC_COLUMNS,
+  KBO_OFFICIAL_METRIC_TERMS,
+} from "../../src/lib/baseball-qa/stats/kbo-official-metric-columns";
 import {
   SERVED_BATTER_FULL_ENTRY_IDS,
   validateServedBatterPayload,
@@ -140,10 +146,58 @@ check("P0: 지표 SSOT — 표현이 어떻든 지표 어휘가 있으면 hold �
     assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
   }
 });
-check("P0: 미열거 지표는 룰을 늘리지 않고 LLM 으로 내려간다 (닫힌 집합 계약)", () => {
-  // 표지 축을 버린 대가이자 이득. 반례가 오면 METRIC_WORDS 에 한 줄 추가로 끝난다.
-  for (const q of ["통산 끝내기 1위 누구야?", "역대 견제사 누가 많아?"]) {
-    assert.equal(isCareerLeaderboardAsk(q), false, q);
+check("P0: 판정 어휘 = 공식 컬럼 inventory 파생 (exact-set, extra 0)", () => {
+  // 손열거였을 때 OOB(주루사)·PKO(견제사) 가 빠졌고 게이트가 그 누락을 "허용"으로 굳혔다
+  // (삼순 10차 P0). 판정 어휘는 inventory 에서만 나와야 하고 임의 추가는 불가능해야 한다.
+  assert.deepEqual(
+    [...CAREER_LEADERBOARD_METRIC_WORDS].sort(),
+    [...KBO_OFFICIAL_METRIC_TERMS].sort(),
+    "판정 어휘가 inventory 파생이 아니다 — 손으로 늘렸거나 몰래 줄였다",
+  );
+  const fromColumns = new Set(KBO_OFFICIAL_METRIC_COLUMNS.flatMap((c) => c.terms));
+  const extra = CAREER_LEADERBOARD_METRIC_WORDS.filter((w) => !fromColumns.has(w));
+  assert.deepEqual(extra, [], `inventory 밖 어휘가 섞였다: ${extra.join(", ")}`);
+});
+check("P0: 주루·수비 공식 컬럼 누락 0 (OOB/PKO 실측 누락 재발 방지)", () => {
+  // 삼순 exact — 손열거에서 실제로 빠졌던 두 컬럼.
+  for (const code of ["OOB", "PKO", "SBA", "SB", "CS", "SB%", "E", "PO", "A", "FPCT", "PB", "CS%"]) {
+    assert.ok(
+      KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === code),
+      `공식 컬럼 ${code} 가 inventory 에 없다`,
+    );
+  }
+  // 그리고 그 컬럼이 실제 질문 결속까지 이어지는지 — inventory 등재만으로 끝나면 무의미하다.
+  for (const q of ["역대 주루사 누가 많아?", "통산 견제사 1위 누구야?"]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
+});
+check("P0: inventory 전 컬럼이 질문 결속까지 도달한다 (등재-판정 괴리 0)", () => {
+  for (const column of KBO_OFFICIAL_METRIC_COLUMNS) {
+    for (const term of column.terms) {
+      const q = `통산 ${term} 1위 누구야?`;
+      assert.equal(isCareerLeaderboardAsk(q), true, `${column.code}/${term} 미결속`);
+    }
+  }
+});
+check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘에서 분리된다", () => {
+  // 삼순 10차 P0 — bare `경기` 를 지표로 넣으면 서술·주관 질문이 과차단된다.
+  assert.ok(KBO_OFFICIAL_GENERAL_TERMS.includes("경기"));
+  assert.ok(KBO_OFFICIAL_GENERAL_TERMS.includes("선발"));
+  const overlap = KBO_OFFICIAL_GENERAL_TERMS.filter((w) => KBO_OFFICIAL_METRIC_TERMS.includes(w));
+  assert.deepEqual(overlap, [], `일반명사가 판정 어휘에 섞였다: ${overlap.join(", ")}`);
+  // 같은 컬럼은 비일반 공식 표기로 여전히 결속된다(기능 손실 없음).
+  for (const q of ["통산 경기수 1위 누구야?", "통산 선발등판 1위 누구야?"]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+  }
+});
+check("P0 무회귀: 일반명사만 있는 서술·주관 질문은 과차단하지 않는다 (삼순 exact)", () => {
+  for (const q of [
+    "역대 최고의 경기 알려줘",              // 삼순 exact
+    "커리어 선발로 가장 기억나는 경기는?",   // 삼순 exact
+    "통산 최고의 경기 뭐야?",
+  ]) {
+    assert.equal(routeQuestion(q, [], []), "llm_scope_gate", q);
   }
 });
 

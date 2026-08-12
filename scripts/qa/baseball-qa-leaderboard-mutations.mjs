@@ -16,6 +16,7 @@ const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
 const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
 const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
+const METRIC_INVENTORY = "src/lib/baseball-qa/stats/kbo-official-metric-columns.ts";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
@@ -41,10 +42,10 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m1d 닫힌 지표 SSOT 축소(`실책` 제거) — 순위 표지 없는 alias 가 generic LLM 으로 샌다",
-    file: CAREER_LEADERBOARD,
-    from: '"실책", "수비율",',
-    to: '"수비율",',
+    name: "m1d 공식 컬럼 삭제(`E=실책`) — inventory 축소가 조용히 통과",
+    file: METRIC_INVENTORY,
+    from: '  { code: "E", source: "defense", terms: ["실책"] },\n',
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -76,10 +77,31 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m1e3 투수 지표군 삭제(`폭투`) — 목록 축소가 조용히 통과",
+    name: "m1e3 주루 공식 컬럼 삭제(`PKO=견제사`) — 삼순 10차 실측 누락 재발",
+    file: METRIC_INVENTORY,
+    from: '  { code: "PKO", source: "runner", terms: ["견제사"] },\n',
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e4 주루 공식 컬럼 삭제(`OOB=주루사`) — 삼순 10차 실측 누락 재발",
+    file: METRIC_INVENTORY,
+    from: '  { code: "OOB", source: "runner", terms: ["주루사"] },\n',
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e5 일반명사 컬럼을 판정 어휘로 승격(`경기`) — 서술·주관 질문 과차단",
+    file: METRIC_INVENTORY,
+    from: '{ code: "G", source: "hitter", terms: ["경기수", "출장경기", "경기출장"], general: ["경기"] }',
+    to: '{ code: "G", source: "hitter", terms: ["경기수", "출장경기", "경기출장", "경기"] }',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e6 판정 어휘를 inventory 밖 손열거로 되돌림 — exact-set 계약 파괴",
     file: CAREER_LEADERBOARD,
-    from: '"폭투", "whip",',
-    to: '"whip",',
+    from: "export const CAREER_LEADERBOARD_METRIC_WORDS = KBO_OFFICIAL_METRIC_TERMS;",
+    to: 'export const CAREER_LEADERBOARD_METRIC_WORDS = ["안타", "홈런", "도루"] as const;',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
