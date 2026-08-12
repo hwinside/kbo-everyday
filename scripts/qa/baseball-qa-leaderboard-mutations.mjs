@@ -16,8 +16,6 @@ const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
 const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
 const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
-const METRIC_INVENTORY = "src/lib/baseball-qa/stats/kbo-official-metric-columns.ts";
-const EXPECTED_PARSER = "scripts/qa/kbo-metric-inventory-expected.mjs";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
@@ -43,101 +41,17 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m1d 공식 컬럼 삭제(`E=실책`) — inventory 축소가 조용히 통과",
-    file: METRIC_INVENTORY,
-    from: '  { code: "E", source: "defense", terms: ["실책"] },\n',
-    to: "",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1g 앞단 prefilter 재도입 — ask regex drift 로 marker-only 가 generic LLM 으로 샌다",
-    file: CAREER_LEADERBOARD,
-    from: "export function isCareerLeaderboardHoldScope(question: string): boolean {\n  const normalized = compactCareerQuestion(question);",
-    to: "export function isCareerLeaderboardHoldScope(question: string): boolean {\n  const normalized = compactCareerQuestion(question);\n  if (!/1위|누구|누가|최다|최고|선두|알려/.test(normalized)) return false;",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1h prefilter 별칭 분리 — 이름만 다른 두 판정이 생겨 다시 drift",
-    file: CAREER_LEADERBOARD,
-    from: "export const isCareerLeaderboardQuestion = isCareerLeaderboardHoldScope;",
-    to: "export const isCareerLeaderboardQuestion = (question: string): boolean =>\n  CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => compactCareerQuestion(question).includes(word)) &&\n  /1위|누구|누가|최다|최고|선두|알려/.test(compactCareerQuestion(question));",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e 열린 표지 축 재도입(`많|상위|가장`) — 무관한 서술형까지 hold 로 과차단",
-    file: CAREER_LEADERBOARD,
-    from: "  return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));\n}",
-    to: "  if (/많|상위|가장|제일|1위|최다|선두/.test(normalized)) return true;\n  return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));\n}",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e2 지표 SSOT 판정 제거 — 통산 지표 질문이 전부 generic LLM 으로 샌다",
-    file: CAREER_LEADERBOARD,
-    from: "  return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));\n}",
-    to: "  return false;\n}",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e3 주루 공식 컬럼 삭제(`PKO=견제사`) — 삼순 10차 실측 누락 재발",
-    file: METRIC_INVENTORY,
-    from: '  { code: "PKO", source: "runner", terms: ["견제사"] },\n',
-    to: "",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e4 주루 공식 컬럼 삭제(`OOB=주루사`) — 삼순 10차 실측 누락 재발",
-    file: METRIC_INVENTORY,
-    from: '  { code: "OOB", source: "runner", terms: ["주루사"] },\n',
-    to: "",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e5 일반명사 컬럼을 판정 어휘로 승격(`경기`) — 서술·주관 질문 과차단",
-    file: METRIC_INVENTORY,
-    from: '{ code: "G", source: "hitter", terms: ["경기수", "출장경기", "경기출장"], general: ["경기"] }',
-    to: '{ code: "G", source: "hitter", terms: ["경기수", "출장경기", "경기출장", "경기"] }',
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e6 판정 어휘를 inventory 밖 손열거로 되돌림 — exact-set 계약 파괴",
-    file: CAREER_LEADERBOARD,
-    from: "export const CAREER_LEADERBOARD_METRIC_WORDS = KBO_OFFICIAL_METRIC_TERMS;",
-    to: 'export const CAREER_LEADERBOARD_METRIC_WORDS = ["안타", "홈런", "도루"] as const;',
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e7 expected parser 의 공식 컬럼 임의 제외 재도입(`Wgs`/`Wgr`) — completeness 약화",
-    file: EXPECTED_PARSER,
-    from: "export const DOCUMENTED_EXCLUSIONS = new Map([]);",
-    to: 'export const DOCUMENTED_EXCLUSIONS = new Map([["Wgs", "통합"], ["Wgr", "통합"]]);',
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e8 선발승 공식 컬럼 삭제(`Wgs`) — 통산 선발승 질문이 generic LLM 으로 샌다",
-    file: METRIC_INVENTORY,
-    from: '  { code: "Wgs", source: "pitcher", terms: ["선발승"] },\n',
-    to: "",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e9 파생 비율 제외 통로 재도입(`GO/AO`) — 공식 컬럼 우회 제외로 completeness 약화",
-    file: EXPECTED_PARSER,
-    from: "export const DERIVED_RATIO = new Set([]);",
-    to: 'export const DERIVED_RATIO = new Set(["GO/AO"]);',
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1e10 `GO/AO` 공식 컬럼 삭제 — 비율 지표 질문이 generic LLM 으로 샌다",
-    file: METRIC_INVENTORY,
-    from: '  { code: "GO/AO", source: "hitter", terms: ["땅볼뜬공비율", "땅볼뜬공", "go/ao"] },\n',
-    to: "",
-    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
-  },
-  {
-    name: "m1f hold 판정을 옛 hasStat 축으로 회귀 — 지표 목록 밖 alias 미포착",
+    name: "m1f(C안) hold 판정을 main 과 다르게 변형 — 이 PR 의 '거절 범위 변화 0' 계약 파괴",
     file: PIPELINE,
-    from: "    if (isCareerLeaderboardHoldScope(question)) return \"history_hold\";",
-    to: "    if (hasStat && isCareerLeaderboardQuestion(question)) return \"history_hold\";",
+    from: "const CAREER_LEADERBOARD_ASK = /1\\s*위|누구|누가|최다|최고/;",
+    to: "const CAREER_LEADERBOARD_ASK = /1\\s*위|누구|누가|최다|최고|많|상위/;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1g(C안) intent 결속을 hold 뒤로 밀어냄 — 본목적(안타 1위 실답)이 hold 로 회귀",
+    file: PIPELINE,
+    from: "    const careerIntent = resolveCareerLeaderboardIntent(question);\n    if (careerIntent) return \"career_leaderboard\";",
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

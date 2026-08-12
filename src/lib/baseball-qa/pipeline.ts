@@ -64,8 +64,6 @@ import {
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import {
   composeCareerLeaderboardAnswer,
-  isCareerLeaderboardHoldScope,
-  isCareerLeaderboardQuestion,
   resolveCareerLeaderboardIntent,
   type CareerLeaderboardFetcher,
 } from "./stats/career-leaderboard";
@@ -820,8 +818,11 @@ const SERVICE_WORDS = [
  * 기준일 있는 공식 큐레이션/물질화 테이블이 생기기 전까지 **기존 fail-close(hold)** 를
  * 유지한다 — 이 predicate 는 위임용이 아니라 그 fail-close 를 명시하는 식별자다.
  */
+const CAREER_LEADERBOARD_SCOPE = /통산|역대|올타임/;
+const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
 export function isCareerLeaderboardAsk(question: string): boolean {
-  return isCareerLeaderboardQuestion(question);
+  const normalized = question.normalize("NFKC").toLowerCase();
+  return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
 }
 
 const HISTORY_CONTEXT_WORDS = [
@@ -2225,19 +2226,22 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
-  // ── 리그 통산·역대 순위 질문 — 공식 구조화 조회 위임 ──
-  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음"
-  // 전제는 오판이었다. generic LLM 은 여전히 금지하고, 닫힌 지표 intent 만 구조화 조회한다.
-  // ⚠️ hold 범위를 `hasStat`(선수 개인 기록축 토큰 목록)으로 판정하면 `통산 다승 1위`
-  // 처럼 그 목록에 없는 지표 alias 가 llm_scope_gate 로 샌다(삼순 5차 P0). 판정은
-  // `career-leaderboard` 안의 **닫힌 지표 SSOT + 순위 표지 형태**가 단독으로 책임진다.
-  // 지표도 순위 표지도 없는 주관 평가(`역대 최고의 타자`)는 여기서 빠져 LLM 범위 판정으로 간다.
+  // ── 리그 통산·역대 순위 질문 ──
+  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음" 전제는
+  // 오판이었으므로, **지원 지표에 한해** 구조화 조회로 답한다. generic LLM 이름 단답은 여전히
+  // 금지다(모델이 확신하는 옛 1위 = stale 오답).
+  //
+  // ⚠️ **거절 범위는 이 PR 에서 건드리지 않는다** (2026-08-12 하린아빠 C안).
+  // 미지원 지표를 어떤 표현까지 hold 로 잡을지는 열린 언어 판정이라 13라운드를 왕복했다.
+  // 그 축은 별도 PR(공식 컬럼 inventory + expected-set 대조)로 분리하고, 여기서는 아래
+  // `isCareerLeaderboardAsk` 를 **main 그대로** 유지한다 — hold 범위 변화량 0 이 이 PR 의 계약이다.
+  // 지원 intent 만 그보다 먼저 결속해 `intent != null ⇒ career_leaderboard` 를 성립시킨다.
   if (!hasTeam && !hasPlayerReference(tokens, players)) {
-    // 지원 intent를 넓은 scope/ask보다 먼저 직접 결속한다. 이렇게 해야
-    // `intent != null ⇒ career_leaderboard`가 구조적으로 성립하고 라우터 SSOT drift가 없다.
     const careerIntent = resolveCareerLeaderboardIntent(question);
     if (careerIntent) return "career_leaderboard";
-    if (isCareerLeaderboardHoldScope(question)) return "history_hold";
+  }
+  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+    return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.

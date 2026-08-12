@@ -5,7 +5,6 @@ import {
 } from "./served-record";
 import { STATS_STALE_MS, type SeasonRecordRow } from "./season-record";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
-import { KBO_OFFICIAL_METRIC_TERMS } from "./kbo-official-metric-columns";
 
 const CAREER_SOURCE_URL = "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx";
 
@@ -53,53 +52,6 @@ function compactCareerQuestion(question: string): string {
     .replace(/[?!？！.,。]+$/g, "")
     .replace(/\s+/g, "");
 }
-
-/**
- * 통산 리더보드로 물을 수 있는 **누적 기록 지표의 닫힌 SSOT**.
- *
- * ⚠️ 손으로 열거하지 않는다(삼순 #1159 10차 P0). KBO 공식 기록실 컬럼 inventory
- * (`kbo-official-metric-columns.ts`)에서 **기계적으로 파생**한다. 손열거였을 때 실제로
- * `OOB(주루사)`·`PKO(견제사)` 가 빠졌고, 게이트는 그 누락을 "미열거 허용"으로 굳혀
- * "공식 컬럼 전수" 계약과 정면 충돌했다. 컬럼을 추가하면 판정이 자동으로 따라오고,
- * 판정 어휘만 몰래 늘리는 것은 게이트의 exact-set 대조가 막는다.
- *
- * ⚠️ **왜 지표 어휘만으로 판정하는가** (2026-08-12 하린아빠 A안 확정).
- * 종전에는 "순위를 요구하는 표현"(`1위`·`최다`·`많`·`상위`…)도 표지로 봤다. 그 축은
- * **열린 언어**라 반례마다 룰이 늘었다 — 6차(지표 열거) → 7차(`많` 추가) → 9차(`많`
- * 과차단 되돌리기)로 같은 축에서 세 번 왕복했다. 표지 축을 통째로 버리고, 공식 컬럼이라는
- * **닫힌 집합**만 룰로 판정한다. 표현이 어떻든 지표 어휘가 없으면 우리 소관이 아니다.
- *
- * 목록에 없는 지표는 LLM 으로 내려가지만, 그건 이 함수가 아니라 기존 숫자 환각 게이트가
- * 받는 2차 방어다. 공식 컬럼이 늘면 inventory 에 한 줄 추가로 끝난다.
- */
-export const CAREER_LEADERBOARD_METRIC_WORDS = KBO_OFFICIAL_METRIC_TERMS;
-
-/**
- * 통산 리더보드 질문인가 — **미지원 지표까지 포함해** hold 로 닫아야 하는 범위.
- *
- * 판정은 **한 줄**이다: `시점어(통산·역대·커리어·누적·올타임) + 공식 지표 컬럼 어휘`.
- * 두 축 모두 닫힌 집합이라 반례가 와도 inventory 한 줄로 끝나고, 표현 변이를 쫓지 않는다.
- *
- * ⚠️ 별도 prefilter 를 두지 않는다(삼순 8차 P0). 앞단에 ask regex 를 따로 두었더니
- * 뒤의 계약과 어긋나 `통산 끝내기 상위 10명` 류가 앞단에서 탈락해 generic LLM 으로 샜다.
- * 이 함수 하나가 라우터·게이트·prefilter 전부의 유일한 계약이다.
- *
- * ⚠️ 일반명사와 충돌하는 공식 컬럼(`G=경기`·`GS=선발`)은 판정 어휘에서 제외돼 있다.
- * 그래서 `역대 최고의 경기 알려줘`·`커리어 선발로 가장 기억나는 경기는?` 은 여기서 빠져
- * LLM 범위 판정으로 내려간다(삼순 10차 P0). 같은 컬럼은 `경기수`·`선발등판` 같은
- * 비일반 공식 표기로만 결속한다.
- */
-export function isCareerLeaderboardHoldScope(question: string): boolean {
-  const normalized = compactCareerQuestion(question);
-  if (!CAREER_LEADERBOARD_TEMPORAL_WORDS.some((word) => normalized.includes(word))) return false;
-  return CAREER_LEADERBOARD_METRIC_WORDS.some((word) => normalized.includes(word));
-}
-
-/**
- * 넓은 리더보드 scope. **hold scope 와 같은 함수다** — 이름만 다른 두 판정이 존재하면
- * 다시 drift 가 난다(위 주석의 실측 사고). 재수출로 물리적으로 하나임을 강제한다.
- */
-export const isCareerLeaderboardQuestion = isCareerLeaderboardHoldScope;
 
 /** 첫 수직 슬라이스: 질문 **전체를 consume하는 안타+단일 1위 positive grammar**만 지원한다.
  *

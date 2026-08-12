@@ -29,23 +29,10 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 import {
-  CAREER_LEADERBOARD_METRIC_WORDS,
   composeCareerLeaderboardAnswer,
-  isCareerLeaderboardHoldScope,
-  isCareerLeaderboardQuestion,
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
-import {
-  DERIVED_RATIO,
-  DOCUMENTED_EXCLUSIONS,
-  parseExpectedColumns,
-} from "./kbo-metric-inventory-expected.mjs";
-import {
-  KBO_OFFICIAL_GENERAL_TERMS,
-  KBO_OFFICIAL_METRIC_COLUMNS,
-  KBO_OFFICIAL_METRIC_TERMS,
-} from "../../src/lib/baseball-qa/stats/kbo-official-metric-columns";
 import {
   SERVED_BATTER_FULL_ENTRY_IDS,
   validateServedBatterPayload,
@@ -88,7 +75,9 @@ check("intent 양성 전수는 라우터와 동일 SSOT로 구조화 경로에 �
     "통산 안타 선두 알려줘",
     "올타임 안타 1위 누구야",
   ]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    // ⚠️ C안 이후 `isCareerLeaderboardAsk`(hold 판정) 는 main 그대로이므로 `커리어`·`누적`·
+    // `선두` 를 모른다. 그래도 상관없다 — intent 가 hold 판정보다 **먼저** 결속되기 때문이다.
+    // 여기서 검사할 계약은 "지원 intent ⇒ 구조화 경로"이고, hold 어휘 일치는 이 PR 범위가 아니다.
     assert.deepEqual(resolveCareerLeaderboardIntent(q), { metric: "hits", label: "안타" }, q);
     assert.equal(routeQuestion(q, [], PLAYERS), "career_leaderboard", q);
   }
@@ -102,173 +91,55 @@ check("아직 스냅샷 계약이 없는 통산 지표는 LLM 대신 hold 유지
 // ⚠️ 삼순 5차 P0: `STAT_WORDS`(선수 개인 기록축 토큰)에 없는 지표 alias 가 hold 조건을
 // 통째로 건너뛰고 generic LLM 으로 새면, 숫자 가드로도 못 막는 **이름 단답 환각**이 난다.
 // 아래 두 축은 서로를 가리지 않는다 — 지표 어휘 축(순위 표지 없음)과 순위 표지 축(미열거 지표).
-check("P0: 닫힌 지표 SSOT — 미지원 통산 지표 alias 는 순위 표지 없이도 hold", () => {
-  // ⚠️ 여기 표본에는 순위 표지(`N위`·`최다`·`선두`·`상위`·`많`)를 **일부러 넣지 않는다**.
-  // 넣으면 표지 축이 지표 축을 가려 `CAREER_LEADERBOARD_METRIC_WORDS` 를 통째로 지워도
-  // 스모크가 GREEN 이 된다(실측: `다승` 제거 mutation 검출력 0). 두 가드는 각각 단독으로
-  // 증명돼야 한다 — 수량 비교(`누가 제일 많아?`) 형태는 아래 순위 표지 check 가 맡는다.
+// ⚠️ 2026-08-12 하린아빠 C안 — **이 PR 은 거절 범위를 건드리지 않는다.**
+// 미지원 지표를 어떤 표현까지 hold 로 잡을지는 열린 언어 판정이라 13라운드를 왕복했다.
+// 그 축은 별도 PR(공식 컬럼 inventory + 감사 문서 expected-set 대조)로 분리했다.
+// 여기서 지키는 계약은 하나다: **hold 범위 변화량 0** — 즉 `isCareerLeaderboardAsk` 가
+// main 구현(`통산|역대|올타임` + `1위|누구|누가|최다|최고`)과 동일하게 동작한다.
+check("P0(C안): hold 판정은 main 구현과 동일하다 — 거절 범위 변화 0", () => {
+  const mainScope = /통산|역대|올타임/;
+  const mainAsk = /1\s*위|누구|누가|최다|최고/;
+  const mainImpl = (question: string): boolean => {
+    const normalized = question.normalize("NFKC").toLowerCase();
+    return mainScope.test(normalized) && mainAsk.test(normalized);
+  };
+  // 이 PR 이 새로 잡거나 새로 놓아주는 표현이 하나도 없어야 한다.
   for (const q of [
-    "통산 실책 누구야?",   // `STAT_WORDS` 미포함 alias — 지표 SSOT 단독 판정
-    "역대 볼넷 누구야?",
-    "통산 이닝 알려줘",
-  ]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-// ⚠️ 삼순 8차 P0 — **의문사 없는 형태**. 종전 앞단 prefilter(ask regex)가 이걸 탈락시켜
-// generic LLM 으로 샜다. 아래 표본에는 `1위|누구|누가|최다|최고|선두|알려` 를 **한 글자도
-// 넣지 않는다** — 넣으면 옛 prefilter 가 대신 통과시켜 계약이 깨져도 GREEN 이 된다.
-check("P0: 의문사 없는 질문도 지표 어휘만으로 hold 에 결속된다", () => {
-  for (const q of [
-    "통산 안타 상위 10명",
-    "역대 홈런 많은 타자",
-    "통산 도루 랭킹",
-    "역대 탈삼진 순위",
-  ]) {
-    for (const forbidden of ["1위", "누구", "누가", "최다", "최고", "선두", "알려"]) {
-      assert.ok(!q.includes(forbidden), `표본에 옛 prefilter 어휘가 섞이면 false-green: ${q}`);
-    }
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-check("P0: prefilter/hold 는 물리적으로 같은 함수다 (drift 불가)", () => {
-  assert.equal(isCareerLeaderboardQuestion, isCareerLeaderboardHoldScope);
-});
-
-// ⚠️ 2026-08-12 A안(하린아빠 확정) — 표지 축(열린 언어) 폐기. 판정은 `시점어 + 지표 SSOT` 한 줄.
-// 6·7·9차 NO-GO 가 전부 이 표지 축에서 났다(지표 열거 → `많` 추가 → `많` 과차단 되돌리기).
-// 지표는 KBO 공식 기록실 컬럼이라 **닫힌 집합**이고, 반례가 오면 배열 한 줄 추가로 끝난다.
-check("P0: 지표 SSOT — 표현이 어떻든 지표 어휘가 있으면 hold 로 결속", () => {
-  for (const q of [
+    "통산 안타 1위 누구야?",
+    "역대 홈런 최다 누구야?",
     "통산 폭투 1위 누구야?",
-    "통산 폭투 누가 제일 많아?",
-    "역대 실책 많은 선수",
-    "통산 이닝 상위 10명",
-    "역대 도루 순위 보여줘",
-    "통산 세이브 랭킹",
-    "역대 몸에맞는공 누가 많이 맞았어?",
-    "통산 다승 누가 제일 많아?",
-  ]) {
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-check("P0: 판정 어휘 = 공식 컬럼 inventory 파생 (exact-set, extra 0)", () => {
-  // 손열거였을 때 OOB(주루사)·PKO(견제사) 가 빠졌고 게이트가 그 누락을 "허용"으로 굳혔다
-  // (삼순 10차 P0). 판정 어휘는 inventory 에서만 나와야 하고 임의 추가는 불가능해야 한다.
-  assert.deepEqual(
-    [...CAREER_LEADERBOARD_METRIC_WORDS].sort(),
-    [...KBO_OFFICIAL_METRIC_TERMS].sort(),
-    "판정 어휘가 inventory 파생이 아니다 — 손으로 늘렸거나 몰래 줄였다",
-  );
-  const fromColumns = new Set(KBO_OFFICIAL_METRIC_COLUMNS.flatMap((c) => c.terms));
-  const extra = CAREER_LEADERBOARD_METRIC_WORDS.filter((w) => !fromColumns.has(w));
-  assert.deepEqual(extra, [], `inventory 밖 어휘가 섞였다: ${extra.join(", ")}`);
-});
-check("P0: 주루·수비 공식 컬럼 누락 0 (OOB/PKO 실측 누락 재발 방지)", () => {
-  // 삼순 exact — 손열거에서 실제로 빠졌던 두 컬럼.
-  for (const code of ["OOB", "PKO", "SBA", "SB", "CS", "SB%", "E", "PO", "A", "FPCT", "PB", "CS%"]) {
-    assert.ok(
-      KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === code),
-      `공식 컬럼 ${code} 가 inventory 에 없다`,
-    );
-  }
-  // 그리고 그 컬럼이 실제 질문 결속까지 이어지는지 — inventory 등재만으로 끝나면 무의미하다.
-  for (const q of ["역대 주루사 누가 많아?", "통산 견제사 1위 누구야?"]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-check("P0: inventory 전 컬럼이 질문 결속까지 도달한다 (등재-판정 괴리 0)", () => {
-  for (const column of KBO_OFFICIAL_METRIC_COLUMNS) {
-    for (const term of column.terms) {
-      const q = `통산 ${term} 1위 누구야?`;
-      assert.equal(isCareerLeaderboardAsk(q), true, `${column.code}/${term} 미결속`);
-    }
-  }
-});
-check("P0: 감사 문서 expected-set 과 inventory 가 missing/extra 0 (독립 근거 대조)", () => {
-  // ⚠️ 삼순 11차 P0 — 직전 게이트는 inventory 자기 자신을 훑어 "전 컬럼이 결속되나"만 봤다.
-  // 그건 completeness 가 아니라 자기 참조라, 따로 찍어둔 항목 외의 컬럼 1개 삭제는 조용히
-  // 통과했다(실측 MISS 2건). expected-set 은 repo 에 커밋된 감사 문서
-  // `docs/baseball-qa/kbo-record-endpoint-audit.md` 의 컬럼 표에서 파싱한 **독립 근거**다.
-  const { expected, rowCount, doc } = parseExpectedColumns(REPO_ROOT);
-  assert.equal(rowCount, 10, `${doc} 컬럼 표 행 수가 변했다`);
-  assert.ok(expected.size >= 70, `expected-set 이 비정상적으로 작다: ${expected.size}`);
-  const actual = new Set(KBO_OFFICIAL_METRIC_COLUMNS.map((c) => `${c.source}:${c.code}`));
-  const missing = [...expected].filter((key) => !actual.has(key)).sort();
-  const extra = [...actual].filter((key) => !expected.has(key)).sort();
-  assert.deepEqual(missing, [], `공식 컬럼 누락: ${missing.join(", ")}`);
-  assert.deepEqual(extra, [], `감사 문서에 없는 컬럼: ${extra.join(", ")}`);
-});
-check("P0: expected parser 의 공식 컬럼 제외 통로 전부 0 (삼순 12·13차 P0)", () => {
-  // 제외를 두 번 넣었다 — `Wgs`/`Wgr`("W 로 통합"), `GO/AO`("두 컬럼의 몫"). 사유는 달랐지만
-  // 결과는 같았다: 감사 문서의 공식 컬럼이 expected 에서 빠져 대조가 그만큼 무력해졌다.
-  // 제외 통로는 **하나도** 있어서는 안 된다.
-  assert.equal(
-    DOCUMENTED_EXCLUSIONS.size, 0,
-    `공식 컬럼을 임의 제외했다: ${[...DOCUMENTED_EXCLUSIONS.keys()].join(", ")}`,
-  );
-  assert.equal(
-    DERIVED_RATIO.size, 0,
-    `파생 비율이라며 공식 컬럼을 제외했다: ${[...DERIVED_RATIO].join(", ")}`,
-  );
-});
-check("P0: 비율 파생 공식 컬럼(`GO/AO`)도 hold 에 결속된다 (삼순 13차 exact)", () => {
-  assert.ok(KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === "GO/AO"), "GO/AO 가 inventory 에 없다");
-  for (const q of ["통산 땅볼뜬공비율 1위 누구야?", "역대 GO/AO 순위"]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-check("P0: 선발승·구원승 공식 컬럼이 hold 에 결속된다 (삼순 12차 exact)", () => {
-  for (const code of ["Wgs", "Wgr"]) {
-    assert.ok(
-      KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === code),
-      `공식 컬럼 ${code} 가 inventory 에 없다`,
-    );
-  }
-  // `다승|승수|승리` 어휘로는 이 두 표현이 잡히지 않는다 — 통합 지원으로 대체 불가.
-  for (const q of ["통산 선발승 1위", "역대 구원승 순위"]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
-});
-check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘에서 분리된다", () => {
-  // 삼순 10차 P0 — bare `경기` 를 지표로 넣으면 서술·주관 질문이 과차단된다.
-  assert.ok(KBO_OFFICIAL_GENERAL_TERMS.includes("경기"));
-  assert.ok(KBO_OFFICIAL_GENERAL_TERMS.includes("선발"));
-  const overlap = KBO_OFFICIAL_GENERAL_TERMS.filter((w) => KBO_OFFICIAL_METRIC_TERMS.includes(w));
-  assert.deepEqual(overlap, [], `일반명사가 판정 어휘에 섞였다: ${overlap.join(", ")}`);
-  // 같은 컬럼은 비일반 공식 표기로 여전히 결속된다(기능 손실 없음).
-  for (const q of ["통산 경기수 1위 누구야?", "통산 선발등판 1위 누구야?"]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-  }
-});
-check("P0 무회귀: 일반명사만 있는 서술·주관 질문은 과차단하지 않는다 (삼순 exact)", () => {
-  for (const q of [
-    "역대 최고의 경기 알려줘",              // 삼순 exact
-    "커리어 선발로 가장 기억나는 경기는?",   // 삼순 exact
-    "통산 최고의 경기 뭐야?",
-  ]) {
-    assert.equal(routeQuestion(q, [], []), "llm_scope_gate", q);
-  }
-});
-
-// ⚠️ 삼순 9차 P0 + A안의 핵심 이득 — 지표 어휘가 없으면 시점어·수량·최상급 표현이 있어도
-// 우리 소관이 아니다. 표지 축을 버렸기 때문에 이 축이 구조적으로 안전해졌다.
-check("P0 무회귀: 시점어 + 수량/최상급 표현이 있어도 지표 어휘가 없으면 LLM 범위 판정", () => {
-  for (const q of [
-    "누적 피로가 많으면 구속이 떨어져?",   // 삼순 exact
-    "커리어가 긴 투수는 부상이 많아?",     // 삼순 exact
-    "통산 성적이 좋으면 연봉도 많이 받아?",
+    "역대 견제사 누가 많아?",
+    "통산 끝내기 상위 10명",
+    "통산 폭투 제일 많은 선수",
     "역대 최고의 타자는 누구야?",
     "역대 가장 멋진 선수 누구야?",
-    "역대 제일 인상 깊은 선수 누구야?",
+    "누적 피로가 많으면 구속이 떨어져?",
+    "커리어가 긴 투수는 부상이 많아?",
+    "역대 최고의 경기 알려줘",
+    "커리어 선발로 가장 기억나는 경기는?",
+    "통산 선발승 1위",
+    "역대 구원승 순위",
+    "통산 도루 랭킹",
+    "지금 홈런 1위 누구야?",
+    "통산 기록이 뭐야?",
   ]) {
-    assert.equal(routeQuestion(q, [], []), "llm_scope_gate", q);
+    assert.equal(
+      isCareerLeaderboardAsk(q), mainImpl(q),
+      `hold 판정이 main 과 갈라졌다(C안 위반): ${q}`,
+    );
   }
+});
+check("P0(C안): 지원 intent 는 hold 보다 먼저 결속된다 (본목적)", () => {
+  // 이 PR 의 본목적. intent 가 잡히면 hold 판정과 무관하게 구조화 경로로 간다.
+  for (const q of ["통산 안타 1위 누구야?", "역대 최다안타 누구야?", "통산 안타 선두 알려줘"]) {
+    assert.ok(resolveCareerLeaderboardIntent(q), `intent 미결속: ${q}`);
+    assert.equal(routeQuestion(q, [], PLAYERS), "career_leaderboard", q);
+  }
+});
+check("P0(C안): 미지원 지표는 main 과 같은 경로로 간다 (이 PR 이 바꾸지 않는다)", () => {
+  // `통산 홈런 1위` 는 main 에서도 hold 였고 이 PR 에서도 hold 다 — 확장이 아니다.
+  assert.equal(resolveCareerLeaderboardIntent("통산 홈런 1위 누구야?"), null);
+  assert.equal(routeQuestion("통산 홈런 1위 누구야?", [], PLAYERS), "history_hold");
 });
 
 check("야구 인물 질문은 결정론 차단이 아니라 위임이다 (캡처 exact 포함)", () => {
@@ -406,7 +277,11 @@ check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 
     "통산 안타 1위부터 알려줘",
   ]) {
     assert.equal(resolveCareerLeaderboardIntent(q), null, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+    // ⚠️ 라우팅 결과는 main 이 정한다(C안: 거절 범위 변화 0). 실측으로 `history_hold` 이고,
+    // 하린아빠 exact 만 `blocked` 다 — `안타기록` 이 `hasStat` 토큰에 안 걸리는 main 동작이며
+    // 이 PR 이 바꾸지 않는다. Top N 지원은 후속 트랙이다.
+    const expected = q.includes("1위부터 10위까지") ? "blocked" : "history_hold";
+    assert.equal(routeQuestion(q, [], PLAYERS), expected, q);
   }
 });
 check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", () => {
