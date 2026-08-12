@@ -13,6 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { NextRequest } from "next/server";
 import baseline from "../../data/baseball-qa/kbo-career-metrics-through-2025.json";
 import batters from "../../src/lib/constants/stats-2026-batters.json";
 import pitchers from "../../src/lib/constants/stats-2026-pitchers.json";
@@ -52,6 +53,22 @@ function toRows(src: Array<Record<string, unknown>>): SeasonRecordRow[] {
     name: String(r.name ?? ""), team: (r.team as string) ?? null, updated_at: SERVED_AT,
   })) as SeasonRecordRow[];
 }
+function pitcherRouteHtml(): string {
+  const rows = (pitchers as Array<Record<string, unknown>>).map((row, index) => {
+    const cells = [
+      String(index + 1), String(row.name ?? ""), String(row.team ?? ""), String(row.era ?? "0.00"),
+      String(row.games ?? 0), String(row.wins ?? 0), String(row.losses ?? 0), String(row.saves ?? 0),
+      String(row.holds ?? 0), String(row.wpct ?? "0.000"), String(row.ip ?? "0"), String(row.h ?? 0),
+      String(row.hr ?? 0), String(row.bb ?? 0), String(row.hbp ?? 0), String(row.so ?? 0),
+      String(row.r ?? 0), String(row.er ?? 0), String(row.whip ?? "0.00"),
+    ];
+    return `<tr>${cells.map((cell, cellIndex) => cellIndex === 1
+      ? `<td><a href="/Record/Player/PitcherDetail/Basic.aspx?playerId=${row.kboId}">${cell}</a></td>`
+      : `<td>${cell}</td>`).join("")}</tr>`;
+  }).join("");
+  return `<html><tbody>${rows}</tbody></html>`;
+}
+
 const SERVED: Record<CareerTable, SeasonRecordRow[]> = {
   batter: toRows(batters as never),
   pitcher: toRows(pitchers as never),
@@ -372,6 +389,29 @@ checkAsync("P0(종단): 미지원·모호·서술형은 generic LLM 으로 새�
     const r = await answerQuestion("u1", q, deps());
     assert.notEqual(r.source, "llm", `${q} 가 generic LLM 으로 샜다 :: ${r.answer}`);
     assert.notEqual(r.source, "kbo_structured", `${q} 가 값을 단정했다 :: ${r.answer}`);
+  }
+});
+
+checkAsync("P0(actual route): KBO 공식 playerId가 merge까지 보존돼 투수 278-ID exact다", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx")) {
+      return new Response(pitcherRouteHtml(), { status: 200 });
+    }
+    throw new Error(`unexpected actual-route URL: ${url}`);
+  }) as typeof fetch;
+  try {
+    const { GET } = await import("../../src/app/api/stats/route");
+    const response = await GET(new NextRequest(
+      `http://localhost/api/stats?type=pitcher&full=1&season=qa-career-${Date.now()}`,
+    ));
+    const body = await response.json() as { stats: SeasonRecordRow[]; count: number };
+    assert.equal(response.status, 200);
+    assert.equal(body.count, FULL_ENTRY_PITCHER_IDS.length);
+    assert.ok(validateServedPitcherPayload(body), "actual route payload가 exact validator를 통과해야 한다");
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

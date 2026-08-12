@@ -18,6 +18,7 @@ const CATALOG = "src/lib/baseball-qa/stats/career-metric-catalog.ts";
 const LEADERBOARD = "src/lib/baseball-qa/stats/career-metric-leaderboard.ts";
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const SERVED = "src/lib/baseball-qa/stats/served-record.ts";
+const STATS_ROUTE = "src/app/api/stats/route.ts";
 const SMOKE = "scripts/qa/baseball-qa-career-metrics-smoke.ts";
 
 const MUTATIONS = [
@@ -94,6 +95,12 @@ const MUTATIONS = [
     file: SERVED,
     from: "  const expectedIds = new Set(FULL_ENTRY_PITCHER_IDS);\n  if (rows.length !== expectedIds.size) return null;\n  const seen = new Set<string>();\n  for (const row of rows) {\n    const id = canonicalKboId(row.kboId as string | number | null);\n    if (!id || !expectedIds.has(id) || seen.has(id)) return null;\n    seen.add(id);\n  }\n  if (FULL_ENTRY_PITCHER_IDS.some((id) => !seen.has(id))) return null;",
     to: "  if (rows.length < 200) return null;\n  const seen = new Set<string>();\n  for (const row of rows) {\n    const id = canonicalKboId(row.kboId as string | number | null);\n    if (!id || seen.has(id)) return null;\n    seen.add(id);\n  }",
+  },
+  {
+    name: "m11e KBO 공식 playerId 보존 제거 — 동명이인 live 행이 blank ID가 된다",
+    file: STATS_ROUTE,
+    from: "  const officialId = canonicalKboId(c.playerId);",
+    to: "  const officialId = \"\";",
   },
   // ── 질문 해석(룰 누적 방지 축) ──
   {
