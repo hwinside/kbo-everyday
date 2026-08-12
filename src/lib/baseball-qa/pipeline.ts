@@ -62,6 +62,7 @@ import {
   type CareerRecordFetcher,
 } from "./stats/career-series";
 import { crossCheckServedAgainstDb } from "./stats/served-record";
+import { KBO_OFFICIAL_METRIC_TERMS } from "./stats/kbo-official-metric-columns";
 import {
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
@@ -814,6 +815,26 @@ const CAREER_LEADERBOARD_ASK = /1\s*위|누구|누가|최다|최고/;
 export function isCareerLeaderboardAsk(question: string): boolean {
   const normalized = question.normalize("NFKC").toLowerCase();
   return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
+}
+
+/**
+ * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
+ *
+ * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
+ * 공식 기록실 컬럼 71개로 `통산 <지표> 1위 누구야?` 를 돌려보니 **52개가 `llm_scope_gate`로
+ * 샜다**(`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 숫자 환각 게이트는 2차 방어지만
+ * 리더보드 답은 **이름 단답**이라 숫자가 없어 그 게이트에 걸리지 않는다 — 모델이 기억하는
+ * 옛 1위를 확신해서 내보낸다(8/9 `임창규` 사고와 같은 축).
+ *
+ * 판정은 **닫힌 집합**만 쓴다(A안 계약): 공식 컬럼 어휘에 있으면 이 축, 없으면 우리 소관이 아니다.
+ * 표현 변이는 쫓지 않는다 — 요청 형태는 위 `CAREER_LEADERBOARD_ASK`(main 그대로)가 본다.
+ *
+ * 일반명사와 충돌하는 컬럼(`G=경기`·`GS=선발`)은 inventory 에서 판정 어휘로 승격되지 않으므로
+ * `역대 최고의 경기`·`커리어 선발로 기억나는 경기` 같은 서술·주관 질문은 여기 걸리지 않는다.
+ */
+export function hasCareerMetricTerm(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return KBO_OFFICIAL_METRIC_TERMS.some((term) => normalized.includes(term));
 }
 
 const HISTORY_CONTEXT_WORDS = [
@@ -2221,7 +2242,14 @@ export function routeQuestion(
   // generic LLM 이름 단답은 stale 오답(모델이 확신하는 옛 1위)을 못 막고, KBO 공식
   // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
   // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
-  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+  // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
+  // 공식 지표 71개 중 52개가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
+  if (
+    hasCareerMetricTerm(question) &&
+    !hasTeam &&
+    !hasPlayerReference(tokens, players) &&
+    isCareerLeaderboardAsk(question)
+  ) {
     return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
