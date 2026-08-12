@@ -61,6 +61,12 @@ const MUTATIONS = [
     to: "    !hasPlayerReference(tokens, players) &&\n    isCareerLeaderboardAsk(question)\n  ) {",
   },
   {
+    name: "m4e(종단) 선수 결속 route override 제거 — 지원 지표 구조화 실답이 hold 로 죽는다",
+    file: PIPELINE,
+    from: '  const route = enabledPlayerCandidate\n    ? "baseball_rule_term"\n    : routeQuestion(question, glossary, players, context !== null);',
+    to: "  const route = routeQuestion(question, glossary, players, context !== null);",
+  },
+  {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",
     file: INVENTORY,
     from: '  { code: "SO-pit", source: "pitcher", terms: ["탈삼진"] },\n',

@@ -16,15 +16,21 @@
  *   ② 반대편 과차단 0 — 지표 어휘가 없는 서술·주관 질문은 그대로 LLM 범위 판정
  *   ③ 판정 어휘는 감사 문서 expected-set 과 missing/extra 0 (독립 근거 대조)
  *   ④ 기존 경로 무회귀 (선수 지목·구단 수치·당해 시즌)
+ *   ⑤ **종단(`answerQuestion`) 검증** — 라우터만 보면 production 을 증명하지 못한다.
+ *      지원 지표의 구조화 실답 보존 + 미지원 지표의 생성·검색 경로 도달 0.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  answerQuestion,
   hasCareerMetricTerm,
   isCareerLeaderboardAsk,
   routeQuestion,
+  type QaDeps,
   type QuestionRoute,
 } from "../../src/lib/baseball-qa/pipeline";
+import { createCareerRecordFetcher } from "../../src/lib/baseball-qa/stats/career-series";
 import {
   KBO_OFFICIAL_GENERAL_TERMS,
   KBO_OFFICIAL_METRIC_COLUMNS,
@@ -345,8 +351,136 @@ check("무회귀: 기존 경로 (선수 지목·구단 수치·당해 시즌)", 
   assert.equal(routeQuestion("지금 홈런 1위 누구야?", [], PLAYERS), "blocked");
 });
 
-console.log(`\ngenius career metric leak: PASS=${pass} FAIL=${failures.length}`);
-if (failures.length > 0) {
-  console.error(`\n${failures.length} FAIL:\n  ${failures.join("\n  ")}`);
-  process.exit(1);
+// ─────────────────────────────────────────────────────────────────────────────
+// 종단 검증 (`answerQuestion`) — 라우터만 보면 production 을 증명하지 못한다.
+//
+// ⚠️ 삼순 #1164 5차 P0. 이 게이트는 `routeQuestion()` 만 검사했는데, production 의
+// `answerQuestion()` 은 **선수가 결속되면 route 를 `baseball_rule_term` 으로 덮어** 이 분기를
+// 건너가고, `fetchCareerRecord` 도 배선돼 있다. 그래서 `최형우 통산 타율 얼마야?` 는 라우터에서
+// hold 로 보이지만 종단에서는 `kbo_structured` **실답**이다. 나는 라우터 결과만 보고 주석에
+// "선수 지목 통산은 조회 배선 없음 / 전부 hold" 라고 반대로 적었다 — 실측하지 않은 단정이었다.
+//
+// 그래서 두 계약을 종단에서 각각 고정한다:
+//   ⓐ 지원 지표(career-series 컬럼)의 구조화 실답은 **보존**된다.
+//   ⓑ 미지원 공식 지표는 llm / rag / cache / dictionary 로 **가지 않는다**(누수 0).
+const CAREER_FIXTURE = readFileSync(
+  path.join(REPO_ROOT, "scripts/qa/fixtures/kbo-career-batter.html"),
+  "utf-8",
+);
+/** 생성·검색 경로 — 미지원 지표가 여기 닿으면 누수다. */
+const GENERATIVE_SOURCES = ["llm", "rag", "team_rag", "news_rag", "cache", "dictionary"];
+
+function e2eDeps(): QaDeps {
+  let stored: unknown = null;
+  let started = false;
+  return {
+    loadGlossary: async () => [],
+    loadPlayers: async () => PLAYERS,
+    getCache: async () => null,
+    setCache: async () => {},
+    // LLM 이 불리면 그 자체가 누수다. 불렸는지 알 수 있도록 정상 응답을 준다.
+    callLlm: async () => ({
+      text: JSON.stringify({ status: "OK", answer: "최형우가 1위입니다" }),
+      inputTokens: 1,
+      outputTokens: 1,
+    }),
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+    log: async () => {},
+    getLlmState: async () => ({ started, result: stored, ownerActive: false }),
+    acquireLlmStart: async () => {
+      started = true;
+      return true;
+    },
+    storeLlm: async (r: unknown) => {
+      stored = r;
+    },
+    fetchSeasonRecord: async () => [],
+    enablePlayerRag: true,
+    searchRag: async () => [],
+    callRagLlm: async () => ({ text: "{}", inputTokens: 1, outputTokens: 1 }),
+    // production 과 동일하게 배선한다 — 미배선으로 두면 ⓐ 를 증명할 수 없다.
+    fetchCareerRecord: createCareerRecordFetcher(async () => CAREER_FIXTURE, () => Date.UTC(2026, 7, 10)),
+  } as unknown as QaDeps;
 }
+
+const asyncChecks: Array<[string, () => Promise<void>]> = [];
+function checkAsync(name: string, fn: () => Promise<void>): void {
+  asyncChecks.push([name, fn]);
+}
+
+checkAsync("P0(종단): 지원 지표의 구조화 실답이 보존된다 (kbo_structured)", async () => {
+  for (const question of [
+    "최형우 통산 타율 얼마야?",   // 삼순 5차 exact
+    "최형우 통산 홈런 몇 개야?",
+    "최형우 통산 안타 몇 개야?",
+  ]) {
+    const result = await answerQuestion("u1", question, e2eDeps());
+    assert.equal(result.source, "kbo_structured", `${question} -> ${result.source} :: ${result.answer}`);
+  }
+});
+
+checkAsync("P0(종단): 미지원 공식 지표는 생성·검색 경로에 닿지 않는다 (전수)", async () => {
+  // 어휘 전수 × 축(리그·팀·선수·복합). 라우터가 아니라 `answerQuestion` 결과로 판정한다.
+  const forms: Array<(term: string) => string> = [
+    (term) => `통산 ${term} 1위 누구야?`,
+    (term) => `LG 통산 ${term} 1위 누구야?`,
+    (term) => `최형우 통산 ${term} 1위야?`,
+    (term) => `LG 김도영 통산 ${term} 최다 맞아?`,
+  ];
+  // career-series 가 실제로 답하는 지원 지표는 이 대조에서 제외한다(그건 ⓐ 의 몫이다).
+  const SUPPORTED = ["타율", "홈런", "안타", "타점", "득점", "도루", "출루율", "장타율", "ops"];
+  const unsupported = KBO_OFFICIAL_METRIC_TERMS.filter((term) => !SUPPORTED.includes(term));
+  const leaks: string[] = [];
+  let checked = 0;
+  for (const term of unsupported) {
+    for (const form of forms) {
+      const question = form(term);
+      checked += 1;
+      const result = await answerQuestion("u1", question, e2eDeps());
+      if (GENERATIVE_SOURCES.includes(result.source)) leaks.push(`${question} -> ${result.source}`);
+    }
+  }
+  console.log(`     종단 전수 ${forms.length}형태 × ${unsupported.length}미지원어휘 = ${checked} / 누수 ${leaks.length}`);
+  assert.equal(checked, forms.length * unsupported.length);
+  assert.deepEqual(
+    leaks, [],
+    `미지원 지표 ${leaks.length}건이 생성·검색 경로로 샌다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
+  );
+});
+
+checkAsync("P0(종단): 미지원 지표 안내문은 hold 문구다 (숫자·이름 단정 없음)", async () => {
+  for (const question of [
+    "통산 견제사 1위 누구야?",
+    "최형우 통산 폭투 1위야?",
+    "LG 통산 주루사 1위 누구야?",
+  ]) {
+    const result = await answerQuestion("u1", question, e2eDeps());
+    assert.equal(result.source, "history_hold", `${question} -> ${result.source}`);
+    // LLM mock 이 준 이름 단답이 새어나오지 않았음을 직접 확인한다.
+    assert.ok(
+      !result.answer.includes("1위입니다"),
+      `LLM 단답이 새어나왔다: ${question} :: ${result.answer}`,
+    );
+  }
+});
+
+async function runAsyncChecks(): Promise<void> {
+  for (const [name, fn] of asyncChecks) {
+    try {
+      await fn();
+      pass += 1;
+      console.log(`PASS ${name}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${name} :: ${message}`);
+      console.error(`FAIL ${name} :: ${message}`);
+    }
+  }
+  console.log(`\ngenius career metric leak: PASS=${pass} FAIL=${failures.length}`);
+  if (failures.length > 0) {
+    console.error(`\n${failures.length} FAIL:\n  ${failures.join("\n  ")}`);
+    process.exit(1);
+  }
+}
+
+void runAsyncChecks();
