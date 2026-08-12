@@ -36,7 +36,7 @@ import {
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
-import { parseExpectedColumns } from "./kbo-metric-inventory-expected.mjs";
+import { DOCUMENTED_EXCLUSIONS, parseExpectedColumns } from "./kbo-metric-inventory-expected.mjs";
 import {
   KBO_OFFICIAL_GENERAL_TERMS,
   KBO_OFFICIAL_METRIC_COLUMNS,
@@ -197,6 +197,27 @@ check("P0: 감사 문서 expected-set 과 inventory 가 missing/extra 0 (독립 
   const extra = [...actual].filter((key) => !expected.has(key)).sort();
   assert.deepEqual(missing, [], `공식 컬럼 누락: ${missing.join(", ")}`);
   assert.deepEqual(extra, [], `감사 문서에 없는 컬럼: ${extra.join(", ")}`);
+});
+check("P0: expected parser 의 공식 컬럼 임의 제외 0 (삼순 12차 P0)", () => {
+  // 종전에 `Wgs`·`Wgr` 을 "W 로 통합" 이라며 parser 에서 빼 completeness 를 약화시켰다.
+  // 제외는 이 대조를 무력화하는 유일한 구멍이므로 항상 비어 있어야 한다.
+  assert.equal(
+    DOCUMENTED_EXCLUSIONS.size, 0,
+    `공식 컬럼을 임의 제외했다: ${[...DOCUMENTED_EXCLUSIONS.keys()].join(", ")}`,
+  );
+});
+check("P0: 선발승·구원승 공식 컬럼이 hold 에 결속된다 (삼순 12차 exact)", () => {
+  for (const code of ["Wgs", "Wgr"]) {
+    assert.ok(
+      KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === code),
+      `공식 컬럼 ${code} 가 inventory 에 없다`,
+    );
+  }
+  // `다승|승수|승리` 어휘로는 이 두 표현이 잡히지 않는다 — 통합 지원으로 대체 불가.
+  for (const q of ["통산 선발승 1위", "역대 구원승 순위"]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
 });
 check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘에서 분리된다", () => {
   // 삼순 10차 P0 — bare `경기` 를 지표로 넣으면 서술·주관 질문이 과차단된다.

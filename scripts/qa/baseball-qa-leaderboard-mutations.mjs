@@ -17,6 +17,7 @@ const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
 const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
 const METRIC_INVENTORY = "src/lib/baseball-qa/stats/kbo-official-metric-columns.ts";
+const EXPECTED_PARSER = "scripts/qa/kbo-metric-inventory-expected.mjs";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
@@ -102,6 +103,20 @@ const MUTATIONS = [
     file: CAREER_LEADERBOARD,
     from: "export const CAREER_LEADERBOARD_METRIC_WORDS = KBO_OFFICIAL_METRIC_TERMS;",
     to: 'export const CAREER_LEADERBOARD_METRIC_WORDS = ["안타", "홈런", "도루"] as const;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e7 expected parser 의 공식 컬럼 임의 제외 재도입(`Wgs`/`Wgr`) — completeness 약화",
+    file: EXPECTED_PARSER,
+    from: "export const DOCUMENTED_EXCLUSIONS = new Map([]);",
+    to: 'export const DOCUMENTED_EXCLUSIONS = new Map([["Wgs", "통합"], ["Wgr", "통합"]]);',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e8 선발승 공식 컬럼 삭제(`Wgs`) — 통산 선발승 질문이 generic LLM 으로 샌다",
+    file: METRIC_INVENTORY,
+    from: '  { code: "Wgs", source: "pitcher", terms: ["선발승"] },\n',
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

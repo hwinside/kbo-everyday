@@ -60,11 +60,13 @@ const PITCHER_SUFFIXED = new Map([
  */
 const DERIVED_RATIO = new Set(["GO/AO"]);
 
-/** 감사 문서에 있으나 별도 트랙(선발승/구원승 세분)으로 미지원인 컬럼. 사유를 명시해 둔다. */
-const DOCUMENTED_EXCLUSIONS = new Map([
-  ["Wgs", "선발승 세분 — W(다승)로 통합 지원"],
-  ["Wgr", "구원승 세분 — W(다승)로 통합 지원"],
-]);
+/**
+ * 공식 컬럼 임의 제외는 **금지**다(삼순 12차 P0). 종전에 `Wgs`·`Wgr` 을 "W 로 통합" 이라며
+ * 여기서 빼버렸는데, 실제 판정 어휘(`다승|승수|승리`)에는 `선발승`·`구원승` 이 없어 두 질문이
+ * generic LLM 으로 샜다. 제외는 completeness 를 약화시키는 유일한 구멍이므로 **항상 비어 있어야**
+ * 하고, 게이트가 size 0 을 검증한다. 파서는 이 집합을 실제로 참조하므로 재도입은 즉시 RED 다.
+ */
+export const DOCUMENTED_EXCLUSIONS = new Map([]);
 
 export function parseExpectedColumns(repoRoot = process.cwd()) {
   const raw = readFileSync(path.join(repoRoot, AUDIT_DOC), "utf8");

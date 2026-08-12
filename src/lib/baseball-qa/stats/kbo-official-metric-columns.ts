@@ -86,6 +86,11 @@ export const KBO_OFFICIAL_METRIC_COLUMNS: readonly KboOfficialMetricColumn[] = [
   { code: "WP", source: "pitcher", terms: ["폭투"] },
   { code: "BK", source: "pitcher", terms: ["보크"] },
   { code: "GS", source: "pitcher", terms: ["선발등판", "선발경기"], general: ["선발"] },
+  // ⚠️ `Wgs`·`Wgr` 은 감사 문서(투수 세부)에 실린 공식 컬럼이다(삼순 12차 P0). A안은
+  // "미지원 공식 지표도 hold" 이므로 답변 지원은 필요 없고, hold 에 결속되기만 하면 된다.
+  // `W(다승)` 어휘(`다승|승수|승리`)에는 `선발승`·`구원승` 이 포함되지 않아 통합으로 대체할 수 없다.
+  { code: "Wgs", source: "pitcher", terms: ["선발승"] },
+  { code: "Wgr", source: "pitcher", terms: ["구원승"] },
   { code: "GF", source: "pitcher", terms: ["경기종료"] },
   { code: "SVO", source: "pitcher", terms: ["세이브기회"] },
   { code: "TS", source: "pitcher", terms: ["터프세이브"] },
