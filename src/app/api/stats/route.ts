@@ -9,7 +9,12 @@ import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
-import { mergeFullEntry } from "@/lib/stats/full-entry";
+import {
+  mergeFullEntry,
+  oldestFullEntryTimestamp,
+  requireOldestFullEntryTimestamp,
+  StatsFreshnessContractError,
+} from "@/lib/stats/full-entry";
 import {
   fetchNaverPlayerStats,
   type NaverPlayerStat,
@@ -585,6 +590,37 @@ async function fetchCurrentStats(
   }
 }
 
+export function handleStatsGetFailure(
+  error: unknown,
+  season: string,
+  type: string,
+  now = new Date(),
+): NextResponse {
+  // ⚠️ 이 함수의 모든 응답은 degraded(또는 에러)다 — **엣지 캐시 금지**(main #1166 계약).
+  //   fallback 이 CDN 에 고정되면 크롤이 회복돼도 stale 이 계속 서빙된다.
+  // freshness 계약 실패는 "크롤 실패"가 아니다. 같은 오염 static을 fallback 200으로
+  // 다시 내보내면 fail-close가 무효화된다(삼순 #1159 5차 NO-GO).
+  if (error instanceof StatsFreshnessContractError) {
+    return NextResponse.json({ error: error.message, stats: [] }, { status: 500, headers: NO_STORE });
+  }
+  // 크롤링 실패 시 static JSON fallback (빈화면 방지). 단 fallback 자체의 구성시각도
+  // 동일 freshness 계약을 통과해야 하며 미래/invalid면 500 fail-close 한다.
+  if (season === "2026" || season === "current") {
+    const fallback = type === "pitcher"
+      ? (pitcherStats2026 as unknown as PlayerStat[])
+      : (batterStats2026 as unknown as PlayerStat[]);
+    const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
+    const validFbAt = oldestFullEntryTimestamp([fbAt], now);
+    if (!validFbAt) {
+      return NextResponse.json({ error: "stats fallback has invalid freshness", stats: [] }, { status: 500, headers: NO_STORE });
+    }
+    return NextResponse.json({
+      stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: validFbAt,
+    }, { headers: NO_STORE });
+  }
+  return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
+}
+
 export async function GET(req: NextRequest) {
   const type = req.nextUrl.searchParams.get("type") || "batter";
   const season = req.nextUrl.searchParams.get("season") || "current";
@@ -627,6 +663,17 @@ export async function GET(req: NextRequest) {
       stats = applyRunnerStats(stats, current.runnerMap);
     }
     const now = new Date().toISOString();
+    const currentUpdatedAt = current.runnerSource === "static-fallback"
+      ? current.runnerUpdatedAt
+      : now;
+    const staticGeneratedAt = statsType === "pitcher"
+      ? statsMeta.pitchersGeneratedAt
+      : statsMeta.battersGeneratedAt;
+    // full=1은 live 목록에 static 비규정 엔트리를 합친 응답이다. runner가 live여도
+    // static 생성시각을 숨기고 `now`만 내보내면 봇의 stale 가드가 우회된다.
+    const updatedAt = full
+      ? requireOldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])
+      : currentUpdatedAt;
     const result: StatsResult = {
       stats,
       type,
@@ -638,10 +685,7 @@ export async function GET(req: NextRequest) {
             ? "live+static-runner-fallback"
             : "live",
       // 혼합 응답은 가장 오래된 구성요소 시각을 대표 freshness로 노출한다.
-      updatedAt:
-        current.runnerSource === "static-fallback"
-          ? current.runnerUpdatedAt
-          : now,
+      updatedAt,
       ...(current.runnerSource
         ? {
             runnerSource: current.runnerSource,
@@ -652,18 +696,8 @@ export async function GET(req: NextRequest) {
     setCache(cacheKey, result);
     return NextResponse.json(result, { headers: statsEdgeHeaders(result, 0) });
   } catch (e: unknown) {
-    // 크롤링 실패 시 static JSON fallback (빈화면 방지)
-    if (season === "2026" || season === "current") {
-      const fallback = type === "pitcher"
-        ? (pitcherStats2026 as unknown as PlayerStat[])
-        : (batterStats2026 as unknown as PlayerStat[]);
-      const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
-      // degraded fallback은 캐시 금지 — 회복 즉시 live로 복귀해야 한다.
-      return NextResponse.json(
-        { stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: fbAt },
-        { headers: NO_STORE },
-      );
-    }
-    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
+    // degraded fallback·에러는 엣지 캐시 금지 — 회복 즉시 live 복귀(main #1166 계약).
+    //   그 헤더는 handleStatsGetFailure 안에서 붙인다(분기마다 빠뜨리지 않게).
+    return handleStatsGetFailure(e, season, type);
   }
 }
