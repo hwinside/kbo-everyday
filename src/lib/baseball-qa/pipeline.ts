@@ -821,7 +821,7 @@ export function isCareerLeaderboardAsk(question: string): boolean {
  * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
  *
  * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
- * 공식 기록실 컬럼 71개로 `통산 <지표> 1위 누구야?` 를 돌려보니 **52개가 `llm_scope_gate`로
+ * 공식 기록실 컬럼 **75개(판정 어휘 96개)** 로 `통산 <지표> 1위 누구야?` 를 돌려보니 다수가 `llm_scope_gate`로
  * 샜다**(`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 숫자 환각 게이트는 2차 방어지만
  * 리더보드 답은 **이름 단답**이라 숫자가 없어 그 게이트에 걸리지 않는다 — 모델이 기억하는
  * 옛 1위를 확신해서 내보낸다(8/9 `임창규` 사고와 같은 축).
@@ -2286,7 +2286,7 @@ export function routeQuestion(
   // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
   // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
   // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
-  // 공식 지표 71개 중 52개가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
+  // 공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
   if (
     hasCareerMetricTerm(question) &&
     !hasTeam &&

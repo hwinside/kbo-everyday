@@ -3,8 +3,8 @@
  * 통산·역대 리더보드 질문의 **generic LLM 누수 차단** 게이트.
  *
  * ⚠️ 왜 필요한가 (2026-08-12 실측).
- * 종전 라우팅은 이 축을 `STAT_WORDS`(13개)로 판정했다. KBO 공식 기록실 컬럼 71개로
- * `통산 <지표> 1위 누구야?` 를 전수 돌려보니 **52개가 `llm_scope_gate`로 샜다**
+ * 종전 라우팅은 이 축을 `STAT_WORDS`(13개)로 판정했다. KBO 공식 기록실 컬럼 **75개
+ * (판정 어휘 96개)** 로 `통산 <지표> 1위 누구야?` 를 전수 돌려보니 **다수가 `llm_scope_gate`로 샜다**
  * (`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 리더보드 답은 **이름 단답**이라
  * 숫자 환각 게이트에 걸리지 않는다 — 모델이 기억하는 옛 1위를 확신해서 내보낸다
  * (8/9 `임창규` 사고와 같은 축).
@@ -80,7 +80,7 @@ check("P0: 공식 컬럼 어휘 × 통산 요청 형태 전수 — generic LLM �
   );
 });
 
-check("P0: 실측 누수 52건 대표 표본이 fail-close 된다", () => {
+check("P0: 실측 누수 대표 표본이 fail-close 된다", () => {
   // 2026-08-12 실측에서 실제로 샜던 어휘들. 회귀하면 여기서 먼저 터진다.
   for (const term of [
     "탈삼진", "완봉", "완투", "이닝", "실책", "선발승", "구원승", "견제사", "주루사",
@@ -109,7 +109,7 @@ check("P0: 지표어에 조사가 붙어도 fail-close (조사 처리 결속)", 
 
 check("P0: 띄어쓰기 변이도 fail-close (공백 정규화 결속 — m4 실제 RED)", () => {
   // ⚠️ 삼순 #1164 1차 P0-1: 종전 게이트에는 이 표본이 없어 공백 정규화를 제거해도 GREEN 이었고,
-  // 나는 그 mutation 을 `expectRed:false` 로 성공 처리해 9/9 RED 에 포함시켰다(false RED).
+  // 나는 그 mutation 을 `expectRed:false` 로 성공 처리해 RED 카운트에 포함시켰다(false RED).
   // 정규화가 실제로 필요한 표본을 넣어야 그 축이 게이트가 된다.
   for (const question of [
     "통산 탈 삼진 1위 누구야?",
@@ -172,7 +172,7 @@ check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘로 �
 check("P0: 판정 어휘 = 감사 문서 expected-set (missing/extra 0, 독립 근거)", () => {
   const { expected, rowCount, doc } = parseExpectedColumns(REPO_ROOT);
   assert.equal(rowCount, 10, `${doc} 컬럼 표 행 수가 변했다`);
-  // ⚠️ 규모를 상수로 못 박는다(삼순 #1164 1차 지적 — 내 보고가 71개였으나 실측 75개였다).
+  // ⚠️ 규모를 상수로 못 박는다(삼순 #1164 1차 지적 — 보고가 71개였으나 실측 75개였다).
   // 이 숫자가 바뀌면 보고문도 함께 고쳐야 한다는 신호다.
   const columnCount = new Set(KBO_OFFICIAL_METRIC_COLUMNS.map((c) => `${c.source}:${c.code}`)).size;
   assert.equal(columnCount, 75, `공식 컬럼 (source,code) 수가 변했다: ${columnCount}`);

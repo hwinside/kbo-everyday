@@ -19,7 +19,7 @@ const SMOKE = "scripts/qa/genius-career-metric-leak-smoke.ts";
 
 const MUTATIONS = [
   {
-    name: "m1 지표 축을 옛 STAT_WORDS 로 회귀 — 공식 지표 52건이 generic LLM 으로 샌다",
+    name: "m1 지표 축을 옛 STAT_WORDS 로 회귀 — 공식 지표 다수가 generic LLM 으로 샌다",
     file: PIPELINE,
     from: "    hasCareerMetricTerm(question) &&",
     to: "    hasStat &&",
