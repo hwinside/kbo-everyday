@@ -3699,9 +3699,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   if (
-    recordIntent.kind === "unsupported_season" ||
-    recordIntent.kind === "untrusted_metric" ||
-    (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+    resolveCareerMetricIntent(question) === null && (
+      recordIntent.kind === "unsupported_season" ||
+      recordIntent.kind === "untrusted_metric" ||
+      (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+    )
   ) {
     const answer = recordIntent.kind === "untrusted_metric"
       ? UNTRUSTED_METRIC_ANSWER

@@ -42,6 +42,10 @@ import {
   parseExpectedColumns,
 } from "./kbo-metric-inventory-expected.mjs";
 import { resolveCareerLeaderboardIntent } from "../../src/lib/baseball-qa/stats/career-leaderboard";
+import {
+  resolveCareerMetricIntent,
+  type CareerMetricQuery,
+} from "../../src/lib/baseball-qa/stats/career-metric-leaderboard";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const PLAYERS = [
@@ -148,7 +152,8 @@ check("P0: 실측 누수 대표 표본이 fail-close 된다", () => {
   ]) {
     const question = `통산 ${term} 1위 누구야?`;
     assert.equal(hasCareerMetricTerm(question), true, `지표 미인식: ${term}`);
-    assert.equal(routeQuestion(question, [], PLAYERS), "history_hold", question);
+    const expected = resolveCareerMetricIntent(question) ? "career_leaderboard" : "history_hold";
+    assert.equal(routeQuestion(question, [], PLAYERS), expected, question);
   }
 });
 
@@ -197,7 +202,8 @@ check("P0: 띄어쓰기 변이도 fail-close (공백 정규화 결속)", () => {
     "통산 퀄리티 스타트 1위 누구야?",
   ]) {
     assert.equal(hasCareerMetricTerm(question), true, `띄어쓰기 변이 미인식: ${question}`);
-    assert.equal(routeQuestion(question, [], PLAYERS), "history_hold", question);
+    const expected = resolveCareerMetricIntent(question) ? "career_leaderboard" : "history_hold";
+    assert.equal(routeQuestion(question, [], PLAYERS), expected, question);
   }
 });
 
@@ -451,15 +457,23 @@ function makeE2eDeps(): { deps: QaDeps; calls: CallCounter } {
     //   순위형 hold 대상 질문이 이걸 부르면 그것도 위반이므로 카운터에 넣는다.
     fetchCareerLeaderboard: async () => {
       bump("record.leaderboard");
-      // ⚠️ 형태는 `CareerLeaderboardAnswer` 를 그대로 따른다. 처음에 내가 지어낸 형태
-      //   (`playerName`/`value`/`baselineSeason`)를 넣었더니 compose 가 터져 `source=error`
-      //   였다 — 게이트 실패의 원인이 대상 로직이 아니라 내 fixture 였다(오늘 두 번째).
       return {
         metric: "hits" as const,
         label: "안타",
         leaders: [{ kboId: "60000", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
         asOf: "2026-08-10T00:00:00.000Z",
         baselineThroughSeason: 2025,
+        sourceUrl: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
+      };
+    },
+    fetchCareerMetricLeaderboard: async (query: CareerMetricQuery) => {
+      bump("record.metricLeaderboard");
+      const label = query.metric === "hits" ? "안타" : query.metric;
+      return {
+        table: query.table, metric: query.metric, label, unit: query.metric === "hits" ? "안타" : "개",
+        rows: [{ rank: 1, kboId: "60000", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
+        from: query.from, to: query.to,
+        asOf: "2026-08-10T00:00:00.000Z", baselineThroughSeason: 2025,
         sourceUrl: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
       };
     },
@@ -485,7 +499,7 @@ const FORBIDDEN_CALLS = [
   "rag.news", "rag.news.llm",
   "glossary.map",
   "cache.get", "cache.set",
-  "record.season", "record.career", "record.leaderboard",
+  "record.season", "record.career", "record.leaderboard", "record.metricLeaderboard",
 ];
 
 const asyncChecks: Array<[string, () => Promise<void>]> = [];
@@ -515,7 +529,7 @@ checkAsync("P0(종단): #1159 지원 intent 는 hold 보다 먼저 — 통산 �
   //   실측하니 main(#1159) 에서도 intent=null 인 **미지원 표현**이었다(회귀가 아니라 내
   //   기대가 틀린 것). 지원 여부는 #1159 의 intent 해석기가 SSOT 다.
   const supported = ["통산 안타 1위 누구야?", "역대 안타 1위 누구야?"]
-    .filter((q) => resolveCareerLeaderboardIntent(q) !== null);
+    .filter((q) => resolveCareerMetricIntent(q) !== null);
   assert.ok(supported.length >= 2, "지원 intent 표본이 사라졌다 — #1159 해석기 확인 필요");
   for (const question of supported) {
     const route = routeQuestion(question, [], PLAYERS);
@@ -580,8 +594,8 @@ checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history
       const result = await answerQuestion("u1", question, deps);
       // ⚠️ **지원 intent 는 hold 대상이 아니다**(삼순 7차 계약). #1159 가 실제로 답하는
       //   질문까지 hold 로 기대하면 그 실답을 없애라는 게이트가 된다. 지원/미지원은
-      //   #1159 의 해석기로 기계 판정한다 — 어느 지표가 지원인지 손으로 열거하지 않는다.
-      if (resolveCareerLeaderboardIntent(question) !== null) {
+      //   현재 다지표 해석기로 기계 판정한다 — 어느 지표가 지원인지 손으로 열거하지 않는다.
+      if (resolveCareerMetricIntent(question) !== null) {
         supportedChecked += 1;
         if (result.source !== "kbo_structured") {
           bad.push(`(지원) ${question} -> source=${result.source} (실답이어야 한다)`);
