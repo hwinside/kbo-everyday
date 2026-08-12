@@ -146,7 +146,7 @@ export default function MatchupCard({
               {(() => {
                 const href = getPlayerHref(currentPitcher, currentPitcherTeamId);
                 return href ? (
-                  <Link href={href} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
+                  <Link href={href} prefetch={false} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</Link>
                 ) : (
                   <div className="text-[15px] font-bold truncate" style={{ color: "var(--matchup-name)" }}>{currentPitcher}</div>
                 );
@@ -193,7 +193,7 @@ export default function MatchupCard({
               {(() => {
                 const href = getPlayerHref(currentBatter, currentBatterTeamId);
                 return href ? (
-                  <Link href={href} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
+                  <Link href={href} prefetch={false} className="text-[15px] font-bold truncate hover:underline" style={{ color: "var(--matchup-name)" }}>{currentBatter}</Link>
                 ) : (
                   <div className="text-[15px] font-bold truncate" style={{ color: "var(--matchup-name)" }}>{currentBatter}</div>
                 );

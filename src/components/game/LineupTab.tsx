@@ -83,7 +83,7 @@ function PitcherCard({
     </>
   );
   return href ? (
-    <Link href={href} className="text-center flex flex-col items-center hover:opacity-80">
+    <Link href={href} prefetch={false} className="text-center flex flex-col items-center hover:opacity-80">
       {inner}
     </Link>
   ) : (
@@ -346,7 +346,7 @@ export default function LineupTab({
                     {away.order}
                   </td>
                   <td className="py-2">
-                    <Link href={awayHref} className="flex items-center gap-1.5 hover:opacity-80">
+                    <Link href={awayHref} prefetch={false} className="flex items-center gap-1.5 hover:opacity-80">
                       <PlayerAvatar
                         name={away.name}
                         teamId={awayInfo?.teamId ?? away.teamId}
@@ -378,7 +378,7 @@ export default function LineupTab({
                     <div className="w-px h-4 bg-border mx-auto" />
                   </td>
                   <td className="py-2 text-right">
-                    <Link href={homeHref} className="flex items-center justify-end gap-1.5 hover:opacity-80">
+                    <Link href={homeHref} prefetch={false} className="flex items-center justify-end gap-1.5 hover:opacity-80">
                       <div className="flex flex-col items-end">
                         <span className="text-sm text-text-primary font-medium whitespace-nowrap">
                           {homeInfo && (
