@@ -55,6 +55,12 @@ const MUTATIONS = [
     to: "    hasCareerMetricTerm(question) &&\n    !hasTeam &&\n",
   },
   {
+    name: "m4d `!hasPlayerReference` 재도입 — 선수 지목 통산 질문이 샌다",
+    file: PIPELINE,
+    from: "    isCareerLeaderboardAsk(question)\n  ) {",
+    to: "    !hasPlayerReference(tokens, players) &&\n    isCareerLeaderboardAsk(question)\n  ) {",
+  },
+  {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",
     file: INVENTORY,
     from: '  { code: "SO-pit", source: "pitcher", terms: ["탈삼진"] },\n',

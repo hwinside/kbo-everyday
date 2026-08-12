@@ -2282,7 +2282,12 @@ export function routeQuestion(
     // 답할 수 있게 되는 것이 아니다 — 오히려 구단별 통산 정본은 더 없다.
     // 구단 **당해 시즌 수치**는 아래 team 축이 그대로 처리한다. 여기서 먼저 닫히는 것은
     // `통산·역대 + 공식 지표` 조합뿐이다.
-    !hasPlayerReference(tokens, players) &&
+    //
+    // ⚠️ `!hasPlayerReference` 도 두지 않는다(자체 전수 훑기 실측). 아래 2290 라인이 선수 지목
+    // 통산 질문을 받지만 그 조건도 `hasStat`(13개)이라, `최형우 역대 타격률 최다 맞아?`·
+    // `김도영 통산 출장경기 1위야?` 처럼 공식 어휘가 STAT_WORDS 밖이면 샜다(192 조합 중 75건).
+    // 팀+선수 복합(`LG 김도영 통산 <지표> 1위`)은 2290 의 `!hasTeam` 때문에 더 크게 샜다.
+    // 선수 지목 통산 질문은 이미 전부 `history_hold` 라(조회 배선 없음) 답변 경로를 빼앗지 않는다.
     isCareerLeaderboardAsk(question)
   ) {
     return "history_hold";

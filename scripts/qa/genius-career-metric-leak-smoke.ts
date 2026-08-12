@@ -73,6 +73,19 @@ const CAREER_TEAM_ASK_FORMS = [
   (term: string) => `삼성 통산 ${term}이 가장 많은 선수 누구야?`,
 ];
 
+/**
+ * **선수를 지목한 통산 질문** + 팀·선수 복합. 자체 전수 훑기에서 찾은 누수 축이다.
+ * 아래 `hasStat && hasPlayerReference && !hasTeam` 라인이 이 부류를 받지만 그 조건도
+ * `STAT_WORDS`(13개)라, 공식 어휘가 그 목록 밖이면 샜다(192 조합 중 75건). 팀+선수 복합은
+ * 그 라인의 `!hasTeam` 때문에 더 크게 샜다. 선수 지목 통산 질문은 조회 배선이 없어 이미
+ * 전부 hold 이므로, 여기서 닫는 것이 답변 경로를 빼앗지 않는다.
+ */
+const CAREER_PLAYER_ASK_FORMS = [
+  (term: string) => `김도영 통산 ${term} 1위야?`,
+  (term: string) => `최형우 역대 ${term} 최다 맞아?`,
+  (term: string) => `LG 김도영 통산 ${term} 1위 누구야?`,
+];
+
 /** generic LLM 으로 내려가는 라우트 — 이 축에서는 하나도 나와서는 안 된다. */
 const LLM_ROUTES: QuestionRoute[] = ["llm_scope_gate"];
 
@@ -93,7 +106,12 @@ function check(name: string, fn: () => void): void {
 check("P0: 공식 컬럼 어휘 × 요청 형태 전수 — generic LLM 도달 0", () => {
   // ⚠️ 조합 수를 **게이트가 계산해 출력한다**(삼순 #1164 3차 지적). 종전에는 보고문에
   // 손으로 쓴 수치(480)가 게이트의 실제 열거(4×96=384)와 어긋났다. 숫자의 SSOT 는 이 출력이다.
-  const forms = [...CAREER_ASK_FORMS, ...CAREER_OPEN_ASK_FORMS, ...CAREER_TEAM_ASK_FORMS];
+  const forms = [
+    ...CAREER_ASK_FORMS,
+    ...CAREER_OPEN_ASK_FORMS,
+    ...CAREER_TEAM_ASK_FORMS,
+    ...CAREER_PLAYER_ASK_FORMS,
+  ];
   const leaks: string[] = [];
   let combinations = 0;
   for (const term of KBO_OFFICIAL_METRIC_TERMS) {
@@ -263,6 +281,28 @@ check("P0: 팀 한정 통산·역대도 어휘 전수 fail-close (`!hasTeam` 제
     leaks, [],
     `팀 한정 통산 질문 ${leaks.length}건이 fail-close 되지 않는다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
   );
+});
+
+check("P0: 선수 지목·팀선수 복합 통산도 어휘 전수 fail-close", () => {
+  const leaks: string[] = [];
+  for (const term of KBO_OFFICIAL_METRIC_TERMS) {
+    for (const form of CAREER_PLAYER_ASK_FORMS) {
+      const question = form(term);
+      const route = routeQuestion(question, [], PLAYERS);
+      if (route !== "history_hold") leaks.push(`${question} -> ${route}`);
+    }
+  }
+  assert.deepEqual(
+    leaks, [],
+    `선수 지목 통산 질문 ${leaks.length}건이 fail-close 되지 않는다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
+  );
+});
+
+check("무회귀: 선수 **당해 시즌** 수치·서술은 그대로다", () => {
+  // 통산·역대 표지가 없으면 이 분기에 들어오지 않는다.
+  assert.equal(routeQuestion("김도영 홈런 몇 개야?", [], PLAYERS), "history_hold");
+  assert.equal(routeQuestion("최형우 타율 얼마야?", [], PLAYERS), "history_hold");
+  assert.equal(routeQuestion("김도영 누구야?", [], PLAYERS), "llm_scope_gate");
 });
 
 check("무회귀: 구단 **당해 시즌** 수치는 여전히 team 축이 처리한다", () => {
