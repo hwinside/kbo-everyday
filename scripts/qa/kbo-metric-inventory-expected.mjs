@@ -46,6 +46,9 @@ const CODE_OWNER = new Map([
   ["AVG", "hitter"], ["2B", "hitter"], ["3B", "hitter"], ["SAC", "hitter"],
   ["SF", "hitter"], ["IBB", "hitter"], ["BB", "hitter"], ["HBP", "hitter"],
   ["SO", "hitter"], ["GDP", "hitter"], ["GO", "hitter"], ["AO", "hitter"],
+  // `GO`·`AO`·`GO/AO` 는 타자 세부·투수 세부 두 표에 모두 나온다. 같은 지표를 소스만 다르게
+  // 두 번 요구하면 대조가 무의미해지므로 타자 표를 정본으로 삼는다(`GO/AO` 누락 실측 반영).
+  ["GO/AO", "hitter"],
   ["H", "hitter"], ["HR", "hitter"], ["R", "hitter"],
 ]);
 
@@ -55,10 +58,17 @@ const PITCHER_SUFFIXED = new Map([
 ]);
 
 /**
- * 비율 파생 표기 — `GO/AO` 는 같은 표의 `GO`·`AO` 두 컬럼의 몫이라 독립 지표로 요구하지 않는다.
- * `BB/K`·`P/PA` 는 감사 문서에 독립 컬럼으로 실려 있으므로 **제외하지 않는다**(실측 EXTRA 2건).
+ * 공식 지표 컬럼의 **제외 통로는 존재하지 않는다**(삼순 12·13차 P0).
+ *
+ * 종전에 두 번 제외를 넣었다 — `DOCUMENTED_EXCLUSIONS`(`Wgs`/`Wgr`, "W 로 통합"), 그리고
+ * `DERIVED_RATIO`(`GO/AO`, "두 컬럼의 몫"). 둘 다 사유가 그럴듯했지만 결과는 같았다:
+ * 감사 문서에 있는 공식 컬럼이 expected 에서 빠져 **대조가 그만큼 무력해졌다**.
+ * A안은 "미지원 공식 지표도 hold" 이므로 제외할 이유가 애초에 없다 — 등재하면 hold 로 닫힌다.
+ *
+ * 이 집합들은 비워 둔 채로 **참조는 유지**한다. 재도입하면 expected 가 줄고 actual 은 그대로라
+ * `extra` 가 생겨 즉시 RED 가 되며, size 0 게이트가 한 번 더 잡는다.
  */
-const DERIVED_RATIO = new Set(["GO/AO"]);
+export const DERIVED_RATIO = new Set([]);
 
 /**
  * 공식 컬럼 임의 제외는 **금지**다(삼순 12차 P0). 종전에 `Wgs`·`Wgr` 을 "W 로 통합" 이라며

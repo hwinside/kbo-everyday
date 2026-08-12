@@ -120,6 +120,20 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
+    name: "m1e9 파생 비율 제외 통로 재도입(`GO/AO`) — 공식 컬럼 우회 제외로 completeness 약화",
+    file: EXPECTED_PARSER,
+    from: "export const DERIVED_RATIO = new Set([]);",
+    to: 'export const DERIVED_RATIO = new Set(["GO/AO"]);',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1e10 `GO/AO` 공식 컬럼 삭제 — 비율 지표 질문이 generic LLM 으로 샌다",
+    file: METRIC_INVENTORY,
+    from: '  { code: "GO/AO", source: "hitter", terms: ["땅볼뜬공비율", "땅볼뜬공", "go/ao"] },\n',
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
     name: "m1f hold 판정을 옛 hasStat 축으로 회귀 — 지표 목록 밖 alias 미포착",
     file: PIPELINE,
     from: "    if (isCareerLeaderboardHoldScope(question)) return \"history_hold\";",

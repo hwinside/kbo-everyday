@@ -56,6 +56,10 @@ export const KBO_OFFICIAL_METRIC_COLUMNS: readonly KboOfficialMetricColumn[] = [
   { code: "GO", source: "hitter", terms: ["땅볼"] },
   { code: "AO", source: "hitter", terms: ["뜬공"] },
   { code: "GW RBI", source: "hitter", terms: ["결승타", "결승타점"] },
+  // ⚠️ `GO/AO` 는 감사 문서(타자 세부·투수 세부)에 실린 공식 컬럼이다(삼순 13차 P0).
+  // 두 컬럼의 몫이라는 이유로 parser 에서 제외했었는데, 공식 컬럼을 임의 제외하는 통로 자체가
+  // completeness 를 약화시킨다. A안대로 hold 결속만 하면 되므로 그냥 등재한다.
+  { code: "GO/AO", source: "hitter", terms: ["땅볼뜬공비율", "땅볼뜬공", "go/ao"] },
   { code: "BB/K", source: "hitter", terms: ["볼넷삼진비율"] },
   { code: "P/PA", source: "hitter", terms: ["타석당투구수"] },
   { code: "ISOP", source: "hitter", terms: ["순장타율", "isop"] },

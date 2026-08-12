@@ -36,7 +36,11 @@ import {
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
-import { DOCUMENTED_EXCLUSIONS, parseExpectedColumns } from "./kbo-metric-inventory-expected.mjs";
+import {
+  DERIVED_RATIO,
+  DOCUMENTED_EXCLUSIONS,
+  parseExpectedColumns,
+} from "./kbo-metric-inventory-expected.mjs";
 import {
   KBO_OFFICIAL_GENERAL_TERMS,
   KBO_OFFICIAL_METRIC_COLUMNS,
@@ -198,13 +202,25 @@ check("P0: 감사 문서 expected-set 과 inventory 가 missing/extra 0 (독립 
   assert.deepEqual(missing, [], `공식 컬럼 누락: ${missing.join(", ")}`);
   assert.deepEqual(extra, [], `감사 문서에 없는 컬럼: ${extra.join(", ")}`);
 });
-check("P0: expected parser 의 공식 컬럼 임의 제외 0 (삼순 12차 P0)", () => {
-  // 종전에 `Wgs`·`Wgr` 을 "W 로 통합" 이라며 parser 에서 빼 completeness 를 약화시켰다.
-  // 제외는 이 대조를 무력화하는 유일한 구멍이므로 항상 비어 있어야 한다.
+check("P0: expected parser 의 공식 컬럼 제외 통로 전부 0 (삼순 12·13차 P0)", () => {
+  // 제외를 두 번 넣었다 — `Wgs`/`Wgr`("W 로 통합"), `GO/AO`("두 컬럼의 몫"). 사유는 달랐지만
+  // 결과는 같았다: 감사 문서의 공식 컬럼이 expected 에서 빠져 대조가 그만큼 무력해졌다.
+  // 제외 통로는 **하나도** 있어서는 안 된다.
   assert.equal(
     DOCUMENTED_EXCLUSIONS.size, 0,
     `공식 컬럼을 임의 제외했다: ${[...DOCUMENTED_EXCLUSIONS.keys()].join(", ")}`,
   );
+  assert.equal(
+    DERIVED_RATIO.size, 0,
+    `파생 비율이라며 공식 컬럼을 제외했다: ${[...DERIVED_RATIO].join(", ")}`,
+  );
+});
+check("P0: 비율 파생 공식 컬럼(`GO/AO`)도 hold 에 결속된다 (삼순 13차 exact)", () => {
+  assert.ok(KBO_OFFICIAL_METRIC_COLUMNS.some((c) => c.code === "GO/AO"), "GO/AO 가 inventory 에 없다");
+  for (const q of ["통산 땅볼뜬공비율 1위 누구야?", "역대 GO/AO 순위"]) {
+    assert.equal(isCareerLeaderboardAsk(q), true, q);
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
+  }
 });
 check("P0: 선발승·구원승 공식 컬럼이 hold 에 결속된다 (삼순 12차 exact)", () => {
   for (const code of ["Wgs", "Wgr"]) {
