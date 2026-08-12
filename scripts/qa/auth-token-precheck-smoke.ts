@@ -26,12 +26,20 @@ import { join } from "node:path";
 import type { User } from "@supabase/supabase-js";
 import {
   _clearDeadTokenCache,
+  _clearInFlight,
   decodeJwtExpMs,
   isKnownDeadToken,
   markTokenDead,
   passesLocalPrecheck,
   verifyAccessTokenWith,
 } from "../../src/lib/auth/token-precheck";
+
+// verified-user → supabase/admin 은 import 시점에 env 를 요구하므로 스텁 후 동적 import
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://auth-precheck-test.supabase.co";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
+type ExtractFn = (all: Array<{ name: string; value: string }>) => string | null;
+let extractAccessTokenFromCookies!: ExtractFn;
 
 let failed = 0;
 function assert(label: string, cond: boolean, detail?: unknown) {
@@ -68,6 +76,8 @@ function stubGetUser(
 }
 
 async function main() {
+  extractAccessTokenFromCookies = (await import("../../src/lib/auth/verified-user"))
+    .extractAccessTokenFromCookies;
   // --- T1: expired token → local reject, zero remote calls
   _clearDeadTokenCache();
   {
@@ -77,6 +87,11 @@ async function main() {
     assert("T1b expired token made no Supabase call", log.calls === 0, log);
     assert("T1c decodeJwtExpMs reads exp", decodeJwtExpMs(EXPIRED) !== null);
     assert("T1d passesLocalPrecheck false for expired", !passesLocalPrecheck(EXPIRED));
+    // 경계: exp 시각부터는 즉시 거절 — forward slack 금지 (삼순 2차 리뷰)
+    const atExp = makeJwt({ sub: "u1", exp: Math.floor(NOW / 1000) });
+    assert("T1e token at exact exp rejected (no forward slack)", !passesLocalPrecheck(atExp, NOW));
+    const justExpired = makeJwt({ sub: "u1", exp: Math.floor((NOW - 1_000) / 1000) });
+    assert("T1f token expired 1s ago rejected", !passesLocalPrecheck(justExpired, NOW));
   }
 
   // --- T2: non-JWT garbage → local reject, zero remote calls
@@ -137,6 +152,56 @@ async function main() {
     assert("T6b dead expires after TTL", !isKnownDeadToken(LIVE, NOW + 16 * 60_000));
   }
 
+  // --- T8: single-flight — concurrent same-token verifications share ONE call
+  _clearDeadTokenCache();
+  _clearInFlight();
+  {
+    const log: CallLog = { calls: 0 };
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slowFn = async (_token: string) => {
+      log.calls++;
+      await gate;
+      return { data: { user: FAKE_USER }, error: null };
+    };
+    const p1 = verifyAccessTokenWith(slowFn, LIVE);
+    const p2 = verifyAccessTokenWith(slowFn, LIVE);
+    const p3 = verifyAccessTokenWith(slowFn, LIVE);
+    release();
+    const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+    assert("T8a concurrent same-token → exactly one Supabase call", log.calls === 1, log);
+    assert("T8b all callers get the user", r1?.id === "u1" && r2?.id === "u1" && r3?.id === "u1");
+    // 해소 후에는 새 호출이 다시 나간다(영구 캐시 아님)
+    const r4 = await verifyAccessTokenWith(slowFn, LIVE);
+    assert("T8c after settle a fresh call goes out", log.calls === 2 && r4?.id === "u1", log);
+  }
+
+  // --- T9: cookie access-token extraction is local-only parsing (no client)
+  {
+    const session = JSON.stringify({ access_token: LIVE, refresh_token: "r" });
+    const plain = [{ name: "sb-abcdefgh-auth-token", value: session }];
+    assert("T9a plain JSON cookie parsed", extractAccessTokenFromCookies(plain) === LIVE);
+    const b64 = "base64-" + Buffer.from(session).toString("base64url");
+    assert(
+      "T9b base64- cookie parsed",
+      extractAccessTokenFromCookies([{ name: "sb-abcdefgh-auth-token", value: b64 }]) === LIVE,
+    );
+    const half = Math.ceil(b64.length / 2);
+    const chunked = [
+      { name: "sb-abcdefgh-auth-token.1", value: b64.slice(half) },
+      { name: "sb-abcdefgh-auth-token.0", value: b64.slice(0, half) },
+    ];
+    assert("T9c chunked cookies joined in index order", extractAccessTokenFromCookies(chunked) === LIVE);
+    assert(
+      "T9d unrelated cookies ignored",
+      extractAccessTokenFromCookies([{ name: "other", value: "x" }]) === null,
+    );
+    assert(
+      "T9e malformed cookie → null (fail-close)",
+      extractAccessTokenFromCookies([{ name: "sb-abcdefgh-auth-token", value: "{not json" }]) === null,
+    );
+  }
+
   // --- T7: route binding — guarded routes must use the guard, not raw getUser
   {
     const root = join(__dirname, "..", "..");
@@ -148,6 +213,7 @@ async function main() {
       "src/app/api/leaderboard/my-snapshot/route.ts",
       "src/app/api/setup/route.ts",
       "src/app/api/avatar/upload/route.ts",
+      "src/app/api/venue-stories/[id]/view/route.ts",
     ];
     for (const rel of guardedRoutes) {
       const src = readFileSync(join(root, rel), "utf8");
@@ -164,10 +230,14 @@ async function main() {
       "T7c verified-user routes getUser through verifyAccessTokenWith",
       /verifyAccessTokenWith\(/.test(vu),
     );
-    // 쿠키 fallback도 /auth/v1/user 직접 호출 금지 (getSession은 로컬)
+    // 쿠키 fallback은 순수 쿠키 파싱만 — auth-js 클라이언트 금지(getSession은
+    // 만료 임박 시 /auth/v1/token refresh를 내보낸다 — 삼순 2차 리뷰)
     assert(
-      "T7d cookie fallback reads session locally (getSession), no auth.getUser()",
-      /getSession\(\)/.test(vu) && !/auth\.getUser\(\)/.test(vu),
+      "T7d cookie fallback parses cookies directly — no getSession/createServerClient",
+      /extractAccessTokenFromCookies\(/.test(vu) &&
+        !/getSession\(/.test(vu) &&
+        !/createServerClient/.test(vu) &&
+        !/auth\.getUser\(\)/.test(vu),
     );
   }
 

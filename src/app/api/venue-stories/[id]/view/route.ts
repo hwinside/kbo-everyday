@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase, getSupabaseAdmin } from "@/lib/supabase/admin";
+import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { verifyAccessToken } from "@/lib/auth/verified-user";
 import {
   resolveViewerKey,
   isVenueStoryViewKind,
@@ -45,11 +46,9 @@ export async function POST(
   let userId: string | null = null;
   const token = typeof body.accessToken === "string" ? body.accessToken.trim() : "";
   if (token && process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    const {
-      data: { user },
-      error,
-    } = await getSupabaseAdmin().auth.getUser(token);
-    if (!error && user) userId = user.id;
+    // sendBeacon 경로라 클라가 실패를 못 멈춤 — dead-token 가드 경유가 유일한 방어.
+    const user = await verifyAccessToken(token);
+    if (user) userId = user.id;
   }
 
   const viewerKey = resolveViewerKey(userId, body.guestId);

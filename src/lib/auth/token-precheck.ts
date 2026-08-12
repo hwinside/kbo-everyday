@@ -21,7 +21,6 @@ import type { User } from "@supabase/supabase-js";
 //     out (fail-open to retry).
 // ---------------------------------------------------------------------------
 
-const EXP_SLACK_MS = 30_000; // tolerate small clock skew before rejecting
 const DEAD_TOKEN_TTL_MS = 15 * 60_000; // cache window per dead token
 const DEAD_TOKEN_MAX_ENTRIES = 5_000; // hard cap (per warm serverless instance)
 
@@ -47,7 +46,11 @@ export function passesLocalPrecheck(token: string, nowMs = Date.now()): boolean 
   if (token.split(".").length !== 3) return false;
   const expMs = decodeJwtExpMs(token);
   if (expMs === null) return true; // let Supabase decide unusual-but-JWT-shaped tokens
-  return expMs + EXP_SLACK_MS > nowMs;
+  // No forward slack: a token at/past exp can never validate — reject NOW.
+  // (Slack here would let already-expired tokens hit /auth/v1/user for its
+  // duration — 삼순 2차 리뷰 지적. Clock-behind skew merely delays the local
+  // reject boundary; Supabase remains the authority for live tokens.)
+  return expMs > nowMs;
 }
 
 function tokenKey(token: string): string {
@@ -101,6 +104,16 @@ type GetUserFn = (
   token: string,
 ) => Promise<{ data: { user: User | null }; error: { status?: number; code?: string } | null }>;
 
+// Single-flight: concurrent verifications of the SAME token share one
+// in-flight Supabase call instead of each firing /auth/v1/user (a burst of
+// parallel requests from one stale client was the observed pattern).
+const inFlight = new Map<string, Promise<User | null>>();
+
+/** Test hook: reset single-flight state between smoke scenarios. */
+export function _clearInFlight(): void {
+  inFlight.clear();
+}
+
 /** Core verifier with an injectable Supabase call (unit-testable). */
 export async function verifyAccessTokenWith(
   getUserFn: GetUserFn,
@@ -111,14 +124,26 @@ export async function verifyAccessTokenWith(
   if (!passesLocalPrecheck(token, nowMs)) return null;
   if (isKnownDeadToken(token, nowMs)) return null;
 
-  const { data, error } = await getUserFn(token);
-  if (error || !data.user) {
-    // Only cache rejections whose error CODE proves the session is dead.
-    // 429/408/5xx/network errors or codeless 4xx stay retryable.
-    if (error?.code && DEAD_TOKEN_ERROR_CODES.has(error.code)) {
-      markTokenDead(token, nowMs);
+  const key = tokenKey(token);
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const task = (async () => {
+    const { data, error } = await getUserFn(token);
+    if (error || !data.user) {
+      // Only cache rejections whose error CODE proves the session is dead.
+      // 429/408/5xx/network errors or codeless 4xx stay retryable.
+      if (error?.code && DEAD_TOKEN_ERROR_CODES.has(error.code)) {
+        markTokenDead(token, nowMs);
+      }
+      return null;
     }
-    return null;
+    return data.user;
+  })();
+  inFlight.set(key, task);
+  try {
+    return await task;
+  } finally {
+    inFlight.delete(key);
   }
-  return data.user;
 }
