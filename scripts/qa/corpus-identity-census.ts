@@ -39,7 +39,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { verifyCorpusPlayerIdentity, type CorpusIdentityVerdict } from "../../src/lib/baseball-qa/rag/corpus-identity";
-import { computeRosterIdentityFingerprint } from "./roster-identity-fingerprint";
+import { fingerprintOfTuples, rosterIdentityTuples } from "./roster-identity-fingerprint";
 
 type Roster = { name: string; kboId: string; birthDate?: string };
 type IdentityInput = Parameters<typeof verifyCorpusPlayerIdentity>[0];
@@ -223,7 +223,11 @@ async function main(): Promise<void> {
       // ⚠️ 게이트가 비교하는 지문은 **신원 multiset**(name·kboId·birthDate)이다.
       //   파일 전체 해시를 게이트로 쓰면 스탯·사진 등 매일 갱신에도 전건 FAIL 이 된다(#1162 실측).
       //   파일 해시는 provenance 참고용으로만 남긴다.
-      rosterIdentitySha256: computeRosterIdentityFingerprint(roster),
+      rosterIdentitySha256: fingerprintOfTuples(rosterIdentityTuples(roster)),
+      // 기준 신원 multiset **원문** — 지문 drift 시 CI 가 corpus 없이 영향 판정을 하려면
+      // 해시만으로는 안 되고 기준 튜플 원문이 필요하다(roster-identity-impact.ts).
+      // smoke 가 이 원문과 rosterIdentitySha256 의 결속을 검증한다(원문 변조 방어).
+      rosterIdentityTuples: rosterIdentityTuples(roster),
       rosterFileSha256AtBuild: sha256(rosterRaw),
       rosterPlayers: roster.length,
       // ⚠️ base = PR base(merge-base) 커밋. 이 PR 의 중간 커밋이 아니다.

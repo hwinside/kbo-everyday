@@ -644,6 +644,15 @@ function verifyCensusIntegrity(): void {
   const storedTuples = census.rosterIdentityTuples;
   assert.ok(Array.isArray(storedTuples) && storedTuples.length > 500,
     "census 에 기준 신원 multiset 원문(rosterIdentityTuples)이 없다 — census 를 재생성해야 한다");
+  // ⚠️ **재생성 경로 결속** (삼순 NO-GO 2026-08-12): 현재 커밋된 census.json 에 필드가 있어도
+  //   생성기가 emission 을 안 하면 **다음 T7 재생성에서 필드가 사라져** 게이트가 깨진다.
+  //   실제로 exact 38abaf09c 가 그 상태였다(json 에만 있고 생성기 미배선). 생성기 소스의
+  //   emission 을 직접 결속해 그 퇴행을 커밋 시점에 잡는다(mutation H-1 이 이 assert 를 검증).
+  const generatorSource = fs.readFileSync(path.join(process.cwd(), "scripts/qa/corpus-identity-census.ts"), "utf8");
+  assert.ok(
+    generatorSource.includes("rosterIdentityTuples: rosterIdentityTuples(roster),"),
+    "census 생성기가 기준 튜플 원문(rosterIdentityTuples)을 산출물에 기록하지 않는다 — 다음 T7 재생성에서 필드가 사라져 게이트가 깨진다",
+  );
   assert.equal(fingerprintOfTuples(storedTuples), census.rosterIdentitySha256,
     "census 의 기준 튜플 원문이 저장된 지문과 결속되지 않는다 — 원문 변조로 영향 판정을 우회할 수 있다");
   const currentTuples = rosterIdentityTuples(

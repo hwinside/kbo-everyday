@@ -29,6 +29,8 @@ const TARGET = "src/lib/baseball-qa/rag/corpus-identity.ts";
 const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
 /** 영향 판정 모듈 — G 축 변이의 대상(완전 무인화 계약). */
 const IMPACT_TARGET = "scripts/qa/roster-identity-impact.ts";
+/** census 생성기 — H 축 변이의 대상(재생성 경로 결속). */
+const CENSUS_GENERATOR_TARGET = "scripts/qa/corpus-identity-census.ts";
 
 /** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
@@ -347,6 +349,18 @@ const MUTATIONS = [
       'return { affected: true, reason: "affected_census_entities", affectedNames: [...changedNames] };',
     ),
   },
+
+  // ── H. 재생성 경로 결속 (삼순 NO-GO 2026-08-12 — exact 38abaf09c 가 실제로 이 결함이었다) ─
+  //   census.json 에 필드가 있어도 생성기가 emission 을 안 하면 다음 T7 재생성에서
+  //   필드가 사라져 게이트가 깨진다. 런타임 변이(G 축)는 이걸 못 잡는다 — 생성기는
+  //   게이트 실행 경로에서 안 도며, smoke 의 소스 결속 assert 가 잡는다.
+  {
+    id: "H-1",
+    name: "생성기 emission 제거(재생성 시 기준 튜플 원문 소실)",
+    expect: "census 생성기가 기준 튜플 원문(rosterIdentityTuples)을 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace("      rosterIdentityTuples: rosterIdentityTuples(roster),\n", ""),
+  },
 ];
 
 function runGate() {
@@ -366,6 +380,7 @@ function main() {
     [TARGET, readFileSync(TARGET, "utf8")],
     [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
     [IMPACT_TARGET, readFileSync(IMPACT_TARGET, "utf8")],
+    [CENSUS_GENERATOR_TARGET, readFileSync(CENSUS_GENERATOR_TARGET, "utf8")],
   ]);
   let red = 0;
   let failed = 0;
