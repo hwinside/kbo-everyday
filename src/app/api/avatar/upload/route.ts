@@ -7,7 +7,7 @@ const MAX_SIZE = 500 * 1024; // 500KB
 
 /** 서버사이드 아바타 업로드 — service role로 RLS 우회 */
 export async function POST(req: NextRequest) {
-  // 1. 인증 확인 (anon key로 유저 세션 검증)
+  // 1. 인증 확인 (dead-token 가드 경유 — 무효 토큰의 Supabase 호출 차단)
   const authHeader = req.headers.get("authorization");
   if (!authHeader) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

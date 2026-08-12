@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
-import { verifyAccessToken } from '@/lib/auth/verified-user'
+import { verifyAccessToken, getVerifiedUserIdFromCookies } from '@/lib/auth/verified-user'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,6 +16,7 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(request: NextRequest) {
   // 1. 현재 유저 식별 (Authorization 헤더 우선, 쿠키 fallback) — my-rank 와 동일 패턴
+  // 두 경로 모두 dead-token 가드 경유 (쿠키 fallback 재호출 구멍 차단)
   let userId: string | null = null
   const authHeader = request.headers.get('authorization')
   if (authHeader?.startsWith('Bearer ')) {
@@ -26,19 +25,7 @@ export async function GET(request: NextRequest) {
     userId = user?.id ?? null
   }
   if (!userId) {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() { return cookieStore.getAll() },
-          setAll() {},
-        },
-      },
-    )
-    const { data: { user } } = await supabase.auth.getUser()
-    userId = user?.id ?? null
+    userId = await getVerifiedUserIdFromCookies()
   }
 
   if (!userId) {

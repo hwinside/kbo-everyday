@@ -12,10 +12,13 @@ import type { User } from "@supabase/supabase-js";
 //
 //  1. exp precheck — a JWT whose `exp` is already past can never validate;
 //     reject locally without a network call.
-//  2. negative cache — a token Supabase definitively rejected (4xx) belongs
-//     to a destroyed session and cannot come back to life; remember its hash
-//     and short-circuit repeats. Transient failures (5xx/network) are NOT
-//     cached so an auth outage never locks users out.
+//  2. negative cache — a token Supabase definitively rejected (a closed set
+//     of Auth error codes: bad_jwt / session_expired / …) belongs to a
+//     destroyed session and cannot come back to life; remember its hash and
+//     short-circuit repeats. Anything else — 429 rate limit, 408 timeout,
+//     5xx, network errors, or a 4xx without a definitive code — is NOT
+//     cached, so an Auth outage or rate-limit burst never locks live users
+//     out (fail-open to retry).
 // ---------------------------------------------------------------------------
 
 const EXP_SLACK_MS = 30_000; // tolerate small clock skew before rejecting
@@ -82,9 +85,21 @@ export function _clearDeadTokenCache(): void {
   deadTokens.clear();
 }
 
+/** Auth error codes that PROVE the token/session is dead and can never
+ * validate again. Per Supabase docs, judge by `error.code`, not HTTP status —
+ * status alone also matches 429 over_request_rate_limit / 408 request_timeout,
+ * which must stay retryable. Closed set; expand only with evidence. */
+const DEAD_TOKEN_ERROR_CODES = new Set([
+  "bad_jwt",
+  "session_expired",
+  "session_not_found",
+  "user_not_found",
+  "user_banned",
+]);
+
 type GetUserFn = (
   token: string,
-) => Promise<{ data: { user: User | null }; error: { status?: number } | null }>;
+) => Promise<{ data: { user: User | null }; error: { status?: number; code?: string } | null }>;
 
 /** Core verifier with an injectable Supabase call (unit-testable). */
 export async function verifyAccessTokenWith(
@@ -98,10 +113,9 @@ export async function verifyAccessTokenWith(
 
   const { data, error } = await getUserFn(token);
   if (error || !data.user) {
-    // Only cache definitive auth rejections (4xx). Transient failures
-    // (5xx / network errors without a status) must stay retryable.
-    const status = error?.status;
-    if (typeof status === "number" && status >= 400 && status < 500) {
+    // Only cache rejections whose error CODE proves the session is dead.
+    // 429/408/5xx/network errors or codeless 4xx stay retryable.
+    if (error?.code && DEAD_TOKEN_ERROR_CODES.has(error.code)) {
       markTokenDead(token, nowMs);
     }
     return null;

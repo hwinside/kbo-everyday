@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
   try {
     const admin = getSupabaseAdmin();
 
-    // 토큰으로 유저 검증 (로컬 exp 프리체크 + dead-token 캐시)
+    // 토큰으로 유저 검증
     const user = await verifyAccessToken(token);
     if (!user) {
       return NextResponse.json({ ok: false }, { status: 401 });

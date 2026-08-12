@@ -1,22 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { verifyAccessToken } from "@/lib/auth/verified-user";
+import { verifyAccessToken, getVerifiedUserIdFromCookies } from "@/lib/auth/verified-user";
+import { normalizeNickname, validateNickname } from "@/lib/validation/nickname";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { nickname, team_id, invite_code, favorite_players } = body;
+    const trimmedNickname = normalizeNickname(nickname);
 
-    if (!nickname || !team_id) {
+    if (!trimmedNickname || !team_id) {
       return NextResponse.json({ error: "닉네임과 팀을 선택해주세요" }, { status: 400 });
+    }
+    const validationError = validateNickname(trimmedNickname);
+    if (validationError) {
+      return NextResponse.json({ error: validationError }, { status: 400 });
     }
 
     // 1. 세션에서 유저 확인 (쿠키 또는 Authorization 헤더)
     let userId: string | null = null;
 
-    // Authorization 헤더로 먼저 시도
+    // Authorization 헤더로 먼저 시도 (dead-token 가드 경유)
     const authHeader = request.headers.get("authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
@@ -24,21 +28,9 @@ export async function POST(request: NextRequest) {
       userId = user?.id ?? null;
     }
 
-    // 쿠키로 fallback
+    // 쿠키로 fallback (동일 가드 경유 — 무효 토큰 재호출 구멍 차단)
     if (!userId) {
-      const cookieStore = await cookies();
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll() { return cookieStore.getAll(); },
-            setAll() { /* read-only */ },
-          },
-        }
-      );
-      const { data: { user } } = await supabase.auth.getUser();
-      userId = user?.id ?? null;
+      userId = await getVerifiedUserIdFromCookies();
     }
 
     if (!userId) {
@@ -50,7 +42,6 @@ export async function POST(request: NextRequest) {
     // 2. 서버측 닉네임 중복 조회 (현재 DB에 nickname UNIQUE constraint 없음 — 애플리케이션 레벨에서 강제)
     // 단, race condition 완전 차단은 도 떨어질 수 있으니 (동시 두 사람이 같은 닉으로 POST 가능)
     // 후속 마이그레이션으로 UNIQUE 추가 예정. 그때까지는 상필 수준 차단.
-    const trimmedNickname = nickname.trim();
     // 2026-04-19: case-insensitive 비교 (ktwiz/Ktwiz 중복 실사례)
     const { data: dupCheck, error: dupError } = await admin
       .from("profiles")
