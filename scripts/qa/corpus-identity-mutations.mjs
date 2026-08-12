@@ -27,6 +27,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 const TARGET = "src/lib/baseball-qa/rag/corpus-identity.ts";
 /** 신원 지문 모듈 — F 축 변이의 대상(#1162 재발 방지). */
 const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
+/** 영향 판정 모듈 — G 축 변이의 대상(완전 무인화 계약). */
+const IMPACT_TARGET = "scripts/qa/roster-identity-impact.ts";
+/** census 생성기 — H 축 변이의 대상(재생성 경로 결속). */
+const CENSUS_GENERATOR_TARGET = "scripts/qa/corpus-identity-census.ts";
+/** smoke 자신 — I-1(영향판정 universe 를 rows 로 회귀)의 대상. */
+const SMOKE_TARGET = "scripts/qa/baseball-qa-corpus-identity-smoke.ts";
 
 /** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
@@ -289,6 +295,121 @@ const MUTATIONS = [
       "(value: unknown): unknown => (value === null || value === undefined ? null : String(value))",
     ),
   },
+
+  // ── G. 영향 판정 축 (2026-08-12 완전 무인화 — 하린아빠 지시) ───────────────────
+  //   과소(영향을 비영향으로) = stale census 통과 / 과대(전부 영향) = 무인화 회귀.
+  //   양쪽 모두 smoke 의 영향 판정 계약 섹션이 잡아야 한다.
+  {
+    id: "G-1",
+    name: "census entity 교집합 무시(영향을 전부 비영향으로 — 과소)",
+    expect: "census entity 동명이인 생성이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "const affectedNames = [...changedNames].filter((name) => censusEntities.has(name));",
+      "const affectedNames = [];",
+    ),
+  },
+  {
+    id: "G-2",
+    name: "multiset 대칭차 무력화(변경 감지 0 — 모든 drift 통과)",
+    expect: "multiset 대칭차가 변경을 놓쳤다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const diff: string[] = [];",
+      "  return [];\n  const diff: string[] = [];",
+    ),
+  },
+  {
+    id: "G-3",
+    name: "판정불가 튜플 fail-open(이름 못 읽으면 비영향 처리)",
+    expect: "판정 불가 튜플이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      'if (name === null) return { affected: true, reason: "unparseable", affectedNames: [] };',
+      "if (name === null) continue;",
+    ),
+  },
+  {
+    // ⚠️ 기대 assertion 은 "빈 entity 집합" 쪽이다. 빈 기준 multiset 쪽은 가드가 없어도
+    //   "전원 추가 = census entity 포함" 이라 우연히 affected 가 돼 변별력이 없다(실측).
+    id: "G-4",
+    name: "빈 입력 fail-close 제거",
+    expect: "빈 entity 집합이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "if (baseTuples.length === 0 || currentTuples.length === 0 || censusEntities.size === 0) {",
+      "if (false) {",
+    ),
+  },
+  {
+    id: "G-5",
+    name: "전부 영향 판정(과대 — 무인화 회귀)",
+    expect: "비영향 변경(신규 이름이 census entity 밖)이 영향으로 과판정됐다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "return { affected: false, changedNames: [...changedNames] };",
+      'return { affected: true, reason: "affected_census_entities", affectedNames: [...changedNames] };',
+    ),
+  },
+
+  // ── H. 재생성 경로 결속 (삼순 NO-GO 2026-08-12 — exact 38abaf09c 가 실제로 이 결함이었다) ─
+  //   census.json 에 필드가 있어도 생성기가 emission 을 안 하면 다음 T7 재생성에서
+  //   필드가 사라져 게이트가 깨진다. 런타임 변이(G 축)는 이걸 못 잡는다 — 생성기는
+  //   게이트 실행 경로에서 안 도며, smoke 의 소스 결속 assert 가 잡는다.
+  {
+    id: "H-1",
+    name: "생성기 emission 제거(재생성 시 기준 튜플 원문 소실)",
+    expect: "census 생성기가 기준 튜플 원문(rosterIdentityTuples)을 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace("      rosterIdentityTuples: rosterIdentityTuples(roster),\n", ""),
+  },
+
+  // ── I. 영속 universe 축 (삼순 시간축 NO-GO 2026-08-12) ──────────────────────
+  {
+    // rows 기반 universe 로 되돌리는 회귀: 이탈→재생성→동일 이름 재등록이 false-GREEN.
+    // ⚠️ 대상은 smoke 가 아니라 **실제 게이트 경로인 judge 함수**다 — smoke 인라인을
+    //   변이하는 첫 판은 GREEN 이었다(지문 일치 상태엔 drift 경로가 안 돌아서). judge 를
+    //   변이하면 합성 시간축 census 를 태우는 smoke 의 judged.status 계약이 잡는다.
+    id: "I-1",
+    name: "judge 의 universe 를 rows 로 회귀(시간축 false-GREEN)",
+    expect: "시간축 결함: corpus 이름 선수 이탈→재생성→동일 이름 재등록이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, impactUniverseFromCensus(census));",
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, new Set(((census as { rows?: { entity: string }[] }).rows ?? []).map((row) => String(row.entity))));",
+    ),
+  },
+  {
+    // 생성기가 universe 를 roster 필터 **후**(latest = ∩ roster)에서 만드는 회귀:
+    // universe ⊇ rows 는 유지되지만 로스터 밖 corpus 이름이 빠져 시간축이 뚫린다.
+    // 이번 T7 재생성에서는 root 631 = rows 631 이라 결과가 같으므로, 검출은
+    // 생성기 소스 결속(assert)이 담당한다 — 산출물로는 구분되지 않는다(아래 expect).
+    id: "I-2",
+    name: "생성기 universe 를 roster 필터 후 생성(영속성 파괴)",
+    expect: "census 생성기가 영속 universe 를 roster 필터 전 전체 root 에서 만들지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(
+      "    corpusRootEntitySet.add(String(record.entity));\n    if (!byName.has(record.entity)) continue;",
+      "    if (!byName.has(record.entity)) continue;\n    corpusRootEntitySet.add(String(record.entity));",
+    ),
+  },
+  {
+    id: "I-3",
+    name: "universe emission 제거(재생성 시 universe 소실)",
+    expect: "census 생성기가 영속 universe(corpusRootEntities)를 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(/^.*corpusRootEntities: \[\.\.\.corpusRootEntitySet\].*\n/m, ""),
+  },
+  {
+    id: "I-4",
+    name: "universe 해시 결속 제거(원문 변조 fail-open)",
+    expect: "universe 원문 변조가 해시 결속에 걸리지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  if (computed !== census.corpusRootEntitiesSha256) {",
+      "  if (false) {",
+    ),
+  },
 ];
 
 function runGate() {
@@ -307,6 +428,9 @@ function main() {
   const originals = new Map([
     [TARGET, readFileSync(TARGET, "utf8")],
     [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
+    [IMPACT_TARGET, readFileSync(IMPACT_TARGET, "utf8")],
+    [CENSUS_GENERATOR_TARGET, readFileSync(CENSUS_GENERATOR_TARGET, "utf8")],
+    [SMOKE_TARGET, readFileSync(SMOKE_TARGET, "utf8")],
   ]);
   let red = 0;
   let failed = 0;
