@@ -25,10 +25,10 @@ const MUTATIONS = [
     to: "    hasStat &&",
   },
   {
-    name: "m2 지표 축 판정 무력화 (어휘 순회 제거) — 통산 질문 전량 누수",
+    name: "m2 지표 축 판정 무력화 (항상 false) — 통산 질문 전량 누수",
     file: PIPELINE,
-    from: "  for (const term of KBO_OFFICIAL_METRIC_TERMS) {",
-    to: "  for (const term of []) {",
+    from: "  return KBO_OFFICIAL_METRIC_TERMS.some((term) => normalized.includes(term));",
+    to: "  return false;",
   },
   {
     name: "m3 지표 축 판정 과확대 (항상 true) — 서술·주관 질문까지 hold 로 과차단",
@@ -43,28 +43,10 @@ const MUTATIONS = [
     to: 'const normalized = question.normalize("NFKC").toLowerCase();',
   },
   {
-    name: "m4b 뒤결합 화이트리스트 무력화(항상 통과) — 다의어 과차단 재발",
+    name: "m4b(A안) 지표어 뒤결합 판정 재도입 — `역대 완봉승 1위` 등 실제 목표 자연어가 누락된다",
     file: PIPELINE,
-    from: "      if (tail.length > 0 && CAREER_METRIC_TAIL.test(tail)) return true;",
-    to: "      if (tail.length >= 0) return true;",
-  },
-  {
-    name: "m4c 뒤결합에 빈 문자열 허용 — `역대 최고의 보살은?` 이 hold 로 과차단",
-    file: PIPELINE,
-    from: "      if (tail.length > 0 && CAREER_METRIC_TAIL.test(tail)) return true;",
-    to: "      if (CAREER_METRIC_TAIL.test(tail) || tail.length === 0) return true;",
-  },
-  {
-    name: "m4d 뒤결합 앵커 제거(^ 삭제) — 문장 뒤쪽 아무 위치의 `1위` 에 붙어 과차단",
-    file: PIPELINE,
-    from: "const CAREER_METRIC_TAIL = /^(?:\\d+\\s*위|최다|최고|선두|순위|랭킹|톱|top|기록|보유|누구|누가|몇)/;",
-    to: "const CAREER_METRIC_TAIL = /(?:\\d+\\s*위|최다|최고|선두|순위|랭킹|톱|top|기록|보유|누구|누가|몇)/;",
-  },
-  {
-    name: "m4e 조사 벗기기 제거 — `역대 최다 안타는 누구야?` 가 generic LLM 으로 샌다",
-    file: PIPELINE,
-    from: "      if (particle) tail = tail.slice(particle[0].length);",
-    to: "",
+    from: "  return KBO_OFFICIAL_METRIC_TERMS.some((term) => normalized.includes(term));",
+    to: "  return KBO_OFFICIAL_METRIC_TERMS.some((term) => {\n    const at = normalized.indexOf(term);\n    if (at < 0) return false;\n    const tail = normalized.slice(at + term.length);\n    return /^(?:\\d+\\s*위|최다|최고|선두|순위|랭킹|누구|누가)/.test(tail);\n  });",
   },
   {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",
