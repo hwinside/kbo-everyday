@@ -22,8 +22,8 @@ const MUTATIONS = [
   {
     name: "m1 intent 직접결속 제거 — 양성 intent가 history_hold로 회귀",
     file: PIPELINE,
-    from: '    if (careerIntent) return "career_leaderboard";',
-    to: '    if (careerIntent) return "history_hold";',
+    from: '    if (resolveCareerMetricIntent(question)) return "career_leaderboard";',
+    to: '    if (resolveCareerMetricIntent(question)) return "history_hold";',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -50,7 +50,7 @@ const MUTATIONS = [
   {
     name: "m1g(C안) intent 결속을 hold 뒤로 밀어냄 — 본목적(안타 1위 실답)이 hold 로 회귀",
     file: PIPELINE,
-    from: "    const careerIntent = resolveCareerLeaderboardIntent(question);\n    if (careerIntent) return \"career_leaderboard\";",
+    from: '    if (resolveCareerMetricIntent(question)) return "career_leaderboard";',
     to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
