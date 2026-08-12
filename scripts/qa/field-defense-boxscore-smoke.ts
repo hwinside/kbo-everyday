@@ -188,25 +188,25 @@ const awayLineupKT: LineupEntry[] = [
   check("중간 이동 최원준 미포함", !names.includes("최원준"), `got ${names.join(",")}`);
 }
 
-// ── 케이스 6: normalizeFieldPosition 직접 검증 (투수/DH/순수 대타 제외) ──
+// ── 케이스 6: normalizeFieldPosition 직접 검증 (투수/DH 제외 + 순수 대타 슬롯 상속) ──
 {
-  console.log("[case6] 투수·DH·순수 대타는 수비 그림에서 제외");
+  console.log("[case6] 투수·DH 제외 + 순수 대타는 빠진 선수 위치 상속");
   const box: BatterRecord[] = [
     batter(1, "투", "켈리"),      // 투수 → 제외
-    batter(2, "지", "오지환"),    // 지명 → 제외
-    batter(3, "타", "이재원", true), // 순수 대타(수비 미정) → 제외
+    batter(2, "지", "오지환"),    // 지명 → 제외 (선발 SS 최원준 슬롯이지만 지명은 상속 대상 아님)
+    batter(3, "타", "이재원", true), // 순수 대타 → 선발 LF(안현민) 위치 상속
     batter(4, "포", "박동원"),    // C
   ];
   const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
   check("C = 박동원", defenderAt(s, "C") === "박동원", `got ${defenderAt(s, "C")}`);
   check("투수 켈리 미포함", !(s ?? []).some(d => d.name === "켈리"));
   check("지명 오지환 미포함", !(s ?? []).some(d => d.name === "오지환"));
-  check("순수 대타 이재원 미포함", !(s ?? []).some(d => d.name === "이재원"));
+  check("순수 대타 이재원 = LF 상속(선발 안현민 슬롯)", defenderAt(s, "LF") === "이재원", `got ${defenderAt(s, "LF")}`);
 }
 
-// ── 케이스 7: 순수 대타·대주가 현재 슬롯이면 stale 선발 수비를 되살리지 않음 ──
+// ── 케이스 7: 순수 대타·대주 = stale 선발을 되살리지 않되, 현재 선수가 빠진 위치를 상속 ──
 {
-  console.log("[case7] 순수 타/주 뒤 stale 선발 억제");
+  console.log("[case7] 순수 타/주 → stale 선발 억제 + 현재 선수 슬롯 상속");
   const box: BatterRecord[] = [
     batter(2, "SS", "최원준"),
     batter(2, "타", "대타", true),
@@ -214,10 +214,10 @@ const awayLineupKT: LineupEntry[] = [
     batter(3, "주", "대주자", true),
   ];
   const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
-  check("순수 대타 뒤 선발 SS 미노출", defenderAt(s, "SS") === undefined, `got ${defenderAt(s, "SS")}`);
-  check("순수 대주 뒤 선발 LF 미노출", defenderAt(s, "LF") === undefined, `got ${defenderAt(s, "LF")}`);
-  check("대타 미포함", !(s ?? []).some(d => d.name === "대타"));
-  check("대주자 미포함", !(s ?? []).some(d => d.name === "대주자"));
+  check("SS = 대타 (BoxScore 직전 entry 최원준 SS 상속)", defenderAt(s, "SS") === "대타", `got ${defenderAt(s, "SS")}`);
+  check("LF = 대주자 (BoxScore 직전 entry 안현민 LF 상속)", defenderAt(s, "LF") === "대주자", `got ${defenderAt(s, "LF")}`);
+  check("교체된 최원준 미포함", !(s ?? []).some(d => d.name === "최원준"));
+  check("교체된 안현민 미포함", !(s ?? []).some(d => d.name === "안현민"));
 }
 
 // ── 케이스 8: 선발 선수가 포지션 이동하면 옛 위치 fallback과 이름 중복을 막음 ──
@@ -233,6 +233,57 @@ const awayLineupKT: LineupEntry[] = [
   check("옛 CF 위치 미노출", defenderAt(s, "CF") === undefined, `got ${defenderAt(s, "CF")}`);
   check("선발 RF 홍창기 stale 미노출", !names.includes("홍창기"), `got ${names.join(",")}`);
   check("선수명 중복 0", new Set(names).size === names.length, `got ${names.join(",")}`);
+}
+
+// ── 케이스 9: 실제 제보 경기(20260812LGWO0) 운영 원문 — 순수 대/주가 끝까지 미갱신 ──
+// 9회초 키움 수비: 2번 안치홍(1B)→김웅빈 '대', 7번 임병욱(CF)→최주환 '대'→박채울 '주'.
+// KBO BoxScore가 경기 종료까지 두 교체 선수의 수비 위치를 갱신하지 않아
+// 1B/CF가 빈 자리로 렌더된 실사고(2026-08-12 하린아빠 제보). 상속으로 채워져야 한다.
+const homeLineupWO: LineupEntry[] = [
+  lineupEntry(1, "2B", "서건창"),
+  lineupEntry(2, "1B", "안치홍"),
+  lineupEntry(3, "DH", "데이비슨"),
+  lineupEntry(4, "RF", "박찬혁"),
+  lineupEntry(5, "LF", "추재현"),
+  lineupEntry(6, "C", "김건희"),
+  lineupEntry(7, "CF", "임병욱"),
+  lineupEntry(8, "SS", "권혁빈"),
+  lineupEntry(9, "3B", "여동욱"),
+];
+{
+  // 2026-08-12 22:20 Production 캡처의 home boxScore 행·타순·포지션·순서 그대로.
+  const homeBoxWO: BatterRecord[] = [
+    batter(1, "二", "서건창"),
+    batter(2, "一", "안치홍"),
+    batter(2, "대", "김웅빈", true),   // 2번 현재 = 순수 대타, 수비 위치 미갱신
+    batter(3, "DH", "데이비슨"),
+    batter(4, "RF", "박찬혁"),
+    batter(5, "LF", "추재현"),
+    batter(6, "C", "김건희"),
+    batter(7, "CF", "임병욱"),
+    batter(7, "대", "최주환", true),   // 7번 중간 교체(대타)
+    batter(7, "주", "박채울", true),   // 7번 현재 = 순수 대주, 수비 위치 미갱신
+    batter(8, "SS", "권혁빈"),
+    batter(9, "三", "여동욱"),
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: awayLineup, home: homeLineupWO },
+    boxScore: { awayBatters: [], homeBatters: homeBoxWO, awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const gameWO = { status: "live", inning: "9회초", awayScore: 3, homeScore: 4, awayTeamId: 5, homeTeamId: 10 };
+  const s = deriveGameState(undefined, gameWO, detail).defensiveSide;
+  console.log("[case9] 실제 제보 경기(20260812LGWO0) 순수 대/주 미갱신 → 슬롯 상속 (홈 9회초 수비)");
+  check("1B = 김웅빈 (안치홍 슬롯 상속)", defenderAt(s, "1B") === "김웅빈", `got ${defenderAt(s, "1B")}`);
+  check("CF = 박채울 (임병욱 슬롯 상속, 최주환 아님)", defenderAt(s, "CF") === "박채울", `got ${defenderAt(s, "CF")}`);
+  check("교체된 안치홍 미포함", !(s ?? []).some(d => d.name === "안치홍"));
+  check("교체된 임병욱 미포함", !(s ?? []).some(d => d.name === "임병욱"));
+  check("중간 교체 최주환 미포함", !(s ?? []).some(d => d.name === "최주환"));
+  check("수비수 정확히 8명", (s?.length ?? 0) === 8, `got ${s?.length}`);
+  const positionsSeen = (s ?? []).map(d => d.position);
+  check("포지션 중복 0", new Set(positionsSeen).size === positionsSeen.length, `got ${positionsSeen.join(",")}`);
+  check("2B = 서건창", defenderAt(s, "2B") === "서건창", `got ${defenderAt(s, "2B")}`);
+  check("DH 데이비슨 미포함", !(s ?? []).some(d => d.name === "데이비슨"));
 }
 
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);
