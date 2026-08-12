@@ -168,6 +168,41 @@ test("전송: fetch 실패/5xx 응답이면 false — 호출부 재시도 mark �
   );
 });
 
+// ── this 결속 회귀 (2026-08-12 프로덕션 결함): 브라우저 fetch 는 this-sensitive 다.
+// `fetchFn: fetch` 를 그대로 넘기면 sendVenueStoryViewPing 의 `opts.fetchFn(...)` 호출에서
+// this=opts 가 되어 Chromium "Illegal invocation" / WebKit TypeError 가 동기 발생 →
+// 모든 조회 ping(click·impression)이 조용히 유실됐다. 전송 헬퍼가 브라우저와 동일하게
+// this 를 검사하는 fetch 로도 성공해야 하며, 클라 배선은 반드시 bind 해서 넘겨야 한다.
+test("전송: this-sensitive fetch(브라우저 시맨틱)로도 전송이 성공한다 — unbound 호출 회귀", async () => {
+  const HOST = { tag: "window" };
+  function thisSensitiveFetch(this: unknown): Promise<Response> {
+    if (this !== undefined && this !== globalThis && this !== HOST) {
+      // 브라우저(Blink/WebKit)와 동일한 브랜드 체크 실패 — 동기 throw
+      throw new TypeError("Illegal invocation");
+    }
+    return Promise.resolve(new Response(null, { status: 204 }));
+  }
+  // 1) 배선 계약: view-tracker-client 는 fetch 를 bind 해서 넘긴다(소스 고정)
+  const client = readFileSync(
+    new URL("../../src/lib/venue-stories/view-tracker-client.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(client, /fetchFn:\s*fetch\.bind\(globalThis\)/);
+  assert.doesNotMatch(client, /fetchFn:\s*fetch\s*,/);
+  // 2) 실행 계약: bind 된 this-sensitive fetch 는 성공, unbound 는 실패(false)여야
+  //    이 mock 이 실제 브라우저 시맨틱을 재현하고 있음이 증명된다.
+  const bound = thisSensitiveFetch.bind(HOST) as unknown as typeof fetch;
+  assert.equal(
+    await sendVenueStoryViewPing({ url: "/v", payload, fetchFn: bound }),
+    true,
+  );
+  const unbound = thisSensitiveFetch as unknown as typeof fetch;
+  assert.equal(
+    await sendVenueStoryViewPing({ url: "/v", payload, fetchFn: unbound }),
+    false, // 종전 결함 재현: unbound 는 동기 TypeError → 유실(false)
+  );
+});
+
 test("RPC 오류 응답은 500이며 뷰어 click은 타이머 없이 즉시 전송", () => {
   assert.equal(venueStoryViewRecordStatus(null), 204);
   assert.equal(venueStoryViewRecordStatus({ message: "db down" }), 500);
