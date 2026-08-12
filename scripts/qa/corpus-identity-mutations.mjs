@@ -265,15 +265,28 @@ const MUTATIONS = [
     apply: (s) => s.replace("  tuples.sort();\n", ""),
   },
   {
-    // 삼순 재리뷰 blocker 그 자체: 지문이 값을 가공(trim)하면 whitespace 변경이
+    // 삼순 1차 blocker 그 자체: 지문이 값을 가공(trim)하면 whitespace 변경이
     // loader 귀속을 바꾸는데도 지문은 그대로라 stale census 가 false-GREEN 된다.
     id: "F-8",
     name: "trim 재도입(raw exact 계약 파괴)",
     expect: "지문이 값을 가공(trim)하고 있다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace(
-      "value === null || value === undefined ? null : String(value)",
-      "value === null || value === undefined ? null : String(value).trim()",
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      '(value: unknown): unknown => (value === undefined ? null : (typeof value === "string" ? value.trim() : value))',
+    ),
+  },
+  {
+    // 삼순 2차 blocker 그 자체: String() 강제변환이 되살아나면 kboId 의
+    // string↔number 타입 변화(`"53006" → 53006`)를 지문이 못 본다 —
+    // validator 는 둘 다 허용하고 loader 는 원타입을 산출물에 넣기 때문에 실질 변화다.
+    id: "F-9",
+    name: "String() 강제변환 재도입(타입 raw exact 파괴)",
+    expect: "지문이 값을 강제변환(String)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      "(value: unknown): unknown => (value === null || value === undefined ? null : String(value))",
     ),
   },
 ];

@@ -718,8 +718,16 @@ function verifyRosterFingerprintContract(): void {
     computeRosterIdentityFingerprint([{ name: "a", kboId: "b", birthDate: `c\n["d","e","f"]` }]),
     "필드에 주입한 개행+직렬화 모양 문자열이 행 경계를 위조한다 — 튜플 경계 충돌이 살아났다",
   );
+  // ─ 타입 raw exact (삼순 2차 blocker) ────────────────────────────────────────────
+  // validator 는 kboId 의 string/number 를 모두 허용하고 loader 는 원타입을 산출물에 넣는다.
+  // 지문이 String() 강제변환을 하면 `"53006" → 53006` 타입 변화가 false-GREEN 된다.
+  assert.notEqual(
+    computeRosterIdentityFingerprint([{ name: "x", kboId: "53006", birthDate: "2000-01-01" }]),
+    computeRosterIdentityFingerprint([{ name: "x", kboId: 53006, birthDate: "2000-01-01" }]),
+    "kboId string↔number 타입 변화가 지문에 반영되지 않았다 — 지문이 값을 강제변환(String)하고 있다",
+  );
   // 결측(null/undefined)은 JSON null 로 결정론적으로 표기된다 — 표현 불가능한 undefined 만 예외이고
-  // 문자열 값은 어떤 것도 가공되지 않는다("" 와 null 은 서로 다른 지문).
+  // 그 외 어떤 값도(타입 포함) 가공되지 않는다("" 와 null 은 서로 다른 지문).
   assert.equal(
     canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: undefined }),
     canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: null }),
@@ -730,7 +738,7 @@ function verifyRosterFingerprintContract(): void {
     canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: null }),
     '"" 와 null 이 같은 지문으로 뭉쳤다 — raw exact 가 아니다',
   );
-  ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종 · whitespace RED 3종 · 충돌 방지 2종");
+  ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종 · whitespace RED 3종 · 타입 RED 1종 · 충돌 방지 2종");
 }
 
 function run(): void {

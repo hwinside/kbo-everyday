@@ -33,12 +33,14 @@ export type RosterIdentitySource = {
 
 /**
  * 한 선수의 신원 튜플을 canonical 문자열로 만든다 — **raw 값의 JSON 배열**.
- * 가공 금지: trim·소문자화·포맷 통일을 하지 않는다(위 raw exact 계약).
- * 결측(null/undefined)은 JSON null 로 고정 표기한다 — JSON 은 undefined 를 표현할 수
- * 없으므로 이 둘의 구분은 지문 계약 밖이고, 그 외 어떤 문자열 값도 원형 그대로 보존된다.
+ * 가공 금지: trim·소문자화·포맷 통일뿐 아니라 **타입 강제변환도 하지 않는다**
+ * (삼순 2차 blocker, 2026-08-12): validator 는 kboId 의 string/number 를 모두 허용하고
+ * loader 는 원타입을 그대로 쓰므로, `String()` 을 끼우면 `"53006" → 53006` 같은
+ * 타입 변화가 loader 산출물을 바꾸는데 지문은 그대로라 false-GREEN 된다.
+ * JSON 원값을 그대로 직렬화하고, JSON 이 표현할 수 없는 undefined 만 null 로 매핑한다.
  */
 export function canonicalIdentityTuple(player: RosterIdentitySource): string {
-  const field = (value: unknown): string | null => (value === null || value === undefined ? null : String(value));
+  const field = (value: unknown): unknown => (value === undefined ? null : value);
   return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);
 }
 
