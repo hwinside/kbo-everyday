@@ -2276,7 +2276,12 @@ export function routeQuestion(
   // 공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
   if (
     hasCareerMetricTerm(question) &&
-    !hasTeam &&
+    // ⚠️ `!hasTeam` 을 두면 **팀 한정 통산 질문이 샌다**(삼순 #1164 4차 P0 실측):
+    // `LG 통산 홈런 1위`·`기아 역대 탈삼진 1위`·`삼성 통산 <지표>이 가장 많은 선수` 형태로
+    // 288 조합을 돌려 165건이 `llm_scope_gate` 로 갔다. 팀을 붙였다고 리그 통산 리더보드를
+    // 답할 수 있게 되는 것이 아니다 — 오히려 구단별 통산 정본은 더 없다.
+    // 구단 **당해 시즌 수치**는 아래 team 축이 그대로 처리한다. 여기서 먼저 닫히는 것은
+    // `통산·역대 + 공식 지표` 조합뿐이다.
     !hasPlayerReference(tokens, players) &&
     isCareerLeaderboardAsk(question)
   ) {

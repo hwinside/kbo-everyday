@@ -12,7 +12,7 @@
  * 이 게이트가 지키는 것:
  *   ⓪ (A안 계약) 판정은 **어휘 포함 여부만** — 지표어 뒤 결합을 보지 않는다. 다의어 과차단은
  *      수용하고, 누수 0 을 우선한다. 근거는 `hasCareerMetricTerm` 주석의 실측 트레이드오프.
- *   ① 공식 컬럼 어휘 전수 × 통산 요청 형태 → generic LLM 도달 0
+ *   ① 공식 컬럼 어휘 전수 × 통산 요청 형태(팀 한정 포함) → generic LLM 도달 0
  *   ② 반대편 과차단 0 — 지표 어휘가 없는 서술·주관 질문은 그대로 LLM 범위 판정
  *   ③ 판정 어휘는 감사 문서 expected-set 과 missing/extra 0 (독립 근거 대조)
  *   ④ 기존 경로 무회귀 (선수 지목·구단 수치·당해 시즌)
@@ -61,6 +61,18 @@ const CAREER_OPEN_ASK_FORMS = [
   (term: string) => `역대 ${term}승 1위 누구야?`,
 ];
 
+/**
+ * **팀을 붙인 통산 질문** — 라우팅에 `!hasTeam` 이 있으면 여기서 대량 누수한다
+ * (삼순 #1164 4차 P0 실측: 288 조합 중 165건이 `llm_scope_gate`).
+ * 팀을 붙였다고 리그 통산 리더보드를 답할 수 있게 되는 것이 아니다 — 구단별 통산 정본은
+ * 더 없다. 구단 **당해 시즌** 수치는 team 축이 그대로 처리하므로 무회귀는 아래에서 따로 본다.
+ */
+const CAREER_TEAM_ASK_FORMS = [
+  (term: string) => `LG 통산 ${term} 1위 누구야?`,
+  (term: string) => `기아 역대 ${term} 최다 누구야?`,
+  (term: string) => `삼성 통산 ${term}이 가장 많은 선수 누구야?`,
+];
+
 /** generic LLM 으로 내려가는 라우트 — 이 축에서는 하나도 나와서는 안 된다. */
 const LLM_ROUTES: QuestionRoute[] = ["llm_scope_gate"];
 
@@ -81,7 +93,7 @@ function check(name: string, fn: () => void): void {
 check("P0: 공식 컬럼 어휘 × 요청 형태 전수 — generic LLM 도달 0", () => {
   // ⚠️ 조합 수를 **게이트가 계산해 출력한다**(삼순 #1164 3차 지적). 종전에는 보고문에
   // 손으로 쓴 수치(480)가 게이트의 실제 열거(4×96=384)와 어긋났다. 숫자의 SSOT 는 이 출력이다.
-  const forms = [...CAREER_ASK_FORMS, ...CAREER_OPEN_ASK_FORMS];
+  const forms = [...CAREER_ASK_FORMS, ...CAREER_OPEN_ASK_FORMS, ...CAREER_TEAM_ASK_FORMS];
   const leaks: string[] = [];
   let combinations = 0;
   for (const term of KBO_OFFICIAL_METRIC_TERMS) {
@@ -235,6 +247,32 @@ check("P0: inventory 전 컬럼이 판정까지 도달한다 (등재-판정 괴�
         `${column.code}/${term} 미결속`,
       );
     }
+  }
+});
+
+check("P0: 팀 한정 통산·역대도 어휘 전수 fail-close (`!hasTeam` 제거 결속)", () => {
+  const leaks: string[] = [];
+  for (const term of KBO_OFFICIAL_METRIC_TERMS) {
+    for (const form of CAREER_TEAM_ASK_FORMS) {
+      const question = form(term);
+      const route = routeQuestion(question, [], PLAYERS);
+      if (route !== "history_hold") leaks.push(`${question} -> ${route}`);
+    }
+  }
+  assert.deepEqual(
+    leaks, [],
+    `팀 한정 통산 질문 ${leaks.length}건이 fail-close 되지 않는다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
+  );
+});
+
+check("무회귀: 구단 **당해 시즌** 수치는 여전히 team 축이 처리한다", () => {
+  // `!hasTeam` 제거가 구단 축을 삼키면 안 된다. 통산·역대 표지가 없는 구단 수치는 그대로다.
+  for (const question of ["LG 팀타율 얼마야?", "기아 홈런 몇 개야?", "두산 순위 어때?"]) {
+    assert.equal(routeQuestion(question, [], PLAYERS), "team_record", question);
+  }
+  // 구단 서술·평가도 그대로 LLM 범위 판정이다(과차단 회귀 방지).
+  for (const question of ["삼성 라이온즈 홈런 잘 치는 팀이야?", "LG 주장 누구야?"]) {
+    assert.equal(routeQuestion(question, [], PLAYERS), "llm_scope_gate", question);
   }
 });
 

@@ -49,6 +49,12 @@ const MUTATIONS = [
     to: "  return KBO_OFFICIAL_METRIC_TERMS.some((term) => {\n    const at = normalized.indexOf(term);\n    if (at < 0) return false;\n    const tail = normalized.slice(at + term.length);\n    return /^(?:\\d+\\s*위|최다|최고|선두|순위|랭킹|누구|누가)/.test(tail);\n  });",
   },
   {
+    name: "m4c `!hasTeam` 재도입 — `LG 통산 홈런 1위` 등 팀 한정 통산 질문이 샌다",
+    file: PIPELINE,
+    from: "    hasCareerMetricTerm(question) &&\n",
+    to: "    hasCareerMetricTerm(question) &&\n    !hasTeam &&\n",
+  },
+  {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",
     file: INVENTORY,
     from: '  { code: "SO-pit", source: "pitcher", terms: ["탈삼진"] },\n',
