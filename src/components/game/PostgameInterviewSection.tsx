@@ -120,6 +120,7 @@ export default function PostgameInterviewSection({
                       <Link
                         key={`${player.kboId}:${player.name}`}
                         href={`/community/players/${player.kboId}`}
+                        prefetch={false}
                         className={className}
                         style={style}
                       >
