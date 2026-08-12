@@ -1,4 +1,5 @@
 import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
+import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
 
 /**
@@ -13,6 +14,13 @@ import { canonicalKboId } from "@/lib/utils/resolve-player";
  */
 export const FULL_ENTRY_BATTER_IDS: readonly string[] = Object.freeze(
   (batterStats2026 as Array<Record<string, unknown>>).map((row) =>
+    canonicalKboId(row.kboId as string | number | null),
+  ),
+);
+
+/** 투수 `full=1` 응답도 같은 방식으로 exact current-universe ID 전집합에 결속한다. */
+export const FULL_ENTRY_PITCHER_IDS: readonly string[] = Object.freeze(
+  (pitcherStats2026 as Array<Record<string, unknown>>).map((row) =>
     canonicalKboId(row.kboId as string | number | null),
   ),
 );

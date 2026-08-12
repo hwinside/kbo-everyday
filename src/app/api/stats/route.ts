@@ -7,7 +7,7 @@ import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import defenseStats2026 from "@/lib/constants/stats-2026-defense.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
 import type { RosterPlayer } from "@/types/api";
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { canonicalKboId, resolvePlayer } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 import {
   mergeFullEntry,
@@ -67,15 +67,17 @@ async function fetchHtml(url: string, signal?: AbortSignal): Promise<string> {
   return readTextWithSignal(res, signal);
 }
 
-function parseTable(html: string): string[][] {
-  const rows: string[][] = [];
+type ParsedTableRow = string[] & { playerId?: string };
+
+function parseTable(html: string): ParsedTableRow[] {
+  const rows: ParsedTableRow[] = [];
   const tbodyMatch = html.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i);
   if (!tbodyMatch) return rows;
   const tbody = tbodyMatch[1];
   const trMatches = tbody.match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
   if (!trMatches) return rows;
   for (const tr of trMatches) {
-    const cells: string[] = [];
+    const cells = [] as ParsedTableRow;
     const tdMatches = tr.match(/<td[^>]*>([\s\S]*?)<\/td>/gi);
     if (tdMatches) {
       for (const td of tdMatches) {
@@ -83,6 +85,9 @@ function parseTable(html: string): string[][] {
         cells.push(text);
       }
     }
+    // KBO 기록실 이름 링크의 공식 playerId를 보존한다. 동명이인은 name+team으로 풀 수 없다.
+    const playerId = tr.match(/\bplayerId=(\d+)\b/i)?.[1];
+    if (playerId) cells.playerId = playerId;
     if (cells.length > 0) rows.push(cells);
   }
   return rows;
@@ -380,10 +385,13 @@ export function applyRunnerStats<T extends PlayerStat>(
   });
 }
 
-function parsePitcherRow(c: string[], roster: RosterPlayer[]): PlayerStat {
+function parsePitcherRow(c: ParsedTableRow, roster: RosterPlayer[]): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
-  const found = resolvePlayer({ name, team }, roster, { context: "api/stats:pitcher" });
+  const officialId = canonicalKboId(c.playerId);
+  const found = officialId
+    ? { kboId: officialId }
+    : resolvePlayer({ name, team }, roster, { context: "api/stats:pitcher" });
   return {
     rank: 0,
     name,

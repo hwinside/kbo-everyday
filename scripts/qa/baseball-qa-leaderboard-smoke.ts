@@ -83,10 +83,11 @@ check("intent 양성 전수는 라우터와 동일 SSOT로 구조화 경로에 �
   }
 });
 check("아직 스냅샷 계약이 없는 통산 지표는 LLM 대신 hold 유지", () => {
-  for (const q of ["역대 홈런 1위 누구야?", "역대 최고 타율은 누구야?"]) {
-    assert.equal(isCareerLeaderboardAsk(q), true, q);
-    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
-  }
+  // 홈런 등 counting 지표는 #1169에서 공식 스냅샷 계약이 생겼다.
+  // rate 지표(타율)는 여전히 구성요소 재계산 계약이 없어 fail-close 해야 한다.
+  const q = "역대 최고 타율은 누구야?";
+  assert.equal(isCareerLeaderboardAsk(q), true, q);
+  assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
 });
 // ⚠️ 삼순 5차 P0: `STAT_WORDS`(선수 개인 기록축 토큰)에 없는 지표 alias 가 hold 조건을
 // 통째로 건너뛰고 generic LLM 으로 새면, 숫자 가드로도 못 막는 **이름 단답 환각**이 난다.
@@ -136,10 +137,11 @@ check("P0(C안): 지원 intent 는 hold 보다 먼저 결속된다 (본목적)",
     assert.equal(routeQuestion(q, [], PLAYERS), "career_leaderboard", q);
   }
 });
-check("P0(C안): 미지원 지표는 main 과 같은 경로로 간다 (이 PR 이 바꾸지 않는다)", () => {
-  // `통산 홈런 1위` 는 main 에서도 hold 였고 이 PR 에서도 hold 다 — 확장이 아니다.
+check("P0(C안): 기존 hold 범위는 유지하되 새 공식 지표 intent만 구조화 경로로 연다", () => {
+  // #1159의 안타 전용 resolver는 그대로 부분집합이고, #1169의 카탈로그 resolver가 홈런을 연다.
   assert.equal(resolveCareerLeaderboardIntent("통산 홈런 1위 누구야?"), null);
-  assert.equal(routeQuestion("통산 홈런 1위 누구야?", [], PLAYERS), "history_hold");
+  assert.equal(routeQuestion("통산 홈런 1위 누구야?", [], PLAYERS), "career_leaderboard");
+  assert.equal(routeQuestion("통산 타율 1위 누구야?", [], PLAYERS), "history_hold");
 });
 
 check("야구 인물 질문은 결정론 차단이 아니라 위임이다 (캡처 exact 포함)", () => {
@@ -425,10 +427,11 @@ checkAsync("E2E: 캡처 exact가 history_hold/LLM이 아니라 kbo_structured로
     loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
     getCache: async () => null, setCache: async () => {},
     callLlm: async () => { genericLlm++; throw new Error("통산 정본 질문은 LLM 금지"); },
-    fetchCareerLeaderboard: async () => ({
-      metric: "hits", label: "안타", asOf: "2026-08-11T14:00:00Z", baselineThroughSeason: 2025,
+    fetchCareerMetricLeaderboard: async () => ({
+      table: "batter", metric: "hits", label: "안타", unit: "안타",
+      from: 1, to: 1, asOf: "2026-08-11T14:00:00Z", baselineThroughSeason: 2025,
       sourceUrl: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
-      leaders: [{ kboId: "72443", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
+      rows: [{ rank: 1, kboId: "72443", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
     }),
     reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
   } as unknown as QaDeps;
