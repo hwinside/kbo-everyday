@@ -101,7 +101,7 @@ function PlayerMarker({
   return (
     <div className={`absolute flex flex-col items-center gap-0 z-10 ${className}`}>
       {playerHref ? (
-        <Link href={playerHref} className="flex flex-col items-center gap-0">
+        <Link href={playerHref} prefetch={false} className="flex flex-col items-center gap-0">
           {content}
         </Link>
       ) : (

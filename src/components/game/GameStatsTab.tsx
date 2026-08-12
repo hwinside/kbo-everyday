@@ -419,7 +419,7 @@ export default function GameStatsTab({
                       ) : isName ? (() => {
                         const href = getPlayerHref(b.name, team.id);
                         return href ? (
-                          <Link href={href} className="hover:underline">
+                          <Link href={href} prefetch={false} className="hover:underline">
                             {String(b[col.key])}
                           </Link>
                         ) : (
@@ -482,7 +482,7 @@ export default function GameStatsTab({
                   return (
                     <th key={`phead-${i}-${p.name}`} className="py-1.5 px-0.5 text-center font-medium min-w-[30px]">
                       {href ? (
-                        <Link href={href} className="hover:underline">
+                        <Link href={href} prefetch={false} className="hover:underline">
                           {head}
                         </Link>
                       ) : (

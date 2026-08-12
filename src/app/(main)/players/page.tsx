@@ -314,7 +314,7 @@ function PlayersPageContent() {
       {/* 선수 목록 */}
       <div className="space-y-2 pb-24">
         {filtered.slice(0, visibleCount).map((player, i) => (
-          <Link key={player.kboId || i} href={`/community/players/${player.kboId}`}>
+          <Link key={player.kboId || i} href={`/community/players/${player.kboId}`} prefetch={false}>
             <div className="flex items-center gap-3 rounded-xl bg-bg-secondary/50 px-4 py-3 active:bg-bg-tertiary transition-colors">
               <PlayerAvatar
                 name={player.name}

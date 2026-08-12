@@ -7927,5 +7927,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "사토시",
+    "kboId": "56474",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "74",
+    "team": "삼성",
+    "birthDate": "1998-05-28"
   }
 ]
