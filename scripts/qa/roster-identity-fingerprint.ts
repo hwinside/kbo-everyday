@@ -50,9 +50,22 @@ export function canonicalIdentityTuple(player: RosterIdentitySource): string {
  * join("\n") 은 안전하다 — 각 튜플이 JSON 직렬화라 raw 개행을 포함할 수 없다.
  */
 export function computeRosterIdentityFingerprint(roster: readonly RosterIdentitySource[]): string {
+  return fingerprintOfTuples(rosterIdentityTuples(roster));
+}
+
+/** 정렬된 canonical 튜플 목록 — census 가 기준 multiset 원문으로 저장하는 값. */
+export function rosterIdentityTuples(roster: readonly RosterIdentitySource[]): string[] {
   const tuples = roster.map(canonicalIdentityTuple);
   tuples.sort();
-  return createHash("sha256").update(tuples.join("\n")).digest("hex");
+  return tuples;
+}
+
+/**
+ * 튜플 목록 → 지문. **저장된 튜플 원문과 저장된 지문의 결속 검증**에도 쓴다 —
+ * 기준 multiset 원문을 변조해 영향 판정을 우회하는 경로를 막는다(지문이 원문을 고정).
+ */
+export function fingerprintOfTuples(sortedTuples: readonly string[]): string {
+  return createHash("sha256").update(sortedTuples.join("\n")).digest("hex");
 }
 
 /** 파일 내용(bytes/string) → 지문. JSON 포맷(들여쓰기·키 순서·개행)은 지문에 영향을 주지 않는다. */

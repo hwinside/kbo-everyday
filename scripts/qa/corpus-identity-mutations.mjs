@@ -27,6 +27,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 const TARGET = "src/lib/baseball-qa/rag/corpus-identity.ts";
 /** 신원 지문 모듈 — F 축 변이의 대상(#1162 재발 방지). */
 const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
+/** 영향 판정 모듈 — G 축 변이의 대상(완전 무인화 계약). */
+const IMPACT_TARGET = "scripts/qa/roster-identity-impact.ts";
 
 /** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
@@ -289,6 +291,62 @@ const MUTATIONS = [
       "(value: unknown): unknown => (value === null || value === undefined ? null : String(value))",
     ),
   },
+
+  // ── G. 영향 판정 축 (2026-08-12 완전 무인화 — 하린아빠 지시) ───────────────────
+  //   과소(영향을 비영향으로) = stale census 통과 / 과대(전부 영향) = 무인화 회귀.
+  //   양쪽 모두 smoke 의 영향 판정 계약 섹션이 잡아야 한다.
+  {
+    id: "G-1",
+    name: "census entity 교집합 무시(영향을 전부 비영향으로 — 과소)",
+    expect: "census entity 동명이인 생성이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "const affectedNames = [...changedNames].filter((name) => censusEntities.has(name));",
+      "const affectedNames = [];",
+    ),
+  },
+  {
+    id: "G-2",
+    name: "multiset 대칭차 무력화(변경 감지 0 — 모든 drift 통과)",
+    expect: "multiset 대칭차가 변경을 놓쳤다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const diff: string[] = [];",
+      "  return [];\n  const diff: string[] = [];",
+    ),
+  },
+  {
+    id: "G-3",
+    name: "판정불가 튜플 fail-open(이름 못 읽으면 비영향 처리)",
+    expect: "판정 불가 튜플이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      'if (name === null) return { affected: true, reason: "unparseable", affectedNames: [] };',
+      "if (name === null) continue;",
+    ),
+  },
+  {
+    // ⚠️ 기대 assertion 은 "빈 entity 집합" 쪽이다. 빈 기준 multiset 쪽은 가드가 없어도
+    //   "전원 추가 = census entity 포함" 이라 우연히 affected 가 돼 변별력이 없다(실측).
+    id: "G-4",
+    name: "빈 입력 fail-close 제거",
+    expect: "빈 entity 집합이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "if (baseTuples.length === 0 || currentTuples.length === 0 || censusEntities.size === 0) {",
+      "if (false) {",
+    ),
+  },
+  {
+    id: "G-5",
+    name: "전부 영향 판정(과대 — 무인화 회귀)",
+    expect: "비영향 변경(신규 이름이 census entity 밖)이 영향으로 과판정됐다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "return { affected: false, changedNames: [...changedNames] };",
+      'return { affected: true, reason: "affected_census_entities", affectedNames: [...changedNames] };',
+    ),
+  },
 ];
 
 function runGate() {
@@ -307,6 +365,7 @@ function main() {
   const originals = new Map([
     [TARGET, readFileSync(TARGET, "utf8")],
     [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
+    [IMPACT_TARGET, readFileSync(IMPACT_TARGET, "utf8")],
   ]);
   let red = 0;
   let failed = 0;

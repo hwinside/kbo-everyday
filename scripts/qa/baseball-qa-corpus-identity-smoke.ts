@@ -37,9 +37,12 @@ import {
 import {
   canonicalIdentityTuple,
   computeRosterIdentityFingerprint,
+  fingerprintOfTuples,
   fingerprintRosterFile,
+  rosterIdentityTuples,
   type RosterIdentitySource,
 } from "./roster-identity-fingerprint";
+import { classifyIdentityDrift, multisetSymmetricDiff, tupleName } from "./roster-identity-impact";
 
 type FixtureDocument = {
   entity: string;
@@ -67,6 +70,8 @@ type CensusFile = {
   corpusPhysicalLines: number;
   /** 신원 multiset(name·kboId·birthDate) 지문 — 게이트가 비교하는 값. */
   rosterIdentitySha256: string;
+  /** 기준 신원 multiset 원문 — 지문 drift 시 corpus 없는 CI 영향 판정의 입력. */
+  rosterIdentityTuples: string[];
   /** census 빌드 시점 로스터 파일 해시 — provenance 참고용. 게이트 비교 대상이 아니다. */
   rosterFileSha256AtBuild: string;
   /** PR base(merge-base) 커밋. 이 PR 안의 중간 커밋이 아니다. */
@@ -630,16 +635,31 @@ function verifyCensusIntegrity(): void {
   assert.ok(강준서, "census 에 강준서가 없다");
   assert.equal(강준서!.base, "rejected:category_absent", "listed 문서가 base 에서 분류 부재가 아니었다");
   assert.equal(강준서!.current, "assigned");
-  // census 의 로스터 **신원 지문**이 현재 repo 로스터와 같아야 한다.
-  // ⚠️ 파일 전체 해시 비교가 아니다(#1162 사고): 로스터는 봇이 매일 갱신하므로 파일 해시로 잡으면
-  //   신원 무관 갱신(스탯·사진·팀·등번호)에도 자동 PR 이 전건 FAIL 이다.
-  //   census 가 실제 소비하는 값은 (name, kboId, birthDate) 뿐이므로 그 multiset 지문이 기준이다.
-  //   신원이 진짜 바뀌면(선수 추가/제외/신원필드 변경) 여전히 재생성을 요구한다(fail-close).
-  assert.equal(
-    fingerprintRosterFile(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"))),
-    census.rosterIdentitySha256,
-    "census 의 신원 지문(rosterIdentitySha256)이 현재 로스터의 (name,kboId,birthDate) multiset 과 다르다 — 명단/신원이 바뀌었으므로 T7 에서 census 를 재생성해야 한다",
+  // census 의 로스터 **신원 지문** 대조 — 3단 계약(완전 무인화, 2026-08-12):
+  //   ① 기준 튜플 원문이 저장된 지문과 결속되는지 먼저 검증(원문 변조로 영향판정 우회 방어)
+  //   ② 현재 로스터 지문이 일치하면 PASS
+  //   ③ 불일치면 corpus 없이 판정 가능한 **영향 분류**로 갈린다(roster-identity-impact.ts):
+  //      변경된 이름이 census entity 와 교집합 0 → 판정 불변이 증명되므로 PASS(무인 통과),
+  //      교집합 있으면(동명이인 생성·corpus 대상 선수 신원 변경) T7 재생성 fail-close.
+  const storedTuples = census.rosterIdentityTuples;
+  assert.ok(Array.isArray(storedTuples) && storedTuples.length > 500,
+    "census 에 기준 신원 multiset 원문(rosterIdentityTuples)이 없다 — census 를 재생성해야 한다");
+  assert.equal(fingerprintOfTuples(storedTuples), census.rosterIdentitySha256,
+    "census 의 기준 튜플 원문이 저장된 지문과 결속되지 않는다 — 원문 변조로 영향 판정을 우회할 수 있다");
+  const currentTuples = rosterIdentityTuples(
+    JSON.parse(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8")),
   );
+  if (fingerprintOfTuples(currentTuples) !== census.rosterIdentitySha256) {
+    const censusEntities = new Set(census.rows.map((row) => row.entity));
+    const verdict = classifyIdentityDrift(storedTuples, currentTuples, censusEntities);
+    assert.equal(
+      verdict.affected, false,
+      `신원 변경이 census 판정에 영향을 준다(${verdict.affected ? `${verdict.reason}: ${verdict.affectedNames.join(", ")}` : ""}) — T7 에서 census 를 재생성해야 한다`,
+    );
+    if (!verdict.affected) {
+      console.log(`  ℹ️ 신원 지문 drift 수용 — 변경 이름 ${verdict.changedNames.length}명 전원 census 비영향(corpus 루트 부재): ${verdict.changedNames.slice(0, 8).join(", ")}${verdict.changedNames.length > 8 ? " …" : ""}`);
+    }
+  }
   ok(`census 정합성 — base(${census.baseCommit.slice(0, 9)}) ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
 }
 
@@ -741,12 +761,78 @@ function verifyRosterFingerprintContract(): void {
   ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종 · whitespace RED 3종 · 타입 RED 1종 · 충돌 방지 2종");
 }
 
+/**
+ * (영향 판정) **완전 무인화 계약** — corpus 없는 CI 가 신원 drift 를 분류한다.
+ * 양방향 고정: 비영향(신규/이탈 이름이 census entity 밖)은 PASS, 영향(동명이인 생성·
+ * corpus 대상 선수 신원 변경·이탈·판정불가)은 fail-close. 한쪽만 보면 무인화 회귀(과대)
+ * 또는 stale census 통과(과소)로 기운다. 입력은 실 census 에서 기계 추출한다.
+ */
+function verifyIdentityImpactContract(): void {
+  const censusEntities = new Set(census.rows.map((row) => row.entity));
+  assert.ok(censusEntities.size > 600, `census entity 가 비정상적으로 적다: ${censusEntities.size}`);
+  const base = census.rosterIdentityTuples;
+  const realEntity = census.rows[0].entity; // 실 census 에서 기계 추출한 corpus 루트 entity
+  assert.ok(censusEntities.has(realEntity));
+
+  // ─ 대칭차 자체 계약(변경 감지 누락 방어) ─────────────────────────────────
+  // ⚠️ 좋은 계약부터 본다(순서가 mutation 특정성의 일부). 대칭차가 무력화되면 아래
+  //   classify 시나리오가 연쇄로 뭉개져 어느 결함인지 구분되지 않는다(실측: G-2 뭉침).
+  const newcomer = canonicalIdentityTuple({ name: "미등록신인", kboId: "99999", birthDate: "2005-01-01" });
+  assert.ok(!censusEntities.has("미등록신인"), "전제 붕괴: 테스트 이름이 census entity 에 있다");
+  assert.deepEqual(multisetSymmetricDiff(base, base), [], "무변경인데 대칭차가 비어있지 않다");
+  assert.deepEqual(multisetSymmetricDiff(base, [...base, newcomer].sort()), [newcomer],
+    "multiset 대칭차가 변경을 놓쳤다 — 영향 판정의 입력이 비어 모든 drift 가 통과한다");
+  assert.deepEqual(multisetSymmetricDiff([...base, newcomer], base), [newcomer], "삭제 방향 대칭차 누락");
+
+  // ─ 비영향 측(무인 통과가 유지돼야 한다) ───────────────────────────────────
+  const addedNewcomer = classifyIdentityDrift(base, [...base, newcomer].sort(), censusEntities);
+  assert.equal(addedNewcomer.affected, false,
+    "비영향 변경(신규 이름이 census entity 밖)이 영향으로 과판정됐다 — 무인화가 회귀한다");
+  const removedNewcomer = classifyIdentityDrift([...base, newcomer].sort(), base, censusEntities);
+  assert.equal(removedNewcomer.affected, false, "census 밖 이름의 이탈이 영향으로 과판정됐다");
+
+  // ─ 영향 측(fail-close 가 유지돼야 한다) ─────────────────────────────────────
+  // 동명이인 생성: census entity 와 같은 이름의 신규 선수 → 후보수 1→2 → 판정 변경.
+  const doppelganger = canonicalIdentityTuple({ name: realEntity, kboId: "88888", birthDate: "2004-04-04" });
+  const addedDoppelganger = classifyIdentityDrift(base, [...base, doppelganger].sort(), censusEntities);
+  assert.equal(addedDoppelganger.affected, true,
+    "census entity 동명이인 생성이 영향으로 판정되지 않았다 — stale census 가 통과한다");
+  if (addedDoppelganger.affected) {
+    assert.equal(addedDoppelganger.reason, "affected_census_entities");
+    assert.deepEqual(addedDoppelganger.affectedNames, [realEntity]);
+  }
+  // corpus 대상 선수의 신원 필드(생년 등) 변경: 기준 튜플을 변경해 교체.
+  const entityTupleIndex = base.findIndex((tuple) => tupleName(tuple) === realEntity);
+  assert.ok(entityTupleIndex >= 0, "전제 붕괴: census entity 가 기준 multiset 에 없다");
+  const mutated = [...base];
+  mutated[entityTupleIndex] = canonicalIdentityTuple({ name: realEntity, kboId: "77777", birthDate: "1990-09-09" });
+  const changedEntity = classifyIdentityDrift(base, [...mutated].sort(), censusEntities);
+  assert.equal(changedEntity.affected, true,
+    "corpus 대상 선수의 신원 변경이 영향으로 판정되지 않았다");
+  // 이탈: census entity 선수가 로스터에서 빠지면 후보수 1→0 → 영향.
+  const removedEntity = classifyIdentityDrift(base, base.filter((_, index) => index !== entityTupleIndex), censusEntities);
+  assert.equal(removedEntity.affected, true, "corpus 대상 선수 이탈이 영향으로 판정되지 않았다");
+
+  // ─ fail-close 측 ────────────────────────────────────────────────────────────────
+  const broken = classifyIdentityDrift(base, [...base, "not-json-tuple"], censusEntities);
+  assert.equal(broken.affected, true, "판정 불가 튜플이 fail-close 되지 않았다");
+  if (broken.affected) assert.equal(broken.reason, "unparseable");
+  // ⚠️ 빈 기준 multiset 은 가드 제거 시에도 "전원 추가 = census entity 포함" 이라 우연히 affected 가
+  //   된다(변별력 없음). 가드 제거를 변별하는 건 **빈 entity 집합** 쪽이다 — diff 0·entity 0이면
+  //   가드 없는 구현은 비영향으로 떨어진다.
+  assert.equal(classifyIdentityDrift([], base, censusEntities).affected, true, "빈 기준 multiset 이 fail-close 되지 않았다");
+  assert.equal(classifyIdentityDrift(base, base, new Set()).affected, true, "빈 entity 집합이 fail-close 되지 않았다");
+
+  ok("신원 drift 영향 판정 — 대칭차 계약 3종 · 비영향 PASS 2종 · 영향 fail-close 3종 · 판정불가 3종");
+}
+
 function run(): void {
   verifyFixtureProvenance();
   // ⚠️ 지문 **계약**을 census 정합성보다 먼저 본다. census 정합성도 지문 함수를 쓰므로,
   //   함수 결함 시 순서가 반대면 모든 변이가 "census 재생성 필요" 한 문구로 뭉쳐
   //   어떤 결함인지 구분되지 않는다(실측: F 축 변이 6개가 같은 문구로 뭉쳤다).
   verifyRosterFingerprintContract();
+  verifyIdentityImpactContract();
   verifyCensusIntegrity();
   verifyBothLayouts();
   verifyLongCategoryBlock();
