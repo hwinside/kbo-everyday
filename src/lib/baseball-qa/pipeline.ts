@@ -2996,6 +2996,19 @@ async function answerSeasonRecordQuestion(
     if (!record || record.playerName !== candidate.name) {
       return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
     }
+    // ⚠️ **리더보드를 물었으면 개인값으로 답하지 않는다** (삼순 #1164 5차 P0).
+    // `최형우 통산 홈런 1위야?` 는 "1위인가"를 물었는데 이 경로가 개인 통산값(431)을
+    // 그대로 렌더해 `kbo_structured` 로 내보냈다 — 질문에 답하지 않은 **오답 변환**이다
+    // (main 도 같았다. 회귀는 아니지만 이 PR 이 닫겠다고 한 축이라 여기서 닫는다).
+    // 순위를 확정하려면 전체 리그 통산 순위표가 필요하고 그 정본은 아직 없다.
+    //
+    // 판정은 **새 룰을 만들지 않는다** — 이미 main 에 있는 `isCareerLeaderboardAsk`
+    // (`통산|역대|올타임` + `1위|누구|누가|최다|최고`)를 그대로 쓴다. 그 술어는 이 PR 이
+    // 건드리지 않는 닫힌 계약이고 mutation m9 로 잠겨 있다.
+    // 값을 묻는 형태(`몇 개야?`·`얼마야?`)는 이 술어에 걸리지 않아 실답이 보존된다.
+    if (isCareerLeaderboardAsk(question)) {
+      return settle(HISTORY_HOLD_ANSWER, "history_hold", "history_hold");
+    }
     const answer =
       intent.span.type === "series"
         ? composeCareerSeriesAnswer(candidate.name, intent.query.label, column, record)

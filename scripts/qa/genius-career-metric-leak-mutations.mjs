@@ -67,6 +67,12 @@ const MUTATIONS = [
     to: "  const route = routeQuestion(question, glossary, players, context !== null);",
   },
   {
+    name: "m4f(종단) 리더보드 질문 개인값 가드 제거 — `최형우 통산 홈런 1위야?` 가 431 로 오답 변환",
+    file: PIPELINE,
+    from: '    if (isCareerLeaderboardAsk(question)) {\n      return settle(HISTORY_HOLD_ANSWER, "history_hold", "history_hold");\n    }',
+    to: "",
+  },
+  {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",
     file: INVENTORY,
     from: '  { code: "SO-pit", source: "pitcher", terms: ["탈삼진"] },\n',

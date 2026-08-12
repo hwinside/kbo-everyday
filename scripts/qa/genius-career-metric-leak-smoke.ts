@@ -408,43 +408,68 @@ function checkAsync(name: string, fn: () => Promise<void>): void {
   asyncChecks.push([name, fn]);
 }
 
-checkAsync("P0(종단): 지원 지표의 구조화 실답이 보존된다 (kbo_structured)", async () => {
+checkAsync("P0(종단): 값 질문의 구조화 실답이 보존된다 (kbo_structured)", async () => {
+  // 이 PR 이 실답을 빼앗지 않는다는 계약. **값을 묻는 형태**만 실답 대상이다.
   for (const question of [
     "최형우 통산 타율 얼마야?",   // 삼순 5차 exact
     "최형우 통산 홈런 몇 개야?",
     "최형우 통산 안타 몇 개야?",
+    "최형우의 연도별 타율 추이가 어떻게 돼?",
+    "최형우 작년 타율 얼마였어?",
   ]) {
     const result = await answerQuestion("u1", question, e2eDeps());
     assert.equal(result.source, "kbo_structured", `${question} -> ${result.source} :: ${result.answer}`);
   }
 });
 
-checkAsync("P0(종단): 미지원 공식 지표는 생성·검색 경로에 닿지 않는다 (전수)", async () => {
-  // 어휘 전수 × 축(리그·팀·선수·복합). 라우터가 아니라 `answerQuestion` 결과로 판정한다.
+checkAsync("P0(종단): 리더보드 질문에 개인값을 렌더하지 않는다 (오답 변환 금지)", async () => {
+  // ⚠️ 삼순 #1164 5차 P0 exact. `최형우 통산 홈런 1위야?` 는 "1위인가" 를 물었는데
+  // 개인 통산값(431)을 `kbo_structured` 로 내보냈다 — 질문에 답하지 않은 오답 변환이다.
+  // 순위 확정에는 리그 전체 통산 순위표가 필요하고 그 정본이 아직 없으므로 hold 다.
+  for (const question of [
+    "최형우 통산 홈런 1위야?",     // 삼순 exact
+    "최형우 통산 타율 1위야?",
+    "최형우 역대 안타 최다 맞아?",
+    "김도영 통산 도루 1위야?",
+  ]) {
+    const result = await answerQuestion("u1", question, e2eDeps());
+    assert.notEqual(
+      result.source, "kbo_structured",
+      `리더보드 질문에 개인값을 렌더했다: ${question} :: ${result.answer}`,
+    );
+    assert.ok(
+      !/\d/.test(result.answer.replace(/2026|\d+\s*시즌/g, "")),
+      `순위 답에 수치가 섞였다: ${question} :: ${result.answer}`,
+    );
+  }
+});
+
+checkAsync("P0(종단): 리더보드 형태 × 공식 어휘 전수 — kbo_structured·생성경로 0", async () => {
+  // ⚠️ 종전 이 전수는 지원 지표 9개를 **제외**해서 false-green 이었다(삼순 5차 P0).
+  // 지금은 전 어휘를 태우고, 금지 목록에 `kbo_structured` 까지 넣는다 — 리더보드 질문에
+  // 개인값을 렌더하는 것도 누수로 센다.
   const forms: Array<(term: string) => string> = [
     (term) => `통산 ${term} 1위 누구야?`,
     (term) => `LG 통산 ${term} 1위 누구야?`,
     (term) => `최형우 통산 ${term} 1위야?`,
     (term) => `LG 김도영 통산 ${term} 최다 맞아?`,
   ];
-  // career-series 가 실제로 답하는 지원 지표는 이 대조에서 제외한다(그건 ⓐ 의 몫이다).
-  const SUPPORTED = ["타율", "홈런", "안타", "타점", "득점", "도루", "출루율", "장타율", "ops"];
-  const unsupported = KBO_OFFICIAL_METRIC_TERMS.filter((term) => !SUPPORTED.includes(term));
+  const forbidden = [...GENERATIVE_SOURCES, "kbo_structured"];
   const leaks: string[] = [];
   let checked = 0;
-  for (const term of unsupported) {
+  for (const term of KBO_OFFICIAL_METRIC_TERMS) {
     for (const form of forms) {
       const question = form(term);
       checked += 1;
       const result = await answerQuestion("u1", question, e2eDeps());
-      if (GENERATIVE_SOURCES.includes(result.source)) leaks.push(`${question} -> ${result.source}`);
+      if (forbidden.includes(result.source)) leaks.push(`${question} -> ${result.source}`);
     }
   }
-  console.log(`     종단 전수 ${forms.length}형태 × ${unsupported.length}미지원어휘 = ${checked} / 누수 ${leaks.length}`);
-  assert.equal(checked, forms.length * unsupported.length);
+  console.log(`     종단 전수 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ${checked} / 누수 ${leaks.length}`);
+  assert.equal(checked, forms.length * KBO_OFFICIAL_METRIC_TERMS.length);
   assert.deepEqual(
     leaks, [],
-    `미지원 지표 ${leaks.length}건이 생성·검색 경로로 샌다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
+    `리더보드 질문 ${leaks.length}건이 금지 경로로 샌다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
   );
 });
 
