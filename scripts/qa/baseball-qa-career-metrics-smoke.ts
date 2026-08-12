@@ -12,6 +12,7 @@
  *   서빙 static 에서 **기계로 계산**해 만든다. 내가 아는 이름을 적으면 그건 검증이 아니라 암기다.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import baseline from "../../data/baseball-qa/kbo-career-metrics-through-2025.json";
 import batters from "../../src/lib/constants/stats-2026-batters.json";
 import pitchers from "../../src/lib/constants/stats-2026-pitchers.json";
@@ -28,6 +29,8 @@ import {
   resolveCareerMetricLeaderboard,
 } from "../../src/lib/baseball-qa/stats/career-metric-leaderboard";
 import { answerQuestion, routeQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
+import { validateServedPitcherPayload } from "../../src/lib/baseball-qa/stats/served-record";
+import { FULL_ENTRY_PITCHER_IDS } from "../../src/lib/stats/full-entry-roster";
 import type { SeasonRecordRow } from "../../src/lib/baseball-qa/stats/season-record";
 
 let pass = 0;
@@ -87,20 +90,42 @@ function deps(): QaDeps {
 }
 
 // ── 1. 스냅샷 무결성 ─────────────────────────────────────────────────────────
-check("스냅샷: 스키마·행수·지표 집합이 카탈로그와 일치한다", () => {
+check("스냅샷: source·행수·sha256·지표 집합이 exact 계약과 일치한다", () => {
   const snap = baseline as never as {
-    schemaVersion: number; throughSeason: number;
-    metrics: Record<CareerTable, string[]>;
+    schemaVersion: number; throughSeason: number; sha256: string;
+    source: { hitterUrl: string; pitcherUrl: string; seasonValue: string; currentSeason: number; capturedAt: string };
+    metrics: Record<CareerTable, string[]>; rowCount: Record<CareerTable, number>;
     batter: unknown[]; pitcher: unknown[];
   };
   assert.equal(snap.schemaVersion, 1);
   assert.equal(snap.throughSeason, 2025);
+  assert.equal(snap.source.hitterUrl, "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx");
+  assert.equal(snap.source.pitcherUrl, "https://www.koreabaseball.com/Record/Player/PitcherBasic/BasicTotal.aspx");
+  assert.equal(snap.source.seasonValue, "9999");
+  assert.equal(snap.source.currentSeason, 2026);
+  assert.ok(Number.isFinite(Date.parse(snap.source.capturedAt)));
   for (const table of ["batter", "pitcher"] as const) {
     const catalogKeys = CAREER_METRICS_BY_TABLE[table].map((s) => s.key).sort();
     assert.deepEqual([...snap.metrics[table]].sort(), catalogKeys,
       `${table}: 스냅샷 지표와 카탈로그가 어긋났다 — 크롤러/서빙 SSOT 불일치`);
-    assert.ok(snap[table].length > 1_000, `${table}: 행수 ${snap[table].length}`);
+    assert.equal(snap.rowCount[table], snap[table].length, `${table}: 선언 행수와 실제 행수 불일치`);
   }
+  const { sha256, ...unsigned } = snap;
+  assert.equal(createHash("sha256").update(JSON.stringify(unsigned)).digest("hex"), sha256);
+});
+
+check("당해 투수 스냅샷: canonical ID 전집합 exact coverage", () => {
+  const rows = (pitchers as Array<Record<string, unknown>>).map((row) => ({ ...row }));
+  const payload = { stats: rows, type: "pitcher", count: rows.length };
+  assert.equal(rows.length, FULL_ENTRY_PITCHER_IDS.length);
+  assert.equal(validateServedPitcherPayload(payload)?.length, rows.length);
+  const missing = rows.filter((row) => String(row.kboId) !== String(rows[0].kboId));
+  assert.equal(validateServedPitcherPayload({ ...payload, stats: missing, count: missing.length }), null,
+    "리더 후보 1명 누락도 행수 하한으로 통과하면 안 된다");
+  const duplicate = [...rows.slice(1), { ...rows[1] }];
+  assert.equal(validateServedPitcherPayload({ ...payload, stats: duplicate }), null, "중복 ID");
+  const unexpected = rows.map((row, i) => i === 0 ? { ...row, kboId: "99999" } : row);
+  assert.equal(validateServedPitcherPayload({ ...payload, stats: unexpected }), null, "우주 밖 ID");
 });
 
 check("스냅샷: 모든 지표 값이 음이 아닌 정수다 (뺄셈 오염 검출)", () => {
@@ -135,24 +160,20 @@ check("intent: 카탈로그 전 지표가 `통산 <지표> 1위` 로 결속된�
   let bound = 0;
   for (const table of ["batter", "pitcher"] as const) {
     for (const spec of CAREER_METRICS_BY_TABLE[table]) {
-      const label = spec.label.replace(/\s+/g, "");
-      const ambiguous = (owners.get(label)?.size ?? 0) > 1;
-      const intent = resolveCareerMetricIntent(`통산 ${spec.label} 1위 누구야?`);
-      if (ambiguous) {
-        if (intent !== null) missed.push(`${table}.${spec.key}(${spec.label}): 모호한데 결속됨`);
-        continue;
-      }
-      if (intent?.metric !== spec.key || intent?.table !== table) {
-        missed.push(`${table}.${spec.key}(${spec.label}) -> ${JSON.stringify(intent)}`);
-      } else {
-        bound += 1;
-      }
+      // 각 카탈로그 행은 alias 중 적어도 하나로 자기 자신에게 도달해야 한다. label 하나만 검사하면
+      // 볼넷·사구·경기·삼진처럼 타자/투수 충돌 지표가 영구 미지원이어도 하한이 숨긴다.
+      const reachable = spec.aliases.some((alias) => {
+        const intent = resolveCareerMetricIntent(`통산 ${alias} 1위 누구야?`);
+        return intent?.metric === spec.key && intent?.table === table;
+      });
+      if (!reachable) missed.push(`${table}.${spec.key}(${spec.label}): 도달 가능한 alias 0`);
+      else bound += 1;
     }
   }
   assert.deepEqual(missed, [], `결속 실패: ${missed.join(", ")}`);
-  // 지표 확장이 실제로 일어났다는 하한 — 안타 1개만 남아도 통과하는 게이트를 막는다.
-  assert.ok(bound >= 20, `결속된 지표가 ${bound}개뿐이다 — 확장이 죽었는지 확인해야 한다`);
-  console.log(`     결속 지표 ${bound}개 / 모호(fail-close) ${[...owners].filter(([, v]) => v.size > 1).length}개`);
+  const catalogSize = CAREER_METRICS_BY_TABLE.batter.length + CAREER_METRICS_BY_TABLE.pitcher.length;
+  assert.equal(bound, catalogSize, `카탈로그 ${catalogSize}개 중 ${bound}개만 도달 가능`);
+  console.log(`     결속 지표 ${bound}/${catalogSize} · 충돌 alias ${[...owners].filter(([, v]) => v.size > 1).length}개는 명시 alias로 해소`);
 });
 
 check("intent: 복수절·서술형은 결속하지 않는다 (#1159 4차 계약 유지)", () => {
@@ -240,26 +261,40 @@ check("fail-close: 서빙 행 오염(중복·타입·identity)은 답하지 않�
     { table: "batter", metric: "hr", from: 1, to: 1 }, NOW), null, "identity 불일치");
 });
 
-check("fail-close: 스냅샷 지표 누락·빈 서빙은 답하지 않는다", () => {
+check("fail-close: 스냅샷 manifest 절단·변조와 빈 서빙은 답하지 않는다", () => {
   assert.equal(resolveCareerMetricLeaderboard(baseline, [], SERVED_AT,
     { table: "batter", metric: "hr", from: 1, to: 1 }, NOW), null, "빈 서빙");
   assert.equal(resolveCareerMetricLeaderboard(baseline, SERVED.batter, SERVED_AT,
     { table: "batter", metric: "nope", from: 1, to: 1 }, NOW), null, "미등록 지표");
-  const broken = { ...(baseline as object), schemaVersion: 2 };
-  assert.equal(resolveCareerMetricLeaderboard(broken, SERVED.batter, SERVED_AT,
+  const schemaBroken = { ...(baseline as object), schemaVersion: 2 };
+  assert.equal(resolveCareerMetricLeaderboard(schemaBroken, SERVED.batter, SERVED_AT,
     { table: "batter", metric: "hr", from: 1, to: 1 }, NOW), null, "스키마 변경");
+
+  // 절단자가 rowCount/hash까지 다시 써도 immutable manifest와 달라 거절돼야 한다.
+  const truncated = JSON.parse(JSON.stringify(baseline)) as any;
+  truncated.batter = truncated.batter.slice(0, 100);
+  truncated.rowCount.batter = 100;
+  delete truncated.sha256;
+  truncated.sha256 = createHash("sha256").update(JSON.stringify(truncated)).digest("hex");
+  assert.equal(resolveCareerMetricLeaderboard(truncated, SERVED.batter, SERVED_AT,
+    { table: "batter", metric: "hr", from: 1, to: 1 }, NOW), null, "100행 self-consistent 절단본");
+
+  const tampered = JSON.parse(JSON.stringify(baseline)) as any;
+  tampered.batter[0].values.hr += 1; // stale sha256 유지
+  assert.equal(resolveCareerMetricLeaderboard(tampered, SERVED.batter, SERVED_AT,
+    { table: "batter", metric: "hr", from: 1, to: 1 }, NOW), null, "sha256 불일치 변조본");
 });
 
 // ── 5. 렌더 ──────────────────────────────────────────────────────────────────
 check("fail-close: 오염된 스냅샷 값(음수·비정수·문자열)은 답하지 않는다", () => {
   // ⚠️ 종전 이 축은 **실제 스냅샷이 깨끗해서** 검증기가 사각이었다(mutation m9 GREEN).
   //   실 데이터가 정상이면 "검증을 지워도 통과"한다 — 오염 입력을 직접 만들어 태워야 게이트다.
-  const clone = () => JSON.parse(JSON.stringify(baseline)) as never as {
-    batter: Array<{ values: Record<string, unknown> }>;
-  };
+  const clone = () => JSON.parse(JSON.stringify(baseline)) as any;
   for (const [label, poison] of [["음수", -1], ["소수", 1.5], ["문자열", "12"], ["null", null]] as Array<[string, unknown]>) {
     const broken = clone();
     broken.batter[0].values.hr = poison;
+    delete broken.sha256;
+    broken.sha256 = createHash("sha256").update(JSON.stringify(broken)).digest("hex");
     assert.equal(
       resolveCareerMetricLeaderboard(broken, SERVED.batter, SERVED_AT,
         { table: "batter", metric: "hr", from: 1, to: 1 }, NOW),
@@ -271,10 +306,10 @@ check("fail-close: 카탈로그엔 있으나 스냅샷에 없는 지표는 답�
   // ⚠️ 종전 `metric:"nope"` 표본은 **앞단 spec 검사에 먼저 걸려** 스냅샷 검증을 태우지 못했다
   //   (mutation m11 GREEN — 이중 가드가 서로를 가려 검출력 0). 카탈로그에 **있는** 지표를
   //   스냅샷에서만 빼야 그 검증이 단독으로 시험된다.
-  const broken = JSON.parse(JSON.stringify(baseline)) as never as {
-    metrics: Record<CareerTable, string[]>;
-  };
-  broken.metrics.batter = broken.metrics.batter.filter((m) => m !== "hr");
+  const broken = JSON.parse(JSON.stringify(baseline)) as any;
+  broken.metrics.batter = broken.metrics.batter.filter((m: string) => m !== "hr");
+  delete broken.sha256;
+  broken.sha256 = createHash("sha256").update(JSON.stringify(broken)).digest("hex");
   assert.equal(
     resolveCareerMetricLeaderboard(broken, SERVED.batter, SERVED_AT,
       { table: "batter", metric: "hr", from: 1, to: 1 }, NOW),

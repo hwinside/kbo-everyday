@@ -10,6 +10,7 @@
  *   순위 구간은 이미 파싱된 `{from,to}` 정수로 받는다. 표현→구조 변환은 LLM 정규화 슬라이스가
  *   맡는다(룰 누적 방지 — 열린 자연어를 정규식으로 쫓지 않는다).
  */
+import { createHash } from "node:crypto";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
 import { STATS_STALE_MS, type SeasonRecordRow } from "./season-record";
 import { CAREER_LEADERBOARD_TEMPORAL_WORDS } from "./career-leaderboard";
@@ -23,6 +24,12 @@ import {
 const SOURCE_URL = {
   batter: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
   pitcher: "https://www.koreabaseball.com/Record/Player/PitcherBasic/BasicTotal.aspx",
+} as const;
+
+/** 2025말 immutable 기준선 manifest. 절단본이 자기 rowCount/hash를 다시 써도 통과하지 못한다. */
+const BASELINE_MANIFEST = {
+  rowCount: { batter: 2659, pitcher: 1764 },
+  sha256: "2def69114d6aec44fdcadfea99b27a0923f561838ca2179b9adfd2fbc13bed99",
 } as const;
 
 /** 최대 반환 순위 — 통산표 1페이지(30행) 안이면 크롤 부하 없이 답한다. */
@@ -70,9 +77,18 @@ interface BaselineEntry {
 interface BaselineSnapshot {
   schemaVersion: number;
   throughSeason: number;
+  source: {
+    hitterUrl: string;
+    pitcherUrl: string;
+    seasonValue: string;
+    currentSeason: number;
+    capturedAt: string;
+  };
   metrics: Record<CareerTable, string[]>;
+  rowCount: Record<CareerTable, number>;
   batter: BaselineEntry[];
   pitcher: BaselineEntry[];
+  sha256: string;
 }
 
 export function findCareerMetricSpec(table: CareerTable, metric: string): CareerMetricSpec | null {
@@ -172,10 +188,27 @@ export function resolveCareerMetricIntent(question: string): CareerMetricIntent 
 function validSnapshot(value: unknown, query: CareerMetricQuery): value is BaselineSnapshot {
   const s = value as Partial<BaselineSnapshot>;
   if (s?.schemaVersion !== 1 || s.throughSeason !== 2025) return false;
+  if (
+    s.source?.hitterUrl !== SOURCE_URL.batter ||
+    s.source?.pitcherUrl !== SOURCE_URL.pitcher ||
+    s.source?.seasonValue !== "9999" ||
+    s.source?.currentSeason !== 2026 ||
+    !Number.isFinite(Date.parse(s.source?.capturedAt ?? ""))
+  ) return false;
   const metrics = s.metrics?.[query.table];
   if (!Array.isArray(metrics) || !metrics.includes(query.metric)) return false;
+  if (!Array.isArray(s.batter) || !Array.isArray(s.pitcher)) return false;
+  if (
+    s.rowCount?.batter !== BASELINE_MANIFEST.rowCount.batter ||
+    s.rowCount?.pitcher !== BASELINE_MANIFEST.rowCount.pitcher ||
+    s.batter.length !== BASELINE_MANIFEST.rowCount.batter ||
+    s.pitcher.length !== BASELINE_MANIFEST.rowCount.pitcher
+  ) return false;
   const rows = s[query.table];
-  if (!Array.isArray(rows) || rows.length < 100) return false;
+  if (!Array.isArray(rows)) return false;
+  if (s.sha256 !== BASELINE_MANIFEST.sha256) return false;
+  const { sha256, ...unsigned } = s as BaselineSnapshot;
+  if (createHash("sha256").update(JSON.stringify(unsigned)).digest("hex") !== sha256) return false;
   const ids = new Set<string>();
   for (const row of rows) {
     if (!/^\d+$/.test(String(row?.kboId ?? "")) || !row.name || typeof row.team !== "string") return false;

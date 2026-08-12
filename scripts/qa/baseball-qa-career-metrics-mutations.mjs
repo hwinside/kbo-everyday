@@ -17,6 +17,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const CATALOG = "src/lib/baseball-qa/stats/career-metric-catalog.ts";
 const LEADERBOARD = "src/lib/baseball-qa/stats/career-metric-leaderboard.ts";
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
+const SERVED = "src/lib/baseball-qa/stats/served-record.ts";
 const SMOKE = "scripts/qa/baseball-qa-career-metrics-smoke.ts";
 
 const MUTATIONS = [
@@ -71,22 +72,28 @@ const MUTATIONS = [
     to: "    if (!id) continue;",
   },
   {
-    name: "m9 스냅샷 값 검증 제거 — 음수·비정수 오염이 그대로 서빙된다",
-    file: LEADERBOARD,
-    from: "    if (typeof v !== \"number\" || !Number.isInteger(v) || v < 0) return false;",
-    to: "",
-  },
-  {
     name: "m10 순위 구간 상한 제거 — 임의 구간 요청이 통과한다",
     file: LEADERBOARD,
     from: "  if (query.from < 1 || query.to < query.from || query.to > CAREER_RANK_MAX) return null;",
     to: "",
   },
   {
-    name: "m11 스냅샷 지표 포함 검증 제거 — 카탈로그 밖 지표도 답한다",
+    name: "m11b immutable rowCount manifest 훼손 — 절단본 완전성 계약 소실",
     file: LEADERBOARD,
-    from: "  if (!Array.isArray(metrics) || !metrics.includes(query.metric)) return false;",
-    to: "  if (!Array.isArray(metrics)) return false;",
+    from: "  rowCount: { batter: 2659, pitcher: 1764 },",
+    to: "  rowCount: { batter: 100, pitcher: 100 },",
+  },
+  {
+    name: "m11c 스냅샷 sha256 검증 제거 — payload 절단·변조 통과",
+    file: LEADERBOARD,
+    from: "  if (createHash(\"sha256\").update(JSON.stringify(unsigned)).digest(\"hex\") !== sha256) return false;",
+    to: "  void unsigned;",
+  },
+  {
+    name: "m11d 투수 current exact 우주를 옛 행수 하한으로 후퇴 — 리더 누락 통과",
+    file: SERVED,
+    from: "  const expectedIds = new Set(FULL_ENTRY_PITCHER_IDS);\n  if (rows.length !== expectedIds.size) return null;\n  const seen = new Set<string>();\n  for (const row of rows) {\n    const id = canonicalKboId(row.kboId as string | number | null);\n    if (!id || !expectedIds.has(id) || seen.has(id)) return null;\n    seen.add(id);\n  }\n  if (FULL_ENTRY_PITCHER_IDS.some((id) => !seen.has(id))) return null;",
+    to: "  if (rows.length < 200) return null;\n  const seen = new Set<string>();\n  for (const row of rows) {\n    const id = canonicalKboId(row.kboId as string | number | null);\n    if (!id || seen.has(id)) return null;\n    seen.add(id);\n  }",
   },
   // ── 질문 해석(룰 누적 방지 축) ──
   {
@@ -112,6 +119,12 @@ const MUTATIONS = [
     file: CATALOG,
     from: "  { key: \"hr\", column: \"HR\", currentField: \"hr\", label: \"홈런\", unit: \"개\", aliases: [\"홈런\", \"홈런수\", \"hr\"] },",
     to: "  { key: \"hr\", column: \"HR\", currentField: \"homeruns\", label: \"홈런\", unit: \"개\", aliases: [\"홈런\", \"홈런수\", \"hr\"] },",
+  },
+  {
+    name: "m16b 충돌 지표의 명시 alias 제거 — 카탈로그 행이 영구 미도달",
+    file: CATALOG,
+    from: "aliases: [\"볼넷\", \"타자볼넷\"]",
+    to: "aliases: [\"볼넷\"]",
   },
   // ── 파이프라인 배선 ──
   {

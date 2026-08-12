@@ -1,6 +1,6 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
-import { FULL_ENTRY_BATTER_IDS } from "@/lib/stats/full-entry-roster";
+import { FULL_ENTRY_BATTER_IDS, FULL_ENTRY_PITCHER_IDS } from "@/lib/stats/full-entry-roster";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -125,6 +125,22 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
  *   0 으로 깔려 통산이 과소 계산된다). 투수는 그 명단 정본이 아직 없어 **행수 하한 + kboId
  *   유일성**으로만 검증하고, 그 사실을 여기 명시해 둔다 — 나중에 명단이 생기면 같은 계약으로 올린다.
  */
+export function validateServedPitcherPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
+  if (payload.type !== "pitcher" || !Number.isInteger(payload.count)) return null;
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) return null;
+  const expectedIds = new Set(FULL_ENTRY_PITCHER_IDS);
+  if (rows.length !== expectedIds.size) return null;
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    if (!id || !expectedIds.has(id) || seen.has(id)) return null;
+    seen.add(id);
+  }
+  if (FULL_ENTRY_PITCHER_IDS.some((id) => !seen.has(id))) return null;
+  return rows;
+}
+
 export async function fetchServedCareerSnapshot(
   table: "batter" | "pitcher",
 ): Promise<{ rows: SeasonRecordRow[]; updatedAt: string }> {
@@ -143,27 +159,15 @@ export async function fetchServedCareerSnapshot(
   } finally {
     clearTimeout(timer);
   }
-  if (payload.type !== "pitcher" || !Number.isInteger(payload.count)) {
-    throw new Error("served pitcher payload violates envelope contract");
-  }
-  const rows = Array.isArray(payload.stats) ? payload.stats : null;
-  if (!rows || payload.count !== rows.length) {
-    throw new Error("served pitcher payload count mismatch");
-  }
-  // 리그 전체가 아니면 증분이 0 으로 깔려 통산이 과소 계산된다 — 부분 스냅샷은 거절한다.
-  if (rows.length < 200) throw new Error(`served pitcher coverage too small: ${rows.length}`);
+  const rows = validateServedPitcherPayload(payload);
+  if (!rows) throw new Error("served pitcher payload violates exact full-entry coverage contract");
   const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
   if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
     throw new Error("served pitcher payload has no usable updatedAt");
   }
-  const seen = new Set<string>();
   const mapped: SeasonRecordRow[] = [];
   for (const row of rows) {
     const id = canonicalKboId(row.kboId as string | number | null);
-    // kboId 가 없는 행은 통산 기준선과 이을 수 없다 — 조용히 0 증분으로 두면 과소 계산이다.
-    if (!id) continue;
-    if (seen.has(id)) throw new Error(`served pitcher duplicate kboId: ${id}`);
-    seen.add(id);
     mapped.push({
       ...row,
       player_key: id,

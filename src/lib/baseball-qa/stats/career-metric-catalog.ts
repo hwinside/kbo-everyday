@@ -40,7 +40,7 @@ export interface CareerMetricSpec {
  * 그래서 카탈로그에 넣지 않는다 — 별도 수집 슬라이스가 붙으면 그때 추가한다.
  */
 export const CAREER_HITTER_METRICS: readonly CareerMetricSpec[] = [
-  { key: "games", column: "G", currentField: "games", label: "경기", unit: "경기", aliases: ["경기", "출장", "출장경기", "경기수", "출전경기"] },
+  { key: "games", column: "G", currentField: "games", label: "경기", unit: "경기", aliases: ["경기", "타자경기", "출장", "출장경기", "경기수", "출전경기"] },
   { key: "pa", column: "PA", currentField: "pa", label: "타석", unit: "타석", aliases: ["타석"] },
   { key: "ab", column: "AB", currentField: "ab", label: "타수", unit: "타수", aliases: ["타수"] },
   { key: "runs", column: "R", currentField: "runs", label: "득점", unit: "점", aliases: ["득점"] },
@@ -51,9 +51,9 @@ export const CAREER_HITTER_METRICS: readonly CareerMetricSpec[] = [
   { key: "tb", column: "TB", currentField: "tb", label: "루타", unit: "루타", aliases: ["루타", "총루타"] },
   { key: "rbi", column: "RBI", currentField: "rbi", label: "타점", unit: "타점", aliases: ["타점", "rbi"] },
   { key: "sb", column: "SB", currentField: "sb", label: "도루", unit: "개", aliases: ["도루", "도루수"] },
-  { key: "bb", column: "BB", currentField: "bb", label: "볼넷", unit: "개", aliases: ["볼넷"] },
-  { key: "hbp", column: "HBP", currentField: "hbp", label: "사구", unit: "개", aliases: ["사구", "몸에맞는공"] },
-  { key: "so", column: "SO", currentField: "so", label: "삼진", unit: "개", aliases: ["삼진"] },
+  { key: "bb", column: "BB", currentField: "bb", label: "볼넷", unit: "개", aliases: ["볼넷", "타자볼넷"] },
+  { key: "hbp", column: "HBP", currentField: "hbp", label: "사구", unit: "개", aliases: ["사구", "타자사구", "몸에맞는공"] },
+  { key: "so", column: "SO", currentField: "so", label: "삼진", unit: "개", aliases: ["삼진", "타자삼진"] },
   { key: "gdp", column: "GDP", currentField: "gdp", label: "병살타", unit: "개", aliases: ["병살타", "병살"] },
 ];
 
@@ -65,8 +65,8 @@ export const CAREER_PITCHER_METRICS: readonly CareerMetricSpec[] = [
   { key: "holds", column: "HLD", currentField: "holds", label: "홀드", unit: "개", aliases: ["홀드"] },
   { key: "h", column: "H", currentField: "h", label: "피안타", unit: "개", aliases: ["피안타"] },
   { key: "hr", column: "HR", currentField: "hr", label: "피홈런", unit: "개", aliases: ["피홈런"] },
-  { key: "bb", column: "BB", currentField: "bb", label: "볼넷", unit: "개", aliases: ["볼넷"] },
-  { key: "hbp", column: "HBP", currentField: "hbp", label: "사구", unit: "개", aliases: ["사구"] },
+  { key: "bb", column: "BB", currentField: "bb", label: "볼넷", unit: "개", aliases: ["볼넷", "투수볼넷"] },
+  { key: "hbp", column: "HBP", currentField: "hbp", label: "사구", unit: "개", aliases: ["사구", "투수사구"] },
   { key: "so", column: "SO", currentField: "so", label: "탈삼진", unit: "개", aliases: ["탈삼진", "삼진"] },
   { key: "r", column: "R", currentField: "r", label: "실점", unit: "점", aliases: ["실점"] },
   { key: "er", column: "ER", currentField: "er", label: "자책점", unit: "점", aliases: ["자책점", "자책"] },
