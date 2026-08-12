@@ -286,15 +286,11 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
         <span className="ml-auto text-[10px] font-bold text-white px-1.5 py-0.5 rounded-md" style={{ background: accent }}>MY TEAM</span>
       </Link>
 
-      {/* 경기 링크는 TeamCard fan-out(순위·선수·로스터) 완료와 무관한 홈 초기 데이터다.
-          loaded 바깥에서 먼저 렌더해 MY TEAM → 경기상세 클릭 가능 시점을 늦추지 않는다. */}
-      {gameSlot && <div className="mb-4 border-b border-border/40 pb-3.5">{gameSlot}</div>}
-
+      {/* 1. 순위 정보 (클릭 → 순위 페이지) + 최근 5경기 2분할 — 항상 최상단 */}
       {!loaded ? (
         <div className="h-24 animate-pulse rounded-xl bg-bg-secondary" />
       ) : (
         <>
-          {/* 1. 순위 정보 (클릭 → 순위 페이지) + 최근 5경기 2분할 */}
           {(st || (data?.recentForm?.length ?? 0) > 0) && (
             <div className="flex items-start gap-3">
               {st && (
@@ -325,8 +321,15 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             </div>
           )}
 
-          {/* 2. 경기 카드는 TeamCard fan-out과 무관하므로 loaded 바깥에서 먼저 렌더 */}
+        </>
+      )}
 
+      {/* 2. 경기 카드 (임베드) — fan-out(loaded)과 독립 렌더는 유지하되, 위치는 순위 정보 아래(#1156 이전 순서 원복).
+          team-card 지연/실패여도 gameSlot 클릭 가능 시점은 늦춰지지 않는다(순위 스켈레톤 아래 즉시 렌더). */}
+      {gameSlot && <div className="mt-4 border-t border-border/40 pt-3.5">{gameSlot}</div>}
+
+      {loaded && (
+        <>
           {/* 3. 그래프 — 좌(전체높이) 순위변동(Y축 1~10위 라벨·빗금) + 우(상하) 타율/방어율 */}
           {rg && (
             <div className="mt-4 border-t border-border/40 pt-3.5">
