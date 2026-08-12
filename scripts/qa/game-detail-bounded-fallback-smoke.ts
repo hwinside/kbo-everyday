@@ -37,7 +37,8 @@ type SourceMode =
   | "detail-http-error"
   | "detail-timeout"
   | "list-http-error"
-  | "pitch-zero";
+  | "pitch-zero"
+  | "pure-sub";
 type GameState = "scheduled" | "live" | "final" | "cancelled";
 
 function json(data: unknown): Response {
@@ -87,12 +88,18 @@ function lineup() {
   return [[{ LINEUP_CK: true }], [], [], side("홍길동"), side("김선수")];
 }
 
-function boxScore(pitchCount = 102) {
+function boxScore(pitchCount = 102, pureSub = false) {
   return {
     tables: [
       { rows: [] },
       { rows: [{ row: cells([1, "중", "김선수", 4, 2, 1, 1, ".500"]) }] },
-      { rows: [{ row: cells([1, "중", "홍길동", 4, 1, 1, 0, ".250"]) }] },
+      {
+        rows: [
+          { row: cells([1, "중", "홍길동", 4, 1, 1, 0, ".250"]) },
+          // KBO 실측(20260812LGWO0): 대타/대주 교체 선수의 수비 위치가 끝까지 '대/주'.
+          ...(pureSub ? [{ row: cells([1, "대", "김대타", 1, 0, 0, 0, ".000"]) }] : []),
+        ],
+      },
       { rows: [{ row: cells(["원정투수", "선발", "승", 0, 0, 0, "9", 31, pitchCount, 30, 6, 0, 2, 8, 2, 2, "2.00"]) }] },
       { rows: [{ row: cells(["홈투수", "선발", "승", 0, 0, 0, "9", 31, pitchCount, 30, 6, 0, 2, 8, 2, 2, "2.00"]) }] },
     ],
@@ -284,7 +291,8 @@ async function scenario(
     | "preview-partial"
     | "bf-zero"
     | "bf-missing"
-    | "bf-hidden-row",
+    | "bf-hidden-row"
+    | "sub-pos",
   state: GameState,
 ) {
   const signals = new Set<AbortSignal>();
@@ -355,9 +363,20 @@ async function scenario(
         state === "scheduled" ||
         state === "cancelled"
       ) return json({ tables: [] });
-      return json(boxScore(kboMode === "pitch-zero" ? 0 : 102));
+      return json(boxScore(kboMode === "pitch-zero" ? 0 : 102, kboMode === "pure-sub"));
     }
     if (url.includes("/record")) {
+      if (naverMode === "sub-pos") {
+        // Naver 실측: 같은 교체 선수를 '타중' 같은 복합 위치로 정확히 내려준다.
+        const payload = naverRecord(state) as {
+          result: { recordData: { battersBoxscore: { home: Array<Record<string, unknown>> } } };
+        };
+        payload.result.recordData.battersBoxscore.home.push({
+          batOrder: 1, pos: "타중", name: "김대타", ab: 1, hit: 0, run: 0, rbi: 0,
+          hr: 0, h2: null, h3: null, bb: 0, kk: 0, sb: 0, hra: ".000",
+        });
+        return json(payload);
+      }
       if (naverMode === "bf-hidden-row") {
         const payload = naverRecord(state) as {
           result: { recordData: { pitchersBoxscore: { away: Array<Record<string, unknown>> } } };
@@ -669,6 +688,36 @@ async function main() {
   assert.equal(cancelled.body.boxScore, null);
   assert.equal(cancelled.degradationEvents.length, 0);
   assert.ok(cancelled.body.meta.broadcastChannels?.length > 0, "cancelled KBO TV_IF preserved");
+
+  // 순수 대/주 수비 위치 미갱신 → Naver 선수별 복합 위치 응답 병합 (route 배선 actual GET).
+  const subMerge = await scenario("KBO 순수 대/주 + Naver 복합 위치", "pure-sub", "sub-pos", "live");
+  assert.equal(subMerge.body.trace?.boxScoreSource, "kbo", "sub-merge: KBO box 유지(교체 아닌 병합)");
+  const mergedSub = subMerge.body.boxScore.homeBatters.find(
+    (b: { name: string }) => b.name === "김대타",
+  );
+  assert.equal(mergedSub?.position, "타중", "sub-merge: route가 Naver 복합 위치(타중)로 병합");
+  assert.equal(
+    subMerge.body.boxScore.homeBatters.find((b: { name: string }) => b.name === "홍길동")?.position,
+    "중",
+    "sub-merge: 비교체 entry 무변경",
+  );
+
+  // Naver 전면 장애 → 병합 없이 fail-safe(응답은 200 유지, 위치는 '대' 그대로).
+  const subNaverDown = await scenario("KBO 순수 대/주 + Naver blackhole", "pure-sub", "blackhole", "live");
+  assert.equal(subNaverDown.body.trace?.boxScoreSource, "kbo");
+  assert.equal(
+    subNaverDown.body.boxScore.homeBatters.find((b: { name: string }) => b.name === "김대타")?.position,
+    "대",
+    "sub-merge: Naver 장애 시 병합 없이 fail-safe",
+  );
+
+  // Naver 정상이지만 해당 선수 행이 없으면 병합 no-op.
+  const subNaverMissing = await scenario("KBO 순수 대/주 + Naver에 해당 선수 없음", "pure-sub", "normal", "live");
+  assert.equal(
+    subNaverMissing.body.boxScore.homeBatters.find((b: { name: string }) => b.name === "김대타")?.position,
+    "대",
+    "sub-merge: 동일 선수 부재 시 no-op",
+  );
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");
