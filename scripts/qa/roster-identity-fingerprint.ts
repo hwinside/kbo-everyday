@@ -13,9 +13,15 @@
  *     이 중 하나라도 빼면 그 필드의 변경이 stale census 를 통과시킨다(과소).
  *   - `teamId`·`position`·`backNo`·`team` 등 신원 무관 필드는 **넣지 않는다**(과대 —
  *     넣는 순간 매일 갱신이 다시 전건 FAIL 로 돌아간다).
+ *   - **raw exact** 다 (삼순 재리뷰 blocker, 2026-08-12): census/loader 는 필드 값을
+ *     trim·정규화 없이 그대로 쓴다(`byName` 키 = raw name). 그러므로 지문도 값을
+ *     **일절 가공하지 않는다** — trim 을 넣으면 `"가나쿠보 유토"` → `"가나쿠보 유토 "` 같은
+ *     변경이 loader 귀속을 바꾸는데 지문은 그대로라 stale census 가 false-GREEN 된다.
+ *   - **무충돌 직렬화**: 튜플은 JSON 배열로 직렬화한다. JSON 이 제어문자·따옴표·구분자를
+ *     전부 escape 하므로, 직렬화 결과에 raw 개행이 존재할 수 없고 튜플 join("\n") 이
+ *     필드 경계 조작으로 충돌하지 않는다(NUL join 같은 "필드에 안 나올 것" 가정이 없다).
  *   - **multiset** 이다: 순서·JSON 포맷은 무시하고(정렬·canonical 직렬화), 중복 행은
  *     보존한다(동명이인 multiplicity 변화도 지문이 바뀌어야 한다).
- *   - 결측 필드는 빈 문자열로 고정 표기한다 — `undefined` 와 `""` 를 섞어 읽지 않는다.
  */
 import { createHash } from "node:crypto";
 
@@ -25,15 +31,21 @@ export type RosterIdentitySource = {
   birthDate?: unknown;
 };
 
-/** 한 선수의 신원 튜플을 canonical 문자열로 만든다. 구분자는 본문에 등장할 수 없는 NUL. */
+/**
+ * 한 선수의 신원 튜플을 canonical 문자열로 만든다 — **raw 값의 JSON 배열**.
+ * 가공 금지: trim·소문자화·포맷 통일을 하지 않는다(위 raw exact 계약).
+ * 결측(null/undefined)은 JSON null 로 고정 표기한다 — JSON 은 undefined 를 표현할 수
+ * 없으므로 이 둘의 구분은 지문 계약 밖이고, 그 외 어떤 문자열 값도 원형 그대로 보존된다.
+ */
 export function canonicalIdentityTuple(player: RosterIdentitySource): string {
-  const field = (value: unknown): string => (value === null || value === undefined ? "" : String(value).trim());
-  return [field(player.name), field(player.kboId), field(player.birthDate)].join("\u0000");
+  const field = (value: unknown): string | null => (value === null || value === undefined ? null : String(value));
+  return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);
 }
 
 /**
  * 로스터 배열 → 신원 multiset 의 SHA-256.
  * 정렬로 순서를 지우되 `sort` 는 동일 튜플을 제거하지 않으므로 중복(multiplicity)은 남는다.
+ * join("\n") 은 안전하다 — 각 튜플이 JSON 직렬화라 raw 개행을 포함할 수 없다.
  */
 export function computeRosterIdentityFingerprint(roster: readonly RosterIdentitySource[]): string {
   const tuples = roster.map(canonicalIdentityTuple);

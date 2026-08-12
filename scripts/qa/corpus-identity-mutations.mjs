@@ -203,8 +203,8 @@ const MUTATIONS = [
     expect: "kboId 변경이 지문에 반영되지 않았다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace(
-      "return [field(player.name), field(player.kboId), field(player.birthDate)].join(\"\\u0000\");",
-      "return [field(player.name), field(player.birthDate)].join(\"\\u0000\");",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.birthDate)]);",
     ),
   },
   {
@@ -213,8 +213,8 @@ const MUTATIONS = [
     expect: "birthDate 변경이 지문에 반영되지 않았다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace(
-      "return [field(player.name), field(player.kboId), field(player.birthDate)].join(\"\\u0000\");",
-      "return [field(player.name), field(player.kboId)].join(\"\\u0000\");",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId)]);",
     ),
   },
   {
@@ -223,8 +223,8 @@ const MUTATIONS = [
     expect: "name 변경이 지문에 반영되지 않았다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace(
-      "return [field(player.name), field(player.kboId), field(player.birthDate)].join(\"\\u0000\");",
-      "return [field(player.kboId), field(player.birthDate)].join(\"\\u0000\");",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.kboId), field(player.birthDate)]);",
     ),
   },
   {
@@ -243,8 +243,8 @@ const MUTATIONS = [
     expect: "지문이 과대해서 매일 갱신이 다시 전건 FAIL 로 돌아간다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace(
-      "return [field(player.name), field(player.kboId), field(player.birthDate)].join(\"\\u0000\");",
-      "return [field(player.name), field(player.kboId), field(player.birthDate), field(/** @type {any} */ (player).team)].join(\"\\u0000\");",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate), field(/** @type {any} */ (player).team)]);",
     ),
   },
   {
@@ -263,6 +263,18 @@ const MUTATIONS = [
     expect: "multiset 이 아니라 순서에 묶였다",
     target: FINGERPRINT_TARGET,
     apply: (s) => s.replace("  tuples.sort();\n", ""),
+  },
+  {
+    // 삼순 재리뷰 blocker 그 자체: 지문이 값을 가공(trim)하면 whitespace 변경이
+    // loader 귀속을 바꾸는데도 지문은 그대로라 stale census 가 false-GREEN 된다.
+    id: "F-8",
+    name: "trim 재도입(raw exact 계약 파괴)",
+    expect: "지문이 값을 가공(trim)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "value === null || value === undefined ? null : String(value)",
+      "value === null || value === undefined ? null : String(value).trim()",
+    ),
   },
 ];
 

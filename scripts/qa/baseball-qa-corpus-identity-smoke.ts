@@ -688,13 +688,49 @@ function verifyRosterFingerprintContract(): void {
   const duplicated = [...roster, { ...roster[0] }];
   assert.notEqual(computeRosterIdentityFingerprint(duplicated), baseline,
     "동일 튜플 multiplicity 변화가 지문에 반영되지 않았다 — 중복이 dedupe 됐다");
-  // 결측 표기 계약: undefined 와 "" 는 같은 canonical 표기로 읽는다(표기 차이로 지문이 흔들리면 안 된다).
+
+  // ─ raw exact 계약 (삼순 재리뷰 blocker 2026-08-12) ──────────────────────────────
+  // census/loader 는 값을 trim 없이 그대로 쓴다(byName 키 = raw name). whitespace 변이는
+  // loader 귀속을 바꾸므로 지문도 반드시 바뀌어야 한다(지문이 값을 가공하면 false-GREEN).
+  const nameWs = roster.map((player, index) => (index === 0 ? { ...player, name: `${player.name} ` } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(nameWs), baseline,
+    "name whitespace 변이가 지문에 반영되지 않았다 — 지문이 값을 가공(trim)하고 있다");
+  const kboIdWs = roster.map((player, index) => (index === 0 ? { ...player, kboId: ` ${player.kboId}` } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(kboIdWs), baseline,
+    "kboId whitespace 변이가 지문에 반영되지 않았다");
+  const birthWs = roster.map((player, index) => (index === 0 ? { ...player, birthDate: `${player.birthDate}\t` } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(birthWs), baseline,
+    "birthDate whitespace 변이가 지문에 반영되지 않았다");
+
+  // ─ 무충돌 직렬화 계약 ──────────────────────────────────────────────────────────────────
+  // 필드 경계 이동(같은 문자열을 필드를 다르게 쪼개기)·구분자 문자 주입이 같은 지문을
+  // 만들면 안 된다. JSON 직렬화가 제어문자·구분자를 escape 하므로 충돌이 불가능해야 한다.
+  assert.notEqual(
+    computeRosterIdentityFingerprint([{ name: "a\u0000b", kboId: "c", birthDate: "d" }]),
+    computeRosterIdentityFingerprint([{ name: "a", kboId: "b\u0000c", birthDate: "d" }]),
+    "필드 경계 이동이 같은 지문을 만든다 — 구분자 충돌이 살아났다",
+  );
+  assert.notEqual(
+    computeRosterIdentityFingerprint([
+      { name: "a", kboId: "b", birthDate: "c" },
+      { name: "d", kboId: "e", birthDate: "f" },
+    ]),
+    computeRosterIdentityFingerprint([{ name: "a", kboId: "b", birthDate: `c\n["d","e","f"]` }]),
+    "필드에 주입한 개행+직렬화 모양 문자열이 행 경계를 위조한다 — 튜플 경계 충돌이 살아났다",
+  );
+  // 결측(null/undefined)은 JSON null 로 결정론적으로 표기된다 — 표현 불가능한 undefined 만 예외이고
+  // 문자열 값은 어떤 것도 가공되지 않는다("" 와 null 은 서로 다른 지문).
   assert.equal(
     canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: undefined }),
-    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: "" }),
-    "결측 birthDate 의 canonical 표기가 일관되지 않다",
+    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: null }),
+    "결측 birthDate(null/undefined)의 canonical 표기가 결정론적이지 않다",
   );
-  ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종");
+  assert.notEqual(
+    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: "" }),
+    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: null }),
+    '"" 와 null 이 같은 지문으로 뭉쳤다 — raw exact 가 아니다',
+  );
+  ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종 · whitespace RED 3종 · 충돌 방지 2종");
 }
 
 function run(): void {
