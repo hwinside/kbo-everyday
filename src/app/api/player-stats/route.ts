@@ -97,16 +97,22 @@ export async function GET(req: NextRequest) {
   const id = resolvePlayer(rawId)?.numericId || rawId;
 
   const cacheKey = `player-${id}-${pos}`;
+  // 엣지캐시 TTL = 인메모리 캐시 TTL(1시간) 동일값 — 신선도 저하 0. SWR 미사용, 에러 캐시 금지.
+  const OK_HEADERS = { "Cache-Control": "public, s-maxage=3600" } as const;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < 3600000) {
-    return NextResponse.json({ stats: cached.data, cached: true });
+    return NextResponse.json({ stats: cached.data, cached: true }, { headers: OK_HEADERS });
   }
 
   try {
     const stats = await fetchPlayerStats(id, pos);
     if (stats) cache[cacheKey] = { data: stats, ts: Date.now() };
-    return NextResponse.json({ stats, cached: false });
+    // stats null(기록 없음)은 단기 캐시(10분) — 미등록 선수 반복 조회 방어, 단 신규 등록 반영은 10분 내 복귀.
+    return NextResponse.json(
+      { stats, cached: false },
+      { headers: stats ? OK_HEADERS : { "Cache-Control": "public, s-maxage=600" } },
+    );
   } catch (e: unknown) {
-    return NextResponse.json({ error: (e as Error).message, stats: null }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message, stats: null }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }

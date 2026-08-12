@@ -45,14 +45,23 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
     if (articles.length === 0) return;
 
     let cancelled = false;
-    fetch("/api/news/discussion/counts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ articles }),
-    })
+    // GET + 정렬된 쿼리 → 전 유저가 같은 top-10을 조회하므로 엣지캐시(60초) HIT가 흥수.
+    // 응답은 canonical url로 키잉 → lookupId로 재매핑.
+    const query = [...articles]
+      .map((a) => a.canonicalUrl)
+      .sort()
+      .map((u) => `u=${encodeURIComponent(u)}`)
+      .join("&");
+    fetch(`/api/news/discussion/counts?${query}`)
       .then((response) => response.ok ? response.json() : null)
       .then((result) => {
-        if (!cancelled && result?.counts) setCommentCounts(result.counts);
+        if (!cancelled && result?.counts) {
+          setCommentCounts(
+            Object.fromEntries(
+              articles.map((a) => [a.lookupId, Number(result.counts[a.canonicalUrl] ?? 0)]),
+            ),
+          );
+        }
       })
       .catch(() => {});
     return () => { cancelled = true; };

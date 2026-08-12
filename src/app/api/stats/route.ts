@@ -473,6 +473,13 @@ function getCacheTtl(): number {
   return kstHour >= 11 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
 }
 
+// 엣지캐시 TTL = 인메모리 캐시 TTL과 동일값(경기시간대 10분/평시 1시간) — 신선도 저하 0.
+// SWR 미사용·fallback/에러 응답 캐시 금지(#1114 relay 계약과 동일 축).
+function edgeCacheHeaders(): Record<string, string> {
+  return { "Cache-Control": `public, s-maxage=${Math.floor(getCacheTtl() / 1000)}` };
+}
+const NO_STORE = { "Cache-Control": "no-store" } as const;
+
 function getCached(key: string) {
   const entry = cache[key];
   if (entry && Date.now() - entry.ts < getCacheTtl()) return entry.data;
@@ -580,19 +587,25 @@ export async function GET(req: NextRequest) {
     const stats = type === "pitcher"
       ? (pitcherStats2025 as unknown as PlayerStat[])
       : (batterStats2025 as unknown as PlayerStat[]);
-    return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
+    return NextResponse.json(
+      { stats, type, count: stats.length, season: 2025 },
+      { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 확정 static 데이터
+    );
   }
 
   // 수비 — 라이브 fetch 불가(KBO 수비페이지 POST 차단) → 정적 크롤 JSON(매일 CI 갱신) 집계
   if (type === "defense") {
     const stats = aggregateDefense(defenseStats2026 as unknown as DefenseRow[]) as unknown as PlayerStat[];
-    return NextResponse.json({ stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt });
+    return NextResponse.json(
+      { stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt },
+      { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 일일 크롤 static
+    );
   }
 
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
   const cacheKey = `stats-${type}-${season}${full ? "-full" : ""}`;
   const cached = getCached(cacheKey);
-  if (cached) return NextResponse.json(cached);
+  if (cached) return NextResponse.json(cached, { headers: edgeCacheHeaders() });
 
   try {
     const statsType = type === "pitcher" ? "pitcher" : "batter";
@@ -629,7 +642,7 @@ export async function GET(req: NextRequest) {
         : {}),
     };
     setCache(cacheKey, result);
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: edgeCacheHeaders() });
   } catch (e: unknown) {
     // 크롤링 실패 시 static JSON fallback (빈화면 방지)
     if (season === "2026" || season === "current") {
@@ -637,8 +650,12 @@ export async function GET(req: NextRequest) {
         ? (pitcherStats2026 as unknown as PlayerStat[])
         : (batterStats2026 as unknown as PlayerStat[]);
       const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
-      return NextResponse.json({ stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: fbAt });
+      // degraded fallback은 캐시 금지 — 회복 즉시 live로 복귀해야 한다.
+      return NextResponse.json(
+        { stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: fbAt },
+        { headers: NO_STORE },
+      );
     }
-    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });
+    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
   }
 }
