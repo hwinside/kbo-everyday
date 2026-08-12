@@ -41,6 +41,7 @@ import {
   DOCUMENTED_EXCLUSIONS,
   parseExpectedColumns,
 } from "./kbo-metric-inventory-expected.mjs";
+import { resolveCareerLeaderboardIntent } from "../../src/lib/baseball-qa/stats/career-leaderboard";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const PLAYERS = [
@@ -170,9 +171,12 @@ check("P0: 삼순 2차 exact — 어휘 접미/열린 요청 표현도 fail-clos
 
 check("P0: 지표어에 조사가 붙어도 fail-close (조사 처리 결속)", () => {
   // 실사용 다수 형태다. 조사를 벗기지 않으면 뒤결합 판정이 조사에 막혀 전부 샌다.
+  // ⚠️ `역대 최다 안타는 누구야?` 를 뺐다 — #1159 머지 후 **안타는 지원 지표**라
+  //   `career_leaderboard` 로 실제 답한다(hold 가 정답이 아니다). 조사 처리 축은 미지원
+  //   지표로 검증한다. 지원 지표의 실답 보존은 아래 #1159 회귀 방지 검사가 맡는다.
   for (const question of [
     "통산 홈런은 누가 1위야?",
-    "역대 최다 안타는 누구야?",
+    "역대 최다 사사구는 누구야?",
     "통산 세이브는 누가 1위야?",
     // ⚠️ `통산 이닝이 가장 많은 기록 누구야?` 는 넣지 않는다. 뒤결합이 `가장 많은` 이라
     // 화이트리스트에 `가장`·`많` 을 넣어야 통과하는데, 그건 **열린 언어**를 다시 쫓는 것이다
@@ -410,17 +414,55 @@ function makeE2eDeps(): { deps: QaDeps; calls: CallCounter } {
       return [{ season: 2026, team: "삼성", avg: "0.301", hr: 20, hit: 100, rbi: 60, sb: 2, game: 90 }];
     },
     enablePlayerRag: true,
-    // player/team/news/official RAG 는 같은 검색 진입점을 쓴다 — 호출되면 전부 잡힌다.
+    // ⚠️ RAG 는 **진입점이 하나가 아니다**(삼순 7차 P0). player RAG 만 배선하고 "RAG 전부
+    //   배선" 이라고 한 것은 과장이었다. official·team·news 는 각자 별도 deps 를 쓰므로
+    //   미배선이면 그 경로는 애초에 실행될 수 없어 "호출 0" 이 공짜로 GREEN 이 된다.
+    //   전부 배선하고 **각각 따로** 센다.
     searchRag: async () => {
       bump("rag.search");
       return [{ chunkId: "c1", content: "최형우 통산 홈런 1위 기록", entityType: "player", entityId: "60000" }];
     },
     callRagLlm: async () => { bump("rag.llm"); return { text: JSON.stringify({ status: "OK", answer: "최형우" }), inputTokens: 1, outputTokens: 1 }; },
+    // 공식 RAG
+    searchOfficialRag: async () => {
+      bump("rag.official");
+      return [{ chunkId: "o1", content: "KBO 공식 통산 기록", entityType: "official", entityId: "kbo" }];
+    },
+    callOfficialRagLlm: async () => { bump("rag.official.llm"); return { text: JSON.stringify({ status: "OK", answer: "최형우" }), inputTokens: 1, outputTokens: 1 }; },
+    // 구단 RAG
+    enableTeamRag: true,
+    callTeamRagLlm: async () => { bump("rag.team.llm"); return { text: JSON.stringify({ status: "OK", answer: "LG" }), inputTokens: 1, outputTokens: 1 }; },
+    // 최신기사 RAG
+    enableNewsRag: true,
+    searchNewsRag: async () => {
+      bump("rag.news");
+      return [{ chunkId: "n1", content: "최형우 통산 홈런 기사", entityType: "news", entityId: "n" }];
+    },
+    callNewsRagLlm: async () => { bump("rag.news.llm"); return { text: JSON.stringify({ status: "OK", answer: "최형우" }), inputTokens: 1, outputTokens: 1 }; },
+    // 사전 정의 매핑(LLM 호출 경로)
+    mapGlossaryDefinition: async () => { bump("glossary.map"); return null; },
     // production 과 동일하게 배선한다 — 미배선으로 두면 ⓐ 를 증명할 수 없다.
     fetchCareerRecord: createCareerRecordFetcher(
       async () => { bump("record.career"); return CAREER_FIXTURE; },
       () => Date.UTC(2026, 7, 10),
     ),
+    // ⚠️ #1159 의 통산 리더보드 조회. **미배선으로 두면 지원 intent 도 hold 로 떨어져**
+    //   "#1159 실답 보존" 을 증명할 수 없다(내 첫 시도가 그래서 FAIL 이었다).
+    //   순위형 hold 대상 질문이 이걸 부르면 그것도 위반이므로 카운터에 넣는다.
+    fetchCareerLeaderboard: async () => {
+      bump("record.leaderboard");
+      // ⚠️ 형태는 `CareerLeaderboardAnswer` 를 그대로 따른다. 처음에 내가 지어낸 형태
+      //   (`playerName`/`value`/`baselineSeason`)를 넣었더니 compose 가 터져 `source=error`
+      //   였다 — 게이트 실패의 원인이 대상 로직이 아니라 내 fixture 였다(오늘 두 번째).
+      return {
+        metric: "hits" as const,
+        label: "안타",
+        leaders: [{ kboId: "60000", name: "최형우", team: "삼성", total: 2695, baseline: 2586, current: 109 }],
+        asOf: "2026-08-10T00:00:00.000Z",
+        baselineThroughSeason: 2025,
+        sourceUrl: "https://www.koreabaseball.com/Record/Player/HitterBasic/BasicTotal.aspx",
+      };
+    },
   } as unknown as QaDeps;
   return { deps, calls };
 }
@@ -436,8 +478,14 @@ function e2eDeps(): QaDeps {
  *   (`dictionary` source 는 아래 exact history_hold 계약에서 이미 실패로 잡힌다).
  */
 const FORBIDDEN_CALLS = [
-  "llm", "rag.search", "rag.llm", "cache.get", "cache.set",
-  "record.season", "record.career",
+  "llm",
+  "rag.search", "rag.llm",
+  "rag.official", "rag.official.llm",
+  "rag.team.llm",
+  "rag.news", "rag.news.llm",
+  "glossary.map",
+  "cache.get", "cache.set",
+  "record.season", "record.career", "record.leaderboard",
 ];
 
 const asyncChecks: Array<[string, () => Promise<void>]> = [];
@@ -456,6 +504,30 @@ checkAsync("P0(종단): 값 질문의 구조화 실답이 보존된다 (kbo_stru
   ]) {
     const result = await answerQuestion("u1", question, e2eDeps());
     assert.equal(result.source, "kbo_structured", `${question} -> ${result.source} :: ${result.answer}`);
+  }
+});
+
+checkAsync("P0(종단): #1159 지원 intent 는 hold 보다 먼저 — 통산 안타 1위 실답 보존", async () => {
+  // ⚠️ 삼순 #1164 7차 P0. #1159 가 `통산 안타 1위 누구야?` 를 `career_leaderboard` 구조화
+  //   조회로 답하도록 출시했다. 이 PR 의 hold 가 그보다 앞서면 방금 출시한 실답을 삼켜
+  //   #1159 가 회귀한다. 지원 intent 는 **hold 예외**여야 한다.
+  // ⚠️ 표본을 손으로 짓지 않는다 — `KBO 통산 최다 안타 누구야?` 를 넣었다가 FAIL 났는데,
+  //   실측하니 main(#1159) 에서도 intent=null 인 **미지원 표현**이었다(회귀가 아니라 내
+  //   기대가 틀린 것). 지원 여부는 #1159 의 intent 해석기가 SSOT 다.
+  const supported = ["통산 안타 1위 누구야?", "역대 안타 1위 누구야?"]
+    .filter((q) => resolveCareerLeaderboardIntent(q) !== null);
+  assert.ok(supported.length >= 2, "지원 intent 표본이 사라졌다 — #1159 해석기 확인 필요");
+  for (const question of supported) {
+    const route = routeQuestion(question, [], PLAYERS);
+    assert.equal(
+      route, "career_leaderboard",
+      `#1159 지원 intent 가 hold 로 삼켜졌다(라우팅): ${question} -> ${route}`,
+    );
+    const result = await answerQuestion("u1", question, e2eDeps());
+    assert.notEqual(
+      result.source, "history_hold",
+      `#1159 지원 intent 가 hold 로 삼켜졌다(종단): ${question} :: ${result.answer}`,
+    );
   }
 });
 
@@ -499,18 +571,30 @@ checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history
   ];
   const bad: string[] = [];
   let checked = 0;
+  let supportedChecked = 0;
   for (const term of KBO_OFFICIAL_METRIC_TERMS) {
     for (const form of forms) {
       const question = form(term);
       checked += 1;
       const { deps, calls } = makeE2eDeps();
       const result = await answerQuestion("u1", question, deps);
+      // ⚠️ **지원 intent 는 hold 대상이 아니다**(삼순 7차 계약). #1159 가 실제로 답하는
+      //   질문까지 hold 로 기대하면 그 실답을 없애라는 게이트가 된다. 지원/미지원은
+      //   #1159 의 해석기로 기계 판정한다 — 어느 지표가 지원인지 손으로 열거하지 않는다.
+      if (resolveCareerLeaderboardIntent(question) !== null) {
+        supportedChecked += 1;
+        if (result.source !== "kbo_structured") {
+          bad.push(`(지원) ${question} -> source=${result.source} (실답이어야 한다)`);
+        }
+        continue;
+      }
       if (result.source !== "history_hold") bad.push(`${question} -> source=${result.source}`);
       const called = FORBIDDEN_CALLS.filter((k) => (calls[k] ?? 0) > 0);
       if (called.length > 0) bad.push(`${question} -> calls=${called.join(",")}`);
     }
   }
-  console.log(`     종단 전수 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ${checked} / 위반 ${bad.length}`);
+  console.log(`     종단 전수 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ${checked} (지원 intent ${supportedChecked} 건은 실답 계약) / 위반 ${bad.length}`);
+  assert.ok(supportedChecked > 0, "지원 intent 가 0 건이다 — #1159 배선이 끊겼는지 확인해야 한다");
   assert.equal(checked, forms.length * KBO_OFFICIAL_METRIC_TERMS.length);
   assert.deepEqual(
     bad, [],

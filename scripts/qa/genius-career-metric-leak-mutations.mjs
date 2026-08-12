@@ -69,14 +69,26 @@ const MUTATIONS = [
   {
     name: "m4f(종단) 순위형 가드 제거 — 통산/연도/현재 전부 개인값 오답 변환(431·28·현재값)",
     file: PIPELINE,
-    from: "  if (hasCareerMetricTerm(question) && isRankAsk(question)) {\n    await deps.log({\n      userId, question, questionNorm, matchPath: \"history_hold\", answer: HISTORY_HOLD_ANSWER,\n      inputTokens: null, outputTokens: null,\n    });\n    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: \"history_hold\", remaining };\n  }",
+    from: "  if (\n    hasCareerMetricTerm(question)\n    && isRankAsk(question)\n    && resolveCareerLeaderboardIntent(question) === null\n  ) {\n    await deps.log({\n      userId, question, questionNorm, matchPath: \"history_hold\", answer: HISTORY_HOLD_ANSWER,\n      inputTokens: null, outputTokens: null,\n    });\n    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: \"history_hold\", remaining };\n  }",
+    to: "",
+  },
+  {
+    name: "m4j(#1159 회귀) 종단 hold 의 지원 intent 예외 제거 — `통산 안타 1위` 실답이 hold 로 죽는다",
+    file: PIPELINE,
+    from: "    && resolveCareerLeaderboardIntent(question) === null\n  ) {",
+    to: "  ) {",
+  },
+  {
+    name: "m4k(#1159 회귀) 라우팅에서 지원 intent 선결속 제거 — career_leaderboard 가 사라진다",
+    file: PIPELINE,
+    from: "    const careerIntent = resolveCareerLeaderboardIntent(question);\n    if (careerIntent) return \"career_leaderboard\";",
     to: "",
   },
   {
     name: "m4g(종단) 순위형 가드를 career scope 로 되돌림 — 연도·현재가 다시 비켜간다(6차 회귀)",
     file: PIPELINE,
-    from: "  if (hasCareerMetricTerm(question) && isRankAsk(question)) {",
-    to: "  if (hasCareerMetricTerm(question) && isCareerLeaderboardAsk(question)) {",
+    from: "  if (\n    hasCareerMetricTerm(question)\n    && isRankAsk(question)\n    && resolveCareerLeaderboardIntent(question) === null\n  ) {",
+    to: "  if (\n    hasCareerMetricTerm(question)\n    && isCareerLeaderboardAsk(question)\n    && resolveCareerLeaderboardIntent(question) === null\n  ) {",
   },
   {
     name: "m4i(라우팅) 순위 판정을 scope 필수로 되돌림 — 연도·현재 순위형 35건이 generic LLM 으로 샌다",
