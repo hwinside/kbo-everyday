@@ -31,10 +31,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "articles must contain at most 10 items" }, { status: 400, headers: NO_STORE });
   }
 
+  // compact lookupId(인덱스 문자열) — parser의 lookupId 100자 상한과 URL 2048자 계약 충돌 회피(삼순 2차 #1).
+  // 응답 키는 url로 재매핑해 클라이언트 계약(counts[url]) 유지.
+  const dedupedUrls = [...new Set(urls)];
   let lookups: Array<{ lookupId: string; articleKey: string }>;
   try {
     lookups = parseCountLookups({
-      articles: [...new Set(urls)].map((u) => ({ lookupId: u, url: u, canonicalUrl: u })),
+      articles: dedupedUrls.map((u, i) => ({ lookupId: String(i), url: u, canonicalUrl: u })),
     });
   } catch (error) {
     const message = error instanceof NewsDiscussionInputError ? error.message : "invalid request";
@@ -47,13 +50,12 @@ export async function GET(req: NextRequest) {
   });
   if (error) return NextResponse.json({ error: "failed to load counts" }, { status: 500, headers: NO_STORE });
 
+  const countsByLookup = mapDiscussionCounts(
+    lookups,
+    (data ?? []) as Array<{ article_key: string; visible_comment_count: number | string | null }>,
+  );
   return NextResponse.json(
-    {
-      counts: mapDiscussionCounts(
-        lookups,
-        (data ?? []) as Array<{ article_key: string; visible_comment_count: number | string | null }>,
-      ),
-    },
+    { counts: Object.fromEntries(dedupedUrls.map((u, i) => [u, countsByLookup[String(i)] ?? 0])) },
     { headers: COUNTS_CACHE_HEADERS },
   );
 }

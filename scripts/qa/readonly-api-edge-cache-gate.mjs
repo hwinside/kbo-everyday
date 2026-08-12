@@ -10,6 +10,11 @@
  *  2) TTL 누적 금지 — stats는 remaining-TTL, player-stats는 60초 상한
  *  3) player-stats upstream 장애(res.ok/parse anomaly)는 throw → no-store ('기록 없음'과 구분)
  *  4) stats의 runner static-fallback 혼합 degraded도 no-store
+ * 2차 NO-GO 반영:
+ *  5) counts GET은 compact lookupId(인덱스) — parser 100자 상한×URL 2048자 계약 충돌 해소,
+ *     클라는 총길이 초과 시 POST fallback
+ *  6) player-stats 파서를 모듈 분리(src/lib/kbo/player-stats-parser.ts) — t0/t1 양 테이블·필수 열 길이
+ *     fail-close, truncated fixture 실행 RED는 qa:player-stats-parser smoke가 담당
  *
  * --selftest: 헤더 제거/오염 변이를 주입해 게이트가 RED를 내는지 자기검증.
  */
@@ -39,9 +44,7 @@ const CONTRACTS = [
     [
       ["성공 응답 60초 상한(revalidate+memory+edge 누적 방지)", /OK_HEADERS = \{ "Cache-Control": "public, s-maxage=60" \}/],
       ["upstream 비정상 상태코드 throw", /if \(!res\.ok\) throw new Error\(`upstream \$\{res\.status\}`\)/],
-      ["투수 테이블 부재 = 장애 throw", /throw new Error\("upstream parse anomaly: pitcher tables missing"\)/],
-      ["타자 테이블 부재 = 장애 throw", /throw new Error\("upstream parse anomaly: hitter tables missing"\)/],
-      ["명시적 '기록 없음'만 null", /if \(t0\[0\] === "기록이 없습니다\."\) return null;/],
+      ["fail-close 파서 모듈 사용(자체 파싱 금지)", /import \{ parsePlayerStats, type PlayerDetailStats \} from "@\/lib\/kbo\/player-stats-parser"/],
       ["인메모리 HIT 응답에 엣지 헤더", /cached: true \}, \{ headers: OK_HEADERS \}/],
       ["성공/기록없음 응답에 엣지 헤더", /\{ stats, cached: false \}, \{ headers: OK_HEADERS \}/],
       ["500 응답 no-store", /status: 500, headers: \{ "Cache-Control": "no-store" \}/],
@@ -49,7 +52,21 @@ const CONTRACTS = [
     [
       ["SWR 금지", /stale-while-revalidate/],
       ["60초 초과 s-maxage 금지", /s-maxage=(?!60\b)\d+/],
+      ["라우트 내 자체 tbody 파싱 잔존 금지(파서 우회)", /<tbody/],
     ],
+  ],
+  [
+    "src/lib/kbo/player-stats-parser.ts",
+    [
+      ["투수 테이블 부재 = 장애 throw", /throw new Error\("upstream parse anomaly: pitcher tables missing"\)/],
+      ["타자 테이블 부재 = 장애 throw", /throw new Error\("upstream parse anomaly: hitter tables missing"\)/],
+      ["투수 t0/t1 열 미달 fail-close", /t0\.length < PITCHER_T0_MIN_CELLS \|\| !t1 \|\| t1\.length < PITCHER_T1_MIN_CELLS/],
+      ["타자 t0/t1 열 미달 fail-close", /t0\.length < BATTER_T0_MIN_CELLS \|\| !t1 \|\| t1\.length < BATTER_T1_MIN_CELLS/],
+      ["투수 truncated throw", /throw new Error\("upstream parse anomaly: pitcher stat columns truncated"\)/],
+      ["타자 truncated throw", /throw new Error\("upstream parse anomaly: hitter stat columns truncated"\)/],
+      ["명시적 '기록 없음'만 null", /if \(t0\[0\] === "기록이 없습니다\."\) return null;/],
+    ],
+    [],
   ],
   [
     "src/app/api/news/discussion/counts/route.ts",
@@ -57,6 +74,8 @@ const CONTRACTS = [
       ["GET 핸들러 존재(POST는 CDN 캐시 불가)", /export async function GET\(/],
       ["성공 응답 s-maxage=60", /COUNTS_CACHE_HEADERS = \{ "Cache-Control": "public, s-maxage=60" \}/],
       ["입력 상한 10개 유지", /urls\.length > 10/],
+      ["compact lookupId(인덱스) — 100자 상한 충돌 해소", /lookupId: String\(i\), url: u, canonicalUrl: u/],
+      ["응답을 url 키로 재매핑", /dedupedUrls\.map\(\(u, i\) => \[u, countsByLookup\[String\(i\)\] \?\? 0\]\)/],
       ["RPC bounded annotation(query-guard)", /query-guard:\s*bounded\s*--\s*p_article_keys[^\n]{12,}\n[\s\S]{0,120}?getSupabaseAdmin\(\)\.rpc\("news_discussion_visible_counts"/],
       ["에러 응답 no-store", /status: 400, headers: NO_STORE/],
       ["rate-limit 유지", /allowNewsDiscussionRequest\(`counts:\$\{ip\}`\)/],
@@ -67,11 +86,12 @@ const CONTRACTS = [
   [
     "src/components/news/NewsCarousel.tsx",
     [
-      ["클라이언트가 GET 사용", /fetch\(`\/api\/news\/discussion\/counts\?\$\{query\}`\)/],
+      ["클라이언트가 GET 우선 사용", /fetch\(`\/api\/news\/discussion\/counts\?\$\{query\}`\)/],
       ["쿼리 정규화(정렬) — 캐시 키 안정화", /\.sort\(\)/],
-      ["lookupId 재매핑", /a\.lookupId, Number\(result\.counts\[a\.canonicalUrl\]/],
+      ["url 키 응답 → lookupId 재매핑", /a\.lookupId, Number\(counts\[a\.canonicalUrl\]/],
+      ["총길이 초과 시 POST fallback(정확성 우선)", /if \(query\.length > 6000\) \{/],
     ],
-    [["POST 잔존 금지", /method: "POST"[\s\S]{0,80}?discussion\/counts/]],
+    [["무조건 POST 회귀 금지(fallback 가드 밖 POST)", /\.sort\(\)[\s\S]*?(?<!if \(query\.length > 6000\) \{\n)(?:^|\n)\s{4}fetch\("\/api\/news\/discussion\/counts", \{\n\s*method: "POST"/]],
   ],
 ];
 
