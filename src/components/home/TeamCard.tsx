@@ -382,7 +382,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                     isLong ? "basis-full rounded-[10px]" : "",
                   ].join(" ");
                   return p.href ? (
-                    <Link key={i} href={p.href} className={itemClassName}>
+                    <Link key={i} href={p.href} prefetch={false} className={itemClassName}>
                       <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={12} className="text-text-tertiary flex-shrink-0" />
                     </Link>
                   ) : (
@@ -439,6 +439,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                               {move.href ? (
                                 <Link
                                   href={move.href}
+                                  prefetch={false}
                                   className="pointer-events-auto truncate text-[12.5px] font-semibold text-text-primary"
                                 >
                                   {move.playerName}
