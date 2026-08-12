@@ -214,10 +214,18 @@ async function main() {
       "src/app/api/setup/route.ts",
       "src/app/api/avatar/upload/route.ts",
       "src/app/api/venue-stories/[id]/view/route.ts",
+      "src/app/api/auth/delete-account/route.ts",
+      "src/app/api/dm/upload/route.ts",
+      "src/lib/news/discussion-auth.ts",
     ];
     for (const rel of guardedRoutes) {
       const src = readFileSync(join(root, rel), "utf8");
       assert(`T7a[${rel}] no direct auth.getUser`, !/\bauth\.getUser\b/.test(src), rel);
+      assert(
+        `T7a2[${rel}] no supabase server client (createServerClient/createSupabaseServer)`,
+        !/createServerClient|createSupabaseServer/.test(src),
+        rel,
+      );
       assert(
         `T7b[${rel}] uses dead-token guard`,
         /verifyAccessToken|getVerifiedUserIdFromCookies|getVerifiedUserFromRequest/.test(src),

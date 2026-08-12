@@ -1,4 +1,4 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getVerifiedUserIdFromCookies } from "@/lib/auth/verified-user";
 
 /**
  * 기사 댓글 브릿지 ensure / 네이티브 댓글 오버레이는 로그인 유저에게만 연다.
@@ -11,9 +11,8 @@ import { createSupabaseServer } from "@/lib/supabase/server";
  * (익명 열람까지 여는 건 별도 승인 범위.)
  */
 export async function isNewsDiscussionUser(): Promise<boolean> {
-  const supabase = await createSupabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return Boolean(user);
+  // 쿠키 직접파싱 → dead-token guard 경유. supabase-js 서버 클라를 쓰지 않아
+  // 만료 세션이 /auth/v1/user·refresh를 유발하지 않는다.
+  const userId = await getVerifiedUserIdFromCookies();
+  return userId !== null;
 }
