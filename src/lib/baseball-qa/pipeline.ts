@@ -832,9 +832,52 @@ export function isCareerLeaderboardAsk(question: string): boolean {
  * 일반명사와 충돌하는 컬럼(`G=경기`·`GS=선발`)은 inventory 에서 판정 어휘로 승격되지 않으므로
  * `역대 최고의 경기`·`커리어 선발로 기억나는 경기` 같은 서술·주관 질문은 여기 걸리지 않는다.
  */
+/**
+ * 지표어 **직후에 올 수 있는 것**의 닫힌 집합 — 리더보드 요구 표현.
+ *
+ * ⚠️ 단순 `includes` 는 과차단이다(삼순 #1164 1차 P0-2). 공식 컬럼 어휘에는 `득점`·`승리`·
+ * `보살` 처럼 일상어와 겹치는 다의어가 있어서, 어휘가 문장에 **포함**되기만 하면
+ * `역대 최고의 득점 장면`·`역대 최고의 승리 영화` 까지 hold 로 끌려온다(실측 확인).
+ *
+ * 그래서 "그 어휘가 **지표로 쓰였는지**" 를 지표어 뒤 결합으로 본다. 비야구 명사를 열거하는
+ * 대신(그건 열린 언어다) **허용되는 뒤 결합만 열거**한다 — 화이트리스트라 닫힌 집합이다.
+ */
+const CAREER_METRIC_TAIL = /^(?:\d+\s*위|최다|최고|선두|순위|랭킹|톱|top|기록|보유|누구|누가|몇)/;
+/** 지표어와 뒤 결합 사이에 끼는 조사. 조사 **뒤에도** 리더보드 표현이 와야 지표로 인정한다. */
+const CAREER_METRIC_PARTICLE = /^(?:은|는|이|가|의|를|을|도|만|에서|중)/;
+
+/**
+ * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
+ *
+ * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
+ * 공식 기록실 컬럼 어휘로 `통산 <지표> 1위 누구야?` 를 돌려보니 **다수가 `llm_scope_gate`로
+ * 샜다**(`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 숫자 환각 게이트는 2차 방어지만
+ * 리더보드 답은 **이름 단답**이라 숫자가 없어 그 게이트에 걸리지 않는다 — 모델이 기억하는
+ * 옛 1위를 확신해서 내보낸다(8/9 `임창규` 사고와 같은 축).
+ *
+ * 판정은 **두 개의 닫힌 집합**만 쓴다(A안 계약): 공식 컬럼 어휘 + 위 뒤결합 화이트리스트.
+ * 표현 변이를 쫓지 않는다 — 요청 형태는 `CAREER_LEADERBOARD_ASK`(main 그대로)가 본다.
+ *
+ * 일반명사와 충돌하는 컬럼(`G=경기`·`GS=선발`)은 inventory 에서 판정 어휘로 승격되지 않으므로
+ * `역대 최고의 경기`·`커리어 선발로 기억나는 경기` 같은 서술·주관 질문은 여기 걸리지 않는다.
+ */
 export function hasCareerMetricTerm(question: string): boolean {
+  // 공백을 지워야 `탈 삼진`·`몸에 맞는 공` 같은 띄어쓰기 변이가 어휘와 맞는다.
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
-  return KBO_OFFICIAL_METRIC_TERMS.some((term) => normalized.includes(term));
+  for (const term of KBO_OFFICIAL_METRIC_TERMS) {
+    let from = 0;
+    for (;;) {
+      const at = normalized.indexOf(term, from);
+      if (at < 0) break;
+      from = at + 1;
+      let tail = normalized.slice(at + term.length);
+      // 조사는 한 번만 벗긴다. 벗긴 뒤가 비어 있으면(`…보살은?`) 지표 질문이 아니다.
+      const particle = tail.match(CAREER_METRIC_PARTICLE);
+      if (particle) tail = tail.slice(particle[0].length);
+      if (tail.length > 0 && CAREER_METRIC_TAIL.test(tail)) return true;
+    }
+  }
+  return false;
 }
 
 const HISTORY_CONTEXT_WORDS = [

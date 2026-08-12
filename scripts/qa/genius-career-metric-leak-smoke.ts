@@ -92,6 +92,56 @@ check("P0: 실측 누수 52건 대표 표본이 fail-close 된다", () => {
   }
 });
 
+check("P0: 지표어에 조사가 붙어도 fail-close (조사 처리 결속)", () => {
+  // 실사용 다수 형태다. 조사를 벗기지 않으면 뒤결합 판정이 조사에 막혀 전부 샌다.
+  for (const question of [
+    "통산 홈런은 누가 1위야?",
+    "역대 최다 안타는 누구야?",
+    "통산 세이브는 누가 1위야?",
+    // ⚠️ `통산 이닝이 가장 많은 기록 누구야?` 는 넣지 않는다. 뒤결합이 `가장 많은` 이라
+    // 화이트리스트에 `가장`·`많` 을 넣어야 통과하는데, 그건 **열린 언어**를 다시 쫓는 것이다
+    // (#1159 6~13차 교훈). 이 축은 요청 형태 판정(main)의 몫으로 남긴다.
+  ]) {
+    assert.equal(hasCareerMetricTerm(question), true, `조사 결합 미인식: ${question}`);
+    assert.equal(routeQuestion(question, [], PLAYERS), "history_hold", question);
+  }
+});
+
+check("P0: 띄어쓰기 변이도 fail-close (공백 정규화 결속 — m4 실제 RED)", () => {
+  // ⚠️ 삼순 #1164 1차 P0-1: 종전 게이트에는 이 표본이 없어 공백 정규화를 제거해도 GREEN 이었고,
+  // 나는 그 mutation 을 `expectRed:false` 로 성공 처리해 9/9 RED 에 포함시켰다(false RED).
+  // 정규화가 실제로 필요한 표본을 넣어야 그 축이 게이트가 된다.
+  for (const question of [
+    "통산 탈 삼진 1위 누구야?",
+    "역대 몸에 맞는 공 최다 누구야?",
+    "통산 퀄리티 스타트 1위 누구야?",
+  ]) {
+    assert.equal(hasCareerMetricTerm(question), true, `띄어쓰기 변이 미인식: ${question}`);
+    assert.equal(routeQuestion(question, [], PLAYERS), "history_hold", question);
+  }
+});
+
+check("P0: 다의어 지표어가 **지표로 쓰이지 않은** 문장은 과차단하지 않는다", () => {
+  // ⚠️ 삼순 #1164 1차 P0-2 실측 exact. 공식 컬럼 어휘에는 `득점`·`승리`·`보살` 처럼 일상어와
+  // 겹치는 다의어가 있다. 단순 `includes` + 기존 `최고` 조합이면 아래가 전부 hold 로 끌려온다.
+  for (const question of [
+    "역대 최고의 득점 장면",   // 삼순 exact — 지표어 뒤가 다른 명사
+    "역대 최고의 보살은?",     // 삼순 exact — 조사로 끝나 리더보드 요구가 없다
+    "역대 최고의 실책 순간",
+    // 지표어로 문장이 끝난다 — 리더보드 요구가 아예 없다(뒤결합 빈 문자열 허용 금지 축).
+    "역대 최고의 보살",
+    // 리더보드 요구어(`누구`)가 문장 뒤쪽에 있지만 지표어 **직후**가 아니다(뒤결합 앵커 축).
+    "역대 최고의 보살 얘기 누구한테 들었어?",
+    // ⚠️ `통산 안타 느낌 어때?` 는 넣지 않는다. main 에서도 `history_hold` 라(대조 실측)
+    // 이 PR 범위 밖이고, 넣으면 게이트가 main 의 기존 동작을 회귀로 오판한다.
+  ]) {
+    assert.notEqual(
+      routeQuestion(question, [], PLAYERS), "history_hold",
+      `지표로 쓰이지 않은 다의어를 과차단했다: ${question}`,
+    );
+  }
+});
+
 check("P0: 반대편 과차단 0 — 지표 어휘 없는 서술·주관은 LLM 범위 판정", () => {
   for (const question of [
     "역대 최고의 타자는 누구야?",
@@ -122,6 +172,11 @@ check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘로 �
 check("P0: 판정 어휘 = 감사 문서 expected-set (missing/extra 0, 독립 근거)", () => {
   const { expected, rowCount, doc } = parseExpectedColumns(REPO_ROOT);
   assert.equal(rowCount, 10, `${doc} 컬럼 표 행 수가 변했다`);
+  // ⚠️ 규모를 상수로 못 박는다(삼순 #1164 1차 지적 — 내 보고가 71개였으나 실측 75개였다).
+  // 이 숫자가 바뀌면 보고문도 함께 고쳐야 한다는 신호다.
+  const columnCount = new Set(KBO_OFFICIAL_METRIC_COLUMNS.map((c) => `${c.source}:${c.code}`)).size;
+  assert.equal(columnCount, 75, `공식 컬럼 (source,code) 수가 변했다: ${columnCount}`);
+  assert.equal(KBO_OFFICIAL_METRIC_TERMS.length, 96, `판정 어휘 수가 변했다: ${KBO_OFFICIAL_METRIC_TERMS.length}`);
   const actual = new Set(KBO_OFFICIAL_METRIC_COLUMNS.map((c) => `${c.source}:${c.code}`));
   const missing = [...expected].filter((key) => !actual.has(key)).sort();
   const extra = [...actual].filter((key) => !expected.has(key)).sort();
