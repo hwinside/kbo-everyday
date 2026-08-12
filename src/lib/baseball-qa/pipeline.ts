@@ -69,6 +69,12 @@ import {
   type CareerLeaderboardFetcher,
 } from "./stats/career-leaderboard";
 import {
+  composeCareerMetricAnswer,
+  resolveCareerMetricIntent,
+  type CareerMetricAnswer,
+  type CareerMetricQuery,
+} from "./stats/career-metric-leaderboard";
+import {
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
   resolveTeamRecord,
@@ -745,6 +751,14 @@ export interface QaDeps {
   fetchCareerRecord?: CareerRecordFetcher;
   /** 리그 통산 순위 — 전년도 말 공식 기준선 + 앱의 당해 시즌 최종 스냅샷. */
   fetchCareerLeaderboard?: CareerLeaderboardFetcher;
+  /**
+   * 리그 통산 **다지표** 순위 — 위와 같은 계약(기준선 + 당해 증분)을 지표·순위구간 축으로 넓힌 것.
+   * 미주입이면 `history_hold` 로 fail-close 한다(추정값을 만들지 않는다).
+   */
+  fetchCareerMetricLeaderboard?: (
+    query: CareerMetricQuery,
+    now?: Date,
+  ) => Promise<CareerMetricAnswer | null>;
   /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
@@ -2302,8 +2316,10 @@ export function routeQuestion(
   //   **먼저** 결속돼야 한다. 반대로 두면 방금 출시한 `통산 안타 1위 누구야?` 실답이 hold 로
   //   삼켜져 #1159 가 회귀한다. `intent != null ⇒ career_leaderboard` 를 먼저 성립시킨다.
   if (!hasTeam && !hasPlayerReference(tokens, players)) {
-    const careerIntent = resolveCareerLeaderboardIntent(question);
-    if (careerIntent) return "career_leaderboard";
+    // ⚠️ 지원 지표 판정은 **카탈로그 기반 단일 SSOT**(`resolveCareerMetricIntent`)다.
+    //   지표를 늘려도 이 분기는 그대로다 — 늘어나는 건 `career-metric-catalog.ts` 의 데이터 행뿐.
+    //   `resolveCareerLeaderboardIntent`(안타 전용)는 이 resolver 의 부분집합이라 대체된다.
+    if (resolveCareerMetricIntent(question)) return "career_leaderboard";
   }
   // 여기부터가 이 PR 이 넓히는 **미지원 순위형**의 fail-close 다.
   // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
@@ -3673,7 +3689,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (
     hasCareerMetricTerm(question)
     && isRankAsk(question)
-    && resolveCareerLeaderboardIntent(question) === null
+    && resolveCareerMetricIntent(question) === null
   ) {
     await deps.log({
       userId, question, questionNorm, matchPath: "history_hold", answer: HISTORY_HOLD_ANSWER,
@@ -3683,9 +3699,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   if (
-    recordIntent.kind === "unsupported_season" ||
-    recordIntent.kind === "untrusted_metric" ||
-    (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+    resolveCareerMetricIntent(question) === null && (
+      recordIntent.kind === "unsupported_season" ||
+      recordIntent.kind === "untrusted_metric" ||
+      (recordIntent.kind === "career" && !deps.fetchCareerRecord)
+    )
   ) {
     const answer = recordIntent.kind === "untrusted_metric"
       ? UNTRUSTED_METRIC_ANSWER
@@ -3766,18 +3784,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //
   // ── KBO 리그 통산 순위 (전년도 말 기준선 + 당해 시즌 증분) ───────────────────
   if (route === "career_leaderboard") {
-    const intent = resolveCareerLeaderboardIntent(question);
+    const intent = resolveCareerMetricIntent(question);
     const settleCareerLeaderboard = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
       await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
       return { status: 200, answer, source: matchPath, remaining };
     };
-    if (!intent || !deps.fetchCareerLeaderboard) {
+    if (!intent || !deps.fetchCareerMetricLeaderboard) {
       return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
     }
+    // ⚠️ 순위 구간은 **여기서 파싱하지 않는다.** `TOP10`·`1~5위` 같은 표현은 열린 자연어라
+    //   정규식으로 쫓으면 룰이 누적된다(#1143·#1132 교훈). 이 슬라이스는 단일 1위만 요청하고,
+    //   구간 표현은 LLM 정규화가 `{from,to}` 를 만들어 넘기는 후속 슬라이스에서 붙인다.
+    const query: CareerMetricQuery = { table: intent.table, metric: intent.metric, from: 1, to: 1 };
     try {
-      const result = await deps.fetchCareerLeaderboard(intent, deps.now ? new Date(deps.now()) : new Date());
+      const result = await deps.fetchCareerMetricLeaderboard(query, deps.now ? new Date(deps.now()) : new Date());
       if (!result) return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
-      return settleCareerLeaderboard(composeCareerLeaderboardAnswer(result), "kbo_structured");
+      return settleCareerLeaderboard(composeCareerMetricAnswer(result), "kbo_structured");
     } catch {
       return settleCareerLeaderboard(SYSTEM_ERROR_ANSWER, "error");
     }

@@ -1,6 +1,6 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
 import { canonicalKboId } from "@/lib/utils/resolve-player";
-import { FULL_ENTRY_BATTER_IDS } from "@/lib/stats/full-entry-roster";
+import { FULL_ENTRY_BATTER_IDS, FULL_ENTRY_PITCHER_IDS } from "@/lib/stats/full-entry-roster";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -115,6 +115,69 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
       updated_at: servedAt,
     })) as SeasonRecordRow[],
   };
+}
+
+/**
+ * 통산 리더보드용 당해 시즌 스냅샷 — **타자/투수 공용**.
+ *
+ * `fetchServedBatterSnapshot` 과 같은 정본(`/api/stats?full=1`)을 쓰되, 투수 축을 함께 연다.
+ * ⚠️ 타자에만 있던 `full-entry 전집합` 완전성 계약은 그대로 유지한다(부분 스냅샷이면 증분이
+ *   0 으로 깔려 통산이 과소 계산된다). 투수는 그 명단 정본이 아직 없어 **행수 하한 + kboId
+ *   유일성**으로만 검증하고, 그 사실을 여기 명시해 둔다 — 나중에 명단이 생기면 같은 계약으로 올린다.
+ */
+export function validateServedPitcherPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
+  if (payload.type !== "pitcher" || !Number.isInteger(payload.count)) return null;
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) return null;
+  const expectedIds = new Set(FULL_ENTRY_PITCHER_IDS);
+  if (rows.length !== expectedIds.size) return null;
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    if (!id || !expectedIds.has(id) || seen.has(id)) return null;
+    seen.add(id);
+  }
+  if (FULL_ENTRY_PITCHER_IDS.some((id) => !seen.has(id))) return null;
+  return rows;
+}
+
+export async function fetchServedCareerSnapshot(
+  table: "batter" | "pitcher",
+): Promise<{ rows: SeasonRecordRow[]; updatedAt: string }> {
+  if (table === "batter") return fetchServedBatterSnapshot();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
+  let payload: ServedStatsResponse;
+  try {
+    const res = await fetch(`${PUBLIC_BASE}/api/stats?type=pitcher&full=1`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`served pitcher stats HTTP ${res.status}`);
+    payload = (await res.json()) as ServedStatsResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+  const rows = validateServedPitcherPayload(payload);
+  if (!rows) throw new Error("served pitcher payload violates exact full-entry coverage contract");
+  const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
+  if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
+    throw new Error("served pitcher payload has no usable updatedAt");
+  }
+  const mapped: SeasonRecordRow[] = [];
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    mapped.push({
+      ...row,
+      player_key: id,
+      kbo_id: id,
+      name: String(row.name ?? ""),
+      team: (row.team as string | null) ?? null,
+      updated_at: servedAt,
+    } as SeasonRecordRow);
+  }
+  return { rows: mapped, updatedAt: servedAt };
 }
 
 export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {

@@ -8,6 +8,7 @@
  * 실행: npx tsx scripts/qa/field-defense-boxscore-smoke.ts
  */
 import { deriveGameState } from "../../src/lib/utils/game-derived";
+import { mergeNaverSubPositions, hasPureSubPositions } from "../../src/lib/utils/sub-position-merge";
 import type { GameDetailResponse, LineupEntry, BatterRecord } from "../../src/lib/hooks/useGameDetail";
 
 let pass = 0;
@@ -188,25 +189,25 @@ const awayLineupKT: LineupEntry[] = [
   check("중간 이동 최원준 미포함", !names.includes("최원준"), `got ${names.join(",")}`);
 }
 
-// ── 케이스 6: normalizeFieldPosition 직접 검증 (투수/DH/순수 대타 제외) ──
+// ── 케이스 6: normalizeFieldPosition 직접 검증 (투수/DH 제외 + 순수 대타 슬롯 상속) ──
 {
-  console.log("[case6] 투수·DH·순수 대타는 수비 그림에서 제외");
+  console.log("[case6] 투수·DH 제외 + 순수 대타는 빠진 선수 위치 상속");
   const box: BatterRecord[] = [
     batter(1, "투", "켈리"),      // 투수 → 제외
-    batter(2, "지", "오지환"),    // 지명 → 제외
-    batter(3, "타", "이재원", true), // 순수 대타(수비 미정) → 제외
+    batter(2, "지", "오지환"),    // 지명 → 제외 (선발 SS 최원준 슬롯이지만 지명은 상속 대상 아님)
+    batter(3, "타", "이재원", true), // 순수 대타 → 선발 LF(안현민) 위치 상속
     batter(4, "포", "박동원"),    // C
   ];
   const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
   check("C = 박동원", defenderAt(s, "C") === "박동원", `got ${defenderAt(s, "C")}`);
   check("투수 켈리 미포함", !(s ?? []).some(d => d.name === "켈리"));
   check("지명 오지환 미포함", !(s ?? []).some(d => d.name === "오지환"));
-  check("순수 대타 이재원 미포함", !(s ?? []).some(d => d.name === "이재원"));
+  check("순수 대타 이재원 = LF 상속(선발 안현민 슬롯)", defenderAt(s, "LF") === "이재원", `got ${defenderAt(s, "LF")}`);
 }
 
-// ── 케이스 7: 순수 대타·대주가 현재 슬롯이면 stale 선발 수비를 되살리지 않음 ──
+// ── 케이스 7: 미확정 순수 타/주가 2명 이상 → 상속 금지(더블스위치 구분 불가), fail-empty 유지 ──
 {
-  console.log("[case7] 순수 타/주 뒤 stale 선발 억제");
+  console.log("[case7] 미확정 2명 → 추정 상속 금지 + stale 선발 억제");
   const box: BatterRecord[] = [
     batter(2, "SS", "최원준"),
     batter(2, "타", "대타", true),
@@ -214,10 +215,10 @@ const awayLineupKT: LineupEntry[] = [
     batter(3, "주", "대주자", true),
   ];
   const s = deriveGameState(undefined, game, makeDetail(box)).defensiveSide;
-  check("순수 대타 뒤 선발 SS 미노출", defenderAt(s, "SS") === undefined, `got ${defenderAt(s, "SS")}`);
-  check("순수 대주 뒤 선발 LF 미노출", defenderAt(s, "LF") === undefined, `got ${defenderAt(s, "LF")}`);
-  check("대타 미포함", !(s ?? []).some(d => d.name === "대타"));
-  check("대주자 미포함", !(s ?? []).some(d => d.name === "대주자"));
+  check("미확정 2명 → SS 비움(추정 금지)", defenderAt(s, "SS") === undefined, `got ${defenderAt(s, "SS")}`);
+  check("미확정 2명 → LF 비움(추정 금지)", defenderAt(s, "LF") === undefined, `got ${defenderAt(s, "LF")}`);
+  check("교체된 최원준 미포함", !(s ?? []).some(d => d.name === "최원준"));
+  check("교체된 안현민 미포함", !(s ?? []).some(d => d.name === "안현민"));
 }
 
 // ── 케이스 8: 선발 선수가 포지션 이동하면 옛 위치 fallback과 이름 중복을 막음 ──
@@ -233,6 +234,124 @@ const awayLineupKT: LineupEntry[] = [
   check("옛 CF 위치 미노출", defenderAt(s, "CF") === undefined, `got ${defenderAt(s, "CF")}`);
   check("선발 RF 홍창기 stale 미노출", !names.includes("홍창기"), `got ${names.join(",")}`);
   check("선수명 중복 0", new Set(names).size === names.length, `got ${names.join(",")}`);
+}
+
+// ── 케이스 9: 실제 제보 경기(20260812LGWO0) 운영 원문 — 순수 대/주가 끝까지 미갱신 ──
+// 9회초 키움 수비: 2번 안치홍(1B)→김웅빈 '대', 7번 임병욱(CF)→최주환 '대'→박채울 '주'.
+// KBO BoxScore가 경기 종료까지 두 교체 선수의 수비 위치를 갱신하지 않아
+// 1B/CF가 빈 자리로 렌더된 실사고(2026-08-12 하린아빠 제보). 상속으로 채워져야 한다.
+const homeLineupWO: LineupEntry[] = [
+  lineupEntry(1, "2B", "서건창"),
+  lineupEntry(2, "1B", "안치홍"),
+  lineupEntry(3, "DH", "데이비슨"),
+  lineupEntry(4, "RF", "박찬혁"),
+  lineupEntry(5, "LF", "추재현"),
+  lineupEntry(6, "C", "김건희"),
+  lineupEntry(7, "CF", "임병욱"),
+  lineupEntry(8, "SS", "권혁빈"),
+  lineupEntry(9, "3B", "여동욱"),
+];
+// KBO 원문(순수 대/주 방치) — 매 케이스마다 fresh copy를 쓴다(merge가 mutate하므로).
+function homeBoxWOKbo(): BatterRecord[] {
+  return [
+    batter(1, "二", "서건창"),
+    batter(2, "一", "안치홍"),
+    batter(2, "대", "김웅빈", true),   // 2번 현재 = 순수 대타, KBO가 수비 위치 미갱신
+    batter(3, "DH", "데이비슨"),
+    batter(4, "RF", "박찬혁"),
+    batter(5, "LF", "추재현"),
+    batter(6, "C", "김건희"),
+    batter(7, "CF", "임병욱"),
+    batter(7, "대", "최주환", true),   // 7번 중간 교체(대타)
+    batter(7, "주", "박채울", true),   // 7번 현재 = 순수 대주, KBO가 수비 위치 미갱신
+    batter(8, "SS", "권혁빈"),
+    batter(9, "三", "여동욱"),
+  ];
+}
+const gameWO = { status: "live", inning: "9회초", awayScore: 3, homeScore: 4, awayTeamId: 5, homeTeamId: 10 };
+function detailWO(homeBatters: BatterRecord[]): GameDetailResponse {
+  return {
+    status: "live",
+    lineup: { away: awayLineup, home: homeLineupWO },
+    boxScore: { awayBatters: [], homeBatters, awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+}
+{
+  // 2026-08-12 22:38 Production 캡처(boxScoreSource=naver)의 선수별 복합 위치 그대로.
+  const naverBoxWO: BatterRecord[] = [
+    batter(1, "二", "서건창"),
+    batter(2, "一", "안치홍"),
+    batter(2, "타一", "김웅빈", true),  // Naver 원문: 타·1루 → 1B
+    batter(3, "DH", "데이비슨"),
+    batter(4, "RF", "박찬혁"),
+    batter(5, "LF", "추재현"),
+    batter(6, "C", "김건희"),
+    batter(7, "CF", "임병욱"),
+    batter(7, "타", "최주환", true),
+    batter(7, "주중", "박채울", true),  // Naver 원문: 대주·중견 → CF
+    batter(8, "SS", "권혁빈"),
+    batter(9, "三", "여동욱"),
+  ];
+  const kboBox = { awayBatters: [] as BatterRecord[], homeBatters: homeBoxWOKbo(), awayPitchers: [], homePitchers: [] };
+  const naverBox = { awayBatters: [] as BatterRecord[], homeBatters: naverBoxWO, awayPitchers: [], homePitchers: [] };
+  console.log("[case9] 실제 제보 경기(20260812LGWO0): KBO 대/주 방치 → Naver 복합 위치 병합 → 1B/CF 복원");
+  check("hasPureSubPositions: KBO 원문 감지", hasPureSubPositions(kboBox) === true);
+  mergeNaverSubPositions(kboBox, naverBox);
+  check("병합 후 김웅빈 position = 타一", kboBox.homeBatters.find(b => b.name === "김웅빈")?.position === "타一");
+  check("병합 후 박채울 position = 주중", kboBox.homeBatters.find(b => b.name === "박채울")?.position === "주중");
+  check("비교체 entry 무변경(안치홍 一 유지)", kboBox.homeBatters.find(b => b.name === "안치홍")?.position === "一");
+  const s = deriveGameState(undefined, gameWO, detailWO(kboBox.homeBatters)).defensiveSide;
+  check("1B = 김웅빈 (Naver 소스 진실)", defenderAt(s, "1B") === "김웅빈", `got ${defenderAt(s, "1B")}`);
+  check("CF = 박채울 (Naver 소스 진실, 최주환 아님)", defenderAt(s, "CF") === "박채울", `got ${defenderAt(s, "CF")}`);
+  check("교체된 안치홍 미포함", !(s ?? []).some(d => d.name === "안치홍"));
+  check("교체된 임병욱 미포함", !(s ?? []).some(d => d.name === "임병욱"));
+  check("중간 교체 최주환 미포함", !(s ?? []).some(d => d.name === "최주환"));
+  check("수비수 정확히 8명", (s?.length ?? 0) === 8, `got ${s?.length}`);
+  const positionsSeen = (s ?? []).map(d => d.position);
+  check("포지션 중복 0", new Set(positionsSeen).size === positionsSeen.length, `got ${positionsSeen.join(",")}`);
+  check("2B = 서건창", defenderAt(s, "2B") === "서건창", `got ${defenderAt(s, "2B")}`);
+  check("DH 데이비슨 미포함", !(s ?? []).some(d => d.name === "데이비슨"));
+}
+
+// ── 케이스 10: 더블스위치(미확정 2명이 서로 위치 교환) — Naver 소스 진실이 이긴다 ──
+// 김웅빈이 빠진 자리(1B)가 아니라 CF로, 박채울이 1B로 들어간 교환 시나리오.
+// 추정 상속이면 둘 다 자기 타순의 옛 자리로 오배정되지만(8명·중복 0 통과하는 false
+// green — 삼순 NO-GO 지적), 소스 병합은 선수별 위치를 쓰므로 올바르게 풀린다.
+{
+  const naverSwap: BatterRecord[] = [
+    batter(2, "주중", "김웅빈", true),  // 교환: 김웅빈 → CF
+    batter(7, "타一", "박채울", true),  // 교환: 박채울 → 1B
+  ];
+  const kboBox = { awayBatters: [] as BatterRecord[], homeBatters: homeBoxWOKbo(), awayPitchers: [], homePitchers: [] };
+  const naverBox = { awayBatters: [] as BatterRecord[], homeBatters: naverSwap, awayPitchers: [], homePitchers: [] };
+  mergeNaverSubPositions(kboBox, naverBox);
+  const s = deriveGameState(undefined, gameWO, detailWO(kboBox.homeBatters)).defensiveSide;
+  console.log("[case10] 더블스위치 교환 → Naver 선수별 위치로 올바르게 배정");
+  check("CF = 김웅빈 (교환 반영, 옛 자리 1B 아님)", defenderAt(s, "CF") === "김웅빈", `got ${defenderAt(s, "CF")}`);
+  check("1B = 박채울 (교환 반영, 옛 자리 CF 아님)", defenderAt(s, "1B") === "박채울", `got ${defenderAt(s, "1B")}`);
+  check("수비수 8명·중복 0", (s?.length ?? 0) === 8 && new Set((s ?? []).map(d => d.position)).size === (s?.length ?? 0));
+}
+
+// ── 케이스 11: Naver 부재/부분 병합 — 다중 미확정은 추정 금지, 단일 미확정만 상속 ──
+{
+  // 11-a: Naver 전면 부재 → 미확정 2명 그대로 → 1B/CF 비움(오배정 금지).
+  const sA = deriveGameState(undefined, gameWO, detailWO(homeBoxWOKbo())).defensiveSide;
+  console.log("[case11] Naver 부재/부분 병합 폴백");
+  check("11-a: 병합 없이 미확정 2명 → 1B 비움", defenderAt(sA, "1B") === undefined, `got ${defenderAt(sA, "1B")}`);
+  check("11-a: 병합 없이 미확정 2명 → CF 비움", defenderAt(sA, "CF") === undefined, `got ${defenderAt(sA, "CF")}`);
+  check("11-a: stale 안치홍·임병욱 미포함", !(sA ?? []).some(d => d.name === "안치홍" || d.name === "임병욱"));
+  // 11-b: Naver가 한 명만 해소(김웅빈=타一) → 남은 미확정 1명(박채울)은 상속으로 CF 복원.
+  const kboBoxB = { awayBatters: [] as BatterRecord[], homeBatters: homeBoxWOKbo(), awayPitchers: [], homePitchers: [] };
+  const naverPartial = { awayBatters: [] as BatterRecord[], homeBatters: [batter(2, "타一", "김웅빈", true)], awayPitchers: [], homePitchers: [] };
+  mergeNaverSubPositions(kboBoxB, naverPartial);
+  const sB = deriveGameState(undefined, gameWO, detailWO(kboBoxB.homeBatters)).defensiveSide;
+  check("11-b: 부분 병합 → 1B = 김웅빈(소스)", defenderAt(sB, "1B") === "김웅빈", `got ${defenderAt(sB, "1B")}`);
+  check("11-b: 단일 미확정 박채울 = CF 상속", defenderAt(sB, "CF") === "박채울", `got ${defenderAt(sB, "CF")}`);
+  // 11-c: Naver도 순수 대/주라면 병합 무효(fail-safe).
+  const kboBoxC = { awayBatters: [] as BatterRecord[], homeBatters: homeBoxWOKbo(), awayPitchers: [], homePitchers: [] };
+  const naverPure = { awayBatters: [] as BatterRecord[], homeBatters: [batter(2, "대", "김웅빈", true), batter(7, "주", "박채울", true)], awayPitchers: [], homePitchers: [] };
+  mergeNaverSubPositions(kboBoxC, naverPure);
+  check("11-c: Naver도 순수 대/주 → 병합 무효(김웅빈 '대' 유지)", kboBoxC.homeBatters.find(b => b.name === "김웅빈")?.position === "대");
 }
 
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);

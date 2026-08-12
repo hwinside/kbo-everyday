@@ -24,6 +24,9 @@ const POS_FULL_TO_FIELD: Record<string, string> = {
   "포수": "C", "1루수": "1B", "2루수": "2B", "3루수": "3B",
   "유격수": "SS", "좌익수": "LF", "중견수": "CF", "우익수": "RF",
 };
+// 수비 위치가 아직 확정 표기되지 않은 순수 대타/대주 약어(폐쇄집합).
+// 이 값 이외의 미지 포지션은 상속 대상이 아니다(기존 fail-safe 유지).
+export const PURE_SUB_POSITIONS = new Set(["대", "주", "타", "대타", "대주"]);
 
 /**
  * BoxScore/라인업의 포지션 값을 *최종 수비 위치 코드*로 정규화한다.
@@ -37,7 +40,7 @@ const POS_FULL_TO_FIELD: Record<string, string> = {
  * 투수(P/투)·지명타자(DH/지)·순수 대타·대주(타/주 단독)는 필드 수비수가 아니므로
  * null을 반환한다(필드뷰에서 제외, 투수는 currentPitcher로 별도 렌더).
  */
-function normalizeFieldPosition(raw: string | null | undefined): string | null {
+export function normalizeFieldPosition(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const t = raw.trim();
   if (!t) return null;
@@ -102,6 +105,38 @@ function toDefenders(
   for (const b of currentBySlot.values()) {
     const pos = normalizeFieldPosition(b.position);
     if (pos && !byPosition.has(pos)) byPosition.set(pos, b);
+  }
+
+  // 3) 순수 대타/대주 슬롯 상속 — 소스가 교체 선수의 수비 위치를 끝까지 '대/주'로
+  //    두는 경우가 있다(실측: 20260812LGWO0 KBO BoxScore가 김웅빈 '대'·박채울 '주'를
+  //    9회초 수비 내내 미갱신 → 1B/CF 빈 자리 렌더).
+  //    1순위 보정은 서버의 Naver 선수별 복합 위치(타一/주중) 병합이다
+  //    (mergeNaverSubPositions — 소스 진실 우선, 추정 아님).
+  //    여기 휴리스틱 상속은 그 병합 후에도 남은 미확정 entry가 *정확히 1명*일
+  //    때만 적용한다. 2명 이상이면 서로 위치를 바꾸는 더블스위치를 데이터로
+  //    구분할 수 없으므로 추정하지 않고 기존 fail-empty(#932)를 유지한다.
+  //    또한 다른 현재 선수가 이미 차지한 위치는 상속하지 않는다.
+  const unresolvedPureSubs: Array<[number, BatterRecord]> = [];
+  for (const [order, cur] of currentBySlot) {
+    const raw = (cur.position ?? "").trim();
+    if (PURE_SUB_POSITIONS.has(raw)) unresolvedPureSubs.push([order, cur]);
+  }
+  if (unresolvedPureSubs.length === 1) {
+    const [order, cur] = unresolvedPureSubs[0];
+    // 같은 타순의 직전 entry들(선발 → 중간 교체) 중 마지막으로 확인된 수비 위치.
+    let vacated: string | null = null;
+    for (let i = boxBatters.length - 1; i >= 0; i--) {
+      const b = boxBatters[i];
+      if (b === cur || b.order !== order || !b.name) continue;
+      const pos = normalizeFieldPosition(b.position);
+      if (pos) { vacated = pos; break; }
+    }
+    // BoxScore에 이전 수비 위치 기록이 없으면 선발 라인업의 같은 타순 위치로 폴백.
+    if (!vacated) {
+      const entry = lineupEntries?.find(e => e.order === order);
+      vacated = entry ? normalizeFieldPosition(entry.position) : null;
+    }
+    if (vacated && !byPosition.has(vacated)) byPosition.set(vacated, cur);
   }
 
   return FIELD_POSITIONS.flatMap(pos => {
