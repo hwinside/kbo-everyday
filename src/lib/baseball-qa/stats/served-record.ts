@@ -117,6 +117,65 @@ export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot>
   };
 }
 
+/**
+ * 통산 리더보드용 당해 시즌 스냅샷 — **타자/투수 공용**.
+ *
+ * `fetchServedBatterSnapshot` 과 같은 정본(`/api/stats?full=1`)을 쓰되, 투수 축을 함께 연다.
+ * ⚠️ 타자에만 있던 `full-entry 전집합` 완전성 계약은 그대로 유지한다(부분 스냅샷이면 증분이
+ *   0 으로 깔려 통산이 과소 계산된다). 투수는 그 명단 정본이 아직 없어 **행수 하한 + kboId
+ *   유일성**으로만 검증하고, 그 사실을 여기 명시해 둔다 — 나중에 명단이 생기면 같은 계약으로 올린다.
+ */
+export async function fetchServedCareerSnapshot(
+  table: "batter" | "pitcher",
+): Promise<{ rows: SeasonRecordRow[]; updatedAt: string }> {
+  if (table === "batter") return fetchServedBatterSnapshot();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
+  let payload: ServedStatsResponse;
+  try {
+    const res = await fetch(`${PUBLIC_BASE}/api/stats?type=pitcher&full=1`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`served pitcher stats HTTP ${res.status}`);
+    payload = (await res.json()) as ServedStatsResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (payload.type !== "pitcher" || !Number.isInteger(payload.count)) {
+    throw new Error("served pitcher payload violates envelope contract");
+  }
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) {
+    throw new Error("served pitcher payload count mismatch");
+  }
+  // 리그 전체가 아니면 증분이 0 으로 깔려 통산이 과소 계산된다 — 부분 스냅샷은 거절한다.
+  if (rows.length < 200) throw new Error(`served pitcher coverage too small: ${rows.length}`);
+  const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
+  if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
+    throw new Error("served pitcher payload has no usable updatedAt");
+  }
+  const seen = new Set<string>();
+  const mapped: SeasonRecordRow[] = [];
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    // kboId 가 없는 행은 통산 기준선과 이을 수 없다 — 조용히 0 증분으로 두면 과소 계산이다.
+    if (!id) continue;
+    if (seen.has(id)) throw new Error(`served pitcher duplicate kboId: ${id}`);
+    seen.add(id);
+    mapped.push({
+      ...row,
+      player_key: id,
+      kbo_id: id,
+      name: String(row.name ?? ""),
+      team: (row.team as string | null) ?? null,
+      updated_at: servedAt,
+    } as SeasonRecordRow);
+  }
+  return { rows: mapped, updatedAt: servedAt };
+}
+
 export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {
   const snapshot = await fetchServedBatterSnapshot();
   // 2행 이상이면 그대로 넘겨 `resolveSeasonRecord` 가 inconsistent 로 fail-close 한다.
