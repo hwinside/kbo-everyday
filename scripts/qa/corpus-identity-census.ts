@@ -39,6 +39,7 @@ import path from "node:path";
 import readline from "node:readline";
 
 import { verifyCorpusPlayerIdentity, type CorpusIdentityVerdict } from "../../src/lib/baseball-qa/rag/corpus-identity";
+import { computeRosterIdentityFingerprint } from "./roster-identity-fingerprint";
 
 type Roster = { name: string; kboId: string; birthDate?: string };
 type IdentityInput = Parameters<typeof verifyCorpusPlayerIdentity>[0];
@@ -219,7 +220,11 @@ async function main(): Promise<void> {
       corpusFile: corpusPath.split("/").pop(),
       corpusSha256: corpusHash.digest("hex"),
       corpusPhysicalLines: physicalLines,
-      rosterFileSha256: sha256(rosterRaw),
+      // ⚠️ 게이트가 비교하는 지문은 **신원 multiset**(name·kboId·birthDate)이다.
+      //   파일 전체 해시를 게이트로 쓰면 스탯·사진 등 매일 갱신에도 전건 FAIL 이 된다(#1162 실측).
+      //   파일 해시는 provenance 참고용으로만 남긴다.
+      rosterIdentitySha256: computeRosterIdentityFingerprint(roster),
+      rosterFileSha256AtBuild: sha256(rosterRaw),
       rosterPlayers: roster.length,
       // ⚠️ base = PR base(merge-base) 커밋. 이 PR 의 중간 커밋이 아니다.
       baseCommit,

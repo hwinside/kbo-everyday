@@ -25,8 +25,10 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const TARGET = "src/lib/baseball-qa/rag/corpus-identity.ts";
+/** 신원 지문 모듈 — F 축 변이의 대상(#1162 재발 방지). */
+const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
 
-/** @type {{id: string, name: string, expect: string, apply: (source: string) => string}[]} */
+/** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
   // ── A. 레이아웃 축 ───────────────────────────────────────────────────────
   {
@@ -190,6 +192,103 @@ const MUTATIONS = [
       "  if (!hasBaseballPlayerCategory(input.text)) {",
     ),
   },
+
+  // ── F. 신원 지문 축 (2026-08-12, #1162 재발 방지 — 삼순 수용조건) ──────────────
+  //   과소(신원 필드 누락·dedupe·상수화)는 신원 변경을 놓치고,
+  //   과대(신원 무관 필드 포함)는 매일 갱신을 다시 전건 FAIL 로 되돌린다.
+  //   양쪽 모두 smoke 의 지문 계약 섹션이 잡아야 한다.
+  {
+    id: "F-1",
+    name: "지문에서 kboId 제외(과소 — kboId 교체를 놓침)",
+    expect: "kboId 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.birthDate)]);",
+    ),
+  },
+  {
+    id: "F-2",
+    name: "지문에서 birthDate 제외(과소 — 생년 정정을 놓침)",
+    expect: "birthDate 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId)]);",
+    ),
+  },
+  {
+    id: "F-3",
+    name: "지문에서 name 제외(과소 — 개명·오타 교정을 놓침)",
+    expect: "name 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.kboId), field(player.birthDate)]);",
+    ),
+  },
+  {
+    id: "F-4",
+    name: "중복 튜플 dedupe(multiset 계약 파괴)",
+    expect: "중복이 dedupe 됐다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "const tuples = roster.map(canonicalIdentityTuple);\n  tuples.sort();",
+      "const tuples = [...new Set(roster.map(canonicalIdentityTuple))];\n  tuples.sort();",
+    ),
+  },
+  {
+    id: "F-5",
+    name: "지문에 신원 무관 필드 포함(과대 — 매일 갱신 전건 FAIL 회귀)",
+    expect: "지문이 과대해서 매일 갱신이 다시 전건 FAIL 로 돌아간다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate), field(/** @type {any} */ (player).team)]);",
+    ),
+  },
+  {
+    id: "F-6",
+    name: "지문 상수화(모든 변경을 놓침)",
+    expect: "선수 추가가 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "const tuples = roster.map(canonicalIdentityTuple);",
+      "const tuples = [];",
+    ),
+  },
+  {
+    id: "F-7",
+    name: "정렬 제거(순서 의존 회귀 — reorder 가 전건 FAIL)",
+    expect: "multiset 이 아니라 순서에 묶였다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace("  tuples.sort();\n", ""),
+  },
+  {
+    // 삼순 1차 blocker 그 자체: 지문이 값을 가공(trim)하면 whitespace 변경이
+    // loader 귀속을 바꾸는데도 지문은 그대로라 stale census 가 false-GREEN 된다.
+    id: "F-8",
+    name: "trim 재도입(raw exact 계약 파괴)",
+    expect: "지문이 값을 가공(trim)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      '(value: unknown): unknown => (value === undefined ? null : (typeof value === "string" ? value.trim() : value))',
+    ),
+  },
+  {
+    // 삼순 2차 blocker 그 자체: String() 강제변환이 되살아나면 kboId 의
+    // string↔number 타입 변화(`"53006" → 53006`)를 지문이 못 본다 —
+    // validator 는 둘 다 허용하고 loader 는 원타입을 산출물에 넣기 때문에 실질 변화다.
+    id: "F-9",
+    name: "String() 강제변환 재도입(타입 raw exact 파괴)",
+    expect: "지문이 값을 강제변환(String)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      "(value: unknown): unknown => (value === null || value === undefined ? null : String(value))",
+    ),
+  },
 ];
 
 function runGate() {
@@ -204,11 +303,17 @@ function runGate() {
 }
 
 function main() {
-  const original = readFileSync(TARGET, "utf8");
+  /** 변이 대상별 원본 — 복원·종료검증을 대상 파일 단위로 한다. */
+  const originals = new Map([
+    [TARGET, readFileSync(TARGET, "utf8")],
+    [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
+  ]);
   let red = 0;
   let failed = 0;
   try {
     for (const mutation of MUTATIONS) {
+      const target = mutation.target ?? TARGET;
+      const original = originals.get(target);
       const mutated = mutation.apply(original);
       const label = `${mutation.id} ${mutation.name}`;
       if (mutated === original) {
@@ -216,12 +321,12 @@ function main() {
         failed += 1;
         continue;
       }
-      writeFileSync(TARGET, mutated);
+      writeFileSync(target, mutated);
       let verdict;
       try {
         verdict = runGate();
       } finally {
-        writeFileSync(TARGET, original);
+        writeFileSync(target, original);
       }
       if (verdict.ok) {
         console.log(`❌ ${label} → GREEN (게이트가 못 잡는다)`);
@@ -242,14 +347,16 @@ function main() {
       red += 1;
     }
   } finally {
-    writeFileSync(TARGET, original);
+    for (const [file, source] of originals) writeFileSync(file, source);
   }
 
   console.log("----------------------------------------");
   console.log(`RED ${red} · 검출실패 ${failed}`);
-  if (readFileSync(TARGET, "utf8") !== original) {
-    console.log("❌ 원본 복원 실패");
-    process.exit(1);
+  for (const [file, source] of originals) {
+    if (readFileSync(file, "utf8") !== source) {
+      console.log(`❌ 원본 복원 실패: ${file}`);
+      process.exit(1);
+    }
   }
   if (failed !== 0) {
     console.log(`❌ mutation: 검출 실패 ${failed}건`);
