@@ -136,6 +136,11 @@ async function main(): Promise<void> {
 
   const corpusHash = createHash("sha256");
   const latest = new Map<string, { entity: string; title: string; canonical: string; fetchedAt: string; text: string }>();
+  // ⚠️ **영속 universe** (삼순 시간축 NO-GO 2026-08-12): 영향 판정의 기준이 될 corpus 루트
+  //   entity 는 **roster 필터 전**의 전체 player root 에서 모은다. rows(= roster 교집합)로
+  //   판정하면 corpus 대상 선수가 이탈한 뒤 T7 재생성 시 그 이름이 universe 에서 사라져,
+  //   같은 이름 선수가 재등록될 때 false-GREEN 이 된다(T7 엔 과거 root 문서가 여전히 있다).
+  const corpusRootEntitySet = new Set<string>();
   let physicalLines = 0;
   const stream = readline.createInterface({ input: fs.createReadStream(corpusPath), crlfDelay: Infinity });
   for await (const line of stream) {
@@ -146,6 +151,7 @@ async function main(): Promise<void> {
     let record: any;
     try { record = JSON.parse(line); } catch { continue; }
     if (record.kind !== "player" || record.depth !== 1) continue;
+    corpusRootEntitySet.add(String(record.entity));
     if (!byName.has(record.entity)) continue;
     const key = `${record.entity}\u0000${record.canonical}`;
     const seen = latest.get(key);
@@ -228,6 +234,10 @@ async function main(): Promise<void> {
       // 해시만으로는 안 되고 기준 튜플 원문이 필요하다(roster-identity-impact.ts).
       // smoke 가 이 원문과 rosterIdentitySha256 의 결속을 검증한다(원문 변조 방어).
       rosterIdentityTuples: rosterIdentityTuples(roster),
+      // 영속 universe — roster 필터 **전** T7 전체 player root entity. 영향 판정은 rows 가
+      // 아니라 이 집합을 쓴다(이탈→재등록 시간축 false-GREEN 방어). 해시로 결속된다.
+      corpusRootEntities: [...corpusRootEntitySet].sort((a, b) => a.localeCompare(b, "ko")),
+      corpusRootEntitiesSha256: sha256([...corpusRootEntitySet].sort((a, b) => a.localeCompare(b, "ko")).join("\n")),
       rosterFileSha256AtBuild: sha256(rosterRaw),
       rosterPlayers: roster.length,
       // ⚠️ base = PR base(merge-base) 커밋. 이 PR 의 중간 커밋이 아니다.

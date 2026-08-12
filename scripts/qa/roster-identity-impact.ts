@@ -22,9 +22,36 @@
  * 판정 불가(파싱 실패·빈 입력·결속 붕괴)는 전부 "영향 있음" 쪽으로 떨어진다.
  */
 
+import { createHash } from "node:crypto";
+
 export type IdentityImpactVerdict =
   | { affected: false; changedNames: string[] }
   | { affected: true; reason: "affected_census_entities" | "unparseable"; affectedNames: string[] };
+
+/**
+ * 영향 판정이 쓸 **영속 universe** 를 census 산출물에서 꺼낸다 (삼순 시간축 NO-GO 2026-08-12).
+ *
+ * ⚠️ 왜 rows 가 아닌가: rows 는 corpus root ∩ 현재 로스터다. corpus 대상 선수가 이탈하면
+ *   다음 T7 재생성에서 그 이름이 rows 에서 사라지고, 이후 같은 이름의 새 선수가 등록되면
+ *   ∩ rows = ∅ 로 false-GREEN 이 된다 — T7 엔 과거 root 문서가 여전히 있는데도.
+ *   그래서 universe 는 roster 필터 **전** 전체 player root(`corpusRootEntities`)를 쓴다.
+ *
+ * fail-close: 필드 부재·빈 목록·해시 불일치(원문 변조)는 예외를 던져 게이트를 깨늈다.
+ */
+export function impactUniverseFromCensus(census: {
+  corpusRootEntities?: unknown;
+  corpusRootEntitiesSha256?: unknown;
+}): Set<string> {
+  const entities = census.corpusRootEntities;
+  if (!Array.isArray(entities) || entities.length === 0 || entities.some((name) => typeof name !== "string")) {
+    throw new Error("census 에 영속 universe(corpusRootEntities)가 없다 — T7 에서 census 를 재생성해야 한다");
+  }
+  const computed = createHash("sha256").update((entities as string[]).join("\n")).digest("hex");
+  if (computed !== census.corpusRootEntitiesSha256) {
+    throw new Error("corpusRootEntities 가 저장된 해시와 결속되지 않는다 — universe 원문이 변조됐다");
+  }
+  return new Set(entities as string[]);
+}
 
 /** canonical 튜플 문자열(JSON 배열)에서 이름을 꺼낸다. 실패는 null — 호출부가 fail-close 한다. */
 export function tupleName(tuple: string): string | null {
@@ -50,10 +77,50 @@ export function multisetSymmetricDiff(base: readonly string[], current: readonly
 }
 
 /**
+ * **drift 게이트 단일 경로** — 지문 비교부터 영향 분류까지 한 함수다.
+ *
+ * ⚠️ 왜 함수로 묶는가 (mutation I-1 GREEN 실측, 2026-08-12): 이 로직이 smoke 인라인이면
+ *   "universe 를 rows 로 회귀" 변이를 잡을 수 없다 — 지문이 일치하는 평소엔 drift 경로가
+ *   실행되지 않아 어떤 assert 도 안 깨진다. 함수로 뽑으면 smoke 계약 섹션이 **합성
+ *   시간축 census**(universe ⊋ rows)로 같은 함수를 직접 태워 회귀를 검출한다.
+ */
+export function judgeRosterDriftAgainstCensus(
+  census: {
+    rosterIdentityTuples?: unknown;
+    rosterIdentitySha256?: unknown;
+    corpusRootEntities?: unknown;
+    corpusRootEntitiesSha256?: unknown;
+  },
+  currentTuples: readonly string[],
+  fingerprintOfTuples: (tuples: readonly string[]) => string,
+):
+  | { status: "fingerprint_match" }
+  | { status: "accepted"; changedNames: string[] }
+  | { status: "regenerate"; reason: string; affectedNames: string[] } {
+  const stored = census.rosterIdentityTuples;
+  if (!Array.isArray(stored) || stored.length === 0 || stored.some((tuple) => typeof tuple !== "string")) {
+    return { status: "regenerate", reason: "base_tuples_missing", affectedNames: [] };
+  }
+  if (fingerprintOfTuples(stored as string[]) !== census.rosterIdentitySha256) {
+    return { status: "regenerate", reason: "base_tuples_tampered", affectedNames: [] };
+  }
+  if (fingerprintOfTuples(currentTuples) === census.rosterIdentitySha256) {
+    return { status: "fingerprint_match" };
+  }
+  // ⚠️ universe 는 rows(∩ 현재 로스터)가 아니라 영속 universe 다 — rows 로 회귀하면
+  //   corpus 이름 선수 이탈 → T7 재생성 → 동일 이름 재등록이 false-GREEN 이 된다.
+  const verdict = classifyIdentityDrift(stored as string[], currentTuples, impactUniverseFromCensus(census));
+  if (verdict.affected) {
+    return { status: "regenerate", reason: verdict.reason, affectedNames: verdict.affectedNames };
+  }
+  return { status: "accepted", changedNames: verdict.changedNames };
+}
+
+/**
  * 신원 drift 의 census 영향 판정.
  * @param baseTuples census 에 저장된 기준 신원 multiset(정렬 canonical 튜플)
  * @param currentTuples 현재 로스터의 신원 multiset
- * @param censusEntities census rows 의 entity 이름 전건
+ * @param censusEntities 영속 universe(roster 필터 전 전체 corpus root entity)
  */
 export function classifyIdentityDrift(
   baseTuples: readonly string[],

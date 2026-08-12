@@ -42,7 +42,13 @@ import {
   rosterIdentityTuples,
   type RosterIdentitySource,
 } from "./roster-identity-fingerprint";
-import { classifyIdentityDrift, multisetSymmetricDiff, tupleName } from "./roster-identity-impact";
+import {
+  classifyIdentityDrift,
+  impactUniverseFromCensus,
+  judgeRosterDriftAgainstCensus,
+  multisetSymmetricDiff,
+  tupleName,
+} from "./roster-identity-impact";
 
 type FixtureDocument = {
   entity: string;
@@ -72,6 +78,9 @@ type CensusFile = {
   rosterIdentitySha256: string;
   /** 기준 신원 multiset 원문 — 지문 drift 시 corpus 없는 CI 영향 판정의 입력. */
   rosterIdentityTuples: string[];
+  /** 영속 universe — roster 필터 전 T7 전체 player root entity(이탈→재등록 시간축 방어). */
+  corpusRootEntities: string[];
+  corpusRootEntitiesSha256: string;
   /** census 빌드 시점 로스터 파일 해시 — provenance 참고용. 게이트 비교 대상이 아니다. */
   rosterFileSha256AtBuild: string;
   /** PR base(merge-base) 커밋. 이 PR 안의 중간 커밋이 아니다. */
@@ -653,21 +662,36 @@ function verifyCensusIntegrity(): void {
     generatorSource.includes("rosterIdentityTuples: rosterIdentityTuples(roster),"),
     "census 생성기가 기준 튜플 원문(rosterIdentityTuples)을 산출물에 기록하지 않는다 — 다음 T7 재생성에서 필드가 사라져 게이트가 깨진다",
   );
+  // 영속 universe 의 재생성 경로 결속 2종 (삼순 시간축 NO-GO):
+  //   ① emission 자체 — 빠지면 다음 T7 재생성에서 universe 가 사라진다.
+  assert.ok(
+    generatorSource.includes("corpusRootEntities: [...corpusRootEntitySet]"),
+    "census 생성기가 영속 universe(corpusRootEntities)를 산출물에 기록하지 않는다 — 다음 T7 재생성에서 universe 가 사라진다",
+  );
+  //   ② 수집 시점 — roster 필터 **전**에 add 해야 이탈 선수의 corpus 이름이 보존된다.
+  //     이번 T7 재생성은 root 631 = rows 631 이라 산출물로는 구분되지 않으므로(미래 경계)
+  //     소스 순서를 직접 결속한다(mutation I-2 가 이 assert 를 검증).
+  assert.ok(
+    generatorSource.indexOf("corpusRootEntitySet.add(String(record.entity));")
+      < generatorSource.indexOf("if (!byName.has(record.entity)) continue;"),
+    "census 생성기가 영속 universe 를 roster 필터 전 전체 root 에서 만들지 않는다 — 이탈 선수의 corpus 이름이 universe 에서 사라져 시간축이 뚫린다",
+  );
   assert.equal(fingerprintOfTuples(storedTuples), census.rosterIdentitySha256,
     "census 의 기준 튜플 원문이 저장된 지문과 결속되지 않는다 — 원문 변조로 영향 판정을 우회할 수 있다");
   const currentTuples = rosterIdentityTuples(
     JSON.parse(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8")),
   );
-  if (fingerprintOfTuples(currentTuples) !== census.rosterIdentitySha256) {
-    const censusEntities = new Set(census.rows.map((row) => row.entity));
-    const verdict = classifyIdentityDrift(storedTuples, currentTuples, censusEntities);
-    assert.equal(
-      verdict.affected, false,
-      `신원 변경이 census 판정에 영향을 준다(${verdict.affected ? `${verdict.reason}: ${verdict.affectedNames.join(", ")}` : ""}) — T7 에서 census 를 재생성해야 한다`,
-    );
-    if (!verdict.affected) {
-      console.log(`  ℹ️ 신원 지문 drift 수용 — 변경 이름 ${verdict.changedNames.length}명 전원 census 비영향(corpus 루트 부재): ${verdict.changedNames.slice(0, 8).join(", ")}${verdict.changedNames.length > 8 ? " …" : ""}`);
-    }
+  // ⚠️ drift 판정은 **단일 경로**(judgeRosterDriftAgainstCensus)만 탄다 — 지문 비교부터
+  //   영속 universe 분류까지 함수 하나다. 인라인으로 풌어두면 "universe → rows 회귀" 변이를
+  //   평소(지문 일치) 상태의 어떤 assert 도 못 잡는다(mutation I-1 GREEN 실측) — 함수로 묶고
+  //   영향판정 계약 섹션이 합성 시간축 census 로 같은 함수를 직접 태워 회귀를 검출한다.
+  const drift = judgeRosterDriftAgainstCensus(census, currentTuples, fingerprintOfTuples);
+  assert.notEqual(
+    drift.status, "regenerate",
+    `신원 변경이 census 판정에 영향을 준다(${drift.status === "regenerate" ? `${drift.reason}: ${drift.affectedNames.join(", ")}` : ""}) — T7 에서 census 를 재생성해야 한다`,
+  );
+  if (drift.status === "accepted") {
+    console.log(`  ℹ️ 신원 지문 drift 수용 — 변경 이름 ${drift.changedNames.length}명 전원 census 비영향(corpus 루트 부재): ${drift.changedNames.slice(0, 8).join(", ")}${drift.changedNames.length > 8 ? " …" : ""}`);
   }
   ok(`census 정합성 — base(${census.baseCommit.slice(0, 9)}) ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
 }
@@ -777,8 +801,15 @@ function verifyRosterFingerprintContract(): void {
  * 또는 stale census 통과(과소)로 기운다. 입력은 실 census 에서 기계 추출한다.
  */
 function verifyIdentityImpactContract(): void {
-  const censusEntities = new Set(census.rows.map((row) => row.entity));
-  assert.ok(censusEntities.size > 600, `census entity 가 비정상적으로 적다: ${censusEntities.size}`);
+  // ⚠️ 영향 판정의 universe 는 rows(∩ 현재 로스터)가 아니라 **영속 universe**(roster 필터 전
+  //   T7 전체 player root)다 — 삼순 시간축 NO-GO(2026-08-12): corpus 대상 선수 이탈 후
+  //   T7 재생성되면 rows 에서 그 이름이 사라져, 같은 이름 재등록이 false-GREEN 이 된다.
+  const censusEntities = impactUniverseFromCensus(census);
+  assert.ok(censusEntities.size > 600, `영속 universe 가 비정상적으로 작다: ${censusEntities.size}`);
+  // universe ⊇ rows: rows 는 universe 의 roster 교집합이므로 모든 row entity 가 포함돼야 한다.
+  for (const row of census.rows) {
+    assert.ok(censusEntities.has(row.entity), `영속 universe 가 rows 를 담지 않는다: ${row.entity} — 필터 후 생성됐다`);
+  }
   const base = census.rosterIdentityTuples;
   const realEntity = census.rows[0].entity; // 실 census 에서 기계 추출한 corpus 루트 entity
   assert.ok(censusEntities.has(realEntity));
@@ -822,6 +853,52 @@ function verifyIdentityImpactContract(): void {
   const removedEntity = classifyIdentityDrift(base, base.filter((_, index) => index !== entityTupleIndex), censusEntities);
   assert.equal(removedEntity.affected, true, "corpus 대상 선수 이탈이 영향으로 판정되지 않았다");
 
+  // ─ 시간축 RED (삼순 필수 시나리오) ───────────────────────────────────────────
+  // `corpus 이름 선수 이탈 → T7 재생성(기준 tuple 에 그 이름 없음) → 동일 이름 재등록`.
+  // 재생성 후에는 rows 에도 기준 tuple 에도 그 이름이 없지만, T7 엔 과거 root 문서가
+  // 남아있으므로 재등록은 **영향**이어야 한다. rows 기반 universe 는 여기서 정확히
+  // false-GREEN 이 난다 — 이 시나리오가 영속 universe 를 강제한다.
+  const afterDeparture = base.filter((_, index) => index !== entityTupleIndex); // 이탈 반영된 기준
+  const rowsAfterRegen = new Set([...census.rows.map((row) => row.entity)].filter((name) => name !== realEntity));
+  const reRegistered = canonicalIdentityTuple({ name: realEntity, kboId: "66666", birthDate: "2006-06-06" });
+  const timeAxisRows = classifyIdentityDrift(afterDeparture, [...afterDeparture, reRegistered].sort(), rowsAfterRegen);
+  assert.equal(timeAxisRows.affected, false,
+    "전제 재확인: rows 기반 universe 는 이 시나리오에서 false-GREEN 이다(이 축이 성립해야 영속 universe 가 의미있다)");
+  const timeAxisUniverse = classifyIdentityDrift(afterDeparture, [...afterDeparture, reRegistered].sort(), censusEntities);
+  assert.equal(timeAxisUniverse.affected, true,
+    "시간축 결함(classify): 이탈→재생성→동일 이름 재등록이 영향으로 판정되지 않았다");
+  if (timeAxisUniverse.affected) assert.deepEqual(timeAxisUniverse.affectedNames, [realEntity]);
+
+  // ⚠️ 실제 게이트 경로(judgeRosterDriftAgainstCensus)로도 같은 시간축을 태운다 — **합성
+  //   재생성 후 census**(rows 에서 realEntity 소멸, universe 엔 잔존)를 만들어 직접 호출.
+  //   이게 있어야 "judge 가 universe 대신 rows 를 쓰는" 회귀(mutation I-1)가 RED 가 된다.
+  const syntheticCensusAfterRegen = {
+    rosterIdentityTuples: afterDeparture,
+    rosterIdentitySha256: fingerprintOfTuples(afterDeparture),
+    corpusRootEntities: census.corpusRootEntities,
+    corpusRootEntitiesSha256: census.corpusRootEntitiesSha256,
+    rows: census.rows.filter((row) => row.entity !== realEntity),
+  };
+  const judged = judgeRosterDriftAgainstCensus(
+    syntheticCensusAfterRegen, [...afterDeparture, reRegistered].sort(), fingerprintOfTuples,
+  );
+  assert.equal(judged.status, "regenerate",
+    "시간축 결함: corpus 이름 선수 이탈→재생성→동일 이름 재등록이 영향으로 판정되지 않았다 — T7 의 과거 root 문서가 새 선수에 오귀속된다");
+  if (judged.status === "regenerate") assert.deepEqual(judged.affectedNames, [realEntity]);
+  // judge 의 기준 튜플 결속 fail-close: 원문 변조·부재는 regenerate 로 떨어진다.
+  const tampered = judgeRosterDriftAgainstCensus(
+    { ...syntheticCensusAfterRegen, rosterIdentityTuples: [...afterDeparture, reRegistered].sort() },
+    [...afterDeparture, reRegistered].sort(), fingerprintOfTuples,
+  );
+  assert.equal(tampered.status, "regenerate", "기준 튜플 원문 변조가 judge 에서 fail-close 되지 않았다");
+  if (tampered.status === "regenerate") assert.equal(tampered.reason, "base_tuples_tampered");
+
+  // universe 원문·해시 결속 fail-close: 변조·부재는 예외로 게이트를 깨늈다.
+  assert.throws(() => impactUniverseFromCensus({ ...census, corpusRootEntities: [...census.corpusRootEntities, "변조entity"] }),
+    /결속되지 않는다/, "universe 원문 변조가 해시 결속에 걸리지 않았다");
+  assert.throws(() => impactUniverseFromCensus({ corpusRootEntities: [], corpusRootEntitiesSha256: "x" }),
+    /corpusRootEntities/, "universe 부재가 fail-close 되지 않았다");
+
   // ─ fail-close 측 ────────────────────────────────────────────────────────────────
   const broken = classifyIdentityDrift(base, [...base, "not-json-tuple"], censusEntities);
   assert.equal(broken.affected, true, "판정 불가 튜플이 fail-close 되지 않았다");
@@ -832,7 +909,7 @@ function verifyIdentityImpactContract(): void {
   assert.equal(classifyIdentityDrift([], base, censusEntities).affected, true, "빈 기준 multiset 이 fail-close 되지 않았다");
   assert.equal(classifyIdentityDrift(base, base, new Set()).affected, true, "빈 entity 집합이 fail-close 되지 않았다");
 
-  ok("신원 drift 영향 판정 — 대칭차 계약 3종 · 비영향 PASS 2종 · 영향 fail-close 3종 · 판정불가 3종");
+  ok("신원 drift 영향 판정 — 대칭차 3 · 비영향 PASS 2 · 영향 fail-close 3 · 시간축 2 · universe 결속 2 · 판정불가 3");
 }
 
 function run(): void {

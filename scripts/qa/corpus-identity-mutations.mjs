@@ -31,6 +31,8 @@ const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
 const IMPACT_TARGET = "scripts/qa/roster-identity-impact.ts";
 /** census 생성기 — H 축 변이의 대상(재생성 경로 결속). */
 const CENSUS_GENERATOR_TARGET = "scripts/qa/corpus-identity-census.ts";
+/** smoke 자신 — I-1(영향판정 universe 를 rows 로 회귀)의 대상. */
+const SMOKE_TARGET = "scripts/qa/baseball-qa-corpus-identity-smoke.ts";
 
 /** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
@@ -361,6 +363,53 @@ const MUTATIONS = [
     target: CENSUS_GENERATOR_TARGET,
     apply: (s) => s.replace("      rosterIdentityTuples: rosterIdentityTuples(roster),\n", ""),
   },
+
+  // ── I. 영속 universe 축 (삼순 시간축 NO-GO 2026-08-12) ──────────────────────
+  {
+    // rows 기반 universe 로 되돌리는 회귀: 이탈→재생성→동일 이름 재등록이 false-GREEN.
+    // ⚠️ 대상은 smoke 가 아니라 **실제 게이트 경로인 judge 함수**다 — smoke 인라인을
+    //   변이하는 첫 판은 GREEN 이었다(지문 일치 상태엔 drift 경로가 안 돌아서). judge 를
+    //   변이하면 합성 시간축 census 를 태우는 smoke 의 judged.status 계약이 잡는다.
+    id: "I-1",
+    name: "judge 의 universe 를 rows 로 회귀(시간축 false-GREEN)",
+    expect: "시간축 결함: corpus 이름 선수 이탈→재생성→동일 이름 재등록이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, impactUniverseFromCensus(census));",
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, new Set(((census as { rows?: { entity: string }[] }).rows ?? []).map((row) => String(row.entity))));",
+    ),
+  },
+  {
+    // 생성기가 universe 를 roster 필터 **후**(latest = ∩ roster)에서 만드는 회귀:
+    // universe ⊇ rows 는 유지되지만 로스터 밖 corpus 이름이 빠져 시간축이 뚫린다.
+    // 이번 T7 재생성에서는 root 631 = rows 631 이라 결과가 같으므로, 검출은
+    // 생성기 소스 결속(assert)이 담당한다 — 산출물로는 구분되지 않는다(아래 expect).
+    id: "I-2",
+    name: "생성기 universe 를 roster 필터 후 생성(영속성 파괴)",
+    expect: "census 생성기가 영속 universe 를 roster 필터 전 전체 root 에서 만들지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(
+      "    corpusRootEntitySet.add(String(record.entity));\n    if (!byName.has(record.entity)) continue;",
+      "    if (!byName.has(record.entity)) continue;\n    corpusRootEntitySet.add(String(record.entity));",
+    ),
+  },
+  {
+    id: "I-3",
+    name: "universe emission 제거(재생성 시 universe 소실)",
+    expect: "census 생성기가 영속 universe(corpusRootEntities)를 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(/^.*corpusRootEntities: \[\.\.\.corpusRootEntitySet\].*\n/m, ""),
+  },
+  {
+    id: "I-4",
+    name: "universe 해시 결속 제거(원문 변조 fail-open)",
+    expect: "universe 원문 변조가 해시 결속에 걸리지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  if (computed !== census.corpusRootEntitiesSha256) {",
+      "  if (false) {",
+    ),
+  },
 ];
 
 function runGate() {
@@ -381,6 +430,7 @@ function main() {
     [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
     [IMPACT_TARGET, readFileSync(IMPACT_TARGET, "utf8")],
     [CENSUS_GENERATOR_TARGET, readFileSync(CENSUS_GENERATOR_TARGET, "utf8")],
+    [SMOKE_TARGET, readFileSync(SMOKE_TARGET, "utf8")],
   ]);
   let red = 0;
   let failed = 0;
