@@ -62,6 +62,7 @@ import {
   type CareerRecordFetcher,
 } from "./stats/career-series";
 import { crossCheckServedAgainstDb } from "./stats/served-record";
+import { KBO_OFFICIAL_METRIC_TERMS } from "./stats/kbo-official-metric-columns";
 import {
   composeCareerLeaderboardAnswer,
   resolveCareerLeaderboardIntent,
@@ -824,6 +825,72 @@ export function isCareerLeaderboardAsk(question: string): boolean {
   const normalized = question.normalize("NFKC").toLowerCase();
   return CAREER_LEADERBOARD_SCOPE.test(normalized) && CAREER_LEADERBOARD_ASK.test(normalized);
 }
+
+/**
+ * **순위를 물었는가** — 시점(통산·연도·올해)과 무관한 판정.
+ *
+ * `isCareerLeaderboardAsk` 는 `통산|역대|올타임` 이 있어야 참이라, `2020년 홈런 1위였어?`
+ * 처럼 연도로 물으면 비켜간다(삼순 #1164 6차 P0). 순위 확정에는 **리그 전체 순위표**가
+ * 필요하고 그 정본이 없으므로, 시점이 무엇이든 개인값을 렌더하면 질문에 답하지 않은
+ * 오답이 된다.
+ *
+ * ⚠️ **새 어휘를 만들지 않았다** — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다.
+ *   scope 조건만 떼서 재사용하는 것이고, 그 어휘 집합은 이 PR 이 넓히지 않는다(m9).
+ *   값을 묻는 형태(`몇 개`·`얼마`)는 이 술어에 없으므로 실답이 보존된다.
+ */
+export function isRankAsk(question: string): boolean {
+  return CAREER_LEADERBOARD_ASK.test(question.normalize("NFKC").toLowerCase());
+}
+
+/**
+ * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
+ *
+ * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
+ * 공식 기록실 컬럼 **75개(판정 어휘 96개)** 로 `통산 <지표> 1위 누구야?` 를 돌려보니 다수가 `llm_scope_gate`로
+ * 샜다**(`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 숫자 환각 게이트는 2차 방어지만
+ * 리더보드 답은 **이름 단답**이라 숫자가 없어 그 게이트에 걸리지 않는다 — 모델이 기억하는
+ * 옛 1위를 확신해서 내보낸다(8/9 `임창규` 사고와 같은 축).
+ *
+ * 판정은 **닫힌 집합**만 쓴다(A안 계약): 공식 컬럼 어휘에 있으면 이 축, 없으면 우리 소관이 아니다.
+ * 표현 변이는 쫓지 않는다 — 요청 형태는 위 `CAREER_LEADERBOARD_ASK`(main 그대로)가 본다.
+ *
+ * 일반명사와 충돌하는 컬럼(`G=경기`·`GS=선발`)은 inventory 에서 판정 어휘로 승격되지 않으므로
+ * `역대 최고의 경기`·`커리어 선발로 기억나는 경기` 같은 서술·주관 질문은 여기 걸리지 않는다.
+ */
+/**
+ * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
+ *
+ * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
+ * 공식 기록실 컬럼 **75개(판정 어휘 96개)** 로 `통산 <지표> 1위 누구야?` 를 돌려보니 다수가
+ * `llm_scope_gate`로 샜다(`탈삼진`·`완봉`·`이닝`·`실책`·`선발승`·`견제사`…). 숫자 환각 게이트는
+ * 2차 방어지만 리더보드 답은 **이름 단답**이라 숫자가 없어 그 게이트에 걸리지 않는다 —
+ * 모델이 기억하는 옛 1위를 확신해서 내보낸다(8/9 `임창규` 사고와 같은 축).
+ *
+ * ⚠️ **지표어 뒤 결합을 판정하지 않는다** (2026-08-12 하린아빠 A안 확정).
+ * 1차 시도에서 "그 어휘가 지표로 쓰였는지" 를 뒤결합 화이트리스트로 봤다. 과차단
+ * (`역대 최고의 득점 장면`)은 사라졌지만 대신 **실제 목표 자연어가 누락됐다** — `역대 완봉승
+ * 1위`(어휘는 `완봉` 까지만 매칭돼 tail 이 `승1위`), `역대 탈삼진이 가장 많은 선수`(tail 이
+ * `가장많은`). 열린 요청 표현 3종 × 어휘 96개 = 288 조합 중 **149 누수** 실측.
+ * tail 에 `가장`·`많`·`제일` 을 더하고 어휘에 `완봉승`·
+ * `탈삼진수` 를 더하는 것은 **열린 언어를 다시 쫓는 것**이고, 그 축에서 이미 13라운드를
+ * 왕복했다(#1159).
+ *
+ * 그래서 **판정을 어휘 포함 여부로만** 둔다. 두 리스크는 대칭이 아니다:
+ *   - 누수 = 봇이 **틀린 이름을 확신해서 말한다**(거짓).
+ *   - 과차단 = "그 기록은 아직 준비되지 않았어요"(불친절하지만 거짓이 아니고, 되돌릴 수 있다).
+ * 다의어(`득점`·`승리`·`보살`)가 지표 아닌 뜻으로 쓰인 소수 문장이 hold 안내문을 받는 것은
+ * 감수한다. 표현으로 그 둘을 가르는 일은 라우팅 룰의 몫이 아니라 **답변 단계에서 실명에
+ * 근거를 요구**하는 게이트(후속 PR)의 몫이다.
+ *
+ * 일반명사와 충돌하는 컬럼(`G=경기`·`GS=선발`)은 inventory 에서 판정 어휘로 승격되지 않으므로
+ * `역대 최고의 경기`·`커리어 선발로 기억나는 경기` 같은 서술·주관 질문은 여기 걸리지 않는다.
+ */
+export function hasCareerMetricTerm(question: string): boolean {
+  // 공백을 지워야 `탈 삼진`·`몸에 맞는 공` 같은 띄어쓰기 변이가 어휘와 맞는다.
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+  return KBO_OFFICIAL_METRIC_TERMS.some((term) => normalized.includes(term));
+}
+
 
 const HISTORY_CONTEXT_WORDS = [
   "통산", "성적", "우승", "연도", "시즌", "드래프트", "은퇴", "몇승", "몇 홈런",
@@ -2227,20 +2294,30 @@ export function routeQuestion(
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
   // ── 리그 통산·역대 순위 질문 ──
-  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. 어제의 "정본 없음" 전제는
-  // 오판이었으므로, **지원 지표에 한해** 구조화 조회로 답한다. generic LLM 이름 단답은 여전히
-  // 금지다(모델이 확신하는 옛 1위 = stale 오답).
+  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. **지원 지표는 구조화 조회로
+  // 실제로 답하고**, 나머지 순위형만 hold 로 닫는다. generic LLM 이름 단답은 여전히 금지다
+  // (모델이 확신하는 옛 1위 = stale 오답. 8/9 `임창규` 축).
   //
-  // ⚠️ **거절 범위는 이 PR 에서 건드리지 않는다** (2026-08-12 하린아빠 C안).
-  // 미지원 지표를 어떤 표현까지 hold 로 잡을지는 열린 언어 판정이라 13라운드를 왕복했다.
-  // 그 축은 별도 PR(공식 컬럼 inventory + expected-set 대조)로 분리하고, 여기서는 아래
-  // `isCareerLeaderboardAsk` 를 **main 그대로** 유지한다 — hold 범위 변화량 0 이 이 PR 의 계약이다.
-  // 지원 intent 만 그보다 먼저 결속해 `intent != null ⇒ career_leaderboard` 를 성립시킨다.
+  // ⚠️ **순서가 계약이다** (삼순 #1164 7차 P0): #1159 의 지원 intent 가 이 PR 의 hold 보다
+  //   **먼저** 결속돼야 한다. 반대로 두면 방금 출시한 `통산 안타 1위 누구야?` 실답이 hold 로
+  //   삼켜져 #1159 가 회귀한다. `intent != null ⇒ career_leaderboard` 를 먼저 성립시킨다.
   if (!hasTeam && !hasPlayerReference(tokens, players)) {
     const careerIntent = resolveCareerLeaderboardIntent(question);
     if (careerIntent) return "career_leaderboard";
   }
-  if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
+  // 여기부터가 이 PR 이 넓히는 **미지원 순위형**의 fail-close 다.
+  // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
+  //   공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다.
+  // ⚠️ `!hasTeam`·`!hasPlayerReference` 를 두지 않는다(4차 P0 실측): 팀 한정 288 조합 중 165건,
+  //   선수 지목 192 조합 중 75건이 `llm_scope_gate` 로 샜다. 팀·선수를 붙였다고 리그 순위표를
+  //   답할 수 있게 되는 것이 아니다. 구단 **당해 시즌 수치**는 아래 team 축이 그대로 처리한다.
+  // ⚠️ 판정을 `isCareerLeaderboardAsk`(scope 필수) 가 아니라 `isRankAsk` 로 한다 — `2020년 홈런
+  //   1위였어?`·`올해 탈삼진 1위야?` 는 `통산|역대|올타임` 이 없어 scope 조건에서 빠져 샜다
+  //   (6차 P0 실측 35건, 전부 `unsure`=LLM 실호출).
+  if (
+    hasCareerMetricTerm(question) &&
+    isRankAsk(question)
+  ) {
     return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
@@ -2909,6 +2986,7 @@ async function answerSeasonRecordQuestion(
     await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer, source, remaining };
   };
+
 
   // 신뢰할 수 없는 지표(pa/sac/sf)·지원 안 하는 시즌은 둘 다 **답변 거절**로 명시 종결한다.
   // 조용히 서술형 RAG 로 흘리면 위키 숫자가 대신 나가버린다 — 정확히 막으려던 것이다.
@@ -3579,6 +3657,31 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // career(연도별·통산·과거)는 2026-08-10 부터 답변 가능하므로 picker 대상이되,
   // 조회 배선(fetchCareerRecord)이 없는 환경에서는 골라도 못 답하므로 같은 이유로
   // picker 앞에서 종전 안내로 닫는다(헛동작 방지 계약 유지).
+  // ⚠️ **순위형은 어떤 렌더보다 먼저 닫는다 — 시점 무관** (삼순 #1164 5·6차 P0).
+  //   `통산 홈런 1위야?`(career)·`2020년 홈런 1위였어?`(year)·`올해 홈런 1위야?`(current)
+  //   는 전부 "1위인가"를 물었는데 개인값(431·28·현재값)이 `kbo_structured` 로 나갔다.
+  //   순위 확정에는 리그 전체 순위표가 필요하고 그 정본이 아직 없다.
+  // 이 위치여야 하는 이유: 아래 blocked 분기(untrusted_metric)나 기록 렌더보다 앞이라
+  //   `희생플라이 1위` 류도 안내문이 갈리지 않고 **전부 exact history_hold** 로 통일된다.
+  //   그리고 LLM·RAG·cache·기록조회가 **한 번도 호출되지 않는다**(게이트가 호출 0 으로 잠금).
+  // 판정 어휘는 새로 만들지 않았다 — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다(m9).
+  //   값을 묻는 형태(`몇 개`·`얼마`)는 그 어휘에 없으므로 실답이 보존된다.
+  // ⚠️ **지원 intent 는 예외다** (삼순 #1164 7차 P0). #1159 가 `통산 안타 1위 누구야?` 를
+  //   `career_leaderboard` 구조화 조회로 답하도록 출시했는데, 이 hold 가 route 계산보다
+  //   **앞**이라 그대로 두면 그 실답을 삼켜 #1159 가 회귀한다.
+  //   판정은 #1159 의 `resolveCareerLeaderboardIntent` 를 그대로 쓴다 — 새 로직 0.
+  if (
+    hasCareerMetricTerm(question)
+    && isRankAsk(question)
+    && resolveCareerLeaderboardIntent(question) === null
+  ) {
+    await deps.log({
+      userId, question, questionNorm, matchPath: "history_hold", answer: HISTORY_HOLD_ANSWER,
+      inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: "history_hold", remaining };
+  }
+
   if (
     recordIntent.kind === "unsupported_season" ||
     recordIntent.kind === "untrusted_metric" ||
