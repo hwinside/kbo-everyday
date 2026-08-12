@@ -34,6 +34,12 @@ import {
   verifyCorpusPlayerIdentity,
   type CorpusIdentityVerdict,
 } from "../../src/lib/baseball-qa/rag/corpus-identity";
+import {
+  canonicalIdentityTuple,
+  computeRosterIdentityFingerprint,
+  fingerprintRosterFile,
+  type RosterIdentitySource,
+} from "./roster-identity-fingerprint";
 
 type FixtureDocument = {
   entity: string;
@@ -59,7 +65,10 @@ type CensusFile = {
   corpusFile: string;
   corpusSha256: string;
   corpusPhysicalLines: number;
-  rosterFileSha256: string;
+  /** 신원 multiset(name·kboId·birthDate) 지문 — 게이트가 비교하는 값. */
+  rosterIdentitySha256: string;
+  /** census 빌드 시점 로스터 파일 해시 — provenance 참고용. 게이트 비교 대상이 아니다. */
+  rosterFileSha256AtBuild: string;
   /** PR base(merge-base) 커밋. 이 PR 안의 중간 커밋이 아니다. */
   baseCommit: string;
   baseIdentitySha256: string;
@@ -621,18 +630,79 @@ function verifyCensusIntegrity(): void {
   assert.ok(강준서, "census 에 강준서가 없다");
   assert.equal(강준서!.base, "rejected:category_absent", "listed 문서가 base 에서 분류 부재가 아니었다");
   assert.equal(강준서!.current, "assigned");
-  // census 의 로스터 지문이 현재 repo 로스터와 같아야 한다 — 로스터가 바뀌면 성씨·생년 파생이
-  // 달라지므로 census 를 재생성해야 한다.
+  // census 의 로스터 **신원 지문**이 현재 repo 로스터와 같아야 한다.
+  // ⚠️ 파일 전체 해시 비교가 아니다(#1162 사고): 로스터는 봇이 매일 갱신하므로 파일 해시로 잡으면
+  //   신원 무관 갱신(스탯·사진·팀·등번호)에도 자동 PR 이 전건 FAIL 이다.
+  //   census 가 실제 소비하는 값은 (name, kboId, birthDate) 뿐이므로 그 multiset 지문이 기준이다.
+  //   신원이 진짜 바뀌면(선수 추가/제외/신원필드 변경) 여전히 재생성을 요구한다(fail-close).
   assert.equal(
-    createHash("sha256").update(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"))).digest("hex"),
-    census.rosterFileSha256,
-    "census 의 rosterFileSha256 이 현재 로스터 파일과 다르다 — census 를 재생성해야 한다",
+    fingerprintRosterFile(fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"))),
+    census.rosterIdentitySha256,
+    "census 의 신원 지문(rosterIdentitySha256)이 현재 로스터의 (name,kboId,birthDate) multiset 과 다르다 — 명단/신원이 바뀌었으므로 T7 에서 census 를 재생성해야 한다",
   );
   ok(`census 정합성 — base(${census.baseCommit.slice(0, 9)}) ${census.baseAssigned}→${census.currentAssigned} · ${JSON.stringify(census.transitions)}`);
 }
 
+/**
+ * (신원 지문) **canonical fingerprint 계약** — #1162 사고의 재발 방지 축.
+ *
+ * 수용조건(삼순 조건부 GO, 2026-08-12):
+ *   PASS 측: stats/photo/team/position/backNo 갱신·JSON reorder·포맷 변경은 지문 불변.
+ *   RED 측: 선수 add/remove · name/kboId/birthDate 변경 · 동일 튜플 multiplicity 변화는 지문 변경.
+ * 양쪽을 다 고정해야 한다 — 한쪽만 보면 과소(신원 변경을 놓침) 또는 과대(매일 갱신이 다시 전건 FAIL)로 기운다.
+ */
+function verifyRosterFingerprintContract(): void {
+  const rosterRaw = fs.readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8");
+  const roster = JSON.parse(rosterRaw) as (RosterIdentitySource & Record<string, unknown>)[];
+  assert.ok(roster.length > 500, `로스터가 비정상적으로 작다: ${roster.length}`);
+  const baseline = computeRosterIdentityFingerprint(roster);
+
+  // ─ PASS 측: 신원 무관 변경은 지문을 바꾸면 안 된다 ────────────────────────────
+  const reordered = [...roster].reverse();
+  assert.equal(computeRosterIdentityFingerprint(reordered), baseline,
+    "JSON 순서 변경이 지문을 바꿨다 — multiset 이 아니라 순서에 묶였다");
+  const nonIdentityTouched = roster.map((player) => ({
+    ...player, team: "가상", teamId: 99, position: "지명타자", backNo: "999",
+  }));
+  assert.equal(computeRosterIdentityFingerprint(nonIdentityTouched), baseline,
+    "team/position/backNo 변경이 지문을 바꿨다 — 지문이 과대해서 매일 갱신이 다시 전건 FAIL 로 돌아간다");
+  assert.equal(fingerprintRosterFile(JSON.stringify(roster)), baseline,
+    "JSON 포맷(들여쓰기·개행) 변경이 지문을 바꿨다 — canonical 직렬화가 아니다");
+
+  // ─ RED 측: 신원 변경은 지문이 반드시 바뀌어야 한다(fail-close) ───────────────────
+  const added = [...roster, { name: "가상신인", kboId: "99999", birthDate: "2004-01-01" }];
+  assert.notEqual(computeRosterIdentityFingerprint(added), baseline,
+    "선수 추가가 지문에 반영되지 않았다 — 명단 변경을 stale census 가 통과한다");
+  assert.notEqual(computeRosterIdentityFingerprint(roster.slice(1)), baseline,
+    "선수 제외가 지문에 반영되지 않았다");
+  const nameChanged = roster.map((player, index) => (index === 0 ? { ...player, name: `${player.name}′` } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(nameChanged), baseline,
+    "name 변경이 지문에 반영되지 않았다");
+  const kboIdChanged = roster.map((player, index) => (index === 0 ? { ...player, kboId: "00000" } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(kboIdChanged), baseline,
+    "kboId 변경이 지문에 반영되지 않았다");
+  const birthChanged = roster.map((player, index) => (index === 0 ? { ...player, birthDate: "1900-01-01" } : player));
+  assert.notEqual(computeRosterIdentityFingerprint(birthChanged), baseline,
+    "birthDate 변경이 지문에 반영되지 않았다");
+  // multiplicity: 같은 신원 튜플이 하나 더 생기면(동명이인 등록 등) 지문이 바뀌어야 한다.
+  const duplicated = [...roster, { ...roster[0] }];
+  assert.notEqual(computeRosterIdentityFingerprint(duplicated), baseline,
+    "동일 튜플 multiplicity 변화가 지문에 반영되지 않았다 — 중복이 dedupe 됐다");
+  // 결측 표기 계약: undefined 와 "" 는 같은 canonical 표기로 읽는다(표기 차이로 지문이 흔들리면 안 된다).
+  assert.equal(
+    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: undefined }),
+    canonicalIdentityTuple({ name: "무생년", kboId: "1", birthDate: "" }),
+    "결측 birthDate 의 canonical 표기가 일관되지 않다",
+  );
+  ok("신원 지문 계약 — 신원 무관 PASS 3종 · 신원 변경 RED 6종");
+}
+
 function run(): void {
   verifyFixtureProvenance();
+  // ⚠️ 지문 **계약**을 census 정합성보다 먼저 본다. census 정합성도 지문 함수를 쓰므로,
+  //   함수 결함 시 순서가 반대면 모든 변이가 "census 재생성 필요" 한 문구로 뭉쳐
+  //   어떤 결함인지 구분되지 않는다(실측: F 축 변이 6개가 같은 문구로 뭉쳤다).
+  verifyRosterFingerprintContract();
   verifyCensusIntegrity();
   verifyBothLayouts();
   verifyLongCategoryBlock();
