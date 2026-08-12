@@ -478,9 +478,24 @@ function getCacheTtl(): number {
   return kstHour >= 11 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
 }
 
-function getCached(key: string) {
+// 엣지캐시는 remaining-TTL 방식 — 인메모리 엔트리의 잔여 수명만큼만 캐시해
+// 총 stale 상한 = TTL 1회분(기존과 동일)으로 고정한다(삼순 NO-GO #2: TTL 누적 금지).
+// SWR 미사용·degraded(fallback/runner static-fallback)/에러 응답 캐시 금지(#1114 동일 축).
+function edgeCacheHeaders(ageMs: number): Record<string, string> {
+  const remainingSec = Math.max(1, Math.floor((getCacheTtl() - ageMs) / 1000));
+  return { "Cache-Control": `public, s-maxage=${remainingSec}` };
+}
+const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+// degraded 구성요소(runner static-fallback 혼합 포함)는 엣지에 고정되면 회복이 지연된다 — 캐시 금지(삼순 NO-GO #4).
+function statsEdgeHeaders(result: StatsResult, ageMs: number): Record<string, string> {
+  if (result.runnerSource === "static-fallback" || result.source === "fallback") return NO_STORE;
+  return edgeCacheHeaders(ageMs);
+}
+
+function getCached(key: string): { data: StatsResult; ageMs: number } | null {
   const entry = cache[key];
-  if (entry && Date.now() - entry.ts < getCacheTtl()) return entry.data;
+  if (entry && Date.now() - entry.ts < getCacheTtl()) return { data: entry.data, ageMs: Date.now() - entry.ts };
   return null;
 }
 function setCache(key: string, data: StatsResult) {
@@ -581,10 +596,12 @@ export function handleStatsGetFailure(
   type: string,
   now = new Date(),
 ): NextResponse {
+  // ⚠️ 이 함수의 모든 응답은 degraded(또는 에러)다 — **엣지 캐시 금지**(main #1166 계약).
+  //   fallback 이 CDN 에 고정되면 크롤이 회복돼도 stale 이 계속 서빙된다.
   // freshness 계약 실패는 "크롤 실패"가 아니다. 같은 오염 static을 fallback 200으로
   // 다시 내보내면 fail-close가 무효화된다(삼순 #1159 5차 NO-GO).
   if (error instanceof StatsFreshnessContractError) {
-    return NextResponse.json({ error: error.message, stats: [] }, { status: 500 });
+    return NextResponse.json({ error: error.message, stats: [] }, { status: 500, headers: NO_STORE });
   }
   // 크롤링 실패 시 static JSON fallback (빈화면 방지). 단 fallback 자체의 구성시각도
   // 동일 freshness 계약을 통과해야 하며 미래/invalid면 500 fail-close 한다.
@@ -595,13 +612,13 @@ export function handleStatsGetFailure(
     const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
     const validFbAt = oldestFullEntryTimestamp([fbAt], now);
     if (!validFbAt) {
-      return NextResponse.json({ error: "stats fallback has invalid freshness", stats: [] }, { status: 500 });
+      return NextResponse.json({ error: "stats fallback has invalid freshness", stats: [] }, { status: 500, headers: NO_STORE });
     }
     return NextResponse.json({
       stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: validFbAt,
-    });
+    }, { headers: NO_STORE });
   }
-  return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500 });
+  return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
 }
 
 export async function GET(req: NextRequest) {
@@ -614,19 +631,25 @@ export async function GET(req: NextRequest) {
     const stats = type === "pitcher"
       ? (pitcherStats2025 as unknown as PlayerStat[])
       : (batterStats2025 as unknown as PlayerStat[]);
-    return NextResponse.json({ stats, type, count: stats.length, season: 2025 });
+    return NextResponse.json(
+      { stats, type, count: stats.length, season: 2025 },
+      { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 확정 static 데이터
+    );
   }
 
   // 수비 — 라이브 fetch 불가(KBO 수비페이지 POST 차단) → 정적 크롤 JSON(매일 CI 갱신) 집계
   if (type === "defense") {
     const stats = aggregateDefense(defenseStats2026 as unknown as DefenseRow[]) as unknown as PlayerStat[];
-    return NextResponse.json({ stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt });
+    return NextResponse.json(
+      { stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt },
+      { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 일일 크롤 static
+    );
   }
 
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
   const cacheKey = `stats-${type}-${season}${full ? "-full" : ""}`;
   const cached = getCached(cacheKey);
-  if (cached) return NextResponse.json(cached);
+  if (cached) return NextResponse.json(cached.data, { headers: statsEdgeHeaders(cached.data, cached.ageMs) });
 
   try {
     const statsType = type === "pitcher" ? "pitcher" : "batter";
@@ -671,8 +694,10 @@ export async function GET(req: NextRequest) {
         : {}),
     };
     setCache(cacheKey, result);
-    return NextResponse.json(result);
+    return NextResponse.json(result, { headers: statsEdgeHeaders(result, 0) });
   } catch (e: unknown) {
+    // degraded fallback·에러는 엣지 캐시 금지 — 회복 즉시 live 복귀(main #1166 계약).
+    //   그 헤더는 handleStatsGetFailure 안에서 붙인다(분기마다 빠뜨리지 않게).
     return handleStatsGetFailure(e, season, type);
   }
 }
