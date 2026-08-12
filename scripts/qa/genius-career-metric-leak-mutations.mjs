@@ -57,8 +57,8 @@ const MUTATIONS = [
   {
     name: "m4d `!hasPlayerReference` 재도입 — 선수 지목 통산 질문이 샌다",
     file: PIPELINE,
-    from: "    isCareerLeaderboardAsk(question)\n  ) {",
-    to: "    !hasPlayerReference(tokens, players) &&\n    isCareerLeaderboardAsk(question)\n  ) {",
+    from: "    isRankAsk(question)\n  ) {",
+    to: "    !hasPlayerReference(tokens, players) &&\n    isRankAsk(question)\n  ) {",
   },
   {
     name: "m4e(종단) 선수 결속 route override 제거 — 지원 지표 구조화 실답이 hold 로 죽는다",
@@ -67,10 +67,28 @@ const MUTATIONS = [
     to: "  const route = routeQuestion(question, glossary, players, context !== null);",
   },
   {
-    name: "m4f(종단) 리더보드 질문 개인값 가드 제거 — `최형우 통산 홈런 1위야?` 가 431 로 오답 변환",
+    name: "m4f(종단) 순위형 가드 제거 — 통산/연도/현재 전부 개인값 오답 변환(431·28·현재값)",
     file: PIPELINE,
-    from: '    if (isCareerLeaderboardAsk(question)) {\n      return settle(HISTORY_HOLD_ANSWER, "history_hold", "history_hold");\n    }',
+    from: "  if (hasCareerMetricTerm(question) && isRankAsk(question)) {\n    await deps.log({\n      userId, question, questionNorm, matchPath: \"history_hold\", answer: HISTORY_HOLD_ANSWER,\n      inputTokens: null, outputTokens: null,\n    });\n    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: \"history_hold\", remaining };\n  }",
     to: "",
+  },
+  {
+    name: "m4g(종단) 순위형 가드를 career scope 로 되돌림 — 연도·현재가 다시 비켜간다(6차 회귀)",
+    file: PIPELINE,
+    from: "  if (hasCareerMetricTerm(question) && isRankAsk(question)) {",
+    to: "  if (hasCareerMetricTerm(question) && isCareerLeaderboardAsk(question)) {",
+  },
+  {
+    name: "m4i(라우팅) 순위 판정을 scope 필수로 되돌림 — 연도·현재 순위형 35건이 generic LLM 으로 샌다",
+    file: PIPELINE,
+    from: "    isRankAsk(question)\n  ) {\n    return \"history_hold\";",
+    to: "    isCareerLeaderboardAsk(question)\n  ) {\n    return \"history_hold\";",
+  },
+  {
+    name: "m4h 순위 술어에서 scope 조건을 되살림 — isRankAsk 가 통산 전용이 된다",
+    file: PIPELINE,
+    from: "  return CAREER_LEADERBOARD_ASK.test(question.normalize(\"NFKC\").toLowerCase());",
+    to: "  const n = question.normalize(\"NFKC\").toLowerCase();\n  return CAREER_LEADERBOARD_SCOPE.test(n) && CAREER_LEADERBOARD_ASK.test(n);",
   },
   {
     name: "m5 투수 공식 컬럼 삭제(`SO-pit=탈삼진`) — 실측 누수 어휘가 되살아난다",

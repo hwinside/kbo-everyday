@@ -818,6 +818,22 @@ export function isCareerLeaderboardAsk(question: string): boolean {
 }
 
 /**
+ * **순위를 물었는가** — 시점(통산·연도·올해)과 무관한 판정.
+ *
+ * `isCareerLeaderboardAsk` 는 `통산|역대|올타임` 이 있어야 참이라, `2020년 홈런 1위였어?`
+ * 처럼 연도로 물으면 비켜간다(삼순 #1164 6차 P0). 순위 확정에는 **리그 전체 순위표**가
+ * 필요하고 그 정본이 없으므로, 시점이 무엇이든 개인값을 렌더하면 질문에 답하지 않은
+ * 오답이 된다.
+ *
+ * ⚠️ **새 어휘를 만들지 않았다** — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다.
+ *   scope 조건만 떼서 재사용하는 것이고, 그 어휘 집합은 이 PR 이 넓히지 않는다(m9).
+ *   값을 묻는 형태(`몇 개`·`얼마`)는 이 술어에 없으므로 실답이 보존된다.
+ */
+export function isRankAsk(question: string): boolean {
+  return CAREER_LEADERBOARD_ASK.test(question.normalize("NFKC").toLowerCase());
+}
+
+/**
  * 통산·역대 질문의 **지표 축** 판정 — `STAT_WORDS` 가 아니라 KBO 공식 컬럼 inventory 를 쓴다.
  *
  * ⚠️ 실측 누수(2026-08-12): 종전 라우팅은 `hasStat`(= `STAT_WORDS` 13개)로 이 축을 판정했다.
@@ -2274,6 +2290,11 @@ export function routeQuestion(
   // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
   // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
   // 공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
+  // ⚠️ 판정을 `isCareerLeaderboardAsk`(scope 필수) 에서 `isRankAsk` 로 바꾼다 —
+  //   `2020년 홈런 1위였어?`·`올해 탈삼진 1위야?` 처럼 **시점을 연도·현재로 말하면**
+  //   `통산|역대|올타임` 이 없어 scope 조건에서 빠져 generic LLM 으로 샜다
+  //   (삼순 #1164 6차 P0. 4형태×96어휘 실측 누수 35건, 전부 `unsure`=LLM 실호출).
+  //   순위는 시점이 무엇이든 리그 전체 순위표가 있어야 답할 수 있다.
   if (
     hasCareerMetricTerm(question) &&
     // ⚠️ `!hasTeam` 을 두면 **팀 한정 통산 질문이 샌다**(삼순 #1164 4차 P0 실측):
@@ -2294,7 +2315,7 @@ export function routeQuestion(
     // 여기 조건에 걸려도 종단에서는 `kbo_structured` 실답이다(종단 게이트로 고정).
     // 종전 주석에 "선수 지목 통산은 조회 배선 없음" 이라고 쓴 것은 **오류였다** — 라우터 단
     // 결과만 보고 단정했고, 실제 배선을 확인하지 않았다.
-    isCareerLeaderboardAsk(question)
+    isRankAsk(question)
   ) {
     return "history_hold";
   }
@@ -2965,6 +2986,7 @@ async function answerSeasonRecordQuestion(
     return { status: 200, answer, source, remaining };
   };
 
+
   // 신뢰할 수 없는 지표(pa/sac/sf)·지원 안 하는 시즌은 둘 다 **답변 거절**로 명시 종결한다.
   // 조용히 서술형 RAG 로 흘리면 위키 숫자가 대신 나가버린다 — 정확히 막으려던 것이다.
   if (intent.kind === "untrusted_metric") {
@@ -2995,19 +3017,6 @@ async function answerSeasonRecordQuestion(
     // identity 대조 — 페이지 선수명이 후보와 다르면 잗못된 선수의 기록이다(답하면 안 된다).
     if (!record || record.playerName !== candidate.name) {
       return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
-    }
-    // ⚠️ **리더보드를 물었으면 개인값으로 답하지 않는다** (삼순 #1164 5차 P0).
-    // `최형우 통산 홈런 1위야?` 는 "1위인가"를 물었는데 이 경로가 개인 통산값(431)을
-    // 그대로 렌더해 `kbo_structured` 로 내보냈다 — 질문에 답하지 않은 **오답 변환**이다
-    // (main 도 같았다. 회귀는 아니지만 이 PR 이 닫겠다고 한 축이라 여기서 닫는다).
-    // 순위를 확정하려면 전체 리그 통산 순위표가 필요하고 그 정본은 아직 없다.
-    //
-    // 판정은 **새 룰을 만들지 않는다** — 이미 main 에 있는 `isCareerLeaderboardAsk`
-    // (`통산|역대|올타임` + `1위|누구|누가|최다|최고`)를 그대로 쓴다. 그 술어는 이 PR 이
-    // 건드리지 않는 닫힌 계약이고 mutation m9 로 잠겨 있다.
-    // 값을 묻는 형태(`몇 개야?`·`얼마야?`)는 이 술어에 걸리지 않아 실답이 보존된다.
-    if (isCareerLeaderboardAsk(question)) {
-      return settle(HISTORY_HOLD_ANSWER, "history_hold", "history_hold");
     }
     const answer =
       intent.span.type === "series"
@@ -3647,6 +3656,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // career(연도별·통산·과거)는 2026-08-10 부터 답변 가능하므로 picker 대상이되,
   // 조회 배선(fetchCareerRecord)이 없는 환경에서는 골라도 못 답하므로 같은 이유로
   // picker 앞에서 종전 안내로 닫는다(헛동작 방지 계약 유지).
+  // ⚠️ **순위형은 어떤 렌더보다 먼저 닫는다 — 시점 무관** (삼순 #1164 5·6차 P0).
+  //   `통산 홈런 1위야?`(career)·`2020년 홈런 1위였어?`(year)·`올해 홈런 1위야?`(current)
+  //   는 전부 "1위인가"를 물었는데 개인값(431·28·현재값)이 `kbo_structured` 로 나갔다.
+  //   순위 확정에는 리그 전체 순위표가 필요하고 그 정본이 아직 없다.
+  // 이 위치여야 하는 이유: 아래 blocked 분기(untrusted_metric)나 기록 렌더보다 앞이라
+  //   `희생플라이 1위` 류도 안내문이 갈리지 않고 **전부 exact history_hold** 로 통일된다.
+  //   그리고 LLM·RAG·cache·기록조회가 **한 번도 호출되지 않는다**(게이트가 호출 0 으로 잠금).
+  // 판정 어휘는 새로 만들지 않았다 — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다(m9).
+  //   값을 묻는 형태(`몇 개`·`얼마`)는 그 어휘에 없으므로 실답이 보존된다.
+  if (hasCareerMetricTerm(question) && isRankAsk(question)) {
+    await deps.log({
+      userId, question, questionNorm, matchPath: "history_hold", answer: HISTORY_HOLD_ANSWER,
+      inputTokens: null, outputTokens: null,
+    });
+    return { status: 200, answer: HISTORY_HOLD_ANSWER, source: "history_hold", remaining };
+  }
+
   if (
     recordIntent.kind === "unsupported_season" ||
     recordIntent.kind === "untrusted_metric" ||

@@ -348,7 +348,11 @@ check("무회귀: 요청 형태 판정(`isCareerLeaderboardAsk`)은 main 구현 
 check("무회귀: 기존 경로 (선수 지목·구단 수치·당해 시즌)", () => {
   assert.equal(routeQuestion("김도영 홈런 몇 개야?", [], PLAYERS), "history_hold");
   assert.equal(routeQuestion("LG 팀타율 얼마야?", [], PLAYERS), "team_record");
-  assert.equal(routeQuestion("지금 홈런 1위 누구야?", [], PLAYERS), "blocked");
+  // ⚠️ **의도된 변경**: main 은 `blocked`("올 시즌 기록을 못 찾았어요")였는데 이제
+  //   `history_hold` 다. 삼순 6차 계약이 "통산·연도·현재의 순위형을 모두 차단하고
+  //   전수를 exact history_hold 로 잠글 것" 이라, 시점별로 안내문이 갈리지 않게 통일했다.
+  //   둘 다 거절이라 환각 리스크 차이는 없고, 바뀐 것은 안내 문구뿐이다.
+  assert.equal(routeQuestion("지금 홈런 1위 누구야?", [], PLAYERS), "history_hold");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,38 +374,71 @@ const CAREER_FIXTURE = readFileSync(
 /** 생성·검색 경로 — 미지원 지표가 여기 닿으면 누수다. */
 const GENERATIVE_SOURCES = ["llm", "rag", "team_rag", "news_rag", "cache", "dictionary"];
 
-function e2eDeps(): QaDeps {
+/**
+ * 호출 카운터 — **final source 만 보면 "숨은 호출 후 hold"가 GREEN 이 된다**(삼순 6차).
+ * 그래서 LLM·RAG(official·player·team·news)·cache·dictionary·기록조회를 전부 배선하고
+ * 실제 호출 횟수를 센다. 순위형 질문은 이 중 어느 것도 불러선 안 된다.
+ */
+type CallCounter = Record<string, number>;
+function makeE2eDeps(): { deps: QaDeps; calls: CallCounter } {
+  const calls: CallCounter = {};
+  const bump = (key: string) => { calls[key] = (calls[key] ?? 0) + 1; };
   let stored: unknown = null;
   let started = false;
-  return {
-    loadGlossary: async () => [],
+  const deps = {
+    // dictionary — 배선하고 센다(미배선이면 "안 불렸다"를 증명 못 한다).
+    loadGlossary: async () => {
+      bump("dictionary");
+      return [{ term: "홈런", definition: "타구가 담장을 넘는 것", aliases: [] }];
+    },
     loadPlayers: async () => PLAYERS,
-    getCache: async () => null,
-    setCache: async () => {},
+    getCache: async () => { bump("cache.get"); return null; },
+    setCache: async () => { bump("cache.set"); },
     // LLM 이 불리면 그 자체가 누수다. 불렸는지 알 수 있도록 정상 응답을 준다.
-    callLlm: async () => ({
-      text: JSON.stringify({ status: "OK", answer: "최형우가 1위입니다" }),
-      inputTokens: 1,
-      outputTokens: 1,
-    }),
+    callLlm: async () => {
+      bump("llm");
+      return { text: JSON.stringify({ status: "OK", answer: "최형우가 1위입니다" }), inputTokens: 1, outputTokens: 1 };
+    },
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     log: async () => {},
     getLlmState: async () => ({ started, result: stored, ownerActive: false }),
-    acquireLlmStart: async () => {
-      started = true;
-      return true;
+    acquireLlmStart: async () => { started = true; return true; },
+    storeLlm: async (r: unknown) => { stored = r; },
+    // 기록 조회도 **결과가 있는** 상태로 배선한다 — 빈 배열이면 hold 가 우연히 나온다.
+    fetchSeasonRecord: async () => {
+      bump("record.season");
+      return [{ season: 2026, team: "삼성", avg: "0.301", hr: 20, hit: 100, rbi: 60, sb: 2, game: 90 }];
     },
-    storeLlm: async (r: unknown) => {
-      stored = r;
-    },
-    fetchSeasonRecord: async () => [],
     enablePlayerRag: true,
-    searchRag: async () => [],
-    callRagLlm: async () => ({ text: "{}", inputTokens: 1, outputTokens: 1 }),
+    // player/team/news/official RAG 는 같은 검색 진입점을 쓴다 — 호출되면 전부 잡힌다.
+    searchRag: async () => {
+      bump("rag.search");
+      return [{ chunkId: "c1", content: "최형우 통산 홈런 1위 기록", entityType: "player", entityId: "60000" }];
+    },
+    callRagLlm: async () => { bump("rag.llm"); return { text: JSON.stringify({ status: "OK", answer: "최형우" }), inputTokens: 1, outputTokens: 1 }; },
     // production 과 동일하게 배선한다 — 미배선으로 두면 ⓐ 를 증명할 수 없다.
-    fetchCareerRecord: createCareerRecordFetcher(async () => CAREER_FIXTURE, () => Date.UTC(2026, 7, 10)),
+    fetchCareerRecord: createCareerRecordFetcher(
+      async () => { bump("record.career"); return CAREER_FIXTURE; },
+      () => Date.UTC(2026, 7, 10),
+    ),
   } as unknown as QaDeps;
+  return { deps, calls };
 }
+function e2eDeps(): QaDeps {
+  return makeE2eDeps().deps;
+}
+/**
+ * 순위형 질문이 부르면 안 되는 경로 전부.
+ *
+ * ⚠️ `dictionary`(loadGlossary) 는 제외한다 — **질문과 무관하게 무조건 preload** 되는
+ *   경로다(대조 실측: `안녕?`·`오늘 날씨 어때?` 도 각 1회 호출). 넣으면 모든 질문이
+ *   위반이 되어 계약이 의미를 잃는다. 사전이 **답변에 쓰였는지**는 source 로 판정한다
+ *   (`dictionary` source 는 아래 exact history_hold 계약에서 이미 실패로 잡힌다).
+ */
+const FORBIDDEN_CALLS = [
+  "llm", "rag.search", "rag.llm", "cache.get", "cache.set",
+  "record.season", "record.career",
+];
 
 const asyncChecks: Array<[string, () => Promise<void>]> = [];
 function checkAsync(name: string, fn: () => Promise<void>): void {
@@ -422,54 +459,62 @@ checkAsync("P0(종단): 값 질문의 구조화 실답이 보존된다 (kbo_stru
   }
 });
 
-checkAsync("P0(종단): 리더보드 질문에 개인값을 렌더하지 않는다 (오답 변환 금지)", async () => {
-  // ⚠️ 삼순 #1164 5차 P0 exact. `최형우 통산 홈런 1위야?` 는 "1위인가" 를 물었는데
-  // 개인 통산값(431)을 `kbo_structured` 로 내보냈다 — 질문에 답하지 않은 오답 변환이다.
-  // 순위 확정에는 리그 전체 통산 순위표가 필요하고 그 정본이 아직 없으므로 hold 다.
+checkAsync("P0(종단): 순위형은 시점 무관 exact history_hold + 조회 호출 0", async () => {
+  // ⚠️ 삼순 #1164 6차 P0. 5차에는 career span 만 막아 **연도·현재가 비켜갔다**:
+  //   `최형우 2020년 홈런 1위였어?` -> 개인값 28 / `올해 홈런 1위야?` -> 현재값.
+  // 계약: 통산·연도·현재 어느 시점이든 순위형은 **exact history_hold**,
+  //   그리고 LLM·RAG·cache·dictionary·기록조회 **호출 0**(숨은 호출 후 hold 도 실패).
   for (const question of [
-    "최형우 통산 홈런 1위야?",     // 삼순 exact
-    "최형우 통산 타율 1위야?",
+    "최형우 2020년 홈런 1위였어?",   // 삼순 6차 exact (year)
+    "최형우 올해 홈런 1위야?",       // 삼순 6차 exact (current)
+    "최형우 통산 홈런 1위야?",       // 삼순 5차 exact (career)
     "최형우 역대 안타 최다 맞아?",
+    "최형우 2020 홈런 최다였어?",
+    "최형우 지금 홈런 1위야?",
     "김도영 통산 도루 1위야?",
   ]) {
-    const result = await answerQuestion("u1", question, e2eDeps());
-    assert.notEqual(
-      result.source, "kbo_structured",
-      `리더보드 질문에 개인값을 렌더했다: ${question} :: ${result.answer}`,
+    const { deps, calls } = makeE2eDeps();
+    const result = await answerQuestion("u1", question, deps);
+    assert.equal(
+      result.source, "history_hold",
+      `순위형이 exact history_hold 가 아니다: ${question} -> ${result.source} :: ${result.answer}`,
     );
-    assert.ok(
-      !/\d/.test(result.answer.replace(/2026|\d+\s*시즌/g, "")),
-      `순위 답에 수치가 섞였다: ${question} :: ${result.answer}`,
+    const called = FORBIDDEN_CALLS.filter((k) => (calls[k] ?? 0) > 0);
+    assert.deepEqual(
+      called, [],
+      `순위형이 조회/생성 경로를 호출했다: ${question} -> ${JSON.stringify(calls)}`,
     );
   }
 });
 
-checkAsync("P0(종단): 리더보드 형태 × 공식 어휘 전수 — kbo_structured·생성경로 0", async () => {
-  // ⚠️ 종전 이 전수는 지원 지표 9개를 **제외**해서 false-green 이었다(삼순 5차 P0).
-  // 지금은 전 어휘를 태우고, 금지 목록에 `kbo_structured` 까지 넣는다 — 리더보드 질문에
-  // 개인값을 렌더하는 것도 누수로 센다.
+checkAsync("P0(종단): 순위형 4축 × 공식 어휘 전수 — exact history_hold + 호출 0", async () => {
+  // ⚠️ 종전 이 전수는 ①지원 지표 9개를 제외해 false-green 이었고(5차) ②`blocked/error/
+  //   unsure` 도 통과시켰다(6차). 지금은 전 어휘를 태우고 **exact history_hold** 만 통과,
+  //   그리고 매 질문마다 조회·생성 경로 호출 0 을 함께 확인한다.
   const forms: Array<(term: string) => string> = [
     (term) => `통산 ${term} 1위 누구야?`,
-    (term) => `LG 통산 ${term} 1위 누구야?`,
     (term) => `최형우 통산 ${term} 1위야?`,
-    (term) => `LG 김도영 통산 ${term} 최다 맞아?`,
+    (term) => `최형우 2020년 ${term} 1위였어?`,
+    (term) => `최형우 올해 ${term} 1위야?`,
   ];
-  const forbidden = [...GENERATIVE_SOURCES, "kbo_structured"];
-  const leaks: string[] = [];
+  const bad: string[] = [];
   let checked = 0;
   for (const term of KBO_OFFICIAL_METRIC_TERMS) {
     for (const form of forms) {
       const question = form(term);
       checked += 1;
-      const result = await answerQuestion("u1", question, e2eDeps());
-      if (forbidden.includes(result.source)) leaks.push(`${question} -> ${result.source}`);
+      const { deps, calls } = makeE2eDeps();
+      const result = await answerQuestion("u1", question, deps);
+      if (result.source !== "history_hold") bad.push(`${question} -> source=${result.source}`);
+      const called = FORBIDDEN_CALLS.filter((k) => (calls[k] ?? 0) > 0);
+      if (called.length > 0) bad.push(`${question} -> calls=${called.join(",")}`);
     }
   }
-  console.log(`     종단 전수 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ${checked} / 누수 ${leaks.length}`);
+  console.log(`     종단 전수 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ${checked} / 위반 ${bad.length}`);
   assert.equal(checked, forms.length * KBO_OFFICIAL_METRIC_TERMS.length);
   assert.deepEqual(
-    leaks, [],
-    `리더보드 질문 ${leaks.length}건이 금지 경로로 샌다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
+    bad, [],
+    `순위형 ${bad.length}건이 계약 위반(exact history_hold + 호출 0):\n  ${bad.slice(0, 12).join("\n  ")}`,
   );
 });
 
