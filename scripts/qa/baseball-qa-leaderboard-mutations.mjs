@@ -12,17 +12,46 @@ const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const RETRIEVE = "src/lib/baseball-qa/rag/retrieve.ts";
 const CONSTANTS = "src/lib/constants/baseball-genius.ts";
 const PRIZE = "src/lib/baseball-qa/awards/series-prize.ts";
+const CAREER_LEADERBOARD = "src/lib/baseball-qa/stats/career-leaderboard.ts";
+const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
+const FULL_ENTRY = "src/lib/stats/full-entry.ts";
+const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
+const STATS_ROUTE = "src/app/api/stats/route.ts";
 
 const MUTATIONS = [
   {
-    name: "m1 리더보드 fail-close 제거 — generic LLM 위임 부활 (stale 이름 오답 통로)",
+    name: "m1 intent 직접결속 제거 — 양성 intent가 history_hold로 회귀",
     file: PIPELINE,
-    from: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "history_hold";
-  }`,
-    to: `if (hasStat && !hasTeam && !hasPlayerReference(tokens, players) && isCareerLeaderboardAsk(question)) {
-    return "llm_scope_gate";
-  }`,
+    from: '    if (careerIntent) return "career_leaderboard";',
+    to: '    if (careerIntent) return "history_hold";',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1b 올시즌 증분 제거 — 작년 1위가 그대로 나가는 stale 회귀",
+    file: CAREER_LEADERBOARD,
+    from: "total: base[intent.metric] + delta,",
+    to: "total: base[intent.metric],",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1c stale 가드 제거 — 하루 넘은 올시즌 값으로 최신 통산을 단정",
+    file: CAREER_LEADERBOARD,
+    from: "now.getTime() - updatedMs > STATS_STALE_MS || ",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1f(C안) hold 판정을 main 과 다르게 변형 — 이 PR 의 '거절 범위 변화 0' 계약 파괴",
+    file: PIPELINE,
+    from: "const CAREER_LEADERBOARD_ASK = /1\\s*위|누구|누가|최다|최고/;",
+    to: "const CAREER_LEADERBOARD_ASK = /1\\s*위|누구|누가|최다|최고|많|상위/;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m1g(C안) intent 결속을 hold 뒤로 밀어냄 — 본목적(안타 1위 실답)이 hold 로 회귀",
+    file: PIPELINE,
+    from: "    const careerIntent = resolveCareerLeaderboardIntent(question);\n    if (careerIntent) return \"career_leaderboard\";",
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -51,6 +80,138 @@ const MUTATIONS = [
     file: CONSTANTS,
     from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;",
     to: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 200;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6 known full-entry current coverage 제거 — 리더 빠진 임의 100행으로 2025값 단정",
+    file: CAREER_LEADERBOARD,
+    from: "if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => currentById.has(id))) return null;",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6b /api/stats type 계약 제거 — pitcher payload를 batter 통산에 혼합",
+    file: SERVED_RECORD,
+    from: 'if (payload.type !== "batter" || !Number.isInteger(payload.count)) return null;',
+    to: 'if (!Number.isInteger(payload.count)) return null;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6c /api/stats count 계약 제거 — 선언 count와 실제 rows 불일치 통과",
+    file: SERVED_RECORD,
+    from: "if (!rows || payload.count !== rows.length) return null;",
+    to: "if (!rows) return null;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6d /api/stats known full-entry coverage 제거 — 임의 100행 payload 통과",
+    file: SERVED_RECORD,
+    from: "if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => ids.has(id))) return null;",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6e static numeric→canonical ID 정규화 제거 — FP006 운영 payload 상시 거절",
+    file: FULL_ENTRY_ROSTER,
+    from: `  (batterStats2026 as Array<Record<string, unknown>>).map((row) =>
+    canonicalKboId(row.kboId as string | number | null),
+  ),`,
+    to: '  (batterStats2026 as Array<Record<string, unknown>>).map((row) => String(row.kboId ?? "")),',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6f baseline numeric→canonical ID 정규화 제거 — 외국인 current와 결합 실패",
+    file: CAREER_LEADERBOARD,
+    from: 'const canonicalId = canonicalKboId(base.kboId);',
+    to: 'const canonicalId = base.kboId;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6g oldest component freshness 계산 반전 — full=1이 최신 now로 stale 우회",
+    file: FULL_ENTRY,
+    from: 'item.ms < oldest.ms ? item : oldest',
+    to: 'item.ms > oldest.ms ? item : oldest',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6h route static 생성시각 결속 제거 — full=1이 live now만 노출",
+    file: STATS_ROUTE,
+    from: 'requireOldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])',
+    to: 'requireOldestFullEntryTimestamp([currentUpdatedAt, currentUpdatedAt])',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6i 미래 구성시각 선검증 제거 — min(now,futureStatic)이 now로 오염을 숨김",
+    file: FULL_ENTRY,
+    from: " || item.ms > nowMs + 5 * 60_000",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m6j GET catch 의 handler 결속 제거 — 옛 인라인 fallback 이 freshness 를 우회",
+    file: STATS_ROUTE,
+    from: "    return handleStatsGetFailure(e, season, type);",
+    to: `    if (season === "2026" || season === "current") {
+      const fb = type === "pitcher"
+        ? (pitcherStats2026 as unknown as PlayerStat[])
+        : (batterStats2026 as unknown as PlayerStat[]);
+      const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
+      return NextResponse.json({ stats: fb, type, count: fb.length, season: 2026, source: "fallback", updatedAt: fbAt });
+    }
+    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });`,
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m7 current 원타입 계약 제거 — 문자열 '109'/필드 누락이 그대로 합산",
+    file: CAREER_LEADERBOARD,
+    from: `    const raw = row[intent.metric];
+    if (raw === undefined || raw === null || typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+      return null;
+    }
+    currentById.set(id, row);`,
+    to: "    currentById.set(id, row);",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8 전체질의 consume 종단 앵커 제거 — 1위/2위 복수절 앞부분만 먹음",
+    file: CAREER_LEADERBOARD,
+    from: 'const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}$`);',
+    to: 'const explicitFirst = new RegExp(`^${temporal}안타(?:기록)?1위(?:는|가|를)?${who}`);',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8b 최다 singular positive grammar 우회 — 최다 두 명을 단일답으로",
+    file: CAREER_LEADERBOARD,
+    from: "if (!explicitFirst.test(normalized) && !singularLeader.test(normalized)) return null;",
+    to: 'if (!explicitFirst.test(normalized) && !singularLeader.test(normalized) && !normalized.includes("최다")) return null;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m8c 지표-순위 결속 제거 — 홈런 1위 절 뒤 안타를 오결속",
+    file: CAREER_LEADERBOARD,
+    from: "if (!explicitFirst.test(normalized) && !singularLeader.test(normalized)) return null;",
+    to: 'if (!explicitFirst.test(normalized) && !singularLeader.test(normalized) && !(normalized.includes("1위") && normalized.includes("안타"))) return null;',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m9 temporal SSOT 올타임 제거 — resolver와 라우터 양성이 drift",
+    file: CAREER_LEADERBOARD,
+    from: '  "통산", "역대", "커리어", "누적", "올타임",',
+    to: '  "통산", "역대", "커리어", "누적",',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m9b freshness 계약 오류 분리 제거 — GET catch가 static fallback 200으로 우회",
+    file: STATS_ROUTE,
+    from: '  if (error instanceof StatsFreshnessContractError) {',
+    to: '  if (false && error instanceof StatsFreshnessContractError) {',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m10 출처 표기 제거 — 답변에서 공식 출처·기준 연도 소실",
+    file: CAREER_LEADERBOARD,
+    from: "\\n\ud83d\udcc4 출처: KBO 공식 기록실(${result.baselineThroughSeason}년 말 통산) + 크보팬 2026 시즌 기록",
+    to: "",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

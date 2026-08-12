@@ -64,6 +64,11 @@ import {
 import { crossCheckServedAgainstDb } from "./stats/served-record";
 import { KBO_OFFICIAL_METRIC_TERMS } from "./stats/kbo-official-metric-columns";
 import {
+  composeCareerLeaderboardAnswer,
+  resolveCareerLeaderboardIntent,
+  type CareerLeaderboardFetcher,
+} from "./stats/career-leaderboard";
+import {
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
   resolveTeamRecord,
@@ -545,6 +550,8 @@ export type QuestionRoute =
   // ⚠️ 이 라벨로는 로그를 쓰지 않는다 — 성공은 `kbo_structured`, 실패는 `history_hold`/`error` 로
   // 확정된다. 전부 기존 `match_path` 허용값이라 DB CHECK 확장·migration 이 필요 없다.
   | "team_record"
+  // KBO 공식 통산 기준선 + 당해 시즌 스냅샷으로 결정론 조회한다. 이 라벨 자체로는 로그를 쓰지 않는다.
+  | "career_leaderboard"
   // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
   | "name_suggest"
   | "baseball_rule_term"
@@ -736,6 +743,8 @@ export interface QaDeps {
    * 미주입이면 해당 질문은 RECORD_MISSING 으로 fail-close.
    */
   fetchCareerRecord?: CareerRecordFetcher;
+  /** 리그 통산 순위 — 전년도 말 공식 기준선 + 앱의 당해 시즌 최종 스냅샷. */
+  fetchCareerLeaderboard?: CareerLeaderboardFetcher;
   /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
@@ -2284,37 +2293,29 @@ export function routeQuestion(
   //
   // 반대로 `삼성 주장`·`LG트윈스의 역사` 처럼 수치가 없는 구단 질문은 그대로
   // 흘려보낸다 — 서술은 프롬프트 범위 안이고 숫자 환각 리스크가 없다.
-  // ── 리그 통산·역대 순위 질문 — fail-close 유지 (삼순 2026-08-10 NO-GO) ──
-  // generic LLM 이름 단답은 stale 오답(모델이 확신하는 옛 1위)을 못 막고, KBO 공식
-  // 웹에는 대조할 통산 누적 리더보드 정본도 없다. 기준일 있는 공식 큐레이션/물질화
-  // 테이블이 생기기 전까지 기존 hold 로 닫는다 — 틀린 이름보다 좁은 안내가 낫다.
+  // ── 리그 통산·역대 순위 질문 ──
+  // 2026-08-11 실측으로 `BasicTotal.aspx` 공식 통산표가 확인됐다. **지원 지표는 구조화 조회로
+  // 실제로 답하고**, 나머지 순위형만 hold 로 닫는다. generic LLM 이름 단답은 여전히 금지다
+  // (모델이 확신하는 옛 1위 = stale 오답. 8/9 `임창규` 축).
+  //
+  // ⚠️ **순서가 계약이다** (삼순 #1164 7차 P0): #1159 의 지원 intent 가 이 PR 의 hold 보다
+  //   **먼저** 결속돼야 한다. 반대로 두면 방금 출시한 `통산 안타 1위 누구야?` 실답이 hold 로
+  //   삼켜져 #1159 가 회귀한다. `intent != null ⇒ career_leaderboard` 를 먼저 성립시킨다.
+  if (!hasTeam && !hasPlayerReference(tokens, players)) {
+    const careerIntent = resolveCareerLeaderboardIntent(question);
+    if (careerIntent) return "career_leaderboard";
+  }
+  // 여기부터가 이 PR 이 넓히는 **미지원 순위형**의 fail-close 다.
   // ⚠️ `hasStat`(STAT_WORDS 13개)가 아니라 공식 컬럼 inventory 로 판정한다 — 종전 조건에서
-  // 공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다(`hasCareerMetricTerm` 주석의 실측).
-  // ⚠️ 판정을 `isCareerLeaderboardAsk`(scope 필수) 에서 `isRankAsk` 로 바꾼다 —
-  //   `2020년 홈런 1위였어?`·`올해 탈삼진 1위야?` 처럼 **시점을 연도·현재로 말하면**
-  //   `통산|역대|올타임` 이 없어 scope 조건에서 빠져 generic LLM 으로 샜다
-  //   (삼순 #1164 6차 P0. 4형태×96어휘 실측 누수 35건, 전부 `unsure`=LLM 실호출).
-  //   순위는 시점이 무엇이든 리그 전체 순위표가 있어야 답할 수 있다.
+  //   공식 컬럼 75개(어휘 96개) 기준 다수가 generic LLM 으로 샜다.
+  // ⚠️ `!hasTeam`·`!hasPlayerReference` 를 두지 않는다(4차 P0 실측): 팀 한정 288 조합 중 165건,
+  //   선수 지목 192 조합 중 75건이 `llm_scope_gate` 로 샜다. 팀·선수를 붙였다고 리그 순위표를
+  //   답할 수 있게 되는 것이 아니다. 구단 **당해 시즌 수치**는 아래 team 축이 그대로 처리한다.
+  // ⚠️ 판정을 `isCareerLeaderboardAsk`(scope 필수) 가 아니라 `isRankAsk` 로 한다 — `2020년 홈런
+  //   1위였어?`·`올해 탈삼진 1위야?` 는 `통산|역대|올타임` 이 없어 scope 조건에서 빠져 샜다
+  //   (6차 P0 실측 35건, 전부 `unsure`=LLM 실호출).
   if (
     hasCareerMetricTerm(question) &&
-    // ⚠️ `!hasTeam` 을 두면 **팀 한정 통산 질문이 샌다**(삼순 #1164 4차 P0 실측):
-    // `LG 통산 홈런 1위`·`기아 역대 탈삼진 1위`·`삼성 통산 <지표>이 가장 많은 선수` 형태로
-    // 288 조합을 돌려 165건이 `llm_scope_gate` 로 갔다. 팀을 붙였다고 리그 통산 리더보드를
-    // 답할 수 있게 되는 것이 아니다 — 오히려 구단별 통산 정본은 더 없다.
-    // 구단 **당해 시즌 수치**는 아래 team 축이 그대로 처리한다. 여기서 먼저 닫히는 것은
-    // `통산·역대 + 공식 지표` 조합뿐이다.
-    //
-    // ⚠️ `!hasPlayerReference` 도 두지 않는다(자체 전수 훑기 실측). 아래 2290 라인이 선수 지목
-    // 통산 질문을 받지만 그 조건도 `hasStat`(13개)이라, `최형우 역대 타격률 최다 맞아?`·
-    // `김도영 통산 출장경기 1위야?` 처럼 공식 어휘가 STAT_WORDS 밖이면 샜다(192 조합 중 75건).
-    // 팀+선수 복합(`LG 김도영 통산 <지표> 1위`)은 2290 의 `!hasTeam` 때문에 더 크게 샜다.
-    //
-    // ⚠️ **이 분기가 지원 지표의 실답을 빼앗지 않는다** (삼순 #1164 5차 P0). production 에는
-    // `fetchCareerRecord` 가 배선돼 있고 `answerQuestion` 은 선수 결속 시 route 를
-    // `baseball_rule_term` 으로 덮어 이 분기를 건너간다. 그래서 `최형우 통산 타율 얼마야?` 는
-    // 여기 조건에 걸려도 종단에서는 `kbo_structured` 실답이다(종단 게이트로 고정).
-    // 종전 주석에 "선수 지목 통산은 조회 배선 없음" 이라고 쓴 것은 **오류였다** — 라우터 단
-    // 결과만 보고 단정했고, 실제 배선을 확인하지 않았다.
     isRankAsk(question)
   ) {
     return "history_hold";
@@ -3665,7 +3666,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   그리고 LLM·RAG·cache·기록조회가 **한 번도 호출되지 않는다**(게이트가 호출 0 으로 잠금).
   // 판정 어휘는 새로 만들지 않았다 — main 의 `CAREER_LEADERBOARD_ASK` 를 그대로 쓴다(m9).
   //   값을 묻는 형태(`몇 개`·`얼마`)는 그 어휘에 없으므로 실답이 보존된다.
-  if (hasCareerMetricTerm(question) && isRankAsk(question)) {
+  // ⚠️ **지원 intent 는 예외다** (삼순 #1164 7차 P0). #1159 가 `통산 안타 1위 누구야?` 를
+  //   `career_leaderboard` 구조화 조회로 답하도록 출시했는데, 이 hold 가 route 계산보다
+  //   **앞**이라 그대로 두면 그 실답을 삼켜 #1159 가 회귀한다.
+  //   판정은 #1159 의 `resolveCareerLeaderboardIntent` 를 그대로 쓴다 — 새 로직 0.
+  if (
+    hasCareerMetricTerm(question)
+    && isRankAsk(question)
+    && resolveCareerLeaderboardIntent(question) === null
+  ) {
     await deps.log({
       userId, question, questionNorm, matchPath: "history_hold", answer: HISTORY_HOLD_ANSWER,
       inputTokens: null, outputTokens: null,
@@ -3755,6 +3764,25 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `/api/team-records` 에 LG 팀타율 .270 · 홈런 92 · 도루 65 가 이미 서빙된다.
   // 앱 순위탭·팀기록탭이 그대로 보여주는 값을 봇만 "못 답한다"고 하는 건 거짓말이다.
   //
+  // ── KBO 리그 통산 순위 (전년도 말 기준선 + 당해 시즌 증분) ───────────────────
+  if (route === "career_leaderboard") {
+    const intent = resolveCareerLeaderboardIntent(question);
+    const settleCareerLeaderboard = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    if (!intent || !deps.fetchCareerLeaderboard) {
+      return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
+    }
+    try {
+      const result = await deps.fetchCareerLeaderboard(intent, deps.now ? new Date(deps.now()) : new Date());
+      if (!result) return settleCareerLeaderboard(resolveHoldAnswer(question), "history_hold");
+      return settleCareerLeaderboard(composeCareerLeaderboardAnswer(result), "kbo_structured");
+    } catch {
+      return settleCareerLeaderboard(SYSTEM_ERROR_ANSWER, "error");
+    }
+  }
+
   // 선수 기록과 **같은 계약**으로 답한다 — 조회한 원값 그대로, 계산·추정 없음,
   // 없으면 답하지 않음, LLM 미경유. 조회 실패는 static 폴백 없이 fail-close 한다.
   if (route === "team_record") {
