@@ -473,16 +473,24 @@ function getCacheTtl(): number {
   return kstHour >= 11 && kstHour < 24 ? 10 * 60 * 1000 : 60 * 60 * 1000;
 }
 
-// 엣지캐시 TTL = 인메모리 캐시 TTL과 동일값(경기시간대 10분/평시 1시간) — 신선도 저하 0.
-// SWR 미사용·fallback/에러 응답 캐시 금지(#1114 relay 계약과 동일 축).
-function edgeCacheHeaders(): Record<string, string> {
-  return { "Cache-Control": `public, s-maxage=${Math.floor(getCacheTtl() / 1000)}` };
+// 엣지캐시는 remaining-TTL 방식 — 인메모리 엔트리의 잔여 수명만큼만 캐시해
+// 총 stale 상한 = TTL 1회분(기존과 동일)으로 고정한다(삼순 NO-GO #2: TTL 누적 금지).
+// SWR 미사용·degraded(fallback/runner static-fallback)/에러 응답 캐시 금지(#1114 동일 축).
+function edgeCacheHeaders(ageMs: number): Record<string, string> {
+  const remainingSec = Math.max(1, Math.floor((getCacheTtl() - ageMs) / 1000));
+  return { "Cache-Control": `public, s-maxage=${remainingSec}` };
 }
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-function getCached(key: string) {
+// degraded 구성요소(runner static-fallback 혼합 포함)는 엣지에 고정되면 회복이 지연된다 — 캐시 금지(삼순 NO-GO #4).
+function statsEdgeHeaders(result: StatsResult, ageMs: number): Record<string, string> {
+  if (result.runnerSource === "static-fallback" || result.source === "fallback") return NO_STORE;
+  return edgeCacheHeaders(ageMs);
+}
+
+function getCached(key: string): { data: StatsResult; ageMs: number } | null {
   const entry = cache[key];
-  if (entry && Date.now() - entry.ts < getCacheTtl()) return entry.data;
+  if (entry && Date.now() - entry.ts < getCacheTtl()) return { data: entry.data, ageMs: Date.now() - entry.ts };
   return null;
 }
 function setCache(key: string, data: StatsResult) {
@@ -605,7 +613,7 @@ export async function GET(req: NextRequest) {
   // 2026 시즌 + current — 라이브 크롤링 (캐시: 경기시간대 10분 / 평시 1시간)
   const cacheKey = `stats-${type}-${season}${full ? "-full" : ""}`;
   const cached = getCached(cacheKey);
-  if (cached) return NextResponse.json(cached, { headers: edgeCacheHeaders() });
+  if (cached) return NextResponse.json(cached.data, { headers: statsEdgeHeaders(cached.data, cached.ageMs) });
 
   try {
     const statsType = type === "pitcher" ? "pitcher" : "batter";
@@ -642,7 +650,7 @@ export async function GET(req: NextRequest) {
         : {}),
     };
     setCache(cacheKey, result);
-    return NextResponse.json(result, { headers: edgeCacheHeaders() });
+    return NextResponse.json(result, { headers: statsEdgeHeaders(result, 0) });
   } catch (e: unknown) {
     // 크롤링 실패 시 static JSON fallback (빈화면 방지)
     if (season === "2026" || season === "current") {

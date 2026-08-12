@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400, headers: NO_STORE });
   }
 
+  // query-guard: bounded -- p_article_keys는 parseCountLookups가 10개로 상한(초과 시 예외)하고 RPC는 키당 최대 1행 집계만 반환한다
   const { data, error } = await getSupabaseAdmin().rpc("news_discussion_visible_counts", {
     p_article_keys: [...new Set(lookups.map((item) => item.articleKey))],
   });

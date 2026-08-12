@@ -29,6 +29,8 @@ async function fetchPlayerStats(playerId: string, position: string) {
     headers: { "User-Agent": "Mozilla/5.0", Referer: KBO_BASE },
     next: { revalidate: 3600 },
   });
+  // 업스트림 장애(403/5xx)는 throw → 500 no-store. '기록 없음'과 구분(삼순 NO-GO #3).
+  if (!res.ok) throw new Error(`upstream ${res.status}`);
   const html = await res.text();
   const tables = parseTables(html);
 
@@ -37,7 +39,9 @@ async function fetchPlayerStats(playerId: string, position: string) {
     // Table 1: SAC, SF, BB, IBB, SO, WP, BK, R, ER, BSV, WHIP, AVG, QS
     const t0 = tables[0]?.[0];
     const t1 = tables[1]?.[0];
-    if (!t0 || t0[0] === "기록이 없습니다.") return null;
+    // 테이블 자체가 없는 비정상 HTML은 장애로 취급(throw → no-store) — 명시적 '기록 없음'만 null.
+    if (!t0) throw new Error("upstream parse anomaly: pitcher tables missing");
+    if (t0[0] === "기록이 없습니다.") return null;
     return {
       team: t0[0], era: t0[1], games: parseInt(t0[2]) || 0,
       cg: parseInt(t0[3]) || 0, sho: parseInt(t0[4]) || 0,
@@ -52,7 +56,8 @@ async function fetchPlayerStats(playerId: string, position: string) {
     // Table 1: BB, IBB, HBP, SO, GDP, SLG, OBP, E, SB%, MH, OPS, RISP, PH-BA
     const t0 = tables[0]?.[0];
     const t1 = tables[1]?.[0];
-    if (!t0 || t0[0] === "기록이 없습니다.") return null;
+    if (!t0) throw new Error("upstream parse anomaly: hitter tables missing");
+    if (t0[0] === "기록이 없습니다.") return null;
     return {
       team: t0[0], avg: t0[1], games: parseInt(t0[2]) || 0,
       pa: parseInt(t0[3]) || 0, ab: parseInt(t0[4]) || 0,
@@ -97,8 +102,9 @@ export async function GET(req: NextRequest) {
   const id = resolvePlayer(rawId)?.numericId || rawId;
 
   const cacheKey = `player-${id}-${pos}`;
-  // 엣지캐시 TTL = 인메모리 캐시 TTL(1시간) 동일값 — 신선도 저하 0. SWR 미사용, 에러 캐시 금지.
-  const OK_HEADERS = { "Cache-Control": "public, s-maxage=3600" } as const;
+  // 엣지 s-maxage=60 상한 — upstream revalidate(1h)+인메모리(1h)+엣지 누적을 막는다(삼순 NO-GO #2, 30~60s 상한안).
+  // SWR 미사용, 장애 응답 캐시 금지.
+  const OK_HEADERS = { "Cache-Control": "public, s-maxage=60" } as const;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < 3600000) {
     return NextResponse.json({ stats: cached.data, cached: true }, { headers: OK_HEADERS });
@@ -107,11 +113,8 @@ export async function GET(req: NextRequest) {
   try {
     const stats = await fetchPlayerStats(id, pos);
     if (stats) cache[cacheKey] = { data: stats, ts: Date.now() };
-    // stats null(기록 없음)은 단기 캐시(10분) — 미등록 선수 반복 조회 방어, 단 신규 등록 반영은 10분 내 복귀.
-    return NextResponse.json(
-      { stats, cached: false },
-      { headers: stats ? OK_HEADERS : { "Cache-Control": "public, s-maxage=600" } },
-    );
+    // stats null = 명시적 '기록이 없습니다.'만 도달(장애는 throw) — 동일 60초 캐시.
+    return NextResponse.json({ stats, cached: false }, { headers: OK_HEADERS });
   } catch (e: unknown) {
     return NextResponse.json({ error: (e as Error).message, stats: null }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
