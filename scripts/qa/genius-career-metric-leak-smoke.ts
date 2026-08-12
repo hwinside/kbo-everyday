@@ -50,6 +50,17 @@ const CAREER_ASK_FORMS = [
   (term: string) => `통산 ${term} 최고 기록 누구야?`,
 ];
 
+/**
+ * **열린 요청 표현** — 1차 tail 화이트리스트가 여기서 대량 누수했다(삼순 2차 P0).
+ * `가장 많은`·`제일 많은` 은 화이트리스트로 못 잡는 형태이고, `<지표>승` 은 어휘 접미가
+ * 달라 매칭이 끊기는 형태다. A안(어휘 포함 여부만) 계약의 회귀 앵커로 함께 전수 돌린다.
+ */
+const CAREER_OPEN_ASK_FORMS = [
+  (term: string) => `역대 ${term}이 가장 많은 선수 누구야?`,
+  (term: string) => `통산 ${term} 제일 많은 선수 누구야?`,
+  (term: string) => `역대 ${term}승 1위 누구야?`,
+];
+
 /** generic LLM 으로 내려가는 라우트 — 이 축에서는 하나도 나와서는 안 된다. */
 const LLM_ROUTES: QuestionRoute[] = ["llm_scope_gate"];
 
@@ -67,15 +78,25 @@ function check(name: string, fn: () => void): void {
   }
 }
 
-check("P0: 공식 컬럼 어휘 × 통산 요청 형태 전수 — generic LLM 도달 0", () => {
+check("P0: 공식 컬럼 어휘 × 요청 형태 전수 — generic LLM 도달 0", () => {
+  // ⚠️ 조합 수를 **게이트가 계산해 출력한다**(삼순 #1164 3차 지적). 종전에는 보고문에
+  // 손으로 쓴 수치(480)가 게이트의 실제 열거(4×96=384)와 어긋났다. 숫자의 SSOT 는 이 출력이다.
+  const forms = [...CAREER_ASK_FORMS, ...CAREER_OPEN_ASK_FORMS];
   const leaks: string[] = [];
+  let combinations = 0;
   for (const term of KBO_OFFICIAL_METRIC_TERMS) {
-    for (const form of CAREER_ASK_FORMS) {
+    for (const form of forms) {
+      combinations += 1;
       const question = form(term);
       const route = routeQuestion(question, [], PLAYERS);
       if (LLM_ROUTES.includes(route)) leaks.push(`${question} -> ${route}`);
     }
   }
+  console.log(
+    `     전수 조합 ${forms.length}형태 × ${KBO_OFFICIAL_METRIC_TERMS.length}어휘 = ` +
+    `${combinations} / 누수 ${leaks.length}`,
+  );
+  assert.equal(combinations, forms.length * KBO_OFFICIAL_METRIC_TERMS.length);
   assert.deepEqual(
     leaks, [],
     `공식 지표 ${leaks.length}건이 generic LLM 으로 샌다:\n  ${leaks.slice(0, 12).join("\n  ")}`,
