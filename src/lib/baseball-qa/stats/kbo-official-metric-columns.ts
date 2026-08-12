@@ -89,7 +89,9 @@ export const KBO_OFFICIAL_METRIC_COLUMNS: readonly KboOfficialMetricColumn[] = [
   { code: "GF", source: "pitcher", terms: ["경기종료"] },
   { code: "SVO", source: "pitcher", terms: ["세이브기회"] },
   { code: "TS", source: "pitcher", terms: ["터프세이브"] },
-  { code: "SVP", source: "pitcher", terms: ["세이브포인트"] },
+  // ⚠️ `SVP(세이브포인트)` 는 감사한 10개 기록표의 컬럼이 아니라 역대 Top 페이지 드롭다운
+  // 항목이라 여기 두지 않는다. expected-set 대조(extra 0)를 통과하려면 inventory 는
+  // **감사 문서의 표 컬럼과 정확히 같은 집합**이어야 한다.
 
   // ── 수비 (Defense/Basic) ──
   { code: "E", source: "defense", terms: ["실책"] },

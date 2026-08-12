@@ -19,6 +19,7 @@
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   answerQuestion,
   routeQuestion,
@@ -35,6 +36,7 @@ import {
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
 } from "../../src/lib/baseball-qa/stats/career-leaderboard";
+import { parseExpectedColumns } from "./kbo-metric-inventory-expected.mjs";
 import {
   KBO_OFFICIAL_GENERAL_TERMS,
   KBO_OFFICIAL_METRIC_COLUMNS,
@@ -58,6 +60,8 @@ import {
   RAG_TEAM_SYSTEM_PROMPT,
   RAG_NEWS_SYSTEM_PROMPT,
 } from "../../src/lib/baseball-qa/rag/retrieve";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 
 let pass = 0;
 const failures: string[] = [];
@@ -179,6 +183,20 @@ check("P0: inventory 전 컬럼이 질문 결속까지 도달한다 (등재-판�
       assert.equal(isCareerLeaderboardAsk(q), true, `${column.code}/${term} 미결속`);
     }
   }
+});
+check("P0: 감사 문서 expected-set 과 inventory 가 missing/extra 0 (독립 근거 대조)", () => {
+  // ⚠️ 삼순 11차 P0 — 직전 게이트는 inventory 자기 자신을 훑어 "전 컬럼이 결속되나"만 봤다.
+  // 그건 completeness 가 아니라 자기 참조라, 따로 찍어둔 항목 외의 컬럼 1개 삭제는 조용히
+  // 통과했다(실측 MISS 2건). expected-set 은 repo 에 커밋된 감사 문서
+  // `docs/baseball-qa/kbo-record-endpoint-audit.md` 의 컬럼 표에서 파싱한 **독립 근거**다.
+  const { expected, rowCount, doc } = parseExpectedColumns(REPO_ROOT);
+  assert.equal(rowCount, 10, `${doc} 컬럼 표 행 수가 변했다`);
+  assert.ok(expected.size >= 70, `expected-set 이 비정상적으로 작다: ${expected.size}`);
+  const actual = new Set(KBO_OFFICIAL_METRIC_COLUMNS.map((c) => `${c.source}:${c.code}`));
+  const missing = [...expected].filter((key) => !actual.has(key)).sort();
+  const extra = [...actual].filter((key) => !expected.has(key)).sort();
+  assert.deepEqual(missing, [], `공식 컬럼 누락: ${missing.join(", ")}`);
+  assert.deepEqual(extra, [], `감사 문서에 없는 컬럼: ${extra.join(", ")}`);
 });
 check("P0: 일반명사 공식 컬럼(`경기`·`선발`)은 판정 어휘에서 분리된다", () => {
   // 삼순 10차 P0 — bare `경기` 를 지표로 넣으면 서술·주관 질문이 과차단된다.
