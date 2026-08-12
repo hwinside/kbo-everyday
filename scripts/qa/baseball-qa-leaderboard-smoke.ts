@@ -277,11 +277,14 @@ check("P0: 범위형(1위부터 10위)은 단일 1위로 오매칭하지 않고 
     "통산 안타 1위부터 알려줘",
   ]) {
     assert.equal(resolveCareerLeaderboardIntent(q), null, q);
-    // ⚠️ 라우팅 결과는 main 이 정한다(C안: 거절 범위 변화 0). 실측으로 `history_hold` 이고,
-    // 하린아빠 exact 만 `blocked` 다 — `안타기록` 이 `hasStat` 토큰에 안 걸리는 main 동작이며
-    // 이 PR 이 바꾸지 않는다. Top N 지원은 후속 트랙이다.
-    const expected = q.includes("1위부터 10위까지") ? "blocked" : "history_hold";
-    assert.equal(routeQuestion(q, [], PLAYERS), expected, q);
+    // ⚠️ 이 검사의 **본계약은 위 `intent === null`** 이다 — 범위형을 단일 1위로 오매칭해
+    //   엉뚱한 이름을 단정하지 않는 것. 라우팅 라벨은 그 다음이다.
+    // 2026-08-12 #1164 이후 하린아빠 exact 도 `blocked` 가 아니라 `history_hold` 다.
+    //   종전에는 `안타기록` 이 `hasStat`(STAT_WORDS 13개)에 안 걸려 혼자 `blocked` 로 샜는데,
+    //   #1164 가 지표 판정을 공식 컬럼 inventory 로 바꾸면서 나머지와 같은 칸으로 통일됐다.
+    //   둘 다 거절이고 **바뀐 것은 안내 문구뿐**이다(실측: 11표본 전부 intent=null ·
+    //   source=history_hold · LLM/RAG/cache/record 호출 0).
+    assert.equal(routeQuestion(q, [], PLAYERS), "history_hold", q);
   }
 });
 check("결함주입: 빈/낡은/중복 identity/컬럼 변형은 fail-close", () => {
