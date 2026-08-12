@@ -180,6 +180,7 @@
     "qa:team-card-graph": "tsx scripts/qa/team-card-graph-smoke.ts",
     "qa:pagination": "tsx scripts/qa/pagination-fail-closed-smoke.ts",
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
+    "qa:auth-token-precheck": "tsx scripts/qa/auth-token-precheck-smoke.ts",
     "qa:bottom-safe-inset": "node scripts/qa/bottom-safe-inset-gate.mjs --static",
     "qa:poll-contract": "bash scripts/qa/poll-contract-e2e.sh && npm run qa:poll-route",
     "qa:poll-route": "tsx scripts/qa/poll-route-e2e.ts",

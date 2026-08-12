@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { verifyAccessToken } from "@/lib/auth/verified-user";
 
 const BUCKET = "photos";
 const MAX_SIZE = 500 * 1024; // 500KB
@@ -12,14 +13,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const anonClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
-
-  const { data: { user }, error: authError } = await anonClient.auth.getUser();
-  if (authError || !user) {
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const user = await verifyAccessToken(token);
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

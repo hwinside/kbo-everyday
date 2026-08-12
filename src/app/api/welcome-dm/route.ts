@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { verifyAccessToken } from "@/lib/auth/verified-user";
 import { NextRequest, NextResponse } from "next/server";
 
 const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
@@ -30,9 +31,9 @@ export async function POST(request: NextRequest) {
   try {
     const admin = getSupabaseAdmin();
 
-    // 토큰으로 유저 검증
-    const { data: { user }, error: authError } = await admin.auth.getUser(token);
-    if (authError || !user) {
+    // 토큰으로 유저 검증 (로컬 exp 프리체크 + dead-token 캐시)
+    const user = await verifyAccessToken(token);
+    if (!user) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
 

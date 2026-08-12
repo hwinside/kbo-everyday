@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { getSupabaseAdmin } from '@/lib/supabase/admin'
+import { verifyAccessToken } from '@/lib/auth/verified-user'
 import { getWritingLeaderboardRows } from '@/lib/events/leaderboard-cache'
 
 export const dynamic = 'force-dynamic'
@@ -42,8 +43,7 @@ export async function GET(request: NextRequest) {
   const authHeader = request.headers.get('authorization')
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7)
-    const admin = getSupabaseAdmin()
-    const { data: { user } } = await admin.auth.getUser(token)
+    const user = await verifyAccessToken(token)
     userId = user?.id ?? null
   }
   if (!userId) {
