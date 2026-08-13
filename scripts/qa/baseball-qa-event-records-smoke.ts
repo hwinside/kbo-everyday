@@ -124,6 +124,20 @@ checkAsync("종단 fail-close: 미배선·범위 밖 순번은 history_hold, 조
   assert.equal(failed.source, "error");
 });
 
+checkAsync("종단 fail-close: 미지원 한정어 5축을 버리고 정규시즌 14번으로 오결속하지 않는다", async () => {
+  for (const question of [
+    "한국시리즈 노히트노런 몇 번?",
+    "강우콜드 노히트노런 몇 번?",
+    "2010년 이후 노히트노런 몇 번?",
+    "두산 노히트노런 몇 번?",
+    "퍼펙트게임 노히트노런 몇 번?",
+  ]) {
+    const result = await answerQuestion("u1", question, deps());
+    assert.equal(result.source, "history_hold", `${question} -> ${result.source} :: ${result.answer}`);
+    assert.ok(!result.answer.includes("14번"), question);
+  }
+});
+
 async function main() {
   for (const [name, fn] of asyncChecks) {
     try { await fn(); pass += 1; console.log(`PASS ${name}`); }

@@ -18,8 +18,8 @@ const MUTATIONS = [
   {
     name: "m3 알 수 없는 선수명 잔여를 전체 목록으로 오결속",
     file: EVENT,
-    from: '  return residue.length === 0 ? { kind: "list" } : null;',
-    to: '  return { kind: "list" };',
+    from: '  return residue.length === 0 ? query : null;',
+    to: '  return query;',
   },
   {
     name: "m4 라우터 선결속 제거 — generic LLM 경로 회귀",

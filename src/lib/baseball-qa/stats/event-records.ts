@@ -62,19 +62,30 @@ export function resolveEventRecordQuery(
   if (!isNoHitNoRunQuestion(question)) return null;
   const normalized = compact(question);
   const named = playerNames.filter((name) => normalized.includes(compact(name)));
-  if (named.length === 1) return { kind: "player", player: named[0] };
   if (named.length > 1) return null;
 
   const ordinal = normalized.match(/(?:역대)?(\d{1,2})(?:번째|호)/);
-  if (ordinal) return { kind: "ordinal", ordinal: Number(ordinal[1]) };
-  if (/(?:최초|처음|첫번째|1호)/.test(normalized)) return { kind: "first" };
-  if (/(?:최근|마지막|최신)/.test(normalized)) return { kind: "latest" };
-  if (/(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized)) return { kind: "count" };
-  const residue = normalized
-    .replace(/노-?히트-?노-?런/g, "")
-    .replace(/(?:kbo|역대|정규시즌|기록|목록|전부|모두|알려줘|알려주세요|누구야|누가|있어|있나요|해줘)/g, "")
+  const query: EventRecordQuery = named.length === 1
+    ? { kind: "player", player: named[0] }
+    : ordinal
+      ? { kind: "ordinal", ordinal: Number(ordinal[1]) }
+      : /(?:최초|처음|첫번째|1호)/.test(normalized)
+        ? { kind: "first" }
+        : /(?:최근|마지막|최신)/.test(normalized)
+          ? { kind: "latest" }
+          : /(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized)
+            ? { kind: "count" }
+            : { kind: "list" };
+
+  // Query kind를 먼저 반환하면 미지원 한정어가 버려져 정규시즌 전체 기록으로 오결속된다.
+  // 닫힌 문법을 전부 소비한 질문만 구조화 조회로 보낸다.
+  let residue = normalized.replace(/노-?히트-?노-?런/g, "");
+  if (named.length === 1) residue = residue.replace(compact(named[0]), "");
+  residue = residue
+    .replace(/(?:역대)?\d{1,2}(?:번째|호)/g, "")
+    .replace(/(?:kbo|역대|정규시즌|공식|기록|목록|전부|모두|최초|처음|첫번째|가장|최근|마지막|최신|몇번|몇차례|몇명|총몇|개수|횟수|나왔어|나왔나요|알려줘|알려주세요|누구야|누가|있어|있나요|해줘)/g, "")
     .replace(/[?!？！.,。]/g, "");
-  return residue.length === 0 ? { kind: "list" } : null;
+  return residue.length === 0 ? query : null;
 }
 
 function validSnapshot(value: unknown): value is EventSnapshot {
