@@ -64,7 +64,9 @@ export function resolveEventRecordQuery(
   const named = playerNames.filter((name) => normalized.includes(compact(name)));
   if (named.length > 1) return null;
 
-  const ordinal = normalized.match(/(?:역대)?(\d{1,2})(?:번째|호)/);
+  const ordinals = [...normalized.matchAll(/(?:역대)?(\d{1,2})(?:번째|호)/g)];
+  if (ordinals.length > 1) return null;
+  const ordinal = ordinals[0];
   const hasFirst = /(?:최초|처음|첫번째)/.test(normalized);
   const hasLatest = /(?:최근|마지막|최신)/.test(normalized);
   const hasCount = /(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized);

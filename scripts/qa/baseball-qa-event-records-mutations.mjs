@@ -16,6 +16,12 @@ const MUTATIONS = [
     to: "  void unsigned;",
   },
   {
+    name: "m2 복수 순번 차단 제거 — 첫 순번으로 오결속",
+    file: EVENT,
+    from: '  if (ordinals.length > 1) return null;',
+    to: '  void ordinals.length;',
+  },
+  {
     name: "m2a 선수 intent 신호 제거 — 불일치 순번으로 오결속",
     file: EVENT,
     from: '  const intentCount = Number(named.length === 1) + Number(Boolean(ordinal)) +',
