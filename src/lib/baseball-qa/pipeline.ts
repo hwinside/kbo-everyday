@@ -3859,9 +3859,15 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       question = candidate;
       questionNorm = normalizeQuestion(candidate);
     } else if (suggested) {
-      if (deps.releaseDaily) {
-        try { await deps.releaseDaily(userId); } catch { /* 제안은 유지하고 quota만 보수적으로 둔다. */ }
-      }
+      // ⚠️ 여기서 `releaseDaily` 를 부르지 않는다 (삼순 2026-08-13 quota/crash).
+      //
+      // 제안은 답변이 아니라 quota 를 반납해야 하지만, 반납과 "후보를 job 에 durable 로
+      // 고정"이 **따로 일어나면** 그 사이 창에서 crash 했을 때 반납만 되고 제안은 사라진다.
+      // 그 상태에서 cron 이 재개하면 `quota_reserved=true` 라 reserve 가 재차감 없이 통과해
+      // 최종 답변이 무료로 나간다. 반대로 반납 오류를 삼키면 카드는 나가고 차감은 남는다.
+      //
+      // 그래서 반납은 서버 계층이 제안 저장과 **한 트랜잭션**으로 처리한다
+      // (`settle_baseball_genius_correction_suggestion`). 중간 상태 자체를 없앱다.
       await deps.log({
         userId, question, questionNorm, matchPath: "question_correction",
         answer: QUESTION_CORRECTION_ANSWER, inputTokens: null, outputTokens: null,

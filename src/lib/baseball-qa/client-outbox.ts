@@ -39,9 +39,26 @@ export interface BaseballQaReplyMessage {
   payload?: unknown;
 }
 
+/**
+ * "답변이 아니라 **선택을 기다리는** 카드" 의 dedup_key 접두 SSOT.
+ *
+ * 선수 picker 와 교정 카드는 종류가 같다 — 둘 다 outbox 를 보존해야 유저 클릭이 원 질문을
+ * 재처리하고, 둘 다 선행 관측 · late-enqueue 복원에서 같은 취급을 받아야 한다.
+ *
+ * 🔴 직전 회차 결손(삼순 2026-08-13 교정 DM 선행 race): 이 목록이 여러 곳에 하드코딩돼
+ *    있어 `useDM` 쪽만 picker 키만 보고 있었고, 교정 DM 이 질문 INSERT 응답보다 먼저
+ *    도착하면 outbox 가 active 로 재생성돼 202 재시도/typing 이 반복됐다.
+ *    이제 모든 소비자가 이 상수를 참조한다 — 새 카드 종류가 생기면 여기 한 줄만 늘어난다.
+ */
+export const BASEBALL_QA_SELECTION_DEDUP_KEYS = [
+  "baseball-genius-picker:",
+  "baseball-genius-correction:",
+] as const;
+
 function isPickerReply(message: BaseballQaReplyMessage): boolean {
-  if (message.dedup_key?.startsWith("baseball-genius-picker:") ||
-      message.dedup_key?.startsWith("baseball-genius-correction:")) return true;
+  if (BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) => message.dedup_key?.startsWith(prefix))) {
+    return true;
+  }
   if (!message.payload || typeof message.payload !== "object") return false;
   return (message.payload as { reply_kind?: unknown }).reply_kind === "picker";
 }

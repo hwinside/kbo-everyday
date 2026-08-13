@@ -22,6 +22,7 @@ import {
   declineBaseballQaQuestionCorrection,
   collectBaseballQaAnsweredQuestionIds,
   createBaseballQaAnsweredUpdater,
+  BASEBALL_QA_SELECTION_DEDUP_KEYS,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
@@ -263,9 +264,15 @@ export function useDMChat(conversationId: string) {
         message.dedup_key === `baseball-genius:${messageId}`)) {
         observedBaseballQaReplyIdsRef.current.add(messageId);
       }
+      // 선수 picker 와 교정 카드는 **같은 종류의 발화**다 — 둘 다 "답변이 아니라 선택을 기다리는
+      // 카드"고, 둘 다 outbox 를 보존해야 유저 클릭이 원 질문을 재처리할 수 있다.
+      // 교정 dedup_key 를 빼면 교정 DM 이 질문 INSERT 응답보다 먼저 도착했을 때
+      // late-enqueue 복원이 안 돌아 outbox 가 active 로 재생성되고 202 재시도/typing 이 반복된다
+      // (삼순 2026-08-13 교정 DM 선행 race).
       if (nextMessages.some((message) =>
         message.sender_id === BASEBALL_GENIUS_USER_ID &&
-        message.dedup_key === `baseball-genius-picker:${messageId}`)) {
+        BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) =>
+          message.dedup_key === `${prefix}${messageId}`))) {
         observedBaseballQaPickerIdsRef.current.add(messageId);
       }
     }
@@ -668,10 +675,16 @@ export function useDMChat(conversationId: string) {
               messageId: result.message_id,
             });
             if (observedBaseballQaPickerIdsRef.current.has(result.message_id)) {
-              observeBaseballQaReplies(window.localStorage, [{
-                sender_id: BASEBALL_GENIUS_USER_ID,
-                dedup_key: `baseball-genius-picker:${result.message_id}`,
-              }], BASEBALL_GENIUS_USER_ID);
+              // 합성 복원도 선행 관측과 **같은 키 집합**을 써야 한다. picker 키로만 합성하면
+              // 교정 카드가 먼저 온 경우에 복원이 모양만 같고 의미가 달라진다.
+              observeBaseballQaReplies(
+                window.localStorage,
+                BASEBALL_QA_SELECTION_DEDUP_KEYS.map((prefix) => ({
+                  sender_id: BASEBALL_GENIUS_USER_ID,
+                  dedup_key: `${prefix}${result.message_id}`,
+                })),
+                BASEBALL_GENIUS_USER_ID,
+              );
             }
           }
           setGeniusReplyStates(

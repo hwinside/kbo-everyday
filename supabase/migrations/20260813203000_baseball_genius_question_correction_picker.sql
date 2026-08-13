@@ -37,6 +37,84 @@ ALTER TABLE public.genius_question_jobs
   ADD COLUMN IF NOT EXISTS correction_question_message_id bigint,
   ADD COLUMN IF NOT EXISTS correction_declined boolean NOT NULL DEFAULT false;
 
+-- 제안 카드 발행을 **한 트랜잭션으로** 결정한다: quota 반납 + 후보 durable 저장 + ready 전환.
+--
+-- 🔴 직전 회차 결손(삼순 2026-08-13 quota/crash): pipeline 이 `releaseDaily` 를 후보를 job 에
+--    저장하기 **전에** 불렀고 오류도 삼켤다. 그 창에서 crash 하면
+--      · 반납만 되고 제안이 안 저장됨 → cron 재개 시 `quota_reserved=true` 라 reserve 가
+--        재차감 없이 통과해 최종 답변이 `used=0` 으로 나간다(무료 질문).
+--      · 반납이 실패했는데 삼켜지면 카드는 나가고 `used=1` 이 남는다(이중 과금).
+--    둘을 같은 트랜잭션에 묶으면 중간 상태 자체가 존재할 수 없다 — 둘 다 되거나 둘 다 안 된다.
+CREATE OR REPLACE FUNCTION public.settle_baseball_genius_correction_suggestion(
+  p_message_id bigint,
+  p_user_id uuid,
+  p_answer text,
+  p_correction_option text
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_job public.genius_question_jobs%ROWTYPE;
+  v_day date;
+  v_changed integer;
+BEGIN
+  IF p_message_id IS NULL OR p_message_id < 1 OR p_user_id IS NULL
+     OR nullif(btrim(p_correction_option), '') IS NULL
+     OR length(p_correction_option) > 200
+     OR nullif(btrim(p_answer), '') IS NULL THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'invalid correction suggestion';
+  END IF;
+
+  SELECT * INTO v_job
+  FROM public.genius_question_jobs
+  WHERE message_id = p_message_id AND user_id = p_user_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION USING errcode = '22023', message = 'genius question job missing';
+  END IF;
+
+  -- 반납은 release RPC 와 **같은 계약**이다(예약된 적 없거나 이미 반납 = 멱등 no-op,
+  -- 반납은 예약했던 바로 그 날짜 버킷에서). 다른 곳에 복사하지 않고 여기서 바로 한다 —
+  -- 별도 호출로 나누는 순간 다시 분리 가능한 두 쓰기가 된다.
+  IF v_job.quota_reserved AND NOT v_job.quota_released
+     AND coalesce(v_job.quota_allowed, false) = true THEN
+    v_day := coalesce(
+      v_job.quota_kst_day,
+      (clock_timestamp() AT TIME ZONE 'Asia/Seoul')::date
+    );
+    UPDATE public.genius_daily_usage
+    SET used = greatest(0, used - 1), updated_at = now()
+    WHERE user_id = p_user_id AND kst_day = v_day;
+  END IF;
+
+  UPDATE public.genius_question_jobs
+  SET status = 'ready',
+      answer = p_answer,
+      source = 'question_correction',
+      remaining = v_job.quota_remaining,
+      correction_options = jsonb_build_array(p_correction_option),
+      correction_question_message_id = p_message_id,
+      -- 반납을 이 행에 함께 기록해야 선택/거절 RPC 가 "예약을 새로 열지"를 맞게 판정한다.
+      quota_released = CASE
+        WHEN v_job.quota_reserved AND coalesce(v_job.quota_allowed, false) = true THEN true
+        ELSE v_job.quota_released
+      END,
+      updated_at = now()
+  WHERE message_id = p_message_id
+    AND status = 'processing';
+  GET DIAGNOSTICS v_changed = ROW_COUNT;
+  RETURN v_changed = 1;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settle_baseball_genius_correction_suggestion(bigint, uuid, text, text)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.settle_baseball_genius_correction_suggestion(bigint, uuid, text, text)
+  TO service_role;
+
 -- 교정 제안 응답을 원자로 고정한다. `p_picked_normalized_question IS NULL` = **거절**(원문 진행).
 --
 -- ⚠️ 핵심은 `status = 'awaiting_selection'` 조건이다 (삼순 2026-08-13 ① · 2탭/재전송 방어).

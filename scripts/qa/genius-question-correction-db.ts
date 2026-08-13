@@ -130,13 +130,26 @@ async function respond(db: Db, messageId: number, candidate: string | null) {
 }
 
 /** 봇이 제안 카드를 낸 상태를 실제 서버 write 순서 그대로 재현한다. */
+/**
+ * 서버가 제안 카드를 확정하는 종단 경로.
+ * quota 반납과 후보 durable 저장을 **한 트랜잭션**으로 묶는다(삼순 2026-08-13 quota/crash).
+ */
+async function settleSuggestion(db: Db, messageId: number, candidate: string) {
+  const r = await db.query<{ settle_baseball_genius_correction_suggestion: boolean }>(
+    `SELECT settle_baseball_genius_correction_suggestion($1,$2,$3,$4)`,
+    [messageId, UID, "혹시 아래 질문을 뜻하셨나요?", candidate],
+  );
+  return r.rows[0].settle_baseball_genius_correction_suggestion;
+}
+
 async function markSuggested(db: Db, messageId: number, candidate: string) {
+  // 서버와 같은 순서: processing → settle RPC(반납+후보 저장 원자) → 발송 후 awaiting_selection.
+  // 직접 UPDATE 로 흥내내면 quota 계약을 아예 안 태우므로 생애주기 축이 false-green 이 된다.
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=$1`, [messageId]);
+  const ok = await settleSuggestion(db, messageId, candidate);
+  if (!ok) throw new Error(`settle failed for ${messageId}`);
   await db.query(
-    `UPDATE genius_question_jobs
-       SET status='awaiting_selection',
-           correction_options=jsonb_build_array($2::text),
-           correction_question_message_id=$1
-     WHERE message_id=$1`, [messageId, candidate],
+    `UPDATE genius_question_jobs SET status='awaiting_selection' WHERE message_id=$1`, [messageId],
   );
 }
 
@@ -155,11 +168,13 @@ async function main() {
     assert.equal(r1.rows[0].allowed, true);
     assert.equal(await usedToday(db), 1);
   });
-  await release(db, 1); // 제안은 답변이 아니라 반납한다
-  await check("T5b 제안 단계 반납으로 사용량이 0으로 돌아온다", async () => {
+  // 제안은 답변이 아니라 quota 를 반납한다. 단, 반납과 후보 저장을 **따로** 하면 그 사이
+  // crash 가 무료 질문(used=0) 또는 이중 과금을 만들어서(삼순 2026-08-13 quota/crash),
+  // 한 트랜잭션으로 묶은 settle 경로만 태운다.
+  await markSuggested(db, 1, "보크가 뭐야?");
+  await check("T5b 제안 확정이 quota 를 반납해 사용량이 0 으로 돌아온다", async () => {
     assert.equal(await usedToday(db), 0);
   });
-  await markSuggested(db, 1, "보크가 뭐야?");
   await check("T5c 서버 발급 exact 후보 수용", async () => {
     assert.equal(await respond(db, 1, "보크가 뭐야?"), true);
   });
@@ -185,7 +200,6 @@ async function main() {
   // ── T6 취소(거절) 종결도 같은 quota 계약 ──────────────────────────────────
   await seedJob(db, 2);
   await reserve(db, 2);
-  await release(db, 2);
   await markSuggested(db, 2, "도루가 뭐야");
   await check("T6a 거절(null)도 제안이 있었을 때만 수용", async () => {
     assert.equal(await respond(db, 2, null), true);
@@ -206,7 +220,6 @@ async function main() {
   // ── T7 동시 2탭: 선택과 거절이 겹치면 하나만 이긴다 ────────────────────────
   await seedJob(db, 3);
   await reserve(db, 3);
-  await release(db, 3);
   await markSuggested(db, 3, "보크가 뭐야?");
   const tabA = await respond(db, 3, "보크가 뭐야?");
   const tabB = await respond(db, 3, null);
@@ -244,11 +257,162 @@ async function main() {
   // ── T9 제안 저장 전 crash: prepare 미도달 행은 응답을 받지 않는다 ───────────
   await seedJob(db, 5);
   await reserve(db, 5);
-  await release(db, 5);
-  // markSuggested 를 하지 않는다 = 제안 INSERT 직전 crash
+  // markSuggested 를 하지 않는다 = 제안 확정 직전 crash
   await check("T9 제안이 저장되지 않은 행은 어떤 응답도 수용하지 않는다", async () => {
     assert.equal(await respond(db, 5, "보크가 뭐야?"), false);
     assert.equal(await respond(db, 5, null), false);
+  });
+
+  // ── T11 crash → cron 재개 생애주기 (삼순 2026-08-13 quota/crash 핵심) ───────
+  //
+  // 사고 시나리오: 제안 확정 직전에 죽으면 quota 는 예약된 채로 남고 제안은 없다.
+  // cron 이 이어받아 다시 돌리면 reserve 가 멱등으로 통과해야 하고(재차감 없음),
+  // 최종적으로 유저가 물리는 건 **정확히 1회**여야 한다.
+  await seedJob(db, 11);
+  await reserve(db, 11);
+  const usedAfterCrash = await usedToday(db);
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=11`);
+  // 💥 여기서 crash — settle 이 실행되지 않았다.
+  await check("T11a crash 시점에는 예약만 남고 제안은 없다", async () => {
+    const row = (await db.query<Record<string, unknown>>(
+      `SELECT * FROM genius_question_jobs WHERE message_id=11`)).rows[0];
+    assert.equal(row.correction_options, null);
+    assert.equal(row.quota_reserved, true);
+    assert.equal(row.quota_released, false);
+  });
+  await reserve(db, 11); // cron 재개
+  await check("T11b cron 재개의 reserve 는 멱등 — 재차감 0", async () => {
+    assert.equal(await usedToday(db), usedAfterCrash);
+  });
+  await markSuggested(db, 11, "보크가 뭐야?");
+  await check("T11c 재개 후 제안 확정이 예약을 반납한다", async () => {
+    assert.equal(await usedToday(db), usedAfterCrash - 1);
+  });
+  await respond(db, 11, "보크가 뭐야?");
+  await reserve(db, 11);
+  await reserve(db, 11); // worker 재진입
+  await check("T11d crash→재개 전체에서 최종 차감은 정확히 1회", async () => {
+    assert.equal(await usedToday(db), usedAfterCrash);
+  });
+
+  // ── T12 제안 확정은 **원자** — 반납만 되고 후보가 사라지는 상태가 없다 ──────
+  await seedJob(db, 12);
+  await reserve(db, 12);
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=12`);
+  await settleSuggestion(db, 12, "보크가 뭐야?");
+  await check("T12 반납과 후보 저장이 같은 트랜잭션에서 함께 확정된다", async () => {
+    const row = (await db.query<Record<string, unknown>>(
+      `SELECT * FROM genius_question_jobs WHERE message_id=12`)).rows[0];
+    assert.equal(row.quota_released, true, "반납 표시 없음 — 선택 시 예약을 새로 안 열어 무료 답변이 된다");
+    assert.deepEqual(row.correction_options, ["보크가 뭐야?"], "후보 유실 — 유저가 빈 카드를 받는다");
+    assert.equal(row.status, "ready");
+  });
+
+  // ── T13 settle 재시도는 두 번 반납하지 않는다 ──────────────────────
+  await seedJob(db, 13);
+  await reserve(db, 13);
+  const usedBefore13 = await usedToday(db);
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=13`);
+  await settleSuggestion(db, 13, "보크가 뭐야?");
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=13`);
+  await settleSuggestion(db, 13, "보크가 뭐야?");
+  await check("T13 settle 재시도가 이중 반납을 만들지 않는다", async () => {
+    assert.equal(await usedToday(db), usedBefore13 - 1);
+  });
+
+  // ── T14 settle 은 **자기가 소유한 processing 행**에만 쓴다 ────────────────
+  //
+  // 소유권 조건이 없으면 늦게 깨어난 worker 가 **이미 유저가 응답한 행**을 제안 상태로
+  // 되돌려 선택을 날리고 카드를 다시 띄운다. 상태를 손대지 않고 false 여야 한다.
+  await seedJob(db, 14);
+  await reserve(db, 14);
+  await markSuggested(db, 14, "보크가 뭐야?");
+  await respond(db, 14, "보크가 뭐야?"); // 유저가 골랐다 → status='queued', 선택 고정
+  const beforeLate = (await db.query<Record<string, unknown>>(
+    `SELECT status, picked_normalized_question, correction_options FROM genius_question_jobs WHERE message_id=14`)).rows[0];
+  const usedBeforeLate = await usedToday(db);
+  const lateSettle = await settleSuggestion(db, 14, "보크가 뭐야?"); // 좌비 worker
+  const afterLate = (await db.query<Record<string, unknown>>(
+    `SELECT status, picked_normalized_question, correction_options FROM genius_question_jobs WHERE message_id=14`)).rows[0];
+  await check("T14a 소유가 아닌 행에 대한 settle 은 false 로 물러난다", () => {
+    assert.equal(lateSettle, false);
+  });
+  await check("T14b 좌비 settle 이 유저 선택을 되돌리지 않는다", () => {
+    assert.equal(afterLate.status, beforeLate.status, "진행 상태가 제안으로 후퇴했다");
+    assert.equal(afterLate.picked_normalized_question, "보크가 뭐야?", "선택이 날아갔다");
+    assert.equal(afterLate.correction_options, null, "카드가 다시 뜼워졌다");
+  });
+  await check("T14c 좌비 settle 은 quota 를 다시 건드리지 않는다", async () => {
+    assert.equal(await usedToday(db), usedBeforeLate);
+  });
+
+  // ── T15 ready 전환 **경로 선택**이 서버 SSOT 에서 실제로 갈리는가 ─────────
+  //
+  // 🔴 직전 회차 결손: 이 분기가 server.ts 안에 인라인으로만 있어 게이트가 못 태웠고,
+  //    비원자 update 로 되돌려도 GREEN 이었다. 이젠 SSOT 를 그대로 실행해 판정한다.
+  const { planQuestionJobReady } = await import("../../src/lib/baseball-qa/job-ready-plan");
+  type Plan = ReturnType<typeof planQuestionJobReady>;
+  const planOf = (r: Record<string, unknown>): Plan =>
+    planQuestionJobReady(r as Parameters<typeof planQuestionJobReady>[0], 777);
+
+  await check("T15a 교정 제안은 원자 settle 경로로 간다", () => {
+    const plan = planOf({
+      answer: "혹시 아래 질문을 뜻하셨나요?", source: "question_correction",
+      remaining: 19, correctionOptions: ["보크가 뭐야?"],
+    });
+    assert.equal(plan.kind, "settle_correction",
+      "비원자 update 로 가면 반납·저장이 갈라져 crash 창이 다시 생긴다");
+    if (plan.kind !== "settle_correction") return;
+    assert.equal(plan.correctionOption, "보크가 뭐야?");
+  });
+
+  await check("T15b 일반 답변은 update 경로이고 교정 칸을 반드시 비운다", () => {
+    const plan = planOf({ answer: "보크란 …", source: "dictionary", remaining: 19 });
+    assert.equal(plan.kind, "update");
+    if (plan.kind !== "update") return;
+    assert.equal(plan.row.correction_options, null,
+      "교정 칸이 남으면 엉뚝한 답변에 카드가 붙는다");
+    void 0;
+    assert.equal(plan.row.correction_question_message_id, null);
+  });
+
+  await check("T15c 후보가 1개가 아니면 settle 경로로 보내지 않는다(fail-close)", () => {
+    for (const opts of [undefined, [], ["a", "b"]]) {
+      const plan = planOf({
+        answer: "x", source: "question_correction", remaining: 19, correctionOptions: opts,
+      });
+      assert.equal(plan.kind, "update", `correctionOptions=${JSON.stringify(opts)}`);
+    }
+  });
+
+  // 그리고 그 계획이 실제 DB 에서 의도대로 동작하는지까지 본다(계획만 맞고 행이 틀리면 무의미).
+  await seedJob(db, 15);
+  await reserve(db, 15);
+  const usedBefore15 = await usedToday(db);
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=15`);
+  {
+    const plan = planOf({
+      answer: "혹시 아래 질문을 뜻하셨나요?", source: "question_correction",
+      remaining: 19, correctionOptions: ["보크가 뭐야?"],
+    });
+    if (plan.kind === "settle_correction") {
+      await settleSuggestion(db, 15, plan.correctionOption);
+    } else {
+      const cols = Object.keys(plan.row);
+      await db.query(
+        `UPDATE genius_question_jobs SET ${cols.map((c, i) => `${c}=$${i + 2}`).join(",")}
+         WHERE message_id=$1 AND status='processing'`,
+        [15, ...cols.map((c) => plan.row[c] ?? null)],
+      );
+    }
+  }
+  await check("T15d SSOT 계획대로 실행하면 반납과 후보가 함께 확정된다", async () => {
+    const row = (await db.query<Record<string, unknown>>(
+      `SELECT quota_released, correction_options, status FROM genius_question_jobs WHERE message_id=15`)).rows[0];
+    assert.equal(await usedToday(db), usedBefore15 - 1, "제안 턴인데 차감이 남았다");
+    assert.equal(row.quota_released, true);
+    assert.deepEqual(row.correction_options, ["보크가 뭐야?"]);
+    assert.equal(row.status, "ready");
   });
 
   // ── T10 늦은 탭: 이미 완료된 질문 카드 재탭 ───────────────────────────────

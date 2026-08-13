@@ -4,6 +4,7 @@
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
+import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
@@ -1092,22 +1093,30 @@ export async function processBaseballQaQuestion(input: {
         // fence 경과 후 ambiguous fail-closed 복구로 이어받는다 (삼순 5차 P1).
         return { kind: "pending" };
       }
-      const { error: readyError } = await supabaseAdmin
-        .from("genius_question_jobs")
-        .update({
-          status: "ready",
-          answer: result.answer,
-          source: result.source,
-          remaining: result.remaining,
-          picker_options: result.pickerOptions ?? null,
-          picker_question_message_id: result.pickerOptions ? messageId : null,
-          correction_options: result.correctionOptions ?? null,
-          correction_question_message_id: result.correctionOptions ? messageId : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("message_id", messageId)
-        .eq("status", "processing");
-      if (readyError) throw readyError;
+      // ready 전환 경로는 `planQuestionJobReady` SSOT 가 정한다 — 교정 제안은 quota 반납과
+      // 후보 durable 저장을 **한 트랜잭션**으로 닫는다(삼순 2026-08-13 quota/crash).
+      // 둘을 나누면 그 사이 crash 가 무료 질문 또는 이중 과금을 만든다.
+      const plan = planQuestionJobReady(result, messageId);
+      if (plan.kind === "settle_correction") {
+        // query-guard: bounded -- message_id 단위 단일 행 갱신 RPC.
+        const { data: settled, error: settleError } = await supabaseAdmin
+          .rpc("settle_baseball_genius_correction_suggestion", {
+            p_message_id: messageId,
+            p_user_id: userId,
+            p_answer: plan.answer,
+            p_correction_option: plan.correctionOption,
+          });
+        if (settleError) throw settleError;
+        // false = 이 worker 가 소유한 processing 행이 아니다(다른 worker 가 이미 진행).
+        if (settled !== true) return { kind: "pending" };
+      } else {
+        const { error: readyError } = await supabaseAdmin
+          .from("genius_question_jobs")
+          .update({ ...plan.row, updated_at: new Date().toISOString() })
+          .eq("message_id", messageId)
+          .eq("status", "processing");
+        if (readyError) throw readyError;
+      }
     } catch (error) {
       console.error("baseball-genius pipeline failed:", (error as Error).message);
       result = { status: 200, answer: BLOCKED_ANSWER, source: "error", remaining: 0 };

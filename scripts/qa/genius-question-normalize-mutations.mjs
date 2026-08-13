@@ -21,6 +21,13 @@ const root = path.resolve(new URL(".", import.meta.url).pathname, "../..");
 const PIPELINE = path.join(root, "src/lib/baseball-qa/pipeline.ts");
 const LOG_ROW = path.join(root, "src/lib/baseball-qa/log-row.ts");
 const PICKER = path.join(root, "src/components/dm/GeniusQuestionCorrectionPicker.tsx");
+const USE_DM = path.join(root, "src/lib/supabase/useDM.ts");
+const OUTBOX = path.join(root, "src/lib/baseball-qa/client-outbox.ts");
+const SERVER = path.join(root, "src/lib/baseball-qa/server.ts");
+const READY_PLAN = path.join(root, "src/lib/baseball-qa/job-ready-plan.ts");
+const MIGRATION = path.join(
+  root, "supabase/migrations/20260813203000_baseball_genius_question_correction_picker.sql",
+);
 
 /**
  * mutation 은 `file` 을 생략하면 pipeline.ts 를 대상으로 한다.
@@ -30,6 +37,7 @@ const GATES = {
   normalize: ["npx", ["tsx", "scripts/qa/genius-question-normalize-smoke.ts"]],
   correctionDb: ["npx", ["tsx", "scripts/qa/genius-question-correction-db.ts"]],
   pickerRender: ["npx", ["tsx", "scripts/qa/genius-picker-disabled-render.ts"]],
+  dmRace: ["npx", ["tsx", "scripts/qa/genius-correction-dm-race.ts"]],
 };
 
 const mutations = [
@@ -135,6 +143,66 @@ const mutations = [
     gate: "pickerRender",
     find: '        disabled={disabled}\n        onClick={() => onRespond(null)}',
     replace: '        onClick={() => onRespond(null)}',
+  },
+  {
+    // 삼순 2026-08-13 교정 DM 선행 race: 선행관측 ref 가 picker 키만 보면
+    // 교정 DM 이 먼저 왔을 때 late-enqueue 복원이 안 돌아 202 재시도가 반복된다.
+    name: "M17 선행관측 ref 를 picker 키로 좌힘",
+    file: USE_DM,
+    gate: "dmRace",
+    find: '        BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) =>\n          message.dedup_key === `${prefix}${messageId}`))) {',
+    replace: '        message.dedup_key === `baseball-genius-picker:${messageId}`)) {',
+  },
+  {
+    name: "M19 선택대기 키 집합에서 교정 제거",
+    file: OUTBOX,
+    gate: "dmRace",
+    find: '  "baseball-genius-correction:",\n] as const;',
+    replace: '] as const;',
+  },
+  {
+    // 삼순 2026-08-13 quota/crash 의 핵심: 제안 확정이 반납을 함께 하지 않으면
+    // 제안 턴에 차감이 남아 유저가 답도 못 받고 1회를 물린다(이중 과금).
+    name: "M20 settle 에서 quota 반납 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: '    UPDATE public.genius_daily_usage\n    SET used = greatest(0, used - 1), updated_at = now()\n    WHERE user_id = p_user_id AND kst_day = v_day;',
+    replace: '    NULL;',
+  },
+  {
+    // 반대방향: 반납 표시를 안 남기면 선택 단계가 최종 답변용 예약을 새로 안 열어
+    // 최종 답변이 무료로 나간다(used=0).
+    name: "M20b settle 의 반납 표시 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: '      quota_released = CASE\n        WHEN v_job.quota_reserved AND coalesce(v_job.quota_allowed, false) = true THEN true\n        ELSE v_job.quota_released\n      END,',
+    replace: '      quota_released = v_job.quota_released,',
+  },
+  {
+    // settle 이 소유권(status='processing')을 안 보면 이미 ready/awaiting 로 넘어간 행을
+    // 다른 worker 가 덮어 진행 상태를 되돌린다(유저 선택이 날아간다).
+    name: "M20c settle 의 processing 소유권 조건 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: "  WHERE message_id = p_message_id\n    AND status = 'processing';",
+    replace: '  WHERE message_id = p_message_id;',
+  },
+  {
+    // 배선 축: 서버가 settle 경로를 안 고르고 비원자 update 로 돌아가면
+    // RPC 가 아무리 올바라도 Production 은 그걸 안 쓴다.
+    name: "M21 교정 제안을 비원자 update 경로로 되돌림",
+    file: READY_PLAN,
+    gate: "correctionDb",
+    find: '  if (result.source === "question_correction" && result.correctionOptions?.length === 1) {',
+    replace: '  if (false) {',
+  },
+  {
+    // 교정 경로가 아닌 답변이 교정 칸을 남기면 엉뚝한 답변에 카드가 붙는다.
+    name: "M21b 일반 답변이 교정 칸을 그대로 남김",
+    file: READY_PLAN,
+    gate: "correctionDb",
+    find: '      correction_options: null,\n      correction_question_message_id: null,',
+    replace: '      correction_options: result.correctionOptions ?? null,\n      correction_question_message_id: messageId,',
   },
 ];
 
