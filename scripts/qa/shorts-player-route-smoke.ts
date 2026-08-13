@@ -25,6 +25,7 @@ function check(label: string, condition: boolean) {
 }
 
 const players: PlayerAlias[] = [
+  { kbo_id: "52605", name: "김도영", team: "KIA", aliases: [] },
   { kbo_id: "53554", name: "김민석", team: "두산", aliases: [] },
   { kbo_id: "54097", name: "김민석", team: "KT", aliases: [] },
   { kbo_id: "68043", name: "김민", team: "SSG", aliases: [] },
@@ -77,9 +78,35 @@ function videoSupabase(rows: VideoRow[]) {
       let selected = [...rows];
       const query: any = {
         select: () => query,
-        eq: () => query,
-        neq: () => query,
-        or: () => query,
+        // team 쿼리의 eq(team_id)를 실제 필터링 — no-op이면 타팀 scalar 행이
+        // 팀 쿼리로도 들어와 선수 union 쿼리가 깨져도 PASS하는 false-positive가
+        // 된다 (2026-08-13 삼순 2차 NO-GO #1).
+        eq: (column: string, value: unknown) => {
+          if (column === "team_id") {
+            selected = selected.filter((row) => row.team_id === value);
+          }
+          return query;
+        },
+        neq: (column: string, value: unknown) => {
+          if (column === "team_id") {
+            selected = selected.filter((row) => row.team_id !== value);
+          }
+          return query;
+        },
+        or: (expr: string) => {
+          // 최애선수 union 필터(player_id scalar + player_ids 배열)만 실제 필터링.
+          // 그 외(LG 제목 역조회 title.ilike)는 no-op 유지.
+          const m = expr.match(/player_id\.in\.\(([^)]*)\)/);
+          if (m) {
+            const ids = m[1].split(",").filter(Boolean);
+            selected = selected.filter(
+              (row) =>
+                (row.player_id !== null && ids.includes(row.player_id)) ||
+                row.player_ids.some((id) => ids.includes(id)),
+            );
+          }
+          return query;
+        },
         overlaps: (_column: string, ids: string[]) => {
           selected = selected.filter((row) =>
             row.player_ids.some((id) => ids.includes(id)),
@@ -408,6 +435,120 @@ async function finishAsyncChecks() {
     routeChannelFailedClosed = true;
   }
   check("actual GET channel lookup error fail-close", routeChannelFailedClosed);
+
+  // --- scope=all = 마이팀+최애선수 병합 (2026-08-13 삼순 NO-GO 회귀) ---
+  // 최애 매칭은 scalar player_id와 배열 player_ids union: source_type=player의
+  // scalar 단일 태깅(playerId="77532", playerIds=[]) 타팀 영상이 포함돼야 하고,
+  // 일반 ETC 뉴스는 제외, 양쪽 쿼리 중복은 1건으로 dedupe되어야 한다.
+  const allScopeRows = [
+    videoRow({
+      video_id: "kia-team",
+      team_id: "KIA",
+      title: "KIA 타이거즈 끝내기 홈런",
+      source_type: "official_short",
+      player_id: null,
+      player_ids: [],
+    }),
+    videoRow({
+      video_id: "nc-son-scalar",
+      team_id: "NC",
+      title: "손아섭 멀티히트",
+      source_type: "player",
+      player_id: "77532",
+      player_ids: [],
+    }),
+    videoRow({
+      video_id: "kia-son-dupe",
+      team_id: "KIA",
+      title: "KIA전 손아섭 활약",
+      source_type: "player",
+      player_id: "77532",
+      player_ids: [],
+    }),
+    videoRow({
+      video_id: "etc-news",
+      team_id: "ETC",
+      title: "정치 뉴스 현장 발언 #shorts",
+      source_type: "community_short",
+      player_id: null,
+      player_ids: [],
+    }),
+  ];
+  const allScopeResponse = await routeFor(allScopeRows)(
+    new NextRequest(
+      "http://localhost/api/shorts-feed?scope=all&team=KIA&player_ids=77532&limit=30",
+    ),
+  );
+  check("actual GET scope=all status 200", allScopeResponse.status === 200);
+  const allScopeItems = (await allScopeResponse.json()).items as Array<{
+    id: string;
+  }>;
+  const allScopeIds = allScopeItems.map((item) => item.id);
+  check(
+    "scope=all 마이팀 영상 포함",
+    allScopeIds.includes("kia-team"),
+  );
+  check(
+    "scope=all 타팀 scalar 최애선수 영상 포함 (player_id union)",
+    allScopeIds.includes("nc-son-scalar"),
+  );
+  check(
+    "scope=all 일반 ETC 뉴스 제외",
+    !allScopeIds.includes("etc-news"),
+  );
+  check(
+    "scope=all 양쪽 쿼리 중복 1건 dedupe",
+    allScopeIds.filter((id) => id === "kia-son-dupe").length === 1,
+  );
+  check(
+    "scope=all 응답 = 정확히 마이팀∪최애 3건",
+    allScopeIds.length === 3,
+  );
+
+  // 최애 미설정 시 전체 = 마이팀만
+  const allTeamOnlyResponse = await routeFor(allScopeRows)(
+    new NextRequest("http://localhost/api/shorts-feed?scope=all&team=KIA&limit=30"),
+  );
+  const allTeamOnlyIds = (
+    (await allTeamOnlyResponse.json()).items as Array<{ id: string }>
+  ).map((item) => item.id);
+  check(
+    "scope=all 최애 미설정 → 마이팀만 (ETC·타팀 제외)",
+    allTeamOnlyIds.sort().join(",") === "kia-son-dupe,kia-team",
+  );
+
+  // --- 외부 입력 sanitize 회귀 (삼순 2차 NO-GO #2) ---
+  // malformed/주입 시도 토큰은 버려지고 숫자 canonical ID만 쿼리에 도달해야 한다.
+  const malformedResponse = await routeFor(allScopeRows)(
+    new NextRequest(
+      "http://localhost/api/shorts-feed?scope=all&team=KIA&limit=30&player_ids=" +
+        encodeURIComponent(
+          "77532,77532, 77532 ,abc,or(,player_ids.ov.{x},77532);--,",
+        ),
+    ),
+  );
+  check("malformed player_ids에도 200", malformedResponse.status === 200);
+  const malformedIds = (
+    (await malformedResponse.json()).items as Array<{ id: string }>
+  ).map((item) => item.id);
+  check(
+    "malformed 토큰 필터링 후 숫자 ID만 적용 (결과 = 정상 union과 동일)",
+    malformedIds.sort().join(",") === "kia-son-dupe,kia-team,nc-son-scalar",
+  );
+
+  // 최대 5개 제한: 6번째 ID(77532)는 잘려 scalar 최애 행이 빠져야 한다.
+  const overCapResponse = await routeFor(allScopeRows)(
+    new NextRequest(
+      "http://localhost/api/shorts-feed?scope=all&team=KIA&limit=30&player_ids=1,2,3,4,5,77532",
+    ),
+  );
+  const overCapIds = (
+    (await overCapResponse.json()).items as Array<{ id: string }>
+  ).map((item) => item.id);
+  check(
+    "player_ids 6개 입력 시 앞 5개만 적용 (77532 제외 확인)",
+    !overCapIds.includes("nc-son-scalar"),
+  );
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail > 0) process.exit(1);
