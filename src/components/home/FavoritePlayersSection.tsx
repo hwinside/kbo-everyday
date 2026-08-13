@@ -313,7 +313,7 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
           const heroUrl = heroCutoutUrl(player.playerId);
 
           return (
-            <Link key={player.playerId} href={`/community/players/${player.playerId}`}>
+            <Link key={player.playerId} href={`/community/players/${player.playerId}`} prefetch={false}>
               <div className="rounded-2xl overflow-hidden border border-border bg-bg-secondary">
                 {/* 상단: 히어로샷 + 기본정보 — 히어로 사진이 잘리지 않을 높이 확보, 하단 정렬 */}
                 <div className="flex gap-2.5 pr-3.5 min-h-[120px]">

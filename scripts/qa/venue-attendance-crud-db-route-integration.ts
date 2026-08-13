@@ -24,6 +24,15 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 const OWNER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 
+// dead-token guard의 exp 프리체크는 JWT 형태가 아닌 토큰을 로컬 거절하므로
+// 테스트 토큰도 실제와 같은 JWT 형태여야 한다 (서명 검증은 shim이 대신한다).
+const _b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const _testJwt = (sub: string) =>
+  `${_b64({ alg: "HS256", typ: "JWT" })}.${_b64({ sub, exp: Math.floor(Date.now() / 1000) + 3600 })}.test-sig`;
+const OWNER_TOKEN = _testJwt("owner");
+const OTHER_TOKEN = _testJwt("other");
+
+
 /** 2026 종료 경기 3종(직접 등록 허용 조건) + 1종은 미종료(scheduled). */
 const GAME_A = "20260614LGOB0"; // LG(원정) 5 : 3 OB(홈)
 const GAME_B = "20260615LGHH0"; // LG(원정) 2 : 4 HH(홈)
@@ -276,7 +285,7 @@ async function installSupabaseShim(db: PGlite) {
   };
 
   client.auth.getUser = async (token: string) => {
-    const userId = token === "owner-token" ? OWNER : token === "other-token" ? OTHER : null;
+    const userId = token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
     return userId
       ? { data: { user: { id: userId } }, error: null }
       : { data: { user: null }, error: { message: "invalid token" } };
@@ -427,7 +436,7 @@ async function main() {
 
   // ── 1) 직접 등록 생성 → 통계 즉시 반영 ─────────────────────────────────────
   const created = await list.POST(
-    authed("http://localhost/api/me/venue-attendance", "owner-token", {
+    authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
       method: "POST",
       body: JSON.stringify({ gameId: GAME_A, favoriteTeamId: LG }),
     }),
@@ -437,7 +446,7 @@ async function main() {
   ok("생성 source=diary_manual", createdBody.source === "diary_manual");
 
   {
-    const diary = await diaryOf(list, "owner-token");
+    const diary = await diaryOf(list, OWNER_TOKEN);
     ok("생성 직후 다이어리 1경기", diary.diaryGameCount === 1, `count=${diary.diaryGameCount}`);
     ok(
       "LG 원정 5:3 승 → overall 1승",
@@ -449,7 +458,7 @@ async function main() {
       diary.summary.attendanceCount === 0,
       `certified=${diary.summary.attendanceCount}`,
     );
-    const stats = await statsOf("owner-token");
+    const stats = await statsOf(OWNER_TOKEN);
     ok(
       "통계 overall 즉시 1경기 반영",
       stats.overall.coverage.attendanceGames === 1,
@@ -461,14 +470,14 @@ async function main() {
   // ── 2) 종료되지 않은 경기·참가팀 아닌 응원팀은 등록 거부 ────────────────────
   {
     const notFinal = await list.POST(
-      authed("http://localhost/api/me/venue-attendance", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
         method: "POST",
         body: JSON.stringify({ gameId: GAME_SCHEDULED, favoriteTeamId: LG }),
       }),
     );
     ok("미종료 경기 직접 등록 403", notFinal.status === 403, `status=${notFinal.status}`);
     const wrongTeam = await list.POST(
-      authed("http://localhost/api/me/venue-attendance", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
         method: "POST",
         body: JSON.stringify({ gameId: GAME_B, favoriteTeamId: SS }),
       }),
@@ -483,7 +492,7 @@ async function main() {
   // ── 3) 타인 원장 수정·삭제 403 (⚠️ 소스 정규식이 아니라 실제 status) ───────
   {
     const patch = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "other-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OTHER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ favoriteTeamId: OB }),
       }),
@@ -491,7 +500,7 @@ async function main() {
     );
     ok("타인 PATCH 403", patch.status === 403, `status=${patch.status}`);
     const del = await item.DELETE(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "other-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OTHER_TOKEN, {
         method: "DELETE",
       }),
       idContext(createdBody.id),
@@ -506,21 +515,21 @@ async function main() {
       alive.rows[0]!.deleted_at === null && alive.rows[0]!.favorite_team_id_snapshot === LG,
       JSON.stringify(alive.rows[0]),
     );
-    const otherDiary = await diaryOf(list, "other-token");
+    const otherDiary = await diaryOf(list, OTHER_TOKEN);
     ok("타인 다이어리에는 owner 경기 없음", otherDiary.games.length === 0);
   }
 
   // ── 4) 응원팀 수정 → 승패 반전이 통계까지 ──────────────────────────────────
   {
     const patch = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ favoriteTeamId: OB }),
       }),
       idContext(createdBody.id),
     );
     ok("본인 응원팀 수정 200", patch.status === 200, `status=${patch.status}`);
-    const diary = await diaryOf(list, "owner-token");
+    const diary = await diaryOf(list, OWNER_TOKEN);
     ok(
       "두산 기준으로 5:3 패배 반영",
       diary.overallSummary.losses === 1 && diary.overallSummary.wins === 0,
@@ -550,7 +559,7 @@ async function main() {
     const pendingMediaId = manualMedia.rows[1]!.id;
 
     const moveWrongTeam = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_B, favoriteTeamId: OB }),
       }),
@@ -568,7 +577,7 @@ async function main() {
     ok("거부된 이동은 경기를 바꾸지 않음", stillA.rows[0]!.game_id === GAME_A);
 
     const moveScheduled = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_SCHEDULED, favoriteTeamId: LG }),
       }),
@@ -577,7 +586,7 @@ async function main() {
     ok("미종료 경기로 이동 403", moveScheduled.status === 403, `status=${moveScheduled.status}`);
 
     const moved = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_B, favoriteTeamId: LG }),
       }),
@@ -622,7 +631,7 @@ async function main() {
         sourceTombstone.rows[0]?.deleted_at != null,
       JSON.stringify(sourceTombstone.rows[0]),
     );
-    const diary = await diaryOf(list, "owner-token");
+    const diary = await diaryOf(list, OWNER_TOKEN);
     ok(
       "원경기 미디어 terminal 뒤에도 변경된 경기만 다이어리 반영",
       diary.games.length === 1 &&
@@ -630,7 +639,7 @@ async function main() {
         diary.overallSummary.losses === 1,
       JSON.stringify(diary.overallSummary),
     );
-    const stats = await statsOf("owner-token");
+    const stats = await statsOf(OWNER_TOKEN);
     ok(
       "원경기 미디어 terminal 뒤 venue-stats도 대상 1경기",
       stats.overall.coverage.attendanceGames === 1,
@@ -647,7 +656,7 @@ async function main() {
   // ── 6) 중복 경기 이동 차단 ─────────────────────────────────────────────────
   {
     const second = await list.POST(
-      authed("http://localhost/api/me/venue-attendance", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
         method: "POST",
         body: JSON.stringify({ gameId: GAME_C, favoriteTeamId: LG }),
       }),
@@ -656,7 +665,7 @@ async function main() {
     ok("두 번째 경기 직접 등록 200", second.status === 200);
 
     const dup = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${secondBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${secondBody.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_B, favoriteTeamId: LG }),
       }),
@@ -670,7 +679,7 @@ async function main() {
 
     // 정리: 두 번째 기록은 이후 케이스에 영향 없도록 삭제
     const del = await item.DELETE(
-      authed(`http://localhost/api/me/venue-attendance/${secondBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${secondBody.id}`, OWNER_TOKEN, {
         method: "DELETE",
       }),
       idContext(secondBody.id),
@@ -680,17 +689,17 @@ async function main() {
 
   // ── 7) 삭제 → 통계 제외 → 같은 경기 재등록 ─────────────────────────────────
   {
-    const beforeDelete = await diaryOf(list, "owner-token");
+    const beforeDelete = await diaryOf(list, OWNER_TOKEN);
     ok("삭제 전 1경기", beforeDelete.diaryGameCount === 1, `count=${beforeDelete.diaryGameCount}`);
 
     const del = await item.DELETE(
-      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${createdBody.id}`, OWNER_TOKEN, {
         method: "DELETE",
       }),
       idContext(createdBody.id),
     );
     ok("직접 등록 기록 삭제 200", del.status === 200);
-    const afterDelete = await diaryOf(list, "owner-token");
+    const afterDelete = await diaryOf(list, OWNER_TOKEN);
     ok("삭제 즉시 다이어리 0경기", afterDelete.diaryGameCount === 0);
     ok(
       "삭제 즉시 승률 표본도 사라짐",
@@ -698,7 +707,7 @@ async function main() {
         afterDelete.overallSummary.winRate === null,
       JSON.stringify(afterDelete.overallSummary),
     );
-    const stats = await statsOf("owner-token");
+    const stats = await statsOf(OWNER_TOKEN);
     ok(
       "삭제 즉시 통계 overall 0경기",
       stats.overall.coverage.attendanceGames === 0 && stats.overall.state === "empty",
@@ -710,7 +719,7 @@ async function main() {
     );
 
     const again = await list.POST(
-      authed("http://localhost/api/me/venue-attendance", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
         method: "POST",
         body: JSON.stringify({ gameId: GAME_B, favoriteTeamId: LG }),
       }),
@@ -718,7 +727,7 @@ async function main() {
     ok("삭제한 경기 재등록 200", again.status === 200, `status=${again.status}`);
     const reBody = (await again.json()) as { id: number };
     ok("재등록은 같은 원장 행 복원(중복 행 생성 아님)", reBody.id === createdBody.id);
-    const afterRe = await diaryOf(list, "owner-token");
+    const afterRe = await diaryOf(list, OWNER_TOKEN);
     ok(
       "재등록 즉시 통계 복귀",
       afterRe.diaryGameCount === 1 && afterRe.overallSummary.losses === 1,
@@ -760,7 +769,7 @@ async function main() {
     );
 
     const patch = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ favoriteTeamId: OB }),
       }),
@@ -768,7 +777,7 @@ async function main() {
     );
     ok("GPS 기록 응원팀 수정 403", patch.status === 403, `status=${patch.status}`);
     const move = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_C, favoriteTeamId: LG }),
       }),
@@ -784,7 +793,7 @@ async function main() {
       untouched.rows[0]!.game_id === GAME_A && untouched.rows[0]!.favorite_team_id_snapshot === LG,
     );
 
-    const beforeGpsDelete = await diaryOf(list, "owner-token");
+    const beforeGpsDelete = await diaryOf(list, OWNER_TOKEN);
     ok(
       "GPS 인증 직관수 1 집계",
       beforeGpsDelete.summary.attendanceCount === 1,
@@ -792,13 +801,13 @@ async function main() {
     );
 
     const del = await item.DELETE(
-      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${gpsId}`, OWNER_TOKEN, {
         method: "DELETE",
       }),
       idContext(gpsId),
     );
     ok("GPS 기록 삭제 200", del.status === 200, `status=${del.status}`);
-    const afterGpsDelete = await diaryOf(list, "owner-token");
+    const afterGpsDelete = await diaryOf(list, OWNER_TOKEN);
     ok(
       "GPS 삭제 즉시 인증 직관수 0",
       afterGpsDelete.summary.attendanceCount === 0,
@@ -818,7 +827,7 @@ async function main() {
   // ── 9) GPS ↔ 직접등록 출처 위조 차단 ───────────────────────────────────────
   {
     const conflict = await list.POST(
-      authed("http://localhost/api/me/venue-attendance", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance", OWNER_TOKEN, {
         method: "POST",
         body: JSON.stringify({ gameId: GAME_A, favoriteTeamId: LG }),
       }),
@@ -839,7 +848,7 @@ async function main() {
       [OWNER, GAME_B],
     );
     const moveOntoGps = await item.PATCH(
-      authed(`http://localhost/api/me/venue-attendance/${manual.rows[0]!.id}`, "owner-token", {
+      authed(`http://localhost/api/me/venue-attendance/${manual.rows[0]!.id}`, OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ gameId: GAME_A, favoriteTeamId: LG }),
       }),
@@ -863,14 +872,14 @@ async function main() {
   // ── 10) 존재하지 않는 원장 ─────────────────────────────────────────────────
   {
     const missing = await item.DELETE(
-      authed("http://localhost/api/me/venue-attendance/999999", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance/999999", OWNER_TOKEN, {
         method: "DELETE",
       }),
       idContext(999999),
     );
     ok("없는 원장 삭제 404", missing.status === 404, `status=${missing.status}`);
     const badId = await item.PATCH(
-      authed("http://localhost/api/me/venue-attendance/abc", "owner-token", {
+      authed("http://localhost/api/me/venue-attendance/abc", OWNER_TOKEN, {
         method: "PATCH",
         body: JSON.stringify({ favoriteTeamId: LG }),
       }),

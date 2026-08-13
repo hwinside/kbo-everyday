@@ -14,6 +14,45 @@ export type FullEntryRow = {
 const canonId = (id: string | number | undefined): string => canonicalKboId(id);
 
 /**
+ * full=1 응답은 live + static(비규정 엔트리) + runner 보정의 혼합물이다. 응답 freshness는
+ * `now`가 아니라 **가장 오래된 구성요소 시각**이어야 stale 가드가 우회되지 않는다.
+ */
+export class StatsFreshnessContractError extends Error {
+  constructor(message = "stats response has invalid component freshness") {
+    super(message);
+    this.name = "StatsFreshnessContractError";
+  }
+}
+
+export function oldestFullEntryTimestamp(
+  values: readonly (string | null | undefined)[],
+  now = new Date(),
+): string | null {
+  const nowMs = now.getTime();
+  if (!Number.isFinite(nowMs)) return null;
+  const parsed = values.map((value) => ({
+    value,
+    ms: typeof value === "string" ? Date.parse(value) : Number.NaN,
+  }));
+  // min을 먼저 계산하면 [정상 now, 미래 static]에서 정상 now가 선택돼 오염이 숨는다.
+  // 구성요소 **전부**를 먼저 검증한 뒤 가장 오래된 시각을 고른다(5분 clock skew만 허용).
+  if (
+    parsed.length === 0 ||
+    parsed.some((item) => typeof item.value !== "string" || !Number.isFinite(item.ms) || item.ms > nowMs + 5 * 60_000)
+  ) return null;
+  return parsed.reduce((oldest, item) => item.ms < oldest.ms ? item : oldest).value as string;
+}
+
+export function requireOldestFullEntryTimestamp(
+  values: readonly (string | null | undefined)[],
+  now = new Date(),
+): string {
+  const value = oldestFullEntryTimestamp(values, now);
+  if (!value) throw new StatsFreshnessContractError();
+  return value;
+}
+
+/**
  * 전체 엔트리(full=1): 라이브 리더보드(규정타석/이닝 위주)에 없는 선수를
  * 매일 CI 크롤한 전체 JSON에서 채워 넣는다. 라이브 선수는 실시간 값을 유지하고
  * 비규정(백업) 선수만 추가 → 기록실 전용. 다른 화면은 full 없이 규정 리더보드 그대로.

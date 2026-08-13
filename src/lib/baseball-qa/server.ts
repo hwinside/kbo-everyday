@@ -59,6 +59,10 @@ import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
 import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
+import { createCareerLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-leaderboard";
+import { createCareerMetricLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-metric-leaderboard";
+import careerMetricBaseline from "@/../data/baseball-qa/kbo-career-metrics-through-2025.json";
+import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
@@ -752,6 +756,16 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
      * draft `lblDraft` 와 같은 축 — 여기도 seam factory(게이트가 실제 배포 함수 실행).
      */
     fetchCareerRecord: createCareerRecordFetcher(),
+    /** 리그 통산 순위 — 2025년 말 공식 기준선 + 앱의 2026 최종 스냅샷. */
+    fetchCareerLeaderboard: createCareerLeaderboardFetcher(),
+    /**
+     * 리그 통산 **다지표** 순위 — 위와 같은 계약(2025년 말 공식 기준선 + 앱의 당해 시즌 증분)을
+     * 타자 15지표·투수 12지표로 넓힌 것. 지표가 늘어도 판정 분기는 늘지 않는다(카탈로그 SSOT).
+     */
+    fetchCareerMetricLeaderboard: createCareerMetricLeaderboardFetcher(
+      () => careerMetricBaseline,
+      fetchServedCareerSnapshot,
+    ),
     /**
      * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
      *

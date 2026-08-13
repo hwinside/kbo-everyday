@@ -25,8 +25,16 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const TARGET = "src/lib/baseball-qa/rag/corpus-identity.ts";
+/** 신원 지문 모듈 — F 축 변이의 대상(#1162 재발 방지). */
+const FINGERPRINT_TARGET = "scripts/qa/roster-identity-fingerprint.ts";
+/** 영향 판정 모듈 — G 축 변이의 대상(완전 무인화 계약). */
+const IMPACT_TARGET = "scripts/qa/roster-identity-impact.ts";
+/** census 생성기 — H 축 변이의 대상(재생성 경로 결속). */
+const CENSUS_GENERATOR_TARGET = "scripts/qa/corpus-identity-census.ts";
+/** smoke 자신 — I-1(영향판정 universe 를 rows 로 회귀)의 대상. */
+const SMOKE_TARGET = "scripts/qa/baseball-qa-corpus-identity-smoke.ts";
 
-/** @type {{id: string, name: string, expect: string, apply: (source: string) => string}[]} */
+/** @type {{id: string, name: string, expect: string, target?: string, apply: (source: string) => string}[]} */
 const MUTATIONS = [
   // ── A. 레이아웃 축 ───────────────────────────────────────────────────────
   {
@@ -190,6 +198,218 @@ const MUTATIONS = [
       "  if (!hasBaseballPlayerCategory(input.text)) {",
     ),
   },
+
+  // ── F. 신원 지문 축 (2026-08-12, #1162 재발 방지 — 삼순 수용조건) ──────────────
+  //   과소(신원 필드 누락·dedupe·상수화)는 신원 변경을 놓치고,
+  //   과대(신원 무관 필드 포함)는 매일 갱신을 다시 전건 FAIL 로 되돌린다.
+  //   양쪽 모두 smoke 의 지문 계약 섹션이 잡아야 한다.
+  {
+    id: "F-1",
+    name: "지문에서 kboId 제외(과소 — kboId 교체를 놓침)",
+    expect: "kboId 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.birthDate)]);",
+    ),
+  },
+  {
+    id: "F-2",
+    name: "지문에서 birthDate 제외(과소 — 생년 정정을 놓침)",
+    expect: "birthDate 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId)]);",
+    ),
+  },
+  {
+    id: "F-3",
+    name: "지문에서 name 제외(과소 — 개명·오타 교정을 놓침)",
+    expect: "name 변경이 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.kboId), field(player.birthDate)]);",
+    ),
+  },
+  {
+    id: "F-4",
+    name: "중복 튜플 dedupe(multiset 계약 파괴)",
+    expect: "중복이 dedupe 됐다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "const tuples = roster.map(canonicalIdentityTuple);\n  tuples.sort();",
+      "const tuples = [...new Set(roster.map(canonicalIdentityTuple))];\n  tuples.sort();",
+    ),
+  },
+  {
+    id: "F-5",
+    name: "지문에 신원 무관 필드 포함(과대 — 매일 갱신 전건 FAIL 회귀)",
+    expect: "지문이 과대해서 매일 갱신이 다시 전건 FAIL 로 돌아간다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate)]);",
+      "return JSON.stringify([field(player.name), field(player.kboId), field(player.birthDate), field(/** @type {any} */ (player).team)]);",
+    ),
+  },
+  {
+    id: "F-6",
+    name: "지문 상수화(모든 변경을 놓침)",
+    expect: "선수 추가가 지문에 반영되지 않았다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "const tuples = roster.map(canonicalIdentityTuple);",
+      "const tuples = [];",
+    ),
+  },
+  {
+    id: "F-7",
+    name: "정렬 제거(순서 의존 회귀 — reorder 가 전건 FAIL)",
+    expect: "multiset 이 아니라 순서에 묶였다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace("  tuples.sort();\n", ""),
+  },
+  {
+    // 삼순 1차 blocker 그 자체: 지문이 값을 가공(trim)하면 whitespace 변경이
+    // loader 귀속을 바꾸는데도 지문은 그대로라 stale census 가 false-GREEN 된다.
+    id: "F-8",
+    name: "trim 재도입(raw exact 계약 파괴)",
+    expect: "지문이 값을 가공(trim)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      '(value: unknown): unknown => (value === undefined ? null : (typeof value === "string" ? value.trim() : value))',
+    ),
+  },
+  {
+    // 삼순 2차 blocker 그 자체: String() 강제변환이 되살아나면 kboId 의
+    // string↔number 타입 변화(`"53006" → 53006`)를 지문이 못 본다 —
+    // validator 는 둘 다 허용하고 loader 는 원타입을 산출물에 넣기 때문에 실질 변화다.
+    id: "F-9",
+    name: "String() 강제변환 재도입(타입 raw exact 파괴)",
+    expect: "지문이 값을 강제변환(String)하고 있다",
+    target: FINGERPRINT_TARGET,
+    apply: (s) => s.replace(
+      "(value: unknown): unknown => (value === undefined ? null : value)",
+      "(value: unknown): unknown => (value === null || value === undefined ? null : String(value))",
+    ),
+  },
+
+  // ── G. 영향 판정 축 (2026-08-12 완전 무인화 — 하린아빠 지시) ───────────────────
+  //   과소(영향을 비영향으로) = stale census 통과 / 과대(전부 영향) = 무인화 회귀.
+  //   양쪽 모두 smoke 의 영향 판정 계약 섹션이 잡아야 한다.
+  {
+    id: "G-1",
+    name: "census entity 교집합 무시(영향을 전부 비영향으로 — 과소)",
+    expect: "census entity 동명이인 생성이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "const affectedNames = [...changedNames].filter((name) => censusEntities.has(name));",
+      "const affectedNames = [];",
+    ),
+  },
+  {
+    id: "G-2",
+    name: "multiset 대칭차 무력화(변경 감지 0 — 모든 drift 통과)",
+    expect: "multiset 대칭차가 변경을 놓쳤다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const diff: string[] = [];",
+      "  return [];\n  const diff: string[] = [];",
+    ),
+  },
+  {
+    id: "G-3",
+    name: "판정불가 튜플 fail-open(이름 못 읽으면 비영향 처리)",
+    expect: "판정 불가 튜플이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      'if (name === null) return { affected: true, reason: "unparseable", affectedNames: [] };',
+      "if (name === null) continue;",
+    ),
+  },
+  {
+    // ⚠️ 기대 assertion 은 "빈 entity 집합" 쪽이다. 빈 기준 multiset 쪽은 가드가 없어도
+    //   "전원 추가 = census entity 포함" 이라 우연히 affected 가 돼 변별력이 없다(실측).
+    id: "G-4",
+    name: "빈 입력 fail-close 제거",
+    expect: "빈 entity 집합이 fail-close 되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "if (baseTuples.length === 0 || currentTuples.length === 0 || censusEntities.size === 0) {",
+      "if (false) {",
+    ),
+  },
+  {
+    id: "G-5",
+    name: "전부 영향 판정(과대 — 무인화 회귀)",
+    expect: "비영향 변경(신규 이름이 census entity 밖)이 영향으로 과판정됐다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "return { affected: false, changedNames: [...changedNames] };",
+      'return { affected: true, reason: "affected_census_entities", affectedNames: [...changedNames] };',
+    ),
+  },
+
+  // ── H. 재생성 경로 결속 (삼순 NO-GO 2026-08-12 — exact 38abaf09c 가 실제로 이 결함이었다) ─
+  //   census.json 에 필드가 있어도 생성기가 emission 을 안 하면 다음 T7 재생성에서
+  //   필드가 사라져 게이트가 깨진다. 런타임 변이(G 축)는 이걸 못 잡는다 — 생성기는
+  //   게이트 실행 경로에서 안 도며, smoke 의 소스 결속 assert 가 잡는다.
+  {
+    id: "H-1",
+    name: "생성기 emission 제거(재생성 시 기준 튜플 원문 소실)",
+    expect: "census 생성기가 기준 튜플 원문(rosterIdentityTuples)을 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace("      rosterIdentityTuples: rosterIdentityTuples(roster),\n", ""),
+  },
+
+  // ── I. 영속 universe 축 (삼순 시간축 NO-GO 2026-08-12) ──────────────────────
+  {
+    // rows 기반 universe 로 되돌리는 회귀: 이탈→재생성→동일 이름 재등록이 false-GREEN.
+    // ⚠️ 대상은 smoke 가 아니라 **실제 게이트 경로인 judge 함수**다 — smoke 인라인을
+    //   변이하는 첫 판은 GREEN 이었다(지문 일치 상태엔 drift 경로가 안 돌아서). judge 를
+    //   변이하면 합성 시간축 census 를 태우는 smoke 의 judged.status 계약이 잡는다.
+    id: "I-1",
+    name: "judge 의 universe 를 rows 로 회귀(시간축 false-GREEN)",
+    expect: "시간축 결함: corpus 이름 선수 이탈→재생성→동일 이름 재등록이 영향으로 판정되지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, impactUniverseFromCensus(census));",
+      "  const verdict = classifyIdentityDrift(stored as string[], currentTuples, new Set(((census as { rows?: { entity: string }[] }).rows ?? []).map((row) => String(row.entity))));",
+    ),
+  },
+  {
+    // 생성기가 universe 를 roster 필터 **후**(latest = ∩ roster)에서 만드는 회귀:
+    // universe ⊇ rows 는 유지되지만 로스터 밖 corpus 이름이 빠져 시간축이 뚫린다.
+    // 이번 T7 재생성에서는 root 631 = rows 631 이라 결과가 같으므로, 검출은
+    // 생성기 소스 결속(assert)이 담당한다 — 산출물로는 구분되지 않는다(아래 expect).
+    id: "I-2",
+    name: "생성기 universe 를 roster 필터 후 생성(영속성 파괴)",
+    expect: "census 생성기가 영속 universe 를 roster 필터 전 전체 root 에서 만들지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(
+      "    corpusRootEntitySet.add(String(record.entity));\n    if (!byName.has(record.entity)) continue;",
+      "    if (!byName.has(record.entity)) continue;\n    corpusRootEntitySet.add(String(record.entity));",
+    ),
+  },
+  {
+    id: "I-3",
+    name: "universe emission 제거(재생성 시 universe 소실)",
+    expect: "census 생성기가 영속 universe(corpusRootEntities)를 산출물에 기록하지 않는다",
+    target: CENSUS_GENERATOR_TARGET,
+    apply: (s) => s.replace(/^.*corpusRootEntities: \[\.\.\.corpusRootEntitySet\].*\n/m, ""),
+  },
+  {
+    id: "I-4",
+    name: "universe 해시 결속 제거(원문 변조 fail-open)",
+    expect: "universe 원문 변조가 해시 결속에 걸리지 않았다",
+    target: IMPACT_TARGET,
+    apply: (s) => s.replace(
+      "  if (computed !== census.corpusRootEntitiesSha256) {",
+      "  if (false) {",
+    ),
+  },
 ];
 
 function runGate() {
@@ -204,11 +424,20 @@ function runGate() {
 }
 
 function main() {
-  const original = readFileSync(TARGET, "utf8");
+  /** 변이 대상별 원본 — 복원·종료검증을 대상 파일 단위로 한다. */
+  const originals = new Map([
+    [TARGET, readFileSync(TARGET, "utf8")],
+    [FINGERPRINT_TARGET, readFileSync(FINGERPRINT_TARGET, "utf8")],
+    [IMPACT_TARGET, readFileSync(IMPACT_TARGET, "utf8")],
+    [CENSUS_GENERATOR_TARGET, readFileSync(CENSUS_GENERATOR_TARGET, "utf8")],
+    [SMOKE_TARGET, readFileSync(SMOKE_TARGET, "utf8")],
+  ]);
   let red = 0;
   let failed = 0;
   try {
     for (const mutation of MUTATIONS) {
+      const target = mutation.target ?? TARGET;
+      const original = originals.get(target);
       const mutated = mutation.apply(original);
       const label = `${mutation.id} ${mutation.name}`;
       if (mutated === original) {
@@ -216,12 +445,12 @@ function main() {
         failed += 1;
         continue;
       }
-      writeFileSync(TARGET, mutated);
+      writeFileSync(target, mutated);
       let verdict;
       try {
         verdict = runGate();
       } finally {
-        writeFileSync(TARGET, original);
+        writeFileSync(target, original);
       }
       if (verdict.ok) {
         console.log(`❌ ${label} → GREEN (게이트가 못 잡는다)`);
@@ -242,14 +471,16 @@ function main() {
       red += 1;
     }
   } finally {
-    writeFileSync(TARGET, original);
+    for (const [file, source] of originals) writeFileSync(file, source);
   }
 
   console.log("----------------------------------------");
   console.log(`RED ${red} · 검출실패 ${failed}`);
-  if (readFileSync(TARGET, "utf8") !== original) {
-    console.log("❌ 원본 복원 실패");
-    process.exit(1);
+  for (const [file, source] of originals) {
+    if (readFileSync(file, "utf8") !== source) {
+      console.log(`❌ 원본 복원 실패: ${file}`);
+      process.exit(1);
+    }
   }
   if (failed !== 0) {
     console.log(`❌ mutation: 검출 실패 ${failed}건`);

@@ -18,6 +18,51 @@ import {
 
 // delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
 const FULL_REFRESH_EVERY = 10;
+// 경기 시작(scheduled→live) 순간 모든 시청자의 폴링이 같은 tick으로 정렬돼
+// cold 인스턴스 burst가 업스트림으로 증폭된다(2026-08-11 19:00 timeout 266건 실측).
+// 서버 single-flight는 인스턴스 내 증폭만 막으므로, 시작점 bounded jitter로
+// 인스턴스 간(cross-instance) 동시성까지 흩뿌린다(삼순 2차 리뷰 ①).
+export const RELAY_POLL_MAX_JITTER_MS = 2000;
+
+/**
+ * live 폴링 시작점 bounded jitter 스케줄러 (훅 effect에서 분리한 순수 로직).
+ *
+ * 왜 분리했나(삼순 3차 ③): jitter 계약(0~min(interval, 2s)·초기 timer cleanup·
+ * interval 1회 시작)을 React 렌더러 없이 fake timer/고정 random으로 prebuild
+ * 게이트에 고정하기 위해. 훅은 이 함수를 그대로 사용한다(재구현 금지).
+ */
+export function scheduleJitteredRelayPolling(opts: {
+  fetchRelay: () => unknown;
+  interval: number;
+  random?: () => number;
+  setTimeoutFn?: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeoutFn?: (t: ReturnType<typeof setTimeout>) => void;
+  setIntervalFn?: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
+  clearIntervalFn?: (t: ReturnType<typeof setInterval>) => void;
+}): { jitterMs: number; cleanup: () => void } {
+  const {
+    fetchRelay,
+    interval,
+    random = Math.random,
+    setTimeoutFn = setTimeout,
+    clearTimeoutFn = clearTimeout,
+    setIntervalFn = setInterval,
+    clearIntervalFn = clearInterval,
+  } = opts;
+  const jitterMs = random() * Math.min(interval, RELAY_POLL_MAX_JITTER_MS);
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const jitterTimer = setTimeoutFn(() => {
+    fetchRelay();
+    timer = setIntervalFn(fetchRelay, interval);
+  }, jitterMs);
+  return {
+    jitterMs,
+    cleanup: () => {
+      clearTimeoutFn(jitterTimer);
+      if (timer) clearIntervalFn(timer);
+    },
+  };
+}
 const FINAL_EVENTS_TAIL_TIMEOUT_MS = 12_000;
 interface GameEventsPayload {
   events?: GameEvent[];
@@ -247,15 +292,18 @@ export function useGameRelay(
 
     if (isLive) {
       finalFetchedRef.current = false;
-      fetchRelay();
-      const timer = setInterval(fetchRelay, interval);
+      // bounded jitter: 첫 fetch와 interval 시작점을 0~min(interval, 2s) 랜덤 지연.
+      // live 전환 직후 최대 2초 지연은 UX 영향이 미미하고, 이후 주기는 시작점
+      // 오프셋을 유지해 클라이언트 간 그리드 정렬이 해소된다. 계약은
+      // scheduleJitteredRelayPolling(prebuild 게이트 고정)에 있다.
+      const { cleanup } = scheduleJitteredRelayPolling({ fetchRelay, interval });
       const onVisibilityChange = () => {
         if (document.visibilityState === "visible") fetchRelay();
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
         mountedRef.current = false;
-        clearInterval(timer);
+        cleanup();
         document.removeEventListener("visibilitychange", onVisibilityChange);
         for (const controller of controllers) controller.abort();
       };

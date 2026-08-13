@@ -5,9 +5,11 @@ import {
   type KboGame,
 } from "@/lib/crawler/kbo-api";
 import { jsonWithETag } from "@/lib/http/conditional";
+import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { fetchNaverRelayBatterCounts } from "@/lib/naver-relay-counts";
+import { hasPureSubPositions, mergeNaverSubPositions } from "@/lib/utils/sub-position-merge";
 import {
   naverGameId,
   parseNaverBoxScore,
@@ -611,6 +613,14 @@ export async function GET(req: NextRequest) {
   if (!gameId) {
     return NextResponse.json({ error: "gameId is required" }, { status: 400 });
   }
+  // canonical 형식이 아니면 업스트림 도달 전 400 fail-close(2026-08-11 오판 사고
+  // 재발 방지 — src/lib/game/game-id.ts 주석 참조).
+  if (!isCanonicalKboGameId(gameId)) {
+    return NextResponse.json(
+      { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
+      { status: 400 },
+    );
+  }
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
@@ -790,6 +800,16 @@ export async function GET(req: NextRequest) {
       if (!hasInningBreakdown(linescore) && hasInningBreakdown(naverLs)) {
         linescore = naverLs;
       }
+    }
+
+    // KBO BoxScore가 대타/대주 교체 선수의 수비 위치를 '대/주'로 방치하는 경우
+    // (실측: 20260812LGWO0 김웅빈 '대'·박채울 '주' → 필드뷰 1B/CF 빈 자리),
+    // Naver record의 선수별 복합 위치(타一/주중)로 병합한다 — 소스 진실 우선.
+    // naverRecordPromise는 이미 시작된 프로미스라 추가 요청 없이 같은 deadline
+    // 안에서만 기다린다. Naver가 없거나 partial이면 그대로 둔다(fail-safe).
+    if (boxScore && boxScoreSource === "kbo" && hasPureSubPositions(boxScore)) {
+      naver = naver ?? await untilDeadline(naverRecordPromise, deadlineSignal, null);
+      if (naver?.boxScore) mergeNaverSubPositions(boxScore, naver.boxScore);
     }
 
     const hasRealBoxScoreFinal = boxScore &&

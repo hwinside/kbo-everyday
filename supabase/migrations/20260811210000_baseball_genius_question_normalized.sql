@@ -22,8 +22,8 @@ alter table genius_question_logs
   add constraint genius_question_logs_normalize_status_check
   check (
     question_normalize_status is null
-    or question_normalize_status in ('accepted_surface', 'accepted_entity', 'rejected', 'no_change', 'error')
+    or question_normalize_status in ('accepted_surface', 'rejected', 'no_change', 'error')
   );
 
 comment on column genius_question_logs.question_normalize_status is
-  '질문 1차 LLM 정규화 관측 상태. null=미발동, accepted_surface=공백/부호만 교정 수용, accepted_entity=폐쇄집합 오탈자 교정 수용, rejected=가드 탈락(원문 진행), no_change=교정 없음, error=호출 장애(원문 진행).';
+  '질문 1차 LLM 정규화 관측 상태. null=미발동, accepted_surface=공백/부호만 교정 수용, rejected=가드 탈락 또는 Tier B 오탈자 HOLD(원문 진행), no_change=교정 없음, error=호출 장애(원문 진행).';

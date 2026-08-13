@@ -465,7 +465,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
               `/community/players/${p.kboId || p.playerId || p.name}`;
 
             return (
-              <Link key={p.kboId || p.playerId || `${p.name}-${i}`} href={href}>
+              <Link key={p.kboId || p.playerId || `${p.name}-${i}`} href={href} prefetch={false}>
                 <GlassCard pressable className="p-3 flex items-center gap-3" style={cardStyle}>
                   <span
                     className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold flex-shrink-0 ${
@@ -539,7 +539,7 @@ export default function RecordRoom({ scopeTeamId }: { scopeTeamId?: number }) {
                         getCanonicalPlayerHref({ name: p.name, kboId: p.kboId, playerId: p.playerId, teamId }) ??
                         `/community/players/${p.kboId || p.playerId || p.name}`;
                       return (
-                        <Link key={p.kboId || p.playerId || `unq-${p.name}-${i}`} href={href}>
+                        <Link key={p.kboId || p.playerId || `unq-${p.name}-${i}`} href={href} prefetch={false}>
                           <GlassCard pressable className="p-3 flex items-center gap-3 opacity-70">
                             <span className="flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold flex-shrink-0 bg-bg-tertiary text-text-tertiary">
                               미달

@@ -515,11 +515,15 @@ async function main() {
     const pollModule = (await import("../../src/app/api/polls/route")) as {
       POST: (req: Request) => Promise<Response>;
     };
+    // dead-token guard의 exp 프리체크가 비JWT 토큰을 로컬 거절하므로
+    // 테스트 토큰도 exp가 유효한 JWT 형태여야 한다 (서명 검증은 stub이 대신).
+    const qaB64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const qaJwt = `${qaB64({ alg: "HS256", typ: "JWT" })}.${qaB64({ sub: "qa", exp: Math.floor(Date.now() / 1000) + 3600 })}.qa-sig`;
     const postPoll = async (body: unknown) => {
       const res = await pollModule.POST(
         new Request("http://localhost/api/polls", {
           method: "POST",
-          headers: { "content-type": "application/json", authorization: "Bearer qa-token" },
+          headers: { "content-type": "application/json", authorization: `Bearer ${qaJwt}` },
           body: JSON.stringify(body),
         }) as never,
       );

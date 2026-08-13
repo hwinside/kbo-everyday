@@ -36,6 +36,10 @@ on:
       - "scripts/qa/venue-workflow-trigger-guard.mjs"
       - "scripts/qa/venue-validate-smoke.ts"
       - "scripts/qa/venue-media-smoke.ts"
+      - "scripts/qa/venue-story-views.sh"
+      - "scripts/qa/venue-story-view-client-smoke.ts"
+      - "scripts/qa/venue-story-view-route-smoke.ts"
+      - "src/app/api/venue-stories/[id]/view/route.ts"
       - "scripts/venue-transcode-job.mjs"
       - "scripts/transcode-videos.mjs"
       - "eslint.config.mjs"
@@ -65,6 +69,10 @@ on:
       - "scripts/qa/venue-workflow-trigger-guard.mjs"
       - "scripts/qa/venue-validate-smoke.ts"
       - "scripts/qa/venue-media-smoke.ts"
+      - "scripts/qa/venue-story-views.sh"
+      - "scripts/qa/venue-story-view-client-smoke.ts"
+      - "scripts/qa/venue-story-view-route-smoke.ts"
+      - "src/app/api/venue-stories/[id]/view/route.ts"
       - "scripts/venue-transcode-job.mjs"
       - "scripts/transcode-videos.mjs"
       - "eslint.config.mjs"
@@ -102,6 +110,8 @@ jobs:
           scripts/qa/venue-workflow-trigger-guard.mjs
           scripts/qa/venue-validate-smoke.ts
           scripts/qa/venue-media-smoke.ts
+          scripts/qa/venue-story-view-client-smoke.ts
+          scripts/qa/venue-story-view-route-smoke.ts
           scripts/transcode-videos.mjs
           scripts/venue-transcode-job.mjs
 
@@ -127,6 +137,31 @@ jobs:
 
       - name: Run venue media limit + mp4 box smoke (fail-closed)
         run: npm run qa:venue-media
+
+      - name: Ensure local PostgreSQL for view RPC regression (fail-closed)
+        # venue-story-views.sh 는 initdb/psql 부재 시 exit 2(SKIP)로 떨어진다 —
+        # 러너에 pg 바이너리를 PATH 에 올려 SKIP 자체를 불가능하게 만든다.
+        # ubuntu-latest 는 postgresql 이 설치돼 있어도 /usr/lib/postgresql/*/bin 이
+        # PATH 밖이다. 없으면 설치하고, 그래도 없으면 job 을 떨어뜨린다(fail-closed).
+        run: |
+          if ! command -v initdb >/dev/null; then
+            PGBIN=$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -1 || true)
+            if [ -z "$PGBIN" ]; then
+              sudo apt-get update
+              sudo apt-get install -y postgresql
+              PGBIN=$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)
+            fi
+            [ -x "$PGBIN/initdb" ] || { echo "initdb not found"; exit 1; }
+            echo "$PGBIN" >> "$GITHUB_PATH"
+            "$PGBIN/initdb" --version
+          else
+            initdb --version
+          fi
+
+      - name: Run venue story view tracking regression (fail-closed)
+        # 2026-08-12 조회수 전량 유실 회귀(#1161 — unbound fetch Illegal invocation) 결속.
+        # pg RPC dedupe 회귀 + 클라 this-sensitive 전송 계약 + route 실호출 재시도 경로.
+        run: npm run qa:venue-story-views
 
       - name: Run venue video validate + serve-readiness smoke (fail-closed)
         # needs_transcode 후속 큐 판정 + video-validate-server 실배선(realDeps) 검증.
