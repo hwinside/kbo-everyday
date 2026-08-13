@@ -19,6 +19,16 @@
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
 
+// ⚠️ React 의 `act` 는 **development 번들에만** 있다(react package.json 조건부 exports).
+// Vercel prebuild 는 NODE_ENV=production 이라 production 번들이 로드돼
+// `TypeError: act is not a function` 으로 죽는다.
+// 이 함정은 2026-08-03 `next-game-date-badge-render`, 그 다음 `genius-picker-disabled-render`
+// 가 이미 당했고, 이 파일이 세 번째다 — 로컬에서만 통과하는 게이트는 게이트가 아니다.
+//
+// react/react-dom 은 아래에서 **dynamic import** 하므로(정적 import 는 hoisting 돼 이 줄보다
+// 먼저 평가된다) 이 시점 세팅이 조건부 export 해석에 반영된다.
+process.env.NODE_ENV = "development";
+
 const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "http://localhost/" });
 const globals = globalThis as Record<string, unknown>;
 globals.window = dom.window;
@@ -64,6 +74,11 @@ type MessageRow = {
 async function main() {
   const React = (await import("react")) as typeof ReactNamespace;
   const { act } = await import("react");
+  // 위 NODE_ENV 고정이 깨지면 여기서 **명시적으로** 죽는다 — 원인 불명 TypeError 대신
+  // 무엇이 잘못됐는지 말해주는 실패로 만든다.
+  if (typeof act !== "function") {
+    throw new Error("React.act 가 없다 — development 번들이 로드되지 않았다(NODE_ENV 고정이 import 보다 늦은지 확인)");
+  }
   const { createRoot } = await import("react-dom/client");
   const { supabase } = await import("../../src/lib/supabase/client");
   const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
