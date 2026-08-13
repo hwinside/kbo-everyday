@@ -7,27 +7,6 @@
       "missStreak": 0
     },
     "68743|3루수": {
-      "observed": 2,
-      "missStreak": 0
-    },
-    "54214|중견수": {
-      "observed": 2,
-      "missStreak": 0
-    },
-    "64101|좌익수": {
-      "observed": 2,
-      "missStreak": 0
-    },
-    "54214|좌익수": {
-      "observed": 2,
-      "missStreak": 0
-    },
-    "64101|우익수": {
-      "observed": 3,
-      "missStreak": 0,
-      "viaGroup": true
-    },
-    "64101|중견수": {
       "observed": 3,
       "missStreak": 0,
       "viaGroup": true
