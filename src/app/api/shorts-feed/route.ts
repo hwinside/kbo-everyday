@@ -71,6 +71,21 @@ export async function handleShortsFeedGET(
 
   const plan = resolveShortsQueryPlan(scope, team, playerIds.length);
 
+  // 최애선수 매칭은 scalar `player_id`(source_type=player 단일 태깅)와 배열
+  // `player_ids`(다중 태깅) 둘 다 union으로 본다. overlaps(player_ids)만 쓰면
+  // scalar만 채워진 영상(예: 타팀 최애 김도영 playerId=52605, playerIds=[])이
+  // 전부 누락된다 (2026-08-13 삼순 NO-GO).
+  const favUnionOrFilter =
+    playerIds.length > 0
+      ? `player_id.in.(${playerIds.join(",")}),player_ids.ov.{${playerIds.join(",")}}`
+      : null;
+  const matchesFavorite = (v: {
+    player_id?: string | null;
+    player_ids?: string[] | null;
+  }): boolean =>
+    (Boolean(v.player_id) && playerIds.includes(v.player_id as string)) ||
+    (v.player_ids ?? []).some((id: string) => playerIds.includes(id));
+
   // 다중 팀 노출 (2026-07-24 삼순 라운드4 — 운영 케이스 79W-OwErIEA):
   // 비-LG affinity 채널(예: 히어로북, 키움)이 올린 명시적 LG 야구 제목은
   // 수집 계약(channelTeam 선확정)을 유지한 채 team_id가 LG가 아니므로,
@@ -119,7 +134,7 @@ export async function handleShortsFeedGET(
         .from("videos")
         .select(selectCols)
         .eq("is_short_candidate", true)
-        .overlaps("player_ids", playerIds)
+        .or(favUnionOrFilter as string)
         .gte("published_at", sinceDate)
         .order("published_at", { ascending: false })
         .limit(fetchLimit),
@@ -148,7 +163,7 @@ export async function handleShortsFeedGET(
       .from("videos")
       .select(selectCols)
       .eq("is_short_candidate", true)
-      .overlaps("player_ids", playerIds)
+      .or(favUnionOrFilter as string)
       .gte("published_at", sinceDate)
       .order("published_at", { ascending: false })
       .limit(fetchLimit);
@@ -285,11 +300,7 @@ export async function handleShortsFeedGET(
   const filtered = (data ?? []).filter((v) => {
     if (v._playerTagAllowed === false) return false;
     if (plan.kind === "team_only" && v.team_id !== team) return false;
-    if (
-      plan.kind === "mixed" &&
-      v.team_id !== team &&
-      !(v.player_ids ?? []).some((id: string) => playerIds.includes(id))
-    )
+    if (plan.kind === "mixed" && v.team_id !== team && !matchesFavorite(v))
       return false;
     const flags: string[] = Array.isArray(v.noise_flags) ? v.noise_flags : [];
     if (flags.some((f) => excludeSet.has(f))) return false;
@@ -327,9 +338,11 @@ export async function handleShortsFeedGET(
     const byPlayer = new Map<string, typeof items>();
     const rest: typeof items = [];
     for (const item of items) {
-      const matchedId = item.playerIds.find((id: string) =>
-        playerIdSet.has(id),
-      );
+      // scalar playerId(단일 태깅)도 union 매칭 — 쿼리/필터와 동일 계약
+      const matchedId =
+        item.playerId && playerIdSet.has(item.playerId)
+          ? item.playerId
+          : item.playerIds.find((id: string) => playerIdSet.has(id));
       if (matchedId) {
         const bucket = byPlayer.get(matchedId);
         if (bucket) bucket.push(item);
