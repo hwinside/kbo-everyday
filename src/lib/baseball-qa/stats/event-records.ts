@@ -92,7 +92,7 @@ export function resolveEventRecordQuery(
   if (named.length === 1) residue = residue.replace(compact(named[0]), "");
   residue = residue
     .replace(/(?:역대)?\d{1,2}(?:번째|호)/g, "")
-    .replace(/(?:kbo|역대|정규시즌|공식|기록|목록|전부|모두|최초|처음|첫번째|가장|최근|마지막|최신|몇번|몇차례|몇명|총몇|개수|횟수|나왔어|나왔나요|알려줘|알려주세요|누구야|누가|있어|있나요|해줘)/g, "")
+    .replace(/(?:kbo|역대|정규시즌|공식|기록|목록|전부|모두|최초|처음|첫번째|가장|최근|마지막|최신|총몇번|총몇차례|총몇명|몇번|몇차례|몇명|총몇|개수|횟수|나왔어|나왔나요|알려줘|알려주세요|누구야|누가|있어|있나요|해줘)/g, "")
     .replace(/[?!？！.,。]/g, "");
   return residue.length === 0 ? query : null;
 }

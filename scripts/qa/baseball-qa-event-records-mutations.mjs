@@ -52,6 +52,12 @@ const MUTATIONS = [
     to: '    Number(hasFirst) + Number(hasLatest) + 0;',
   },
   {
+    name: "m2f count 긴 토큰 소비 순서 회귀 — 총몇번에서 번 잔여",
+    file: EVENT,
+    from: '|총몇번|총몇차례|총몇명|몇번|몇차례|몇명|총몇|개수|횟수|',
+    to: '|몇번|몇차례|몇명|총몇|총몇번|총몇차례|총몇명|개수|횟수|',
+  },
+  {
     name: "m3 알 수 없는 선수명 잔여를 전체 목록으로 오결속",
     file: EVENT,
     from: '  return residue.length === 0 ? query : null;',
