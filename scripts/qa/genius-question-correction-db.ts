@@ -35,8 +35,20 @@ async function loadSchema(): Promise<Db> {
       updated_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (user_id, kst_day)
     );
+    -- 서버가 실제로 쓰는 컬럼을 그대로 세운다. 일부만 세우면 buildQuestionLogRow 가
+    -- 새 컬럼을 보내도 이 게이트가 그걸 못 잡는다(= 직전 회차의 단절 그대로).
     CREATE TABLE genius_question_logs (
-      match_path text, question_normalize_status text, question_normalized text
+      user_id uuid,
+      question text,
+      question_norm text,
+      question_normalized text,
+      question_normalize_status text,
+      question_correction_candidate text,
+      match_path text,
+      answer text,
+      input_tokens integer,
+      output_tokens integer,
+      question_message_id bigint
     );
     ALTER TABLE genius_question_logs ADD CONSTRAINT genius_question_logs_match_path_check CHECK (true);
     ALTER TABLE genius_question_logs ADD CONSTRAINT genius_question_logs_normalize_status_check CHECK (true);
@@ -285,6 +297,80 @@ async function main() {
       `SELECT question_normalized, question_correction_candidate FROM genius_question_logs
        WHERE question_correction_candidate IS NOT NULL`)).rows[0];
     assert.equal(row.question_normalized, null, "제안만 한 후보는 수용문 칸을 비워둔다");
+    assert.equal(row.question_correction_candidate, "보크가 뭐야?");
+  });
+
+  // ── Production INSERT 종단 (삼순 2026-08-13 ① 재지적) ────────────────────
+  //
+  // 🔴 직전 회차까지 이 게이트는 DB 에 **직접** INSERT 해서 "칸과 CHECK 가 있다"만 보았고,
+  //    서버가 그 칸을 실제로 채우는지는 보지 않았다. 그래서 pipeline 이 후보를 만들어도
+  //    Production INSERT 에 칸이 없어 DB 는 계속 null 인 단절을 몸랏다.
+  //    이제 **서버가 쓰는 바로 그 행 조립 함수**를 태우고 그 결과를 실 테이블에 넣어 대조한다.
+  const { buildQuestionLogRow } = await import("../../src/lib/baseball-qa/log-row");
+
+  /** 서버 행 조립 결과를 그대로 실 테이블에 넣고 저장된 행을 돌려준다. */
+  async function insertViaServer(entry: Record<string, unknown>) {
+    const row = buildQuestionLogRow(
+      entry as Parameters<typeof buildQuestionLogRow>[0], 4242,
+    ) as Record<string, unknown>;
+    // 게이트 스키마에 없는 컬럼은 무시하지 않고 **실패하게** 둔다 — 서버가 쓰려는
+    // 컬럼이 실제로 없으면 Production 에서도 INSERT 가 터진다.
+    const cols = Object.keys(row);
+    const vals = cols.map((_, i) => `$${i + 1}`).join(",");
+    await db.query(
+      `INSERT INTO genius_question_logs (${cols.join(",")}) VALUES (${vals})`,
+      cols.map((c) => row[c] ?? null),
+    );
+    return (await db.query<Record<string, unknown>>(
+      `SELECT * FROM genius_question_logs WHERE question_message_id = 4242`)).rows;
+  }
+
+  const base = {
+    userId: UID, questionNorm: "보끄가모야", answer: null, inputTokens: null, outputTokens: null,
+  };
+
+  await check("PROD INSERT: 제안 턴은 서버가 후보를 전용 칸에 실제로 쓴다", async () => {
+    const rows = await insertViaServer({
+      ...base, question: "보끄가모야", matchPath: "question_correction",
+      correctionCandidate: "보크가 뭐야?", normalizeStatus: "suggested",
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].question, "보끄가모야", "원문은 항상 보존된다");
+    assert.equal(rows[0].question_correction_candidate, "보크가 뭐야?",
+      "pipeline 이 만든 correctionCandidate 가 DB 까지 도착해야 한다");
+    assert.equal(rows[0].question_normalized, null, "제안문은 수용문 칸을 오염하지 않는다");
+    assert.equal(rows[0].question_normalize_status, "suggested");
+  });
+
+  await db.query(`DELETE FROM genius_question_logs WHERE question_message_id = 4242`);
+  await check("PROD INSERT: 수용 턴은 수용문 칸만 채우고 제안 칸은 비운다", async () => {
+    const rows = await insertViaServer({
+      ...base, question: "보끄가모야", matchPath: "dictionary",
+      questionNormalized: "보크가 뭐야?", normalizeStatus: "accepted_user",
+    });
+    assert.equal(rows[0].question_normalized, "보크가 뭐야?");
+    assert.equal(rows[0].question_correction_candidate, null);
+  });
+
+  await db.query(`DELETE FROM genius_question_logs WHERE question_message_id = 4242`);
+  await check("PROD INSERT: 거절 턴은 두 칸 모두 비고 status 만 남긴다", async () => {
+    const rows = await insertViaServer({
+      ...base, question: "보끄가모야", matchPath: "llm", normalizeStatus: "declined",
+    });
+    assert.equal(rows[0].question_normalize_status, "declined");
+    assert.equal(rows[0].question_normalized, null);
+    assert.equal(rows[0].question_correction_candidate, null);
+  });
+
+  await db.query(`DELETE FROM genius_question_logs WHERE question_message_id = 4242`);
+  await check("PROD INSERT: 서버 행에 제안 칸이 아예 없으면 즉시 RED", () => {
+    // 이것이 직전 회차의 결손을 직접 잡는 앞커다 — 서버가 칸을 안 쓰면 여기서 죽는다.
+    const row = buildQuestionLogRow({
+      ...base, question: "보끄가모야", matchPath: "question_correction",
+      correctionCandidate: "보크가 뭐야?", normalizeStatus: "suggested",
+    } as Parameters<typeof buildQuestionLogRow>[0], 1) as Record<string, unknown>;
+    assert.ok("question_correction_candidate" in row,
+      "Production INSERT 행에 question_correction_candidate 칸이 없다");
     assert.equal(row.question_correction_candidate, "보크가 뭐야?");
   });
 

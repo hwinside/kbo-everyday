@@ -211,23 +211,202 @@ async function main() {
     );
   });
 
-  // 교정 카드도 같은 비활성 판정을 실제 렌더 결과로 쓴다.
-  {
+  // ── 교정 카드: 실제 prop(`onRespond`)로 선택·거절 종단 흐름을 검증한다 ────────
+  //
+  // 🔴 직전 회차 결손(삼순 2026-08-13): 이 게이트가 죽은 `onPick` 을 넘겨서, 핸들러가
+  //    아예 결속되지 않은 상태로도 disabled 2건만 PASS 하는 false-green 이었다.
+  //    그래서 여기서는 **컴포넌트가 실제로 요구하는 prop 이름**을 타입으로 강제하고
+  //    (`ComponentProps` 추출), 클릭 → outbox → API body 까지 종단으로 태운다.
+  type CorrectionProps = React.ComponentProps<typeof GeniusQuestionCorrectionPicker>;
+
+  /** 카드를 렌더하고 두 버튼과 수집된 응답을 돌려준다. */
+  function renderCorrectionCard(disabled: boolean) {
     const host = dom.window.document.createElement("div");
     dom.window.document.body.appendChild(host);
     const root = createRoot(host);
-    let picks = 0;
-    void act(() => {
-      root.render(React.createElement(GeniusQuestionCorrectionPicker, {
-        options: ["보크가 뭐야?"], onPick: () => { picks++; },
-        disabled: isGeniusPickerDisabled(QUESTION_ID, new Set([QUESTION_ID]), new Set()),
-      }));
+    const responses: (string | null)[] = [];
+    const props: CorrectionProps = {
+      options: ["보크가 뭐야?"],
+      onRespond: (q) => { responses.push(q); },
+      disabled,
+    };
+    void act(() => { root.render(React.createElement(GeniusQuestionCorrectionPicker, props)); });
+    const q = (id: string) => {
+      const el = host.querySelector(`[data-testid='${id}']`) as HTMLButtonElement | null;
+      // 버튼이 없으면 이후 단계는 null 에 대고 TypeError 로 죽는다 — 그러면 "게이트 고장"과
+      // "산출물 결함"을 구분할 수 없다. 부재 자체를 **assertion 으로** 즉시 죽인다.
+      assert.ok(el, `교정 카드에 [${id}] 버튼이 없다`);
+      return el;
+    };
+    return {
+      responses,
+      accept: q("genius-question-correction-option"),
+      decline: q("genius-question-correction-decline"),
+      click: (btn: HTMLButtonElement) => {
+        void act(() => { btn.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+      },
+      cleanup: () => { void act(() => root.unmount()); host.remove(); },
+    };
+  }
+
+  // ⑥-a 활성 카드: 두 버튼이 실제로 그려지고 각각 제 값을 올린다.
+  {
+    const card = renderCorrectionCard(false);
+    check("활성 교정 카드는 선택·거절 두 버튼을 모두 그린다", () => {
+      assert.equal(card.accept.disabled, false);
+      assert.equal(card.decline.disabled, false);
     });
-    const button = host.querySelector("[data-testid='genius-question-correction-option']") as HTMLButtonElement;
-    check("완료된 교정 카드는 disabled", () => assert.equal(button.disabled, true));
-    void act(() => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
-    check("disabled 교정 카드는 재요청하지 않는다", () => assert.equal(picks, 0));
+    card.click(card.accept);
+    check("선택 클릭은 서버 발급 exact 후보를 그대로 올린다", () => {
+      assert.deepEqual(card.responses, ["보크가 뭐야?"]);
+    });
+    card.cleanup();
+  }
+  {
+    const card = renderCorrectionCard(false);
+    card.click(card.decline);
+    check("거절 클릭은 null 을 올린다(원문 그대로 진행)", () => {
+      assert.deepEqual(card.responses, [null]);
+    });
+    card.cleanup();
+  }
+
+  // ⑥-b 상호 잠금: 한쪽을 누른 뒤 다른 쪽을 눌러도 두 번째 응답은 나가지 않는다.
+  //     서버는 선택+거절 동시 수신을 400 으로 막지만, 애초에 클라가 두 개를 만들면 안 된다.
+  for (const first of ["accept", "decline"] as const) {
+    const host = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(host);
+    const root = createRoot(host);
+    const responses: (string | null)[] = [];
+    // useDM 의 잠금과 같은 모양: 한 번 응답하면 그 messageId 는 corrected 집합에 들어가
+    // 카드가 곧바로 disabled 로 재렌더된다.
+    const corrected = new Set<number>();
+    const draw = () => {
+      const props: CorrectionProps = {
+        options: ["보크가 뭐야?"],
+        onRespond: (q) => {
+          if (corrected.has(QUESTION_ID)) return;
+          corrected.add(QUESTION_ID); responses.push(q); draw();
+        },
+        disabled: isGeniusPickerDisabled(QUESTION_ID, new Set<number>(), corrected),
+      };
+      void act(() => { root.render(React.createElement(GeniusQuestionCorrectionPicker, props)); });
+    };
+    draw();
+    const btn = (id: string) => host.querySelector(`[data-testid='${id}']`) as HTMLButtonElement;
+    const order = first === "accept"
+      ? ["genius-question-correction-option", "genius-question-correction-decline"]
+      : ["genius-question-correction-decline", "genius-question-correction-option"];
+    void act(() => { btn(order[0]).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+    check(`${first} 먼저 누르면 나머지 버튼이 즉시 비활성`, () => {
+      assert.equal(btn(order[1]).disabled, true);
+      assert.equal(btn(order[0]).disabled, true);
+    });
+    void act(() => { btn(order[1]).dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+    check(`${first} 확정 뒤 반대 버튼 클릭은 두 번째 응답을 만들지 않는다`, () => {
+      assert.equal(responses.length, 1, "선택+거절 두 응답이 동시에 나가면 서버가 400 이다");
+    });
     void act(() => root.unmount()); host.remove();
+  }
+
+  // ⑥-c 완료된 카드는 두 버튼 다 죽어 있고 아무 요청도 만들지 않는다.
+  {
+    const card = renderCorrectionCard(isGeniusPickerDisabled(QUESTION_ID, new Set([QUESTION_ID]), new Set()));
+    check("완료된 교정 카드는 선택·거절 둘 다 disabled", () => {
+      assert.equal(card.accept.disabled, true);
+      assert.equal(card.decline.disabled, true);
+    });
+    card.click(card.accept); card.click(card.decline);
+    check("disabled 교정 카드는 재요청하지 않는다", () => assert.equal(card.responses.length, 0));
+    card.cleanup();
+  }
+
+  // ── ⑦ outbox → API body 종단: 클릭이 만든 응답이 실제 전송 payload 가 되는지 ──
+  //
+  // 컴포넌트가 값을 올려도 outbox 가 그 값을 body 에 안 실으면 서버는 아무것도 못 받는다.
+  // 그 구간이 이 PR 의 핵심 배선이므로 실제 outbox 헬퍼와 fetch 로 태운다.
+  {
+    const {
+      applyBaseballQaQuestionCorrection, declineBaseballQaQuestionCorrection, readBaseballQaOutbox,
+    } = await import("../../src/lib/baseball-qa/client-outbox");
+
+    const makeStorage = () => {
+      const map = new Map<string, string>();
+      return {
+        getItem: (k: string) => map.get(k) ?? null,
+        setItem: (k: string, v: string) => { map.set(k, v); },
+        removeItem: (k: string) => { map.delete(k); },
+      };
+    };
+
+    {
+      const storage = makeStorage();
+      const card = renderCorrectionCard(false);
+      card.click(card.accept);
+      applyBaseballQaQuestionCorrection(storage, "conv-1", QUESTION_ID, card.responses[0] as string);
+      const row = readBaseballQaOutbox(storage).find((r) => r.messageId === QUESTION_ID)!;
+      check("선택 클릭 값이 outbox 에 그대로 적재된다", () => {
+        assert.equal(row.pickedNormalizedQuestion, "보크가 뭐야?");
+        assert.notEqual(row.declineCorrection, true);
+      });
+      card.cleanup();
+    }
+    {
+      const storage = makeStorage();
+      const card = renderCorrectionCard(false);
+      card.click(card.decline);
+      assert.equal(card.responses[0], null);
+      declineBaseballQaQuestionCorrection(storage, "conv-1", QUESTION_ID);
+      const row = readBaseballQaOutbox(storage).find((r) => r.messageId === QUESTION_ID)!;
+      check("거절 클릭 값이 outbox 에 거절로 적재된다", () => {
+        assert.equal(row.declineCorrection, true);
+        assert.equal(row.pickedNormalizedQuestion ?? null, null);
+      });
+      card.cleanup();
+    }
+    {
+      // 이미 선택이 확정된 행은 거절로 덮이지 않는다 — 먼저 확정된 응답이 이긴다(서버와 같은 계약).
+      const storage = makeStorage();
+      applyBaseballQaQuestionCorrection(storage, "conv-1", QUESTION_ID, "보크가 뭐야?");
+      const overwritten = declineBaseballQaQuestionCorrection(storage, "conv-1", QUESTION_ID);
+      const row = readBaseballQaOutbox(storage).find((r) => r.messageId === QUESTION_ID)!;
+      check("선택 확정 행은 거절로 덮이지 않는다", () => {
+        assert.equal(overwritten, false);
+        assert.equal(row.pickedNormalizedQuestion, "보크가 뭐야?");
+        assert.notEqual(row.declineCorrection, true);
+      });
+    }
+
+    // 실제 전송 body 확인: outbox 처리기가 만든 요청에 값이 실려 나가는가.
+    for (const c of [
+      { name: "선택", seed: (s: ReturnType<typeof makeStorage>) =>
+        applyBaseballQaQuestionCorrection(s, "conv-1", QUESTION_ID, "보크가 뭐야?"),
+        expect: (b: Record<string, unknown>) => {
+          assert.equal(b.pickedNormalizedQuestion, "보크가 뭐야?");
+          assert.notEqual(b.declineCorrection, true);
+        } },
+      { name: "거절", seed: (s: ReturnType<typeof makeStorage>) =>
+        declineBaseballQaQuestionCorrection(s, "conv-1", QUESTION_ID),
+        expect: (b: Record<string, unknown>) => {
+          assert.equal(b.declineCorrection, true);
+          assert.equal(b.pickedNormalizedQuestion ?? null, null);
+        } },
+    ]) {
+      const storage = makeStorage();
+      c.seed(storage);
+      const bodies: Record<string, unknown>[] = [];
+      const { attemptBaseballQaOutbox } = await import("../../src/lib/baseball-qa/client-outbox");
+      // 실제 전송 함수를 그대로 태우고 fetch 만 가로챘다 — body 조립은 이 함수 안에 있다.
+      await attemptBaseballQaOutbox(storage, null, (async (_url: string, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return { ok: true, status: 200, json: async () => ({ status: "completed" }) } as Response;
+      }) as unknown as typeof fetch);
+      check(`${c.name} 응답이 API body 에 실려 나간다`, () => {
+        assert.equal(bodies.length, 1, "요청이 정확히 1건");
+        c.expect(bodies[0]);
+        assert.equal(bodies[0].messageId, QUESTION_ID);
+      });
+    }
   }
 
   if (failures.length > 0) {

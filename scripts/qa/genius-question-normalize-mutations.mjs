@@ -18,8 +18,19 @@ import path from "node:path";
 import process from "node:process";
 
 const root = path.resolve(new URL(".", import.meta.url).pathname, "../..");
-const target = path.join(root, "src/lib/baseball-qa/pipeline.ts");
-const backup = `${target}.qnorm-mutations.bak`;
+const PIPELINE = path.join(root, "src/lib/baseball-qa/pipeline.ts");
+const LOG_ROW = path.join(root, "src/lib/baseball-qa/log-row.ts");
+const PICKER = path.join(root, "src/components/dm/GeniusQuestionCorrectionPicker.tsx");
+
+/**
+ * mutation 은 `file` 을 생략하면 pipeline.ts 를 대상으로 한다.
+ * `gate` 를 주면 그 게이트로 RED 를 판정한다(기본 = normalize smoke).
+ */
+const GATES = {
+  normalize: ["npx", ["tsx", "scripts/qa/genius-question-normalize-smoke.ts"]],
+  correctionDb: ["npx", ["tsx", "scripts/qa/genius-question-correction-db.ts"]],
+  pickerRender: ["npx", ["tsx", "scripts/qa/genius-picker-disabled-render.ts"]],
+};
 
 const mutations = [
   {
@@ -87,15 +98,50 @@ const mutations = [
     find: 'normalizeStatus: normStatus,',
     replace: '',
   },
+  {
+    // 삼순 2026-08-13 ①: pipeline 이 후보를 만들어도 Production INSERT 에 칸이 없으면
+    // 실 DB 는 계속 null 이다. 그 단절을 DB 게이트가 잡는지 증명한다.
+    name: "M12 Production INSERT 에서 제안 칸 제거",
+    file: LOG_ROW,
+    gate: "correctionDb",
+    find: 'question_correction_candidate: entry.correctionCandidate ?? null,',
+    replace: '',
+  },
+  {
+    name: "M13 Production INSERT 가 제안문을 수용문 칸에 섮음",
+    file: LOG_ROW,
+    gate: "correctionDb",
+    find: 'question_normalized: entry.questionNormalized ?? null,',
+    replace: 'question_normalized: entry.questionNormalized ?? entry.correctionCandidate ?? null,',
+  },
+  {
+    // 삼순 2026-08-13 ②: 거절 버튼이 없으면 유저는 원문 답변을 받을 길이 없다.
+    name: "M14 교정 카드에서 거절 버튼 제거",
+    file: PICKER,
+    gate: "pickerRender",
+    find: 'data-testid="genius-question-correction-decline"',
+    replace: 'data-testid="genius-question-correction-decline-REMOVED"',
+  },
+  {
+    name: "M15 거절 버튼이 거절 대신 후보를 올림",
+    file: PICKER,
+    gate: "pickerRender",
+    find: 'onClick={() => onRespond(null)}',
+    replace: 'onClick={() => onRespond(options[0])}',
+  },
+  {
+    name: "M16 교정 카드 disabled 무시(상호 잠금 붕괴)",
+    file: PICKER,
+    gate: "pickerRender",
+    find: '        disabled={disabled}\n        onClick={() => onRespond(null)}',
+    replace: '        onClick={() => onRespond(null)}',
+  },
 ];
 
-function runSmoke() {
+function runGate(name = "normalize") {
+  const [cmd, args] = GATES[name];
   try {
-    execFileSync("npx", ["tsx", "scripts/qa/genius-question-normalize-smoke.ts"], {
-      cwd: root,
-      stdio: "pipe",
-      timeout: 120_000,
-    });
+    execFileSync(cmd, args, { cwd: root, stdio: "pipe", timeout: 180_000 });
     return { code: 0, output: "" };
   } catch (err) {
     const output = `${err.stdout ?? ""}\n${err.stderr ?? ""}`;
@@ -103,22 +149,30 @@ function runSmoke() {
   }
 }
 
-// 전제: 무변이 상태에서 smoke 는 GREEN 이어야 한다 — 아니면 mutation 판정 자체가 무의미하다.
-{
-  const base = runSmoke();
+// 전제: 무변이 상태에서 쓰는 게이트는 전부 GREEN 이어야 한다 — 아니면 판정 자체가 무의미하다.
+for (const g of new Set(mutations.map((m) => m.gate ?? "normalize"))) {
+  const base = runGate(g);
   if (base.code !== 0) {
-    console.error("BASELINE RED — 무변이 smoke 가 이미 실패한다. mutation 판정 불가.");
+    console.error(`BASELINE RED (${g}) — 무변이 게이트가 이미 실패한다. mutation 판정 불가.`);
     console.error(base.output.slice(0, 2000));
     process.exit(1);
   }
 }
 
-const original = readFileSync(target, "utf8");
-copyFileSync(target, backup);
+const sources = new Map();
+const backups = new Map();
+for (const f of new Set(mutations.map((m) => m.file ?? PIPELINE))) {
+  sources.set(f, readFileSync(f, "utf8"));
+  const b = `${f}.qnorm-mutations.bak`;
+  copyFileSync(f, b);
+  backups.set(f, b);
+}
 let failures = 0;
 
 try {
   for (const m of mutations) {
+    const file = m.file ?? PIPELINE;
+    const original = sources.get(file);
     if (!original.includes(m.find)) {
       console.error(`INJECTION FAILED (pattern not found): ${m.name}`);
       failures++;
@@ -130,9 +184,9 @@ try {
       failures++;
       continue;
     }
-    writeFileSync(target, original.replace(m.find, m.replace));
-    const res = runSmoke();
-    const assertionFailure = /AssertionError|ERR_ASSERTION|normalizer failure leaks/.test(res.output);
+    writeFileSync(file, original.replace(m.find, m.replace));
+    const res = runGate(m.gate);
+    const assertionFailure = /AssertionError|ERR_ASSERTION|normalizer failure leaks|FAIL=/.test(res.output);
     if (res.code !== 0 && assertionFailure) {
       console.log(`RED (검출 성공): ${m.name}`);
     } else if (res.code !== 0) {
@@ -143,11 +197,13 @@ try {
       console.error(`GREEN (검출 실패 — 가드가 죽어도 게이트가 통과): ${m.name}`);
       failures++;
     }
-    copyFileSync(backup, target);
+    copyFileSync(backups.get(file), file);
   }
 } finally {
-  copyFileSync(backup, target);
-  rmSync(backup, { force: true });
+  for (const [f, b] of backups) {
+    copyFileSync(b, f);
+    rmSync(b, { force: true });
+  }
 }
 
 if (failures > 0) {

@@ -3,6 +3,7 @@
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
@@ -918,24 +919,9 @@ export function makeDeps(
       if (error) throw error;
     },
     log: async (entry) => {
-      const { error } = await supabaseAdmin.from("genius_question_logs").insert({
-        user_id: entry.userId,
-        question: entry.question,
-        question_norm: entry.questionNorm,
-        // LLM 정규화 관측 (migration 20260811210000): 교정문은 수용 행에만, status 는
-        // 정규화가 호출된 모든 행에 채워진다 — null 만으로는 미호출·거절·오류를 구분할 수
-        // 없어 발동률·오교정 감사의 분모를 못 만든다(삼순 2026-08-11 1차 ④).
-        question_normalized: entry.questionNormalized ?? null,
-        question_normalize_status: entry.normalizeStatus ?? null,
-        match_path: entry.matchPath,
-        answer: entry.answer,
-        input_tokens: entry.inputTokens,
-        output_tokens: entry.outputTokens,
-        // 질문 쪽지 id 로 로그를 exact 결속한다. 종전에는 (user, question_norm, created_at) 뿐이라
-        // 같은 질문을 두 번 하면 두 로그가 구분되지 않았고, 피드백을 붙이려면 시간창 추정을
-        // 해야 했다. 추정 결속은 오적재를 만든다.
-        question_message_id: messageId,
-      });
+      const { error } = await supabaseAdmin
+        .from("genius_question_logs")
+        .insert(buildQuestionLogRow(entry, messageId));
       if (error) throw error;
     },
   };
