@@ -70,10 +70,10 @@ const MUTATIONS = [
     to: '|기록|전체목록|목록|전부|',
   },
   {
-    name: "m2j 모두 count 귀속 제거 — 정상 count를 list 경쟁으로 과차단",
+    name: "m2j 모두·전부 count 귀속 제거 — 정상 count를 list 경쟁으로 과차단",
     file: EVENT,
-    from: '    (normalized.includes("모두") && !hasCount);',
-    to: '    normalized.includes("모두");',
+    from: '    (/(?:모두|전부)/.test(normalized) && !hasCount);',
+    to: '    /(?:모두|전부)/.test(normalized);',
   },
   {
     name: "m2i list intent 신호 제거 — first·ordinal과 경쟁해도 오결속",

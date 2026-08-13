@@ -70,8 +70,8 @@ export function resolveEventRecordQuery(
   const hasFirst = /(?:최초|처음|첫번째)/.test(normalized);
   const hasLatest = /(?:최근|마지막|최신)/.test(normalized);
   const hasCount = /(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized);
-  const hasList = /(?:전체목록|달성선수|목록|전부)/.test(normalized) ||
-    (normalized.includes("모두") && !hasCount);
+  const hasList = /(?:전체목록|달성선수|목록)/.test(normalized) ||
+    (/(?:모두|전부)/.test(normalized) && !hasCount);
   const intentCount = Number(named.length === 1) + Number(Boolean(ordinal)) +
     Number(hasFirst) + Number(hasLatest) + Number(hasCount) + Number(hasList);
   if (intentCount > 1) return null;
