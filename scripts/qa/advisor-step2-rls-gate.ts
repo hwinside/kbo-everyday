@@ -20,6 +20,11 @@
  *      fingerprint로 완전 복원 + 복원 후 재적용 성공
  *  A10b rollback-drift RED: 적용 후 정책 변조 → rollback 전건 거부
  *  A10c rollback-missing RED: 적용 후 정책 DROP → rollback 전건 거부
+ *  A11 target 67/67 qual/with_check 오라클: post-migration 실측값을 이 파일이
+ *      독립 구현한 wrap(문자 스캔, 생성기 python regex와 별개)으로 만든
+ *      기대식을 PG deparse로 정규화한 오라클과 67/67 전건 대조
+ *  A11b/A11c mutation RED: migration의 래핑식 1개를 true/다른 래핑식으로
+ *      바꾼 mutant를 적용하면 오라클 대조가 검출(RED)
  *  T-check 생성기 SSOT: generate --check로 committed 출력 byte 일치 고정 (spawn 실패도 FAIL)
  */
 import { spawnSync } from "node:child_process";
@@ -171,6 +176,76 @@ function fpOf(p: { cmd: string; permissive: string; roles: string; qual: string 
   return [p.cmd, p.permissive, p.roles, p.qual ?? "", p.with_check ?? ""].join("|");
 }
 
+// 독립 wrap 구현 — 생성기(python regex)와 달리 문자 스캔으로 구현해 같은
+// 오치환을 공유하지 않는다. bare auth.<fn>() 호출을 (select auth.<fn>())로 치환하되
+// 직전이 'SELECT '/'select '인 발생부(이미 래핑)는 건너뀜다.
+function tsWrap(expr: string): string {
+  const FNS = ["uid", "role", "jwt", "email"];
+  let out = "";
+  let i = 0;
+  while (i < expr.length) {
+    let matched = false;
+    if (expr.startsWith("auth.", i)) {
+      for (const fn of FNS) {
+        const call = `auth.${fn}()`;
+        if (expr.startsWith(call, i)) {
+          const prefix = expr.slice(Math.max(0, i - 7), i).toLowerCase();
+          const wrappedAlready = prefix.endsWith("select ");
+          out += wrappedAlready ? call : `(select auth.${fn}())`;
+          i += call.length;
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) {
+      out += expr[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * 오라클 구축: 별도 PGlite에 prod-like 스키마를 만들고, target 67건을
+ * DROP → tsWrap 기대식으로 CREATE 해 PG deparse로 정규화된 기대 qual/with_check를
+ * 추출한다. migration 경로(python wrap + ALTER)와 완전 분리된 경로다.
+ */
+async function buildOracle(): Promise<Map<string, { qual: string | null; with_check: string | null }>> {
+  const db = await prodLikeDb();
+  for (const p of TARGETS) {
+    await db.exec(`DROP POLICY ${q(p.policyname)} ON public.${q(p.tablename)};`);
+    const wrapped = {
+      ...p,
+      qual: p.qual ? tsWrap(p.qual) : null,
+      with_check: p.with_check ? tsWrap(p.with_check) : null,
+    };
+    await db.exec(createPolicySql(wrapped));
+  }
+  const m = await policyMap(db);
+  await db.close();
+  const oracle = new Map<string, { qual: string | null; with_check: string | null }>();
+  for (const p of TARGETS) {
+    const key = `${p.tablename}|${p.policyname}`;
+    const row = m.get(key);
+    if (!row) throw new Error(`oracle build failed: ${key}`);
+    oracle.set(key, { qual: row.qual, with_check: row.with_check });
+  }
+  return oracle;
+}
+
+function compareToOracle(
+  after: Map<string, PolicyRow>,
+  oracle: Map<string, { qual: string | null; with_check: string | null }>,
+): string[] {
+  const diffs: string[] = [];
+  for (const [key, exp] of oracle) {
+    const now = after.get(key);
+    if (!now || now.qual !== exp.qual || now.with_check !== exp.with_check) diffs.push(key);
+  }
+  return diffs;
+}
+
 // ---- 동작 동일성 스모크 (posts 작성자 DELETE — 래핑 대상 정책) ---------------
 const AUTHOR = "11111111-1111-4111-8111-111111111111";
 const OTHER = "33333333-3333-4333-8333-333333333333";
@@ -284,6 +359,12 @@ async function main() {
     assert("A6 posts DELETE behavior identical", behaviorAfter === baselineBehavior,
       { before: baselineBehavior, after: behaviorAfter });
 
+    // --- A11: target 67/67 qual/with_check 오라클 전건 대조
+    const oracle = await buildOracle();
+    assert("A11 oracle covers 67 targets", oracle.size === 67, oracle.size);
+    const oracleDiffs = compareToOracle(after, oracle);
+    assert("A11 post-migration qual/with_check == 독립 wrap 오라클 (67/67)", oracleDiffs.length === 0, oracleDiffs.slice(0, 5));
+
     // --- A8: 이미 적용된 DB에 재실행 → 전건 fingerprint 불일치 → 거부
     const r2 = await run(db, migrationSql);
     assert("A8 re-run on applied db → EXCEPTION (이중 적용 거부)", !r2.ok);
@@ -336,6 +417,38 @@ async function main() {
     const r = await run(db, migrationSql);
     assert("A9 clean-chain (empty db) replay succeeds", r.ok, r.error);
     await db.close();
+  }
+
+  // --- A11b/A11c mutation RED: migration 래핑식 오치환 → 오라클 대조가 검출
+  {
+    const oracle = await buildOracle();
+    // blocks_select의 새 USING 식을 특정해 mutant 생성
+    const blocksSelect = TARGETS.find((p) => p.tablename === "user_blocks" && p.policyname === "blocks_select")!;
+    const wrappedExpr = tsWrap(blocksSelect.qual!);
+    const idx = migrationSql.indexOf(wrappedExpr);
+    assert("A11 setup: migration contains expected wrapped expr for blocks_select", idx >= 0);
+
+    // A11b: 식을 true로 치환 (fingerprint 가드는 통과하는 오치환 — 오라클만 잡을 수 있다)
+    {
+      const mutant = migrationSql.replace(wrappedExpr, "true");
+      const db = await prodLikeDb();
+      const r = await run(db, mutant);
+      assert("A11b mutant(true 치환) migration은 가드를 통과해 적용됨", r.ok, r.error);
+      const diffs = compareToOracle(await policyMap(db), oracle);
+      assert("A11b 오라클 대조가 오치환 검출 (RED)", diffs.includes("user_blocks|blocks_select"), diffs.slice(0, 3));
+      await db.close();
+    }
+    // A11c: 다른 래핑식(auth.uid → auth.role)으로 치환
+    {
+      const wrongExpr = wrappedExpr.split("auth.uid()").join("auth.role()::uuid");
+      const mutant = migrationSql.replace(wrappedExpr, wrongExpr);
+      const db = await prodLikeDb();
+      const r = await run(db, mutant);
+      assert("A11c mutant(오래핑) migration은 가드를 통과해 적용됨", r.ok, r.error);
+      const diffs = compareToOracle(await policyMap(db), oracle);
+      assert("A11c 오라클 대조가 오래핑 검출 (RED)", diffs.includes("user_blocks|blocks_select"), diffs.slice(0, 3));
+      await db.close();
+    }
   }
 
   // --- A10b rollback-drift RED: 적용 후 변조 → rollback 전건 거부
