@@ -2070,6 +2070,15 @@
     "birthDate": null
   },
   {
+    "name": "대니엘",
+    "kboId": "56002",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "36",
+    "team": "KT",
+    "birthDate": "1997-06-11"
+  },
+  {
     "name": "데이비슨",
     "kboId": "54944",
     "teamId": 10,
@@ -3274,6 +3283,15 @@
     "backNo": "50",
     "team": "NC",
     "birthDate": "1997-06-17"
+  },
+  {
+    "name": "사토시",
+    "kboId": "56474",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "74",
+    "team": "삼성",
+    "birthDate": "1998-05-28"
   },
   {
     "name": "샘 힐리어드",
@@ -7927,14 +7945,5 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
-  },
-  {
-    "name": "사토시",
-    "kboId": "56474",
-    "teamId": 8,
-    "position": "투수",
-    "backNo": "74",
-    "team": "삼성",
-    "birthDate": "1998-05-28"
   }
 ]
