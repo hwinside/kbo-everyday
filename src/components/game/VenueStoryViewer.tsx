@@ -159,9 +159,12 @@ export default function VenueStoryViewer({
   // 스토리 좌/우 탭은 pointerup에서 즉시 1칸 이동한다.
   // pointer 뒤 합성 click(detail>0)은 무시하고 키보드 click(detail=0)만 폴백으로 받아 2칸 이동을 막는다.
   const storyNavPressRef = useRef(createPressState());
-  const rafRef = useRef<number | null>(null);
-  const startRef = useRef<number>(0);
-  const elapsedRef = useRef<number>(0);
+  // 이미지 진행바 — RAF+setState(초당 60회 리렌더) 대신 Web Animations API 로 compositor 구동.
+  // iOS WebKit 은 탭 디스패치 창에서 스크립트발 DOM/style 변이를 감지하면 첫 탭을 hover 로
+  // 삼켜 click 을 안 보낸다(더블탭 요구) — 하린아빠 8/13 iPhone 리포트: 댓글/더보기/닫기 전부
+  // 더블탭. WAAPI/CSS 애니메이션은 엔진 구동이라 이 휴리스틱에 걸리지 않는다.
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const progressAnimRef = useRef<{ storyId: number; anim: Animation } | null>(null);
   const refreshedStoryIdRef = useRef<number | null>(null);
   const lastUrlRefreshAtRef = useRef(0);
 
@@ -227,8 +230,6 @@ export default function VenueStoryViewer({
   // index 바뀔 때 진행 상태 리셋
   useEffect(() => {
     setProgress(0);
-    elapsedRef.current = 0;
-    startRef.current = performance.now();
     setCommentsOpen(false);
     setCommentsClosing(false);
     setComments(null);
@@ -345,30 +346,37 @@ export default function VenueStoryViewer({
     if (shouldClose) requestCommentsClose();
   }, [requestCommentsClose]);
 
-  // 이미지 자동 진행(RAF), 영상은 timeupdate 로 처리
+  // 이미지 자동 진행 — WAAPI(엔진 구동, per-frame 스크립트 변이 0). 영상은 timeupdate 로 처리.
+  // 일시정지는 anim.pause()(currentTime 보존 — display:none 이 돼도 CSS 애니메이션과 달리 리셋 없음).
   useEffect(() => {
     if (!story || story.mediaType !== "image") return;
-    // commentBusy: 전송 중에는 모달이 닫혀도 재생이 재개되지 않게 결속
-    if (paused || menuOpen || commentsOpen || commentBusy) return;
-    const hold = VENUE_STORY_IMAGE_HOLD_MS;
-    startRef.current = performance.now();
-    const base = elapsedRef.current;
-    const tick = () => {
-      const el = base + (performance.now() - startRef.current);
-      const p = Math.min(1, el / hold);
-      setProgress(p);
-      if (p >= 1) {
-        goNext();
-        return;
-      }
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-      elapsedRef.current = base + (performance.now() - startRef.current);
-    };
+    const el = progressBarRef.current;
+    // jsdom 등 WAAPI 미지원 환경은 자동 진행 없이 뷰어만 유지(수동 넘김은 동작)
+    if (!el || typeof el.animate !== "function") return;
+    let entry = progressAnimRef.current;
+    if (!entry || entry.storyId !== story.id) {
+      entry?.anim.cancel();
+      const anim = el.animate(
+        [{ transform: "scaleX(0)" }, { transform: "scaleX(1)" }],
+        { duration: VENUE_STORY_IMAGE_HOLD_MS, easing: "linear", fill: "forwards" },
+      );
+      entry = { storyId: story.id, anim };
+      progressAnimRef.current = entry;
+    }
+    entry.anim.onfinish = () => goNext();
+    // commentBusy: 전송 중에는 모달이 닫혀도 재생이 재개되지 않게 결속(기존 계약 유지)
+    if (paused || menuOpen || commentsOpen || commentBusy) entry.anim.pause();
+    else entry.anim.play();
   }, [story, index, paused, menuOpen, commentsOpen, commentBusy, goNext]);
+
+  // 스토리 전환/뷰어 unmount 시 잔여 애니메이션 정리 — fill:forwards 가 남으면
+  // 이전 바의 inline width(100%/0%) 스타일을 애니메이션 결과가 계속 덮는다.
+  useEffect(() => {
+    return () => {
+      progressAnimRef.current?.anim.cancel();
+      progressAnimRef.current = null;
+    };
+  }, [index]);
 
   // 영상 재생/일시정지 동기화
   useEffect(() => {
@@ -597,10 +605,20 @@ export default function VenueStoryViewer({
       >
         {stories.map((s, i) => (
           <div key={s.id} className="flex-1 h-0.5 rounded-full bg-white/30 overflow-hidden">
-            <div
-              className="h-full bg-white"
-              style={{ width: `${i < index ? 100 : i === index ? progress * 100 : 0}%` }}
-            />
+            {i === index && story.mediaType === "image" ? (
+              // 이미지 활성 바: WAAPI 가 transform(scaleX 0→1)을 구동 — React 리렌더 무발생
+              <div
+                ref={progressBarRef}
+                data-story-progress="waapi"
+                className="h-full w-full bg-white origin-left"
+                style={{ transform: "scaleX(0)" }}
+              />
+            ) : (
+              <div
+                className="h-full bg-white"
+                style={{ width: `${i < index ? 100 : i === index ? progress * 100 : 0}%` }}
+              />
+            )}
           </div>
         ))}
       </div>
