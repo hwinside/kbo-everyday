@@ -120,7 +120,8 @@ export const INVALID_QUESTION_ANSWER =
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
 
-async function loadGlossary(): Promise<GlossaryEntry[]> {
+// 실-provider 게이트(genius-question-normalize-live)가 파이프라인과 같은 입력으로 판정하도록 export.
+export async function loadGlossary(): Promise<GlossaryEntry[]> {
   if (glossaryCache && Date.now() - glossaryCache.loadedAt < GLOSSARY_TTL_MS) {
     return glossaryCache.entries;
   }
@@ -216,6 +217,64 @@ export async function mapGlossaryDefinition(
   const term = (parsed as { term?: unknown })?.term;
   return {
     term: typeof term === "string" && term.length > 0 ? term : null,
+    inputTokens,
+    outputTokens,
+  };
+}
+
+/**
+ * 질문 1차 LLM 정규화 (pipeline `normalizeQuestionLlm` seam 구현, 2026-08-11).
+ *
+ * 표기 교정만 한다 — 띄어쓰기·명백한 오탈자·붙여 쓴 단어 분리. 의미 변경·단어 대체·숫자
+ * 변경은 프롬프트로 금지하고, 수용 여부는 어차피 호출부(pipeline)의 폐쇄 가드
+ * (숫자 시퀀스 보존·길이 상한·재라우팅 non-blocked)가 다시 강제한다.
+ * malformed·장애·null 은 전부 "교정 없음"으로 수렴한다(fail-open — 원문 진행).
+ */
+export async function normalizeQuestionLlm(
+  question: string,
+): Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const systemPrompt = [
+    "너는 KBO 야구 서비스에 들어온 사용자 질문의 표기 교정기다.",
+    "질문의 의미는 절대 바꾸지 말고 **표기만** 교정한다: 띄어쓰기, 명백한 오탈자, 붙여 쓴 단어 분리.",
+    "다음은 금지다:",
+    "· 단어 추가·삭제·다른 단어로 대체 (표기 교정이 아닌 바꿔쓰기)",
+    "· 숫자 변경",
+    "· 질문을 답변이나 설명으로 바꾸는 것",
+    "· 확신 없는 사람 이름 교정 — 이름은 명백한 오타일 때만 고친다",
+    "교정할 것이 없거나 확신이 없으면 null 을 준다 — 잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다.",
+    '반드시 JSON 하나만 출력한다: {"normalized":"교정한 질문"} 또는 {"normalized":null}',
+  ].join("\n");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: "user", parts: [{ text: `질문: ${question}` }] }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 128,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  const inputTokens: number | null = data.usageMetadata?.promptTokenCount ?? null;
+  const outputTokens: number | null = data.usageMetadata?.candidatesTokenCount ?? null;
+  const text: string =
+    data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // malformed 는 교정 없음 — 원문 진행 (#1142 malformed fail-close 계약과 같은 축).
+    return { text: null, inputTokens, outputTokens };
+  }
+  const normalized = (parsed as { normalized?: unknown })?.normalized;
+  return {
+    text: typeof normalized === "string" && normalized.trim().length > 0 ? normalized.trim() : null,
     inputTokens,
     outputTokens,
   };
@@ -642,6 +701,9 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
     // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
     mapGlossaryDefinition,
+    // 질문 1차 LLM 정규화 (2026-08-11): residual 질문만 표기 교정 후 재라우팅한다.
+    // 수용 가드(숫자 보존·길이·non-blocked)는 pipeline 이 강제한다.
+    normalizeQuestionLlm,
     searchRag,
     callRagLlm,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
@@ -833,6 +895,11 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
         user_id: entry.userId,
         question: entry.question,
         question_norm: entry.questionNorm,
+        // LLM 정규화 관측 (migration 20260811210000): 교정문은 수용 행에만, status 는
+        // 정규화가 호출된 모든 행에 채워진다 — null 만으로는 미호출·거절·오류를 구분할 수
+        // 없어 발동률·오교정 감사의 분모를 못 만든다(삼순 2026-08-11 1차 ④).
+        question_normalized: entry.questionNormalized ?? null,
+        question_normalize_status: entry.normalizeStatus ?? null,
         match_path: entry.matchPath,
         answer: entry.answer,
         input_tokens: entry.inputTokens,
