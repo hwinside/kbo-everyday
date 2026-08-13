@@ -690,9 +690,17 @@ async function preparePickedPlayerSelection(
   return data === true;
 }
 
+/**
+ * 교정 제안 응답(선택 또는 거절)을 job 행에 원자로 고정하고 최종 답변용 quota 예약을 다시 열다.
+ *
+ * `pickedNormalizedQuestion === null` 이면 거절(원문 진행)이다. 둘 다 **같은 RPC** 를 쓰는
+ * 이유는 quota 재예약·attempts 리셋·`awaiting_selection` 해제 계약이 동일하기 때문이다 —
+ * 둘로 나누면 한쪽만 고치는 사고가 난다.
+ */
 async function prepareQuestionCorrectionSelection(
-  messageId: number, userId: string, pickedNormalizedQuestion: string,
+  messageId: number, userId: string, pickedNormalizedQuestion: string | null,
 ): Promise<boolean> {
+  // query-guard: bounded -- message_id PK 한 행만 갱신하고 boolean scalar 하나를 반환한다.
   const { data, error } = await supabaseAdmin.rpc("prepare_baseball_genius_question_correction", {
     p_message_id: messageId,
     p_user_id: userId,
@@ -703,7 +711,12 @@ async function prepareQuestionCorrectionSelection(
 }
 
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-export function makeDeps(messageId: number, pickedPlayerKboId?: string | null, pickedNormalizedQuestion?: string | null): QaDeps {
+export function makeDeps(
+  messageId: number,
+  pickedPlayerKboId?: string | null,
+  pickedNormalizedQuestion?: string | null,
+  correctionDeclined?: boolean,
+): QaDeps {
   return {
     loadGlossary,
     // 인라인 loader 대신 seam 을 그대로 주입한다 — 게이트가 실제 배포 함수를 실행해
@@ -717,6 +730,7 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null, p
     // 수용 가드(숫자 보존·길이·non-blocked)는 pipeline 이 강제한다.
     normalizeQuestionLlm,
     pickedNormalizedQuestion: pickedNormalizedQuestion ?? null,
+    correctionDeclined: correctionDeclined === true,
     searchRag,
     callRagLlm,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
@@ -944,6 +958,8 @@ export async function processBaseballQaQuestion(input: {
   pickedPlayerKboId?: string | null;
   /** 교정 카드에서 유저가 고른 서버 발급 exact 후보. */
   pickedNormalizedQuestion?: string | null;
+  /** 교정 제안을 거절하고 원문 그대로 답변받겠다고 한 경우. */
+  declineCorrection?: boolean;
 }): Promise<ProcessOutcome> {
   const { messageId, conversationId, userId } = input;
   const question = input.question.trim();
@@ -977,6 +993,11 @@ export async function processBaseballQaQuestion(input: {
   }
   const effectiveQuestionForPlayerPick = persistedCorrection ?? question;
 
+  // 선택과 거절을 **동시에** 받으면 어느 쪽을 따를지 모른다 — 입력단에서 fail-close 한다.
+  if (input.pickedNormalizedQuestion && input.declineCorrection) {
+    return { kind: "failed", status: 400, reason: "교정 응답이 모호합니다" };
+  }
+
   if (input.pickedPlayerKboId) {
     try {
       const prepared = await preparePickedPlayerSelection(
@@ -991,10 +1012,10 @@ export async function processBaseballQaQuestion(input: {
     }
   }
 
-  if (input.pickedNormalizedQuestion) {
+  if (input.pickedNormalizedQuestion || input.declineCorrection) {
     try {
       const prepared = await prepareQuestionCorrectionSelection(
-        messageId, userId, input.pickedNormalizedQuestion,
+        messageId, userId, input.pickedNormalizedQuestion ?? null,
       );
       if (!prepared) return { kind: "failed", status: 400, reason: "선택한 교정 질문을 확인할 수 없습니다" };
     } catch (error) {
@@ -1060,17 +1081,24 @@ export async function processBaseballQaQuestion(input: {
         const picked = await persistOrLoadPickedPlayer(
           messageId, persistedCorrection ?? question, input.pickedPlayerKboId,
         );
+        // 선택·거절 둘 다 job 행이 SSOT 다 — 즉시 경로가 죽어 cron drain 이 이어받아도 같은
+        // 결정으로 답하고, 거절된 질문이 정규화를 다시 타 같은 카드를 또 내지 않는다.
         let selectedCorrection = persistedCorrection;
-        if (!selectedCorrection) {
+        let declined = input.declineCorrection === true;
+        if (!selectedCorrection || !declined) {
           const { data: correctionJob, error: correctionError } = await supabaseAdmin
             .from("genius_question_jobs")
-            .select("picked_normalized_question")
+            .select("picked_normalized_question, correction_declined")
             .eq("message_id", messageId)
             .maybeSingle();
           if (correctionError) throw correctionError;
-          selectedCorrection = correctionJob?.picked_normalized_question as string | null ?? null;
+          selectedCorrection = selectedCorrection
+            ?? (correctionJob?.picked_normalized_question as string | null ?? null);
+          declined = declined || correctionJob?.correction_declined === true;
         }
-        result = await answerQuestion(userId, question, makeDeps(messageId, picked, selectedCorrection));
+        result = await answerQuestion(
+          userId, question, makeDeps(messageId, picked, selectedCorrection, declined),
+        );
       }
       if (result.source === "pending") {
         // LLM winner가 다른 worker (CAS 패배/fence 창) — 이 worker는 ready 저장도 발송도 하지
@@ -1088,6 +1116,7 @@ export async function processBaseballQaQuestion(input: {
           picker_options: result.pickerOptions ?? null,
           picker_question_message_id: result.pickerOptions ? messageId : null,
           correction_options: result.correctionOptions ?? null,
+          correction_question_message_id: result.correctionOptions ? messageId : null,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)

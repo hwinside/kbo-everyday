@@ -64,7 +64,7 @@ export default function DMChatPage() {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
-    pickBaseballQaQuestionCorrection,
+    respondBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
     geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
@@ -602,9 +602,9 @@ export default function DMChatPage() {
                           geniusAnsweredQuestionIds,
                           geniusCorrectedQuestionIds,
                         )}
-                        onPick={(question) => {
+                        onRespond={(question) => {
                           if (geniusReply?.question_message_id) {
-                            pickBaseballQaQuestionCorrection(geniusReply.question_message_id, question);
+                            respondBaseballQaQuestionCorrection(geniusReply.question_message_id, question);
                           }
                         }}
                       />

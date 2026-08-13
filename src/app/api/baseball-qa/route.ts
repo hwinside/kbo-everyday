@@ -15,8 +15,9 @@ export async function POST(req: NextRequest) {
   let messageId: unknown;
   let pickedPlayerKboId: unknown;
   let pickedNormalizedQuestion: unknown;
+  let declineCorrection: unknown;
   try {
-    ({ conversationId, messageId, pickedPlayerKboId, pickedNormalizedQuestion } = await req.json());
+    ({ conversationId, messageId, pickedPlayerKboId, pickedNormalizedQuestion, declineCorrection } = await req.json());
   } catch {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
@@ -35,6 +36,13 @@ export async function POST(req: NextRequest) {
 
   if (pickedNormalizedQuestion !== undefined && pickedNormalizedQuestion !== null &&
       (typeof pickedNormalizedQuestion !== "string" || pickedNormalizedQuestion.length < 1 || pickedNormalizedQuestion.length > 200)) {
+    return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
+  }
+  if (declineCorrection !== undefined && typeof declineCorrection !== "boolean") {
+    return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
+  }
+  // 선택과 거절을 한 요청에 담으면 어느 쪽을 따를지 모른다 — 입력단에서 fail-close.
+  if (typeof pickedNormalizedQuestion === "string" && declineCorrection === true) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
 
@@ -65,6 +73,7 @@ export async function POST(req: NextRequest) {
     question: message.content,
     pickedPlayerKboId: typeof pickedPlayerKboId === "string" ? pickedPlayerKboId : null,
     pickedNormalizedQuestion: typeof pickedNormalizedQuestion === "string" ? pickedNormalizedQuestion : null,
+    declineCorrection: declineCorrection === true,
   });
   if (outcome.kind === "pending") {
     return NextResponse.json({ ok: false, pending: true }, { status: 202 });

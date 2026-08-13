@@ -19,6 +19,7 @@ import {
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
   applyBaseballQaQuestionCorrection,
+  declineBaseballQaQuestionCorrection,
   collectBaseballQaAnsweredQuestionIds,
   createBaseballQaAnsweredUpdater,
   type BaseballQaReplyStates,
@@ -363,13 +364,19 @@ export function useDMChat(conversationId: string) {
     void processBaseballQaOutbox();
   }, [conversationId, processBaseballQaOutbox, geniusPickedQuestionIds]);
 
-  const pickBaseballQaQuestionCorrection = useCallback((messageId: number, question: string) => {
+  /**
+   * 교정 카드 응답(선택 또는 거절). 둘 다 **같은 잠금 집합**을 쓴다 — 한 카드에
+   * 선택과 거절을 연속으로 누를 수 있으면 서버가 모호한 응답 두 개를 받는다.
+   */
+  const respondBaseballQaQuestionCorrection = useCallback((messageId: number, question: string | null) => {
     if (typeof window === "undefined" || !conversationId) return;
     if (geniusCorrectedQuestionIds.has(messageId)) return;
-    const enqueued = applyBaseballQaQuestionCorrection(
-      window.localStorage, conversationId, messageId, question,
-      observedBaseballQaReplyIdsRef.current.has(messageId),
-    );
+    const alreadyAnswered = observedBaseballQaReplyIdsRef.current.has(messageId);
+    const enqueued = question === null
+      ? declineBaseballQaQuestionCorrection(window.localStorage, conversationId, messageId, alreadyAnswered)
+      : applyBaseballQaQuestionCorrection(
+        window.localStorage, conversationId, messageId, question, alreadyAnswered,
+      );
     setGeniusCorrectedQuestionIds((prev) => {
       if (prev.has(messageId)) return prev;
       const next = new Set(prev); next.add(messageId); return next;
@@ -687,7 +694,7 @@ export function useDMChat(conversationId: string) {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
-    pickBaseballQaQuestionCorrection,
+    respondBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
     geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,

@@ -15,6 +15,8 @@ export interface BaseballQaOutboxEntry {
   pickedPlayerKboId?: string;
   /** 교정 카드에서 유저가 고른 서버 발급 exact 후보. */
   pickedNormalizedQuestion?: string;
+  /** 교정 제안을 거절하고 원문 그대로 답변받겠다고 한 경우. */
+  declineCorrection?: boolean;
 }
 
 interface StorageLike {
@@ -61,7 +63,10 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         (row.pickedPlayerKboId === undefined ||
           (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)) &&
         (row.pickedNormalizedQuestion === undefined ||
-          (typeof row.pickedNormalizedQuestion === "string" && row.pickedNormalizedQuestion.length > 0 && row.pickedNormalizedQuestion.length <= 200)),
+          (typeof row.pickedNormalizedQuestion === "string" && row.pickedNormalizedQuestion.length > 0 && row.pickedNormalizedQuestion.length <= 200)) &&
+        (row.declineCorrection === undefined || typeof row.declineCorrection === "boolean") &&
+        // 선택과 거절을 동시에 든 행은 서버가 400 으로 막는다 — 복원 단계에서 버린다.
+        !(typeof row.pickedNormalizedQuestion === "string" && row.declineCorrection === true),
     );
   } catch {
     return [];
@@ -98,9 +103,29 @@ export function applyBaseballQaQuestionCorrection(
   const index = entries.findIndex((row) => row.messageId === messageId);
   const selected: BaseballQaOutboxEntry = {
     conversationId, messageId, pickedNormalizedQuestion, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+    declineCorrection: false,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
+  writeBaseballQaOutbox(storage, entries);
+  return true;
+}
+
+/** 교정 제안 거절 — 원문 그대로 답변받는다. 같은 messageId 를 재처리하므로 quota 중복은 없다. */
+export function declineBaseballQaQuestionCorrection(
+  storage: StorageLike, conversationId: string, messageId: number, alreadyAnswered = false,
+): boolean {
+  if (alreadyAnswered) return false;
+  const entries = readBaseballQaOutbox(storage);
+  const index = entries.findIndex((row) => row.messageId === messageId);
+  const declined: BaseballQaOutboxEntry = {
+    conversationId, messageId, declineCorrection: true, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+  };
+  // 선택값이 이미 있으면 거절로 덮지 않는다 — 먼저 확정된 응답이 이긴다(서버와 같은 계약).
+  if (index >= 0) {
+    if (entries[index].pickedNormalizedQuestion) return false;
+    entries[index] = { ...entries[index], ...declined };
+  } else entries.push(declined);
   writeBaseballQaOutbox(storage, entries);
   return true;
 }
@@ -307,6 +332,7 @@ export async function attemptBaseballQaOutbox(
           ...(entry.pickedNormalizedQuestion
             ? { pickedNormalizedQuestion: entry.pickedNormalizedQuestion }
             : {}),
+          ...(entry.declineCorrection ? { declineCorrection: true } : {}),
         }),
       });
       if (response.ok && response.status !== 202) {
@@ -339,7 +365,8 @@ export async function attemptBaseballQaOutbox(
       if (!update) return entry;
       // 요청 중 picker 관측/선택이 발생하면 오래된 HTTP 응답이 그 새 상태를 덮지 못한다.
       if (entry.pickedPlayerKboId !== update.pickedPlayerKboId ||
-          entry.pickedNormalizedQuestion !== update.pickedNormalizedQuestion) return entry;
+          entry.pickedNormalizedQuestion !== update.pickedNormalizedQuestion ||
+          entry.declineCorrection !== update.declineCorrection) return entry;
       if (entry.awaitingPlayerPick) {
         return { ...update, acknowledged: true, awaitingPlayerPick: true };
       }

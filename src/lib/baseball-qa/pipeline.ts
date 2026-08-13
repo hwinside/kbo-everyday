@@ -691,6 +691,13 @@ export interface QaDeps {
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
   /**
+   * 유저가 교정 제안을 거절해 원문 그대로 답해달라고 한 경우 (취소 종결 경로).
+   *
+   * ⚠️ 이 플래그가 없으면 원문 재처리가 정규화를 다시 타서 **같은 제안을 다시 낸다.**
+   * 거절은 job 행에 durable 로 고정되어 cron drain 재처리에서도 유지된다.
+   */
+  correctionDeclined?: boolean;
+  /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
@@ -843,6 +850,12 @@ export interface QaDeps {
      * 원문을 덮어쓰면 그 감사는 분모부터 만들 수 없다.
      */
     questionNormalized?: string | null;
+    /**
+     * 제안만 한 후보. **`questionNormalized` 와 같은 칸을 쓰지 않는다** (삼순 2026-08-13 ③).
+     * `question_normalized` 는 "수용된 문장" 이라는 계약이라, 유저가 고르지도 않은 후보를
+     * 거기 넣으면 "이 문장으로 답했다" 와 "이 문장을 제안했다" 가 섮여 오교정 감사가 깨진다.
+     */
+    correctionCandidate?: string | null;
     /**
      * 정규화 단계가 **호출된** 질문에서만 채워진다(미발동 = 미설정).
      * accepted_surface / rejected / no_change / error —
@@ -3622,7 +3635,16 @@ export function digitSequencesMatch(a: string, b: string): boolean {
 
 /** 정규화 관측 상태 — 미호출(null)·교정없음·거절·장애를 분리해야 발동률·오교정 감사가 가능하다. */
 export type NormalizeAcceptStatus = "accepted_surface" | "rejected";
-export type NormalizeStatus = NormalizeAcceptStatus | "suggested" | "accepted_user" | "no_change" | "error";
+export type NormalizeStatus =
+  | NormalizeAcceptStatus
+  // 후보를 유저에게 제안만 했다 — 질문으로 쓴 적이 없다.
+  | "suggested"
+  // 유저가 제안을 골라 그 문장으로 답했다.
+  | "accepted_user"
+  // 유저가 제안을 거절해 원문 그대로 진행했다(제안 재노출 없음).
+  | "declined"
+  | "no_change"
+  | "error";
 
 /**
  * 정규화 후보 수용 판정 SSOT (삼순 2026-08-11 2차 NO-GO 반영).
@@ -3642,6 +3664,26 @@ export type NormalizeStatus = NormalizeAcceptStatus | "suggested" | "accepted_us
  */
 export type QuestionCorrectionVerdict = "accepted_surface" | "suggest" | "rejected";
 
+/**
+ * Tier B 교정 후보를 **제안해도 되는 착지 라우트** 폐쇄 allowlist (삼순 2026-08-13 NO-GO ②).
+ *
+ * ⚠️ `blocked`/residual 만 제외하는 방식은 잘못이었다 — 그러면 `ack`·`service_redirect`·
+ * `history_hold`·`name_suggest`·`scope_guide`·`context_missing` 까지 전부 제안 자격을 얻는다.
+ * 그 라우트들은 **답을 못 하거나 되묻는** 경로라, 유저가 카드를 눌러도 얻는 게 없다
+ * (`보끄가모야` → `고마워` 를 제안하는 형태가 실제로 가능했다).
+ *
+ * 그래서 **답변이 실제로 나오는 라우트만** 열거한다. 새 라우트가 생겨도 여기 안 적으면
+ * 제안되지 않는다(fail-close). 라우트 union 은 이미 폐쇄집합이라 어휘가 늘지 않는다.
+ */
+export const CORRECTION_SUGGESTABLE_ROUTES: readonly QuestionRoute[] = [
+  // 사전 정의·룰/용어·선수 서술형 RAG 가 전부 이 라우트로 들어간다.
+  "baseball_rule_term",
+  // 구단 수치 — 순위표·팀기록 조회로 확정 답변이 나간다.
+  "team_record",
+  // 통산 순위 — 공식 기준선 + 당해 스냅샷 조회로 확정 답변이 나간다.
+  "career_leaderboard",
+];
+
 /** Tier A만 자동 수용한다. Tier B는 유저 선택 전까지 질문으로 쓰지 않고 제안만 한다. */
 export function classifyQuestionCorrectionCandidate(
   question: string,
@@ -3658,10 +3700,8 @@ export function classifyQuestionCorrectionCandidate(
   // Tier A(표기만 변경)는 #1151 계약 그대로 자동 수용한다 — 문자 구성이 같아 의미 드리프트가
   // 구조적으로 불가능하고, 재라우팅 결과가 residual 이어도 종전 동작과 동일하다.
   if (normalizeKey(candidate) === normalizeKey(question)) return "accepted_surface";
-  // Tier B(문자 구성 변경)는 **폐쇄집합에 착지했을 때만** 제안한다. 후보가 여전히 residual
-  // (`llm_scope_gate`)이면 교정해도 답이 안 나오므로 유저에게 헛선택을 시키지 않는다.
-  if (candidateRoute === "llm_scope_gate") return "rejected";
-  return "suggest";
+  // Tier B(문자 구성 변경)는 **답변 가능 폐쇄 allowlist 에 착지했을 때만** 제안한다.
+  return CORRECTION_SUGGESTABLE_ROUTES.includes(candidateRoute) ? "suggest" : "rejected";
 }
 
 export function evaluateNormalizedCandidate(
@@ -3742,6 +3782,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
     question = picked;
     questionNorm = normalizeQuestion(picked);
+  } else if (deps.correctionDeclined) {
+    // 취소 종결 (삼순 2026-08-13 ③): 유저가 제안을 거절했으면 원문 그대로 진행하되
+    // **정규화를 다시 타지 않는다** — 다시 타면 같은 후보가 또 제안돼 카드가 무한 반복된다.
+    const baseLog = deps.log;
+    deps = {
+      ...deps,
+      log: (entry) => baseLog({ ...entry, normalizeStatus: "declined" }),
+    };
   }
 
   // ── 질문 1차 LLM 정규화 (2026-08-11 하린아빠 착수 지시) ──────────────────────
@@ -3756,7 +3804,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   탈락·장애·null 은 전부 원문 그대로 진행한다(fail-open — 교정 실패가 기존 동작을 죽이면 안 된다).
   // 이 지점(직전 턴 로드·전용 경로 계산 **앞**)이 계약이다 — 뒤로 옮기면 기록·draft·선발 등
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
-  if (!deps.pickedNormalizedQuestion && deps.normalizeQuestionLlm && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+  if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm
+      && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
@@ -3788,13 +3837,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     {
       const baseLog = deps.log;
       const originalQuestion = question;
-      const acceptedText = accepted || suggested ? candidate : null;
+      // 관측 분리 (삼순 2026-08-13 ③): `question_normalized` 는 **수용된 문장** 전용 칸이다.
+      // 제안만 한 후보는 별도 칸(`correction_candidate`)에 남긴다 — 같은 칸에 섞으면
+      // "이 문장으로 답했다" 와 "이 문장을 제안했다" 를 구분할 수 없어 오교정 감사가 깨진다.
+      const acceptedText = accepted ? candidate : null;
+      const suggestedText = suggested ? candidate : null;
       deps = {
         ...deps,
         log: (entry) => baseLog({
           ...entry,
           question: originalQuestion,
           questionNormalized: acceptedText,
+          correctionCandidate: suggestedText,
           normalizeStatus: normStatus,
           inputTokens: (entry.inputTokens ?? 0) + (normIn ?? 0),
           outputTokens: (entry.outputTokens ?? 0) + (normOut ?? 0),

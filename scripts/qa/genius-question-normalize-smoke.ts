@@ -21,6 +21,7 @@ import {
   digitSequencesMatch,
   evaluateNormalizedCandidate,
   classifyQuestionCorrectionCandidate,
+  CORRECTION_SUGGESTABLE_ROUTES,
   routeQuestion,
   type GlossaryEntry,
   type PlayerRef,
@@ -46,6 +47,7 @@ interface State {
   logs: {
     question: string;
     questionNormalized: string | null | undefined;
+    correctionCandidate: string | null | undefined;
     normalizeStatus: string | null | undefined;
     matchPath: string;
     inputTokens: number | null;
@@ -72,6 +74,7 @@ function makeDeps(state: State, withNormalizer = true): QaDeps {
       state.logs.push({
         question: entry.question,
         questionNormalized: entry.questionNormalized,
+        correctionCandidate: entry.correctionCandidate,
         normalizeStatus: entry.normalizeStatus,
         matchPath: entry.matchPath,
         inputTokens: entry.inputTokens,
@@ -115,8 +118,24 @@ async function main() {
     assert.equal(s.llmCalls, 0); // 선택 전 후보를 답변 경로에 절대 쓰지 않는다
     const log = s.logs.at(-1)!;
     assert.equal(log.question, "보끄가모야");
-    assert.equal(log.questionNormalized, "보크가 뭐야?");
+    // 관측 분리 (삼순 ③): 제안만 한 후보는 수용문 칸에 들어가면 안 된다.
+    assert.equal(log.questionNormalized ?? null, null);
+    assert.equal(log.correctionCandidate, "보크가 뭐야?");
     assert.equal(log.normalizeStatus, "suggested");
+  }
+
+  // 유저가 제안을 거절하면 원문 그대로 진행하고 **정규화를 다시 타지 않는다**.
+  // 다시 타면 같은 후보가 또 제안돼 카드가 무한 반복된다(취소 종결 경로).
+  {
+    const s = freshState({ normReply: "보크가 뭐야?" });
+    const deps = makeDeps(s);
+    deps.correctionDeclined = true;
+    const r = await answerQuestion("u1", "보끄가모야", deps);
+    assert.equal(s.normCalls.length, 0, "거절 후엔 정규화 재호출 0");
+    assert.notEqual(r.source, "question_correction", "같은 제안을 다시 내지 않는다");
+    const log = s.logs.at(-1)!;
+    assert.equal(log.question, "보끄가모야");
+    assert.equal(log.normalizeStatus, "declined");
   }
 
   // 유저가 제안 카드를 고른 뒤에만 exact 후보로 재질의한다. 정규화 LLM은 재호출하지 않는다.
@@ -153,6 +172,20 @@ async function main() {
     assert.deepEqual(r.correctionOptions, ["도루가 뭐야"]);
     assert.equal(s.llmCalls, 0);
     assert.equal(s.logs.at(-1)?.normalizeStatus, "suggested");
+  }
+
+  // ── 2-c. 착지 allowlist (삼순 2026-08-13 ②) ─────────────────────────────
+  // 답변이 안 나오는 라우트로 착지한 후보는 골라도 얻을 게 없으므로 제안하지 않는다.
+  for (const c of [
+    { reply: "고마워", why: "ack 로 착지" },
+    { reply: "문보경 홈런 몇 개야?", why: "history_hold 로 착지" },
+  ]) {
+    const s = freshState({ normReply: c.reply });
+    const r = await answerQuestion("u1", "보끄가모야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction", `${c.why} 후보는 제안 금지`);
+    const log = s.logs.at(-1)!;
+    assert.equal(log.correctionCandidate ?? null, null);
+    assert.equal(log.normalizeStatus, "rejected");
   }
 
   // ── 3. 미발동: 전용 라우트 질문은 정규화가 아예 안 탄다 ──────────────────
@@ -257,6 +290,12 @@ async function main() {
     assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "보크가 뭐야?", glossary, players), "suggest");
     assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "복가무야", glossary, players), "rejected");
     assert.equal(classifyQuestionCorrectionCandidate("김도영홈런30개", "김도영 홈런 40개", glossary, players), "rejected");
+    // 착지 allowlist 에 없는 라우트는 전부 거절된다 — 이게 삼순 ② 의 핵심 계약이다.
+    assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "고마워", glossary, players), "rejected");
+    assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "문보경 홈런 몇 개야?", glossary, players), "rejected");
+    assert.deepEqual([...CORRECTION_SUGGESTABLE_ROUTES].sort(),
+      ["baseball_rule_term", "career_leaderboard", "team_record"],
+      "제안 가능 라우트는 답변이 실제로 나오는 3개 폐쇄집합이다");
     const ev = (q: string, c: string) => evaluateNormalizedCandidate(q, c, glossary, players);
     assert.deepEqual(ev("김도영홈런몇개", "김도영 홈런 몇 개"), { accepted: true, status: "accepted_surface" });
     assert.deepEqual(ev("보끄가모야", "보크가 뭐야?"), { accepted: false, status: "rejected" }); // Tier B 오탈자 HOLD

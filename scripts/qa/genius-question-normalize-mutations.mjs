@@ -33,9 +33,34 @@ const mutations = [
     replace: 'if (false) return "rejected";',
   },
   {
-    name: "M3 unsafe residual 후보도 제안",
-    find: '  if (candidateRoute === "llm_scope_gate") return "rejected";\n  return "suggest";',
-    replace: '  return "suggest";',
+    // 삼순 2026-08-13 ②: 착지 allowlist 를 "blocked/residual 만 제외" 로 되돌리면
+    // ack·history_hold 같은 답 못 하는 라우트 후보까지 제안된다.
+    name: "M3 착지 allowlist 를 non-blocked 로 완화",
+    find: 'return CORRECTION_SUGGESTABLE_ROUTES.includes(candidateRoute) ? "suggest" : "rejected";',
+    replace: 'return candidateRoute !== "llm_scope_gate" ? "suggest" : "rejected";',
+  },
+  {
+    // allowlist 자체를 넓혀도 같은 사고가 난다 — 상수 목록도 계약이다.
+    name: "M3b allowlist 에 답 못 하는 라우트 추가",
+    find: '  "career_leaderboard",\n];',
+    replace: '  "career_leaderboard",\n  "ack",\n  "history_hold",\n];',
+  },
+  {
+    // 삼순 ③ 취소 종결: 거절을 무시하면 정규화가 다시 돌아 같은 제안이 무한 반복된다.
+    name: "M9 거절 플래그를 무시하고 정규화 재진입",
+    find: 'if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm',
+    replace: 'if (!deps.pickedNormalizedQuestion && deps.normalizeQuestionLlm',
+  },
+  {
+    // 삼순 ③ 관측 분리: 제안문을 수용문 칸에 섮으면 오교정 감사 분모가 깨진다.
+    name: "M10 제안 후보를 수용문 칸에 섮음",
+    find: 'const acceptedText = accepted ? candidate : null;',
+    replace: 'const acceptedText = accepted || suggested ? candidate : null;',
+  },
+  {
+    name: "M11 제안 전용 관측 칸 기록 제거",
+    find: 'correctionCandidate: suggestedText,',
+    replace: '',
   },
   {
     name: "M4 선택 전 Tier B 자동수용",
