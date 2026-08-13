@@ -13,11 +13,16 @@
  *  A3 67건 전부: cmd·permissive·roles 불변 + 래핑 완료, 나머지 36건 fingerprint 완전 불변
  *  A6 동작 동일성: posts DELETE(작성자/타인/anon) before=after
  *  A7 mutation RED: USING(true) 변조(bare auth 없음) → EXCEPTION으로 전체 거부
+ *  A7b mutation RED: 테이블은 있는데 대상 policy만 부재 → EXCEPTION (부분 성공 차단)
  *  A8 mutation RED: 이미 적용된 DB에 재실행(이중 적용) → EXCEPTION
  *  A9 clean-chain: 빈 DB replay 성공 (no-op)
  *  A10 rollback roundtrip: replay → rollback.sql 실행 → 103건 전부 baseline
- *      fingerprint로 완전 복원
+ *      fingerprint로 완전 복원 + 복원 후 재적용 성공
+ *  A10b rollback-drift RED: 적용 후 정책 변조 → rollback 전건 거부
+ *  A10c rollback-missing RED: 적용 후 정책 DROP → rollback 전건 거부
+ *  T-check 생성기 SSOT: generate --check로 committed 출력 byte 일치 고정 (spawn 실패도 FAIL)
  */
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
@@ -212,6 +217,19 @@ async function setupBehaviorFixture(db: PGlite) {
 async function main() {
   assert("T0 initplan 대상 67건 (생성기와 동일 규칙)", TARGETS.length === 67, TARGETS.length);
 
+  // --- T-check: 생성기 SSOT — committed 출력이 재생성 결과와 byte 일치 (fail-close)
+  {
+    const r = spawnSync("python3", [join(ROOT, "scripts", "db", "generate-advisor-step2-migration.py"), "--check"], {
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    assert(
+      "T-check 생성기 --check: committed forward/rollback 일치",
+      r.error === undefined && r.status === 0,
+      r.error ? String(r.error) : `${r.status} ${String(r.stdout).slice(0, 200)}`,
+    );
+  }
+
   // --- baseline 동작 스냅샷
   let baselineBehavior = "";
   {
@@ -302,11 +320,45 @@ async function main() {
     await db.close();
   }
 
+  // --- A7b mutation RED: 테이블 존재 + 대상 policy만 부재 → 거부 (부분 성공 차단)
+  {
+    const db = await prodLikeDb();
+    await db.exec(`DROP POLICY "blocks_select" ON public.user_blocks;`);
+    const r = await run(db, migrationSql);
+    assert("A7b missing policy (table exists) → EXCEPTION (RED)", !r.ok, "migration must refuse");
+    assert("A7b error names missing", /missing while table exists/i.test(r.error), r.error.slice(0, 150));
+    await db.close();
+  }
+
   // --- A9 clean-chain: 빈 DB → no-op 성공
   {
     const db = new PGlite();
     const r = await run(db, migrationSql);
     assert("A9 clean-chain (empty db) replay succeeds", r.ok, r.error);
+    await db.close();
+  }
+
+  // --- A10b rollback-drift RED: 적용 후 변조 → rollback 전건 거부
+  {
+    const db = await prodLikeDb();
+    const r1 = await run(db, migrationSql);
+    assert("A10b setup: migration applied", r1.ok, r1.error);
+    await db.exec(`ALTER POLICY "blocks_select" ON public.user_blocks USING (true);`);
+    const rb = await run(db, rollbackSql);
+    assert("A10b drifted post-migration state → rollback EXCEPTION (RED)", !rb.ok, "rollback must refuse");
+    assert("A10b error names post-migration drift", /not in post-migration state/i.test(rb.error), rb.error.slice(0, 150));
+    await db.close();
+  }
+
+  // --- A10c rollback-missing RED: 적용 후 정책 DROP → rollback 전건 거부
+  {
+    const db = await prodLikeDb();
+    const r1 = await run(db, migrationSql);
+    assert("A10c setup: migration applied", r1.ok, r1.error);
+    await db.exec(`DROP POLICY "blocks_select" ON public.user_blocks;`);
+    const rb = await run(db, rollbackSql);
+    assert("A10c missing policy → rollback EXCEPTION (RED)", !rb.ok, "rollback must refuse");
+    assert("A10c error names missing", /missing/i.test(rb.error), rb.error.slice(0, 150));
     await db.close();
   }
 

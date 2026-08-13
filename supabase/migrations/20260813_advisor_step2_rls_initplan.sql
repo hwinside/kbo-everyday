@@ -1,12 +1,12 @@
 -- Supabase advisor 2단계-A — RLS initplan 67건 (initplan ONLY)
--- 2026-08-13 하린아빠 착수 승인 + 삼순 1차 NO-GO 반영 (#infra 1786505729.677579)
--- 생성기: scripts/db/generate-advisor-step2-migration.py (수동 편집 금지)
+-- 2026-08-13 하린아빠 착수 승인 + 삼순 1·2차 NO-GO 반영 (#infra 1786505729.677579)
+-- 생성기: scripts/db/generate-advisor-step2-migration.py (수동 편집 금지 — --check로 결속)
 -- baseline: scripts/qa/fixtures/rls-policies-baseline-20260813.json (production 기계 추출)
--- rollback: scripts/db/rollback-advisor-step2-rls-initplan.sql (실행형 역방향 전문)
+-- rollback: scripts/db/rollback-advisor-step2-rls-initplan.sql (가드형 역방향, chain 밖)
 --
--- 가드(fail-closed): full fingerprint(cmd|permissive|roles|qual|check) md5가
--- baseline과 일치할 때만 ALTER. 불일치 → EXCEPTION (변조·drift·이중 적용 전부 거부).
--- 정책·테이블 부재 → skip (clean chain). 단일 DO 블록 = 원자 적용.
+-- 가드(fail-closed): full fingerprint(cmd|permissive|roles|qual|check) md5 일치 시에만
+-- ALTER. 불일치·정책 부재(테이블 존재) → EXCEPTION. 테이블 부재만 skip (clean chain).
+-- 단일 DO 블록 = 원자 적용 (부분 성공 없음).
 
 SET lock_timeout = '5s';
 
@@ -97,14 +97,16 @@ BEGIN
     ('youtube_quota_ledger', $p66$yql_service_all$p66$, '5364e1efc87497c6dbe48cf88208678c', $u66$((select auth.role()) = 'service_role'::text)$u66$, $c66$((select auth.role()) = 'service_role'::text)$c66$)
   ) AS t(tbl, pol, expected_fp, new_using, new_check)
   LOOP
-    IF to_regclass('public.' || r.tbl) IS NULL THEN CONTINUE; END IF;
+    IF to_regclass('public.' || r.tbl) IS NULL THEN CONTINUE; END IF; -- clean chain: 테이블 자체가 없음
     SELECT md5(coalesce(cmd,'') || '|' || coalesce(permissive,'') || '|' ||
                coalesce(roles::text,'') || '|' || coalesce(qual,'') || '|' || coalesce(with_check,''))
       INTO cur_fp FROM pg_policies
      WHERE schemaname='public' AND tablename=r.tbl AND policyname=r.pol;
-    IF cur_fp IS NULL THEN CONTINUE; END IF; -- 정책 부재 (clean chain)
+    IF cur_fp IS NULL THEN
+      RAISE EXCEPTION 'advisor_step2a: policy %.% missing while table exists — refusing (drift)', r.tbl, r.pol;
+    END IF;
     IF cur_fp <> r.expected_fp THEN
-      RAISE EXCEPTION 'advisor_step2a: policy fingerprint drift on %.% — refusing (baseline과 다름: 변조/이중적용/드리프트)', r.tbl, r.pol;
+      RAISE EXCEPTION 'advisor_step2a: policy fingerprint drift on %.% — refusing (변조/이중적용/드리프트)', r.tbl, r.pol;
     END IF;
     EXECUTE format('ALTER POLICY %I ON public.%I %s %s', r.pol, r.tbl,
       CASE WHEN r.new_using IS NOT NULL THEN 'USING (' || r.new_using || ')' ELSE '' END,
