@@ -16,6 +16,36 @@ const MUTATIONS = [
     to: "  void unsigned;",
   },
   {
+    name: "m2a 선수 intent 신호 제거 — 불일치 순번으로 오결속",
+    file: EVENT,
+    from: '  const intentCount = Number(named.length === 1) + Number(Boolean(ordinal)) +',
+    to: '  const intentCount = 0 + Number(Boolean(ordinal)) +',
+  },
+  {
+    name: "m2b 순번 intent 신호 제거 — 선수·최초와 경쟁해도 오결속",
+    file: EVENT,
+    from: '  const intentCount = Number(named.length === 1) + Number(Boolean(ordinal)) +',
+    to: '  const intentCount = Number(named.length === 1) + 0 +',
+  },
+  {
+    name: "m2c 최초 intent 신호 제거 — 최근과 경쟁해도 오결속",
+    file: EVENT,
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
+    to: '    0 + Number(hasLatest) + Number(hasCount);',
+  },
+  {
+    name: "m2d 최근 intent 신호 제거 — 최초·순번과 경쟁해도 오결속",
+    file: EVENT,
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
+    to: '    Number(hasFirst) + 0 + Number(hasCount);',
+  },
+  {
+    name: "m2e count intent 신호 제거 — 순번과 경쟁해도 오결속",
+    file: EVENT,
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
+    to: '    Number(hasFirst) + Number(hasLatest) + 0;',
+  },
+  {
     name: "m3 알 수 없는 선수명 잔여를 전체 목록으로 오결속",
     file: EVENT,
     from: '  return residue.length === 0 ? query : null;',

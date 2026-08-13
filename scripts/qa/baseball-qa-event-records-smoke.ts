@@ -59,6 +59,18 @@ check("해석: count/list/최초/최근/순번/선수는 닫힌 query로 변환"
   assert.deepEqual(resolveEventRecordQuery("선동열 노히트노런", PLAYER_NAMES), { kind: "player", player: "선동열" });
 });
 
+check("해석 fail-close: 경쟁 intent를 우선순위로 하나만 골라 오결속하지 않는다", () => {
+  for (const question of [
+    "선동열 9번째 노히트노런",
+    "최초 최근 노히트노런",
+    "9번째 최초 노히트노런",
+    "9번째 최근 노히트노런",
+    "9번째 노히트노런 몇 번?",
+  ]) {
+    assert.equal(resolveEventRecordQuery(question, PLAYER_NAMES), null, question);
+  }
+});
+
 check("조회: 최초·최근·9번째·선수 exact, 범위 밖 순번은 null", () => {
   assert.equal(resolveEventRecord(snapshot, { kind: "first" })?.events[0].player, "방수원");
   assert.equal(resolveEventRecord(snapshot, { kind: "latest" })?.events[0].player, "맥과이어");
@@ -122,6 +134,20 @@ checkAsync("종단 fail-close: 미배선·범위 밖 순번은 history_hold, 조
   assert.equal(missing.source, "history_hold");
   const failed = await answerQuestion("u1", "최근 노히트노런", deps({ fetchEventRecord: async () => { throw new Error("boom"); } }));
   assert.equal(failed.source, "error");
+});
+
+checkAsync("종단 fail-close: 경쟁 intent를 우선순위로 하나만 골라 오결속하지 않는다", async () => {
+  for (const question of [
+    "선동열 9번째 노히트노런",
+    "최초 최근 노히트노런",
+    "9번째 최초 노히트노런",
+    "9번째 최근 노히트노런",
+    "9번째 노히트노런 몇 번?",
+  ]) {
+    const result = await answerQuestion("u1", question, deps());
+    assert.equal(result.source, "history_hold", `${question} -> ${result.source} :: ${result.answer}`);
+    assert.ok(!result.answer.includes("선동열") && !result.answer.includes("정민철"), question);
+  }
 });
 
 checkAsync("종단 fail-close: 미지원 한정어 5축을 버리고 정규시즌 14번으로 오결속하지 않는다", async () => {

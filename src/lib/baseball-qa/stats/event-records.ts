@@ -65,15 +65,22 @@ export function resolveEventRecordQuery(
   if (named.length > 1) return null;
 
   const ordinal = normalized.match(/(?:역대)?(\d{1,2})(?:번째|호)/);
+  const hasFirst = /(?:최초|처음|첫번째)/.test(normalized);
+  const hasLatest = /(?:최근|마지막|최신)/.test(normalized);
+  const hasCount = /(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized);
+  const intentCount = Number(named.length === 1) + Number(Boolean(ordinal)) +
+    Number(hasFirst) + Number(hasLatest) + Number(hasCount);
+  if (intentCount > 1) return null;
+
   const query: EventRecordQuery = named.length === 1
     ? { kind: "player", player: named[0] }
     : ordinal
       ? { kind: "ordinal", ordinal: Number(ordinal[1]) }
-      : /(?:최초|처음|첫번째|1호)/.test(normalized)
+      : hasFirst
         ? { kind: "first" }
-        : /(?:최근|마지막|최신)/.test(normalized)
+        : hasLatest
           ? { kind: "latest" }
-          : /(?:몇번|몇차례|몇명|총몇|개수|횟수)/.test(normalized)
+          : hasCount
             ? { kind: "count" }
             : { kind: "list" };
 
