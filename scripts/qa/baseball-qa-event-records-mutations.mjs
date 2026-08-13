@@ -58,6 +58,18 @@ const MUTATIONS = [
     to: '|몇번|몇차례|몇명|총몇|총몇번|총몇차례|총몇명|개수|횟수|',
   },
   {
+    name: "m2g 전체목록 원자 소비 제거 — 지원 list 과차단",
+    file: EVENT,
+    from: '|기록|전체목록|달성선수|목록|전부|',
+    to: '|기록|달성선수|목록|전부|',
+  },
+  {
+    name: "m2h 달성선수 원자 소비 제거 — 지원 list 과차단",
+    file: EVENT,
+    from: '|기록|전체목록|달성선수|목록|전부|',
+    to: '|기록|전체목록|목록|전부|',
+  },
+  {
     name: "m3 알 수 없는 선수명 잔여를 전체 목록으로 오결속",
     file: EVENT,
     from: '  return residue.length === 0 ? query : null;',
