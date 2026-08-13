@@ -179,13 +179,13 @@ const mutations = [
     replace: '      quota_released = v_job.quota_released,',
   },
   {
-    // settle 이 소유권(status='processing')을 안 보면 이미 ready/awaiting 로 넘어간 행을
-    // 다른 worker 가 덮어 진행 상태를 되돌린다(유저 선택이 날아간다).
-    name: "M20c settle 의 processing 소유권 조건 제거",
+    // 반납 전 fence 가 없으면 ready 일반답변은 quota 만 환불되고, 선택 후 재claim 된
+    // processing 행은 구 worker 가 다시 교정 카드로 되돌릴 수 있다.
+    name: "M20c settle 의 반납 전 결정 fence 제거",
     file: MIGRATION,
     gate: "correctionDb",
-    find: "  WHERE message_id = p_message_id\n    AND status = 'processing';",
-    replace: '  WHERE message_id = p_message_id;',
+    find: "  IF v_job.status <> 'processing'\n     OR v_job.picked_normalized_question IS NOT NULL\n     OR v_job.correction_declined\n     OR v_job.correction_options IS NOT NULL THEN\n    RETURN false;\n  END IF;",
+    replace: "  IF false THEN\n    RETURN false;\n  END IF;",
   },
   {
     // 배선 축: 서버가 settle 경로를 안 고르고 비원자 update 로 돌아가면

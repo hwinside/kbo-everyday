@@ -328,8 +328,12 @@ async function main() {
   await reserve(db, 14);
   await markSuggested(db, 14, "보크가 뭐야?");
   await respond(db, 14, "보크가 뭐야?"); // 유저가 골랐다 → status='queued', 선택 고정
+  // 실제 재현: 선택 뒤 즉시 경로/cron 이 다시 claim 해 status 가 processing 으로 돌아온다.
+  // status 하나만 보면 구 worker 와 새 worker 를 구분할 수 없고, durable 결정 칸이 fence 다.
+  await db.query(`UPDATE genius_question_jobs SET status='processing' WHERE message_id=14`);
   const beforeLate = (await db.query<Record<string, unknown>>(
-    `SELECT status, picked_normalized_question, correction_options FROM genius_question_jobs WHERE message_id=14`)).rows[0];
+    `SELECT status, picked_normalized_question, correction_declined, correction_options
+       FROM genius_question_jobs WHERE message_id=14`)).rows[0];
   const usedBeforeLate = await usedToday(db);
   const lateSettle = await settleSuggestion(db, 14, "보크가 뭐야?"); // 좌비 worker
   const afterLate = (await db.query<Record<string, unknown>>(
@@ -338,12 +342,26 @@ async function main() {
     assert.equal(lateSettle, false);
   });
   await check("T14b 좌비 settle 이 유저 선택을 되돌리지 않는다", () => {
-    assert.equal(afterLate.status, beforeLate.status, "진행 상태가 제안으로 후퇴했다");
+    assert.equal(afterLate.status, beforeLate.status, "재claim processing 이 제안 ready 로 후퇴했다");
     assert.equal(afterLate.picked_normalized_question, "보크가 뭐야?", "선택이 날아갔다");
     assert.equal(afterLate.correction_options, null, "카드가 다시 뜼워졌다");
   });
   await check("T14c 좌비 settle 은 quota 를 다시 건드리지 않는다", async () => {
     assert.equal(await usedToday(db), usedBeforeLate);
+  });
+
+  // 일반 답변이 먼저 ready 된 뒤 늦은 correction worker 가 와도 환불 0.
+  await seedJob(db, 16);
+  await reserve(db, 16);
+  await db.query(
+    `UPDATE genius_question_jobs SET status='ready', answer='일반 답변', source='llm' WHERE message_id=16`,
+  );
+  const usedBeforeReadyLate = await usedToday(db);
+  await check("T14d 완료 일반답변에 늦은 settle 은 false", async () => {
+    assert.equal(await settleSuggestion(db, 16, "보크가 뭐야?"), false);
+  });
+  await check("T14e 완료 일반답변의 quota 는 환불되지 않는다", async () => {
+    assert.equal(await usedToday(db), usedBeforeReadyLate);
   });
 
   // ── T15 ready 전환 **경로 선택**이 서버 SSOT 에서 실제로 갈리는가 ─────────

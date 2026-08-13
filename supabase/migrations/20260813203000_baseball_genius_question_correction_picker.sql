@@ -76,6 +76,17 @@ BEGIN
     RAISE EXCEPTION USING errcode = '22023', message = 'genius question job missing';
   END IF;
 
+  -- quota 를 건드리기 **전에** 이 worker 가 아직 최초 교정 판정의 processing 행을
+  -- 소유하는지 확인한다. 유저 선택/거절 뒤 prepare→claim 으로 status 가 다시 processing 이
+  -- 되어도 결정 칸은 남으므로, 늦게 깨어난 구 worker 는 여기서 false 로 물러난다.
+  -- 이 검증이 반납 뒤에 있으면 ready 일반답변도 quota 만 환불되는 무료 질문이 된다.
+  IF v_job.status <> 'processing'
+     OR v_job.picked_normalized_question IS NOT NULL
+     OR v_job.correction_declined
+     OR v_job.correction_options IS NOT NULL THEN
+    RETURN false;
+  END IF;
+
   -- 반납은 release RPC 와 **같은 계약**이다(예약된 적 없거나 이미 반납 = 멱등 no-op,
   -- 반납은 예약했던 바로 그 날짜 버킷에서). 다른 곳에 복사하지 않고 여기서 바로 한다 —
   -- 별도 호출로 나누는 순간 다시 분리 가능한 두 쓰기가 된다.
@@ -104,7 +115,11 @@ BEGIN
       END,
       updated_at = now()
   WHERE message_id = p_message_id
-    AND status = 'processing';
+    AND user_id = p_user_id
+    AND status = 'processing'
+    AND picked_normalized_question IS NULL
+    AND correction_declined = false
+    AND correction_options IS NULL;
   GET DIAGNOSTICS v_changed = ROW_COUNT;
   RETURN v_changed = 1;
 END;
