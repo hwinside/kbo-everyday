@@ -272,7 +272,7 @@
     "qa:venue-player-comparison": "tsx scripts/qa/venue-player-comparison-smoke.ts",
     "qa:venue-story-comments": "tsx scripts/qa/venue-story-comments-smoke.ts",
     "qa:venue-story-comment-render": "tsx scripts/qa/venue-story-comment-submit-render.ts",
-    "qa:venue-story-progress-waapi": "tsx scripts/qa/venue-story-progress-waapi.ts",
+    "qa:venue-story-progress-waapi": "NODE_ENV=development IS_REACT_ACT_ENVIRONMENT=true tsx scripts/qa/venue-story-progress-waapi.ts",
     "qa:venue-story-comment-rpc": "bash scripts/qa/venue-story-comment-rpc-concurrency.sh",
     "qa:ios-story-keyboard": "node scripts/qa/browserstack-ios-story-comments-keyboard.mjs",
     "qa:pick-myteam-game": "tsx scripts/qa/pick-myteam-game-smoke.ts",
