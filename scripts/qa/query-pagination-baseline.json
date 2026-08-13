@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "cf1638a129692b322a9ed9157018326e17025fe1",
+  "generatedFrom": "28b1fd80659221d4e8f21b7be5aa4e2d188b35c4",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -701,13 +701,6 @@
       "file": "src/lib/supabase/useDM.ts",
       "subject": "profiles",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "83efd63c04a2b733517c": {
-      "count": 1,
-      "kind": "ambiguous_growing_limit",
-      "file": "src/app/api/shorts-feed/route.ts",
-      "subject": "videos",
-      "detail": "growing-table limit requires an explicit bounded annotation or a structurally verified keyset helper"
     },
     "83fa57797e3a29185ac4": {
       "count": 1,

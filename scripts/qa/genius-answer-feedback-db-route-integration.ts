@@ -32,6 +32,15 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 
 const OWNER = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
+
+// dead-token guard의 exp 프리체크는 JWT 형태가 아닌 토큰을 로컬 거절하므로
+// 테스트 토큰도 실제와 같은 JWT 형태여야 한다 (서명 검증은 shim이 대신한다).
+const _b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const _testJwt = (sub: string) =>
+  `${_b64({ alg: "HS256", typ: "JWT" })}.${_b64({ sub, exp: Math.floor(Date.now() / 1000) + 3600 })}.test-sig`;
+const OWNER_TOKEN = _testJwt("owner");
+const OTHER_TOKEN = _testJwt("other");
+
 const GENIUS = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
 let pass = 0;
@@ -138,7 +147,7 @@ async function installSupabaseShim(db: PGlite) {
     rpc: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   };
   client.auth.getUser = async (token: string) => {
-    const userId = token === "owner-token" ? OWNER : token === "other-token" ? OTHER : null;
+    const userId = token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
     return userId
       ? { data: { user: { id: userId } }, error: null }
       : { data: { user: null }, error: { message: "invalid token" } };
@@ -266,7 +275,7 @@ async function main() {
     }
   }
 
-  async function post(aid: number, body: Record<string, unknown>, token: string | null = "owner-token") {
+  async function post(aid: number, body: Record<string, unknown>, token: string | null = OWNER_TOKEN) {
     return route.POST(authed("http://localhost/api/baseball-qa/feedback", token, {
       method: "POST",
       body: JSON.stringify({ answerMessageId: aid, ...body }),
@@ -505,12 +514,12 @@ async function main() {
     await seed({ qid, aid, matchPath: "rag", replyKind: "answer" });
     await post(aid, { desired: -1, expectedPrev: null });
     const res = await route.GET(authed(
-      `http://localhost/api/baseball-qa/feedback?answerMessageIds=${aid}`, "owner-token"));
+      `http://localhost/api/baseball-qa/feedback?answerMessageIds=${aid}`, OWNER_TOKEN));
     const body = (await res.json()) as { ratings?: Record<string, number> };
     ok("⑥ 본인 표 복원", res.status === 200 && body.ratings?.[String(aid)] === -1, JSON.stringify(body));
 
     const otherRes = await route.GET(authed(
-      `http://localhost/api/baseball-qa/feedback?answerMessageIds=${aid}`, "other-token"));
+      `http://localhost/api/baseball-qa/feedback?answerMessageIds=${aid}`, OTHER_TOKEN));
     const otherBody = (await otherRes.json()) as { ratings?: Record<string, number> };
     ok("⑥ 타인 표는 안 보인다", Object.keys(otherBody.ratings ?? {}).length === 0, JSON.stringify(otherBody));
   }

@@ -45,6 +45,7 @@ interface ShortsFeedItem {
   publishedAt: string;
   playerIds?: string[];
   teamId?: string | null;
+  playerId?: string | null;
   playerName?: string | null;
 }
 
@@ -109,8 +110,9 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
     const favPlayerMap = new Map(favPlayers.map(p => [p.playerId, p.name]));
-    // 마이팀/전체 scope는 순수 팀/전체 피드 — 최애선수 병합 쿼리 방지 위해 player_ids 미전송
-    const playerIdsParam = scope === "favorite_players" && favPlayers.length > 0
+    // 마이팀 scope는 순수 팀 피드 — 최애선수 병합 쿼리 방지 위해 player_ids 미전송.
+    // 전체 scope는 마이팀+최애선수 병합(2026-08-13 재정의)이므로 player_ids 전송.
+    const playerIdsParam = (scope === "favorite_players" || scope === "all") && favPlayers.length > 0
       ? `&player_ids=${encodeURIComponent(favPlayers.map(p => p.playerId).join(","))}`
       : "";
 
@@ -123,7 +125,12 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
         if (!gateRef.current.isCurrent(token)) return; // 늦은 이전 요청 — 버림
         const items: VideoItem[] = ((data.items ?? []) as ShortsFeedItem[]).map((v) => {
           // Label: 최애선수명 > 태깅된 선수명 > 팀명 > 없음
-          const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
+          // 최애 판별도 scalar playerId ∪ playerIds union — 서버 쿼리/필터와 동일 계약
+          // (scalar 단일 태깅 최애가 일반 선수(amber)로 보이던 결손, 삼순 2차 NO-GO #3)
+          const matchedPlayer =
+            v.playerId && favPlayerMap.has(v.playerId)
+              ? v.playerId
+              : (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
           const label = matchedPlayer
             ? favPlayerMap.get(matchedPlayer)!

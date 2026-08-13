@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { verifyAccessToken, getVerifiedUserIdFromCookies } from "@/lib/auth/verified-user";
 import { normalizeNickname, validateNickname } from "@/lib/validation/nickname";
 
 export async function POST(request: NextRequest) {
@@ -21,30 +20,17 @@ export async function POST(request: NextRequest) {
     // 1. 세션에서 유저 확인 (쿠키 또는 Authorization 헤더)
     let userId: string | null = null;
 
-    // Authorization 헤더로 먼저 시도
+    // Authorization 헤더로 먼저 시도 (dead-token 가드 경유)
     const authHeader = request.headers.get("authorization");
     if (authHeader?.startsWith("Bearer ")) {
       const token = authHeader.slice(7);
-      const admin = getSupabaseAdmin();
-      const { data: { user } } = await admin.auth.getUser(token);
+      const user = await verifyAccessToken(token);
       userId = user?.id ?? null;
     }
 
-    // 쿠키로 fallback
+    // 쿠키로 fallback (동일 가드 경유 — 무효 토큰 재호출 구멍 차단)
     if (!userId) {
-      const cookieStore = await cookies();
-      const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-          cookies: {
-            getAll() { return cookieStore.getAll(); },
-            setAll() { /* read-only */ },
-          },
-        }
-      );
-      const { data: { user } } = await supabase.auth.getUser();
-      userId = user?.id ?? null;
+      userId = await getVerifiedUserIdFromCookies();
     }
 
     if (!userId) {

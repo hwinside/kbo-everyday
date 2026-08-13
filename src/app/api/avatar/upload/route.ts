@@ -1,25 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { verifyAccessToken } from "@/lib/auth/verified-user";
 
 const BUCKET = "photos";
 const MAX_SIZE = 500 * 1024; // 500KB
 
 /** 서버사이드 아바타 업로드 — service role로 RLS 우회 */
 export async function POST(req: NextRequest) {
-  // 1. 인증 확인 (anon key로 유저 세션 검증)
+  // 1. 인증 확인 (dead-token 가드 경유 — 무효 토큰의 Supabase 호출 차단)
   const authHeader = req.headers.get("authorization");
   if (!authHeader) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const anonClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { global: { headers: { Authorization: authHeader } } },
-  );
-
-  const { data: { user }, error: authError } = await anonClient.auth.getUser();
-  if (authError || !user) {
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const user = await verifyAccessToken(token);
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

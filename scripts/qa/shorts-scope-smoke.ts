@@ -46,7 +46,11 @@ check("legacy _ALL → all", resolveShortsQueryPlan(null, "_ALL", 0).kind, "all"
 check("scope=favorite_players → player_only (팀 무관)", resolveShortsQueryPlan("favorite_players", "LG", 3).kind, "player_only");
 check("scope=favorite_players team=_ALL → player_only", resolveShortsQueryPlan("favorite_players", "_ALL", 3).kind, "player_only");
 check("scope=my_team → team_only (최애 있어도 병합 안 함)", resolveShortsQueryPlan("my_team", "LG", 3).kind, "team_only");
-check("scope=all → all (team 파라미터 무시)", resolveShortsQueryPlan("all", "LG", 3).kind, "all");
+// 2026-08-13 재정의: 전체 = 마이팀 + 최애선수 병합 (ETC 뉴스 숏츠 도배 차단)
+check("scope=all 팀+최애 → mixed(마이팀+최애선수 병합)", resolveShortsQueryPlan("all", "LG", 3).kind, "mixed");
+check("scope=all 팀만 → team_only", resolveShortsQueryPlan("all", "LG", 0).kind, "team_only");
+check("scope=all 마이팀 미지정+최애 → player_only", resolveShortsQueryPlan("all", "_ALL", 3).kind, "player_only");
+check("scope=all 둘 다 미지정 → empty (팀필터 없는 전체 쿼리 금지)", resolveShortsQueryPlan("all", "_ALL", 0).kind, "empty");
 
 // --- ③ 조건 미충족 → 빈 피드 (다른 scope 임의 폴백 금지) ---
 check("scope=favorite_players 최애 미지정 → empty", resolveShortsQueryPlan("favorite_players", "LG", 0).kind, "empty");
@@ -57,7 +61,8 @@ check("legacy LG 혼합 → LG 합류 ON", includesLgTeamFeed(resolveShortsQuery
 check("legacy LG 팀만 → LG 합류 ON", includesLgTeamFeed(resolveShortsQueryPlan(null, "LG", 0), "LG"), true);
 check("scope=my_team LG → LG 합류 ON", includesLgTeamFeed(resolveShortsQueryPlan("my_team", "LG", 0), "LG"), true);
 check("scope=favorite_players → LG 합류 OFF", includesLgTeamFeed(resolveShortsQueryPlan("favorite_players", "LG", 3), "LG"), false);
-check("scope=all team=LG → LG 합류 OFF (행별 자기 팀 라벨)", includesLgTeamFeed(resolveShortsQueryPlan("all", "LG", 3), "LG"), false);
+check("scope=all team=LG → LG 합류 ON (마이팀 병합이므로 LG 팀 피드 포함)", includesLgTeamFeed(resolveShortsQueryPlan("all", "LG", 3), "LG"), true);
+check("scope=all 마이팀 미지정 → LG 합류 OFF (player_only)", includesLgTeamFeed(resolveShortsQueryPlan("all", "_ALL", 3), "_ALL"), false);
 check("타 팀 → LG 합류 OFF", includesLgTeamFeed(resolveShortsQueryPlan("my_team", "KIA", 0), "KIA"), false);
 
 // --- 피드 내 중복 제거 유지 (LG 합류 dedupe — #826 계약) ---
