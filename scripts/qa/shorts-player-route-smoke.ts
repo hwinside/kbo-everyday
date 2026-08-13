@@ -78,8 +78,21 @@ function videoSupabase(rows: VideoRow[]) {
       let selected = [...rows];
       const query: any = {
         select: () => query,
-        eq: () => query,
-        neq: () => query,
+        // team 쿼리의 eq(team_id)를 실제 필터링 — no-op이면 타팀 scalar 행이
+        // 팀 쿼리로도 들어와 선수 union 쿼리가 깨져도 PASS하는 false-positive가
+        // 된다 (2026-08-13 삼순 2차 NO-GO #1).
+        eq: (column: string, value: unknown) => {
+          if (column === "team_id") {
+            selected = selected.filter((row) => row.team_id === value);
+          }
+          return query;
+        },
+        neq: (column: string, value: unknown) => {
+          if (column === "team_id") {
+            selected = selected.filter((row) => row.team_id !== value);
+          }
+          return query;
+        },
         or: (expr: string) => {
           // 최애선수 union 필터(player_id scalar + player_ids 배열)만 실제 필터링.
           // 그 외(LG 제목 역조회 title.ilike)는 no-op 유지.
@@ -502,6 +515,39 @@ async function finishAsyncChecks() {
   check(
     "scope=all 최애 미설정 → 마이팀만 (ETC·타팀 제외)",
     allTeamOnlyIds.sort().join(",") === "kia-son-dupe,kia-team",
+  );
+
+  // --- 외부 입력 sanitize 회귀 (삼순 2차 NO-GO #2) ---
+  // malformed/주입 시도 토큰은 버려지고 숫자 canonical ID만 쿼리에 도달해야 한다.
+  const malformedResponse = await routeFor(allScopeRows)(
+    new NextRequest(
+      "http://localhost/api/shorts-feed?scope=all&team=KIA&limit=30&player_ids=" +
+        encodeURIComponent(
+          "77532,77532, 77532 ,abc,or(,player_ids.ov.{x},77532);--,",
+        ),
+    ),
+  );
+  check("malformed player_ids에도 200", malformedResponse.status === 200);
+  const malformedIds = (
+    (await malformedResponse.json()).items as Array<{ id: string }>
+  ).map((item) => item.id);
+  check(
+    "malformed 토큰 필터링 후 숫자 ID만 적용 (결과 = 정상 union과 동일)",
+    malformedIds.sort().join(",") === "kia-son-dupe,kia-team,nc-son-scalar",
+  );
+
+  // 최대 5개 제한: 6번째 ID(77532)는 잘려 scalar 최애 행이 빠져야 한다.
+  const overCapResponse = await routeFor(allScopeRows)(
+    new NextRequest(
+      "http://localhost/api/shorts-feed?scope=all&team=KIA&limit=30&player_ids=1,2,3,4,5,77532",
+    ),
+  );
+  const overCapIds = (
+    (await overCapResponse.json()).items as Array<{ id: string }>
+  ).map((item) => item.id);
+  check(
+    "player_ids 6개 입력 시 앞 5개만 적용 (77532 제외 확인)",
+    !overCapIds.includes("nc-son-scalar"),
   );
 
   console.log(`\n${pass} passed, ${fail} failed`);

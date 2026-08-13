@@ -45,6 +45,7 @@ interface ShortsFeedItem {
   publishedAt: string;
   playerIds?: string[];
   teamId?: string | null;
+  playerId?: string | null;
   playerName?: string | null;
 }
 
@@ -124,7 +125,12 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
         if (!gateRef.current.isCurrent(token)) return; // 늦은 이전 요청 — 버림
         const items: VideoItem[] = ((data.items ?? []) as ShortsFeedItem[]).map((v) => {
           // Label: 최애선수명 > 태깅된 선수명 > 팀명 > 없음
-          const matchedPlayer = (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
+          // 최애 판별도 scalar playerId ∪ playerIds union — 서버 쿼리/필터와 동일 계약
+          // (scalar 단일 태깅 최애가 일반 선수(amber)로 보이던 결손, 삼순 2차 NO-GO #3)
+          const matchedPlayer =
+            v.playerId && favPlayerMap.has(v.playerId)
+              ? v.playerId
+              : (v.playerIds ?? []).find((id: string) => favPlayerMap.has(id));
           const teamLabel = v.teamId ? (TEAM_LABEL[v.teamId] ?? null) : null;
           const label = matchedPlayer
             ? favPlayerMap.get(matchedPlayer)!

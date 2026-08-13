@@ -46,12 +46,17 @@ export async function handleShortsFeedGET(
   const now = dependencies.now ?? Date.now;
   const team = req.nextUrl.searchParams.get("team") || "_ALL";
   const playerIdsParam = req.nextUrl.searchParams.get("player_ids") || "";
-  const playerIds = playerIdsParam
-    ? playerIdsParam
+  // 외부 입력 sanitize: 숫자 canonical kboId만 허용·중복 제거·최대 5개(UI 계약과
+  // 동일). raw 문자열을 PostgREST `.or()` 문법에 보간하므로 필터 주입 차단이
+  // 필수다 (2026-08-13 삼순 2차 NO-GO #2).
+  const playerIds = Array.from(
+    new Set(
+      playerIdsParam
         .split(",")
         .map((s) => s.trim())
-        .filter(Boolean)
-    : [];
+        .filter((s) => /^\d+$/.test(s)),
+    ),
+  ).slice(0, 5);
   const limit = Math.min(
     parseInt(req.nextUrl.searchParams.get("limit") || "30", 10),
     50,
@@ -130,6 +135,7 @@ export async function handleShortsFeedGET(
         .gte("published_at", sinceDate)
         .order("published_at", { ascending: false })
         .limit(fetchLimit),
+      // query-guard: bounded -- fetchLimit(=limit*3) 단일 오버페치 페이지 + 7일 시간창, 페이지네이션 커서 없음 (형제 팀 쿼리와 동일 계약)
       supabaseAdmin
         .from("videos")
         .select(selectCols)
