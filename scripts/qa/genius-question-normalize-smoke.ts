@@ -20,6 +20,7 @@ import {
   answerQuestion,
   digitSequencesMatch,
   evaluateNormalizedCandidate,
+  classifyQuestionCorrectionCandidate,
   routeQuestion,
   type GlossaryEntry,
   type PlayerRef,
@@ -104,19 +105,32 @@ async function main() {
   assert.equal(routeQuestion("고마워", glossary, players, false), "ack");
   assert.equal(routeQuestion("오늘 날씨 알려줘", glossary, players, false), "blocked");
 
-  // ── 1. Tier B HOLD: 오탈자 교정 후보도 자동 재라우팅하지 않는다 ───────────
+  // ── 1. Tier B: 자동 재라우팅 없이 교정 후보만 제안한다 ───────────────────
   {
     const s = freshState({ normReply: "보크가 뭐야?" });
     const r = await answerQuestion("u1", "보끄가모야", makeDeps(s));
     assert.deepEqual(s.normCalls, ["보끄가모야"]);
-    assert.notEqual(r.source, "dictionary");
-    assert.ok(s.llmCalls >= 1); // 후보를 버리고 원문 residual 경로 진행
+    assert.equal(r.source, "question_correction");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야?"]);
+    assert.equal(s.llmCalls, 0); // 선택 전 후보를 답변 경로에 절대 쓰지 않는다
     const log = s.logs.at(-1)!;
     assert.equal(log.question, "보끄가모야");
-    assert.equal(log.questionNormalized ?? null, null);
-    assert.equal(log.normalizeStatus, "rejected");
-    assert.equal(log.inputTokens, 11 + 23);
-    assert.equal(log.outputTokens, 3 + 7);
+    assert.equal(log.questionNormalized, "보크가 뭐야?");
+    assert.equal(log.normalizeStatus, "suggested");
+  }
+
+  // 유저가 제안 카드를 고른 뒤에만 exact 후보로 재질의한다. 정규화 LLM은 재호출하지 않는다.
+  {
+    const s = freshState({ normReply: "도루가 뭐야" });
+    const deps = makeDeps(s);
+    deps.pickedNormalizedQuestion = "보크가 뭐야?";
+    const r = await answerQuestion("u1", "보끄가모야", deps);
+    assert.equal(s.normCalls.length, 0);
+    assert.equal(r.source, "dictionary");
+    const log = s.logs.at(-1)!;
+    assert.equal(log.question, "보끄가모야");
+    assert.equal(log.questionNormalized, "보크가 뭐야?");
+    assert.equal(log.normalizeStatus, "accepted_user");
   }
 
   // ── 2. 수용: 붙여쓰기 → 기록계 전용 라우트(history_hold) 도달 ─────────────
@@ -131,33 +145,14 @@ async function main() {
     assert.equal(log.normalizeStatus, "accepted_surface"); // 문자 구성 동일, 공백·부호만 변경
   }
 
-  // ── 2-b. P0 의미·엔티티 드리프트 반례 (삼순 1차 NO-GO actual) ─────────────
-  // 재라우팅 non-blocked 만으로는 못 막던 두 반례가 코드 가드로 닫혔는지 실측한다.
+  // ── 2-b. 후보가 원문과 달라도 선택 전에는 어떤 답변 경로도 실행하지 않는다 ─────
   {
-    // 선수 치환: 다른 로스터 선수의 기록 질문으로 바뀌면 거절 — 원문 residual 진행.
-    const s = freshState({ normReply: "문보경 홈런 몇 개야?" });
-    const r = await answerQuestion("u1", "김도영홈런몇개", makeDeps(s));
-    assert.equal(s.normCalls.length, 1);
-    assert.notEqual(r.source, "history_hold"); // 치환 질문의 전용 라우트로 가면 안 된다
-    const log = s.logs.at(-1)!;
-    assert.equal(log.question, "김도영홈런몇개");
-    assert.equal(log.questionNormalized ?? null, null);
-    assert.equal(log.normalizeStatus, "rejected");
-  }
-  for (const c of [
-    { reply: "고마워", forbidden: "ack" },
-    { reply: "도루가 뭐야", forbidden: "dictionary" }, // 폐쇄집합 내부 용어 치환
-    { reply: "김도영 별명이 뭐야?", forbidden: "rag" }, // 같은 선수 내 의도 치환
-  ]) {
-    const question = c.reply.includes("김도영") ? "김도영홈런몇개" : "보끄가모야";
-    const s = freshState({ normReply: c.reply });
-    const r = await answerQuestion("u1", question, makeDeps(s));
-    assert.equal(s.normCalls.length, 1);
-    assert.notEqual(r.source, c.forbidden);
-    assert.ok(s.llmCalls >= 1); // 원문 residual 경로 진행
-    const log = s.logs.at(-1)!;
-    assert.equal(log.questionNormalized ?? null, null);
-    assert.equal(log.normalizeStatus, "rejected");
+    const s = freshState({ normReply: "도루가 뭐야" });
+    const r = await answerQuestion("u1", "보끄가모야", makeDeps(s));
+    assert.equal(r.source, "question_correction");
+    assert.deepEqual(r.correctionOptions, ["도루가 뭐야"]);
+    assert.equal(s.llmCalls, 0);
+    assert.equal(s.logs.at(-1)?.normalizeStatus, "suggested");
   }
 
   // ── 3. 미발동: 전용 라우트 질문은 정규화가 아예 안 탄다 ──────────────────
@@ -239,6 +234,16 @@ async function main() {
     assert.equal(log.normalizeStatus, "accepted_surface"); // 문자 구성 동일 = 드리프트 구조적 불가
   }
 
+  // 서버/DB가 위조 후보를 넘겨도 파이프라인 재검증에서 fail-close한다.
+  {
+    const s = freshState();
+    const deps = makeDeps(s);
+    deps.pickedNormalizedQuestion = "복가무야";
+    const r = await answerQuestion("u1", "보끄가모야", deps);
+    assert.equal(r.source, "error");
+    assert.equal(s.llmCalls, 0);
+  }
+
   // ── 8. digitSequencesMatch 단위 계약 ──────────────────────────────────────
   assert.ok(digitSequencesMatch("30-30 클럽이 뭐야", "30-30 클럽이 뭐야?"));
   assert.ok(digitSequencesMatch("숫자 없음", "숫자 없음!"));
@@ -246,8 +251,12 @@ async function main() {
   assert.ok(!digitSequencesMatch("2011년 입단", "입단")); // 숫자 소실도 불일치다
   assert.ok(!digitSequencesMatch("3할", "3할 3푼")); // 숫자 추가도 불일치다
 
-  // ── 9. evaluateNormalizedCandidate 단위 계약 (SSOT — live 게이트도 같은 함수를 쓴다) ──
+  // ── 9. 후보 분류 SSOT: Tier A 자동, Tier B 제안, unsafe 거절 ────────────────
   {
+    assert.equal(classifyQuestionCorrectionCandidate("김도영홈런몇개", "김도영 홈런 몇 개", glossary, players), "accepted_surface");
+    assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "보크가 뭐야?", glossary, players), "suggest");
+    assert.equal(classifyQuestionCorrectionCandidate("보끄가모야", "복가무야", glossary, players), "rejected");
+    assert.equal(classifyQuestionCorrectionCandidate("김도영홈런30개", "김도영 홈런 40개", glossary, players), "rejected");
     const ev = (q: string, c: string) => evaluateNormalizedCandidate(q, c, glossary, players);
     assert.deepEqual(ev("김도영홈런몇개", "김도영 홈런 몇 개"), { accepted: true, status: "accepted_surface" });
     assert.deepEqual(ev("보끄가모야", "보크가 뭐야?"), { accepted: false, status: "rejected" }); // Tier B 오탈자 HOLD

@@ -17,6 +17,7 @@ import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
+import GeniusQuestionCorrectionPicker from "@/components/dm/GeniusQuestionCorrectionPicker";
 import GeniusAnswerFeedback from "@/components/dm/GeniusAnswerFeedback";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
@@ -63,7 +64,9 @@ export default function DMChatPage() {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
+    pickBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
+    geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
@@ -482,6 +485,8 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
+            const correctionOptions =
+              geniusReply?.reply_kind === "correction" ? geniusReply.correction_options ?? null : null;
             // 품질 피드백은 **RAG·사전 근거로 답한 것에만** 붙인다
             // (하린아빠 2026-08-06 16:36 "스몰톡은 넣지마" + 16:37 "사전에서 가져온 답변 추가").
             // 순수 생성답(llm)에 붙이면 스몰톡마다 버튼이 뜬다. 질문 결속 id 가 없는 과거
@@ -585,6 +590,21 @@ export default function DMChatPage() {
                           // 답변 도착 순서가 뒤집혀도 payload에 고정된 exact 원 질문만 재처리한다.
                           if (geniusReply?.question_message_id) {
                             pickBaseballQaPlayer(geniusReply.question_message_id, option.kbo_id);
+                          }
+                        }}
+                      />
+                    ) : null}
+                    {correctionOptions ? (
+                      <GeniusQuestionCorrectionPicker
+                        options={correctionOptions}
+                        disabled={isGeniusPickerDisabled(
+                          geniusReply?.question_message_id,
+                          geniusAnsweredQuestionIds,
+                          geniusCorrectedQuestionIds,
+                        )}
+                        onPick={(question) => {
+                          if (geniusReply?.question_message_id) {
+                            pickBaseballQaQuestionCorrection(geniusReply.question_message_id, question);
                           }
                         }}
                       />

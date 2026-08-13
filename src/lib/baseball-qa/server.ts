@@ -690,8 +690,20 @@ async function preparePickedPlayerSelection(
   return data === true;
 }
 
+async function prepareQuestionCorrectionSelection(
+  messageId: number, userId: string, pickedNormalizedQuestion: string,
+): Promise<boolean> {
+  const { data, error } = await supabaseAdmin.rpc("prepare_baseball_genius_question_correction", {
+    p_message_id: messageId,
+    p_user_id: userId,
+    p_picked_normalized_question: pickedNormalizedQuestion,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
-export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): QaDeps {
+export function makeDeps(messageId: number, pickedPlayerKboId?: string | null, pickedNormalizedQuestion?: string | null): QaDeps {
   return {
     loadGlossary,
     // 인라인 loader 대신 seam 을 그대로 주입한다 — 게이트가 실제 배포 함수를 실행해
@@ -704,6 +716,7 @@ export function makeDeps(messageId: number, pickedPlayerKboId?: string | null): 
     // 질문 1차 LLM 정규화 (2026-08-11): residual 질문만 표기 교정 후 재라우팅한다.
     // 수용 가드(숫자 보존·길이·non-blocked)는 pipeline 이 강제한다.
     normalizeQuestionLlm,
+    pickedNormalizedQuestion: pickedNormalizedQuestion ?? null,
     searchRag,
     callRagLlm,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
@@ -929,6 +942,8 @@ export async function processBaseballQaQuestion(input: {
    * job 행에 고정되어 cron drain 재처리에서도 같은 선수로 이어진다.
    */
   pickedPlayerKboId?: string | null;
+  /** 교정 카드에서 유저가 고른 서버 발급 exact 후보. */
+  pickedNormalizedQuestion?: string | null;
 }): Promise<ProcessOutcome> {
   const { messageId, conversationId, userId } = input;
   const question = input.question.trim();
@@ -950,10 +965,22 @@ export async function processBaseballQaQuestion(input: {
     return { kind: "completed", deduped: true };
   }
 
+  let persistedCorrection: string | null = input.pickedNormalizedQuestion ?? null;
+  if (!persistedCorrection && input.pickedPlayerKboId) {
+    const { data: correctionJob, error: correctionError } = await supabaseAdmin
+      .from("genius_question_jobs")
+      .select("picked_normalized_question")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (correctionError) return { kind: "failed", status: 503, reason: "교정 질문을 확인할 수 없습니다" };
+    persistedCorrection = correctionJob?.picked_normalized_question as string | null ?? null;
+  }
+  const effectiveQuestionForPlayerPick = persistedCorrection ?? question;
+
   if (input.pickedPlayerKboId) {
     try {
       const prepared = await preparePickedPlayerSelection(
-        messageId, userId, question, input.pickedPlayerKboId,
+        messageId, userId, effectiveQuestionForPlayerPick, input.pickedPlayerKboId,
       );
       if (!prepared) {
         return { kind: "failed", status: 400, reason: "선택한 선수를 확인할 수 없습니다" };
@@ -961,6 +988,18 @@ export async function processBaseballQaQuestion(input: {
     } catch (error) {
       console.error("baseball-genius player selection failed:", (error as Error).message);
       return { kind: "failed", status: 503, reason: "선수 선택을 저장할 수 없습니다" };
+    }
+  }
+
+  if (input.pickedNormalizedQuestion) {
+    try {
+      const prepared = await prepareQuestionCorrectionSelection(
+        messageId, userId, input.pickedNormalizedQuestion,
+      );
+      if (!prepared) return { kind: "failed", status: 400, reason: "선택한 교정 질문을 확인할 수 없습니다" };
+    } catch (error) {
+      console.error("baseball-genius question correction selection failed:", (error as Error).message);
+      return { kind: "failed", status: 503, reason: "교정 질문 선택을 저장할 수 없습니다" };
     }
   }
 
@@ -985,7 +1024,7 @@ export async function processBaseballQaQuestion(input: {
   if (claimState === "ready") {
     const { data: readyJob, error: readyError } = await supabaseAdmin
       .from("genius_question_jobs")
-      .select("answer, source, remaining, picker_options, picker_question_message_id")
+      .select("answer, source, remaining, picker_options, picker_question_message_id, correction_options, picked_normalized_question")
       .eq("message_id", messageId)
       .eq("conversation_id", conversationId)
       .eq("user_id", userId)
@@ -1002,6 +1041,9 @@ export async function processBaseballQaQuestion(input: {
       ...(Array.isArray(readyJob.picker_options)
         ? { pickerOptions: readyJob.picker_options as NonNullable<QaResult["pickerOptions"]> }
         : {}),
+      ...(Array.isArray(readyJob.correction_options)
+        ? { correctionOptions: readyJob.correction_options as string[] }
+        : {}),
     };
   } else {
     try {
@@ -1015,8 +1057,20 @@ export async function processBaseballQaQuestion(input: {
       } else {
         // 선택은 job 행을 SSOT로 삼는다. 즉시 경로가 죽어 cron이 이어받아도 유저가 고른
         // 그 선수로 답하도록, 입력이 있으면 먼저 고정하고 없으면 저장된 값을 읽는다.
-        const picked = await persistOrLoadPickedPlayer(messageId, question, input.pickedPlayerKboId);
-        result = await answerQuestion(userId, question, makeDeps(messageId, picked));
+        const picked = await persistOrLoadPickedPlayer(
+          messageId, persistedCorrection ?? question, input.pickedPlayerKboId,
+        );
+        let selectedCorrection = persistedCorrection;
+        if (!selectedCorrection) {
+          const { data: correctionJob, error: correctionError } = await supabaseAdmin
+            .from("genius_question_jobs")
+            .select("picked_normalized_question")
+            .eq("message_id", messageId)
+            .maybeSingle();
+          if (correctionError) throw correctionError;
+          selectedCorrection = correctionJob?.picked_normalized_question as string | null ?? null;
+        }
+        result = await answerQuestion(userId, question, makeDeps(messageId, picked, selectedCorrection));
       }
       if (result.source === "pending") {
         // LLM winner가 다른 worker (CAS 패배/fence 창) — 이 worker는 ready 저장도 발송도 하지
@@ -1033,6 +1087,7 @@ export async function processBaseballQaQuestion(input: {
           remaining: result.remaining,
           picker_options: result.pickerOptions ?? null,
           picker_question_message_id: result.pickerOptions ? messageId : null,
+          correction_options: result.correctionOptions ?? null,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
@@ -1073,14 +1128,12 @@ export async function processBaseballQaQuestion(input: {
     ...(result.pickerOptions
       ? {
         picker_options: result.pickerOptions.map((option) => ({
-          kbo_id: option.kboId,
-          name: option.name,
-          team: option.team,
-          position: option.position,
-          back_no: option.backNo,
+          kbo_id: option.kboId, name: option.name, team: option.team,
+          position: option.position, back_no: option.backNo,
         })),
       }
       : {}),
+    ...(result.correctionOptions ? { correction_options: result.correctionOptions } : {}),
     // 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고 클라가 여기에 앵커를 씌운다.
     // 내부 메타(revision·crawledAt·asOf)는 절대 payload 에 싣지 않는다 — 유저가 볼 이유가 없고
     // `crawled` 는 수집 사실을 화면에 적는 것이라 위험하다 (하린아빠 2026-08-05 P0).
@@ -1088,7 +1141,9 @@ export async function processBaseballQaQuestion(input: {
   };
   const deliveryDedupKey = result.source === "player_picker"
     ? `baseball-genius-picker:${messageId}`
-    : dedupKey;
+    : result.source === "question_correction"
+      ? `baseball-genius-correction:${messageId}`
+      : dedupKey;
   const sent = await sendOpsMessageToUser(
     supabaseAdmin,
     BASEBALL_GENIUS_USER_ID,
@@ -1121,7 +1176,7 @@ export async function processBaseballQaQuestion(input: {
   await supabaseAdmin
     .from("genius_question_jobs")
     .update({
-      status: result.source === "player_picker" ? "awaiting_selection" : "completed",
+      status: result.source === "player_picker" || result.source === "question_correction" ? "awaiting_selection" : "completed",
       updated_at: new Date().toISOString(),
     })
     .eq("message_id", messageId);

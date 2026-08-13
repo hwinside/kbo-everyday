@@ -13,6 +13,8 @@ export interface BaseballQaOutboxEntry {
    * 보관한다 — 버리면 재시도 때 picker가 다시 뜨면서 유저 선택이 사라진다.
    */
   pickedPlayerKboId?: string;
+  /** 교정 카드에서 유저가 고른 서버 발급 exact 후보. */
+  pickedNormalizedQuestion?: string;
 }
 
 interface StorageLike {
@@ -36,7 +38,8 @@ export interface BaseballQaReplyMessage {
 }
 
 function isPickerReply(message: BaseballQaReplyMessage): boolean {
-  if (message.dedup_key?.startsWith("baseball-genius-picker:")) return true;
+  if (message.dedup_key?.startsWith("baseball-genius-picker:") ||
+      message.dedup_key?.startsWith("baseball-genius-correction:")) return true;
   if (!message.payload || typeof message.payload !== "object") return false;
   return (message.payload as { reply_kind?: unknown }).reply_kind === "picker";
 }
@@ -56,7 +59,9 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         (row.acknowledged === undefined || typeof row.acknowledged === "boolean") &&
         (row.awaitingPlayerPick === undefined || typeof row.awaitingPlayerPick === "boolean") &&
         (row.pickedPlayerKboId === undefined ||
-          (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)),
+          (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)) &&
+        (row.pickedNormalizedQuestion === undefined ||
+          (typeof row.pickedNormalizedQuestion === "string" && row.pickedNormalizedQuestion.length > 0 && row.pickedNormalizedQuestion.length <= 200)),
     );
   } catch {
     return [];
@@ -84,6 +89,22 @@ export function enqueueBaseballQaQuestion(
  * 새 질문 메시지를 만들지 않고 **원래 질문 messageId 그대로** 재처리한다. 새 메시지를
  * 만들면 quota가 또 예약되고 대화창에 같은 질문이 두 번 남는다.
  */
+export function applyBaseballQaQuestionCorrection(
+  storage: StorageLike, conversationId: string, messageId: number, pickedNormalizedQuestion: string,
+  alreadyAnswered = false,
+): boolean {
+  if (alreadyAnswered || pickedNormalizedQuestion.length < 1 || pickedNormalizedQuestion.length > 200) return false;
+  const entries = readBaseballQaOutbox(storage);
+  const index = entries.findIndex((row) => row.messageId === messageId);
+  const selected: BaseballQaOutboxEntry = {
+    conversationId, messageId, pickedNormalizedQuestion, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+  };
+  if (index >= 0) entries[index] = { ...entries[index], ...selected };
+  else entries.push(selected);
+  writeBaseballQaOutbox(storage, entries);
+  return true;
+}
+
 export function applyBaseballQaPlayerPick(
   storage: StorageLike,
   conversationId: string,
@@ -217,7 +238,7 @@ export function observeBaseballQaReplies(
   const pickerObserved = new Set<number>();
   for (const message of messages) {
     if (message.sender_id !== geniusUserId) continue;
-    const match = /^baseball-genius(?:-picker)?:(\d+)$/.exec(message.dedup_key ?? "");
+    const match = /^baseball-genius(?:-(?:picker|correction))?:(\d+)$/.exec(message.dedup_key ?? "");
     if (!match) continue;
     const messageId = Number(match[1]);
     if (Number.isSafeInteger(messageId) && messageId > 0) {
@@ -283,6 +304,9 @@ export async function attemptBaseballQaOutbox(
           ...(entry.pickedPlayerKboId
             ? { pickedPlayerKboId: entry.pickedPlayerKboId }
             : {}),
+          ...(entry.pickedNormalizedQuestion
+            ? { pickedNormalizedQuestion: entry.pickedNormalizedQuestion }
+            : {}),
         }),
       });
       if (response.ok && response.status !== 202) {
@@ -314,7 +338,8 @@ export async function attemptBaseballQaOutbox(
       const update = updates.get(entry.messageId);
       if (!update) return entry;
       // 요청 중 picker 관측/선택이 발생하면 오래된 HTTP 응답이 그 새 상태를 덮지 못한다.
-      if (entry.pickedPlayerKboId !== update.pickedPlayerKboId) return entry;
+      if (entry.pickedPlayerKboId !== update.pickedPlayerKboId ||
+          entry.pickedNormalizedQuestion !== update.pickedNormalizedQuestion) return entry;
       if (entry.awaitingPlayerPick) {
         return { ...update, acknowledged: true, awaitingPlayerPick: true };
       }

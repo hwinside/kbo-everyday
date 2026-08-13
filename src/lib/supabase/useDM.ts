@@ -18,6 +18,7 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
+  applyBaseballQaQuestionCorrection,
   collectBaseballQaAnsweredQuestionIds,
   createBaseballQaAnsweredUpdater,
   type BaseballQaReplyStates,
@@ -220,6 +221,9 @@ export function useDMChat(conversationId: string) {
    */
   const [geniusPickedQuestionIds, setGeniusPickedQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
+  /** 교정 선택과 선수 선택은 연속될 수 있어 서로 다른 탭 잠금으로 관리한다. */
+  const [geniusCorrectedQuestionIds, setGeniusCorrectedQuestionIds] =
+    useState<ReadonlySet<number>>(() => new Set<number>());
   /** 최종 답변이 있는 질문 id — 과거 picker 카드 재탭을 UI에서도 막는다. */
   const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
@@ -359,6 +363,24 @@ export function useDMChat(conversationId: string) {
     void processBaseballQaOutbox();
   }, [conversationId, processBaseballQaOutbox, geniusPickedQuestionIds]);
 
+  const pickBaseballQaQuestionCorrection = useCallback((messageId: number, question: string) => {
+    if (typeof window === "undefined" || !conversationId) return;
+    if (geniusCorrectedQuestionIds.has(messageId)) return;
+    const enqueued = applyBaseballQaQuestionCorrection(
+      window.localStorage, conversationId, messageId, question,
+      observedBaseballQaReplyIdsRef.current.has(messageId),
+    );
+    setGeniusCorrectedQuestionIds((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev); next.add(messageId); return next;
+    });
+    if (!enqueued) return;
+    setGeniusReplyStates(getBaseballQaReplyStates(
+      readBaseballQaOutbox(window.localStorage), new Set([messageId]),
+    ));
+    void processBaseballQaOutbox();
+  }, [conversationId, processBaseballQaOutbox, geniusCorrectedQuestionIds]);
+
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
   // (React 공식 "렌더 중 이전 렌더 값 비교 후 setState" 패턴 — effect 보다 먼저 적용된다.)
@@ -446,6 +468,7 @@ export function useDMChat(conversationId: string) {
     // 바뀔 때 여기서 버린다. 이게 없으면 이전 대화의 question id 가 다음 대화로 샐다.
     setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    setGeniusCorrectedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
@@ -664,7 +687,9 @@ export function useDMChat(conversationId: string) {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
+    pickBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
+    geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
   };
 }

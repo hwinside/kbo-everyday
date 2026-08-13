@@ -238,6 +238,8 @@ export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 �
  */
 export const PLAYER_PICKER_ANSWER =
   "같은 이름의 선수가 여럿 있어요. 어느 선수를 말씀하시는 건가요?";
+export const QUESTION_CORRECTION_ANSWER =
+  "혹시 아래 질문을 뜻하셨나요? 맞으면 선택해주세요.";
 
 /**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
@@ -616,6 +618,8 @@ export type MatchPath =
   // 동명이인으로 선수를 특정하지 못해 선택지를 되물은 경로. 답변이 아니라 **되물기**라
   // blocked와 같은 칸에 넣으면 #983 모니터에서 "못 답한 질문"으로 오집계된다.
   | "player_picker"
+  // 문자 구성이 바뀌는 교정 후보를 자동 적용하지 않고 유저 확인을 기다리는 경로.
+  | "question_correction"
   | "unsure"
   | "limited"
   | "error"
@@ -633,6 +637,8 @@ export interface QaResult {
    * 클라이언트가 선택 카드를 렌더하게 한다.
    */
   pickerOptions?: PlayerPickerOption[];
+  /** `source === "question_correction"` 일 때만. 선택 전에는 절대 재라우팅하지 않는다. */
+  correctionOptions?: string[];
   /**
    * 근거 문서 링크. `source === "rag"` 일 때만 채워진다.
    * 본문에는 `📄 출처: 나무위키` 표시명만 있고, 호출부(server.ts)가 이 URL 을 payload 로 실어
@@ -682,6 +688,8 @@ export interface QaDeps {
   normalizeQuestionLlm?: (
     question: string,
   ) => Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
+  pickedNormalizedQuestion?: string | null;
   /**
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
@@ -3614,7 +3622,7 @@ export function digitSequencesMatch(a: string, b: string): boolean {
 
 /** 정규화 관측 상태 — 미호출(null)·교정없음·거절·장애를 분리해야 발동률·오교정 감사가 가능하다. */
 export type NormalizeAcceptStatus = "accepted_surface" | "rejected";
-export type NormalizeStatus = NormalizeAcceptStatus | "no_change" | "error";
+export type NormalizeStatus = NormalizeAcceptStatus | "suggested" | "accepted_user" | "no_change" | "error";
 
 /**
  * 정규화 후보 수용 판정 SSOT (삼순 2026-08-11 2차 NO-GO 반영).
@@ -3632,22 +3640,40 @@ export type NormalizeStatus = NormalizeAcceptStatus | "no_change" | "error";
  * 공통 가드: 비어있지 않음 · 길이 상한 · 숫자 시퀀스 정확 보존 · raw 실변경 · 재라우팅
  * non-blocked. 파이프라인·mock 게이트·실-provider 게이트가 전부 이 함수 하나를 쓴다.
  */
+export type QuestionCorrectionVerdict = "accepted_surface" | "suggest" | "rejected";
+
+/** Tier A만 자동 수용한다. Tier B는 유저 선택 전까지 질문으로 쓰지 않고 제안만 한다. */
+export function classifyQuestionCorrectionCandidate(
+  question: string,
+  candidate: string,
+  glossary: GlossaryEntry[],
+  players: PlayerRef[],
+): QuestionCorrectionVerdict {
+  if (candidate.length === 0) return "rejected";
+  if (candidate.length > question.length * 2 + 10) return "rejected";
+  if (!digitSequencesMatch(question, candidate)) return "rejected";
+  if (candidate === question) return "rejected";
+  const candidateRoute = routeQuestion(candidate, glossary, players, false);
+  if (candidateRoute === "blocked") return "rejected";
+  // Tier A(표기만 변경)는 #1151 계약 그대로 자동 수용한다 — 문자 구성이 같아 의미 드리프트가
+  // 구조적으로 불가능하고, 재라우팅 결과가 residual 이어도 종전 동작과 동일하다.
+  if (normalizeKey(candidate) === normalizeKey(question)) return "accepted_surface";
+  // Tier B(문자 구성 변경)는 **폐쇄집합에 착지했을 때만** 제안한다. 후보가 여전히 residual
+  // (`llm_scope_gate`)이면 교정해도 답이 안 나오므로 유저에게 헛선택을 시키지 않는다.
+  if (candidateRoute === "llm_scope_gate") return "rejected";
+  return "suggest";
+}
+
 export function evaluateNormalizedCandidate(
   question: string,
   candidate: string,
   glossary: GlossaryEntry[],
   players: PlayerRef[],
 ): { accepted: boolean; status: NormalizeAcceptStatus } {
-  const rejected = { accepted: false, status: "rejected" as const };
-  if (candidate.length === 0) return rejected;
-  if (candidate.length > question.length * 2 + 10) return rejected;
-  if (!digitSequencesMatch(question, candidate)) return rejected;
-  if (candidate === question) return rejected;
-  if (routeQuestion(candidate, glossary, players, false) === "blocked") return rejected;
-  if (normalizeKey(candidate) === normalizeKey(question)) {
+  if (classifyQuestionCorrectionCandidate(question, candidate, glossary, players) === "accepted_surface") {
     return { accepted: true, status: "accepted_surface" };
   }
-  return rejected; // Tier B 자동 재라우팅 HOLD — 폐쇄집합 착지만으로 의미 불변을 증명할 수 없다.
+  return { accepted: false, status: "rejected" };
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
@@ -3699,6 +3725,25 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
 
+  // 유저가 교정 카드에서 고른 exact 후보만 적용한다. 호출부와 여기서 같은 SSOT를 재검증한다.
+  if (deps.pickedNormalizedQuestion) {
+    const picked = deps.pickedNormalizedQuestion.trim();
+    if (classifyQuestionCorrectionCandidate(question, picked, glossary, players) !== "suggest") {
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+    }
+    const originalQuestion = question;
+    const baseLog = deps.log;
+    deps = {
+      ...deps,
+      log: (entry) => baseLog({
+        ...entry, question: originalQuestion, questionNormalized: picked, normalizeStatus: "accepted_user",
+      }),
+    };
+    question = picked;
+    questionNorm = normalizeQuestion(picked);
+  }
+
   // ── 질문 1차 LLM 정규화 (2026-08-11 하린아빠 착수 지시) ──────────────────────
   //
   // 발동 = routeQuestion 이 어떤 전용 라우트도 확정하지 못한 residual(`llm_scope_gate`)뿐이다.
@@ -3711,7 +3756,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   탈락·장애·null 은 전부 원문 그대로 진행한다(fail-open — 교정 실패가 기존 동작을 죽이면 안 된다).
   // 이 지점(직전 턴 로드·전용 경로 계산 **앞**)이 계약이다 — 뒤로 옮기면 기록·draft·선발 등
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
-  if (deps.normalizeQuestionLlm && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+  if (!deps.pickedNormalizedQuestion && deps.normalizeQuestionLlm && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
@@ -3723,14 +3768,16 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // null 만으로는 발동률을 주장할 수 없다(삼순 1차 ④).
     let normStatus: NormalizeStatus;
     let accepted = false;
+    let suggested = false;
     if (norm === null) {
       normStatus = "error";
     } else if (candidate.length === 0) {
       normStatus = "no_change";
     } else {
-      const verdict = evaluateNormalizedCandidate(question, candidate, glossary, players);
-      accepted = verdict.accepted;
-      normStatus = verdict.status;
+      const verdict = classifyQuestionCorrectionCandidate(question, candidate, glossary, players);
+      accepted = verdict === "accepted_surface";
+      suggested = verdict === "suggest";
+      normStatus = accepted ? "accepted_surface" : suggested ? "suggested" : "rejected";
     }
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
@@ -3741,7 +3788,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     {
       const baseLog = deps.log;
       const originalQuestion = question;
-      const acceptedText = accepted ? candidate : null;
+      const acceptedText = accepted || suggested ? candidate : null;
       deps = {
         ...deps,
         log: (entry) => baseLog({
@@ -3757,6 +3804,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (accepted) {
       question = candidate;
       questionNorm = normalizeQuestion(candidate);
+    } else if (suggested) {
+      if (deps.releaseDaily) {
+        try { await deps.releaseDaily(userId); } catch { /* 제안은 유지하고 quota만 보수적으로 둔다. */ }
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: "question_correction",
+        answer: QUESTION_CORRECTION_ANSWER, inputTokens: null, outputTokens: null,
+      });
+      return {
+        status: 200, answer: QUESTION_CORRECTION_ANSWER, source: "question_correction", remaining,
+        correctionOptions: [candidate],
+      };
     }
   }
 

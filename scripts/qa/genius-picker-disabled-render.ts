@@ -94,6 +94,7 @@ async function main() {
   assert.equal(typeof act, "function",
     "React.act 가 없다 — development 번들이 로드되지 않았다(NODE_ENV 고정이 import 보다 늦었는지 확인)");
   const GeniusPlayerPicker = (await import("../../src/components/dm/GeniusPlayerPicker")).default;
+  const GeniusQuestionCorrectionPicker = (await import("../../src/components/dm/GeniusQuestionCorrectionPicker")).default;
 
   /**
    * 관측 시퀀스를 그대로 재생해 answered 집합을 만든 뒤 카드를 렌더한다.
@@ -209,6 +210,25 @@ async function main() {
       true,
     );
   });
+
+  // 교정 카드도 같은 비활성 판정을 실제 렌더 결과로 쓴다.
+  {
+    const host = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(host);
+    const root = createRoot(host);
+    let picks = 0;
+    void act(() => {
+      root.render(React.createElement(GeniusQuestionCorrectionPicker, {
+        options: ["보크가 뭐야?"], onPick: () => { picks++; },
+        disabled: isGeniusPickerDisabled(QUESTION_ID, new Set([QUESTION_ID]), new Set()),
+      }));
+    });
+    const button = host.querySelector("[data-testid='genius-question-correction-option']") as HTMLButtonElement;
+    check("완료된 교정 카드는 disabled", () => assert.equal(button.disabled, true));
+    void act(() => button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    check("disabled 교정 카드는 재요청하지 않는다", () => assert.equal(picks, 0));
+    void act(() => root.unmount()); host.remove();
+  }
 
   if (failures.length > 0) {
     console.error(`❌ genius picker disabled render: PASS=${pass} FAIL=${failures.length}`);

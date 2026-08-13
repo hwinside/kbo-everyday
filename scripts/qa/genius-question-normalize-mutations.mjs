@@ -23,54 +23,44 @@ const backup = `${target}.qnorm-mutations.bak`;
 
 const mutations = [
   {
-    name: "M1 발동 라우트 조건 제거 (모든 라우트에서 발동)",
+    name: "M1 발동 라우트 조건 제거",
     find: 'routeQuestion(question, glossary, players, false) === "llm_scope_gate"',
     replace: 'routeQuestion(question, glossary, players, false) !== "__never__"',
   },
   {
-    name: "M2 숫자 시퀀스 보존 가드 제거",
-    find: "if (!digitSequencesMatch(question, candidate)) return rejected;",
-    replace: "if (false) return rejected;",
+    name: "M2 숫자 시퀀스 보존 제거",
+    find: 'if (!digitSequencesMatch(question, candidate)) return "rejected";',
+    replace: 'if (false) return "rejected";',
   },
   {
-    name: "M3 재라우팅 blocked 가드 제거",
-    find: 'if (routeQuestion(candidate, glossary, players, false) === "blocked") return rejected;',
-    replace: "if (false) return rejected;",
+    name: "M3 unsafe residual 후보도 제안",
+    find: '  if (candidateRoute === "llm_scope_gate") return "rejected";\n  return "suggest";',
+    replace: '  return "suggest";',
   },
   {
-    name: "M4 실변경(raw 비교) 가드 제거",
-    find: "if (candidate === question) return rejected;",
-    replace: "if (false) return rejected;",
+    name: "M4 선택 전 Tier B 자동수용",
+    find: 'accepted = verdict === "accepted_surface";',
+    replace: 'accepted = verdict === "accepted_surface" || verdict === "suggest";',
   },
   {
-    name: "M5 fail-open 제거 (정규화 장애가 답변을 죽임)",
-    find: "norm = null; // 정규화 장애는 원문 진행",
-    replace: 'throw new Error("normalizer failure leaks"); //',
+    name: "M5 선택 적용 시 membership 재검증 제거",
+    find: 'if (classifyQuestionCorrectionCandidate(question, picked, glossary, players) !== "suggest") {',
+    replace: 'if (false) {',
   },
   {
-    name: "M6 로그 원문 고정 제거 (정규화문이 question 을 덮어씀)",
-    find: "question: originalQuestion,\n          questionNormalized: acceptedText,",
-    replace: "questionNormalized: acceptedText,",
+    name: "M6 유저 선택 후보 적용 제거",
+    find: 'question = picked;\n    questionNorm = normalizeQuestion(picked);',
+    replace: 'question = originalQuestion;\n    questionNorm = normalizeQuestion(originalQuestion);',
   },
   {
-    name: "M7 길이 상한 가드 제거",
-    find: "if (candidate.length > question.length * 2 + 10) return rejected;",
-    replace: "if (false) return rejected;",
+    name: "M7 로그 원문 고정 제거",
+    find: `question: originalQuestion,\n          questionNormalized: acceptedText,`,
+    replace: 'questionNormalized: acceptedText,',
   },
   {
-    name: "M8 Tier B HOLD 제거 (폐쇄집합 내부 용어 치환 통과)",
-    find: "return rejected; // Tier B 자동 재라우팅 HOLD — 폐쇄집합 착지만으로 의미 불변을 증명할 수 없다.",
-    replace: 'return { accepted: true, status: "accepted_surface" };',
-  },
-  {
-    name: "M9 관측 status 기록 제거 (미호출/거절/오류 구분 소실)",
-    find: "normalizeStatus: normStatus,",
-    replace: "",
-  },
-  {
-    name: "M10 Tier A 조건 완화 (문자 구성이 달라도 surface 수용 — Tier B HOLD 우회)",
-    find: 'if (normalizeKey(candidate) === normalizeKey(question)) {\n    return { accepted: true, status: "accepted_surface" };\n  }',
-    replace: 'if (true) {\n    return { accepted: true, status: "accepted_surface" };\n  }',
+    name: "M8 관측 status 제거",
+    find: 'normalizeStatus: normStatus,',
+    replace: '',
   },
 ];
 

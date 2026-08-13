@@ -14,8 +14,9 @@ export async function POST(req: NextRequest) {
   let conversationId: unknown;
   let messageId: unknown;
   let pickedPlayerKboId: unknown;
+  let pickedNormalizedQuestion: unknown;
   try {
-    ({ conversationId, messageId, pickedPlayerKboId } = await req.json());
+    ({ conversationId, messageId, pickedPlayerKboId, pickedNormalizedQuestion } = await req.json());
   } catch {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
@@ -29,6 +30,11 @@ export async function POST(req: NextRequest) {
     (typeof pickedPlayerKboId !== "string" ||
       !/^[A-Za-z0-9]{1,16}$/.test(pickedPlayerKboId))
   ) {
+    return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
+  }
+
+  if (pickedNormalizedQuestion !== undefined && pickedNormalizedQuestion !== null &&
+      (typeof pickedNormalizedQuestion !== "string" || pickedNormalizedQuestion.length < 1 || pickedNormalizedQuestion.length > 200)) {
     return NextResponse.json({ error: "잘못된 요청입니다" }, { status: 400 });
   }
 
@@ -58,6 +64,7 @@ export async function POST(req: NextRequest) {
     userId: verified.user.id,
     question: message.content,
     pickedPlayerKboId: typeof pickedPlayerKboId === "string" ? pickedPlayerKboId : null,
+    pickedNormalizedQuestion: typeof pickedNormalizedQuestion === "string" ? pickedNormalizedQuestion : null,
   });
   if (outcome.kind === "pending") {
     return NextResponse.json({ ok: false, pending: true }, { status: 202 });
