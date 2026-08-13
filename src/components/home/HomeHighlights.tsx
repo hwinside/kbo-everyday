@@ -109,8 +109,9 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
 
     const favPlayers = getFavoritePlayers().slice(0, 5);
     const favPlayerMap = new Map(favPlayers.map(p => [p.playerId, p.name]));
-    // 마이팀/전체 scope는 순수 팀/전체 피드 — 최애선수 병합 쿼리 방지 위해 player_ids 미전송
-    const playerIdsParam = scope === "favorite_players" && favPlayers.length > 0
+    // 마이팀 scope는 순수 팀 피드 — 최애선수 병합 쿼리 방지 위해 player_ids 미전송.
+    // 전체 scope는 마이팀+최애선수 병합(2026-08-13 재정의)이므로 player_ids 전송.
+    const playerIdsParam = (scope === "favorite_players" || scope === "all") && favPlayers.length > 0
       ? `&player_ids=${encodeURIComponent(favPlayers.map(p => p.playerId).join(","))}`
       : "";
 
