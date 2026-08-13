@@ -67,6 +67,8 @@ check("해석 fail-close: 경쟁 intent를 우선순위로 하나만 골라 오�
     "9번째 최근 노히트노런",
     "9번째 노히트노런 몇 번?",
     "9번째, 10번째 노히트노런 알려줘",
+    "최초 노히트노런 전체 목록 알려줘",
+    "9번째 노히트노런 전체 목록",
   ]) {
     assert.equal(resolveEventRecordQuery(question, PLAYER_NAMES), null, question);
   }
@@ -146,6 +148,8 @@ checkAsync("종단 fail-close: 경쟁 intent를 우선순위로 하나만 골라
     "9번째 최근 노히트노런",
     "9번째 노히트노런 몇 번?",
     "9번째, 10번째 노히트노런 알려줘",
+    "최초 노히트노런 전체 목록 알려줘",
+    "9번째 노히트노런 전체 목록",
   ]) {
     const result = await answerQuestion("u1", question, deps());
     assert.equal(result.source, "history_hold", `${question} -> ${result.source} :: ${result.answer}`);

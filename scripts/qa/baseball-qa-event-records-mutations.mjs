@@ -36,20 +36,20 @@ const MUTATIONS = [
   {
     name: "m2c 최초 intent 신호 제거 — 최근과 경쟁해도 오결속",
     file: EVENT,
-    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
-    to: '    0 + Number(hasLatest) + Number(hasCount);',
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount) + Number(hasList);',
+    to: '    0 + Number(hasLatest) + Number(hasCount) + Number(hasList);',
   },
   {
     name: "m2d 최근 intent 신호 제거 — 최초·순번과 경쟁해도 오결속",
     file: EVENT,
-    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
-    to: '    Number(hasFirst) + 0 + Number(hasCount);',
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount) + Number(hasList);',
+    to: '    Number(hasFirst) + 0 + Number(hasCount) + Number(hasList);',
   },
   {
     name: "m2e count intent 신호 제거 — 순번과 경쟁해도 오결속",
     file: EVENT,
-    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount);',
-    to: '    Number(hasFirst) + Number(hasLatest) + 0;',
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount) + Number(hasList);',
+    to: '    Number(hasFirst) + Number(hasLatest) + 0 + Number(hasList);',
   },
   {
     name: "m2f count 긴 토큰 소비 순서 회귀 — 총몇번에서 번 잔여",
@@ -68,6 +68,12 @@ const MUTATIONS = [
     file: EVENT,
     from: '|기록|전체목록|달성선수|목록|전부|',
     to: '|기록|전체목록|목록|전부|',
+  },
+  {
+    name: "m2i list intent 신호 제거 — first·ordinal과 경쟁해도 오결속",
+    file: EVENT,
+    from: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount) + Number(hasList);',
+    to: '    Number(hasFirst) + Number(hasLatest) + Number(hasCount) + 0;',
   },
   {
     name: "m3 알 수 없는 선수명 잔여를 전체 목록으로 오결속",
