@@ -281,6 +281,31 @@ async function main() {
     });
   }
 
+  // ── (E-2) cache P0 — global 캐시 우회 차단 (삼순 2026-08-14 cache P0) ──────────
+  //
+  //   게이트 도입 이전에 캐시에 쓰인 `374개` 답이 남아 있으면, 가드 소유 질문의
+  //   cache read 가 final gate 앞에서 `source=cache` 로 발송해 게이트를 우회한다.
+  //   가드 소유 질문은 cache read 0 이어야 한다.
+  {
+    const q = "이대호 홈런 몇개";
+    const { deps, calls } = makeDeps();
+    let cacheReads = 0;
+    const poisonedDeps = {
+      ...(deps as unknown as Record<string, unknown>),
+      getCache: async () => {
+        cacheReads += 1;
+        return "야구 기록으로 이대호 선수는 통산 홈런 374개를 기록했습니다.";
+      },
+    } as unknown as QaDeps;
+    const result = await answerQuestion("u-stat-clarify-gate", q, poisonedDeps);
+    check("캐시 우회 차단 — 오염된 getCache(374개)가 가드 소유 질문에 서빙되면 안 된다", () => {
+      assert.equal(cacheReads, 0, `가드 소유 질문이 global 캐시를 ${cacheReads}회 읽었다`);
+      assert.notEqual(result.source, "cache", `오염 캐시가 그대로 발송됐다: ${result.answer}`);
+      assert.ok(!/374/.test(result.answer ?? ""), `캐시의 지어낸 숫자가 도달했다: ${result.answer}`);
+      assert.equal(calls.cacheSet, 0);
+    });
+  }
+
   // ── (F) 재생 P0 — durable stored-final 우회 차단 (삼순 2026-08-14 NO-GO) ────────
   //
   //   게이트 도입 이전에 저장된 `llm/374개` envelope 가 front 재생으로 그대로 나가면
@@ -308,6 +333,31 @@ async function main() {
       assert.equal(calls.llm, 0, "재생 경로에서 새 LLM 호출이 발생했다");
       assert.equal(calls.cacheSet, 0, "위반 envelope 의 cacheable 이 캐시로 샐다");
       assert.ok(stored.some((text) => text.includes("stat_clarify")), "되묻기로 재저장되지 않았다 — 다음 재생이 또 우회된다");
+    });
+  }
+  {
+    // stored `cache/374개` envelope — 게이트 도입 이전에 캐시 발송으로 저장된 final 도
+    // 재생 경로에서 같은 대조를 태워야 한다 (삼순 2026-08-14 cache P0 ②).
+    const q = "이대호 홈런 몇개";
+    const staleCacheEnvelope = packStoredQaFinal(
+      { answer: "야구 기록으로 이대호 선수는 통산 홈런 374개를 기록했습니다.", source: "cache" },
+      { text: "", inputTokens: 1, outputTokens: 1 },
+    );
+    const { deps, calls } = makeDeps();
+    const stored: string[] = [];
+    const replayDeps = {
+      ...(deps as unknown as Record<string, unknown>),
+      getLlmState: async () => ({ started: true, result: staleCacheEnvelope, ownerActive: false }),
+      acquireLlmStart: async () => { throw new Error("replay 경로에서 새 LLM 획득이 있으면 안 된다"); },
+      storeLlm: async (llm: { text: string }) => { stored.push(llm.text); },
+    } as unknown as QaDeps;
+    const result = await answerQuestion("u-stat-clarify-gate", q, replayDeps);
+    check("재생 우회 차단 — 저장된 cache/374개 envelope → stat_clarify 교체+재저장", () => {
+      assert.equal(result.source, "stat_clarify", `cache envelope 가 게이트 없이 재생됐다(${result.source}): ${result.answer}`);
+      assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+      assert.ok(!/374/.test(result.answer ?? ""), "지어낸 숫자가 재생 경로로 도달했다");
+      assert.equal(calls.llm, 0, "재생 경로에서 새 LLM 호출이 발생했다");
+      assert.ok(stored.some((text) => text.includes("stat_clarify")), "되묻기로 재저장되지 않았다");
     });
   }
 

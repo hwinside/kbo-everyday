@@ -2906,7 +2906,9 @@ async function replayStoredFinalResult(
   // statNumericGuard 계산 전 front 재생으로 그대로 나가면 게이트가 통째로 우회된다.
   // 재생 경로에서도 같은 기계 대조를 수행하고, 위반이면 되묻기로 교체·재저장한다.
   // (소유 판정 재계산은 fail-close 방향 전용이다 — cacheable 재계산 금지 계약과 무관.)
-  if (storedFinal.source === "llm") {
+  // `cache` envelope 도 같은 축이다 (삼순 2026-08-14 cache P0) — 게이트 도입 이전에
+  // 캐시 발송으로 저장된 `cache/374개` final 이 재생으로 그대로 나가면 안 된다.
+  if (storedFinal.source === "llm" || storedFinal.source === "cache") {
     const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
     if (statGuardOwnsQuestion(question, glossary, players) && (
       !numericTokensSubsetOf(storedFinal.answer, question) ||
@@ -4947,7 +4949,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ⚠️ 로스터 블록이 실리는 질문(로스터 선수 언급)도 캐시 밖이다 — 소속·포지션·등번호는
   //   이적·말소로 **시간에 따라 변하는** 사실이라, 캐시된 옛 답이 현재 roster SSOT 와
   //   어긋날 수 있다(최형우 이적 축과 같은 뿌리). read/write 모두 건너뛴다.
-  if (!context && !scopeGate && !rosterBlock) {
+  // ⚠️ 가드 소유 질문(statNumericGuard)도 캐시 밖이다 (삼순 2026-08-14 cache P0) — 게이트
+  //   도입 이전에 쓰인 `374개` 답이 캐시에 남아 있으면 read 경로가 final gate 앞에서
+  //   `source=cache` 로 발송해 게이트를 통째로 우회한다. write 만 막으면 기존 오염이
+  //   계속 서빙되므로 read 도 건너뜕다(fail-close).
+  if (!context && !scopeGate && !rosterBlock && !statNumericGuard) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
       // 선종결 CAS 결속 (삼순 5차): 캐시 발송도 durable 경계를 이긴 쪽만 한다.
