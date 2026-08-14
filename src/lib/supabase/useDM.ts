@@ -27,6 +27,7 @@ import {
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
 import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
+import { useBaseballQaReplyRecovery } from "@/lib/baseball-qa/use-reply-recovery";
 
 export type { DMMessage };
 
@@ -217,6 +218,9 @@ export function useDMChat(conversationId: string) {
   // HTTP 성공과 답변 Realtime INSERT는 서로 다른 전달 경로다. INSERT를 놓쳐도
   // exact 답변을 다시 읽어 typing을 종료할 수 있게 현재 대화 재조회를 연결한다.
   const syncBaseballQaRepliesRef = useRef<() => void>(() => {});
+  const syncBaseballQaReplies = useCallback(() => {
+    syncBaseballQaRepliesRef.current();
+  }, []);
   const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
   const observedBaseballQaPickerIdsRef = useRef(new Set<number>());
   /**
@@ -327,16 +331,12 @@ export function useDMChat(conversationId: string) {
     };
   }, [user, processBaseballQaOutbox]);
 
-  useEffect(() => {
-    if (!Object.values(geniusReplyStates).some((state) => state !== "failed")) return;
-    const timer = window.setInterval(() => {
-      // 요청이 응답 대기에서 멈추거나 Realtime만 빠진 경우에도 3초마다 DB 정본을 확인한다.
-      // 현재 대화가 아닌 outbox 항목은 아래 ref callback에서 건너뛴다.
-      syncBaseballQaRepliesRef.current();
-      void processBaseballQaOutbox();
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [geniusReplyStates, processBaseballQaOutbox]);
+  useBaseballQaReplyRecovery({
+    replyStates: geniusReplyStates,
+    setReplyStates: setGeniusReplyStates,
+    syncReplies: syncBaseballQaReplies,
+    processOutbox: processBaseballQaOutbox,
+  });
 
   const retryBaseballQa = useCallback((messageId: number) => {
     if (typeof window === "undefined") return;

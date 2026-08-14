@@ -17,13 +17,17 @@ import type * as ReactNamespace from "react";
 import type { Root } from "react-dom/client";
 import {
   BASEBALL_QA_OUTBOX_KEY,
+  BASEBALL_QA_MAX_ATTEMPTS,
+  BASEBALL_QA_REPLY_TIMEOUT_MS,
   attemptBaseballQaOutbox,
   enqueueBaseballQaQuestion,
+  expireBaseballQaReplyTimeouts,
   getBaseballQaReplyStates,
   observeBaseballQaReplies,
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
 } from "../../src/lib/baseball-qa/client-outbox";
+import { useBaseballQaReplyRecovery } from "../../src/lib/baseball-qa/use-reply-recovery";
 import { BASEBALL_GENIUS_FALLBACK_ANSWER } from "../../src/lib/constants/baseball-genius";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -80,8 +84,8 @@ function assertMissedRealtimeRecoveryWiring(source: string) {
   );
   assert.match(
     source,
-    /setInterval\(\(\) => \{[\s\S]*?syncBaseballQaRepliesRef\.current\(\);[\s\S]*?processBaseballQaOutbox\(\);[\s\S]*?\}, 3000\)/,
-    "Realtime 누락·HTTP 장기대기용 3초 강제 동기화가 있어야 한다",
+    /useBaseballQaReplyRecovery\(\{[\s\S]*?processOutbox: processBaseballQaOutbox/,
+    "실제 reply recovery 훅이 outbox 처리 경로에 결속되어야 한다",
   );
   assert.match(
     source,
@@ -107,10 +111,118 @@ test("HTTP 성공 뒤 Realtime INSERT를 놓쳐도 exact 답변을 강제 재조
     "성공 직후 재조회 배선을 죽이면 게이트가 RED여야 한다",
   );
   assert.throws(
-    () => assertMissedRealtimeRecoveryWiring(source.replace("setInterval", "setTimeout")),
-    /3초 강제 동기화/,
-    "주기 강제 동기화를 죽이면 게이트가 RED여야 한다",
+    () => assertMissedRealtimeRecoveryWiring(
+      source.replace("useBaseballQaReplyRecovery({", "void ({"),
+    ),
+    /reply recovery 훅/,
+    "production 훅 결속을 죽이면 게이트가 RED여야 한다",
   );
+});
+
+test("acknowledged/202 무답변은 유계 시간 뒤 실제 recovery 훅에서 failed로 전환된다", async () => {
+  React = await import("react");
+  ({ createRoot } = await import("react-dom/client"));
+  act = React.act;
+
+  const storage = new MemoryStorage();
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 99 });
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async () => response(202)) as typeof fetch,
+    1_000,
+  );
+
+  let tick: (() => void) | null = null;
+  const originalSetInterval = window.setInterval;
+  const originalClearInterval = window.clearInterval;
+  window.setInterval = ((callback: TimerHandler) => {
+    tick = callback as () => void;
+    return 1;
+  }) as typeof window.setInterval;
+  window.clearInterval = (() => undefined) as typeof window.clearInterval;
+
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  let syncCalls = 0;
+  let processCalls = 0;
+  function Harness() {
+    const [states, setStates] = React.useState(
+      getBaseballQaReplyStates(readBaseballQaOutbox(storage)),
+    );
+    useBaseballQaReplyRecovery({
+      replyStates: states,
+      setReplyStates: setStates,
+      storage,
+      nowMs: () => 1_000 + BASEBALL_QA_REPLY_TIMEOUT_MS,
+      syncReplies: () => { syncCalls += 1; },
+      processOutbox: () => { processCalls += 1; },
+    });
+    return React.createElement("div", { "data-state": states[99] ?? "idle" });
+  }
+
+  try {
+    await act(async () => { root.render(React.createElement(Harness)); });
+    assert.equal(container.firstElementChild?.getAttribute("data-state"), "waiting");
+    assert.ok(tick, "production recovery interval callback이 등록되어야 한다");
+    await act(async () => { tick?.(); });
+    assert.equal(container.firstElementChild?.getAttribute("data-state"), "failed");
+    assert.equal(readBaseballQaOutbox(storage)[0]?.attempts, BASEBALL_QA_MAX_ATTEMPTS);
+    assert.equal(syncCalls, 1);
+    assert.equal(processCalls, 1);
+  } finally {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    window.setInterval = originalSetInterval;
+    window.clearInterval = originalClearInterval;
+  }
+});
+
+test("timeout 직전은 waiting을 유지하고 retry는 질문 deadline을 새로 시작한다", async () => {
+  const storage = new MemoryStorage();
+  enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 98 });
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async () => response(200)) as typeof fetch,
+    5_000,
+  );
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async () => response(500)) as typeof fetch,
+    5_000 + BASEBALL_QA_REPLY_TIMEOUT_MS - 1,
+  );
+  assert.equal(getBaseballQaReplyStates(readBaseballQaOutbox(storage))[98], "waiting");
+
+  await attemptBaseballQaOutbox(
+    storage,
+    "token",
+    (async () => response(500)) as typeof fetch,
+    5_000 + BASEBALL_QA_REPLY_TIMEOUT_MS,
+  );
+  assert.equal(getBaseballQaReplyStates(readBaseballQaOutbox(storage))[98], "failed");
+  resetBaseballQaQuestion(storage, 98);
+  assert.equal(getBaseballQaReplyStates(readBaseballQaOutbox(storage))[98], "waiting");
+  assert.equal(readBaseballQaOutbox(storage)[0]?.responsePendingSinceMs, undefined);
+});
+
+test("질문별 deadline은 다른 질문과 picker 대기를 건드리지 않는다", () => {
+  const storage = new MemoryStorage(JSON.stringify([
+    { conversationId: "conv", messageId: 91, attempts: 0, acknowledged: true, responsePendingSinceMs: 1_000 },
+    { conversationId: "conv", messageId: 92, attempts: 0, acknowledged: true, responsePendingSinceMs: 2_000 },
+    { conversationId: "conv", messageId: 93, attempts: 0, acknowledged: true, awaitingPlayerPick: true, responsePendingSinceMs: 1_000 },
+  ]));
+  assert.deepEqual(
+    expireBaseballQaReplyTimeouts(storage, 1_000 + BASEBALL_QA_REPLY_TIMEOUT_MS),
+    [91],
+  );
+  assert.deepEqual(getBaseballQaReplyStates(readBaseballQaOutbox(storage)), {
+    91: "failed",
+    92: "waiting",
+  });
+  assert.equal(readBaseballQaOutbox(storage).find((entry) => entry.messageId === 93)?.attempts, 0);
 });
 
 test("연속 질문은 messageId별 waiting/failed 상태를 독립 유지한다", async () => {
