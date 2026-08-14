@@ -4,21 +4,26 @@
 alter table notification_prefs
   add column if not exists fav_player_interview boolean not null default true;
 
--- 2) 발송 원장 — postgame_interviews 행 단위로 "알림 처리 완료" 시각을 남긴다.
---    이번 run에 새로 insert된 행만 대상으로 삼으면 발송이 실패했을 때 다음 run에는
---    이미 저장된 행이라 재입력되지 않아 영구 유실된다(삼순 NO-GO). notified_at이
---    null인 행을 매 run 다시 집어오는 구조라야 durable retry가 성립한다.
+-- 2) 발송 상태 머신 (삼순 NO-GO 4라운드: in-flight와 완료를 분리하는 row lease/status).
+--    pending    : 미발송 — 다음 cron이 집어간다
+--    processing : 어떤 run이 lease를 잡고 발송 진행 중 — lease_until 전에는 다른 run이
+--                 건드리지 못한다. lease 만료 후에도 processing이면 그 run이 죽은 것
+--                 → 재획득 가능(sent 마커로 이중발송 방어)
+--    sent       : 발송 종결(성공, 대상 0, 선수 미확정 포함)
 alter table postgame_interviews
-  add column if not exists notified_at timestamptz;
+  add column if not exists notify_state text not null default 'pending'
+    check (notify_state in ('pending', 'processing', 'sent'));
+alter table postgame_interviews
+  add column if not exists notify_lease_until timestamptz;
 
--- 3) 🔴 backlog 방어: 이 마이그레이션 이전에 저장된 인터뷰는 전부 처리완료로 백필한다.
+-- 3) 🔴 backlog 방어: 이 마이그레이션 이전에 저장된 인터뷰는 전부 sent로 백필한다.
 --    백필하지 않으면 배포 직후 첫 cron이 과거 인터뷰 전량을 최애선수 팬에게
 --    일괄 발송한다(#274 backlog 플러시와 동일 사고).
 update postgame_interviews
-   set notified_at = now()
- where notified_at is null;
+   set notify_state = 'sent'
+ where notify_state <> 'sent';
 
 -- 4) 미발송 행 조회 인덱스 (cron이 매 5분 조회).
-create index if not exists idx_postgame_interviews_pending_notify
+create index if not exists idx_postgame_interviews_notify_pending
   on postgame_interviews (published_at)
-  where notified_at is null and confidence = 'high';
+  where notify_state <> 'sent' and confidence = 'high';

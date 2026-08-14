@@ -6,50 +6,48 @@ import { interviewPlayerLinks } from "@/lib/video/postgame-interviews-route-poli
 // 그 cron(#1001)이 경기 종료 후 30분~24시간 동안 승인 채널 16곳을 추적해
 //   - 어느 경기인지(game_id)   — 제목 날짜·대진·스코어 대조 + 더블헤더 fail-close
 //   - 누구 인터뷰인지(player_names) — 승리팀 박스스코어 선수명과 대조
-// 를 이미 고신뢰(confidence='high')로 매칭해 postgame_interviews에 저장한다.
-// 경기 상세의 "수훈선수 인터뷰" 섹션이 그 테이블을 그대로 읽는다.
+// 를 고신뢰(confidence='high')로 매칭해 postgame_interviews에 저장한다.
+// 이 모듈은 감지를 다시 하지 않는다 — 저장된 행을 최애선수 팬에게 보낼 뿐이다.
 //
-// 따라서 이 모듈은 **감지를 다시 하지 않는다**. 제목 문자열 파싱도, 스코어보드
-// 재조회도 없다. 저장된 행을 받아 kboId로 바꾸고 최애선수 팬에게 보낼 뿐이다.
+// ── 복구 설계 (삼순 NO-GO 4라운드 — 발송 모델 자체를 단순화) ─────────────────
+// 이전 설계(선수별 claim + run-local dedupe)는 in-flight/완료 구분, unclaim 실패,
+// run 사이 최애 변경까지 원장이 3개 필요했다. 삼순이 제안한 **영상당 union
+// audience 1회 발송**으로 바꾸면 그 축들이 구조적으로 사라진다:
 //
-// ── 복구 계약 (삼순 NO-GO 3라운드 반영) ───────────────────────────────────
-// (1) durable retry: 대상은 "이번 run 새 insert"가 아니라 **notified_at IS NULL 행**.
-//     새 insert만 보면 발송 실패 시 다음 run에는 이미 저장된 행이라 재입력되지 않아
-//     영구 유실된다.
-// (2) claim은 **tri-state**다. 공용 claimEvent는 중복과 DB 오류를 모두 false로
-//     뭉개는데, 그 false를 "정상 skip"으로 보고 행을 완료 처리하면 DB 오류 한 번에
-//     그 인터뷰가 영구 유실된다. error는 실패로 취급해 행을 미완료로 남긴다.
-// (3) video×user 중복 방지는 **run 경계를 넘어야 한다**. 2인 영상에서 A 성공·B 실패
-//     후 다음 run에 B만 재시도하면, run-local Set은 비어 있어 A로 이미 받은 유저에게
-//     또 간다. 그래서 claim=duplicate(=이전 run에서 이미 발송됨)인 선수도 audience를
-//     조회해 **수신자 제외 집합에만 넣고 발송하지 않는다** — 원장이 곧 dedupe 근거다.
-// (4) 완료 표시는 **row id**로 한다. postgame_interviews의 unique key는
-//     (game_id, video_id)라 video_id 단독 update는 다른 경기의 같은 영상까지 건드린다.
+//  - 발송 단위 = 영상 1건 · 푸시 1회. 확정된 모든 선수의 팬을 합집합으로 모아
+//    한 번에 보낸다 → 같은 유저가 같은 영상으로 2번 받을 경로 자체가 없다.
+//    run 사이 최애 변경도 무관(재조회·과거 수신자 원장 불필요).
+//  - 동시 실행 배제 = **row lease**(notify_state pending→processing + lease_until).
+//    lease를 잡은 run만 발송한다. 다른 run은 in-flight 행을 아예 못 본다.
+//    lease가 만료된 processing 행은 그 run이 죽은 것 → 재획득.
+//  - 이중발송 방어 = **sent 마커**(notified_score_events, `interview#{videoId}`).
+//    발송 성공 직후 기록한다. markSent가 실패해 행이 processing으로 남아도, lease
+//    만료 후 재획득한 run이 마커를 보고 재발송 없이 sent로 회복한다.
+//    마커 조회가 오류면 "미발송"으로 단정하지 않고 lease를 풀어 다음 run에 넘긴다.
+//  - unclaim이라는 개념이 없다. 실패 복구는 전부 lease 해제(pending 복귀)로 한다.
+//    해제 자체가 실패해도 lease 만료가 최종 안전망이라 은폐되는 실패가 없다.
+//
+// 상태 전이: pending ──lease──▶ processing ──성공/종결──▶ sent
+//                             └─실패/불확실─▶ pending (또는 lease 만료로 재획득)
 //
 // 그 외 안전장치:
 //  - kboId 확정은 interviewPlayerLinks(승리팀 로스터에서 이름이 유일할 때만) 재사용.
-//    UI가 선수 링크를 만드는 것과 같은 함수라 화면과 알림 대상이 어긋나지 않는다.
-//    kboId가 null(동명이인·로스터 부재)이면 발송하지 않는다 — 오발송 방어.
-//  - claim 이후 모든 실패 경로(반환 false·throw)는 반드시 unclaim. 잔류하면 그 선수는
-//    다음 run에서도 duplicate로 걸러져 영구 유실된다.
+//    UI 선수 링크와 같은 함수라 화면과 알림 대상이 어긋나지 않는다. 미확정 선수는
+//    발송에서 빠지고, 확정 선수가 0명이면 그 행은 보낼 수 없으므로 sent로 종결.
+//  - 토글 fav_player_interview(기본 on)는 sendPush 구현의 prefKey 필터가 적용.
 //
-// DB/FCM 의존은 전부 InterviewDeps로 주입 — QA smoke가 claim→대상조회→발송→
-// unclaim/원장기록 종단 경로를 그대로 태울 수 있게.
+// DB/FCM 의존은 전부 InterviewDeps로 주입 — QA smoke가 lease→마커→발송→상태전이
+// 종단 경로를 그대로 태울 수 있게.
 
 /** 알림 토글 키 (prefs.ts PREF_KEYS와 동일 문자열). */
 export const INTERVIEW_PREF_KEY = "fav_player_interview" as const;
 
-/**
- * claim 결과 3분기.
- *  - claimed   : 이번에 선점 성공 → 발송 대상
- *  - duplicate : 이미 발송됨(이전 run 또는 동시 run) → 발송 안 하되 수신자는 제외 집합에
- *  - error     : DB/인프라 오류 → 완료 처리 금지, 다음 run 재시도
- */
-export type ClaimResult = "claimed" | "duplicate" | "error";
+/** sent 마커 조회 결과. error를 absent로 오독하면 이중발송 위험이 있어 3분기. */
+export type SentMarkerState = "present" | "absent" | "error";
 
-/** postgame_interviews의 미발송 행. */
+/** lease를 획득한 미발송 행. */
 export interface PendingInterview {
-  /** postgame_interviews.id (PK) — 완료 표시는 반드시 이 값으로 한다. */
+  /** postgame_interviews.id (PK) — 상태 전이는 반드시 이 값으로 한다. */
   id: string;
   gameId: string;
   videoId: string;
@@ -61,14 +59,19 @@ export interface PendingInterview {
 }
 
 export interface InterviewDeps {
-  /** notified_at IS NULL + confidence=high 인 행. */
-  fetchPendingInterviews: () => Promise<PendingInterview[]>;
-  /** 처리 완료 표시 — postgame_interviews.id 기준. */
-  markNotified: (rowIds: string[]) => Promise<void>;
-  /** event_id 선점. 중복과 오류를 구분해 반환한다. */
-  claimEvent: (eventId: string, gameId: string) => Promise<ClaimResult>;
-  /** 인프라 실패 시 선점 해제 → 다음 run 재시도. */
-  unclaimEvent: (eventId: string) => Promise<void>;
+  /**
+   * pending(또는 lease 만료된 processing) 행에 lease를 걸고 반환.
+   * 원자적 UPDATE라 두 run이 같은 행을 동시에 잡을 수 없다.
+   */
+  leasePendingInterviews: () => Promise<PendingInterview[]>;
+  /** 발송 종결 표시 (성공·대상0·선수 미확정). row id 기준. */
+  markSent: (rowIds: string[]) => Promise<void>;
+  /** lease 해제 → pending 복귀. 실패해도 lease 만료가 안전망. */
+  releaseLease: (rowIds: string[]) => Promise<void>;
+  /** 이 영상이 이미 발송됐는지(sent 마커). */
+  hasSentMarker: (videoId: string) => Promise<SentMarkerState>;
+  /** 발송 성공 직후 마커 기록. false = 기록 실패(행 상태가 1차 방어라 진행은 한다). */
+  insertSentMarker: (videoId: string, gameId: string) => Promise<boolean>;
   /** kboId를 최애선수로 둔 유저 id. */
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
   /** 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행. */
@@ -80,14 +83,16 @@ export interface InterviewDeps {
 }
 
 export interface InterviewNotifySummary {
-  pending: number;
+  leased: number;
   sent: number;
-  skippedUnresolved: number;
-  skippedClaimed: number;
-  skippedNoAudience: number;
-  skippedDuplicateUser: number;
-  failed: number;
-  settled: number;
+  /** sent 마커로 회복(직전 run이 발송 후 markSent 전에 죽은 행). */
+  recoveredFromMarker: number;
+  settledUnresolved: number;
+  settledNoAudience: number;
+  /** 실패/불확실 → lease 해제, 다음 run 재시도. */
+  released: number;
+  /** 마커 기록 실패(발송은 성공, 행 상태로만 방어 중) — 관측용. */
+  markerWriteFailures: number;
 }
 
 /**
@@ -98,107 +103,102 @@ export async function notifyFavPlayerInterviews(
   deps: InterviewDeps,
 ): Promise<InterviewNotifySummary> {
   const summary: InterviewNotifySummary = {
-    pending: 0, sent: 0, skippedUnresolved: 0, skippedClaimed: 0,
-    skippedNoAudience: 0, skippedDuplicateUser: 0, failed: 0, settled: 0,
+    leased: 0, sent: 0, recoveredFromMarker: 0, settledUnresolved: 0,
+    settledNoAudience: 0, released: 0, markerWriteFailures: 0,
   };
 
-  const pending = await deps.fetchPendingInterviews();
-  summary.pending = pending.length;
-  if (pending.length === 0) return summary;
+  const leased = await deps.leasePendingInterviews();
+  summary.leased = leased.length;
+  if (leased.length === 0) return summary;
 
-  const settledRowIds: string[] = [];
+  const sentRowIds: string[] = [];
+  const releaseRowIds: string[] = [];
 
-  for (const interview of pending) {
-    // UI의 선수 링크와 같은 경로로 kboId 확정 — 승리팀 로스터에서 이름이 유일할 때만.
-    const links = interviewPlayerLinks(interview.playerNames, interview.winnerTeamId);
-    // 이 영상으로 이미 푸시를 받은 유저. duplicate 선수의 audience도 여기 합쳐지므로
-    // run 경계를 넘어 중복이 막힌다(삼순 NO-GO ②).
-    const notifiedUsers = new Set<string>();
-    let hadInfraFailure = false;
-
-    for (const link of links) {
-      if (!link.kboId) {
-        // 동명이인이거나 로스터에 없음 → 누구인지 확정 못 하므로 보내지 않는다.
-        // (재시도해도 결과가 같으므로 인프라 실패로 치지 않는다.)
-        summary.skippedUnresolved++;
-        continue;
-      }
-      const eventId = `interview#${interview.videoId}#${link.kboId}`;
-
-      let claim: ClaimResult;
-      try {
-        claim = await deps.claimEvent(eventId, interview.gameId);
-      } catch {
-        claim = "error";
-      }
-
-      if (claim === "error") {
-        // DB 오류를 "이미 보냈음"으로 오독하면 그 인터뷰가 영구 유실된다(삼순 NO-GO ①).
-        hadInfraFailure = true;
-        continue;
-      }
-
-      if (claim === "duplicate") {
-        // 이전(또는 동시) run에서 이미 발송된 선수. 그 수신자들을 제외 집합에 넣어
-        // 같은 영상의 다른 선수가 같은 유저에게 두 번 보내지 않게 한다.
-        summary.skippedClaimed++;
-        try {
-          for (const id of await deps.fetchFavoritePlayerFanIds(link.kboId)) {
-            notifiedUsers.add(id);
-          }
-        } catch {
-          // 제외 집합을 못 만들면 중복 발송 위험이 있으므로 이 행을 완료 처리하지 않는다.
-          hadInfraFailure = true;
-        }
-        continue;
-      }
-
-      // claim 이후의 모든 실패 경로는 반드시 unclaim 한다 — 잔류하면 그 선수는
-      // 다음 run에서도 duplicate로 걸러져 영구 유실된다.
-      try {
-        const userIds = await deps.fetchFavoritePlayerFanIds(link.kboId);
-        const targets = userIds.filter((id) => !notifiedUsers.has(id));
-        summary.skippedDuplicateUser += userIds.length - targets.length;
-        if (targets.length === 0) {
-          // 대상 0(또는 전부 이 영상에서 이미 수신) = 정상 종결. claim 유지.
-          summary.skippedNoAudience++;
-          for (const id of userIds) notifiedUsers.add(id);
-          continue;
-        }
-        const result = await deps.sendPush(
-          targets,
-          {
-            title: `⭐ ${link.name} 수훈선수 인터뷰가 올라왔어요`,
-            body: interview.title,
-            url: `/games/${interview.gameId}`,
-          },
-          INTERVIEW_PREF_KEY,
-        );
-        if (!result.ok) {
-          await deps.unclaimEvent(eventId);
-          hadInfraFailure = true;
-          summary.failed++;
-          continue;
-        }
-        for (const id of targets) notifiedUsers.add(id);
-        summary.sent++;
-      } catch {
-        // throw(네트워크·DB 예외)도 동일하게 선점 해제 — 예외 경로에서 claim이
-        // 남는 것이 가장 위험하다.
-        await deps.unclaimEvent(eventId).catch(() => {});
-        hadInfraFailure = true;
-        summary.failed++;
-      }
+  for (const interview of leased) {
+    // 1. 이중발송 방어 — 직전 run이 발송 후 markSent 전에 죽었으면 마커가 남아 있다.
+    let marker: SentMarkerState;
+    try {
+      marker = await deps.hasSentMarker(interview.videoId);
+    } catch {
+      marker = "error";
+    }
+    if (marker === "present") {
+      sentRowIds.push(interview.id);
+      summary.recoveredFromMarker++;
+      continue;
+    }
+    if (marker === "error") {
+      // 조회 실패를 "미발송"으로 단정하면 이중발송 위험 → 이번 run은 건드리지 않는다.
+      releaseRowIds.push(interview.id);
+      summary.released++;
+      continue;
     }
 
-    // 인프라 실패가 하나도 없을 때만 처리완료로 확정한다.
-    // 실패가 있으면 notified_at을 비워둬 다음 run이 이 행을 다시 집어온다.
-    if (!hadInfraFailure) settledRowIds.push(interview.id);
+    // 2. kboId 확정 — UI 선수 링크와 같은 경로. 미확정 선수는 발송 대상에서 제외.
+    const links = interviewPlayerLinks(interview.playerNames, interview.winnerTeamId)
+      .filter((link): link is typeof link & { kboId: string } => link.kboId !== null);
+    if (links.length === 0) {
+      // 보낼 수 있는 선수가 없다 — 재시도해도 결과가 같으므로 종결.
+      sentRowIds.push(interview.id);
+      summary.settledUnresolved++;
+      continue;
+    }
+
+    // 3. union audience — 확정된 모든 선수의 팬 합집합. 영상당 푸시는 1회뿐이라
+    //    같은 유저가 같은 영상으로 중복 수신할 경로가 없다.
+    let targets: string[];
+    try {
+      const union = new Set<string>();
+      for (const link of links) {
+        for (const id of await deps.fetchFavoritePlayerFanIds(link.kboId)) union.add(id);
+      }
+      targets = [...union];
+    } catch {
+      releaseRowIds.push(interview.id);
+      summary.released++;
+      continue;
+    }
+    if (targets.length === 0) {
+      sentRowIds.push(interview.id);
+      summary.settledNoAudience++;
+      continue;
+    }
+
+    // 4. 발송 1회 → 성공 시 마커 기록 후 종결. 실패/예외는 lease 해제(다음 run 재시도).
+    try {
+      const names = links.map((link) => link.name).join("·");
+      const result = await deps.sendPush(
+        targets,
+        {
+          title: `⭐ ${names} 수훈선수 인터뷰가 올라왔어요`,
+          body: interview.title,
+          url: `/games/${interview.gameId}`,
+        },
+        INTERVIEW_PREF_KEY,
+      );
+      if (!result.ok) {
+        releaseRowIds.push(interview.id);
+        summary.released++;
+        continue;
+      }
+      if (!(await deps.insertSentMarker(interview.videoId, interview.gameId).catch(() => false))) {
+        summary.markerWriteFailures++;
+      }
+      sentRowIds.push(interview.id);
+      summary.sent++;
+    } catch {
+      releaseRowIds.push(interview.id);
+      summary.released++;
+    }
   }
 
-  if (settledRowIds.length > 0) {
-    await deps.markNotified(settledRowIds);
-    summary.settled = settledRowIds.length;
+  // 상태 전이는 마지막에 일괄 적용. markSent가 실패하면 행은 processing으로 남지만
+  // lease 만료 + sent 마커 경로가 재발송 없이 회복한다.
+  if (sentRowIds.length > 0) await deps.markSent(sentRowIds);
+  if (releaseRowIds.length > 0) {
+    await deps.releaseLease(releaseRowIds).catch(() => {
+      // 해제 실패는 은폐되지 않는다 — lease 만료가 같은 효과를 낸다(다음 run 재획득).
+    });
   }
   return summary;
 }

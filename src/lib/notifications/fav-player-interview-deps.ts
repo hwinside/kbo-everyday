@@ -1,34 +1,14 @@
-import { unclaimEvent } from "@/lib/notifications/game-score";
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 import { sendFcmToUsers } from "@/lib/notifications/fcm";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import type {
-  ClaimResult,
   InterviewDeps,
   PendingInterview,
+  SentMarkerState,
 } from "@/lib/notifications/fav-player-interview";
 
-/** 한 run에서 처리할 미발송 인터뷰 상한 — KBO 하루 최대 10경기 × 인터뷰 수 여유. */
-const PENDING_LIMIT = 40;
-
-/**
- * event_id 선점 — 중복과 DB 오류를 **구분**해 반환한다.
- *
- * 공용 claimEvent(game-score.ts)는 둘 다 false로 뭉갠다. 득점 알림에서는 다음 이벤트가
- * 곧 오므로 감수되지만, 인터뷰는 경기당 1~2건뿐이라 DB 오류 한 번을 "이미 보냈음"으로
- * 오독하면 그 인터뷰가 영구 유실된다(삼순 NO-GO). 그래서 별도 구현을 둔다.
- */
-async function claimInterviewEvent(eventId: string, gameId: string): Promise<ClaimResult> {
-  const { data, error } = await supabase
-    .from("notified_score_events")
-    .upsert(
-      { event_id: eventId, game_id: gameId },
-      { onConflict: "event_id", ignoreDuplicates: true },
-    )
-    .select("event_id");
-  if (error) return "error";
-  return (data ?? []).length > 0 ? "claimed" : "duplicate";
-}
+/** lease 유지 시간 — cron 주기(5분)와 함수 maxDuration(60s)을 함께 커버. */
+const LEASE_MS = 10 * 60 * 1000;
 
 /**
  * 수훈 인터뷰 알림의 실 인프라 배선 (DB·FCM).
@@ -37,23 +17,31 @@ async function claimInterviewEvent(eventId: string, gameId: string): Promise<Cla
  */
 export function createInterviewDeps(): InterviewDeps {
   return {
-    fetchPendingInterviews: async (): Promise<PendingInterview[]> => {
-      // query-guard: bounded -- 미발송(notified_at is null) 인터뷰만 PENDING_LIMIT 상한으로 조회.
-      // published_at 정렬 명시 — 무정렬 limit은 실행마다 다른 부분집합을 준다(M90 lesson).
+    /**
+     * pending(또는 lease 만료된 processing) 행을 원자적 UPDATE로 processing 전이.
+     * Postgres row lock + READ COMMITTED 재평가 덕에 두 run이 같은 행을 동시에
+     * 잡을 수 없다: 늦은 쪽 UPDATE는 lock 대기 후 WHERE를 다시 평가하는데, 그때
+     * notify_state=processing + 미래 lease_until이라 어느 분기에도 안 걸린다.
+     */
+    leasePendingInterviews: async (): Promise<PendingInterview[]> => {
+      const nowIso = new Date().toISOString();
+      const leaseIso = new Date(Date.now() + LEASE_MS).toISOString();
+      // query-guard: bounded -- 대상은 notify_state!=sent 인터뷰뿐(경기당 최대 6건 저장,
+      // 24h TTL jobs에서 파생)이라 무제한 UPDATE여도 행수가 구조적으로 작다.
       const { data, error } = await supabase
         .from("postgame_interviews")
-        .select("id, game_id, video_id, title, player_names")
-        .is("notified_at", null)
+        .update({ notify_state: "processing", notify_lease_until: leaseIso })
         .eq("confidence", "high")
-        .order("published_at", { ascending: true })
-        .limit(PENDING_LIMIT);
-      if (error) throw new Error(`pending interviews query failed: ${error.message}`);
+        .neq("notify_state", "sent")
+        .or(`notify_state.eq.pending,notify_lease_until.lt.${nowIso}`)
+        .select("id, game_id, video_id, title, player_names");
+      if (error) throw new Error(`lease pending interviews failed: ${error.message}`);
       const rows = data ?? [];
       if (rows.length === 0) return [];
 
       // winner_team_id는 jobs에 있다 — 동명이인 분리에 필요.
       const gameIds = [...new Set(rows.map((r) => r.game_id as string))];
-      // query-guard: bounded -- 위 PENDING_LIMIT 행에서 파생된 exact game_id IN 조회.
+      // query-guard: bounded -- 위 lease된 행에서 파생된 exact game_id IN 조회.
       const { data: jobs, error: jobErr } = await supabase
         .from("postgame_interview_jobs")
         .select("game_id, winner_team_id")
@@ -74,18 +62,48 @@ export function createInterviewDeps(): InterviewDeps {
     },
 
     // unique key가 (game_id, video_id)라 video_id 단독 update는 다른 경기의 같은
-    // 영상 행까지 건드린다. PK(id)로 정확히 그 행만 표시한다(삼순 NO-GO ③).
-    markNotified: async (rowIds: string[]): Promise<void> => {
+    // 영상 행까지 건드린다. PK(id)로 정확히 그 행만 전이한다.
+    markSent: async (rowIds: string[]): Promise<void> => {
       const { error } = await supabase
         .from("postgame_interviews")
-        .update({ notified_at: new Date().toISOString() })
-        .in("id", rowIds)
-        .is("notified_at", null);
-      if (error) throw new Error(`mark notified failed: ${error.message}`);
+        .update({ notify_state: "sent", notify_lease_until: null })
+        .in("id", rowIds);
+      if (error) throw new Error(`mark sent failed: ${error.message}`);
     },
 
-    claimEvent: claimInterviewEvent,
-    unclaimEvent,
+    releaseLease: async (rowIds: string[]): Promise<void> => {
+      const { error } = await supabase
+        .from("postgame_interviews")
+        .update({ notify_state: "pending", notify_lease_until: null })
+        .in("id", rowIds)
+        .neq("notify_state", "sent");
+      if (error) throw new Error(`release lease failed: ${error.message}`);
+    },
+
+    /**
+     * sent 마커 — notified_score_events 재사용, event_id = interview#{videoId}.
+     * 조회 오류를 absent로 오독하면 이중발송이라 3분기로 반환한다.
+     */
+    hasSentMarker: async (videoId: string): Promise<SentMarkerState> => {
+      const { data, error } = await supabase
+        .from("notified_score_events")
+        .select("event_id")
+        .eq("event_id", `interview#${videoId}`)
+        .maybeSingle();
+      if (error) return "error";
+      return data ? "present" : "absent";
+    },
+
+    insertSentMarker: async (videoId: string, gameId: string): Promise<boolean> => {
+      const { error } = await supabase
+        .from("notified_score_events")
+        .upsert(
+          { event_id: `interview#${videoId}`, game_id: gameId },
+          { onConflict: "event_id", ignoreDuplicates: true },
+        );
+      return !error;
+    },
+
     fetchFavoritePlayerFanIds: (kboId) => fetchFavoritePlayerFanIds(kboId),
     // prefKey 전달 = 토글 off 유저 필터링(sendFcmToUsers 내부 notification_prefs 조회).
     sendPush: async (userIds, payload, prefKey) => {
