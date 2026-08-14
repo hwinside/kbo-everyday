@@ -19,30 +19,50 @@ export const BASEBALL_GENIUS_TONE_PROMPT = [
   "부진과 패배는 사실대로 담백하게 설명하고, 근거 없는 희망이나 승리를 단정하지 않는다.",
   "고함, 명령조, 상시 구호를 쓰지 않는다. 야구에 대한 사랑과 호기심으로 흥분을 표현한다.",
   "지식 답변에는 이모지를 쓰지 않는다.",
-  "시그니처 ⚾는 인사·감사 같은 대화형 고정 응답에만 답변당 최대 1회 사용한다.",
+  "승인된 언어 시그니처 '승리를 위하여!'는 smalltalk 종료에만 쓰고, 최근 positive ending 5회 안에 이미 썼다면 반복하지 않는다.",
   "유저의 지적이 자료로 확인되면 첫 문장을 '지적 감사합니다. 제가 실책했습니다. 정확히 다시 확인하겠습니다.'로 쓴다.",
   "오류를 인정할 때 야구 비유로 변명하거나 자기변호하지 않는다.",
 ].join("\n");
 
-/**
- * 생성 답변을 denylist가 아니라 **문장 종결 구조**로 판정한다.
- * 봇이 서술하는 각 한국어 문장은 `-니다/-니까`로 끝나야 한다.
- */
+/** 생성 답변은 strict, 코드가 만든 목록형 답변만 structured 면제를 명시적으로 사용한다. */
+export type ToneValidationMode = "strict" | "structured";
 const FORMAL_SENTENCE_ENDING_RE = /(?:니다|니까)$/u;
 const HANGUL_RE = /[가-힣]/u;
 
-export function isBaseballGeniusToneCompliant(answer: string): boolean {
-  // `예:` 뒤의 따옴표 질문만 유저 입력 예시로 제외한다. 답 전체를 따옴표로 감싼 우회는 제외하지 않는다.
-  const botSpeech = answer.replace(/예:\s*(?:(?:["“][^"”]*["”])\s*)+/gu, "");
-  const lines = botSpeech.split(/\n+/u);
+function splitSentences(line: string): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const decimalPoint = char === "." && /\d/u.test(line[index - 1] ?? "") && /\d/u.test(line[index + 1] ?? "");
+    if (!decimalPoint && (char === "." || char === "!" || char === "?" || char === "…")) {
+      parts.push(line.slice(start, index + 1));
+      start = index + 1;
+    }
+  }
+  if (start < line.length) parts.push(line.slice(start));
+  return parts;
+}
+
+export function isBaseballGeniusToneCompliant(
+  answer: string,
+  options: { mode?: ToneValidationMode } = {},
+): boolean {
+  const mode = options.mode ?? "strict";
+  // 유저 예시·출처·목록 면제는 코드가 만든 정적 structured 출력에서만 허용한다.
+  const botSpeech = mode === "structured"
+    ? answer.replace(/예:\s*(?:(?:["“'‘][^"”'’]*["”'’])\s*)+/gu, "")
+    : answer;
+  const lines = botSpeech.split(/\n/u);
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const trimmedLine = lines[lineIndex].trim();
-    if (!trimmedLine || /^(?:📄\s*)?출처[:：]|^https?:\/\//u.test(trimmedLine)) continue;
-    for (const rawSentence of trimmedLine.split(/(?<=[.!?…])\s+/u)) {
-      let sentence = rawSentence
+    if (!trimmedLine) continue;
+    if (mode === "structured" && /^(?:📄\s*)?출처[:：]|^https?:\/\//u.test(trimmedLine)) continue;
+    for (const rawSentence of splitSentences(trimmedLine)) {
+      const sentence = rawSentence
         .trim()
         .replace(/^[-*•]\s*/u, "")
-        .replace(/[.!?…⚾\s]+$/u, "")
+        .replace(/[.!?…\s]+$/u, "")
         .replace(/[:：]$/u, "")
         .trim()
         .replace(/\s*\([^()]*\)$/u, "")
@@ -52,11 +72,17 @@ export function isBaseballGeniusToneCompliant(answer: string): boolean {
         .trim();
       if (!sentence || !HANGUL_RE.test(sentence)) continue;
       if (FORMAL_SENTENCE_ENDING_RE.test(sentence)) continue;
-      // 정식 문장 뒤에 이어지는 선수명 등 다중행 목록 조각은 문장 종결 계약 대상이 아니다.
-      const isListFragment = lines.length > 1 && lineIndex > 0 && !/[.!?…]$/u.test(rawSentence.trim());
-      if (isListFragment) continue;
+      const isStructuredListFragment =
+        mode === "structured" && lines.length > 1 && lineIndex > 0 && !/[.!?…]$/u.test(rawSentence.trim());
+      if (isStructuredListFragment) continue;
       return false;
     }
   }
   return true;
+}
+
+export const BASEBALL_GENIUS_SIGNATURE = "승리를 위하여!";
+export function appendSparsePositiveSignature(answer: string, recentPositiveAnswers: string[]): string {
+  const usedRecently = recentPositiveAnswers.slice(0, 5).some((recent) => recent.includes(BASEBALL_GENIUS_SIGNATURE));
+  return usedRecently ? answer : `${answer}\n${BASEBALL_GENIUS_SIGNATURE}`;
 }

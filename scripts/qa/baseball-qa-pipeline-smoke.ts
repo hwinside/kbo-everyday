@@ -1582,6 +1582,20 @@ async function verifyPipeline() {
     assert.deepEqual(state.logs, ["ack"], `${input}: #983 모니터용 ack 라벨 기록`);
   }
 
+  // 승인 언어 시그니처는 positive ending 최근 5회에 없을 때만 실제 ack 경로에 붙는다.
+  {
+    const fresh = freshState();
+    const first = await answerQuestion("u1", "고마워", {
+      ...makeDeps(fresh), loadRecentPositiveAnswers: async () => [],
+    });
+    assert.equal(first.answer, `${ACK_ANSWER}\n승리를 위하여!`, "최근 5회 미사용이면 시그니처 부착");
+    const cooled = freshState();
+    const second = await answerQuestion("u1", "고마워", {
+      ...makeDeps(cooled), loadRecentPositiveAnswers: async () => ["승리를 위하여!", "감사합니다."],
+    });
+    assert.equal(second.answer, ACK_ANSWER, "최근 5회 사용했으면 시그니처 반복 금지");
+  }
+
   // ── 인사말 actual path (2026-08-07) ────────────────────────────────────────
   // 라우팅만 맞고 답변 문구가 틀리면 유저에겐 여전히 대화가 어긋난다. 실제 answerQuestion 을 태운다.
   for (const input of greetingQuestions) {

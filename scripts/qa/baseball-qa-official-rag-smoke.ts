@@ -146,10 +146,10 @@ check("숫자 없는 답은 근거 대조를 요구하지 않는다", () => {
 check("길이 상한 — tier1·tier2 모두 320자, 초과는 거부", () => {
   // 2026-08-10 하린아빠 "긴 답변이 필요한 경우는 충분히 길게": tier2 상한 160→320.
   // 장문 복붙 방지 상한 자체는 양쪽 다 유지된다.
-  const long = "가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS + 1);
+  const long = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 3)}입니다.`;
   const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long });
   assert.equal(validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] }).kind, "insufficient");
-  const ok = "가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS);
+  const ok = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 4)}입니다.`;
   assert.equal(
     validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok }), { numericEvidence: true, evidence: [OFFICIAL] }).kind,
     "grounded",

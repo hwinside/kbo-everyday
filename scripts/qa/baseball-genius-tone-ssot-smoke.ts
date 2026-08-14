@@ -47,6 +47,8 @@ import {
 } from "../../src/lib/baseball-qa/stats/season-record";
 import { composeTeamRecordAnswer } from "../../src/lib/baseball-qa/stats/team-record";
 import {
+  appendSparsePositiveSignature,
+  BASEBALL_GENIUS_SIGNATURE,
   BASEBALL_GENIUS_TONE_PROMPT,
   BASEBALL_GENIUS_TONE_SSOT,
   isBaseballGeniusToneCompliant,
@@ -58,7 +60,8 @@ assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중하지만 야구에 미쳐 있�
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /모든 답변은 합니다체/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중함, 야구 과몰입, 팀 중립, 사람에 대한 선의/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\. 정확히 다시 확인하겠습니다\./);
-assert.match(BASEBALL_GENIUS_TONE_PROMPT, /시그니처 ⚾는 인사·감사 같은 대화형 고정 응답에만 답변당 최대 1회/);
+assert.match(BASEBALL_GENIUS_TONE_PROMPT, /승인된 언어 시그니처 '승리를 위하여!'는 smalltalk 종료에만/);
+assert.match(BASEBALL_GENIUS_TONE_PROMPT, /최근 positive ending 5회/);
 
 for (const prompt of [
   BASEBALL_QA_SYSTEM_PROMPT,
@@ -71,7 +74,6 @@ for (const prompt of [
 }
 
 const staticAnswers = [
-  BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER("임찬규"),
@@ -82,20 +84,16 @@ const staticAnswers = [
   HISTORY_HOLD_ANSWER,
   LIMITED_ANSWER,
   LLM_AMBIGUOUS_ANSWER,
-  NEWS_UNAVAILABLE_ANSWER,
   PLAYER_PICKER_ANSWER,
   QUESTION_CORRECTION_ANSWER,
-  SCOPE_GUIDE_ANSWER,
   SERVICE_REDIRECT_ANSWER,
   SYSTEM_ERROR_ANSWER,
   TEAM_ENTRY_UNAVAILABLE_ANSWER,
   TEAM_STAT_HOLD_ANSWER,
   TODAY_NO_GAMES_ANSWER,
-  UNSURE_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
   UNSUPPORTED_SEASON_ANSWER,
   RECORD_MISSING_ANSWER,
-  renderTeamEntryAnswer("LG", { snapshotDate: "2026-08-14", players: ["홍길동"] }),
   renderTodayStartersAnswer([], "LG"),
   renderDraftAnswer("홍길동", { year: 2020, team: "LG", detail: "1차 지명" }),
   renderDraftUnavailable("홍길동", "not_registered"),
@@ -103,6 +101,16 @@ const staticAnswers = [
 ];
 for (const answer of staticAnswers) {
   assert.ok(isBaseballGeniusToneCompliant(answer), `static answer violates 합니다체: ${answer}`);
+}
+const structuredAnswers = [
+  BASEBALL_GENIUS_FALLBACK_ANSWER,
+  UNSURE_ANSWER,
+  NEWS_UNAVAILABLE_ANSWER,
+  SCOPE_GUIDE_ANSWER,
+  renderTeamEntryAnswer("LG", { snapshotDate: "2026-08-14", players: ["홍길동"] }),
+];
+for (const answer of structuredAnswers) {
+  assert.ok(isBaseballGeniusToneCompliant(answer, { mode: "structured" }), `structured answer violates 합니다체: ${answer}`);
 }
 
 const beforeTermFixture = JSON.parse(
@@ -149,6 +157,9 @@ for (const nonFormal of [
   "좋아.",
   "몰라.",
   "“보크는 반칙이야.”",
+  "정식 답변입니다.\n보크는 반칙이야",
+  "반칙이야.다음은 정식 답변입니다.",
+  "정식 답변입니다.\n출처: 나무위키",
 ]) {
   assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `비합니다체를 통과시키면 안 된다: ${nonFormal}`);
 }
@@ -160,7 +171,10 @@ assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
   { kind: "insufficient", reason: "tone_violation" },
 );
-for (const nonFormal of ["보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”"]) {
+for (const nonFormal of [
+  "보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”",
+  "정식 답변입니다.\n보크는 반칙이야", "반칙이야.다음은 정식 답변입니다.", "정식 답변입니다.\n출처: 나무위키",
+]) {
   assert.deepEqual(
     validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
     { kind: "unsure" },
@@ -218,10 +232,22 @@ for (const relative of outputFiles) {
 }
 assert.deepEqual(violations, [], `비합니다체/명령형 output literals: ${violations.join(", ")}`);
 
-const signatureAnswers = staticAnswers.filter((answer) => answer.includes("⚾"));
-assert.deepEqual(signatureAnswers, [ACK_ANSWER, GREETING_ANSWER], "시그니처는 인사·감사 고정 응답에서만 사용한다");
-for (const answer of signatureAnswers) {
-  assert.equal(answer.match(/⚾/gu)?.length, 1, "시그니처는 답변당 최대 1회다");
-}
+assert.equal(BASEBALL_GENIUS_SIGNATURE, "승리를 위하여!");
+assert.equal(
+  appendSparsePositiveSignature(ACK_ANSWER, ["좋은 하루입니다.", "감사합니다.", "반갑습니다.", "확인했습니다.", "기쁩니다."]),
+  `${ACK_ANSWER}\n승리를 위하여!`,
+  "최근 positive ending 5회에 시그니처가 없을 때만 부착한다",
+);
+assert.equal(
+  appendSparsePositiveSignature(ACK_ANSWER, ["좋은 하루입니다.", "승리를 위하여!", "감사합니다.", "반갑습니다.", "기쁩니다."]),
+  ACK_ANSWER,
+  "최근 positive ending 5회 안의 시그니처는 반복하지 않는다",
+);
+assert.equal(
+  appendSparsePositiveSignature(ACK_ANSWER, ["1", "2", "3", "4", "5", "승리를 위하여!"]),
+  `${ACK_ANSWER}\n승리를 위하여!`,
+  "6번째 이전 사용은 cooldown 범위 밖이다",
+);
+assert.equal(staticAnswers.some((answer) => answer.includes("⚾")), false, "⚾를 승인 언어 시그니처로 오인하지 않는다");
 
 console.log(`PASS baseball genius tone SSOT: ${staticAnswers.length} static outputs, 5 prompts, 136 dictionary answers, generated-output fail-close`);

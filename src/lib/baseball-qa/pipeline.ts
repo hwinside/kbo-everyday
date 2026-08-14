@@ -43,7 +43,7 @@ import {
 } from "./rag/retrieve";
 import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
-import { isBaseballGeniusToneCompliant } from "./tone";
+import { appendSparsePositiveSignature, isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -218,7 +218,7 @@ export const SCOPE_GUIDE_ANSWER =
   "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
   "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
-export const ACK_ANSWER = "도움이 됐다니 기쁩니다! ⚾";
+export const ACK_ANSWER = "도움이 됐다니 기쁩니다!";
 // 대화 첫 턴 인사 — 질문이 아니라 대화 시작이다. 차단 문구를 보내면 문전박대가 된다.
 // ⚠️ ACK_ANSWER("도움이 됐다니 다행이에요")를 재사용하면 안 된다: `안녕` 에 그 문구가 나가면
 //    아무 도움도 준 적 없이 도움이 됐다고 말하는 꼴이라 대화가 어긋난다.
@@ -230,7 +230,7 @@ export const ACK_ANSWER = "도움이 됐다니 기쁩니다! ⚾";
 //    반대가설이 있는 건 코드가 단정하면 안 된다(2026-08-07 확정 원칙).
 //    그래서 **만남·헤어짐 양쪽에 다 자연스러운 중립 문구**를 쓴다.
 export const GREETING_ANSWER =
-  "야구 이야기가 궁금한 순간에 함께하겠습니다 ⚾";
+  "야구 이야기가 궁금한 순간에 함께하겠습니다.";
 // 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
 // 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
 export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 모두 사용했습니다. 내일 다시 질문할 수 있습니다.`;
@@ -835,6 +835,8 @@ export interface QaDeps {
    * 과거 폴백은 없다 — 이 1행이 부적격이면 맥락 없음으로 종료한다.
    */
   loadPreviousTurn?: () => Promise<PreviousTurnRow | null>;
+  /** 최근 smalltalk positive ending 5회 — 승인 시그니처 cooldown 판정용. */
+  loadRecentPositiveAnswers?: () => Promise<string[]>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
   /**
    * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
@@ -4193,7 +4195,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
-    const answer =
+    let answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
@@ -4211,6 +4213,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
       BLOCKED_ANSWER;
+    if (route === "ack" && deps.loadRecentPositiveAnswers) {
+      try {
+        answer = appendSparsePositiveSignature(answer, await deps.loadRecentPositiveAnswers());
+      } catch {
+        // 시그니처는 장식이다. 이력 조회 실패가 본답을 막거나 무제한 반복을 만들면 안 된다.
+      }
+    }
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
     //   화면 취급(`reply_kind`)은 `ack` 과 같게 두어 마스코트·피드백 계약은 그대로다.
