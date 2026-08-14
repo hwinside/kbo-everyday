@@ -647,6 +647,7 @@ export default function DMChatPage() {
             <GeniusTypingIndicator
               key={messageId}
               state={state}
+              questionMessageId={Number(messageId)}
               onRetry={() => retryBaseballQa(Number(messageId))}
             />
           ))
