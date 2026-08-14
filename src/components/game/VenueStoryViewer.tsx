@@ -164,14 +164,18 @@ export default function VenueStoryViewer({
   // 좌/우 넘기기 존·댓글 전송 버튼(#948)과 동일하게 click 대신 primary pointerup(버튼 안 릴리즈)에서
   // 확정한다 — pointer 이벤트는 이 뷰어에서 첫 탭부터 안정적임이 실증된 경로.
   // onClick 은 키보드(detail=0) 폴백만 받고 pointer 합성 click(detail>0)은 무시해 중복 발동을 막는다.
+  // sheetPrimary/sheetCancel: 더보기 액션 시트(신고하기·삭제하기·취소) — 하린아빠 8/14 09:52 리포트,
+  // 크롬 4버튼 전환(#1180) 후에도 시트 내부 버튼은 click 잔존이라 동일 더블탭 증상.
   const chromePressRefs = useRef({
     mute: createPressState(),
     more: createPressState(),
     close: createPressState(),
     comments: createPressState(),
+    sheetPrimary: createPressState(),
+    sheetCancel: createPressState(),
   });
   const chromePressHandlers = (
-    key: "mute" | "more" | "close" | "comments",
+    key: "mute" | "more" | "close" | "comments" | "sheetPrimary" | "sheetCancel",
     activate: () => void,
   ) => ({
     onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
@@ -1101,7 +1105,7 @@ export default function VenueStoryViewer({
           >
             {isOwn ? (
               <button
-                onClick={handleDelete}
+                {...chromePressHandlers("sheetPrimary", handleDelete)}
                 disabled={busy}
                 className="w-full py-3 rounded-xl bg-red-500/15 text-red-400 font-semibold flex items-center justify-center gap-2"
               >
@@ -1109,7 +1113,7 @@ export default function VenueStoryViewer({
               </button>
             ) : (
               <button
-                onClick={handleReport}
+                {...chromePressHandlers("sheetPrimary", handleReport)}
                 disabled={busy}
                 className="w-full py-3 rounded-xl bg-red-500/15 text-red-400 font-semibold flex items-center justify-center gap-2"
               >
@@ -1117,10 +1121,10 @@ export default function VenueStoryViewer({
               </button>
             )}
             <button
-              onClick={() => {
+              {...chromePressHandlers("sheetCancel", () => {
                 setMenuOpen(false);
                 setPaused(false);
-              }}
+              })}
               className="w-full py-3 rounded-xl bg-white/5 text-text-secondary"
             >
               취소

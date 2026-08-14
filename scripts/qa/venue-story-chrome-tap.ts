@@ -8,7 +8,8 @@
  *   3. pointercancel 후 pointerup = 활성화 0 (스크롤/제스처 취소).
  *   4. drag-out(버튼 밖 릴리즈) = 활성화 0.
  *   5. 키보드 click(detail=0)은 폴백으로 활성화(접근성).
- * 대상: 닫기(X)·더보기(점세개)·댓글 pill(이미지 스토리) + 음소거(영상 스토리).
+ * 대상: 닫기(X)·더보기(점세개)·댓글 pill(이미지 스토리) + 음소거(영상 스토리)
+ *       + 액션 시트 버튼(신고하기/삭제하기/취소 — 하린아빠 8/14 09:52 리포트, 시트 내부 click 잔존 축).
  * 실행: npm run qa:venue-story-chrome-tap
  */
 import "./_smoke-env";
@@ -123,8 +124,38 @@ async function main() {
   ok("더보기: pointercancel 후 릴리즈 = 메뉴 미오픈", !Array.from(scope.querySelectorAll("button")).some((b) => b.textContent?.includes("취소")));
   await tapIn(more);
   ok("더보기: 정상 pointer 탭 = 액션 시트 오픈", Array.from(scope.querySelectorAll("button")).some((b) => b.textContent?.includes("취소")));
+
+  // ②-b 액션 시트 — 신고하기/취소 버튼도 pointerup 활성화 (8/14 09:52 리포트 축)
+  // handleReport 는 getSafeSession 토큰이 없으면 fetch 전에 이탈 — 이 구간만 세션 있는 모크로 교체
+  (clientMod.supabase.auth as unknown as { getSession: () => Promise<unknown> }).getSession = async () => ({
+    data: { session: { access_token: "qa-token" } }, error: null,
+  });
+  // 신고하기: trailing click 만으로는 발동 0 (click 의존 제거 확인) — fetch 호출 계수로 판정
+  let reportCalls = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/report") && init?.method === "POST") reportCalls++;
+    return { ok: true, status: 200, json: async () => ({ comments: [], total: 0, hidden: false }) };
+  }) as unknown as typeof fetch;
+  const reportBtn = Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.includes("신고하기")) as HTMLElement;
+  ok("액션 시트: 신고하기 버튼 렌더(타인 스토리)", !!reportBtn);
+  await act(async () => { reportBtn.dispatchEvent(clickEv(1)); });
+  ok("신고하기: pointer 없는 합성 click(detail>0)만으로는 발동 0", reportCalls === 0);
+  // 정상 pointer 탭 = 신고 1회
+  await tapIn(reportBtn);
+  await act(async () => { await Promise.resolve(); });
+  ok("신고하기: pointerdown→up 1회 = 신고 API 1회", reportCalls === 1);
+  // trailing click 중복 0
+  await act(async () => { reportBtn.dispatchEvent(clickEv(1)); });
+  await act(async () => { await Promise.resolve(); });
+  ok("신고하기: trailing click(detail>0) 중복 발동 0", reportCalls === 1);
+  // 시트 다시 열고 취소 버튼 pointer 탭 = 닫힘
+  if (!Array.from(scope.querySelectorAll("button")).some((b) => b.textContent?.includes("취소"))) {
+    await tapIn(more);
+  }
   const cancelBtn = Array.from(scope.querySelectorAll("button")).find((b) => b.textContent?.includes("취소")) as HTMLElement;
-  await act(async () => { cancelBtn.dispatchEvent(clickEv(1)); });
+  await tapIn(cancelBtn);
+  ok("취소: pointer 탭 1회 = 액션 시트 닫힘", !Array.from(scope.querySelectorAll("button")).some((b) => b.textContent?.includes("취소")));
 
   // ③ 닫기(X): drag-out = 0, pointer 탭 = 1, trailing click 중복 0, 키보드 click = 폴백
   const close = q('button[aria-label="닫기"]')!;

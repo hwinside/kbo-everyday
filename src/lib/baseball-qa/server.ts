@@ -64,6 +64,8 @@ import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series
 import { createCareerLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-leaderboard";
 import { createCareerMetricLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-metric-leaderboard";
 import careerMetricBaseline from "@/../data/baseball-qa/kbo-career-metrics-through-2025.json";
+import { createEventRecordFetcher } from "@/lib/baseball-qa/stats/event-records";
+import eventRecordSnapshot from "@/../data/baseball-qa/kbo-event-records-2026.json";
 import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
@@ -795,6 +797,8 @@ export function makeDeps(
       () => careerMetricBaseline,
       fetchServedCareerSnapshot,
     ),
+    /** KBO 공식 2026 레코드북 p.104의 정규시즌 노히트노런 사건 원장. */
+    fetchEventRecord: createEventRecordFetcher(() => eventRecordSnapshot),
     /**
      * 구단 기록 조회 — `/api/standings` · `/api/team-records`.
      *
