@@ -547,6 +547,12 @@
       [
         "quota_date"
       ]
+    ],
+    "content_views": [
+      [
+        "content_type",
+        "content_id"
+      ]
     ]
   },
   "keysetHelpers": {
