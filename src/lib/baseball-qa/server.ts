@@ -70,6 +70,7 @@ import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
 import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
+import { renderTeamFanCopy } from "@/lib/constants/baseball-genius-team-copy";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
 import { tier2WeightForQuestion } from "@/lib/baseball-qa/rag/fetch-wikipedia";
 

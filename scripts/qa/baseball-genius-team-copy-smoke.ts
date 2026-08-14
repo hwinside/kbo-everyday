@@ -76,7 +76,11 @@ check("SSOT 구조·결속·톤 (30종 = 10팀×3)", realErrors.length === 0, re
 check("예비 NC-4 결속·톤", TEAM_FAN_COPY_SPARE.id === "NC-4"
   && (TEAM_FAN_COPY_SOURCE_IDS as readonly string[]).includes(TEAM_FAN_COPY_SPARE.sourceId)
   && /습니다\.$/.test(TEAM_FAN_COPY_SPARE.text));
-check("문서 exact 결속 (64자 sha256)", /^[0-9a-f]{64}$/.test(TEAM_FAN_COPY_DOC_SHA256));
+// 삼순 최종 GO 문서 exact — **equality** 로 검사한다 (형식 검사는 false-green, 삼순 1차 지적).
+//   이 리터럴이 게이트의 정본이다 — 문서 재검수(새 GO exact) 없이 SSOT 해시만 바꾸면 RED.
+const APPROVED_DOC_SHA256 = "05c166231ce97cae0cc9f373ad504dcda65157c997bc41f70e7ae31338153f23";
+check("문서 exact 결속 (승인 sha256 equality)", TEAM_FAN_COPY_DOC_SHA256 === APPROVED_DOC_SHA256,
+  `SSOT=${TEAM_FAN_COPY_DOC_SHA256}`);
 
 // [4] 렌더 규칙 — 전 팀에서 첫 문장 정확히 1회
 {
@@ -116,15 +120,30 @@ check("fail-open (null·0·미지원 팀 → null)",
   && renderTeamFanCopy(99, 1) === null
   && renderTeamFanCopy(Number.NaN, 1) === null);
 
-// [7] 파이프라인 배선 — greeting 에서만 소비 (소스 결속; 실행 경로는 아래 시뮬레이션이 보강)
-{
+// [7] 파이프라인·서버 배선 — **실제 모듈을 로드**해 결속한다 (삼순 1차 P0:
+//   정규식만 읽는 검사는 import 누락 TS2304 를 놓친다 — tsc 범위 밖 파일은 tsx 실로드가
+//   유일한 컴파일 증명이다, 8/14 M90 계약). supabase 클라이언트는 모듈 init 싱글턴이므로
+//   dummy env 로 로드만 한다 — 네트워크 호출 0.
+async function checkServerBinding(): Promise<void> {
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke-dummy.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-dummy-anon-key";
+  let server: typeof import("../../src/lib/baseball-qa/server");
+  try {
+    server = await import("../../src/lib/baseball-qa/server");
+  } catch (e) {
+    check("server 모듈 실로드 (컴파일·import 결속)", false, (e as Error).message.slice(0, 200));
+    return;
+  }
+  check("server 모듈 실로드 (컴파일·import 결속)", true);
+  const withUser = server.makeDeps(1, null, null, false, "00000000-0000-0000-0000-000000000001");
+  const withoutUser = server.makeDeps(1, null, null, false);
+  check("makeDeps 실결속 (signatureUserId → pickTeamFanCopy 함수)",
+    typeof withUser.pickTeamFanCopy === "function");
+  check("makeDeps 실결속 (유저 없으면 미주입 → 기존 경로)",
+    withoutUser.pickTeamFanCopy === undefined);
   const pipelineSrc = readFileSync(join(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8");
-  const wired = /route === "ack" && isGreetingPhrase\(question\) && deps\.pickTeamFanCopy/.test(pipelineSrc);
-  const serverSrc = readFileSync(join(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
-  const serverWired = /pickTeamFanCopy: signatureUserId \? async \(\) =>/.test(serverSrc)
-    && /renderTeamFanCopy\(teamId, messageId\)/.test(serverSrc);
-  check("pipeline 배선 (greeting 한정 가드)", wired);
-  check("server 배선 (profiles.team_id + messageId 시드)", serverWired);
+  check("pipeline 배선 (greeting 한정 가드)",
+    /route === "ack" && isGreetingPhrase\(question\) && deps\.pickTeamFanCopy/.test(pipelineSrc));
 }
 
 // ── 결함주입 self-test — 판정 함수가 실제로 RED 를 내는지 증명 ────────────────
@@ -147,8 +166,14 @@ for (const [name, bad] of injections) {
   check(`결함주입 RED: ${name}`, errors.length > 0);
 }
 
-if (failures > 0) {
-  console.error(`\nFAIL baseball-genius-team-copy: ${failures}건`);
+// tsx cjs 변환은 top-level await 미지원 — promise 체인으로 종결한다.
+void checkServerBinding().then(() => {
+  if (failures > 0) {
+    console.error(`\nFAIL baseball-genius-team-copy: ${failures}건`);
+    process.exit(1);
+  }
+  console.log("\nPASS baseball-genius-team-copy: 전 축 GREEN (결함주입 RED 5/5 + server 실로드 포함)");
+}).catch((e) => {
+  console.error("FAIL baseball-genius-team-copy: 게이트 자체 예외", e);
   process.exit(1);
-}
-console.log("\nPASS baseball-genius-team-copy: 전 축 GREEN (결함주입 RED 5/5 포함)");
+});
