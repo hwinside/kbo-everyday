@@ -1,4 +1,6 @@
 import { calcBatterSaberFromStats } from "@/lib/utils/sabermetrics-calc";
+import { canonicalKboId } from "@/lib/utils/resolve-player";
+import { FULL_ENTRY_BATTER_IDS, FULL_ENTRY_PITCHER_IDS } from "@/lib/stats/full-entry-roster";
 import type { SeasonRecordRow } from "./season-record";
 
 /**
@@ -29,9 +31,38 @@ const SERVED_STATS_TIMEOUT_MS = 3_000;
 
 interface ServedStatsResponse {
   stats?: Array<Record<string, unknown>>;
+  type?: unknown;
+  count?: unknown;
   updatedAt?: string;
   source?: string;
   runnerSource?: string;
+}
+
+/**
+ * `full=1` 완전성의 정본 — mergeFullEntry 에 실제로 투입되는 2026 선수 ID 전집합.
+ * 단순 행수 하한(예: 100)은 리더를 뺀 임의 100행도 통과시킨다. 이 집합 전부가 payload 에
+ * 있어야 "리그 전체 current snapshot" 으로 인정한다(삼순 #1159 2차 NO-GO).
+ *
+ * ⚠️ **명단만** `full-entry-roster` 에서 가져온다. 이 모듈은 값의 정본을 `/api/stats` 로
+ * 못박은 자리라 static JSON 을 직접 읽지 않는다(삼순 #1100 3차 P0-3, 이주형 sb 4 vs 0).
+ */
+export const SERVED_BATTER_FULL_ENTRY_IDS = FULL_ENTRY_BATTER_IDS;
+
+/** `/api/stats?type=batter&full=1` envelope + known full-entry ID coverage 계약. */
+export function validateServedBatterPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
+  if (payload.type !== "batter" || !Number.isInteger(payload.count)) return null;
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) return null;
+  const ids = new Set<string>();
+  for (const row of rows) {
+    const id = typeof row.kboId === "string" || typeof row.kboId === "number"
+      ? canonicalKboId(row.kboId)
+      : "";
+    if (!id || ids.has(id)) return null;
+    ids.add(id);
+  }
+  if (!SERVED_BATTER_FULL_ENTRY_IDS.every((id) => ids.has(id))) return null;
+  return rows;
 }
 
 /**
@@ -44,7 +75,13 @@ interface ServedStatsResponse {
  * 실패·비정상 응답은 예외로 던진다. 호출부가 "조회 실패"로 처리해 답변하지 않는다 —
  * 여기서 static 으로 폴백하면 위에 적은 4 vs 0 불일치가 그대로 되살아난다.
  */
-export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {
+export interface ServedBatterSnapshot {
+  rows: SeasonRecordRow[];
+  updatedAt: string;
+}
+
+/** 앱의 최종 타자 스냅샷을 한 번만 읽는다. 선수별·리그 통산 조회가 같은 정본을 공유한다. */
+export async function fetchServedBatterSnapshot(): Promise<ServedBatterSnapshot> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
   let payload: ServedStatsResponse;
@@ -59,28 +96,94 @@ export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecord
     clearTimeout(timer);
   }
 
-  const rows = Array.isArray(payload.stats) ? payload.stats : null;
-  if (!rows) throw new Error("served stats payload has no stats array");
-  // 응답 시각이 없으면 stale 판정을 할 수 없다 — 신선도 불명인 값을 최신인 척 답하지 않는다.
+  const rows = validateServedBatterPayload(payload);
+  if (!rows) throw new Error("served stats payload violates batter/full completeness contract");
   const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
   if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
     throw new Error("served stats payload has no usable updatedAt");
   }
-
-  // 2행 이상이면 그대로 넘겨 `resolveSeasonRecord` 가 inconsistent 로 fail-close 한다.
-  return rows
-    .filter((row) => String(row.kboId ?? "") === kboId)
-    .map((row) => ({
+  return {
+    updatedAt: servedAt,
+    rows: rows.map((row) => ({
       ...row,
-      // WAR·wRC+는 저장 칼럼이 아니라 **화면과 같은 공용 helper**로 파생한다.
       war: calcBatterSaberFromStats(row)?.WAR ?? null,
       wrc_plus: calcBatterSaberFromStats(row)?.wRC_plus ?? null,
-      player_key: String(row.kboId ?? ""),
-      kbo_id: String(row.kboId ?? ""),
+      player_key: canonicalKboId(row.kboId as string | number | null),
+      kbo_id: canonicalKboId(row.kboId as string | number | null),
       name: String(row.name ?? ""),
       team: (row.team as string | null) ?? null,
       updated_at: servedAt,
-    })) as SeasonRecordRow[];
+    })) as SeasonRecordRow[],
+  };
+}
+
+/**
+ * 통산 리더보드용 당해 시즌 스냅샷 — **타자/투수 공용**.
+ *
+ * `fetchServedBatterSnapshot` 과 같은 정본(`/api/stats?full=1`)을 쓰되, 투수 축을 함께 연다.
+ * ⚠️ 타자에만 있던 `full-entry 전집합` 완전성 계약은 그대로 유지한다(부분 스냅샷이면 증분이
+ *   0 으로 깔려 통산이 과소 계산된다). 투수는 그 명단 정본이 아직 없어 **행수 하한 + kboId
+ *   유일성**으로만 검증하고, 그 사실을 여기 명시해 둔다 — 나중에 명단이 생기면 같은 계약으로 올린다.
+ */
+export function validateServedPitcherPayload(payload: ServedStatsResponse): Array<Record<string, unknown>> | null {
+  if (payload.type !== "pitcher" || !Number.isInteger(payload.count)) return null;
+  const rows = Array.isArray(payload.stats) ? payload.stats : null;
+  if (!rows || payload.count !== rows.length) return null;
+  const expectedIds = new Set(FULL_ENTRY_PITCHER_IDS);
+  if (rows.length !== expectedIds.size) return null;
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    if (!id || !expectedIds.has(id) || seen.has(id)) return null;
+    seen.add(id);
+  }
+  if (FULL_ENTRY_PITCHER_IDS.some((id) => !seen.has(id))) return null;
+  return rows;
+}
+
+export async function fetchServedCareerSnapshot(
+  table: "batter" | "pitcher",
+): Promise<{ rows: SeasonRecordRow[]; updatedAt: string }> {
+  if (table === "batter") return fetchServedBatterSnapshot();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SERVED_STATS_TIMEOUT_MS);
+  let payload: ServedStatsResponse;
+  try {
+    const res = await fetch(`${PUBLIC_BASE}/api/stats?type=pitcher&full=1`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`served pitcher stats HTTP ${res.status}`);
+    payload = (await res.json()) as ServedStatsResponse;
+  } finally {
+    clearTimeout(timer);
+  }
+  const rows = validateServedPitcherPayload(payload);
+  if (!rows) throw new Error("served pitcher payload violates exact full-entry coverage contract");
+  const servedAt = typeof payload.updatedAt === "string" ? payload.updatedAt : "";
+  if (!servedAt || !Number.isFinite(Date.parse(servedAt))) {
+    throw new Error("served pitcher payload has no usable updatedAt");
+  }
+  const mapped: SeasonRecordRow[] = [];
+  for (const row of rows) {
+    const id = canonicalKboId(row.kboId as string | number | null);
+    mapped.push({
+      ...row,
+      player_key: id,
+      kbo_id: id,
+      name: String(row.name ?? ""),
+      team: (row.team as string | null) ?? null,
+      updated_at: servedAt,
+    } as SeasonRecordRow);
+  }
+  return { rows: mapped, updatedAt: servedAt };
+}
+
+export async function fetchServedBatterRows(kboId: string): Promise<SeasonRecordRow[]> {
+  const snapshot = await fetchServedBatterSnapshot();
+  // 2행 이상이면 그대로 넘겨 `resolveSeasonRecord` 가 inconsistent 로 fail-close 한다.
+  return snapshot.rows.filter((row) => String(row.kbo_id ?? "") === kboId);
 }
 
 /**

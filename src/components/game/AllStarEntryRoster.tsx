@@ -17,7 +17,7 @@ function EntryRow({ entry }: { entry: AllStarEntry }) {
   const team = getTeamById(entry.teamId)!;
   const href = getCanonicalPlayerHref({ kboId: entry.kboId }) ?? `/community/players/${encodeURIComponent(entry.name)}`;
   return (
-    <Link href={href} className="flex items-center gap-2 py-1.5 hover:opacity-80">
+    <Link href={href} prefetch={false} className="flex items-center gap-2 py-1.5 hover:opacity-80">
       <PlayerAvatar
         name={entry.name}
         teamId={entry.teamId}

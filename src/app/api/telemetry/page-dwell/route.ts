@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { verifyAccessToken } from "@/lib/auth/verified-user";
 
 interface DwellPayload {
   visitorId?: string;
@@ -44,11 +45,11 @@ export async function POST(req: NextRequest) {
 
   // Pin the population to logged-in users: verify the JWT and derive user_id
   // server-side. An invalid/expired token is silently dropped (telemetry).
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser(accessToken);
-  if (authError || !user) {
+  // verifyAccessToken은 로컬 exp 프리체크 + dead-token 캐시로 무효 토큰의
+  // Supabase 호출 자체를 차단한다 (sendBeacon은 응답을 못 보는 fire-and-forget이라
+  // 클라가 죽은 세션을 알 수 없이 계속 보내는 경로 — 서버가 막아야 한다).
+  const user = await verifyAccessToken(accessToken);
+  if (!user) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 

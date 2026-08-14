@@ -148,7 +148,9 @@ export class NextRequest extends Request {}
 `);
 
 writeFileSync(resolve(GEN, "verified-user.js"), `
-export const getVerifiedUserFromRequest = async () => ({ user: { id: "existing-user" } });`);
+export const getVerifiedUserFromRequest = async () => ({ user: { id: "existing-user" } });
+export const verifyAccessToken = async () => ({ id: "existing-user" });
+export const getVerifiedUserIdFromCookies = async () => "existing-user";`);
 writeFileSync(resolve(GEN, "headers.js"), `
 export const cookies = async () => ({ getAll: () => [] });`);
 writeFileSync(resolve(GEN, "ssr.js"), `

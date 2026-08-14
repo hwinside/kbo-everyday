@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "throughSeason": 2025,
+  "source": {
+    "title": "2026 KBO 레코드북",
+    "section": "노히트노런",
+    "printedPage": 104,
+    "canonicalUrl": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx"
+  },
+  "events": [
+    {
+      "ordinal": 1,
+      "player": "방수원",
+      "team": "해태",
+      "date": "1984-05-05",
+      "opponent": "삼미",
+      "ballpark": "무등",
+      "catchers": [
+        "유승안"
+      ],
+      "score": "8-0",
+      "note": "6탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 2,
+      "player": "김정행",
+      "team": "롯데",
+      "date": "1986-06-05",
+      "opponent": "빙그레",
+      "ballpark": "사직",
+      "catchers": [
+        "한문연",
+        "김용운"
+      ],
+      "score": "8-0",
+      "note": "더블헤더 1차전, 5탈삼진, 4사사구"
+    },
+    {
+      "ordinal": 3,
+      "player": "장호연",
+      "team": "OB",
+      "date": "1988-04-02",
+      "opponent": "롯데",
+      "ballpark": "사직",
+      "catchers": [
+        "김경문"
+      ],
+      "score": "4-0",
+      "note": "개막전, 3사사구"
+    },
+    {
+      "ordinal": 4,
+      "player": "이동석",
+      "team": "빙그레",
+      "date": "1988-04-17",
+      "opponent": "해태",
+      "ballpark": "무등",
+      "catchers": [
+        "유승안"
+      ],
+      "score": "1-0",
+      "note": "5탈삼진, 무사사구, 2실책"
+    },
+    {
+      "ordinal": 5,
+      "player": "선동열",
+      "team": "해태",
+      "date": "1989-07-06",
+      "opponent": "삼성",
+      "ballpark": "무등",
+      "catchers": [
+        "장채근"
+      ],
+      "score": "10-0",
+      "note": "9탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 6,
+      "player": "이태일",
+      "team": "삼성",
+      "date": "1990-08-08",
+      "opponent": "롯데",
+      "ballpark": "사직",
+      "catchers": [
+        "이만수"
+      ],
+      "score": "8-0",
+      "note": "4탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 7,
+      "player": "김원형",
+      "team": "쌍방울",
+      "date": "1993-04-30",
+      "opponent": "OB",
+      "ballpark": "전주",
+      "catchers": [
+        "김충민"
+      ],
+      "score": "3-0",
+      "note": "6탈삼진, 1사사구"
+    },
+    {
+      "ordinal": 8,
+      "player": "김태원",
+      "team": "LG",
+      "date": "1993-09-09",
+      "opponent": "쌍방울",
+      "ballpark": "잠실",
+      "catchers": [
+        "김동수"
+      ],
+      "score": "9-0",
+      "note": "4탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 9,
+      "player": "정민철",
+      "team": "한화",
+      "date": "1997-05-23",
+      "opponent": "OB",
+      "ballpark": "한밭",
+      "catchers": [
+        "강인권"
+      ],
+      "score": "8-0",
+      "note": "8탈삼진, 무사사구, 낫아웃 출루"
+    },
+    {
+      "ordinal": 10,
+      "player": "송진우",
+      "team": "한화",
+      "date": "2000-05-18",
+      "opponent": "해태",
+      "ballpark": "무등",
+      "catchers": [
+        "강인권"
+      ],
+      "score": "6-0",
+      "note": "6탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 11,
+      "player": "찰리",
+      "team": "NC",
+      "date": "2014-06-24",
+      "opponent": "LG",
+      "ballpark": "잠실",
+      "catchers": [
+        "김태군"
+      ],
+      "score": "6-0",
+      "note": "7탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 12,
+      "player": "마야",
+      "team": "두산",
+      "date": "2015-04-09",
+      "opponent": "넥센",
+      "ballpark": "잠실",
+      "catchers": [
+        "양의지"
+      ],
+      "score": "1-0",
+      "note": "8탈삼진, 3사사구"
+    },
+    {
+      "ordinal": 13,
+      "player": "보우덴",
+      "team": "두산",
+      "date": "2016-06-30",
+      "opponent": "NC",
+      "ballpark": "잠실",
+      "catchers": [
+        "양의지"
+      ],
+      "score": "4-0",
+      "note": "9탈삼진, 4사사구"
+    },
+    {
+      "ordinal": 14,
+      "player": "맥과이어",
+      "team": "삼성",
+      "date": "2019-04-21",
+      "opponent": "한화",
+      "ballpark": "한밭",
+      "catchers": [
+        "강민호"
+      ],
+      "score": "16-0",
+      "note": "13탈삼진, 2사사구"
+    }
+  ],
+  "excluded": [
+    {
+      "player": "박동희",
+      "date": "1993-05-13",
+      "reason": "6회 강우 콜드"
+    },
+    {
+      "player": "정명원",
+      "date": "1996-10-20",
+      "reason": "한국시리즈 4차전"
+    }
+  ],
+  "sha256": "041e31fba2f1ec9fb75bc6c2c2050e200b8eb89be0a76de0d185b56808ce10f5"
+}

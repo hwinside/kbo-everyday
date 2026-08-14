@@ -17,6 +17,7 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import {
   isGeniusReplyPayload,
   BASEBALL_GENIUS_USER_ID,
@@ -127,9 +128,28 @@ if (payloadBlock) {
   );
 }
 // 질문 로그도 같은 id 로 결속돼야 분석에서 답변↔질문↔로그가 이어진다.
+//
+// 행 조립은 `log-row.ts` 의 `buildQuestionLogRow` SSOT 로 분리돼 있다(2026-08-13).
+// 그래서 소스 grep 대신 **그 함수를 직접 태워서** 결속 id 가 무조건 실리는지 본다 —
+// 정규식은 컬럼이 사라져도 문자열만 남으면 통과하지만, 실행은 그럴 수 없다.
+const logRow = buildQuestionLogRow(
+  {
+    userId: "u1", question: "q", questionNorm: "q",
+    matchPath: "llm", answer: null, inputTokens: null, outputTokens: null,
+  } as Parameters<typeof buildQuestionLogRow>[0],
+  777,
+);
 check(
-  "D2 genius_question_logs insert 가 question_message_id 를 쓴다",
-  /from\("genius_question_logs"\)\.insert\(\{[\s\S]*?question_message_id:\s*messageId/.test(serverSrc),
+  "D2 genius_question_logs 행이 question_message_id 를 무조건 실는다",
+  logRow.question_message_id === 777,
+  "조건부로 실리면 피드백 결속이 깨진다",
+);
+// 그리고 Production INSERT 가 실제로 그 SSOT 를 쓰고 있어야 한다 — 함수만 맞고 호출부가
+// 따로 놀면 같은 단절이 다시 생긴다.
+check(
+  "D2b server.ts 가 buildQuestionLogRow 로 질문로그를 insert 한다",
+  /from\("genius_question_logs"\)\s*\n?\s*\.insert\(buildQuestionLogRow\(/.test(serverSrc),
+  "행 조립 SSOT 를 안 쓰면 서버와 게이트가 다른 행을 본다",
 );
 
 // ── E. migration 계약 ─────────────────────────────────────────────────────────

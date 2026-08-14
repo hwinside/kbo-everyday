@@ -161,7 +161,7 @@ export const BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER =
  */
 export type GeniusMascotState = "idle" | "thinking" | "answering" | "praised" | "unknown";
 // `picker` = 동명이인이라 되물는 중. 답변도 실패도 아니라 별도 종류다.
-export type GeniusReplyKind = "answer" | "ack" | "unavailable" | "picker";
+export type GeniusReplyKind = "answer" | "ack" | "unavailable" | "picker" | "correction";
 
 export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
   "idle",
@@ -212,6 +212,8 @@ export const MATCH_PATH_REPLY_KIND = {
   scope_guide: "ack",
   // 동명이인이라 선택지를 되물은 경로. 답변도 실패도 아닌 별도 상태다.
   player_picker: "picker",
+  // 문자 교정 후보를 자동 적용하지 않고 유저 확인을 기다리는 카드.
+  question_correction: "correction",
   // 로스터에 없는 실명을 받아 이름을 되물은 경로.
   //
   // 화면 취급은 `player_picker` 와 같은 **되묻기**다 — 둘 다 "답을 못 했다"가 아니라
@@ -267,7 +269,7 @@ export function mascotStateForReplyKind(replyKind: GeniusReplyKind | null | unde
   if (replyKind === "ack") return "praised";
   if (replyKind === "unavailable") return "unknown";
   // 되물는 중은 "모른다"가 아니라 "생각 중"이다 — unknown 표정을 쓰면 실패처럼 보인다.
-  if (replyKind === "picker") return "thinking";
+  if (replyKind === "picker" || replyKind === "correction") return "thinking";
   return "idle";
 }
 
@@ -302,6 +304,8 @@ export interface GeniusReplyPayload {
   match_path: string;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
+  /** `reply_kind === "correction"` 일 때만. 서버가 발급한 exact 후보만 유저에게 제안한다. */
+  correction_options?: string[];
   /**
    * 이 답변이 대답한 **원 질문 쪽지 id**. 두 곳에서 쓴다.
    *  ① picker: 답변 도착 순서와 무관하게 exact 질문을 재처리한다.
@@ -365,11 +369,11 @@ function isPickerOption(p: unknown): p is GeniusPickerOption {
  */
 export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   if (!p || typeof p !== "object") return false;
-  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; question_message_id?: unknown; source_url?: unknown };
+  const obj = p as { type?: unknown; reply_kind?: unknown; match_path?: unknown; picker_options?: unknown; correction_options?: unknown; question_message_id?: unknown; source_url?: unknown };
   if (obj.type !== "baseball_genius_reply" || typeof obj.match_path !== "string") return false;
   if (
     obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
-    obj.reply_kind !== "unavailable" && obj.reply_kind !== "picker"
+    obj.reply_kind !== "unavailable" && obj.reply_kind !== "picker" && obj.reply_kind !== "correction"
   ) return false;
   // 선택지가 붙어 있으면 항목까지 검증한다 — 깨진 payload 로 카드를 그리면 빈 버튼이 난다.
   // 상한 초과도 거절한다(무한 목록 렌더 방지).
@@ -380,11 +384,15 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   }
   // picker 라고 주장하면서 선택지가 없으면 렌더할 것이 없다 — 유효한 payload 가 아니다.
   if (obj.reply_kind === "picker" && obj.picker_options === undefined) return false;
-  if (obj.reply_kind === "picker" &&
+  if (obj.correction_options !== undefined &&
+      (!Array.isArray(obj.correction_options) || obj.correction_options.length !== 1 ||
+       !obj.correction_options.every((value) => typeof value === "string" && value.length > 0 && value.length <= 200))) return false;
+  if (obj.reply_kind === "correction" && obj.correction_options === undefined) return false;
+  if ((obj.reply_kind === "picker" || obj.reply_kind === "correction") &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
   // picker 가 아니어도 값이 실려 오면 형식을 검증한다 — 피드백이 이 값을 결속키로 쓰므로
   // 깨진 값이 통과하면 잘못된 질문에 평가가 붙는다.
-  if (obj.reply_kind !== "picker" && obj.question_message_id !== undefined &&
+  if (obj.reply_kind !== "picker" && obj.reply_kind !== "correction" && obj.question_message_id !== undefined &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
