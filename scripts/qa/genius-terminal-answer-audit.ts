@@ -94,6 +94,9 @@ const admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
 /** 결정론 고정 문구 — 이게 나오면 "생성된 답변" 이 아니다. */
 const CANNED_ANSWERS = new Set<string>([
   BLOCKED_ANSWER, UNCLEAR_ANSWER, UNSURE_ANSWER, STAT_CLARIFY_ANSWER,
+  // A안 (#1132, 2026-08-14): 가드 소유 서사 의도의 고정 응대문 — source 는 `llm` 이지만
+  // 코드 고정문이므로 "생성된 답변" 이 아니다(길이 WARN 대상 제외).
+  STAT_NARRATIVE_ANSWER,
   SERVICE_REDIRECT_ANSWER, HISTORY_HOLD_ANSWER, TEAM_STAT_HOLD_ANSWER,
   CONTEXT_MISSING_ANSWER, LLM_AMBIGUOUS_ANSWER, SCOPE_GUIDE_ANSWER,
   ACK_ANSWER, LIMITED_ANSWER, PLAYER_PICKER_ANSWER, SYSTEM_ERROR_ANSWER,
@@ -339,11 +342,21 @@ function judge(row: Omit<AuditRow, "verdict" | "reasons">): { verdict: Verdict; 
   //   반대로 아래 경로들은 LLM 앞단에서 결정론으로 끝나므로 **LLM 0** 이 계약이다.
   //   여기가 뚫리면 존재를 확인 못 한 대상의 기록을 모델이 지어낸다.
   const PRE_LLM_TERMINAL = new Set<MatchPath>([
-    "stat_clarify", "history_hold", "scope_guide", "service_redirect",
+    "history_hold", "scope_guide", "service_redirect",
     "ack", "dictionary", "player_picker", "limited", "context_missing",
   ]);
   if (PRE_LLM_TERMINAL.has(row.source) && row.llmCalls > 0) {
     fail.push(`결정론 경로가 LLM 을 호출했다(llm=${row.llmCalls})`);
+  }
+  // A안 (#1132, 2026-08-14): `stat_clarify` 는 더 이상 전부 LLM 0 이 아니다 —
+  // 혼합형 앞단 결정론은 LLM 0, 가드 소유 위임은 **의도 판정 1회**만 허용된다.
+  // 그 1회는 범위판정(blocked/unsure)과 같은 성격의 판정 호출이지 답변 생성이 아니다.
+  // 답변 문구는 여전히 고정문만 허용(CANNED 검사가 아래 generated 로 강제).
+  if (row.source === "stat_clarify" && row.llmCalls > 1) {
+    fail.push(`stat_clarify 의도판정 LLM 이 1회를 넘었다(llm=${row.llmCalls})`);
+  }
+  if (row.source === "stat_clarify" && row.generated) {
+    fail.push("stat_clarify 가 고정문이 아닌 답을 냈다");
   }
   if (row.outcome !== "answered" && row.cacheWrites > 0) {
     fail.push(`비답변을 캐시에 썼다(cacheW=${row.cacheWrites})`);

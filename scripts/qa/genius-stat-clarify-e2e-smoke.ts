@@ -258,7 +258,7 @@ async function main() {
   //
   //   ① 한글 수사 — `삼백칠십사 개` 는 \p{N} 토큰 0개라 아라비아 subset 만으로는 통과
   //   ② 단위 전용 — 질문 `2024년` 의 `2024` 를 답이 `2024개` 로 쓰면 subset 은 통과
-  //   둘 다 수사+단위 쌍 대조(`statQuantityClaimsGroundedIn`)가 반드시 RED 로 잡아야 한다.
+  //   A안 이후: 자유문장은 의도 토큰이 아니므로 되묻기 fail-close — 어느 쪽도 서빙되지 않는다.
   {
     const q = "이대호 홈런 몇개";
     const koreanNumeral = "야구 기록으로 이대호 선수는 통산 홈런 삼백칠십사 개를 기록했습니다.";

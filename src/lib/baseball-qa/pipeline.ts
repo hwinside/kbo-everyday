@@ -30,8 +30,6 @@ import {
 import {
   allowsNumericAnswer,
   composeRagAnswer,
-  numericTokensSubsetOf,
-  statQuantityClaimsGroundedIn,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
@@ -2887,7 +2885,10 @@ export function parseStatIntentToken(rawText: string): "record" | "narrative" | 
     return null;
   }
   if (!row || typeof row !== "object" || typeof row.answer !== "string") return null;
-  const token = row.answer.trim().toUpperCase();
+  // 삼순 2026-08-14 결속 ②: status 까지 exact 결속 — 프롬프트 계약과 다른 응답
+  // (NOT_BASEBALL 로 토큰만 내보내는 등)은 의도로 인정하지 않고 되묻기 fail-close.
+  if (row.status !== "BASEBALL_RULE_TERM") return null;
+  const token = row.answer.trim();
   if (token === "RECORD") return "record";
   if (token === "NARRATIVE") return "narrative";
   return null;
@@ -2932,17 +2933,16 @@ async function replayStoredFinalResult(
   const storedFinal = unpackStoredQaFinal(llm.text);
   if (!storedFinal) return null;
   const { userId, question, questionNorm, remaining, deps } = args;
-  // 삼순 2026-08-14 재생 P0: 게이트 도입 이전에 저장된 `llm` envelope(예: `374개` 단정)가
-  // statNumericGuard 계산 전 front 재생으로 그대로 나가면 게이트가 통째로 우회된다.
-  // 재생 경로에서도 같은 기계 대조를 수행하고, 위반이면 되묻기로 교체·재저장한다.
+  // 삼순 2026-08-14 재생 P0 + 결속 ③: 가드 소유 질문의 저장 envelope 재생은 수사 파서가
+  // 아니라 **구조 판정**으로 닫는다 (A안과 동일 축 — 자유문장 서빙 0):
+  //   · `cache` envelope → 전량 거절 (가드 소유 질문은 캐시 밖이다 — 존재 자체가 구버전)
+  //   · `llm` envelope → 현행 고정 응대문(`STAT_NARRATIVE_ANSWER`) exact 만 허용
+  //   · 그 외는 전부 되묻기로 교체·재저장 (구버전 `374개` 단정 envelope 포함)
   // (소유 판정 재계산은 fail-close 방향 전용이다 — cacheable 재계산 금지 계약과 무관.)
-  // `cache` envelope 도 같은 축이다 (삼순 2026-08-14 cache P0) — 게이트 도입 이전에
-  // 캐시 발송으로 저장된 `cache/374개` final 이 재생으로 그대로 나가면 안 된다.
   if (storedFinal.source === "llm" || storedFinal.source === "cache") {
     const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
-    if (statGuardOwnsQuestion(question, glossary, players) && (
-      !numericTokensSubsetOf(storedFinal.answer, question) ||
-      !statQuantityClaimsGroundedIn(storedFinal.answer, question)
+    if (statGuardOwnsQuestion(question, glossary, players) && !(
+      storedFinal.source === "llm" && storedFinal.answer === STAT_NARRATIVE_ANSWER
     )) {
       if (deps.storeLlm) {
         await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
@@ -5060,8 +5060,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
   //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
   // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
-  // 숫자 계약(numericTokensSubsetOf·statQuantityClaimsGroundedIn)은 재생/캐시 envelope
-  // 재검사(replayStoredFinalResult)에 그대로 남아 구버전 저장분을 계속 막는다.
+  // 저장 envelope 방어는 replayStoredFinalResult 의 구조 판정(cache 전량 거절 ·
+  // llm 은 고정 응대문 exact 만)이 담당한다 — 수사 파서 의존 0.
   if (statNumericGuard) {
     const intent = parseStatIntentToken(llm.text);
     const final: StoredQaFinal = intent === "narrative"
