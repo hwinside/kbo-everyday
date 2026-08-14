@@ -836,6 +836,22 @@ export function makeDeps(
         .eq("id", data.id);
       return data.answer as string;
     },
+    // 팀별 팬 카피 (rev2) — 단독 인사에서만 pipeline 이 호출한다.
+    //   · 팀 = `profiles.team_id` (유저 본인 행 1건 조회). 미설정·미지원 값은 null → 기존 인사.
+    //   · 로테이션 시드 = **messageId** — job 행에 고정된 값이라 cron drain 재처리도
+    //     같은 카피를 재생한다 (process-local 카운터·Math.random 금지, M90 계약).
+    //   · 조회 실패는 throw → pipeline 이 삼켜 fail-open (인사 응답을 죽이지 않는다).
+    pickTeamFanCopy: signatureUserId ? async () => {
+      // query-guard: bounded -- id PK 단일 행의 team_id 한 칸만 읽는다.
+      const { data, error } = await supabaseAdmin
+        .from("profiles")
+        .select("team_id")
+        .eq("id", signatureUserId)
+        .maybeSingle();
+      if (error) throw error;
+      const teamId = data?.team_id == null ? null : Number(data.team_id);
+      return renderTeamFanCopy(teamId, messageId);
+    } : undefined,
     claimPositiveEnding: signatureUserId ? async (baseAnswer) => {
       // query-guard: bounded -- message_id idempotency + user별 최근 5행을 한 DB 트랜잭션에서 판정·기록한다.
       const { data, error } = await supabaseAdmin

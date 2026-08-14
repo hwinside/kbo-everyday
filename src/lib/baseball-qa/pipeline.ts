@@ -696,6 +696,16 @@ export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
+  /**
+   * 팀별 팬 카피 렌더 (rev2, 2026-08-14 — 삼순 최종 GO exact `05c16623…`).
+   *
+   * 단독 인사(greeting)일 때만 호출된다. 반환이 문자열이면 그 문구가 인사 답변이 되고,
+   * null·미주입·throw 는 전부 기존 `GREETING_ANSWER` 로 진행한다(fail-open — 팀 미설정·
+   * 조회 장애가 인사 자체를 죽이면 안 된다). 렌더 내용·로테이션은 호출부(server.ts)가
+   * SSOT(`constants/baseball-genius-team-copy`)와 messageId 시드로 결정론화한다 —
+   * pipeline 은 어떤 팀·어떤 카피인지 모른다(관심사 분리, durable 재처리 동일 재생).
+   */
+  pickTeamFanCopy?: () => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean) => Promise<LlmResult>;
   /**
@@ -4693,6 +4703,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
       route === "ack" ? (isGreetingPhrase(question) ? GREETING_ANSWER : ACK_ANSWER) :
+      // ⚠️ 팀 카피 치환은 이 삼항 **밖**(아래)에서 한다 — 여기서 await 를 섞으면 삼항 전체가
+      //   promise 가 되어 다른 라우트 문구까지 실행 순서가 바뀐다. 문구 결정(결정론)과
+      //   외부 조회(fail-open)를 분리해 두는 것이 계약이다.
       route === "scope_guide" ? SCOPE_GUIDE_ANSWER :
       // 미결속 실명 → **생성 없이** 끝난다. 후보가 유일하면 그 이름을 되묻고, 아니면
       // 모른다고 말한다. 둘 다 모델이 아니라 **코드가 쓴 문장**이다.
@@ -4706,6 +4719,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
       BLOCKED_ANSWER;
+    // ── 팀별 팬 카피 (rev2) — **단독 인사에만** 적용한다 ─────────────────────────
+    //   `안녕` 류 단독 인사에서 유저의 응원팀이 확인되면 중립 인사 대신
+    //   `{팀명}를 응원하신다니 반갑습니다. {검수 카피 1종}` 을 낸다.
+    //   · ack(감사 인사)에는 붙이지 않는다 — "도움이 됐다니 기쁩니다" 뒤에 구단 소개가
+    //     이어지면 대화가 어긋난다(GREETING/ACK 분리와 같은 축).
+    //   · 실패·팀 미설정·미주입은 전부 기존 GREETING_ANSWER 그대로(fail-open).
+    //   · 카피 선택은 호출부가 messageId 시드로 결정론화한다 — durable 재처리에서도 같은
+    //     문구가 재생되어 저장/발송 분기 불일치가 생기지 않는다.
+    if (route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {
+      try {
+        const teamCopy = await deps.pickTeamFanCopy();
+        if (teamCopy) answer = teamCopy;
+      } catch {
+        // 팀 카피는 장식이다. 조회 장애가 인사 응답을 막으면 안 된다.
+      }
+    }
     if (route === "ack" && deps.claimPositiveEnding) {
       try {
         answer = await deps.claimPositiveEnding(answer);
