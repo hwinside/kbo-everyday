@@ -10,6 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { signContentView } from "@/lib/content-views/sign";
 import { supabaseAdmin as productionSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   DEFAULT_EXCLUDE_FLAGS,
@@ -418,8 +419,13 @@ export async function handleShortsFeedGET(
     diversified.push(item);
   }
 
+  // 조회수 서명 발급 — 서버가 실제 피드에 내보낸 영상만 /api/content-views/view 증가 가능(임의 id 차단).
+  const signed = diversified.map((item) => {
+    const viewToken = item.id ? signContentView("shorts", String(item.id)) : null;
+    return viewToken ? { ...item, viewToken } : item;
+  });
   return NextResponse.json(
-    { items: diversified },
+    { items: signed },
     {
       headers: {
         "Cache-Control": "public, s-maxage=900, stale-while-revalidate=60",

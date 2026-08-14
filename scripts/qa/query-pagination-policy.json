@@ -28,6 +28,7 @@
     "announcements",
     "api_fallback_events",
     "app_downloads",
+    "content_views",
     "genius_answer_feedback",
     "genius_daily_usage",
     "genius_news_articles",
@@ -546,6 +547,12 @@
       [
         "quota_date"
       ]
+    ],
+    "content_views": [
+      [
+        "content_type",
+        "content_id"
+      ]
     ]
   },
   "keysetHelpers": {
@@ -592,6 +599,7 @@
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
     "upsert_baseball_genius_news_articles": "upserts a jsonb batch (hard-capped at 500 rows inside the function) and returns exactly one summary row",
     "upsert_naver_identity": "upserts one authenticated identity",
-    "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)"
+    "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)",
+    "increment_content_view": "increments one content counter"
   }
 }

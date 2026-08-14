@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ExternalLink, ChevronLeft, Images } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
@@ -10,6 +10,9 @@ import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { setPhotoFilterEnabled } from "@/lib/store/news-pref";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import ContentViewBadge from "@/components/admin/ContentViewBadge";
+import { useContentViewCounts } from "@/hooks/useContentViewCounts";
+import { newsContentId, type ContentViewType } from "@/lib/content-views/policy";
 import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsItem {
@@ -19,6 +22,7 @@ interface NewsItem {
   originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
+  viewToken?: string;
 }
 
 export default function TeamNewsPage() {
@@ -33,6 +37,19 @@ export default function TeamNewsPage() {
   const visibleNews = photoFilterOn
     ? news.filter((item) => !isPhotoArticle(item.title))
     : news;
+
+  // 관리자 전용 조회수 — 관리자가 아니면 hook이 요청 자체를 안 한다(최대 40건 상한).
+  const viewCountItems = useMemo(() => {
+    return visibleNews.slice(0, 40).flatMap((item) => {
+      const id = newsContentId(item.link, item.originalLink);
+      return id ? [{ type: "news" as ContentViewType, id }] : [];
+    });
+  }, [visibleNews]);
+  const viewCounts = useContentViewCounts(viewCountItems);
+  const viewCountOf = (link: string, originalLink?: string): number | undefined => {
+    const id = newsContentId(link, originalLink);
+    return id ? viewCounts[`news:${id}`] : undefined;
+  };
 
   useEffect(() => {
     if (!team) return;
@@ -108,6 +125,7 @@ export default function TeamNewsPage() {
                 source,
                 thumbnailUrl: item.thumbnailUrl,
                 teamId: team.id,
+                viewToken: item.viewToken,
               };
               return (
                 <GlassCard key={i} pressable className="overflow-hidden p-0">
@@ -140,6 +158,7 @@ export default function TeamNewsPage() {
                         <span className="text-[11px] text-text-tertiary">
                           {new Date(item.pubDate).toLocaleDateString("ko-KR")}
                         </span>
+                        <ContentViewBadge count={viewCountOf(item.link, item.originalLink)} />
                         <ExternalLink size={13} className="ml-auto text-text-tertiary" />
                       </div>
                     </div>
