@@ -104,6 +104,11 @@ async function main() {
   assert.equal(routeQuestion("보끄가모야", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("수비시프트제한이언제부터였지", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("보크가 뭐야?", glossary, players, false), "baseball_rule_term");
+  assert.equal(routeQuestion("보크가 뭐야", glossary, players, false), "baseball_rule_term");
+  assert.equal(routeQuestion("보끄가 뭐야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보루가모야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보루가 뭐야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보끄최고야", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("김도영 홈런 몇 개야?", glossary, players, false), "history_hold");
   assert.equal(routeQuestion("고마워", glossary, players, false), "ack");
   assert.equal(routeQuestion("오늘 날씨 알려줘", glossary, players, false), "blocked");
@@ -186,6 +191,55 @@ async function main() {
     const log = s.logs.at(-1)!;
     assert.equal(log.correctionCandidate ?? null, null);
     assert.equal(log.normalizeStatus, "rejected");
+  }
+
+  // ── 2-d. 결정론 사전 복원 (2026-08-14 #1177 Production QA FAIL 실데이터) ────
+  // 전용계정 QA 실측: 배포 SSOT provider 3/3 이 `보끄가모야` 를 `보끄가 뭐야` 까지만
+  // 교정했다(`보끄→보크` 는 안 고침) → 후보 residual 착지 → 카드 도달 불가.
+  // 복원 경로는 이 실데이터 그대로를 카드로 되살려야 한다.
+  {
+    const s = freshState({ normReply: "보끄가 뭐야" });
+    const r = await answerQuestion("u1", "보끄가모야", makeDeps(s));
+    assert.equal(r.source, "question_correction", "실데이터 도달성: 카드가 떠야 한다");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+    assert.equal(s.llmCalls, 0);
+    const log = s.logs.at(-1)!;
+    assert.equal(log.question, "보끄가모야");
+    assert.equal(log.questionNormalized ?? null, null);
+    assert.equal(log.correctionCandidate, "보크가 뭐야");
+    assert.equal(log.normalizeStatus, "suggested");
+  }
+
+  // LLM 이 교정없음(null)이어도, 이미 띄어 쓴 오탈자는 복원이 원문에서 직접 카드를 만든다.
+  {
+    const s = freshState({ normReply: null });
+    const r = await answerQuestion("u1", "보끄가 뭐야", makeDeps(s));
+    assert.equal(r.source, "question_correction");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+    assert.equal(s.logs.at(-1)?.normalizeStatus, "suggested");
+  }
+
+  // 정규화 provider 장애(throw)여도 복원은 결정론이라 카드가 살아있다(fail-open 강화).
+  {
+    const s = freshState({ normThrows: true });
+    const r = await answerQuestion("u1", "보끄가 뭐야", makeDeps(s));
+    assert.equal(r.source, "question_correction");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+  }
+
+  // 유일성 fail-close: 한 창이 두 term(보크·도루)과 동시에 치환 1 이면 증명 불가 — 카드 금지.
+  {
+    const s = freshState({ normReply: "보루가 뭐야" });
+    const r = await answerQuestion("u1", "보루가모야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction", "복원 후보 2개는 fail-close");
+    assert.equal(s.logs.at(-1)?.normalizeStatus, "rejected");
+  }
+
+  // 복원 결과도 SSOT 재판정을 통과해야만 제안한다 — 착지가 allowlist 밖이면 카드 금지.
+  {
+    const s = freshState({ normReply: "보끄 최고야" });
+    const r = await answerQuestion("u1", "보끄최고야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction", "정의 의도 없는 복원 후보는 제안 금지");
   }
 
   // ── 3. 미발동: 전용 라우트 질문은 정규화가 아예 안 탄다 ──────────────────

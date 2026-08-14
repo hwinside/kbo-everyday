@@ -3729,6 +3729,45 @@ export function evaluateNormalizedCandidate(
   return { accepted: false, status: "rejected" };
 }
 
+/**
+ * 결정론적 사전 용어 오탈자 복원 (2026-08-14 #1177 Production QA FAIL hotfix).
+ *
+ * 배포 실측(전용계정 QA): `보끄가모야` 에 대해 SSOT provider 3/3 이 `보끄가 뭐야` 까지만
+ * 출력했다 — 정규화 프롬프트의 보수 계약("잘못 고치는 쪽이 안 고치는 쪽보다 나쁘다")상
+ * `보끄→보크` 오탈자는 안 고친다. 그 후보는 residual 로 착지해 rejected 가 되므로
+ * 교정 카드가 **구조적으로 도달 불가**였다.
+ *
+ * 그래서 LLM 출력 성향에 의존하지 않는 결정론 경로를 한 층 더한다: 사전 term(폐쇄집합)과
+ * **음절 치환 1** 로만 다른 창(window)을 term 으로 되돌린 후보를 만든다.
+ *  · 치환만(길이 동일) — 삽입·삭제 편집은 조사·일반어와 충돌 폭이 커서 열지 않는다.
+ *  · term 길이 2 미만 제외, 창에 공백·숫자 포함 제외, 창=term(이미 정상 표기) 제외.
+ *  · 복원 결과 문자열이 **정확히 1개**일 때만 반환 — 2026-08-09 name_suggest 와 같은
+ *    "후보 정확히 1개" 안전선. 2개 이상이면 어느 쪽인지 증명할 수 없어 fail-close.
+ *  · 이 함수는 후보 생성만 한다 — 제안 자격은 classifyQuestionCorrectionCandidate
+ *    (숫자 보존·길이 상한·착지 allowlist SSOT)가 다시 판정한다. 자동 수용 경로는 없다.
+ */
+export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]): string | null {
+  const source = text.normalize("NFKC");
+  const repaired = new Set<string>();
+  for (const entry of glossary) {
+    const term = entry.term.normalize("NFKC");
+    if (term.length < 2) continue;
+    for (let i = 0; i + term.length <= source.length; i++) {
+      const window = source.slice(i, i + term.length);
+      if (window === term) continue;
+      if (/[\s\p{N}]/u.test(window)) continue;
+      let diff = 0;
+      for (let j = 0; j < term.length; j++) {
+        if (window[j] !== term[j]) diff++;
+      }
+      if (diff !== 1) continue;
+      repaired.add(source.slice(0, i) + term + source.slice(i + term.length));
+    }
+  }
+  if (repaired.size !== 1) return null;
+  return [...repaired].at(0) ?? null;
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   let question = rawQuestion.trim();
   let questionNorm = normalizeQuestion(question);
@@ -3831,6 +3870,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     let normStatus: NormalizeStatus;
     let accepted = false;
     let suggested = false;
+    let suggestionText: string | null = null;
     if (norm === null) {
       normStatus = "error";
     } else if (candidate.length === 0) {
@@ -3840,6 +3880,21 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       accepted = verdict === "accepted_surface";
       suggested = verdict === "suggest";
       normStatus = accepted ? "accepted_surface" : suggested ? "suggested" : "rejected";
+    }
+    if (suggested) suggestionText = candidate;
+    // ── 결정론 사전 복원 fallback (2026-08-14 #1177 Production QA FAIL hotfix) ──
+    // 배포 provider 3/3 실측이 `보끄가모야 → 보끄가 뭐야` 까지만 교정해(`보끄→보크` 는
+    // 보수 계약상 안 고침) 후보가 residual 착지 → rejected → 카드가 도달 불가였다.
+    // 사전 폐쇄집합 결정론 복원을 시도하되, 제안 자격은 같은 SSOT 가 재판정한다.
+    if (!accepted && !suggested) {
+      const repairBase = candidate.length > 0 ? candidate : question;
+      const repaired = repairGlossaryTermTypo(repairBase, glossary);
+      if (repaired !== null
+          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
+        suggested = true;
+        suggestionText = repaired;
+        normStatus = "suggested";
+      }
     }
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
@@ -3854,7 +3909,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 제안만 한 후보는 별도 칸(`correction_candidate`)에 남긴다 — 같은 칸에 섞으면
       // "이 문장으로 답했다" 와 "이 문장을 제안했다" 를 구분할 수 없어 오교정 감사가 깨진다.
       const acceptedText = accepted ? candidate : null;
-      const suggestedText = suggested ? candidate : null;
+      const suggestedText = suggestionText;
       deps = {
         ...deps,
         log: (entry) => baseLog({
@@ -3887,7 +3942,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       });
       return {
         status: 200, answer: QUESTION_CORRECTION_ANSWER, source: "question_correction", remaining,
-        correctionOptions: [candidate],
+        correctionOptions: [suggestionText ?? candidate],
       };
     }
   }
