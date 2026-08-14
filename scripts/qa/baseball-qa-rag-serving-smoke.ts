@@ -1184,6 +1184,54 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
     assert.equal(genericCalls, 0, `드리프트 retry 가 generic 공급자를 호출했다(${genericCalls})`);
   }
 
+  // (e-2b) 해요체 RAG → store 성공 → log 실패/crash → retry (삼순 2026-08-14 1차 재리뷰 P0).
+  //   failing-first: envelope 에 toneCompliant 보존이 없으면 retry 재생이 tone_compliant=null
+  //   로 기록돼 관측 계약이 유실된다. 계약 = LLM 1회 · 동일 답 · tone_compliant=false.
+  {
+    let stored: LlmResult | null = null;
+    let ragCalls = 0;
+    let logAttempts = 0;
+    const informalAnswer = "'문학소년'이라는 별명으로 불려요.";
+    const logged: { matchPath: string; answer: string | null; toneCompliant: boolean | null }[] = [];
+    const mk = (failLog: boolean): QaDeps => {
+      const { deps } = makeDeps({
+        getLlmState: async () => ({ started: stored !== null, result: stored, ownerActive: false }),
+        acquireLlmStart: async () => true,
+        storeLlm: async (r) => { stored = r; },
+        searchRag: async () => [MOON_EVIDENCE],
+        callRagLlm: async () => {
+          ragCalls++;
+          return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: informalAnswer }), inputTokens: 1, outputTokens: 1 };
+        },
+        callLlm: async () => { throw new Error("generic 호출 금지"); },
+        log: async (entry) => {
+          logAttempts++;
+          if (failLog) throw new Error("log insert down");
+          logged.push({ matchPath: entry.matchPath, answer: entry.answer, toneCompliant: entry.toneCompliant ?? null });
+        },
+      });
+      return deps;
+    };
+    // 1차: store 는 성공하고 log 에서 crash.
+    await assert.rejects(
+      () => answerQuestion("u1", "문보경 별명이 뭐야?", mk(true)),
+      /log insert down/,
+      "1차 실행은 log 실패로 crash 해야 한다(스토어는 이미 성공)",
+    );
+    assert.ok(stored !== null, "crash 전에 envelope 가 저장돼 있어야 한다");
+    assert.equal(ragCalls, 1);
+    // 2차 retry: envelope 재생 — LLM 재호출 0, 동일 답, tone_compliant=false 유지.
+    const replayed = await answerQuestion("u1", "문보경 별명이 뭐야?", mk(false));
+    assert.equal(replayed.source, "rag", `retry 재생 source=${replayed.source}`);
+    assert.ok(replayed.answer.includes(informalAnswer), "retry 가 저장된 해요체 답을 그대로 재생해야 한다");
+    assert.equal(ragCalls, 1, `retry 가 RAG LLM 을 재소비했다(${ragCalls})`);
+    assert.equal(logged.at(-1)?.matchPath, "rag");
+    assert.equal(
+      logged.at(-1)?.toneCompliant, false,
+      "retry 재생 로그의 tone_compliant=false 가 유실됐다 — envelope 보존 결함",
+    );
+  }
+
   // (e-3) stored rag + search throw (삼순 2차 회귀축 ①) — envelope 재생이 route/search 보다
   //   앞이므로, 재시도 때 검색 RPC 가 터져도 저장된 rag 최종 답·출처가 그대로 나간다.
   //   (종전에는 searchRag throw 가 state 조회 전에 error 로 종결해 저장 답을 덮었다.)

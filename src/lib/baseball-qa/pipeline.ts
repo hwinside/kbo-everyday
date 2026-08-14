@@ -914,8 +914,9 @@ export interface QaDeps {
     /**
      * 생성 RAG 답변의 **톤 준수 관측값** (2026-08-14 A안, 하린아빠 확정 + 삼순 조건부 GO).
      * 게이트가 아니다 — 해요체여도 서빙하고 여기에 `false` 로 남겨 "프롬프트가 얼마나
-     * 지켜지는가"를 센다. 생성 답변이 아닌 경로(사전·구조화·고정문)는 미설정 = `null` 이다 —
-     * 그래야 분모가 "LLM 이 실제로 쓴 문장" 으로 유지된다.
+     * 지켜지는가"를 센다. `null` = **서빙된 생성 RAG 답변 없음/판정불가** (삼순 1차 재리뷰 정정) —
+     * 비생성 경로(사전·구조화·고정문)뿐 아니라 안전검증(JSON/status/URL/길이/숫자) 탈락으로
+     * 폐기된 RAG 도 null 이다. 관측은 서빙된 생성답에만 붙는다.
      */
     toneCompliant?: boolean | null;
     matchPath: MatchPath;
@@ -2877,6 +2878,12 @@ export interface StoredQaFinal {
   /** 원시점 캐시 가능 여부 (generic llm 만 true 가능). 재시도 시점 재계산 금지 —
    * context/scope/roster 를 다시 계산하면 비캐시 답이 global cache 로 샌다 (삼순 2차). */
   cacheable?: boolean;
+  /**
+   * 생성 RAG 답변의 톤 준수 관측값 (2026-08-14 A안, 삼순 1차 재리뷰 P0).
+   * 원시점 판정을 envelope 에 보존해야 "store 성공 → log 실패/crash → retry 재생" 에서
+   * 관측이 null 로 유실되지 않는다. 미설정 = 판정 없음(비생성 경로·구버전 envelope).
+   */
+  toneCompliant?: boolean;
 }
 /**
  * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
@@ -2923,6 +2930,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     source: final.source as MatchPath,
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
     ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
+    ...(typeof final.toneCompliant === "boolean" ? { toneCompliant: final.toneCompliant } : {}),
   };
 }
 
@@ -2969,6 +2977,8 @@ async function replayStoredFinalResult(
   await deps.log({
     userId, question, questionNorm, matchPath: storedFinal.source,
     answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    // 재생도 원시점 톤 관측을 그대로 기록한다 — 재판정 없음(원시점 계약, cacheable 과 동일 축).
+    toneCompliant: storedFinal.toneCompliant ?? null,
   });
   return {
     status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
@@ -3668,7 +3678,7 @@ async function answerPlayerDescriptiveQuestion(
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
@@ -3759,7 +3769,7 @@ async function answerOfficialDocumentQuestion(
   //   이 답은 근거 없는 생성답이므로 기존 generic 경로와 같은 자격(`llm`)으로 기록하고
   //   출처는 붙이지 않는다. 숫자는 validate 단계가 질문 밖 토큰을 기계 폐기했다.
   if (validated.kind === "general") {
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm" }, llm));
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm", toneCompliant: validated.toneCompliant }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
@@ -3777,7 +3787,7 @@ async function answerOfficialDocumentQuestion(
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
@@ -3924,7 +3934,7 @@ async function answerTeamRagQuestion(
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "team_rag", sourceUrl }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "team_rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
   // `team_rag` 로 기록한다 — 선수·공식 RAG 와 섞이면 구단 전수 감사가 불가능하다.
   await deps.log({
     userId, question, questionNorm, matchPath: "team_rag", answer,
@@ -4032,7 +4042,7 @@ async function answerNewsRagQuestion(
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "news_rag", sourceUrl }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "news_rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "news_rag",
     answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,

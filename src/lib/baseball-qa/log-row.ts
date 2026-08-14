@@ -29,7 +29,7 @@ export function buildQuestionLogRow(
     // 무너진다.
     question_correction_candidate: entry.correctionCandidate ?? null,
     // 생성 RAG 톤은 **관측값**이다. false 여도 답변은 서빙된다 — 이 칸으로 프롬프트
-    // 준수율을 감사하고, null 은 생성 답변이 아닌 경로를 뜻한다.
+    // 준수율을 감사한다. null = 서빙된 생성 RAG 답변 없음/판정불가(비생성 경로 + 안전검증 탈락 폐기).
     tone_compliant: entry.toneCompliant ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,
