@@ -7,6 +7,7 @@ import ts from "typescript";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
 import {
   applyBaseballQaPlayerPick,
+  applyBaseballQaQuestionCorrection,
   attemptBaseballQaOutbox,
   collectBaseballQaAnsweredQuestionIds,
   createBaseballQaAnsweredUpdater,
@@ -2271,6 +2272,20 @@ async function verifyClientRetryOutbox() {
   }], "45ae7419-6a9a-4c6b-9101-8d65df7e242e");
   assert.equal(readBaseballQaOutbox(storage).length, 0, "최종 답변 관측 뒤에만 picker outbox 종료");
 
+  // 교정 선택 뒤 동명이인 picker가 이어져도 두 선택값을 모두 보존한다.
+  {
+    const chainValues = new Map<string, string>();
+    const chainStorage = {
+      getItem: (key: string) => chainValues.get(key) ?? null,
+      setItem: (key: string, value: string) => { chainValues.set(key, value); },
+    };
+    applyBaseballQaQuestionCorrection(chainStorage, "conversation-chain", 77, "김동현 별명이 뭐야?");
+    applyBaseballQaPlayerPick(chainStorage, "conversation-chain", 77, "69102");
+    const chained = readBaseballQaOutbox(chainStorage).find((entry) => entry.messageId === 77);
+    assert.equal(chained?.pickedNormalizedQuestion, "김동현 별명이 뭐야?");
+    assert.equal(chained?.pickedPlayerKboId, "69102");
+  }
+
   // Realtime picker가 HTTP 응답보다 먼저 와도 늦은 응답이 awaiting 상태를 덮지 않는다.
   enqueueBaseballQaQuestion(storage, { conversationId: "conversation-1", messageId: 99 });
   let releaseRequest!: () => void;
@@ -3201,6 +3216,13 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     { question: "어제 LG 무슨 일 있었어?", deps: richDeps },           // news_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
+    {
+      question: "보끄가모야",
+      deps: (state) => ({
+        ...richDeps(state),
+        normalizeQuestionLlm: async () => ({ text: "보크가 뭐야?", inputTokens: 5, outputTokens: 2 }),
+      }),
+    },                                                                    // question_correction
     { question: "고마워", deps: richDeps },                                // ack
     // 범위 되묻기 — 우리 안내문에 대한 반응이라 결정론으로 범위를 안내한다.
     { question: "야구 룰", deps: richDeps },                               // scope_guide
@@ -3323,7 +3345,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   // ② 반대 방향 — 고정 거절 문구를 내보낸 경로를 `answer` 로 분류하면 RED.
   // (`ack` 은 고정 문구지만 거절이 아니라 자기 분류 `ack` 를 갖는다 — 제외.)
   const overclaimed = [...observed.entries()]
-    .filter(([path, v]) => !v.generated && path !== "ack" && path !== "player_picker")
+    .filter(([path, v]) => !v.generated && path !== "ack" && path !== "player_picker" && path !== "question_correction")
     .filter(([path]) => replyKindForMatchPath(path) === "answer")
     .map(([path]) => path);
   assert.deepEqual(overclaimed, [],
@@ -3333,6 +3355,10 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   if (observed.has("player_picker")) {
     assert.equal(replyKindForMatchPath("player_picker"), "picker",
       "되묻기는 picker 로 분류돼야 한다");
+  }
+  if (observed.has("question_correction")) {
+    assert.equal(replyKindForMatchPath("question_correction"), "correction",
+      "교정 제안은 correction 으로 분류돼야 한다");
   }
 
   console.log(`   behavioral reply_kind: ${observed.size}경로 실행 결과로 검증`);
