@@ -78,6 +78,13 @@ const mutations = [
     replace: '  if (repaired.size < 1) return null;',
   },
   {
+    // 삼순 2026-08-14 2차: 정의형 축약 guard 를 죽이면 실측 오제안
+    // (`전광판 보는 법` → `전광판 보크 법`)이 다시 카드로 나간다.
+    name: "M26 복원의 정의형 축약 guard 제거",
+    find: '      if (normalizeQuestion(restored) !== normalizeKey(term)) continue;',
+    replace: '      if (false) continue;',
+  },
+  {
     // 삼순 2026-08-14 NO-GO 축: Tier A 공백-only 수용이 residual 로 남는 경로를 죽이면
     // provider 가 공백만 고치는 실측 행동에서 카드가 다시 도달 불가가 된다.
     name: "M25 Tier A residual 복원 확장 제거",

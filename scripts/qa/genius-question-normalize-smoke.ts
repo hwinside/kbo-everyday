@@ -31,6 +31,7 @@ import {
 const glossary: GlossaryEntry[] = [
   { term: "보크", aliases: ["balk"], answer: "투수의 반칙 동작입니다." },
   { term: "도루", aliases: ["sb"], answer: "베이스를 훔치는 플레이입니다." },
+  { term: "스윕", aliases: [], answer: "한 팀이 시리즈 모든 경기를 이기는 것입니다." },
 ];
 const players = [
   { kboId: "50001", name: "김도영", team: "KIA 타이거즈" },
@@ -213,6 +214,15 @@ async function main() {
     assert.equal(log.normalizeStatus, "suggested");
   }
 
+  // 실유저 rejected 재생의 두 번째 양성: `스왑이 모야?` → `스윕이 뭐야?`.
+  // 전체가 term 정의형으로 축약되므로 카드는 살아야 한다.
+  {
+    const s = freshState({ normReply: "스왑이 뭐야?" });
+    const r = await answerQuestion("u1", "스왑이 모야?", makeDeps(s));
+    assert.equal(r.source, "question_correction", "실양성 스윕 카드가 떠야 한다");
+    assert.deepEqual(r.correctionOptions, ["스윕이 뭐야?"]);
+  }
+
   // LLM 이 교정없음(null)이어도, 이미 띄어 쓴 오탈자는 복원이 원문에서 직접 카드를 만든다.
   {
     const s = freshState({ normReply: null });
@@ -268,6 +278,52 @@ async function main() {
     const s = freshState({ normReply: "보끄 최고야" });
     const r = await answerQuestion("u1", "보끄최고야", makeDeps(s));
     assert.notEqual(r.source, "question_correction", "정의 의도 없는 복원 후보는 제안 금지");
+  }
+
+  // A′가 정의형으로 축약돼도 기존 SSOT 재판정은 독립 방어다. provider가 문장부호를
+  // 비정상 증폭한 후보는 normalizeQuestion(restored)=term 이어도 길이 상한에서 탈락해야 한다.
+  // 이 fixture가 M24(SSOT 재판정 제거)를 직접 RED로 만든다.
+  {
+    const s = freshState({ normReply: `보끄가 뭐야${"?".repeat(40)}` });
+    const r = await answerQuestion("u1", "보끄가뭐야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction", "정의형이어도 SSOT 길이 상한 위반은 no-card");
+    assert.equal(s.logs.some((log) => log.correctionCandidate != null), false);
+  }
+
+  // ── 2-e. A′ 정의형 전체축약 guard — 실유저 오복원 20건 전부 no-card ───────
+  // #1151 이후 rejected 실유저 112건을 배포 정규화기로 재생해 실제로 복원이 발생한
+  // 21건 중 양성 `스왑이 모야?`를 뺀 **전건**이다. 이 목록은 지어낸 반례가 아니라
+  // `/tmp/rejected-route-replay.json` 기계 추출 원문+provider 후보다(2026-08-14).
+  const realFalseRepairCases: { question: string; reply: string | null }[] = [
+    { question: "왜 주자를 태그할때가ㅡ있고 그냥 송구 해서 잡을때가 있어?", reply: "왜 주자를 태그할 때가 있고 그냥 송구해서 잡을 때가 있어?" },
+    { question: "선 맞으면 파울임?", reply: "선 맞으면 파울임?" },
+    { question: "최대 몇일이야?", reply: "최대 며칠이야?" },
+    { question: "야구 한 경기맘 이기면 뭐라해", reply: "야구 한 경기만 이기면 뭐라해" },
+    { question: "삼진을 잡아낸다의 뜻이 뭐야", reply: "삼진을 잡아낸다의 뜻이 뭐야" },
+    { question: "그 전광판에 B S O 이게 뭐야", reply: "전광판에 B S O 이게 뭐야" },
+    { question: "그 전광판에 H랑 그런거 가 뭐야?", reply: "전광판에 H랑 그런 거 뭐야?" },
+    { question: "야구 ㅇㄱ", reply: "야구 이거" },
+    { question: "2026북중미월드켭결과와1루비디오판독기준", reply: "2026 북중미 월드컵 결과와 1루 비디오 판독 기준" },
+    { question: "롯데 신윤후도 본헤드 플레이 한 적 있잖아", reply: "롯데 신윤후도 본헤드 플레이 한 적 있잖아" },
+    { question: "헛스윙은 뭐야", reply: null },
+    { question: "채은성 부상 이유", reply: "채은성 부상 이유" },
+    { question: "1.xxx 이렇게도 나올수잇능 걍우가 잇어?", reply: "1.xxx 이렇게도 나올 수 있는 경우가 있어?" },
+    { question: "10승이 머야", reply: "10승이 뭐야" },
+    { question: "사인미스가 머ㅑ", reply: "사인미스가 뭐야" },
+    { question: "그것을 중고로 팔아도 되니", reply: null },
+    { question: "7/16/2026 잠실에서 엘지랑 케이티랑 했을 때", reply: "7/16/2026 잠실에서 LG랑 KT랑 했을 때" },
+    { question: "근데 심판마다 보는 기준이 다르잔ㄹ아", reply: "근데 심판마다 보는 기준이 다르잖아" },
+    // 실제 Production 카드 오제안 원문 — 반드시 no-card.
+    { question: "야구 전광판 보는 법 알려줘", reply: null },
+    { question: "그러니가 FC가 뭐냐고", reply: "그러니까 FC가 뭐냐고" },
+  ];
+  assert.equal(realFalseRepairCases.length, 20, "실오복원 fixture 전건이 결속돼야 한다");
+  for (const c of realFalseRepairCases) {
+    const s = freshState({ normReply: c.reply });
+    const r = await answerQuestion("u1", c.question, makeDeps(s));
+    assert.notEqual(r.source, "question_correction", `실오복원은 no-card: ${c.question}`);
+    assert.equal(s.logs.some((log) => log.correctionCandidate != null), false,
+      `실오복원 후보 칸도 비어야 한다: ${c.question}`);
   }
 
   // ── 3. 미발동: 전용 라우트 질문은 정규화가 아예 안 탄다 ──────────────────

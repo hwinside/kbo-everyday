@@ -4124,6 +4124,9 @@ export function evaluateNormalizedCandidate(
  * 그래서 LLM 출력 성향에 의존하지 않는 결정론 경로를 한 층 더한다: 사전 term(폐쇄집합)과
  * **음절 치환 1** 로만 다른 창(window)을 term 으로 되돌린 후보를 만든다.
  *  · 치환만(길이 동일) — 삽입·삭제 편집은 조사·일반어와 충돌 폭이 커서 열지 않는다.
+ *  · **정의형 축약**: 복원 결과가 그 term 의 정의 질문으로만 축약될 때만 채택한다
+ *    (`normalizeQuestion(restored) === normalizeKey(term)`). 잔여 의미어가 남는
+ *    복원은 오제안이라 전부 탈락한다 (삼순 2026-08-14 배포 후 오제안 실측).
  *  · term 길이 2 미만 제외, 창에 공백·숫자 포함 제외, 창=term(이미 정상 표기) 제외.
  *  · 복원 결과 문자열이 **정확히 1개**일 때만 반환 — 2026-08-09 name_suggest 와 같은
  *    "후보 정확히 1개" 안전선. 2개 이상이면 어느 쪽인지 증명할 수 없어 fail-close.
@@ -4145,7 +4148,20 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
         if (window[j] !== term[j]) diff++;
       }
       if (diff !== 1) continue;
-      repaired.add(source.slice(0, i) + term + source.slice(i + term.length));
+      const restored = source.slice(0, i) + term + source.slice(i + term.length);
+      // A′ 정의형 축약 guard (삼순 2026-08-14 NO-GO — 배포 후 오제안 실측).
+      //
+      // 치환 1 만으로는 사전 term 대부분이 2글자(보크·도루·스윕)라 `보는` 같은 흔한
+      // 일반어와도 매치된다. 실측 오제안: `야구 전광판 보는 법 알려줘`
+      // → `야구 전광판 보크 법 알려줘` 가 allowlist(`baseball_rule_term`)에 착지해
+      // 실제 카드로 나갔다.
+      //
+      // 그래서 "term 직후가 정의형" 같은 부분 판정이 아니라 **질문 전체가 그 term 의
+      // 정의 질문으로만 축약**될 때만 채택한다. normalizeQuestion 은 어미·조사를 떼어
+      // `보크가 뭐야?` → `보크` 로 줄이므로, 잔여 의미어가 하나라도 남으면
+      // (`야구전광판보크법`) 등가가 깨져 구조적으로 탈락한다.
+      if (normalizeQuestion(restored) !== normalizeKey(term)) continue;
+      repaired.add(restored);
     }
   }
   if (repaired.size !== 1) return null;
