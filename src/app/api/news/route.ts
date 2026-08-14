@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { NewsItem } from "@/types/api";
+import { withNewsViewTokens } from "@/lib/content-views/sign";
 import { isTeamBaseballRelevant, dedupeNewsByTitle } from "@/lib/news-relevance";
 import {
   TEAM_SEARCH,
@@ -121,7 +122,8 @@ export async function GET(req: NextRequest) {
   const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     const items = wantThumbnails ? await attachThumbnails(cached.data.items) : cached.data.items;
-    return NextResponse.json({ items, _q: cached.data._q });
+    // 조회수 서명은 cache-hit 경로도 동일하게 종단에서 부착(삼순 2차 — unsigned 캐시 결손 방지).
+    return NextResponse.json({ items: withNewsViewTokens(items), _q: cached.data._q });
   }
 
   if (!isNaverNewsConfigured()) {
@@ -166,7 +168,8 @@ export async function GET(req: NextRequest) {
       const withoutThumbnail = itemsOut.filter((item) => !item.thumbnailUrl);
       itemsOut = [...withThumbnail, ...withoutThumbnail].slice(0, 5);
     }
-    return NextResponse.json({ items: itemsOut, _q: searchQuery });
+    // 조회수 서명 발급 — 서버가 실제 목록에 내보낸 기사만 /api/content-views/view 증가 가능(임의 id 차단).
+    return NextResponse.json({ items: withNewsViewTokens(itemsOut), _q: searchQuery });
   } catch (e: unknown) {
     console.error('[API/news] Fetch error:', (e as Error).message);
     return NextResponse.json({ items: [], error: (e as Error).message, _q: searchQuery });

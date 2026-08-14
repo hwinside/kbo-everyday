@@ -34,6 +34,7 @@ interface VideoItem {
   isPlayerMatch: boolean;
   hasPlayerTag: boolean;
   label: string;
+  viewToken?: string;
 }
 
 // /api/shorts-feed 원본 아이템 (map 입력)
@@ -47,6 +48,7 @@ interface ShortsFeedItem {
   teamId?: string | null;
   playerId?: string | null;
   playerName?: string | null;
+  viewToken?: string;
 }
 
 interface HomeHighlightsProps {
@@ -149,6 +151,7 @@ export default function HomeHighlights({ team, refreshNonce = 0 }: HomeHighlight
             isPlayerMatch,
             hasPlayerTag,
             label,
+            viewToken: v.viewToken,
           };
         });
         setVideos(items.slice(0, 30));

@@ -8,6 +8,7 @@ interface NewsItem {
   originalLink?: string;
   pubDate: string;
   _label?: string;
+  viewToken?: string;
 }
 
 export interface HomeNewsItem {
@@ -23,11 +24,14 @@ export interface HomeNewsItem {
   timeAgo: string;
   teamId: number | null;
   type: "news";
+  /** 조회수 서명(/api/news 발급). */
+  viewToken?: string;
 }
 
 // v4: non-Naver link 기사를 API에서 노출 제외하도록 바뀌어, 옛 캐시(언론사 link 섞인 v3)를
 // 무효화해야 배포 직후에도 "무조건 네이버" 보장됨
-const NEWS_CACHE_KEY = "kbo-home-news-v4";
+// v5: 조회수 서명(viewToken) 도입 — unsigned 구버전 캐시 무효화(삼순 2차, 배포 직후부터 집계)
+const NEWS_CACHE_KEY = "kbo-home-news-v5";
 const NEWS_CACHE_TTL = 30 * 60 * 1000; // 30분
 
 function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsItem[] {
@@ -57,6 +61,7 @@ function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsIt
     thumbnailUrl: null,
     type: "news" as const,
     teamId: myTeamId || null,
+    viewToken: item.viewToken,
   }));
 }
 

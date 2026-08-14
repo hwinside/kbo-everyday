@@ -11,6 +11,7 @@ interface Video {
   thumbnail: string;
   publishedAt: string;
   durationSeconds?: number;
+  viewToken?: string;
 }
 
 /** 초 → "3:24" / 1시간 이상은 "1:02:30" */
@@ -167,6 +168,7 @@ export default function TeamVideos({ teamSlug }: { teamSlug: string }) {
             thumbnail: v.thumbnail,
             channel: "",
             publishedAt: v.publishedAt,
+            viewToken: v.viewToken,
           }))}
           startIndex={reelIndex}
           onClose={() => setReelIndex(null)}

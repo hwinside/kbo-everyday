@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withNewsViewTokensEdge } from "@/lib/content-views/sign-edge";
 import type { NaverNewsRawItem, NewsItem } from "@/types/api";
 import {
   isPlayerBaseballRelevant,
@@ -168,7 +169,8 @@ export async function POST(req: NextRequest) {
     // 매체만 다른 같은 사건 기사(near-duplicate) 제거 — 최신순이라 첫(최신) 항목 유지
     const deduped = dedupeNewsByTitle(allItems);
 
-    return NextResponse.json({ items: deduped.slice(0, 10) });
+    // 조회수 서명 부착 — 홈 캐러셀이 쓰는 batch 종단(삼순 2차 — 배선 누락 결손 방지).
+    return NextResponse.json({ items: await withNewsViewTokensEdge(deduped.slice(0, 10)) });
   } catch {
     return NextResponse.json({ items: [] });
   }
