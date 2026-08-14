@@ -130,8 +130,23 @@ const MOON_EVIDENCE: RagEvidence = {
   sourceGrade: "tier2",
 };
 
-function makeDeps(overrides: Partial<QaDeps> = {}): { deps: QaDeps; logs: { matchPath: string; answer: string | null }[] } {
-  const logs: { matchPath: string; answer: string | null }[] = [];
+function makeDeps(overrides: Partial<QaDeps> = {}): {
+  deps: QaDeps;
+  logs: {
+    matchPath: string;
+    answer: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    toneCompliant: boolean | null;
+  }[];
+} {
+  const logs: {
+    matchPath: string;
+    answer: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    toneCompliant: boolean | null;
+  }[] = [];
   const deps: QaDeps = {
     enablePlayerRag: true,
     loadGlossary: async () => GLOSSARY,
@@ -144,7 +159,15 @@ function makeDeps(overrides: Partial<QaDeps> = {}): { deps: QaDeps; logs: { matc
       outputTokens: 1,
     }),
     reserveDaily: async () => ({ allowed: true, remaining: 19 }),
-    log: async (entry) => { logs.push({ matchPath: entry.matchPath, answer: entry.answer }); },
+    log: async (entry) => {
+      logs.push({
+        matchPath: entry.matchPath,
+        answer: entry.answer,
+        inputTokens: entry.inputTokens,
+        outputTokens: entry.outputTokens,
+        toneCompliant: entry.toneCompliant ?? null,
+      });
+    },
     ...overrides,
   };
   return { deps, logs };
@@ -963,6 +986,9 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
         assert.equal(result.source, "unsure", `${label}: source=${result.source}`);
         assert.equal(result.answer, UNCLEAR_ANSWER, label);
         assert.equal(genericLlmCalls, 0, `${label}: 근거를 본 실패인데 generic 으로 샜다(${genericLlmCalls})`);
+        // RAG LLM 을 소비하고 검증에서 떨어진 건은 토큰을 null 로 숨기지 않는다.
+        assert.equal(logs.at(-1)?.inputTokens, 1, `${label}: 소비한 RAG input token 누락`);
+        assert.equal(logs.at(-1)?.outputTokens, 1, `${label}: 소비한 RAG output token 누락`);
       }
       assert.notEqual(result.answer, BLOCKED_ANSWER, `${label}: 범위밖 문구 금지`);
       assert.equal(cache.size, 0, `${label}: cache write가 0이 아니다(${cache.size})`);
@@ -974,7 +1000,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
   {
     const cache = new Map<string, string>();
     let genericLlmCalls = 0;
-    const { deps } = makeDeps({
+    const { deps, logs } = makeDeps({
       getCache: async (key) => cache.get(key) ?? null,
       setCache: async (key, answer) => { cache.set(key, answer); },
       callLlm: async () => { genericLlmCalls++; return adversarialLlm(); },
@@ -983,6 +1009,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
     });
     const green = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(green.source, "rag");
+    assert.equal(logs.at(-1)?.toneCompliant, true, "합니다체 RAG 답변은 toneCompliant=true 관측");
     assert.equal(genericLlmCalls, 0, "rag 경로가 generic LLM을 추가 소비하면 안 된다");
     assert.equal(cache.size, 0, "rag 답변은 global 캐시에 쓰지 않는다(근거·revision 종속 답변)");
   }
