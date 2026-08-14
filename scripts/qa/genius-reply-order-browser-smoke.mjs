@@ -35,7 +35,8 @@ async function createSession(email) {
   };
 }
 
-async function sendAnswer(userId, questionMessageId, content, suffix) {
+async function sendAnswer(userId, questionMessageId, content) {
+  const dedupKey = `baseball-genius:${questionMessageId}`;
   // query-guard: bounded -- admin_send_ops_message는 대상 대화 1행만 반환한다.
   const { data, error } = await admin.rpc("admin_send_ops_message", {
     p_system_user_id: GENIUS_ID,
@@ -44,13 +45,23 @@ async function sendAnswer(userId, questionMessageId, content, suffix) {
     p_image_urls: [],
     p_preview: content,
     p_origin: "dm",
-    p_dedup_key: `qa-genius-order:${userId}:${suffix}`,
+    p_dedup_key: dedupKey,
     p_payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "dictionary", question_message_id: questionMessageId },
   });
   if (error) throw new Error(`답변 RPC 실패: ${error.message}`);
   const row = Array.isArray(data) ? data[0] : data;
-  assert.ok(Number.isSafeInteger(row?.message_id), `답변 message_id 누락: ${JSON.stringify(row)}`);
-  return row.message_id;
+  assert.ok(row?.conversation_id, `답변 conversation_id 누락: ${JSON.stringify(row)}`);
+  // query-guard: bounded -- dedup_key UNIQUE exact 1행 조회.
+  const { data: message, error: messageError } = await admin
+    .from("dm_messages")
+    .select("id")
+    .eq("conversation_id", row.conversation_id)
+    .eq("dedup_key", dedupKey)
+    .single();
+  if (messageError || !Number.isSafeInteger(message?.id)) {
+    throw new Error(`답변 message_id 조회 실패: ${messageError?.message ?? JSON.stringify(message)}`);
+  }
+  return message.id;
 }
 
 async function main() {
@@ -78,7 +89,11 @@ async function main() {
     const [q1, q2] = questions;
 
     const session = await createSession(email);
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      ...(bypass ? { extraHTTPHeaders: { "x-vercel-protection-bypass": bypass } } : {}),
+    });
     const authKey = `sb-${REF}-auth-token`;
     const origin = new URL(BASE_URL);
     await context.addCookies([{
@@ -102,19 +117,25 @@ async function main() {
 
     const page = await context.newPage();
     await page.goto(`${BASE_URL}/messages/${conversationId}`, { waitUntil: "networkidle", timeout: 60_000 });
-    await page.waitForSelector(`[data-message-id="${q1.id}"]`, { timeout: 20_000 });
+    try {
+      await page.waitForSelector(`[data-message-id="${q1.id}"]`, { timeout: 20_000 });
+    } catch (error) {
+      if (SCREENSHOT) await page.screenshot({ path: SCREENSHOT, fullPage: true });
+      console.error(`Preview 진입 실패: url=${page.url()} body=${(await page.locator("body").innerText()).slice(0, 500)}`);
+      throw error;
+    }
     await page.waitForSelector(`[data-message-id="${q2.id}"]`, { timeout: 20_000 });
     await page.waitForSelector(`[data-genius-typing-question-id="${q1.id}"]`, { timeout: 20_000 });
     await page.waitForSelector(`[data-genius-typing-question-id="${q2.id}"]`, { timeout: 20_000 });
 
-    const bId = await sendAnswer(userId, q2.id, "QA 둘째 exact 답변", "b");
+    const bId = await sendAnswer(userId, q2.id, "QA 둘째 exact 답변");
     const b = page.locator(`[data-message-id="${bId}"][data-genius-question-id="${q2.id}"]`);
     await b.waitFor({ timeout: 20_000 });
     await assert.doesNotReject(() => b.getByText("QA 둘째 exact 답변", { exact: true }).waitFor());
     await page.waitForSelector(`[data-genius-typing-question-id="${q2.id}"]`, { state: "detached", timeout: 20_000 });
     assert.equal(await page.locator(`[data-genius-typing-question-id="${q1.id}"]`).count(), 1, "B답변 뒤 A typing은 유지돼야 한다");
 
-    const aId = await sendAnswer(userId, q1.id, "QA 첫 exact 답변", "a");
+    const aId = await sendAnswer(userId, q1.id, "QA 첫 exact 답변");
     const a = page.locator(`[data-message-id="${aId}"][data-genius-question-id="${q1.id}"]`);
     await a.waitFor({ timeout: 20_000 });
     await assert.doesNotReject(() => a.getByText("QA 첫 exact 답변", { exact: true }).waitFor());
