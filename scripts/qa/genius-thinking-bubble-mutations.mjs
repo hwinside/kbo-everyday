@@ -34,18 +34,33 @@ const mutations = [
     expect: "말풍선",
   },
   {
-    name: "M3 hook route 전환 SSOT 우회",
+    name: "M3 hook route 전환 SSOT 우회 (actual DOM)",
     file: TARGETS[2],
     from: 'transitionGeniusThinkingMessageId(previousConversationId, conversationId, current)',
     to: 'null',
-    expect: "실제 conversation 전환 함수",
+    script: "qa:genius-thinking-bubble:workflow",
+    expect: "route 승격 뒤 Q1 thinking",
   },
   {
-    name: "M4 draft→실제 route에서 marker 삭제",
+    name: "M4 draft→실제 route에서 marker 삭제 (actual DOM)",
     file: TARGETS[3],
     from: 'return previousConversationId === "" && nextConversationId !== "" ? current : null;',
     to: 'return null;',
-    expect: "draft→실제 대화 route 승격",
+    script: "qa:genius-thinking-bubble:workflow",
+    expect: "route 승격 뒤 Q1 thinking",
+  },
+  {
+    name: "M5 stale localStorage replyStates에서 marker 재유도 (actual DOM)",
+    file: TARGETS[2],
+    from: '  const previousConversationIdRef = useRef(conversationId);\n',
+    to: `  const previousConversationIdRef = useRef(conversationId);
+  useEffect(() => {
+    const ids = Object.keys(geniusReplyStates).map(Number).filter(Number.isSafeInteger);
+    if (ids.length > 0) setGeniusThinkingQuestionId(Math.max(...ids));
+  }, [geniusReplyStates]);
+`,
+    script: "qa:genius-thinking-bubble:workflow",
+    expect: "stale outbox로 thinking이 되살아나면",
   },
 ];
 
@@ -59,7 +74,7 @@ for (const mutation of mutations) {
     continue;
   }
   fs.writeFileSync(mutation.file, source.replace(mutation.from, mutation.to));
-  const run = spawnSync("npm", ["run", "-s", "qa:genius-thinking-bubble"], { encoding: "utf8" });
+  const run = spawnSync("npm", ["run", "-s", mutation.script ?? "qa:genius-thinking-bubble"], { encoding: "utf8" });
   restore();
   const output = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
   if (run.status !== 0 && output.includes(mutation.expect)) {
@@ -75,4 +90,4 @@ if (failures > 0) {
   console.error(`FAIL thinking-bubble mutations: ${failures}건`);
   process.exit(1);
 }
-console.log("PASS thinking-bubble mutations: 4/4 RED");
+console.log("PASS thinking-bubble mutations: 5/5 RED");
