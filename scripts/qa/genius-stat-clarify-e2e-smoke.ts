@@ -34,6 +34,7 @@ import {
   packStoredQaFinal,
   teamIdOfCanonical,
   STAT_CLARIFY_ANSWER,
+  STAT_NARRATIVE_ANSWER,
   type GlossaryEntry,
   type PlayerRef,
   type QaDeps,
@@ -116,8 +117,9 @@ async function main() {
 
   // ── (A) 반대쌍 — 서사·매체 요청은 하드 되묻기로 삼키지 않는다 ────────────────
   //
-  //   재설계 후 이 문장들은 LLM 위임 대상이다. stub 이 숫자 없는 답을 주면 그 답이
-  //   그대로 나가야 한다(되묻기 문구로 교체되면 FAIL). 어떤 경로로 답하든
+  //   A안 계약(하린아빠 2026-08-14 확정): 가드 소유 경로에서 LLM 은 의도 토큰
+  //   (RECORD/NARRATIVE)만 반환하고 유저 노출 문구는 코드 고정문 2개뿐이다.
+  //   서사 문장에 stub 이 NARRATIVE 를 주면 고정 응대문이 나가야 한다. 어떤 경로로 답하든
   //   `stat_clarify` 하드 종결만 아니면 계약 성립이다 — 문장 유형 판정은 LLM 몫이다.
   const COUNTERPAIRS = [
     "친구가 이대호 홈런 영상을 보내줬어",
@@ -130,13 +132,25 @@ async function main() {
     "이대호 홈런 영상 보여주세요",
   ];
   for (const q of COUNTERPAIRS) {
-    const { result, calls } = await ask(q);
-    check(`반대쌍 통과 — "${q}" → ${result.source}`, () => {
-      assert.notEqual(result.source, "stat_clarify", `서사·요청 문장이 하드 되묻기로 삼켜졌다: ${q}`);
-      assert.notEqual(result.answer, STAT_CLARIFY_ANSWER, `답변 문자열이 되묻기 문구다: ${q}`);
-      // 위임이 실제로 성립해야 한다 — LLM 까지 가서 숫자 없는 답이 그대로 나가는 것이 계약이다.
+    const { result, calls } = await ask(q, "NARRATIVE");
+    check(`반대쌍 고정 응대 — "${q}" → ${result.source}`, () => {
+      assert.notEqual(result.source, "stat_clarify", `서사 의도가 하드 되묻기로 삼켜졌다: ${q}`);
       assert.ok(calls.llm > 0, `서사·요청 문장이 LLM 위임 없이 ${result.source} 로 끝났다: ${q}`);
-      assert.equal(result.source, "llm", `LLM 답이 ${result.source} 로 접혔다: ${q}`);
+      assert.equal(result.source, "llm", `NARRATIVE 의도가 ${result.source} 로 접혔다: ${q}`);
+      assert.equal(result.answer, STAT_NARRATIVE_ANSWER, `고정 응대문이 아닌 답이 나갔다: ${result.answer}`);
+      assert.equal(calls.cacheSet, 0, `가드 소유 답이 캐시에 쓰였다: ${q}`);
+    });
+  }
+  {
+    // A안 핵심 계약 — LLM 자유문장은 의도 토큰이 아니므로 절대 그대로 서빙되지 않는다.
+    const q = "친구가 이대호 홈런 영상을 보내줬어";
+    const freeText = "야구 이야기군요! 이대호 선수 홈런 영상은 언제 봐도 멋집니다.";
+    const { result, calls } = await ask(q, freeText);
+    check("자유문장 서빙 0 — 토큰 외 출력은 되묻기 fail-close", () => {
+      assert.ok(calls.llm > 0, "위임이 성립하지 않았다");
+      assert.equal(result.source, "stat_clarify", `자유문장이 서빙됐다(${result.source}): ${result.answer}`);
+      assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+      assert.notEqual(result.answer, freeText, "LLM 자유문장이 그대로 나갔다");
     });
   }
 
@@ -166,14 +180,13 @@ async function main() {
     });
   }
   {
-    // 자연 방향 — LLM 이 스스로 숫자 없이 되묻으면 그 문장이 그대로 나간다.
+    // A안 이후 — RECORD 의도 토큰은 고정 되묻기로 종결된다(자유문장 서빙 없음).
     const q = "이대호 홈런";
-    const natural = "야구 기록 질문으로 이해했습니다. 어느 이대호 선수인지 확인이 필요합니다. 현역 KBO 선수인지 알려주시면 확인하겠습니다.";
-    const { result, calls } = await ask(q, natural);
-    check(`자연 되묻기 통과 — "${q}" (숫자 없는 stub)`, () => {
+    const { result, calls } = await ask(q, "RECORD");
+    check(`RECORD 의도 → 고정 되묻기 — "${q}"`, () => {
       if (calls.llm > 0) {
-        assert.equal(result.answer, natural, `숫자 없는 LLM 답이 교체됐다: ${result.answer}`);
-        assert.equal(result.source, "llm");
+        assert.equal(result.source, "stat_clarify", `RECORD 의도가 ${result.source} 로 접혔다`);
+        assert.equal(result.answer, STAT_CLARIFY_ANSWER);
       }
       assert.equal(calls.cacheSet, 0, "미결속 위임 답이 캐시에 쓰였다");
     });

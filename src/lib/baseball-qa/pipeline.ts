@@ -169,6 +169,16 @@ export const UNSURE_ANSWER =
 export const STAT_CLARIFY_ANSWER =
   "앞말이 선수 이름인지 야구 용어인지 확인하지 못했습니다. " +
   "현역 선수라면 이름을 정확히, 용어라면 붙여서(예: 만루홈런) 다시 질문해 주시면 확인하겠습니다.";
+/**
+ * 가드 소유 질문의 **서사·매체 의도** 고정 응대문 (#1132 A안, 하린아빠 2026-08-14 확정).
+ *
+ * 가드 소유 경로에서 LLM 자유문장은 유저에게 직접 서빙되지 않는다 — LLM 은 의도
+ * enum(RECORD/NARRATIVE)만 반환하고, 화면 문구는 이 고정문과 `STAT_CLARIFY_ANSWER`
+ * 둘뿐이다. 자유문장 서빙이 없으므로 수사·단위·표현 변이 열거 자체가 불필요해진다.
+ */
+export const STAT_NARRATIVE_ANSWER =
+  "야구 이야기를 나눠주셔서 감사합니다. 특정 선수의 공식 기록이 궁금하시면 " +
+  "현역 선수 이름을 정확히 적어 질문해 주시면 확인하겠습니다.";
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기에서 운영팀이 확인합니다. 저는 야구 이야기를 함께 살펴보겠습니다.";
 /**
@@ -689,7 +699,7 @@ export interface QaDeps {
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
-  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string) => Promise<LlmResult>;
+  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean) => Promise<LlmResult>;
   /**
    * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
    *
@@ -2863,6 +2873,26 @@ export interface StoredQaFinal {
    * context/scope/roster 를 다시 계산하면 비캐시 답이 global cache 로 샌다 (삼순 2차). */
   cacheable?: boolean;
 }
+/**
+ * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
+ *
+ * 반환이 "record"/"narrative" 가 아니면 무조건 null — 호출측이 되묻기로 fail-close 한다.
+ * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(서빙 경로 없음).
+ */
+export function parseStatIntentToken(rawText: string): "record" | "narrative" | null {
+  let row: Record<string, unknown>;
+  try {
+    row = JSON.parse(rawText.trim()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  if (!row || typeof row !== "object" || typeof row.answer !== "string") return null;
+  const token = row.answer.trim().toUpperCase();
+  if (token === "RECORD") return "record";
+  if (token === "NARRATIVE") return "narrative";
+  return null;
+}
+
 export function packStoredQaFinal(final: StoredQaFinal, llm: LlmResult): LlmResult {
   return {
     text: JSON.stringify({ [STORED_QA_FINAL_MARKER]: true, final }),
@@ -5012,7 +5042,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     try {
-      llm = await deps.callLlm(question, context ?? undefined, rosterBlock);
+      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard);
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
       //   종전에는 `unsure`(판정 불명확)로 접었는데, 그러면 유저는 "질문을 못 알아들었다" 를
@@ -5020,6 +5050,29 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
       return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
     }
+  }
+
+  // ── statNumericGuard 의도 2분기 (#1132 A안 — 하린아빠 2026-08-14 확정, 삼순 구조 제안) ──
+  //
+  // 가드 소유 질문은 LLM 자유문장을 **절대 서빙하지 않는다**. LLM 은 의도 토큰만
+  // 반환하고(RECORD/NARRATIVE), 유저 노출 문구는 코드 고정문 2개뿐이다:
+  //   · RECORD(기록 요구) → `STAT_CLARIFY_ANSWER` 되묻기 (미결속 대상은 값을 못 준다)
+  //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
+  //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
+  // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
+  // 숫자 계약(numericTokensSubsetOf·statQuantityClaimsGroundedIn)은 재생/캐시 envelope
+  // 재검사(replayStoredFinalResult)에 그대로 남아 구버전 저장분을 계속 막는다.
+  if (statNumericGuard) {
+    const intent = parseStatIntentToken(llm.text);
+    const final: StoredQaFinal = intent === "narrative"
+      ? { answer: STAT_NARRATIVE_ANSWER, source: "llm" }
+      : { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({
+      userId, question, questionNorm, matchPath: final.source,
+      answer: final.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    });
+    return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
   const validated = validateLlmResponse(llm.text, question);
@@ -5034,23 +5087,6 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
-  }
-
-  // ── statNumericGuard 기계 게이트 (2026-08-10 재설계) ─────────────────────────
-  //
-  // 미결속 `<X> <지표>` 위임 답변의 숫자는 질문에 있던 숫자만 허용한다(strict subset —
-  // #1142 GENERAL 과 같은 계약·같은 판정기). 질문 밖 숫자가 하나라도 나오면 근거 없는
-  // 기록 수치로 보고 되묻기로 교체한다. 저장도 되묻기로 한다 — 위반 답을 저장하면
-  // 재시도 replay 가 게이트를 우회한다.
-  // 삼순 2026-08-14 숫자 P0: 아라비아 strict subset 만으로는 한글 수사(`삼백칠십사 개`)와
-  // 단위 전용(질문 `2024년` → 답 `2024개`)이 통과한다 — 수사+단위 쌍 대조를 병행한다.
-  if (statNumericGuard && (
-    !numericTokensSubsetOf(validated.answer, question) ||
-    !statQuantityClaimsGroundedIn(validated.answer, question)
-  )) {
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
-    await deps.log({ userId, question, questionNorm, matchPath: "stat_clarify", answer: STAT_CLARIFY_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };
   }
 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).

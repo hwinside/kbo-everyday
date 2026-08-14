@@ -71,6 +71,24 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
 ].join("\n");
 
 /**
+ * 가드 소유(statNumericGuard) 질문 전용 — **의도 판정만** 요구하는 추가 계약 (#1132 A안,
+ * 하린아빠 2026-08-14 확정 · 삼순 구조 제안).
+ *
+ * 왜 의도만 받는가 — 가드 소유 경로에서 LLM 자유문장을 그대로 서빙하면 숫자·한글
+ * 수사·단위 전용 등 표현 변이를 출력측에서 열거로 막아야 하고, 그 열거는 끝나지
+ * 않는다(룰베이스 핑픍 교훈). 출력을 의도 enum 단일 토큰으로 좁히면 서빙 문구는
+ * 코드 고정문 2개뿐이라 환각 표면이 구조적으로 사라진다. 토큰 외 출력은 코드가
+ * 되묻기로 fail-close 한다.
+ */
+export const STAT_INTENT_PROMPT = [
+  "이번 질문은 등록되지 않은 대상의 기록 질문일 수 있다. 자유로운 문장으로 답하지 말고 의도만 판정한다.",
+  "answer 에는 반드시 다음 두 토큰 중 하나만 쓴다:",
+  "RECORD — 특정 인물·대상의 기록·수치·순위 값을 요구하는 질문",
+  "NARRATIVE — 값 요구가 아닌 서사·감상·매체 공유·일상 대화(예: 친구가 홈런 영상을 보내줬다는 이야기)",
+  '출력 형식은 동일하게 JSON 하나다: {"status":"BASEBALL_RULE_TERM","answer":"RECORD 또는 NARRATIVE"}',
+].join("\n");
+
+/**
  * 선정된 소스 turn 1개의 Q/A만 컨텍스트로 넣는다 (spec §4.1 공통).
  * 히스토리 전체를 넣지 않으므로 타 대화·타 유저 누수 경로가 없다.
  */
@@ -79,6 +97,7 @@ export function buildBaseballQaGeminiRequest(
   systemPrompt: string,
   context?: { question: string; answer: string },
   rosterBlock?: string,
+  statIntentMode = false,
 ) {
   // 로스터 블록은 **데이터**로 user turn 안에 구획해 넣는다 — 지시는 systemInstruction에만.
   const finalQuestion = rosterBlock
@@ -97,7 +116,9 @@ export function buildBaseballQaGeminiRequest(
       ]
     : [{ role: "user", parts: [{ text: finalQuestion }] }];
   return {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
+    systemInstruction: {
+      parts: [{ text: statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt }],
+    },
     contents,
     generationConfig: {
       temperature: 0.1,
