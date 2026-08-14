@@ -13,6 +13,7 @@
  * 검증력 증명(결함주입): 판정 함수를 변조 사본에도 태워 RED 가 나는지 self-test 한다 —
  * "통과"가 검증력 없는 GREEN 이 아님을 게이트 스스로 증명한다 (M90 검증기 계약).
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -82,6 +83,27 @@ const APPROVED_DOC_SHA256 = "05c166231ce97cae0cc9f373ad504dcda65157c997bc41f70e7
 check("문서 exact 결속 (승인 sha256 equality)", TEAM_FAN_COPY_DOC_SHA256 === APPROVED_DOC_SHA256,
   `SSOT=${TEAM_FAN_COPY_DOC_SHA256}`);
 
+// canonical payload digest (삼순 2차 P0) — 문자열 리터럴끼리의 비교는 카피·sourceId 가
+//   바뀌어도 통과한다. **실제 30+1 payload**(팀별 id·text·sourceId + 예비 + 문서 exact)를
+//   결정론 직렬화해 sha256 으로 잠근다. 카피 한 글자·결속 한 칸이라도 바뀌면 RED —
+//   수정은 문서 재검수(삼순 GO) → 이 digest 갱신 순서로만 가능하다.
+function canonicalPayloadDigest(): string {
+  const canonical = JSON.stringify({
+    doc: TEAM_FAN_COPY_DOC_SHA256,
+    sources: [...TEAM_FAN_COPY_SOURCE_IDS],
+    teams: Object.keys(TEAM_FAN_COPY).map(Number).sort((a, b) => a - b).map((teamId) => [
+      teamId,
+      (TEAM_FAN_COPY[teamId] ?? []).map((r) => [r.id, r.text, r.sourceId]),
+    ]),
+    spare: [TEAM_FAN_COPY_SPARE.id, TEAM_FAN_COPY_SPARE.text, TEAM_FAN_COPY_SPARE.sourceId],
+  });
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
+}
+const APPROVED_PAYLOAD_SHA256 = "82b625137a9b349cd30671e33e54473e031bb59271d61ff0413f9d8f59dc7cd5";
+check("payload canonical digest 결속 (30+1 실내용 sha256 equality)",
+  canonicalPayloadDigest() === APPROVED_PAYLOAD_SHA256,
+  `payload=${canonicalPayloadDigest()}`);
+
 // [4] 렌더 규칙 — 전 팀에서 첫 문장 정확히 1회
 {
   let ok = true;
@@ -141,16 +163,58 @@ async function checkServerBinding(): Promise<void> {
     typeof withUser.pickTeamFanCopy === "function");
   check("makeDeps 실결속 (유저 없으면 미주입 → 기존 경로)",
     withoutUser.pickTeamFanCopy === undefined);
-  const pipelineSrc = readFileSync(join(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8");
-  check("pipeline 배선 (greeting 한정 가드)",
-    /route === "ack" && isGreetingPhrase\(question\) && deps\.pickTeamFanCopy/.test(pipelineSrc));
+
+  // 배선은 정규식이 아니라 **answerQuestion 실실행**으로 검증한다 (삼순 2차 교훈:
+  //   `false &&` 로 죽여도 소스 문자열은 남아 regex 는 GREEN — mutation 이 실증했다).
+  const pipeline = await import("../../src/lib/baseball-qa/pipeline");
+  const { answerQuestion, GREETING_ANSWER, ACK_ANSWER, isGreetingPhrase, isAckPhrase } = pipeline;
+  const GREETING_Q = "반가워";
+  const ACK_Q = "고마워";
+  check("입력 전제 (greeting/ack 판정기 실확인)", isGreetingPhrase(GREETING_Q) && isAckPhrase(ACK_Q));
+  const TEAM_COPY_FIXED = renderTeamFanCopy(1, 7);
+  function stubDeps(pick: (() => Promise<string | null>) | undefined, calls: string[]) {
+    return {
+      loadGlossary: async () => [],
+      loadPlayers: async () => [],
+      getCache: async () => null,
+      setCache: async () => { calls.push("setCache"); },
+      callLlm: async () => { throw new Error("llm must not be called"); },
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      log: async () => {},
+      ...(pick ? { pickTeamFanCopy: pick } : {}),
+    };
+  }
+  {
+    const calls: string[] = [];
+    const res = await answerQuestion("u1", GREETING_Q, stubDeps(async () => { calls.push("pick"); return TEAM_COPY_FIXED; }, calls) as never);
+    check("pipeline 실실행 (greeting + 팀 → 팀 카피 답변)",
+      res.source === "ack" && res.answer === TEAM_COPY_FIXED && calls.includes("pick"),
+      `source=${res.source} answer=${String(res.answer).slice(0, 40)}`);
+  }
+  {
+    const calls: string[] = [];
+    const res = await answerQuestion("u1", GREETING_Q, stubDeps(async () => null, calls) as never);
+    check("pipeline 실실행 (greeting + 팀 없음 → 기존 인사 fail-open)", res.answer === GREETING_ANSWER);
+  }
+  {
+    const calls: string[] = [];
+    const res = await answerQuestion("u1", ACK_Q, stubDeps(async () => { calls.push("pick"); return TEAM_COPY_FIXED; }, calls) as never);
+    check("pipeline 실실행 (ack 감사 인사 → 카피 미부착·미호출)",
+      res.answer === ACK_ANSWER && !calls.includes("pick"));
+  }
+  {
+    const calls: string[] = [];
+    const res = await answerQuestion("u1", GREETING_Q, stubDeps(async () => { throw new Error("boom"); }, calls) as never);
+    check("pipeline 실실행 (카피 조회 throw → 인사 생존 fail-open)", res.answer === GREETING_ANSWER);
+  }
 }
 
 // ── 결함주입 self-test — 판정 함수가 실제로 RED 를 내는지 증명 ────────────────
-function mutated(mutator: (rows: TeamFanCopyRow[][]) => void): Record<number, readonly TeamFanCopyRow[]> {
+type MutableRow = { -readonly [K in keyof TeamFanCopyRow]: TeamFanCopyRow[K] };
+function mutated(mutator: (rows: MutableRow[][]) => void): Record<number, readonly TeamFanCopyRow[]> {
   const clone = Object.fromEntries(
     Object.entries(TEAM_FAN_COPY).map(([k, rows]) => [k, rows.map((r) => ({ ...r }))]),
-  ) as Record<number, TeamFanCopyRow[]>;
+  ) as Record<number, MutableRow[]>;
   mutator(Object.values(clone));
   return clone;
 }
