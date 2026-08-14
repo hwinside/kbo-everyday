@@ -208,8 +208,50 @@ export default function VenueStoryViewer({
   const progressAnimRef = useRef<{ storyId: number; anim: Animation } | null>(null);
   const refreshedStoryIdRef = useRef<number | null>(null);
   const lastUrlRefreshAtRef = useRef(0);
+  // 이미지 스토리 검은 화면 깜박임 방지(하린아빠 8/14 11:39 리포트) — <img src> 교체 순간
+  // 브라우저가 이전 프레임을 비우고 새 이미지 디코드 완료까지 검은 배경이 노출된다
+  // (영상은 poster 가 있어 무증상). 로드 완료 전에는 트레이 썸네일(thumbUrl, 이미 로드됨)을
+  // placeholder 로 깔고, 인접 스토리를 미리 로드해 다음 전환은 즐시 표시되게 한다.
+  const [loadedMediaUrls, setLoadedMediaUrls] = useState<ReadonlySet<string>>(() => new Set());
+  const markMediaLoaded = useCallback((url: string) => {
+    setLoadedMediaUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+  }, []);
 
   const story = stories[index];
+  // 활성 스토리 src latch(삼순 8/14 계약) — 진입 즉시 도는 signed URL 재발급(onRefreshUrl)이
+  // stories prop 의 mediaUrl·thumbUrl 을 교체하면 표시 중인 <img>/<video> src 가 바뀌며 재로드
+  // → 화면이 한 번 깜박인다(하린아빠 8/14 11:39 리포트). 표시 URL 은 story.id 단위로
+  // 진입 시점 값을 latch 해 백그라운드 갱신이 와도 유지하고, 실제 로드 오류(만료 URL)때만
+  // 최신 URL 로 1회 교체한다. 4분 주기 갱신·만료 복구 루프 자체는 그대로 둔다.
+  const [mediaLatch, setMediaLatch] = useState<{
+    storyId: number;
+    mediaUrl: string;
+    thumbUrl: string | null;
+    errored: boolean;
+  } | null>(null);
+  if (story) {
+    if (mediaLatch === null || mediaLatch.storyId !== story.id) {
+      // 스토리 진입(전환 포함): 진입 시점 prop URL 을 latch — render 중 조정 패턴(즉시 재렌더).
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false });
+    } else if (mediaLatch.errored && story.mediaUrl !== mediaLatch.mediaUrl) {
+      // 로드 오류 후 갱신된 새 URL 이 도착하면 교체 — URL 별 1회 시도(삼순 3차 계약).
+      // 교체 후 errored 를 리셋하므로 같은 URL 재시도는 없고(무한 재로드 0),
+      // B 도 실패하면 4분 주기·retry 루프가 발급하는 C·D… 새 URL 에 계속 기회가 열린다(빈 화면 고정 방지).
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false });
+    }
+  }
+  const latchActive = story != null && mediaLatch?.storyId === story.id;
+  const displayMediaUrl = latchActive && mediaLatch ? mediaLatch.mediaUrl : story?.mediaUrl;
+  const displayThumbUrl = latchActive && mediaLatch ? mediaLatch.thumbUrl : story?.thumbUrl;
+  const markMediaErrored = useCallback(() => {
+    // 현재 latch URL 의 로드 실패 표시 — 같은 URL 에서 중복 error 가 와도 상태는 한 번만 바뀝다.
+    setMediaLatch((prev) => (prev && !prev.errored ? { ...prev, errored: true } : prev));
+  }, []);
   const keyboardOpen = isVenueStoryKeyboardOpen(composerFocused, kbInset);
 
   // #807 전송 중 스토리 전환 오염 가드용 현재 story.id 추적
@@ -222,6 +264,21 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 인접 이미지 스토리 선로드 — 다음/이전 전환 시 디코드 대기 없이 즐시 표시(8/14 깜박임).
+  // 브라우저 메모리 캐시만 데우며, load 이벤트에서 loadedMediaUrls 에도 등록해 placeholder 단계를 건너뛴다.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.Image !== "function") return;
+    for (const i of [index + 1, index - 1]) {
+      const s = stories[i];
+      if (!s || s.mediaType !== "image" || loadedMediaUrls.has(s.mediaUrl)) continue;
+      const im = new window.Image();
+      im.onload = () => markMediaLoaded(s.mediaUrl);
+      im.src = s.mediaUrl;
+    }
+    // loadedMediaUrls 는 의도적 제외 — 로드 완료마다 재실행하면 같은 URL 재요청만 늘어난다(캐시 히트지만 불필요).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, stories, markMediaLoaded]);
 
   // 조회수 트래킹(A안 원문 · #735 패턴) — 뷰어 열람 = click: 표시된 스토리마다 1회 전송.
   // 비로그인 guest 집계·beacon 우선/keepalive 폴백·탭 세션 내 중복 방지·실패 재시도 해제는
@@ -773,22 +830,40 @@ export default function VenueStoryViewer({
           <video
             ref={videoRef}
             data-story-media="video"
-            src={story.mediaUrl}
-            {...(story.thumbUrl ? { poster: story.thumbUrl } : {})}
+            src={displayMediaUrl}
+            {...(displayThumbUrl ? { poster: displayThumbUrl } : {})}
             preload="auto"
             className="max-h-full max-w-full w-full h-full object-contain"
             playsInline
             autoPlay
             onTimeUpdate={onVideoTime}
             onEnded={goNext}
+            onError={markMediaErrored}
           />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={story.mediaUrl}
-            alt=""
-            className="max-h-full max-w-full w-full h-full object-contain"
-          />
+          <>
+            {/* 로드 완료 전 placeholder — 트레이에서 이미 로드된 진입 시점 썸네일(latch)로 검은 화면 대체(8/14 깜박임) */}
+            {displayMediaUrl && !loadedMediaUrls.has(displayMediaUrl) && displayThumbUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={displayThumbUrl}
+                alt=""
+                aria-hidden
+                data-story-media-placeholder
+                className="absolute inset-0 m-auto max-h-full max-w-full w-full h-full object-contain"
+              />
+            )}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={displayMediaUrl}
+              alt=""
+              data-story-media="image"
+              onLoad={() => displayMediaUrl && markMediaLoaded(displayMediaUrl)}
+              onError={markMediaErrored}
+              className="relative max-h-full max-w-full w-full h-full object-contain"
+              style={displayMediaUrl && loadedMediaUrls.has(displayMediaUrl) ? undefined : { opacity: 0 }}
+            />
+          </>
         )}
 
         {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지.
