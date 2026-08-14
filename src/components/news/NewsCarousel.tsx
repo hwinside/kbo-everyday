@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import { readableTextColor } from "@/lib/utils/team";
 import type { NewsMock } from "@/lib/constants/news";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import ContentViewBadge from "@/components/admin/ContentViewBadge";
+import { useContentViewCounts } from "@/hooks/useContentViewCounts";
+import { newsContentId, type ContentViewType } from "@/lib/content-views/policy";
 import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 import { useAuth } from "@/lib/supabase/AuthContext";
 
@@ -14,6 +17,16 @@ interface NewsCarouselProps {
 }
 
 const AUTO_INTERVAL = 4000;
+
+/** counts 맵에서 이 기사의 조회수 추출 — 미로드/무효 URL이면 undefined(배지 미표시). */
+function viewCountOf(
+  counts: Record<string, number>,
+  sourceUrl: string,
+  ogUrl?: string,
+): number | undefined {
+  const id = newsContentId(sourceUrl, ogUrl);
+  return id ? counts[`news:${id}`] : undefined;
+}
 
 export default function NewsCarousel({ news }: NewsCarouselProps) {
   const { user } = useAuth();
@@ -30,6 +43,15 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
 
   const slides = news.slice(0, 10);
   const len = slides.length;
+
+  // 관리자 전용 조회수 — 관리자가 아니면 hook이 요청 자체를 안 한다.
+  const viewCountItems = useMemo(() => {
+    return news.slice(0, 10).flatMap((item) => {
+      const id = newsContentId(item.sourceUrl, item.ogUrl);
+      return id ? [{ type: "news" as ContentViewType, id }] : [];
+    });
+  }, [news]);
+  const viewCounts = useContentViewCounts(viewCountItems);
 
   // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
   // 댓글은 로그인 유저 공개(admin-only 해제 = 전체 로그인 유저)라 미로그인은 count 조회 불필요.
@@ -284,8 +306,9 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                     <h3 className="text-[15px] font-semibold leading-[21px] text-white line-clamp-3">
                       {item.title}
                     </h3>
-                    <p className="mt-1 text-xs leading-[18px] text-gray-400">
-                      {item.source} · {item.timeAgo}
+                    <p className="mt-1 flex items-center gap-1.5 text-xs leading-[18px] text-gray-400">
+                      <span>{item.source} · {item.timeAgo}</span>
+                      <ContentViewBadge count={viewCountOf(viewCounts, item.sourceUrl, item.ogUrl)} className="!text-gray-400" />
                     </p>
                   </div>
                 </button>
@@ -337,8 +360,9 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
                       <h3 className="text-[15px] font-semibold leading-[21px] text-text-primary line-clamp-3">
                         {item.title}
                       </h3>
-                      <p className="mt-1 text-xs leading-[18px] text-text-tertiary">
-                        {item.source} · {item.timeAgo}
+                      <p className="mt-1 flex items-center gap-1.5 text-xs leading-[18px] text-text-tertiary">
+                        <span>{item.source} · {item.timeAgo}</span>
+                        <ContentViewBadge count={viewCountOf(viewCounts, item.sourceUrl, item.ogUrl)} />
                       </p>
                     </div>
                   </button>

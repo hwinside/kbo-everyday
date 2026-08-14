@@ -5,13 +5,16 @@ import { ExternalLink } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import type { NewsMock } from "@/lib/constants/news";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import ContentViewBadge from "@/components/admin/ContentViewBadge";
 import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsCardProps {
   news: NewsMock;
+  /** 관리자 전용 조회수 — 상위(NewsFeed 등)에서 배치 로드해 주입. 미제공 시 미표시. */
+  viewCount?: number;
 }
 
-export default function NewsCard({ news }: NewsCardProps) {
+export default function NewsCard({ news, viewCount }: NewsCardProps) {
   const { handleArticleAnchorClick } = useNewsArticleBrowser();
   const article = {
     url: news.sourceUrl,
@@ -55,6 +58,7 @@ export default function NewsCard({ news }: NewsCardProps) {
             <span className="text-base text-text-tertiary">
               {news.timeAgo}
             </span>
+            <ContentViewBadge count={viewCount} />
             <ExternalLink size={20} className="ml-auto text-text-tertiary" />
           </div>
         </div>

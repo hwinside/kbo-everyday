@@ -57,6 +57,7 @@
     "qa:roster-crawl-completion": "node scripts/qa/roster-crawl-completion-smoke.mjs",
     "qa:roster-scope-trust": "node scripts/qa/roster-scope-trust-smoke.mjs",
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
+    "qa:content-views": "tsx scripts/qa/content-views-smoke.ts",
     "qa:app-rankings": "tsx scripts/qa/app-rankings-smoke.ts",
     "qa:retention-dates": "tsx scripts/qa/retention-gamedates-smoke.ts",
     "qa:admin-telemetry-retention": "tsx scripts/qa/admin-telemetry-retention-smoke.ts",

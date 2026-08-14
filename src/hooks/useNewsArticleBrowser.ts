@@ -6,6 +6,7 @@ import {
   openNewsArticle,
 } from "@/lib/open-external";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { trackNewsView } from "@/lib/content-views/tracker";
 import type { NewsArticleDiscussion } from "@/lib/news/article-discussion";
 
 // 댓글은 로그인 유저에게 열린다(admin-only 해제 = 전체 로그인 유저, PR #818 선례
@@ -16,6 +17,8 @@ export function useNewsArticleBrowser() {
   const commentsEnabled = Boolean(user);
 
   const openArticle = useCallback((article: NewsArticleDiscussion) => {
+    // 조회수 +1 (best-effort, 관리자 전용 표시) — 모든 뉴스 원문 열기의 SSOT 초크포인트.
+    trackNewsView(article.url, article.canonicalUrl);
     openNewsArticle(article, commentsEnabled);
   }, [commentsEnabled]);
 
@@ -23,6 +26,7 @@ export function useNewsArticleBrowser() {
     event: { preventDefault: () => void },
     article: NewsArticleDiscussion,
   ) => {
+    trackNewsView(article.url, article.canonicalUrl);
     handleNewsArticleAnchorClick(event, article, commentsEnabled);
   }, [commentsEnabled]);
 

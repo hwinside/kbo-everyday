@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { X, ChevronUp, ChevronDown, Volume2, VolumeX, ExternalLink } from "lucide-react";
 import { handleExternalAnchorClick } from "@/lib/open-external";
+import { trackShortsView } from "@/lib/content-views/tracker";
+import { useContentViewCounts } from "@/hooks/useContentViewCounts";
+import ContentViewBadge from "@/components/admin/ContentViewBadge";
+import type { ContentViewType } from "@/lib/content-views/policy";
 
 interface ReelVideo {
   thumbnail?: string;
@@ -35,6 +39,18 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
   const prevVideoId = useRef(videos[startIndex].id);
 
   const video = videos[current];
+
+  // 조회수: 현재 영상이 노출될 때 +1 (세션당 영상 1회 dedup — tracker 내부).
+  useEffect(() => {
+    trackShortsView(video.id);
+  }, [video.id]);
+
+  // 관리자 전용 조회수 배지 — 관리자가 아니면 hook이 요청 자체를 안 한다.
+  const viewCountItems = useMemo(
+    () => videos.map((v) => ({ type: "shorts" as ContentViewType, id: v.id })),
+    [videos],
+  );
+  const viewCounts = useContentViewCounts(viewCountItems);
 
   const postCmd = useCallback((func: string, args: (string | number | boolean)[] = []) => {
     iframeRef.current?.contentWindow?.postMessage(
@@ -104,6 +120,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
           {video.label && (
             <span className="px-2.5 py-1 rounded-full bg-accent/80 text-xs font-semibold text-white">{video.label}</span>
           )}
+          <ContentViewBadge count={viewCounts[`shorts:${video.id}`]} className="!text-white/60" />
           <span className="text-white/60 text-xs">{current + 1}/{videos.length}</span>
         </div>
       </div>

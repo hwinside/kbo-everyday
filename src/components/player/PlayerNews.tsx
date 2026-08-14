@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import { TEAMS } from "@/lib/constants/teams";
 import NewsCommentButton from "@/components/news/NewsCommentButton";
+import ContentViewBadge from "@/components/admin/ContentViewBadge";
+import { useContentViewCounts } from "@/hooks/useContentViewCounts";
+import { newsContentId, type ContentViewType } from "@/lib/content-views/policy";
 import { useNewsArticleBrowser } from "@/hooks/useNewsArticleBrowser";
 
 interface NewsItem {
@@ -25,6 +28,19 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
   const { handleArticleAnchorClick } = useNewsArticleBrowser();
   const [news, setNews] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // 관리자 전용 조회수 — 관리자가 아니면 hook이 요청 자체를 안 한다(최대 40건 상한).
+  const viewCountItems = useMemo(() => {
+    return news.slice(0, 40).flatMap((item) => {
+      const id = newsContentId(item.link, item.originalLink);
+      return id ? [{ type: "news" as ContentViewType, id }] : [];
+    });
+  }, [news]);
+  const viewCounts = useContentViewCounts(viewCountItems);
+  const viewCountOf = (link: string, originalLink?: string): number | undefined => {
+    const id = newsContentId(link, originalLink);
+    return id ? viewCounts[`news:${id}`] : undefined;
+  };
 
   useEffect(() => {
     const teamObj = teamId ? TEAMS.find(t => t.id === teamId) : null;
@@ -109,6 +125,7 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
                       <p className="text-xs text-text-tertiary">
                         {new Date(item.pubDate).toLocaleDateString("ko-KR")}
                       </p>
+                      <ContentViewBadge count={viewCountOf(item.link, item.originalLink)} />
                       <ExternalLink size={14} className="text-text-tertiary" />
                     </div>
                   </div>

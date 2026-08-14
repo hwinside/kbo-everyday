@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import NewsCard from "./NewsCard";
+import { useContentViewCounts } from "@/hooks/useContentViewCounts";
+import { newsContentId, type ContentViewType } from "@/lib/content-views/policy";
 import VideoCard from "./VideoCard";
 import { TEAMS } from "@/lib/constants/teams";
 import type { NewsMock, VideoMock } from "@/lib/constants/news";
@@ -41,6 +43,20 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
   const filteredVideos = selectedTeam
     ? videos.filter((v) => v.teamId === selectedTeam)
     : videos;
+
+  // 관리자 전용 조회수 배치 로드 — 관리자가 아니면 요청 자체를 안 한다(최대 40건 상한).
+  const viewCountItems = useMemo(() => {
+    return filteredNews.slice(0, 40).flatMap((n) => {
+      const id = newsContentId(n.sourceUrl, n.ogUrl);
+      return id ? [{ type: "news" as ContentViewType, id }] : [];
+    });
+  }, [filteredNews]);
+  const viewCounts = useContentViewCounts(viewCountItems);
+
+  const newsViewCount = (n: (typeof filteredNews)[number]): number | undefined => {
+    const id = newsContentId(n.sourceUrl, n.ogUrl);
+    return id ? viewCounts[`news:${id}`] : undefined;
+  };
 
   return (
     <div>
@@ -104,7 +120,7 @@ export default function NewsFeed({ news, videos }: NewsFeedProps) {
           {(activeTab === "all" || activeTab === "news") &&
             filteredNews.map((n) => (
               <motion.div key={`news-${n.id}`} variants={item}>
-                <NewsCard news={n} />
+                <NewsCard news={n} viewCount={newsViewCount(n)} />
               </motion.div>
             ))}
 
