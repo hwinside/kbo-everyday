@@ -1586,12 +1586,12 @@ async function verifyPipeline() {
   {
     const fresh = freshState();
     const first = await answerQuestion("u1", "고마워", {
-      ...makeDeps(fresh), loadRecentPositiveAnswers: async () => [],
+      ...makeDeps(fresh), claimPositiveEnding: async (baseAnswer) => `${baseAnswer}\n승리를 위하여!`,
     });
     assert.equal(first.answer, `${ACK_ANSWER}\n승리를 위하여!`, "최근 5회 미사용이면 시그니처 부착");
     const cooled = freshState();
     const second = await answerQuestion("u1", "고마워", {
-      ...makeDeps(cooled), loadRecentPositiveAnswers: async () => ["승리를 위하여!", "감사합니다."],
+      ...makeDeps(cooled), claimPositiveEnding: async (baseAnswer) => baseAnswer,
     });
     assert.equal(second.answer, ACK_ANSWER, "최근 5회 사용했으면 시그니처 반복 금지");
   }

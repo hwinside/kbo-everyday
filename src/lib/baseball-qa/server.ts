@@ -835,17 +835,17 @@ export function makeDeps(
         .eq("id", data.id);
       return data.answer as string;
     },
-    loadRecentPositiveAnswers: signatureUserId ? async () => {
-      // query-guard: bounded -- user_id+ack로 제한한 최신 positive ending 5행만 읽는 cooldown 조회다.
+    claimPositiveEnding: signatureUserId ? async (baseAnswer) => {
+      // query-guard: bounded -- message_id idempotency + user별 최근 5행을 한 DB 트랜잭션에서 판정·기록한다.
       const { data, error } = await supabaseAdmin
-        .from("genius_question_logs")
-        .select("answer")
-        .eq("user_id", signatureUserId)
-        .eq("match_path", "ack")
-        .order("created_at", { ascending: false })
-        .limit(5);
-      if (error) throw error;
-      return (data ?? []).map((row) => row.answer as string);
+        .rpc("claim_baseball_genius_positive_ending", {
+          p_message_id: messageId,
+          p_user_id: signatureUserId,
+          p_base_answer: baseAnswer,
+        })
+        .single();
+      if (error || !data) throw error ?? new Error("positive ending claim missing");
+      return (data as { answer: string }).answer;
     } : undefined,
     // spec §4.1 B1·B2: 바로 직전 user turn 1행만 가져온다 (과거 폴백 없음).
     loadPreviousTurn: async () => {

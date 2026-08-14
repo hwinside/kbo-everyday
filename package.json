@@ -387,7 +387,8 @@
     "qa:event-records": "tsx scripts/qa/baseball-qa-event-records-smoke.ts",
     "qa:event-records:mutations": "node scripts/qa/baseball-qa-event-records-mutations.mjs",
     "qa:genius-tone-ssot": "tsx scripts/qa/baseball-genius-tone-ssot-smoke.ts",
-    "qa:genius-tone-migration": "tsx scripts/qa/baseball-terms-tone-migration-smoke.ts"
+    "qa:genius-tone-migration": "tsx scripts/qa/baseball-terms-tone-migration-smoke.ts && tsx scripts/qa/baseball-genius-positive-ending-db.ts",
+    "qa:genius-tone-concurrency": "bash scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

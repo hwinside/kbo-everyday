@@ -43,7 +43,7 @@ import {
 } from "./rag/retrieve";
 import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
-import { appendSparsePositiveSignature, isBaseballGeniusToneCompliant } from "./tone";
+import { isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -835,8 +835,8 @@ export interface QaDeps {
    * 과거 폴백은 없다 — 이 1행이 부적격이면 맥락 없음으로 종료한다.
    */
   loadPreviousTurn?: () => Promise<PreviousTurnRow | null>;
-  /** 최근 smalltalk positive ending 5회 — 승인 시그니처 cooldown 판정용. */
-  loadRecentPositiveAnswers?: () => Promise<string[]>;
+  /** 사용자별 positive ending 판정·기록을 DB 트랜잭션으로 원자화한다. */
+  claimPositiveEnding?: (baseAnswer: string) => Promise<string>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
   /**
    * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
@@ -4213,11 +4213,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
       BLOCKED_ANSWER;
-    if (route === "ack" && deps.loadRecentPositiveAnswers) {
+    if (route === "ack" && deps.claimPositiveEnding) {
       try {
-        answer = appendSparsePositiveSignature(answer, await deps.loadRecentPositiveAnswers());
+        answer = await deps.claimPositiveEnding(answer);
       } catch {
-        // 시그니처는 장식이다. 이력 조회 실패가 본답을 막거나 무제한 반복을 만들면 안 된다.
+        // 시그니처는 장식이다. 원자 claim 실패가 본답을 막거나 중복 시그니처를 만들면 안 된다.
       }
     }
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
