@@ -1,11 +1,15 @@
 export const BASEBALL_QA_OUTBOX_KEY = "baseball-genius-question-outbox-v1";
 export const BASEBALL_QA_MAX_ATTEMPTS = 5;
+/** 30초 lease가 두 번 만료되어도 답변이 없으면 사용자에게 재시도를 돌려준다. */
+export const BASEBALL_QA_REPLY_TIMEOUT_MS = 90_000;
 
 export interface BaseballQaOutboxEntry {
   conversationId: string;
   messageId: number;
   attempts: number;
   acknowledged?: boolean;
+  /** 서버가 200/202를 반환한 뒤 exact 답변을 기다리기 시작한 시각. */
+  responsePendingSinceMs?: number;
   /** picker DM을 관측해 사용자 선택만 기다리는 상태. typing indicator/retry는 멈춘다. */
   awaitingPlayerPick?: boolean;
   /**
@@ -19,7 +23,7 @@ export interface BaseballQaOutboxEntry {
   declineCorrection?: boolean;
 }
 
-interface StorageLike {
+export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
@@ -76,6 +80,8 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         Number.isInteger(row.attempts) &&
         row.attempts >= 0 &&
         (row.acknowledged === undefined || typeof row.acknowledged === "boolean") &&
+        (row.responsePendingSinceMs === undefined ||
+          (Number.isSafeInteger(row.responsePendingSinceMs) && row.responsePendingSinceMs >= 0)) &&
         (row.awaitingPlayerPick === undefined || typeof row.awaitingPlayerPick === "boolean") &&
         (row.pickedPlayerKboId === undefined ||
           (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)) &&
@@ -120,7 +126,7 @@ export function applyBaseballQaQuestionCorrection(
   const index = entries.findIndex((row) => row.messageId === messageId);
   const selected: BaseballQaOutboxEntry = {
     conversationId, messageId, pickedNormalizedQuestion, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
-    declineCorrection: false,
+    declineCorrection: false, responsePendingSinceMs: undefined,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
@@ -137,6 +143,7 @@ export function declineBaseballQaQuestionCorrection(
   const index = entries.findIndex((row) => row.messageId === messageId);
   const declined: BaseballQaOutboxEntry = {
     conversationId, messageId, declineCorrection: true, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
   };
   // 선택값이 이미 있으면 거절로 덮지 않는다 — 먼저 확정된 응답이 이긴다(서버와 같은 계약).
   if (index >= 0) {
@@ -171,6 +178,7 @@ export function applyBaseballQaPlayerPick(
     attempts: 0,
     acknowledged: false,
     awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
@@ -250,9 +258,37 @@ export function createBaseballQaAnsweredUpdater(
 
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
-    row.messageId === messageId ? { ...row, attempts: 0, acknowledged: false } : row,
+    row.messageId === messageId
+      ? { ...row, attempts: 0, acknowledged: false, responsePendingSinceMs: undefined }
+      : row,
   );
   writeBaseballQaOutbox(storage, entries);
+}
+
+/**
+ * 서버가 요청을 접수했지만 exact 답변이 끝내 관측되지 않은 질문을 유계 시간 뒤 실패로 바꾼다.
+ * outbox에 시각을 보존하므로 새로고침으로 deadline이 리셋되지 않는다.
+ */
+export function expireBaseballQaReplyTimeouts(
+  storage: StorageLike,
+  nowMs = Date.now(),
+  timeoutMs = BASEBALL_QA_REPLY_TIMEOUT_MS,
+): number[] {
+  const expired: number[] = [];
+  const entries = readBaseballQaOutbox(storage).map((entry) => {
+    if (
+      entry.awaitingPlayerPick ||
+      entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS ||
+      entry.responsePendingSinceMs === undefined ||
+      nowMs - entry.responsePendingSinceMs < timeoutMs
+    ) {
+      return entry;
+    }
+    expired.push(entry.messageId);
+    return { ...entry, attempts: BASEBALL_QA_MAX_ATTEMPTS, acknowledged: false };
+  });
+  if (expired.length > 0) writeBaseballQaOutbox(storage, entries);
+  return expired;
 }
 
 export function getBaseballQaReplyStates(
@@ -316,20 +352,25 @@ export async function attemptBaseballQaOutbox(
   storage: StorageLike,
   accessToken: string | null,
   request: typeof fetch = fetch,
+  nowMs = Date.now(),
 ): Promise<BaseballQaAttemptResult> {
+  expireBaseballQaReplyTimeouts(storage, nowMs);
   const entries = readBaseballQaOutbox(storage);
   const result: BaseballQaAttemptResult = { completed: [], pending: [], failed: [] };
   const updates = new Map<number, BaseballQaOutboxEntry>();
 
   for (const entry of entries) {
-    if (entry.acknowledged) {
-      updates.set(entry.messageId, entry);
-      result.pending.push(entry.messageId);
-      continue;
-    }
     if (entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS) {
       updates.set(entry.messageId, entry);
       result.failed.push(entry.messageId);
+      continue;
+    }
+    if (entry.acknowledged) {
+      updates.set(entry.messageId, {
+        ...entry,
+        responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+      });
+      result.pending.push(entry.messageId);
       continue;
     }
     try {
@@ -353,12 +394,19 @@ export async function attemptBaseballQaOutbox(
         }),
       });
       if (response.ok && response.status !== 202) {
-        updates.set(entry.messageId, { ...entry, acknowledged: true });
+        updates.set(entry.messageId, {
+          ...entry,
+          acknowledged: true,
+          responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+        });
         result.completed.push(entry.messageId);
         continue;
       }
       if (response.status === 202) {
-        updates.set(entry.messageId, entry);
+        updates.set(entry.messageId, {
+          ...entry,
+          responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+        });
         result.pending.push(entry.messageId);
         continue;
       }

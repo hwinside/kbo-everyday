@@ -511,6 +511,8 @@ export default function DMChatPage() {
             return (
               <motion.div
                 key={msg.id}
+                data-message-id={msg.id}
+                data-genius-question-id={geniusReply?.question_message_id}
                 ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -645,6 +647,7 @@ export default function DMChatPage() {
             <GeniusTypingIndicator
               key={messageId}
               state={state}
+              questionMessageId={Number(messageId)}
               onRetry={() => retryBaseballQa(Number(messageId))}
             />
           ))
