@@ -13,7 +13,12 @@
 -- `team_rag`(2026-08-07)·`news_rag`·`scope_guide`(2026-08-08)를 나눈 것과 같은 축이다:
 -- 화면 취급이 같아도 **감사 축이 다르면 라벨을 나눈다**.
 --
--- ⚠️ 타임스탬프 이력 (2026-08-09, 이 파일이 `20260808200000` 을 대체한다).
+-- ⚠️ 타임스탬프 이력 (2026-08-14, 이 파일이 `20260809150000` 을 대체한다 — 삼순 NO-GO DB P0).
+--   구 `20260809150000` 은 #1135(`20260808230000`) 기준 union 이라, 그 뒤 Production 에
+--   적용된 `20260813203000`(#1151, `question_correction`)의 라벨을 **누락한 CHECK 로
+--   덮어쓴다** — 적용 순서상 이 파일이 마지막이므로 현행 라벨이 조용히 사라진다.
+--   (2026-08-09 에 `20260808200000` 이 같은 유형으로 대체된 것과 동일 축.)
+--   그래서 현 시점 최신 CHECK(`20260813203000`) 전체 union 위에 `stat_clarify` 만 더한다.
 --   원래 이 확장은 `20260808200000` 이었는데, 그 사이 main 에 머지·Production 적용된
 --   `20260808230000`(#1135, `name_suggest`)이 같은 CHECK 를 DROP+재정의한다. 구 타임스탬프를
 --   유지하면 적용 순서상 `stat_clarify` 가 나중 migration 에 덮여 **조용히 사라진다** —
@@ -32,10 +37,9 @@ ALTER TABLE public.genius_question_logs
     match_path IN (
       'dictionary','cache','llm','service_redirect','history_hold',
       'blocked','unsure','limited','error','context_missing','ack','rag',
-      'player_picker','kbo_structured',
-      'team_rag',
-      'news_rag',
-      'scope_guide',
+      -- 유저가 교정 후보를 수용해 답한 경로 (#1151, 20260813203000).
+      'player_picker','question_correction','kbo_structured',
+      'team_rag','news_rag','scope_guide',
       -- 실측된 이름 오타를 받아 생성 없이 그 이름을 되물은 경로 (#1135).
       'name_suggest',
       -- `<X> <지표>` 에서 X 를 운영 데이터로 특정하지 못해 되물은 경로.

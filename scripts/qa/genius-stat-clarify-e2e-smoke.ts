@@ -31,6 +31,7 @@
 import assert from "node:assert/strict";
 import {
   answerQuestion,
+  packStoredQaFinal,
   teamIdOfCanonical,
   STAT_CLARIFY_ANSWER,
   type GlossaryEntry,
@@ -238,6 +239,76 @@ async function main() {
         assert.equal(calls.cacheSet, 0, `가드 소유 질문 답이 캐시에 쓰였다: ${q}`);
       });
     }
+  }
+
+  // ── (E) 숫자 P0 반례 2종 (삼순 2026-08-14 NO-GO) ─────────────────────────────
+  //
+  //   ① 한글 수사 — `삼백칠십사 개` 는 \p{N} 토큰 0개라 아라비아 subset 만으로는 통과
+  //   ② 단위 전용 — 질문 `2024년` 의 `2024` 를 답이 `2024개` 로 쓰면 subset 은 통과
+  //   둘 다 수사+단위 쌍 대조(`statQuantityClaimsGroundedIn`)가 반드시 RED 로 잡아야 한다.
+  {
+    const q = "이대호 홈런 몇개";
+    const koreanNumeral = "야구 기록으로 이대호 선수는 통산 홈런 삼백칠십사 개를 기록했습니다.";
+    const { result, calls } = await ask(q, koreanNumeral);
+    check(`한글 수사 차단 — "삼백칠십사 개" → stat_clarify`, () => {
+      assert.ok(calls.llm > 0, "위임이 성립하지 않았다 — 반례가 게이트에 도달 못 함");
+      assert.equal(result.source, "stat_clarify", `한글 수사 환각이 통과됐다(${result.source}): ${result.answer}`);
+      assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+      assert.equal(calls.cacheSet, 0);
+    });
+  }
+  {
+    const q = "2024년 이대호 홈런 몇개";
+    const unitTransfer = "야구 기록으로 이대호 선수는 홈런 2024개를 기록했습니다.";
+    const { result, calls } = await ask(q, unitTransfer);
+    check(`단위 전용 차단 — 질문 "2024년" → 답 "2024개" → stat_clarify`, () => {
+      assert.ok(calls.llm > 0, "위임이 성립하지 않았다 — 반례가 게이트에 도달 못 함");
+      assert.equal(result.source, "stat_clarify", `단위 전용 환각이 통과됐다(${result.source}): ${result.answer}`);
+      assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+      assert.equal(calls.cacheSet, 0);
+    });
+  }
+  {
+    // 반대방향 회귀 — 질문이 준 수치를 같은 단위로 되받은 정상 답은 통과해야 한다.
+    const q = "홈런 30개면 많은 거야?";
+    const echo = "야구 기록 기준으로 한 시즌 30개는 리그 상위권 수준의 홈런 기록입니다.";
+    const { result, calls } = await ask(q, echo);
+    check(`되받은 수치 통과 — 질문 "30개" → 답 "30개"`, () => {
+      if (calls.llm > 0 && result.source !== "stat_clarify") {
+        assert.equal(result.answer, echo, `되받은 수치 답이 교체됐다: ${result.answer}`);
+      }
+      // 가드 소유가 아니어도(용어 질문 등) 지어낸 수치 없음 — 이 케이스는 과차단 방지 목적이다.
+    });
+  }
+
+  // ── (F) 재생 P0 — durable stored-final 우회 차단 (삼순 2026-08-14 NO-GO) ────────
+  //
+  //   게이트 도입 이전에 저장된 `llm/374개` envelope 가 front 재생으로 그대로 나가면
+  //   statNumericGuard 가 통째로 우회된다. 재생 경로도 같은 대조를 태워 되묻기로
+  //   교체·재저장해야 한다.
+  {
+    const q = "이대호 홈런 몇개";
+    const staleEnvelope = packStoredQaFinal(
+      { answer: "야구 기록으로 이대호 선수는 통산 홈런 374개를 기록했습니다.", source: "llm", cacheable: true },
+      { text: "", inputTokens: 1, outputTokens: 1 },
+    );
+    const { deps, calls } = makeDeps();
+    const stored: string[] = [];
+    const replayDeps = {
+      ...(deps as unknown as Record<string, unknown>),
+      getLlmState: async () => ({ started: true, result: staleEnvelope, ownerActive: false }),
+      acquireLlmStart: async () => { throw new Error("replay 경로에서 새 LLM 획득이 있으면 안 된다"); },
+      storeLlm: async (llm: { text: string }) => { stored.push(llm.text); },
+    } as unknown as QaDeps;
+    const result = await answerQuestion("u-stat-clarify-gate", q, replayDeps);
+    check("재생 우회 차단 — 저장된 llm/374개 envelope → stat_clarify 교체+재저장", () => {
+      assert.equal(result.source, "stat_clarify", `저장 envelope 가 게이트 없이 재생됐다(${result.source}): ${result.answer}`);
+      assert.equal(result.answer, STAT_CLARIFY_ANSWER);
+      assert.ok(!/374/.test(result.answer ?? ""), "지어낸 숫자가 재생 경로로 도달했다");
+      assert.equal(calls.llm, 0, "재생 경로에서 새 LLM 호출이 발생했다");
+      assert.equal(calls.cacheSet, 0, "위반 envelope 의 cacheable 이 캐시로 샐다");
+      assert.ok(stored.some((text) => text.includes("stat_clarify")), "되묻기로 재저장되지 않았다 — 다음 재생이 또 우회된다");
+    });
   }
 
   console.log(`\n${pass} checks PASS — 미결속 <X> <지표> LLM 위임 + 기계 숫자 게이트 계약 성립`);

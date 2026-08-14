@@ -758,6 +758,47 @@ export function numericTokensSubsetOf(answer: string, baseText: string): boolean
   return tokens.every((token) => baseTokens.has(token));
 }
 
+/** 합성 한자어 수사(`삼백칠십사`) — 문자 클래스가 닫혀 있어 기계 판정 가능하다. */
+const SINO_NUMERAL_SEQ = "[영일이삼사오육칠팔구십백천만억]+";
+
+/**
+ * statNumericGuard 전용 수량 결속 판정 (#1132 삼순 2026-08-14 숫자 P0).
+ *
+ * `numericTokensSubsetOf`(아라비아 숫자 strict subset)만으로는 두 우회가 남는다:
+ *   ① 한글 수사 — `홈런 삼백칠십사 개` 는 \p{N} 토큰이 0개라 그대로 통과
+ *   ② 단위 전용 — 질문 `2024년`의 `2024`가 허용 집합에 들어가, 답이 `2024개`로
+ *      단위를 바꿔 기록 수치처럼 단정해도 통과
+ * 그래서 **수사+단위 쌍** 단위로 추가 대조한다: 답의 (수사, 단위) 쌍은 질문에
+ * 같은 쌍으로 존재해야 한다. 단위가 없는 맨 숫자는 기존 strict subset 이 담당한다.
+ *
+ * ⚠️ 위 `numericTokensSubsetOf` 의 "한글 수사 사전 재추가 금지" 경고는 **team_rag
+ *   생성 감사 축**(측정 없이 층을 얹던 사고) 이야기다. 이 함수는 축이 다르다 —
+ *   statNumericGuard 소유 질문(엔티티 미결속 `<X> <지표>`)의 fail-close 되묻기 전용이고,
+ *   삼순이 반례를 실측 제시해(2026-08-14 NO-GO) 계약으로 요구한 판정이다. 판정 재료도
+ *   기존 `KOREAN_NUMERALS`·`QUANTITY_COUNTERS`·닫힌 한자어 수사 문자 클래스라
+ *   자연어 추정이 아니라 기계 대조다.
+ */
+export function statQuantityClaimsGroundedIn(answer: string, baseText: string): boolean {
+  const nativeWords = Object.keys(KOREAN_NUMERALS).join("|");
+  const pairRe = () => new RegExp(
+    `(?:(\\p{N}+(?:[.]\\p{N}+)?)|(?<![가-힣])(${nativeWords}|${SINO_NUMERAL_SEQ}))\\s*(?:이|가|은|는|을|를)?\\s*(${QUANTITY_COUNTERS})`,
+    "gu",
+  );
+  const pairs = (text: string): Set<string> => {
+    const out = new Set<string>();
+    for (const m of text.replace(/,/g, "").matchAll(pairRe())) {
+      const numeral = m[1] ?? (KOREAN_NUMERALS[m[2]] ?? m[2]);
+      out.add(`${numeral}\u0000${m[3]}`);
+    }
+    return out;
+  };
+  const grounded = pairs(baseText);
+  for (const claim of pairs(answer)) {
+    if (!grounded.has(claim)) return false;
+  }
+  return true;
+}
+
 /** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
 function hasKoreanQuantityClaim(answer: string): boolean {
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");

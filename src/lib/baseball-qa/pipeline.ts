@@ -31,6 +31,7 @@ import {
   allowsNumericAnswer,
   composeRagAnswer,
   numericTokensSubsetOf,
+  statQuantityClaimsGroundedIn,
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
@@ -2901,6 +2902,26 @@ async function replayStoredFinalResult(
   const storedFinal = unpackStoredQaFinal(llm.text);
   if (!storedFinal) return null;
   const { userId, question, questionNorm, remaining, deps } = args;
+  // 삼순 2026-08-14 재생 P0: 게이트 도입 이전에 저장된 `llm` envelope(예: `374개` 단정)가
+  // statNumericGuard 계산 전 front 재생으로 그대로 나가면 게이트가 통째로 우회된다.
+  // 재생 경로에서도 같은 기계 대조를 수행하고, 위반이면 되묻기로 교체·재저장한다.
+  // (소유 판정 재계산은 fail-close 방향 전용이다 — cacheable 재계산 금지 계약과 무관.)
+  if (storedFinal.source === "llm") {
+    const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
+    if (statGuardOwnsQuestion(question, glossary, players) && (
+      !numericTokensSubsetOf(storedFinal.answer, question) ||
+      !statQuantityClaimsGroundedIn(storedFinal.answer, question)
+    )) {
+      if (deps.storeLlm) {
+        await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
+      }
+      await deps.log({
+        userId, question, questionNorm, matchPath: "stat_clarify",
+        answer: STAT_CLARIFY_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      });
+      return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };
+    }
+  }
   // crash 복구 완결 — **원시점 cacheable** 일 때만 캐시를 마저 쓴다 (재시도 시점
   // context/scope/roster 재계산 금지 — 비캐시 답이 global cache 로 샌다).
   if (storedFinal.source === "llm" && storedFinal.cacheable === true) {
@@ -5015,7 +5036,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // #1142 GENERAL 과 같은 계약·같은 판정기). 질문 밖 숫자가 하나라도 나오면 근거 없는
   // 기록 수치로 보고 되묻기로 교체한다. 저장도 되묻기로 한다 — 위반 답을 저장하면
   // 재시도 replay 가 게이트를 우회한다.
-  if (statNumericGuard && !numericTokensSubsetOf(validated.answer, question)) {
+  // 삼순 2026-08-14 숫자 P0: 아라비아 strict subset 만으로는 한글 수사(`삼백칠십사 개`)와
+  // 단위 전용(질문 `2024년` → 답 `2024개`)이 통과한다 — 수사+단위 쌍 대조를 병행한다.
+  if (statNumericGuard && (
+    !numericTokensSubsetOf(validated.answer, question) ||
+    !statQuantityClaimsGroundedIn(validated.answer, question)
+  )) {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
     await deps.log({ userId, question, questionNorm, matchPath: "stat_clarify", answer: STAT_CLARIFY_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: STAT_CLARIFY_ANSWER, source: "stat_clarify", remaining };

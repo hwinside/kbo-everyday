@@ -64,9 +64,15 @@ async function main() {
   await db.exec(readMigration("20260808040000_baseball_genius_news_rag_match_path.sql"));
   await db.exec(readMigration("20260808120000_baseball_genius_scope_guide_match_path.sql"));
   await db.exec(readMigration("20260808230000_baseball_genius_name_suggest_match_path.sql"));
-  // ⚠️ `stat_clarify` 는 #1135(`20260808230000`) **뒤** 타임스탬프다. 구 `20260808200000` 은
-  //   적용 순서상 #1135 재선언에 라벨이 덮여 조용히 사라졌다(2026-08-09 Vercel 게이트 실측).
-  await db.exec(readMigration("20260809150000_baseball_genius_stat_clarify_match_path.sql"));
+  // #1151 정규화 컬럼 — picker migration 이 이 컬럼의 CHECK 를 재선언하므로 선행 필수.
+  await db.exec(readMigration("20260811210000_baseball_genius_question_normalized.sql"));
+  // #1151 picker — `question_correction` 라벨을 더하며 CHECK 를 재선언한다 (Production 적용분).
+  await db.exec(readMigration("20260813203000_baseball_genius_question_correction_picker.sql"));
+  // ⚠️ `stat_clarify` 는 현행 최신(`20260813203000`) **뒤** 타임스탬프다. 구 `20260809150000` 은
+  //   #1135 기준 union 이라 그 뒤 Production 적용된 `question_correction` 을 누락한 CHECK 로
+  //   덮어썼다(삼순 2026-08-14 DB P0 실측). 이 게이트는 그 유형을 잡기 위해 운영 적용 순서
+  //   그대로 재현하고 아래 전수 INSERT 로 전 라벨 생존을 검증한다.
+  await db.exec(readMigration("20260814215000_baseball_genius_stat_clarify_match_path.sql"));
 
   await verifyFinalAllowlistIsExactUnion(db);
 
@@ -150,6 +156,7 @@ const FINAL_MATCH_PATH_ALLOWLIST = [
   "name_suggest",
   "news_rag",
   "player_picker",
+  "question_correction",
   "rag",
   "scope_guide",
   "service_redirect",
