@@ -31,18 +31,42 @@ SQL
   "${PSQL[@]}" -f "$1" >/dev/null
 }
 
+# PID별 wait: 인자 없는 wait는 자식 실패를 버리고 0을 반환한다(거짓 PASS).
+# 각 자식 exit code를 개별 검증하고, 유효 결과 행(t/f)이 정확히 6개인지도 확인한다.
 run_six() {
-  local out="$1"; : > "$out"
+  local out="$1" inject="${2:-}"
+  : > "$out"
+  local pids=() id sql
   for id in 1 2 3 4 5 6; do
-    "${PSQL[@]}" -c "select used_signature from public.claim_baseball_genius_positive_ending($id, '$USER_ID'::uuid, '도움이 됐다니 기쁩니다!')" >> "$out" &
+    sql="select used_signature from public.claim_baseball_genius_positive_ending($id, '$USER_ID'::uuid, '도움이 됐다니 기쁩니다!')"
+    if [[ "$inject" == "child-failure" && "$id" == "6" ]]; then
+      sql="select public.no_such_function_1186()"
+    fi
+    "${PSQL[@]}" -c "$sql" >> "$out" &
+    pids+=("$!")
   done
-  wait
+  local failed=0 pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || failed=$((failed + 1))
+  done
+  [[ "$failed" == "0" ]] || { echo "run_six: $failed child psql invocation(s) failed"; return 1; }
+  local valid
+  valid="$(grep -Ec '^[tf]$' "$out" || true)"
+  [[ "$valid" == "6" ]] || { echo "run_six: expected exactly 6 valid result rows, got $valid"; return 1; }
+  return 0
 }
 
 setup "$MIGRATION"
-run_six "$WORK/baseline"
+run_six "$WORK/baseline" || { echo "FAIL baseline: child failure or invalid result rows"; exit 1; }
 BASELINE="$(grep -c '^t$' "$WORK/baseline" || true)"
 [[ "$BASELINE" == "1" ]] || { echo "FAIL baseline: expected exactly one signature, got $BASELINE"; exit 1; }
+
+# Selftest: 자식 실패를 하네스가 반드시 검출해야 한다(검출 실패 = 게이트 자체 결함).
+setup "$MIGRATION"
+if run_six "$WORK/selftest" child-failure >/dev/null; then
+  echo "FAIL selftest: injected child failure was NOT detected (harness would false-PASS)"; exit 1
+fi
+echo "selftest: injected child failure detected (harness fail-closed)"
 
 # Mutation: user lock 제거 + 판정과 INSERT 사이 race window를 열면 게이트가 반드시 RED여야 한다.
 awk '
@@ -54,7 +78,7 @@ awk '
   END { if (lock != 1 || sleep != 1) exit 42 }
 ' "$MIGRATION" > "$WORK/mutated.sql" || { echo "FAIL: mutation anchors drifted"; exit 1; }
 setup "$WORK/mutated.sql"
-run_six "$WORK/mutated"
+run_six "$WORK/mutated" || { echo "FAIL mutation run: child failure or invalid result rows"; exit 1; }
 MUTATED="$(grep -c '^t$' "$WORK/mutated" || true)"
 [[ "$MUTATED" != "1" ]] || { echo "FAIL mutation stayed GREEN: lock removal was not detected"; exit 1; }
 
