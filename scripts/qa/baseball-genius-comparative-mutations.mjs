@@ -30,8 +30,8 @@ const MUTATIONS = [
   {
     id: "N2 generic LLM 에 context 미전달",
     file: PIPELINE,
-    anchor: "llm = await deps.callLlm(question, context ?? undefined, rosterBlock);",
-    replacement: "llm = await deps.callLlm(question, undefined, rosterBlock);",
+    anchor: "llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard);",
+    replacement: "llm = await deps.callLlm(question, undefined, rosterBlock, statNumericGuard);",
     why: "직전 턴을 로드해 놓고 LLM 프롬프트에 싣지 않으면 후속 결속이 조용히 죽는다",
   },
   // ── 축 D: 현재 소속 roster SSOT ─────────────────────────────────────────
