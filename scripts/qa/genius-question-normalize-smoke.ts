@@ -16,11 +16,13 @@
  * 실행: npm run qa:genius-question-normalize
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   answerQuestion,
   digitSequencesMatch,
   evaluateNormalizedCandidate,
   classifyQuestionCorrectionCandidate,
+  repairGlossaryTermTypo,
   CORRECTION_SUGGESTABLE_ROUTES,
   routeQuestion,
   type GlossaryEntry,
@@ -31,6 +33,7 @@ import {
 const glossary: GlossaryEntry[] = [
   { term: "보크", aliases: ["balk"], answer: "투수의 반칙 동작입니다." },
   { term: "도루", aliases: ["sb"], answer: "베이스를 훔치는 플레이입니다." },
+  { term: "스윕", aliases: [], answer: "한 팀이 시리즈 모든 경기를 이기는 것입니다." },
 ];
 const players = [
   { kboId: "50001", name: "김도영", team: "KIA 타이거즈" },
@@ -59,9 +62,9 @@ function freshState(overrides: Partial<State> = {}): State {
   return { normCalls: [], normReply: null, normThrows: false, llmCalls: 0, logs: [], ...overrides };
 }
 
-function makeDeps(state: State, withNormalizer = true): QaDeps {
+function makeDeps(state: State, withNormalizer = true, glossaryOverride?: GlossaryEntry[]): QaDeps {
   const deps: QaDeps = {
-    loadGlossary: async () => glossary,
+    loadGlossary: async () => glossaryOverride ?? glossary,
     loadPlayers: async () => players,
     getCache: async () => null,
     setCache: async () => {},
@@ -213,6 +216,15 @@ async function main() {
     assert.equal(log.normalizeStatus, "suggested");
   }
 
+  // 실유저 rejected 재생의 두 번째 양성: `스왑이 모야?` → `스윕이 뭐야?`.
+  // 전체가 term 정의형으로 축약되므로 카드는 살아야 한다.
+  {
+    const s = freshState({ normReply: "스왑이 뭐야?" });
+    const r = await answerQuestion("u1", "스왑이 모야?", makeDeps(s));
+    assert.equal(r.source, "question_correction", "실양성 스윕 카드가 떠야 한다");
+    assert.deepEqual(r.correctionOptions, ["스윕이 뭐야?"]);
+  }
+
   // LLM 이 교정없음(null)이어도, 이미 띄어 쓴 오탈자는 복원이 원문에서 직접 카드를 만든다.
   {
     const s = freshState({ normReply: null });
@@ -268,6 +280,80 @@ async function main() {
     const s = freshState({ normReply: "보끄 최고야" });
     const r = await answerQuestion("u1", "보끄최고야", makeDeps(s));
     assert.notEqual(r.source, "question_correction", "정의 의도 없는 복원 후보는 제안 금지");
+  }
+
+  // A′가 정의형으로 축약돼도 기존 SSOT 재판정은 독립 방어다. provider가 문장부호를
+  // 비정상 증폭한 후보는 normalizeQuestion(restored)=term 이어도 길이 상한에서 탈락해야 한다.
+  // 이 fixture가 M24(SSOT 재판정 제거)를 직접 RED로 만든다.
+  {
+    const s = freshState({ normReply: `보끄가 뭐야${"?".repeat(40)}` });
+    const r = await answerQuestion("u1", "보끄가뭐야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction", "정의형이어도 SSOT 길이 상한 위반은 no-card");
+    assert.equal(s.logs.some((log) => log.correctionCandidate != null), false);
+  }
+
+  // ── 2-e. A′ — production 136-term snapshot 전건 재생 (삼순 2026-08-14 3차 NO-GO 반영) ──
+  //
+  // 3-term 게이트 glossary 로는 오복원 다수(원인 term = 태그업·파울팁·이닝·아웃·홈런·홀드·
+  // 승률·FA…)가 복원 경로에 **진입조차 못해** no-card 가 false-green 이었다. 그래서:
+  //  · production glossary 136-term snapshot 을 fixture 로 고정하고
+  //  · 재생 artifact 21행 각각에 구버전(#1189)이 실제 생성한 `old_repaired` 와
+  //    구버전 알고리즘 재실행으로 **기계 도출**한 `cause_term` 을 결속한다.
+  //  · A′ 에서는 정의형 축약 1행(`스왑이 모야?`)만 카드, 나머지 20행은 null/no-card.
+  //  · M26(guard 제거)이면 21행 전부 old_repaired 가 되살아나 이 게이트가 RED 가 된다.
+  interface ReplayRow {
+    question: string;
+    provider_candidate: string | null;
+    old_repaired: string;
+    cause_term: string;
+    collapses_to_definition: boolean;
+  }
+  const fixture = JSON.parse(readFileSync(
+    new URL("./fixtures/genius-repair-precision-replay-20260814.json", import.meta.url), "utf8",
+  )) as { glossary_snapshot: { term: string; aliases: string[] }[]; replay_rows: ReplayRow[] };
+  const prodGlossary: GlossaryEntry[] = fixture.glossary_snapshot.map((g) => ({
+    term: g.term, aliases: g.aliases, answer: "(snapshot)",
+  }));
+  assert.equal(prodGlossary.length, 136, "production glossary snapshot 전건");
+  assert.equal(fixture.replay_rows.length, 21, "재생 artifact 복원 발생 전건");
+  assert.equal(fixture.replay_rows.filter((r) => r.collapses_to_definition).length, 1,
+    "정의형 축약 양성은 스왑 1행뿐이어야 한다");
+  const prodTerms = new Set(prodGlossary.map((g) => g.term));
+  for (const row of fixture.replay_rows) {
+    const base = row.provider_candidate ?? row.question;
+    // causal 결속 precondition — 이 행의 오복원은 cause_term 이 만든 것이다.
+    assert.ok(prodTerms.has(row.cause_term), `cause_term 이 snapshot 에 실재: ${row.cause_term}`);
+    assert.ok(row.old_repaired.includes(row.cause_term),
+      `구버전 복원문에 cause_term 포함: ${row.question}`);
+    assert.ok(!base.includes(row.cause_term),
+      `원문/후보에는 없던 term — 복원이 주입한 것: ${row.question}`);
+    // 단위: A′ repair 는 정의형 축약행만 살리고 나머지는 null 이어야 한다.
+    const repairedNow = repairGlossaryTermTypo(base, prodGlossary);
+    if (row.collapses_to_definition) {
+      assert.equal(repairedNow, row.old_repaired, `양성 유지: ${row.question}`);
+    } else {
+      assert.equal(repairedNow, null, `A′ 는 이 오복원을 거부해야 한다: ${row.question} → ${row.old_repaired}`);
+    }
+    // 종단: production snapshot glossary 로 answerQuestion 을 태운다.
+    const s = freshState({ normReply: row.provider_candidate });
+    const r = await answerQuestion("u1", row.question, makeDeps(s, true, prodGlossary));
+    if (row.collapses_to_definition) {
+      assert.equal(r.source, "question_correction", `양성 카드 도달: ${row.question}`);
+      assert.deepEqual(r.correctionOptions, [row.old_repaired]);
+    } else {
+      assert.notEqual(r.source, "question_correction", `오복원 no-card: ${row.question}`);
+      assert.equal(s.logs.some((log) => log.correctionCandidate != null), false,
+        `오복원 후보 칸도 비어야 한다: ${row.question}`);
+    }
+  }
+
+  // 실양성 1번(보끄) 도 production snapshot 에서 그대로 살아있어야 한다 — Production QA 20/0
+  // 을 만든 동선의 회귀 방어.
+  {
+    const s = freshState({ normReply: "보끄가 뭐야" });
+    const r = await answerQuestion("u1", "보끄가모야", makeDeps(s, true, prodGlossary));
+    assert.equal(r.source, "question_correction", "보끄 카드가 snapshot glossary 에서도 떠야 한다");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
   }
 
   // ── 3. 미발동: 전용 라우트 질문은 정규화가 아예 안 탄다 ──────────────────
