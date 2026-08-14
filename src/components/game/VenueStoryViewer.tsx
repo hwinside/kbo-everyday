@@ -233,23 +233,24 @@ export default function VenueStoryViewer({
     mediaUrl: string;
     thumbUrl: string | null;
     errored: boolean;
-    swapped: boolean;
   } | null>(null);
   if (story) {
     if (mediaLatch === null || mediaLatch.storyId !== story.id) {
       // 스토리 진입(전환 포함): 진입 시점 prop URL 을 latch — render 중 조정 패턴(즉시 재렌더).
-      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false, swapped: false });
-    } else if (mediaLatch.errored && !mediaLatch.swapped && story.mediaUrl !== mediaLatch.mediaUrl) {
-      // 로드 오류 후 갱신된 URL 이 도착하면 그때만 1회 교체(만료 복구).
-      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false, swapped: true });
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false });
+    } else if (mediaLatch.errored && story.mediaUrl !== mediaLatch.mediaUrl) {
+      // 로드 오류 후 갱신된 새 URL 이 도착하면 교체 — URL 별 1회 시도(삼순 3차 계약).
+      // 교체 후 errored 를 리셋하므로 같은 URL 재시도는 없고(무한 재로드 0),
+      // B 도 실패하면 4분 주기·retry 루프가 발급하는 C·D… 새 URL 에 계속 기회가 열린다(빈 화면 고정 방지).
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false });
     }
   }
   const latchActive = story != null && mediaLatch?.storyId === story.id;
   const displayMediaUrl = latchActive && mediaLatch ? mediaLatch.mediaUrl : story?.mediaUrl;
   const displayThumbUrl = latchActive && mediaLatch ? mediaLatch.thumbUrl : story?.thumbUrl;
   const markMediaErrored = useCallback(() => {
-    // swapped 이후 오류는 더 교체하지 않는다(무한 재로드 방지) — 기존 retry 루프가 복구 담당.
-    setMediaLatch((prev) => (prev && !prev.swapped && !prev.errored ? { ...prev, errored: true } : prev));
+    // 현재 latch URL 의 로드 실패 표시 — 같은 URL 에서 중복 error 가 와도 상태는 한 번만 바뀝다.
+    setMediaLatch((prev) => (prev && !prev.errored ? { ...prev, errored: true } : prev));
   }, []);
   const keyboardOpen = isVenueStoryKeyboardOpen(composerFocused, kbInset);
 

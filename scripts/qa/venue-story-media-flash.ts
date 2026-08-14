@@ -12,7 +12,9 @@
  *   1. 진입 즉시 refresh 가 URL A→B 로 갱신돼도 활성 DOM src=A 유지(latch) — 재로드 0.
  *   2. placeholder 도 진입 시점 썸네일(A) 유지 — 갱신된 썸네일로 재마운트 0.
  *   3. 로드 완료 전: 본 이미지 opacity 0 + placeholder 표시 / load 후: 표시 + placeholder 제거.
- *   4. 실제 로드 오류(error) 시에만 최신 URL B 로 1회 교체, 이후 추가 오류에도 재교체 0.
+ *   4. 실제 로드 오류(error) 시에만 최신 URL 로 교체 — URL 별 1회 시도(삼순 3차 계약):
+ *      같은 URL 재시도 0(무한 재로드 방지)이되, B 도 실패하면 나중에 도착하는 새 C URL 에
+ *      다시 교체 기회가 열려야 한다(swapped 영구 고정 금지 — 빈 화면 지속 방지).
  *   5. 다음 스토리 전환: 새 스토리도 같은 계약(진입 시점 URL latch + placeholder→load).
  *   6. thumbUrl 없는 스토리: placeholder 없이 크래시 0.
  *   7. 인접(다음) 이미지 스토리 선로드 요청 발생(window.Image).
@@ -101,13 +103,22 @@ async function main() {
   } as Story);
 
   // 실제 앱 배선과 동일: onRefreshUrl 이 단건 재발급 결과를 applyVenueStoryUrlRefresh 로 stories 에 반영.
+  // applyLaterRefresh 는 4분 주기/retry 루프가 나중에 새 세대 URL 을 발급하는 상황을 재현한다(같은 prop 경로).
   const refreshCalls: number[] = [];
   let latestStories: Story[] = [];
+  let applyLaterRefresh: (storyId: number, gen: string) => void = () => {};
   function Harness() {
     const [stories, setStories] = React.useState<Story[]>(
       () => [makeStory(1, true), makeStory(2, true), makeStory(3, false)],
     );
     latestStories = stories;
+    applyLaterRefresh = (storyId: number, gen: string) => {
+      setStories((prev) => applyVenueStoryUrlRefresh(prev, {
+        id: storyId,
+        mediaUrl: `http://x/media-${storyId}-${gen}.jpg`,
+        thumbUrl: `http://x/thumb-${storyId}-${gen}.jpg`,
+      }));
+    };
     const onRefreshUrl = React.useCallback(async (storyId: number) => {
       refreshCalls.push(storyId);
       setStories((prev) => applyVenueStoryUrlRefresh(prev, {
@@ -160,10 +171,18 @@ async function main() {
   ok("교체 직후: B 미로드 상태라 placeholder(B 썸네일) 표시", placeholder()?.getAttribute("src") === "http://x/thumb-1-B.jpg");
   await act(async () => { mainImg()!.dispatchEvent(new (win.Event as typeof Event)("load")); });
   ok("B load 후: 본 이미지 표시", (mainImg()?.style.opacity ?? "") !== "0");
-  // 추가 오류 → 재교체 0 (무한 재로드 방지)
+  // 추가 오류(같은 URL B 유지 상태) → 같은 URL 재시도 0 (무한 재로드 방지)
   await act(async () => { mainImg()!.dispatchEvent(new (win.Event as typeof Event)("error")); });
   await act(async () => { await Promise.resolve(); });
-  ok("swap 이후 추가 error: 재교체 0(src=B 유지)", mainImg()?.getAttribute("src") === "http://x/media-1-B.jpg");
+  ok("B error 후 새 URL 도착 전: 같은 URL 재시도 0(src=B 유지)", mainImg()?.getAttribute("src") === "http://x/media-1-B.jpg");
+  // 삼순 3차 계약: B 도 실패한 뒤 4분 주기/retry 가 새 C URL 을 발급하면 교체 기회가 다시 열려야 한다.
+  await act(async () => { applyLaterRefresh(1, "C"); });
+  ok("B 실패 후 새 C URL 도착: C 로 교체(빈 화면 고정 방지)", mainImg()?.getAttribute("src") === "http://x/media-1-C.jpg");
+  await act(async () => { mainImg()!.dispatchEvent(new (win.Event as typeof Event)("load")); });
+  ok("C load 후: 본 이미지 표시(복구 완료)", (mainImg()?.style.opacity ?? "") !== "0");
+  // C 성공 후 추가 error 없이 새 URL 이 와도 교체 0(성공 상태에서는 latch 유지)
+  await act(async () => { applyLaterRefresh(1, "D"); });
+  ok("C 성공 상태에서 새 D 도착: 교체 0(src=C 유지)", mainImg()?.getAttribute("src") === "http://x/media-1-C.jpg");
 
   // ⑤ 다음 스토리 전환 — 진입 시점 URL latch + 같은 계약 (전환 시 스토리 2 refresh 도 발생)
   const nextZone = q('button[aria-label="다음"]')!;
