@@ -216,7 +216,7 @@ export const LLM_AMBIGUOUS_ANSWER =
  */
 export const SCOPE_GUIDE_ANSWER =
   "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
-  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\" ⚾";
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 기쁩니다! ⚾";
 // 대화 첫 턴 인사 — 질문이 아니라 대화 시작이다. 차단 문구를 보내면 문전박대가 된다.
@@ -2782,7 +2782,7 @@ export function renderTeamEntryAnswer(
 }
 
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
-  "지금은 당일 1군 등록 명단을 확인할 수 없습니다. 잠시 후에는 다시 확인할 수 있습니다.";
+  "지금은 당일 1군 등록 명단을 확인할 수 없습니다. 잠시 후 다시 질문하면 최신 상태로 확인하겠습니다.";
 
 // ── 오늘 선발 매치업 (2026-08-11 하린아빠 제보 ① · 삼순 A안 확정) ────────────────
 //
@@ -2880,7 +2880,7 @@ export function adaptTodayStarters(
 }
 
 export const TODAY_NO_GAMES_ANSWER =
-  "오늘은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 잡히면 안내하겠습니다.";
+  "오늘은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.";
 export const STARTER_TBD = "미발표";
 
 /** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
@@ -2908,7 +2908,7 @@ export function renderTodayStartersAnswer(
   if (rows.length === 0) {
     return team === null
       ? TODAY_NO_GAMES_ANSWER
-      : `오늘은 ${team} 경기가 없습니다. 다음 경기 일정이 잡히면 안내하겠습니다.`;
+      : `오늘은 ${team} 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.`;
   }
   const lines = rows.map((game) => {
     // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).

@@ -242,7 +242,7 @@ export function renderSeriesPrizeAnswer(
 ): SeriesPrizeAnswer {
   const year = askedYear ?? rows.find((row) => row.koreanSeries !== null)?.year ?? null;
   if (year === null) {
-    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없습니다. 조금 뒤에는 다시 확인할 수 있습니다.", grounded: false };
+    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.", grounded: false };
   }
   const row = rows.find((r) => r.year === year);
   if (!row) {

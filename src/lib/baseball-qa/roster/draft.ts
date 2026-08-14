@@ -168,7 +168,7 @@ export function renderDraftUnavailable(
 ): string {
   return reason === "not_registered"
     ? `${playerName} 선수의 입단 정보는 KBO 공식 기록에 등록돼 있지 않아 안내할 수 없습니다.`
-    : `${playerName} 선수의 입단 정보는 아직 확인하지 못했습니다. 조금 뒤에는 다시 확인할 수 있습니다.`;
+    : `${playerName} 선수의 입단 정보는 아직 확인하지 못했습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.`;
 }
 
 /** 원문 보관 상태 → 안내 사유. `undefined`(미수집)와 `""`(미등록)를 가른다. */

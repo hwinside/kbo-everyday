@@ -611,4 +611,4 @@ export const UNTRUSTED_METRIC_ANSWER =
 export const UNSUPPORTED_SEASON_ANSWER =
   "그 기간 형태로는 아직 집계할 수 없습니다. 확인 가능한 범위는 특정 연도(예: 2019년 타율), 통산 기록, 연도별 기록입니다.";
 export const RECORD_MISSING_ANSWER =
-  "그 선수의 올 시즌 기록을 아직 찾지 못했습니다. 조금 뒤에는 다시 확인할 수 있습니다.";
+  "그 선수의 올 시즌 기록을 아직 찾지 못했습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.";

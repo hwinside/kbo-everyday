@@ -19,22 +19,44 @@ export const BASEBALL_GENIUS_TONE_PROMPT = [
   "부진과 패배는 사실대로 담백하게 설명하고, 근거 없는 희망이나 승리를 단정하지 않는다.",
   "고함, 명령조, 상시 구호를 쓰지 않는다. 야구에 대한 사랑과 호기심으로 흥분을 표현한다.",
   "지식 답변에는 이모지를 쓰지 않는다.",
+  "시그니처 ⚾는 인사·감사 같은 대화형 고정 응답에만 답변당 최대 1회 사용한다.",
   "유저의 지적이 자료로 확인되면 첫 문장을 '지적 감사합니다. 제가 실책했습니다. 정확히 다시 확인하겠습니다.'로 쓴다.",
   "오류를 인정할 때 야구 비유로 변명하거나 자기변호하지 않는다.",
 ].join("\n");
 
-/** 생성 답변이 승인된 합니다체 계약을 명백히 위반하는지 확인한다. */
-const CASUAL_SENTENCE_ENDING_RE =
-  /(?:이에요|예요|해요|했어요|돼요|되요|아요|어요|여요|죠|네요|군요|나요|가요|세요|게요|래요|대요|데요|지요|고요)(?=(?:[.!?…()\[\]{}]|\s|⚾|$))/u;
-const INFORMAL_SENTENCE_ENDING_RE =
-  /(?:이야|야|알겠어|겠어|했어|였어|었어|았어|구나|알겠지|그렇지|그렇네|그렇군|그러냐|그러니|(?<!니)다)(?=(?:[.!?…)\]}]|⚾|$))/u;
+/**
+ * 생성 답변을 denylist가 아니라 **문장 종결 구조**로 판정한다.
+ * 봇이 서술하는 각 한국어 문장은 `-니다/-니까`로 끝나야 한다.
+ */
+const FORMAL_SENTENCE_ENDING_RE = /(?:니다|니까)$/u;
+const HANGUL_RE = /[가-힣]/u;
 
 export function isBaseballGeniusToneCompliant(answer: string): boolean {
-  // 유저가 바로 쓸 수 있는 질문 예시(`"보크가 뭐야?"`)는 봇의 발화가 아니므로 제외한다.
-  const botSpeech = answer
-    .replace(/["“][^"”]*["”]/gu, "")
-    .replace(/['‘][^'’]*['’]/gu, "");
-  // `필요.` 같은 명사 끝의 `요`와 합니다체의 `니다`는 허용하되,
-  // 해요체뿐 아니라 반말·해라체(`이야/알겠어/그렇다`)도 문장 경계에서 막는다.
-  return !CASUAL_SENTENCE_ENDING_RE.test(botSpeech) && !INFORMAL_SENTENCE_ENDING_RE.test(botSpeech);
+  // `예:` 뒤의 따옴표 질문만 유저 입력 예시로 제외한다. 답 전체를 따옴표로 감싼 우회는 제외하지 않는다.
+  const botSpeech = answer.replace(/예:\s*(?:(?:["“][^"”]*["”])\s*)+/gu, "");
+  const lines = botSpeech.split(/\n+/u);
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const trimmedLine = lines[lineIndex].trim();
+    if (!trimmedLine || /^(?:📄\s*)?출처[:：]|^https?:\/\//u.test(trimmedLine)) continue;
+    for (const rawSentence of trimmedLine.split(/(?<=[.!?…])\s+/u)) {
+      let sentence = rawSentence
+        .trim()
+        .replace(/^[-*•]\s*/u, "")
+        .replace(/[.!?…⚾\s]+$/u, "")
+        .replace(/[:：]$/u, "")
+        .trim()
+        .replace(/\s*\([^()]*\)$/u, "")
+        .replace(/["”'’\])}]+$/u, "")
+        .trim()
+        .replace(/^["“'‘]+|["”'’]+$/gu, "")
+        .trim();
+      if (!sentence || !HANGUL_RE.test(sentence)) continue;
+      if (FORMAL_SENTENCE_ENDING_RE.test(sentence)) continue;
+      // 정식 문장 뒤에 이어지는 선수명 등 다중행 목록 조각은 문장 종결 계약 대상이 아니다.
+      const isListFragment = lines.length > 1 && lineIndex > 0 && !/[.!?…]$/u.test(rawSentence.trim());
+      if (isListFragment) continue;
+      return false;
+    }
+  }
+  return true;
 }

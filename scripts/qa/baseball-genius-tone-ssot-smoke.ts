@@ -58,6 +58,7 @@ assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중하지만 야구에 미쳐 있�
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /모든 답변은 합니다체/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /정중함, 야구 과몰입, 팀 중립, 사람에 대한 선의/);
 assert.match(BASEBALL_GENIUS_TONE_PROMPT, /지적 감사합니다\. 제가 실책했습니다\. 정확히 다시 확인하겠습니다\./);
+assert.match(BASEBALL_GENIUS_TONE_PROMPT, /시그니처 ⚾는 인사·감사 같은 대화형 고정 응답에만 답변당 최대 1회/);
 
 for (const prompt of [
   BASEBALL_QA_SYSTEM_PROMPT,
@@ -104,11 +105,16 @@ for (const answer of staticAnswers) {
   assert.ok(isBaseballGeniusToneCompliant(answer), `static answer violates 합니다체: ${answer}`);
 }
 
+const beforeTermFixture = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "scripts/qa/fixtures/baseball-terms-before-tone.json"), "utf8"),
+) as Array<{ term: string; answer: string }>;
 const termFixture = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), "scripts/qa/fixtures/baseball-terms-formal-tone.json"), "utf8"),
 ) as Array<{ term: string; answer: string }>;
-assert.equal(termFixture.length, 136, "production 검수 사전 136항목이 모두 있어야 한다");
+assert.equal(beforeTermFixture.length, 136, "production before fixture 136항목이 모두 있어야 한다");
+assert.equal(termFixture.length, 136, "production after fixture 136항목이 모두 있어야 한다");
 assert.equal(new Set(termFixture.map(({ term }) => term)).size, 136, "검수 사전 term 중복 금지");
+assert.deepEqual(beforeTermFixture.map(({ term }) => term), termFixture.map(({ term }) => term), "before/after term·순서 exact");
 for (const { term, answer } of termFixture) {
   assert.ok(isBaseballGeniusToneCompliant(answer), `dictionary answer violates 합니다체: ${term}`);
 }
@@ -117,22 +123,32 @@ const migration = fs.readFileSync(
   "utf8",
 );
 const sqlQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
-for (const { term, answer } of termFixture) {
+for (let index = 0; index < termFixture.length; index += 1) {
+  const before = beforeTermFixture[index];
+  const after = termFixture[index];
   assert.ok(
-    migration.includes(`(${sqlQuote(term)}, ${sqlQuote(answer)})`),
-    `migration fixture mismatch: ${term}`,
+    migration.includes(`(${sqlQuote(after.term)}, ${sqlQuote(before.answer)}, ${sqlQuote(after.answer)})`),
+    `migration before/after fixture mismatch: ${after.term}`,
   );
 }
-assert.match(migration, /matched_count <> 136/);
+assert.match(migration, /before_answer = bt\.answer/);
+assert.match(migration, /GET DIAGNOSTICS updated_count = ROW_COUNT/);
+assert.match(migration, /updated_count <> 136/);
+assert.match(migration, /after_answer = bt\.answer/);
+assert.match(migration, /after_count <> 136/);
 
 assert.equal(isBaseballGeniusToneCompliant("야구에서 보크는 반칙 동작입니다."), true);
-assert.equal(isBaseballGeniusToneCompliant("추가 확인이 필요."), true, "명사 끝 `요`를 해요체로 오판하면 안 된다");
+assert.equal(isBaseballGeniusToneCompliant("추가 확인이 필요합니다."), true, "합니다체 문장은 통과해야 한다");
 for (const nonFormal of [
   "야구에서 보크는 반칙 동작이에요.",
   "주자가 진루할 수 없어요(2사 제외).",
   "보크는 반칙이야.",
   "알겠어.",
   "그렇다.",
+  "맞아.",
+  "좋아.",
+  "몰라.",
+  "“보크는 반칙이야.”",
 ]) {
   assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `비합니다체를 통과시키면 안 된다: ${nonFormal}`);
 }
@@ -144,7 +160,7 @@ assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
   { kind: "insufficient", reason: "tone_violation" },
 );
-for (const nonFormal of ["보크는 반칙이야.", "알겠어.", "그렇다."]) {
+for (const nonFormal of ["보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”"]) {
   assert.deepEqual(
     validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
     { kind: "unsure" },
@@ -169,6 +185,7 @@ const outputFiles = [
   "src/lib/baseball-qa/stats/career-series.ts",
   "src/lib/baseball-qa/stats/career-metric-leaderboard.ts",
 ];
+const literalForbiddenEnding = /(?:이에요|예요|해요|했어요|돼요|되요|아요|어요|여요|죠|네요|군요|나요|가요|세요|게요|래요|대요|데요|지요|고요|이야|알겠어|맞아|좋아|몰라|(?<!니)다)(?=(?:[.!?…)\]}]|⚾|$))/u;
 const imperativeOrMechanicalCopy = /주십시오|(?:관해|기록을|이야기에) 답변합니다/u;
 const violations: string[] = [];
 for (const relative of outputFiles) {
@@ -186,7 +203,10 @@ for (const relative of outputFiles) {
       }
       if (isOutput) {
         const output = ts.isStringLiteralLike(node) ? node.text : node.getText(sf);
-        if (!isBaseballGeniusToneCompliant(output) || imperativeOrMechanicalCopy.test(output)) {
+        // AST의 template 조각은 완성 문장이 아니므로 positive 종결 검사는 런타임 렌더 표본에서 한다.
+        // 여기서는 새 리터럴에 명백한 비격식/명령형이 들어오는지만 전수 감시한다.
+        const botLiteral = output.replace(/예:\s*(?:(?:["“][^"”]*["”])\s*)+/gu, "");
+        if (literalForbiddenEnding.test(botLiteral) || imperativeOrMechanicalCopy.test(botLiteral)) {
           const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
           violations.push(`${relative}:${pos.line + 1}`);
         }
@@ -196,6 +216,12 @@ for (const relative of outputFiles) {
   };
   visit(sf);
 }
-assert.deepEqual(violations, [], `해요체 output literals: ${violations.join(", ")}`);
+assert.deepEqual(violations, [], `비합니다체/명령형 output literals: ${violations.join(", ")}`);
+
+const signatureAnswers = staticAnswers.filter((answer) => answer.includes("⚾"));
+assert.deepEqual(signatureAnswers, [ACK_ANSWER, GREETING_ANSWER], "시그니처는 인사·감사 고정 응답에서만 사용한다");
+for (const answer of signatureAnswers) {
+  assert.equal(answer.match(/⚾/gu)?.length, 1, "시그니처는 답변당 최대 1회다");
+}
 
 console.log(`PASS baseball genius tone SSOT: ${staticAnswers.length} static outputs, 5 prompts, 136 dictionary answers, generated-output fail-close`);
