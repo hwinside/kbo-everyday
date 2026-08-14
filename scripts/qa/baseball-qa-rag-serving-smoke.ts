@@ -117,7 +117,7 @@ const PLAYERS: PlayerRef[] = [
   { name: "양현종", kboId: "55370" },
 ];
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 const MOON_EVIDENCE: RagEvidence = {
@@ -176,7 +176,7 @@ async function run(): Promise<void> {
       callRagLlm: async () => { ragLlmCalls++; throw new Error("플래그 OFF — 호출 금지"); },
       callLlm: async () => {
         genericLlmCalls++;
-        return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "문보경 선수는 LG 트윈스 팬들 사이에서 곰돌이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "문보경 선수는 LG 트윈스 팬들 사이에서 곰돌이라는 별명으로 불립니다." }), inputTokens: 1, outputTokens: 1 };
       },
       getCache: async () => { cacheReads++; return "오염 캐시"; },
     });
@@ -206,7 +206,7 @@ async function run(): Promise<void> {
         rosterBlockSeen = rosterBlock ?? "";
         // 답변에 구단명(야구 앵커)이 있어야 answerInQuestionScope 를 통과한다 — 실 모델도
         // 로스터 블록을 근거로 소속을 함께 말하는 형태가 정상 답변이다.
-        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요. 별명 정보는 확실하지 않아요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다. 별명 정보는 확실하지 않습니다." }), inputTokens: 1, outputTokens: 1 };
       },
     });
     const red = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
@@ -223,7 +223,7 @@ async function run(): Promise<void> {
     const { deps, logs } = makeDeps({
       searchRag: async () => [MOON_EVIDENCE],
       callRagLlm: async () => ({
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경 선수는 '문학소년'이라는 별명으로 불려요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경 선수는 '문학소년'이라는 별명으로 불립니다." }),
         inputTokens: 10,
         outputTokens: 5,
       }),
@@ -272,7 +272,7 @@ async function run(): Promise<void> {
       callLlm: async (_question: string, _context: unknown, rosterBlock?: string) => {
         // 인젝션 chunk 가 generic 프롬프트(로스터 블록)로도 새면 안 된다.
         injGenericPromptSafe = !(rosterBlock ?? "").includes("무시하고");
-        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다." }), inputTokens: 1, outputTokens: 1 };
       },
     });
     const injected = await answerQuestion("u1", "문보경 별명이 뭐야?", injDeps);
@@ -295,7 +295,7 @@ async function run(): Promise<void> {
         inputTokens: 1, outputTokens: 1,
       }),
       callLlm: async () => ({
-        text: JSON.stringify({ status: "ANSWER", answer: "김도영 선수는 KIA 타이거즈 소속이에요. 별명 정보는 확실하지 않아요." }),
+        text: JSON.stringify({ status: "ANSWER", answer: "김도영 선수는 KIA 타이거즈 소속입니다. 별명 정보는 확실하지 않습니다." }),
         inputTokens: 1, outputTokens: 1,
       }),
     });
@@ -331,10 +331,10 @@ async function run(): Promise<void> {
 
   // ── 6. 출력 가드: 숫자·URL·길이·계약 밖 status ─────────────────────────
   {
-    assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "별명은 문학소년이에요." })).kind, "grounded");
-    assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤어요." })).kind, "insufficient");
+    assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "별명은 문학소년입니다." })).kind, "grounded");
+    assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤습니다." })).kind, "insufficient");
     assert.equal(
-      (validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "타율은 0.301이에요." })) as { reason: string }).reason,
+      (validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "타율은 0.301입니다." })) as { reason: string }).reason,
       "numeric_claim_ungrounded",
     );
     assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "https://example.com 참고" })).kind, "insufficient");
@@ -346,7 +346,7 @@ async function run(): Promise<void> {
     // 숫자 답변은 파이프라인에서도 서빙되지 않는다.
     const { deps } = makeDeps({
       searchRag: async () => [MOON_EVIDENCE],
-      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경은 2024년 20홈런을 쳤어요." }), inputTokens: 1, outputTokens: 1 }),
+      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경은 2024년 20홈런을 쳤습니다." }), inputTokens: 1, outputTokens: 1 }),
     });
     const numericAnswer = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     // 서빙 금지 계약은 그대로. 라벨만 `unsure` 로 정확해졌다 (삼순 2026-08-08 ①) —
@@ -374,11 +374,11 @@ async function run(): Promise<void> {
     const { deps, logs } = makeDeps({
       getCache: async () => {
         cacheReads += 1;
-        return "예전에 저장된 근거 없는 답이에요.";
+        return "예전에 저장된 근거 없는 답입니다.";
       },
       searchRag: async () => [MOON_EVIDENCE],
       callRagLlm: async () => ({
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경 선수는 '문학소년'이라는 별명으로 불려요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문보경 선수는 '문학소년'이라는 별명으로 불립니다." }),
         inputTokens: 3,
         outputTokens: 3,
       }),
@@ -396,12 +396,12 @@ async function run(): Promise<void> {
     const { deps } = makeDeps({
       getCache: async () => {
         cacheReads += 1;
-        return "예전에 저장된 근거 없는 답이에요.";
+        return "예전에 저장된 근거 없는 답입니다.";
       },
       searchRag: async () => [],
       callRagLlm: async () => { throw new Error("근거 0건에서 호출되면 안 됨"); },
       callLlm: async () => ({
-        text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }),
+        text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다." }),
         inputTokens: 1, outputTokens: 1,
       }),
     });
@@ -419,7 +419,7 @@ async function run(): Promise<void> {
     const { deps } = makeDeps({
       getCache: async () => {
         cacheReads += 1;
-        return "캐시된 룰 설명이에요.";
+        return "캐시된 룰 설명입니다.";
       },
       searchRag: async () => [MOON_EVIDENCE],
       callRagLlm: async () => { throw new Error("비-선수 질문에서 RAG 호출 금지"); },
@@ -916,7 +916,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
 
   // 적대적 provider: 정상 답변을 돌려준다 — fixture가 만들던 우연한 blocked를 제거한다.
   const adversarialLlm = async (): Promise<LlmResult> => ({
-    text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "문보경 선수는 유명한 타자예요." }),
+    text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "문보경 선수는 유명한 타자입니다." }),
     inputTokens: 10,
     outputTokens: 10,
   });
@@ -979,7 +979,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
       setCache: async (key, answer) => { cache.set(key, answer); },
       callLlm: async () => { genericLlmCalls++; return adversarialLlm(); },
       searchRag: async () => [MOON_EVIDENCE],
-      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불려요." }), inputTokens: 1, outputTokens: 1 }),
+      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불립니다." }), inputTokens: 1, outputTokens: 1 }),
     });
     const green = await answerQuestion("u1", "문보경 별명이 뭐야?", deps);
     assert.equal(green.source, "rag");
@@ -1017,7 +1017,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
       callRagLlm: async () => {
         ragLlmCalls++;
         await new Promise((resolve) => setTimeout(resolve, 30));
-        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불려요." }), inputTokens: 7, outputTokens: 3 };
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불립니다." }), inputTokens: 7, outputTokens: 3 };
       },
       getLlmState: async () => ({ started, result: stored, ownerActive: started && !stored }),
       acquireLlmStart: async () => {
@@ -1041,7 +1041,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
   // (b) 재처리 — 저장된 결과를 재사용하고 RAG LLM을 재호출하지 않는다.
   {
     let ragLlmCalls = 0;
-    const stored: LlmResult = { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불려요." }), inputTokens: 7, outputTokens: 3 };
+    const stored: LlmResult = { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라고 불립니다." }), inputTokens: 7, outputTokens: 3 };
     const { deps } = makeDeps({
       searchRag: async () => [MOON_EVIDENCE],
       callRagLlm: async () => { ragLlmCalls++; throw new Error("재호출 금지"); },
@@ -1086,7 +1086,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
       acquireLlmStart: async () => { casCalls++; return true; },
       storeLlm: async () => {},
       callLlm: async () => ({
-        text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }),
+        text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다." }),
         inputTokens: 1, outputTokens: 1,
       }),
     });
@@ -1110,11 +1110,11 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
       searchRag: async () => rows,
       callRagLlm: async () => {
         ragCalls++;
-        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라 불려요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "문학소년이라 불립니다." }), inputTokens: 1, outputTokens: 1 };
       },
       callLlm: async () => {
         genericCalls++;
-        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다." }), inputTokens: 1, outputTokens: 1 };
       },
     }).deps;
     const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([]));
@@ -1138,11 +1138,11 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
       searchRag: async () => rows,
       callRagLlm: async () => {
         ragCalls++;
-        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불립니다." }), inputTokens: 1, outputTokens: 1 };
       },
       callLlm: async () => {
         genericCalls++;
-        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수예요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: "ANSWER", answer: "문보경 선수는 LG 트윈스 소속 내야수입니다." }), inputTokens: 1, outputTokens: 1 };
       },
     }).deps;
     const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mk([MOON_EVIDENCE]));
@@ -1170,7 +1170,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
       searchRag: async () => [MOON_EVIDENCE],
       callRagLlm: async () => {
         ragCalls++;
-        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불려요." }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "'문학소년'이라는 별명으로 불립니다." }), inputTokens: 1, outputTokens: 1 };
       },
     }).deps;
     const first = await answerQuestion("u1", "문보경 별명이 뭐야?", mkOk);
@@ -1194,7 +1194,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
   //   경계도 공용 helper 로 envelope 를 인식해 그대로 재생해야 한다.
   {
     const envelope: LlmResult = {
-      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불려요. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불립니다. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
       inputTokens: 1, outputTokens: 1,
     };
     let stateCalls = 0;
@@ -1240,7 +1240,7 @@ async function verifyRagLlmDurableBoundary(): Promise<void> {
   //   fence 가 종결 직전 상태를 재확인해 envelope 를 우선해야 한다.
   {
     const envelope: LlmResult = {
-      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불려요. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "'문학소년'이라는 별명으로 불립니다. (출처: 나무위키 문보경)", source: "rag", sourceUrl: "https://namu.wiki/w/문보경" } }),
       inputTokens: 1, outputTokens: 1,
     };
     let stateCalls = 0;
@@ -2371,7 +2371,7 @@ async function verifyServingContractOnRealDb(): Promise<void> {
   }));
   const ranked = rankEvidenceByQuery(rows, JSON.parse(embedding) as number[]);
   assert.equal(ranked.length, 1);
-  const finalAnswer = composeRagAnswer("문보경 선수의 별명은 문학소년이에요.", selectEvidence(ranked)[0]);
+  const finalAnswer = composeRagAnswer("문보경 선수의 별명은 문학소년입니다.", selectEvidence(ranked)[0]);
   assert.match(finalAnswer, /📄 출처: 나무위키$/);
   assert.doesNotMatch(finalAnswer, /rev\s|crawled|https?:\/\//i,
     "실 DB 경로에서도 내부 메타가 본문에 새면 안 된다");

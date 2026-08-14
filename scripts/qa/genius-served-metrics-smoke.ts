@@ -399,7 +399,7 @@ async function main() {
       setCache: async () => {},
       callLlm: async () => {
         llmCalls += 1;
-        return { text: '{"status":"ANSWER","answer":"야구 룰 답변이에요."}', inputTokens: 1, outputTokens: 1 };
+        return { text: '{"status":"ANSWER","answer":"야구 룰 답변입니다."}', inputTokens: 1, outputTokens: 1 };
       },
       reserveDaily: async (_u, limit) => ({ allowed: true, remaining: limit - 1 }),
       log: async (entry) => { logs.push(entry.matchPath); },

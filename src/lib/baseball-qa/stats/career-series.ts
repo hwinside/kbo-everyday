@@ -192,7 +192,7 @@ export function composeCareerSeriesAnswer(
   }
   const careerValue = record.career?.[column];
   const tail = careerValue !== undefined ? `\n통산 ${careerValue}` : "";
-  return `${name} 선수의 연도별 ${label}이에요 (KBO 공식 기록):\n${lines.join("\n")}${tail}`;
+  return `${name} 선수의 연도별 ${label}입니다 (KBO 공식 기록):\n${lines.join("\n")}${tail}`;
 }
 
 export function composeCareerTotalAnswer(

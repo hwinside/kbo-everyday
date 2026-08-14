@@ -242,38 +242,38 @@ export function renderSeriesPrizeAnswer(
 ): SeriesPrizeAnswer {
   const year = askedYear ?? rows.find((row) => row.koreanSeries !== null)?.year ?? null;
   if (year === null) {
-    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없어요. 조금 뒤에 다시 물어봐 주세요!", grounded: false };
+    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없습니다. 조금 뒤에 다시 물어봐 주십시오.", grounded: false };
   }
   const row = rows.find((r) => r.year === year);
   if (!row) {
     // 미래(올해 포함) 연도는 "기록 미보유"가 아니라 "아직 미확정"이다 — `내년 한국시리즈
     // MVP` 에 과거 기록·다른 연도 안내로 답하면 오안내다 (삼순 5차 미래 참조 축).
     if (nowYear <= year) {
-      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았습니다. 시즌이 끝나면 확인하겠습니다.`, grounded: true };
     }
-    return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않아요. 다른 연도를 물어봐 주세요!`, grounded: false };
+    return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않습니다. 다른 연도를 물어봐 주십시오.`, grounded: false };
   }
   if (!row.koreanSeries) {
     // 같은 `-` 라도 뜻이 갈린다 (삼순 P1): 현재 시즌은 "아직 미확정", 과거 연도는
     // 한국시리즈 미개최(1985 삼성 전·후기 통합우승 등) — "시즌이 끝나면" 은 오안내다.
     if (year >= nowYear) {
-      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았어요. 시즌이 끝나면 알려드릴게요!`, grounded: true };
+      return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았습니다. 시즌이 끝나면 확인하겠습니다.`, grounded: true };
     }
-    return { answer: `${year}년에는 한국시리즈가 열리지 않아 한국시리즈 MVP가 없어요.`, grounded: true };
+    return { answer: `${year}년에는 한국시리즈가 열리지 않아 한국시리즈 MVP가 없습니다.`, grounded: true };
   }
   const w = row.koreanSeries;
   const who = `${w.name} 선수(${w.team}, ${w.position})`;
   // 전제 정정 — 질문이 지목한 구단과 실제 수상(우승) 구단이 다르면 먼저 바로잡는다.
   const premiseFix = mentionedTeam && mentionedTeam !== w.team
-    ? `${year}년 한국시리즈 우승은 ${mentionedTeam}이(가) 아니라 ${w.team}이었어요. `
+    ? `${year}년 한국시리즈 우승은 ${mentionedTeam}이(가) 아니라 ${w.team}이었습니다. `
     : "";
   if (intent === "ks_mvp") {
-    return { answer: `${premiseFix}${year}년 한국시리즈 MVP는 ${who}예요.`, grounded: true };
+    return { answer: `${premiseFix}${year}년 한국시리즈 MVP는 ${who}입니다.`, grounded: true };
   }
   return {
     answer:
-      `${premiseFix}기준에 따라 다를 수 있지만, ${year}년 한국시리즈 MVP 기준으로는 ${who}가 우승의 주역으로 꼽혀요. ` +
-      "시즌 전체 기여는 타율·홈런·WAR 같은 어떤 스탯을 기준으로 보느냐에 따라 달라질 수 있어요.",
+      `${premiseFix}기준에 따라 다를 수 있지만, ${year}년 한국시리즈 MVP 기준으로는 ${who}가 우승의 주역으로 꼽힙니다. ` +
+      "시즌 전체 기여는 타율·홈런·WAR 가운데 어떤 스탯을 기준으로 보느냐에 따라 달라질 수 있습니다.",
     grounded: true,
   };
 }
