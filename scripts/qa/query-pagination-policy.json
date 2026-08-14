@@ -32,6 +32,7 @@
     "genius_answer_feedback",
     "genius_daily_usage",
     "genius_news_articles",
+    "genius_positive_endings",
     "genius_qa_cache",
     "genius_question_jobs",
     "genius_question_logs",

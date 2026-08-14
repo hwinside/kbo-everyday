@@ -64,7 +64,7 @@ async function main() {
 /** 로스터는 **실제 배포 로더**로 읽는다 — 자체 fixture 는 loader 결함을 GREEN 으로 만든다. */
 let players: PlayerRef[] = [];
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 interface Calls {
@@ -352,7 +352,7 @@ function makeRagDeps(overrides: Partial<QaDeps>): QaDeps {
       sourceGrade: "tier2", sourceKind: "namu_document",
     }],
     callTeamRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "구단 문서 답변이에요." }),
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "구단 문서 답변입니다." }),
       inputTokens: 1, outputTokens: 1,
     }),
     searchNewsRag: async () => [{
@@ -363,7 +363,7 @@ function makeRagDeps(overrides: Partial<QaDeps>): QaDeps {
       sourceGrade: "tier2", sourceKind: "news_article",
     }],
     callNewsRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "기사 근거 답변이에요." }),
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "기사 근거 답변입니다." }),
       inputTokens: 1, outputTokens: 1,
     }),
     ...overrides,

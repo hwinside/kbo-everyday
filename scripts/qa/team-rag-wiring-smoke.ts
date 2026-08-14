@@ -58,7 +58,7 @@ import {
 let players: PlayerRef[] = [];
 
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 /**
@@ -127,7 +127,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
       return {
         text: JSON.stringify({
           status: "BASEBALL_RULE_TERM",
-          answer: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단이에요.",
+          answer: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단입니다.",
         }),
         inputTokens: 1,
         outputTokens: 1,
@@ -147,8 +147,8 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
         text: JSON.stringify({
           status: RAG_GROUNDED_SENTINEL,
           answer: usesSamsung
-            ? "삼성 라이온즈는 한국시리즈 우승 경험이 많은 구단이에요."
-            : "LG 트윈스는 MBC 청룡을 인수해 창단한 서울 연고 구단이에요.",
+            ? "삼성 라이온즈는 한국시리즈 우승 경험이 많은 구단입니다."
+            : "LG 트윈스는 MBC 청룡을 인수해 창단한 서울 연고 구단입니다.",
         }),
         inputTokens: 10,
         outputTokens: 5,
@@ -160,14 +160,14 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
     callRagLlm: async () => {
       calls.playerLlm++;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "선수 경로 답변이에요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "선수 경로 답변입니다." }),
         inputTokens: 1,
         outputTokens: 1,
       };
     },
     searchOfficialRag: async () => { calls.officialSearch++; return []; },
     callOfficialRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변이에요." }),
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변입니다." }),
       inputTokens: 1,
       outputTokens: 1,
     }),
@@ -305,7 +305,7 @@ async function run(): Promise<void> {
           // 두 사실을 이어붙인 관계 주장. 숫자는 둘 다 근거 한 문장 안에 있다.
           text: JSON.stringify({
             status: RAG_GROUNDED_SENTINEL,
-            answer: "LG는 1990년에 3회째 우승했어요.",
+            answer: "LG는 1990년에 3회째 우승했습니다.",
           }),
           inputTokens: 10,
           outputTokens: 5,
@@ -326,7 +326,7 @@ async function run(): Promise<void> {
     const { deps, logs } = makeDeps({
       callTeamRagLlm: async () => ({
         // 삼성 근거 원문에 `8회` 가 실제로 있다. 그래도 폐기돼야 한다.
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 8회 우승했어요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 8회 우승했습니다." }),
         inputTokens: 10,
         outputTokens: 5,
       }),
@@ -343,7 +343,7 @@ async function run(): Promise<void> {
     // ④-3 지어낸 숫자는 당연히 거절 (종전 계약도 유지).
     const { deps, logs } = makeDeps({
       callTeamRagLlm: async () => ({
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 12회 우승했어요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "삼성은 통산 12회 우승했습니다." }),
         inputTokens: 10,
         outputTokens: 5,
       }),
@@ -413,20 +413,20 @@ async function run(): Promise<void> {
     //     한글 수치의 실제 위반율은 배포 후 전수 감사로 **측정**한다.
     for (const answer of [
       // 한글 수사가 섞인 서술 — 프롬프트가 1차로 막고, 코드는 관여하지 않는다.
-      "삼성 라이온즈는 한국시리즈에서 여덟 번 우승했어요.",
-      "삼성 라이온즈는 첫 우승을 차지한 구단이에요.",
-      "삼성 라이온즈의 우승은 하나라고 해요.",
+      "삼성 라이온즈는 한국시리즈에서 여덟 번 우승했습니다.",
+      "삼성 라이온즈는 첫 우승을 차지한 구단입니다.",
+      "삼성 라이온즈의 우승은 하나라고 합니다.",
       // 12라운드 동안 파서가 실제로 죽였던 야구·일상 어휘 — 과차단 회귀 방지.
-      "이승엽 선수가 활약한 구단이에요.",
-      "만루 상황에 강한 구단이에요.",
-      "셋업맨이 강한 구단이에요.",
-      "세이브 기록이 많은 구단이에요.",
-      "세이프 판정으로 이긴 구단이에요.",
-      "네이버에서도 화제가 된 구단이에요.",
-      "이사회에서 연고지를 결정했어요.",
-      "하나은행과 후원 계약을 맺은 구단이에요.",
-      "두산 베어스와 잠실을 함께 써요.",
-      "이천 베어스 파크에서 훈련해요.",
+      "이승엽 선수가 활약한 구단입니다.",
+      "만루 상황에 강한 구단입니다.",
+      "셋업맨이 강한 구단입니다.",
+      "세이브 기록이 많은 구단입니다.",
+      "세이프 판정으로 이긴 구단입니다.",
+      "네이버에서도 화제가 된 구단입니다.",
+      "이사회에서 연고지를 결정했습니다.",
+      "하나은행과 후원 계약을 맺은 구단입니다.",
+      "두산 베어스와 잠실을 함께 씁니다.",
+      "이천 베어스 파크에서 훈련합니다.",
     ]) {
       const { deps } = makeDeps({
         callTeamRagLlm: async () => ({
@@ -557,7 +557,7 @@ async function run(): Promise<void> {
         return {
           text: JSON.stringify({
             status: RAG_GROUNDED_SENTINEL,
-            answer: "LG 트윈스는 1994년에 통산 3회째 우승을 달성했어요.",
+            answer: "LG 트윈스는 1994년에 통산 3회째 우승을 달성했습니다.",
           }),
           inputTokens: 10,
           outputTokens: 5,

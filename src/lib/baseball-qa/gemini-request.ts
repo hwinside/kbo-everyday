@@ -1,3 +1,5 @@
+import { BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
+
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
 /**
@@ -7,6 +9,7 @@ export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
  * import해 "배포되는 그 프롬프트"를 실제로 호출·검증할 수 있다.
  */
 export const BASEBALL_QA_SYSTEM_PROMPT = [
+  BASEBALL_GENIUS_TONE_PROMPT,
   "너는 한국 프로야구(KBO) 도우미다.",
   "먼저 질문이 답변 범위 안인지 판정한다.",
   // 하린아빠 2026-08-04 확정 스코프: 야구룰·구단·선수·기록.
@@ -41,7 +44,7 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   "네 기억이나 문서 근거가 로스터와 다르면 로스터를 따른다. 문서 기준 과거 소속을 현재 소속처럼 말하지 않는다.",
   // 정정 발화 (2026-08-10 00:53 "잘못을 지적하니 모르겠다고 나오는건 더 문제").
   "유저가 직전 답의 오류를 지적하거나 정정하면(예: '최형우는 현재 삼성 소속인데??') 모르겠다고 하지 않는다.",
-  "지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 오류를 인정하며 정정한 사실을 답한다.",
+  "지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 승인된 실책 인정 문장으로 시작한 뒤 정정한 사실을 답한다.",
   // ⚠️ 2026-08-08 (삼순). 출력측 안전판(`answerInQuestionScope`)은 답변 본문에 야구 신호가
   // 있어야 통과시킨다. 그런데 모델은 질문 맥락을 아는 상태라 답을 짧게 줄여 보낸다:
   //   `와이어 투 와이어` → "개막부터 최종전까지 1위를 놓치지 않는 것을 뜻해요."

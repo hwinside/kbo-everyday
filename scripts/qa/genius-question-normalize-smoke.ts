@@ -29,8 +29,8 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 
 const glossary: GlossaryEntry[] = [
-  { term: "보크", aliases: ["balk"], answer: "투수의 반칙 동작이에요." },
-  { term: "도루", aliases: ["sb"], answer: "베이스를 훔치는 플레이예요." },
+  { term: "보크", aliases: ["balk"], answer: "투수의 반칙 동작입니다." },
+  { term: "도루", aliases: ["sb"], answer: "베이스를 훔치는 플레이입니다." },
 ];
 const players = [
   { kboId: "50001", name: "김도영", team: "KIA 타이거즈" },
