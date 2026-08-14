@@ -27,7 +27,6 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
 } from "../../src/lib/baseball-qa/client-outbox";
-import { useBaseballQaReplyRecovery } from "../../src/lib/baseball-qa/use-reply-recovery";
 import { BASEBALL_GENIUS_FALLBACK_ANSWER } from "../../src/lib/constants/baseball-genius";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -47,12 +46,28 @@ for (const key of ["HTMLElement", "Element", "Node", "Event"]) {
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "qa-anon-key";
+// React의 act는 production 조건부 export에 없다. Vercel prebuild도 실제 DOM 훅 회귀를
+// 실행할 수 있도록 어떤 runtime import보다 먼저 development 번들을 고정한다.
+process.env.NODE_ENV = "development";
 
 let React: typeof ReactNamespace;
 let createRoot: typeof import("react-dom/client").createRoot;
 let act: typeof ReactNamespace.act;
 let GeniusTypingIndicator: typeof import("../../src/components/dm/GeniusTypingIndicator").default;
+let useBaseballQaReplyRecovery: typeof import("../../src/lib/baseball-qa/use-reply-recovery").useBaseballQaReplyRecovery;
 type GeniusTypingState = import("../../src/components/dm/GeniusTypingIndicator").GeniusTypingState;
+
+async function loadReactHarness() {
+  if (!React) React = await import("react");
+  if (!createRoot) ({ createRoot } = await import("react-dom/client"));
+  act = React.act;
+  if (typeof act !== "function") {
+    throw new Error("React.act가 없다 — NODE_ENV=development가 runtime import보다 먼저여야 한다");
+  }
+  if (!useBaseballQaReplyRecovery) {
+    ({ useBaseballQaReplyRecovery } = await import("../../src/lib/baseball-qa/use-reply-recovery"));
+  }
+}
 
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
@@ -120,9 +135,7 @@ test("HTTP 성공 뒤 Realtime INSERT를 놓쳐도 exact 답변을 강제 재조
 });
 
 test("acknowledged/202 무답변은 유계 시간 뒤 실제 recovery 훅에서 failed로 전환된다", async () => {
-  React = await import("react");
-  ({ createRoot } = await import("react-dom/client"));
-  act = React.act;
+  await loadReactHarness();
 
   const storage = new MemoryStorage();
   enqueueBaseballQaQuestion(storage, { conversationId: "conv", messageId: 99 });
@@ -337,9 +350,7 @@ test("다시 시도는 선택한 failed messageId만 요청한다", async () => 
 });
 
 test("야잘알봇 타이핑 인디케이터 3전이", async () => {
-  React = await import("react");
-  ({ createRoot } = await import("react-dom/client"));
-  act = React.act;
+  await loadReactHarness();
   GeniusTypingIndicator = (await import("../../src/components/dm/GeniusTypingIndicator")).default;
 
   const container = dom.window.document.createElement("div");
