@@ -66,11 +66,14 @@ function iv(over: Partial<PendingInterview> = {}): PendingInterview {
 interface Calls {
   markedSent: string[][]; released: string[][]; markerChecks: string[]; markerInserts: string[];
   audience: string[];
-  sends: { userIds: string[]; title: string; body: string; url: string; prefKey: string }[];
+  sends: Array<{
+    userIds: string[]; title: string; body: string; url: string; prefKey: string;
+    data: { notification_id: string }; collapseKey: string; apnsCollapseId: string;
+  }>; 
 }
 interface Over {
   leased?: PendingInterview[];
-  marker?: (videoId: string) => SentMarkerState;
+  marker?: (gameId: string, videoId: string) => SentMarkerState;
   markerThrow?: boolean;
   markerInsertOk?: boolean;
   audience?: (kboId: string) => string[];
@@ -86,13 +89,13 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
     leasePendingInterviews: async () => over.leased ?? [iv()],
     markSent: async (ids) => { calls.markedSent.push(ids); },
     releaseLease: async (ids) => { calls.released.push(ids); },
-    hasSentMarker: async (videoId) => {
-      calls.markerChecks.push(videoId);
+    hasSentMarker: async (gameId, videoId) => {
+      calls.markerChecks.push(`${gameId}#${videoId}`);
       if (over.markerThrow) throw new Error("marker boom");
-      return over.marker ? over.marker(videoId) : "absent";
+      return over.marker ? over.marker(gameId, videoId) : "absent";
     },
-    insertSentMarker: async (videoId) => {
-      calls.markerInserts.push(videoId);
+    insertSentMarker: async (gameId, videoId) => {
+      calls.markerInserts.push(`${gameId}#${videoId}`);
       return over.markerInsertOk ?? true;
     },
     fetchFavoritePlayerFanIds: async (kboId) => {
@@ -124,12 +127,16 @@ async function main() {
     const { deps, calls } = makeDeps();
     const s = await notifyFavPlayerInterviews(deps);
     check("sent=1", s.sent === 1 && s.leased === 1);
-    check("마커 선확인", calls.markerChecks[0] === "vid-1");
+    check("복합키 마커 선확인", calls.markerChecks[0] === "20260814SKLG0#vid-1");
     check("발송 1회", calls.sends.length === 1);
     check("딥링크 = 경기페이지", calls.sends[0]?.url === "/games/20260814SKLG0");
     check("prefKey 전달(토글 필터)", calls.sends[0]?.prefKey === INTERVIEW_PREF_KEY);
+    const stableId = "interview#20260814SKLG0#vid-1";
+    check("안정 notification id(복합키)", calls.sends[0]?.data.notification_id === stableId);
+    check("Android/iOS provider dedupe id", calls.sends[0]?.collapseKey === stableId
+      && calls.sends[0]?.apnsCollapseId === stableId);
     check("제목에 선수명", calls.sends[0]?.title.includes(P1.name));
-    check("성공 → 마커 기록", calls.markerInserts[0] === "vid-1");
+    check("성공 → 복합키 마커 기록", calls.markerInserts[0] === "20260814SKLG0#vid-1");
     check("성공 → sent 전이(row id)", calls.markedSent[0]?.[0] === "row-1" && s.sent === 1);
     check("release 없음", calls.released.length === 0);
   }
@@ -191,7 +198,7 @@ async function main() {
         iv({ id: "ok-row", videoId: "ok-vid" }),
         iv({ id: "bad-row", videoId: "bad-vid" }),
       ],
-      marker: (vid) => (vid === "bad-vid" ? "error" : "absent"),
+      marker: (_gameId, vid) => (vid === "bad-vid" ? "error" : "absent"),
     });
     const s4 = await notifyFavPlayerInterviews(mixed.deps);
     check("부분 실패 → 성공 행만 sent, 실패 행은 release",

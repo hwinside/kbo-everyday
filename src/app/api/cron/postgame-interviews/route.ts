@@ -252,7 +252,19 @@ export async function GET(req: NextRequest) {
   const activeJobs = (activeRows ?? []) as JobRow[];
   const dueJobs = activeJobs.filter((job) => Date.parse(job.next_collect_at) <= nowMs);
   if (dueJobs.length === 0) {
-    return NextResponse.json({ ok: seed.faults === 0, seed, active: activeJobs.length, due: 0 });
+    // 수집할 job이 없어도 인터뷰 알림 복구는 반드시 돈다. 마지막 수집 run에서
+    // FCM/DB가 실패하거나 job이 만료된 뒤에도 pending·만료 lease를 재시도해야 한다.
+    let interviewNotify: InterviewNotifySummary | { error: string } | null = null;
+    try {
+      interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());
+    } catch (e) {
+      interviewNotify = { error: e instanceof Error ? e.message : String(e) };
+      console.error("[postgame-interviews] notify recovery failed:", interviewNotify.error);
+    }
+    return NextResponse.json({
+      ok: seed.faults === 0 && !("error" in (interviewNotify ?? {})),
+      seed, active: activeJobs.length, due: 0, interviewNotify,
+    });
   }
 
   const [contexts, feedResults] = await Promise.all([
@@ -306,9 +318,9 @@ export async function GET(req: NextRequest) {
 
   // ── 최애선수 수훈 인터뷰 알림 ──
   // 기존 파이프라인이 이미 game_id·player_names를 확정했으므로 여기서 감지·문자열
-  // 분석은 하지 않는다. 대상은 이번 run의 새 insert가 아니라 **notified_at IS NULL인
-  // 미발송 행 전체**다 — 새 insert만 보면 발송 실패 시 다음 run에 재입력되지 않아
-  // 영구 유실된다(삼순 NO-GO). 모듈이 원장을 직접 조회하므로 인자가 없다.
+  // 분석은 하지 않는다. 대상은 이번 run의 새 insert가 아니라 **DB lease가 선점한
+  // pending/만료 processing 행**이다 — 새 insert만 보면 발송 실패 시 다음 run에
+  // 재입력되지 않아 영구 유실된다. 모듈이 원장을 직접 조회하므로 인자가 없다.
   // best-effort — 실패해도 cron 본연(수집)을 막지 않고, 미발송 행은 다음 run이 재시도.
   let interviewNotify: InterviewNotifySummary | { error: string } | null = null;
   try {

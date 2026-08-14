@@ -68,16 +68,22 @@ export interface InterviewDeps {
   markSent: (rowIds: string[]) => Promise<void>;
   /** lease 해제 → pending 복귀. 실패해도 lease 만료가 안전망. */
   releaseLease: (rowIds: string[]) => Promise<void>;
-  /** 이 영상이 이미 발송됐는지(sent 마커). */
-  hasSentMarker: (videoId: string) => Promise<SentMarkerState>;
-  /** 발송 성공 직후 마커 기록. false = 기록 실패(행 상태가 1차 방어라 진행은 한다). */
-  insertSentMarker: (videoId: string, gameId: string) => Promise<boolean>;
+  /** 이 경기+영상이 이미 발송됐는지(sent 마커). */
+  hasSentMarker: (gameId: string, videoId: string) => Promise<SentMarkerState>;
+  /** 발송 성공 직후 복합키 마커 기록. false = 기록 실패(행 상태가 1차 방어). */
+  insertSentMarker: (gameId: string, videoId: string) => Promise<boolean>;
   /** kboId를 최애선수로 둔 유저 id. */
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
   /** 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행. */
   sendPush: (
     userIds: string[],
-    payload: { title: string; body: string; url: string },
+    payload: {
+      title: string; body: string; url: string;
+      /** 외부 발송 crash gap에서 provider/client가 같은 알림을 접도록 하는 안정 id. */
+      data: { notification_id: string };
+      collapseKey: string;
+      apnsCollapseId: string;
+    },
     prefKey: typeof INTERVIEW_PREF_KEY,
   ) => Promise<{ ok: boolean }>;
 }
@@ -118,7 +124,7 @@ export async function notifyFavPlayerInterviews(
     // 1. 이중발송 방어 — 직전 run이 발송 후 markSent 전에 죽었으면 마커가 남아 있다.
     let marker: SentMarkerState;
     try {
-      marker = await deps.hasSentMarker(interview.videoId);
+      marker = await deps.hasSentMarker(interview.gameId, interview.videoId);
     } catch {
       marker = "error";
     }
@@ -167,12 +173,16 @@ export async function notifyFavPlayerInterviews(
     // 4. 발송 1회 → 성공 시 마커 기록 후 종결. 실패/예외는 lease 해제(다음 run 재시도).
     try {
       const names = links.map((link) => link.name).join("·");
+      const notificationId = `interview#${interview.gameId}#${interview.videoId}`;
       const result = await deps.sendPush(
         targets,
         {
           title: `⭐ ${names} 수훈선수 인터뷰가 올라왔어요`,
           body: interview.title,
           url: `/games/${interview.gameId}`,
+          data: { notification_id: notificationId },
+          collapseKey: notificationId,
+          apnsCollapseId: notificationId,
         },
         INTERVIEW_PREF_KEY,
       );
@@ -181,7 +191,7 @@ export async function notifyFavPlayerInterviews(
         summary.released++;
         continue;
       }
-      if (!(await deps.insertSentMarker(interview.videoId, interview.gameId).catch(() => false))) {
+      if (!(await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false))) {
         summary.markerWriteFailures++;
       }
       sentRowIds.push(interview.id);
@@ -196,9 +206,9 @@ export async function notifyFavPlayerInterviews(
   // lease 만료 + sent 마커 경로가 재발송 없이 회복한다.
   if (sentRowIds.length > 0) await deps.markSent(sentRowIds);
   if (releaseRowIds.length > 0) {
-    await deps.releaseLease(releaseRowIds).catch(() => {
-      // 해제 실패는 은폐되지 않는다 — lease 만료가 같은 효과를 낸다(다음 run 재획득).
-    });
+    // release 실패는 호출자/cron 응답에 드러나야 한다. lease 만료가 복구 안전망이지만
+    // 실패를 성공처럼 반환하지 않는다(삼순 5차 NO-GO).
+    await deps.releaseLease(releaseRowIds);
   }
   return summary;
 }

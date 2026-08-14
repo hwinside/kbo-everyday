@@ -24,19 +24,15 @@ export function createInterviewDeps(): InterviewDeps {
      * notify_state=processing + 미래 lease_until이라 어느 분기에도 안 걸린다.
      */
     leasePendingInterviews: async (): Promise<PendingInterview[]> => {
-      const nowIso = new Date().toISOString();
-      const leaseIso = new Date(Date.now() + LEASE_MS).toISOString();
-      // query-guard: bounded -- 대상은 notify_state!=sent 인터뷰뿐(경기당 최대 6건 저장,
-      // 24h TTL jobs에서 파생)이라 무제한 UPDATE여도 행수가 구조적으로 작다.
-      const { data, error } = await supabase
-        .from("postgame_interviews")
-        .update({ notify_state: "processing", notify_lease_until: leaseIso })
-        .eq("confidence", "high")
-        .neq("notify_state", "sent")
-        .or(`notify_state.eq.pending,notify_lease_until.lt.${nowIso}`)
-        .select("id, game_id, video_id, title, player_names");
+      // query-guard: bounded -- RPC 내부 ORDER BY + LIMIT 40 + FOR UPDATE SKIP LOCKED.
+      const { data, error } = await supabase.rpc(
+        "claim_postgame_interview_notifications",
+        { p_limit: 40, p_lease_seconds: Math.floor(LEASE_MS / 1000) },
+      );
       if (error) throw new Error(`lease pending interviews failed: ${error.message}`);
-      const rows = data ?? [];
+      const rows = (data ?? []) as Array<{
+        id: string; game_id: string; video_id: string; title: string; player_names: string[] | null;
+      }>;
       if (rows.length === 0) return [];
 
       // winner_team_id는 jobs에 있다 — 동명이인 분리에 필요.
@@ -84,21 +80,21 @@ export function createInterviewDeps(): InterviewDeps {
      * sent 마커 — notified_score_events 재사용, event_id = interview#{videoId}.
      * 조회 오류를 absent로 오독하면 이중발송이라 3분기로 반환한다.
      */
-    hasSentMarker: async (videoId: string): Promise<SentMarkerState> => {
+    hasSentMarker: async (gameId: string, videoId: string): Promise<SentMarkerState> => {
       const { data, error } = await supabase
         .from("notified_score_events")
         .select("event_id")
-        .eq("event_id", `interview#${videoId}`)
+        .eq("event_id", `interview#${gameId}#${videoId}`)
         .maybeSingle();
       if (error) return "error";
       return data ? "present" : "absent";
     },
 
-    insertSentMarker: async (videoId: string, gameId: string): Promise<boolean> => {
+    insertSentMarker: async (gameId: string, videoId: string): Promise<boolean> => {
       const { error } = await supabase
         .from("notified_score_events")
         .upsert(
-          { event_id: `interview#${videoId}`, game_id: gameId },
+          { event_id: `interview#${gameId}#${videoId}`, game_id: gameId },
           { onConflict: "event_id", ignoreDuplicates: true },
         );
       return !error;
