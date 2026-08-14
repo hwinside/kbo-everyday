@@ -6,15 +6,19 @@
  * game_id·player_names를 고신뢰로 확정해 postgame_interviews에 저장한 결과를
  * 받아서, 승리팀 로스터로 kboId를 확정하고 최애선수 팬에게 보낼 뿐이다.
  *
- * 삼순 NO-GO 4축이 회귀하면 RED가 되도록 박아둔다:
- *  A. durable retry — 발송 실패 행은 markNotified 되지 않아 다음 run이 재입력
- *  B. audience/sendPush throw 후에도 claim 해제(잔류 시 영구 유실)
- *  C. 한 영상에서 같은 유저 중복 푸시 금지(video×user)
- *  D. kboId 미확정 fail-close
+ * 삼순 NO-GO 축이 회귀하면 RED가 되도록 박아둔다:
+ *  R2-A durable retry — 발송 실패 행은 markNotified 되지 않아 다음 run이 재입력
+ *  R2-B audience/sendPush throw 후에도 claim 해제(잔류 시 영구 유실)
+ *  R2-C 한 영상에서 같은 유저 중복 푸시 금지(video×user)
+ *  R2-D kboId 미확정 fail-close
+ *  R3-① claim tri-state — DB error를 duplicate로 오독하면 영구 유실
+ *  R3-② 다중 run — 부분 실패 후 재시도 시 이전 run 수신자에게 재발송 금지
+ *  R3-③ 완료 표시는 row id(PK)로 — (game_id, video_id)가 unique라 video_id 단독은 위험
  */
 import {
   notifyFavPlayerInterviews,
   INTERVIEW_PREF_KEY,
+  type ClaimResult,
   type InterviewDeps,
   type PendingInterview,
 } from "../../src/lib/notifications/fav-player-interview";
@@ -51,6 +55,7 @@ const [P1, P2] = uniquePlayers(1, 2); // LG
 
 function iv(over: Partial<PendingInterview> = {}): PendingInterview {
   return {
+    id: "row-1",
     gameId: "20260814SKLG0",
     videoId: "vid-1",
     title: `${P1.name} 수훈선수 인터뷰`,
@@ -62,31 +67,34 @@ function iv(over: Partial<PendingInterview> = {}): PendingInterview {
 
 interface Calls {
   claims: string[]; unclaims: string[]; marked: string[][];
+  audience: string[];
   sends: { userIds: string[]; title: string; body: string; url: string; prefKey: string }[];
 }
 interface Over {
   pending?: PendingInterview[];
-  claim?: (id: string) => boolean;
+  claim?: (id: string) => ClaimResult;
   audience?: (kboId: string) => string[];
   audienceThrow?: boolean;
-  sendOk?: boolean;
+  sendOk?: boolean | ((title: string) => boolean);
   sendThrow?: boolean;
 }
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
-  const calls: Calls = { claims: [], unclaims: [], marked: [], sends: [] };
+  const calls: Calls = { claims: [], unclaims: [], marked: [], audience: [], sends: [] };
   const deps: InterviewDeps = {
     fetchPendingInterviews: async () => over.pending ?? [iv()],
     markNotified: async (ids) => { calls.marked.push(ids); },
-    claimEvent: async (id) => { calls.claims.push(id); return over.claim ? over.claim(id) : true; },
+    claimEvent: async (id) => { calls.claims.push(id); return over.claim ? over.claim(id) : "claimed"; },
     unclaimEvent: async (id) => { calls.unclaims.push(id); },
     fetchFavoritePlayerFanIds: async (kboId) => {
+      calls.audience.push(kboId);
       if (over.audienceThrow) throw new Error("audience boom");
       return over.audience ? over.audience(kboId) : ["u1", "u2"];
     },
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
       if (over.sendThrow) throw new Error("send boom");
-      return { ok: over.sendOk ?? true };
+      const ok = typeof over.sendOk === "function" ? over.sendOk(payload.title) : over.sendOk ?? true;
+      return { ok };
     },
   };
   return { deps, calls };
@@ -111,13 +119,67 @@ async function main() {
     check("prefKey 전달(토글 필터)", calls.sends[0]?.prefKey === INTERVIEW_PREF_KEY);
     check("제목에 선수명", calls.sends[0]?.title.includes(P1.name));
     check("본문 = 인터뷰 제목", calls.sends[0]?.body === `${P1.name} 수훈선수 인터뷰`);
-    check("성공 시 markNotified", calls.marked[0]?.includes("vid-1") === true && s.settled === 1);
     check("unclaim 없음", calls.unclaims.length === 0);
   }
 
-  console.log("[2-A] durable retry (삼순 NO-GO ①)");
+  console.log("[R3-③] 완료 표시는 row id(PK)");
   {
-    // 발송 실패한 행은 처리완료로 찍히면 안 된다 — 찍히면 다음 run이 재입력 못 해 영구 유실.
+    const { deps, calls } = makeDeps({ pending: [iv({ id: "row-abc", videoId: "vid-x" })] });
+    const s = await notifyFavPlayerInterviews(deps);
+    check("markNotified에 row id 전달", calls.marked[0]?.[0] === "row-abc" && s.settled === 1);
+    check("video_id를 완료키로 쓰지 않음", calls.marked[0]?.includes("vid-x") === false);
+  }
+
+  console.log("[R3-①] claim tri-state — DB error ≠ duplicate");
+  {
+    const e = makeDeps({ claim: () => "error" });
+    const s = await notifyFavPlayerInterviews(e.deps);
+    check("claim error → 미발송", s.sent === 0 && e.calls.sends.length === 0);
+    check("claim error → 완료 처리 금지(다음 run 재시도)",
+      s.settled === 0 && e.calls.marked.length === 0);
+
+    const t = makeDeps();
+    t.deps.claimEvent = async () => { throw new Error("claim boom"); };
+    const s2 = await notifyFavPlayerInterviews(t.deps);
+    check("claim throw → 완료 처리 금지", s2.settled === 0 && t.calls.marked.length === 0);
+
+    const d = makeDeps({ claim: () => "duplicate" });
+    const s3 = await notifyFavPlayerInterviews(d.deps);
+    check("claim duplicate → 미발송이지만 완료 처리(재시도 무의미)",
+      s3.sent === 0 && s3.skippedClaimed === 1 && s3.settled === 1);
+  }
+
+  console.log("[R3-②] 다중 run — 부분 실패 재시도 시 이전 수신자 재발송 금지");
+  {
+    // 시나리오: 2인 영상. 이전 run에서 P1은 발송 성공(=claim duplicate),
+    // P2는 실패해 unclaim된 상태. 이번 run은 P2만 claim 성공한다.
+    // 두 선수 팬이 같은 유저(shared)라면 그 유저는 이미 P1으로 받았으므로 제외돼야 한다.
+    const d = makeDeps({
+      pending: [iv({ playerNames: [P1.name, P2.name] })],
+      claim: (id) => (id.endsWith(P1.kboId) ? "duplicate" : "claimed"),
+      // P1 팬 = shared 만, P2 팬 = shared + p2only → shared는 이전 run에 P1으로 이미 받았다.
+      audience: (kboId) => (kboId === P1.kboId ? ["shared"] : ["shared", "p2only"]),
+    });
+    const s = await notifyFavPlayerInterviews(d.deps);
+    const recipients = d.calls.sends.flatMap((x) => x.userIds);
+    check("duplicate 선수도 audience 조회(제외 집합 구성)",
+      d.calls.audience.includes(P1.kboId));
+    check("이전 run 수신자는 재발송 제외", recipients.includes("shared") === false);
+    check("신규 수신자에게는 발송", recipients.includes("p2only") === true);
+    check("중복 제외 카운트 기록", s.skippedDuplicateUser >= 1);
+
+    // duplicate 선수의 audience 조회가 실패하면 제외 집합을 못 만드므로 완료 금지.
+    const f = makeDeps({
+      pending: [iv({ playerNames: [P1.name, P2.name] })],
+      claim: () => "duplicate",
+      audienceThrow: true,
+    });
+    const s2 = await notifyFavPlayerInterviews(f.deps);
+    check("duplicate audience 실패 → 완료 처리 금지", s2.settled === 0 && f.calls.marked.length === 0);
+  }
+
+  console.log("[R2-A] durable retry");
+  {
     const f = makeDeps({ sendOk: false });
     const s = await notifyFavPlayerInterviews(f.deps);
     check("발송 실패 → markNotified 안 함(다음 run 재입력)",
@@ -125,24 +187,20 @@ async function main() {
     check("발송 실패 → unclaim(선수 단위 재시도 가능)",
       f.calls.unclaims[0] === `interview#vid-1#${P1.kboId}`);
 
-    // 2건 중 1건만 실패하면 성공한 행만 확정된다.
     const mixed = makeDeps({
-      pending: [iv({ videoId: "ok-1" }), iv({ videoId: "bad-1", playerNames: [P2.name] })],
-      sendOk: true,
+      pending: [
+        iv({ id: "ok-row", videoId: "ok-1" }),
+        iv({ id: "bad-row", videoId: "bad-1", playerNames: [P2.name] }),
+      ],
+      sendOk: (title) => !title.includes(P2.name),
     });
-    // P2만 실패시키기 위해 sendPush를 래핑
-    const origSend = mixed.deps.sendPush;
-    mixed.deps.sendPush = async (u, p, k) => {
-      const r = await origSend(u, p, k);
-      return p.title.includes(P2.name) ? { ok: false } : r;
-    };
     const s2 = await notifyFavPlayerInterviews(mixed.deps);
     check("부분 실패 → 성공 행만 확정",
-      s2.settled === 1 && mixed.calls.marked[0]?.includes("ok-1") === true
-      && mixed.calls.marked[0]?.includes("bad-1") === false);
+      s2.settled === 1 && mixed.calls.marked[0]?.includes("ok-row") === true
+      && mixed.calls.marked[0]?.includes("bad-row") === false);
   }
 
-  console.log("[2-B] 예외 경로 claim 해제 (삼순 NO-GO ②)");
+  console.log("[R2-B] 예외 경로 claim 해제");
   {
     const a = makeDeps({ audienceThrow: true });
     const s = await notifyFavPlayerInterviews(a.deps);
@@ -157,22 +215,21 @@ async function main() {
     check("sendPush throw → markNotified 안 함", t.calls.marked.length === 0);
   }
 
-  console.log("[2-C] video×user 중복 방지 (삼순 NO-GO ③)");
+  console.log("[R2-C] video×user 중복 방지(같은 run)");
   {
-    // 한 영상에 2명, 유저가 둘 다 최애 → 같은 영상으로 두 번 가면 안 된다.
     const d = makeDeps({
       pending: [iv({ playerNames: [P1.name, P2.name] })],
       audience: () => ["dup-user", "solo"],
     });
     const s = await notifyFavPlayerInterviews(d.deps);
     const allRecipients = d.calls.sends.flatMap((x) => x.userIds);
-    const dupCount = allRecipients.filter((u) => u === "dup-user").length;
-    check("같은 유저에게 한 영상 1회만", dupCount === 1);
+    check("같은 유저에게 한 영상 1회만",
+      allRecipients.filter((u) => u === "dup-user").length === 1);
     check("중복 제외 카운트 기록", s.skippedDuplicateUser >= 1);
     check("두 선수 각각 claim", d.calls.claims.length === 2);
   }
 
-  console.log("[2-D] kboId 미확정 fail-close (삼순 NO-GO ④축 관련)");
+  console.log("[R2-D] kboId 미확정 fail-close");
   {
     const u = makeDeps({ pending: [iv({ playerNames: ["존재하지않는선수XYZ"] })] });
     const s = await notifyFavPlayerInterviews(u.deps);
@@ -191,10 +248,6 @@ async function main() {
 
   console.log("[3] 경계 처리");
   {
-    const dup = makeDeps({ claim: () => false });
-    const s1 = await notifyFavPlayerInterviews(dup.deps);
-    check("중복 claim → 미발송", s1.sent === 0 && s1.skippedClaimed === 1 && dup.calls.sends.length === 0);
-
     const noAud = makeDeps({ audience: () => [] });
     const s2 = await notifyFavPlayerInterviews(noAud.deps);
     check("대상 0 → 발송·unclaim 없음",
@@ -203,7 +256,8 @@ async function main() {
 
     const empty = makeDeps({ pending: [] });
     const s3 = await notifyFavPlayerInterviews(empty.deps);
-    check("미발송 0 → no-op", s3.pending === 0 && empty.calls.sends.length === 0 && empty.calls.marked.length === 0);
+    check("미발송 0 → no-op",
+      s3.pending === 0 && empty.calls.sends.length === 0 && empty.calls.marked.length === 0);
   }
 }
 
