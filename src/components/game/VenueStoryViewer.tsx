@@ -208,6 +208,19 @@ export default function VenueStoryViewer({
   const progressAnimRef = useRef<{ storyId: number; anim: Animation } | null>(null);
   const refreshedStoryIdRef = useRef<number | null>(null);
   const lastUrlRefreshAtRef = useRef(0);
+  // 이미지 스토리 검은 화면 깜박임 방지(하린아빠 8/14 11:39 리포트) — <img src> 교체 순간
+  // 브라우저가 이전 프레임을 비우고 새 이미지 디코드 완료까지 검은 배경이 노출된다
+  // (영상은 poster 가 있어 무증상). 로드 완료 전에는 트레이 썸네일(thumbUrl, 이미 로드됨)을
+  // placeholder 로 깔고, 인접 스토리를 미리 로드해 다음 전환은 즐시 표시되게 한다.
+  const [loadedMediaUrls, setLoadedMediaUrls] = useState<ReadonlySet<string>>(() => new Set());
+  const markMediaLoaded = useCallback((url: string) => {
+    setLoadedMediaUrls((prev) => {
+      if (prev.has(url)) return prev;
+      const next = new Set(prev);
+      next.add(url);
+      return next;
+    });
+  }, []);
 
   const story = stories[index];
   const keyboardOpen = isVenueStoryKeyboardOpen(composerFocused, kbInset);
@@ -222,6 +235,21 @@ export default function VenueStoryViewer({
   useEffect(() => {
     if (storyId != null) onStorySeen?.(storyId);
   }, [storyId, onStorySeen]);
+
+  // 인접 이미지 스토리 선로드 — 다음/이전 전환 시 디코드 대기 없이 즐시 표시(8/14 깜박임).
+  // 브라우저 메모리 캐시만 데우며, load 이벤트에서 loadedMediaUrls 에도 등록해 placeholder 단계를 건너뛴다.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.Image !== "function") return;
+    for (const i of [index + 1, index - 1]) {
+      const s = stories[i];
+      if (!s || s.mediaType !== "image" || loadedMediaUrls.has(s.mediaUrl)) continue;
+      const im = new window.Image();
+      im.onload = () => markMediaLoaded(s.mediaUrl);
+      im.src = s.mediaUrl;
+    }
+    // loadedMediaUrls 는 의도적 제외 — 로드 완료마다 재실행하면 같은 URL 재요청만 늘어난다(캐시 히트지만 불필요).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, stories, markMediaLoaded]);
 
   // 조회수 트래킹(A안 원문 · #735 패턴) — 뷰어 열람 = click: 표시된 스토리마다 1회 전송.
   // 비로그인 guest 집계·beacon 우선/keepalive 폴백·탭 세션 내 중복 방지·실패 재시도 해제는
@@ -783,12 +811,28 @@ export default function VenueStoryViewer({
             onEnded={goNext}
           />
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={story.mediaUrl}
-            alt=""
-            className="max-h-full max-w-full w-full h-full object-contain"
-          />
+          <>
+            {/* 로드 완료 전 placeholder — 트레이에서 이미 로드된 썸네일로 검은 화면 대체(8/14 깜박임) */}
+            {!loadedMediaUrls.has(story.mediaUrl) && story.thumbUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={story.thumbUrl}
+                alt=""
+                aria-hidden
+                data-story-media-placeholder
+                className="absolute inset-0 m-auto max-h-full max-w-full w-full h-full object-contain"
+              />
+            )}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={story.mediaUrl}
+              alt=""
+              data-story-media="image"
+              onLoad={() => markMediaLoaded(story.mediaUrl)}
+              className="relative max-h-full max-w-full w-full h-full object-contain"
+              style={loadedMediaUrls.has(story.mediaUrl) ? undefined : { opacity: 0 }}
+            />
+          </>
         )}
 
         {/* 탭 존: 좌(이전)/우(다음), 길게 눌러 일시정지.
