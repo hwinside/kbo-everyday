@@ -75,6 +75,11 @@ import {
   type CareerMetricQuery,
 } from "./stats/career-metric-leaderboard";
 import {
+  composeEventRecordAnswer,
+  isNoHitNoRunQuestion,
+  type EventRecordAnswer,
+} from "./stats/event-records";
+import {
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
   resolveTeamRecord,
@@ -558,6 +563,8 @@ export type QuestionRoute =
   | "team_record"
   // KBO 공식 통산 기준선 + 당해 시즌 스냅샷으로 결정론 조회한다. 이 라벨 자체로는 로그를 쓰지 않는다.
   | "career_leaderboard"
+  // KBO 공식 레코드북 사건 원장 조회. 성공/실패는 kbo_structured/history_hold로 확정한다.
+  | "event_record"
   // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
   | "name_suggest"
   | "baseball_rule_term"
@@ -776,6 +783,8 @@ export interface QaDeps {
     query: CareerMetricQuery,
     now?: Date,
   ) => Promise<CareerMetricAnswer | null>;
+  /** KBO 공식 레코드북 사건 원장. 현재 폐쇄 범위는 정규시즌 노히트노런이다. */
+  fetchEventRecord?: (question: string) => Promise<EventRecordAnswer | null>;
   /**
    * 구단 기록 조회 (kbo_structured — 팀 축).
    *
@@ -2312,6 +2321,7 @@ export function routeQuestion(
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
   if (isScopeAskPhrase(question)) return "scope_guide";
   if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
+  if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
   // ── 기록 질문의 종착지 (2026-08-04 하린아빠 18:26 + 삼순 #1100 1차 P0-1) ──────────
@@ -3943,6 +3953,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return settleCareerLeaderboard(composeCareerMetricAnswer(result), "kbo_structured");
     } catch {
       return settleCareerLeaderboard(SYSTEM_ERROR_ANSWER, "error");
+    }
+  }
+
+  if (route === "event_record") {
+    const settleEventRecord = async (answer: string, matchPath: MatchPath): Promise<QaResult> => {
+      await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: null, outputTokens: null });
+      return { status: 200, answer, source: matchPath, remaining };
+    };
+    if (!deps.fetchEventRecord) {
+      return settleEventRecord(resolveHoldAnswer(question), "history_hold");
+    }
+    try {
+      const result = await deps.fetchEventRecord(question);
+      if (!result) return settleEventRecord(resolveHoldAnswer(question), "history_hold");
+      return settleEventRecord(composeEventRecordAnswer(result), "kbo_structured");
+    } catch {
+      return settleEventRecord(SYSTEM_ERROR_ANSWER, "error");
     }
   }
 
