@@ -37,9 +37,9 @@ function markSeen(key: string): void {
 }
 
 /** 카운터 +1 (best-effort). sendBeacon 우선, 큐잉 실패 시 fetch 폴백. */
-function sendView(type: ContentViewType, id: string): void {
+function sendView(type: ContentViewType, id: string, viewToken: string): void {
   const url = "/api/content-views/view";
-  const body = JSON.stringify({ type, id });
+  const body = JSON.stringify({ type, id, token: viewToken });
   const beaconAvailable =
     typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function";
   let beaconQueued = false;
@@ -65,17 +65,23 @@ function sendView(type: ContentViewType, id: string): void {
 }
 
 /** 숏츠 조회 +1 — 동일 세션당 영상 1회 dedup. */
-export function trackShortsView(videoId: string): void {
+export function trackShortsView(videoId: string, viewToken?: string | null): void {
+  if (!viewToken) return; // 서명 없는 항목은 전송 안 함 — 임의 id 증가 차단(삼순 blocker3)
   if (!shouldCountShortsView(seenSet(), videoId)) return;
   markSeen(contentViewKey("shorts", videoId));
-  sendView("shorts", videoId);
+  sendView("shorts", videoId, viewToken);
 }
 
 /** 뉴스 원문 열기 +1 — click 축이라 dedup 없음. */
-export function trackNewsView(url: string, canonicalUrl?: string | null): void {
+export function trackNewsView(
+  url: string,
+  canonicalUrl?: string | null,
+  viewToken?: string | null,
+): void {
+  if (!viewToken) return; // 서명 없는 표면(DM 클리핑 등)은 전송 안 함 — best-effort
   const id = newsContentId(url, canonicalUrl);
   if (!isValidContentId(id)) return;
-  sendView("news", id);
+  sendView("news", id, viewToken);
 }
 
 /** 관리자 배지용 배치 count 조회. 실패 시 빈 맵(배지 미표시). */
@@ -85,9 +91,17 @@ export async function fetchContentViewCounts(
   const valid = items.filter((item) => isValidContentId(item.id));
   if (valid.length === 0) return {};
   try {
+    // 서버가 로그인+ADMIN_EMAILS를 검증하므로(삼순 blocker2) 세션 토큰을 Bearer로 동봉.
+    const { supabase } = await import("@/lib/supabase/client");
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.access_token;
+    if (!accessToken) return {};
     const response = await fetch("/api/content-views/counts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
       body: JSON.stringify({ items: valid }),
     });
     if (!response.ok) return {};

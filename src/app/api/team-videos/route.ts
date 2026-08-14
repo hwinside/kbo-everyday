@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { signContentView } from "@/lib/content-views/sign";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import {
@@ -18,6 +19,15 @@ interface TeamVideoItem {
   thumbnail: string | undefined;
   publishedAt: string;
   durationSeconds: number;
+  viewToken?: string;
+}
+
+/** 조회수 서명 발급 — 서버가 실제 목록에 내보낸 영상만 /api/content-views/view 증가 가능(임의 id 차단). */
+function withViewTokens(items: TeamVideoItem[]): TeamVideoItem[] {
+  return items.map((item) => {
+    const viewToken = item.id ? signContentView("shorts", item.id) : null;
+    return viewToken ? { ...item, viewToken } : item;
+  });
 }
 
 interface TeamVideoResult {
@@ -148,7 +158,8 @@ export async function GET(req: NextRequest) {
 
       if (items.length === 0) return fallback(team.shortName, type);
 
-      const result = { items };
+      // 조회수 서명 발급 — 서버가 실제 목록에 내보낸 영상만 /api/content-views/view 증가 가능.
+      const result = { items: withViewTokens(items) };
       cache.set(cacheKey, { data: result, ts: Date.now() });
       return NextResponse.json(result);
     });
@@ -177,13 +188,13 @@ async function fallback(teamShortName: string, type: string) {
       });
 
       return NextResponse.json({
-        items: filtered.map((v) => ({
+        items: withViewTokens(filtered.map((v) => ({
           id: v.video_id,
           title: v.title,
-          thumbnail: v.thumbnail,
+          thumbnail: v.thumbnail ?? undefined,
           publishedAt: v.published_at,
           durationSeconds: 0,
-        })),
+        }))),
       });
     }
   } catch { /* ignore */ }

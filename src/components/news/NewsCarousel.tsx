@@ -252,6 +252,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
               source: item.source,
               thumbnailUrl: thumbUrl,
               teamId: item.teamId,
+              viewToken: item.viewToken,
             };
 
             return (

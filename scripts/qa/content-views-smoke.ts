@@ -75,4 +75,29 @@ check("counts 키 형식: `<type>:<id>`", () => {
   assert.equal(contentViewKey("news", "https://a.b/c"), "news:https://a.b/c");
 });
 
+// ── 서명 계약 (삼순 blocker3: 임의 content_id 차단) ──
+// 서명 비밀은 서버 env에서 유도 — 스모크용 가짜 값 주입 후 import(CJS 변환 환경이라 top-level await 불가).
+process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "smoke-secret";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { signContentView, verifyContentViewToken } = require("../../src/lib/content-views/sign") as typeof import("../../src/lib/content-views/sign");
+
+check("서명 라운드트립: 발급 토큰은 검증 통과", () => {
+  const token = signContentView("shorts", "vid123");
+  assert.ok(token && token.length === 32);
+  assert.equal(verifyContentViewToken("shorts", "vid123", token), true);
+});
+
+check("서명 거부: 다른 id/type/위조·비문자열 토큰은 거부", () => {
+  const token = signContentView("shorts", "vid123")!;
+  assert.equal(verifyContentViewToken("shorts", "vid999", token), false); // 다른 id
+  assert.equal(verifyContentViewToken("news", "vid123", token), false); // 다른 type
+  assert.equal(verifyContentViewToken("shorts", "vid123", "f".repeat(32)), false); // 위조
+  assert.equal(verifyContentViewToken("shorts", "vid123", undefined), false);
+  assert.equal(verifyContentViewToken("shorts", "vid123", "short"), false); // 길이 불일치
+});
+
+check("서명 결정론: 같은 입력 → 같은 토큰 (캐시 응답에 담겨도 유효)", () => {
+  assert.equal(signContentView("news", "https://a.b/c"), signContentView("news", "https://a.b/c"));
+});
+
 console.log(`\ncontent-views smoke: ${passed} PASS`);

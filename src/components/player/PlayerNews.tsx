@@ -17,6 +17,7 @@ interface NewsItem {
   originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
+  viewToken?: string;
 }
 
 interface PlayerNewsProps {
@@ -94,6 +95,7 @@ export default function PlayerNews({ playerName, teamId }: PlayerNewsProps) {
               title: item.title,
               thumbnailUrl: item.thumbnailUrl,
               teamId,
+              viewToken: item.viewToken,
             };
             return (
               <GlassCard key={i} pressable className="overflow-hidden p-0">

@@ -8,6 +8,7 @@ interface NewsItem {
   originalLink?: string;
   pubDate: string;
   _label?: string;
+  viewToken?: string;
 }
 
 export interface HomeNewsItem {
@@ -23,6 +24,8 @@ export interface HomeNewsItem {
   timeAgo: string;
   teamId: number | null;
   type: "news";
+  /** 조회수 서명(/api/news 발급). */
+  viewToken?: string;
 }
 
 // v4: non-Naver link 기사를 API에서 노출 제외하도록 바뀌어, 옛 캐시(언론사 link 섞인 v3)를
@@ -57,6 +60,7 @@ function toHomeNewsItems(items: NewsItem[], myTeamId: number | null): HomeNewsIt
     thumbnailUrl: null,
     type: "news" as const,
     teamId: myTeamId || null,
+    viewToken: item.viewToken,
   }));
 }
 

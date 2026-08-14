@@ -13,6 +13,8 @@ interface ReelVideo {
   id: string;
   title: string;
   label?: string;
+  /** 조회수 서명(피드 API 발급) — 없으면 조회수 미집계(best-effort). */
+  viewToken?: string;
 }
 
 interface ReelViewerProps {
@@ -42,8 +44,8 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
 
   // 조회수: 현재 영상이 노출될 때 +1 (세션당 영상 1회 dedup — tracker 내부).
   useEffect(() => {
-    trackShortsView(video.id);
-  }, [video.id]);
+    trackShortsView(video.id, video.viewToken);
+  }, [video.id, video.viewToken]);
 
   // 관리자 전용 조회수 배지 — 관리자가 아니면 hook이 요청 자체를 안 한다.
   const viewCountItems = useMemo(

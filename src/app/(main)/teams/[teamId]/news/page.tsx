@@ -22,6 +22,7 @@ interface NewsItem {
   originalLink?: string;
   pubDate: string;
   thumbnailUrl?: string | null;
+  viewToken?: string;
 }
 
 export default function TeamNewsPage() {
@@ -124,6 +125,7 @@ export default function TeamNewsPage() {
                 source,
                 thumbnailUrl: item.thumbnailUrl,
                 teamId: team.id,
+                viewToken: item.viewToken,
               };
               return (
                 <GlassCard key={i} pressable className="overflow-hidden p-0">

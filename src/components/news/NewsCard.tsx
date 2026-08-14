@@ -23,6 +23,7 @@ export default function NewsCard({ news, viewCount }: NewsCardProps) {
     source: news.source,
     thumbnailUrl: news.thumbnailUrl,
     teamId: news.teamId,
+    viewToken: news.viewToken,
   };
 
   return (

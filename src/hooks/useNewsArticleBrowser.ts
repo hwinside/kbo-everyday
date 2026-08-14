@@ -18,7 +18,7 @@ export function useNewsArticleBrowser() {
 
   const openArticle = useCallback((article: NewsArticleDiscussion) => {
     // 조회수 +1 (best-effort, 관리자 전용 표시) — 모든 뉴스 원문 열기의 SSOT 초크포인트.
-    trackNewsView(article.url, article.canonicalUrl);
+    trackNewsView(article.url, article.canonicalUrl, article.viewToken);
     openNewsArticle(article, commentsEnabled);
   }, [commentsEnabled]);
 
@@ -26,7 +26,7 @@ export function useNewsArticleBrowser() {
     event: { preventDefault: () => void },
     article: NewsArticleDiscussion,
   ) => {
-    trackNewsView(article.url, article.canonicalUrl);
+    trackNewsView(article.url, article.canonicalUrl, article.viewToken);
     handleNewsArticleAnchorClick(event, article, commentsEnabled);
   }, [commentsEnabled]);
 
