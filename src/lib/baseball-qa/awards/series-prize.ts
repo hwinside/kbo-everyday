@@ -242,7 +242,7 @@ export function renderSeriesPrizeAnswer(
 ): SeriesPrizeAnswer {
   const year = askedYear ?? rows.find((row) => row.koreanSeries !== null)?.year ?? null;
   if (year === null) {
-    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없습니다. 조금 뒤에 다시 물어봐 주십시오.", grounded: false };
+    return { answer: "한국시리즈 MVP 기록을 아직 확인할 수 없습니다. 조금 뒤에는 다시 확인할 수 있습니다.", grounded: false };
   }
   const row = rows.find((r) => r.year === year);
   if (!row) {
@@ -251,7 +251,7 @@ export function renderSeriesPrizeAnswer(
     if (nowYear <= year) {
       return { answer: `${year}년 한국시리즈는 아직 MVP가 정해지지 않았습니다. 시즌이 끝나면 확인하겠습니다.`, grounded: true };
     }
-    return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않습니다. 다른 연도를 물어봐 주십시오.`, grounded: false };
+    return { answer: `${year}년 한국시리즈 MVP 기록은 아직 갖고 있지 않습니다. 다른 연도라면 확인할 수 있습니다.`, grounded: false };
   }
   if (!row.koreanSeries) {
     // 같은 `-` 라도 뜻이 갈린다 (삼순 P1): 현재 시즌은 "아직 미확정", 과거 연도는

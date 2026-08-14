@@ -26,8 +26,15 @@ export const BASEBALL_GENIUS_TONE_PROMPT = [
 /** 생성 답변이 승인된 합니다체 계약을 명백히 위반하는지 확인한다. */
 const CASUAL_SENTENCE_ENDING_RE =
   /(?:이에요|예요|해요|했어요|돼요|되요|아요|어요|여요|죠|네요|군요|나요|가요|세요|게요|래요|대요|데요|지요|고요)(?=(?:[.!?…()\[\]{}]|\s|⚾|$))/u;
+const INFORMAL_SENTENCE_ENDING_RE =
+  /(?:이야|야|알겠어|겠어|했어|였어|었어|았어|구나|알겠지|그렇지|그렇네|그렇군|그러냐|그러니|(?<!니)다)(?=(?:[.!?…)\]}]|⚾|$))/u;
 
 export function isBaseballGeniusToneCompliant(answer: string): boolean {
-  // `필요.` 같은 명사 끝의 `요`는 허용하고, 실제 해요체 종결어미만 문장 경계에서 잡는다.
-  return !CASUAL_SENTENCE_ENDING_RE.test(answer);
+  // 유저가 바로 쓸 수 있는 질문 예시(`"보크가 뭐야?"`)는 봇의 발화가 아니므로 제외한다.
+  const botSpeech = answer
+    .replace(/["“][^"”]*["”]/gu, "")
+    .replace(/['‘][^'’]*['’]/gu, "");
+  // `필요.` 같은 명사 끝의 `요`와 합니다체의 `니다`는 허용하되,
+  // 해요체뿐 아니라 반말·해라체(`이야/알겠어/그렇다`)도 문장 경계에서 막는다.
+  return !CASUAL_SENTENCE_ENDING_RE.test(botSpeech) && !INFORMAL_SENTENCE_ENDING_RE.test(botSpeech);
 }

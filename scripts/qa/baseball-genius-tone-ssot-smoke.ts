@@ -127,8 +127,15 @@ assert.match(migration, /matched_count <> 136/);
 
 assert.equal(isBaseballGeniusToneCompliant("야구에서 보크는 반칙 동작입니다."), true);
 assert.equal(isBaseballGeniusToneCompliant("추가 확인이 필요."), true, "명사 끝 `요`를 해요체로 오판하면 안 된다");
-assert.equal(isBaseballGeniusToneCompliant("야구에서 보크는 반칙 동작이에요."), false);
-assert.equal(isBaseballGeniusToneCompliant("주자가 진루할 수 없어요(2사 제외)."), false);
+for (const nonFormal of [
+  "야구에서 보크는 반칙 동작이에요.",
+  "주자가 진루할 수 없어요(2사 제외).",
+  "보크는 반칙이야.",
+  "알겠어.",
+  "그렇다.",
+]) {
+  assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `비합니다체를 통과시키면 안 된다: ${nonFormal}`);
+}
 assert.deepEqual(
   validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 반칙 동작이에요." }), "보크가 뭐야?"),
   { kind: "unsure" },
@@ -137,6 +144,18 @@ assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
   { kind: "insufficient", reason: "tone_violation" },
 );
+for (const nonFormal of ["보크는 반칙이야.", "알겠어.", "그렇다."]) {
+  assert.deepEqual(
+    validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
+    { kind: "unsure" },
+    `generic LLM 비합니다체 fail-close: ${nonFormal}`,
+  );
+  assert.deepEqual(
+    validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: nonFormal }), { numericEvidence: true, evidence: [] }),
+    { kind: "insufficient", reason: "tone_violation" },
+    `RAG 비합니다체 fail-close: ${nonFormal}`,
+  );
+}
 
 // 새 정적 출력이 추가되면서 해요체가 섞이면, 위 수동 목록에 없더라도 실행 코드 AST에서 잡는다.
 const outputFiles = [
@@ -150,7 +169,7 @@ const outputFiles = [
   "src/lib/baseball-qa/stats/career-series.ts",
   "src/lib/baseball-qa/stats/career-metric-leaderboard.ts",
 ];
-const casualEnding = /(?:이에요|예요|해요|했어요|돼요|되요|아요|어요|여요|죠|네요|군요|나요|가요|세요|게요|래요|대요|데요|지요|고요)(?=(?:[.!?…()\[\]{}]|\s|⚾|$))/u;
+const imperativeOrMechanicalCopy = /주십시오|(?:관해|기록을|이야기에) 답변합니다/u;
 const violations: string[] = [];
 for (const relative of outputFiles) {
   const absolute = path.join(process.cwd(), relative);
@@ -165,9 +184,12 @@ for (const relative of outputFiles) {
         if (ts.isPropertyAssignment(owner) && owner.name.getText(sf) === "answer") isOutput = true;
         if (ts.isVariableDeclaration(owner) && /_ANSWER$/.test(owner.name.getText(sf))) isOutput = true;
       }
-      if (isOutput && casualEnding.test(node.getText(sf))) {
-        const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
-        violations.push(`${relative}:${pos.line + 1}`);
+      if (isOutput) {
+        const output = ts.isStringLiteralLike(node) ? node.text : node.getText(sf);
+        if (!isBaseballGeniusToneCompliant(output) || imperativeOrMechanicalCopy.test(output)) {
+          const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          violations.push(`${relative}:${pos.line + 1}`);
+        }
       }
     }
     ts.forEachChild(node, visit);

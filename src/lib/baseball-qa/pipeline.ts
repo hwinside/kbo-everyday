@@ -149,7 +149,7 @@ export const UNSURE_ANSWER =
   "어떤 내용을 물으신 건지 조금만 더 구체적으로 적어 주시면 정확히 확인하겠습니다. " +
   "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 요즘 어때?\"";
 export const SERVICE_REDIRECT_ANSWER =
-  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내 주시면 운영팀이 확인합니다. 저는 야구 이야기에 답변합니다.";
+  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기에서 운영팀이 확인합니다. 저는 야구 이야기를 함께 살펴보겠습니다.";
 /**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
@@ -168,7 +168,7 @@ export const SERVICE_REDIRECT_ANSWER =
  */
 export const HISTORY_HOLD_ANSWER =
   "그 기록은 아직 준비되지 않았습니다. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
-  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 답변합니다.";
+  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 확인할 수 있습니다.";
 
 /**
  * **구단 단위 수치** 전용 fail-close 안내 (삼순 #1100 2차 P0-2).
@@ -183,7 +183,7 @@ export const HISTORY_HOLD_ANSWER =
  */
 export const TEAM_STAT_HOLD_ANSWER =
   "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어렵습니다. " +
-  "순위·팀 기록은 홈의 순위표에서 확인할 수 있으며, 구단 이야기나 선수 기록은 답변합니다.";
+  "순위·팀 기록은 홈의 순위표에서 확인할 수 있으며, 구단 이야기나 선수 기록도 함께 살펴볼 수 있습니다.";
 
 /**
  * 최신 소식을 물었는데 그 창의 기사 근거로 답을 못 만든 경우 (삼순 조건부 GO ②).
@@ -215,7 +215,7 @@ export const LLM_AMBIGUOUS_ANSWER =
  * 골라야 하고, 그 고르는 부담 때문에 그냥 나간다.
  */
 export const SCOPE_GUIDE_ANSWER =
-  "야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식에 관해 답변합니다. " +
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
   "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\" ⚾";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 기쁩니다! ⚾";
@@ -230,10 +230,10 @@ export const ACK_ANSWER = "도움이 됐다니 기쁩니다! ⚾";
 //    반대가설이 있는 건 코드가 단정하면 안 된다(2026-08-07 확정 원칙).
 //    그래서 **만남·헤어짐 양쪽에 다 자연스러운 중립 문구**를 쓴다.
 export const GREETING_ANSWER =
-  "반갑습니다! 야구 이야기가 궁금할 때 언제든 불러 주십시오 ⚾";
+  "야구 이야기가 궁금한 순간에 함께하겠습니다 ⚾";
 // 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
 // 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
-export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 모두 사용했습니다. 내일 다시 물어봐 주십시오.`;
+export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 모두 사용했습니다. 내일 다시 질문할 수 있습니다.`;
 
 /**
  * 동명이인 picker 안내 문구.
@@ -244,7 +244,7 @@ export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 모두
 export const PLAYER_PICKER_ANSWER =
   "같은 이름의 선수가 여럿 있습니다. 어느 선수를 말씀하시는 겁니까?";
 export const QUESTION_CORRECTION_ANSWER =
-  "혹시 아래 질문을 뜻하셨습니까? 맞으면 선택해 주십시오.";
+  "혹시 아래 질문을 뜻하셨습니까? 맞는 질문을 선택하면 이어서 확인하겠습니다.";
 
 /**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
@@ -2782,7 +2782,7 @@ export function renderTeamEntryAnswer(
 }
 
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
-  "지금은 당일 1군 등록 명단을 확인할 수 없습니다. 잠시 후 다시 물어봐 주십시오.";
+  "지금은 당일 1군 등록 명단을 확인할 수 없습니다. 잠시 후에는 다시 확인할 수 있습니다.";
 
 // ── 오늘 선발 매치업 (2026-08-11 하린아빠 제보 ① · 삼순 A안 확정) ────────────────
 //
@@ -2880,7 +2880,7 @@ export function adaptTodayStarters(
 }
 
 export const TODAY_NO_GAMES_ANSWER =
-  "오늘은 예정된 KBO 경기가 없습니다. 다음 경기일에 다시 물어봐 주십시오.";
+  "오늘은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 잡히면 안내하겠습니다.";
 export const STARTER_TBD = "미발표";
 
 /** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
@@ -2908,7 +2908,7 @@ export function renderTodayStartersAnswer(
   if (rows.length === 0) {
     return team === null
       ? TODAY_NO_GAMES_ANSWER
-      : `오늘은 ${team} 경기가 없습니다. 다음 경기일에 다시 물어봐 주십시오.`;
+      : `오늘은 ${team} 경기가 없습니다. 다음 경기 일정이 잡히면 안내하겠습니다.`;
   }
   const lines = rows.map((game) => {
     // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).

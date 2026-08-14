@@ -41,7 +41,7 @@ export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
  * 반대 방향으로 다시 만드는 셈이다.
  */
 export const BASEBALL_GENIUS_FALLBACK_ANSWER =
-  "야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식에 관해 답변합니다. 예: \"보크가 뭐야?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식입니다. 예: \"보크가 뭐야?\"";
 
 /**
  * **답변 가능 경로 → 유저에게 밝혀야 하는 범위어** (SSOT).

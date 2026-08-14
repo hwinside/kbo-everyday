@@ -119,7 +119,7 @@ export const LLM_START_FENCE_MS = 30_000;
 const DELIVERY_RETRY_BACKOFF_SECONDS = 60;
 
 export const INVALID_QUESTION_ANSWER =
-  `질문은 ${MIN_QUESTION_LEN}~${MAX_QUESTION_LEN}자 텍스트로 입력해 주십시오. 예: "보크가 뭐야?"`;
+  `질문 형식은 ${MIN_QUESTION_LEN}~${MAX_QUESTION_LEN}자의 텍스트입니다. 예: "보크가 뭐야?"`;
 
 let glossaryCache: { entries: GlossaryEntry[]; loadedAt: number } | null = null;
 const GLOSSARY_TTL_MS = 10 * 60 * 1000;
