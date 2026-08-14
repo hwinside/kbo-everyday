@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { contentViewKey, type ContentViewType } from "./policy";
+import { contentViewKey, newsContentId, type ContentViewType } from "./policy";
 
 /**
  * 콘텐츠 조회수 서명 키 (서버 전용) — 2026-08-14 삼순 blocker3.
@@ -30,6 +30,22 @@ export function signContentView(type: ContentViewType, id: string): string | nul
     .update(contentViewKey(type, id))
     .digest("hex")
     .slice(0, TOKEN_BYTES * 2);
+}
+
+/**
+ * 뉴스 목록 응답 공통 종단 — 항목별 viewToken 부착.
+ * cold/cache-hit/batch 모든 응답 경로가 이 함수 하나를 통과해야 한다(삼순 2차 리뷰 —
+ * 캐시-hit 경로가 unsigned raw를 반환해 첫 요청 이후 전부 미집계되던 결손 방지).
+ * 서명은 결정론이라 캐시된 항목에 다시 불러도 같은 토큰이 나온다.
+ */
+export function withNewsViewTokens<T extends { link: string; originalLink?: string }>(
+  items: T[],
+): (T & { viewToken?: string })[] {
+  return items.map((item) => {
+    const contentId = newsContentId(item.link, item.originalLink);
+    const viewToken = contentId ? signContentView("news", contentId) : null;
+    return viewToken ? { ...item, viewToken } : item;
+  });
 }
 
 /** 서버 전용: 서명 검증 (timing-safe). */
