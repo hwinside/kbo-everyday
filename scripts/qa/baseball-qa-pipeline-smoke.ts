@@ -1971,7 +1971,7 @@ async function verifyPipeline() {
   // ⚠️ `unsure` 가 아니라 **전용 라벨**이다(삼순 2026-08-08). 원인 축(결속 데이터 부재)이
   //   달라 한 칸에 두면 과차단 감사의 분모가 사라진다 — 이 축은 재설계 후에도 유지된다.
   const unregisteredPlayer = freshState({
-    llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 오타니 선수는 홈런 468개를 기록했어요."}',
+    llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 오타니 선수는 홈런 468개를 기록했습니다."}',
   });
   const unregisteredResult = await answerQuestion(
     "u1",
@@ -3551,7 +3551,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // stub 이 질문에 없는 숫자를 단정하게 만들어 가드 fail-close 경로(stat_clarify)를 관측한다.
     {
       question: "이대호 홈런", deps: (s) => makeDeps(s),
-      state: { llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 이대호 선수는 홈런 374개를 기록했어요."}' },
+      state: { llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 이대호 선수는 홈런 374개를 기록했습니다."}' },
     },                                                                    // stat_clarify
     { question: "9회말 야구 룰에서 우천 중단은 어떻게 처리해?", deps: (s) => makeDeps(s) }, // llm
     {

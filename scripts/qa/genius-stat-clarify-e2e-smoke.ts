@@ -51,7 +51,7 @@ async function main() {
   const players: PlayerRef[] = await loadRosterPlayers();
   assert.ok(players.length >= 100, `로스터가 ${players.length}명뿐이다 — 로더가 깨졌다`);
   const GLOSSARY: GlossaryEntry[] = [
-    { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작이에요." },
+    { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작입니다." },
   ];
 
   // 구단 fixture — teamId 는 배포 판정기로 역산한다(표 중복 금지).
@@ -79,7 +79,7 @@ async function main() {
    */
   // ⚠️ stub 답은 배포 프롬프트 계약("첫 문장에 야구 신호")을 지켜야 한다 — 안 지키면
   //   출력측 안전판(`answerInQuestionScope`)이 unsure 로 접어 게이트가 위임 경로를 못 본다.
-  function makeDeps(llmAnswer = "야구 이야기시군요. 이대호 선수는 어느 시즌 말씀이신가요?"): { deps: QaDeps; calls: Calls } {
+  function makeDeps(llmAnswer = "야구 이야기로 이해했습니다. 이대호 선수의 어느 시즌 기록인지 알려주시면 확인하겠습니다."): { deps: QaDeps; calls: Calls } {
     const calls: Calls = { llm: 0, cacheSet: 0 };
     const deps = {
       loadGlossary: async () => GLOSSARY,
@@ -111,7 +111,7 @@ async function main() {
   }
 
   // 게이트가 잡아야 하는 환각 stub — 질문에 없는 숫자(374·0.312)를 단정한다.
-  const FABRICATED = "야구 기록으로 이대호 선수는 통산 홈런 374개, 타율 0.312를 기록했어요.";
+  const FABRICATED = "야구 기록으로 이대호 선수는 통산 홈런 374개, 타율 0.312를 기록했습니다.";
 
   // ── (A) 반대쌍 — 서사·매체 요청은 하드 되묻기로 삼키지 않는다 ────────────────
   //
@@ -167,7 +167,7 @@ async function main() {
   {
     // 자연 방향 — LLM 이 스스로 숫자 없이 되묻으면 그 문장이 그대로 나간다.
     const q = "이대호 홈런";
-    const natural = "야구 기록 질문이시군요. 어느 이대호 선수를 말씀하시는 건가요? 현역 KBO 선수인지 확인이 필요해요.";
+    const natural = "야구 기록 질문으로 이해했습니다. 어느 이대호 선수인지 확인이 필요합니다. 현역 KBO 선수인지 알려주시면 확인하겠습니다.";
     const { result, calls } = await ask(q, natural);
     check(`자연 되묻기 통과 — "${q}" (숫자 없는 stub)`, () => {
       if (calls.llm > 0) {
@@ -211,7 +211,7 @@ async function main() {
   {
     const HR_GLOSSARY: GlossaryEntry[] = [
       ...GLOSSARY,
-      { term: "홈런", aliases: ["홈런"], answer: "타자가 친 공이 담장을 넘어가 한 번에 득점하는 안타예요." },
+      { term: "홈런", aliases: ["홈런"], answer: "타자가 친 공이 담장을 넘어가 한 번에 득점하는 안타입니다." },
     ];
     for (const q of ["이대호 홈런 몇개", "오타니 홈런이 뭐야"]) {
       const { deps, calls } = makeDeps(FABRICATED);
