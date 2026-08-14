@@ -330,7 +330,7 @@ export function resolveTeamRecord(
   return { kind: "ok", team: canonicalTeam, label, value: String(raw) };
 }
 
-/** 받침 유무로 은/는 · 이/가 를 가른다. `순위은`·`홈런이에요` 같은 문장이 그대로 유저에게 간다. */
+/** 받침 유무로 은/는 를 가른다. `순위은` 같은 문장이 그대로 유저에게 간다. */
 function hasFinalConsonant(word: string): boolean {
   const last = word.trim().slice(-1);
   const code = last.charCodeAt(0);
@@ -340,6 +340,5 @@ function hasFinalConsonant(word: string): boolean {
 
 export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { kind: "ok" }>): string {
   const topicParticle = hasFinalConsonant(outcome.label) ? "은" : "는";
-  const copula = hasFinalConsonant(outcome.value) ? "이에요" : "예요";
-  return `${outcome.team} ${outcome.label}${topicParticle} ${outcome.value}${copula}! ⚾`;
+  return `${outcome.team} ${outcome.label}${topicParticle} ${outcome.value}입니다.`;
 }

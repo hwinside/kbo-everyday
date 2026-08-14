@@ -59,7 +59,7 @@ let players: PlayerRef[] = [];
  * 정상 구단 답변이 `unsure` 로 폐기되는 결함을 **물리적으로 못 잡았다**.
  * 이제는 provider 가 실제로 돌려줄 법한 **구단 답변 문장**을 그대로 태운다.
  */
-const LLM_ANSWER = "LG 트윈스는 서울을 연고로 하는 KBO 구단이에요.";
+const LLM_ANSWER = "LG 트윈스는 서울을 연고로 하는 KBO 구단입니다.";
 
 /**
  * production provider 가 돌려줄 법한 **정상 구단 답변** 표본 — `[원질문, 답변]` 쌍.
@@ -452,7 +452,7 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   for (const [question, bad] of [
     ["LG트윈스 응원가 알려줘", "리그 오브 레전드는 인기 게임입니다."],
     ["LG트윈스 오늘 어때?", "오늘 서울 날씨는 맑고 따뜻합니다."],
-    ["두산베어스 관련 알려줘", "근처 맛집으로는 갈비집을 추천해요."],
+    ["두산베어스 관련 알려줘", "근처 맛집으로는 갈비집을 추천합니다."],
     ["삼성 라이온즈 이야기", "이 영화는 2020년에 개봉했습니다."],
     ["KIA타이거즈 궁금해", "드라마 추천은 이건 어떨까요."],
   ] as const) {
@@ -512,9 +512,9 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   //   죽어도 `mentionsTeam` 경로가 대신 통과시켰다. 즉 "앵커가 지키는 것"을 아무도 안 봤다.
   //   구단명이 없고 **앵커만으로 살아야 하는** 답변을 따로 태운다.
   for (const [question, answer] of [
-    ["야구에서 유격수는 왜 ss야", "유격수는 shortstop 의 약자로 ss 라고 표기해요."],
-    ["내야수가 뭐야?", "내야수는 1루수·2루수·3루수·유격수를 통틀어 부르는 말이에요."],
-    ["KBO가 뭐야?", "KBO는 한국야구위원회의 약자예요."],
+    ["야구에서 유격수는 왜 ss야", "유격수는 shortstop 의 약자로 ss 라고 표기합니다."],
+    ["내야수가 뭐야?", "내야수는 1루수·2루수·3루수·유격수를 통틀어 부르는 말입니다."],
+    ["KBO가 뭐야?", "KBO는 한국야구위원회의 약자입니다."],
   ] as const) {
     await check(`앵커 단독으로도 정상 답변이 산다 "${answer}"`, () => {
       // ⚠️ 전제 확인 — 표본에 구단명이 있으면 `mentionsTeam` 경로가 대신 통과시켜
@@ -546,7 +546,7 @@ async function verifyTeamAnswersSurviveFinalValidator() {
     // 확정 신호가 같이 있으면 인정된다 — 이 완화가 통째로 닫히면 그것도 회귀다.
     for (const answer of [
       "삼성 라이온즈 주장은 구자욱 선수입니다.",
-      "KBO 리그 한화 이글스 소속의 내야수 문현빈 선수예요.",
+      "KBO 리그 한화 이글스 소속의 내야수 문현빈 선수입니다.",
     ]) {
       assert.equal(isQualifiedOnlyAnchorAnswer(answer), false,
         `확정 신호가 있는데 한정 앵커 단독으로 봤다: ${answer}`);
@@ -569,11 +569,11 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   // 아래는 전부 **질문에 구단·선수·야구 신호가 있는데 답변은 범위 밖**인 표본이다.
   // 종전 완화 경로는 이걸 통과시켰다(`LG 티켓 가격` 실측).
   for (const [question, bad] of [
-    ["문현빈 연봉 얼마야?", "문현빈의 연봉은 3억 원으로 알려져 있어요."],
-    ["문현빈 연봉 얼마야?", "문현빈 선수의 연봉은 3억 원이에요."],
-    ["김도영 여자친구 누구야?", "KIA 타이거즈 김도영 선수의 여자친구는 공개된 바 없어요."],
-    ["LG 티켓 가격 알려줘", "LG 홈경기 티켓은 1만원부터 시작해요."],
-    ["야구 유니폼 세탁법", "유니폼은 찬물에 중성세제로 손세탁하는 게 좋아요."],
+    ["문현빈 연봉 얼마야?", "문현빈의 연봉은 3억 원으로 알려져 있습니다."],
+    ["문현빈 연봉 얼마야?", "문현빈 선수의 연봉은 3억 원입니다."],
+    ["김도영 여자친구 누구야?", "KIA 타이거즈 김도영 선수의 여자친구는 공개된 바 없습니다."],
+    ["LG 티켓 가격 알려줘", "LG 홈경기 티켓은 1만원부터 시작합니다."],
+    ["야구 유니폼 세탁법", "유니폼은 찬물에 중성세제로 손세탁하는 것이 좋습니다."],
     ["리그 오브 레전드 알려줘", "리그 오브 레전드는 MOBA 장르입니다."],
     // ⚠️ 삼순 2026-08-08 P0 — **denylist 단어를 피한** 적대 표본. 범용 앵커
     //   (`선수`·`구단`·`선발`)를 단독 인정하면 전부 통과했다(실측). denylist 로는 못 닫는다:
@@ -635,9 +635,9 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   // 이게 빠지면 "다 막으면 통과"가 되어 게이트가 기능 퇴행을 승인한다.
   for (const answer of [
     "잠실야구장은 LG 트윈스의 홈 구장입니다.",
-    "야구에서 대타는 타순을 대신하는 선수예요.",
-    "야구에서 투구 동작 중 반칙이 보크예요.",
-    "1루 주자가 도루를 시도했어요.",
+    "야구에서 대타는 타순을 대신하는 선수입니다.",
+    "야구에서 투구 동작 중 반칙이 보크입니다.",
+    "1루 주자가 도루를 시도했습니다.",
   ]) {
     await check(`답변 어휘 분리 — 야구 문맥이면 통과 "${answer}"`, async () => {
       const { answerInQuestionScope } = await import("../../src/lib/baseball-qa/pipeline");
@@ -832,7 +832,7 @@ async function verifyUnsupportedMetricsStillHeld() {
 // ── 룰/용어 질문 회귀 ───────────────────────────────────────────────────────
 async function verifyRuleQuestionsStillOpen() {
   const glossary: GlossaryEntry[] = [
-    { term: "보크", aliases: ["balk"], answer: "보크는 투수의 반칙 투구 동작이에요." },
+    { term: "보크", aliases: ["balk"], answer: "보크는 투수의 반칙 투구 동작입니다." },
   ];
   await check('사전 히트 "보크가 뭐야?"', async () => {
     const state: RunState = { llmCalls: 0, logs: [] };

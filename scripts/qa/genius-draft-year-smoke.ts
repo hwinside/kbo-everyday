@@ -71,7 +71,7 @@ async function checkAsync(name: string, fn: () => Promise<void>) {
 }
 
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 interface Calls {
@@ -94,7 +94,7 @@ function previousTurnRow(question: string, jobSource = "rag") {
   const now = Date.now();
   return {
     question,
-    answer: "임찬규는 LG 트윈스의 프랜차이즈 투수예요.",
+    answer: "임찬규는 LG 트윈스의 프랜차이즈 투수입니다.",
     jobSource,
     answeredAt: new Date(now - 5_000).toISOString(),
     currentCreatedAt: new Date(now).toISOString(),
@@ -124,7 +124,7 @@ function makeDeps(
     callLlm: async () => {
       calls.llm += 1;
       return {
-        text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "아마 2010년쯤일 거예요." }),
+        text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "아마 2010년쯤일 것입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
@@ -141,7 +141,7 @@ function makeDeps(
     callRagLlm: async () => {
       calls.ragLlm += 1;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "프랜차이즈 투수예요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "프랜차이즈 투수입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
@@ -270,7 +270,7 @@ async function main() {
     await checkAsync(`\`${question}\` → 입단 경로로 새지 않는다`, async () => {
       const { result } = await ask(question);
       assert.doesNotMatch(
-        result.answer, /입단했어요/,
+        result.answer, /입단했습니다/,
         `입단이 아닌 질문에 입단 답을 줬다: ${result.answer}`,
       );
     });
@@ -349,7 +349,7 @@ async function main() {
   await checkAsync("직전 턴의 **답변**이 아니라 **질문**에서 선수를 푼다", async () => {
     // 답변에 다른 선수가 섞여 있어도 질문의 선수(김도영)로 결속돼야 한다.
     const turn = previousTurnRow("김도영 어떤 선수야");
-    turn.answer = "김도영은 임찬규와 자주 비교되는 타자예요.";
+    turn.answer = "김도영은 임찬규와 자주 비교되는 타자입니다.";
     const { result } = await ask("입단을 언제 했냐고?", undefined, turn);
     assert.match(result.answer, /김도영/, `엉뚱한 선수로 결속됐다: ${result.answer}`);
     assert.doesNotMatch(result.answer, /임찬규/, result.answer);
@@ -363,7 +363,7 @@ async function main() {
     // 이 문장이 없으면 유저는 "키움에 2005년 입단" 으로 읽는다.
     // ⚠️ "키움에 입단한 건 아니에요" 는 과단정이다(삼순) — draft 필드는 최초 지명만 증명하고
     //   이후 이적 합류를 부정할 수 없다. 확인 불가 범위를 그대로 말해야 한다.
-    assert.match(result.answer, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없어요/, `구단 불일치 안내가 없다: ${result.answer}`);
+    assert.match(result.answer, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없습니다/, `구단 불일치 안내가 없다: ${result.answer}`);
     assert.doesNotMatch(result.answer, /입단한 건 아니에요/, `이적 합류까지 부정하는 과단정: ${result.answer}`);
   });
 
@@ -426,7 +426,7 @@ async function main() {
   // ── 순위류 단독 종단 반례 — 입단 경로로 새지 않는다 ──────────────────────────
   await checkAsync("`임찬규 지금 몇 순위야?` → 입단 답이 아니다", async () => {
     const { result } = await ask("임찬규 지금 몇 순위야?");
-    assert.doesNotMatch(result.answer, /입단했어요/, `현재 순위 질문에 입단 답: ${result.answer}`);
+    assert.doesNotMatch(result.answer, /입단했습니다/, `현재 순위 질문에 입단 답: ${result.answer}`);
     assert.doesNotMatch(result.answer, /2011년/, `현재 순위 질문에 입단 연도: ${result.answer}`);
   });
 
@@ -489,17 +489,17 @@ async function main() {
     // 입단 당시 구단과 현재 구단이 다를 수 있다(이적). 우리 표기로 옮기면 사실이 바뀐다.
     assert.equal(
       renderDraftAnswer("임찬규", { year: 2011, team: "LG", detail: "1라운드 2순위" }),
-      "임찬규 선수는 2011년에 LG에 입단했어요.",
+      "임찬규 선수는 2011년에 LG에 입단했습니다.",
     );
     assert.equal(
       renderDraftAnswer("임찬규", { year: 2011, team: "LG", detail: "1라운드 2순위" }, { wantsDetail: true }),
-      "임찬규 선수는 2011년 LG 1라운드 2순위로 입단했어요.",
+      "임찬규 선수는 2011년 LG 1라운드 2순위로 입단했습니다.",
     );
     // ⚠️ 과단정 금지(삼순 2026-08-09): draft 필드는 최초 지명만 증명한다 — 이후 이적
     //   합류를 부정하면 안 된다. 확인 불가 범위를 그대로 말한다.
     const mismatch = renderDraftAnswer("박병호", { year: 2005, team: "LG", detail: "1차" }, { askedTeam: "키움" });
-    assert.match(mismatch, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없어요/);
-    assert.doesNotMatch(mismatch, /입단한 건 아니에요/);
+    assert.match(mismatch, /키움 합류 시점은 공식 입단\(최초 지명\) 기록으로는 확인할 수 없습니다/);
+    assert.doesNotMatch(mismatch, /입단한 것은 아닙니다/);
   });
 
   check("순번 질문 판정", () => {

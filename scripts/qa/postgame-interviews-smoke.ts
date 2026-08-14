@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  APPROVED_INTERVIEW_CHANNELS,
   isPostgameInterviewTitle,
   matchPostgameInterview,
   nextPostgameInterviewCollectionAt,
@@ -30,8 +31,10 @@ assert.equal(titleMatchesGameDate("인터뷰 | 2026 KBO리그 (26.07.30)", "2026
 assert.equal(titleMatchesGameDate("아이러브베이스볼 (07.30)", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("7월 30일 수훈선수", "2026-07-30"), true);
 assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260731", "2026-07-31"), true);
+assert.equal(titleMatchesGameDate("0811 | 카라스코 수훈선수 인터뷰", "2026-08-11"), true);
 assert.equal(titleMatchesGameDate("KIA 4 vs. NC 10 | 07/31/26", "2026-07-31"), true);
 assert.equal(titleMatchesGameDate("LG 2 vs 두산 4 | 260730", "2026-07-31"), false);
+assert.equal(titleMatchesGameDate("0810 | 카라스코 수훈선수 인터뷰", "2026-08-11"), false);
 assert.equal(titleMatchesGameDate("7월 29일 수훈선수", "2026-07-30"), false);
 
 const channel: InterviewChannel = {
@@ -82,6 +85,55 @@ assert.equal(
     [base],
   ),
   null,
+);
+
+const winningTwinsChannel = APPROVED_INTERVIEW_CHANNELS.find(
+  (candidate) => candidate.channelId === "UCYKUMtgU-lfM7PnclPkFXfQ",
+);
+assert.ok(winningTwinsChannel, "위닝트윈스 승인 채널 등록");
+assert.deepEqual(
+  matchPostgameInterview(
+    {
+      title: "0811 | 10이닝 퍼펙트! KBO 데뷔 첫 승! | 카라스코 수훈선수 인터뷰",
+      published_at: "2026-08-11T13:44:55.000Z",
+    },
+    winningTwinsChannel,
+    [{
+      ...base,
+      gameId: "20260811LGWO0",
+      gameDate: "2026-08-11",
+      awayTeamName: "LG",
+      homeTeamName: "키움",
+      awayScore: 3,
+      homeScore: 1,
+      winnerTeamId: 1,
+      winnerPlayerNames: ["카라스코"],
+      endedAt: "2026-08-11T13:20:35.538Z",
+      expiresAt: "2026-08-12T13:20:35.538Z",
+    }],
+  ),
+  { gameId: "20260811LGWO0", playerNames: ["카라스코"] },
+  "실제 누락 영상이 MMDD·선수명·승리팀·업로드 창으로 매핑",
+);
+assert.equal(
+  matchPostgameInterview(
+    {
+      title: "0811 | 카라스코 수훈선수 인터뷰",
+      published_at: "2026-08-11T13:44:55.000Z",
+    },
+    winningTwinsChannel,
+    [{
+      ...base,
+      gameId: "20260811HHOB0",
+      gameDate: "2026-08-11",
+      winnerTeamId: 2,
+      winnerPlayerNames: ["카라스코"],
+      endedAt: "2026-08-11T13:01:29.390Z",
+      expiresAt: "2026-08-12T13:01:29.390Z",
+    }],
+  ),
+  null,
+  "LG 전용 채널은 타 구단 승리 경기와 매핑하지 않는다",
 );
 
 const curatedInterviewChannel: InterviewChannel = {

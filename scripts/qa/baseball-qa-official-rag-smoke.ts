@@ -100,7 +100,7 @@ check("등급 분리 — 방어적 혼합 판정은 보수적인 tier2로 떨어
 
 // ── 2. tier2 숫자 금지 유지 (회귀 방지) ────────────────────────────────────────
 check("tier2 숫자 금지 — 기존 계약이 느슨해지지 않았다", () => {
-  const numeric = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤어요." });
+  const numeric = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤습니다." });
   assert.equal(validateRagResponse(numeric).kind, "insufficient");
   assert.equal(
     (validateRagResponse(numeric) as { reason: string }).reason,
@@ -146,10 +146,10 @@ check("숫자 없는 답은 근거 대조를 요구하지 않는다", () => {
 check("길이 상한 — tier1·tier2 모두 320자, 초과는 거부", () => {
   // 2026-08-10 하린아빠 "긴 답변이 필요한 경우는 충분히 길게": tier2 상한 160→320.
   // 장문 복붙 방지 상한 자체는 양쪽 다 유지된다.
-  const long = "가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS + 1);
+  const long = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 3)}입니다.`;
   const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long });
   assert.equal(validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] }).kind, "insufficient");
-  const ok = "가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS);
+  const ok = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 4)}입니다.`;
   assert.equal(
     validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok }), { numericEvidence: true, evidence: [OFFICIAL] }).kind,
     "grounded",
@@ -196,7 +196,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): { deps: QaDeps; calls: strin
     setCache: async () => { calls.push("setCache"); },
     callLlm: async () => {
       calls.push("callLlm");
-      return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "보크는 주자가 있을 때 투수의 반칙 투구 동작을 말해요." }), inputTokens: 1, outputTokens: 1 };
+      return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "보크는 주자가 있을 때 투수의 반칙 투구 동작을 말합니다." }), inputTokens: 1, outputTokens: 1 };
     },
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     log: async (row) => { calls.push(`log:${row.matchPath}`); },
@@ -335,7 +335,7 @@ checkAsync("모델이 지어낸 숫자는 tier1이어도 서빙하지 않는다"
 
 checkAsync("검수 사전이 있으면 공식 경로보다 우선한다(토큰 0 우선)", async () => {
   const { deps, calls } = makeDeps({
-    loadGlossary: async () => ([{ term: "보크", aliases: [], answer: "보크는 투수의 반칙 행위예요." } as GlossaryEntry]),
+    loadGlossary: async () => ([{ term: "보크", aliases: [], answer: "보크는 투수의 반칙 행위입니다." } as GlossaryEntry]),
     searchOfficialRag: async () => { throw new Error("사전이 먼저 답해야 한다"); },
     callOfficialRagLlm: async () => { throw new Error("호출되면 안 됨"); },
   });

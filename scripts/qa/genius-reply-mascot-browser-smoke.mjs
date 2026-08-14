@@ -24,8 +24,8 @@ const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
 // (질문, 답변 유형, 기대 마스코트) — 매핑 5갈래를 화면에서 직접 확인한다.
 const CASES = [
-  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작이에요.", kind: "answer", path: "dictionary", expect: "answering" },
-  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황이에요.", kind: "answer", path: "llm", expect: "answering" },
+  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작입니다.", kind: "answer", path: "dictionary", expect: "answering" },
+  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황입니다.", kind: "answer", path: "llm", expect: "answering" },
   { q: "고마워", a: "도움이 됐다니 다행이에요! ⚾", kind: "ack", path: "ack", expect: "praised" },
   { q: "오늘 경기 결과 알려줘", a: "야구 룰/용어에 대한 질문만 답할 수 있어요.", kind: "unavailable", path: "blocked", expect: "unknown" },
   // payload 자체가 없는 과거 답변(배포 전 생성분) — idle 폴백이어야 하고 깨지면 안 된다.
@@ -40,14 +40,14 @@ const NAMU_URL = "https://namu.wiki/w/%EB%AC%B8%EB%B3%B4%EA%B2%BD";
 const PROVENANCE_CASES = [
   {
     label: "신규 표기",
-    answer: "문보경 선수의 별명은 문보물이에요.\n\n📄 출처: 나무위키",
+    answer: "문보경 선수의 별명은 문보물입니다.\n\n📄 출처: 나무위키",
     payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag", source_url: NAMU_URL },
     expectLabel: "나무위키",
     expectHref: NAMU_URL,
   },
   {
     label: "구 표기(과거 발송분)",
-    answer: `문보경 선수의 별명은 문학소년이에요.\n\n📄 출처: 문보경 (${NAMU_URL}) · rev crawled:2026-08-02T02:59:26.899Z · 2026-08-02 기준`,
+    answer: `문보경 선수의 별명은 문학소년입니다.\n\n📄 출처: 문보경 (${NAMU_URL}) · rev crawled:2026-08-02T02:59:26.899Z · 2026-08-02 기준`,
     payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag" },
     expectLabel: "나무위키",
     expectHref: NAMU_URL,

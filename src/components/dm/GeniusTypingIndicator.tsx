@@ -30,14 +30,21 @@ const STATE_TO_MASCOT: Record<Exclude<GeniusTypingState, "idle">, GeniusMascotSt
 export default function GeniusTypingIndicator({
   state,
   onRetry,
+  questionMessageId,
 }: {
   state: GeniusTypingState;
   onRetry: () => void;
+  questionMessageId?: number;
 }) {
   if (state === "idle") return null;
 
   return (
-    <div className="flex justify-start" data-testid="genius-typing-indicator" data-state={state}>
+    <div
+      className="flex justify-start"
+      data-testid="genius-typing-indicator"
+      data-state={state}
+      data-genius-typing-question-id={questionMessageId}
+    >
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
           {/* eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG */}

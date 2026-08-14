@@ -56,8 +56,10 @@ export async function trackFallback(
     errorMessage: options?.errorMessage,
   };
 
-  // Supabase 영구 저장 (비동기, 실패해도 알림은 계속)
-  saveToSupabase(event).catch(err => {
+  // Supabase 영구 저장 — 반드시 await 한다. fire-and-forget은 응답 반환 직후
+  // 서버리스 freeze로 insert가 유실된다(2026-08-11 실측: "Failed to save to
+  // Supabase: fetch failed" — 장애 중 이벤트 공백으로 진단 지연). 실패해도 계속.
+  await saveToSupabase(event).catch(err => {
     console.error("[API Fallback] Failed to save to Supabase:", err.message);
   });
 
@@ -223,7 +225,7 @@ function firstRow<T>(data: unknown): T | null {
 export async function trackApiDegradation(
   apiName: string,
   reason: FallbackEvent["reason"],
-  options: { statusCode?: number; errorMessage?: string },
+  options: { statusCode?: number; errorMessage?: string; scope?: string },
   policy: DegradationAlertPolicy,
 ): Promise<void> {
   try {
@@ -244,7 +246,19 @@ export async function trackApiDegradation(
     const row = firstRow<{ should_send: boolean; attempt_token: string | null }>(data);
     if (!row || row.should_send !== true || !row.attempt_token) return;
 
-    await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
+    // 복구 알림 등록은 반드시 **경보 전송 confirm 이후** (삼순 Blocker 2).
+    // should_send 시점에 등록하면 전송 실패 → 복구 시 ✅가 먼저 나가고 drainer의
+    // 🚨가 나중에 가는 순서 역전이 생긴다. 전송 실패분은 outbox/drainer가 이어받지만
+    // 그 경우 복구 알림은 생략된다(best-effort 계약 유지).
+    const delivered = await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
+    if (delivered) {
+      // scope(예: gameId) 단위로 묶는다 — 경보를 유발한 scope가 정상으로 돌아왔을
+      // 때만 복구로 인정(삼순 2차 ③: game A 경보 후 game B 정상 200이 즉시 ✅를
+      // 보내는 오보 차단). scope 미지정 경보는 "*"로 등록돼 임의 성공이 복구다.
+      const scopes = pendingRecoveryNotice.get(apiName) ?? new Set<string>();
+      scopes.add(options.scope ?? "*");
+      pendingRecoveryNotice.set(apiName, scopes);
+    }
   } catch (err) {
     console.error(
       "[API Degradation] unexpected error:",
@@ -305,8 +319,8 @@ async function deliverAndSettle(
   options: { statusCode?: number; errorMessage?: string },
   policy: DegradationAlertPolicy,
   token: string,
-): Promise<void> {
-  await settleAttempt(apiName, reason, options, policy, token);
+): Promise<boolean> {
+  return settleAttempt(apiName, reason, options, policy, token);
 }
 
 /**
@@ -395,6 +409,74 @@ export async function sendDegradationTelegramAlert(
     console.error("[API Degradation] Telegram send failed — NACK(재시도):", error);
     return false;
   }
+}
+
+// ============================================================================
+// 복구 알림 (best-effort, 2026-08-11 실질 요구사항: 경보 후 "다시 정상"을 알 수 있게)
+//
+// 설계: 전역 claim 승자 인스턴스만 pendingRecoveryNotice에 등록되므로 복구 알림도
+// 쿨다운 창당 최대 1회다. 그 인스턴스가 재활용 전에 죽으면 복구 알림은 생략될 수
+// 있다(best-effort 명시). 경보 자체는 durable(outbox)하므로 정확성에 영향 없음.
+// ============================================================================
+
+const pendingRecoveryNotice = new Map<string, Set<string>>();
+
+/**
+ * 성공 경로에서 호출: 이 인스턴스가 직전에 경보를 보냈고 **그 경보의 scope**가
+ * 정상으로 돌아왔을 때만 복구 알림을 1회 보낸다(삼순 2차 ③: 다른 scope의 정상
+ * 응답이 전역 ✅를 보내는 오보 차단). 경보 이력이 없으면 in-memory 체크로 즉시 반환.
+ */
+export async function markApiRecovered(apiName: string, scope = "*"): Promise<void> {
+  const scopes = pendingRecoveryNotice.get(apiName);
+  if (!scopes || scopes.size === 0) return;
+  // 경보 scope와 일치하거나, scope 미지정("*") 경보만 복구 대상.
+  const matched = scopes.has(scope) ? scope : scopes.has("*") ? "*" : null;
+  if (matched === null) return;
+  scopes.delete(matched);
+  if (scopes.size === 0) pendingRecoveryNotice.delete(apiName);
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID || "6796048731"; // 하린아빠
+  if (!botToken) return;
+  const scopeText = matched === "*" ? "" : ` (${matched})`;
+  const message = `✅ 외부 API 복구\n\n**${apiName}**${scopeText} 정상 응답 확인\n\n시간: ${new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: "Markdown" }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    // 복구 알림은 best-effort — 실패해도 서비스 경로에 영향 없음. 재등록하지 않는다
+    // (다음 경보 사이클에서 다시 기회가 생김).
+    console.error("[API Recovery] Telegram send failed:", error);
+  }
+}
+
+/** 테스트 전용: 복구 알림 대기 상태 주입/조회. */
+export function _setPendingRecoveryForTest(
+  apiName: string,
+  pending: boolean,
+  scope = "*",
+): void {
+  if (pending) {
+    const scopes = pendingRecoveryNotice.get(apiName) ?? new Set<string>();
+    scopes.add(scope);
+    pendingRecoveryNotice.set(apiName, scopes);
+  } else {
+    pendingRecoveryNotice.delete(apiName);
+  }
+}
+export function _hasPendingRecoveryForTest(apiName: string, scope?: string): boolean {
+  const scopes = pendingRecoveryNotice.get(apiName);
+  if (!scopes || scopes.size === 0) return false;
+  return scope ? scopes.has(scope) : true;
 }
 
 /**

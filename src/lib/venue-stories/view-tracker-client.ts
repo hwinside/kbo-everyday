@@ -76,7 +76,12 @@ export async function trackVenueStoryView(
         typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function"
           ? navigator.sendBeacon.bind(navigator)
           : undefined,
-      fetchFn: fetch,
+      // ⚠️ fetch 는 반드시 바인딩해서 넘긴다. `fetchFn: fetch` 를 그대로 넘기면
+      // sendVenueStoryViewPing 안에서 `opts.fetchFn(...)` 로 호출될 때 this=opts 가 되어
+      // Chromium "Illegal invocation" / WebKit "Can only call Window.fetch on instances of
+      // Window" TypeError 가 동기 발생 → 모든 조회 ping 이 조용히 유실된다
+      // (#963 keepalive-first 전환에서 실제로 터진 프로덕션 결함, 2026-08-12).
+      fetchFn: fetch.bind(globalThis),
     });
     if (!ok) sent.delete(key);
     return ok;

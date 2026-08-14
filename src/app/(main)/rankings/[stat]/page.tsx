@@ -215,7 +215,7 @@ function RankingContent() {
 
             return (
               <div key={p.kboId || p.playerId || i} ref={isUrlHighlight ? highlightRef : undefined}>
-                <Link href={playerHref}>
+                <Link href={playerHref} prefetch={false}>
                   <GlassCard
                     pressable
                     className={`p-3 flex items-center gap-3 ${
