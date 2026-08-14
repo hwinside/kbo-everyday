@@ -24,6 +24,9 @@ import {
 } from "@/lib/video/youtube-api";
 import { reserveQuota } from "@/lib/video/youtube-quota";
 import { classifyVideosRssStatus } from "@/lib/video/videos-rss-status";
+import { notifyFavPlayerInterviews, type InterviewNotifySummary } from "@/lib/notifications/fav-player-interview";
+import { createInterviewDeps } from "@/lib/notifications/fav-player-interview-deps";
+import type { VideoUpsertRow } from "@/lib/video/videos-repo";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const BACKFILL_LIMIT = 500; // max videos to backfill per run
@@ -59,6 +62,8 @@ export async function GET(req: NextRequest) {
   const channelLatest = new Map<string, string>(); // channel_id → latest published_at
   const rssFailedChannels: PoolChannel[] = []; // for fallback (preserves tier order)
   let totalUpserted = 0;
+  // 이번 run에서 upsert까지 성공한 행 — 수훈선수 인터뷰 알림 감지 입력(dedup은 claim 원장).
+  const notifyRows: VideoUpsertRow[] = [];
 
   const errorKey = (ch: PoolChannel) => `${ch.channel_name}(${ch.channel_id})`;
 
@@ -89,6 +94,7 @@ export async function GET(req: NextRequest) {
       } else {
         results[ch.channel_name] = upserted;
         totalUpserted += upserted;
+        notifyRows.push(...rows);
         // Track latest published_at per channel for last_video_at
         if (rows.length > 0) {
           const latest = rows.reduce((a, b) =>
@@ -150,6 +156,7 @@ export async function GET(req: NextRequest) {
     delete errors[errorKey(ch)];
     results[ch.channel_name] = upserted;
     totalUpserted += upserted;
+    notifyRows.push(...rows);
     fallbackRecovered++;
     const latest = rows.reduce((a, b) =>
       a.published_at > b.published_at ? a : b,
@@ -231,6 +238,16 @@ export async function GET(req: NextRequest) {
     }
   } catch {
     // Duration backfill is best-effort — don't fail the cron
+  }
+
+  // ── 최애선수 수훈 인터뷰 알림: 공식 채널 신규 수집분에서 감지 → 발송 ──
+  // best-effort — 실패해도 cron 본연(수집)을 막지 않는다. dedup은 모듈 내 claim.
+  let interview: InterviewNotifySummary | { error: string } | null = null;
+  try {
+    interview = await notifyFavPlayerInterviews(notifyRows, playerAliases, createInterviewDeps());
+  } catch (e) {
+    interview = { error: e instanceof Error ? e.message : String(e) };
+    console.error("[videos-cron] interview notify failed:", interview.error);
   }
 
   // fallback/backfill quota는 reserveQuota가 이미 원장에 반영함(이중 기록 방지로 record 생략).

@@ -50,6 +50,7 @@
     "qa:ui:game-chat-visibility": "node scripts/qa/ui-smoke-game-chat-visibility.mjs",
     "qa:chat-count-delta": "tsx scripts/qa/chat-count-delta-smoke.ts",
     "qa:chat-count-hook": "tsx scripts/qa/chat-count-hook-probe.ts",
+    "qa:fav-player-interview": "tsx scripts/qa/fav-player-interview-smoke.ts",
     "qa:resolve-player": "tsx scripts/qa/resolve-player-smoke.ts",
     "qa:roster-count-consistency": "tsx scripts/qa/roster-count-consistency-smoke.ts",
     "qa:roster-derived-sync": "node scripts/ci/sync-roster-derived-artifacts.mjs --check && node scripts/qa/roster-derived-sync-smoke.mjs",
