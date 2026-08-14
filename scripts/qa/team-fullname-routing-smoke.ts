@@ -310,6 +310,49 @@ async function verifyTeamNumericAnswers() {
     });
   }
 
+  // ①-b **`팀` 대용어 축** (2026-08-08 회귀). `KIA 팀 타율 알려줘` 처럼 구단명과
+  //     지표어 사이에 `팀` 이 끼면 `<X> <지표>` 의 head 가 `팀` 이 돼 미결속으로 읽혔고,
+  //     혼합형 fail-close 가 **서빙 중인 구단 수치 질문을** 되묻기로 삼켰다.
+  //     위 servedCases 가 값을 고정하지만, **`팀` 이 끼는 모양을 여기서 따로 박는다** —
+  //     그래야 이 축이 다시 깨졌을 때 어느 계약이 깨졌는지 바로 읽힌다.
+  for (const [question, expected] of [
+    ["두산 팀 홈런 몇 개야", String((teamRecords.batting ?? []).find((r) => Number(r.teamId) === 2)!.hr)],
+    ["한화 구단 순위 알려줘", `${standings.find((r) => r.teamId === 9)!.ranking}위`],
+  ] as Array<[string, string]>) {
+    await check(`팀 대용어 삽입형 "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runTeam(question);
+      assert.notEqual(source, "stat_clarify",
+        `${question}: 서빙 중인 구단 수치를 되물었다 — 답할 수 있는 것을 못 답한 형태`);
+      assert.equal(source, "kbo_structured", `${question}: source=${source}`);
+      assert.ok(answer?.includes(expected), `${question}: 서빙값 "${expected}" 이 답변에 없다 — "${answer}"`);
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다`);
+    });
+  }
+  // ①-c 반대편 — `팀` 을 **무조건 결속으로 읽으면** 구단이 없는 문장까지 수치로 답하게 된다.
+  //     지시 대상이 없으면(어느 팀?) `kbo_structured` 조회로 답해선 안 된다.
+  //     2026-08-10 재설계: 결정론 되묻기 대신 LLM 위임 + statNumericGuard 다 —
+  //     모델이 어느 팀인지 되묻고, 그래도 숫자를 단정하면 게이트가 되묻기로 교체한다.
+  for (const question of ["팀 타율 알려줘", "팀 홈런 몇 개야"]) {
+    await check(`구단 미지명 팀 수치 — 조회 금지 + 환각 차단 "${question}"`, async () => {
+      // 위임 성립 확인 (조회로 답하지 않는다)
+      const { source } = await runTeam(question);
+      assert.notEqual(source, "kbo_structured", `${question}: 어느 팀인지 모르는데 조회로 답했다`);
+      // 환각 방향 — 지어낸 숫자는 게이트가 되묻기로 교체한다
+      const state: RunState = { llmCalls: 0, logs: [] };
+      const deps: QaDeps = {
+        ...teamDeps(state),
+        callLlm: async () => {
+          state.llmCalls += 1;
+          return { text: '{"status":"ANSWER","answer":"야구 기록으로 팀 타율은 0.299예요."}', inputTokens: 1, outputTokens: 1 };
+        },
+      };
+      const guarded = await answerQuestion("u-team-gate", question, deps);
+      assert.equal(guarded.source as MatchPath, "stat_clarify", `${question}: 지어낸 숫자가 통과했다 (source=${guarded.source})`);
+      assert.ok(!(guarded.answer ?? "").includes("0.299"), `${question}: 지어낸 숫자가 답에 남았다`);
+      assert.equal(state.llmCalls, 1, `${question}: 위임이 성립해야 한다`);
+    });
+  }
+
   // ② 우리가 서빙하지 **않는** 팀 수치는 여전히 LLM 에 안 보낸다. 환각 축은 그대로 닫는다.
   for (const question of ["LG 우승 몇 번 했어?", "두산 상대전적 알려줘", "LG 관중 수 몇 명이야?", "삼성 연봉 총액 얼마야?"]) {
     await check(`미서빙 팀 수치 fail-close "${question}"`, async () => {

@@ -139,16 +139,17 @@ export async function loadGlossary(): Promise<GlossaryEntry[]> {
   return entries;
 }
 
-async function callLlm(
+export async function callLlm(
   question: string,
   context?: ContextTurn,
   rosterBlock?: string,
+  statIntentMode = false,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock)),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode)),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
@@ -407,7 +408,7 @@ export async function searchRag(
 }
 
 /** 근거를 비신뢰 데이터 블록으로만 전달하는 재서술 호출 (S2b). */
-async function callRagLlm(
+export async function callRagLlm(
   question: string,
   evidence: RagEvidence[],
   extras?: RagLlmExtras,
@@ -416,7 +417,7 @@ async function callRagLlm(
 }
 
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
-async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+export async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
   return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
 }
 
@@ -426,7 +427,7 @@ async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Pr
  * 선수용 프롬프트를 재사용하지 않는다 — "선수 소개 도우미"로 자기규정한 모델은
  * 구단 질문을 범위 밖으로 오판하고, 숫자 전면금지라 연도가 들어간 구단 서사를 전부 거부한다.
  */
-async function callTeamRagLlm(
+export async function callTeamRagLlm(
   question: string,
   evidence: RagEvidence[],
   extras?: RagLlmExtras,
@@ -514,7 +515,7 @@ async function callRagLlmWithPrompt(
  * 범위는 `entity_type='document'` + `source_grade='tier1'`로 이중 제한한다 — tier2 chunk가
  * 이 경로로 새면 숫자 허용 계약이 깨진다.
  */
-async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
+export async function searchOfficialRag(question: string): Promise<RagEvidence[]> {
   const embedded = await embedQuery(question);
   if (!embedded.ok) return [];
   // query-guard: bounded -- RPC가 RAG_DOCUMENT_CANDIDATE_LIMIT 상한을 강제하는 정렬 조회다.
@@ -563,7 +564,7 @@ interface RagNewsArticleRow {
  *  ③ 정렬은 DB 가 pgvector 로 한다(공식 문서 경로와 동일). 앱은 재정렬하지 않는다 —
  *    구단 문서처럼 소스가 여럿이 아니라 가중치를 줄 대상이 없다.
  */
-async function searchNewsRag(
+export async function searchNewsRag(
   candidate: RagNewsCandidate,
   question: string,
 ): Promise<RagEvidence[]> {
@@ -613,7 +614,7 @@ async function searchNewsRag(
  * "구단 소개 도우미"로 규정해 사건·경기 서술을 범위 밖으로 오판하고, 기사 발췌이 잘려 있다는
  * 사실도 모른다(잘린 문장을 자기 지식으로 이어붙일 수 있다).
  */
-async function callNewsRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
+export async function callNewsRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
   return callRagLlmWithPrompt(question, evidence, RAG_NEWS_SYSTEM_PROMPT);
 }
 

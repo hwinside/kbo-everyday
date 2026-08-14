@@ -30,8 +30,8 @@ const MUTATIONS = [
   {
     id: "N2 generic LLM 에 context 미전달",
     file: PIPELINE,
-    anchor: "llm = await deps.callLlm(question, context ?? undefined, rosterBlock);",
-    replacement: "llm = await deps.callLlm(question, undefined, rosterBlock);",
+    anchor: "llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard);",
+    replacement: "llm = await deps.callLlm(question, undefined, rosterBlock, statNumericGuard);",
     why: "직전 턴을 로드해 놓고 LLM 프롬프트에 싣지 않으면 후속 결속이 조용히 죽는다",
   },
   // ── 축 D: 현재 소속 roster SSOT ─────────────────────────────────────────
@@ -210,7 +210,8 @@ const MUTATIONS = [
   {
     id: "N34 generic 저장을 raw 로 회귀 (envelope 미결속)",
     file: PIPELINE,
-    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock },\n      llm,\n    ));',
+    // 2026-08-10 #1132: cacheable 에 !statNumericGuard 가 추가돼 앵커 원문 갱신 (앵커 부재 = 러너 fail-close 실측).
+    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },\n      llm,\n    ));',
     replacement: "await deps.storeLlm(llm);",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
@@ -246,6 +247,15 @@ const MUTATIONS = [
     replacement: "",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "2차 null 직후 다른 worker 가 CAS 를 이겨도 이 worker 가 답을 발송해 두 답이 갈린다 (삼순 5차 c2)",
+  },
+  // ── #1148×#1132 합성 우회 (삼순 2026-08-11 재리뷰 P0) ─────────────────────
+  {
+    id: "N39 statNumericGuard 매퍼 스킵 제거 (사전 선반환이 숫자 게이트 우회)",
+    file: PIPELINE,
+    anchor: "    !questionMentionsTeam && !startersOwned && !statNumericGuard",
+    replacement: "    !questionMentionsTeam && !startersOwned",
+    gate: "scripts/qa/genius-stat-clarify-e2e-smoke.ts",
+    why: "가드 소유 질문(`이대호 홈런 몇개`)에서 매퍼가 dictionary 로 선반환해 종단 statNumericGuard 를 통째로 우회한다 (삼순 재리뷰 P0)",
   },
 ];
 

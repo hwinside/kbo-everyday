@@ -27,6 +27,7 @@ import {
   HISTORY_HOLD_ANSWER,
   isAckPhrase,
   isGreetingPhrase,
+  classifyNamedStat,
   TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
   LIMITED_ANSWER,
@@ -40,6 +41,7 @@ import {
   SERVICE_REDIRECT_ANSWER,
   SYSTEM_ERROR_ANSWER,
   UNSURE_ANSWER,
+  STAT_CLARIFY_ANSWER,
   UNCLEAR_ANSWER,
   UNSURE_SENTINEL,
   validateLlmResponse,
@@ -308,6 +310,279 @@ for (const question of ["김도영 타율 알려줘", "류현진 방어율 알�
 }
 // 선수 수치 질문은 지원 allowlist 밖이면 안내로 종결한다(운영 DB 에 컬럼이 없다).
 assert.equal(routeQuestion("류현진 승수", seedEntries, players), "history_hold", "류현진 승수");
+
+// ── `<X> <지표>` 3분기 계약 (삼순 2026-08-08 / 인입 3,162건 전수 감사) ──────────────
+//
+// ⚠️ 세 블록은 **한 묶음으로만 의미가 있다**. rescue 만 보면 가드를 통째로 지워도 GREEN,
+//    방어만 보면 종전처럼 룰 질문을 다 막아도 GREEN 이다.
+//
+// ①-a **검증된 근거가 있는** 룰·용어 질문은 지표어가 들어가도 열린다.
+//    종전에는 `[가-힣]{2,12}` 가 이름 자리라 `만루`·`홀드와` 가 사람 이름 취급돼 닫혔다.
+for (const question of [
+  "만루 홈런이 뭐야?", "홀드와 세이브의 차이가 뭐야?", "끝내기 안타",
+  "타율과 출루율의 차이가 뭐야?", "세이브랑 홀드가 뭐야?",
+  "안타는 뭐고 홈런은 뭐에요?",
+]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    ["baseball_rule_term", "llm_scope_gate"].includes(route),
+    `${question}: 근거 있는 용어 질문을 선수 기록 요구로 오인하면 안 된다 (route=${route})`,
+  );
+}
+// ①-b **근거가 없는** `<X> <지표>` 는 LLM 위임이다 (2026-08-10 재설계 — 룰 최소화).
+//
+// ⚠️ 종전에는 여기서 결정론 되묻기(`stat_clarify` 라우트)로 닫았다. `루킹 삼진이 뭐야` 와
+//   `오타니 홈런이 뭐야` 는 구조가 같아 룰로 가를 수 없기 때문이었는데, 그 결과 사전
+//   미수록 정상 용어 질문까지 전부 되묻기를 받았다. 재설계 후에는 **가르는 주체가 LLM**이다:
+//   용어면 답하고, 미결속 인물 기록이면 프롬프트가 되묻게 하며, 그래도 새 숫자가 나오면
+//   `answerQuestion` 의 statNumericGuard 가 `stat_clarify` 로 fail-close 한다
+//   (종단 계약은 qa:genius-stat-clarify 가 고정).
+for (const question of [
+  "루킹 삼진이 뭐야", "좌익수 홈런", "장내 홈런", "오타니 홈런이 뭐야",
+  "페어와 안타는 다른 건가요",
+]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players), "llm_scope_gate",
+    `${question}: 근거 없는 <X> <지표> 는 LLM 위임(가드 첨부)이어야 한다`,
+  );
+}
+// ①-c 되묻기 안내가 **실제로 통하는 길**인지 고정한다. 안내가 막다른 길이면 그건
+//     되묻기가 아니라 차단이다.
+for (const question of ["루킹삼진이 뭐야", "좌익수홈런이 뭐야", "장내홈런이 뭐야"]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    !["stat_clarify", "blocked"].includes(route),
+    `${question}: 안내대로 붙여 물었는데 또 막히면 안 된다 (route=${route})`,
+  );
+}
+// ②-a 정상 룰 질문에 지표어가 **문장 중간에** 섞여도 되묻기로 끝내면 안 된다.
+//     되묻기가 정당한 건 문장이 `<X> <지표>` 그 자체일 때뿐이다.
+for (const question of ["선수 역할이 바뀌면 기록은", "감독 역할 변경 절차가 궁금해"]) {
+  assert.notEqual(
+    routeQuestion(question, seedEntries, players),
+    "stat_clarify",
+    `${question}: 문장 중간 지표어를 bare 모호형으로 오인하면 안 된다`,
+  );
+}
+// ②-b 반대 방향 — DB 에 없는 대상의 수치 질문 (2026-08-10 재설계로 계약 변경).
+//
+//   종전: "LLM 으로 내려보내지 않는다"(결정론 되묻기). 재설계 후: **LLM 위임은 허용**하되
+//   ①룰/용어 결정론 경로(`baseball_rule_term`)로 오분류되지 않고 ②generic 위임이면
+//   statNumericGuard 가 지어낸 숫자를 `stat_clarify` 로 fail-close 한다(종단은
+//   qa:genius-stat-clarify 와 아래 answerQuestion 검사가 고정).
+//   허용 라우트: llm_scope_gate(가드 위임) · name_suggest(실명 교정 되묻기) ·
+//   history_hold(로스터 결속 기록 안내).
+const UNBOUND_STAT_ALLOWED = ["llm_scope_gate", "name_suggest", "history_hold"];
+for (const question of [
+  "이대호 홈런", "이승엽 홈런", "최동원 방어율", "선동열 방어율",   // 은퇴 — 로스터에 없다
+  "홍길동 홈런", "김철수 타점", "박길동 도루", "가나다 홈런",       // 가공 인물
+  "김도용 홈런",                                                   // 오타로 만들어진 이름
+  "에레디아 타율", "디아즈 홈런",                                  // 외국인 성만
+  "이대호 도루 알려줘", "홍길동 타점 보여줘", "이승엽 홈런 어때",   // 요청 꼬리 변형
+  "오타니 홈런 몇개",                                              // 타 리그 선수
+]) {
+  const route = routeQuestion(question, seedEntries, players);
+  assert.ok(
+    UNBOUND_STAT_ALLOWED.includes(route),
+    `${question}: 미결속 수치 질문의 허용 라우트가 아니다 (route=${route})`,
+  );
+}
+// ③ 현역 로스터 선수는 기존 기록 경로(`history_hold`)를 그대로 탄다.
+for (const question of ["김도영 홈런", "구자욱 타율", "오지환 도루", "김도영 홈런 몇 개야"]) {
+  assert.equal(
+    routeQuestion(question, seedEntries, players),
+    "history_hold",
+    `${question}: 현역 선수 수치 질문은 history_hold`,
+  );
+}
+// ③-b mutation 이 뚫었던 축들 — 각 조건이 **유일하게 책임지는 입력**으로 고정한다.
+//     이 블록이 없으면 아래 조건들을 지워도 게이트가 GREEN 이다(2026-08-08 실측).
+//
+//   ⓐ 수치 명시 요구(`몇`·`얼마`)는 bare 가 아니어도 되묻는다.
+//      없으면 `홍길동은 홈런을 몇 개 쳤어?` 가 LLM 으로 내려가 숫자를 지어낸다.
+for (const question of ["홍길동은 홈런을 몇 개 쳤어?", "이대호가 홈런 몇 개 쳤나요"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 존재 확인 불가 대상의 수치 요구는 되묻기`,
+  );
+}
+//   ⓑ **앞말이 담화 표지뿐이면 여전히 bare 다** (삼순 2026-08-08 P0, 계약 뒤집음).
+//
+//      ⚠️ 종전 계약은 정반대였다 — "선두 매치가 아니면 판단 범위 밖"이라 `그래서 이대호
+//        홈런` 이 통째로 빠져나갔고, 게이트가 그 우회를 **정상으로 박아두고** 있었다.
+//        `그래서`·`아 그럼` 은 새 정보를 더하지 않는다. 문장은 여전히 `<X> <지표>` 다.
+//
+//      위치(`m.index === 0`)가 아니라 **분해 가능성**으로 판정하므로 접두 표지가
+//      몇 개 붙든 열거에 없든 상관없다.
+for (const question of ["그래서 이대호 홈런", "아 그럼 홍길동 타점", "그럼 이대호 홈런"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 담화 표지가 앞에 붙어도 문장은 여전히 <X> <지표> 다`,
+  );
+}
+//   ⓑ-2 (2026-08-10 재설계로 계약 변경) — 종전에는 "앞에 내용어(야구 어휘)가 있으면
+//        판단 범위 밖(none)"으로 잔여 룰 문법이 갈랐다. 그 문법을 폐기했으므로 이제
+//        `<X> <지표>` 매치가 있고 head 가 미결속이면 문장 유형과 무관하게 `ambiguous`
+//        = LLM 위임이다. 정상 룰 질문도 위임으로 답을 받되, 근거 없는 숫자만
+//        statNumericGuard 가 닫는다 — "삼키지 않는다"는 보호가 결정론 분류가 아니라
+//        위임+게이트로 옮겨진 것이다 (`감독이 역할을 바꾸면` 은 지표어가 없어 매치 0 → none).
+assert.equal(
+  classifyNamedStat("선수 역할이 바뀌면 기록은".normalize("NFKC").toLowerCase(), seedEntries, players, false),
+  "ambiguous",
+  "선수 역할이 바뀌면 기록은: <X> <지표> 매치 + 미결속 head → LLM 위임",
+);
+assert.equal(
+  classifyNamedStat("감독이 역할을 바꾸면 어떻게 돼".normalize("NFKC").toLowerCase(), seedEntries, players, false),
+  "none",
+  "감독이 역할을 바꾸면 어떻게 돼: 지표어가 없으면 매치 자체가 없다",
+);
+//   ⓑ-3 **꼬리도 열거가 아니라 분해**로 본다. 종전 `REQUEST_TAILS` 열거에는 존대형이
+//        없어 `이대호 홈런 알려줘요`·`부탁해` 가 빠져나갔다 (삼순 P0).
+for (const question of [
+  "이대호 홈런 알려줘요", "이대호 홈런 부탁해", "이대호 홈런 알려주세요", "이승엽 홈런 어때",
+]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 요청 꼬리가 붙어도 문장은 여전히 <X> <지표> 다`,
+  );
+}
+//   ⓑ-4 **모든 매치를 본다**. 첫 `exec()` 만 보면 앞이 용어·뒤가 수치인 혼합형에서
+//        앞만 읽고 열어준다 (삼순 P0). 하나라도 되묻기면 문장 전체가 되묻기다.
+for (const question of ["루킹 삼진과 이대호 홈런 몇개", "만루 홈런이랑 이대호 홈런 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 혼합형은 fail-close — 나머지 절이 근거 없이 생성된다`,
+  );
+}
+//   ⓑ-4b **집계 우선순위가 계약이다.** 결속 엔티티와 미결속이 한 문장에 섞이면
+//        `entity_stat` 가 아니라 되묻기다. 우선순위를 뒤집으면 `김도영 홈런과 이대호 홈런
+//        몇개` 가 기록 경로로 열려 **이대호 쪽 숫자를 지어낸다** — 안전한 절 하나가
+//        위험한 절을 통과시키는 형태다.
+for (const question of ["김도영 홈런과 이대호 홈런 몇개", "문보경 타율이랑 오타니 홈런 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 결속+미결속 혼합은 안전한 쪽으로 접지 않는다`,
+  );
+}
+//   ⓑ-5 **정의 의도만으로는 용어로 승격하지 않는다** (삼순 P0).
+//        `루킹 삼진이 뭐야`(미수록 용어)와 `오타니 홈런이 뭐야`(미등록 인물)는 구조가
+//        같아서 의도로는 못 가른다. 근거가 있을 때만 연다.
+for (const question of ["오타니 홈런이 뭐야", "홍길동 타점 설명", "이승엽 홈런 뜻"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 정의 의도는 용어 근거가 아니다`,
+  );
+}
+//   ⓒ 용어사전 어휘 예외 — `투수의 기록 용어` 처럼 지표어 앞이 야구 어휘면 용어 질문이다.
+//   ⓓ 조사 제거 — `기록에`·`주자는` 의 조사를 못 떼면 ⓒ가 통째로 무력해진다.
+for (const question of [
+  "투수의 기록 용어",
+  "기록에 삼진은 우리가 삼진 당한 거야?",
+  "파울팁이 포수 미트에 바로 잡히면 주자는 도루할 수 있어?",
+]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 조사 결합 야구 어휘는 용어 질문이다`,
+  );
+}
+//   ⓔ **정의 의도는 용어 근거가 아니다** (삼순 2026-08-08 P0, 계약 뒤집음).
+//
+//      ⚠️ 종전 계약은 "사전에 없어도 정의를 물으면 용어"였다. 그런데 그 조건은
+//        `오타니 홈런이 뭐야`·`홍길동 타점 설명` 에도 **똑같이** 붙는다 — 미결속 head +
+//        지표 + 정의 의도. 구조가 같은 두 경우를 의도로는 가를 수 없고, 열어두면
+//        존재하지 않는 선수의 지표를 LLM 이 설명한다. 가를 수 없으면 되묻는다.
+//
+//      ⚠️ 이건 종전 `blocked` 과차단으로의 회귀가 아니다: 되묻기이고, 안내대로 붙여
+//        쓰면(`그라운드홈런이 뭐야?`) 열린다. 위 ①-c 가 그 길을 고정한다.
+//        띄어쓰기가 근거를 만드는 게 아니라, 붙여 쓰면 지표 정규식이 아예 안 걸려
+//        이 가드의 판단 대상에서 벗어나기 때문이다.
+for (const question of ["그라운드 홈런이 뭐야?", "페어 안타 차이"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 근거 없는 <X> <지표> 는 정의 의도가 있어도 되묻기다`,
+  );
+}
+//   ⓔ-2 반대편 — head 자체가 **사전 수록 용어**면 정의 의도와 무관하게 열린다.
+//        `혹시 삼진 홈런이 모야?` 의 `삼진` 은 사전에 있다. 근거가 판정 축이라는 것을
+//        양방향으로 고정한다(위 ⓔ가 "의도로는 안 연다", 여기가 "근거로는 연다").
+for (const question of ["만루 홈런이 뭐야?", "끝내기 안타"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 사전·어휘 근거가 있으면 열려야 한다`,
+  );
+}
+//   ⓔ-3 `<X>` 자리가 담화 표지면 이 가드의 판단 대상이 아니다 — 되묻기도 아니다.
+//        `혹시 삼진 홈런이 모야?` 는 `혹시`+`삼진` 이 먼저 매치돼 head 가 담화 표지가 된다.
+//        `<X>` 가 없으면 판단할 게 없으므로 손대지 않고 아래 라우팅으로 흘린다.
+//        ⚠️ 이게 누수가 아닌 이유: 뒤에 진짜 `<X> <지표>` 가 있으면 **다음 매치**가 잡는다.
+//          아래 ⓕ 가 그것을 고정한다.
+for (const question of ["혹시 삼진 홈런이 모야?", "그럼 삼진 어때"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "none",
+    `${question}: <X> 자리가 담화 표지면 판단 대상이 아니다`,
+  );
+}
+//   ⓔ-4 사전은 복합어를 **붙여서** 수록한다(`탈삼진`·`멀티안타`). 유저는 띄어 쓴다.
+//        그래서 `head + 지표` 결합형도 조회해야 근거를 찾는다.
+//        ⚠️ 아래 4종은 **결합형 조회가 유일하게 책임지는** 입력이다 — head 단독은 사전에도
+//          어휘집에도 없어서, 결합형 조회를 지우면 정상 용어 질문이 되묻기로 떨어진다.
+//          (`만루`·`끝내기` 등은 head 단독으로도 어휘집에 있어 이 축을 증명하지 못한다.)
+for (const question of ["탈 삼진", "장 타율", "멀티 안타", "내야 안타"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "term_question",
+    `${question}: 사전 결합형 근거로 열려야 한다`,
+  );
+}
+//   ⓔ-5 head 배제 집합은 **지시 표현을 정확히** 담아야 한다.
+//
+//        ⚠️ `그럼 그것도 홈런이야?` 는 앞 대화를 받는 정상 룰 질문이다. head 가 `그것도`
+//          (지시어+조사)라 `<X>` 가 없으므로 이 가드의 판단 대상이 아니다 → `none`.
+//          일반 기능어 집합(`FUNCTION_UNITS`)에는 `그것` 이 없어 분해에 실패하고, 그러면
+//          지시어가 미결속 엔티티로 읽혀 **되묻기가 새로 생긴다**(과차단).
+//          즉 이 케이스는 전용 집합이 유일하게 책임지는 입력이다(mutation M13).
+assert.equal(
+  classifyNamedStat("그럼 그것도 홈런이야?".normalize("NFKC").toLowerCase(), seedEntries, players, false),
+  "none",
+  "그럼 그것도 홈런이야?: 지시어 head 는 판단 대상이 아니다(되묻기로 만들면 과차단)",
+);
+//   ⓕ 담화 표지가 앞 매치를 먹어도 **뒤 매치**는 그대로 잡힌다(전체 스캔의 실효 증명).
+for (const question of ["혹시 삼진 이대호 홈런 몇개", "그럼 삼진 홍길동 타점 알려줘"]) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    "ambiguous",
+    `${question}: 앞 매치가 흡수돼도 뒤 <X> <지표> 는 잡혀야 한다`,
+  );
+}
+
+// ④ 판정 함수 직접 호출 — `routeQuestion` 만으로는 관측되지 않는 축을 고정한다.
+//    현역 선수는 앞단이 먼저 가로채므로 로스터 분기를 지워도 라우팅 결과가 안 바뀐다.
+for (const [question, expected] of [
+  ["네일 방어율 알려줘", "entity_stat"],
+  ["김도영 홈런", "entity_stat"],
+  ["만루 홈런이 뭐야?", "term_question"],
+  ["끝내기 안타", "term_question"],
+  ["이대호 홈런", "ambiguous"],
+  ["홍길동 타점 알려줘", "ambiguous"],
+  // 2026-08-10 재설계: 잔여 룰 문법 폐기로 미결속 head 는 문장 유형과 무관하게 ambiguous(LLM 위임).
+  ["선수 역할이 바뀌면 기록은", "ambiguous"],
+] as const) {
+  assert.equal(
+    classifyNamedStat(question.normalize("NFKC").toLowerCase(), seedEntries, players, false),
+    expected,
+    `${question}: 3분기 판정`,
+  );
+}
 // ⚠️ **구단 서술** 질문은 더 이상 `history_hold` 로 끝내지 않는다 (2026-08-04 하린아빠
 // 18:26 "이런 답변이 이제 나와서는 안 되지" + 삼순 #1100 1차 P0-1).
 // 구단은 확정 답변 범위(야구룰·구단·선수·기록) 안이므로 LLM 2차 가드가 답한다.
@@ -1686,19 +1961,31 @@ async function verifyPipeline() {
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
   }
 
-  // 미등록 선수 기록 질문도 룰 답변으로 새지 않는다. 선수사전 미등록이면 단일 LLM의
-  // NOT_BASEBALL 판정으로 차단하며 quota 1회 소비·cache write 0을 지킨다.
-  const unregisteredPlayer = freshState({ llmText: '{"status":"NOT_BASEBALL","answer":""}' });
+  // 미등록 선수 기록 질문 — LLM 위임 + 기계 숫자 게이트 (2026-08-10 재설계).
+  //
+  //   종전 계약은 "LLM 0 결정론 되묻기"였다. 재설계 후에는 LLM 까지 가되(1회),
+  //   모델이 질문에 없는 숫자를 단정하면 statNumericGuard 가 `stat_clarify` 로
+  //   fail-close 한다 — 유저에게 지어낸 숫자가 도달하지 않는다는 안전 계약은 동일하고,
+  //   판정 주체만 룰 문법 → LLM+기계 게이트로 바뀌었다.
+  //
+  // ⚠️ `unsure` 가 아니라 **전용 라벨**이다(삼순 2026-08-08). 원인 축(결속 데이터 부재)이
+  //   달라 한 칸에 두면 과차단 감사의 분모가 사라진다 — 이 축은 재설계 후에도 유지된다.
+  const unregisteredPlayer = freshState({
+    llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 오타니 선수는 홈런 468개를 기록했습니다."}',
+  });
   const unregisteredResult = await answerQuestion(
     "u1",
     "오타니 홈런 몇개",
     makeDeps(unregisteredPlayer),
   );
-  assert.equal(unregisteredResult.source, "blocked");
-  assert.equal(unregisteredPlayer.llmCalls, 0);
+  assert.equal(unregisteredResult.source, "stat_clarify", "지어낸 숫자는 되묻기로 교체돼야 한다");
+  assert.equal(unregisteredResult.answer, STAT_CLARIFY_ANSWER, "미등록 대상은 전용 되묻기 문구");
+  assert.ok(!unregisteredResult.answer.includes("468"), "지어낸 숫자가 유저에게 도달했다");
+  assert.notEqual(unregisteredResult.answer, UNSURE_ANSWER, "LLM 미확신 문구를 재사용하면 안 된다");
+  assert.deepEqual(unregisteredPlayer.logs, ["stat_clarify"], "로그도 전용 라벨");
+  assert.equal(unregisteredPlayer.llmCalls, 1, "위임이 성립해야 한다 — LLM 1회");
   assert.equal(unregisteredPlayer.used, 1);
-  assert.deepEqual(unregisteredPlayer.events, ["reserve"]);
-  assert.equal(unregisteredPlayer.cache.size, 0);
+  assert.equal(unregisteredPlayer.cache.size, 0, "가드 경로 답변은 캐시 금지");
 
   // 과차단 핏스 — 정상 룰/용어 실경로: 사전 미수록 + 붙여쓰기/조사 변형도
   // LLM까지 도달해 RULE_TERM 답변 경로로 끝나야 한다 (기존엔 전부 blocked였다).
@@ -3165,6 +3452,9 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     SCOPE_GUIDE_ANSWER,
     // 시스템 오류 전용 문구도 마찬가지다.
     SYSTEM_ERROR_ANSWER,
+    // `<X> <지표>` 되묻기도 결정론 고정 문구다. 빠뜨리면 "생성답"으로 오분류돼
+    // reply_kind(`unavailable`) 대조가 RED 가 된다 — 게이트가 실제로 잡았다.
+    STAT_CLARIFY_ANSWER,
   ]);
 
   // 실제 유저 질문 → 실제 pipeline 실행. mock 은 외부 경계(LLM/DB)만 대신한다.
@@ -3257,6 +3547,12 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // 지원 allowlist 밖 지표(`도루`) — 기록 질문이지만 답할 수 없다. 선수 경로가 켜져 있어도
     // 여기로 와야 하고, 문구는 "룰/용어만"이 아니라 앱 기록 탭 안내여야 한다 (삼순 7차 P0-2).
     { question: "박해민 도루 몇 개야?", deps: (s) => makeDeps(s) },       // history_hold
+    // `<X> <지표>` 에서 X 를 운영 데이터로 특정 못 함 — LLM 위임 + 숫자 게이트 (2026-08-10).
+    // stub 이 질문에 없는 숫자를 단정하게 만들어 가드 fail-close 경로(stat_clarify)를 관측한다.
+    {
+      question: "이대호 홈런", deps: (s) => makeDeps(s),
+      state: { llmText: '{"status":"BASEBALL_RULE_TERM","answer":"야구 기록으로 이대호 선수는 홈런 374개를 기록했습니다."}' },
+    },                                                                    // stat_clarify
     { question: "9회말 야구 룰에서 우천 중단은 어떻게 처리해?", deps: (s) => makeDeps(s) }, // llm
     {
       // 모델이 판정을 확신하지 못함 = 이해 못함(`unsure`). 우리 고장(`error`)과 다른 칸이다.
