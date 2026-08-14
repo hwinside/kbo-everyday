@@ -17,6 +17,7 @@ import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
+import GeniusQuestionCorrectionPicker from "@/components/dm/GeniusQuestionCorrectionPicker";
 import GeniusAnswerFeedback from "@/components/dm/GeniusAnswerFeedback";
 import { isNewsClippingPayload } from "@/types/news-clipping";
 import {
@@ -63,7 +64,9 @@ export default function DMChatPage() {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
+    respondBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
+    geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
@@ -482,6 +485,8 @@ export default function DMChatPage() {
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
+            const correctionOptions =
+              geniusReply?.reply_kind === "correction" ? geniusReply.correction_options ?? null : null;
             // 품질 피드백은 **RAG·사전 근거로 답한 것에만** 붙인다
             // (하린아빠 2026-08-06 16:36 "스몰톡은 넣지마" + 16:37 "사전에서 가져온 답변 추가").
             // 순수 생성답(llm)에 붙이면 스몰톡마다 버튼이 뜬다. 질문 결속 id 가 없는 과거
@@ -506,6 +511,8 @@ export default function DMChatPage() {
             return (
               <motion.div
                 key={msg.id}
+                data-message-id={msg.id}
+                data-genius-question-id={geniusReply?.question_message_id}
                 ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -589,6 +596,21 @@ export default function DMChatPage() {
                         }}
                       />
                     ) : null}
+                    {correctionOptions ? (
+                      <GeniusQuestionCorrectionPicker
+                        options={correctionOptions}
+                        disabled={isGeniusPickerDisabled(
+                          geniusReply?.question_message_id,
+                          geniusAnsweredQuestionIds,
+                          geniusCorrectedQuestionIds,
+                        )}
+                        onRespond={(question) => {
+                          if (geniusReply?.question_message_id) {
+                            respondBaseballQaQuestionCorrection(geniusReply.question_message_id, question);
+                          }
+                        }}
+                      />
+                    ) : null}
                     {Array.isArray(msg.image_urls) && msg.image_urls.length > 0 && (
                       <div className={`grid gap-2 ${msg.content ? "mt-2" : ""}`}>
                         {msg.image_urls.map((url, i) => (
@@ -625,6 +647,7 @@ export default function DMChatPage() {
             <GeniusTypingIndicator
               key={messageId}
               state={state}
+              questionMessageId={Number(messageId)}
               onRetry={() => retryBaseballQa(Number(messageId))}
             />
           ))
