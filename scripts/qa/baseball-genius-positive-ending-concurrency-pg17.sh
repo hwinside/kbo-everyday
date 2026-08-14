@@ -80,6 +80,7 @@ awk '
 setup "$WORK/mutated.sql"
 run_six "$WORK/mutated" || { echo "FAIL mutation run: child failure or invalid result rows"; exit 1; }
 MUTATED="$(grep -c '^t$' "$WORK/mutated" || true)"
-[[ "$MUTATED" != "1" ]] || { echo "FAIL mutation stayed GREEN: lock removal was not detected"; exit 1; }
+# RED = 중복 시그니처가 실제로 관측돼야 한다. `!= 1` 은 t0/f6(전부 미사용)도 통과시키는 거짓 PASS.
+[[ "$MUTATED" -gt 1 ]] || { echo "FAIL mutation stayed GREEN: expected >1 duplicate signatures, got $MUTATED"; exit 1; }
 
 echo "PASS genius positive ending concurrency: 6-way baseline signatures=$BASELINE, lock-removal mutation signatures=$MUTATED (RED)"
