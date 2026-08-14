@@ -26,9 +26,6 @@ function violations(x) {
   if (x.deps.split("`interview#${gameId}#${videoId}`").length - 1 !== 2) {
     out.push("composite-marker-storage");
   }
-  if (!x.core.includes("data: { notification_id: notificationId }")
-      || !x.core.includes("collapseKey: notificationId")
-      || !x.core.includes("apnsCollapseId: notificationId")) out.push("provider-dedupe-id");
   if (x.core.includes("releaseLease(releaseRowIds).catch")) out.push("release-failure-hidden");
   if (!x.core.includes("await deps.releaseLease(releaseRowIds);")) out.push("release-not-awaited");
   return out;
@@ -47,7 +44,6 @@ const mutations = [
   ["RPC lease 배선 제거", "deps", "claim_postgame_interview_notifications", "broken_claim_rpc"],
   ["marker read에서 gameId 제거", "core", "hasSentMarker(interview.gameId, interview.videoId)", "hasSentMarker(interview.videoId, interview.videoId)"],
   ["marker storage에서 gameId 제거", "deps", "`interview#${gameId}#${videoId}`", "`interview#${videoId}`"],
-  ["provider dedupe id 제거", "core", "data: { notification_id: notificationId }", "data: { notification_id: 'random' }"],
   ["release 실패 다시 은폐", "core", "await deps.releaseLease(releaseRowIds);", "await deps.releaseLease(releaseRowIds).catch(() => {});"],
 ];
 

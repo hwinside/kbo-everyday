@@ -20,10 +20,12 @@ import { interviewPlayerLinks } from "@/lib/video/postgame-interviews-route-poli
 //  - 동시 실행 배제 = **row lease**(notify_state pending→processing + lease_until).
 //    lease를 잡은 run만 발송한다. 다른 run은 in-flight 행을 아예 못 본다.
 //    lease가 만료된 processing 행은 그 run이 죽은 것 → 재획득.
-//  - 이중발송 방어 = **sent 마커**(notified_score_events, `interview#{videoId}`).
-//    발송 성공 직후 기록한다. markSent가 실패해 행이 processing으로 남아도, lease
-//    만료 후 재획득한 run이 마커를 보고 재발송 없이 sent로 회복한다.
-//    마커 조회가 오류면 "미발송"으로 단정하지 않고 lease를 풀어 다음 run에 넘긴다.
+//  - best-effort 중복 방어 = **sent 마커**(notified_score_events,
+//    `interview#{gameId}#{videoId}`). 발송 성공 직후 기록한다. markSent가 실패해 행이
+//    processing으로 남으면 lease 만료 후 마커를 보고 재발송 없이 sent로 회복한다.
+//    단, FCM 성공 직후 마커 기록 전 프로세스가 죽는 좁은 crash gap은 at-least-once
+//    특성상 중복 1회가 가능하다. 하린아빠가 2026-08-15 B안(희소 중복 허용)을 명시
+//    승인했다. collapse key를 idempotency로 오인하지 않는다. 유실보다 희소 중복을 택함.
 //  - unclaim이라는 개념이 없다. 실패 복구는 전부 lease 해제(pending 복귀)로 한다.
 //    해제 자체가 실패해도 lease 만료가 최종 안전망이라 은폐되는 실패가 없다.
 //
@@ -77,13 +79,7 @@ export interface InterviewDeps {
   /** 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행. */
   sendPush: (
     userIds: string[],
-    payload: {
-      title: string; body: string; url: string;
-      /** 외부 발송 crash gap에서 provider/client가 같은 알림을 접도록 하는 안정 id. */
-      data: { notification_id: string };
-      collapseKey: string;
-      apnsCollapseId: string;
-    },
+    payload: { title: string; body: string; url: string },
     prefKey: typeof INTERVIEW_PREF_KEY,
   ) => Promise<{ ok: boolean }>;
 }
@@ -173,16 +169,12 @@ export async function notifyFavPlayerInterviews(
     // 4. 발송 1회 → 성공 시 마커 기록 후 종결. 실패/예외는 lease 해제(다음 run 재시도).
     try {
       const names = links.map((link) => link.name).join("·");
-      const notificationId = `interview#${interview.gameId}#${interview.videoId}`;
       const result = await deps.sendPush(
         targets,
         {
           title: `⭐ ${names} 수훈선수 인터뷰가 올라왔어요`,
           body: interview.title,
           url: `/games/${interview.gameId}`,
-          data: { notification_id: notificationId },
-          collapseKey: notificationId,
-          apnsCollapseId: notificationId,
         },
         INTERVIEW_PREF_KEY,
       );

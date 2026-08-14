@@ -68,7 +68,6 @@ interface Calls {
   audience: string[];
   sends: Array<{
     userIds: string[]; title: string; body: string; url: string; prefKey: string;
-    data: { notification_id: string }; collapseKey: string; apnsCollapseId: string;
   }>; 
 }
 interface Over {
@@ -131,10 +130,6 @@ async function main() {
     check("발송 1회", calls.sends.length === 1);
     check("딥링크 = 경기페이지", calls.sends[0]?.url === "/games/20260814SKLG0");
     check("prefKey 전달(토글 필터)", calls.sends[0]?.prefKey === INTERVIEW_PREF_KEY);
-    const stableId = "interview#20260814SKLG0#vid-1";
-    check("안정 notification id(복합키)", calls.sends[0]?.data.notification_id === stableId);
-    check("Android/iOS provider dedupe id", calls.sends[0]?.collapseKey === stableId
-      && calls.sends[0]?.apnsCollapseId === stableId);
     check("제목에 선수명", calls.sends[0]?.title.includes(P1.name));
     check("성공 → 복합키 마커 기록", calls.markerInserts[0] === "20260814SKLG0#vid-1");
     check("성공 → sent 전이(row id)", calls.markedSent[0]?.[0] === "row-1" && s.sent === 1);
