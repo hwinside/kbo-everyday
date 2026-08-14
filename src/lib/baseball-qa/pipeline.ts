@@ -3886,12 +3886,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // 배포 provider 3/3 실측이 `보끄가모야 → 보끄가 뭐야` 까지만 교정해(`보끄→보크` 는
     // 보수 계약상 안 고침) 후보가 residual 착지 → rejected → 카드가 도달 불가였다.
     // 사전 폐쇄집합 결정론 복원을 시도하되, 제안 자격은 같은 SSOT 가 재판정한다.
-    if (!accepted && !suggested) {
+    //
+    // (삼순 2026-08-14 NO-GO 반영) Tier A 자동수용 후보가 **여전히 residual** 인 경우 —
+    // provider 가 공백만 고쳐 `보끄가 뭐야` 처럼 오탈자가 남은 경우 — 도 복원 대상이다.
+    // 자동수용해 봤자 generic LLM 으로 가는 질문이므로, 복원이 allowlist 착지 제안을
+    // 만들면 수용 대신 카드를 낸다. 복원이 실패하면 종전 그대로 수용 진행한다(무회귀).
+    const acceptedStillResidual = accepted
+      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";
+    if (!suggested && (!accepted || acceptedStillResidual)) {
       const repairBase = candidate.length > 0 ? candidate : question;
       const repaired = repairGlossaryTermTypo(repairBase, glossary);
       if (repaired !== null
           && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {
         suggested = true;
+        accepted = false;
         suggestionText = repaired;
         normStatus = "suggested";
       }

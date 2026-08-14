@@ -78,6 +78,13 @@ const mutations = [
     replace: '  if (repaired.size < 1) return null;',
   },
   {
+    // 삼순 2026-08-14 NO-GO 축: Tier A 공백-only 수용이 residual 로 남는 경로를 죽이면
+    // provider 가 공백만 고치는 실측 행동에서 카드가 다시 도달 불가가 된다.
+    name: "M25 Tier A residual 복원 확장 제거",
+    find: '    const acceptedStillResidual = accepted\n      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";',
+    replace: '    const acceptedStillResidual = false;',
+  },
+  {
     // 복원 후보도 SSOT 착지 재판정을 통과해야 한다 — 빼면 allowlist 밖 후보가 제안된다.
     name: "M24 복원 후보의 SSOT 재판정 제거",
     find: '      if (repaired !== null\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',

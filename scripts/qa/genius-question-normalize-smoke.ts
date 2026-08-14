@@ -109,6 +109,9 @@ async function main() {
   assert.equal(routeQuestion("보루가모야", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("보루가 뭐야", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("보끄최고야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보끄가뭐야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보끄가 모야", glossary, players, false), "llm_scope_gate");
+  assert.equal(routeQuestion("보크가 모야", glossary, players, false), "llm_scope_gate");
   assert.equal(routeQuestion("김도영 홈런 몇 개야?", glossary, players, false), "history_hold");
   assert.equal(routeQuestion("고마워", glossary, players, false), "ack");
   assert.equal(routeQuestion("오늘 날씨 알려줘", glossary, players, false), "blocked");
@@ -225,6 +228,31 @@ async function main() {
     const r = await answerQuestion("u1", "보끄가 뭐야", makeDeps(s));
     assert.equal(r.source, "question_correction");
     assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+  }
+
+  // (삼순 2026-08-14 NO-GO 반영) Tier A 공백-only 수용 후보가 여전히 residual 이면 —
+  // 자동수용해 봤자 generic LLM 행 — 복원이 카드를 만든다. 수용문 칸은 비어야 한다.
+  {
+    const s = freshState({ normReply: "보끄가 뭐야" });
+    const r = await answerQuestion("u1", "보끄가뭐야", makeDeps(s));
+    assert.equal(r.source, "question_correction", "Tier A residual 도 복원 카드에 도달해야 한다");
+    assert.deepEqual(r.correctionOptions, ["보크가 뭐야"]);
+    const log = s.logs.at(-1)!;
+    assert.equal(log.question, "보끄가뭐야");
+    assert.equal(log.questionNormalized ?? null, null, "카드를 냈으면 수용문 칸은 비어야 한다");
+    assert.equal(log.correctionCandidate, "보크가 뭐야");
+    assert.equal(log.normalizeStatus, "suggested");
+  }
+
+  // Tier A residual 인데 복원 결과가 allowlist 밖(`보크가 모야` → residual)이면
+  // 카드 없이 **종전 그대로 수용 진행**한다 — #1151 계약 무회귀 (실측: #1151 QA 실데이터).
+  {
+    const s = freshState({ normReply: "보끄가 모야" });
+    const r = await answerQuestion("u1", "보끄가모야", makeDeps(s));
+    assert.notEqual(r.source, "question_correction");
+    const log = s.logs.at(-1)!;
+    assert.equal(log.questionNormalized, "보끄가 모야");
+    assert.equal(log.normalizeStatus, "accepted_surface");
   }
 
   // 유일성 fail-close: 한 창이 두 term(보크·도루)과 동시에 치환 1 이면 증명 불가 — 카드 금지.
