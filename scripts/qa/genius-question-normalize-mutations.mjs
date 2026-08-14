@@ -65,6 +65,32 @@ const mutations = [
     replace: '  "career_leaderboard",\n  "ack",\n  "history_hold",\n];',
   },
   {
+    // 2026-08-14 hotfix 축: 복원 배선을 죽이면 Production QA FAIL 실데이터(provider 가
+    // `보끄가 뭐야` 까지만 교정)가 다시 카드 도달 불가가 된다.
+    name: "M22 결정론 사전 복원 배선 제거",
+    find: '      const repaired = repairGlossaryTermTypo(repairBase, glossary);',
+    replace: '      const repaired = null;',
+  },
+  {
+    // 유일성 안전선을 죽이면 증명 불가한 후보(보루→보크/도루 동시)가 카드로 나간다.
+    name: "M23 복원 유일성 fail-close 제거",
+    find: '  if (repaired.size !== 1) return null;',
+    replace: '  if (repaired.size < 1) return null;',
+  },
+  {
+    // 삼순 2026-08-14 NO-GO 축: Tier A 공백-only 수용이 residual 로 남는 경로를 죽이면
+    // provider 가 공백만 고치는 실측 행동에서 카드가 다시 도달 불가가 된다.
+    name: "M25 Tier A residual 복원 확장 제거",
+    find: '    const acceptedStillResidual = accepted\n      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";',
+    replace: '    const acceptedStillResidual = false;',
+  },
+  {
+    // 복원 후보도 SSOT 착지 재판정을 통과해야 한다 — 빼면 allowlist 밖 후보가 제안된다.
+    name: "M24 복원 후보의 SSOT 재판정 제거",
+    find: '      if (repaired !== null\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
+    replace: '      if (repaired !== null) {',
+  },
+  {
     // 삼순 ③ 취소 종결: 거절을 무시하면 정규화가 다시 돌아 같은 제안이 무한 반복된다.
     name: "M9 거절 플래그를 무시하고 정규화 재진입",
     find: 'if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm',
