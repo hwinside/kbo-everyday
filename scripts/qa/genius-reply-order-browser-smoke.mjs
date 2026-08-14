@@ -36,6 +36,7 @@ async function createSession(email) {
 }
 
 async function sendAnswer(userId, questionMessageId, content, suffix) {
+  // query-guard: bounded -- admin_send_ops_message는 대상 대화 1행만 반환한다.
   const { data, error } = await admin.rpc("admin_send_ops_message", {
     p_system_user_id: GENIUS_ID,
     p_user_id: userId,
