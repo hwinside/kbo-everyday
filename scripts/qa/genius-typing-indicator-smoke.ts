@@ -19,7 +19,10 @@ import {
   BASEBALL_QA_OUTBOX_KEY,
   BASEBALL_QA_MAX_ATTEMPTS,
   BASEBALL_QA_REPLY_TIMEOUT_MS,
+  applyBaseballQaPlayerPick,
+  applyBaseballQaQuestionCorrection,
   attemptBaseballQaOutbox,
+  declineBaseballQaQuestionCorrection,
   enqueueBaseballQaQuestion,
   expireBaseballQaReplyTimeouts,
   getBaseballQaReplyStates,
@@ -219,6 +222,67 @@ test("timeout 직전은 waiting을 유지하고 retry는 질문 deadline을 새�
   resetBaseballQaQuestion(storage, 98);
   assert.equal(getBaseballQaReplyStates(readBaseballQaOutbox(storage))[98], "waiting");
   assert.equal(readBaseballQaOutbox(storage)[0]?.responsePendingSinceMs, undefined);
+});
+
+test("90초 뒤 picker·교정 선택/거절은 stale deadline을 버리고 새 요청을 시작한다", () => {
+  const stale = (messageId: number) => new MemoryStorage(JSON.stringify([{
+    conversationId: "conv", messageId, attempts: 0, acknowledged: true,
+    awaitingPlayerPick: true, responsePendingSinceMs: 1_000,
+  }]));
+  const cases: Array<[string, (storage: MemoryStorage, messageId: number) => boolean]> = [
+    ["player pick", (storage, messageId) => applyBaseballQaPlayerPick(storage, "conv", messageId, "69102")],
+    ["correction select", (storage, messageId) =>
+      applyBaseballQaQuestionCorrection(storage, "conv", messageId, "문보경 별명")],
+    ["correction decline", (storage, messageId) =>
+      declineBaseballQaQuestionCorrection(storage, "conv", messageId)],
+  ];
+
+  cases.forEach(([label, select], index) => {
+    const messageId = 81 + index;
+    const storage = stale(messageId);
+    assert.equal(select(storage, messageId), true, `${label}: 선택 요청이 enqueue되어야 한다`);
+    const entry = readBaseballQaOutbox(storage)[0];
+    assert.equal(entry?.attempts, 0, `${label}: attempts를 새로 시작해야 한다`);
+    assert.equal(entry?.acknowledged, false, `${label}: POST 전 waiting 상태여야 한다`);
+    assert.equal(entry?.responsePendingSinceMs, undefined, `${label}: 과거 deadline을 지워야 한다`);
+    assert.deepEqual(
+      expireBaseballQaReplyTimeouts(storage, 1_000 + BASEBALL_QA_REPLY_TIMEOUT_MS),
+      [],
+      `${label}: 선택 직후 과거 deadline으로 failed 전환되면 안 된다`,
+    );
+    assert.equal(getBaseballQaReplyStates(readBaseballQaOutbox(storage))[messageId], "waiting");
+  });
+});
+
+test("picker·교정 3경로 deadline reset 배선 제거는 모두 RED다", () => {
+  const source = readFileSync("src/lib/baseball-qa/client-outbox.ts", "utf8");
+  const sections: Array<[string, string, string]> = [
+    ["applyBaseballQaQuestionCorrection", "declineBaseballQaQuestionCorrection", "교정 선택"],
+    ["declineBaseballQaQuestionCorrection", "applyBaseballQaPlayerPick", "교정 거절"],
+    ["applyBaseballQaPlayerPick", "collectBaseballQaAnsweredQuestionIds", "선수 선택"],
+  ];
+  const assertWiring = (candidate: string) => {
+    for (const [name, nextName, label] of sections) {
+      const start = candidate.indexOf(`export function ${name}`);
+      const end = candidate.indexOf(`export function ${nextName}`, start + 1);
+      assert.ok(start >= 0 && end > start, `${label}: 함수 구획을 찾지 못했다`);
+      assert.match(
+        candidate.slice(start, end),
+        /responsePendingSinceMs: undefined/,
+        `${label}: stale deadline reset이 필요하다`,
+      );
+    }
+  };
+  assertWiring(source);
+  for (const [name, nextName, label] of sections) {
+    const start = source.indexOf(`export function ${name}`);
+    const end = source.indexOf(`export function ${nextName}`, start + 1);
+    const section = source.slice(start, end);
+    const mutated = source.slice(0, start) +
+      section.replace(/\s*responsePendingSinceMs: undefined,?/, "") +
+      source.slice(end);
+    assert.throws(() => assertWiring(mutated), /stale deadline reset/, `${label} reset 제거가 RED여야 한다`);
+  }
 });
 
 test("질문별 deadline은 다른 질문과 picker 대기를 건드리지 않는다", () => {

@@ -324,7 +324,7 @@
     "qa:baseball-qa-live": "tsx scripts/qa/baseball-qa-classifier-live-smoke.ts",
     "qa:baseball-genius-context": "tsx scripts/qa/baseball-genius-context-smoke.ts",
     "qa:baseball-genius-context:mutations": "node scripts/qa/baseball-genius-comparative-mutations.mjs",
-    "qa:genius-typing": "tsx --test scripts/qa/genius-typing-indicator-smoke.ts",
+    "qa:genius-typing": "tsx --test scripts/qa/genius-typing-indicator-smoke.ts && tsx scripts/qa/genius-reply-order-dom.ts",
     "qa:outage-banner": "tsx scripts/qa/outage-notice-banner-smoke.ts",
     "qa:game-log-ledger-orchestrator": "tsx scripts/qa/game-log-ledger-orchestrator.ts",
     "qa:title-orphan": "tsx scripts/qa/title-analysis-orphan-score-smoke.ts",

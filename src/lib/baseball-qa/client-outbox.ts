@@ -126,7 +126,7 @@ export function applyBaseballQaQuestionCorrection(
   const index = entries.findIndex((row) => row.messageId === messageId);
   const selected: BaseballQaOutboxEntry = {
     conversationId, messageId, pickedNormalizedQuestion, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
-    declineCorrection: false,
+    declineCorrection: false, responsePendingSinceMs: undefined,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
@@ -143,6 +143,7 @@ export function declineBaseballQaQuestionCorrection(
   const index = entries.findIndex((row) => row.messageId === messageId);
   const declined: BaseballQaOutboxEntry = {
     conversationId, messageId, declineCorrection: true, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
   };
   // 선택값이 이미 있으면 거절로 덮지 않는다 — 먼저 확정된 응답이 이긴다(서버와 같은 계약).
   if (index >= 0) {
@@ -177,6 +178,7 @@ export function applyBaseballQaPlayerPick(
     attempts: 0,
     acknowledged: false,
     awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
