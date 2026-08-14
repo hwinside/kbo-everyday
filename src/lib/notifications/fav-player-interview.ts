@@ -1,5 +1,5 @@
+import { matchPlayers, type PlayerAlias } from "@/lib/video/player-tagger";
 import type { VideoUpsertRow } from "@/lib/video/videos-repo";
-import type { PlayerAlias } from "@/lib/video/player-tagger";
 import type { KboRawGame } from "@/types/api";
 
 // 최애선수 수훈선수 인터뷰 알림 (2026-08-14 하린아빠 요청).
@@ -7,15 +7,27 @@ import type { KboRawGame } from "@/types/api";
 // 구단 공식 채널의 "수훈(선수) 인터뷰" 영상을 감지 → 태깅된 선수를 최애로 둔
 // 유저에게 발송하고 당일 경기페이지(/games/{gameId})로 딥링크한다.
 //
-// 안전장치:
-//  - 감지는 공식 채널(source_type official_*)만 — 커뮤니티 채널 제목 낚시 차단.
-//  - 제목에 "수훈" + "인터뷰" 둘 다 있어야 함(정밀도 우선, fail-close).
+// 감지 설계 — 제목 문자열 열거가 아니라 "수훈 앵커 + 선수 결속":
+//  구단 제목 관행은 10개 구단×시즌마다 변하는 열린 집합이라 문자열로 닫으면 반례마다 룰이 쌓인다
+//  (M90 open_language_never_closes_with_rules). 실측으로 확인된 변형:
+//    NC   `[🏅수훈 선수 엔터뷰] 안중열 | kt vs NC`   ← "인터뷰"가 아니라 "엔터뷰"(말장난)
+//    롯데  `4타수 2안타 결승타의 주인공! #수훈선수 #황성빈` ← "인터뷰" 단어 자체가 없음
+//  초기 구현은 "수훈"+"인터뷰" AND였고, 실 videos 테이블 공식채널 82건 중 **0건 통과**했다.
+//  → 앵커는 "수훈" 하나로 넣게 잡고, 오발송 방어는 아래 닫힌 축에만 둔다.
+//
+// 오발송 방어(전부 닫힌 집합):
+//  - 공식 채널(source_type official_*)만 — 커뮤니티 채널 제목 낚시 차단.
+//  - 선수 결속 필수: 제목에서 실제 로스터 선수가 매칭되어야 함(미결속 = 발송 안 함).
+//    이 결속이 "개인 수훈 콘텐츠"와 "월간 MVP 시상식·정규코너"를 자연 분리한다
+//    (실측: 정규코너 2건 모두 선수명 부재로 자체 탈락).
+//  - 저장된 player_ids만 믿지 않고 제목을 **재매칭**한다 — 수집 시점 alias가 비어
+//    태깅 0으로 굴러간 건이 82건 중 47건이었고, 재매칭으로 24건 복구된다(35→59).
+//  - alias 소속팀 ≠ 영상 팀이면 skip(오태깅으로 엉뚱한 팀 팬에게 가는 것 방어).
 //  - freshness 컷오프(INTERVIEW_FRESH_MS): RSS는 채널당 최신 ~15개를 매 run 재반환하므로
 //    배포/활성화 직후 과거 영상 backlog 일괄발송 위험(#274 패턴)을 시간창으로 차단.
 //  - dedup = notified_score_events 재사용, event_id = `interview#{videoId}#{kboId}`
 //    (video_id×선수 단위 멱등 claim → cron 재실행에도 1회만 발송).
 //  - 경기 매칭 실패 시 발송 skip(fail-close) — 딥링크 목적지 없는 알림은 보내지 않는다.
-//  - alias 소속팀 ≠ 영상 팀이면 skip(오태깅 방어).
 //
 // DB/FCM 의존은 전부 InterviewDeps로 주입 — 이 모듈 자체는 순수해서 QA smoke가
 // 실제 발송 오케스트레이션 경로(claim→audience→send→unclaim)를 그대로 태울 수 있다.
@@ -37,9 +49,14 @@ export interface InterviewCandidate {
   publishedAtMs: number;
 }
 
-/** 이번 run 행에서 수훈선수 인터뷰 후보 추출. */
+/**
+ * 이번 run 행에서 수훈선수 인터뷰 후보 추출.
+ * playerAliases를 받아 제목을 재매칭한다 — 저장된 player_ids는 수집 시점 alias에
+ * 좌우되어 공식 수훈 영상의 절반이 빈 상태였다(실측 82건 중 47건).
+ */
 export function detectInterviewCandidates(
   rows: VideoUpsertRow[],
+  playerAliases: PlayerAlias[],
   nowMs: number,
 ): InterviewCandidate[] {
   const seen = new Set<string>();
@@ -48,10 +65,15 @@ export function detectInterviewCandidates(
     if (seen.has(row.video_id)) continue;
     if (!OFFICIAL_SOURCE_TYPES.has(row.source_type)) continue;
     const title = row.title ?? "";
-    if (!title.includes("수훈") || !title.includes("인터뷰")) continue;
-    const playerIds = (row.player_ids ?? []).slice(0, MAX_PLAYERS_PER_VIDEO);
-    if (playerIds.length === 0) continue;
+    if (!title.includes("수훈")) continue;
     if (!row.team_id) continue;
+    // 저장 태깅 ∪ 제목 재매칭(팀 제약) — 재매칭이 결손된 태깅을 복구한다.
+    const rematched = matchPlayers(title, playerAliases, row.team_id, null);
+    const merged = [...new Set([...(row.player_ids ?? []), ...rematched])];
+    const playerIds = merged.slice(0, MAX_PLAYERS_PER_VIDEO);
+    // 선수 미결속 = 발송 안 함. 개인 수훈 콘텐츠와 월간 MVP 시상식·정규코너를
+    // 가르는 경계도 이 조건이 겸한다(정규코너는 제목에 선수명이 없다).
+    if (playerIds.length === 0) continue;
     const publishedAtMs = Date.parse(row.published_at);
     if (!Number.isFinite(publishedAtMs)) continue;
     // 미래 timestamp(시계 skew 5분 허용) 또는 freshness 창 밖은 제외.
@@ -124,7 +146,7 @@ export async function notifyFavPlayerInterviews(
     candidates: 0, sent: 0, skippedNoGame: 0, skippedClaimed: 0,
     skippedAliasMismatch: 0, skippedNoAudience: 0, failed: 0,
   };
-  const candidates = detectInterviewCandidates(rows, nowMs);
+  const candidates = detectInterviewCandidates(rows, playerAliases, nowMs);
   summary.candidates = candidates.length;
   if (candidates.length === 0) return summary;
 

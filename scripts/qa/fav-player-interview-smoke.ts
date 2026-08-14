@@ -2,15 +2,20 @@
  * 최애선수 수훈 인터뷰 알림 smoke — 감지 + 실제 발송 오케스트레이션.
  * DB/네트워크 없음(deps 주입). 실패 시 exit 1.
  *
+ * ⚠️ fixture는 지어낸 문자열이 아니라 **운영 videos 테이블 실측 제목**이다.
+ * 초기 구현은 "수훈"+"인터뷰" AND였고 자체 fixture로는 전부 GREEN이었으나,
+ * 실 공식채널 82건에 대보니 **0건 통과**였다(NC="엔터뷰", 롯데=해시태그형).
+ * 그래서 이 게이트는 실측 제목 샘플을 그대로 박아 같은 종류의 false-green을 막는다.
+ *
  * 검증 축:
- *  1. 감지 양성: 공식 채널 + "수훈"+"인터뷰" 제목 + 선수 태깅 + fresh
- *  2. 감지 음성: 커뮤니티 / 제목 부분일치 / 태깅 없음 / stale / 미래 / team_id 없음 / 중복
- *  3. 선수 cap: 태깅 3명 → 2명까지만
- *  4. kstDateStr UTC→KST 날짜 경계
- *  5. pickGameIdForTeam: away/home/무경기/더블헤더
- *  6. 종단 발송 경로: claim→audience→sendPush(url·prefKey·title)→요약
- *  7. 실패 처리: claim 중복 skip / 스코어보드 실패 시 claim 안 함 / 전일 폴백 /
- *     alias 불일치 skip / 발송 실패 unclaim / 대상 0
+ *  1. 감지 양성(실측 제목): NC 엔터뷰 / 롯데 해시태그형 / 일반 인터뷰
+ *  2. 감지 음성: 커뮤니티 / 수훈 없음 / 선수 미결속(월간MVP 시상식·정규코너) /
+ *     stale / 미래 / team_id 없음 / 중복
+ *  3. 재매칭 복구: 저장 태깅 0이어도 제목에서 선수 복구 + 팀 불일치 배제
+ *  4. 선수 cap / kstDateStr / pickGameIdForTeam
+ *  5. 종단 발송 경로: claim→audience→sendPush(url·prefKey·title)→요약
+ *  6. 실패 처리: claim 중복 / 경기없음 / fetch실패 / 전일폴백 / alias불일치 /
+ *     발송실패 unclaim / 대상 0
  */
 import {
   detectInterviewCandidates,
@@ -51,6 +56,10 @@ const ALIASES: PlayerAlias[] = [
   { kbo_id: "55555", name: "문보경", team: "LG", aliases: [] },
   { kbo_id: "77777", name: "박동원", team: "LG", aliases: [] },
   { kbo_id: "99999", name: "양의지", team: "두산", aliases: [] },
+  // 아래는 실측 제목 fixture에 등장하는 실제 선수들
+  { kbo_id: "64101", name: "안중열", team: "NC", aliases: [] },
+  { kbo_id: "51533", name: "황성빈", team: "롯데", aliases: [] },
+  { kbo_id: "68205", name: "전민재", team: "롯데", aliases: [] },
 ];
 const g = (id: string, away: string, home: string) =>
   ({ G_ID: id, AWAY_NM: away, HOME_NM: home }) as KboRawGame;
@@ -87,45 +96,74 @@ function makeDeps(over: DepsOverrides = {}): { deps: InterviewDeps; calls: Calls
   return { deps, calls };
 }
 
-console.log("[1] 감지 양성");
+const det = (rows: VideoUpsertRow[], now = NOW) => detectInterviewCandidates(rows, ALIASES, now);
+
+console.log("[1] 감지 양성 — 운영 실측 제목");
 {
-  const out = detectInterviewCandidates([row()], NOW);
-  check("공식+수훈+인터뷰+fresh → 후보 1", out.length === 1);
+  // 아래 3개는 videos 테이블에 실재하는 제목. 이전 구현은 이 셈 전부를 놓쳤다.
+  const ncReal = row({
+    video_id: "nc-real", team_id: "NC", player_ids: [],
+    title: "[🏅수훈 선수 엔터뷰] 안중열 | kt vs NC | 8월 13일 l Sponsored by NordVPN",
+  });
+  const lotteReal = row({
+    video_id: "lotte-real", team_id: "롯데", player_ids: [],
+    title: "4타수 2안타 결승타의 주인공! #수훈선수 #황성빈",
+  });
+  check("NC '엔터뷰' 표기 감지(구 구현 미검출)", det([ncReal]).length === 1);
+  check("NC 엔터뷰 → 안중열 결속", det([ncReal])[0]?.playerIds.includes("64101") === true);
+  check("롯데 해시태그형 감지(구 구현 미검출)", det([lotteReal]).length === 1);
+  check("롯데 해시태그 → 황성빈 결속", det([lotteReal])[0]?.playerIds.includes("51533") === true);
+
+  const out = det([row()]);
+  check("일반 수훈 인터뷰 제목 감지", out.length === 1);
   check("teamShortName 전달", out[0]?.teamShortName === "LG");
   check("playerIds 전달", out[0]?.playerIds[0] === "55555");
-  check("official_short도 허용",
-    detectInterviewCandidates([row({ source_type: "official_short" })], NOW).length === 1);
+  check("official_short도 허용", det([row({ source_type: "official_short" })]).length === 1);
 }
 
 console.log("[2] 감지 음성");
 {
-  check("커뮤니티 채널 제외",
-    detectInterviewCandidates([row({ source_type: "community_long" })], NOW).length === 0);
-  check("'수훈'만 있는 제목 제외",
-    detectInterviewCandidates([row({ title: "수훈선수 하이라이트 모음" })], NOW).length === 0);
-  check("'인터뷰'만 있는 제목 제외",
-    detectInterviewCandidates([row({ title: "시즌 결산 인터뷰" })], NOW).length === 0);
-  check("선수 태깅 없음 제외",
-    detectInterviewCandidates([row({ player_ids: [] })], NOW).length === 0);
+  check("커뮤니티 채널 제외", det([row({ source_type: "community_long" })]).length === 0);
+  check("'수훈' 앵커 없으면 제외",
+    det([row({ title: "경기 하이라이트 문보경 홈런" })]).length === 0);
+  // 월간 MVP 시상식·정규코너는 제목에 선수명이 없어 선수결속으로 자연 탈락(실측 2건).
+  check("월간 MVP 시상식 제외(실측 제목)",
+    det([row({ team_id: "롯데", player_ids: [], title: "누리라이브 ep.12 7월 월간 수훈 mvp 시상식 ✨" })]).length === 0);
+  check("정규코너 제외(실측 제목)",
+    det([row({ team_id: "롯데", player_ids: [], title: "ep 11. 6월 월간 수훈 mvp✨" })]).length === 0);
+  check("선수 미결속 제외",
+    det([row({ player_ids: [], title: "오늘의 수훈선수 인터뷰" })]).length === 0);
   check("freshness 창 밖 제외",
-    detectInterviewCandidates([row({
-      published_at: new Date(NOW - INTERVIEW_FRESH_MS - 60_000).toISOString(),
-    })], NOW).length === 0);
+    det([row({ published_at: new Date(NOW - INTERVIEW_FRESH_MS - 60_000).toISOString() })]).length === 0);
   check("미래 timestamp 제외",
-    detectInterviewCandidates([row({
-      published_at: new Date(NOW + 10 * 60 * 1000).toISOString(),
-    })], NOW).length === 0);
-  check("team_id 없음 제외",
-    detectInterviewCandidates([row({ team_id: "" })], NOW).length === 0);
-  check("깨진 published_at 제외",
-    detectInterviewCandidates([row({ published_at: "not-a-date" })], NOW).length === 0);
-  check("중복 video_id는 1건만",
-    detectInterviewCandidates([row(), row()], NOW).length === 1);
+    det([row({ published_at: new Date(NOW + 10 * 60 * 1000).toISOString() })]).length === 0);
+  check("team_id 없음 제외", det([row({ team_id: "" })]).length === 0);
+  check("깨진 published_at 제외", det([row({ published_at: "not-a-date" })]).length === 0);
+  check("중복 video_id는 1건만", det([row(), row()]).length === 1);
 }
 
-console.log("[3] 선수 cap");
+console.log("[3] 제목 재매칭 복구");
 {
-  const out = detectInterviewCandidates([row({ player_ids: ["1", "2", "3"] })], NOW);
+  // 수집 시점 alias 결손으로 player_ids가 빈 경우(실측 82건 중 47건) 복구되어야 한다.
+  const recovered = det([row({
+    team_id: "롯데", player_ids: [],
+    title: "결승타의 주인공! 3타점 맹활약🔥#수훈선수 #전민재",
+  })]);
+  check("저장 태깅 0 → 제목에서 복구", recovered.length === 1 && recovered[0].playerIds.includes("68205"));
+  // 팀 제약: LG 영상 제목에 롯데 선수명이 있어도 결속되면 안 된다.
+  const crossTeam = det([row({
+    team_id: "LG", player_ids: [],
+    title: "수훈선수 인터뷰 상대팀 황성빈을 막아낸 수비",
+  })]);
+  check("재매칭은 영상 팀으로 제약", crossTeam.length === 0);
+  // 저장값과 재매칭이 같은 선수면 중복 없이 1명.
+  const dedup = det([row({ player_ids: ["55555"], title: "수훈선수 인터뷰 문보경" })]);
+  check("저장∪재매칭 중복 제거", dedup[0]?.playerIds.length === 1);
+}
+
+console.log("[3-1] 선수 cap");
+{
+  const out = det([row({ player_ids: ["1", "2", "3"] })]);
   check("3명 태깅 → 2명 cap", out[0]?.playerIds.length === 2);
 }
 
