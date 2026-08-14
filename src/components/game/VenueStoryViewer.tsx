@@ -223,6 +223,34 @@ export default function VenueStoryViewer({
   }, []);
 
   const story = stories[index];
+  // 활성 스토리 src latch(삼순 8/14 계약) — 진입 즉시 도는 signed URL 재발급(onRefreshUrl)이
+  // stories prop 의 mediaUrl·thumbUrl 을 교체하면 표시 중인 <img>/<video> src 가 바뀌며 재로드
+  // → 화면이 한 번 깜박인다(하린아빠 8/14 11:39 리포트). 표시 URL 은 story.id 단위로
+  // 진입 시점 값을 latch 해 백그라운드 갱신이 와도 유지하고, 실제 로드 오류(만료 URL)때만
+  // 최신 URL 로 1회 교체한다. 4분 주기 갱신·만료 복구 루프 자체는 그대로 둔다.
+  const [mediaLatch, setMediaLatch] = useState<{
+    storyId: number;
+    mediaUrl: string;
+    thumbUrl: string | null;
+    errored: boolean;
+    swapped: boolean;
+  } | null>(null);
+  if (story) {
+    if (mediaLatch === null || mediaLatch.storyId !== story.id) {
+      // 스토리 진입(전환 포함): 진입 시점 prop URL 을 latch — render 중 조정 패턴(즉시 재렌더).
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false, swapped: false });
+    } else if (mediaLatch.errored && !mediaLatch.swapped && story.mediaUrl !== mediaLatch.mediaUrl) {
+      // 로드 오류 후 갱신된 URL 이 도착하면 그때만 1회 교체(만료 복구).
+      setMediaLatch({ storyId: story.id, mediaUrl: story.mediaUrl, thumbUrl: story.thumbUrl, errored: false, swapped: true });
+    }
+  }
+  const latchActive = story != null && mediaLatch?.storyId === story.id;
+  const displayMediaUrl = latchActive && mediaLatch ? mediaLatch.mediaUrl : story?.mediaUrl;
+  const displayThumbUrl = latchActive && mediaLatch ? mediaLatch.thumbUrl : story?.thumbUrl;
+  const markMediaErrored = useCallback(() => {
+    // swapped 이후 오류는 더 교체하지 않는다(무한 재로드 방지) — 기존 retry 루프가 복구 담당.
+    setMediaLatch((prev) => (prev && !prev.swapped && !prev.errored ? { ...prev, errored: true } : prev));
+  }, []);
   const keyboardOpen = isVenueStoryKeyboardOpen(composerFocused, kbInset);
 
   // #807 전송 중 스토리 전환 오염 가드용 현재 story.id 추적
@@ -801,22 +829,23 @@ export default function VenueStoryViewer({
           <video
             ref={videoRef}
             data-story-media="video"
-            src={story.mediaUrl}
-            {...(story.thumbUrl ? { poster: story.thumbUrl } : {})}
+            src={displayMediaUrl}
+            {...(displayThumbUrl ? { poster: displayThumbUrl } : {})}
             preload="auto"
             className="max-h-full max-w-full w-full h-full object-contain"
             playsInline
             autoPlay
             onTimeUpdate={onVideoTime}
             onEnded={goNext}
+            onError={markMediaErrored}
           />
         ) : (
           <>
-            {/* 로드 완료 전 placeholder — 트레이에서 이미 로드된 썸네일로 검은 화면 대체(8/14 깜박임) */}
-            {!loadedMediaUrls.has(story.mediaUrl) && story.thumbUrl && (
+            {/* 로드 완료 전 placeholder — 트레이에서 이미 로드된 진입 시점 썸네일(latch)로 검은 화면 대체(8/14 깜박임) */}
+            {displayMediaUrl && !loadedMediaUrls.has(displayMediaUrl) && displayThumbUrl && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={story.thumbUrl}
+                src={displayThumbUrl}
                 alt=""
                 aria-hidden
                 data-story-media-placeholder
@@ -825,12 +854,13 @@ export default function VenueStoryViewer({
             )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={story.mediaUrl}
+              src={displayMediaUrl}
               alt=""
               data-story-media="image"
-              onLoad={() => markMediaLoaded(story.mediaUrl)}
+              onLoad={() => displayMediaUrl && markMediaLoaded(displayMediaUrl)}
+              onError={markMediaErrored}
               className="relative max-h-full max-w-full w-full h-full object-contain"
-              style={loadedMediaUrls.has(story.mediaUrl) ? undefined : { opacity: 0 }}
+              style={displayMediaUrl && loadedMediaUrls.has(displayMediaUrl) ? undefined : { opacity: 0 }}
             />
           </>
         )}
