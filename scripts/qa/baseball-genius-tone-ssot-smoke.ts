@@ -32,6 +32,7 @@ import {
   validateLlmResponse,
 } from "../../src/lib/baseball-qa/pipeline";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
+import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import {
   RAG_NEWS_SYSTEM_PROMPT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
@@ -169,7 +170,8 @@ assert.deepEqual(
 );
 assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
-  { kind: "insufficient", reason: "tone_violation" },
+  { kind: "grounded", answer: "야구에서 보크는 반칙 동작이에요.", toneCompliant: false },
+  "RAG 생성답의 해요체는 서빙하되 toneCompliant=false 로 관측한다",
 );
 for (const nonFormal of [
   "보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”",
@@ -182,10 +184,58 @@ for (const nonFormal of [
   );
   assert.deepEqual(
     validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: nonFormal }), { numericEvidence: true, evidence: [] }),
-    { kind: "insufficient", reason: "tone_violation" },
-    `RAG 비합니다체 fail-close: ${nonFormal}`,
+    { kind: "grounded", answer: nonFormal, toneCompliant: false },
+    `RAG 비합니다체는 서빙+관측: ${nonFormal}`,
   );
 }
+
+// 톤 외 안전 계약은 전부 종전대로 fail-close — A안은 **tone_violation만** 강등한다.
+assert.equal(validateRagResponse("not-json").kind, "insufficient", "malformed JSON은 거절");
+assert.equal(
+  validateRagResponse(JSON.stringify({ status: "UNKNOWN", answer: "정답이에요." })).kind,
+  "insufficient",
+  "미지 status는 거절",
+);
+assert.equal(
+  validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "https://evil.example 답이에요." })).kind,
+  "insufficient",
+  "URL 포함은 거절",
+);
+assert.equal(
+  validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "홈런 99개예요." })).kind,
+  "insufficient",
+  "tier2 질문 밖 숫자는 거절",
+);
+assert.equal(
+  validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "가".repeat(500) })).kind,
+  "insufficient",
+  "길이 상한 초과는 거절",
+);
+
+// Production INSERT 행에 관측값이 결속되고, 정적 경로는 null로 남아 분모가 섞이지 않는다.
+const toneObservedRow = buildQuestionLogRow({
+  userId: "00000000-0000-0000-0000-000000000001",
+  question: "구자욱이 누구야?",
+  questionNorm: "구자욱이누구야",
+  matchPath: "rag",
+  answer: "구자욱 선수는 외야수예요.",
+  inputTokens: 100,
+  outputTokens: 10,
+  toneCompliant: false,
+}, 1);
+assert.equal(toneObservedRow.tone_compliant, false, "서버 로그 행에 tone_compliant=false 결속");
+assert.equal(buildQuestionLogRow({
+  userId: "00000000-0000-0000-0000-000000000001",
+  question: "보크가 뭐야?", questionNorm: "보크",
+  matchPath: "dictionary", answer: "보크는 반칙 동작입니다.",
+  inputTokens: null, outputTokens: null,
+}, 2).tone_compliant, null, "정적 경로는 tone_compliant=null");
+
+const toneObservationMigration = fs.readFileSync(
+  path.join(process.cwd(), "supabase/migrations/20260814235500_genius_question_logs_tone_observation.sql"),
+  "utf8",
+);
+assert.match(toneObservationMigration, /ADD COLUMN IF NOT EXISTS tone_compliant boolean/);
 
 // 새 정적 출력이 추가되면서 해요체가 섞이면, 위 수동 목록에 없더라도 실행 코드 AST에서 잡는다.
 const outputFiles = [
