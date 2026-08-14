@@ -688,8 +688,8 @@ for (const question of ["잔루만루가 뭔데", "순위 결정 규칙 알려�
 }
 
 assert.deepEqual(
-  validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작이에요."}'),
-  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작이에요." },
+  validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작입니다."}'),
+  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작입니다." },
 );
 assert.equal(validateLlmResponse("not-json").kind, "unsure");
 assert.equal(validateLlmResponse('{"status":"ANSWER","answer":"https://bad.example"}').kind, "unsure");
@@ -697,7 +697,7 @@ assert.equal(validateLlmResponse('{"status":"ANSWER","answer":"[링크](https://
 assert.equal(validateLlmResponse(`{"status":"ANSWER","answer":"${"가".repeat(201)}"}`).kind, "unsure");
 assert.equal(validateLlmResponse('{"status":"NOT_BASEBALL","answer":""}').kind, "blocked");
 assert.equal(
-  validateLlmResponse('{"status":"ANSWER","answer":"이 영화가 재미있어요."}').kind,
+  validateLlmResponse('{"status":"ANSWER","answer":"이 영화가 재미있습니다."}').kind,
   "unsure",
 );
 // 신규 status 계약: BASEBALL_RULE_TERM = 답변, 구 ANSWER도 동일 의미로 계속 받는다.
@@ -705,18 +705,18 @@ assert.equal(RULE_TERM_SENTINEL, "BASEBALL_RULE_TERM");
 assert.equal(UNSURE_SENTINEL, "UNSURE");
 assert.deepEqual(
   validateLlmResponse(
-    `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자예요."}`,
+    `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자입니다."}`,
   ),
-  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자예요." },
+  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자입니다." },
 );
 // RULE_TERM이어도 출력에 야구 신호가 없으면 2차 가드가 unsure로 돌린다.
 assert.equal(
-  validateLlmResponse(`{"status":"${RULE_TERM_SENTINEL}","answer":"아웃백 메뉴는 스테이크가 맛있어요."}`).kind,
+  validateLlmResponse(`{"status":"${RULE_TERM_SENTINEL}","answer":"아웃백 메뉴는 스테이크가 맛있습니다."}`).kind,
   "unsure",
 );
 // 계약 밖 status는 판정 불명확 → fail-closed(unsure), 답변도 차단도 아니다.
 assert.equal(
-  validateLlmResponse('{"status":"MAYBE_BASEBALL","answer":"야구 룰 답변이에요."}').kind,
+  validateLlmResponse('{"status":"MAYBE_BASEBALL","answer":"야구 룰 답변입니다."}').kind,
   "unsure",
 );
 
@@ -740,7 +740,7 @@ function freshState(overrides: Partial<MockState> = {}): MockState {
     cacheWrites: 0,
     logs: [],
     used: 0,
-    llmText: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+    llmText: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변입니다."}',
     llmCalls: 0,
     llmThrows: false,
     reserveThrows: false,
@@ -835,7 +835,7 @@ async function verifyPipeline() {
   ];
   // blocker 1 actual pipeline: team-bound 수치("LG 순위")는 위 paths에서 history_hold 유지,
   // 팀 없는 순위 룰 질문은 단일 LLM RULE_TERM 경로로 답변되어야 한다.
-  const RANK_RULE_ANSWER = "순위가 같으면 야구 규칙에 따라 상대전적 순으로 가려요.";
+  const RANK_RULE_ANSWER = "순위가 같으면 야구 규칙에 따라 상대전적 순으로 가립니다.";
   for (const input of rankRuleQuestions) {
     const state = freshState({
       llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"${RANK_RULE_ANSWER}"}`,
@@ -955,7 +955,7 @@ async function verifyPipeline() {
   // LLM이 BASEBALL_RULE_TERM으로 판정해 답변이 나간다. 룰베이스 과차단의 출구가 이거다.
   for (const input of ["아웃카운트가 어떻게 돼", "더블스틸이 뭐야"]) {
     const state = freshState({
-      llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"야구 룰 답변이에요."}`,
+      llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"야구 룰 답변입니다."}`,
     });
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.equal(result.source, "llm", `${input}: 사전 미수록 정상 룰 질문을 과차단하면 안 된다`);
@@ -976,7 +976,7 @@ async function verifyPipeline() {
       enablePlayerRag: true,
       searchRag: async () => evidence as never,
       callRagLlm: async () => ({
-        text: '{"status":"GROUNDED","answer":"럭키보이라고 불려요."}',
+        text: '{"status":"GROUNDED","answer":"럭키보이라고 불립니다."}',
         inputTokens: 10, outputTokens: 5,
       }),
       searchOfficialRag: async () => { throw new Error("선수 질문은 공식 RAG 미사용"); },
@@ -1582,6 +1582,20 @@ async function verifyPipeline() {
     assert.deepEqual(state.logs, ["ack"], `${input}: #983 모니터용 ack 라벨 기록`);
   }
 
+  // 승인 언어 시그니처는 positive ending 최근 5회에 없을 때만 실제 ack 경로에 붙는다.
+  {
+    const fresh = freshState();
+    const first = await answerQuestion("u1", "고마워", {
+      ...makeDeps(fresh), claimPositiveEnding: async (baseAnswer) => `${baseAnswer}\n승리를 위하여!`,
+    });
+    assert.equal(first.answer, `${ACK_ANSWER}\n승리를 위하여!`, "최근 5회 미사용이면 시그니처 부착");
+    const cooled = freshState();
+    const second = await answerQuestion("u1", "고마워", {
+      ...makeDeps(cooled), claimPositiveEnding: async (baseAnswer) => baseAnswer,
+    });
+    assert.equal(second.answer, ACK_ANSWER, "최근 5회 사용했으면 시그니처 반복 금지");
+  }
+
   // ── 인사말 actual path (2026-08-07) ────────────────────────────────────────
   // 라우팅만 맞고 답변 문구가 틀리면 유저에겐 여전히 대화가 어긋난다. 실제 answerQuestion 을 태운다.
   for (const input of greetingQuestions) {
@@ -1604,7 +1618,7 @@ async function verifyPipeline() {
   }
   // 인사 + 야구 질문은 인사로 삼키지 않고 정상 답변한다.
   {
-    const BORK = "보크는 투수의 반칙 투구 동작이에요.";
+    const BORK = "보크는 투수의 반칙 투구 동작입니다.";
     const state = freshState({ llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"${BORK}"}` });
     const result = await answerQuestion("u1", "안녕 보크가 뭐야", makeDeps(state));
     assert.equal(result.source, "llm", "인사+야구 질문은 정상 답변 경로");
@@ -1624,7 +1638,7 @@ async function verifyPipeline() {
     assert.equal(state.cache.size, 0, input);
   }
   {
-    const BORK_ANSWER = "보크는 투수의 반칙 투구 동작이에요.";
+    const BORK_ANSWER = "보크는 투수의 반칙 투구 동작입니다.";
     const state = freshState({
       llmText: `{"status":"${RULE_TERM_SENTINEL}","answer":"${BORK_ANSWER}"}`,
     });
@@ -1689,12 +1703,12 @@ async function verifyPipeline() {
   // 과차단 핏스 — 정상 룰/용어 실경로: 사전 미수록 + 붙여쓰기/조사 변형도
   // LLM까지 도달해 RULE_TERM 답변 경로로 끝나야 한다 (기존엔 전부 blocked였다).
   const RULE_TERM_TEXT =
-    `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자예요."}`;
+    `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자입니다."}`;
   for (const input of ruleTermRoutingQuestions) {
     const state = freshState({ llmText: RULE_TERM_TEXT });
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.equal(result.source, "llm", input);
-    assert.equal(result.answer, "잔루는 공격이 끝났을 때 루상에 남은 주자예요.", input);
+    assert.equal(result.answer, "잔루는 공격이 끝났을 때 루상에 남은 주자입니다.", input);
     assert.equal(state.llmCalls, 1, input);
     assert.equal(state.used, 1, input);
     assert.equal(state.cache.size, 1, `${input}: 유효 RULE_TERM만 cache write`);
@@ -1703,7 +1717,7 @@ async function verifyPipeline() {
   // fail-closed: 판정 불명확(계약 밖 status · 파싱실패 · UNSURE)는 차단도 답변도 아닌 되묻기다.
   for (const llmText of [
     `{"status":"${UNSURE_SENTINEL}","answer":""}`,
-    '{"status":"MAYBE_BASEBALL","answer":"야구 룰 답변이에요."}',
+    '{"status":"MAYBE_BASEBALL","answer":"야구 룰 답변입니다."}',
     "not-json",
   ]) {
     const state = freshState({ llmText });
@@ -1792,7 +1806,7 @@ async function verifyCrashIdempotentLlmAndQuota() {
     callLlm: async () => {
       llmCalls++;
       return {
-        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변입니다."}',
         inputTokens: 250,
         outputTokens: 100,
       };
@@ -1836,7 +1850,7 @@ async function verifyCrashIdempotentLlmAndQuota() {
 // 앞이고, 캐시 복구는 **원시점 cacheable** 로만 한다.
 async function verifyStoredEnvelopeReplayFrontOfExternalState() {
   const question = "우천 중단 되면 야구 경기 재개 룰이 어떻게 돼?";
-  const llmText = '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}';
+  const llmText = '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변입니다."}';
 
   // 축 ③ stored generic + preseed cache — 재생이 global cache 읽기보다 앞이다.
   {
@@ -1859,7 +1873,7 @@ async function verifyStoredEnvelopeReplayFrontOfExternalState() {
     assert.equal(first.source, "llm");
     assert.equal(llmCalls, 1);
     const retryReads = { reads: 0 };
-    const retry = await answerQuestion("u1", question, mk(async () => "예전에 저장된 오염 캐시 답이에요.", retryReads));
+    const retry = await answerQuestion("u1", question, mk(async () => "예전에 저장된 오염 캐시 답입니다.", retryReads));
     assert.equal(retry.source, "llm", `preseed cache 가 재생을 이겼다: ${retry.source}`);
     assert.equal(retry.answer, first.answer, "preseed cache 가 answer 를 바꿨다");
     assert.equal(retryReads.reads, 0, `재생 전에 global cache 를 읽었다(${retryReads.reads})`);
@@ -1873,7 +1887,7 @@ async function verifyStoredEnvelopeReplayFrontOfExternalState() {
     const cache = new Map<string, string>();
     const contextRow = {
       question: "보크가 뭐야?",
-      answer: "보크는 투수의 반칙 동작이에요.",
+      answer: "보크는 투수의 반칙 동작입니다.",
       jobSource: "llm",
       answeredAt: new Date(Date.now() - 1_000).toISOString(),
       currentCreatedAt: new Date().toISOString(),
@@ -1904,7 +1918,7 @@ async function verifyStoredEnvelopeReplayFrontOfExternalState() {
   // global cache hit 선종결. fence 가 캐시 발송 직전 상태를 재확인해 envelope 를 우선한다.
   {
     const envelope: LlmResult = {
-      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "야구 룰에 따른 검증된 답변이에요.", source: "llm", cacheable: true } }),
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "야구 룰에 따른 검증된 답변입니다.", source: "llm", cacheable: true } }),
       inputTokens: 1, outputTokens: 1,
     };
     let stateCalls = 0;
@@ -1929,7 +1943,7 @@ async function verifyStoredEnvelopeReplayFrontOfExternalState() {
     };
     const fenced = await answerQuestion("u1", question, deps);
     assert.equal(fenced.source, "llm", `cache-hit 선종결이 envelope 를 덮었다: ${fenced.source}`);
-    assert.equal(fenced.answer, "야구 룰에 따른 검증된 답변이에요.", "오염 캐시가 저장 final 을 이겼다");
+    assert.equal(fenced.answer, "야구 룰에 따른 검증된 답변입니다.", "오염 캐시가 저장 final 을 이겼다");
     assert.equal(llmCalls, 0);
     assert.equal(logs.at(-1), "llm", "cache 가 로그에 남았다 — fence 이전에 종결됐다");
   }
@@ -1952,7 +1966,7 @@ async function verifyLlmStoreFailureFailClosed() {
     callLlm: async () => {
       llmCalls++;
       return {
-        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변입니다."}',
         inputTokens: 250,
         outputTokens: 100,
       };
@@ -2021,7 +2035,7 @@ async function verifyConcurrentLlmBoundaryRace() {
       // winner가 LLM 경계에 머무는 동안 loser가 뒤따라 진입하도록 지연을 넣는다.
       await new Promise((resolve) => setTimeout(resolve, 30));
       return {
-        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변이에요."}',
+        text: '{"status":"ANSWER","answer":"야구 룰에 따른 검증된 답변입니다."}',
         inputTokens: 250,
         outputTokens: 100,
       };
@@ -2075,7 +2089,7 @@ async function verifyConcurrentLlmBoundaryRace() {
   assert.equal(losers.length, 1, "loser는 답변 없이 pending으로 물러나야 함");
   assert.equal(losers[0]?.status, 202);
   assert.equal(losers[0]?.answer, "", "loser는 ambiguous 등 어떤 답변도 먼저 발송하면 안 됨");
-  assert.equal(winners[0]?.answer, "야구 룰에 따른 검증된 답변이에요.");
+  assert.equal(winners[0]?.answer, "야구 룰에 따른 검증된 답변입니다.");
   assert.equal(cache.size, 1, "winner 답변만 캐시에 1건 저장되어야 함");
 }
 
@@ -2820,7 +2834,7 @@ async function verifyReadyDeliveryRetryWithPglite() {
   }
   // 5번째 처리: 답변 생성 성공 → ready 저장.
   await db.query(
-    "UPDATE genius_question_jobs SET status='ready', answer='보크는 투수의 반칙 투구 동작이에요.', source='dictionary', remaining=19 WHERE message_id=$1",
+    "UPDATE genius_question_jobs SET status='ready', answer='보크는 투수의 반칙 투구 동작입니다.', source='dictionary', remaining=19 WHERE message_id=$1",
     [messageId],
   );
   const afterReady = await db.query<{ attempts: number; delivery_attempts: number }>(
@@ -3193,16 +3207,16 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
       (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
     searchNewsRag: async () => newsEvidence as never,
     callRagLlm: async () => ({
-      text: '{"status":"GROUNDED","answer":"럭키보이라고 불려요."}',
+      text: '{"status":"GROUNDED","answer":"럭키보이라고 불립니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     callTeamRagLlm: async () => ({
-      text: '{"status":"GROUNDED","answer":"서울 연고 구단으로 MBC 청룡을 인수해 창단했어요."}',
+      text: '{"status":"GROUNDED","answer":"서울 연고 구단으로 MBC 청룡을 인수해 창단했습니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     callNewsRagLlm: async () => ({
       // 기사 tier2 는 숫자 전면 HOLD 라 모델도 숫자 없이 서술한다.
-      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있어요."}',
+      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있습니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,

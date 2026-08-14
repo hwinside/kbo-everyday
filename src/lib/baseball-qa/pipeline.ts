@@ -43,6 +43,7 @@ import {
 } from "./rag/retrieve";
 import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
+import { isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -145,10 +146,10 @@ export const SYSTEM_ERROR_ANSWER = BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER;
 // 다시 되묻기만 하니 유저는 다음에 뭘 해야 할지 알 수 없다. 되물을 때는 **무엇을 물으면
 // 되는지 실제 예시**를 준다.
 export const UNSURE_ANSWER =
-  "어떤 걸 여쭤보신 걸까요? 조금만 더 구체적으로 적어주시면 정확히 답해드릴게요. " +
-  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 요즘 어때?\" ⚾";
+  "어떤 내용을 물으신 건지 조금만 더 구체적으로 적어 주시면 정확히 확인하겠습니다. " +
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 요즘 어때?\"";
 export const SERVICE_REDIRECT_ANSWER =
-  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기로 보내주시면 운영팀이 확인해요! 저는 야구 이야기를 도와드릴게요 ⚾";
+  "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기에서 운영팀이 확인합니다. 저는 야구 이야기를 함께 살펴보겠습니다.";
 /**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
@@ -166,8 +167,8 @@ export const SERVICE_REDIRECT_ANSWER =
  * 지표를 같이 안내해 유저가 다음 행동을 할 수 있게 한다.
  */
 export const HISTORY_HOLD_ANSWER =
-  "그 기록은 아직 준비되지 않았어요. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
-  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 답해드릴 수 있어요! ⚾";
+  "그 기록은 아직 준비되지 않았습니다. 지금은 2026 시즌의 타율·홈런·타점·안타·경기·루타, " +
+  "방어율·승·패·세이브·홀드·탈삼진·이닝 같은 기록을 확인할 수 있습니다.";
 
 /**
  * **구단 단위 수치** 전용 fail-close 안내 (삼순 #1100 2차 P0-2).
@@ -181,8 +182,8 @@ export const HISTORY_HOLD_ANSWER =
  * 답할 수 있는 범위를 같이 밝혀 유저가 다음 행동을 할 수 있게 한다.
  */
 export const TEAM_STAT_HOLD_ANSWER =
-  "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어려워요. " +
-  "순위·팀 기록은 홈의 순위표에서 바로 보실 수 있고, 구단 이야기나 선수 기록은 제가 답해드릴게요! ⚾";
+  "팀 단위 기록(팀 타율·팀 홈런·현재 순위 같은 수치)은 정확한 자료가 없어 말씀드리기 어렵습니다. " +
+  "순위·팀 기록은 홈의 순위표에서 확인할 수 있으며, 구단 이야기나 선수 기록도 함께 살펴볼 수 있습니다.";
 
 /**
  * 최신 소식을 물었는데 그 창의 기사 근거로 답을 못 만든 경우 (삼순 조건부 GO ②).
@@ -192,14 +193,14 @@ export const TEAM_STAT_HOLD_ANSWER =
  * 유저가 다음에 뭐를 할 수 있는지(다른 날·다른 질문)를 남긴다.
  */
 export const NEWS_UNAVAILABLE_ANSWER =
-  "그 시기 기사에서는 답드릴 만한 내용을 찾지 못했어요. " +
-  "기간을 조금 달리해서(예: ‘최근 LG 어때?’) 다시 물어보시면 찾아볼게요! ⚾";
+  "그 시기 기사에서는 답변할 만한 내용을 찾지 못했습니다. " +
+  "기간을 조금 달리해서(예: ‘최근 LG 어때?’) 다시 물어보시면 확인하겠습니다.";
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
-  "어떤 내용에 이어서 여쭤보시는 걸까요? 궁금한 걸 한 번만 더 적어주시면 답해드릴게요! ⚾";
+  "어떤 내용에 이어서 물으신 건지 궁금한 내용을 한 번만 더 적어 주시면 답변하겠습니다.";
 
 export const LLM_AMBIGUOUS_ANSWER =
-  "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답을 드리지 못했어요. 같은 질문을 다시 보내주시면 새로 답해드릴게요! ⚾";
+  "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답변하지 못했습니다. 같은 질문을 다시 보내 주시면 새로 확인하겠습니다.";
 
 /**
  * **범위 되묻기 안내** — `야구 룰`처럼 "뭔가 되느냐"를 물은 경우.
@@ -214,11 +215,10 @@ export const LLM_AMBIGUOUS_ANSWER =
  * 골라야 하고, 그 고르는 부담 때문에 그냥 나간다.
  */
 export const SCOPE_GUIDE_ANSWER =
-  "제가 답해드릴 수 있는 건 이런 거예요 — 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 그리고 최근 소식이요. " +
-  "어떤 걸 물어볼지 고르셔도 되고(예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" " +
-  "\"김도영 타율\" \"요즘 삼성 어때?\"), 궁금한 걸 그냥 적어주셔도 찾아볼게요! ⚾";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
-export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
+export const ACK_ANSWER = "도움이 됐다니 기쁩니다!";
 // 대화 첫 턴 인사 — 질문이 아니라 대화 시작이다. 차단 문구를 보내면 문전박대가 된다.
 // ⚠️ ACK_ANSWER("도움이 됐다니 다행이에요")를 재사용하면 안 된다: `안녕` 에 그 문구가 나가면
 //    아무 도움도 준 적 없이 도움이 됐다고 말하는 꼴이라 대화가 어긋난다.
@@ -230,10 +230,10 @@ export const ACK_ANSWER = "도움이 됐다니 다행이에요! ⚾";
 //    반대가설이 있는 건 코드가 단정하면 안 된다(2026-08-07 확정 원칙).
 //    그래서 **만남·헤어짐 양쪽에 다 자연스러운 중립 문구**를 쓴다.
 export const GREETING_ANSWER =
-  "안녕! 야구 이야기가 궁금할 때 언제든 불러 주세요 ⚾";
+  "야구 이야기가 궁금한 순간에 함께하겠습니다.";
 // 하루 한도 소진 안내 — 질문에 대한 답이 아니라 상태 고지다.
 // 인라인 템플릿으로 두면 "고정 문구"로 식별되지 않아 분류 게이트가 실답변으로 오판한다.
-export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 썼어요. 내일 다시 물어봐 주세요!`;
+export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 모두 사용했습니다. 내일 다시 질문할 수 있습니다.`;
 
 /**
  * 동명이인 picker 안내 문구.
@@ -242,9 +242,9 @@ export const LIMITED_ANSWER = `오늘 질문 한도(${DAILY_LIMIT}개)를 다 �
  * 이 텍스트만 보게 된다. 그래서 문구 단독으로도 상황이 전달되게 쓴다.
  */
 export const PLAYER_PICKER_ANSWER =
-  "같은 이름의 선수가 여럿 있어요. 어느 선수를 말씀하시는 건가요?";
+  "같은 이름의 선수가 여럿 있습니다. 어느 선수를 말씀하시는 겁니까?";
 export const QUESTION_CORRECTION_ANSWER =
-  "혹시 아래 질문을 뜻하셨나요? 맞으면 선택해주세요.";
+  "혹시 아래 질문을 뜻하셨습니까? 맞는 질문을 선택하면 이어서 확인하겠습니다.";
 
 /**
  * 단독 감사·확인 인사 폐쇄집합 (삼순 GO / 신기능 B).
@@ -835,6 +835,8 @@ export interface QaDeps {
    * 과거 폴백은 없다 — 이 1행이 부적격이면 맥락 없음으로 종료한다.
    */
   loadPreviousTurn?: () => Promise<PreviousTurnRow | null>;
+  /** 사용자별 positive ending 판정·기록을 DB 트랜잭션으로 원자화한다. */
+  claimPositiveEnding?: (baseAnswer: string) => Promise<string>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
   /**
    * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
@@ -2670,6 +2672,7 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
     /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
+    !isBaseballGeniusToneCompliant(answer) ||
     // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
     !answerInQuestionScope(question, answer)
   ) {
@@ -2777,11 +2780,11 @@ export function renderTeamEntryAnswer(
   teamCanonical: string,
   entry: { snapshotDate: string; players: string[] },
 ): string {
-  return `${teamCanonical} 1군 등록 명단이에요 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준):\n${entry.players.join(", ")}`;
+  return `${teamCanonical} 1군 등록 명단입니다 (KBO 공식 당일 등록, ${entry.snapshotDate} 기준):\n${entry.players.join(", ")}`;
 }
 
 export const TEAM_ENTRY_UNAVAILABLE_ANSWER =
-  "지금은 당일 1군 등록 명단을 확인할 수 없어요. 잠시 후 다시 물어봐 주세요.";
+  "지금은 당일 1군 등록 명단을 확인할 수 없습니다. 잠시 후 다시 질문하면 최신 상태로 확인하겠습니다.";
 
 // ── 오늘 선발 매치업 (2026-08-11 하린아빠 제보 ① · 삼순 A안 확정) ────────────────
 //
@@ -2879,7 +2882,7 @@ export function adaptTodayStarters(
 }
 
 export const TODAY_NO_GAMES_ANSWER =
-  "오늘은 예정된 KBO 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!";
+  "오늘은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.";
 export const STARTER_TBD = "미발표";
 
 /** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
@@ -2907,7 +2910,7 @@ export function renderTodayStartersAnswer(
   if (rows.length === 0) {
     return team === null
       ? TODAY_NO_GAMES_ANSWER
-      : `오늘은 ${team} 경기가 없어요. 다음 경기일에 다시 물어봐 주세요!`;
+      : `오늘은 ${team} 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.`;
   }
   const lines = rows.map((game) => {
     // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).
@@ -2916,13 +2919,13 @@ export function renderTodayStartersAnswer(
     }
     // 선발 출처(KBO) 장애 경기는 fail-close — 빈값을 `미발표`로 위장하지 않는다 (삼순 P0).
     if (!game.starterSourceOk) {
-      return `· ${game.awayName} vs ${game.homeName} — 선발 정보를 지금 확인할 수 없어요 (${game.time} ${game.stadium})`;
+      return `· ${game.awayName} vs ${game.homeName} — 선발 정보를 지금 확인할 수 없습니다 (${game.time} ${game.stadium})`;
     }
     const away = game.awayStarterName.trim() || STARTER_TBD;
     const home = game.homeStarterName.trim() || STARTER_TBD;
     return `· ${game.awayName} ${away} vs ${game.homeName} ${home} (${game.time} ${game.stadium})`;
   });
-  const header = team === null ? "오늘의 선발 매치업이에요 ⚾" : `오늘 ${team} 경기 선발이에요 ⚾`;
+  const header = team === null ? "오늘의 선발 매치업입니다" : `오늘 ${team} 경기 선발입니다`;
   return `${header}\n${lines.join("\n")}`;
 }
 
@@ -4192,7 +4195,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
-    const answer =
+    let answer =
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
@@ -4210,6 +4213,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         ? (unbound === null ? UNCLEAR_ANSWER : NAME_SUGGEST_ANSWER(unbound.suggestion))
         :
       BLOCKED_ANSWER;
+    if (route === "ack" && deps.claimPositiveEnding) {
+      try {
+        answer = await deps.claimPositiveEnding(answer);
+      } catch {
+        // 시그니처는 장식이다. 원자 claim 실패가 본답을 막거나 중복 시그니처를 만들면 안 된다.
+      }
+    }
     // ⚠️ 범위 되묻기는 **자기 라벨로** 기록한다(삼순 2026-08-08 조건 ④).
     //   `ack` 으로 접으면 이 PR 이 고친 것을 사후에 셀 수가 없다 — 감사 분모가 사라진다.
     //   화면 취급(`reply_kind`)은 `ack` 과 같게 두어 마스코트·피드백 계약은 그대로다.

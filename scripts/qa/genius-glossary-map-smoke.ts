@@ -27,12 +27,12 @@ import {
 import { UNSUPPORTED_SEASON_ANSWER } from "../../src/lib/baseball-qa/stats/season-record";
 
 const glossary: GlossaryEntry[] = [
-  { term: "유격수", aliases: ["ss", "숏스탑", "shortstop"], answer: "2루와 3루 사이를 지키는 내야 수비의 핵심이에요." },
-  { term: "도루", aliases: ["stolen base", "sb"], answer: "주자가 투구 사이에 다음 베이스를 훔치는 플레이예요." },
-  { term: "40-40 클럽", aliases: ["40-40", "40-40클럽", "포티포티클럽"], answer: "한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 기록이에요." },
-  { term: "타율", aliases: ["batting average", "avg"], answer: "안타 ÷ 타수로 계산하는 타자의 기본 지표예요." },
-  { term: "득점", aliases: ["run", "r"], answer: "주자가 홈을 밟아 팀 점수가 1점 올라가는 거예요." },
-  { term: "20-20 클럽", aliases: ["20-20", "20-20클럽"], answer: "한 시즌에 홈런 20개와 도루 20개를 동시에 달성하는 기록이에요." },
+  { term: "유격수", aliases: ["ss", "숏스탑", "shortstop"], answer: "2루와 3루 사이를 지키는 내야 수비의 핵심입니다." },
+  { term: "도루", aliases: ["stolen base", "sb"], answer: "주자가 투구 사이에 다음 베이스를 훔치는 플레이입니다." },
+  { term: "40-40 클럽", aliases: ["40-40", "40-40클럽", "포티포티클럽"], answer: "한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 기록입니다." },
+  { term: "타율", aliases: ["batting average", "avg"], answer: "안타 ÷ 타수로 계산하는 타자의 기본 지표입니다." },
+  { term: "득점", aliases: ["run", "r"], answer: "주자가 홈을 밟아 팀 점수가 1점 올라가는 것입니다." },
+  { term: "20-20 클럽", aliases: ["20-20", "20-20클럽"], answer: "한 시즌에 홈런 20개와 도루 20개를 동시에 달성하는 기록입니다." },
 ];
 
 interface MapperState {

@@ -244,7 +244,7 @@ const MUTATIONS = [
     name: "s4 전제 정정 제거 — 틀린 우승팀 전제를 침묵 승인",
     file: PRIZE,
     from: `const premiseFix = mentionedTeam && mentionedTeam !== w.team
-    ? \`\${year}년 한국시리즈 우승은 \${mentionedTeam}이(가) 아니라 \${w.team}이었어요. \`
+    ? \`\${year}년 한국시리즈 우승은 \${mentionedTeam}이(가) 아니라 \${w.team}이었습니다. \`
     : "";`,
     to: 'const premiseFix = "";',
     smoke: "scripts/qa/baseball-qa-series-prize-smoke.ts",

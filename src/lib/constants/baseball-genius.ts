@@ -41,7 +41,7 @@ export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
  * 반대 방향으로 다시 만드는 셈이다.
  */
 export const BASEBALL_GENIUS_FALLBACK_ANSWER =
-  "저는 야구 이야기만 답해드릴 수 있어요. 룰·용어, 구단, 선수, 일부 기록, 최근 소식을 물어봐 주세요! 예: \"보크가 뭐야?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식입니다. 예: \"보크가 뭐야?\"";
 
 /**
  * **답변 가능 경로 → 유저에게 밝혀야 하는 범위어** (SSOT).
@@ -100,7 +100,7 @@ export const ANSWER_PATH_SCOPE_WORD = {
  * ①을 남발하면 야구 질문을 한 유저에게 "야구 질문만 하라"고 답하는 꼴이 된다.
  */
 export const BASEBALL_GENIUS_UNCLEAR_ANSWER =
-  "질문을 정확히 이해하지 못했어요. 더 자세히 물어봐주실 수 있으실까요?";
+  "질문을 정확히 이해하지 못했습니다. 내용을 조금 더 구체적으로 적어 주시면 다시 확인하겠습니다.";
 
 /**
  * ③ **시스템 오류** 안내 — 우리 쪽이 고장났을 때.
@@ -117,7 +117,7 @@ export const BASEBALL_GENIUS_UNCLEAR_ANSWER =
  * ⚠️ 내부 사정(RPC·LLM·타임아웃)은 문구에 적지 않는다 — 유저가 할 수 있는 행동만 적는다.
  */
 export const BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER =
-  "일시적인 문제로 답변을 만들지 못했어요. 같은 질문을 다시 보내주시면 답해드릴게요! ⚾";
+  "일시적인 문제로 답변을 만들지 못했습니다. 같은 질문을 다시 보내 주시면 다시 확인하겠습니다.";
 
 /**
  * ④ **이름 교정 제안** — 로스터에 없는 실명인데 한 글자만 다른 선수가 있을 때.
@@ -136,7 +136,7 @@ export const BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER =
  *   그건 picker 의 일이라 이 문구의 책임이 아니다.
  */
 export const BASEBALL_GENIUS_NAME_SUGGEST_ANSWER = (suggested: string): string =>
-  `혹시 ${suggested} 선수를 말씀하신 건가요? 그 이름으로 다시 물어봐 주시면 답해드릴게요! ⚾`;
+  `혹시 ${suggested} 선수를 말씀하신 겁니까? 그 이름으로 다시 물어봐 주시면 확인하겠습니다.`;
 
 /**
  * ⑤ **미결속 실명 · 제안할 이름 없음** — 로스터에 없고 가까운 후보도 없을 때.
@@ -153,7 +153,7 @@ export const BASEBALL_GENIUS_NAME_SUGGEST_ANSWER = (suggested: string): string =
  *   로스터에서 못 찾았을 뿐이다. 유저가 취할 다음 행동이 다르므로 문구도 다르다.
  */
 export const BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER =
-  "제가 아는 KBO 현역 선수 명단에서 그 이름을 찾지 못했어요. 이름을 다시 확인해서 물어봐 주시면 답해드릴게요! ⚾";
+  "KBO 현역 선수 명단에서 그 이름을 찾지 못했습니다. 이름을 다시 확인해서 물어봐 주시면 확인하겠습니다.";
 
 /**
  * 답변 유형별 마스코트 상태 (2026-08-02 하린아빠 지시 — "design채널 캐릭터를

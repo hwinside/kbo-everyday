@@ -128,14 +128,14 @@ export function renderDraftAnswer(
   const { askedTeam = null, wantsDetail = false } = options;
   const detail = draft.detail.length > 0 ? ` ${draft.detail}` : "";
   const head = wantsDetail && detail.length > 0
-    ? `${playerName} 선수는 ${draft.year}년 ${draft.team}${detail}로 입단했어요.`
-    : `${playerName} 선수는 ${draft.year}년에 ${draft.team}에 입단했어요.`;
+    ? `${playerName} 선수는 ${draft.year}년 ${draft.team}${detail}로 입단했습니다.`
+    : `${playerName} 선수는 ${draft.year}년에 ${draft.team}에 입단했습니다.`;
   // 질문이 지목한 구단과 입단 구단이 다르면 **오해를 남기지 않는다**.
   // ⚠️ 단 "그 구단에 입단한 건 아니다"라고 단정하지 않는다(삼순 2026-08-09) — 공식
   //   `lblDraft` 는 **최초 지명**만 증명하고, 이후 이적으로 그 구단에 합류했을 수 있다
   //   (박병호: 2005 LG 지명 → 현재 키움). 이 필드로 증명 못 하는 범위는 그렇다고 말한다.
   if (askedTeam && !teamMatches(askedTeam, draft.team)) {
-    return `${head} 다만 ${askedTeam} 합류 시점은 공식 입단(최초 지명) 기록으로는 확인할 수 없어요.`;
+    return `${head} 다만 ${askedTeam} 합류 시점은 공식 입단(최초 지명) 기록으로는 확인할 수 없습니다.`;
   }
   return head;
 }
@@ -167,8 +167,8 @@ export function renderDraftUnavailable(
   reason: "not_registered" | "not_collected",
 ): string {
   return reason === "not_registered"
-    ? `${playerName} 선수의 입단 정보는 KBO 공식 기록에 등록돼 있지 않아 알려드릴 수 없어요.`
-    : `${playerName} 선수의 입단 정보는 아직 확인하지 못했어요. 조금 뒤에 다시 물어봐 주세요.`;
+    ? `${playerName} 선수의 입단 정보는 KBO 공식 기록에 등록돼 있지 않아 안내할 수 없습니다.`
+    : `${playerName} 선수의 입단 정보는 아직 확인하지 못했습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.`;
 }
 
 /** 원문 보관 상태 → 안내 사유. `undefined`(미수집)와 `""`(미등록)를 가른다. */

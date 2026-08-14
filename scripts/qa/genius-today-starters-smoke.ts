@@ -42,8 +42,8 @@ function fresh(overrides: Partial<State> = {}): State {
 // 이 smoke 는 GREEN 이었다. 실제 사전처럼 `선발·투수` 후보가 생기는 구성으로 바꾸고
 // 매퍼 호출 0회를 actual 로 고정한다 — owner 가드 제거 변종은 여기서 RED 난다.
 const PROD_LIKE_GLOSSARY = [
-  { term: "선발 투수", aliases: ["선발", "선발투수", "starting pitcher"], answer: "경기를 첫 타자부터 시작하는 투수예요." },
-  { term: "투수", aliases: ["pitcher"], answer: "마운드에서 공을 던지는 선수예요." },
+  { term: "선발 투수", aliases: ["선발", "선발투수", "starting pitcher"], answer: "경기를 첫 타자부터 시작하는 투수입니다." },
+  { term: "투수", aliases: ["pitcher"], answer: "마운드에서 공을 던지는 선수입니다." },
 ];
 function makeDeps(state: State): QaDeps {
   return {
@@ -112,7 +112,7 @@ async function main() {
       assert.ok(adapted.every((g) => g.starterSourceOk === false), "kboGameIds=null인데 sourceOk=true");
       const rendered = renderTodayStartersAnswer(adapted, null);
       assert.ok(!rendered.includes("미발표"), "소스 전체 장애가 미발표로 위장됐다");
-      assert.ok(rendered.includes("확인할 수 없어요"));
+      assert.ok(rendered.includes("확인할 수 없습니다"));
     }
     // ② 부분 누락: KBO 응답에 있던 경기만 true.
     {
@@ -121,7 +121,7 @@ async function main() {
       const rendered = renderTodayStartersAnswer(adapted, null);
       assert.ok(rendered.includes("한화 왕옌청 vs 두산 곽빈"));
       assert.ok(rendered.includes("KT 미발표 vs NC 라일리")); // 소스 정상 + 빈값 = 진짜 미발표
-      assert.ok(rendered.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없어요"));
+      assert.ok(rendered.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없습니다"));
     }
     // ③ 전체 정상 + 빈 선발 → true/미발표 (진짜 미발표는 미발표로 남는다).
     {
@@ -130,7 +130,7 @@ async function main() {
       const rendered = renderTodayStartersAnswer(adapted, null);
       assert.ok(rendered.includes("KT 미발표 vs NC 라일리"));
       assert.ok(rendered.includes("롯데 미발표 vs SSG 미발표"));
-      assert.ok(!rendered.includes("확인할 수 없어요"));
+      assert.ok(!rendered.includes("확인할 수 없습니다"));
     }
   }
 
@@ -140,7 +140,7 @@ async function main() {
     assert.ok(all.includes("한화 왕옌청 vs 두산 곽빈"));
     assert.ok(all.includes("KT 미발표 vs NC 라일리")); // 소스 정상 + 빈 선발 = 진짜 미발표
     // 소스 장애 경기: 미발표 위장 금지 — 확인 불가로 fail-close (삼순 P0).
-    assert.ok(all.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없어요"));
+    assert.ok(all.includes("롯데 vs SSG — 선발 정보를 지금 확인할 수 없습니다"));
     assert.ok(!all.includes("롯데 미발표"), "소스 장애가 미발표로 위장됐다");
     // 취소 경기: 매치업·시간 대신 취소 명시 (삼순 ③축).
     assert.ok(all.includes("삼성 vs KIA — 취소"));
@@ -151,7 +151,7 @@ async function main() {
     assert.equal(renderTodayStartersAnswer([], null), TODAY_NO_GAMES_ANSWER);
     // 팀 지정 + 취소도 취소로 명시된다("경기 없음" 아님).
     assert.ok(renderTodayStartersAnswer(GAMES, "삼성").includes("삼성 vs KIA — 취소"));
-    assert.ok(renderTodayStartersAnswer(GAMES.slice(0, 3), "삼성").includes("삼성 경기가 없어요"));
+    assert.ok(renderTodayStartersAnswer(GAMES.slice(0, 3), "삼성").includes("삼성 경기가 없습니다"));
   }
 
   // ── 종단: LLM·cache 0 · kbo_structured · KST 날짜 ───────────────────

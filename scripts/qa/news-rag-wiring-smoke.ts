@@ -59,7 +59,7 @@ import path from "node:path";
 let players: PlayerRef[] = [];
 
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["balk"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 /**
@@ -124,7 +124,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
       return {
         text: JSON.stringify({
           status: "BASEBALL_RULE_TERM",
-          answer: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단이에요.",
+          answer: "LG 트윈스는 서울을 연고로 하는 KBO 리그 구단입니다.",
         }),
         inputTokens: 1,
         outputTokens: 1,
@@ -139,7 +139,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
       return {
         text: JSON.stringify({
           status: RAG_GROUNDED_SENTINEL,
-          answer: "젊은 타자들이 홈런을 합작하며 떠난 주전 외야수 자리를 메우고 있어요.",
+          answer: "젊은 타자들이 홈런을 합작하며 떠난 주전 외야수 자리를 메우고 있습니다.",
         }),
         inputTokens: 10,
         outputTokens: 5,
@@ -161,20 +161,20 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
     callTeamRagLlm: async () => {
       calls.teamLlm++;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "구단 문서 경로 답변이에요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "구단 문서 경로 답변입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
     callRagLlm: async () => {
       calls.playerLlm++;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "선수 경로 답변이에요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "선수 경로 답변입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
     searchOfficialRag: async () => { calls.officialSearch++; return []; },
     callOfficialRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변이에요." }),
+      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 조문 답변입니다." }),
       inputTokens: 1, outputTokens: 1,
     }),
     reserveDaily: async () => ({ allowed: true, remaining: 19 }),
@@ -392,7 +392,7 @@ async function run(): Promise<void> {
   //   우선해야 한다 — 종전에는 unsure/error 가 저장 final 을 덮었다.
   for (const breakKind of ["zero", "throw"] as const) {
     const envelope: LlmResult = {
-      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "젊은 타자들이 홈런을 합작했어요. (출처: 네이버 스포츠 기사)", source: "news_rag", sourceUrl: "https://sports.naver.com/news/1" } }),
+      text: JSON.stringify({ __qa_final_v1: true, final: { answer: "젊은 타자들이 홈런을 합작했습니다. (출처: 네이버 스포츠 기사)", source: "news_rag", sourceUrl: "https://sports.naver.com/news/1" } }),
       inputTokens: 1, outputTokens: 1,
     };
     let stateCalls = 0;
@@ -469,7 +469,7 @@ async function run(): Promise<void> {
       return {
         ok: true,
         json: async () => ({
-          candidates: [{ content: { parts: [{ text: '{"status":"GROUNDED","answer":"서술 답변이에요."}' }] } }],
+          candidates: [{ content: { parts: [{ text: '{"status":"GROUNDED","answer":"서술 답변입니다."}' }] } }],
           usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
         }),
       } as unknown as Response;
@@ -559,7 +559,7 @@ async function run(): Promise<void> {
         callNewsRagLlm: async () => ({
           text: JSON.stringify({
             status: RAG_GROUNDED_SENTINEL,
-            answer: "키움 전준표와 LG 손용준이 퓨처스 월간 신인왕으로 뽑혔어요.",
+            answer: "키움 전준표와 LG 손용준이 퓨처스 월간 신인왕으로 뽑혔습니다.",
           }),
           inputTokens: 1, outputTokens: 1,
         }),

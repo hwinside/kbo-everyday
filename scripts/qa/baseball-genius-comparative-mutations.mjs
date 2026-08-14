@@ -151,7 +151,7 @@ const MUTATIONS = [
   {
     id: "N11 정정 인정 지시 제거 (generic)",
     file: GEMINI,
-    anchor: '"지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 오류를 인정하며 정정한 사실을 답한다.",',
+    anchor: '"지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 승인된 실책 인정 문장으로 시작한 뒤 정정한 사실을 답한다.",',
     replacement: "",
     why: "유저가 오류를 지적하면 모르겠다로 도망간다 (00:53 지적 축)",
   },
