@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, Volume2, VolumeX, MoreVertical, Loader2, MessageCircle, Send, Trash2, Eye } from "lucide-react";
@@ -159,6 +159,43 @@ export default function VenueStoryViewer({
   // 스토리 좌/우 탭은 pointerup에서 즉시 1칸 이동한다.
   // pointer 뒤 합성 click(detail>0)은 무시하고 키보드 click(detail=0)만 폴백으로 받아 2칸 이동을 막는다.
   const storyNavPressRef = useRef(createPressState());
+  // 뷰어 크롬 버튼(음소거/더보기/닫기/댓글 pill) — iPhone 실기기에서 click 합성이 첫 탭을 씹어
+  // 더블탭을 요구(하린아빠 8/13·8/14 리포트, WAAPI 전환 #1178 후에도 재현 지속).
+  // 좌/우 넘기기 존·댓글 전송 버튼(#948)과 동일하게 click 대신 primary pointerup(버튼 안 릴리즈)에서
+  // 확정한다 — pointer 이벤트는 이 뷰어에서 첫 탭부터 안정적임이 실증된 경로.
+  // onClick 은 키보드(detail=0) 폴백만 받고 pointer 합성 click(detail>0)은 무시해 중복 발동을 막는다.
+  const chromePressRefs = useRef({
+    mute: createPressState(),
+    more: createPressState(),
+    close: createPressState(),
+    comments: createPressState(),
+  });
+  const chromePressHandlers = (
+    key: "mute" | "more" | "close" | "comments",
+    activate: () => void,
+  ) => ({
+    onPointerDown: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      // 포커스/선택 등 기본동작 억제 + iOS 합성 click 경로 의존 제거(넘기기 존과 동일 계약)
+      e.preventDefault();
+      markPressStart(chromePressRefs.current[key]);
+    },
+    onPointerUp: (e: ReactPointerEvent<HTMLButtonElement>) => {
+      const b = e.currentTarget.getBoundingClientRect();
+      const shouldActivate = shouldSubmitOnPointerUp(chromePressRefs.current[key], {
+        isPrimary: e.isPrimary,
+        button: e.button,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        bounds: { left: b.left, top: b.top, right: b.right, bottom: b.bottom },
+      });
+      if (shouldActivate) activate();
+    },
+    onPointerCancel: () => cancelPress(chromePressRefs.current[key]),
+    onClick: (e: ReactMouseEvent<HTMLButtonElement>) => {
+      // 키보드 접근성(Enter/Space, detail=0)만 폴백 — pointer 합성 click 은 중복 발동 방지
+      if (e.detail === 0) activate();
+    },
+  });
   // 이미지 진행바 — RAF+setState(초당 60회 리렌더) 대신 Web Animations API 로 compositor 구동.
   // iOS WebKit 은 탭 디스패치 창에서 스크립트발 DOM/style 변이를 감지하면 첫 탭을 hover 로
   // 삼켜 click 을 안 보낸다(더블탭 요구) — 하린아빠 8/13 iPhone 리포트: 댓글/더보기/닫기 전부
@@ -700,7 +737,7 @@ export default function VenueStoryViewer({
         </div>
         {story.mediaType === "video" && (
           <button
-            onClick={() => setMuted((m) => !m)}
+            {...chromePressHandlers("mute", () => setMuted((m) => !m))}
             className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
             aria-label="음소거"
           >
@@ -708,17 +745,17 @@ export default function VenueStoryViewer({
           </button>
         )}
         <button
-          onClick={() => {
+          {...chromePressHandlers("more", () => {
             setMenuOpen(true);
             setPaused(true);
-          }}
+          })}
           className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="더보기"
         >
           <MoreVertical size={20} />
         </button>
         <button
-          onClick={onClose}
+          {...chromePressHandlers("close", onClose)}
           className="w-11 h-11 flex items-center justify-center text-white/90 shrink-0 touch-manipulation"
           aria-label="닫기"
         >
@@ -817,11 +854,11 @@ export default function VenueStoryViewer({
           이 pill 위에서 끔기므로 pill 주변 탭이 스토리 넘김으로 샘나지 않는다(하린아빠 7/29 안드). */}
       <button
         data-open-comments
-        onClick={() => {
+        {...chromePressHandlers("comments", () => {
           setCommentsClosing(false);
           setCommentError(null);
           setCommentsOpen(true);
-        }}
+        })}
         className="absolute left-3 right-3 z-20 h-12 flex items-center gap-2 px-4 rounded-full bg-black/40 border border-white/25 text-white/80"
         style={{ bottom: safeBottomCalc(STORY_PILL_BOTTOM_OFFSET) }}
         aria-label="댓글 목록"
