@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, Fragment, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -15,7 +15,8 @@ import { isNoReplySender, noReplyBannerLabel } from "@/lib/constants/no-reply-se
 import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
-import GeniusTypingIndicator from "@/components/dm/GeniusTypingIndicator";
+import GeniusTypingIndicator, { GeniusThinkingBubble } from "@/components/dm/GeniusTypingIndicator";
+import { resolveGeniusThinkingRender } from "@/lib/baseball-qa/thinking-bubble";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import GeniusQuestionCorrectionPicker from "@/components/dm/GeniusQuestionCorrectionPicker";
 import GeniusAnswerFeedback from "@/components/dm/GeniusAnswerFeedback";
@@ -68,6 +69,7 @@ export default function DMChatPage() {
     geniusPickedQuestionIds,
     geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
+    geniusThinkingQuestionId,
   } = useDMChat(draftTargetId ? "" : conversationId);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -508,9 +510,16 @@ export default function DMChatPage() {
               : null;
             const displayContent = split ? split.body : msg.content;
             const provenance = split?.provenance ?? null;
+            const thinking = resolveGeniusThinkingRender({
+              isGeniusConversation: isBaseballGeniusConv,
+              isMine: isMe,
+              messageId: msg.id,
+              thinkingMessageId: geniusThinkingQuestionId,
+              replyStates: geniusReplyStates,
+            });
             return (
+              <Fragment key={msg.id}>
               <motion.div
-                key={msg.id}
                 data-message-id={msg.id}
                 data-genius-question-id={geniusReply?.question_message_id}
                 ref={i === messages.length - 1 ? lastMsgRef : undefined}
@@ -639,6 +648,8 @@ export default function DMChatPage() {
                   </div>
                 </div>
               </motion.div>
+              {thinking.show && <GeniusThinkingBubble pending={thinking.pending} />}
+              </Fragment>
             );
           })
         )}

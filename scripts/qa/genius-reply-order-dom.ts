@@ -176,8 +176,8 @@ async function main() {
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="201"]')?.textContent ?? "", /첫 질문/);
       assert.match(container.querySelector('[data-message-id="202"]')?.textContent ?? "", /둘째 질문/);
-      assert.ok(container.querySelector('[data-genius-typing-question-id="201"]'));
-      assert.ok(container.querySelector('[data-genius-typing-question-id="202"]'));
+      // reload에서 localStorage outbox만 남은 경우 생각중 기록을 되살리지 않는다.
+      assert.equal(container.querySelectorAll('[data-genius-typing-question-id]').length, 0);
       assert.equal(container.querySelector('[data-message-id="303"]'), null);
     }, act);
 
@@ -187,8 +187,7 @@ async function main() {
     await waitFor(() => {
       const answer = container.querySelector('[data-message-id="303"][data-genius-question-id="202"]');
       assert.match(answer?.textContent ?? "", /둘째 질문 exact 답변/);
-      assert.equal(container.querySelector('[data-genius-typing-question-id="202"]'), null);
-      assert.ok(container.querySelector('[data-genius-typing-question-id="201"]'));
+      assert.equal(container.querySelectorAll('[data-genius-typing-question-id]').length, 0);
     }, act);
 
     rows = [a1, b2, q2, q1];
