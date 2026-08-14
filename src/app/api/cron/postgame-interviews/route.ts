@@ -16,7 +16,6 @@ import {
 } from "@/lib/video/postgame-interviews-route-policy";
 import {
   notifyFavPlayerInterviews,
-  type StoredInterview,
   type InterviewNotifySummary,
 } from "@/lib/notifications/fav-player-interview";
 import { createInterviewDeps } from "@/lib/notifications/fav-player-interview-deps";
@@ -307,27 +306,16 @@ export async function GET(req: NextRequest) {
 
   // ── 최애선수 수훈 인터뷰 알림 ──
   // 기존 파이프라인이 이미 game_id·player_names를 확정했으므로 여기서 감지·문자열
-  // 분석은 하지 않는다. 새로 저장된 행만 최애선수 팬에게 발송한다. best-effort —
-  // 실패해도 cron 본연(수집)을 막지 않는다(발송 실패는 모듈 내부 dedup 원장이 재시도).
+  // 분석은 하지 않는다. 대상은 이번 run의 새 insert가 아니라 **notified_at IS NULL인
+  // 미발송 행 전체**다 — 새 insert만 보면 발송 실패 시 다음 run에 재입력되지 않아
+  // 영구 유실된다(삼순 NO-GO). 모듈이 원장을 직접 조회하므로 인자가 없다.
+  // best-effort — 실패해도 cron 본연(수집)을 막지 않고, 미발송 행은 다음 run이 재시도.
   let interviewNotify: InterviewNotifySummary | { error: string } | null = null;
-  if (insertedVideoIds.length > 0) {
-    const winnerByGame = new Map(dueJobs.map((job) => [job.game_id, job.winner_team_id]));
-    const insertedSet = new Set(insertedVideoIds);
-    const toNotify: StoredInterview[] = interviewRows
-      .filter((r) => insertedSet.has(r.video_id as string))
-      .map((r) => ({
-        gameId: r.game_id as string,
-        videoId: r.video_id as string,
-        title: r.title as string,
-        playerNames: (r.player_names as string[]) ?? [],
-        winnerTeamId: winnerByGame.get(r.game_id as string) ?? null,
-      }));
-    try {
-      interviewNotify = await notifyFavPlayerInterviews(toNotify, createInterviewDeps());
-    } catch (e) {
-      interviewNotify = { error: e instanceof Error ? e.message : String(e) };
-      console.error("[postgame-interviews] notify failed:", interviewNotify.error);
-    }
+  try {
+    interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());
+  } catch (e) {
+    interviewNotify = { error: e instanceof Error ? e.message : String(e) };
+    console.error("[postgame-interviews] notify failed:", interviewNotify.error);
   }
 
   const contextIds = new Set(contexts.map((context) => context.gameId));
