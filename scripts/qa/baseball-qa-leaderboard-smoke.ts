@@ -43,6 +43,7 @@ import {
   StatsFreshnessContractError,
 } from "../../src/lib/stats/full-entry";
 import { GET as statsGET, handleStatsGetFailure } from "../../src/app/api/stats/route";
+import statsMeta from "../../src/lib/constants/stats-2026-meta.json";
 import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -380,11 +381,25 @@ const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
 checkAsync("GET 경계: freshness 계약 오류는 fallback 200으로 우회하지 않는다", async () => {
+  // ⚠️ now 를 달력 날짜로 고정하면 이 검사가 **데이터 의존**이 된다: 자동 데이터 PR 이
+  //   generatedAt 을 고정 now 이후로 갱신하는 순간 fallback 구성시각이 '미래'가 되어
+  //   mutant(freshness 분기 제거)도 fallback 500 으로 같은 답을 내 검출력이 0 이 된다
+  //   (2026-08-12~13 자동 PR 3일 연속 Preview FAIL 의 실원인, m9b MISS).
+  //   now 는 repo 의 실제 generatedAt 에서 파생시켜 fallback 이 항상 '유효'한 시계로 검사한다:
+  //   비변이 코드만 freshness 분기에서 500, mutant 는 fallback 200 으로 갈라진다.
+  const generatedMs = Date.parse(statsMeta.battersGeneratedAt);
+  assert.ok(Number.isFinite(generatedMs), "stats-2026-meta battersGeneratedAt 파싱 불가 — 게이트 전제 붕괴");
+  const nowAfterGeneration = new Date(generatedMs + 60 * 60 * 1000);
+  // 검출력 전제 자가검증: 이 시계에서 fallback 구성시각은 반드시 유효해야 한다.
+  assert.ok(
+    oldestFullEntryTimestamp([statsMeta.battersGeneratedAt], nowAfterGeneration),
+    "파생 시계에서 fallback freshness 가 invalid — 이 검사는 mutant 를 검출할 수 없다",
+  );
   const response = handleStatsGetFailure(
     new StatsFreshnessContractError(),
     "2026",
     "batter",
-    new Date("2026-08-12T01:00:00Z"),
+    nowAfterGeneration,
   );
   assert.equal(response.status, 500);
   const body = await response.json();
