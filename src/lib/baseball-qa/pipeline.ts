@@ -293,6 +293,16 @@ const ACK_PHRASES = [
   // ⚠️ 넣지 않는 것: `ㄴㄴ`(부정어 — 수긍이 아니다), `ㅋㅋ`·`ㅎㅎ`(normalizeAck 가 말몸 ㅋ/ㅎ 를
   // 전부 벗겨 **빈 문자열**이 된다 — 빈 문자열을 집합에 넣으면 `??` 같은 순수 구두점도 ack 으로 접힌다).
   "ㅇㅋ", "ㅇㅋㅇㅋ", "오케이", "오키", "ok", "okay", "ㅇㅇ", "넵", "네", "응", "굿", "굿굿",
+  // 칭찬 (2026-08-15 삼순 #1197 P0 — 계약은 `감사·칭찬→headspin` 인데 폐쇄집합에는 `굿` 뿐이었다).
+  // 감사와 같은 칸에 둔다 — 둘 다 "직전 답변을 수긍하는 대화 행위"라 라우팅 의미가 같고,
+  // 새 `match_path` 를 만들면 CHECK migration + 피드백 allowlist + 마스코트 분류 + 게이트
+  // 4곳을 함께 등록해야 한다(아래 GREETING 주석과 같은 이유).
+  // ⚠️ full-string 완전일치만 잡는다 — `이대호 최고야` 처럼 대상이 붙은 문장은 여기 안 걸리고
+  //   기존 판정을 타 답변된다. 반대가설을 만들 수 없는 단독 발화만 넣는다.
+  "잘했어", "잘했어요", "잘하네", "잘하네요", "잘한다", "잘하는데",
+  "최고", "최고야", "최고다", "최고네", "최고예요", "최고임", "ㅎㄷ",
+  "대단해", "대단해요", "대단하네", "대단하다", "대단합니다",
+  "똑똑해", "똑똑하네", "기특해", "기특하네", "밥잘먹네",
 ] as const;
 
 /** 앞뒤 공백 제거 · 중복 공백 축약 · 문말 구두점 제거 · 소문자 · NFC */
@@ -690,6 +700,28 @@ export interface QaResult {
    * 클라가 그 문구에 하이퍼링크를 씌운다 (하린아빠 2026-08-05 P0).
    */
   sourceUrl?: string;
+}
+
+/**
+ * 마스코트 모션 매핑 SSOT (§7.6 — 인사→신남 / 감사·칭찬→헤드스핀 / 거절→심심함).
+ *
+ * ⚠️ 계산은 **payload 조립 직전 단일 지점**(server.ts 의 composeGeniusReplyPayload 호출부)에서
+ * (source, question) 만으로 한다 — QaResult 에 실어 나르면 안 되는 이유 2가지(삼순 #1197 NO-GO):
+ *  ① durable 재시도(claimState="ready")는 job 행에서 result 를 재구성하므로 실어보낸 모션이 소실된다.
+ *  ② 길이 위반 등 결정론 blocked 조기 반환이 여러 곳이라 각자 붙이면 누락이 생긴다.
+ * (source, question) 은 둘 다 결정론 입력이라 어느 경로로 오든 같은 답이 나온다.
+ *
+ * 매핑: ack → 인사면 excited, 아니면(감사·칭찬) headspin / scope_guide·blocked 거절 → bored /
+ * 그 외(되묻기·오류·지식 답변) → 없음. 모션은 감정 반응 전용이다(unsure LLM 거절 확장은 별도 트랙).
+ * 반환 타입은 constants 의 GeniusMascotMotion 과 구조적으로 동일(순환 import 회피 리터럴).
+ */
+export function geniusMotionForResult(
+  source: string,
+  question: string,
+): "excited" | "headspin" | "bored" | undefined {
+  if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
+  if (source === "scope_guide" || source === "blocked") return "bored";
+  return undefined;
 }
 
 export interface QaDeps {
@@ -4809,6 +4841,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
+    // 모션은 여기서 싣지 않는다 — payload 조립 직전 단일 지점에서 geniusMotionForResult 로
+    // 계산한다(durable 재시도·조기 blocked 반환까지 동일 계산을 타게 — 함수 문서 참조).
     return { status: 200, answer, source: route, remaining: quotaRemaining };
   }
 

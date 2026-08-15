@@ -172,6 +172,28 @@ export const GENIUS_MASCOT_STATES: readonly GeniusMascotState[] = [
 ] as const;
 
 /**
+ * 마스코트 **모션** — 답변 유형별 애니메이션 (SSOT §7.6, 2026-08-15 하린아빠 착수 지시).
+ *
+ *   인사 → excited(신남) / 감사·칭찬 → headspin(헤드스핀) / 거절 → bored(심심함)
+ *
+ * 상태(GeniusMascotState = 어느 그림)와는 별개 축이다 — 모션은 그 그림에 CSS
+ * 애니메이션을 입힐지만 정한다(애니메이션 이미지 자산 없음 — 2026-08-15 실측,
+ * public/mascot/reply 는 정적 PNG 5상태뿐이다).
+ *
+ * ⚠️ **채팅창에는 항상 최신 1개만 움직인다** (하린아빠 2026-08-15 13:34: "이전에
+ * 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함. 그래야 일관되게 하나의 봇과
+ * 대화하는 느낌"). 그 판정은 클라(page)가 메시지 목록에서 순수 파생한다 —
+ * 상태·localStorage 없이 데이터만으로 결정되며 reload 에서도 같은 결과다.
+ */
+export type GeniusMascotMotion = "excited" | "headspin" | "bored";
+
+export const GENIUS_MASCOT_MOTIONS: readonly GeniusMascotMotion[] = [
+  "excited",
+  "headspin",
+  "bored",
+] as const;
+
+/**
  * 답변 유형(MatchPath) → 의미 분류(reply_kind). **전 경로를 명시 열거한다.**
  *
  * 유형은 서버가 답변 저장 시점에 `dm_messages.payload` 에 기록한다(SSOT, A안).
@@ -309,6 +331,13 @@ export interface GeniusReplyPayload {
   type: "baseball_genius_reply";
   reply_kind: GeniusReplyKind;
   match_path: string;
+  /**
+   * 마스코트 모션 (§7.6). 서버가 smalltalk·거절 경로에서만 실어 보낸다.
+   * 클라는 `geniusMotionFromPayload` 로만 읽는다 — 폐쇄집합 밖 값(미래 서버가 추가한
+   * 새 모션)은 모션 없음으로 폴백하고 payload 전체를 무효화하지 않는다
+   * (mascotStateForReplyKind 의 forward-compat 계약과 같은 축).
+   */
+  motion?: GeniusMascotMotion;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
   /** `reply_kind === "correction"` 일 때만. 서버가 발급한 exact 후보만 유저에게 제안한다. */
@@ -337,6 +366,47 @@ export interface GeniusReplyPayload {
 export const GENIUS_PICKER_MAX_OPTIONS = 6;
 
 /**
+ * 답변 payload 조립 (SSOT) — server.ts 인라인에서 뽑았다 (2026-08-15 모션 매핑 PR).
+ *
+ * 인라인이면 게이트가 실제 조립 경로를 못 태우고 문자열 검사로 밀린다(#1102 SSOT 추출과
+ * 같은 축). 필드별 계약:
+ *  · reply_kind 는 match_path 에서 파생(SSOT 표) — 호출부가 따로 계산하지 않는다.
+ *  · question_message_id 는 **모든 답변**에 실는다(피드백 exact 결속).
+ *  · motion 은 pipeline 이 정한 값만 그대로 실는다(§7.6 매핑은 pipeline 단일 지점).
+ *  · 내부 메타(revision·crawledAt·asOf)는 절대 실지 않는다 (하린아빠 2026-08-05 P0).
+ */
+export function composeGeniusReplyPayload(
+  result: {
+    source: string;
+    motion?: GeniusMascotMotion;
+    pickerOptions?: ReadonlyArray<{
+      kboId: string; name: string; team: string | null; position: string | null; backNo: string | null;
+    }>;
+    correctionOptions?: readonly string[];
+    sourceUrl?: string;
+  },
+  questionMessageId: number,
+): GeniusReplyPayload {
+  return {
+    type: "baseball_genius_reply",
+    reply_kind: replyKindForMatchPath(result.source),
+    match_path: result.source,
+    question_message_id: questionMessageId,
+    ...(result.motion ? { motion: result.motion } : {}),
+    ...(result.pickerOptions
+      ? {
+        picker_options: result.pickerOptions.map((option) => ({
+          kbo_id: option.kboId, name: option.name, team: option.team,
+          position: option.position, back_no: option.backNo,
+        })),
+      }
+      : {}),
+    ...(result.correctionOptions ? { correction_options: [...result.correctionOptions] } : {}),
+    ...(result.sourceUrl ? { source_url: result.sourceUrl } : {}),
+  };
+}
+
+/**
  * picker 카드를 비활성화해야 하는가.
  *
  * 재탭하면 서버는 dedup 200만 돌려주고 새 DM 이 안 생겨 typing 이 영원히 돌았다.
@@ -355,6 +425,20 @@ export function isGeniusPickerDisabled(
 ): boolean {
   if (!questionMessageId) return true;
   return answeredQuestionIds.has(questionMessageId) || pickedQuestionIds.has(questionMessageId);
+}
+
+/**
+ * payload 에서 모션을 읽는다 — **폐쇄집합 대조는 이 함수 하나뿐이다** (SSOT).
+ * 모르는 값(미래 모션·외부 조작)은 null — 애니메이션이 안 붙을 뿐 화면은 그대로다.
+ */
+export function geniusMotionFromPayload(
+  payload: GeniusReplyPayload | null | undefined,
+): GeniusMascotMotion | null {
+  const motion = payload?.motion;
+  if (motion === undefined) return null;
+  return (GENIUS_MASCOT_MOTIONS as readonly string[]).includes(motion)
+    ? (motion as GeniusMascotMotion)
+    : null;
 }
 
 function isPickerOption(p: unknown): p is GeniusPickerOption {
@@ -382,6 +466,11 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
     obj.reply_kind !== "answer" && obj.reply_kind !== "ack" &&
     obj.reply_kind !== "unavailable" && obj.reply_kind !== "picker" && obj.reply_kind !== "correction"
   ) return false;
+  // motion 은 문자열만 통과시킨다. 폐쇄집합 대조는 여기서 하지 **않는다** — 미래 서버가
+  // 새 모션 값을 보내도 구 클라에서 payload 전체(마스코트·picker·피드백)가 죽으면
+  // 안 된다. 값 해석은 `geniusMotionFromPayload` 가 폐쇄집합으로 닫는다.
+  const motionField = (obj as { motion?: unknown }).motion;
+  if (motionField !== undefined && typeof motionField !== "string") return false;
   // 선택지가 붙어 있으면 항목까지 검증한다 — 깨진 payload 로 카드를 그리면 빈 버튼이 난다.
   // 상한 초과도 거절한다(무한 목록 렌더 방지).
   if (obj.picker_options !== undefined) {

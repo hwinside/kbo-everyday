@@ -9,6 +9,7 @@ import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  geniusMotionForResult,
   isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
@@ -29,7 +30,7 @@ import {
 } from "@/lib/baseball-qa/context";
 import {
   BASEBALL_GENIUS_USER_ID,
-  replyKindForMatchPath,
+  composeGeniusReplyPayload,
   type GeniusReplyPayload,
 } from "@/lib/constants/baseball-genius";
 import {
@@ -1173,31 +1174,16 @@ export async function processBaseballQaQuestion(input: {
     }
   }
 
-  // 답변 유형을 payload 에 함께 저장한다 — 클라가 유형별 마스코트를 고를 근거(SSOT).
-  // 클라가 답변 문구를 상수와 대조하는 방식은 문구를 고치는 순간 조용히 깨진다.
-  const replyPayload: GeniusReplyPayload = {
-    type: "baseball_genius_reply",
-    reply_kind: replyKindForMatchPath(result.source),
-    match_path: result.source,
-    // 모든 답변에 원 질문 id 를 실는다 — 품질 피드백(👍/👎)이 "어느 질문에 대한 평가인지"를
-    // exact 로 결속하려면 필요하다. 답변 쪽지에서 dedup_key 접두를 파싱해 역산하면
-    // 접두 규칙이 바뀌는 순간 조용히 깨진다.
-    question_message_id: messageId,
-    // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
-    ...(result.pickerOptions
-      ? {
-        picker_options: result.pickerOptions.map((option) => ({
-          kbo_id: option.kboId, name: option.name, team: option.team,
-          position: option.position, back_no: option.backNo,
-        })),
-      }
-      : {}),
-    ...(result.correctionOptions ? { correction_options: result.correctionOptions } : {}),
-    // 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고 클라가 여기에 앵커를 씌운다.
-    // 내부 메타(revision·crawledAt·asOf)는 절대 payload 에 싣지 않는다 — 유저가 볼 이유가 없고
-    // `crawled` 는 수집 사실을 화면에 적는 것이라 위험하다 (하린아빠 2026-08-05 P0).
-    ...(result.sourceUrl ? { source_url: result.sourceUrl } : {}),
-  };
+  // 답변 유형·모션을 payload 에 함께 저장한다 — 클라가 유형별 마스코트·모션을 고를 근거(SSOT).
+  // 조립은 composeGeniusReplyPayload 단일 함수가 한다 — 인라인이면 게이트가 실제 조립
+  // 경로를 못 태운다(#1102 SSOT 추출과 같은 축). 필드 계약·금지 메타 규칙은 그 함수 문서에.
+  // 모션은 **여기 단일 지점**에서 (source, question) 결정론 계산 — 즉시 경로·durable 재시도
+  // (claimState="ready")·길이 위반 blocked·pipeline 조기 blocked 전부 같은 계산을 탄다
+  // (삼순 #1197 NO-GO ②③: result 에 실어 나르면 ready 재시도에서 소실되고 조기 반환에서 누락된다).
+  const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
+    { ...result, motion: geniusMotionForResult(result.source, question) },
+    messageId,
+  );
   const deliveryDedupKey = result.source === "player_picker"
     ? `baseball-genius-picker:${messageId}`
     : result.source === "question_correction"
