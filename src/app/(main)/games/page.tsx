@@ -32,6 +32,16 @@ interface GameData {
   awayStarter?: string;
   homeStarter?: string;
   broadcastChannels?: BroadcastChannel[];
+  // 라이브 상세(잠금화면 LA 패리티) — live 상태에서만 채워진다
+  balls?: number;
+  strikes?: number;
+  outs?: number;
+  runnersOn?: { first: boolean; second: boolean; third: boolean };
+  currentPitcher?: string;
+  currentBatter?: string;
+  lastPlay?: string;
+  /** 라이브 상세가 실제 KBO 관측값인지(provenance). Naver degrade 는 0/false 를 채우므로 값만으론 구분 불가. */
+  liveDetailFromKbo?: boolean;
 }
 
 const container = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
@@ -97,7 +107,7 @@ export default function GamesPage() {
         const res = await fetch(`/api/games?date=${formatDate(date)}`, { signal });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[] }) => ({
+        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean }) => ({
           id: g.gameId,
           awayTeamId: g.awayTeamId,
           homeTeamId: g.homeTeamId,
@@ -110,6 +120,16 @@ export default function GamesPage() {
           awayStarter: g.awayStarterName,
           homeStarter: g.homeStarterName,
           broadcastChannels: g.broadcastChannels,
+          ...(g.status === "live" ? {
+            balls: g.balls,
+            strikes: g.strikes,
+            outs: g.outs,
+            runnersOn: g.runnersOn,
+            liveDetailFromKbo: g.liveDetailFromKbo,
+            currentPitcher: g.currentPitcher,
+            currentBatter: g.currentBatter,
+            lastPlay: g.lastPlay,
+          } : {}),
         }));
         return mapped.length === 0 ? buildPreseasonFallback(date) : mapped;
       });
@@ -139,6 +159,8 @@ export default function GamesPage() {
   }, [loadGames, requestCoordinator, selectedDate]);
 
   // 예정/라이브 경기 구장의 날씨 로드 (날씨는 부가 정보 — 실패해도 조용히 무시)
+  // 종료·취소 경기는 카드에서 날씨를 렌더하지 않으므로 fetch 대상에서 제외한다
+  // (하린아빠 2026-08-15: "종료카드에 날씨가 뜰 필요는 없지").
   useEffect(() => {
     // 날짜 전환 직후엔 games가 아직 이전 날짜 것일 수 있다 — 목록 로드가 끝나
     // games와 selectedDate가 정합일 때만 fetch (이전 구장 세트로 캐시가 잠기는 것 방지)
@@ -286,7 +308,7 @@ export default function GamesPage() {
                 <Star size={14} className="fill-current" /> MY TEAM
               </h2>
               <motion.div variants={item}>
-                <CompactGameCard game={myTeamGame} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(myTeamGame)} />
+                <CompactGameCard game={myTeamGame} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(myTeamGame)} featured />
               </motion.div>
             </div>
           )}
@@ -309,6 +331,7 @@ export default function GamesPage() {
                   isPreseason={isPreseason}
                   myTeamId={myTeamId}
                   dateStr={nextMyGame.dateStr}
+                  featured
                 />
               </motion.div>
             </div>
@@ -335,7 +358,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {finalGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>
@@ -348,7 +371,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {cancelledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>

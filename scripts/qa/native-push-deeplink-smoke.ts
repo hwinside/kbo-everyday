@@ -49,6 +49,7 @@ globals.document = dom.window.document;
 
 type TapCallback = (event: unknown) => void;
 type StateCallback = (state: { isActive: boolean }) => void;
+type UrlOpenCallback = (data: { url: string }) => void;
 type Loaders = NonNullable<Parameters<PushModule["listenForNotificationTap"]>[0]>;
 type PushModule = {
   listenForNotificationTap: (loaders?: {
@@ -60,6 +61,7 @@ type PushModule = {
       addListener: (event: "appStateChange", callback: StateCallback) => Promise<{ remove: () => Promise<void> }>;
     }>;
     pushDeepLink: () => Promise<{ consume: () => Promise<{ url?: string }> }>;
+    urlOpen: (callback: UrlOpenCallback) => Promise<void>;
   }) => Promise<void>;
   __resetNotificationTapForTest: (clearPending?: boolean) => void;
 };
@@ -84,9 +86,14 @@ function harness(options?: {
   let active = options?.active ?? false;
   let tapCallback: TapCallback | null = null;
   let stateCallback: StateCallback | null = null;
+  let urlOpenCallback: UrlOpenCallback | null = null;
+  let urlOpenSubscribes = 0;
   let messagingAdds = 0;
   let appAdds = 0;
   let nativeConsumes = 0;
+  // 네이티브 stash 재현 — consume는 1회 소비(반환 후 비움). setNativePending으로
+  // 런타임에 새 stash 주입 가능(warm LA 탭 재현).
+  let nativePending: string | undefined = options?.nativePending;
   const loaders: Loaders = {
     messaging: async () => ({
       addListener: async (_event, callback) => {
@@ -100,16 +107,22 @@ function harness(options?: {
       getState: async () => ({ isActive: active }),
       addListener: async (_event, callback) => {
         appAdds += 1;
-        stateCallback = callback;
+        stateCallback = callback as StateCallback;
         return { remove: async () => undefined };
       },
     }),
+    urlOpen: async (callback) => {
+      urlOpenSubscribes += 1;
+      urlOpenCallback = callback;
+    },
     pushDeepLink: async () => {
       if (options?.nativeMissing) throw new Error("PushDeepLink does not have an implementation");
       return {
         consume: async () => {
           nativeConsumes += 1;
-          return options?.nativePending !== undefined ? { url: options.nativePending } : {};
+          const url = nativePending;
+          nativePending = undefined; // 네이티브와 동일하게 1회 소비
+          return url !== undefined ? { url } : {};
         },
       };
     },
@@ -118,7 +131,11 @@ function harness(options?: {
     loaders,
     tap: (event: unknown) => tapCallback?.(event),
     activate: () => { active = true; stateCallback?.({ isActive: true }); },
+    deactivate: () => { active = false; stateCallback?.({ isActive: false }); },
+    openUrl: (url: string) => { urlOpenCallback?.({ url }); },
+    setNativePending: (url: string) => { nativePending = url; },
     counts: () => ({ messagingAdds, appAdds, nativeConsumes }),
+    urlOpenCount: () => urlOpenSubscribes,
   };
 }
 
@@ -136,6 +153,7 @@ test("1) remote-load: npm core가 web이어도 주입 bridge iOS면 실제 liste
   const h = harness({ active: false });
   await (await pushModule()).listenForNotificationTap(h.loaders);
   assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.equal(h.urlOpenCount(), 1, "urlOpen 디스패처 구독 1회");
 });
 
 test("2) web에서는 native loader/listener를 호출하지 않는다", async () => {
@@ -153,6 +171,7 @@ test("3) background callback은 이동하지 않고 native appStateChange active
   await flush();
   assert.deepEqual(navigations, []);
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/20260802HHKT0?tab=lineup"]);
 });
 
@@ -194,6 +213,7 @@ test("7) pending은 1회만 소비돼 재활성화·재attach에서 중복 이�
   h.tap(tap("/games/G1?tab=lineup"));
   h.activate();
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/G1?tab=lineup"]);
 
   await reset(true, false);
@@ -208,6 +228,7 @@ test("8) active 전 여러 알림이면 마지막 탭 URL만 이동", async () =
   h.tap(tap("/games/OLD?tab=lineup"));
   h.tap(tap("/games/NEW?tab=lineup"));
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/NEW?tab=lineup"]);
 });
 
@@ -222,6 +243,7 @@ test("9) TTL 지난 pending은 reload 뒤 이동하지 않는다", async () => {
     h.tap(tap("/games/STALE?tab=lineup"));
     now += 120_001;
     h.activate();
+    await flush();
     assert.deepEqual(navigations, []);
   } finally {
     Date.now = realNow;
@@ -249,6 +271,7 @@ test("11) 동시·반복 호출에도 listener는 각 1개", async () => {
     m.listenForNotificationTap(h.loaders),
   ]);
   assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.equal(h.urlOpenCount(), 1, "urlOpen 디스패처 구독 1회");
 });
 
 test("12) actual mount가 정적 gate 전에 딥링크 listener를 정확히 1회 호출", async () => {
@@ -327,6 +350,387 @@ test("17) 네이티브 stash의 외부 URL도 차단", async () => {
   assert.deepEqual(navigations, []);
 });
 
+test("22) warm LA 카드 탭: 백그라운드에서 생긴 네이티브 stash를 active 복귀 시 재회수해 이동", async () => {
+  // #cs 2026-08-15 실기기 QA 재현 — 앱이 살아있는 채 잠금화면 LA 카드 탭:
+  // AppDelegate continue가 stash를 쓰지만 JS는 이미 attach 완료 상태라,
+  // active 복귀 이벤트에서 네이티브 stash를 재회수하지 않으면 영원히 안 움직인다.
+  await reset(true);
+  const h = harness({ active: true });
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  await flush();
+  assert.deepEqual(navigations, []);
+
+  h.deactivate(); // 잠금화면으로 — 앱 background
+  h.setNativePending("/games/LATAP?tab=chat"); // LA 카드 탭 → continue stash
+  h.activate(); // 앱 foreground 복귀
+  await flush();
+  assert.deepEqual(navigations, ["/games/LATAP?tab=chat"]);
+});
+
+test("23) LA widgetURL·AppDelegate continue 배선 — 카드 탭 딥링크 소스 계약", async () => {
+  const widget = await readFile(new URL("../../ios/App/LiveActivity/KBOLiveActivityWidget.swift", import.meta.url), "utf8");
+  // 잠금화면 카드 + DynamicIsland 전체 양쪽에 widgetURL 배선(2곳)
+  const urls = widget.match(/\.widgetURL\(gameDeepLinkURL\(context\.attributes\.gameId\)\)/g) ?? [];
+  assert.ok(urls.length >= 2, `잠금카드+DI widgetURL 배선 필요 (found ${urls.length})`);
+  // DI는 특정 영역 뷰가 아니라 DynamicIsland 전체(minimal 블록 뒤)에 적용되어야
+  // compact/minimal·모든 확장 영역 탭이 보장된다(삼순 #1204 R1-②).
+  assert.match(widget, /minimal: \{[\s\S]*?\n {12}\}\n(?:[ \t]*\/\/[^\n]*\n)*[ \t]*\.widgetURL\(gameDeepLinkURL\(context\.attributes\.gameId\)\)/);
+  assert.match(widget, /https:\/\/keubo\.fan\/games\//);
+
+  // gameId 엄격 allowlist — 소스에서 정규식을 추출해 실제 판정을 재현(삼순 #1204 R1-③)
+  const idReMatch = widget.match(/gameId\.range\(of: "([^"]+)", options: \.regularExpression\)/);
+  assert.ok(idReMatch, "gameDeepLinkURL에 gameId allowlist 정규식 필요");
+  const idRe = new RegExp(idReMatch![1]);
+  assert.ok(idRe.test("20260815HHKT0"), "실제 gameId는 통과");
+  for (const bad of ["../auth", "a/b", "a?x=1", "a#f", "", "a b", "게임", "a".repeat(33)]) {
+    assert.ok(!idRe.test(bad), `비정상 gameId 차단 실패: ${bad}`);
+  }
+
+  const appDelegate = await readFile(new URL("../../ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
+  // continue(userActivity:)가 /games/<id> 폐쇄 allowlist로만 stash — 정규식 추출 후 실제 판정 재현
+  assert.match(appDelegate, /NSUserActivityTypeBrowsingWeb/);
+  const pathReMatch = appDelegate.match(/path\.range\(of: "([^"]+)", options: \.regularExpression\)/);
+  assert.ok(pathReMatch, "continue에 /games/<id> allowlist 정규식 필요");
+  const pathRe = new RegExp(pathReMatch![1]);
+  assert.ok(pathRe.test("/games/20260815HHKT0"), "실제 경기 경로는 통과");
+  for (const bad of [
+    "/games/../auth/callback", // dot-segment auth 우회
+    "/auth/callback",           // OAuth 콜백 직접
+    "/games/x/../../auth",      // 중첩 dot-segment
+    "/games/",                  // 빈 id
+    "/games/abc/def",           // 하위 경로 주입
+    "/",                        // 루트
+    "/admin",                   // 임의 경로
+  ]) {
+    assert.ok(!pathRe.test(bad), `allowlist 우회 차단 실패: ${bad}`);
+  }
+  const stashes = appDelegate.match(/PushDeepLinkPlugin\.stash\(url:/g) ?? [];
+  assert.ok(stashes.length >= 2, `launchOptions+continue 양쪽 stash 필요 (found ${stashes.length})`);
+});
+
+test("24b) 순서 역전: active가 먼저 오고 stash가 나중이어도 appUrlOpen 재회수로 이동", async () => {
+  // iOS는 continue(stash)와 appStateChange(active)의 순서를 계약하지 않는다(삼순 #1204 R1-①).
+  // active 이벤트가 먼저 소비 시도(빈손) 후 stash 도착 → appUrlOpen이 재회수 트리거.
+  await reset(true);
+  const h = harness({ active: false });
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  h.activate(); // active 먼저 — 이 시점엔 stash 없음(빈손)
+  await flush();
+  assert.deepEqual(navigations, []);
+
+  h.setNativePending("/games/REVERSE?tab=chat"); // continue 늦게 도착(stash)
+  h.openUrl("https://keubo.fan/games/REVERSE?tab=chat"); // Capacitor appUrlOpen(stash 후 발행 보장)
+  await flush();
+  assert.deepEqual(navigations, ["/games/REVERSE?tab=chat"]);
+});
+
+// ── appUrlOpen 단일 디스패쳐(R2) — cold retained OAuth 경합 방지 ──────────────
+
+test("25) 딥링크 모듈은 App.addListener('appUrlOpen')을 직접 등록하지 않는다(디스패쳐 경유)", async () => {
+  // Capacitor iOS는 cold retained appUrlOpen을 첫 리스너에만 전달 후 삭제한다(삼순 R2).
+  // 딥링크가 독립 등록하면 OAuth 콜백을 가로채 로그인이 깨진다 → 소스 계약으로 차단.
+  const deeplink = await readFile(new URL("../../src/lib/native-push-deeplink.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(deeplink, /addListener\(\s*["']appUrlOpen["']/,
+    "native-push-deeplink이 appUrlOpen을 직접 등록하면 안 된다(단일 디스패쳐 경유 필수)");
+  assert.match(deeplink, /subscribeAppUrlOpen/);
+
+  const auth = await readFile(new URL("../../src/lib/capacitor/auth.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(auth, /App\.addListener\(\s*["']appUrlOpen["']/,
+    "capacitor/auth도 단일 디스패쳐를 경유해야 한다");
+  assert.match(auth, /subscribeAppUrlOpen/);
+});
+
+test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late 소비자에 targeted replay, 전원 수신 즉시 buffer 0", async () => {
+  // "retained가 첫 리스너에만 전달" 재현: 네이티브는 첫 addListener 직후 이벤트를 1회만 발행.
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let nativeAdds = 0;
+  const oauthUrl = "https://keubo.fan/auth/callback?code=RETAINED";
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          nativeAdds += 1;
+          if (nativeAdds === 1) cb({ url: oauthUrl }); // retained — 첫 리스너에만
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // LA 딥링크 구독이 먼저 붙는다(문제의 cold 순서) — retained는 이 시점에 발행됨
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  assert.deepEqual(laSeen, [], "R5: OAuth callback은 무관 소비자(LA)에 전달되지 않는다");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "relevant(oauth) 미수신 동안은 보관");
+
+  // OAuth 구독이 늦게 붙어도 targeted replay로 같은 이벤트를 받는다 → 로그인 보존
+  const oauthSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
+
+  assert.equal(nativeAdds, 1, "네이티브 appUrlOpen 리스너는 정확히 1개");
+  assert.deepEqual(oauthSeen, [oauthUrl], "late OAuth subscriber도 retained 이벤트를 받아야 한다");
+  // R4: 마지막 대기 소비자(oauth) 수신 즉시 secret 삭제 — 추가 진입 불필요
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "전 소비자 수신 즉시 buffer 0(secret 즉시 폐기)");
+
+  // 소비자 ID별 1회 — 같은 ID 재구독(재마운트/HMR)에도 중복 재생 0
+  const dupSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { dupSeen.push(url); });
+  assert.deepEqual(dupSeen, [], "이미 수신한 소비자 ID 재구독 시 replay 중복 금지(secret 1회 전달)");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스로 재연결한다", async () => {
+  // 초기 소비자 2곳(OAuth·LA)이 전부 등록을 끝낸 뒤 attach가 실패하면
+  // "다음 subscribe 재시도" 주체가 없다 → 디스패쳐 backoff 재연결이 유일한 복구수단(삼순 R3).
+  const { subscribeAppUrlOpen, __resetAppUrlOpenForTest } =
+    await import("../../src/lib/capacitor/app-url-open") as unknown as {
+      subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+      __resetAppUrlOpenForTest: () => void;
+    };
+  __resetAppUrlOpenForTest();
+
+  let attempts = 0;
+  let liveListener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          attempts += 1;
+          if (attempts <= 2) throw new Error("bridge not ready"); // 동시 실패 창 재현
+          liveListener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const seenA: string[] = [];
+  const seenB: string[] = [];
+  // 두 1회성 소비자가 같은 실패 attach를 공유(문제 상황)
+  await Promise.all([
+    subscribeAppUrlOpen("la-deeplink", ({ url }) => { seenA.push(url); }),
+    subscribeAppUrlOpen("oauth", ({ url }) => { seenB.push(url); }),
+  ]);
+  assert.equal(liveListener, null, "첫 attach는 실패 상태");
+
+  // backoff 재시도(500ms·1s)를 실제로 기다린다 — 재구독 없이 복구되어야 한다
+  const deadline = Date.now() + 4_000;
+  while (liveListener === null && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(liveListener !== null, "디스패쳐가 스스로 재연결해야 한다(재구독 없이)");
+  assert.ok(attempts >= 3, `재시도 횟수 (got ${attempts})`);
+
+  (liveListener as unknown as (ev: { url: string }) => void)({ url: "https://keubo.fan/games/RETRY1" });
+  assert.deepEqual(seenA, ["https://keubo.fan/games/RETRY1"], "기존 relevant 구독자(LA) 수신");
+  assert.deepEqual(seenB, [], "R5: games 이벤트는 무관 소비자(oauth)에 전달되지 않는다");
+  __resetAppUrlOpenForTest();
+});
+
+test("26b) 디스패처 R5: 폐쇄 분류 — OAuth만 구독 중 처리 직후 buffer 0 · games→LA만 · unknown fail-closed", async () => {
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    classifyAppUrlOpen: (url: string) => string | null;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const oauthSeen: string[] = [];
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  const emit = (url: string) => (listener as unknown as (ev: { url: string }) => void)({ url });
+
+  // ① OAuth callback — oauth만 수신, 처리 직후 buffer 0(LA를 기다리지 않는다)
+  emit("https://keubo.fan/auth/callback?code=***");
+  assert.deepEqual(oauthSeen, ["https://keubo.fan/auth/callback?code=***"]);
+  assert.deepEqual(laSeen, [], "무관 소비자(LA) 수신 0");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "OAuth 구독 중이면 처리 직후 buffer 0");
+
+  // ② exact /games/<id> — la-deeplink만 수신
+  emit("https://keubo.fan/games/20260815LGOB0");
+  assert.deepEqual(laSeen, ["https://keubo.fan/games/20260815LGOB0"]);
+  assert.equal(oauthSeen.length, 1, "games 이벤트는 oauth에 전달되지 않는다");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0);
+
+  // ③ unknown — replay 없이 fail-closed(보관 0·전달 0)
+  emit("https://keubo.fan/players/12345");
+  emit("not a url");
+  assert.equal(oauthSeen.length, 1);
+  assert.equal(laSeen.length, 1);
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "unknown은 보관하지 않는다(fail-closed)");
+
+  // ④ 분류 함수 경계 — token hash·auth error는 oauth, 하위경로·빈 id는 unknown
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/#access_token=x&refresh_token=y"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?error=access_denied"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/abc/def"), null);
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/"), null);
+
+  // ⑤ R6: 실제 서버 오류 callback 파라미터군 — auth_error/error_code/error_description 전부 oauth
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?auth_error=kakao_email_unverified"), "oauth",
+    "실제 서버 오류 callback 형상이 oauth로 분류되지 않으면 네이티브 오류 안내가 사라진다(삼순 R6)");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?error_code=422"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/#error_description=KAKAO_EMAIL_UNVERIFIED"), "oauth");
+  // R6: /auth는 exact segment — /author 같은 무관 경로는 unknown
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/author"), null, "/auth는 exact segment 판정이어야 한다");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/auth/callback"), "oauth");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("26c) 디스패처 R6: 실제 서버 오류 callback URL이 OAuth로 1회 전달→즉시 buffer 0 + 키 집합 소스 결속", async () => {
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // 실제 서버 출력 형상(auth-error.ts 상수와 동일) — OAuth만 구독 중 1회 전달 → 즉시 buffer 0
+  const errorCallbackUrl = "https://keubo.fan/?auth_error=kakao_email_unverified";
+  const oauthSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
+  (listener as unknown as (ev: { url: string }) => void)({ url: errorCallbackUrl });
+  assert.deepEqual(oauthSeen, [errorCallbackUrl], "서버 오류 callback은 OAuth 소비자에 1회 전달");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "수신 즉시 buffer 0");
+
+  // 소스 결속 — auth-error.ts가 읽는 키 집합과 공유 상수가 일치하는지(재구현 드리프트 방지)
+  const authErrorSrc = await readFile(new URL("../../src/lib/auth-error.ts", import.meta.url), "utf8");
+  const readKeys = [...authErrorSrc.matchAll(/params\.get\("([a-z_]+)"\)/g)].map((m) => m[1]);
+  assert.ok(readKeys.length >= 4, `auth-error.ts 키 추출 실패(found ${readKeys.length})`);
+  const { AUTH_ERROR_PARAM_KEYS } = await import("../../src/lib/auth-error") as unknown as {
+    AUTH_ERROR_PARAM_KEYS: readonly string[];
+  };
+  for (const key of new Set(readKeys)) {
+    assert.ok(AUTH_ERROR_PARAM_KEYS.includes(key),
+      `auth-error.ts가 읽는 키 "${key}"가 공유 상수에 없다 — 분류가 이 키를 못 보면 네이티브 오류 안내가 사라진다`);
+  }
+  const deeplinkSrc = await readFile(new URL("../../src/lib/capacitor/app-url-open.ts", import.meta.url), "utf8");
+  assert.match(deeplinkSrc, /AUTH_ERROR_PARAM_KEYS/, "classifier는 공유 상수를 써야 한다(키 재구현 금지)");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("28) 디스패쳐 R4: 15초를 넘긴 late OAuth도 1회 수신하고, 수신 즉시 secret이 삭제된다", async (t) => {
+  // R3의 고정 15초 컷오프는 느린 remote-load OAuth 구독자에서 cold OAuth 유실을 재발시킨다(삼순 R4).
+  // → 보관 기준은 시간이 아니라 소비자: expected 소비자가 수신할 때까지(orphan 상한 60s) 보관.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  const secretUrl = "https://keubo.fan/auth/callback#access_token=SECRET&refresh_token=SECRET";
+  (listener as unknown as (ev: { url: string }) => void)({ url: secretUrl });
+  assert.deepEqual(laSeen, [], "R5: secret은 무관 소비자(LA)에 전달되지 않는다");
+
+  t.mock.timers.tick(16_000); // 종전 고정 TTL(15s)을 넘긴 시점
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "relevant(oauth) 미수신 이벤트는 15초 뒤에도 보관");
+
+  const late: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { late.push(url); }); // >15초 late OAuth
+  assert.deepEqual(late, [secretUrl], ">15초 late OAuth도 1회 수신해야 한다(cold OAuth 유실 방지)");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "마지막 대기 소비자 수신 즉시 secret 삭제");
+
+  const dupLate: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { dupLate.push(url); });
+  assert.deepEqual(dupLate, [], "수신 완료된 secret은 어떤 재구독에도 재생 0");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("28b) 디스패쳐 R4: 미수신 orphan은 추가 진입 없이 expiry timer로 자동 buffer 0", async (t) => {
+  // sweep이 진입 시점에만 돌면 이후 이벤트가 없을 때 secret이 메모리에 잔류한다(삼순 R4).
+  // 실제 setTimeout 기반 expiry — subscribe/fanout 재진입 없이 스스로 폐기되는지 본다.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // LA만 수신하고 OAuth는 끝내 붙지 않는다 → orphan
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  (listener as unknown as (ev: { url: string }) => void)({ url: "https://keubo.fan/auth/callback?code=ORPHAN" });
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "orphan은 일단 보관");
+
+  t.mock.timers.tick(59_999);
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "만료 전에는 유지");
+  t.mock.timers.tick(2); // 60s 경과 — subscribe/fanout 어떤 진입도 없이
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "expiry timer가 추가 진입 없이 secret을 자동 폐기");
+  mod.__resetAppUrlOpenForTest();
+});
+
 test("18) background cold-start: stash는 보관만 하고 active 전에는 이동하지 않는다", async () => {
   await reset(true);
   const h = harness({ active: false, nativePending: "/games/COLDBG?tab=lineup" });
@@ -334,6 +738,7 @@ test("18) background cold-start: stash는 보관만 하고 active 전에는 이�
   await flush();
   assert.deepEqual(navigations, []);
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/COLDBG?tab=lineup"]);
 });
 
