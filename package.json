@@ -354,6 +354,7 @@
     "qa:baseball-corpus-identity:mutations": "node scripts/qa/corpus-identity-mutations.mjs",
     "qa:baseball-corpus-loader": "tsx scripts/qa/baseball-qa-corpus-loader-smoke.ts",
     "qa:corpus-resolve-scope": "tsx scripts/qa/corpus-resolve-scope-smoke.ts",
+    "qa:namu-cdp-raw": "tsx scripts/qa/namu-cdp-raw-smoke.ts",
     "qa:baseball-corpus-ledger-full-pg": "tsx scripts/qa/baseball-qa-corpus-ledger-full-pg.ts",
     "rag:load-corpus": "tsx scripts/baseball-qa/load-corpus-sources.ts",
     "qa:post-detail-header-nowrap-browser": "bash scripts/qa/post-detail-header-nowrap-browser-gate.sh",
@@ -479,6 +480,8 @@
     "minimatch": "^3.1.5",
     "tailwindcss": "^4",
     "tsx": "^4.22.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.19.0"
   }
 }

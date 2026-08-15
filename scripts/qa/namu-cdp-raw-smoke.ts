@@ -1,0 +1,202 @@
+/**
+ * raw-CDP fetcher 행동 게이트 (2026-08-16 삼순 P1 지적 반영, PR #1217).
+ *
+ * mock CDP 서버(실제 ws 서버)를 띄워 `fetchNamuDocumentViaCdp`의 **실행 경로**를 태운다 —
+ * 정적 grep이 아니라 실제 WebSocket 왕복으로 판정한다. 검증 축:
+ *
+ *   1. happy path — 노이즈 이벤트(다른 frame의 frameStoppedLoading·iframe Document 500·
+ *      무관 method·비JSON 프레임)가 먼저 와도 **navigate frameId/loaderId에 결속된**
+ *      Document(200)·frameStoppedLoading(F1)만 판정에 쓰인다. 조기 완료·오염이면 RED.
+ *   2. navigate errorText — net::ERR_* 를 조용히 넘기면 RED.
+ *   3. non-200 Document — 403이 missing/ok로 새면 RED (blocked + httpStatus).
+ *   4. challenge 본문 — 200이어도 차단 페이지면 blocked. 아니면 RED.
+ *   5. cleanup fail-close — fetch가 성공해도 Target.closeTarget 실패(success=false)면
+ *      결과가 blocked(cdp_cleanup_failed)여야 한다. 삼키면 488회 탭 누적 — RED.
+ *   6. 응답 없는 소켓 — navigate 무응답이 timeout으로 드러나야 한다(hang이면 RED).
+ *   7. 연속 3회 후 target 수 원복 — mock의 열린 탭 카운트가 0으로 돌아와야 한다.
+ */
+
+import assert from "node:assert";
+import { createServer, type Server } from "node:http";
+
+import WebSocket, { WebSocketServer } from "ws";
+
+import { fetchNamuDocumentViaCdp } from "../baseball-qa/rag/fetch-namu-cdp";
+
+type Scenario =
+  | "happy"
+  | "navigate_error"
+  | "http_403"
+  | "challenge_body"
+  | "close_fail"
+  | "no_reply";
+
+const HAPPY_HTML = "<html><head><title>강현우(야구선수)</title></head><body>2001년 출생 야구선수 문서 본문</body></html>";
+const CHALLENGE_HTML = "<html><body>Just a moment...</body></html>";
+const FINAL_URL = "https://namu.wiki/w/%EA%B0%95%ED%98%84%EC%9A%B0(%EC%95%BC%EA%B5%AC%EC%84%A0%EC%88%98)";
+
+class MockChrome {
+  readonly server: Server;
+  readonly openTargets = new Set<string>();
+  scenario: Scenario = "happy";
+  private nextTarget = 1;
+  private readonly wss = new WebSocketServer({ noServer: true });
+
+  constructor() {
+    this.server = createServer((_request, response) => {
+      response.statusCode = 404;
+      response.end();
+    });
+    this.server.on("upgrade", (request, socket, head) => {
+      const path = request.url ?? "";
+      this.wss.handleUpgrade(request, socket, head, (ws) => {
+        if (path === "/devtools/browser") this.serveBrowser(ws);
+        else if (path.startsWith("/devtools/page/")) this.servePage(ws);
+        else ws.close();
+      });
+    });
+  }
+
+  private serveBrowser(ws: WebSocket): void {
+    ws.on("message", (data) => {
+      const message = JSON.parse(String(data)) as { id: number; method: string; params?: { targetId?: string; url?: string } };
+      if (message.method === "Target.createTarget") {
+        const targetId = `T${this.nextTarget++}`;
+        this.openTargets.add(targetId);
+        ws.send(JSON.stringify({ id: message.id, result: { targetId } }));
+      } else if (message.method === "Target.closeTarget") {
+        if (this.scenario === "close_fail") {
+          ws.send(JSON.stringify({ id: message.id, result: { success: false } }));
+        } else {
+          if (message.params?.targetId) this.openTargets.delete(message.params.targetId);
+          ws.send(JSON.stringify({ id: message.id, result: { success: true } }));
+        }
+      } else {
+        ws.send(JSON.stringify({ id: message.id, result: {} }));
+      }
+    });
+  }
+
+  private servePage(ws: WebSocket): void {
+    const emit = (method: string, params: Record<string, unknown>, delayMs: number) => {
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ method, params }));
+      }, delayMs);
+    };
+    ws.on("message", (data) => {
+      const message = JSON.parse(String(data)) as { id: number; method: string; params?: { expression?: string } };
+      if (message.method === "Page.enable" || message.method === "Network.enable") {
+        ws.send(JSON.stringify({ id: message.id, result: {} }));
+        return;
+      }
+      if (message.method === "Page.navigate") {
+        if (this.scenario === "no_reply") return; // 무응답 — timeout 경로 검증
+        if (this.scenario === "navigate_error") {
+          ws.send(JSON.stringify({ id: message.id, result: { errorText: "net::ERR_NAME_NOT_RESOLVED" } }));
+          return;
+        }
+        ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
+        // 노이즈 먼저: 비JSON 프레임·무관 method·다른 frame 완료·iframe Document(500).
+        setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.send("this-is-not-json"); }, 3);
+        emit("Inspector.detachedNoise", { reason: "unrelated" }, 5);
+        emit("Page.frameStoppedLoading", { frameId: "F9-unrelated" }, 8);
+        emit("Network.responseReceived", { type: "Document", frameId: "F2-iframe", loaderId: "L9", response: { status: 500 } }, 10);
+        // 결속 대상: main Document + main frame 완료.
+        const status = this.scenario === "http_403" ? 403 : 200;
+        emit("Network.responseReceived", { type: "Document", frameId: "F1", loaderId: "L1", response: { status } }, 14);
+        emit("Page.frameStoppedLoading", { frameId: "F1" }, 18);
+        return;
+      }
+      if (message.method === "Runtime.evaluate") {
+        const expression = message.params?.expression ?? "";
+        const value = expression.includes("outerHTML")
+          ? (this.scenario === "challenge_body" ? CHALLENGE_HTML : HAPPY_HTML)
+          : FINAL_URL;
+        ws.send(JSON.stringify({ id: message.id, result: { result: { value } } }));
+        return;
+      }
+      ws.send(JSON.stringify({ id: message.id, result: {} }));
+    });
+  }
+
+  async listen(): Promise<string> {
+    await new Promise<void>((resolve) => this.server.listen(0, "127.0.0.1", resolve));
+    const address = this.server.address();
+    if (address === null || typeof address === "string") throw new Error("mock 서버 주소 확인 실패");
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  async close(): Promise<void> {
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+}
+
+async function main(): Promise<void> {
+  const mock = new MockChrome();
+  const cdpUrl = await mock.listen();
+  const fetchOnce = () => fetchNamuDocumentViaCdp("https://namu.wiki/w/%EA%B0%95%ED%98%84%EC%9A%B0", {
+    cdpUrl,
+    minIntervalMs: 0,
+    timeoutMs: 1_500,
+  });
+
+  try {
+    // 1) happy — 노이즈 무시 + 결속된 200만 판정에 사용.
+    mock.scenario = "happy";
+    const happy = await fetchOnce();
+    assert.ok(happy.ok === true, `happy는 ok여야 한다: ${JSON.stringify(happy)}`);
+    assert.equal(happy.ok && happy.html, HAPPY_HTML, "html은 렌더 문서 수확값이어야 한다");
+    assert.equal(happy.ok && happy.url, FINAL_URL, "최종 URL은 location.href여야 한다(redirect 반영)");
+
+    // 2) navigate errorText — 조용히 넘기면 RED.
+    mock.scenario = "navigate_error";
+    const navigateError = await fetchOnce();
+    assert.ok(!navigateError.ok && navigateError.status === "blocked", "navigate errorText는 blocked여야 한다");
+    assert.ok(!navigateError.ok && navigateError.reason.includes("ERR_NAME_NOT_RESOLVED"), "errorText가 reason에 드러나야 한다");
+
+    // 3) non-200 — 결속된 Document status로 분류.
+    mock.scenario = "http_403";
+    const forbidden = await fetchOnce();
+    assert.ok(!forbidden.ok && forbidden.status === "blocked" && forbidden.httpStatus === 403,
+      `403은 blocked+httpStatus=403이어야 한다: ${JSON.stringify(forbidden)}`);
+
+    // 4) challenge 본문 — 200이어도 blocked.
+    mock.scenario = "challenge_body";
+    const challenge = await fetchOnce();
+    assert.ok(!challenge.ok && challenge.status === "blocked" && challenge.reason === "bot_protection_challenge_body",
+      "challenge 본문은 bot_protection_challenge_body여야 한다");
+
+    // 5) cleanup fail-close — fetch 성공이어도 closeTarget 실패면 blocked(cdp_cleanup_failed).
+    mock.scenario = "close_fail";
+    const cleanupFail = await fetchOnce();
+    assert.ok(!cleanupFail.ok && cleanupFail.status === "blocked" && cleanupFail.reason.startsWith("cdp_cleanup_failed"),
+      `closeTarget 실패는 fail-close여야 한다: ${JSON.stringify(cleanupFail)}`);
+    mock.openTargets.clear(); // close_fail이 남긴 mock 상태 정리
+
+    // 6) 무응답 소켓 — hang이 아니라 timeout으로 드러나야 한다.
+    mock.scenario = "no_reply";
+    const started = Date.now();
+    const noReply = await fetchOnce();
+    assert.ok(!noReply.ok && noReply.status === "blocked" && noReply.reason.startsWith("cdp_fetch_failed"),
+      "navigate 무응답은 cdp_fetch_failed여야 한다");
+    assert.ok(Date.now() - started < 10_000, "무응답은 timeout 내에 드러나야 한다(hang 금지)");
+    mock.openTargets.clear();
+
+    // 7) 연속 3회 후 target 수 원복 — 탭 누적이면 RED.
+    mock.scenario = "happy";
+    for (let index = 0; index < 3; index += 1) {
+      const repeat = await fetchOnce();
+      assert.ok(repeat.ok, `연속 ${index + 1}회차 happy는 ok여야 한다`);
+    }
+    assert.equal(mock.openTargets.size, 0, `연속 3회 후 열린 target이 0이어야 한다(실측 ${mock.openTargets.size})`);
+
+    console.log("namu-cdp-raw-smoke PASS (결속 happy / navigate errorText / 403 / challenge / cleanup fail-close / 무응답 timeout / 연속3회 target 원복)");
+  } finally {
+    await mock.close();
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
