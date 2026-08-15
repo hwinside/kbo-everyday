@@ -89,15 +89,19 @@ export interface InterviewDeps {
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
   /**
    * 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행.
+   * attempted = FCM이 실제로 시도되어 기기별 outcome이 있다(부분 성공 포함).
+   * false = 인프라 선행 실패(env/prefs 조회 등) — 아무 기기도 받지 않았으므로
+   * 행 전체 release가 안전하다.
    * retryableTokens = FCM이 transient(재시도 가능)로 보고한 기기 토큰.
-   * ok:true여도 이 목록이 비어 있지 않으면 그 기기들은 아직 못 받았다 —
-   * 버리면 영구 유실이다(삼순 NO-GO 2026-08-15).
+   * attempted:true여도 이 목록이 비어 있지 않으면 그 기기들은 아직 못 받았다 —
+   * 버리면 영구 유실이고(삼순 NO-GO 1차), 행 전체 release는 accepted 기기
+   * 재발송 중복이다(삼순 NO-GO 2차 P1) — transient만 durable settle한다.
    */
   sendPush: (
     userIds: string[],
     payload: { title: string; body: string; url: string },
     prefKey: typeof INTERVIEW_PREF_KEY,
-  ) => Promise<{ ok: boolean; retryableTokens: string[] }>;
+  ) => Promise<{ attempted: boolean; retryableTokens: string[] }>;
   /**
    * durable retry 경로 — 이미 실패로 확정된 기기 토큰에만 재발송.
    * 유저/prefs 재조회 없음(이미 1차 attempt에서 토글 필터 통과한 토큰).
@@ -105,7 +109,7 @@ export interface InterviewDeps {
   sendToTokens: (
     tokens: string[],
     payload: { title: string; body: string; url: string },
-  ) => Promise<{ ok: boolean; retryableTokens: string[] }>;
+  ) => Promise<{ attempted: boolean; retryableTokens: string[] }>;
   /**
    * transient 기기 토큰을 durable 저장하고 행을 pending으로 되돌린다(다음 run 재시도).
    * attempts도 함께 기록해 상한 판정에 쓴다.
@@ -169,17 +173,24 @@ export async function notifyFavPlayerInterviews(
         const retry = await deps.sendToTokens(interview.retryTokens, {
           title: interview.title, body: interview.title, url: `/games/${interview.gameId}`,
         });
-        if (!retry.ok) {
+        if (!retry.attempted) {
+          // 인프라 선행 실패 — 아무 기기도 안 받았으므로 release가 안전(중복 0).
           releaseRowIds.push(interview.id);
           summary.released++;
           continue;
         }
         if (retry.retryableTokens.length > 0) {
+          // 부분 성공이어도 release하지 않는다 — accepted 기기 재발송 중복(삼순 P1).
+          // 잔여 transient만 durable 재저장.
           await deps.storeRetryTokens(
             interview.id, retry.retryableTokens, interview.attempts + 1,
           );
           summary.pendingDeviceRetry++;
           continue;
+        }
+        // 전량 종결 — 이제야 마커 기록(마커 = "이 영상 발송 완전 종결"로 의미 통일).
+        if (!(await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false))) {
+          summary.markerWriteFailures++;
         }
         sentRowIds.push(interview.id);
         summary.sent++;
@@ -251,22 +262,26 @@ export async function notifyFavPlayerInterviews(
         },
         INTERVIEW_PREF_KEY,
       );
-      if (!result.ok) {
+      if (!result.attempted) {
+        // 인프라 선행 실패(env/prefs 등) — 아무 기기도 안 받았으므로 release 안전.
         releaseRowIds.push(interview.id);
         summary.released++;
         continue;
       }
-      // 마커는 "1차 attempt가 audience 전체에 시도됐다"를 뜻한다. 이후 회복/재시도는
-      // durable retry 토큰 경로만 탄다(전체 재발송 금지 = accepted 기기 중복 방어).
-      if (!(await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false))) {
-        summary.markerWriteFailures++;
-      }
       if (result.retryableTokens.length > 0) {
         // transient 기기는 버리지 않고 durable 저장 → 행은 pending 복귀,
-        // 다음 run이 그 토큰에만 재발송한다(삼순 NO-GO 2026-08-15 핵심 축).
+        // 다음 run이 그 토큰에만 재발송한다(삼순 NO-GO 핵심 축).
+        // ⚠️ 마커는 여기서 기록하지 않는다(삼순 P0-2): 마커 선기록 후 이 저장이
+        // 실패하면 다음 run이 마커만 보고 sent 종결해 transient 기기가 다시 영구
+        // 유실된다. 마커 = "완전 종결" 시점에만 기록. 저장 throw 시는 catch에서
+        // release → 전체 재발송(하린아빠 B안 희소 중복 허용, 유실보다 낫다).
         await deps.storeRetryTokens(interview.id, result.retryableTokens, interview.attempts + 1);
         summary.pendingDeviceRetry++;
         continue;
+      }
+      // 전량 accepted — 완전 종결 시점에만 마커 기록(crash gap은 B안 희소 중복 허용).
+      if (!(await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false))) {
+        summary.markerWriteFailures++;
       }
       sentRowIds.push(interview.id);
       summary.sent++;

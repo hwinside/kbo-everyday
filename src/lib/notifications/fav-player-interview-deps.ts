@@ -32,9 +32,27 @@ export function createInterviewDeps(): InterviewDeps {
       if (error) throw new Error(`lease pending interviews failed: ${error.message}`);
       const rows = (data ?? []) as Array<{
         id: string; game_id: string; video_id: string; title: string; player_names: string[] | null;
-        notify_retry_tokens: string[] | null; notify_attempts: number | null;
       }>;
       if (rows.length === 0) return [];
+
+      // durable retry 원장 — postgame_interviews는 공개 SELECT라 raw FCM 토큰을 둘 수
+      // 없다(삼순 P0). service_role 전용 별도 테이블에서 lease된 행만 조회한다.
+      // query-guard: bounded -- lease된 최대 40행에서 파생된 exact id IN 조회.
+      const { data: retryRows, error: retryErr } = await supabase
+        .from("postgame_interview_retry_tokens")
+        .select("row_id, tokens, attempts")
+        .in("row_id", rows.map((r) => r.id));
+      if (retryErr) throw new Error(`retry ledger query failed: ${retryErr.message}`);
+      const retryByRow = new Map(
+        (retryRows ?? []).map((r) => [r.row_id as string, {
+          tokens: Array.isArray(r.tokens)
+            ? (r.tokens as unknown[]).filter(
+                (t): t is string => typeof t === "string" && t.length > 0,
+              )
+            : [],
+          attempts: typeof r.attempts === "number" ? r.attempts : 1,
+        }]),
+      );
 
       // winner_team_id는 jobs에 있다 — 동명이인 분리에 필요.
       const gameIds = [...new Set(rows.map((r) => r.game_id as string))];
@@ -55,10 +73,8 @@ export function createInterviewDeps(): InterviewDeps {
         title: r.title as string,
         playerNames: (r.player_names as string[]) ?? [],
         winnerTeamId: winnerByGame.get(r.game_id as string) ?? null,
-        retryTokens: Array.isArray(r.notify_retry_tokens)
-          ? r.notify_retry_tokens.filter((t): t is string => typeof t === "string" && t.length > 0)
-          : [],
-        attempts: typeof r.notify_attempts === "number" ? r.notify_attempts : 0,
+        retryTokens: retryByRow.get(r.id as string)?.tokens ?? [],
+        attempts: retryByRow.get(r.id as string)?.attempts ?? 0,
       }));
     },
 
@@ -67,11 +83,16 @@ export function createInterviewDeps(): InterviewDeps {
     markSent: async (rowIds: string[]): Promise<void> => {
       const { error } = await supabase
         .from("postgame_interviews")
-        .update({
-          notify_state: "sent", notify_lease_until: null, notify_retry_tokens: null,
-        })
+        .update({ notify_state: "sent", notify_lease_until: null })
         .in("id", rowIds);
       if (error) throw new Error(`mark sent failed: ${error.message}`);
+      // 원장 정리 — sent 행은 다시 lease되지 않아 잔존해도 무해하지만(행 삭제 시
+      // cascade), raw 토큰을 필요 이상 보관하지 않는다.
+      const { error: purgeErr } = await supabase
+        .from("postgame_interview_retry_tokens")
+        .delete()
+        .in("row_id", rowIds);
+      if (purgeErr) throw new Error(`retry ledger purge failed: ${purgeErr.message}`);
     },
 
     releaseLease: async (rowIds: string[]): Promise<void> => {
@@ -109,11 +130,14 @@ export function createInterviewDeps(): InterviewDeps {
 
     fetchFavoritePlayerFanIds: (kboId) => fetchFavoritePlayerFanIds(kboId),
     // prefKey 전달 = 토글 off 유저 필터링(sendFcmToUsers 내부 notification_prefs 조회).
-    // outcomes의 transient 토큰을 버리지 않고 반환해 durable retry에 쓴다(삼순 NO-GO 2026-08-15).
+    // attempted = outcomes 존재(FCM이 실제 시도됨). 인프라 선행 실패(env/prefs 조회
+    // 등)는 outcomes 없이 돌아오므로 release가 안전하고, 부분 성공(ok=false여도
+    // outcomes 있음)은 transient만 durable settle한다(삼순 P1).
+    // outcomes의 transient 토큰을 버리지 않고 반환해 durable retry에 쓴다(삼순 NO-GO).
     sendPush: async (userIds, payload, prefKey) => {
       const result = await sendFcmToUsers(userIds, payload, prefKey);
       return {
-        ok: result.ok,
+        attempted: Array.isArray(result.outcomes),
         retryableTokens: (result.outcomes ?? [])
           .filter((o) => o.status === "transient")
           .map((o) => o.token),
@@ -123,22 +147,26 @@ export function createInterviewDeps(): InterviewDeps {
     sendToTokens: async (tokens, payload) => {
       const result = await sendFcmToTokens(tokens, payload);
       return {
-        ok: result.ok,
+        attempted: Array.isArray(result.outcomes),
         retryableTokens: (result.outcomes ?? [])
           .filter((o) => o.status === "transient")
           .map((o) => o.token),
       };
     },
-    // transient 토큰 durable 저장 + pending 복귀 — 다음 run이 토큰 경로로 재시도.
+    // transient 토큰 durable 저장(service_role 전용 원장) + 행 pending 복귀.
+    // 원장 upsert 성공 후 행 전이 순서 — 행 전이가 실패하면 throw → 호출부 release,
+    // lease 만료 후 재획득 때 원장 토큰이 그대로 있어 토큰 경로로 재시도된다.
     storeRetryTokens: async (rowId, tokens, attempts) => {
+      const { error: ledgerErr } = await supabase
+        .from("postgame_interview_retry_tokens")
+        .upsert(
+          { row_id: rowId, tokens, attempts, updated_at: new Date().toISOString() },
+          { onConflict: "row_id" },
+        );
+      if (ledgerErr) throw new Error(`retry ledger upsert failed: ${ledgerErr.message}`);
       const { error } = await supabase
         .from("postgame_interviews")
-        .update({
-          notify_state: "pending",
-          notify_lease_until: null,
-          notify_retry_tokens: tokens,
-          notify_attempts: attempts,
-        })
+        .update({ notify_state: "pending", notify_lease_until: null })
         .eq("id", rowId)
         .neq("notify_state", "sent");
       if (error) throw new Error(`store retry tokens failed: ${error.message}`);
