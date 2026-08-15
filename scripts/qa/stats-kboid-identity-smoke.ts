@@ -26,13 +26,20 @@ import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 
 /** static 에서 raw≠canonical 외국인을 실제로 찾는다(하드코딩 금지 — 실측 타자 11명 존재).
  * full=1/fallback 응답이 이 선수를 raw 숫자ID 그대로 내보내면 rewrite 계약 위반이다. */
-function findStaticForeign(): { name: string; raw: string; canonical: string } {
-  for (const p of batterStats2026 as Array<{ name: string; kboId?: string }>) {
+function findForeignIn(
+  rows: Array<{ name: string; kboId?: string | number }>,
+  label: string,
+): { name: string; raw: string; canonical: string } {
+  for (const p of rows) {
     const raw = String(p.kboId || "").trim();
     const canonical = canonicalKboId(raw);
     if (raw && canonical && canonical !== raw) return { name: p.name, raw, canonical };
   }
-  throw new Error("static 에 raw≠canonical 외국인이 없다 — rewrite 시나리오 전제 소멸(게이트 재설계 필요)");
+  throw new Error(`${label} 에 raw≠canonical 외국인이 없다 — rewrite 시나리오 전제 소멸(게이트 재설계 필요)`);
+}
+
+function findStaticForeign(): { name: string; raw: string; canonical: string } {
+  return findForeignIn(batterStats2026 as Array<{ name: string; kboId?: string }>, "static 2026 batters");
 }
 
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
@@ -107,10 +114,83 @@ const SCENARIOS = [
   "pitcher-live",
   "pitcher-noid",
   "pitcher-dup",
+  // 삼순 5차 — rewrite 를 거치지 않고 static 을 직반환하던 분기들.
+  "season2025-batter",
+  "season2025-pitcher",
+  "defense-static",
 ] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
+/**
+ * static 직반환 분기(season=2025 · type=defense) 종단 게이트 — 삼순 #1196 5차.
+ * live 크롤을 안 타므로 fetch 모킹 없이 actual GET 을 그대로 호출해
+ * canonical 존재 + raw 부재 양방향을 판정한다.
+ */
+async function runStaticDirectScenario(scenario: Scenario): Promise<void> {
+  const { GET } = await import("../../src/app/api/stats/route");
+  const { NextRequest } = await import("next/server");
+
+  let url: string;
+  let expected: { name: string; raw: string; canonical: string };
+  if (scenario === "defense-static") {
+    const defenseRows = (await import("../../src/lib/constants/stats-2026-defense.json"))
+      .default as Array<{ name: string; kboId?: string }>;
+    expected = findForeignIn(defenseRows, "static 2026 defense");
+    url = "http://localhost/api/stats?type=defense";
+  } else if (scenario === "season2025-pitcher") {
+    const rows = (await import("../../src/lib/constants/stats-2025-pitchers.json"))
+      .default as Array<{ name: string; kboId?: string }>;
+    expected = findForeignIn(rows, "static 2025 pitchers");
+    url = "http://localhost/api/stats?type=pitcher&season=2025";
+  } else {
+    const rows = (await import("../../src/lib/constants/stats-2025-batters.json"))
+      .default as Array<{ name: string; kboId?: string }>;
+    expected = findForeignIn(rows, "static 2025 batters");
+    url = "http://localhost/api/stats?type=batter&season=2025";
+  }
+
+  const res = await GET(new NextRequest(url));
+  assert.equal(res.status, 200, `${scenario}: status=${res.status}`);
+  const json = await res.json() as { stats: Array<Record<string, string | number>> };
+  assert.ok(json.stats.length > 0, `${scenario}: 응답이 비었다`);
+
+  const row = json.stats.find((r) => r.kboId === expected.canonical);
+  assert.ok(row, `${scenario}: 외국인 ${expected.name} 이 canonical(${expected.canonical})로 없다`);
+  assert.ok(
+    !json.stats.some((r) => r.kboId === expected.raw),
+    `${scenario}: raw 숫자ID(${expected.raw})가 남았다 — rewrite 누락`,
+  );
+  // playerId 도 canonical 로 나가야 한다(수비는 종전 playerId 자체가 없었다).
+  assert.equal(row!.playerId, expected.canonical, `${scenario}: playerId=${row!.playerId}`);
+  // 전 행 identity 계약 — 비어있지 않고 유일해야 한다.
+  const ids = json.stats.map((r) => String(r.kboId || "").trim());
+  assert.ok(ids.every(Boolean), `${scenario}: 빈 kboId 행이 남았다`);
+  assert.equal(new Set(ids).size, ids.length, `${scenario}: 중복 kboId 가 남았다`);
+
+  if (scenario === "defense-static") {
+    // ⚠️ 집계 **전** 키를 canonical 로 통일했는가 — 집계 후 rewrite 면 같은 선수가 raw/canonical
+    // 두 덩어리로 쪼개져 행수가 증가한다. 실측 unique canonical id = 553 과 일치해야 한다.
+    const defenseRows = (await import("../../src/lib/constants/stats-2026-defense.json"))
+      .default as Array<{ kboId?: string; pos?: string }>;
+    const expectedPlayers = new Set(
+      defenseRows
+        .filter((r) => String(r.kboId || "").trim() && r.pos !== "투수")
+        .map((r) => canonicalKboId(String(r.kboId))),
+    );
+    assert.equal(
+      json.stats.length,
+      expectedPlayers.size,
+      `defense 행수=${json.stats.length} ≠ canonical 선수수=${expectedPlayers.size} — 집계 전 키 미통일로 쪼개졌다`,
+    );
+  }
+  console.log(`  ✅ [route] ${scenario}`);
+}
+
 async function runScenario(scenario: Scenario): Promise<void> {
+  if (scenario === "season2025-batter" || scenario === "season2025-pitcher" || scenario === "defense-static") {
+    await runStaticDirectScenario(scenario);
+    return;
+  }
   // ── 타자 fixture 로스터: 팀별 3명(전 10팀) + 동명이인 반대쌍(같은 이름·팀, 다른 id) ──
   const teams = ["한화", "KIA", "KT", "LG", "롯데", "NC", "두산", "SSG", "삼성", "키움"];
   const base: FixRow[] = [];
@@ -443,6 +523,18 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     );
     assert.throws(
       () => mergeFullEntry(live, [{ name: "오염된이름", team: HOMONYM.team, kboId: ID_A }]),
+      /identity conflict/,
+    );
+  });
+  await check("collapseIdenticalStatRows: rank만 다른 완전동일 중복은 접고 · 값 다르면 throw", async () => {
+    const { collapseIdenticalStatRows } = await import("../../src/app/api/stats/route");
+    const row = { rank: 1, name: "오승환", team: "삼성", kboId: "75421", playerId: "75421", era: "2.10" };
+    // 실측: 2025 투수 static 은 rank 제외 완전동일 행이 30쌍 — 중복 노출 제거.
+    const collapsed = collapseIdenticalStatRows([row, { ...row, rank: 2 }] as never);
+    assert.equal(collapsed.length, 1, `collapsed=${collapsed.length}`);
+    // 값이 다른 동일 ID 는 진짜 오염 — 조용히 접지 않고 fail-close.
+    assert.throws(
+      () => collapseIdenticalStatRows([row, { ...row, rank: 2, era: "9.99" }] as never),
       /identity conflict/,
     );
   });

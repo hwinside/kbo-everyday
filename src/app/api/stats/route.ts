@@ -653,6 +653,38 @@ export function canonicalizeStatsIdentity<T extends PlayerStat>(stats: T[]): T[]
 }
 
 /**
+ * 같은 canonical ID 가 여러 번 들어있는 static 행을 접는다(삼순 #1196 5차).
+ *
+ * ⚠️ 2025 투수 static 은 **rank 를 제외하면 완전히 동일한 행**이 30쌍 들어있다(실측).
+ * 즉 현재 프로덕션은 같은 선수를 두 번씩 노출하고 있다. 동일 행은 접고,
+ * 값이 다른 동일 ID(서로 다른 선수가 같은 ID 를 가진 진짜 오염)는 throw 해 fail-close 한다.
+ * — 그냥 dedupe 하면 오염까지 조용히 숨고, 그냥 throw 하면 멀줦한 중복까지 500 이 된다.
+ */
+export function collapseIdenticalStatRows<T extends PlayerStat>(stats: T[]): T[] {
+  const byId = new Map<string, T>();
+  const out: T[] = [];
+  const fingerprint = (row: T): string => {
+    const { rank: _rank, ...rest } = row as T & { rank?: unknown };
+    void _rank;
+    return JSON.stringify(rest);
+  };
+  for (const row of stats) {
+    const id = String(row.kboId || "").trim();
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, row);
+      out.push(row);
+      continue;
+    }
+    if (fingerprint(existing) !== fingerprint(row)) {
+      throw new Error(`KBO stats identity conflict (static duplicate with different values): ${id}`);
+    }
+    // rank 만 다른 완전 동일 행 — 중복 노출 제거.
+  }
+  return out;
+}
+
+/**
  * full=1 최종 응답(라이브 + static 보강 merge 후)의 identity 종단 가드.
  * 빈 ID · 중복 ID 가 하나라도 남으면 서빙하지 않고 throw → 전체 static fallback
  * (삼순 #1196 2차 P0: mergeFullEntry 의 name::team 보조경로가 무시되는 것을 종단에서 막는다).
@@ -811,10 +843,22 @@ export async function GET(req: NextRequest) {
   const full = req.nextUrl.searchParams.get("full") === "1";
 
   // 2025 시즌 — 확정 static data (300 batters + 277 pitchers)
+  // ⚠️ static 은 외국인을 숫자ID 로 든다(실측 2025 타자 1·투수 4명) → canonical rewrite 후 반환
+  // (삼순 #1196 5차: 직반환 분기도 kboId·playerId 계약을 지켜야 하류가 동일인을 같은 사람으로 본다).
   if (season === "2025") {
-    const stats = type === "pitcher"
+    const raw = type === "pitcher"
       ? (pitcherStats2025 as unknown as PlayerStat[])
       : (batterStats2025 as unknown as PlayerStat[]);
+    let stats: PlayerStat[];
+    try {
+      stats = collapseIdenticalStatRows(canonicalizeStatsIdentity(raw));
+      assertFullEntryIdentity(stats);
+    } catch (identityError) {
+      return NextResponse.json(
+        { error: (identityError as Error).message, stats: [] },
+        { status: 500, headers: NO_STORE },
+      );
+    }
     return NextResponse.json(
       { stats, type, count: stats.length, season: 2025 },
       { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 확정 static 데이터
@@ -822,8 +866,27 @@ export async function GET(req: NextRequest) {
   }
 
   // 수비 — 라이브 fetch 불가(KBO 수비페이지 POST 차단) → 정적 크롤 JSON(매일 CI 갱신) 집계
+  // ⚠️ **집계 전** 키부터 canonical 로 통일한다(삼순 #1196 5차). aggregateDefense 는 kboId 로
+  // 포지션별 행을 묶으므로, raw 숫자ID와 canonical 영문ID 가 섞이면 같은 선수의 수비가
+  // 두 덩어리로 쪼개진다. 집계 후 rewrite 는 이미 깨진 집계를 못 되돌린다.
   if (type === "defense") {
-    const stats = aggregateDefense(defenseStats2026 as unknown as DefenseRow[]) as unknown as PlayerStat[];
+    let stats: PlayerStat[];
+    try {
+      const canonicalRows = (defenseStats2026 as unknown as DefenseRow[]).map((row) => {
+        const id = canonicalKboId(String(row.kboId || "").trim());
+        if (!id) throw new Error(`KBO defense identity missing: ${row.name}::${row.team}`);
+        return { ...row, kboId: id };
+      });
+      stats = canonicalizeStatsIdentity(
+        aggregateDefense(canonicalRows) as unknown as PlayerStat[],
+      );
+      assertFullEntryIdentity(stats);
+    } catch (identityError) {
+      return NextResponse.json(
+        { error: (identityError as Error).message, stats: [] },
+        { status: 500, headers: NO_STORE },
+      );
+    }
     return NextResponse.json(
       { stats, type, count: stats.length, season: 2026, source: "static", updatedAt: statsMeta.defenseGeneratedAt },
       { headers: { "Cache-Control": "public, s-maxage=3600" } }, // 일일 크롤 static
