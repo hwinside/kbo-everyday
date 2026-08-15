@@ -637,6 +637,22 @@ function setCache(key: string, data: StatsResult) {
 }
 
 /**
+ * 응답 행의 `kboId`·`playerId` 를 **canonical 값으로 rewrite** 한다(삼순 #1196 4차).
+ *
+ * ⚠️ static JSON 은 외국인을 숫자ID(56950 등)로 들고 있다(실측 타자 11·투수 21명).
+ * 검증만 하고 raw 를 그대로 내보내면 하류(앱·봇)가 live(영문ID)와 static(숫자ID)을
+ * 다른 사람으로 본다. 결손은 fail-close.
+ * export 는 identity 게이트가 실제 배포 함수를 태우기 위해서다.
+ */
+export function canonicalizeStatsIdentity<T extends PlayerStat>(stats: T[]): T[] {
+  return stats.map((row) => {
+    const id = canonicalKboId(String(row.kboId || "").trim());
+    if (!id) throw new Error(`KBO stats identity missing: ${row.name}::${row.team}`);
+    return { ...row, kboId: id, playerId: id };
+  });
+}
+
+/**
  * full=1 최종 응답(라이브 + static 보강 merge 후)의 identity 종단 가드.
  * 빈 ID · 중복 ID 가 하나라도 남으면 서빙하지 않고 throw → 전체 static fallback
  * (삼순 #1196 2차 P0: mergeFullEntry 의 name::team 보조경로가 무시되는 것을 종단에서 막는다).
@@ -766,9 +782,11 @@ export function handleStatsGetFailure(
       : (batterStats2026 as unknown as PlayerStat[]));
     // ⚠️ fallback 자체도 identity 계약을 통과해야 200 을 받는다(삼순 #1196 3차 P0-1:
     // 종단 가드가 throw 해도 같은 오염 static 을 200 으로 되돌려주면 fail-close 가 무효다).
-    // 오염이면 500/no-store fail-close.
+    // rewrite(외국인 숫자→canonical, 4차) 후 중복 검증, 오염이면 500/no-store fail-close.
+    let served: PlayerStat[];
     try {
-      assertFullEntryIdentity(fallback);
+      served = canonicalizeStatsIdentity(fallback);
+      assertFullEntryIdentity(served);
     } catch (identityError) {
       return NextResponse.json(
         { error: (identityError as Error).message, stats: [] },
@@ -781,7 +799,7 @@ export function handleStatsGetFailure(
       return NextResponse.json({ error: "stats fallback has invalid freshness", stats: [] }, { status: 500, headers: NO_STORE });
     }
     return NextResponse.json({
-      stats: fallback, type, count: fallback.length, season: 2026, source: "fallback", updatedAt: validFbAt,
+      stats: served, type, count: served.length, season: 2026, source: "fallback", updatedAt: validFbAt,
     }, { headers: NO_STORE });
   }
   return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
@@ -828,8 +846,12 @@ export async function GET(req: NextRequest) {
       // full=1로 static에서 추가된 선수도 같은 전페이지 live Runner map으로 마지막에 보정한다.
       stats = applyRunnerStats(stats, current.runnerMap);
     }
-    // ⚠️ full=1 종단 identity 가드 — merge 후 빈/중복 ID 가 남으면 서빙 금지(삼순 #1196 2차 P0).
-    if (full) assertFullEntryIdentity(stats);
+    // ⚠️ full=1 종단 — 응답 ID 를 canonical 로 rewrite(외국인 숫자→영문, 삼순 #1196 4차) 한 뒤
+    // 빈/중복 ID 가 남으면 서빙 금지(삼순 #1196 2차 P0).
+    if (full) {
+      stats = canonicalizeStatsIdentity(stats);
+      assertFullEntryIdentity(stats);
+    }
     const now = new Date().toISOString();
     const currentUpdatedAt = current.runnerSource === "static-fallback"
       ? current.runnerUpdatedAt

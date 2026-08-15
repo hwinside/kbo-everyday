@@ -22,6 +22,18 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import playersRoster from "../../src/lib/constants/players-roster.json";
 import batterStats2026 from "../../src/lib/constants/stats-2026-batters.json";
+import { canonicalKboId } from "../../src/lib/utils/resolve-player";
+
+/** static 에서 raw≠canonical 외국인을 실제로 찾는다(하드코딩 금지 — 실측 타자 11명 존재).
+ * full=1/fallback 응답이 이 선수를 raw 숫자ID 그대로 내보내면 rewrite 계약 위반이다. */
+function findStaticForeign(): { name: string; raw: string; canonical: string } {
+  for (const p of batterStats2026 as Array<{ name: string; kboId?: string }>) {
+    const raw = String(p.kboId || "").trim();
+    const canonical = canonicalKboId(raw);
+    if (raw && canonical && canonical !== raw) return { name: p.name, raw, canonical };
+  }
+  throw new Error("static 에 raw≠canonical 외국인이 없다 — rewrite 시나리오 전제 소멸(게이트 재설계 필요)");
+}
 
 const PAGER_PREFIX = "ctl00$ctl00$ctl00$cphContents$cphContents$cphContents$ucPager$";
 
@@ -255,6 +267,16 @@ async function runScenario(scenario: Scenario): Promise<void> {
     const ids = json.stats.map((r) => String(r.kboId || "").trim());
     assert.ok(ids.every(Boolean), "full=1 응답에 빈 kboId 행이 남았다");
     assert.equal(new Set(ids).size, ids.length, "full=1 응답에 중복 kboId 가 남았다");
+    // ⚠️ static-only 외국인 rewrite (삼순 4차): raw 숫자ID 가 아니라 canonical 로 나가야 한다.
+    const foreign = findStaticForeign();
+    assert.ok(
+      json.stats.some((r) => r.kboId === foreign.canonical),
+      `외국인 ${foreign.name} 이 canonical(${foreign.canonical})로 없다`,
+    );
+    assert.ok(
+      !json.stats.some((r) => r.kboId === foreign.raw),
+      `외국인 ${foreign.name} 이 raw 숫자ID(${foreign.raw})로 남았다 — rewrite 누락`,
+    );
   } else if (scenario === "batter-live") {
     assert.equal(json.source, "live", `source=${json.source} — live 여야 한다`);
     assert.equal(json.runnerSource, "live", `runnerSource=${json.runnerSource}`);
@@ -286,6 +308,18 @@ async function runScenario(scenario: Scenario): Promise<void> {
     // 결손/부분 coverage — live 혼합 없이 전체 static fallback 으로 닫혀야 한다.
     assert.equal(json.source, "fallback", `${scenario}: source=${json.source} — 전체 fallback 이 아니라 live 혼합이 남았다`);
     assert.equal(res.headers.get("cache-control"), "no-store", "degraded 응답이 엣지에 캐시된다");
+    if (type === "batter") {
+      // ⚠️ fallback 응답도 rewrite 계약(삼순 4차) — static-only 외국인이 canonical 로 나가야 한다.
+      const foreign = findStaticForeign();
+      assert.ok(
+        json.stats.some((r) => r.kboId === foreign.canonical),
+        `fallback 응답에 외국인 ${foreign.name} canonical(${foreign.canonical})이 없다`,
+      );
+      assert.ok(
+        !json.stats.some((r) => r.kboId === foreign.raw),
+        `fallback 응답에 외국인 raw 숫자ID(${foreign.raw})가 남았다 — rewrite 누락`,
+      );
+    }
   }
   console.log(`  ✅ [route] ${scenario}`);
 }
@@ -412,12 +446,32 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       /identity conflict/,
     );
   });
-  await check("handleStatsGetFailure: 오염 fallback 은 200 이 아니라 500/no-store", async () => {
+  await check("canonicalizeStatsIdentity: 외국인 raw→canonical rewrite · 결손 throw", async () => {
+    const { canonicalizeStatsIdentity } = await import("../../src/app/api/stats/route");
+    const foreign = findStaticForeign();
+    const out = canonicalizeStatsIdentity([
+      { rank: 1, name: foreign.name, team: "두산", kboId: foreign.raw, playerId: foreign.raw },
+    ] as never);
+    assert.equal(out[0].kboId, foreign.canonical);
+    assert.equal(out[0].playerId, foreign.canonical);
+    assert.throws(
+      () => canonicalizeStatsIdentity([{ rank: 1, name: "무명", team: "두산", kboId: "" }] as never),
+      /identity missing/,
+    );
+  });
+  await check("handleStatsGetFailure: 오염 fallback 은 200 이 아니라 500/no-store · 정상은 rewrite 후 200", async () => {
     const { handleStatsGetFailure } = await import("../../src/app/api/stats/route");
-    // 정상 static 은 200 fallback (identity 검증 통과).
+    // 정상 static 은 200 fallback (identity 검증 통과) + 외국인 canonical rewrite.
     const okRes = handleStatsGetFailure(new Error("crawl failed"), "current", "batter");
     assert.equal(okRes.status, 200);
-    assert.equal((await okRes.json()).source, "fallback");
+    const okJson = await okRes.json();
+    assert.equal(okJson.source, "fallback");
+    const foreign = findStaticForeign();
+    assert.ok(
+      (okJson.stats as Array<{ kboId?: string }>).some((r) => r.kboId === foreign.canonical) &&
+      !(okJson.stats as Array<{ kboId?: string }>).some((r) => r.kboId === foreign.raw),
+      "fallback 응답이 외국인 raw 숫자ID 를 그대로 내보낸다",
+    );
     // 빈 ID 오염 주입 → 500 + no-store (삼순 3차 P0-1: 오염 static 을 200 으로 되돌리면 fail-close 무효).
     const corrupt = [
       { rank: 1, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
