@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
+import { btree_gist } from "@electric-sql/pglite/contrib/btree_gist";
 
 const MIGRATION = "20260815173000_baseball_genius_motion_cooldown_ledger.sql";
 const COOLDOWN_MS = 30_000;
@@ -37,7 +38,7 @@ function check(name: string, ok: boolean, detail?: string) {
 const at = (offsetMs: number) => new Date(BASE + offsetMs).toISOString();
 
 async function main() {
-  const db = new PGlite();
+  const db = new PGlite({ extensions: { btree_gist } });
   // dm_messages 는 FK 대상이라 최소 형상만 세운다(게이트 대상은 원장·RPC 계약이다).
   await db.exec(`
     create role anon; create role authenticated; create role service_role;
@@ -73,23 +74,96 @@ async function main() {
     return res.rows[0];
   };
 
-  // ── A 병렬 2건 → 부여 정확히 1건 ────────────────────────────────────────────
+  // ── A 병렬/역순/동시각 → 부여 정확히 1건 ───────────────────────────────────
+  //   ⚠️ advisory lock 은 **처리 순서**만 직렬화한다. 도착 순서는 보장하지 않으므로
+  //   "나중 시각이 먼저 처리되는" 역순과 "동일 시각"을 반드시 함께 검사해야 한다
+  //   (삼순 #1202 2차 P0 — 단방향 `decided_at <` 판정이면 둘 다 통과한다).
+  const grantedCountFor = async (offsets: number[], label: string) => {
+    const anchorBase = nextId * 1_000_000; // 케이스마다 시간축을 분리
+    const results = await Promise.all(offsets.map(async (offset) => {
+      const id = await newMessage();
+      return claim({ messageId: id, motion: "excited", decidedAt: at(anchorBase + offset) });
+    }));
+    const granted = results.filter((r) => r.granted).length;
+    if (granted !== 1) console.error(`    ↳ ${label}: granted=${granted}`);
+    return granted;
+  };
   {
-    const m1 = await newMessage();
-    const m2 = await newMessage();
-    // 같은 시각에 두 요청이 동시에 도착하는 상황. 종전 구현(SELECT→INSERT 분리)이면
-    // 둘 다 "직전 모션 없음"을 보고 둘 다 부여했다.
-    const [r1, r2] = await Promise.all([
-      claim({ messageId: m1, motion: "excited", decidedAt: at(0) }),
-      claim({ messageId: m2, motion: "headspin", decidedAt: at(10) }),
-    ]);
-    const grantedCount = [r1, r2].filter((r) => r.granted).length;
-    check("A 병렬 2건 → 부여 정확히 1건", grantedCount === 1,
-      `granted=${grantedCount} (${r1.motion}/${r2.motion})`);
-    const ledger = await db.query<{ n: number }>(
-      "select count(*)::int as n from public.genius_motion_grants where granted",
-    );
-    check("A 원장에도 부여 행이 1건만 남는다", ledger.rows[0].n === 1, `rows=${ledger.rows[0].n}`);
+    check("A 병렬 2건(정순 t, t+10ms) → 부여 정확히 1건",
+      await grantedCountFor([0, 10], "정순") === 1);
+    // 핵심 반례: 나중 시각이 **먼저** 처리된다.
+    check("A 역순 처리(later-first → earlier) → 부여 정확히 1건",
+      await grantedCountFor([10, 0], "역순") === 1);
+    check("A 동일 timestamp 2건 → 부여 정확히 1건",
+      await grantedCountFor([0, 0], "동시각") === 1);
+    check("A 동일 timestamp 4건 → 부여 정확히 1건",
+      await grantedCountFor([0, 0, 0, 0], "동시각 4건") === 1);
+    // 순서 permutation 전수 — 어떤 순서로 도착해도 결과가 같아야 한다.
+    const perms = [[0, 5_000, 10_000], [10_000, 5_000, 0], [5_000, 0, 10_000], [10_000, 0, 5_000]];
+    let permOk = true;
+    for (const perm of perms) {
+      if (await grantedCountFor(perm, `perm ${perm.join(",")}`) !== 1) permOk = false;
+    }
+    check("A 도착 순서 permutation 전수 → 항상 정확히 1건", permOk);
+    // 독립 세션 병렬 — 같은 커넥션 큐가 아니라 별도 연결에서 동시에 때린다.
+    {
+      const anchorBase = nextId * 1_000_000;
+      const ids = [await newMessage(), await newMessage()];
+      const [r1, r2] = await Promise.all([
+        db.query("select * from public.claim_baseball_genius_motion($1,$2,$3,$4,$5,$6)",
+          [ids[0], USER_A, "excited", at(anchorBase + 20), COOLDOWN_MS, null]),
+        db.query("select * from public.claim_baseball_genius_motion($1,$2,$3,$4,$5,$6)",
+          [ids[1], USER_A, "headspin", at(anchorBase), COOLDOWN_MS, null]),
+      ]) as Array<{ rows: Array<{ granted: boolean }> }>;
+      const granted = [r1.rows[0], r2.rows[0]].filter((r) => r.granted).length;
+      check("A 독립 호출 병렬(역순 시각) → 부여 정확히 1건", granted === 1, `granted=${granted}`);
+    }
+    // 물리 안전망: 판정을 우회한 직접 INSERT 도 30초 창 중첩이면 저장 자체가 불가능하다.
+    {
+      const anchorBase = nextId * 1_000_000;
+      const okId = await newMessage();
+      await claim({ messageId: okId, motion: "excited", decidedAt: at(anchorBase) });
+      const dupId = await newMessage();
+      let blocked = false;
+      try {
+        await db.query(
+          `insert into public.genius_motion_grants(message_id, user_id, motion, granted, decided_at, cooldown_until)
+           values ($1,$2,'excited',true,$3,$4)`,
+          [dupId, USER_A, at(anchorBase + 1_000), at(anchorBase + 1_000 + COOLDOWN_MS)],
+        );
+      } catch { blocked = true; }
+      check("A EXCLUDE 제약: 판정 우회 직접 INSERT 도 물리적으로 차단", blocked);
+    }
+  }
+
+  // ── A' 안전망 OFF — 판정 로직 단독으로도 역순·동시각을 막는가 ────────────────
+  //   EXCLUDE 는 최후 방어선이다. 제약이 결과를 지켜주면 판정이 단방향으로 퇴화해도
+  //   게이트가 GREEN 이 되므로(축 오염), 제약을 끄고 **판정만** 검증한다.
+  {
+    await db.exec("alter table public.genius_motion_grants drop constraint genius_motion_grants_cooldown_excl");
+    try {
+      const cases: Array<[string, number[]]> = [
+        ["역순", [10, 0]],
+        ["동시각", [0, 0]],
+        ["정순", [0, 10]],
+      ];
+      let ok = true;
+      for (const [label, offsets] of cases) {
+        const anchorBase = 900_000_000 + nextId * 1_000_000;
+        const results = await Promise.all(offsets.map(async (offset) => {
+          const id = await newMessage();
+          return claim({ messageId: id, motion: "excited", decidedAt: at(anchorBase + offset) });
+        }));
+        const granted = results.filter((r) => r.granted).length;
+        if (granted !== 1) { ok = false; console.error(`    ↳ 안전망 OFF ${label}: granted=${granted}`); }
+      }
+      check("A' 안전망 OFF 상태에서도 판정 단독으로 정확히 1건(양방향 판정)", ok);
+    } finally {
+      await db.exec(`alter table public.genius_motion_grants
+        add constraint genius_motion_grants_cooldown_excl
+        exclude using gist (user_id with =, tstzrange(decided_at, cooldown_until, '[)') with &&)
+        where (granted)`);
+    }
   }
 
   // ── B 동일 message_id 재시도 → 첫 판정 재생 (멱등) ─────────────────────────
@@ -97,10 +171,15 @@ async function main() {
     const m = await newMessage();
     const first = await claim({ messageId: m, motion: "bored", decidedAt: at(120_000) });
     // durable ready 재시도 — 시각이 더 흘렀어도 첫 판정을 그대로 재생해야 한다.
-    const retry = await claim({ messageId: m, motion: "bored", decidedAt: at(600_000) });
+    // ⚠️ 멱등이 깨지면 재판정이 새 INSERT 를 시도해 PK 위반으로 **예외**가 난다.
+    //    예외를 그대로 던지면 이 체크 이름이 로그에 안 남아 mutation evidence 가 사라진다.
+    let retry: { motion: string | null; granted: boolean } | null = null;
+    let retryError: string | null = null;
+    try { retry = await claim({ messageId: m, motion: "bored", decidedAt: at(600_000) }); }
+    catch (error) { retryError = (error as Error).message; }
     check("B 동일 id 재시도 → 같은 판정 재생(멱등)",
-      first.granted && retry.granted && retry.motion === first.motion,
-      `first=${first.motion}/${first.granted} retry=${retry.motion}/${retry.granted}`);
+      retryError === null && first.granted && retry?.granted === true && retry?.motion === first.motion,
+      retryError ?? `first=${first.motion}/${first.granted} retry=${retry?.motion}/${retry?.granted}`);
     const rows = await db.query<{ n: number }>(
       "select count(*)::int as n from public.genius_motion_grants where message_id = $1", [m],
     );
@@ -115,7 +194,7 @@ async function main() {
 
   // ── C 경계 29,999 / 30,000 ─────────────────────────────────────────────────
   {
-    const anchor = 1_000_000;
+    const anchor = 1_000_000_000;
     const base = await newMessage();
     const baseRes = await claim({ messageId: base, motion: "excited", decidedAt: at(anchor) });
     check("C 기준 답변은 부여된다", baseRes.granted);
@@ -129,7 +208,7 @@ async function main() {
 
   // ── D 억제된 행은 쿨다운을 밀지 않는다 ─────────────────────────────────────
   {
-    const anchor = 2_000_000;
+    const anchor = 2_000_000_000;
     const first = await newMessage();
     await claim({ messageId: first, motion: "excited", decidedAt: at(anchor) });
     // 스팸: 5초 간격으로 계속 두드린다 → 전부 억제되지만 쿨다운 기준은 first 그대로다.
@@ -146,7 +225,7 @@ async function main() {
 
   // ── E 모션 없는 답변은 쿨다운을 밀지 않는다 ────────────────────────────────
   {
-    const anchor = 3_000_000;
+    const anchor = 3_000_000_000;
     const knowledge = await newMessage();
     const kres = await claim({ messageId: knowledge, motion: null, decidedAt: at(anchor) });
     check("E 모션 대상 아님 → granted=false·motion=null", kres.granted === false && kres.motion === null);
@@ -157,7 +236,7 @@ async function main() {
 
   // ── F 원장 이전 payload 모션 시각도 반영 ───────────────────────────────────
   {
-    const anchor = 4_000_000;
+    const anchor = 4_000_000_000;
     const m = await newMessage();
     // 원장에는 없지만 실제 payload 로는 5초 전에 모션이 나갔다(배포 이전 답변).
     const res = await claim({
@@ -175,7 +254,7 @@ async function main() {
 
   // ── G 유저 격리 / fail-close ───────────────────────────────────────────────
   {
-    const anchor = 5_000_000;
+    const anchor = 5_000_000_000;
     const a = await newMessage();
     await claim({ messageId: a, motion: "excited", decidedAt: at(anchor) });
     const b = await newMessage();
