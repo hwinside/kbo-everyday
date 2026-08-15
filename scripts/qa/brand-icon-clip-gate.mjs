@@ -63,20 +63,32 @@ function listTsx(dir) {
 }
 
 /**
- * 브랜드 아이콘 `<img ...>` 태그를 원문에서 뽑는다.
- * 정규식 파싱이지만 대상이 닫힌 집합(자산 3개)이고, 못 찾으면 fail-close(사용처 0 = RED)라
- * 조용히 통과하는 경로가 없다.
+ * 브랜드 아이콘 이미지 태그를 원문에서 뽑는다 — full scanner.
+ * `<img>` 와 `<Image>`(next/image 등 대문자 컴포넌트) 모두, src 표기는
+ * 큰따옴표·단일따옴표·JSX expression(`src={"…"}`·`src={`…`}`) 전부 잡는다.
+ * 태그 텍스트 안에 자산 경로 문자열이 등장하기만 하면 수집하므로 인용 형태로 우회할 수 없다.
+ * (한계: `const A = "/app-icon.png"; <img src={A}>` 처럼 변수 간접 참조는 정적 스캔 밖 —
+ *  이 파일의 자산은 상수 경로라 현재 코드베이스에 해당 패턴이 없고, 생기면 아래
+ *  EXPECTED_MIN_USAGES 바닥이 사용처 감소를 RED 로 드러낸다.)
+ * 대상이 닫힌 집합(자산 3개)이고, 못 찾으면 fail-close(사용처 0 = RED)라 조용히 통과하는 경로가 없다.
  */
 export function findBrandIconImgTags(source) {
   const tags = [];
-  const re = /<img\b[^>]*?>/gs;
+  const re = /<(img|Image)\b[^>]*?\/?>/gs;
   for (const m of source.matchAll(re)) {
     const tag = m[0];
-    const asset = BRAND_ICON_ASSETS.find((a) => tag.includes(`src="${a}"`));
-    if (asset) tags.push({ tag, asset });
+    const asset = BRAND_ICON_ASSETS.find((a) => tag.includes(a));
+    if (asset) tags.push({ tag, asset, element: m[1] });
   }
   return tags;
 }
+
+/**
+ * 알려진 사용처 바닥값 — full scanner 가 놓치는 형태로 리팩터링되면(예: 변수 간접 참조)
+ * 수집 건수가 이 값 아래로 떨어져 RED. 2026-08-15 기준 실사용처 3건
+ * (messages/page.tsx 2곳 + PostScopeBadge.tsx 1곳). 정당한 감소면 이 값을 함께 갱신한다.
+ */
+export const EXPECTED_MIN_USAGES = 3;
 
 /** 태그 자체가 원형 클립을 갖는지. 조상 overflow 에 의존하지 않는다. */
 export function isSelfClipped(tag) {
@@ -91,7 +103,11 @@ function checkUsages(files) {
       found.push({ file: path.relative(ROOT, file), asset, clipped: isSelfClipped(tag), tag });
     }
   }
-  ok("브랜드 아이콘 사용처를 1건 이상 찾았다(파서 fail-close)", found.length > 0, `found=${found.length}`);
+  ok(
+    `브랜드 아이콘 사용처를 ${EXPECTED_MIN_USAGES}건 이상 찾았다(파서 fail-close + 사용처 감소 감지)`,
+    found.length >= EXPECTED_MIN_USAGES,
+    `found=${found.length}`,
+  );
   for (const u of found) {
     ok(
       `${u.file} — ${u.asset} 가 self-clip(rounded-full)`,
@@ -146,11 +162,40 @@ async function main() {
   checkUsages(listTsx(SRC));
 
   if (selftest) {
-    console.log("\n③ selftest — 결함 주입 시 RED 인지");
-    const brokenTag = `<img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />`;
-    const goodTag = `<img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full rounded-full object-cover" />`;
-    ok("주입1: rounded-full 없는 사용처를 미클립으로 판정", isSelfClipped(brokenTag) === false);
-    ok("주입1 대조: rounded-full 있으면 클립으로 판정", isSelfClipped(goodTag) === true);
+    console.log("\n③ selftest — 결함 주입 시 RED 인지 (전체 scanner 경유)");
+    /** 전체 scanner 를 태워 '수집됐고 미클립인가'를 판정한다 — isSelfClipped 단독 호출 금지. */
+    const scanUnclipped = (src) => {
+      const parsed = findBrandIconImgTags(src);
+      return parsed.length === 1 && !isSelfClipped(parsed[0].tag);
+    };
+    ok(
+      "주입1: 소문자 <img> 큰따옴표 미클립 → 수집 + RED",
+      scanUnclipped(`<img src="/apple-touch-icon.png" alt="크보팬" className="w-full object-cover" />`),
+    );
+    ok(
+      "주입1b: 단일따옴표 src 미클립 → 수집 + RED (인용 우회 차단)",
+      scanUnclipped(`<img src='/apple-touch-icon.png' alt='크보팬' className='w-full object-cover' />`),
+    );
+    ok(
+      "주입1c: 대문자 <Image> 미클립 → 수집 + RED (next/image 우회 차단)",
+      scanUnclipped(`<Image src="/apple-touch-icon.png" alt="크보팬" width={40} height={40} className="w-10" />`),
+    );
+    ok(
+      "주입1d: JSX expression src 미클립 → 수집 + RED (expression 우회 차단)",
+      scanUnclipped(`<Image src={"/apple-touch-icon.png"} alt="크보팬" className={"w-10 h-10"} />`),
+    );
+    ok(
+      "주입1e: 템플릿 리터럴 src 미클립 → 수집 + RED",
+      scanUnclipped("<img src={`/apple-touch-icon.png`} alt=\"크보팬\" className=\"w-10\" />"),
+    );
+    const goodTags = findBrandIconImgTags(
+      `<img src="/apple-touch-icon.png" alt="크보팬" className="w-full rounded-full object-cover" />`,
+    );
+    ok("주입1 대조: rounded-full 있으면 클립으로 판정", goodTags.length === 1 && isSelfClipped(goodTags[0].tag));
+    ok(
+      "주입1f: 사용처가 바닥값 아래로 줄면 RED (scanner 무력화 감지)",
+      EXPECTED_MIN_USAGES >= 3 && findBrandIconImgTags(`<div />`).length < EXPECTED_MIN_USAGES,
+    );
 
     const transparentCorner = await sharp({
       create: { width: 8, height: 8, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
