@@ -150,7 +150,7 @@ assert.deepEqual(
 }
 
 // (7) checkpoint 파서 행동 테스트 — main이 쓰는 실제 함수(parseCheckpointText)를 직접 태운다.
-const fp = buildCheckpointFingerprint({ source: "namu", scope: "snapshot", snapshotSha256: "abc123" });
+const fp = buildCheckpointFingerprint({ source: "namu", scope: "snapshot", snapshotSha256: "abc123", rosterSha256: "roster-abc" });
 const verdictRow = {
   sourceKey: "namu:player:50066", kboId: "50066", name: "강현우", source: "namu",
   status: "resolved", canonicalUrl: "https://namu.wiki/w/강현우", pageTitle: "강현우",
@@ -170,6 +170,8 @@ assert.equal(parsedCp.probedByKboId.get("78224")?.[0]?.candidates?.[0], "김재�
   "probe replay에 파생 후보가 복원된다");
 // RED 1: fingerprint 불일치(다른 스냅샷·다른 판정 리비전) — 반드시 던진다.
 assert.throws(() => parseCheckpointText(goodText, { ...fp, snapshotSha256: "different" }), /fingerprint 불일치/);
+assert.throws(() => parseCheckpointText(goodText, { ...fp, rosterSha256: "other-roster" }), /rosterSha256/,
+  "로스터 변경(생년 정정 포함) 후 구 checkpoint 재사용 금지");
 assert.throws(() => parseCheckpointText(goodText, { ...fp, resolverRevision: "old" }), /resolverRevision/,
   "판정 로직 리비전이 다르면 구 checkpoint 재사용 금지");
 assert.throws(() => parseCheckpointText(goodText, { ...fp, canonicalGateVersion: "r2" }), /canonicalGateVersion/,
@@ -237,8 +239,41 @@ assert.throws(
     `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, canonicalUrl: "https://evil.example/w/강현우" } })}`,
     fp,
   ),
-  /canonicalUrl 호스트/,
+  /URL 호스트/,
   "resolved verdict 타 호스트 canonical 차단",
+);
+// RED 7 (삼순 5차 P0 스키마 우회 차단): 빈 probe url / 빈 candidateUrls / 비문자열 / 타 host.
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "probe", kboId: "78224", ...probeIdentity, title: "x", url: "", kind: "rejected", reason: "r" })}`,
+    fp,
+  ),
+  /probe URL 결측/,
+  "빈 probe url 차단(length>0 조건부 검증 우회 불가)",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, candidateUrls: [] } })}`,
+    fp,
+  ),
+  /candidateUrls가 비었다/,
+  "빈 candidateUrls 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, candidateUrls: [1] } })}`,
+    fp,
+  ),
+  /candidateUrls URL 결측/,
+  "비문자열 candidateUrls 차단(DB builder 도달 전)",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, candidateUrls: ["https://evil.example/w/x"] } })}`,
+    fp,
+  ),
+  /candidateUrls URL 호스트/,
+  "타 host candidateUrls 차단",
 );
 assert.throws(
   () => parseCheckpointText(
@@ -279,7 +314,7 @@ async function behaviorGate(): Promise<void> {
   const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
   const work = mkdtempSync(path.join(tmpdir(), "resolve-batch-smoke-"));
   const cp = path.join(work, "checkpoint.jsonl");
-  const runFp = buildCheckpointFingerprint({ source: "namu", scope: "targets", snapshotSha256: "-" });
+  const runFp = buildCheckpointFingerprint({ source: "namu", scope: "targets", snapshotSha256: "-", rosterSha256: "mini-roster" });
   wf(cp, `${JSON.stringify(runFp)}\n`, "utf8");
 
   const rosterMini = [
@@ -354,7 +389,7 @@ async function behaviorGate(): Promise<void> {
     kboId: string; name: string;
   }[];
   const realById = new Map(realRoster.map((player) => [player.kboId, player] as const));
-  const cliFp = buildCheckpointFingerprint({ source: "wikipedia", scope: "targets", snapshotSha256: "-" });
+  const cliFp = buildCheckpointFingerprint({ source: "wikipedia", scope: "targets", snapshotSha256: "-", rosterSha256: rosterActualSha });
   const cliRows = S2B_TARGET_PLAYERS.map(({ kboId }) => {
     const rosterRow = realById.get(kboId);
     assert.ok(rosterRow, `S2B 대상 kboId=${kboId}가 로스터에 있어야 한다`);
@@ -420,7 +455,39 @@ async function behaviorGate(): Promise<void> {
   assert.match(applyRestore.stdout, /전원 완료된 checkpoint — 외부 요청 0/);
   assert.equal(upsertCount, S2B_TARGET_PLAYERS.length, "완주 복원 non-dry-run은 전원 DB upsert를 재시도해야 한다");
   assert.match(applyRestore.stdout, new RegExp(`반영 ${S2B_TARGET_PLAYERS.length}/${S2B_TARGET_PLAYERS.length}건`));
-  console.log(`CLI 완주-checkpoint 게이트 PASS — 외부요청0→out ${restoredOut.length}명 복원 / non-dry-run DB upsert ${upsertCount}건 재시도`);
+
+  // (3) membership RED(삼순 5차 P0): scope 원집합 밖 roster 선수 1명을 checkpoint에 섞으면
+  // 외부 요청 전에 즉시 실패해야 한다(17행 DB 혼입 차단).
+  const s2bIds = new Set(S2B_TARGET_PLAYERS.map((player) => player.kboId));
+  const outsider = realRoster.find((player) => !s2bIds.has(player.kboId));
+  assert.ok(outsider, "S2B 밖 로스터 선수가 있어야 한다");
+  const outsiderRow = {
+    sourceKey: `wikipedia:player:${outsider.kboId}`, kboId: outsider.kboId, name: outsider.name,
+    source: "wikipedia", status: "missing", canonicalUrl: null, pageTitle: null,
+    candidateUrls: [`https://ko.wikipedia.org/wiki/${encodeURIComponent(outsider.name)}`],
+    note: "membership RED fixture",
+  };
+  const cliCpBad = path.join(work, "cli-checkpoint-bad.jsonl");
+  wf(cliCpBad, [
+    JSON.stringify(cliFp),
+    ...cliRows.slice(0, 15).map((row) => JSON.stringify({ t: "verdict", row, at: "2026-08-15T12:00:00Z" })),
+    JSON.stringify({ t: "verdict", row: outsiderRow, at: "2026-08-15T12:00:00Z" }),
+  ].join("\n") + "\n", "utf8");
+  const badMembership = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn("npx", ["tsx", "scripts/baseball-qa/resolve-rag-urls.ts",
+      "--source=wikipedia", "--scope=targets", `--checkpoint=${cliCpBad}`, `--out=${path.join(work, "bad-out.json")}`, "--dry-run"], {
+      cwd: process.cwd(), env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+  assert.equal(badMembership.code, 1, "scope 원집합 밖 verdict 혼입은 즉시 실패해야 한다");
+  assert.match(`${badMembership.stdout}${badMembership.stderr}`, /원집합 밖/);
+  console.log(`CLI 완주-checkpoint 게이트 PASS — 외부요청0→out ${restoredOut.length}명 복원 / non-dry-run DB upsert ${upsertCount}건 재시도 / 원집합 밖 혼입 RED`);
 }
 
 // self-test RED: 검출력 증명 — 조작된 스냅샷은 반드시 잡혀야 한다.

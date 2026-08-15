@@ -89,6 +89,28 @@ export const SOURCE_URL_PREFIX: Record<SourceName, string> = {
   wikipedia: "https://ko.wikipedia.org/",
 };
 
+/** source별 허용 hostname — prefix startsWith가 아니라 **URL 파싱 후 hostname exact**로 비교한다(삼순 5차 P0). */
+export const SOURCE_HOSTNAME: Record<SourceName, string> = {
+  namu: "namu.wiki",
+  wikipedia: "ko.wikipedia.org",
+};
+
+/** checkpoint URL 검증 — 비어 있거나, 파싱 불가거나, hostname이 source와 다르면 던진다. */
+function assertCheckpointUrl(lineNo: number, source: SourceName, url: unknown, label: string): void {
+  if (typeof url !== "string" || url.length === 0) {
+    throw new Error(`checkpoint ${lineNo}번 줄 ${label} URL 결측 — fail-close`);
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    throw new Error(`checkpoint ${lineNo}번 줄 ${label} URL 파싱 불가(${url}) — fail-close`);
+  }
+  if (hostname !== SOURCE_HOSTNAME[source]) {
+    throw new Error(`checkpoint ${lineNo}번 줄 ${label} URL 호스트가 ${source} 밖이다(${url}) — fail-close`);
+  }
+}
+
 /**
  * checkpoint run fingerprint (P0, 2026-08-15 삼순) — 다른 source/scope/스냅샷/예산으로 만든
  * checkpoint를 이어받으면 대상이 잘못 skip된다. 첫 줄에 박아 넣고 resume 시 일치 검증한다.
@@ -98,6 +120,8 @@ export interface CheckpointFingerprint {
   source: string;
   scope: string;
   snapshotSha256: string;
+  /** 로스터 파일 SHA 결속(삼순 5차 P0) — birth 정정 등 로스터 변경 시 구 checkpoint 전면 무효화. */
+  rosterSha256: string;
   budget: number;
   schedule: string;
   /** 판정 로직 리비전 — 코드 판정이 바뀜 뒤 구 checkpoint 재사용 차단(삼순 P1). */
@@ -109,16 +133,19 @@ export interface CheckpointFingerprint {
  * resolver 판정 로직 리비전 — 후보 생성·판정 규칙의 의미가 바뀌면 올린다.
  * canonical 게이트 버전과 함께 fingerprint에 들어가 구 판정 checkpoint 재사용을 막는다(삼순 P1).
  */
-export const RESOLVER_REVISION = "2026-08-15.r4"; // r4: probe 신원 결속 + 완주-checkpoint 복원 경로
+export const RESOLVER_REVISION = "2026-08-15.r5"; // r5: roster 결속 fingerprint + URL hostname exact + scope membership
 
 export function buildCheckpointFingerprint(input: {
   source: string; scope: string; snapshotSha256: string;
+  /** 로스터 파일 SHA — 생년 정정 등 로스터가 바뀌면 구 verdict/probe 재사용을 전면 차단(삼순 5차 P0). */
+  rosterSha256: string;
 }): CheckpointFingerprint {
   return {
     t: "fingerprint",
     source: input.source,
     scope: input.scope,
     snapshotSha256: input.snapshotSha256,
+    rosterSha256: input.rosterSha256,
     budget: MAX_PROBES_PER_PLAYER,
     schedule: INTERVAL_PROBE_SCHEDULE_MS.join("-"),
     resolverRevision: RESOLVER_REVISION,
@@ -162,7 +189,7 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
     throw new Error("checkpoint 헤더 JSON 손상 — fail-close");
   }
   if (header.t !== "fingerprint") throw new Error("checkpoint 첫 줄이 fingerprint가 아니다 — fail-close");
-  for (const key of ["source", "scope", "snapshotSha256", "budget", "schedule", "resolverRevision", "canonicalGateVersion"] as const) {
+  for (const key of ["source", "scope", "snapshotSha256", "rosterSha256", "budget", "schedule", "resolverRevision", "canonicalGateVersion"] as const) {
     if (String(header[key]) !== String(expected[key])) {
       throw new Error(`checkpoint fingerprint 불일치: ${key}=${String(header[key])} (기대 ${String(expected[key])}) — fail-close`);
     }
@@ -202,11 +229,10 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
         && (!Array.isArray(probe.candidates) || probe.candidates.some((candidate) => typeof candidate !== "string" || candidate.length === 0))) {
         throw new Error(`checkpoint ${index + 2}번 줄 probe candidates 스키마 오류 — fail-close`);
       }
-      for (const candidateUrl of [probe.url, probe.canonicalUrl]) {
-        if (typeof candidateUrl === "string" && candidateUrl.length > 0 && !candidateUrl.startsWith(SOURCE_URL_PREFIX[probe.source])) {
-          throw new Error(`checkpoint ${index + 2}번 줄 probe URL 호스트가 ${probe.source} 밖이다(${candidateUrl}) — fail-close`);
-        }
-      }
+      // URL 검증(삼순 5차 P0): 빈 문자열 허용 금지 — url은 무조건, canonicalUrl은 canonical일 때
+      // nonempty + 파싱 후 hostname exact로 검증한다(startsWith 아님).
+      assertCheckpointUrl(index + 2, probe.source, probe.url, "probe");
+      if (probe.kind === "canonical") assertCheckpointUrl(index + 2, probe.source, probe.canonicalUrl, "probe canonical");
       const list = probedByKboId.get(probe.kboId) ?? [];
       list.push(probe);
       probedByKboId.set(probe.kboId, list);
@@ -225,14 +251,20 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
       if (result.sourceKey !== `${result.source}:player:${result.kboId}`) {
         throw new Error(`checkpoint ${index + 2}번 줄 verdict sourceKey 불일치(${result.sourceKey}) — fail-close`);
       }
+      // candidateUrls 검증(삼순 5차 P0): 배열 여부만 보면 []·[1]·타 host가 DB까지 흘러간다 —
+      // nonempty string[] + 전건 hostname exact.
+      if (result.candidateUrls.length === 0) {
+        throw new Error(`checkpoint ${index + 2}번 줄 verdict candidateUrls가 비었다 — fail-close`);
+      }
+      for (const candidateUrl of result.candidateUrls) {
+        assertCheckpointUrl(index + 2, result.source, candidateUrl, "verdict candidateUrls");
+      }
       if (result.status === "resolved") {
         if (typeof result.canonicalUrl !== "string" || result.canonicalUrl.length === 0
           || typeof result.pageTitle !== "string" || result.pageTitle.length === 0) {
           throw new Error(`checkpoint ${index + 2}번 줄 resolved verdict에 canonicalUrl/pageTitle 결측 — fail-close`);
         }
-        if (!result.canonicalUrl.startsWith(SOURCE_URL_PREFIX[result.source])) {
-          throw new Error(`checkpoint ${index + 2}번 줄 resolved canonicalUrl 호스트가 ${result.source} 밖이다 — fail-close`);
-        }
+        assertCheckpointUrl(index + 2, result.source, result.canonicalUrl, "resolved canonicalUrl");
       } else if (result.canonicalUrl !== null || result.pageTitle !== null) {
         throw new Error(`checkpoint ${index + 2}번 줄 ${result.status} verdict에 canonicalUrl/pageTitle이 남아 있다 — fail-close`);
       }
@@ -736,10 +768,11 @@ async function main(): Promise<void> {
   // 로컬 계약: 스냅샷이 가리키는 로스터와 지금 repo 로스터가 같아야 488 선정이 유효하다.
   // 파일 SHA만 보지 않고 스냅샷 전 행의 신원 4축(kboId·name·team·birthDate)을 런타임에서
   // 전건 exact 대조한다(삼순 3차 P1 — 스모크 fixture가 아니라 실제 run 경로의 가드).
+  // 로스터 파일 SHA — 스냅샷 대조와 checkpoint fingerprint 결속(삼순 5차 P0)에 같이 쓴다.
+  const rosterSha = createHash("sha256")
+    .update(readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json")))
+    .digest("hex");
   if (snapshotDoc) {
-    const rosterSha = createHash("sha256")
-      .update(readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json")))
-      .digest("hex");
     if (snapshotDoc.rosterSha256 !== rosterSha) {
       console.error(`스냅샷 rosterSha256(${snapshotDoc.rosterSha256?.slice(0, 12)}…) ≠ 현재 로스터(${rosterSha.slice(0, 12)}…) — 스냅샷 재생성 필요(fail-close)`);
       process.exit(1);
@@ -818,7 +851,7 @@ async function main(): Promise<void> {
   const snapshotSha256 = SCOPE === "snapshot"
     ? createHash("sha256").update(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH))).digest("hex")
     : "-";
-  const fingerprint = buildCheckpointFingerprint({ source: SOURCE, scope: SCOPE, snapshotSha256 });
+  const fingerprint = buildCheckpointFingerprint({ source: SOURCE, scope: SCOPE, snapshotSha256, rosterSha256: rosterSha });
   let doneRows: ResultRow[] = [];
   let probedByKboId = new Map<string, CheckpointProbeRow[]>();
   if (CHECKPOINT_PATH) {
@@ -842,9 +875,21 @@ async function main(): Promise<void> {
       );
     }
   }
-  // resume identity 대조(삼순 3·4차 P0) — 복원된 판정/probe가 현재 run의 로스터 신원과 정확히
-  // 일치해야 한다. 엉뚱한 kboId/이름/생년의 행이 identity gate 재실행 없이 replay되는 것을 막는다.
+  // scope 원집합(삼순 5차 P0) — checkpoint 행 membership과 최종 판정표 ID/cardinality exact에 쓴다.
+  const scopeIdSet = new Set(
+    SCOPE === "targets"
+      ? S2B_TARGET_PLAYERS.map((player) => player.kboId)
+      : SCOPE === "snapshot"
+        ? (snapshotDoc?.players ?? []).filter((player) => SNAPSHOT_RESOLVE_BUCKETS.has(player.bucket)).map((player) => player.kboId)
+        : roster.map((player) => player.kboId),
+  );
+
+  // resume identity 대조(삼순 3·4·5차 P0) — 복원된 판정/probe가 현재 run의 로스터 신원과 정확히
+  // 일치하고 **scope 원집합 안**이어야 한다. 외부 행 하나가 섞여 DB까지 흘러가는 것을 막는다.
   for (const row of doneRows) {
+    if (!scopeIdSet.has(row.kboId)) {
+      throw new Error(`checkpoint verdict kboId=${row.kboId} — scope=${SCOPE} 원집합 밖이다(fail-close)`);
+    }
     const rosterRow = byKboId.get(row.kboId);
     if (!rosterRow) throw new Error(`checkpoint verdict kboId=${row.kboId} — 현재 로스터에 없다(fail-close)`);
     if (rosterRow.name !== row.name) {
@@ -853,6 +898,9 @@ async function main(): Promise<void> {
     if (row.source !== SOURCE) throw new Error(`checkpoint verdict source=${row.source} ≠ 현재 run ${SOURCE} — fail-close`);
   }
   for (const [kboId, probeRows] of probedByKboId) {
+    if (!scopeIdSet.has(kboId)) {
+      throw new Error(`checkpoint probe kboId=${kboId} — scope=${SCOPE} 원집합 밖이다(fail-close)`);
+    }
     const rosterRow = byKboId.get(kboId);
     if (!rosterRow) throw new Error(`checkpoint probe kboId=${kboId} — 현재 로스터에 없다(fail-close)`);
     for (const probeRow of probeRows) {
@@ -949,11 +997,19 @@ async function main(): Promise<void> {
     }
     process.exit(2);
   }
-  if (SCOPE === "snapshot" && ONLY_NAMES.length === 0 && LIMIT === null && snapshotResolveCount > 0
-    && results.length !== snapshotResolveCount) {
-    // 전량 run 완주의 최종 판정표는 정확히 해석 버킷 전원이어야 한다(488 unique 강제).
-    console.error(`최종 판정표 ${results.length}명 ≠ 해석 대상 ${snapshotResolveCount}명 — 유실/중복(fail-close)`);
-    process.exit(1);
+  if (ONLY_NAMES.length === 0 && LIMIT === null) {
+    // 무필터 full run 최종 게이트(삼순 5차 P0): count만이 아니라 **ID 집합 exact** —
+    // 외부 행 혼입·유실·중복 전부 여기서 잡힌다(전 scope 공통).
+    const resultIds = new Set(results.map((row) => row.kboId));
+    const missing = [...scopeIdSet].filter((id) => !resultIds.has(id));
+    const extra = [...resultIds].filter((id) => !scopeIdSet.has(id));
+    if (results.length !== scopeIdSet.size || missing.length > 0 || extra.length > 0) {
+      console.error(
+        `최종 판정표 ID/cardinality 불일치: ${results.length}행 vs 원집합 ${scopeIdSet.size}`
+        + ` (누락 ${missing.length}, 외부 ${extra.length}) — 유실/혼입(fail-close)`,
+      );
+      process.exit(1);
+    }
   }
   const summary = results.reduce<Record<string, number>>((acc, row) => {
     acc[row.status] = (acc[row.status] ?? 0) + 1;
