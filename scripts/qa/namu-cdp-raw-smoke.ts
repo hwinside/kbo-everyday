@@ -29,7 +29,9 @@ type Scenario =
   | "http_403"
   | "challenge_body"
   | "close_fail"
-  | "no_reply";
+  | "no_reply"
+  | "stop_before_response"
+  | "close_during_wait";
 
 const HAPPY_HTML = "<html><head><title>강현우(야구선수)</title></head><body>2001년 출생 야구선수 문서 본문</body></html>";
 const CHALLENGE_HTML = "<html><body>Just a moment...</body></html>";
@@ -93,6 +95,23 @@ class MockChrome {
         if (this.scenario === "no_reply") return; // 무응답 — timeout 경로 검증
         if (this.scenario === "navigate_error") {
           ws.send(JSON.stringify({ id: message.id, result: { errorText: "net::ERR_NAME_NOT_RESOLVED" } }));
+          return;
+        }
+        if (this.scenario === "stop_before_response") {
+          // 삼순 P0 RED: matching stop·Document가 navigate command response보다 먼저 도착.
+          // 버퍼링 없이 응답 후 listener만 붙이면 유실 → false-timeout이다.
+          ws.send(JSON.stringify({ method: "Network.responseReceived", params: { type: "Document", frameId: "F1", loaderId: "L1", response: { status: 200 } } }));
+          ws.send(JSON.stringify({ method: "Page.frameStoppedLoading", params: { frameId: "F1" } }));
+          setTimeout(() => {
+            if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
+          }, 60);
+          return;
+        }
+        if (this.scenario === "close_during_wait") {
+          // 삼순 P1 RED: 응답은 주되 완료 이벤트 없이 소켓을 끊는다 — event waiter가
+          // 즉시 깨어지지 않고 timeout까지 대기하면 계약 위반이다.
+          ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
+          setTimeout(() => ws.close(), 40);
           return;
         }
         ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
@@ -182,7 +201,25 @@ async function main(): Promise<void> {
     assert.ok(Date.now() - started < 10_000, "무응답은 timeout 내에 드러나야 한다(hang 금지)");
     mock.openTargets.clear();
 
-    // 7) 연속 3회 후 target 수 원복 — 탭 누적이면 RED.
+    // 7) stop-before-navigate-response — matching stop·Document가 command response보다
+    // 먼저 와도 버퍼 소비로 성공해야 한다(유실이면 false-timeout RED — 삼순 P0).
+    mock.scenario = "stop_before_response";
+    const preStop = Date.now();
+    const stopFirst = await fetchOnce();
+    assert.ok(stopFirst.ok === true, `stop-before-response는 버퍼 소비로 ok여야 한다: ${JSON.stringify(stopFirst)}`);
+    assert.ok(Date.now() - preStop < 1_200, "버퍼 소비는 대기 없이 즉시 완료돼야 한다(false-timeout 금지)");
+
+    // 8) close-during-event-wait — 이벤트 대기 중 소켓 close가 즉시 실패로 드러나야
+    // 한다(timeout까지 대기하면 RED — 삼순 P1).
+    mock.scenario = "close_during_wait";
+    const preClose = Date.now();
+    const closedMid = await fetchOnce();
+    assert.ok(!closedMid.ok && closedMid.status === "blocked" && closedMid.reason.startsWith("cdp_fetch_failed"),
+      `대기 중 close는 cdp_fetch_failed여야 한다: ${JSON.stringify(closedMid)}`);
+    assert.ok(Date.now() - preClose < 1_000, `close는 즉시 실패로 드러나야 한다(timeout 대기 금지, 실측 ${Date.now() - preClose}ms)`);
+    mock.openTargets.clear();
+
+    // 9) 연속 3회 후 target 수 원복 — 탭 누적이면 RED.
     mock.scenario = "happy";
     for (let index = 0; index < 3; index += 1) {
       const repeat = await fetchOnce();
@@ -190,7 +227,7 @@ async function main(): Promise<void> {
     }
     assert.equal(mock.openTargets.size, 0, `연속 3회 후 열린 target이 0이어야 한다(실측 ${mock.openTargets.size})`);
 
-    console.log("namu-cdp-raw-smoke PASS (결속 happy / navigate errorText / 403 / challenge / cleanup fail-close / 무응답 timeout / 연속3회 target 원복)");
+    console.log("namu-cdp-raw-smoke PASS (결속 happy / navigate errorText / 403 / challenge / cleanup fail-close / 무응답 timeout / stop-before-response 버퍼소비 / close-during-wait 즉시실패 / 연속3회 target 원복)");
   } finally {
     await mock.close();
   }

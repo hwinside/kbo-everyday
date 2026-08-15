@@ -77,6 +77,7 @@ export class RawCdpSession {
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (value: Record<string, unknown>) => void; reject: (error: Error) => void }>();
   private readonly eventListeners = new Set<EventListener>();
+  private readonly eventWaiters = new Set<(error: Error) => void>();
   private closedError: Error | null = null;
 
   constructor(private readonly ws: WebSocket) {
@@ -104,6 +105,9 @@ export class RawCdpSession {
       this.closedError = error;
       for (const [, waiter] of this.pending) waiter.reject(error);
       this.pending.clear();
+      // 명령뿐 아니라 이벤트 대기(waitFor)도 즉시 깨운다 — timeout까지 대기하면 계약 위반(삼순 P1).
+      for (const rejectWaiter of [...this.eventWaiters]) rejectWaiter(error);
+      this.eventWaiters.clear();
     };
     ws.on("error", (error) => fail(new Error(`CDP 소켓 오류: ${(error as Error).message}`)));
     ws.on("close", () => fail(new Error("CDP 소켓이 닫혔다")));
@@ -130,20 +134,26 @@ export class RawCdpSession {
     });
   }
 
-  /** predicate가 참인 첫 이벤트를 기다린다 — method만이 아니라 params(frameId 등)로 결속한다. */
+  /** predicate가 참인 첫 이벤트를 기다린다 — method만이 아니라 params(frameId 등)로 결속한다.
+   * 소켓 error/close 시 즉시 reject된다(timeout 대기 금지 — 삼순 P1). */
   waitFor(predicate: (event: CdpEvent) => boolean, timeoutMs: number, label: string): Promise<CdpEvent> {
     if (this.closedError) return Promise.reject(this.closedError);
     return new Promise<CdpEvent>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        remove();
-        reject(new Error(`CDP 이벤트 ${label} 없음 (${timeoutMs}ms)`));
-      }, timeoutMs);
-      const remove = this.onEvent((event) => {
-        if (!predicate(event)) return;
+      const settle = (cleanupOnly: boolean, error?: Error, event?: CdpEvent) => {
         clearTimeout(timer);
         remove();
-        resolve(event);
+        this.eventWaiters.delete(rejectWaiter);
+        if (cleanupOnly) return;
+        if (error) reject(error);
+        else resolve(event as CdpEvent);
+      };
+      const rejectWaiter = (error: Error) => settle(false, error);
+      const timer = setTimeout(() => settle(false, new Error(`CDP 이벤트 ${label} 없음 (${timeoutMs}ms)`)), timeoutMs);
+      const remove = this.onEvent((event) => {
+        if (!predicate(event)) return;
+        settle(false, undefined, event);
       });
+      this.eventWaiters.add(rejectWaiter);
     });
   }
 }
@@ -206,14 +216,21 @@ export async function fetchNamuDocumentViaCdp(
     await session.send("Page.enable", {}, 10_000);
     await session.send("Network.enable", {}, 10_000);
 
-    // 3) Document 응답 후보를 버퍼링 — navigate 응답(frameId/loaderId)이 오기 전에 이벤트가
-    // 먼저 도착해도 놓치지 않도록 전부 쌓아두고, 결속 키가 확정된 뒤 필터한다.
+    // 3) Document 응답·frameStoppedLoading 후보를 버퍼링 — navigate 응답(frameId/loaderId)이
+    // 오기 전에 이벤트가 먼저 도착해도 놓치지 않도록 전부 쌓아두고, 결속 키가 확정된 뒤
+    // 필터한다. (stop 이벤트가 command response보다 먼저 오면 유실 → false-timeout
+    // → 488명 전역중단 — 삼순 P0 지적 반영.)
     const documentResponses: Array<{ frameId?: string; loaderId?: string; status?: number }> = [];
+    const stoppedFrames = new Set<string>();
     session.onEvent((event) => {
-      if (event.method !== "Network.responseReceived") return;
-      const params = event.params as { type?: string; frameId?: string; loaderId?: string; response?: { status?: number } };
-      if (params.type === "Document") {
-        documentResponses.push({ frameId: params.frameId, loaderId: params.loaderId, status: params.response?.status });
+      if (event.method === "Network.responseReceived") {
+        const params = event.params as { type?: string; frameId?: string; loaderId?: string; response?: { status?: number } };
+        if (params.type === "Document") {
+          documentResponses.push({ frameId: params.frameId, loaderId: params.loaderId, status: params.response?.status });
+        }
+      } else if (event.method === "Page.frameStoppedLoading") {
+        const frame = (event.params as { frameId?: string }).frameId;
+        if (frame) stoppedFrames.add(frame);
       }
     });
 
@@ -228,12 +245,16 @@ export async function fetchNamuDocumentViaCdp(
 
     // 5) 로드 완료 — 반드시 navigate한 frame의 frameStoppedLoading에만 결속한다.
     // (domContentEventFired는 frame 무결속이라 about:blank/iframe이 조기 완료시킬 수 있다.)
-    await session.waitFor(
-      (event) => event.method === "Page.frameStoppedLoading"
-        && (event.params as { frameId?: string }).frameId === frameId,
-      timeoutMs,
-      `Page.frameStoppedLoading(frameId=${frameId})`,
-    );
+    // 이미 관측된 matching stop(버퍼)이 있으면 소비하고 대기를 생략한다 — stop이
+    // navigate 응답보다 먼저 온 경우의 유실/false-timeout 방지(삼순 P0).
+    if (!stoppedFrames.has(frameId)) {
+      await session.waitFor(
+        (event) => event.method === "Page.frameStoppedLoading"
+          && (event.params as { frameId?: string }).frameId === frameId,
+        timeoutMs,
+        `Page.frameStoppedLoading(frameId=${frameId})`,
+      );
+    }
 
     // 6) main Document status — frameId exact + (loaderId 있으면 exact) 결속.
     const documentResponse = documentResponses.find(
