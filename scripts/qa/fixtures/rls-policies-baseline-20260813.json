@@ -1,0 +1,1032 @@
+[
+ {
+  "schemaname": "public",
+  "tablename": "admin_page_views",
+  "policyname": "apv_insert_own",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(user_id = auth.uid())"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "announcements",
+  "policyname": "Anyone can read active announcements",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "((is_active = true) AND ((display_until IS NULL) OR (display_until > now())))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "announcements",
+  "policyname": "Service role full access on announcements",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "api_fallback_events",
+  "policyname": "Admin read access",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(((auth.jwt() ->> 'role'::text) = 'admin'::text) OR ((auth.jwt() ->> 'role'::text) = 'service_role'::text))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "api_fallback_events",
+  "policyname": "Service role write access",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "((auth.jwt() ->> 'role'::text) = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "channel_discovery_candidates",
+  "policyname": "cdc_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "channel_discovery_lock",
+  "policyname": "cdl_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "channel_discovery_runs",
+  "policyname": "cdr_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "channel_pool",
+  "policyname": "channel_pool_public_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "channel_pool",
+  "policyname": "channel_pool_service_write",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "chat_messages",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "chat_messages",
+  "policyname": "Auth users send",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comment_likes",
+  "policyname": "Anyone can read comment likes",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comment_likes",
+  "policyname": "Auth users create comment likes",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comment_likes",
+  "policyname": "Users delete own comment likes",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comments",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comments",
+  "policyname": "Auth users create",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = author_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comments",
+  "policyname": "Authors delete own comments",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comments",
+  "policyname": "Authors update own comments",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": "(auth.uid() = author_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "comments",
+  "policyname": "Operators delete any comments",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "DELETE",
+  "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_operator = true))))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "daily_analysis",
+  "policyname": "public read daily_analysis",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "daily_standings_snapshot",
+  "policyname": "public read daily_standings_snapshot",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "daily_stats_snapshot",
+  "policyname": "public read daily_stats_snapshot",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "device_push_tokens",
+  "policyname": "Users delete own device token",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "device_push_tokens",
+  "policyname": "Users insert own device token",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "device_push_tokens",
+  "policyname": "Users read own device token",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "device_push_tokens",
+  "policyname": "Users update own device token",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_conversations",
+  "policyname": "dm_conv_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "((user1_id IS NOT NULL) AND (user2_id IS NOT NULL) AND ((auth.uid() = user1_id) OR (auth.uid() = user2_id)) AND (NOT (EXISTS ( SELECT 1\n   FROM user_blocks\n  WHERE (((user_blocks.blocker_id = dm_conversations.user1_id) AND (user_blocks.blocked_id = dm_conversations.user2_id)) OR ((user_blocks.blocker_id = dm_conversations.user2_id) AND (user_blocks.blocked_id = dm_conversations.user1_id)))))))"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_conversations",
+  "policyname": "dm_conv_select",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "((auth.uid() = user1_id) OR (auth.uid() = user2_id))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_conversations",
+  "policyname": "dm_conv_update",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "((auth.uid() = user1_id) OR (auth.uid() = user2_id))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_messages",
+  "policyname": "dm_msg_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "((auth.uid() = sender_id) AND (EXISTS ( SELECT 1\n   FROM dm_conversations conversation\n  WHERE ((conversation.id = dm_messages.conversation_id) AND (conversation.user1_id IS NOT NULL) AND (conversation.user2_id IS NOT NULL) AND ((conversation.user1_id = auth.uid()) OR (conversation.user2_id = auth.uid())) AND (NOT (EXISTS ( SELECT 1\n           FROM user_blocks\n          WHERE (((user_blocks.blocker_id = conversation.user1_id) AND (user_blocks.blocked_id = conversation.user2_id)) OR ((user_blocks.blocker_id = conversation.user2_id) AND (user_blocks.blocked_id = conversation.user1_id))))))))))"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_messages",
+  "policyname": "dm_msg_select",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(EXISTS ( SELECT 1\n   FROM dm_conversations c\n  WHERE ((c.id = dm_messages.conversation_id) AND ((c.user1_id = auth.uid()) OR (c.user2_id = auth.uid())))))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_messages",
+  "policyname": "dm_msg_update",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(EXISTS ( SELECT 1\n   FROM dm_conversations c\n  WHERE ((c.id = dm_messages.conversation_id) AND ((c.user1_id = auth.uid()) OR (c.user2_id = auth.uid())))))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_reports",
+  "policyname": "reports_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = reporter_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "dm_reports",
+  "policyname": "reports_select",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = reporter_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "feedback",
+  "policyname": "feedback_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() IS NOT NULL)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "feedback",
+  "policyname": "feedback_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "((user_id = auth.uid()) OR (status = ANY (ARRAY['resolved'::text, 'rejected'::text, 'duplicate'::text])))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "feedback_votes",
+  "policyname": "feedback_vote_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(user_id = auth.uid())"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "feedback_votes",
+  "policyname": "feedback_vote_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "genius_rag_corpus_records",
+  "policyname": "genius_rag_corpus_records_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{service_role}",
+  "cmd": "ALL",
+  "qual": "true",
+  "with_check": "true"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "genius_rag_corpus_runs",
+  "policyname": "genius_rag_corpus_runs_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{service_role}",
+  "cmd": "ALL",
+  "qual": "true",
+  "with_check": "true"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "gif_collector_queue",
+  "policyname": "gif_collector_queue_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "highlights",
+  "policyname": "highlights_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "highlights",
+  "policyname": "highlights_write",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "invitations",
+  "policyname": "Create invites",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = inviter_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "invitations",
+  "policyname": "Read own invites",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "((auth.uid() = inviter_id) OR (auth.uid() = invitee_id))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "invitations",
+  "policyname": "Use invites",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "invite_refill_log",
+  "policyname": "Users read own refill",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "leaderboard_final_invite",
+  "policyname": "read_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "leaderboard_final_writing",
+  "policyname": "read_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "leaderboard_invite_rollup",
+  "policyname": "leaderboard_invite_rollup_public_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "(user_id <> ALL (leaderboard_internal_user_ids()))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "leaderboard_writing_rollup",
+  "policyname": "leaderboard_writing_rollup_public_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "(user_id <> ALL (leaderboard_internal_user_ids()))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "likes",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "likes",
+  "policyname": "Auth users toggle",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "likes",
+  "policyname": "Users delete own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_start_tokens",
+  "policyname": "own la start token delete",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_start_tokens",
+  "policyname": "own la start token insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_start_tokens",
+  "policyname": "own la start token update",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_tokens",
+  "policyname": "own live activity tokens delete",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_tokens",
+  "policyname": "own live activity tokens insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "live_activity_tokens",
+  "policyname": "own live activity tokens update",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "notification_prefs",
+  "policyname": "Users insert own notification prefs",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "notification_prefs",
+  "policyname": "Users read own notification prefs",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "notification_prefs",
+  "policyname": "Users update own notification prefs",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "player_game_logs",
+  "policyname": "Public read access for game logs",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "player_stats_batter",
+  "policyname": "Public read access for batter stats",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "player_stats_pitcher",
+  "policyname": "Public read access for pitcher stats",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "players_roster",
+  "policyname": "anon_select_players_roster",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "players_roster",
+  "policyname": "service_role_all_players_roster",
+  "permissive": "PERMISSIVE",
+  "roles": "{service_role}",
+  "cmd": "ALL",
+  "qual": "true",
+  "with_check": "true"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "postgame_interviews",
+  "policyname": "postgame interviews public read",
+  "permissive": "PERMISSIVE",
+  "roles": "{anon,authenticated}",
+  "cmd": "SELECT",
+  "qual": "(confidence = 'high'::text)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "posts",
+  "policyname": "Anyone can read posts",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "posts",
+  "policyname": "Auth users create",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = author_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "posts",
+  "policyname": "Authors delete own posts",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "posts",
+  "policyname": "Authors update own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "posts",
+  "policyname": "Operators delete any posts",
+  "permissive": "PERMISSIVE",
+  "roles": "{authenticated}",
+  "cmd": "DELETE",
+  "qual": "(EXISTS ( SELECT 1\n   FROM profiles p\n  WHERE ((p.id = auth.uid()) AND (p.is_operator = true))))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "prediction_votes",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "prediction_votes",
+  "policyname": "Auth users vote",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "predictions",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "profile_nickname_changes",
+  "policyname": "Users read own nickname changes",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "profiles",
+  "policyname": "Public profiles",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "profiles",
+  "policyname": "Users create own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "profiles",
+  "policyname": "Users update own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "push_subscriptions",
+  "policyname": "Anyone inserts",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "true"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "push_subscriptions",
+  "policyname": "Delete expired",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "push_subscriptions",
+  "policyname": "Users read own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "reports",
+  "policyname": "Users create reports",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = reporter_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "reports",
+  "policyname": "Users read own reports",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(auth.uid() = reporter_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "roster_moves",
+  "policyname": "Public read access for roster moves",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "(status = 'published'::text)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "season_predictions",
+  "policyname": "Anyone reads",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "season_predictions",
+  "policyname": "Users create own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = user_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "season_predictions",
+  "policyname": "Users update own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = user_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "tester_signups",
+  "policyname": "Service role full access on tester_signups",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "ticket_transfers",
+  "policyname": "Anyone can read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "ticket_transfers",
+  "policyname": "Auth users create",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = author_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "ticket_transfers",
+  "policyname": "Authors delete own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "ticket_transfers",
+  "policyname": "Authors update own",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "UPDATE",
+  "qual": "(auth.uid() = author_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "user_badges",
+  "policyname": "Anyone reads badges",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "user_blocks",
+  "policyname": "blocks_delete",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "DELETE",
+  "qual": "(auth.uid() = blocker_id)",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "user_blocks",
+  "policyname": "blocks_insert",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "INSERT",
+  "qual": null,
+  "with_check": "(auth.uid() = blocker_id)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "user_blocks",
+  "policyname": "blocks_select",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "((auth.uid() = blocker_id) OR (auth.uid() = blocked_id))",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "videos",
+  "policyname": "videos_public_read",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "SELECT",
+  "qual": "true",
+  "with_check": null
+ },
+ {
+  "schemaname": "public",
+  "tablename": "videos",
+  "policyname": "videos_service_write",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ },
+ {
+  "schemaname": "public",
+  "tablename": "youtube_quota_ledger",
+  "policyname": "yql_service_all",
+  "permissive": "PERMISSIVE",
+  "roles": "{public}",
+  "cmd": "ALL",
+  "qual": "(auth.role() = 'service_role'::text)",
+  "with_check": "(auth.role() = 'service_role'::text)"
+ }
+]

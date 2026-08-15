@@ -1,0 +1,7724 @@
+[
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "avg",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "games",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "pa",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "ab",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "runs",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "hits",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "doubles",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "triples",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "hr",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "tb",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "rbi",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "sac",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "sf",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "_bak_psb_20260731",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "era",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "games",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "wins",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "losses",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "saves",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "holds",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "wpct",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "ip",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "h",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "hr",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "bb",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "hbp",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "so",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "r",
+  "coltype": "integer",
+  "attnum": 18
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "er",
+  "coltype": "integer",
+  "attnum": 19
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "whip",
+  "coltype": "text",
+  "attnum": 20
+ },
+ {
+  "tablename": "_bak_psp_20260731",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "_venue_expiry_backup_20260726",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "_venue_expiry_backup_20260726",
+  "colname": "orig_expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "_venue_expiry_backup_20260726",
+  "colname": "orig_status",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "_venue_expiry_backup_20260726",
+  "colname": "backed_up_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_alert_state",
+  "colname": "job_name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_alert_state",
+  "colname": "level",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_alert_state",
+  "colname": "reason",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_alert_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "type",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "severity",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "message",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "details",
+  "coltype": "jsonb",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "acknowledged",
+  "coltype": "boolean",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_anomaly_logs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_app_devices",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_app_devices",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_app_devices",
+  "colname": "first_seen",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_app_version_devices",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_app_version_devices",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_app_version_devices",
+  "colname": "app_version",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_app_version_devices",
+  "colname": "last_seen",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "ip_address",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "failed_attempts",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "blocked_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "last_failed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_auth_attempts",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "target_label",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "target_team_ids",
+  "coltype": "integer[]",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "total_count",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "success_count",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "fail_count",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_broadcast_logs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "job_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "claimed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "delivered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_broadcast_recipients",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "message",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "stack",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "source",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "digest",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "path",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "app_version",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "user_agent",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "admin_client_errors",
+  "colname": "is_chunk_error",
+  "coltype": "boolean",
+  "attnum": 12
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "uv",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "pv",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "new_users",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "posts",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "comments",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "photos",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_daily_stats",
+  "colname": "predictions",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "sender_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "body",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "target_label",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "target_team_ids",
+  "coltype": "integer[]",
+  "attnum": 10
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "expected_count",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "selected_count",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "token_count",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "sent_count",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "failed_count",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 16
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "completed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "admin_delivery_jobs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 19
+ },
+ {
+  "tablename": "admin_dm_notify_claims",
+  "colname": "message_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_dm_notify_claims",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_dm_notify_claims",
+  "colname": "sender_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_dm_notify_claims",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_dwell_session_slices",
+  "colname": "session_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_dwell_session_slices",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_dwell_session_slices",
+  "colname": "day_kst",
+  "coltype": "date",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_dwell_session_slices",
+  "colname": "dwell_ms",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_dwell_session_slices",
+  "colname": "event_count",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_dwell_sessions",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_dwell_sessions",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_dwell_sessions",
+  "colname": "session_start",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_dwell_sessions",
+  "colname": "session_end",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "job_name",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "finished_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "duration_ms",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "result_summary",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_job_logs",
+  "colname": "error_message",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "path",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "dwell_ms",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_page_dwell",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_page_view_user_days",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_page_view_user_days",
+  "colname": "day_kst",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_page_view_user_days",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_page_view_user_days",
+  "colname": "page_views",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_page_view_user_days",
+  "colname": "game_ids",
+  "coltype": "text[]",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "path",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "referrer",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "user_agent",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "device",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "admin_page_views",
+  "colname": "app_version",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "admin_perf_metrics",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_perf_metrics",
+  "colname": "path",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_perf_metrics",
+  "colname": "metric_name",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_perf_metrics",
+  "colname": "value",
+  "coltype": "double precision",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_perf_metrics",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_push_subscriptions",
+  "colname": "endpoint",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_push_subscriptions",
+  "colname": "subscription",
+  "coltype": "jsonb",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_push_subscriptions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_push_subscriptions",
+  "colname": "last_seen_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "token_hash",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "user_agent",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "last_used_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_sessions",
+  "colname": "revoked_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "ran_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "raw_cutoff",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "rollup_cutoff",
+  "coltype": "date",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "backup_ref",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "deleted",
+  "coltype": "jsonb",
+  "attnum": 6
+ },
+ {
+  "tablename": "admin_telemetry_retention_runs",
+  "colname": "coverage",
+  "coltype": "jsonb",
+  "attnum": 7
+ },
+ {
+  "tablename": "admin_traffic_daily_stats",
+  "colname": "day_kst",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_traffic_daily_stats",
+  "colname": "pv",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_traffic_daily_visitors",
+  "colname": "day_kst",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_traffic_daily_visitors",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_traffic_daily_visitors",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_traffic_daily_visitors",
+  "colname": "pv",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "admin_user_game_lifetime",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_user_game_lifetime",
+  "colname": "first_game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "admin_user_game_lifetime",
+  "colname": "first_game_day_kst",
+  "coltype": "date",
+  "attnum": 3
+ },
+ {
+  "tablename": "admin_visitor_first_seen",
+  "colname": "visitor_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "admin_visitor_first_seen",
+  "colname": "first_day",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "announcements",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "announcements",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "announcements",
+  "colname": "summary",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "announcements",
+  "colname": "body",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "announcements",
+  "colname": "cta_label",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "announcements",
+  "colname": "cta_path",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "announcements",
+  "colname": "published_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "announcements",
+  "colname": "display_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "announcements",
+  "colname": "is_active",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "announcements",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "announcements",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "announcements",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 12
+ },
+ {
+  "tablename": "announcements",
+  "colname": "target_platform",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "api_name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "last_alerted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "pending_event_id",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "pending_reason",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "pending_error_message",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "pending_since",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "attempt_token",
+  "coltype": "uuid",
+  "attnum": 8
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "locked_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "api_fallback_alert_state",
+  "colname": "attempt_count",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "api_name",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "reason",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "status_code",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "error_message",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "timestamp",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "api_fallback_events",
+  "colname": "alert_sent",
+  "coltype": "boolean",
+  "attnum": 7
+ },
+ {
+  "tablename": "app_downloads",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "app_downloads",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "app_downloads",
+  "colname": "units",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "app_downloads",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "term",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "aliases",
+  "coltype": "text[]",
+  "attnum": 3
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "answer",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "category",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "source_kind",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "source_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "rule_version",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "reviewed_at",
+  "coltype": "date",
+  "attnum": 9
+ },
+ {
+  "tablename": "baseball_terms",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "run_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "channel_name",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "seen_count",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "decision",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "reason",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "kbo_count",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "kbo_considered",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "short_count",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "recent_upload_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "channel_discovery_candidates",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "channel_discovery_lock",
+  "colname": "id",
+  "coltype": "integer",
+  "attnum": 1
+ },
+ {
+  "tablename": "channel_discovery_lock",
+  "colname": "locked_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "ran_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "mode",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "queries",
+  "coltype": "text[]",
+  "attnum": 5
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "candidates_found",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "verified",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "activated",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "quota_used",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "degraded",
+  "coltype": "boolean",
+  "attnum": 10
+ },
+ {
+  "tablename": "channel_discovery_runs",
+  "colname": "summary",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "channel_name",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "tier",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "subscriber_count",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "is_active",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "team_affinity",
+  "coltype": "text[]",
+  "attnum": 6
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "last_video_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "channel_pool",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "room_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "deleted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "deleted_by",
+  "coltype": "uuid",
+  "attnum": 7
+ },
+ {
+  "tablename": "chat_messages",
+  "colname": "reply_to_id",
+  "coltype": "bigint",
+  "attnum": 8
+ },
+ {
+  "tablename": "comment_likes",
+  "colname": "comment_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "comment_likes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "comment_likes",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "comments",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "comments",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "comments",
+  "colname": "author_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "comments",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "comments",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "comments",
+  "colname": "is_hidden",
+  "coltype": "boolean",
+  "attnum": 6
+ },
+ {
+  "tablename": "comments",
+  "colname": "report_count",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "comments",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "comments",
+  "colname": "parent_id",
+  "coltype": "bigint",
+  "attnum": 9
+ },
+ {
+  "tablename": "comments",
+  "colname": "like_count",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "token",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "cs_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 5
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 6
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "feedback_id",
+  "coltype": "uuid",
+  "attnum": 7
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "body",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "sent_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "cs_content",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "escalate_requested_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 15
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "escalated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "approved_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "cs_reply_drafts",
+  "colname": "processing_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "type",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "delta_json",
+  "coltype": "jsonb",
+  "attnum": 3
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "generated_copy",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "prompt_version",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "daily_analysis",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "daily_analysis_live_claims",
+  "colname": "analysis_date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "daily_analysis_live_claims",
+  "colname": "claimed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "wins",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "losses",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "draws",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "win_rate",
+  "coltype": "double precision",
+  "attnum": 7
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "games_behind",
+  "coltype": "double precision",
+  "attnum": 8
+ },
+ {
+  "tablename": "daily_standings_snapshot",
+  "colname": "streak",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "category",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "player_name",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "daily_stats_snapshot",
+  "colname": "value",
+  "coltype": "double precision",
+  "attnum": 6
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "fcm_token",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "last_seen",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "device_push_tokens",
+  "colname": "app_build",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "user1_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "user2_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "last_message",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "last_message_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "dm_conversations",
+  "colname": "origin",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "sender_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "is_read",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "image_urls",
+  "coltype": "text[]",
+  "attnum": 7
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "payload",
+  "coltype": "jsonb",
+  "attnum": 8
+ },
+ {
+  "tablename": "dm_messages",
+  "colname": "dedup_key",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "reporter_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "reported_user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "reason",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "dm_reports",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "track",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "nickname",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "score",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "last_activity",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "is_bot",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "cutoff_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "event_leaderboard_snapshot",
+  "colname": "frozen_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "feedback",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "feedback",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "feedback",
+  "colname": "type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "feedback",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "feedback",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "feedback",
+  "colname": "body",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "feedback",
+  "colname": "metadata",
+  "coltype": "jsonb",
+  "attnum": 7
+ },
+ {
+  "tablename": "feedback",
+  "colname": "page_url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "feedback",
+  "colname": "device_info",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "feedback",
+  "colname": "vote_count",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "feedback",
+  "colname": "admin_note",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "feedback",
+  "colname": "resolved_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "feedback",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "feedback",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "feedback_votes",
+  "colname": "feedback_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "feedback_votes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "feedback_votes",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_event_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_event_state",
+  "colname": "prev_state",
+  "coltype": "jsonb",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_event_state",
+  "colname": "event_history",
+  "coltype": "jsonb",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_event_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "lineup_notified",
+  "coltype": "boolean",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "lineup_snapshot_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "lineup_snapshot_deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "push_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "push_body",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "push_url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "game_lineup_notify_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "start_notified",
+  "coltype": "boolean",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "end_notified",
+  "coltype": "boolean",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "end_away_notified",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "end_home_notified",
+  "coltype": "boolean",
+  "attnum": 6
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "cancel_notified",
+  "coltype": "boolean",
+  "attnum": 7
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "last_seen_scheduled_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "start_snapshot_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "game_notify_state",
+  "colname": "start_snapshot_deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "event_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "token_id",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "token_hash",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 6
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "fcm_token",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "lease_token",
+  "coltype": "uuid",
+  "attnum": 12
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "dispatch_started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 15
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "fcm_accepted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "device_delivered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 18
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 19
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "game_start_delivery_ledger",
+  "colname": "is_primary_token",
+  "coltype": "boolean",
+  "attnum": 21
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "starter_notified",
+  "coltype": "boolean",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "starter_snapshot_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "starter_snapshot_deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "push_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "push_body",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "push_url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "game_starter_notify_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "game_starter_observation",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_starter_observation",
+  "colname": "saw_unannounced",
+  "coltype": "boolean",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_starter_observation",
+  "colname": "baseline_official",
+  "coltype": "boolean",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_starter_observation",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_starter_observation",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "game_summaries",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_summaries",
+  "colname": "summary",
+  "coltype": "jsonb",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_summaries",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "game_summaries",
+  "colname": "prompt_version",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "game_summary_generation_claims",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "game_summary_generation_claims",
+  "colname": "generation_token",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "game_summary_generation_claims",
+  "colname": "claimed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "answer_message_id",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "question_message_id",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "question_log_id",
+  "coltype": "uuid",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "match_path",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "reply_kind",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "rating",
+  "coltype": "smallint",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_answer_feedback",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_daily_usage",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_daily_usage",
+  "colname": "kst_day",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_daily_usage",
+  "colname": "used",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_daily_usage",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "article_key",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "team_ids",
+  "coltype": "integer[]",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "description",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "link",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "original_link",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "press_host",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "published_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "collected_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "content_hash",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "embedding",
+  "coltype": "vector(768)",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "embedded_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "embed_attempts",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "last_embed_error",
+  "coltype": "text",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "genius_news_articles",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "clip_date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "collected",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "ingested",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "truncated",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "pages_fetched",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "detail",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "reached_api_limit",
+  "coltype": "boolean",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "oldest_reached",
+  "coltype": "date",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_news_ingest_coverage",
+  "colname": "queries_used",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "question_norm",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "answer",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "hit_count",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_qa_cache",
+  "colname": "last_hit_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "message_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "delivery_attempts",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "quota_reserved",
+  "coltype": "boolean",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "quota_allowed",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "quota_remaining",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "llm_started",
+  "coltype": "boolean",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "llm_started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "llm_text",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "llm_input_tokens",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "llm_output_tokens",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "answer",
+  "coltype": "text",
+  "attnum": 16
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "source",
+  "coltype": "text",
+  "attnum": 17
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "remaining",
+  "coltype": "integer",
+  "attnum": 18
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 19
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "picked_player_kbo_id",
+  "coltype": "text",
+  "attnum": 22
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "picker_options",
+  "coltype": "jsonb",
+  "attnum": 23
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "picker_question_message_id",
+  "coltype": "bigint",
+  "attnum": 24
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "quota_released",
+  "coltype": "boolean",
+  "attnum": 25
+ },
+ {
+  "tablename": "genius_question_jobs",
+  "colname": "quota_kst_day",
+  "coltype": "date",
+  "attnum": 26
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "question",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "question_norm",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "match_path",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "answer",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "input_tokens",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "output_tokens",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "question_message_id",
+  "coltype": "bigint",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "question_normalized",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_question_logs",
+  "colname": "question_normalize_status",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "source_key",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "source_kind",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "entity_type",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "entity_id",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "page_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "canonical_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "revision",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "section_path",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "chunk_index",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "content_chars",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "document_content_hash",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "content_hash",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "source_grade",
+  "coltype": "text",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "crawled_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "as_of",
+  "coltype": "date",
+  "attnum": 17
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "claim_token",
+  "coltype": "uuid",
+  "attnum": 18
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "claim_generation",
+  "coltype": "bigint",
+  "attnum": 19
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "embedding",
+  "coltype": "vector(768)",
+  "attnum": 20
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "metadata",
+  "coltype": "jsonb",
+  "attnum": 21
+ },
+ {
+  "tablename": "genius_rag_chunks",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 22
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "source_key",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "source_kind",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "entity_type",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "entity_id",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "page_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "canonical_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "revision",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "section_path",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "chunk_index",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "content_chars",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "document_content_hash",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "content_hash",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "source_grade",
+  "coltype": "text",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "crawled_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "as_of",
+  "coltype": "date",
+  "attnum": 17
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "claim_token",
+  "coltype": "uuid",
+  "attnum": 18
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "claim_generation",
+  "coltype": "bigint",
+  "attnum": 19
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "embedding",
+  "coltype": "vector(768)",
+  "attnum": 20
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "metadata",
+  "coltype": "jsonb",
+  "attnum": 21
+ },
+ {
+  "tablename": "genius_rag_chunks_bak_20260807",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 22
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "artifact_sha256",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "row_index",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "record_hash",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "entity",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "doc",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "depth",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "page_title",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "canonical_url",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "fetched_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "content_length",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "raw_text",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "disposition",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "is_latest_owner_revision",
+  "coltype": "boolean",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_rag_corpus_records",
+  "colname": "collector",
+  "coltype": "text",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "artifact_sha256",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "expected_rows",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "assigned_rows",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "quarantined_rows",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "latest_owner_relations",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "collector_counts",
+  "coltype": "jsonb",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_rag_corpus_runs",
+  "colname": "completed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "source_key",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "source_kind",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "entity_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "entity_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "page_title",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "candidate_urls",
+  "coltype": "text[]",
+  "attnum": 6
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "canonical_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "resolution_status",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "resolution_note",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "source_grade",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "ingestion_status",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "ingestion_attempts",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "claim_token",
+  "coltype": "uuid",
+  "attnum": 14
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "claim_generation",
+  "coltype": "bigint",
+  "attnum": 15
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "active_claim_generation",
+  "coltype": "bigint",
+  "attnum": 16
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "revision",
+  "coltype": "text",
+  "attnum": 17
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "content_hash",
+  "coltype": "text",
+  "attnum": 18
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "crawled_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 19
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "ingested_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "stale_after",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "tombstoned_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 22
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "question_count",
+  "coltype": "bigint",
+  "attnum": 23
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "last_question_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 24
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 25
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "identity_fingerprint",
+  "coltype": "text",
+  "attnum": 26
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "metadata",
+  "coltype": "jsonb",
+  "attnum": 27
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 28
+ },
+ {
+  "tablename": "genius_rag_sources",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 29
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_type",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "external_post_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_url",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_author",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_content",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "source_tags",
+  "coltype": "jsonb",
+  "attnum": 8
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "original_media_urls",
+  "coltype": "jsonb",
+  "attnum": 9
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "matched_kbo_id",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "matched_board_type",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "matched_board_id",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "match_confidence",
+  "coltype": "real",
+  "attnum": 13
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "match_status",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "posted_post_id",
+  "coltype": "bigint",
+  "attnum": 15
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "reviewed_by",
+  "coltype": "uuid",
+  "attnum": 16
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "reviewed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "gif_collector_queue",
+  "colname": "posted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 19
+ },
+ {
+  "tablename": "highlights",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "highlights",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "highlights",
+  "colname": "video_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "highlights",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "highlights",
+  "colname": "thumbnail",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "highlights",
+  "colname": "channel",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "highlights",
+  "colname": "published_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "highlights",
+  "colname": "fetched_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "invitations",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "invitations",
+  "colname": "code",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "invitations",
+  "colname": "inviter_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "invitations",
+  "colname": "invitee_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "invitations",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "invitations",
+  "colname": "used_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "invitations",
+  "colname": "activated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "invitations",
+  "colname": "flagged",
+  "coltype": "boolean",
+  "attnum": 8
+ },
+ {
+  "tablename": "invitations",
+  "colname": "flagged_reason",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "invitations",
+  "colname": "flagged_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "invite_abuse_check",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "invite_abuse_check",
+  "colname": "invitee_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "invite_abuse_check",
+  "colname": "fingerprint",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "invite_abuse_check",
+  "colname": "ip_address",
+  "coltype": "inet",
+  "attnum": 4
+ },
+ {
+  "tablename": "invite_abuse_check",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "invite_refill_log",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "invite_refill_log",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "invite_refill_log",
+  "colname": "refilled_count",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "invite_refill_log",
+  "colname": "refilled_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "ios_widget_push_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "ios_widget_push_state",
+  "colname": "last_score_state",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "ios_widget_push_state",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "ios_widget_push_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 1
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "nickname",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "invite_count",
+  "coltype": "bigint",
+  "attnum": 5
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "last_activated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "leaderboard_final_invite",
+  "colname": "frozen_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 1
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "nickname",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "total_points",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "last_active_day",
+  "coltype": "date",
+  "attnum": 6
+ },
+ {
+  "tablename": "leaderboard_final_writing",
+  "colname": "frozen_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "leaderboard_invite_rollup",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "leaderboard_invite_rollup",
+  "colname": "invite_count",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "leaderboard_invite_rollup",
+  "colname": "last_activated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "leaderboard_invite_rollup",
+  "colname": "refreshed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "track",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "nickname",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "score",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "cutoff_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "leaderboard_snapshot",
+  "colname": "frozen_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "leaderboard_writing_rollup",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "leaderboard_writing_rollup",
+  "colname": "total_points",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "leaderboard_writing_rollup",
+  "colname": "last_active_day",
+  "coltype": "date",
+  "attnum": 3
+ },
+ {
+  "tablename": "leaderboard_writing_rollup",
+  "colname": "refreshed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "likes",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "likes",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "likes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "likes",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "event_type",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "token_id",
+  "coltype": "bigint",
+  "attnum": 5
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "token_hash",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 7
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "fcm_token",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "lease_token",
+  "coltype": "uuid",
+  "attnum": 13
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "dispatch_started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 15
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "fcm_accepted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "device_delivered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 19
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "lineup_confirm_delivery_ledger",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "device_key",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "environment",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 5
+ },
+ {
+  "tablename": "live_activity_channel_subscriptions",
+  "colname": "confirmed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "environment",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "last_score_state",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "last_state_hash",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "attempt_count",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "next_retry_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "ending_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "deleted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "live_activity_channels",
+  "colname": "last_p10_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "live_activity_game_push_state",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_game_push_state",
+  "colname": "last_score_state",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_game_push_state",
+  "colname": "last_state_hash",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_game_push_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "push_to_start_token",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "apns_environment",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "app_build",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "os_major",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "frequent_pushes",
+  "coltype": "boolean",
+  "attnum": 7
+ },
+ {
+  "tablename": "live_activity_start_tokens",
+  "colname": "token_changed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "live_activity_started",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_started",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "channel_born_environment",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "channel_born_channel_id",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "live_activity_started_users",
+  "colname": "wake_attempted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "push_token",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "live_activity_tokens",
+  "colname": "app_build",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "news_clipping_sends",
+  "colname": "clip_date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "news_clipping_sends",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "news_clipping_sends",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "news_clipping_sends",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "article_key",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "canonical_url",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "source_url",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "source",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "thumbnail_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "news_discussions",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "game_start",
+  "coltype": "boolean",
+  "attnum": 2
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "game_end",
+  "coltype": "boolean",
+  "attnum": 3
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "my_team_score",
+  "coltype": "boolean",
+  "attnum": 4
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "my_team_score_inning_summary",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "fav_player_highlight",
+  "coltype": "boolean",
+  "attnum": 6
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "fav_player_strikeout",
+  "coltype": "boolean",
+  "attnum": 7
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "fav_player_post",
+  "coltype": "boolean",
+  "attnum": 8
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "comment_reply",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "dm",
+  "coltype": "boolean",
+  "attnum": 10
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "live_activity",
+  "coltype": "boolean",
+  "attnum": 12
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "team_rank_change",
+  "coltype": "boolean",
+  "attnum": 13
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "my_team_concede",
+  "coltype": "boolean",
+  "attnum": 14
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "news_clipping",
+  "coltype": "boolean",
+  "attnum": 15
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "lineup_confirm",
+  "coltype": "boolean",
+  "attnum": 16
+ },
+ {
+  "tablename": "notification_prefs",
+  "colname": "starter_announce",
+  "coltype": "boolean",
+  "attnum": 17
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "event_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "token_id",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "token_hash",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "start_required",
+  "coltype": "boolean",
+  "attnum": 5
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "lease_token",
+  "coltype": "uuid",
+  "attnum": 9
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "accepted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "notified_player_highlight_tokens",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "notified_score_events",
+  "colname": "event_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "notified_score_events",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "notified_score_events",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "expected_row_count",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "expected_payload_hash",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "persisted_row_count",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "unresolved_count",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "source_fetched_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "verified_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "failure_reason",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "player_game_log_ingestions",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "player_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 5
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "team_code",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "opponent_team_id",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "is_home",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "result",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "ab",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "h",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "hr",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "rbi",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "bb",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "so",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "ip_outs",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "er",
+  "coltype": "integer",
+  "attnum": 18
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "h_allowed",
+  "coltype": "integer",
+  "attnum": 19
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "k",
+  "coltype": "integer",
+  "attnum": 20
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "bb_allowed",
+  "coltype": "integer",
+  "attnum": 21
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 22
+ },
+ {
+  "tablename": "player_game_logs",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 23
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "event_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "player_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "pref_key",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "start_team_ids",
+  "coltype": "integer[]",
+  "attnum": 5
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "push_title",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "push_body",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "push_url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "snapshot_completed",
+  "coltype": "boolean",
+  "attnum": 9
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "audience_attempts",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "audience_next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "player_highlight_event_snapshots",
+  "colname": "completed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "avg",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "games",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "pa",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "ab",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "runs",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "hits",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "doubles",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "triples",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "hr",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "tb",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "rbi",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "sac",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "sf",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "player_stats_batter",
+  "colname": "player_key",
+  "coltype": "text",
+  "attnum": 19
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "name",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "era",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "games",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "wins",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "losses",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "saves",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "holds",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "wpct",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "ip",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "h",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "hr",
+  "coltype": "integer",
+  "attnum": 14
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "bb",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "hbp",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "so",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "r",
+  "coltype": "integer",
+  "attnum": 18
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "er",
+  "coltype": "integer",
+  "attnum": 19
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "whip",
+  "coltype": "text",
+  "attnum": 20
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "player_stats_pitcher",
+  "colname": "player_key",
+  "coltype": "text",
+  "attnum": 22
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "kbo_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "name",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "team",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "position",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "back_no",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "players_roster",
+  "colname": "aliases",
+  "coltype": "text[]",
+  "attnum": 8
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "position",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "ref_id",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "label_snapshot",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "image_snapshot",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "poll_options",
+  "colname": "vote_count",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "allow_multiple",
+  "coltype": "boolean",
+  "attnum": 2
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "closes_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "voter_count",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "first_vote_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "poll_polls",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "poll_votes",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "poll_votes",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "poll_votes",
+  "colname": "option_id",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "poll_votes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "poll_votes",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "away_team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "home_team_id",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "winner_team_id",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "is_doubleheader",
+  "coltype": "boolean",
+  "attnum": 6
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "ended_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "collect_after",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "next_collect_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "last_collected_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 13
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 15
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "away_team_name",
+  "coltype": "text",
+  "attnum": 17
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "home_team_name",
+  "coltype": "text",
+  "attnum": 18
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "away_score",
+  "coltype": "integer",
+  "attnum": 19
+ },
+ {
+  "tablename": "postgame_interview_jobs",
+  "colname": "home_score",
+  "coltype": "integer",
+  "attnum": 20
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "video_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "channel",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "thumbnail",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "published_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "player_names",
+  "coltype": "text[]",
+  "attnum": 9
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "source_kind",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "confidence",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "postgame_interviews",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "posts",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "posts",
+  "colname": "author_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "posts",
+  "colname": "board_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "posts",
+  "colname": "board_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "posts",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "posts",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "posts",
+  "colname": "image_urls",
+  "coltype": "jsonb",
+  "attnum": 7
+ },
+ {
+  "tablename": "posts",
+  "colname": "like_count",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "posts",
+  "colname": "comment_count",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "posts",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "posts",
+  "colname": "is_hidden",
+  "coltype": "boolean",
+  "attnum": 11
+ },
+ {
+  "tablename": "posts",
+  "colname": "report_count",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "posts",
+  "colname": "content_type",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "posts",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "posts",
+  "colname": "player_tags",
+  "coltype": "jsonb",
+  "attnum": 15
+ },
+ {
+  "tablename": "posts",
+  "colname": "hashtags",
+  "coltype": "jsonb",
+  "attnum": 16
+ },
+ {
+  "tablename": "posts",
+  "colname": "video_urls",
+  "coltype": "text[]",
+  "attnum": 17
+ },
+ {
+  "tablename": "posts",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "posts",
+  "colname": "image_hashes",
+  "coltype": "jsonb",
+  "attnum": 19
+ },
+ {
+  "tablename": "posts",
+  "colname": "seat_info",
+  "coltype": "jsonb",
+  "attnum": 20
+ },
+ {
+  "tablename": "posts",
+  "colname": "author_team_id_snapshot",
+  "coltype": "integer",
+  "attnum": 21
+ },
+ {
+  "tablename": "posts",
+  "colname": "team_tags",
+  "coltype": "jsonb",
+  "attnum": 22
+ },
+ {
+  "tablename": "posts",
+  "colname": "click_view_count",
+  "coltype": "integer",
+  "attnum": 23
+ },
+ {
+  "tablename": "posts",
+  "colname": "impression_view_count",
+  "coltype": "integer",
+  "attnum": 24
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "prediction_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "option_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "points_earned",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "prediction_votes",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "predictions",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "predictions",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "predictions",
+  "colname": "question",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "predictions",
+  "colname": "options",
+  "coltype": "jsonb",
+  "attnum": 4
+ },
+ {
+  "tablename": "predictions",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "predictions",
+  "colname": "correct_option",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "predictions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "predictions",
+  "colname": "closes_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "profile_nickname_changes",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "profile_nickname_changes",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "profile_nickname_changes",
+  "colname": "old_nickname",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "profile_nickname_changes",
+  "colname": "new_nickname",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "profile_nickname_changes",
+  "colname": "changed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "profiles",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "profiles",
+  "colname": "nickname",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "profiles",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "profiles",
+  "colname": "favorite_players",
+  "coltype": "jsonb",
+  "attnum": 4
+ },
+ {
+  "tablename": "profiles",
+  "colname": "points",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "profiles",
+  "colname": "grade",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "profiles",
+  "colname": "avatar_url",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "profiles",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "profiles",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "profiles",
+  "colname": "invited_by",
+  "coltype": "uuid",
+  "attnum": 10
+ },
+ {
+  "tablename": "profiles",
+  "colname": "is_founder",
+  "coltype": "boolean",
+  "attnum": 11
+ },
+ {
+  "tablename": "profiles",
+  "colname": "invite_count",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "profiles",
+  "colname": "show_posts",
+  "coltype": "boolean",
+  "attnum": 13
+ },
+ {
+  "tablename": "profiles",
+  "colname": "bio",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "profiles",
+  "colname": "total_posts",
+  "coltype": "integer",
+  "attnum": 15
+ },
+ {
+  "tablename": "profiles",
+  "colname": "total_comments",
+  "coltype": "integer",
+  "attnum": 16
+ },
+ {
+  "tablename": "profiles",
+  "colname": "total_likes_received",
+  "coltype": "integer",
+  "attnum": 17
+ },
+ {
+  "tablename": "profiles",
+  "colname": "joined_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "profiles",
+  "colname": "design_version",
+  "coltype": "text",
+  "attnum": 19
+ },
+ {
+  "tablename": "profiles",
+  "colname": "v2_optout_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "profiles",
+  "colname": "v2_optout_reason",
+  "coltype": "text",
+  "attnum": 21
+ },
+ {
+  "tablename": "profiles",
+  "colname": "is_bot",
+  "coltype": "boolean",
+  "attnum": 22
+ },
+ {
+  "tablename": "profiles",
+  "colname": "is_operator",
+  "coltype": "boolean",
+  "attnum": 23
+ },
+ {
+  "tablename": "profiles",
+  "colname": "game_chat_enabled",
+  "coltype": "boolean",
+  "attnum": 24
+ },
+ {
+  "tablename": "push_subscriptions",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "push_subscriptions",
+  "colname": "endpoint",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "push_subscriptions",
+  "colname": "subscription",
+  "coltype": "jsonb",
+  "attnum": 3
+ },
+ {
+  "tablename": "push_subscriptions",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "push_subscriptions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "target_type",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "target_id",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "author_id",
+  "coltype": "uuid",
+  "attnum": 4
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "blinded_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "notified_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "claimed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "report_blind_notices",
+  "colname": "dead_lettered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "reports",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "reports",
+  "colname": "reporter_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "reports",
+  "colname": "target_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "reports",
+  "colname": "target_id",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "reports",
+  "colname": "reason",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "reports",
+  "colname": "detail",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "reports",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "reports",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "date",
+  "coltype": "date",
+  "attnum": 2
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "metric_type",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "cohort_key",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "metric_key",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "total",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "value",
+  "coltype": "integer",
+  "attnum": 7
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "rate",
+  "coltype": "double precision",
+  "attnum": 8
+ },
+ {
+  "tablename": "retention_metrics",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "kbo_player_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "player_name",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "move_type",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "move_date",
+  "coltype": "date",
+  "attnum": 6
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "canonical_id",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "roster_moves",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "snapshot_date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "kbo_player_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "player_name",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "back_no",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "position",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "captured_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "roster_snapshots",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "season",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "category",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "pick",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "season_predictions",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "event_type",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "token_id",
+  "coltype": "bigint",
+  "attnum": 5
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "token_hash",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 7
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "fcm_token",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "next_attempt_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 12
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "lease_token",
+  "coltype": "uuid",
+  "attnum": 13
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "lease_until",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "dispatch_started_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 15
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "deadline_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 16
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "fcm_accepted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "device_delivered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "last_error",
+  "coltype": "text",
+  "attnum": 19
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 20
+ },
+ {
+  "tablename": "starter_announce_delivery_ledger",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 21
+ },
+ {
+  "tablename": "team_rank_notify_state",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 1
+ },
+ {
+  "tablename": "team_rank_notify_state",
+  "colname": "rank",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "team_rank_notify_state",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "account_email",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "play_store_email",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "device_info",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "tester_signups",
+  "colname": "dm_sent_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "author_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "team_id",
+  "coltype": "integer",
+  "attnum": 3
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "venue_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 5
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "opponent_team_id",
+  "coltype": "integer",
+  "attnum": 6
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "seat_area",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "seat_detail",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "quantity",
+  "coltype": "integer",
+  "attnum": 9
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "price",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "original_price",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 12
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "contact_method",
+  "coltype": "text",
+  "attnum": 13
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "contact_info",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "description",
+  "coltype": "text",
+  "attnum": 15
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "image_urls",
+  "coltype": "jsonb",
+  "attnum": 16
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "ticket_transfers",
+  "colname": "expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 18
+ },
+ {
+  "tablename": "urgent_notice_deliveries",
+  "colname": "notice_key",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "urgent_notice_deliveries",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "urgent_notice_deliveries",
+  "colname": "conversation_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "urgent_notice_deliveries",
+  "colname": "message_id",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "urgent_notice_deliveries",
+  "colname": "delivered_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "notice_key",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "result",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "detail",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "urgent_notice_send_log",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "notice_key",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "message",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "target_platform",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "active",
+  "coltype": "boolean",
+  "attnum": 4
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "urgent_notices",
+  "colname": "deactivated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "user_badges",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "user_badges",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "user_badges",
+  "colname": "badge_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "user_badges",
+  "colname": "earned_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "user_blocks",
+  "colname": "id",
+  "coltype": "uuid",
+  "attnum": 1
+ },
+ {
+  "tablename": "user_blocks",
+  "colname": "blocker_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "user_blocks",
+  "colname": "blocked_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "user_blocks",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "favorite_team_id_snapshot",
+  "coltype": "integer",
+  "attnum": 5
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "stadium_name",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "source",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "recorded_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 8
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "venue_attendance",
+  "colname": "deleted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "venue_cleanup_cursor",
+  "colname": "bucket",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_cleanup_cursor",
+  "colname": "after_name",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_cleanup_cursor",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "game_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "media_type",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "media_url",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "media_bucket",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "media_path",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "thumb_url",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "thumb_bucket",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "thumb_path",
+  "coltype": "text",
+  "attnum": 10
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "duration_ms",
+  "coltype": "integer",
+  "attnum": 11
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "width",
+  "coltype": "integer",
+  "attnum": 12
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "height",
+  "coltype": "integer",
+  "attnum": 13
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "caption",
+  "coltype": "text",
+  "attnum": 14
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "venue_verified",
+  "coltype": "boolean",
+  "attnum": 15
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "consent_version",
+  "coltype": "smallint",
+  "attnum": 16
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "consent_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 17
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "stadium_name",
+  "coltype": "text",
+  "attnum": 18
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "report_count",
+  "coltype": "integer",
+  "attnum": 19
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "transcode_attempts",
+  "coltype": "integer",
+  "attnum": 20
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 21
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "needs_transcode",
+  "coltype": "boolean",
+  "attnum": 22
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "game_ended_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 23
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 24
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "expires_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 25
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "attendance_source",
+  "coltype": "text",
+  "attnum": 26
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "favorite_team_id_snapshot",
+  "coltype": "integer",
+  "attnum": 27
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "game_date",
+  "coltype": "date",
+  "attnum": 28
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "archived_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 29
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "removed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 30
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "cleanup_failed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 31
+ },
+ {
+  "tablename": "venue_stories",
+  "colname": "upload_counted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 32
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "story_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "user_id",
+  "coltype": "uuid",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "content",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "content_key",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "venue_story_comments",
+  "colname": "deleted_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 7
+ },
+ {
+  "tablename": "venue_story_upload_daily",
+  "colname": "upload_day",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_story_upload_daily",
+  "colname": "media_type",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_story_upload_daily",
+  "colname": "uploads",
+  "coltype": "bigint",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_story_view_daily",
+  "colname": "story_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_story_view_daily",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_story_view_daily",
+  "colname": "view_date",
+  "coltype": "date",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_story_view_daily",
+  "colname": "view_count",
+  "coltype": "bigint",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_story_view_marks",
+  "colname": "story_id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "venue_story_view_marks",
+  "colname": "viewer_key",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "venue_story_view_marks",
+  "colname": "view_date",
+  "coltype": "date",
+  "attnum": 3
+ },
+ {
+  "tablename": "venue_story_view_marks",
+  "colname": "kind",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "venue_story_view_marks",
+  "colname": "viewed_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "post_id",
+  "coltype": "bigint",
+  "attnum": 2
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "original_url",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "optimized_url",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "status",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "original_bytes",
+  "coltype": "bigint",
+  "attnum": 6
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "optimized_bytes",
+  "coltype": "bigint",
+  "attnum": 7
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "attempts",
+  "coltype": "integer",
+  "attnum": 8
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "error",
+  "coltype": "text",
+  "attnum": 9
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "created_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 10
+ },
+ {
+  "tablename": "video_transcode_jobs",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 11
+ },
+ {
+  "tablename": "videos",
+  "colname": "id",
+  "coltype": "bigint",
+  "attnum": 1
+ },
+ {
+  "tablename": "videos",
+  "colname": "video_id",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "videos",
+  "colname": "team_id",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "videos",
+  "colname": "player_id",
+  "coltype": "text",
+  "attnum": 4
+ },
+ {
+  "tablename": "videos",
+  "colname": "title",
+  "coltype": "text",
+  "attnum": 5
+ },
+ {
+  "tablename": "videos",
+  "colname": "channel",
+  "coltype": "text",
+  "attnum": 6
+ },
+ {
+  "tablename": "videos",
+  "colname": "channel_id",
+  "coltype": "text",
+  "attnum": 7
+ },
+ {
+  "tablename": "videos",
+  "colname": "thumbnail",
+  "coltype": "text",
+  "attnum": 8
+ },
+ {
+  "tablename": "videos",
+  "colname": "published_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 9
+ },
+ {
+  "tablename": "videos",
+  "colname": "duration_seconds",
+  "coltype": "integer",
+  "attnum": 10
+ },
+ {
+  "tablename": "videos",
+  "colname": "source_type",
+  "coltype": "text",
+  "attnum": 11
+ },
+ {
+  "tablename": "videos",
+  "colname": "is_short_candidate",
+  "coltype": "boolean",
+  "attnum": 12
+ },
+ {
+  "tablename": "videos",
+  "colname": "noise_flags",
+  "coltype": "jsonb",
+  "attnum": 13
+ },
+ {
+  "tablename": "videos",
+  "colname": "fetched_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 14
+ },
+ {
+  "tablename": "videos",
+  "colname": "player_ids",
+  "coltype": "text[]",
+  "attnum": 15
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "ping_date",
+  "coltype": "date",
+  "attnum": 1
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "platform",
+  "coltype": "text",
+  "attnum": 2
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "ip_hash",
+  "coltype": "text",
+  "attnum": 3
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "hits",
+  "coltype": "integer",
+  "attnum": 4
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "first_seen",
+  "coltype": "timestamp with time zone",
+  "attnum": 5
+ },
+ {
+  "tablename": "watch_pings",
+  "colname": "last_seen",
+  "coltype": "timestamp with time zone",
+  "attnum": 6
+ },
+ {
+  "tablename": "youtube_quota_ledger",
+  "colname": "quota_date",
+  "coltype": "text",
+  "attnum": 1
+ },
+ {
+  "tablename": "youtube_quota_ledger",
+  "colname": "used",
+  "coltype": "integer",
+  "attnum": 2
+ },
+ {
+  "tablename": "youtube_quota_ledger",
+  "colname": "updated_at",
+  "coltype": "timestamp with time zone",
+  "attnum": 3
+ }
+]
