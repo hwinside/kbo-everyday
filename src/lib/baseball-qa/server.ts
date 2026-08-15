@@ -9,6 +9,7 @@ import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  geniusMotionForResult,
   isAckPhrase,
   MAX_QUESTION_LEN,
   MIN_QUESTION_LEN,
@@ -1176,7 +1177,13 @@ export async function processBaseballQaQuestion(input: {
   // 답변 유형·모션을 payload 에 함께 저장한다 — 클라가 유형별 마스코트·모션을 고를 근거(SSOT).
   // 조립은 composeGeniusReplyPayload 단일 함수가 한다 — 인라인이면 게이트가 실제 조립
   // 경로를 못 태운다(#1102 SSOT 추출과 같은 축). 필드 계약·금지 메타 규칙은 그 함수 문서에.
-  const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(result, messageId);
+  // 모션은 **여기 단일 지점**에서 (source, question) 결정론 계산 — 즉시 경로·durable 재시도
+  // (claimState="ready")·길이 위반 blocked·pipeline 조기 blocked 전부 같은 계산을 탄다
+  // (삼순 #1197 NO-GO ②③: result 에 실어 나르면 ready 재시도에서 소실되고 조기 반환에서 누락된다).
+  const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
+    { ...result, motion: geniusMotionForResult(result.source, question) },
+    messageId,
+  );
   const deliveryDedupKey = result.source === "player_picker"
     ? `baseball-genius-picker:${messageId}`
     : result.source === "question_correction"

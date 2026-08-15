@@ -46,20 +46,31 @@ const STATE_TO_MASCOT: Record<Exclude<GeniusTypingState, "idle">, GeniusMascotSt
  * 영구 저장하려면 봇이 실제 쪽지를 한 번 더 보내야 하고, 그러면 quota·푸시알림·dedup
  * 계약까지 바뀌는 큰 변경이 된다 — 이번 목적(안 보임)은 세션 유지로 충분히 해결된다.
  */
-export function GeniusThinkingBubble({ pending }: { pending: boolean }) {
+export function GeniusThinkingBubble({ pending, showMascot = true }: { pending: boolean;
+  /**
+   * 마스코트 노출 여부 — **채팅창 전체 마스코트 최대 1개** 불변식(하린아빠 2026-08-15
+   * 13:34·13:53 "하나의 봇과 대화하는 느낌")을 page 가 소유권 판정으로 강제한다.
+   * 더 최신 마스코트(답변·실패)가 생기면 이 말풍선은 문장 기록만 남기고 마스코트를 숨긴다.
+   * (2026-08-04 "캐릭터도 그대로 남아있게" 계약은 13:53 지시로 대체됐다.)
+   * 단독 렌더(게이트 등) 기본값은 true — 컴포넌트 단독 계약은 그대로다.
+   */
+  showMascot?: boolean;
+}) {
   return (
     <div className="flex justify-start" data-testid="genius-thinking-bubble" data-pending={pending}>
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
-          {/* eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG */}
-          <img
-            src={geniusMascotSrc("thinking")}
-            alt=""
-            aria-hidden
-            data-testid="genius-thinking-mascot"
-            data-mascot="thinking"
-            className="h-8 w-auto max-w-none object-contain"
-          />
+          {showMascot && (
+            // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+            <img
+              src={geniusMascotSrc("thinking")}
+              alt=""
+              aria-hidden
+              data-testid="genius-thinking-mascot"
+              data-mascot="thinking"
+              className="h-8 w-auto max-w-none object-contain"
+            />
+          )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
         <div
@@ -89,10 +100,13 @@ export default function GeniusTypingIndicator({
   state,
   onRetry,
   questionMessageId,
+  showMascot = true,
 }: {
   state: GeniusTypingState;
   onRetry: () => void;
   questionMessageId?: number;
+  /** 마스코트 노출 여부 — 전체 최대 1개 불변식을 page 소유권 판정이 강제한다(위 주석). */
+  showMascot?: boolean;
 }) {
   // ⚠️ 대기(waiting/retrying)는 이제 질문 바로 아래 `GeniusThinkingBubble` 이 맡는다.
   // 여기서도 그리면 대기 중 말풍선이 두 개 된다. 이 컴포넌트는 **실패 재시도**만 남긴다.
@@ -107,15 +121,17 @@ export default function GeniusTypingIndicator({
     >
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
-          {/* eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG */}
-          <img
-            src={geniusMascotSrc(STATE_TO_MASCOT[state])}
-            alt=""
-            aria-hidden
-            data-testid="genius-typing-mascot"
-            data-mascot={STATE_TO_MASCOT[state]}
-            className="h-8 w-auto max-w-none object-contain"
-          />
+          {showMascot && (
+            // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+            <img
+              src={geniusMascotSrc(STATE_TO_MASCOT[state])}
+              alt=""
+              aria-hidden
+              data-testid="genius-typing-mascot"
+              data-mascot={STATE_TO_MASCOT[state]}
+              className="h-8 w-auto max-w-none object-contain"
+            />
+          )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
         {state === "failed" ? (

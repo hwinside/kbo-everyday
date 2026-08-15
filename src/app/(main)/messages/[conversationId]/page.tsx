@@ -84,6 +84,33 @@ export default function DMChatPage() {
     }
     return latest;
   }, [messages]);
+  // 마스코트 소유권 — reply(최신 봇 답변)·thinking(생각중 말풍선)·failed(재시도 버블)
+  // **3종을 통합해 채팅창 전체에 마스코트는 항상 최대 1개**다 (삼순 #1197 P0).
+  // 소유자 = 가장 큰 메시지 id. 질문 id가 같으면 failed 가 thinking 보다 우선한다
+  // (같은 질문에 둘 다 뚜면 재시도 버블이 현재 상태를 말한다). 봇 답변 id 는 원 질문
+  // id 보다 항상 크므로 답변이 도착하면 소유권이 자연히 reply 로 넘어간다.
+  const failedQuestionIds = useMemo(
+    () => Object.entries(geniusReplyStates)
+      .filter(([, state]) => state === "failed")
+      .map(([id]) => Number(id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0),
+    [geniusReplyStates],
+  );
+  const mascotOwner = useMemo<{ id: number | null; kind: "reply" | "thinking" | "failed" | null }>(() => {
+    let id: number | null = latestGeniusMessageId;
+    let kind: "reply" | "thinking" | "failed" | null = latestGeniusMessageId === null ? null : "reply";
+    if (geniusThinkingQuestionId !== null && (id === null || geniusThinkingQuestionId > id)) {
+      id = geniusThinkingQuestionId;
+      kind = "thinking";
+    }
+    for (const failedId of failedQuestionIds) {
+      if (id === null || failedId > id || (failedId === id && kind === "thinking")) {
+        id = failedId;
+        kind = "failed";
+      }
+    }
+    return { id, kind };
+  }, [latestGeniusMessageId, geniusThinkingQuestionId, failedQuestionIds]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -493,9 +520,10 @@ export default function DMChatPage() {
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
                 ? msg.payload
                 : null;
-            // 마스코트는 최신 봇 답변에만 — 이전 답변은 정적 마스코트도 없이 닉네임만 남는다.
+            // 마스코트는 소유권이 reply 일 때 최신 봇 답변에만 — 이전 답변은 닉네임만 남는다.
             const mascotState =
-              msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId
+              msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId &&
+              mascotOwner.kind === "reply"
                 ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
             const mascotMotion = mascotState ? geniusMotionFromPayload(geniusReply) : null;
@@ -667,7 +695,12 @@ export default function DMChatPage() {
                   </div>
                 </div>
               </motion.div>
-              {thinking.show && <GeniusThinkingBubble pending={thinking.pending} />}
+              {thinking.show && (
+                <GeniusThinkingBubble
+                  pending={thinking.pending}
+                  showMascot={mascotOwner.kind === "thinking" && mascotOwner.id === msg.id}
+                />
+              )}
               </Fragment>
             );
           })
@@ -678,6 +711,7 @@ export default function DMChatPage() {
               key={messageId}
               state={state}
               questionMessageId={Number(messageId)}
+              showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}
               onRetry={() => retryBaseballQa(Number(messageId))}
             />
           ))

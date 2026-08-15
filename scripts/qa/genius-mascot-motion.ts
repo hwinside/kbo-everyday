@@ -1,19 +1,22 @@
 /**
- * 야잘알봇 마스코트 모션 게이트 (SSOT §7.6 — 2026-08-15 하린아빠 착수 지시).
+ * 야잘알봇 마스코트 모션 게이트 (SSOT §7.6 — 2026-08-15 하린아빠 착수 지시 + 삼순 #1197 NO-GO 반영).
  *
  * 계약:
- *  ① 매핑: 인사→excited(신남) / 감사·칭찬→headspin(헤드스핀) / 결정론 거절(scope_guide·blocked)→bored(심심함).
- *     되묻기·오류·지식 답변에는 모션 없음. 판정은 **answerQuestion 실실행**으로 본다(문자열 검사 금지).
- *  ② payload: composeGeniusReplyPayload 실행으로 motion 이 실리는지 / 비모션 경로에 키 자체가 없는지.
- *  ③ 폐쇄집합: geniusMotionFromPayload 는 3종 밖 값(미래 서버·조작)을 null 로 — payload 전체는 살아있어야 한다.
- *  ④ 최신 1개만 (하린아빠 13:34 "이전에 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함"
- *     + 13:53 "이전 답변은 정적 마스코트도 안되고 아예 마스코트가 없어야 함"):
- *     실제 DMChatPage 마운트 + 실제 Realtime callback 배달로 **마스코트 자체가 항상 정확히
- *     1개**(최신 봇 답변), 이전 답변은 마스코트 없이 닉네임만 남는지 DOM 으로 검증.
+ *  ① 매핑 SSOT: geniusMotionForResult(source, question) — 인사→excited / 감사·칭찬→headspin /
+ *     결정론 거절(scope_guide·blocked)→bored / 그 외 없음. answerQuestion 실실행으로 question→source
+ *     라우팅까지 결속한다.
+ *  ② payload: composeGeniusReplyPayload 실행 + server.ts 가 **단일 지점**에서
+ *     `motion: geniusMotionForResult(result.source, question)` 으로 결속(ready 재시도·조기 blocked 포함).
+ *  ③ 폐쇄집합: geniusMotionFromPayload 는 3종 밖 값을 null 로 — payload 전체는 생존.
+ *  ④ 전체 마스코트 최대 1개 (하린아빠 13:34·13:53 + 삼순 P0): reply·thinking·failed **3종 합산**이
+ *     항상 ≤1. 실제 DMChatPage + 실제 Realtime 배달 + 실제 전송(rpc)으로 생각중→답변 교체,
+ *     failed 소유권, 역순 Realtime, reload 재진입까지 DOM 실행 검증.
  *
  * 실행: npm run qa:genius-mascot-motion
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
 import type { Root } from "react-dom/client";
@@ -34,14 +37,19 @@ function check(name: string, ok: boolean, detail?: string) {
   }
 }
 
-async function partPipeline() {
+async function partMapping() {
   const pipeline = await import("../../src/lib/baseball-qa/pipeline");
-  const { answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase } = pipeline;
-  const GREETING_Q = "안녕";
-  const ACK_Q = "고마워";
-  const SCOPE_Q = "야구 룰";
+  const { answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult } = pipeline;
   check("입력 전제 (판정기 실확인)",
-    isGreetingPhrase(GREETING_Q) && isAckPhrase(ACK_Q) && isScopeAskPhrase(SCOPE_Q));
+    isGreetingPhrase("안녕") && isAckPhrase("고마워") && isScopeAskPhrase("야구 룰"));
+  check("매핑: 인사 → excited", geniusMotionForResult("ack", "안녕") === "excited");
+  check("매핑: 감사 → headspin", geniusMotionForResult("ack", "고마워") === "headspin");
+  check("매핑: scope_guide 거절 → bored", geniusMotionForResult("scope_guide", "야구 룰") === "bored");
+  check("매핑: blocked 거절 → bored (길이 위반·조기 반환 포함 전 경로)",
+    geniusMotionForResult("blocked", "주식 추천해줘") === "bored");
+  check("매핑: 지식·오류 답변에는 모션 없음",
+    geniusMotionForResult("rag", "보크가 뭐야") === undefined && geniusMotionForResult("error", "x") === undefined);
+  // question→source 라우팅 실실행 결속 — 매핑 단위검사만으로는 라우팅이 갈라져도 GREEN 이다.
   const deps = () => ({
     loadGlossary: async () => [],
     loadPlayers: async () => [],
@@ -52,21 +60,20 @@ async function partPipeline() {
     log: async () => {},
   });
   {
-    const res = await answerQuestion("u1", GREETING_Q, deps() as never);
-    check("실실행: 인사 → motion excited", res.source === "ack" && res.motion === "excited",
-      `source=${res.source} motion=${String(res.motion)}`);
+    const res = await answerQuestion("u1", "안녕", deps() as never);
+    check("실실행: 인사 → source ack (모션 계산 입력 결속)", res.source === "ack", `source=${res.source}`);
   }
   {
-    const res = await answerQuestion("u1", ACK_Q, deps() as never);
-    check("실실행: 감사 → motion headspin", res.source === "ack" && res.motion === "headspin",
-      `source=${res.source} motion=${String(res.motion)}`);
+    const res = await answerQuestion("u1", "야구 룰", deps() as never);
+    check("실실행: 범위 재질문 → source scope_guide", res.source === "scope_guide", `source=${res.source}`);
   }
-  {
-    const res = await answerQuestion("u1", SCOPE_Q, deps() as never);
-    check("실실행: 범위 재질문(scope_guide 거절) → motion bored",
-      res.source === "scope_guide" && res.motion === "bored",
-      `source=${res.source} motion=${String(res.motion)}`);
-  }
+  // 서버 단일 지점 결속 — compose 호출부가 (source, question) 계산을 태우는지.
+  // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
+  const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
+  check("server 배선: compose 가 geniusMotionForResult(result.source, question) 을 받는다",
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion: geniusMotionForResult\(result\.source, question\) \}/.test(serverSrc));
+  check("server 배선: QaResult 탑재 방식이 아니다(ready 재시도 소실 방지)",
+    !/motion\?:/.test(readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8").split("export interface QaResult")[1]?.split("}")[0] ?? ""));
 }
 
 async function partPayload() {
@@ -95,7 +102,6 @@ async function partPayload() {
       payload.picker_options?.[0]?.kbo_id === "69100" && payload.picker_options?.[0]?.back_no === "2");
   }
   {
-    // 미래 서버가 새 모션 값을 보내도 ①payload 는 유효해야 하고 ②모션만 없음으로 폴백한다.
     const foreign = { type: "baseball_genius_reply", reply_kind: "ack", match_path: "ack", question_message_id: 1, motion: "sparkle" };
     check("폐쇄집합: 밖의 값은 payload 를 살리고 모션만 null",
       isGeniusReplyPayload(foreign) && geniusMotionFromPayload(foreign as never) === null);
@@ -104,7 +110,7 @@ async function partPayload() {
   }
 }
 
-// ── ④ 실제 DMChatPage DOM — 최신 1개만 ──────────────────────────────────────
+// ── ④ 실제 DMChatPage DOM — 전체 마스코트(3종 합산) 최대 1개 ────────────────
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 const CONVERSATION_ID = "motion-conversation";
 
@@ -142,6 +148,10 @@ async function partDom() {
   const { ThemeProvider } = await import("../../src/components/ThemeProvider");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");
   const { PathParamsContext } = await import("next/dist/shared/lib/hooks-client-context.shared-runtime");
+  const {
+    BASEBALL_QA_MAX_ATTEMPTS,
+    BASEBALL_QA_OUTBOX_KEY,
+  } = await import("../../src/lib/baseball-qa/client-outbox");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
 
   const profile = { id: "me", nickname: "테스터", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null };
@@ -163,6 +173,11 @@ async function partDom() {
     assert.ok(handler, "실제 대화 Realtime 구독이 있어야 한다");
     await handler({ new: row });
   };
+
+  // 실제 전송 경로 — hook 의 send 성공이 thinking marker 를 찍는다 (pr1102 하니스와 같은 축).
+  const QUESTION_IDS = [501, 601];
+  const CREATED: Record<number, string> = { 501: "2026-08-15T00:00:10Z", 601: "2026-08-15T00:00:14Z" };
+  let questionIndex = 0;
 
   const mutable = supabase as unknown as {
     from: (table: string) => unknown; rpc: (fn: string, args: Record<string, unknown>) => unknown;
@@ -187,8 +202,8 @@ async function partDom() {
       return query;
     }
     if (table === "profiles") {
-      // Realtime 단건 조회가 봇 발신자에게 유저 프로필(team_id=1)을 돌려주면 이전 봇
-      // 답변이 TeamBadge fallback 을 타버린다 — eq 인자를 보고 실제처럼 분기한다.
+      // Realtime 단건 조회가 봇 발신자에게 유저 프로필(team_id=1)을 돌려주면 TeamBadge
+      // fallback 을 타버린다 — eq 인자를 보고 실제처럼 분기한다.
       let requestedId: unknown = null;
       const query = {
         select: () => query,
@@ -204,7 +219,16 @@ async function partDom() {
     }
     throw new Error(`unexpected table: ${table}`);
   };
-  mutable.rpc = () => { throw new Error("rpc must not be called in this scenario"); };
+  mutable.rpc = (fn, args) => {
+    assert.equal(fn, "send_dm_message_atomic");
+    const id = QUESTION_IDS[questionIndex];
+    questionIndex += 1;
+    rows.push({
+      id, conversation_id: CONVERSATION_ID, sender_id: "me", content: String(args.p_content),
+      is_read: true, created_at: CREATED[id],
+    });
+    return { single: async () => ({ data: { conversation_id: CONVERSATION_ID, message_id: id }, error: null }) };
+  };
   mutable.channel = (name: string) => {
     const channel = {
       on: (_event: string, _filter: unknown, callback: (payload: RealtimePayload) => unknown) => {
@@ -254,26 +278,42 @@ async function partDom() {
     );
   }
 
-  const mascotOf = (container: HTMLElement, messageId: number) =>
+  // 3종 합산 총계 — reply·thinking·failed 마스코트가 전부 geniusMascotSrc(`/mascot/reply/…`)를 쓴다.
+  const totalMascots = (container: HTMLElement) =>
+    container.querySelectorAll('img[src*="/mascot/reply/"]').length;
+  const replyMascotOf = (container: HTMLElement, messageId: number) =>
     container.querySelector(`[data-message-id="${messageId}"] [data-testid="genius-reply-mascot"]`);
   const motionOf = (container: HTMLElement, messageId: number) =>
-    mascotOf(container, messageId)?.getAttribute("data-motion") ?? null;
-  const motionCount = (container: HTMLElement) =>
-    container.querySelectorAll("[data-motion]").length;
-  const mascotCount = (container: HTMLElement) =>
-    container.querySelectorAll('[data-testid="genius-reply-mascot"]').length;
+    replyMascotOf(container, messageId)?.getAttribute("data-motion") ?? null;
+  const thinkingMascots = (container: HTMLElement) =>
+    container.querySelectorAll('[data-testid="genius-thinking-mascot"]').length;
+  const failedMascots = (container: HTMLElement) =>
+    container.querySelectorAll('[data-testid="genius-typing-mascot"]').length;
+
+  const typeAndSend = async (container: HTMLElement, value: string) => {
+    const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
+    const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(textarea, value);
+      textarea.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    });
+    await waitFor(() => assert.equal((container.querySelector("textarea") as HTMLTextAreaElement).value, value));
+    await act(async () => {
+      container.querySelector('button[aria-label="쪽지 보내기"]')!
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+  };
 
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
-  const root: Root = createRoot(container);
+  let root: Root = createRoot(container);
   try {
     await act(async () => { root.render(React.createElement(Harness)); });
     await waitFor(() => {
       assert.equal(motionOf(container, 150), "excited", "초기 로드: 인사 답변에 excited 모션");
-      assert.equal(motionCount(container), 1);
-      assert.equal(mascotCount(container), 1, "마스코트는 채팅창에 정확히 1개");
+      assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
     });
-    check("DOM: 초기 로드 — 인사 답변 excited, 마스코트·모션 1개", true);
+    check("DOM: 초기 로드 — reply excited, 전체 마스코트 1개", true);
 
     await act(async () => {
       await deliver({
@@ -283,15 +323,28 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(motionOf(container, 250), "headspin", "새 모션이 최신 메시지에 붙는다");
-      assert.equal(mascotOf(container, 150) === null, true,
-        "이전 답변은 정적 마스코트도 없이 완전히 사라진다 (13:53 지시)");
-      assert.equal(motionCount(container), 1, "모션은 항상 정확히 1개");
-      assert.equal(mascotCount(container), 1, "마스코트 자체도 항상 정확히 1개");
-      assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /반갑습니다/,
-        "이전 답변 본문은 그대로 남는다");
+      assert.equal(motionOf(container, 250), "headspin");
+      assert.equal(replyMascotOf(container, 150) === null, true, "이전 답변은 마스코트 자체가 완전히 사라진다 (13:53 지시)");
+      assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
+      assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /반갑습니다/);
     });
-    check("DOM: 새 모션 도착 → 이전 답변 마스코트 완전 제거, 최신 1개만", true);
+    check("DOM: 새 모션 도착 → 이전 답변 마스코트 완전 제거", true);
+
+    // 역순 Realtime — 더 낮은 id 의 답변이 늦게 도착해도 소유권이 되돌아가지 않는다.
+    await act(async () => {
+      await deliver({
+        id: 240, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content: "늦게 도착한 과거 답변입니다.",
+        is_read: false, created_at: "2026-08-15T00:00:03Z", dedup_key: "baseball-genius:199",
+        payload: { type: "baseball_genius_reply", reply_kind: "ack", match_path: "ack", question_message_id: 199, motion: "excited" },
+      });
+    });
+    await waitFor(() => {
+      assert.match(container.querySelector('[data-message-id="240"]')?.textContent ?? "", /늦게 도착한/);
+      assert.equal(replyMascotOf(container, 240) === null, true, "역순 도착한 과거 답변에 마스코트가 붙으면 안 된다");
+      assert.equal(motionOf(container, 250), "headspin", "역순 도착에도 최신 소유권 유지");
+      assert.equal(totalMascots(container), 1);
+    });
+    check("DOM: 역순 Realtime — 소유권 회귀 없음", true);
 
     await act(async () => {
       await deliver({
@@ -302,30 +355,69 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.equal(motionOf(container, 350), "bored");
-      assert.equal(mascotOf(container, 250) === null, true, "직전 답변 마스코트 제거");
-      assert.equal(motionCount(container), 1);
-      assert.equal(mascotCount(container), 1);
+      assert.equal(totalMascots(container), 1);
     });
-    check("DOM: 거절 bored 모션도 같은 규칙(마스코트·모션 최신 1개)", true);
+    check("DOM: 거절 bored 도 같은 규칙", true);
 
-    // 폐쇄집합 밖 모션 — 새 메시지가 와도 모션이 붙지 않고, 기존 최신(bored)이 유지된다.
+    // 새 질문 전송 → 생각중 말풍선이 마스코트를 소유한다 (reply 마스코트는 사라진다).
+    await typeAndSend(container, "새 질문입니다");
+    await waitFor(() => {
+      assert.equal(thinkingMascots(container), 1, "생각중 마스코트가 소유권을 가진다");
+      assert.equal(replyMascotOf(container, 350) === null, true, "생각중이 뜨면 이전 답변 마스코트는 사라진다");
+      assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
+    });
+    check("DOM: 새 질문 → thinking 소유권 이동(답변 마스코트 제거)", true);
+
+    // failed — 같은 질문의 재시도 버블이 소유권을 가진다(생각중 말풍선 마스코트는 숨는다).
+    const stored = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<Record<string, unknown>>;
+    for (const entry of stored) {
+      if (entry.messageId === 501) { entry.attempts = BASEBALL_QA_MAX_ATTEMPTS; entry.acknowledged = false; }
+    }
+    dom.window.localStorage.setItem(BASEBALL_QA_OUTBOX_KEY, JSON.stringify(stored));
+    await act(async () => { dom.window.dispatchEvent(new dom.window.Event("online")); });
+    await waitFor(() => {
+      assert.equal(failedMascots(container), 1, "failed 재시도 버블이 마스코트를 소유한다");
+      assert.equal(thinkingMascots(container), 0, "같은 질문의 생각중 마스코트는 숨는다(문장은 유지)");
+      assert.ok(container.querySelector('[data-testid="genius-thinking-bubble"]'), "생각중 문장 기록은 남는다");
+      assert.equal(totalMascots(container), 1);
+    });
+    check("DOM: failed → 재시도 버블 소유권(동일 질문 우선순위 failed>thinking)", true);
+
+    // failed 가 남아 있는 채 두 번째 질문 → 최신 thinking 이 소유. failed 마스코트는 숨는다.
+    await typeAndSend(container, "두 번째 질문입니다");
+    await waitFor(() => {
+      assert.equal(thinkingMascots(container), 1, "최신 질문의 생각중이 소유권을 가진다");
+      assert.equal(failedMascots(container), 0, "과거 failed 마스코트는 숨는다(재시도 버튼은 유지)");
+      assert.ok(container.querySelector('[data-state="failed"] button'), "재시도 버튼 기능은 남는다");
+      assert.equal(totalMascots(container), 1);
+    });
+    check("DOM: failed 잔존 + 새 질문 → 최신 thinking 소유권", true);
+
+    // 답변 도착 → reply 가 소유권을 되찾고 모션이 입혀진다.
     await act(async () => {
       await deliver({
-        id: 450, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content: "미래 모션 값입니다.",
-        is_read: false, created_at: "2026-08-15T00:00:08Z", dedup_key: "baseball-genius:401",
-        payload: { type: "baseball_genius_reply", reply_kind: "ack", match_path: "ack", question_message_id: 401, motion: "sparkle" },
+        id: 650, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content: "도움이 됐다니 기쁩니다.",
+        is_read: false, created_at: "2026-08-15T00:00:16Z", dedup_key: "baseball-genius:601",
+        payload: { type: "baseball_genius_reply", reply_kind: "ack", match_path: "ack", question_message_id: 601, motion: "headspin" },
       });
     });
     await waitFor(() => {
-      assert.ok(container.querySelector('[data-message-id="450"]'), "미지 모션 메시지도 본문은 렌더된다");
-      // 최신 봇 답변이므로 마스코트는 붙되, 폐쇄집합 밖 모션 값은 정적으로 강등된다.
-      assert.equal(mascotOf(container, 450) !== null, true, "최신 답변엔 마스코트가 붙는다");
-      assert.equal(motionOf(container, 450), null, "폐쇄집합 밖 값은 모션 없음(정적)");
-      assert.equal(mascotOf(container, 350) === null, true, "이전 답변 마스코트 제거");
-      assert.equal(motionCount(container), 0, "유효 모션이 없으면 모션 0개");
-      assert.equal(mascotCount(container), 1, "마스코트는 여전히 정확히 1개");
+      assert.equal(motionOf(container, 650), "headspin", "답변 도착 → reply 소유권 복귀 + 모션");
+      assert.equal(thinkingMascots(container), 0);
+      assert.equal(totalMascots(container), 1);
     });
-    check("DOM: 폐쇄집합 밖 값 — 최신엔 정적 마스코트만, 이전 제거 유지", true);
+    check("DOM: 답변 도착 → thinking→reply 교체", true);
+
+    // reload 재진입 — 같은 데이터로 새 인스턴스를 띄워도 최신 1개 그대로다.
+    await act(async () => { root.unmount(); });
+    container.replaceChildren();
+    root = createRoot(container);
+    await act(async () => { root.render(React.createElement(Harness)); });
+    await waitFor(() => {
+      assert.equal(motionOf(container, 650), "headspin", "reload 후에도 최신 답변에만");
+      assert.equal(totalMascots(container), 1, "reload 후에도 전체 1개");
+    });
+    check("DOM: reload 재진입 — 최신 1개 불변", true);
   } finally {
     await act(async () => { root.unmount(); });
     container.remove();
@@ -336,14 +428,14 @@ async function partDom() {
 }
 
 async function main() {
-  await partPipeline();
+  await partMapping();
   await partPayload();
   await partDom();
   if (failures.length > 0) {
     console.error(`\n❌ genius mascot motion FAIL: ${failures.length}건 — ${failures.join(" | ")}`);
     process.exit(1);
   }
-  console.log(`\n✅ genius mascot motion: ${pass} PASS (매핑 실실행 + payload 조립 + 폐쇄집합 + 최신 1개만 DOM)`);
+  console.log(`\n✅ genius mascot motion: ${pass} PASS (매핑 SSOT + 단일 지점 배선 + 폐쇄집합 + 전체 마스코트 ≤1 DOM)`);
   process.exit(0);
 }
 

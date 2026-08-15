@@ -690,14 +690,28 @@ export interface QaResult {
    * 클라가 그 문구에 하이퍼링크를 씌운다 (하린아빠 2026-08-05 P0).
    */
   sourceUrl?: string;
-  /**
-   * 마스코트 모션 (SSOT §7.6 — 인사→신남 / 감사·칭찬→헤드스핀 / 거절→심심함).
-   * smalltalk(ack)·결정론 거절(scope_guide·blocked)에서만 채운다. 되묻기·오류·지식
-   * 답변에는 모션을 붙이지 않는다 — 모션은 감정 반응 전용이다(unsure LLM 거절 확장은
-   * 별도 트랙). 타입은 constants/baseball-genius.ts 의 GeniusMascotMotion 과 구조적으로
-   * 동일하나 순환 import 를 피하려고 리터럴로 적는다(구조적 타이핑).
-   */
-  motion?: "excited" | "headspin" | "bored";
+}
+
+/**
+ * 마스코트 모션 매핑 SSOT (§7.6 — 인사→신남 / 감사·칭찬→헤드스핀 / 거절→심심함).
+ *
+ * ⚠️ 계산은 **payload 조립 직전 단일 지점**(server.ts 의 composeGeniusReplyPayload 호출부)에서
+ * (source, question) 만으로 한다 — QaResult 에 실어 나르면 안 되는 이유 2가지(삼순 #1197 NO-GO):
+ *  ① durable 재시도(claimState="ready")는 job 행에서 result 를 재구성하므로 실어보낸 모션이 소실된다.
+ *  ② 길이 위반 등 결정론 blocked 조기 반환이 여러 곳이라 각자 붙이면 누락이 생긴다.
+ * (source, question) 은 둘 다 결정론 입력이라 어느 경로로 오든 같은 답이 나온다.
+ *
+ * 매핑: ack → 인사면 excited, 아니면(감사·칭찬) headspin / scope_guide·blocked 거절 → bored /
+ * 그 외(되묻기·오류·지식 답변) → 없음. 모션은 감정 반응 전용이다(unsure LLM 거절 확장은 별도 트랙).
+ * 반환 타입은 constants 의 GeniusMascotMotion 과 구조적으로 동일(순환 import 회피 리터럴).
+ */
+export function geniusMotionForResult(
+  source: string,
+  question: string,
+): "excited" | "headspin" | "bored" | undefined {
+  if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
+  if (source === "scope_guide" || source === "blocked") return "bored";
+  return undefined;
 }
 
 export interface QaDeps {
@@ -4817,14 +4831,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
-    // 마스코트 모션 (§7.6) — 이 블록이 smalltalk·결정론 거절의 단일 종결지점이므로
-    // 매핑도 여기서 한다. 인사/감사 판정은 답변 문구가 아니라 **같은 판정기**
-    // (isGreetingPhrase)를 탄다 — 팀 카피 치환으로 answer 가 바뀌어도 모션은 안 갈린다.
-    const motion: QaResult["motion"] =
-      route === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :
-      route === "scope_guide" || route === "blocked" ? "bored" :
-      undefined;
-    return { status: 200, answer, source: route, remaining: quotaRemaining, ...(motion ? { motion } : {}) };
+    // 모션은 여기서 싣지 않는다 — payload 조립 직전 단일 지점에서 geniusMotionForResult 로
+    // 계산한다(durable 재시도·조기 blocked 반환까지 동일 계산을 타게 — 함수 문서 참조).
+    return { status: 200, answer, source: route, remaining: quotaRemaining };
   }
 
   // ① 검수 사전 (토큰 0)

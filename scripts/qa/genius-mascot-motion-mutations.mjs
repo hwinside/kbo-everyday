@@ -8,6 +8,7 @@ const TARGETS = [
   "src/lib/baseball-qa/pipeline.ts",
   "src/app/(main)/messages/[conversationId]/page.tsx",
   "src/lib/constants/baseball-genius.ts",
+  "src/lib/baseball-qa/server.ts",
 ];
 const originals = new Map(TARGETS.map((file) => [file, fs.readFileSync(file, "utf8")]));
 const restore = () => {
@@ -21,23 +22,24 @@ const mutations = [
   {
     name: "M1 인사/감사 매핑 훼손 (greeting에도 headspin)",
     file: TARGETS[0],
-    from: 'route === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :',
-    to: 'route === "ack" ? "headspin" :',
-    expect: "인사 → motion excited",
+    from: 'if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";',
+    to: 'if (source === "ack") return "headspin";',
+    expect: "인사 → excited",
   },
   {
     name: "M2 거절 bored 매핑 삭제",
     file: TARGETS[0],
-    from: 'route === "scope_guide" || route === "blocked" ? "bored" :',
+    from: '  if (source === "scope_guide" || source === "blocked") return "bored";\n',
     to: "",
-    expect: "scope_guide 거절) → motion bored",
+    expect: "bored",
   },
   {
-    name: "M3 최신 1개만 훼손 (모든 봇 답변에 마스코트·모션 부착)",
+    name: "M3 reply 최신 1개 훼손 (모든 봇 답변에 마스코트 부착)",
     file: TARGETS[1],
-    from: "msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId",
+    from: `msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId &&
+              mascotOwner.kind === "reply"`,
     to: "msg.sender_id === BASEBALL_GENIUS_USER_ID",
-    // 이 변이는 "이전 답변은 정적 마스코트도 없이 완전히 사라진다" assertion 에서 죽는다.
+    // 이 변이는 "이전 답변 마스코트 완전 제거" assertion 에서 먼저 죽는다(전 봇 답변 부착).
     expect: "완전히 사라진다",
   },
   {
@@ -57,6 +59,34 @@ const mutations = [
     to: `  if (motion === undefined) return null;
   return motion as GeniusMascotMotion;`,
     expect: "폐쇄집합",
+  },
+  {
+    name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
+    file: TARGETS[3],
+    from: "{ ...result, motion: geniusMotionForResult(result.source, question) }",
+    to: "result",
+    expect: "server 배선",
+  },
+  {
+    name: "M7 thinking showMascot 소유권 우회 (항상 노출)",
+    file: TARGETS[1],
+    from: 'showMascot={mascotOwner.kind === "thinking" && mascotOwner.id === msg.id}',
+    to: "showMascot={true}",
+    expect: "생각중 마스코트는 숨는다",
+  },
+  {
+    name: "M8 failed showMascot 소유권 우회 (항상 노출)",
+    file: TARGETS[1],
+    from: 'showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}',
+    to: "showMascot={true}",
+    expect: "failed 마스코트는 숨는다",
+  },
+  {
+    name: "M9 역순 방어 훼손 (마지막 도착이 소유권 탈취)",
+    file: TARGETS[1],
+    from: "      if (latest === null || m.id > latest) latest = m.id;",
+    to: "      latest = m.id;",
+    expect: "역순",
   },
 ];
 

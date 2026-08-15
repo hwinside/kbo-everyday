@@ -240,7 +240,12 @@ check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", 
   assert.match(constants, /type:\s*"baseball_genius_reply"/, "payload type 없음");
   assert.match(constants, /reply_kind:\s*replyKindForMatchPath\(result\.source\)/, "의미 분류 reply_kind 없음");
   assert.match(constants, /match_path:\s*result\.source/, "실제 유형 대신 고정값을 쓰고 있음");
-  assert.match(server, /composeGeniusReplyPayload\(result,\s*messageId\)/, "server 가 조립 함수를 소비하지 않음");
+  // motion 은 단일 지점에서 (source, question) 결정론 계산으로 실린다(삼순 #1197 ②③).
+  assert.match(
+    server,
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion: geniusMotionForResult\(result\.source, question\) \},\s*messageId,?\s*\)/,
+    "server 가 조립 함수를 단일 지점 motion 계산과 함께 소비하지 않음",
+  );
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
   assert.ok(call.indexOf("replyPayload") > 0 && call.indexOf("replyPayload") < 400, "발송 호출에 payload 미전달");
