@@ -15,17 +15,22 @@ import { interviewPlayerLinks } from "@/lib/video/postgame-interviews-route-poli
 // audience 1회 발송**으로 바꾸면 그 축들이 구조적으로 사라진다:
 //
 //  - 발송 단위 = 영상 1건 · 푸시 1회. 확정된 모든 선수의 팬을 합집합으로 모아
-//    한 번에 보낸다 → 같은 유저가 같은 영상으로 2번 받을 경로 자체가 없다.
-//    run 사이 최애 변경도 무관(재조회·과거 수신자 원장 불필요).
+//    한 번에 보낸다 → **한 run 안에서** 선수 overlap(두 수훈선수를 동시에 최애로
+//    둔 유저)으로 2번 받을 경로가 사라진다. run 사이 최애 변경도 무관
+//    (재조회·과거 수신자 원장 불필요).
+//    단 이것은 run 내 dedupe일 뿐 재시도 중복까지 막지 않는다 — 아래 참조.
 //  - 동시 실행 배제 = **row lease**(notify_state pending→processing + lease_until).
 //    lease를 잡은 run만 발송한다. 다른 run은 in-flight 행을 아예 못 본다.
 //    lease가 만료된 processing 행은 그 run이 죽은 것 → 재획득.
 //  - best-effort 중복 방어 = **sent 마커**(notified_score_events,
 //    `interview#{gameId}#{videoId}`). 발송 성공 직후 기록한다. markSent가 실패해 행이
 //    processing으로 남으면 lease 만료 후 마커를 보고 재발송 없이 sent로 회복한다.
-//    단, FCM 성공 직후 마커 기록 전 프로세스가 죽는 좁은 crash gap은 at-least-once
-//    특성상 중복 1회가 가능하다. 하린아빠가 2026-08-15 B안(희소 중복 허용)을 명시
-//    승인했다. collapse key를 idempotency로 오인하지 않는다. 유실보다 희소 중복을 택함.
+//    단 at-least-once라 **재시도 중복에는 상한이 없다**: ①FCM 성공 직후 마커 기록 전
+//    crash ②일부 토큰만 transient 실패(retryableFailed>0)해 행 전체를 release하고
+//    다음 run이 union 전체에 재발송 — 둘 다 이미 받은 유저에게 다시 갈 수 있고,
+//    실패가 반복되면 그만큼 반복된다("중복 1회"가 아니다). 하린아빠가 2026-08-15
+//    B안(유실보다 희소 중복)을 명시 승인했다. collapse key를 idempotency로 오인하지
+//    않는다 — 미배달 coalescing일 뿐 배달된 알림의 중복을 막지 못한다.
 //  - unclaim이라는 개념이 없다. 실패 복구는 전부 lease 해제(pending 복귀)로 한다.
 //    해제 자체가 실패해도 lease 만료가 최종 안전망이라 은폐되는 실패가 없다.
 //
@@ -76,12 +81,19 @@ export interface InterviewDeps {
   insertSentMarker: (gameId: string, videoId: string) => Promise<boolean>;
   /** kboId를 최애선수로 둔 유저 id. */
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
-  /** 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행. */
+  /**
+   * 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행.
+   *
+   * retryableFailed = transient 실패로 **다음 run 재시도가 필요한 토큰 수**.
+   * FCM 배치는 토큰 일부가 server-unavailable/quota/deadline-미시도여도 배치 자체는
+   * ok:true 를 유지한다. ok 만 보고 종결하면 그 토큰들이 영구 유실되므로
+   * (B안 = 유실보다 중복) 0보다 크면 발송 미완으로 취급한다.
+   */
   sendPush: (
     userIds: string[],
     payload: { title: string; body: string; url: string },
     prefKey: typeof INTERVIEW_PREF_KEY,
-  ) => Promise<{ ok: boolean }>;
+  ) => Promise<{ ok: boolean; retryableFailed?: number }>;
 }
 
 export interface InterviewNotifySummary {
@@ -93,6 +105,8 @@ export interface InterviewNotifySummary {
   settledNoAudience: number;
   /** 실패/불확실 → lease 해제, 다음 run 재시도. */
   released: number;
+  /** ok:true 였지만 transient 실패 토큰이 남아 release한 행 수 — 관측용. */
+  releasedPartialDelivery: number;
   /** 마커 기록 실패(발송은 성공, 행 상태로만 방어 중) — 관측용. */
   markerWriteFailures: number;
 }
@@ -106,7 +120,8 @@ export async function notifyFavPlayerInterviews(
 ): Promise<InterviewNotifySummary> {
   const summary: InterviewNotifySummary = {
     leased: 0, sent: 0, recoveredFromMarker: 0, settledUnresolved: 0,
-    settledNoAudience: 0, released: 0, markerWriteFailures: 0,
+    settledNoAudience: 0, released: 0, releasedPartialDelivery: 0,
+    markerWriteFailures: 0,
   };
 
   const leased = await deps.leasePendingInterviews();
@@ -181,6 +196,15 @@ export async function notifyFavPlayerInterviews(
       if (!result.ok) {
         releaseRowIds.push(interview.id);
         summary.released++;
+        continue;
+      }
+      // ok:true 여도 transient 실패 토큰이 남았으면 발송은 미완이다.
+      // 여기서 marker+sent 로 종결하면 그 토큰들은 영구 유실된다(삼순 최종 NO-GO P0).
+      // B안 계약대로 유실 대신 중복을 택해 release → 다음 run 이 union 전체에 재발송.
+      if ((result.retryableFailed ?? 0) > 0) {
+        releaseRowIds.push(interview.id);
+        summary.released++;
+        summary.releasedPartialDelivery++;
         continue;
       }
       if (!(await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false))) {
