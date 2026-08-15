@@ -604,6 +604,14 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       /identity conflict/,
     );
   });
+  await check("2025 분기 결속: renumberRanks · assertNoRowLoss 가 응답 경로에 묶여있다", () => {
+    // ⚠️ 구조 결속 검사. assertNoRowLoss 를 떼기만 하면 현재 static 으로는 응답이 똑같아
+    // 행동 검사로는 잡힐 수 없다(가드는 앞으로 유입될 소스 변형을 막는 장치다).
+    // 그래서 “응답 직전에 두 계약이 실제로 호출된다”를 소스에서 결속한다.
+    const src = readFileSync(new URL("../../src/app/api/stats/route.ts", import.meta.url), "utf8");
+    assert.ok(/renumberRanks\(collapseIdenticalStatRows\(/.test(src), "2025 분기가 renumberRanks 를 거치지 않는다");
+    assert.ok(/assertNoRowLoss\(\s*stats\s*,\s*raw\s*,/.test(src), "2025 분기에 assertNoRowLoss 호출이 없다");
+  });
   await check("renumberRanks: 중복 접기 후 rank 가 1..N 으로 재부여된다", async () => {
     const { renumberRanks } = await import("../../src/app/api/stats/route");
     const out = renumberRanks([
