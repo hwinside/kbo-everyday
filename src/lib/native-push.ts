@@ -1,6 +1,7 @@
 "use client";
 
-import { isNative, platform } from "@/lib/capacitor/platform";
+import { registerPlugin } from "@capacitor/core";
+import { isNative, isIosNativeRuntime, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
@@ -244,11 +245,45 @@ export async function listenForNotificationTap(): Promise<void> {
   try {
     const { FirebaseMessaging } = await loadMessaging();
     await FirebaseMessaging.addListener("notificationActionPerformed", (event) => {
-      const data = (event.notification?.data ?? {}) as Record<string, unknown>;
-      const url = typeof data.url === "string" ? data.url : null;
-      if (url && url.startsWith("/")) window.location.href = url;
+      const data = toDataRecord(event.notification?.data);
+      // notificationUrl — 상대경로 외에 same-origin 절대 URL도 앱 내 경로로 수용
+      const url = notificationUrl(data);
+      if (url) window.location.href = url;
     });
   } catch {
     // silent
+  }
+}
+
+interface PushDeepLinkPlugin {
+  consume(): Promise<{ url?: string }>;
+}
+
+/**
+ * iOS cold-start 푸시 탭 딥링크 회수.
+ *
+ * 앱이 완전 종료된 상태에서 알림을 탭해 launch되면 웹뷰/브릿지가 아직 없어
+ * notificationActionPerformed가 유실될 수 있는 iOS 고질 이슈 보완 —
+ * AppDelegate가 launch payload의 url을 UserDefaults에 보관해두면(1.0.14+),
+ * 웹 부팅 직후 여기서 1회 회수해 해당 페이지로 이동한다.
+ *
+ * - 원격 로드(server.url) 앱은 npm core가 'web' 오판할 수 있어 isIosNativeRuntime +
+ *   주입 브릿지(window.Capacitor.Plugins) 우선 호출(dual-instance 우회, #484/#833 축).
+ * - 구버전 네이티브 빌드(플러그인 없음)에서는 호출 실패 → silent no-op.
+ */
+export async function consumePendingPushDeepLink(): Promise<void> {
+  if (!isIosNativeRuntime()) return;
+  try {
+    const injected = typeof window !== "undefined"
+      ? (window as unknown as { Capacitor?: { Plugins?: { PushDeepLink?: PushDeepLinkPlugin } } })
+        .Capacitor?.Plugins?.PushDeepLink
+      : undefined;
+    const plugin = injected ?? registerPlugin<PushDeepLinkPlugin>("PushDeepLink");
+    const { url } = await plugin.consume();
+    if (typeof url !== "string" || !url.startsWith("/") || url.startsWith("//")) return;
+    const current = window.location.pathname + window.location.search;
+    if (current !== url) window.location.replace(url);
+  } catch {
+    // 구빌드(플러그인 미탑재)/브릿지 오류 — 딥링크는 부가 기능, 앱 동작 무영향
   }
 }

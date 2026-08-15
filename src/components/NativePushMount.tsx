@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 import { isNative } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap } from "@/lib/native-push";
+import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap, consumePendingPushDeepLink } from "@/lib/native-push";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken, autoStartMyTeamLiveActivity } from "@/lib/native-live-activity";
 import { bootstrapAndroidLockCardGate } from "@/lib/capacitor/game-notification";
 import { listenForAndroidBackButton } from "@/lib/native-back-button";
@@ -23,6 +23,9 @@ export function NativePushMount() {
     // Android 뒤로가기 처리 — 자체적으로 Android 네이티브를 판정(주입 브릿지 폴백 포함)하므로
     // 원격 로드 시 npm core의 isNative 오판(web) 케이스에도 동작하도록 게이트 앞에서 호출.
     void listenForAndroidBackButton();
+    // iOS cold-start 푸시 탭 딥링크 회수 — notificationActionPerformed 유실 보완(1.0.14+).
+    // 자체 iOS 런타임 판정(주입 브릿지 폴백)을 하므로 isNative 게이트 앞에서 호출.
+    void consumePendingPushDeepLink();
     if (!isNative) return;
     void syncNativePushToken();
     void listenForTokenRefresh();

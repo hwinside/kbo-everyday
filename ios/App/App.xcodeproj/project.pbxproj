@@ -38,6 +38,7 @@
 		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
 		AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */; };
 		B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */; };
+		B001A7732FE0000000000001 /* PushDeepLinkPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */; };
 		B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */; };
 		ABCD00000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000001 /* Assets.xcassets */; };
 		ABCD00000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ABCD00000000000000000003 /* Assets.xcassets */; };
@@ -141,6 +142,7 @@
 		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VenueMediaLibraryPlugin.swift; sourceTree = "<group>"; };
 		B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserPlugin.swift; sourceTree = "<group>"; };
+		B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushDeepLinkPlugin.swift; sourceTree = "<group>"; };
 		B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserSupport.swift; sourceTree = "<group>"; };
 		ABCD00000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ABCD00000000000000000003 /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -297,6 +299,7 @@
 				AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */,
 				B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */,
 				B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */,
+				B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				8C0B1A992FDB001000000001 /* LiveActivityController.swift */,
@@ -536,6 +539,7 @@
 				AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */,
 				B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */,
 				B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */,
+				B001A7732FE0000000000001 /* PushDeepLinkPlugin.swift in Sources */,
 				1FB9D552D369B5999B046BE8 /* WatchSyncManager.swift in Sources */,
 				08E32B4C8D8F8FA4802047ED /* ChannelAckPolicy.swift in Sources */,
 				08E32B4D8D8F8FA4802047EE /* ChannelMigrationPolicy.swift in Sources */,
