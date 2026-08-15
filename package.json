@@ -418,8 +418,7 @@
     "qa:genius-tone-concurrency": "bash scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh",
     "qa:native-push-deeplink:mutations": "node scripts/qa/native-push-deeplink-mutations.mjs",
     "qa:stats-kboid-identity": "tsx scripts/qa/stats-kboid-identity-smoke.ts",
-    "qa:live-detail-provenance:selftest": "tsx scripts/qa/live-detail-provenance-gate.ts --selftest",
-    "qa:native-push-deeplink:mutations": "node scripts/qa/native-push-deeplink-mutations.mjs",
+    "qa:live-detail-provenance:selftest": "tsx scripts/qa/live-detail-provenance-gate.ts --selftest"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
