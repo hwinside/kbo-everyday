@@ -10,6 +10,7 @@
     "qa:featured-card-contrast": "tsx scripts/qa/featured-card-contrast-gate.mjs",
     "qa:featured-card-contrast:selftest": "tsx scripts/qa/featured-card-contrast-gate.mjs --selftest",
     "qa:games-card-render": "tsx scripts/qa/featured-card-render-capture.mts",
+    "qa:games-card-render:mutations": "node scripts/qa/games-card-render-mutations.mjs",
     "qa:live-detail-provenance": "tsx scripts/qa/live-detail-provenance-gate.ts",
     "qa:player-link-prefetch": "node scripts/qa/player-link-prefetch-gate.mjs",
     "qa:player-link-prefetch:selftest": "node scripts/qa/player-link-prefetch-gate.mjs --selftest",

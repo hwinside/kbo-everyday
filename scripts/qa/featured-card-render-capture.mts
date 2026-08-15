@@ -263,7 +263,7 @@ async function main() {
               // regex 로 rgb 만 받으면 파싱 실패해 검정(0,0,0)으로 잡히고, 멀줦한 콜론이
               // 2.68:1 로 찍혀 false-RED 가 된다(실측 확인됨). canvas 로 브라우저에게
               // 직접 해석시켜 어떤 색 표기법이든 실제 rgba 로 받는다.
-              const cx = document.createElement("canvas").getContext("2d")!;
+              const cx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
               const parseRgb = (v: string): [number, number, number, number] => {
                 const m = /rgba?\(([^)]+)\)/.exec(v);
                 if (m && !v.includes("oklab") && !v.includes("color(")) {
@@ -275,10 +275,28 @@ async function main() {
                 cx.fillStyle = v;
                 cx.fillRect(0, 0, 1, 1);
                 const d = cx.getImageData(0, 0, 1, 1).data;
-                // canvas 는 알파를 미리 곱해 저장하므로 원본 채널값으로 되돌린다.
-                const a = d[3] / 255;
-                return a === 0 ? [0, 0, 0, 0] : [d[0] / a, d[1] / a, d[2] / a, a];
+                // getImageData 는 이미 straight(un-premultiplied) RGBA 를 돌려준다.
+                // 직전 버전은 여기서 다시 α 로 나누는 이중 un-premultiply 를 해
+                // white/80 채널이 318.75 까지 부풀었다(삼순 P1). 그대로 쓴다.
+                return [d[0], d[1], d[2], d[3] / 255];
               };
+              // 색 파서 calibration — 기준색 3종이 허용오차(채널 ±3 · α ±0.02) 밖이면
+              // 측정 전체를 신뢰할 수 없으므로 그 자리에서 죽는다(fail-close).
+              {
+                const calib: Array<[string, [number, number, number, number]]> = [
+                  ["rgb(140, 56, 0)", [140, 56, 0, 1]],
+                  ["rgba(255, 255, 255, 0.8)", [255, 255, 255, 0.8]],
+                  ["oklab(0.999994 0.0000455677 0.0000200868 / 0.8)", [255, 255, 255, 0.8]],
+                ];
+                for (const [input, want] of calib) {
+                  const got = parseRgb(input);
+                  const chOk = [0, 1, 2].every((i) => Math.abs(got[i] - want[i]) <= 3);
+                  const aOk = Math.abs(got[3] - want[3]) <= 0.02;
+                  if (!chOk || !aOk) {
+                    throw new Error(`색 파서 calibration 실패: ${input} → [${got.map((x) => x.toFixed(1)).join(",")}] (기대 [${want.join(",")}])`);
+                  }
+                }
+              }
               const srgb = (c: number) => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
               const lum = (c: [number, number, number]) => 0.2126 * srgb(c[0]) + 0.7152 * srgb(c[1]) + 0.0722 * srgb(c[2]);
               const ratio = (a: [number, number, number], b: [number, number, number]) => {
@@ -331,6 +349,7 @@ async function main() {
                 label,
                 logoLeft: logos.length ? logos[logos.length >= 2 ? logos.length - 2 : 0] : -1,
                 logoRight: logos.length >= 2 ? logos[logos.length - 1] : -1,
+                logoCount: imgs.length,
                 logoNaturalMin: logoNatural.length ? Math.min(...logoNatural) : -1,
                 overflowPx: overflow,
                 heightPx: Math.round(card.getBoundingClientRect().height),
@@ -391,10 +410,15 @@ async function main() {
       if (typeof colon === "number" && colon >= 0 && colon < colonNeed) {
         console.error(`  ❌ 콜론 대비 미달 ${k} :: ${r.label} = ${colon}:1 (필요 ${colonNeed})`); bad++;
       }
-      // 로고가 실제로 로드되었는가(root-relative 경로라 미로드면 빈 칸이 된다)
+      // 로고 실재 증명 — 직전에는 이미지 0개일 때 logoNaturalMin=-1 이 통과해
+      // "로고 검증"이 빈 카드에서 헛돌았다(삼순 P1). 양팀 로고 ≥2 + 전부 디코딩되어야 한다.
+      const cnt = r.logoCount as number;
+      if (typeof cnt !== "number" || cnt < 2) {
+        console.error(`  ❌ 팀 로고 부족(${cnt ?? "없음"}개 < 2) ${k} :: ${r.label}`); bad++;
+      }
       const nat = r.logoNaturalMin as number;
-      if (typeof nat === "number" && nat >= 0 && nat === 0) {
-        console.error(`  ❌ 로고 미로드(naturalWidth=0) ${k} :: ${r.label}`); bad++;
+      if (typeof nat !== "number" || nat <= 0) {
+        console.error(`  ❌ 로고 미로드(naturalWidth=${nat}) ${k} :: ${r.label}`); bad++;
       }
       // fixture 가 의도한 문자열이 실제로 렌더됐는가(필드명 불일치 방지)
       const want = EXPECT_TEXT[r.label as string];
