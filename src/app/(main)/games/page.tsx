@@ -155,15 +155,15 @@ export default function GamesPage() {
     return () => requestCoordinator.dispose();
   }, [loadGames, requestCoordinator, selectedDate]);
 
-  // 예정/라이브/종료 경기 구장의 날씨 로드 (날씨는 부가 정보 — 실패해도 조용히 무시)
-  // 종료 경기도 카드에 경기시각 기준 기온을 노출하므로 fetch 대상에 포함한다.
-  // (취소 경기는 카드에서 날씨를 렌더하지 않으므로 제외 — 불필요한 구장 키로 캐시가 갈리는 것 방지)
+  // 예정/라이브 경기 구장의 날씨 로드 (날씨는 부가 정보 — 실패해도 조용히 무시)
+  // 종료·취소 경기는 카드에서 날씨를 렌더하지 않으므로 fetch 대상에서 제외한다
+  // (하린아빠 2026-08-15: "종료카드에 날씨가 뜰 필요는 없지").
   useEffect(() => {
     // 날짜 전환 직후엔 games가 아직 이전 날짜 것일 수 있다 — 목록 로드가 끝나
     // games와 selectedDate가 정합일 때만 fetch (이전 구장 세트로 캐시가 잠기는 것 방지)
     if (loading) return;
     const stadiums = [...new Set(
-      games.filter(g => g.status !== "cancelled").map(g => g.stadium)
+      games.filter(g => g.status === "scheduled" || g.status === "live").map(g => g.stadium)
     )].sort();
     if (stadiums.length === 0) return;
     const key = `${selectedDate}|${stadiums.join(",")}`;

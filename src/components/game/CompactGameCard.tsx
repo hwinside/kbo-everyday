@@ -10,7 +10,7 @@ import BroadcastBadges from "@/components/game/BroadcastBadges";
 interface CompactGameCardProps {
   isPreseason?: boolean;
   myTeamId?: number | null;
-  /** 경기 시간 기준 구장 날씨 (예정=예보, 라이브=실시간, 종료=경기시각 검증값). null/undefined면 미노출 */
+  /** 경기 시간 기준 구장 날씨 (예정=예보, 라이브=실시간). 종료·취소는 미노출. null/undefined면 미노출 */
   weather?: GameWeather | null;
   /**
    * 오늘이 아닌 날짜의 경기를 오늘 화면에 얹어 보여줄 때(MY TEAM 다음 경기 카드) 넘긴다.
@@ -158,8 +158,12 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
           {isPreseason && (
             <span className="rounded bg-yellow-500/15 px-1 text-[9px] font-medium leading-[14px] text-yellow-500">시범</span>
           )}
-          {/* 날씨 — 예정=경기시각 예보, 라이브=실시간, 종료=경기시각 검증값. 값 없으면 렌더 안 함 */}
-          {weather && !isCancelled && (
+          {/*
+            날씨 — 예정=경기시각 예보, 라이브=실시간. 값 없으면 렌더 안 함.
+            종료·취소 경기는 날씨를 보여주지 않는다 — 이미 끝난 경기의 기온은 사용자에게 쓸모가 없다
+            (하린아빠 2026-08-15: "종료카드에 날씨가 뜰 필요는 없지").
+          */}
+          {weather && (isScheduled || isLive) && (
             <span
               className={`whitespace-nowrap text-[10px] ${
                 weather.pop !== null && weather.pop >= 60 ? "font-semibold text-amber-400" : "text-text-tertiary"
@@ -168,7 +172,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
             >
               {weather.emoji}
               {weather.temp !== null && ` ${weather.temp}°`}
-              {weather.indoor ? " · 돔" : weather.pop !== null && !isFinal ? ` · ${weather.pop}%` : ""}
+              {weather.indoor ? " · 돔" : weather.pop !== null ? ` · ${weather.pop}%` : ""}
             </span>
           )}
           <span className="flex-1" />
