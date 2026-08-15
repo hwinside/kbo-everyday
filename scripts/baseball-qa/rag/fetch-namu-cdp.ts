@@ -23,18 +23,22 @@
  *
  * ── 전송 결속 계약 (2026-08-16 삼순 P0 반영) ─────────────────────────────────────
  *   - `Page.navigate` 응답의 `errorText`는 즉시 실패다(net::ERR_* 등) — 조용히 넘기지 않는다.
- *   - 문서 status·로드 완료는 navigate가 돌려준 **frameId/loaderId에 exact 결속**한다:
- *     `Network.responseReceived`(type=Document)와 `Page.frameStoppedLoading`을 frameId로
- *     필터해, about:blank·iframe·다른 탭의 이벤트가 조기 완료시키는 경로를 차단한다.
+ *   - 문서 status·로드 완료는 navigate가 돌려준 **frameId+loaderId에 exact 결속**한다:
+ *     `Network.responseReceived`(type=Document)와 `Page.lifecycleEvent`를 둘 다 frameId+
+ *     loaderId로 필터해, about:blank·iframe·다른 탭은 물론 **같은 main frame의 stale
+ *     이전 loader**(navigate 이전 세대) 이벤트까지 차단한다 — frameId만으로는
+ *     이전/현재 로드를 구분 못 해 stale/partial DOM을 수확할 수 있다(삼순 7차 P0).
+ *     loaderId가 없는 navigate 응답은 결속 불가 → fail-close.
  *   - cleanup(`Target.closeTarget`) 실패는 **fail-close**다: fetch가 성공했어도 결과를
  *     blocked(`cdp_cleanup_failed`)로 바꿔 전역 중단시킨다 — 488회 탭 누적 방지.
  *
  * 전송 절차 (요청 1건):
  *   1. browser WebSocket `Target.createTarget` — 새 탭 생성
  *   2. `/devtools/page/<targetId>` page WebSocket 접속 → `Page.enable` + `Network.enable`
- *   3. `Page.navigate` → `{frameId, loaderId, errorText}` — errorText면 실패
- *   4. frameId 결속 `Page.frameStoppedLoading` 대기, frameId/loaderId 결속
- *      `Network.responseReceived`(type=Document)로 HTTP status 포착
+ *      + `Page.setLifecycleEventsEnabled(enabled:true)`
+ *   3. `Page.navigate` → `{frameId, loaderId, errorText}` — errorText면 실패, loaderId 부재도 실패
+ *   4. frameId+loaderId exact 결속 `Page.lifecycleEvent(DOMContentLoaded|load)` 대기
+ *      (버퍼 소비 포함), 동일 결속 `Network.responseReceived`(type=Document)로 status 포착
  *   5. `Runtime.evaluate`로 outerHTML·location.href 수확
  *   6. `Target.closeTarget` — 실패 시 fail-close. 폰 Chrome 프로세스는 건드리지 않는다.
  */
@@ -215,22 +219,24 @@ export async function fetchNamuDocumentViaCdp(
     const session = new RawCdpSession(ws);
     await session.send("Page.enable", {}, 10_000);
     await session.send("Network.enable", {}, 10_000);
+    // 공식 lifecycle 이벤트(frameId+loaderId 동반) 활성화 — 현재 navigation 세대 exact 결속용.
+    await session.send("Page.setLifecycleEventsEnabled", { enabled: true }, 10_000);
 
-    // 3) Document 응답·frameStoppedLoading 후보를 버퍼링 — navigate 응답(frameId/loaderId)이
-    // 오기 전에 이벤트가 먼저 도착해도 놓치지 않도록 전부 쌓아두고, 결속 키가 확정된 뒤
-    // 필터한다. (stop 이벤트가 command response보다 먼저 오면 유실 → false-timeout
-    // → 488명 전역중단 — 삼순 P0 지적 반영.)
+    // 3) Document 응답·lifecycle 완료 후보를 버퍼링 — navigate 응답(frameId/loaderId)이
+    // 오기 전에 이벤트가 먼저 도착해도 놓치지 않도록 전부 쌓아두고(false-timeout 방지),
+    // 결속 키(frameId+loaderId)가 확정된 뒤 exact 필터한다. frameId만의 보존은 stale
+    // about:blank stop이 현재 load를 건너뛰게 했다(삼순 7차 P0) — loaderId까지 결속.
     const documentResponses: Array<{ frameId?: string; loaderId?: string; status?: number }> = [];
-    const stoppedFrames = new Set<string>();
+    const lifecycleDone: Array<{ frameId?: string; loaderId?: string; name?: string }> = [];
     session.onEvent((event) => {
       if (event.method === "Network.responseReceived") {
         const params = event.params as { type?: string; frameId?: string; loaderId?: string; response?: { status?: number } };
         if (params.type === "Document") {
           documentResponses.push({ frameId: params.frameId, loaderId: params.loaderId, status: params.response?.status });
         }
-      } else if (event.method === "Page.frameStoppedLoading") {
-        const frame = (event.params as { frameId?: string }).frameId;
-        if (frame) stoppedFrames.add(frame);
+      } else if (event.method === "Page.lifecycleEvent") {
+        const params = event.params as { frameId?: string; loaderId?: string; name?: string };
+        if (params.name === "DOMContentLoaded" || params.name === "load") lifecycleDone.push(params);
       }
     });
 
@@ -240,25 +246,34 @@ export async function fetchNamuDocumentViaCdp(
     };
     if (navigated.errorText) throw new Error(`Page.navigate 실패: ${navigated.errorText}`);
     if (!navigated.frameId) throw new Error("Page.navigate 응답에 frameId 없음");
+    // loaderId 없이는 현재 navigation 세대에 결속할 수 없다 — stale 이벤트 수확 위험이므로 fail-close.
+    if (!navigated.loaderId) throw new Error("Page.navigate 응답에 loaderId 없음 — navigation 세대 결속 불가");
     const frameId = navigated.frameId;
     const loaderId = navigated.loaderId;
 
-    // 5) 로드 완료 — 반드시 navigate한 frame의 frameStoppedLoading에만 결속한다.
-    // (domContentEventFired는 frame 무결속이라 about:blank/iframe이 조기 완료시킬 수 있다.)
-    // 이미 관측된 matching stop(버퍼)이 있으면 소비하고 대기를 생략한다 — stop이
-    // navigate 응답보다 먼저 온 경우의 유실/false-timeout 방지(삼순 P0).
-    if (!stoppedFrames.has(frameId)) {
+    // 5) 로드 완료 — 반드시 현재 navigation 세대(frameId+loaderId exact)의 lifecycle
+    // 완료(DOMContentLoaded|load)에만 결속한다. 버퍼에 있으면 소비(응답보다 먼저 온
+    // 경우), 없으면 대기. frameId만 같고 loaderId가 다른 stale 이벤트는 절대 소비하지
+    // 않는다 — 현재 loader 완료 전 수확 금지(삼순 7차 P0).
+    const lifecycleMatched = lifecycleDone.some(
+      (candidate) => candidate.frameId === frameId && candidate.loaderId === loaderId,
+    );
+    if (!lifecycleMatched) {
       await session.waitFor(
-        (event) => event.method === "Page.frameStoppedLoading"
-          && (event.params as { frameId?: string }).frameId === frameId,
+        (event) => event.method === "Page.lifecycleEvent"
+          && (() => {
+            const params = event.params as { frameId?: string; loaderId?: string; name?: string };
+            return params.frameId === frameId && params.loaderId === loaderId
+              && (params.name === "DOMContentLoaded" || params.name === "load");
+          })(),
         timeoutMs,
-        `Page.frameStoppedLoading(frameId=${frameId})`,
+        `Page.lifecycleEvent(frameId=${frameId}, loaderId=${loaderId})`,
       );
     }
 
-    // 6) main Document status — frameId exact + (loaderId 있으면 exact) 결속.
+    // 6) main Document status — frameId+loaderId exact 결속(stale 세대 불채택).
     const documentResponse = documentResponses.find(
-      (candidate) => candidate.frameId === frameId && (loaderId === undefined || candidate.loaderId === loaderId),
+      (candidate) => candidate.frameId === frameId && candidate.loaderId === loaderId,
     );
 
     // 7) 수확 — HTML·최종 URL은 렌더된 문서에서 직접 읽는다(redirect 반영).

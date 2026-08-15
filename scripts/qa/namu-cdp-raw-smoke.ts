@@ -31,7 +31,8 @@ type Scenario =
   | "close_fail"
   | "no_reply"
   | "stop_before_response"
-  | "close_during_wait";
+  | "close_during_wait"
+  | "stale_stop_before_navigate";
 
 const HAPPY_HTML = "<html><head><title>강현우(야구선수)</title></head><body>2001년 출생 야구선수 문서 본문</body></html>";
 const CHALLENGE_HTML = "<html><body>Just a moment...</body></html>";
@@ -79,6 +80,8 @@ class MockChrome {
     });
   }
 
+  evaluateCalls = 0;
+
   private servePage(ws: WebSocket): void {
     const emit = (method: string, params: Record<string, unknown>, delayMs: number) => {
       setTimeout(() => {
@@ -91,6 +94,17 @@ class MockChrome {
         ws.send(JSON.stringify({ id: message.id, result: {} }));
         return;
       }
+      if (message.method === "Page.setLifecycleEventsEnabled") {
+        ws.send(JSON.stringify({ id: message.id, result: {} }));
+        if (this.scenario === "stale_stop_before_navigate") {
+          // 삼순 7차 P0 RED: navigate 이전 세대(about:blank, 같은 main frame F1·다른
+          // loader L0)의 stale 완료 이벤트. frameId만으로 결속하면 이걸 소비해 현재
+          // load(L1) 완료 전에 stale/partial DOM을 수확한다.
+          ws.send(JSON.stringify({ method: "Page.lifecycleEvent", params: { frameId: "F1", loaderId: "L0-stale", name: "DOMContentLoaded" } }));
+          ws.send(JSON.stringify({ method: "Page.frameStoppedLoading", params: { frameId: "F1" } }));
+        }
+        return;
+      }
       if (message.method === "Page.navigate") {
         if (this.scenario === "no_reply") return; // 무응답 — timeout 경로 검증
         if (this.scenario === "navigate_error") {
@@ -98,13 +112,19 @@ class MockChrome {
           return;
         }
         if (this.scenario === "stop_before_response") {
-          // 삼순 P0 RED: matching stop·Document가 navigate command response보다 먼저 도착.
-          // 버퍼링 없이 응답 후 listener만 붙이면 유실 → false-timeout이다.
+          // 삼순 6차 P0 RED: 현재 세대(F1+L1)의 완료·Document가 navigate command response보다
+          // 먼저 도착. 버퍼링 없이 응답 후 listener만 붙이면 유실 → false-timeout이다.
           ws.send(JSON.stringify({ method: "Network.responseReceived", params: { type: "Document", frameId: "F1", loaderId: "L1", response: { status: 200 } } }));
-          ws.send(JSON.stringify({ method: "Page.frameStoppedLoading", params: { frameId: "F1" } }));
+          ws.send(JSON.stringify({ method: "Page.lifecycleEvent", params: { frameId: "F1", loaderId: "L1", name: "DOMContentLoaded" } }));
           setTimeout(() => {
             if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
           }, 60);
+          return;
+        }
+        if (this.scenario === "stale_stop_before_navigate") {
+          // 응답은 현재 세대(L1)로 주되, 현재 세대의 완료 이벤트는 주지 않는다 —
+          // stale(L0)을 소비하면 ok가 나오고(RED), 결속이 올바르면 timeout 실패가 맞다.
+          ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
           return;
         }
         if (this.scenario === "close_during_wait") {
@@ -115,18 +135,22 @@ class MockChrome {
           return;
         }
         ws.send(JSON.stringify({ id: message.id, result: { frameId: "F1", loaderId: "L1" } }));
-        // 노이즈 먼저: 비JSON 프레임·무관 method·다른 frame 완료·iframe Document(500).
+        // 노이즈 먼저: 비JSON 프레임·무관 method·다른 frame 완료·같은 frame의 stale loader
+        // 완료·iframe Document(500) — 전부 무시되어야 한다.
         setTimeout(() => { if (ws.readyState === WebSocket.OPEN) ws.send("this-is-not-json"); }, 3);
         emit("Inspector.detachedNoise", { reason: "unrelated" }, 5);
-        emit("Page.frameStoppedLoading", { frameId: "F9-unrelated" }, 8);
+        emit("Page.lifecycleEvent", { frameId: "F9-unrelated", loaderId: "L1", name: "load" }, 7);
+        emit("Page.lifecycleEvent", { frameId: "F1", loaderId: "L0-stale", name: "DOMContentLoaded" }, 8);
         emit("Network.responseReceived", { type: "Document", frameId: "F2-iframe", loaderId: "L9", response: { status: 500 } }, 10);
-        // 결속 대상: main Document + main frame 완료.
+        emit("Network.responseReceived", { type: "Document", frameId: "F1", loaderId: "L0-stale", response: { status: 500 } }, 12);
+        // 결속 대상: 현재 세대(F1+L1)의 Document + lifecycle 완료.
         const status = this.scenario === "http_403" ? 403 : 200;
         emit("Network.responseReceived", { type: "Document", frameId: "F1", loaderId: "L1", response: { status } }, 14);
-        emit("Page.frameStoppedLoading", { frameId: "F1" }, 18);
+        emit("Page.lifecycleEvent", { frameId: "F1", loaderId: "L1", name: "DOMContentLoaded" }, 18);
         return;
       }
       if (message.method === "Runtime.evaluate") {
+        this.evaluateCalls += 1;
         const expression = message.params?.expression ?? "";
         const value = expression.includes("outerHTML")
           ? (this.scenario === "challenge_body" ? CHALLENGE_HTML : HAPPY_HTML)
@@ -219,7 +243,18 @@ async function main(): Promise<void> {
     assert.ok(Date.now() - preClose < 1_000, `close는 즉시 실패로 드러나야 한다(timeout 대기 금지, 실측 ${Date.now() - preClose}ms)`);
     mock.openTargets.clear();
 
-    // 9) 연속 3회 후 target 수 원복 — 탭 누적이면 RED.
+    // 9) stale-stop-before-navigate — navigate 이전 세대(같은 frame·다른 loader)의 stale
+    // 완료를 소비해 현재 loader 완료 전에 수확하면 RED(삼순 7차 P0). 결속이 올바르면
+    // 현재 세대 완료가 안 오므로 timeout 실패 + Runtime.evaluate 호출 0이 맞다.
+    mock.scenario = "stale_stop_before_navigate";
+    mock.evaluateCalls = 0;
+    const staleResult = await fetchOnce();
+    assert.ok(!staleResult.ok && staleResult.status === "blocked" && staleResult.reason.startsWith("cdp_fetch_failed"),
+      `stale 세대 소비는 금지 — 현재 세대 미완료는 실패여야 한다: ${JSON.stringify(staleResult)}`);
+    assert.equal(mock.evaluateCalls, 0, `현재 loader 완료 전 Runtime.evaluate 수확은 금지다(실측 ${mock.evaluateCalls}회)`);
+    mock.openTargets.clear();
+
+    // 10) 연속 3회 후 target 수 원복 — 탭 누적이면 RED.
     mock.scenario = "happy";
     for (let index = 0; index < 3; index += 1) {
       const repeat = await fetchOnce();
@@ -227,7 +262,7 @@ async function main(): Promise<void> {
     }
     assert.equal(mock.openTargets.size, 0, `연속 3회 후 열린 target이 0이어야 한다(실측 ${mock.openTargets.size})`);
 
-    console.log("namu-cdp-raw-smoke PASS (결속 happy / navigate errorText / 403 / challenge / cleanup fail-close / 무응답 timeout / stop-before-response 버퍼소비 / close-during-wait 즉시실패 / 연속3회 target 원복)");
+    console.log("namu-cdp-raw-smoke PASS (결속 happy(stale 노이즈 포함) / navigate errorText / 403 / challenge / cleanup fail-close / 무응답 timeout / stop-before-response 버퍼소비 / close-during-wait 즉시실패 / stale-세대 불채택(evaluate 0) / 연속3회 target 원복)");
   } finally {
     await mock.close();
   }
