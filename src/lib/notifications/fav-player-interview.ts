@@ -89,11 +89,14 @@ export interface InterviewDeps {
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
   /**
    * 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행.
-   * attempted = FCM이 실제로 시도되어 기기별 outcome이 있다(부분 성공 포함).
-   * false = 인프라 선행 실패(env/prefs 조회 등) — 아무 기기도 받지 않았으므로
-   * 행 전체 release가 안전하다.
+   * settled = 이 attempt가 종결 가능한 상태다. 두 경우 모두 true:
+   *   (a) FCM이 실제 시도되어 기기별 outcome이 있다(부분 성공 포함)
+   *   (b) 보낼 토큰이 애초에 없다 — 전원 토글 OFF·등록 토큰 0은 **정상 종결**이다
+   *       (삼순 NO-GO 3차 P0: outcomes 유무만 보면 이 정상경로가 영구 pending이 된다)
+   * false = 인프라 선행 실패(env 미설정·prefs 조회 실패·deadline) — 아무 기기도
+   * 받지 않았으므로 행 전체 release가 안전하다.
    * retryableTokens = FCM이 transient(재시도 가능)로 보고한 기기 토큰.
-   * attempted:true여도 이 목록이 비어 있지 않으면 그 기기들은 아직 못 받았다 —
+   * settled:true여도 이 목록이 비어 있지 않으면 그 기기들은 아직 못 받았다 —
    * 버리면 영구 유실이고(삼순 NO-GO 1차), 행 전체 release는 accepted 기기
    * 재발송 중복이다(삼순 NO-GO 2차 P1) — transient만 durable settle한다.
    */
@@ -101,7 +104,7 @@ export interface InterviewDeps {
     userIds: string[],
     payload: { title: string; body: string; url: string },
     prefKey: typeof INTERVIEW_PREF_KEY,
-  ) => Promise<{ attempted: boolean; retryableTokens: string[] }>;
+  ) => Promise<{ settled: boolean; retryableTokens: string[] }>;
   /**
    * durable retry 경로 — 이미 실패로 확정된 기기 토큰에만 재발송.
    * 유저/prefs 재조회 없음(이미 1차 attempt에서 토글 필터 통과한 토큰).
@@ -109,7 +112,7 @@ export interface InterviewDeps {
   sendToTokens: (
     tokens: string[],
     payload: { title: string; body: string; url: string },
-  ) => Promise<{ attempted: boolean; retryableTokens: string[] }>;
+  ) => Promise<{ settled: boolean; retryableTokens: string[] }>;
   /**
    * transient 기기 토큰을 durable 저장하고 행을 pending으로 되돌린다(다음 run 재시도).
    * attempts도 함께 기록해 상한 판정에 쓴다.
@@ -162,6 +165,24 @@ export async function notifyFavPlayerInterviews(
     //    재발송 경로 자체가 없어 중복이 생기지 않는다.
     if (interview.retryTokens.length > 0) {
       try {
+        // 삼순 NO-GO 3차 P1 — retry 행도 마커를 먼저 본다. 직전 run이 전량 accepted 후
+        // 마커만 기록하고 markSent 전에 죽으면, 원장 토큰이 남아 재발송된다.
+        let retryMarker: SentMarkerState;
+        try {
+          retryMarker = await deps.hasSentMarker(interview.gameId, interview.videoId);
+        } catch {
+          retryMarker = "error";
+        }
+        if (retryMarker === "present") {
+          sentRowIds.push(interview.id);
+          summary.recoveredFromMarker++;
+          continue;
+        }
+        if (retryMarker === "error") {
+          releaseRowIds.push(interview.id);
+          summary.released++;
+          continue;
+        }
         if (interview.attempts >= MAX_SEND_ATTEMPTS) {
           // 상한 초과 — 해당 기기는 포기(관측 카운트)하고 종결. 유실을 sent로
           // 숨기는 게 아니라 gaveUpDevices로 보고한다.
@@ -173,7 +194,7 @@ export async function notifyFavPlayerInterviews(
         const retry = await deps.sendToTokens(interview.retryTokens, {
           title: interview.title, body: interview.title, url: `/games/${interview.gameId}`,
         });
-        if (!retry.attempted) {
+        if (!retry.settled) {
           // 인프라 선행 실패 — 아무 기기도 안 받았으므로 release가 안전(중복 0).
           releaseRowIds.push(interview.id);
           summary.released++;
@@ -262,8 +283,9 @@ export async function notifyFavPlayerInterviews(
         },
         INTERVIEW_PREF_KEY,
       );
-      if (!result.attempted) {
-        // 인프라 선행 실패(env/prefs 등) — 아무 기기도 안 받았으므로 release 안전.
+      if (!result.settled) {
+        // 인프라 선행 실패(env 미설정·prefs 조회 실패 등) — 아무 기기도 안 받았으므로
+        // release 안전. 전원 토글 OFF·토큰 0은 여기 해당 안 됨(settled=true → 정상 종결).
         releaseRowIds.push(interview.id);
         summary.released++;
         continue;

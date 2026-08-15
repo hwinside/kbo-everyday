@@ -82,12 +82,12 @@ interface Over {
   markerInsertOk?: boolean;
   audience?: (kboId: string) => string[];
   audienceThrow?: boolean;
-  /** false = 인프라 선행 실패(outcomes 없음) — release 대상. */
-  sendAttempted?: boolean;
+  /** false = 인프라 선행 실패(ok:false + outcomes 없음) — release 대상. */
+  sendSettled?: boolean;
   sendThrow?: boolean;
   /** 1차 발송에서 transient로 보고될 기기 토큰. */
   sendRetryable?: string[];
-  tokenSendAttempted?: boolean;
+  tokenSendSettled?: boolean;
   tokenSendThrow?: boolean;
   /** 토큰 재발송에서도 여전히 transient인 토큰. */
   tokenSendRetryable?: string[];
@@ -119,13 +119,13 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
       if (over.sendThrow) throw new Error("send boom");
-      return { attempted: over.sendAttempted ?? true, retryableTokens: over.sendRetryable ?? [] };
+      return { settled: over.sendSettled ?? true, retryableTokens: over.sendRetryable ?? [] };
     },
     sendToTokens: async (tokens, payload) => {
       calls.tokenSends.push({ tokens, url: payload.url });
       if (over.tokenSendThrow) throw new Error("token send boom");
       return {
-        attempted: over.tokenSendAttempted ?? true,
+        settled: over.tokenSendSettled ?? true,
         retryableTokens: over.tokenSendRetryable ?? [],
       };
     },
@@ -193,9 +193,9 @@ async function main() {
 
   console.log("[R4-②] 실패 은폐 금지 — 전부 release(재시도)");
   {
-    const f = makeDeps({ sendAttempted: false });
+    const f = makeDeps({ sendSettled: false });
     const s = await notifyFavPlayerInterviews(f.deps);
-    check("인프라 선행 실패(outcomes 없음) → release·sent 전이 금지",
+    check("인프라 선행 실패(ok:false + outcomes 없음) → release·sent 전이 금지",
       s.released === 1 && f.calls.markedSent.length === 0 && f.calls.released[0]?.[0] === "row-1");
     check("인프라 선행 실패 → 마커 기록 안 함", f.calls.markerInserts.length === 0);
 
@@ -315,7 +315,7 @@ async function main() {
 
     // 토큰 재발송 인프라 선행 실패/throw → release(은폐 금지)
     const rf = makeDeps({
-      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], tokenSendAttempted: false,
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], tokenSendSettled: false,
     });
     const s4 = await notifyFavPlayerInterviews(rf.deps);
     check("retry 인프라 선행 실패 → release",
@@ -326,6 +326,29 @@ async function main() {
     const s5 = await notifyFavPlayerInterviews(rt.deps);
     check("retry throw → releaseLease 실호출",
       s5.released === 1 && rt.calls.released[0]?.includes("row-1") === true);
+
+    // 삼순 3차 P0 — 전원 토글 OFF/등록 토큰 0(ok:true, outcomes 없음)은 정상 종결.
+    // deps 어댑터가 settled=true로 준다 → 영구 pending이 아니라 sent.
+    const off = makeDeps({ sendSettled: true, sendRetryable: [] });
+    const sOff = await notifyFavPlayerInterviews(off.deps);
+    check("전원 토글 OFF/토큰 0 → 정상 sent 종결(영구 pending 아님)",
+      sOff.sent === 1 && sOff.released === 0 && off.calls.markedSent[0]?.[0] === "row-1");
+
+    // 삼순 3차 P1 — retry 행도 마커 선확인. present면 토큰 재발송 0.
+    const rm = makeDeps({
+      leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 1 })], marker: () => "present",
+    });
+    const sRm = await notifyFavPlayerInterviews(rm.deps);
+    check("retry 행 + 마커 present → 토큰 재발송 0·sent 회복",
+      rm.calls.tokenSends.length === 0 && sRm.recoveredFromMarker === 1
+      && rm.calls.markedSent[0]?.[0] === "row-1");
+    const rmE = makeDeps({
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], marker: () => "error",
+    });
+    const sRmE = await notifyFavPlayerInterviews(rmE.deps);
+    check("retry 행 + 마커 error → 재발송 금지·release",
+      rmE.calls.tokenSends.length === 0 && sRmE.released === 1
+      && rmE.calls.markedSent.length === 0);
 
     // attempt 상한 → 포기는 숨기지 않고 gaveUpDevices로 관측 후 종결
     const g = makeDeps({

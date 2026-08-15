@@ -130,14 +130,16 @@ export function createInterviewDeps(): InterviewDeps {
 
     fetchFavoritePlayerFanIds: (kboId) => fetchFavoritePlayerFanIds(kboId),
     // prefKey 전달 = 토글 off 유저 필터링(sendFcmToUsers 내부 notification_prefs 조회).
-    // attempted = outcomes 존재(FCM이 실제 시도됨). 인프라 선행 실패(env/prefs 조회
-    // 등)는 outcomes 없이 돌아오므로 release가 안전하고, 부분 성공(ok=false여도
-    // outcomes 있음)은 transient만 durable settle한다(삼순 P1).
-    // outcomes의 transient 토큰을 버리지 않고 반환해 durable retry에 쓴다(삼순 NO-GO).
+    // settled = ok 또는 outcomes 존재. 전원 토글 OFF·등록 토큰 0은 sendFcmToUsers가
+    // ok:true + outcomes 없이 돌아오는 **정상 종결**이라 ok를 반드시 함께 본다
+    // (outcomes 유무만 보면 이 경로가 영구 pending — 삼순 NO-GO 3차 P0).
+    // 인프라 선행 실패(env 미설정·prefs 조회 실패·deadline)는 ok:false + outcomes 없음
+    // → settled:false → release. 부분 성공(ok:false여도 outcomes 있음)은 transient만
+    // durable settle한다(삼순 P1).
     sendPush: async (userIds, payload, prefKey) => {
       const result = await sendFcmToUsers(userIds, payload, prefKey);
       return {
-        attempted: Array.isArray(result.outcomes),
+        settled: result.ok || Array.isArray(result.outcomes),
         retryableTokens: (result.outcomes ?? [])
           .filter((o) => o.status === "transient")
           .map((o) => o.token),
@@ -147,7 +149,7 @@ export function createInterviewDeps(): InterviewDeps {
     sendToTokens: async (tokens, payload) => {
       const result = await sendFcmToTokens(tokens, payload);
       return {
-        attempted: Array.isArray(result.outcomes),
+        settled: result.ok || Array.isArray(result.outcomes),
         retryableTokens: (result.outcomes ?? [])
           .filter((o) => o.status === "transient")
           .map((o) => o.token),

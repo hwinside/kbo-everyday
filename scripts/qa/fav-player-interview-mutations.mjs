@@ -46,8 +46,21 @@ function violations(x) {
   }
   // P1: 인프라 선행 실패(attempted=false)만 전체 release — 부분 성공을 release하면
   // accepted 기기 재발송 중복.
-  if (!x.core.includes("if (!result.attempted) {")) out.push("attempted-gate-missing");
-  if (!x.core.includes("if (!retry.attempted) {")) out.push("retry-attempted-gate-missing");
+  if (!x.core.includes("if (!result.settled) {")) out.push("settled-gate-missing");
+  if (!x.core.includes("if (!retry.settled) {")) out.push("retry-settled-gate-missing");
+  // P0(3차): 전원 토글 OFF·토큰 0은 ok:true + outcomes 없음으로 돌아오는 정상 종결이다.
+  // outcomes 유무만 보면 그 경로가 영구 pending이 된다 — ok를 반드시 함께 본다(2곳).
+  if (x.deps.split("settled: result.ok || Array.isArray(result.outcomes)").length - 1 !== 2) {
+    out.push("settled-ignores-ok");
+  }
+  // P1(3차): retry 행도 마커를 먼저 본다 — 안 보면 직전 run 종결분을 재발송한다.
+  {
+    const r = x.core.indexOf("if (interview.retryTokens.length > 0) {");
+    const send = x.core.indexOf("await deps.sendToTokens(interview.retryTokens, {", r);
+    if (r < 0 || send < 0 || !x.core.slice(r, send).includes("hasSentMarker(interview.gameId, interview.videoId)")) {
+      out.push("retry-skips-marker");
+    }
+  }
   // sendPush·sendToTokens 둘 다 transient outcome을 반환해야 한다(출현 2회 강제 —
   // includes만 보면 한 쪽 배선 제거 변이가 GREEN으로 샐: 8/15 실측).
   if (x.deps.split('.filter((o) => o.status === "transient")').length - 1 !== 2) {
@@ -97,8 +110,10 @@ const mutations = [
   ["원장 RLS 제거(토큰 공개)", "migration2", "alter table postgame_interview_retry_tokens enable row level security;", ""],
   ["원장 권한 revoke 제거", "migration2", "revoke all on table postgame_interview_retry_tokens from public, anon, authenticated;", ""],
   ["마커를 transient 분기로 이동(P0-2 순서 역전)", "core", "await deps.storeRetryTokens(interview.id, result.retryableTokens, interview.attempts + 1);", "await deps.insertSentMarker(interview.gameId, interview.videoId).catch(() => false); await deps.storeRetryTokens(interview.id, result.retryableTokens, interview.attempts + 1);"],
-  ["attempted 게이트 제거(1차)", "core", "if (!result.attempted) {", "if (false) {"],
-  ["attempted 게이트 제거(retry)", "core", "if (!retry.attempted) {", "if (false) {"],
+  ["settled 게이트 제거(1차)", "core", "if (!result.settled) {", "if (false) {"],
+  ["settled 게이트 제거(retry)", "core", "if (!retry.settled) {", "if (false) {"],
+  ["settled가 ok 무시(토글 OFF 영구 pending)", "deps", "settled: result.ok || Array.isArray(result.outcomes)", "settled: Array.isArray(result.outcomes)"],
+  ["retry 마커 선확인 제거", "core", "          retryMarker = await deps.hasSentMarker(interview.gameId, interview.videoId);", "          retryMarker = \"absent\";"],
   ["deps 원장 배선 제거", "deps", 'from("postgame_interview_retry_tokens")', 'from("broken_ledger")'],
 ];
 
