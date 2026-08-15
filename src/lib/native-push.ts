@@ -238,17 +238,5 @@ export async function listenForForegroundNotifications(): Promise<void> {
   }
 }
 
-/** 알림 탭 → 페이로드 data.url 앱 내 경로로 이동 (딥링크) */
-export async function listenForNotificationTap(): Promise<void> {
-  if (!isNative) return;
-  try {
-    const { FirebaseMessaging } = await loadMessaging();
-    await FirebaseMessaging.addListener("notificationActionPerformed", (event) => {
-      const data = (event.notification?.data ?? {}) as Record<string, unknown>;
-      const url = typeof data.url === "string" ? data.url : null;
-      if (url && url.startsWith("/")) window.location.href = url;
-    });
-  } catch {
-    // silent
-  }
-}
+// 알림 탭 → 딥링크 경로는 src/lib/native-push-deeplink.ts 로 분리됐다.
+// (background 탭 #1070 + cold-start 탭 #1198 을 한 pending 저장소로 수렴)
