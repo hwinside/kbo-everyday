@@ -39,7 +39,7 @@ import {
 } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
-import { resolveCollectorTeam } from "./collector-team";
+import { buildCollectorPlayerTags, resolveCollectorTeam } from "./collector-team";
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -366,6 +366,14 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     );
   }
 
+  // 선수 태그(player_tags) — 최애선수 게시글 알림(`fav_player_post`)의 **유일한** 대상 선정 근거다.
+  // `/api/notifications/dispatch` 의 handlePost() 는 record.player_tags 가 비면 그 자리에서
+  // return [] 한다 — board_id 가 선수판이어도 푸시 시도 자체가 0건이 된다.
+  // (2026-08-16 하린아빠 제보: 콜렉터 생성글 50건 전부 player_tags=[] → 알림 0건)
+  // 매칭 결과(matched_kbo_id)가 있고 로스터에서 이름이 해석될 때만 채운다.
+  // 일반 유저 글과 동일 취급 — 별도 pref 없이 fav_player_post 그대로 탄다(하린아빠 2026-08-16 1번안).
+  const collectorPlayerTags = buildCollectorPlayerTags(row.matched_kbo_id);
+
   const postInsert: Record<string, unknown> = {
     author_id: botUserId,
     board_type: row.matched_board_type,
@@ -378,6 +386,7 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     // 프로필에 박힌 한 팀(현재 LG)으로 찍힌다 — 2026-08-07 하린아빠 지적(KIA 김도영 글이 "LG 팬").
     author_team_id_snapshot: collectorTeam.id,
   };
+  if (collectorPlayerTags.length > 0) postInsert.player_tags = collectorPlayerTags;
   if (kind === "video") {
     postInsert.video_urls = mediaUrls;
   } else {

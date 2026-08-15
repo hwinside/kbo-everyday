@@ -6,6 +6,10 @@ const KBO_TO_TEAM_ID = new Map<string, number>(
   (PLAYERS_ROSTER as { kboId: string; teamId: number }[]).map((p) => [p.kboId, p.teamId]),
 );
 
+const KBO_TO_NAME = new Map<string, string>(
+  (PLAYERS_ROSTER as { kboId: string; name: string }[]).map((p) => [String(p.kboId), p.name]),
+);
+
 const SLUG_TO_TEAM_ID = new Map<string, number>(TEAMS.map((t) => [t.slug, t.id]));
 
 /**
@@ -45,6 +49,11 @@ export function teamSlugsForPlayerTags(playerTags: string[] | undefined | null):
 /** 선수 kboId → 소속팀 id (로스터 기준). 미등록이면 null. */
 export function teamIdForKboId(kboId: string): number | null {
   return KBO_TO_TEAM_ID.get(String(kboId)) ?? null;
+}
+
+/** 선수 kboId → 표시 이름 (로스터 기준). 미등록이면 null. */
+export function playerNameForKboId(kboId: string): string | null {
+  return KBO_TO_NAME.get(String(kboId)) ?? null;
 }
 
 export interface RosterPlayer {
