@@ -46,23 +46,65 @@ const run = async () => {
     await db.close();
   }
 
-  // ── ② public 설치(drift 재현) → extensions 로 이동 ──────────────────────────
+  // ── ② 실제 순서 재현: 원장(173000) 적재 → public+EXCLUDE → 정본화(184000) 이동 ──
+  //   실제 이력은 173000 이 public 에 btree_gist 를 설치하고 EXCLUDE 까지 만든 **뒤에**
+  //   184000 이 확장을 extensions 로 옮긴다. 게이트도 같은 순서로 태워, 의존 EXCLUDE 가
+  //   이미 존재하는 상태에서 이동해도 제약이 존속하고 중첩 INSERT 를 계속 차단하는지 증명한다.
   {
     const db = new PGlite({ extensions: { btree_gist } });
-    await db.exec("create extension btree_gist"); // 구 migration 의 public 설치 재현
-    check("② 시작 상태 = public 설치(drift 재현)", (await gistSchema(db)) === "public");
-    await db.exec(canonSql);
-    check("② 실행 → extensions 로 이동", (await gistSchema(db)) === "extensions");
-    // 이동 후에도 gist opclass 참조(EXCLUDE 제약)가 살아 있는지 — 원장 migration 전체 적재.
-    // (원장의 FK 대상 dm_messages 는 이 게이트 관심사가 아니므로 최소 스텁만 둔다.)
+    // 원장 migration 의 FK 대상·롤 최소 스텁 (게이트 관심사 아님)
     await db.exec("create table public.dm_messages (id bigint primary key)");
     await db.exec("create role service_role; create role anon; create role authenticated");
     await db.exec("set search_path = public, extensions");
+    // 1) 원장 migration 적재 — 구 정본 그대로 public 설치 + EXCLUDE 생성
     await db.exec(fs.readFileSync(LEDGER_MIGRATION, "utf8"));
-    const excl = await db.query<{ count: number }>(
+    check("② 원장 적재 후 시작 상태 = public 설치(drift 재현)", (await gistSchema(db)) === "public");
+    const exclBefore = await db.query<{ count: number }>(
       "select count(*)::int as count from pg_constraint where conname = 'genius_motion_grants_cooldown_excl'",
     );
-    check("② 이동 후에도 EXCLUDE 제약 생성 가능(opclass 참조 무결)", excl.rows[0]?.count === 1);
+    check("② 이동 전 EXCLUDE 제약 존재", exclBefore.rows[0]?.count === 1);
+    // 2) 정본화 migration 실행 — 의존 EXCLUDE 가 있는 상태에서 확장 이동
+    await db.exec(canonSql);
+    check("② 정본화 실행 → extensions 로 이동", (await gistSchema(db)) === "extensions");
+    const exclAfter = await db.query<{ count: number }>(
+      "select count(*)::int as count from pg_constraint where conname = 'genius_motion_grants_cooldown_excl'",
+    );
+    check("② 이동 후 EXCLUDE 제약 존속", exclAfter.rows[0]?.count === 1);
+    // 3) 이동 후에도 제약이 **동작**하는지 — 중첩 granted INSERT 차단 / 정확히 30초는 허용
+    await db.exec("insert into public.dm_messages (id) values (1), (2), (3)");
+    const T0 = "2026-08-15T12:00:00Z";
+    const T0_10S = "2026-08-15T12:00:10Z"; // |Δ| < 30초 → 겹침
+    const T0_30S = "2026-08-15T12:00:30Z"; // |Δ| = 30초 → 반열림 경계, 허용
+    const uid = "00000000-0000-0000-0000-000000000001";
+    const ins = (id: number, at: string) =>
+      db.query(
+        `insert into public.genius_motion_grants
+           (message_id, user_id, motion, granted, decided_at, cooldown_until)
+         values ($1, $2, 'excited', true, $3::timestamptz, $3::timestamptz + interval '30 seconds')`,
+        [id, uid, at],
+      );
+    await ins(1, T0);
+    let overlapBlocked = false;
+    try {
+      await ins(2, T0_10S);
+    } catch (error) {
+      overlapBlocked = String(error).includes("genius_motion_grants_cooldown_excl");
+    }
+    check("② 이동 후 중첩 granted INSERT 차단(제약 실동작)", overlapBlocked);
+    let boundaryAllowed = true;
+    try {
+      await ins(3, T0_30S);
+    } catch {
+      boundaryAllowed = false;
+    }
+    check("② 정확히 30초 경계 INSERT 허용(반열림 구간)", boundaryAllowed);
+    // 4) 정본화 재실행(멱등) — 이동 완료 상태에서 no-op
+    await db.exec(canonSql);
+    check("② 정본화 재실행(멱등) → extensions 유지", (await gistSchema(db)) === "extensions");
+    const exclFinal = await db.query<{ count: number }>(
+      "select count(*)::int as count from pg_constraint where conname = 'genius_motion_grants_cooldown_excl'",
+    );
+    check("② 재실행 후에도 EXCLUDE 제약 존속", exclFinal.rows[0]?.count === 1);
     await db.close();
   }
 
