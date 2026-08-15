@@ -424,6 +424,76 @@ test("24b) 순서 역전: active가 먼저 오고 stash가 나중이어도 appUr
   assert.deepEqual(navigations, ["/games/REVERSE?tab=chat"]);
 });
 
+test("24c) open(url:) 경로: 네이티브 stash 가 없어도 appUrlOpen 이벤트 URL 만으로 이동한다", async () => {
+  // 🔴 build 25 실기기 QA 재현 — widgetURL 이 continue(userActivity:) 가 아니라
+  // open(url:) 로 도착하면 AppDelegate 가 stash 하지 않아 재조회가 빈손으로 끝난다.
+  // 이때도 이벤트 URL 자체를 1차 근거로 써서 이동해야 한다.
+  await reset(true);
+  const h = harness({ active: true }); // warm — 앱이 떠 있는 상태
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  await flush();
+  navigations.length = 0;
+
+  // stash 를 설정하지 않는다 — open(url:) 경로 재현(네이티브가 보관한 것 0건)
+  h.openUrl("https://keubo.fan/games/OPENURL1?tab=chat");
+  await flush();
+  assert.deepEqual(navigations, ["/games/OPENURL1?tab=chat"],
+    "stash 없는 open(url:) 경로에서도 이벤트 URL 로 이동해야 한다");
+});
+
+test("24d) open(url:) 경로: OAuth callback · 무관 URL 은 딥링크 pending 으로 저장하지 않는다", async () => {
+  // 세션 교환 플로우 보호 — la-deeplink 분류가 아닌 URL 은 이 모듈이 소비하지 않는다.
+  await reset(true);
+  const h = harness({ active: true });
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  await flush();
+  navigations.length = 0;
+
+  for (const url of [
+    "https://keubo.fan/auth/callback?code=***",       // OAuth callback
+    "https://keubo.fan/?auth_error=kakao_email_unverified", // 서버 오류 callback
+    "https://keubo.fan/admin",                          // 임의 경로
+    "https://keubo.fan/games/",                         // 빈 id
+    "https://evil.example.com/games/ABC",               // 외부 호스트
+  ]) {
+    h.openUrl(url);
+  }
+  await flush();
+  assert.deepEqual(navigations, [], `la-deeplink 가 아닌 URL 은 이동 0건이어야 한다`);
+});
+
+test("24e) 소스 계약: open(url:)·continue 두 진입점이 *단일* allowlist 헬퍼를 공유한다", async () => {
+  const appDelegate = await readFile(new URL("../../ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
+  const HELPER = "stashLiveActivityDeepLinkIfAllowed";
+
+  // ① open(url:) 바디 — 헬퍼 호출이 proxy 호출 '전'에 있어야 한다(순서 계약).
+  const openUrlBody = appDelegate.split("open url: URL")[1]?.split("func application")[0] ?? "";
+  assert.ok(openUrlBody.length > 0, "open(url:) 핸들러를 찾지 못함");
+  assert.ok(openUrlBody.includes(HELPER),
+    "open(url:) 경로에도 stash 가 있어야 한다(widgetURL 이 continue 가 아닌 이 경로로 올 수 있음)");
+  assert.ok(
+    openUrlBody.indexOf(HELPER) < openUrlBody.indexOf("ApplicationDelegate.shared.application"),
+    "stash 는 proxy 호출 전에 실행되어야 한다(appUrlOpen 발행 시점 순서 계약)");
+
+  // ② continue(userActivity:) 바디 — 같은 헬퍼를 써야 한다.
+  const continueBody = appDelegate.split("continue userActivity")[1]?.split("func application")[0] ?? "";
+  assert.ok(continueBody.length > 0, "continue(userActivity:) 핸들러를 찾지 못함");
+  assert.ok(continueBody.includes(HELPER), "continue 도 같은 헬퍼를 경유해야 한다");
+
+  // ③ allowlist 는 파일 전체에 *딱 1회* — 진입점마다 복제하면 한쪽만 고쳐져 어긋난다
+  //    (삼순 #1204 R6 교훈 — 분류 키 재선언으로 서버 오류 callback 이 폐기됐던 것과 동일 축).
+  const allowlistHits = appDelegate.match(/\^\/games\/\[A-Za-z0-9\]\{1,32\}\$/g) ?? [];
+  assert.equal(allowlistHits.length, 1,
+    `allowlist 정규식은 단일 구현이어야 한다(found ${allowlistHits.length}) — 복제 금지`);
+
+  // ④ 헬퍼 본문 — 호스트 검증 + allowlist + stash 가 모두 있어야 한다.
+  const helperBody = appDelegate.split(`private func ${HELPER}`)[1]?.split("\n    func ")[0] ?? "";
+  assert.ok(helperBody.length > 0, "헬퍼 정의를 찾지 못함");
+  assert.match(helperBody, /components\.host == "keubo\.fan"/, "호스트 검증 필수");
+  assert.match(helperBody, /\^\/games\/\[A-Za-z0-9\]\{1,32\}\$/, "폐쇄 allowlist 필수");
+  assert.match(helperBody, /PushDeepLinkPlugin\.stash\(url:/, "stash 호출 필수");
+});
+
 // ── appUrlOpen 단일 디스패쳐(R2) — cold retained OAuth 경합 방지 ──────────────
 
 test("25) 딥링크 모듈은 App.addListener('appUrlOpen')을 직접 등록하지 않는다(디스패쳐 경유)", async () => {

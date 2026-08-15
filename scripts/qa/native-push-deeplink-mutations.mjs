@@ -144,14 +144,13 @@ const mutations = [
   {
     id: "M18 continue의 /games/<id> 폐쇄 allowlist 완화(임의 경로·auth 우회 허용)",
     file: APPDELEGATE,
-    from: `if path.range(of: "^/games/[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil {`,
-    to: `if path.hasPrefix("/") {`,
+    from: `        guard path.range(of: "^/games/[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return }`,
+    to: `        guard path.hasPrefix("/") else { return }`,
   },
   {
     id: "M19 appUrlOpen 재회수 제거(순서 역전 시 pending 영구 잔류)",
     file: DEEPLINK,
-    from: `  await loaders.urlOpen(() => {
-    void consumeNativePendingIntoStore(loaders)
+    from: `    void consumeNativePendingIntoStore(loaders)
       .then(() => app.getState())
       .then(({ isActive }) => {
         if (isActive) consumePendingTap();
@@ -230,6 +229,26 @@ const mutations = [
     file: DISPATCHER,
     from: `  if (parsed.pathname === "/auth" || parsed.pathname.startsWith("/auth/")) return "oauth";`,
     to: `  if (parsed.pathname.startsWith("/auth")) return "oauth";`,
+  },
+  {
+    id: "M30 open(url:) 경로 이벤트 URL 직접 소비 제거(stash 없는 widgetURL 미이동 재발)",
+    file: DEEPLINK,
+    from: `    const direct = laDeepLinkPathFromEvent(event);
+    if (direct) storePendingTap(direct);`,
+    to: "",
+  },
+  {
+    id: "M31 이벤트 URL 폐쇄 분류 무력화(OAuth callback 까지 딥링크 pending 저장)",
+    file: DEEPLINK,
+    from: `  if (classifyAppUrlOpen(url) !== "la-deeplink") return null;`,
+    to: "",
+  },
+  {
+    id: "M32 AppDelegate open(url:) stash 제거(continue 로 안 오는 경로 미커버 재발)",
+    file: APPDELEGATE,
+    from: `        stashLiveActivityDeepLinkIfAllowed(url)
+        let facebookHandled`,
+    to: `        let facebookHandled`,
   },
 ];
 
