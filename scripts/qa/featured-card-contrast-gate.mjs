@@ -106,6 +106,11 @@ async function run({ selftest }) {
   check(`대비: ${TEAMS.length}개 구단 × 전경 3색 전부 AA(${AA}:1) 이상`, bad.length === 0,
     bad.slice(0, 4).map((b) => `${b.team}/${b.key} ${b.ratio.toFixed(2)}:1`).join(", "));
 
+  // ③ 상태 pill · 자식 배경 조합 — 실제 카드 DOM 을 렌더해 검사한다 (삼순 2026-08-15).
+  //    token 만 보면 `bg-text-tertiary/15 + text-text-tertiary` 같은 **반투명 pill 위 토큰 텍스트**
+  //    조합이 누락된다(종료 4.01 / 취소 3.75 / LIVE 4.04 — 전부 AA 미달이었다).
+  await pillContrast({ selftest, card, TEAMS, check });
+
   console.log();
   if (selftest) {
     if (failed === 0) {
@@ -117,6 +122,108 @@ async function run({ selftest }) {
   }
   if (failed > 0) { console.error(`✗ FAIL — ${failed}건`); process.exit(1); }
   console.log(`✓ PASS — ${TEAMS.length}개 구단 × 3색 = ${rows.length}조합 전부 AA 이상 (최악 ${worst.team}/${worst.key} ${worst.ratio.toFixed(2)}:1)`);
+}
+
+/* ── ③ 상태 pill 대비 (실제 DOM) ───────────────────── */
+
+/** globals.css 에서 토큰 실값을 읽는다(게이트가 색값을 재선언하지 않게). featured 카드는 다크 기준. */
+function readTokens() {
+  const css = readFileSync(path.join(ROOT, "src/styles/globals.css"), "utf8");
+  const pick = (name) => {
+    const all = [...css.matchAll(new RegExp(`--${name}:\\s*(#[0-9a-fA-F]{6})`, "g"))].map((m) => m[1]);
+    if (all.length === 0) throw new Error(`globals.css 에 --${name} 없음`);
+    return { light: all[0], dark: all[1] ?? all[0] };
+  };
+  return { "text-primary": pick("text-primary"), "text-secondary": pick("text-secondary"), "text-tertiary": pick("text-tertiary") };
+}
+
+/** Tailwind 유틸리티 클래스 하나를 {rgb, alpha} 로 해석. 모르면 null. */
+function resolveUtil(cls, kind, tokens, mode) {
+  const m = new RegExp(`^${kind}-(.+?)(?:/(\\d{1,3}))?$`).exec(cls);
+  if (!m) return null;
+  const [, name, pct] = m;
+  const alpha = pct === undefined ? 1 : Number(pct) / 100;
+  const arb = /^\[(#[0-9a-fA-F]{6})\]$/.exec(name);
+  if (arb) return { rgb: parseHex(arb[1]), alpha };
+  if (name === "white") return { rgb: [255, 255, 255], alpha };
+  if (name === "black") return { rgb: [0, 0, 0], alpha };
+  if (name === "red-500") return { rgb: parseHex("#EF4444"), alpha };
+  const tok = tokens[name];
+  if (tok) return { rgb: parseHex(mode === "dark" ? tok.dark : tok.light), alpha };
+  return null;
+}
+
+async function pillContrast({ selftest, card, TEAMS, check }) {
+  const tokens = readTokens();
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true, url: "http://localhost/" });
+  const g = globalThis;
+  const prev = { window: g.window, document: g.document, navigator: g.navigator, HTMLElement: g.HTMLElement, self: g.self, requestIdleCallback: g.requestIdleCallback };
+  g.window = dom.window; g.document = dom.window.document; g.HTMLElement = dom.window.HTMLElement; g.self = dom.window;
+  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+  g.requestIdleCallback = (cb) => dom.window.setTimeout(cb, 0);
+  dom.window.requestIdleCallback = g.requestIdleCallback;
+  g.cancelIdleCallback = (id) => dom.window.clearTimeout(id);
+  dom.window.cancelIdleCallback = g.cancelIdleCallback;
+
+  const rows = [];
+  try {
+    const React = (await import("react")).default;
+    // client createRoot 는 JSDOM 에서 scheduler(MessageChannel) 충돌이 난다. 대비 검사는
+    // 마크업만 필요하므로 서버 렌더러로 실제 캴포넌트를 그대로 태운다(수제 DOM 재구성 아님).
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const Card = card.default;
+
+    const STATES = [
+      { name: "live", game: { status: "live", inning: "7회초", awayScore: 3, homeScore: 5, liveDetailFromKbo: true, balls: 3, strikes: 2, outs: 1 } },
+      { name: "final", game: { status: "final", inning: "", awayScore: 12, homeScore: 10 } },
+      { name: "cancelled", game: { status: "cancelled", inning: "", awayScore: null, homeScore: null } },
+      { name: "scheduled", game: { status: "scheduled", inning: "", awayScore: null, homeScore: null } },
+    ];
+
+    for (const t of TEAMS) {
+      const surface = card.FEATURED_SURFACE(t.colorPrimary);
+      const bgHex = /linear-gradient\(135deg,\s*(#[0-9a-fA-F]{6})\s*0%/.exec(String(surface.background))[1];
+      const cardBg = parseHex(bgHex);
+
+      for (const st of STATES) {
+        const game = {
+          id: "20260815SSLG0", awayTeamId: 4, homeTeamId: t.id, time: "18:30", stadium: "잠실",
+          runnersOn: { first: false, second: false, third: false }, currentPitcher: "", currentBatter: "",
+          ...st.game,
+        };
+        const html = renderToStaticMarkup(React.createElement(Card, { game, featured: true, myTeamId: t.id }));
+        const el = dom.window.document.createElement("div");
+        el.innerHTML = html;
+        // 상태 pill = 첫 번째 rounded-full 자식
+        const pill = el.querySelector("span.rounded-full");
+        if (!pill) throw new Error(`${t.shortName}/${st.name}: 상태 pill 을 DOM 에서 못 찾음`);
+        let classes = [...pill.classList];
+        if (selftest) {
+          // 검출력 증명: featured 전용 고대비 pill 을 걱어내고 구 반투명 조합으로 되돌린다.
+          classes = classes.filter((c) => !/^bg-\[#|^text-white$/.test(c));
+          classes.push(st.name === "live" ? "bg-red-500/90" : "bg-text-tertiary/15", st.name === "live" ? "text-white" : "text-text-tertiary");
+        }
+        const bgCls = classes.map((c) => resolveUtil(c, "bg", tokens, "dark")).find(Boolean);
+        const fgCls = classes.map((c) => resolveUtil(c, "text", tokens, "dark")).find(Boolean);
+        if (!fgCls) throw new Error(`${t.shortName}/${st.name}: pill 텍스트 색 클래스 미해석 (${classes.join(" ")})`);
+        // 배경 없으면 카드 배경이 그대로 비친다.
+        const pillBg = bgCls ? composite(bgCls, cardBg) : cardBg;
+        const txt = composite(fgCls, pillBg);
+        rows.push({ team: t.shortName, state: st.name, ratio: contrast(txt, pillBg) });
+      }
+    }
+  } finally {
+    g.window = prev.window; g.document = prev.document; g.HTMLElement = prev.HTMLElement;
+    g.self = prev.self; g.requestIdleCallback = prev.requestIdleCallback;
+    Object.defineProperty(globalThis, "navigator", { value: prev.navigator, configurable: true });
+  }
+
+  const bad = rows.filter((r) => r.ratio < AA);
+  const worst = rows.reduce((a, b) => (a.ratio < b.ratio ? a : b));
+  console.log(`  pill: ${rows.length}조합(구단 × live/final/cancelled/scheduled) · worst=${worst.team}/${worst.state} ${worst.ratio.toFixed(2)}:1`);
+  check(`상태 pill 대비: 실제 DOM ${rows.length}조합 전부 AA(${AA}:1) 이상`, bad.length === 0,
+    bad.slice(0, 4).map((b) => `${b.team}/${b.state} ${b.ratio.toFixed(2)}:1`).join(", "));
 }
 
 run({ selftest: process.argv.includes("--selftest") }).catch((e) => {

@@ -194,11 +194,17 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
         <div className="flex h-[15px] items-center gap-[5px]">
           <span
             className={`rounded-full px-1.5 text-[10px] font-extrabold leading-[15px] ${
-              isLive ? "bg-red-500/90 text-white" :
-              isCancelled ? "bg-text-tertiary/20 text-text-tertiary" :
-              isFinal ? "bg-text-tertiary/15 text-text-tertiary" :
-              // 예정 pill은 라이트모드에서 흰 배경이 사라지므로 semantic token 기반으로 칠한다.
-              "bg-text-tertiary/15 text-text-primary"
+              // featured 카드는 배경이 팀컬러(한화 #8C3800 등 밝은 계열)이라 반투명 pill 위 토큰
+              // 텍스트가 AA 미달이 된다(종료 4.01 / 취소 3.75 / LIVE 4.04 — 삼순 지적, 실측 재현).
+              // 10px 저사이즈 텍스트라 large 예외도 안 된다 → featured 에서만 불투명 고대비
+              // 표면으로 갈아끼운다. qa:featured-card-contrast 가 이 조합을 직접 검증한다.
+              featuredTeam
+                ? (isLive ? "bg-[#E11D2E] text-white" : "bg-[#12121A] text-white")
+                : isLive ? "bg-red-500/90 text-white" :
+                  isCancelled ? "bg-text-tertiary/20 text-text-tertiary" :
+                  isFinal ? "bg-text-tertiary/15 text-text-tertiary" :
+                  // 예정 pill은 라이트모드에서 흰 배경이 사라지므로 semantic token 기반으로 칠한다.
+                  "bg-text-tertiary/15 text-text-primary"
             }`}
           >
             {isLive ? `LIVE ${game.inning}` : isCancelled ? "취소" : isFinal ? "종료" : dateStr ? `${formatBadgeDate(dateStr)} ${game.time}` : game.time}
@@ -257,7 +263,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
                 <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${awayWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.awayScore ?? 0}
                 </span>
-                <span className="text-xs font-bold text-text-tertiary/70">:</span>
+                <span className={`text-xs font-bold ${featuredTeam ? "text-white/80" : "text-text-tertiary/70"}`}>:</span>
                 <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${homeWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.homeScore ?? 0}
                 </span>

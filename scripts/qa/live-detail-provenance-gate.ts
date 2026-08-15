@@ -20,6 +20,8 @@
 // SUPABASE env 를 요구한다. 이 게이트는 순수 파싱/병합만 검증하므로 더미 값을 선주입한다
 // (반드시 아래 import 보다 먼저 평가될 것 — 기존 scripts/qa/_smoke-env.ts 와 동일 패턴).
 import "./_smoke-env";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { mapNaverGameToKbo } from "@/lib/crawler/naver-games";
 import { mergeKboEnrichment, type KboGame } from "@/lib/crawler/games-user-facing";
@@ -181,6 +183,17 @@ async function main() {
   const all = [nv, drift[0], timeout[0]];
   check("불변식: flag=false ⇒ 값 degrade (전수)", all.every((g) => g.liveDetailFromKbo || degradedValuesOnly(g)));
 
+  // ── ⑨-0 mapper 배선 (삼순 2026-08-15): route 응답과 카드 사이의 games/page.tsx mapper 가
+  //    liveDetailFromKbo 를 실제로 전달하는가. 이 한 줄이 빠지면 카드는 영원히 '준비 중'이 되고
+  //    (fail-close 방향이라 안전하지만) 기능이 죽는다 — 값 검증만으로는 잡힐 수 없다.
+  {
+    const src = readFileSync(resolve(import.meta.dirname, "../../src/app/(main)/games/page.tsx"), "utf8");
+    check("mapper 배선: games/page.tsx 가 liveDetailFromKbo 를 카드로 전달",
+      /liveDetailFromKbo:\s*g\.liveDetailFromKbo/.test(src));
+    check("mapper 배선: 응답 타입에도 liveDetailFromKbo 선언 존재",
+      /liveDetailFromKbo\?:\s*boolean/.test(src));
+  }
+
   // ── ⑨ route 종단 (삼순 2026-08-15): 실제 KBO abort → /api/games GET → 응답 flag=false
   //    병합 함수 단위가 아니라 production route 모듈을 그대로 실행해 배선을 고정한다.
   await routeEndToEnd();
@@ -247,8 +260,9 @@ async function cardEndToEnd() {
   (dom.window as unknown as Record<string, unknown>).cancelIdleCallback = g.cancelIdleCallback;
   try {
     const React = (await import("react")).default;
-    const { createRoot } = await import("react-dom/client");
-    const { flushSync } = await import("react-dom");
+    // client createRoot 는 JSDOM 에서 scheduler(MessageChannel) 충돌로 프로세스 exit 를 깨뜨린다.
+    // 여기서 필요한 건 렌더 결과 마크업이므로 서버 렌더러로 실제 캴포넌트를 그대로 태운다.
+    const { renderToStaticMarkup } = await import("react-dom/server");
     const Card = (await import("@/components/game/CompactGameCard")).default;
     const baseGame = {
       id: "20260815SSLG0", awayTeamId: 4, homeTeamId: 1, awayScore: 3, homeScore: 5,
@@ -256,15 +270,8 @@ async function cardEndToEnd() {
       balls: 0, strikes: 0, outs: 0, runnersOn: { first: false, second: false, third: false },
       currentPitcher: "", currentBatter: "",
     };
-    const render = (game: Record<string, unknown>) => {
-      const el = dom.window.document.createElement("div");
-      dom.window.document.body.appendChild(el);
-      const root = createRoot(el);
-      flushSync(() => root.render(React.createElement(Card, { game } as never)));
-      const html = el.innerHTML;
-      root.unmount(); el.remove();
-      return html;
-    };
+    const render = (game: Record<string, unknown>) =>
+      renderToStaticMarkup(React.createElement(Card, { game } as never));
     const degraded = render({ ...baseGame, liveDetailFromKbo: false });
     check("카드 종단: flag=false → '실시간 상세 준비 중' 표시", degraded.includes("실시간 상세 준비 중"));
     check("카드 종단: flag=false → BSO/다이아몬드 미렌더(거짓 0-0-0 없음)",
