@@ -18,69 +18,231 @@ import path from "node:path";
 import process from "node:process";
 
 const root = path.resolve(new URL(".", import.meta.url).pathname, "../..");
-const target = path.join(root, "src/lib/baseball-qa/pipeline.ts");
-const backup = `${target}.qnorm-mutations.bak`;
+const PIPELINE = path.join(root, "src/lib/baseball-qa/pipeline.ts");
+const LOG_ROW = path.join(root, "src/lib/baseball-qa/log-row.ts");
+const PICKER = path.join(root, "src/components/dm/GeniusQuestionCorrectionPicker.tsx");
+const USE_DM = path.join(root, "src/lib/supabase/useDM.ts");
+const OUTBOX = path.join(root, "src/lib/baseball-qa/client-outbox.ts");
+const SERVER = path.join(root, "src/lib/baseball-qa/server.ts");
+const READY_PLAN = path.join(root, "src/lib/baseball-qa/job-ready-plan.ts");
+const MIGRATION = path.join(
+  root, "supabase/migrations/20260813203000_baseball_genius_question_correction_picker.sql",
+);
+
+/**
+ * mutation 은 `file` 을 생략하면 pipeline.ts 를 대상으로 한다.
+ * `gate` 를 주면 그 게이트로 RED 를 판정한다(기본 = normalize smoke).
+ */
+const GATES = {
+  normalize: ["npx", ["tsx", "scripts/qa/genius-question-normalize-smoke.ts"]],
+  correctionDb: ["npx", ["tsx", "scripts/qa/genius-question-correction-db.ts"]],
+  pickerRender: ["npx", ["tsx", "scripts/qa/genius-picker-disabled-render.ts"]],
+  dmRace: ["npx", ["tsx", "scripts/qa/genius-correction-dm-race.ts"]],
+};
 
 const mutations = [
   {
-    name: "M1 발동 라우트 조건 제거 (모든 라우트에서 발동)",
+    name: "M1 발동 라우트 조건 제거",
     find: 'routeQuestion(question, glossary, players, false) === "llm_scope_gate"',
     replace: 'routeQuestion(question, glossary, players, false) !== "__never__"',
   },
   {
-    name: "M2 숫자 시퀀스 보존 가드 제거",
-    find: "if (!digitSequencesMatch(question, candidate)) return rejected;",
-    replace: "if (false) return rejected;",
+    name: "M2 숫자 시퀀스 보존 제거",
+    find: 'if (!digitSequencesMatch(question, candidate)) return "rejected";',
+    replace: 'if (false) return "rejected";',
   },
   {
-    name: "M3 재라우팅 blocked 가드 제거",
-    find: 'if (routeQuestion(candidate, glossary, players, false) === "blocked") return rejected;',
-    replace: "if (false) return rejected;",
+    // 삼순 2026-08-13 ②: 착지 allowlist 를 "blocked/residual 만 제외" 로 되돌리면
+    // ack·history_hold 같은 답 못 하는 라우트 후보까지 제안된다.
+    name: "M3 착지 allowlist 를 non-blocked 로 완화",
+    find: 'return CORRECTION_SUGGESTABLE_ROUTES.includes(candidateRoute) ? "suggest" : "rejected";',
+    replace: 'return candidateRoute !== "llm_scope_gate" ? "suggest" : "rejected";',
   },
   {
-    name: "M4 실변경(raw 비교) 가드 제거",
-    find: "if (candidate === question) return rejected;",
-    replace: "if (false) return rejected;",
+    // allowlist 자체를 넓혀도 같은 사고가 난다 — 상수 목록도 계약이다.
+    name: "M3b allowlist 에 답 못 하는 라우트 추가",
+    find: '  "career_leaderboard",\n];',
+    replace: '  "career_leaderboard",\n  "ack",\n  "history_hold",\n];',
   },
   {
-    name: "M5 fail-open 제거 (정규화 장애가 답변을 죽임)",
-    find: "norm = null; // 정규화 장애는 원문 진행",
-    replace: 'throw new Error("normalizer failure leaks"); //',
+    // 2026-08-14 hotfix 축: 복원 배선을 죽이면 Production QA FAIL 실데이터(provider 가
+    // `보끄가 뭐야` 까지만 교정)가 다시 카드 도달 불가가 된다.
+    name: "M22 결정론 사전 복원 배선 제거",
+    find: '      const repaired = repairGlossaryTermTypo(repairBase, glossary);',
+    replace: '      const repaired = null;',
   },
   {
-    name: "M6 로그 원문 고정 제거 (정규화문이 question 을 덮어씀)",
-    find: "question: originalQuestion,\n          questionNormalized: acceptedText,",
-    replace: "questionNormalized: acceptedText,",
+    // 유일성 안전선을 죽이면 증명 불가한 후보(보루→보크/도루 동시)가 카드로 나간다.
+    name: "M23 복원 유일성 fail-close 제거",
+    find: '  if (repaired.size !== 1) return null;',
+    replace: '  if (repaired.size < 1) return null;',
   },
   {
-    name: "M7 길이 상한 가드 제거",
-    find: "if (candidate.length > question.length * 2 + 10) return rejected;",
-    replace: "if (false) return rejected;",
+    // 삼순 2026-08-14 2차: 정의형 축약 guard 를 죽이면 실측 오제안
+    // (`전광판 보는 법` → `전광판 보크 법`)이 다시 카드로 나간다.
+    name: "M26 복원의 정의형 축약 guard 제거",
+    find: '      if (normalizeQuestion(restored) !== normalizeKey(term)) continue;',
+    replace: '      if (false) continue;',
   },
   {
-    name: "M8 Tier B HOLD 제거 (폐쇄집합 내부 용어 치환 통과)",
-    find: "return rejected; // Tier B 자동 재라우팅 HOLD — 폐쇄집합 착지만으로 의미 불변을 증명할 수 없다.",
-    replace: 'return { accepted: true, status: "accepted_surface" };',
+    // 삼순 2026-08-14 NO-GO 축: Tier A 공백-only 수용이 residual 로 남는 경로를 죽이면
+    // provider 가 공백만 고치는 실측 행동에서 카드가 다시 도달 불가가 된다.
+    name: "M25 Tier A residual 복원 확장 제거",
+    find: '    const acceptedStillResidual = accepted\n      && routeQuestion(candidate, glossary, players, false) === "llm_scope_gate";',
+    replace: '    const acceptedStillResidual = false;',
   },
   {
-    name: "M9 관측 status 기록 제거 (미호출/거절/오류 구분 소실)",
-    find: "normalizeStatus: normStatus,",
-    replace: "",
+    // 복원 후보도 SSOT 착지 재판정을 통과해야 한다 — 빼면 allowlist 밖 후보가 제안된다.
+    name: "M24 복원 후보의 SSOT 재판정 제거",
+    find: '      if (repaired !== null\n          && classifyQuestionCorrectionCandidate(question, repaired, glossary, players) === "suggest") {',
+    replace: '      if (repaired !== null) {',
   },
   {
-    name: "M10 Tier A 조건 완화 (문자 구성이 달라도 surface 수용 — Tier B HOLD 우회)",
-    find: 'if (normalizeKey(candidate) === normalizeKey(question)) {\n    return { accepted: true, status: "accepted_surface" };\n  }',
-    replace: 'if (true) {\n    return { accepted: true, status: "accepted_surface" };\n  }',
+    // 삼순 ③ 취소 종결: 거절을 무시하면 정규화가 다시 돌아 같은 제안이 무한 반복된다.
+    name: "M9 거절 플래그를 무시하고 정규화 재진입",
+    find: 'if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm',
+    replace: 'if (!deps.pickedNormalizedQuestion && deps.normalizeQuestionLlm',
+  },
+  {
+    // 삼순 ③ 관측 분리: 제안문을 수용문 칸에 섮으면 오교정 감사 분모가 깨진다.
+    name: "M10 제안 후보를 수용문 칸에 섮음",
+    find: 'const acceptedText = accepted ? candidate : null;',
+    replace: 'const acceptedText = accepted || suggested ? candidate : null;',
+  },
+  {
+    name: "M11 제안 전용 관측 칸 기록 제거",
+    find: 'correctionCandidate: suggestedText,',
+    replace: '',
+  },
+  {
+    name: "M4 선택 전 Tier B 자동수용",
+    find: 'accepted = verdict === "accepted_surface";',
+    replace: 'accepted = verdict === "accepted_surface" || verdict === "suggest";',
+  },
+  {
+    name: "M5 선택 적용 시 membership 재검증 제거",
+    find: 'if (classifyQuestionCorrectionCandidate(question, picked, glossary, players) !== "suggest") {',
+    replace: 'if (false) {',
+  },
+  {
+    name: "M6 유저 선택 후보 적용 제거",
+    find: 'question = picked;\n    questionNorm = normalizeQuestion(picked);',
+    replace: 'question = originalQuestion;\n    questionNorm = normalizeQuestion(originalQuestion);',
+  },
+  {
+    name: "M7 로그 원문 고정 제거",
+    find: `question: originalQuestion,\n          questionNormalized: acceptedText,`,
+    replace: 'questionNormalized: acceptedText,',
+  },
+  {
+    name: "M8 관측 status 제거",
+    find: 'normalizeStatus: normStatus,',
+    replace: '',
+  },
+  {
+    // 삼순 2026-08-13 ①: pipeline 이 후보를 만들어도 Production INSERT 에 칸이 없으면
+    // 실 DB 는 계속 null 이다. 그 단절을 DB 게이트가 잡는지 증명한다.
+    name: "M12 Production INSERT 에서 제안 칸 제거",
+    file: LOG_ROW,
+    gate: "correctionDb",
+    find: 'question_correction_candidate: entry.correctionCandidate ?? null,',
+    replace: '',
+  },
+  {
+    name: "M13 Production INSERT 가 제안문을 수용문 칸에 섮음",
+    file: LOG_ROW,
+    gate: "correctionDb",
+    find: 'question_normalized: entry.questionNormalized ?? null,',
+    replace: 'question_normalized: entry.questionNormalized ?? entry.correctionCandidate ?? null,',
+  },
+  {
+    // 삼순 2026-08-13 ②: 거절 버튼이 없으면 유저는 원문 답변을 받을 길이 없다.
+    name: "M14 교정 카드에서 거절 버튼 제거",
+    file: PICKER,
+    gate: "pickerRender",
+    find: 'data-testid="genius-question-correction-decline"',
+    replace: 'data-testid="genius-question-correction-decline-REMOVED"',
+  },
+  {
+    name: "M15 거절 버튼이 거절 대신 후보를 올림",
+    file: PICKER,
+    gate: "pickerRender",
+    find: 'onClick={() => onRespond(null)}',
+    replace: 'onClick={() => onRespond(options[0])}',
+  },
+  {
+    name: "M16 교정 카드 disabled 무시(상호 잠금 붕괴)",
+    file: PICKER,
+    gate: "pickerRender",
+    find: '        disabled={disabled}\n        onClick={() => onRespond(null)}',
+    replace: '        onClick={() => onRespond(null)}',
+  },
+  {
+    // 삼순 2026-08-13 교정 DM 선행 race: 선행관측 ref 가 picker 키만 보면
+    // 교정 DM 이 먼저 왔을 때 late-enqueue 복원이 안 돌아 202 재시도가 반복된다.
+    name: "M17 선행관측 ref 를 picker 키로 좌힘",
+    file: USE_DM,
+    gate: "dmRace",
+    find: '        BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) =>\n          message.dedup_key === `${prefix}${messageId}`))) {',
+    replace: '        message.dedup_key === `baseball-genius-picker:${messageId}`)) {',
+  },
+  {
+    name: "M19 선택대기 키 집합에서 교정 제거",
+    file: OUTBOX,
+    gate: "dmRace",
+    find: '  "baseball-genius-correction:",\n] as const;',
+    replace: '] as const;',
+  },
+  {
+    // 삼순 2026-08-13 quota/crash 의 핵심: 제안 확정이 반납을 함께 하지 않으면
+    // 제안 턴에 차감이 남아 유저가 답도 못 받고 1회를 물린다(이중 과금).
+    name: "M20 settle 에서 quota 반납 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: '    UPDATE public.genius_daily_usage\n    SET used = greatest(0, used - 1), updated_at = now()\n    WHERE user_id = p_user_id AND kst_day = v_day;',
+    replace: '    NULL;',
+  },
+  {
+    // 반대방향: 반납 표시를 안 남기면 선택 단계가 최종 답변용 예약을 새로 안 열어
+    // 최종 답변이 무료로 나간다(used=0).
+    name: "M20b settle 의 반납 표시 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: '      quota_released = CASE\n        WHEN v_job.quota_reserved AND coalesce(v_job.quota_allowed, false) = true THEN true\n        ELSE v_job.quota_released\n      END,',
+    replace: '      quota_released = v_job.quota_released,',
+  },
+  {
+    // 반납 전 fence 가 없으면 ready 일반답변은 quota 만 환불되고, 선택 후 재claim 된
+    // processing 행은 구 worker 가 다시 교정 카드로 되돌릴 수 있다.
+    name: "M20c settle 의 반납 전 결정 fence 제거",
+    file: MIGRATION,
+    gate: "correctionDb",
+    find: "  IF v_job.status <> 'processing'\n     OR v_job.picked_normalized_question IS NOT NULL\n     OR v_job.correction_declined\n     OR v_job.correction_options IS NOT NULL THEN\n    RETURN false;\n  END IF;",
+    replace: "  IF false THEN\n    RETURN false;\n  END IF;",
+  },
+  {
+    // 배선 축: 서버가 settle 경로를 안 고르고 비원자 update 로 돌아가면
+    // RPC 가 아무리 올바라도 Production 은 그걸 안 쓴다.
+    name: "M21 교정 제안을 비원자 update 경로로 되돌림",
+    file: READY_PLAN,
+    gate: "correctionDb",
+    find: '  if (result.source === "question_correction" && result.correctionOptions?.length === 1) {',
+    replace: '  if (false) {',
+  },
+  {
+    // 교정 경로가 아닌 답변이 교정 칸을 남기면 엉뚝한 답변에 카드가 붙는다.
+    name: "M21b 일반 답변이 교정 칸을 그대로 남김",
+    file: READY_PLAN,
+    gate: "correctionDb",
+    find: '      correction_options: null,\n      correction_question_message_id: null,',
+    replace: '      correction_options: result.correctionOptions ?? null,\n      correction_question_message_id: messageId,',
   },
 ];
 
-function runSmoke() {
+function runGate(name = "normalize") {
+  const [cmd, args] = GATES[name];
   try {
-    execFileSync("npx", ["tsx", "scripts/qa/genius-question-normalize-smoke.ts"], {
-      cwd: root,
-      stdio: "pipe",
-      timeout: 120_000,
-    });
+    execFileSync(cmd, args, { cwd: root, stdio: "pipe", timeout: 180_000 });
     return { code: 0, output: "" };
   } catch (err) {
     const output = `${err.stdout ?? ""}\n${err.stderr ?? ""}`;
@@ -88,22 +250,30 @@ function runSmoke() {
   }
 }
 
-// 전제: 무변이 상태에서 smoke 는 GREEN 이어야 한다 — 아니면 mutation 판정 자체가 무의미하다.
-{
-  const base = runSmoke();
+// 전제: 무변이 상태에서 쓰는 게이트는 전부 GREEN 이어야 한다 — 아니면 판정 자체가 무의미하다.
+for (const g of new Set(mutations.map((m) => m.gate ?? "normalize"))) {
+  const base = runGate(g);
   if (base.code !== 0) {
-    console.error("BASELINE RED — 무변이 smoke 가 이미 실패한다. mutation 판정 불가.");
+    console.error(`BASELINE RED (${g}) — 무변이 게이트가 이미 실패한다. mutation 판정 불가.`);
     console.error(base.output.slice(0, 2000));
     process.exit(1);
   }
 }
 
-const original = readFileSync(target, "utf8");
-copyFileSync(target, backup);
+const sources = new Map();
+const backups = new Map();
+for (const f of new Set(mutations.map((m) => m.file ?? PIPELINE))) {
+  sources.set(f, readFileSync(f, "utf8"));
+  const b = `${f}.qnorm-mutations.bak`;
+  copyFileSync(f, b);
+  backups.set(f, b);
+}
 let failures = 0;
 
 try {
   for (const m of mutations) {
+    const file = m.file ?? PIPELINE;
+    const original = sources.get(file);
     if (!original.includes(m.find)) {
       console.error(`INJECTION FAILED (pattern not found): ${m.name}`);
       failures++;
@@ -115,9 +285,9 @@ try {
       failures++;
       continue;
     }
-    writeFileSync(target, original.replace(m.find, m.replace));
-    const res = runSmoke();
-    const assertionFailure = /AssertionError|ERR_ASSERTION|normalizer failure leaks/.test(res.output);
+    writeFileSync(file, original.replace(m.find, m.replace));
+    const res = runGate(m.gate);
+    const assertionFailure = /AssertionError|ERR_ASSERTION|normalizer failure leaks|FAIL=/.test(res.output);
     if (res.code !== 0 && assertionFailure) {
       console.log(`RED (검출 성공): ${m.name}`);
     } else if (res.code !== 0) {
@@ -128,11 +298,13 @@ try {
       console.error(`GREEN (검출 실패 — 가드가 죽어도 게이트가 통과): ${m.name}`);
       failures++;
     }
-    copyFileSync(backup, target);
+    copyFileSync(backups.get(file), file);
   }
 } finally {
-  copyFileSync(backup, target);
-  rmSync(backup, { force: true });
+  for (const [f, b] of backups) {
+    copyFileSync(b, f);
+    rmSync(b, { force: true });
+  }
 }
 
 if (failures > 0) {

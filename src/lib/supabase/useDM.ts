@@ -6,6 +6,10 @@ import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import {
+  markGeniusThinkingMessageId,
+  transitionGeniusThinkingMessageId,
+} from "@/lib/baseball-qa/thinking-bubble";
+import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
 } from "@/lib/constants/baseball-genius";
@@ -18,12 +22,16 @@ import {
   readBaseballQaOutbox,
   resetBaseballQaQuestion,
   applyBaseballQaPlayerPick,
+  applyBaseballQaQuestionCorrection,
+  declineBaseballQaQuestionCorrection,
   collectBaseballQaAnsweredQuestionIds,
   createBaseballQaAnsweredUpdater,
+  BASEBALL_QA_SELECTION_DEDUP_KEYS,
   type BaseballQaReplyStates,
 } from "@/lib/baseball-qa/client-outbox";
 import { usePollingFallback } from "./usePollingFallback";
 import { mergeDmMessagesById, type DMMessage } from "./dm-messages";
+import { useBaseballQaReplyRecovery } from "@/lib/baseball-qa/use-reply-recovery";
 
 export type { DMMessage };
 
@@ -211,6 +219,12 @@ export function useDMChat(conversationId: string) {
   const [geniusReplyStates, setGeniusReplyStates] =
     useState<BaseballQaReplyStates>({});
   const processingBaseballQaRef = useRef(false);
+  // HTTP 성공과 답변 Realtime INSERT는 서로 다른 전달 경로다. INSERT를 놓쳐도
+  // exact 답변을 다시 읽어 typing을 종료할 수 있게 현재 대화 재조회를 연결한다.
+  const syncBaseballQaRepliesRef = useRef<() => void>(() => {});
+  const syncBaseballQaReplies = useCallback(() => {
+    syncBaseballQaRepliesRef.current();
+  }, []);
   const observedBaseballQaReplyIdsRef = useRef(new Set<number>());
   const observedBaseballQaPickerIdsRef = useRef(new Set<number>());
   /**
@@ -220,9 +234,17 @@ export function useDMChat(conversationId: string) {
    */
   const [geniusPickedQuestionIds, setGeniusPickedQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
+  /** 교정 선택과 선수 선택은 연속될 수 있어 서로 다른 탭 잠금으로 관리한다. */
+  const [geniusCorrectedQuestionIds, setGeniusCorrectedQuestionIds] =
+    useState<ReadonlySet<number>>(() => new Set<number>());
   /** 최종 답변이 있는 질문 id — 과거 picker 카드 재탭을 UI에서도 막는다. */
   const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
+  /** 현재 페이지 세션에서 생각중 말풍선을 붙일 최신 질문 id. */
+  const [geniusThinkingQuestionId, setGeniusThinkingQuestionId] =
+    useState<number | null>(null);
+  /** draft(`""`) → RPC가 만든 실제 대화 id 승격과 일반 대화 전환을 구분한다. */
+  const previousConversationIdRef = useRef(conversationId);
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
@@ -258,9 +280,15 @@ export function useDMChat(conversationId: string) {
         message.dedup_key === `baseball-genius:${messageId}`)) {
         observedBaseballQaReplyIdsRef.current.add(messageId);
       }
+      // 선수 picker 와 교정 카드는 **같은 종류의 발화**다 — 둘 다 "답변이 아니라 선택을 기다리는
+      // 카드"고, 둘 다 outbox 를 보존해야 유저 클릭이 원 질문을 재처리할 수 있다.
+      // 교정 dedup_key 를 빼면 교정 DM 이 질문 INSERT 응답보다 먼저 도착했을 때
+      // late-enqueue 복원이 안 돌아 outbox 가 active 로 재생성되고 202 재시도/typing 이 반복된다
+      // (삼순 2026-08-13 교정 DM 선행 race).
       if (nextMessages.some((message) =>
         message.sender_id === BASEBALL_GENIUS_USER_ID &&
-        message.dedup_key === `baseball-genius-picker:${messageId}`)) {
+        BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) =>
+          message.dedup_key === `${prefix}${messageId}`))) {
         observedBaseballQaPickerIdsRef.current.add(messageId);
       }
     }
@@ -284,10 +312,15 @@ export function useDMChat(conversationId: string) {
       );
       setGeniusReplyStates(getBaseballQaReplyStates(queued, retrying));
       const { data: { session } } = await supabase.auth.getSession();
-      await attemptBaseballQaOutbox(
+      const attempt = await attemptBaseballQaOutbox(
         window.localStorage,
         session?.access_token ?? null,
       );
+      if (attempt.completed.length > 0) {
+        // 200은 서버 답변 발송 완료를 뜻하지만 Realtime INSERT 관측을 보장하지 않는다.
+        // 성공 직후 DB 정본을 다시 읽어 놓친 답변을 즉시 회수한다.
+        syncBaseballQaRepliesRef.current();
+      }
       setGeniusReplyStates(getBaseballQaReplyStates(readBaseballQaOutbox(window.localStorage)));
     } finally {
       processingBaseballQaRef.current = false;
@@ -307,13 +340,12 @@ export function useDMChat(conversationId: string) {
     };
   }, [user, processBaseballQaOutbox]);
 
-  useEffect(() => {
-    if (!Object.values(geniusReplyStates).some((state) => state === "waiting")) return;
-    const timer = window.setTimeout(() => {
-      void processBaseballQaOutbox();
-    }, 3000);
-    return () => window.clearTimeout(timer);
-  }, [geniusReplyStates, processBaseballQaOutbox]);
+  useBaseballQaReplyRecovery({
+    replyStates: geniusReplyStates,
+    setReplyStates: setGeniusReplyStates,
+    syncReplies: syncBaseballQaReplies,
+    processOutbox: processBaseballQaOutbox,
+  });
 
   const retryBaseballQa = useCallback((messageId: number) => {
     if (typeof window === "undefined") return;
@@ -358,6 +390,30 @@ export function useDMChat(conversationId: string) {
     );
     void processBaseballQaOutbox();
   }, [conversationId, processBaseballQaOutbox, geniusPickedQuestionIds]);
+
+  /**
+   * 교정 카드 응답(선택 또는 거절). 둘 다 **같은 잠금 집합**을 쓴다 — 한 카드에
+   * 선택과 거절을 연속으로 누를 수 있으면 서버가 모호한 응답 두 개를 받는다.
+   */
+  const respondBaseballQaQuestionCorrection = useCallback((messageId: number, question: string | null) => {
+    if (typeof window === "undefined" || !conversationId) return;
+    if (geniusCorrectedQuestionIds.has(messageId)) return;
+    const alreadyAnswered = observedBaseballQaReplyIdsRef.current.has(messageId);
+    const enqueued = question === null
+      ? declineBaseballQaQuestionCorrection(window.localStorage, conversationId, messageId, alreadyAnswered)
+      : applyBaseballQaQuestionCorrection(
+        window.localStorage, conversationId, messageId, question, alreadyAnswered,
+      );
+    setGeniusCorrectedQuestionIds((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev); next.add(messageId); return next;
+    });
+    if (!enqueued) return;
+    setGeniusReplyStates(getBaseballQaReplyStates(
+      readBaseballQaOutbox(window.localStorage), new Set([messageId]),
+    ));
+    void processBaseballQaOutbox();
+  }, [conversationId, processBaseballQaOutbox, geniusCorrectedQuestionIds]);
 
   // 대화 전환(A→B) 즉시 렌더 시점에 이전 대화 화면을 무효화한다:
   // A 메시지 잔존 상태로 B composer 가 뜨면 A 화면을 보고 B 에 오발송하는 창이 생긴다.
@@ -439,6 +495,20 @@ export function useDMChat(conversationId: string) {
     intervalMs: DM_CHAT_POLL_MS,
   });
 
+  useIsomorphicLayoutEffect(() => {
+    syncBaseballQaRepliesRef.current = () => {
+      if (typeof window === "undefined") return;
+      const hasPendingCurrentConversation = readBaseballQaOutbox(window.localStorage).some(
+        (entry) => entry.conversationId === conversationId && !entry.awaitingPlayerPick,
+      );
+      if (!hasPendingCurrentConversation) return;
+      requestLoad(() => loadMessages("merge"));
+    };
+    return () => {
+      syncBaseballQaRepliesRef.current = () => {};
+    };
+  }, [conversationId, loadMessages, requestLoad]);
+
   // 대화 전환 시에는 replace 로 새 대화 메시지만 로드.
   // single-flight 대기 중 대화가 또 바뀌면 generation 가드가 실행 자체를 건너뛴다.
   useEffect(() => {
@@ -446,6 +516,13 @@ export function useDMChat(conversationId: string) {
     // 바뀔 때 여기서 버린다. 이게 없으면 이전 대화의 question id 가 다음 대화로 샐다.
     setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    setGeniusCorrectedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    const previousConversationId = previousConversationIdRef.current;
+    previousConversationIdRef.current = conversationId;
+    // 첫 질문은 `useDMChat("")`에서 전송한 뒤 실제 대화 id로 route replace된다.
+    // 이것은 대화 전환이 아니라 동일 대화의 승격이므로 marker를 지우지 않는다.
+    setGeniusThinkingQuestionId((current) =>
+      transitionGeniusThinkingMessageId(previousConversationId, conversationId, current));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
@@ -632,16 +709,26 @@ export function useDMChat(conversationId: string) {
           result?.message_id &&
           targetUserId === BASEBALL_GENIUS_USER_ID
         ) {
+          // outbox enqueue보다 먼저 답변을 관측한 경우에도 전송 행위 자체는 남긴다.
+          // draft → 실제 대화 route 승격 뒤에도 같은 hook 세션에서 이 marker를 보존한다.
+          setGeniusThinkingQuestionId((prev) =>
+            markGeniusThinkingMessageId(result.message_id as number, prev));
           if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {
             enqueueBaseballQaQuestion(window.localStorage, {
               conversationId: result.conversation_id,
               messageId: result.message_id,
             });
             if (observedBaseballQaPickerIdsRef.current.has(result.message_id)) {
-              observeBaseballQaReplies(window.localStorage, [{
-                sender_id: BASEBALL_GENIUS_USER_ID,
-                dedup_key: `baseball-genius-picker:${result.message_id}`,
-              }], BASEBALL_GENIUS_USER_ID);
+              // 합성 복원도 선행 관측과 **같은 키 집합**을 써야 한다. picker 키로만 합성하면
+              // 교정 카드가 먼저 온 경우에 복원이 모양만 같고 의미가 달라진다.
+              observeBaseballQaReplies(
+                window.localStorage,
+                BASEBALL_QA_SELECTION_DEDUP_KEYS.map((prefix) => ({
+                  sender_id: BASEBALL_GENIUS_USER_ID,
+                  dedup_key: `${prefix}${result.message_id}`,
+                })),
+                BASEBALL_GENIUS_USER_ID,
+              );
             }
           }
           setGeniusReplyStates(
@@ -664,8 +751,11 @@ export function useDMChat(conversationId: string) {
     geniusReplyStates,
     retryBaseballQa,
     pickBaseballQaPlayer,
+    respondBaseballQaQuestionCorrection,
     geniusPickedQuestionIds,
+    geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
+    geniusThinkingQuestionId,
   };
 }
 

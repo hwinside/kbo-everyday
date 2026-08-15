@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "incremental": false
+  },
+  "include": [
+    "scripts/qa/team-copy-gate-env.d.ts",
+    "scripts/qa/baseball-genius-team-copy-smoke.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

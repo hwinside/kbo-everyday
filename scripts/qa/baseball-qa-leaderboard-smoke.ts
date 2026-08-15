@@ -43,6 +43,7 @@ import {
   StatsFreshnessContractError,
 } from "../../src/lib/stats/full-entry";
 import { GET as statsGET, handleStatsGetFailure } from "../../src/app/api/stats/route";
+import statsMeta from "../../src/lib/constants/stats-2026-meta.json";
 import { canonicalKboId } from "../../src/lib/utils/resolve-player";
 import {
   RAG_ANSWER_MAX_CHARS,
@@ -380,11 +381,25 @@ const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
 checkAsync("GET 경계: freshness 계약 오류는 fallback 200으로 우회하지 않는다", async () => {
+  // ⚠️ now 를 달력 날짜로 고정하면 이 검사가 **데이터 의존**이 된다: 자동 데이터 PR 이
+  //   generatedAt 을 고정 now 이후로 갱신하는 순간 fallback 구성시각이 '미래'가 되어
+  //   mutant(freshness 분기 제거)도 fallback 500 으로 같은 답을 내 검출력이 0 이 된다
+  //   (2026-08-12~13 자동 PR 3일 연속 Preview FAIL 의 실원인, m9b MISS).
+  //   now 는 repo 의 실제 generatedAt 에서 파생시켜 fallback 이 항상 '유효'한 시계로 검사한다:
+  //   비변이 코드만 freshness 분기에서 500, mutant 는 fallback 200 으로 갈라진다.
+  const generatedMs = Date.parse(statsMeta.battersGeneratedAt);
+  assert.ok(Number.isFinite(generatedMs), "stats-2026-meta battersGeneratedAt 파싱 불가 — 게이트 전제 붕괴");
+  const nowAfterGeneration = new Date(generatedMs + 60 * 60 * 1000);
+  // 검출력 전제 자가검증: 이 시계에서 fallback 구성시각은 반드시 유효해야 한다.
+  assert.ok(
+    oldestFullEntryTimestamp([statsMeta.battersGeneratedAt], nowAfterGeneration),
+    "파생 시계에서 fallback freshness 가 invalid — 이 검사는 mutant 를 검출할 수 없다",
+  );
   const response = handleStatsGetFailure(
     new StatsFreshnessContractError(),
     "2026",
     "batter",
-    new Date("2026-08-12T01:00:00Z"),
+    nowAfterGeneration,
   );
   assert.equal(response.status, 500);
   const body = await response.json();
@@ -443,9 +458,9 @@ checkAsync("E2E: 캡처 exact가 history_hold/LLM이 아니라 kbo_structured로
 });
 
 const FULL_ANSWER =
-  "맛자욱이라는 별명은 먹방 예능에서 보여준 남다른 먹성 때문에 팬들이 붙여준 거예요. " +
-  "데뷔 초 방송 출연이 화제가 된 뒤 응원단이 먼저 부르기 시작했고, 홈 경기 응원가에도 등장하면서 널리 퍼졌다고 알려져 있어요. " +
-  "본인도 그 별명을 마음에 들어해서 인터뷰에서 직접 언급할 만큼 지금까지 정착했다고 해요.";
+  "맛자욱이라는 별명은 먹방 예능에서 보여준 남다른 먹성 때문에 팬들이 붙인 것입니다. " +
+  "데뷔 초 방송 출연이 화제가 된 뒤 응원단이 먼저 부르기 시작했고, 홈 경기 응원가에도 등장하면서 널리 퍼졌다고 알려져 있습니다. " +
+  "본인도 그 별명을 마음에 들어 해 인터뷰에서 직접 언급할 만큼 지금까지 정착했다고 합니다.";
 checkAsync("E2E: 이유·배경 질문의 세 문장 답변이 잘리지 않고 그대로 나간다 (캡처 성의 축)", async () => {
   const { deps, counters } = ragDeps(FULL_ANSWER);
   const result = await answerQuestion("u1", "맛자욱 별명이 생긴 이유가 뭐야?", deps);

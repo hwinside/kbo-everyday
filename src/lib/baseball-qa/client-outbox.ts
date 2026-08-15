@@ -1,11 +1,15 @@
 export const BASEBALL_QA_OUTBOX_KEY = "baseball-genius-question-outbox-v1";
 export const BASEBALL_QA_MAX_ATTEMPTS = 5;
+/** 30초 lease가 두 번 만료되어도 답변이 없으면 사용자에게 재시도를 돌려준다. */
+export const BASEBALL_QA_REPLY_TIMEOUT_MS = 90_000;
 
 export interface BaseballQaOutboxEntry {
   conversationId: string;
   messageId: number;
   attempts: number;
   acknowledged?: boolean;
+  /** 서버가 200/202를 반환한 뒤 exact 답변을 기다리기 시작한 시각. */
+  responsePendingSinceMs?: number;
   /** picker DM을 관측해 사용자 선택만 기다리는 상태. typing indicator/retry는 멈춘다. */
   awaitingPlayerPick?: boolean;
   /**
@@ -13,9 +17,13 @@ export interface BaseballQaOutboxEntry {
    * 보관한다 — 버리면 재시도 때 picker가 다시 뜨면서 유저 선택이 사라진다.
    */
   pickedPlayerKboId?: string;
+  /** 교정 카드에서 유저가 고른 서버 발급 exact 후보. */
+  pickedNormalizedQuestion?: string;
+  /** 교정 제안을 거절하고 원문 그대로 답변받겠다고 한 경우. */
+  declineCorrection?: boolean;
 }
 
-interface StorageLike {
+export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
 }
@@ -35,8 +43,26 @@ export interface BaseballQaReplyMessage {
   payload?: unknown;
 }
 
+/**
+ * "답변이 아니라 **선택을 기다리는** 카드" 의 dedup_key 접두 SSOT.
+ *
+ * 선수 picker 와 교정 카드는 종류가 같다 — 둘 다 outbox 를 보존해야 유저 클릭이 원 질문을
+ * 재처리하고, 둘 다 선행 관측 · late-enqueue 복원에서 같은 취급을 받아야 한다.
+ *
+ * 🔴 직전 회차 결손(삼순 2026-08-13 교정 DM 선행 race): 이 목록이 여러 곳에 하드코딩돼
+ *    있어 `useDM` 쪽만 picker 키만 보고 있었고, 교정 DM 이 질문 INSERT 응답보다 먼저
+ *    도착하면 outbox 가 active 로 재생성돼 202 재시도/typing 이 반복됐다.
+ *    이제 모든 소비자가 이 상수를 참조한다 — 새 카드 종류가 생기면 여기 한 줄만 늘어난다.
+ */
+export const BASEBALL_QA_SELECTION_DEDUP_KEYS = [
+  "baseball-genius-picker:",
+  "baseball-genius-correction:",
+] as const;
+
 function isPickerReply(message: BaseballQaReplyMessage): boolean {
-  if (message.dedup_key?.startsWith("baseball-genius-picker:")) return true;
+  if (BASEBALL_QA_SELECTION_DEDUP_KEYS.some((prefix) => message.dedup_key?.startsWith(prefix))) {
+    return true;
+  }
   if (!message.payload || typeof message.payload !== "object") return false;
   return (message.payload as { reply_kind?: unknown }).reply_kind === "picker";
 }
@@ -54,9 +80,16 @@ export function readBaseballQaOutbox(storage: StorageLike): BaseballQaOutboxEntr
         Number.isInteger(row.attempts) &&
         row.attempts >= 0 &&
         (row.acknowledged === undefined || typeof row.acknowledged === "boolean") &&
+        (row.responsePendingSinceMs === undefined ||
+          (Number.isSafeInteger(row.responsePendingSinceMs) && row.responsePendingSinceMs >= 0)) &&
         (row.awaitingPlayerPick === undefined || typeof row.awaitingPlayerPick === "boolean") &&
         (row.pickedPlayerKboId === undefined ||
-          (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)),
+          (typeof row.pickedPlayerKboId === "string" && row.pickedPlayerKboId.length > 0)) &&
+        (row.pickedNormalizedQuestion === undefined ||
+          (typeof row.pickedNormalizedQuestion === "string" && row.pickedNormalizedQuestion.length > 0 && row.pickedNormalizedQuestion.length <= 200)) &&
+        (row.declineCorrection === undefined || typeof row.declineCorrection === "boolean") &&
+        // 선택과 거절을 동시에 든 행은 서버가 400 으로 막는다 — 복원 단계에서 버린다.
+        !(typeof row.pickedNormalizedQuestion === "string" && row.declineCorrection === true),
     );
   } catch {
     return [];
@@ -84,6 +117,43 @@ export function enqueueBaseballQaQuestion(
  * 새 질문 메시지를 만들지 않고 **원래 질문 messageId 그대로** 재처리한다. 새 메시지를
  * 만들면 quota가 또 예약되고 대화창에 같은 질문이 두 번 남는다.
  */
+export function applyBaseballQaQuestionCorrection(
+  storage: StorageLike, conversationId: string, messageId: number, pickedNormalizedQuestion: string,
+  alreadyAnswered = false,
+): boolean {
+  if (alreadyAnswered || pickedNormalizedQuestion.length < 1 || pickedNormalizedQuestion.length > 200) return false;
+  const entries = readBaseballQaOutbox(storage);
+  const index = entries.findIndex((row) => row.messageId === messageId);
+  const selected: BaseballQaOutboxEntry = {
+    conversationId, messageId, pickedNormalizedQuestion, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+    declineCorrection: false, responsePendingSinceMs: undefined,
+  };
+  if (index >= 0) entries[index] = { ...entries[index], ...selected };
+  else entries.push(selected);
+  writeBaseballQaOutbox(storage, entries);
+  return true;
+}
+
+/** 교정 제안 거절 — 원문 그대로 답변받는다. 같은 messageId 를 재처리하므로 quota 중복은 없다. */
+export function declineBaseballQaQuestionCorrection(
+  storage: StorageLike, conversationId: string, messageId: number, alreadyAnswered = false,
+): boolean {
+  if (alreadyAnswered) return false;
+  const entries = readBaseballQaOutbox(storage);
+  const index = entries.findIndex((row) => row.messageId === messageId);
+  const declined: BaseballQaOutboxEntry = {
+    conversationId, messageId, declineCorrection: true, attempts: 0, acknowledged: false, awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
+  };
+  // 선택값이 이미 있으면 거절로 덮지 않는다 — 먼저 확정된 응답이 이긴다(서버와 같은 계약).
+  if (index >= 0) {
+    if (entries[index].pickedNormalizedQuestion) return false;
+    entries[index] = { ...entries[index], ...declined };
+  } else entries.push(declined);
+  writeBaseballQaOutbox(storage, entries);
+  return true;
+}
+
 export function applyBaseballQaPlayerPick(
   storage: StorageLike,
   conversationId: string,
@@ -108,6 +178,7 @@ export function applyBaseballQaPlayerPick(
     attempts: 0,
     acknowledged: false,
     awaitingPlayerPick: false,
+    responsePendingSinceMs: undefined,
   };
   if (index >= 0) entries[index] = { ...entries[index], ...selected };
   else entries.push(selected);
@@ -187,9 +258,37 @@ export function createBaseballQaAnsweredUpdater(
 
 export function resetBaseballQaQuestion(storage: StorageLike, messageId: number) {
   const entries = readBaseballQaOutbox(storage).map((row) =>
-    row.messageId === messageId ? { ...row, attempts: 0, acknowledged: false } : row,
+    row.messageId === messageId
+      ? { ...row, attempts: 0, acknowledged: false, responsePendingSinceMs: undefined }
+      : row,
   );
   writeBaseballQaOutbox(storage, entries);
+}
+
+/**
+ * 서버가 요청을 접수했지만 exact 답변이 끝내 관측되지 않은 질문을 유계 시간 뒤 실패로 바꾼다.
+ * outbox에 시각을 보존하므로 새로고침으로 deadline이 리셋되지 않는다.
+ */
+export function expireBaseballQaReplyTimeouts(
+  storage: StorageLike,
+  nowMs = Date.now(),
+  timeoutMs = BASEBALL_QA_REPLY_TIMEOUT_MS,
+): number[] {
+  const expired: number[] = [];
+  const entries = readBaseballQaOutbox(storage).map((entry) => {
+    if (
+      entry.awaitingPlayerPick ||
+      entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS ||
+      entry.responsePendingSinceMs === undefined ||
+      nowMs - entry.responsePendingSinceMs < timeoutMs
+    ) {
+      return entry;
+    }
+    expired.push(entry.messageId);
+    return { ...entry, attempts: BASEBALL_QA_MAX_ATTEMPTS, acknowledged: false };
+  });
+  if (expired.length > 0) writeBaseballQaOutbox(storage, entries);
+  return expired;
 }
 
 export function getBaseballQaReplyStates(
@@ -217,7 +316,7 @@ export function observeBaseballQaReplies(
   const pickerObserved = new Set<number>();
   for (const message of messages) {
     if (message.sender_id !== geniusUserId) continue;
-    const match = /^baseball-genius(?:-picker)?:(\d+)$/.exec(message.dedup_key ?? "");
+    const match = /^baseball-genius(?:-(?:picker|correction))?:(\d+)$/.exec(message.dedup_key ?? "");
     if (!match) continue;
     const messageId = Number(match[1]);
     if (Number.isSafeInteger(messageId) && messageId > 0) {
@@ -253,20 +352,25 @@ export async function attemptBaseballQaOutbox(
   storage: StorageLike,
   accessToken: string | null,
   request: typeof fetch = fetch,
+  nowMs = Date.now(),
 ): Promise<BaseballQaAttemptResult> {
+  expireBaseballQaReplyTimeouts(storage, nowMs);
   const entries = readBaseballQaOutbox(storage);
   const result: BaseballQaAttemptResult = { completed: [], pending: [], failed: [] };
   const updates = new Map<number, BaseballQaOutboxEntry>();
 
   for (const entry of entries) {
-    if (entry.acknowledged) {
-      updates.set(entry.messageId, entry);
-      result.pending.push(entry.messageId);
-      continue;
-    }
     if (entry.attempts >= BASEBALL_QA_MAX_ATTEMPTS) {
       updates.set(entry.messageId, entry);
       result.failed.push(entry.messageId);
+      continue;
+    }
+    if (entry.acknowledged) {
+      updates.set(entry.messageId, {
+        ...entry,
+        responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+      });
+      result.pending.push(entry.messageId);
       continue;
     }
     try {
@@ -283,15 +387,26 @@ export async function attemptBaseballQaOutbox(
           ...(entry.pickedPlayerKboId
             ? { pickedPlayerKboId: entry.pickedPlayerKboId }
             : {}),
+          ...(entry.pickedNormalizedQuestion
+            ? { pickedNormalizedQuestion: entry.pickedNormalizedQuestion }
+            : {}),
+          ...(entry.declineCorrection ? { declineCorrection: true } : {}),
         }),
       });
       if (response.ok && response.status !== 202) {
-        updates.set(entry.messageId, { ...entry, acknowledged: true });
+        updates.set(entry.messageId, {
+          ...entry,
+          acknowledged: true,
+          responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+        });
         result.completed.push(entry.messageId);
         continue;
       }
       if (response.status === 202) {
-        updates.set(entry.messageId, entry);
+        updates.set(entry.messageId, {
+          ...entry,
+          responsePendingSinceMs: entry.responsePendingSinceMs ?? nowMs,
+        });
         result.pending.push(entry.messageId);
         continue;
       }
@@ -314,7 +429,9 @@ export async function attemptBaseballQaOutbox(
       const update = updates.get(entry.messageId);
       if (!update) return entry;
       // 요청 중 picker 관측/선택이 발생하면 오래된 HTTP 응답이 그 새 상태를 덮지 못한다.
-      if (entry.pickedPlayerKboId !== update.pickedPlayerKboId) return entry;
+      if (entry.pickedPlayerKboId !== update.pickedPlayerKboId ||
+          entry.pickedNormalizedQuestion !== update.pickedNormalizedQuestion ||
+          entry.declineCorrection !== update.declineCorrection) return entry;
       if (entry.awaitingPlayerPick) {
         return { ...update, acknowledged: true, awaitingPlayerPick: true };
       }

@@ -1,0 +1,1297 @@
+{
+ "note": "2026-08-14 #1151 이후 실유저 rejected 112건 재생 artifact. 구버전(#1189) repair가 실제 생성한 복원 21건 전건 — cause_term은 구버전 알고리즘 재실행으로 기계 도출(손 라벨 아님).",
+ "glossary_snapshot": [
+  {
+   "term": "2루타",
+   "aliases": [
+    "two base hit",
+    "투베이스",
+    "이루타"
+   ]
+  },
+  {
+   "term": "낫아웃",
+   "aliases": [
+    "스트라이크아웃낫아웃",
+    "not out",
+    "낫 아웃",
+    "스트라이크 아웃 낫 아웃"
+   ]
+  },
+  {
+   "term": "WAR",
+   "aliases": [
+    "승리기여도",
+    "대체선수대비승리기여도",
+    "와르"
+   ]
+  },
+  {
+   "term": "대타",
+   "aliases": [
+    "핀치히터",
+    "pinch hitter",
+    "대타자"
+   ]
+  },
+  {
+   "term": "내야안타",
+   "aliases": [
+    "인필드히트",
+    "infield hit",
+    "내야 안타"
+   ]
+  },
+  {
+   "term": "MVP",
+   "aliases": [
+    "엠브이피",
+    "최우수선수",
+    "시즌mvp"
+   ]
+  },
+  {
+   "term": "골든글러브",
+   "aliases": [
+    "골글",
+    "golden glove",
+    "골든 글러브"
+   ]
+  },
+  {
+   "term": "너클볼",
+   "aliases": [
+    "knuckleball",
+    "너클"
+   ]
+  },
+  {
+   "term": "10-10 클럽",
+   "aliases": [
+    "10-10",
+    "10-10클럽",
+    "텐텐클럽",
+    "텐텐 클럽"
+   ]
+  },
+  {
+   "term": "20-20 클럽",
+   "aliases": [
+    "20-20",
+    "20-20클럽",
+    "트웬티트웬티클럽"
+   ]
+  },
+  {
+   "term": "30-30 클럽",
+   "aliases": [
+    "30-30",
+    "30-30클럽",
+    "서티서티클럽"
+   ]
+  },
+  {
+   "term": "3루타",
+   "aliases": [
+    "triple",
+    "쓰리베이스",
+    "삼루타"
+   ]
+  },
+  {
+   "term": "40-40 클럽",
+   "aliases": [
+    "40-40",
+    "40-40클럽",
+    "포티포티클럽"
+   ]
+  },
+  {
+   "term": "ABS",
+   "aliases": [
+    "abs",
+    "에이비에스",
+    "자동투구판정시스템",
+    "자동볼판정",
+    "로봇심판",
+    "자동 투구 판정 시스템"
+   ]
+  },
+  {
+   "term": "FA",
+   "aliases": [
+    "에프에이",
+    "자유계약선수",
+    "fa자격",
+    "프리에이전트"
+   ]
+  },
+  {
+   "term": "OPS",
+   "aliases": [
+    "ops",
+    "오피에스",
+    "온베이스플러스슬러깅"
+   ]
+  },
+  {
+   "term": "WHIP",
+   "aliases": [
+    "위프",
+    "이닝당출루허용률",
+    "whip이란"
+   ]
+  },
+  {
+   "term": "wRC+",
+   "aliases": [
+    "더블유알씨플러스",
+    "wrc플러스",
+    "wrc"
+   ]
+  },
+  {
+   "term": "견제구",
+   "aliases": [
+    "견제",
+    "pickoff",
+    "견제사"
+   ]
+  },
+  {
+   "term": "끝내기",
+   "aliases": [
+    "끝내기안타",
+    "끝내기홈런",
+    "워크오프",
+    "walk off"
+   ]
+  },
+  {
+   "term": "마무리투수",
+   "aliases": [
+    "클로저",
+    "마무리",
+    "closer",
+    "마무리 투수",
+    "수호신"
+   ]
+  },
+  {
+   "term": "노게임",
+   "aliases": [
+    "no game",
+    "노 게임"
+   ]
+  },
+  {
+   "term": "노히트노런",
+   "aliases": [
+    "노히터",
+    "no hitter",
+    "노히트"
+   ]
+  },
+  {
+   "term": "대주자",
+   "aliases": [
+    "핀치러너",
+    "pinch runner",
+    "대주자란"
+   ]
+  },
+  {
+   "term": "더그아웃",
+   "aliases": [
+    "dugout",
+    "덕아웃",
+    "벤치"
+   ]
+  },
+  {
+   "term": "더블헤더",
+   "aliases": [
+    "double header",
+    "더블 헤더",
+    "두경기"
+   ]
+  },
+  {
+   "term": "도루",
+   "aliases": [
+    "steal",
+    "sb",
+    "도루란"
+   ]
+  },
+  {
+   "term": "도루실패",
+   "aliases": [
+    "도루자",
+    "cs",
+    "도루 실패"
+   ]
+  },
+  {
+   "term": "득점",
+   "aliases": [
+    "run",
+    "득점이란",
+    "r"
+   ]
+  },
+  {
+   "term": "득점권",
+   "aliases": [
+    "스코어링포지션",
+    "득점권타율",
+    "scoring position",
+    "risp"
+   ]
+  },
+  {
+   "term": "등록말소",
+   "aliases": [
+    "말소",
+    "1군말소",
+    "엔트리말소",
+    "등록 말소"
+   ]
+  },
+  {
+   "term": "땅볼",
+   "aliases": [
+    "그라운드볼",
+    "ground ball",
+    "그라운더"
+   ]
+  },
+  {
+   "term": "뜬공",
+   "aliases": [
+    "플라이",
+    "fly ball",
+    "플라이볼",
+    "외야뜬공"
+   ]
+  },
+  {
+   "term": "리드오프",
+   "aliases": [
+    "1번타자",
+    "톱타자",
+    "leadoff",
+    "리드 오프"
+   ]
+  },
+  {
+   "term": "마운드",
+   "aliases": [
+    "mound",
+    "투수판",
+    "피칭마운드"
+   ]
+  },
+  {
+   "term": "만루홈런",
+   "aliases": [
+    "그랜드슬램",
+    "grand slam",
+    "만루홈런이란",
+    "싹쓸이홈런"
+   ]
+  },
+  {
+   "term": "매직넘버",
+   "aliases": [
+    "magic number",
+    "매직 넘버"
+   ]
+  },
+  {
+   "term": "멀티히트",
+   "aliases": [
+    "멀티 히트",
+    "multi hit",
+    "멀티안타"
+   ]
+  },
+  {
+   "term": "몸에 맞는 공",
+   "aliases": [
+    "사구",
+    "데드볼",
+    "히트바이피치",
+    "hbp",
+    "몸에맞는공",
+    "빈볼"
+   ]
+  },
+  {
+   "term": "무승부",
+   "aliases": [
+    "draw",
+    "무"
+   ]
+  },
+  {
+   "term": "배터리",
+   "aliases": [
+    "battery",
+    "배터리란"
+   ]
+  },
+  {
+   "term": "번트",
+   "aliases": [
+    "bunt"
+   ]
+  },
+  {
+   "term": "벤치클리어링",
+   "aliases": [
+    "벤치 클리어링",
+    "bench clearing",
+    "벤클"
+   ]
+  },
+  {
+   "term": "병살타",
+   "aliases": [
+    "더블플레이",
+    "병살",
+    "dp",
+    "더블 플레이",
+    "겟투"
+   ]
+  },
+  {
+   "term": "보크",
+   "aliases": [
+    "balk",
+    "보크란",
+    "보크가"
+   ]
+  },
+  {
+   "term": "볼",
+   "aliases": [
+    "ball",
+    "볼 판정",
+    "볼이란"
+   ]
+  },
+  {
+   "term": "볼넷",
+   "aliases": [
+    "4구",
+    "베이스온볼스",
+    "bb",
+    "포볼"
+   ]
+  },
+  {
+   "term": "불펜",
+   "aliases": [
+    "중간계투",
+    "계투",
+    "릴리프",
+    "bullpen",
+    "불펜투수"
+   ]
+  },
+  {
+   "term": "블론세이브",
+   "aliases": [
+    "블론",
+    "blown save",
+    "블론 세이브"
+   ]
+  },
+  {
+   "term": "비디오판독",
+   "aliases": [
+    "비디오 판독",
+    "챌린지",
+    "리플레이",
+    "판독신청"
+   ]
+  },
+  {
+   "term": "사이클링히트",
+   "aliases": [
+    "사이클링 히트",
+    "히트포더사이클",
+    "cycle",
+    "사이클히트"
+   ]
+  },
+  {
+   "term": "사이클링히트 조건",
+   "aliases": [
+    "사이클링히트조건"
+   ]
+  },
+  {
+   "term": "삼중살",
+   "aliases": [
+    "트리플플레이",
+    "triple play",
+    "삼중살타"
+   ]
+  },
+  {
+   "term": "삼진",
+   "aliases": [
+    "strikeout",
+    "탈삼진",
+    "k"
+   ]
+  },
+  {
+   "term": "샐러리캡",
+   "aliases": [
+    "salary cap",
+    "샐러리 캡",
+    "경쟁균형세"
+   ]
+  },
+  {
+   "term": "서스펜디드게임",
+   "aliases": [
+    "서스펜디드",
+    "suspended game",
+    "서스펜디드 게임",
+    "일시정지경기"
+   ]
+  },
+  {
+   "term": "선발투수",
+   "aliases": [
+    "선발",
+    "starting pitcher",
+    "선발 투수"
+   ]
+  },
+  {
+   "term": "세이브",
+   "aliases": [
+    "save",
+    "sv",
+    "세이브란"
+   ]
+  },
+  {
+   "term": "수비방해",
+   "aliases": [
+    "수비 방해",
+    "interference",
+    "인터피어"
+   ]
+  },
+  {
+   "term": "스윕",
+   "aliases": [
+    "sweep",
+    "싹쓸이",
+    "스윕승"
+   ]
+  },
+  {
+   "term": "스퀴즈",
+   "aliases": [
+    "스퀴즈번트",
+    "squeeze"
+   ]
+  },
+  {
+   "term": "스트라이크",
+   "aliases": [
+    "strike",
+    "스트라이크 판정"
+   ]
+  },
+  {
+   "term": "스트라이크존",
+   "aliases": [
+    "strike zone",
+    "존",
+    "스트존"
+   ]
+  },
+  {
+   "term": "슬라이더",
+   "aliases": [
+    "slider",
+    "슬라"
+   ]
+  },
+  {
+   "term": "승률",
+   "aliases": [
+    "winning percentage",
+    "승률계산"
+   ]
+  },
+  {
+   "term": "승리투수",
+   "aliases": [
+    "승리투수요건",
+    "승리요건",
+    "winning pitcher",
+    "승리 투수"
+   ]
+  },
+  {
+   "term": "시프트",
+   "aliases": [
+    "수비시프트",
+    "shift",
+    "수비 시프트"
+   ]
+  },
+  {
+   "term": "신인드래프트",
+   "aliases": [
+    "드래프트",
+    "draft",
+    "신인 드래프트",
+    "지명회의"
+   ]
+  },
+  {
+   "term": "신인왕",
+   "aliases": [
+    "신인상",
+    "rookie of the year",
+    "루키상"
+   ]
+  },
+  {
+   "term": "실책",
+   "aliases": [
+    "에러",
+    "error",
+    "e"
+   ]
+  },
+  {
+   "term": "아웃",
+   "aliases": [
+    "out"
+   ]
+  },
+  {
+   "term": "안타",
+   "aliases": [
+    "hit",
+    "히트",
+    "h"
+   ]
+  },
+  {
+   "term": "야수선택",
+   "aliases": [
+    "야선",
+    "fielders choice",
+    "야수 선택"
+   ]
+  },
+  {
+   "term": "언더핸드",
+   "aliases": [
+    "잠수함",
+    "잠수함투수",
+    "언더스로",
+    "사이드암",
+    "underhand"
+   ]
+  },
+  {
+   "term": "엔트리",
+   "aliases": [
+    "1군엔트리",
+    "로스터",
+    "활성로스터",
+    "등록선수",
+    "등록 인원"
+   ]
+  },
+  {
+   "term": "연장전",
+   "aliases": [
+    "연장",
+    "extra inning",
+    "승부치기"
+   ]
+  },
+  {
+   "term": "올스타전",
+   "aliases": [
+    "올스타",
+    "all star",
+    "올스타 게임"
+   ]
+  },
+  {
+   "term": "와일드카드결정전",
+   "aliases": [
+    "와일드카드",
+    "wild card",
+    "와일드카드 결정전",
+    "wc"
+   ]
+  },
+  {
+   "term": "와일드피치",
+   "aliases": [
+    "폭투",
+    "wild pitch",
+    "와일드 피치"
+   ]
+  },
+  {
+   "term": "완봉",
+   "aliases": [
+    "shutout",
+    "완봉승",
+    "셧아웃"
+   ]
+  },
+  {
+   "term": "완투",
+   "aliases": [
+    "complete game",
+    "cg",
+    "완투승"
+   ]
+  },
+  {
+   "term": "외국인선수",
+   "aliases": [
+    "용병",
+    "외인",
+    "외국인 선수",
+    "외국인쿼터",
+    "아시아쿼터"
+   ]
+  },
+  {
+   "term": "우천취소",
+   "aliases": [
+    "우취",
+    "rain out",
+    "우천 취소"
+   ]
+  },
+  {
+   "term": "웨이버",
+   "aliases": [
+    "웨이버공시",
+    "방출",
+    "waiver",
+    "웨이버 공시"
+   ]
+  },
+  {
+   "term": "위닝시리즈",
+   "aliases": [
+    "winning series",
+    "위닝 시리즈",
+    "루징시리즈"
+   ]
+  },
+  {
+   "term": "유격수",
+   "aliases": [
+    "ss",
+    "숏스탑",
+    "shortstop"
+   ]
+  },
+  {
+   "term": "유틸리티",
+   "aliases": [
+    "유틸리티플레이어",
+    "유틸",
+    "utility",
+    "멀티포지션"
+   ]
+  },
+  {
+   "term": "이닝",
+   "aliases": [
+    "inning",
+    "회",
+    "이닝이란"
+   ]
+  },
+  {
+   "term": "인필드플라이",
+   "aliases": [
+    "인필드 플라이",
+    "infield fly",
+    "인플라이"
+   ]
+  },
+  {
+   "term": "자동고의4구",
+   "aliases": [
+    "고의사구",
+    "고의4구",
+    "자동 고의 4구",
+    "고의볼넷",
+    "ibb"
+   ]
+  },
+  {
+   "term": "자책점",
+   "aliases": [
+    "earned run",
+    "자책",
+    "비자책"
+   ]
+  },
+  {
+   "term": "장타율",
+   "aliases": [
+    "slg",
+    "장타율이란",
+    "slugging"
+   ]
+  },
+  {
+   "term": "주루방해",
+   "aliases": [
+    "주루 방해",
+    "obstruction",
+    "오브스트럭션"
+   ]
+  },
+  {
+   "term": "준플레이오프",
+   "aliases": [
+    "준po",
+    "준플옵",
+    "semi playoff",
+    "준 플레이오프"
+   ]
+  },
+  {
+   "term": "지명타자",
+   "aliases": [
+    "dh",
+    "디에이치",
+    "지타",
+    "designated hitter"
+   ]
+  },
+  {
+   "term": "직선타",
+   "aliases": [
+    "라이너",
+    "line drive",
+    "라인드라이브"
+   ]
+  },
+  {
+   "term": "진루타",
+   "aliases": [
+    "진루타란",
+    "productive out"
+   ]
+  },
+  {
+   "term": "체인지업",
+   "aliases": [
+    "changeup",
+    "서클체인지업",
+    "첸지업"
+   ]
+  },
+  {
+   "term": "체크스윙",
+   "aliases": [
+    "하프스윙",
+    "check swing",
+    "체크 스윙"
+   ]
+  },
+  {
+   "term": "출루율",
+   "aliases": [
+    "obp",
+    "출루율이란",
+    "on base percentage"
+   ]
+  },
+  {
+   "term": "커브",
+   "aliases": [
+    "커브볼",
+    "curve",
+    "커브란"
+   ]
+  },
+  {
+   "term": "커터",
+   "aliases": [
+    "컷패스트볼",
+    "cutter",
+    "컷터",
+    "컷 패스트볼"
+   ]
+  },
+  {
+   "term": "콜드게임",
+   "aliases": [
+    "강우콜드",
+    "called game",
+    "콜드 게임"
+   ]
+  },
+  {
+   "term": "퀄리티스타트",
+   "aliases": [
+    "qs",
+    "퀄스",
+    "quality start",
+    "퀄리티 스타트"
+   ]
+  },
+  {
+   "term": "클러치",
+   "aliases": [
+    "클러치히터",
+    "clutch",
+    "클러치 히터"
+   ]
+  },
+  {
+   "term": "클린업",
+   "aliases": [
+    "클린업트리오",
+    "중심타선",
+    "cleanup",
+    "클린업 트리오"
+   ]
+  },
+  {
+   "term": "타격방해",
+   "aliases": [
+    "타격 방해",
+    "catcher interference",
+    "포수타격방해"
+   ]
+  },
+  {
+   "term": "타순",
+   "aliases": [
+    "라인업",
+    "batting order",
+    "타순이란",
+    "오더"
+   ]
+  },
+  {
+   "term": "타율",
+   "aliases": [
+    "batting average",
+    "avg",
+    "타율이란"
+   ]
+  },
+  {
+   "term": "타점",
+   "aliases": [
+    "rbi",
+    "타점이란"
+   ]
+  },
+  {
+   "term": "태그아웃",
+   "aliases": [
+    "tag out",
+    "터치아웃",
+    "태그 아웃"
+   ]
+  },
+  {
+   "term": "태그업",
+   "aliases": [
+    "tag up",
+    "리터치",
+    "태그 업"
+   ]
+  },
+  {
+   "term": "테이블세터",
+   "aliases": [
+    "테이블 세터",
+    "table setter",
+    "1번타자2번타자"
+   ]
+  },
+  {
+   "term": "투심",
+   "aliases": [
+    "투심패스트볼",
+    "싱커",
+    "two seam",
+    "씽커"
+   ]
+  },
+  {
+   "term": "트레이드",
+   "aliases": [
+    "trade",
+    "트레이드란"
+   ]
+  },
+  {
+   "term": "파울",
+   "aliases": [
+    "foul",
+    "파울볼",
+    "파울이란"
+   ]
+  },
+  {
+   "term": "파울팁",
+   "aliases": [
+    "foul tip",
+    "파울 팁"
+   ]
+  },
+  {
+   "term": "패전투수",
+   "aliases": [
+    "패전",
+    "losing pitcher",
+    "패전 투수"
+   ]
+  },
+  {
+   "term": "퍼펙트게임",
+   "aliases": [
+    "perfect game",
+    "퍼펙트 게임",
+    "퍼펙트"
+   ]
+  },
+  {
+   "term": "평균자책점",
+   "aliases": [
+    "era",
+    "방어율",
+    "평자책",
+    "이알에이"
+   ]
+  },
+  {
+   "term": "포수",
+   "aliases": [
+    "catcher",
+    "캐처",
+    "안방마님"
+   ]
+  },
+  {
+   "term": "포스아웃",
+   "aliases": [
+    "force out",
+    "포스 아웃",
+    "봉살"
+   ]
+  },
+  {
+   "term": "포심",
+   "aliases": [
+    "직구",
+    "패스트볼",
+    "속구",
+    "포심패스트볼",
+    "fastball"
+   ]
+  },
+  {
+   "term": "포일",
+   "aliases": [
+    "패스드볼",
+    "passed ball",
+    "캐처미스"
+   ]
+  },
+  {
+   "term": "포크볼",
+   "aliases": [
+    "스플리터",
+    "스플릿",
+    "forkball",
+    "splitter"
+   ]
+  },
+  {
+   "term": "풀카운트",
+   "aliases": [
+    "full count",
+    "풀 카운트",
+    "쓰리볼투스트라이크"
+   ]
+  },
+  {
+   "term": "퓨처스리그",
+   "aliases": [
+    "2군",
+    "퓨처스",
+    "futures league",
+    "이군"
+   ]
+  },
+  {
+   "term": "플레이오프",
+   "aliases": [
+    "po",
+    "플옵",
+    "playoff"
+   ]
+  },
+  {
+   "term": "피치클락",
+   "aliases": [
+    "pitch clock",
+    "피치 클락",
+    "투구시계"
+   ]
+  },
+  {
+   "term": "한국시리즈",
+   "aliases": [
+    "ks",
+    "코리안시리즈",
+    "korean series",
+    "한국 시리즈"
+   ]
+  },
+  {
+   "term": "협살",
+   "aliases": [
+    "런다운",
+    "rundown",
+    "피클"
+   ]
+  },
+  {
+   "term": "홀드",
+   "aliases": [
+    "hold",
+    "hld",
+    "홀드란"
+   ]
+  },
+  {
+   "term": "홈런",
+   "aliases": [
+    "homerun",
+    "hr",
+    "홈런이란"
+   ]
+  },
+  {
+   "term": "희생번트",
+   "aliases": [
+    "희번",
+    "보내기번트",
+    "sacrifice bunt"
+   ]
+  },
+  {
+   "term": "희생플라이",
+   "aliases": [
+    "희플",
+    "희생타",
+    "sacrifice fly",
+    "희생 플라이",
+    "희비"
+   ]
+  },
+  {
+   "term": "히트앤런",
+   "aliases": [
+    "hit and run",
+    "히트앤드런",
+    "히트 앤 런"
+   ]
+  }
+ ],
+ "replay_rows": [
+  {
+   "question": "왜 주자를 태그할때가ㅡ있고 그냥 송구 해서 잡을때가 있어?",
+   "provider_candidate": "왜 주자를 태그할 때가 있고 그냥 송구해서 잡을 때가 있어?",
+   "old_repaired": "왜 주자를 태그업 때가 있고 그냥 송구해서 잡을 때가 있어?",
+   "cause_term": "태그업",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "선 맞으면 파울임?",
+   "provider_candidate": "선 맞으면 파울임?",
+   "old_repaired": "선 맞으면 파울팁?",
+   "cause_term": "파울팁",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "최대 몇일이야?",
+   "provider_candidate": "최대 며칠이야?",
+   "old_repaired": "최대 며칠이닝?",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "야구 한 경기맘 이기면 뭐라해",
+   "provider_candidate": "야구 한 경기만 이기면 뭐라해",
+   "old_repaired": "야구 한 경기만 이닝면 뭐라해",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "삼진을 잡아낸다의 뜻이 뭐야",
+   "provider_candidate": "삼진을 잡아낸다의 뜻이 뭐야",
+   "old_repaired": "삼진을 잡아웃다의 뜻이 뭐야",
+   "cause_term": "아웃",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "그 전광판에 B S O 이게 뭐야",
+   "provider_candidate": "전광판에 B S O 이게 뭐야",
+   "old_repaired": "전광판에 B S O 이닝 뭐야",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "그 전광판에 H랑 그런거 가 뭐야?",
+   "provider_candidate": "전광판에 H랑 그런 거 뭐야?",
+   "old_repaired": "전광판에 H랑 홈런 거 뭐야?",
+   "cause_term": "홈런",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "야구 ㅇㄱ",
+   "provider_candidate": "야구 이거",
+   "old_repaired": "야구 이닝",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "2026북중미월드켭결과와1루비디오판독기준",
+   "provider_candidate": "2026 북중미 월드컵 결과와 1루 비디오 판독 기준",
+   "old_repaired": "2026 북중미 홀드컵 결과와 1루 비디오 판독 기준",
+   "cause_term": "홀드",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "롯데 신윤후도 본헤드 플레이 한 적 있잖아",
+   "provider_candidate": "롯데 신윤후도 본헤드 플레이 한 적 있잖아",
+   "old_repaired": "롯데 신윤후도 본홀드 플레이 한 적 있잖아",
+   "cause_term": "홀드",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "헛스윙은 뭐야",
+   "provider_candidate": null,
+   "old_repaired": "헛스윕은 뭐야",
+   "cause_term": "스윕",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "채은성 부상 이유",
+   "provider_candidate": "채은성 부상 이유",
+   "old_repaired": "채은성 부상 이닝",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "1.xxx 이렇게도 나올수잇능 걍우가 잇어?",
+   "provider_candidate": "1.xxx 이렇게도 나올 수 있는 경우가 있어?",
+   "old_repaired": "1.xxx 이닝게도 나올 수 있는 경우가 있어?",
+   "cause_term": "이닝",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "10승이 머야",
+   "provider_candidate": "10승이 뭐야",
+   "old_repaired": "10승률 뭐야",
+   "cause_term": "승률",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "사인미스가 머ㅑ",
+   "provider_candidate": "사인미스가 뭐야",
+   "old_repaired": "사인미스윕 뭐야",
+   "cause_term": "스윕",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "스왑이 모야?",
+   "provider_candidate": "스왑이 뭐야?",
+   "old_repaired": "스윕이 뭐야?",
+   "cause_term": "스윕",
+   "collapses_to_definition": true,
+   "old_verdict": "suggest"
+  },
+  {
+   "question": "그것을 중고로 팔아도 되니",
+   "provider_candidate": null,
+   "old_repaired": "그것을 중고로 팔아웃 되니",
+   "cause_term": "아웃",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "7/16/2026 잠실에서 엘지랑 케이티랑 했을 때",
+   "provider_candidate": "7/16/2026 잠실에서 LG랑 KT랑 했을 때",
+   "old_repaired": "7/16/2026 잠실책서 LG랑 KT랑 했을 때",
+   "cause_term": "실책",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "근데 심판마다 보는 기준이 다르잔ㄹ아",
+   "provider_candidate": "근데 심판마다 보는 기준이 다르잖아",
+   "old_repaired": "근데 심판마다 보크 기준이 다르잖아",
+   "cause_term": "보크",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  },
+  {
+   "question": "야구 전광판 보는 법 알려줘",
+   "provider_candidate": null,
+   "old_repaired": "야구 전광판 보크 법 알려줘",
+   "cause_term": "보크",
+   "collapses_to_definition": false,
+   "old_verdict": "suggest"
+  },
+  {
+   "question": "그러니가 FC가 뭐냐고",
+   "provider_candidate": "그러니까 FC가 뭐냐고",
+   "old_repaired": "그러니까 FA가 뭐냐고",
+   "cause_term": "FA",
+   "collapses_to_definition": false,
+   "old_verdict": "rejected"
+  }
+ ]
+}

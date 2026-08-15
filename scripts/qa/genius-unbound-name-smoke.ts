@@ -78,7 +78,7 @@ async function checkAsync(name: string, fn: () => Promise<void>) {
 }
 
 const GLOSSARY: GlossaryEntry[] = [
-  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작이에요." },
+  { term: "보크", aliases: ["보크"], answer: "투수의 부정 투구 동작입니다." },
 ];
 
 interface Calls {
@@ -115,7 +115,7 @@ function makeDeps(players: PlayerRef[]): { deps: QaDeps; logs: string[]; calls: 
       return {
         text: JSON.stringify({
           status: "BASEBALL_RULE_TERM",
-          answer: "임창규는 LG 트윈스의 주축 선수예요.",
+          answer: "임창규는 LG 트윈스의 주축 선수입니다.",
         }),
         inputTokens: 1, outputTokens: 1,
       };
@@ -131,7 +131,7 @@ function makeDeps(players: PlayerRef[]): { deps: QaDeps; logs: string[]; calls: 
     callRagLlm: async () => {
       calls.ragLlm += 1;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "프랜차이즈 투수예요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "프랜차이즈 투수입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
@@ -143,7 +143,7 @@ function makeDeps(players: PlayerRef[]): { deps: QaDeps; logs: string[]; calls: 
     callTeamRagLlm: async () => {
       calls.teamRagLlm += 1;
       return {
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "서울 연고 구단이에요." }),
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "서울 연고 구단입니다." }),
         inputTokens: 1, outputTokens: 1,
       };
     },
@@ -288,7 +288,7 @@ async function main() {
       assert.equal(calls.cacheRead, 0, "캐시를 읽었다 — 미결속 실명 답을 재사용하면 안 된다");
       assert.equal(calls.cacheWrite, 0, "캐시에 썼다");
       // 유저가 받은 문장에 **없는 사람에 대한 사실**이 하나도 없어야 한다.
-      assert.doesNotMatch(result.answer, /주축|선수예요|트윈스의/);
+      assert.doesNotMatch(result.answer, /주축|선수입니다|트윈스의/);
     });
   }
 

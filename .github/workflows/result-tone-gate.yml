@@ -16,6 +16,12 @@ name: Result Tone SSOT Gate
 on:
   pull_request:
     paths:
+      - "src/lib/baseball-qa/pipeline.ts"
+      - "src/lib/baseball-qa/server.ts"
+      - "src/lib/baseball-qa/tone.ts"
+      - "scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh"
+      - "scripts/qa/baseball-genius-positive-ending-db.ts"
+      - "supabase/migrations/20260814154000_baseball_genius_positive_ending_ledger.sql"
       - "src/lib/ui/result-tone.ts"
       - "src/components/home/TeamCard.tsx"
       - "src/components/my/VenueDiaryCard.tsx"
@@ -54,6 +60,12 @@ on:
     branches:
       - main
     paths:
+      - "src/lib/baseball-qa/pipeline.ts"
+      - "src/lib/baseball-qa/server.ts"
+      - "src/lib/baseball-qa/tone.ts"
+      - "scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh"
+      - "scripts/qa/baseball-genius-positive-ending-db.ts"
+      - "supabase/migrations/20260814154000_baseball_genius_positive_ending_ledger.sql"
       - "src/lib/ui/result-tone.ts"
       - "src/components/home/TeamCard.tsx"
       - "src/components/my/VenueDiaryCard.tsx"
@@ -92,8 +104,29 @@ on:
 jobs:
   result-tone:
     runs-on: ubuntu-latest
+    services:
+      postgres17:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
+
+      - name: Run positive-ending concurrency gate (PostgreSQL 17, fail-closed)
+        env:
+          PG17_CONTAINER: ${{ job.services.postgres17.id }}
+        run: |
+          test -n "$PG17_CONTAINER" || { echo "::error::PostgreSQL 17 service container missing"; exit 1; }
+          docker exec "$PG17_CONTAINER" postgres --version | grep -Eq ' 17(\.|$)' || { echo "::error::PostgreSQL service is not version 17"; exit 1; }
+          docker exec "$PG17_CONTAINER" mkdir -p /tmp/genius-positive-ending/scripts/qa /tmp/genius-positive-ending/supabase/migrations
+          docker cp scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh "$PG17_CONTAINER":/tmp/genius-positive-ending/scripts/qa/
+          docker cp supabase/migrations/20260814154000_baseball_genius_positive_ending_ledger.sql "$PG17_CONTAINER":/tmp/genius-positive-ending/supabase/migrations/
+          docker exec -u postgres -w /tmp/genius-positive-ending "$PG17_CONTAINER" bash scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh
 
       - name: Setup Node
         uses: actions/setup-node@v4

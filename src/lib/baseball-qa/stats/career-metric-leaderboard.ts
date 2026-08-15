@@ -326,7 +326,7 @@ export function composeCareerMetricAnswer(result: CareerMetricAnswer): string {
   }
   // 구간(Top N) — 줄바꿈 목록.
   const lines = result.rows.map((row) => `${row.rank}. ${row.name}(${row.team}) ${num(row.total)}${result.unit}`);
-  return `${date} 기준 KBO 통산 ${result.label} ${result.from}~${result.to}위예요.\n${lines.join("\n")}${source}`;
+  return `${date} 기준 KBO 통산 ${result.label} ${result.from}~${result.to}위입니다.\n${lines.join("\n")}${source}`;
 }
 
 /**

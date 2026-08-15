@@ -41,7 +41,8 @@ async function main() {
   assert.ok(process.env.GEMINI_API_KEY, "GEMINI_API_KEY 필요 — 이 게이트는 SKIP 하지 않는다");
   // env 주입 후에 로드해야 server.ts 모듈 초기화(supabase·GEMINI_URL)가 산다.
   const { mapGlossaryDefinition } = await import("../../src/lib/baseball-qa/server");
-  const { glossaryCandidatesIn } = await import("../../src/lib/baseball-qa/pipeline");
+  const { glossaryCandidatesIn, statGuardOwnsQuestion } = await import("../../src/lib/baseball-qa/pipeline");
+  const { loadRosterPlayers } = await import("../../src/lib/baseball-qa/roster/load-roster-players");
   const { createClient } = await import("@supabase/supabase-js");
 
   // production 사전 실조회 — 후보는 파이프라인과 동일한 배포 추출 함수로 만든다.
@@ -113,6 +114,26 @@ async function main() {
       ? "후보 0 → 매퍼 미호출(구조적 차단)"
       : `후보 ${candidates.join(",")} → ${mapped ?? "null"}`;
     report(mapped === null, `[반대] ${question} — ${detail}`);
+  }
+
+  // ── #1132 합성 음성축 (삼순 2026-08-11 재리뷰 P0 ④) ──────────────────────
+  //
+  //   미결속 `<X> <지표>` 질문은 서빙 경로에서 매퍼 자체가 구조적으로 도달 불가여야 한다.
+  //   판정은 **배포 함수** `statGuardOwnsQuestion`(answerQuestion 의 스킵 조건과 동일)으로
+  //   재구현 없이 실측한다 — production 사전 + 실제 로스터 로더 입력.
+  //   provider 단독 방어(매퍼가 호출돼도 null)는 위 반대편 리스트가 같은 유형
+  //   (`김도영 도루 몇 개야?`)으로 이미 검증하므로, 여기서는 서빙 소유권을 못 박는다.
+  {
+    const players = await loadRosterPlayers();
+    assert.ok(players.length >= 100, `로스터가 ${players.length}명뿐이다 — 로더가 깨졌다`);
+    for (const question of ["이대호 홈런 몇개", "오타니 홈런이 뭐야"]) {
+      const candidates = glossaryCandidatesIn(glossary, question).map((c) => c.term);
+      const owned = statGuardOwnsQuestion(question, glossary, players);
+      report(
+        owned,
+        `[음성축] ${question} — 후보 ${candidates.join(",") || "(0)"} · statGuard 소유=${owned} → 매퍼 서빙 불가`,
+      );
+    }
   }
 
   console.log(`\n${pass} PASS / ${fail} FAIL`);
