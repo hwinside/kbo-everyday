@@ -476,7 +476,108 @@ test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late
   assert.equal(nativeAdds, 1, "네이티브 appUrlOpen 리스너는 정확히 1개");
   assert.deepEqual(laSeen, [oauthUrl]);
   assert.deepEqual(oauthSeen, [oauthUrl], "late OAuth subscriber도 retained 이벤트를 받아야 한다");
+
+  // R3-② 구독자별 1회 — 같은 구독자가 재구독 없이 같은 이벤트를 중복 수신하지 않는다
+  assert.equal(laSeen.length, 1, "구독자별 1회 전달 — 중복 replay 금지");
+
+  // R3-② 같은 구독자 함수가 재구독(재마운트/HMR)되어도 secret URL이 중복 재생되지 않는다
+  const dupSeen: string[] = [];
+  const dupSub = ({ url }: { url: string }) => { dupSeen.push(url); };
+  await subscribeAppUrlOpen(dupSub); // 1차 구독 → replay 1회 수신
+  await subscribeAppUrlOpen(dupSub); // 동일 참조 재구독 → 가드가 중복 replay 차단
+  assert.deepEqual(dupSeen, [oauthUrl], "동일 구독자 재구독 시 replay 중복 금지(secret 1회 전달)");
   __resetAppUrlOpenForTest();
+});
+
+test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스로 재연결한다", async () => {
+  // 초기 소비자 2곳(OAuth·LA)이 전부 등록을 끝낸 뒤 attach가 실패하면
+  // "다음 subscribe 재시도" 주체가 없다 → 디스패쳐 backoff 재연결이 유일한 복구수단(삼순 R3).
+  const { subscribeAppUrlOpen, __resetAppUrlOpenForTest } =
+    await import("../../src/lib/capacitor/app-url-open") as unknown as {
+      subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
+      __resetAppUrlOpenForTest: () => void;
+    };
+  __resetAppUrlOpenForTest();
+
+  let attempts = 0;
+  let liveListener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          attempts += 1;
+          if (attempts <= 2) throw new Error("bridge not ready"); // 동시 실패 창 재현
+          liveListener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const seenA: string[] = [];
+  const seenB: string[] = [];
+  // 두 1회성 소비자가 같은 실패 attach를 공유(문제 상황)
+  await Promise.all([
+    subscribeAppUrlOpen(({ url }) => { seenA.push(url); }),
+    subscribeAppUrlOpen(({ url }) => { seenB.push(url); }),
+  ]);
+  assert.equal(liveListener, null, "첫 attach는 실패 상태");
+
+  // backoff 재시도(500ms·1s)를 실제로 기다린다 — 재구독 없이 복구되어야 한다
+  const deadline = Date.now() + 4_000;
+  while (liveListener === null && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.ok(liveListener !== null, "디스패쳐가 스스로 재연결해야 한다(재구독 없이)");
+  assert.ok(attempts >= 3, `재시도 횟수 (got ${attempts})`);
+
+  (liveListener as unknown as (ev: { url: string }) => void)({ url: "https://keubo.fan/games/RETRY1" });
+  assert.deepEqual(seenA, ["https://keubo.fan/games/RETRY1"], "기존 구독자 A 수신");
+  assert.deepEqual(seenB, ["https://keubo.fan/games/RETRY1"], "기존 구독자 B 수신");
+  __resetAppUrlOpenForTest();
+});
+
+test("28) 디스패쳐 R3-②: secret URL은 TTL 경과 후 새 구독자에게 재생되지 않는다(stale replay 0)", async () => {
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const first: string[] = [];
+  await mod.subscribeAppUrlOpen(({ url }) => { first.push(url); });
+  const secretUrl = "https://keubo.fan/auth/callback#access_token=SECRET&refresh_token=SECRET";
+
+  // TTL(15s)을 지나간 시점을 Date.now 모킹으로 재현 — 실제 대기 없이 만료 경로를 태운다
+  const realNow = Date.now;
+  try {
+    (listener as unknown as (ev: { url: string }) => void)({ url: secretUrl });
+    assert.deepEqual(first, [secretUrl], "도착 시점 구독자는 수신");
+
+    Date.now = () => realNow() + 15_001; // TTL 경과
+    const late: string[] = [];
+    await mod.subscribeAppUrlOpen(({ url }) => { late.push(url); });
+    assert.deepEqual(late, [], "TTL 경과 후 구독자는 secret URL을 받으면 안 된다(stale replay 0)");
+  } finally {
+    Date.now = realNow;
+  }
+  mod.__resetAppUrlOpenForTest();
 });
 
 test("18) background cold-start: stash는 보관만 하고 active 전에는 이동하지 않는다", async () => {

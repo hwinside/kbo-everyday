@@ -169,13 +169,7 @@ const mutations = [
   {
     id: "M21 디스패처 replay 제거(late OAuth subscriber가 retained 이벤트 유실)",
     file: DISPATCHER,
-    from: `  for (const event of [...replayBuffer]) {
-    try {
-      subscriber(event);
-    } catch {
-      // subscriber 오류 격리
-    }
-  }`,
+    from: `  for (const buffered of [...replayBuffer]) deliver(subscriber, buffered);`,
     to: "",
   },
   {
@@ -186,6 +180,29 @@ const mutations = [
     const { App } = await import("@capacitor/app");
     await App.addListener("appUrlOpen", listener);
   },`,
+  },
+  {
+    id: "M23 R3-② TTL sweep 제거(secret URL 무기한 보관·stale replay 재발)",
+    file: DISPATCHER,
+    from: `  const t = now();
+  for (let i = replayBuffer.length - 1; i >= 0; i -= 1) {
+    if (replayBuffer[i].expiresAt <= t) replayBuffer.splice(i, 1);
+  }`,
+    to: "",
+  },
+  {
+    id: "M24 R3-② 구독자별 1회 전달 가드 제거(중복 replay)",
+    file: DISPATCHER,
+    from: `  if (buffered.deliveredTo.has(subscriber)) return; // 구독자별 1회 전달(R3-②)
+  buffered.deliveredTo.add(subscriber);`,
+    to: "",
+  },
+  {
+    id: "M25 R3-① attach 실패 자체 재시도 제거(영구 무수신 재발)",
+    file: DISPATCHER,
+    from: `      attachPromise = null;
+      scheduleRetry(); // 실패를 삼키되 재연결 책임은 디스패처가 진다(R3-①)`,
+    to: `      attachPromise = null;`,
   },
 ];
 
