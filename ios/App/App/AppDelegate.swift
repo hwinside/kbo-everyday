@@ -115,6 +115,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called when the app was launched with an activity, including Universal Links.
         // Feel free to add additional processing here, but if you want the App API to support
         // tracking app url opens, make sure to keep this call
+        //
+        // Live Activity 카드 탭 딥링크 — widgetURL(universal link)의 앱 내 경로를 pending에
+        // 보관해 웹(native-push-deeplink)이 단일 경로로 소비한다. cold launch는 웹 부팅 후
+        // consume()이, warm 복귀는 appStateChange(active) 재회수가 집는다.
+        // /auth* 는 제외 — OAuth 콜백 universal link를 라우팅하면 세션 교환 플로우를 깨늈다
+        // (appUrlOpen 리스너가 토큰 교환 전담). 루트("/")도 이동 무의미라 제외.
+        if userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+           let url = userActivity.webpageURL,
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           components.host == "keubo.fan" {
+            let path = components.path
+            if path.hasPrefix("/"), path != "/", !path.hasPrefix("/auth") {
+                let query = components.query.map { "?\($0)" } ?? ""
+                PushDeepLinkPlugin.stash(url: path + query)
+            }
+        }
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 

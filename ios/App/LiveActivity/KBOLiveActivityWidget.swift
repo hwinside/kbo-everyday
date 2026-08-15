@@ -190,6 +190,16 @@ extension Color {
     }
 }
 
+/// 잠금화면 카드/DI 탭 → 해당 경기 페이지 universal link.
+/// widgetURL은 NSUserActivity(webpageURL)로 앱에 전달되고, AppDelegate continue(userActivity:)가
+/// path를 PushDeepLinkPlugin.stash에 보관 → 웹(native-push-deeplink)이 단일 pending 경로로 소비한다.
+/// gameId는 서버 경기 ID(영숫자)만 오지만, URL 생성 실패 시 nil → widgetURL 미설정(기존 동작).
+func gameDeepLinkURL(_ gameId: String) -> URL? {
+    guard !gameId.isEmpty,
+          let encoded = gameId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else { return nil }
+    return URL(string: "https://keubo.fan/games/\(encoded)")
+}
+
 // ⚠️ iOS 18.0 게이트(기존 16.1) — 애플워치 Smart Stack 전용 레이아웃(supplementalActivityFamilies)이
 // iOS 18+/watchOS 11+ API인데, WidgetBundleBuilder가 #available의 else 분기를 지원하지 않아
 // 16.1용 레거시 등록과 병행이 컴파일 불가(같은 Attributes에 이중 등록도 미정의 동작).
@@ -205,11 +215,17 @@ struct KBOLiveActivityWidget: Widget {
             KBOActivityCard(attributes: context.attributes, state: context.state)
                 .activityBackgroundTint(Color(hex: kCardDarkBase))
                 .activitySystemActionForegroundColor(Color.white)
+                // 잠금화면 카드 탭 → 해당 경기 페이지 딥링크(universal link). AppDelegate
+                // continue(userActivity:)가 path를 PushDeepLinkPlugin.stash로 보관 → 웹이 소비.
+                // (#cs 2026-08-15 하린아빠 실기기 QA — 카드 탭이 홈으로만 감)
+                .widgetURL(gameDeepLinkURL(context.attributes.gameId))
         } dynamicIsland: { context in
             DynamicIsland {
                 // 확장 — 양팀 로고 + 약어 + 점수 + 이닝 (다이아몬드는 공간상 잠금화면만)
                 DynamicIslandExpandedRegion(.leading) {
                     DITeam(code: context.attributes.awayTeamCode, score: context.state.awayScore, isScheduled: context.state.isScheduled)
+                        // DI 확장뷰 탭 딥링크 — 한 영역에만 설정해도 확장뷰 전체 탭에 적용된다.
+                        .widgetURL(gameDeepLinkURL(context.attributes.gameId))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     DITeam(code: context.attributes.homeTeamCode, score: context.state.homeScore, isScheduled: context.state.isScheduled)

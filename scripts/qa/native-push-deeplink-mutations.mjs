@@ -16,6 +16,7 @@ const DEEPLINK = path.join(root, "src/lib/native-push-deeplink.ts");
 const MOUNT = path.join(root, "src/components/NativePushMount.tsx");
 const APPDELEGATE = path.join(root, "ios/App/App/AppDelegate.swift");
 const PLUGIN = path.join(root, "ios/App/App/PushDeepLinkPlugin.swift");
+const LA_WIDGET = path.join(root, "ios/App/LiveActivity/KBOLiveActivityWidget.swift");
 
 const mutations = [
   {
@@ -29,10 +30,8 @@ const mutations = [
   {
     id: "M2 appStateChange active 소비 제거(#1070 경로 파괴)",
     file: DEEPLINK,
-    from: `  const appHandle = await app.addListener("appStateChange", ({ isActive }) => {
-    if (isActive) consumePendingTap();
-  });`,
-    to: `  const appHandle = await app.addListener("appStateChange", () => {});`,
+    from: "    if (!isActive) return;",
+    to: "    return;",
   },
   {
     id: "M3 cold-start 네이티브 stash 회수 제거(#1198 경로 파괴)",
@@ -127,6 +126,25 @@ const mutations = [
     file: MOUNT,
     from: "    void listenForForegroundNotifications();",
     to: "    void listenForForegroundNotifications();\n    void listenForNotificationTap();",
+  },
+  {
+    id: "M16 warm 복귀 시 네이티브 stash 재회수 제거(LA 카드 warm 탭 회귀)",
+    file: DEEPLINK,
+    from: "    void consumeNativePendingIntoStore(loaders).then(() => consumePendingTap());",
+    to: "    consumePendingTap();",
+  },
+  {
+    id: "M17 잠금카드 widgetURL 제거(LA 탭 딥링크 소멸)",
+    file: LA_WIDGET,
+    from: `                .widgetURL(gameDeepLinkURL(context.attributes.gameId))
+        } dynamicIsland: { context in`,
+    to: `        } dynamicIsland: { context in`,
+  },
+  {
+    id: "M18 continue의 OAuth(/auth) 제외 가드 제거",
+    file: APPDELEGATE,
+    from: `if path.hasPrefix("/"), path != "/", !path.hasPrefix("/auth") {`,
+    to: `if path.hasPrefix("/"), path != "/" {`,
   },
 ];
 

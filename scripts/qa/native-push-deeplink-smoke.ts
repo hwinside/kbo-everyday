@@ -87,6 +87,9 @@ function harness(options?: {
   let messagingAdds = 0;
   let appAdds = 0;
   let nativeConsumes = 0;
+  // 네이티브 stash 재현 — consume는 1회 소비(반환 후 비움). setNativePending으로
+  // 런타임에 새 stash 주입 가능(warm LA 탭 재현).
+  let nativePending: string | undefined = options?.nativePending;
   const loaders: Loaders = {
     messaging: async () => ({
       addListener: async (_event, callback) => {
@@ -109,7 +112,9 @@ function harness(options?: {
       return {
         consume: async () => {
           nativeConsumes += 1;
-          return options?.nativePending !== undefined ? { url: options.nativePending } : {};
+          const url = nativePending;
+          nativePending = undefined; // 네이티브와 동일하게 1회 소비
+          return url !== undefined ? { url } : {};
         },
       };
     },
@@ -118,6 +123,8 @@ function harness(options?: {
     loaders,
     tap: (event: unknown) => tapCallback?.(event),
     activate: () => { active = true; stateCallback?.({ isActive: true }); },
+    deactivate: () => { active = false; stateCallback?.({ isActive: false }); },
+    setNativePending: (url: string) => { nativePending = url; },
     counts: () => ({ messagingAdds, appAdds, nativeConsumes }),
   };
 }
@@ -153,6 +160,7 @@ test("3) background callback은 이동하지 않고 native appStateChange active
   await flush();
   assert.deepEqual(navigations, []);
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/20260802HHKT0?tab=lineup"]);
 });
 
@@ -194,6 +202,7 @@ test("7) pending은 1회만 소비돼 재활성화·재attach에서 중복 이�
   h.tap(tap("/games/G1?tab=lineup"));
   h.activate();
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/G1?tab=lineup"]);
 
   await reset(true, false);
@@ -208,6 +217,7 @@ test("8) active 전 여러 알림이면 마지막 탭 URL만 이동", async () =
   h.tap(tap("/games/OLD?tab=lineup"));
   h.tap(tap("/games/NEW?tab=lineup"));
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/NEW?tab=lineup"]);
 });
 
@@ -222,6 +232,7 @@ test("9) TTL 지난 pending은 reload 뒤 이동하지 않는다", async () => {
     h.tap(tap("/games/STALE?tab=lineup"));
     now += 120_001;
     h.activate();
+    await flush();
     assert.deepEqual(navigations, []);
   } finally {
     Date.now = realNow;
@@ -327,6 +338,38 @@ test("17) 네이티브 stash의 외부 URL도 차단", async () => {
   assert.deepEqual(navigations, []);
 });
 
+test("22) warm LA 카드 탭: 백그라운드에서 생긴 네이티브 stash를 active 복귀 시 재회수해 이동", async () => {
+  // #cs 2026-08-15 실기기 QA 재현 — 앱이 살아있는 채 잠금화면 LA 카드 탭:
+  // AppDelegate continue가 stash를 쓰지만 JS는 이미 attach 완료 상태라,
+  // active 복귀 이벤트에서 네이티브 stash를 재회수하지 않으면 영원히 안 움직인다.
+  await reset(true);
+  const h = harness({ active: true });
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  await flush();
+  assert.deepEqual(navigations, []);
+
+  h.deactivate(); // 잠금화면으로 — 앱 background
+  h.setNativePending("/games/LATAP?tab=chat"); // LA 카드 탭 → continue stash
+  h.activate(); // 앱 foreground 복귀
+  await flush();
+  assert.deepEqual(navigations, ["/games/LATAP?tab=chat"]);
+});
+
+test("23) LA widgetURL·AppDelegate continue 배선 — 카드 탭 딥링크 소스 계약", async () => {
+  const widget = await readFile(new URL("../../ios/App/LiveActivity/KBOLiveActivityWidget.swift", import.meta.url), "utf8");
+  // 잠금화면 카드 + DI 확장뷰 양쪽에 widgetURL 배선(2곳 이상)
+  const urls = widget.match(/\.widgetURL\(gameDeepLinkURL\(context\.attributes\.gameId\)\)/g) ?? [];
+  assert.ok(urls.length >= 2, `잠금카드+DI widgetURL 배선 필요 (found ${urls.length})`);
+  assert.match(widget, /https:\/\/keubo\.fan\/games\//);
+
+  const appDelegate = await readFile(new URL("../../ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
+  // continue(userActivity:)가 universal link path를 stash하고, OAuth 콜백(/auth*)은 제외
+  assert.match(appDelegate, /NSUserActivityTypeBrowsingWeb/);
+  assert.match(appDelegate, /!path\.hasPrefix\("\/auth"\)/);
+  const stashes = appDelegate.match(/PushDeepLinkPlugin\.stash\(url:/g) ?? [];
+  assert.ok(stashes.length >= 2, `launchOptions+continue 양쪽 stash 필요 (found ${stashes.length})`);
+});
+
 test("18) background cold-start: stash는 보관만 하고 active 전에는 이동하지 않는다", async () => {
   await reset(true);
   const h = harness({ active: false, nativePending: "/games/COLDBG?tab=lineup" });
@@ -334,6 +377,7 @@ test("18) background cold-start: stash는 보관만 하고 active 전에는 이�
   await flush();
   assert.deepEqual(navigations, []);
   h.activate();
+  await flush();
   assert.deepEqual(navigations, ["/games/COLDBG?tab=lineup"]);
 });
 

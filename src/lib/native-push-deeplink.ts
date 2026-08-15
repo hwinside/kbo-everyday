@@ -126,7 +126,10 @@ async function consumeNativePendingIntoStore(loaders: ListenerLoaders): Promise<
 async function attachListeners(loaders: ListenerLoaders): Promise<void> {
   const [messaging, app] = await Promise.all([loaders.messaging(), loaders.app()]);
   const appHandle = await app.addListener("appStateChange", ({ isActive }) => {
-    if (isActive) consumePendingTap();
+    if (!isActive) return;
+    // warm 복귀 — 백그라운드에 있는 동안 네이티브 stash가 새로 생겼을 수 있다
+    // (Live Activity 카드 탭 → AppDelegate continue가 stash). 재회수 후 소비.
+    void consumeNativePendingIntoStore(loaders).then(() => consumePendingTap());
   });
 
   try {
