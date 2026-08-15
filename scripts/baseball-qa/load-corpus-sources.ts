@@ -263,9 +263,22 @@ async function main(): Promise<void> {
 
   if (ENTITIES.length > 0) {
     // 부분 재적재(P0, 2026-08-15 삼순): 필터된 planned.ledger는 전체 artifact의 부분집합이다.
-    // 이 상태로 아래 ledger 분기를 타면 전체 run의 corpus_runs 행을 "3명 expected_rows +
-    // status=loading"으로 덮어쓴다 — 원장 훼손. 부분 재적재는 ledger를 읽지도 쓰지도 않는다.
-    console.log(`LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명)는 corpus_runs/원장을 건드리지 않는다.`);
+    // corpus_runs/corpus_records는 **쓰지 않는다**(원장 훼손 방지). 단, 임의 corpus 파일이
+    // 이 경로로 재적재되는 것을 막기 위해 해당 artifact SHA의 run이 `ready`임을
+    // **읽기 전용으로** exact 확인한다(삼순 2차 계약). 미등록/미완료 artifact는 fail-close.
+    const readResponse = await fetch(
+      `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}&select=status,expected_rows`,
+      { headers },
+    );
+    if (!readResponse.ok) throw new Error(`corpus run 읽기 실패: HTTP ${readResponse.status}`);
+    const runs = await readResponse.json() as Array<{ status?: string; expected_rows?: number }>;
+    if (runs.length !== 1 || runs[0]?.status !== "ready" || runs[0]?.expected_rows !== planned.ledger.length) {
+      throw new Error(
+        `--entities 부분 재적재는 ledger에 ready로 등록된 artifact만 허용한다 — `
+        + `현재 ${artifactSha256.slice(0, 12)}…: ${runs.length === 0 ? "corpus_runs 미등록" : `status=${runs[0]?.status} expected_rows=${runs[0]?.expected_rows}(기대 ${planned.ledger.length})`} (fail-close)`,
+      );
+    }
+    console.log(`LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명). artifact ready 확인(읽기 전용), corpus_runs/원장 쓰기 0.`);
   } else if (LIMIT === 0) {
     const existingResponse = await fetch(
       `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}`

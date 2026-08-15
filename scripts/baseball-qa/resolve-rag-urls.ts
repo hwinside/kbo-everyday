@@ -42,10 +42,11 @@
  */
 
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  CANONICAL_GATE_VERSION,
   expectedPlayerTitles,
   extractDisambiguationCandidates,
   verifyCanonicalIdentity,
@@ -88,7 +89,16 @@ export interface CheckpointFingerprint {
   snapshotSha256: string;
   budget: number;
   schedule: string;
+  /** 판정 로직 리비전 — 코드 판정이 바뀜 뒤 구 checkpoint 재사용 차단(삼순 P1). */
+  resolverRevision: string;
+  canonicalGateVersion: string;
 }
+
+/**
+ * resolver 판정 로직 리비전 — 후보 생성·판정 규칙의 의미가 바뀌면 올린다.
+ * canonical 게이트 버전과 함께 fingerprint에 들어가 구 판정 checkpoint 재사용을 막는다(삼순 P1).
+ */
+export const RESOLVER_REVISION = "2026-08-15.r3";
 
 export function buildCheckpointFingerprint(input: {
   source: string; scope: string; snapshotSha256: string;
@@ -100,12 +110,28 @@ export function buildCheckpointFingerprint(input: {
     snapshotSha256: input.snapshotSha256,
     budget: MAX_PROBES_PER_PLAYER,
     schedule: INTERVAL_PROBE_SCHEDULE_MS.join("-"),
+    resolverRevision: RESOLVER_REVISION,
+    canonicalGateVersion: CANONICAL_GATE_VERSION,
   };
 }
 
 export interface ParsedCheckpoint {
-  doneKboIds: Set<string>;
+  /** 완료된 선수의 full 판정 행 — resume 후 최종 판정표에 병합된다(삼순 P0: 유실 금지). */
+  doneRows: ResultRow[];
   probedByKboId: Map<string, CheckpointProbeRow[]>;
+}
+
+/** 판정 결과 1행 — checkpoint·--out·DB 경로가 전부 이 모양을 쓴다. */
+export interface ResultRow {
+  sourceKey: string;
+  kboId: string;
+  name: string;
+  source: SourceName;
+  status: Resolution;
+  canonicalUrl: string | null;
+  pageTitle: string | null;
+  candidateUrls: string[];
+  note: string;
 }
 
 const CHECKPOINT_VERDICT_STATUSES = new Set(["resolved", "missing", "ambiguous", "budget_exhausted"]);
@@ -125,12 +151,12 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
     throw new Error("checkpoint 헤더 JSON 손상 — fail-close");
   }
   if (header.t !== "fingerprint") throw new Error("checkpoint 첫 줄이 fingerprint가 아니다 — fail-close");
-  for (const key of ["source", "scope", "snapshotSha256", "budget", "schedule"] as const) {
+  for (const key of ["source", "scope", "snapshotSha256", "budget", "schedule", "resolverRevision", "canonicalGateVersion"] as const) {
     if (String(header[key]) !== String(expected[key])) {
       throw new Error(`checkpoint fingerprint 불일치: ${key}=${String(header[key])} (기대 ${String(expected[key])}) — fail-close`);
     }
   }
-  const doneKboIds = new Set<string>();
+  const doneRows: ResultRow[] = [];
   const probedByKboId = new Map<string, CheckpointProbeRow[]>();
   for (const [index, line] of lines.slice(1).entries()) {
     let row: Record<string, unknown>;
@@ -149,15 +175,33 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
       list.push(probe);
       probedByKboId.set(probe.kboId, list);
     } else if (row.t === "verdict") {
-      if (typeof row.kboId !== "string" || !CHECKPOINT_VERDICT_STATUSES.has(String(row.status))) {
-        throw new Error(`checkpoint ${index + 2}번 줄 verdict 스키마 오류(status=${String(row.status)}) — fail-close`);
+      // verdict는 **full ResultRow**를 품는다(삼순 P0) — resume 후 최종 판정표에 그대로 복원된다.
+      const result = row.row as ResultRow | undefined;
+      if (!result || typeof result.kboId !== "string" || typeof result.name !== "string"
+        || typeof result.sourceKey !== "string" || !Array.isArray(result.candidateUrls)
+        || !CHECKPOINT_VERDICT_STATUSES.has(String(result.status))) {
+        throw new Error(`checkpoint ${index + 2}번 줄 verdict 스키마 오류(status=${String((result ?? row as { status?: unknown }).status)}) — fail-close`);
       }
-      doneKboIds.add(row.kboId);
+      doneRows.push(result);
     } else {
       throw new Error(`checkpoint ${index + 2}번 줄 알 수 없는 행 타입(t=${String(row.t)}) — fail-close`);
     }
   }
-  return { doneKboIds, probedByKboId };
+  return { doneRows, probedByKboId };
+}
+
+/**
+ * 최종 판정표 병합(삼순 P0) — resume 이전 완료분 + 이번 run 신규분. kboId 중복은 버그
+ * 신호다(done은 target에서 제외되므로) — 조용히 덮지 않고 던진다.
+ */
+export function mergeResultRows(done: readonly ResultRow[], fresh: readonly ResultRow[]): ResultRow[] {
+  const merged = [...done, ...fresh];
+  const seen = new Set<string>();
+  for (const row of merged) {
+    if (seen.has(row.kboId)) throw new Error(`판정표 kboId 중복: ${row.kboId} — resume 병합 결함(fail-close)`);
+    seen.add(row.kboId);
+  }
+  return merged;
 }
 type SourceName = "wikipedia" | "namu";
 type ResolveScope = "snapshot" | "roster" | "targets";
@@ -418,19 +462,186 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** 위키피디아 API bounded rate — 공식 API지만 연속 호출 간격을 둔다(§12.2 b). */
 const WIKIPEDIA_INTERVAL_MS = 1_000;
 
+/**
+ * 판정 루프 본체 — probe fetcher를 **주입**받는다(삼순 P0: 행동 게이트가 fake fetcher로
+ * run1 중단→run2 resume→재요청 0→최종 합본을 실제 실행 경로로 태울 수 있게).
+ * main과 스모크가 같은 함수를 태운다 — 게이트가 계약 문자열이 아니라 실행을 검증한다.
+ */
+export interface ResolveBatchDeps {
+  source: SourceName;
+  byKboId: Map<string, RosterPlayer>;
+  nameCounts: Map<string, number>;
+  nameBirthCounts: Map<string, number>;
+  probedByKboId: Map<string, CheckpointProbeRow[]>;
+  checkpointPath: string | null;
+  probe: (title: string, identity: PlayerDocumentIdentity) => Promise<CandidateProbe>;
+  maxProbesPerPlayer?: number;
+  log?: (line: string) => void;
+}
+
+export async function resolvePlayerBatch(
+  targets: readonly ResolveTarget[],
+  deps: ResolveBatchDeps,
+): Promise<{ rows: ResultRow[]; blocked: boolean }> {
+  const { source, byKboId, nameCounts, nameBirthCounts, probedByKboId, checkpointPath } = deps;
+  const maxProbes = deps.maxProbesPerPlayer ?? MAX_PROBES_PER_PLAYER;
+  const log = deps.log ?? ((line: string) => console.log(line));
+  const rows: ResultRow[] = [];
+  let runBlocked = false;
+
+  for (const target of targets) {
+    const sourceKey = `${source === "namu" ? "namu" : "wikipedia"}:player:${target.kboId}`;
+    const rosterRow = byKboId.get(target.kboId);
+    const birthYear = rosterRow?.birthDate?.slice(0, 4) ?? "";
+    const candidateTitles = source === "namu"
+      ? [...expectedPlayerTitles(target.name)]
+      : wikipediaCandidateTitles(target.name, birthYear);
+    const candidateUrls = candidateTitles.map((title) => source === "namu" ? namuUrl(title) : wikipediaUrl(title));
+    const base = { sourceKey, kboId: target.kboId, name: target.name, source: source, candidateUrls };
+
+    // 동명이인(§12 + 2026-08-15 삼순 계약): 이름 중복 자체로는 즉시 ambiguous하지 않는다 —
+    // identity 게이트가 생년 분류(`{생년}년 출생`)로 개인을 가른다. 단, 이름+생년이 모두 같은
+    // 로스터 쌍은 문서 쪽 근거로 구별할 축이 없다 → fail-close 유지. 팀·포지션은 이적/문서
+    // 지연 때문에 hard gate로 쓰지 않고 note 보조 근거로만 남긴다.
+    if ((nameBirthCounts.get(`${target.name}|${birthYear}`) ?? 0) > 1) {
+      rows.push({
+        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
+        note: `로스터 동명·동생년 ${nameBirthCounts.get(`${target.name}|${birthYear}`)}건 — 문서 근거로 구별 불능(fail-close)`,
+      });
+      continue;
+    }
+    if (!/^\d{4}$/.test(birthYear)) {
+      // 생년이 없으면 동명이인을 가려낼 축이 없다 — 확인되지 않은 것을 확인된 것으로 만들지 않는다.
+      rows.push({
+        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
+        note: "로스터 생년 결측 — identity 대조 불가(fail-close)",
+      });
+      continue;
+    }
+    const identity: PlayerDocumentIdentity = { name: target.name, birthYear };
+
+    const probes: CandidateProbe[] = [];
+    const queue = [...candidateTitles];
+    const seen = new Set<string>();
+    let blocked = false;
+    // resume replay 사전 — 이 선수의 기록된 (kboId, candidateUrl) probe는 재요청하지 않는다.
+    const replayByTitle = new Map<string, CheckpointProbeRow>();
+    for (const row of probedByKboId.get(target.kboId) ?? []) replayByTitle.set(row.title, row);
+
+    while (queue.length > 0 && !blocked && probes.length < maxProbes) {
+      const title = queue.shift()!;
+      if (seen.has(title)) continue;
+      seen.add(title);
+
+      const replay = replayByTitle.get(title);
+      if (replay) {
+        // 외부 요청 없이 기록된 결과를 그대로 이어받는다. 파생 후보도 기록에서 복원한다.
+        const reconstructed: CandidateProbe = replay.kind === "canonical"
+          ? { kind: "canonical", url: replay.url, canonicalUrl: replay.canonicalUrl ?? "", pageTitle: replay.pageTitle ?? "", redirected: replay.redirected ?? false }
+          : replay.kind === "rejected"
+            ? { kind: "rejected", url: replay.url, reason: replay.reason ?? "replayed" }
+            : { kind: "missing", url: replay.url, reason: replay.reason ?? "replayed" };
+        probes.push(reconstructed);
+        for (const candidate of replay.candidates ?? []) {
+          if (!seen.has(candidate)) queue.push(candidate);
+        }
+        if (reconstructed.kind === "canonical") break;
+        continue;
+      }
+
+      const probe = await deps.probe(title, identity);
+      probes.push(probe);
+      if (probe.kind === "blocked") {
+        // §12.2(b): 차단은 우회 대상이 아니다. 이 선수에 대한 추가 요청을 즉시 중단한다.
+        // blocked는 checkpoint에 쓰지 않는다 — 원인 해소 후 resume에서 재시도해야 한다.
+        blocked = true;
+        break;
+      }
+      const derivedCandidates = probe.kind === "rejected" && probe.disambiguationHtml
+        ? extractDisambiguationCandidates(probe.disambiguationHtml, target.name)
+        : [];
+      if (checkpointPath) {
+        const probeRow: CheckpointProbeRow = {
+          t: "probe", kboId: target.kboId, title, url: probe.url, kind: probe.kind,
+          ...(probe.kind !== "canonical" ? { reason: probe.reason } : {}),
+          ...(probe.kind === "canonical" ? { canonicalUrl: probe.canonicalUrl, pageTitle: probe.pageTitle, redirected: probe.redirected } : {}),
+          ...(derivedCandidates.length > 0 ? { candidates: derivedCandidates } : {}),
+          at: new Date().toISOString(),
+        };
+        appendFileSync(checkpointPath, `${JSON.stringify(probeRow)}\n`, "utf8");
+      }
+      for (const candidate of derivedCandidates) {
+        if (!seen.has(candidate)) queue.push(candidate);
+      }
+      if (probe.kind === "canonical") break; // identity가 확정되면 더 두들기지 않는다(bounded).
+    }
+    // 예산 소진 판정 — 볼 후보가 남았는데 상한(9)에 닿은 것은 "문서 부재(missing)"가 아니다.
+    const budgetExhausted = !blocked && queue.length > 0 && probes.length >= maxProbes
+      && !probes.some((probe) => probe.kind === "canonical");
+
+    const canonicalHits = probes.filter(
+      (probe): probe is Extract<CandidateProbe, { kind: "canonical" }> => probe.kind === "canonical",
+    );
+    const distinct = new Set(canonicalHits.map((probe) => probe.canonicalUrl));
+    const trace = probes
+      .map((probe) => `${probe.kind}${probe.kind === "canonical" ? "" : `(${probe.reason})`}`)
+      .join("/");
+
+    let verdict: { status: Resolution; canonicalUrl: string | null; pageTitle: string | null; note: string };
+    if (distinct.size === 1) {
+      const hit = canonicalHits[0];
+      verdict = {
+        status: "resolved",
+        canonicalUrl: hit.canonicalUrl,
+        pageTitle: hit.pageTitle,
+        note: `${new Date().toISOString().slice(0, 10)} identity 대조 통과(최종URL+canonical+분류: 야구선수/${birthYear}년 출생, 제목 "${hit.pageTitle}"${hit.redirected ? ", redirect 반영" : ""})`,
+      };
+    } else if (distinct.size > 1) {
+      verdict = { status: "ambiguous", canonicalUrl: null, pageTitle: null, note: `문서 ${distinct.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
+    } else if (blocked) {
+      verdict = { status: "blocked", canonicalUrl: null, pageTitle: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
+    } else if (budgetExhausted) {
+      verdict = {
+        status: "budget_exhausted", canonicalUrl: null, pageTitle: null,
+        note: `요청 예산 소진(인당 ${maxProbes}) — 미확인 후보 ${queue.length}건 잔존, missing 아님 (${trace})`,
+      };
+    } else {
+      verdict = { status: "missing", canonicalUrl: null, pageTitle: null, note: `identity 확정 후보 없음 (${trace})` };
+    }
+    const isRosterDupName = (nameCounts.get(target.name) ?? 0) > 1;
+    if (isRosterDupName && verdict.status === "resolved") {
+      // 보조 근거 기록 — 판정은 생년 분류가 했고, 팀은 검수자가 대조할 참고칸이다(hard gate 아님).
+      verdict.note += ` [동명이인 주의: 로스터 동명 ${nameCounts.get(target.name)}명, 이 판정은 kboId ${target.kboId}(${rosterRow?.team ?? "?"}) 생년 ${birthYear} 기준]`;
+    }
+    const resultRow: ResultRow = { ...base, ...verdict };
+    rows.push(resultRow);
+    if (checkpointPath && verdict.status !== "blocked") {
+      // blocked는 판정 확정이 아니라 중단 사유다 — verdict로 봉인하면 resume이 이 선수를 영영 건너뛴다.
+      // verdict는 full ResultRow를 품는다(삼순 P0) — resume 후 최종 판정표에 그대로 복원된다.
+      appendFileSync(
+        checkpointPath,
+        `${JSON.stringify({ t: "verdict", row: resultRow, at: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+    }
+    log(`${target.name.padEnd(6)} ${verdict.status.padEnd(10)} ${verdict.note}`);
+    if (verdict.status === "blocked") {
+      // 전역 즉시 중단(2026-08-15 삼순 계약) — 보고·저장·종료는 호출자(main)가 한다.
+      runBlocked = true;
+      break;
+    }
+  }
+
+  return { rows, blocked: runBlocked };
+}
+
+
 async function main(): Promise<void> {
+  // ⚠️ 검증 순서 계약(삼순 P1): 모든 **로컬 계약**(실행형태·roster/스냅샷 해시·checkpoint·out 경로)을
+  // 먼저 끝내고, 그 다음에만 외부 요청(robots 포함)으로 넘어간다. 로컬 결함으로 죽을 run이
+  // 외부 서버를 먼저 두드리는 것을 막는다.
   enforceRunContract();
   const env = loadEnv();
-  if (SOURCE === "namu") {
-    const robots = await assertRobotsAllowed();
-    if (!robots.ok) {
-      console.error(`robots.txt 확인 실패(${robots.reason}) — 확인기록 없는 수집은 금지다(§12.2 a).`);
-      process.exit(1);
-    }
-    console.log(`namu robots.txt OK: "${robots.allowRule}" (checked ${robots.checkedAt})`);
-  } else {
-    console.log("wikipedia: 공식 API(/w/api.php) 경로. 정직한 UA plain fetch, 우회 없음.");
-  }
 
   const roster = JSON.parse(
     readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8"),
@@ -447,11 +658,37 @@ async function main(): Promise<void> {
     byKboId.set(player.kboId, player);
   }
 
-  const snapshotPlayers = SCOPE === "snapshot"
-    ? (JSON.parse(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH), "utf8")) as {
+  const snapshotDoc = SCOPE === "snapshot"
+    ? JSON.parse(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH), "utf8")) as {
+        rosterSha256?: string;
         players: { kboId: string; name: string; bucket: string }[];
-      }).players
+      }
     : undefined;
+  const snapshotPlayers = snapshotDoc?.players;
+
+  // 로컬 계약: 스냅샷이 가리키는 로스터와 지금 repo 로스터가 같아야 488 선정이 유효하다.
+  // (스모크에만 두면 실제 run이 stale 스냅샷으로 도는 것을 못 막는다 — 삼순 P1 런타임 대조.)
+  if (snapshotDoc) {
+    const rosterSha = createHash("sha256")
+      .update(readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json")))
+      .digest("hex");
+    if (snapshotDoc.rosterSha256 !== rosterSha) {
+      console.error(`스냅샷 rosterSha256(${snapshotDoc.rosterSha256?.slice(0, 12)}…) ≠ 현재 로스터(${rosterSha.slice(0, 12)}…) — 스냅샷 재생성 필요(fail-close)`);
+      process.exit(1);
+    }
+  }
+  // 로컬 계약: checkpoint와 out은 서로 다른 파일이어야 하고, 디렉터리가 존재해야 한다.
+  if (CHECKPOINT_PATH && OUT_PATH && path.resolve(CHECKPOINT_PATH) === path.resolve(OUT_PATH)) {
+    console.error("--checkpoint와 --out이 같은 파일이다 — 서로 덮어쓴다(fail-close)");
+    process.exit(1);
+  }
+  for (const [label, target] of [["--checkpoint", CHECKPOINT_PATH], ["--out", OUT_PATH]] as const) {
+    if (!target) continue;
+    if (!existsSync(path.dirname(path.resolve(target)))) {
+      console.error(`${label} 경로의 디렉터리가 없다: ${target} — 쓰기 불가(fail-close)`);
+      process.exit(1);
+    }
+  }
 
   // checkpoint resume (P0 계약) — fingerprint 일치 + 전 행 스키마 검증을 통과한 파일만 이어받는다.
   // 손상·불일치는 "신규 생성"이 아니라 즉시 실패다. 파일 부재(ENOENT)만 신규로 만든다.
@@ -459,7 +696,7 @@ async function main(): Promise<void> {
     ? createHash("sha256").update(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH))).digest("hex")
     : "-";
   const fingerprint = buildCheckpointFingerprint({ source: SOURCE, scope: SCOPE, snapshotSha256 });
-  let doneKboIds = new Set<string>();
+  let doneRows: ResultRow[] = [];
   let probedByKboId = new Map<string, CheckpointProbeRow[]>();
   if (CHECKPOINT_PATH) {
     let raw: string | null = null;
@@ -474,14 +711,17 @@ async function main(): Promise<void> {
     } else {
       // 파싱 실패는 이 자리에서 던져져 run을 즉시 실패시킨다(catch 없음 — fail-close).
       const parsed = parseCheckpointText(raw, fingerprint);
-      doneKboIds = parsed.doneKboIds;
+      doneRows = parsed.doneRows;
       probedByKboId = parsed.probedByKboId;
       console.log(
-        `checkpoint 이어받기: ${CHECKPOINT_PATH} — fingerprint 일치, 판정 완료 ${doneKboIds.size}명 skip, `
+        `checkpoint 이어받기: ${CHECKPOINT_PATH} — fingerprint 일치, 판정 완료 ${doneRows.length}명 복원·skip, `
         + `probe 기록 보유 ${probedByKboId.size}명 replay`,
       );
     }
   }
+  const doneKboIds = new Set(doneRows.map((row) => row.kboId));
+  const snapshotResolveCount = snapshotPlayers
+    ?.filter((player) => SNAPSHOT_RESOLVE_BUCKETS.has(player.bucket)).length ?? 0;
 
   const targets = selectResolveTargets(roster, {
     scope: SCOPE,
@@ -510,166 +750,50 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  interface ResultRow {
-    sourceKey: string;
-    kboId: string;
-    name: string;
-    source: SourceName;
-    status: Resolution;
-    canonicalUrl: string | null;
-    pageTitle: string | null;
-    candidateUrls: string[];
-    note: string;
+  // 로컬 계약이 전부 끝난 뒤에만 첫 외부 요청(robots)으로 넘어간다(삼순 P1 순서 계약).
+  if (SOURCE === "namu") {
+    const robots = await assertRobotsAllowed();
+    if (!robots.ok) {
+      console.error(`robots.txt 확인 실패(${robots.reason}) — 확인기록 없는 수집은 금지다(§12.2 a).`);
+      process.exit(1);
+    }
+    console.log(`namu robots.txt OK: "${robots.allowRule}" (checked ${robots.checkedAt})`);
+  } else {
+    console.log("wikipedia: 공식 API(/w/api.php) 경로. 정직한 UA plain fetch, 우회 없음.");
   }
-  const results: ResultRow[] = [];
 
-  for (const target of targets) {
-    const sourceKey = `${SOURCE === "namu" ? "namu" : "wikipedia"}:player:${target.kboId}`;
-    const rosterRow = byKboId.get(target.kboId);
-    const birthYear = rosterRow?.birthDate?.slice(0, 4) ?? "";
-    const candidateTitles = SOURCE === "namu"
-      ? [...expectedPlayerTitles(target.name)]
-      : wikipediaCandidateTitles(target.name, birthYear);
-    const candidateUrls = candidateTitles.map((title) => SOURCE === "namu" ? namuUrl(title) : wikipediaUrl(title));
-    const base = { sourceKey, kboId: target.kboId, name: target.name, source: SOURCE, candidateUrls };
-
-    // 동명이인(§12 + 2026-08-15 삼순 계약): 이름 중복 자체로는 즉시 ambiguous하지 않는다 —
-    // identity 게이트가 생년 분류(`{생년}년 출생`)로 개인을 가른다. 단, 이름+생년이 모두 같은
-    // 로스터 쌍은 문서 쪽 근거로 구별할 축이 없다 → fail-close 유지. 팀·포지션은 이적/문서
-    // 지연 때문에 hard gate로 쓰지 않고 note 보조 근거로만 남긴다.
-    if ((nameBirthCounts.get(`${target.name}|${birthYear}`) ?? 0) > 1) {
-      results.push({
-        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
-        note: `로스터 동명·동생년 ${nameBirthCounts.get(`${target.name}|${birthYear}`)}건 — 문서 근거로 구별 불능(fail-close)`,
-      });
-      continue;
-    }
-    if (!/^\d{4}$/.test(birthYear)) {
-      // 생년이 없으면 동명이인을 가려낼 축이 없다 — 확인되지 않은 것을 확인된 것으로 만들지 않는다.
-      results.push({
-        ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
-        note: "로스터 생년 결측 — identity 대조 불가(fail-close)",
-      });
-      continue;
-    }
-    const identity: PlayerDocumentIdentity = { name: target.name, birthYear };
-
-    const probes: CandidateProbe[] = [];
-    const queue = [...candidateTitles];
-    const seen = new Set<string>();
-    let blocked = false;
-    // resume replay 사전 — 이 선수의 기록된 (kboId, candidateUrl) probe는 재요청하지 않는다.
-    const replayByTitle = new Map<string, CheckpointProbeRow>();
-    for (const row of probedByKboId.get(target.kboId) ?? []) replayByTitle.set(row.title, row);
-
-    while (queue.length > 0 && !blocked && probes.length < MAX_PROBES_PER_PLAYER) {
-      const title = queue.shift()!;
-      if (seen.has(title)) continue;
-      seen.add(title);
-
-      const replay = replayByTitle.get(title);
-      if (replay) {
-        // 외부 요청 없이 기록된 결과를 그대로 이어받는다. 파생 후보도 기록에서 복원한다.
-        const reconstructed: CandidateProbe = replay.kind === "canonical"
-          ? { kind: "canonical", url: replay.url, canonicalUrl: replay.canonicalUrl ?? "", pageTitle: replay.pageTitle ?? "", redirected: replay.redirected ?? false }
-          : replay.kind === "rejected"
-            ? { kind: "rejected", url: replay.url, reason: replay.reason ?? "replayed" }
-            : { kind: "missing", url: replay.url, reason: replay.reason ?? "replayed" };
-        probes.push(reconstructed);
-        for (const candidate of replay.candidates ?? []) {
-          if (!seen.has(candidate)) queue.push(candidate);
-        }
-        if (reconstructed.kind === "canonical") break;
-        continue;
-      }
-
+  const outcome = await resolvePlayerBatch(targets, {
+    source: SOURCE,
+    byKboId,
+    nameCounts,
+    nameBirthCounts,
+    probedByKboId,
+    checkpointPath: CHECKPOINT_PATH,
+    probe: async (title, identity) => {
       const probe = SOURCE === "namu" ? await probeNamu(title, identity) : await probeWikipedia(title, identity);
       if (SOURCE !== "namu") await sleep(WIKIPEDIA_INTERVAL_MS);
-      probes.push(probe);
-      if (probe.kind === "blocked") {
-        // §12.2(b): 차단은 우회 대상이 아니다. 이 선수에 대한 추가 요청을 즉시 중단한다.
-        // blocked는 checkpoint에 쓰지 않는다 — 원인 해소 후 resume에서 재시도해야 한다.
-        blocked = true;
-        break;
-      }
-      const derivedCandidates = probe.kind === "rejected" && probe.disambiguationHtml
-        ? extractDisambiguationCandidates(probe.disambiguationHtml, target.name)
-        : [];
-      if (CHECKPOINT_PATH) {
-        const probeRow: CheckpointProbeRow = {
-          t: "probe", kboId: target.kboId, title, url: probe.url, kind: probe.kind,
-          ...(probe.kind !== "canonical" ? { reason: probe.reason } : {}),
-          ...(probe.kind === "canonical" ? { canonicalUrl: probe.canonicalUrl, pageTitle: probe.pageTitle, redirected: probe.redirected } : {}),
-          ...(derivedCandidates.length > 0 ? { candidates: derivedCandidates } : {}),
-          at: new Date().toISOString(),
-        };
-        appendFileSync(CHECKPOINT_PATH, `${JSON.stringify(probeRow)}\n`, "utf8");
-      }
-      for (const candidate of derivedCandidates) {
-        if (!seen.has(candidate)) queue.push(candidate);
-      }
-      if (probe.kind === "canonical") break; // identity가 확정되면 더 두들기지 않는다(bounded).
-    }
-    // 예산 소진 판정 — 볼 후보가 남았는데 상한(9)에 닿은 것은 "문서 부재(missing)"가 아니다.
-    const budgetExhausted = !blocked && queue.length > 0 && probes.length >= MAX_PROBES_PER_PLAYER
-      && !probes.some((probe) => probe.kind === "canonical");
-
-    const canonicalHits = probes.filter(
-      (probe): probe is Extract<CandidateProbe, { kind: "canonical" }> => probe.kind === "canonical",
+      return probe;
+    },
+  });
+  // 최종 판정표 = resume 이전 완료분 + 이번 run 신규분(삼순 P0: 중단 전 완료분 유실 금지).
+  const results = mergeResultRows(doneRows, outcome.rows);
+  if (outcome.blocked) {
+    console.error(
+      `차단 감지 — 전역 즉시 중단. 누적 판정 ${results.length}명(이전 ${doneRows.length}+이번 ${outcome.rows.length}), `
+      + `checkpoint=${CHECKPOINT_PATH ?? "(없음)"}`,
     );
-    const distinct = new Set(canonicalHits.map((probe) => probe.canonicalUrl));
-    const trace = probes
-      .map((probe) => `${probe.kind}${probe.kind === "canonical" ? "" : `(${probe.reason})`}`)
-      .join("/");
-
-    let verdict: { status: Resolution; canonicalUrl: string | null; pageTitle: string | null; note: string };
-    if (distinct.size === 1) {
-      const hit = canonicalHits[0];
-      verdict = {
-        status: "resolved",
-        canonicalUrl: hit.canonicalUrl,
-        pageTitle: hit.pageTitle,
-        note: `${new Date().toISOString().slice(0, 10)} identity 대조 통과(최종URL+canonical+분류: 야구선수/${birthYear}년 출생, 제목 "${hit.pageTitle}"${hit.redirected ? ", redirect 반영" : ""})`,
-      };
-    } else if (distinct.size > 1) {
-      verdict = { status: "ambiguous", canonicalUrl: null, pageTitle: null, note: `문서 ${distinct.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
-    } else if (blocked) {
-      verdict = { status: "blocked", canonicalUrl: null, pageTitle: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
-    } else if (budgetExhausted) {
-      verdict = {
-        status: "budget_exhausted", canonicalUrl: null, pageTitle: null,
-        note: `요청 예산 소진(인당 ${MAX_PROBES_PER_PLAYER}) — 미확인 후보 ${queue.length}건 잔존, missing 아님 (${trace})`,
-      };
-    } else {
-      verdict = { status: "missing", canonicalUrl: null, pageTitle: null, note: `identity 확정 후보 없음 (${trace})` };
+    if (OUT_PATH) {
+      writeFileSync(OUT_PATH, JSON.stringify(results, null, 2), "utf8");
+      console.log(`부분 판정 결과 저장(누적): ${OUT_PATH}`);
     }
-    const isRosterDupName = (nameCounts.get(target.name) ?? 0) > 1;
-    if (isRosterDupName && verdict.status === "resolved") {
-      // 보조 근거 기록 — 판정은 생년 분류가 했고, 팀은 검수자가 대조할 참고칸이다(hard gate 아님).
-      verdict.note += ` [동명이인 주의: 로스터 동명 ${nameCounts.get(target.name)}명, 이 판정은 kboId ${target.kboId}(${rosterRow?.team ?? "?"}) 생년 ${birthYear} 기준]`;
-    }
-    results.push({ ...base, ...verdict });
-    if (CHECKPOINT_PATH && verdict.status !== "blocked") {
-      // blocked는 판정 확정이 아니라 중단 사유다 — verdict로 봉인하면 resume이 이 선수를 영영 건너뛴다.
-      appendFileSync(
-        CHECKPOINT_PATH,
-        `${JSON.stringify({ t: "verdict", kboId: target.kboId, name: target.name, status: verdict.status, canonicalUrl: verdict.canonicalUrl, note: verdict.note, at: new Date().toISOString() })}\n`,
-        "utf8",
-      );
-    }
-    console.log(`${target.name.padEnd(6)} ${verdict.status.padEnd(10)} ${verdict.note}`);
-    if (verdict.status === "blocked") {
-      // 전역 즉시 중단(2026-08-15 삼순 계약) — 첫 차단은 "다음 선수로 넘어갈 일"이 아니라 run 종료 사유다.
-      // checkpoint에 진행분이 남아 있으므로 재개는 원인 해소 후 resume으로 한다.
-      console.error(`차단 감지 — 전역 즉시 중단. 진행 ${results.length}명/${targets.length}명, checkpoint=${CHECKPOINT_PATH ?? "(없음)"}`);
-      if (OUT_PATH) {
-        writeFileSync(OUT_PATH, JSON.stringify(results, null, 2), "utf8");
-        console.log(`부분 판정 결과 저장: ${OUT_PATH}`);
-      }
-      process.exit(2);
-    }
+    process.exit(2);
   }
-
+  if (SCOPE === "snapshot" && ONLY_NAMES.length === 0 && LIMIT === null && snapshotResolveCount > 0
+    && results.length !== snapshotResolveCount) {
+    // 전량 run 완주의 최종 판정표는 정확히 해석 버킷 전원이어야 한다(488 unique 강제).
+    console.error(`최종 판정표 ${results.length}명 ≠ 해석 대상 ${snapshotResolveCount}명 — 유실/중복(fail-close)`);
+    process.exit(1);
+  }
   const summary = results.reduce<Record<string, number>>((acc, row) => {
     acc[row.status] = (acc[row.status] ?? 0) + 1;
     return acc;

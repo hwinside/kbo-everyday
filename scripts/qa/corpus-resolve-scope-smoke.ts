@@ -16,6 +16,9 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+
 import {
   buildCheckpointFingerprint,
   INTERVAL_FLOOR_MS,
@@ -25,7 +28,9 @@ import {
   intervalForSuccessCount,
   intervalWithJitter,
   MAX_PROBES_PER_PLAYER,
+  mergeResultRows,
   parseCheckpointText,
+  resolvePlayerBatch,
   selectResolveTargets,
 } from "../baseball-qa/resolve-rag-urls";
 
@@ -112,8 +117,10 @@ assert.equal(MAX_PROBES_PER_PLAYER, 9, "인당 요청 예산 9 명시");
 
 // (4) 전역 중단 + 직접 실행 가드 — 소스 계약(실행 주입이 안 되는 네트워크 축의 최소 고정).
 const source = readFileSync(path.join(process.cwd(), "scripts/baseball-qa/resolve-rag-urls.ts"), "utf8");
-assert.ok(/verdict\.status === "blocked"[\s\S]{0,700}process\.exit\(2\)/.test(source),
-  "blocked → 전역 즉시 중단(exit 2) 계약이 소스에 존재해야 한다");
+assert.ok(/outcome\.blocked[\s\S]{0,700}process\.exit\(2\)/.test(source),
+  "blocked → 전역 즉시 중단(exit 2) 계약이 main에 존재해야 한다");
+assert.ok(/runBlocked = true;\s*break;/.test(source),
+  "배치 함수는 첫 blocked에서 루프를 즉시 이탈해야 한다");
 assert.ok(source.includes("if (isDirectRun)"), "직접 실행 가드 존재(스모크 import 안전)");
 assert.ok(source.includes('"budget_exhausted"') && source.includes("budgetExhausted"),
   "budget_exhausted 상태가 missing과 분리된 별도 판정으로 존재");
@@ -144,26 +151,42 @@ assert.deepEqual(
 
 // (7) checkpoint 파서 행동 테스트 — main이 쓰는 실제 함수(parseCheckpointText)를 직접 태운다.
 const fp = buildCheckpointFingerprint({ source: "namu", scope: "snapshot", snapshotSha256: "abc123" });
+const verdictRow = {
+  sourceKey: "namu:player:50066", kboId: "50066", name: "강현우", source: "namu",
+  status: "resolved", canonicalUrl: "https://namu.wiki/w/강현우", pageTitle: "강현우",
+  candidateUrls: ["https://namu.wiki/w/강현우"], note: "-",
+};
 const goodText = [
   JSON.stringify(fp),
   JSON.stringify({ t: "probe", kboId: "78224", title: "김재환", url: "https://namu.wiki/w/김재환", kind: "rejected", reason: "disambiguation_document", candidates: ["김재환(야구선수)"], at: "2026-08-15T12:00:00Z" }),
-  JSON.stringify({ t: "verdict", kboId: "50066", name: "강현우", status: "resolved", canonicalUrl: "https://namu.wiki/w/강현우", note: "-", at: "2026-08-15T12:00:05Z" }),
+  JSON.stringify({ t: "verdict", row: verdictRow, at: "2026-08-15T12:00:05Z" }),
 ].join("\n");
 const parsedCp = parseCheckpointText(goodText, fp);
-assert.ok(parsedCp.doneKboIds.has("50066"), "verdict 행 → done skip 대상");
-assert.ok(!parsedCp.doneKboIds.has("78224"), "probe만 있는 선수는 done이 아니다");
+assert.equal(parsedCp.doneRows.length, 1, "verdict 행 → full row 복원");
+assert.equal(parsedCp.doneRows[0].kboId, "50066");
+assert.equal(parsedCp.doneRows[0].note, "-", "full ResultRow 복원(판정표 유실 금지)");
+assert.ok(!parsedCp.doneRows.some((r) => r.kboId === "78224"), "probe만 있는 선수는 done이 아니다");
 assert.equal(parsedCp.probedByKboId.get("78224")?.[0]?.candidates?.[0], "김재환(야구선수)",
   "probe replay에 파생 후보가 복원된다");
-// RED 1: fingerprint 불일치(다른 스냅샷) — 반드시 던진다.
+// RED 1: fingerprint 불일치(다른 스냅샷·다른 판정 리비전) — 반드시 던진다.
 assert.throws(() => parseCheckpointText(goodText, { ...fp, snapshotSha256: "different" }), /fingerprint 불일치/);
+assert.throws(() => parseCheckpointText(goodText, { ...fp, resolverRevision: "old" }), /resolverRevision/,
+  "판정 로직 리비전이 다르면 구 checkpoint 재사용 금지");
+assert.throws(() => parseCheckpointText(goodText, { ...fp, canonicalGateVersion: "r2" }), /canonicalGateVersion/,
+  "canonical 게이트 버전 불일치도 fail-close");
 // RED 2: 헤더 부재(구버전/손상 파일) — 신규 생성으로 삼켜지지 않고 던진다.
 assert.throws(() => parseCheckpointText(goodText.split("\n").slice(1).join("\n"), fp), /fingerprint가 아니다|헤더/);
 // RED 3: 중간 줄 JSON 손상 — 던진다.
 assert.throws(() => parseCheckpointText(`${goodText}\n{broken`, fp), /JSON 손상/);
-// RED 4: 스키마 오류(허용 안 된 status) — 던진다. blocked는 verdict로 봉인 금지 계약.
+// RED 4: 스키마 오류(허용 안 된 status·row 부재) — 던진다. blocked는 verdict로 봉인 금지 계약.
 assert.throws(
-  () => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "verdict", kboId: "1", status: "blocked" })}`, fp),
+  () => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, kboId: "1", status: "blocked" } })}`, fp),
   /스키마 오류/,
+);
+assert.throws(
+  () => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "verdict", kboId: "1", status: "resolved" })}`, fp),
+  /스키마 오류/,
+  "구 포맷(flat verdict)은 full row가 아니므로 fail-close",
 );
 // RED 5: 알 수 없는 행 타입 — 던진다.
 assert.throws(() => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "junk", kboId: "1" })}`, fp), /알 수 없는 행/);
@@ -172,6 +195,79 @@ assert.throws(() => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "jun
 assert.ok(/SCOPE === "snapshot"[\s\S]{0,900}--source=namu 필수[\s\S]{0,900}--dry-run 필수[\s\S]{0,900}--checkpoint[\s\S]{0,600}--out/.test(source),
   "snapshot 모드는 namu+cdp+dry-run+checkpoint+out 전부 강제");
 assert.ok(/--source 값이 잘못됐다|\(wikipedia\|namu\)/.test(source), "enum 오타 즉시 실패 가드 존재");
+
+// (9) 주입 fetcher 행동 게이트(삼순 2차 P0) — main과 같은 실행 함수(resolvePlayerBatch)를
+// fake fetcher로 태운다: run1 중단 → run2 resume → 같은 URL 재요청 0 → 최종 합본 unique,
+// budget_exhausted≠missing까지 실행 경로로 검증한다.
+async function behaviorGate(): Promise<void> {
+  const { readFileSync: rf, writeFileSync: wf } = await import("node:fs");
+  const work = mkdtempSync(path.join(tmpdir(), "resolve-batch-smoke-"));
+  const cp = path.join(work, "checkpoint.jsonl");
+  const runFp = buildCheckpointFingerprint({ source: "namu", scope: "targets", snapshotSha256: "-" });
+  wf(cp, `${JSON.stringify(runFp)}\n`, "utf8");
+
+  const rosterMini = [
+    { kboId: "10001", name: "가선수", team: "T", birthDate: "2000-01-01" },
+    { kboId: "10002", name: "나선수", team: "T", birthDate: "2001-01-01" },
+    { kboId: "10003", name: "다선수", team: "T", birthDate: "2002-01-01" },
+  ];
+  const deps = (probeImpl: (title: string) => Promise<unknown>, calls: string[]) => ({
+    source: "namu" as const,
+    byKboId: new Map(rosterMini.map((p) => [p.kboId, p] as const)),
+    nameCounts: new Map(rosterMini.map((p) => [p.name, 1] as const)),
+    nameBirthCounts: new Map(rosterMini.map((p) => [`${p.name}|${p.birthDate.slice(0, 4)}`, 1] as const)),
+    probedByKboId: parseCheckpointText(rf(cp, "utf8"), runFp).probedByKboId,
+    checkpointPath: cp,
+    log: () => undefined,
+    probe: async (title: string) => {
+      calls.push(title);
+      return await probeImpl(title) as never;
+    },
+  });
+
+  // run1: 가선수 resolved 확정 후 나선수에서 blocked → 전역 중단.
+  const targetsAll = rosterMini.map(({ kboId, name }) => ({ kboId, name }));
+  const calls1: string[] = [];
+  const canonicalOf = (title: string) => ({
+    kind: "canonical", url: `https://namu.wiki/w/${title}`, canonicalUrl: `https://namu.wiki/w/${title}`,
+    pageTitle: title, redirected: false,
+  });
+  const run1 = await resolvePlayerBatch(targetsAll, deps(async (title) =>
+    title.includes("가선수") ? canonicalOf(title) : { kind: "blocked", url: "u", reason: "bot_protection_http_403" }, calls1));
+  assert.equal(run1.blocked, true, "run1은 blocked로 중단된다");
+  assert.equal(run1.rows.filter((r) => r.status === "resolved").length, 1, "중단 전 완료 1명");
+  const cpAfterRun1 = rf(cp, "utf8");
+  assert.ok(!cpAfterRun1.includes('"blocked"'), "blocked는 checkpoint에 봉인되지 않는다");
+
+  // run2 resume: done 복원 + 같은 URL 재요청 0 + 최종 합본 3명 unique.
+  const resumed = parseCheckpointText(rf(cp, "utf8"), runFp);
+  assert.equal(resumed.doneRows.length, 1, "resume이 full ResultRow를 복원한다(유실 금지)");
+  assert.equal(resumed.doneRows[0].status, "resolved");
+  const remaining = targetsAll.filter((t) => !resumed.doneRows.some((r) => r.kboId === t.kboId));
+  const calls2: string[] = [];
+  const run2 = await resolvePlayerBatch(remaining, {
+    ...deps(async (title) => canonicalOf(title), calls2),
+    probedByKboId: resumed.probedByKboId,
+  });
+  assert.equal(run2.blocked, false);
+  const finalRows = mergeResultRows(resumed.doneRows, run2.rows);
+  assert.equal(finalRows.length, 3, "최종 판정표 = 이전 완료 + 신규, 유실 0");
+  assert.ok(!calls2.some((title) => title.includes("가선수")), "완료된 선수 URL 재요청 0");
+  assert.throws(() => mergeResultRows(resumed.doneRows, [...run2.rows, resumed.doneRows[0]]), /kboId 중복/,
+    "중복 병합은 fail-close");
+
+  // budget_exhausted ≠ missing — 동음이의 파생 후보가 예산(9)을 넘도록 주입.
+  const manyLinks = Array.from({ length: 12 }, (_, i) => `<a href="/w/다선수(${2000 + i})">x</a>`).join("");
+  const calls3: string[] = [];
+  const run3 = await resolvePlayerBatch([{ kboId: "10003", name: "다선수" }], {
+    ...deps(async () => ({ kind: "rejected", url: "u", reason: "disambiguation_document", disambiguationHtml: manyLinks }), calls3),
+    checkpointPath: null,
+    probedByKboId: new Map(),
+  });
+  assert.equal(run3.rows[0].status, "budget_exhausted", "예산 소진은 missing이 아니다");
+  assert.equal(calls3.length, MAX_PROBES_PER_PLAYER, "요청 수 = 예산 상한 exact");
+  console.log("행동 게이트 PASS — run1중단→resume→재요청0→합본 unique / budget_exhausted 실행경로");
+}
 
 // self-test RED: 검출력 증명 — 조작된 스냅샷은 반드시 잡혀야 한다.
 let selfTestRed = false;
@@ -182,7 +278,14 @@ try {
 }
 assert.ok(selfTestRed, "self-test: fail-close 경로가 실제로 던진다");
 
-console.log(
-  "corpus-resolve-scope-smoke PASS (snapshot 491/488·roster해시대조 / checkpoint fingerprint+스키마 RED5 / "
-  + "probe 8→6→4→2s / budget9 / snapshot모드 강제가드 / global-abort / 대표코호트)",
-);
+behaviorGate()
+  .then(() => {
+    console.log(
+      "corpus-resolve-scope-smoke PASS (snapshot 491/488·roster해시대조 / checkpoint fingerprint(rev포함)+스키마 RED / "
+      + "주입fetcher resume행동 / probe 8→6→4→2s / budget9 / snapshot모드 강제가드 / global-abort / 대표코호트)",
+    );
+  })
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });

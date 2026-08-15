@@ -180,7 +180,12 @@ const server = createServer(async (request, response) => {
   const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
   response.setHeader("Content-Type", "application/json");
   if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
-    response.end(JSON.stringify(ledgerRun?.status === "ready" ? [ledgerRun] : []));
+    // 실제 PostgREST처럼 artifact_sha256 필터를 존중한다 — 필터를 무시하면 임의 corpus의
+    // ready 확인(삼순 2차 계약) RED를 검증할 수 없다.
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sha = (url.searchParams.get("artifact_sha256") ?? "").replace(/^eq\./, "");
+    const matches = ledgerRun?.status === "ready" && (!sha || ledgerRun.artifact_sha256 === sha);
+    response.end(JSON.stringify(matches ? [ledgerRun] : []));
     return;
   }
   if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
@@ -458,7 +463,21 @@ try {
   ], applyEnv);
   assert.equal(partialAbsent.code, 1, "corpus에 없는 entity 요청은 fail-close여야 한다");
   assert.match(partialAbsent.stderr, /corpus에 없는 entity/);
-  console.log("PASS actual E2E — --entities 부분 재적재 원장 보존 + 부재 entity fail-close");
+  // RED: ledger에 ready로 등록되지 않은 임의(변조) corpus 파일은 부분 재적재를 거부해야 한다.
+  // fetchedAt만 바꿔 artifact SHA를 바꾼다(스키마 유효 유지 — text 변조는 len 검증, recovery 대상
+  // 변조는 provenance 대조에 먼저 걸려 ready-check RED 증명이 안 된다 → recovery 밖 entity를 고른다).
+  const tamperedFixtures = fixtures.map((fixture) =>
+    fixture.entity === "KIA 타이거즈" ? { ...fixture, fetchedAt: "2026-08-04T00:00:00.000Z" } : fixture);
+  const tamperedFile = writeJsonl("tampered-partial.jsonl", tamperedFixtures, "\n");
+  const tampered = await run([
+    `--file=${tamperedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(tampered.code, 1, "미등록 artifact의 --entities apply는 fail-close여야 한다");
+  assert.match(tampered.stderr, /ready로 등록된 artifact만 허용/);
+  console.log("PASS actual E2E — --entities 원장 보존 + 부재 entity fail-close + 미등록 artifact 거부");
 } finally {
   server.close();
 }
