@@ -4,10 +4,10 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useCallback, useRef, startTransition } from "react";
+import { useState, useMemo, useEffect, useRef, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
-import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { TEAMS, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
@@ -127,7 +127,7 @@ function PlayersPageContent() {
   useEffect(() => {
     if (!hasUrlParams && myTeamId) {
       setFilterMode("team"); // eslint-disable-line react-hooks/set-state-in-effect
-      setFilterTeam(myTeamId); // eslint-disable-line react-hooks/set-state-in-effect
+      setFilterTeam(myTeamId);
     }
   }, [myTeamId, hasUrlParams]);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
@@ -350,7 +350,7 @@ function PlayersPageContent() {
 
       {/* 소팅 + 결과 수 */}
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-xs text-text-tertiary">
+        <span data-testid="players-count" className="text-xs text-text-tertiary">
           {searchQuery ? `검색 결과 ${filtered.length}명` : `${filtered.length}명`}
         </span>
         <div className="flex gap-1">

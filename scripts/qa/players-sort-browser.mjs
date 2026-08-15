@@ -75,6 +75,17 @@ if (MUTATE) {
         to: '        settled = true;\n      });',
       },
     ],
+    // teamfilter: 구단별 필터를 무력화한다 → B8 RED
+    teamfilter: [{
+      from: '      result = result.filter(p => p.teamId === filterTeam);',
+      to: '      result = result;',
+    }],
+    // urlsort: 정규화된 값이 아니라 원본 쿼리를 그대로 다시 쓴다 → B9 RED
+    //   (제거된 ?sort=posts 가 URL 에 살아남아 공유되는 상태)
+    urlsort: [{
+      from: '    if (sortMode !== DEFAULT_SORT) params.set("sort", sortMode);',
+      to: '    { const raw = searchParams.get("sort"); if (raw) params.set("sort", raw); else if (sortMode !== DEFAULT_SORT) params.set("sort", sortMode); }',
+    }],
   };
   const steps = mutations[MUTATE];
   if (!steps) throw new Error(`unknown mutation: ${MUTATE}`);
@@ -173,6 +184,24 @@ const COUNTS = {
 };
 const EXPECTED_TOP3 = boosted.map((p) => p.name);
 const EXPECTED_ALPHA1 = byName[0].name;
+
+// 필터 fixture 도 실물에서 파생한다 — 인원이 가장 많은 팀을 골라 목록이 비지 않게 한다.
+// 구단 버튼은 TEAMS 상수의 shortName 을 쓰고 roster 도 같은 문자열(예: "삼성")을 가진다.
+const rosterFull = JSON.parse(readFileSync(resolve(ROOT, "src/lib/constants/players-roster.json"), "utf8"));
+const teamCounts = new Map();
+for (const p of rosterFull) teamCounts.set(p.team, (teamCounts.get(p.team) ?? 0) + 1);
+const [TEAM_LABEL, TEAM_SIZE] = [...teamCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+if (!TEAM_LABEL || TEAM_SIZE < 10) throw new Error("팀 fixture 추출 실패");
+// 행의 소속까지 확인하려면 teamId 가 필요하다(TeamBadge 스텁이 "팀<id>" 를 찍는다).
+const TEAM_ID = rosterFull.find((p) => p.team === TEAM_LABEL)?.teamId;
+if (!TEAM_ID) throw new Error("팀 id fixture 추출 실패");
+// 포지션 fixture 도 실물 기준(가장 흔한 포지션).
+const posCounts = new Map();
+for (const p of rosterFull) posCounts.set(p.position, (posCounts.get(p.position) ?? 0) + 1);
+const [POSITION_LABEL] = [...posCounts.entries()]
+  .filter(([label]) => ["투수", "포수", "내야수", "외야수"].includes(label))
+  .sort((a, b) => b[1] - a[1])[0] ?? [];
+if (!POSITION_LABEL) throw new Error("포지션 fixture 추출 실패");
 
 let failures = 0;
 const check = (label, cond, detail = "") => {
@@ -327,6 +356,81 @@ try {
     const removed = await page.locator("button", { hasText: "게시글수" }).count();
     const removed2 = await page.locator("button", { hasText: "직찍수" }).count();
     check("B5b 제거된 토글이 화면에 없다", removed === 0 && removed2 === 0, `게시글수=${removed} 직찍수=${removed2}`);
+
+    // ── B9: 구 sort 파라미터가 URL 에서도 사라진다 ─────────────────────────
+    // 화면만 정규화하고 URL 에 ?sort=posts 를 남기면, 그 URL 이 계속 공유·북마크되어
+    // 제거된 값이 영원히 재유입된다. router.replace 로 넘어간 URL 을 직접 본다.
+    await page.waitForTimeout(300);
+    const lastUrl = await page.evaluate(() => window.__LAST_URL__ ?? "");
+    check(
+      "B9 URL 에서 제거된 sort 파라미터가 사라진다",
+      typeof lastUrl === "string" && !/sort=(posts|photos)/.test(lastUrl),
+      `last_url=${lastUrl}`,
+    );
+    await page.close();
+  }
+
+  // ── B8: 구단별·포지션별 필터가 실제로 목록을 줄인다 ────────────────────────
+  // 삼순 2026-08-15: "필터 비회귀" 를 소스 regex 로만 봤을 뿐 실제 동작을 안 봤다.
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    page.on("pageerror", (e) => { failures += 1; console.error(`BROWSER_PAGE_ERROR: ${e.message}`); });
+    await page.route("**/api/roster", (r) =>
+      r.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.route("**/api/player-popularity", (r) =>
+      r.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ counts: COUNTS, degraded: false }),
+      }));
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector(ROW, { timeout: 5000 });
+
+    const countLabel = () => page.locator(String.raw`[data-testid="players-count"]`).innerText();
+    const totalText = await countLabel();
+    const total = Number((totalText.match(/(\d+)명/) ?? [])[1] ?? 0);
+    check("B8a 필터 전 전체 인원이 표시된다", total > 100, `total=${total}`);
+
+    // 구단별 → 특정 팀
+    await page.getByRole("button", { name: "구단별", exact: true }).click();
+    await page.waitForTimeout(150);
+    await page.locator('button[class*="shrink-0"]', { hasText: TEAM_LABEL }).first().click();
+    await page.waitForTimeout(250);
+    const teamText = await countLabel();
+    const teamCount = Number((teamText.match(/(\d+)명/) ?? [])[1] ?? 0);
+    check(
+      "B8 구단별 필터가 실제로 목록을 줄인다",
+      teamCount > 0 && teamCount < total,
+      `team=${teamCount} total=${total}`,
+    );
+    // 카운트 문자열만 보면 목록이 안 그려져도 통과한다 — 실제 행과 그 행의 소속까지 본다.
+    const teamRows = await rowNames(page);
+    const teamBadges = await page.$$eval(
+      '[data-testid="players-list"] > a',
+      (nodes) => nodes.map((n) => n.textContent ?? ""),
+    );
+    check(
+      "B8b 필터된 행이 실제로 그려진다(카운트만 바뀌는 게 아님)",
+      teamRows.length > 0 && teamRows.length <= teamCount,
+      `rows=${teamRows.length} count=${teamCount}`,
+    );
+    check(
+      "B8d 필터된 행이 전부 선택한 구단이다",
+      teamBadges.length > 0 && teamBadges.every((t) => t.includes(`팀${TEAM_ID}`)),
+      `team=${TEAM_LABEL}(id=${TEAM_ID}) rows=${teamBadges.length} sample=${JSON.stringify(teamBadges[0] ?? "").slice(0, 80)}`,
+    );
+
+    // 포지션별 → 투수
+    await page.getByRole("button", { name: "포지션별", exact: true }).click();
+    await page.waitForTimeout(150);
+    await page.getByRole("button", { name: POSITION_LABEL, exact: true }).click();
+    await page.waitForTimeout(250);
+    const posText = await countLabel();
+    const posCount = Number((posText.match(/(\d+)명/) ?? [])[1] ?? 0);
+    check(
+      "B8c 포지션별 필터가 실제로 목록을 줄인다",
+      posCount > 0 && posCount < total,
+      `position=${POSITION_LABEL}:${posCount} total=${total}`,
+    );
     await page.close();
   }
 } finally {
