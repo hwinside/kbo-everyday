@@ -135,18 +135,38 @@ function PlayersPageContent() {
     parseSortMode(searchParams.get("sort"))
   );
 
-  // 최애선수 지정 수 집계 (실패해도 목록은 그대로 — 가나다순으로 자연 폴백)
+  // 최애선수 지정 수 집계.
+  //
+  // 빈 counts 로 먼저 그려버리면 "인기순" 상태에서 가나다순 목록이 보이다가
+  // 집계가 도착하는 시점(Production 실측 ~339ms)에 행이 통째로 재정렬된다.
+  // 그 사이에 터치하면 의도하지 않은 선수로 들어간다 — 온보딩 선수 선택과 같은
+  // bounded settle 로 닫는다: 먼저 끝난 쪽(응답 또는 timeout)이 이기고, 늦게 온 응답은 무시한다.
   const [popularity, setPopularity] = useState<PopularityCounts>({});
+  const [popularityStatus, setPopularityStatus] = useState<"loading" | "ready">("loading");
   useEffect(() => {
     let stale = false;
+    let settled = false;
+    // 집계가 느리거나 죽어도 목록을 영원히 막지 않는다 — 빈 counts 로 가나다순 확정.
+    const timeout = window.setTimeout(() => {
+      if (stale || settled) return;
+      settled = true;
+      setPopularityStatus("ready");
+    }, 1200);
     fetch("/api/player-popularity")
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
-        if (stale) return;
+        if (stale || settled) return;
+        settled = true;
         setPopularity(normalizePopularityCounts(json?.counts));
+        setPopularityStatus("ready");
       })
-      .catch(() => { /* keep empty counts → 가나다순 */ });
-    return () => { stale = true; };
+      .catch(() => {
+        // 실패해도 목록은 나와야 한다(counts 빈 상태 → 가나다순).
+        if (stale || settled) return;
+        settled = true;
+        setPopularityStatus("ready");
+      });
+    return () => { stale = true; window.clearTimeout(timeout); };
   }, []);
   const [visibleCount, setVisibleCount] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
@@ -351,7 +371,16 @@ function PlayersPageContent() {
       </div>
 
       {/* 선수 목록 */}
-      <div className="space-y-2 pb-24">
+      {sortMode === "popularity" && popularityStatus === "loading" ? (
+        // 재정렬 방지: 인기순은 집계가 settle 된 뒤에만 목록을 그린다.
+        <div
+          data-testid="players-popularity-loading"
+          className="py-16 text-center text-sm text-text-tertiary"
+        >
+          불러오는 중...
+        </div>
+      ) : (
+      <div data-testid="players-list" className="space-y-2 pb-24">
         {filtered.slice(0, visibleCount).map((player, i) => (
           <Link key={player.kboId || i} href={`/community/players/${player.kboId}`} prefetch={false}>
             <div className="flex items-center gap-3 rounded-xl bg-bg-secondary/50 px-4 py-3 active:bg-bg-tertiary transition-colors">
@@ -394,6 +423,7 @@ function PlayersPageContent() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
