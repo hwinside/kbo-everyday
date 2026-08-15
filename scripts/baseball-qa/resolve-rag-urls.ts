@@ -300,6 +300,12 @@ const SNAPSHOT_RESOLVE_BUCKETS = new Set(["외부 해석 필요", "원장 미등
 /** 0단계 스냅샷 합계 계약(2026-08-15) — 전체 491 = 해석 버킷 488 + census 재사용 3. */
 const GAP_SNAPSHOT_TOTAL = 491;
 const GAP_SNAPSHOT_RESOLVE_TOTAL = 488;
+/** 버킷별 exact 계약(삼순 보완) — 총계만 보면 분포 이동·라벨 변경을 못 잡는다. unknown 버킷은 0건. */
+const GAP_SNAPSHOT_BUCKET_COUNTS: Record<string, number> = {
+  "외부 해석 필요": 485,
+  "원장 미등록": 3,
+  "적재만(기존 corpus 재사용)": 3,
+};
 
 /** 해석 대상 한 명. `S2B_TARGET_PLAYERS`와 로스터 행을 같은 모양으로 받는다. */
 interface ResolveTarget { kboId: string; name: string }
@@ -633,6 +639,15 @@ export async function resolvePlayerBatch(
 
       const replay = replayByTitle.get(title);
       if (replay) {
+        // title↔requested URL exact 결속(삼순 보완): 기록된 url이 이 title로 만들어지는 URL과
+        // 정확히 같아야 한다. title만 같고 url이 다른 행을 replay하면 요청하지 않은 문서의
+        // 판정을 그 title의 결과로 둔갑하게 된다(외부 요청 0이라 들킵지도 않는다).
+        const expectedUrl = source === "namu" ? namuUrl(title) : wikipediaUrl(title);
+        if (replay.url !== expectedUrl) {
+          throw new Error(
+            `checkpoint replay 결속 위반: title="${title}" 기대 URL ${expectedUrl} ≠ 기록 ${replay.url} — fail-close`,
+          );
+        }
         // 외부 요청 없이 기록된 결과를 그대로 이어받는다. 파생 후보도 기록에서 복원한다.
         const reconstructed: CandidateProbe = replay.kind === "canonical"
           ? { kind: "canonical", url: replay.url, canonicalUrl: replay.canonicalUrl ?? "", pageTitle: replay.pageTitle ?? "", redirected: replay.redirected ?? false }
@@ -801,12 +816,24 @@ async function main(): Promise<void> {
         process.exit(1);
       }
     }
-    // 버킷 합계 강제: 전체 491 = 해석 버킷 488 + 재사용 3. 집계가 깨진 스냅샷은 쓰지 않는다.
+    // 버킷 합계 강제(삼순 보완): 총계·해석합계만이 아니라 **버킷별 exact 485/3/3 + unknown 0**.
+    // 총계만 보면 버킷 라벨이 바뀌거나 분포가 이동해도 통과한다.
+    const bucketCounts = new Map<string, number>();
+    for (const player of snapshotDoc.players) {
+      bucketCounts.set(player.bucket, (bucketCounts.get(player.bucket) ?? 0) + 1);
+    }
+    const unknownBuckets = [...bucketCounts.keys()].filter((bucket) => !(bucket in GAP_SNAPSHOT_BUCKET_COUNTS));
+    const bucketMismatch = Object.entries(GAP_SNAPSHOT_BUCKET_COUNTS)
+      .filter(([bucket, expected]) => (bucketCounts.get(bucket) ?? 0) !== expected)
+      .map(([bucket, expected]) => `${bucket}=${bucketCounts.get(bucket) ?? 0}(기대 ${expected})`);
     const resolveBucketCount = snapshotDoc.players.filter((player) => SNAPSHOT_RESOLVE_BUCKETS.has(player.bucket)).length;
-    if (snapshotDoc.players.length !== GAP_SNAPSHOT_TOTAL || resolveBucketCount !== GAP_SNAPSHOT_RESOLVE_TOTAL) {
+    if (snapshotDoc.players.length !== GAP_SNAPSHOT_TOTAL || resolveBucketCount !== GAP_SNAPSHOT_RESOLVE_TOTAL
+      || unknownBuckets.length > 0 || bucketMismatch.length > 0) {
       console.error(
-        `스냅샷 합계 불일치: 전체 ${snapshotDoc.players.length}(기대 ${GAP_SNAPSHOT_TOTAL})`
-        + ` / 해석버킷 ${resolveBucketCount}(기대 ${GAP_SNAPSHOT_RESOLVE_TOTAL}) — fail-close`,
+        `스냅샷 버킷 합계 불일치: 전체 ${snapshotDoc.players.length}(기대 ${GAP_SNAPSHOT_TOTAL})`
+        + ` / 해석버킷 ${resolveBucketCount}(기대 ${GAP_SNAPSHOT_RESOLVE_TOTAL})`
+        + `${bucketMismatch.length > 0 ? ` / 버킷별 ${bucketMismatch.join(", ")}` : ""}`
+        + `${unknownBuckets.length > 0 ? ` / unknown 버킷 ${unknownBuckets.join(", ")}` : ""} — fail-close`,
       );
       process.exit(1);
     }

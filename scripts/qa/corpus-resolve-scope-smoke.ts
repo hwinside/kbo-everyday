@@ -59,6 +59,35 @@ assert.equal(rosterActualSha, snapshot.rosterSha256,
   "스냅샷 rosterSha256이 현재 repo 로스터와 불일치 — 스냅샷 재생성 필요(fail-close)");
 assert.ok(Number.isFinite(Date.parse(snapshot.generatedAt)), "generatedAt이 유효한 시각이어야 한다");
 
+// (0-b) 버킷별 exact 계약(삼순 보완) — 총계 491만이 아니라 485/3/3이어야 하고 unknown 버킷은 0건.
+const smokeBucketCounts = new Map<string, number>();
+for (const player of snapshot.players) {
+  smokeBucketCounts.set(player.bucket, (smokeBucketCounts.get(player.bucket) ?? 0) + 1);
+}
+const EXPECTED_BUCKETS: Record<string, number> = {
+  "외부 해석 필요": 485,
+  "원장 미등록": 3,
+  "적재만(기존 corpus 재사용)": 3,
+};
+for (const [bucket, expected] of Object.entries(EXPECTED_BUCKETS)) {
+  assert.equal(smokeBucketCounts.get(bucket) ?? 0, expected, `스냅샷 버킷 ${bucket}은 ${expected}명이어야 한다`);
+}
+assert.deepEqual(
+  [...smokeBucketCounts.keys()].filter((bucket) => !(bucket in EXPECTED_BUCKETS)),
+  [],
+  "알 수 없는 버킷은 0건이어야 한다(unknown 0)",
+);
+// main preflight가 버킷별 exact를 실제로 강제하는지 — 소스 계약 대조(총계만 보는 구조면 RED).
+const resolverSource = readFileSync(path.join(process.cwd(), "scripts/baseball-qa/resolve-rag-urls.ts"), "utf8");
+for (const [bucket, expected] of Object.entries(EXPECTED_BUCKETS)) {
+  assert.ok(resolverSource.includes(`"${bucket}": ${expected}`),
+    `main preflight 버킷 계약에 ${bucket}=${expected}이 있어야 한다`);
+}
+assert.ok(/unknownBuckets[\s\S]{0,600}process\.exit\(1\)/.test(resolverSource),
+  "main preflight에 unknown 버킷 0건 fail-close가 있어야 한다");
+assert.ok(/bucketMismatch[\s\S]{0,600}process\.exit\(1\)/.test(resolverSource),
+  "main preflight에 버킷별 exact 불일치 fail-close가 있어야 한다");
+
 // (1) 스냅샷 정합 — 0단계 실측과 어긋나면 여기서 멈춘다(조작·drift 검출).
 assert.equal(snapshot.denominator, 883, "분모는 origin/main 로스터 883");
 assert.equal(snapshot.gapTotal, snapshot.players.length, "players 수 = gapTotal");
@@ -366,6 +395,37 @@ async function behaviorGate(): Promise<void> {
   assert.ok(!calls2.some((title) => title.includes("가선수")), "완료된 선수 URL 재요청 0");
   assert.throws(() => mergeResultRows(resumed.doneRows, [...run2.rows, resumed.doneRows[0]]), /kboId 중복/,
     "중복 병합은 fail-close");
+
+  // title↔requested URL exact 결속 RED(삼순 보완): 같은 title인데 다른 URL이 기록된
+  // checkpoint를 replay하면 던져야 한다(요청하지 않은 문서의 판정을 둔갑 차단).
+  const mismatchCp = path.join(work, "title-url-mismatch.jsonl");
+  const mismatchTitle = "라선수(야구선수)";
+  wf(mismatchCp, [
+    JSON.stringify(runFp),
+    JSON.stringify({
+      t: "probe", kboId: "10004", source: "namu", name: "라선수", birthYear: "2003",
+      title: mismatchTitle, url: "https://namu.wiki/w/%EB%8B%A4%EB%A5%B8%EB%AC%B8%EC%84%9C",
+      kind: "canonical", canonicalUrl: "https://namu.wiki/w/%EB%8B%A4%EB%A5%B8%EB%AC%B8%EC%84%9C",
+      pageTitle: "다른문서", redirected: false, at: "2026-08-15T12:00:00Z",
+    }),
+  ].join("\n") + "\n", "utf8");
+  const mismatchRoster = [{ kboId: "10004", name: "라선수", team: "T", birthDate: "2003-01-01" }];
+  await assert.rejects(
+    async () => await resolvePlayerBatch([{ kboId: "10004", name: "라선수" }], {
+      source: "namu",
+      byKboId: new Map(mismatchRoster.map((player) => [player.kboId, player] as const)),
+      nameCounts: new Map([["라선수", 1]]),
+      nameBirthCounts: new Map([["라선수|2003", 1]]),
+      probedByKboId: parseCheckpointText(rf(mismatchCp, "utf8"), runFp).probedByKboId,
+      checkpointPath: null,
+      log: () => undefined,
+      probe: async () => {
+        throw new Error("replay 결속 위반은 외부 요청 전에 던져야 한다");
+      },
+    }),
+    /replay 결속 위반/,
+    "title↔requested URL 불일치 replay는 fail-close",
+  );
 
   // budget_exhausted ≠ missing — 동음이의 파생 후보가 예산(9)을 넘도록 주입.
   const manyLinks = Array.from({ length: 12 }, (_, i) => `<a href="/w/다선수(${2000 + i})">x</a>`).join("");
