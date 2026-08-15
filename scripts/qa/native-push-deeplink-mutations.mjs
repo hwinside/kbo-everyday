@@ -16,6 +16,8 @@ const DEEPLINK = path.join(root, "src/lib/native-push-deeplink.ts");
 const MOUNT = path.join(root, "src/components/NativePushMount.tsx");
 const APPDELEGATE = path.join(root, "ios/App/App/AppDelegate.swift");
 const PLUGIN = path.join(root, "ios/App/App/PushDeepLinkPlugin.swift");
+const LA_WIDGET = path.join(root, "ios/App/LiveActivity/KBOLiveActivityWidget.swift");
+const DISPATCHER = path.join(root, "src/lib/capacitor/app-url-open.ts");
 
 const mutations = [
   {
@@ -29,10 +31,8 @@ const mutations = [
   {
     id: "M2 appStateChange active 소비 제거(#1070 경로 파괴)",
     file: DEEPLINK,
-    from: `  const appHandle = await app.addListener("appStateChange", ({ isActive }) => {
-    if (isActive) consumePendingTap();
-  });`,
-    to: `  const appHandle = await app.addListener("appStateChange", () => {});`,
+    from: "    if (!isActive) return;",
+    to: "    return;",
   },
   {
     id: "M3 cold-start 네이티브 stash 회수 제거(#1198 경로 파괴)",
@@ -127,6 +127,109 @@ const mutations = [
     file: MOUNT,
     from: "    void listenForForegroundNotifications();",
     to: "    void listenForForegroundNotifications();\n    void listenForNotificationTap();",
+  },
+  {
+    id: "M16 warm 복귀 시 네이티브 stash 재회수 제거(LA 카드 warm 탭 회귀)",
+    file: DEEPLINK,
+    from: "    void consumeNativePendingIntoStore(loaders).then(() => consumePendingTap());",
+    to: "    consumePendingTap();",
+  },
+  {
+    id: "M17 잠금카드 widgetURL 제거(LA 탭 딥링크 소멸)",
+    file: LA_WIDGET,
+    from: `                .widgetURL(gameDeepLinkURL(context.attributes.gameId))
+        } dynamicIsland: { context in`,
+    to: `        } dynamicIsland: { context in`,
+  },
+  {
+    id: "M18 continue의 /games/<id> 폐쇄 allowlist 완화(임의 경로·auth 우회 허용)",
+    file: APPDELEGATE,
+    from: `if path.range(of: "^/games/[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil {`,
+    to: `if path.hasPrefix("/") {`,
+  },
+  {
+    id: "M19 appUrlOpen 재회수 제거(순서 역전 시 pending 영구 잔류)",
+    file: DEEPLINK,
+    from: `  await loaders.urlOpen(() => {
+    void consumeNativePendingIntoStore(loaders)
+      .then(() => app.getState())
+      .then(({ isActive }) => {
+        if (isActive) consumePendingTap();
+      })
+      .catch(() => undefined);
+  });`,
+    to: `  await loaders.urlOpen(() => {});`,
+  },
+  {
+    id: "M20 gameId allowlist 완화(위젯 URL에 임의 문자열 허용)",
+    file: LA_WIDGET,
+    from: `    guard gameId.range(of: "^[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return nil }`,
+    to: `    guard !gameId.isEmpty else { return nil }`,
+  },
+  {
+    id: "M21 디스패처 replay 제거(late OAuth subscriber가 retained 이벤트 유실)",
+    file: DISPATCHER,
+    from: `  for (const buffered of [...replayBuffer]) deliver(consumerId, subscriber, buffered);`,
+    to: "",
+  },
+  {
+    id: "M22 딥링크가 App.addListener('appUrlOpen') 직접 등록 재도입(OAuth 경합 회귀)",
+    file: DEEPLINK,
+    from: `  urlOpen: (listener) => subscribeAppUrlOpen("la-deeplink", listener),`,
+    to: `  urlOpen: async (listener) => {
+    const { App } = await import("@capacitor/app");
+    await App.addListener("appUrlOpen", listener);
+  },`,
+  },
+  {
+    id: "M23 R4 orphan expiry timer 무력화(secret URL 무기한 잔류)",
+    file: DISPATCHER,
+    from: `    expiryTimer: setTimeout(() => dropBuffered(buffered), orphanTtlMs),`,
+    to: `    expiryTimer: setTimeout(() => undefined, orphanTtlMs),`,
+  },
+  {
+    id: "M24 R4 소비자별 1회·수신 즉시 삭제 가드 제거(secret 중복 재생·잔류)",
+    file: DISPATCHER,
+    from: `  if (!buffered.pending.has(consumerId)) return; // 소비자별 1회 — 재구독/재마운트 중복 재생 0
+  buffered.pending.delete(consumerId);
+  if (buffered.pending.size === 0) dropBuffered(buffered); // 마지막 대기 소비자 수신 → secret 즉시 폐기(R4)`,
+    to: "",
+  },
+  {
+    id: "M25 R3-① attach 실패 자체 재시도 제거(영구 무수신 재발)",
+    file: DISPATCHER,
+    from: `      attachPromise = null;
+      scheduleRetry(); // 실패를 삼키되 재연결 책임은 디스패처가 진다(R3-①)`,
+    to: `      attachPromise = null;`,
+  },
+  {
+    id: "M26 R5 폐쇄 분류 무력화(모든 URL을 양 소비자 pending — secret 잔류·무관 전달 회귀)",
+    file: DISPATCHER,
+    from: `  const relevant = classifyAppUrlOpen(event.url);
+  if (relevant === null) return; // unknown — replay 없이 fail-closed(보관 0·전달 0)`,
+    to: `  const relevant = "oauth";`,
+  },
+  {
+    id: "M27 R5 unknown fail-closed 제거(분류 불가 URL을 oauth로 fail-open)",
+    file: DISPATCHER,
+    from: `  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
+  return null;`,
+    to: `  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
+  return "oauth";`,
+  },
+  {
+    id: "M28 R6 서버 오류 callback 키 인식 제거(auth_error URL 폐기 → 네이티브 오류 안내 소실)",
+    file: DISPATCHER,
+    from: `  for (const key of AUTH_ERROR_PARAM_KEYS) {
+    if (parsed.searchParams.has(key) || hashParams.has(key)) return "oauth";
+  }`,
+    to: "",
+  },
+  {
+    id: "M29 R6 /auth exact segment 판정 완화(startsWith 회귀 — /author 오분류)",
+    file: DISPATCHER,
+    from: `  if (parsed.pathname === "/auth" || parsed.pathname.startsWith("/auth/")) return "oauth";`,
+    to: `  if (parsed.pathname.startsWith("/auth")) return "oauth";`,
   },
 ];
 
