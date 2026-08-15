@@ -433,6 +433,46 @@ try {
     );
     await page.close();
   }
+
+  // ── B10: 생로드 무한스크롤 (유저 제보 2026-08-15) ──────────────────────
+  // B7 은 앞서 토글·검색을 이미 써버린 뒤에 스크롤하므로, 그 상호작용이
+  // observer 를 뒤늦게 붙여줘 진짜 결함을 가렸다. 실유저는 목록을 열자마자
+  // 그냥 내린다 — 아무 버튼도 안 누른 상태에서 다음 페이지가 로드되는지를 본다.
+  // (인기순 settle 게이트 때문에 sentinel 은 첫 페인트에 DOM 에 없다 —
+  //  그 뒤늘게 mount 되는 sentinel 을 observer 가 잡아야 한다.)
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    page.on("pageerror", (e) => { failures += 1; console.error(`BROWSER_PAGE_ERROR: ${e.message}`); });
+    await page.route("**/api/roster", (r) =>
+      r.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+    await page.route("**/api/player-popularity", (r) =>
+      r.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ counts: COUNTS, degraded: false }),
+      }));
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector(ROW, { timeout: 5000 });
+
+    const first = (await rowNames(page)).length;
+    check("B10a 첫 페이지 20명", first === 20, `rows=${first}`);
+
+    // 상호작용 없이 바로 스크롤만 한다.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(700);
+    const second = (await rowNames(page)).length;
+    check(
+      "B10b 생로드 상태에서 스크롤만으로 다음 페이지가 로드된다",
+      second > first,
+      `${first} -> ${second}`,
+    );
+
+    // 한 번 더 — 재관측이 끊기면 2페이지에서 멈춘다.
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(700);
+    const third = (await rowNames(page)).length;
+    check("B10c 연속 스크롤로 계속 늘어난다", third > second, `${second} -> ${third}`);
+    await page.close();
+  }
 } finally {
   await browser.close();
   await new Promise((done) => server.close(done));

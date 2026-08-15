@@ -4,7 +4,7 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useRef, startTransition } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { TEAMS, getTeamBgColor } from "@/lib/constants/teams";
@@ -169,7 +169,25 @@ function PlayersPageContent() {
     return () => { stale = true; window.clearTimeout(timeout); };
   }, []);
   const [visibleCount, setVisibleCount] = useState(20);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // 무한스크롤 sentinel.
+  //
+  // sentinel 은 인기순 settle 게이트 아래에 렌더되므로 첫 페인트에는 DOM 에 없다
+  // (DEFAULT_SORT = "popularity" 라 전 유저가 loading 브랜치로 시작한다).
+  // 의존성 배열로 attach 시점을 맞추면 sentinel 이 뒤늦게 마운트될 때 effect 가
+  // 재실행된다는 보장이 없어(= 그 사이 visibleCount·filtered.length 가 안 변하면
+  // observer 가 영영 안 붙어) 스크롤이 통째로 먹통이 된다.
+  // callback ref 는 노드가 실제로 붙고 떨어지는 순간에만 호출되므로 그 추측을 없앤다.
+  const sentinelNodeRef = useRef<HTMLDivElement | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
+    sentinelNodeRef.current = node;
+    const observer = observerRef.current;
+    if (!observer) return;
+    observer.disconnect();
+    if (node) observer.observe(node);
+  }, []);
 
   const filtered = useMemo(() => {
     let result = players;
@@ -203,8 +221,6 @@ function PlayersPageContent() {
   }, [filtered]);
 
   useEffect(() => {
-    const el = loadMoreRef.current;
-    if (!el) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -213,8 +229,23 @@ function PlayersPageContent() {
       },
       { threshold: 0.1 }
     );
-    observer.observe(el);
-    return () => observer.disconnect();
+    observerRef.current = observer;
+    // ref callback 이 먼저 실행돼 이미 sentinel 이 붙어 있을 수 있다.
+    if (sentinelNodeRef.current) observer.observe(sentinelNodeRef.current);
+    return () => {
+      observer.disconnect();
+      observerRef.current = null;
+    };
+  }, []);
+
+  // 20개를 더 그려도 sentinel 이 여전히 화면 안이면(짧은 목록·큰 화면) 브라우저는
+  // 교차 상태가 안 바뀌었으므로 콜백을 다시 주지 않는다 — 재관측으로 현재 상태를 다시 받는다.
+  useEffect(() => {
+    const observer = observerRef.current;
+    const node = sentinelNodeRef.current;
+    if (!observer || !node) return;
+    observer.unobserve(node);
+    observer.observe(node);
   }, [visibleCount, filtered.length]);
 
   // URL 쿼리 파라미터 동기화
