@@ -40,7 +40,12 @@ export default function PostgameInterviewSection({
   const load = useCallback(async () => {
     if (!enabled) return;
     try {
-      const response = await fetch(`/api/game-interviews?gameId=${encodeURIComponent(gameId)}`);
+      // 삼순 NO-GO P1: 알림을 타고 들어온 warm 탭은 직전 빈 응답을 그대로 들고 있을 수
+      // 있다. 브라우저 캐시를 우회해 항상 서버 응답을 받는다(no-store 경로라 엣지도 fresh).
+      const response = await fetch(
+        `/api/game-interviews?gameId=${encodeURIComponent(gameId)}`,
+        { cache: "no-store" },
+      );
       if (!response.ok) return;
       const json = await response.json() as InterviewResponse;
       setItems(json.items ?? []);
@@ -56,19 +61,26 @@ export default function PostgameInterviewSection({
     return () => window.clearTimeout(timer);
   }, [enabled, load]);
 
+  // 포그라운드 복귀는 collecting 여부와 무관하게 항상 재조회한다(삼순 NO-GO P1).
+  // 알림을 누르고 들어온 시점에 이 탭이 들고 있던 마지막 응답이 collecting=false·빈
+  // 목록이었다면, collecting 조건부 재조회로는 영영 갱신되지 않아 "알림은 왔는데
+  // 페이지는 그대로"가 재발한다.
+  useEffect(() => {
+    if (!enabled) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [enabled, load]);
+
+  // 주기 폴링은 수집 중일 때만 — 목록이 확정된 뒤에는 불필요한 호출을 만들지 않는다.
   useEffect(() => {
     if (!enabled || !collecting) return;
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void load();
     }, 5 * 60_000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
+    return () => window.clearInterval(timer);
   }, [collecting, enabled, load]);
 
   if (!enabled || items.length === 0) return null;
