@@ -17,6 +17,7 @@
  *   B5 구 딥링크    — ?sort=posts 로 들어와도 빈 화면이 아니라 인기순 기본으로 정규화
  *   B6 검색         — 초성 검색이 목록을 줄인다
  *   B7 무한스크롤   — 최초 20명 → 스크롤 시 증가
+ *   B10 인기순 스크롤 — settle 뒤에 목록이 마운트되는 경로에서도 무한스크롤이 산다
  *
  * 실행: node scripts/qa/players-sort-browser.mjs
  * 자기검증: PLAYERS_SORT_MUTATE=<race|toggle|fallback> 로 결함을 주입하면 RED 여야 한다.
@@ -82,6 +83,20 @@ if (MUTATE) {
     }],
     // urlsort: 정규화된 값이 아니라 원본 쿼리를 그대로 다시 쓴다 → B9 RED
     //   (제거된 ?sort=posts 가 URL 에 살아남아 공유되는 상태)
+    // scrollobs: sentinel 옵저버를 callback ref 에서 ref+effect 로 되돌린다 → B10 RED.
+    //   인기순은 집계 settle 전까지 sentinel 이 DOM 에 없어 effect 가 early-return 하고,
+    //   deps 가 [visibleCount, filtered.length] 뿐이라 sentinel 이 처음 붙는 렌더에서
+    //   재실행되지 않는다 → 옵저버 미부착 = 무한 스피너(2026-08-15 Production 실측 버그 그대로).
+    scrollobs: [
+      {
+        from: '    loadMoreObserverRef.current?.disconnect();\n    loadMoreObserverRef.current = null;\n    loadMoreRef.current = node;\n    if (!node) return;\n    const observer = new IntersectionObserver(',
+        to: '    loadMoreRef.current = node;\n  }, []);\n  useEffect(() => {\n    const el = loadMoreRef.current;\n    if (!el) return;\n    const observer = new IntersectionObserver(',
+      },
+      {
+        from: '    observer.observe(node);\n    loadMoreObserverRef.current = observer;\n  }, []);',
+        to: '    observer.observe(el);\n    return () => observer.disconnect();\n  }, [visibleCount, filtered.length]);',
+      },
+    ],
     urlsort: [{
       from: '    if (sortMode !== DEFAULT_SORT) params.set("sort", sortMode);',
       to: '    { const raw = searchParams.get("sort"); if (raw) params.set("sort", raw); else if (sortMode !== DEFAULT_SORT) params.set("sort", sortMode); }',
@@ -433,6 +448,44 @@ try {
     );
     await page.close();
   }
+  // ── B10: 인기순(=기본)에서도 무한스크롤이 산다 ────────────────────────────
+  // B7 은 B4 에서 가나다순으로 토글한 뒤에 돌아 sentinel 이 첫 렌더부터 DOM 에 있는
+  // 경로만 본다. 실제 유저가 처음 보는 화면은 **인기순**이고, 그 경로는 집계 settle
+  // 뒤에야 목록이 마운트된다 — 그 시점에 옵저버가 붙는지를 따로 봐야 한다.
+  // 2026-08-15 Production 무한 스피너가 정확히 이 틈이었다(가나다순은 정상, 인기순만 고정).
+  {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    page.on("pageerror", (e) => { failures += 1; console.error(`BROWSER_PAGE_ERROR: ${e.message}`); });
+    await page.route("**/api/roster", (r) =>
+      r.fulfill({ status: 200, contentType: "application/json", body: "[]" }));
+    // 집계를 일부러 늦게 준다 — sentinel 이 첫 렌더에는 없고 나중에 붙는 상태를 만든다.
+    await page.route("**/api/player-popularity", async (r) => {
+      await new Promise((done) => setTimeout(done, 400));
+      await r.fulfill({
+        status: 200, contentType: "application/json",
+        body: JSON.stringify({ counts: COUNTS, degraded: false }),
+      });
+    });
+    await page.goto(`http://127.0.0.1:${port}/`);
+    await page.waitForSelector(ROW, { timeout: 5000 });
+
+    const sentinel = await page.locator('[data-testid="players-load-more"]').count();
+    check("B10a 더 볼 항목이 남아 sentinel 이 렌더된다", sentinel === 1, `sentinel=${sentinel}`);
+
+    const before = (await rowNames(page)).length;
+    let after = before;
+    for (let i = 0; i < 6 && after <= before; i += 1) {
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForTimeout(400);
+      after = (await rowNames(page)).length;
+    }
+    check(
+      "B10 인기순에서도 무한스크롤로 목록이 늘어난다(무한 스피너 금지)",
+      after > before,
+      `${before} -> ${after}`,
+    );
+    await page.close();
+  }
 } finally {
   await browser.close();
   await new Promise((done) => server.close(done));
@@ -443,4 +496,4 @@ if (failures > 0) {
   console.error(`FAIL players sort browser: ${failures} check(s) failed${MUTATE ? ` (mutation=${MUTATE})` : ""}`);
   process.exit(1);
 }
-console.log(`PASS players sort browser: popularity_default + no_reorder + failure_fallback + toggle + legacy_url + search + infinite_scroll${MUTATE ? ` (mutation=${MUTATE} NOT detected — 게이트 결함)` : ""}`);
+console.log(`PASS players sort browser: popularity_default + no_reorder + failure_fallback + toggle + legacy_url + search + infinite_scroll + popularity_infinite_scroll${MUTATE ? ` (mutation=${MUTATE} NOT detected — 게이트 결함)` : ""}`);

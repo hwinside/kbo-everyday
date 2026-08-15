@@ -4,7 +4,7 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useRef, startTransition } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { TEAMS, getTeamBgColor } from "@/lib/constants/teams";
@@ -181,7 +181,8 @@ function PlayersPageContent() {
     return () => { stale = true; window.clearTimeout(timeout); };
   }, []);
   const [visibleCount, setVisibleCount] = useState(20);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreObserverRef = useRef<IntersectionObserver | null>(null);
 
   const filtered = useMemo(() => {
     let result = players;
@@ -214,9 +215,20 @@ function PlayersPageContent() {
     return new Set(Object.entries(nameCount).filter(([, c]) => c > 1).map(([n]) => n));
   }, [filtered]);
 
-  useEffect(() => {
-    const el = loadMoreRef.current;
-    if (!el) return;
+  // 옵저버는 effect deps 가 아니라 **노드 부착 시점**에 건다.
+  //
+  // sentinel 은 조건부로 마운트된다(인기순은 집계 settle 전까지 목록 대신
+  // 플레이스홀더를 그리고, 그 동안 sentinel 자체가 DOM 에 없다). ref + effect
+  // 조합은 "마운트 조건"과 "effect deps" 가 어긋나면 옵저버가 영영 안 붙는다 —
+  // status 가 loading→ready 로 바뀌어 sentinel 이 처음 붙는 렌더에서 deps 가
+  // 그대로면 effect 가 재실행되지 않아 무한 스피너가 된다.
+  // callback ref 는 노드가 붙고/떨어질 때 React 가 직접 호출하므로 그 불일치가
+  // 구조적으로 성립하지 않는다.
+  const attachLoadMore = useCallback((node: HTMLDivElement | null) => {
+    loadMoreObserverRef.current?.disconnect();
+    loadMoreObserverRef.current = null;
+    loadMoreRef.current = node;
+    if (!node) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -225,9 +237,15 @@ function PlayersPageContent() {
       },
       { threshold: 0.1 }
     );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [visibleCount, filtered.length]);
+    observer.observe(node);
+    loadMoreObserverRef.current = observer;
+  }, []);
+
+  // 언마운트 정리(페이지 이탈 시 옵저버 누수 방지).
+  useEffect(() => () => {
+    loadMoreObserverRef.current?.disconnect();
+    loadMoreObserverRef.current = null;
+  }, []);
 
   // URL 쿼리 파라미터 동기화
   useEffect(() => {
@@ -425,7 +443,7 @@ function PlayersPageContent() {
         ))}
 
         {visibleCount < filtered.length && (
-          <div ref={loadMoreRef} className="w-full py-4 mt-2 flex justify-center">
+          <div ref={attachLoadMore} data-testid="players-load-more" className="w-full py-4 mt-2 flex justify-center">
             <div className="w-6 h-6 border-2 border-text-tertiary border-t-accent rounded-full animate-spin" />
           </div>
         )}

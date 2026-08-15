@@ -16,6 +16,7 @@
 import {
   notifyFavPlayerInterviews,
   INTERVIEW_PREF_KEY,
+  MAX_SEND_ATTEMPTS,
   type InterviewDeps,
   type PendingInterview,
   type SentMarkerState,
@@ -59,6 +60,9 @@ function iv(over: Partial<PendingInterview> = {}): PendingInterview {
     title: `${P1.name} 수훈선수 인터뷰`,
     playerNames: [P1.name],
     winnerTeamId: 1,
+    retryTokens: [],
+    attempts: 0,
+    visibilityDeferrals: 0,
     ...over,
   };
 }
@@ -68,7 +72,11 @@ interface Calls {
   audience: string[];
   sends: Array<{
     userIds: string[]; title: string; body: string; url: string; prefKey: string;
-  }>; 
+  }>;
+  tokenSends: Array<{ tokens: string[]; url: string }>;
+  storedRetries: Array<{ rowId: string; tokens: string[]; attempts: number }>;
+  visibilityChecks: string[];
+  visibilityDeferrals: Array<{ rowId: string; deferrals: number }>;
 }
 interface Over {
   leased?: PendingInterview[];
@@ -77,12 +85,24 @@ interface Over {
   markerInsertOk?: boolean;
   audience?: (kboId: string) => string[];
   audienceThrow?: boolean;
-  sendOk?: boolean;
+  /** false = 인프라 선행 실패(ok:false + outcomes 없음) — release 대상. */
+  sendSettled?: boolean;
   sendThrow?: boolean;
+  /** 1차 발송에서 transient로 보고될 기기 토큰. */
+  sendRetryable?: string[];
+  tokenSendSettled?: boolean;
+  tokenSendThrow?: boolean;
+  /** 토큰 재발송에서도 여전히 transient인 토큰. */
+  tokenSendRetryable?: string[];
+  storeRetryThrow?: boolean;
+  /** 발송 직전 노출 확인 결과. 기본값은 present(보임). */
+  visible?: SentMarkerState;
+  visibleThrow?: boolean;
 }
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
   const calls: Calls = {
     markedSent: [], released: [], markerChecks: [], markerInserts: [], audience: [], sends: [],
+    tokenSends: [], storedRetries: [], visibilityChecks: [], visibilityDeferrals: [],
   };
   const deps: InterviewDeps = {
     leasePendingInterviews: async () => over.leased ?? [iv()],
@@ -102,10 +122,30 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
       if (over.audienceThrow) throw new Error("audience boom");
       return over.audience ? over.audience(kboId) : ["u1", "u2"];
     },
+    isVisibleOnGamePage: async (gameId, videoId) => {
+      calls.visibilityChecks.push(`${gameId}#${videoId}`);
+      if (over.visibleThrow) throw new Error("visibility boom");
+      return over.visible ?? "present";
+    },
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
       if (over.sendThrow) throw new Error("send boom");
-      return { ok: over.sendOk ?? true };
+      return { settled: over.sendSettled ?? true, retryableTokens: over.sendRetryable ?? [] };
+    },
+    sendToTokens: async (tokens, payload) => {
+      calls.tokenSends.push({ tokens, url: payload.url });
+      if (over.tokenSendThrow) throw new Error("token send boom");
+      return {
+        settled: over.tokenSendSettled ?? true,
+        retryableTokens: over.tokenSendRetryable ?? [],
+      };
+    },
+    storeRetryTokens: async (rowId, tokens, attempts) => {
+      if (over.storeRetryThrow) throw new Error("store boom");
+      calls.storedRetries.push({ rowId, tokens, attempts });
+    },
+    recordVisibilityDeferral: async (rowId, deferrals) => {
+      calls.visibilityDeferrals.push({ rowId, deferrals });
     },
   };
   return { deps, calls };
@@ -167,11 +207,11 @@ async function main() {
 
   console.log("[R4-②] 실패 은폐 금지 — 전부 release(재시도)");
   {
-    const f = makeDeps({ sendOk: false });
+    const f = makeDeps({ sendSettled: false });
     const s = await notifyFavPlayerInterviews(f.deps);
-    check("발송 실패 → release·sent 전이 금지",
+    check("인프라 선행 실패(ok:false + outcomes 없음) → release·sent 전이 금지",
       s.released === 1 && f.calls.markedSent.length === 0 && f.calls.released[0]?.[0] === "row-1");
-    check("발송 실패 → 마커 기록 안 함", f.calls.markerInserts.length === 0);
+    check("인프라 선행 실패 → 마커 기록 안 함", f.calls.markerInserts.length === 0);
 
     const t = makeDeps({ sendThrow: true });
     const s2 = await notifyFavPlayerInterviews(t.deps);
@@ -244,6 +284,175 @@ async function main() {
     const x = makeDeps({ leased: [iv({ winnerTeamId: 2 })] });
     const s4 = await notifyFavPlayerInterviews(x.deps);
     check("이름이 승리팀 소속 아니면 미발송", s4.settledUnresolved === 1 && x.calls.sends.length === 0);
+  }
+
+  console.log("[R5] transient 기기 durable retry — 유실 금지 (삼순 NO-GO 2026-08-15)");
+  {
+    // 1차 발송 ok지만 일부 기기 transient → sent 종결 금지, 토큰 durable 저장 + pending 복귀
+    const p = makeDeps({ sendRetryable: ["tokA", "tokB"] });
+    const s = await notifyFavPlayerInterviews(p.deps);
+    check("transient 있으면 sent 전이 금지",
+      s.sent === 0 && p.calls.markedSent.length === 0 && s.pendingDeviceRetry === 1);
+    check("transient 토큰 durable 저장(attempts=1)",
+      p.calls.storedRetries[0]?.rowId === "row-1"
+      && p.calls.storedRetries[0]?.tokens.join() === "tokA,tokB"
+      && p.calls.storedRetries[0]?.attempts === 1);
+    check("transient 분기는 마커 미기록(P0-2: 마커 선기록+저장실패 = 재유실)",
+      p.calls.markerInserts.length === 0);
+
+    // P0-2 순서 결함 재현 경로: retry 저장이 실패하면 마커도 sent도 없이 release만.
+    const st = makeDeps({ sendRetryable: ["tokA"], storeRetryThrow: true });
+    const sSt = await notifyFavPlayerInterviews(st.deps);
+    check("retry 저장 실패 → 마커 미기록·release(유실 없음, B안 희소 중복만)",
+      sSt.released === 1 && st.calls.markerInserts.length === 0
+      && st.calls.markedSent.length === 0 && st.calls.released[0]?.[0] === "row-1");
+
+    // retry 행 → 저장된 토큰에만 재발송, audience 재조회 없음, 성공 시 sent
+    const r = makeDeps({ leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 1 })] });
+    const s2 = await notifyFavPlayerInterviews(r.deps);
+    check("retry 행은 저장 토큰에만 재발송",
+      r.calls.tokenSends[0]?.tokens.join() === "tokA,tokB"
+      && r.calls.sends.length === 0 && r.calls.audience.length === 0);
+    check("재발송 전량 성공 → 마커 기록 + sent 종결",
+      s2.sent === 1 && s2.retriedDevices === 2 && r.calls.markedSent[0]?.[0] === "row-1"
+      && r.calls.markerInserts.length === 1);
+
+    // retry에서도 일부 transient → 다시 durable 저장(attempts 증가)
+    const r2 = makeDeps({
+      leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 1 })],
+      tokenSendRetryable: ["tokB"],
+    });
+    const s3 = await notifyFavPlayerInterviews(r2.deps);
+    check("재시도 잔여 transient → 재저장(attempts=2)·sent 금지",
+      s3.pendingDeviceRetry === 1 && r2.calls.storedRetries[0]?.tokens.join() === "tokB"
+      && r2.calls.storedRetries[0]?.attempts === 2 && r2.calls.markedSent.length === 0);
+
+    // 토큰 재발송 인프라 선행 실패/throw → release(은폐 금지)
+    const rf = makeDeps({
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], tokenSendSettled: false,
+    });
+    const s4 = await notifyFavPlayerInterviews(rf.deps);
+    check("retry 인프라 선행 실패 → release",
+      s4.released === 1 && rf.calls.released[0]?.[0] === "row-1" && rf.calls.markedSent.length === 0);
+    const rt = makeDeps({
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], tokenSendThrow: true,
+    });
+    const s5 = await notifyFavPlayerInterviews(rt.deps);
+    check("retry throw → releaseLease 실호출",
+      s5.released === 1 && rt.calls.released[0]?.includes("row-1") === true);
+
+    // 삼순 3차 P0 — 전원 토글 OFF/등록 토큰 0(ok:true, outcomes 없음)은 정상 종결.
+    // deps 어댑터가 settled=true로 준다 → 영구 pending이 아니라 sent.
+    const off = makeDeps({ sendSettled: true, sendRetryable: [] });
+    const sOff = await notifyFavPlayerInterviews(off.deps);
+    check("전원 토글 OFF/토큰 0 → 정상 sent 종결(영구 pending 아님)",
+      sOff.sent === 1 && sOff.released === 0 && off.calls.markedSent[0]?.[0] === "row-1");
+
+    // 삼순 3차 P1 — retry 행도 마커 선확인. present면 토큰 재발송 0.
+    const rm = makeDeps({
+      leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 1 })], marker: () => "present",
+    });
+    const sRm = await notifyFavPlayerInterviews(rm.deps);
+    check("retry 행 + 마커 present → 토큰 재발송 0·sent 회복",
+      rm.calls.tokenSends.length === 0 && sRm.recoveredFromMarker === 1
+      && rm.calls.markedSent[0]?.[0] === "row-1");
+    const rmE = makeDeps({
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1 })], marker: () => "error",
+    });
+    const sRmE = await notifyFavPlayerInterviews(rmE.deps);
+    check("retry 행 + 마커 error → 재발송 금지·release",
+      rmE.calls.tokenSends.length === 0 && sRmE.released === 1
+      && rmE.calls.markedSent.length === 0);
+
+    // attempt 상한 → 포기는 숨기지 않고 gaveUpDevices로 관측 후 종결
+    const g = makeDeps({
+      leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: MAX_SEND_ATTEMPTS })],
+    });
+    const s6 = await notifyFavPlayerInterviews(g.deps);
+    check("상한 초과 → gaveUpDevices 관측 + 종결·재발송 없음",
+      s6.gaveUpDevices === 2 && g.calls.tokenSends.length === 0
+      && g.calls.markedSent[0]?.[0] === "row-1");
+  }
+
+  console.log("[R6] 노출 확인 후 발송 (2026-08-15 문정빈 사고)");
+  {
+    // 기본: 보임 → 발송. 확인은 발송 전에 일어난다.
+    const ok = makeDeps({ visible: "present" });
+    const s = await notifyFavPlayerInterviews(ok.deps);
+    check("보임 → 발송·확인 1회(해당 영상 기준)",
+      s.sent === 1 && ok.calls.sends.length === 1
+      && ok.calls.visibilityChecks[0] === "20260814SKLG0#vid-1");
+
+    // 핵심: 아직 안 보임 → 발송 금지·종결 금지·다음 run 재시도
+    const nv = makeDeps({ visible: "absent" });
+    const s2 = await notifyFavPlayerInterviews(nv.deps);
+    check("안 보임 → 발송 0·sent 전이 금지·마커 미기록",
+      s2.deferredNotVisible === 1 && nv.calls.sends.length === 0
+      && nv.calls.markedSent.length === 0 && nv.calls.markerInserts.length === 0);
+    // 삼순 NO-GO P0-2 — 보류는 전용 카운터로만 기록하고 FCM attempts는 건드리지 않는다.
+    check("안 보임 → 보류 전용 카운터만 증가(FCM attempts 미오염)",
+      nv.calls.visibilityDeferrals[0]?.rowId === "row-1"
+      && nv.calls.visibilityDeferrals[0]?.deferrals === 1
+      && nv.calls.storedRetries.length === 0);
+    const nvD = makeDeps({ visible: "absent", leased: [iv({ visibilityDeferrals: 4, attempts: 2 })] });
+    await notifyFavPlayerInterviews(nvD.deps);
+    check("보류 누적 → 기존 deferrals에서 +1, attempts는 그대로",
+      nvD.calls.visibilityDeferrals[0]?.deferrals === 5
+      && nvD.calls.storedRetries.length === 0);
+
+    // 확인 경로 고장도 보류 — 빈 페이지로 보내는 것보다 늦게 보내는 게 낫다.
+    const ve = makeDeps({ visible: "error" });
+    const s3 = await notifyFavPlayerInterviews(ve.deps);
+    check("확인 error → 발송 보류", s3.deferredNotVisible === 1 && ve.calls.sends.length === 0);
+    const vt = makeDeps({ visibleThrow: true });
+    const s4 = await notifyFavPlayerInterviews(vt.deps);
+    check("확인 throw → 발송 보류", s4.deferredNotVisible === 1 && vt.calls.sends.length === 0);
+
+    // 삼순 NO-GO P0-1 — fail-close에 예외 없음. attempts나 deferrals가 아무리 높아도
+    // 노출 확인 없이는 절대 발송하지 않는다(빈 페이지 알림 재발 차단).
+    const cap = makeDeps({ visible: "absent", leased: [iv({ attempts: MAX_SEND_ATTEMPTS })] });
+    const s5 = await notifyFavPlayerInterviews(cap.deps);
+    check("attempts 상한이어도 미노출이면 발송 금지(fail-open 제거)",
+      s5.sent === 0 && cap.calls.sends.length === 0
+      && cap.calls.visibilityChecks.length === 1 && s5.deferredNotVisible === 1);
+    const capD = makeDeps({ visible: "error", leased: [iv({ visibilityDeferrals: 99 })] });
+    const s6 = await notifyFavPlayerInterviews(capD.deps);
+    check("보류 99회 + 확인 error → 여전히 발송 금지",
+      s6.sent === 0 && capD.calls.sends.length === 0 && s6.deferredNotVisible === 1);
+
+    // 삼순 NO-GO 2차 P0 — retry 경로도 노출 확인 없이 sendToTokens 금지.
+    // absent/error면 tokens·FCM attempts 보존 + 보류 카운터만 증가.
+    const rA = makeDeps({
+      visible: "absent", leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 2 })],
+    });
+    const sRA = await notifyFavPlayerInterviews(rA.deps);
+    check("retry + 안 보임 → sendToTokens 0·보류만(tokens·attempts 보존)",
+      rA.calls.tokenSends.length === 0 && sRA.deferredNotVisible === 1
+      && rA.calls.visibilityDeferrals[0]?.deferrals === 1
+      && rA.calls.storedRetries.length === 0 && rA.calls.markedSent.length === 0);
+    const rE = makeDeps({
+      visibleThrow: true, leased: [iv({ retryTokens: ["tokA"], attempts: 1 })],
+    });
+    const sRE = await notifyFavPlayerInterviews(rE.deps);
+    check("retry + 확인 throw → sendToTokens 0·보류",
+      rE.calls.tokenSends.length === 0 && sRE.deferredNotVisible === 1);
+    const rC = makeDeps({
+      visible: "absent",
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1, visibilityDeferrals: 99 })],
+    });
+    const sRC = await notifyFavPlayerInterviews(rC.deps);
+    check("retry + 보류 99회여도 미노출이면 발송 금지(fail-close 예외 없음)",
+      rC.calls.tokenSends.length === 0 && sRC.deferredNotVisible === 1
+      && rC.calls.visibilityDeferrals[0]?.deferrals === 100);
+    // 보이면 기존대로 재발송된다(게이트가 정상 경로를 막지 않음).
+    const rP = makeDeps({ leased: [iv({ retryTokens: ["tokA"], attempts: 1 })] });
+    const sRP = await notifyFavPlayerInterviews(rP.deps);
+    check("retry + 보임 → 정상 재발송", rP.calls.tokenSends.length === 1 && sRP.sent === 1);
+
+    // 확인은 audience 확정 뒤 — 보낼 사람이 없으면 확인 자체가 낭비다.
+    const noAud = makeDeps({ audience: () => [] });
+    await notifyFavPlayerInterviews(noAud.deps);
+    check("대상 0 → 노출 확인 호출 안 함", noAud.calls.visibilityChecks.length === 0);
   }
 
   console.log("[3] 경계 처리");

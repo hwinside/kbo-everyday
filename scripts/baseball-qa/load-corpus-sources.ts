@@ -44,6 +44,15 @@ const argValue = (name: string): string | undefined =>
   args.find((arg) => arg.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const FILE = argValue("file");
 const MAC_RECOVERY_FILE = argValue("mac-recovery-file");
+/**
+ * `--entities=이름,이름` — corpus 중 해당 entity만 재판정·재적재한다.
+ * 2026-08-15 0단계 실측: 양의지·장성우·최형우는 신 게이트(census) 통과인데 live 원장에는
+ * 구 게이트 격리가 남아 있다. 재크롤 없이 기존 corpus 문서로 그  3명만 늫는 경로.
+ */
+const ENTITIES = (argValue("entities") ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
 const LIMIT = Number(argValue("limit") ?? "0");
 const APPLY = args.includes("--apply");
 const CONCURRENCY = Math.max(1, Math.min(12, Number(argValue("concurrency") ?? "6") || 6));
@@ -162,6 +171,9 @@ async function main(): Promise<void> {
   if (!MAC_RECOVERY_FILE) {
     throw new Error("--mac-recovery-file=<recovered.jsonl>이 필요하다(collector provenance fail-close)");
   }
+  // ⚠️ --entities는 여기(파싱)가 아니라 **적재 대상 선택 단계**에서 필터한다.
+  // 파싱 단계에서 records를 자르면 팀/리그 루트가 사라져 plan 빌드 자체가 깨진다(스모크 실측:
+  // `team source root absent`). 전체 corpus로 plan을 세우고, 적재만 좁힌다.
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
   const recoveryRecords = MAC_RECOVERY_FILE
     ? parseCorpusJsonl(readFileSync(MAC_RECOVERY_FILE, "utf8")).records
@@ -204,7 +216,21 @@ async function main(): Promise<void> {
       + ` / Mac recovery ${collectorByLedgerRow.filter((x) => x === "mac_direct_recovery").length}`,
   );
 
-  const selected = LIMIT > 0 ? planned.plans.slice(0, LIMIT) : planned.plans;
+  // --entities 부분 재적재: plan은 전체 corpus로 세우되 적재 대상만 해당 entity로 좁힌다.
+  // 요청 entity가 corpus plan에 없으면 조용히 전체로 넘어가지 않고 즉시 실패한다.
+  const entityFiltered = (() => {
+    if (ENTITIES.length === 0) return planned.plans;
+    const wanted = new Set(ENTITIES);
+    const filtered = planned.plans.filter((plan) => wanted.has(plan.root.entity));
+    const present = new Set(filtered.map((plan) => plan.root.entity));
+    const absent = ENTITIES.filter((name) => !present.has(name));
+    if (absent.length > 0) {
+      throw new Error(`--entities 중 corpus에 없는 entity: ${absent.join(", ")} (fail-close)`);
+    }
+    console.log(`--entities 필터: ${ENTITIES.join(", ")} → 적재 대상 ${filtered.length}/${planned.plans.length} source`);
+    return filtered;
+  })();
+  const selected = LIMIT > 0 ? entityFiltered.slice(0, LIMIT) : entityFiltered;
   console.log(`적재 대상: ${selected.length}/${planned.plans.length} source${LIMIT > 0 ? ` (--limit=${LIMIT})` : ""}`);
   for (const entry of selected.slice(0, 5)) {
     console.log(`  귀속 확정 ${entry.sourceKey} ← ${entry.root.canonical}`);
@@ -235,7 +261,61 @@ async function main(): Promise<void> {
     return await response.json() as T;
   };
 
-  if (LIMIT === 0) {
+  if (ENTITIES.length > 0) {
+    // 부분 재적재(P0, 2026-08-15 삼순): 필터된 planned.ledger는 전체 artifact의 부분집합이다.
+    // corpus_runs/corpus_records는 **쓰지 않는다**(원장 훼손 방지). 단, 임의 corpus 파일이
+    // 이 경로로 재적재되는 것을 막기 위해 해당 artifact SHA의 run이 `ready`임을
+    // **읽기 전용으로** exact 확인한다(삼순 2차 계약). 미등록/미완료 artifact는 fail-close.
+    const readResponse = await fetch(
+      `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}&select=status,expected_rows`,
+      { headers },
+    );
+    if (!readResponse.ok) throw new Error(`corpus run 읽기 실패: HTTP ${readResponse.status}`);
+    const runs = await readResponse.json() as Array<{ status?: string; expected_rows?: number }>;
+    if (runs.length !== 1 || runs[0]?.status !== "ready" || runs[0]?.expected_rows !== planned.ledger.length) {
+      throw new Error(
+        `--entities 부분 재적재는 ledger에 ready로 등록된 artifact만 허용한다 — `
+        + `현재 ${artifactSha256.slice(0, 12)}…: ${runs.length === 0 ? "corpus_runs 미등록" : `status=${runs[0]?.status} expected_rows=${runs[0]?.expected_rows}(기대 ${planned.ledger.length})`} (fail-close)`,
+      );
+    }
+    // provenance exact 대조(삼순 3차 P0): artifact SHA는 corpus 본문만 묶고 recovery 파일은
+    // 안 묶는다 — 같은 corpus + 변조 recovery로 collector가 뒤바뀌는 것을, 선택 entity의
+    // ledger 행(record_hash+collector)을 읽기 전용으로 가져와 로컬 계산과 exact 대조해 막는다.
+    const wantedEntities = new Set(ENTITIES);
+    const localRows = planned.ledger
+      .map((row, ledgerIndex) => ({ row, collector: collectorByLedgerRow[ledgerIndex] }))
+      .filter(({ row }) => wantedEntities.has(row.record.entity));
+    const entityList = ENTITIES.map((name) => `"${name.replaceAll('"', '\\"')}"`).join(",");
+    const rowsResponse = await fetch(
+      `${url}/rest/v1/genius_rag_corpus_records?artifact_sha256=eq.${artifactSha256}`
+        + `&entity=in.(${encodeURIComponent(entityList)})&select=row_index,record_hash,collector,entity`,
+      { headers },
+    );
+    if (!rowsResponse.ok) throw new Error(`corpus records 읽기 실패: HTTP ${rowsResponse.status}`);
+    const ledgerRows = await rowsResponse.json() as Array<{
+      row_index?: number; record_hash?: string; collector?: string; entity?: string;
+    }>;
+    const ledgerByIndex = new Map(ledgerRows.map((row) => [row.row_index, row] as const));
+    if (ledgerRows.length !== localRows.length) {
+      throw new Error(
+        `--entities provenance 불일치: ledger ${ledgerRows.length}행 ≠ 로컬 ${localRows.length}행 (fail-close)`,
+      );
+    }
+    for (const { row, collector } of localRows) {
+      const ledgerRow = ledgerByIndex.get(row.rowIndex);
+      if (!ledgerRow || ledgerRow.record_hash !== row.recordHash || ledgerRow.collector !== collector) {
+        throw new Error(
+          `--entities provenance 불일치(row_index=${row.rowIndex} ${row.record.entity}): `
+          + `ledger hash=${ledgerRow?.record_hash?.slice(0, 12) ?? "(부재)"}/collector=${ledgerRow?.collector ?? "-"} `
+          + `≠ 로컬 ${row.recordHash.slice(0, 12)}/${collector} — recovery/corpus 변조 의심(fail-close)`,
+        );
+      }
+    }
+    console.log(
+      `LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명). artifact ready + 선택 entity ledger `
+      + `${localRows.length}행 record_hash·collector exact 대조 PASS(읽기 전용), corpus_runs/원장 쓰기 0.`,
+    );
+  } else if (LIMIT === 0) {
     const existingResponse = await fetch(
       `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}`
         + "&select=expected_rows,assigned_rows,quarantined_rows,latest_owner_relations,collector_counts,status",
