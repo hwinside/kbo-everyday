@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect } from "react";
-import { isNative } from "@/lib/capacitor/platform";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
-import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications, listenForNotificationTap, consumePendingPushDeepLink } from "@/lib/native-push";
+import { syncNativePushToken, listenForTokenRefresh, listenForForegroundNotifications } from "@/lib/native-push";
+import { listenForNotificationTap } from "@/lib/native-push-deeplink";
 import { bootstrapLiveActivityPushToStart, reregisterPushToStartToken, autoStartMyTeamLiveActivity } from "@/lib/native-live-activity";
 import { bootstrapAndroidLockCardGate } from "@/lib/capacitor/game-notification";
 import { listenForAndroidBackButton } from "@/lib/native-back-button";
@@ -23,10 +24,11 @@ export function NativePushMount() {
     // Android 뒤로가기 처리 — 자체적으로 Android 네이티브를 판정(주입 브릿지 폴백 포함)하므로
     // 원격 로드 시 npm core의 isNative 오판(web) 케이스에도 동작하도록 게이트 앞에서 호출.
     void listenForAndroidBackButton();
-    // iOS cold-start 푸시 탭 딥링크 회수 — notificationActionPerformed 유실 보완(1.0.14+).
-    // 자체 iOS 런타임 판정(주입 브릿지 폴백)을 하므로 isNative 게이트 앞에서 호출.
-    void consumePendingPushDeepLink();
-    if (!isNative) return;
+    // 알림 탭 딥링크도 정적 core 판정 밖에서 호출한다. remote server.url 앱은 npm core가
+    // web으로 오판해도 주입된 window.Capacitor를 통해 native runtime으로 판정해야 한다.
+    // background 탭(#1070) + cold-start 탭(#1198)을 한 pending 저장소로 수렴시킨다.
+    void listenForNotificationTap();
+    if (!isNativeRuntime()) return;
     void syncNativePushToken();
     void listenForTokenRefresh();
     void listenForForegroundNotifications();

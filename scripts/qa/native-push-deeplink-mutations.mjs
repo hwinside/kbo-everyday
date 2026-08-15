@@ -1,0 +1,146 @@
+#!/usr/bin/env node
+/**
+ * native-push-deeplink 게이트 검증력 증명 — 결함 주입 mutation.
+ *
+ * 각 mutation은 "이 결함이 들어가면 게이트가 반드시 RED"를 증명한다.
+ * 앵커가 사라지면(리팩터링) MISS로 실패시켜, 게이트가 조용히 무력화되는 것을 막는다.
+ * 원본은 항상 복원한다(finally).
+ */
+import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const DEEPLINK = path.join(root, "src/lib/native-push-deeplink.ts");
+const MOUNT = path.join(root, "src/components/NativePushMount.tsx");
+const APPDELEGATE = path.join(root, "ios/App/App/AppDelegate.swift");
+const PLUGIN = path.join(root, "ios/App/App/PushDeepLinkPlugin.swift");
+
+const mutations = [
+  {
+    id: "M1 background 탭 즉시 이동(앱 상태 무시)",
+    file: DEEPLINK,
+    from: `      void app.getState().then(({ isActive }) => {
+        if (isActive) consumePendingTap();
+      }).catch(() => undefined);`,
+    to: `      consumePendingTap();`,
+  },
+  {
+    id: "M2 appStateChange active 소비 제거(#1070 경로 파괴)",
+    file: DEEPLINK,
+    from: `  const appHandle = await app.addListener("appStateChange", ({ isActive }) => {
+    if (isActive) consumePendingTap();
+  });`,
+    to: `  const appHandle = await app.addListener("appStateChange", () => {});`,
+  },
+  {
+    id: "M3 cold-start 네이티브 stash 회수 제거(#1198 경로 파괴)",
+    file: DEEPLINK,
+    from: "  await consumeNativePendingIntoStore(loaders);",
+    to: "  // mutation: cold-start stash 회수 제거",
+  },
+  {
+    id: "M4 중복 이동 가드 제거(cold+retained 이중 이동)",
+    file: DEEPLINK,
+    from: "  if (lastConsumedUrl === pending.url && now - lastConsumedAt <= DUPLICATE_NAV_WINDOW_MS) return;",
+    to: "  // mutation: 중복 가드 제거",
+  },
+  {
+    id: "M5 TTL 검사 제거(만료 pending도 이동)",
+    file: DEEPLINK,
+    from: "    if (!url || typeof parsed.createdAt !== \"number\" || now - parsed.createdAt > PENDING_TAP_TTL_MS) {",
+    to: "    if (!url) {",
+  },
+  {
+    id: "M6 1회 소비 파괴(pending 미제거 → 재활성화마다 이동)",
+    file: DEEPLINK,
+    from: `  window.localStorage.removeItem(PENDING_TAP_KEY);
+  const now = Date.now();`,
+    to: "  const now = Date.now();",
+  },
+  {
+    id: "M7 URL 가드 무력화(외부·protocol-relative 허용)",
+    file: DEEPLINK,
+    from: `  if (typeof window === "undefined" || typeof url !== "string" || !url.startsWith("/")) return null;`,
+    to: `  if (typeof window === "undefined" || typeof url !== "string") return url as string;`,
+  },
+  {
+    id: "M8 구빌드 안전망 파괴(플러그인 없으면 전체 attach 실패)",
+    file: DEEPLINK,
+    from: `  } catch {
+    // 구빌드(플러그인 미탑재)/브릿지 오류 — 딥링크는 부가 기능, 앱 동작 무영향
+  }`,
+    to: `  } catch (e) {
+    throw e;
+  }`,
+  },
+  {
+    id: "M9 mount가 정적 gate 뒤로 이동(원격로드 오판 회귀)",
+    file: MOUNT,
+    from: `    void listenForNotificationTap();
+    if (!isNativeRuntime()) return;`,
+    to: `    if (!isNativeRuntime()) return;
+    void listenForNotificationTap();`,
+  },
+  {
+    id: "M10 AppDelegate silent(.background) launch 제외 해제",
+    file: APPDELEGATE,
+    from: "        if application.applicationState != .background,",
+    to: "        if true,",
+  },
+  {
+    id: "M11 네이티브 consume 1회 소비 파괴(키 미삭제)",
+    file: PLUGIN,
+    from: "        defaults.removeObject(forKey: Self.urlKey)",
+    to: "        // mutation: 키 미삭제",
+  },
+  {
+    id: "M12 네이티브 stash 경로 가드 제거",
+    file: PLUGIN,
+    from: `        guard url.hasPrefix("/"), !url.hasPrefix("//") else { return }`,
+    to: "        // mutation: stash 가드 제거",
+  },
+];
+
+function runGate() {
+  const res = spawnSync("npx", ["tsx", "--test", "scripts/qa/native-push-deeplink-smoke.ts"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  return res.status === 0;
+}
+
+let failures = 0;
+console.log("baseline 확인…");
+if (!runGate()) {
+  console.error("✖ baseline이 이미 RED — mutation 판정 불가");
+  process.exit(1);
+}
+console.log("✔ baseline GREEN\n");
+
+for (const m of mutations) {
+  const original = readFileSync(m.file, "utf8");
+  const occurrences = original.split(m.from).length - 1;
+  if (occurrences !== 1) {
+    console.error(`✖ ${m.id} — 앵커 MISS (found ${occurrences}, expected 1) in ${path.relative(root, m.file)}`);
+    failures += 1;
+    continue;
+  }
+  try {
+    writeFileSync(m.file, original.replace(m.from, m.to));
+    const green = runGate();
+    if (green) {
+      console.error(`✖ ${m.id} — 결함 주입에도 게이트 GREEN (검출력 없음)`);
+      failures += 1;
+    } else {
+      console.log(`✔ ${m.id} — RED`);
+    }
+  } finally {
+    writeFileSync(m.file, original);
+  }
+}
+
+console.log(`\n${mutations.length - failures}/${mutations.length} RED`);
+if (failures > 0) process.exit(1);
+console.log("게이트 검증력 확인 완료");
