@@ -278,7 +278,43 @@ async function main(): Promise<void> {
         + `현재 ${artifactSha256.slice(0, 12)}…: ${runs.length === 0 ? "corpus_runs 미등록" : `status=${runs[0]?.status} expected_rows=${runs[0]?.expected_rows}(기대 ${planned.ledger.length})`} (fail-close)`,
       );
     }
-    console.log(`LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명). artifact ready 확인(읽기 전용), corpus_runs/원장 쓰기 0.`);
+    // provenance exact 대조(삼순 3차 P0): artifact SHA는 corpus 본문만 묶고 recovery 파일은
+    // 안 묶는다 — 같은 corpus + 변조 recovery로 collector가 뒤바뀌는 것을, 선택 entity의
+    // ledger 행(record_hash+collector)을 읽기 전용으로 가져와 로컬 계산과 exact 대조해 막는다.
+    const wantedEntities = new Set(ENTITIES);
+    const localRows = planned.ledger
+      .map((row, ledgerIndex) => ({ row, collector: collectorByLedgerRow[ledgerIndex] }))
+      .filter(({ row }) => wantedEntities.has(row.record.entity));
+    const entityList = ENTITIES.map((name) => `"${name.replaceAll('"', '\\"')}"`).join(",");
+    const rowsResponse = await fetch(
+      `${url}/rest/v1/genius_rag_corpus_records?artifact_sha256=eq.${artifactSha256}`
+        + `&entity=in.(${encodeURIComponent(entityList)})&select=row_index,record_hash,collector,entity`,
+      { headers },
+    );
+    if (!rowsResponse.ok) throw new Error(`corpus records 읽기 실패: HTTP ${rowsResponse.status}`);
+    const ledgerRows = await rowsResponse.json() as Array<{
+      row_index?: number; record_hash?: string; collector?: string; entity?: string;
+    }>;
+    const ledgerByIndex = new Map(ledgerRows.map((row) => [row.row_index, row] as const));
+    if (ledgerRows.length !== localRows.length) {
+      throw new Error(
+        `--entities provenance 불일치: ledger ${ledgerRows.length}행 ≠ 로컬 ${localRows.length}행 (fail-close)`,
+      );
+    }
+    for (const { row, collector } of localRows) {
+      const ledgerRow = ledgerByIndex.get(row.rowIndex);
+      if (!ledgerRow || ledgerRow.record_hash !== row.recordHash || ledgerRow.collector !== collector) {
+        throw new Error(
+          `--entities provenance 불일치(row_index=${row.rowIndex} ${row.record.entity}): `
+          + `ledger hash=${ledgerRow?.record_hash?.slice(0, 12) ?? "(부재)"}/collector=${ledgerRow?.collector ?? "-"} `
+          + `≠ 로컬 ${row.recordHash.slice(0, 12)}/${collector} — recovery/corpus 변조 의심(fail-close)`,
+        );
+      }
+    }
+    console.log(
+      `LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명). artifact ready + 선택 entity ledger `
+      + `${localRows.length}행 record_hash·collector exact 대조 PASS(읽기 전용), corpus_runs/원장 쓰기 0.`,
+    );
   } else if (LIMIT === 0) {
     const existingResponse = await fetch(
       `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}`

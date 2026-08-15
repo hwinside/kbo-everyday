@@ -16,10 +16,10 @@
  *                  해석 필요 버킷. roster = 로스터 전체, targets = S2b 16명 재현)
  *         `--fetcher=chrome|cdp` 나무 fetch 경로 (기본 chrome = 로컬 headed Chrome 재기동.
  *                  cdp = A17 폰 Chrome CDP — `NAMU_CDP_URL`/`--cdp-url`, adb forward 전제)
- *         `--interval-ms=<N>` 요청 간 최소 간격. 기본 5000 + 0~2000ms 지터.
- *                  ⚠️ 2026-08-15 하린아빠 지시로 기본을 10초 미만(5초+지터)으로 낮췄다.
- *                  실측 하한(데스크톱 2.5초 연타 403)을 감안해 바닥 3000ms 미만은 거부한다.
- *                  안전선은 간격이 아니라 **첫 blocked 전역 즉시 중단**이다(삼순 계약).
+ *         `--interval-ms=<N>` 요청 간 고정 간격(지정 시 probe 스케줄 대신 사용).
+ *                  기본은 고정값이 아니라 **probe 스케줄 8→6→4→2초**(성공 누적마다 하강,
+ *                  바닥 2000ms, +0~2000ms 지터)다 — 2026-08-15 하린아빠 "10초보다 짧게" 지시의
+ *                  구현(삼순 안). 안전선은 간격이 아니라 **첫 blocked 전역 즉시 중단**이다(삼순 계약).
  *         `--checkpoint=<path>` kboId 단위 진행 원장(JSONL). 있으면 이어받기(resume)한다.
  *         `--name=<이름>` 특정 선수만 (반복 가능, 검증·재시도용)
  *         `--limit=<N>` 앞에서 N명만 (bounded rate 때문에 분할 실행이 필요하다)
@@ -27,7 +27,7 @@
  *
  * 소스 우선순위 (하린아빠 지시, R3): **위키피디아가 기본, 나무위키는 보조**다.
  *   - wikipedia: 공식 API + 정직한 UA plain fetch. 서버 런타임에서도 가능한 경로다. revid가 정본.
- *   - namu: Playwright 실크롤(요청마다 브라우저 재기동 + 10초 간격). 별명·팬덤 서술 보충용.
+ *   - namu: Playwright 실크롤(요청마다 브라우저 재기동 + probe 스케줄 간격). 별명·팬덤 서술 보충용.
  *
  * 판정 계약 (spec rev0.7 §12 / §12.2 d):
  *   resolved   — 후보 중 **정확히 하나가 identity 게이트를 통과**하고 동명이인 위험이 없음.
@@ -42,7 +42,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, appendFileSync, constants as fsConstants, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -171,6 +171,16 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
         || !CHECKPOINT_PROBE_KINDS.has(probe.kind)) {
         throw new Error(`checkpoint ${index + 2}번 줄 probe 스키마 오류 — fail-close`);
       }
+      // 의미 검증(삼순 3차 P0): kind별 필수 필드가 비어 있으면 replay가 빈 URL을 resolved로 만든다.
+      if (probe.kind === "canonical") {
+        if (typeof probe.canonicalUrl !== "string" || probe.canonicalUrl.length === 0
+          || typeof probe.pageTitle !== "string" || probe.pageTitle.length === 0
+          || typeof probe.redirected !== "boolean") {
+          throw new Error(`checkpoint ${index + 2}번 줄 canonical probe 의미 오류(canonicalUrl/pageTitle/redirected 결측) — fail-close`);
+        }
+      } else if (typeof probe.reason !== "string" || probe.reason.length === 0) {
+        throw new Error(`checkpoint ${index + 2}번 줄 ${probe.kind} probe 의미 오류(reason 결측) — fail-close`);
+      }
       const list = probedByKboId.get(probe.kboId) ?? [];
       list.push(probe);
       probedByKboId.set(probe.kboId, list);
@@ -178,9 +188,24 @@ export function parseCheckpointText(text: string, expected: CheckpointFingerprin
       // verdict는 **full ResultRow**를 품는다(삼순 P0) — resume 후 최종 판정표에 그대로 복원된다.
       const result = row.row as ResultRow | undefined;
       if (!result || typeof result.kboId !== "string" || typeof result.name !== "string"
-        || typeof result.sourceKey !== "string" || !Array.isArray(result.candidateUrls)
+        || result.name.length === 0 || typeof result.sourceKey !== "string"
+        || !Array.isArray(result.candidateUrls)
+        || (result.source !== "namu" && result.source !== "wikipedia")
+        || typeof result.note !== "string"
         || !CHECKPOINT_VERDICT_STATUSES.has(String(result.status))) {
         throw new Error(`checkpoint ${index + 2}번 줄 verdict 스키마 오류(status=${String((result ?? row as { status?: unknown }).status)}) — fail-close`);
+      }
+      // 의미 검증(삼순 3차 P0): status별 null 계약 + sourceKey 정합.
+      if (result.sourceKey !== `${result.source}:player:${result.kboId}`) {
+        throw new Error(`checkpoint ${index + 2}번 줄 verdict sourceKey 불일치(${result.sourceKey}) — fail-close`);
+      }
+      if (result.status === "resolved") {
+        if (typeof result.canonicalUrl !== "string" || result.canonicalUrl.length === 0
+          || typeof result.pageTitle !== "string" || result.pageTitle.length === 0) {
+          throw new Error(`checkpoint ${index + 2}번 줄 resolved verdict에 canonicalUrl/pageTitle 결측 — fail-close`);
+        }
+      } else if (result.canonicalUrl !== null || result.pageTitle !== null) {
+        throw new Error(`checkpoint ${index + 2}번 줄 ${result.status} verdict에 canonicalUrl/pageTitle이 남아 있다 — fail-close`);
       }
       doneRows.push(result);
     } else {
@@ -503,8 +528,17 @@ export async function resolvePlayerBatch(
     // identity 게이트가 생년 분류(`{생년}년 출생`)로 개인을 가른다. 단, 이름+생년이 모두 같은
     // 로스터 쌍은 문서 쪽 근거로 구별할 축이 없다 → fail-close 유지. 팀·포지션은 이적/문서
     // 지연 때문에 hard gate로 쓰지 않고 note 보조 근거로만 남긴다.
+    // 이 두 판정은 외부 요청 없이 확정되지만 역시 **완료된 판정**이다 — checkpoint에 기록해야
+    // resume이 전원을 복원하고(488 유지) 재실행이 같은 판정을 반복하지 않는다(삼순 3차 P1).
+    const recordVerdict = (row: ResultRow) => {
+      rows.push(row);
+      if (checkpointPath) {
+        appendFileSync(checkpointPath, `${JSON.stringify({ t: "verdict", row, at: new Date().toISOString() })}\n`, "utf8");
+      }
+      log(`${row.name.padEnd(6)} ${row.status.padEnd(10)} ${row.note}`);
+    };
     if ((nameBirthCounts.get(`${target.name}|${birthYear}`) ?? 0) > 1) {
-      rows.push({
+      recordVerdict({
         ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
         note: `로스터 동명·동생년 ${nameBirthCounts.get(`${target.name}|${birthYear}`)}건 — 문서 근거로 구별 불능(fail-close)`,
       });
@@ -512,7 +546,7 @@ export async function resolvePlayerBatch(
     }
     if (!/^\d{4}$/.test(birthYear)) {
       // 생년이 없으면 동명이인을 가려낼 축이 없다 — 확인되지 않은 것을 확인된 것으로 만들지 않는다.
-      rows.push({
+      recordVerdict({
         ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
         note: "로스터 생년 결측 — identity 대조 불가(fail-close)",
       });
@@ -661,13 +695,14 @@ async function main(): Promise<void> {
   const snapshotDoc = SCOPE === "snapshot"
     ? JSON.parse(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH), "utf8")) as {
         rosterSha256?: string;
-        players: { kboId: string; name: string; bucket: string }[];
+        players: { kboId: string; name: string; bucket: string; team?: string; birthDate?: string }[];
       }
     : undefined;
   const snapshotPlayers = snapshotDoc?.players;
 
   // 로컬 계약: 스냅샷이 가리키는 로스터와 지금 repo 로스터가 같아야 488 선정이 유효하다.
-  // (스모크에만 두면 실제 run이 stale 스냅샷으로 도는 것을 못 막는다 — 삼순 P1 런타임 대조.)
+  // 파일 SHA만 보지 않고 스냅샷 전 행의 신원 4축(kboId·name·team·birthDate)을 런타임에서
+  // 전건 exact 대조한다(삼순 3차 P1 — 스모크 fixture가 아니라 실제 run 경로의 가드).
   if (snapshotDoc) {
     const rosterSha = createHash("sha256")
       .update(readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json")))
@@ -676,17 +711,51 @@ async function main(): Promise<void> {
       console.error(`스냅샷 rosterSha256(${snapshotDoc.rosterSha256?.slice(0, 12)}…) ≠ 현재 로스터(${rosterSha.slice(0, 12)}…) — 스냅샷 재생성 필요(fail-close)`);
       process.exit(1);
     }
+    for (const snapshotRow of snapshotDoc.players) {
+      const rosterRow = byKboId.get(snapshotRow.kboId);
+      if (!rosterRow || rosterRow.name !== snapshotRow.name
+        || (snapshotRow.team !== undefined && rosterRow.team !== snapshotRow.team)
+        || (snapshotRow.birthDate !== undefined && rosterRow.birthDate !== snapshotRow.birthDate)) {
+        console.error(
+          `스냅샷 행 신원 불일치: kboId=${snapshotRow.kboId} ${snapshotRow.name}`
+          + ` ↔ 로스터 ${rosterRow ? `${rosterRow.name}/${rosterRow.team}/${rosterRow.birthDate}` : "(부재)"} — fail-close`,
+        );
+        process.exit(1);
+      }
+    }
   }
-  // 로컬 계약: checkpoint와 out은 서로 다른 파일이어야 하고, 디렉터리가 존재해야 한다.
+  // 로컬 계약: checkpoint·out은 서로 다른 파일 + 쓰기 가능(W_OK)이어야 한다.
+  // 디렉터리 존재만 보면 권한 없는 경로가 외부 요청 다 끝난 뒤에야 터진다(삼순 3차 P1).
   if (CHECKPOINT_PATH && OUT_PATH && path.resolve(CHECKPOINT_PATH) === path.resolve(OUT_PATH)) {
     console.error("--checkpoint와 --out이 같은 파일이다 — 서로 덮어쓴다(fail-close)");
     process.exit(1);
   }
   for (const [label, target] of [["--checkpoint", CHECKPOINT_PATH], ["--out", OUT_PATH]] as const) {
     if (!target) continue;
-    if (!existsSync(path.dirname(path.resolve(target)))) {
-      console.error(`${label} 경로의 디렉터리가 없다: ${target} — 쓰기 불가(fail-close)`);
-      process.exit(1);
+    const resolved = path.resolve(target);
+    if (existsSync(resolved)) {
+      if (!statSync(resolved).isFile()) {
+        console.error(`${label} 경로가 일반 파일이 아니다: ${target} — fail-close`);
+        process.exit(1);
+      }
+      try {
+        accessSync(resolved, fsConstants.W_OK);
+      } catch {
+        console.error(`${label} 파일에 쓰기 권한이 없다: ${target} — fail-close`);
+        process.exit(1);
+      }
+    } else {
+      const dir = path.dirname(resolved);
+      if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+        console.error(`${label} 경로의 디렉터리가 없다: ${target} — 쓰기 불가(fail-close)`);
+        process.exit(1);
+      }
+      try {
+        accessSync(dir, fsConstants.W_OK);
+      } catch {
+        console.error(`${label} 디렉터리에 쓰기 권한이 없다: ${target} — fail-close`);
+        process.exit(1);
+      }
     }
   }
 
@@ -719,6 +788,19 @@ async function main(): Promise<void> {
       );
     }
   }
+  // resume identity 대조(삼순 3차 P0) — 복원된 판정/probe가 현재 run의 로스터 신원과 정확히
+  // 일치해야 한다. 엉뚱한 kboId/이름의 full row가 실제 대상을 skip시키는 것을 막는다.
+  for (const row of doneRows) {
+    const rosterRow = byKboId.get(row.kboId);
+    if (!rosterRow) throw new Error(`checkpoint verdict kboId=${row.kboId} — 현재 로스터에 없다(fail-close)`);
+    if (rosterRow.name !== row.name) {
+      throw new Error(`checkpoint verdict 신원 불일치: kboId=${row.kboId} name=${row.name} (로스터 ${rosterRow.name}) — fail-close`);
+    }
+    if (row.source !== SOURCE) throw new Error(`checkpoint verdict source=${row.source} ≠ 현재 run ${SOURCE} — fail-close`);
+  }
+  for (const kboId of probedByKboId.keys()) {
+    if (!byKboId.has(kboId)) throw new Error(`checkpoint probe kboId=${kboId} — 현재 로스터에 없다(fail-close)`);
+  }
   const doneKboIds = new Set(doneRows.map((row) => row.kboId));
   const snapshotResolveCount = snapshotPlayers
     ?.filter((player) => SNAPSHOT_RESOLVE_BUCKETS.has(player.bucket)).length ?? 0;
@@ -746,6 +828,17 @@ async function main(): Promise<void> {
     );
   }
   if (targets.length === 0) {
+    // 완주된 checkpoint로 재실행한 경우(삼순 3차 P1): 외부 요청 0으로 최종 판정표를 복원한다.
+    // 그 외의 "대상 0명"(범위 옵션 오류)은 종전처럼 즉시 실패다.
+    const fullSetSize = SCOPE === "snapshot" ? snapshotResolveCount : roster.length;
+    if (doneRows.length > 0 && doneRows.length === fullSetSize) {
+      console.log(`전원 완료된 checkpoint — 외부 요청 0, 최종 판정표 ${doneRows.length}명 복원`);
+      if (OUT_PATH) {
+        writeFileSync(OUT_PATH, JSON.stringify(mergeResultRows(doneRows, []), null, 2), "utf8");
+        console.log(`판정 결과 저장(복원): ${OUT_PATH}`);
+      }
+      return;
+    }
     console.error("해석 대상 0명 — 범위 옵션을 확인하라(조용한 성공으로 끝내지 않는다).");
     process.exit(1);
   }

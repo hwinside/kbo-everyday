@@ -197,6 +197,23 @@ const server = createServer(async (request, response) => {
     response.end("null");
     return;
   }
+  if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
+    // 실제 PostgREST처럼 artifact_sha256·entity 필터를 존중한다 — provenance exact 대조(삼순 3차)의
+    // RED를 검증하려면 mock이 저장된 ledger 행을 그대로 돌려줘야 한다.
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sha = (url.searchParams.get("artifact_sha256") ?? "").replace(/^eq\./, "");
+    const entityFilter = decodeURIComponent(url.searchParams.get("entity") ?? "");
+    const entityNames = entityFilter.startsWith("in.(")
+      ? entityFilter.slice(4, -1).split(",").map((name) => name.replace(/^"|"$/g, ""))
+      : null;
+    const matched = [...ledgerRecords.values()].filter((row) =>
+      (!sha || row.artifact_sha256 === sha)
+      && (!entityNames || entityNames.includes(String(row.entity))));
+    response.end(JSON.stringify(matched.map((row) => ({
+      row_index: row.row_index, record_hash: row.record_hash, collector: row.collector, entity: row.entity,
+    }))));
+    return;
+  }
   if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
     for (const row of body as Record<string, unknown>[]) {
       assert.equal(

@@ -188,6 +188,48 @@ assert.throws(
   /스키마 오류/,
   "구 포맷(flat verdict)은 full row가 아니므로 fail-close",
 );
+// RED 5 (삼순 3차 P0 의미 검증): 빈 canonicalUrl probe / resolved인데 canonical 결측 /
+// 비-resolved인데 canonical 잔존 / sourceKey 불일치 — 전부 던져야 한다.
+assert.throws(
+  () => parseCheckpointText(
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", title: "x", url: "u", kind: "canonical", canonicalUrl: "", pageTitle: "", redirected: false })}`,
+    fp,
+  ),
+  /canonical probe 의미 오류/,
+  "빈 canonicalUrl을 replay가 resolved로 만드는 경로 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", title: "x", url: "u", kind: "rejected" })}`,
+    fp,
+  ),
+  /probe 의미 오류/,
+  "rejected probe의 reason 결측 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, canonicalUrl: null } })}`,
+    fp,
+  ),
+  /resolved verdict에 canonicalUrl/,
+  "resolved인데 canonical 결측 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, status: "missing" } })}`,
+    fp,
+  ),
+  /verdict에 canonicalUrl\/pageTitle이 남아 있다/,
+  "비-resolved인데 canonical 잔존 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, sourceKey: "namu:player:99999" } })}`,
+    fp,
+  ),
+  /sourceKey 불일치/,
+  "sourceKey↔kboId 정합 깨짐 차단",
+);
 // RED 5: 알 수 없는 행 타입 — 던진다.
 assert.throws(() => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "junk", kboId: "1" })}`, fp), /알 수 없는 행/);
 
