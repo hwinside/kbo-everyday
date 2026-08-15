@@ -660,6 +660,24 @@ export function canonicalizeStatsIdentity<T extends PlayerStat>(stats: T[]): T[]
  * 값이 다른 동일 ID(서로 다른 선수가 같은 ID 를 가진 진짜 오염)는 throw 해 fail-close 한다.
  * — 그냥 dedupe 하면 오염까지 조용히 숨고, 그냥 throw 하면 멀줦한 중복까지 500 이 된다.
  */
+/**
+ * 수비 원본 행의 kboId 를 **집계 전에** canonical 로 통일한다(삼순 #1196 5차).
+ *
+ * aggregateDefense 는 kboId 로 포지션별 행을 묶는다. 그래서 같은 선수가 raw 숫자ID와
+ * canonical 영문ID 로 갈려 들어오면 **한 선수의 수비가 두 덩어리로 쪼개진다**
+ * (이닝 3경기 + 5경기 → 8경기가 아니라 3경기·5경기 두 행). 집계 후 rewrite 는
+ * 이미 깨진 집계를 못 되돌리므로 순서가 계약이다. 결손은 fail-close.
+ * (현재 static 은 전부 raw 형태라 쉽게 안 드러나지만, 크롤러가 일부라도 canonical 로
+ *  바뀌는 순간 조용히 쪼개진다 — 그것이 이 함수가 막는 미래다.)
+ */
+export function canonicalizeDefenseRows(rows: DefenseRow[]): DefenseRow[] {
+  return rows.map((row) => {
+    const id = canonicalKboId(String(row.kboId || "").trim());
+    if (!id) throw new Error(`KBO defense identity missing: ${row.name}::${row.team}`);
+    return { ...row, kboId: id };
+  });
+}
+
 export function collapseIdenticalStatRows<T extends PlayerStat>(stats: T[]): T[] {
   const byId = new Map<string, T>();
   const out: T[] = [];
@@ -872,11 +890,7 @@ export async function GET(req: NextRequest) {
   if (type === "defense") {
     let stats: PlayerStat[];
     try {
-      const canonicalRows = (defenseStats2026 as unknown as DefenseRow[]).map((row) => {
-        const id = canonicalKboId(String(row.kboId || "").trim());
-        if (!id) throw new Error(`KBO defense identity missing: ${row.name}::${row.team}`);
-        return { ...row, kboId: id };
-      });
+      const canonicalRows = canonicalizeDefenseRows(defenseStats2026 as unknown as DefenseRow[]);
       stats = canonicalizeStatsIdentity(
         aggregateDefense(canonicalRows) as unknown as PlayerStat[],
       );

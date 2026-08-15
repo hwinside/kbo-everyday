@@ -526,6 +526,29 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       /identity conflict/,
     );
   });
+  await check("canonicalizeDefenseRows: 집계 **전** 키 통일 — raw/canonical 혼합이 한 선수로 묶인다", async () => {
+    const { canonicalizeDefenseRows } = await import("../../src/app/api/stats/route");
+    const { aggregateDefense } = await import("../../src/lib/utils/defense-aggregate");
+    const defenseRows = (await import("../../src/lib/constants/stats-2026-defense.json"))
+      .default as Array<{ name: string; kboId?: string }>;
+    const foreign = findForeignIn(defenseRows, "static 2026 defense");
+    // 같은 선수가 raw 숫자ID 행 + canonical 영문ID 행으로 갈려 들어오는 상황.
+    const mixed = [
+      { name: foreign.name, team: "두산", kboId: foreign.raw, pos: "1루수", games: 3, ip: "20", e: 0, pko: 0, po: 10, a: 2, dp: 1, fpct: "1.000", pb: 0, sb: 0, cs: 0 },
+      { name: foreign.name, team: "두산", kboId: foreign.canonical, pos: "지명타자", games: 5, ip: "30", e: 1, pko: 0, po: 8, a: 3, dp: 0, fpct: "0.900", pb: 0, sb: 0, cs: 0 },
+    ];
+    // 집계 전 통일 → 한 선수.
+    const before = aggregateDefense(canonicalizeDefenseRows(mixed as never));
+    assert.equal(before.length, 1, `집계 전 통일인데 ${before.length}명으로 쪼개졌다`);
+    assert.equal(before[0].kboId, foreign.canonical);
+    assert.equal(before[0].po, 18, "합산이 안 됐다 — 두 덩어리로 남았다");
+    // 집계 후 rewrite 는 이미 깨진 집계를 못 되돌린다 — 2명으로 쪼개진다.
+    assert.equal(aggregateDefense(mixed as never).length, 2, "순서 대조 전제 소멸(혼합이 이미 1명으로 묶인다)");
+    assert.throws(
+      () => canonicalizeDefenseRows([{ name: "무명", team: "KT", kboId: "" }] as never),
+      /identity missing/,
+    );
+  });
   await check("collapseIdenticalStatRows: rank만 다른 완전동일 중복은 접고 · 값 다르면 throw", async () => {
     const { collapseIdenticalStatRows } = await import("../../src/app/api/stats/route");
     const row = { rank: 1, name: "오승환", team: "삼성", kboId: "75421", playerId: "75421", era: "2.10" };
