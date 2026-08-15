@@ -25,6 +25,18 @@
  *      기대식을 PG deparse로 정규화한 오라클과 67/67 전건 대조
  *  A11b/A11c mutation RED: migration의 래핑식 1개를 true/다른 래핑식으로
  *      바꾼 mutant를 적용하면 오라클 대조가 검출(RED)
+ *  --- 삼순 4차 NO-GO 반영 ---
+ *  A12 lock-before-read: forward/rollback 모두 루프 본문에서 LOCK TABLE .. ACCESS
+ *      EXCLUSIVE가 fingerprint SELECT보다 앞서는지 구조 판정 + lock 실효성(tx 내
+ *      pg_locks에 대상 테이블 AccessExclusiveLock 실측). PGlite는 단일 커넥션이라
+ *      실제 인터리브 재현은 불가 — 순서는 구조로, 실효성은 pg_locks로 고정한다.
+ *  A12b/A12c mutation RED: LOCK 제거/SELECT 뒤로 재배치 mutant → 구조 판정이 검출
+ *  A13 rollback-on-baseline RED: migration 미적용 baseline DB에 rollback → 전건 거부
+ *      (구 unwrap→baseline 비교 가드는 이 상태를 통과시켰다 — exact post_fp 직접
+ *      비교로 교체해 RED)
+ *  A13b partial-bare RED: 적용 후 일부 정책만 bare로 원복된 상태에 rollback → 거부
+ *  A10(기존)이 겸하는 검증: rollback은 생성기 예측 post_fp와 직접 비교하므로,
+ *      roundtrip 67건 전건 성공 = 예측 deparse가 실제 post-state와 exact 일치 실측
  *  T-check 생성기 SSOT: generate --check로 committed 출력 byte 일치 고정 (spawn 실패도 FAIL)
  */
 import { spawnSync } from "node:child_process";
@@ -33,7 +45,7 @@ import { join } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 
 const ROOT = join(__dirname, "..", "..");
-const MIGRATION = join(ROOT, "supabase", "migrations", "20260813_advisor_step2_rls_initplan.sql");
+const MIGRATION = join(ROOT, "supabase", "migrations", "20260815130000_advisor_step2_rls_initplan.sql");
 const ROLLBACK = join(ROOT, "scripts", "db", "rollback-advisor-step2-rls-initplan.sql");
 const POLICIES = JSON.parse(
   readFileSync(join(__dirname, "fixtures", "rls-policies-baseline-20260813.json"), "utf8"),
@@ -459,7 +471,7 @@ async function main() {
     await db.exec(`ALTER POLICY "blocks_select" ON public.user_blocks USING (true);`);
     const rb = await run(db, rollbackSql);
     assert("A10b drifted post-migration state → rollback EXCEPTION (RED)", !rb.ok, "rollback must refuse");
-    assert("A10b error names post-migration drift", /not in post-migration state/i.test(rb.error), rb.error.slice(0, 150));
+    assert("A10b error names post-migration drift", /not in exact post-migration state/i.test(rb.error), rb.error.slice(0, 150));
     await db.close();
   }
 
@@ -473,6 +485,76 @@ async function main() {
     assert("A10c missing policy → rollback EXCEPTION (RED)", !rb.ok, "rollback must refuse");
     assert("A10c error names missing", /missing/i.test(rb.error), rb.error.slice(0, 150));
     await db.close();
+  }
+
+  // --- A13 rollback-on-baseline RED: migration 미적용 DB에 rollback → 전건 거부
+  // (삼순 4차 blocker 1 — 구 unwrap→baseline md5 가드는 이 상태를 통과시켰다)
+  {
+    const db = await prodLikeDb();
+    const rb = await run(db, rollbackSql);
+    assert("A13 rollback on un-migrated baseline → EXCEPTION (RED)", !rb.ok, "rollback must refuse baseline state");
+    assert("A13 error names exact post-migration state", /not in exact post-migration state/i.test(rb.error), rb.error.slice(0, 150));
+    await db.close();
+  }
+
+  // --- A13b partial-bare RED: 적용 후 일부 정책만 bare baseline으로 원복 → rollback 거부
+  {
+    const db = await prodLikeDb();
+    const r1 = await run(db, migrationSql);
+    assert("A13b setup: migration applied", r1.ok, r1.error);
+    const blocksSelect = TARGETS.find((p) => p.tablename === "user_blocks" && p.policyname === "blocks_select")!;
+    await db.exec(`ALTER POLICY "blocks_select" ON public.user_blocks USING (${blocksSelect.qual});`);
+    const rb = await run(db, rollbackSql);
+    assert("A13b partially-bare state → rollback EXCEPTION (RED)", !rb.ok, "rollback must refuse partial-bare");
+    assert("A13b error names exact post-migration state", /not in exact post-migration state/i.test(rb.error), rb.error.slice(0, 150));
+    await db.close();
+  }
+
+  // --- A12 lock-before-read: 구조 판정 + 실효성 실측 (삼순 4차 blocker 2)
+  // PGlite는 단일 커넥션이라 동시 DDL 인터리브 재현은 불가하다. 따라서
+  //  (a) 순서(lock이 fingerprint SELECT보다 선행)는 구조 판정으로 고정하고
+  //  (b) lock 문이 장식이 아님(실제 AccessExclusiveLock 획득)은 tx 내 pg_locks로 실측한다.
+  {
+    // (a) 구조 판정: DO 본문에서 LOCK EXECUTE가 INTO cur_fp SELECT보다 앞서야 한다
+    const lockBeforeRead = (sql: string): boolean => {
+      const lockIdx = sql.indexOf("LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE");
+      const readIdx = sql.indexOf("INTO cur_fp");
+      return lockIdx >= 0 && readIdx >= 0 && lockIdx < readIdx;
+    };
+    assert("A12 forward: LOCK TABLE이 fingerprint SELECT보다 선행", lockBeforeRead(migrationSql));
+    assert("A12 rollback: LOCK TABLE이 fingerprint SELECT보다 선행", lockBeforeRead(rollbackSql));
+
+    // A12b mutation RED: LOCK 라인 제거 mutant → 구조 판정이 검출
+    const lockLine = /^.*LOCK TABLE public\.%I IN ACCESS EXCLUSIVE MODE.*\n/m;
+    const noLockMutant = migrationSql.replace(lockLine, "");
+    assert("A12b mutant(LOCK 제거) → 구조 판정 RED", !lockBeforeRead(noLockMutant));
+    // A12c mutation RED: LOCK을 SELECT 뒤로 재배치한 mutant → 구조 판정이 검출
+    {
+      const lockStmt = migrationSql.match(lockLine)![0];
+      const reordered = migrationSql
+        .replace(lockLine, "")
+        .replace(/^(.*RAISE EXCEPTION 'advisor_step2a: policy fingerprint drift.*)$/m, lockStmt + "$1");
+      assert("A12c mutant(LOCK를 read 뒤로) → 구조 판정 RED", !lockBeforeRead(reordered));
+    }
+
+    // (b) 실효성: 명시적 tx 안에서 migration 실행 후 pg_locks에 대상 테이블
+    // AccessExclusiveLock이 잡혔는지 확인 (DO 블록 커밋 전 시점)
+    {
+      const db = await prodLikeDb();
+      await db.exec("BEGIN;");
+      const r = await run(db, migrationSql);
+      assert("A12 setup: migration applied inside explicit tx", r.ok, r.error);
+      const targetTables = [...new Set(TARGETS.map((p) => p.tablename))];
+      const locks = await db.query<{ relname: string }>(`
+        SELECT c.relname FROM pg_locks l JOIN pg_class c ON c.oid = l.relation
+        WHERE l.mode = 'AccessExclusiveLock' AND l.granted
+      `);
+      const held = new Set(locks.rows.map((x) => x.relname));
+      const missing = targetTables.filter((t) => !held.has(t));
+      assert(`A12 tx 내 pg_locks: 대상 테이블 ${targetTables.length}개 전부 AccessExclusiveLock 보유`, missing.length === 0, missing.slice(0, 5));
+      await db.exec("ROLLBACK;");
+      await db.close();
+    }
   }
 
   console.log(failed === 0 ? "\nAll advisor-step2 RLS gate tests PASSED" : `\n${failed} test(s) FAILED`);

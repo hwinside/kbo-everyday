@@ -98,6 +98,8 @@ BEGIN
   ) AS t(tbl, pol, expected_fp, new_using, new_check)
   LOOP
     IF to_regclass('public.' || r.tbl) IS NULL THEN CONTINUE; END IF; -- clean chain: 테이블 자체가 없음
+    -- lock-before-read: fingerprint SELECT와 ALTER 사이 동시 정책 DDL TOCTOU 차단
+    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', r.tbl);
     SELECT md5(coalesce(cmd,'') || '|' || coalesce(permissive,'') || '|' ||
                coalesce(roles::text,'') || '|' || coalesce(qual,'') || '|' || coalesce(with_check,''))
       INTO cur_fp FROM pg_policies

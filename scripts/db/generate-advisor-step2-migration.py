@@ -16,10 +16,20 @@
 삼순 2차 NO-GO 반영 (exact d422e3d98):
   ① forward: policy 부재 CONTINUE 제거 — table 부재만 clean-chain skip, 테이블이 있는데
      정책이 없으면 EXCEPTION (부분 성공 차단).
-  ② rollback: 무가드 ALTER → 단일 원자 DO 블록 + post-migration full fingerprint
-     선검증(래핑 unwrap 후 baseline과 비교) + missing/drift 전건 EXCEPTION.
+  ② rollback: 무가드 ALTER → 단일 원자 DO 블록 + 선검증 + missing/drift 전건 EXCEPTION.
   ③ --check 모드: 정방향/rollback committed 출력이 생성기 재실행 결과와 byte 일치하는지
      검증 — 게이트가 이 모드를 실행해 SSOT를 고정한다.
+삼순 4차 NO-GO 반영 (exact e71c9844685d):
+  ① rollback 가드를 unwrap→baseline 비교에서 **exact post-migration fingerprint 직접
+     비교**로 교체 — 생성기가 PG deparse 형태('( SELECT auth.<fn>() AS <fn>)')를 예측해
+     post_fp를 만들고, rollback은 현재 fp를 정규식 없이 그대로 post_fp와 대조한다.
+     미적용 baseline 상태·일부만 bare 원복된 상태 → fp 불일치 → EXCEPTION (RED).
+     예측 deparse의 정확성은 게이트 A10 roundtrip(67건 전부 rollback 성공)이 실측 고정.
+  ② forward/rollback 모두 fingerprint SELECT **전에** 대상 테이블
+     LOCK TABLE .. IN ACCESS EXCLUSIVE MODE — SELECT와 ALTER 사이 동시 정책 DDL이
+     끼어드는 TOCTOU 차단 (PG의 ALTER POLICY 자체 락은 ALTER 시점에야 획득되므로).
+  ③ migration 파일명 20260813_ → 20260815130000_ 재번호 — Production에 이미 적용된
+     20260814* 체인 뒤로 정렬 (8/14 #1132 migration 재번호 교훈).
 """
 import hashlib
 import json
@@ -29,7 +39,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "scripts/qa/fixtures/rls-policies-baseline-20260813.json"
-OUT_FWD = ROOT / "supabase/migrations/20260813_advisor_step2_rls_initplan.sql"
+OUT_FWD = ROOT / "supabase/migrations/20260815130000_advisor_step2_rls_initplan.sql"
 OUT_RB = ROOT / "scripts/db/rollback-advisor-step2-rls-initplan.sql"
 
 BARE_AUTH = re.compile(r"(?<![Tt] )auth\.(uid|role|jwt|email)\(\)")
@@ -48,6 +58,25 @@ def fingerprint(p: dict) -> str:
     raw = "|".join([
         p["cmd"] or "", p["permissive"] or "", p["roles"] or "",
         p["qual"] or "", p["with_check"] or "",
+    ])
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def post_deparse(expr: str) -> str:
+    """post-migration 상태의 PG deparse 예측: bare auth.<fn>() → '( SELECT auth.<fn>() AS <fn>)'.
+
+    PG는 스칼라 서브쿼리 '(select auth.uid())'를 '( SELECT auth.uid() AS uid)'로
+    deparse 한다(함수명이 결과 컬럼 alias). baseline에 이미 래핑돼 있던 발생부
+    ('T '/'t ' 선행)는 원문 그대로 유지. 예측이 실제와 다르면 게이트 A10
+    roundtrip(rollback이 post_fp 대조에 실패)에서 즉시 RED."""
+    return BARE_AUTH.sub(lambda m: f"( SELECT auth.{m.group(1)}() AS {m.group(1)})", expr)
+
+
+def post_fingerprint(p: dict) -> str:
+    raw = "|".join([
+        p["cmd"] or "", p["permissive"] or "", p["roles"] or "",
+        post_deparse(p["qual"]) if p["qual"] else "",
+        post_deparse(p["with_check"]) if p["with_check"] else "",
     ])
     return hashlib.md5(raw.encode()).hexdigest()
 
@@ -90,6 +119,8 @@ A(",\n".join(vals))
 A("  ) AS t(tbl, pol, expected_fp, new_using, new_check)")
 A("  LOOP")
 A("    IF to_regclass('public.' || r.tbl) IS NULL THEN CONTINUE; END IF; -- clean chain: 테이블 자체가 없음")
+A("    -- lock-before-read: fingerprint SELECT와 ALTER 사이 동시 정책 DDL TOCTOU 차단")
+A("    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', r.tbl);")
 A("    SELECT md5(coalesce(cmd,'') || '|' || coalesce(permissive,'') || '|' ||")
 A("               coalesce(roles::text,'') || '|' || coalesce(qual,'') || '|' || coalesce(with_check,''))")
 A("      INTO cur_fp FROM pg_policies")
@@ -108,22 +139,23 @@ A("END $mig$;")
 forward_text = "\n".join(L) + "\n"
 
 # ---- 역방향 rollback (가드형 단일 원자 DO 블록, chain 밖) --------------------
-# 선검증: 현재 정책이 "정확히 migration이 만든 post-migration 상태"인지 확인 —
-# 래핑 발생부('( SELECT auth.<fn>() AS <alias>)' deparse 형태)를 bare 호출로 unwrap한
-# fingerprint가 baseline과 일치해야 한다. missing/불일치 전건 EXCEPTION.
+# 선검증(4차 NO-GO 반영): 현재 정책 fingerprint를 정규식 없이 그대로 계산해 생성기가
+# 예측한 exact post-migration fingerprint(post_fp)와 직접 비교. 미적용 baseline·일부
+# bare 원복 상태도 fp 불일치로 거부된다. missing/불일치 전건 EXCEPTION.
 R = []
 B = R.append
 B("-- advisor 2단계-A rollback — initplan 67건을 baseline 원문 qual/with_check로 복원")
 B("-- 생성기: scripts/db/generate-advisor-step2-migration.py (수동 편집 금지 — --check로 결속)")
 B("-- 적용된 DB에서만 실행. migration chain 밖 파일 — supabase/migrations에 넣지 말 것.")
 B("--")
-B("-- 가드(fail-closed): 현재 상태가 정확히 post-migration 상태(unwrap 시 baseline과")
-B("-- full fingerprint 일치)일 때만 복원. missing·drift 전건 EXCEPTION. 단일 원자 블록.")
+B("-- 가드(fail-closed): 현재 상태가 정확히 post-migration 상태(fingerprint가 생성기")
+B("-- 예측 exact post_fp와 직접 일치)일 때만 복원. 미적용 baseline·일부 bare 원복·")
+B("-- missing·drift 전건 EXCEPTION. 단일 원자 블록. lock-before-read로 TOCTOU 차단.")
 B("")
 B("SET lock_timeout = '5s';")
 B("")
 B("DO $rb$")
-B("DECLARE r record; cur_unwrapped_fp text;")
+B("DECLARE r record; cur_fp text;")
 B("BEGIN")
 B("  FOR r IN SELECT * FROM (VALUES")
 rvals = []
@@ -131,25 +163,24 @@ for i, p in enumerate(targets):
     tbl, pol = p["tablename"], p["policyname"]
     u = dq(p["qual"], f"u{i}") if p["qual"] else "NULL"
     c = dq(p["with_check"], f"c{i}") if p["with_check"] else "NULL"
-    rvals.append(f"    ('{tbl}', {dq(pol, f'p{i}')}, '{fingerprint(p)}', {u}, {c})")
+    rvals.append(f"    ('{tbl}', {dq(pol, f'p{i}')}, '{post_fingerprint(p)}', {u}, {c})")
 B(",\n".join(rvals))
-B("  ) AS t(tbl, pol, baseline_fp, old_using, old_check)")
+B("  ) AS t(tbl, pol, post_fp, old_using, old_check)")
 B("  LOOP")
 B("    IF to_regclass('public.' || r.tbl) IS NULL THEN")
 B("      RAISE EXCEPTION 'advisor_step2a_rollback: table % missing — rollback은 적용된 DB 전제', r.tbl;")
 B("    END IF;")
-B("    SELECT md5(coalesce(cmd,'') || '|' || coalesce(permissive,'') || '|' || coalesce(roles::text,'') || '|' ||")
-B("           regexp_replace(coalesce(qual,''),")
-B("             '\\( SELECT auth\\.(uid|role|jwt|email)\\(\\) AS [a-z]+\\)', 'auth.\\1()', 'g') || '|' ||")
-B("           regexp_replace(coalesce(with_check,''),")
-B("             '\\( SELECT auth\\.(uid|role|jwt|email)\\(\\) AS [a-z]+\\)', 'auth.\\1()', 'g'))")
-B("      INTO cur_unwrapped_fp FROM pg_policies")
+B("    -- lock-before-read: fingerprint SELECT와 ALTER 사이 동시 정책 DDL TOCTOU 차단")
+B("    EXECUTE format('LOCK TABLE public.%I IN ACCESS EXCLUSIVE MODE', r.tbl);")
+B("    SELECT md5(coalesce(cmd,'') || '|' || coalesce(permissive,'') || '|' ||")
+B("               coalesce(roles::text,'') || '|' || coalesce(qual,'') || '|' || coalesce(with_check,''))")
+B("      INTO cur_fp FROM pg_policies")
 B("     WHERE schemaname='public' AND tablename=r.tbl AND policyname=r.pol;")
-B("    IF cur_unwrapped_fp IS NULL THEN")
+B("    IF cur_fp IS NULL THEN")
 B("      RAISE EXCEPTION 'advisor_step2a_rollback: policy %.% missing — refusing', r.tbl, r.pol;")
 B("    END IF;")
-B("    IF cur_unwrapped_fp <> r.baseline_fp THEN")
-B("      RAISE EXCEPTION 'advisor_step2a_rollback: %.% is not in post-migration state — refusing (drift)', r.tbl, r.pol;")
+B("    IF cur_fp <> r.post_fp THEN")
+B("      RAISE EXCEPTION 'advisor_step2a_rollback: %.% is not in exact post-migration state — refusing (drift)', r.tbl, r.pol;")
 B("    END IF;")
 B("    EXECUTE format('ALTER POLICY %I ON public.%I %s %s', r.pol, r.tbl,")
 B("      CASE WHEN r.old_using IS NOT NULL THEN 'USING (' || r.old_using || ')' ELSE '' END,")
