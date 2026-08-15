@@ -671,11 +671,58 @@ export function canonicalizeStatsIdentity<T extends PlayerStat>(stats: T[]): T[]
  *  바뀌는 순간 조용히 쪼개진다 — 그것이 이 함수가 막는 미래다.)
  */
 export function canonicalizeDefenseRows(rows: DefenseRow[]): DefenseRow[] {
+  const nameById = new Map<string, string>();
   return rows.map((row) => {
     const id = canonicalKboId(String(row.kboId || "").trim());
     if (!id) throw new Error(`KBO defense identity missing: ${row.name}::${row.team}`);
+    // ⚠️ 같은 canonical ID 인데 name 이 다르면 서로 다른 선수가 한 키로 묶이는 것이다
+    // (삼순 #1196 6차 P0-1). aggregateDefense 는 그걸 조용히 합산하고, 집계 후에는
+    // 행이 이미 1개라 사후 유일성 가드가 잡을 수 없다 — 집계 전에 fail-close.
+    const seenName = nameById.get(id);
+    const name = String(row.name || "").trim();
+    if (seenName === undefined) nameById.set(id, name);
+    else if (seenName !== name) {
+      throw new Error(`KBO defense identity conflict: ${id} (${seenName} vs ${name})`);
+    }
     return { ...row, kboId: id };
   });
+}
+
+/**
+ * 중복 접기 뒤 rank 를 순차 재부여한다(삼순 #1196 6차 P0-2).
+ *
+ * ⚠️ static 은 이미 지표 순으로 정렬돼 있고 rank 가 1..N 으로 박혀 있다. 중복을 접으면
+ * 그 rank 에 구멍이 생겨 `count=281` 인데 마지막 rank 가 311 이 된다(실측).
+ * 하류가 rank 를 순위로 쓰므로 배열 순서를 그대로 따라 1..N 으로 다시 매긴다.
+ */
+export function renumberRanks<T extends PlayerStat>(stats: T[]): T[] {
+  return stats.map((row, index) => (
+    typeof (row as T & { rank?: unknown }).rank === "undefined"
+      ? row
+      : { ...row, rank: index + 1 }
+  ));
+}
+
+/**
+ * 응답 행수가 **소스의 canonical unique 선수 수**와 같은지 확인한다(삼순 #1196 6차 P0-2).
+ * 중복 접기·rewrite 과정에서 행이 대량 유실되는 것을 종단에서 잡는다(유일성만 보면
+ * 200개를 지워도 통과한다).
+ */
+export function assertNoRowLoss(
+  served: readonly unknown[],
+  sourceRows: ReadonlyArray<Record<string, unknown>>,
+  label: string,
+): void {
+  const expected = new Set(
+    sourceRows
+      .map((row) => canonicalKboId(String(row.kboId ?? "").trim()))
+      .filter(Boolean),
+  );
+  if (served.length !== expected.size) {
+    throw new Error(
+      `KBO ${label} row loss: served=${served.length}, source canonical unique=${expected.size}`,
+    );
+  }
 }
 
 export function collapseIdenticalStatRows<T extends PlayerStat>(stats: T[]): T[] {
@@ -869,8 +916,9 @@ export async function GET(req: NextRequest) {
       : (batterStats2025 as unknown as PlayerStat[]);
     let stats: PlayerStat[];
     try {
-      stats = collapseIdenticalStatRows(canonicalizeStatsIdentity(raw));
+      stats = renumberRanks(collapseIdenticalStatRows(canonicalizeStatsIdentity(raw)));
       assertFullEntryIdentity(stats);
+      assertNoRowLoss(stats, raw, `${type} 2025`);
     } catch (identityError) {
       return NextResponse.json(
         { error: (identityError as Error).message, stats: [] },

@@ -157,6 +157,32 @@ async function runStaticDirectScenario(scenario: Scenario): Promise<void> {
 
   const row = json.stats.find((r) => r.kboId === expected.canonical);
   assert.ok(row, `${scenario}: 외국인 ${expected.name} 이 canonical(${expected.canonical})로 없다`);
+
+  // ⚠️ 행 유실 가드(삼순 6차 P0-2): 응답 행수 = 소스의 canonical unique 선수수.
+  // “>0 + 외국인 1명” 만 보면 200개를 지워도 통과한다.
+  if (scenario !== "defense-static") {
+    const sourceRows = scenario === "season2025-pitcher"
+      ? (await import("../../src/lib/constants/stats-2025-pitchers.json")).default as Array<{ kboId?: string }>
+      : (await import("../../src/lib/constants/stats-2025-batters.json")).default as Array<{ kboId?: string }>;
+    const expectedIds = new Set(
+      sourceRows.map((r) => canonicalKboId(String(r.kboId || "").trim())).filter(Boolean),
+    );
+    assert.equal(
+      json.stats.length,
+      expectedIds.size,
+      `${scenario}: 응답 ${json.stats.length}행 ≠ source canonical unique ${expectedIds.size} — 행 유실`,
+    );
+    // rank 정합 — 중복 접기 후 rank 가 1..N 으로 연속이어야 한다(종전: count=281 인데 rank=311).
+    const ranks = json.stats.map((r) => Number(r.rank));
+    assert.ok(ranks.every((n) => Number.isFinite(n)), `${scenario}: rank 가 숨어진 행이 있다`);
+    assert.equal(Math.max(...ranks), json.stats.length, `${scenario}: max rank=${Math.max(...ranks)} ≠ count=${json.stats.length}`);
+    assert.equal(new Set(ranks).size, ranks.length, `${scenario}: rank 중복`);
+    assert.deepEqual(
+      [...ranks].sort((a, b) => a - b),
+      Array.from({ length: json.stats.length }, (_, i) => i + 1),
+      `${scenario}: rank 가 1..N 연속이 아니다`,
+    );
+  }
   assert.ok(
     !json.stats.some((r) => r.kboId === expected.raw),
     `${scenario}: raw 숫자ID(${expected.raw})가 남았다 — rewrite 누락`,
@@ -559,6 +585,43 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       /aggregateDefense\(\s*canonicalizeDefenseRows\(/.test(src) ||
       /const canonicalRows = canonicalizeDefenseRows\([\s\S]{0,200}?aggregateDefense\(canonicalRows\)/.test(src),
       "defense 분기가 canonicalizeDefenseRows 를 거치지 않고 집계한다 — 집계 전 통일 계약 우회",
+    );
+  });
+  await check("canonicalizeDefenseRows: 같은 canonical ID · 다른 name 은 집계 전 throw", async () => {
+    const { canonicalizeDefenseRows } = await import("../../src/app/api/stats/route");
+    const defenseRows = (await import("../../src/lib/constants/stats-2026-defense.json"))
+      .default as Array<{ name: string; kboId?: string }>;
+    const foreign = findForeignIn(defenseRows, "static 2026 defense");
+    const mk = (name: string, id: string) => ({
+      name, team: "두산", kboId: id, pos: "1루수", games: 3, ip: "20", e: 0, pko: 0,
+      po: 10, a: 2, dp: 1, fpct: "1.000", pb: 0, sb: 0, cs: 0,
+    });
+    // 같은 선수 — raw/canonical 두 표기지만 이름이 같으므로 정상 통과.
+    assert.equal(canonicalizeDefenseRows([mk(foreign.name, foreign.raw), mk(foreign.name, foreign.canonical)] as never).length, 2);
+    // 같은 canonical ID 인데 이름이 다르면 서로 다른 사람이 한 키로 묶이는 것 — 집계 전 fail-close.
+    assert.throws(
+      () => canonicalizeDefenseRows([mk(foreign.name, foreign.raw), mk("다른선수", foreign.canonical)] as never),
+      /identity conflict/,
+    );
+  });
+  await check("renumberRanks: 중복 접기 후 rank 가 1..N 으로 재부여된다", async () => {
+    const { renumberRanks } = await import("../../src/app/api/stats/route");
+    const out = renumberRanks([
+      { rank: 1, name: "A", team: "LG", kboId: "1" },
+      { rank: 5, name: "B", team: "LG", kboId: "2" },
+      { rank: 9, name: "C", team: "LG", kboId: "3" },
+    ] as never);
+    assert.deepEqual(out.map((r) => r.rank), [1, 2, 3]);
+    // 순서는 보존(static 은 이미 지표 순 정렬).
+    assert.deepEqual(out.map((r) => r.name), ["A", "B", "C"]);
+  });
+  await check("assertNoRowLoss: 응답이 source canonical unique 보다 적으면 throw", async () => {
+    const { assertNoRowLoss } = await import("../../src/app/api/stats/route");
+    const source = [{ kboId: "1" }, { kboId: "2" }, { kboId: "3" }];
+    assertNoRowLoss([{ kboId: "1" }, { kboId: "2" }, { kboId: "3" }] as never, source, "test");
+    assert.throws(
+      () => assertNoRowLoss([{ kboId: "1" }, { kboId: "2" }] as never, source, "test"),
+      /row loss/,
     );
   });
   await check("collapseIdenticalStatRows: rank만 다른 완전동일 중복은 접고 · 값 다르면 throw", async () => {
