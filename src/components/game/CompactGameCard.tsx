@@ -141,6 +141,12 @@ export function darkenForFeatured(hex: string, mix: number = FEATURED_DARKEN_MIX
  */
 export const FEATURED_SURFACE = (teamColor: string): React.CSSProperties => ({
   background: `linear-gradient(135deg, ${darkenForFeatured(teamColor)} 0%, #1A1A1D 78%)`,
+  // 토큰 재정의만으로는 **색 클래스가 없는** 텍스트(스코어 숫자 등)를 못 고친다.
+  // `body { color: var(--text-primary) }` 는 body 시점에 **계산된 색**을 상속시키므로,
+  // 카드에서 변수를 바꿔도 이미 상속된 라이트모드 어두운 색(#1D1D1F)이 그대로 쓰인다
+  // — 실렌더 캐프처에서 라이트모드 featured 점수 `12 : 10` 이 배경에 묻힐을 확인했다.
+  // 따라서 상속 기본색 자체를 흰색으로 고정한다(featured 배경은 항상 어둡다).
+  color: "#FFFFFF",
   ["--text-primary" as string]: "#FFFFFF",
   ["--text-secondary" as string]: "rgba(255,255,255,0.86)",
   // tertiary 0.66 은 가장 밝은 배경(한화 darken 결과 위)에서 합성 대비 4.30:1 로 AA 미달이라 0.72 로 올렸다

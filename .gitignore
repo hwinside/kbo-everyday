@@ -79,3 +79,6 @@ src/lib/baseball-qa/.before-snapshot.*.ts
 src/lib/baseball-qa/.before-pipeline.*.ts
 src/lib/baseball-qa/.before-request.*.ts
 scripts/qa/.llm-delegation-e2e-tmp.mts
+
+# 카드 실렌더 캡처 산출물(증거용, 로컬 생성 — qa:games-card-render)
+/state/games-card-render/
