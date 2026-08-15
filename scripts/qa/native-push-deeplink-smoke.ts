@@ -58,9 +58,10 @@ type PushModule = {
     }>;
     app: () => Promise<{
       getState: () => Promise<{ isActive: boolean }>;
-      addListener: (event: "appStateChange" | "appUrlOpen", callback: StateCallback | UrlOpenCallback) => Promise<{ remove: () => Promise<void> }>;
+      addListener: (event: "appStateChange", callback: StateCallback) => Promise<{ remove: () => Promise<void> }>;
     }>;
     pushDeepLink: () => Promise<{ consume: () => Promise<{ url?: string }> }>;
+    urlOpen: (callback: UrlOpenCallback) => Promise<void>;
   }) => Promise<void>;
   __resetNotificationTapForTest: (clearPending?: boolean) => void;
 };
@@ -86,6 +87,7 @@ function harness(options?: {
   let tapCallback: TapCallback | null = null;
   let stateCallback: StateCallback | null = null;
   let urlOpenCallback: UrlOpenCallback | null = null;
+  let urlOpenSubscribes = 0;
   let messagingAdds = 0;
   let appAdds = 0;
   let nativeConsumes = 0;
@@ -103,13 +105,16 @@ function harness(options?: {
     }),
     app: async () => ({
       getState: async () => ({ isActive: active }),
-      addListener: async (event, callback) => {
+      addListener: async (_event, callback) => {
         appAdds += 1;
-        if (event === "appStateChange") stateCallback = callback as StateCallback;
-        else urlOpenCallback = callback as UrlOpenCallback;
+        stateCallback = callback as StateCallback;
         return { remove: async () => undefined };
       },
     }),
+    urlOpen: async (callback) => {
+      urlOpenSubscribes += 1;
+      urlOpenCallback = callback;
+    },
     pushDeepLink: async () => {
       if (options?.nativeMissing) throw new Error("PushDeepLink does not have an implementation");
       return {
@@ -130,6 +135,7 @@ function harness(options?: {
     openUrl: (url: string) => { urlOpenCallback?.({ url }); },
     setNativePending: (url: string) => { nativePending = url; },
     counts: () => ({ messagingAdds, appAdds, nativeConsumes }),
+    urlOpenCount: () => urlOpenSubscribes,
   };
 }
 
@@ -146,7 +152,8 @@ test("1) remote-load: npm core가 web이어도 주입 bridge iOS면 실제 liste
   await reset(true);
   const h = harness({ active: false });
   await (await pushModule()).listenForNotificationTap(h.loaders);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 1 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.equal(h.urlOpenCount(), 1, "urlOpen 디스패처 구독 1회");
 });
 
 test("2) web에서는 native loader/listener를 호출하지 않는다", async () => {
@@ -263,7 +270,8 @@ test("11) 동시·반복 호출에도 listener는 각 1개", async () => {
     m.listenForNotificationTap(h.loaders),
     m.listenForNotificationTap(h.loaders),
   ]);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 1 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.equal(h.urlOpenCount(), 1, "urlOpen 디스패처 구독 1회");
 });
 
 test("12) actual mount가 정적 gate 전에 딥링크 listener를 정확히 1회 호출", async () => {
@@ -312,7 +320,7 @@ test("16) 구빌드(PushDeepLink 미탑재)여도 JS 경로는 그대로 동작"
   await reset(true);
   const h = harness({ active: true, nativeMissing: true });
   await (await pushModule()).listenForNotificationTap(h.loaders);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 0 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 0 });
   h.tap(tap("/games/OLDBUILD?tab=lineup"));
   await flush();
   assert.deepEqual(navigations, ["/games/OLDBUILD?tab=lineup"]);
@@ -414,6 +422,61 @@ test("24b) 순서 역전: active가 먼저 오고 stash가 나중이어도 appUr
   h.openUrl("https://keubo.fan/games/REVERSE?tab=chat"); // Capacitor appUrlOpen(stash 후 발행 보장)
   await flush();
   assert.deepEqual(navigations, ["/games/REVERSE?tab=chat"]);
+});
+
+// ── appUrlOpen 단일 디스패쳐(R2) — cold retained OAuth 경합 방지 ──────────────
+
+test("25) 딥링크 모듈은 App.addListener('appUrlOpen')을 직접 등록하지 않는다(디스패쳐 경유)", async () => {
+  // Capacitor iOS는 cold retained appUrlOpen을 첫 리스너에만 전달 후 삭제한다(삼순 R2).
+  // 딥링크가 독립 등록하면 OAuth 콜백을 가로채 로그인이 깨진다 → 소스 계약으로 차단.
+  const deeplink = await readFile(new URL("../../src/lib/native-push-deeplink.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(deeplink, /addListener\(\s*["']appUrlOpen["']/,
+    "native-push-deeplink이 appUrlOpen을 직접 등록하면 안 된다(단일 디스패쳐 경유 필수)");
+  assert.match(deeplink, /subscribeAppUrlOpen/);
+
+  const auth = await readFile(new URL("../../src/lib/capacitor/auth.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(auth, /App\.addListener\(\s*["']appUrlOpen["']/,
+    "capacitor/auth도 단일 디스패쳐를 경유해야 한다");
+  assert.match(auth, /subscribeAppUrlOpen/);
+});
+
+test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late subscriber에 replay", async () => {
+  // "retained가 첫 리스너에만 전달" 재현: 네이티브는 첫 addListener 직후 이벤트를 1회만 발행.
+  const { subscribeAppUrlOpen, __resetAppUrlOpenForTest } =
+    await import("../../src/lib/capacitor/app-url-open") as unknown as {
+      subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
+      __resetAppUrlOpenForTest: () => void;
+    };
+  __resetAppUrlOpenForTest();
+
+  let nativeAdds = 0;
+  const oauthUrl = "https://keubo.fan/auth/callback?code=RETAINED";
+  // 주입 브릿지의 App 플러그인 재현 — 첫 리스너 등록 순간 retained 이벤트를 전달하고 삭제.
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          nativeAdds += 1;
+          if (nativeAdds === 1) cb({ url: oauthUrl }); // retained — 첫 리스너에만
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // LA 딥링크 구독이 먼저 붙는다(문제의 cold 순서) — retained는 이 시점에 발행됨
+  const laSeen: string[] = [];
+  await subscribeAppUrlOpen(({ url }) => { laSeen.push(url); });
+  // OAuth 구독이 늘게 붙어도 replay로 같은 이벤트를 받는다 → 로그인 보존
+  const oauthSeen: string[] = [];
+  await subscribeAppUrlOpen(({ url }) => { oauthSeen.push(url); });
+
+  assert.equal(nativeAdds, 1, "네이티브 appUrlOpen 리스너는 정확히 1개");
+  assert.deepEqual(laSeen, [oauthUrl]);
+  assert.deepEqual(oauthSeen, [oauthUrl], "late OAuth subscriber도 retained 이벤트를 받아야 한다");
+  __resetAppUrlOpenForTest();
 });
 
 test("18) background cold-start: stash는 보관만 하고 active 전에는 이동하지 않는다", async () => {

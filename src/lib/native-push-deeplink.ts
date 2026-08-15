@@ -1,6 +1,7 @@
 "use client";
 
 import { registerPlugin } from "@capacitor/core";
+import { subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
 
 // 알림 탭 → 앱 내 딥링크 이동 (iOS/Android 네이티브 전용).
@@ -27,10 +28,10 @@ type MessagingSource = {
 };
 type AppStateSource = {
   getState: () => Promise<{ isActive: boolean }>;
-  addListener: {
-    (event: "appStateChange", listener: (state: { isActive: boolean }) => void): Promise<ListenerHandle>;
-    (event: "appUrlOpen", listener: (data: { url: string }) => void): Promise<ListenerHandle>;
-  };
+  addListener: (
+    event: "appStateChange",
+    listener: (state: { isActive: boolean }) => void,
+  ) => Promise<ListenerHandle>;
 };
 type PushDeepLinkSource = {
   consume: () => Promise<{ url?: string }>;
@@ -40,6 +41,11 @@ type ListenerLoaders = {
   app: () => Promise<AppStateSource>;
   /** 네이티브 cold-start stash 회수(1.0.14+). 구빌드/미탑재는 loader가 throw → silent no-op. */
   pushDeepLink: () => Promise<PushDeepLinkSource>;
+  /**
+   * appUrlOpen 구독 — 반드시 단일 디스패쳐(subscribeAppUrlOpen)를 경유한다.
+   * App.addListener 직접 등록은 cold retained 이벤트를 OAuth 리스너와 경합시킨다(삼순 #1204 R2).
+   */
+  urlOpen: (listener: (event: { url: string }) => void) => Promise<void>;
 };
 
 type PendingTap = { url: string; createdAt: number };
@@ -136,7 +142,8 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
   // 순서를 계약하지 않는다. active가 먼저 오면 위 핸들러는 빈손으로 끝나 stash가 잔류한다.
   // AppDelegate는 stash를 proxy 호출 '전'에 실행하므로, Capacitor가 그 뒤 발행하는
   // appUrlOpen 시점에는 stash 존재가 보장된다 → 이 이벤트를 재회수 트리거로 쓴다.
-  const urlOpenHandle = await app.addListener("appUrlOpen", () => {
+  // 단일 디스패쳐 구독(R2) — OAuth 리스너와 네이티브 리스너를 경합시키지 않는다.
+  await loaders.urlOpen(() => {
     void consumeNativePendingIntoStore(loaders)
       .then(() => app.getState())
       .then(({ isActive }) => {
@@ -155,7 +162,6 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
     });
   } catch (error) {
     await appHandle.remove().catch(() => undefined);
-    await urlOpenHandle.remove().catch(() => undefined);
     throw error;
   }
 
@@ -209,17 +215,16 @@ const defaultLoaders: ListenerLoaders = {
     if (injected) {
       return {
         getState: () => injected.getState(),
-        addListener: ((event, listener) =>
-          injected.addListener(event as never, listener as never)) as AppStateSource["addListener"],
-      } as AppStateSource;
+        addListener: (event, listener) => injected.addListener(event, listener),
+      };
     }
     const { App } = await import("@capacitor/app");
     return {
       getState: () => App.getState(),
-      addListener: ((event, listener) =>
-        App.addListener(event as never, listener as never)) as AppStateSource["addListener"],
+      addListener: (event, listener) => App.addListener(event, listener),
     } as AppStateSource;
   },
+  urlOpen: (listener) => subscribeAppUrlOpen(listener),
   pushDeepLink: async () => {
     // 주입 브릿지 우선, 없으면 npm core registerPlugin
     // (구빌드는 호출 시 unimplemented throw → 상위 catch no-op).

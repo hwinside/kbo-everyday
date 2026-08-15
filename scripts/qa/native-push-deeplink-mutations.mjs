@@ -17,6 +17,7 @@ const MOUNT = path.join(root, "src/components/NativePushMount.tsx");
 const APPDELEGATE = path.join(root, "ios/App/App/AppDelegate.swift");
 const PLUGIN = path.join(root, "ios/App/App/PushDeepLinkPlugin.swift");
 const LA_WIDGET = path.join(root, "ios/App/LiveActivity/KBOLiveActivityWidget.swift");
+const DISPATCHER = path.join(root, "src/lib/capacitor/app-url-open.ts");
 
 const mutations = [
   {
@@ -116,9 +117,8 @@ const mutations = [
     if (injected) {
       return {
         getState: () => injected.getState(),
-        addListener: ((event, listener) =>
-          injected.addListener(event as never, listener as never)) as AppStateSource["addListener"],
-      } as AppStateSource;
+        addListener: (event, listener) => injected.addListener(event, listener),
+      };
     }`,
     to: "",
   },
@@ -150,7 +150,7 @@ const mutations = [
   {
     id: "M19 appUrlOpen 재회수 제거(순서 역전 시 pending 영구 잔류)",
     file: DEEPLINK,
-    from: `  const urlOpenHandle = await app.addListener("appUrlOpen", () => {
+    from: `  await loaders.urlOpen(() => {
     void consumeNativePendingIntoStore(loaders)
       .then(() => app.getState())
       .then(({ isActive }) => {
@@ -158,13 +158,34 @@ const mutations = [
       })
       .catch(() => undefined);
   });`,
-    to: `  const urlOpenHandle = await app.addListener("appUrlOpen", () => {});`,
+    to: `  await loaders.urlOpen(() => {});`,
   },
   {
     id: "M20 gameId allowlist 완화(위젯 URL에 임의 문자열 허용)",
     file: LA_WIDGET,
     from: `    guard gameId.range(of: "^[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return nil }`,
     to: `    guard !gameId.isEmpty else { return nil }`,
+  },
+  {
+    id: "M21 디스패처 replay 제거(late OAuth subscriber가 retained 이벤트 유실)",
+    file: DISPATCHER,
+    from: `  for (const event of [...replayBuffer]) {
+    try {
+      subscriber(event);
+    } catch {
+      // subscriber 오류 격리
+    }
+  }`,
+    to: "",
+  },
+  {
+    id: "M22 딥링크가 App.addListener('appUrlOpen') 직접 등록 재도입(OAuth 경합 회귀)",
+    file: DEEPLINK,
+    from: `  urlOpen: (listener) => subscribeAppUrlOpen(listener),`,
+    to: `  urlOpen: async (listener) => {
+    const { App } = await import("@capacitor/app");
+    await App.addListener("appUrlOpen", listener);
+  },`,
   },
 ];
 

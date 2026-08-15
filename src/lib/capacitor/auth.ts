@@ -7,9 +7,9 @@
  * 3. App Links / Universal Links가 앱으로 URL을 전달
  * 4. appUrlOpen 이벤트에서 토큰 추출 → supabase.auth.setSession()
  */
-import { App } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import { registerPlugin } from "@capacitor/core";
+import { subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
 import { supabase } from "@/lib/supabase/client";
 import {
   AUTH_ERROR_EVENT,
@@ -46,12 +46,20 @@ export async function openOAuthInBrowser(url: string): Promise<void> {
 /**
  * appUrlOpen 리스너 등록 (앱 시작 시 1회 호출)
  * OAuth 콜백 URL을 가로채서 세션을 복원
+ *
+ * ⚠️ App.addListener 직접 등록 금지 — Capacitor iOS는 cold retained appUrlOpen을
+ * 첫 리스너에만 전달 후 삭제한다. LA 딥링크 리스너와 독립 등록하면 등록 순서에
+ * 따라 OAuth 콜백을 영영 못 받을 수 있다(삼순 #1204 R2). 단일 디스패쳐
+ * (subscribeAppUrlOpen)로 구독 — 늘은 구독에도 replay로 전달된다.
  */
 export function registerDeepLinkListener(): void {
   if (!isNative || listenerRegistered) return;
   listenerRegistered = true;
 
-  App.addListener("appUrlOpen", async ({ url }) => {
+  void subscribeAppUrlOpen(({ url }) => void handleOAuthUrlOpen(url));
+}
+
+async function handleOAuthUrlOpen(url: string): Promise<void> {
     // keubo.fan Universal Link 또는 fan.keubo.app custom scheme에서 OAuth 토큰/코드 추출
     const isKeuboUniversalLink = url.includes("keubo.fan");
     const isKeuboCustomScheme = url.startsWith("fan.keubo.app://");
@@ -107,5 +115,4 @@ export function registerDeepLinkListener(): void {
         console.error("[capacitor/auth] setSession failed:", error.message);
       }
     }
-  });
 }
