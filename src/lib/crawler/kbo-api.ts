@@ -132,9 +132,25 @@ interface KboGameRaw {
   TV_IF?: string;
 }
 
+/**
+ * raw KBO live 상세 필드가 전부 유효한가 — provenance 판정의 유일한 기준.
+ *
+ * HTTP 200 이어도 per-game 상세 필드가 빠지는 부분 열화가 있다. `?? 0` 으로 합성하면
+ * 그 0 이 "실제 관측된 0"과 구분되지 않으므로, 합성 전에 원본 유효성을 먼저 본다.
+ * live 가 아닌 경기는 상세 자체가 의미 없으므로 false(카드도 live 에서만 쓴다).
+ */
+function hasValidLiveDetail(raw: KboGameRaw, status: KboGame["status"]): boolean {
+  if (status !== "live") return false;
+  const nums = [raw.STRIKE_CN, raw.BALL_CN, raw.OUT_CN, raw.B1_BAT_ORDER_NO, raw.B2_BAT_ORDER_NO, raw.B3_BAT_ORDER_NO];
+  return nums.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0);
+}
+
 function parseGame(raw: KboGameRaw): KboGame {
   const status = parseGameStatus(raw.GAME_STATE_SC?.toString(), raw.CANCEL_SC_ID?.toString());
   const isTop = raw.GAME_TB_SC === "T";
+  // 상세 유효성을 한 번만 판정해 **값과 플래그를 같은 조건으로** 묶는다.
+  // 이렇게 해야 "합성 0 인데 flag만 true" 가 구조적으로 불가능해진다(삼순 P1).
+  const liveDetailOk = hasValidLiveDetail(raw, status);
   return {
     gameId: raw.G_ID,
     date: raw.G_DT,
@@ -154,16 +170,16 @@ function parseGame(raw: KboGameRaw): KboGame {
     winPitcher: raw.W_PIT_P_NM?.trim() ?? "",
     losePitcher: raw.L_PIT_P_NM?.trim() ?? "",
     savePitcher: raw.SV_PIT_P_NM?.trim() ?? "",
-    strikes: raw.STRIKE_CN ?? 0,
-    balls: raw.BALL_CN ?? 0,
-    outs: raw.OUT_CN ?? 0,
+    strikes: liveDetailOk ? raw.STRIKE_CN : 0,
+    balls: liveDetailOk ? raw.BALL_CN : 0,
+    outs: liveDetailOk ? raw.OUT_CN : 0,
     runnersOn: {
-      first: (raw.B1_BAT_ORDER_NO ?? 0) > 0,
-      second: (raw.B2_BAT_ORDER_NO ?? 0) > 0,
-      third: (raw.B3_BAT_ORDER_NO ?? 0) > 0,
+      first: liveDetailOk && raw.B1_BAT_ORDER_NO > 0,
+      second: liveDetailOk && raw.B2_BAT_ORDER_NO > 0,
+      third: liveDetailOk && raw.B3_BAT_ORDER_NO > 0,
     },
-    // KBO 원본 파싱 결과 — 라이브 상세의 출처가 실제 관측값이다.
-    liveDetailFromKbo: true,
+    // 값과 동일한 조건 — 유효한 원본을 그대로 실은 때만 "실제 관측값"이다.
+    liveDetailFromKbo: liveDetailOk,
     currentPitcher: isTop ? (raw.B_P_NM?.trim() ?? "") : (raw.T_P_NM?.trim() ?? ""),
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,

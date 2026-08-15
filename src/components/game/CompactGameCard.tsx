@@ -108,6 +108,26 @@ function WinDot() {
 }
 
 /**
+ * featured 배경용 팀색 darken — gradient 시작점이 흰 전경과 대비를 확보하도록 검정과 섮는다.
+ *
+ * 왜 필요한가 (삼순 2026-08-15 P1): 전경만 흰색으로 고정하면 밝은 팀색에서 오히려 대비가 깨진다 —
+ * 한화 `#FF6600` ↔ 흰색은 2.94:1 로 AA large 조차 미달.
+ * `MIX` 비율은 임의값이 아니라 12개 팀색 전수 계산으로 정했다(최악 = 한화):
+ *   0.20 → 4.40:1(AA 미달) / 0.30 → 5.50:1 / **0.45 → 7.83:1** / 0.50 → 8.78:1
+ * 0.45 를 쓰면 12개 팀 모두 AA(4.5:1) 통과하고 팀색 생상은 유지된다.
+ * 검증: `npm run qa:featured-card-contrast` (전수 계산 게이트).
+ */
+export const FEATURED_DARKEN_MIX = 0.45;
+
+export function darkenForFeatured(hex: string, mix: number = FEATURED_DARKEN_MIX): string {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return hex; // 예기치 않은 형식은 건드리지 않는다(호출자 입력 손상 방지)
+  const n = parseInt(m[1], 16);
+  const ch = (shift: number) => Math.round(((n >> shift) & 255) * (1 - mix));
+  return `#${[ch(16), ch(8), ch(0)].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
  * MY TEAM(featured) 카드 표면 — 배경 + 전경 토큰을 한 번에 고정한다.
  *
  * 왜 전경까지 같이 고정하는가 (삼순 2026-08-15 NO-GO): 배경은 팀 `colorPrimary`로 고정인데
@@ -120,7 +140,7 @@ function WinDot() {
  * `text-text-primary` 같은 기존 토큰 클래스가 그대로 고대비를 얻는다(단일 지점 제어).
  */
 const FEATURED_SURFACE = (teamColor: string): React.CSSProperties => ({
-  background: `linear-gradient(135deg, ${teamColor} 0%, #1A1A1D 78%)`,
+  background: `linear-gradient(135deg, ${darkenForFeatured(teamColor)} 0%, #1A1A1D 78%)`,
   ["--text-primary" as string]: "#FFFFFF",
   ["--text-secondary" as string]: "rgba(255,255,255,0.86)",
   ["--text-tertiary" as string]: "rgba(255,255,255,0.66)",
