@@ -39,7 +39,7 @@ import {
 } from "./og-media";
 import { appendAttribution } from "./attribution";
 import { normalizeQueueTextForPost } from "./text-normalizer";
-import { resolveCollectorTeam } from "./collector-team";
+import { collectorPlayerTags, resolveCollectorTeam } from "./collector-team";
 
 const BUCKET = "photos";
 const STORAGE_FOLDER = "gif-collector";
@@ -378,6 +378,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
     // 프로필에 박힌 한 팀(현재 LG)으로 찍힌다 — 2026-08-07 하린아빠 지적(KIA 김도영 글이 "LG 팬").
     author_team_id_snapshot: collectorTeam.id,
   };
+  // 최애선수 관련 글 알림(2026-08-16 하린아빠 요청 — 움짤/짤콜렉터 게시물 알림).
+  // player_tags 가 있어야 posts INSERT webhook(handlePost)이 fav_player_post 토글
+  // 유저에게 푸시를 보낸다. 파생 규칙은 collectorPlayerTags 참조(순수 함수 — 게이트 직접 호출).
+  const playerTags = collectorPlayerTags(row.matched_board_type, row.matched_kbo_id);
+  if (playerTags) postInsert.player_tags = playerTags;
   if (kind === "video") {
     postInsert.video_urls = mediaUrls;
   } else {

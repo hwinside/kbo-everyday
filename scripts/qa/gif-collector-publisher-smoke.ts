@@ -11,6 +11,11 @@ import {
   inferMediaExt,
 } from "@/lib/gif-collector/og-media";
 import { normalizeQueueTextForPost } from "@/lib/gif-collector/text-normalizer";
+import { collectorPlayerTags } from "@/lib/gif-collector/collector-team";
+import { postDetailUrl } from "@/lib/notifications/post-detail-url";
+import { resolveRosterPlayer } from "@/lib/utils/player-roster";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 let pass = 0;
 let fail = 0;
@@ -233,6 +238,50 @@ check("content-type 없고 URL도 확장자 없으면 bin", inferMediaExt("appli
     "queue source_title/source_content Slack emoji shortcode 디코드",
     r.title === "화제입니다.⚾ 곡 후렴" && r.sourceContent === "본문에도 🔥 남음",
     `got ${JSON.stringify(r)}`,
+  );
+}
+
+// ── 최애선수 관련 글 알림 (2026-08-16 — 움짤/짤콜렉터 게시물 알림) ────────────────
+// fixture 는 실제 로스터에서 기계 추출한다 — 지어낸 이름/아이디 금지(2026-08-09 교훈).
+{
+  const roster = JSON.parse(
+    readFileSync(resolve(process.cwd(), "src/lib/constants/players-roster.json"), "utf8"),
+  ) as Array<{ kboId: string; name: string }>;
+  const sample = roster[0];
+  check("roster fixture 추출", Boolean(sample?.kboId && sample?.name));
+
+  const tags = collectorPlayerTags("player", sample.kboId);
+  const canonical = resolveRosterPlayer({ name: null, kboId: sample.kboId })?.name;
+  check(
+    "선수 게시판 글 → player_tags 1개 (kboId:canonical이름)",
+    tags?.length === 1 && tags[0] === `${sample.kboId}:${canonical}` && Boolean(canonical),
+    `got ${JSON.stringify(tags)} canonical=${canonical}`,
+  );
+  check("팀 게시판 글 → 태그 없음(알림 없음)", collectorPlayerTags("team", sample.kboId) === null);
+  check("kboId 없으면 태그 없음", collectorPlayerTags("player", null) === null);
+  check(
+    "로스터 미등록 kboId → 태그 없음(틀린 이름 발송 금지)",
+    collectorPlayerTags("player", "ZZ_NOT_A_REAL_ID") === null,
+  );
+
+  // 딥링크 — 게시판 종류별 실제 상세 라우트.
+  check(
+    "선수 게시판 글 딥링크",
+    postDetailUrl({ board_type: "player", board_id: sample.kboId }, 123)
+      === `/community/players/${sample.kboId}/posts/123`,
+  );
+  check(
+    "팀 게시판 글 딥링크",
+    postDetailUrl({ board_type: "team", board_id: "lg" }, 5) === "/community/teams/lg/posts/5",
+  );
+  check(
+    "자유게시판/미지 board 는 기존 free 경로 유지",
+    postDetailUrl({ board_type: "free", board_id: null }, 7) === "/community/free/7"
+      && postDetailUrl({}, 8) === "/community/free/8",
+  );
+  check(
+    "board_id 결손 시 free 폴백(깨진 URL 금지)",
+    postDetailUrl({ board_type: "player", board_id: "" }, 9) === "/community/free/9",
   );
 }
 

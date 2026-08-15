@@ -7,6 +7,7 @@ import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 import { URGENT_NOTICE_USER_ID } from "@/lib/constants/urgent-notice";
 import { isNoReplySender, noReplyAutoReplyText } from "@/lib/constants/no-reply-senders";
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
+import { postDetailUrl } from "@/lib/notifications/post-detail-url";
 
 // 푸시 알림 디스패처 (push-notifications-v1 S3).
 // DB 트리거(pg_net)가 INSERT 이벤트를 POST — 대상 결정 → prefs 필터 → FCM 발송.
@@ -187,6 +188,8 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   }];
 }
 
+// 글 상세 딥링크는 board_type 기준 분기(움짤/짤콜렉터 글은 player/team 게시판) —
+// 규칙과 근거는 post-detail-url.ts 참조.
 /** 최애선수 관련 글 — player_tags("kboId:이름")에 매칭되는 최애선수 보유 유저 */
 async function handlePost(record: Record<string, unknown>): Promise<Dispatch[]> {
   if (record.is_hidden === true) return []; // 브리지 포스트(새소식 등) 제외
@@ -210,7 +213,7 @@ async function handlePost(record: Record<string, unknown>): Promise<Dispatch[]> 
       payload: {
         title: `⭐ ${playerName || "최애선수"} 관련 글이 올라왔어요`,
         body: truncate((record.content as string) || (record.title as string) || ""),
-        url: `/community/free/${postId}`,
+        url: postDetailUrl(record, postId),
       },
       prefKey: "fav_player_post",
     });
