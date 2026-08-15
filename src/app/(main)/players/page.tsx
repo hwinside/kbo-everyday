@@ -98,8 +98,6 @@ function PlayersPageContent() {
   const hasUrlMode = searchParams.has("mode");
   const hasUrlTeam = searchParams.has("team");
 
-  // URL 파라미터가 없으면 MY TEAM 기준 디폴트 적용 (myTeamId 로드 후)
-  const hasUrlParams = searchParams.has("mode") || searchParams.has("team") || searchParams.has("pos");
   const [filterMode, setFilterMode] = useState<FilterMode>(
     (searchParams.get("mode") as FilterMode) || "all"
   );
