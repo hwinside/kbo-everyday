@@ -6,8 +6,7 @@ import batterStats2026 from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats2026 from "@/lib/constants/stats-2026-pitchers.json";
 import defenseStats2026 from "@/lib/constants/stats-2026-defense.json";
 import statsMeta from "@/lib/constants/stats-2026-meta.json";
-import type { RosterPlayer } from "@/types/api";
-import { canonicalKboId, resolvePlayer } from "@/lib/utils/resolve-player";
+import { canonicalKboId } from "@/lib/utils/resolve-player";
 import { aggregateDefense, type DefenseRow } from "@/lib/utils/defense-aggregate";
 import {
   mergeFullEntry,
@@ -106,25 +105,19 @@ export function rowKboId(row: ParsedTableRow): string {
 }
 
 /**
- * KBO 표 행의 **병합 키** — playerId exact 우선, 없는 행만 `이름::팀` 하위호환.
- *
- * ⚠️ production 과 게이트가 **같은 함수**를 타야 한다(#1100 삼순 7차 P0-2 교훈:
- * 게이트가 같은 규칙을 재구현하면 production 을 `이름::팀` 으로 되돌려도 GREEN 이다).
- */
-export function statsRowKey(row: ParsedTableRow): string {
-  return rowKboId(row) || `${(row[1] || "").trim()}::${(row[2] || "").trim()}`;
-}
-
-/**
  * Basic1 union — 각 정렬 상위 30 합집합을 **identity 로** 묶는다.
  * production 경로와 게이트가 공유하는 유일한 구현이다.
+ *
+ * ⚠️ `이름::팀` 하위호환은 없다(삼순 #1196 1차 P0). ID 결손 행은 조용히 이름 키로
+ * 흘러보내지 않고 **fail-close** 한다 — 혼합보다 전체 fallback 이 안전하다.
  */
 export function mergeBasicRows(tables: ParsedTableRow[][]): ParsedTableRow[] {
   const merged = new Map<string, ParsedTableRow>();
   for (const table of tables) {
     for (const row of table) {
-      const key = statsRowKey(row);
-      if (key !== "::" && !merged.has(key)) merged.set(key, row);
+      const key = rowKboId(row);
+      if (!key) throw new Error("KBO stats row identity missing");
+      if (!merged.has(key)) merged.set(key, row);
     }
   }
   return [...merged.values()];
@@ -256,7 +249,6 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   // basic1 union으로 들어온 모든 선수(도루·안타 정렬 포함)의 b2 데이터가 미스 없이 채워짐.
   // 추가로 BB/KK/HP/GD 정렬을 넣어 각 누적 부문 리더(예: 김재환 BB, 송찬의 HBP)까지 커버.
   const basic2Sorts = [...basic1Sorts, "BB_CN", "KK_CN", "HP_CN", "GD_CN"];
-  const roster = playersRoster as RosterPlayer[];
 
   const [basic1Htmls, basic2Htmls, runnerResult] = await Promise.all([
     Promise.all(basic1Sorts.map((s) => fetchHtml(`${KBO_BASE}/Record/Player/HitterBasic/Basic1.aspx?sort=${s}`, signal))),
@@ -270,16 +262,18 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   ]);
   const basic1Tables = basic1Htmls.map(parseTable);
   const basic2Tables = basic2Htmls.map(parseTable);
+  // ⚠️ 행 identity(공식 playerId)도 스키마 계약이다(삼순 #1196 1차 P0). 결손 행을
+  // `이름::팀` 으로 혼합 흡수하지 않고 전체 fallback 으로 fail-close 한다.
   if (
     basic1Tables.some(
       (table) =>
         table.length < KBO_TABLE_MIN_ROWS ||
-        table.some((row) => row.length < 16 || !row[1]?.trim() || !row[2]?.trim()),
+        table.some((row) => row.length < 16 || !row[1]?.trim() || !row[2]?.trim() || !rowKboId(row)),
     ) ||
     basic2Tables.some(
       (table) =>
         table.length < KBO_TABLE_MIN_ROWS ||
-        table.some((row) => row.length < 12 || !row[1]?.trim() || !row[2]?.trim()),
+        table.some((row) => row.length < 12 || !row[1]?.trim() || !row[2]?.trim() || !rowKboId(row)),
     )
   ) {
     throw new Error("KBO batter stats table incomplete");
@@ -298,14 +292,14 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
     const idx = basic1Sorts.indexOf(sort);
     for (const c of basic1Tables[idx]) {
       // ⚠️ 저장키와 조회키가 갈라지면 규정타석 플래그가 전부 0 이 된다 — 병합과 같은 키.
-      qualifiedKeys.add(statsRowKey(c));
+      qualifiedKeys.add(rowKboId(c));
     }
   }
 
   // Basic2 lookup: identity → { bb, ibb, hbp, so, gdp, slg, obp, ops }
   const basic2Map = new Map<string, Basic2Entry>();
   for (const c of basic2Rows) {
-    const key = statsRowKey(c);
+    const key = rowKboId(c);
     basic2Map.set(key, {
       bb: parseInt(c[4]) || 0,
       ibb: parseInt(c[5]) || 0,
@@ -317,7 +311,7 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       ops: c[11] || ".000",
     });
   }
-  const missingBasic2 = rows.map(statsRowKey).filter((key) => !basic2Map.has(key));
+  const missingBasic2 = rows.map(rowKboId).filter((key) => !basic2Map.has(key));
   if (missingBasic2.length > 0) {
     throw new Error(
       `KBO batter Basic2 join incomplete: missing=${missingBasic2.length}`,
@@ -326,25 +320,19 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
 
   // Runner 전 페이지 live 수집이 완전히 성공했을 때만 사용한다. 일부 페이지만 성공한 결과와
   // static을 선수별로 섞지 않고, WebForms 수집이 실패한 요청에 한해 static 전체를 최종 fallback.
+  // ⚠️ Runner 가 수집은 됐는데 identity 가 깨졌으면(결손/중복) 부분 혼합이 아니라
+  // **전체 fail-close** 다 — buildRunnerMap 이 throw 해 batter 전체가 fallback 으로 넘어간다
+  // (삼순 #1196 1차: live+static 혼합으로 남기지 말 것). 수집 자체가 실패한 경우
+  // (live=false)만 기존 static Runner 전체 fallback 경로를 탄다.
   const runnerMap = runnerResult.live
     ? buildRunnerMap(runnerResult.rows)
     : new Map<string, RunnerStat>();
   // HTTP 200이어도 pager가 조기 종료될 수 있다. 최종 full 후보(live union + static 전체)를
   // Runner map이 모두 덮지 못하면 부분 live 전체를 폐기하고 static fallback으로 전환한다.
-  // ⚠️ 요구 키도 kboId 다. 행에 playerId 가 없으면 로스터 조회로 보완하되,
-  // 그래도 못 찾은 행은 요구 집합에서 뺀다(이름 추정으로 가짜 요구키를 만들지 않는다).
+  // ⚠️ 요구 키도 kboId 다. live 행은 위 검증으로 전부 ID 보유가 보장된다.
   const requiredRunnerKeys = new Set(
     [
-      ...rows.map((c) =>
-        rowKboId(c) ||
-        canonicalKboId(
-          resolvePlayer(
-            { name: (c[1] || "").trim(), team: (c[2] || "").trim() },
-            roster,
-            { context: "api/stats:runner-key" },
-          )?.kboId ?? "",
-        ),
-      ),
+      ...rows.map(rowKboId),
       ...(batterStats2026 as unknown as PlayerStat[]).map((p) =>
         canonicalKboId(String(p.kboId || "").trim()),
       ),
@@ -361,7 +349,7 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
     }
   }
 
-  const stats = rows.map((c, i) => buildBatterStat(c, i, roster, basic2Map, qualifiedKeys));
+  const stats = rows.map((c, i) => buildBatterStat(c, i, basic2Map, qualifiedKeys));
   return {
     stats,
     runnerMap,
@@ -373,16 +361,17 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
 /**
  * Runner 수집 행 → kboId exact 도루 map.
  *
- * ⚠️ 키는 **kboId exact** 다(#1100 4차 P0-3). `이름::팀` 으로 묶으면 같은 팀 동명이인이
- * 서로의 도루 값을 덮어쓴다. playerId 없는 Runner 행은 이름으로 추정 병합하지 않는다
- * — 동명이인 오염보다 기존값 보존이 안전하다.
+ * ⚠️ 키는 **kboId exact** 다(#1100 4차 P0-3). ID 결손·중복 행은 skip(혼합)이 아니라
+ * **throw** 다(삼순 #1196 1차 P0) — identity 무결성이 깨진 live 세트는 통째로 폐기하고
+ * 전체 fallback 으로 닫는다.
  * (export 는 identity 게이트가 실제 배포 함수를 태우기 위해서다 — 인라인이면 되돌려도 GREEN.)
  */
 export function buildRunnerMap(rows: ParsedTableRow[]): Map<string, RunnerStat> {
   const runnerMap = new Map<string, RunnerStat>();
   for (const c of rows) {
     const key = rowKboId(c);
-    if (!key) continue;
+    if (!key) throw new Error("KBO runner row identity missing");
+    if (runnerMap.has(key)) throw new Error(`KBO runner row identity duplicated: ${key}`);
     runnerMap.set(key, {
       sb: parseInt(c[5]) || 0,
       cs: parseInt(c[6]) || 0,
@@ -406,19 +395,17 @@ export interface Basic2Entry {
 export function buildBatterStat(
   c: ParsedTableRow,
   i: number,
-  roster: RosterPlayer[],
   basic2Map: Map<string, Basic2Entry>,
   qualifiedKeys: Set<string>,
 ) {
   const name = (c[1] || "").trim();
   const team = (c[2] || "").trim();
-  // ⚠️ KBO 원본 playerId 가 있으면 **그것이 canonical identity** 다. 로스터 이름 조회
-  // (`resolvePlayer`)는 같은 팀 동명이인을 first-match 로 합친다 — union 을 identity 로
-  // 갈라놓고도 출력 ID 가 같아지면 하류가 다시 섞는다.
+  // ⚠️ KBO 원본 playerId 가 **canonical identity** 다. 로스터 이름 조회(resolvePlayer)는
+  // 같은 팀 동명이인을 first-match 로 합치므로 fallback 으로도 쓰지 않는다(삼순 #1196 1차 P0)
+  // — ID 없는 행은 정답 추정 대신 fail-close.
   const rowId = rowKboId(c);
-  const lookupKey = statsRowKey(c);
-  const found = resolvePlayer({ name, team }, roster, { context: "api/stats:batter" });
-  const b2 = basic2Map.get(lookupKey);
+  if (!rowId) throw new Error("KBO batter row identity missing");
+  const b2 = basic2Map.get(rowId);
   return {
     rank: i + 1,
     name,
@@ -448,10 +435,10 @@ export function buildBatterStat(
     // Runner stats
     sb: 0,
     cs: 0,
-    kboId: rowId || found?.kboId || "",
-    playerId: rowId || found?.kboId || "",
-    // ⚠️ 저장키(statsRowKey)와 같은 키로 조회해야 한다 — 갈라지면 전부 0 이 된다.
-    qualifiedRate: qualifiedKeys.has(lookupKey) ? 1 : 0,
+    kboId: rowId,
+    playerId: rowId,
+    // ⚠️ 저장키(rowKboId)와 같은 키로 조회해야 한다 — 갈라지면 전부 0 이 된다.
+    qualifiedRate: qualifiedKeys.has(rowId) ? 1 : 0,
   };
 }
 
@@ -471,13 +458,13 @@ export function applyRunnerStats<T extends PlayerStat>(
   });
 }
 
-function parsePitcherRow(c: ParsedTableRow, roster: RosterPlayer[]): PlayerStat {
+function parsePitcherRow(c: ParsedTableRow): PlayerStat {
   const name = c[1] || "";
   const team = c[2] || "";
   const officialId = canonicalKboId(c.playerId);
-  const found = officialId
-    ? { kboId: officialId }
-    : resolvePlayer({ name, team }, roster, { context: "api/stats:pitcher" });
+  // ⚠️ 로스터 이름 조회 fallback 없음(삼순 #1196 1차 P0) — ID 결손은 fail-close.
+  if (!officialId) throw new Error("KBO pitcher row identity missing");
+  const found = { kboId: officialId };
   return {
     rank: 0,
     name,
@@ -508,8 +495,7 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
   // 여러 정렬로 크롤링 후 병합해야 세이브/홀드/이닝 리더가 빠지지 않음.
   // INN2_CN(이닝) 미포함 시 규정이닝 미달 이닝이터(선발 기량투수)가 라이브 집합에서 전부 누락된다.
   const sortKeys = ["ERA_RT", "SV_CN", "HOLD_CN", "W_CN", "KK_CN", "INN2_CN"];
-  const roster = playersRoster as RosterPlayer[];
-  const merged = new Map<string, PlayerStat>(); // key: name+team
+  const merged = new Map<string, PlayerStat>(); // key: canonical kboId
   const qualifiedKeys = new Set<string>(); // ERA_RT 페이지에 나오는 규정이닝 충족 선수
 
   const results = await Promise.all(
@@ -520,9 +506,10 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
       // ERA_RT는 규정이닝 충족자만 내려와 현재 정상 응답도 19행이다.
       // 나머지 누적 정렬은 정상 페이지의 30행 계약을 그대로 요구한다.
       const minimumRows = sort === "ERA_RT" ? 15 : KBO_TABLE_MIN_ROWS;
+      // ⚠️ 행 identity 결손도 스키마 계약 위반이다 — 혼합 없이 전체 fallback (삼순 #1196 1차 P0).
       if (
         rows.length < minimumRows ||
-        rows.some((row) => row.length < 19 || !row[1]?.trim() || !row[2]?.trim())
+        rows.some((row) => row.length < 19 || !row[1]?.trim() || !row[2]?.trim() || !rowKboId(row))
       ) {
         throw new Error(`KBO pitcher stats ${sort} table incomplete`);
       }
@@ -532,14 +519,13 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
 
   for (const { sort, rows } of results) {
     for (const c of rows) {
-      // 타자와 같은 identity 계약 — playerId exact 우선, 없으면 `이름::팀` 하위호환.
-      const key = statsRowKey(c);
-      if (key === "::") continue;
+      // 타자와 같은 identity 계약 — kboId exact만. 결손은 위 검증에서 이미 fail-close 됐다.
+      const key = rowKboId(c);
       if (sort === "ERA_RT") {
         qualifiedKeys.add(key);
       }
       if (!merged.has(key)) {
-        merged.set(key, parsePitcherRow(c, roster));
+        merged.set(key, parsePitcherRow(c));
       }
     }
   }
@@ -601,7 +587,8 @@ function setCache(key: string, data: StatsResult) {
   cache[key] = { data, ts: Date.now() };
 }
 
-function assertStatsComplete(stats: PlayerStat[], type: "batter" | "pitcher"): void {
+// ⚠️ export 는 identity 게이트가 실제 배포 함수를 태우기 위해서다.
+export function assertStatsComplete(stats: PlayerStat[], type: "batter" | "pitcher"): void {
   const minimum = 30;
   const teamCounts = new Map<string, number>();
   for (const row of stats) {
@@ -609,15 +596,13 @@ function assertStatsComplete(stats: PlayerStat[], type: "batter" | "pitcher"): v
     if (team) teamCounts.set(team, (teamCounts.get(team) || 0) + 1);
   }
   // ⚠️ uniqueness 판정도 identity 다 — `이름::팀` 이면 정상인 같은 팀 동명이인 2행을
-  // 중복으로 오판해 partial 로 던진다(identity 병합 전환의 하류 가드 정합).
-  const players = new Set(
-    stats
-      .map((row) =>
-        canonicalKboId(String(row.kboId || "").trim()) ||
-        `${row.name.trim()}::${row.team.trim()}`,
-      )
-      .filter((key) => key !== "::"),
-  );
+  // 중복으로 오판해 partial 로 던진다. 이름 fallback 없음 — ID 결손 행은 그 자체로 partial 다
+  // (삼순 #1196 1차 P0: 빈/오인 ID 가 정상 응답으로 통과하면 안 된다).
+  const ids = stats.map((row) => canonicalKboId(String(row.kboId || "").trim()));
+  if (ids.some((id) => !id)) {
+    throw new Error(`KBO ${type} stats identity missing: ${ids.filter((id) => !id).length} rows`);
+  }
+  const players = new Set(ids);
   const perTeamMinimum = KBO_TEAM_MINIMUM[type];
   const allTeamsCovered = [...KBO_TEAM_NAMES].every(
     (team) => (teamCounts.get(team) || 0) >= perTeamMinimum,
