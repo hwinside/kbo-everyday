@@ -101,6 +101,33 @@ const mutations = [
     from: `        guard url.hasPrefix("/"), !url.hasPrefix("//") else { return }`,
     to: "        // mutation: stash 가드 제거",
   },
+  {
+    id: "M13 actual loader가 주입 브릿지 무시(npm core=Web 구현에 부착)",
+    file: DEEPLINK,
+    from: `    const injected = injectedPlugin<MessagingSource>("FirebaseMessaging");
+    if (injected) {
+      return { addListener: (event, listener) => injected.addListener(event, listener) };
+    }`,
+    to: "",
+  },
+  {
+    id: "M14 actual App loader가 주입 브릿지 무시",
+    file: DEEPLINK,
+    from: `    const injected = injectedPlugin<AppStateSource>("App");
+    if (injected) {
+      return {
+        getState: () => injected.getState(),
+        addListener: (event, listener) => injected.addListener(event, listener),
+      };
+    }`,
+    to: "",
+  },
+  {
+    id: "M15 mount 중복 호출 재도입",
+    file: MOUNT,
+    from: "    void listenForForegroundNotifications();",
+    to: "    void listenForForegroundNotifications();\n    void listenForNotificationTap();",
+  },
 ];
 
 function runGate() {

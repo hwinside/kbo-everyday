@@ -251,9 +251,11 @@ test("11) 동시·반복 호출에도 listener는 각 1개", async () => {
   assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
 });
 
-test("12) actual mount가 정적 gate 전에 딥링크 listener를 호출", async () => {
+test("12) actual mount가 정적 gate 전에 딥링크 listener를 정확히 1회 호출", async () => {
   const source = await readFile(new URL("../../src/components/NativePushMount.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ listenForNotificationTap \} from "@\/lib\/native-push-deeplink"/);
+  const calls = source.match(/void listenForNotificationTap\(\);/g) ?? [];
+  assert.equal(calls.length, 1, `mount 호출은 1회여야 함 (found ${calls.length}) — 중복 호출 금지`);
   const call = source.indexOf("void listenForNotificationTap();");
   const gate = source.indexOf("if (!isNativeRuntime()) return;");
   assert.ok(call >= 0 && gate >= 0 && call < gate, "mount 호출 제거·정적 gate 뒤 이동을 차단");
@@ -333,6 +335,75 @@ test("18) background cold-start: stash는 보관만 하고 active 전에는 이�
   assert.deepEqual(navigations, []);
   h.activate();
   assert.deepEqual(navigations, ["/games/COLDBG?tab=lineup"]);
+});
+
+// ── actual defaultLoaders(#1070 재발 방지) ───────────────────────────
+// 위 1~19축은 fake loader 를 주입해 소비 로직만 본다. 실제 사고는 loader 가 npm core
+// (Web 구현)에 붙어 네이티브 탭 이벤트를 못 받는 자리에서 난다 — 그 경로를 직접 태운다.
+
+test("20) actual defaultLoaders: core=web + injected iOS면 주입 브릿지 플러그인에 붙는다", async () => {
+  await reset(true);
+  const injectedCalls: string[] = [];
+  let tapCallback: TapCallback | null = null;
+  let stateCallback: StateCallback | null = null;
+  // npm core 는 web 으로 오판하는 설치 앱 재현 — 주입 브릿지만이 네이티브 진실이다.
+  injectedCapacitor = {
+    isNativePlatform: () => false,
+    getPlatform: () => "ios",
+    Plugins: {
+      FirebaseMessaging: {
+        addListener: async (event: string, cb: TapCallback) => {
+          injectedCalls.push(`messaging:${event}`);
+          tapCallback = cb;
+          return { remove: async () => undefined };
+        },
+      },
+      App: {
+        getState: async () => {
+          injectedCalls.push("app:getState");
+          return { isActive: true };
+        },
+        addListener: async (event: string, cb: StateCallback) => {
+          injectedCalls.push(`app:${event}`);
+          stateCallback = cb;
+          return { remove: async () => undefined };
+        },
+      },
+      PushDeepLink: {
+        consume: async () => {
+          injectedCalls.push("pushDeepLink:consume");
+          return {};
+        },
+      },
+    },
+  } as unknown as typeof injectedCapacitor;
+
+  // loaders 인자 없이 호출 = actual defaultLoaders 경로
+  await (await pushModule()).listenForNotificationTap();
+  await flush();
+
+  assert.ok(injectedCalls.includes("messaging:notificationActionPerformed"),
+    `주입 FirebaseMessaging 에 붙어야 함 (calls=${injectedCalls.join(",")})`);
+  assert.ok(injectedCalls.includes("app:appStateChange"),
+    `주입 App 에 붙어야 함 (calls=${injectedCalls.join(",")})`);
+  assert.ok(injectedCalls.includes("pushDeepLink:consume"),
+    `주입 PushDeepLink 를 호출해야 함 (calls=${injectedCalls.join(",")})`);
+
+  // 주입 경로로 받은 탭이 실제 이동으로 이어진다(배선 종단 확인)
+  assert.ok(tapCallback, "tap callback 이 등록되어야 함");
+  (tapCallback as unknown as TapCallback)(tap("/games/INJECTED?tab=lineup"));
+  await flush();
+  assert.deepEqual(navigations, ["/games/INJECTED?tab=lineup"]);
+  assert.ok(stateCallback, "appStateChange callback 이 등록되어야 함");
+});
+
+test("21) actual defaultLoaders: 주입 브릿지가 없으면 npm core 로 fallback한다", async () => {
+  await reset(true); // injectedCapacitor = isNativePlatform:true, Plugins 없음
+  // Plugins 가 없으니 injectedPlugin() 은 undefined → npm 모듈 import 경로.
+  // 이 환경엔 네이티브가 없어 addListener 가 throw 할 수 있지만, attach 실패는
+  // 상위 catch 로 잡혀 registration 이 초기화되어야 한다(다음 mount 재시도 가능).
+  const m = await pushModule();
+  await assert.doesNotReject(() => m.listenForNotificationTap());
 });
 
 test("19) 네이티브 stash는 AppDelegate가 .background launch를 제외하고 상대경로만 저장", async () => {

@@ -151,19 +151,62 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
 }
 
 interface InjectedPluginsBridge {
-  Plugins?: { PushDeepLink?: PushDeepLinkSource };
+  Plugins?: Record<string, unknown>;
+}
+
+/**
+ * 원격 로드(server.url) dual-instance 우회 — 주입 브릿지의 플러그인 인스턴스를 먼저 찾는다.
+ *
+ * npm 번들과 앱에 주입된 window.Capacitor 는 서로 다른 인스턴스다. npm core 가 'web' 으로
+ * 오판하는 설치 앱(#484/#833 축)에서 npm 모듈을 쓰면 **Web 구현**에 listener 가 붙어
+ * 네이티브 탭 이벤트를 영원히 못 받는다(#1070 background 실패의 또 하나의 원인 후보).
+ */
+function injectedPlugin<T>(name: string): T | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const plugin = (window as unknown as { Capacitor?: InjectedPluginsBridge })
+      .Capacitor?.Plugins?.[name];
+    return plugin ? (plugin as T) : undefined;
+  } catch {
+    return undefined; // bridge 접근 throw → npm fallback
+  }
 }
 
 const defaultLoaders: ListenerLoaders = {
-  messaging: async () => (await import("@capacitor-firebase/messaging")).FirebaseMessaging,
-  app: async () => (await import("@capacitor/app")).App,
+  // ⚠️ Capacitor plugin proxy 를 async 함수에서 그대로 return 하지 않는다 — await 의 thenable
+  // 검사가 proxy 의 .then 을 네이티브 호출로 변환해 "X.then() is not implemented" 런타임
+  // 에러가 난다(native-push.ts 상단 사고 사례). 메서드만 노출하는 객체로 감싼다.
+  messaging: async () => {
+    const injected = injectedPlugin<MessagingSource>("FirebaseMessaging");
+    if (injected) {
+      return { addListener: (event, listener) => injected.addListener(event, listener) };
+    }
+    const { FirebaseMessaging } = await import("@capacitor-firebase/messaging");
+    return {
+      addListener: (event, listener) =>
+        FirebaseMessaging.addListener(event, listener as (e: unknown) => void),
+    } as MessagingSource;
+  },
+  app: async () => {
+    const injected = injectedPlugin<AppStateSource>("App");
+    if (injected) {
+      return {
+        getState: () => injected.getState(),
+        addListener: (event, listener) => injected.addListener(event, listener),
+      };
+    }
+    const { App } = await import("@capacitor/app");
+    return {
+      getState: () => App.getState(),
+      addListener: (event, listener) => App.addListener(event, listener),
+    } as AppStateSource;
+  },
   pushDeepLink: async () => {
-    // 원격 로드 dual-instance 우회 — 주입 브릿지(window.Capacitor.Plugins) 우선,
-    // 없으면 npm core registerPlugin(구빌드는 호출 시 unimplemented throw → 상위 catch no-op).
-    const injected = typeof window !== "undefined"
-      ? (window as unknown as { Capacitor?: InjectedPluginsBridge }).Capacitor?.Plugins?.PushDeepLink
-      : undefined;
-    return injected ?? registerPlugin<PushDeepLinkSource>("PushDeepLink");
+    // 주입 브릿지 우선, 없으면 npm core registerPlugin
+    // (구빌드는 호출 시 unimplemented throw → 상위 catch no-op).
+    const injected = injectedPlugin<PushDeepLinkSource>("PushDeepLink");
+    const plugin = injected ?? registerPlugin<PushDeepLinkSource>("PushDeepLink");
+    return { consume: () => plugin.consume() };
   },
 };
 

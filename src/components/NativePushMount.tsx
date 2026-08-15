@@ -32,7 +32,6 @@ export function NativePushMount() {
     void syncNativePushToken();
     void listenForTokenRefresh();
     void listenForForegroundNotifications();
-    void listenForNotificationTap();
     // W3b — 잠금화면 Live Activity 자동 시작용 push-to-start 토큰 등록(iOS 17.2+, 그 외 no-op).
     void bootstrapLiveActivityPushToStart();
     // 안드 잠금카드 게이트 — 서버 live_activity pref를 네이티브에 미러(타 기기서 꺼둔 유저/재설치 복원).
