@@ -99,9 +99,33 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
 
+    /// LA 딥링크 폐쇄 allowlist — `/games/<영숫자 gameId>` 만 stash 한다.
+    /// dot-segment(`/games/../auth`)·`/auth*` 우회·임의 경로는 전부 미매치로 탈락
+    /// (정규식이 공 정규화다 — 삼순 #1204 R1-③). OAuth 콜백 플로우 보호 포함.
+    ///
+    /// ⚠️ `open(url:)` · `continue(userActivity:)` 두 진입점이 *같은 구현*을 공유한다.
+    /// allowlist 를 진입점마다 복제하면 한쪽만 고쳐져 조용히 어긋나간다(삼순 #1204 R6 교훈 —
+    /// 분류 키를 재선언했다가 실제 핸들러와 어긋나 서버 오류 callback 이 폐기된 건과 동일 축).
+    private func stashLiveActivityDeepLinkIfAllowed(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.host == "keubo.fan" else { return }
+        let path = components.path
+        guard path.range(of: "^/games/[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return }
+        let query = components.query.map { "?\($0)" } ?? ""
+        PushDeepLinkPlugin.stash(url: path + query)
+    }
+
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
+        //
+        // 🔴 build 25 실기기 QA — LA 카드 탭이 미이동. widgetURL 은 iOS 버전·컨텍스트에
+        // 따라 continue(userActivity:) 가 아니라 이 open(url:) 로 도착할 수 있다. 그때
+        // stash 가 없어 웹의 재조회가 빈손으로 끝나 이동이 사라졌다.
+        // → continue 와 *같은 함수*로 stash 한다(경로 이중 방어, allowlist 단일 구현).
+        // ⚠️ proxy 호출 '전'에 실행 — Capacitor 가 발행하는 appUrlOpen 이 JS 재회수
+        // 트리거라, 그 시점에 stash 존재가 순서 계약이다(#1204 R1-① 계약 동일).
+        stashLiveActivityDeepLinkIfAllowed(url)
         let facebookHandled = ApplicationDelegate.shared.application(
             app,
             open: url,
@@ -115,6 +139,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Called when the app was launched with an activity, including Universal Links.
         // Feel free to add additional processing here, but if you want the App API to support
         // tracking app url opens, make sure to keep this call
+        //
+        // Live Activity 카드 탭 딥링크 — widgetURL(universal link)의 앱 내 경로를 pending에
+        // 보관해 웹(native-push-deeplink)이 단일 경로로 소비한다. cold launch는 웹 부팅 후
+        // consume()이, warm 복귀는 appStateChange(active)·appUrlOpen 재회수가 집는다.
+        // ⚠️ stash는 반드시 proxy 호출 '전'에 실행 — Capacitor가 발행하는 appUrlOpen이
+        // JS 재회수 트리거라, 그 시점에 stash 존재가 순서 계약이된다(삼순 #1204 R1-①).
+        // 폐쇄 allowlist — LA 딥링크가 만드는 /games/<영숫자 gameId>만 stash한다.
+        // dot-segment(/games/../auth)·/auth* 우회·임의 경로는 전부 미매치로 탈락
+        // (정규식이 곳 정규화다 — 삼순 #1204 R1-③). OAuth 콜백 플로우 보호 포함.
+        if userActivity.activityType == NSUserActivityTypeBrowsingWeb,
+           let url = userActivity.webpageURL {
+            stashLiveActivityDeepLinkIfAllowed(url)
+        }
         return ApplicationDelegateProxy.shared.application(application, continue: userActivity, restorationHandler: restorationHandler)
     }
 

@@ -159,6 +159,74 @@ ok("기존 동작 보존: 무한스크롤", () => {
   assert.match(modal, /displayPlayers = allDisplayPlayers\.slice\(0, visibleCount\)/);
 });
 
+// ── 선수 목록 페이지(/players) 정렬 토글 ──────────────────────────────────
+// 하린아빠 2026-08-15: 게시글수·직찍수 토글은 집계가 없어 둘 다 가나다순으로 폴백되고
+// 있었다(눌러도 목록 불변). 제거하고 인기순을 기본값으로 둔다.
+const playersPageRaw = readFileSync("src/app/(main)/players/page.tsx", "utf8");
+
+/**
+ * 주석을 제거한 본문. "제거됐다" 계약은 코드에서 판정해야 한다 — 삭제 이유를
+ * 설명하는 주석이 문자열을 인용했다는 이유로 FAIL 나면 게이트가 주석 검사기가 된다.
+ */
+const playersPage = playersPageRaw
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
+ok("/players 정렬 축은 인기순·가나다순 둘뿐", () => {
+  assert.match(playersPage, /const SORT_MODES = \["popularity", "name"\] as const/);
+  assert.match(playersPage, /popularity: "인기순"/);
+  assert.match(playersPage, /name: "가나다순"/);
+});
+
+ok("/players 기본 정렬은 인기순", () => {
+  assert.match(playersPage, /const DEFAULT_SORT: SortMode = "popularity"/);
+});
+
+ok("/players 에서 미구현 토글(게시글수·직찍수)이 제거됨", () => {
+  // 라벨도 사용자에게 노출되면 안 되고, 같은 결과를 돌려주던 폴백도 남으면 안 된다.
+  assert.doesNotMatch(playersPage, /"게시글수"/);
+  assert.doesNotMatch(playersPage, /"직찍수"/);
+  assert.doesNotMatch(playersPage, /TODO\(Phase 2\)/);
+  assert.doesNotMatch(playersPage, /case "posts"|case "photos"/);
+});
+
+ok("/players 인기순이 공용 정렬 함수를 통과(별도 구현 금지)", () => {
+  assert.match(playersPage, /sortPlayersByPopularity/);
+  assert.match(playersPage, /from "@\/lib\/utils\/player-popularity"/);
+  assert.match(
+    playersPage,
+    /if \(mode === "popularity"\) \{[\s\S]*?return sortPlayersByPopularity\(/,
+    "인기순은 공용 함수로 가야 동률 가나다순 계약이 같이 간다",
+  );
+});
+
+ok("/players 집계를 서버 route 에서 받는다(profiles 직접 조회 금지)", () => {
+  assert.match(playersPage, /fetch\("\/api\/player-popularity"\)/);
+  assert.match(playersPage, /normalizePopularityCounts\(/);
+  assert.doesNotMatch(playersPage, /from\("profiles"\)/);
+});
+
+ok("/players 집계 실패에도 목록이 살아있다(fail-safe)", () => {
+  // counts 를 빈 상태로 두면 전원 0 → 가나다순. 목록을 비우거나 throw 하면 안 된다.
+  assert.match(playersPage, /useState<PopularityCounts>\(\{\}\)/);
+  assert.match(playersPage, /\.catch\(\(\) =>/);
+});
+
+ok("/players 구 딥링크(?sort=posts·photos)가 기본값으로 정규화된다", () => {
+  assert.match(
+    playersPage,
+    /function parseSortMode\(raw: string \| null\): SortMode \{[\s\S]*?DEFAULT_SORT/,
+    "제거된 sort 값이 들어와도 빈 상태가 되면 안 된다",
+  );
+  assert.match(playersPage, /parseSortMode\(searchParams\.get\("sort"\)\)/);
+});
+
+ok("/players 기존 동작 보존: 검색·필터·무한스크롤", () => {
+  assert.match(playersPage, /matchHangul\(p\.name, q\)/);
+  assert.match(playersPage, /filterMode === "team" && filterTeam/);
+  assert.match(playersPage, /setVisibleCount\(v => v \+ 20\)/);
+});
+
 // ── 서버 route 계약 ─────────────────────────────────────────────────────────
 const route = readFileSync("src/app/api/player-popularity/route.ts", "utf8");
 

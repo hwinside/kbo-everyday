@@ -4,16 +4,21 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useCallback, useRef, startTransition } from "react";
+import { useState, useMemo, useEffect, useRef, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
-import { TEAMS, getTeamById, getTeamBgColor } from "@/lib/constants/teams";
+import { TEAMS, getTeamBgColor } from "@/lib/constants/teams";
 import { getMyTeamId } from "@/lib/store/myteam";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import playersRosterStatic from "@/lib/constants/players-roster.json";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { matchHangul } from "@/lib/utils/hangul-search";
+import {
+  normalizePopularityCounts,
+  sortPlayersByPopularity,
+  type PopularityCounts,
+} from "@/lib/utils/player-popularity";
 
 interface PlayerItem {
   name: string;
@@ -27,30 +32,50 @@ interface PlayerItem {
 const STATIC_PLAYERS: PlayerItem[] = playersRosterStatic as PlayerItem[];
 
 type FilterMode = "all" | "team" | "position";
-type SortMode = "name" | "posts" | "photos";
+
+/**
+ * 정렬 축은 인기순(최애선수 지정 계정 수)·가나다순 둘뿐이다.
+ *
+ * 기존 "게시글수"·"직찍수" 토글은 집계가 구현되지 않아 두 갈래 모두 가나다순으로
+ * 폴백되고 있었다(= 눌러도 목록이 그대로). 동작하지 않는 UI를 노출하는 대신
+ * 제거하고, 실제로 집계가 있는 인기순을 기본값으로 둔다.
+ */
+const SORT_MODES = ["popularity", "name"] as const;
+type SortMode = (typeof SORT_MODES)[number];
+
+const DEFAULT_SORT: SortMode = "popularity";
 
 const POSITIONS = ["투수", "포수", "내야수", "외야수"];
 
 const SORT_LABELS: Record<SortMode, string> = {
+  popularity: "인기순",
   name: "가나다순",
-  posts: "게시글수",
-  photos: "직찍수",
 };
 
-function sortPlayers(players: PlayerItem[], mode: SortMode): PlayerItem[] {
-  const sorted = [...players];
-  switch (mode) {
-    case "name":
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    case "posts":
-      // TODO(Phase 2): fetch post counts per player from Supabase (board_type='player'), then sort by count desc. Falls back to name sort for now.
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    case "photos":
-      // TODO(Phase 2): fetch photo post counts per player from Supabase (content_type='photo'), then sort by count desc. Falls back to name sort for now.
-      return sorted.sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    default:
-      return sorted;
+/**
+ * URL `?sort=` 를 정규화한다. 제거된 값(posts·photos)이나 오타는 기본값으로 되돌린다.
+ * 이전에 공유된 `?sort=posts` 링크가 404 스러운 빈 상태가 되지 않게 하는 것이 목적.
+ */
+function parseSortMode(raw: string | null): SortMode {
+  return (SORT_MODES as readonly string[]).includes(raw ?? "")
+    ? (raw as SortMode)
+    : DEFAULT_SORT;
+}
+
+function sortPlayers(
+  players: PlayerItem[],
+  mode: SortMode,
+  popularity: PopularityCounts,
+): PlayerItem[] {
+  if (mode === "popularity") {
+    // 지정 계정 수 desc, 동률(0명끼리 포함)은 가나다순 — 온보딩 선수 선택과 같은 계약.
+    // counts 가 비면 전원 0 이 되어 자연스럽게 가나다순이 된다(집계 실패해도 목록은 유지).
+    return sortPlayersByPopularity(
+      players.map((p) => ({ ...p, id: p.kboId })),
+      popularity,
+    );
   }
+  return [...players].sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
 function PlayersPageContent() {
@@ -102,13 +127,47 @@ function PlayersPageContent() {
   useEffect(() => {
     if (!hasUrlParams && myTeamId) {
       setFilterMode("team"); // eslint-disable-line react-hooks/set-state-in-effect
-      setFilterTeam(myTeamId); // eslint-disable-line react-hooks/set-state-in-effect
+      setFilterTeam(myTeamId);
     }
   }, [myTeamId, hasUrlParams]);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
-  const [sortMode, setSortMode] = useState<SortMode>(
-    (searchParams.get("sort") as SortMode) || "name"
+  const [sortMode, setSortMode] = useState<SortMode>(() =>
+    parseSortMode(searchParams.get("sort"))
   );
+
+  // 최애선수 지정 수 집계.
+  //
+  // 빈 counts 로 먼저 그려버리면 "인기순" 상태에서 가나다순 목록이 보이다가
+  // 집계가 도착하는 시점(Production 실측 ~339ms)에 행이 통째로 재정렬된다.
+  // 그 사이에 터치하면 의도하지 않은 선수로 들어간다 — 온보딩 선수 선택과 같은
+  // bounded settle 로 닫는다: 먼저 끝난 쪽(응답 또는 timeout)이 이기고, 늦게 온 응답은 무시한다.
+  const [popularity, setPopularity] = useState<PopularityCounts>({});
+  const [popularityStatus, setPopularityStatus] = useState<"loading" | "ready">("loading");
+  useEffect(() => {
+    let stale = false;
+    let settled = false;
+    // 집계가 느리거나 죽어도 목록을 영원히 막지 않는다 — 빈 counts 로 가나다순 확정.
+    const timeout = window.setTimeout(() => {
+      if (stale || settled) return;
+      settled = true;
+      setPopularityStatus("ready");
+    }, 1200);
+    fetch("/api/player-popularity")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => {
+        if (stale || settled) return;
+        settled = true;
+        setPopularity(normalizePopularityCounts(json?.counts));
+        setPopularityStatus("ready");
+      })
+      .catch(() => {
+        // 실패해도 목록은 나와야 한다(counts 빈 상태 → 가나다순).
+        if (stale || settled) return;
+        settled = true;
+        setPopularityStatus("ready");
+      });
+    return () => { stale = true; window.clearTimeout(timeout); };
+  }, []);
   const [visibleCount, setVisibleCount] = useState(20);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
@@ -131,8 +190,8 @@ function PlayersPageContent() {
       );
     }
 
-    return sortPlayers(result, sortMode);
-  }, [players, filterMode, filterTeam, filterPosition, searchQuery, sortMode]);
+    return sortPlayers(result, sortMode, popularity);
+  }, [players, filterMode, filterTeam, filterPosition, searchQuery, sortMode, popularity]);
 
   // 동명이인 감지: 이름이 같은 선수가 2명 이상이면 Set에 추가
   const duplicateNames = useMemo(() => {
@@ -165,7 +224,7 @@ function PlayersPageContent() {
     if (filterTeam) params.set("team", String(filterTeam));
     if (filterPosition) params.set("pos", filterPosition);
     if (searchQuery.trim()) params.set("q", searchQuery.trim());
-    if (sortMode !== "name") params.set("sort", sortMode);
+    if (sortMode !== DEFAULT_SORT) params.set("sort", sortMode);
     const qs = params.toString();
     const newUrl = qs ? `/players?${qs}` : "/players";
     router.replace(newUrl, { scroll: false });
@@ -291,7 +350,7 @@ function PlayersPageContent() {
 
       {/* 소팅 + 결과 수 */}
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-xs text-text-tertiary">
+        <span data-testid="players-count" className="text-xs text-text-tertiary">
           {searchQuery ? `검색 결과 ${filtered.length}명` : `${filtered.length}명`}
         </span>
         <div className="flex gap-1">
@@ -312,7 +371,16 @@ function PlayersPageContent() {
       </div>
 
       {/* 선수 목록 */}
-      <div className="space-y-2 pb-24">
+      {sortMode === "popularity" && popularityStatus === "loading" ? (
+        // 재정렬 방지: 인기순은 집계가 settle 된 뒤에만 목록을 그린다.
+        <div
+          data-testid="players-popularity-loading"
+          className="py-16 text-center text-sm text-text-tertiary"
+        >
+          불러오는 중...
+        </div>
+      ) : (
+      <div data-testid="players-list" className="space-y-2 pb-24">
         {filtered.slice(0, visibleCount).map((player, i) => (
           <Link key={player.kboId || i} href={`/community/players/${player.kboId}`} prefetch={false}>
             <div className="flex items-center gap-3 rounded-xl bg-bg-secondary/50 px-4 py-3 active:bg-bg-tertiary transition-colors">
@@ -355,6 +423,7 @@ function PlayersPageContent() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

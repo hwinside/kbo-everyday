@@ -190,6 +190,17 @@ extension Color {
     }
 }
 
+/// 잠금화면 카드/DI 탭 → 해당 경기 페이지 universal link.
+/// widgetURL은 NSUserActivity(webpageURL)로 앱에 전달되고, AppDelegate continue(userActivity:)가
+/// path를 PushDeepLinkPlugin.stash에 보관 → 웹(native-push-deeplink)이 단일 pending 경로로 소비한다.
+/// gameId는 엄격 allowlist(영숫자 1~32자, 예: 20260815HHKT0)만 통과 — '/'·dot-segment·
+/// 특수문자는 percent-encoding 이전에 URL 생성 자체를 거부해 임의 경로 주입을 차단한다
+/// (삼순 #1204 R1-③). 실패 시 nil → widgetURL 미설정(기존 동작 = 앱 열기).
+func gameDeepLinkURL(_ gameId: String) -> URL? {
+    guard gameId.range(of: "^[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return nil }
+    return URL(string: "https://keubo.fan/games/\(gameId)")
+}
+
 // ⚠️ iOS 18.0 게이트(기존 16.1) — 애플워치 Smart Stack 전용 레이아웃(supplementalActivityFamilies)이
 // iOS 18+/watchOS 11+ API인데, WidgetBundleBuilder가 #available의 else 분기를 지원하지 않아
 // 16.1용 레거시 등록과 병행이 컴파일 불가(같은 Attributes에 이중 등록도 미정의 동작).
@@ -205,6 +216,10 @@ struct KBOLiveActivityWidget: Widget {
             KBOActivityCard(attributes: context.attributes, state: context.state)
                 .activityBackgroundTint(Color(hex: kCardDarkBase))
                 .activitySystemActionForegroundColor(Color.white)
+                // 잠금화면 카드 탭 → 해당 경기 페이지 딥링크(universal link). AppDelegate
+                // continue(userActivity:)가 path를 PushDeepLinkPlugin.stash로 보관 → 웹이 소비.
+                // (#cs 2026-08-15 하린아빠 실기기 QA — 카드 탭이 홈으로만 감)
+                .widgetURL(gameDeepLinkURL(context.attributes.gameId))
         } dynamicIsland: { context in
             DynamicIsland {
                 // 확장 — 양팀 로고 + 약어 + 점수 + 이닝 (다이아몬드는 공간상 잠금화면만)
@@ -271,6 +286,9 @@ struct KBOLiveActivityWidget: Widget {
                         .font(montserrat(13, .bold)).monospacedDigit()
                 }
             }
+            // DI 전체(확장·compact·minimal 모든 표면) 탭 → 경기 페이지 딥링크.
+            // 특정 영역 뷰에만 달면 다른 표면 탭이 미보장된다(삼순 #1204 R1-②).
+            .widgetURL(gameDeepLinkURL(context.attributes.gameId))
         }
         // 애플워치 Smart Stack 노출 opt-in — .small 패밀리를 추가하면 워치에서 DI compact 축소판
         // 대신 KBOActivityCard의 워치 전용 레이아웃(KBOWatchSmallCard)이 렌더된다.

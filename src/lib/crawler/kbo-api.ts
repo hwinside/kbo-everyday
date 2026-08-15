@@ -76,6 +76,15 @@ export interface KboGame {
   runnerOrders?: { first: number; second: number; third: number };
   currentPitcher: string;
   currentBatter: string;
+  /**
+   * 위 라이브 상세(BSO/주자/현재투타)가 **실제 KBO 관측값**인지 여부(provenance).
+   *
+   * 왜 필요한가 (삼순 2026-08-15 NO-GO): Naver 매핑은 이 필드들을 항상 `0`/`false` 로
+   * degrade 채운다. 값만 보면 "볼카운트 0-0-0, 주자 없음"과 "아직 못 받아왔다"가
+   * 구분되지 않아, KBO timeout·시점 불일치에도 UI 가 거짓 0-0-0 을 사실처럼 단정하게 된다.
+   * KBO 원본에서 온 값일 때만 true, degrade/미확인이면 false.
+   */
+  liveDetailFromKbo: boolean;
   // 순위
   awayRank: number;
   homeRank: number;
@@ -123,9 +132,38 @@ interface KboGameRaw {
   TV_IF?: string;
 }
 
+/**
+ * raw KBO live 상세 필드가 전부 유효한가 — provenance 판정의 유일한 기준.
+ *
+ * HTTP 200 이어도 per-game 상세 필드가 빠지는 부분 열화가 있다. `?? 0` 으로 합성하면
+ * 그 0 이 "실제 관측된 0"과 구분되지 않으므로, 합성 전에 원본 유효성을 먼저 본다.
+ * live 가 아닌 경기는 상세 자체가 의미 없으므로 false(카드도 live 에서만 쓴다).
+ */
+function hasValidLiveDetail(raw: KboGameRaw, status: KboGame["status"]): boolean {
+  if (status !== "live") return false;
+  // 정수 + 도메인 상한까지 검증(삼순 2026-08-15): 소수·과대값(예: BALL_CN=99)은 필드 밀린
+  // 등 upstream 열화의 신호이며 관측값으로 믿으면 안 된다. 상한은 표기 도메인(3B/2S/2O)이
+  // 아니라 순간 관측 도메인이다 — 볼넷/삼진/이닝종료 순간 피드에 4B/3S/3O 가 실재할 수
+  // 있으므로 그것까지 거부하면 정상 경기가 '준비 중'으로 오판된다(카드가 표기 상한으로 clamp).
+  const inRange = (n: unknown, max: number): boolean =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= max;
+  return (
+    inRange(raw.BALL_CN, 4) &&
+    inRange(raw.STRIKE_CN, 3) &&
+    inRange(raw.OUT_CN, 3) &&
+    // 주자 타순은 0(없음)~9번 타순만 유효하다.
+    inRange(raw.B1_BAT_ORDER_NO, 9) &&
+    inRange(raw.B2_BAT_ORDER_NO, 9) &&
+    inRange(raw.B3_BAT_ORDER_NO, 9)
+  );
+}
+
 function parseGame(raw: KboGameRaw): KboGame {
   const status = parseGameStatus(raw.GAME_STATE_SC?.toString(), raw.CANCEL_SC_ID?.toString());
   const isTop = raw.GAME_TB_SC === "T";
+  // 상세 유효성을 한 번만 판정해 **값과 플래그를 같은 조건으로** 묶는다.
+  // 이렇게 해야 "합성 0 인데 flag만 true" 가 구조적으로 불가능해진다(삼순 P1).
+  const liveDetailOk = hasValidLiveDetail(raw, status);
   return {
     gameId: raw.G_ID,
     date: raw.G_DT,
@@ -145,14 +183,16 @@ function parseGame(raw: KboGameRaw): KboGame {
     winPitcher: raw.W_PIT_P_NM?.trim() ?? "",
     losePitcher: raw.L_PIT_P_NM?.trim() ?? "",
     savePitcher: raw.SV_PIT_P_NM?.trim() ?? "",
-    strikes: raw.STRIKE_CN ?? 0,
-    balls: raw.BALL_CN ?? 0,
-    outs: raw.OUT_CN ?? 0,
+    strikes: liveDetailOk ? raw.STRIKE_CN : 0,
+    balls: liveDetailOk ? raw.BALL_CN : 0,
+    outs: liveDetailOk ? raw.OUT_CN : 0,
     runnersOn: {
-      first: (raw.B1_BAT_ORDER_NO ?? 0) > 0,
-      second: (raw.B2_BAT_ORDER_NO ?? 0) > 0,
-      third: (raw.B3_BAT_ORDER_NO ?? 0) > 0,
+      first: liveDetailOk && raw.B1_BAT_ORDER_NO > 0,
+      second: liveDetailOk && raw.B2_BAT_ORDER_NO > 0,
+      third: liveDetailOk && raw.B3_BAT_ORDER_NO > 0,
     },
+    // 값과 동일한 조건 — 유효한 원본을 그대로 실은 때만 "실제 관측값"이다.
+    liveDetailFromKbo: liveDetailOk,
     currentPitcher: isTop ? (raw.B_P_NM?.trim() ?? "") : (raw.T_P_NM?.trim() ?? ""),
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,

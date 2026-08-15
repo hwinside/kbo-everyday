@@ -180,7 +180,12 @@ const server = createServer(async (request, response) => {
   const body = chunks.length > 0 ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
   response.setHeader("Content-Type", "application/json");
   if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
-    response.end(JSON.stringify(ledgerRun?.status === "ready" ? [ledgerRun] : []));
+    // 실제 PostgREST처럼 artifact_sha256 필터를 존중한다 — 필터를 무시하면 임의 corpus의
+    // ready 확인(삼순 2차 계약) RED를 검증할 수 없다.
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sha = (url.searchParams.get("artifact_sha256") ?? "").replace(/^eq\./, "");
+    const matches = ledgerRun?.status === "ready" && (!sha || ledgerRun.artifact_sha256 === sha);
+    response.end(JSON.stringify(matches ? [ledgerRun] : []));
     return;
   }
   if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_runs")) {
@@ -190,6 +195,23 @@ const server = createServer(async (request, response) => {
     ledgerRun = { ...row, status: "loading" };
     response.statusCode = 201;
     response.end("null");
+    return;
+  }
+  if (request.method === "GET" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
+    // 실제 PostgREST처럼 artifact_sha256·entity 필터를 존중한다 — provenance exact 대조(삼순 3차)의
+    // RED를 검증하려면 mock이 저장된 ledger 행을 그대로 돌려줘야 한다.
+    const url = new URL(request.url, "http://127.0.0.1");
+    const sha = (url.searchParams.get("artifact_sha256") ?? "").replace(/^eq\./, "");
+    const entityFilter = decodeURIComponent(url.searchParams.get("entity") ?? "");
+    const entityNames = entityFilter.startsWith("in.(")
+      ? entityFilter.slice(4, -1).split(",").map((name) => name.replace(/^"|"$/g, ""))
+      : null;
+    const matched = [...ledgerRecords.values()].filter((row) =>
+      (!sha || row.artifact_sha256 === sha)
+      && (!entityNames || entityNames.includes(String(row.entity))));
+    response.end(JSON.stringify(matched.map((row) => ({
+      row_index: row.row_index, record_hash: row.record_hash, collector: row.collector, entity: row.entity,
+    }))));
     return;
   }
   if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_corpus_records")) {
@@ -436,6 +458,65 @@ try {
   assert.equal(claimCounts.get(kiaSourceKey), priorKiaClaims + 1, "동일 root/count의 child 변경은 재claim해야 한다");
   assert.doesNotMatch(changed.stdout, new RegExp(`READY ${kiaSourceKey} already-loaded`));
   console.log("PASS actual E2E — 18 physical/17 latest ledger + row provenance + 동일 root/count child 재적재");
+
+  // 부분 재적재(--entities) 원장 보존 — P0(2026-08-15 삼순): 필터된 부분집합이 전체 run의
+  // corpus_runs를 expected_rows 축소/status=loading으로 덮으면 원장 훼손이다. 실제 CLI로 검증한다.
+  const ledgerBeforePartial = JSON.stringify(ledgerRun);
+  const ledgerRecordsBeforePartial = ledgerRecords.size;
+  const partial = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(partial.code, 0, `${partial.stdout}\n${partial.stderr}`);
+  assert.match(partial.stdout, /LEDGER SKIP/, "부분 재적재는 LEDGER SKIP을 명시해야 한다");
+  assert.equal(JSON.stringify(ledgerRun), ledgerBeforePartial, "--entities apply가 corpus_runs를 변경하면 안 된다");
+  assert.equal(ledgerRecords.size, ledgerRecordsBeforePartial, "--entities apply가 corpus_records를 변경하면 안 된다");
+  const partialAbsent = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=없는사람",
+  ], applyEnv);
+  assert.equal(partialAbsent.code, 1, "corpus에 없는 entity 요청은 fail-close여야 한다");
+  assert.match(partialAbsent.stderr, /corpus에 없는 entity/);
+  // RED: ledger에 ready로 등록되지 않은 임의(변조) corpus 파일은 부분 재적재를 거부해야 한다.
+  // fetchedAt만 바꿔 artifact SHA를 바꾼다(스키마 유효 유지 — text 변조는 len 검증, recovery 대상
+  // 변조는 provenance 대조에 먼저 걸려 ready-check RED 증명이 안 된다 → recovery 밖 entity를 고른다).
+  const tamperedFixtures = fixtures.map((fixture) =>
+    fixture.entity === "KIA 타이거즈" ? { ...fixture, fetchedAt: "2026-08-04T00:00:00.000Z" } : fixture);
+  const tamperedFile = writeJsonl("tampered-partial.jsonl", tamperedFixtures, "\n");
+  const tampered = await run([
+    `--file=${tamperedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(tampered.code, 1, "미등록 artifact의 --entities apply는 fail-close여야 한다");
+  assert.match(tampered.stderr, /ready로 등록된 artifact만 허용/);
+  // RED(삼순 4차 P1): 같은 corpus artifact + **빈/교체 recovery** — artifact SHA는 그대로라
+  // ready 확인은 통과하지만 collector 귀속이 뒤바뀜다. ledger record_hash+collector exact
+  // 대조가 이걸 잡아 exit 1 + 원장·serving 쓰기 0이어야 한다.
+  const emptyRecoveryFile = writeJsonl("empty-recovery.jsonl", [], "\n");
+  const ledgerRunBeforeSwap = JSON.stringify(ledgerRun);
+  const ledgerRecordsBeforeSwap = ledgerRecords.size;
+  const servingBeforeSwap = [...serving.values()].reduce((sum, count) => sum + count, 0);
+  const swappedRecovery = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${emptyRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(swappedRecovery.code, 1, "recovery 교체(collector 귀속 변조)는 provenance 대조에서 fail-close여야 한다");
+  assert.match(swappedRecovery.stderr, /provenance 불일치|Mac recovery rows absent/);
+  assert.equal(JSON.stringify(ledgerRun), ledgerRunBeforeSwap, "recovery 변조 실패 시 corpus_runs 쓰기 0");
+  assert.equal(ledgerRecords.size, ledgerRecordsBeforeSwap, "recovery 변조 실패 시 corpus_records 쓰기 0");
+  assert.equal(
+    [...serving.values()].reduce((sum, count) => sum + count, 0),
+    servingBeforeSwap,
+    "recovery 변조 실패 시 serving 쓰기 0",
+  );
+  console.log("PASS actual E2E — --entities 원장 보존 + 부재 entity fail-close + 미등록 artifact 거부 + recovery 변조 RED(쓰기 0)");
 } finally {
   server.close();
 }

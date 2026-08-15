@@ -57,28 +57,40 @@ export function requireOldestFullEntryTimestamp(
  * 매일 CI 크롤한 전체 JSON에서 채워 넣는다. 라이브 선수는 실시간 값을 유지하고
  * 비규정(백업) 선수만 추가 → 기록실 전용. 다른 화면은 full 없이 규정 리더보드 그대로.
  *
- * dedup 규칙(중복 노출 방지 + 동명이인 보존):
- *  1) canonical kboId 기준. 외국인은 라이브=영문ID·크롤=숫자ID로 갈리므로
- *     FOREIGN_NUMERIC_TO_ALPHA로 정규화해 한 선수로 모은다.
- *  2) 라이브에서 ID 미해결(빈 kboId, 주로 외국인)인 선수는 크롤이 숫자ID로 들고 있어
- *     id-key가 어긋남 → 그 name::team을 별도로 막아 중복 차단.
- *  3) 서로 다른 숫자ID 동명이인(예: 삼성 이승현 2명)은 정규화 대상이 아니라 그대로 보존.
- *  4) 크롤 JSON 자체의 동일 ID 중복도 append 중 dedup으로 1건만 남긴다.
+ * identity 계약(삼순 #1196 3차 P0-1 — canonical ID-only, 혼합/보조키 없음):
+ *  1) 모든 행은 canonical kboId 보유가 전제다. 결손은 `name::team` 보조키로
+ *     흡수하지 않고 **throw** 한다(보조키 자체가 동명이인 오염 경로였다).
+ *     외국인 영문/숫자 이중 ID 는 FOREIGN_NUMERIC_TO_ALPHA 정규화로 한 선수로 모은다.
+ *  2) live 내 중복·crawled 내 중복은 조용한 dedupe 가 아니라 **throw** (소스 오염).
+ *  3) live↔crawled 같은 ID 는 정상(같은 선수) — 단 name 이 다르면 식별 충돌로 **throw**.
+ *     (team 은 이적 당일 live/static 시점차로 정당하게 갈릴 수 있어 충돌 판정에서 제외,
+ *      name 까지 다르면 같은 ID 가 다른 사람을 가리키는 오염이다.)
+ *  4) 서로 다른 숫자ID 동명이인(예: 삼성 이승현 2명)은 각자 ID 로 그대로 보존된다.
+ * 위반 시 throw → 호출측(GET)이 전체 fallback 으로 닫는다.
  */
 export function mergeFullEntry<T extends FullEntryRow>(live: T[], crawled: T[]): T[] {
-  const keyOf = (p: T): string => {
+  const liveById = new Map<string, T>();
+  for (const p of live) {
     const id = canonId(p.kboId);
-    return id ? `id:${id}` : `nt:${p.name}::${p.team}`;
-  };
-  const seen = new Set(live.map(keyOf));
-  const liveUnresolvedNT = new Set(
-    live.filter((p) => !canonId(p.kboId)).map((p) => `${p.name}::${p.team}`),
-  );
+    if (!id) throw new Error(`full-entry identity missing (live): ${p.name}::${p.team}`);
+    if (liveById.has(id)) throw new Error(`full-entry identity duplicated (live): ${id}`);
+    liveById.set(id, p);
+  }
+  const crawledSeen = new Set<string>();
   const out: T[] = [...live];
   for (const p of crawled) {
-    const k = keyOf(p);
-    if (seen.has(k) || liveUnresolvedNT.has(`${p.name}::${p.team}`)) continue;
-    seen.add(k);
+    const id = canonId(p.kboId);
+    if (!id) throw new Error(`full-entry identity missing (crawled): ${p.name}::${p.team}`);
+    if (crawledSeen.has(id)) throw new Error(`full-entry identity duplicated (crawled): ${id}`);
+    crawledSeen.add(id);
+    const existing = liveById.get(id);
+    if (existing) {
+      // 같은 선수 — 라이브 실시간 행 유지. name 불일치는 식별 체계 오염이다.
+      if (existing.name.trim() !== p.name.trim()) {
+        throw new Error(`full-entry identity conflict: ${id}`);
+      }
+      continue;
+    }
     out.push({ ...p, qualifiedRate: typeof p.qualifiedRate === "number" ? p.qualifiedRate : 0 });
   }
   return out;
