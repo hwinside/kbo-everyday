@@ -1,5 +1,5 @@
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
-import { sendFcmToUsers } from "@/lib/notifications/fcm";
+import { sendFcmToTokens, sendFcmToUsers } from "@/lib/notifications/fcm";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import type {
   InterviewDeps,
@@ -32,6 +32,7 @@ export function createInterviewDeps(): InterviewDeps {
       if (error) throw new Error(`lease pending interviews failed: ${error.message}`);
       const rows = (data ?? []) as Array<{
         id: string; game_id: string; video_id: string; title: string; player_names: string[] | null;
+        notify_retry_tokens: string[] | null; notify_attempts: number | null;
       }>;
       if (rows.length === 0) return [];
 
@@ -54,6 +55,10 @@ export function createInterviewDeps(): InterviewDeps {
         title: r.title as string,
         playerNames: (r.player_names as string[]) ?? [],
         winnerTeamId: winnerByGame.get(r.game_id as string) ?? null,
+        retryTokens: Array.isArray(r.notify_retry_tokens)
+          ? r.notify_retry_tokens.filter((t): t is string => typeof t === "string" && t.length > 0)
+          : [],
+        attempts: typeof r.notify_attempts === "number" ? r.notify_attempts : 0,
       }));
     },
 
@@ -62,7 +67,9 @@ export function createInterviewDeps(): InterviewDeps {
     markSent: async (rowIds: string[]): Promise<void> => {
       const { error } = await supabase
         .from("postgame_interviews")
-        .update({ notify_state: "sent", notify_lease_until: null })
+        .update({
+          notify_state: "sent", notify_lease_until: null, notify_retry_tokens: null,
+        })
         .in("id", rowIds);
       if (error) throw new Error(`mark sent failed: ${error.message}`);
     },
@@ -102,9 +109,39 @@ export function createInterviewDeps(): InterviewDeps {
 
     fetchFavoritePlayerFanIds: (kboId) => fetchFavoritePlayerFanIds(kboId),
     // prefKey 전달 = 토글 off 유저 필터링(sendFcmToUsers 내부 notification_prefs 조회).
+    // outcomes의 transient 토큰을 버리지 않고 반환해 durable retry에 쓴다(삼순 NO-GO 2026-08-15).
     sendPush: async (userIds, payload, prefKey) => {
       const result = await sendFcmToUsers(userIds, payload, prefKey);
-      return { ok: result.ok };
+      return {
+        ok: result.ok,
+        retryableTokens: (result.outcomes ?? [])
+          .filter((o) => o.status === "transient")
+          .map((o) => o.token),
+      };
+    },
+    // durable retry — 실패 확정 토큰에만 재발송(유저/prefs 재조회 없음).
+    sendToTokens: async (tokens, payload) => {
+      const result = await sendFcmToTokens(tokens, payload);
+      return {
+        ok: result.ok,
+        retryableTokens: (result.outcomes ?? [])
+          .filter((o) => o.status === "transient")
+          .map((o) => o.token),
+      };
+    },
+    // transient 토큰 durable 저장 + pending 복귀 — 다음 run이 토큰 경로로 재시도.
+    storeRetryTokens: async (rowId, tokens, attempts) => {
+      const { error } = await supabase
+        .from("postgame_interviews")
+        .update({
+          notify_state: "pending",
+          notify_lease_until: null,
+          notify_retry_tokens: tokens,
+          notify_attempts: attempts,
+        })
+        .eq("id", rowId)
+        .neq("notify_state", "sent");
+      if (error) throw new Error(`store retry tokens failed: ${error.message}`);
     },
   };
 }

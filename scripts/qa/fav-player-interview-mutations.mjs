@@ -11,6 +11,7 @@ const files = {
   deps: fs.readFileSync("src/lib/notifications/fav-player-interview-deps.ts", "utf8"),
   route: fs.readFileSync("src/app/api/cron/postgame-interviews/route.ts", "utf8"),
   migration: fs.readFileSync("supabase/migrations/20260814_fav_player_interview_notify.sql", "utf8"),
+  migration2: fs.readFileSync("supabase/migrations/20260815191500_fav_interview_transient_retry.sql", "utf8"),
 };
 
 function violations(x) {
@@ -28,6 +29,20 @@ function violations(x) {
   }
   if (x.core.includes("releaseLease(releaseRowIds).catch")) out.push("release-failure-hidden");
   if (!x.core.includes("await deps.releaseLease(releaseRowIds);")) out.push("release-not-awaited");
+  // transient 기기 durable retry (삼순 NO-GO 2026-08-15) — 버리면 영구 유실.
+  if (!x.core.includes("if (result.retryableTokens.length > 0) {")) out.push("transient-dropped");
+  if (!x.core.includes("await deps.storeRetryTokens(interview.id, result.retryableTokens, interview.attempts + 1);")) {
+    out.push("retry-not-durable");
+  }
+  if (!x.core.includes("await deps.sendToTokens(interview.retryTokens, {")) out.push("retry-path-missing");
+  // sendPush·sendToTokens 둘 다 transient outcome을 반환해야 한다(출현 2회 강제 —
+  // includes만 보면 한 쪽 배선 제거 변이가 GREEN으로 샐: 8/15 실측).
+  if (x.deps.split('.filter((o) => o.status === "transient")').length - 1 !== 2) {
+    out.push("transient-outcome-unwired");
+  }
+  if (!x.migration2.includes("add column if not exists notify_retry_tokens jsonb")) {
+    out.push("retry-column-missing");
+  }
   return out;
 }
 
@@ -45,6 +60,11 @@ const mutations = [
   ["marker read에서 gameId 제거", "core", "hasSentMarker(interview.gameId, interview.videoId)", "hasSentMarker(interview.videoId, interview.videoId)"],
   ["marker storage에서 gameId 제거", "deps", "`interview#${gameId}#${videoId}`", "`interview#${videoId}`"],
   ["release 실패 다시 은폐", "core", "await deps.releaseLease(releaseRowIds);", "await deps.releaseLease(releaseRowIds).catch(() => {});"],
+  ["transient 기기 다시 버림(유실 복원)", "core", "if (result.retryableTokens.length > 0) {", "if (false) {"],
+  ["retry 토큰 durable 저장 제거", "core", "await deps.storeRetryTokens(interview.id, result.retryableTokens, interview.attempts + 1);", ""],
+  ["retry 재발송 경로 제거", "core", "await deps.sendToTokens(interview.retryTokens, {", "await (async () => ({ ok: true, retryableTokens: [] }))({"],
+  ["deps transient outcome 배선 제거(sendPush 쪽)", "deps", '.filter((o) => o.status === "transient")', '.filter(() => false)'],
+  ["retry 컬럼 migration 제거", "migration2", "add column if not exists notify_retry_tokens jsonb", "-- removed"],
 ];
 
 let failed = 0;
