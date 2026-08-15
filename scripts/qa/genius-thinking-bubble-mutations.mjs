@@ -90,7 +90,18 @@ for (const mutation of mutations) {
     continue;
   }
   fs.writeFileSync(mutation.file, source.replace(mutation.from, mutation.to));
-  const run = spawnSync("npm", ["run", "-s", mutation.script ?? "qa:genius-thinking-bubble"], { encoding: "utf8" });
+  // 빌드 컨테이너 OOM(SIGKILL, status 137)은 판정 불능이지 GREEN이 아니다 — GREEN은 반드시
+  // status 0 으로만 나타난다. 자식 힙을 제한해 OOM 자체를 줄이고, 그래도 죽으면 1회 재시도한다
+  // (Vercel 2026-08-15 M1 status=137 실측 — 로컬 7/7 RED 와 동일 소스).
+  const runOnce = () => spawnSync("npm", ["run", "-s", mutation.script ?? "qa:genius-thinking-bubble"], {
+    encoding: "utf8",
+    env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=2048" },
+  });
+  let run = runOnce();
+  if (run.status === 137 || run.signal === "SIGKILL") {
+    console.warn(`WARN ${mutation.name}: SIGKILL(OOM 추정) — 1회 재시도`);
+    run = runOnce();
+  }
   restore();
   const output = `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
   if (run.status !== 0 && output.includes(mutation.expect)) {
