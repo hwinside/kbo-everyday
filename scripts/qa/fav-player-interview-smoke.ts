@@ -62,6 +62,7 @@ function iv(over: Partial<PendingInterview> = {}): PendingInterview {
     winnerTeamId: 1,
     retryTokens: [],
     attempts: 0,
+    visibilityDeferrals: 0,
     ...over,
   };
 }
@@ -74,6 +75,8 @@ interface Calls {
   }>;
   tokenSends: Array<{ tokens: string[]; url: string }>;
   storedRetries: Array<{ rowId: string; tokens: string[]; attempts: number }>;
+  visibilityChecks: string[];
+  visibilityDeferrals: Array<{ rowId: string; deferrals: number }>;
 }
 interface Over {
   leased?: PendingInterview[];
@@ -92,11 +95,14 @@ interface Over {
   /** 토큰 재발송에서도 여전히 transient인 토큰. */
   tokenSendRetryable?: string[];
   storeRetryThrow?: boolean;
+  /** 발송 직전 노출 확인 결과. 기본값은 present(보임). */
+  visible?: SentMarkerState;
+  visibleThrow?: boolean;
 }
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
   const calls: Calls = {
     markedSent: [], released: [], markerChecks: [], markerInserts: [], audience: [], sends: [],
-    tokenSends: [], storedRetries: [],
+    tokenSends: [], storedRetries: [], visibilityChecks: [], visibilityDeferrals: [],
   };
   const deps: InterviewDeps = {
     leasePendingInterviews: async () => over.leased ?? [iv()],
@@ -116,6 +122,11 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
       if (over.audienceThrow) throw new Error("audience boom");
       return over.audience ? over.audience(kboId) : ["u1", "u2"];
     },
+    isVisibleOnGamePage: async (gameId, videoId) => {
+      calls.visibilityChecks.push(`${gameId}#${videoId}`);
+      if (over.visibleThrow) throw new Error("visibility boom");
+      return over.visible ?? "present";
+    },
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
       if (over.sendThrow) throw new Error("send boom");
@@ -132,6 +143,9 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
     storeRetryTokens: async (rowId, tokens, attempts) => {
       if (over.storeRetryThrow) throw new Error("store boom");
       calls.storedRetries.push({ rowId, tokens, attempts });
+    },
+    recordVisibilityDeferral: async (rowId, deferrals) => {
+      calls.visibilityDeferrals.push({ rowId, deferrals });
     },
   };
   return { deps, calls };
@@ -358,6 +372,87 @@ async function main() {
     check("상한 초과 → gaveUpDevices 관측 + 종결·재발송 없음",
       s6.gaveUpDevices === 2 && g.calls.tokenSends.length === 0
       && g.calls.markedSent[0]?.[0] === "row-1");
+  }
+
+  console.log("[R6] 노출 확인 후 발송 (2026-08-15 문정빈 사고)");
+  {
+    // 기본: 보임 → 발송. 확인은 발송 전에 일어난다.
+    const ok = makeDeps({ visible: "present" });
+    const s = await notifyFavPlayerInterviews(ok.deps);
+    check("보임 → 발송·확인 1회(해당 영상 기준)",
+      s.sent === 1 && ok.calls.sends.length === 1
+      && ok.calls.visibilityChecks[0] === "20260814SKLG0#vid-1");
+
+    // 핵심: 아직 안 보임 → 발송 금지·종결 금지·다음 run 재시도
+    const nv = makeDeps({ visible: "absent" });
+    const s2 = await notifyFavPlayerInterviews(nv.deps);
+    check("안 보임 → 발송 0·sent 전이 금지·마커 미기록",
+      s2.deferredNotVisible === 1 && nv.calls.sends.length === 0
+      && nv.calls.markedSent.length === 0 && nv.calls.markerInserts.length === 0);
+    // 삼순 NO-GO P0-2 — 보류는 전용 카운터로만 기록하고 FCM attempts는 건드리지 않는다.
+    check("안 보임 → 보류 전용 카운터만 증가(FCM attempts 미오염)",
+      nv.calls.visibilityDeferrals[0]?.rowId === "row-1"
+      && nv.calls.visibilityDeferrals[0]?.deferrals === 1
+      && nv.calls.storedRetries.length === 0);
+    const nvD = makeDeps({ visible: "absent", leased: [iv({ visibilityDeferrals: 4, attempts: 2 })] });
+    await notifyFavPlayerInterviews(nvD.deps);
+    check("보류 누적 → 기존 deferrals에서 +1, attempts는 그대로",
+      nvD.calls.visibilityDeferrals[0]?.deferrals === 5
+      && nvD.calls.storedRetries.length === 0);
+
+    // 확인 경로 고장도 보류 — 빈 페이지로 보내는 것보다 늦게 보내는 게 낫다.
+    const ve = makeDeps({ visible: "error" });
+    const s3 = await notifyFavPlayerInterviews(ve.deps);
+    check("확인 error → 발송 보류", s3.deferredNotVisible === 1 && ve.calls.sends.length === 0);
+    const vt = makeDeps({ visibleThrow: true });
+    const s4 = await notifyFavPlayerInterviews(vt.deps);
+    check("확인 throw → 발송 보류", s4.deferredNotVisible === 1 && vt.calls.sends.length === 0);
+
+    // 삼순 NO-GO P0-1 — fail-close에 예외 없음. attempts나 deferrals가 아무리 높아도
+    // 노출 확인 없이는 절대 발송하지 않는다(빈 페이지 알림 재발 차단).
+    const cap = makeDeps({ visible: "absent", leased: [iv({ attempts: MAX_SEND_ATTEMPTS })] });
+    const s5 = await notifyFavPlayerInterviews(cap.deps);
+    check("attempts 상한이어도 미노출이면 발송 금지(fail-open 제거)",
+      s5.sent === 0 && cap.calls.sends.length === 0
+      && cap.calls.visibilityChecks.length === 1 && s5.deferredNotVisible === 1);
+    const capD = makeDeps({ visible: "error", leased: [iv({ visibilityDeferrals: 99 })] });
+    const s6 = await notifyFavPlayerInterviews(capD.deps);
+    check("보류 99회 + 확인 error → 여전히 발송 금지",
+      s6.sent === 0 && capD.calls.sends.length === 0 && s6.deferredNotVisible === 1);
+
+    // 삼순 NO-GO 2차 P0 — retry 경로도 노출 확인 없이 sendToTokens 금지.
+    // absent/error면 tokens·FCM attempts 보존 + 보류 카운터만 증가.
+    const rA = makeDeps({
+      visible: "absent", leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 2 })],
+    });
+    const sRA = await notifyFavPlayerInterviews(rA.deps);
+    check("retry + 안 보임 → sendToTokens 0·보류만(tokens·attempts 보존)",
+      rA.calls.tokenSends.length === 0 && sRA.deferredNotVisible === 1
+      && rA.calls.visibilityDeferrals[0]?.deferrals === 1
+      && rA.calls.storedRetries.length === 0 && rA.calls.markedSent.length === 0);
+    const rE = makeDeps({
+      visibleThrow: true, leased: [iv({ retryTokens: ["tokA"], attempts: 1 })],
+    });
+    const sRE = await notifyFavPlayerInterviews(rE.deps);
+    check("retry + 확인 throw → sendToTokens 0·보류",
+      rE.calls.tokenSends.length === 0 && sRE.deferredNotVisible === 1);
+    const rC = makeDeps({
+      visible: "absent",
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1, visibilityDeferrals: 99 })],
+    });
+    const sRC = await notifyFavPlayerInterviews(rC.deps);
+    check("retry + 보류 99회여도 미노출이면 발송 금지(fail-close 예외 없음)",
+      rC.calls.tokenSends.length === 0 && sRC.deferredNotVisible === 1
+      && rC.calls.visibilityDeferrals[0]?.deferrals === 100);
+    // 보이면 기존대로 재발송된다(게이트가 정상 경로를 막지 않음).
+    const rP = makeDeps({ leased: [iv({ retryTokens: ["tokA"], attempts: 1 })] });
+    const sRP = await notifyFavPlayerInterviews(rP.deps);
+    check("retry + 보임 → 정상 재발송", rP.calls.tokenSends.length === 1 && sRP.sent === 1);
+
+    // 확인은 audience 확정 뒤 — 보낼 사람이 없으면 확인 자체가 낭비다.
+    const noAud = makeDeps({ audience: () => [] });
+    await notifyFavPlayerInterviews(noAud.deps);
+    check("대상 0 → 노출 확인 호출 안 함", noAud.calls.visibilityChecks.length === 0);
   }
 
   console.log("[3] 경계 처리");
