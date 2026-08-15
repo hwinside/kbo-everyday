@@ -44,6 +44,9 @@ async function loadSchema(): Promise<Db> {
       question_normalized text,
       question_normalize_status text,
       question_correction_candidate text,
+      -- 톤 관측 칸 (migration 20260814235500) — buildQuestionLogRow 가 항상 보내므로
+      -- 여기 없으면 실 INSERT 가 42703 으로 죽는다(2026-08-14 Vercel 실측).
+      tone_compliant boolean,
       match_path text,
       answer text,
       input_tokens integer,

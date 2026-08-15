@@ -9,8 +9,11 @@ import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  geniusMotionForResult,
+  GENIUS_MOTION_COOLDOWN_MS,
   isAckPhrase,
   MAX_QUESTION_LEN,
+  SMALLTALK_STREAK_LIMIT,
   MIN_QUESTION_LEN,
   isPickedPlayerAllowed,
   type GlossaryEntry,
@@ -29,7 +32,7 @@ import {
 } from "@/lib/baseball-qa/context";
 import {
   BASEBALL_GENIUS_USER_ID,
-  replyKindForMatchPath,
+  composeGeniusReplyPayload,
   type GeniusReplyPayload,
 } from "@/lib/constants/baseball-genius";
 import {
@@ -853,6 +856,37 @@ export function makeDeps(
       const teamId = data?.team_id == null ? null : Number(data.team_id);
       return renderTeamFanCopy(teamId, messageId);
     } : undefined,
+    // §7.4 연속 smalltalk 남용 신호 — 현재 질문 **이전** 로그의 연속 ack 수.
+    //   기준 시각 = 질문 dm_messages.created_at (job 행에 고정 — durable 재처리 동일 판정).
+    //   현재 런의 로그 행은 질문 시각 **이후**에 쓰이므로 lt 필터가 자연 배제한다.
+    loadSmalltalkStreak: signatureUserId ? async () => {
+      // query-guard: bounded -- 질문 행 1건 + 직전 로그 3건(ORDER 명시 — 무정렬 LIMIT 금지 M90).
+      const { data: questionRow, error: questionError } = await supabaseAdmin
+        .from("dm_messages")
+        .select("created_at")
+        .eq("id", messageId)
+        .maybeSingle();
+      if (questionError) throw questionError;
+      const questionAt = (questionRow?.created_at as string | undefined) ?? null;
+      if (!questionAt) return 0;
+      // query-guard: bounded -- user_id 스코프 + created_at < 질문시각 keyset 커서에
+      // ORDER BY created_at DESC + LIMIT SMALLTALK_STREAK_LIMIT(3). 테이블이 커져도
+      // 읽는 행 수는 상수 3으로 고정된다(연속 판정에 4번째 행은 필요 없다).
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_logs")
+        .select("match_path, created_at")
+        .eq("user_id", signatureUserId)
+        .lt("created_at", questionAt)
+        .order("created_at", { ascending: false })
+        .limit(SMALLTALK_STREAK_LIMIT);
+      if (error) throw error;
+      let streak = 0;
+      for (const row of data ?? []) {
+        if ((row as { match_path: string }).match_path === "ack") streak += 1;
+        else break;
+      }
+      return streak;
+    } : undefined,
     claimPositiveEnding: signatureUserId ? async (baseAnswer) => {
       // query-guard: bounded -- message_id idempotency + user별 최근 5행을 한 DB 트랜잭션에서 판정·기록한다.
       const { data, error } = await supabaseAdmin
@@ -1173,31 +1207,66 @@ export async function processBaseballQaQuestion(input: {
     }
   }
 
-  // 답변 유형을 payload 에 함께 저장한다 — 클라가 유형별 마스코트를 고를 근거(SSOT).
-  // 클라가 답변 문구를 상수와 대조하는 방식은 문구를 고치는 순간 조용히 깨진다.
-  const replyPayload: GeniusReplyPayload = {
-    type: "baseball_genius_reply",
-    reply_kind: replyKindForMatchPath(result.source),
-    match_path: result.source,
-    // 모든 답변에 원 질문 id 를 실는다 — 품질 피드백(👍/👎)이 "어느 질문에 대한 평가인지"를
-    // exact 로 결속하려면 필요하다. 답변 쪽지에서 dedup_key 접두를 파싱해 역산하면
-    // 접두 규칙이 바뀌는 순간 조용히 깨진다.
-    question_message_id: messageId,
-    // 동명이인 되물기일 때만 선택지를 실는다. 클라는 이걸 보고 카드를 렌더한다.
-    ...(result.pickerOptions
-      ? {
-        picker_options: result.pickerOptions.map((option) => ({
-          kbo_id: option.kboId, name: option.name, team: option.team,
-          position: option.position, back_no: option.backNo,
-        })),
-      }
-      : {}),
-    ...(result.correctionOptions ? { correction_options: result.correctionOptions } : {}),
-    // 근거 문서 링크. 본문에는 `📄 출처: 나무위키` 표시명만 있고 클라가 여기에 앵커를 씌운다.
-    // 내부 메타(revision·crawledAt·asOf)는 절대 payload 에 싣지 않는다 — 유저가 볼 이유가 없고
-    // `crawled` 는 수집 사실을 화면에 적는 것이라 위험하다 (하린아빠 2026-08-05 P0).
-    ...(result.sourceUrl ? { source_url: result.sourceUrl } : {}),
-  };
+  // 답변 유형·모션을 payload 에 함께 저장한다 — 클라가 유형별 마스코트·모션을 고를 근거(SSOT).
+  // 조립은 composeGeniusReplyPayload 단일 함수가 한다 — 인라인이면 게이트가 실제 조립
+  // 경로를 못 태운다(#1102 SSOT 추출과 같은 축). 필드 계약·금지 메타 규칙은 그 함수 문서에.
+  // 모션은 **여기 단일 지점**에서 (source, question) 결정론 계산 — 즉시 경로·durable 재시도
+  // (claimState="ready")·길이 위반 blocked·pipeline 조기 blocked 전부 같은 계산을 탄다
+  // (삼순 #1197 NO-GO ②③: result 에 실어 나르면 ready 재시도에서 소실되고 조기 반환에서 누락된다).
+  // §7.4 모션 30초 1회 — **원자 claim** (삼순 #1202 P0).
+  //   종전엔 `SELECT 직전 모션` 과 답변 INSERT 가 별도 트랜잭션이라, 같은 유저의 두 메시지가
+  //   동시에 들어오면 둘 다 같은 lastMotionAt 을 읽고 둘 다 모션을 붙였다(30초 1회 파괴).
+  //   이제 유저 advisory lock + message_id 멱등 + 쿨다운 판정 + 부여 기록을 RPC 한 트랜잭션에
+  //   묶는다(positive ending 시그니처와 같은 축).
+  //
+  //   · 후보 모션은 결정론 계산(geniusMotionForResult) — 어떤 모션인지는 코드가 정한다.
+  //   · 실제 부여 여부는 DB 가 정한다 — 동시성·멱등은 DB 만 보장할 수 있다.
+  //   · 기준 시각은 질문 dm_messages.created_at (job 행 고정값) — wall clock 이면 durable
+  //     재시도 시점에 따라 모션이 생겼다 사라진다(#1197 ②③ 계약).
+  //   · payload 시각을 함께 넘긴다 — 원장 도입 **이전**에 나간 모션도 쿨다운을 밀어야 한다.
+  //   · RPC 실패는 후보 모션 그대로 유지(fail-open) — 관측·원장 장애가 감정 반응을 죽이면 안 된다.
+  const candidateMotion = geniusMotionForResult(result.source, question);
+  let motion = candidateMotion;
+  try {
+    // query-guard: bounded -- 질문 행 1건 + 직전 모션 payload 1건(ORDER 명시) + 단일 RPC.
+    const { data: questionRow } = await supabaseAdmin
+      .from("dm_messages")
+      .select("created_at")
+      .eq("id", messageId)
+      .maybeSingle();
+    const decidedAt = (questionRow?.created_at as string | undefined) ?? null;
+    if (decidedAt) {
+      const { data: lastMotionRow } = await supabaseAdmin
+        .from("dm_messages")
+        .select("created_at")
+        .eq("conversation_id", conversationId)
+        .eq("sender_id", BASEBALL_GENIUS_USER_ID)
+        .not("payload->>motion", "is", null)
+        .lt("created_at", decidedAt)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const { data: claim, error: claimMotionError } = await supabaseAdmin
+        .rpc("claim_baseball_genius_motion", {
+          p_message_id: messageId,
+          p_user_id: userId,
+          p_motion: candidateMotion ?? null,
+          p_decided_at: decidedAt,
+          p_cooldown_ms: GENIUS_MOTION_COOLDOWN_MS,
+          p_payload_last_motion_at: (lastMotionRow?.created_at as string | undefined) ?? null,
+        })
+        .single();
+      if (claimMotionError) throw claimMotionError;
+      const granted = (claim as { motion: string | null } | null)?.motion ?? null;
+      motion = granted === null ? undefined : (granted as typeof candidateMotion);
+    }
+  } catch (error) {
+    console.error("baseball-genius motion claim failed:", (error as Error).message);
+  }
+  const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
+    { ...result, motion },
+    messageId,
+  );
   const deliveryDedupKey = result.source === "player_picker"
     ? `baseball-genius-picker:${messageId}`
     : result.source === "question_correction"

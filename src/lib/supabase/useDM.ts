@@ -6,6 +6,10 @@ import { useAuth } from "./AuthContext";
 import { useBlockedIds } from "./useBlock";
 import { OPERATOR_USER_ID } from "@/lib/constants/operator";
 import {
+  markGeniusThinkingMessageId,
+  transitionGeniusThinkingMessageId,
+} from "@/lib/baseball-qa/thinking-bubble";
+import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_USER_ID,
 } from "@/lib/constants/baseball-genius";
@@ -236,6 +240,11 @@ export function useDMChat(conversationId: string) {
   /** 최종 답변이 있는 질문 id — 과거 picker 카드 재탭을 UI에서도 막는다. */
   const [geniusAnsweredQuestionIds, setGeniusAnsweredQuestionIds] =
     useState<ReadonlySet<number>>(() => new Set<number>());
+  /** 현재 페이지 세션에서 생각중 말풍선을 붙일 최신 질문 id. */
+  const [geniusThinkingQuestionId, setGeniusThinkingQuestionId] =
+    useState<number | null>(null);
+  /** draft(`""`) → RPC가 만든 실제 대화 id 승격과 일반 대화 전환을 구분한다. */
+  const previousConversationIdRef = useRef(conversationId);
 
   const observeBaseballQaMessages = useCallback((nextMessages: DMMessage[]) => {
     if (typeof window === "undefined") return;
@@ -508,6 +517,12 @@ export function useDMChat(conversationId: string) {
     setGeniusAnsweredQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusPickedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
     setGeniusCorrectedQuestionIds((prev) => (prev.size === 0 ? prev : new Set<number>()));
+    const previousConversationId = previousConversationIdRef.current;
+    previousConversationIdRef.current = conversationId;
+    // 첫 질문은 `useDMChat("")`에서 전송한 뒤 실제 대화 id로 route replace된다.
+    // 이것은 대화 전환이 아니라 동일 대화의 승격이므로 marker를 지우지 않는다.
+    setGeniusThinkingQuestionId((current) =>
+      transitionGeniusThinkingMessageId(previousConversationId, conversationId, current));
     const generation = ++loadGenerationRef.current;
     requestLoad(() => {
       if (loadGenerationRef.current !== generation) return;
@@ -694,6 +709,10 @@ export function useDMChat(conversationId: string) {
           result?.message_id &&
           targetUserId === BASEBALL_GENIUS_USER_ID
         ) {
+          // outbox enqueue보다 먼저 답변을 관측한 경우에도 전송 행위 자체는 남긴다.
+          // draft → 실제 대화 route 승격 뒤에도 같은 hook 세션에서 이 marker를 보존한다.
+          setGeniusThinkingQuestionId((prev) =>
+            markGeniusThinkingMessageId(result.message_id as number, prev));
           if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {
             enqueueBaseballQaQuestion(window.localStorage, {
               conversationId: result.conversation_id,
@@ -736,6 +755,7 @@ export function useDMChat(conversationId: string) {
     geniusPickedQuestionIds,
     geniusCorrectedQuestionIds,
     geniusAnsweredQuestionIds,
+    geniusThinkingQuestionId,
   };
 }
 

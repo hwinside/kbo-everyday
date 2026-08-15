@@ -110,20 +110,27 @@ check(
 // ⚠️ 소스 정규식으로 "그렇게 보이는지"를 추론하지 않는다(#1107 false-green 원인).
 // 실제 배포 모듈이 만드는 payload 를 재현하려면 supabase 의존이 붙으므로, 여기서는
 // **payload 를 만드는 그 코드 경로가 결속 id 를 무조건 싣는지**를 계약으로 고정한다:
-// server.ts 가 `question_message_id: messageId` 를 **조건부 spread 밖**에서 쓰고 있어야 한다.
-// 조건부(`...(cond ? {question_message_id} : {})`) 안이면 picker 일 때만 실리므로 계약 위반이다.
+// payload 조립은 composeGeniusReplyPayload 로 추출됐다(2026-08-15 모션 매핑 PR). 그 함수가
+// `question_message_id: questionMessageId` 를 **조건부 spread 밖**에서 쓰고 있어야 하고,
+// server.ts 는 그 함수를 소비해야 한다. 조건부 안이면 picker 일 때만 실리므로 계약 위반이다.
 const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
-const payloadBlock = serverSrc.match(
-  /const replyPayload: GeniusReplyPayload = \{[\s\S]*?\n  \};/,
+const constantsSrc = readFileSync(resolve(process.cwd(), "src/lib/constants/baseball-genius.ts"), "utf8");
+const payloadBlock = constantsSrc.match(
+  /export function composeGeniusReplyPayload\([\s\S]*?\n\}/,
 );
-check("D0 replyPayload 블록을 찾았다", payloadBlock !== null, "서버 payload 구성 블록 미발견 → fail-close");
+check("D0 payload 조립 함수를 찾았다", payloadBlock !== null, "composeGeniusReplyPayload 미발견 → fail-close");
+check(
+  "D0-b server 가 조립 함수를 소비한다",
+  /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion \},\s*messageId,?\s*\)/.test(serverSrc),
+  "server.ts 가 compose 를 소비하지 않으면 이 계약은 허공이다",
+);
 if (payloadBlock) {
   const block = payloadBlock[0];
   // 조건부 spread 안쪽을 전부 제거한 뒤에도 결속 id 가 남아야 무조건 실린다.
   const unconditional = block.replace(/\.\.\.\([\s\S]*?\n      : \{\}\)/g, "").replace(/\.\.\.\(result\.[\s\S]*?\)/g, "");
   check(
     "D1 모든 답변에 question_message_id 를 무조건 싣는다",
-    /question_message_id:\s*messageId/.test(unconditional),
+    /question_message_id:\s*questionMessageId/.test(unconditional),
     "조건부 안에만 있으면 picker 답변에만 실려 피드백 결속이 깨진다",
   );
 }

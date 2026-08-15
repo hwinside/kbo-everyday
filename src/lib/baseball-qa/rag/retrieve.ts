@@ -614,10 +614,27 @@ export function buildRagLlmRequest(
   };
 }
 
+/**
+ * 톤 준수 여부 — **관측값이지 게이트가 아니다** (2026-08-14 하린아빠 A안 + 삼순 조건부 GO).
+ *
+ * ⚠️ 왜 fail-close 를 풀었는가 (Production 실측, #1186 배포 당일 발견).
+ *   `구자욱이 누구야?` → 근거 4건 → LLM 이 **정답**을 냈는데(`…외야수예요`) 어미 하나로
+ *   `tone_violation` 전량 폐기 → `unsure` 상용구가 나갔다. 선수 RAG 6문항 실 provider
+ *   실측에서 grounded 3 / tone_violation 3 = **폐기율 50%**, 폐기된 3건 모두 내용은 정답.
+ *
+ *   코드·사전이 소유한 문구는 **닫힌 집합**이라 합니다체를 100% 강제할 수 있지만, LLM
+ *   생성문은 **열린 집합**이라 어미 준수가 확률적이다. 확률 실패를 폐기로 처리하면
+ *   정답이 죽는다. 어미 목록을 더 열거하거나 후처리 변환을 짜는 것은 열린 집합을 룰로
+ *   닫으려는 시도(M90 `open_language_never_closes_with_rules`)라 같은 함정이다.
+ *
+ * 그래서 톤은 **프롬프트로 지시하고 로그로 관측**한다. 재호출·어미 변환은 하지 않는다.
+ * ⚠️ 다른 검증(malformed·status·길이·URL·숫자 근거)은 **그대로 fail-close** 다 —
+ *   삼순 조건: "검사를 삭제하지 말고, 나머지 검증까지 통과한 답에 플래그만 붙인다".
+ */
 export type ValidatedRagAnswer =
-  | { kind: "grounded"; answer: string }
+  | { kind: "grounded"; answer: string; toneCompliant: boolean }
   // 공식 경로 전용: 자료 밖 일반 야구 지식 답변. `generalFallback` 옵션을 켠 호출에만 나온다.
-  | { kind: "general"; answer: string }
+  | { kind: "general"; answer: string; toneCompliant: boolean }
   | { kind: "insufficient"; reason: string };
 
 /**
@@ -895,12 +912,12 @@ export function validateRagResponse(
     const generalMax = options.maxChars ?? RAG_OFFICIAL_ANSWER_MAX_CHARS;
     if (generalAnswer.length > generalMax) return { kind: "insufficient", reason: "too_long" };
     if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(generalAnswer)) return { kind: "insufficient", reason: "unsafe_output" };
-    if (!isBaseballGeniusToneCompliant(generalAnswer)) return { kind: "insufficient", reason: "tone_violation" };
     // 질문 밖 숫자 금지 — 근거 없는 일반 지식 답변이므로 숫자는 유저가 직접 준 것만 되받는다.
     if (!numericTokensSubsetOf(generalAnswer, options.generalFallback.question)) {
       return { kind: "insufficient", reason: "numeric_not_in_question" };
     }
-    return { kind: "general", answer: generalAnswer };
+    // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
+    return { kind: "general", answer: generalAnswer, toneCompliant: isBaseballGeniusToneCompliant(generalAnswer) };
   }
   if (status !== RAG_GROUNDED_SENTINEL) return { kind: "insufficient", reason: "unknown_status" };
   if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
@@ -910,7 +927,6 @@ export function validateRagResponse(
     ?? (options.numericEvidence ? RAG_OFFICIAL_ANSWER_MAX_CHARS : RAG_ANSWER_MAX_CHARS);
   if (answer.length > maxChars) return { kind: "insufficient", reason: "too_long" };
   if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(answer)) return { kind: "insufficient", reason: "unsafe_output" };
-  if (!isBaseballGeniusToneCompliant(answer)) return { kind: "insufficient", reason: "tone_violation" };
   // §12 수치 계약.
   //  - tier2 근거(기본값): 숫자 자체를 금지한다. 위키류는 수치 정본이 아니다.
   //  - tier1 근거(KBO 공식 간행물): 숫자를 허용하되 **근거에 적힌 숫자만** 허용한다.
@@ -930,7 +946,8 @@ export function validateRagResponse(
   })) {
     return { kind: "insufficient", reason: "numeric_not_in_evidence" };
   }
-  return { kind: "grounded", answer };
+  // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
+  return { kind: "grounded", answer, toneCompliant: isBaseballGeniusToneCompliant(answer) };
 }
 
 /**

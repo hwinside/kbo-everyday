@@ -96,6 +96,9 @@ async function main() {
   assert.equal(typeof act, "function", "development React.act가 필요하다");
   const { supabase } = await import("../../src/lib/supabase/client");
   const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
+  // 마스코트가 최신 봇 답변 1개로 좁혀지면서(2026-08-15) 이전 봇 답변이 TeamBadge
+  // fallback 을 탈 수 있다 — 실제 앱처럼 ThemeProvider 로 감싼다.
+  const { ThemeProvider } = await import("../../src/components/ThemeProvider");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");
   const { PathParamsContext } = await import("next/dist/shared/lib/hooks-client-context.shared-runtime");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
@@ -169,15 +172,15 @@ async function main() {
     await act(async () => {
       root.render(React.createElement(
         AppRouterContext.Provider, { value: router as never },
-        React.createElement(PathParamsContext.Provider, { value: { conversationId: "conv" } }, React.createElement(AuthProvider, null, React.createElement(DMChatPage))),
+        React.createElement(PathParamsContext.Provider, { value: { conversationId: "conv" } }, React.createElement(ThemeProvider, null, React.createElement(AuthProvider, null, React.createElement(DMChatPage)))),
       ));
     });
 
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="201"]')?.textContent ?? "", /첫 질문/);
       assert.match(container.querySelector('[data-message-id="202"]')?.textContent ?? "", /둘째 질문/);
-      assert.ok(container.querySelector('[data-genius-typing-question-id="201"]'));
-      assert.ok(container.querySelector('[data-genius-typing-question-id="202"]'));
+      // reload에서 localStorage outbox만 남은 경우 생각중 기록을 되살리지 않는다.
+      assert.equal(container.querySelectorAll('[data-genius-typing-question-id]').length, 0);
       assert.equal(container.querySelector('[data-message-id="303"]'), null);
     }, act);
 
@@ -187,8 +190,7 @@ async function main() {
     await waitFor(() => {
       const answer = container.querySelector('[data-message-id="303"][data-genius-question-id="202"]');
       assert.match(answer?.textContent ?? "", /둘째 질문 exact 답변/);
-      assert.equal(container.querySelector('[data-genius-typing-question-id="202"]'), null);
-      assert.ok(container.querySelector('[data-genius-typing-question-id="201"]'));
+      assert.equal(container.querySelectorAll('[data-genius-typing-question-id]').length, 0);
     }, act);
 
     rows = [a1, b2, q2, q1];
