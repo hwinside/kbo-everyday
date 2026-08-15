@@ -297,7 +297,12 @@ async function main() {
   for (const state of ["waiting", "retrying"] as const) {
     const r = render(React.createElement(GeniusTypingIndicator, { state, onRetry: () => {} }));
     check(`중복 방지: TypingIndicator(${state})는 아무것도 안 그린다`, () => {
-      assert.equal(r.host.querySelector('[data-testid="genius-typing-indicator"]'), null);
+      // ⚠️ DOM 노드를 `assert.equal(node, null)` 로 비교하면 안 된다. 실패할 때 node:assert 가
+      // JSDOM 엘리먼트를 재귀 inspect 하며 **수 GB 를 먹고 SIGKILL(OOM)** 로 죽는다
+      // (2026-08-15 Vercel 실측: M1 결함주입 시 8.8GB/43s → status=137 로 evidence 소실).
+      // 판정은 그대로 두고 비교값만 boolean 으로 좁힌다.
+      assert.equal(r.host.querySelector('[data-testid="genius-typing-indicator"]') === null, true,
+        "waiting/retrying 에서 TypingIndicator 가 렌더됐다");
       assert.equal(r.host.textContent, "");
     });
     r.cleanup();

@@ -222,7 +222,7 @@ async function main() {
       assert.equal(attachedThinking(container, 101), true, "답변 도착 후에도 Q1 생각중 말풍선 기록이 남아야 한다");
       const bubble = container.querySelector('[data-message-id="101"]')?.nextElementSibling;
       assert.equal(bubble?.getAttribute("data-pending"), "false", "답변 도착 후 pending 점/status는 해제돼야 한다");
-      assert.equal(bubble?.querySelector('[role="status"]'), null);
+      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
       const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
       assert.equal(outbox.some((entry) => entry.messageId === 101), false, "답변 관측 뒤 outbox 101 항목은 제거돼야 한다");
     }, act);
@@ -247,7 +247,7 @@ async function main() {
     await waitFor(() => {
       const bubble = container.querySelector('[data-message-id="202"]')?.nextElementSibling;
       assert.equal(bubble?.getAttribute("data-pending"), "false");
-      assert.equal(bubble?.querySelector('[role="status"]'), null);
+      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
       assert.ok(container.querySelector('[data-state="failed"] button'));
     }, act);
     console.log("✅ actual failed → thinking record retained, pending stopped, retry shown");
@@ -262,7 +262,7 @@ async function main() {
         "답변 선도착(outbox 이전)이어도 전송 marker로 Q3 말풍선이 남아야 한다");
       const bubble = container.querySelector('[data-message-id="303"]')?.nextElementSibling;
       assert.equal(bubble?.getAttribute("data-pending"), "false");
-      assert.equal(bubble?.querySelector('[role="status"]'), null);
+      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
       const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
       assert.equal(outbox.some((entry) => entry.messageId === 303), false,
         "답변 선도착이면 enqueue를 건너뛰어 outbox에 303이 없어야 한다");
