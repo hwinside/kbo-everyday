@@ -143,6 +143,34 @@ const DEFENSE_CONFIRM_READS = MIN_CONFIRM_READS;
 /** 이번 런의 행 불안정 원장 — promote payload 에 함께 실려 오라클이 읽는다. */
 let defenseRowLedger = { label: "수비", reads: 0, rows: {} };
 
+/**
+ * 테이블 header 열을 exact 검증한다 — 불일치면 크롤 전체 fail-close.
+ *
+ * ⚠️ 왜 필요한가 (2026-08-15 삼순 P0): 파서는 positional index(c[4]…c[11])로 읽는다.
+ * KBO가 열을 추가/재배치하면 값이 "존재하고 타입도 맞지만 다른 지표"가 되어 조용히 밀린다
+ * — 76e623ef8 재크롤이 2025 타자 42명 전원의 Basic2 8필드를 밀어 서빙한 사고의 근인.
+ * header 검증은 그 drift 를 소스(크롤 시점)에서 차단한다. 기대값은 2026-08-15 실측.
+ */
+async function assertTableHeader(page, label, expected) {
+  const actual = await page.$$eval("thead th", (ths) =>
+    ths.map((th) => (th.textContent || "").trim()),
+  );
+  const ok =
+    actual.length === expected.length &&
+    expected.every((h, i) => actual[i] === h);
+  if (!ok) {
+    throw new Error(
+      `${label} header drift — 크롤 중단 (positional 파싱 안전 불가).\n` +
+        `  expected: ${JSON.stringify(expected)}\n` +
+        `  actual:   ${JSON.stringify(actual)}`,
+    );
+  }
+}
+
+const HEADER_BATTER_BASIC1 = ["순위", "선수명", "팀명", "AVG", "G", "PA", "AB", "R", "H", "2B", "3B", "HR", "TB", "RBI", "SAC", "SF"];
+const HEADER_BATTER_BASIC2 = ["순위", "선수명", "팀명", "AVG", "BB", "IBB", "HBP", "SO", "GDP", "SLG", "OBP", "OPS", "MH", "RISP", "PH-BA"];
+const HEADER_RUNNER = ["순위", "선수명", "팀명", "G", "SBA", "SB", "CS", "SB%", "OOB", "PKO"];
+
 async function crawlBatterBasic1(page) {
   console.log("\n📊 타자 Basic1 크롤링...");
   // GAME_CN 정렬로 출장기록 있는 전체 타자 수집 (HRA_RT는 규정타석 충족자만 반환)
@@ -151,6 +179,7 @@ async function crawlBatterBasic1(page) {
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
+  await assertTableHeader(page, "타자 Basic1", HEADER_BATTER_BASIC1);
 
   const rows = await scrapeAllPages(page);
 
@@ -187,6 +216,7 @@ async function crawlBatterBasic2(page) {
   );
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
+  await assertTableHeader(page, "타자 Basic2", HEADER_BATTER_BASIC2);
 
   const rows = await scrapeAllPages(page);
 
@@ -214,6 +244,7 @@ async function crawlRunner(page) {
   await page.goto(`${KBO_BASE}/Record/Player/Runner/Basic.aspx`);
   await page.waitForLoadState("networkidle");
   await selectSeason(page);
+  await assertTableHeader(page, "도루 Runner", HEADER_RUNNER);
 
   const rows = await scrapeAllPages(page);
 
