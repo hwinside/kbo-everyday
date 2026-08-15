@@ -72,16 +72,14 @@ export default function DMChatPage() {
     geniusAnsweredQuestionIds,
     geniusThinkingQuestionId,
   } = useDMChat(draftTargetId ? "" : conversationId);
-  // 마스코트 모션은 **채팅창에 항상 최신 1개만** 움직인다 (하린아빠 2026-08-15 13:34
-  // "이전에 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함"). 이전 답변은 정적
-  // 마스코트로 강등된다. 메시지 목록에서 순수 파생하므로 상태·localStorage 없이 결정론이고
-  // Realtime 순서 역전·reload 에서도 같은 답이 나온다. 봇 발신 + 유효 payload 만 신뢰.
-  const latestMotionMessageId = useMemo(() => {
+  // 마스코트는 **채팅창에 항상 최신 봇 답변 1개에만** 붙는다 (하린아빠 2026-08-15 13:34
+  // + 13:53 "이전 답변은 정적 마스코트도 안되고 아예 마스코트가 없어야 함"). 모션은 그
+  // 최신 답변의 payload 에 유효 모션이 있을 때만 입힌다. 메시지 목록에서 순수 파생하므로
+  // 상태·localStorage 없이 결정론이고 Realtime 순서 역전·reload 에서도 같은 답이 나온다.
+  const latestGeniusMessageId = useMemo(() => {
     let latest: number | null = null;
     for (const m of messages) {
       if (m.sender_id !== BASEBALL_GENIUS_USER_ID) continue;
-      if (!isGeniusReplyPayload(m.payload)) continue;
-      if (geniusMotionFromPayload(m.payload) === null) continue;
       if (latest === null || m.id > latest) latest = m.id;
     }
     return latest;
@@ -495,10 +493,12 @@ export default function DMChatPage() {
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
                 ? msg.payload
                 : null;
+            // 마스코트는 최신 봇 답변에만 — 이전 답변은 정적 마스코트도 없이 닉네임만 남는다.
             const mascotState =
-              msg.sender_id === BASEBALL_GENIUS_USER_ID
+              msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId
                 ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
+            const mascotMotion = mascotState ? geniusMotionFromPayload(geniusReply) : null;
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
@@ -553,16 +553,10 @@ export default function DMChatPage() {
                           aria-hidden
                           data-testid="genius-reply-mascot"
                           data-state={mascotState}
-                          // 모션은 최신 모션 메시지 1개에만 붙는다 — 그 외에서는 data-motion 자체가 없다.
-                          data-motion={
-                            msg.id === latestMotionMessageId
-                              ? geniusMotionFromPayload(geniusReply) ?? undefined
-                              : undefined
-                          }
+                          // 마스코트 자체가 최신 1개뿐이므로 모션도 구조적으로 최대 1개다.
+                          data-motion={mascotMotion ?? undefined}
                           className={`h-8 w-auto max-w-none object-contain${
-                            msg.id === latestMotionMessageId && geniusMotionFromPayload(geniusReply)
-                              ? ` genius-motion-${geniusMotionFromPayload(geniusReply)}`
-                              : ""
+                            mascotMotion ? ` genius-motion-${mascotMotion}` : ""
                           }`}
                         />
                       ) : (

@@ -6,9 +6,10 @@
  *     되묻기·오류·지식 답변에는 모션 없음. 판정은 **answerQuestion 실실행**으로 본다(문자열 검사 금지).
  *  ② payload: composeGeniusReplyPayload 실행으로 motion 이 실리는지 / 비모션 경로에 키 자체가 없는지.
  *  ③ 폐쇄집합: geniusMotionFromPayload 는 3종 밖 값(미래 서버·조작)을 null 로 — payload 전체는 살아있어야 한다.
- *  ④ 최신 1개만 (하린아빠 13:34 "이전에 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함"):
- *     실제 DMChatPage 마운트 + 실제 Realtime callback 배달로 [data-motion] 이 항상 정확히 1개,
- *     새 모션 도착 시 이전 메시지가 정적 마스코트로 강등되는지 DOM 으로 검증.
+ *  ④ 최신 1개만 (하린아빠 13:34 "이전에 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함"
+ *     + 13:53 "이전 답변은 정적 마스코트도 안되고 아예 마스코트가 없어야 함"):
+ *     실제 DMChatPage 마운트 + 실제 Realtime callback 배달로 **마스코트 자체가 항상 정확히
+ *     1개**(최신 봇 답변), 이전 답변은 마스코트 없이 닉네임만 남는지 DOM 으로 검증.
  *
  * 실행: npm run qa:genius-mascot-motion
  */
@@ -138,6 +139,7 @@ async function partDom() {
   assert.equal(typeof act, "function");
   const { supabase } = await import("../../src/lib/supabase/client");
   const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
+  const { ThemeProvider } = await import("../../src/components/ThemeProvider");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");
   const { PathParamsContext } = await import("next/dist/shared/lib/hooks-client-context.shared-runtime");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
@@ -185,9 +187,13 @@ async function partDom() {
       return query;
     }
     if (table === "profiles") {
+      // Realtime 단건 조회가 봇 발신자에게 유저 프로필(team_id=1)을 돌려주면 이전 봇
+      // 답변이 TeamBadge fallback 을 타버린다 — eq 인자를 보고 실제처럼 분기한다.
+      let requestedId: unknown = null;
       const query = {
-        select: () => query, eq: () => query,
-        maybeSingle: async () => ({ data: profile, error: null }),
+        select: () => query,
+        eq: (_column: string, value: unknown) => { requestedId = value; return query; },
+        maybeSingle: async () => ({ data: requestedId === GENIUS_ID ? genius : profile, error: null }),
         in: async () => ({ data: [profile, genius], error: null }),
       };
       return query;
@@ -240,17 +246,22 @@ async function partDom() {
       AppRouterContext.Provider, { value: router as never },
       React.createElement(
         PathParamsContext.Provider, { value: { conversationId: CONVERSATION_ID } },
-        React.createElement(AuthProvider, null, React.createElement(DMChatPage)),
+        React.createElement(
+          ThemeProvider, null,
+          React.createElement(AuthProvider, null, React.createElement(DMChatPage)),
+        ),
       ),
     );
   }
 
+  const mascotOf = (container: HTMLElement, messageId: number) =>
+    container.querySelector(`[data-message-id="${messageId}"] [data-testid="genius-reply-mascot"]`);
   const motionOf = (container: HTMLElement, messageId: number) =>
-    container
-      .querySelector(`[data-message-id="${messageId}"] [data-testid="genius-reply-mascot"]`)
-      ?.getAttribute("data-motion") ?? null;
+    mascotOf(container, messageId)?.getAttribute("data-motion") ?? null;
   const motionCount = (container: HTMLElement) =>
     container.querySelectorAll("[data-motion]").length;
+  const mascotCount = (container: HTMLElement) =>
+    container.querySelectorAll('[data-testid="genius-reply-mascot"]').length;
 
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
@@ -260,8 +271,9 @@ async function partDom() {
     await waitFor(() => {
       assert.equal(motionOf(container, 150), "excited", "초기 로드: 인사 답변에 excited 모션");
       assert.equal(motionCount(container), 1);
+      assert.equal(mascotCount(container), 1, "마스코트는 채팅창에 정확히 1개");
     });
-    check("DOM: 초기 로드 — 인사 답변 excited, 모션 1개", true);
+    check("DOM: 초기 로드 — 인사 답변 excited, 마스코트·모션 1개", true);
 
     await act(async () => {
       await deliver({
@@ -272,12 +284,14 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.equal(motionOf(container, 250), "headspin", "새 모션이 최신 메시지에 붙는다");
-      assert.equal(motionOf(container, 150), null, "이전 모션은 사라진다(정적 강등)");
+      assert.equal(mascotOf(container, 150) === null, true,
+        "이전 답변은 정적 마스코트도 없이 완전히 사라진다 (13:53 지시)");
       assert.equal(motionCount(container), 1, "모션은 항상 정확히 1개");
-      assert.ok(container.querySelector('[data-message-id="150"] [data-testid="genius-reply-mascot"]'),
-        "이전 답변의 정적 마스코트는 남는다");
+      assert.equal(mascotCount(container), 1, "마스코트 자체도 항상 정확히 1개");
+      assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /반갑습니다/,
+        "이전 답변 본문은 그대로 남는다");
     });
-    check("DOM: 새 모션 도착 → 이전 모션 강등, 최신 1개만", true);
+    check("DOM: 새 모션 도착 → 이전 답변 마스코트 완전 제거, 최신 1개만", true);
 
     await act(async () => {
       await deliver({
@@ -288,10 +302,11 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.equal(motionOf(container, 350), "bored");
-      assert.equal(motionOf(container, 250), null);
+      assert.equal(mascotOf(container, 250) === null, true, "직전 답변 마스코트 제거");
       assert.equal(motionCount(container), 1);
+      assert.equal(mascotCount(container), 1);
     });
-    check("DOM: 거절 bored 모션도 같은 규칙(최신 1개만)", true);
+    check("DOM: 거절 bored 모션도 같은 규칙(마스코트·모션 최신 1개)", true);
 
     // 폐쇄집합 밖 모션 — 새 메시지가 와도 모션이 붙지 않고, 기존 최신(bored)이 유지된다.
     await act(async () => {
@@ -303,11 +318,14 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.ok(container.querySelector('[data-message-id="450"]'), "미지 모션 메시지도 본문은 렌더된다");
-      assert.equal(motionOf(container, 450), null, "폐쇄집합 밖 값은 모션 없음");
-      assert.equal(motionOf(container, 350), "bored", "기존 최신 모션이 유지된다");
-      assert.equal(motionCount(container), 1);
+      // 최신 봇 답변이므로 마스코트는 붙되, 폐쇄집합 밖 모션 값은 정적으로 강등된다.
+      assert.equal(mascotOf(container, 450) !== null, true, "최신 답변엔 마스코트가 붙는다");
+      assert.equal(motionOf(container, 450), null, "폐쇄집합 밖 값은 모션 없음(정적)");
+      assert.equal(mascotOf(container, 350) === null, true, "이전 답변 마스코트 제거");
+      assert.equal(motionCount(container), 0, "유효 모션이 없으면 모션 0개");
+      assert.equal(mascotCount(container), 1, "마스코트는 여전히 정확히 1개");
     });
-    check("DOM: 폐쇄집합 밖 값 — 모션 미부착, 화면 생존", true);
+    check("DOM: 폐쇄집합 밖 값 — 최신엔 정적 마스코트만, 이전 제거 유지", true);
   } finally {
     await act(async () => { root.unmount(); });
     container.remove();

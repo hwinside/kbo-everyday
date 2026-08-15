@@ -233,9 +233,14 @@ const sendOps = read("src/lib/cs/send-ops-message.ts");
 const migration = read("supabase/migrations/20260802_ops_message_payload.sql");
 
 check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", () => {
-  assert.match(server, /type:\s*"baseball_genius_reply"/, "payload type 없음");
-  assert.match(server, /reply_kind:\s*replyKindForMatchPath\(result\.source\)/, "의미 분류 reply_kind 없음");
-  assert.match(server, /match_path:\s*result\.source/, "실제 유형 대신 고정값을 쓰고 있음");
+  // payload 조립은 composeGeniusReplyPayload 로 추출됐다(2026-08-15 모션 매핑 PR —
+  // 인라인이면 게이트가 실제 조립 경로를 못 태운다). 조립 내용은 constants 의 그 함수에,
+  // server 에는 소비 배선이 있어야 한다. 실행 검증은 qa:genius-mascot-motion 이 담당한다.
+  const constants = read("src/lib/constants/baseball-genius.ts");
+  assert.match(constants, /type:\s*"baseball_genius_reply"/, "payload type 없음");
+  assert.match(constants, /reply_kind:\s*replyKindForMatchPath\(result\.source\)/, "의미 분류 reply_kind 없음");
+  assert.match(constants, /match_path:\s*result\.source/, "실제 유형 대신 고정값을 쓰고 있음");
+  assert.match(server, /composeGeniusReplyPayload\(result,\s*messageId\)/, "server 가 조립 함수를 소비하지 않음");
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
   assert.ok(call.indexOf("replyPayload") > 0 && call.indexOf("replyPayload") < 400, "발송 호출에 payload 미전달");

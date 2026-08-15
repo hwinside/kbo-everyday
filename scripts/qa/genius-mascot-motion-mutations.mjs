@@ -33,14 +33,12 @@ const mutations = [
     expect: "scope_guide 거절) → motion bored",
   },
   {
-    name: "M3 최신 1개만 훼손 (모든 모션 메시지에 부착)",
+    name: "M3 최신 1개만 훼손 (모든 봇 답변에 마스코트·모션 부착)",
     file: TARGETS[1],
-    from: `msg.id === latestMotionMessageId
-                              ? geniusMotionFromPayload(geniusReply) ?? undefined
-                              : undefined`,
-    to: "geniusMotionFromPayload(geniusReply) ?? undefined",
-    // 이 변이는 "이전 모션 강등" assertion 에서 먼저 죽는다 (모든 메시지에 부착 → 150 이 안 사라짐).
-    expect: "이전 모션은 사라진다",
+    from: "msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId",
+    to: "msg.sender_id === BASEBALL_GENIUS_USER_ID",
+    // 이 변이는 "이전 답변은 정적 마스코트도 없이 완전히 사라진다" assertion 에서 죽는다.
+    expect: "완전히 사라진다",
   },
   {
     name: "M4 compose motion 스프레드 삭제 (payload 미탑재)",
