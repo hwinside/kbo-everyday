@@ -64,9 +64,9 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion: geniusMotionForResult(result.source, question) }",
-    to: "result",
-    expect: "server 배선",
+    from: "{ ...result, motion },\n    messageId,",
+    to: "result,\n    messageId,",
+    expect: "compose 가 DB 가 승인한 motion",
   },
   {
     name: "M7 thinking showMascot 소유권 우회 (항상 노출)",
@@ -81,6 +81,27 @@ const mutations = [
     from: 'showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}',
     to: "showMascot={true}",
     expect: "failed 마스코트는 숨는다",
+  },
+  {
+    name: "M12 원자 claim 우회 (후보 모션을 그대로 부착 — SELECT→INSERT race 재현)",
+    file: TARGETS[3],
+    from: "      motion = granted === null ? undefined : (granted as typeof candidateMotion);",
+    to: "      motion = candidateMotion;",
+    expect: "RPC 반환값에서만",
+  },
+  {
+    name: "M13 연속 고정문 우회 (streak 무시)",
+    file: TARGETS[0],
+    from: "        if (streak >= SMALLTALK_STREAK_LIMIT) {",
+    to: "        if (false) {",
+    expect: "연속",
+  },
+  {
+    name: "M14 payload 이월 시각 미전달 (배포 직후 무조건 부여)",
+    file: TARGETS[3],
+    from: "          p_payload_last_motion_at: (lastMotionRow?.created_at as string | undefined) ?? null,",
+    to: "          p_payload_last_motion_at: null,",
+    expect: "payload 모션 시각도 넘긴다",
   },
   {
     name: "M10 칭찬 폐쇄집합 삭제 (대표 칭찬이 ack 이 아니게 됨)",
