@@ -141,8 +141,21 @@ interface KboGameRaw {
  */
 function hasValidLiveDetail(raw: KboGameRaw, status: KboGame["status"]): boolean {
   if (status !== "live") return false;
-  const nums = [raw.STRIKE_CN, raw.BALL_CN, raw.OUT_CN, raw.B1_BAT_ORDER_NO, raw.B2_BAT_ORDER_NO, raw.B3_BAT_ORDER_NO];
-  return nums.every((n) => typeof n === "number" && Number.isFinite(n) && n >= 0);
+  // 정수 + 도메인 상한까지 검증(삼순 2026-08-15): 소수·과대값(예: BALL_CN=99)은 필드 밀린
+  // 등 upstream 열화의 신호이며 관측값으로 믿으면 안 된다. 상한은 표기 도메인(3B/2S/2O)이
+  // 아니라 순간 관측 도메인이다 — 볼넷/삼진/이닝종료 순간 피드에 4B/3S/3O 가 실재할 수
+  // 있으므로 그것까지 거부하면 정상 경기가 '준비 중'으로 오판된다(카드가 표기 상한으로 clamp).
+  const inRange = (n: unknown, max: number): boolean =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= max;
+  return (
+    inRange(raw.BALL_CN, 4) &&
+    inRange(raw.STRIKE_CN, 3) &&
+    inRange(raw.OUT_CN, 3) &&
+    // 주자 타순은 0(없음)~9번 타순만 유효하다.
+    inRange(raw.B1_BAT_ORDER_NO, 9) &&
+    inRange(raw.B2_BAT_ORDER_NO, 9) &&
+    inRange(raw.B3_BAT_ORDER_NO, 9)
+  );
 }
 
 function parseGame(raw: KboGameRaw): KboGame {

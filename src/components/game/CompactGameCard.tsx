@@ -139,11 +139,13 @@ export function darkenForFeatured(hex: string, mix: number = FEATURED_DARKEN_MIX
  * 밝은 값으로 재정의한다. 자식은 CSS 변수를 상속받으므로 개별 클래스를 고치지 않아도
  * `text-text-primary` 같은 기존 토큰 클래스가 그대로 고대비를 얻는다(단일 지점 제어).
  */
-const FEATURED_SURFACE = (teamColor: string): React.CSSProperties => ({
+export const FEATURED_SURFACE = (teamColor: string): React.CSSProperties => ({
   background: `linear-gradient(135deg, ${darkenForFeatured(teamColor)} 0%, #1A1A1D 78%)`,
   ["--text-primary" as string]: "#FFFFFF",
   ["--text-secondary" as string]: "rgba(255,255,255,0.86)",
-  ["--text-tertiary" as string]: "rgba(255,255,255,0.66)",
+  // tertiary 0.66 은 가장 밝은 배경(한화 darken 결과 위)에서 합성 대비 4.30:1 로 AA 미달이라 0.72 로 올렸다
+  // (qa:featured-card-contrast 가 3색 합성 대비 전수를 실제 이 함수 출력으로 검증한다).
+  ["--text-tertiary" as string]: "rgba(255,255,255,0.72)",
 });
 
 export default function CompactGameCard({ game, isPreseason, myTeamId, weather, dateStr, featured }: CompactGameCardProps) {
