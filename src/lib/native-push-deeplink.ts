@@ -1,7 +1,7 @@
 "use client";
 
 import { registerPlugin } from "@capacitor/core";
-import { subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
+import { classifyAppUrlOpen, subscribeAppUrlOpen } from "@/lib/capacitor/app-url-open";
 import { isNativeRuntime } from "@/lib/capacitor/platform";
 
 // 알림 탭 → 앱 내 딥링크 이동 (iOS/Android 네이티브 전용).
@@ -117,6 +117,27 @@ function storeTapEvent(event: unknown): void {
   if (url) storePendingTap(url); // 최신 탭이 이전 탭을 덮는다.
 }
 
+/**
+ * appUrlOpen 이벤트 URL → LA 딥링크 내부 경로. la-deeplink 분류가 아니면 null.
+ *
+ * widgetURL 은 절대 URL(https://keubo.fan/games/<id>)로 온다 — internalPath 는
+ * 내부 경로("/"로 시작)만 받으므로 origin 검증 후 pathname 으로 내린 다음 통과시킨다.
+ */
+function laDeepLinkPathFromEvent(event: unknown): string | null {
+  const url = (event as { url?: unknown } | null)?.url;
+  if (typeof url !== "string" || url.length === 0) return null;
+  // 폐쇄 분류 — la-deeplink 가 아닌 것(OAuth callback·unknown)은 여기서 다루지 않는다.
+  if (classifyAppUrlOpen(url) !== "la-deeplink") return null;
+  try {
+    const parsed = new URL(url);
+    // 웹뷰 origin 과 다른 호스트는 거부(외부 유입 차단).
+    if (typeof window !== "undefined" && parsed.origin !== window.location.origin) return null;
+    return internalPath(parsed.pathname + parsed.search + parsed.hash);
+  } catch {
+    return null;
+  }
+}
+
 /** cold-start 네이티브 stash 회수 → 같은 pending 저장소에 합류. 구빌드/실패는 silent no-op. */
 async function consumeNativePendingIntoStore(loaders: ListenerLoaders): Promise<void> {
   try {
@@ -143,7 +164,19 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
   // AppDelegate는 stash를 proxy 호출 '전'에 실행하므로, Capacitor가 그 뒤 발행하는
   // appUrlOpen 시점에는 stash 존재가 보장된다 → 이 이벤트를 재회수 트리거로 쓴다.
   // 단일 디스패쳐 구독(R2) — OAuth 리스너와 네이티브 리스너를 경합시키지 않는다.
-  await loaders.urlOpen(() => {
+  //
+  // 🔴 실기기 QA(2026-08-15 build 25) — 잠금화면 LA 카드 탭이 여전히 미이동.
+  // 이 리스너가 이벤트 URL 을 버리고 "AppDelegate 가 stash 해둔다"는 가정하에 네이티브
+  // stash 재조회만 했던 것이 원인. widgetURL 은 iOS 버전·컨텍스트에 따라
+  //   (a) continue(userActivity:) — AppDelegate 가 stash ✅
+  //   (b) open(url:)          — stash 없음 ❌ → 재조회 빈손 → 아무 일도 안 일어남
+  // 두 경로 중 어느 쪽으로 오든 닫히도록, 이벤트 URL 자체를 1차 근거로 쓰고
+  // stash 재조회는 그대로 유지한다(순서 역전 방어 R1-① 계약 보존).
+  // 분류는 단일 디스패처의 폐쇄 분류(classifyAppUrlOpen)를 재사용 — la-deeplink 가
+  // 아닌 URL(OAuth callback 등)은 여기서 저장하지 않는다(세션 교환 플로우 보호).
+  await loaders.urlOpen((event) => {
+    const direct = laDeepLinkPathFromEvent(event);
+    if (direct) storePendingTap(direct);
     void consumeNativePendingIntoStore(loaders)
       .then(() => app.getState())
       .then(({ isActive }) => {
