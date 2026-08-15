@@ -303,7 +303,7 @@ export default function GamesPage() {
                 <Star size={14} className="fill-current" /> MY TEAM
               </h2>
               <motion.div variants={item}>
-                <CompactGameCard game={myTeamGame} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(myTeamGame)} />
+                <CompactGameCard game={myTeamGame} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(myTeamGame)} featured />
               </motion.div>
             </div>
           )}
@@ -326,6 +326,7 @@ export default function GamesPage() {
                   isPreseason={isPreseason}
                   myTeamId={myTeamId}
                   dateStr={nextMyGame.dateStr}
+                  featured
                 />
               </motion.div>
             </div>
@@ -352,7 +353,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {finalGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>
@@ -365,7 +366,7 @@ export default function GamesPage() {
               <div className="space-y-2">
                 {cancelledGames.map(g => (
                   <motion.div key={g.id} variants={item}>
-                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} />
+                    <CompactGameCard game={g} isPreseason={isPreseason} myTeamId={myTeamId} weather={gameWeather(g)} />
                   </motion.div>
                 ))}
               </div>
