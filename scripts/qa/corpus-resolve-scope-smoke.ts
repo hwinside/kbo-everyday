@@ -158,7 +158,7 @@ const verdictRow = {
 };
 const goodText = [
   JSON.stringify(fp),
-  JSON.stringify({ t: "probe", kboId: "78224", title: "김재환", url: "https://namu.wiki/w/김재환", kind: "rejected", reason: "disambiguation_document", candidates: ["김재환(야구선수)"], at: "2026-08-15T12:00:00Z" }),
+  JSON.stringify({ t: "probe", kboId: "78224", source: "namu", name: "김재환", birthYear: "1988", title: "김재환", url: "https://namu.wiki/w/김재환", kind: "rejected", reason: "disambiguation_document", candidates: ["김재환(야구선수)"], at: "2026-08-15T12:00:00Z" }),
   JSON.stringify({ t: "verdict", row: verdictRow, at: "2026-08-15T12:00:05Z" }),
 ].join("\n");
 const parsedCp = parseCheckpointText(goodText, fp);
@@ -190,9 +190,10 @@ assert.throws(
 );
 // RED 5 (삼순 3차 P0 의미 검증): 빈 canonicalUrl probe / resolved인데 canonical 결측 /
 // 비-resolved인데 canonical 잔존 / sourceKey 불일치 — 전부 던져야 한다.
+const probeIdentity = { source: "namu", name: "x", birthYear: "1990" };
 assert.throws(
   () => parseCheckpointText(
-    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", title: "x", url: "u", kind: "canonical", canonicalUrl: "", pageTitle: "", redirected: false })}`,
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", ...probeIdentity, title: "x", url: "https://namu.wiki/w/x", kind: "canonical", canonicalUrl: "", pageTitle: "", redirected: false })}`,
     fp,
   ),
   /canonical probe 의미 오류/,
@@ -200,11 +201,44 @@ assert.throws(
 );
 assert.throws(
   () => parseCheckpointText(
-    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", title: "x", url: "u", kind: "rejected" })}`,
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", ...probeIdentity, title: "x", url: "https://namu.wiki/w/x", kind: "rejected" })}`,
     fp,
   ),
   /probe 의미 오류/,
   "rejected probe의 reason 결측 차단",
+);
+// RED 6 (삼순 4차 P0 신원 결속): 신원 필드 결측 / 타 호스트 URL / candidates 비문자열 — 전부 던진다.
+assert.throws(
+  () => parseCheckpointText(
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", title: "x", url: "https://namu.wiki/w/x", kind: "rejected", reason: "r" })}`,
+    fp,
+  ),
+  /신원 결속 결측/,
+  "probe 신원 필드(source·name·birthYear) 결측 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", ...probeIdentity, title: "x", url: "https://evil.example/w/x", kind: "rejected", reason: "r" })}`,
+    fp,
+  ),
+  /URL 호스트/,
+  "타 호스트 probe URL 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${goodText}\n${JSON.stringify({ t: "probe", kboId: "78224", ...probeIdentity, title: "x", url: "https://namu.wiki/w/x", kind: "rejected", reason: "r", candidates: [1] })}`,
+    fp,
+  ),
+  /candidates 스키마/,
+  "candidates 비문자열 차단",
+);
+assert.throws(
+  () => parseCheckpointText(
+    `${JSON.stringify(fp)}\n${JSON.stringify({ t: "verdict", row: { ...verdictRow, canonicalUrl: "https://evil.example/w/강현우" } })}`,
+    fp,
+  ),
+  /canonicalUrl 호스트/,
+  "resolved verdict 타 호스트 canonical 차단",
 );
 assert.throws(
   () => parseCheckpointText(
@@ -309,6 +343,84 @@ async function behaviorGate(): Promise<void> {
   assert.equal(run3.rows[0].status, "budget_exhausted", "예산 소진은 missing이 아니다");
   assert.equal(calls3.length, MAX_PROBES_PER_PLAYER, "요청 수 = 예산 상한 exact");
   console.log("행동 게이트 PASS — run1중단→resume→재요청0→합본 unique / budget_exhausted 실행경로");
+
+  // ── 완주-checkpoint CLI 게이트(삼순 4차 P0/P1) ────────────────────────────────
+  // 실제 CLI를 전원 완료 checkpoint로 재실행: 외부 요청 0 → --out 복원, 그리고
+  // non-dry-run은 DB upsert 단계를 실제로 탄다(앞 run DB 부분 실패 재시도 경로).
+  const { spawn } = await import("node:child_process");
+  const { createServer } = await import("node:http");
+  const { S2B_TARGET_PLAYERS } = await import("../../src/lib/baseball-qa/rag/targets");
+  const realRoster = JSON.parse(rf(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8")) as {
+    kboId: string; name: string;
+  }[];
+  const realById = new Map(realRoster.map((player) => [player.kboId, player] as const));
+  const cliFp = buildCheckpointFingerprint({ source: "wikipedia", scope: "targets", snapshotSha256: "-" });
+  const cliRows = S2B_TARGET_PLAYERS.map(({ kboId }) => {
+    const rosterRow = realById.get(kboId);
+    assert.ok(rosterRow, `S2B 대상 kboId=${kboId}가 로스터에 있어야 한다`);
+    return {
+      sourceKey: `wikipedia:player:${kboId}`, kboId, name: rosterRow.name, source: "wikipedia",
+      status: "missing", canonicalUrl: null, pageTitle: null,
+      candidateUrls: [`https://ko.wikipedia.org/wiki/${encodeURIComponent(rosterRow.name)}`],
+      note: "완주 복원 게이트 fixture",
+    };
+  });
+  const cliCp = path.join(work, "cli-checkpoint.jsonl");
+  wf(cliCp, [JSON.stringify(cliFp), ...cliRows.map((row) => JSON.stringify({ t: "verdict", row, at: "2026-08-15T12:00:00Z" }))].join("\n") + "\n", "utf8");
+  const cliOut = path.join(work, "cli-out.json");
+
+  const runCli = async (extraArgs: string[], extraEnv: Record<string, string>) =>
+    await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn("npx", ["tsx", "scripts/baseball-qa/resolve-rag-urls.ts",
+        "--source=wikipedia", "--scope=targets", `--checkpoint=${cliCp}`, `--out=${cliOut}`, ...extraArgs], {
+        cwd: process.cwd(), env: { ...process.env, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+      child.stderr.on("data", (chunk) => { stderr += String(chunk); });
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code, stdout, stderr }));
+    });
+
+  // (1) dry-run: 외부 요청 0 선언 + out 16명 복원 + DB 생략.
+  const dryRestore = await runCli(["--dry-run"], {});
+  assert.equal(dryRestore.code, 0, `완주 복원 dry-run은 성공해야 한다:\n${dryRestore.stdout}\n${dryRestore.stderr}`);
+  assert.match(dryRestore.stdout, /전원 완료된 checkpoint — 외부 요청 0/);
+  const restoredOut = JSON.parse(rf(cliOut, "utf8")) as unknown[];
+  assert.equal(restoredOut.length, S2B_TARGET_PLAYERS.length, "완주 복원 out은 대상 전원이어야 한다");
+  assert.match(dryRestore.stdout, /--dry-run: DB 쓰기 생략/);
+
+  // (2) non-dry-run: 외부 probe 0이지만 summary/out/**DB upsert**는 그대로 탄다(false success 차단).
+  let upsertCount = 0;
+  const dbServer = createServer((request, response) => {
+    if (request.method === "POST" && request.url?.startsWith("/rest/v1/genius_rag_sources")) {
+      let body = "";
+      request.on("data", (chunk) => { body += String(chunk); });
+      request.on("end", () => {
+        upsertCount += 1;
+        response.statusCode = 201;
+        response.setHeader("content-type", "application/json");
+        response.end(body);
+      });
+      return;
+    }
+    response.statusCode = 404;
+    response.end("[]");
+  });
+  await new Promise<void>((resolve) => dbServer.listen(0, "127.0.0.1", resolve));
+  const dbAddress = dbServer.address();
+  assert.ok(dbAddress && typeof dbAddress === "object");
+  const applyRestore = await runCli([], {
+    NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${dbAddress.port}`,
+    SUPABASE_SERVICE_ROLE_KEY: "smoke-test-key",
+  });
+  dbServer.close();
+  assert.equal(applyRestore.code, 0, `완주 복원 non-dry-run은 DB upsert까지 성공해야 한다:\n${applyRestore.stdout}\n${applyRestore.stderr}`);
+  assert.match(applyRestore.stdout, /전원 완료된 checkpoint — 외부 요청 0/);
+  assert.equal(upsertCount, S2B_TARGET_PLAYERS.length, "완주 복원 non-dry-run은 전원 DB upsert를 재시도해야 한다");
+  assert.match(applyRestore.stdout, new RegExp(`반영 ${S2B_TARGET_PLAYERS.length}/${S2B_TARGET_PLAYERS.length}건`));
+  console.log(`CLI 완주-checkpoint 게이트 PASS — 외부요청0→out ${restoredOut.length}명 복원 / non-dry-run DB upsert ${upsertCount}건 재시도`);
 }
 
 // self-test RED: 검출력 증명 — 조작된 스냅샷은 반드시 잡혀야 한다.

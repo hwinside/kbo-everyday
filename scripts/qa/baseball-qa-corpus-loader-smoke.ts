@@ -494,7 +494,29 @@ try {
   ], applyEnv);
   assert.equal(tampered.code, 1, "미등록 artifact의 --entities apply는 fail-close여야 한다");
   assert.match(tampered.stderr, /ready로 등록된 artifact만 허용/);
-  console.log("PASS actual E2E — --entities 원장 보존 + 부재 entity fail-close + 미등록 artifact 거부");
+  // RED(삼순 4차 P1): 같은 corpus artifact + **빈/교체 recovery** — artifact SHA는 그대로라
+  // ready 확인은 통과하지만 collector 귀속이 뒤바뀜다. ledger record_hash+collector exact
+  // 대조가 이걸 잡아 exit 1 + 원장·serving 쓰기 0이어야 한다.
+  const emptyRecoveryFile = writeJsonl("empty-recovery.jsonl", [], "\n");
+  const ledgerRunBeforeSwap = JSON.stringify(ledgerRun);
+  const ledgerRecordsBeforeSwap = ledgerRecords.size;
+  const servingBeforeSwap = [...serving.values()].reduce((sum, count) => sum + count, 0);
+  const swappedRecovery = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${emptyRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(swappedRecovery.code, 1, "recovery 교체(collector 귀속 변조)는 provenance 대조에서 fail-close여야 한다");
+  assert.match(swappedRecovery.stderr, /provenance 불일치|Mac recovery rows absent/);
+  assert.equal(JSON.stringify(ledgerRun), ledgerRunBeforeSwap, "recovery 변조 실패 시 corpus_runs 쓰기 0");
+  assert.equal(ledgerRecords.size, ledgerRecordsBeforeSwap, "recovery 변조 실패 시 corpus_records 쓰기 0");
+  assert.equal(
+    [...serving.values()].reduce((sum, count) => sum + count, 0),
+    servingBeforeSwap,
+    "recovery 변조 실패 시 serving 쓰기 0",
+  );
+  console.log("PASS actual E2E — --entities 원장 보존 + 부재 entity fail-close + 미등록 artifact 거부 + recovery 변조 RED(쓰기 0)");
 } finally {
   server.close();
 }
