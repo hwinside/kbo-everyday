@@ -67,6 +67,30 @@ async function partMapping() {
     const res = await answerQuestion("u1", "야구 룰", deps() as never);
     check("실실행: 범위 재질문 → source scope_guide", res.source === "scope_guide", `source=${res.source}`);
   }
+  // ⚠️ 삼순 #1197 P0: 종전에는 `고마워`만 검사하고 source 를 직접 넣어 **대표 칭찬이
+  // deterministic ack 이 아니어도 GREEN** 이었다. 칭찬은 질문문자열로 **실제 라우팅을
+  // 태워** payload 까지 headspin 이 나오는지 종단으로 확인한다.
+  {
+    const { composeGeniusReplyPayload, geniusMotionFromPayload } = await import("../../src/lib/constants/baseball-genius");
+    const praises = ["잘했어", "최고야", "대단해", "잘하네", "최고", "대단하네", "똑똑하네", "기특해"];
+    const bad: string[] = [];
+    for (const praise of praises) {
+      const res = await answerQuestion("u1", praise, deps() as never);
+      // server 가 하는 것과 **같은 계산**을 그대로 태운다(synthetic source 주입 금지).
+      const payload = composeGeniusReplyPayload(
+        { ...res, motion: geniusMotionForResult(res.source, praise) } as never, 1,
+      );
+      if (res.source !== "ack" || geniusMotionFromPayload(payload) !== "headspin") {
+        bad.push(`${praise}(source=${res.source}, motion=${geniusMotionFromPayload(payload)})`);
+      }
+    }
+    check(`종단: 대표 칭찬 ${praises.length}종 → actual routing → payload headspin`, bad.length === 0, bad.join(", "));
+  }
+  {
+    // 칭찬을 넣었다고 진짜 질문을 삼키면 안 된다 — 폐쇄집합은 full-string 완전일치다.
+    const res = await answerQuestion("u1", "이대호 최고야", deps() as never);
+    check("과차단 없음: 대상이 붙은 문장은 ack 이 아니다", res.source !== "ack", `source=${res.source}`);
+  }
   // 서버 단일 지점 결속 — compose 호출부가 (source, question) 계산을 태우는지.
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
@@ -167,6 +191,8 @@ async function partDom() {
 
   type RealtimePayload = { new: Row };
   const realtimeHandlers = new Map<string, (payload: RealtimePayload) => unknown>();
+  // 구독 status 콜백을 보관해야 CHANNEL_ERROR 전이(= Realtime 사망 → polling 폴백)를 재현할 수 있다.
+  const statusHandlers = new Map<string, (status: string) => void>();
   const deliver = async (row: Row) => {
     rows.push(row);
     const handler = realtimeHandlers.get(`dm:${CONVERSATION_ID}`);
@@ -175,8 +201,10 @@ async function partDom() {
   };
 
   // 실제 전송 경로 — hook 의 send 성공이 thinking marker 를 찍는다 (pr1102 하니스와 같은 축).
-  const QUESTION_IDS = [501, 601];
-  const CREATED: Record<number, string> = { 501: "2026-08-15T00:00:10Z", 601: "2026-08-15T00:00:14Z" };
+  const QUESTION_IDS = [501, 601, 701];
+  const CREATED: Record<number, string> = {
+    501: "2026-08-15T00:00:10Z", 601: "2026-08-15T00:00:14Z", 701: "2026-08-15T00:00:18Z",
+  };
   let questionIndex = 0;
 
   const mutable = supabase as unknown as {
@@ -235,7 +263,10 @@ async function partDom() {
         realtimeHandlers.set(name, callback);
         return channel;
       },
-      subscribe: (callback?: (status: string) => void) => { callback?.("SUBSCRIBED"); return channel; },
+      subscribe: (callback?: (status: string) => void) => {
+        if (callback) { statusHandlers.set(name, callback); callback("SUBSCRIBED"); }
+        return channel;
+      },
     };
     return channel;
   };
@@ -408,13 +439,40 @@ async function partDom() {
     });
     check("DOM: 답변 도착 → thinking→reply 교체", true);
 
+    // ── polling 폴백 경로 (삼순 #1197 P1) ───────────────────────────────────
+    // Realtime 이 죽은 동안 답변은 `loadMessages("merge")` → `mergeDmMessagesById` 로 들어온다.
+    // 이 경로로 들어온 답변도 같은 소유권 규칙을 따라야 한다.
+    await typeAndSend(container, "폴링 경로 질문입니다");
+    await waitFor(() => {
+      assert.equal(thinkingMascots(container), 1, "새 질문 → thinking 소유");
+      assert.equal(totalMascots(container), 1);
+    });
+    // Realtime handler 를 타지 **않고** 저장소에만 답변을 넣는다 — polling 이어야만 보인다.
+    rows.push({
+      id: 750, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content: "폴링으로 도착한 답변입니다.",
+      is_read: false, created_at: "2026-08-15T00:00:20Z", dedup_key: "baseball-genius:701",
+      payload: { type: "baseball_genius_reply", reply_kind: "unavailable", match_path: "scope_guide", question_message_id: 701, motion: "bored" },
+    });
+    // 구독을 죽인다 → healthy=false → catch-up 폴링(jitter ≤1.5s)이 merge 로 재조회한다.
+    await act(async () => {
+      for (const handler of statusHandlers.values()) handler("CHANNEL_ERROR");
+    });
+    await waitFor(() => {
+      assert.ok(container.querySelector('[data-message-id="750"]'), "polling merge 로 새 답변이 들어와야 한다");
+      assert.equal(motionOf(container, 750), "bored", "polling 으로 도착한 답변이 모션 소유권을 가진다");
+      assert.equal(thinkingMascots(container), 0, "polling 답변 관측 후 생각중 마스코트가 사라진다");
+      assert.equal(replyMascotOf(container, 650) === null, true, "이전 답변 마스코트는 제거된다");
+      assert.equal(totalMascots(container), 1, "polling 경로에서도 전체 마스코트는 1개");
+    }, 10_000);
+    check("DOM: polling merge 경로 — 소유권·모션·총계 동일", true);
+
     // reload 재진입 — 같은 데이터로 새 인스턴스를 띄워도 최신 1개 그대로다.
     await act(async () => { root.unmount(); });
     container.replaceChildren();
     root = createRoot(container);
     await act(async () => { root.render(React.createElement(Harness)); });
     await waitFor(() => {
-      assert.equal(motionOf(container, 650), "headspin", "reload 후에도 최신 답변에만");
+      assert.equal(motionOf(container, 750), "bored", "reload 후에도 최신 답변에만");
       assert.equal(totalMascots(container), 1, "reload 후에도 전체 1개");
     });
     check("DOM: reload 재진입 — 최신 1개 불변", true);

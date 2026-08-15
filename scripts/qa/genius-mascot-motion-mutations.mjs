@@ -9,6 +9,7 @@ const TARGETS = [
   "src/app/(main)/messages/[conversationId]/page.tsx",
   "src/lib/constants/baseball-genius.ts",
   "src/lib/baseball-qa/server.ts",
+  "src/lib/supabase/dm-messages.ts",
 ];
 const originals = new Map(TARGETS.map((file) => [file, fs.readFileSync(file, "utf8")]));
 const restore = () => {
@@ -80,6 +81,20 @@ const mutations = [
     from: 'showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}',
     to: "showMascot={true}",
     expect: "failed 마스코트는 숨는다",
+  },
+  {
+    name: "M10 칭찬 폐쇄집합 삭제 (대표 칭찬이 ack 이 아니게 됨)",
+    file: TARGETS[0],
+    from: '  "잘했어", "잘했어요", "잘하네", "잘하네요", "잘한다", "잘하는데",\n',
+    to: "",
+    expect: "대표 칭찬",
+  },
+  {
+    name: "M11 polling merge 훼손 (재조회 결과를 버림)",
+    file: "src/lib/supabase/dm-messages.ts",
+    from: "  for (const m of incoming) byId.set(m.id, m);",
+    to: "",
+    expect: "polling merge",
   },
   {
     name: "M9 역순 방어 훼손 (마지막 도착이 소유권 탈취)",
