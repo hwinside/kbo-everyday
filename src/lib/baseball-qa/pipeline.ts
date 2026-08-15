@@ -248,6 +248,14 @@ export const SCOPE_GUIDE_ANSWER =
   "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 기쁩니다!";
+
+/**
+ * §7.4 연속 4회부터 짧은 고정문 (hard mute 없음).
+ * 직전 연속 `ack` 로그가 SMALLTALK_STREAK_LIMIT 이상(= 이번이 4회째)이면
+ * 팀 카피·시그니처 없이 이 문장 하나만 낸다. 답변 자체는 계속 나간다(mute 아님).
+ */
+export const SMALLTALK_STREAK_LIMIT = 3;
+export const SMALLTALK_STREAK_ANSWER = "네! 궁금한 야구 이야기가 생기면 언제든 답변하겠습니다.";
 // 대화 첫 턴 인사 — 질문이 아니라 대화 시작이다. 차단 문구를 보내면 문전박대가 된다.
 // ⚠️ ACK_ANSWER("도움이 됐다니 다행이에요")를 재사용하면 안 된다: `안녕` 에 그 문구가 나가면
 //    아무 도움도 준 적 없이 도움이 됐다고 말하는 꼴이라 대화가 어긋난다.
@@ -715,13 +723,39 @@ export interface QaResult {
  * 그 외(되묻기·오류·지식 답변) → 없음. 모션은 감정 반응 전용이다(unsure LLM 거절 확장은 별도 트랙).
  * 반환 타입은 constants 의 GeniusMascotMotion 과 구조적으로 동일(순환 import 회피 리터럴).
  */
+export const GENIUS_MOTION_COOLDOWN_MS = 30_000;
+
+/**
+ * 모션 남용 방지 신호 (SSOT §7.4 "모션 30초 1회").
+ * 두 시각 모두 DB 에 고정된 값이라 durable ready 재시도에서도 같은 판정이 나온다
+ * (wall clock 을 쓰면 재시도 시점에 따라 모션이 생겼다 사라진다 — 삼순 #1197 ② 계약).
+ */
+export interface GeniusMotionSignals {
+  /** 현재 질문 dm_messages.created_at (ISO). */
+  questionAt: string | null;
+  /** 직전에 모션이 **실제로 실린** 봇 답변의 created_at — payload->>motion 기준. 없으면 null. */
+  lastMotionAt: string | null;
+}
+
 export function geniusMotionForResult(
   source: string,
   question: string,
+  signals?: GeniusMotionSignals | null,
 ): "excited" | "headspin" | "bored" | undefined {
-  if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
-  if (source === "scope_guide" || source === "blocked") return "bored";
-  return undefined;
+  const motion =
+    source === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :
+    source === "scope_guide" || source === "blocked" ? ("bored" as const) :
+    undefined;
+  if (!motion) return undefined;
+  // §7.4 모션 30초 1회 — 기준은 match_path 추정이 아니라 **실제 부착된 모션**(payload)이다.
+  //   match_path 로 재면 억제된 답변도 쿨다운을 밀어 스팸 중엔 모션이 영원히 안 나온다 —
+  //   스펙은 "30초에 1회"지 "연속이면 0회"가 아니다.
+  //   신호 미주입·파싱 불가는 모션 유지(fail-open) — 관측 장애가 감정 반응을 죽이면 안 된다.
+  if (signals?.questionAt && signals.lastMotionAt) {
+    const gap = Date.parse(signals.questionAt) - Date.parse(signals.lastMotionAt);
+    if (Number.isFinite(gap) && gap < GENIUS_MOTION_COOLDOWN_MS) return undefined;
+  }
+  return motion;
 }
 
 export interface QaDeps {
@@ -917,6 +951,12 @@ export interface QaDeps {
   loadPreviousTurn?: () => Promise<PreviousTurnRow | null>;
   /** 사용자별 positive ending 판정·기록을 DB 트랜잭션으로 원자화한다. */
   claimPositiveEnding?: (baseAnswer: string) => Promise<string>;
+  /**
+   * §7.4 연속 smalltalk 남용 신호 — 현재 질문 **이전** 로그에서 연속된 `ack` 답변 수.
+   * SMALLTALK_STREAK_LIMIT 이상이면 이번 ack 응답을 짧은 고정문으로 줄인다.
+   * 미주입·조회 실패는 fail-open(정상 응답) — 관측 장애가 인사를 죽이면 안 된다.
+   */
+  loadSmalltalkStreak?: () => Promise<number>;
   reserveDaily: (userId: string, limit: number) => Promise<{ allowed: boolean; remaining: number }>;
   /**
    * messageId의 durable LLM 상태: 호출 시작 여부 + 저장된 결과 (job 행 기준).
@@ -4808,7 +4848,21 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     //   · 실패·팀 미설정·미주입은 전부 기존 GREETING_ANSWER 그대로(fail-open).
     //   · 카피 선택은 호출부가 messageId 시드로 결정론화한다 — durable 재처리에서도 같은
     //     문구가 재생되어 저장/발송 분기 불일치가 생기지 않는다.
-    if (route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {
+    // §7.4 연속 4회부터 짧은 고정문 — 팀 카피·시그니처보다 **먼저** 판정한다.
+    //   고정문이 적용되면 둘 다 건너린다(짧게 유지가 목적이다). 실패·미주입은 정상 경로.
+    let streakFixed = false;
+    if (route === "ack" && deps.loadSmalltalkStreak) {
+      try {
+        const streak = await deps.loadSmalltalkStreak();
+        if (streak >= SMALLTALK_STREAK_LIMIT) {
+          answer = SMALLTALK_STREAK_ANSWER;
+          streakFixed = true;
+        }
+      } catch {
+        // 남용 방지는 보조 장치다. 조회 장애가 인사 응답을 막으면 안 된다.
+      }
+    }
+    if (!streakFixed && route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {
       try {
         const teamCopy = await deps.pickTeamFanCopy();
         if (teamCopy) answer = teamCopy;
@@ -4816,7 +4870,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         // 팀 카피는 장식이다. 조회 장애가 인사 응답을 막으면 안 된다.
       }
     }
-    if (route === "ack" && deps.claimPositiveEnding) {
+    if (!streakFixed && route === "ack" && deps.claimPositiveEnding) {
       try {
         answer = await deps.claimPositiveEnding(answer);
       } catch {

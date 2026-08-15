@@ -10,8 +10,10 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   geniusMotionForResult,
+  type GeniusMotionSignals,
   isAckPhrase,
   MAX_QUESTION_LEN,
+  SMALLTALK_STREAK_LIMIT,
   MIN_QUESTION_LEN,
   isPickedPlayerAllowed,
   type GlossaryEntry,
@@ -854,6 +856,37 @@ export function makeDeps(
       const teamId = data?.team_id == null ? null : Number(data.team_id);
       return renderTeamFanCopy(teamId, messageId);
     } : undefined,
+    // §7.4 연속 smalltalk 남용 신호 — 현재 질문 **이전** 로그의 연속 ack 수.
+    //   기준 시각 = 질문 dm_messages.created_at (job 행에 고정 — durable 재처리 동일 판정).
+    //   현재 런의 로그 행은 질문 시각 **이후**에 쓰이므로 lt 필터가 자연 배제한다.
+    loadSmalltalkStreak: signatureUserId ? async () => {
+      // query-guard: bounded -- 질문 행 1건 + 직전 로그 3건(ORDER 명시 — 무정렬 LIMIT 금지 M90).
+      const { data: questionRow, error: questionError } = await supabaseAdmin
+        .from("dm_messages")
+        .select("created_at")
+        .eq("id", messageId)
+        .maybeSingle();
+      if (questionError) throw questionError;
+      const questionAt = (questionRow?.created_at as string | undefined) ?? null;
+      if (!questionAt) return 0;
+      // query-guard: bounded -- user_id 스코프 + created_at < 질문시각 keyset 커서에
+      // ORDER BY created_at DESC + LIMIT SMALLTALK_STREAK_LIMIT(3). 테이블이 커져도
+      // 읽는 행 수는 상수 3으로 고정된다(연속 판정에 4번째 행은 필요 없다).
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_logs")
+        .select("match_path, created_at")
+        .eq("user_id", signatureUserId)
+        .lt("created_at", questionAt)
+        .order("created_at", { ascending: false })
+        .limit(SMALLTALK_STREAK_LIMIT);
+      if (error) throw error;
+      let streak = 0;
+      for (const row of data ?? []) {
+        if ((row as { match_path: string }).match_path === "ack") streak += 1;
+        else break;
+      }
+      return streak;
+    } : undefined,
     claimPositiveEnding: signatureUserId ? async (baseAnswer) => {
       // query-guard: bounded -- message_id idempotency + user별 최근 5행을 한 DB 트랜잭션에서 판정·기록한다.
       const { data, error } = await supabaseAdmin
@@ -1180,8 +1213,39 @@ export async function processBaseballQaQuestion(input: {
   // 모션은 **여기 단일 지점**에서 (source, question) 결정론 계산 — 즉시 경로·durable 재시도
   // (claimState="ready")·길이 위반 blocked·pipeline 조기 blocked 전부 같은 계산을 탄다
   // (삼순 #1197 NO-GO ②③: result 에 실어 나르면 ready 재시도에서 소실되고 조기 반환에서 누락된다).
+  // §7.4 모션 30초 1회 — 신호는 전부 DB 고정 시각(질문 created_at, 직전 모션 payload 행)이라
+  //   durable ready 재시도에서도 같은 판정이 나온다. 조회 실패는 신호 없음(fail-open) —
+  //   남용 방지가 답변·모션 자체를 죽이면 안 된다.
+  let motionSignals: GeniusMotionSignals | null = null;
+  try {
+    // query-guard: bounded -- 질문 행 1건 + 직전 모션 답변 1건(ORDER 명시).
+    const { data: questionRow } = await supabaseAdmin
+      .from("dm_messages")
+      .select("created_at")
+      .eq("id", messageId)
+      .maybeSingle();
+    const questionAt = (questionRow?.created_at as string | undefined) ?? null;
+    if (questionAt) {
+      const { data: lastMotionRow } = await supabaseAdmin
+        .from("dm_messages")
+        .select("created_at")
+        .eq("conversation_id", conversationId)
+        .eq("sender_id", BASEBALL_GENIUS_USER_ID)
+        .not("payload->>motion", "is", null)
+        .lt("created_at", questionAt)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      motionSignals = {
+        questionAt,
+        lastMotionAt: (lastMotionRow?.created_at as string | undefined) ?? null,
+      };
+    }
+  } catch {
+    // fail-open: 신호 없이 진행 — 모션은 나가되 쿨다운만 비활성된다.
+  }
   const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
-    { ...result, motion: geniusMotionForResult(result.source, question) },
+    { ...result, motion: geniusMotionForResult(result.source, question, motionSignals) },
     messageId,
   );
   const deliveryDedupKey = result.source === "player_picker"

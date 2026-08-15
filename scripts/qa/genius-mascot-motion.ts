@@ -39,7 +39,10 @@ function check(name: string, ok: boolean, detail?: string) {
 
 async function partMapping() {
   const pipeline = await import("../../src/lib/baseball-qa/pipeline");
-  const { answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult } = pipeline;
+  const {
+    answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult,
+    GENIUS_MOTION_COOLDOWN_MS, SMALLTALK_STREAK_LIMIT, SMALLTALK_STREAK_ANSWER,
+  } = pipeline;
   check("입력 전제 (판정기 실확인)",
     isGreetingPhrase("안녕") && isAckPhrase("고마워") && isScopeAskPhrase("야구 룰"));
   check("매핑: 인사 → excited", geniusMotionForResult("ack", "안녕") === "excited");
@@ -91,11 +94,65 @@ async function partMapping() {
     const res = await answerQuestion("u1", "이대호 최고야", deps() as never);
     check("과차단 없음: 대상이 붙은 문장은 ack 이 아니다", res.source !== "ack", `source=${res.source}`);
   }
+  // ── §7.4 모션 30초 1회 (쿨다운 판정은 DB 고정 시각 — durable 재시도 결정론) ─────
+  {
+    const at = (ms: number) => new Date(ms).toISOString();
+    check("쿨다운: 30초 미만 → 모션 없음",
+      geniusMotionForResult("ack", "안녕", { questionAt: at(GENIUS_MOTION_COOLDOWN_MS - 1), lastMotionAt: at(0) }) === undefined);
+    check("쿨다운: 정확히 30초 → 모션 유지(경계 포함)",
+      geniusMotionForResult("ack", "안녕", { questionAt: at(GENIUS_MOTION_COOLDOWN_MS), lastMotionAt: at(0) }) === "excited");
+    check("쿨다운: 직전 모션 없음 → 모션 유지",
+      geniusMotionForResult("ack", "안녕", { questionAt: at(5_000), lastMotionAt: null }) === "excited");
+    check("쿨다운: 신호 미주입(fail-open) → 모션 유지",
+      geniusMotionForResult("scope_guide", "야구 룰") === "bored");
+    check("쿨다운: 거절 bored 도 같은 규칙",
+      geniusMotionForResult("blocked", "주식 추천", { questionAt: at(10_000), lastMotionAt: at(0) }) === undefined);
+  }
+  // ── §7.4 연속 4회부터 짧은 고정문 (answerQuestion 종단 실실행) ───────────
+  {
+    const withStreak = (streak: number, extra?: Record<string, unknown>) => ({
+      ...deps(), loadSmalltalkStreak: async () => streak, ...extra,
+    });
+    {
+      const res = await answerQuestion("u1", "고마워", withStreak(SMALLTALK_STREAK_LIMIT) as never);
+      check("연속: 직전 3연속 ack(=4회째) → 짧은 고정문",
+        res.source === "ack" && res.answer === SMALLTALK_STREAK_ANSWER, `answer=${res.answer}`);
+    }
+    {
+      const res = await answerQuestion("u1", "고마워", withStreak(SMALLTALK_STREAK_LIMIT - 1) as never);
+      check("연속: 2연속까지는 정상 응답",
+        res.source === "ack" && res.answer !== SMALLTALK_STREAK_ANSWER, `answer=${res.answer}`);
+    }
+    {
+      // 고정문이 적용되면 팀 카피·시그니처 둘 다 건너뛴다 — 짧게 유지가 목적이다.
+      let copyCalled = false; let endingCalled = false;
+      const res = await answerQuestion("u1", "안녕", withStreak(SMALLTALK_STREAK_LIMIT, {
+        pickTeamFanCopy: async () => { copyCalled = true; return "LG 트윈스를 응원하신다니 반갑습니다."; },
+        claimPositiveEnding: async (a: string) => { endingCalled = true; return `${a}\n승리를 위하여!`; },
+      }) as never);
+      check("연속: 고정문 적용 시 팀 카피·시그니처 미호출",
+        res.answer === SMALLTALK_STREAK_ANSWER && !copyCalled && !endingCalled,
+        `copy=${copyCalled} ending=${endingCalled}`);
+    }
+    {
+      // fail-open: 신호 조회가 터져도 인사는 살아야 한다.
+      const res = await answerQuestion("u1", "고마워", {
+        ...deps(), loadSmalltalkStreak: async () => { throw new Error("db down"); },
+      } as never);
+      check("연속: 신호 조회 실패 → 정상 응답(fail-open)",
+        res.source === "ack" && res.answer !== SMALLTALK_STREAK_ANSWER);
+    }
+  }
   // 서버 단일 지점 결속 — compose 호출부가 (source, question) 계산을 태우는지.
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
-  check("server 배선: compose 가 geniusMotionForResult(result.source, question) 을 받는다",
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion: geniusMotionForResult\(result\.source, question\) \}/.test(serverSrc));
+  check("server 배선: compose 가 geniusMotionForResult(result.source, question, motionSignals) 을 받는다",
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion: geniusMotionForResult\(result\.source, question, motionSignals\) \}/.test(serverSrc));
+  check("server 배선: motionSignals 는 DB 고정 시각(payload->>motion 직전 행)으로 만든다",
+    serverSrc.includes('payload->>motion') && /lastMotionAt:/.test(serverSrc));
+  check("server 배선: loadSmalltalkStreak 가 ORDER 명시 로그 조회로 연결된다",
+    /loadSmalltalkStreak: signatureUserId \? async \(\) =>/.test(serverSrc) &&
+    /order\("created_at", \{ ascending: false \}\)[\s\S]{0,80}?limit\(SMALLTALK_STREAK_LIMIT\)/.test(serverSrc));
   check("server 배선: QaResult 탑재 방식이 아니다(ready 재시도 소실 방지)",
     !/motion\?:/.test(readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8").split("export interface QaResult")[1]?.split("}")[0] ?? ""));
 }

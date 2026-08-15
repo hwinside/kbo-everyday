@@ -23,15 +23,15 @@ const mutations = [
   {
     name: "M1 인사/감사 매핑 훼손 (greeting에도 headspin)",
     file: TARGETS[0],
-    from: 'if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";',
-    to: 'if (source === "ack") return "headspin";',
+    from: '    source === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :',
+    to: '    source === "ack" ? ("headspin" as const) :',
     expect: "인사 → excited",
   },
   {
     name: "M2 거절 bored 매핑 삭제",
     file: TARGETS[0],
-    from: '  if (source === "scope_guide" || source === "blocked") return "bored";\n',
-    to: "",
+    from: '    source === "scope_guide" || source === "blocked" ? ("bored" as const) :',
+    to: '    false ? ("bored" as const) :',
     expect: "bored",
   },
   {
@@ -64,7 +64,7 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion: geniusMotionForResult(result.source, question) }",
+    from: "{ ...result, motion: geniusMotionForResult(result.source, question, motionSignals) }",
     to: "result",
     expect: "server 배선",
   },
@@ -81,6 +81,31 @@ const mutations = [
     from: 'showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}',
     to: "showMascot={true}",
     expect: "failed 마스코트는 숨는다",
+  },
+  {
+    name: "M12 모션 쿨다운 삭제 (30초 내 재모션 허용)",
+    file: TARGETS[0],
+    from: `  if (signals?.questionAt && signals.lastMotionAt) {
+    const gap = Date.parse(signals.questionAt) - Date.parse(signals.lastMotionAt);
+    if (Number.isFinite(gap) && gap < GENIUS_MOTION_COOLDOWN_MS) return undefined;
+  }
+`,
+    to: "",
+    expect: "쿨다운",
+  },
+  {
+    name: "M13 연속 고정문 우회 (streak 무시)",
+    file: TARGETS[0],
+    from: "        if (streak >= SMALLTALK_STREAK_LIMIT) {",
+    to: "        if (false) {",
+    expect: "연속",
+  },
+  {
+    name: "M14 server motionSignals 미전달 (쿨다운 무효화)",
+    file: TARGETS[3],
+    from: "motion: geniusMotionForResult(result.source, question, motionSignals)",
+    to: "motion: geniusMotionForResult(result.source, question)",
+    expect: "server 배선",
   },
   {
     name: "M10 칭찬 폐쇄집합 삭제 (대표 칭찬이 ack 이 아니게 됨)",
