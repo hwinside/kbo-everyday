@@ -351,6 +351,12 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
       `KBO batter Basic2 join incomplete: missing=${missingBasic2.length}`,
     );
   }
+  // ⚠️ Basic1↔Basic2 교차 식별 충돌(삼순 #1196 3차 P0-2): 같은 kboId 가 두 표에서
+  // 다른 name/team 이면 다른 사람의 수치가 조용히 붙는다 — join 전체 fail-close.
+  for (const row of rows) {
+    const b2row = basic2RowByKey.get(rowKboId(row));
+    if (b2row) assertRowIdentityConsistent(row, b2row, rowKboId(row));
+  }
 
   // Runner 전 페이지 live 수집이 완전히 성공했을 때만 사용한다. 일부 페이지만 성공한 결과와
   // static을 선수별로 섞지 않고, WebForms 수집이 실패한 요청에 한해 static 전체를 최종 fallback.
@@ -742,6 +748,8 @@ export function handleStatsGetFailure(
   season: string,
   type: string,
   now = new Date(),
+  // ⚠️ 게이트 주입용(오염 fallback → 500 검증). production 호출은 항상 생략 → static 사용.
+  fallbackOverride?: PlayerStat[],
 ): NextResponse {
   // ⚠️ 이 함수의 모든 응답은 degraded(또는 에러)다 — **엣지 캐시 금지**(main #1166 계약).
   //   fallback 이 CDN 에 고정되면 크롤이 회복돼도 stale 이 계속 서빙된다.
@@ -753,9 +761,20 @@ export function handleStatsGetFailure(
   // 크롤링 실패 시 static JSON fallback (빈화면 방지). 단 fallback 자체의 구성시각도
   // 동일 freshness 계약을 통과해야 하며 미래/invalid면 500 fail-close 한다.
   if (season === "2026" || season === "current") {
-    const fallback = type === "pitcher"
+    const fallback = fallbackOverride ?? (type === "pitcher"
       ? (pitcherStats2026 as unknown as PlayerStat[])
-      : (batterStats2026 as unknown as PlayerStat[]);
+      : (batterStats2026 as unknown as PlayerStat[]));
+    // ⚠️ fallback 자체도 identity 계약을 통과해야 200 을 받는다(삼순 #1196 3차 P0-1:
+    // 종단 가드가 throw 해도 같은 오염 static 을 200 으로 되돌려주면 fail-close 가 무효다).
+    // 오염이면 500/no-store fail-close.
+    try {
+      assertFullEntryIdentity(fallback);
+    } catch (identityError) {
+      return NextResponse.json(
+        { error: (identityError as Error).message, stats: [] },
+        { status: 500, headers: NO_STORE },
+      );
+    }
     const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
     const validFbAt = oldestFullEntryTimestamp([fbAt], now);
     if (!validFbAt) {

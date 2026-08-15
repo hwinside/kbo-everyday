@@ -90,6 +90,8 @@ const SCENARIOS = [
   "batter-id-conflict",
   "batter-runner-noid",
   "batter-basic2-partial",
+  "batter-basic2-dup",
+  "batter-b1b2-conflict",
   "pitcher-live",
   "pitcher-noid",
   "pitcher-dup",
@@ -189,6 +191,12 @@ async function runScenario(scenario: Scenario): Promise<void> {
     }
   }
   if (scenario === "batter-basic2-partial") b2Served = basic2Rows.filter((r) => r.id !== ID_B);
+  // Basic2 같은 테이블 내 같은 ID 재등장 → 전체 fallback (삼순 3차 P0-2 보강축).
+  if (scenario === "batter-basic2-dup") b2Served = [...basic2Rows, { ...basic2Rows[0] }];
+  // 같은 kboId 가 Basic1과 Basic2 에서 다른 name → 교차 식별 충돌로 전체 fallback (삼순 3차 P0-2).
+  if (scenario === "batter-b1b2-conflict") {
+    b2Served = basic2Rows.map((r) => (r.id === ID_A ? { ...r, name: "오염된이름" } : r));
+  }
   // ⚠️ 동명이인 행은 half2 에 있다 — 주입은 실제로 서빙되는 페이지에 걸어야 한다.
   if (scenario === "pitcher-noid") pitcherServed2 = noid(pitcherHalf2, ID_B);
   if (scenario === "pitcher-dup") pitcherServed2 = [...pitcherHalf2, { ...pHomoB }];
@@ -381,6 +389,50 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     const nameKeyed = new Map([["무명::두산", { sb: 4, cs: 1 }]]);
     const kept = applyRunnerStats([{ rank: 1, name: "무명", team: "두산", kboId: "", sb: 0, cs: 0 }], nameKeyed);
     assert.equal(Number(kept[0].sb), 0, "이름::팀 fallback 이 살아있다");
+  });
+  await check("mergeFullEntry: ID-only 계약 — 결손/중복/충돌 throw · 동명이인 보존", async () => {
+    const { mergeFullEntry } = await import("../../src/lib/stats/full-entry");
+    const live = [
+      { name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A, qualifiedRate: 1 },
+    ];
+    const merged = mergeFullEntry(live, [
+      { name: HOMONYM.name, team: HOMONYM.team, kboId: ID_B },
+    ]);
+    assert.equal(merged.length, 2, "동명이인 static 보강이 사라졌다");
+    assert.throws(() => mergeFullEntry(live, [{ name: "무명", team: "KT", kboId: "" }]), /identity missing/);
+    assert.throws(
+      () => mergeFullEntry(live, [
+        { name: "중복", team: "KT", kboId: "99001" },
+        { name: "중복", team: "KT", kboId: "99001" },
+      ]),
+      /duplicated/,
+    );
+    assert.throws(
+      () => mergeFullEntry(live, [{ name: "오염된이름", team: HOMONYM.team, kboId: ID_A }]),
+      /identity conflict/,
+    );
+  });
+  await check("handleStatsGetFailure: 오염 fallback 은 200 이 아니라 500/no-store", async () => {
+    const { handleStatsGetFailure } = await import("../../src/app/api/stats/route");
+    // 정상 static 은 200 fallback (identity 검증 통과).
+    const okRes = handleStatsGetFailure(new Error("crawl failed"), "current", "batter");
+    assert.equal(okRes.status, 200);
+    assert.equal((await okRes.json()).source, "fallback");
+    // 빈 ID 오염 주입 → 500 + no-store (삼순 3차 P0-1: 오염 static 을 200 으로 되돌리면 fail-close 무효).
+    const corrupt = [
+      { rank: 1, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
+      { rank: 2, name: "무명", team: "두산", kboId: "" },
+    ];
+    const bad = handleStatsGetFailure(new Error("crawl failed"), "current", "batter", new Date(), corrupt as never);
+    assert.equal(bad.status, 500, `status=${bad.status}`);
+    assert.equal(bad.headers.get("cache-control"), "no-store");
+    // 중복 ID 오염도 동일.
+    const dup = [
+      { rank: 1, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
+      { rank: 2, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
+    ];
+    const badDup = handleStatsGetFailure(new Error("crawl failed"), "current", "batter", new Date(), dup as never);
+    assert.equal(badDup.status, 500);
   });
   await check("assertFullEntryIdentity: 동명이인 정상쌍 통과 · 빈 id throw · 중복 id throw", async () => {
     const { assertFullEntryIdentity } = await import("../../src/app/api/stats/route");
