@@ -20,6 +20,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import playersRoster from "../../src/lib/constants/players-roster.json";
 import batterStats2026 from "../../src/lib/constants/stats-2026-batters.json";
 import { canonicalKboId } from "../../src/lib/utils/resolve-player";
@@ -547,6 +548,17 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     assert.throws(
       () => canonicalizeDefenseRows([{ name: "무명", team: "KT", kboId: "" }] as never),
       /identity missing/,
+    );
+  });
+  await check("defense 호출부 결속: aggregateDefense 입력은 canonicalizeDefenseRows 를 거친다", () => {
+    // ⚠️ 이건 **구조 결속 검사**다(행동 검사 아님). 현재 static defense 는 전 행이 raw 형태라
+    // 호출부를 우회해도 응답이 똑같다(쪼개짐이 안 생긴다). 그래서 크롤러가 일부를 canonical 로
+    // 바꾸는 날 조용히 깨지는 것을 막으려면 순서 자체를 소스에서 묶어두는 수밖에 없다.
+    const src = readFileSync(new URL("../../src/app/api/stats/route.ts", import.meta.url), "utf8");
+    assert.ok(
+      /aggregateDefense\(\s*canonicalizeDefenseRows\(/.test(src) ||
+      /const canonicalRows = canonicalizeDefenseRows\([\s\S]{0,200}?aggregateDefense\(canonicalRows\)/.test(src),
+      "defense 분기가 canonicalizeDefenseRows 를 거치지 않고 집계한다 — 집계 전 통일 계약 우회",
     );
   });
   await check("collapseIdenticalStatRows: rank만 다른 완전동일 중복은 접고 · 값 다르면 throw", async () => {
