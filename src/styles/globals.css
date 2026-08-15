@@ -461,3 +461,35 @@ html.postdetail-open > body {
 .dark .myteam-card .text-text-primary { color: #F5F5F7 !important; }
 .dark .myteam-card .text-text-secondary { color: #D1D1D6 !important; }
 .dark .myteam-card .text-text-tertiary { color: #A1A1A6 !important; }
+
+/* ── 야잘알봇 마스코트 모션 (SSOT §7.6 — 2026-08-15 하린아빠 착수 지시) ─────────
+   인사→excited(신남 바운스) / 감사·칭찬→headspin(헤드스핀) / 거절→bored(심심함 스웨이).
+   애니메이션 이미지 자산 없이 정적 PNG 에 CSS transform 만 입힌다.
+   유한 반복(무한 루프 금지) — 재생 후 정적 마스코트로 자연 정착해 남용을 구조적으로 막는다.
+   채팅창에는 최신 모션 1개만 존재한다(부착 판정은 page 의 latestMotionMessageId). */
+@keyframes genius-motion-excited {
+  0%, 100% { transform: translateY(0); }
+  20% { transform: translateY(-4px) rotate(-3deg); }
+  40% { transform: translateY(0); }
+  60% { transform: translateY(-3px) rotate(3deg); }
+  80% { transform: translateY(0); }
+}
+@keyframes genius-motion-headspin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+@keyframes genius-motion-bored {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-8deg) translateY(1px); }
+  70% { transform: rotate(8deg) translateY(1px); }
+}
+.genius-motion-excited { animation: genius-motion-excited 0.9s ease-in-out 3; }
+.genius-motion-headspin { animation: genius-motion-headspin 0.8s ease-in-out 2; }
+.genius-motion-bored { animation: genius-motion-bored 2.2s ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) {
+  .genius-motion-excited,
+  .genius-motion-headspin,
+  .genius-motion-bored {
+    animation: none;
+  }
+}

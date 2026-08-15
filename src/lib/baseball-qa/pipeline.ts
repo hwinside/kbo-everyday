@@ -690,6 +690,14 @@ export interface QaResult {
    * 클라가 그 문구에 하이퍼링크를 씌운다 (하린아빠 2026-08-05 P0).
    */
   sourceUrl?: string;
+  /**
+   * 마스코트 모션 (SSOT §7.6 — 인사→신남 / 감사·칭찬→헤드스핀 / 거절→심심함).
+   * smalltalk(ack)·결정론 거절(scope_guide·blocked)에서만 채운다. 되묻기·오류·지식
+   * 답변에는 모션을 붙이지 않는다 — 모션은 감정 반응 전용이다(unsure LLM 거절 확장은
+   * 별도 트랙). 타입은 constants/baseball-genius.ts 의 GeniusMascotMotion 과 구조적으로
+   * 동일하나 순환 import 를 피하려고 리터럴로 적는다(구조적 타이핑).
+   */
+  motion?: "excited" | "headspin" | "bored";
 }
 
 export interface QaDeps {
@@ -4809,7 +4817,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     await deps.log({ userId, question, questionNorm, matchPath: route, answer, inputTokens: null, outputTokens: null });
-    return { status: 200, answer, source: route, remaining: quotaRemaining };
+    // 마스코트 모션 (§7.6) — 이 블록이 smalltalk·결정론 거절의 단일 종결지점이므로
+    // 매핑도 여기서 한다. 인사/감사 판정은 답변 문구가 아니라 **같은 판정기**
+    // (isGreetingPhrase)를 탄다 — 팀 카피 치환으로 answer 가 바뀌어도 모션은 안 갈린다.
+    const motion: QaResult["motion"] =
+      route === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :
+      route === "scope_guide" || route === "blocked" ? "bored" :
+      undefined;
+    return { status: 200, answer, source: route, remaining: quotaRemaining, ...(motion ? { motion } : {}) };
   }
 
   // ① 검수 사전 (토큰 0)

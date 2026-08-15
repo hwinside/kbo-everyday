@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, Fragment, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,6 +28,7 @@ import {
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
   geniusMascotSrc,
+  geniusMotionFromPayload,
   isGeniusPickerDisabled,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -71,6 +72,20 @@ export default function DMChatPage() {
     geniusAnsweredQuestionIds,
     geniusThinkingQuestionId,
   } = useDMChat(draftTargetId ? "" : conversationId);
+  // 마스코트 모션은 **채팅창에 항상 최신 1개만** 움직인다 (하린아빠 2026-08-15 13:34
+  // "이전에 보여줬던 모션은 새로운 모션이 등장하면 사라져야 함"). 이전 답변은 정적
+  // 마스코트로 강등된다. 메시지 목록에서 순수 파생하므로 상태·localStorage 없이 결정론이고
+  // Realtime 순서 역전·reload 에서도 같은 답이 나온다. 봇 발신 + 유효 payload 만 신뢰.
+  const latestMotionMessageId = useMemo(() => {
+    let latest: number | null = null;
+    for (const m of messages) {
+      if (m.sender_id !== BASEBALL_GENIUS_USER_ID) continue;
+      if (!isGeniusReplyPayload(m.payload)) continue;
+      if (geniusMotionFromPayload(m.payload) === null) continue;
+      if (latest === null || m.id > latest) latest = m.id;
+    }
+    return latest;
+  }, [messages]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -531,14 +546,24 @@ export default function DMChatPage() {
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
                       {mascotState ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG(모션은 CSS 애니메이션)
                         <img
                           src={geniusMascotSrc(mascotState)}
                           alt=""
                           aria-hidden
                           data-testid="genius-reply-mascot"
                           data-state={mascotState}
-                          className="h-8 w-auto max-w-none object-contain"
+                          // 모션은 최신 모션 메시지 1개에만 붙는다 — 그 외에서는 data-motion 자체가 없다.
+                          data-motion={
+                            msg.id === latestMotionMessageId
+                              ? geniusMotionFromPayload(geniusReply) ?? undefined
+                              : undefined
+                          }
+                          className={`h-8 w-auto max-w-none object-contain${
+                            msg.id === latestMotionMessageId && geniusMotionFromPayload(geniusReply)
+                              ? ` genius-motion-${geniusMotionFromPayload(geniusReply)}`
+                              : ""
+                          }`}
                         />
                       ) : (
                         msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />
