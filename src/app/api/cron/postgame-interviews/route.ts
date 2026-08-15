@@ -14,6 +14,11 @@ import {
   contextFromStoredJob,
   doubleheaderGameIds,
 } from "@/lib/video/postgame-interviews-route-policy";
+import {
+  notifyFavPlayerInterviews,
+  type InterviewNotifySummary,
+} from "@/lib/notifications/fav-player-interview";
+import { createInterviewDeps } from "@/lib/notifications/fav-player-interview-deps";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const KBO_SCOREBOARD_URL = "https://www.koreabaseball.com/ws/Schedule.asmx/GetScoreBoard";
@@ -247,7 +252,19 @@ export async function GET(req: NextRequest) {
   const activeJobs = (activeRows ?? []) as JobRow[];
   const dueJobs = activeJobs.filter((job) => Date.parse(job.next_collect_at) <= nowMs);
   if (dueJobs.length === 0) {
-    return NextResponse.json({ ok: seed.faults === 0, seed, active: activeJobs.length, due: 0 });
+    // 수집할 job이 없어도 인터뷰 알림 복구는 반드시 돈다. 마지막 수집 run에서
+    // FCM/DB가 실패하거나 job이 만료된 뒤에도 pending·만료 lease를 재시도해야 한다.
+    let interviewNotify: InterviewNotifySummary | { error: string } | null = null;
+    try {
+      interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());
+    } catch (e) {
+      interviewNotify = { error: e instanceof Error ? e.message : String(e) };
+      console.error("[postgame-interviews] notify recovery failed:", interviewNotify.error);
+    }
+    return NextResponse.json({
+      ok: seed.faults === 0 && !("error" in (interviewNotify ?? {})),
+      seed, active: activeJobs.length, due: 0, interviewNotify,
+    });
   }
 
   const [contexts, feedResults] = await Promise.all([
@@ -285,13 +302,32 @@ export async function GET(req: NextRequest) {
 
   let stored = 0;
   let storeError: string | null = null;
+  // 이번 run에 실제로 새로 insert된 video_id만 반환(ignoreDuplicates) → 알림도 이 집합만.
+  let insertedVideoIds: string[] = [];
   if (interviewRows.length > 0) {
     const { data, error } = await supabaseAdmin
       .from("postgame_interviews")
       .upsert(interviewRows, { onConflict: "game_id,video_id", ignoreDuplicates: true })
       .select("video_id");
     if (error) storeError = error.message;
-    else stored = data?.length ?? 0;
+    else {
+      stored = data?.length ?? 0;
+      insertedVideoIds = (data ?? []).map((r) => r.video_id as string);
+    }
+  }
+
+  // ── 최애선수 수훈 인터뷰 알림 ──
+  // 기존 파이프라인이 이미 game_id·player_names를 확정했으므로 여기서 감지·문자열
+  // 분석은 하지 않는다. 대상은 이번 run의 새 insert가 아니라 **DB lease가 선점한
+  // pending/만료 processing 행**이다 — 새 insert만 보면 발송 실패 시 다음 run에
+  // 재입력되지 않아 영구 유실된다. 모듈이 원장을 직접 조회하므로 인자가 없다.
+  // best-effort — 실패해도 cron 본연(수집)을 막지 않고, 미발송 행은 다음 run이 재시도.
+  let interviewNotify: InterviewNotifySummary | { error: string } | null = null;
+  try {
+    interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());
+  } catch (e) {
+    interviewNotify = { error: e instanceof Error ? e.message : String(e) };
+    console.error("[postgame-interviews] notify failed:", interviewNotify.error);
   }
 
   const contextIds = new Set(contexts.map((context) => context.gameId));
@@ -330,6 +366,7 @@ export async function GET(req: NextRequest) {
     feedFaults,
     candidates: interviewRows.length,
     stored,
+    interviewNotify,
     storeError,
     expiryError: expiryError?.message ?? null,
     jobUpdateFaults,
