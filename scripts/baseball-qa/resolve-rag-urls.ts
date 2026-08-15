@@ -1,9 +1,28 @@
 /**
- * S2b: 대상 선수(16명)의 tier2 canonical URL을 해석해 resolution_status를 확정한다.
+ * tier2 canonical URL을 해석해 resolution_status를 확정한다.
  *
- * 실행: `npm run rag:resolve-urls`  (수동/GitHub Actions. 맥미니 LaunchAgent 금지 — P0)
+ * ⚠️ **범위 계약 (2026-08-15)** — 종전엔 `S2B_TARGET_PLAYERS`(16명)만 돌았다. 그러는 사이
+ * 로스터 나머지는 별도 벌크 경로(`w/{이름}` 단일 시도)로 수집돼, 이 파일이 가진
+ * 괄호 표제어·동음이의 재해석이 **대다수에게 적용된 적이 없다.**
+ * 실측(2026-08-15): 김재환은 `w/김재환`(동명이인 목록 페이지)를 받아 신원 게이트가 격리했고,
+ * 그 다음 후보가 없어 그대로 끝났다 — corpus에 김재환 선수 문서가 0건이 된 이유다.
+ * 그래서 기본 범위를 **로스터 전체**로 바꿈. `--scope=targets`는 S2b 슬라이스 재현용으로만 남긴다.
+ *
+ * 실행: `npm run rag:resolve-urls`  (수동. GitHub Actions 직접 수집은 나무 IP 차단으로 부적합,
+ *        맥미니 LaunchAgent 금지 — P0)
  *   옵션: `--dry-run` DB 쓰기 없이 판정만 출력
  *         `--source=wikipedia|namu` 해석할 소스 (기본 wikipedia)
+ *         `--scope=snapshot|roster|targets` 해석 대상 (기본 snapshot = 0단계 나무 공백 스냅샷의
+ *                  해석 필요 버킷. roster = 로스터 전체, targets = S2b 16명 재현)
+ *         `--fetcher=chrome|cdp` 나무 fetch 경로 (기본 chrome = 로컬 headed Chrome 재기동.
+ *                  cdp = A17 폰 Chrome CDP — `NAMU_CDP_URL`/`--cdp-url`, adb forward 전제)
+ *         `--interval-ms=<N>` 요청 간 최소 간격. 기본 5000 + 0~2000ms 지터.
+ *                  ⚠️ 2026-08-15 하린아빠 지시로 기본을 10초 미만(5초+지터)으로 낮췄다.
+ *                  실측 하한(데스크톱 2.5초 연타 403)을 감안해 바닥 3000ms 미만은 거부한다.
+ *                  안전선은 간격이 아니라 **첫 blocked 전역 즉시 중단**이다(삼순 계약).
+ *         `--checkpoint=<path>` kboId 단위 진행 원장(JSONL). 있으면 이어받기(resume)한다.
+ *         `--name=<이름>` 특정 선수만 (반복 가능, 검증·재시도용)
+ *         `--limit=<N>` 앞에서 N명만 (bounded rate 때문에 분할 실행이 필요하다)
  *         `--out=<path>` 판정 결과 JSON 저장 (ingest 스크립트 입력)
  *
  * 소스 우선순위 (하린아빠 지시, R3): **위키피디아가 기본, 나무위키는 보조**다.
@@ -22,7 +41,7 @@
  * §12.2(b): 차단을 만나면 그 선수에 대한 추가 요청을 중단한다. 우회하지 않는다.
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import {
@@ -36,15 +55,60 @@ import { fetchWikipediaDocument } from "../../src/lib/baseball-qa/rag/fetch-wiki
 import { buildResolutionSourceRow } from "../../src/lib/baseball-qa/rag/source-resolution";
 import { S2B_TARGET_PLAYERS } from "../../src/lib/baseball-qa/rag/targets";
 import { fetchNamuDocumentViaBrowser } from "./rag/fetch-namu-browser";
+import { fetchNamuDocumentViaCdp } from "./rag/fetch-namu-cdp";
 
 type Resolution = "resolved" | "missing" | "ambiguous" | "blocked";
 type SourceName = "wikipedia" | "namu";
+type ResolveScope = "snapshot" | "roster" | "targets";
+type FetcherName = "chrome" | "cdp";
+
+/** 0단계 나무 공백 스냅샷(2026-08-15) — resolver 해석 대상의 SSOT. */
+const GAP_SNAPSHOT_PATH = "scripts/qa/fixtures/corpus-gap-snapshot-20260815.json";
+/** 스냅샷 버킷 중 외부 해석이 필요한 것들. `적재만(기존 corpus 재사용)`은 재크롤 대상이 아니다. */
+const SNAPSHOT_RESOLVE_BUCKETS = new Set(["외부 해석 필요", "원장 미등록"]);
+
+/** 해석 대상 한 명. `S2B_TARGET_PLAYERS`와 로스터 행을 같은 모양으로 받는다. */
+interface ResolveTarget { kboId: string; name: string }
 
 interface RosterPlayer { name: string; kboId: string; team: string; birthDate?: string }
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const SOURCE = (process.argv.find((arg) => arg.startsWith("--source="))?.split("=")[1] ?? "wikipedia") as SourceName;
 const OUT_PATH = process.argv.find((arg) => arg.startsWith("--out="))?.split("=")[1] ?? null;
+const SCOPE = (process.argv.find((arg) => arg.startsWith("--scope="))?.split("=")[1] ?? "snapshot") as ResolveScope;
+const FETCHER = (process.argv.find((arg) => arg.startsWith("--fetcher="))?.split("=")[1] ?? "chrome") as FetcherName;
+const CDP_URL = process.argv.find((arg) => arg.startsWith("--cdp-url="))?.split("=").slice(1).join("=") ?? undefined;
+const CHECKPOINT_PATH = process.argv.find((arg) => arg.startsWith("--checkpoint="))?.split("=")[1] ?? null;
+/** 간격 바닥 — 이보다 낮추는 것은 실측 근거(2.5초 연타 403)와 충돌한다. fail-close. */
+export const INTERVAL_FLOOR_MS = 3_000;
+/** 기본 간격 5초 (2026-08-15 하린아빠: "10초보다 더 짧게"). 지터 0~2초를 매 요청 더한다. */
+export const DEFAULT_INTERVAL_MS = 5_000;
+export const INTERVAL_JITTER_MS = 2_000;
+const INTERVAL_MS = (() => {
+  const raw = process.argv.find((arg) => arg.startsWith("--interval-ms="))?.split("=")[1];
+  if (raw === undefined) return DEFAULT_INTERVAL_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < INTERVAL_FLOOR_MS) {
+    console.error(`--interval-ms 값이 잘못됐다: ${raw} (${INTERVAL_FLOOR_MS}ms 이상 정수만 허용)`);
+    process.exit(1);
+  }
+  return parsed;
+})();
+const ONLY_NAMES = process.argv
+  .filter((arg) => arg.startsWith("--name="))
+  .map((arg) => arg.split("=").slice(1).join("=").trim())
+  .filter((name) => name.length > 0);
+const LIMIT = (() => {
+  const raw = process.argv.find((arg) => arg.startsWith("--limit="))?.split("=")[1];
+  if (raw === undefined) return null;
+  const parsed = Number(raw);
+  // 잘못된 `--limit`을 조용히 무시하면 "전체 돌았다"는 착각을 만든다 — fail-close.
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    console.error(`--limit 값이 잘못됐다: ${raw} (양의 정수만 허용)`);
+    process.exit(1);
+  }
+  return parsed;
+})();
 
 function loadEnv(): Record<string, string> {
   const env: Record<string, string> = { ...process.env } as Record<string, string>;
@@ -71,10 +135,22 @@ function namuUrl(title: string): string {
   return `https://namu.wiki/w/${encodeURIComponent(title)}`;
 }
 
+/** 나무 fetch 경로 선택 — 판정(verifyCanonicalIdentity)은 경로와 무관하게 동일하다. */
+async function fetchNamuDocument(url: string) {
+  return FETCHER === "cdp"
+    ? fetchNamuDocumentViaCdp(url, { cdpUrl: CDP_URL, minIntervalMs: intervalWithJitter() })
+    : fetchNamuDocumentViaBrowser(url, { minIntervalMs: intervalWithJitter() });
+}
+
+/** 지터 포함 간격 — 고정 주기는 패턴 탐지를 돕기 때문에 지터를 더한다(#1153 계약 재사용). */
+export function intervalWithJitter(base = INTERVAL_MS, jitter = INTERVAL_JITTER_MS): number {
+  return base + Math.floor(Math.random() * (jitter + 1));
+}
+
 /** 나무위키 후보 1건 판정 — 응답이 와도 identity 대조를 통과하지 못하면 canonical이 아니다. */
 async function probeNamu(title: string, identity: PlayerDocumentIdentity): Promise<CandidateProbe> {
   const url = namuUrl(title);
-  const fetched = await fetchNamuDocumentViaBrowser(url);
+  const fetched = await fetchNamuDocument(url);
   if (!fetched.ok) return { kind: fetched.status, url, reason: fetched.reason };
   const verdict = verifyCanonicalIdentity({
     requestedUrl: fetched.requestedUrl,
@@ -115,6 +191,52 @@ async function probeWikipedia(title: string, identity: PlayerDocumentIdentity): 
   };
 }
 
+/**
+ * 해석 대상 선정.
+ *
+ * `roster`가 기본이다 — S2b 슬라이스는 끝난 지 오래고, 16명만 도는 동안 나머지 로스터는
+ * 괄호 표제어 재해석 없이 수집돼 김재환처럼 통째로 빠졌다.
+ *
+ * ⚠️ 순서를 **kboId 오름차순으로 고정**한다. `--limit` 분할 실행이 전제인데 순서가 흔들리면
+ * 회차마다 같은 사람을 다시 두드리거나 영영 안 닿는 사람이 생긴다(무정렬 LIMIT과 같은 함정).
+ */
+export function selectResolveTargets(
+  roster: readonly RosterPlayer[],
+  options: {
+    scope: ResolveScope;
+    onlyNames: readonly string[];
+    limit: number | null;
+    /** scope=snapshot일 때만 쓴다. 해석 필요 버킷만 통과시킨다. */
+    snapshotPlayers?: readonly { kboId: string; name: string; bucket: string }[];
+    /** checkpoint에 이미 기록된 kboId — resume 시 건너뛴다. */
+    doneKboIds?: ReadonlySet<string>;
+  },
+): ResolveTarget[] {
+  let pool: ResolveTarget[];
+  if (options.scope === "targets") {
+    pool = S2B_TARGET_PLAYERS.map(({ kboId, name }) => ({ kboId, name }));
+  } else if (options.scope === "snapshot") {
+    const players = options.snapshotPlayers ?? [];
+    if (players.length === 0) {
+      throw new Error("scope=snapshot인데 스냅샷 입력이 비었다 — 조용한 전체 통과로 바꾸지 않는다(fail-close)");
+    }
+    pool = players
+      .filter((player) => SNAPSHOT_RESOLVE_BUCKETS.has(player.bucket))
+      .map(({ kboId, name }) => ({ kboId, name }))
+      .sort((left, right) => left.kboId.localeCompare(right.kboId));
+  } else {
+    pool = [...roster]
+      .map(({ kboId, name }) => ({ kboId, name }))
+      .sort((left, right) => left.kboId.localeCompare(right.kboId));
+  }
+  const done = options.doneKboIds;
+  const afterResume = done && done.size > 0 ? pool.filter((target) => !done.has(target.kboId)) : pool;
+  const filtered = options.onlyNames.length > 0
+    ? afterResume.filter((target) => options.onlyNames.includes(target.name))
+    : afterResume;
+  return options.limit === null ? filtered : filtered.slice(0, options.limit);
+}
+
 /** 위키피디아 후보 제목 — 동명이인은 `이름 (YYYY년)` 형식이 표준이다(실측). */
 function wikipediaCandidateTitles(name: string, birthYear: string): string[] {
   return [name, `${name} (${birthYear}년)`, `${name} (야구 선수)`];
@@ -145,10 +267,59 @@ async function main(): Promise<void> {
     readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json"), "utf8"),
   ) as RosterPlayer[];
   const nameCounts = new Map<string, number>();
+  // 동명이인 판정 축 — 이름이 같아도 생년이 다르면 identity 게이트(생년 분류 대조)가 가른다.
+  // 이름+생년이 모두 같은 쌍만 문서 쪽 근거로는 구별 불능 → 그 경우만 즉시 ambiguous(fail-close).
+  const nameBirthCounts = new Map<string, number>();
   const byKboId = new Map<string, RosterPlayer>();
   for (const player of roster) {
     nameCounts.set(player.name, (nameCounts.get(player.name) ?? 0) + 1);
+    const birthKey = `${player.name}|${player.birthDate?.slice(0, 4) ?? ""}`;
+    nameBirthCounts.set(birthKey, (nameBirthCounts.get(birthKey) ?? 0) + 1);
     byKboId.set(player.kboId, player);
+  }
+
+  const snapshotPlayers = SCOPE === "snapshot"
+    ? (JSON.parse(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH), "utf8")) as {
+        players: { kboId: string; name: string; bucket: string }[];
+      }).players
+    : undefined;
+
+  // checkpoint resume — 이미 판정된 kboId는 다시 두드리지 않는다(외부 요청 재발사 금지).
+  const doneKboIds = new Set<string>();
+  if (CHECKPOINT_PATH) {
+    try {
+      for (const line of readFileSync(CHECKPOINT_PATH, "utf8").split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const row = JSON.parse(trimmed) as { kboId?: string };
+        if (row.kboId) doneKboIds.add(row.kboId);
+      }
+      console.log(`checkpoint 이어받기: ${CHECKPOINT_PATH} — 기존 판정 ${doneKboIds.size}명 skip`);
+    } catch {
+      console.log(`checkpoint 신규 생성: ${CHECKPOINT_PATH}`);
+    }
+  }
+
+  const targets = selectResolveTargets(roster, {
+    scope: SCOPE,
+    onlyNames: ONLY_NAMES,
+    limit: LIMIT,
+    snapshotPlayers,
+    doneKboIds,
+  });
+  console.log(
+    `범위: scope=${SCOPE} → 대상 ${targets.length}명`
+    + ` (로스터 ${roster.length}행${SCOPE === "snapshot" ? `, 스냅샷 해석버킷 입력` : ""}`
+    + `${doneKboIds.size > 0 ? `, resume skip ${doneKboIds.size}명` : ""}`
+    + `${ONLY_NAMES.length > 0 ? `, --name 필터 ${ONLY_NAMES.length}건` : ""}`
+    + `${LIMIT === null ? "" : `, --limit ${LIMIT}`})`,
+  );
+  if (SOURCE === "namu") {
+    console.log(`fetcher=${FETCHER}, 간격 ${INTERVAL_MS}ms+지터≤${INTERVAL_JITTER_MS}ms, 첫 blocked 전역 즉시 중단`);
+  }
+  if (targets.length === 0) {
+    console.error("해석 대상 0명 — 범위 옵션을 확인하라(조용한 성공으로 끝내지 않는다).");
+    process.exit(1);
   }
 
   interface ResultRow {
@@ -164,7 +335,7 @@ async function main(): Promise<void> {
   }
   const results: ResultRow[] = [];
 
-  for (const target of S2B_TARGET_PLAYERS) {
+  for (const target of targets) {
     const sourceKey = `${SOURCE === "namu" ? "namu" : "wikipedia"}:player:${target.kboId}`;
     const rosterRow = byKboId.get(target.kboId);
     const birthYear = rosterRow?.birthDate?.slice(0, 4) ?? "";
@@ -174,10 +345,14 @@ async function main(): Promise<void> {
     const candidateUrls = candidateTitles.map((title) => SOURCE === "namu" ? namuUrl(title) : wikipediaUrl(title));
     const base = { sourceKey, kboId: target.kboId, name: target.name, source: SOURCE, candidateUrls };
 
-    if ((nameCounts.get(target.name) ?? 0) > 1) {
+    // 동명이인(§12 + 2026-08-15 삼순 계약): 이름 중복 자체로는 즉시 ambiguous하지 않는다 —
+    // identity 게이트가 생년 분류(`{생년}년 출생`)로 개인을 가른다. 단, 이름+생년이 모두 같은
+    // 로스터 쌍은 문서 쪽 근거로 구별할 축이 없다 → fail-close 유지. 팀·포지션은 이적/문서
+    // 지연 때문에 hard gate로 쓰지 않고 note 보조 근거로만 남긴다.
+    if ((nameBirthCounts.get(`${target.name}|${birthYear}`) ?? 0) > 1) {
       results.push({
         ...base, status: "ambiguous", canonicalUrl: null, pageTitle: null,
-        note: `로스터 동명이인 ${nameCounts.get(target.name)}건 — 이름 단독 연결 금지(§12)`,
+        note: `로스터 동명·동생년 ${nameBirthCounts.get(`${target.name}|${birthYear}`)}건 — 문서 근거로 구별 불능(fail-close)`,
       });
       continue;
     }
@@ -240,8 +415,30 @@ async function main(): Promise<void> {
     } else {
       verdict = { status: "missing", canonicalUrl: null, pageTitle: null, note: `identity 확정 후보 없음 (${trace})` };
     }
+    const isRosterDupName = (nameCounts.get(target.name) ?? 0) > 1;
+    if (isRosterDupName && verdict.status === "resolved") {
+      // 보조 근거 기록 — 판정은 생년 분류가 했고, 팀은 검수자가 대조할 참고칸이다(hard gate 아님).
+      verdict.note += ` [동명이인 주의: 로스터 동명 ${nameCounts.get(target.name)}명, 이 판정은 kboId ${target.kboId}(${rosterRow?.team ?? "?"}) 생년 ${birthYear} 기준]`;
+    }
     results.push({ ...base, ...verdict });
+    if (CHECKPOINT_PATH) {
+      appendFileSync(
+        CHECKPOINT_PATH,
+        `${JSON.stringify({ kboId: target.kboId, name: target.name, status: verdict.status, canonicalUrl: verdict.canonicalUrl, note: verdict.note, at: new Date().toISOString() })}\n`,
+        "utf8",
+      );
+    }
     console.log(`${target.name.padEnd(6)} ${verdict.status.padEnd(10)} ${verdict.note}`);
+    if (verdict.status === "blocked") {
+      // 전역 즉시 중단(2026-08-15 삼순 계약) — 첫 차단은 "다음 선수로 넘어갈 일"이 아니라 run 종료 사유다.
+      // checkpoint에 진행분이 남아 있으므로 재개는 원인 해소 후 resume으로 한다.
+      console.error(`차단 감지 — 전역 즉시 중단. 진행 ${results.length}명/${targets.length}명, checkpoint=${CHECKPOINT_PATH ?? "(없음)"}`);
+      if (OUT_PATH) {
+        writeFileSync(OUT_PATH, JSON.stringify(results, null, 2), "utf8");
+        console.log(`부분 판정 결과 저장: ${OUT_PATH}`);
+      }
+      process.exit(2);
+    }
   }
 
   const summary = results.reduce<Record<string, number>>((acc, row) => {
@@ -316,7 +513,18 @@ async function main(): Promise<void> {
   console.log(`source upsert + resolution_status 갱신 완료 (반영 ${affected}/${results.length}건)`);
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exit(1);
-});
+// 직접 실행일 때만 main을 태운다 — QA 스모크가 순수 함수(selectResolveTargets 등)를 외부 요청 없이
+// import할 수 있게 한다. 가드가 없으면 스모크 import 자체가 외부 조회를 유발한다(금지 축).
+const isDirectRun = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === new URL(`file://${path.resolve(entry)}`).href
+    || import.meta.url.endsWith("/resolve-rag-urls.ts") && path.resolve(entry).endsWith("/resolve-rag-urls.ts");
+})();
+
+if (isDirectRun) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

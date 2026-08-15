@@ -44,6 +44,15 @@ const argValue = (name: string): string | undefined =>
   args.find((arg) => arg.startsWith(`--${name}=`))?.split("=").slice(1).join("=");
 const FILE = argValue("file");
 const MAC_RECOVERY_FILE = argValue("mac-recovery-file");
+/**
+ * `--entities=이름,이름` — corpus 중 해당 entity만 재판정·재적재한다.
+ * 2026-08-15 0단계 실측: 양의지·장성우·최형우는 신 게이트(census) 통과인데 live 원장에는
+ * 구 게이트 격리가 남아 있다. 재크롤 없이 기존 corpus 문서로 그  3명만 늫는 경로.
+ */
+const ENTITIES = (argValue("entities") ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
 const LIMIT = Number(argValue("limit") ?? "0");
 const APPLY = args.includes("--apply");
 const CONCURRENCY = Math.max(1, Math.min(12, Number(argValue("concurrency") ?? "6") || 6));
@@ -158,14 +167,32 @@ async function main(): Promise<void> {
   );
   const corpusRaw = readFileSync(FILE, "utf8");
   const artifactSha256 = createHash("sha256").update(corpusRaw).digest("hex");
-  const parsed = parseCorpusJsonl(corpusRaw);
+  const parsedAll = parseCorpusJsonl(corpusRaw);
   if (!MAC_RECOVERY_FILE) {
     throw new Error("--mac-recovery-file=<recovered.jsonl>이 필요하다(collector provenance fail-close)");
   }
+  // --entities 부분 재적재: 요청 entity가 corpus에 없으면 조용히 전체로 넘어가지 않고 즉시 실패한다.
+  const parsed = (() => {
+    if (ENTITIES.length === 0) return parsedAll;
+    const wanted = new Set(ENTITIES);
+    const records = parsedAll.records.filter((record) => wanted.has(record.entity));
+    const present = new Set(records.map((record) => record.entity));
+    const absent = ENTITIES.filter((name) => !present.has(name));
+    if (absent.length > 0) {
+      throw new Error(`--entities 중 corpus에 없는 entity: ${absent.join(", ")} (fail-close)`);
+    }
+    console.log(`--entities 필터: ${ENTITIES.join(", ")} → record ${records.length}건/${parsedAll.records.length}건`);
+    return { ...parsedAll, records, counts: { ...parsedAll.counts, filtered: records.length } };
+  })();
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
-  const recoveryRecords = MAC_RECOVERY_FILE
+  const recoveryRecordsAll = MAC_RECOVERY_FILE
     ? parseCorpusJsonl(readFileSync(MAC_RECOVERY_FILE, "utf8")).records
     : [];
+  // entity 필터 사용 시 recovery도 같은 부분집합으로 좁힌다 — 안 좁히면 타 entity recovery 행이
+  // "corpus에 없는 recovery"로 오판돼 fail-close가 오발된다(검출력은 유지 — 같은 entity 내 불일치는 잡는다).
+  const recoveryRecords = ENTITIES.length === 0
+    ? recoveryRecordsAll
+    : recoveryRecordsAll.filter((record) => new Set(ENTITIES).has(record.entity));
   const recoveryHashCounts = new Map<string, number>();
   for (const record of recoveryRecords) {
     const hash = corpusRecordHash(record);
