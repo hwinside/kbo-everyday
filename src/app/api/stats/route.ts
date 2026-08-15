@@ -105,19 +105,40 @@ export function rowKboId(row: ParsedTableRow): string {
 }
 
 /**
+ * 같은 canonical ID 가 다른 name/team 으로 재등장하면 식별 체계 오염이다 — throw.
+ * (삼순 #1196 2차 P0: 충돌을 조용히 삼키면 오인 ID 가 정상 응답으로 통과한다.)
+ */
+function assertRowIdentityConsistent(existing: ParsedTableRow, row: ParsedTableRow, key: string): void {
+  const same =
+    (existing[1] || "").trim() === (row[1] || "").trim() &&
+    (existing[2] || "").trim() === (row[2] || "").trim();
+  if (!same) throw new Error(`KBO stats identity conflict: ${key}`);
+}
+
+/**
  * Basic1 union — 각 정렬 상위 30 합집합을 **identity 로** 묶는다.
  * production 경로와 게이트가 공유하는 유일한 구현이다.
  *
  * ⚠️ `이름::팀` 하위호환은 없다(삼순 #1196 1차 P0). ID 결손 행은 조용히 이름 키로
  * 흘러보내지 않고 **fail-close** 한다 — 혼합보다 전체 fallback 이 안전하다.
+ * ⚠️ 중복 규칙(삼순 #1196 2차 P0): **같은 테이블 안** 같은 ID 재등장 = 소스 오염 → throw.
+ * 테이블 간 재등장은 union 의 정상 dedupe 이되, name/team 이 다르면 충돌 → throw.
  */
 export function mergeBasicRows(tables: ParsedTableRow[][]): ParsedTableRow[] {
   const merged = new Map<string, ParsedTableRow>();
   for (const table of tables) {
+    const seenInTable = new Set<string>();
     for (const row of table) {
       const key = rowKboId(row);
       if (!key) throw new Error("KBO stats row identity missing");
-      if (!merged.has(key)) merged.set(key, row);
+      if (seenInTable.has(key)) throw new Error(`KBO stats row identity duplicated in table: ${key}`);
+      seenInTable.add(key);
+      const existing = merged.get(key);
+      if (existing) {
+        assertRowIdentityConsistent(existing, row, key);
+        continue;
+      }
+      merged.set(key, row);
     }
   }
   return [...merged.values()];
@@ -283,8 +304,7 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   // `이름::팀` 이면 같은 팀 동명이인의 source row 자체가 서로를 가린다(#1100 4차 P0-3).
   const rows = mergeBasicRows(basic1Tables);
 
-  // Basic2 union (OBP/OPS/SLG 등)
-  const basic2Rows = basic2Tables.flat();
+  // Basic2 union (OBP/OPS/SLG 등) — 테이블 경계를 유지해 소스별 중복을 판정한다(아래 주석).
   // 규정타석 충족 선수 셋 — 비율스탯 리더보드(규정타석만 노출) union
   // (단일 HRA_RT는 타율 31위↓ 규정타석 선수를 놓쳐 OPS/OBP/SLG 랭킹 누락 유발)
   const qualifiedKeys = new Set<string>();
@@ -297,19 +317,33 @@ async function fetchBatterStats(signal?: AbortSignal): Promise<{
   }
 
   // Basic2 lookup: identity → { bb, ibb, hbp, so, gdp, slg, obp, ops }
+  // ⚠️ 같은 테이블 내 중복 ID · 테이블 간 name/team 충돌은 조용한 덮어쓰기가 아니라
+  // fail-close 다(삼순 #1196 2차 P0).
   const basic2Map = new Map<string, Basic2Entry>();
-  for (const c of basic2Rows) {
-    const key = rowKboId(c);
-    basic2Map.set(key, {
-      bb: parseInt(c[4]) || 0,
-      ibb: parseInt(c[5]) || 0,
-      hbp: parseInt(c[6]) || 0,
-      so: parseInt(c[7]) || 0,
-      gdp: parseInt(c[8]) || 0,
-      slg: c[9] || ".000",
-      obp: c[10] || ".000",
-      ops: c[11] || ".000",
-    });
+  const basic2RowByKey = new Map<string, ParsedTableRow>();
+  for (const table of basic2Tables) {
+    const seenInTable = new Set<string>();
+    for (const c of table) {
+      const key = rowKboId(c);
+      if (seenInTable.has(key)) throw new Error(`KBO stats row identity duplicated in table: ${key}`);
+      seenInTable.add(key);
+      const existing = basic2RowByKey.get(key);
+      if (existing) {
+        assertRowIdentityConsistent(existing, c, key);
+        continue;
+      }
+      basic2RowByKey.set(key, c);
+      basic2Map.set(key, {
+        bb: parseInt(c[4]) || 0,
+        ibb: parseInt(c[5]) || 0,
+        hbp: parseInt(c[6]) || 0,
+        so: parseInt(c[7]) || 0,
+        gdp: parseInt(c[8]) || 0,
+        slg: c[9] || ".000",
+        obp: c[10] || ".000",
+        ops: c[11] || ".000",
+      });
+    }
   }
   const missingBasic2 = rows.map(rowKboId).filter((key) => !basic2Map.has(key));
   if (missingBasic2.length > 0) {
@@ -517,16 +551,25 @@ async function fetchPitcherStats(signal?: AbortSignal): Promise<PlayerStat[]> {
     })
   );
 
+  const pitcherRowByKey = new Map<string, ParsedTableRow>();
   for (const { sort, rows } of results) {
+    const seenInTable = new Set<string>();
     for (const c of rows) {
       // 타자와 같은 identity 계약 — kboId exact만. 결손은 위 검증에서 이미 fail-close 됐다.
+      // 중복 규칙도 타자와 동일(삼순 #1196 2차 P0): 같은 테이블 내 재등장 throw · 테이블 간 충돌 throw.
       const key = rowKboId(c);
+      if (seenInTable.has(key)) throw new Error(`KBO stats row identity duplicated in table: ${key}`);
+      seenInTable.add(key);
       if (sort === "ERA_RT") {
         qualifiedKeys.add(key);
       }
-      if (!merged.has(key)) {
-        merged.set(key, parsePitcherRow(c));
+      const existing = pitcherRowByKey.get(key);
+      if (existing) {
+        assertRowIdentityConsistent(existing, c, key);
+        continue;
       }
+      pitcherRowByKey.set(key, c);
+      merged.set(key, parsePitcherRow(c));
     }
   }
 
@@ -585,6 +628,19 @@ function getCached(key: string): { data: StatsResult; ageMs: number } | null {
 }
 function setCache(key: string, data: StatsResult) {
   cache[key] = { data, ts: Date.now() };
+}
+
+/**
+ * full=1 최종 응답(라이브 + static 보강 merge 후)의 identity 종단 가드.
+ * 빈 ID · 중복 ID 가 하나라도 남으면 서빙하지 않고 throw → 전체 static fallback
+ * (삼순 #1196 2차 P0: mergeFullEntry 의 name::team 보조경로가 무시되는 것을 종단에서 막는다).
+ * export 는 identity 게이트가 실제 배포 함수를 태우기 위해서다.
+ */
+export function assertFullEntryIdentity(stats: PlayerStat[]): void {
+  const ids = stats.map((row) => canonicalKboId(String(row.kboId || "").trim()));
+  const missing = ids.filter((id) => !id).length;
+  if (missing > 0) throw new Error(`KBO full-entry identity missing: ${missing} rows`);
+  if (new Set(ids).size !== ids.length) throw new Error("KBO full-entry identity duplicated");
 }
 
 // ⚠️ export 는 identity 게이트가 실제 배포 함수를 태우기 위해서다.
@@ -753,6 +809,8 @@ export async function GET(req: NextRequest) {
       // full=1로 static에서 추가된 선수도 같은 전페이지 live Runner map으로 마지막에 보정한다.
       stats = applyRunnerStats(stats, current.runnerMap);
     }
+    // ⚠️ full=1 종단 identity 가드 — merge 후 빈/중복 ID 가 남으면 서빙 금지(삼순 #1196 2차 P0).
+    if (full) assertFullEntryIdentity(stats);
     const now = new Date().toISOString();
     const currentUpdatedAt = current.runnerSource === "static-fallback"
       ? current.runnerUpdatedAt

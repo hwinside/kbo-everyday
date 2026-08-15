@@ -84,11 +84,15 @@ function runnerPageHtml(rows: FixRow[], page: number, lastPage: number): string 
 // ─────────────────────────────────────────────────────────────────────────────
 const SCENARIOS = [
   "batter-live",
+  "batter-full-live",
   "batter-basic1-noid",
+  "batter-basic1-dup",
+  "batter-id-conflict",
   "batter-runner-noid",
   "batter-basic2-partial",
   "pitcher-live",
   "pitcher-noid",
+  "pitcher-dup",
 ] as const;
 type Scenario = (typeof SCENARIOS)[number];
 
@@ -169,7 +173,14 @@ async function runScenario(scenario: Scenario): Promise<void> {
   let runnerPagesServed = runnerPages;
   let b2Served = basic2Rows;
   let pitcherServed2 = pitcherHalf2;
+  let rateServed = rateRows;
   if (scenario === "batter-basic1-noid") b1Counting = noid(countingRows, ID_B);
+  // 같은 테이블 안 같은 ID 재등장 = 소스 오염 → 전체 fallback 이어야 한다(삼순 2차 P0).
+  if (scenario === "batter-basic1-dup") b1Counting = [...countingRows, { ...homoA }];
+  // 테이블 간 같은 ID 가 다른 이름으로 등장 = 식별 충돌 → 전체 fallback.
+  if (scenario === "batter-id-conflict") {
+    rateServed = rateRows.map((r) => (r.id === ID_A ? { ...r, name: "오염된이름" } : r));
+  }
   if (scenario === "batter-runner-noid") {
     const mutated = runnerRows.map((r) => (r.id === ID_B ? { ...r, id: null } : r));
     runnerPagesServed = [];
@@ -180,6 +191,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
   if (scenario === "batter-basic2-partial") b2Served = basic2Rows.filter((r) => r.id !== ID_B);
   // ⚠️ 동명이인 행은 half2 에 있다 — 주입은 실제로 서빙되는 페이지에 걸어야 한다.
   if (scenario === "pitcher-noid") pitcherServed2 = noid(pitcherHalf2, ID_B);
+  if (scenario === "pitcher-dup") pitcherServed2 = [...pitcherHalf2, { ...pHomoB }];
 
   // ── global.fetch 모킹 — KBO/Naver 전 엔드포인트 ──
   let runnerPageIdx = 0;
@@ -187,7 +199,7 @@ async function runScenario(scenario: Scenario): Promise<void> {
     const url = String(input instanceof Request ? input.url : input);
     if (url.includes("HitterBasic/Basic1.aspx")) {
       const sort = new URL(url).searchParams.get("sort") ?? "";
-      return new Response(tableHtml(rateSorts.has(sort) ? rateRows : b1Counting, 16), { status: 200 });
+      return new Response(tableHtml(rateSorts.has(sort) ? rateServed : b1Counting, 16), { status: 200 });
     }
     if (url.includes("HitterBasic/Basic2.aspx")) {
       return new Response(tableHtml(b2Served, 12), { status: 200 });
@@ -214,13 +226,28 @@ async function runScenario(scenario: Scenario): Promise<void> {
   const { GET } = await import("../../src/app/api/stats/route");
   const { NextRequest } = await import("next/server");
   const type = scenario.startsWith("pitcher") ? "pitcher" : "batter";
-  const res = await GET(new NextRequest(`http://localhost/api/stats?type=${type}`));
+  const full = scenario === "batter-full-live" ? "&full=1" : "";
+  const res = await GET(new NextRequest(`http://localhost/api/stats?type=${type}${full}`));
   const json = await res.json() as {
     source?: string; runnerSource?: string;
     stats: Array<Record<string, string | number>>;
   };
 
-  if (scenario === "batter-live") {
+  if (scenario === "batter-full-live") {
+    // full=1 종단 — static 보강이 섞인 최종 응답에서도 identity 가 유지되는가(삼순 2차 P0-3).
+    assert.equal(json.source, "live", `source=${json.source}`);
+    const a = json.stats.find((r) => r.kboId === ID_A);
+    const b = json.stats.find((r) => r.kboId === ID_B);
+    assert.ok(a && b, "full=1 응답에 동명이인 반대쌍이 각자 kboId 로 존재해야 한다");
+    assert.equal(Number(a!.sb), 9);
+    assert.equal(Number(b!.sb), 0, "full=1 경로에서 동명이인 Runner 오염");
+    // static 보강이 실제로 병합됐는가(라이브 31명 + 비규정 static 보강).
+    assert.ok(json.stats.length > 31, `full=1 행수=${json.stats.length} — static 보강이 없다`);
+    // 최종 응답 전 행 identity 유일·비어있지 않음 — assertFullEntryIdentity 가 지키는 계약 그대로.
+    const ids = json.stats.map((r) => String(r.kboId || "").trim());
+    assert.ok(ids.every(Boolean), "full=1 응답에 빈 kboId 행이 남았다");
+    assert.equal(new Set(ids).size, ids.length, "full=1 응답에 중복 kboId 가 남았다");
+  } else if (scenario === "batter-live") {
     assert.equal(json.source, "live", `source=${json.source} — live 여야 한다`);
     assert.equal(json.runnerSource, "live", `runnerSource=${json.runnerSource}`);
     const a = json.stats.find((r) => r.kboId === ID_A);
@@ -297,7 +324,7 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       '<td>85.4</td><td>4</td><td>4</td>\n</tr></tbody>';
     assert.equal(rowKboId(parseTable(real)[0]), "50500");
   });
-  await check("mergeBasicRows: 동명이인 2행 보존 + 같은 id dedupe", () => {
+  await check("mergeBasicRows: 동명이인 2행 보존 + 테이블 간 같은 id 정상 dedupe", () => {
     const t = parseTable(tableHtml(pair, 16));
     const merged = mergeBasicRows([t, t]);
     assert.equal(merged.length, 2, `union=${merged.length}`);
@@ -306,6 +333,13 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
   await check("mergeBasicRows: ID 결손 행은 이름::팀 흡수가 아니라 throw", () => {
     const t = parseTable(tableHtml([{ id: null, name: "무명", team: "두산", cells: [] }], 16));
     assert.throws(() => mergeBasicRows([t]), /identity missing/);
+  });
+  await check("mergeBasicRows: 같은 테이블 내 중복 ID throw · 테이블 간 name 충돌 throw", () => {
+    const dupTable = parseTable(tableHtml([pair[0], pair[0]], 16));
+    assert.throws(() => mergeBasicRows([dupTable]), /duplicated in table/);
+    const t1 = parseTable(tableHtml([pair[0]], 16));
+    const conflict = parseTable(tableHtml([{ ...pair[0], name: "오염된이름" }], 16));
+    assert.throws(() => mergeBasicRows([t1, conflict]), /identity conflict/);
   });
   await check("buildRunnerMap: kboId exact 키 · 결손 throw · 중복 throw", () => {
     const ok = parseTable(runnerPageHtml([
@@ -347,6 +381,22 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     const nameKeyed = new Map([["무명::두산", { sb: 4, cs: 1 }]]);
     const kept = applyRunnerStats([{ rank: 1, name: "무명", team: "두산", kboId: "", sb: 0, cs: 0 }], nameKeyed);
     assert.equal(Number(kept[0].sb), 0, "이름::팀 fallback 이 살아있다");
+  });
+  await check("assertFullEntryIdentity: 동명이인 정상쌍 통과 · 빈 id throw · 중복 id throw", async () => {
+    const { assertFullEntryIdentity } = await import("../../src/app/api/stats/route");
+    const ok = [
+      { rank: 1, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
+      { rank: 2, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_B },
+    ];
+    assert.doesNotThrow(() => assertFullEntryIdentity(ok as never));
+    assert.throws(
+      () => assertFullEntryIdentity([...ok, { rank: 3, name: "무명", team: "두산", kboId: "" }] as never),
+      /identity missing/,
+    );
+    assert.throws(
+      () => assertFullEntryIdentity([...ok, { rank: 3, name: "중복", team: "두산", kboId: ID_A }] as never),
+      /identity duplicated/,
+    );
   });
   await check("assertStatsComplete: 같은 팀 동명이인 정상 · 빈 id throw · 중복 id throw", () => {
     const teams10 = ["한화", "KIA", "KT", "LG", "롯데", "NC", "두산", "SSG", "삼성", "키움"];
