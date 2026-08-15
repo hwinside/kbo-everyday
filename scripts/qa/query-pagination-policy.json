@@ -31,6 +31,7 @@
     "content_views",
     "genius_answer_feedback",
     "genius_daily_usage",
+    "genius_motion_grants",
     "genius_news_articles",
     "genius_positive_endings",
     "genius_qa_cache",
@@ -574,6 +575,7 @@
     "admin_venue_story_daily": "one aggregated row per KST day (slow-growing daily rollup), same pattern as admin_content_daily",
     "cast_poll_vote": "casts/replaces one user's poll ballot and returns void",
     "claim_api_fallback_alert": "inserts one fallback event, atomically claims one alert lease, returns one boolean should_send",
+    "claim_baseball_genius_motion": "atomically claims one message's mascot motion under a per-user advisory lock (message_id idempotent) and returns exactly one row",
     "claim_game_summary_generation": "claims one game and returns one monotonic generation token",
     "confirm_api_fallback_alert": "confirms one alert delivery (sets cooldown, clears lease, marks one event), returns void",
     "create_admin_broadcast_job": "creates one job and returns its id",
@@ -584,6 +586,7 @@
     "delete_own_chat_message": "deletes one message",
     "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
     "finish_admin_broadcast_recipient": "state transition for one recipient",
+    "increment_content_view": "increments one content counter",
     "increment_post_view": "increments one post counter",
     "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
     "leaderboard_writing_rollup_refresh": "full snapshot recompute of the writing leaderboard rollup, returns void",
@@ -599,7 +602,6 @@
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
     "upsert_baseball_genius_news_articles": "upserts a jsonb batch (hard-capped at 500 rows inside the function) and returns exactly one summary row",
     "upsert_naver_identity": "upserts one authenticated identity",
-    "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)",
-    "increment_content_view": "increments one content counter"
+    "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)"
   }
 }

@@ -723,39 +723,28 @@ export interface QaResult {
  * 그 외(되묻기·오류·지식 답변) → 없음. 모션은 감정 반응 전용이다(unsure LLM 거절 확장은 별도 트랙).
  * 반환 타입은 constants 의 GeniusMascotMotion 과 구조적으로 동일(순환 import 회피 리터럴).
  */
+/**
+ * §7.4 모션 쿨다운 창 (SSOT "모션 30초 1회").
+ *
+ * ⚠️ **판정은 여기서 하지 않는다.** 이 함수는 "이 답변이 어떤 모션 후보인가"만 정하고,
+ *    실제 부여 여부는 `claim_baseball_genius_motion` RPC 가 유저 advisory lock 안에서
+ *    정한다(삼순 #1202 P0). 코드에서 시각을 비교하면 SELECT→INSERT 사이가 열려 있어
+ *    같은 유저의 병렬 두 메시지가 둘 다 모션을 받는다. 동시성·멱등은 DB 만 보장할 수 있다.
+ */
 export const GENIUS_MOTION_COOLDOWN_MS = 30_000;
 
 /**
- * 모션 남용 방지 신호 (SSOT §7.4 "모션 30초 1회").
- * 두 시각 모두 DB 에 고정된 값이라 durable ready 재시도에서도 같은 판정이 나온다
- * (wall clock 을 쓰면 재시도 시점에 따라 모션이 생겼다 사라진다 — 삼순 #1197 ② 계약).
+ * 답변 유형 → 마스코트 모션 **후보** 매핑 (SSOT §7.6).
+ * 인사 → excited / 감사·칭찬 → headspin / 결정론 거절(scope_guide·blocked) → bored.
+ * 그 외(되묻기·오류·지식 답변) → 없음. 모션은 감정 반응 전용이다.
  */
-export interface GeniusMotionSignals {
-  /** 현재 질문 dm_messages.created_at (ISO). */
-  questionAt: string | null;
-  /** 직전에 모션이 **실제로 실린** 봇 답변의 created_at — payload->>motion 기준. 없으면 null. */
-  lastMotionAt: string | null;
-}
-
 export function geniusMotionForResult(
   source: string,
   question: string,
-  signals?: GeniusMotionSignals | null,
 ): "excited" | "headspin" | "bored" | undefined {
-  const motion =
-    source === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :
-    source === "scope_guide" || source === "blocked" ? ("bored" as const) :
-    undefined;
-  if (!motion) return undefined;
-  // §7.4 모션 30초 1회 — 기준은 match_path 추정이 아니라 **실제 부착된 모션**(payload)이다.
-  //   match_path 로 재면 억제된 답변도 쿨다운을 밀어 스팸 중엔 모션이 영원히 안 나온다 —
-  //   스펙은 "30초에 1회"지 "연속이면 0회"가 아니다.
-  //   신호 미주입·파싱 불가는 모션 유지(fail-open) — 관측 장애가 감정 반응을 죽이면 안 된다.
-  if (signals?.questionAt && signals.lastMotionAt) {
-    const gap = Date.parse(signals.questionAt) - Date.parse(signals.lastMotionAt);
-    if (Number.isFinite(gap) && gap < GENIUS_MOTION_COOLDOWN_MS) return undefined;
-  }
-  return motion;
+  if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
+  if (source === "scope_guide" || source === "blocked") return "bored";
+  return undefined;
 }
 
 export interface QaDeps {

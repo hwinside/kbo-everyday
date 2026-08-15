@@ -23,15 +23,15 @@ const mutations = [
   {
     name: "M1 인사/감사 매핑 훼손 (greeting에도 headspin)",
     file: TARGETS[0],
-    from: '    source === "ack" ? (isGreetingPhrase(question) ? "excited" : "headspin") :',
-    to: '    source === "ack" ? ("headspin" as const) :',
+    from: 'if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";',
+    to: 'if (source === "ack") return "headspin";',
     expect: "인사 → excited",
   },
   {
     name: "M2 거절 bored 매핑 삭제",
     file: TARGETS[0],
-    from: '    source === "scope_guide" || source === "blocked" ? ("bored" as const) :',
-    to: '    false ? ("bored" as const) :',
+    from: '  if (source === "scope_guide" || source === "blocked") return "bored";\n',
+    to: "",
     expect: "bored",
   },
   {
@@ -64,9 +64,9 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion: geniusMotionForResult(result.source, question, motionSignals) }",
-    to: "result",
-    expect: "server 배선",
+    from: "{ ...result, motion },\n    messageId,",
+    to: "result,\n    messageId,",
+    expect: "compose 가 DB 가 승인한 motion",
   },
   {
     name: "M7 thinking showMascot 소유권 우회 (항상 노출)",
@@ -83,15 +83,11 @@ const mutations = [
     expect: "failed 마스코트는 숨는다",
   },
   {
-    name: "M12 모션 쿨다운 삭제 (30초 내 재모션 허용)",
-    file: TARGETS[0],
-    from: `  if (signals?.questionAt && signals.lastMotionAt) {
-    const gap = Date.parse(signals.questionAt) - Date.parse(signals.lastMotionAt);
-    if (Number.isFinite(gap) && gap < GENIUS_MOTION_COOLDOWN_MS) return undefined;
-  }
-`,
-    to: "",
-    expect: "쿨다운",
+    name: "M12 원자 claim 우회 (후보 모션을 그대로 부착 — SELECT→INSERT race 재현)",
+    file: TARGETS[3],
+    from: "      motion = granted === null ? undefined : (granted as typeof candidateMotion);",
+    to: "      motion = candidateMotion;",
+    expect: "RPC 반환값에서만",
   },
   {
     name: "M13 연속 고정문 우회 (streak 무시)",
@@ -101,11 +97,11 @@ const mutations = [
     expect: "연속",
   },
   {
-    name: "M14 server motionSignals 미전달 (쿨다운 무효화)",
+    name: "M14 payload 이월 시각 미전달 (배포 직후 무조건 부여)",
     file: TARGETS[3],
-    from: "motion: geniusMotionForResult(result.source, question, motionSignals)",
-    to: "motion: geniusMotionForResult(result.source, question)",
-    expect: "server 배선",
+    from: "          p_payload_last_motion_at: (lastMotionRow?.created_at as string | undefined) ?? null,",
+    to: "          p_payload_last_motion_at: null,",
+    expect: "payload 모션 시각도 넘긴다",
   },
   {
     name: "M10 칭찬 폐쇄집합 삭제 (대표 칭찬이 ack 이 아니게 됨)",

@@ -41,7 +41,7 @@ async function partMapping() {
   const pipeline = await import("../../src/lib/baseball-qa/pipeline");
   const {
     answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult,
-    GENIUS_MOTION_COOLDOWN_MS, SMALLTALK_STREAK_LIMIT, SMALLTALK_STREAK_ANSWER,
+    SMALLTALK_STREAK_LIMIT, SMALLTALK_STREAK_ANSWER,
   } = pipeline;
   check("입력 전제 (판정기 실확인)",
     isGreetingPhrase("안녕") && isAckPhrase("고마워") && isScopeAskPhrase("야구 룰"));
@@ -94,19 +94,14 @@ async function partMapping() {
     const res = await answerQuestion("u1", "이대호 최고야", deps() as never);
     check("과차단 없음: 대상이 붙은 문장은 ack 이 아니다", res.source !== "ack", `source=${res.source}`);
   }
-  // ── §7.4 모션 30초 1회 (쿨다운 판정은 DB 고정 시각 — durable 재시도 결정론) ─────
+  // ⚠️ §7.4 모션 30초 1회의 **판정**은 여기서 검사하지 않는다 — 쿨다운은 동시성 계약이라
+  //    합성 시각 단위검사로는 SELECT→INSERT race 를 못 잡는다(삼순 #1202 P0).
+  //    실 DB 종단은 `npm run qa:genius-motion-cooldown:db` 가 담당한다.
+  //    여기서는 "코드가 쿨다운을 판정하지 않는다"(= DB 단일 소유)만 구조로 잠근다.
   {
-    const at = (ms: number) => new Date(ms).toISOString();
-    check("쿨다운: 30초 미만 → 모션 없음",
-      geniusMotionForResult("ack", "안녕", { questionAt: at(GENIUS_MOTION_COOLDOWN_MS - 1), lastMotionAt: at(0) }) === undefined);
-    check("쿨다운: 정확히 30초 → 모션 유지(경계 포함)",
-      geniusMotionForResult("ack", "안녕", { questionAt: at(GENIUS_MOTION_COOLDOWN_MS), lastMotionAt: at(0) }) === "excited");
-    check("쿨다운: 직전 모션 없음 → 모션 유지",
-      geniusMotionForResult("ack", "안녕", { questionAt: at(5_000), lastMotionAt: null }) === "excited");
-    check("쿨다운: 신호 미주입(fail-open) → 모션 유지",
-      geniusMotionForResult("scope_guide", "야구 룰") === "bored");
-    check("쿨다운: 거절 bored 도 같은 규칙",
-      geniusMotionForResult("blocked", "주식 추천", { questionAt: at(10_000), lastMotionAt: at(0) }) === undefined);
+    const pipelineSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8");
+    check("순수 매핑: 코드가 쿨다운을 판정하지 않는다(DB 단일 소유)",
+      geniusMotionForResult.length === 2 && !/GENIUS_MOTION_COOLDOWN_MS\)\s*return undefined/.test(pipelineSrc));
   }
   // ── §7.4 연속 4회부터 짧은 고정문 (answerQuestion 종단 실실행) ───────────
   {
@@ -146,10 +141,22 @@ async function partMapping() {
   // 서버 단일 지점 결속 — compose 호출부가 (source, question) 계산을 태우는지.
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
-  check("server 배선: compose 가 geniusMotionForResult(result.source, question, motionSignals) 을 받는다",
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion: geniusMotionForResult\(result\.source, question, motionSignals\) \}/.test(serverSrc));
-  check("server 배선: motionSignals 는 DB 고정 시각(payload->>motion 직전 행)으로 만든다",
-    serverSrc.includes('payload->>motion') && /lastMotionAt:/.test(serverSrc));
+  check("server 배선: compose 가 DB 가 승인한 motion 을 싣는다",
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion \}/.test(serverSrc));
+  check("server 배선: 쿨다운은 원자 claim RPC 가 정한다(SELECT→INSERT race 차단)",
+    serverSrc.includes('.rpc("claim_baseball_genius_motion"') &&
+    /p_decided_at: decidedAt/.test(serverSrc) &&
+    /p_cooldown_ms: GENIUS_MOTION_COOLDOWN_MS/.test(serverSrc));
+  // ⚠️ "RPC 를 호출한다"만으로는 부족하다 — 반환을 **버리고** 후보 모션을 그대로 쓰면
+  //    호출은 남은 채 race 가 되살아난다(M12). 그래서 반환 결속 자체를 계약으로 잠근다.
+  check("server 배선: payload 모션은 RPC 반환값에서만 나온다(후보 직접 사용 금지)",
+    /motion = granted === null \? undefined : \(granted as typeof candidateMotion\)/.test(serverSrc) &&
+    !/motion = candidateMotion;/.test(serverSrc.split("let motion = candidateMotion;")[1] ?? ""));
+  // 같은 이유로 payload 이월 시각도 **실제 조회 행**에 결속한다 — 키만 있고 null 을 넣으면
+  //    배포 직후 첫 답변이 무조건 모션을 받는다(M14).
+  check("server 배선: 원장 이전 payload 모션 시각도 넘긴다(배포 직후 무조건 부여 방지)",
+    serverSrc.includes('payload->>motion') &&
+    /p_payload_last_motion_at: \(lastMotionRow\?\.created_at as string \| undefined\) \?\? null/.test(serverSrc));
   check("server 배선: loadSmalltalkStreak 가 ORDER 명시 로그 조회로 연결된다",
     /loadSmalltalkStreak: signatureUserId \? async \(\) =>/.test(serverSrc) &&
     /order\("created_at", \{ ascending: false \}\)[\s\S]{0,80}?limit\(SMALLTALK_STREAK_LIMIT\)/.test(serverSrc));

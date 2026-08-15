@@ -61,7 +61,9 @@ const MUTATIONS = [
   {
     name: "M4 pipeline greeting 가드 훼손 (실실행 RED — regex 검사였다면 false-green이던 변이)",
     file: "src/lib/baseball-qa/pipeline.ts",
-    from: 'if (route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {',
+    // ⚠️ 앵커는 pipeline 의 현재 문면을 그대로 복사한다 — 조건이 늘면(streakFixed 등)
+    // 앵커가 조용히 MISS 되고(anchor=0) mutation 이 검증력 없이 FAIL 한다(2026-08-15 실측).
+    from: 'if (!streakFixed && route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {',
     to: 'if (false && route === "ack" && isGreetingPhrase(question) && deps.pickTeamFanCopy) {',
     expect: "pipeline 실실행",
   },

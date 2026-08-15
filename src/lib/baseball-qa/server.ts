@@ -10,7 +10,7 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   geniusMotionForResult,
-  type GeniusMotionSignals,
+  GENIUS_MOTION_COOLDOWN_MS,
   isAckPhrase,
   MAX_QUESTION_LEN,
   SMALLTALK_STREAK_LIMIT,
@@ -1213,39 +1213,58 @@ export async function processBaseballQaQuestion(input: {
   // 모션은 **여기 단일 지점**에서 (source, question) 결정론 계산 — 즉시 경로·durable 재시도
   // (claimState="ready")·길이 위반 blocked·pipeline 조기 blocked 전부 같은 계산을 탄다
   // (삼순 #1197 NO-GO ②③: result 에 실어 나르면 ready 재시도에서 소실되고 조기 반환에서 누락된다).
-  // §7.4 모션 30초 1회 — 신호는 전부 DB 고정 시각(질문 created_at, 직전 모션 payload 행)이라
-  //   durable ready 재시도에서도 같은 판정이 나온다. 조회 실패는 신호 없음(fail-open) —
-  //   남용 방지가 답변·모션 자체를 죽이면 안 된다.
-  let motionSignals: GeniusMotionSignals | null = null;
+  // §7.4 모션 30초 1회 — **원자 claim** (삼순 #1202 P0).
+  //   종전엔 `SELECT 직전 모션` 과 답변 INSERT 가 별도 트랜잭션이라, 같은 유저의 두 메시지가
+  //   동시에 들어오면 둘 다 같은 lastMotionAt 을 읽고 둘 다 모션을 붙였다(30초 1회 파괴).
+  //   이제 유저 advisory lock + message_id 멱등 + 쿨다운 판정 + 부여 기록을 RPC 한 트랜잭션에
+  //   묶는다(positive ending 시그니처와 같은 축).
+  //
+  //   · 후보 모션은 결정론 계산(geniusMotionForResult) — 어떤 모션인지는 코드가 정한다.
+  //   · 실제 부여 여부는 DB 가 정한다 — 동시성·멱등은 DB 만 보장할 수 있다.
+  //   · 기준 시각은 질문 dm_messages.created_at (job 행 고정값) — wall clock 이면 durable
+  //     재시도 시점에 따라 모션이 생겼다 사라진다(#1197 ②③ 계약).
+  //   · payload 시각을 함께 넘긴다 — 원장 도입 **이전**에 나간 모션도 쿨다운을 밀어야 한다.
+  //   · RPC 실패는 후보 모션 그대로 유지(fail-open) — 관측·원장 장애가 감정 반응을 죽이면 안 된다.
+  const candidateMotion = geniusMotionForResult(result.source, question);
+  let motion = candidateMotion;
   try {
-    // query-guard: bounded -- 질문 행 1건 + 직전 모션 답변 1건(ORDER 명시).
+    // query-guard: bounded -- 질문 행 1건 + 직전 모션 payload 1건(ORDER 명시) + 단일 RPC.
     const { data: questionRow } = await supabaseAdmin
       .from("dm_messages")
       .select("created_at")
       .eq("id", messageId)
       .maybeSingle();
-    const questionAt = (questionRow?.created_at as string | undefined) ?? null;
-    if (questionAt) {
+    const decidedAt = (questionRow?.created_at as string | undefined) ?? null;
+    if (decidedAt) {
       const { data: lastMotionRow } = await supabaseAdmin
         .from("dm_messages")
         .select("created_at")
         .eq("conversation_id", conversationId)
         .eq("sender_id", BASEBALL_GENIUS_USER_ID)
         .not("payload->>motion", "is", null)
-        .lt("created_at", questionAt)
+        .lt("created_at", decidedAt)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      motionSignals = {
-        questionAt,
-        lastMotionAt: (lastMotionRow?.created_at as string | undefined) ?? null,
-      };
+      const { data: claim, error: claimMotionError } = await supabaseAdmin
+        .rpc("claim_baseball_genius_motion", {
+          p_message_id: messageId,
+          p_user_id: userId,
+          p_motion: candidateMotion ?? null,
+          p_decided_at: decidedAt,
+          p_cooldown_ms: GENIUS_MOTION_COOLDOWN_MS,
+          p_payload_last_motion_at: (lastMotionRow?.created_at as string | undefined) ?? null,
+        })
+        .single();
+      if (claimMotionError) throw claimMotionError;
+      const granted = (claim as { motion: string | null } | null)?.motion ?? null;
+      motion = granted === null ? undefined : (granted as typeof candidateMotion);
     }
-  } catch {
-    // fail-open: 신호 없이 진행 — 모션은 나가되 쿨다운만 비활성된다.
+  } catch (error) {
+    console.error("baseball-genius motion claim failed:", (error as Error).message);
   }
   const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
-    { ...result, motion: geniusMotionForResult(result.source, question, motionSignals) },
+    { ...result, motion },
     messageId,
   );
   const deliveryDedupKey = result.source === "player_picker"
