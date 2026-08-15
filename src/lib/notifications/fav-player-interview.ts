@@ -62,6 +62,13 @@ export interface PendingInterview {
   retryTokens: string[];
   /** 누적 발송 attempt 수 — MAX_SEND_ATTEMPTS 상한으로 무한 재시도를 막는다. */
   attempts: number;
+  /**
+   * 노출 보류 횟수 — FCM 재시도(attempts)와 **별도 카운터**다(삼순 NO-GO P0-2).
+   * 둘을 섞으면 5번 보류된 행이 그 다음 첫 FCM transient에서 곳바로 상한에
+   * 걸려 기기가 포기된다 — 서로 다른 실패 축은 예산을 공유하지 않는다.
+   * 관측용이며 발송 허가 판정에는 쓰지 않는다(노출 확인은 fail-close).
+   */
+  visibilityDeferrals: number;
 }
 
 /**
@@ -126,6 +133,11 @@ export interface InterviewDeps {
    * attempts도 함께 기록해 상한 판정에 쓴다.
    */
   storeRetryTokens: (rowId: string, tokens: string[], attempts: number) => Promise<void>;
+  /**
+   * 노출 보류 기록 — 행을 pending으로 되돌리고 보류 횟수만 올린다.
+   * FCM attempts는 건드리지 않는다(삼순 NO-GO P0-2 — 두 실패 축 분리).
+   */
+  recordVisibilityDeferral: (rowId: string, deferrals: number) => Promise<void>;
 }
 
 export interface InterviewNotifySummary {
@@ -286,23 +298,25 @@ export async function notifyFavPlayerInterviews(
     // 2026-08-15 사고: DB 저장과 같은 run에서 발송했는데, 유저가 86초 뒤 들어갔을 때
     // 목록이 비어 있었다(엣지 stale-while-revalidate 서빙). 데이터가 있다 ≠ 유저가
     // 본다 — 그래서 발송 직전에 그 경로로 한 번 확인한다.
-    // absent/error는 release — 못 보내는 것보다 빈 페이지로 보내는 게 나쁘다.
-    // 단 무한 대기를 막기 위해 attempts 상한을 같이 쓴다(상한 도달 시엔 그대로 발송 —
-    // 확인 경로 자체가 고장난 경우까지 알림을 죽이지는 않는다).
-    if (interview.attempts < MAX_SEND_ATTEMPTS) {
-      let visible: SentMarkerState;
-      try {
-        visible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);
-      } catch {
-        visible = "error";
-      }
-      if (visible !== "present") {
-        // 아직 노출 전(또는 확인 실패) — 발송을 미룬다. attempts를 올려 무한
-        // 보류를 막고(상한 도달 시 확인 없이 발송), 토큰은 없으므로 빈 목록으로 저장한다.
-        await deps.storeRetryTokens(interview.id, [], interview.attempts + 1);
-        summary.deferredNotVisible++;
-        continue;
-      }
+    //
+    // ⚠️ **fail-close — 예외 없음**(삼순 NO-GO P0-1). 이전 판에서는 attempts 상한에
+    // 도달하면 확인 없이 발송했는데, 그러면 API 장애·목록 6개 제한 등으로 영상이
+    // 실제 미노출인 때 바로 그 빈 페이지 알림이 재발한다. 하린아빠 계약은
+    // "페이지에서 확실히 보는 게 가능한 시점에 발송"이므로, 못 보내는 것보다 잘못된
+    // 시점에 보내는 게 나쁘다. 보류가 길어지면 deferredNotVisible 관측치로 드러난다.
+    let visible: SentMarkerState;
+    try {
+      visible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);
+    } catch {
+      visible = "error";
+    }
+    if (visible !== "present") {
+      // 아직 노출 전(또는 확인 실패) — 발송을 미룬다.
+      // 보류 카운터는 FCM attempts와 분리된 전용 카운터다(삼순 P0-2) —
+      // 보류가 발송 재시도 예산을 갉아먹지 않게 한다.
+      await deps.recordVisibilityDeferral(interview.id, interview.visibilityDeferrals + 1);
+      summary.deferredNotVisible++;
+      continue;
     }
 
     // 4. 발송 1회 → 성공 시 마커 기록 후 종결. 실패/예외는 lease 해제(다음 run 재시도).

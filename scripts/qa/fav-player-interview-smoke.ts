@@ -62,6 +62,7 @@ function iv(over: Partial<PendingInterview> = {}): PendingInterview {
     winnerTeamId: 1,
     retryTokens: [],
     attempts: 0,
+    visibilityDeferrals: 0,
     ...over,
   };
 }
@@ -75,6 +76,7 @@ interface Calls {
   tokenSends: Array<{ tokens: string[]; url: string }>;
   storedRetries: Array<{ rowId: string; tokens: string[]; attempts: number }>;
   visibilityChecks: string[];
+  visibilityDeferrals: Array<{ rowId: string; deferrals: number }>;
 }
 interface Over {
   leased?: PendingInterview[];
@@ -100,7 +102,7 @@ interface Over {
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
   const calls: Calls = {
     markedSent: [], released: [], markerChecks: [], markerInserts: [], audience: [], sends: [],
-    tokenSends: [], storedRetries: [], visibilityChecks: [],
+    tokenSends: [], storedRetries: [], visibilityChecks: [], visibilityDeferrals: [],
   };
   const deps: InterviewDeps = {
     leasePendingInterviews: async () => over.leased ?? [iv()],
@@ -141,6 +143,9 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
     storeRetryTokens: async (rowId, tokens, attempts) => {
       if (over.storeRetryThrow) throw new Error("store boom");
       calls.storedRetries.push({ rowId, tokens, attempts });
+    },
+    recordVisibilityDeferral: async (rowId, deferrals) => {
+      calls.visibilityDeferrals.push({ rowId, deferrals });
     },
   };
   return { deps, calls };
@@ -384,10 +389,16 @@ async function main() {
     check("안 보임 → 발송 0·sent 전이 금지·마커 미기록",
       s2.deferredNotVisible === 1 && nv.calls.sends.length === 0
       && nv.calls.markedSent.length === 0 && nv.calls.markerInserts.length === 0);
-    check("안 보임 → attempts 증가해 무한 보류 방지(토큰은 빈 목록)",
-      nv.calls.storedRetries[0]?.rowId === "row-1"
-      && nv.calls.storedRetries[0]?.tokens.length === 0
-      && nv.calls.storedRetries[0]?.attempts === 1);
+    // 삼순 NO-GO P0-2 — 보류는 전용 카운터로만 기록하고 FCM attempts는 건드리지 않는다.
+    check("안 보임 → 보류 전용 카운터만 증가(FCM attempts 미오염)",
+      nv.calls.visibilityDeferrals[0]?.rowId === "row-1"
+      && nv.calls.visibilityDeferrals[0]?.deferrals === 1
+      && nv.calls.storedRetries.length === 0);
+    const nvD = makeDeps({ visible: "absent", leased: [iv({ visibilityDeferrals: 4, attempts: 2 })] });
+    await notifyFavPlayerInterviews(nvD.deps);
+    check("보류 누적 → 기존 deferrals에서 +1, attempts는 그대로",
+      nvD.calls.visibilityDeferrals[0]?.deferrals === 5
+      && nvD.calls.storedRetries.length === 0);
 
     // 확인 경로 고장도 보류 — 빈 페이지로 보내는 것보다 늦게 보내는 게 낫다.
     const ve = makeDeps({ visible: "error" });
@@ -397,11 +408,17 @@ async function main() {
     const s4 = await notifyFavPlayerInterviews(vt.deps);
     check("확인 throw → 발송 보류", s4.deferredNotVisible === 1 && vt.calls.sends.length === 0);
 
-    // 상한 도달 — 확인 경로가 계속 고장나도 알림을 영영 죽이진 않는다.
+    // 삼순 NO-GO P0-1 — fail-close에 예외 없음. attempts나 deferrals가 아무리 높아도
+    // 노출 확인 없이는 절대 발송하지 않는다(빈 페이지 알림 재발 차단).
     const cap = makeDeps({ visible: "absent", leased: [iv({ attempts: MAX_SEND_ATTEMPTS })] });
     const s5 = await notifyFavPlayerInterviews(cap.deps);
-    check("attempts 상한 → 확인 생략하고 발송(무한 보류 방지)",
-      s5.sent === 1 && cap.calls.sends.length === 1 && cap.calls.visibilityChecks.length === 0);
+    check("attempts 상한이어도 미노출이면 발송 금지(fail-open 제거)",
+      s5.sent === 0 && cap.calls.sends.length === 0
+      && cap.calls.visibilityChecks.length === 1 && s5.deferredNotVisible === 1);
+    const capD = makeDeps({ visible: "error", leased: [iv({ visibilityDeferrals: 99 })] });
+    const s6 = await notifyFavPlayerInterviews(capD.deps);
+    check("보류 99회 + 확인 error → 여전히 발송 금지",
+      s6.sent === 0 && capD.calls.sends.length === 0 && s6.deferredNotVisible === 1);
 
     // 확인은 audience 확정 뒤 — 보낼 사람이 없으면 확인 자체가 낭비다.
     const noAud = makeDeps({ audience: () => [] });

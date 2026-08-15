@@ -13,16 +13,20 @@ const GAME_ID_RE = /^\d{8}[A-Z]{4}\d$/;
  * s-maxage 60초가 지나도 엣지는 최대 5분간 **옛 응답(빈 목록)을 그대로 서빙**하고
  * 뒤에서만 갱신한다. 실측 헤더: `x-vercel-cache: STALE`, `age: 117`.
  *
- * 그래서 **수집 중인 경기(collecting)** 에는 stale 서빙을 아예 주지 않는다.
- * 새 인터뷰가 붙는 시간대가 정확히 그 구간이라, 그때만 신선도를 사고 그 외에는
- * 기존처럼 캐시로 비용을 아낀다(수집 종료 후에는 목록이 더 변하지 않는다).
+ * 삼순 NO-GO P0-3: `s-maxage=10` 도 **10초짜리 빈 목록을 여전히 허용**하고, 더 나쁜 건
+ * 이미 캐시된 `collecting=false` 응답(60+300 SWR)이 false→true 전환 뒤에도 그대로
+ * 남는다 — 동적 헤더는 **이미 저장된 응답을 무효화하지 못한다**. 그래서 인터뷰가
+ * 붙을 수 있는 경기(수집 전·중)는 Edge·브라우저 모두 `no-store`로 닫는다.
+ *
+ * `collecting=false` + 목록이 이미 채워진 경기만 캐시한다 — 그젠 더 변할 일이 없어
+ * 빈 목록이 고착될 위험이 없다. 빈 목록은 수집 전일 수 있으므로 캐시하지 않는다.
  */
-export function interviewCacheControl(collecting: boolean): string {
-  return collecting
-    // 수집 중 — 옛 목록 서빙 금지. 엣지 10초, 브라우저는 매번 재검증.
-    ? "public, max-age=0, must-revalidate, s-maxage=10"
-    // 수집 종료 — 목록 확정. 기존 캐시 정책 유지.
-    : "public, s-maxage=60, stale-while-revalidate=300";
+export function interviewCacheControl(collecting: boolean, itemCount: number): string {
+  // 수집 중이거나 아직 비어 있다 — 어떤 캐시도 두지 않는다(저장 자체를 막아
+  // false→true 전환 직후에도 남은 응답이 없게 한다).
+  if (collecting || itemCount === 0) return "no-store";
+  // 수집 종료 + 목록 확정 — 기존 캐시 정책으로 비용 방어.
+  return "public, s-maxage=60, stale-while-revalidate=300";
 }
 
 export async function GET(req: NextRequest) {
@@ -73,6 +77,6 @@ export async function GET(req: NextRequest) {
       collecting,
       collectionEndsAt: collecting ? job.expires_at : null,
     },
-    { headers: { "Cache-Control": interviewCacheControl(collecting) } },
+    { headers: { "Cache-Control": interviewCacheControl(collecting, (items ?? []).length) } },
   );
 }

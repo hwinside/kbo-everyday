@@ -49,7 +49,7 @@ export function createInterviewDeps(): InterviewDeps {
       // query-guard: bounded -- lease된 최대 40행에서 파생된 exact id IN 조회.
       const { data: retryRows, error: retryErr } = await supabase
         .from("postgame_interview_retry_tokens")
-        .select("row_id, tokens, attempts")
+        .select("row_id, tokens, attempts, visibility_deferrals")
         .in("row_id", rows.map((r) => r.id));
       if (retryErr) throw new Error(`retry ledger query failed: ${retryErr.message}`);
       const retryByRow = new Map(
@@ -60,6 +60,9 @@ export function createInterviewDeps(): InterviewDeps {
               )
             : [],
           attempts: typeof r.attempts === "number" ? r.attempts : 1,
+          // 노출 보류는 FCM attempts와 별도 카운터(삼순 P0-2).
+          visibilityDeferrals:
+            typeof r.visibility_deferrals === "number" ? r.visibility_deferrals : 0,
         }]),
       );
 
@@ -84,6 +87,7 @@ export function createInterviewDeps(): InterviewDeps {
         winnerTeamId: winnerByGame.get(r.game_id as string) ?? null,
         retryTokens: retryByRow.get(r.id as string)?.tokens ?? [],
         attempts: retryByRow.get(r.id as string)?.attempts ?? 0,
+        visibilityDeferrals: retryByRow.get(r.id as string)?.visibilityDeferrals ?? 0,
       }));
     },
 
@@ -189,6 +193,44 @@ export function createInterviewDeps(): InterviewDeps {
     // transient 토큰 durable 저장(service_role 전용 원장) + 행 pending 복귀.
     // 원장 upsert 성공 후 행 전이 순서 — 행 전이가 실패하면 throw → 호출부 release,
     // lease 만료 후 재획득 때 원장 토큰이 그대로 있어 토큰 경로로 재시도된다.
+    /**
+     * 노출 보류 — 행을 pending으로 되돌리고 보류 카운터만 올린다.
+     * `attempts`는 건드리지 않는다(삼순 P0-2: FCM 재시도 예산과 분리).
+     * 원장 행이 없으면 tokens=[] 로 생성하되 기존 tokens는 절대 덮어쓰지 않는다
+     * — 덮어쓰면 직전 run의 transient 토큰이 사라져 기기가 영구 유실된다.
+     */
+    recordVisibilityDeferral: async (rowId, deferrals) => {
+      const { data: existing, error: readErr } = await supabase
+        .from("postgame_interview_retry_tokens")
+        .select("row_id")
+        .eq("row_id", rowId)
+        .maybeSingle();
+      if (readErr) throw new Error(`visibility deferral read failed: ${readErr.message}`);
+
+      if (existing) {
+        // tokens/attempts 미변경 — 보류 카운터만 갱신.
+        const { error } = await supabase
+          .from("postgame_interview_retry_tokens")
+          .update({ visibility_deferrals: deferrals, updated_at: new Date().toISOString() })
+          .eq("row_id", rowId);
+        if (error) throw new Error(`visibility deferral update failed: ${error.message}`);
+      } else {
+        const { error } = await supabase
+          .from("postgame_interview_retry_tokens")
+          .insert({
+            row_id: rowId, tokens: [], attempts: 0,
+            visibility_deferrals: deferrals, updated_at: new Date().toISOString(),
+          });
+        if (error) throw new Error(`visibility deferral insert failed: ${error.message}`);
+      }
+
+      const { error: relErr } = await supabase
+        .from("postgame_interviews")
+        .update({ notify_state: "pending", notify_lease_until: null })
+        .eq("id", rowId);
+      if (relErr) throw new Error(`visibility deferral release failed: ${relErr.message}`);
+    },
+
     storeRetryTokens: async (rowId, tokens, attempts) => {
       const { error: ledgerErr } = await supabase
         .from("postgame_interview_retry_tokens")
