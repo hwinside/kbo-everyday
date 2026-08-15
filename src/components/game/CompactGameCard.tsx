@@ -54,13 +54,13 @@ function formatBadgeDate(dateStr: string): string {
   return `${m}/${d}(${weekday})`;
 }
 
-/** BSO 점 한 줄 — 잠금화면 LA outDot과 동일 개념(채워짐=색, 빈=반투명). 팀컬러 미사용. */
-function CountRow({ label, count, total, activeClass }: { label: string; count: number; total: number; activeClass: string }) {
+/** BSO 점 한 묶음 — 잠금화면 LA outDot과 동일 개념(채워짐=색, 빈=반투명). 팀컬러 미사용. */
+function CountGroup({ label, count, total, activeClass }: { label: string; count: number; total: number; activeClass: string }) {
   return (
-    <span className="flex h-[8px] items-center gap-[2.5px]">
-      <span className="w-[6px] text-[8px] font-extrabold leading-[8px] text-text-tertiary">{label}</span>
+    <span className="flex items-center gap-[2.5px]">
+      <span className="text-[8.5px] font-extrabold leading-none text-text-tertiary">{label}</span>
       {Array.from({ length: total }).map((_, i) => (
-        <span key={i} className={`h-[4.5px] w-[4.5px] rounded-full ${i < count ? activeClass : "bg-text-tertiary/25"}`} />
+        <span key={i} className={`h-[5px] w-[5px] rounded-full ${i < count ? activeClass : "bg-white/15"}`} />
       ))}
     </span>
   );
@@ -69,15 +69,33 @@ function CountRow({ label, count, total, activeClass }: { label: string; count: 
 /** 주자 다이아몬드 — 잠금화면 LA DiamondView와 동일 배치(2루 위·1루 우·3루 좌). 팀컬러 미사용. */
 function MiniDiamond({ first, second, third }: { first: boolean; second: boolean; third: boolean }) {
   const cls = (on: boolean) =>
-    `absolute h-2 w-2 rotate-45 rounded-[2px] ${on ? "bg-red-500" : "border border-text-tertiary/30 bg-text-tertiary/10"}`;
+    `absolute h-2 w-2 rotate-45 rounded-[2px] border ${on ? "border-red-500 bg-red-500" : "border-white/25 bg-white/10"}`;
   const onBases = [first && "1루", second && "2루", third && "3루"].filter(Boolean).join("·");
   return (
-    <span className="relative block h-[22px] w-[26px] shrink-0" role="img" aria-label={`주자 ${onBases || "없음"}`}>
+    <span className="relative block h-5 w-[26px] shrink-0" role="img" aria-label={`주자 ${onBases || "없음"}`}>
       <span className={cls(second)} style={{ left: "50%", top: 0, marginLeft: -4 }} />
-      <span className={cls(first)} style={{ right: 0, bottom: 3 }} />
-      <span className={cls(third)} style={{ left: 0, bottom: 3 }} />
+      <span className={cls(first)} style={{ right: 0, bottom: 2 }} />
+      <span className={cls(third)} style={{ left: 0, bottom: 2 }} />
     </span>
   );
+}
+
+/**
+ * 팀 로고 — 행2 고정 트랙(22px)에 직접 올린다.
+ * 카드마다 팀명 길이가 달라도 로고 x좌표가 흔들리지 않게 하려면 고정폭 그리드 트랙이어야 한다
+ * (flex 배치에서는 형제 콘텐츠 길이가 로고 위치를 밀어버린다).
+ */
+function TeamLogo({ src }: { src: string }) {
+  return (
+    <span className="h-[22px] w-[22px] rounded-full bg-white p-0.5">
+      <Image src={src} alt="" width={22} height={22} unoptimized className="h-full w-full object-contain" />
+    </span>
+  );
+}
+
+/** 승팀 표시 점 — 종료 카드에서만. */
+function WinDot() {
+  return <span className="inline-block h-1 w-1 shrink-0 rounded-full bg-emerald-400 align-middle" />;
 }
 
 export default function CompactGameCard({ game, isPreseason, myTeamId, weather, dateStr, featured }: CompactGameCardProps) {
@@ -86,6 +104,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
   const isLive = game.status === "live";
   const isFinal = game.status === "final";
   const isCancelled = game.status === "cancelled";
+  const isScheduled = game.status === "scheduled";
   const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
   const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
   const showScore = isLive || isFinal;
@@ -98,10 +117,12 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
   return (
     <Link prefetch={false} href={`/games/${game.id}`}>
       <div
-        className={`relative overflow-hidden rounded-xl px-[9px] pb-1.5 pt-[5px] transition-colors ${
+        className={`relative overflow-hidden rounded-xl border px-2.5 pb-1.5 pt-[5px] transition-colors ${
           featuredTeam
-            ? ""
-            : `glass-card hover:bg-black/5 dark:hover:bg-white/5 ${accentEdge ? "border-l-[3px] border-l-accent" : ""}`
+            ? // MY TEAM 카드도 보더 박스를 유지하고 색만 투명하게 한다.
+              // border를 없애면 내부 콘텐츠가 다른 카드보다 1px 안쪽으로 밀려 로고 정렬이 깨진다.
+              "border-transparent"
+            : `glass-card border-transparent hover:bg-black/5 dark:hover:bg-white/5 ${accentEdge ? "border-l-[3px] border-l-accent" : ""}`
         }`}
         style={featuredTeam ? { background: `linear-gradient(135deg, ${featuredTeam.colorPrimary} 0%, var(--bg-tertiary) 78%)` } : undefined}
       >
@@ -144,62 +165,67 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
           <span className="whitespace-nowrap text-[10px] text-text-tertiary">{game.stadium}</span>
         </div>
 
-        {/* 행2 — 양팀 한 줄 병합(원정 로고·명 · 점수/선발 · 홈 명·로고) + 라이브 BSO·다이아몬드 */}
-        <div className="flex h-[29px] items-center gap-2">
-          <span className="flex min-w-0 items-center gap-[5px]">
-            <span className="h-5 w-5 shrink-0 rounded-full bg-gray-100 p-0.5 dark:bg-white">
-              <Image src={away.logoPath} alt="" width={20} height={20} unoptimized className="h-full w-full object-contain" />
-            </span>
-            <span className={`text-xs font-bold ${awayWin || !isFinal ? "text-text-primary" : "text-text-tertiary"}`}>{away.shortName}</span>
-            {awayWin && <span className="h-1 w-1 shrink-0 rounded-full bg-emerald-400" />}
+        {/*
+          행2 — 양팀 한 줄 병합. 5열 *고정폭* 그리드로 로고 위치를 콘텐츠와 분리한다:
+          [로고 22][원정명 50][스코어 68][홈명 50][로고 22], column-gap 2px, 전체를 가운데 정렬.
+          팀명 트랙이 고정폭이라 카드가 달라도 로고·스코어의 x좌표가 항상 동일하다.
+        */}
+        <div
+          className="grid h-[30px] items-center justify-center gap-x-0.5"
+          style={{ gridTemplateColumns: "22px 50px 68px 50px 22px" }}
+        >
+          <TeamLogo src={away.logoPath} />
 
+          <span className="flex min-w-0 flex-col items-center leading-[1.15]">
+            <span className={`whitespace-nowrap text-[12.5px] ${awayWin || !isFinal ? "font-bold text-text-primary" : "font-semibold text-text-tertiary"}`}>
+              {away.shortName}
+              {awayWin && <> <WinDot /></>}
+            </span>
+            {isScheduled && (
+              <span className="whitespace-nowrap text-[9.5px] text-text-tertiary">선발 {game.awayStarter || "미정"}</span>
+            )}
+          </span>
+
+          <span className="flex items-center justify-center gap-1">
             {showScore ? (
               <>
-                <span className={`text-[18px] font-extrabold leading-none tabular-nums ${awayWin || !isFinal ? "" : "text-text-tertiary"}`}>
+                <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${awayWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.awayScore ?? 0}
                 </span>
-                <span className="text-xs font-bold text-text-tertiary/70">:</span>
-                <span className={`text-[18px] font-extrabold leading-none tabular-nums ${homeWin || !isFinal ? "" : "text-text-tertiary"}`}>
+                <span className="text-xs font-bold text-white/30">:</span>
+                <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${homeWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.homeScore ?? 0}
                 </span>
               </>
             ) : isCancelled ? (
-              <span className="px-1 text-[11px] font-bold text-text-tertiary">취소</span>
+              <span className="text-[11px] font-bold text-text-tertiary">취소</span>
             ) : (
-              <>
-                <span className="truncate text-[11px] text-text-secondary">{game.awayStarter || "미정"}</span>
-                <span className="px-px text-[11px] font-bold text-text-tertiary">vs</span>
-                <span className="truncate text-[11px] text-text-secondary">{game.homeStarter || "미정"}</span>
-              </>
+              <span className="text-[10px] font-extrabold text-text-tertiary">VS</span>
             )}
-
-            {homeWin && <span className="h-1 w-1 shrink-0 rounded-full bg-emerald-400" />}
-            <span className={`text-xs font-bold ${homeWin || !isFinal ? "text-text-primary" : "text-text-tertiary"}`}>{home.shortName}</span>
-            <span className="h-5 w-5 shrink-0 rounded-full bg-gray-100 p-0.5 dark:bg-white">
-              <Image src={home.logoPath} alt="" width={20} height={20} unoptimized className="h-full w-full object-contain" />
-            </span>
           </span>
 
-          {isLive && (
-            <>
-              <span className="flex-1" />
-              <span className="flex shrink-0 flex-col gap-px">
-                <CountRow label="B" count={Math.max(0, Math.min(game.balls ?? 0, 3))} total={3} activeClass="bg-emerald-400" />
-                <CountRow label="S" count={Math.max(0, Math.min(game.strikes ?? 0, 2))} total={2} activeClass="bg-amber-400" />
-                <CountRow label="O" count={Math.max(0, Math.min(game.outs ?? 0, 2))} total={2} activeClass="bg-red-500" />
-              </span>
-              <MiniDiamond
-                first={game.runnersOn?.first ?? false}
-                second={game.runnersOn?.second ?? false}
-                third={game.runnersOn?.third ?? false}
-              />
-            </>
-          )}
+          <span className="flex min-w-0 flex-col items-center leading-[1.15]">
+            <span className={`whitespace-nowrap text-[12.5px] ${homeWin || !isFinal ? "font-bold text-text-primary" : "font-semibold text-text-tertiary"}`}>
+              {homeWin && <><WinDot /> </>}
+              {home.shortName}
+            </span>
+            {isScheduled && (
+              <span className="whitespace-nowrap text-[9.5px] text-text-tertiary">선발 {game.homeStarter || "미정"}</span>
+            )}
+          </span>
+
+          <TeamLogo src={home.logoPath} />
         </div>
 
-        {/* 행3 — 라이브 전용: 현재 투수/타자 + 문자중계 최근 플레이 한 줄 */}
+        {/* 행3 — 라이브 전용: 좌 BSO · 중앙 투/타 · 우 주자 다이아몬드 (폭 전체를 3분할) */}
         {isLive && (
-          <div className="mt-px flex h-[17px] items-center gap-[5px]">
+          <div className="mt-px flex h-[22px] items-center gap-2 border-t border-white/[0.07] pt-0.5">
+            <span className="flex shrink-0 items-center gap-[7px]">
+              <CountGroup label="B" count={Math.max(0, Math.min(game.balls ?? 0, 3))} total={3} activeClass="bg-emerald-400" />
+              <CountGroup label="S" count={Math.max(0, Math.min(game.strikes ?? 0, 2))} total={2} activeClass="bg-amber-400" />
+              <CountGroup label="O" count={Math.max(0, Math.min(game.outs ?? 0, 2))} total={2} activeClass="bg-red-500" />
+            </span>
+            <span className="flex-1" />
             {(game.currentPitcher || game.currentBatter) && (
               <span className="whitespace-nowrap text-[10.5px] text-text-secondary">
                 {game.currentPitcher && (
@@ -211,12 +237,20 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
                 )}
               </span>
             )}
-            {game.lastPlay && (
-              <span className="flex h-4 min-w-0 flex-1 items-center gap-1 rounded-[5px] bg-text-tertiary/10 px-1.5">
-                <span className="h-1 w-1 shrink-0 rounded-full bg-red-400" />
-                <span className="truncate text-[10.5px] text-text-secondary">{game.lastPlay}</span>
-              </span>
-            )}
+            <span className="flex-1" />
+            <MiniDiamond
+              first={game.runnersOn?.first ?? false}
+              second={game.runnersOn?.second ?? false}
+              third={game.runnersOn?.third ?? false}
+            />
+          </div>
+        )}
+
+        {/* 행4 — 라이브 전용: 문자중계 최근 플레이 full-width 티커 */}
+        {isLive && game.lastPlay && (
+          <div className="mt-[3px] flex h-4 items-center gap-[5px] rounded-[5px] bg-white/[0.07] px-1.5">
+            <span className="h-1 w-1 shrink-0 rounded-full bg-red-400" />
+            <span className="min-w-0 flex-1 truncate text-[10.5px] text-text-secondary">{game.lastPlay}</span>
           </div>
         )}
       </div>
