@@ -1,4 +1,8 @@
-/** 실제 DMChatPage/useDMChat 종단: draft 첫 질문 → route 승격 → Q2 최신 1개 → failed → reload 0. */
+/**
+ * 실제 DMChatPage/useDMChat 종단: draft 첫 질문 → route 승격 → 실제 Realtime 답변 INSERT
+ * (답변 DOM + 말풍선 잔존 + pending 해제) → Q2 최신 1개 → failed → answer-before-outbox
+ * (RPC 반환 전 답변 선도착 → outbox 0 + 말풍선 잔존) → reload 0.
+ */
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
@@ -49,7 +53,12 @@ type Message = {
 };
 const profile = { id: "me", nickname: "테스터", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null };
 const rows: Message[] = [];
-let nextMessageId = 101;
+const QUESTION_IDS = [101, 202, 303];
+const CREATED_AT: Record<number, string> = {
+  101: "2026-08-15T00:00:01Z", 150: "2026-08-15T00:00:02Z", 202: "2026-08-15T00:00:03Z",
+  303: "2026-08-15T00:00:05Z", 350: "2026-08-15T00:00:06Z",
+};
+let questionIndex = 0;
 let routePromoted = false;
 
 async function main() {
@@ -100,20 +109,42 @@ async function main() {
     }
     throw new Error(`unexpected table: ${table}`);
   };
+  type RealtimePayload = { new: Message };
+  const realtimeHandlers = new Map<string, (payload: RealtimePayload) => unknown>();
+  // 실제 서버 파이프라인처럼 봇 답변을 Realtime INSERT callback으로 배달한다(모의 DOM 주입 아님).
+  const deliverGeniusAnswer = async (id: number, questionMessageId: number, content: string) => {
+    const message: Message = {
+      id, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content,
+      is_read: false, created_at: CREATED_AT[id], dedup_key: `baseball-genius:${questionMessageId}`,
+    };
+    rows.push(message);
+    const handler = realtimeHandlers.get(`dm:${CONVERSATION_ID}`);
+    assert.ok(handler, "실제 대화 Realtime 구독(on callback)이 있어야 한다");
+    await handler({ new: message });
+  };
   mutable.rpc = (fn, args) => {
     assert.equal(fn, "send_dm_message_atomic");
     assert.equal(args.p_target_user_id, GENIUS_ID);
-    const id = nextMessageId;
-    nextMessageId = id === 101 ? 202 : id + 1;
+    const id = QUESTION_IDS[questionIndex];
+    questionIndex += 1;
     rows.push({
       id, conversation_id: CONVERSATION_ID, sender_id: "me", content: String(args.p_content),
-      is_read: true, created_at: `2026-08-15T00:00:${id === 101 ? "01" : "02"}Z`,
+      is_read: true, created_at: CREATED_AT[id],
     });
-    return { single: async () => ({ data: { conversation_id: CONVERSATION_ID, message_id: id }, error: null }) };
+    return {
+      single: async () => {
+        // Q3: 최종 답변이 질문 RPC 응답보다 먼저 Realtime으로 도착하는 answer-before-outbox race.
+        if (id === 303) await deliverGeniusAnswer(350, 303, "선도착 답변입니다");
+        return { data: { conversation_id: CONVERSATION_ID, message_id: id }, error: null };
+      },
+    };
   };
-  mutable.channel = () => {
+  mutable.channel = (name: string) => {
     const channel = {
-      on: () => channel,
+      on: (_event: string, _filter: unknown, callback: (payload: RealtimePayload) => unknown) => {
+        realtimeHandlers.set(name, callback);
+        return channel;
+      },
       subscribe: (callback?: (status: string) => void) => { callback?.("SUBSCRIBED"); return channel; },
     };
     return channel;
@@ -183,6 +214,20 @@ async function main() {
     }, act);
     console.log("✅ actual Q1 send → new-* route promotion → thinking1 retained");
 
+    // 실제 Realtime callback으로 봇 최종 답변 INSERT를 배달한다.
+    await act(async () => { await deliverGeniusAnswer(150, 101, "첫 답변입니다"); });
+    await waitFor(() => {
+      assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /첫 답변입니다/,
+        "실제 Realtime 답변 INSERT가 DOM에 보여야 한다");
+      assert.equal(attachedThinking(container, 101), true, "답변 도착 후에도 Q1 생각중 말풍선 기록이 남아야 한다");
+      const bubble = container.querySelector('[data-message-id="101"]')?.nextElementSibling;
+      assert.equal(bubble?.getAttribute("data-pending"), "false", "답변 도착 후 pending 점/status는 해제돼야 한다");
+      assert.equal(bubble?.querySelector('[role="status"]'), null);
+      const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
+      assert.equal(outbox.some((entry) => entry.messageId === 101), false, "답변 관측 뒤 outbox 101 항목은 제거돼야 한다");
+    }, act);
+    console.log("✅ actual Realtime answer → answer DOM + bubble retained + pending cleared");
+
     await typeAndSend(container, "둘째 질문");
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="202"]')?.textContent ?? "", /둘째 질문/);
@@ -206,6 +251,24 @@ async function main() {
       assert.ok(container.querySelector('[data-state="failed"] button'));
     }, act);
     console.log("✅ actual failed → thinking record retained, pending stopped, retry shown");
+
+    // RPC 반환 전 답변 선도착: rpc mock이 single() 안에서 답변 350을 먼저 Realtime으로 배달한다.
+    await typeAndSend(container, "셋째 질문");
+    await waitFor(() => {
+      assert.match(container.querySelector('[data-message-id="303"]')?.textContent ?? "", /셋째 질문/);
+      assert.match(container.querySelector('[data-message-id="350"]')?.textContent ?? "", /선도착 답변입니다/,
+        "RPC 반환 전에 선도착한 답변이 DOM에 보여야 한다");
+      assert.equal(attachedThinking(container, 303), true,
+        "답변 선도착(outbox 이전)이어도 전송 marker로 Q3 말풍선이 남아야 한다");
+      const bubble = container.querySelector('[data-message-id="303"]')?.nextElementSibling;
+      assert.equal(bubble?.getAttribute("data-pending"), "false");
+      assert.equal(bubble?.querySelector('[role="status"]'), null);
+      const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
+      assert.equal(outbox.some((entry) => entry.messageId === 303), false,
+        "답변 선도착이면 enqueue를 건너뛰어 outbox에 303이 없어야 한다");
+      assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 1);
+    }, act);
+    console.log("✅ actual answer-before-outbox → outbox skipped + bubble retained");
 
     // 같은 stale localStorage를 둔 채 새 hook/page 인스턴스로 재진입한다.
     await act(async () => { root.unmount(); });
