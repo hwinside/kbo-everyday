@@ -1,6 +1,6 @@
 {
  "note": "0단계 읽기 전용 대조 산출(2026-08-15). 분모 = origin/main players-roster.json 883 kboId. 나무 서빙(genius_rag_chunks source_kind=namu_document distinct entity_id) 392 제외한 나무 공백 491명. buckets: '적재만(기존 corpus 재사용)'=census(#1137 게이트) assigned인데 live 미반영 3명 / '외부 해석 필요'=namu source not_started 485명 / '원장 미등록'=namu source row 부재 3명. 생성: 운영 DB 읽기 전용 조회 + corpus-identity-census.json 대조 (외부 조회 0). resolver --scope=snapshot 입력.",
- "generatedAt": "2026-08-15T11:05:00+09:00",
+ "generatedAt": "2026-08-15T20:07:00+09:00",
  "rosterSha256": "39167dab12a1dae2528eed2160008adb102fd60ebbf4f519cb9dbb98cd5ecb38",
  "denominator": 883,
  "namuServed": 392,

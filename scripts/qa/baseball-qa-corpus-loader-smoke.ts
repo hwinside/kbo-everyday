@@ -436,6 +436,29 @@ try {
   assert.equal(claimCounts.get(kiaSourceKey), priorKiaClaims + 1, "동일 root/count의 child 변경은 재claim해야 한다");
   assert.doesNotMatch(changed.stdout, new RegExp(`READY ${kiaSourceKey} already-loaded`));
   console.log("PASS actual E2E — 18 physical/17 latest ledger + row provenance + 동일 root/count child 재적재");
+
+  // 부분 재적재(--entities) 원장 보존 — P0(2026-08-15 삼순): 필터된 부분집합이 전체 run의
+  // corpus_runs를 expected_rows 축소/status=loading으로 덮으면 원장 훼손이다. 실제 CLI로 검증한다.
+  const ledgerBeforePartial = JSON.stringify(ledgerRun);
+  const ledgerRecordsBeforePartial = ledgerRecords.size;
+  const partial = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=레이예스",
+    "--apply",
+  ], applyEnv);
+  assert.equal(partial.code, 0, `${partial.stdout}\n${partial.stderr}`);
+  assert.match(partial.stdout, /LEDGER SKIP/, "부분 재적재는 LEDGER SKIP을 명시해야 한다");
+  assert.equal(JSON.stringify(ledgerRun), ledgerBeforePartial, "--entities apply가 corpus_runs를 변경하면 안 된다");
+  assert.equal(ledgerRecords.size, ledgerRecordsBeforePartial, "--entities apply가 corpus_records를 변경하면 안 된다");
+  const partialAbsent = await run([
+    `--file=${changedFile}`,
+    `--mac-recovery-file=${macRecoveryFile}`,
+    "--entities=없는사람",
+  ], applyEnv);
+  assert.equal(partialAbsent.code, 1, "corpus에 없는 entity 요청은 fail-close여야 한다");
+  assert.match(partialAbsent.stderr, /corpus에 없는 entity/);
+  console.log("PASS actual E2E — --entities 부분 재적재 원장 보존 + 부재 entity fail-close");
 } finally {
   server.close();
 }

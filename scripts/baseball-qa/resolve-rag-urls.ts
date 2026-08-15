@@ -41,6 +41,7 @@
  * §12.2(b): 차단을 만나면 그 선수에 대한 추가 요청을 중단한다. 우회하지 않는다.
  */
 
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -61,7 +62,7 @@ type Resolution = "resolved" | "missing" | "ambiguous" | "blocked" | "budget_exh
 
 /** checkpoint 행 — probe(요청 1건)와 verdict(선수 최종 판정) 두 종류. (kboId, candidateUrl) 단위로
  * 요청을 기록해 재시작 시 같은 URL을 다시 두드리지 않는다(삼순 계약). */
-interface CheckpointProbeRow {
+export interface CheckpointProbeRow {
   t: "probe";
   kboId: string;
   title: string;
@@ -74,6 +75,89 @@ interface CheckpointProbeRow {
   /** 동음이의 문서에서 뽑았던 파생 후보 — replay 시 재요청 없이 그대로 이어받는다. */
   candidates?: string[];
   at: string;
+}
+
+/**
+ * checkpoint run fingerprint (P0, 2026-08-15 삼순) — 다른 source/scope/스냅샷/예산으로 만든
+ * checkpoint를 이어받으면 대상이 잘못 skip된다. 첫 줄에 박아 넣고 resume 시 일치 검증한다.
+ */
+export interface CheckpointFingerprint {
+  t: "fingerprint";
+  source: string;
+  scope: string;
+  snapshotSha256: string;
+  budget: number;
+  schedule: string;
+}
+
+export function buildCheckpointFingerprint(input: {
+  source: string; scope: string; snapshotSha256: string;
+}): CheckpointFingerprint {
+  return {
+    t: "fingerprint",
+    source: input.source,
+    scope: input.scope,
+    snapshotSha256: input.snapshotSha256,
+    budget: MAX_PROBES_PER_PLAYER,
+    schedule: INTERVAL_PROBE_SCHEDULE_MS.join("-"),
+  };
+}
+
+export interface ParsedCheckpoint {
+  doneKboIds: Set<string>;
+  probedByKboId: Map<string, CheckpointProbeRow[]>;
+}
+
+const CHECKPOINT_VERDICT_STATUSES = new Set(["resolved", "missing", "ambiguous", "budget_exhausted"]);
+const CHECKPOINT_PROBE_KINDS = new Set(["canonical", "rejected", "missing"]);
+
+/**
+ * checkpoint 본문 파싱 — 손상·스키마 오류·fingerprint 불일치는 전부 **throw(fail-close)**한다.
+ * 손상된 파일을 "신규 생성"으로 삼켜 진행하면 기록되었던 요청을 재발사하거나 엉뚱한 대상을 skip한다.
+ */
+export function parseCheckpointText(text: string, expected: CheckpointFingerprint): ParsedCheckpoint {
+  const lines = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  if (lines.length === 0) throw new Error("checkpoint가 비어 있다(헤더 부재) — fail-close");
+  let header: CheckpointFingerprint;
+  try {
+    header = JSON.parse(lines[0]) as CheckpointFingerprint;
+  } catch {
+    throw new Error("checkpoint 헤더 JSON 손상 — fail-close");
+  }
+  if (header.t !== "fingerprint") throw new Error("checkpoint 첫 줄이 fingerprint가 아니다 — fail-close");
+  for (const key of ["source", "scope", "snapshotSha256", "budget", "schedule"] as const) {
+    if (String(header[key]) !== String(expected[key])) {
+      throw new Error(`checkpoint fingerprint 불일치: ${key}=${String(header[key])} (기대 ${String(expected[key])}) — fail-close`);
+    }
+  }
+  const doneKboIds = new Set<string>();
+  const probedByKboId = new Map<string, CheckpointProbeRow[]>();
+  for (const [index, line] of lines.slice(1).entries()) {
+    let row: Record<string, unknown>;
+    try {
+      row = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      throw new Error(`checkpoint ${index + 2}번 줄 JSON 손상 — fail-close`);
+    }
+    if (row.t === "probe") {
+      const probe = row as unknown as CheckpointProbeRow;
+      if (typeof probe.kboId !== "string" || typeof probe.title !== "string" || typeof probe.url !== "string"
+        || !CHECKPOINT_PROBE_KINDS.has(probe.kind)) {
+        throw new Error(`checkpoint ${index + 2}번 줄 probe 스키마 오류 — fail-close`);
+      }
+      const list = probedByKboId.get(probe.kboId) ?? [];
+      list.push(probe);
+      probedByKboId.set(probe.kboId, list);
+    } else if (row.t === "verdict") {
+      if (typeof row.kboId !== "string" || !CHECKPOINT_VERDICT_STATUSES.has(String(row.status))) {
+        throw new Error(`checkpoint ${index + 2}번 줄 verdict 스키마 오류(status=${String(row.status)}) — fail-close`);
+      }
+      doneKboIds.add(row.kboId);
+    } else {
+      throw new Error(`checkpoint ${index + 2}번 줄 알 수 없는 행 타입(t=${String(row.t)}) — fail-close`);
+    }
+  }
+  return { doneKboIds, probedByKboId };
 }
 type SourceName = "wikipedia" | "namu";
 type ResolveScope = "snapshot" | "roster" | "targets";
@@ -96,10 +180,45 @@ const SCOPE = (process.argv.find((arg) => arg.startsWith("--scope="))?.split("="
 const FETCHER = (process.argv.find((arg) => arg.startsWith("--fetcher="))?.split("=")[1] ?? "chrome") as FetcherName;
 const CDP_URL = process.argv.find((arg) => arg.startsWith("--cdp-url="))?.split("=").slice(1).join("=") ?? undefined;
 const CHECKPOINT_PATH = process.argv.find((arg) => arg.startsWith("--checkpoint="))?.split("=")[1] ?? null;
-// A17(cdp) 경로는 나무 전용이다 — wiki로 잘못 실행되면 즉시 실패(삼순 계약: 조용한 오실행 금지).
-if (FETCHER === "cdp" && SOURCE !== "namu") {
-  console.error(`--fetcher=cdp는 --source=namu 전용이다 (현재 source=${SOURCE}) — 즉시 실패`);
-  process.exit(1);
+
+/**
+ * 오실행 가드 (P0, 2026-08-15 삼순) — main() 첫 줄에서만 호출한다.
+ * top-level에 두면 스모크의 순수 함수 import만으로 process.exit이 터진다(실측).
+ */
+function enforceRunContract(): void {
+  // (a) enum 값 오타는 기본값 폴백이 아니라 즉시 실패다 — 조용한 오실행 금지.
+  if (!(["wikipedia", "namu"] as const).includes(SOURCE)) {
+    console.error(`--source 값이 잘못됐다: ${SOURCE} (wikipedia|namu)`);
+    process.exit(1);
+  }
+  if (!(["snapshot", "roster", "targets"] as const).includes(SCOPE)) {
+    console.error(`--scope 값이 잘못됐다: ${SCOPE} (snapshot|roster|targets)`);
+    process.exit(1);
+  }
+  if (!(["chrome", "cdp"] as const).includes(FETCHER)) {
+    console.error(`--fetcher 값이 잘못됐다: ${FETCHER} (chrome|cdp)`);
+    process.exit(1);
+  }
+  // (b) A17(cdp) 경로는 나무 전용이다 — wiki로 잘못 실행되면 즉시 실패.
+  if (FETCHER === "cdp" && SOURCE !== "namu") {
+    console.error(`--fetcher=cdp는 --source=namu 전용이다 (현재 source=${SOURCE}) — 즉시 실패`);
+    process.exit(1);
+  }
+  // (c) snapshot 모드(488명 실전 해석)는 승인된 실행 형태를 전부 강제한다:
+  // source=namu + fetcher=cdp + --dry-run + --checkpoint + --out. 하나라도 빠지면 시작하지 않는다.
+  // (DB 쓰기는 3단계 별도 승인 — snapshot 모드에서는 구조적으로 불가능하다.)
+  if (SCOPE === "snapshot") {
+    const violations: string[] = [];
+    if (SOURCE !== "namu") violations.push(`--source=namu 필수 (현재 ${SOURCE})`);
+    if (FETCHER !== "cdp") violations.push(`--fetcher=cdp 필수 (현재 ${FETCHER})`);
+    if (!DRY_RUN) violations.push("--dry-run 필수 (snapshot 모드 DB 쓰기 금지)");
+    if (!CHECKPOINT_PATH) violations.push("--checkpoint=<path> 필수 (재시작 중복 요청 차단)");
+    if (!OUT_PATH) violations.push("--out=<path> 필수 (판정표 산출)");
+    if (violations.length > 0) {
+      console.error(`snapshot 모드 실행 계약 위반 — 시작하지 않는다:\n  ${violations.join("\n  ")}`);
+      process.exit(1);
+    }
+  }
 }
 /**
  * 간격 계약 (2026-08-15 하린아빠 "10초보다 더 짧게" + 삼순 "5초 하드코딩 금지, 8→6→4→2초 probe").
@@ -300,6 +419,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const WIKIPEDIA_INTERVAL_MS = 1_000;
 
 async function main(): Promise<void> {
+  enforceRunContract();
   const env = loadEnv();
   if (SOURCE === "namu") {
     const robots = await assertRobotsAllowed();
@@ -333,33 +453,33 @@ async function main(): Promise<void> {
       }).players
     : undefined;
 
-  // checkpoint resume — verdict가 있는 kboId는 통째로 skip, probe만 있는 kboId는
-  // 기록된 (kboId, candidateUrl) 요청을 replay해 같은 URL 재요청을 차단한다(삼순 계약).
-  const doneKboIds = new Set<string>();
-  const probedByKboId = new Map<string, CheckpointProbeRow[]>();
+  // checkpoint resume (P0 계약) — fingerprint 일치 + 전 행 스키마 검증을 통과한 파일만 이어받는다.
+  // 손상·불일치는 "신규 생성"이 아니라 즉시 실패다. 파일 부재(ENOENT)만 신규로 만든다.
+  const snapshotSha256 = SCOPE === "snapshot"
+    ? createHash("sha256").update(readFileSync(path.join(process.cwd(), GAP_SNAPSHOT_PATH))).digest("hex")
+    : "-";
+  const fingerprint = buildCheckpointFingerprint({ source: SOURCE, scope: SCOPE, snapshotSha256 });
+  let doneKboIds = new Set<string>();
+  let probedByKboId = new Map<string, CheckpointProbeRow[]>();
   if (CHECKPOINT_PATH) {
+    let raw: string | null = null;
     try {
-      for (const line of readFileSync(CHECKPOINT_PATH, "utf8").split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const row = JSON.parse(trimmed) as { t?: string; kboId?: string; status?: string };
-        if (!row.kboId) continue;
-        if (row.t === "probe") {
-          const probeRow = row as unknown as CheckpointProbeRow;
-          const list = probedByKboId.get(probeRow.kboId) ?? [];
-          list.push(probeRow);
-          probedByKboId.set(probeRow.kboId, list);
-        } else if (row.t === "verdict" || row.status) {
-          // 구형(무타입) 행은 verdict로 취급 — 이미 끝난 선수를 다시 두드리지 않는다.
-          doneKboIds.add(row.kboId);
-        }
-      }
+      raw = readFileSync(CHECKPOINT_PATH, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (raw === null) {
+      writeFileSync(CHECKPOINT_PATH, `${JSON.stringify(fingerprint)}\n`, "utf8");
+      console.log(`checkpoint 신규 생성(fingerprint 기록): ${CHECKPOINT_PATH}`);
+    } else {
+      // 파싱 실패는 이 자리에서 던져져 run을 즉시 실패시킨다(catch 없음 — fail-close).
+      const parsed = parseCheckpointText(raw, fingerprint);
+      doneKboIds = parsed.doneKboIds;
+      probedByKboId = parsed.probedByKboId;
       console.log(
-        `checkpoint 이어받기: ${CHECKPOINT_PATH} — 판정 완료 ${doneKboIds.size}명 skip, `
+        `checkpoint 이어받기: ${CHECKPOINT_PATH} — fingerprint 일치, 판정 완료 ${doneKboIds.size}명 skip, `
         + `probe 기록 보유 ${probedByKboId.size}명 replay`,
       );
-    } catch {
-      console.log(`checkpoint 신규 생성: ${CHECKPOINT_PATH}`);
     }
   }
 

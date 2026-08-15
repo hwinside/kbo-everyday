@@ -12,10 +12,12 @@
  * import만으로는 main()이 돌지 않는다 — 그 가드 자체도 여기서 검증한다.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  buildCheckpointFingerprint,
   INTERVAL_FLOOR_MS,
   INTERVAL_JITTER_MS,
   INTERVAL_PROBE_SCHEDULE_MS,
@@ -23,6 +25,7 @@ import {
   intervalForSuccessCount,
   intervalWithJitter,
   MAX_PROBES_PER_PLAYER,
+  parseCheckpointText,
   selectResolveTargets,
 } from "../baseball-qa/resolve-rag-urls";
 
@@ -37,7 +40,19 @@ interface Snapshot {
   players: SnapshotPlayer[];
 }
 
-const snapshot = JSON.parse(readFileSync(path.join(process.cwd(), SNAPSHOT_PATH), "utf8")) as Snapshot;
+const snapshot = JSON.parse(readFileSync(path.join(process.cwd(), SNAPSHOT_PATH), "utf8")) as Snapshot & {
+  generatedAt: string;
+  rosterSha256: string;
+};
+
+// (0) fixture ↔ 런타임 대조 — 스냅샷이 가리키는 로스터가 지금 repo의 로스터와 같은 것이어야
+// 488 대상 선정이 유효하다. 로스터가 바뀌면 여기서 막혀 스냅샷 재생성을 강제한다(drift 검출).
+const rosterActualSha = createHash("sha256")
+  .update(readFileSync(path.join(process.cwd(), "src/lib/constants/players-roster.json")))
+  .digest("hex");
+assert.equal(rosterActualSha, snapshot.rosterSha256,
+  "스냅샷 rosterSha256이 현재 repo 로스터와 불일치 — 스냅샷 재생성 필요(fail-close)");
+assert.ok(Number.isFinite(Date.parse(snapshot.generatedAt)), "generatedAt이 유효한 시각이어야 한다");
 
 // (1) 스냅샷 정합 — 0단계 실측과 어긋나면 여기서 멈춘다(조작·drift 검출).
 assert.equal(snapshot.denominator, 883, "분모는 origin/main 로스터 883");
@@ -127,6 +142,37 @@ assert.deepEqual(
   assert.ok([...dupInPicked.values()].some((count) => count >= 2), "동명이인 코호트가 해석 대상에 존재");
 }
 
+// (7) checkpoint 파서 행동 테스트 — main이 쓰는 실제 함수(parseCheckpointText)를 직접 태운다.
+const fp = buildCheckpointFingerprint({ source: "namu", scope: "snapshot", snapshotSha256: "abc123" });
+const goodText = [
+  JSON.stringify(fp),
+  JSON.stringify({ t: "probe", kboId: "78224", title: "김재환", url: "https://namu.wiki/w/김재환", kind: "rejected", reason: "disambiguation_document", candidates: ["김재환(야구선수)"], at: "2026-08-15T12:00:00Z" }),
+  JSON.stringify({ t: "verdict", kboId: "50066", name: "강현우", status: "resolved", canonicalUrl: "https://namu.wiki/w/강현우", note: "-", at: "2026-08-15T12:00:05Z" }),
+].join("\n");
+const parsedCp = parseCheckpointText(goodText, fp);
+assert.ok(parsedCp.doneKboIds.has("50066"), "verdict 행 → done skip 대상");
+assert.ok(!parsedCp.doneKboIds.has("78224"), "probe만 있는 선수는 done이 아니다");
+assert.equal(parsedCp.probedByKboId.get("78224")?.[0]?.candidates?.[0], "김재환(야구선수)",
+  "probe replay에 파생 후보가 복원된다");
+// RED 1: fingerprint 불일치(다른 스냅샷) — 반드시 던진다.
+assert.throws(() => parseCheckpointText(goodText, { ...fp, snapshotSha256: "different" }), /fingerprint 불일치/);
+// RED 2: 헤더 부재(구버전/손상 파일) — 신규 생성으로 삼켜지지 않고 던진다.
+assert.throws(() => parseCheckpointText(goodText.split("\n").slice(1).join("\n"), fp), /fingerprint가 아니다|헤더/);
+// RED 3: 중간 줄 JSON 손상 — 던진다.
+assert.throws(() => parseCheckpointText(`${goodText}\n{broken`, fp), /JSON 손상/);
+// RED 4: 스키마 오류(허용 안 된 status) — 던진다. blocked는 verdict로 봉인 금지 계약.
+assert.throws(
+  () => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "verdict", kboId: "1", status: "blocked" })}`, fp),
+  /스키마 오류/,
+);
+// RED 5: 알 수 없는 행 타입 — 던진다.
+assert.throws(() => parseCheckpointText(`${goodText}\n${JSON.stringify({ t: "junk", kboId: "1" })}`, fp), /알 수 없는 행/);
+
+// (8) snapshot 모드 실행 계약 가드 — 소스 계약(namu+cdp+dry-run+checkpoint+out 전부 강제).
+assert.ok(/SCOPE === "snapshot"[\s\S]{0,900}--source=namu 필수[\s\S]{0,900}--dry-run 필수[\s\S]{0,900}--checkpoint[\s\S]{0,600}--out/.test(source),
+  "snapshot 모드는 namu+cdp+dry-run+checkpoint+out 전부 강제");
+assert.ok(/--source 값이 잘못됐다|\(wikipedia\|namu\)/.test(source), "enum 오타 즉시 실패 가드 존재");
+
 // self-test RED: 검출력 증명 — 조작된 스냅샷은 반드시 잡혀야 한다.
 let selfTestRed = false;
 try {
@@ -137,5 +183,6 @@ try {
 assert.ok(selfTestRed, "self-test: fail-close 경로가 실제로 던진다");
 
 console.log(
-  "corpus-resolve-scope-smoke PASS (snapshot 491/488 / URL단위 checkpoint / probe 8→6→4→2s / budget9 / namu강제 / global-abort / 대표코호트)",
+  "corpus-resolve-scope-smoke PASS (snapshot 491/488·roster해시대조 / checkpoint fingerprint+스키마 RED5 / "
+  + "probe 8→6→4→2s / budget9 / snapshot모드 강제가드 / global-abort / 대표코호트)",
 );

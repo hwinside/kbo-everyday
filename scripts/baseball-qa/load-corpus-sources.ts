@@ -167,32 +167,17 @@ async function main(): Promise<void> {
   );
   const corpusRaw = readFileSync(FILE, "utf8");
   const artifactSha256 = createHash("sha256").update(corpusRaw).digest("hex");
-  const parsedAll = parseCorpusJsonl(corpusRaw);
+  const parsed = parseCorpusJsonl(corpusRaw);
   if (!MAC_RECOVERY_FILE) {
     throw new Error("--mac-recovery-file=<recovered.jsonl>이 필요하다(collector provenance fail-close)");
   }
-  // --entities 부분 재적재: 요청 entity가 corpus에 없으면 조용히 전체로 넘어가지 않고 즉시 실패한다.
-  const parsed = (() => {
-    if (ENTITIES.length === 0) return parsedAll;
-    const wanted = new Set(ENTITIES);
-    const records = parsedAll.records.filter((record) => wanted.has(record.entity));
-    const present = new Set(records.map((record) => record.entity));
-    const absent = ENTITIES.filter((name) => !present.has(name));
-    if (absent.length > 0) {
-      throw new Error(`--entities 중 corpus에 없는 entity: ${absent.join(", ")} (fail-close)`);
-    }
-    console.log(`--entities 필터: ${ENTITIES.join(", ")} → record ${records.length}건/${parsedAll.records.length}건`);
-    return { ...parsedAll, records, counts: { ...parsedAll.counts, filtered: records.length } };
-  })();
+  // ⚠️ --entities는 여기(파싱)가 아니라 **적재 대상 선택 단계**에서 필터한다.
+  // 파싱 단계에서 records를 자르면 팀/리그 루트가 사라져 plan 빌드 자체가 깨진다(스모크 실측:
+  // `team source root absent`). 전체 corpus로 plan을 세우고, 적재만 좁힌다.
   const planned = buildCorpusSourcePlan(parsed.records, roster, manifest);
-  const recoveryRecordsAll = MAC_RECOVERY_FILE
+  const recoveryRecords = MAC_RECOVERY_FILE
     ? parseCorpusJsonl(readFileSync(MAC_RECOVERY_FILE, "utf8")).records
     : [];
-  // entity 필터 사용 시 recovery도 같은 부분집합으로 좁힌다 — 안 좁히면 타 entity recovery 행이
-  // "corpus에 없는 recovery"로 오판돼 fail-close가 오발된다(검출력은 유지 — 같은 entity 내 불일치는 잡는다).
-  const recoveryRecords = ENTITIES.length === 0
-    ? recoveryRecordsAll
-    : recoveryRecordsAll.filter((record) => new Set(ENTITIES).has(record.entity));
   const recoveryHashCounts = new Map<string, number>();
   for (const record of recoveryRecords) {
     const hash = corpusRecordHash(record);
@@ -231,7 +216,21 @@ async function main(): Promise<void> {
       + ` / Mac recovery ${collectorByLedgerRow.filter((x) => x === "mac_direct_recovery").length}`,
   );
 
-  const selected = LIMIT > 0 ? planned.plans.slice(0, LIMIT) : planned.plans;
+  // --entities 부분 재적재: plan은 전체 corpus로 세우되 적재 대상만 해당 entity로 좁힌다.
+  // 요청 entity가 corpus plan에 없으면 조용히 전체로 넘어가지 않고 즉시 실패한다.
+  const entityFiltered = (() => {
+    if (ENTITIES.length === 0) return planned.plans;
+    const wanted = new Set(ENTITIES);
+    const filtered = planned.plans.filter((plan) => wanted.has(plan.root.entity));
+    const present = new Set(filtered.map((plan) => plan.root.entity));
+    const absent = ENTITIES.filter((name) => !present.has(name));
+    if (absent.length > 0) {
+      throw new Error(`--entities 중 corpus에 없는 entity: ${absent.join(", ")} (fail-close)`);
+    }
+    console.log(`--entities 필터: ${ENTITIES.join(", ")} → 적재 대상 ${filtered.length}/${planned.plans.length} source`);
+    return filtered;
+  })();
+  const selected = LIMIT > 0 ? entityFiltered.slice(0, LIMIT) : entityFiltered;
   console.log(`적재 대상: ${selected.length}/${planned.plans.length} source${LIMIT > 0 ? ` (--limit=${LIMIT})` : ""}`);
   for (const entry of selected.slice(0, 5)) {
     console.log(`  귀속 확정 ${entry.sourceKey} ← ${entry.root.canonical}`);
@@ -262,7 +261,12 @@ async function main(): Promise<void> {
     return await response.json() as T;
   };
 
-  if (LIMIT === 0) {
+  if (ENTITIES.length > 0) {
+    // 부분 재적재(P0, 2026-08-15 삼순): 필터된 planned.ledger는 전체 artifact의 부분집합이다.
+    // 이 상태로 아래 ledger 분기를 타면 전체 run의 corpus_runs 행을 "3명 expected_rows +
+    // status=loading"으로 덮어쓴다 — 원장 훼손. 부분 재적재는 ledger를 읽지도 쓰지도 않는다.
+    console.log(`LEDGER SKIP — 부분 재적재(--entities ${ENTITIES.length}명)는 corpus_runs/원장을 건드리지 않는다.`);
+  } else if (LIMIT === 0) {
     const existingResponse = await fetch(
       `${url}/rest/v1/genius_rag_corpus_runs?artifact_sha256=eq.${artifactSha256}`
         + "&select=expected_rows,assigned_rows,quarantined_rows,latest_owner_relations,collector_counts,status",
