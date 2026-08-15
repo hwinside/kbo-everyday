@@ -33,6 +33,13 @@
  * 이 모듈은 순수 함수만 담는다(네트워크 없음) — 회귀가 배포되는 계약 그대로를 검증할 수 있게.
  */
 
+/**
+ * canonical/identity 판정 규칙의 버전. **판정 결과의 의미가 바뀌는 변경마다 올린다.**
+ * resolver checkpoint가 이 값을 fingerprint에 박아, 구 규칙으로 난 판정 기록을 새 규칙 run이
+ * 재사용하는 것을 차단한다(2026-08-15 삼순 P1).
+ */
+export const CANONICAL_GATE_VERSION = "r3-category-identity";
+
 /** 문서 URL로 허용하는 호스트. 다른 호스트로의 redirect는 동일 문서로 인정하지 않는다. */
 export const NAMU_DOCUMENT_HOST = "namu.wiki";
 /** 나무위키 문서 경로 접두. robots.txt가 명시 허용한 경로다(§12.2 a). */
