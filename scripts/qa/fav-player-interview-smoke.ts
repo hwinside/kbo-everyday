@@ -420,6 +420,35 @@ async function main() {
     check("보류 99회 + 확인 error → 여전히 발송 금지",
       s6.sent === 0 && capD.calls.sends.length === 0 && s6.deferredNotVisible === 1);
 
+    // 삼순 NO-GO 2차 P0 — retry 경로도 노출 확인 없이 sendToTokens 금지.
+    // absent/error면 tokens·FCM attempts 보존 + 보류 카운터만 증가.
+    const rA = makeDeps({
+      visible: "absent", leased: [iv({ retryTokens: ["tokA", "tokB"], attempts: 2 })],
+    });
+    const sRA = await notifyFavPlayerInterviews(rA.deps);
+    check("retry + 안 보임 → sendToTokens 0·보류만(tokens·attempts 보존)",
+      rA.calls.tokenSends.length === 0 && sRA.deferredNotVisible === 1
+      && rA.calls.visibilityDeferrals[0]?.deferrals === 1
+      && rA.calls.storedRetries.length === 0 && rA.calls.markedSent.length === 0);
+    const rE = makeDeps({
+      visibleThrow: true, leased: [iv({ retryTokens: ["tokA"], attempts: 1 })],
+    });
+    const sRE = await notifyFavPlayerInterviews(rE.deps);
+    check("retry + 확인 throw → sendToTokens 0·보류",
+      rE.calls.tokenSends.length === 0 && sRE.deferredNotVisible === 1);
+    const rC = makeDeps({
+      visible: "absent",
+      leased: [iv({ retryTokens: ["tokA"], attempts: 1, visibilityDeferrals: 99 })],
+    });
+    const sRC = await notifyFavPlayerInterviews(rC.deps);
+    check("retry + 보류 99회여도 미노출이면 발송 금지(fail-close 예외 없음)",
+      rC.calls.tokenSends.length === 0 && sRC.deferredNotVisible === 1
+      && rC.calls.visibilityDeferrals[0]?.deferrals === 100);
+    // 보이면 기존대로 재발송된다(게이트가 정상 경로를 막지 않음).
+    const rP = makeDeps({ leased: [iv({ retryTokens: ["tokA"], attempts: 1 })] });
+    const sRP = await notifyFavPlayerInterviews(rP.deps);
+    check("retry + 보임 → 정상 재발송", rP.calls.tokenSends.length === 1 && sRP.sent === 1);
+
     // 확인은 audience 확정 뒤 — 보낼 사람이 없으면 확인 자체가 낭비다.
     const noAud = makeDeps({ audience: () => [] });
     await notifyFavPlayerInterviews(noAud.deps);

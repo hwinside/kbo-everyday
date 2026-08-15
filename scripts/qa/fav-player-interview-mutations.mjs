@@ -50,19 +50,21 @@ function violations(x) {
   // accepted 기기 재발송 중복.
   // 2026-08-15 문정빈 사고: DB에 있다 ≠ 유저가 본다. 발송 전 노출 확인이 있어야 하고,
   // present 가 아니면 발송하지 않고 보류해야 한다.
-  if (!x.core.includes("await deps.isVisibleOnGamePage(interview.gameId, interview.videoId)")) {
+  // 노출 확인은 1차 발송·retry 두 곳 모두 있어야 한다 — 출현 횟수로 강제.
+  // (includes만 보면 한 곳 제거 변이가 다른 곳 때문에 GREEN으로 샐다 — 8/15 실측 3회차)
+  if (x.core.split("await deps.isVisibleOnGamePage(").length - 1 !== 2) {
     out.push("visibility-check-missing");
   }
   if (!x.core.includes('if (visible !== "present") {')) out.push("visibility-gate-open");
-  // 삼순 P0-1: 확인은 fail-close — attempts/deferrals 상한으로 우회하는 경로가 없어야 한다.
-  {
-    const v = x.core.indexOf("await deps.isVisibleOnGamePage(");
-    const guard = x.core.lastIndexOf("if (", v);
-    const between = guard >= 0 ? x.core.slice(guard, v) : "";
-    if (/MAX_SEND_ATTEMPTS|visibilityDeferrals/.test(between)) out.push("visibility-fail-open");
+  if (!x.core.includes('if (retryVisible !== "present") {')) out.push("retry-visibility-gate-open");
+  // 삼순 P0-1: 확인은 fail-close — attempts/deferrals 상한을 조건으로 확인을 건너뛰는
+  // 형태(`if (attempts < MAX) { 확인 }` = 상한 도달 시 무확인 발송)가 없어야 한다.
+  if (/if \(interview\.(?:attempts|visibilityDeferrals) <[\s\S]{0,400}?isVisibleOnGamePage/.test(x.core)) {
+    out.push("visibility-fail-open");
   }
   // 삼순 P0-2: 보류는 전용 카운터로 — FCM attempts 예산을 갉아먹으면 안 된다.
-  if (!x.core.includes("await deps.recordVisibilityDeferral(interview.id, interview.visibilityDeferrals + 1)")) {
+  // 1차·retry 두 곳 모두 전용 카운터로 기록해야 하므로 출현 횟수로 강제.
+  if (x.core.split("await deps.recordVisibilityDeferral(interview.id, interview.visibilityDeferrals + 1)").length - 1 !== 2) {
     out.push("deferral-counter-not-separated");
   }
   // 삼순 P0-3: 수집 중·빈 목록은 no-store — s-maxage 잠깐도 빈 목록을 고착시킨다.
@@ -81,6 +83,15 @@ function violations(x) {
     const v = x.core.indexOf("await deps.isVisibleOnGamePage(");
     const send = x.core.indexOf("await deps.sendPush(");
     if (v < 0 || send < 0 || v > send) out.push("visibility-after-send");
+  }
+  // 삼순 2차 P0: retry 경로(sendToTokens)도 노출 확인 없이 발송하면 안 된다.
+  // retry 분기 시작~sendToTokens 사이에 확인 호출이 있어야 한다.
+  {
+    const r = x.core.indexOf("if (interview.retryTokens.length > 0) {");
+    const send = x.core.indexOf("await deps.sendToTokens(interview.retryTokens, {", r);
+    if (r < 0 || send < 0 || !x.core.slice(r, send).includes("await deps.isVisibleOnGamePage(")) {
+      out.push("retry-visibility-missing");
+    }
   }
   // 어댑터는 공개 경로를 타야 한다 — DB 재조회는 이번 사고를 못 잡는다.
   if (!x.deps.includes("/api/game-interviews?gameId=")) out.push("visibility-not-public-path");
@@ -147,11 +158,13 @@ const mutations = [
   ["due=0 복구 호출 제거", "cron", "interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());", "interviewNotify = null;"],
   ["노출 확인 제거(사고 복원)", "core", "visible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);", 'visible = "present";'],
   ["노출 게이트 개방", "core", 'if (visible !== "present") {', "if (false) {"],
+  ["retry 노출 확인 제거(재시도 빈페이지 알림)", "core", "          retryVisible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);", '          retryVisible = "present";'],
+  ["retry 노출 게이트 개방", "core", 'if (retryVisible !== "present") {', "if (false) {"],
   ["확인을 공개 경로 대신 DB로", "deps", "/api/game-interviews?gameId=", "/internal/db-check?gameId="],
   ["수집 중·빈 목록을 캐시함(no-store 제거)", "route", 'if (collecting || itemCount === 0) return "no-store";', ""],
   ["빈 목록 캐시 허용(collecting만 막음)", "route", "if (collecting || itemCount === 0)", "if (collecting)"],
   ["캐시 정책 배선 제거", "route", "interviewCacheControl(collecting, (items ?? []).length)", '"public, s-maxage=60, stale-while-revalidate=300"'],
-  ["fail-open 복원(attempts 상한 시 확인 생략)", "core", "    let visible: SentMarkerState;", "    if (interview.attempts >= MAX_SEND_ATTEMPTS) { /* skip */ }\n    let visible: SentMarkerState;"],
+  ["fail-open 복원(attempts 상한 시 무확인 발송)", "core", 'if (visible !== "present") {', 'if (visible !== "present" && interview.attempts < MAX_SEND_ATTEMPTS) {'],
   ["보류 카운터를 FCM attempts에 혼용", "core", "await deps.recordVisibilityDeferral(interview.id, interview.visibilityDeferrals + 1);", "await deps.storeRetryTokens(interview.id, [], interview.attempts + 1);"],
   ["warm 탭 브라우저 캐시 사용", "section", '{ cache: "no-store" },', ""],
   ["포그라운드 재조회를 collecting 조건부로 회귀", "section", "    if (!enabled) return;\n    const onVisible = () => {", "    if (!enabled || !collecting) return;\n    const onVisible = () => {"],

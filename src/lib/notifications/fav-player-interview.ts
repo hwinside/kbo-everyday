@@ -212,6 +212,21 @@ export async function notifyFavPlayerInterviews(
           sentRowIds.push(interview.id);
           continue;
         }
+        // 노출 확인 — retry 경로도 예외 없는 fail-close다(삼순 NO-GO 2차 P0).
+        // 첫 발송 뒤 API 장애·영상이 상위 6개 밖으로 밀리면 재시도 알림도 빈 페이지로
+        // 간다. absent/error면 tokens·FCM attempts를 그대로 보존한 채 보류 카운터만
+        // 올린다(recordVisibilityDeferral은 기존 원장 행의 tokens/attempts를 건드리지 않는다).
+        let retryVisible: SentMarkerState;
+        try {
+          retryVisible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);
+        } catch {
+          retryVisible = "error";
+        }
+        if (retryVisible !== "present") {
+          await deps.recordVisibilityDeferral(interview.id, interview.visibilityDeferrals + 1);
+          summary.deferredNotVisible++;
+          continue;
+        }
         summary.retriedDevices += interview.retryTokens.length;
         const retry = await deps.sendToTokens(interview.retryTokens, {
           title: interview.title, body: interview.title, url: `/games/${interview.gameId}`,
