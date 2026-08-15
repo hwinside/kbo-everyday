@@ -29,8 +29,13 @@ const mutations = [
   {
     name: "M2 page 말풍선 배선 상수 무력화",
     file: TARGETS[1],
-    from: '{thinking.show && <GeniusThinkingBubble pending={thinking.pending} />}',
-    to: '{false && <GeniusThinkingBubble pending={thinking.pending} />}',
+    // ⚠️ 이 앵커는 page 의 JSX 모양을 그대로 복사한다 — prop 이 늘어 멀티라인이 되면
+    // 앵커가 조용히 MISS 되고(anchor=0) mutation 이 검증력 없이 FAIL 한다.
+    // 2026-08-15 showMascot 추가 때 실제로 그러져 Vercel 빌드가 깨졌다.
+    from: `{thinking.show && (
+                <GeniusThinkingBubble`,
+    to: `{false && (
+                <GeniusThinkingBubble`,
     expect: "말풍선",
   },
   {

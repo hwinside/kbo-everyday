@@ -19,6 +19,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         // 애플워치 최애팀 동기화 — 활성화 완료 시 저장된 my_team을 1회 push.
         WatchSyncManager.shared.activate()
+        // 푸시 탭 cold-start 딥링크 — 앱이 완전 종료된 상태에서 알림을 탭해 launch되면
+        // 웹뷰/브릿지가 아직 없어 JS notificationActionPerformed가 유실될 수 있다(고질 이슈).
+        // launch payload의 url을 보관해 웹 부팅 후 PushDeepLink.consume()이 회수한다.
+        // .background = 무음 푸시(content-available) 백그라운드 launch — 유저 탭이 아니므로 제외
+        // (game_live 등 무음 wake payload에도 url이 실려 있어, 제외하지 않으면 나중에 유저가
+        // 앱을 일반 실행했을 때 엉뚱한 경기 페이지로 튕긴다).
+        if application.applicationState != .background,
+           let remote = launchOptions?[.remoteNotification] as? [AnyHashable: Any],
+           let url = remote["url"] as? String {
+            PushDeepLinkPlugin.stash(url: url)
+        }
         return true
     }
 

@@ -96,6 +96,9 @@ async function main() {
   assert.equal(typeof act, "function", "development React.act가 필요하다");
   const { supabase } = await import("../../src/lib/supabase/client");
   const { AuthProvider } = await import("../../src/lib/supabase/AuthContext");
+  // 마스코트가 최신 봇 답변 1개로 좁혀지면서(2026-08-15) 이전 봇 답변이 TeamBadge
+  // fallback 을 탈 수 있다 — 실제 앱처럼 ThemeProvider 로 감싼다.
+  const { ThemeProvider } = await import("../../src/components/ThemeProvider");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");
   const { PathParamsContext } = await import("next/dist/shared/lib/hooks-client-context.shared-runtime");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
@@ -169,7 +172,7 @@ async function main() {
     await act(async () => {
       root.render(React.createElement(
         AppRouterContext.Provider, { value: router as never },
-        React.createElement(PathParamsContext.Provider, { value: { conversationId: "conv" } }, React.createElement(AuthProvider, null, React.createElement(DMChatPage))),
+        React.createElement(PathParamsContext.Provider, { value: { conversationId: "conv" } }, React.createElement(ThemeProvider, null, React.createElement(AuthProvider, null, React.createElement(DMChatPage)))),
       ));
     });
 

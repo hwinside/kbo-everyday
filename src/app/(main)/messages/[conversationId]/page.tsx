@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useLayoutEffect, useCallback, Fragment, type ChangeEvent } from "react";
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Fragment, type ChangeEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ChevronLeft, Send, EllipsisVertical, AlertTriangle, ShieldBan, Flag, X, ImagePlus, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -28,6 +28,7 @@ import {
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
   geniusMascotSrc,
+  geniusMotionFromPayload,
   isGeniusPickerDisabled,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -71,6 +72,45 @@ export default function DMChatPage() {
     geniusAnsweredQuestionIds,
     geniusThinkingQuestionId,
   } = useDMChat(draftTargetId ? "" : conversationId);
+  // 마스코트는 **채팅창에 항상 최신 봇 답변 1개에만** 붙는다 (하린아빠 2026-08-15 13:34
+  // + 13:53 "이전 답변은 정적 마스코트도 안되고 아예 마스코트가 없어야 함"). 모션은 그
+  // 최신 답변의 payload 에 유효 모션이 있을 때만 입힌다. 메시지 목록에서 순수 파생하므로
+  // 상태·localStorage 없이 결정론이고 Realtime 순서 역전·reload 에서도 같은 답이 나온다.
+  const latestGeniusMessageId = useMemo(() => {
+    let latest: number | null = null;
+    for (const m of messages) {
+      if (m.sender_id !== BASEBALL_GENIUS_USER_ID) continue;
+      if (latest === null || m.id > latest) latest = m.id;
+    }
+    return latest;
+  }, [messages]);
+  // 마스코트 소유권 — reply(최신 봇 답변)·thinking(생각중 말풍선)·failed(재시도 버블)
+  // **3종을 통합해 채팅창 전체에 마스코트는 항상 최대 1개**다 (삼순 #1197 P0).
+  // 소유자 = 가장 큰 메시지 id. 질문 id가 같으면 failed 가 thinking 보다 우선한다
+  // (같은 질문에 둘 다 뚜면 재시도 버블이 현재 상태를 말한다). 봇 답변 id 는 원 질문
+  // id 보다 항상 크므로 답변이 도착하면 소유권이 자연히 reply 로 넘어간다.
+  const failedQuestionIds = useMemo(
+    () => Object.entries(geniusReplyStates)
+      .filter(([, state]) => state === "failed")
+      .map(([id]) => Number(id))
+      .filter((id) => Number.isSafeInteger(id) && id > 0),
+    [geniusReplyStates],
+  );
+  const mascotOwner = useMemo<{ id: number | null; kind: "reply" | "thinking" | "failed" | null }>(() => {
+    let id: number | null = latestGeniusMessageId;
+    let kind: "reply" | "thinking" | "failed" | null = latestGeniusMessageId === null ? null : "reply";
+    if (geniusThinkingQuestionId !== null && (id === null || geniusThinkingQuestionId > id)) {
+      id = geniusThinkingQuestionId;
+      kind = "thinking";
+    }
+    for (const failedId of failedQuestionIds) {
+      if (id === null || failedId > id || (failedId === id && kind === "thinking")) {
+        id = failedId;
+        kind = "failed";
+      }
+    }
+    return { id, kind };
+  }, [latestGeniusMessageId, geniusThinkingQuestionId, failedQuestionIds]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
@@ -480,10 +520,13 @@ export default function DMChatPage() {
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
                 ? msg.payload
                 : null;
+            // 마스코트는 소유권이 reply 일 때 최신 봇 답변에만 — 이전 답변은 닉네임만 남는다.
             const mascotState =
-              msg.sender_id === BASEBALL_GENIUS_USER_ID
+              msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId &&
+              mascotOwner.kind === "reply"
                 ? mascotStateForReplyKind(geniusReply?.reply_kind)
                 : null;
+            const mascotMotion = mascotState ? geniusMotionFromPayload(geniusReply) : null;
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
@@ -531,14 +574,18 @@ export default function DMChatPage() {
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
                       {mascotState ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
+                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG(모션은 CSS 애니메이션)
                         <img
                           src={geniusMascotSrc(mascotState)}
                           alt=""
                           aria-hidden
                           data-testid="genius-reply-mascot"
                           data-state={mascotState}
-                          className="h-8 w-auto max-w-none object-contain"
+                          // 마스코트 자체가 최신 1개뿐이므로 모션도 구조적으로 최대 1개다.
+                          data-motion={mascotMotion ?? undefined}
+                          className={`h-8 w-auto max-w-none object-contain${
+                            mascotMotion ? ` genius-motion-${mascotMotion}` : ""
+                          }`}
                         />
                       ) : (
                         msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />
@@ -648,7 +695,12 @@ export default function DMChatPage() {
                   </div>
                 </div>
               </motion.div>
-              {thinking.show && <GeniusThinkingBubble pending={thinking.pending} />}
+              {thinking.show && (
+                <GeniusThinkingBubble
+                  pending={thinking.pending}
+                  showMascot={mascotOwner.kind === "thinking" && mascotOwner.id === msg.id}
+                />
+              )}
               </Fragment>
             );
           })
@@ -659,6 +711,7 @@ export default function DMChatPage() {
               key={messageId}
               state={state}
               questionMessageId={Number(messageId)}
+              showMascot={mascotOwner.kind === "failed" && mascotOwner.id === Number(messageId)}
               onRetry={() => retryBaseballQa(Number(messageId))}
             />
           ))

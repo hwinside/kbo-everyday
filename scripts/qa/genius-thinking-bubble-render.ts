@@ -254,10 +254,12 @@ async function main() {
       const m = page.match(/const (\w+) = resolveGeniusThinkingRender\(\{/);
       assert.ok(m, "resolveGeniusThinkingRender 호출을 찾지 못했다");
       const v = m![1];
-      assert.ok(
-        page.includes(`{${v}.show && <GeniusThinkingBubble pending={${v}.pending} />}`),
-        `말풍선이 ${v}.show/${v}.pending 에 결속되지 않았다`,
+      // showMascot prop 이 붙으면서 단일라인 형태가 아니게 됐다(2026-08-15 전체 마스코트 ≤1 통합).
+      // 결속 계약은 그대로다: 렌더는 v.show 가 가드하고 pending 은 v.pending 을 받는다.
+      const binding = new RegExp(
+        `\\{${v}\\.show && \\(?\\s*<GeniusThinkingBubble\\s[\\s\\S]{0,200}?pending=\\{${v}\\.pending\\}`,
       );
+      assert.ok(binding.test(page), `말풍선이 ${v}.show/${v}.pending 에 결속되지 않았다`);
     });
     check("말풍선이 상수로 꺼져 있지 않다", () => {
       assert.ok(!/\{false && <GeniusThinkingBubble/.test(page), "말풍선이 false 로 꺼져 있다");
