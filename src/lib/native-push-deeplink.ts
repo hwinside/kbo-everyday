@@ -27,10 +27,10 @@ type MessagingSource = {
 };
 type AppStateSource = {
   getState: () => Promise<{ isActive: boolean }>;
-  addListener: (
-    event: "appStateChange",
-    listener: (state: { isActive: boolean }) => void,
-  ) => Promise<ListenerHandle>;
+  addListener: {
+    (event: "appStateChange", listener: (state: { isActive: boolean }) => void): Promise<ListenerHandle>;
+    (event: "appUrlOpen", listener: (data: { url: string }) => void): Promise<ListenerHandle>;
+  };
 };
 type PushDeepLinkSource = {
   consume: () => Promise<{ url?: string }>;
@@ -132,6 +132,19 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
     void consumeNativePendingIntoStore(loaders).then(() => consumePendingTap());
   });
 
+  // 순서 역전 방어(삼순 #1204 R1-①) — iOS는 continue(stash)와 appStateChange(active)의
+  // 순서를 계약하지 않는다. active가 먼저 오면 위 핸들러는 빈손으로 끝나 stash가 잔류한다.
+  // AppDelegate는 stash를 proxy 호출 '전'에 실행하므로, Capacitor가 그 뒤 발행하는
+  // appUrlOpen 시점에는 stash 존재가 보장된다 → 이 이벤트를 재회수 트리거로 쓴다.
+  const urlOpenHandle = await app.addListener("appUrlOpen", () => {
+    void consumeNativePendingIntoStore(loaders)
+      .then(() => app.getState())
+      .then(({ isActive }) => {
+        if (isActive) consumePendingTap();
+      })
+      .catch(() => undefined);
+  });
+
   try {
     await messaging.addListener("notificationActionPerformed", (event) => {
       storeTapEvent(event);
@@ -142,6 +155,7 @@ async function attachListeners(loaders: ListenerLoaders): Promise<void> {
     });
   } catch (error) {
     await appHandle.remove().catch(() => undefined);
+    await urlOpenHandle.remove().catch(() => undefined);
     throw error;
   }
 
@@ -195,13 +209,15 @@ const defaultLoaders: ListenerLoaders = {
     if (injected) {
       return {
         getState: () => injected.getState(),
-        addListener: (event, listener) => injected.addListener(event, listener),
-      };
+        addListener: ((event, listener) =>
+          injected.addListener(event as never, listener as never)) as AppStateSource["addListener"],
+      } as AppStateSource;
     }
     const { App } = await import("@capacitor/app");
     return {
       getState: () => App.getState(),
-      addListener: (event, listener) => App.addListener(event, listener),
+      addListener: ((event, listener) =>
+        App.addListener(event as never, listener as never)) as AppStateSource["addListener"],
     } as AppStateSource;
   },
   pushDeepLink: async () => {

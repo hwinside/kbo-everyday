@@ -116,8 +116,9 @@ const mutations = [
     if (injected) {
       return {
         getState: () => injected.getState(),
-        addListener: (event, listener) => injected.addListener(event, listener),
-      };
+        addListener: ((event, listener) =>
+          injected.addListener(event as never, listener as never)) as AppStateSource["addListener"],
+      } as AppStateSource;
     }`,
     to: "",
   },
@@ -141,10 +142,29 @@ const mutations = [
     to: `        } dynamicIsland: { context in`,
   },
   {
-    id: "M18 continue의 OAuth(/auth) 제외 가드 제거",
+    id: "M18 continue의 /games/<id> 폐쇄 allowlist 완화(임의 경로·auth 우회 허용)",
     file: APPDELEGATE,
-    from: `if path.hasPrefix("/"), path != "/", !path.hasPrefix("/auth") {`,
-    to: `if path.hasPrefix("/"), path != "/" {`,
+    from: `if path.range(of: "^/games/[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil {`,
+    to: `if path.hasPrefix("/") {`,
+  },
+  {
+    id: "M19 appUrlOpen 재회수 제거(순서 역전 시 pending 영구 잔류)",
+    file: DEEPLINK,
+    from: `  const urlOpenHandle = await app.addListener("appUrlOpen", () => {
+    void consumeNativePendingIntoStore(loaders)
+      .then(() => app.getState())
+      .then(({ isActive }) => {
+        if (isActive) consumePendingTap();
+      })
+      .catch(() => undefined);
+  });`,
+    to: `  const urlOpenHandle = await app.addListener("appUrlOpen", () => {});`,
+  },
+  {
+    id: "M20 gameId allowlist 완화(위젯 URL에 임의 문자열 허용)",
+    file: LA_WIDGET,
+    from: `    guard gameId.range(of: "^[A-Za-z0-9]{1,32}$", options: .regularExpression) != nil else { return nil }`,
+    to: `    guard !gameId.isEmpty else { return nil }`,
   },
 ];
 

@@ -49,6 +49,7 @@ globals.document = dom.window.document;
 
 type TapCallback = (event: unknown) => void;
 type StateCallback = (state: { isActive: boolean }) => void;
+type UrlOpenCallback = (data: { url: string }) => void;
 type Loaders = NonNullable<Parameters<PushModule["listenForNotificationTap"]>[0]>;
 type PushModule = {
   listenForNotificationTap: (loaders?: {
@@ -57,7 +58,7 @@ type PushModule = {
     }>;
     app: () => Promise<{
       getState: () => Promise<{ isActive: boolean }>;
-      addListener: (event: "appStateChange", callback: StateCallback) => Promise<{ remove: () => Promise<void> }>;
+      addListener: (event: "appStateChange" | "appUrlOpen", callback: StateCallback | UrlOpenCallback) => Promise<{ remove: () => Promise<void> }>;
     }>;
     pushDeepLink: () => Promise<{ consume: () => Promise<{ url?: string }> }>;
   }) => Promise<void>;
@@ -84,6 +85,7 @@ function harness(options?: {
   let active = options?.active ?? false;
   let tapCallback: TapCallback | null = null;
   let stateCallback: StateCallback | null = null;
+  let urlOpenCallback: UrlOpenCallback | null = null;
   let messagingAdds = 0;
   let appAdds = 0;
   let nativeConsumes = 0;
@@ -101,9 +103,10 @@ function harness(options?: {
     }),
     app: async () => ({
       getState: async () => ({ isActive: active }),
-      addListener: async (_event, callback) => {
+      addListener: async (event, callback) => {
         appAdds += 1;
-        stateCallback = callback;
+        if (event === "appStateChange") stateCallback = callback as StateCallback;
+        else urlOpenCallback = callback as UrlOpenCallback;
         return { remove: async () => undefined };
       },
     }),
@@ -124,6 +127,7 @@ function harness(options?: {
     tap: (event: unknown) => tapCallback?.(event),
     activate: () => { active = true; stateCallback?.({ isActive: true }); },
     deactivate: () => { active = false; stateCallback?.({ isActive: false }); },
+    openUrl: (url: string) => { urlOpenCallback?.({ url }); },
     setNativePending: (url: string) => { nativePending = url; },
     counts: () => ({ messagingAdds, appAdds, nativeConsumes }),
   };
@@ -142,7 +146,7 @@ test("1) remote-load: npm core가 web이어도 주입 bridge iOS면 실제 liste
   await reset(true);
   const h = harness({ active: false });
   await (await pushModule()).listenForNotificationTap(h.loaders);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 1 });
 });
 
 test("2) web에서는 native loader/listener를 호출하지 않는다", async () => {
@@ -259,7 +263,7 @@ test("11) 동시·반복 호출에도 listener는 각 1개", async () => {
     m.listenForNotificationTap(h.loaders),
     m.listenForNotificationTap(h.loaders),
   ]);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 1 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 1 });
 });
 
 test("12) actual mount가 정적 gate 전에 딥링크 listener를 정확히 1회 호출", async () => {
@@ -308,7 +312,7 @@ test("16) 구빌드(PushDeepLink 미탑재)여도 JS 경로는 그대로 동작"
   await reset(true);
   const h = harness({ active: true, nativeMissing: true });
   await (await pushModule()).listenForNotificationTap(h.loaders);
-  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 1, nativeConsumes: 0 });
+  assert.deepEqual(h.counts(), { messagingAdds: 1, appAdds: 2, nativeConsumes: 0 });
   h.tap(tap("/games/OLDBUILD?tab=lineup"));
   await flush();
   assert.deepEqual(navigations, ["/games/OLDBUILD?tab=lineup"]);
@@ -357,17 +361,59 @@ test("22) warm LA 카드 탭: 백그라운드에서 생긴 네이티브 stash를
 
 test("23) LA widgetURL·AppDelegate continue 배선 — 카드 탭 딥링크 소스 계약", async () => {
   const widget = await readFile(new URL("../../ios/App/LiveActivity/KBOLiveActivityWidget.swift", import.meta.url), "utf8");
-  // 잠금화면 카드 + DI 확장뷰 양쪽에 widgetURL 배선(2곳 이상)
+  // 잠금화면 카드 + DynamicIsland 전체 양쪽에 widgetURL 배선(2곳)
   const urls = widget.match(/\.widgetURL\(gameDeepLinkURL\(context\.attributes\.gameId\)\)/g) ?? [];
   assert.ok(urls.length >= 2, `잠금카드+DI widgetURL 배선 필요 (found ${urls.length})`);
+  // DI는 특정 영역 뷰가 아니라 DynamicIsland 전체(minimal 블록 뒤)에 적용되어야
+  // compact/minimal·모든 확장 영역 탭이 보장된다(삼순 #1204 R1-②).
+  assert.match(widget, /minimal: \{[\s\S]*?\n {12}\}\n(?:[ \t]*\/\/[^\n]*\n)*[ \t]*\.widgetURL\(gameDeepLinkURL\(context\.attributes\.gameId\)\)/);
   assert.match(widget, /https:\/\/keubo\.fan\/games\//);
 
+  // gameId 엄격 allowlist — 소스에서 정규식을 추출해 실제 판정을 재현(삼순 #1204 R1-③)
+  const idReMatch = widget.match(/gameId\.range\(of: "([^"]+)", options: \.regularExpression\)/);
+  assert.ok(idReMatch, "gameDeepLinkURL에 gameId allowlist 정규식 필요");
+  const idRe = new RegExp(idReMatch![1]);
+  assert.ok(idRe.test("20260815HHKT0"), "실제 gameId는 통과");
+  for (const bad of ["../auth", "a/b", "a?x=1", "a#f", "", "a b", "게임", "a".repeat(33)]) {
+    assert.ok(!idRe.test(bad), `비정상 gameId 차단 실패: ${bad}`);
+  }
+
   const appDelegate = await readFile(new URL("../../ios/App/App/AppDelegate.swift", import.meta.url), "utf8");
-  // continue(userActivity:)가 universal link path를 stash하고, OAuth 콜백(/auth*)은 제외
+  // continue(userActivity:)가 /games/<id> 폐쇄 allowlist로만 stash — 정규식 추출 후 실제 판정 재현
   assert.match(appDelegate, /NSUserActivityTypeBrowsingWeb/);
-  assert.match(appDelegate, /!path\.hasPrefix\("\/auth"\)/);
+  const pathReMatch = appDelegate.match(/path\.range\(of: "([^"]+)", options: \.regularExpression\)/);
+  assert.ok(pathReMatch, "continue에 /games/<id> allowlist 정규식 필요");
+  const pathRe = new RegExp(pathReMatch![1]);
+  assert.ok(pathRe.test("/games/20260815HHKT0"), "실제 경기 경로는 통과");
+  for (const bad of [
+    "/games/../auth/callback", // dot-segment auth 우회
+    "/auth/callback",           // OAuth 콜백 직접
+    "/games/x/../../auth",      // 중첩 dot-segment
+    "/games/",                  // 빈 id
+    "/games/abc/def",           // 하위 경로 주입
+    "/",                        // 루트
+    "/admin",                   // 임의 경로
+  ]) {
+    assert.ok(!pathRe.test(bad), `allowlist 우회 차단 실패: ${bad}`);
+  }
   const stashes = appDelegate.match(/PushDeepLinkPlugin\.stash\(url:/g) ?? [];
   assert.ok(stashes.length >= 2, `launchOptions+continue 양쪽 stash 필요 (found ${stashes.length})`);
+});
+
+test("24b) 순서 역전: active가 먼저 오고 stash가 나중이어도 appUrlOpen 재회수로 이동", async () => {
+  // iOS는 continue(stash)와 appStateChange(active)의 순서를 계약하지 않는다(삼순 #1204 R1-①).
+  // active 이벤트가 먼저 소비 시도(빈손) 후 stash 도착 → appUrlOpen이 재회수 트리거.
+  await reset(true);
+  const h = harness({ active: false });
+  await (await pushModule()).listenForNotificationTap(h.loaders);
+  h.activate(); // active 먼저 — 이 시점엔 stash 없음(빈손)
+  await flush();
+  assert.deepEqual(navigations, []);
+
+  h.setNativePending("/games/REVERSE?tab=chat"); // continue 늦게 도착(stash)
+  h.openUrl("https://keubo.fan/games/REVERSE?tab=chat"); // Capacitor appUrlOpen(stash 후 발행 보장)
+  await flush();
+  assert.deepEqual(navigations, ["/games/REVERSE?tab=chat"]);
 });
 
 test("18) background cold-start: stash는 보관만 하고 active 전에는 이동하지 않는다", async () => {
