@@ -74,6 +74,7 @@ interface Calls {
   }>;
   tokenSends: Array<{ tokens: string[]; url: string }>;
   storedRetries: Array<{ rowId: string; tokens: string[]; attempts: number }>;
+  visibilityChecks: string[];
 }
 interface Over {
   leased?: PendingInterview[];
@@ -92,11 +93,14 @@ interface Over {
   /** 토큰 재발송에서도 여전히 transient인 토큰. */
   tokenSendRetryable?: string[];
   storeRetryThrow?: boolean;
+  /** 발송 직전 노출 확인 결과. 기본값은 present(보임). */
+  visible?: SentMarkerState;
+  visibleThrow?: boolean;
 }
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
   const calls: Calls = {
     markedSent: [], released: [], markerChecks: [], markerInserts: [], audience: [], sends: [],
-    tokenSends: [], storedRetries: [],
+    tokenSends: [], storedRetries: [], visibilityChecks: [],
   };
   const deps: InterviewDeps = {
     leasePendingInterviews: async () => over.leased ?? [iv()],
@@ -115,6 +119,11 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
       calls.audience.push(kboId);
       if (over.audienceThrow) throw new Error("audience boom");
       return over.audience ? over.audience(kboId) : ["u1", "u2"];
+    },
+    isVisibleOnGamePage: async (gameId, videoId) => {
+      calls.visibilityChecks.push(`${gameId}#${videoId}`);
+      if (over.visibleThrow) throw new Error("visibility boom");
+      return over.visible ?? "present";
     },
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
@@ -358,6 +367,46 @@ async function main() {
     check("상한 초과 → gaveUpDevices 관측 + 종결·재발송 없음",
       s6.gaveUpDevices === 2 && g.calls.tokenSends.length === 0
       && g.calls.markedSent[0]?.[0] === "row-1");
+  }
+
+  console.log("[R6] 노출 확인 후 발송 (2026-08-15 문정빈 사고)");
+  {
+    // 기본: 보임 → 발송. 확인은 발송 전에 일어난다.
+    const ok = makeDeps({ visible: "present" });
+    const s = await notifyFavPlayerInterviews(ok.deps);
+    check("보임 → 발송·확인 1회(해당 영상 기준)",
+      s.sent === 1 && ok.calls.sends.length === 1
+      && ok.calls.visibilityChecks[0] === "20260814SKLG0#vid-1");
+
+    // 핵심: 아직 안 보임 → 발송 금지·종결 금지·다음 run 재시도
+    const nv = makeDeps({ visible: "absent" });
+    const s2 = await notifyFavPlayerInterviews(nv.deps);
+    check("안 보임 → 발송 0·sent 전이 금지·마커 미기록",
+      s2.deferredNotVisible === 1 && nv.calls.sends.length === 0
+      && nv.calls.markedSent.length === 0 && nv.calls.markerInserts.length === 0);
+    check("안 보임 → attempts 증가해 무한 보류 방지(토큰은 빈 목록)",
+      nv.calls.storedRetries[0]?.rowId === "row-1"
+      && nv.calls.storedRetries[0]?.tokens.length === 0
+      && nv.calls.storedRetries[0]?.attempts === 1);
+
+    // 확인 경로 고장도 보류 — 빈 페이지로 보내는 것보다 늦게 보내는 게 낫다.
+    const ve = makeDeps({ visible: "error" });
+    const s3 = await notifyFavPlayerInterviews(ve.deps);
+    check("확인 error → 발송 보류", s3.deferredNotVisible === 1 && ve.calls.sends.length === 0);
+    const vt = makeDeps({ visibleThrow: true });
+    const s4 = await notifyFavPlayerInterviews(vt.deps);
+    check("확인 throw → 발송 보류", s4.deferredNotVisible === 1 && vt.calls.sends.length === 0);
+
+    // 상한 도달 — 확인 경로가 계속 고장나도 알림을 영영 죽이진 않는다.
+    const cap = makeDeps({ visible: "absent", leased: [iv({ attempts: MAX_SEND_ATTEMPTS })] });
+    const s5 = await notifyFavPlayerInterviews(cap.deps);
+    check("attempts 상한 → 확인 생략하고 발송(무한 보류 방지)",
+      s5.sent === 1 && cap.calls.sends.length === 1 && cap.calls.visibilityChecks.length === 0);
+
+    // 확인은 audience 확정 뒤 — 보낼 사람이 없으면 확인 자체가 낭비다.
+    const noAud = makeDeps({ audience: () => [] });
+    await notifyFavPlayerInterviews(noAud.deps);
+    check("대상 0 → 노출 확인 호출 안 함", noAud.calls.visibilityChecks.length === 0);
   }
 
   console.log("[3] 경계 처리");

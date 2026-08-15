@@ -88,6 +88,14 @@ export interface InterviewDeps {
   /** kboId를 최애선수로 둔 유저 id. */
   fetchFavoritePlayerFanIds: (kboId: string) => Promise<string[]>;
   /**
+   * 발송 직전 노출 확인 — 유저가 실제로 읽는 경로에서 그 영상이 보이는가.
+   * "present" 일 때만 발송한다(2026-08-15 사고: 알림을 보고 들어갔는데 목록이
+   * 비어 있었다 — 엣지 stale 서빙). "absent" 는 아직 이른 것이므로 release해
+   * 다음 run이 재시도하고, "error" 도 동일하게 보류한다(못 보내는 것보다
+   * 잘못된 시점에 보내는 게 나쁘다). 단 이 보류도 상한이 있어야 무한 대기가 안 된다.
+   */
+  isVisibleOnGamePage: (gameId: string, videoId: string) => Promise<SentMarkerState>;
+  /**
    * 토글 필터는 sendPush 구현(sendFcmToUsers prefKey)이 수행.
    * settled = 이 attempt가 종결 가능한 상태다. 두 경우 모두 true:
    *   (a) FCM이 실제 시도되어 기기별 outcome이 있다(부분 성공 포함)
@@ -137,6 +145,8 @@ export interface InterviewNotifySummary {
   retriedDevices: number;
   /** attempt 상한 초과로 포기한 기기 토큰 수 — 관측용(유실을 숨기지 않는다). */
   gaveUpDevices: number;
+  /** 페이지에 아직 안 보여 발송을 미룬 행 수 — 관측용. */
+  deferredNotVisible: number;
 }
 
 /**
@@ -149,7 +159,7 @@ export async function notifyFavPlayerInterviews(
   const summary: InterviewNotifySummary = {
     leased: 0, sent: 0, recoveredFromMarker: 0, settledUnresolved: 0,
     settledNoAudience: 0, released: 0, markerWriteFailures: 0,
-    pendingDeviceRetry: 0, retriedDevices: 0, gaveUpDevices: 0,
+    pendingDeviceRetry: 0, retriedDevices: 0, gaveUpDevices: 0, deferredNotVisible: 0,
   };
 
   const leased = await deps.leasePendingInterviews();
@@ -269,6 +279,30 @@ export async function notifyFavPlayerInterviews(
       sentRowIds.push(interview.id);
       summary.settledNoAudience++;
       continue;
+    }
+
+    // 3.5 노출 확인 — 유저가 실제로 읽는 경로에 그 영상이 뜼기 전에는 보내지 않는다.
+    //
+    // 2026-08-15 사고: DB 저장과 같은 run에서 발송했는데, 유저가 86초 뒤 들어갔을 때
+    // 목록이 비어 있었다(엣지 stale-while-revalidate 서빙). 데이터가 있다 ≠ 유저가
+    // 본다 — 그래서 발송 직전에 그 경로로 한 번 확인한다.
+    // absent/error는 release — 못 보내는 것보다 빈 페이지로 보내는 게 나쁘다.
+    // 단 무한 대기를 막기 위해 attempts 상한을 같이 쓴다(상한 도달 시엔 그대로 발송 —
+    // 확인 경로 자체가 고장난 경우까지 알림을 죽이지는 않는다).
+    if (interview.attempts < MAX_SEND_ATTEMPTS) {
+      let visible: SentMarkerState;
+      try {
+        visible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);
+      } catch {
+        visible = "error";
+      }
+      if (visible !== "present") {
+        // 아직 노출 전(또는 확인 실패) — 발송을 미룬다. attempts를 올려 무한
+        // 보류를 막고(상한 도달 시 확인 없이 발송), 토큰은 없으므로 빈 목록으로 저장한다.
+        await deps.storeRetryTokens(interview.id, [], interview.attempts + 1);
+        summary.deferredNotVisible++;
+        continue;
+      }
     }
 
     // 4. 발송 1회 → 성공 시 마커 기록 후 종결. 실패/예외는 lease 해제(다음 run 재시도).

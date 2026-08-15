@@ -9,16 +9,17 @@ import fs from "node:fs";
 const files = {
   core: fs.readFileSync("src/lib/notifications/fav-player-interview.ts", "utf8"),
   deps: fs.readFileSync("src/lib/notifications/fav-player-interview-deps.ts", "utf8"),
-  route: fs.readFileSync("src/app/api/cron/postgame-interviews/route.ts", "utf8"),
+  route: fs.readFileSync("src/app/api/game-interviews/route.ts", "utf8"),
+  cron: fs.readFileSync("src/app/api/cron/postgame-interviews/route.ts", "utf8"),
   migration: fs.readFileSync("supabase/migrations/20260814_fav_player_interview_notify.sql", "utf8"),
   migration2: fs.readFileSync("supabase/migrations/20260815191500_fav_interview_transient_retry.sql", "utf8"),
 };
 
 function violations(x) {
   const out = [];
-  const due = x.route.indexOf("if (dueJobs.length === 0)");
-  const dueEnd = x.route.indexOf("const [contexts, feedResults]", due);
-  const recovery = x.route.indexOf("notifyFavPlayerInterviews(createInterviewDeps())", due);
+  const due = x.cron.indexOf("if (dueJobs.length === 0)");
+  const dueEnd = x.cron.indexOf("const [contexts, feedResults]", due);
+  const recovery = x.cron.indexOf("notifyFavPlayerInterviews(createInterviewDeps())", due);
   if (!(due >= 0 && recovery > due && recovery < dueEnd)) out.push("due0-recovery");
   if (!x.migration.includes("limit greatest(1, least(coalesce(p_limit, 40), 40))")
       || !x.migration.includes("for update skip locked")) out.push("bounded-atomic-lease");
@@ -46,6 +47,23 @@ function violations(x) {
   }
   // P1: 인프라 선행 실패(attempted=false)만 전체 release — 부분 성공을 release하면
   // accepted 기기 재발송 중복.
+  // 2026-08-15 문정빈 사고: DB에 있다 ≠ 유저가 본다. 발송 전 노출 확인이 있어야 하고,
+  // present 가 아니면 발송하지 않고 보류해야 한다.
+  if (!x.core.includes("await deps.isVisibleOnGamePage(interview.gameId, interview.videoId)")) {
+    out.push("visibility-check-missing");
+  }
+  if (!x.core.includes('if (visible !== "present") {')) out.push("visibility-gate-open");
+  // 확인은 반드시 sendPush 앞에 있어야 한다(뒤에 있으면 이미 보낸 뒤다).
+  {
+    const v = x.core.indexOf("await deps.isVisibleOnGamePage(");
+    const send = x.core.indexOf("await deps.sendPush(");
+    if (v < 0 || send < 0 || v > send) out.push("visibility-after-send");
+  }
+  // 어댑터는 공개 경로를 타야 한다 — DB 재조회는 이번 사고를 못 잡는다.
+  if (!x.deps.includes("/api/game-interviews?gameId=")) out.push("visibility-not-public-path");
+  // 수집 중인 경기는 stale 응답을 서빙하면 안 된다(사고의 1차 원인).
+  if (!x.route.includes("interviewCacheControl(collecting)")) out.push("cache-policy-unwired");
+  if (!/collecting[\s\S]{0,200}must-revalidate/.test(x.route)) out.push("stale-served-while-collecting");
   if (!x.core.includes("if (!result.settled) {")) out.push("settled-gate-missing");
   if (!x.core.includes("if (!retry.settled) {")) out.push("retry-settled-gate-missing");
   // P0(3차): 전원 토글 OFF·토큰 0은 ok:true + outcomes 없음으로 돌아오는 정상 종결이다.
@@ -95,7 +113,12 @@ if (base.length) {
 }
 
 const mutations = [
-  ["due=0 복구 호출 제거", "route", "interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());", "interviewNotify = null;"],
+  ["due=0 복구 호출 제거", "cron", "interviewNotify = await notifyFavPlayerInterviews(createInterviewDeps());", "interviewNotify = null;"],
+  ["노출 확인 제거(사고 복원)", "core", "visible = await deps.isVisibleOnGamePage(interview.gameId, interview.videoId);", 'visible = "present";'],
+  ["노출 게이트 개방", "core", 'if (visible !== "present") {', "if (false) {"],
+  ["확인을 공개 경로 대신 DB로", "deps", "/api/game-interviews?gameId=", "/internal/db-check?gameId="],
+  ["수집 중 stale 서빙 복원", "route", "public, max-age=0, must-revalidate, s-maxage=10", "public, s-maxage=60, stale-while-revalidate=300"],
+  ["캐시 정책 배선 제거", "route", "interviewCacheControl(collecting)", '"public, s-maxage=60, stale-while-revalidate=300"'],
   ["lease LIMIT 제거", "migration", "limit greatest(1, least(coalesce(p_limit, 40), 40))", ""],
   ["SKIP LOCKED 제거", "migration", "for update skip locked", "for update"],
   ["RPC lease 배선 제거", "deps", "claim_postgame_interview_notifications", "broken_claim_rpc"],

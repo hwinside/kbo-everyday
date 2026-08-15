@@ -4,6 +4,27 @@ import { interviewPlayerLinks } from "@/lib/video/postgame-interviews-route-poli
 
 const GAME_ID_RE = /^\d{8}[A-Z]{4}\d$/;
 
+/**
+ * 캐시 정책 — 알림 시점과 페이지 노출 시점의 불일치를 막는다.
+ *
+ * 2026-08-15 실측 사고: 문정빈 인터뷰가 22:55:08에 DB 저장되고 같은 cron run이
+ * 알림을 보냈는데, 유저가 22:56:34에 들어가니 목록이 비어 있었다(22:59 노출).
+ * 원인은 데이터가 아니라 이 응답의 `stale-while-revalidate=300`이다 —
+ * s-maxage 60초가 지나도 엣지는 최대 5분간 **옛 응답(빈 목록)을 그대로 서빙**하고
+ * 뒤에서만 갱신한다. 실측 헤더: `x-vercel-cache: STALE`, `age: 117`.
+ *
+ * 그래서 **수집 중인 경기(collecting)** 에는 stale 서빙을 아예 주지 않는다.
+ * 새 인터뷰가 붙는 시간대가 정확히 그 구간이라, 그때만 신선도를 사고 그 외에는
+ * 기존처럼 캐시로 비용을 아낀다(수집 종료 후에는 목록이 더 변하지 않는다).
+ */
+export function interviewCacheControl(collecting: boolean): string {
+  return collecting
+    // 수집 중 — 옛 목록 서빙 금지. 엣지 10초, 브라우저는 매번 재검증.
+    ? "public, max-age=0, must-revalidate, s-maxage=10"
+    // 수집 종료 — 목록 확정. 기존 캐시 정책 유지.
+    : "public, s-maxage=60, stale-while-revalidate=300";
+}
+
 export async function GET(req: NextRequest) {
   const gameId = req.nextUrl.searchParams.get("gameId") ?? "";
   if (!GAME_ID_RE.test(gameId)) {
@@ -52,10 +73,6 @@ export async function GET(req: NextRequest) {
       collecting,
       collectionEndsAt: collecting ? job.expires_at : null,
     },
-    {
-      headers: {
-        "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-      },
-    },
+    { headers: { "Cache-Control": interviewCacheControl(collecting) } },
   );
 }
