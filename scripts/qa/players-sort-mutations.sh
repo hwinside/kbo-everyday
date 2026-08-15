@@ -22,6 +22,12 @@ set -uo pipefail
 
 FAILED=0
 
+# mktemp -t 는 BSD(macOS) 와 GNU(Actions ubuntu) 의 문법이 다르다 — BSD 는 prefix 만 받고
+# GNU 는 template 에 X 가 3개 이상 있어야 한다(`too few X's in template`). 양쪽에서 같은
+# 결과가 나오도록 명시 template 을 쓴다. 로컬만 보고 통과시키면 CI 에서 로그 파일이
+# 만들어지지 않아 모든 판정이 "라벨 없음" 으로 떨어진다(2026-08-15 실제 발생).
+mk_log() { mktemp "${TMPDIR:-/tmp}/players-sort-mut.XXXXXX"; }
+
 # mutation 이름 → 반드시 RED 여야 하는 체크 라벨 prefix
 expect_red() {
   case "$1" in
@@ -36,7 +42,12 @@ expect_red() {
 
 for m in race toggle fallback teamfilter urlsort; do
   want="$(expect_red "$m")"
-  log="$(mktemp -t players-sort-mut)"
+  log="$(mk_log)"
+  if [ -z "$log" ] || [ ! -f "$log" ]; then
+    echo "❌ mutation '$m' → 임시 로그 파일 생성 실패(mktemp)"
+    FAILED=1
+    continue
+  fi
   PLAYERS_SORT_MUTATE="$m" PLAYERS_SORT_REQUIRE_BROWSER=1 \
     node scripts/qa/players-sort-browser.mjs > "$log" 2>&1
   code=$?
