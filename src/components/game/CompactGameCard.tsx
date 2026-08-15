@@ -30,7 +30,41 @@ interface CompactGameCardProps {
     broadcastChannels?: BroadcastChannel[];
     awayStarter?: string;
     homeStarter?: string;
+    // 라이브 상세(잠금화면 Live Activity 패리티) — live 상태에서만 채워진다
+    balls?: number;
+    strikes?: number;
+    outs?: number;
+    runnersOn?: { first: boolean; second: boolean; third: boolean };
+    currentPitcher?: string;
+    currentBatter?: string;
+    lastPlay?: string;
   };
+}
+
+/** BSO 점 묶음 — 잠금화면 LA outDot과 동일 개념(채워짐=색, 빈=반투명). 팀컴러 미사용. */
+function CountDots({ label, count, total, activeClass }: { label: string; count: number; total: number; activeClass: string }) {
+  return (
+    <span className="flex items-center gap-1">
+      <span className="w-2.5 text-[10px] font-semibold text-text-tertiary">{label}</span>
+      {Array.from({ length: total }).map((_, i) => (
+        <span key={i} className={`h-1.5 w-1.5 rounded-full ${i < count ? activeClass : "bg-text-tertiary/25"}`} />
+      ))}
+    </span>
+  );
+}
+
+/** 주자 다이아몬드 — 잠금화면 LA DiamondView와 동일 배치(2루 위·1루 우·3루 좌). 팀컴러 미사용. */
+function MiniDiamond({ first, second, third }: { first: boolean; second: boolean; third: boolean }) {
+  const base = (on: boolean) =>
+    `absolute h-2.5 w-2.5 rounded-[2px] ${on ? "bg-red-500" : "border border-text-tertiary/40 bg-text-tertiary/15"}`;
+  const onBases = [first && "1루", second && "2루", third && "3루"].filter(Boolean).join("·");
+  return (
+    <span className="relative block h-7 w-9 shrink-0" role="img" aria-label={`주자 ${onBases || "없음"}`}>
+      <span className={base(second)} style={{ left: "50%", top: 0, transform: "translateX(-50%) rotate(45deg)" }} />
+      <span className={base(first)} style={{ right: 0, bottom: 4, transform: "rotate(45deg)" }} />
+      <span className={base(third)} style={{ left: 0, bottom: 4, transform: "rotate(45deg)" }} />
+    </span>
+  );
 }
 
 /** "YYYY-MM-DD" → "8/4(화)" — 카드 배지용 초압축 표기 */
@@ -48,15 +82,15 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
   const isCancelled = game.status === "cancelled";
   const awayWin = isFinal && (game.awayScore ?? 0) > (game.homeScore ?? 0);
   const homeWin = isFinal && (game.homeScore ?? 0) > (game.awayScore ?? 0);
-  // 예고 선발은 경기 시작 전(예정)·진행 중에만 의미가 있다. KBO가 보통 전날 저녁에 공시하므로
-  // 먼 경기는 비어 있을 수 있어, 이름이 있을 때만 노출한다.
-  const showStarter = game.status === "scheduled" || game.status === "live";
+  // 예고 선발은 경기 시작 전(예정)에만 노출한다. 라이브는 잠금화면 LA와 동일하게 하단
+  // 현재 투수/타자 줄이 대신하므로(세로 압축) 선발 줄을 겹쳐 보여주지 않는다.
+  const showStarter = game.status === "scheduled";
 
   return (
     <Link prefetch={false} href={`/games/${game.id}`}>
-      <div className={`glass-card p-4 hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${myTeamId != null && (game.awayTeamId === myTeamId || game.homeTeamId === myTeamId) ? "border-l-[3px] border-l-accent" : ""}`}>
+      <div className={`glass-card ${isLive ? "p-3" : "p-4"} hover:bg-black/5 dark:hover:bg-white/5 transition-colors ${myTeamId != null && (game.awayTeamId === myTeamId || game.homeTeamId === myTeamId) ? "border-l-[3px] border-l-accent" : ""}`}>
         {/* Status */}
-        <div className="flex items-center justify-between mb-3">
+        <div className={`flex items-center justify-between ${isLive ? "mb-1.5" : "mb-3"}`}>
           <div className="flex items-center gap-2">
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
               isLive ? "bg-red-500/20 text-red-400 animate-pulse" :
@@ -91,15 +125,15 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
             )}
           </div>
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            {game.status === "scheduled" && <BroadcastBadges channels={game.broadcastChannels} />}
+            {(game.status === "scheduled" || isLive) && <BroadcastBadges channels={game.broadcastChannels} />}
             <span className="truncate text-xs text-text-tertiary">{game.stadium}</span>
           </div>
         </div>
 
         {/* Away team row */}
-        <div className={`flex items-center justify-between py-1.5 ${awayWin ? "" : isFinal ? "opacity-50" : ""}`}>
+        <div className={`flex items-center justify-between ${isLive ? "py-0.5" : "py-1.5"} ${awayWin ? "" : isFinal ? "opacity-50" : ""}`}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
+            <div className={`${isLive ? "h-7 w-7" : "w-9 h-9"} rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center`}>
               <Image src={away.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
             <div className="flex flex-col">
@@ -123,9 +157,9 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
         </div>
 
         {/* Home team row */}
-        <div className={`flex items-center justify-between py-1.5 ${homeWin ? "" : isFinal ? "opacity-50" : ""}`}>
+        <div className={`flex items-center justify-between ${isLive ? "py-0.5" : "py-1.5"} ${homeWin ? "" : isFinal ? "opacity-50" : ""}`}>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center">
+            <div className={`${isLive ? "h-7 w-7" : "w-9 h-9"} rounded-full bg-gray-100 dark:bg-white p-1 flex items-center justify-center`}>
               <Image src={home.logoPath} alt="" width={24} height={24} unoptimized className="object-contain" />
             </div>
             <div className="flex flex-col">
@@ -147,6 +181,44 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
             </span>
           )}
         </div>
+
+        {/* 라이브 상세 — 잠금화면 LA 패리티: BSO + 투수/타자 + 주자 다이아몬드 + 문자중계 한 줄.
+            팀컴러 미적용(마이팀 카드 좌측 보더는 기존 그대로), 세로 최소화(2줄 + 티커 1줄). */}
+        {isLive && (
+          <div className="mt-1 border-t border-border/60 pt-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <div className="flex items-center gap-2.5">
+                  <CountDots label="B" count={Math.max(0, Math.min(game.balls ?? 0, 3))} total={3} activeClass="bg-green-500" />
+                  <CountDots label="S" count={Math.max(0, Math.min(game.strikes ?? 0, 2))} total={2} activeClass="bg-yellow-500" />
+                  <CountDots label="O" count={Math.max(0, Math.min(game.outs ?? 0, 2))} total={2} activeClass="bg-red-500" />
+                </div>
+                {(game.currentPitcher || game.currentBatter) && (
+                  <div className="truncate text-[11px] leading-tight text-text-secondary">
+                    {game.currentPitcher && (
+                      <><span className="text-text-tertiary">투수 </span><span className="font-semibold">{game.currentPitcher}</span></>
+                    )}
+                    {game.currentPitcher && game.currentBatter && <span className="text-text-tertiary"> · </span>}
+                    {game.currentBatter && (
+                      <><span className="text-text-tertiary">타자 </span><span className="font-semibold">{game.currentBatter}</span></>
+                    )}
+                  </div>
+                )}
+              </div>
+              <MiniDiamond
+                first={game.runnersOn?.first ?? false}
+                second={game.runnersOn?.second ?? false}
+                third={game.runnersOn?.third ?? false}
+              />
+            </div>
+            {game.lastPlay && (
+              <div className="mt-1 flex items-center gap-1.5 rounded-md bg-text-tertiary/10 px-2 py-0.5">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" />
+                <span className="truncate text-[11px] text-text-secondary">{game.lastPlay}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Link>
   );
