@@ -44,6 +44,12 @@ interface CompactGameCardProps {
     currentPitcher?: string;
     currentBatter?: string;
     lastPlay?: string;
+    /**
+     * 라이브 상세(BSO/주자/현재투타)가 실제 KBO 관측값인지(provenance).
+     * Naver degrade 는 이 필드들을 항상 0/false 로 채우므로, 값만 보고는
+     * "0-0-0·주자 없음"과 "아직 못 받았음"을 구분할 수 없다.
+     */
+    liveDetailFromKbo?: boolean;
   };
 }
 
@@ -101,6 +107,25 @@ function WinDot() {
   return <span className="inline-block h-1 w-1 shrink-0 rounded-full bg-emerald-400 align-middle" />;
 }
 
+/**
+ * MY TEAM(featured) 카드 표면 — 배경 + 전경 토큰을 한 번에 고정한다.
+ *
+ * 왜 전경까지 같이 고정하는가 (삼순 2026-08-15 NO-GO): 배경은 팀 `colorPrimary`로 고정인데
+ * 글자는 테마 토큰을 따라가서, 라이트모드에선 `--text-primary: #1D1D1F`(거의 검정)가 된다.
+ * KT `#000000`·두산 `#131230`·롯데 `#002856` 처럼 어두운 팀색 위에 검정 글자가 옛는다.
+ *
+ * 해결: featured 카드는 테마와 무관하게 **항상 어두운 표면**으로 둘고(gradient 끝을 테마
+ * 종속 `--bg-tertiary` 대신 고정 다크로), 그 위에 쓰이는 semantic 전경 변수를 카드 범위에서
+ * 밝은 값으로 재정의한다. 자식은 CSS 변수를 상속받으므로 개별 클래스를 고치지 않아도
+ * `text-text-primary` 같은 기존 토큰 클래스가 그대로 고대비를 얻는다(단일 지점 제어).
+ */
+const FEATURED_SURFACE = (teamColor: string): React.CSSProperties => ({
+  background: `linear-gradient(135deg, ${teamColor} 0%, #1A1A1D 78%)`,
+  ["--text-primary" as string]: "#FFFFFF",
+  ["--text-secondary" as string]: "rgba(255,255,255,0.86)",
+  ["--text-tertiary" as string]: "rgba(255,255,255,0.66)",
+});
+
 export default function CompactGameCard({ game, isPreseason, myTeamId, weather, dateStr, featured }: CompactGameCardProps) {
   const away = getTeamById(game.awayTeamId)!;
   const home = getTeamById(game.homeTeamId)!;
@@ -116,12 +141,13 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
   // 하린아빠 지시가 "팀컬러는 맨 위 마이팀만"이므로 목록 카드는 전부 중립이어야 한다.
   const featuredTeam = featured && myTeamId != null ? getTeamById(myTeamId) : undefined;
 
-  // 라이브 상세(BSO·주자·투·타)가 아직 내려오지 않은 경우가 있다.
-  // 이때 0-0-0 · 빈 다이아몬드를 그리면 "볼카운트 0-0, 주자 없음"이라는 거짓 사실을 단정하게 된다.
-  // 값이 하나라도 있을 때만 카운트/주자를 그리고, 없으면 준비 중으로 표시한다.
-  const hasCountDetail =
-    game.balls !== undefined || game.strikes !== undefined || game.outs !== undefined || game.runnersOn !== undefined;
-  const hasMatchupDetail = Boolean(game.currentPitcher || game.currentBatter);
+  // 라이브 상세(BSO·주자·투·타) 표시 가능 여부는 **값이 아니라 provenance** 로 판정한다.
+  // Naver degrade 는 balls/strikes/outs=0, runnersOn=false 를 항상 채우므로 `!== undefined`
+  // 검사는 KBO timeout·시점불일치에서도 true 가 돼 거짓 0-0-0 을 그려버린다(삼순 NO-GO).
+  // 서버가 내려주는 liveDetailFromKbo 가 true 일 때만 실제 관측값이다.
+  // 필드 자체가 없는 호출부(다음 경기 카드 등)는 상세를 안 쓰므로 false 로 fail-close 한다.
+  const hasCountDetail = game.liveDetailFromKbo === true;
+  const hasMatchupDetail = hasCountDetail && Boolean(game.currentPitcher || game.currentBatter);
   const hasLiveDetail = hasCountDetail || hasMatchupDetail;
 
   return (
@@ -134,7 +160,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
               "border-transparent"
             : "glass-card border-transparent hover:bg-black/5 dark:hover:bg-white/5"
         }`}
-        style={featuredTeam ? { background: `linear-gradient(135deg, ${featuredTeam.colorPrimary} 0%, var(--bg-tertiary) 78%)` } : undefined}
+        style={featuredTeam ? FEATURED_SURFACE(featuredTeam.colorPrimary) : undefined}
       >
         {featuredTeam && (
           <span className="pointer-events-none absolute right-1.5 top-1 h-[46px] w-[46px] opacity-10">

@@ -40,6 +40,8 @@ interface GameData {
   currentPitcher?: string;
   currentBatter?: string;
   lastPlay?: string;
+  /** 라이브 상세가 실제 KBO 관측값인지(provenance). Naver degrade 는 0/false 를 채우므로 값만으론 구분 불가. */
+  liveDetailFromKbo?: boolean;
 }
 
 const container = { hidden: {}, show: { transition: { staggerChildren: 0.05 } } };
@@ -105,7 +107,7 @@ export default function GamesPage() {
         const res = await fetch(`/api/games?date=${formatDate(date)}`, { signal });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string }) => ({
+        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean }) => ({
           id: g.gameId,
           awayTeamId: g.awayTeamId,
           homeTeamId: g.homeTeamId,
@@ -123,6 +125,7 @@ export default function GamesPage() {
             strikes: g.strikes,
             outs: g.outs,
             runnersOn: g.runnersOn,
+            liveDetailFromKbo: g.liveDetailFromKbo,
             currentPitcher: g.currentPitcher,
             currentBatter: g.currentBatter,
             lastPlay: g.lastPlay,

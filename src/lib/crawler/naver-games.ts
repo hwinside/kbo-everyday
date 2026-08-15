@@ -178,12 +178,16 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string, now: Date 
     winPitcher: "",
     losePitcher: "",
     savePitcher: "",
+    // Naver schedule 피드에는 BSO/주자/현재투타가 없다. 아래 0/false 는 관측값이 아니라
+    // 타입을 채우기 위한 degrade 기본값이므로 liveDetailFromKbo=false 로 명시한다.
+    // (이 플래그가 없으면 소비자가 "볼카운트 0-0-0, 주자 없음"을 사실로 단정한다 — 삼순 NO-GO)
     strikes: 0,
     balls: 0,
     outs: 0,
     runnersOn: { first: false, second: false, third: false },
     currentPitcher: "",
     currentBatter: "",
+    liveDetailFromKbo: false,
     awayRank: 0,
     homeRank: 0,
     broadcastChannels: broadcastChannels.length > 0 ? broadcastChannels : undefined,

@@ -76,6 +76,15 @@ export interface KboGame {
   runnerOrders?: { first: number; second: number; third: number };
   currentPitcher: string;
   currentBatter: string;
+  /**
+   * 위 라이브 상세(BSO/주자/현재투타)가 **실제 KBO 관측값**인지 여부(provenance).
+   *
+   * 왜 필요한가 (삼순 2026-08-15 NO-GO): Naver 매핑은 이 필드들을 항상 `0`/`false` 로
+   * degrade 채운다. 값만 보면 "볼카운트 0-0-0, 주자 없음"과 "아직 못 받아왔다"가
+   * 구분되지 않아, KBO timeout·시점 불일치에도 UI 가 거짓 0-0-0 을 사실처럼 단정하게 된다.
+   * KBO 원본에서 온 값일 때만 true, degrade/미확인이면 false.
+   */
+  liveDetailFromKbo: boolean;
   // 순위
   awayRank: number;
   homeRank: number;
@@ -153,6 +162,8 @@ function parseGame(raw: KboGameRaw): KboGame {
       second: (raw.B2_BAT_ORDER_NO ?? 0) > 0,
       third: (raw.B3_BAT_ORDER_NO ?? 0) > 0,
     },
+    // KBO 원본 파싱 결과 — 라이브 상세의 출처가 실제 관측값이다.
+    liveDetailFromKbo: true,
     currentPitcher: isTop ? (raw.B_P_NM?.trim() ?? "") : (raw.T_P_NM?.trim() ?? ""),
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,

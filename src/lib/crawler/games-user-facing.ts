@@ -47,6 +47,10 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
       runnersOn: sameLiveMoment ? k.runnersOn : base.runnersOn,
       currentPitcher: sameLiveMoment ? k.currentPitcher : base.currentPitcher,
       currentBatter: sameLiveMoment ? k.currentBatter : base.currentBatter,
+      // provenance: 오버레이를 실제로 한 때만 KBO 관측값이다. 시점 불일치로 오버레이를 포기하면
+      // 남는 값은 Naver degrade(0/false) 이므로 base 의 플래그(false)를 그대로 유지해야 한다.
+      // 값과 플래그를 같은 조건으로 묶어야 "값은 degrade 인데 플래그만 true" 가 구조적으로 불가능해진다.
+      liveDetailFromKbo: sameLiveMoment ? k.liveDetailFromKbo : base.liveDetailFromKbo,
       // 준정적(시점 무관): 선발/랭크/방송 — KBO 값 있으면 채움
       awayStarterName: k.awayStarterName || base.awayStarterName,
       homeStarterName: k.homeStarterName || base.homeStarterName,
