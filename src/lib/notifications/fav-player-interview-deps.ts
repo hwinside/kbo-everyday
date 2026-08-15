@@ -102,9 +102,14 @@ export function createInterviewDeps(): InterviewDeps {
 
     fetchFavoritePlayerFanIds: (kboId) => fetchFavoritePlayerFanIds(kboId),
     // prefKey 전달 = 토글 off 유저 필터링(sendFcmToUsers 내부 notification_prefs 조회).
+    //
+    // retryableFailed 를 반드시 함께 올린다 — fcm-batch 는 토큰별 transient 실패
+    // (server-unavailable/quota/deadline 미시도)를 retryableFailed 로만 세고 ok=true 를
+    // 유지한다. ok 만 보면 core 가 marker+sent 로 종결해 그 토큰들이 영구 유실된다.
+    // B안(유실보다 희소 중복) 계약상 이 경우는 release → 다음 run 재시도가 맞다.
     sendPush: async (userIds, payload, prefKey) => {
       const result = await sendFcmToUsers(userIds, payload, prefKey);
-      return { ok: result.ok };
+      return { ok: result.ok, retryableFailed: result.retryableFailed ?? 0 };
     },
   };
 }

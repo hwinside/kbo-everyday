@@ -10,6 +10,7 @@
  * 삼순 NO-GO 축이 회귀하면 RED:
  *  R4-① in-flight/완료 분리 — 마커 present=회복, error=손대지 않음(released)
  *  R4-② 실패 은폐 금지 — 발송실패/throw/마커불확실 → 전부 released(재시도), sent 전이 금지
+ *  R6-① partial-transient — ok:true여도 retryableFailed>0이면 marker/sent 금지·release
  *  R4-③ union audience 1회 발송 — 2인 영상 합집합 dedupe·발송 1회·제목에 두 선수
  *  R2-D kboId 미확정 fail-close
  */
@@ -79,6 +80,7 @@ interface Over {
   audienceThrow?: boolean;
   sendOk?: boolean;
   sendThrow?: boolean;
+  sendRetryableFailed?: number;
 }
 function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
   const calls: Calls = {
@@ -105,7 +107,7 @@ function makeDeps(over: Over = {}): { deps: InterviewDeps; calls: Calls } {
     sendPush: async (userIds, payload, prefKey) => {
       calls.sends.push({ userIds, ...payload, prefKey });
       if (over.sendThrow) throw new Error("send boom");
-      return { ok: over.sendOk ?? true };
+      return { ok: over.sendOk ?? true, retryableFailed: over.sendRetryableFailed ?? 0 };
     },
   };
   return { deps, calls };
@@ -163,6 +165,33 @@ async function main() {
     const s4 = await notifyFavPlayerInterviews(w.deps);
     check("마커 기록 실패 → sent 전이 + 관측 카운트",
       s4.sent === 1 && s4.markerWriteFailures === 1 && w.calls.markedSent.length === 1);
+  }
+
+  console.log("[R6-①] partial-transient — ok:true + retryableFailed>0 → marker/sent 금지·release");
+  {
+    // 삼순 최종 NO-GO P0: fcm-batch 는 토큰별 server-unavailable 을 retryableFailed 로만 세고
+    // 배치 ok 는 true 로 둔다. ok 만 보면 그 토큰이 영구 유실된다.
+    const p = makeDeps({ sendRetryableFailed: 1 });
+    const s = await notifyFavPlayerInterviews(p.deps);
+    check("ok:true + retryableFailed:1 → sent 전이 금지",
+      s.sent === 0 && p.calls.markedSent.length === 0);
+    check("ok:true + retryableFailed:1 → marker 기록 금지",
+      p.calls.markerInserts.length === 0);
+    check("ok:true + retryableFailed:1 → releaseLease 실호출(row id)",
+      s.released === 1 && p.calls.released[0]?.includes("row-1") === true);
+    check("partial 관측 카운터 증가", s.releasedPartialDelivery === 1);
+
+    // 반대 방향 — retryableFailed:0 은 종결되어야 한다(과차단 방지).
+    const c = makeDeps({ sendRetryableFailed: 0 });
+    const s2 = await notifyFavPlayerInterviews(c.deps);
+    check("retryableFailed:0 → 정상 종결(sent)",
+      s2.sent === 1 && s2.releasedPartialDelivery === 0 && c.calls.released.length === 0);
+
+    // 실 어댑터 계약 — deps 가 retryableFailed 를 실제로 올리는지(상수 0 반환 방지).
+    const depsSrc = fs.readFileSync(
+      path.join(__dirname, "../../src/lib/notifications/fav-player-interview-deps.ts"), "utf8");
+    check("deps.sendPush 가 result.retryableFailed 를 결속",
+      /retryableFailed:\s*result\.retryableFailed/.test(depsSrc));
   }
 
   console.log("[R4-②] 실패 은폐 금지 — 전부 release(재시도)");

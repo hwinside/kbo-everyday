@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 최애선수 인터뷰 알림 durable mutation gate.
- * 핵심 배선/SQL을 일부러 훼손한 8개 변이가 각각 계약 검증을 RED로 만드는지 증명한다.
+ * 핵심 배선/SQL을 일부러 훼손한 변이가 각각 계약 검증을 RED로 만드는지 증명한다.
  * smoke의 동작 검증과 함께 prebuild에 결속한다.
  */
 import fs from "node:fs";
@@ -28,6 +28,18 @@ function violations(x) {
   }
   if (x.core.includes("releaseLease(releaseRowIds).catch")) out.push("release-failure-hidden");
   if (!x.core.includes("await deps.releaseLease(releaseRowIds);")) out.push("release-not-awaited");
+  // partial-transient: ok:true 여도 retryableFailed>0 이면 종결하지 않고 release 해야 한다.
+  // 어댑터가 값을 올리지 않으면(상수 0) core 가 아무리 맞아도 무의미라 둘 다 본다.
+  if (!/retryableFailed:\s*result\.retryableFailed/.test(x.deps)) out.push("retryable-not-propagated");
+  {
+    const guard = x.core.indexOf("(result.retryableFailed ?? 0) > 0");
+    const marker = x.core.indexOf("insertSentMarker(interview.gameId, interview.videoId)");
+    // 가드가 없거나 marker 기록 뒤에 있으면 이미 종결된 뒤라 유실을 막지 못한다.
+    if (!(guard >= 0 && marker > guard)) out.push("retryable-guard-missing");
+    if (!/\(result\.retryableFailed \?\? 0\) > 0\)\s*\{[^}]*releaseRowIds\.push/.test(x.core)) {
+      out.push("retryable-guard-not-releasing");
+    }
+  }
   return out;
 }
 
@@ -45,6 +57,10 @@ const mutations = [
   ["marker read에서 gameId 제거", "core", "hasSentMarker(interview.gameId, interview.videoId)", "hasSentMarker(interview.videoId, interview.videoId)"],
   ["marker storage에서 gameId 제거", "deps", "`interview#${gameId}#${videoId}`", "`interview#${videoId}`"],
   ["release 실패 다시 은폐", "core", "await deps.releaseLease(releaseRowIds);", "await deps.releaseLease(releaseRowIds).catch(() => {});"],
+  // 삼순 최종 NO-GO P0 — partial-transient 유실 축
+  ["deps 가 retryableFailed 미전파", "deps", "retryableFailed: result.retryableFailed ?? 0", "retryableFailed: 0"],
+  ["core partial-transient 가드 제거", "core", "if ((result.retryableFailed ?? 0) > 0) {", "if (false) {"],
+  ["partial-transient 을 release 없이 카운트만", "core", "releaseRowIds.push(interview.id);\n        summary.released++;\n        summary.releasedPartialDelivery++;", "summary.released++;\n        summary.releasedPartialDelivery++;"],
 ];
 
 let failed = 0;
