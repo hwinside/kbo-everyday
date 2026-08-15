@@ -16,10 +16,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
-  DEFAULT_INTERVAL_MS,
   INTERVAL_FLOOR_MS,
   INTERVAL_JITTER_MS,
+  INTERVAL_PROBE_SCHEDULE_MS,
+  INTERVAL_PROBE_STEP_SUCCESSES,
+  intervalForSuccessCount,
   intervalWithJitter,
+  MAX_PROBES_PER_PLAYER,
   selectResolveTargets,
 } from "../baseball-qa/resolve-rag-urls";
 
@@ -76,20 +79,53 @@ assert.throws(
   "빈 스냅샷은 조용한 전체 통과가 아니라 즉시 실패",
 );
 
-// (3) 간격 계약 — 10초 미만(하린아빠 지시) + 바닥 3초 + 지터 경계
-assert.ok(DEFAULT_INTERVAL_MS < 10_000, "기본 간격은 10초 미만");
-assert.ok(DEFAULT_INTERVAL_MS >= INTERVAL_FLOOR_MS, "기본 간격은 바닥(3초) 이상");
+// (3) 간격 계약 — 승인된 8→6→4→2초 probe 스케줄(5초 하드코딩 없음) + 전구간 10초 미만 + 바닥
+assert.deepEqual([...INTERVAL_PROBE_SCHEDULE_MS], [8_000, 6_000, 4_000, 2_000], "승인된 probe 스케줄 그대로");
+assert.ok(INTERVAL_PROBE_SCHEDULE_MS.every((ms) => ms < 10_000 && ms >= INTERVAL_FLOOR_MS), "전 구간 <10초, 바닥 이상");
+assert.equal(intervalForSuccessCount(0), 8_000, "시작은 8초");
+assert.equal(intervalForSuccessCount(INTERVAL_PROBE_STEP_SUCCESSES), 6_000, "1단계 하강");
+assert.equal(intervalForSuccessCount(INTERVAL_PROBE_STEP_SUCCESSES * 2), 4_000, "2단계 하강");
+assert.equal(intervalForSuccessCount(INTERVAL_PROBE_STEP_SUCCESSES * 3), 2_000, "3단계 하강");
+assert.equal(intervalForSuccessCount(10_000), 2_000, "바닥 아래로 내려가지 않는다");
 for (let i = 0; i < 200; i += 1) {
-  const value = intervalWithJitter();
-  assert.ok(value >= DEFAULT_INTERVAL_MS && value <= DEFAULT_INTERVAL_MS + INTERVAL_JITTER_MS,
-    `지터 범위 위반: ${value}`);
+  const value = intervalWithJitter(2_000);
+  assert.ok(value >= 2_000 && value <= 2_000 + INTERVAL_JITTER_MS, `지터 범위 위반: ${value}`);
 }
+
+// (3b) request budget 계약 — 기본 후보 3 + 동음이의 상한 6 = 인당 9 명시, budget_exhausted는 missing과 분리
+assert.equal(MAX_PROBES_PER_PLAYER, 9, "인당 요청 예산 9 명시");
 
 // (4) 전역 중단 + 직접 실행 가드 — 소스 계약(실행 주입이 안 되는 네트워크 축의 최소 고정).
 const source = readFileSync(path.join(process.cwd(), "scripts/baseball-qa/resolve-rag-urls.ts"), "utf8");
 assert.ok(/verdict\.status === "blocked"[\s\S]{0,700}process\.exit\(2\)/.test(source),
   "blocked → 전역 즉시 중단(exit 2) 계약이 소스에 존재해야 한다");
 assert.ok(source.includes("if (isDirectRun)"), "직접 실행 가드 존재(스모크 import 안전)");
+assert.ok(source.includes('"budget_exhausted"') && source.includes("budgetExhausted"),
+  "budget_exhausted 상태가 missing과 분리된 별도 판정으로 존재");
+assert.ok(/FETCHER === "cdp" && SOURCE !== "namu"[\s\S]{0,200}process\.exit\(1\)/.test(source),
+  "cdp fetcher는 namu 강제 — wiki 오실행 즉시 실패 가드");
+assert.ok(source.includes('t: "probe"') && source.includes("replayByTitle"),
+  "checkpoint는 (kboId, candidateUrl) probe 단위 기록 + replay로 재요청 차단");
+
+// (5) 대표 코호트 고정 — 삼순 계약 6번 축
+const byName = new Map(snapshot.players.map((p) => [p.name, p] as const));
+assert.equal(byName.get("김재환")?.kboId, "78224", "김재환(78224) = 외부 해석 대상");
+assert.equal(byName.get("김재환")?.bucket, "외부 해석 필요");
+assert.ok(picked.some((t) => t.kboId === "78224"), "김재환은 해석 대상에 포함");
+assert.equal(byName.get("네이선 와일스")?.kboId, "FP019", "외국인 풀네임 코호트 존재");
+assert.ok(picked.some((t) => t.kboId === "FP019"), "외국인 풀네임도 해석 대상");
+assert.equal(byName.get("김요셉")?.bucket, "외부 해석 필요", "오문서 격리 대표(김요셉)도 재해석 대상");
+assert.ok(!byName.has("원태인"), "기존 ready(원태인 69446)는 스냅샷 밖 — 건드리지 않는다");
+assert.deepEqual(
+  snapshot.players.filter((p) => p.bucket === "적재만(기존 corpus 재사용)").map((p) => p.name).sort(),
+  ["양의지", "장성우", "최형우"],
+  "corpus 재사용 3명 exact",
+);
+{
+  const dupInPicked = new Map<string, number>();
+  for (const t of picked) dupInPicked.set(t.name, (dupInPicked.get(t.name) ?? 0) + 1);
+  assert.ok([...dupInPicked.values()].some((count) => count >= 2), "동명이인 코호트가 해석 대상에 존재");
+}
 
 // self-test RED: 검출력 증명 — 조작된 스냅샷은 반드시 잡혀야 한다.
 let selfTestRed = false;
@@ -100,4 +136,6 @@ try {
 }
 assert.ok(selfTestRed, "self-test: fail-close 경로가 실제로 던진다");
 
-console.log("corpus-resolve-scope-smoke PASS (snapshot 488 / resume / interval<10s / global-abort 계약)");
+console.log(
+  "corpus-resolve-scope-smoke PASS (snapshot 491/488 / URL단위 checkpoint / probe 8→6→4→2s / budget9 / namu강제 / global-abort / 대표코호트)",
+);

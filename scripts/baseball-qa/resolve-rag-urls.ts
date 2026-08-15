@@ -57,7 +57,24 @@ import { S2B_TARGET_PLAYERS } from "../../src/lib/baseball-qa/rag/targets";
 import { fetchNamuDocumentViaBrowser } from "./rag/fetch-namu-browser";
 import { fetchNamuDocumentViaCdp } from "./rag/fetch-namu-cdp";
 
-type Resolution = "resolved" | "missing" | "ambiguous" | "blocked";
+type Resolution = "resolved" | "missing" | "ambiguous" | "blocked" | "budget_exhausted";
+
+/** checkpoint 행 — probe(요청 1건)와 verdict(선수 최종 판정) 두 종류. (kboId, candidateUrl) 단위로
+ * 요청을 기록해 재시작 시 같은 URL을 다시 두드리지 않는다(삼순 계약). */
+interface CheckpointProbeRow {
+  t: "probe";
+  kboId: string;
+  title: string;
+  url: string;
+  kind: "canonical" | "rejected" | "missing";
+  reason?: string;
+  canonicalUrl?: string;
+  pageTitle?: string;
+  redirected?: boolean;
+  /** 동음이의 문서에서 뽑았던 파생 후보 — replay 시 재요청 없이 그대로 이어받는다. */
+  candidates?: string[];
+  at: string;
+}
 type SourceName = "wikipedia" | "namu";
 type ResolveScope = "snapshot" | "roster" | "targets";
 type FetcherName = "chrome" | "cdp";
@@ -79,14 +96,26 @@ const SCOPE = (process.argv.find((arg) => arg.startsWith("--scope="))?.split("="
 const FETCHER = (process.argv.find((arg) => arg.startsWith("--fetcher="))?.split("=")[1] ?? "chrome") as FetcherName;
 const CDP_URL = process.argv.find((arg) => arg.startsWith("--cdp-url="))?.split("=").slice(1).join("=") ?? undefined;
 const CHECKPOINT_PATH = process.argv.find((arg) => arg.startsWith("--checkpoint="))?.split("=")[1] ?? null;
-/** 간격 바닥 — 이보다 낮추는 것은 실측 근거(2.5초 연타 403)와 충돌한다. fail-close. */
-export const INTERVAL_FLOOR_MS = 3_000;
-/** 기본 간격 5초 (2026-08-15 하린아빠: "10초보다 더 짧게"). 지터 0~2초를 매 요청 더한다. */
-export const DEFAULT_INTERVAL_MS = 5_000;
+// A17(cdp) 경로는 나무 전용이다 — wiki로 잘못 실행되면 즉시 실패(삼순 계약: 조용한 오실행 금지).
+if (FETCHER === "cdp" && SOURCE !== "namu") {
+  console.error(`--fetcher=cdp는 --source=namu 전용이다 (현재 source=${SOURCE}) — 즉시 실패`);
+  process.exit(1);
+}
+/**
+ * 간격 계약 (2026-08-15 하린아빠 "10초보다 더 짧게" + 삼순 "5초 하드코딩 금지, 8→6→4→2초 probe").
+ *
+ * 기본은 **probe 스케줄**이다: 8초에서 시작해 연속 성공이 쌓일 때마다 6→4→2초로 내린다.
+ * 내려가다 blocked를 만나면 back-off가 아니라 **전역 즉시 중단**이다(안전선은 간격이 아니라 중단).
+ * `--interval-ms=N`은 고정 간격 override다(재시도·검증용). 바닥 2초 미만은 승인 밖 — fail-close.
+ */
+export const INTERVAL_PROBE_SCHEDULE_MS = [8_000, 6_000, 4_000, 2_000] as const;
+/** 스케줄 한 단계를 내리기 위해 필요한 연속 성공 수. */
+export const INTERVAL_PROBE_STEP_SUCCESSES = 25;
+export const INTERVAL_FLOOR_MS = 2_000;
 export const INTERVAL_JITTER_MS = 2_000;
-const INTERVAL_MS = (() => {
+const FIXED_INTERVAL_MS = (() => {
   const raw = process.argv.find((arg) => arg.startsWith("--interval-ms="))?.split("=")[1];
-  if (raw === undefined) return DEFAULT_INTERVAL_MS;
+  if (raw === undefined) return null;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < INTERVAL_FLOOR_MS) {
     console.error(`--interval-ms 값이 잘못됐다: ${raw} (${INTERVAL_FLOOR_MS}ms 이상 정수만 허용)`);
@@ -94,6 +123,20 @@ const INTERVAL_MS = (() => {
   }
   return parsed;
 })();
+
+/** 성공 횟수 → probe 스케줄 간격. 순수 함수 — 스모크가 직접 태운다. */
+export function intervalForSuccessCount(successes: number): number {
+  const step = Math.min(
+    Math.floor(Math.max(0, successes) / INTERVAL_PROBE_STEP_SUCCESSES),
+    INTERVAL_PROBE_SCHEDULE_MS.length - 1,
+  );
+  return INTERVAL_PROBE_SCHEDULE_MS[step];
+}
+
+/** 인당 요청 예산 — 기본 후보 3 + 동음이의 파생 후보 상한 6 = 9 (삼순 계약: 상한을 명시한다).
+ * 예산 소진은 `budget_exhausted`로 기록하며 **missing과 구분한다** — "문서가 없다"와
+ * "더 볼 예산이 없었다"를 썮으면 재시도 대상을 영영 잃는다. */
+export const MAX_PROBES_PER_PLAYER = 9;
 const ONLY_NAMES = process.argv
   .filter((arg) => arg.startsWith("--name="))
   .map((arg) => arg.split("=").slice(1).join("=").trim())
@@ -135,15 +178,21 @@ function namuUrl(title: string): string {
   return `https://namu.wiki/w/${encodeURIComponent(title)}`;
 }
 
+/** 런 누적 성공 수 — probe 스케줄 입력. blocked는 전역 중단이라 감산할 일이 없다. */
+let namuSuccessCount = 0;
+
 /** 나무 fetch 경로 선택 — 판정(verifyCanonicalIdentity)은 경로와 무관하게 동일하다. */
 async function fetchNamuDocument(url: string) {
-  return FETCHER === "cdp"
-    ? fetchNamuDocumentViaCdp(url, { cdpUrl: CDP_URL, minIntervalMs: intervalWithJitter() })
-    : fetchNamuDocumentViaBrowser(url, { minIntervalMs: intervalWithJitter() });
+  const minIntervalMs = intervalWithJitter(FIXED_INTERVAL_MS ?? intervalForSuccessCount(namuSuccessCount));
+  const fetched = FETCHER === "cdp"
+    ? await fetchNamuDocumentViaCdp(url, { cdpUrl: CDP_URL, minIntervalMs })
+    : await fetchNamuDocumentViaBrowser(url, { minIntervalMs });
+  if (fetched.ok) namuSuccessCount += 1;
+  return fetched;
 }
 
 /** 지터 포함 간격 — 고정 주기는 패턴 탐지를 돕기 때문에 지터를 더한다(#1153 계약 재사용). */
-export function intervalWithJitter(base = INTERVAL_MS, jitter = INTERVAL_JITTER_MS): number {
+export function intervalWithJitter(base: number, jitter = INTERVAL_JITTER_MS): number {
   return base + Math.floor(Math.random() * (jitter + 1));
 }
 
@@ -284,17 +333,31 @@ async function main(): Promise<void> {
       }).players
     : undefined;
 
-  // checkpoint resume — 이미 판정된 kboId는 다시 두드리지 않는다(외부 요청 재발사 금지).
+  // checkpoint resume — verdict가 있는 kboId는 통째로 skip, probe만 있는 kboId는
+  // 기록된 (kboId, candidateUrl) 요청을 replay해 같은 URL 재요청을 차단한다(삼순 계약).
   const doneKboIds = new Set<string>();
+  const probedByKboId = new Map<string, CheckpointProbeRow[]>();
   if (CHECKPOINT_PATH) {
     try {
       for (const line of readFileSync(CHECKPOINT_PATH, "utf8").split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const row = JSON.parse(trimmed) as { kboId?: string };
-        if (row.kboId) doneKboIds.add(row.kboId);
+        const row = JSON.parse(trimmed) as { t?: string; kboId?: string; status?: string };
+        if (!row.kboId) continue;
+        if (row.t === "probe") {
+          const probeRow = row as unknown as CheckpointProbeRow;
+          const list = probedByKboId.get(probeRow.kboId) ?? [];
+          list.push(probeRow);
+          probedByKboId.set(probeRow.kboId, list);
+        } else if (row.t === "verdict" || row.status) {
+          // 구형(무타입) 행은 verdict로 취급 — 이미 끝난 선수를 다시 두드리지 않는다.
+          doneKboIds.add(row.kboId);
+        }
       }
-      console.log(`checkpoint 이어받기: ${CHECKPOINT_PATH} — 기존 판정 ${doneKboIds.size}명 skip`);
+      console.log(
+        `checkpoint 이어받기: ${CHECKPOINT_PATH} — 판정 완료 ${doneKboIds.size}명 skip, `
+        + `probe 기록 보유 ${probedByKboId.size}명 replay`,
+      );
     } catch {
       console.log(`checkpoint 신규 생성: ${CHECKPOINT_PATH}`);
     }
@@ -315,7 +378,12 @@ async function main(): Promise<void> {
     + `${LIMIT === null ? "" : `, --limit ${LIMIT}`})`,
   );
   if (SOURCE === "namu") {
-    console.log(`fetcher=${FETCHER}, 간격 ${INTERVAL_MS}ms+지터≤${INTERVAL_JITTER_MS}ms, 첫 blocked 전역 즉시 중단`);
+    console.log(
+      `fetcher=${FETCHER}, 간격 ${FIXED_INTERVAL_MS !== null
+        ? `고정 ${FIXED_INTERVAL_MS}ms`
+        : `probe ${INTERVAL_PROBE_SCHEDULE_MS.join("→")}ms(성공 ${INTERVAL_PROBE_STEP_SUCCESSES}회당 하강)`}`
+      + `+지터≤${INTERVAL_JITTER_MS}ms, 인당 예산 ${MAX_PROBES_PER_PLAYER}, 첫 blocked 전역 즉시 중단`,
+    );
   }
   if (targets.length === 0) {
     console.error("해석 대상 0명 — 범위 옵션을 확인하라(조용한 성공으로 끝내지 않는다).");
@@ -370,26 +438,61 @@ async function main(): Promise<void> {
     const queue = [...candidateTitles];
     const seen = new Set<string>();
     let blocked = false;
+    // resume replay 사전 — 이 선수의 기록된 (kboId, candidateUrl) probe는 재요청하지 않는다.
+    const replayByTitle = new Map<string, CheckpointProbeRow>();
+    for (const row of probedByKboId.get(target.kboId) ?? []) replayByTitle.set(row.title, row);
 
-    while (queue.length > 0 && !blocked) {
+    while (queue.length > 0 && !blocked && probes.length < MAX_PROBES_PER_PLAYER) {
       const title = queue.shift()!;
       if (seen.has(title)) continue;
       seen.add(title);
+
+      const replay = replayByTitle.get(title);
+      if (replay) {
+        // 외부 요청 없이 기록된 결과를 그대로 이어받는다. 파생 후보도 기록에서 복원한다.
+        const reconstructed: CandidateProbe = replay.kind === "canonical"
+          ? { kind: "canonical", url: replay.url, canonicalUrl: replay.canonicalUrl ?? "", pageTitle: replay.pageTitle ?? "", redirected: replay.redirected ?? false }
+          : replay.kind === "rejected"
+            ? { kind: "rejected", url: replay.url, reason: replay.reason ?? "replayed" }
+            : { kind: "missing", url: replay.url, reason: replay.reason ?? "replayed" };
+        probes.push(reconstructed);
+        for (const candidate of replay.candidates ?? []) {
+          if (!seen.has(candidate)) queue.push(candidate);
+        }
+        if (reconstructed.kind === "canonical") break;
+        continue;
+      }
+
       const probe = SOURCE === "namu" ? await probeNamu(title, identity) : await probeWikipedia(title, identity);
       if (SOURCE !== "namu") await sleep(WIKIPEDIA_INTERVAL_MS);
       probes.push(probe);
       if (probe.kind === "blocked") {
         // §12.2(b): 차단은 우회 대상이 아니다. 이 선수에 대한 추가 요청을 즉시 중단한다.
+        // blocked는 checkpoint에 쓰지 않는다 — 원인 해소 후 resume에서 재시도해야 한다.
         blocked = true;
         break;
       }
-      if (probe.kind === "rejected" && probe.disambiguationHtml) {
-        for (const candidate of extractDisambiguationCandidates(probe.disambiguationHtml, target.name)) {
-          if (!seen.has(candidate)) queue.push(candidate);
-        }
+      const derivedCandidates = probe.kind === "rejected" && probe.disambiguationHtml
+        ? extractDisambiguationCandidates(probe.disambiguationHtml, target.name)
+        : [];
+      if (CHECKPOINT_PATH) {
+        const probeRow: CheckpointProbeRow = {
+          t: "probe", kboId: target.kboId, title, url: probe.url, kind: probe.kind,
+          ...(probe.kind !== "canonical" ? { reason: probe.reason } : {}),
+          ...(probe.kind === "canonical" ? { canonicalUrl: probe.canonicalUrl, pageTitle: probe.pageTitle, redirected: probe.redirected } : {}),
+          ...(derivedCandidates.length > 0 ? { candidates: derivedCandidates } : {}),
+          at: new Date().toISOString(),
+        };
+        appendFileSync(CHECKPOINT_PATH, `${JSON.stringify(probeRow)}\n`, "utf8");
+      }
+      for (const candidate of derivedCandidates) {
+        if (!seen.has(candidate)) queue.push(candidate);
       }
       if (probe.kind === "canonical") break; // identity가 확정되면 더 두들기지 않는다(bounded).
     }
+    // 예산 소진 판정 — 볼 후보가 남았는데 상한(9)에 닿은 것은 "문서 부재(missing)"가 아니다.
+    const budgetExhausted = !blocked && queue.length > 0 && probes.length >= MAX_PROBES_PER_PLAYER
+      && !probes.some((probe) => probe.kind === "canonical");
 
     const canonicalHits = probes.filter(
       (probe): probe is Extract<CandidateProbe, { kind: "canonical" }> => probe.kind === "canonical",
@@ -412,6 +515,11 @@ async function main(): Promise<void> {
       verdict = { status: "ambiguous", canonicalUrl: null, pageTitle: null, note: `문서 ${distinct.size}건 동시 확정 — 동일인 확정 불가 (${trace})` };
     } else if (blocked) {
       verdict = { status: "blocked", canonicalUrl: null, pageTitle: null, note: `봇차단으로 확인 불가 (${trace}) — 우회 금지(§12.2 b)` };
+    } else if (budgetExhausted) {
+      verdict = {
+        status: "budget_exhausted", canonicalUrl: null, pageTitle: null,
+        note: `요청 예산 소진(인당 ${MAX_PROBES_PER_PLAYER}) — 미확인 후보 ${queue.length}건 잔존, missing 아님 (${trace})`,
+      };
     } else {
       verdict = { status: "missing", canonicalUrl: null, pageTitle: null, note: `identity 확정 후보 없음 (${trace})` };
     }
@@ -421,10 +529,11 @@ async function main(): Promise<void> {
       verdict.note += ` [동명이인 주의: 로스터 동명 ${nameCounts.get(target.name)}명, 이 판정은 kboId ${target.kboId}(${rosterRow?.team ?? "?"}) 생년 ${birthYear} 기준]`;
     }
     results.push({ ...base, ...verdict });
-    if (CHECKPOINT_PATH) {
+    if (CHECKPOINT_PATH && verdict.status !== "blocked") {
+      // blocked는 판정 확정이 아니라 중단 사유다 — verdict로 봉인하면 resume이 이 선수를 영영 건너뛴다.
       appendFileSync(
         CHECKPOINT_PATH,
-        `${JSON.stringify({ kboId: target.kboId, name: target.name, status: verdict.status, canonicalUrl: verdict.canonicalUrl, note: verdict.note, at: new Date().toISOString() })}\n`,
+        `${JSON.stringify({ t: "verdict", kboId: target.kboId, name: target.name, status: verdict.status, canonicalUrl: verdict.canonicalUrl, note: verdict.note, at: new Date().toISOString() })}\n`,
         "utf8",
       );
     }
@@ -478,8 +587,10 @@ async function main(): Promise<void> {
       pageTitle,
       candidateUrls: row.candidateUrls,
       canonicalUrl: row.canonicalUrl,
-      resolutionStatus: row.status,
-      resolutionNote: row.note,
+      // DB CHECK는 resolved/missing/ambiguous/blocked 4값만 받는다. budget_exhausted는 판정 JSON·
+      // checkpoint에는 그대로 남기되, DB에는 ambiguous로 쓰고 note 접두로 구분한다(재시도 대상 보존).
+      resolutionStatus: row.status === "budget_exhausted" ? "ambiguous" : row.status,
+      resolutionNote: row.status === "budget_exhausted" ? `budget_exhausted: ${row.note}` : row.note,
       updatedAt: new Date().toISOString(),
     });
     const response = await fetch(`${url}/rest/v1/genius_rag_sources?on_conflict=source_key`, {
