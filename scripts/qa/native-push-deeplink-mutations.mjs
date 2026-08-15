@@ -217,6 +217,20 @@ const mutations = [
     to: `  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
   return "oauth";`,
   },
+  {
+    id: "M28 R6 서버 오류 callback 키 인식 제거(auth_error URL 폐기 → 네이티브 오류 안내 소실)",
+    file: DISPATCHER,
+    from: `  for (const key of AUTH_ERROR_PARAM_KEYS) {
+    if (parsed.searchParams.has(key) || hashParams.has(key)) return "oauth";
+  }`,
+    to: "",
+  },
+  {
+    id: "M29 R6 /auth exact segment 판정 완화(startsWith 회귀 — /author 오분류)",
+    file: DISPATCHER,
+    from: `  if (parsed.pathname === "/auth" || parsed.pathname.startsWith("/auth/")) return "oauth";`,
+    to: `  if (parsed.pathname.startsWith("/auth")) return "oauth";`,
+  },
 ];
 
 function runGate() {

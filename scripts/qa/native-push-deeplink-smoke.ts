@@ -590,6 +590,61 @@ test("26b) 디스패처 R5: 폐쇄 분류 — OAuth만 구독 중 처리 직후 
   assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?error=access_denied"), "oauth");
   assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/abc/def"), null);
   assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/"), null);
+
+  // ⑤ R6: 실제 서버 오류 callback 파라미터군 — auth_error/error_code/error_description 전부 oauth
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?auth_error=kakao_email_unverified"), "oauth",
+    "실제 서버 오류 callback 형상이 oauth로 분류되지 않으면 네이티브 오류 안내가 사라진다(삼순 R6)");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?error_code=422"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/#error_description=KAKAO_EMAIL_UNVERIFIED"), "oauth");
+  // R6: /auth는 exact segment — /author 같은 무관 경로는 unknown
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/author"), null, "/auth는 exact segment 판정이어야 한다");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/auth/callback"), "oauth");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("26c) 디스패처 R6: 실제 서버 오류 callback URL이 OAuth로 1회 전달→즉시 buffer 0 + 키 집합 소스 결속", async () => {
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // 실제 서버 출력 형상(auth-error.ts 상수와 동일) — OAuth만 구독 중 1회 전달 → 즉시 buffer 0
+  const errorCallbackUrl = "https://keubo.fan/?auth_error=kakao_email_unverified";
+  const oauthSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
+  (listener as unknown as (ev: { url: string }) => void)({ url: errorCallbackUrl });
+  assert.deepEqual(oauthSeen, [errorCallbackUrl], "서버 오류 callback은 OAuth 소비자에 1회 전달");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "수신 즉시 buffer 0");
+
+  // 소스 결속 — auth-error.ts가 읽는 키 집합과 공유 상수가 일치하는지(재구현 드리프트 방지)
+  const authErrorSrc = await readFile(new URL("../../src/lib/auth-error.ts", import.meta.url), "utf8");
+  const readKeys = [...authErrorSrc.matchAll(/params\.get\("([a-z_]+)"\)/g)].map((m) => m[1]);
+  assert.ok(readKeys.length >= 4, `auth-error.ts 키 추출 실패(found ${readKeys.length})`);
+  const { AUTH_ERROR_PARAM_KEYS } = await import("../../src/lib/auth-error") as unknown as {
+    AUTH_ERROR_PARAM_KEYS: readonly string[];
+  };
+  for (const key of new Set(readKeys)) {
+    assert.ok(AUTH_ERROR_PARAM_KEYS.includes(key),
+      `auth-error.ts가 읽는 키 "${key}"가 공유 상수에 없다 — 분류가 이 키를 못 보면 네이티브 오류 안내가 사라진다`);
+  }
+  const deeplinkSrc = await readFile(new URL("../../src/lib/capacitor/app-url-open.ts", import.meta.url), "utf8");
+  assert.match(deeplinkSrc, /AUTH_ERROR_PARAM_KEYS/, "classifier는 공유 상수를 써야 한다(키 재구현 금지)");
   mod.__resetAppUrlOpenForTest();
 });
 

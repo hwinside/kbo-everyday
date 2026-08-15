@@ -25,6 +25,8 @@
 // 수신 즉시 버퍼에서 삭제한다(secret 즉시 폐기). 끝내 안 붙는 소비자의 이벤트는
 // orphan timer(60초)가 제거한다.
 
+import { AUTH_ERROR_PARAM_KEYS } from "@/lib/auth-error";
+
 type UrlOpenEvent = { url: string };
 type Subscriber = (event: UrlOpenEvent) => void;
 
@@ -47,11 +49,15 @@ export function classifyAppUrlOpen(url: string): AppUrlOpenConsumerId | null {
   } catch {
     return null; // 파싱 불가 URL은 fail-closed
   }
-  if (parsed.pathname.startsWith("/auth")) return "oauth";
-  if (parsed.searchParams.has("code") || parsed.searchParams.has("error")) return "oauth";
+  // /auth는 exact segment 판정 — startsWith("/auth")는 /author 등 무관 경로를 오분류한다(삼순 R6)
+  if (parsed.pathname === "/auth" || parsed.pathname.startsWith("/auth/")) return "oauth";
   const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ""));
-  if (hashParams.has("access_token") || hashParams.has("refresh_token") || hashParams.has("error")) {
-    return "oauth";
+  if (parsed.searchParams.has("code")) return "oauth";
+  if (hashParams.has("access_token") || hashParams.has("refresh_token")) return "oauth";
+  // 서버 오류 callback(`/?auth_error=…`)·provider 오류 — 실제 핸들러(auth-error.ts)가 읽는
+  // 키 집합과 공유 상수로 결속한다 — 분류가 못 보는 키는 네이티브 오류 안내를 삼킨다(삼순 R6).
+  for (const key of AUTH_ERROR_PARAM_KEYS) {
+    if (parsed.searchParams.has(key) || hashParams.has(key)) return "oauth";
   }
   if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
   return null;
