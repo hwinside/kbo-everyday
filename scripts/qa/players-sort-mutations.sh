@@ -16,6 +16,7 @@
 #   fallback   — 실패 settle 제거(timeout+catch) → B2c (timeout 확정 실패)
 #   teamfilter — 구단별 필터 무력화               → B8  (필터가 목록을 안 줄임)
 #   urlsort    — 구 sort 파라미터 URL 잔존        → B9  (URL 정규화 실패)
+#   scrollobs  — sentinel 옵저버를 ref+effect 로   → B10 (인기순 무한 스피너)
 #
 # 실행: npm run qa:players-sort:mutations
 set -uo pipefail
@@ -36,11 +37,12 @@ expect_red() {
     fallback) echo "B2c" ;;
     teamfilter) echo "B8" ;;
     urlsort) echo "B9" ;;
+    scrollobs) echo "B10" ;;
     *) echo "" ;;
   esac
 }
 
-for m in race toggle fallback teamfilter urlsort; do
+for m in race toggle fallback teamfilter urlsort scrollobs; do
   want="$(expect_red "$m")"
   log="$(mk_log)"
   if [ -z "$log" ] || [ ! -f "$log" ]; then
