@@ -111,7 +111,7 @@ const roster = playersRoster as RosterRow[];
 {
   // 사고 재현 케이스: 김도영(52605) 매칭 글은 태그가 반드시 채워져야 한다.
   const kimDoyoung = roster.find((p) => p.kboId === "52605");
-  const tags = buildCollectorPlayerTags("52605");
+  const tags = buildCollectorPlayerTags("player", "52605");
   check(
     "사고 재현: matched_kbo_id=52605 → player_tags 비어있지 않다",
     tags.length === 1,
@@ -145,7 +145,7 @@ const roster = playersRoster as RosterRow[];
     for (const p of roster) if (!perTeam.has(p.teamId)) perTeam.set(p.teamId, p);
     let ok = 0;
     for (const [, p] of perTeam) {
-      const t = buildCollectorPlayerTags(p.kboId);
+      const t = buildCollectorPlayerTags("player", p.kboId);
       if (t.length === 1 && t[0] === `${p.kboId}:${p.name}`) ok++;
       else console.log(`   · 불일치 ${p.name}(${p.kboId}) got=${JSON.stringify(t)}`);
     }
@@ -156,7 +156,7 @@ const roster = playersRoster as RosterRow[];
   {
     const foreign = roster.find((p) => /^(FP|AQ)/.test(String(p.kboId)));
     if (foreign) {
-      const t = buildCollectorPlayerTags(foreign.kboId);
+      const t = buildCollectorPlayerTags("player", foreign.kboId);
       check(
         `외국인 canonical ID(${foreign.kboId}) 도 태그 생성`,
         t.length === 1 && t[0] === `${foreign.kboId}:${foreign.name}`,
@@ -165,11 +165,25 @@ const roster = playersRoster as RosterRow[];
     }
   }
 
+  // board_type 가드(삼순 2026-08-16 NO-GO) — matcher 는 선수 식별 + 낮은 확신으로 팀판으로
+  // 내려보내는 `matchedKboId≠null + boardType='team'` 상태를 실제 생성한다(matching.ts).
+  // 그 글에 태그를 만들면 팀 글이 특정 선수 팬에게 잘못 알림된다.
+  {
+    const teamWithKboId = buildCollectorPlayerTags("team", "52605");
+    check(
+      "team 글은 matched_kbo_id 가 있어도 태그 없음(오발송 방지)",
+      teamWithKboId.length === 0,
+      `got ${JSON.stringify(teamWithKboId)} — 팀 글이 특정 선수 팬에게 알림 간다`,
+    );
+    check("board_type=null → 태그 없음", buildCollectorPlayerTags(null, "52605").length === 0);
+    check("알 수 없는 board_type → 태그 없음", buildCollectorPlayerTags("free", "52605").length === 0);
+  }
+
   // fail-close — 이름을 모르면 태그를 지어내지 않는다("52605:" 같은 깨진 태그 금지).
   {
-    check("matched_kbo_id=null → 빈 배열(team 글)", buildCollectorPlayerTags(null).length === 0);
-    check("빈 문자열 → 빈 배열", buildCollectorPlayerTags("   ").length === 0);
-    const unknown = buildCollectorPlayerTags("00000");
+    check("matched_kbo_id=null → 빈 배열", buildCollectorPlayerTags("player", null).length === 0);
+    check("빈 문자열 → 빈 배열", buildCollectorPlayerTags("player", "   ").length === 0);
+    const unknown = buildCollectorPlayerTags("player", "00000");
     check(
       "로스터 미등록 kboId → 빈 배열(이름 없는 태그 생성 금지)",
       unknown.length === 0,
@@ -210,8 +224,8 @@ const roster = playersRoster as RosterRow[];
 
   // 사고 재발 방지: 태그 파생이 insert 까지 실제로 이어져 있어야 한다.
   check(
-    "publisher 가 buildCollectorPlayerTags 를 matched_kbo_id 로 호출",
-    /const\s+collectorPlayerTags\s*=\s*buildCollectorPlayerTags\(\s*row\.matched_kbo_id\s*\)/.test(src),
+    "publisher 가 buildCollectorPlayerTags 를 board_type + matched_kbo_id 로 호출",
+    /const\s+collectorPlayerTags\s*=\s*buildCollectorPlayerTags\(\s*row\.matched_board_type,\s*row\.matched_kbo_id\s*\)/.test(src),
     "호출이 사라지면 최애선수 알림이 다시 0건이 된다",
   );
   check(

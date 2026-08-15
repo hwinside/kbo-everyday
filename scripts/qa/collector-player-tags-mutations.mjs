@@ -50,9 +50,9 @@ const MUTATIONS = [
     // 파생 호출만 죽여도 알림은 0건이 된다.
     name: "M2 buildCollectorPlayerTags 호출을 빈 배열로 대체 (배선 훼손)",
     file: "src/lib/gif-collector/publisher.ts",
-    from: "const collectorPlayerTags = buildCollectorPlayerTags(row.matched_kbo_id);",
+    from: "const collectorPlayerTags = buildCollectorPlayerTags(row.matched_board_type, row.matched_kbo_id);",
     to: "const collectorPlayerTags: string[] = [];",
-    expect: "publisher 가 buildCollectorPlayerTags 를 matched_kbo_id 로 호출",
+    expect: "publisher 가 buildCollectorPlayerTags 를 board_type + matched_kbo_id 로 호출",
   },
   {
     // 파생 함수 자체를 항상 빈 배열로 — 행동 검증(사고 재현 케이스)이 잡아야 한다.
@@ -69,6 +69,15 @@ const MUTATIONS = [
     from: "  const name = playerNameForKboId(kboId);\n  if (!name) return [];\n  return [formatPlayerTag(kboId, name)];",
     to: "  const name = playerNameForKboId(kboId);\n  return [formatPlayerTag(kboId, name ?? \"\")];",
     expect: "로스터 미등록 kboId → 빈 배열(이름 없는 태그 생성 금지)",
+  },
+  {
+    // board_type 가드 훼손(삼순 2026-08-16 NO-GO 축): matcher 가 실제 생성하는
+    // `matchedKboId≠null + boardType='team'` 글에 태그가 붙으면 특정 선수 팬에게 오발송된다.
+    name: "M8 board_type 가드 제거 (team 글 오발송 RED)",
+    file: "src/lib/gif-collector/collector-team.ts",
+    from: '  if (boardType !== "player") return [];',
+    to: "",
+    expect: "team 글은 matched_kbo_id 가 있어도 태그 없음(오발송 방지)",
   },
   {
     // 포맷 훼손: 디스패처가 tag.split(":") 로 kboId/이름을 복원하지 못하면 알림 제목이 깨진다.

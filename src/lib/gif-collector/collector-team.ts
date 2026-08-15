@@ -50,11 +50,19 @@ export function resolveCollectorTeam(
  * 빈 배열 — 이름 없는 태그("52605:")를 만들면 알림 제목이 깨지고, 태그 파서의 displayName 계약도
  * 무너진다. 임의 문자열을 지어내지 않고 알림을 포기하는 쪽이 안전하다(fail-close).
  *
+ * board_type 가드(삼순 2026-08-16 NO-GO 반영): 태그는 boardType==='player' 일 때만 만든다.
+ * matcher 는 `matchedKboId≠null + matchedBoardType='team'` 상태를 실제로 생성한다
+ * (matching.ts — 선수가 식별됐지만 확신이 낮아 팀판으로 내려보낸 경로). 그 글은 팀 글로
+ * 발행된 것이므로 matchedKboId 만 보고 태그를 만들면 특정 선수 팬에게 잘못된 알림이 간다.
  * board_type='team' 글은 특정 선수 글이 아니므로 태그가 없다 — 팀 공개범위(team_tags)만 남는다.
  *
  * supabase 를 import 하지 않는 순수 모듈 — 게이트가 실행 환경 없이 직접 호출할 수 있어야 한다.
  */
-export function buildCollectorPlayerTags(matchedKboId: string | null): string[] {
+export function buildCollectorPlayerTags(
+  boardType: string | null,
+  matchedKboId: string | null,
+): string[] {
+  if (boardType !== "player") return [];
   if (!matchedKboId) return [];
   const kboId = String(matchedKboId).trim();
   if (!kboId) return [];

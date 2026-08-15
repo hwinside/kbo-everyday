@@ -371,8 +371,11 @@ export async function publishQueueItem(queueId: number): Promise<PublishResult> 
   // return [] 한다 — board_id 가 선수판이어도 푸시 시도 자체가 0건이 된다.
   // (2026-08-16 하린아빠 제보: 콜렉터 생성글 50건 전부 player_tags=[] → 알림 0건)
   // 매칭 결과(matched_kbo_id)가 있고 로스터에서 이름이 해석될 때만 채운다.
+  // board_type='player' 일 때만 — matcher 는 선수가 식별됐지만 확신이 낮아 팀판으로 내려보내는
+  // `matchedKboId≠null + boardType='team'` 상태를 실제 생성하므로(삼순 2026-08-16 NO-GO),
+  // 그 경우 태그를 만들면 팀 글이 특정 선수 팬에게 잘못 알림된다.
   // 일반 유저 글과 동일 취급 — 별도 pref 없이 fav_player_post 그대로 탄다(하린아빠 2026-08-16 1번안).
-  const collectorPlayerTags = buildCollectorPlayerTags(row.matched_kbo_id);
+  const collectorPlayerTags = buildCollectorPlayerTags(row.matched_board_type, row.matched_kbo_id);
 
   const postInsert: Record<string, unknown> = {
     author_id: botUserId,
