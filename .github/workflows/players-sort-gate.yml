@@ -1,0 +1,116 @@
+name: Players Sort Gate
+
+# 선수탭(/players) 정렬 토글 게이트.
+#
+# 배경(삼순 2026-08-15 NO-GO ①): qa:players-sort / qa:players-sort:mutations 를 새로
+# 만들었지만 prebuild 에도 어떤 워크플로에도 결속하지 않아, PR 의 전 checks GREEN 이
+# 이 게이트를 **단 한 번도 실행하지 않은** false-green 상태였다.
+#
+# 이 워크플로는 Chromium 을 설치해 실제 /players 페이지를 마운트하고 fail-closed 로 돈다:
+#   - 인기순 기본 정렬 / 늦은 집계 응답의 행 재정렬 금지(bounded settle)
+#   - 집계 실패 폴백 + 로딩 고착 금지
+#   - 가나다순 토글이 실제 DOM 순서를 바꾸는지
+#   - 구단별·포지션별 필터가 실제로 목록을 줄이는지
+#   - 제거된 ?sort=posts·photos 딥링크가 화면과 URL 양쪽에서 정규화되는지
+#   - 검색 / 무한스크롤 비회귀
+# 그리고 mutation job 이 결함주입 5축의 **해당 체크가 RED 인지**(semantic) 로 게이트의
+# 검증력 자체를 증명한다. 단순 non-zero exit 은 anchor drift·빌드 오류까지 "검출" 로
+# 세므로 쓰지 않는다.
+#
+# ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
+# pull_request / push paths 는 중복이지만 반드시 그대로 나열해야 한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/app/(main)/players/page.tsx"
+      - "src/lib/utils/player-popularity.ts"
+      - "src/app/api/player-popularity/route.ts"
+      - "src/components/onboarding/PlayerSelectModal.tsx"
+      - "src/lib/constants/players-roster.json"
+      - "scripts/qa/players-sort-browser.mjs"
+      - "scripts/qa/players-sort-mutations.sh"
+      - "scripts/qa/player-popularity-order-smoke.ts"
+      - "scripts/qa/player-popularity-order-browser.mjs"
+      - "src/styles/globals.css"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/players-sort-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/app/(main)/players/page.tsx"
+      - "src/lib/utils/player-popularity.ts"
+      - "src/app/api/player-popularity/route.ts"
+      - "src/components/onboarding/PlayerSelectModal.tsx"
+      - "src/lib/constants/players-roster.json"
+      - "scripts/qa/players-sort-browser.mjs"
+      - "scripts/qa/players-sort-mutations.sh"
+      - "scripts/qa/player-popularity-order-smoke.ts"
+      - "scripts/qa/player-popularity-order-browser.mjs"
+      - "src/styles/globals.css"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/players-sort-gate.yml"
+
+jobs:
+  players-sort:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint players sort surface (fail-closed, warnings blocked)
+        # --max-warnings=0 → react-hooks 경고 1건도 check 실패로 이어진다.
+        run: >-
+          npx eslint --max-warnings=0
+          'src/app/(main)/players/page.tsx'
+          src/lib/utils/player-popularity.ts
+          'src/app/api/player-popularity/route.ts'
+          scripts/qa/players-sort-browser.mjs
+          scripts/qa/player-popularity-order-smoke.ts
+          scripts/qa/player-popularity-order-browser.mjs
+
+      - name: Syntax check gate scripts (.mjs, fail-closed)
+        # tsc 는 .mjs 를 보지 않는다 — 게이트 스크립트 자체의 문법 오류가
+        # 어느 체크에도 안 잡히면 "게이트가 돌았다" 는 말이 거짓이 된다.
+        run: |
+          node --check scripts/qa/players-sort-browser.mjs
+          bash -n scripts/qa/players-sort-mutations.sh
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run player popularity contract smoke (fail-closed)
+        # 정렬 순수함수 · /players 배선 · route · RPC 계약 (소스/단위 축)
+        run: npx tsx scripts/qa/player-popularity-order-smoke.ts
+
+      - name: Run onboarding player picker browser gate (fail-closed)
+        env:
+          PLAYER_POPULARITY_REQUIRE_BROWSER: "1"
+        run: node scripts/qa/player-popularity-order-browser.mjs
+
+      - name: Run /players sort browser gate (fail-closed)
+        # 실제 페이지를 마운트해 렌더 순서·race·필터·URL·검색·스크롤을 직접 본다.
+        # REQUIRE_BROWSER=1 → chromium 미설치/launch 실패도 exit 1 (SKIP 불가)
+        env:
+          PLAYERS_SORT_REQUIRE_BROWSER: "1"
+        run: npm run qa:players-sort
+
+      - name: Prove gate detects real defects (mutation, fail-closed)
+        # race·toggle·fallback·teamfilter·urlsort 5축 결함주입 → 해당 체크가 RED 여야 한다.
+        # 이 job 이 GREEN 이어야 위 게이트의 GREEN 에 의미가 생긴다.
+        env:
+          PLAYERS_SORT_REQUIRE_BROWSER: "1"
+        run: npm run qa:players-sort:mutations
