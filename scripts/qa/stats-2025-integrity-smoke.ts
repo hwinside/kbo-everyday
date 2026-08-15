@@ -22,10 +22,26 @@
  *  era/whip 형식(소수점)·범위, 관계 so/bb/hits >= 0. Basic2 밀림과 같은 유형이
  *  투수에도 오면 형식·범위 축에서 걸린다.
  *
+ * ── 스냅샷 해시 고정 (삼순 NO-GO 필수 2 반영) ──────────────────
+ *  2025 는 종료 시즌 = 값이 변할 수 없다. 항등식만으로는 BB↔HBP swap(PA 항등식·
+ *  IBB≤BB 모두 통과)·GDP/SO 단독 오염을 못 잡는다 → 파일 SHA-256 을 고정해
+ *  임의의 단일 바이트 변조까지 fail-close 한다. 정당한 재수집(예: 송성문 재추가) 시에는
+ *  항등식·관계 전수 PASS 를 확인한 뒤 이 해시를 같은 PR 에서 갱신한다(절차 계약).
+ *
  * 실행: npm run qa:stats-2025-integrity  (prebuild 포함, 위반 시 exit 1)
  */
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import batters from "../../src/lib/constants/stats-2025-batters.json";
 import pitchers from "../../src/lib/constants/stats-2025-pitchers.json";
+
+/** 확정 스냅샷 SHA-256 (2026-08-15 복구본 기준). 갱신 절차는 상단 주석 참조. */
+const SNAPSHOT_SHA256: Record<string, string> = {
+  "src/lib/constants/stats-2025-batters.json":
+    "a3b9877fed358524579fb1cd6c6fa8ce76222ca256d37f0a1179523e9731d998",
+  "src/lib/constants/stats-2025-pitchers.json":
+    "fa722bbf4b6ccc9916f619fd3cc6cc0e8401e86d714c66ea674f0c217237d314",
+};
 
 type Row = Record<string, string | number>;
 
@@ -52,6 +68,16 @@ function checkRateFormat(row: Row, name: string, field: string, max: number): vo
   }
 }
 
+// ── 스냅샷 해시 — 단일 필드 변조(GDP/SO 단독·BB↔HBP swap 포함)까지 fail-close ──
+for (const [path, expected] of Object.entries(SNAPSHOT_SHA256)) {
+  const actual = createHash("sha256")
+    .update(readFileSync(new URL(`../../${path}`, import.meta.url)))
+    .digest("hex");
+  if (actual !== expected) {
+    bad(path, "snapshot-hash", `확정 시즌 파일 변경 감지 — actual=${actual.slice(0, 16)}… (정당한 갱신이면 항등식 전수 PASS 확인 후 해시를 같은 PR 에서 갱신)`);
+  }
+}
+
 // ── batter 42행 전수 ──
 const batterRows = batters as Row[];
 if (batterRows.length !== 42) bad("(전체)", "row-count", `batter=${batterRows.length} ≠ 42`);
@@ -60,7 +86,7 @@ for (const r of batterRows) {
   const [games, pa, ab, runs, hits] = ["games", "pa", "ab", "runs", "hits"].map((f) => num(r, f));
   const [d2, d3, hr, tb] = ["doubles", "triples", "hr", "tb"].map((f) => num(r, f));
   const [bb, ibb, hbp, so, gdp, sac, sf] = ["bb", "ibb", "hbp", "so", "gdp", "sac", "sf"].map((f) => num(r, f));
-  void runs; void gdp;
+  void runs;
 
   // 1. 밀림 시그니처 (76e623ef8 오염의 정확한 형태)
   if (bb === games && ibb === pa && hbp === ab) {
@@ -85,6 +111,9 @@ for (const r of batterRows) {
   if (hits > ab) bad(name, "hits-ab", `hits=${hits} > ab=${ab}`);
   if (so > ab + bb + hbp) bad(name, "so-relation", `so=${so} > ab+bb+hbp=${ab + bb + hbp}`);
   if (ibb > bb) bad(name, "ibb-relation", `ibb=${ibb} > bb=${bb}`);
+  // GDP/SO 단독 오염의 정밀 검출은 snapshot-hash 가 담당. 여기는 관계 하한만.
+  if (!Number.isInteger(gdp) || gdp < 0 || gdp > ab) bad(name, "gdp-range", `gdp=${gdp} (0~ab=${ab})`);
+  if (!Number.isInteger(so) || so < 0) bad(name, "so-range", `so=${so}`);
 }
 
 // ── pitcher 311행 기본 검증 ──
