@@ -224,7 +224,7 @@ const defaultLoaders: ListenerLoaders = {
       addListener: (event, listener) => App.addListener(event, listener),
     } as AppStateSource;
   },
-  urlOpen: (listener) => subscribeAppUrlOpen(listener),
+  urlOpen: (listener) => subscribeAppUrlOpen("la-deeplink", listener),
   pushDeepLink: async () => {
     // 주입 브릿지 우선, 없으면 npm core registerPlugin
     // (구빌드는 호출 시 unimplemented throw → 상위 catch no-op).

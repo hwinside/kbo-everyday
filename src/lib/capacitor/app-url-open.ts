@@ -1,6 +1,6 @@
 "use client";
 
-// appUrlOpen 단일 디스패처 (삼순 #1204 R2·R3)
+// appUrlOpen 단일 디스패처 (삼순 #1204 R2·R3·R4)
 //
 // R2 문제: Capacitor iOS는 retained `appUrlOpen`(cold launch로 앱이 열리기 전 도착한 URL)을
 // *첫 리스너 등록 시 전달 후 삭제*한다. OAuth 리스너(capacitor/auth)와 LA 딥링크 재회수
@@ -8,17 +8,24 @@
 // 어느 쪽이 먼저 붙느냐에 따라 다른 쪽이 이벤트를 영영 못 받는다(로그인 파손 가능).
 // → 네이티브 리스너는 이 모듈이 정확히 1개만 등록하고, 소비자는 subscribe로 팬아웃받는다.
 //
-// R3-①: attach 실패를 "다음 subscribe 재시도"에만 맡기면 초기 소비자 2곳(OAuth·딥링크)이
-// 전부 등록을 끝낸 뒤 실패했을 때 재시도 주체가 없어 앱 reload까지 영구 무수신이다.
-// → 디스패처가 스스로 backoff 재시도한다(구독자가 남아 있는 한).
+// R3-①: attach 실패는 디스패처가 backoff로 스스로 재연결한다(재구독 없이 복구).
 //
-// R3-②: replay 버퍼는 OAuth 콜백의 code/access_token 등 secret URL을 담는다. 무기한
-// 보관·전 구독자 재생은 유출면이다. → 이벤트는 구독자별 1회만 전달하고, 짧은 TTL(15초 —
-// 부팅 창의 초기 구독자 등록만 커버) 후 즉시 폐기한다. late 구독자 replay는 부팅 창
-// 안에서만 필요하므로 기능 손실이 없다.
+// R4 (R3-② 고정 TTL의 두 결함 교정):
+// - 고정 15초 컷오프는 느린 remote-load OAuth 구독자가 15초를 넘겨 붙으면 R2의
+//   cold OAuth 유실을 그대로 재발시킨다 → 시간이 아니라 **소비자 기준**으로 보관한다.
+// - sweep이 subscribe/fanout 진입 때만 돌면 이후 진입이 없을 때 secret URL이 메모리에
+//   잔류한다 → orphan은 **실제 expiry timer**(setTimeout)로 추가 진입 없이 자동 폐기한다.
+//
+// 보관 계약: 이벤트는 알려진 소비자(EXPECTED_CONSUMERS) 각각이 1회 수신할 때까지만
+// 보관하고, 마지막 대기 소비자가 수신하는 즉시 버퍼에서 삭제한다(secret 즉시 폐기).
+// 끝내 안 붙는 소비자가 있으면 orphan timer(60초)가 이벤트를 제거한다.
 
 type UrlOpenEvent = { url: string };
 type Subscriber = (event: UrlOpenEvent) => void;
+
+/** 폐쇄집합 — 이 디스패처를 소비하는 앱 내 소비자 ID. 새 소비자는 여기에 추가해야 replay를 보장받는다. */
+export type AppUrlOpenConsumerId = "oauth" | "la-deeplink";
+const EXPECTED_CONSUMERS: readonly AppUrlOpenConsumerId[] = ["oauth", "la-deeplink"];
 
 interface ListenerHandle { remove: () => Promise<void> }
 interface AppUrlOpenSource {
@@ -31,38 +38,35 @@ interface InjectedBridge { Plugins?: { App?: AppUrlOpenSource } }
 
 interface BufferedEvent {
   event: UrlOpenEvent;
-  expiresAt: number;
-  deliveredTo: WeakSet<Subscriber>;
+  /** 아직 이 이벤트를 받지 못한 expected 소비자 — 비는 즉시 이벤트 삭제. */
+  pending: Set<AppUrlOpenConsumerId>;
+  /** orphan 자동 폐기 타이머 — 추가 진입 없이도 secret이 메모리에 남지 않게 한다(R4). */
+  expiryTimer: ReturnType<typeof setTimeout>;
 }
 
-// secret URL 노출면 최소화 — 부팅 창(초기 구독자 2곳 등록)만 커버하면 된다.
-const REPLAY_TTL_MS = 15_000;
+// orphan(끝내 안 붙는 소비자 대기분) 보관 상한. OAuth code 수명과 부팅 지연을 함께 고려.
+let orphanTtlMs = 60_000;
 const REPLAY_MAX = 10;
 const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 15_000;
 
-const subscribers: Subscriber[] = [];
+const subscribers = new Map<AppUrlOpenConsumerId, Subscriber[]>();
 const replayBuffer: BufferedEvent[] = [];
 let attachPromise: Promise<void> | null = null;
 let attached = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 
-function now(): number {
-  return Date.now();
+function dropBuffered(buffered: BufferedEvent): void {
+  clearTimeout(buffered.expiryTimer);
+  const idx = replayBuffer.indexOf(buffered);
+  if (idx !== -1) replayBuffer.splice(idx, 1);
 }
 
-/** 만료된 secret URL을 즉시 폐기한다(R3-②). 모든 진입점에서 호출. */
-function sweepExpired(): void {
-  const t = now();
-  for (let i = replayBuffer.length - 1; i >= 0; i -= 1) {
-    if (replayBuffer[i].expiresAt <= t) replayBuffer.splice(i, 1);
-  }
-}
-
-function deliver(subscriber: Subscriber, buffered: BufferedEvent): void {
-  if (buffered.deliveredTo.has(subscriber)) return; // 구독자별 1회 전달(R3-②)
-  buffered.deliveredTo.add(subscriber);
+function deliver(consumerId: AppUrlOpenConsumerId, subscriber: Subscriber, buffered: BufferedEvent): void {
+  if (!buffered.pending.has(consumerId)) return; // 소비자별 1회 — 재구독/재마운트 중복 재생 0
+  buffered.pending.delete(consumerId);
+  if (buffered.pending.size === 0) dropBuffered(buffered); // 마지막 대기 소비자 수신 → secret 즉시 폐기(R4)
   try {
     subscriber(buffered.event);
   } catch {
@@ -71,15 +75,18 @@ function deliver(subscriber: Subscriber, buffered: BufferedEvent): void {
 }
 
 function fanout(event: UrlOpenEvent): void {
-  sweepExpired();
-  if (replayBuffer.length >= REPLAY_MAX) replayBuffer.shift();
+  if (replayBuffer.length >= REPLAY_MAX) dropBuffered(replayBuffer[0]);
   const buffered: BufferedEvent = {
     event,
-    expiresAt: now() + REPLAY_TTL_MS,
-    deliveredTo: new WeakSet<Subscriber>(),
+    pending: new Set(EXPECTED_CONSUMERS),
+    expiryTimer: setTimeout(() => dropBuffered(buffered), orphanTtlMs),
   };
   replayBuffer.push(buffered);
-  for (const sub of [...subscribers]) deliver(sub, buffered);
+  for (const id of EXPECTED_CONSUMERS) {
+    const subs = subscribers.get(id);
+    if (!subs || subs.length === 0) continue;
+    deliver(id, subs[0], buffered); // 같은 ID의 첫 구독자가 대표 수신(ID당 1회 계약)
+  }
 }
 
 async function loadAppSource(): Promise<AppUrlOpenSource> {
@@ -99,10 +106,16 @@ async function loadAppSource(): Promise<AppUrlOpenSource> {
   return { addListener: (event, listener) => App.addListener(event, listener) };
 }
 
+function subscriberCount(): number {
+  let n = 0;
+  for (const subs of subscribers.values()) n += subs.length;
+  return n;
+}
+
 /** attach 실패 시 디스패처 자체 backoff 재시도(R3-①) — 구독자가 남아 있는 한 재연결한다. */
 function scheduleRetry(): void {
   if (retryTimer !== null || attached) return;
-  if (subscribers.length === 0) return; // 소비자가 없으면 다음 subscribe가 재시도 주체
+  if (subscriberCount() === 0) return; // 소비자가 없으면 다음 subscribe가 재시도 주체
   const delay = Math.min(RETRY_BASE_MS * 2 ** retryAttempt, RETRY_MAX_MS);
   retryAttempt += 1;
   retryTimer = setTimeout(() => {
@@ -129,26 +142,40 @@ function ensureAttached(): Promise<void> {
 
 /**
  * appUrlOpen 구독 — 네이티브 리스너는 전 앱에서 이 모듈 1개만 등록된다.
- * 부팅 창(TTL 15초) 내 이벤트는 late 구독자에게도 replay되며, 구독자별 1회만 전달되고
- * TTL 경과 시 즉시 폐기된다(secret URL 보존 금지). 네이티브 등록 실패 시에도 구독은
- * 유지되고 디스패처가 backoff로 스스로 재연결한다.
+ * 대기 중인 이벤트는 이 consumerId가 아직 수신하지 않은 것만 즉시 전달되며(1회),
+ * 마지막 대기 소비자가 수신하는 순간 이벤트(secret URL 포함)는 버퍼에서 삭제된다.
+ * 어떤 소비자도 끝내 붙지 않은 이벤트는 orphan expiry timer가 자동 폐기한다.
+ * 네이티브 등록 실패 시에도 구독은 유지되고 디스패처가 backoff로 스스로 재연결한다.
  */
-export async function subscribeAppUrlOpen(subscriber: Subscriber): Promise<void> {
-  subscribers.push(subscriber);
-  sweepExpired();
-  for (const buffered of [...replayBuffer]) deliver(subscriber, buffered);
+export async function subscribeAppUrlOpen(
+  consumerId: AppUrlOpenConsumerId,
+  subscriber: Subscriber,
+): Promise<void> {
+  const subs = subscribers.get(consumerId) ?? [];
+  subs.push(subscriber);
+  subscribers.set(consumerId, subs);
+  for (const buffered of [...replayBuffer]) deliver(consumerId, subscriber, buffered);
   await ensureAttached();
 }
 
 /** 테스트 전용 — 구독/버퍼/등록/재시도 상태 초기화. */
 export function __resetAppUrlOpenForTest(): void {
-  subscribers.length = 0;
-  replayBuffer.length = 0;
+  subscribers.clear();
+  for (const buffered of [...replayBuffer]) dropBuffered(buffered);
   attachPromise = null;
   attached = false;
   retryAttempt = 0;
+  orphanTtlMs = 60_000;
   if (retryTimer !== null) {
     clearTimeout(retryTimer);
     retryTimer = null;
   }
+}
+
+/** 테스트 전용 — orphan expiry 관찰용 훅. */
+export function __appUrlOpenBufferSizeForTest(): number {
+  return replayBuffer.length;
+}
+export function __setAppUrlOpenOrphanTtlForTest(ms: number): void {
+  orphanTtlMs = ms;
 }

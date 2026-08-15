@@ -56,7 +56,7 @@ export function registerDeepLinkListener(): void {
   if (!isNative || listenerRegistered) return;
   listenerRegistered = true;
 
-  void subscribeAppUrlOpen(({ url }) => void handleOAuthUrlOpen(url));
+  void subscribeAppUrlOpen("oauth", ({ url }) => void handleOAuthUrlOpen(url));
 }
 
 async function handleOAuthUrlOpen(url: string): Promise<void> {

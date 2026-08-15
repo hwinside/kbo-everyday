@@ -440,18 +440,17 @@ test("25) 딥링크 모듈은 App.addListener('appUrlOpen')을 직접 등록하�
   assert.match(auth, /subscribeAppUrlOpen/);
 });
 
-test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late subscriber에 replay", async () => {
+test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late 소비자에 targeted replay, 전원 수신 즉시 buffer 0", async () => {
   // "retained가 첫 리스너에만 전달" 재현: 네이티브는 첫 addListener 직후 이벤트를 1회만 발행.
-  const { subscribeAppUrlOpen, __resetAppUrlOpenForTest } =
-    await import("../../src/lib/capacitor/app-url-open") as unknown as {
-      subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
-      __resetAppUrlOpenForTest: () => void;
-    };
-  __resetAppUrlOpenForTest();
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
 
   let nativeAdds = 0;
   const oauthUrl = "https://keubo.fan/auth/callback?code=RETAINED";
-  // 주입 브릿지의 App 플러그인 재현 — 첫 리스너 등록 순간 retained 이벤트를 전달하고 삭제.
   (injectedCapacitor as unknown as Record<string, unknown>) = {
     isNativePlatform: () => true,
     getPlatform: () => "ios",
@@ -468,25 +467,24 @@ test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late
 
   // LA 딥링크 구독이 먼저 붙는다(문제의 cold 순서) — retained는 이 시점에 발행됨
   const laSeen: string[] = [];
-  await subscribeAppUrlOpen(({ url }) => { laSeen.push(url); });
-  // OAuth 구독이 늘게 붙어도 replay로 같은 이벤트를 받는다 → 로그인 보존
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "OAuth 미수신 동안은 보관");
+
+  // OAuth 구독이 늦게 붙어도 targeted replay로 같은 이벤트를 받는다 → 로그인 보존
   const oauthSeen: string[] = [];
-  await subscribeAppUrlOpen(({ url }) => { oauthSeen.push(url); });
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
 
   assert.equal(nativeAdds, 1, "네이티브 appUrlOpen 리스너는 정확히 1개");
   assert.deepEqual(laSeen, [oauthUrl]);
   assert.deepEqual(oauthSeen, [oauthUrl], "late OAuth subscriber도 retained 이벤트를 받아야 한다");
+  // R4: 마지막 대기 소비자(oauth) 수신 즉시 secret 삭제 — 추가 진입 불필요
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "전 소비자 수신 즉시 buffer 0(secret 즉시 폐기)");
 
-  // R3-② 구독자별 1회 — 같은 구독자가 재구독 없이 같은 이벤트를 중복 수신하지 않는다
-  assert.equal(laSeen.length, 1, "구독자별 1회 전달 — 중복 replay 금지");
-
-  // R3-② 같은 구독자 함수가 재구독(재마운트/HMR)되어도 secret URL이 중복 재생되지 않는다
+  // 소비자 ID별 1회 — 같은 ID 재구독(재마운트/HMR)에도 중복 재생 0
   const dupSeen: string[] = [];
-  const dupSub = ({ url }: { url: string }) => { dupSeen.push(url); };
-  await subscribeAppUrlOpen(dupSub); // 1차 구독 → replay 1회 수신
-  await subscribeAppUrlOpen(dupSub); // 동일 참조 재구독 → 가드가 중복 replay 차단
-  assert.deepEqual(dupSeen, [oauthUrl], "동일 구독자 재구독 시 replay 중복 금지(secret 1회 전달)");
-  __resetAppUrlOpenForTest();
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { dupSeen.push(url); });
+  assert.deepEqual(dupSeen, [], "이미 수신한 소비자 ID 재구독 시 replay 중복 금지(secret 1회 전달)");
+  mod.__resetAppUrlOpenForTest();
 });
 
 test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스로 재연결한다", async () => {
@@ -494,7 +492,7 @@ test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스�
   // "다음 subscribe 재시도" 주체가 없다 → 디스패쳐 backoff 재연결이 유일한 복구수단(삼순 R3).
   const { subscribeAppUrlOpen, __resetAppUrlOpenForTest } =
     await import("../../src/lib/capacitor/app-url-open") as unknown as {
-      subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
+      subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
       __resetAppUrlOpenForTest: () => void;
     };
   __resetAppUrlOpenForTest();
@@ -520,8 +518,8 @@ test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스�
   const seenB: string[] = [];
   // 두 1회성 소비자가 같은 실패 attach를 공유(문제 상황)
   await Promise.all([
-    subscribeAppUrlOpen(({ url }) => { seenA.push(url); }),
-    subscribeAppUrlOpen(({ url }) => { seenB.push(url); }),
+    subscribeAppUrlOpen("la-deeplink", ({ url }) => { seenA.push(url); }),
+    subscribeAppUrlOpen("oauth", ({ url }) => { seenB.push(url); }),
   ]);
   assert.equal(liveListener, null, "첫 attach는 실패 상태");
 
@@ -539,10 +537,14 @@ test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스�
   __resetAppUrlOpenForTest();
 });
 
-test("28) 디스패쳐 R3-②: secret URL은 TTL 경과 후 새 구독자에게 재생되지 않는다(stale replay 0)", async () => {
+test("28) 디스패쳐 R4: 15초를 넘긴 late OAuth도 1회 수신하고, 수신 즉시 secret이 삭제된다", async (t) => {
+  // R3의 고정 15초 컷오프는 느린 remote-load OAuth 구독자에서 cold OAuth 유실을 재발시킨다(삼순 R4).
+  // → 보관 기준은 시간이 아니라 소비자: expected 소비자가 수신할 때까지(orphan 상한 60s) 보관.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
-    subscribeAppUrlOpen: (s: (e: { url: string }) => void) => Promise<void>;
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
     __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
   };
   mod.__resetAppUrlOpenForTest();
 
@@ -560,23 +562,61 @@ test("28) 디스패쳐 R3-②: secret URL은 TTL 경과 후 새 구독자에게 
     },
   };
 
-  const first: string[] = [];
-  await mod.subscribeAppUrlOpen(({ url }) => { first.push(url); });
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
   const secretUrl = "https://keubo.fan/auth/callback#access_token=SECRET&refresh_token=SECRET";
+  (listener as unknown as (ev: { url: string }) => void)({ url: secretUrl });
+  assert.deepEqual(laSeen, [secretUrl], "도착 시점 구독자는 수신");
 
-  // TTL(15s)을 지나간 시점을 Date.now 모킹으로 재현 — 실제 대기 없이 만료 경로를 태운다
-  const realNow = Date.now;
-  try {
-    (listener as unknown as (ev: { url: string }) => void)({ url: secretUrl });
-    assert.deepEqual(first, [secretUrl], "도착 시점 구독자는 수신");
+  t.mock.timers.tick(16_000); // 종전 고정 TTL(15s)을 넘긴 시점
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "OAuth 미수신 이벤트는 15초 뒤에도 보관");
 
-    Date.now = () => realNow() + 15_001; // TTL 경과
-    const late: string[] = [];
-    await mod.subscribeAppUrlOpen(({ url }) => { late.push(url); });
-    assert.deepEqual(late, [], "TTL 경과 후 구독자는 secret URL을 받으면 안 된다(stale replay 0)");
-  } finally {
-    Date.now = realNow;
-  }
+  const late: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { late.push(url); }); // >15초 late OAuth
+  assert.deepEqual(late, [secretUrl], ">15초 late OAuth도 1회 수신해야 한다(cold OAuth 유실 방지)");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "마지막 대기 소비자 수신 즉시 secret 삭제");
+
+  const dupLate: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { dupLate.push(url); });
+  assert.deepEqual(dupLate, [], "수신 완료된 secret은 어떤 재구독에도 재생 0");
+  mod.__resetAppUrlOpenForTest();
+});
+
+test("28b) 디스패쳐 R4: 미수신 orphan은 추가 진입 없이 expiry timer로 자동 buffer 0", async (t) => {
+  // sweep이 진입 시점에만 돌면 이후 이벤트가 없을 때 secret이 메모리에 잔류한다(삼순 R4).
+  // 실제 setTimeout 기반 expiry — subscribe/fanout 재진입 없이 스스로 폐기되는지 본다.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  // LA만 수신하고 OAuth는 끝내 붙지 않는다 → orphan
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  (listener as unknown as (ev: { url: string }) => void)({ url: "https://keubo.fan/auth/callback?code=ORPHAN" });
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "orphan은 일단 보관");
+
+  t.mock.timers.tick(59_999);
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "만료 전에는 유지");
+  t.mock.timers.tick(2); // 60s 경과 — subscribe/fanout 어떤 진입도 없이
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "expiry timer가 추가 진입 없이 secret을 자동 폐기");
   mod.__resetAppUrlOpenForTest();
 });
 

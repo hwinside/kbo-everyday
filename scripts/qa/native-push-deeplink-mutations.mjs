@@ -169,32 +169,30 @@ const mutations = [
   {
     id: "M21 디스패처 replay 제거(late OAuth subscriber가 retained 이벤트 유실)",
     file: DISPATCHER,
-    from: `  for (const buffered of [...replayBuffer]) deliver(subscriber, buffered);`,
+    from: `  for (const buffered of [...replayBuffer]) deliver(consumerId, subscriber, buffered);`,
     to: "",
   },
   {
     id: "M22 딥링크가 App.addListener('appUrlOpen') 직접 등록 재도입(OAuth 경합 회귀)",
     file: DEEPLINK,
-    from: `  urlOpen: (listener) => subscribeAppUrlOpen(listener),`,
+    from: `  urlOpen: (listener) => subscribeAppUrlOpen("la-deeplink", listener),`,
     to: `  urlOpen: async (listener) => {
     const { App } = await import("@capacitor/app");
     await App.addListener("appUrlOpen", listener);
   },`,
   },
   {
-    id: "M23 R3-② TTL sweep 제거(secret URL 무기한 보관·stale replay 재발)",
+    id: "M23 R4 orphan expiry timer 무력화(secret URL 무기한 잔류)",
     file: DISPATCHER,
-    from: `  const t = now();
-  for (let i = replayBuffer.length - 1; i >= 0; i -= 1) {
-    if (replayBuffer[i].expiresAt <= t) replayBuffer.splice(i, 1);
-  }`,
-    to: "",
+    from: `    expiryTimer: setTimeout(() => dropBuffered(buffered), orphanTtlMs),`,
+    to: `    expiryTimer: setTimeout(() => undefined, orphanTtlMs),`,
   },
   {
-    id: "M24 R3-② 구독자별 1회 전달 가드 제거(중복 replay)",
+    id: "M24 R4 소비자별 1회·수신 즉시 삭제 가드 제거(secret 중복 재생·잔류)",
     file: DISPATCHER,
-    from: `  if (buffered.deliveredTo.has(subscriber)) return; // 구독자별 1회 전달(R3-②)
-  buffered.deliveredTo.add(subscriber);`,
+    from: `  if (!buffered.pending.has(consumerId)) return; // 소비자별 1회 — 재구독/재마운트 중복 재생 0
+  buffered.pending.delete(consumerId);
+  if (buffered.pending.size === 0) dropBuffered(buffered); // 마지막 대기 소비자 수신 → secret 즉시 폐기(R4)`,
     to: "",
   },
   {
