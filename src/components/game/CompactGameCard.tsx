@@ -269,7 +269,10 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
                 <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${awayWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.awayScore ?? 0}
                 </span>
-                <span className={`text-xs font-bold ${featuredTeam ? "text-white/80" : "text-text-tertiary/70"}`}>:</span>
+                {/* 구분자 콜론도 읽힐 수 있어야 한다 — 12px 본문 크기라 AA large(3:1) 예외 대상이
+                    아니다. tertiary/70 은 라이트 1.39:1 · 다크 3.29:1 로 둘 다 미달이었다
+                    (qa:games-card-render 실측). featured 는 백색 계열, 그 외는 secondary 로 올린다. */}
+                <span className={`text-xs font-bold ${featuredTeam ? "text-white/80" : "text-text-secondary"}`}>:</span>
                 <span className={`text-[20px] font-extrabold leading-none tracking-[-0.5px] tabular-nums ${homeWin || !isFinal ? "" : "text-text-tertiary"}`}>
                   {game.homeScore ?? 0}
                 </span>
