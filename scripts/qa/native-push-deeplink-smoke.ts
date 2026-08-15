@@ -468,14 +468,14 @@ test("26) 디스패쳐: 네이티브 리스너 1개 + retained 이벤트를 late
   // LA 딥링크 구독이 먼저 붙는다(문제의 cold 순서) — retained는 이 시점에 발행됨
   const laSeen: string[] = [];
   await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
-  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "OAuth 미수신 동안은 보관");
+  assert.deepEqual(laSeen, [], "R5: OAuth callback은 무관 소비자(LA)에 전달되지 않는다");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "relevant(oauth) 미수신 동안은 보관");
 
   // OAuth 구독이 늦게 붙어도 targeted replay로 같은 이벤트를 받는다 → 로그인 보존
   const oauthSeen: string[] = [];
   await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
 
   assert.equal(nativeAdds, 1, "네이티브 appUrlOpen 리스너는 정확히 1개");
-  assert.deepEqual(laSeen, [oauthUrl]);
   assert.deepEqual(oauthSeen, [oauthUrl], "late OAuth subscriber도 retained 이벤트를 받아야 한다");
   // R4: 마지막 대기 소비자(oauth) 수신 즉시 secret 삭제 — 추가 진입 불필요
   assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "전 소비자 수신 즉시 buffer 0(secret 즉시 폐기)");
@@ -532,9 +532,65 @@ test("27) 디스패쳐 R3-①: attach 동시 실패 후 디스패쳐가 스스�
   assert.ok(attempts >= 3, `재시도 횟수 (got ${attempts})`);
 
   (liveListener as unknown as (ev: { url: string }) => void)({ url: "https://keubo.fan/games/RETRY1" });
-  assert.deepEqual(seenA, ["https://keubo.fan/games/RETRY1"], "기존 구독자 A 수신");
-  assert.deepEqual(seenB, ["https://keubo.fan/games/RETRY1"], "기존 구독자 B 수신");
+  assert.deepEqual(seenA, ["https://keubo.fan/games/RETRY1"], "기존 relevant 구독자(LA) 수신");
+  assert.deepEqual(seenB, [], "R5: games 이벤트는 무관 소비자(oauth)에 전달되지 않는다");
   __resetAppUrlOpenForTest();
+});
+
+test("26b) 디스패처 R5: 폐쇄 분류 — OAuth만 구독 중 처리 직후 buffer 0 · games→LA만 · unknown fail-closed", async () => {
+  const mod = await import("../../src/lib/capacitor/app-url-open") as unknown as {
+    subscribeAppUrlOpen: (id: string, s: (e: { url: string }) => void) => Promise<void>;
+    classifyAppUrlOpen: (url: string) => string | null;
+    __resetAppUrlOpenForTest: () => void;
+    __appUrlOpenBufferSizeForTest: () => number;
+  };
+  mod.__resetAppUrlOpenForTest();
+
+  let listener: ((ev: { url: string }) => void) | null = null;
+  (injectedCapacitor as unknown as Record<string, unknown>) = {
+    isNativePlatform: () => true,
+    getPlatform: () => "ios",
+    Plugins: {
+      App: {
+        addListener: async (_e: string, cb: (ev: { url: string }) => void) => {
+          listener = cb;
+          return { remove: async () => undefined };
+        },
+      },
+    },
+  };
+
+  const oauthSeen: string[] = [];
+  const laSeen: string[] = [];
+  await mod.subscribeAppUrlOpen("oauth", ({ url }) => { oauthSeen.push(url); });
+  await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
+  const emit = (url: string) => (listener as unknown as (ev: { url: string }) => void)({ url });
+
+  // ① OAuth callback — oauth만 수신, 처리 직후 buffer 0(LA를 기다리지 않는다)
+  emit("https://keubo.fan/auth/callback?code=***");
+  assert.deepEqual(oauthSeen, ["https://keubo.fan/auth/callback?code=***"]);
+  assert.deepEqual(laSeen, [], "무관 소비자(LA) 수신 0");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "OAuth 구독 중이면 처리 직후 buffer 0");
+
+  // ② exact /games/<id> — la-deeplink만 수신
+  emit("https://keubo.fan/games/20260815LGOB0");
+  assert.deepEqual(laSeen, ["https://keubo.fan/games/20260815LGOB0"]);
+  assert.equal(oauthSeen.length, 1, "games 이벤트는 oauth에 전달되지 않는다");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0);
+
+  // ③ unknown — replay 없이 fail-closed(보관 0·전달 0)
+  emit("https://keubo.fan/players/12345");
+  emit("not a url");
+  assert.equal(oauthSeen.length, 1);
+  assert.equal(laSeen.length, 1);
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 0, "unknown은 보관하지 않는다(fail-closed)");
+
+  // ④ 분류 함수 경계 — token hash·auth error는 oauth, 하위경로·빈 id는 unknown
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/#access_token=x&refresh_token=y"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/?error=access_denied"), "oauth");
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/abc/def"), null);
+  assert.equal(mod.classifyAppUrlOpen("https://keubo.fan/games/"), null);
+  mod.__resetAppUrlOpenForTest();
 });
 
 test("28) 디스패쳐 R4: 15초를 넘긴 late OAuth도 1회 수신하고, 수신 즉시 secret이 삭제된다", async (t) => {
@@ -566,10 +622,10 @@ test("28) 디스패쳐 R4: 15초를 넘긴 late OAuth도 1회 수신하고, 수�
   await mod.subscribeAppUrlOpen("la-deeplink", ({ url }) => { laSeen.push(url); });
   const secretUrl = "https://keubo.fan/auth/callback#access_token=SECRET&refresh_token=SECRET";
   (listener as unknown as (ev: { url: string }) => void)({ url: secretUrl });
-  assert.deepEqual(laSeen, [secretUrl], "도착 시점 구독자는 수신");
+  assert.deepEqual(laSeen, [], "R5: secret은 무관 소비자(LA)에 전달되지 않는다");
 
   t.mock.timers.tick(16_000); // 종전 고정 TTL(15s)을 넘긴 시점
-  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "OAuth 미수신 이벤트는 15초 뒤에도 보관");
+  assert.equal(mod.__appUrlOpenBufferSizeForTest(), 1, "relevant(oauth) 미수신 이벤트는 15초 뒤에도 보관");
 
   const late: string[] = [];
   await mod.subscribeAppUrlOpen("oauth", ({ url }) => { late.push(url); }); // >15초 late OAuth

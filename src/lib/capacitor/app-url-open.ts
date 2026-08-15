@@ -16,16 +16,46 @@
 // - sweep이 subscribe/fanout 진입 때만 돌면 이후 진입이 없을 때 secret URL이 메모리에
 //   잔류한다 → orphan은 **실제 expiry timer**(setTimeout)로 추가 진입 없이 자동 폐기한다.
 //
-// 보관 계약: 이벤트는 알려진 소비자(EXPECTED_CONSUMERS) 각각이 1회 수신할 때까지만
-// 보관하고, 마지막 대기 소비자가 수신하는 즉시 버퍼에서 삭제한다(secret 즉시 폐기).
-// 끝내 안 붙는 소비자가 있으면 orphan timer(60초)가 이벤트를 제거한다.
+// R5 (보관 대상의 폐쇄 분류): 모든 URL을 전 소비자 pending으로 잡으면 OAuth가 이미
+// 처리한 secret이 무관한 LA 소비자를 기다리며 최대 60초 잔류한다. 이벤트는 도착
+// 즉시 폐쇄 분류해 **해당 소비자만** pending에 넣는다: OAuth callback→oauth,
+// exact /games/<id>→la-deeplink. 분류 불가(unknown)는 replay 없이 fail-closed(보관 0·전달 0).
+//
+// 보관 계약: 이벤트는 분류된 relevant 소비자가 1회 수신할 때까지만 보관하고,
+// 수신 즉시 버퍼에서 삭제한다(secret 즉시 폐기). 끝내 안 붙는 소비자의 이벤트는
+// orphan timer(60초)가 제거한다.
 
 type UrlOpenEvent = { url: string };
 type Subscriber = (event: UrlOpenEvent) => void;
 
-/** 폐쇄집합 — 이 디스패처를 소비하는 앱 내 소비자 ID. 새 소비자는 여기에 추가해야 replay를 보장받는다. */
+/** 폐쇄집합 — 이 디스패처를 소비하는 앱 내 소비자 ID. 새 소비자는 여기와 classifyAppUrlOpen에 추가해야 replay를 보장받는다. */
 export type AppUrlOpenConsumerId = "oauth" | "la-deeplink";
-const EXPECTED_CONSUMERS: readonly AppUrlOpenConsumerId[] = ["oauth", "la-deeplink"];
+
+// LA 카드 widgetURL이 만드는 exact 경로 — AppDelegate continue의 stash allowlist와 동일 형상.
+const LA_GAMES_PATH_RE = /^\/games\/[A-Za-z0-9]{1,32}$/;
+
+/**
+ * 이벤트의 relevant 소비자를 폐쇄 분류한다(삼순 R5).
+ * - oauth: OAuth callback 표식이 있는 URL만 — code query · token hash · /auth 경로 · auth error 파라미터.
+ * - la-deeplink: exact /games/<id> (LA widgetURL → 네이티브 stash 재회수 트리거).
+ * - null: 분류 불가 — 보관도 전달도 하지 않는다(fail-closed).
+ */
+export function classifyAppUrlOpen(url: string): AppUrlOpenConsumerId | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null; // 파싱 불가 URL은 fail-closed
+  }
+  if (parsed.pathname.startsWith("/auth")) return "oauth";
+  if (parsed.searchParams.has("code") || parsed.searchParams.has("error")) return "oauth";
+  const hashParams = new URLSearchParams(parsed.hash.replace(/^#/, ""));
+  if (hashParams.has("access_token") || hashParams.has("refresh_token") || hashParams.has("error")) {
+    return "oauth";
+  }
+  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
+  return null;
+}
 
 interface ListenerHandle { remove: () => Promise<void> }
 interface AppUrlOpenSource {
@@ -75,17 +105,18 @@ function deliver(consumerId: AppUrlOpenConsumerId, subscriber: Subscriber, buffe
 }
 
 function fanout(event: UrlOpenEvent): void {
+  const relevant = classifyAppUrlOpen(event.url);
+  if (relevant === null) return; // unknown — replay 없이 fail-closed(보관 0·전달 0)
   if (replayBuffer.length >= REPLAY_MAX) dropBuffered(replayBuffer[0]);
   const buffered: BufferedEvent = {
     event,
-    pending: new Set(EXPECTED_CONSUMERS),
+    pending: new Set([relevant]), // relevant 소비자만 대기 — 무관 소비자 때문에 secret이 잔류하지 않는다(R5)
     expiryTimer: setTimeout(() => dropBuffered(buffered), orphanTtlMs),
   };
   replayBuffer.push(buffered);
-  for (const id of EXPECTED_CONSUMERS) {
-    const subs = subscribers.get(id);
-    if (!subs || subs.length === 0) continue;
-    deliver(id, subs[0], buffered); // 같은 ID의 첫 구독자가 대표 수신(ID당 1회 계약)
+  const subs = subscribers.get(relevant);
+  if (subs && subs.length > 0) {
+    deliver(relevant, subs[0], buffered); // 같은 ID의 첫 구독자가 대표 수신(ID당 1회 계약) → 수신 즉시 buffer 0
   }
 }
 

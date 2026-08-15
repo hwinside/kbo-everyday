@@ -202,6 +202,21 @@ const mutations = [
       scheduleRetry(); // 실패를 삼키되 재연결 책임은 디스패처가 진다(R3-①)`,
     to: `      attachPromise = null;`,
   },
+  {
+    id: "M26 R5 폐쇄 분류 무력화(모든 URL을 양 소비자 pending — secret 잔류·무관 전달 회귀)",
+    file: DISPATCHER,
+    from: `  const relevant = classifyAppUrlOpen(event.url);
+  if (relevant === null) return; // unknown — replay 없이 fail-closed(보관 0·전달 0)`,
+    to: `  const relevant = "oauth";`,
+  },
+  {
+    id: "M27 R5 unknown fail-closed 제거(분류 불가 URL을 oauth로 fail-open)",
+    file: DISPATCHER,
+    from: `  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
+  return null;`,
+    to: `  if (LA_GAMES_PATH_RE.test(parsed.pathname)) return "la-deeplink";
+  return "oauth";`,
+  },
 ];
 
 function runGate() {
