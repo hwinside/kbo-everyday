@@ -1,5 +1,6 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
 import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS } from "@/lib/baseball-qa/answer-budget";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -8,9 +9,11 @@ export const BASEBALL_GENIUS_NAME = "야잘알봇";
 /** 하린아빠 확정 대기 중인 권장 기본값(spec §8). */
 export const BASEBALL_GENIUS_DAILY_LIMIT = 20;
 export const BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE = false;
-// 320 = tier1/tier2 RAG 상한과 동일 (2026-08-10 성의 계약 — 유형별 목표는 프롬프트가,
-// 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약 그대로면 adaptive-length 미완").
-export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;
+// tier1/tier2 RAG 상한과 **같은 예산 SSOT 를 파생**한다 (2026-08-10 성의 계약 — 유형별
+// 목표 길이는 프롬프트가, 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약
+// 그대로면 adaptive-length 미완"). 200 → 320(08-10) → 700(08-16 "너무 짧게 즉답형").
+// ⚠️ 리터럴 재기술 금지 — 세 상한이 갈라지면 같은 질문이 경로에 따라 다른 길이로 잘린다.
+export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
 export const BASEBALL_GENIUS_MIN_QUESTION_LENGTH = 2;
 export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
 /**

@@ -18,7 +18,8 @@ import {
   type SourceGrade,
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
-import { BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
+import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "../answer-budget";
 
 /**
  * 이번 슬라이스의 retrieval 모드 — **vector-only**다 (S2b thin-slice waiver, 삼순 R1 P1 #6).
@@ -124,8 +125,15 @@ export const RAG_OFFICIAL_DOCUMENT_QUERY: RagDocumentQuery = {
   sourceGrade: "tier1",
 };
 
-/** 근거로 넘길 chunk 수 상한 — 프롬프트 팽창과 무관 chunk 혼입을 동시에 막는다. */
-export const RAG_EVIDENCE_LIMIT = 4;
+/**
+ * 근거로 넘길 chunk 수 상한 — 프롬프트 팽창과 무관 chunk 혼입을 동시에 막는다.
+ *
+ * 2026-08-16 하린아빠: "RAG 내에서 가능한 한 많은 정보를 풍부하게". 4건은 답변 상한을 올려도
+ * 모델이 채울 **재료 자체**를 묶는 병목이었다(4×600 = 2,400자). 6으로 올린다.
+ * 무관 chunk 혼입 방어는 건수가 아니라 벡터 유사도 정렬(`rankEvidenceByQuery`)과
+ * 등급 고정(`selectEvidence`)이 맡는다 — 건수는 그 정렬의 상위 몇 개를 쓸지일 뿐이다.
+ */
+export const RAG_EVIDENCE_LIMIT = 6;
 /**
  * 공식 문서(tier1) 후보 상한.
  *
@@ -182,19 +190,29 @@ export async function searchSourcePriorityCandidates(
   ]);
   return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor);
 }
-/** 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(900자)보다 짧게 잡아 다중 근거를 허용한다. */
-export const RAG_EVIDENCE_MAX_CHARS = 600;
-/** RAG 답변 본문(출처 표기 제외) 상한. */
-// 2026-08-10 하린아빠: "단답형은 단답형으로, 긴 답변이 필요한 경우는 충분히 길게".
-// 160자는 이유·배경을 묻는 질문(`맛자욱 별명이 생긴 이유`)의 설명을 한 문장으로 잘랐다.
-// tier1(320)과 같은 상한으로 올리되, 장문 복붙 방지 상한 자체는 유지한다.
-export const RAG_ANSWER_MAX_CHARS = 320;
 /**
- * 공식 문서(tier1) 답변 상한.
- * 규칙 설명은 조건절이 붙어 160자로는 조문 취지가 잘린다(예: 보크 성립 조건).
- * 근거가 정본이므로 tier2보다 여유를 주되, 장문 복붙 방지를 위해 상한 자체는 유지한다.
+ * 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(`MAX_CHUNK_CHARS` 900자)보다 짧게 잡아
+ * 다중 근거를 허용한다 — 900으로 두면 chunk 하나가 통째로 들어와 다양성이 줄어든다.
+ *
+ * 2026-08-16: 600 → 800. 실제 chunk 는 900자까지 존재하므로 600은 문단 뒷부분(맥락·사연)을
+ * 자주 잘랐다. 900보다는 여전히 작게 둬 "chunk 전문 복사"가 되지 않게 한다.
  */
-export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 320;
+export const RAG_EVIDENCE_MAX_CHARS = 800;
+/**
+ * RAG 답변 본문(출처 표기 제외) 상한 — **예산 SSOT 파생**(`answer-budget.ts`).
+ *
+ * ⚠️ 여기에 리터럴을 다시 적지 않는다. 문자 상한만 올리고 `maxOutputTokens` 를 두면
+ * 상한 답변이 JSON 절단으로 전량 폐기된다(삼순 2026-08-16 NO-GO P0 실제 사고).
+ * 두 단위는 같은 예산이므로 한 모듈에서 파생시킨다.
+ */
+export const RAG_ANSWER_MAX_CHARS = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
+/**
+ * 공식 문서(tier1) 답변 상한 — 같은 예산 SSOT 파생.
+ * 규칙 설명은 조건절이 붙어 160자로는 조문 취지가 잘린다(예: 보크 성립 조건).
+ * tier2 와 **같은 상수**를 파생하므로 두 값이 갈라질 수 없다(갈라지면 같은 질문이
+ * 라우팅 경로에 따라 다르게 잘린다).
+ */
+export const RAG_OFFICIAL_ANSWER_MAX_CHARS = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
 
 export const RAG_GROUNDED_SENTINEL = "GROUNDED";
 export const RAG_INSUFFICIENT_SENTINEL = "INSUFFICIENT";
@@ -447,8 +465,7 @@ export const RAG_SYSTEM_PROMPT = [
   "지적이 <현재 로스터>로 확인되면 GROUNDED로 판정하고, 오류를 인정하며 로스터 기준으로 정정해 답한다.",
   "숫자(기록·나이·연도·성적)는 이 자료로 확정할 수 없으므로 답변에 절대 쓰지 않는다.",
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
-  "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다.",
-  "단 자료에 없는 내용을 보태 길이를 채우지 않는다 — 길이는 자료가 허락하는 만큼만 늘린다.",
+  BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
 ].join("\n");
@@ -482,7 +499,8 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   `${RAG_GENERAL_SENTINEL} 답변에서는 숫자를 쓰지 않는다. 단 질문에 이미 적힌 숫자를 되받아 해석하는 것은 허용한다.`,
   `루 이름도 숫자 없이 쓴다 — '1루, 2루, 3루에 주자' 대신 '모든 베이스에 주자가 있는'처럼 서술한다.`,
   `${RAG_GENERAL_SENTINEL} 답변에서 특정 선수·구단의 성적 수치, 순위, 연도는 절대 단정하지 않는다 — 개념과 의미만 설명한다.`,
-  "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 두세 문장 이내로 다시 서술한다.",
+  "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
+  BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_OFFICIAL_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변"}`,
 ].join("\n");
@@ -522,7 +540,7 @@ export const RAG_TEAM_SYSTEM_PROMPT = [
   "예: `1990년 MBC 청룡을 인수해 창단했다` → `MBC 청룡을 인수해 창단했다` 로 쓴다.",
   "답변은 자료를 그대로 옆기지 말고 한국어 존댓말로 다시 서술한다.",
   // 성의 계약 (2026-08-10 하린아빠 12:06 + 삼순: 선수·뉴스만 고치고 구단을 빼면 미완):
-  "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다. 자료에 없는 내용으로 길이를 채우지 않는다.",
+  BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
 ].join("\n");
@@ -550,8 +568,7 @@ export const RAG_NEWS_SYSTEM_PROMPT = [
   "예: `문보경이 두 개의 홈런을 치며 승리를 이끓었다` → `문보경의 홈런 활약으로 승리했다` 로 쓴다.",
   "언론사 이름·기자명을 답변에 쓰지 않는다.",
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
-  "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다.",
-  "단 자료에 없는 내용을 보태 길이를 채우지 않는다 — 길이는 자료가 허락하는 만큼만 늘린다.",
+  BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
 ].join("\n");
@@ -608,7 +625,8 @@ export function buildRagLlmRequest(
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 256,
+      // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
+      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
     },
   };
