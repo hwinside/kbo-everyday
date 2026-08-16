@@ -359,6 +359,45 @@ export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { ki
 //   (`엘지 두산 기아 중 누가 제일 잘해?` = 순위 나열이 아니라 평가 요구),
 //   폐쇄집합을 2로 고정하는 편이 판정이 결정론적이다.
 
+/**
+ * 두 구단 pair 경로가 답할 수 있는 지표 — **폐쇄집합** (2026-08-16 삼순 2차 NO-GO).
+ *
+ * 🔴 1차 구현은 `구단 2개 + 지원 지표 아무거나` 면 전부 시즌 집계 쌍으로 답했다.
+ *   실측 오답(삼순 지적 그대로 재현):
+ *     `LG와 두산 전적 알려줘`        → 양 팀 **시즌** 전적 (맞대결이 아니다)
+ *     `LG가 두산 상대로 몇 승 했어?` → 시즌 승수 `LG 58 / 두산 55`
+ *     `엘지랑 두산 팀타율`           → 시즌 팀타율 나열
+ *   구단 2개를 나열하는 질문은 대개 **두 팀을 견주는** 질문이고, 시즌 집계 나열은
+ *   그 질문에 대한 답이 아니다. 순위·게임차만이 "두 팀을 견주는" 의미가 시즌 집계로
+ *   정확히 성립하는 지표다(순위표가 곧 그 비교표다).
+ *
+ * 그래서 pair 경로를 이 둘로 닫는다. 나머지 지표는 단일 구단 질문으로만 답한다.
+ * 확장하려면 그 지표에서 "두 팀 나열"이 질문의 답이 되는지부터 따져야 한다.
+ */
+export const TEAM_PAIR_METRICS = ["ranking", "gamesBehind"] as const;
+export type TeamPairMetric = (typeof TEAM_PAIR_METRICS)[number];
+
+export function isTeamPairMetric(metric: TeamMetricKey): metric is TeamPairMetric {
+  return (TEAM_PAIR_METRICS as readonly string[]).includes(metric);
+}
+
+/**
+ * 맞대결·상대전 문맥인가 — pair 경로 **진입 전** fail-close.
+ *
+ * ⚠️ `resolveTeamRecordIntent` 의 `TEAM_UNSERVED_PATTERNS` 는 `상대전적`·`맞대전 전적` 만
+ *   보고 `상대로`(조사형)를 못 잡는다. 그런데 `LG가 두산 상대로 몇 승 했어?` 는
+ *   `wins` 로 판정돼 시즌 승수가 나갔다(실측). 우리는 맞대결 정본을 서빙하지 않으므로
+ *   **묻는 순간 답할 수 없는 질문**이다 — 시즌 집계로 대체하면 확정 오답이다.
+ *
+ * ⚠️ 여기서 어휘를 늘려 반례를 메우지 않는다. 이 판정이 놓치더라도 위 지표 폐쇄집합이
+ *   2차 방어로 남는다(승수·홈런·타율은 애초에 pair 경로에 못 들어온다).
+ */
+const HEAD_TO_HEAD_CONTEXT = /상대로|상대\s*전적|상대전|맞대결|맞대전|[가-힣A-Za-z]+전\s*(?:성적|전적|기록)/;
+
+export function isHeadToHeadQuestion(question: string): boolean {
+  return HEAD_TO_HEAD_CONTEXT.test(question.normalize("NFKC").toLowerCase().replace(/\s+/g, " "));
+}
+
 /** 두 구단 질문의 결과. 부분 성공은 없다 — 둘 다 있거나, 없거나. */
 export type TeamPairOutcome =
   | {
@@ -389,6 +428,8 @@ export function resolveTeamPairRecord(
   records: TeamRecordsPayload,
   teamIdOf: (canonical: string) => number | null,
 ): TeamPairOutcome {
+  // 폐쇄집합 밖 지표는 pair 로 답하지 않는다 — 시즌 집계 나열은 견주기 질문의 답이 아니다.
+  if (!isTeamPairMetric(metric)) return { kind: "missing" };
   const [teamA, teamB] = teams;
   if (teamA === teamB) return { kind: "missing" };
   const a = resolveTeamRecord(metric, teamA, standings, records, teamIdOf);

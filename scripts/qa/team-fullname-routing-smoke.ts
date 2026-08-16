@@ -836,8 +836,10 @@ async function verifyConjunctiveParticleBinding() {
 // ⚠️ 값은 라이브 `/api/standings` 에서 읽어 기대값을 만든다. 하드코딩하면 순위가 바뀔 때마다
 //   게이트가 깨지고 결국 누군가 값을 지운다(그게 검증력 0의 시작이다).
 async function verifyTeamPairEndToEnd() {
-  const { createTeamRecordFetchers, resolveTeamPairRecord } =
-    await import("@/lib/baseball-qa/stats/team-record");
+  const {
+    createTeamRecordFetchers, resolveTeamPairRecord,
+    TEAM_PAIR_METRICS, isTeamPairMetric, isHeadToHeadQuestion,
+  } = await import("@/lib/baseball-qa/stats/team-record");
   const fetchers = createTeamRecordFetchers();
   const [standings, teamRecords] = await Promise.all([
     fetchers.fetchStandings(),
@@ -870,13 +872,20 @@ async function verifyTeamPairEndToEnd() {
     assert.equal(checked, 45, `10개 구단 45쌍을 검증해야 한다 (실제 ${checked})`);
   });
 
+  const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
   const runPair = async (question: string) => {
     const state: RunState = { llmCalls: 0, logs: [] };
     const result = await answerQuestion("u-team-pair", question, {
       ...makeDeps(state),
       fetchTeamRecord: fetchers,
     } as QaDeps);
-    return { source: result.source as MatchPath, answer: result.answer ?? "", llmCalls: state.llmCalls };
+    return {
+      source: result.source as MatchPath,
+      answer: result.answer ?? "",
+      llmCalls: state.llmCalls,
+      logs: state.logs,
+    };
   };
 
   // ── ① 운영 로그 5개 원문 전부 — 종단에서 실제 값을 받는가 ───────────────────
@@ -890,40 +899,138 @@ async function verifyTeamPairEndToEnd() {
   ];
   for (const c of pairCases) {
     await check(`두 구단 종단 "${c.question}"`, async () => {
-      const { source, answer, llmCalls } = await runPair(c.question);
+      const { source, answer, llmCalls, logs } = await runPair(c.question);
       assert.equal(source, "kbo_structured", `${c.question}: source=${source} — 조회로 답하지 않았다`);
       assert.equal(llmCalls, 0, `${c.question}: LLM 을 ${llmCalls}회 태웠다 — 숫자 환각 경로`);
       assert.notEqual(answer, TEAM_STAT_HOLD_ANSWER, `${c.question}: 서빙 중인 값을 "못 답한다"고 안내했다`);
 
-      // 양 팀명이 **둘 다** 답변에 있어야 한다. 한 팀만 답하면 유저는 나머지를 못 받은 채
-      // "답을 받았다"고 인식한다 — 그게 더 나쁘다.
-      for (const team of c.teams) {
-        assert.ok(answer.includes(team), `${c.question}: 답변에 "${team}" 이 없다 — "${answer}"`);
-      }
-
-      // 실값 대조 — 라이브 값에서 계산한 기대치와 문자열이 일치해야 한다.
+      // 🔴 팀↔값 **결속**을 본다 (삼순 2026-08-16 2차 NO-GO).
+      //   종전엔 팀명 2개·값 2개를 각각 `includes` 만 해서 **값이 서로 뒤바뀌어도 GREEN** 이었다.
+      //   `${팀} ... ${값}` 이 한 덩어리로 인접해 있는지를 anchored 정규식으로 확인한다.
       const rowA = byName(c.teams[0]);
       const rowB = byName(c.teams[1]);
+      const boundTo = (scope: string, team: string, value: string) => {
+        // 팀명 뒤 최대 12자(라벨·조사) 안에 그 팀의 값이 와야 한다 — 다른 팀 이름이 끼면 실패.
+        const pattern = new RegExp(
+          `${escapeRegExp(team)}(?:(?!${c.teams.map(escapeRegExp).join("|")}).){0,12}?${escapeRegExp(value)}`,
+        );
+        return pattern.test(scope);
+      };
+      // ⚠️ 게임차 답변은 두 문장이다 — 1행은 **두 팀 사이 파생값**, 2행은 **각 팀 선두대비 원값**.
+      //   결속 검증을 답변 전체에 걸면 1행의 파생값이 2행의 팀 값과 **우연히 같을 때**
+      //   오탐이 난다(실측: KT↔삼성 은 두 팀 사이 게임차 0.5 = 삼성 선두대비 0.5).
+      //   그래서 팀↔값 결속은 **나열 행(scope)** 안에서만 판정한다.
+      const listingScope = answer.includes("선두 대비")
+        ? answer.split("\n").find((line) => line.includes("선두 대비")) ?? answer
+        : answer;
+
       if (c.metric === "ranking") {
-        assert.ok(answer.includes(`${rowA.ranking}위`), `${c.question}: ${c.teams[0]} 순위 누락 — "${answer}"`);
-        assert.ok(answer.includes(`${rowB.ranking}위`), `${c.question}: ${c.teams[1]} 순위 누락 — "${answer}"`);
+        assert.ok(
+          boundTo(answer, c.teams[0], `${rowA.ranking}위`),
+          `${c.question}: ${c.teams[0]} ↔ ${rowA.ranking}위 결속 실패 — "${answer}"`,
+        );
+        assert.ok(
+          boundTo(answer, c.teams[1], `${rowB.ranking}위`),
+          `${c.question}: ${c.teams[1]} ↔ ${rowB.ranking}위 결속 실패 — "${answer}"`,
+        );
+        // 값이 뒤바뀐 형태는 반드시 실패해야 한다 — 두 팀 순위가 같으면 이 검증이 무의미하다.
+        if (rowA.ranking !== rowB.ranking) {
+          assert.ok(
+            !boundTo(answer, c.teams[0], `${rowB.ranking}위`),
+            `${c.question}: ${c.teams[0]} 에 상대 팀 순위가 붙었다 — "${answer}"`,
+          );
+        }
       } else {
         const pairGb = Math.abs(Number(rowA.gamesBehind) - Number(rowB.gamesBehind)).toFixed(1);
         assert.ok(
           answer.includes(`${pairGb}게임`),
           `${c.question}: 두 팀 사이 게임차 ${pairGb} 이 답변에 없다 — "${answer}"`,
         );
-        // 선두 대비 원값도 함께 제시해야 앱 순위표와 대조가 된다.
-        for (const row of [rowA, rowB]) {
-          const gb = Number(row.gamesBehind);
-          const shown = gb === 0 ? "0.0 (선두)" : gb.toFixed(1);
-          assert.ok(answer.includes(shown), `${c.question}: ${row.teamName} 선두대비 "${shown}" 누락 — "${answer}"`);
+        // 선두 대비 원값도 **각 팀에 결속된 채로** 제시해야 앱 순위표와 대조가 된다.
+        const shownOf = (gb: number) => (gb === 0 ? "0.0 (선두)" : gb.toFixed(1));
+        assert.ok(
+          boundTo(listingScope, c.teams[0], shownOf(Number(rowA.gamesBehind))),
+          `${c.question}: ${c.teams[0]} ↔ 선두대비 ${shownOf(Number(rowA.gamesBehind))} 결속 실패 — "${answer}"`,
+        );
+        assert.ok(
+          boundTo(listingScope, c.teams[1], shownOf(Number(rowB.gamesBehind))),
+          `${c.question}: ${c.teams[1]} ↔ 선두대비 ${shownOf(Number(rowB.gamesBehind))} 결속 실패 — "${answer}"`,
+        );
+        if (Number(rowA.gamesBehind) !== Number(rowB.gamesBehind)) {
+          assert.ok(
+            !boundTo(listingScope, c.teams[0], shownOf(Number(rowB.gamesBehind))),
+            `${c.question}: ${c.teams[0]} 에 상대 팀 게임차가 붙었다 — "${answer}"`,
+          );
         }
       }
+      // log match_path 까지 고정 — source 만 보면 로그가 다른 값으로 남아도 GREEN 이다.
+      assert.deepEqual(logs, ["kbo_structured"], `${c.question}: log=${JSON.stringify(logs)}`);
       // 톤 SSOT
       assert.ok(isBaseballGeniusToneCompliant(answer), `${c.question}: 톤 SSOT 위반 — "${answer}"`);
     });
   }
+
+  // ── ①-b 오답 금지 — pair 경로가 **답하면 안 되는** 질문 (삼순 2026-08-16 2차 NO-GO) ──
+  //
+  //   🔴 1차 구현은 `구단 2개 + 지원 지표 아무거나` 면 전부 시즌 집계 쌍으로 답했다.
+  //     실측 오답(삼순 지적 그대로 재현됐다):
+  //       `LG와 두산 전적 알려줘`        → 양 팀 **시즌** 전적 (맞대결이 아니다)
+  //       `LG가 두산 상대로 몇 승 했어?` → 시즌 승수 `LG 58 / 두산 55`
+  //       `엘지랑 두산 팀타율`           → 시즌 팀타율 나열
+  //   순위·게임차만이 "두 팀을 견주는" 의미가 시즌 집계로 정확히 성립한다(순위표가 곧 비교표).
+  //   나머지는 pair 로 답하지 않는다 — 지표 폐쇄집합 + 맞대결 문맥 fail-close 2중 방어.
+  for (const question of [
+    "LG와 두산 전적 알려줘",
+    "LG가 두산 상대로 몇 승 했어?",
+    "LG가 두산 상대로 홈런 몇 개?",
+    "엘지랑 두산 팀타율",
+    "엘지랑 두산 홈런",
+    "엘지랑 두산 맞대결 전적",
+    "엘지 두산전 성적",
+  ]) {
+    await check(`pair 오답 금지 "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runPair(question);
+      assert.notEqual(
+        source, "kbo_structured",
+        `${question}: 두 팀 시즌 집계를 견주기 질문의 답으로 내보냈다 — "${answer}"`,
+      );
+      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다 — 수치 질문 환각 통로`);
+    });
+  }
+
+  // ①-c 폐쇄집합·맞대결 판정을 **production 함수로 직접** 확인한다 (게이트 자기 재구현 금지).
+  await check("pair 지표 폐쇄집합은 순위·게임차뿐", () => {
+    assert.deepEqual([...TEAM_PAIR_METRICS], ["ranking", "gamesBehind"],
+      "pair 폐쇄집합이 바뀌었다 — 확장하려면 '두 팀 나열'이 그 지표의 답이 되는지 먼저 따져야 한다");
+    for (const metric of ["record", "wins", "hr", "avg", "era", "sb"] as const) {
+      assert.equal(isTeamPairMetric(metric), false, `${metric} 이 pair 폐쇄집합에 들어왔다`);
+    }
+    for (const metric of ["ranking", "gamesBehind"] as const) {
+      assert.equal(isTeamPairMetric(metric), true, `${metric} 이 pair 폐쇄집합에서 빠졌다`);
+    }
+  });
+  await check("맞대결 문맥 판정", () => {
+    for (const question of [
+      "LG가 두산 상대로 몇 승 했어?",
+      "엘지랑 두산 맞대결 전적",
+      "엘지 두산전 성적",
+      "LG 두산 상대전적",
+    ]) {
+      assert.equal(isHeadToHeadQuestion(question), true, `맞대결 문맥을 못 잡았다: ${question}`);
+    }
+    // 과탐 방지 — 순수 순위·게임차 질문은 맞대결이 아니다.
+    for (const question of ["엘지랑 두산이랑 몇게임 차야?", "두산이랑 롯데 순위", "기아랑 삼성 승차"]) {
+      assert.equal(isHeadToHeadQuestion(question), false, `맞대결로 오탐했다: ${question}`);
+    }
+  });
+  // ①-d mutation — 폐쇄집합 밖 지표는 resolver 단계에서 이미 막힌다(라우팅에만 의존하지 않는다).
+  await check("mutation — 폐쇄집합 밖 지표는 resolver 가 missing", () => {
+    const teamIdOf = (name: string) => standings.find((r) => r.teamName === name)?.teamId ?? null;
+    for (const metric of ["record", "wins", "hr", "avg"] as const) {
+      const out = resolveTeamPairRecord(metric, ["LG", "두산"], standings, teamRecords, teamIdOf);
+      assert.equal(out.kind, "missing", `${metric}: pair resolver 가 폐쇄집합 밖 지표를 답했다`);
+    }
+  });
 
   // ── ② 회귀: 한 팀 게임차는 종전 그대로 (복수 경로가 단일 경로를 가로채면 안 된다) ──
   for (const [question, teamName] of [
