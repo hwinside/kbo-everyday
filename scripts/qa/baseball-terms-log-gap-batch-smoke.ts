@@ -233,12 +233,15 @@ const logCasesFixture = JSON.parse(
     question: string;
     /** 배치 이전 이 질문이 실제로 어떻게 종결됐는지 (운영 로그 실측) */
     loggedPath: string;
-    /** 다른 28 term 이 섞이지 않았는가 */
+    /**
+     * 이 질문에 **이 배치의 다른 신규 term 이 섞이지 않았는가**.
+     * 🔴 삼순 4차 NO-GO ②: 종전에는 fixture 에 적힌 값을 그대로 읽기만 했다(자가 기입).
+     *   이제 게이트가 production `glossaryCandidatesIn` 으로 **재계산**해 대조한다 — 값이
+     *   어긋나면 fixture 가 낡은 것이고, 새 정규식은 한 줄도 만들지 않는다.
+     *   쓰이지 않던 `defform`·`compare` 는 제거했다(검증하지 않는 필드는 주장도 아니다).
     single: boolean;
-    /** 정의형 어미인가 */
-    defform: boolean;
+    /** 그 중 다른 신규 term 후보 개수 */
     otherTerms: number;
-    compare: boolean;
     /**
      * 배치 적용 후 종단 기대.
      *   `exact`       매퍼 없이 사전 exact 회수
@@ -259,6 +262,11 @@ type TermRow = {
   source_kind: string;
   source_url: string | null;
   rule_version: string;
+  /**
+   * 🔴 삼순 4차 NO-GO ①: 종전 `TermRow`·`readAll`·`norm` 어디에도 `reviewed_at` 이 없어,
+   *   그 칸을 통째로 바꿔도 게이트가 GREEN 이었다. 조회·비교·최종 대조 전 경로에 싣는다.
+   */
+  reviewed_at: string | null;
 };
 
 async function loadDb(applyBatchTimes: number): Promise<PGlite> {
@@ -274,7 +282,7 @@ async function loadDb(applyBatchTimes: number): Promise<PGlite> {
 
 async function readAll(db: PGlite): Promise<TermRow[]> {
   const r = await db.query<TermRow>(
-    "SELECT term, aliases, answer, category, source_kind, source_url, rule_version FROM baseball_terms ORDER BY term",
+    "SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at FROM baseball_terms ORDER BY term",
   );
   return r.rows;
 }
@@ -309,6 +317,13 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
   await seedDbForBase.close();
   const baseGlossary = toGlossary(baseRows);
   const glossary = toGlossary(rows);
+  /**
+   * 이 배치가 **새로 넣은 term 집합**. 종단 케이스의 `single`/`otherTerms` 를 게이트가
+   * 재계산할 때 기준이 된다(삼순 4차 NO-GO ②). base 사전에 없던 term = 이 배치 산물.
+   */
+  const batchTermSet = new Set<string>(
+    rows.map((r) => r.term).filter((t) => !baseRows.some((b) => b.term === t)),
+  );
 
   // ① migration 실행 → 행 수 (재구축 경로: seed 132 + 정본화 4 + 신규 28 = 164)
   check(
@@ -551,16 +566,26 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
       const mapped = await answerFor(c.question, true);
       const row = rows.find((r) => r.term === c.term);
 
-      // 케이스 선정 규칙이 실제로 지켜졌는가 — fixture 를 코드가 **읽고 판정한다**.
-      //   `single`/`defform` 은 선정기가 기록한 값이고, 이 값이 분류와 어긋나면 fixture 가
-      //   낡은 것이다(삼순 ③: "loggedPath 도 코드에서 한 번도 읽지 않는다").
+      // 🔴 삼순 4차 NO-GO ②: `single`/`otherTerms` 를 **게이트가 재계산**해 fixture 와 대조한다.
+      //   종전에는 fixture 에 적힌 값을 읽기만 해서, 내가 적은 숫자가 곧 판정이었다(자가 기입).
+      //   재계산은 production `glossaryCandidatesIn` 재사용이다 — 새 규칙·정규식 0.
+      const caseCands = glossaryCandidatesIn(glossary, c.question).map((e) => e.term);
+      const otherBatchTerms = caseCands.filter((t) => t !== c.term && batchTermSet.has(t));
+      check(
+        c.otherTerms === otherBatchTerms.length,
+        `[선정] "${c.question}" otherTerms fixture=${c.otherTerms} / 재계산=${otherBatchTerms.length} ${JSON.stringify(otherBatchTerms)}`,
+      );
+      check(
+        c.single === (otherBatchTerms.length === 0),
+        `[선정] "${c.question}" single fixture=${c.single} / 재계산=${otherBatchTerms.length === 0}`,
+      );
       if (c.expect === "exact" || c.expect === "mapper") {
-        check(c.single === true, `[선정] "${c.question}" 는 단일 용어 질문이어야 한다 (otherTerms=${c.otherTerms}, compare=${c.compare})`);
+        check(otherBatchTerms.length === 0, `[선정] "${c.question}" 는 단일 용어 질문이어야 한다 (섞임 ${JSON.stringify(otherBatchTerms)})`);
       }
       if (c.expect === "multi_term") {
         check(
-          c.single === false,
-          `[선정] "${c.question}" 를 multi_term 으로 분류했는데 선정기는 단일 용어라고 판정했다`,
+          otherBatchTerms.length >= 1,
+          `[선정] "${c.question}" 를 multi_term 으로 분류했는데 재계산은 단일 용어다`,
         );
       }
 
@@ -751,7 +776,7 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
         );
       }
       const before = await prodLike.query<TermRow>(
-        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version FROM baseball_terms ORDER BY term",
+        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at FROM baseball_terms ORDER BY term",
       );
       check(before.rows.length === PRODUCTION_ROWS_BEFORE, `production 형상 재현 ${PRODUCTION_ROWS_BEFORE}행 (실제 ${before.rows.length})`);
       check(
@@ -762,7 +787,7 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
 
       await prodLike.exec(batchSql.replace(/public\./g, ""));
       const after = await prodLike.query<TermRow>(
-        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version FROM baseball_terms ORDER BY term",
+        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at FROM baseball_terms ORDER BY term",
       );
       // ⑧ postcondition: production 경로도 재구축본과 **같은 행 수**에 수렴한다.
       check(after.rows.length === FINAL_ROWS, `production 적용 후 ${FINAL_ROWS}행 (실제 ${after.rows.length})`);
@@ -777,13 +802,13 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
         check(row?.answer === r.answer, `CAS 가 answer 를 바꿨다: ${r.term}`);
       }
       // 재구축본과 production 경로의 **최종 상태가 동일**한가 — 두 경로가 만나는 지점.
-      const norm = (list: TermRow[]) => JSON.stringify(list.map((r) => [r.term, r.answer, r.aliases, r.category, r.source_kind, r.source_url, r.rule_version]));
+      const norm = (list: TermRow[]) => JSON.stringify(list.map((r) => [r.term, r.answer, r.aliases, r.category, r.source_kind, r.source_url, r.rule_version, String(r.reviewed_at ?? "")]));
       check(norm(after.rows) === norm(rows), "재구축본과 production 경로의 최종 상태가 다르다 — 여전히 갈린다");
 
       // 멱등 — production 경로에서도 2회 적용이 1회와 같아야 한다.
       await prodLike.exec(batchSql.replace(/public\./g, ""));
       const twiceProd = await prodLike.query<TermRow>(
-        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version FROM baseball_terms ORDER BY term",
+        "SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at FROM baseball_terms ORDER BY term",
       );
       check(norm(twiceProd.rows) === norm(after.rows), "production 경로 멱등 위반 — 2회 적용 결과가 다르다");
     }

@@ -6,13 +6,16 @@
 --   사전은 production 136항목뿐이라, 유저가 실제로 물어본 기본 용어(잔루·타수·타석·실점·만루·
 --   전광판 B/S/O·포지션명)가 통째로 비어 `unsure`/`blocked` 로 종결됐다.
 --
--- 🔴 행 수 SSOT (삼순 2026-08-16 NO-GO — 136/132/164 3중 불일치의 정체):
+-- 🔴 행 수 SSOT (삼순 2026-08-16 NO-GO — 136/132/163 3중 불일치의 정체):
 --   production 136 = repo seed 132 + **repo 에 INSERT 가 없는 4행**(`10-10`~`40-40 클럽`).
 --   그 4행은 2026-08-11 production 에 직접 들어갔고 repo 에는 톤 migration 의 UPDATE 대상으로만
 --   존재해, 신규 환경 재구축본(132)과 production(136)이 영구히 어긋나 있었다.
---   이 배치가 ⓐ 블록으로 그 4행을 정본화해 **양쪽이 164 로 수렴**한다:
---     재구축본  132 + 4(정본화) + 28(신규) = 164
---     production 136 + 0(ON CONFLICT no-op) + 28(신규) = 164
+--   이 배치가 ⓐ 블록으로 그 4행을 정본화해 **양쪽이 163 로 수렴**한다:
+--     재구축본  132 + 4(정본화) + 27(신규) = 163
+--     production 136 + 0(ON CONFLICT no-op) + 27(신규) = 163
+--   ⚠️ 신규는 28 이 아니라 **27** 이다 — `파울폴` 은 유효 근거 0(로그 2건이 전부 룰 판정
+--     질문이고 정의를 묻는 유저가 없었다)이라 배치에서 뺐다. 게이트 상수 `BATCH_ROWS=27`
+--     `FINAL_ROWS=163` 이 SSOT 다.
 --
 -- ⚠️ 이 배치는 **룰(코드) 추가가 아니라 데이터 행 추가**다. 판정 로직은 한 줄도 바뀌지 않고,
 --   `matchGlossary` 가 쓰는 닫힌 집합의 원소만 늘어난다(핑퐁 축 아님).
@@ -31,7 +34,7 @@
 --   `created_at = 2026-08-11 00:58:28+00` 로 production 에 직접 들어갔고,
 --   repo 에는 `20260814121000_baseball_terms_formal_tone.sql` 의 **UPDATE 대상**으로만
 --   등장한다(그 migration 은 INSERT 를 하지 않는다).
---   → 재구축본 132 vs production 136. 수치 혼선(136/132/164)의 정체가 이것이다.
+--   → 재구축본 132 vs production 136. 수치 혼선(136/132/163)의 정체가 이것이다.
 --
 -- 🔴 그리고 이 4행은 근거 분류 계약을 어기고 있다 —
 --   `editorial_definition` 인데 `rule_version = '2026'`(계약상 `not_applicable`).
@@ -45,7 +48,26 @@
 --       INSERT ... ON CONFLICT (term) DO UPDATE  (재구축본: 계약 준수값으로 생성)
 --       WHERE 절 CAS                              (production: 알려진 위반값일 때만 교정)
 --   CAS 조건이 answer 를 건드리지 않으므로 2026-08-14 톤 migration 결과는 보존된다.
-INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
+--
+-- 🔴 삼순 2026-08-16 4차 NO-GO ③: 종전 postcondition 은 `answer` 를 비교하지 않아
+--   **metadata 만 이미 교정된 answer drift** 가 그대로 통과했다. answer 를 확인하려면
+--   기대값이 필요한데, DO 블록에 본문을 다시 적으면 리터럴이 두 벌이 되어 한쪽만 고쳐질 때
+--   조용히 갈라진다(#1100 실패 모드).
+--   → 정본 4행을 **임시 테이블 한 곳**에 정의하고, INSERT 와 postcondition 이 **같은 소스**를
+--     읽는다. 기대값 중복이 구조적으로 불가능해지고 answer 까지 full-row 로 결속된다.
+CREATE TEMP TABLE IF NOT EXISTS baseball_terms_reconcile_src (
+  term text PRIMARY KEY,
+  aliases text[] NOT NULL,
+  answer text NOT NULL,
+  category text NOT NULL,
+  source_kind text NOT NULL,
+  source_url text,
+  rule_version text NOT NULL,
+  reviewed_at date NOT NULL
+);
+DELETE FROM baseball_terms_reconcile_src;
+
+INSERT INTO baseball_terms_reconcile_src(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
 VALUES
 ('10-10 클럽', ARRAY['10-10','10-10클럽','텐텐클럽','텐텐 클럽'],
  '한 시즌에 홈런 10개와 도루 10개를 동시에 달성하는 기록입니다.
@@ -69,7 +91,11 @@ KBO 최초는 1996년 박재홍 선수입니다.
  '한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 초대형 기록입니다.
 KBO에서는 2015년 에릭 테임즈 선수가 최초이자 유일하게 달성했습니다.
 세계적으로도 극소수만 도달한 꿈의 기록입니다.',
- 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11')
+ 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11');
+
+INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
+SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at
+  FROM baseball_terms_reconcile_src
 ON CONFLICT (term) DO UPDATE
    SET rule_version = EXCLUDED.rule_version
  WHERE baseball_terms.source_kind = 'editorial_definition'
@@ -88,32 +114,33 @@ ON CONFLICT (term) DO UPDATE
 --     전체를 되돌린다. "조용한 부분 적용"이 불가능해진다.
 DO $$
 DECLARE
-  expected CONSTANT jsonb := $json$[
-    {"term":"10-10 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["10-10","10-10클럽","텐텐클럽","텐텐 클럽"]},
-    {"term":"20-20 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["20-20","20-20클럽","트웬티트웬티클럽"]},
-    {"term":"30-30 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["30-30","30-30클럽","서티서티클럽"]},
-    {"term":"40-40 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["40-40","40-40클럽","포티포티클럽"]}
-  ]$json$::jsonb;
-  row_expected jsonb;
+  want baseball_terms_reconcile_src%ROWTYPE;
   actual public.baseball_terms%ROWTYPE;
 BEGIN
-  FOR row_expected IN SELECT * FROM jsonb_array_elements(expected) LOOP
-    SELECT * INTO actual FROM public.baseball_terms WHERE term = row_expected->>'term';
+  IF (SELECT count(*) FROM baseball_terms_reconcile_src) <> 4 THEN
+    RAISE EXCEPTION '정본화 소스가 4행이 아니다 (실제 %)', (SELECT count(*) FROM baseball_terms_reconcile_src);
+  END IF;
+  FOR want IN SELECT * FROM baseball_terms_reconcile_src LOOP
+    SELECT * INTO actual FROM public.baseball_terms WHERE term = want.term;
     IF NOT FOUND THEN
-      RAISE EXCEPTION '정본화 실패: 행이 없다 (term=%)', row_expected->>'term';
+      RAISE EXCEPTION '정본화 실패: 행이 없다 (term=%)', want.term;
     END IF;
-    IF actual.category IS DISTINCT FROM row_expected->>'category'
-       OR actual.source_kind IS DISTINCT FROM row_expected->>'source_kind'
-       OR actual.rule_version IS DISTINCT FROM row_expected->>'rule_version'
-       OR actual.source_url IS NOT NULL
-       OR actual.reviewed_at IS DISTINCT FROM (row_expected->>'reviewed_at')::date
-       OR to_jsonb(actual.aliases) IS DISTINCT FROM row_expected->'aliases' THEN
-      RAISE EXCEPTION '정본화 drift (term=%): category=% source_kind=% rule_version=% source_url=% reviewed_at=% aliases=%',
-        row_expected->>'term', actual.category, actual.source_kind, actual.rule_version,
-        actual.source_url, actual.reviewed_at, to_jsonb(actual.aliases);
+    -- full-row 대조 — answer 포함. 한 칸이라도 어긋나면 트랜잭션을 되돌린다.
+    IF actual.answer IS DISTINCT FROM want.answer
+       OR actual.category IS DISTINCT FROM want.category
+       OR actual.source_kind IS DISTINCT FROM want.source_kind
+       OR actual.rule_version IS DISTINCT FROM want.rule_version
+       OR actual.source_url IS DISTINCT FROM want.source_url
+       OR actual.reviewed_at IS DISTINCT FROM want.reviewed_at
+       OR actual.aliases IS DISTINCT FROM want.aliases THEN
+      RAISE EXCEPTION '정본화 drift (term=%): answer_match=% category=% source_kind=% rule_version=% source_url=% reviewed_at=% aliases=%',
+        want.term, (actual.answer = want.answer), actual.category, actual.source_kind,
+        actual.rule_version, actual.source_url, actual.reviewed_at, actual.aliases;
     END IF;
   END LOOP;
 END $$;
+
+DROP TABLE baseball_terms_reconcile_src;
 
 INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
 VALUES
@@ -254,10 +281,13 @@ VALUES
  'batting', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-16'),
 
 -- ── 규칙 (로그: `3피트룰` `파울 타구가 폴대를 맞추면 홈런이야?` `만루`) ────────────
+-- 🔴 삼순 2026-08-16 4차 NO-GO ④: 팬이 `3피트룰` 이라 부르는 것은 KBO 공식야구규칙의
+--   **서로 다른 두 조항**이다 — 5.09(a)(8) 1루 러닝 레인 방해, 5.09(b)(1) 태그 회피 주로 이탈.
+--   종전 정의문은 앞쪽만 설명해, 태그를 피해 벗어난 주자를 묻는 질문에는 오답이었다.
 ('3피트룰', ARRAY['3피트 룰','쓰리피트','three foot rule','3피트 라인','스리피트'],
- '타자 주자가 1루로 달릴 때 파울 라인 바깥 3피트 폭 안으로 달려야 하는 규칙입니다.
-이 범위를 벗어나 1루 송구나 포구를 방해하면 아웃이 선언될 수 있습니다.
-홈과 1루 사이의 뒤쪽 절반 구간에 적용합니다.',
+ '3피트룰은 서로 다른 두 규정을 함께 부르는 말입니다.
+타자 주자는 홈과 1루 사이 뒤쪽 절반에서 파울 라인 바깥 3피트 폭의 러닝 레인 안으로 달려야 하고, 벗어나 1루 송구나 포구를 방해하면 아웃입니다.
+주자가 태그를 피하려고 원래 주루 선에서 좌우로 3피트를 넘게 벗어나도 그 자체로 아웃입니다.',
  'rule', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-16'),
 
 
