@@ -49,6 +49,17 @@ export function hasRequiredTeamTag(teamSlugs: readonly string[] | null | undefin
   return (teamSlugs ?? []).some((slug) => getTeamBySlug(String(slug)) !== undefined);
 }
 
+/**
+ * 정규 10구단을 **하나씩 전부** 골랐는지 = 전체구단 공개 시도(하린아빠 2026-08-16).
+ * "전체 선택" 단축 칩을 없앤 뒤, 유저가 10팀을 다 눌러야만 전체공개가 되고,
+ * 그때 작성 화면 3종이 이 판정으로 확인창을 띄운다(예=전체공개 / 아니요=최애팀 축소).
+ * 규칙 기반 판정만 사용한다(내용 AI 판정 아님 — 삼순 확정 2026-08-16).
+ */
+export function isAllTeamsSelected(teamSlugs: readonly string[] | null | undefined): boolean {
+  const set = new Set((teamSlugs ?? []).map((s) => String(s)));
+  return TEAMS.every((t) => set.has(t.slug));
+}
+
 export type PostScope =
   /** 선수 태그 1명 (단일 팀) */
   | { kind: "player"; teamId: number; name: string; kboId: string }
