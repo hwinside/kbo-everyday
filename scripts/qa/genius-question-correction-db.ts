@@ -51,6 +51,7 @@ async function loadSchema(): Promise<Db> {
       -- 실 INSERT 가 42703 으로 죽는다. buildQuestionLogRow 가 항상 보낸다.
       rag_discard_reason text,
       rag_attempt_path text,
+      rag_question_numeric_count integer,
       rag_discard_numeric_count integer,
       match_path text,
       answer text,

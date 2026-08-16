@@ -40,6 +40,10 @@ export function buildQuestionLogRow(
     // 채우면 분자만 있고 분모가 없어 경로별 폐기율을 몇 낼 수 없다. `match_path` 로는 복원
     // 불가하다(선수·공식·뉴스 폐기가 전부 'unsure' 로 접힌다).
     rag_attempt_path: entry.ragAttemptPath ?? null,
+    // **질문**의 숫자 토큰 개수 (삼순 2026-08-16 2차 ①). 답변 개수만으로는 그 숫자가
+    // 유저가 준 것을 되받은 것인지 모델이 새로 만든 것인지 구분할 수 없다 — 두 경우는
+    // 성격이 완전히 다르다. 성공·폐기 모두 채운다(분모).
+    rag_question_numeric_count: entry.ragQuestionNumericCount ?? null,
     // 폐기된 답변의 숫자 토큰 **개수**만 (삼순 익명집계 조건). 본문·값은 저장하지 않는다.
     rag_discard_numeric_count: entry.ragDiscardNumericCount ?? null,
     match_path: entry.matchPath,

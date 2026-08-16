@@ -57,6 +57,7 @@ const ok = (label: string) => { passed += 1; console.log(`PASS ${label}`); };
 interface LogEntry {
   matchPath: string;
   ragAttemptPath: RagAttemptPath | null | undefined;
+  ragQuestionNumericCount: number | null | undefined;
   ragDiscardReason: RagDiscardReason | null | undefined;
   ragDiscardNumericCount: number | null | undefined;
 }
@@ -196,6 +197,7 @@ function makeDeps(answers: {
     log: async (entry: {
       matchPath: string;
       ragAttemptPath?: RagAttemptPath | null;
+      ragQuestionNumericCount?: number | null;
       ragDiscardReason?: RagDiscardReason | null;
       ragDiscardNumericCount?: number | null;
     }) => {
@@ -203,6 +205,7 @@ function makeDeps(answers: {
       logs.push({
         matchPath: entry.matchPath,
         ragAttemptPath: entry.ragAttemptPath,
+        ragQuestionNumericCount: entry.ragQuestionNumericCount,
         ragDiscardReason: entry.ragDiscardReason,
         ragDiscardNumericCount: entry.ragDiscardNumericCount,
       });
@@ -266,7 +269,12 @@ async function run(): Promise<void> {
   // 한쪽만 늘리면 배포 후 CHECK 위반(23514)으로 터지므로 여기서 먼저 RED 를 낸다.
   {
     const sql = readFileSync(MIGRATION, "utf8");
-    for (const column of ["rag_discard_reason text", "rag_attempt_path text", "rag_discard_numeric_count integer"]) {
+    for (const column of [
+      "rag_discard_reason text",
+      "rag_attempt_path text",
+      "rag_question_numeric_count integer",
+      "rag_discard_numeric_count integer",
+    ]) {
       assert.ok(
         new RegExp(`add column if not exists ${column}`, "i").test(sql),
         `migration 이 ${column} 컬럼을 추가하지 않는다`,
@@ -396,10 +404,7 @@ async function run(): Promise<void> {
     ok(`③ 종단 ${probe.attemptPath} — 폐기(사유+경로+개수) / 서빙(경로만)`);
   }
 
-  // ── ③-b 공식(official) 경로 — GENERAL 출구까지 (다른 셋과 구조가 다르다) ──
-  //
-  // 공식 경로만 `GENERAL` 출구가 있어 `match_path='llm'` 로 서빙된다. 그 경로도 경로 라벨이
-  // 실려야 "공식 근거로는 못 답했지만 일반 지식으로 답한" 비율을 뽑을 수 있다.
+  // ── ③-b 공식(official) 경로 — GROUNDED 폐기 ────────────────────────────
   {
     const { deps, logs } = makeDeps({
       official: "인필드 플라이는 1루와 2루에 주자가 있을 때 선고돼요.",
@@ -416,15 +421,109 @@ async function run(): Promise<void> {
   }
   {
     const { deps, logs } = makeDeps();
-    await answerQuestion("u-served-official", "인필드 플라이 규칙 알려줘", deps);
+    const result = await answerQuestion("u-served-official", "인필드 플라이 규칙 알려줘", deps);
     const served = logs.at(-1);
     assert.ok(served, "official 서빙 로그가 없다");
+    assert.equal(served.matchPath, "rag", `official GROUNDED 서빙이 rag 가 아니다: ${served.matchPath}`);
+    assert.equal(result.source, "rag", `official GROUNDED source 가 rag 가 아니다: ${result.source}`);
     assert.equal(
       served.ragAttemptPath, "official",
       `official 서빙 행에 경로가 없다: ${JSON.stringify(served)}`,
     );
     assert.ok(served.ragDiscardReason == null, "official 서빙 행에 폐기 사유가 붙었다");
-    ok(`③-c 종단 official 서빙 (match_path=${served.matchPath})`);
+    ok("③-c 종단 official 서빙 GROUNDED (match_path=rag)");
+  }
+
+  // ── ③-d official **GENERAL 출구** — 공식 경로에만 있는 세 번째 판정 (삼순 2차 ②) ──
+  //
+  // 🔴 직전 회차 결손 자기신고: ③-c 는 기본 `GROUNDED` 로만 돌아 "GENERAL 출구 actual" 이
+  //   아니었다. `officialStatus` 를 GENERAL 로 세운 테스트가 **하나도 없었고**
+  //   `matchPath='llm'` 도 단언하지 않았다 — 그 분기는 게이트가 본 적이 없다.
+  //
+  // GENERAL 은 "공식 자료엔 답이 없지만 일반 야구 지식으로 답했다" 로, 근거 없는 생성답이라
+  // `match_path='llm'` 로 서빙된다. 이 분기에도 경로 라벨이 실려야 "공식 근거로는 못 답했지만
+  // 일반 지식으로 답한" 비율을 뽑을 수 있다.
+  {
+    const { deps, logs } = makeDeps({
+      officialStatus: "GENERAL",
+      official: "지명타자는 투수 대신 타석에 서는 타자를 말해요.",
+    });
+    const result = await answerQuestion("u-general-official", "인필드 플라이 규칙 알려줘", deps);
+    const served = logs.at(-1);
+    assert.ok(served, "official GENERAL 로그가 없다");
+    assert.equal(
+      served.matchPath, "llm",
+      `GENERAL 출구가 llm 으로 안 갔다 — 이 분기를 태우지 못했다: ${served.matchPath} (source=${result.source})`,
+    );
+    assert.equal(result.source, "llm", `GENERAL source 가 llm 이 아니다: ${result.source}`);
+    assert.equal(
+      served.ragAttemptPath, "official",
+      `**GENERAL 서빙 행에 경로가 없다** — 공식 근거 실패율의 분모가 깎인다: ${JSON.stringify(served)}`,
+    );
+    assert.ok(served.ragDiscardReason == null, `GENERAL 서빙 행에 폐기 사유가 붙었다: ${served.ragDiscardReason}`);
+    assert.ok(
+      typeof served.ragQuestionNumericCount === "number",
+      `GENERAL 서빙 행에 질문 숫자 개수가 없다: ${JSON.stringify(served)}`,
+    );
+    ok("③-d 종단 official GENERAL 출구 (match_path=llm + 경로 라벨)");
+  }
+
+  // ── ③-e GENERAL 이 질문 밖 숫자로 폐기될 때도 관측이 실리는가 ────────────
+  //
+  // GENERAL 은 `numeric_not_in_question` 이라는 **이 경로 전용** 사유를 낸다
+  // (질문에 없는 숫자를 새로 만들면 폐기). 그 사유가 실제로 로그까지 오는지 본다.
+  {
+    const { deps, logs } = makeDeps({
+      officialStatus: "GENERAL",
+      official: "지명타자 제도는 1973년에 도입됐어요.",
+    });
+    const result = await answerQuestion("u-general-discard", "인필드 플라이 규칙 알려줘", deps);
+    const last = logs.at(-1);
+    assert.ok(last, "GENERAL 폐기 로그가 없다");
+    assert.equal(
+      last.ragDiscardReason, "numeric_not_in_question",
+      `GENERAL 질문 밖 숫자 폐기 사유가 아니다: ${JSON.stringify(last)} (source=${result.source})`,
+    );
+    assert.equal(last.ragAttemptPath, "official", `GENERAL 폐기 행에 경로가 없다: ${JSON.stringify(last)}`);
+    assert.ok(
+      typeof last.ragDiscardNumericCount === "number" && last.ragDiscardNumericCount > 0,
+      `GENERAL 폐기 행에 답변 숫자 개수가 없다: ${JSON.stringify(last)}`,
+    );
+    ok("③-e 종단 official GENERAL 폐기 (numeric_not_in_question + 개수)");
+  }
+
+  // ── ③-f 질문 숫자 개수 — 유저가 준 숫자와 모델이 만든 숫자를 가른다 (삼순 2차 ①) ──
+  //
+  // 답변 개수만 있으면 "유저가 `wRC+ 88` 이라고 써서 그걸 되받은 것" 과 "모델이 지어낸 것" 이
+  // 구분되지 않는다. 질문 개수를 나란히 남겨야 익명 교차집계가 가능하다.
+  // ⚠️ 성공·폐기 **양쪽** 에 실려야 한다 — 폐기에만 실으면 분모가 없다.
+  {
+    // 숫자 없는 질문 → 0
+    const clean = makeDeps({ team: "LG 트윈스는 1990년에 창단했어요." });
+    await answerQuestion("u-qcount-0", "LG 트윈스 역사 알려줘", clean.deps);
+    assert.equal(
+      clean.logs.at(-1)?.ragQuestionNumericCount, 0,
+      `숫자 없는 질문의 개수가 0 이 아니다: ${JSON.stringify(clean.logs.at(-1))}`,
+    );
+
+    // 숫자 2개가 든 질문 → 2 (폐기 행)
+    const withNumbers = makeDeps({ team: "LG 트윈스는 1990년에 창단했어요." });
+    await answerQuestion("u-qcount-2", "LG 트윈스 1990 1994 역사 알려줘", withNumbers.deps);
+    assert.equal(
+      withNumbers.logs.at(-1)?.ragQuestionNumericCount, 2,
+      `질문 숫자 개수가 2 가 아니다: ${JSON.stringify(withNumbers.logs.at(-1))}`,
+    );
+
+    // 서빙 행에도 실린다
+    const served = makeDeps();
+    await answerQuestion("u-qcount-served", "어제 LG 무슨 일 있었어?", served.deps);
+    const servedRow = served.logs.find((row) => row.matchPath === "news_rag");
+    assert.ok(servedRow, `뉴스 서빙 로그가 없다: ${JSON.stringify(served.logs)}`);
+    assert.ok(
+      typeof servedRow.ragQuestionNumericCount === "number",
+      `**서빙 행에 질문 숫자 개수가 없다** — 교차집계 분모가 깎인다: ${JSON.stringify(servedRow)}`,
+    );
+    ok("③-f 질문 숫자 개수 — 폐기·서빙 양쪽 (0 / 2 / 서빙)");
   }
 
   // ── ④ crash replay — store 성공 후 log 전 crash 에서 관측이 살아남는가 (삼순 ②) ──
@@ -444,7 +543,11 @@ async function run(): Promise<void> {
     assert.equal(envelope.ragAttemptPath, "team", "envelope 에 경로가 없다");
     assert.ok(
       typeof envelope.ragDiscardNumericCount === "number",
-      "envelope 에 숫자 개수가 없다",
+      "envelope 에 답변 숫자 개수가 없다",
+    );
+    assert.ok(
+      typeof envelope.ragQuestionNumericCount === "number",
+      `envelope 에 질문 숫자 개수가 없다 — crash 재생 시 교차집계 분모가 유실된다: ${JSON.stringify(envelope)}`,
     );
 
     // 실제 재생: `getLlmState` 가 저장된 envelope 를 돌려주는 상태에서 재실행한다.
@@ -452,15 +555,19 @@ async function run(): Promise<void> {
     const replayDeps = {
       ...(makeDeps().deps as Record<string, unknown>),
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
+      // ⚠️ 하니스가 수집하지 않는 칸은 게이트가 **영원히 못 본다**. 재생 로그도
+      //   production 이 넘기는 관측 4칸을 그대로 담는다(수집 누락 = 구조적 false-green).
       log: async (entry: {
         matchPath: string;
         ragAttemptPath?: RagAttemptPath | null;
+        ragQuestionNumericCount?: number | null;
         ragDiscardReason?: RagDiscardReason | null;
         ragDiscardNumericCount?: number | null;
       }) => {
         logs.push({
           matchPath: entry.matchPath,
           ragAttemptPath: entry.ragAttemptPath,
+          ragQuestionNumericCount: entry.ragQuestionNumericCount,
           ragDiscardReason: entry.ragDiscardReason,
           ragDiscardNumericCount: entry.ragDiscardNumericCount,
         });
@@ -476,7 +583,11 @@ async function run(): Promise<void> {
     assert.equal(replayed.ragAttemptPath, "team", `재생에서 경로가 유실됐다: ${JSON.stringify(replayed)}`);
     assert.ok(
       typeof replayed.ragDiscardNumericCount === "number",
-      `재생에서 숫자 개수가 유실됐다: ${JSON.stringify(replayed)}`,
+      `재생에서 답변 숫자 개수가 유실됐다: ${JSON.stringify(replayed)}`,
+    );
+    assert.ok(
+      typeof replayed.ragQuestionNumericCount === "number",
+      `재생에서 질문 숫자 개수가 유실됐다: ${JSON.stringify(replayed)}`,
     );
     ok("④ crash replay — envelope 보존 + 재생 로그 관측 유지");
   }
@@ -490,20 +601,33 @@ async function run(): Promise<void> {
     assert.ok(envelope, "뉴스 envelope 복원 실패");
     assert.equal(envelope.ragAttemptPath, "news", `서빙 envelope 에 경로가 없다: ${JSON.stringify(envelope)}`);
     assert.ok(envelope.ragDiscardReason == null, "서빙 envelope 에 폐기 사유가 붙었다");
+    assert.ok(
+      typeof envelope.ragQuestionNumericCount === "number",
+      `서빙 envelope 에 질문 숫자 개수가 없다: ${JSON.stringify(envelope)}`,
+    );
 
     const replayDeps = {
       ...(makeDeps().deps as Record<string, unknown>),
       getLlmState: async () => ({ started: true, result: stored.value, ownerActive: false }),
-      log: async (entry: { matchPath: string; ragAttemptPath?: RagAttemptPath | null }) => {
+      log: async (entry: {
+        matchPath: string;
+        ragAttemptPath?: RagAttemptPath | null;
+        ragQuestionNumericCount?: number | null;
+      }) => {
         logs.push({
           matchPath: entry.matchPath,
           ragAttemptPath: entry.ragAttemptPath,
+          ragQuestionNumericCount: entry.ragQuestionNumericCount,
           ragDiscardReason: null,
           ragDiscardNumericCount: null,
         });
       },
     } as unknown as QaDeps;
     await answerQuestion("u-crash-2", "어제 LG 무슨 일 있었어?", replayDeps);
+    assert.ok(
+      typeof logs.at(-1)?.ragQuestionNumericCount === "number",
+      `서빙 재생에서 질문 숫자 개수가 유실됐다: ${JSON.stringify(logs.at(-1))}`,
+    );
     assert.equal(
       logs.at(-1)?.ragAttemptPath, "news",
       `서빙 재생에서 경로가 유실됐다 — 분모가 깎인다: ${JSON.stringify(logs.at(-1))}`,
@@ -521,6 +645,7 @@ async function run(): Promise<void> {
         answer: "테스트 답변이에요.", source: "team_rag",
         ragAttemptPath: "made_up_path" as RagAttemptPath,
         ragDiscardReason: "totally_new_reason" as RagDiscardReason,
+        ragQuestionNumericCount: 1.5,
         ragDiscardNumericCount: -3,
       },
       { text: "", inputTokens: 1, outputTokens: 1 },
@@ -530,6 +655,10 @@ async function run(): Promise<void> {
     assert.ok(restored.ragAttemptPath === undefined, `폐쇄집합 밖 경로가 살아남았다: ${restored.ragAttemptPath}`);
     assert.ok(restored.ragDiscardReason === undefined, `폐쇄집합 밖 사유가 살아남았다: ${restored.ragDiscardReason}`);
     assert.ok(restored.ragDiscardNumericCount === undefined, `음수 개수가 살아남았다: ${restored.ragDiscardNumericCount}`);
+    assert.ok(
+      restored.ragQuestionNumericCount === undefined,
+      `소수 질문 개수가 살아남았다: ${restored.ragQuestionNumericCount}`,
+    );
     ok("④-c 오염 envelope 폐쇄집합 밖 값 폐기 (23514 차단)");
   }
 
@@ -544,13 +673,15 @@ async function run(): Promise<void> {
         matchPath: "unsure", answer: null, inputTokens: null, outputTokens: null,
         ragDiscardReason: "numeric_claim_ungrounded",
         ragAttemptPath: "news",
+        ragQuestionNumericCount: 1,
         ragDiscardNumericCount: 2,
       } as Parameters<typeof buildQuestionLogRow>[0],
       4242,
     );
     assert.equal(row.rag_discard_reason, "numeric_claim_ungrounded", "INSERT 행에 사유가 없다");
     assert.equal(row.rag_attempt_path, "news", "INSERT 행에 경로가 없다");
-    assert.equal(row.rag_discard_numeric_count, 2, "INSERT 행에 숫자 개수가 없다");
+    assert.equal(row.rag_question_numeric_count, 1, "INSERT 행에 질문 숫자 개수가 없다");
+    assert.equal(row.rag_discard_numeric_count, 2, "INSERT 행에 답변 숫자 개수가 없다");
 
     const nullRow = buildQuestionLogRow(
       {
@@ -561,7 +692,8 @@ async function run(): Promise<void> {
     );
     assert.equal(nullRow.rag_discard_reason, null, "비RAG 행의 사유가 null 이 아니다");
     assert.equal(nullRow.rag_attempt_path, null, "비RAG 행의 경로가 null 이 아니다");
-    assert.equal(nullRow.rag_discard_numeric_count, null, "비RAG 행의 개수가 null 이 아니다");
+    assert.equal(nullRow.rag_question_numeric_count, null, "비RAG 행의 질문 개수가 null 이 아니다");
+    assert.equal(nullRow.rag_discard_numeric_count, null, "비RAG 행의 답변 개수가 null 이 아니다");
     ok("⑤ log-row SSOT 컬럼 매핑");
   }
 

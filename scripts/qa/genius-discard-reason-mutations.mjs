@@ -40,20 +40,21 @@ const MUTATIONS = [
   {
     name: "M3 서빙 행에는 경로를 안 남긴다 (분자만 있고 분모가 없다 — 삼순 ①)",
     file: "pipeline",
-    from: `    toneCompliant: validated.toneCompliant, ragAttemptPath: "team",
-  }, llm));
-  // \`team_rag\` 로 기록한다`,
-    to: `    toneCompliant: validated.toneCompliant, ragAttemptPath: "team",
-  }, llm));
-  if (validated.kind === "grounded") {
-    await deps.log({
-      userId, question, questionNorm, matchPath: "team_rag", answer,
-      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      toneCompliant: validated.toneCompliant,
-    });
-    return { status: 200, answer, source: "team_rag", remaining, sourceUrl };
-  }
-  // \`team_rag\` 로 기록한다`,
+    // ⚠️ 앵커는 **서빙 로그 블록 그 자체**를 잡는다. 종전에는 envelope 쪽 문면
+    //   (`ragAttemptPath: "team",`)에 걸었는데, 서빙 envelope 를 `ragObservation()` 으로
+    //   통일하면서 그 문자열이 사라져 앵커가 깨졌다(runner 고장으로 검출됨).
+    //   조립기를 쓰는 지금은 로그 호출부에서 관측을 빼는 것이 이 결함의 정확한 형태다.
+    from: `  await deps.log({
+    userId, question, questionNorm, matchPath: "team_rag", answer,
+    inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    toneCompliant: validated.toneCompliant,
+    ...ragObservation("team", question, validated),
+  });`,
+    to: `  await deps.log({
+    userId, question, questionNorm, matchPath: "team_rag", answer,
+    inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    toneCompliant: validated.toneCompliant,
+  });`,
     expect: "서빙 행에 경로가 없다",
   },
   {
@@ -69,8 +70,10 @@ const MUTATIONS = [
     name: "M5 재생이 관측을 다시 null 로 쓴다 (삼순 ② 정확한 증상)",
     file: "pipeline",
     from: `    ragAttemptPath: storedFinal.ragAttemptPath ?? null,
+    ragQuestionNumericCount: storedFinal.ragQuestionNumericCount ?? null,
     ragDiscardReason: storedFinal.ragDiscardReason ?? null,`,
     to: `    ragAttemptPath: null,
+    ragQuestionNumericCount: null,
     ragDiscardReason: null,`,
     expect: "재생에서 폐기 사유가 유실됐다",
   },
@@ -120,6 +123,47 @@ const MUTATIONS = [
     expect: "숫자 개수가 1990",
   },
   {
+    name: "M16 질문 숫자 개수를 안 보낸다 (유저가 준 숫자↔모델 창작 구분 불가 — 삼순 2차 ①)",
+    file: "pipeline",
+    from: `    ragQuestionNumericCount: numericTokenCount(question),`,
+    to: `    ragQuestionNumericCount: 0,`,
+    expect: "질문 숫자 개수가 2 가 아니다",
+  },
+  {
+    name: "M17 log-row 가 질문 개수 칸을 빠뜨린다 (production 은 영원히 null)",
+    file: "logrow",
+    from: `    rag_question_numeric_count: entry.ragQuestionNumericCount ?? null,`,
+    to: ``,
+    expect: "INSERT 행에 질문 숫자 개수가 없다",
+  },
+  {
+    name: "M18 envelope 가 질문 개수를 안 싣는다 (crash replay 에서 유실)",
+    file: "pipeline",
+    from: `    ...(isNonNegativeInteger(final.ragQuestionNumericCount)
+      ? { ragQuestionNumericCount: final.ragQuestionNumericCount } : {}),`,
+    to: `    ...({}),`,
+    expect: "envelope 에 질문 숫자 개수가 없다",
+  },
+  {
+    name: "M19 migration 에 질문 개수 컬럼이 없다",
+    file: "migration",
+    from: `  add column if not exists rag_question_numeric_count integer;`,
+    to: `  add column if not exists rag_question_numeric_count_TYPO integer;`,
+    expect: "rag_question_numeric_count integer 컬럼을 추가하지 않는다",
+  },
+  {
+    name: "M20 official GENERAL 출구가 경로 라벨을 안 남긴다 (공식 실패율 분모 소실 — 삼순 2차 ②)",
+    file: "pipeline",
+    from: `      toneCompliant: validated.toneCompliant,
+      ...ragObservation("official", question, validated),
+    });
+    return { status: 200, answer: validated.answer, source: "llm", remaining };`,
+    to: `      toneCompliant: validated.toneCompliant,
+    });
+    return { status: 200, answer: validated.answer, source: "llm", remaining };`,
+    expect: "GENERAL 서빙 행에 경로가 없다",
+  },
+  {
     name: "M11 migration CHECK 에서 사유 하나를 뺀다 (배포 후 23514)",
     file: "migration",
     from: `      'numeric_claim_ungrounded',`,
@@ -158,12 +202,12 @@ const MUTATIONS = [
     from: `    await deps.log({
       userId, question, questionNorm, matchPath, answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("team", validated),
+      ...ragObservation("team", question, validated),
     });`,
     to: `    await deps.log({
       userId, question, questionNorm, matchPath, answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("team", validated),
+      ...ragObservation("team", question, validated),
       ...({ rawLlmText: llm.text } as Record<string, never>),
     });`,
     expect: "로그로 샜다",
