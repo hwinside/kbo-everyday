@@ -33,6 +33,7 @@ import {
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
+  projectPlayerDescriptiveEvidence,
   validateRagResponse,
   isRagAttemptPath,
   isRagDiscardReason,
@@ -3784,6 +3785,16 @@ async function answerSeasonRecordQuestion(
   return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
 }
 
+function canonicalSparsePlayerIntroAnswer(evidence: RagEvidence[]): string | null {
+  if (evidence.length !== 1) return null;
+  const sentence = evidence[0]?.content.trim() ?? "";
+  const match = sentence.match(/^(.+?)은 현 KBO 리그 (.+?)의 (.+?)이다\.?$/u);
+  if (!match) return null;
+  const [, name, team, role] = match;
+  if (!name || !team || !role || /\p{N}/u.test(sentence)) return null;
+  return `${name} 선수는 ${team} 소속 ${role}입니다.`;
+}
+
 async function answerPlayerDescriptiveQuestion(
   userId: string,
   question: string,
@@ -3823,7 +3834,7 @@ async function answerPlayerDescriptiveQuestion(
   // 근거 검색은 LLM 경계 앞이다 — 근거가 없으면 LLM을 아예 소비하지 않고 종결한다.
   let evidence: RagEvidence[];
   try {
-    evidence = selectEvidence(await deps.searchRag!(candidate, question));
+    evidence = projectPlayerDescriptiveEvidence(selectEvidence(await deps.searchRag!(candidate, question)));
   } catch {
     // ⚠️ 검색 RPC 실패는 "근거가 없다" 가 아니라 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
     //   둘을 같은 칸에 넣으면 장애가 "근거 부족" 통계에 섞여 조용히 정상처럼 보인다.
@@ -3904,7 +3915,8 @@ async function answerPlayerDescriptiveQuestion(
     // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
     return failClose(llm, ragObservation("player", question, validated));
   }
-  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  const canonicalIntroAnswer = canonicalSparsePlayerIntroAnswer(evidence);
+  const answer = composeRagAnswer(canonicalIntroAnswer ?? validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;

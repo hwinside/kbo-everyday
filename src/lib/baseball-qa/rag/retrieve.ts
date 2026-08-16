@@ -433,6 +433,60 @@ export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
 }
 
 /**
+ * 선수 소개형 질문용 evidence projection.
+ *
+ * 적용 경계는 선수 **서술형 소개** 경로의 LLM 직전뿐이다. 전역 sanitize/selectEvidence,
+ * tier1/team/news, 출력 validator는 건드리지 않는다.
+ *
+ * tier2 위키는 수치 정본이 아니므로 답변에는 숫자를 쓰지 않는다. 그런데 "어떤 선수야" 같은
+ * 소개 질문에 기록표·계약·연봉·연도 chunk를 그대로 넣으면 모델이 `276개 홈런` 같은 수치를
+ * `많은 홈런`·`굵직한 기록`처럼 정성 평가어로 바꿔 새어 나간다. 출력 validator에 평가어
+ * 사전을 붙이면 정상 서술까지 막는 누더기 규칙이 되므로, 생성 전에 숫자-heavy 문장/라인을
+ * 제외하고 clean 소개 근거만 남긴다.
+ */
+export function projectPlayerDescriptiveEvidence(rows: RagEvidence[]): RagEvidence[] {
+  const candidates = rows
+    .map((row) => ({ row, content: projectPlayerDescriptiveContent(row.content) }))
+    .filter(({ content }) => content.length >= 20);
+  const wikipedia = candidates.filter(({ row }) => (
+    row.sourceKind === "wikipedia_document" || /(?:^|\.)wikipedia\.org$/i.test(safeHostname(row.canonicalUrl))
+  ));
+  const picked = wikipedia.length > 0 ? wikipedia : candidates;
+  return picked.slice(0, RAG_EVIDENCE_LIMIT).map(({ row, content }) => ({ ...row, content }));
+}
+
+function safeHostname(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function projectPlayerDescriptiveContent(content: string): string {
+  const withoutNumericParentheticals = content
+    // `김재환(金宰煥, 1988년...)은 현 ... 외야수` 같은 프로필 첫문장의 핵심을 살린다.
+    .replace(/\([^)]*\p{N}[^)]*\)/gu, "")
+    .replace(/\[[^\]]*\p{N}[^\]]*\]/gu, "");
+  const parts = withoutNumericParentheticals
+    .split(/(?<=[.!?。]|[다요]\.)\s+|\n+/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const clean = parts.filter((part) => {
+    if (/\p{N}/u.test(part)) return false;
+    if (/주요 기록|통산 홈런|계약금|연봉|옵션|등번호|타점|득점|타율|홈런왕|타점왕|MVP|아시안 게임|프리미어 12|국가대표|기록|수상|시즌/.test(part)) {
+      return false;
+    }
+    if (/프런트|코칭스태프|편집 요청|편집 권한|최근 변경|최근 토론|정보 더 보기|펼치기|접기|둘러보기/.test(part)) {
+      return false;
+    }
+    return true;
+  });
+  return clean.join(" ").replace(/\s+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
+}
+
+
+/**
  * 선별된 근거의 단일 등급.
  * `selectEvidence`가 등급을 하나로 고정하므로 여기서는 첫 근거의 등급이 곧 전체 등급이다.
  * 방어적으로 하나라도 다르면 **더 보수적인 tier2**로 떨어뜨린다(숫자 금지 쪽으로 fail-close).
@@ -473,6 +527,12 @@ export const RAG_SYSTEM_PROMPT = [
   "'~이에요', '~예요', '~해요', '~네요', '~랍니다', '~있어요', '~왔어요' 같은 해요체·요체 표현은 절대 쓰지 않는다.",
   "답변 초안이 해요체라면 출력 전에 반드시 합니다체로 다시 고쳐 쓴다.",
   "답변은 자료를 그대로 옮기지 말고 한국어 합니다체로 다시 서술한다.",
+  "자료에 없는 팬 반응·기대·응원·팀 내 비중·강점·중심 역할·활약 평가를 덧붙이지 않는다.",
+  "근거가 소속·투타·포지션뿐이면 그 사실만 간단히 답한다. 멋진 선수·핵심 선수·많은 팬·앞으로의 활약 같은 미화 문장은 쓰지 않는다.",
+  "최선을 다한다·성실하다·소중하다·구슬땀·깊은 매력·팀을 위해 뛴다처럼 자료에 없는 태도·가치 평가도 쓰지 않는다.",
+  "자료가 'X는 Y 소속 Z이다' 한 문장뿐이면 답변도 정확히 한 문장만 쓴다.",
+  "이때 형식은 'X 선수는 Y 소속 Z입니다.'처럼 소속과 포지션만 말한다. 다른 문장을 덧붙이면 계약 위반이다.",
+  "자료가 한 문장뿐이면 '그라운드', '팀의 승리', '역할', '야구 팬', '매력', '최선', '열정' 같은 일반 감상어를 절대 쓰지 않는다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
