@@ -19,6 +19,7 @@ import {
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "../answer-budget";
 
 /**
  * 이번 슬라이스의 retrieval 모드 — **vector-only**다 (S2b thin-slice waiver, 삼순 R1 P1 #6).
@@ -197,20 +198,21 @@ export async function searchSourcePriorityCandidates(
  * 자주 잘랐다. 900보다는 여전히 작게 둬 "chunk 전문 복사"가 되지 않게 한다.
  */
 export const RAG_EVIDENCE_MAX_CHARS = 800;
-/** RAG 답변 본문(출처 표기 제외) 상한. */
-// 2026-08-10 하린아빠: "단답형은 단답형으로, 긴 답변이 필요한 경우는 충분히 길게" → 160→320.
-// 2026-08-16 하린아빠: "전반적인 답변이 너무 짧게 즉답형" → 320→700.
-// ⚠️ 상한은 **목표 길이가 아니라 안전 상한**이다. 유형별 길이는 BASEBALL_GENIUS_DEPTH_PROMPT 가
-//    정하고, 이 값은 장문 복붙(원문 재발행)을 막는 마지막 방어선이다. 700 = 근거 1건 상한(800)보다
-//    작게 둬서 "근거 한 건을 통째로 옮긴 답변"이 상한 안에서 성립하지 못하게 한다.
-export const RAG_ANSWER_MAX_CHARS = 700;
 /**
- * 공식 문서(tier1) 답변 상한.
- * 규칙 설명은 조건절이 붙어 160자로는 조문 취지가 잘린다(예: 보크 성립 조건).
- * 근거가 정본이므로 tier2보다 여유를 주되, 장문 복붙 방지를 위해 상한 자체는 유지한다.
- * 2026-08-16: tier2 와 같은 700 으로 함께 올린다(두 값이 갈라지면 경로별 체감이 어긋난다).
+ * RAG 답변 본문(출처 표기 제외) 상한 — **예산 SSOT 파생**(`answer-budget.ts`).
+ *
+ * ⚠️ 여기에 리터럴을 다시 적지 않는다. 문자 상한만 올리고 `maxOutputTokens` 를 두면
+ * 상한 답변이 JSON 절단으로 전량 폐기된다(삼순 2026-08-16 NO-GO P0 실제 사고).
+ * 두 단위는 같은 예산이므로 한 모듈에서 파생시킨다.
  */
-export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 700;
+export const RAG_ANSWER_MAX_CHARS = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
+/**
+ * 공식 문서(tier1) 답변 상한 — 같은 예산 SSOT 파생.
+ * 규칙 설명은 조건절이 붙어 160자로는 조문 취지가 잘린다(예: 보크 성립 조건).
+ * tier2 와 **같은 상수**를 파생하므로 두 값이 갈라질 수 없다(갈라지면 같은 질문이
+ * 라우팅 경로에 따라 다르게 잘린다).
+ */
+export const RAG_OFFICIAL_ANSWER_MAX_CHARS = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
 
 export const RAG_GROUNDED_SENTINEL = "GROUNDED";
 export const RAG_INSUFFICIENT_SENTINEL = "INSUFFICIENT";
@@ -623,7 +625,8 @@ export function buildRagLlmRequest(
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 256,
+      // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
+      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
     },
   };

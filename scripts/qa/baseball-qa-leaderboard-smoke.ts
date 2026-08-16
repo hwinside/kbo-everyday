@@ -34,6 +34,14 @@ import {
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
 import { BASEBALL_GENIUS_DEPTH_PROMPT } from "../../src/lib/baseball-qa/tone";
 import {
+  BASEBALL_GENIUS_ANSWER_MAX_CHARS,
+  BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
+  BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER,
+  answerBudgetViolation,
+} from "../../src/lib/baseball-qa/answer-budget";
+import { buildBaseballQaGeminiRequest } from "../../src/lib/baseball-qa/gemini-request";
+import { buildRagLlmRequest } from "../../src/lib/baseball-qa/rag/retrieve";
+import {
   composeCareerLeaderboardAnswer,
   resolveCareerLeaderboard,
   resolveCareerLeaderboardIntent,
@@ -359,11 +367,42 @@ check("깊이 지시문 내용 계약 — '짧게' 강제와 무근거 채움 �
   assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("700자 이하"));
   assert.ok(!BASEBALL_QA_SYSTEM_PROMPT.includes("320자 이하"));
 });
+// 🔴 삼순 2026-08-16 NO-GO P0. 문자 상한만 올리고 `maxOutputTokens` 를 두면 상한 답변이
+//   JSON 중간 절단(`finishReason: MAX_TOKENS`) → validator 가 malformed 로 **전량 폐기**한다.
+//   실측(gemini-flash-lite-latest): 700자 JSON 이 서술형 372 / 규칙형 392 / 수치혼합 500 /
+//   지표최대밀도 552 토큰. 실호출로 max=256·384 는 MAX_TOKENS 파손, 512 부터 STOP.
+check("답변 예산 정합 — 문자 상한과 토큰 상한은 같은 예산이다", () => {
+  // 게이트가 조건을 재기술하지 않는다 — production 순수 함수를 그대로 태운다.
+  assert.equal(answerBudgetViolation(), null, `예산 정합 위반: ${answerBudgetViolation()}`);
+  // 자가검증: 이 판정 함수가 실제로 위반을 잡는가(무력화 검출).
+  assert.notEqual(answerBudgetViolation(BASEBALL_GENIUS_ANSWER_MAX_CHARS, 256), null, "종전 256 토큰을 위반으로 잡지 못한다");
+  assert.notEqual(
+    answerBudgetViolation(BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER),
+    null,
+    "실측 최악과 같은 값(여유 0)을 위반으로 잡지 못한다",
+  );
+});
+// 배선축: 상수만 맞고 실제 요청 body 가 옛 리터럴이면 아무 의미가 없다.
+// **배포 빌더가 만든 body 를 직접 읽어** 판정한다(문자열 재기술 금지).
+check("토큰 상한 실배선 — 두 요청 빌더가 같은 예산 상수를 싣는다", () => {
+  const ragBody = buildRagLlmRequest("질문", [{
+    content: "문보경은 LG 트윈스 소속 내야수로 별명은 문학소년이다. 충분히 긴 근거 문장입니다.",
+    pageTitle: "문보경", canonicalUrl: "https://namu.wiki/w/문보경", revision: "1",
+    sectionPath: "본문", asOf: "2026-01-01", sourceGrade: "tier2",
+  }] as never, "system");
+  const genericBody = buildBaseballQaGeminiRequest("질문", "system");
+  assert.equal(ragBody.generationConfig.maxOutputTokens, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS, "RAG 요청이 옛 토큰 상한을 싣는다");
+  assert.equal(genericBody.generationConfig.maxOutputTokens, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS, "generic 요청이 옛 토큰 상한을 싣는다");
+});
 check("근거 재료량 — 상한만 올리고 재료를 안 늘리면 모델이 지어내는 쪽으로 간다", () => {
   assert.equal(RAG_EVIDENCE_LIMIT, 6);
   assert.equal(RAG_EVIDENCE_MAX_CHARS, 800);
-  // 근거 1건 상한 > 답변 상한 이면 "근거 한 건 통째 복사"가 상한 안에서 성립한다.
-  assert.ok(RAG_EVIDENCE_MAX_CHARS > RAG_ANSWER_MAX_CHARS, "답변 상한이 근거 1건 상한 이상이면 원문 재발행이 가능해진다");
+  // ⚠️ 종전 주석의 "근거상한 > 답변상한 이면 통째 복사가 성립하지 못한다"는 **false-green**
+  //    이었다(삼순 2026-08-16 P1). 700자 이하 chunk 는 전문이 그대로 들어갈 수 있고, 긴
+  //    chunk 도 앞 700자를 옮길 수 있다. 복사 방어는 이 부등식이 아니라 실 provider 산출물의
+  //    최장 공통 부분문자열을 재는 `qa:genius-sincerity-live` 반대축이 담당한다.
+  //    여기서는 두 값의 관계를 관측값으로만 남긴다(방어 주장 아님).
+  assert.ok(RAG_EVIDENCE_MAX_CHARS > 0 && RAG_ANSWER_MAX_CHARS > 0);
 });
 
 // ── 4. 성의 축 — 실제 생성답 E2E (삼순 2026-08-10: 프롬프트 문자열 단정만으로는

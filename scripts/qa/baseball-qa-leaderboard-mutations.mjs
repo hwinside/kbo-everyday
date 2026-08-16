@@ -19,6 +19,7 @@ const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
 const TONE = "src/lib/baseball-qa/tone.ts";
 const GEMINI_REQUEST = "src/lib/baseball-qa/gemini-request.ts";
+const ANSWER_BUDGET = "src/lib/baseball-qa/answer-budget.ts";
 
 const MUTATIONS = [
   {
@@ -81,17 +82,51 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m4 tier2 상한 320 회귀 — 상향 이전 값으로 되돌림",
-    file: RETRIEVE,
-    from: "export const RAG_ANSWER_MAX_CHARS = 700;",
-    to: "export const RAG_ANSWER_MAX_CHARS = 320;",
+    // ⚠️ 앵커는 **예산 SSOT 상수 선언**에 건다. 세 상한이 전부 이 값을 파생하므로
+    //   여기 하나만 되돌리면 전 경로가 함께 회귀한다(리터럴 3개를 각각 앵커하던 시대 종료).
+    name: "m4 답변 문자 상한 320 회귀 — 상향 이전 값으로 되돌림",
+    file: ANSWER_BUDGET,
+    from: "export const BASEBALL_GENIUS_ANSWER_MAX_CHARS = 700;",
+    to: "export const BASEBALL_GENIUS_ANSWER_MAX_CHARS = 320;",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m4b tier1 상한만 갈라놓기 — 경로별 길이 불일치",
+    name: "m4b tier1 상한만 갈라놓기 — SSOT 파생을 끊고 경로별 길이 불일치",
     file: RETRIEVE,
-    from: "export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 700;",
+    from: "export const RAG_OFFICIAL_ANSWER_MAX_CHARS = BASEBALL_GENIUS_ANSWER_MAX_CHARS;",
     to: "export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 320;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4e 생성 토큰 상한 256 회귀 — 700자 답변이 JSON 절단으로 전량 폐기 (삼순 P0 재현)",
+    file: ANSWER_BUDGET,
+    from: "export const BASEBALL_GENIUS_MAX_OUTPUT_TOKENS = 1_024;",
+    to: "export const BASEBALL_GENIUS_MAX_OUTPUT_TOKENS = 256;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    // ⚠️ 첫 가드만 지우는 변이는 **의도적으로 쓰지 않는다** — 1.5배 여유 가드가 같은 입력을
+    //   여전히 잡아내므로 검출력 0 이 되고, 그건 코드 결함이 아니라 두 가드가 겹친다는 뜻이다
+    //   (실측으로 확인: 256 < ceil(552*1.5)=828 이라 두 번째 가드가 대신 잡는다).
+    //   판정 자체를 무력화하는 변이라야 "게이트가 이 함수를 실제로 태우는가"를 검사한다.
+    name: "m4f 예산 정합 판정 무력화 — 어떤 토큰 상한도 통과시킨다",
+    file: ANSWER_BUDGET,
+    from: "): string | null {\n  if (maxOutputTokens < worstMeasuredTokens) {",
+    to: "): string | null {\n  return null;\n  if (maxOutputTokens < worstMeasuredTokens) {",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4g RAG 요청 토큰 미배선 — 상수는 맞는데 실제 body 가 옛 리터럴",
+    file: RETRIEVE,
+    from: "      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,",
+    to: "      maxOutputTokens: 256,",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4h generic 요청 토큰 미배선 — 상수는 맞는데 실제 body 가 옛 리터럴",
+    file: GEMINI_REQUEST,
+    from: "      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,",
+    to: "      maxOutputTokens: 256,",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -109,16 +144,16 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m5 generic 상한 320 회귀",
+    name: "m5 generic 상한만 SSOT 파생을 끊고 320 회귀",
     file: CONSTANTS,
-    from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 700;",
+    from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = BASEBALL_GENIUS_ANSWER_MAX_CHARS;",
     to: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
     name: "m5b generic 프롬프트만 구 상한 문구로 회귀 — 상수와 지시 불일치",
     file: GEMINI_REQUEST,
-    from: 'BASEBALL_RULE_TERM일 때만 700자 이하 답변',
+    from: 'BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변',
     to: 'BASEBALL_RULE_TERM일 때만 320자 이하 답변',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
