@@ -2,10 +2,10 @@
  * 콘텐츠 조회수(숏츠·뉴스) 순수 정책 — 테스트 가능 · React/DOM 무관. 2026-08-14.
  *
  * dedup 규칙:
- *  - 숏츠: 뷰어에서 영상이 화면에 노출될 때마다 +1(재조회 카운트).
- *    동일 영상은 짧은 창(SHORTS_RECOUNT_WINDOW_MS) 안의 중복만 차단 —
- *    내리면서 본 것·다시 본 것은 모두 집계하되, 순간 위아래 왕복 스팸만 막는다.
- *    (2026-08-16 하린아빠 지시: 뷰어에서 하나하나 본 영상 모두 카운트. dwell 게이팅 없음.)
+ *  - 숏츠: 풀스크린 뷰어에서 영상이 노출될 때마다 +1 — 단순 조회수, 클라 dedup 없음.
+ *    썰네일/캐러셀 노출은 제외(풀스크린 뷰어만 집계).
+ *    (2026-08-16 하린아빠 지시: 광고 인벤토리 가치 측정용 — IAB 기준 없이 그냥 단순하게
+ *    조회수, 썰네일 노출 제외, dwell 게이팅 없음.)
  *  - 뉴스: 원문 열기(click)마다 +1 (게시글 click과 동일 축, dedup 없음)
  */
 
@@ -42,25 +42,10 @@ export function newsContentId(url: string, canonicalUrl?: string | null): string
 }
 
 /**
- * 숏츠 재조회 중복 차단 창(ms). 이 시간 안의 같은 영상 재노출만 미집계 —
- * 순간 위아래 왕복 스와이프 스팸만 막고, 그 밖의 재조회는 다시 +1 된다.
+ * 숏츠 집계 대상 여부 — 단순 조회수(클라 dedup/창 없음, 순수).
+ * 유효 id면 매 노출마다 집계(true), 무효 id만 제외.
+ * (서버 route가 IP+콘텐츠 1초 abuse cap을 유지해 폭주만 막는다 — 이건 사기방지지 IAB 가시성 로직이 아니다.)
  */
-export const SHORTS_RECOUNT_WINDOW_MS = 30_000;
-
-/**
- * 숏츠 집계 대상 여부(재조회 창 기반, 순수).
- * - 무효 id → 미집계.
- * - 이 영상을 이번 세션에서 처음 보거나(lastCountedMs 없음) 마지막 집계 이후
- *   windowMs 이상 지났으면 집계 대상(true). 창 안 재노출만 false.
- * community/view-rate-limit의 shouldAllowView와 동일한 시간창 판정 축.
- */
-export function shouldCountShortsView(
-  lastCountedMs: number | undefined,
-  nowMs: number,
-  videoId: string,
-  windowMs: number = SHORTS_RECOUNT_WINDOW_MS,
-): boolean {
-  if (!isValidContentId(videoId)) return false;
-  if (lastCountedMs === undefined) return true;
-  return nowMs - lastCountedMs >= windowMs;
+export function shouldCountShortsView(videoId: string): boolean {
+  return isValidContentId(videoId);
 }

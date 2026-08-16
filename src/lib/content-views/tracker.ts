@@ -2,11 +2,9 @@
 
 import { pickTransport } from "@/lib/community/view-tracker-policy";
 import {
-  contentViewKey,
   isValidContentId,
   newsContentId,
   shouldCountShortsView,
-  SHORTS_RECOUNT_WINDOW_MS,
   type ContentViewType,
 } from "./policy";
 
@@ -15,36 +13,6 @@ import {
  * 순수 판정은 policy.ts. 서버(/api/content-views/view)는 순수 증가만.
  * 전송 실패는 best-effort(UX 무영향) — 게시글 view-tracker와 동일 계약.
  */
-
-// key(`shorts:<id>`) → 마지막 집계 시각(ms). 재조회 창 판정용. v2 = 타임스탬맵 포맷.
-const SEEN_KEY = "kbo_content_views_seen_v2";
-
-function seenMap(): Record<string, number> {
-  try {
-    const raw = sessionStorage.getItem(SEEN_KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, number>)
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function markSeen(key: string, atMs: number): void {
-  try {
-    const m = seenMap();
-    m[key] = atMs;
-    // 창 밖(오래된) 항목 정리 — 어차피 재카운트 대상이라 제거해도 동작 동일, 메모리만 절약.
-    const cutoff = atMs - SHORTS_RECOUNT_WINDOW_MS;
-    for (const k of Object.keys(m)) {
-      if (m[k] < cutoff) delete m[k];
-    }
-    sessionStorage.setItem(SEEN_KEY, JSON.stringify(m));
-  } catch {
-    /* storage 불가 환경 무시 */
-  }
-}
 
 /** 카운터 +1 (best-effort). sendBeacon 우선, 큐잉 실패 시 fetch 폴백. */
 function sendView(type: ContentViewType, id: string, viewToken: string): void {
@@ -75,15 +43,13 @@ function sendView(type: ContentViewType, id: string, viewToken: string): void {
 }
 
 /**
- * 숏츠 조회 +1 — 내리면서 본 영상 하나하나 카운트(재조회 포함).
- * 동일 영상은 SHORTS_RECOUNT_WINDOW_MS 창 안 중복만 차단(순간 왕복 스팸 방지).
+ * 숏츠 조회 +1 — 단순 조회수. 뷰어에서 영상이 노출될 때마다 집계(클라 dedup 없음).
+ * 호출부(ReelViewer)는 video.id 변경 시마다 1회 발화 — 스와이프로 내린 영상 하나하나 +1.
+ * 서버 route가 IP+콘텐츠 1초 abuse cap으로 폭주만 막는다(사기방지, IAB 로직 아님).
  */
 export function trackShortsView(videoId: string, viewToken?: string | null): void {
   if (!viewToken) return; // 서명 없는 항목은 전송 안 함 — 임의 id 증가 차단(삼순 blocker3)
-  const key = contentViewKey("shorts", videoId);
-  const now = Date.now();
-  if (!shouldCountShortsView(seenMap()[key], now, videoId)) return;
-  markSeen(key, now);
+  if (!shouldCountShortsView(videoId)) return;
   sendView("shorts", videoId, viewToken);
 }
 

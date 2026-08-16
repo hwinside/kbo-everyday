@@ -58,19 +58,12 @@ check("뉴스 content_id: 512자 초과는 절단 (DB CHECK 정합)", () => {
   assert.equal(isValidContentId(id), true);
 });
 
-check("숏츠 재조회 창: 처음·창 밖 재조회는 집계, 창 안 중복만 미집계", () => {
-  // 처음 노출(lastCountedMs 없음) → 집계.
-  assert.equal(shouldCountShortsView(undefined, 1_000, "vid123"), true);
-  // 30초 창 안 재노출 → 미집계(순간 왕복 스팸 방지).
-  assert.equal(shouldCountShortsView(1_000, 1_000 + 29_000, "vid123"), false);
-  // 30초 경과 후 재조회 → 다시 집계.
-  assert.equal(shouldCountShortsView(1_000, 1_000 + 30_000, "vid123"), true);
-  // 다른 영상은 독립(마지막 집계 없음) → 집계.
-  assert.equal(shouldCountShortsView(undefined, 1_000, "vid456"), true);
-});
-
-check("숏츠 재조회 창: 무효 id는 집계 대상 아님", () => {
-  assert.equal(shouldCountShortsView(undefined, 1_000, ""), false);
+check("숏츠 단순 조회수: 유효 id는 매 노출 집계, 무효 id만 제외", () => {
+  // 클라 dedup/창 없음 — 유효 id면 항상 집계 대상(노출마다 +1).
+  assert.equal(shouldCountShortsView("vid123"), true);
+  assert.equal(shouldCountShortsView("vid456"), true);
+  // 무효 id(빈 문자열)만 제외.
+  assert.equal(shouldCountShortsView(""), false);
 });
 
 check("counts 키 형식: `<type>:<id>`", () => {
