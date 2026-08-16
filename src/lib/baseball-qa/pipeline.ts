@@ -82,9 +82,9 @@ import {
 import {
   composeTeamPairAnswer,
   composeTeamRecordAnswer,
-  isHeadToHeadQuestion,
   isTeamPairMetric,
   isTeamScoreQuestion,
+  mentionsUnservedTeamTopic,
   resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
@@ -4761,16 +4761,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // 단일 구단과 같은 계약: 원값 그대로 · 한 팀이라도 없으면 통째로 fail-close · LLM 미경유.
     // 3개 이상은 열지 않는다(폐쇄집합 2 고정) — 열거 대상이 늘면 질문 의도가 모호해진다.
     const mentionedTeams = mentionedTeamCanonicals(question);
-    // ⚠️ 진입 조건 3중 fail-close (2026-08-16 삼순 2차 NO-GO):
+    // ⚠️ 진입 조건 (2026-08-16 삼순 NO-GO):
     //   ① 지표가 pair 폐쇄집합(`ranking`·`gamesBehind`) 안일 것
     //      — 시즌 집계 나열(`전적`·`승`·`홈런`·`타율`)은 견주기 질문의 답이 아니다.
-    //   ② 맞대결·상대전 문맥이 아닐 것
-    //      — 우리는 맞대결 정본을 서빙하지 않으므로 시즌 집계로 대체하면 확정 오답이다.
-    //   ③ 구단이 정확히 2개일 것 (기존)
+    //   ② 구단이 정확히 2개일 것
+    //
+    //   ③ 미서빙 주제어(맞대결·상대전적·우승 등)가 없을 것
+    //
+    // ③은 **새 정규식이 아니라 기존 SSOT(`TEAM_UNSERVED_PATTERNS`) 재사용**이다.
+    // `resolveTeamRecordIntent` 는 그 패턴을 값 요구어와 AND 로 묶어 서사 질문을 살리는데,
+    // pair 경로는 이미 지표가 잡힌 상태라 서사가 아니다 — `LG와 두산 맞대결 순위` 처럼
+    // 값 요구어가 없어도 답은 수치로 확정되므로 여기서는 주제어만으로 닫는다.
+    // 3차 반영에서 별도 판정기(`isHeadToHeadQuestion`)를 세웠다가 제거했다:
+    // 같은 판정을 두 곳에서 하면 한쪽만 고쳤을 때 조용히 갈라진다.
     if (
       intent.kind === "query"
       && isTeamPairMetric(intent.metric)
-      && !isHeadToHeadQuestion(question)
+      && !mentionsUnservedTeamTopic(question)
       && !canonicalTeam
       && mentionedTeams.length === 2
       && deps.fetchTeamRecord

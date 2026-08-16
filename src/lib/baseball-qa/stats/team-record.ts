@@ -122,7 +122,11 @@ const UNSERVED_VALUE_ASK = /몇|얼마|횟수|개수|알려|보여|어떻게\s*�
 const TEAM_UNSERVED_PATTERNS: ReadonlyArray<RegExp> = [
   // 우승 서사는 범위 안이지만 **횟수 질문**은 앱 정본이 없으므로 LLM으로 보내지 않는다.
   /우승/,
-  /상대\s*전적|상대전|맞대전\s*전적/,
+  // ⚠️ 2026-08-16: `맞대결` 추가. 우리는 맞대결 정본을 서빙하지 않으므로 시즌 집계로
+  //   대체하면 확정 오답이다. **여기가 SSOT** — 라우팅·구단 RAG·기사 RAG 가 이 한 곳에서
+  //   같은 판정을 받는다. 별도 판정기를 새로 만들면 한쪽만 고쳐져 조용히 갈라진다
+  //   (이 파일 아래 `TEAM_SCORE_PATTERN` 주석의 실패 모드와 같은 축).
+  /상대\s*전적|상대전|맞대전\s*전적|맞대결/,
   /관중\s*수|연봉|연봉액|몸값|순자산|연종/,
 ];
 
@@ -189,6 +193,23 @@ export function isTeamScoreQuestion(question: string): boolean {
   if (!TEAM_SCORE_PATTERN.test(normalized)) return false;
   // 스코어 단어가 있어도 **다른 의문 대상**이 함께 있으면 그쪽이 질문의 머리다.
   return !SCORE_CONTEXT_HEADS.test(normalized);
+}
+
+/**
+ * 미서빙 주제어가 문장에 있는가 — **값 요구어 조건 없이** 본다.
+ *
+ * `resolveTeamRecordIntent` 는 `UNSERVED_VALUE_ASK` 와 AND 로 묶어 쓴다(서사 질문을 살리려고).
+ * 그런데 **두 구단 pair 경로**는 사정이 다르다 — 이미 지표가 잡힌 상태이므로 서사가 아니고,
+ * `LG와 두산 맞대결 순위` 처럼 값 요구어가 없어도 답은 수치로 확정된다.
+ * 우리는 맞대결 정본을 서빙하지 않으므로 시즌 집계로 대체하면 확정 오답이다.
+ *
+ * ⚠️ **같은 패턴 배열(SSOT)을 재사용한다** — 별도 판정기를 새로 만들지 않는다.
+ *   3차 반영에서 `isHeadToHeadQuestion` 이라는 두 번째 정규식을 세웠다가 제거했다:
+ *   같은 판정을 두 곳에서 하면 한쪽만 고쳤을 때 조용히 갈라진다(이 파일의 기존 실패 모드).
+ */
+export function mentionsUnservedTeamTopic(question: string): boolean {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  return TEAM_UNSERVED_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export type TeamRecordIntent =
@@ -379,23 +400,6 @@ export type TeamPairMetric = (typeof TEAM_PAIR_METRICS)[number];
 
 export function isTeamPairMetric(metric: TeamMetricKey): metric is TeamPairMetric {
   return (TEAM_PAIR_METRICS as readonly string[]).includes(metric);
-}
-
-/**
- * 맞대결·상대전 문맥인가 — pair 경로 **진입 전** fail-close.
- *
- * ⚠️ `resolveTeamRecordIntent` 의 `TEAM_UNSERVED_PATTERNS` 는 `상대전적`·`맞대전 전적` 만
- *   보고 `상대로`(조사형)를 못 잡는다. 그런데 `LG가 두산 상대로 몇 승 했어?` 는
- *   `wins` 로 판정돼 시즌 승수가 나갔다(실측). 우리는 맞대결 정본을 서빙하지 않으므로
- *   **묻는 순간 답할 수 없는 질문**이다 — 시즌 집계로 대체하면 확정 오답이다.
- *
- * ⚠️ 여기서 어휘를 늘려 반례를 메우지 않는다. 이 판정이 놓치더라도 위 지표 폐쇄집합이
- *   2차 방어로 남는다(승수·홈런·타율은 애초에 pair 경로에 못 들어온다).
- */
-const HEAD_TO_HEAD_CONTEXT = /상대로|상대\s*전적|상대전|맞대결|맞대전|[가-힣A-Za-z]+전\s*(?:성적|전적|기록)/;
-
-export function isHeadToHeadQuestion(question: string): boolean {
-  return HEAD_TO_HEAD_CONTEXT.test(question.normalize("NFKC").toLowerCase().replace(/\s+/g, " "));
 }
 
 /** 두 구단 질문의 결과. 부분 성공은 없다 — 둘 다 있거나, 없거나. */

@@ -838,7 +838,7 @@ async function verifyConjunctiveParticleBinding() {
 async function verifyTeamPairEndToEnd() {
   const {
     createTeamRecordFetchers, resolveTeamPairRecord,
-    TEAM_PAIR_METRICS, isTeamPairMetric, isHeadToHeadQuestion,
+    TEAM_PAIR_METRICS, isTeamPairMetric, mentionsUnservedTeamTopic, resolveTeamRecordIntent,
   } = await import("@/lib/baseball-qa/stats/team-record");
   const fetchers = createTeamRecordFetchers();
   const [standings, teamRecords] = await Promise.all([
@@ -876,15 +876,22 @@ async function verifyTeamPairEndToEnd() {
 
   const runPair = async (question: string) => {
     const state: RunState = { llmCalls: 0, logs: [] };
+    // 조회 호출 수를 센다 — 값을 받아놓고 버리는 형태도 나중에 누수 통로가 된다.
+    let fetchCalls = 0;
+    const countingFetchers = {
+      fetchStandings: async () => { fetchCalls += 1; return standings; },
+      fetchTeamRecords: async () => teamRecords,
+    };
     const result = await answerQuestion("u-team-pair", question, {
       ...makeDeps(state),
-      fetchTeamRecord: fetchers,
+      fetchTeamRecord: countingFetchers,
     } as QaDeps);
     return {
       source: result.source as MatchPath,
       answer: result.answer ?? "",
       llmCalls: state.llmCalls,
       logs: state.logs,
+      fetchCalls,
     };
   };
 
@@ -911,8 +918,11 @@ async function verifyTeamPairEndToEnd() {
       const rowB = byName(c.teams[1]);
       const boundTo = (scope: string, team: string, value: string) => {
         // 팀명 뒤 최대 12자(라벨·조사) 안에 그 팀의 값이 와야 한다 — 다른 팀 이름이 끼면 실패.
+        // ⚠️ **숫자 토큰 경계**를 건다(삼순 3차 NO-GO): 경계가 없으면 기대 `1.0` 이 실제
+        //   `11.0` 안에서도 매치돼, 값이 틀려도 GREEN 이 된다.
+        //   앞: 숫자·소수점이 이어지지 않을 것 / 뒤: 숫자가 이어지지 않을 것.
         const pattern = new RegExp(
-          `${escapeRegExp(team)}(?:(?!${c.teams.map(escapeRegExp).join("|")}).){0,12}?${escapeRegExp(value)}`,
+          `${escapeRegExp(team)}(?:(?!${c.teams.map(escapeRegExp).join("|")}).){0,12}?(?<![0-9.])${escapeRegExp(value)}(?![0-9])`,
         );
         return pattern.test(scope);
       };
@@ -933,11 +943,15 @@ async function verifyTeamPairEndToEnd() {
           boundTo(answer, c.teams[1], `${rowB.ranking}위`),
           `${c.question}: ${c.teams[1]} ↔ ${rowB.ranking}위 결속 실패 — "${answer}"`,
         );
-        // 값이 뒤바뀐 형태는 반드시 실패해야 한다 — 두 팀 순위가 같으면 이 검증이 무의미하다.
+        // 값이 뒤바뀐 형태는 **양방향 모두** 실패해야 한다 (삼순 3차: A→B 한쪽만 봤다).
         if (rowA.ranking !== rowB.ranking) {
           assert.ok(
             !boundTo(answer, c.teams[0], `${rowB.ranking}위`),
             `${c.question}: ${c.teams[0]} 에 상대 팀 순위가 붙었다 — "${answer}"`,
+          );
+          assert.ok(
+            !boundTo(answer, c.teams[1], `${rowA.ranking}위`),
+            `${c.question}: ${c.teams[1]} 에 상대 팀 순위가 붙었다 — "${answer}"`,
           );
         }
       } else {
@@ -961,6 +975,10 @@ async function verifyTeamPairEndToEnd() {
             !boundTo(listingScope, c.teams[0], shownOf(Number(rowB.gamesBehind))),
             `${c.question}: ${c.teams[0]} 에 상대 팀 게임차가 붙었다 — "${answer}"`,
           );
+          assert.ok(
+            !boundTo(listingScope, c.teams[1], shownOf(Number(rowA.gamesBehind))),
+            `${c.question}: ${c.teams[1]} 에 상대 팀 게임차가 붙었다 — "${answer}"`,
+          );
         }
       }
       // log match_path 까지 고정 — source 만 보면 로그가 다른 값으로 남아도 GREEN 이다.
@@ -970,35 +988,60 @@ async function verifyTeamPairEndToEnd() {
     });
   }
 
-  // ── ①-b 오답 금지 — pair 경로가 **답하면 안 되는** 질문 (삼순 2026-08-16 2차 NO-GO) ──
+  // ── ①-b 오답 금지 — pair 경로가 **답하면 안 되는** 질문 (삼순 2026-08-16 3차 NO-GO) ──
   //
-  //   🔴 1차 구현은 `구단 2개 + 지원 지표 아무거나` 면 전부 시즌 집계 쌍으로 답했다.
-  //     실측 오답(삼순 지적 그대로 재현됐다):
-  //       `LG와 두산 전적 알려줘`        → 양 팀 **시즌** 전적 (맞대결이 아니다)
-  //       `LG가 두산 상대로 몇 승 했어?` → 시즌 승수 `LG 58 / 두산 55`
-  //       `엘지랑 두산 팀타율`           → 시즌 팀타율 나열
-  //   순위·게임차만이 "두 팀을 견주는" 의미가 시즌 집계로 정확히 성립한다(순위표가 곧 비교표).
-  //   나머지는 pair 로 답하지 않는다 — 지표 폐쇄집합 + 맞대결 문맥 fail-close 2중 방어.
-  for (const question of [
-    "LG와 두산 전적 알려줘",
-    "LG가 두산 상대로 몇 승 했어?",
-    "LG가 두산 상대로 홈런 몇 개?",
-    "엘지랑 두산 팀타율",
-    "엘지랑 두산 홈런",
-    "엘지랑 두산 맞대결 전적",
-    "엘지 두산전 성적",
-  ]) {
-    await check(`pair 오답 금지 "${question}"`, async () => {
-      const { source, answer, llmCalls } = await runPair(question);
-      assert.notEqual(
-        source, "kbo_structured",
-        `${question}: 두 팀 시즌 집계를 견주기 질문의 답으로 내보냈다 — "${answer}"`,
-      );
-      assert.equal(llmCalls, 0, `${question}: LLM 을 ${llmCalls}회 태웠다 — 수치 질문 환각 통로`);
+  //   🔴 2차 반영의 7문장은 전부 `record/wins/hr/avg` 라 **지표 폐쇄집합만으로 막혔다** —
+  //     미서빙 주제어 조건을 삭제해도 GREEN 이었다(삼순 지적). 그래서 두 축을 나눈다:
+  //       A축 폐쇄집합 밖 지표      (주제어 조건이 없어도 막힘)
+  //       B축 **허용 지표 + 맞대결** (주제어 조건이 유일한 방어 — 삭제하면 RED)
+  //   그리고 `source !== kbo_structured` 만 보던 것을 **source·answer·logs exact** 로 바꾼다
+  //   (`blocked`/`service_redirect`/`error` 로 잘못 끝나도 GREEN 이었다).
+  const forbiddenPairCases: Array<{ question: string; axis: "metric" | "topic"; source: MatchPath; answer: string }> = [
+    // A축 — 폐쇄집합 밖 지표
+    { question: "LG와 두산 전적 알려줘", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "엘지랑 두산 팀타율", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "엘지랑 두산 홈런", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "LG가 두산 상대로 몇 승 했어?", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "엘지랑 두산 맞대결 전적", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "LG 두산 상대전적", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    // B축 — **허용 지표 + 미서빙 주제어**. 주제어 조건이 유일한 방어다.
+    //   ⚠️ 값 요구어(`몇`·`얼마`)가 붙으면 `resolveTeamRecordIntent` 가 먼저 `unserved` 로
+    //     닫아 이 축이 성립하지 않는다(게이트가 먼저 잡았다). 값 요구어 없는 형태만 고른다.
+    { question: "LG와 두산 맞대결 순위", axis: "topic", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "LG 두산 맞대결 게임차", axis: "topic", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "LG와 두산 맞대결 게임차는", axis: "topic", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "엘지랑 두산 맞대결 순위는?", axis: "topic", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+  ];
+  for (const c of forbiddenPairCases) {
+    await check(`pair 오답 금지 [${c.axis}] "${c.question}"`, async () => {
+      const { source, answer, llmCalls, logs, fetchCalls } = await runPair(c.question);
+      assert.equal(source, c.source, `${c.question}: source=${source} (기대 ${c.source}) — 답변 "${answer}"`);
+      assert.equal(answer, c.answer, `${c.question}: 안내문 불일치 — "${answer}"`);
+      assert.deepEqual(logs, [c.source], `${c.question}: log=${JSON.stringify(logs)}`);
+      assert.equal(llmCalls, 0, `${c.question}: LLM 을 ${llmCalls}회 태웠다 — 수치 질문 환각 통로`);
+      // 조회 자체를 하지 않는다 — 값을 받아놓고 버리면 나중에 누수 통로가 된다.
+      assert.equal(fetchCalls, 0, `${c.question}: standings 를 ${fetchCalls}회 조회했다`);
     });
   }
 
-  // ①-c 폐쇄집합·맞대결 판정을 **production 함수로 직접** 확인한다 (게이트 자기 재구현 금지).
+  // ①-b-2 B축이 **주제어 조건으로만** 막히는지 확인 — 지표는 폐쇄집합 안에 있어야 한다.
+  //   이게 없으면 "B축도 사실 지표 때문에 막혔다"는 가능성이 남아 ①-b 가 무의미해진다.
+  await check("B축은 허용 지표 + 맞대결 조합이다 (주제어 조건이 유일한 방어)", () => {
+    for (const c of forbiddenPairCases.filter((x) => x.axis === "topic")) {
+      const intent = resolveTeamRecordIntent(c.question);
+      assert.equal(intent.kind, "query", `${c.question}: intent=${intent.kind} — 지표가 안 잡히면 이 축이 성립 안 한다`);
+      assert.equal(
+        isTeamPairMetric(intent.metric), true,
+        `${c.question}: metric=${intent.metric} 이 폐쇄집합 밖 — 지표만으로 막히므로 주제어 축 검증이 무의미`,
+      );
+      assert.equal(
+        mentionsUnservedTeamTopic(c.question), true,
+        `${c.question}: 미서빙 주제어를 못 잡았다 — 이 문장은 pair 로 답해버린다`,
+      );
+    }
+  });
+
+  // ①-c 폐쇄집합·주제어 판정을 **production 함수 직접 호출**로 확인한다 (게이트 자기 재구현 금지).
   await check("pair 지표 폐쇄집합은 순위·게임차뿐", () => {
     assert.deepEqual([...TEAM_PAIR_METRICS], ["ranking", "gamesBehind"],
       "pair 폐쇄집합이 바뀌었다 — 확장하려면 '두 팀 나열'이 그 지표의 답이 되는지 먼저 따져야 한다");
@@ -1009,18 +1052,18 @@ async function verifyTeamPairEndToEnd() {
       assert.equal(isTeamPairMetric(metric), true, `${metric} 이 pair 폐쇄집합에서 빠졌다`);
     }
   });
-  await check("맞대결 문맥 판정", () => {
+  await check("미서빙 주제어 판정 (SSOT 재사용 — 별도 정규식 신설 금지)", () => {
     for (const question of [
-      "LG가 두산 상대로 몇 승 했어?",
+      "LG와 두산 맞대결에서 몇 게임 차야?",
       "엘지랑 두산 맞대결 전적",
-      "엘지 두산전 성적",
       "LG 두산 상대전적",
+      "LG와 두산 우승 몇 번씩?",
     ]) {
-      assert.equal(isHeadToHeadQuestion(question), true, `맞대결 문맥을 못 잡았다: ${question}`);
+      assert.equal(mentionsUnservedTeamTopic(question), true, `미서빙 주제어를 못 잡았다: ${question}`);
     }
-    // 과탐 방지 — 순수 순위·게임차 질문은 맞대결이 아니다.
+    // 과탐 방지 — 순수 순위·게임차 질문은 미서빙 주제어가 없다.
     for (const question of ["엘지랑 두산이랑 몇게임 차야?", "두산이랑 롯데 순위", "기아랑 삼성 승차"]) {
-      assert.equal(isHeadToHeadQuestion(question), false, `맞대결로 오탐했다: ${question}`);
+      assert.equal(mentionsUnservedTeamTopic(question), false, `미서빙 주제어로 오탐했다: ${question}`);
     }
   });
   // ①-d mutation — 폐쇄집합 밖 지표는 resolver 단계에서 이미 막힌다(라우팅에만 의존하지 않는다).
