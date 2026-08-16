@@ -11,6 +11,8 @@
  *
  * 실행: node scripts/qa/genius-reply-mascot-browser-smoke.mjs --base-url=http://localhost:3099
  */
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
@@ -18,6 +20,15 @@ import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 // ⚠️ 키를 문자열로 다시 적으면 배포 클라가 키를 바꿔도 게이트는 조용히 GREEN 이다.
 // 실제 배포 모듈의 상수를 그대로 읽는다.
 const OUTBOX_KEY = "baseball-genius-question-outbox-v1";
+
+// 마스코트 렌더 높이도 같은 이유로 **배포 소스에서** 읽는다(.mjs 라 TS import 불가 → 파싱).
+// 파싱 실패를 기본값으로 넘기면 상수가 사라져도 GREEN 이 된다 — fail-close.
+const GENIUS_MASCOT_HEIGHT_PX = (() => {
+  const src = readFileSync(resolve(process.cwd(), "src/lib/constants/baseball-genius.ts"), "utf8");
+  const m = src.match(/export const GENIUS_MASCOT_HEIGHT_PX\s*=\s*(\d+)\s*;/);
+  if (!m) throw new Error("GENIUS_MASCOT_HEIGHT_PX 상수를 배포 소스에서 찾지 못했다");
+  return Number(m[1]);
+})();
 
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -373,9 +384,12 @@ async function main() {
       !!typing && typing.naturalWidth > 0,
       typing ? `naturalWidth=${typing.naturalWidth}` : "미렌더",
     );
+    // 기대 높이는 배포 상수에서 온다 — 숫자를 게이트에 적으면 상수가 바뀌어도 몰라서
+    // 사용처만 되돌아가는 결함을 못 잡는다(M90 `게이트가 상수를 재구현하면…`).
+    // 2026-08-16 하린아빠 지시로 32 → 96(헤더 마스코트와 동일 규격)으로 키운 자리다.
     ok(
-      "대기중 마스코트가 32px 로 눈에 보인다",
-      !!typing && typing.visible && typing.height === 32,
+      `대기중 마스코트가 ${GENIUS_MASCOT_HEIGHT_PX}px 로 눈에 보인다`,
+      !!typing && typing.visible && typing.height === GENIUS_MASCOT_HEIGHT_PX,
       typing ? `height=${typing.height} visible=${typing.visible}` : "미렌더",
     );
     ok(

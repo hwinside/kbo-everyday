@@ -486,10 +486,30 @@ html.postdetail-open > body {
 .genius-motion-excited { animation: genius-motion-excited 0.9s ease-in-out 3; }
 .genius-motion-headspin { animation: genius-motion-headspin 0.8s ease-in-out 2; }
 .genius-motion-bored { animation: genius-motion-bored 2.2s ease-in-out 2; }
+
+/* ── 상시 idle 미세 모션 (2026-08-16 하린아빠 "캐릭터가 안움직이는 것 같은데") ────────
+   위 감정 모션 3종은 **감정 반응 전용**이라 지식 답변(선수·기록·룰)에는 아예 붙지
+   않는다(`geniusMotionForResult` → undefined). 그래서 일반 질문에서는 캐릭터가 완전히
+   멈춰 있었다. idle 은 "살아있다"만 말하는 수준의 미세한 상하 bob 이다.
+
+   ⚠️ 감정 모션과 **별도 엘리먼트**에 건다(idle=래퍼 span, 감정=img). 같은 엘리먼트에
+   두 animation 을 걸면 둘 다 `transform` 을 건드려 뒤 선언이 앞 선언을 통째로 덮어쓴다
+   (감정 모션이 조용히 죽는다). 분리하면 부모·자식 transform 이 곱으로 합성된다.
+
+   §7.4 "모션 30초 1회 / 유한 반복"은 **감정 반응 남용** 방지 계약이므로 idle 은 대상이
+   아니다 — idle 은 DB claim 을 타지 않고 payload 에도 실리지 않는 순수 표시 계층이며,
+   화면에 존재하는 마스코트 1개에만 붙으므로 개수도 구조적으로 최대 1이다. */
+@keyframes genius-motion-idle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2.5px); }
+}
+.genius-motion-idle { animation: genius-motion-idle 2.4s ease-in-out infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .genius-motion-excited,
   .genius-motion-headspin,
-  .genius-motion-bored {
+  .genius-motion-bored,
+  .genius-motion-idle {
     animation: none;
   }
 }
