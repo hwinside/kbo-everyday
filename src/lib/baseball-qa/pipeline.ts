@@ -80,8 +80,10 @@ import {
   type EventRecordAnswer,
 } from "./stats/event-records";
 import {
+  composeTeamPairAnswer,
   composeTeamRecordAnswer,
   isTeamScoreQuestion,
+  resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
   type TeamRecordFetchers,
@@ -4747,6 +4749,38 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
     const intent = resolveTeamRecordIntent(question);
     const canonicalTeam = resolveMentionedTeam(question);
+    // ── 두 구단 질문 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────
+    //
+    // 🔴 `resolveMentionedTeam()` 은 구단이 **정확히 1개**일 때만 값을 준다. 그런데
+    //   운영 로그의 순위·게임차 질문은 전부 2개 구단이라(`엘지랑 두산이랑 몇게임 차야?`),
+    //   조사·음독 결속을 고쳐 구단 2개가 잡히게 만들어도 여기서 `null → history_hold` 로
+    //   끝나 **유저가 받는 답은 바뀌지 않았다**. 그 구멍을 여기서 닫는다.
+    //
+    // 단일 구단과 같은 계약: 원값 그대로 · 한 팀이라도 없으면 통째로 fail-close · LLM 미경유.
+    // 3개 이상은 열지 않는다(폐쇄집합 2 고정) — 열거 대상이 늘면 질문 의도가 모호해진다.
+    const mentionedTeams = mentionedTeamCanonicals(question);
+    if (intent.kind === "query" && !canonicalTeam && mentionedTeams.length === 2 && deps.fetchTeamRecord) {
+      let pairStandings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
+      let pairRecords: Awaited<ReturnType<TeamRecordFetchers["fetchTeamRecords"]>>;
+      try {
+        [pairStandings, pairRecords] = await Promise.all([
+          deps.fetchTeamRecord.fetchStandings(),
+          deps.fetchTeamRecord.fetchTeamRecords(),
+        ]);
+      } catch {
+        // 조회 실패는 "기록 없음"이 아니다 — 재시도 가능한 실패로 알린다(단일 경로와 동일).
+        return settleTeam(SYSTEM_ERROR_ANSWER, "error");
+      }
+      const pair = resolveTeamPairRecord(
+        intent.metric,
+        [mentionedTeams[0], mentionedTeams[1]],
+        pairStandings,
+        pairRecords,
+        teamIdOfCanonical,
+      );
+      if (pair.kind === "ok") return settleTeam(composeTeamPairAnswer(pair), "kbo_structured");
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
     // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
     // 지어내지 않고 닫는다. `TEAM_STAT_HOLD_ANSWER` 는 "순위표에서 보세요" 안내다.
     if (intent.kind !== "query" || !canonicalTeam || !deps.fetchTeamRecord) {

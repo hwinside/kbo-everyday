@@ -41,6 +41,7 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
+import { isBaseballGeniusToneCompliant } from "../../src/lib/baseball-qa/tone";
 
 /**
  * 로스터는 **실제 배포 함수**로 읽는다.
@@ -745,9 +746,10 @@ async function verifyTeamAnswersSurviveFinalValidator() {
 //   `엘지랑 두산이랑 몇게임 차야?`  → 구단 0개 → `unsure` (유저는 답을 못 받았다)
 // 알파벳 구단(`KT`·`SSG`·`NC`)에 한글 음독이 없던 것도 같은 증상을 만들었다.
 //
-// ⚠️ 여기서 **종단 답변까지 보지 않는다.** `team_record` 는 라이브 `/api/standings` 를 타므로
-//   종단 값 검증은 `verifyTeamNumericAnswers` 가 자기 fetcher 로 소유한다. 이 함수가 고정하는
-//   것은 딱 하나 — **구단 결속과 라우팅이 표기에 따라 갈라지지 않는가**다.
+// ⚠️ 이 함수는 **결속·라우팅 단면**만 고정한다. 종단 답변은 아래
+//   `verifyTeamPairEndToEnd()` 가 `answerQuestion` 으로 소유한다 (삼순 2026-08-16 NO-GO:
+//   "라우팅까지만 보면 운영 종단은 `resolveMentionedTeam()` 이 1개일 때만 통과해
+//    5개 원문이 전부 `canonicalTeam=null → history_hold` 로 끝난다").
 async function verifyConjunctiveParticleBinding() {
   const { mentionedTeamCanonicals, routeQuestion } = await import("../../src/lib/baseball-qa/pipeline");
   const { resolveTeamRecordIntent } = await import("../../src/lib/baseball-qa/stats/team-record");
@@ -823,6 +825,208 @@ async function verifyConjunctiveParticleBinding() {
 // 약칭·별칭을 평평하게 두면 `LG라이온즈` 같은 존재하지 않는 구단을 정본으로 인정한다
 // (삼순 #1100 1차 P0-2). 구단으로 인정하지 않는 것이 계약이며, 그렇다고 차단하는 것도
 // 아니다 — LLM 2차 가드로 내려가 판정받는다.
+// ── 두 구단 종단 계약 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────
+//
+// 🔴 지적 그대로였다: 조사·음독을 고쳐 구단이 2개로 잡히게 만들어도, 운영 종단은
+//   `resolveMentionedTeam()` 이 **정확히 1개**일 때만 통과해 5개 원문이 전부
+//   `canonicalTeam=null → history_hold` 로 끝났다. 즉 유저가 받는 답은 그대로였다.
+//   복수 구단 구조화 경로(`resolveTeamPairRecord`)를 열고, 여기서 `answerQuestion`
+//   종단으로 결속한다 — source·양 팀명·실값·LLM 0콜.
+//
+// ⚠️ 값은 라이브 `/api/standings` 에서 읽어 기대값을 만든다. 하드코딩하면 순위가 바뀔 때마다
+//   게이트가 깨지고 결국 누군가 값을 지운다(그게 검증력 0의 시작이다).
+async function verifyTeamPairEndToEnd() {
+  const { createTeamRecordFetchers, resolveTeamPairRecord } =
+    await import("@/lib/baseball-qa/stats/team-record");
+  const fetchers = createTeamRecordFetchers();
+  const [standings, teamRecords] = await Promise.all([
+    fetchers.fetchStandings(),
+    fetchers.fetchTeamRecords(),
+  ]);
+  const byName = (name: string) => {
+    const row = standings.find((r) => r.teamName === name);
+    assert.ok(row, `표본 팀 행이 없다: ${name}`);
+    return row!;
+  };
+
+  // ── ⓪ 파생값의 근거 — KBO 게임차 항등식을 **매 실행 재검증**한다 ────────────
+  //   두 팀 사이 게임차 = |선두대비 차| 이고, 이는 ((Wa-La)-(Wb-Lb))/2 와 항등이다.
+  //   이 항등이 깨지면 우리가 만드는 파생값의 근거 자체가 사라지므로 그때는 RED 여야 한다.
+  await check("게임차 항등식 — 전 구단 쌍에서 성립", () => {
+    let checked = 0;
+    for (let i = 0; i < standings.length; i += 1) {
+      for (let j = i + 1; j < standings.length; j += 1) {
+        const a = standings[i];
+        const b = standings[j];
+        const lhs = Math.abs(Number(a.gamesBehind) - Number(b.gamesBehind));
+        const rhs = Math.abs(((a.wins - a.losses) - (b.wins - b.losses)) / 2);
+        assert.ok(
+          Math.abs(lhs - rhs) < 1e-9,
+          `게임차 항등식 위반 ${a.teamName}↔${b.teamName}: |Δgb|=${lhs} vs 승패차/2=${rhs}`,
+        );
+        checked += 1;
+      }
+    }
+    assert.equal(checked, 45, `10개 구단 45쌍을 검증해야 한다 (실제 ${checked})`);
+  });
+
+  const runPair = async (question: string) => {
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const result = await answerQuestion("u-team-pair", question, {
+      ...makeDeps(state),
+      fetchTeamRecord: fetchers,
+    } as QaDeps);
+    return { source: result.source as MatchPath, answer: result.answer ?? "", llmCalls: state.llmCalls };
+  };
+
+  // ── ① 운영 로그 5개 원문 전부 — 종단에서 실제 값을 받는가 ───────────────────
+  //    지어낸 문자열이 아니라 `genius_question_logs` 원문이다.
+  const pairCases: Array<{ question: string; teams: [string, string]; metric: "gamesBehind" | "ranking" }> = [
+    { question: "케이티랑 삼성이랑 몇게임 차야?", teams: ["KT", "삼성"], metric: "gamesBehind" },
+    { question: "삼성이랑 케이티랑 2게임 차라고?", teams: ["KT", "삼성"], metric: "gamesBehind" },
+    { question: "엘지랑 두산이랑 몇게임 차야?", teams: ["LG", "두산"], metric: "gamesBehind" },
+    { question: "두산이랑 롯데 순위", teams: ["두산", "롯데"], metric: "ranking" },
+    { question: "기아랑 삼성 승차", teams: ["KIA", "삼성"], metric: "gamesBehind" },
+  ];
+  for (const c of pairCases) {
+    await check(`두 구단 종단 "${c.question}"`, async () => {
+      const { source, answer, llmCalls } = await runPair(c.question);
+      assert.equal(source, "kbo_structured", `${c.question}: source=${source} — 조회로 답하지 않았다`);
+      assert.equal(llmCalls, 0, `${c.question}: LLM 을 ${llmCalls}회 태웠다 — 숫자 환각 경로`);
+      assert.notEqual(answer, TEAM_STAT_HOLD_ANSWER, `${c.question}: 서빙 중인 값을 "못 답한다"고 안내했다`);
+
+      // 양 팀명이 **둘 다** 답변에 있어야 한다. 한 팀만 답하면 유저는 나머지를 못 받은 채
+      // "답을 받았다"고 인식한다 — 그게 더 나쁘다.
+      for (const team of c.teams) {
+        assert.ok(answer.includes(team), `${c.question}: 답변에 "${team}" 이 없다 — "${answer}"`);
+      }
+
+      // 실값 대조 — 라이브 값에서 계산한 기대치와 문자열이 일치해야 한다.
+      const rowA = byName(c.teams[0]);
+      const rowB = byName(c.teams[1]);
+      if (c.metric === "ranking") {
+        assert.ok(answer.includes(`${rowA.ranking}위`), `${c.question}: ${c.teams[0]} 순위 누락 — "${answer}"`);
+        assert.ok(answer.includes(`${rowB.ranking}위`), `${c.question}: ${c.teams[1]} 순위 누락 — "${answer}"`);
+      } else {
+        const pairGb = Math.abs(Number(rowA.gamesBehind) - Number(rowB.gamesBehind)).toFixed(1);
+        assert.ok(
+          answer.includes(`${pairGb}게임`),
+          `${c.question}: 두 팀 사이 게임차 ${pairGb} 이 답변에 없다 — "${answer}"`,
+        );
+        // 선두 대비 원값도 함께 제시해야 앱 순위표와 대조가 된다.
+        for (const row of [rowA, rowB]) {
+          const gb = Number(row.gamesBehind);
+          const shown = gb === 0 ? "0.0 (선두)" : gb.toFixed(1);
+          assert.ok(answer.includes(shown), `${c.question}: ${row.teamName} 선두대비 "${shown}" 누락 — "${answer}"`);
+        }
+      }
+      // 톤 SSOT
+      assert.ok(isBaseballGeniusToneCompliant(answer), `${c.question}: 톤 SSOT 위반 — "${answer}"`);
+    });
+  }
+
+  // ── ② 회귀: 한 팀 게임차는 종전 그대로 (복수 경로가 단일 경로를 가로채면 안 된다) ──
+  for (const [question, teamName] of [
+    ["LG 게임차", "LG"],
+    ["삼성 승차 얼마야", "삼성"],
+    ["엘지 순위", "LG"],
+  ] as Array<[string, string]>) {
+    await check(`단일 구단 회귀 "${question}"`, async () => {
+      const { source, answer, llmCalls } = await runPair(question);
+      assert.equal(source, "kbo_structured", `${question}: source=${source}`);
+      assert.equal(llmCalls, 0, `${question}: LLM ${llmCalls}회`);
+      assert.ok(answer.includes(teamName), `${question}: 답변에 ${teamName} 없음 — "${answer}"`);
+      // 단일 질문에 두 팀 답변 형식(`~의 게임차는`)이 나오면 경로가 잘못 잡힌 것이다.
+      assert.ok(!/의 게임차는/.test(answer), `${question}: 단일 질문에 두 팀 형식이 나왔다 — "${answer}"`);
+    });
+  }
+
+  // ── ③ 회귀: 한 행 누락 → 부분 답변을 만들지 않고 통째로 fail-close ──────────
+  await check("두 구단 중 한 행 누락 — 부분 답변 금지", async () => {
+    const partial = standings.filter((r) => r.teamName !== "두산");
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const result = await answerQuestion("u-team-pair-missing", "엘지랑 두산이랑 몇게임 차야?", {
+      ...makeDeps(state),
+      fetchTeamRecord: { fetchStandings: async () => partial, fetchTeamRecords: async () => teamRecords },
+    } as QaDeps);
+    assert.equal(result.source, "history_hold", `한 행이 없는데 source=${result.source}`);
+    assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER, `안내문이 아니다 — "${result.answer}"`);
+    assert.ok(!/게임입니다/.test(result.answer ?? ""), "한 팀 값만으로 게임차를 만들었다");
+  });
+
+  // ── ④ 회귀: 조회 실패는 "기록 없음"이 아니다 ────────────────────────────────
+  await check("두 구단 조회 실패 — error 로 닫는다", async () => {
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const result = await answerQuestion("u-team-pair-error", "엘지랑 두산이랑 몇게임 차야?", {
+      ...makeDeps(state),
+      fetchTeamRecord: {
+        fetchStandings: async () => { throw new Error("standings down"); },
+        fetchTeamRecords: async () => teamRecords,
+      },
+    } as QaDeps);
+    assert.equal(result.source, "error", `조회 실패인데 source=${result.source}`);
+    assert.equal(state.llmCalls, 0, "조회 실패 후 LLM 을 태웠다");
+  });
+
+  // ── ⑤ 경계: 3개 이상은 열지 않는다 (폐쇄집합 2 고정) ────────────────────────
+  for (const question of ["엘지 두산 기아 순위", "엘지랑 두산이랑 기아 몇게임차"]) {
+    await check(`3개 구단은 구조화 경로를 타지 않는다 "${question}"`, async () => {
+      const { source, llmCalls } = await runPair(question);
+      assert.notEqual(source, "kbo_structured", `${question}: 3개 구단인데 조회로 답했다`);
+      assert.equal(llmCalls, 0, `${question}: LLM ${llmCalls}회`);
+    });
+  }
+
+  // ── ⑥ 경계: 같은 팀 두 번은 단일 질문이다 ───────────────────────────────────
+  await check("같은 팀 중복 지명은 단일 경로", async () => {
+    const { source, answer } = await runPair("엘지랑 LG 순위");
+    assert.equal(source, "kbo_structured", `source=${source}`);
+    assert.ok(!/,/.test(answer), `단일 팀인데 나열 형식이 나왔다 — "${answer}"`);
+  });
+
+  // ── ⑦ 회귀: 미서빙 지표는 2팀이어도 조회하지 않는다 ─────────────────────────
+  await check("두 구단 미서빙 지표 — 조회 금지", async () => {
+    const { source, llmCalls } = await runPair("엘지랑 두산 우승 몇번씩 했어?");
+    assert.notEqual(source, "kbo_structured", "서빙하지 않는 지표를 조회로 답했다");
+    assert.equal(llmCalls, 0, `LLM ${llmCalls}회 — 수치 질문 환각 통로`);
+  });
+
+  // ── ⑧ mutation: 판정 함수를 직접 태워 결함이 RED 가 되는지 확인한다 ──────────
+  //    게이트가 술어를 재구현하지 않고 production 함수를 호출한다.
+  await check("mutation — 부분 성공 허용 시 RED", () => {
+    const teamIdOf = (name: string) => standings.find((r) => r.teamName === name)?.teamId ?? null;
+    const partial = standings.filter((r) => r.teamName !== "두산");
+    const out = resolveTeamPairRecord("gamesBehind", ["LG", "두산"], partial, teamRecords, teamIdOf);
+    assert.equal(out.kind, "missing", "한 팀이 없는데 ok 를 돌려줬다 — 부분 답변 통로");
+  });
+  await check("mutation — 같은 팀 쌍은 missing", () => {
+    const teamIdOf = (name: string) => standings.find((r) => r.teamName === name)?.teamId ?? null;
+    const out = resolveTeamPairRecord("gamesBehind", ["LG", "LG"], standings, teamRecords, teamIdOf);
+    assert.equal(out.kind, "missing", "같은 팀 쌍인데 게임차 0 을 답으로 만들었다");
+  });
+  await check("mutation — pairGamesBehind 는 gamesBehind 에서만 생성된다", () => {
+    const teamIdOf = (name: string) => standings.find((r) => r.teamName === name)?.teamId ?? null;
+    const ranked = resolveTeamPairRecord("ranking", ["LG", "두산"], standings, teamRecords, teamIdOf);
+    assert.equal(ranked.kind, "ok");
+    assert.equal(
+      ranked.kind === "ok" ? ranked.pairGamesBehind : "x", undefined,
+      "순위 질문인데 게임차 파생값을 만들었다",
+    );
+  });
+  await check("mutation — 파생 게임차가 라이브 값과 결정론적으로 일치", () => {
+    const teamIdOf = (name: string) => standings.find((r) => r.teamName === name)?.teamId ?? null;
+    for (const [a, b] of [["LG", "두산"], ["KT", "삼성"], ["KIA", "삼성"]] as Array<[string, string]>) {
+      const out = resolveTeamPairRecord("gamesBehind", [a, b], standings, teamRecords, teamIdOf);
+      assert.equal(out.kind, "ok", `${a}↔${b} 조회 실패`);
+      const expected = Math.abs(Number(byName(a).gamesBehind) - Number(byName(b).gamesBehind)).toFixed(1);
+      assert.equal(
+        out.kind === "ok" ? out.pairGamesBehind : null, expected,
+        `${a}↔${b} 파생 게임차 불일치`,
+      );
+    }
+  });
+}
+
 async function verifyCrossTeamCombosRejected() {
   const { mentionsTeamForGate } = await import("../../src/lib/baseball-qa/pipeline");
   for (const [short, nick] of [
@@ -984,6 +1188,7 @@ async function main() {
   await verifyTeamQuestionsAnswerable();
   await verifyTeamNumericAnswers();
   await verifyConjunctiveParticleBinding();
+  await verifyTeamPairEndToEnd();
   await verifyCrossTeamCombosRejected();
   await verifyOutOfScopeStillBlocked();
   await verifyUnsupportedMetricsStillHeld();

@@ -342,3 +342,95 @@ export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { ki
   const topicParticle = hasFinalConsonant(outcome.label) ? "은" : "는";
   return `${outcome.team} ${outcome.label}${topicParticle} ${outcome.value}입니다.`;
 }
+
+// ── 복수 구단 구조화 경로 (2026-08-16 삼순 NO-GO 반영) ────────────────────────────
+//
+// 🔴 종전 종단은 `resolveMentionedTeam()` 이 **구단 정확히 1개**일 때만 통과했다.
+//   그런데 운영 로그의 순위·게임차 질문은 전부 2개 구단이다(`엘지랑 두산이랑 몇게임 차야?`).
+//   조사·음독 결속을 고쳐 구단이 2개로 잡히게 만들어도, 그 다음 단계에서
+//   `canonicalTeam=null → history_hold` 로 끝나 **유저가 받는 답은 그대로였다**.
+//
+// 그래서 2개 구단 질문을 구조화 조회로 답하는 경로를 연다. 계약은 단일 구단과 동일하다:
+//   · 조회한 원값 그대로. 앱 순위표가 보여주는 값과 1비트도 다르면 안 된다.
+//   · 한 팀이라도 행이 없으면 **부분 답변을 만들지 않고** 통째로 fail-close 한다.
+//   · LLM 미경유.
+//
+// ⚠️ 3개 이상은 열지 않는다. 열거 대상이 늘수록 "무엇을 묻는지"가 모호해지고
+//   (`엘지 두산 기아 중 누가 제일 잘해?` = 순위 나열이 아니라 평가 요구),
+//   폐쇄집합을 2로 고정하는 편이 판정이 결정론적이다.
+
+/** 두 구단 질문의 결과. 부분 성공은 없다 — 둘 다 있거나, 없거나. */
+export type TeamPairOutcome =
+  | {
+      kind: "ok";
+      label: string;
+      rows: ReadonlyArray<{ team: string; value: string }>;
+      /** `gamesBehind` 일 때만: 두 팀 **사이의** 게임차. 그 외 지표는 undefined. */
+      pairGamesBehind?: string;
+    }
+  | { kind: "missing" };
+
+/**
+ * 두 구단의 같은 지표를 각각 조회한다.
+ *
+ * 단일 구단 경로(`resolveTeamRecord`)를 **그대로 재사용**한다 — 값 산출 로직을 복제하면
+ * 두 경로가 갈라져 "한 팀만 물으면 A, 두 팀을 물으면 B" 가 된다.
+ *
+ * `gamesBehind` 만 추가로 **두 팀 사이의 게임차**를 계산한다. 이것은 유일한 파생값이라
+ * 근거를 명시한다: KBO 게임차는 선두 대비 값이므로 두 팀 사이 게임차는 그 차의 절대값이고,
+ * 이는 `((Wa-La)-(Wb-Lb))/2` 와 항등이다. 2026-08-16 production standings 45쌍 전수에서
+ * 위반 0건으로 확인했다(게이트가 매 실행 재검증한다). 원값을 파싱하지 않고 standings 행에서
+ * 직접 읽는다 — 표시 문자열(`0.0 (선두)`)을 되파싱하면 표기가 바뀌는 순간 조용히 깨진다.
+ */
+export function resolveTeamPairRecord(
+  metric: TeamMetricKey,
+  teams: readonly [string, string],
+  standings: StandingsRow[],
+  records: TeamRecordsPayload,
+  teamIdOf: (canonical: string) => number | null,
+): TeamPairOutcome {
+  const [teamA, teamB] = teams;
+  if (teamA === teamB) return { kind: "missing" };
+  const a = resolveTeamRecord(metric, teamA, standings, records, teamIdOf);
+  const b = resolveTeamRecord(metric, teamB, standings, records, teamIdOf);
+  // 한 팀이라도 없으면 통째로 닫는다. 한 행만 답하면 유저는 다른 팀 값을 못 받은 채
+  // "답을 받았다"고 인식한다 — 그게 더 나쁘다.
+  if (a.kind !== "ok" || b.kind !== "ok") return { kind: "missing" };
+
+  const rows = [
+    { team: a.team, value: a.value },
+    { team: b.team, value: b.value },
+  ] as const;
+
+  if (metric !== "gamesBehind") return { kind: "ok", label: a.label, rows };
+
+  const idA = teamIdOf(teamA);
+  const idB = teamIdOf(teamB);
+  if (idA === null || idB === null) return { kind: "missing" };
+  const rowA = standings.find((entry) => entry.teamId === idA);
+  const rowB = standings.find((entry) => entry.teamId === idB);
+  if (!rowA || !rowB) return { kind: "missing" };
+  const gbA = Number(rowA.gamesBehind);
+  const gbB = Number(rowB.gamesBehind);
+  if (!Number.isFinite(gbA) || !Number.isFinite(gbB)) return { kind: "missing" };
+  return { kind: "ok", label: a.label, rows, pairGamesBehind: Math.abs(gbA - gbB).toFixed(1) };
+}
+
+/**
+ * 두 구단 답변 문장. 톤 SSOT(합니다체)를 지킨다.
+ *
+ * 게임차는 **유저가 물은 것**(두 팀 사이)을 먼저 답하고, 선두 대비 원값을 근거로 덧붙인다.
+ * 파생값만 주면 앱 순위표와 대조가 안 되고, 원값만 주면 질문에 답하지 않은 것이다.
+ */
+export function composeTeamPairAnswer(outcome: Extract<TeamPairOutcome, { kind: "ok" }>): string {
+  const [a, b] = outcome.rows;
+  const listed = `${a.team} ${outcome.label}${hasFinalConsonant(outcome.label) ? "은" : "는"} ${a.value}, `
+    + `${b.team}${hasFinalConsonant(b.team) ? "은" : "는"} ${b.value}입니다.`;
+  if (outcome.pairGamesBehind === undefined) return listed;
+  // ⚠️ `삼성와` 처럼 받침을 무시한 조사가 그대로 유저에게 간다 — 공동격도 갈라준다.
+  //   구단명은 한글(`삼성`)·알파벳(`KT`) 이 섞여 있어 `hasFinalConsonant` 가 알파벳에
+  //   false 를 주는데, 그 경우 `와` 가 맞다(`KT와`). 한글 받침만 `과` 로 간다.
+  return `${a.team}${hasFinalConsonant(a.team) ? "과" : "와"} ${b.team}의 게임차는 `
+    + `${outcome.pairGamesBehind}게임입니다.\n`
+    + `선두 대비 게임차는 ${a.team} ${a.value}, ${b.team} ${b.value}입니다.`;
+}
