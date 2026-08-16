@@ -1,0 +1,94 @@
+name: Players MyTeam Default Gate
+
+# /players 마이팀 디폴트 게이트.
+#
+# 배경(삼순 2026-08-16 NO-GO): qa:players-myteam / qa:players-myteam:mutations 를
+# package script 로만 추가하고 어떤 워크플로에도 결속하지 않아, PR 의 전 checks GREEN 이
+# 이 게이트를 **단 한 번도 실행하지 않은** false-green 상태였다 (players-sort-gate 와
+# 동일한 결손 패턴).
+#
+# 이 워크플로는 Chromium 을 설치해 실제 /players 페이지를 마운트하고 fail-closed 로 돈다:
+#   - localStorage 마이팀 → 팀 필터 디폴트 (기존 정상 경로 비회귀)
+#   - 쿠키에만 마이팀 → 쿠키 폴백으로 디폴트 적용
+#   - 마운트 후 늦게 도착한 마이팀(team-changed) → 반영
+#   - URL 이 mode/team 명시 → 마이팀이 덮어쓰지 않음
+#   - 유저가 필터를 직접 만짐 → 늦은 마이팀이 덮어쓰지 않음
+# 판정은 카운트 라벨이 아니라 렌더된 행의 소속 팀으로 본다.
+#
+# mutation job 이 결함주입 4축(cookie/late/touched/urlwin)의 **해당 체크 라벨이
+# semantic RED 인지**로 게이트의 검증력 자체를 증명한다. 단순 non-zero exit 은
+# anchor drift·빌드 오류까지 "검출"로 세므로 쓰지 않는다.
+#
+# ⚠️ GitHub Actions 워크플로 파서는 YAML anchor/alias 를 지원하지 않는다 —
+# pull_request / push paths 는 중복이지만 반드시 그대로 나열해야 한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/app/(main)/players/page.tsx"
+      - "src/lib/store/myteam.ts"
+      - "scripts/qa/players-myteam-default-browser.mjs"
+      - "scripts/qa/players-myteam-mutations.sh"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/players-myteam-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/app/(main)/players/page.tsx"
+      - "src/lib/store/myteam.ts"
+      - "scripts/qa/players-myteam-default-browser.mjs"
+      - "scripts/qa/players-myteam-mutations.sh"
+      - "eslint.config.mjs"
+      - "package.json"
+      - ".github/workflows/players-myteam-gate.yml"
+
+jobs:
+  players-myteam:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint myteam surface (fail-closed, warnings blocked)
+        # --max-warnings=0 → 미사용 변수/react-hooks 경고 1건도 check 실패로 이어진다.
+        run: >-
+          npx eslint --max-warnings=0
+          'src/app/(main)/players/page.tsx'
+          src/lib/store/myteam.ts
+          scripts/qa/players-myteam-default-browser.mjs
+
+      - name: Syntax check gate scripts (fail-closed)
+        # tsc 는 .mjs/.sh 를 보지 않는다 — 게이트 스크립트 자체의 문법 오류가
+        # 어느 체크에도 안 잡히면 "게이트가 돌았다"는 말이 거짓이 된다.
+        run: |
+          node --check scripts/qa/players-myteam-default-browser.mjs
+          bash -n scripts/qa/players-myteam-mutations.sh
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Run /players myteam default browser gate (fail-closed)
+        # 실제 페이지를 마운트해 쿠키-only·늦은 도착·가드 경로를 직접 본다.
+        # MYTEAM_REQUIRE_BROWSER=1 → chromium 미설치/launch 실패도 exit 1 (SKIP 불가)
+        env:
+          MYTEAM_REQUIRE_BROWSER: "1"
+        run: npm run qa:players-myteam
+
+      - name: Prove gate detects real defects (mutation, fail-closed)
+        # cookie·late·touched·urlwin 4축 결함주입 → 해당 체크가 semantic RED 여야 한다.
+        # 이 job 이 GREEN 이어야 위 게이트의 GREEN 에 의미가 생긴다.
+        env:
+          MYTEAM_REQUIRE_BROWSER: "1"
+        run: npm run qa:players-myteam:mutations
