@@ -10,15 +10,17 @@
  *  ⑥ alias 보강 UPDATE 가 기존 `answer` 를 **한 글자도 바꾸지 않는지** (톤 migration CAS 보호)
  *  ⑦ 정규화 키 충돌 0 — 신규 term/alias 가 기존 항목의 키를 **가로채지 않는지**
  *  ⑧ Production inventory(136행) → 적용 후 postcondition 결속
- *  ⑨ 신규 28항목 **전부** 운영 로그 근거를 갖는지 (근거 없는 행 = 0)
+ *  ⑨ 신규 27항목 **전부** 운영 로그 근거를 갖는지 (근거 없는 행 = 0)
  *
  * 🔴 2026-08-16 삼순 NO-GO 반영 (exact e0152ac5d):
  *   · 종전 게이트는 `matchGlossary`/`glossaryCandidatesIn` predicate 만 봐서 **종단 답변을
  *     증명하지 않았다**. `answerQuestion` 으로 source/term/answer 를 결속한다.
- *   · 수치가 136(production)/132(게이트)/164(파일 설명) 로 갈려 있었다. 근본 원인은
+ *   · 수치가 136(production)/132(게이트)/163(파일 설명) 로 갈려 있었다. 근본 원인은
  *     **production 4행이 repo migration 어디에도 INSERT 가 없다**는 것이었다(아래 ⓐ 참조).
  *     이 배치가 그 4행을 정본화해 재구축본과 production 이 같은 수에 수렴한다.
- *   · 28항목 중 21항목만 실질 케이스였다 → 28/28 전수 근거·전수 종단으로 확대.
+ *   · 종전엔 21항목만 실질 케이스였다 → **전건** 근거·전건 종단으로 확대.
+ *   · 신규는 28 이 아니라 **27** 이다 — `파울폴` 은 유효 근거 0(로그 2건이 전부 룰 판정
+ *     질문이고 정의를 묻는 유저가 없었다)이라 뺐다. `BATCH_ROWS=27`·`FINAL_ROWS=163` 이 SSOT.
  *
  * ⚠️ 이 게이트는 사전 **행 데이터**를 검증한다. 룰(코드) 추가가 아니므로 파서·정규식이 늘지 않는다.
  *
@@ -50,7 +52,7 @@ const batchSql = fs.readFileSync(
 );
 
 /**
- * ⓐ 수치 SSOT — 삼순 NO-GO 의 핵심 지적(136/132/164 3중 불일치)을 여기서 닫는다.
+ * ⓐ 수치 SSOT — 삼순 NO-GO 의 핵심 지적(136/132/163 3중 불일치)을 여기서 닫는다.
  *
  * 🔴 실측으로 밝혀진 원인: production 136행 중 **4행(`10-10`~`40-40 클럽`)은 repo
  *   migration 어디에도 INSERT 가 없다.** `created_at = 2026-08-11 00:58:28+00` 로
@@ -59,9 +61,9 @@ const batchSql = fs.readFileSync(
  *   → 신규 환경 재구축본은 132, production 은 136. 이 간극이 수치 혼선의 정체였다.
  *
  * 이 배치가 그 4행을 **production 현재 값 그대로** 정본화(ⓐ 블록)해서 양쪽이 수렴한다.
- *   재구축본: 132(seed) + 4(정본화) + 28(신규) = 164
- *   production: 136 + 0(정본화는 ON CONFLICT no-op) + 28(신규) = 164
- * 두 경로가 **같은 164** 로 만나는 것을 ⑧에서 결속한다.
+ *   재구축본: 132(seed) + 4(정본화) + 27(신규) = 163
+ *   production: 136 + 0(정본화는 ON CONFLICT no-op) + 27(신규) = 163
+ * 두 경로가 **같은 163** 로 만나는 것을 ⑧에서 결속한다.
  */
 const SEED_ROWS = 132;
 const RECONCILED_ROWS = 4;
@@ -89,7 +91,7 @@ const productionInventory = JSON.parse(
 ) as { captured_at: string; row_count: number; terms: string[] };
 
 /**
- * 신규 28항목 **전부**의 운영 로그 근거 — fixture 원문에서 읽는다.
+ * 신규 27항목 **전부**의 운영 로그 근거 — fixture 원문에서 읽는다.
  *
  * 🔴 삼순 2차 NO-GO ③ 반영: 종전에는 hit/실패 **개수만 소스에 자가 기입**해 두고
  *   `hits > 0` 만 확인했다. 숫자를 내가 적었으니 그 검증은 아무 것도 증명하지 않는다.
@@ -204,7 +206,7 @@ const MAPPER_CASES: Array<{ question: string; term: string }> = [
 ];
 
 /**
- * ⓑ 신규 28항목 **전건** 종단 케이스 — fixture 에서 읽는다 (자가 기입 금지).
+ * ⓑ 신규 27항목 **전건** 종단 케이스 — fixture 에서 읽는다 (자가 기입 금지).
  *
  * 🔴 삼순 2차 NO-GO(exact 080a146d) 반영:
  *   · ② mapper stub 이 무조건 첫 후보를 골라 **다중 용어 질문**에 한 term 정의만 답한 것을
@@ -218,7 +220,7 @@ const MAPPER_CASES: Array<{ question: string; term: string }> = [
  *
  * fixture(`baseball-terms-log-cases-20260816.json`)는 `genius_question_logs` 120시간에서
  * term/alias 포함 질문을 기계 추출한 것이다. 선정 규칙(코드로 실행됨):
- *   ① 다른 28 term 이 섞이지 않고 비교·열거 표지가 없는 **단일 용어** 질문 우선
+ *   ① 이 배치의 다른 신규 term 이 섞이지 않은 **단일 용어** 질문 우선
  *   ② 그중 정의형 어미(`뭐야`·`뜻`·`~는?`·단문) 우선
  *   ③ 그중 실패 종결(unsure/blocked/stat_clarify) 우선, 마지막으로 최단
  * 지어낸 문장 0개.
@@ -325,7 +327,7 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
     rows.map((r) => r.term).filter((t) => !baseRows.some((b) => b.term === t)),
   );
 
-  // ① migration 실행 → 행 수 (재구축 경로: seed 132 + 정본화 4 + 신규 28 = 164)
+  // ① migration 실행 → 행 수 (재구축 경로: seed 132 + 정본화 4 + 신규 27 = 163)
   check(
     rows.length === (applyBatch ? FINAL_ROWS : SEED_ROWS),
     `행 수 ${applyBatch ? FINAL_ROWS : SEED_ROWS} (실제 ${rows.length})`,
@@ -333,7 +335,7 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
 
   // ⑧ Production inventory → 적용 후 postcondition 결속 (삼순 NO-GO ③)
   //    production 은 136행에서 시작한다. 이 배치의 ⓐ 4행은 이미 있으므로 no-op,
-  //    신규 28행만 들어가 **재구축본과 같은 164** 에 수렴한다. 두 경로가 만나는지 확인한다.
+  //    신규 27행만 들어가 **재구축본과 같은 163** 에 수렴한다. 두 경로가 만나는지 확인한다.
   {
     check(
       productionInventory.row_count === PRODUCTION_ROWS_BEFORE &&
@@ -499,7 +501,7 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
     }
   }
 
-  // ② 종단 결속 — `answerQuestion` 으로 28항목 전건 (삼순 NO-GO ①)
+  // ② 종단 결속 — `answerQuestion` 으로 신규 전건 (삼순 NO-GO ①)
   //
   //   🔴 predicate(`matchGlossary`) 만 보면 "후보가 있다"까지만 증명된다. 유저가 실제로 받는
   //     것은 종단 답변이므로 `answerQuestion` 의 source/term/answer 를 직접 고정한다.
