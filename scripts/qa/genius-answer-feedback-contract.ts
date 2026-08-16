@@ -121,7 +121,7 @@ const payloadBlock = constantsSrc.match(
 check("D0 payload 조립 함수를 찾았다", payloadBlock !== null, "composeGeniusReplyPayload 미발견 → fail-close");
 check(
   "D0-b server 가 조립 함수를 소비한다",
-  /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion \},\s*messageId,?\s*\)/.test(serverSrc),
+  /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, answerTeamId \},\s*messageId,?\s*\)/.test(serverSrc),
   "server.ts 가 compose 를 소비하지 않으면 이 계약은 허공이다",
 );
 if (payloadBlock) {
