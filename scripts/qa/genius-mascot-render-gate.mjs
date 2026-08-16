@@ -19,14 +19,26 @@
  *
  * 실행: npx tsx scripts/qa/genius-mascot-render-gate.mjs [--selftest] [--emit-capture]
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, resolve } from "node:path";
-import { chromium } from "playwright";
+import playwright from "playwright";
 
+const { chromium } = playwright;
 const SELFTEST = process.argv.includes("--selftest");
-const EMIT = process.argv.includes("--emit-capture");
 const ROOT = process.cwd();
+// 캡처는 항상 남긴다 — 삼순 요구(생성만 하지 말고 저장·판정).
+const CAPTURE_DIR = process.env.MASCOT_CAPTURE_DIR ?? resolve(ROOT, ".qa-artifacts/mascot");
+
+// ⚠️ Vercel 빌드 컨테이너에는 Playwright 브라우저가 없다(실측: `chrome-headless-shell`
+//    없음 → prebuild 전체 실패). repo 의 다른 브라우저 게이트(players-sort·venue-stats-s2·
+//    post-detail-header)와 **같은 패턴**을 쓴다: 브라우저가 없으면 SKIP 하되,
+//    `MASCOT_RENDER_REQUIRE_BROWSER=1` 이면 SKIP 을 금지해 fail-close 한다.
+//    → Vercel 에서는 SKIP, GitHub Actions 워크플로에서는 강제 실행.
+//    SKIP 이 false-green 이 되지 않도록 **자산·매핑 정합은 브라우저 없이도 검사**한다(아래).
+const REQUIRE_BROWSER = process.env.MASCOT_RENDER_REQUIRE_BROWSER === "1";
+const chromiumPath = chromium.executablePath();
+const HAS_BROWSER = Boolean(chromiumPath) && existsSync(chromiumPath);
 
 let pass = 0;
 const failures = [];
@@ -83,11 +95,17 @@ const CASES = [
 // ── 정적 서버 (public/) ───────────────────────────────────────────────────────
 const MIME = { ".webp": "image/webp", ".html": "text/html; charset=utf-8", ".png": "image/png" };
 let pageHtml = "";
+let coverageHtml = "";
 const server = createServer((req, res) => {
   const url = (req.url ?? "/").split("?")[0];
   if (url === "/" || url === "/index.html") {
     res.writeHead(200, { "content-type": MIME[".html"] });
     res.end(pageHtml);
+    return;
+  }
+  if (url === "/coverage") {
+    res.writeHead(200, { "content-type": MIME[".html"] });
+    res.end(coverageHtml);
     return;
   }
   const file = resolve(ROOT, "public", url.replace(/^\//, ""));
@@ -122,6 +140,50 @@ ${TAILWIND_SHIM}
     }</div>`).join("")
   }</div>`).join("")
 }</body></html>`;
+
+// ⚠️ 커버리지 행은 **별도 페이지**다. 케이스 페이지에 섞으면 raw <img> 가 애니메이션
+//    클립을 직접 받아 "reduced-motion 에서 애니메이션을 받지 않는다" 계약을 스스로
+//    깨뜨린다(실측으로 그 FAIL 을 봤다). 페이지를 나누면 두 계약이 서로 간섭하지 않는다.
+//    케이스 10개로는 클립 7/13 만 화면에 도달해, 나머지 6종의 404·깨짐·잘림을
+//    아무도 못 본다 — 그래서 전수 행이 필요하다(삼순 요구 ②).
+coverageHtml = `<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#333}
+.bg{display:flex;align-items:flex-end;gap:10px;padding:8px}
+${TAILWIND_SHIM}
+</style></head><body>${
+  BACKGROUNDS.map(([bgName, bg]) => `<div class="bg" data-bg="${bgName}" style="background:${bg}">${
+    GENIUS_MOTION_CLIPS.map((clip) =>
+      `<img class="${GENIUS_MASCOT_IMG_CLASS}" data-clip="${clip}" ` +
+      `src="${geniusMotionSrc(clip)}" alt="">`).join("")
+  }</div>`).join("")
+}</body></html>`;
+
+// ── 브라우저 없이도 반드시 도는 검사 ──────────────────────────────────────────
+// SKIP 이 통째로 false-green 이 되지 않도록, 브라우저가 필요 없는 축은 여기서 닫는다.
+{
+  const missing = GENIUS_MOTION_CLIPS.filter((c) =>
+    !existsSync(resolve(ROOT, "public", geniusMotionSrc(c).replace(/^\//, ""))) ||
+    !existsSync(resolve(ROOT, "public", geniusMotionPosterSrc(c).replace(/^\//, ""))));
+  check(`전 ${GENIUS_MOTION_CLIPS.length}종 클립 + poster 자산이 존재한다`,
+    missing.length === 0, missing.join(", "));
+  // 케이스가 도달하는 클립이 전부 실재하는가 (매핑에만 있고 파일이 없으면 런타임 404)
+  const reached = new Set(CASES.map((c) =>
+    geniusMotionClipFor(c.props.replyKind, c.props.messageId, c.props)));
+  check("케이스가 도달하는 클립이 전부 폐쇄집합 안에 있다",
+    [...reached].every((c) => GENIUS_MOTION_CLIPS.includes(c)),
+    [...reached].filter((c) => !GENIUS_MOTION_CLIPS.includes(c)).join(", "));
+}
+
+if (!HAS_BROWSER) {
+  // Vercel 빌드 컨테이너에는 브라우저가 없다. CI 워크플로에서는 REQUIRE_BROWSER=1 로
+  // 강제 실행하므로, 여기서 SKIP 해도 브라우저 축이 검증되지 않는 상태로 남지 않는다.
+  console.log(`${REQUIRE_BROWSER ? "  ❌ FAIL" : "  ⏭️  SKIP"}: playwright chromium 사용 불가` +
+    `${REQUIRE_BROWSER ? " (REQUIRE_BROWSER=1 이므로 fail-close)" : " — 브라우저 축은 CI 워크플로가 강제 실행한다"}`);
+  server.close();
+  if (REQUIRE_BROWSER || failures.length > 0) process.exit(1);
+  console.log(`\n✅ genius mascot render: ${pass} PASS (자산·매핑 정합 / 브라우저 축 SKIP)`);
+  process.exit(0);
+}
 
 const browser = await chromium.launch();
 try {
@@ -186,23 +248,52 @@ try {
       [...new Set(observed.map((o) => o.box?.height))].join(","));
 
     if (!reduce) {
-      // ⑤ 13종 × 3배경 실제 캡처 — 배경 위에 올렸을 때 **불투명 사각형이 안 보이는지**.
-      //    투명 배경 자산인데 배경색이 캐릭터 주변에 사각형으로 남으면 여기서 잡힌다.
-      for (const [bgName] of BACKGROUNDS) {
-        const shot = await page.locator(`.bg[data-bg="${bgName}"]`).screenshot();
-        if (EMIT) writeFileSync(`/tmp/mascot-capture-${bgName}.png`, shot);
+      // ⑤ 13종 전수 × 3배경 실제 캡처 — **저장하고 픽셀로 판정**한다.
+      //
+      // 🔴 종전에는 캡처 후 `check("배경 3종 실제 캡처 성공", true)` 였다. 리터럴 true 는
+      //    무엇도 검증하지 않는다 — 캡처가 새까맣게 나와도 GREEN 이다(삼순 지적).
+      //    이제 캡처 PNG 를 디코딩해 배경별로 실제 픽셀을 읽는다.
+      mkdirSync(CAPTURE_DIR, { recursive: true });
+      const sharp = (await import("sharp")).default;
+      const cov = await ctx.newPage();
+      await cov.goto(`${BASE}/coverage`, { waitUntil: "networkidle" });
+      for (const [bgName, bgHex] of BACKGROUNDS) {
+        const shot = await cov.locator(`.bg[data-bg="${bgName}"]`).screenshot();
+        const file = resolve(CAPTURE_DIR, `mascot-${bgName}.png`);
+        writeFileSync(file, shot);
+
+        const { data, info } = await sharp(shot).ensureAlpha().raw()
+          .toBuffer({ resolveWithObject: true });
+        const bgRgb = [1, 3, 5].map((i) => parseInt(bgHex.slice(i, i + 2), 16));
+        // 배경과 다른 픽셀 = 실제로 그려진 마스코트 픽셀.
+        let drawn = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (Math.max(Math.abs(data[i] - bgRgb[0]), Math.abs(data[i + 1] - bgRgb[1]),
+                       Math.abs(data[i + 2] - bgRgb[2])) > 12) drawn += 1;
+        }
+        const drawnPct = (drawn / (info.width * info.height)) * 100;
+        // 13종이 나란히 그려지면 캔버스의 상당 부분이 채워진다. 새까만/빈 캡처는 여기서 죽는다.
+        check(`[${bgName}] 캡처에 마스코트가 실제로 그려졌다 (${drawnPct.toFixed(1)}% 채움, 저장: ${file})`,
+          SELFTEST ? false : drawnPct > 5, `${drawnPct.toFixed(2)}%`);
       }
-      check("배경 3종 실제 캡처 성공", true);
+      // 13종이 **전부** 화면에 도달했는가 — 케이스 10개로는 일부 클립이 안 그려진다.
+      const covRows = await cov.evaluate(() => [...document.querySelectorAll("[data-clip]")]
+        .map((el) => ({ clip: el.getAttribute("data-clip"),
+                        w: el.naturalWidth, h: Math.round(el.getBoundingClientRect().height) })));
+      const shown = new Set(covRows.map((r) => r.clip));
+      check(`13종 전수가 실제 화면에 도달했다 (${shown.size}/${GENIUS_MOTION_CLIPS.length})`,
+        GENIUS_MOTION_CLIPS.every((c) => shown.has(c)),
+        GENIUS_MOTION_CLIPS.filter((c) => !shown.has(c)).join(", "));
+      // 전수가 실제로 **로드**되고 규격대로 그려졌는가 — 도달만으로는 404 를 못 본다.
+      check("13종 전수가 404 없이 로드되고 96px 규격으로 그려진다",
+        covRows.length > 0 && covRows.every((r) => r.w > 0 && r.h === GENIUS_MASCOT_HEIGHT_PX),
+        covRows.filter((r) => !(r.w > 0 && r.h === GENIUS_MASCOT_HEIGHT_PX))
+          .map((r) => `${r.clip}(w=${r.w},h=${r.h})`).join(", "));
+      await cov.close();
     }
     await ctx.close();
   }
 
-  // ⑥ 전 클립의 자산이 실제로 존재하는가 (매핑에만 있고 파일이 없으면 런타임 404)
-  const missing = GENIUS_MOTION_CLIPS.filter((c) =>
-    !existsSync(resolve(ROOT, "public", geniusMotionSrc(c).replace(/^\//, ""))) ||
-    !existsSync(resolve(ROOT, "public", geniusMotionPosterSrc(c).replace(/^\//, ""))));
-  check(`전 ${GENIUS_MOTION_CLIPS.length}종 클립 + poster 자산이 존재한다`,
-    missing.length === 0, missing.join(", "));
 } finally {
   await browser.close();
   server.close();

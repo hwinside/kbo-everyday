@@ -497,8 +497,13 @@ export function geniusMotionClipFor(
   // 음수·부동소수로 음수 인덱스가 나오면 undefined 가 된다 — 정규화해 닫는다.
   const seed = Math.abs(Math.trunc(messageId)) || 0;
   if (replyKind === "picker" || replyKind === "correction") return "thinking";
-  if (replyKind === "unavailable") return "bored";
 
+  // ⚠️ `unavailable` 의 조기 반환을 **제거했다** (삼순 2026-08-16 ①).
+  //    종전에는 여기서 곧장 bored 를 돌려줘, 그 경로만 쿨다운 판정을 건너뛰었다.
+  //    "reply_kind 는 모션이 아니라 유형이니 무관하다"는 내 논리였지만, 결과적으로
+  //    **거절 계열만 쿨다운을 우회**하는 예외가 하나 더 생기는 것이었다(bored 예외화와
+  //    같은 축). 이제 아래 공통 경로에서 intent/granted 로 함께 판정한다.
+  //
   // ── §7.6 의미 ────────────────────────────────────────────────────────────────
   //
   // 🔴 의미(intent)와 부여(granted)를 **분리해서** 읽는다.
@@ -517,8 +522,14 @@ export function geniusMotionClipFor(
   //    뒀다가 철회했다. 그 판단 자체는 그럴듯했지만 **§7.4 계약을 리뷰 승인 없이
   //    바꾸는 것**이었다. 예외가 필요하다는 근거가 서면 그때 §7.4 를 정식으로 고친다.
   //    지금 필요한 것은 "오해를 만들지 않는 것"뿐이고, 중립 클립이 그걸 이미 만족한다.
-  const intent = context?.motionIntent ?? context?.motion;
-  const granted = context?.motion;
+  // `unavailable` 은 서버가 항상 bored 를 실어 보내는 유형이지만(scope_guide·blocked),
+  // payload 가 없는 legacy 응답도 있다 — 그 경우 유형 자체가 의미이므로 intent 로 승격한다.
+  // (예외가 아니라 **의미 해석**이다: 승격된 intent 도 아래 쿨다운 판정을 똑같이 탄다.)
+  const intent = context?.motionIntent ?? context?.motion
+    ?? (replyKind === "unavailable" ? "bored" : undefined);
+  const granted = context?.motion ?? (replyKind === "unavailable" && !context?.motionIntent
+    // legacy unavailable(payload 없음)은 쿨다운 원장이 없으니 억제 대상이 아니다.
+    ? "bored" : context?.motion);
 
   if (intent === "excited" || intent === "headspin" || intent === "bored") {
     // 쿨다운이 승인했을 때만 감정 클립. 거절되면 중립(야구 동작)으로 **일괄** 억제한다.
