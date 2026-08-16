@@ -1105,6 +1105,21 @@ const STAT_WORDS = [
  *
  * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
  * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
+ *
+ * ⚠️ **알파벳 구단명은 한글 음독도 같이 둔다** (2026-08-16 운영 로그 전수조사).
+ * `LG`·`KIA` 는 처음부터 `엘지`·`기아` 를 갖고 있었는데 `KT`·`SSG`·`NC` 는 알파벳만 있었다.
+ * 그래서 **같은 질문이 표기만 바뀌어도 결과가 갈라졌다** — 72시간 로그 실측:
+ *   `Kt wiz와 삼성과 몇게임 차야?`      → `team_record` (정상 답변)
+ *   `케이티랑 삼성이랑 몇게임 차야?`    → `unsure`  (똑같은 질문인데 못 답함)
+ *   `삼성이랑 케이티랑 2게임 차라고?`   → `unsure`
+ * 지표 판정(`resolveTeamRecordIntent`)은 세 문장 모두 `gamesBehind` 를 정확히 잡았고,
+ * **구단 결속만 실패**해 라우팅이 갈라졌다.
+ *
+ * ⚠️ 수록 기준 — **반례를 찾아보고 오탐이 없는 음독만** 넣는다.
+ * `쓱`(SSG 팬 은어)은 로그에 나왔지만 **넣지 않았다** — 국어 부사 `쓱`(공이 쓱 빠졌다)과
+ * 토큰이 완전히 같아 `tokenIsWord` 가 구분할 수 없다. 문맥으로 가르려면 규칙을 쌓아야
+ * 하므로(`open_language_never_closes_with_rules`) 미수록으로 둔다.
+ * 이 목록은 구단 10개라는 **닫힌 집합**의 원소 표기라 무한히 늘어나는 축이 아니다.
  */
 const TEAM_ALIASES: ReadonlyArray<{
   readonly canonical: string;
@@ -1120,9 +1135,9 @@ const TEAM_ALIASES: ReadonlyArray<{
   { canonical: "삼성", teamId: 8, shorts: ["삼성"], nicks: ["라이온즈"] },
   { canonical: "한화", teamId: 9, shorts: ["한화"], nicks: ["이글스"] },
   { canonical: "키움", teamId: 10, shorts: ["키움"], nicks: ["히어로즈"] },
-  { canonical: "KT", teamId: 3, shorts: ["kt"], nicks: ["위즈"] },
-  { canonical: "SSG", teamId: 4, shorts: ["ssg"], nicks: ["랜더스"] },
-  { canonical: "NC", teamId: 5, shorts: ["nc"], nicks: ["다이노스"] },
+  { canonical: "KT", teamId: 3, shorts: ["kt", "케이티"], nicks: ["위즈"] },
+  { canonical: "SSG", teamId: 4, shorts: ["ssg", "에스에스지"], nicks: ["랜더스"] },
+  { canonical: "NC", teamId: 5, shorts: ["nc", "엔씨"], nicks: ["다이노스"] },
 ];
 const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
 
@@ -1933,9 +1948,24 @@ function injectionNormalize(value: string): string {
     .join("");
 }
 
+/**
+ * 토큰 꼬리에서 떼어낼 조사·어미의 **폐쇄집합**.
+ *
+ * ⚠️ `랑`·`이랑` 은 2026-08-16 운영 로그 전수조사에서 추가했다. 한국어 **공동격 조사**로
+ * `과`·`와` 와 같은 부류인데 이것만 빠져 있어서, 나열형 질문이 통째로 결속에 실패했다:
+ *   `엘지와 두산 몇게임 차야?`   → 구단 2개 결속 → `team_record` (정상)
+ *   `엘지랑 두산이랑 몇게임 차야?` → 구단 **0개** 결속 → `unsure` (같은 질문인데 못 답함)
+ * 72시간 로그의 순위·게임차 미답변 8건 중 다수가 이 형태였다. 구단뿐 아니라 선수·용어
+ * 결속도 같은 함수를 타므로 영향 범위가 넓다(`이승엽이랑`·`잔루랑`).
+ *
+ * ⚠️ 반례 탐색 실측 — 이 두 꼬리를 떼어도 **다른 실단어가 되는 경우가 없다**:
+ *   사전 term+alias 583개 → `W+랑`/`W+이랑` 이 다른 어휘와 충돌: 0건
+ *   현재 로스터 선수명 295명 → `랑` 으로 끝나는 이름 0명, 충돌 0건
+ * 이 목록은 한국어 조사라는 닫힌 부류라 반례마다 늘어나는 축이 아니다.
+ */
 const TOKEN_TRIM_SUFFIXES = [
   "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
-  "과", "와", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "과", "와", "이랑", "랑", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
   "인데", "인가", "예요", "이에요", "뭐야", "뜻",
 ];
 

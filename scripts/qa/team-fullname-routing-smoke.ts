@@ -169,9 +169,12 @@ const TEAMS: Array<{ label: string; shorts: string[]; nick: string }> = [
   { label: "삼성", shorts: ["삼성"], nick: "라이온즈" },
   { label: "한화", shorts: ["한화"], nick: "이글스" },
   { label: "키움", shorts: ["키움"], nick: "히어로즈" },
-  { label: "KT", shorts: ["KT", "kt"], nick: "위즈" },
-  { label: "SSG", shorts: ["SSG", "ssg"], nick: "랜더스" },
-  { label: "NC", shorts: ["NC", "nc"], nick: "다이노스" },
+  // ⚠️ 알파벳 구단은 **한글 음독도 같이** 태운다 (2026-08-16 운영 로그 전수조사).
+  //   `LG`/`KIA` 만 한글 표기를 갖고 있어서 `케이티`·`엔씨`·`에스에스지` 는 구단으로
+  //   결속되지 않았고, 같은 질문이 표기만 바뀌어도 `team_record` ↔ `unsure` 로 갈라졌다.
+  { label: "KT", shorts: ["KT", "kt", "케이티"], nick: "위즈" },
+  { label: "SSG", shorts: ["SSG", "ssg", "에스에스지"], nick: "랜더스" },
+  { label: "NC", shorts: ["NC", "nc", "엔씨"], nick: "다이노스" },
 ];
 
 async function verifyTeamQuestionsAnswerable() {
@@ -734,6 +737,88 @@ async function verifyTeamAnswersSurviveFinalValidator() {
   }
 }
 
+// ── 공동격 조사 나열형: 구단 결속이 조사 표기로 갈라지면 안 된다 ─────────────
+//
+// 2026-08-16 운영 로그 전수조사에서 나온 축. `과`·`와` 는 `TOKEN_TRIM_SUFFIXES` 에 있었는데
+// `랑`·`이랑` 만 빠져 있어서, **똑같은 질문이 조사 표기만 바뀌면 구단 0개로 결속 실패**했다.
+//   `엘지와 두산 몇게임 차야?`     → 구단 2개 → `team_record`
+//   `엘지랑 두산이랑 몇게임 차야?`  → 구단 0개 → `unsure` (유저는 답을 못 받았다)
+// 알파벳 구단(`KT`·`SSG`·`NC`)에 한글 음독이 없던 것도 같은 증상을 만들었다.
+//
+// ⚠️ 여기서 **종단 답변까지 보지 않는다.** `team_record` 는 라이브 `/api/standings` 를 타므로
+//   종단 값 검증은 `verifyTeamNumericAnswers` 가 자기 fetcher 로 소유한다. 이 함수가 고정하는
+//   것은 딱 하나 — **구단 결속과 라우팅이 표기에 따라 갈라지지 않는가**다.
+async function verifyConjunctiveParticleBinding() {
+  const { mentionedTeamCanonicals, routeQuestion } = await import("../../src/lib/baseball-qa/pipeline");
+  const { resolveTeamRecordIntent } = await import("../../src/lib/baseball-qa/stats/team-record");
+
+  // 로그 원문 그대로 — 지어낸 문자열이 아니다.
+  const cases: Array<{ question: string; teams: string[] }> = [
+    { question: "케이티랑 삼성이랑 몇게임 차야?", teams: ["KT", "삼성"] },
+    { question: "삼성이랑 케이티랑 2게임 차라고?", teams: ["KT", "삼성"] },
+    { question: "엘지랑 두산이랑 몇게임 차야?", teams: ["LG", "두산"] },
+    { question: "두산이랑 롯데 순위", teams: ["두산", "롯데"] },
+    { question: "기아랑 삼성 승차", teams: ["KIA", "삼성"] },
+  ];
+  for (const { question, teams } of cases) {
+    await check(`나열형 조사 구단 결속 "${question}"`, () => {
+      assert.deepEqual(
+        [...mentionedTeamCanonicals(question)].sort(),
+        [...teams].sort(),
+        `${question}: 구단 결속 실패 — 조사 표기에 따라 결과가 갈라진다`,
+      );
+      assert.equal(
+        routeQuestion(question, [], players, false), "team_record",
+        `${question}: 구단 수치 질문이 team_record 로 위임되지 않았다`,
+      );
+      assert.equal(
+        resolveTeamRecordIntent(question).kind, "query",
+        `${question}: 지표 판정이 query 가 아니다`,
+      );
+    });
+  }
+
+  // 조사 표기가 달라도 **같은 결과**여야 한다 — 이 등가성이 이 PR 의 계약이다.
+  for (const [a, b] of [
+    ["엘지와 두산 몇게임 차야?", "엘지랑 두산이랑 몇게임 차야?"],
+    ["삼성과 KT 순위", "삼성이랑 KT랑 순위"],
+  ] as const) {
+    await check(`조사 표기 등가 "${a}" ≡ "${b}"`, () => {
+      assert.deepEqual(
+        [...mentionedTeamCanonicals(a)].sort(), [...mentionedTeamCanonicals(b)].sort(),
+        `조사 표기만 다른데 구단 결속이 갈라진다`,
+      );
+      assert.equal(
+        routeQuestion(a, [], players, false), routeQuestion(b, [], players, false),
+        `조사 표기만 다른데 라우팅이 갈라진다`,
+      );
+    });
+  }
+
+  // 알파벳 구단 한글 음독 — 같은 축의 두 번째 원인.
+  for (const [alpha, hangul] of [
+    ["KT 순위 알려줘", "케이티 순위 알려줘"],
+    ["NC 순위 알려줘", "엔씨 순위 알려줘"],
+    ["SSG 순위 알려줘", "에스에스지 순위 알려줘"],
+  ] as const) {
+    await check(`알파벳↔한글 음독 등가 "${alpha}" ≡ "${hangul}"`, () => {
+      assert.deepEqual(
+        [...mentionedTeamCanonicals(alpha)].sort(), [...mentionedTeamCanonicals(hangul)].sort(),
+        `알파벳 표기와 한글 음독이 다른 결과를 낸다`,
+      );
+    });
+  }
+
+  // ⚠️ 반대 방향 — 조사를 떼는 것이 **다른 단어를 만들어내면 안 된다**.
+  //   `랑`/`이랑` 이 사전 어휘·로스터 이름과 충돌하지 않는다는 것은 실측으로 확인했지만,
+  //   게이트에도 못 박아 둔다. 비야구 문맥에서 구단이 튀어나오면 그것도 회귀다.
+  for (const question of ["도루묵이랑 회 먹었어", "번트케이크랑 커피"]) {
+    await check(`조사 제거 과탐 없음 "${question}"`, () => {
+      assert.deepEqual(mentionedTeamCanonicals(question), [], `${question}: 구단이 아니다`);
+    });
+  }
+}
+
 // ── 반대 방향 ①: 잘못 조합한 구단명은 구단이 아니다 ─────────────────────────
 // 약칭·별칭을 평평하게 두면 `LG라이온즈` 같은 존재하지 않는 구단을 정본으로 인정한다
 // (삼순 #1100 1차 P0-2). 구단으로 인정하지 않는 것이 계약이며, 그렇다고 차단하는 것도
@@ -898,6 +983,7 @@ async function main() {
   await verifyTeamAnswersSurviveFinalValidator();
   await verifyTeamQuestionsAnswerable();
   await verifyTeamNumericAnswers();
+  await verifyConjunctiveParticleBinding();
   await verifyCrossTeamCombosRejected();
   await verifyOutOfScopeStillBlocked();
   await verifyUnsupportedMetricsStillHeld();
