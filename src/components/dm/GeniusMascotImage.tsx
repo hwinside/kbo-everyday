@@ -33,6 +33,7 @@ export default function GeniusMascotImage({
   replyKind = null,
   messageId,
   motion = null,
+  motionIntent = null,
   answerTeamId = null,
   favoriteTeamId = null,
   testId,
@@ -47,6 +48,14 @@ export default function GeniusMascotImage({
    */
   motion?: GeniusMascotMotion | null;
   /**
+   * 쿨다운(#1202)과 **무관한** §7.6 의도 모션.
+   *
+   * `motion` 은 DB 쿨다운이 승인해야 실린다 — 30초 내 재인사면 비어버린다. 그때
+   * intent 가 없으면 "감사"·"인사"·"범위 안내"가 전부 같은 폴백으로 무너진다
+   * (삼순 2026-08-16 P0). 의미 판정은 intent 로, 감정 클립 재생 여부는 motion 으로.
+   */
+  motionIntent?: GeniusMascotMotion | null;
+  /**
    * 답변이 다루는 구단 canonical id (서버 payload). 유저 최애팀과 **exact 일치**할 때만
    * 응원 7종이 재생된다 — 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에".
    * 값이 없으면(구단 미특정·거절·되묻기) 응원은 안 붙는다(fail-close).
@@ -57,7 +66,7 @@ export default function GeniusMascotImage({
   /** 게이트가 소유권을 세는 앵커. 사용처마다 다르므로 호출부가 준다. */
   testId: string;
 }) {
-  const clip = geniusMotionClipFor(replyKind, messageId, { motion, answerTeamId, favoriteTeamId });
+  const clip = geniusMotionClipFor(replyKind, messageId, { motion, motionIntent, answerTeamId, favoriteTeamId });
   return (
     // ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈출 수 없다 — 재생 주체가
     // 이미지 디코더라 CSS 가 관여하지 못한다. `prefers-reduced-motion` 에서는

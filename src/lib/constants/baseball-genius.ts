@@ -397,6 +397,15 @@ export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
 const ANSWER_CLIPS = ["swing", "pitching"] as const;
 
 /**
+ * 중립 클립 — 감정 반응이 **억제됐을 때** 쓰는 자리.
+ *
+ * 30초 쿨다운(#1202)이 감정 모션을 거절하면 감정 클립을 재생하지 않는다. 그렇다고
+ * 아무 감정이나 붙이면(예: 감사에 신남) 쿨다운이 오히려 **틀린 신호**를 만든다.
+ * 중립 야구 동작 하나로 고정해 "억제됨"을 결정론적으로 표현한다.
+ */
+const NEUTRAL_ACK_CLIP = "swing" as const;
+
+/**
  * 응원 7종 — **유저 최애팀에 관한 답변에만** 붙는다.
  *
  * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출".
@@ -470,10 +479,15 @@ export function geniusMotionClipFor(
   messageId: number,
   context?: {
     /**
-     * 서버가 §7.6 SSOT 로 계산해 payload 에 실은 감정 모션.
+     * 서버가 §7.6 SSOT 로 계산해 payload 에 실은 감정 모션 — **쿨다운이 승인한 것**.
      * 인사=excited / 감사·칭찬=headspin / 거절=bored 의 **의미**가 여기 들어있다.
      */
     readonly motion?: GeniusMascotMotion | null;
+    /**
+     * 쿨다운과 무관한 §7.6 **의도**. 30초 내 재인사면 `motion` 은 비지만 intent 는 남는다.
+     * 의미 판정은 intent 로 하고, 감정 클립을 실제로 **재생할지**는 motion 이 정한다.
+     */
+    readonly motionIntent?: GeniusMascotMotion | null;
     /** 답변이 다루는 구단의 canonical team id. 서버가 질문에서 해석해 payload 로 싣는다. */
     readonly answerTeamId?: number | null;
     /** 보고 있는 유저의 최애팀 id (프로필). */
@@ -485,14 +499,33 @@ export function geniusMotionClipFor(
   if (replyKind === "picker" || replyKind === "correction") return "thinking";
   if (replyKind === "unavailable") return "bored";
 
-  // §7.6 의미 모션이 실려 있으면 **그대로 쓴다** — 이름이 같은 클립이 이미 존재한다.
-  // 시드 교대로 덮으면 "고마워"에 신남이, "안녕"에 헤드스핀이 나온다(삼순 4축-②).
-  // 거절(bored)은 replyKind 가 ack 여도 여기서 잡힌다 — 범위 안내가 그 경우다.
-  const motion = context?.motion;
-  if (motion === "excited" || motion === "headspin" || motion === "bored") return motion;
+  // ── §7.6 의미 ────────────────────────────────────────────────────────────────
+  //
+  // 🔴 의미(intent)와 부여(granted)를 **분리해서** 읽는다.
+  //    `motion` 하나만 보면, 30초 쿨다운(#1202)이 거절한 순간 payload 에서 motion 이
+  //    사라지고 "감사"·"인사"·"범위 안내"가 전부 같은 폴백으로 무너진다
+  //    (삼순 2026-08-16 P0 — 쿨다운 거절이 **실경로**인데 게이트가 항상 motion 을
+  //    주입해 그 경로를 못 보고 있었다).
+  //
+  //    쿨다운의 목적은 *감정 반응 남용 억제*이지 **의미를 지우는 것이 아니다.** 그래서
+  //      · intent + granted → 그 감정 클립 (감정 반응)
+  //      · intent + 거절    → **중립 클립** (억제하되 다른 감정으로 바꾸지 않는다)
+  //    로 나눈다. 거절됐다고 "고마워"에 신남을 붙이면 그게 더 나쁜 오답이다.
+  const intent = context?.motionIntent ?? context?.motion;
+  const granted = context?.motion;
 
-  // 의미를 모르는 ack — 인사 기본값. 무작위로 고르면 감사에 신남이 붙을 수 있다.
-  if (replyKind === "ack") return "excited";
+  // 거절 안내(bored)는 감정 반응이 아니라 **상태 표시**다 — 쿨다운과 무관하게 항상 보인다.
+  // (범위 안내에 신나는 마스코트가 뜨면 신호가 정반대가 된다.)
+  if (intent === "bored") return "bored";
+
+  if (intent === "excited" || intent === "headspin") {
+    // 쿨다운이 승인했을 때만 감정 클립. 거절되면 중립(야구 동작)으로 억제한다.
+    if (granted === intent) return intent;
+    return NEUTRAL_ACK_CLIP;
+  }
+
+  // 의미를 모르는 ack(legacy payload) — 중립. 무작위로 고르면 감사에 신남이 붙는다.
+  if (replyKind === "ack") return NEUTRAL_ACK_CLIP;
 
   // 최애팀 얘기일 때만 응원 7종 — 그 외엔 야구 동작(fail-close).
   if (isFavoriteTeamAnswer(context?.answerTeamId, context?.favoriteTeamId)) {
@@ -529,6 +562,20 @@ export interface GeniusReplyPayload {
    * (mascotStateForReplyKind 의 forward-compat 계약과 같은 축).
    */
   motion?: GeniusMascotMotion;
+  /**
+   * §7.6 **의도** 모션 — 쿨다운 승인과 무관하게 항상 실린다.
+   *
+   * `motion` 은 DB 쿨다운(#1202)이 승인해야 실린다. 그래서 30초 내 재인사에서는
+   * `motion` 이 비고, 그 순간 "감사"·"인사"·"범위 안내"가 클라에서 **구분 불가**가
+   * 된다(삼순 2026-08-16 P0). 쿨다운의 목적은 *감정 반응 남용 억제*이지
+   * **의미를 지우는 것이 아니다.**
+   *
+   * 그래서 의미(intent)와 부여(granted)를 분리해 둘 다 싣는다:
+   *   · intent 있음 + granted 있음 → 그 감정 클립
+   *   · intent 있음 + granted 없음 → **중립 클립**(쿨다운 억제. 다른 감정으로 바꾸지 않는다)
+   *   · intent 없음(legacy payload) → reply_kind 기본값
+   */
+  motion_intent?: GeniusMascotMotion;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
   /**
@@ -578,6 +625,8 @@ export function composeGeniusReplyPayload(
   result: {
     source: string;
     motion?: GeniusMascotMotion;
+    /** 쿨다운 승인 여부와 무관한 §7.6 의도 모션. 의미는 항상 보존한다. */
+    motionIntent?: GeniusMascotMotion;
     pickerOptions?: ReadonlyArray<{
       kboId: string; name: string; team: string | null; position: string | null; backNo: string | null;
     }>;
@@ -594,6 +643,7 @@ export function composeGeniusReplyPayload(
     match_path: result.source,
     question_message_id: questionMessageId,
     ...(result.motion ? { motion: result.motion } : {}),
+    ...(result.motionIntent ? { motion_intent: result.motionIntent } : {}),
     ...(typeof result.answerTeamId === "number" && Number.isFinite(result.answerTeamId)
       ? { answer_team_id: result.answerTeamId }
       : {}),
@@ -645,6 +695,20 @@ export function geniusMotionFromPayload(
     : null;
 }
 
+/**
+ * 쿨다운과 무관한 §7.6 **의도** 모션. 클립 선택은 이 값으로 의미를 판정한다.
+ * (`geniusMotionFromPayload` 는 "부여됐는가"에 답한다 — 둘은 다른 질문이다.)
+ */
+export function geniusMotionIntentFromPayload(
+  payload: GeniusReplyPayload | null | undefined,
+): GeniusMascotMotion | null {
+  const intent = payload?.motion_intent;
+  if (intent === undefined) return null;
+  return (GENIUS_MASCOT_MOTIONS as readonly string[]).includes(intent)
+    ? (intent as GeniusMascotMotion)
+    : null;
+}
+
 function isPickerOption(p: unknown): p is GeniusPickerOption {
   if (!p || typeof p !== "object") return false;
   const o = p as Record<string, unknown>;
@@ -675,6 +739,8 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 안 된다. 값 해석은 `geniusMotionFromPayload` 가 폐쇄집합으로 닫는다.
   const motionField = (obj as { motion?: unknown }).motion;
   if (motionField !== undefined && typeof motionField !== "string") return false;
+  const motionIntentField = (obj as { motion_intent?: unknown }).motion_intent;
+  if (motionIntentField !== undefined && typeof motionIntentField !== "string") return false;
   // 선택지가 붙어 있으면 항목까지 검증한다 — 깨진 payload 로 카드를 그리면 빈 버튼이 난다.
   // 상한 초과도 거절한다(무한 목록 렌더 방지).
   if (obj.picker_options !== undefined) {

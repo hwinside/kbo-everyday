@@ -81,8 +81,8 @@
    ],
    "fps": 11.98,
    "source_frames": 119,
-   "clip_sha256": "8a8752fe61a7aed54fc9796c5d51d8c61dcd0b9ff517b3688bacbf13d1fda5b0",
-   "poster_sha256": "cdc8c7557aa5064f39a1350b9e31474fdf4b5db73f45995c66c88a01190cfb2b",
+   "clip_sha256": "05eebbbbde8cf18710fa93a26300a86ff2eb5fa018ebf34c67c8a231bb06736c",
+   "poster_sha256": "8a77b32cb89b05fcb635afd4b6d4f746dc32f38ea92fceae141def7dd772affd",
    "clip_kb": 372
   },
   "cheer": {
@@ -142,8 +142,8 @@
    ],
    "fps": 11.98,
    "source_frames": 97,
-   "clip_sha256": "312b95b9b57382fd1b10c69129b7bc05672bc979e85f379b47d3e6b1fe99b12e",
-   "poster_sha256": "21365a94241d9d770b536bd97692ab20e08cd6c7fca6bcd87e2112cf80b4946c",
+   "clip_sha256": "75f72887c500b83c13bed697e8080401d3b09d39ff487e05ee3b0d9f4b0411c6",
+   "poster_sha256": "860343d05ff74fff6b3553595c620549cb6798b009c19afcb0e0a9be41b84a84",
    "clip_kb": 358
   },
   "cheerC": {
@@ -204,8 +204,8 @@
    ],
    "fps": 11.98,
    "source_frames": 99,
-   "clip_sha256": "82ff1fca68be46833eb9efabbb94d8a6474e312c262a0d7de8afd22728ed8072",
-   "poster_sha256": "3a9933950ef2dc7b488e908877dfb5ef18b34b6f6b4e8115d3e30c2a8a2b9947",
+   "clip_sha256": "7e405102ad4addae3a7b1d9f2b317212aff905fd8dbf4e3975128fc9d31d5ae9",
+   "poster_sha256": "c7bad7e4e20318020cba607d43c3a71989278ecea1a2158bc3905c989dea7cfd",
    "clip_kb": 320
   },
   "cheerD": {
@@ -261,8 +261,8 @@
    ],
    "fps": 11.98,
    "source_frames": 90,
-   "clip_sha256": "1b02222cb1bcf632be5db30cdc9d2c38ae7b740089faf293253bf74032a92af5",
-   "poster_sha256": "0ba2839fb2ac86ea522502abb507ff560fe5eb4961b630205d13e652175f15ff",
+   "clip_sha256": "e6748d775859c29ef6de46993c7d33937e7cfee5c37740fca5c3e4f983c10ac1",
+   "poster_sha256": "8bd4c059da4778b763eb4aa87d4f262b0bd407d09c0fcc9a3283952ed082d837",
    "clip_kb": 287
   },
   "cheerG": {
@@ -320,8 +320,8 @@
    ],
    "fps": 11.98,
    "source_frames": 94,
-   "clip_sha256": "80a8527d2950d692d958a7c6afc586c197fcfb338f9ac6d224789c7ebabbaf92",
-   "poster_sha256": "e55e71ec811a35cc2dd72f9c1ec8a7931945b2b698ea32af571917bbf7f2ed0b",
+   "clip_sha256": "b12f4584c2d407d3acc02e27e9f6d0e942db59f3fc63be49dd0000960c9fe0d8",
+   "poster_sha256": "f4ad4ef681d3588bcf9a7ccee838f6a53347b4c3eee5084ec721459c89285970",
    "clip_kb": 287
   },
   "cheerpom": {
@@ -405,8 +405,8 @@
    ],
    "fps": 11.98,
    "source_frames": 145,
-   "clip_sha256": "a118c6de914f141a868389fd5a85145a88394954ef4ea5a48bab295e589a9f02",
-   "poster_sha256": "ab0cb68333a7057367a54561652e23f08fa1b85b1e4ea39aa7a5217b3e5a62a5",
+   "clip_sha256": "f4a0770424a10cebd7ee10f27dc79f86256c76e61770b7223b499cd3a06e345f",
+   "poster_sha256": "4e20391db0910cadceeea2d5fd9814157330579950efc83301c220f6debd4e8e",
    "clip_kb": 766
   },
   "cheerstick": {
@@ -467,9 +467,9 @@
    ],
    "fps": 11.98,
    "source_frames": 100,
-   "clip_sha256": "93e4d40bbe6b30f687600b2340f50b7686901ad91c60107d691d4ddde5c76499",
-   "poster_sha256": "6039783964c56c4345761a16552797c9778e68bc4a90c7b7db6e23b7e4676d8d",
-   "clip_kb": 421
+   "clip_sha256": "0ce3bc1e1b565908eb0d963c51f2ec36813e675fed126503e81c08c6faaf38b4",
+   "poster_sha256": "61d40f536192621c6b8d4fed08fb50c68cb1b84288b65f2c858b7d3dd59aca43",
+   "clip_kb": 422
   },
   "cheertowel": {
    "frames": 50,
@@ -529,8 +529,8 @@
    ],
    "fps": 11.98,
    "source_frames": 100,
-   "clip_sha256": "1afc484f449e430dbd8146257c250394bb55932e4a5b146b734f690df143b578",
-   "poster_sha256": "85977e2b73181d4be7805b7a9be1e326c9f4c0fa500a552f9eb4712327d76802",
+   "clip_sha256": "bf6f9f7a2715d9a6df4095ba4db3127ef984b91097133ad903f43380be659462",
+   "poster_sha256": "127e18354a29c6601092cb8a954a340ed296bab0306039649b43fb9f934f1c62",
    "clip_kb": 297
   },
   "excited": {
@@ -596,7 +596,7 @@
    "fps": 11.98,
    "source_frames": 108,
    "clip_sha256": "2b93c3beaaf47f4729a33a09281fc60026fc7ef049ce96de453e023dfd2277a4",
-   "poster_sha256": "628f11189c40cfd2a0cea085b6de23a55cdb8bd7818246220638e6d4570fb66b",
+   "poster_sha256": "e73ebafae7b8dea68c7a8800210d23f2da43f5daf6b1a7eb6e44539da3e5bb35",
    "clip_kb": 345
   },
   "headspin": {
@@ -662,8 +662,8 @@
    ],
    "fps": 11.98,
    "source_frames": 109,
-   "clip_sha256": "ffe9962f45eb6f822892638eb61a3bfaac2ed3478effdc214f1508c9b080d0df",
-   "poster_sha256": "ca3136fb996c4d293b8c5ee11b0bea5abe186ce00657e7a8df5ec249a571d33a",
+   "clip_sha256": "b48d4cd1ef6fa29678e02733c47fbcb91e0ddc99d3b92065041ac3d074d31b0c",
+   "poster_sha256": "ed4b1947daa17c9bc8708a569763985dc4ddc3a4de90b7474c5c67c5b6d0fd18",
    "clip_kb": 320
   },
   "pitching": {
@@ -721,8 +721,8 @@
    ],
    "fps": 11.98,
    "source_frames": 93,
-   "clip_sha256": "67fd895d7edf49e313f1384d68cbaca001bda6b5cb53dce006e90efed78f0f42",
-   "poster_sha256": "6fb46a8dfc1c75edd700931979ad819876ac9ac2c93e23d6b694d14dfce2fdff",
+   "clip_sha256": "211eda8cb6d5be245024dcc1e0937b2f63b0304434d9101672228e3f245adffa",
+   "poster_sha256": "fd8a0288c73631a63957ccd06bbb19a76077eb4608bd3f7b38ca7ac7c504f7b5",
    "clip_kb": 248
   },
   "swing": {
@@ -783,7 +783,7 @@
    "fps": 11.98,
    "source_frames": 98,
    "clip_sha256": "95dcfc824d820631bcf5c8c99cea6ec9c9908811cc889f93f0aeeb1b43376860",
-   "poster_sha256": "5e6f26fa992d8965663127ea96c8653155a53bb7dcd7671a783ae79c3d3caf94",
+   "poster_sha256": "fb4a7717601ee6f596d25675e3c100e52b1b91922ad3cf3e7dd4211dd6c0f378",
    "clip_kb": 268
   },
   "thinking": {
@@ -848,8 +848,8 @@
    ],
    "fps": 11.98,
    "source_frames": 108,
-   "clip_sha256": "966f3224355cdec9da40f805696e3071ad46514d3e7c3a787af0aa7053d3ed41",
-   "poster_sha256": "b36cbca76a8e315cf4849d6a7ac12b8314016e0af60ce7bd7c4a7ae8b387ede3",
+   "clip_sha256": "ad895d7fd9c2b7c84db841d1dc97144800c9dd8fc89a0deb667a387fa319217c",
+   "poster_sha256": "b6195a0c34f6228d1a1242c461b2f347499c9a57eee4a84e443b7e37fc284918",
    "clip_kb": 274
   }
  }

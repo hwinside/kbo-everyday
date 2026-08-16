@@ -253,7 +253,7 @@ check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", 
   // durable 재시도(claimState="ready")에서 그 값이 소실된다.
   assert.match(
     server,
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, answerTeamId \},\s*messageId,?\s*\)/,
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \},\s*messageId,?\s*\)/,
     "server 가 조립 함수를 단일 지점 motion·응원자격 계산과 함께 소비하지 않음",
   );
   assert.match(server, /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/,
@@ -326,15 +326,25 @@ check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
   // §7.6 의미 모션(motion)·응원 자격(answerTeamId/favoriteTeamId)이 **전부** 전달돼야 한다.
   // 하나라도 빠지면 그 축이 조용히 죽는다(motion 누락 → 감사에 신남, team 누락 → 응원 미도달).
   assert.match(mascotComponent,
-    /geniusMotionClipFor\(replyKind, messageId, \{ motion, answerTeamId, favoriteTeamId \}\)/,
+    /geniusMotionClipFor\(replyKind, messageId, \{ motion, motionIntent, answerTeamId, favoriteTeamId \}\)/,
     "클립 선택 SSOT 미사용(또는 의미 모션·응원 최애팀 결속 누락)");
-  // 사용처가 payload 의 motion 을 실제로 넘기는지 — 넘기지 않으면 위 계약이 허공이다.
-  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?motion=\{geniusMotionFromPayload\(geniusReply\)\}/,
-    "사용처가 payload 의 §7.6 모션을 전달하지 않는다");
-  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?answerTeamId=\{geniusReply\?\.answer_team_id \?\? null\}/,
-    "사용처가 응원 자격 팀 id 를 전달하지 않는다");
-  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?favoriteTeamId=\{profile\?\.team_id \?\? null\}/,
-    "사용처가 유저 최애팀을 전달하지 않는다");
+  // 사용처가 payload 값을 실제로 넘기는지 — 넘기지 않으면 위 계약이 허공이다.
+  //
+  // ⚠️ "태그로부터 N자 이내"로 찾지 **않는다**. prop 을 하나 추가할 때마다 뒤쪽 prop 이
+  //    창 밖으로 밀려나 무관한 변경이 게이트를 깨뜨린다(실측: motionIntent 추가로
+  //    favoriteTeamId 검사가 320자 창을 벗어나 FAIL). JSX 블록을 **경계까지 잘라내**
+  //    그 안에서 찾으면 prop 개수·순서와 무관하게 성립한다.
+  const mascotUsage = /<GeniusMascotImage\b[\s\S]*?\/>/.exec(chat)?.[0] ?? "";
+  assert.ok(mascotUsage.length > 0, "사용처에서 <GeniusMascotImage ... /> 블록을 못 찾았다");
+  for (const [label, re] of [
+    ["payload 의 §7.6 모션", /motion=\{geniusMotionFromPayload\(geniusReply\)\}/],
+    // 쿨다운 거절 시 의미를 살리는 축 — 빠지면 감사/인사/범위안내가 한 폴백으로 무너진다.
+    ["쿨다운 무관 의도 모션", /motionIntent=\{geniusMotionIntentFromPayload\(geniusReply\)\}/],
+    ["응원 자격 팀 id", /answerTeamId=\{geniusReply\?\.answer_team_id \?\? null\}/],
+    ["유저 최애팀", /favoriteTeamId=\{profile\?\.team_id \?\? null\}/],
+  ] as const) {
+    assert.match(mascotUsage, re, `사용처가 ${label} 을(를) 전달하지 않는다`);
+  }
   // 대기 = 되묻기(thinking 클립) / 실패 = 답하지 못함(bored 클립) 으로 번역된다.
   assert.match(typing, /waiting:\s*"picker"/, "대기 상태 매핑 없음");
   assert.match(typing, /failed:\s*"unavailable"/, "실패 상태 매핑 없음");

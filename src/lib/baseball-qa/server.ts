@@ -1269,8 +1269,11 @@ export async function processBaseballQaQuestion(input: {
   // blocked 반환도 같은 값을 얻는다(#1197 계약과 동일 축). 최애팀과의 비교는 클라가 한다:
   // 서버는 "이 답변이 어느 팀 얘기인가"만 알고, "누가 보고 있는가"는 모른다.
   const answerTeamId = answerTeamIdForResult(result.source, question);
+  // ⚠️ `motion`(부여)과 `motionIntent`(의미)를 **둘 다** 싣는다.
+  //    쿨다운이 거절하면 motion 은 비지만, 그렇다고 "감사"가 "인사"가 되는 건 아니다.
+  //    intent 를 함께 실어야 클라가 의미를 잃지 않는다(삼순 2026-08-16 P0).
   const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
-    { ...result, motion, answerTeamId },
+    { ...result, motion, motionIntent: candidateMotion, answerTeamId },
     messageId,
   );
   const deliveryDedupKey = result.source === "player_picker"

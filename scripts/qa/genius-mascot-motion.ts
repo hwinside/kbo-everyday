@@ -225,7 +225,8 @@ async function partMapping() {
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
   check("server 배선: compose 가 DB 가 승인한 motion 을 싣는다",
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, answerTeamId \}/.test(serverSrc));
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \}/
+      .test(serverSrc));
   // 응원 자격(답변 대상 구단)도 **같은 단일 지점**에서 결정론 계산해야 한다 —
   // 여기 말고 다른 곳에서 계산하면 durable 재시도에서 값이 소실된다(#1197 계약과 동일 축).
   check("server 배선: 응원 자격 팀 id 를 단일 지점에서 계산한다",
@@ -723,6 +724,10 @@ async function partRenderContract() {
   } = await import("../../src/lib/constants/baseball-genius");
   // 응원 자격 계산은 pipeline 소유 — payload 에 실리는 값이라 여기서 직접 태운다.
   const { answerTeamIdForResult } = await import("../../src/lib/baseball-qa/pipeline");
+  // 쿨다운 거절 경로는 서버가 두 값(motion·motionIntent)을 다 실어야 성립한다.
+  const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
+  const constantsSrc = readFileSync(
+    resolve(process.cwd(), "src/lib/constants/baseball-genius.ts"), "utf8");
 
   // 규격은 상수가 SSOT — 게이트가 문자열을 재구현하면 사용처가 되돌아가도 GREEN 이다
   // (M90 `게이트가 상수를 재구현하면 결함을 못 본다`). 상수 자체를 판정한다.
@@ -899,14 +904,53 @@ async function partRenderContract() {
     check("의미 매핑: 거절(motion=bored) → bored 클립 — reply_kind 가 ack(범위 안내)여도",
       Array.from({ length: 40 }, (_, i) =>
         geniusMotionClipFor("ack", i, { motion: "bored" })).every((c) => c === "bored"));
-    // 의미가 안 실린 ack 는 인사 기본값 — 무작위로 고르면 감사에 신남이 붙는다.
+    // 의미가 안 실린 ack(legacy payload) 는 중립 — 무작위면 감사에 신남이 붙는다.
     const acks = new Set(Array.from({ length: 60 }, (_, i) => geniusMotionClipFor("ack", i)));
-    check("의미 매핑: motion 미상 ack 는 excited 고정(무작위 금지)",
-      acks.size === 1 && acks.has("excited"), [...acks].join(","));
+    check("의미 매핑: motion 미상 ack 는 중립 고정(무작위 금지)",
+      acks.size === 1 && acks.has("swing"), [...acks].join(","));
     // 의미 모션은 최애팀보다 **우선**한다 — 인사에 응원이 뜨면 신호가 뒤집힌다.
     check("의미 매핑: 의미 모션이 최애팀 응원보다 우선한다",
-      geniusMotionClipFor("ack", 3, { motion: "excited", answerTeamId: 1, favoriteTeamId: 1 })
+      geniusMotionClipFor("ack", 3,
+        { motion: "excited", motionIntent: "excited", answerTeamId: 1, favoriteTeamId: 1 })
         === "excited");
+
+    // ── 🔴 쿨다운 거절 = **실경로** (삼순 2026-08-16 P0) ────────────────────────
+    //
+    // 30초 쿨다운(#1202)이 claim 을 거절하면 서버는 payload 에 motion 을 **안 싣는다**.
+    // 종전 게이트는 케이스마다 motion 을 직접 주입해서 이 경로를 한 번도 안 태웠고,
+    // 그 결과 "감사"·"인사"·"범위 안내"가 전부 같은 폴백으로 무너지는 걸 못 봤다.
+    //
+    // 계약: 의미(intent)는 쿨다운과 무관하게 보존되고, 쿨다운은 **감정 클립 재생만** 막는다.
+    check("쿨다운 거절: 거절 안내(bored)는 쿨다운과 무관하게 항상 bored — 상태 표시지 감정이 아니다",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: null, motionIntent: "bored" }))
+        .every((c) => c === "bored"));
+    check("쿨다운 거절: 감사(intent=headspin, 미승인) → 중립. 신남으로 바뀌지 않는다",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: null, motionIntent: "headspin" }))
+        .every((c) => c === "swing"));
+    check("쿨다운 거절: 인사(intent=excited, 미승인) → 중립",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: null, motionIntent: "excited" }))
+        .every((c) => c === "swing"));
+    check("쿨다운 승인: intent 와 granted 가 같으면 그 감정 클립",
+      geniusMotionClipFor("ack", 7, { motion: "headspin", motionIntent: "headspin" }) === "headspin" &&
+      geniusMotionClipFor("ack", 7, { motion: "excited", motionIntent: "excited" }) === "excited");
+    // 감사와 인사는 쿨다운 거절 상태에서도 **거절 안내와는** 구분돼야 한다.
+    check("쿨다운 거절: 감사/인사(중립) 와 범위 안내(bored) 는 여전히 구분된다",
+      geniusMotionClipFor("ack", 11, { motion: null, motionIntent: "headspin" }) !==
+      geniusMotionClipFor("ack", 11, { motion: null, motionIntent: "bored" }));
+    // intent 가 없는 legacy payload 도 죽지 않는다.
+    check("쿨다운 거절: intent 없는 legacy ack 도 중립으로 살아있다",
+      geniusMotionClipFor("ack", 5, { motion: null }) === "swing");
+
+    // 서버가 실제로 두 값을 **모두** 싣는지 — 하나라도 빠지면 위 계약이 허공이다.
+    check("서버가 motion(부여)과 motionIntent(의미)를 둘 다 payload 에 싣는다",
+      /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \}/
+        .test(serverSrc),
+      "쿨다운이 거절하면 의미가 사라진다");
+    check("payload 계약에 motion_intent 칸이 있다",
+      /motion_intent\?: GeniusMascotMotion;/.test(constantsSrc));
 
     // ── 응원 7종 = 최애팀 결속 (하린아빠 2026-08-16 14:09 · 삼순 #1228 P0) ────
     // "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출". 응원은 장식이 아니라

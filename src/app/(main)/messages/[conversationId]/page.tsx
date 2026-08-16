@@ -29,6 +29,7 @@ import {
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
   geniusMotionFromPayload,
+  geniusMotionIntentFromPayload,
   isGeniusPickerDisabled,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -581,6 +582,7 @@ export default function DMChatPage() {
                           replyKind={geniusReply?.reply_kind ?? null}
                           messageId={msg.id}
                           motion={geniusMotionFromPayload(geniusReply)}
+                          motionIntent={geniusMotionIntentFromPayload(geniusReply)}
                           answerTeamId={geniusReply?.answer_team_id ?? null}
                           favoriteTeamId={profile?.team_id ?? null}
                           testId="genius-reply-mascot"

@@ -118,8 +118,29 @@ for (const clip of clips) {
   }
   const ringLum = ring ? ringSum / ring : 255;   // 255 = 흰색(테두리 없음)
 
+  // ④ 투명 영역 RGB 잔재 (삼순 2026-08-16 P0-②).
+  //
+  //    un-premultiply 는 alpha 로 나누므로 alpha=0 인 곳의 RGB 에 **원본 배경색이
+  //    그대로 남는다**. 화면(알파 합성)에는 안 보이지만, 알파를 무시하고 RGB 만 읽는
+  //    도구(raw 뷰어·썸네일러·이미지 파이프라인)에서는 "큰 남색 직사각형"으로 보인다 —
+  //    삼순이 실제로 그렇게 관측했다. 안 보인다고 두면 다른 소비 경로에서 그대로 터진다.
+  //
+  //    ⚠️ **poster 만 검사한다.** 클립은 lossy WebP 라 인코더가 투명 픽셀의 RGB 를
+  //       압축이 잘 되는 값으로 바꿔버리며, `exact=True` 로도 lossy 모드에서는 보존되지
+  //       않는다(실측). 무손실로 바꾸면 4.5MB → 수십 MB 가 된다. poster 는 무손실
+  //       + `exact=True` 라 원리적으로 보존 가능하고, **정지 상태로 오래 노출되는 쪽**이
+  //       바로 poster 다(reduced-motion). 클립은 알파 합성으로만 소비된다.
+  let transN = 0, transDirty = 0;
+  for (let i = 0; i < poster.data.length; i += 4) {
+    if (poster.data[i + 3] !== 0) continue;
+    transN += 1;
+    if (poster.data[i] || poster.data[i + 1] || poster.data[i + 2]) transDirty += 1;
+  }
+  const posterTransDirtyPct = transN ? (transDirty / transN) * 100 : 0;
+
   rows.push({ clip, size: `${w}x${h}`, frames: n, posterAvg: +posterAvg.toFixed(2),
-              padMax, ringPx: ring, ringLum: +ringLum.toFixed(0) });
+              padMax, ringPx: ring, ringLum: +ringLum.toFixed(0),
+              posterDirty: +posterTransDirtyPct.toFixed(2) });
 }
 
 console.table(rows);
@@ -146,6 +167,9 @@ check(`dark halo: 어느 클립도 코호트 중앙값(${median})보다 ${T.halo
 const spread = Math.max(...lums) - Math.min(...lums);
 check(`dark halo: 13종 바깥링 밝기 편차 <= 40 (전 클립이 같은 키잉을 탔다) — 실측 ${spread}`,
   SELFTEST ? false : spread <= 40, `min=${Math.min(...lums)} max=${Math.max(...lums)}`);
+check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 사각형으로 보이지 않는다)`,
+  SELFTEST ? false : rows.every((r) => r.posterDirty === 0),
+  rows.filter((r) => r.posterDirty !== 0).map((r) => `${r.clip}=${r.posterDirty}%`).join(", "));
 check("모든 클립이 실제 애니메이션이다(프레임 2 이상)", rows.every((r) => r.frames >= 2),
   rows.filter((r) => r.frames < 2).map((r) => r.clip).join(", "));
 check("13종 전부 검사됐다(파서가 헛돌면 fail-close)", rows.length === 13, `${rows.length}종`);

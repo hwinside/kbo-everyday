@@ -88,20 +88,29 @@ def build(name: str):
         # 검정 배경 합성본이므로 premultiplied 로 보고 un-premultiply → 검정 fringe 제거.
         est = np.clip(np.where(al > 0.02, c / np.maximum(al, 0.02), c), 0, 255)
         rgba = np.concatenate([est, al * 255], axis=2).astype(np.uint8)
-        out.append(Image.fromarray(rgba).resize((nw, TARGET_H), Image.LANCZOS))
-
-    # ⚠️ Pillow WebP 인코더는 **연속된 동일 프레임을 하나로 합치고 duration 을 더한다.**
-    #    그러면 83+84=167ms 짜리 프레임이 생겨 "전 프레임 12fps" 계약이 깨진다
-    #    (실측: pitching·thinking·cheerD 각 1프레임). 원본에 정지 구간이 있으면 발생한다.
-    #    투명 코너 픽셀의 alpha 를 흔들어 동일 판정을 깬다 — 완전 투명 영역이라
-    #    화면에는 아무 차이가 없다.
-    #    ⚠️ **RGB 만 흔들면 소용없다** — alpha=0 픽셀의 RGB 는 lossy 인코딩이 평탄화해
-    #       병합이 되살아난다(실측: cheerD·pitching·thinking 각 1프레임 잔존).
-    #       WebP 는 **alpha 채널을 무손실로** 저장하므로 alpha 를 1~3 으로 흔든다.
-    #       alpha 1/255 ≈ 0.4% 불투명 — 화면에서는 보이지 않는다.
-    for i in range(len(out)):
-        px = out[i].load()
-        px[0, 0] = (0, 0, 0, 1 + (i % 3))
+        small = np.asarray(Image.fromarray(rgba).resize((nw, TARGET_H), Image.LANCZOS))
+        # ⚠️ **완전투명 픽셀의 RGB 를 0 으로 지운다** — 반드시 **리사이즈 뒤에** (삼순 P0-②).
+        #    ① un-premultiply 는 alpha 로 나누므로 alpha≈0 인 곳의 RGB 에 원본 배경색
+        #       (검정/남색)이 그대로 남는다.
+        #    ② LANCZOS 는 이웃 색을 섞으므로, 리사이즈 **전에** 지워도 유니폼 남색이
+        #       투명 영역으로 다시 번진다(실측: 지우고 재빌드했는데 swing 투명 영역에
+        #       (11,11,68) 7,486px 이 그대로 남았다 — 순서가 틀렸던 것).
+        #    화면에는 안 보이지만 **알파를 무시하고 RGB 만 읽는 도구**(raw 뷰어·썸네일러·
+        #    일부 이미지 파이프라인)에서는 "큰 남색 직사각형"으로 보인다 — 삼순이 실제로
+        #    그렇게 관측했다. 안 보인다고 쓰레기를 남기면 다른 소비 경로에서 그대로 터진다.
+        #    (`exact=True` 로 저장하므로 이 0 이 인코딩에서도 보존된다.)
+        small = small.copy()
+        small[..., :3][small[..., 3] == 0] = 0
+        # ⚠️ Pillow WebP 인코더는 **연속된 동일 프레임을 합치고 duration 을 더한다.**
+        #    그러면 83+84=167ms 프레임이 생겨 "전 프레임 12fps" 계약이 깨진다
+        #    (실측: pitching·thinking·cheerD 각 1프레임). 원본 정지 구간에서 발생한다.
+        #    ⚠️ **RGB 만 흔들면 소용없다** — alpha=0 픽셀의 RGB 는 lossy 인코딩이 평탄화해
+        #       병합이 되살아난다. WebP 는 **alpha 를 무손실로** 저장하므로 alpha 를 흔든다.
+        #       alpha 1~3/255 ≈ 0.4~1.2% + RGB 0 → 화면에서는 보이지 않는다.
+        #    (numpy 단계에서 넣는다 — `Image.fromarray` 결과는 readonly 라 `load()` 로
+        #     쓰면 `ValueError: image is readonly` 가 난다. 실측으로 빌드가 죽었다.)
+        small[0, 0] = (0, 0, 0, 1 + (k % 3))
+        out.append(Image.fromarray(small))
 
     # 프레임별 duration — 83/84 교대. Pillow 는 리스트를 받아 프레임마다 적용한다.
     durations = [FRAME_MS[i % len(FRAME_MS)] for i in range(len(out))]
@@ -151,7 +160,17 @@ def main() -> int:
         #    poster 는 reduced-motion 에서만 로드되므로 용량 증가가 상시 비용이 아니다.
         with Image.open(clip) as enc:
             enc.seek(0)
-            enc.convert("RGBA").save(poster, format="WEBP", lossless=True, method=6)
+            first = np.asarray(enc.convert("RGBA")).copy()
+        # ⚠️ poster 는 **lossy 로 인코딩된 클립을 디코딩해서** 뽑는다. 그 디코딩 결과의
+        #    투명 영역 RGB 에는 인코더가 번지게 한 배경색이 남아 있고, 무손실로 저장하면
+        #    그 쓰레기까지 **그대로 보존**된다(실측: swing-poster 투명 영역에 (11,11,68)
+        #    7,486px). 클립 프레임을 정리해도 poster 는 별도 경로라 따로 지워야 한다.
+        first[..., :3][first[..., 3] == 0] = 0
+        # ⚠️ `exact=True` 필수. libwebp 는 기본적으로 **투명 픽셀의 RGB 를 압축이 잘 되는
+        #    값으로 마음대로 바꾼다**(무손실 모드에서도). 그래서 위에서 0 으로 지워도
+        #    저장 과정에서 다시 채워진다(실측: thinking-poster 투명영역 88.7% 가 비검정).
+        #    클립 저장에는 이미 exact=True 가 있었는데 poster 만 빠져 있었다.
+        Image.fromarray(first).save(poster, format="WEBP", lossless=True, method=6, exact=True)
         meta["clip_sha256"] = sha256(clip)
         meta["poster_sha256"] = sha256(poster)
         meta["clip_kb"] = round(os.path.getsize(clip) / 1024)

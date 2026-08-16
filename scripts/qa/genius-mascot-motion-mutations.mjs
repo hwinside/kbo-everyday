@@ -67,7 +67,7 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion, answerTeamId },\n    messageId,",
+    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId },\n    messageId,",
     to: "result,\n    messageId,",
     expect: "compose 가 DB 가 승인한 motion",
   },
@@ -141,9 +141,42 @@ const mutations = [
   {
     name: "M16 §7.6 의미 모션 무시 (인사/감사 구분 소실 — 고마워에 신남이 뜬다)",
     file: TARGETS[2],
-    from: '  if (motion === "excited" || motion === "headspin" || motion === "bored") return motion;',
-    to: '  if (false) return motion as GeniusMotionClip;',
+    from: '  if (intent === "excited" || intent === "headspin") {',
+    to: '  if (false) {',
     expect: "의미 매핑",
+  },
+  {
+    // 🔴 쿨다운 거절은 **실경로**다(삼순 2026-08-16 P0). 의미(intent)를 버리고
+    //    부여(granted)만 보면, 30초 내 재인사에서 감사·인사·범위안내가 한 폴백으로 무너진다.
+    name: "M26 의도 모션 폐기 (쿨다운 거절 시 감사/인사/범위안내 구분 소실)",
+    file: TARGETS[2],
+    from: "  const intent = context?.motionIntent ?? context?.motion;",
+    to: "  const intent = context?.motion;",
+    expect: "쿨다운 거절",
+  },
+  {
+    // 억제는 "감정을 재생하지 않는다"이지 "아무 감정이나 붙인다"가 아니다.
+    name: "M27 쿨다운 거절을 다른 감정으로 대체 (억제가 오답을 만든다)",
+    file: TARGETS[2],
+    from: "    if (granted === intent) return intent;\n    return NEUTRAL_ACK_CLIP;",
+    to: "    return intent;",
+    expect: "쿨다운 거절",
+  },
+  {
+    // 거절 안내(bored)는 감정 반응이 아니라 **상태 표시**다 — 쿨다운에 걸리면 안 된다.
+    name: "M28 범위 안내(bored)를 쿨다운 대상으로 강등 (안내에 신나는 마스코트)",
+    file: TARGETS[2],
+    from: '  if (intent === "bored") return "bored";',
+    to: "  if (false) return \"bored\";",
+    expect: "쿨다운 거절",
+  },
+  {
+    // 서버가 intent 를 안 실으면 위 계약 전체가 허공이다.
+    name: "M29 server 가 motionIntent 를 payload 에 안 싣는다",
+    file: TARGETS[3],
+    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId },",
+    to: "{ ...result, motion, answerTeamId },",
+    expect: "motionIntent",
   },
   {
     name: "M22 응원 최애팀 결속 해제 (모든 답변에 응원 — 14:09 지시 위반)",
@@ -162,8 +195,8 @@ const mutations = [
   {
     name: "M24 server 가 응원 자격 팀 id 를 payload 에 안 싣는다 (응원 영영 미도달)",
     file: TARGETS[3],
-    from: '{ ...result, motion, answerTeamId }',
-    to: '{ ...result, motion }',
+    from: '{ ...result, motion, motionIntent: candidateMotion, answerTeamId }',
+    to: '{ ...result, motion, motionIntent: candidateMotion }',
     expect: "응원 자격",
   },
   {
