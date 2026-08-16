@@ -31,6 +31,11 @@ export function buildQuestionLogRow(
     // 생성 RAG 톤은 **관측값**이다. false 여도 답변은 서빙된다 — 이 칸으로 프롬프트
     // 준수율을 감사한다. null = 서빙된 생성 RAG 답변 없음/판정불가(비생성 경로 + 안전검증 탈락 폐기).
     tone_compliant: entry.toneCompliant ?? null,
+    // 생성 RAG 답변이 **폐기된 사유** (migration 20260816140000). null = 폐기 없음.
+    // 관측 전용이다 — 이 칸으로 "숫자 전면 HOLD 가 정답을 얼마나 함께 버리는가"의 분모를 만든다.
+    // 종전에는 폐기가 전부 match_path='unsure' 로만 남아 JSON 깨짐·길이초과·숫자가드가
+    // 구분되지 않았고, 그래서 정책 손익을 수치로 말할 수 없었다(2026-08-16 하린아빠 지시).
+    rag_discard_reason: entry.ragDiscardReason ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,
     input_tokens: entry.inputTokens,

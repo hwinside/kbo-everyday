@@ -631,11 +631,49 @@ export function buildRagLlmRequest(
  * ⚠️ 다른 검증(malformed·status·길이·URL·숫자 근거)은 **그대로 fail-close** 다 —
  *   삼순 조건: "검사를 삭제하지 말고, 나머지 검증까지 통과한 답에 플래그만 붙인다".
  */
+/**
+ * 생성 RAG 답변이 폐기된 **사유**의 폐쇄집합 (2026-08-16 계측 착수).
+ *
+ * 왜 `string` 이 아니라 union 인가: 이 값은 `genius_question_logs.rag_discard_reason` 으로
+ * 그대로 들어가고 DB CHECK 가 같은 집합을 강제한다. `string` 이면 새 사유를 하나 늘렸을 때
+ * 그게 CHECK 위반(23514)으로 터지는 것을 **배포 뒤에야** 알게 된다 — 타입이 먼저 막아야 한다.
+ * 사유를 추가할 땐 이 union 과 migration CHECK 를 **같은 PR 에서** 갱신한다(게이트가 둘을 대조한다).
+ */
+export type RagDiscardReason =
+  | "malformed_json"
+  | "model_insufficient"
+  | "missing_answer"
+  | "empty_answer"
+  | "too_long"
+  | "unsafe_output"
+  | "unknown_status"
+  | "numeric_claim_ungrounded"
+  | "numeric_not_in_evidence"
+  | "numeric_not_in_question";
+
+/**
+ * 폐기 사유 전체 목록 — 게이트·migration 대조용 SSOT.
+ * 게이트가 이 배열을 직접 import 해 migration CHECK 문면과 대조하므로,
+ * 문자열을 게이트 쪽에 **복제하지 않는다**(복제하면 한쪽만 고쳐져 조용히 어깋금다).
+ */
+export const RAG_DISCARD_REASONS: readonly RagDiscardReason[] = [
+  "malformed_json",
+  "model_insufficient",
+  "missing_answer",
+  "empty_answer",
+  "too_long",
+  "unsafe_output",
+  "unknown_status",
+  "numeric_claim_ungrounded",
+  "numeric_not_in_evidence",
+  "numeric_not_in_question",
+] as const;
+
 export type ValidatedRagAnswer =
   | { kind: "grounded"; answer: string; toneCompliant: boolean }
   // 공식 경로 전용: 자료 밖 일반 야구 지식 답변. `generalFallback` 옵션을 켠 호출에만 나온다.
   | { kind: "general"; answer: string; toneCompliant: boolean }
-  | { kind: "insufficient"; reason: string };
+  | { kind: "insufficient"; reason: RagDiscardReason };
 
 /**
  * 답변에 쓰인 숫자가 전부 근거 안에 존재하는가.

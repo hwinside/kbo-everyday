@@ -34,6 +34,8 @@ import {
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
+  type RagDiscardReason,
+  type ValidatedRagAnswer,
   type RagEntityCandidate,
   type RagEvidence,
   type RagNewsCandidate,
@@ -990,11 +992,33 @@ export interface QaDeps {
      * 폐기된 RAG 도 null 이다. 관측은 서빙된 생성답에만 붙는다.
      */
     toneCompliant?: boolean | null;
+    /**
+     * 생성 RAG 답변이 **폐기된 사유** (2026-08-16 계측 착수, 하린아빠 지시).
+     *
+     * 왜 필요한가: tier2 숫자 전면 HOLD 는 정확한 답변까지 함께 버린다(`1990년 창단`).
+     * 그 손해가 얼마인지 지금은 **측정할 수 없다** — 폐기되면 `match_path='unsure'` 로만 남아
+     * JSON 깨짐·길이초과·숫자가드가 구분되지 않기 때문이다. 정책을 열기 전에 분모부터 만든다.
+     *
+     * `null` = 폐기 없음(서빙된 답 또는 생성 RAG 미경유). 폐기 사유는 `RagDiscardReason` 폐쇄집합이고
+     * DB CHECK 가 같은 집합을 강제한다. ⚠️ **관측값이다** — 이 칸을 보고 분기하는 로직을 만들지 않는다.
+     */
+    ragDiscardReason?: RagDiscardReason | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
     outputTokens: number | null;
   }) => Promise<void>;
+}
+
+/**
+ * 검증 결과에서 폐기 사유를 꺼낸다 — 폐기가 아니면 `null` (2026-08-16 계측 착수).
+ *
+ * 호출부가 `validated.reason` 을 직접 읽지 않는 이유: `ValidatedRagAnswer` 는 union 이라
+ * `general`·`grounded` 에는 `reason` 이 없다. 나중에 분기문이 하나 늘면 좀혀진 타입이
+ * 깨지는데, 여기서 한 번만 좁혀두면 모든 경로가 같은 규칙을 따른다.
+ */
+function discardReasonOf(validated: ValidatedRagAnswer): RagDiscardReason | null {
+  return validated.kind === "insufficient" ? validated.reason : null;
 }
 
 const SERVICE_WORDS = [
@@ -3646,10 +3670,14 @@ async function answerPlayerDescriptiveQuestion(
 ): Promise<QaResult | null> {
   // ⚠️ 소비한 토큰은 **반드시 기록한다** (삼순 2026-08-14). 종전에는 null 고정이라
   // RAG LLM 호출 뒤 검증 탈락 건이 "토큰 0" 으로 남아 이번 tone 폐기 결함을 숨겼다.
-  const failClose = async (consumed?: LlmResult | null): Promise<QaResult> => {
+  const failClose = async (
+    consumed?: LlmResult | null,
+    ragDiscardReason?: RagDiscardReason | null,
+  ): Promise<QaResult> => {
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
+      ragDiscardReason: ragDiscardReason ?? null,
     });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   };
@@ -3743,7 +3771,9 @@ async function answerPlayerDescriptiveQuestion(
   if (validated.kind !== "grounded") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
-    return failClose(llm);
+    // 폐기 사유를 남긴다 — 이게 없으면 `unsure` 를 만든 게 숫자 가드인지 JSON 깨짐인지
+    // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
+    return failClose(llm, discardReasonOf(validated));
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
@@ -3851,7 +3881,11 @@ async function answerOfficialDocumentQuestion(
   if (validated.kind !== "grounded") {
     // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    await deps.log({
+      userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
+      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      ragDiscardReason: discardReasonOf(validated),
+    });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
@@ -4000,7 +4034,11 @@ async function answerTeamRagQuestion(
     const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : UNCLEAR_ANSWER;
     const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: matchPath }, llm));
-    await deps.log({ userId, question, questionNorm, matchPath, answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    await deps.log({
+      userId, question, questionNorm, matchPath, answer,
+      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      ragDiscardReason: discardReasonOf(validated),
+    });
     return { status: 200, answer, source: matchPath, remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
@@ -4108,6 +4146,7 @@ async function answerNewsRagQuestion(
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure",
       answer: NEWS_UNAVAILABLE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      ragDiscardReason: discardReasonOf(validated),
     });
     return { status: 200, answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", remaining };
   }

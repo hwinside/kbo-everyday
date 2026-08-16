@@ -47,6 +47,9 @@ async function loadSchema(): Promise<Db> {
       -- 톤 관측 칸 (migration 20260814235500) — buildQuestionLogRow 가 항상 보내므로
       -- 여기 없으면 실 INSERT 가 42703 으로 죽는다(2026-08-14 Vercel 실측).
       tone_compliant boolean,
+      -- 폐기 사유 관측 칸 (migration 20260816140000) — 톤 칸과 같은 이유로 여기 없으면
+      -- 실 INSERT 가 42703 으로 죽는다. buildQuestionLogRow 가 항상 보낸다.
+      rag_discard_reason text,
       match_path text,
       answer text,
       input_tokens integer,
