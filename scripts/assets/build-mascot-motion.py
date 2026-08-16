@@ -48,16 +48,31 @@ SSOT = os.environ.get("MASCOT_SSOT", os.path.expanduser("~/.openclaw/workspace/a
 #    (`cheerpom` 은 SSOT 가 **모자 로고 제거본**이라 mp4 로 되돌리면 로고가 부활한다;
 #     `cheerD` 는 mp4 원본도 상단 28px 잘려 있어 원본 교체로 닫히지 않는다 — 둘 다
 #     하린아빠 판단 대기 상태이며, 여기서 임의로 바꾸지 않는다).
+#
+#    🔴 그런데 원본 mp4 도 **전 프레임 전수**로 재보니 무결한 것은 3종뿐이었다
+#       (`bored`·`thinking`·`cheer`). 7프레임 샘플로는 무결해 보였는데, 잘린 프레임이
+#       동작 중 한순간(1~18프레임)에만 나타나 샘플에 안 걸린 것이었다.
+#       → **분모를 잘라놓고 전체라고 말하지 않는다.**
+#
+#    그래서 하린아빠 승인(2026-08-17 01:24 "재생성")을 받아 잘린 종을 Seedance 2.0 i2v 로
+#    **재생성**했다(`assets/mascot/v2-regen/*.mp4`). 재생성 계약 2가지가 핵심이다:
+#      ① **시작 이미지에 여백을 만든다** — 깨끗한 프레임에서 캐릭터를 떼어 캔버스의
+#         38~55% 크기로 줄이고 사방 여백을 준 레퍼런스를 쓴다. 기존 원본은 캐릭터가
+#         프레임을 꽉 채워서 팔만 올려도 잘렸다.
+#      ② **프롬프트에 잘림 금지를 명시** — "never touches or crosses the edge" +
+#         고정 카메라·스케일 유지. `pitching` 은 이래도 3회 잘려(좌측 276px) 동작 자체를
+#         "팔꿈치만 움직이는 작은 동작"으로 축소해서야 통과했다.
+#    전 재생성본은 아래 edge-run 계약을 **전 프레임 전수**로 통과했다(실측 여백 107~214px).
 VIDEO_SRC_ROOT = os.environ.get(
-    "MASCOT_VIDEO_SRC", os.path.expanduser("~/.openclaw/workspace/tmp/ref-video"))
-VIDEO_SOURCES = {
-    "excited": "gen/excited.mp4",
-    "cheerC": "gen/cheerC.mp4",
-    "bored": "gen/bored.mp4",
-    "pitching": "gen/pitching.mp4",
-    "thinking": "gen/thinking.mp4",
-    "cheer": "gen/cheer.mp4",
-}
+    "MASCOT_VIDEO_SRC", os.path.expanduser("~/.openclaw/workspace/assets/mascot"))
+# 13종 **전부** 이 폴더의 mp4 에서 뽑는다. SSOT WebP 경유 경로는 더 이상 쓰지 않는다
+# (그 경로가 잘림의 원인이었고, 종별로 소스가 갈리면 어느 자산이 어디서 왔는지 추적이 안 된다).
+#   · 9종 = 2026-08-17 재생성본(잘림 0 실측)
+#   · 4종 = 원본 mp4 가 전수 무결이라 그대로 복사(bored·thinking·cheerG·headspin)
+VIDEO_SOURCES = {n: f"v2-regen/{n}.mp4" for n in (
+    "bored", "cheer", "cheerC", "cheerD", "cheerG", "cheerpom", "cheerstick",
+    "cheertowel", "excited", "headspin", "pitching", "swing", "thinking",
+)}
 # crop 안전여백 — union bbox 에 사방으로 이만큼을 더 남긴다(삼순 #1228 ③ 계약).
 # 0 이면 캐릭터 실루엣이 캔버스 모서리에 그대로 닿아, 안티에일리어싱 여유조차 없다.
 SAFE_PAD = 6

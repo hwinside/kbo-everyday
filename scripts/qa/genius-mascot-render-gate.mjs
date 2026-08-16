@@ -275,6 +275,37 @@ try {
         // 13종이 나란히 그려지면 캔버스의 상당 부분이 채워진다. 새까만/빈 캡처는 여기서 죽는다.
         check(`[${bgName}] 캡처에 마스코트가 실제로 그려졌다 (${drawnPct.toFixed(1)}% 채움, 저장: ${file})`,
           SELFTEST ? false : drawnPct > 5, `${drawnPct.toFixed(2)}%`);
+
+        // 🔴 **자산별** 판정 (삼순 2026-08-16 ②). 행 전체 채움률만 보면 자산 1개가
+        //    완전투명·깨짐이어도 나머지 12개가 채워서 PASS 한다 — 실제로 그랬다.
+        //    각 클립의 DOM 박스로 **crop 해서 그 자산만** 픽셀을 센다. 13종 × 3배경 = 39 판정.
+        const boxes = await cov.evaluate((bg) => [...document.querySelectorAll(`.bg[data-bg="${bg}"] [data-clip]`)]
+          .map((el) => {
+            const r = el.getBoundingClientRect();
+            const p = el.closest(".bg").getBoundingClientRect();
+            return { clip: el.getAttribute("data-clip"),
+                     x: Math.round(r.left - p.left), y: Math.round(r.top - p.top),
+                     w: Math.round(r.width), h: Math.round(r.height) };
+          }), bgName);
+        const weak = [];
+        for (const b of boxes) {
+          if (!(b.w > 0 && b.h > 0)) { weak.push(`${b.clip}(box 0)`); continue; }
+          const { data: cd, info: ci } = await sharp(shot)
+            .extract({ left: Math.max(0, b.x), top: Math.max(0, b.y),
+                       width: Math.min(b.w, info.width - b.x), height: Math.min(b.h, info.height - b.y) })
+            .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          let d2 = 0;
+          for (let i = 0; i < cd.length; i += 4) {
+            if (Math.max(Math.abs(cd[i] - bgRgb[0]), Math.abs(cd[i + 1] - bgRgb[1]),
+                         Math.abs(cd[i + 2] - bgRgb[2])) > 12) d2 += 1;
+          }
+          const pct = (d2 / (ci.width * ci.height)) * 100;
+          // 캐릭터가 제대로 그려지면 자기 박스의 상당 부분을 채운다. 완전투명·깨진 자산은 0 에 가깝다.
+          if (!(pct > 15)) weak.push(`${b.clip}=${pct.toFixed(1)}%`);
+        }
+        check(`[${bgName}] 자산별 판정 ${boxes.length}종 — 각 클립이 자기 박스를 채운다(단일 투명·깨짐도 RED)`,
+          SELFTEST ? false : (boxes.length === GENIUS_MOTION_CLIPS.length && weak.length === 0),
+          weak.length ? weak.join(", ") : `${boxes.length}종`);
       }
       // 13종이 **전부** 화면에 도달했는가 — 케이스 10개로는 일부 클립이 안 그려진다.
       const covRows = await cov.evaluate(() => [...document.querySelectorAll("[data-clip]")]

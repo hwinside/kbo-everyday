@@ -85,6 +85,8 @@ for (const clip of clips) {
     }
   }
   const padMax = Math.max(mnY, h - 1 - mxY, mnX, w - 1 - mxX);
+  // 최소 여백도 함께 잰다 — **잘림 여부**는 여백의 최댓값이 아니라 최솟값이 말한다.
+  const padMin = Math.min(mnY, h - 1 - mxY, mnX, w - 1 - mxX);
 
   // ③ dark halo — **흰 배경에 합성했을 때 캐릭터 바깥 링이 얼마나 어두워지는가**.
   //
@@ -139,23 +141,51 @@ for (const clip of clips) {
   const posterTransDirtyPct = transN ? (transDirty / transN) * 100 : 0;
 
   rows.push({ clip, size: `${w}x${h}`, frames: n, posterAvg: +posterAvg.toFixed(2),
-              padMax, ringPx: ring, ringLum: +ringLum.toFixed(0),
+              padMax, padMin, ringPx: ring, ringLum: +ringLum.toFixed(0),
               posterDirty: +posterTransDirtyPct.toFixed(2) });
 }
 
 console.table(rows);
 
 // selftest: 임계값이 실제로 결함을 잡는지 — 값을 반전시켜 RED 를 확인한다.
+// ⚠️ 여백 계약은 **양쪽 방향**이다 (2026-08-17, 재생성 트랙).
+//    · 여백이 **너무 크면** 96px 렌더에서 캐릭터가 그만큼 작게 보인다 → padMax 상한
+//    · 여백이 **0 이면** 캐릭터가 캔버스 모서리에 닿아 잘려 보인다 → padMin 하한
+//    종전에는 상한만 있었고 하한이 `<= 0` 이라 "잘린 자산"이 오히려 통과했다.
+//    빌드가 사방에 `safe_pad` 를 남기므로, 그 값을 **생성기 manifest 에서 읽어**
+//    기대값으로 쓴다(게이트가 상수를 재구현하면 생성기와 조용히 어긋난다 — 8/15 교훈).
+const DERIVED = JSON.parse(readFileSync(`${DIR}/DERIVED.json`, "utf8"));
+const SAFE_PAD = DERIVED?.params?.safe_pad;
+if (!(SAFE_PAD > 0)) {
+  console.log(`  ❌ DERIVED.json 에 safe_pad 가 없다 — 생성기 계약을 읽을 수 없다`);
+  process.exit(1);
+}
 const T = SELFTEST
-  ? { poster: -1, pad: -1, haloDelta: -1 }         // 불가능한 기준 → 전부 RED 여야 한다
-  : { poster: 2, pad: 0, haloDelta: 40 };          // 코호트 중앙값 대비 허용 낙차
+  ? { poster: -1, padMax: -1, padMin: 9999, haloDelta: -1 }   // 불가능한 기준 → 전부 RED
+  : { poster: 2, padMax: SAFE_PAD, padMin: 1, haloDelta: 40 };
 
 check(`poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
   rows.every((r) => r.posterAvg < T.poster),
   rows.filter((r) => !(r.posterAvg < T.poster)).map((r) => `${r.clip}=${r.posterAvg}`).join(", "));
-check(`전 프레임 union bbox 여백 <= ${T.pad}px (96px 렌더에서 캐릭터가 안 작아짐)`,
-  rows.every((r) => r.padMax <= T.pad),
-  rows.filter((r) => !(r.padMax <= T.pad)).map((r) => `${r.clip}=${r.padMax}px`).join(", "));
+check(`전 프레임 union bbox 여백 <= ${T.padMax}px (96px 렌더에서 캐릭터가 안 작아짐)`,
+  rows.every((r) => r.padMax <= T.padMax),
+  rows.filter((r) => !(r.padMax <= T.padMax)).map((r) => `${r.clip}=${r.padMax}px`).join(", "));
+// 🔴 잘림 계약 — 사방 여백이 **최소 1px 이상**이어야 한다.
+//    여백 0 = 캐릭터 실루엣이 캔버스 변에 그대로 닿음 = 화면에서 "평평하게 잘려" 보인다.
+//    (삼순 #1228 ③. 실측으로 13종 중 8종이 이 상태였고, 원본 재생성으로 닫았다.)
+check(`전 프레임 사방 여백 >= ${T.padMin}px (캐릭터가 캔버스 변에 닿아 잘리지 않는다)`,
+  rows.every((r) => r.padMin >= T.padMin),
+  rows.filter((r) => !(r.padMin >= T.padMin)).map((r) => `${r.clip}=${r.padMin}px`).join(", "));
+// 생성기가 기록한 edge-run(전 프레임+poster 연속 불투명 런) 도 0 이어야 한다.
+// 위 padMin 은 **파생 자산**을 직접 재측정한 것이고, 이건 **생성 시점** 계약이다.
+// 둘 다 봐야 "빌드 후 자산이 교체됐다"까지 잡힌다.
+{
+  const bad = Object.entries(DERIVED.clips ?? {})
+    .filter(([, m]) => Math.max(...Object.values(m.edge_run ?? { x: 1 })) > 0)
+    .map(([n, m]) => `${n}=${Math.max(...Object.values(m.edge_run))}px`);
+  check("DERIVED.json: 전 클립 edge-run 0 (생성 시점 잘림 계약)",
+    SELFTEST ? false : bad.length === 0, bad.join(", "));
+}
 // 코호트 중앙값보다 유의하게 어두운 클립이 있으면 그 클립만 키잉이 실패한 것이다.
 const lums = rows.map((r) => r.ringLum).sort((a, b) => a - b);
 const median = lums[Math.floor(lums.length / 2)];
