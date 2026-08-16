@@ -1,7 +1,7 @@
 /**
  * 야잘알봇 성의(답변 길이·충실도) 실 provider 게이트 (삼순 2026-08-10 4차 재작성).
  *
- * 3차 지적: raw Gemini 만 호출하면 `answerQuestion`/최종 서빙(320 상한·출처·검증 게이트)
+ * 3차 지적: raw Gemini 만 호출하면 `answerQuestion`/최종 서빙(길이 상한·출처·검증 게이트)
  * 을 우회하고, 400자 상한·`문장≥2 || 길이≥100` 항진 단정은 계약이 아니다.
  *
  * 그래서 이 게이트는 **production 파이프라인에 실 provider 를 주입**한다:
@@ -9,7 +9,7 @@
  *  - `callRagLlm` = 배포 코드와 동일한 `buildRagLlmRequest` + `RAG_SYSTEM_PROMPT` 로
  *    실제 Gemini 호출 (mock 답 주입 없음).
  *  - 근거 = production `genius_rag_chunks` 실 데이터 (문보경 별명 chunk).
- *  - 판정 = 최종 서빙 결과의 source·본문 길이(320 = BASEBALL_GENIUS_MAX_ANSWER_LENGTH)·
+ *  - 판정 = 최종 서빙 결과의 source·본문 길이(BASEBALL_GENIUS_MAX_ANSWER_LENGTH)·
  *    출처 표기.
  *
  * 키·DB 접근이 없으면 조용한 SKIP 이 아니라 **명시적 실패(exit 1)** 다.
@@ -140,7 +140,18 @@ function makeLiveDeps(evidence: RagEvidence[]): QaDeps {
   } as unknown as QaDeps;
 }
 
-/** 최종 답에서 출처 표기를 뗀 본문 — production 상한(320)은 본문에 걸린다. */
+/**
+ * 성의 하한 / 단순 사실형 상한.
+ *
+ * 2026-08-16 상한 320→700 상향에 맞춰 함께 올린다. 상한만 올리고 하한을 두면
+ * "즉답 회귀"를 이 게이트가 못 잡고(하한 100자는 한 문장으로도 충족된다),
+ * 단순 사실형 상한을 안 두면 상향이 "모든 답이 길어짐"으로 새는 것을 못 잡는다.
+ * 두 값이 상향의 **양쪽 반대축**이다.
+ */
+const SINCERITY_MIN_CHARS = 180;
+const SIMPLE_MAX_CHARS = 320;
+
+/** 최종 답에서 출처 표기를 뗀 본문 — production 상한은 본문에 걸린다. */
 function bodyOf(answer: string): string {
   const idx = answer.indexOf("\n\n📄");
   return idx >= 0 ? answer.slice(0, idx) : answer;
@@ -157,9 +168,11 @@ function bodyOf(answer: string): string {
     catch (e) { failures.push(name); console.log(`FAIL ${name} :: ${(e as Error).message}`); }
   }
 
-  // ① 이유·배경형 — 최종 서빙 종단: RAG 로 답하고, 본문이 성의 하한(100자) 이상,
-  //    production 상한(320) 이하, 출처 표기 포함. 실패 시 blocked/unsure 로 새는 것까지 잡힌다.
-  await run("이유·배경형: answerQuestion 종단 — 성의 하한·320 상한·출처", async () => {
+  // ① 이유·배경형 — 최종 서빙 종단: RAG 로 답하고, 본문이 성의 하한 이상,
+  //    production 상한 이하, 출처 표기 포함. 실패 시 blocked/unsure 로 새는 것까지 잡힌다.
+  //    ⚠️ 2026-08-16 상한 700 상향 + 깊이 지시 강화에 맞춰 **하한도 함께 올린다**.
+  //    상한만 올리고 하한을 100 에 두면 "즉답 회귀"를 이 게이트가 못 잡는다.
+  await run("이유·배경형: answerQuestion 종단 — 성의 하한·상한·출처", async () => {
     const result = await answerQuestion("live-u1", "문보경 별명이 생긴 이유가 뭐야?", makeLiveDeps(evidence));
     assert.equal(result.status, 200);
     assert.equal(
@@ -167,7 +180,7 @@ function bodyOf(answer: string): string {
       `RAG 실답이어야 한다 (삼순 5차: 배제 나열이 아니라 양성 고정): source=${result.source} answer=${result.answer.slice(0, 120)}`,
     );
     const body = bodyOf(result.answer);
-    assert.ok(body.length >= 100, `이유·배경 답이 성의 하한(100자) 미만(${body.length}자): ${body}`);
+    assert.ok(body.length >= SINCERITY_MIN_CHARS, `이유·배경 답이 성의 하한(${SINCERITY_MIN_CHARS}자) 미만(${body.length}자): ${body}`);
     assert.ok(
       body.length <= BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
       `본문이 production 상한(${BASEBALL_GENIUS_MAX_ANSWER_LENGTH}) 초과(${body.length}자)`,
@@ -177,7 +190,8 @@ function bodyOf(answer: string): string {
   });
 
   // ② 단순 사실형 — 같은 종단에서 과장문이 아니어야 한다 (길이 지시가 죽으면 여기가 잡는다).
-  await run("단순 사실형: answerQuestion 종단 — 간결(≤200자)·320 상한", async () => {
+  //    상한 상향의 반대축: 모든 답이 무작정 길어지면 여기가 RED 가 된다.
+  await run(`단순 사실형: answerQuestion 종단 — 간결(≤${SIMPLE_MAX_CHARS}자)·상한 준수`, async () => {
     const result = await answerQuestion("live-u2", "문보경 별명이 뭐야?", makeLiveDeps(evidence));
     assert.equal(result.status, 200);
     assert.equal(
@@ -185,7 +199,7 @@ function bodyOf(answer: string): string {
       `RAG 실답이어야 한다 (삼순 5차: 배제 나열이 아니라 양성 고정): source=${result.source} answer=${result.answer.slice(0, 120)}`,
     );
     const body = bodyOf(result.answer);
-    assert.ok(body.length > 0 && body.length <= 200, `단순 사실형이 과장문(${body.length}자): ${body}`);
+    assert.ok(body.length > 0 && body.length <= SIMPLE_MAX_CHARS, `단순 사실형이 과장문(${body.length}자): ${body}`);
     console.log(`   ↳ source=${result.source} 본문 ${body.length}자`);
   });
 

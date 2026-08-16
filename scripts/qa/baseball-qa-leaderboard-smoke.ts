@@ -10,12 +10,16 @@
  *    전면 차단 → 인물·평가·역사 축을 denylist 에서 삭제(범위 판정은 LLM 위임).
  *  - `맛자욱 별명` 단답 → tier1·tier2·generic 전 경로 길이 계약: 유형별 목표(단순=짧게,
  *    이유·배경=충분히) + 안전 상한(RAG 320 / generic 320).
+ *  - 2026-08-16 하린아빠 "전반적인 답변이 너무 짧게 즉답형": 상한 320→700 + 깊이 지시문을
+ *    `BASEBALL_GENIUS_DEPTH_PROMPT` **단일 SSOT** 로 통합(선수·공식·구단·뉴스·generic 5경로).
+ *    문구가 4곳에 복제돼 있으면 한쪽만 고쳐져 조용히 어긋난다(2026-08-15 앵커 복제 교훈).
  *
  * 고정하는 계약:
  *  1. 지원 리더보드 질문은 kbo_structured, 미지원 지표는 history_hold fail-close.
  *  2. 인물·평가·역사 의문사는 결정론 차단이 아니라 LLM 범위판정 위임.
  *  3. 진짜 범위밖 어휘(맛집·날씨·추천…)는 여전히 차단.
- *  4. 길이 계약: RAG(선수·구단·뉴스) 320 + 성의 지시, generic 320 + 성의 지시.
+ *  4. 길이 계약: RAG(선수·구단·뉴스·공식) 700 + generic 700이 **같은 값**이고, 깊이 지시문은
+ *     5경로 전부 동일 SSOT 상수를 쓴다(복제 0). 상한 초과는 여전히 거부된다.
  */
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -28,6 +32,7 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import { BASEBALL_GENIUS_MAX_ANSWER_LENGTH } from "../../src/lib/constants/baseball-genius";
+import { BASEBALL_GENIUS_DEPTH_PROMPT } from "../../src/lib/baseball-qa/tone";
 import {
   composeCareerLeaderboardAnswer,
   resolveCareerLeaderboard,
@@ -49,8 +54,11 @@ import {
   RAG_ANSWER_MAX_CHARS,
   RAG_OFFICIAL_ANSWER_MAX_CHARS,
   RAG_SYSTEM_PROMPT,
+  RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_TEAM_SYSTEM_PROMPT,
   RAG_NEWS_SYSTEM_PROMPT,
+  RAG_EVIDENCE_LIMIT,
+  RAG_EVIDENCE_MAX_CHARS,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
@@ -318,24 +326,44 @@ check("무회귀: 선수 지명·시점어 없는 질문은 리더보드가 아�
 });
 
 // ── 3. 길이·성의 계약 — 전 경로 (선수·구단·뉴스 RAG + generic) ─────────────────
-check("tier2 상한 320 = tier1, 선수 RAG 성의 지시", () => {
-  assert.equal(RAG_ANSWER_MAX_CHARS, 320);
+check("상한 등식 — RAG tier2 = tier1 = generic (경로별로 갈라지면 같은 질문이 다르게 잘린다)", () => {
+  assert.equal(RAG_ANSWER_MAX_CHARS, 700);
   assert.equal(RAG_ANSWER_MAX_CHARS, RAG_OFFICIAL_ANSWER_MAX_CHARS);
-  assert.ok(RAG_SYSTEM_PROMPT.includes("이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다"));
-  assert.ok(RAG_SYSTEM_PROMPT.includes("자료에 없는 내용을 보태 길이를 채우지 않는다"));
+  assert.equal(RAG_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_ANSWER_LENGTH);
 });
-check("구단 RAG 도 같은 성의 계약이다 — 한두 문장 강제 잔존 금지 (삼순 축 ③)", () => {
-  assert.ok(RAG_TEAM_SYSTEM_PROMPT.includes("이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다"));
-  assert.ok(!RAG_TEAM_SYSTEM_PROMPT.includes("한두 문장으로 다시 서술"));
+// ⚠️ 깊이 지시문은 **문자열을 다시 적지 않는다**. 게이트가 프롬프트 문구를 재기술하면
+//   상수를 바꿔도 게이트만 통과하는 false-green 이 생긴다(2026-08-15 "게이트가 상수를
+//   재구현하면 결함을 못 본다"). 여기서는 production 상수를 그대로 import 해
+//   **각 프롬프트가 그 상수를 포함하는가**만 본다.
+check("깊이 지시문 SSOT — 5경로가 모두 같은 상수를 쓴다 (복제 0)", () => {
+  for (const [label, prompt] of [
+    ["선수 RAG", RAG_SYSTEM_PROMPT],
+    ["공식 RAG", RAG_OFFICIAL_SYSTEM_PROMPT],
+    ["구단 RAG", RAG_TEAM_SYSTEM_PROMPT],
+    ["뉴스 RAG", RAG_NEWS_SYSTEM_PROMPT],
+    ["generic", BASEBALL_QA_SYSTEM_PROMPT],
+  ] as const) {
+    assert.ok(prompt.includes(BASEBALL_GENIUS_DEPTH_PROMPT), `${label} 프롬프트에 깊이 SSOT 미포함`);
+  }
 });
-check("뉴스 RAG 성의 계약", () => {
-  assert.ok(RAG_NEWS_SYSTEM_PROMPT.includes("두세 문장으로 충분히"));
+check("깊이 지시문 내용 계약 — '짧게' 강제와 무근거 채움 허용이 동시에 없어야 한다", () => {
+  // 하한(충분히 설명) 과 상한(근거 밖 금지) 이 **둘 다** 있어야 한다. 하나만 있으면
+  // 각각 즉답 회귀 / 환각 팽창으로 기운다.
+  assert.ok(BASEBALL_GENIUS_DEPTH_PROMPT.includes("충분히"), "깊이 하한 지시 소실");
+  assert.ok(BASEBALL_GENIUS_DEPTH_PROMPT.includes("길이를 채우지 않는다"), "무근거 채움 금지 지시 소실");
+  // 종전 즉답 강제 문구가 어느 프롬프트에도 남아 있으면 안 된다(한쪽만 고친 상태 검출).
+  for (const prompt of [RAG_SYSTEM_PROMPT, RAG_OFFICIAL_SYSTEM_PROMPT, RAG_TEAM_SYSTEM_PROMPT, RAG_NEWS_SYSTEM_PROMPT, BASEBALL_QA_SYSTEM_PROMPT]) {
+    assert.ok(!prompt.includes("한두 문장으로 짧게"), "즉답 강제 문구 잔존");
+    assert.ok(!prompt.includes("두세 문장 이내로"), "문장 수 상한 강제 잔존");
+  }
+  assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("700자 이하"));
+  assert.ok(!BASEBALL_QA_SYSTEM_PROMPT.includes("320자 이하"));
 });
-check("generic 상한 320 + 성의 지시 (200자 계약 폐기)", () => {
-  assert.equal(BASEBALL_GENIUS_MAX_ANSWER_LENGTH, 320);
-  assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("320자 이하"));
-  assert.ok(!BASEBALL_QA_SYSTEM_PROMPT.includes("200자 이하"));
-  assert.ok(BASEBALL_QA_SYSTEM_PROMPT.includes("이유·배경·사연·과정을 묻는 질문은 두세 문장으로 충분히"));
+check("근거 재료량 — 상한만 올리고 재료를 안 늘리면 모델이 지어내는 쪽으로 간다", () => {
+  assert.equal(RAG_EVIDENCE_LIMIT, 6);
+  assert.equal(RAG_EVIDENCE_MAX_CHARS, 800);
+  // 근거 1건 상한 > 답변 상한 이면 "근거 한 건 통째 복사"가 상한 안에서 성립한다.
+  assert.ok(RAG_EVIDENCE_MAX_CHARS > RAG_ANSWER_MAX_CHARS, "답변 상한이 근거 1건 상한 이상이면 원문 재발행이 가능해진다");
 });
 
 // ── 4. 성의 축 — 실제 생성답 E2E (삼순 2026-08-10: 프롬프트 문자열 단정만으로는
@@ -470,11 +498,21 @@ checkAsync("E2E: 이유·배경 질문의 세 문장 답변이 잘리지 않고 
   assert.ok(FULL_ANSWER.length > 160, "종전 상한(160)을 실제로 넘는 표본이어야 상향이 검증된다");
   assert.equal(counters.llm, 1);
 });
-checkAsync("E2E 반대축: 320 초과 답변은 여전히 거부된다 (상한 상향이 무제한 아님)", async () => {
-  const over = "가".repeat(340);
+checkAsync("E2E 반대축: 상한 초과 답변은 여전히 거부된다 (상한 상향이 무제한 아님)", async () => {
+  const over = "가".repeat(RAG_ANSWER_MAX_CHARS + 20);
   const { deps } = ragDeps(over);
   const result = await answerQuestion("u1", "맛자욱 별명이 생긴 이유가 뭐야?", deps);
-  assert.notEqual(result.answer, over, "320 초과가 그대로 나가면 상한이 죽은 것");
+  assert.notEqual(result.answer, over, "상한 초과가 그대로 나가면 상한이 죽은 것");
+});
+// 상향의 **실효**를 종단으로 고정한다. 종전 상한(320)을 넘는 길이의 근거 기반 답이
+// 한 글자도 잃지 않고 유저에게 도달해야 상향이 실제로 동작한 것이다.
+checkAsync("E2E 실효축: 종전 상한(320)을 넘는 풍부한 답변이 잘리지 않고 그대로 나간다", async () => {
+  const rich = `${FULL_ANSWER} ${"응원단의 구호에도 이 별명이 쓰이면서 팬들 사이에서는 애칭처럼 자리를 잡았다고 전해집니다.".repeat(4)}`;
+  assert.ok(rich.length > 320, "표본이 종전 상한을 넘어야 상향이 검증된다");
+  assert.ok(rich.length <= RAG_ANSWER_MAX_CHARS, "표본이 새 상한 안이어야 통과가 정상이다");
+  const { deps } = ragDeps(rich);
+  const result = await answerQuestion("u1", "맛자욱 별명이 생긴 이유가 뭐야?", deps);
+  assert.ok(result.answer.startsWith(rich), `본문 전체가 그대로 나가야 한다: ${result.answer}`);
 });
 
 (async () => {

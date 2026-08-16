@@ -17,6 +17,8 @@ const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
 const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
+const TONE = "src/lib/baseball-qa/tone.ts";
+const GEMINI_REQUEST = "src/lib/baseball-qa/gemini-request.ts";
 
 const MUTATIONS = [
   {
@@ -62,24 +64,69 @@ const MUTATIONS = [
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m3 구단 RAG 성의 지시 제거 — 한두 문장 강제 회귀",
-    file: RETRIEVE,
-    from: "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연을 묻는 질문은 자료 안의 맥락을 두세 문장으로 충분히 설명한다. 자료에 없는 내용으로 길이를 채우지 않는다.",
-    to: "답변은 한두 문장으로 짧게 서술한다.",
+    // ⚠️ 앵커를 **깊이 SSOT 상수 자체**에 건다. 종전에는 프롬프트 안의 복제 문구를
+    //   앵커로 썼는데, 문구가 4곳에 복제돼 있어 한 곳만 바꾸면 앵커 MISS 로 러너가
+    //   조용히 깨졌다(2026-08-15 앵커 복제 교훈). SSOT 는 하나뿐이라 그 함정이 없다.
+    name: "m3 깊이 지시 제거 — 5경로 전부 즉답 강제로 회귀",
+    file: TONE,
+    from: '  "답변은 질문이 요구하는 만큼 충분히 설명한다. 한 줄로 끊어 즉답만 던지지 않는다.",',
+    to: '  "답변은 한두 문장으로 짧게 서술한다.",',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m4 tier2 상한 160 회귀",
-    file: RETRIEVE,
-    from: "export const RAG_ANSWER_MAX_CHARS = 320;",
-    to: "export const RAG_ANSWER_MAX_CHARS = 160;",
+    name: "m3b 무근거 채움 금지 제거 — 근거 밖 내용으로 길이를 늘려도 통과",
+    file: TONE,
+    from: '  "다만 확인되지 않은 내용을 지어내 길이를 채우지 않는다 — 길이는 근거가 허락하는 만큼만 늘린다.",',
+    to: '  "필요하면 알고 있는 배경 지식을 덧붙여 길이를 늘린다.",',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
-    name: "m5 generic 상한 200 회귀",
+    name: "m4 tier2 상한 320 회귀 — 상향 이전 값으로 되돌림",
+    file: RETRIEVE,
+    from: "export const RAG_ANSWER_MAX_CHARS = 700;",
+    to: "export const RAG_ANSWER_MAX_CHARS = 320;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4b tier1 상한만 갈라놓기 — 경로별 길이 불일치",
+    file: RETRIEVE,
+    from: "export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 700;",
+    to: "export const RAG_OFFICIAL_ANSWER_MAX_CHARS = 320;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4c 근거 건수 회귀 — 상한만 올리고 재료를 되돌림",
+    file: RETRIEVE,
+    from: "export const RAG_EVIDENCE_LIMIT = 6;",
+    to: "export const RAG_EVIDENCE_LIMIT = 4;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4d 근거 길이 회귀 — 문단 뒷부분이 다시 잘림",
+    file: RETRIEVE,
+    from: "export const RAG_EVIDENCE_MAX_CHARS = 800;",
+    to: "export const RAG_EVIDENCE_MAX_CHARS = 600;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m5 generic 상한 320 회귀",
     file: CONSTANTS,
-    from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;",
-    to: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 200;",
+    from: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 700;",
+    to: "export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m5b generic 프롬프트만 구 상한 문구로 회귀 — 상수와 지시 불일치",
+    file: GEMINI_REQUEST,
+    from: 'BASEBALL_RULE_TERM일 때만 700자 이하 답변',
+    to: 'BASEBALL_RULE_TERM일 때만 320자 이하 답변',
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m5c 깊이 SSOT 미배선 — 구단 RAG 프롬프트에서만 빠짐(복제 시대 회귀)",
+    file: RETRIEVE,
+    from: '  // 성의 계약 (2026-08-10 하린아빠 12:06 + 삼순: 선수·뉴스만 고치고 구단을 빼면 미완):\n  BASEBALL_GENIUS_DEPTH_PROMPT,',
+    to: '  // 성의 계약 (2026-08-10 하린아빠 12:06 + 삼순: 선수·뉴스만 고치고 구단을 빼면 미완):',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

@@ -34,6 +34,7 @@ import {
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import {
+  RAG_ANSWER_MAX_CHARS,
   RAG_NEWS_SYSTEM_PROMPT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_SYSTEM_PROMPT,
@@ -206,8 +207,10 @@ assert.equal(
   "insufficient",
   "tier2 질문 밖 숫자는 거절",
 );
+// ⚠️ 상한 리터럴을 다시 적지 않는다 — 상한이 오르면 이 검사가 조용히 "상한 안 표본"을
+//   거절 기대로 검사하게 되어 false-green 이 된다(2026-08-16 실제로 500자가 상한 안이 됐다).
 assert.equal(
-  validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "가".repeat(500) })).kind,
+  validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "가".repeat(RAG_ANSWER_MAX_CHARS + 1) })).kind,
   "insufficient",
   "길이 상한 초과는 거절",
 );

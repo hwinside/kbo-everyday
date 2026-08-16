@@ -8,9 +8,11 @@ export const BASEBALL_GENIUS_NAME = "야잘알봇";
 /** 하린아빠 확정 대기 중인 권장 기본값(spec §8). */
 export const BASEBALL_GENIUS_DAILY_LIMIT = 20;
 export const BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE = false;
-// 320 = tier1/tier2 RAG 상한과 동일 (2026-08-10 성의 계약 — 유형별 목표는 프롬프트가,
-// 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약 그대로면 adaptive-length 미완").
-export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;
+// tier1/tier2 RAG 상한(`RAG_ANSWER_MAX_CHARS`)과 **항상 같은 값**이다 (2026-08-10 성의 계약 —
+// 유형별 목표 길이는 프롬프트가, 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약
+// 그대로면 adaptive-length 미완"). 200 → 320(08-10) → 700(08-16 하린아빠 "너무 짧게 즉답형").
+// ⚠️ 두 상한이 갈라지면 같은 질문이 경로에 따라 다른 길이로 잘린다 — 게이트가 등식을 잠근다.
+export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 700;
 export const BASEBALL_GENIUS_MIN_QUESTION_LENGTH = 2;
 export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
 /**
