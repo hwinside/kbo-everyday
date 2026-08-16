@@ -67,7 +67,7 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion },\n    messageId,",
+    from: "{ ...result, motion, answerTeamId },\n    messageId,",
     to: "result,\n    messageId,",
     expect: "compose 가 DB 가 승인한 motion",
   },
