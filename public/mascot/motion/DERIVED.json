@@ -6,6 +6,7 @@
   "frame_step": 2,
   "quality": 62,
   "tol": 26,
+  "safe_pad": 6,
   "frame_ms": [
    83,
    84
@@ -14,8 +15,8 @@
  },
  "clips": {
   "bored": {
-   "frames": 60,
-   "w": 166,
+   "frames": 61,
+   "w": 150,
    "h": 192,
    "durations_ms": [
     83,
@@ -30,66 +31,6 @@
     84,
     83,
     84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84,
-    83,
-    84
-   ],
-   "fps": 11.98,
-   "source_frames": 119,
-   "clip_sha256": "05eebbbbde8cf18710fa93a26300a86ff2eb5fa018ebf34c67c8a231bb06736c",
-   "poster_sha256": "8a77b32cb89b05fcb635afd4b6d4f746dc32f38ea92fceae141def7dd772affd",
-   "clip_kb": 372
-  },
-  "cheer": {
-   "frames": 49,
-   "w": 240,
-   "h": 192,
-   "durations_ms": [
     83,
     84,
     83,
@@ -141,14 +82,22 @@
     83
    ],
    "fps": 11.98,
-   "source_frames": 97,
-   "clip_sha256": "75f72887c500b83c13bed697e8080401d3b09d39ff487e05ee3b0d9f4b0411c6",
-   "poster_sha256": "860343d05ff74fff6b3553595c620549cb6798b009c19afcb0e0a9be41b84a84",
-   "clip_kb": 358
+   "source_frames": 121,
+   "source": "video:gen/bored.mp4",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": -1,
+   "clip_sha256": "16eabc78b4bb1cea19b0d1332e2ff8e63049fdb9bf2e1a0552ee24ae2e2e82af",
+   "poster_sha256": "834560f324cf02723a1a4c0ee9b4e5d809da5c131b9f73e81b69ef55f81d715d",
+   "clip_kb": 388
   },
-  "cheerC": {
-   "frames": 50,
-   "w": 177,
+  "cheer": {
+   "frames": 61,
+   "w": 139,
    "h": 192,
    "durations_ms": [
     83,
@@ -200,17 +149,117 @@
     83,
     84,
     83,
-    84
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83
    ],
    "fps": 11.98,
-   "source_frames": 99,
-   "clip_sha256": "7e405102ad4addae3a7b1d9f2b317212aff905fd8dbf4e3975128fc9d31d5ae9",
-   "poster_sha256": "c7bad7e4e20318020cba607d43c3a71989278ecea1a2158bc3905c989dea7cfd",
-   "clip_kb": 320
+   "source_frames": 121,
+   "source": "video:gen/cheer.mp4",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": -1,
+   "clip_sha256": "4121a9c9ec179bcc673108be6591221814da71ab9df400baae30b37e2d9620b5",
+   "poster_sha256": "bef37ba35241fee4b4448cfe8a3cdbafaf27b74e5e0c87c1b148a2791ba7af1b",
+   "clip_kb": 394
+  },
+  "cheerC": {
+   "frames": 61,
+   "w": 161,
+   "h": 192,
+   "durations_ms": [
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83
+   ],
+   "fps": 11.98,
+   "source_frames": 121,
+   "source": "video:gen/cheerC.mp4",
+   "edge_run": {
+    "top": 36,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 27,
+   "clip_sha256": "52041a1c78cf99b69dac84faad31c93c8d9802a7859f5c16dba061a93ddcb15c",
+   "poster_sha256": "e7c7188fec3441fe06ac37c5e9097283bad65c374eb36514e21a96cfbbae460f",
+   "clip_kb": 385
   },
   "cheerD": {
    "frames": 45,
-   "w": 169,
+   "w": 173,
    "h": 192,
    "durations_ms": [
     83,
@@ -261,13 +310,21 @@
    ],
    "fps": 11.98,
    "source_frames": 90,
-   "clip_sha256": "e6748d775859c29ef6de46993c7d33937e7cfee5c37740fca5c3e4f983c10ac1",
-   "poster_sha256": "8bd4c059da4778b763eb4aa87d4f262b0bd407d09c0fcc9a3283952ed082d837",
-   "clip_kb": 287
+   "source": "ssot:cheerD-black.webp",
+   "edge_run": {
+    "top": 47,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 11,
+   "clip_sha256": "cf1a306a58afbd664a93426c66066923920b50c9a1ff9b1dd38f63492a9b74fe",
+   "poster_sha256": "cbe27ac42534cd0a12bb16f2e39eaae2e7ec6d282f21f39d3aa6d200f7e25f57",
+   "clip_kb": 286
   },
   "cheerG": {
    "frames": 47,
-   "w": 165,
+   "w": 166,
    "h": 192,
    "durations_ms": [
     83,
@@ -320,9 +377,17 @@
    ],
    "fps": 11.98,
    "source_frames": 94,
-   "clip_sha256": "b12f4584c2d407d3acc02e27e9f6d0e942db59f3fc63be49dd0000960c9fe0d8",
-   "poster_sha256": "f4ad4ef681d3588bcf9a7ccee838f6a53347b4c3eee5084ec721459c89285970",
-   "clip_kb": 287
+   "source": "ssot:cheerG-black.webp",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": -1,
+   "clip_sha256": "94e1b934195db32dddd1c4080ba1733db4f7475ef78f3e932c5271a28588e5bd",
+   "poster_sha256": "756ec285939a403959e32142504f567e8e5d8ed567a9eba0a9bda14250dd375a",
+   "clip_kb": 277
   },
   "cheerpom": {
    "frames": 73,
@@ -405,13 +470,21 @@
    ],
    "fps": 11.98,
    "source_frames": 145,
+   "source": "ssot:cheerpom-black.webp",
+   "edge_run": {
+    "top": 142,
+    "bottom": 62,
+    "left": 5,
+    "right": 33
+   },
+   "edge_run_worst_frame": 26,
    "clip_sha256": "f4a0770424a10cebd7ee10f27dc79f86256c76e61770b7223b499cd3a06e345f",
    "poster_sha256": "4e20391db0910cadceeea2d5fd9814157330579950efc83301c220f6debd4e8e",
    "clip_kb": 766
   },
   "cheerstick": {
    "frames": 50,
-   "w": 341,
+   "w": 327,
    "h": 192,
    "durations_ms": [
     83,
@@ -467,13 +540,21 @@
    ],
    "fps": 11.98,
    "source_frames": 100,
-   "clip_sha256": "0ce3bc1e1b565908eb0d963c51f2ec36813e675fed126503e81c08c6faaf38b4",
-   "poster_sha256": "61d40f536192621c6b8d4fed08fb50c68cb1b84288b65f2c858b7d3dd59aca43",
-   "clip_kb": 422
+   "source": "ssot:cheerstick-black.webp",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 4,
+    "right": 16
+   },
+   "edge_run_worst_frame": 31,
+   "clip_sha256": "3093a5a2aed6521cd4a2fded689b7f1354434b36e899af2e1c3da34042f9b3d7",
+   "poster_sha256": "2d3e490934f57d655ad325c305688b0cf99b6b26bca0b8a63316dd541901c659",
+   "clip_kb": 403
   },
   "cheertowel": {
    "frames": 50,
-   "w": 339,
+   "w": 325,
    "h": 192,
    "durations_ms": [
     83,
@@ -529,13 +610,21 @@
    ],
    "fps": 11.98,
    "source_frames": 100,
-   "clip_sha256": "bf6f9f7a2715d9a6df4095ba4db3127ef984b91097133ad903f43380be659462",
-   "poster_sha256": "127e18354a29c6601092cb8a954a340ed296bab0306039649b43fb9f934f1c62",
-   "clip_kb": 297
+   "source": "ssot:cheertowel-black.webp",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 91,
+    "right": 14
+   },
+   "edge_run_worst_frame": 21,
+   "clip_sha256": "db71bcc3f3b7ef9595623b323430e9af2ef8845180dbe0acce3e3720b4dc3d03",
+   "poster_sha256": "11138f72d245f367f9aec505b9769f828c04d9b8364fd82716f0665b6bcfb40b",
+   "clip_kb": 284
   },
   "excited": {
-   "frames": 54,
-   "w": 145,
+   "frames": 61,
+   "w": 118,
    "h": 192,
    "durations_ms": [
     83,
@@ -591,17 +680,32 @@
     83,
     84,
     83,
-    84
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83
    ],
    "fps": 11.98,
-   "source_frames": 108,
-   "clip_sha256": "2b93c3beaaf47f4729a33a09281fc60026fc7ef049ce96de453e023dfd2277a4",
-   "poster_sha256": "e73ebafae7b8dea68c7a8800210d23f2da43f5daf6b1a7eb6e44539da3e5bb35",
-   "clip_kb": 345
+   "source_frames": 121,
+   "source": "video:gen/excited.mp4",
+   "edge_run": {
+    "top": 4,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 22,
+   "clip_sha256": "ceb965ad813f0913f9f061bed79f74ed1e0878dbfa69cb759784b8569938800c",
+   "poster_sha256": "acc79094613c41a2b2a7a8c015f143c694e1ea2cc9266ec6b6baa75f704d1fee",
+   "clip_kb": 370
   },
   "headspin": {
    "frames": 55,
-   "w": 166,
+   "w": 170,
    "h": 192,
    "durations_ms": [
     83,
@@ -662,15 +766,37 @@
    ],
    "fps": 11.98,
    "source_frames": 109,
-   "clip_sha256": "b48d4cd1ef6fa29678e02733c47fbcb91e0ddc99d3b92065041ac3d074d31b0c",
-   "poster_sha256": "ed4b1947daa17c9bc8708a569763985dc4ddc3a4de90b7474c5c67c5b6d0fd18",
-   "clip_kb": 320
+   "source": "ssot:headspin-black.webp",
+   "edge_run": {
+    "top": 16,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 44,
+   "clip_sha256": "e5ffc614347b0dd9fc816dd2300908cf68a740881a58bac686a2274554ada7d5",
+   "poster_sha256": "fd3419547bb1376d437c74549b99c6840993a109019ad40df927d4a08f62111e",
+   "clip_kb": 317
   },
   "pitching": {
-   "frames": 47,
-   "w": 231,
+   "frames": 61,
+   "w": 235,
    "h": 192,
    "durations_ms": [
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
     83,
     84,
     83,
@@ -720,14 +846,22 @@
     83
    ],
    "fps": 11.98,
-   "source_frames": 93,
-   "clip_sha256": "211eda8cb6d5be245024dcc1e0937b2f63b0304434d9101672228e3f245adffa",
-   "poster_sha256": "fd8a0288c73631a63957ccd06bbb19a76077eb4608bd3f7b38ca7ac7c504f7b5",
-   "clip_kb": 248
+   "source_frames": 121,
+   "source": "video:gen/pitching.mp4",
+   "edge_run": {
+    "top": 53,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 41,
+   "clip_sha256": "3d05557bfbaa2f47d1fe25638132975a8c00cbb44c22e410e7e2d33f212fb7a1",
+   "poster_sha256": "7e84c414d22a385e105b96ad620774aa5653d10d11a70cfec1e1e392f80b4379",
+   "clip_kb": 313
   },
   "swing": {
    "frames": 49,
-   "w": 261,
+   "w": 267,
    "h": 192,
    "durations_ms": [
     83,
@@ -782,13 +916,21 @@
    ],
    "fps": 11.98,
    "source_frames": 98,
-   "clip_sha256": "95dcfc824d820631bcf5c8c99cea6ec9c9908811cc889f93f0aeeb1b43376860",
-   "poster_sha256": "fb4a7717601ee6f596d25675e3c100e52b1b91922ad3cf3e7dd4211dd6c0f378",
+   "source": "ssot:swing-black.webp",
+   "edge_run": {
+    "top": 1,
+    "bottom": 19,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": 4,
+   "clip_sha256": "fb3bf3c464d84e9de2b343a0f62e7993b597ae5a87dd476acdfc727c93932d3f",
+   "poster_sha256": "eb156d3514cbc2938d0bace1692416dd545dddda626d08d232e28b257c46e332",
    "clip_kb": 268
   },
   "thinking": {
-   "frames": 54,
-   "w": 155,
+   "frames": 61,
+   "w": 149,
    "h": 192,
    "durations_ms": [
     83,
@@ -844,13 +986,28 @@
     83,
     84,
     83,
-    84
+    84,
+    83,
+    84,
+    83,
+    84,
+    83,
+    84,
+    83
    ],
    "fps": 11.98,
-   "source_frames": 108,
-   "clip_sha256": "ad895d7fd9c2b7c84db841d1dc97144800c9dd8fc89a0deb667a387fa319217c",
-   "poster_sha256": "b6195a0c34f6228d1a1242c461b2f347499c9a57eee4a84e443b7e37fc284918",
-   "clip_kb": 274
+   "source_frames": 121,
+   "source": "video:gen/thinking.mp4",
+   "edge_run": {
+    "top": 0,
+    "bottom": 0,
+    "left": 0,
+    "right": 0
+   },
+   "edge_run_worst_frame": -1,
+   "clip_sha256": "d6c54e7f2ee7a4e7ef9cea03cd80591d8a7a2f9b585fdd0c3e68d0cd6a627a52",
+   "poster_sha256": "0e37598fec75184acd5600c374e3beecf8eef9a6b5c1ae273689db61425db5f9",
+   "clip_kb": 392
   }
  }
 }

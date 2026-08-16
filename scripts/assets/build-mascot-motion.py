@@ -34,6 +34,33 @@ from scipy import ndimage
 
 # SSOT — 8/7 고정본(MANIFEST.sha256 포함). repo 밖이라 경로를 env 로 덮을 수 있다.
 SSOT = os.environ.get("MASCOT_SSOT", os.path.expanduser("~/.openclaw/workspace/assets/mascot/v1"))
+
+# ⚠️ **일부 SSOT WebP 는 캐릭터가 프레임 밖으로 잘려 있다** (삼순 #1228 ③, 실측).
+#    SSOT 13종 중 8종에서 머리가 캔버스 위쪽에 **평평하게** 붙어 있었다
+#    (`cheerpom` 상단 202px · `excited` 149px · `cheerC`/`cheer` 112px · `pitching` 109px ·
+#     `bored`/`cheerD` 74px · `thinking` 49px — 전 프레임 상단 **연속 불투명 런** 측정).
+#
+#    원본 생성물(Seedance 2.0 i2v, 1280x720 mp4)을 실측해보니 **6종은 원본이 무결**했다.
+#    → 잘림은 생성 결함이 아니라 **이 스크립트의 union-bbox crop 이 만든 파생 결함**이다.
+#      원본에서 다시 뽑으면 닫힌다.
+#
+#    아래 6종만 mp4 원본을 1차 소스로 쓴다. 나머지는 SSOT WebP 를 그대로 쓴다
+#    (`cheerpom` 은 SSOT 가 **모자 로고 제거본**이라 mp4 로 되돌리면 로고가 부활한다;
+#     `cheerD` 는 mp4 원본도 상단 28px 잘려 있어 원본 교체로 닫히지 않는다 — 둘 다
+#     하린아빠 판단 대기 상태이며, 여기서 임의로 바꾸지 않는다).
+VIDEO_SRC_ROOT = os.environ.get(
+    "MASCOT_VIDEO_SRC", os.path.expanduser("~/.openclaw/workspace/tmp/ref-video"))
+VIDEO_SOURCES = {
+    "excited": "gen/excited.mp4",
+    "cheerC": "gen/cheerC.mp4",
+    "bored": "gen/bored.mp4",
+    "pitching": "gen/pitching.mp4",
+    "thinking": "gen/thinking.mp4",
+    "cheer": "gen/cheer.mp4",
+}
+# crop 안전여백 — union bbox 에 사방으로 이만큼을 더 남긴다(삼순 #1228 ③ 계약).
+# 0 이면 캐릭터 실루엣이 캔버스 모서리에 그대로 닿아, 안티에일리어싱 여유조차 없다.
+SAFE_PAD = 6
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "public", "mascot", "motion")
 MANIFEST = os.path.join(OUT, "DERIVED.json")
 
@@ -63,21 +90,56 @@ def key_frame(rgb: np.ndarray) -> np.ndarray:
     return np.where(al > 0, np.maximum(al, af), af * 0.55).clip(0, 255).astype(np.uint8)
 
 
+def _read_video_frames(path: str):
+    """mp4 원본을 디코딩해 RGB 프레임 배열로 돌려준다 (ffmpeg → rawvideo 파이프)."""
+    import subprocess
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+        capture_output=True, text=True, check=True)
+    w, h = (int(v) for v in probe.stdout.strip().split(",")[:2])
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True)
+    buf = np.frombuffer(proc.stdout, dtype=np.uint8)
+    n = buf.size // (w * h * 3)
+    return [buf[i * w * h * 3:(i + 1) * w * h * 3].reshape(h, w, 3).astype(np.float32)
+            for i in range(n)], (w, h)
+
+
 def build(name: str):
-    src = os.path.join(SSOT, f"{name}-black.webp")
-    im = Image.open(src)
-    raw, durs = [], []
-    for i in range(im.n_frames):
-        im.seek(i)
-        raw.append(np.asarray(im.convert("RGB")).astype(np.float32))
-        durs.append(im.info.get("duration", 42))
-    idx = list(range(0, len(raw), STEP))
+    video_rel = VIDEO_SOURCES.get(name)
+    video_path = os.path.join(VIDEO_SRC_ROOT, video_rel) if video_rel else None
+    if video_path and os.path.exists(video_path):
+        # 잘리지 않은 원본에서 다시 뽑는다. mp4 는 1280x720 이라 SSOT(480px)보다
+        # 프레임당 화소가 7배 많다 — 다운스케일 품질도 함께 좋아진다.
+        raw, _ = _read_video_frames(video_path)
+        source_kind = f"video:{video_rel}"
+        # 원본은 24fps 121프레임. SSOT 경유(STEP=2)와 같은 12fps 로 맞춘다.
+        step = 2
+    else:
+        src = os.path.join(SSOT, f"{name}-black.webp")
+        im = Image.open(src)
+        raw = []
+        for i in range(im.n_frames):
+            im.seek(i)
+            raw.append(np.asarray(im.convert("RGB")).astype(np.float32))
+        source_kind = f"ssot:{name}-black.webp"
+        step = STEP
+    idx = list(range(0, len(raw), step))
     alphas = [key_frame(raw[i]) for i in idx]
 
     # union bbox — 전 프레임 합집합으로 잘라야 동작 중 캐릭터가 잘리지 않는다.
     st = np.stack([a > 96 for a in alphas])
     ys, xs = np.where(st.any(axis=0))
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    # ⚠️ **안전여백**. 여백 0 이면 캐릭터가 캔버스 모서리에 그대로 닿아, 원본이 멀쩡해도
+    #    파생 자산이 "평평하게 잘린" 것처럼 보인다(삼순 #1228 ③ 의 실제 원인).
+    #    캔버스 밖으로는 나갈 수 없으므로 clip 한다 — 원본이 이미 잘린 종은 여기서
+    #    여백을 못 얻고, 그 사실은 아래 edge-run 계약 검사로 드러난다.
+    H, W = alphas[0].shape
+    y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)
+    y1 = min(H, y1 + SAFE_PAD); x1 = min(W, x1 + SAFE_PAD)
     bw, bh = x1 - x0, y1 - y0
     nw = max(1, round(bw * TARGET_H / bh))
 
@@ -116,7 +178,23 @@ def build(name: str):
     durations = [FRAME_MS[i % len(FRAME_MS)] for i in range(len(out))]
     return out, {"frames": len(out), "w": nw, "h": TARGET_H,
                  "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
-                 "source_frames": len(raw)}
+                 "source_frames": len(raw), "source": source_kind}
+
+
+def max_edge_run(alpha: np.ndarray) -> dict:
+    """네 변에서 **연속 불투명 런**의 최댓값. 이게 0 이 아니면 캐릭터가 잘린 것이다.
+
+    단순 "모서리에 불투명 픽셀이 있나"로는 부족하다 — 안티에일리어싱 1~2px 접촉과
+    머리가 평평하게 잘린 것은 **연속 길이**로만 구분된다(실측으로 확정).
+    """
+    def run(line):
+        best = cur = 0
+        for v in line:
+            cur = cur + 1 if v >= 250 else 0
+            best = max(best, cur)
+        return best
+    return {"top": run(alpha[0]), "bottom": run(alpha[-1]),
+            "left": run(alpha[:, 0]), "right": run(alpha[:, -1])}
 
 
 def sha256(path: str) -> str:
@@ -143,7 +221,7 @@ def main() -> int:
     tmpdir = outdir if not args.check else os.path.join("/tmp", "mascot-motion-check")
     os.makedirs(tmpdir, exist_ok=True)
 
-    report, mismatched = {}, []
+    report, mismatched, clipped = {}, [], []
     for n in names:
         frames, meta = build(n)
         clip = os.path.join(tmpdir, f"{n}.webp")
@@ -171,6 +249,26 @@ def main() -> int:
         #    저장 과정에서 다시 채워진다(실측: thinking-poster 투명영역 88.7% 가 비검정).
         #    클립 저장에는 이미 exact=True 가 있었는데 poster 만 빠져 있었다.
         Image.fromarray(first).save(poster, format="WEBP", lossless=True, method=6, exact=True)
+        # ── 잘림 계약 검사 (삼순 #1228 ③) ──────────────────────────────────
+        # **전 프레임 + poster** 를 디코딩해 네 변의 연속 불투명 런을 잰다.
+        # union bbox + SAFE_PAD 로 만들어도, 원본 자체가 잘린 종은 여기서 드러난다.
+        runs = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        worst_frame = -1
+        with Image.open(clip) as enc:
+            for fi in range(enc.n_frames):
+                enc.seek(fi)
+                a = np.asarray(enc.convert("RGBA"))[..., 3]
+                r = max_edge_run(a)
+                if max(r.values()) > max(runs.values()):
+                    worst_frame = fi
+                runs = {k: max(runs[k], r[k]) for k in runs}
+        with Image.open(poster) as pim:
+            pr = max_edge_run(np.asarray(pim.convert("RGBA"))[..., 3])
+        runs = {k: max(runs[k], pr[k]) for k in runs}
+        meta["edge_run"] = runs
+        meta["edge_run_worst_frame"] = worst_frame
+        if max(runs.values()) > 0:
+            clipped.append((n, runs, worst_frame))
         meta["clip_sha256"] = sha256(clip)
         meta["poster_sha256"] = sha256(poster)
         meta["clip_kb"] = round(os.path.getsize(clip) / 1024)
@@ -180,14 +278,17 @@ def main() -> int:
                 shipped = os.path.join(outdir, os.path.basename(built))
                 if not os.path.exists(shipped) or sha256(shipped) != sha256(built):
                     mismatched.append(os.path.basename(built))
+        er = meta["edge_run"]
+        mark = "✅" if max(er.values()) == 0 else f'🔴잘림 {max(er.values())}px'
         print(f'{n:12s} {meta["frames"]:3d}f {meta["w"]:3d}x{meta["h"]} '
               f'{meta["clip_kb"]:5d}KB {meta["fps"]}fps '
-              f'dur={sorted(set(meta["durations_ms"]))}ms', flush=True)
+              f'[{meta["source"].split(":")[0]}] {mark}', flush=True)
 
     payload = {
         "generator": "scripts/assets/build-mascot-motion.py",
         "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
+                   "safe_pad": SAFE_PAD,
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "clips": report,
     }
