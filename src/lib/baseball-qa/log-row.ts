@@ -31,6 +31,24 @@ export function buildQuestionLogRow(
     // 생성 RAG 톤은 **관측값**이다. false 여도 답변은 서빙된다 — 이 칸으로 프롬프트
     // 준수율을 감사한다. null = 서빙된 생성 RAG 답변 없음/판정불가(비생성 경로 + 안전검증 탈락 폐기).
     tone_compliant: entry.toneCompliant ?? null,
+    // 생성 RAG 답변이 **폐기된 사유** (migration 20260816140000). null = 폐기 없음.
+    // 관측 전용이다 — 이 칸으로 **경로별 폐기율**을 만든다. 종전에는 폐기가 전부
+    // match_path='unsure' 로만 남아 JSON 깨짐·길이초과·숫자가드가 구분되지 않았다.
+    // ⚠️ `numeric_claim_ungrounded` 는 "tier2 출력에 숫자가 있어 정책상 폐기" 라는 뜻이다 —
+    //    근거 대조를 하지 않으므로 그 숫자가 근거에 있었는지도, 나머지 서술이 옳았는지도
+    //    판정한 적이 없다. **폐기율 ≠ 정답 손실률**(삼순 3·4차). 정답 손실률은 표본 감사로만.
+    rag_discard_reason: entry.ragDiscardReason ?? null,
+    // 생성 RAG 를 **시도한 경로** (삼순 2026-08-16 ①). 성공·폐기 모두 채운다 — 폐기에만
+    // 채우면 분자만 있고 분모가 없어 경로별 폐기율을 몇 낼 수 없다. `match_path` 로는 복원
+    // 불가하다(선수·공식·뉴스 폐기가 전부 'unsure' 로 접힌다).
+    rag_attempt_path: entry.ragAttemptPath ?? null,
+    // **질문**의 숫자 토큰 개수 (삼순 2026-08-16 2차 ①). 성공·폐기 모두 채운다(분모).
+    // ⚠️ 개수에는 값 동일성이 없다 — `질문=0·답변>0` 은 "질문 비기원 숫자" 까지만 확정되고
+    //    (근거에서 복사했을 수 있어 출처·정확성 미판정), `질문>0·답변>0` 은 **미확정**이다
+    //    (삼순 3·4차). `창작/지어냄/근거에 없음` 은 전부 표본 감사 영역.
+    rag_question_numeric_count: entry.ragQuestionNumericCount ?? null,
+    // 폐기된 답변의 숫자 토큰 **개수**만 (삼순 익명집계 조건). 본문·값은 저장하지 않는다.
+    rag_discard_numeric_count: entry.ragDiscardNumericCount ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,
     input_tokens: entry.inputTokens,
