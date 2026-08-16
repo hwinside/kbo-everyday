@@ -871,6 +871,13 @@ function hasKoreanQuantityClaim(answer: string): boolean {
   ).test(answer);
 }
 
+/**
+ * tier2 숫자 전면 HOLD 우회 금지: 수치를 `많은`·`높은`·`굵직한` 같은
+ * 규모 평가어로 바꿔도 근거 없는 수치 주장이다.
+ */
+function hasUngroundedNumericQualifier(answer: string): boolean {
+  return /(?:많은|적은|높은|낮은|굵직한|굵직하게|상위권|최상급|최고 수준|대표적인|거포)/.test(answer);
+}
 /** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
 function groundedAgainst(answer: string, raw: string): boolean {
   const answerNorm = answer.replace(/,/g, "");
@@ -1037,7 +1044,7 @@ export function validateRagResponse(
     //   내보내지 않는다" 이므로 표기 방식과 무관하게 막아야 한다.
     //   `hasKoreanQuantityClaim` 은 수사+단위명사가 붙은 경우만 잡으므로
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
-    if (hasNumericCharacter(answer)) {
+    if (hasNumericCharacter(answer) || hasKoreanQuantityClaim(answer) || hasUngroundedNumericQualifier(answer)) {
       // 개수만 남긴다 — 폐기된 본문은 저장하지 않는다(삼순 익명집계 조건).
       //
       // ⚠️ **개수로 답변의 성격을 분류하지 않는다** (삼순 2026-08-16 3차).
@@ -1047,7 +1054,7 @@ export function validateRagResponse(
       // 🔴 사유 이름이 오해를 부르므로 못 박아 둔다 (삼순 2026-08-16 4차):
       //    여기서 하는 일은 `hasNumericCharacter(answer)` 하나다 — **근거 대조를 하지 않는다.**
       //    따라서 `numeric_claim_ungrounded` 는 "숫자가 근거에 없다" 는 뜻이 아니라
-      //    **"tier2 출력에 숫자가 있어 정책상 폐기했다"** 는 뜻이다.
+      //    **"tier2 출력에 숫자/수량 우회 표현이 있어 정책상 폐기했다"** 는 뜻이다.
       //    그 숫자가 근거에 있었는지도, 나머지 서술이 옳았는지도 **판정한 적이 없다**.
       //    → 폐기율 ≠ 정답 손실률.
       return {
