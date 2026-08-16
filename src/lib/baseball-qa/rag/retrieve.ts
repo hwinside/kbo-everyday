@@ -634,29 +634,15 @@ export function buildRagLlmRequest(
 /**
  * 생성 RAG 답변이 폐기된 **사유**의 폐쇄집합 (2026-08-16 계측 착수).
  *
- * 왜 `string` 이 아니라 union 인가: 이 값은 `genius_question_logs.rag_discard_reason` 으로
- * 그대로 들어가고 DB CHECK 가 같은 집합을 강제한다. `string` 이면 새 사유를 하나 늘렸을 때
- * 그게 CHECK 위반(23514)으로 터지는 것을 **배포 뒤에야** 알게 된다 — 타입이 먼저 막아야 한다.
- * 사유를 추가할 땐 이 union 과 migration CHECK 를 **같은 PR 에서** 갱신한다(게이트가 둘을 대조한다).
+ * 배열이 SSOT 이고 타입은 거기서 **파생**된다 (삼순 1차 NO-GO ③ — union 과 배열을
+ * 따로 적으면 이중 SSOT 라 한쪽만 늘어도 타입체크가 통과한다).
+ * 게이트가 이 배열을 직접 import 해 migration CHECK 문면과 대조하므로 문자열을 게이트 쪽에
+ * 복제하지도 않는다. 사유를 추가할 땐 **이 배열과 migration CHECK 만** 같은 PR 에서 갱신한다.
+ *
+ * 왜 `string` 이면 안 되는가: 이 값은 `genius_question_logs.rag_discard_reason` 으로 그대로
+ * 들어가고 DB CHECK 가 같은 집합을 강제한다. `string` 이면 CHECK 위반(23514)을 **배포 뒤에야** 알게 된다.
  */
-export type RagDiscardReason =
-  | "malformed_json"
-  | "model_insufficient"
-  | "missing_answer"
-  | "empty_answer"
-  | "too_long"
-  | "unsafe_output"
-  | "unknown_status"
-  | "numeric_claim_ungrounded"
-  | "numeric_not_in_evidence"
-  | "numeric_not_in_question";
-
-/**
- * 폐기 사유 전체 목록 — 게이트·migration 대조용 SSOT.
- * 게이트가 이 배열을 직접 import 해 migration CHECK 문면과 대조하므로,
- * 문자열을 게이트 쪽에 **복제하지 않는다**(복제하면 한쪽만 고쳐져 조용히 어깋금다).
- */
-export const RAG_DISCARD_REASONS: readonly RagDiscardReason[] = [
+export const RAG_DISCARD_REASONS = [
   "malformed_json",
   "model_insufficient",
   "missing_answer",
@@ -669,11 +655,49 @@ export const RAG_DISCARD_REASONS: readonly RagDiscardReason[] = [
   "numeric_not_in_question",
 ] as const;
 
+export type RagDiscardReason = (typeof RAG_DISCARD_REASONS)[number];
+
+/** 런타임 값이 폐쇄집합 안인가 — envelope 재생처럼 외부에서 들어온 값을 좌힐 때 쓴다. */
+export function isRagDiscardReason(value: unknown): value is RagDiscardReason {
+  return typeof value === "string"
+    && (RAG_DISCARD_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * 생성 RAG 를 **시도한 경로** (삼순 1차 NO-GO ①).
+ *
+ * `match_path` 로는 경로를 알 수 없다 — 선수·공식·뉴스 폐기가 전부 `unsure` 로 접혀
+ * "어느 경로에서 버렸는가"가 사라진다. 경로별 분모/폐기율을 내려면 **성공·폐기 모두**
+ * 이 칸이 채워져야 한다(성공에만 채우면 분자만 있고 분모가 없다).
+ */
+export const RAG_ATTEMPT_PATHS = ["player", "official", "team", "news"] as const;
+
+export type RagAttemptPath = (typeof RAG_ATTEMPT_PATHS)[number];
+
+export function isRagAttemptPath(value: unknown): value is RagAttemptPath {
+  return typeof value === "string"
+    && (RAG_ATTEMPT_PATHS as readonly string[]).includes(value);
+}
+
 export type ValidatedRagAnswer =
   | { kind: "grounded"; answer: string; toneCompliant: boolean }
   // 공식 경로 전용: 자료 밖 일반 야구 지식 답변. `generalFallback` 옵션을 켠 호출에만 나온다.
   | { kind: "general"; answer: string; toneCompliant: boolean }
-  | { kind: "insufficient"; reason: RagDiscardReason };
+  /**
+   * 폐기. `numericCount` = 폐기된 답변의 **숫자 토큰 개수**(삼순 익명집계 조건).
+   *
+   * 왜 개수가 필요한가: 폐기된 답변 원문은 **저장되지 않는다**(로그에는 안내문이 들어간다).
+   * 그래서 "숫자 1개 섮인 서술형 답"과 "수치 나열"을 사후에 구분할 방법이 없다 —
+   * 전자는 B(정본 주입)으로 즉시 구제되는 부류고 후자는 아니라 우선순위 판단의 핵심이다.
+   * 개수만 남긴다 — 값도 원문도 새로 저장하지 않는다.
+   * 답변 본문을 볼 수 없는 폐기(`malformed_json`·`model_insufficient`)는 미설정이다.
+   */
+  | { kind: "insufficient"; reason: RagDiscardReason; numericCount?: number };
+
+/** 문자열의 숫자 토큰 개수 — `numericTokensSubsetOf` 와 **같은 토큰 규칙**을 쓴다. */
+export function numericTokenCount(text: string): number {
+  return (text.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []).length;
+}
 
 /**
  * 답변에 쓰인 숫자가 전부 근거 안에 존재하는가.
@@ -946,13 +970,20 @@ export function validateRagResponse(
   if (status === RAG_GENERAL_SENTINEL && options.generalFallback) {
     if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
     const generalAnswer = row.answer.trim();
-    if (generalAnswer.length === 0) return { kind: "insufficient", reason: "empty_answer" };
+    if (generalAnswer.length === 0) return { kind: "insufficient", reason: "empty_answer", numericCount: 0 };
     const generalMax = options.maxChars ?? RAG_OFFICIAL_ANSWER_MAX_CHARS;
-    if (generalAnswer.length > generalMax) return { kind: "insufficient", reason: "too_long" };
-    if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(generalAnswer)) return { kind: "insufficient", reason: "unsafe_output" };
+    if (generalAnswer.length > generalMax) {
+      return { kind: "insufficient", reason: "too_long", numericCount: numericTokenCount(generalAnswer) };
+    }
+    if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(generalAnswer)) {
+      return { kind: "insufficient", reason: "unsafe_output", numericCount: numericTokenCount(generalAnswer) };
+    }
     // 질문 밖 숫자 금지 — 근거 없는 일반 지식 답변이므로 숫자는 유저가 직접 준 것만 되받는다.
     if (!numericTokensSubsetOf(generalAnswer, options.generalFallback.question)) {
-      return { kind: "insufficient", reason: "numeric_not_in_question" };
+      return {
+        kind: "insufficient", reason: "numeric_not_in_question",
+        numericCount: numericTokenCount(generalAnswer),
+      };
     }
     // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
     return { kind: "general", answer: generalAnswer, toneCompliant: isBaseballGeniusToneCompliant(generalAnswer) };
@@ -960,11 +991,15 @@ export function validateRagResponse(
   if (status !== RAG_GROUNDED_SENTINEL) return { kind: "insufficient", reason: "unknown_status" };
   if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
   const answer = row.answer.trim();
-  if (answer.length === 0) return { kind: "insufficient", reason: "empty_answer" };
+  if (answer.length === 0) return { kind: "insufficient", reason: "empty_answer", numericCount: 0 };
   const maxChars = options.maxChars
     ?? (options.numericEvidence ? RAG_OFFICIAL_ANSWER_MAX_CHARS : RAG_ANSWER_MAX_CHARS);
-  if (answer.length > maxChars) return { kind: "insufficient", reason: "too_long" };
-  if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(answer)) return { kind: "insufficient", reason: "unsafe_output" };
+  if (answer.length > maxChars) {
+    return { kind: "insufficient", reason: "too_long", numericCount: numericTokenCount(answer) };
+  }
+  if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(answer)) {
+    return { kind: "insufficient", reason: "unsafe_output", numericCount: numericTokenCount(answer) };
+  }
   // §12 수치 계약.
   //  - tier2 근거(기본값): 숫자 자체를 금지한다. 위키류는 수치 정본이 아니다.
   //  - tier1 근거(KBO 공식 간행물): 숫자를 허용하되 **근거에 적힌 숫자만** 허용한다.
@@ -977,12 +1012,21 @@ export function validateRagResponse(
     //   `hasKoreanQuantityClaim` 은 수사+단위명사가 붙은 경우만 잡으므로
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
     if (hasNumericCharacter(answer)) {
-      return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
+      // 개수만 남긴다 — 폐기된 본문은 저장하지 않는다(삼순 익명집계 조건).
+      // `1` 이면 서술형 답에 연도 하나 섮인 것이고(=B 정본으로 구제 가능),
+      // 큰 값이면 수치 나열이라 성격이 다르다 — 이 분포가 B/A 우선순위를 가른다.
+      return {
+        kind: "insufficient", reason: "numeric_claim_ungrounded",
+        numericCount: numericTokenCount(answer),
+      };
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
     requireSingleSource: options.requireSingleSource,
   })) {
-    return { kind: "insufficient", reason: "numeric_not_in_evidence" };
+    return {
+      kind: "insufficient", reason: "numeric_not_in_evidence",
+      numericCount: numericTokenCount(answer),
+    };
   }
   // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
   return { kind: "grounded", answer, toneCompliant: isBaseballGeniusToneCompliant(answer) };

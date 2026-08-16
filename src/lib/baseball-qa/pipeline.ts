@@ -34,6 +34,9 @@ import {
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
   validateRagResponse,
+  isRagAttemptPath,
+  isRagDiscardReason,
+  type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
   type RagEntityCandidate,
@@ -1003,6 +1006,24 @@ export interface QaDeps {
      * DB CHECK 가 같은 집합을 강제한다. ⚠️ **관측값이다** — 이 칸을 보고 분기하는 로직을 만들지 않는다.
      */
     ragDiscardReason?: RagDiscardReason | null;
+    /**
+     * 생성 RAG 를 **시도한 경로** (삼순 2026-08-16 1차 NO-GO ①).
+     *
+     * `match_path` 로는 경로를 복원할 수 없다 — 선수·공식·뉴스 폐기가 전부 `unsure` 로 접혀
+     * 어느 경로에서 버렸는지가 사라진다. 그럼 경로별 폐기율을 몷 내고, 특히 **뉴스 손실**을
+     * 몷 본다(기사엔 숫자가 거의 항상 있어 이 축이 가장 의심스럽다).
+     *
+     * ⚠️ **성공·폐기 모두** 채운다. 폐기에만 채우면 분자만 있고 분모가 없어 비율을 몷 낸다.
+     * `null` = 생성 RAG 를 시도하지 않은 턴(사전·구조화·고정문·generic LLM).
+     */
+    ragAttemptPath?: RagAttemptPath | null;
+    /**
+     * 폐기된 답변의 **숫자 토큰 개수** (삼순 2026-08-16 익명집계 조건).
+     *
+     * 폐기 본문은 저장하지 않으므로 사후에 "숫자 1개 섮인 서술형"과 "수치 나열"을 구분할
+     * 방법이 없다. 개수만 남긴다 — 값도 원문도 저장하지 않는다. `null` = 폐기 없음 또는 판정불가.
+     */
+    ragDiscardNumericCount?: number | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -1019,6 +1040,32 @@ export interface QaDeps {
  */
 function discardReasonOf(validated: ValidatedRagAnswer): RagDiscardReason | null {
   return validated.kind === "insufficient" ? validated.reason : null;
+}
+
+/** 폐기된 답변의 숫자 토큰 개수 — 폐기가 아니거나 본문을 볼 수 없으면 `null`. */
+function discardNumericCountOf(validated: ValidatedRagAnswer): number | null {
+  return validated.kind === "insufficient" ? (validated.numericCount ?? null) : null;
+}
+
+/**
+ * 생성 RAG 관측 3칙 묶음 — 네 경로가 **같은 규칙**으로 채우게 하기 위한 조립기.
+ *
+ * 경로마다 필드를 손으로 나열하면 한 경로만 빠뜨려도 그 경로가 조용히 `null` 로 남는다
+ * (게이트가 4경로를 전부 태워서 막지만, 애초에 빠뜨리기 어렵게 만드는 쪽이 낛다).
+ */
+function ragObservation(
+  attemptPath: RagAttemptPath,
+  validated: ValidatedRagAnswer,
+): {
+  ragAttemptPath: RagAttemptPath;
+  ragDiscardReason: RagDiscardReason | null;
+  ragDiscardNumericCount: number | null;
+} {
+  return {
+    ragAttemptPath: attemptPath,
+    ragDiscardReason: discardReasonOf(validated),
+    ragDiscardNumericCount: discardNumericCountOf(validated),
+  };
 }
 
 const SERVICE_WORDS = [
@@ -2979,6 +3026,18 @@ export interface StoredQaFinal {
    * 관측이 null 로 유실되지 않는다. 미설정 = 판정 없음(비생성 경로·구버전 envelope).
    */
   toneCompliant?: boolean;
+  /**
+   * 생성 RAG 관측 3칸 — **원시점 값을 envelope 에 보존한다** (삼순 2026-08-16 ②).
+   *
+   * `toneCompliant` 와 정확히 같은 이유다: 네 RAG 경로 모두 final envelope 를 먼저 저장하고
+   * 로그를 나중에 쓴다. `store 성공 → log 전 crash → retry` 면 재생 경로가 envelope 만 보고
+   * 로그를 쓰므로, 여기 없으면 관측이 **다시 null 로 유실**된다.
+   *
+   * 미설정 = 관측 없음(비생성 경로·구버전 envelope). 재생 시 재판정하지 않는다 — 원시점 계약.
+   */
+  ragAttemptPath?: RagAttemptPath;
+  ragDiscardReason?: RagDiscardReason | null;
+  ragDiscardNumericCount?: number | null;
 }
 /**
  * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
@@ -3026,6 +3085,14 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
     ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
     ...(typeof final.toneCompliant === "boolean" ? { toneCompliant: final.toneCompliant } : {}),
+    // 관측 3칸 복원 (삼순 2026-08-16 ②). 🔴 폐쇄집합 밖 값은 **버린다** — envelope 는 이전
+    // 배포가 쓴 것일 수 있고, 그 값을 그대로 log 로 보내면 DB CHECK 위반(23514)으로 로그
+    // INSERT 자체가 죽는다. 관측 유실이 서빙 실패보다 낫다(fail-open 방향이 맞는 유일한 칸).
+    ...(isRagAttemptPath(final.ragAttemptPath) ? { ragAttemptPath: final.ragAttemptPath } : {}),
+    ...(isRagDiscardReason(final.ragDiscardReason) ? { ragDiscardReason: final.ragDiscardReason } : {}),
+    ...(typeof final.ragDiscardNumericCount === "number" && Number.isInteger(final.ragDiscardNumericCount)
+      && final.ragDiscardNumericCount >= 0
+      ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
   };
 }
 
@@ -3074,6 +3141,11 @@ async function replayStoredFinalResult(
     answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     // 재생도 원시점 톤 관측을 그대로 기록한다 — 재판정 없음(원시점 계약, cacheable 과 동일 축).
     toneCompliant: storedFinal.toneCompliant ?? null,
+    // 생성 RAG 관측 3칸도 같은 계약 (삼순 2026-08-16 ②) — `store 성공 → log 전 crash → retry`
+    // 에서 여기 없으면 계측이 null 로 유실된다. 재판정하지 않고 원시점 값을 그대로 옮긴다.
+    ragAttemptPath: storedFinal.ragAttemptPath ?? null,
+    ragDiscardReason: storedFinal.ragDiscardReason ?? null,
+    ragDiscardNumericCount: storedFinal.ragDiscardNumericCount ?? null,
   });
   return {
     status: 200, answer: storedFinal.answer, source: storedFinal.source, remaining,
@@ -3672,12 +3744,12 @@ async function answerPlayerDescriptiveQuestion(
   // RAG LLM 호출 뒤 검증 탈락 건이 "토큰 0" 으로 남아 이번 tone 폐기 결함을 숨겼다.
   const failClose = async (
     consumed?: LlmResult | null,
-    ragDiscardReason?: RagDiscardReason | null,
+    observation?: ReturnType<typeof ragObservation> | null,
   ): Promise<QaResult> => {
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
-      ragDiscardReason: ragDiscardReason ?? null,
+      ...(observation ?? {}),
     });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   };
@@ -3770,20 +3842,28 @@ async function answerPlayerDescriptiveQuestion(
   const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
+    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
+    // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다(toneCompliant 와 같은 축).
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("player", validated),
+    }, llm));
     // 폐기 사유를 남긴다 — 이게 없으면 `unsure` 를 만든 게 숫자 가드인지 JSON 깨짐인지
     // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
-    return failClose(llm, discardReasonOf(validated));
+    return failClose(llm, ragObservation("player", validated));
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    answer, source: "rag", sourceUrl,
+    toneCompliant: validated.toneCompliant, ragAttemptPath: "player",
+  }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
+    ...ragObservation("player", validated),
   });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -3870,21 +3950,29 @@ async function answerOfficialDocumentQuestion(
   //   이 답은 근거 없는 생성답이므로 기존 generic 경로와 같은 자격(`llm`)으로 기록하고
   //   출처는 붙이지 않는다. 숫자는 validate 단계가 질문 밖 토큰을 기계 폐기했다.
   if (validated.kind === "general") {
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: validated.answer, source: "llm", toneCompliant: validated.toneCompliant }, llm));
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer: validated.answer, source: "llm",
+      toneCompliant: validated.toneCompliant, ragAttemptPath: "official",
+    }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
       toneCompliant: validated.toneCompliant,
+      ...ragObservation("official", validated),
     });
     return { status: 200, answer: validated.answer, source: "llm", remaining };
   }
   if (validated.kind !== "grounded") {
     // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
+    // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
+    // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", validated),
+    }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ragDiscardReason: discardReasonOf(validated),
+      ...ragObservation("official", validated),
     });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
@@ -3892,11 +3980,15 @@ async function answerOfficialDocumentQuestion(
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    answer, source: "rag", sourceUrl,
+    toneCompliant: validated.toneCompliant, ragAttemptPath: "official",
+  }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
+    ...ragObservation("official", validated),
   });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -4033,22 +4125,30 @@ async function answerTeamRagQuestion(
     //   질문을 탓하는 말이다.
     const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : UNCLEAR_ANSWER;
     const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: matchPath }, llm));
+    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
+    // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다.
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer, source: matchPath, ...ragObservation("team", validated),
+    }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath, answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ragDiscardReason: discardReasonOf(validated),
+      ...ragObservation("team", validated),
     });
     return { status: 200, answer, source: matchPath, remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "team_rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    answer, source: "team_rag", sourceUrl,
+    toneCompliant: validated.toneCompliant, ragAttemptPath: "team",
+  }, llm));
   // `team_rag` 로 기록한다 — 선수·공식 RAG 와 섞이면 구단 전수 감사가 불가능하다.
   await deps.log({
     userId, question, questionNorm, matchPath: "team_rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
+    ...ragObservation("team", validated),
   });
   return { status: 200, answer, source: "team_rag", remaining, sourceUrl };
 }
@@ -4142,21 +4242,30 @@ async function answerNewsRagQuestion(
   // 숫자는 구단 tier2 와 동일하게 전면 HOLD 다(`numericEvidence` 미지정 = 기본값 금지).
   const validated = validateRagResponse(llm.text, { maxChars: RAG_ANSWER_MAX_CHARS });
   if (validated.kind !== "grounded") {
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure" }, llm));
+    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②).
+    // 🔴 뉴스가 이 계측의 최대 관심축이다 — 기사에는 숫자가 거의 항상 있어 숫자 HOLD 손해가
+    //   여기에 몰려 있을 가능성이 크다. 경로 라벨이 없으면 그 손실을 unsure 더미에서 못 꺼낸다.
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...ragObservation("news", validated),
+    }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure",
       answer: NEWS_UNAVAILABLE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ragDiscardReason: discardReasonOf(validated),
+      ...ragObservation("news", validated),
     });
     return { status: 200, answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "news_rag", sourceUrl, toneCompliant: validated.toneCompliant }, llm));
+  if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    answer, source: "news_rag", sourceUrl,
+    toneCompliant: validated.toneCompliant, ragAttemptPath: "news",
+  }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "news_rag",
     answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
+    ...ragObservation("news", validated),
   });
   return { status: 200, answer, source: "news_rag", remaining, sourceUrl };
 }

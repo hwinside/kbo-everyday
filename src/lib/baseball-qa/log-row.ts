@@ -36,6 +36,12 @@ export function buildQuestionLogRow(
     // 종전에는 폐기가 전부 match_path='unsure' 로만 남아 JSON 깨짐·길이초과·숫자가드가
     // 구분되지 않았고, 그래서 정책 손익을 수치로 말할 수 없었다(2026-08-16 하린아빠 지시).
     rag_discard_reason: entry.ragDiscardReason ?? null,
+    // 생성 RAG 를 **시도한 경로** (삼순 2026-08-16 ①). 성공·폐기 모두 채운다 — 폐기에만
+    // 채우면 분자만 있고 분모가 없어 경로별 폐기율을 몇 낼 수 없다. `match_path` 로는 복원
+    // 불가하다(선수·공식·뉴스 폐기가 전부 'unsure' 로 접힌다).
+    rag_attempt_path: entry.ragAttemptPath ?? null,
+    // 폐기된 답변의 숫자 토큰 **개수**만 (삼순 익명집계 조건). 본문·값은 저장하지 않는다.
+    rag_discard_numeric_count: entry.ragDiscardNumericCount ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,
     input_tokens: entry.inputTokens,
