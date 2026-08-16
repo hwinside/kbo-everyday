@@ -1,6 +1,7 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
 import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS } from "@/lib/baseball-qa/answer-budget";
+import { TEAMS } from "@/lib/constants/teams";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -396,15 +397,6 @@ export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
 const ANSWER_CLIPS = ["swing", "pitching"] as const;
 
 /**
- * 긍정 반응(인사·감사·칭찬) 2종.
- *
- * ⚠️ 2026-08-16 14:09 하린아빠 지시로 **응원 7종을 여기서 뺐다** —
- * "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출". 인사·감사에 응원이 뜨면
- * 응원이라는 신호가 아무 뜻도 갖지 않는다.
- */
-const POSITIVE_CLIPS = ["excited", "headspin"] as const;
-
-/**
  * 응원 7종 — **유저 최애팀에 관한 답변에만** 붙는다.
  *
  * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출".
@@ -430,9 +422,25 @@ export function isFavoriteTeamAnswer(
   answerTeamId: number | null | undefined,
   favoriteTeamId: number | null | undefined,
 ): boolean {
-  if (typeof answerTeamId !== "number" || !Number.isFinite(answerTeamId)) return false;
-  if (typeof favoriteTeamId !== "number" || !Number.isFinite(favoriteTeamId)) return false;
-  return answerTeamId === favoriteTeamId;
+  // ⚠️ **실존 구단 id 인지부터 본다** (삼순 #1228 4축-③).
+  //    종전엔 `Number.isFinite` + 동등 비교만 해서, 두 값이 **똑같이 잘못된** 경우
+  //    (0 vs 0 · -1 vs -1 · 1.5 vs 1.5 · 999 vs 999)를 전부 통과시켰다. 동등성만
+  //    보면 "같으니 최애팀" 이 되어 존재하지도 않는 팀에 응원이 붙는다.
+  //    실측: isFav(0,0)=true, isFav(999,999)=true 였다.
+  return isRealTeamId(answerTeamId) && isRealTeamId(favoriteTeamId) &&
+    answerTeamId === favoriteTeamId;
+}
+
+/**
+ * KBO 10개 구단의 실제 team id 인가.
+ *
+ * `TEAMS`(구단 SSOT)에서 파생한다 — 여기에 1..10 을 리터럴로 적으면 구단이 늘거나
+ * 재편될 때 조용히 어긋난다(M90 `게이트가 상수를 재구현하면 결함을 못 본다`와 같은 축).
+ */
+const REAL_TEAM_IDS: ReadonlySet<number> = new Set(TEAMS.map((team) => team.id));
+
+export function isRealTeamId(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && REAL_TEAM_IDS.has(value);
 }
 
 /**
@@ -442,19 +450,30 @@ export function isFavoriteTeamAnswer(
  * 항상 같은 동작을 보여준다. `Math.random()` 이면 새로고침마다 동작이 바뀌어
  * "이 답변은 이 동작"이라는 인과가 깨진다(M90 결정론 계약과 같은 축).
  *
- * 매핑(삼순 2026-08-16 확정):
- *  · answer                    → swing / pitching 교대
- *  · ack                       → excited / headspin 교대(인사·감사·칭찬·범위안내)
+ * 매핑(삼순 2026-08-16 확정 + 4축-② 의미 매핑 복원):
+ *  · **인사 → excited / 감사·칭찬 → headspin** — §7.6 의미 구분을 그대로 쓴다.
+ *    ⚠️ 이 둘을 messageId 로 교대시키면 "고마워"에 신남이, "안녕"에 헤드스핀이
+ *       나온다. 시드 교대는 **의미가 없는 축에서만** 쓴다(삼순 #1228 4축-②).
+ *  · answer                    → swing / pitching 교대 (의미 구분 없는 축)
+ *  · ack(motion 미상)          → excited (인사 기본값 — 의미를 모르면 가장 안전한 반응)
  *  · answer + **최애팀 답변**   → 응원 7종 순환 (하린아빠 2026-08-16 14:09)
  *  · picker / correction       → thinking (되묻는 중)
- *  · unavailable               → bored (답하지 못함)
+ *  · unavailable · motion=bored → bored (답하지 못함·거절)
  *  · null/unknown(legacy)      → swing / pitching 교대 — payload 없는 과거 답변도
  *    멈춰 있지 않게 한다(종전 idle 정지 폴백 대체).
+ *
+ * `motion` 은 서버가 §7.6 SSOT(`geniusMotionForResult`)로 계산해 payload 에 실은 값이다.
+ * 그 계산을 여기서 재현하지 않는다 — 재현하면 두 곳이 조용히 갈라진다.
  */
 export function geniusMotionClipFor(
   replyKind: GeniusReplyKind | null | undefined,
   messageId: number,
-  teams?: {
+  context?: {
+    /**
+     * 서버가 §7.6 SSOT 로 계산해 payload 에 실은 감정 모션.
+     * 인사=excited / 감사·칭찬=headspin / 거절=bored 의 **의미**가 여기 들어있다.
+     */
+    readonly motion?: GeniusMascotMotion | null;
     /** 답변이 다루는 구단의 canonical team id. 서버가 질문에서 해석해 payload 로 싣는다. */
     readonly answerTeamId?: number | null;
     /** 보고 있는 유저의 최애팀 id (프로필). */
@@ -465,9 +484,18 @@ export function geniusMotionClipFor(
   const seed = Math.abs(Math.trunc(messageId)) || 0;
   if (replyKind === "picker" || replyKind === "correction") return "thinking";
   if (replyKind === "unavailable") return "bored";
-  if (replyKind === "ack") return POSITIVE_CLIPS[seed % POSITIVE_CLIPS.length];
+
+  // §7.6 의미 모션이 실려 있으면 **그대로 쓴다** — 이름이 같은 클립이 이미 존재한다.
+  // 시드 교대로 덮으면 "고마워"에 신남이, "안녕"에 헤드스핀이 나온다(삼순 4축-②).
+  // 거절(bored)은 replyKind 가 ack 여도 여기서 잡힌다 — 범위 안내가 그 경우다.
+  const motion = context?.motion;
+  if (motion === "excited" || motion === "headspin" || motion === "bored") return motion;
+
+  // 의미를 모르는 ack — 인사 기본값. 무작위로 고르면 감사에 신남이 붙을 수 있다.
+  if (replyKind === "ack") return "excited";
+
   // 최애팀 얘기일 때만 응원 7종 — 그 외엔 야구 동작(fail-close).
-  if (isFavoriteTeamAnswer(teams?.answerTeamId, teams?.favoriteTeamId)) {
+  if (isFavoriteTeamAnswer(context?.answerTeamId, context?.favoriteTeamId)) {
     return CHEER_CLIPS[seed % CHEER_CLIPS.length];
   }
   // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.
@@ -669,8 +697,7 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 응원 자격 id — 값이 실려 오면 형식을 검증한다. 깨진 값이 통과하면 엉뚱한 팀 답변에
   // 응원이 붙는다. 없는 것(undefined)은 정상 — 구단이 특정 안 된 답변이 대부분이다.
   const answerTeamField = (obj as { answer_team_id?: unknown }).answer_team_id;
-  if (answerTeamField !== undefined &&
-      (!Number.isSafeInteger(answerTeamField) || Number(answerTeamField) < 1)) return false;
+  if (answerTeamField !== undefined && !isRealTeamId(answerTeamField)) return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
   // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.

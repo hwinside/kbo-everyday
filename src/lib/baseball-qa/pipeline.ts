@@ -95,6 +95,7 @@ import {
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
+  replyKindForMatchPath,
 } from "@/lib/constants/baseball-genius";
 
 export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
@@ -765,15 +766,17 @@ export function geniusMotionForResult(
  *  · 두 구단 이상(비교 질문)
  *  · 답을 못 한 경우 — 거절·차단·되묻기·오류에 응원이 붙으면 신호가 뒤집힌다.
  */
-export function answerTeamIdForResult(source: string, question: string): number | null {
-  // 실제로 "답한" 경로에만. `replyKindForMatchPath` 의 answer 칸과 같은 취지를 여기서
-  // 재현하지 않기 위해, 거절/되묻기/오류 계열을 명시 제외한다.
-  if (source === "ack" || source === "scope_guide" || source === "blocked" ||
-      source === "unsure" || source === "error" || source === "player_picker" ||
-      source === "question_correction" || source === "quota" || source === "no_context" ||
-      source === "service_redirect" || source === "stat_clarify") {
-    return null;
-  }
+export function answerTeamIdForResult(source: MatchPath, question: string): number | null {
+  // ⚠️ 거절 경로를 **손으로 열거하지 않는다** (삼순 #1228 4축-③).
+  //    종전엔 `ack`·`blocked`·`unsure`… 를 나열했는데, 새 MatchPath 가 생기면
+  //    그 목록에 없어서 **자동으로 자격을 얻는다**(fail-open). 실제로 `history_hold`·
+  //    `context_missing`·`name_suggest`·`limited`·`pending` 이 목록에서 빠져 있었다.
+    //    `replyKindForMatchPath`(전 경로 명시 열거 SSOT의 공식 접근자)에서 **answer 칸만**
+  //    통과시킨다 — 새 경로가 생기면 그 표에 등록해야 하므로 조용히 새는 경로가 없고,
+  //    표에 없는 값(`pending` 등)은 그 함수가 `unavailable` 로 fail-close 한다.
+  // ⚠️ 타입도 `MatchPath` 로 좁힌다 — 임의 문자열이 들어오면 컴파일에서 막힌다.
+  if (replyKindForMatchPath(source) !== "answer") return null;
+
   const canonical = resolveMentionedTeam(question);
   if (canonical === null) return null;
 

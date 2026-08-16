@@ -59,6 +59,23 @@ function webpFrameCount(buf: Buffer): number {
  *  · duration 이 상수로 박히면 SSOT 타이밍이 바뀌어도 조용히 어긋난다.
  * 셋 다 **파일이 실제로 들고 있는 값**이라, 코드가 아니라 자산을 검사해야 잡힌다.
  */
+/**
+ * 전 프레임의 duration(ms) 목록. **첫 프레임만 보면 나머지가 어긋나도 통과한다.**
+ * 삼순 #1228 4축-① — 재생 속도가 클립마다 다르면 같은 마스코트가 다른 인물처럼 보인다.
+ */
+function webpFrameDurations(buf: Buffer): number[] {
+  const out: number[] = [];
+  if (buf.length < 12 || buf.toString("ascii", 0, 4) !== "RIFF") return out;
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const fourcc = buf.toString("ascii", off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    if (fourcc === "ANMF") out.push(buf.readUIntLE(off + 8 + 12, 3));
+    off += 8 + size + (size % 2);
+  }
+  return out;
+}
+
 function webpPlayback(buf: Buffer): { loop: number | null; alpha: boolean; durationMs: number | null } {
   const out: { loop: number | null; alpha: boolean; durationMs: number | null } =
     { loop: null, alpha: false, durationMs: null };
@@ -68,6 +85,14 @@ function webpPlayback(buf: Buffer): { loop: number | null; alpha: boolean; durat
     const fourcc = buf.toString("ascii", off, off + 4);
     const size = buf.readUInt32LE(off + 4);
     if (fourcc === "VP8X") out.alpha = (buf.readUInt8(off + 8) & 0x10) !== 0;
+    // ⚠️ **무손실(VP8L) WebP 에는 VP8X 확장 청크가 없다.** poster 를 무손실로 저장하면
+    //    이 경로를 탄다 — VP8X 만 보면 "알파 없음"으로 오판한다(실측: 13종 전부 FAIL).
+    //    VP8L 비트스트림 헤더에 alpha_is_used 플래그가 들어있다:
+    //    signature(0x2f) + width-1(14b) + height-1(14b) + alpha(1b) + version(3b).
+    if (fourcc === "VP8L" && buf.readUInt8(off + 8) === 0x2f) {
+      const bits = buf.readUInt32LE(off + 9);          // 시그니처 다음 4바이트
+      out.alpha = ((bits >>> 28) & 0x1) !== 0;         // 14+14 비트 뒤의 alpha 플래그
+    }
     // ANIM: background(4B) + loop_count(2B, LE). loop_count 0 = 무한.
     if (fourcc === "ANIM" && out.loop === null) out.loop = buf.readUInt16LE(off + 12);
     // ANMF: frame header 16B 중 12..15 가 duration(24bit LE).
@@ -498,9 +523,9 @@ async function partDom() {
   try {
     await act(async () => { root.render(React.createElement(Harness)); });
     await waitFor(() => {
-      // ack(인사) → 긍정반응 9종 순환. 어느 클립인지는 (reply_kind, messageId) 결정론.
-      assert.equal(clipOf(container, 150), geniusMotionClipFor("ack", 150),
-        "초기 로드: 인사 답변에 결정론 클립");
+      // ack + §7.6 motion → 의미 클립. payload 의 motion 이 클립을 정한다(4축-②).
+      assert.equal(clipOf(container, 150), geniusMotionClipFor("ack", 150, { motion: "excited" }),
+        "초기 로드: 인사 답변에 의미 클립(excited)");
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
     });
     check("DOM: 초기 로드 — reply 영상 클립, 전체 마스코트 1개", true);
@@ -525,7 +550,8 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250));
+      // payload motion=headspin(감사·칭찬) → headspin 클립. 시드 교대가 아니다.
+      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250, { motion: "headspin" }));
       assert.equal(replyMascotOf(container, 150) === null, true, "이전 답변은 마스코트 자체가 완전히 사라진다 (13:53 지시)");
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
       assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /반갑습니다/);
@@ -543,7 +569,8 @@ async function partDom() {
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="240"]')?.textContent ?? "", /늦게 도착한/);
       assert.equal(replyMascotOf(container, 240) === null, true, "역순 도착한 과거 답변에 마스코트가 붙으면 안 된다");
-      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250), "역순 도착에도 최신 소유권 유지");
+      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250, { motion: "headspin" }),
+        "역순 도착에도 최신 소유권 유지");
       assert.equal(totalMascots(container), 1);
     });
     check("DOM: 역순 Realtime — 소유권 회귀 없음", true);
@@ -635,7 +662,8 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(clipOf(container, 650), geniusMotionClipFor("ack", 650), "답변 도착 → reply 소유권 복귀 + 클립");
+      assert.equal(clipOf(container, 650), geniusMotionClipFor("ack", 650, { motion: "headspin" }),
+        "답변 도착 → reply 소유권 복귀 + 클립");
       assert.equal(thinkingMascots(container), 0);
       assert.equal(totalMascots(container), 1);
     });
@@ -691,7 +719,7 @@ async function partDom() {
 async function partRenderContract() {
   const {
     GENIUS_MASCOT_HEIGHT_PX, GENIUS_MASCOT_IMG_CLASS,
-    GENIUS_MOTION_CLIPS, geniusMotionClipFor, geniusMotionSrc, geniusMotionPosterSrc, isFavoriteTeamAnswer,
+    GENIUS_MOTION_CLIPS, geniusMotionClipFor, geniusMotionSrc, geniusMotionPosterSrc, isFavoriteTeamAnswer, isRealTeamId,
   } = await import("../../src/lib/constants/baseball-genius");
   // 응원 자격 계산은 pipeline 소유 — payload 에 실리는 값이라 여기서 직접 태운다.
   const { answerTeamIdForResult } = await import("../../src/lib/baseball-qa/pipeline");
@@ -749,18 +777,32 @@ async function partRenderContract() {
     const play = webpPlayback(readFileSync(clipAbs));
     if (play.loop !== 0) notLooping.push(`${clip}(loop=${play.loop ?? "없음"})`);
     if (!play.alpha) noAlpha.push(clip);
-    // 12fps 목표(프레임당 ≈83ms). 원본 타이밍을 보존하므로 폭을 넓게 잡되,
-    // 24fps(≈42ms) 나 4fps(250ms) 로 어긋나면 잡힌다.
-    if (play.durationMs === null || play.durationMs < 60 || play.durationMs > 220) {
-      badFps.push(`${clip}(${play.durationMs ?? "없음"}ms)`);
+    // 12fps = 83.33ms/frame → 정수로는 83/84 만 허용한다.
+    // ⚠️ 종전엔 60~220ms 로 폭을 넓게 잡았는데, 그건 **false-green** 이었다:
+    //    실제 자산 10/13 종이 100~200ms(=5~10fps)였는데도 통과했다(삼순 #1228 4축-①).
+    //    "원본 타이밍 보존"이라는 전제 자체가 틀렸다 — SSOT WebP 의 frame duration 은
+    //    전 종 0 이라 보존할 타이밍이 애초에 없었다.
+    // ⚠️ 첫 프레임만 보면 나머지가 어긋나도 통과한다 — **전 프레임**을 검사한다.
+    const durations = webpFrameDurations(readFileSync(clipAbs));
+    const offSpec = durations.filter((d) => d !== 83 && d !== 84);
+    if (durations.length === 0 || offSpec.length > 0) {
+      badFps.push(`${clip}(${[...new Set(offSpec)].join("/") || "없음"}ms · ${offSpec.length}f)`);
     }
     // poster 도 alpha 가 있어야 reduced-motion 에서 네모가 안 뜬다.
     if (!webpPlayback(readFileSync(posterAbs)).alpha) noAlpha.push(`${clip}-poster`);
     // poster 는 "첫 프레임"이어야 한다 — 크기가 다르면 정지 순간 캐릭터가 튄다.
     const clipBuf = readFileSync(clipAbs);
     const posterBuf = readFileSync(posterAbs);
-    const dim = (b: Buffer) => b.toString("ascii", 12, 16) === "VP8X"
-      ? `${b.readUIntLE(24, 3) + 1}x${b.readUIntLE(27, 3) + 1}` : "?";
+    // 규격은 컨테이너 종류와 무관하게 읽는다 — VP8X(확장) / VP8L(무손실) 둘 다.
+    const dim = (b: Buffer) => {
+      const kind = b.toString("ascii", 12, 16);
+      if (kind === "VP8X") return `${b.readUIntLE(24, 3) + 1}x${b.readUIntLE(27, 3) + 1}`;
+      if (kind === "VP8L" && b.readUInt8(20) === 0x2f) {
+        const bits = b.readUInt32LE(21);
+        return `${(bits & 0x3fff) + 1}x${((bits >>> 14) & 0x3fff) + 1}`;
+      }
+      return "?";
+    };
     if (dim(clipBuf) !== dim(posterBuf)) {
       posterNotFirstFrame.push(`${clip}(${dim(clipBuf)} vs ${dim(posterBuf)})`);
     }
@@ -769,7 +811,7 @@ async function partRenderContract() {
     notLooping.length === 0, notLooping.join(", "));
   check("자산: 전 클립·poster 가 투명배경이다 (말풍선 옆 네모 방지)",
     noAlpha.length === 0, noAlpha.join(", "));
-  check("자산: 프레임 지속이 12fps 대역이다 (원본 타이밍 보존)",
+  check("자산: **전 프레임**이 정확히 12fps(83/84ms)다 — 클립마다 속도가 다르지 않다",
     badFps.length === 0, badFps.join(", "));
   check("자산: poster 규격이 본클립과 같다 (정지 순간 캐릭터가 안 튄다)",
     posterNotFirstFrame.length === 0, posterNotFirstFrame.join(", "));
@@ -845,10 +887,26 @@ async function partRenderContract() {
     check("클립 선택: 정상답변은 야구 동작 2종 교대(같은 동작 반복 없음)",
       answers.size === 2 && [...answers].every((c) => c === "swing" || c === "pitching"),
       [...answers].join(","));
+    // ── §7.6 의미 매핑 (삼순 #1228 4축-②) ─────────────────────────────────────
+    // 인사=excited / 감사·칭찬=headspin 은 **의미**다. 시드로 교대시키면
+    // "고마워"에 신남이, "안녕"에 헤드스핀이 나온다 — 그게 종전 회귀였다.
+    check("의미 매핑: 인사(motion=excited) → excited 클립, 시드와 무관",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: "excited" })).every((c) => c === "excited"));
+    check("의미 매핑: 감사·칭찬(motion=headspin) → headspin 클립, 시드와 무관",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: "headspin" })).every((c) => c === "headspin"));
+    check("의미 매핑: 거절(motion=bored) → bored 클립 — reply_kind 가 ack(범위 안내)여도",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("ack", i, { motion: "bored" })).every((c) => c === "bored"));
+    // 의미가 안 실린 ack 는 인사 기본값 — 무작위로 고르면 감사에 신남이 붙는다.
     const acks = new Set(Array.from({ length: 60 }, (_, i) => geniusMotionClipFor("ack", i)));
-    check("클립 선택: 긍정반응(인사·감사·칭찬)은 excited/headspin 교대",
-      acks.size === 2 && [...acks].every((c) => c === "excited" || c === "headspin"),
-      [...acks].join(","));
+    check("의미 매핑: motion 미상 ack 는 excited 고정(무작위 금지)",
+      acks.size === 1 && acks.has("excited"), [...acks].join(","));
+    // 의미 모션은 최애팀보다 **우선**한다 — 인사에 응원이 뜨면 신호가 뒤집힌다.
+    check("의미 매핑: 의미 모션이 최애팀 응원보다 우선한다",
+      geniusMotionClipFor("ack", 3, { motion: "excited", answerTeamId: 1, favoriteTeamId: 1 })
+        === "excited");
 
     // ── 응원 7종 = 최애팀 결속 (하린아빠 2026-08-16 14:09 · 삼순 #1228 P0) ────
     // "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출". 응원은 장식이 아니라
@@ -881,12 +939,27 @@ async function partRenderContract() {
       Array.from({ length: 30 }, (_, i) =>
         geniusMotionClipFor("answer", i, { answerTeamId: MY, favoriteTeamId: MY }) ===
         geniusMotionClipFor("answer", i, { answerTeamId: MY, favoriteTeamId: MY })).every(Boolean));
-    // 유효하지 않은 id(0·음수·NaN·소수)는 전부 자격 없음 — 느슨하면 우연히 같아질 수 있다.
-    const invalid = [0, -1, NaN, 1.5, undefined, null];
-    check("응원 fail-close: 유효하지 않은 팀 id 는 자격 없음",
+    // 유효하지 않은 id 는 전부 자격 없음.
+    const invalid = [0, -1, NaN, 1.5, 999, 11, undefined, null];
+    check("응원 fail-close: 유효하지 않은 팀 id 는 자격 없음(한쪽만 잘못돼도)",
       invalid.every((v) =>
         !isFavoriteTeamAnswer(v as number, MY) && !isFavoriteTeamAnswer(MY, v as number)),
       invalid.join(","));
+    // 🔴 **두 값이 똑같이 잘못된 경우**가 진짜 함정이다 (M23 이 검출).
+    //    동등 비교만 하면 `0 === 0`·`999 === 999` 가 통과해 존재하지 않는 팀에
+    //    응원이 붙는다. 실존 구단 id 인지를 **먼저** 봐야 닫힌다.
+    check("응원 fail-close: 두 값이 **똑같이** 잘못돼도 자격 없음(0/0 · 999/999)",
+      invalid.every((v) => !isFavoriteTeamAnswer(v as number, v as number)),
+      invalid.map((v) => `${String(v)}/${String(v)}`).join(","));
+    check("응원 fail-close: 실존 구단 id 만 통과한다(1~10 밖은 거부)",
+      [1, 10].every((id) => isRealTeamId(id)) &&
+      [0, 11, 999, -1, 1.5, NaN].every((id) => !isRealTeamId(id)));
+    // 같은 잘못된 값으로도 응원 클립이 나오면 안 된다 — 종단까지 확인한다.
+    check("응원 fail-close: 잘못된 id 쌍으로는 응원 클립이 재생되지 않는다",
+      invalid.every((v) => {
+        const clip = geniusMotionClipFor("answer", 3, { answerTeamId: v as number, favoriteTeamId: v as number });
+        return clip === "swing" || clip === "pitching";
+      }));
     // legacy(payload 없는 과거 답변)도 멈춰 있으면 안 된다 — 종전 idle 정지 폴백 대체.
     check("클립 선택: legacy(null/undefined) 도 야구 동작으로 살아있다",
       [null, undefined].every((k) => ["swing", "pitching"].includes(geniusMotionClipFor(k, 9))));
@@ -895,8 +968,12 @@ async function partRenderContract() {
     for (let i = 0; i < 200; i += 1) {
       for (const k of ["answer", "ack", "picker", "correction", "unavailable"] as const) {
         reachable.add(geniusMotionClipFor(k, i));
-        // 최애팀 답변 경로도 같이 태운다 — 응원 7종은 이 경로로만 도달한다.
+        // 최애팀 답변 경로 — 응원 7종은 이 경로로만 도달한다.
         reachable.add(geniusMotionClipFor(k, i, { answerTeamId: 1, favoriteTeamId: 1 }));
+        // §7.6 의미 모션 경로 — headspin 은 이 경로로만 도달한다.
+        for (const m of ["excited", "headspin", "bored"] as const) {
+          reachable.add(geniusMotionClipFor(k, i, { motion: m }));
+        }
       }
     }
     const unreachable = GENIUS_MOTION_CLIPS.filter((c) => !reachable.has(c));

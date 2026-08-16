@@ -323,9 +323,18 @@ check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
   // (고정 src 로 바뀌면 같은 결함이다).
   const mascotComponent = read("src/components/dm/GeniusMascotImage.tsx");
   assert.match(mascotComponent, /src=\{geniusMotionSrc\(clip\)\}/, "공유 컴포넌트가 동적 src 를 안 쓴다");
+  // §7.6 의미 모션(motion)·응원 자격(answerTeamId/favoriteTeamId)이 **전부** 전달돼야 한다.
+  // 하나라도 빠지면 그 축이 조용히 죽는다(motion 누락 → 감사에 신남, team 누락 → 응원 미도달).
   assert.match(mascotComponent,
-    /geniusMotionClipFor\(replyKind, messageId, \{ answerTeamId, favoriteTeamId \}\)/,
-    "클립 선택 SSOT 미사용(또는 응원 최애팀 결속 누락)");
+    /geniusMotionClipFor\(replyKind, messageId, \{ motion, answerTeamId, favoriteTeamId \}\)/,
+    "클립 선택 SSOT 미사용(또는 의미 모션·응원 최애팀 결속 누락)");
+  // 사용처가 payload 의 motion 을 실제로 넘기는지 — 넘기지 않으면 위 계약이 허공이다.
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?motion=\{geniusMotionFromPayload\(geniusReply\)\}/,
+    "사용처가 payload 의 §7.6 모션을 전달하지 않는다");
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?answerTeamId=\{geniusReply\?\.answer_team_id \?\? null\}/,
+    "사용처가 응원 자격 팀 id 를 전달하지 않는다");
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,320}?favoriteTeamId=\{profile\?\.team_id \?\? null\}/,
+    "사용처가 유저 최애팀을 전달하지 않는다");
   // 대기 = 되묻기(thinking 클립) / 실패 = 답하지 못함(bored 클립) 으로 번역된다.
   assert.match(typing, /waiting:\s*"picker"/, "대기 상태 매핑 없음");
   assert.match(typing, /failed:\s*"unavailable"/, "실패 상태 매핑 없음");

@@ -16,8 +16,11 @@
    → 8/5 에 검증된 flood-fill 키잉(외곽 연결성 판정)으로 전환.
      밝기 threshold 는 유니폼·모자가 남색이라 캐릭터 몸이 같이 날아간다(8/5 실측).
 
-⚠️ 프레임 duration 은 원본에서 **읽어서** 계산한다 — 상수로 박으면 SSOT 가 다른
-   타이밍으로 갱신됐을 때 조용히 어긋난다.
+⚠️ 프레임 duration 은 **12fps 고정**이다 (삼순 #1228 4축-①).
+   종전에는 "원본 타이밍 보존"이라며 원본 duration 을 합산했는데, SSOT WebP 의
+   frame duration 이 **전 종 0** 이라(실측) 합산이 무의미했고 100~200ms 로 제각각
+   갈렸다. 재생 속도가 종마다 다르면 같은 마스코트가 클립마다 다른 인물처럼 보인다.
+   12fps = 83.33ms → 정수로 쓸 수 없으므로 **83/84 를 번갈아** 넣어 평균을 맞춘다.
 """
 import argparse
 import hashlib
@@ -38,6 +41,8 @@ TOL = 26          # 배경 색 허용 오차
 TARGET_H = 192    # 2x 자산 (렌더 96px)
 STEP = 2          # 24fps → 12fps
 QUALITY = 62
+# 12fps = 83.33ms/frame. 정수만 쓸 수 있어 83/84 를 번갈아 넣어 평균을 맞춘다.
+FRAME_MS = (83, 84)
 
 
 def key_frame(rgb: np.ndarray) -> np.ndarray:
@@ -85,8 +90,23 @@ def build(name: str):
         rgba = np.concatenate([est, al * 255], axis=2).astype(np.uint8)
         out.append(Image.fromarray(rgba).resize((nw, TARGET_H), Image.LANCZOS))
 
-    dur = sum(durs[i] for i in idx[:2]) if len(idx) > 1 else durs[0] * STEP
-    return out, {"frames": len(out), "w": nw, "h": TARGET_H, "duration_ms": dur,
+    # ⚠️ Pillow WebP 인코더는 **연속된 동일 프레임을 하나로 합치고 duration 을 더한다.**
+    #    그러면 83+84=167ms 짜리 프레임이 생겨 "전 프레임 12fps" 계약이 깨진다
+    #    (실측: pitching·thinking·cheerD 각 1프레임). 원본에 정지 구간이 있으면 발생한다.
+    #    투명 코너 픽셀의 alpha 를 흔들어 동일 판정을 깬다 — 완전 투명 영역이라
+    #    화면에는 아무 차이가 없다.
+    #    ⚠️ **RGB 만 흔들면 소용없다** — alpha=0 픽셀의 RGB 는 lossy 인코딩이 평탄화해
+    #       병합이 되살아난다(실측: cheerD·pitching·thinking 각 1프레임 잔존).
+    #       WebP 는 **alpha 채널을 무손실로** 저장하므로 alpha 를 1~3 으로 흔든다.
+    #       alpha 1/255 ≈ 0.4% 불투명 — 화면에서는 보이지 않는다.
+    for i in range(len(out)):
+        px = out[i].load()
+        px[0, 0] = (0, 0, 0, 1 + (i % 3))
+
+    # 프레임별 duration — 83/84 교대. Pillow 는 리스트를 받아 프레임마다 적용한다.
+    durations = [FRAME_MS[i % len(FRAME_MS)] for i in range(len(out))]
+    return out, {"frames": len(out), "w": nw, "h": TARGET_H,
+                 "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
                  "source_frames": len(raw)}
 
 
@@ -119,10 +139,19 @@ def main() -> int:
         frames, meta = build(n)
         clip = os.path.join(tmpdir, f"{n}.webp")
         poster = os.path.join(tmpdir, f"{n}-poster.webp")
-        frames[0].save(clip, save_all=True, append_images=frames[1:], duration=meta["duration_ms"],
-                       loop=0, format="WEBP", quality=QUALITY, method=6)
-        # poster = 첫 프레임 정지본. reduced-motion 에서 자산 교체로 실제 정지시킨다.
-        frames[0].save(poster, format="WEBP", quality=QUALITY, method=6, lossless=False)
+        frames[0].save(clip, save_all=True, append_images=frames[1:],
+                       duration=meta["durations_ms"], loop=0, format="WEBP",
+                       quality=QUALITY, method=6, exact=True)
+        # poster = **인코딩된 클립의 첫 프레임을 그대로 다시 꺼내** 저장한다.
+        # ⚠️ 원본 프레임을 따로 인코딩하면 lossy 재인코딩 노이즈로 poster 와 첫 프레임이
+        #    미세하게 달라진다(실측 평균 4~5, 최대 54). reduced-motion 으로 전환되는
+        #    순간 그 차이가 깜빡임으로 보인다. 같은 인코딩 결과에서 꺼내면 원리적으로 같다.
+        # ⚠️ **무손실**로 저장한다. lossy 로 다시 인코딩하면 클립 첫 프레임과 평균 3 정도
+        #    어긋나고, reduced-motion 으로 전환되는 순간 그 차이가 깜빡임으로 보인다.
+        #    poster 는 reduced-motion 에서만 로드되므로 용량 증가가 상시 비용이 아니다.
+        with Image.open(clip) as enc:
+            enc.seek(0)
+            enc.convert("RGBA").save(poster, format="WEBP", lossless=True, method=6)
         meta["clip_sha256"] = sha256(clip)
         meta["poster_sha256"] = sha256(poster)
         meta["clip_kb"] = round(os.path.getsize(clip) / 1024)
@@ -133,12 +162,14 @@ def main() -> int:
                 if not os.path.exists(shipped) or sha256(shipped) != sha256(built):
                     mismatched.append(os.path.basename(built))
         print(f'{n:12s} {meta["frames"]:3d}f {meta["w"]:3d}x{meta["h"]} '
-              f'{meta["clip_kb"]:5d}KB dur={meta["duration_ms"]}ms', flush=True)
+              f'{meta["clip_kb"]:5d}KB {meta["fps"]}fps '
+              f'dur={sorted(set(meta["durations_ms"]))}ms', flush=True)
 
     payload = {
         "generator": "scripts/assets/build-mascot-motion.py",
         "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
-        "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL},
+        "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
+                   "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "clips": report,
     }
     if args.check:

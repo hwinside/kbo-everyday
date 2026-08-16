@@ -139,24 +139,24 @@ const mutations = [
   //    종전 M16~M20 은 CSS idle/감정 모션을 훼손했으나 그 코드 자체가 폐기됐다.
   //    같은 자리를 **새 구조의 결함**으로 대체한다.
   {
-    name: "M16 클립 선택을 thinking 고정으로 (전 답변이 같은 동작 = 사실상 정지)",
+    name: "M16 §7.6 의미 모션 무시 (인사/감사 구분 소실 — 고마워에 신남이 뜬다)",
     file: TARGETS[2],
-    from: '  if (replyKind === "ack") return POSITIVE_CLIPS[seed % POSITIVE_CLIPS.length];',
-    to: '  if (replyKind === "ack") return "thinking";',
-    expect: "긍정반응(인사·감사·칭찬)은 excited/headspin 교대",
+    from: '  if (motion === "excited" || motion === "headspin" || motion === "bored") return motion;',
+    to: '  if (false) return motion as GeniusMotionClip;',
+    expect: "의미 매핑",
   },
   {
     name: "M22 응원 최애팀 결속 해제 (모든 답변에 응원 — 14:09 지시 위반)",
     file: TARGETS[2],
-    from: '  if (isFavoriteTeamAnswer(teams?.answerTeamId, teams?.favoriteTeamId)) {',
+    from: '  if (isFavoriteTeamAnswer(context?.answerTeamId, context?.favoriteTeamId)) {',
     to: '  if (true) {',
     expect: "응원 fail-close",
   },
   {
     name: "M23 응원 자격을 느슨하게 (한쪽만 있어도 통과 — 남의 팀에 응원)",
     file: TARGETS[2],
-    from: '  return answerTeamId === favoriteTeamId;',
-    to: '  return answerTeamId === favoriteTeamId || !favoriteTeamId;',
+    from: '  return isRealTeamId(answerTeamId) && isRealTeamId(favoriteTeamId) &&',
+    to: '  return (answerTeamId != null) && (favoriteTeamId != null) &&',
     expect: "응원 fail-close",
   },
   {
@@ -169,8 +169,8 @@ const mutations = [
   {
     name: "M25 응원 자격을 거절 경로에도 부여 (차단인데 응원이 뜬다)",
     file: TARGETS[0],
-    from: '  if (source === "ack" || source === "scope_guide" || source === "blocked" ||',
-    to: '  if (false || source === "scope_guide" || source === "blocked" ||',
+    from: '  if (replyKindForMatchPath(source) !== "answer") return null;',
+    to: '  if (false) return null;',
     expect: "응원",
   },
   {

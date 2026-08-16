@@ -2,6 +2,7 @@
 
 import {
   GENIUS_MASCOT_IMG_CLASS,
+  type GeniusMascotMotion,
   geniusMotionClipFor,
   geniusMotionPosterSrc,
   geniusMotionSrc,
@@ -31,6 +32,7 @@ import {
 export default function GeniusMascotImage({
   replyKind = null,
   messageId,
+  motion = null,
   answerTeamId = null,
   favoriteTeamId = null,
   testId,
@@ -39,6 +41,11 @@ export default function GeniusMascotImage({
   replyKind?: GeniusReplyKind | null;
   /** 클립 선택 시드. 같은 메시지는 reload·재진입·다른 기기에서도 같은 동작이 나온다. */
   messageId: number;
+  /**
+   * 서버가 §7.6 SSOT 로 계산해 payload 에 실은 감정 모션 (인사=excited /
+   * 감사·칭찬=headspin / 거절=bored). **의미**가 여기 들어있어 시드 교대보다 우선한다.
+   */
+  motion?: GeniusMascotMotion | null;
   /**
    * 답변이 다루는 구단 canonical id (서버 payload). 유저 최애팀과 **exact 일치**할 때만
    * 응원 7종이 재생된다 — 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에".
@@ -50,7 +57,7 @@ export default function GeniusMascotImage({
   /** 게이트가 소유권을 세는 앵커. 사용처마다 다르므로 호출부가 준다. */
   testId: string;
 }) {
-  const clip = geniusMotionClipFor(replyKind, messageId, { answerTeamId, favoriteTeamId });
+  const clip = geniusMotionClipFor(replyKind, messageId, { motion, answerTeamId, favoriteTeamId });
   return (
     // ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈출 수 없다 — 재생 주체가
     // 이미지 디코더라 CSS 가 관여하지 못한다. `prefers-reduced-motion` 에서는
