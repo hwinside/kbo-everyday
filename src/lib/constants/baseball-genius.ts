@@ -312,6 +312,39 @@ export function geniusMascotSrc(state: GeniusMascotState): string {
 }
 
 /**
+ * 대화 마스코트 렌더 규격 **SSOT** (2026-08-16 하린아빠 지시 — "캐릭터가 너무 작아서
+ * 잘 안보임. 상단의 캐릭터 크기만큼 키워주고").
+ *
+ * 종전 `h-8`(32px)은 헤더 마스코트(`h-24` = 96px)의 1/3 이라 실기기에서 캐릭터가
+ * 식별되지 않았다. 자산은 96px 원본(`yajalal-<state>-96.png`, 실측 77x96)이라
+ * 96px 렌더는 **원본 크기 그대로**다 — 확대 보간이 아니다.
+ *
+ * ⚠️ 클래스 문자열을 사용처마다 복제하지 않는다. 복제하면 한쪽만 고쳐져도 게이트가
+ * 못 잡는다(M90 `게이트가 상수를 재구현하면 결함을 못 본다` 계약과 같은 축).
+ * 게이트는 이 상수를 **직접 import 해서** 검사한다.
+ */
+export const GENIUS_MASCOT_HEIGHT_PX = 96;
+export const GENIUS_MASCOT_IMG_CLASS = "h-24 w-auto max-w-none object-contain";
+
+/**
+ * 상시 idle 미세 모션 클래스 (2026-08-16 하린아빠 지시 — "캐릭터가 안움직이는 것 같은데
+ * 움직이게 해줘").
+ *
+ * §7.6 감정 모션(excited/headspin/bored)은 **감정 반응 전용**이라 지식 답변에는 아예
+ * 붙지 않는다(`geniusMotionForResult` → undefined). 그래서 캡처처럼 일반 질문에
+ * 답할 때는 캐릭터가 완전히 정지해 보인다.
+ *
+ * idle 은 감정 모션과 **별개 축**이다:
+ *  · 부착 대상 = 화면에 실제로 렌더되는 그 마스코트 1개(소유권 판정은 page 가 그대로 소유).
+ *  · 감정 모션과 **겹쳐 돈다** — idle 은 wrapper 에, 감정 모션은 img 에 걸어 transform
+ *    충돌을 구조적으로 없앤다(같은 엘리먼트에 두 animation 을 걸면 뒤 선언이 transform 을
+ *    통째로 덮어써 한쪽이 조용히 죽는다).
+ *  · §7.4 "모션 30초 1회"는 **감정 반응 남용** 방지 계약이므로 idle 은 그 대상이 아니다.
+ *    idle 은 DB claim 을 타지 않고 payload 에도 실리지 않는다(순수 표시 계층).
+ */
+export const GENIUS_MASCOT_IDLE_MOTION_CLASS = "genius-motion-idle inline-flex";
+
+/**
  * 동명이인 picker 선택지 1개.
  *
  * 로스터 실측(2026-08-03): 880명 중 32그룹 72명이 동명이인이며 그중 7그룹은 **같은 팀에도**
