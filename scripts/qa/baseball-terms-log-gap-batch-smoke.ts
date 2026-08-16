@@ -65,7 +65,7 @@ const batchSql = fs.readFileSync(
  */
 const SEED_ROWS = 132;
 const RECONCILED_ROWS = 4;
-const BATCH_ROWS = 28;
+const BATCH_ROWS = 27;
 const FINAL_ROWS = SEED_ROWS + RECONCILED_ROWS + BATCH_ROWS;
 const PRODUCTION_ROWS_BEFORE = 136;
 
@@ -96,6 +96,20 @@ const productionInventory = JSON.parse(
  *   이제 fixture 에 **질문 원문 + match_path** 를 통째로 담고, 게이트가 그것을 세고
  *   판정한다(문자열 포함 검색은 코드가 재실행한다 — 아래 ⑨).
  */
+interface LogHit {
+  question: string;
+  matchPath: string;
+  /** 배치 적용 후 exact 매칭으로 이 term 이 나오는가 */
+  exactAfter: boolean;
+  /** 질문의 **어절 하나**가 이 term 으로 매칭되는가 (production matchGlossary 재사용) */
+  eojeolMatch: boolean;
+  /** 그 질문의 사전 후보 개수 */
+  candidateCount: number;
+  /** 배치 **이전**에도 잡혔는가 — true 면 이 배치의 근거가 아니다 */
+  baseCandidate: boolean;
+  baseExact: boolean;
+}
+
 const logEvidenceFixture = JSON.parse(
   fs.readFileSync(path.join(ROOT, "scripts/qa/fixtures/baseball-terms-log-evidence-20260816.json"), "utf8"),
 ) as {
@@ -105,7 +119,26 @@ const logEvidenceFixture = JSON.parse(
   terms: Array<{
     term: string;
     aliases: string[];
-    hits: Array<{ question: string; matchPath: string; matchedKey: string }>;
+    /**
+     * 수록 자격.
+     *   `log_evidence`     운영 로그에 유효 근거가 있다 (기본)
+     *   `set_completeness` 유효 근거는 없지만 **이미 수록한 형제 항목의 집합을 완성**한다
+     *                      (1루수·2루수를 넣고 3루수만 빼면 유저가 물을 때 못 답한다)
+     */
+    admission: "log_evidence" | "set_completeness";
+    /** `set_completeness` 일 때 근거가 되는 형제 term */
+    siblings?: string[];
+    /**
+     * **유효 근거** — 질문 전체가 exact 로 회수되거나, **어절 하나가** 이 term 으로 매칭되는 것.
+     * 판정은 production `matchGlossary` 를 어절에 재사용한다(새 토크나이저 신설 0).
+     */
+    evidence: LogHit[];
+    /**
+     * **우연 매칭** — 후보에는 들어가지만 어느 어절도 이 용어가 아닌 것.
+     * `glossaryCandidatesIn` 이 원시 substring(`key.includes(nameKey)`)이라
+     * `돈내야만 생중계` 가 `내야`(내야수 alias)에 걸린다. 근거로 쓰지 않는다.
+     */
+    incidental: LogHit[];
   }>;
 };
 
@@ -313,14 +346,18 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
     }
   }
 
-  // ⑨ 신규 28항목 전부 운영 로그 근거 보유 — 근거 없는 행 0
+  // ⑨ 신규 항목 전부 **유효** 운영 로그 근거 보유 — 유효 근거 0인 행 0
   //
-  //   🔴 삼순 2차 NO-GO ③: 종전에는 hit 개수를 **소스에 자가 기입**해 두고 `hits > 0` 만 봤다.
-  //     숫자를 내가 적었으니 그 검증은 아무 것도 증명하지 않는다.
-  //     이제 fixture 에 담긴 **질문 원문**을 게이트가 직접 재검증한다:
-  //       · 그 질문이 정말 이 term/alias 를 포함하는가 (문자열 포함을 코드가 다시 계산)
-  //       · fixture 가 기록한 `matchedKey` 가 실제 DB 행의 term/alias 안에 있는가
-  //     즉 근거는 "내가 적은 숫자"가 아니라 "원문 + 실제 사전 행"의 관계로 성립한다.
+  //   🔴 삼순 3차 NO-GO ④: 종전 근거는 단순 substring 집계라 `돈내야만` 을 `내야`(내야수)
+  //     근거로 실제 채택했다.
+  //   실측해보니 이건 **fixture 만의 문제가 아니었다** — production `glossaryCandidatesIn` 이
+  //     `key.includes(nameKey)` 원시 substring 이라 그 질문을 정말 `내야수` 후보로 삼는다.
+  //     (게이트가 이 사실을 먼저 잡았다.) 후보 단계의 과탐은 매퍼가 fail-close 로 거르는
+  //     설계이므로 여기서 토크나이저를 고치지 않는다 — 대신 **근거의 자격**을 좁힌다.
+  //
+  //   유효 근거 = exact 회수 **또는** 후보가 이 term 하나뿐 (매퍼가 실제로 고를 수 있는 형태)
+  //   우연 매칭 = 후보엔 들지만 그 용어를 묻는 질문이 아님 → 근거로 세지 않는다
+  //   게이트는 fixture 의 분류를 믿지 않고 **같은 판정을 다시 실행**해 대조한다.
   if (applyBatch) {
     const seedTermSet = new Set(baseRows.map((r) => r.term));
     const prodTerms = new Set(productionInventory.terms);
@@ -328,12 +365,54 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
     check(newRows.length === BATCH_ROWS, `신규(정본화 제외) ${BATCH_ROWS}건 (실제 ${newRows.length})`);
 
     const evidenceByTerm = new Map(logEvidenceFixture.terms.map((t) => [t.term, t]));
-    const squash = (text: string) => text.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+    // 🔴 유효 근거 판정 — **production `matchGlossary` 를 어절에 재사용**한다.
+    //   새 토크나이저·정규식을 만들지 않는다(룰 추가 0). 질문을 공백으로 나눠 그대로 태운다:
+    //     `돈내야만`  → matchGlossary → null      → 우연
+    //     `내야수가`  → matchGlossary → 내야수     → 유효
+    //     `레프트가`  → matchGlossary → 좌익수     → 유효 (전체 exact 는 미스지만 매퍼가 고를 수 있다)
+    //   종전 정의(`후보가 1개면 유효`)는 게이트가 먼저 반증했다 — `돈내야만` 질문의 후보가
+    //   실제로 `내야수` 하나뿐이라 그 정의로는 우연을 걸러내지 못했다.
+    const classify = (question: string, term: string) => {
+      const cands = glossaryCandidatesIn(glossary, question).map((e) => e.term);
+      const exact = matchGlossary(glossary, question)?.term ?? null;
+      const eojeolMatch = question
+        .split(/\s+/)
+        .some((word) => word.length > 0 && matchGlossary(glossary, word)?.term === term);
+      const inCandidates = cands.includes(term) || exact === term;
+      return { cands, exact, eojeolMatch, inCandidates, valid: exact === term || eojeolMatch };
+    };
+
     for (const r of newRows) {
       const ev = evidenceByTerm.get(r.term);
       check(ev !== undefined, `운영 로그 근거 fixture 존재: ${r.term}`);
       if (!ev) continue;
-      check(ev.hits.length > 0, `운영 로그 근거 1건 이상: ${r.term} (실제 ${ev.hits.length})`);
+      // 수록 자격 — 유효 근거가 있거나, 이미 수록한 형제 집합을 완성하는 경우다.
+      if (ev.admission === "log_evidence") {
+        check(
+          ev.evidence.length > 0,
+          `🔴 유효 운영 로그 근거 0: ${r.term} — 우연 매칭 ${ev.incidental.length}건뿐이면 수록 근거가 없다`,
+        );
+      } else {
+        // `set_completeness` — 형제가 **실제로 이 배치에 함께 수록**되고 각자 유효 근거를
+        //   가져야 한다. 아니면 "집합 완성"이라는 근거 자체가 성립하지 않는다.
+        check((ev.siblings ?? []).length > 0, `set_completeness 인데 형제 목록이 없다: ${r.term}`);
+        for (const sibling of ev.siblings ?? []) {
+          const sib = evidenceByTerm.get(sibling);
+          check(
+            newRows.some((x) => x.term === sibling),
+            `set_completeness 형제가 이 배치에 없다: ${r.term} ← ${sibling}`,
+          );
+          check(
+            sib !== undefined && sib.evidence.length > 0,
+            `set_completeness 형제가 유효 근거를 못 가졌다: ${r.term} ← ${sibling}`,
+          );
+        }
+        // 로그에 **등장은 해야** 한다 — 아무도 안 묻는 용어를 집합 논리로 밀어 넣지 않는다.
+        check(
+          ev.evidence.length + ev.incidental.length > 0,
+          `set_completeness 인데 로그 등장 0: ${r.term}`,
+        );
+      }
 
       // fixture 의 alias 목록이 **실제 DB 행과 일치**하는가 — 낡은 fixture 차단.
       check(
@@ -341,17 +420,34 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
         `근거 fixture alias 가 DB 행과 다르다: ${r.term} (fixture ${JSON.stringify(ev.aliases)} / DB ${JSON.stringify(r.aliases)})`,
       );
 
-      // 각 hit 이 정말 이 term/alias 를 포함하는가 — 포함 판정을 **코드가 다시 실행**한다.
-      const keys = [r.term, ...(r.aliases ?? [])].map(squash);
-      for (const hit of ev.hits) {
-        const q = squash(hit.question);
+      for (const hit of ev.evidence) {
+        const c = classify(hit.question, r.term);
         check(
-          keys.some((k) => k.length > 0 && q.includes(k)),
-          `근거 불성립: "${hit.question}" 에 ${r.term} 의 term/alias 가 없다`,
+          c.valid,
+          `유효 근거가 아니다: "${hit.question}" → ${r.term} (후보 ${JSON.stringify(c.cands)}, exact ${c.exact ?? "-"})`,
         );
         check(
-          keys.includes(squash(hit.matchedKey)),
-          `근거 matchedKey 불일치: ${r.term} ← "${hit.matchedKey}" (현재 alias 밖)`,
+          (c.exact === r.term) === hit.exactAfter,
+          `fixture exactAfter 불일치: ${r.term} "${hit.question}"`,
+        );
+        check(c.cands.length === hit.candidateCount, `fixture candidateCount 불일치: ${r.term} "${hit.question}"`);
+        check(c.eojeolMatch === hit.eojeolMatch, `fixture eojeolMatch 불일치: ${r.term} "${hit.question}"`);
+        // 배치 **이전**에는 잡히지 않아야 이 배치의 근거다 — 우연 통과 차단.
+        const baseCands = glossaryCandidatesIn(baseGlossary, hit.question).map((e) => e.term);
+        const baseExact = matchGlossary(baseGlossary, hit.question)?.term ?? null;
+        check(
+          !baseCands.includes(r.term) && baseExact !== r.term,
+          `근거 무효: "${hit.question}" 은 배치 이전에도 ${r.term} 이 잡혔다`,
+        );
+        check(hit.baseCandidate === false && hit.baseExact === false, `fixture base 플래그가 true: ${r.term}`);
+      }
+
+      // 우연 매칭으로 분류한 것이 정말 우연인지도 확인한다 — 유효를 우연으로 숨기면 안 된다.
+      for (const hit of ev.incidental) {
+        const c = classify(hit.question, r.term);
+        check(
+          c.inCandidates && !c.valid,
+          `우연으로 분류했는데 실제로는 유효 근거다: "${hit.question}" → ${r.term} (후보 ${JSON.stringify(c.cands)})`,
         );
       }
     }
@@ -360,11 +456,29 @@ async function runChecks(applyBatch: boolean): Promise<CheckResult> {
       `근거 fixture 가 신규 전건을 덮는가 ${BATCH_ROWS} (실제 ${logEvidenceFixture.terms.length})`,
     );
 
-    // 종단 케이스의 질문도 근거 fixture 안에 실재해야 한다 — 두 fixture 가 갈라지면 안 된다.
+    // 🔴 경계 축 고정 — 삼순이 지적한 `돈내야만` 이 **유효 근거로 채택되지 않는지** 직접 확인한다.
+    //   (후보에는 든다. production 토크나이저가 원시 substring 이기 때문이다.
+    //    그 사실을 숨기지 않고, "근거 자격이 없다"는 것을 계약으로 박는다.)
+    for (const [question, term] of [
+      ["폰으로 야구생중계못해?티빙에 꼭 돈내야만 생중계볼수있어?", "내야수"],
+      ["박해민의 통산 안타수는?", "타수"],
+      ["연타석홈런있어", "타석"],
+    ] as Array<[string, string]>) {
+      const c = classify(question, term);
+      check(!c.valid, `어절 내부 우연 매칭이 유효 근거가 됐다: "${question}" → ${term}`);
+      const ev = evidenceByTerm.get(term);
+      check(
+        ev !== undefined && !ev.evidence.some((h) => h.question === question),
+        `우연 매칭이 fixture 의 유효 근거 목록에 들어갔다: "${question}" → ${term}`,
+      );
+    }
+
+    // 종단 케이스의 질문도 근거 fixture 의 **유효** 목록에 실재해야 한다.
     for (const c of END_TO_END_CASES) {
       const ev = evidenceByTerm.get(c.term);
       check(
-        ev !== undefined && ev.hits.some((h) => h.question === c.question && h.matchPath === c.loggedPath),
+        ev !== undefined
+          && [...ev.evidence, ...ev.incidental].some((h) => h.question === c.question && h.matchPath === c.loggedPath),
         `종단 케이스가 근거 로그에 없다: ${c.term} "${c.question}" (${c.loggedPath})`,
       );
     }

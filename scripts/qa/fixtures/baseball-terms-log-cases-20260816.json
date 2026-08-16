@@ -233,16 +233,6 @@
    "expect": "exact"
   },
   {
-   "term": "파울폴",
-   "question": "파울 타구가 야구장 폴대를 맞추면 홈런이야?",
-   "loggedPath": "stat_clarify",
-   "single": true,
-   "defform": false,
-   "otherTerms": 0,
-   "compare": false,
-   "expect": "guard_owned"
-  },
-  {
    "term": "만루",
    "question": "만루",
    "loggedPath": "unsure",

@@ -75,9 +75,45 @@ ON CONFLICT (term) DO UPDATE
  WHERE baseball_terms.source_kind = 'editorial_definition'
    AND baseball_terms.source_url IS NULL
    AND baseball_terms.rule_version = '2026'
-   -- ⚠️ answer 는 **비교도 갱신도 하지 않는다** — 톤 migration(20260814121000) 결과를
+   -- ⚠️ answer 는 **비교만 하고 갱신하지 않는다** — 톤 migration(20260814121000) 결과를
    --   되돌리면 안 되고, 이 교정의 대상은 metadata 한 칸(rule_version)뿐이다.
    AND baseball_terms.answer = EXCLUDED.answer;
+
+-- ── ⓐ-2 postcondition fail-close (삼순 2026-08-16 3차 NO-GO) ─────────────────────
+--
+-- 🔴 위 CAS 는 조건이 안 맞으면 **조용히 0행 UPDATE 하고 성공**한다. 그러면 우리가 닫으려던
+--   repo↔production 간극이 그대로 남은 채 migration 은 "적용됨"으로 기록된다.
+--   `aliases`·`category`·`reviewed_at` drift 도 CAS 조건 밖이라 감지되지 않는다.
+--   → 트랜잭션 안에서 **최종 상태를 직접 확인**하고, 하나라도 어긋나면 EXCEPTION 으로
+--     전체를 되돌린다. "조용한 부분 적용"이 불가능해진다.
+DO $$
+DECLARE
+  expected CONSTANT jsonb := $json$[
+    {"term":"10-10 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["10-10","10-10클럽","텐텐클럽","텐텐 클럽"]},
+    {"term":"20-20 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["20-20","20-20클럽","트웬티트웬티클럽"]},
+    {"term":"30-30 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["30-30","30-30클럽","서티서티클럽"]},
+    {"term":"40-40 클럽","category":"record","source_kind":"editorial_definition","rule_version":"not_applicable","reviewed_at":"2026-08-11","aliases":["40-40","40-40클럽","포티포티클럽"]}
+  ]$json$::jsonb;
+  row_expected jsonb;
+  actual public.baseball_terms%ROWTYPE;
+BEGIN
+  FOR row_expected IN SELECT * FROM jsonb_array_elements(expected) LOOP
+    SELECT * INTO actual FROM public.baseball_terms WHERE term = row_expected->>'term';
+    IF NOT FOUND THEN
+      RAISE EXCEPTION '정본화 실패: 행이 없다 (term=%)', row_expected->>'term';
+    END IF;
+    IF actual.category IS DISTINCT FROM row_expected->>'category'
+       OR actual.source_kind IS DISTINCT FROM row_expected->>'source_kind'
+       OR actual.rule_version IS DISTINCT FROM row_expected->>'rule_version'
+       OR actual.source_url IS NOT NULL
+       OR actual.reviewed_at IS DISTINCT FROM (row_expected->>'reviewed_at')::date
+       OR to_jsonb(actual.aliases) IS DISTINCT FROM row_expected->'aliases' THEN
+      RAISE EXCEPTION '정본화 drift (term=%): category=% source_kind=% rule_version=% source_url=% reviewed_at=% aliases=%',
+        row_expected->>'term', actual.category, actual.source_kind, actual.rule_version,
+        actual.source_url, actual.reviewed_at, to_jsonb(actual.aliases);
+    END IF;
+  END LOOP;
+END $$;
 
 INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
 VALUES
@@ -194,9 +230,9 @@ VALUES
 
 -- ── 타격 (로그: `백투백` `루킹삼진` `그라운드 홈런은?` `1루타랑 안타랑 뭐가 달라`) ──
 ('1루타', ARRAY['단타','single','싱글','일루타'],
- '타자가 1루까지만 진루한 안타입니다.
+ '타자가 타격한 타구로 1루에 서는 안타입니다.
 안타 중 가장 자주 나오는 형태입니다.
-장타율 계산에서는 1점으로 칩니다.',
+총루타는 1로 기록됩니다.',
  'batting', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-16'),
 
 ('백투백', ARRAY['백 투 백','back to back','연속타자홈런','백투백홈런'],
@@ -224,11 +260,6 @@ VALUES
 홈과 1루 사이의 뒤쪽 절반 구간에 적용합니다.',
  'rule', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-16'),
 
-('파울폴', ARRAY['폴대','파울폴대','foul pole','파울 폴','폴'],
- '좌우 담장 끝에 세워 페어와 파울을 가르는 기둥입니다.
-타구가 폴대를 직접 맞히면 홈런으로 인정합니다.
-이름과 달리 폴대 자체는 페어 지역에 속합니다.',
- 'rule', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-16'),
 
 ('만루', ARRAY['bases loaded','만루상황','만루 상황','풀베이스'],
  '1루·2루·3루에 모두 주자가 나가 있는 상황입니다.
