@@ -1,4 +1,5 @@
-import { BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
+import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
 
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
@@ -59,8 +60,8 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   // **답변이 자기 맥락을 담게** 만든다.
   "답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다. 야구·KBO·구단명·포지션 같은 말을",
   "최소 한 번 넣어 문장만 떼어 읽어도 야구 답변임을 알 수 있게 쓴다(예: '야구에서 와이어 투 와이어는 …').",
-  "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연·과정을 묻는 질문은 두세 문장으로 충분히 설명한다. 확실하지 않은 내용으로 길이를 채우지 않는다.",
-  '반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 320자 이하 답변"}',
+  BASEBALL_GENIUS_DEPTH_PROMPT,
+  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변"}`,
   // ⚠️ 2026-08-08 계약 불일치 수정. 이 줄은 위에서 범위를 ①～④로 선언해 놓고도
   // 판정 기준을 **"룰/용어"만**으로 좁혀 모델에게 지시했다. 즉 구단·선수·기록 질문은
   // 선언상 범위 안인데 마지막 줄이 "룰/용어가 아니면 UNSURE" 로 닫으라고 말하는 꼴이다.
@@ -122,7 +123,8 @@ export function buildBaseballQaGeminiRequest(
     contents,
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 256,
+      // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
+      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
     },
   };
