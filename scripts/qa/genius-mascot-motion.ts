@@ -19,11 +19,34 @@
  * 실행: npm run qa:genius-mascot-motion
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
 import type * as ReactNamespace from "react";
 import type { Root } from "react-dom/client";
+
+/**
+ * WebP 프레임 수 — 컨테이너를 직접 읽는다(디코더 의존 없음).
+ *
+ * 왜 필요한가: 경로 문자열만 검사하면 파일이 없거나 **정지 이미지가 들어있어도** GREEN 이다.
+ * 이번 변경의 핵심이 "실제로 움직이는가" 이므로 그걸 게이트가 증명해야 한다.
+ * RIFF/WEBP 컨테이너에서 `ANMF`(애니메이션 프레임) 청크 개수를 센다.
+ * 정지 WebP 는 ANMF 가 없으므로 1을 돌려준다.
+ */
+function webpFrameCount(buf: Buffer): number {
+  if (buf.length < 12 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WEBP") {
+    return 0; // WebP 가 아니면 0 — fail-close(호출부가 미달로 판정)
+  }
+  let off = 12;
+  let frames = 0;
+  while (off + 8 <= buf.length) {
+    const fourcc = buf.toString("ascii", off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    if (fourcc === "ANMF") frames += 1;
+    off += 8 + size + (size % 2); // 청크는 짝수 정렬
+  }
+  return frames > 0 ? frames : 1;
+}
 
 process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "***";
@@ -245,7 +268,8 @@ async function partDom() {
     BASEBALL_QA_OUTBOX_KEY,
   } = await import("../../src/lib/baseball-qa/client-outbox");
   // 렌더 규격은 문자열로 재작성하지 않고 배포 상수를 그대로 읽는다.
-  const { GENIUS_MASCOT_IMG_CLASS } = await import("../../src/lib/constants/baseball-genius");
+  const { GENIUS_MASCOT_IMG_CLASS, geniusMotionClipFor } =
+    await import("../../src/lib/constants/baseball-genius");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
 
   const profile = { id: "me", nickname: "테스터", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null };
@@ -379,37 +403,43 @@ async function partDom() {
     );
   }
 
-  // 3종 합산 총계 — reply·thinking·failed 마스코트가 전부 geniusMascotSrc(`/mascot/reply/…`)를 쓴다.
+  // 3종 합산 총계 — reply·thinking·failed 마스코트가 전부 `/mascot/motion/…` 영상을 쓴다
+  // (2026-08-16 전면 교체 전에는 `/mascot/reply/*.png` 정적 이미지였다).
   const totalMascots = (container: HTMLElement) =>
-    container.querySelectorAll('img[src*="/mascot/reply/"]').length;
+    container.querySelectorAll('img[src*="/mascot/motion/"]').length;
   const replyMascotOf = (container: HTMLElement, messageId: number) =>
     container.querySelector(`[data-message-id="${messageId}"] [data-testid="genius-reply-mascot"]`);
-  const motionOf = (container: HTMLElement, messageId: number) =>
-    replyMascotOf(container, messageId)?.getAttribute("data-motion") ?? null;
+  /** 재생 중인 영상 클립 이름(종전 `data-motion` 을 대체). */
+  const clipOf = (container: HTMLElement, messageId: number) =>
+    replyMascotOf(container, messageId)?.getAttribute("data-clip") ?? null;
   const thinkingMascots = (container: HTMLElement) =>
     container.querySelectorAll('[data-testid="genius-thinking-mascot"]').length;
   const failedMascots = (container: HTMLElement) =>
     container.querySelectorAll('[data-testid="genius-typing-mascot"]').length;
-  // 렌더된 그 마스코트 1개의 실제 표시 계약(크기·idle)을 DOM 에서 직접 읽는다.
-  //   JSDOM 은 CSS 를 계산하지 않으므로 "몇 px 로 보이느냐"는 여기서 증명할 수 없다
-  //   — 그건 실브라우저 게이트(qa:genius-reply-mascot-browser)가 맡는다.
-  //   여기서는 "공유 규격 상수가 실제 그 엘리먼트에 붙었는가"를 잠그다.
+  // 렌더된 그 마스코트 1개의 실제 표시 계약을 DOM 에서 직접 읽는다.
+  //   JSDOM 은 이미지를 디코딩하지 않으므로 "실제로 재생되느냐"는 여기서 증명할 수 없다
+  //   — 그건 자산 프레임수 검사(partRenderContract)가 맡는다.
+  //   여기서는 "공유 규격·영상 경로·reduced-motion 대체본이 그 엘리먼트에 붙었는가"를 잠근다.
   const renderContractOf = (img: Element | null) => {
     if (!img) return null;
-    const wrapper = img.parentElement;
+    const picture = img.parentElement;
+    const source = picture?.querySelector("source");
     return {
       sized: img.getAttribute("class")?.includes(GENIUS_MASCOT_IMG_CLASS) ?? false,
-      // idle 은 **래퍼**에 걸려야 한다 — img 에 같이 걸면 감정 모션 transform 을 덮어쓴다.
-      idleOnWrapper: wrapper?.classList.contains("genius-motion-idle") ?? false,
-      idleOnImg: img.classList.contains("genius-motion-idle"),
+      animated: (img.getAttribute("src") ?? "").startsWith("/mascot/motion/"),
+      // 종전 CSS 모션 클래스가 하나라도 남아 있으면 폐기가 끝난 게 아니다.
+      legacyCssMotion: /genius-motion-(idle|excited|headspin|bored)/.test(img.getAttribute("class") ?? ""),
+      // reduced-motion 은 CSS 로 못 멈추므로 poster 자산 대체가 붙어야 한다.
+      reducedPoster: (source?.getAttribute("srcset") ?? "").includes("-poster.webp") &&
+        (source?.getAttribute("media") ?? "").includes("prefers-reduced-motion"),
     };
   };
   const everyRenderedMascotOk = (container: HTMLElement) => {
-    const imgs = [...container.querySelectorAll('img[src*="/mascot/reply/"]')];
+    const imgs = [...container.querySelectorAll('img[src*="/mascot/motion/"]')];
     if (imgs.length === 0) return false;
     return imgs.every((img) => {
       const c = renderContractOf(img);
-      return !!c && c.sized && c.idleOnWrapper && !c.idleOnImg;
+      return !!c && c.sized && c.animated && c.reducedPoster && !c.legacyCssMotion;
     });
   };
 
@@ -433,19 +463,23 @@ async function partDom() {
   try {
     await act(async () => { root.render(React.createElement(Harness)); });
     await waitFor(() => {
-      assert.equal(motionOf(container, 150), "excited", "초기 로드: 인사 답변에 excited 모션");
+      // ack(인사) → 긍정반응 9종 순환. 어느 클립인지는 (reply_kind, messageId) 결정론.
+      assert.equal(clipOf(container, 150), geniusMotionClipFor("ack", 150),
+        "초기 로드: 인사 답변에 결정론 클립");
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
     });
-    check("DOM: 초기 로드 — reply excited, 전체 마스코트 1개", true);
+    check("DOM: 초기 로드 — reply 영상 클립, 전체 마스코트 1개", true);
 
-    // ⑤ 렌더 계약 — 감정 모션이 있는 마스코트도 공유 규격 + idle 을 따로 갖는다.
+    // ⑤ 렌더 계약 — 공유 규격 + 영상 경로 + reduced-motion 대체본.
     {
       const contract = renderContractOf(replyMascotOf(container, 150));
       check("렌더: 답변 마스코트가 공유 96px 규격으로 붙는다", contract?.sized === true, JSON.stringify(contract));
-      check("렌더: idle 은 래퍼에, 감정 모션은 img 에 — transform 충돌 없음",
-        contract?.idleOnWrapper === true && contract?.idleOnImg === false, JSON.stringify(contract));
-      check("렌더: 감정 모션은 기존대로 img 에 유지된다",
-        replyMascotOf(container, 150)?.classList.contains("genius-motion-excited") === true);
+      check("렌더: 정적 PNG 가 아니라 영상 클립(/mascot/motion/)을 재생한다",
+        contract?.animated === true, JSON.stringify(contract));
+      check("렌더: reduced-motion poster 대체본이 함께 붙는다",
+        contract?.reducedPoster === true, JSON.stringify(contract));
+      check("렌더: 종전 CSS 모션 클래스 잔존 0",
+        contract?.legacyCssMotion === false, JSON.stringify(contract));
     }
 
     await act(async () => {
@@ -456,7 +490,7 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(motionOf(container, 250), "headspin");
+      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250));
       assert.equal(replyMascotOf(container, 150) === null, true, "이전 답변은 마스코트 자체가 완전히 사라진다 (13:53 지시)");
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
       assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /반갑습니다/);
@@ -474,7 +508,7 @@ async function partDom() {
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="240"]')?.textContent ?? "", /늦게 도착한/);
       assert.equal(replyMascotOf(container, 240) === null, true, "역순 도착한 과거 답변에 마스코트가 붙으면 안 된다");
-      assert.equal(motionOf(container, 250), "headspin", "역순 도착에도 최신 소유권 유지");
+      assert.equal(clipOf(container, 250), geniusMotionClipFor("ack", 250), "역순 도착에도 최신 소유권 유지");
       assert.equal(totalMascots(container), 1);
     });
     check("DOM: 역순 Realtime — 소유권 회귀 없음", true);
@@ -487,14 +521,14 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(motionOf(container, 350), "bored");
+      assert.equal(clipOf(container, 350), "bored", "답하지 못한 답변은 bored 클립");
       assert.equal(totalMascots(container), 1);
     });
-    check("DOM: 거절 bored 도 같은 규칙", true);
+    check("DOM: 거절 bored 클립도 같은 소유권 규칙", true);
 
-    // ⑤ 지식 답변(감정 모션 없음) — 캐프처의 "안 움직임" 재현 지점이다.
-    //   geniusMotionForResult 가 undefined 를 돌려주는 경로라 payload 에 motion 이 없다.
-    //   그래도 idle 은 돌아야 한다(이번 변경의 핵심).
+    // ⑤ 지식 답변 — 하린아빠 캡처의 "안 움직임" 재현 지점이다.
+    //   종전 구조에서는 감정 모션이 안 붙어 완전히 정지했고, 8/16 오전에 넣은 CSS idle 도
+    //   진폭이 작아 "안 움직인다"로 읽혔다. 이제 야구 동작 영상이 실제로 재생돼야 한다.
     await act(async () => {
       await deliver({
         id: 450, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID,
@@ -505,16 +539,17 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.ok(replyMascotOf(container, 450), "지식 답변에도 마스코트는 붙는다");
-      assert.equal(motionOf(container, 450), null, "지식 답변에는 감정 모션이 없다(§7.6 불변)");
+      assert.equal(clipOf(container, 450), geniusMotionClipFor("answer", 450));
       assert.equal(totalMascots(container), 1);
     });
     {
       const img = replyMascotOf(container, 450)!;
       const contract = renderContractOf(img);
-      check("렌더: 감정 모션 없는 지식 답변도 idle 미세 모션이 돌다(캡처 재현 지점)",
-        contract?.idleOnWrapper === true, JSON.stringify(contract));
-      check("렌더: 그 경우에도 감정 모션 클래스는 붙지 않는다",
-        !["excited", "headspin", "bored"].some((m) => img.classList.contains(`genius-motion-${m}`)));
+      const clip = clipOf(container, 450);
+      check("렌더: 지식 답변이 야구 동작(swing/pitching) 영상을 재생한다 — 캡처 재현 지점",
+        clip === "swing" || clip === "pitching", String(clip));
+      check("렌더: 지식 답변도 영상 경로 + reduced-motion poster",
+        contract?.animated === true && contract?.reducedPoster === true, JSON.stringify(contract));
       check("렌더: 지식 답변 마스코트도 공유 96px 규격", contract?.sized === true);
     }
 
@@ -565,7 +600,7 @@ async function partDom() {
       });
     });
     await waitFor(() => {
-      assert.equal(motionOf(container, 650), "headspin", "답변 도착 → reply 소유권 복귀 + 모션");
+      assert.equal(clipOf(container, 650), geniusMotionClipFor("ack", 650), "답변 도착 → reply 소유권 복귀 + 클립");
       assert.equal(thinkingMascots(container), 0);
       assert.equal(totalMascots(container), 1);
     });
@@ -591,7 +626,7 @@ async function partDom() {
     });
     await waitFor(() => {
       assert.ok(container.querySelector('[data-message-id="750"]'), "polling merge 로 새 답변이 들어와야 한다");
-      assert.equal(motionOf(container, 750), "bored", "polling 으로 도착한 답변이 모션 소유권을 가진다");
+      assert.equal(clipOf(container, 750), "bored", "polling 으로 도착한 답변이 클립 소유권을 가진다");
       assert.equal(thinkingMascots(container), 0, "polling 답변 관측 후 생각중 마스코트가 사라진다");
       assert.equal(replyMascotOf(container, 650) === null, true, "이전 답변 마스코트는 제거된다");
       assert.equal(totalMascots(container), 1, "polling 경로에서도 전체 마스코트는 1개");
@@ -604,7 +639,7 @@ async function partDom() {
     root = createRoot(container);
     await act(async () => { root.render(React.createElement(Harness)); });
     await waitFor(() => {
-      assert.equal(motionOf(container, 750), "bored", "reload 후에도 최신 답변에만");
+      assert.equal(clipOf(container, 750), "bored", "reload 후에도 최신 답변에만");
       assert.equal(totalMascots(container), 1, "reload 후에도 전체 1개");
     });
     check("DOM: reload 재진입 — 최신 1개 불변", true);
@@ -620,7 +655,8 @@ async function partDom() {
 // ── ⑤ 렌더 규격 + 상시 idle 모션 CSS 계약 (2026-08-16) ─────────────────────────
 async function partRenderContract() {
   const {
-    GENIUS_MASCOT_HEIGHT_PX, GENIUS_MASCOT_IMG_CLASS, GENIUS_MASCOT_IDLE_MOTION_CLASS,
+    GENIUS_MASCOT_HEIGHT_PX, GENIUS_MASCOT_IMG_CLASS,
+    GENIUS_MOTION_CLIPS, geniusMotionClipFor, geniusMotionSrc, geniusMotionPosterSrc,
   } = await import("../../src/lib/constants/baseball-genius");
 
   // 규격은 상수가 SSOT — 게이트가 문자열을 재구현하면 사용처가 되돌아가도 GREEN 이다
@@ -630,12 +666,71 @@ async function partRenderContract() {
     GENIUS_MASCOT_IMG_CLASS);
   check("규격 SSOT: 종전 h-8(32px) 으로 되돌아가지 않는다",
     !/(^|\s)h-8(\s|$)/.test(GENIUS_MASCOT_IMG_CLASS), GENIUS_MASCOT_IMG_CLASS);
-  check("idle 상수가 CSS 클래스명을 포함한다",
-    GENIUS_MASCOT_IDLE_MOTION_CLASS.split(/\s+/).includes("genius-motion-idle"),
-    GENIUS_MASCOT_IDLE_MOTION_CLASS);
 
-  // 사용처 복제 차단 — 3종 마스코트는 공유 컴포넌트를 통해서만 렌더한다.
-  // 한 곳이라도 인라인 <img> 로 되돌아가면 다음 변경에서 조용히 어긋난다.
+  // ── 영상 모션 자산 실재 (2026-08-16 하린아빠 13:48 전면 교체) ──────────────
+  // ⚠️ 경로 문자열만 검사하면 파일이 없어도 GREEN 이다(404 마스코트 = 빈 칸).
+  //    실제 파일과 **애니메이션임**(프레임 2장 이상)을 딜코더로 확인한다.
+  const missing: string[] = [];
+  const still: string[] = [];
+  const sameFile: string[] = [];
+  for (const clip of GENIUS_MOTION_CLIPS) {
+    // ⚠️ 역할(본클립/poster)은 **호출한 함수**로 정한다. 경로 문자열에 "-poster" 가
+    //    들어있는지로 판정하면, 본클립 함수가 poster 를 돌려주도록 훼손돼도
+    //    poster 검사로 넘어가 GREEN 이 된다(false-green — mutation M20 이 실제로 잡아냈다).
+    const roles = [
+      { role: "clip" as const, path: geniusMotionSrc(clip) },
+      { role: "poster" as const, path: geniusMotionPosterSrc(clip) },
+    ];
+    for (const { role, path: p } of roles) {
+      const abs = resolve(process.cwd(), "public", p.replace(/^\//, ""));
+      if (!existsSync(abs)) { missing.push(p); continue; }
+      const frames = webpFrameCount(readFileSync(abs));
+      // 본 클립은 움직여야 하고(ANMF 다수), poster 는 정지여야 한다.
+      if (role === "poster") { if (frames > 1) still.push(`${p}(${frames}f)`); }
+      else if (frames < 2) still.push(`${p}(${frames}f)`);
+    }
+    // 본클립과 poster 가 같은 파일을 가리키면 둘 중 하나가 제 역할을 못 한다.
+    if (geniusMotionSrc(clip) === geniusMotionPosterSrc(clip)) sameFile.push(clip);
+  }
+  check(`자산: 영상 모션 ${GENIUS_MOTION_CLIPS.length}종 + poster 가 전부 존재한다`,
+    missing.length === 0, missing.join(", "));
+  check("자산: 본클립은 실제 애니메이션(≥2프레임)·poster 는 정지(1프레임)",
+    still.length === 0, still.join(", "));
+  check("자산: 본클립과 poster 가 서로 다른 파일이다(재생 자산이 정지본으로 바뀌지 않음)",
+    sameFile.length === 0, sameFile.join(", "));
+
+  // ── 클립 선택 = 결정론 + 13종 전수 도달성 ──────────────────────────
+  check("클립 선택은 결정론이다(같은 입력 → 같은 출력)",
+    [0, 1, 7, 42, 12345].every((id) =>
+      geniusMotionClipFor("answer", id) === geniusMotionClipFor("answer", id) &&
+      geniusMotionClipFor("ack", id) === geniusMotionClipFor("ack", id)));
+  check("클립 선택: 되묻기(picker/correction) → thinking",
+    geniusMotionClipFor("picker", 3) === "thinking" && geniusMotionClipFor("correction", 8) === "thinking");
+  check("클립 선택: 답하지 못함(unavailable) → bored",
+    geniusMotionClipFor("unavailable", 5) === "bored");
+  {
+    const answers = new Set(Array.from({ length: 40 }, (_, i) => geniusMotionClipFor("answer", i)));
+    check("클립 선택: 정상답변은 야구 동작 2종 교대(같은 동작 반복 없음)",
+      answers.size === 2 && [...answers].every((c) => c === "swing" || c === "pitching"),
+      [...answers].join(","));
+    const acks = new Set(Array.from({ length: 60 }, (_, i) => geniusMotionClipFor("ack", i)));
+    check("클립 선택: 긍정반응은 응원 7종 포함 9종 순환", acks.size === 9, [...acks].join(","));
+    // legacy(payload 없는 과거 답변)도 멈춰 있으면 안 된다 — 종전 idle 정지 폴백 대체.
+    check("클립 선택: legacy(null/undefined) 도 야구 동작으로 살아있다",
+      [null, undefined].every((k) => ["swing", "pitching"].includes(geniusMotionClipFor(k, 9))));
+    // 13종 중 하나라도 도달 불가하면 만들어 놓고 안 쓰는 자산이 생긴다.
+    const reachable = new Set<string>();
+    for (let i = 0; i < 200; i += 1) {
+      for (const k of ["answer", "ack", "picker", "correction", "unavailable"] as const) {
+        reachable.add(geniusMotionClipFor(k, i));
+      }
+    }
+    const unreachable = GENIUS_MOTION_CLIPS.filter((c) => !reachable.has(c));
+    check(`도달성: 13종 전부 실제로 재생된다(사장 자산 0)`,
+      unreachable.length === 0, unreachable.join(","));
+  }
+
+  // ── 사용처 복제 차단 + 종전 CSS/PNG 경로 완전 제거 ─────────────────────
   const pageSrc = readFileSync(resolve(process.cwd(), "src/app/(main)/messages/[conversationId]/page.tsx"), "utf8");
   const typingSrc = readFileSync(resolve(process.cwd(), "src/components/dm/GeniusTypingIndicator.tsx"), "utf8");
   const mascotSrc = readFileSync(resolve(process.cwd(), "src/components/dm/GeniusMascotImage.tsx"), "utf8");
@@ -645,20 +740,28 @@ async function partRenderContract() {
   check("단일 지점: 사용처에 마스코트 크기 클래스가 복제되지 않는다",
     !/h-8 w-auto/.test(pageSrc) && !/h-8 w-auto/.test(typingSrc) &&
     !/h-24 w-auto/.test(typingSrc));
-  check("공유 컴포넌트가 상수를 그대로 소비한다(리터럴 재작성 아님)",
-    mascotSrc.includes("GENIUS_MASCOT_IMG_CLASS") && mascotSrc.includes("GENIUS_MASCOT_IDLE_MOTION_CLASS"));
+  check("공유 컴포넌트가 규격·클립 선택 상수를 그대로 소비한다(리터럴 재작성 아님)",
+    mascotSrc.includes("GENIUS_MASCOT_IMG_CLASS") &&
+    mascotSrc.includes("geniusMotionClipFor") &&
+    mascotSrc.includes("geniusMotionSrc"));
 
-  // CSS 실파일 — 클래스만 붙고 keyframes 가 없으면 아무 일도 안 일어난다(조용한 무효화).
+  // reduced-motion 은 CSS 로 못 멈춘다 — 자산 교체(<source media>)여야 한다.
+  check("reduced-motion: CSS 가 아니라 poster 자산 교체로 멈춘다",
+    /<source[\s\S]{0,120}?media="\(prefers-reduced-motion: reduce\)"/.test(mascotSrc) &&
+    mascotSrc.includes("geniusMotionPosterSrc"));
+
+  // 종전 구조(정적 PNG + CSS transform)는 **전량 폐기**다(하린아빠 13:48).
+  // 클래스만 남기고 keyframes 를 지우는 부분 정리는 "붙는데 아무 일도 안 나는" 조용한
+  // 무효화라 더 나쁘다 — 양쪽 모두 없음을 확인한다.
   const css = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
-  check("CSS: @keyframes genius-motion-idle 가 존재한다", /@keyframes\s+genius-motion-idle\s*\{/.test(css));
-  check("CSS: .genius-motion-idle 가 그 keyframes 를 무한 반복으로 쓴다(상시 움직임)",
-    /\.genius-motion-idle\s*\{[^}]*animation:\s*genius-motion-idle[^;}]*infinite/.test(css));
-  check("CSS: prefers-reduced-motion 에서 idle 도 정지한다",
-    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.genius-motion-idle[^}]*animation:\s*none/.test(css));
-  check("CSS: 감정 모션 3종은 유한 반복 그대로(§7.4 남용방지 불변)",
-    !/\.genius-motion-excited\s*\{[^}]*infinite/.test(css) &&
-    !/\.genius-motion-headspin\s*\{[^}]*infinite/.test(css) &&
-    !/\.genius-motion-bored\s*\{[^}]*infinite/.test(css));
+  check("폐기: CSS 마스코트 모션(idle·excited·headspin·bored) 가 전량 사라졌다",
+    !/genius-motion-(idle|excited|headspin|bored)/.test(css));
+  check("폐기: 사용처·공유컴포넌트에도 종전 CSS 모션 클래스 잔존 0",
+    !/genius-motion-(idle|excited|headspin|bored)/.test(pageSrc) &&
+    !/genius-motion-(idle|excited|headspin|bored)/.test(typingSrc) &&
+    !/genius-motion-(idle|excited|headspin|bored)/.test(mascotSrc));
+  check("폐기: 정적 PNG 마스코트(reply/yajalal-*.png) 를 대화창에서 더 쓰지 않는다",
+    !mascotSrc.includes("geniusMascotSrc") && !/mascot\/reply\//.test(mascotSrc));
 }
 
 async function main() {

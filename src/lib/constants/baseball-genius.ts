@@ -347,6 +347,93 @@ export const GENIUS_MASCOT_IMG_CLASS = "h-24 w-auto max-w-none object-contain";
  */
 export const GENIUS_MASCOT_IDLE_MOTION_CLASS = "genius-motion-idle inline-flex";
 
+/* ══ 영상 모션 클립 13종 (2026-08-16 하린아빠 13:48 — "지금 연결된건 움직이는 것
+   같지도 않아. 모두 폐기하고 활발하게 움직이는 버전들로 교체") ═════════════════
+
+   종전 구조(정적 PNG 5상태 + CSS transform)는 **폐기**한다. CSS 미세 모션은
+   사용자 눈에 "움직이지 않는" 수준이었다(하린아빠 실기기 판정).
+
+   자산 출처 = `assets/mascot/v1`(8/7 고정 SSOT, MANIFEST.sha256). 그 black 합성본을
+   원본으로 **투명배경 WebP 애니메이션**으로 재가공해 `public/mascot/motion/` 에 둔다.
+   (종전 black/white 2벌은 테마 분기가 필요했고, 다크모드 고정인 크보팬에서도
+   말풍선 배경과 정확히 같지 않아 네모가 보였다 — 투명이 유일한 정답이다.)
+
+   ⚠️ **새 판별 룰을 추가하지 않는다**(삼순 확정). 경기일·마이팀 같은 새 입력을 들이지
+   않고, 이미 있는 `reply_kind` + `messageId` 만으로 13종 전부가 도달 가능하다.
+   즉 어휘를 늘리는 방향(M90 `open_language_never_closes_with_rules`)이 아니라
+   **이미 닫힌 집합 안에서 결정론으로 고르는** 구조다. */
+export type GeniusMotionClip =
+  | "swing" | "pitching" | "thinking" | "headspin" | "excited" | "bored"
+  | "cheer" | "cheerC" | "cheerD" | "cheerG"
+  | "cheertowel" | "cheerstick" | "cheerpom";
+
+export const GENIUS_MOTION_CLIPS: readonly GeniusMotionClip[] = [
+  "swing", "pitching", "thinking", "headspin", "excited", "bored",
+  "cheer", "cheerC", "cheerD", "cheerG",
+  "cheertowel", "cheerstick", "cheerpom",
+] as const;
+
+/** 재생되는 애니메이션 WebP. 무한 루프는 자산 자체에 인코딩돼 있다(loop=0). */
+export function geniusMotionSrc(clip: GeniusMotionClip): string {
+  return `/mascot/motion/${clip}.webp`;
+}
+
+/**
+ * 정지 poster (각 클립의 **첫 프레임**).
+ *
+ * ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈춰지지 않는다 — 재생은
+ * 이미지 디코더가 하며 CSS 관여 자체가 없다. 그래서 `prefers-reduced-motion` 에서는
+ * **자산을 교체**해야 한다(삼순 지적). 미디어 쿼리로 poster 를 고르면 정지화된다.
+ */
+export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
+  return `/mascot/motion/${clip}-poster.webp`;
+}
+
+/**
+ * 정상 답변에 교대로 붙는 야구 동작 2종.
+ * 답변이 연속될 때 같은 동작만 반복되면 정적 이미지처럼 보인다.
+ */
+const ANSWER_CLIPS = ["swing", "pitching"] as const;
+
+/**
+ * 긍정 반응(인사·감사·칭찬)에 순환하는 9종.
+ * 응원 7종을 여기 넣어 **새 판별 룰 없이** 전부 도달하게 한다(삼순 확정).
+ * 응원은 "기뻐서 반응하는 동작"이라 인사·칭찬과 같은 칸이 자연스럽다.
+ */
+const POSITIVE_CLIPS = [
+  "excited", "headspin",
+  "cheer", "cheerC", "cheerD", "cheerG",
+  "cheertowel", "cheerstick", "cheerpom",
+] as const;
+
+/**
+ * `reply_kind` + `messageId` → 재생할 클립 (**결정론**).
+ *
+ * ⚠️ 무작위가 아니라 messageId 기반이다 — 같은 메시지는 reload·재진입·다른 기기에서도
+ * 항상 같은 동작을 보여준다. `Math.random()` 이면 새로고침마다 동작이 바뀌어
+ * "이 답변은 이 동작"이라는 인과가 깨진다(M90 결정론 계약과 같은 축).
+ *
+ * 매핑(삼순 2026-08-16 확정):
+ *  · answer                    → swing / pitching 교대
+ *  · ack                       → 긍정 9종 순환(인사·감사·칭찬·범위안내)
+ *  · picker / correction       → thinking (되묻는 중)
+ *  · unavailable               → bored (답하지 못함)
+ *  · null/unknown(legacy)      → swing / pitching 교대 — payload 없는 과거 답변도
+ *    멈춰 있지 않게 한다(종전 idle 정지 폴백 대체).
+ */
+export function geniusMotionClipFor(
+  replyKind: GeniusReplyKind | null | undefined,
+  messageId: number,
+): GeniusMotionClip {
+  // 음수·부동소수로 음수 인덱스가 나오면 undefined 가 된다 — 정규화해 닫는다.
+  const seed = Math.abs(Math.trunc(messageId)) || 0;
+  if (replyKind === "picker" || replyKind === "correction") return "thinking";
+  if (replyKind === "unavailable") return "bored";
+  if (replyKind === "ack") return POSITIVE_CLIPS[seed % POSITIVE_CLIPS.length];
+  // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.
+  return ANSWER_CLIPS[seed % ANSWER_CLIPS.length];
+}
+
 /**
  * 동명이인 picker 선택지 1개.
  *

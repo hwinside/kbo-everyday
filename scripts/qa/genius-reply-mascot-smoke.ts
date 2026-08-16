@@ -17,9 +17,10 @@ import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import {
   BASEBALL_GENIUS_USER_ID,
-  GENIUS_MASCOT_STATES,
   MATCH_PATH_REPLY_KIND,
-  geniusMascotSrc,
+  GENIUS_MOTION_CLIPS,
+  geniusMotionSrc,
+  geniusMotionPosterSrc,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
   replyKindForMatchPath,
@@ -203,28 +204,35 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
   assert.deepEqual(misclassified, [],
     `답변을 내보내는데 '모르겠어요' 로 분류됨: ${misclassified.join(", ")}`);
 });// --- (B) 자산 ---
+// 2026-08-16 하린아빠 13:48 "모두 폐기하고 활발하게 움직이는 버전들로 교체" →
+// 대화창 마스코트는 정적 PNG 5상태가 아니라 **영상 클립 13종**이다.
+// (정적 PNG 는 대화방 헤더 아바타 등 다른 경로에 남아 있어 파일 자체는 지우지 않는다.)
 const digests = new Map<string, string>();
-check("매핑이 가리키는 자산이 실제로 존재한다", () => {
-  for (const s of GENIUS_MASCOT_STATES) {
-    const rel = geniusMascotSrc(s).replace(/^\//, "");
-    const abs = path.join(process.cwd(), "public", rel);
-    assert.ok(existsSync(abs), `없음: public/${rel}`);
-    digests.set(s, createHash("sha256").update(readFileSync(abs)).digest("hex"));
+check("영상 클립 13종 + poster 가 실제로 존재한다", () => {
+  for (const c of GENIUS_MOTION_CLIPS) {
+    for (const rel of [geniusMotionSrc(c), geniusMotionPosterSrc(c)]) {
+      const abs = path.join(process.cwd(), "public", rel.replace(/^\//, ""));
+      assert.ok(existsSync(abs), `없음: public${rel}`);
+    }
+    digests.set(c, createHash("sha256")
+      .update(readFileSync(path.join(process.cwd(), "public", geniusMotionSrc(c).replace(/^\//, ""))))
+      .digest("hex"));
   }
 });
-check("5상태가 서로 다른 이미지다(같은 파일 복사 아님)", () => {
-  assert.equal(digests.size, GENIUS_MASCOT_STATES.length, "자산 로드 실패");
-  const uniq = new Set(digests.values());
-  assert.equal(uniq.size, digests.size, "동일한 이미지가 여러 상태에 쓰임");
+check("13종이 서로 다른 영상이다(같은 파일 복사 아님)", () => {
+  assert.equal(digests.size, GENIUS_MOTION_CLIPS.length, "자산 로드 실패");
+  assert.equal(new Set(digests.values()).size, digests.size, "동일한 영상이 여러 클립에 쓰임");
 });
-check("5상태 자산 크기가 동일하다(상태 전환 시 캐릭터가 안 튄다)", () => {
-  // PNG IHDR: 16..20 width, 20..24 height
-  const dims = GENIUS_MASCOT_STATES.map((s) => {
-    const rel = geniusMascotSrc(s).replace(/^\//, "");
-    const b = readFileSync(path.join(process.cwd(), "public", rel));
-    return `${b.readUInt32BE(16)}x${b.readUInt32BE(20)}`;
+check("영상 자산 높이가 동일하다(클립 전환 시 캐릭터가 안 튄다)", () => {
+  // ⚠️ 폭은 동작마다 다르다(스윙은 배트 때문에 넓다). 캐릭터가 튀지 않으려면
+  //    **높이**가 같아야 한다 — 렌더가 h-24 고정이고 폭은 auto 이기 때문이다.
+  const heights = GENIUS_MOTION_CLIPS.map((c) => {
+    const b = readFileSync(path.join(process.cwd(), "public", geniusMotionSrc(c).replace(/^\//, "")));
+    // RIFF/WEBP → VP8X 청크(12..) 의 canvas height (24bit LE, -1 저장)
+    assert.equal(b.toString("ascii", 12, 16), "VP8X", `애니메이션 WebP 가 아님: ${c}`);
+    return (b.readUIntLE(27, 3) + 1);
   });
-  assert.equal(new Set(dims).size, 1, `크기 불일치: ${dims.join(", ")}`);
+  assert.equal(new Set(heights).size, 1, `높이 불일치: ${heights.join(", ")}`);
 });
 
 // --- (C) 서버 배선 ---
@@ -296,22 +304,25 @@ check("말풍선 마스코트는 봇 발신일 때만 붙는다", () => {
   );
   assert.ok(BASEBALL_GENIUS_USER_ID.length === 36, "봇 ID 상수 이상");
 });
-check("말풍선이 매핑 결과로 자산을 고른다(고정 src 아님)", () => {
-  assert.match(chat, /<GeniusMascotImage[\s\S]{0,200}?state=\{mascotState\}/, "동적 state 전달 아님");
-  assert.match(chat, /mascotStateForReplyKind\(geniusReply\?\.reply_kind\)/, "의미 분류 매핑 미사용");
+check("말풍선이 매핑 결과로 클립을 고른다(고정 src 아님)", () => {
+  // 사용처는 (reply_kind, messageId) 만 넘긴다 — 어느 클립인지는 공유 컴포넌트가 정한다.
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,240}?replyKind=\{geniusReply\?\.reply_kind \?\? null\}/,
+    "동적 reply_kind 전달 아님");
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,240}?messageId=\{msg\.id\}/, "messageId 시드 전달 아님");
 });
 check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
-  // 2026-08-16: <img> 자체는 공유 컴포넌트 소유 — 사용처는 state 전달만 책임진다.
-  assert.match(typing, /<GeniusMascotImage state="thinking"/, "대기 인디케이터 마스코트 없음");
-  assert.match(typing, /<GeniusMascotImage state=\{STATE_TO_MASCOT\[state\]\}/, "실패 인디케이터 마스코트 없음");
-  // 공유 컴포넌트가 그 state 를 실제 자산으로 바꾸는지도 같이 잠긴다(고정 src 로 바뀌면 같은 결함).
-  assert.match(
-    read("src/components/dm/GeniusMascotImage.tsx"),
-    /src=\{geniusMascotSrc\(state\)\}/,
-    "공유 컴포넌트가 동적 src 를 안 쓴다",
-  );
-  assert.match(typing, /waiting:\s*"thinking"/, "대기 상태 매핑 없음");
-  assert.match(typing, /failed:\s*"unknown"/, "실패 상태 매핑 없음");
+  // 2026-08-16: <img> 자체는 공유 컴포넌트 소유 — 사용처는 reply_kind 전달만 책임진다.
+  assert.match(typing, /<GeniusMascotImage[\s\S]{0,160}?replyKind="picker"/, "대기 인디케이터 마스코트 없음");
+  assert.match(typing, /<GeniusMascotImage[\s\S]{0,160}?replyKind=\{STATE_TO_REPLY_KIND\[state\]\}/,
+    "실패 인디케이터 마스코트 없음");
+  // 공유 컴포넌트가 그 reply_kind 를 실제 영상으로 바꾸는지도 같이 잠긴다
+  // (고정 src 로 바뀌면 같은 결함이다).
+  const mascotComponent = read("src/components/dm/GeniusMascotImage.tsx");
+  assert.match(mascotComponent, /src=\{geniusMotionSrc\(clip\)\}/, "공유 컴포넌트가 동적 src 를 안 쓴다");
+  assert.match(mascotComponent, /geniusMotionClipFor\(replyKind, messageId\)/, "클립 선택 SSOT 미사용");
+  // 대기 = 되묻기(thinking 클립) / 실패 = 답하지 못함(bored 클립) 으로 번역된다.
+  assert.match(typing, /waiting:\s*"picker"/, "대기 상태 매핑 없음");
+  assert.match(typing, /failed:\s*"unavailable"/, "실패 상태 매핑 없음");
   // 종전 ⚾ 이모지가 남아 있으면 표정이 안 바뀐다.
   assert.ok(!/⚾/.test(typing), "구 ⚾ 이모지 잔존");
 });

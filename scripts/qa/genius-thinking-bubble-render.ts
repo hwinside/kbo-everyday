@@ -73,7 +73,7 @@ async function main() {
   const mod = await import("../../src/components/dm/GeniusTypingIndicator");
   const { GeniusThinkingBubble, GENIUS_THINKING_TEXT } = mod;
   const GeniusTypingIndicator = mod.default;
-  const { geniusMascotSrc } = await import("../../src/lib/constants/baseball-genius");
+  const { geniusMotionSrc } = await import("../../src/lib/constants/baseball-genius");
 
   function render(node: React.ReactElement) {
     const host = dom.window.document.createElement("div");
@@ -95,7 +95,8 @@ async function main() {
       pending: bubble?.getAttribute("data-pending") ?? null,
       text: bubble?.textContent ?? "",
       mascotSrc: mascot?.getAttribute("src") ?? null,
-      mascotState: mascot?.getAttribute("data-mascot") ?? null,
+      // 2026-08-16 전면 교체: 정적 PNG 상태(data-mascot) → 영상 클립(data-clip).
+      mascotClip: mascot?.getAttribute("data-clip") ?? null,
       dots: host.querySelectorAll(".animate-bounce").length,
       status: bubble?.querySelector('[role="status"]') !== null,
     };
@@ -107,8 +108,9 @@ async function main() {
     const b = readBubble(r.host);
     check("대기 중 말풍선이 렌더된다", () => assert.equal(b.exists, true));
     check("대기 중 문구가 '생각중입니다…'", () => assert.ok(b.text.includes(GENIUS_THINKING_TEXT), b.text));
-    check("대기 중 마스코트가 thinking", () => assert.equal(b.mascotState, "thinking"));
-    check("대기 중 마스코트 src 가 배포 경로", () => assert.equal(b.mascotSrc, geniusMascotSrc("thinking")));
+    check("대기 중 마스코트가 thinking 클립", () => assert.equal(b.mascotClip, "thinking"));
+    check("대기 중 마스코트 src 가 배포 영상 경로",
+      () => assert.equal(b.mascotSrc, geniusMotionSrc("thinking")));
     check("대기 중 점 3개 애니메이션", () => assert.equal(b.dots, 3));
     check("대기 중 role=status 로 접근성 고지", () => assert.equal(b.status, true));
     r.cleanup();
@@ -122,7 +124,7 @@ async function main() {
     r.rerender(React.createElement(GeniusThinkingBubble, { pending: false }));
     const after = readBubble(r.host);
     check("답변 도착 후에도 말풍선이 남는다", () => assert.equal(after.exists, true));
-    check("답변 도착 후에도 캐릭터가 남는다", () => assert.equal(after.mascotState, "thinking"));
+    check("답변 도착 후에도 캐릭터가 남는다", () => assert.equal(after.mascotClip, "thinking"));
     check("답변 도착 후에도 문구가 남는다", () => assert.ok(after.text.includes(GENIUS_THINKING_TEXT)));
     check("답변 도착 후 점 애니메이션은 멈춘다", () => assert.equal(after.dots, 0));
     check("답변 도착 후 role=status 해제(스크린리더 반복 고지 방지)", () => assert.equal(after.status, false));
@@ -322,9 +324,11 @@ async function main() {
       assert.notEqual(btn, null);
       assert.ok((btn?.textContent ?? "").includes("다시 시도"));
     });
-    check("실패 마스코트는 unknown", () => {
+    check("실패 마스코트는 bored 클립", () => {
+      // 2026-08-16 전면 교체: 정적 PNG `unknown` 표정 → 영상 `bored` 클립.
+      // 실패는 "답하지 못함"(unavailable)이므로 거절과 같은 칸을 쓴다.
       const m = r.host.querySelector('[data-testid="genius-typing-mascot"]');
-      assert.equal(m?.getAttribute("data-mascot"), "unknown");
+      assert.equal(m?.getAttribute("data-clip"), "bored");
     });
     check("재시도 버튼이 콜백을 호출", () => {
       act(() => { btn?.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
