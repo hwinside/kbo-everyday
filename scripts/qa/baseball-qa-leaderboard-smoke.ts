@@ -38,6 +38,7 @@ import {
   BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
   BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER,
   answerBudgetViolation,
+  requiredOutputTokensFor,
 } from "../../src/lib/baseball-qa/answer-budget";
 import { buildBaseballQaGeminiRequest } from "../../src/lib/baseball-qa/gemini-request";
 import { buildRagLlmRequest } from "../../src/lib/baseball-qa/rag/retrieve";
@@ -380,6 +381,18 @@ check("답변 예산 정합 — 문자 상한과 토큰 상한은 같은 예산�
     answerBudgetViolation(BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER),
     null,
     "실측 최악과 같은 값(여유 0)을 위반으로 잡지 못한다",
+  );
+  // 🔴 삼순 2026-08-16 P1 — maxChars 가 계산에 실제로 쓰이는가.
+  //    종전에는 인자로 받고 메시지에만 끼워 넣어, 문자 상한을 두 배로 올려도 같은 토큰이
+  //    정합으로 통과했다. 문자수를 올리면 요구 토큰도 따라 올라야 한다.
+  assert.notEqual(
+    answerBudgetViolation(BASEBALL_GENIUS_ANSWER_MAX_CHARS * 2, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS),
+    null,
+    "문자 상한을 2배로 올려도 같은 토큰 상한이 정합으로 통과한다 — maxChars 가 계산에 안 쓰인다",
+  );
+  assert.ok(
+    requiredOutputTokensFor(BASEBALL_GENIUS_ANSWER_MAX_CHARS * 2) > requiredOutputTokensFor(BASEBALL_GENIUS_ANSWER_MAX_CHARS),
+    "요구 토큰이 문자 상한에 비례하지 않는다",
   );
 });
 // 배선축: 상수만 맞고 실제 요청 body 가 옛 리터럴이면 아무 의미가 없다.

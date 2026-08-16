@@ -51,10 +51,55 @@ export const BASEBALL_GENIUS_ANSWER_MAX_CHARS = 700;
 export const BASEBALL_GENIUS_MAX_OUTPUT_TOKENS = 1_024;
 
 /**
- * 700자 답변이 JSON 래핑까지 포함해 실측으로 소비한 **최악 토큰 수**(2026-08-16, 지표 최대밀도).
+ * 실측 기준이 된 **문자 수**. 아래 토큰 실측값은 이 길이에서 잰 것이다.
+ *
+ * ⚠️ 실측값과 그 측정 조건은 반드시 함께 둔다. 조건 없이 토큰만 두면 문자 상한을
+ * 1,400 으로 올려도 "552토큰이면 충분"이라는 낡은 판정이 그대로 통과한다
+ * (삼순 2026-08-16 P1 — `maxChars` 를 받고도 계산에 안 쓰던 결함).
+ */
+export const BASEBALL_GENIUS_MEASURED_AT_CHARS = 700;
+
+/**
+ * 위 길이의 답변이 JSON 래핑까지 포함해 실측으로 소비한 **최악 토큰 수**
+ * (2026-08-16, `gemini-flash-lite-latest`, 지표 최대밀도 표본).
  * 게이트가 "토큰 상한이 문자 상한을 실제로 감당하는가"를 판정하는 기준선이다.
  */
 export const BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER = 552;
+
+/** 절단 실패 모드가 비대칭(전량 폐기)이라 요구하는 최소 여유율. */
+export const BASEBALL_GENIUS_TOKEN_HEADROOM_RATIO = 1.5;
+
+/**
+ * `maxChars` 길이 답변의 **실측 기준 최악 토큰 수** — 스케일 계산의 유일한 자리.
+ *
+ * ⚠️ 이 식을 다른 곳에 복제하지 않는다. 두 곳에 두면 한쪽만 바꿔도 다른 쪽이 가려
+ * **결함주입이 통과**한다(2026-08-16 m4f2 검출력 0 으로 실측). 스케일이 한 지점이면
+ * 그 지점을 변이시켰을 때 반드시 RED 가 된다.
+ *
+ * 실측은 `BASEBALL_GENIUS_MEASURED_AT_CHARS` 에서 잰 값이라 **문자수에 선형 비례**로
+ * 스케일한다(한국어+JSON 래핑의 토큰/문자 비는 길이에 대체로 선형이다).
+ */
+export function scaledWorstTokensFor(
+  maxChars: number,
+  worstMeasuredTokens: number = BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER,
+  measuredAtChars: number = BASEBALL_GENIUS_MEASURED_AT_CHARS,
+): number {
+  return Math.ceil((worstMeasuredTokens * maxChars) / measuredAtChars);
+}
+
+/**
+ * 문자 상한 `maxChars` 를 감당하려면 최소 몇 토큰이 필요한가.
+ * 실측 비례값(`scaledWorstTokensFor`)에 여유율을 곱한다 — 상한에 닿으면
+ * "조금 짧아짐"이 아니라 JSON 파손 → 전량 폐기라 실패 모드가 비대칭이다.
+ */
+export function requiredOutputTokensFor(
+  maxChars: number,
+  worstMeasuredTokens: number = BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER,
+  measuredAtChars: number = BASEBALL_GENIUS_MEASURED_AT_CHARS,
+  headroom: number = BASEBALL_GENIUS_TOKEN_HEADROOM_RATIO,
+): number {
+  return Math.ceil(scaledWorstTokensFor(maxChars, worstMeasuredTokens, measuredAtChars) * headroom);
+}
 
 /**
  * 문자 상한 ↔ 토큰 상한 정합성.
@@ -69,12 +114,16 @@ export function answerBudgetViolation(
   maxOutputTokens: number = BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
   worstMeasuredTokens: number = BASEBALL_GENIUS_MEASURED_WORST_TOKENS_PER_MAX_ANSWER,
 ): string | null {
-  if (maxOutputTokens < worstMeasuredTokens) {
-    return `토큰 상한(${maxOutputTokens})이 실측 최악(${worstMeasuredTokens}토큰/${maxChars}자)보다 작다 — 상한 답변이 JSON 절단으로 폐기된다`;
+  // ⚠️ `maxChars` 를 **반드시 계산에 쓴다**(삼순 2026-08-16 P1). 종전에는 인자로 받고도
+  //    메시지에만 끼워 넣어, 문자 상한을 1,400 으로 올려도 1024 토큰이 정합으로 통과했다.
+  //    스케일 식은 `scaledWorstTokensFor` 한 곳에만 있다(복제 금지 — 위 주석 참조).
+  const scaledWorst = scaledWorstTokensFor(maxChars, worstMeasuredTokens);
+  if (maxOutputTokens < scaledWorst) {
+    return `토큰 상한(${maxOutputTokens})이 ${maxChars}자 기준 실측 최악(${scaledWorst}토큰, ${BASEBALL_GENIUS_MEASURED_AT_CHARS}자에서 잰 ${worstMeasuredTokens}토큰을 비례 스케일)보다 작다 — 상한 답변이 JSON 절단으로 폐기된다`;
   }
-  // 실측은 우리가 만든 표본이고 실제 출력 분포는 더 넓다. 최소 1.5배 여유를 계약으로 둔다.
-  if (maxOutputTokens < Math.ceil(worstMeasuredTokens * 1.5)) {
-    return `토큰 상한(${maxOutputTokens})의 여유가 실측 최악의 1.5배(${Math.ceil(worstMeasuredTokens * 1.5)}) 미만이다 — 절단 실패 모드가 비대칭(전량 폐기)이라 여유가 필요하다`;
+  const required = requiredOutputTokensFor(maxChars, worstMeasuredTokens);
+  if (maxOutputTokens < required) {
+    return `토큰 상한(${maxOutputTokens})의 여유가 ${maxChars}자 기준 요구치(${required}토큰 = 실측 비례 ${scaledWorst} × ${BASEBALL_GENIUS_TOKEN_HEADROOM_RATIO}) 미만이다 — 절단 실패 모드가 비대칭(전량 폐기)이라 여유가 필요하다`;
   }
   return null;
 }

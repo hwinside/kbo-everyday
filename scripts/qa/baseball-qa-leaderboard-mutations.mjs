@@ -111,8 +111,15 @@ const MUTATIONS = [
     //   판정 자체를 무력화하는 변이라야 "게이트가 이 함수를 실제로 태우는가"를 검사한다.
     name: "m4f 예산 정합 판정 무력화 — 어떤 토큰 상한도 통과시킨다",
     file: ANSWER_BUDGET,
-    from: "): string | null {\n  if (maxOutputTokens < worstMeasuredTokens) {",
-    to: "): string | null {\n  return null;\n  if (maxOutputTokens < worstMeasuredTokens) {",
+    from: "  const scaledWorst = scaledWorstTokensFor(maxChars, worstMeasuredTokens);",
+    to: "  return null;\n  const scaledWorst = scaledWorstTokensFor(maxChars, worstMeasuredTokens);",
+    smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
+  },
+  {
+    name: "m4f2 maxChars 미연동 회귀 — 문자 상한을 올려도 옛 토큰이 정합으로 통과 (삼순 P1 재현)",
+    file: ANSWER_BUDGET,
+    from: "  return Math.ceil((worstMeasuredTokens * maxChars) / measuredAtChars);",
+    to: "  return worstMeasuredTokens;",
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {

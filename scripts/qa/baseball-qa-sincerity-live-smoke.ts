@@ -120,37 +120,57 @@ async function callGemini(body: unknown) {
   throw new Error("Gemini 재시도 소진");
 }
 
-/** 마지막 실호출의 finishReason — 절단 여부를 검사에서 직접 본다. */
-let lastFinishReason: string | null = null;
-let lastOutputTokens: number | null = null;
+/**
+ * 한 번의 `answerQuestion` 실행에서 관측한 provider 신호.
+ *
+ * 🔴 삼순 2026-08-16 P0-2. 종전에는 `let lastFinishReason` **모듈 전역** 하나에 담았는데,
+ * 폐기율 표본을 `Promise.all` 로 병렬 실행하므로 다른 호출이 값을 덮어쓴다 —
+ * 개별 `MAX_TOKENS` 가 다른 호출의 `STOP` 에 가려져 **절단 검사가 조용히 무력화**된다.
+ * 그래서 trace 를 deps 클로저에 귀속시켜 결과와 1:1 로 묶는다(전역 공유 금지).
+ */
+interface CallTrace {
+  finishReasons: (string | null)[];
+  outputTokens: (number | null)[];
+}
+function newTrace(): CallTrace {
+  return { finishReasons: [], outputTokens: [] };
+}
+/** 이 실행에서 절단이 한 번이라도 있었는가 — 마지막 값이 아니라 **전체**를 본다. */
+function hadTruncation(trace: CallTrace): boolean {
+  return trace.finishReasons.includes("MAX_TOKENS");
+}
 
 /** 배포 코드와 동일한 요청 빌더·프롬프트로 실제 Gemini 를 호출한다 (mock 없음). */
-async function realCallRagLlm(question: string, evidence: RagEvidence[], extras?: RagLlmExtras) {
-  const result = await callGemini(buildRagLlmRequest(question, evidence, RAG_SYSTEM_PROMPT, {
-    context: extras?.context,
-    rosterBlock: extras?.rosterBlock,
-  }));
-  lastFinishReason = result.finishReason;
-  lastOutputTokens = result.outputTokens;
-  return { text: result.text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+function makeRealCallRagLlm(trace: CallTrace) {
+  return async (question: string, evidence: RagEvidence[], extras?: RagLlmExtras) => {
+    const result = await callGemini(buildRagLlmRequest(question, evidence, RAG_SYSTEM_PROMPT, {
+      context: extras?.context,
+      rosterBlock: extras?.rosterBlock,
+    }));
+    trace.finishReasons.push(result.finishReason);
+    trace.outputTokens.push(result.outputTokens);
+    return { text: result.text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+  };
 }
 
 /**
  * generic(비RAG) 경로 실호출 — 배포 빌더 `buildBaseballQaGeminiRequest` 그대로.
  * 시그니처는 production `QaDeps.callLlm` 과 동일해야 파이프라인에 그대로 주입된다.
  */
-async function realCallLlm(
-  question: string,
-  context?: { question: string; answer: string },
-  rosterBlock?: string,
-  statIntentMode?: boolean,
-) {
-  const result = await callGemini(
-    buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, context, rosterBlock, statIntentMode ?? false),
-  );
-  lastFinishReason = result.finishReason;
-  lastOutputTokens = result.outputTokens;
-  return { text: result.text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+function makeRealCallLlm(trace: CallTrace) {
+  return async (
+    question: string,
+    context?: { question: string; answer: string },
+    rosterBlock?: string,
+    statIntentMode?: boolean,
+  ) => {
+    const result = await callGemini(
+      buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, context, rosterBlock, statIntentMode ?? false),
+    );
+    trace.finishReasons.push(result.finishReason);
+    trace.outputTokens.push(result.outputTokens);
+    return { text: result.text, inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+  };
 }
 
 /**
@@ -185,7 +205,7 @@ const PLAYERS = [
   { kboId: "51868", name: "문보경", team: "LG", position: "내야수" },
 ] as unknown as PlayerRef[];
 
-function makeLiveDeps(evidence: RagEvidence[]): QaDeps {
+function makeLiveDeps(evidence: RagEvidence[], trace: CallTrace = newTrace()): QaDeps {
   let stored: unknown = null;
   let started = false;
   return {
@@ -195,7 +215,7 @@ function makeLiveDeps(evidence: RagEvidence[]): QaDeps {
     setCache: async () => {},
     enablePlayerRag: true,
     searchRag: async () => evidence,
-    callRagLlm: realCallRagLlm,
+    callRagLlm: makeRealCallRagLlm(trace),
     callLlm: async () => { throw new Error("선수 RAG 질문에서 generic LLM 금지"); },
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     log: async () => {},
@@ -209,7 +229,7 @@ function makeLiveDeps(evidence: RagEvidence[]): QaDeps {
  * generic(비RAG) 경로 deps — 실 Gemini `callLlm` 을 주입한다.
  * RAG 를 끄고 로스터에 없는 일반 룰 질문을 태워 `source=llm` 종단을 만든다.
  */
-function makeGenericLiveDeps(): QaDeps {
+function makeGenericLiveDeps(trace: CallTrace = newTrace()): QaDeps {
   let stored: unknown = null;
   let started = false;
   return {
@@ -218,7 +238,7 @@ function makeGenericLiveDeps(): QaDeps {
     getCache: async () => null,
     setCache: async () => {},
     enablePlayerRag: false,
-    callLlm: realCallLlm,
+    callLlm: makeRealCallLlm(trace),
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     log: async () => {},
     getLlmState: async () => ({ started, result: stored, ownerActive: false }),
@@ -258,15 +278,40 @@ const COPY_MAX_RUN_CHARS = 40;
  * 그 소재에 연도·횟수가 섞이면서 **폐기율이 올라간다**. 동일 조건 20회 실측:
  *   · base(origin/main, 상한 320)         → grounded 20/20, 평균 LLM 답 193자
  *   · 깊이 지시만 넣은 중간 상태(상한 700) → grounded 17/20 (3건 폐기), 평균 397자
- *   · 우선순위 줄 추가 후(현재)            → grounded 19/20 (1건 폐기), 평균 412자
+ *   · 우선순위 줄 추가 후(현재)            → grounded 19~20/20, 평균 355~412자
  * 즉 "금지가 길이보다 우선"이라는 한 줄로 대부분 회수했지만 **0으로 돌아가진 않았다.**
  * 이 값은 그 잔여 트레이드오프를 숨기지 않고 **회귀로 감시**하기 위한 것이다.
  *
- * 하한 0.8 = 20회 중 4건까지 허용. 실측 19/20(0.95)보다 낮게 잡아 provider 변동을
- * 흡수하되, 프롬프트가 다시 길이 쪽으로 기울면(17/20=0.85 아래) RED 가 되게 한다.
+ * 🔴 하한 재산정 (삼순 2026-08-16 P0-2 재리뷰 — 내 산술 오류 정정).
+ * 종전 0.8 은 "17/20=0.85 아래면 RED" 라고 적어 놓고 실제로는 **0.85 > 0.8 이라 회귀가
+ * 그대로 PASS** 했다. 즉 이 게이트가 감시하려던 바로 그 형상을 통과시키고 있었다.
+ * 0.9 = 20회 중 2건까지 허용. 실측 20/20·19/20 은 통과하고, 회귀 형상 17/20(0.85)은
+ * RED 가 된다. 검출력은 아래 `assertDiscardRateGateDetectsRegression` 이 증명한다.
  */
 const DISCARD_PROBE_RUNS = 20;
-const MIN_GROUNDED_RATE = 0.8;
+const MIN_GROUNDED_RATE = 0.9;
+
+/**
+ * 폐기율 판정을 **순수 함수**로 분리한다.
+ * 게이트가 조건을 인라인으로 재기술하면 결함주입을 걸 자리가 없다 — 함수로 빼야
+ * 회귀 형상(17/20)을 직접 먹여 RED 인지 증명할 수 있다.
+ */
+function discardRateViolation(groundedCount: number, runs: number): string | null {
+  const rate = groundedCount / runs;
+  if (rate >= MIN_GROUNDED_RATE) return null;
+  return `tier2 폐기율 악화 — grounded ${groundedCount}/${runs}(${(rate * 100).toFixed(0)}%) < ${MIN_GROUNDED_RATE * 100}%`;
+}
+
+/**
+ * 검출력 자가증명 — 이 게이트가 **실제로 발견했던 회귀 형상을 잡는가**.
+ * 실측 기록: base 20/20 · 회귀 17/20 · 수정 후 19~20/20.
+ */
+function assertDiscardRateGateDetectsRegression(): void {
+  assert.equal(discardRateViolation(20, 20), null, "정상 형상(20/20)을 RED 로 만들면 안 된다");
+  assert.equal(discardRateViolation(19, 20), null, "허용 형상(19/20)을 RED 로 만들면 안 된다");
+  assert.notEqual(discardRateViolation(17, 20), null, "회귀 형상(17/20)을 잡지 못한다 — 임계값이 느슨하다");
+  assert.notEqual(discardRateViolation(0, 20), null, "전량 폐기(0/20)를 잡지 못한다");
+}
 
 /** 최종 답에서 출처 표기를 뗀 본문 — production 상한은 본문에 걸린다. */
 function bodyOf(answer: string): string {
@@ -290,7 +335,9 @@ function bodyOf(answer: string): string {
   //    ⚠️ 2026-08-16 상한 700 상향 + 깊이 지시 강화에 맞춰 **하한도 함께 올린다**.
   //    상한만 올리고 하한을 100 에 두면 "즉답 회귀"를 이 게이트가 못 잡는다.
   await run("이유·배경형: answerQuestion 종단 — 성의 하한·상한·출처", async () => {
-    const result = await answerQuestion("live-u1", "문보경 별명이 생긴 이유가 뭐야?", makeLiveDeps(evidence));
+    const trace = newTrace();
+    const result = await answerQuestion("live-u1", "문보경 별명이 생긴 이유가 뭐야?", makeLiveDeps(evidence, trace));
+    assert.equal(hadTruncation(trace), false, "토큰 절단 발생");
     assert.equal(result.status, 200);
     assert.equal(
       result.source, "rag",
@@ -326,14 +373,22 @@ function bodyOf(answer: string): string {
   //    ⚠️ 단발 실행으로 판정하지 않는다. tier2 는 숫자 가드 때문에 생성 결과가 확률적으로
   //    폐기되고(아래 ⑤ 참조), 단발 assert 는 그 확률을 게이트 flakiness 로 옮길 뿐이다.
   //    표본을 모아 **비율과 평균**으로 판정하고, 같은 표본을 ⑤와 공유해 호출도 아낀다.
+  //    ⚠️ trace 는 **실행마다 새로 만들어** deps 에 귀속시킨다(삼순 P0-2). 전역 하나를
+  //    공유하면 병렬 호출이 서로의 finishReason 을 덮어써 절단 검사가 무력화된다.
   const ragProbe = await Promise.all(
     Array.from({ length: DISCARD_PROBE_RUNS }, async (_, i) => {
+      const trace = newTrace();
       const result = await answerQuestion(
         `live-probe-${i}`,
         "문보경 별명이 어떻게 생겼고 팬들 사이에서 어떻게 퍼졌는지 배경과 과정까지 자세히 설명해줘",
-        makeLiveDeps(evidence),
+        makeLiveDeps(evidence, trace),
       );
-      return { source: result.source, chars: bodyOf(result.answer).length, finish: lastFinishReason };
+      return {
+        source: result.source,
+        chars: bodyOf(result.answer).length,
+        truncated: hadTruncation(trace),
+        calls: trace.finishReasons.length,
+      };
     }),
   );
   const ragGrounded = ragProbe.filter((r) => r.source === "rag");
@@ -344,7 +399,10 @@ function bodyOf(answer: string): string {
   const ragOverLegacy = ragGrounded.filter((r) => r.chars > LEGACY_MAX_CHARS).length;
 
   await run(`RAG 종단: 실 Gemini 본문이 종전 상한(${LEGACY_MAX_CHARS}자)을 실제로 넘는다`, async () => {
-    assert.equal(ragProbe.filter((r) => r.finish === "MAX_TOKENS").length, 0, "토큰 상한 절단 발생 — maxOutputTokens 가 다시 병목이다");
+    // 전체 표본에서 절단이 **한 건도** 없어야 한다(마지막 값이 아니라 각 실행의 전 호출).
+    assert.equal(ragProbe.filter((r) => r.truncated).length, 0, "토큰 상한 절단 발생 — maxOutputTokens 가 다시 병목이다");
+    // trace 가 실제로 채워졌는지 확인 — 0 이면 관측 자체가 죽은 것이라 절단 검사가 무의미하다.
+    assert.equal(ragProbe.filter((r) => r.calls === 0).length, 0, "provider 호출 trace 가 비었다 — 절단 관측이 무력화됐다");
     assert.ok(ragGrounded.length > 0, "grounded 표본 0건 — 판정 불가는 실패다");
     assert.ok(ragAvg > LEGACY_MAX_CHARS, `상향 실효 미검증 — grounded 평균 본문이 종전 상한 이하(${ragAvg}자)`);
     assert.ok(
@@ -432,11 +490,10 @@ function bodyOf(answer: string): string {
   //    `BASEBALL_GENIUS_DEPTH_PROMPT` 의 "금지가 길이보다 우선" 두 줄로 대부분 회수했으나
   //    **0 으로 돌아가지는 않았다.** 그 잔여 트레이드오프를 숨기지 않고 여기서 감시한다.
   await run(`tier2 폐기율: grounded 비율 >= ${MIN_GROUNDED_RATE * 100}% (깊이 지시가 숫자 금지를 이기지 않는다)`, async () => {
-    assert.ok(
-      ragRate >= MIN_GROUNDED_RATE,
-      `tier2 폐기율 악화 — grounded ${ragGrounded.length}/${DISCARD_PROBE_RUNS}(${(ragRate * 100).toFixed(0)}%). ` +
-      `깊이 지시가 숫자 금지 계약을 이기고 있다(우선순위 줄 확인).`,
-    );
+    // 임계값을 인라인 비교로 재기술하지 않는다 — 판정 함수를 그대로 태운다.
+    assertDiscardRateGateDetectsRegression();
+    const violation = discardRateViolation(ragGrounded.length, DISCARD_PROBE_RUNS);
+    assert.equal(violation, null, `${violation} — 깊이 지시가 숫자 금지 계약을 이기고 있다(우선순위 줄 확인).`);
     // 폐기율을 지키려고 답을 짧게 만든 것이 아니어야 한다 — 두 축을 함께 본다.
     assert.ok(ragAvg > SINCERITY_MIN_CHARS, `폐기율은 지켰지만 평균 길이가 하한 이하(${ragAvg}자) — 상향이 무효화됐다`);
     console.log(`   \u21b3 grounded ${(ragRate * 100).toFixed(0)}% · 평균 ${ragAvg}자 (base 대조: 100% · 193자)`);
