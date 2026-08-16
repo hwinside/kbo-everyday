@@ -511,15 +511,17 @@ export function geniusMotionClipFor(
   //      · intent + granted → 그 감정 클립 (감정 반응)
   //      · intent + 거절    → **중립 클립** (억제하되 다른 감정으로 바꾸지 않는다)
   //    로 나눈다. 거절됐다고 "고마워"에 신남을 붙이면 그게 더 나쁜 오답이다.
+  //
+  // ⚠️ **전 의미 공통 규칙이다 — bored 도 예외가 아니다** (삼순 2026-08-16 보완).
+  //    직전 회차에서 "범위 안내(bored)는 감정이 아니라 상태 표시"라며 쿨다운 예외로
+  //    뒀다가 철회했다. 그 판단 자체는 그럴듯했지만 **§7.4 계약을 리뷰 승인 없이
+  //    바꾸는 것**이었다. 예외가 필요하다는 근거가 서면 그때 §7.4 를 정식으로 고친다.
+  //    지금 필요한 것은 "오해를 만들지 않는 것"뿐이고, 중립 클립이 그걸 이미 만족한다.
   const intent = context?.motionIntent ?? context?.motion;
   const granted = context?.motion;
 
-  // 거절 안내(bored)는 감정 반응이 아니라 **상태 표시**다 — 쿨다운과 무관하게 항상 보인다.
-  // (범위 안내에 신나는 마스코트가 뜨면 신호가 정반대가 된다.)
-  if (intent === "bored") return "bored";
-
-  if (intent === "excited" || intent === "headspin") {
-    // 쿨다운이 승인했을 때만 감정 클립. 거절되면 중립(야구 동작)으로 억제한다.
+  if (intent === "excited" || intent === "headspin" || intent === "bored") {
+    // 쿨다운이 승인했을 때만 감정 클립. 거절되면 중립(야구 동작)으로 **일괄** 억제한다.
     if (granted === intent) return intent;
     return NEUTRAL_ACK_CLIP;
   }

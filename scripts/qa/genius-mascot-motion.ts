@@ -921,10 +921,18 @@ async function partRenderContract() {
     // 그 결과 "감사"·"인사"·"범위 안내"가 전부 같은 폴백으로 무너지는 걸 못 봤다.
     //
     // 계약: 의미(intent)는 쿨다운과 무관하게 보존되고, 쿨다운은 **감정 클립 재생만** 막는다.
-    check("쿨다운 거절: 거절 안내(bored)는 쿨다운과 무관하게 항상 bored — 상태 표시지 감정이 아니다",
+    // ⚠️ **전 의미 공통이다 — bored 도 예외가 아니다** (삼순 2026-08-16 보완).
+    //    "범위 안내는 상태 표시니 쿨다운 예외" 로 뒀다가 철회했다. 그 판단이 맞더라도
+    //    §7.4 계약을 리뷰 승인 없이 바꾸는 것이었다. 필요하면 §7.4 를 정식으로 고친다.
+    check("쿨다운 거절: 범위 안내(intent=bored, 미승인) → 중립. bored 도 예외가 아니다",
       Array.from({ length: 40 }, (_, i) =>
         geniusMotionClipFor("ack", i, { motion: null, motionIntent: "bored" }))
-        .every((c) => c === "bored"));
+        .every((c) => c === "swing"));
+    check("쿨다운 승인: 범위 안내(intent=granted=bored) → bored",
+      geniusMotionClipFor("ack", 9, { motion: "bored", motionIntent: "bored" }) === "bored");
+    // 답변 불가(reply_kind=unavailable)는 모션이 아니라 **유형**이라 쿨다운과 무관하다.
+    check("답변 불가(reply_kind=unavailable)는 쿨다운과 무관하게 bored — 모션이 아니라 유형",
+      geniusMotionClipFor("unavailable", 9, { motion: null, motionIntent: null }) === "bored");
     check("쿨다운 거절: 감사(intent=headspin, 미승인) → 중립. 신남으로 바뀌지 않는다",
       Array.from({ length: 40 }, (_, i) =>
         geniusMotionClipFor("ack", i, { motion: null, motionIntent: "headspin" }))
@@ -936,13 +944,26 @@ async function partRenderContract() {
     check("쿨다운 승인: intent 와 granted 가 같으면 그 감정 클립",
       geniusMotionClipFor("ack", 7, { motion: "headspin", motionIntent: "headspin" }) === "headspin" &&
       geniusMotionClipFor("ack", 7, { motion: "excited", motionIntent: "excited" }) === "excited");
-    // 감사와 인사는 쿨다운 거절 상태에서도 **거절 안내와는** 구분돼야 한다.
-    check("쿨다운 거절: 감사/인사(중립) 와 범위 안내(bored) 는 여전히 구분된다",
-      geniusMotionClipFor("ack", 11, { motion: null, motionIntent: "headspin" }) !==
-      geniusMotionClipFor("ack", 11, { motion: null, motionIntent: "bored" }));
+    // 쿨다운 거절 시 **모든 의미가 같은 중립**으로 내려간다 — 오해되는 다른 감정으로
+    // 바뀌지 않는 것이 계약이고, 의미를 구분해 보이는 것은 계약이 아니다.
+    check("쿨다운 거절: 전 의미가 동일한 중립 클립으로 수렴(오해 유발 감정 0)",
+      new Set((["excited", "headspin", "bored"] as const).map((m) =>
+        geniusMotionClipFor("ack", 11, { motion: null, motionIntent: m }))).size === 1);
     // intent 가 없는 legacy payload 도 죽지 않는다.
     check("쿨다운 거절: intent 없는 legacy ack 도 중립으로 살아있다",
       geniusMotionClipFor("ack", 5, { motion: null }) === "swing");
+
+    // 🔴 **정직한 한계 기록**: 삼순 보완(전 의미 공통 중립)을 적용하고 나면, 서버가
+    //    실제로 만들어내는 조합(reply_kind=ack + motion) 에서는 intent 를 빼도 결과가
+    //    같다 — ack 는 intent 가 없으면 어차피 중립이기 때문이다. 즉 intent 의 값은
+    //    ①payload 관측(어떤 의미였는지 원장에 남는다)과 ②아래 방어 경로에 있다.
+    //    전수 대조 실측: intent 유무로 클립이 달라지는 조합 24건, 전부 비-ack 경로다.
+    check("방어: reply_kind 가 answer/legacy 여도 intent 가 있으면 감정 억제를 따른다",
+      geniusMotionClipFor("answer", 3, { motion: null, motionIntent: "excited" }) === "swing" &&
+      geniusMotionClipFor(null, 3, { motion: null, motionIntent: "headspin" }) === "swing",
+      "서버 배선이 바뀌어 answer 경로에 의미가 실려도 응원/시드 교대로 새면 안 된다");
+    check("방어: intent 와 granted 가 **다르면** 감정 클립을 쓰지 않는다(불일치 = 미승인)",
+      geniusMotionClipFor("ack", 3, { motion: "excited", motionIntent: "headspin" }) === "swing");
 
     // 서버가 실제로 두 값을 **모두** 싣는지 — 하나라도 빠지면 위 계약이 허공이다.
     check("서버가 motion(부여)과 motionIntent(의미)를 둘 다 payload 에 싣는다",

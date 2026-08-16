@@ -141,7 +141,7 @@ const mutations = [
   {
     name: "M16 §7.6 의미 모션 무시 (인사/감사 구분 소실 — 고마워에 신남이 뜬다)",
     file: TARGETS[2],
-    from: '  if (intent === "excited" || intent === "headspin") {',
+    from: '  if (intent === "excited" || intent === "headspin" || intent === "bored") {',
     to: '  if (false) {',
     expect: "의미 매핑",
   },
@@ -163,11 +163,11 @@ const mutations = [
     expect: "쿨다운 거절",
   },
   {
-    // 거절 안내(bored)는 감정 반응이 아니라 **상태 표시**다 — 쿨다운에 걸리면 안 된다.
-    name: "M28 범위 안내(bored)를 쿨다운 대상으로 강등 (안내에 신나는 마스코트)",
+    // bored 를 쿨다운 예외로 되돌리면 §7.4 계약을 리뷰 승인 없이 바꾸는 것이다(삼순 보완).
+    name: "M28 bored 를 쿨다운 예외로 되돌림 (§7.4 계약 무단 변경)",
     file: TARGETS[2],
-    from: '  if (intent === "bored") return "bored";',
-    to: "  if (false) return \"bored\";",
+    from: '  if (intent === "excited" || intent === "headspin" || intent === "bored") {',
+    to: '  if (intent === "bored") return "bored";\n  if (intent === "excited" || intent === "headspin") {',
     expect: "쿨다운 거절",
   },
   {
