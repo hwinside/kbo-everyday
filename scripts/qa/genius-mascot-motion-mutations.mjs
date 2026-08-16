@@ -150,8 +150,8 @@ const mutations = [
     //    부여(granted)만 보면, 30초 내 재인사에서 감사·인사·범위안내가 한 폴백으로 무너진다.
     name: "M26 의도 모션 폐기 (쿨다운 거절 시 감사/인사/범위안내 구분 소실)",
     file: TARGETS[2],
-    from: "  const intent = context?.motionIntent ?? context?.motion;",
-    to: "  const intent = context?.motion;",
+    from: "  const intent = context?.motionIntent ?? context?.motion\n",
+    to: "  const intent = context?.motion\n",
     expect: "쿨다운 거절",
   },
   {
