@@ -248,12 +248,16 @@ check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", 
   assert.match(constants, /type:\s*"baseball_genius_reply"/, "payload type 없음");
   assert.match(constants, /reply_kind:\s*replyKindForMatchPath\(result\.source\)/, "의미 분류 reply_kind 없음");
   assert.match(constants, /match_path:\s*result\.source/, "실제 유형 대신 고정값을 쓰고 있음");
-  // motion 은 단일 지점에서 (source, question) 결정론 계산으로 실린다(삼순 #1197 ②③).
+  // motion·응원 자격 팀 id 는 **같은 단일 지점**에서 (source, question) 결정론 계산으로
+  // 실린다(삼순 #1197 ②③ + #1228 P0). 어느 하나라도 여기 밖에서 계산하면
+  // durable 재시도(claimState="ready")에서 그 값이 소실된다.
   assert.match(
     server,
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion \},\s*messageId,?\s*\)/,
-    "server 가 조립 함수를 단일 지점 motion 계산과 함께 소비하지 않음",
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, answerTeamId \},\s*messageId,?\s*\)/,
+    "server 가 조립 함수를 단일 지점 motion·응원자격 계산과 함께 소비하지 않음",
   );
+  assert.match(server, /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/,
+    "응원 자격 팀 id 를 단일 지점에서 계산하지 않음");
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
   assert.ok(call.indexOf("replyPayload") > 0 && call.indexOf("replyPayload") < 400, "발송 호출에 payload 미전달");
@@ -319,7 +323,9 @@ check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
   // (고정 src 로 바뀌면 같은 결함이다).
   const mascotComponent = read("src/components/dm/GeniusMascotImage.tsx");
   assert.match(mascotComponent, /src=\{geniusMotionSrc\(clip\)\}/, "공유 컴포넌트가 동적 src 를 안 쓴다");
-  assert.match(mascotComponent, /geniusMotionClipFor\(replyKind, messageId\)/, "클립 선택 SSOT 미사용");
+  assert.match(mascotComponent,
+    /geniusMotionClipFor\(replyKind, messageId, \{ answerTeamId, favoriteTeamId \}\)/,
+    "클립 선택 SSOT 미사용(또는 응원 최애팀 결속 누락)");
   // 대기 = 되묻기(thinking 클립) / 실패 = 답하지 못함(bored 클립) 으로 번역된다.
   assert.match(typing, /waiting:\s*"picker"/, "대기 상태 매핑 없음");
   assert.match(typing, /failed:\s*"unavailable"/, "실패 상태 매핑 없음");

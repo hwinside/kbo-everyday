@@ -23,7 +23,7 @@ import {
  *
  * 이 컴포넌트가 소유하는 것:
  *  · 크기 = GENIUS_MASCOT_IMG_CLASS (96px, 헤더 마스코트와 동일 규격)
- *  · 어느 클립인가 = geniusMotionClipFor(replyKind, messageId) — 결정론
+ *  · 어느 클립인가 = geniusMotionClipFor(replyKind, messageId, teams) — 결정론
  *  · reduced-motion 대응 = **자산 교체**(<picture> media 쿼리). CSS 로는 못 멈춘다.
  *
  * 소유권 판정("전체 마스코트 최대 1개")은 여전히 호출부(page)가 한다 — 여기서 하지 않는다.
@@ -31,16 +31,26 @@ import {
 export default function GeniusMascotImage({
   replyKind = null,
   messageId,
+  answerTeamId = null,
+  favoriteTeamId = null,
   testId,
 }: {
   /** 답변 의미 분류. null 이면 legacy(payload 없는 과거 답변)로 보고 야구 동작을 준다. */
   replyKind?: GeniusReplyKind | null;
   /** 클립 선택 시드. 같은 메시지는 reload·재진입·다른 기기에서도 같은 동작이 나온다. */
   messageId: number;
+  /**
+   * 답변이 다루는 구단 canonical id (서버 payload). 유저 최애팀과 **exact 일치**할 때만
+   * 응원 7종이 재생된다 — 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에".
+   * 값이 없으면(구단 미특정·거절·되묻기) 응원은 안 붙는다(fail-close).
+   */
+  answerTeamId?: number | null;
+  /** 보고 있는 유저의 최애팀 id (프로필). 미설정이면 응원 없음. */
+  favoriteTeamId?: number | null;
   /** 게이트가 소유권을 세는 앵커. 사용처마다 다르므로 호출부가 준다. */
   testId: string;
 }) {
-  const clip = geniusMotionClipFor(replyKind, messageId);
+  const clip = geniusMotionClipFor(replyKind, messageId, { answerTeamId, favoriteTeamId });
   return (
     // ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈출 수 없다 — 재생 주체가
     // 이미지 디코더라 CSS 가 관여하지 못한다. `prefers-reduced-motion` 에서는

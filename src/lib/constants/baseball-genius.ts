@@ -396,15 +396,44 @@ export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
 const ANSWER_CLIPS = ["swing", "pitching"] as const;
 
 /**
- * 긍정 반응(인사·감사·칭찬)에 순환하는 9종.
- * 응원 7종을 여기 넣어 **새 판별 룰 없이** 전부 도달하게 한다(삼순 확정).
- * 응원은 "기뻐서 반응하는 동작"이라 인사·칭찬과 같은 칸이 자연스럽다.
+ * 긍정 반응(인사·감사·칭찬) 2종.
+ *
+ * ⚠️ 2026-08-16 14:09 하린아빠 지시로 **응원 7종을 여기서 뺐다** —
+ * "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출". 인사·감사에 응원이 뜨면
+ * 응원이라는 신호가 아무 뜻도 갖지 않는다.
  */
-const POSITIVE_CLIPS = [
-  "excited", "headspin",
+const POSITIVE_CLIPS = ["excited", "headspin"] as const;
+
+/**
+ * 응원 7종 — **유저 최애팀에 관한 답변에만** 붙는다.
+ *
+ * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출".
+ * 즉 응원은 아무 때나 뜨는 장식이 아니라 **"네 팀 얘기다"라는 신호**다.
+ */
+const CHEER_CLIPS = [
   "cheer", "cheerC", "cheerD", "cheerG",
   "cheertowel", "cheerstick", "cheerpom",
 ] as const;
+
+/**
+ * 응원 7종을 붙일 자격 판정 (**fail-close**).
+ *
+ * 응원은 "이 답변이 당신 팀 얘기다"라는 신호이므로, 그 전제가 **증명될 때만** 붙인다.
+ * 최애팀 미설정·팀 판정 불가·다른 팀이면 전부 자격 없음이다 — 애매하면 안 붙인다
+ * (삼순 #1228 P0: "모두 유효하고 같을 때만").
+ *
+ * ⚠️ 두 값 다 **canonical team id(number)** 여야 한다. 팀명 문자열로 비교하면
+ *   `LG`/`엘지`/`트윈스` 표기 차이로 같은 팀이 다른 팀이 된다. 서버가 질문에서
+ *   canonical 을 해석해 payload 에 id 로 실어야 하는 이유다.
+ */
+export function isFavoriteTeamAnswer(
+  answerTeamId: number | null | undefined,
+  favoriteTeamId: number | null | undefined,
+): boolean {
+  if (typeof answerTeamId !== "number" || !Number.isFinite(answerTeamId)) return false;
+  if (typeof favoriteTeamId !== "number" || !Number.isFinite(favoriteTeamId)) return false;
+  return answerTeamId === favoriteTeamId;
+}
 
 /**
  * `reply_kind` + `messageId` → 재생할 클립 (**결정론**).
@@ -415,7 +444,8 @@ const POSITIVE_CLIPS = [
  *
  * 매핑(삼순 2026-08-16 확정):
  *  · answer                    → swing / pitching 교대
- *  · ack                       → 긍정 9종 순환(인사·감사·칭찬·범위안내)
+ *  · ack                       → excited / headspin 교대(인사·감사·칭찬·범위안내)
+ *  · answer + **최애팀 답변**   → 응원 7종 순환 (하린아빠 2026-08-16 14:09)
  *  · picker / correction       → thinking (되묻는 중)
  *  · unavailable               → bored (답하지 못함)
  *  · null/unknown(legacy)      → swing / pitching 교대 — payload 없는 과거 답변도
@@ -424,12 +454,22 @@ const POSITIVE_CLIPS = [
 export function geniusMotionClipFor(
   replyKind: GeniusReplyKind | null | undefined,
   messageId: number,
+  teams?: {
+    /** 답변이 다루는 구단의 canonical team id. 서버가 질문에서 해석해 payload 로 싣는다. */
+    readonly answerTeamId?: number | null;
+    /** 보고 있는 유저의 최애팀 id (프로필). */
+    readonly favoriteTeamId?: number | null;
+  },
 ): GeniusMotionClip {
   // 음수·부동소수로 음수 인덱스가 나오면 undefined 가 된다 — 정규화해 닫는다.
   const seed = Math.abs(Math.trunc(messageId)) || 0;
   if (replyKind === "picker" || replyKind === "correction") return "thinking";
   if (replyKind === "unavailable") return "bored";
   if (replyKind === "ack") return POSITIVE_CLIPS[seed % POSITIVE_CLIPS.length];
+  // 최애팀 얘기일 때만 응원 7종 — 그 외엔 야구 동작(fail-close).
+  if (isFavoriteTeamAnswer(teams?.answerTeamId, teams?.favoriteTeamId)) {
+    return CHEER_CLIPS[seed % CHEER_CLIPS.length];
+  }
   // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.
   return ANSWER_CLIPS[seed % ANSWER_CLIPS.length];
 }
@@ -463,6 +503,14 @@ export interface GeniusReplyPayload {
   motion?: GeniusMascotMotion;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
+  /**
+   * 답변이 다루는 구단의 canonical team id.
+   *
+   * 응원 7종 재생 자격 판정에만 쓴다 — 유저 최애팀과 **exact 일치**할 때만 응원이 붙는다.
+   * 구단이 특정되지 않는 답변(선수·룰·용어·복수 구단)에는 아예 실리지 않는다.
+   * ⚠️ 팀명 문자열이 아니라 id 다. 표기 변형(`LG`/`엘지`/`트윈스`)으로 갈리지 않게.
+   */
+  answer_team_id?: number;
   /** `reply_kind === "correction"` 일 때만. 서버가 발급한 exact 후보만 유저에게 제안한다. */
   correction_options?: string[];
   /**
@@ -507,6 +555,8 @@ export function composeGeniusReplyPayload(
     }>;
     correctionOptions?: readonly string[];
     sourceUrl?: string;
+    /** 답변 대상 구단 canonical team id (응원 클립 자격). 호출부가 결정론 계산해 넘긴다. */
+    answerTeamId?: number | null;
   },
   questionMessageId: number,
 ): GeniusReplyPayload {
@@ -516,6 +566,9 @@ export function composeGeniusReplyPayload(
     match_path: result.source,
     question_message_id: questionMessageId,
     ...(result.motion ? { motion: result.motion } : {}),
+    ...(typeof result.answerTeamId === "number" && Number.isFinite(result.answerTeamId)
+      ? { answer_team_id: result.answerTeamId }
+      : {}),
     ...(result.pickerOptions
       ? {
         picker_options: result.pickerOptions.map((option) => ({
@@ -613,6 +666,11 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 깨진 값이 통과하면 잘못된 질문에 평가가 붙는다.
   if (obj.reply_kind !== "picker" && obj.reply_kind !== "correction" && obj.question_message_id !== undefined &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // 응원 자격 id — 값이 실려 오면 형식을 검증한다. 깨진 값이 통과하면 엉뚱한 팀 답변에
+  // 응원이 붙는다. 없는 것(undefined)은 정상 — 구단이 특정 안 된 답변이 대부분이다.
+  const answerTeamField = (obj as { answer_team_id?: unknown }).answer_team_id;
+  if (answerTeamField !== undefined &&
+      (!Number.isSafeInteger(answerTeamField) || Number(answerTeamField) < 1)) return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
   // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.

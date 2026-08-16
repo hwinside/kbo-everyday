@@ -19,6 +19,7 @@
  * 실행: npm run qa:genius-mascot-motion
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { JSDOM } from "jsdom";
@@ -48,6 +49,36 @@ function webpFrameCount(buf: Buffer): number {
   return frames > 0 ? frames : 1;
 }
 
+/**
+ * WebP 재생 사양을 컨테이너에서 직접 읽는다 — `loop` / `alpha` / 첫 프레임 지속(ms).
+ *
+ * 왜 필요한가 (삼순 #1228 P1 + 하린아빠 14:08 "무한루프"):
+ *  · 프레임이 2장 이상이어도 `loop=1` 이면 **한 번 재생하고 멈춘다** — 유저 눈에는
+ *    "잠깐 움직이다 죽는" 것이고, 이번 지시(무한루프)의 정반대다.
+ *  · alpha 가 없으면 배경이 구워진 자산이라 말풍선 옆에 네모가 뜬다.
+ *  · duration 이 상수로 박히면 SSOT 타이밍이 바뀌어도 조용히 어긋난다.
+ * 셋 다 **파일이 실제로 들고 있는 값**이라, 코드가 아니라 자산을 검사해야 잡힌다.
+ */
+function webpPlayback(buf: Buffer): { loop: number | null; alpha: boolean; durationMs: number | null } {
+  const out: { loop: number | null; alpha: boolean; durationMs: number | null } =
+    { loop: null, alpha: false, durationMs: null };
+  if (buf.length < 12 || buf.toString("ascii", 0, 4) !== "RIFF") return out;
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const fourcc = buf.toString("ascii", off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    if (fourcc === "VP8X") out.alpha = (buf.readUInt8(off + 8) & 0x10) !== 0;
+    // ANIM: background(4B) + loop_count(2B, LE). loop_count 0 = 무한.
+    if (fourcc === "ANIM" && out.loop === null) out.loop = buf.readUInt16LE(off + 12);
+    // ANMF: frame header 16B 중 12..15 가 duration(24bit LE).
+    if (fourcc === "ANMF" && out.durationMs === null) {
+      out.durationMs = buf.readUIntLE(off + 8 + 12, 3);
+    }
+    off += 8 + size + (size % 2);
+  }
+  return out;
+}
+
 process.env.NEXT_PUBLIC_SUPABASE_URL = "http://127.0.0.1:54321";
 process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "***";
 process.env.NODE_ENV = "development";
@@ -67,7 +98,7 @@ function check(name: string, ok: boolean, detail?: string) {
 async function partMapping() {
   const pipeline = await import("../../src/lib/baseball-qa/pipeline");
   const {
-    answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult,
+    answerQuestion, isGreetingPhrase, isAckPhrase, isScopeAskPhrase, geniusMotionForResult, answerTeamIdForResult,
     SMALLTALK_STREAK_LIMIT, SMALLTALK_STREAK_ANSWER,
   } = pipeline;
   check("입력 전제 (판정기 실확인)",
@@ -169,7 +200,11 @@ async function partMapping() {
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
   check("server 배선: compose 가 DB 가 승인한 motion 을 싣는다",
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion \}/.test(serverSrc));
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, answerTeamId \}/.test(serverSrc));
+  // 응원 자격(답변 대상 구단)도 **같은 단일 지점**에서 결정론 계산해야 한다 —
+  // 여기 말고 다른 곳에서 계산하면 durable 재시도에서 값이 소실된다(#1197 계약과 동일 축).
+  check("server 배선: 응원 자격 팀 id 를 단일 지점에서 계산한다",
+    /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/.test(serverSrc));
   check("server 배선: 쿨다운은 원자 claim RPC 가 정한다(SELECT→INSERT race 차단)",
     serverSrc.includes('.rpc("claim_baseball_genius_motion"') &&
     /p_decided_at: decidedAt/.test(serverSrc) &&
@@ -656,8 +691,10 @@ async function partDom() {
 async function partRenderContract() {
   const {
     GENIUS_MASCOT_HEIGHT_PX, GENIUS_MASCOT_IMG_CLASS,
-    GENIUS_MOTION_CLIPS, geniusMotionClipFor, geniusMotionSrc, geniusMotionPosterSrc,
+    GENIUS_MOTION_CLIPS, geniusMotionClipFor, geniusMotionSrc, geniusMotionPosterSrc, isFavoriteTeamAnswer,
   } = await import("../../src/lib/constants/baseball-genius");
+  // 응원 자격 계산은 pipeline 소유 — payload 에 실리는 값이라 여기서 직접 태운다.
+  const { answerTeamIdForResult } = await import("../../src/lib/baseball-qa/pipeline");
 
   // 규격은 상수가 SSOT — 게이트가 문자열을 재구현하면 사용처가 되돌아가도 GREEN 이다
   // (M90 `게이트가 상수를 재구현하면 결함을 못 본다`). 상수 자체를 판정한다.
@@ -699,11 +736,106 @@ async function partRenderContract() {
   check("자산: 본클립과 poster 가 서로 다른 파일이다(재생 자산이 정지본으로 바뀌지 않음)",
     sameFile.length === 0, sameFile.join(", "));
 
+  // ── 재생 사양 (하린아빠 2026-08-16 14:08 "무한루프" · 삼순 #1228 P1) ────────
+  // 프레임 수만 보면 `loop=1`(1회 재생 후 정지)·불투명 배경·엉뚱한 fps 를 전부 놓친다.
+  const notLooping: string[] = [];
+  const noAlpha: string[] = [];
+  const badFps: string[] = [];
+  const posterNotFirstFrame: string[] = [];
+  for (const clip of GENIUS_MOTION_CLIPS) {
+    const clipAbs = resolve(process.cwd(), "public", geniusMotionSrc(clip).replace(/^\//, ""));
+    const posterAbs = resolve(process.cwd(), "public", geniusMotionPosterSrc(clip).replace(/^\//, ""));
+    if (!existsSync(clipAbs) || !existsSync(posterAbs)) continue;
+    const play = webpPlayback(readFileSync(clipAbs));
+    if (play.loop !== 0) notLooping.push(`${clip}(loop=${play.loop ?? "없음"})`);
+    if (!play.alpha) noAlpha.push(clip);
+    // 12fps 목표(프레임당 ≈83ms). 원본 타이밍을 보존하므로 폭을 넓게 잡되,
+    // 24fps(≈42ms) 나 4fps(250ms) 로 어긋나면 잡힌다.
+    if (play.durationMs === null || play.durationMs < 60 || play.durationMs > 220) {
+      badFps.push(`${clip}(${play.durationMs ?? "없음"}ms)`);
+    }
+    // poster 도 alpha 가 있어야 reduced-motion 에서 네모가 안 뜬다.
+    if (!webpPlayback(readFileSync(posterAbs)).alpha) noAlpha.push(`${clip}-poster`);
+    // poster 는 "첫 프레임"이어야 한다 — 크기가 다르면 정지 순간 캐릭터가 튄다.
+    const clipBuf = readFileSync(clipAbs);
+    const posterBuf = readFileSync(posterAbs);
+    const dim = (b: Buffer) => b.toString("ascii", 12, 16) === "VP8X"
+      ? `${b.readUIntLE(24, 3) + 1}x${b.readUIntLE(27, 3) + 1}` : "?";
+    if (dim(clipBuf) !== dim(posterBuf)) {
+      posterNotFirstFrame.push(`${clip}(${dim(clipBuf)} vs ${dim(posterBuf)})`);
+    }
+  }
+  check("자산: 전 클립이 **무한 루프**다 (loop=0 — 1회 재생 후 정지 아님)",
+    notLooping.length === 0, notLooping.join(", "));
+  check("자산: 전 클립·poster 가 투명배경이다 (말풍선 옆 네모 방지)",
+    noAlpha.length === 0, noAlpha.join(", "));
+  check("자산: 프레임 지속이 12fps 대역이다 (원본 타이밍 보존)",
+    badFps.length === 0, badFps.join(", "));
+  check("자산: poster 규격이 본클립과 같다 (정지 순간 캐릭터가 안 튄다)",
+    posterNotFirstFrame.length === 0, posterNotFirstFrame.join(", "));
+
+  // ── 파생 재현성 (삼순 #1228 P1) ────────────────────────────────────────────
+  // 파생 자산만 있으면 "어디서 어떻게 나왔는가"를 아무도 재현할 수 없다.
+  const genScript = resolve(process.cwd(), "scripts/assets/build-mascot-motion.py");
+  check("파생: 빌드 스크립트가 커밋돼 있다(자산 재생성 가능)", existsSync(genScript));
+  const derivedPath = resolve(process.cwd(), "public/mascot/motion/DERIVED.json");
+  check("파생: manifest 가 커밋돼 있다", existsSync(derivedPath));
+  if (existsSync(derivedPath)) {
+    const derived = JSON.parse(readFileSync(derivedPath, "utf8")) as {
+      clips?: Record<string, { clip_sha256?: string; poster_sha256?: string }>;
+    };
+    const listed = Object.keys(derived.clips ?? {}).sort();
+    check("파생: manifest 가 13종 전부를 기록한다",
+      listed.length === GENIUS_MOTION_CLIPS.length &&
+      [...GENIUS_MOTION_CLIPS].sort().every((c, i) => listed[i] === c),
+      listed.join(", "));
+    // 기록된 해시가 **실제 배포 자산과 일치**해야 한다. 아니면 manifest 는 장식이다.
+    const drift: string[] = [];
+    for (const clip of GENIUS_MOTION_CLIPS) {
+      const meta = derived.clips?.[clip];
+      if (!meta) continue;
+      for (const [field, p] of [
+        ["clip_sha256", geniusMotionSrc(clip)] as const,
+        ["poster_sha256", geniusMotionPosterSrc(clip)] as const,
+      ]) {
+        const abs = resolve(process.cwd(), "public", p.replace(/^\//, ""));
+        if (!existsSync(abs)) continue;
+        const actual = createHash("sha256").update(readFileSync(abs)).digest("hex");
+        if (meta[field] !== actual) drift.push(`${clip}.${field}`);
+      }
+    }
+    check("파생: manifest 해시가 배포 자산과 일치한다(수동 교체 감지)",
+      drift.length === 0, drift.join(", "));
+  }
+
   // ── 클립 선택 = 결정론 + 13종 전수 도달성 ──────────────────────────
   check("클립 선택은 결정론이다(같은 입력 → 같은 출력)",
     [0, 1, 7, 42, 12345].every((id) =>
       geniusMotionClipFor("answer", id) === geniusMotionClipFor("answer", id) &&
       geniusMotionClipFor("ack", id) === geniusMotionClipFor("ack", id)));
+  // ── 응원 자격 계산 함수를 **직접 태운다** (M25 가 검출) ────────────────────
+  // 종전 게이트는 `geniusMotionClipFor` 만 태웠는데, 거절/되묻기는 그 함수가 먼저
+  // 조기 반환하므로 `answerTeamIdForResult` 가 망가져도 결과가 안 변했다.
+  // 자격 계산은 payload 에 실리는 값이므로 **그 함수 자체**를 검사해야 한다.
+  {
+    const rejecting = ["ack", "scope_guide", "blocked", "unsure", "error", "player_picker",
+      "question_correction", "quota", "no_context", "service_redirect", "stat_clarify"];
+    const leaked = rejecting.filter((src) => answerTeamIdForResult(src, "LG 순위 알려줘") !== null);
+    check("응원 자격: 답하지 못한 경로는 팀 id 를 싣지 않는다(차단인데 응원 방지)",
+      leaked.length === 0, leaked.join(","));
+    // 실제 답변 경로에서는 구단이 특정될 때만 id 가 나온다.
+    check("응원 자격: 답변 경로 + 단일 구단 → 팀 id",
+      answerTeamIdForResult("rag", "LG 순위 알려줘") === 1);
+    check("응원 자격: 구단 미언급 → null",
+      answerTeamIdForResult("rag", "번트가 뭐야?") === null);
+    check("응원 자격: 두 구단 이상(비교) → null (기존 구단 결속 SSOT 재사용)",
+      answerTeamIdForResult("rag", "LG랑 두산 중 누가 위야?") === null);
+    // 표기 변형이 같은 id 로 수렴해야 한다 — 문자열 비교였다면 갈렸을 자리.
+    check("응원 자격: 표기 변형(LG/엘지/트윈스)이 같은 id 로 수렴",
+      new Set(["LG 승률", "엘지 승률", "트윈스 승률"]
+        .map((q) => answerTeamIdForResult("rag", q))).size === 1);
+  }
+
   check("클립 선택: 되묻기(picker/correction) → thinking",
     geniusMotionClipFor("picker", 3) === "thinking" && geniusMotionClipFor("correction", 8) === "thinking");
   check("클립 선택: 답하지 못함(unavailable) → bored",
@@ -714,7 +846,47 @@ async function partRenderContract() {
       answers.size === 2 && [...answers].every((c) => c === "swing" || c === "pitching"),
       [...answers].join(","));
     const acks = new Set(Array.from({ length: 60 }, (_, i) => geniusMotionClipFor("ack", i)));
-    check("클립 선택: 긍정반응은 응원 7종 포함 9종 순환", acks.size === 9, [...acks].join(","));
+    check("클립 선택: 긍정반응(인사·감사·칭찬)은 excited/headspin 교대",
+      acks.size === 2 && [...acks].every((c) => c === "excited" || c === "headspin"),
+      [...acks].join(","));
+
+    // ── 응원 7종 = 최애팀 결속 (하린아빠 2026-08-16 14:09 · 삼순 #1228 P0) ────
+    // "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출". 응원은 장식이 아니라
+    // "이 답변이 당신 팀 얘기다"라는 신호이므로, 그 전제가 증명될 때만 붙어야 한다.
+    const MY = 1; // LG
+    const cheers = new Set(Array.from({ length: 80 }, (_, i) =>
+      geniusMotionClipFor("answer", i, { answerTeamId: MY, favoriteTeamId: MY })));
+    check("응원: 최애팀 답변이면 응원 7종이 순환한다",
+      cheers.size === 7 && [...cheers].every((c) => c.startsWith("cheer")),
+      [...cheers].join(","));
+    // fail-close 4축 — 하나라도 뚫리면 엉뚱한 답변에 응원이 붙는다.
+    const notCheer = (label: string, teams: Parameters<typeof geniusMotionClipFor>[2]) => {
+      const got = new Set(Array.from({ length: 40 }, (_, i) => geniusMotionClipFor("answer", i, teams)));
+      return { label, ok: [...got].every((c) => c === "swing" || c === "pitching"), got: [...got].join(",") };
+    };
+    for (const t of [
+      notCheer("다른 팀 답변", { answerTeamId: 2, favoriteTeamId: MY }),
+      notCheer("최애팀 미설정", { answerTeamId: MY, favoriteTeamId: null }),
+      notCheer("구단 미특정 답변", { answerTeamId: null, favoriteTeamId: MY }),
+      notCheer("둘 다 없음(legacy)", undefined),
+    ]) {
+      check(`응원 fail-close: ${t.label} → 야구 동작`, t.ok, t.got);
+    }
+    // 거절·되묻기에는 팀이 맞아도 응원이 붙으면 안 된다 — 신호가 뒤집힌다.
+    check("응원 fail-close: 답하지 못함/되묻기는 팀이 맞아도 응원 아님",
+      geniusMotionClipFor("unavailable", 3, { answerTeamId: MY, favoriteTeamId: MY }) === "bored" &&
+      geniusMotionClipFor("picker", 3, { answerTeamId: MY, favoriteTeamId: MY }) === "thinking");
+    // 결정론 — 같은 메시지는 reload·재진입에도 같은 응원이 나온다.
+    check("응원: 같은 messageId 면 항상 같은 클립(reload 동일성)",
+      Array.from({ length: 30 }, (_, i) =>
+        geniusMotionClipFor("answer", i, { answerTeamId: MY, favoriteTeamId: MY }) ===
+        geniusMotionClipFor("answer", i, { answerTeamId: MY, favoriteTeamId: MY })).every(Boolean));
+    // 유효하지 않은 id(0·음수·NaN·소수)는 전부 자격 없음 — 느슨하면 우연히 같아질 수 있다.
+    const invalid = [0, -1, NaN, 1.5, undefined, null];
+    check("응원 fail-close: 유효하지 않은 팀 id 는 자격 없음",
+      invalid.every((v) =>
+        !isFavoriteTeamAnswer(v as number, MY) && !isFavoriteTeamAnswer(MY, v as number)),
+      invalid.join(","));
     // legacy(payload 없는 과거 답변)도 멈춰 있으면 안 된다 — 종전 idle 정지 폴백 대체.
     check("클립 선택: legacy(null/undefined) 도 야구 동작으로 살아있다",
       [null, undefined].every((k) => ["swing", "pitching"].includes(geniusMotionClipFor(k, 9))));
@@ -723,6 +895,8 @@ async function partRenderContract() {
     for (let i = 0; i < 200; i += 1) {
       for (const k of ["answer", "ack", "picker", "correction", "unavailable"] as const) {
         reachable.add(geniusMotionClipFor(k, i));
+        // 최애팀 답변 경로도 같이 태운다 — 응원 7종은 이 경로로만 도달한다.
+        reachable.add(geniusMotionClipFor(k, i, { answerTeamId: 1, favoriteTeamId: 1 }));
       }
     }
     const unreachable = GENIUS_MOTION_CLIPS.filter((c) => !reachable.has(c));

@@ -58,7 +58,7 @@ export default function DMChatPage() {
   const router = useRouter();
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const {
     messages,
     loading,
@@ -580,6 +580,8 @@ export default function DMChatPage() {
                         <GeniusMascotImage
                           replyKind={geniusReply?.reply_kind ?? null}
                           messageId={msg.id}
+                          answerTeamId={geniusReply?.answer_team_id ?? null}
+                          favoriteTeamId={profile?.team_id ?? null}
                           testId="genius-reply-mascot"
                         />
                       ) : (

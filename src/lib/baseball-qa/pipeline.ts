@@ -747,6 +747,51 @@ export function geniusMotionForResult(
   return undefined;
 }
 
+/**
+ * 답변이 다루는 구단의 canonical team id (**응원 클립 자격 판정용**).
+ *
+ * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출" →
+ * 유저 최애팀과 exact 일치할 때만 응원 7종이 붙는다. 그 "답변 대상 팀"을 여기서 정한다.
+ *
+ * ⚠️ **새 판별 룰을 만들지 않는다.** 이미 있는 구단 결속 SSOT(`resolveMentionedTeam`
+ * → `teamIdOfCanonical`)를 그대로 재사용한다. 그 함수는 두 구단 이상이 언급되면
+ * 이미 null 을 돌려주므로(비교 질문), 여기서도 자동으로 자격 없음이 된다.
+ *
+ * ⚠️ **id 로 반환한다.** 팀명 문자열이면 `LG`/`엘지`/`트윈스` 표기 차이로 같은 팀이
+ * 다른 팀이 된다.
+ *
+ * 자격이 없는 경우(전부 null → 응원 안 붙음):
+ *  · 구단이 안 나온 질문(선수·룰·용어)
+ *  · 두 구단 이상(비교 질문)
+ *  · 답을 못 한 경우 — 거절·차단·되묻기·오류에 응원이 붙으면 신호가 뒤집힌다.
+ */
+export function answerTeamIdForResult(source: string, question: string): number | null {
+  // 실제로 "답한" 경로에만. `replyKindForMatchPath` 의 answer 칸과 같은 취지를 여기서
+  // 재현하지 않기 위해, 거절/되묻기/오류 계열을 명시 제외한다.
+  if (source === "ack" || source === "scope_guide" || source === "blocked" ||
+      source === "unsure" || source === "error" || source === "player_picker" ||
+      source === "question_correction" || source === "quota" || source === "no_context" ||
+      source === "service_redirect" || source === "stat_clarify") {
+    return null;
+  }
+  const canonical = resolveMentionedTeam(question);
+  if (canonical === null) return null;
+
+  // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다 —
+  //    `LG랑 두산 중 누가 위야?` 가 **두산 하나만** 지명된 것처럼 보인다.
+  //    그 상태로 응원을 붙이면 "두산 팬에게 LG 비교 답변 + 두산 응원"이 나간다.
+  //    `resolveRagTeamCandidate` 와 **같은 보수 규칙**을 쓴다: 조사와 무관하게 다른
+  //    구단의 약칭·별칭이 문자열로 등장하면 단일 구단으로 보지 않는다.
+  //    과탐지는 응원 미노출(야구 동작 유지)일 뿐이고, 놓치면 남의 팀에 응원이 붙는다.
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
+    team.canonical !== canonical &&
+    [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
+  if (mentionsOtherTeam) return null;
+
+  return teamIdOfCanonical(canonical);
+}
+
 export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;

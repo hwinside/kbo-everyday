@@ -1,0 +1,142 @@
+{
+ "generator": "scripts/assets/build-mascot-motion.py",
+ "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
+ "params": {
+  "target_h": 192,
+  "frame_step": 2,
+  "quality": 62,
+  "tol": 26
+ },
+ "clips": {
+  "bored": {
+   "frames": 60,
+   "w": 166,
+   "h": 192,
+   "duration_ms": 168,
+   "source_frames": 119,
+   "clip_sha256": "fdb4aa3deff08b64acda83d5f8c9eaef27e238c9a762335d1b0b6c5cf28220a2",
+   "poster_sha256": "7c0e92337c23bfc3850670aa327707a7100c99ac0134179c91823a55b6ab904f",
+   "clip_kb": 361
+  },
+  "cheer": {
+   "frames": 49,
+   "w": 240,
+   "h": 192,
+   "duration_ms": 100,
+   "source_frames": 97,
+   "clip_sha256": "9552da790009c9994d82a4166692ee0000261499af82828d23e64b0da6de7263",
+   "poster_sha256": "7361e8bed381222b9d40b7ad663152acd7e80928e001b3f90abc7e1596f76010",
+   "clip_kb": 347
+  },
+  "cheerC": {
+   "frames": 50,
+   "w": 177,
+   "h": 192,
+   "duration_ms": 100,
+   "source_frames": 99,
+   "clip_sha256": "be85419d8eccab49c008cbb8776a2b29781b3a83c849bc04fa3fd897a856dd0f",
+   "poster_sha256": "f927c5bf289c3f83bf272dc9541d8d4a3518c26268de147f690b2ca02d519a2a",
+   "clip_kb": 315
+  },
+  "cheerD": {
+   "frames": 45,
+   "w": 169,
+   "h": 192,
+   "duration_ms": 200,
+   "source_frames": 90,
+   "clip_sha256": "42e3d04d37c3da191fd2de275bff34d8b58745fb40e224d1082c1acaead49968",
+   "poster_sha256": "c07150ba2cd78477f9993241dc95b3cfe766c65a884ce56a0da1b825ee591293",
+   "clip_kb": 282
+  },
+  "cheerG": {
+   "frames": 47,
+   "w": 165,
+   "h": 192,
+   "duration_ms": 100,
+   "source_frames": 94,
+   "clip_sha256": "830fe7c3c0d7c92a0e75bbc5296c6063261cbf703fa7154ae17042a854b9af5f",
+   "poster_sha256": "746d52fe224f07f98a0822758d91e305207743ac0ba2d3015cb539e324b588b8",
+   "clip_kb": 284
+  },
+  "cheerpom": {
+   "frames": 73,
+   "w": 341,
+   "h": 192,
+   "duration_ms": 84,
+   "source_frames": 145,
+   "clip_sha256": "788ac8c842847ae19937d4636e9180f6380444a939c6fac7c3b4398c86e2c9e9",
+   "poster_sha256": "21c194cf8c9bb474cd958417754811a69ea290840043f17e6e3e0246579a30db",
+   "clip_kb": 768
+  },
+  "cheerstick": {
+   "frames": 50,
+   "w": 341,
+   "h": 192,
+   "duration_ms": 100,
+   "source_frames": 100,
+   "clip_sha256": "9f5ad59011ed3a84fc1c5ebeafba990fa32b35f70886303375cec9ce70414ee3",
+   "poster_sha256": "29e63b577142f51d993510b4cb7c731c8523c2671dcb81a2467887716626e608",
+   "clip_kb": 423
+  },
+  "cheertowel": {
+   "frames": 50,
+   "w": 339,
+   "h": 192,
+   "duration_ms": 100,
+   "source_frames": 100,
+   "clip_sha256": "c1e55a23b5b4f649bf7ab7b1f9e9a11264735c81b02e83e69c2ba56c7feb1800",
+   "poster_sha256": "483c3d2abe42a85b3cd718ba212533d77ea5dc3ada04fa8d38c4086f78e75fa1",
+   "clip_kb": 298
+  },
+  "excited": {
+   "frames": 54,
+   "w": 145,
+   "h": 192,
+   "duration_ms": 126,
+   "source_frames": 108,
+   "clip_sha256": "db72eeee8767400be54dded1a4153aeb23c14a1632fcdbe0301121e083908108",
+   "poster_sha256": "eafcbd19124687455f2958f4a150b4398668064b1d72496f86932c06ecb124b5",
+   "clip_kb": 317
+  },
+  "headspin": {
+   "frames": 55,
+   "w": 166,
+   "h": 192,
+   "duration_ms": 126,
+   "source_frames": 109,
+   "clip_sha256": "351e01ccaa65b642ddb0a7fe22894bfc6969d00cdd42a02ce09ac7dc587766e2",
+   "poster_sha256": "50331fc21628ed8f918ec4e0cbdb13208b27348d6789720ca43a3c5455ebfd62",
+   "clip_kb": 304
+  },
+  "pitching": {
+   "frames": 47,
+   "w": 231,
+   "h": 192,
+   "duration_ms": 84,
+   "source_frames": 93,
+   "clip_sha256": "997d5c44e9276f26b73f3457f485ced0393f6bbdde42d162d13b718c0fc4b828",
+   "poster_sha256": "c256c380c59c2f6234ddcf6929d2de2491e86e2480a3a173ef0211c91e545534",
+   "clip_kb": 230
+  },
+  "swing": {
+   "frames": 49,
+   "w": 261,
+   "h": 192,
+   "duration_ms": 126,
+   "source_frames": 98,
+   "clip_sha256": "c20ce67935f20a277092b161289d36348bd7ae7cecd792456db61904c2aa1d01",
+   "poster_sha256": "302a42747102d7ec9d6aa0d1ab62b96ed5e700a631cfa2ea7cccfdd6c9d5f640",
+   "clip_kb": 249
+  },
+  "thinking": {
+   "frames": 54,
+   "w": 155,
+   "h": 192,
+   "duration_ms": 84,
+   "source_frames": 108,
+   "clip_sha256": "841024596ad33869457509417d81285fea53675cbe803a21876aa4e901abcfd7",
+   "poster_sha256": "74c7ba581c46e994f34da8558935e2cf552d9313434be2e12f47bbbbd291fe38",
+   "clip_kb": 217
+  }
+ }
+}
