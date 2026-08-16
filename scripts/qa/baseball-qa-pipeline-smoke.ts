@@ -5,7 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
-import { selectContextTurn } from "../../src/lib/baseball-qa/context";
+import { selectContextTurn, type ContextTurn } from "../../src/lib/baseball-qa/context";
 import {
   applyBaseballQaPlayerPick,
   applyBaseballQaQuestionCorrection,
@@ -1092,8 +1092,12 @@ async function verifyAmbiguousServiceWordEndToEnd() {
     intent: string;
     expect: "dictionary" | "rule_llm" | "context_llm";
     forbidTerm?: string;
-    /** 종단 답변이 반드시 담아야 하는 문자열(의미축). 없으면 검사 생략. */
-    answerMust?: string;
+    /**
+     * 종단 답변이 담아야 하는 **의미축 2개 이상** (삼순 2026-08-16 3차 NO-GO ②).
+     * 한 단어(`실책`·`퇴장`)만 보면 무관·불완전 답도 GREEN 이다 —
+     * 질문이 요구한 **조건·귀결**까지 각각 고정한다.
+     */
+    answerMust?: readonly string[];
   }> = [
     {
       question: "에러",
@@ -1110,21 +1114,24 @@ async function verifyAmbiguousServiceWordEndToEnd() {
       intent: "전광판 후속 — 직전 턴 `전광판에 b는 뭐야?` 의 E 옆 칸을 묻는다 (실측 12:26:47→12:27:00)",
       expect: "context_llm",
       forbidTerm: "실책",
-      answerMust: "전광판",
+      // 전광판 후속: "무엇의(전광판)" + "어느 칸(E 옆)" 두 축.
+      answerMust: ["전광판", "E", "B"],
     },
     {
       question: "공이 높이 뜨면 오류가 가능해?",
       intent: "룰 판정 — 뜬공에서 실책이 성립하는지 묻는다 (정의 질문이 아니다)",
       expect: "rule_llm",
       forbidTerm: "실책",
-      answerMust: "실책",
+      // 뜬공 실책: "성립 조건(잡을 수 있던 타구를 놓침)" + "귀결(실책 기록)" 두 축.
+      answerMust: ["뜬공", "놓", "실책"],
     },
     {
       question: "감독이 3연전의 첫 번째 경기에러 퇴장당하면 어떻게 되는건가요?",
       intent: "감독 퇴장 규정 — `경기에서` 오타. 실책과 무관하다",
       expect: "rule_llm",
       forbidTerm: "실책",
-      answerMust: "퇴장",
+      // 감독 퇴장: "해당 경기 지휘(코치)" + "후속 경기 조건" 두 축.
+      answerMust: ["퇴장", "코치", "다음 경기"],
     },
   ];
 
@@ -1166,7 +1173,7 @@ async function verifyAmbiguousServiceWordEndToEnd() {
   const run = async (
     question: string,
     mapper: "pick" | "null" | "none" | "contract" | "rogue",
-    opts: { previousTurn?: typeof SCOREBOARD_PREVIOUS_TURN } = {},
+    opts: { previousTurn?: typeof SCOREBOARD_PREVIOUS_TURN & { staleMs?: number } } = {},
   ) => {
     const state = freshState({
       llmText: JSON.stringify({
@@ -1176,8 +1183,16 @@ async function verifyAmbiguousServiceWordEndToEnd() {
     });
     const base = makeDeps(state);
     const now = Date.now();
+    // 🔴 삼순 3차 NO-GO ①: `makeDeps.callLlm` 은 인자를 전부 버린다 —
+    //   `answerQuestion` 이 context 전달을 삭제해도 게이트가 GREEN 이었다.
+    //   여기서 **실제 seam 인자**를 캡처해 직전 Q/A exact 를 검증한다.
+    const llmCalls: Array<{ question: string; context: ContextTurn | undefined }> = [];
     const deps: QaDeps = {
       ...base,
+      callLlm: async (question2, context, rosterBlock, statIntentMode) => {
+        llmCalls.push({ question: question2, context });
+        return base.callLlm(question2, context, rosterBlock, statIntentMode);
+      },
       ...(mapper === "none"
         ? {}
         : {
@@ -1197,7 +1212,8 @@ async function verifyAmbiguousServiceWordEndToEnd() {
               question: opts.previousTurn!.question,
               answer: opts.previousTurn!.answer,
               jobSource: opts.previousTurn!.jobSource,
-              answeredAt: new Date(now - 60_000).toISOString(),
+              // `staleMs` 로 TTL 초과 형상을 만든다 (자격 거름을 종단에서 확인하기 위함).
+              answeredAt: new Date(now - (opts.previousTurn!.staleMs ?? 60_000)).toISOString(),
               currentCreatedAt: new Date(now).toISOString(),
             }),
           }
@@ -1209,6 +1225,7 @@ async function verifyAmbiguousServiceWordEndToEnd() {
       term: (result as { term?: string }).term ?? null,
       answer: result.answer ?? "",
       state,
+      llmCalls,
     };
   };
 
@@ -1255,17 +1272,13 @@ async function verifyAmbiguousServiceWordEndToEnd() {
     }
   }
 
-  // ── ②-b 매퍼 프롬프트 계약 — 위 금지가 production 에서 성립하는 **근거**를 고정한다 ──
-  //    게이트가 stub 계약만 검사하면 production 프롬프트가 바뀌어도 GREEN 이다.
-  //    실제 프롬프트 문면에 "정의 질문일 때만" 과 "결과·규칙 질문은 null" 이 남아 있는지 본다.
+  // ── ②-b 매퍼 프롬프트 계약 — **런타임 조립 결과**를 검사한다 ──────────────────
+  //
+  //   🔴 삼순 3차 NO-GO ②: 종전에는 `server.ts` **소스 텍스트 1,200자를 includes** 했다.
+  //     그러면 실제 literal 을 주석 처리해도 문면이 남아 GREEN 이다.
+  //     프롬프트를 `GLOSSARY_MAPPER_SYSTEM_PROMPT` 로 export 해 **보내지는 값 자체**를 본다.
   {
-    const serverSource = readFileSync(
-      path.join(process.cwd(), "src/lib/baseball-qa/server.ts"),
-      "utf8",
-    );
-    const promptStart = serverSource.indexOf("너는 KBO 야구 용어 사전의 질문 분류기다");
-    assert.ok(promptStart > 0, "mapGlossaryDefinition 프롬프트를 찾지 못했다 — 계약 근거 소실");
-    const promptBlock = serverSource.slice(promptStart, promptStart + 1200);
+    const { GLOSSARY_MAPPER_SYSTEM_PROMPT } = await import("../../src/lib/baseball-qa/gemini-request");
     for (const clause of [
       "그 용어 자체의 뜻·정의",           // 정의 질문일 때만 고른다
       "결과·규칙 질문",                   // 룰 판정은 null (`오류 뜬공`·`경기에러 퇴장`)
@@ -1273,10 +1286,15 @@ async function verifyAmbiguousServiceWordEndToEnd() {
       "확실하지 않으면 null",             // 보수 기본값
     ]) {
       assert.ok(
-        promptBlock.includes(clause),
+        GLOSSARY_MAPPER_SYSTEM_PROMPT.includes(clause),
         `매퍼 프롬프트에서 "${clause}" 계약이 사라졌다 — ② 금지의 근거가 없어진다`,
       );
     }
+    // 조립 결과가 실제로 여러 줄 지시문인지 — 빈 문자열·상수 치환 방어.
+    assert.ok(
+      GLOSSARY_MAPPER_SYSTEM_PROMPT.split("\n").length >= 8,
+      `매퍼 프롬프트가 ${GLOSSARY_MAPPER_SYSTEM_PROMPT.split("\n").length}줄 — 계약 지시문이 사라졌다`,
+    );
   }
 
   // ── ②-c 계약 위반 형상은 **후보 폐쇄집합 밖으로는 못 나간다** ────────────────
@@ -1321,26 +1339,53 @@ async function verifyAmbiguousServiceWordEndToEnd() {
     assert.notEqual(conservative.source, "dictionary", "매퍼가 null 인데 사전이 답했다 — 매퍼 계약 위반");
   }
 
-  // ── ④ 전광판 후속 — 실 context 를 태워 **맥락이 실제로 전달되는지** 확인한다 ──
-  //    삼순 ③: "전광판 후속 → 실 context" 로 분류하라.
-  //    이 PR 이 여는 것은 "서비스로 안 끝난다"이고, 회수는 직전 턴 맥락 + LLM 이 한다.
+  // ── ④ 전광판 후속 — `answerQuestion → callLlm` seam 에서 직전 Q/A exact 를 검증한다 ──
+  //
+  //    🔴 삼순 3차 NO-GO ①: 종전에는 `selectContextTurn()` 을 **따로** 호출해 "자격 있음"만
+  //      증명했다. 그러면 `answerQuestion` 이 context 전달을 삭제해도 이 케이스가 GREEN 이다.
+  //      이제 seam 인자를 캡처해 **실제로 넘어간 값**을 본다.
   {
     const r = await run("그거말고 에러 옆에 잇능거", "null", { previousTurn: SCOREBOARD_PREVIOUS_TURN });
     assert.equal(r.source, "llm", `전광판 후속 source=${r.source} — LLM 경로로 가지 않았다`);
     assert.equal(r.state.llmCalls, 1, `전광판 후속 LLM 호출 ${r.state.llmCalls}회`);
-    assert.ok(r.answer.includes("전광판"), `전광판 후속 답변에 전광판 맥락이 없다 — "${r.answer}"`);
     assert.deepEqual(r.state.logs, ["llm"], `전광판 후속 log=${JSON.stringify(r.state.logs)}`);
-    // 맥락이 **실제로 프롬프트에 실렸는가** — context 없이도 같은 결과면 검증이 무의미하다.
-    // `selectContextTurn` 계약(allowlist·TTL·B2)을 직접 태워 자격을 확인한다.
-    const qualified = selectContextTurn({
-      question: SCOREBOARD_PREVIOUS_TURN.question,
-      answer: SCOREBOARD_PREVIOUS_TURN.answer,
-      jobSource: SCOREBOARD_PREVIOUS_TURN.jobSource,
-      answeredAt: new Date(Date.now() - 60_000).toISOString(),
-      currentCreatedAt: new Date().toISOString(),
+    const scoreboardCase = LOG_CASES.find((x) => x.expect === "context_llm")!;
+    for (const axis of scoreboardCase.answerMust!) {
+      assert.ok(r.answer.includes(axis), `전광판 후속 의미축 "${axis}" 누락 — "${r.answer}"`);
+    }
+
+    // seam 캡처 — 직전 Q/A 가 exact 로 실려 갔는가.
+    assert.equal(r.llmCalls.length, 1, `callLlm 호출 ${r.llmCalls.length}회`);
+    const passed = r.llmCalls[0];
+    assert.equal(passed.question, "그거말고 에러 옆에 잇능거", "현재 질문이 그대로 전달되지 않았다");
+    assert.ok(passed.context, "🔴 직전 턴 맥락이 callLlm 에 전달되지 않았다 — 후속 질문이 맥락 없이 처리된다");
+    assert.equal(
+      passed.context!.question, SCOREBOARD_PREVIOUS_TURN.question,
+      `전달된 직전 질문 불일치 — "${passed.context!.question}"`,
+    );
+    assert.equal(
+      passed.context!.answer, SCOREBOARD_PREVIOUS_TURN.answer,
+      `전달된 직전 답변 불일치 — "${passed.context!.answer}"`,
+    );
+
+    // 대조군 — 직전 턴이 없으면 context 는 undefined 여야 한다.
+    //   이게 없으면 "항상 context 가 실린다"는 구현에서도 위 assert 가 통과한다.
+    const noCtx = await run("그거말고 에러 옆에 잇능거", "null");
+    assert.equal(noCtx.llmCalls.length, 1, "대조군 callLlm 호출 수");
+    assert.equal(
+      noCtx.llmCalls[0].context, undefined,
+      `직전 턴이 없는데 context 가 실렸다 — ${JSON.stringify(noCtx.llmCalls[0].context)}`,
+    );
+
+    // 오염 대조군 — 자격 없는 직전 턴(TTL 초과)은 실리면 안 된다.
+    //   `selectContextTurn` 이 자격을 거른다는 것을 **종단 경로에서** 확인한다.
+    const staleR = await run("그거말고 에러 옆에 잇능거", "null", {
+      previousTurn: { ...SCOREBOARD_PREVIOUS_TURN, staleMs: 601_000 },
     });
-    assert.ok(qualified, "전광판 직전 턴이 맥락 자격을 얻지 못했다 — 후속 질문이 맥락 없이 처리된다");
-    assert.equal(qualified!.question, SCOREBOARD_PREVIOUS_TURN.question);
+    assert.equal(
+      staleR.llmCalls[0].context, undefined,
+      `TTL 초과 직전 턴이 맥락으로 실렸다 — ${JSON.stringify(staleR.llmCalls[0].context)}`,
+    );
   }
 
   // ── ⑤ 룰 판정 2건 — 질문이 요구한 **의미**가 답변에 있는가 ───────────────────
@@ -1352,10 +1397,13 @@ async function verifyAmbiguousServiceWordEndToEnd() {
     assert.equal(r.source, "llm", `"${c.question}"(${c.intent}): source=${r.source} — 룰 답변 경로가 아니다`);
     assert.notEqual(r.source, "unsure", `"${c.question}": 되묻기로 끝났다`);
     assert.equal(r.state.llmCalls, 1, `"${c.question}": LLM ${r.state.llmCalls}회`);
-    assert.ok(
-      r.answer.includes(c.answerMust!),
-      `"${c.question}": 질문이 요구한 "${c.answerMust}" 가 답변에 없다 — "${r.answer}"`,
-    );
+    assert.ok(c.answerMust!.length >= 2, `"${c.question}": 의미축이 ${c.answerMust!.length}개 — 2개 이상이어야 한다`);
+    for (const axis of c.answerMust!) {
+      assert.ok(
+        r.answer.includes(axis),
+        `"${c.question}": 질문이 요구한 의미축 "${axis}" 가 답변에 없다 — "${r.answer}"`,
+      );
+    }
     assert.deepEqual(r.state.logs, ["llm"], `"${c.question}": log=${JSON.stringify(r.state.logs)}`);
   }
 
