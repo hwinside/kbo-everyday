@@ -1,0 +1,64 @@
+{
+ "captured_at": "2026-08-16",
+ "source": "Supabase Management API — production baseball_terms",
+ "note": "repo migration 에 INSERT 가 없어 재구축본에 결손된 4행. 값은 production 실측 그대로이며 rule_version 계약 위반(2026)도 그대로 담는다 — 교정은 migration 이 CAS 로 수행한다.",
+ "rows": [
+  {
+   "term": "10-10 클럽",
+   "aliases": [
+    "10-10",
+    "10-10클럽",
+    "텐텐클럽",
+    "텐텐 클럽"
+   ],
+   "answer": "한 시즌에 홈런 10개와 도루 10개를 동시에 달성하는 기록입니다.\n장타력과 기동력을 모두 갖춘 선수라는 뜻입니다.\n호타준족의 입문 코스로 불립니다.",
+   "category": "record",
+   "source_kind": "editorial_definition",
+   "source_url": null,
+   "rule_version": "2026",
+   "reviewed_at": "2026-08-11"
+  },
+  {
+   "term": "20-20 클럽",
+   "aliases": [
+    "20-20",
+    "20-20클럽",
+    "트웬티트웬티클럽"
+   ],
+   "answer": "한 시즌에 홈런 20개와 도루 20개를 동시에 달성하는 기록입니다.\n파워와 스피드를 겸비한 호타준족의 상징입니다.\nKBO에서도 시즌마다 쉽게 나오지 않는 기록입니다.",
+   "category": "record",
+   "source_kind": "editorial_definition",
+   "source_url": null,
+   "rule_version": "2026",
+   "reviewed_at": "2026-08-11"
+  },
+  {
+   "term": "30-30 클럽",
+   "aliases": [
+    "30-30",
+    "30-30클럽",
+    "서티서티클럽"
+   ],
+   "answer": "한 시즌에 홈런 30개와 도루 30개를 동시에 달성하는 대기록입니다.\nKBO 최초는 1996년 박재홍 선수입니다.\n리그를 대표하는 호타준족만 도달할 수 있습니다.",
+   "category": "record",
+   "source_kind": "editorial_definition",
+   "source_url": null,
+   "rule_version": "2026",
+   "reviewed_at": "2026-08-11"
+  },
+  {
+   "term": "40-40 클럽",
+   "aliases": [
+    "40-40",
+    "40-40클럽",
+    "포티포티클럽"
+   ],
+   "answer": "한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 초대형 기록입니다.\nKBO에서는 2015년 에릭 테임즈 선수가 최초이자 유일하게 달성했습니다.\n세계적으로도 극소수만 도달한 꿈의 기록입니다.",
+   "category": "record",
+   "source_kind": "editorial_definition",
+   "source_url": null,
+   "rule_version": "2026",
+   "reviewed_at": "2026-08-11"
+  }
+ ]
+}

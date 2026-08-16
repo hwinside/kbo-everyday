@@ -25,44 +25,59 @@
 -- 멱등: ON CONFLICT (term) DO NOTHING — 재실행해도 기존 행을 덮어쓰지 않는다.
 -- ============================================================
 
--- ── ⓐ Production 선존재 4행 정본화 (삼순 2026-08-16 NO-GO: "기존 4행의 정체") ──────
+-- ── ⓐ Production 선존재 4행 정본화 + 계약 위반 교정 (삼순 2026-08-16 2차 NO-GO) ──
 --
--- 🔴 실측 결과 이 4행은 **repo migration 어디에도 INSERT 가 없다.**
---   `created_at = 2026-08-11 00:58:28+00` 로 production 에 직접 들어간 행이고,
+-- 🔴 실측: 이 4행은 **repo migration 어디에도 INSERT 가 없다.**
+--   `created_at = 2026-08-11 00:58:28+00` 로 production 에 직접 들어갔고,
 --   repo 에는 `20260814121000_baseball_terms_formal_tone.sql` 의 **UPDATE 대상**으로만
 --   등장한다(그 migration 은 INSERT 를 하지 않는다).
---   즉 신규 환경에서 마이그레이션을 전부 돌려도 이 4행은 생기지 않아,
---   production(136) 과 재구축본(132) 이 영구히 어긋나 있었다.
---   → 배치 수치가 136/132/164 로 갈렸던 근본 원인이 이것이다.
+--   → 재구축본 132 vs production 136. 수치 혼선(136/132/164)의 정체가 이것이다.
 --
--- 값은 production 현재 상태를 그대로 옮긴 것이다(톤 migration 적용 **후** 실측).
--- ON CONFLICT DO NOTHING 이므로 production 에서는 no-op 이고, 재구축본에서만 생성된다.
+-- 🔴 그리고 이 4행은 근거 분류 계약을 어기고 있다 —
+--   `editorial_definition` 인데 `rule_version = '2026'`(계약상 `not_applicable`).
+--   repo INSERT 가 없어 게이트를 한 번도 안 탔기 때문이다.
+--
+--   ⚠️ 종전 판(1차 반영)에서는 "지금 고치면 재구축본과 production 이 갈린다"며 위반값을
+--     그대로 넣었는데, **그 전제가 틀렸다**(삼순 지적). `ON CONFLICT DO NOTHING` 이라
+--     production 은 손대지 않으니 오히려 **영구히 갈린 채로 고정**되고, 알려진 계약 위반을
+--     fresh DB 에 새로 심는 꼴이었다.
+--   → 아래처럼 **양쪽을 동시에 교정**한다:
+--       INSERT ... ON CONFLICT (term) DO UPDATE  (재구축본: 계약 준수값으로 생성)
+--       WHERE 절 CAS                              (production: 알려진 위반값일 때만 교정)
+--   CAS 조건이 answer 를 건드리지 않으므로 2026-08-14 톤 migration 결과는 보존된다.
 INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
 VALUES
 ('10-10 클럽', ARRAY['10-10','10-10클럽','텐텐클럽','텐텐 클럽'],
  '한 시즌에 홈런 10개와 도루 10개를 동시에 달성하는 기록입니다.
 장타력과 기동력을 모두 갖춘 선수라는 뜻입니다.
 호타준족의 입문 코스로 불립니다.',
- 'record', 'editorial_definition', NULL, '2026', DATE '2026-08-11'),
+ 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11'),
 
 ('20-20 클럽', ARRAY['20-20','20-20클럽','트웬티트웬티클럽'],
  '한 시즌에 홈런 20개와 도루 20개를 동시에 달성하는 기록입니다.
 파워와 스피드를 겸비한 호타준족의 상징입니다.
 KBO에서도 시즌마다 쉽게 나오지 않는 기록입니다.',
- 'record', 'editorial_definition', NULL, '2026', DATE '2026-08-11'),
+ 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11'),
 
 ('30-30 클럽', ARRAY['30-30','30-30클럽','서티서티클럽'],
  '한 시즌에 홈런 30개와 도루 30개를 동시에 달성하는 대기록입니다.
 KBO 최초는 1996년 박재홍 선수입니다.
 리그를 대표하는 호타준족만 도달할 수 있습니다.',
- 'record', 'editorial_definition', NULL, '2026', DATE '2026-08-11'),
+ 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11'),
 
 ('40-40 클럽', ARRAY['40-40','40-40클럽','포티포티클럽'],
  '한 시즌에 홈런 40개와 도루 40개를 동시에 달성하는 초대형 기록입니다.
 KBO에서는 2015년 에릭 테임즈 선수가 최초이자 유일하게 달성했습니다.
 세계적으로도 극소수만 도달한 꿈의 기록입니다.',
- 'record', 'editorial_definition', NULL, '2026', DATE '2026-08-11')
-ON CONFLICT (term) DO NOTHING;
+ 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-11')
+ON CONFLICT (term) DO UPDATE
+   SET rule_version = EXCLUDED.rule_version
+ WHERE baseball_terms.source_kind = 'editorial_definition'
+   AND baseball_terms.source_url IS NULL
+   AND baseball_terms.rule_version = '2026'
+   -- ⚠️ answer 는 **비교도 갱신도 하지 않는다** — 톤 migration(20260814121000) 결과를
+   --   되돌리면 안 되고, 이 교정의 대상은 metadata 한 칸(rule_version)뿐이다.
+   AND baseball_terms.answer = EXCLUDED.answer;
 
 INSERT INTO public.baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
 VALUES
@@ -166,9 +181,9 @@ VALUES
 
 -- ── 투구 (로그: `와인드업이 뭐야` `1회초 4실점은 뭔말이야`) ─────────────────────
 ('실점', ARRAY['runs allowed','실점이란','실점이','총실점'],
- '투수가 마운드에 있는 동안 상대에게 내준 점수 전체입니다.
-이 가운데 수비 실책 등이 원인이 아닌 점수만 자책점으로 칩니다.
-평균자책점은 실점이 아니라 자책점으로 계산합니다.',
+ '투수가 책임지는 주자가 득점해 내준 점수입니다.
+자기가 내보낸 주자가 교체 뒤에 득점해도 앞 투수의 실점입니다.
+이 가운데 수비 실책 등이 원인이 아닌 점수만 자책점으로 칩니다.',
  'record', 'official_record', 'https://www.koreabaseball.com/Record/Player/PitcherBasic/Basic1.aspx', '2026', DATE '2026-08-16'),
 
 ('와인드업', ARRAY['windup','wind up','와인드업 자세','와인드업 투구'],
