@@ -1017,8 +1017,13 @@ export function validateRagResponse(
       // ⚠️ **개수로 답변의 성격을 분류하지 않는다** (삼순 2026-08-16 3차).
       //    `1` 이라도 연도일 수도, 순위·점수일 수도, 질문 숫자를 되받은 것일 수도 있다.
       //    "구제 가능한 정답이었는가" 는 **표본 감사로만** 확정한다.
-      //    이 사유(`numeric_claim_ungrounded`)는 "숫자가 근거에 없어 거절했다" 는 뜻일 뿐,
-      //    나머지 서술이 옳았는지는 **판정한 적이 없다** — 폐기율 ≠ 정답 손실률.
+      //
+      // 🔴 사유 이름이 오해를 부르므로 못 박아 둔다 (삼순 2026-08-16 4차):
+      //    여기서 하는 일은 `hasNumericCharacter(answer)` 하나다 — **근거 대조를 하지 않는다.**
+      //    따라서 `numeric_claim_ungrounded` 는 "숫자가 근거에 없다" 는 뜻이 아니라
+      //    **"tier2 출력에 숫자가 있어 정책상 폐기했다"** 는 뜻이다.
+      //    그 숫자가 근거에 있었는지도, 나머지 서술이 옳았는지도 **판정한 적이 없다**.
+      //    → 폐기율 ≠ 정답 손실률.
       return {
         kind: "insufficient", reason: "numeric_claim_ungrounded",
         numericCount: numericTokenCount(answer),

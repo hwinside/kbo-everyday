@@ -999,7 +999,9 @@ export interface QaDeps {
     /**
      * 생성 RAG 답변이 **폐기된 사유** (2026-08-16 계측 착수, 하린아빠 지시).
      *
-     * 왜 필요한가: tier2 숫자 전면 HOLD 는 정확한 답변까지 함께 버린다(`1990년 창단`).
+     * 왜 필요한가: tier2 숫자 전면 HOLD 는 근거에 그대로 적힌 답까지 함께 버릴 수 있다
+     * (`1990년 창단`). ⚠️ 이 칸들이 만드는 값은 **폐기율**이지 정답 손실률이 아니다 —
+     * 폐기된 답이 옳았는지는 어디서도 판정하지 않는다(삼순 3·4차).
      * 그 손해가 얼마인지 지금은 **측정할 수 없다** — 폐기되면 `match_path='unsure'` 로만 남아
      * JSON 깨짐·길이초과·숫자가드가 구분되지 않기 때문이다. 정책을 열기 전에 분모부터 만든다.
      *
@@ -1021,16 +1023,18 @@ export interface QaDeps {
     /**
      * **질문**의 숫자 토큰 개수 (삼순 2026-08-16 2차 NO-GO ①).
      *
-     * 🔴 **이 두 칸으로 "유저 숫자 재사용 ↔ 모델 창작" 을 가를 수 없다** (삼순 3차 ②).
-     *   개수에는 값 동일성이 없기 때문이다. 확정 가능한 방향은 하나뿐이다:
+     * 🔴 **이 두 칸으로 "유저 숫자 재사용 ↔ 모델 창작" 을 가를 수 없다** (삼순 3차 ② · 4차).
+     *   개수에는 값 동일성이 없기 때문이다. 확정 가능한 것은 **질문 기원 여부 하나뿐**이다:
      *
-     *     질문=0 · 답변>0  →  답변의 숫자는 **전부 모델이 새로 넣은 것** (확정)
+     *     질문=0 · 답변>0  →  답변의 숫자는 **질문에 없던 숫자** (확정)
+     *                          🔴 여기까지다. **근거 문서에서 복사했을 수도 있으므로**
+     *                             `모델 창작`·`근거에 없음` 은 확정되지 않는다.
+     *                             출처·정확성 **미판정**.
      *     질문>0 · 답변>0  →  **미확정.** 같은 숫자를 되받았는지 다른 숫자를 만들었는지는
      *                          값을 비교해야 알 수 있는데, 값은 **일부러 저장하지 않는다**
      *     질문>0 · 답변=0  →  숫자 폐기와 무관
      *
-     *   그래서 이 칸의 쓸모는 "전량 창작인 행을 분리해내는 것" 까지다. 그 너머의 분류는
-     *   **표본 감사로만** 확정한다.
+     *   `창작/지어냄/근거에 없음` 분류는 전부 **표본 감사 영역**이다.
      *
      * ⚠️ **성공·폐기 모두** 채운다(경로 라벨과 같은 이유 — 분모가 필요하다).
      * `null` = 생성 RAG 미시도. 개수만이다 — 값은 저장하지 않는다.
@@ -1094,10 +1098,11 @@ export interface RagObservation {
  * 경로마다 필드를 손으로 나열하면 한 경로만 빠뜨려도 그 경로가 조용히 `null` 로 남는다
  * (게이트가 4경로를 전부 태워서 막지만, 애초에 빠뜨리기 어렵게 만드는 쪽이 낫다).
  *
- * 🔴 `ragQuestionNumericCount` 의 쓸모와 **한계** (삼순 2026-08-16 2차 ① / 3차 ②):
+ * 🔴 `ragQuestionNumericCount` 의 쓸모와 **한계** (삼순 2026-08-16 2차 ① / 3차 ② / 4차):
  *   답변 개수만 있으면 "질문=0 인데 답변에 숫자가 있다" 는 행조차 골라낼 수 없다. 질문
- *   개수를 나란히 남기면 그 행만은 **전량 모델 창작**으로 확정된다.
- *   ⚠️ 거기까지다. `질문>0 · 답변>0` 은 값 동일성이 없어 **재사용인지 창작인지 미확정**이며,
+ *   개수를 나란히 남기면 그 행이 **질문 비기원 숫자**임이 확정된다.
+ *   ⚠️ 거기까지다 — 근거 문서에서 복사했을 수도 있어 **출처·정확성은 미판정**이고,
+ *   `질문>0 · 답변>0` 은 값 동일성이 없어 재사용/타 숫자 여부도 **미확정**이다.
  *   값 비교는 익명집계 조건상 하지 않는다. 개수로 그 이상을 주장하지 않는다.
  */
 function ragObservation(
@@ -3131,7 +3136,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
     ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
     ...(typeof final.toneCompliant === "boolean" ? { toneCompliant: final.toneCompliant } : {}),
-    // 관측 3칸 복원 (삼순 2026-08-16 ②). 🔴 폐쇄집합 밖 값은 **버린다** — envelope 는 이전
+    // 관측 4칸 복원 (삼순 2026-08-16 ②). 🔴 폐쇄집합 밖 값은 **버린다** — envelope 는 이전
     // 배포가 쓴 것일 수 있고, 그 값을 그대로 log 로 보내면 DB CHECK 위반(23514)으로 로그
     // INSERT 자체가 죽는다. 관측 유실이 서빙 실패보다 낫다(fail-open 방향이 맞는 유일한 칸).
     ...(isRagAttemptPath(final.ragAttemptPath) ? { ragAttemptPath: final.ragAttemptPath } : {}),
@@ -3188,7 +3193,7 @@ async function replayStoredFinalResult(
     answer: storedFinal.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     // 재생도 원시점 톤 관측을 그대로 기록한다 — 재판정 없음(원시점 계약, cacheable 과 동일 축).
     toneCompliant: storedFinal.toneCompliant ?? null,
-    // 생성 RAG 관측 3칸도 같은 계약 (삼순 2026-08-16 ②) — `store 성공 → log 전 crash → retry`
+    // 생성 RAG 관측 4칸도 같은 계약 (삼순 2026-08-16 ②) — `store 성공 → log 전 crash → retry`
     // 에서 여기 없으면 계측이 null 로 유실된다. 재판정하지 않고 원시점 값을 그대로 옮긴다.
     ragAttemptPath: storedFinal.ragAttemptPath ?? null,
     ragQuestionNumericCount: storedFinal.ragQuestionNumericCount ?? null,

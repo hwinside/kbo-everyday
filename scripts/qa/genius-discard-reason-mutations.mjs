@@ -123,7 +123,7 @@ const MUTATIONS = [
     expect: "숫자 개수가 1990",
   },
   {
-    name: "M16 질문 숫자 개수를 안 보낸다 (유저가 준 숫자↔모델 창작 구분 불가 — 삼순 2차 ①)",
+    name: "M16 질문 숫자 개수를 안 보낸다 (질문 기원 여부조차 못 가른다 — 삼순 2차 ①)",
     file: "pipeline",
     from: `    ragQuestionNumericCount: numericTokenCount(question),`,
     to: `    ragQuestionNumericCount: 0,`,
