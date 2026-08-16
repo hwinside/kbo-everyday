@@ -443,27 +443,29 @@ export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
  * `많은 홈런`·`굵직한 기록`처럼 정성 평가어로 바꿔 새어 나간다. 출력 validator에 평가어
  * 사전을 붙이면 정상 서술까지 막는 누더기 규칙이 되므로, 생성 전에 숫자-heavy 문장/라인을
  * 제외하고 clean 소개 근거만 남긴다.
+ *
+ * 중요: 최종 6건 cap 전에 projection 한다. 먼저 `selectEvidence`로 자르면 rank 7 이하의
+ * clean 소개 근거를 영원히 못 보기 때문이다.
  */
 export function projectPlayerDescriptiveEvidence(rows: RagEvidence[]): RagEvidence[] {
-  const candidates = rows
-    .map((row) => ({ row, content: projectPlayerDescriptiveContent(row.content) }))
-    .filter(({ content }) => content.length >= 20);
-  const wikipedia = candidates.filter(({ row }) => (
-    row.sourceKind === "wikipedia_document" || /(?:^|\.)wikipedia\.org$/i.test(safeHostname(row.canonicalUrl))
-  ));
-  const picked = wikipedia.length > 0 ? wikipedia : candidates;
-  return picked.slice(0, RAG_EVIDENCE_LIMIT).map(({ row, content }) => ({ ...row, content }));
-}
+  const selected: RagEvidence[] = [];
+  let lockedGrade: SourceGrade | null = null;
+  for (const row of rows) {
+    const sanitized = sanitizeEvidenceContent(row.content, row);
+    if (sanitized.length < 20) continue;
+    if (lockedGrade === null) lockedGrade = row.sourceGrade;
+    else if (row.sourceGrade !== lockedGrade) continue;
 
-function safeHostname(url: string): string {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return "";
+    const content = projectPlayerDescriptiveContent(sanitized, row.sectionPath);
+    if (content.length < 20) continue;
+    selected.push({ ...row, content });
+    if (selected.length >= RAG_EVIDENCE_LIMIT) break;
   }
+  return selected;
 }
 
-function projectPlayerDescriptiveContent(content: string): string {
+function projectPlayerDescriptiveContent(content: string, sectionPath: string): string {
+  if (isPlayerDescriptiveRecordSection(sectionPath)) return "";
   const withoutNumericParentheticals = content
     // `김재환(金宰煥, 1988년...)은 현 ... 외야수` 같은 프로필 첫문장의 핵심을 살린다.
     .replace(/\([^)]*\p{N}[^)]*\)/gu, "")
@@ -474,10 +476,14 @@ function projectPlayerDescriptiveContent(content: string): string {
     .filter((part) => part.length > 0);
   const clean = parts.filter((part) => {
     if (/\p{N}/u.test(part)) return false;
-    if (/주요 기록|통산 홈런|계약금|연봉|옵션|등번호|타점|득점|타율|홈런왕|타점왕|MVP|아시안 게임|프리미어 12|국가대표|기록|수상|시즌/.test(part)) {
+    if (/프런트|코칭스태프|편집 요청|편집 권한|최근 변경|최근 토론|정보 더 보기|펼치기|접기|둘러보기/.test(part)) {
       return false;
     }
-    if (/프런트|코칭스태프|편집 요청|편집 권한|최근 변경|최근 토론|정보 더 보기|펼치기|접기|둘러보기/.test(part)) {
+    // Namu 본문에는 비수치로 보이는 색인/헤더 조각이 섞인다. `sectionPath`가 record가
+    // 아니어도 "통산 홈런 일지" 같은 헤더가 본문 chunk 안에 들어오면 소개 생성 근거로는
+    // 오염이다. 선수 소개형 RAG에서는 기록/수상/대표팀 축 전체가 규모 추론의 발화점이므로
+    // LLM 직전 projection에서만 제외한다(전역 selector/validator 무변경).
+    if (/주요 기록|통산 홈런|계약금|연봉|옵션|등번호|타점|득점|타율|홈런왕|타점왕|MVP|아시안 게임|프리미어 12|국가대표|기록|수상|시즌|A대표팀 참가 경력/.test(part)) {
       return false;
     }
     return true;
@@ -485,6 +491,9 @@ function projectPlayerDescriptiveContent(content: string): string {
   return clean.join(" ").replace(/\s+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
 }
 
+function isPlayerDescriptiveRecordSection(sectionPath: string): boolean {
+  return /(?:^|[/›>])\s*(?:주요 기록|통산|기록|수상|연도별 성적|시즌별 성적|역대 성적|선수 경력\/\d{4}년)\s*(?:$|[/›>])/u.test(sectionPath);
+}
 
 /**
  * 선별된 근거의 단일 등급.
