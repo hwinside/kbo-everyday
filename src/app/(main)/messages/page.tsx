@@ -121,7 +121,11 @@ export default function MessagesPage() {
                            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-16 w-auto max-w-none" />
                     </span>
                   ) : conv.other_nickname === "크보팬 운영팀" ? (
-                    <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full object-cover" />
+                    // 컨테이너가 `overflow-visible`(야잘알봇 캐릭터가 슬롯 밖으로 넘쳐야 해서)이라
+                    // 컨테이너의 `rounded-full` 이 자식을 잘라주지 않는다. 그런데 이 아이콘 PNG 는
+                    // 알파가 없고 모서리에 **흰색이 구워져** 있어서, 클립이 없으면 흰 테두리가 그대로 보인다.
+                    // 따라서 자기 자신이 원형으로 클립해야 한다 — 컨테이너 overflow 에 의존하지 않는다.
+                    <img src="/apple-touch-icon.png" alt="크보팬" className="w-full h-full rounded-full object-cover" />
                   ) : conv.other_team_id ? (
                     <TeamBadge teamId={conv.other_team_id} size="sm" />
                   ) : (

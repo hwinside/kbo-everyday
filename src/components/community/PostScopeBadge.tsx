@@ -37,7 +37,10 @@ function AllTeamsChip({ compact }: { compact: boolean }) {
         }`}
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- 정적 브랜드 아이콘 */}
-        <img src="/icon-192.png" alt="" className="w-full h-full object-cover" />
+        {/* 이 아이콘 PNG 는 알파가 없고 모서리가 흰색이라 원형 클립이 없으면 흰 테두리가 드러난다.
+            지금은 부모가 overflow-hidden 이라 가려지지만, 그 한 줄이 바뀌면 조용히 회귀한다
+            (쪽지 아바타가 실제로 그렇게 깨졌다). 그래서 자식이 직접 클립한다. */}
+        <img src="/icon-192.png" alt="" className="w-full h-full rounded-full object-cover" />
       </span>
       {ALL_TEAMS_LABEL}
     </span>
