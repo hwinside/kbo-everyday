@@ -14,10 +14,15 @@
 --                              null = 생성 RAG 미시도(사전·구조화·고정문·generic LLM).
 --   · rag_discard_reason     = 폐기 사유. null = 폐기 없음.
 --   · rag_question_numeric_count = **질문**의 숫자 토큰 개수. 성공·폐기 모두 채운다.
---                              답변 개수만으로는 그 숫자가 유저가 준 것을 되받은 것인지
---                              모델이 새로 만든 것인지 구분할 수 없다 — 두 경우는 성격이
---                              완전히 다르다(전자는 원래 허용 가능, 후자가 진짜 환각 위험).
---                              나란히 남겨야 익명 상태로 교차집계가 된다(삼순 2026-08-16 2차 ①).
+--
+--     ⚠️ **개수 두 칸으로 "유저 숫자 재사용 ↔ 모델 창작"을 가를 수 없다** (삼순 2026-08-16 3차 ②).
+--        개수에는 값 동일성이 없다. 확정 가능한 방향은 하나뿐이다:
+--          · `질문=0 · 답변>0` → 답변의 숫자는 **전부 모델이 새로 넣은 것**이다 (확정).
+--          · `질문>0 · 답변>0` → **미확정.** 같은 숫자를 되받은 것인지 다른 숫자를 만든 것인지
+--                                 값을 비교해야 알 수 있는데, 값은 **일부러 저장하지 않는다**
+--                                 (익명집계 조건). 이 칸으로 결론을 내지 않는다.
+--          · `질문>0 · 답변=0` → 숫자 폐기와 무관한 행.
+--        이 경계를 넘는 분류는 **표본 감사로만** 확정한다.
 --   · rag_discard_numeric_count = 폐기된 **답변**의 숫자 토큰 개수만. 값도 원문도 저장하지 않는다.
 --                              ⚠️ 개수 하나로 답변 성격을 단정하지 않는다 — `1` 이라도 연도일 수도,
 --                              순위·점수일 수도, 질문 숫자를 되받은 것일 수도 있다. "구제 가능한
@@ -84,7 +89,7 @@ alter table genius_question_logs
   check (rag_question_numeric_count is null or rag_question_numeric_count >= 0);
 
 comment on column genius_question_logs.rag_discard_reason is
-  'Generated RAG discard reason (observation only). null = nothing discarded. numeric_claim_ungrounded = tier2 numeric hold discarded an otherwise valid answer.';
+  'Generated RAG discard reason (observation only). null = nothing discarded. numeric_claim_ungrounded = the tier2 numeric hold rejected the answer; it does NOT mean the rest of the answer was correct (never assessed). Discard rate is not answer-loss rate.';
 
 comment on column genius_question_logs.rag_attempt_path is
   'Which generated RAG path was attempted (player|official|team|news). Filled on BOTH served and discarded rows so per-path discard rate has a denominator. null = no generated RAG attempt.';
@@ -93,4 +98,4 @@ comment on column genius_question_logs.rag_discard_numeric_count is
   'Numeric token COUNT of the discarded answer (anonymised: no values, no text). null = nothing discarded or not assessable. A count alone does NOT classify the answer; use sample audit.';
 
 comment on column genius_question_logs.rag_question_numeric_count is
-  'Numeric token COUNT of the question (anonymised). Filled on BOTH served and discarded rows so answer-side counts can be cross-tabulated against user-supplied numbers.';
+  'Numeric token COUNT of the question (anonymised). Filled on BOTH served and discarded rows. Counts carry NO value identity: only question=0 & answer>0 is decidable (every answer number is model-introduced). question>0 & answer>0 stays UNDECIDED - reuse vs invention cannot be told apart without comparing values, which we deliberately do not store. Resolve by sample audit only.';

@@ -1013,8 +1013,12 @@ export function validateRagResponse(
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
     if (hasNumericCharacter(answer)) {
       // 개수만 남긴다 — 폐기된 본문은 저장하지 않는다(삼순 익명집계 조건).
-      // `1` 이면 서술형 답에 연도 하나 섮인 것이고(=B 정본으로 구제 가능),
-      // 큰 값이면 수치 나열이라 성격이 다르다 — 이 분포가 B/A 우선순위를 가른다.
+      //
+      // ⚠️ **개수로 답변의 성격을 분류하지 않는다** (삼순 2026-08-16 3차).
+      //    `1` 이라도 연도일 수도, 순위·점수일 수도, 질문 숫자를 되받은 것일 수도 있다.
+      //    "구제 가능한 정답이었는가" 는 **표본 감사로만** 확정한다.
+      //    이 사유(`numeric_claim_ungrounded`)는 "숫자가 근거에 없어 거절했다" 는 뜻일 뿐,
+      //    나머지 서술이 옳았는지는 **판정한 적이 없다** — 폐기율 ≠ 정답 손실률.
       return {
         kind: "insufficient", reason: "numeric_claim_ungrounded",
         numericCount: numericTokenCount(answer),
