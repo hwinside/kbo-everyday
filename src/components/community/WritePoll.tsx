@@ -7,12 +7,14 @@ import Image from "next/image";
 import TeamTagger from "./TeamTagger";
 import PlayerTagger from "./PlayerTagger";
 import PlayerPickerSheet from "./PlayerPickerSheet";
-import { TEAMS } from "@/lib/constants/teams";
+import { TEAMS, getTeamById } from "@/lib/constants/teams";
+import { useAuth } from "@/lib/supabase/AuthContext";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 import { getPlayerPhotoByKboId } from "@/lib/constants/player-photos";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { createPoll, type PollOptionInput } from "@/lib/community/poll-client";
-import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
+import { hasRequiredTeamTag, isAllTeamsSelected } from "@/lib/utils/post-scope";
+import { useAllTeamsScopeConfirm } from "./useAllTeamsScopeConfirm";
 
 /**
  * 커뮤니티 투표 작성 컴포저 (spec: specs/community-poll.md §6, S2).
@@ -94,6 +96,15 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   // 태그와 서버에서 union 된다(etc만 있는 투표도 원하는 피드에 노출 가능).
   const [tagTeamSlugs, setTagTeamSlugs] = useState<string[]>([]);
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
+
+  // 최애팀(profile.team_id) — 전체공개 확인창 "아니요" 시 축소 대상.
+  const { profile } = useAuth();
+  const favoriteSlug = (() => {
+    const id = (profile as Record<string, unknown> | null)?.team_id as number | undefined;
+    return id ? getTeamById(id)?.slug : undefined;
+  })();
+  // 전체공개(10구단 전부 선택) 시 예/아니요 확인창.
+  const { confirmAllTeamsScope, allTeamsScopeDialog } = useAllTeamsScopeConfirm();
 
   // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
   // 팀/선수 선지가 서버에서 team_tags 로 union 되긴 하지만, 그건 파생이지 글쓴이의 명시적
@@ -198,7 +209,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
     }
     // 게시글은 명시적 team_tags 1개 이상 필수(하린아빠 2026-08-06 / 삼순 정정).
     if (!hasTeamScope) {
-      setError("팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)");
+      setError("팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 10개 구단을 모두 선택)");
       return null;
     }
     for (const o of options) {
@@ -233,6 +244,16 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
     if (submitting) return;
     const v = validate();
     if (!v) return;
+
+    // 전체공개(10구단 전부 선택) 시도 → 확인창. 예=그대로 등록 / 아니요=초안 유지 + 최애팀 1개 축소.
+    if (isAllTeamsSelected(tagTeamSlugs)) {
+      const yes = await confirmAllTeamsScope();
+      if (!yes) {
+        if (favoriteSlug) setTagTeamSlugs([favoriteSlug]);
+        return; // 등록하지 않고 작성중 유지.
+      }
+    }
+
     setSubmitting(true);
     setError(null);
     try {
@@ -419,11 +440,10 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
                 </p>
                 {!hasTeamScope && (
                   <p className="text-xs text-[#FF453A] mb-2">
-                    팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).
+                    팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 10개 구단을 모두 선택).
                   </p>
                 )}
                 <TeamTagger
-                  onSetAll={setTagTeamSlugs}
                   selectedSlugs={tagTeamSlugs}
                   onToggle={(slug) =>
                     setTagTeamSlugs((prev) =>
@@ -513,6 +533,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
         overlayZClassName="z-[10002]"
         title="어느 선수를 추가할까요?"
       />
+      {allTeamsScopeDialog}
     </AnimatePresence>
   );
 }

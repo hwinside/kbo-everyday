@@ -191,7 +191,7 @@ export async function POST(request: NextRequest) {
   // 파생된 값을 담고 있어서 body.teamTags=[] 여도 항상 통과한다(삼순 2차 NO-GO 2026-08-06).
   if (explicitTeamTags.length === 0) {
     return NextResponse.json(
-      { error: "팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’)" },
+      { error: "팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 10개 구단을 모두 선택)" },
       { status: 400 },
     );
   }

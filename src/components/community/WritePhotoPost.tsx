@@ -10,7 +10,8 @@ import MemeEditor from "@/components/editor/MemeEditor";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
 import TeamTagger from "./TeamTagger";
-import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
+import { hasRequiredTeamTag, isAllTeamsSelected } from "@/lib/utils/post-scope";
+import { useAllTeamsScopeConfirm } from "./useAllTeamsScopeConfirm";
 import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
@@ -63,6 +64,8 @@ export default function WritePhotoPost({
     defaultPlayerTag ? [defaultPlayerTag] : []
   );
   const [teamSlugs, setTeamSlugs] = useState<string[]>(defaultTeamSlugs ?? []);
+  // 전체공개(10구단 전부 선택) 시 예/아니요 확인창.
+  const { confirmAllTeamsScope, allTeamsScopeDialog } = useAllTeamsScopeConfirm();
   const [hashtags, setHashtags] = useState<string[]>([]);
   // 게시글은 **명시적 team_tags 1개 이상** 필수(하린아빠 2026-08-06 / 삼순 정정).
   // 선수 태그의 소속팀은 이 필수조건을 대신하지 않는다.
@@ -231,6 +234,16 @@ export default function WritePhotoPost({
     if (media.length === 0 || submittingRef.current) return;
     // 최소 1팀 태그 — 버튼 disabled 우회 방어.
     if (!hasRequiredTeamTag(teamSlugs)) return;
+
+    // 전체공개(10구단 전부 선택) 시도 → 확인창. 예=그대로 등록 / 아니요=초안 유지 + 최애팀 1개 축소.
+    if (isAllTeamsSelected(teamSlugs)) {
+      const yes = await confirmAllTeamsScope();
+      if (!yes) {
+        if (favoriteSlug) setTeamSlugs([favoriteSlug]);
+        return; // 등록하지 않고 작성중 유지.
+      }
+    }
+
     submittingRef.current = true;
     setSubmitting(true);
 
@@ -544,10 +557,9 @@ export default function WritePhotoPost({
                     <TeamTagger
                       selectedSlugs={teamSlugs}
                       onToggle={handleTeamToggle}
-                      onSetAll={setTeamSlugs}
                     />
                     {!hasTeamScope && (
-                      <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).</p>
+                      <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 10개 구단을 모두 선택).</p>
                     )}
 
                     {/* Player tagger */}
@@ -642,6 +654,7 @@ export default function WritePhotoPost({
               />
             )}
           </AnimatePresence>
+          {allTeamsScopeDialog}
         </>
       )}
     </AnimatePresence>

@@ -7,7 +7,7 @@
  *   · 4~9팀                    → 앞 3팀 배지 + "외 n팀" (앞 3팀 = **사용자 선택 순서**)
  *   · 1팀 / 선수 1명           → 팀(+선수) 배지
  *   · 홈 최신글·커뮤니티 피드·프로필 글 목록이 **같은 규칙**
- *   · 작성 시 **명시적 team_tags 1개 이상 필수** + "전체 선택" 옵션
+ *   · 작성 시 **명시적 team_tags 1개 이상 필수**. "전체 선택" 단축 칩은 제거(2026-08-16) — 전체공개는 10구단 개별 선택으로만
  *
  * ⚠️ false-green 이력 (삼순 NO-GO 2026-08-06):
  *   - §2 가 실제 `CommunityLatestPosts` 대신 배지를 직접 렌더해, 홈 배선을 끊어도 GREEN 이었다.
@@ -393,8 +393,8 @@ async function main() {
   const { hasRequiredTeamTag } = await import("../../src/lib/utils/post-scope");
   const TeamTagger = (await import("../../src/components/community/TeamTagger")).default;
 
-  // 4-1. 전체 선택 칩이 실제로 10팀을 넘겨주는지 — 클릭해서 콜백 인자를 본다.
-  let setAllArg: string[] | null = null;
+  // 4-1. "전체 선택" 칩은 제거됨(하린아빠 2026-08-16) — 전체공개는 10구단 개별 선택으로만.
+  //         단축 칩이 사라졌고(=도배 방지), 개별 팀 칩은 그대로 남아있는지 실제 렌더로 확인.
   const el3 = document.createElement("div");
   document.body.appendChild(el3);
   const root3 = createRoot(el3);
@@ -406,21 +406,16 @@ async function main() {
         React.createElement(TeamTagger as never, {
           selectedSlugs: [],
           onToggle: () => {},
-          onSetAll: (v: string[]) => { setAllArg = v; },
         } as never),
       ),
     );
   });
   const allChip = (el3 as unknown as HTMLElement).querySelector("[data-team-select-all]") as HTMLElement | null;
-  ok("§4 전체 선택 칩 렌더", !!allChip);
-  if (allChip) {
-    await act(async () => { allChip.click(); });
-  }
-  ok(
-    "§4 전체 선택 클릭 → 10팀 전부 전달",
-    Array.isArray(setAllArg) && (setAllArg as string[]).length === TEAMS.length,
-    `실제 ${(setAllArg as string[] | null)?.length ?? "null"}개`,
+  ok("§4 '전체 선택' 칩 제거됨(전체공개는 10구단 개별 선택)", !allChip);
+  const teamChips3 = Array.from((el3 as unknown as HTMLElement).querySelectorAll("button")).filter(
+    (b) => !b.hasAttribute("data-team-select-all"),
   );
+  ok("§4 개별 팀 칩은 그대로 렌더", teamChips3.length >= TEAMS.length, `칩 ${teamChips3.length}개`);
   await act(async () => { root3.unmount(); });
 
   // 4-2. WritePost 실제 마운트 — 팀 미선택 시 제출 콜백이 호출되지 않아야 한다.
