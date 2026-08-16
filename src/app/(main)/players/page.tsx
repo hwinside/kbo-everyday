@@ -4,7 +4,7 @@ import { Search, ChevronDown, ChevronLeft } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import Link from "next/link";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
-import { useState, useMemo, useEffect, useRef, startTransition } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback, startTransition } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { TEAMS, getTeamBgColor } from "@/lib/constants/teams";
@@ -98,8 +98,6 @@ function PlayersPageContent() {
   const hasUrlMode = searchParams.has("mode");
   const hasUrlTeam = searchParams.has("team");
 
-  // URL 파라미터가 없으면 MY TEAM 기준 디폴트 적용 (myTeamId 로드 후)
-  const hasUrlParams = searchParams.has("mode") || searchParams.has("team") || searchParams.has("pos");
   const [filterMode, setFilterMode] = useState<FilterMode>(
     (searchParams.get("mode") as FilterMode) || "all"
   );
@@ -108,28 +106,42 @@ function PlayersPageContent() {
   );
 
   const [myTeamId, setMyTeamId] = useState<number | null>(null);
+
+  // 유저가 필터를 직접 만졌으면 그 뒤에 마이팀이 도착해도 화면을 빼앗지 않는다.
+  // (늦게 온 기본값이 유저 선택을 덮으면 그게 더 나쁜 버그다)
+  const filterTouchedRef = useRef(false);
+
   useEffect(() => {
-    const teamId = getMyTeamId();
-    startTransition(() => {
-      setMyTeamId(teamId);
-      // 지정팀이 있고 URL 파라미터가 없으면 → 구단별 > MY TEAM 디폴트
-      if (teamId && !hasUrlMode && !hasUrlTeam) {
-        setFilterMode("team");
-        setFilterTeam(teamId);
-      }
-    });
+    // 마이팀은 마운트 시 한 번만 읽으면 놓친다.
+    //
+    // 로그인 유저의 마이팀은 AuthContext 가 프로필 응답을 받은 뒤에야
+    // setMyTeamId(profile.team_id) 로 채워진다. 그 시점엔 이 페이지가 이미
+    // 마운트를 끝낸 뒤라, 한 번만 읽는 구조에서는 마이팀이 영영 반영되지 않는다
+    // (2026-08-15 Production 실측: 마운트 후 team-changed 가 와도 전체 883명 고정).
+    // 그래서 team-changed(같은 탭) + storage(다른 탭) 를 구독해 늦게 온 값도 받는다.
+    const apply = () => {
+      const teamId = getMyTeamId();
+      if (teamId === null) return;
+      startTransition(() => {
+        setMyTeamId(teamId);
+        // URL 로 명시된 필터와 유저가 직접 만진 필터는 건드리지 않는다.
+        if (!hasUrlMode && !hasUrlTeam && !filterTouchedRef.current) {
+          setFilterMode("team");
+          setFilterTeam(teamId);
+        }
+      });
+    };
+    apply();
+    window.addEventListener("team-changed", apply);
+    window.addEventListener("storage", apply);
+    return () => {
+      window.removeEventListener("team-changed", apply);
+      window.removeEventListener("storage", apply);
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [filterPosition, setFilterPosition] = useState<string | null>(
     searchParams.get("pos") || null
   );
-
-  // MY TEAM이 있고 URL 파라미터가 없으면 → 구단별 + 지정팀 디폴트
-  useEffect(() => {
-    if (!hasUrlParams && myTeamId) {
-      setFilterMode("team"); // eslint-disable-line react-hooks/set-state-in-effect
-      setFilterTeam(myTeamId);
-    }
-  }, [myTeamId, hasUrlParams]);
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [sortMode, setSortMode] = useState<SortMode>(() =>
     parseSortMode(searchParams.get("sort"))
@@ -169,7 +181,8 @@ function PlayersPageContent() {
     return () => { stale = true; window.clearTimeout(timeout); };
   }, []);
   const [visibleCount, setVisibleCount] = useState(20);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const loadMoreObserverRef = useRef<IntersectionObserver | null>(null);
 
   const filtered = useMemo(() => {
     let result = players;
@@ -202,9 +215,20 @@ function PlayersPageContent() {
     return new Set(Object.entries(nameCount).filter(([, c]) => c > 1).map(([n]) => n));
   }, [filtered]);
 
-  useEffect(() => {
-    const el = loadMoreRef.current;
-    if (!el) return;
+  // 옵저버는 effect deps 가 아니라 **노드 부착 시점**에 건다.
+  //
+  // sentinel 은 조건부로 마운트된다(인기순은 집계 settle 전까지 목록 대신
+  // 플레이스홀더를 그리고, 그 동안 sentinel 자체가 DOM 에 없다). ref + effect
+  // 조합은 "마운트 조건"과 "effect deps" 가 어긋나면 옵저버가 영영 안 붙는다 —
+  // status 가 loading→ready 로 바뀌어 sentinel 이 처음 붙는 렌더에서 deps 가
+  // 그대로면 effect 가 재실행되지 않아 무한 스피너가 된다.
+  // callback ref 는 노드가 붙고/떨어질 때 React 가 직접 호출하므로 그 불일치가
+  // 구조적으로 성립하지 않는다.
+  const attachLoadMore = useCallback((node: HTMLDivElement | null) => {
+    loadMoreObserverRef.current?.disconnect();
+    loadMoreObserverRef.current = null;
+    loadMoreRef.current = node;
+    if (!node) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
@@ -213,9 +237,15 @@ function PlayersPageContent() {
       },
       { threshold: 0.1 }
     );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [visibleCount, filtered.length]);
+    observer.observe(node);
+    loadMoreObserverRef.current = observer;
+  }, []);
+
+  // 언마운트 정리(페이지 이탈 시 옵저버 누수 방지).
+  useEffect(() => () => {
+    loadMoreObserverRef.current?.disconnect();
+    loadMoreObserverRef.current = null;
+  }, []);
 
   // URL 쿼리 파라미터 동기화
   useEffect(() => {
@@ -231,6 +261,7 @@ function PlayersPageContent() {
   }, [filterMode, filterTeam, filterPosition, searchQuery, sortMode, router]);
 
   function handleFilterMode(mode: FilterMode) {
+    filterTouchedRef.current = true;
     setFilterMode(mode);
     setFilterTeam(null);
     setFilterPosition(null);
@@ -301,7 +332,7 @@ function PlayersPageContent() {
       {filterMode === "team" && (
         <div className="mb-3 flex gap-2 overflow-x-auto hide-scrollbar pb-1">
           <button
-            onClick={() => { setFilterTeam(null); setVisibleCount(20); }}
+            onClick={() => { filterTouchedRef.current = true; setFilterTeam(null); setVisibleCount(20); }}
             className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
               !filterTeam ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
             }`}
@@ -311,7 +342,7 @@ function PlayersPageContent() {
           {TEAMS.map((t) => (
             <button
               key={t.id}
-              onClick={() => { setFilterTeam(t.id); setVisibleCount(20); }}
+              onClick={() => { filterTouchedRef.current = true; setFilterTeam(t.id); setVisibleCount(20); }}
               className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
                 filterTeam === t.id ? "text-white" : "bg-bg-secondary/50 text-text-tertiary"
               }`}
@@ -325,7 +356,7 @@ function PlayersPageContent() {
       {filterMode === "position" && (
         <div className="mb-3 flex gap-2 pb-1">
           <button
-            onClick={() => { setFilterPosition(null); setVisibleCount(20); }}
+            onClick={() => { filterTouchedRef.current = true; setFilterPosition(null); setVisibleCount(20); }}
             className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
               !filterPosition ? "bg-white/15 text-text-primary" : "bg-bg-secondary/50 text-text-tertiary"
             }`}
@@ -335,7 +366,7 @@ function PlayersPageContent() {
           {POSITIONS.map((pos) => (
             <button
               key={pos}
-              onClick={() => { setFilterPosition(pos); setVisibleCount(20); }}
+              onClick={() => { filterTouchedRef.current = true; setFilterPosition(pos); setVisibleCount(20); }}
               className={`rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
                 filterPosition === pos
                   ? "bg-white/15 text-text-primary"
@@ -412,7 +443,7 @@ function PlayersPageContent() {
         ))}
 
         {visibleCount < filtered.length && (
-          <div ref={loadMoreRef} className="w-full py-4 mt-2 flex justify-center">
+          <div ref={attachLoadMore} data-testid="players-load-more" className="w-full py-4 mt-2 flex justify-center">
             <div className="w-6 h-6 border-2 border-text-tertiary border-t-accent rounded-full animate-spin" />
           </div>
         )}
