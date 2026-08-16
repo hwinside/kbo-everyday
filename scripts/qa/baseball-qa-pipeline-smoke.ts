@@ -30,6 +30,7 @@ import {
   classifyNamedStat,
   TEAM_STAT_HOLD_ANSWER,
   isPickedPlayerAllowed,
+  isServiceInquiry,
   LIMITED_ANSWER,
   LLM_AMBIGUOUS_ANSWER,
   matchGlossary,
@@ -289,18 +290,10 @@ assert.equal(matchGlossary(seedEntries, "에이비에스가 뭐예요?")?.term, 
 assert.equal(matchGlossary(seedEntries, "등록 인원이 뭐야?")?.term, "엔트리");
 
 assert.equal(routeQuestion("크보팬 로그인이 안 돼요"), "service_redirect");
-// 🔴 야구 용어와 표기가 겹치는 어휘는 **단독으로** 서비스 판정 근거가 될 수 없다
-// (2026-08-16 운영 로그 전수조사 — `service_redirect` 7건 중 5건이 오라우팅이었다).
-// `에러` 는 `실책` 의 정식 alias 로 검수 사전에 이미 있고, `오류` 는 그 동의어다.
-// 이 라우터는 사전(①)보다 앞이라, 여기서 종결하면 답을 갖고도 피드백 보내기로 돌려보낸다.
-assert.notEqual(routeQuestion("에러가 뜻하는 건 뭐야?"), "service_redirect");
-assert.notEqual(routeQuestion("에러"), "service_redirect");
-assert.notEqual(routeQuestion("공이 높이 뜨면 오류가 가능해?"), "service_redirect");
-assert.notEqual(routeQuestion("감독이 3연전의 첫 번째 경기에러 퇴장당하면 어떻게 되는건가요?"), "service_redirect");
-// 비모호 어휘가 같이 있으면 서비스 문의 판정은 그대로 유지된다 — 과교정 방지.
-assert.equal(routeQuestion("앱에서 에러 나요"), "service_redirect");
-assert.equal(routeQuestion("크보팬 오류 신고합니다"), "service_redirect");
-assert.equal(routeQuestion("로그인 오류가 계속 나요"), "service_redirect");
+// 🔴 야구 용어와 표기가 겹치는 어휘 축의 **라우터 단면**만 여기서 본다.
+//   종단 회수·서비스 무회귀는 `verifyAmbiguousServiceWordEndToEnd()` 가 answerQuestion 으로
+//   증명한다 — predicate 만 보면 "service_redirect 가 아니다"가 곧 "답을 받았다"는 아니다
+//   (삼순 2026-08-16 NO-GO: 실제로 5건 중 4건이 `unsure` 로 옮겨갔을 뿐이었다).
 // ⚠️ 기록/역사 질문의 라벨은 `blocked` 가 아니라 `history_hold` 다 (삼순 7차 P0-2, 2026-08-04).
 // 차단 범위는 한 글자도 안 바뀌었고 **유저가 보는 문구만** 달라진다 — 선수 RAG·시즌기록을
 // 여는 이 PR 에서 기록 질문에 "룰/용어만 답할 수 있어요" 를 보내는 건 틀린 안내다.
@@ -1063,6 +1056,146 @@ function makeDeps(state: MockState): QaDeps {
     },
     log: async (entry) => { state.logs.push(entry.matchPath); },
   };
+}
+
+/**
+ * 모호 서비스 어휘(`에러`·`오류`) 종단 계약 — 2026-08-16 운영 로그 전수조사 P0.
+ *
+ * 삼순 NO-GO(exact f1c549239) 반영: 종전 게이트는 `routeQuestion != service_redirect` 만 봐서
+ * **최종 답변 회수를 전혀 증명하지 않았다**. 실제로 종단 실측하니 5건 중 4건이
+ * `service_redirect` → `unsure` 로 옮겨갔을 뿐이었다. 그래서 `answerQuestion` 으로 결속한다.
+ *
+ * ⚠️ 사전 서빙은 경로가 둘이다 — 이 PR 이 여는 것은 **경로 진입**이지 exact 매칭이 아니다.
+ *   ① `matchGlossary` 정규화 exact  → LLM 0콜 즉시 `dictionary`
+ *   ①-b `glossaryCandidatesIn` + LLM 매퍼 → 후보 폐쇄집합 안에서만 선택(fail-close)
+ *   `에러가 뜻하는 건 뭐야?` 는 정규화 키가 `에러가뜻하는건` 이라 ① 미스지만, 후보에는
+ *   `실책` 이 들어가므로 ①-b 가 해결한다. 어미(`뜻하는건`)를 정규화 목록에 추가하는 것은
+ *   반례마다 어휘가 쌓이는 축이라(`open_language_never_closes_with_rules`) 하지 않는다.
+ *
+ * ⚠️ **정직한 범위 표기**: `오류` 는 사전 alias 가 아니다(`실책` alias = 에러/error/e).
+ *   따라서 `공이 높이 뜨면 오류가 가능해?` 는 사전 후보가 0이고 룰/용어 LLM 경로로 간다.
+ *   이 PR 이 보장하는 것은 "서비스 문의로 오종결되지 않고 **야구 답변 경로로 들어간다**" 까지다.
+ *   그 이상을 게이트가 주장하면 false-green 이다.
+ */
+async function verifyAmbiguousServiceWordEndToEnd() {
+  // production 형 사전 서빙을 재현한다. 매퍼는 후보 폐쇄집합 안에서만 고르므로
+  // "첫 후보 선택" 은 production 최대 회수 상태, "null" 은 최소(보수) 상태다.
+  const geniusDeps = (state: MockState, mapper: "pick" | "null" | "none"): QaDeps => {
+    const base = makeDeps(state);
+    if (mapper === "none") return base;
+    return {
+      ...base,
+      mapGlossaryDefinition: async (_q, candidates) => {
+        state.events.push("mapper");
+        return {
+          term: mapper === "pick" ? (candidates[0] ?? null) : null,
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      },
+    };
+  };
+  const run = async (question: string, mapper: "pick" | "null" | "none") => {
+    const state = freshState({
+      // 룰 답변이 최종 validator(`answerInQuestionScope`)를 통과하도록 야구 앵커를 담는다 —
+      // 통과 못 하는 문장을 쓰면 "unsure 로 끝났다"가 코드 탓인지 stub 탓인지 구분되지 않는다.
+      llmText: JSON.stringify({
+        status: "ANSWER",
+        answer: "감독이 퇴장되면 남은 이닝은 코치가 지휘하며 다음 경기 출장은 제한되지 않습니다.",
+      }),
+    });
+    const result = await answerQuestion("u-ambiguous-service", question, geniusDeps(state, mapper));
+    return { source: result.source, term: (result as { term?: string }).term ?? null, answer: result.answer, state };
+  };
+
+  // ── ① 서비스 오종결 0 — 5개 운영 원문 전부, 매퍼 3형상 모두에서 ────────────────
+  //    이것이 이 PR 의 **핵심 계약**이다. 매퍼가 어떻게 답하든 서비스 문의로 끝나면 안 된다.
+  const LOG_ORIGINALS = [
+    "에러가 뜻하는 건 뭐야?",
+    "에러",
+    "그거말고 에러 옆에 잇능거",
+    "공이 높이 뜨면 오류가 가능해?",
+    "감독이 3연전의 첫 번째 경기에러 퇴장당하면 어떻게 되는건가요?",
+  ];
+  for (const mapper of ["pick", "null", "none"] as const) {
+    for (const question of LOG_ORIGINALS) {
+      const r = await run(question, mapper);
+      assert.notEqual(
+        r.source, "service_redirect",
+        `[mapper=${mapper}] "${question}": 야구 질문이 서비스 문의로 종결됐다`,
+      );
+      assert.notEqual(
+        r.answer, SERVICE_REDIRECT_ANSWER,
+        `[mapper=${mapper}] "${question}": 서비스 안내 문구가 노출됐다`,
+      );
+      assert.deepEqual(
+        r.state.logs.filter((path) => path === "service_redirect"), [],
+        `[mapper=${mapper}] "${question}": 로그가 service_redirect 로 남았다`,
+      );
+    }
+  }
+
+  // ── ② 실제 회수 — 사전이 `실책` 정의를 돌려주는가 (LLM 0콜) ──────────────────
+  //    `에러` 단독은 ① exact 라 매퍼가 없어도 결정론으로 회수된다.
+  for (const mapper of ["pick", "null", "none"] as const) {
+    const r = await run("에러", mapper);
+    assert.equal(r.source, "dictionary", `[mapper=${mapper}] "에러": 사전 회수 실패 (source=${r.source})`);
+    assert.equal(r.term, "실책", `[mapper=${mapper}] "에러": term=${r.term}`);
+    assert.equal(r.state.llmCalls, 0, `[mapper=${mapper}] "에러": 사전 exact 인데 LLM 을 태웠다`);
+    assert.ok(r.answer?.includes("실책"), `[mapper=${mapper}] "에러": 답변 본문에 실책 설명이 없다`);
+  }
+
+  // ── ③ ①-b 매퍼 경로 회수 — exact 미스지만 후보에 `실책` 이 들어간다 ──────────
+  //    매퍼가 고르면 `dictionary/실책`, 보수적으로 null 이면 룰 LLM 경로. 둘 다 서비스 아님(①).
+  for (const question of [
+    "에러가 뜻하는 건 뭐야?",
+    "그거말고 에러 옆에 잇능거",
+    "감독이 3연전의 첫 번째 경기에러 퇴장당하면 어떻게 되는건가요?",
+  ]) {
+    const picked = await run(question, "pick");
+    assert.equal(picked.source, "dictionary", `"${question}": 매퍼 선택 시 사전 회수 실패 (source=${picked.source})`);
+    assert.equal(picked.term, "실책", `"${question}": term=${picked.term}`);
+    assert.equal(picked.state.llmCalls, 0, `"${question}": 사전 회수인데 generic LLM 을 태웠다`);
+    // 후보가 실제로 생겼는가 — 매퍼가 호출되지 않으면 이 경로는 존재하지 않는 것이다.
+    assert.ok(
+      picked.state.events.includes("mapper"),
+      `"${question}": ①-b 매퍼가 호출되지 않았다 (사전 후보 0)`,
+    );
+  }
+
+  // ── ④ 정직한 범위 — `오류` 는 사전 alias 가 아니다 ─────────────────────────
+  //    사전 후보 0이므로 어떤 매퍼 형상에서도 `dictionary` 가 될 수 없다.
+  //    이 PR 이 보장하는 것은 "서비스 오종결 0 + 야구 답변 경로 진입"까지다(①에서 이미 고정).
+  //    여기서 `dictionary` 를 기대하면 그것이 false-green 이다.
+  {
+    const r = await run("공이 높이 뜨면 오류가 가능해?", "pick");
+    assert.notEqual(r.source, "service_redirect");
+    assert.notEqual(
+      r.source, "dictionary",
+      "`오류` 가 사전 alias 가 아닌데 dictionary 로 회수됐다 — 게이트 기대가 실제와 어긋난다",
+    );
+    assert.ok(
+      r.state.llmCalls >= 1,
+      "`오류` 질문이 야구 답변 경로(LLM 판정)로 들어가지 않았다",
+    );
+  }
+
+  // ── ⑤ 과교정 0 — 비모호 어휘가 같이 있으면 **종단까지** 서비스 문의다 ─────────
+  //    라우터만 보면 이 축이 죽어도 GREEN 이다. 종단 answer/로그까지 고정한다.
+  for (const question of ["앱에서 에러 나요", "크보팬 오류 신고합니다", "로그인 오류가 계속 나요"]) {
+    for (const mapper of ["pick", "none"] as const) {
+      const r = await run(question, mapper);
+      assert.equal(r.source, "service_redirect", `[mapper=${mapper}] "${question}": 서비스 문의 판정이 죽었다`);
+      assert.equal(r.answer, SERVICE_REDIRECT_ANSWER, `[mapper=${mapper}] "${question}": 서비스 안내 문구 불일치`);
+      assert.deepEqual(r.state.logs, ["service_redirect"], `[mapper=${mapper}] "${question}": 로그 match_path 불일치`);
+      assert.equal(r.state.llmCalls, 0, `[mapper=${mapper}] "${question}": 서비스 문의에 LLM 을 태웠다`);
+    }
+  }
+
+  // ── ⑥ 판정 함수 자체의 계약 — 게이트가 술어를 재구현하지 않고 직접 태운다 ──────
+  assert.equal(isServiceInquiry("앱에서 에러 나요".normalize("NFKC").toLowerCase()), true);
+  assert.equal(isServiceInquiry("에러가 뜻하는 건 뭐야?".normalize("NFKC").toLowerCase()), false);
+  assert.equal(isServiceInquiry("공이 높이 뜨면 오류가 가능해?".normalize("NFKC").toLowerCase()), false);
 }
 
 async function verifyPipeline() {
@@ -3688,6 +3821,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
 
 async function main() {
   await verifyPipeline();
+  await verifyAmbiguousServiceWordEndToEnd();
   await verifyReplyKindMatchesActualPipelineOutcome();
   await verifyProductionSeasonRecordSeam();
   await verifyCrashIdempotentLlmAndQuota();
