@@ -289,6 +289,18 @@ assert.equal(matchGlossary(seedEntries, "에이비에스가 뭐예요?")?.term, 
 assert.equal(matchGlossary(seedEntries, "등록 인원이 뭐야?")?.term, "엔트리");
 
 assert.equal(routeQuestion("크보팬 로그인이 안 돼요"), "service_redirect");
+// 🔴 야구 용어와 표기가 겹치는 어휘는 **단독으로** 서비스 판정 근거가 될 수 없다
+// (2026-08-16 운영 로그 전수조사 — `service_redirect` 7건 중 5건이 오라우팅이었다).
+// `에러` 는 `실책` 의 정식 alias 로 검수 사전에 이미 있고, `오류` 는 그 동의어다.
+// 이 라우터는 사전(①)보다 앞이라, 여기서 종결하면 답을 갖고도 피드백 보내기로 돌려보낸다.
+assert.notEqual(routeQuestion("에러가 뜻하는 건 뭐야?"), "service_redirect");
+assert.notEqual(routeQuestion("에러"), "service_redirect");
+assert.notEqual(routeQuestion("공이 높이 뜨면 오류가 가능해?"), "service_redirect");
+assert.notEqual(routeQuestion("감독이 3연전의 첫 번째 경기에러 퇴장당하면 어떻게 되는건가요?"), "service_redirect");
+// 비모호 어휘가 같이 있으면 서비스 문의 판정은 그대로 유지된다 — 과교정 방지.
+assert.equal(routeQuestion("앱에서 에러 나요"), "service_redirect");
+assert.equal(routeQuestion("크보팬 오류 신고합니다"), "service_redirect");
+assert.equal(routeQuestion("로그인 오류가 계속 나요"), "service_redirect");
 // ⚠️ 기록/역사 질문의 라벨은 `blocked` 가 아니라 `history_hold` 다 (삼순 7차 P0-2, 2026-08-04).
 // 차단 범위는 한 글자도 안 바뀌었고 **유저가 보는 문구만** 달라진다 — 선수 RAG·시즌기록을
 // 여는 이 PR 에서 기록 질문에 "룰/용어만 답할 수 있어요" 를 보내는 건 틀린 안내다.
