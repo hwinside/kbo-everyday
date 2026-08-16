@@ -464,7 +464,15 @@ export const RAG_SYSTEM_PROMPT = [
   "유저가 직전 답의 오류를 지적하면(예: '최형우는 현재 삼성 소속인데??') INSUFFICIENT로 도망가지 않는다.",
   "지적이 <현재 로스터>로 확인되면 GROUNDED로 판정하고, 오류를 인정하며 로스터 기준으로 정정해 답한다.",
   "숫자(기록·나이·연도·성적)는 이 자료로 확정할 수 없으므로 답변에 절대 쓰지 않는다.",
-  "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
+  "아라비아 숫자뿐 아니라 한글 수사도 쓰지 않는다. 예: 3년·세 시즌·삼할·백 타점·첫 우승 같은 표현을 쓰지 않는다.",
+  "숫자가 빠지면 의미가 바뀌거나 규모 평가가 필요한 문장은 긍정·부정 평가로 바꾸지 말고 통째로 생략한다.",
+  "수치를 낮음·높음·많음·적음·굵직함 같은 평가어로 바꾸지 않는다. 근거 수치의 규모를 추론하지 않는다.",
+  "포지션 명칭에도 숫자가 들어가면 쓰지 않는다. 1루수·2루수·3루수처럼 숫자가 포함된 포지션은 내야수처럼 숫자 없는 공통 상위 표현으로만 바꾼다.",
+  "코너 내야수처럼 더 좁은 포지션 표현은 근거에 숫자 없이 그대로 적혀 있을 때만 쓴다.",
+  "모든 문장은 반드시 '~입니다', '~합니다', '~습니다' 같은 합니다체로 끝낸다.",
+  "'~이에요', '~예요', '~해요', '~네요', '~랍니다', '~있어요', '~왔어요' 같은 해요체·요체 표현은 절대 쓰지 않는다.",
+  "답변 초안이 해요체라면 출력 전에 반드시 합니다체로 다시 고쳐 쓴다.",
+  "답변은 자료를 그대로 옮기지 말고 한국어 합니다체로 다시 서술한다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
@@ -649,11 +657,73 @@ export function buildRagLlmRequest(
  * ⚠️ 다른 검증(malformed·status·길이·URL·숫자 근거)은 **그대로 fail-close** 다 —
  *   삼순 조건: "검사를 삭제하지 말고, 나머지 검증까지 통과한 답에 플래그만 붙인다".
  */
+/**
+ * 생성 RAG 답변이 폐기된 **사유**의 폐쇄집합 (2026-08-16 계측 착수).
+ *
+ * 배열이 SSOT 이고 타입은 거기서 **파생**된다 (삼순 1차 NO-GO ③ — union 과 배열을
+ * 따로 적으면 이중 SSOT 라 한쪽만 늘어도 타입체크가 통과한다).
+ * 게이트가 이 배열을 직접 import 해 migration CHECK 문면과 대조하므로 문자열을 게이트 쪽에
+ * 복제하지도 않는다. 사유를 추가할 땐 **이 배열과 migration CHECK 만** 같은 PR 에서 갱신한다.
+ *
+ * 왜 `string` 이면 안 되는가: 이 값은 `genius_question_logs.rag_discard_reason` 으로 그대로
+ * 들어가고 DB CHECK 가 같은 집합을 강제한다. `string` 이면 CHECK 위반(23514)을 **배포 뒤에야** 알게 된다.
+ */
+export const RAG_DISCARD_REASONS = [
+  "malformed_json",
+  "model_insufficient",
+  "missing_answer",
+  "empty_answer",
+  "too_long",
+  "unsafe_output",
+  "unknown_status",
+  "numeric_claim_ungrounded",
+  "numeric_not_in_evidence",
+  "numeric_not_in_question",
+] as const;
+
+export type RagDiscardReason = (typeof RAG_DISCARD_REASONS)[number];
+
+/** 런타임 값이 폐쇄집합 안인가 — envelope 재생처럼 외부에서 들어온 값을 좌힐 때 쓴다. */
+export function isRagDiscardReason(value: unknown): value is RagDiscardReason {
+  return typeof value === "string"
+    && (RAG_DISCARD_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * 생성 RAG 를 **시도한 경로** (삼순 1차 NO-GO ①).
+ *
+ * `match_path` 로는 경로를 알 수 없다 — 선수·공식·뉴스 폐기가 전부 `unsure` 로 접혀
+ * "어느 경로에서 버렸는가"가 사라진다. 경로별 분모/폐기율을 내려면 **성공·폐기 모두**
+ * 이 칸이 채워져야 한다(성공에만 채우면 분자만 있고 분모가 없다).
+ */
+export const RAG_ATTEMPT_PATHS = ["player", "official", "team", "news"] as const;
+
+export type RagAttemptPath = (typeof RAG_ATTEMPT_PATHS)[number];
+
+export function isRagAttemptPath(value: unknown): value is RagAttemptPath {
+  return typeof value === "string"
+    && (RAG_ATTEMPT_PATHS as readonly string[]).includes(value);
+}
+
 export type ValidatedRagAnswer =
   | { kind: "grounded"; answer: string; toneCompliant: boolean }
   // 공식 경로 전용: 자료 밖 일반 야구 지식 답변. `generalFallback` 옵션을 켠 호출에만 나온다.
   | { kind: "general"; answer: string; toneCompliant: boolean }
-  | { kind: "insufficient"; reason: string };
+  /**
+   * 폐기. `numericCount` = 폐기된 답변의 **숫자 토큰 개수**(삼순 익명집계 조건).
+   *
+   * 왜 개수가 필요한가: 폐기된 답변 원문은 **저장되지 않는다**(로그에는 안내문이 들어간다).
+   * 그래서 "숫자 1개 섮인 서술형 답"과 "수치 나열"을 사후에 구분할 방법이 없다 —
+   * 전자는 B(정본 주입)으로 즉시 구제되는 부류고 후자는 아니라 우선순위 판단의 핵심이다.
+   * 개수만 남긴다 — 값도 원문도 새로 저장하지 않는다.
+   * 답변 본문을 볼 수 없는 폐기(`malformed_json`·`model_insufficient`)는 미설정이다.
+   */
+  | { kind: "insufficient"; reason: RagDiscardReason; numericCount?: number };
+
+/** 문자열의 숫자 토큰 개수 — `numericTokensSubsetOf` 와 **같은 토큰 규칙**을 쓴다. */
+export function numericTokenCount(text: string): number {
+  return (text.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []).length;
+}
 
 /**
  * 답변에 쓰인 숫자가 전부 근거 안에 존재하는가.
@@ -926,13 +996,20 @@ export function validateRagResponse(
   if (status === RAG_GENERAL_SENTINEL && options.generalFallback) {
     if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
     const generalAnswer = row.answer.trim();
-    if (generalAnswer.length === 0) return { kind: "insufficient", reason: "empty_answer" };
+    if (generalAnswer.length === 0) return { kind: "insufficient", reason: "empty_answer", numericCount: 0 };
     const generalMax = options.maxChars ?? RAG_OFFICIAL_ANSWER_MAX_CHARS;
-    if (generalAnswer.length > generalMax) return { kind: "insufficient", reason: "too_long" };
-    if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(generalAnswer)) return { kind: "insufficient", reason: "unsafe_output" };
+    if (generalAnswer.length > generalMax) {
+      return { kind: "insufficient", reason: "too_long", numericCount: numericTokenCount(generalAnswer) };
+    }
+    if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(generalAnswer)) {
+      return { kind: "insufficient", reason: "unsafe_output", numericCount: numericTokenCount(generalAnswer) };
+    }
     // 질문 밖 숫자 금지 — 근거 없는 일반 지식 답변이므로 숫자는 유저가 직접 준 것만 되받는다.
     if (!numericTokensSubsetOf(generalAnswer, options.generalFallback.question)) {
-      return { kind: "insufficient", reason: "numeric_not_in_question" };
+      return {
+        kind: "insufficient", reason: "numeric_not_in_question",
+        numericCount: numericTokenCount(generalAnswer),
+      };
     }
     // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
     return { kind: "general", answer: generalAnswer, toneCompliant: isBaseballGeniusToneCompliant(generalAnswer) };
@@ -940,11 +1017,15 @@ export function validateRagResponse(
   if (status !== RAG_GROUNDED_SENTINEL) return { kind: "insufficient", reason: "unknown_status" };
   if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };
   const answer = row.answer.trim();
-  if (answer.length === 0) return { kind: "insufficient", reason: "empty_answer" };
+  if (answer.length === 0) return { kind: "insufficient", reason: "empty_answer", numericCount: 0 };
   const maxChars = options.maxChars
     ?? (options.numericEvidence ? RAG_OFFICIAL_ANSWER_MAX_CHARS : RAG_ANSWER_MAX_CHARS);
-  if (answer.length > maxChars) return { kind: "insufficient", reason: "too_long" };
-  if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(answer)) return { kind: "insufficient", reason: "unsafe_output" };
+  if (answer.length > maxChars) {
+    return { kind: "insufficient", reason: "too_long", numericCount: numericTokenCount(answer) };
+  }
+  if (/https?:\/\/|www\.|```|<a\b|\]\(/i.test(answer)) {
+    return { kind: "insufficient", reason: "unsafe_output", numericCount: numericTokenCount(answer) };
+  }
   // §12 수치 계약.
   //  - tier2 근거(기본값): 숫자 자체를 금지한다. 위키류는 수치 정본이 아니다.
   //  - tier1 근거(KBO 공식 간행물): 숫자를 허용하되 **근거에 적힌 숫자만** 허용한다.
@@ -957,12 +1038,30 @@ export function validateRagResponse(
     //   `hasKoreanQuantityClaim` 은 수사+단위명사가 붙은 경우만 잡으므로
     //   `두 팀이 맞붙었어요` 같은 정상 서술이 과차단되는 폭은 원래 계약과 같다.
     if (hasNumericCharacter(answer)) {
-      return { kind: "insufficient", reason: "numeric_claim_ungrounded" };
+      // 개수만 남긴다 — 폐기된 본문은 저장하지 않는다(삼순 익명집계 조건).
+      //
+      // ⚠️ **개수로 답변의 성격을 분류하지 않는다** (삼순 2026-08-16 3차).
+      //    `1` 이라도 연도일 수도, 순위·점수일 수도, 질문 숫자를 되받은 것일 수도 있다.
+      //    "구제 가능한 정답이었는가" 는 **표본 감사로만** 확정한다.
+      //
+      // 🔴 사유 이름이 오해를 부르므로 못 박아 둔다 (삼순 2026-08-16 4차):
+      //    여기서 하는 일은 `hasNumericCharacter(answer)` 하나다 — **근거 대조를 하지 않는다.**
+      //    따라서 `numeric_claim_ungrounded` 는 "숫자가 근거에 없다" 는 뜻이 아니라
+      //    **"tier2 출력에 숫자가 있어 정책상 폐기했다"** 는 뜻이다.
+      //    그 숫자가 근거에 있었는지도, 나머지 서술이 옳았는지도 **판정한 적이 없다**.
+      //    → 폐기율 ≠ 정답 손실률.
+      return {
+        kind: "insufficient", reason: "numeric_claim_ungrounded",
+        numericCount: numericTokenCount(answer),
+      };
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
     requireSingleSource: options.requireSingleSource,
   })) {
-    return { kind: "insufficient", reason: "numeric_not_in_evidence" };
+    return {
+      kind: "insufficient", reason: "numeric_not_in_evidence",
+      numericCount: numericTokenCount(answer),
+    };
   }
   // 톤은 마지막에 **관측만** 한다 — 위 검증을 전부 통과한 답만 여기 온다.
   return { kind: "grounded", answer, toneCompliant: isBaseballGeniusToneCompliant(answer) };

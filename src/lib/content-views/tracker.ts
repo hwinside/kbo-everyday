@@ -2,7 +2,6 @@
 
 import { pickTransport } from "@/lib/community/view-tracker-policy";
 import {
-  contentViewKey,
   isValidContentId,
   newsContentId,
   shouldCountShortsView,
@@ -14,27 +13,6 @@ import {
  * 순수 판정은 policy.ts. 서버(/api/content-views/view)는 순수 증가만.
  * 전송 실패는 best-effort(UX 무영향) — 게시글 view-tracker와 동일 계약.
  */
-
-const SEEN_KEY = "kbo_content_views_seen_v1";
-
-function seenSet(): Set<string> {
-  try {
-    const raw = sessionStorage.getItem(SEEN_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function markSeen(key: string): void {
-  try {
-    const s = seenSet();
-    s.add(key);
-    sessionStorage.setItem(SEEN_KEY, JSON.stringify([...s]));
-  } catch {
-    /* storage 불가 환경 무시 */
-  }
-}
 
 /** 카운터 +1 (best-effort). sendBeacon 우선, 큐잉 실패 시 fetch 폴백. */
 function sendView(type: ContentViewType, id: string, viewToken: string): void {
@@ -64,11 +42,14 @@ function sendView(type: ContentViewType, id: string, viewToken: string): void {
   }
 }
 
-/** 숏츠 조회 +1 — 동일 세션당 영상 1회 dedup. */
+/**
+ * 숏츠 조회 +1 — 단순 조회수. 뷰어에서 영상이 노출될 때마다 집계(클라 dedup 없음).
+ * 호출부(ReelViewer)는 video.id 변경 시마다 1회 발화 — 스와이프로 내린 영상 하나하나 +1.
+ * 서버 route가 IP+콘텐츠 1초 abuse cap으로 폭주만 막는다(사기방지, IAB 로직 아님).
+ */
 export function trackShortsView(videoId: string, viewToken?: string | null): void {
   if (!viewToken) return; // 서명 없는 항목은 전송 안 함 — 임의 id 증가 차단(삼순 blocker3)
-  if (!shouldCountShortsView(seenSet(), videoId)) return;
-  markSeen(contentViewKey("shorts", videoId));
+  if (!shouldCountShortsView(videoId)) return;
   sendView("shorts", videoId, viewToken);
 }
 

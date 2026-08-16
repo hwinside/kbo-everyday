@@ -58,16 +58,12 @@ check("뉴스 content_id: 512자 초과는 절단 (DB CHECK 정합)", () => {
   assert.equal(isValidContentId(id), true);
 });
 
-check("숏츠 세션 dedup: 처음이면 집계, 같은 세션 재노출이면 미집계", () => {
-  const seen = new Set<string>();
-  assert.equal(shouldCountShortsView(seen, "vid123"), true);
-  seen.add(contentViewKey("shorts", "vid123"));
-  assert.equal(shouldCountShortsView(seen, "vid123"), false);
-  assert.equal(shouldCountShortsView(seen, "vid456"), true);
-});
-
-check("숏츠 세션 dedup: 무효 id는 집계 대상 아님", () => {
-  assert.equal(shouldCountShortsView(new Set(), ""), false);
+check("숏츠 단순 조회수: 유효 id는 매 노출 집계, 무효 id만 제외", () => {
+  // 클라 dedup/창 없음 — 유효 id면 항상 집계 대상(노출마다 +1).
+  assert.equal(shouldCountShortsView("vid123"), true);
+  assert.equal(shouldCountShortsView("vid456"), true);
+  // 무효 id(빈 문자열)만 제외.
+  assert.equal(shouldCountShortsView(""), false);
 });
 
 check("counts 키 형식: `<type>:<id>`", () => {
