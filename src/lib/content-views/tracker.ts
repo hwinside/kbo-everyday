@@ -6,6 +6,7 @@ import {
   isValidContentId,
   newsContentId,
   shouldCountShortsView,
+  SHORTS_RECOUNT_WINDOW_MS,
   type ContentViewType,
 } from "./policy";
 
@@ -15,22 +16,31 @@ import {
  * 전송 실패는 best-effort(UX 무영향) — 게시글 view-tracker와 동일 계약.
  */
 
-const SEEN_KEY = "kbo_content_views_seen_v1";
+// key(`shorts:<id>`) → 마지막 집계 시각(ms). 재조회 창 판정용. v2 = 타임스탬맵 포맷.
+const SEEN_KEY = "kbo_content_views_seen_v2";
 
-function seenSet(): Set<string> {
+function seenMap(): Record<string, number> {
   try {
     const raw = sessionStorage.getItem(SEEN_KEY);
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, number>)
+      : {};
   } catch {
-    return new Set();
+    return {};
   }
 }
 
-function markSeen(key: string): void {
+function markSeen(key: string, atMs: number): void {
   try {
-    const s = seenSet();
-    s.add(key);
-    sessionStorage.setItem(SEEN_KEY, JSON.stringify([...s]));
+    const m = seenMap();
+    m[key] = atMs;
+    // 창 밖(오래된) 항목 정리 — 어차피 재카운트 대상이라 제거해도 동작 동일, 메모리만 절약.
+    const cutoff = atMs - SHORTS_RECOUNT_WINDOW_MS;
+    for (const k of Object.keys(m)) {
+      if (m[k] < cutoff) delete m[k];
+    }
+    sessionStorage.setItem(SEEN_KEY, JSON.stringify(m));
   } catch {
     /* storage 불가 환경 무시 */
   }
@@ -64,11 +74,16 @@ function sendView(type: ContentViewType, id: string, viewToken: string): void {
   }
 }
 
-/** 숏츠 조회 +1 — 동일 세션당 영상 1회 dedup. */
+/**
+ * 숏츠 조회 +1 — 내리면서 본 영상 하나하나 카운트(재조회 포함).
+ * 동일 영상은 SHORTS_RECOUNT_WINDOW_MS 창 안 중복만 차단(순간 왕복 스팸 방지).
+ */
 export function trackShortsView(videoId: string, viewToken?: string | null): void {
   if (!viewToken) return; // 서명 없는 항목은 전송 안 함 — 임의 id 증가 차단(삼순 blocker3)
-  if (!shouldCountShortsView(seenSet(), videoId)) return;
-  markSeen(contentViewKey("shorts", videoId));
+  const key = contentViewKey("shorts", videoId);
+  const now = Date.now();
+  if (!shouldCountShortsView(seenMap()[key], now, videoId)) return;
+  markSeen(key, now);
   sendView("shorts", videoId, viewToken);
 }
 
