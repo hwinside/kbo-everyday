@@ -47,6 +47,11 @@ function check(name: string, cond: boolean) {
     !/setInterval\(\s*load\s*,/.test(src));
   check("fav: generation fence로 late 응답 폐기(A→B 덮어쓰기 방지)",
     src.includes("todayGamesGenRef") && /if \(gen !== todayGamesGenRef\.current\) return/.test(src));
+  check("fav: gen 증가를 대상변경 effect+cleanup에 두어 empty·unmount까지 fence",
+    /todayGamesGenRef\.current \+= 1;[\s\S]*?return \(\) => \{ todayGamesGenRef\.current \+= 1;/.test(src)
+      && /\}, \[favKey, refreshNonce, hasFavPlayers\]\)/.test(src));
+  check("fav: load는 gen을 증가없이 캡처만(load 시작 증가 금지)",
+    /const gen = todayGamesGenRef\.current;/.test(src) && !/\+\+todayGamesGenRef/.test(src));
 }
 
 // ── 경기상세 game-detail (pollInterval, 기본 30s) ──

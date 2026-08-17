@@ -221,12 +221,19 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
     if (!hasFavPlayers) setTodayGames({});
   }, [hasFavPlayers]);
 
-  // 대상(favKey) 전환·재요청 late 응답이 최신 state를 덮어쓰지 못하게 하는 generation fence.
+  // 대상(favKey/refreshNonce) 전환·최애 0명·unmount 시 late 응답이 최신 state를 덮어쓰지
+  // 못하게 하는 generation fence. 증가 지점을 load 시작이 아니라 *대상 변경 effect*로 두어
+  // hasFavPlayers=false 전환·언마운트처럼 load가 재호출되지 않는 경우에도 진행 중 A를 무효화한다.
   // (새 poller reset은 진행 중 Promise를 취소하지 않으므로 setState 경로에서 차단한다.)
   const todayGamesGenRef = useRef(0);
+  useEffect(() => {
+    todayGamesGenRef.current += 1;
+    return () => { todayGamesGenRef.current += 1; };
+  }, [favKey, refreshNonce, hasFavPlayers]);
+
   const loadTodayGames = useCallback(async () => {
     if (favPlayers.length === 0) return;
-    const gen = ++todayGamesGenRef.current;
+    const gen = todayGamesGenRef.current;
     const entries = await Promise.all(
       favPlayers.map(async (p) => {
         const pos = classifyIsPitcher(p) ? "투수" : "타자";
