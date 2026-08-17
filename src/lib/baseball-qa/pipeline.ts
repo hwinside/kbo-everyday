@@ -59,6 +59,7 @@ import {
   resolveSeasonRecordIntent,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
+  hasNonStatFocus,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -1956,6 +1957,13 @@ function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: bo
  * 근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
  */
 export function isTeamRagServableQuestion(question: string): boolean {
+  // ⚠️ 비스탯 초점(세레머니 등 조건절 안의 지표·방법/추세)은 지표어가 있어도 수치 질문이 아니다.
+  //   `안타를 쳤을때 …세레머니 있어?` 는 `안타`(STAT_WORDS) 때문에 numeric 으로 오판되어
+  //   team_rag 가 서빙을 거부하고 generic LLM 으로 새면 나무위키 근거를 못 읽어 환각이 된다.
+  //   스탯 경로를 양보시키는 것과 **같은 술어**로 team_rag 가 이 질문을 소유하게 한다(나무위키 근거 존재).
+  //   근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
+  //   rank 는 팀 축에서 실서빙 지표(`케이티 순위`)라 서술로 넘기면 안 된다 → rankIsMismatch:false.
+  if (hasNonStatFocus(question, { rankIsMismatch: false })) return true;
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));

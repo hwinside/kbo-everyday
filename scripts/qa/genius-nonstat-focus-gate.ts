@@ -14,6 +14,7 @@
  */
 import { resolveSeasonRecordIntent, hasNonStatFocus } from "../../src/lib/baseball-qa/stats/season-record";
 import { resolveTeamRecordIntent } from "../../src/lib/baseball-qa/stats/team-record";
+import { isTeamRagServableQuestion } from "../../src/lib/baseball-qa/pipeline";
 
 type Axis = "season" | "team";
 interface Case {
@@ -51,8 +52,23 @@ function diverted(axis: Axis, q: string): boolean {
   return intent.kind === "none";
 }
 
+// divert 된 팀 축 비스탯 질문이 team_rag(나무위키 근거)로 **착지**하는가 — generic LLM 환각 방지.
+// (세레머니 질문은 `안타`가 섞여 numeric 으로 오판되던 것을 비스탯 초점으로 구제)
+const TEAM_RAG_LANDING: Array<{ q: string; servable: boolean }> = [
+  { q: "안타를 쳤을때 기아타이거즈만에 세레머니거 있어?", servable: true },
+  { q: "기아 세레머니 있어?", servable: true },
+  { q: "케이티 순위", servable: false }, // 팀 순위는 numeric 구조화 서빙 — team_rag 서빙 아님
+];
+
 function runFixtures(): number {
   let fail = 0;
+  for (const l of TEAM_RAG_LANDING) {
+    const got = isTeamRagServableQuestion(l.q);
+    if (got !== l.servable) {
+      fail++;
+      console.error(`FAIL [team_rag landing] expect servable=${l.servable} got=${got}  "${l.q}"`);
+    }
+  }
   for (const c of CASES) {
     const got = diverted(c.axis, c.q);
     // divert=false 인 정상 케이스는 "none 이 아니어야" 통과 — 단, 정상 케이스가 애초에
