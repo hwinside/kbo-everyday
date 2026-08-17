@@ -318,6 +318,49 @@ async function run(): Promise<void> {
     ]);
     assert.equal(qualitativeEvidence[0]?.content, "차분한 수비와 성실한 훈련 태도로 알려진 외야수입니다.");
 
+    // 삼순 P1-a: clean 근거가 rank 7 이하에 있어도 도달해야 한다.
+    //   projection 이 최종 6건 cap **앞**에서 돌지 않으면 앞의 기록 chunk 6개가 자리를 다 먹어
+    //   clean 소개 근거를 영원히 못 본다. 앞 6개를 전부 기록 chunk 로 깔아놓고 7번째를 clean 으로 둔다.
+    const rank7Rows: RagEvidence[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      rank7Rows.push({
+        ...MOON_EVIDENCE,
+        sectionPath: `김재환/선수 경력/${2014 + i}년`,
+        content: `${2014 + i}년에는 ${100 + i}경기에 출장해 ${20 + i}홈런을 기록했다.`,
+      });
+    }
+    rank7Rows.push({
+      ...MOON_EVIDENCE,
+      sectionPath: "본문",
+      content: "김재환은 현 KBO 리그 SSG 랜더스의 외야수이다.",
+    });
+    const rank7Projected = projectPlayerDescriptiveEvidence(rank7Rows);
+    assert.deepEqual(
+      rank7Projected.map((row) => row.content),
+      ["김재환은 현 KBO 리그 SSG 랜더스의 외야수이다."],
+      "rank 7 이하의 clean 소개 근거도 projection 으로 도달해야 한다",
+    );
+    // 반대 방향 증명: 먼저 cap 을 걸면 그 clean 근거는 사라진다(= 순서가 계약이다).
+    assert.equal(
+      projectPlayerDescriptiveEvidence(selectEvidence(rank7Rows)).length,
+      0,
+      "cap 을 먼저 걸면 rank 7 clean 근거가 유실된다 — 순서 계약의 반증",
+    );
+
+    // 삼순 P1-b: 본문 단어 사전이 아니라 **구조**로 가른다.
+    //   ① 사전에 없는 비수치 기록 헤더는 걱러지고(Namu-only 혼합)
+    //   ② `국가대표`·`기록` 같은 단어가 들어간 **정상 서술문**은 살아야 한다(과삭제 방지).
+    const structuralRows = projectPlayerDescriptiveEvidence([
+      { ...MOON_EVIDENCE, sectionPath: "본문", content: "통산 홈런 일지 ｜ 수상 내역 ｜ 연도별 기록 ｜ 대표팀 경력" },
+      { ...MOON_EVIDENCE, sectionPath: "김재환/수상 내역", content: "골든글러브를 여러 차례 수상한 외야수이다." },
+      { ...MOON_EVIDENCE, sectionPath: "본문", content: "국가대표로도 발탁되어 국제 대회에 참가한 적이 있다." },
+    ]);
+    assert.deepEqual(
+      structuralRows.map((row) => row.content),
+      ["국가대표로도 발탁되어 국제 대회에 참가한 적이 있다."],
+      "비수치 기록 헤더·기록 section 은 제외하고 정상 서술문은 보존해야 한다",
+    );
+
     const staleWikiDeps = makeDeps({
       searchRag: async () => [
         { ...MOON_EVIDENCE, content: "최형우는 현 KBO 리그 KIA 타이거즈의 외야수이다." },

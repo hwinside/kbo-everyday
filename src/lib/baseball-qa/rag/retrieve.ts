@@ -474,25 +474,36 @@ function projectPlayerDescriptiveContent(content: string, sectionPath: string): 
     .split(/(?<=[.!?。]|[다요]\.)\s+|\n+/u)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
+  // 🔴 판정은 **구조**로만 한다 — `sectionPath`(어디서 온 조각인가) + 숫자문자(수치인가) +
+  //   문장 형태(서술인가 색인/헤더인가). 본문 단어 사전(`국가대표`·`기록`·`시즌`…)으로
+  //   지우면 두 방향으로 동시에 틀린다(삼순 2026-08-16 P1):
+  //     ① `국가대표로도 발탁되어 국제 대회에 참가했다` 같은 **정상 직접근거를 과삭제**하고
+  //     ② `통산 홈런 일지` 처럼 사전에 없는 **비수치 기록 헤더는 그대로 통과**시킨다.
+  //   구조 판정은 사전을 늘리지 않고도 양쪽을 닫는다.
   const clean = parts.filter((part) => {
     if (/\p{N}/u.test(part)) return false;
-    if (/프런트|코칭스태프|편집 요청|편집 권한|최근 변경|최근 토론|정보 더 보기|펼치기|접기|둘러보기/.test(part)) {
-      return false;
-    }
-    // Namu 본문에는 비수치로 보이는 색인/헤더 조각이 섞인다. `sectionPath`가 record가
-    // 아니어도 "통산 홈런 일지" 같은 헤더가 본문 chunk 안에 들어오면 소개 생성 근거로는
-    // 오염이다. 선수 소개형 RAG에서는 기록/수상/대표팀 축 전체가 규모 추론의 발화점이므로
-    // LLM 직전 projection에서만 제외한다(전역 selector/validator 무변경).
-    if (/주요 기록|통산 홈런|계약금|연봉|옵션|등번호|타점|득점|타율|홈런왕|타점왕|MVP|아시안 게임|프리미어 12|국가대표|기록|수상|시즌|A대표팀 참가 경력/.test(part)) {
-      return false;
-    }
-    return true;
+    return isDescriptiveSentence(part);
   });
   return clean.join(" ").replace(/\s+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
 }
 
+/**
+ * 서술 문장인가, 색인/헤더 조각인가.
+ *
+ * 위키 chunk 본문에는 `프런트 ｜ 코칭스태프 ｜ 투수`, `통산 홈런 일지`, `주요 기록`처럼
+ * **문장이 아닌 조각**이 섞여 들어온다. 이런 조각은 소개 답변의 근거가 될 수 없는데도
+ * 숫자가 없어서 수치 필터를 그대로 통과한다. 종결어미와 구분자 나열이라는 구조로 가른다.
+ */
+function isDescriptiveSentence(part: string): boolean {
+  // 목록 구분자가 반복되면 문장이 아니라 색인 나열이다.
+  const separators = part.match(/[｜|·ㆍ‧・]/gu);
+  if (separators && separators.length >= 2) return false;
+  // 한국어 서술 종결(…다 / …요 / …함)로 끝나야 문장이다. 종결부호는 있어도 없어도 된다.
+  return /(?:다|요|함)[.!?。]?$/u.test(part);
+}
+
 function isPlayerDescriptiveRecordSection(sectionPath: string): boolean {
-  return /(?:^|[/›>])\s*(?:주요 기록|통산|기록|수상|연도별 성적|시즌별 성적|역대 성적|선수 경력\/\d{4}년)\s*(?:$|[/›>])/u.test(sectionPath);
+  return /(?:^|[/›>])\s*(?:주요 기록|통산[^/›>]*|기록[^/›>]*|수상[^/›>]*|연도별 성적|시즌별 성적|역대 성적|성적[^/›>]*|계약|연봉|선수 경력\/\d{4}년)\s*(?:$|[/›>])/u.test(sectionPath);
 }
 
 /**
