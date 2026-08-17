@@ -627,7 +627,9 @@ async function partDom() {
     check("렌더: 생각중 마스코트도 공유 규격 + idle (대기 중에도 움직임)",
       everyRenderedMascotOk(container));
 
-    // failed — 같은 질문의 재시도 버블이 소유권을 가진다(생각중 말풍선 마스코트는 숨는다).
+    // failed — 재시도 버블이 소유권을 가진다.
+    // 🔴 원복(하린아빠 2026-08-17 19:46)으로 생각중 말풍선 **자체가 사라진다**.
+    //    종전엔 "마스코트만 숨고 문장 기록은 남는다"였는데, 그 잔존 계약이 되돌려졌다.
     const stored = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<Record<string, unknown>>;
     for (const entry of stored) {
       if (entry.messageId === 501) { entry.attempts = BASEBALL_QA_MAX_ATTEMPTS; entry.acknowledged = false; }
@@ -636,8 +638,9 @@ async function partDom() {
     await act(async () => { dom.window.dispatchEvent(new dom.window.Event("online")); });
     await waitFor(() => {
       assert.equal(failedMascots(container), 1, "failed 재시도 버블이 마스코트를 소유한다");
-      assert.equal(thinkingMascots(container), 0, "같은 질문의 생각중 마스코트는 숨는다(문장은 유지)");
-      assert.ok(container.querySelector('[data-testid="genius-thinking-bubble"]'), "생각중 문장 기록은 남는다");
+      assert.equal(thinkingMascots(container), 0, "생각중 마스코트가 사라진다");
+      assert.equal(container.querySelector('[data-testid="genius-thinking-bubble"]'), null,
+        "원복: 실패 시 생각중 말풍선 자체가 사라진다(재시도 버블과 동시 노출 금지)");
       assert.equal(totalMascots(container), 1);
     });
     check("DOM: failed → 재시도 버블 소유권(동일 질문 우선순위 failed>thinking)", true);
