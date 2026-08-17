@@ -32,6 +32,7 @@ on:
       - "scripts/qa/genius-mascot-motion.ts"
       - "scripts/qa/genius-mascot-motion-mutations.mjs"
       - "scripts/qa/genius-mascot-asset-mutations.mjs"
+      - "scripts/qa/mascot-source-mutate.py"
       - "package.json"
       - "src/components/dm/GeniusMascotImage.tsx"
       - "src/lib/constants/baseball-genius.ts"
@@ -122,6 +123,15 @@ jobs:
 
       - name: Install Python deps (빌더가 쓰는 것)
         run: python3 -m pip install --quiet --break-system-packages numpy scipy pillow
+
+      # 🔴 빌더는 원본 mp4 를 **ffprobe/ffmpeg 로** 디코딩한다 (삼순 2026-08-17 실측 지적).
+      #    첫 실행에서 Python deps 만 깔고 `FileNotFoundError: ffprobe` 로 죽었다 —
+      #    그러면 뒤의 full mutation 스텝이 통째로 SKIP 되어 **job 이 있으나 마나한 상태**가 된다.
+      - name: Install ffmpeg (빌더의 원본 디코더)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          ffprobe -version | head -1
 
       - name: 원본 mp4 provision — 대장 해시로 exact 검증
         env:
