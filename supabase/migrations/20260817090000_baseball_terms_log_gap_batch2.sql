@@ -12,14 +12,16 @@
 -- 🔴 이 배치는 **룰(코드) 추가가 아니라 데이터 행 추가**다. 판정 로직은 한 줄도 바뀌지 않고
 --   `matchGlossary` 가 쓰는 닫힌 집합의 원소만 늘어난다(열린 자연어를 룰로 닫는 축이 아니다).
 --
--- 행 수 SSOT: 1차 배치 후 163 + 신규 13 = **176**.
---   재구축본  132(seed) + 4(1차 정본화) + 27(1차 신규) + 13(이번) = 176
---   production 163 + 13 = 176
+-- 행 수 SSOT: 1차 배치 후 163 + 신규 11 = **174**.
+--   재구축본  132(seed) + 4(1차 정본화) + 27(1차 신규) + 11(이번) = 174
+--   production 163 + 11 = 174
 --
--- 수록 기준 (#1223 과 동일):
---   ① 운영 로그에 **실제 질문으로 등장**했고
---   ② production `matchGlossary` 로 **회수 가능**해야 한다(exact 또는 어절 단위 매칭).
---      회수 불가능한 표현을 넣으면 사전만 커지고 답변은 그대로다.
+-- 수록 기준 (#1223 + 삼순 1차 NO-GO 반영):
+--   ① 운영 로그에 **정의를 묻는 질문**으로 등장했고 (조회·예측·현황 질문은 근거가 아니다)
+--   ② production `matchGlossary` 로 **회수 가능**해야 하며 (회수 불가면 사전만 커지고 답은 그대로)
+--   ③ 배치 후 그 질문이 실제로 `answerQuestion` 종단에서 `dictionary` 로 바뀌어야 하고
+--   ④ **조회·예측 질문을 사전이 가로채지 않아야** 한다 (선점 반대축).
+--      ①~④ 를 게이트가 production 종단으로 재판정한다. 사전 부재 사실만으로는 근거가 아니다.
 --
 -- ⚠️ 제외한 것 — 지어낸 정의를 사전에 박으면 그 오답이 캐시·RAG 를 거쳐 영구화된다.
 --   · 뜻 확정 불가 팬 은어: `어저미` `콱` `도니살` `투출유` `케어러쉬` `볼팬` `중원` `사취`
@@ -27,6 +29,15 @@
 --   · 실패 종결 근거 0: `타자` — 로그 8건이 전부 `지명타자`(사전 기존 항목) 또는 llm 정상응답이라
 --     이 배치가 고치는 결손이 아니다. 사전 부재는 사실이지만 **그 사실만으로는 근거가 아니다**.
 --     (내가 처음엔 `투수` 짝이라는 이유로 넣었다가 게이트가 반증했다.)
+--   · 🔴 선점 유발: `주루` — 삼순 P0 지적을 종단 실측으로 확인했다. `주루 기록 알려줘` 가
+--     배치 전 `stat_clarify`(되묻기)로 끝나던 것이 배치 후 `dictionary` 로 **가로채진다**.
+--     조회 질문에 정의문을 답하는 것은 오답이다. alias 에서 `주루기록` 을 빼도 이번엔
+--     `llm` 으로 새어 되묻기 자체가 사라졌다 — 행의 존재 자체가 `statNumericGuard` 판정을
+--     바꾼다. 데이터 행이 라우팅을 바꾸는 실례라 이 배치에서 제외한다.
+--   · 🔴 효과 0 + 근거 부적격: `타이틀홀더` — 유일 로그가 `이번 시즌 타이틀홀더 예측` 으로
+--     정의 질문이 아니고(예측을 정의문으로 답하면 오답), 배치 후에도 그 질문은 여전히 `llm`
+--     이라 결손이 해소되지도 않는다. 종전 게이트는 로그에 없는 `타이틀홀더` 단문을 스스로
+--     만들어 PASS 시켰다 — 게이트가 자기 자격을 자기가 증명한 자리였다.
 --   · 회수 불가: `선공/후공` — 로그 질문이 `홈팀이 먼저 공격이야?` 뿐이라 어떤 표면으로도
 --     matchGlossary 가 못 집는다. 사전에 넣어도 그 질문은 여전히 안 잡힌다(효과 0).
 --   · 이미 있음: `RHEB`(전광판 alias) `QS`(퀄리티스타트 alias) `wRC`(wRC+ alias)
@@ -51,7 +62,10 @@ VALUES
 치른 경기 수가 서로 다르면 0.5게임차, 이른바 반게임차가 생깁니다.',
  'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-17'),
 
--- 로그: `할,푼,리 가 무슨 뜻이야??` `사람들이 몇할 몇푼 몇리 라구 하는데 그 뜻을 모르겟어` `푼은` `리 는`
+-- 로그: `할,푼,리 가 무슨 뜻이야??` `푼은` `리 는` `사할` — 이 4건이 배치 후 dictionary 로 바뀐다.
+-- ⚠️ 한계를 숨기지 않는다: `푼이 뜻이 머야?` `사람들이 몇할 몇푼 몇리 라구…` `몇할몇분 어떻게 읽어`
+--   는 배치 후에도 회수되지 않는다(어절 경계에 조사·오탈자가 붙어 exact/어절 어느 쪽도 안 걸린다).
+--   그것까지 잡으려면 표면을 계속 늘려야 하고, 그 축은 룰 핑퐁이므로 여기서 닫지 않는다.
 ('할푼리', ARRAY['할','푼','리','할 푼 리','할푼','몇할몇푼몇리','몇 할 몇 푼 몇 리','사할'],
  '타율이나 승률의 소수점 자리를 읽는 우리말 단위입니다.
 소수 첫째 자리가 할, 둘째 자리가 푼, 셋째 자리가 리입니다.
@@ -71,7 +85,8 @@ VALUES
 ('1군', ARRAY['일군','1군 2군','1군2군','일군 이군','1군 등록'],
  'KBO 리그 정규 경기에 나서는 선수단입니다.
 여기에 이름이 올라 있어야 그날 경기에 출전할 수 있습니다.
-1군에서 빠지면 2군, 즉 퓨처스리그에서 경기를 치릅니다.',
+1군에서 빠지면 보통 2군, 즉 퓨처스리그에서 뜁니다.
+부상이나 재정비로 잠시 경기에 나서지 않는 경우도 있습니다.',
  'league', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-17'),
 
 -- ── 투구 기록 ────────────────────────────────────────────────────────────────
@@ -84,10 +99,13 @@ VALUES
 
 -- ── 불펜 운영 ────────────────────────────────────────────────────────────────
 -- 로그: `필승조` `필승조가 뭐야?`
-('필승조', ARRAY['필승 조','셋업맨','셋업 맨','setup man','승리조','필승계투조'],
+-- ⚠️ `셋업맨` 은 alias 가 아니다(삼순 P1). 셋업맨은 마무리 바로 앞을 던지는 **한 역할**이고
+--   필승조는 그 역할을 포함한 **투수 묶음**이라 동의어가 아니다. 동의어로 박으면
+--   `셋업맨이 뭐야` 에 묶음 설명을 답하게 된다.
+('필승조', ARRAY['필승 조','승리조','필승계투조'],
  '리드를 지켜야 하는 경기 후반에 나오는 핵심 불펜 투수들입니다.
-보통 7회부터 마무리 앞까지를 책임집니다.
-팀에서 가장 믿을 만한 중간계투가 이 자리를 맡습니다.',
+보통 경기 후반 접전 상황에 차례로 나오며, 마무리까지 포함해 부르기도 합니다.
+팀에서 가장 믿을 만한 불펜이 이 자리를 맡습니다.',
  'pitching', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-17'),
 
 -- ── 시즌·순위 표현 ───────────────────────────────────────────────────────────
@@ -104,21 +122,6 @@ VALUES
 가을에 열려서 붙은 별칭이며, 정규시즌 상위 다섯 팀이 나갑니다.
 와일드카드 결정전부터 시작해 한국시리즈로 끝납니다.',
  'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-17'),
-
--- 로그: `이번 시즌 타이틀홀더 예측`
-('타이틀홀더', ARRAY['타이틀 홀더','title holder','타이틀 보유자','부문 1위'],
- '타율·홈런·타점처럼 각 기록 부문에서 1위로 시즌을 마친 선수입니다.
-타격왕, 홈런왕 같은 이름으로도 부릅니다.
-한 선수가 여러 부문을 동시에 차지하기도 합니다.',
- 'record', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-17'),
-
--- ── 주자 플레이 ──────────────────────────────────────────────────────────────
--- 로그: `주루기록이 뭐야` `주루플레이? 그게 뭐야`
-('주루', ARRAY['주루플레이','주루 플레이','주루기록','주루 기록','베이스러닝','base running'],
- '출루한 주자가 다음 베이스로 나아가는 플레이 전반을 뜻합니다.
-도루, 태그업, 한 베이스 더 가기 같은 판단이 모두 주루에 들어갑니다.
-주루 기록에는 도루와 도루 실패 등이 집계됩니다.',
- 'running', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-17'),
 
 -- ── 수비 표현 ────────────────────────────────────────────────────────────────
 -- 로그: `플라잉캐치는`
@@ -151,40 +154,92 @@ ON CONFLICT (term) DO NOTHING;
 -- 멱등: 이미 있으면 배열에 다시 넣지 않는다.
 --
 -- 로그: `FC 가 뭐야?` — 야수선택(fielder's choice)의 기록지 약어. `fielders choice` 는 이미 있다.
+--
+-- 🔴 삼순 P1: 종전 판은 `NOT (aliases @> ARRAY['fc'])` 로 **`fc` 하나만** 보고 건너뛰어서,
+--   `fc` 는 있고 `필더스초이스` 는 없는 중간 상태에서 영원히 보강되지 않았다(postcondition 도
+--   `fc` 만 봐서 그 구멍을 GREEN 으로 통과시켰다). 세 alias 를 **각각** 결손일 때만 덧붙이고,
+--   postcondition 은 셋 전부를 본다. 배열 순서·중복 없이 멱등이다.
 UPDATE public.baseball_terms
-   SET aliases = aliases || ARRAY['fc','필더스초이스','필더스 초이스']
- WHERE term = '야수선택' AND NOT (aliases @> ARRAY['fc']);
+   SET aliases = aliases
+       || (CASE WHEN aliases @> ARRAY['fc'] THEN ARRAY[]::text[] ELSE ARRAY['fc'] END)
+       || (CASE WHEN aliases @> ARRAY['필더스초이스'] THEN ARRAY[]::text[] ELSE ARRAY['필더스초이스'] END)
+       || (CASE WHEN aliases @> ARRAY['필더스 초이스'] THEN ARRAY[]::text[] ELSE ARRAY['필더스 초이스'] END)
+ WHERE term = '야수선택'
+   AND NOT (aliases @> ARRAY['fc','필더스초이스','필더스 초이스']);
 
 -- ── postcondition ────────────────────────────────────────────────────────────
 -- 신규 13행이 전부 들어갔고 최종 176행인지 트랜잭션 안에서 확인한다.
 -- 하나라도 어긋나면 되돌린다(부분 적용 금지).
+-- 🔴 삼순 P1: 종전에는 "term 이 존재하는가" 만 봤다. 그러면 행이 있기만 하면 answer·aliases·
+--   근거 분류가 무엇이든 통과한다. 신규 11행은 **full-row** 로 확인한다 —
+--   answer 앞머리·alias 개수·category·source_kind·source_url·rule_version 까지.
 DO $$
 DECLARE
-  batch_terms text[] := ARRAY[
-    '게임차','할푼리','투수','1군','퀄리티스타트플러스','필승조',
-    '와이어투와이어','가을야구','타이틀홀더','주루','플라잉캐치','설욕','집관'
-  ];
-  missing text;
+  expected jsonb := '[
+    {"term":"게임차","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":10},
+    {"term":"할푼리","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","na":8},
+    {"term":"투수","cat":"position","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","na":3},
+    {"term":"1군","cat":"league","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","na":5},
+    {"term":"퀄리티스타트플러스","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","na":6},
+    {"term":"필승조","cat":"pitching","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
+    {"term":"와이어투와이어","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":4},
+    {"term":"가을야구","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
+    {"term":"플라잉캐치","cat":"defense","kind":"editorial_definition","url":null,"ver":"not_applicable","na":4},
+    {"term":"설욕","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
+    {"term":"집관","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3}
+  ]'::jsonb;
+  e jsonb;
+  row_rec record;
   total int;
+  fc_aliases text[] := ARRAY['fc','필더스초이스','필더스 초이스'];
 BEGIN
-  IF array_length(batch_terms, 1) <> 13 THEN
-    RAISE EXCEPTION '배치 term 목록이 13개가 아니다 (실제 %)', array_length(batch_terms, 1);
+  IF jsonb_array_length(expected) <> 11 THEN
+    RAISE EXCEPTION '배치 term 목록이 11개가 아니다 (실제 %)', jsonb_array_length(expected);
   END IF;
 
-  FOREACH missing IN ARRAY batch_terms LOOP
-    IF NOT EXISTS (SELECT 1 FROM public.baseball_terms WHERE term = missing) THEN
-      RAISE EXCEPTION '배치 누락: term=%', missing;
+  FOR e IN SELECT * FROM jsonb_array_elements(expected) LOOP
+    SELECT term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at
+      INTO row_rec FROM public.baseball_terms WHERE term = (e->>'term');
+    IF NOT FOUND THEN
+      RAISE EXCEPTION '배치 누락: term=%', e->>'term';
+    END IF;
+    IF row_rec.category IS DISTINCT FROM (e->>'cat') THEN
+      RAISE EXCEPTION 'category 불일치: term=% 기대=% 실제=%', e->>'term', e->>'cat', row_rec.category;
+    END IF;
+    IF row_rec.source_kind IS DISTINCT FROM (e->>'kind') THEN
+      RAISE EXCEPTION 'source_kind 불일치: term=% 기대=% 실제=%', e->>'term', e->>'kind', row_rec.source_kind;
+    END IF;
+    IF row_rec.source_url IS DISTINCT FROM (e->>'url') THEN
+      RAISE EXCEPTION 'source_url 불일치: term=% 기대=% 실제=%', e->>'term', e->>'url', row_rec.source_url;
+    END IF;
+    IF row_rec.rule_version IS DISTINCT FROM (e->>'ver') THEN
+      RAISE EXCEPTION 'rule_version 불일치: term=% 기대=% 실제=%', e->>'term', e->>'ver', row_rec.rule_version;
+    END IF;
+    IF coalesce(array_length(row_rec.aliases, 1), 0) <> (e->>'na')::int THEN
+      RAISE EXCEPTION 'alias 개수 불일치: term=% 기대=% 실제=%',
+        e->>'term', e->>'na', coalesce(array_length(row_rec.aliases, 1), 0);
+    END IF;
+    IF row_rec.answer IS NULL OR length(row_rec.answer) < 20 THEN
+      RAISE EXCEPTION 'answer 가 비었거나 너무 짧다: term=%', e->>'term';
+    END IF;
+    IF row_rec.reviewed_at IS DISTINCT FROM DATE '2026-08-17' THEN
+      RAISE EXCEPTION 'reviewed_at 불일치: term=% 실제=%', e->>'term', row_rec.reviewed_at;
     END IF;
   END LOOP;
 
+  -- 이 배치에서 **의도적으로 제외**한 term 이 실수로 들어오지 않았는지 (선점 유발·근거 부적격)
+  IF EXISTS (SELECT 1 FROM public.baseball_terms WHERE term IN ('주루','타이틀홀더','타자','선공','후공','추격조')) THEN
+    RAISE EXCEPTION '제외 대상 term 이 사전에 들어왔다 (주루/타이틀홀더/타자/선공/후공/추격조)';
+  END IF;
+
   SELECT count(*) INTO total FROM public.baseball_terms;
-  IF total <> 176 THEN
-    RAISE EXCEPTION '최종 행 수가 176 이 아니다 (실제 %)', total;
+  IF total <> 174 THEN
+    RAISE EXCEPTION '최종 행 수가 174 가 아니다 (실제 %)', total;
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM public.baseball_terms WHERE term = '야수선택' AND aliases @> ARRAY['fc']
+    SELECT 1 FROM public.baseball_terms WHERE term = '야수선택' AND aliases @> fc_aliases
   ) THEN
-    RAISE EXCEPTION 'alias 보강 실패: 야수선택 ← fc';
+    RAISE EXCEPTION 'alias 보강 실패: 야수선택 ← fc/필더스초이스/필더스 초이스';
   END IF;
 END $$;

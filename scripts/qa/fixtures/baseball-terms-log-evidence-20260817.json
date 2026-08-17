@@ -1,370 +1,437 @@
 {
- "captured_at": "2026-08-17",
- "window": "genius_question_logs 최근 120시간 전수 1729건 (PostgREST Range 페이지네이션, 절단 없음)",
- "total_rows": 1729,
- "terms": [
-  {
-   "term": "게임차",
-   "pattern": "게임\\s*차|게임차|반게임|0\\.5\\s*게임",
-   "hits": [
+  "captured_at": "2026-08-17",
+  "window": "genius_question_logs 최근 120시간 (PostgREST Range 페이지네이션 2회: 0-999, 1000-1999)",
+  "total_rows": 1729,
+  "terms": [
     {
-     "question": "엘지랑 두산이랑 몇게임 차야?",
-     "matchPath": "kbo_structured"
+      "term": "게임차",
+      "pattern": "게임\\s*차|게임차|반게임|0\\.5\\s*게임",
+      "hits": [
+        {
+          "question": "엘지랑 두산이랑 몇게임 차야?",
+          "matchPath": "kbo_structured"
+        },
+        {
+          "question": "게임차에서 0.5게임차 뜻",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "게임차에서 반게임 차는 무슨 뜻이야",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "순위표에 게임차라고 적힌거 있잖아 그거 뭐야?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "게임 차는 뭐야?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "게임차",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "각 팀들의 순위에 게임차라는 항목이 있는데 0.5게임차이가 어떻게 발생하는지 궁금해",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "순위에서 0.5게임차는 어떻게 생겨?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "Kt wiz와 삼성과 몇게임 차야?",
+          "matchPath": "history_hold"
+        },
+        {
+          "question": "케이티랑 삼성이랑 몇게임 차야?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "그니까 케이티가 오늘 졌고, 삼성이 오늘이긴다 치면 케이티랑 삼성이랑 몇게임 차냐고",
+          "matchPath": "kbo_structured"
+        },
+        {
+          "question": "삼성이랑 케이티랑 2게임 차라고?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "야구 관한 룰은 아닌데 케이티는 오늘 졌고 만약 삼성이 오늘 이기면 삼성이랑 크트랑 몇게임 차야?",
+          "matchPath": "kbo_structured"
+        },
+        {
+          "question": "4위와 0게임차인데 아직도 5위야?",
+          "matchPath": "blocked"
+        }
+      ]
     },
     {
-     "question": "게임차에서 0.5게임차 뜻",
-     "matchPath": "unsure"
+      "term": "할푼리",
+      "pattern": "몇\\s*할|몇할|사할|할\\s*[,，]?\\s*푼|^푼은?$|푼이\\s*뜻|^리\\s*는$|몇푼|몇리",
+      "hits": [
+        {
+          "question": "타율이 몇할이 나와야 잘하는거야?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "리 는",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "푼은",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "사람들이 몇할 몇푼 몇리 라구 하는데 그 뜻을 모르겟어",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "할,푼,리 가 무슨 뜻이야??",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "사할",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "할푼리",
+          "matchPath": "llm"
+        },
+        {
+          "question": "할 푼 리?는 뭐야",
+          "matchPath": "llm"
+        },
+        {
+          "question": "몇할몇분 어떻게 읽어",
+          "matchPath": "llm"
+        },
+        {
+          "question": "푼이 뜻이 머야?",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "할푼리가 뭘 뜻하는거야",
+          "matchPath": "llm"
+        }
+      ]
     },
     {
-     "question": "게임차에서 반게임 차는 무슨 뜻이야",
-     "matchPath": "unsure"
+      "term": "투수",
+      "pattern": "^투수$|투수는\\s*뭐|투수가\\s*뭐|잘하는\\s*투수|^투수\\W",
+      "hits": [
+        {
+          "question": "잘하는 투수의 기준",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "투수",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "투수는뭐야",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "투수가 뭐야?? 타순은 또 뭐지??",
+          "matchPath": "llm"
+        },
+        {
+          "question": "불펜투수는 뭐야",
+          "matchPath": "dictionary"
+        },
+        {
+          "question": "볼팬투수가 뭐야?",
+          "matchPath": "dictionary"
+        },
+        {
+          "question": "볼팬투수가 뭐야?",
+          "matchPath": "question_correction"
+        },
+        {
+          "question": "투수 등록이랑 말소가 뭐야?",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "선발투수가 뭐야",
+          "matchPath": "dictionary"
+        },
+        {
+          "question": "투수",
+          "matchPath": "llm"
+        }
+      ]
     },
     {
-     "question": "순위표에 게임차라고 적힌거 있잖아 그거 뭐야?",
-     "matchPath": "unsure"
+      "term": "1군",
+      "pattern": "1군|일군",
+      "hits": [
+        {
+          "question": "오원석 1군 말소야?",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "오원석 1군 망고야?",
+          "matchPath": "blocked"
+        },
+        {
+          "question": "1군 말소가 뭐야",
+          "matchPath": "dictionary"
+        },
+        {
+          "question": "1군",
+          "matchPath": "llm"
+        },
+        {
+          "question": "1군 2군이 뭐야",
+          "matchPath": "unsure"
+        }
+      ]
     },
     {
-     "question": "게임 차는 뭐야?",
-     "matchPath": "unsure"
+      "term": "퀄리티스타트플러스",
+      "pattern": "퀄리티\\s*스타트\\s*플러스|QS\\+|Qs\\+|^퀄리티$",
+      "hits": [
+        {
+          "question": "QS+",
+          "matchPath": "llm"
+        },
+        {
+          "question": "퀄리티 스타트 플러스",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "퀄리티",
+          "matchPath": "unsure"
+        },
+        {
+          "question": "Qs+가 머야",
+          "matchPath": "llm"
+        }
+      ]
     },
     {
-     "question": "게임차",
-     "matchPath": "unsure"
+      "term": "필승조",
+      "pattern": "필승조",
+      "hits": [
+        {
+          "question": "필승조가 뭐야?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "필승조가 뭐야?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "필승조",
+          "matchPath": "unsure"
+        }
+      ]
     },
     {
-     "question": "각 팀들의 순위에 게임차라는 항목이 있는데 0.5게임차이가 어떻게 발생하는지 궁금해",
-     "matchPath": "unsure"
+      "term": "와이어투와이어",
+      "pattern": "와이어",
+      "hits": [
+        {
+          "question": "와이어 투 와이어",
+          "matchPath": "unsure"
+        }
+      ]
     },
     {
-     "question": "순위에서 0.5게임차는 어떻게 생겨?",
-     "matchPath": "unsure"
+      "term": "가을야구",
+      "pattern": "가을\\s*야구|가을야구",
+      "hits": [
+        {
+          "question": "가을야구",
+          "matchPath": "llm"
+        },
+        {
+          "question": "아니 이번 가을야구는 몇일 부터야?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "가을야구",
+          "matchPath": "scope_guide"
+        },
+        {
+          "question": "가을야구까지 몇게임 남았오",
+          "matchPath": "llm"
+        },
+        {
+          "question": "롯데가 가을야구 갈 확률",
+          "matchPath": "team_rag"
+        },
+        {
+          "question": "가을야구",
+          "matchPath": "scope_guide"
+        },
+        {
+          "question": "가을야구는 몇 팀이 가?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "가을야구 시스템이 어떻게 돼?",
+          "matchPath": "llm"
+        },
+        {
+          "question": "롯데 가을야구 가려면 얼마나 이겨야해?",
+          "matchPath": "team_rag"
+        },
+        {
+          "question": "2026가을야구 갈수있는 확률",
+          "matchPath": "blocked"
+        }
+      ]
     },
     {
-     "question": "Kt wiz와 삼성과 몇게임 차야?",
-     "matchPath": "history_hold"
+      "term": "플라잉캐치",
+      "pattern": "플라잉",
+      "hits": [
+        {
+          "question": "플라잉캐치는",
+          "matchPath": "unsure"
+        }
+      ]
     },
     {
-     "question": "케이티랑 삼성이랑 몇게임 차야?",
-     "matchPath": "unsure"
+      "term": "설욕",
+      "pattern": "설욕",
+      "hits": [
+        {
+          "question": "설욕",
+          "matchPath": "unsure"
+        }
+      ]
     },
     {
-     "question": "그니까 케이티가 오늘 졌고, 삼성이 오늘이긴다 치면 케이티랑 삼성이랑 몇게임 차냐고",
-     "matchPath": "kbo_structured"
-    },
-    {
-     "question": "삼성이랑 케이티랑 2게임 차라고?",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "야구 관한 룰은 아닌데 케이티는 오늘 졌고 만약 삼성이 오늘 이기면 삼성이랑 크트랑 몇게임 차야?",
-     "matchPath": "kbo_structured"
-    },
-    {
-     "question": "4위와 0게임차인데 아직도 5위야?",
-     "matchPath": "blocked"
+      "term": "집관",
+      "pattern": "집관",
+      "hits": [
+        {
+          "question": "집관과 직관의 차이",
+          "matchPath": "llm"
+        },
+        {
+          "question": "집관",
+          "matchPath": "unsure"
+        }
+      ]
     }
-   ]
-  },
-  {
-   "term": "할푼리",
-   "pattern": "몇\\s*할|몇할|사할|할\\s*[,，]?\\s*푼|^푼은?$|푼이\\s*뜻|^리\\s*는$|몇푼|몇리",
-   "hits": [
+  ],
+  "note": "타자는 실패 종결 근거 0(로그 8건이 전부 `지명타자` 사전항목 또는 llm 정상응답)이라 배치에서 제외했다 — 게이트가 반증.",
+  "pages": [
     {
-     "question": "타율이 몇할이 나와야 잘하는거야?",
-     "matchPath": "llm"
+      "range": "0-999",
+      "rows": 1000
     },
     {
-     "question": "리 는",
-     "matchPath": "blocked"
-    },
-    {
-     "question": "푼은",
-     "matchPath": "blocked"
-    },
-    {
-     "question": "사람들이 몇할 몇푼 몇리 라구 하는데 그 뜻을 모르겟어",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "할,푼,리 가 무슨 뜻이야??",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "사할",
-     "matchPath": "blocked"
-    },
-    {
-     "question": "할푼리",
-     "matchPath": "llm"
-    },
-    {
-     "question": "할 푼 리?는 뭐야",
-     "matchPath": "llm"
-    },
-    {
-     "question": "몇할몇분 어떻게 읽어",
-     "matchPath": "llm"
-    },
-    {
-     "question": "푼이 뜻이 머야?",
-     "matchPath": "blocked"
-    },
-    {
-     "question": "할푼리가 뭘 뜻하는거야",
-     "matchPath": "llm"
+      "range": "1000-1999",
+      "rows": 729
     }
-   ]
-  },
-  {
-   "term": "투수",
-   "pattern": "^투수$|투수는\\s*뭐|투수가\\s*뭐|잘하는\\s*투수|^투수\\W",
-   "hits": [
+  ],
+  "excluded": [
     {
-     "question": "잘하는 투수의 기준",
-     "matchPath": "unsure"
+      "term": "주루",
+      "reason": "선점 유발 — `주루 기록 알려줘` 가 배치 전 stat_clarify(되묻기) → 배치 후 dictionary 로 가로채짐. 조회 질문에 정의문은 오답."
     },
     {
-     "question": "투수",
-     "matchPath": "unsure"
+      "term": "타이틀홀더",
+      "reason": "근거 부적격 + 효과 0 — 유일 로그가 `이번 시즌 타이틀홀더 예측`(정의 질문 아님)이고, 배치 후에도 그 질문은 llm 그대로."
     },
     {
-     "question": "투수는뭐야",
-     "matchPath": "unsure"
+      "term": "타자",
+      "reason": "실패 종결 근거 0 — 로그 8건이 전부 `지명타자`(기존 항목) 또는 llm 정상응답."
     },
     {
-     "question": "투수가 뭐야?? 타순은 또 뭐지??",
-     "matchPath": "llm"
+      "term": "선공/후공",
+      "reason": "회수 불가 — 유일 로그 `홈팀이 먼저 공격이야?` 에 표면이 없어 어떤 alias 로도 안 잡힌다."
     },
     {
-     "question": "불펜투수는 뭐야",
-     "matchPath": "dictionary"
-    },
-    {
-     "question": "볼팬투수가 뭐야?",
-     "matchPath": "dictionary"
-    },
-    {
-     "question": "볼팬투수가 뭐야?",
-     "matchPath": "question_correction"
-    },
-    {
-     "question": "투수 등록이랑 말소가 뭐야?",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "선발투수가 뭐야",
-     "matchPath": "dictionary"
-    },
-    {
-     "question": "투수",
-     "matchPath": "llm"
+      "term": "추격조",
+      "reason": "로그 근거 0건."
     }
-   ]
-  },
-  {
-   "term": "1군",
-   "pattern": "1군|일군",
-   "hits": [
+  ],
+  "preemption": [
     {
-     "question": "오원석 1군 말소야?",
-     "matchPath": "blocked"
+      "question": "오늘 선발투수 누구야",
+      "reason": "조회 — 오늘 선발 라인업 질문",
+      "relatedTerm": "투수"
     },
     {
-     "question": "오원석 1군 망고야?",
-     "matchPath": "blocked"
+      "question": "투수 연봉 알려줘",
+      "reason": "조회 — 연봉은 범위 밖",
+      "relatedTerm": "투수"
     },
     {
-     "question": "1군 말소가 뭐야",
-     "matchPath": "dictionary"
+      "question": "잘하는 투수의 기준",
+      "loggedPath": "unsure",
+      "reason": "평가 질문 — 정의문으로 답할 수 없다",
+      "relatedTerm": "투수"
     },
     {
-     "question": "1군",
-     "matchPath": "llm"
+      "question": "투수 등록이랑 말소가 뭐야",
+      "loggedPath": "unsure",
+      "reason": "복합 용어 — 투수 단독 정의는 질문 전체에 오답",
+      "relatedTerm": "투수"
     },
     {
-     "question": "1군 2군이 뭐야",
-     "matchPath": "unsure"
+      "question": "오원석 1군 말소야?",
+      "loggedPath": "blocked",
+      "reason": "선수 현황 조회",
+      "relatedTerm": "1군"
+    },
+    {
+      "question": "1군 엔트리 알려줘",
+      "reason": "조회 — 엔트리 명단 요구",
+      "relatedTerm": "1군"
+    },
+    {
+      "question": "아니 이번 가을야구는 몇일 부터야?",
+      "loggedPath": "llm",
+      "reason": "일정 조회",
+      "relatedTerm": "가을야구"
+    },
+    {
+      "question": "2026가을야구 갈수있는 확률",
+      "loggedPath": "blocked",
+      "reason": "예측 — 정의문 오답",
+      "relatedTerm": "가을야구"
+    },
+    {
+      "question": "롯데가 가을야구 갈 확률",
+      "loggedPath": "team_rag",
+      "reason": "팀 예측 — team_rag 소유",
+      "relatedTerm": "가을야구"
+    },
+    {
+      "question": "엘지랑 두산이랑 몇게임 차야?",
+      "loggedPath": "kbo_structured",
+      "reason": "수치 조회 — 구조화 경로 소유",
+      "relatedTerm": "게임차"
+    },
+    {
+      "question": "Kt wiz와 삼성과 몇게임 차야?",
+      "loggedPath": "history_hold",
+      "reason": "수치 조회",
+      "relatedTerm": "게임차"
+    },
+    {
+      "question": "타율이 몇할이 나와야 잘하는거야?",
+      "loggedPath": "llm",
+      "reason": "평가 질문",
+      "relatedTerm": "할푼리"
+    },
+    {
+      "question": "이번 시즌 타이틀홀더 예측",
+      "loggedPath": "unsure",
+      "reason": "예측 — 제외한 term 이 실수로 들어오면 여기가 RED",
+      "relatedTerm": "타이틀홀더(제외)"
+    },
+    {
+      "question": "주루 기록 알려줘",
+      "loggedPath": "stat_clarify",
+      "reason": "조회 — 되묻기가 소유. 주루를 넣으면 여기가 RED",
+      "relatedTerm": "주루(제외)"
     }
-   ]
-  },
-  {
-   "term": "퀄리티스타트플러스",
-   "pattern": "퀄리티\\s*스타트\\s*플러스|QS\\+|Qs\\+|^퀄리티$",
-   "hits": [
-    {
-     "question": "QS+",
-     "matchPath": "llm"
-    },
-    {
-     "question": "퀄리티 스타트 플러스",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "퀄리티",
-     "matchPath": "unsure"
-    },
-    {
-     "question": "Qs+가 머야",
-     "matchPath": "llm"
-    }
-   ]
-  },
-  {
-   "term": "필승조",
-   "pattern": "필승조",
-   "hits": [
-    {
-     "question": "필승조가 뭐야?",
-     "matchPath": "llm"
-    },
-    {
-     "question": "필승조가 뭐야?",
-     "matchPath": "llm"
-    },
-    {
-     "question": "필승조",
-     "matchPath": "unsure"
-    }
-   ]
-  },
-  {
-   "term": "와이어투와이어",
-   "pattern": "와이어",
-   "hits": [
-    {
-     "question": "와이어 투 와이어",
-     "matchPath": "unsure"
-    }
-   ]
-  },
-  {
-   "term": "가을야구",
-   "pattern": "가을\\s*야구|가을야구",
-   "hits": [
-    {
-     "question": "가을야구",
-     "matchPath": "llm"
-    },
-    {
-     "question": "아니 이번 가을야구는 몇일 부터야?",
-     "matchPath": "llm"
-    },
-    {
-     "question": "가을야구",
-     "matchPath": "scope_guide"
-    },
-    {
-     "question": "가을야구까지 몇게임 남았오",
-     "matchPath": "llm"
-    },
-    {
-     "question": "롯데가 가을야구 갈 확률",
-     "matchPath": "team_rag"
-    },
-    {
-     "question": "가을야구",
-     "matchPath": "scope_guide"
-    },
-    {
-     "question": "가을야구는 몇 팀이 가?",
-     "matchPath": "llm"
-    },
-    {
-     "question": "가을야구 시스템이 어떻게 돼?",
-     "matchPath": "llm"
-    },
-    {
-     "question": "롯데 가을야구 가려면 얼마나 이겨야해?",
-     "matchPath": "team_rag"
-    },
-    {
-     "question": "2026가을야구 갈수있는 확률",
-     "matchPath": "blocked"
-    }
-   ]
-  },
-  {
-   "term": "타이틀홀더",
-   "pattern": "타이틀\\s*홀더|타이틀홀더",
-   "hits": [
-    {
-     "question": "이번 시즌 타이틀홀더 예측",
-     "matchPath": "unsure"
-    }
-   ]
-  },
-  {
-   "term": "주루",
-   "pattern": "주루",
-   "hits": [
-    {
-     "question": "주루플레이? 그게 뭐야",
-     "matchPath": "llm"
-    },
-    {
-     "question": "주루기록이 뭐야",
-     "matchPath": "stat_clarify"
-    },
-    {
-     "question": "윤동희 주루가 니기 0이라메",
-     "matchPath": "llm"
-    },
-    {
-     "question": "주루",
-     "matchPath": "question_correction"
-    },
-    {
-     "question": "주루",
-     "matchPath": "question_correction"
-    },
-    {
-     "question": "주루가 뭐야",
-     "matchPath": "question_correction"
-    },
-    {
-     "question": "주루사",
-     "matchPath": "llm"
-    },
-    {
-     "question": "주루할때 다른곳 돌아다니지않고 직진해서쭉가야하는룰이 뭐야",
-     "matchPath": "llm"
-    }
-   ]
-  },
-  {
-   "term": "플라잉캐치",
-   "pattern": "플라잉",
-   "hits": [
-    {
-     "question": "플라잉캐치는",
-     "matchPath": "unsure"
-    }
-   ]
-  },
-  {
-   "term": "설욕",
-   "pattern": "설욕",
-   "hits": [
-    {
-     "question": "설욕",
-     "matchPath": "unsure"
-    }
-   ]
-  },
-  {
-   "term": "집관",
-   "pattern": "집관",
-   "hits": [
-    {
-     "question": "집관과 직관의 차이",
-     "matchPath": "llm"
-    },
-    {
-     "question": "집관",
-     "matchPath": "unsure"
-    }
-   ]
-  }
- ],
- "note": "타자는 실패 종결 근거 0(로그 8건이 전부 `지명타자` 사전항목 또는 llm 정상응답)이라 배치에서 제외했다 — 게이트가 반증."
+  ]
 }
