@@ -718,9 +718,25 @@ def main() -> int:
             #      · source = 어느 경로로 만들었나
             #    측정치(defect_px·overfill_px·hole_px·motion_pct·clip_kb)는 오차를 허용하되,
             #    **임계값을 넘나드는 변화는 어차피 위 [B-*] 축이 잡는다.**
-            CONTRACT = ("src_sha256", "frames", "fps", "w", "h", "edge_run", "source")
-            TOL_NUM = {"defect_px": 8, "overfill_px": 0, "hole_px": 8,
-                       "dropped_persist_frames": 0, "motion_pct": 0.2, "clip_kb": 8}
+            # 어디서 돌리든 **반드시 같아야** 하는 것 — 여기가 흔들리면 진짜 문제다.
+            CONTRACT = ("src_sha256", "frames", "fps", "edge_run", "source")
+            # 디코딩 차이로 1~2px 흔들리는 축(실측: headspin w 163↔164).
+            TOL_DIM = 2
+            # 🔴 아래 값들은 **일치를 요구하지 않는다** — 계약은 "임계값을 만족하는가"다.
+            #    · hole_px  : 닫힌 투명영역의 raw 관측치. 정상 음공간(다리 사이)도 포함되고,
+            #                 플랫폼에 따라 그 틈이 닫히냐 마냐가 갈린다
+            #                 (실측: excited 117↔0, 그런데 **defect_px 는 양쪽 다 0**).
+            #                 실제 결함 판정은 원본과 대조하는 `defect_px` 가 한다.
+            #    · clip_kb  : 인코더 차이 그 자체.
+            #    · motion_pct: 디코딩 오차로 소수 둘째 자리가 흔들린다.
+            #    이 값들이 **임계를 넘는 순간**은 어차피 위 [B-*] 축이 빌드에서 먼저 잡는다.
+            LIMIT = (
+                ("defect_px", lambda v: v <= HOLE_PX_MAX, f"<= {HOLE_PX_MAX}"),
+                ("overfill_px", lambda v: v <= OVERFILL_PX_MAX, f"<= {OVERFILL_PX_MAX}"),
+                ("dropped_persist_frames", lambda v: v <= DROPPED_PERSIST_MAX,
+                 f"<= {DROPPED_PERSIST_MAX}"),
+                ("motion_pct", lambda v: v >= MOTION_PCT_MIN, f">= {MOTION_PCT_MIN}"),
+            )
             changed = []
             for k in sorted(set(sc) & set(pc)):
                 a, b = sc[k], pc[k]
@@ -730,13 +746,15 @@ def main() -> int:
                     changed.append(k)
                     continue
                 broken = [f for f in CONTRACT if a.get(f) != b.get(f)]
-                for f, tol in TOL_NUM.items():
+                for f in ("w", "h"):
                     av, bv = a.get(f), b.get(f)
-                    if isinstance(av, (int, float)) and isinstance(bv, (int, float)):
-                        if abs(av - bv) > tol:
-                            broken.append(f"{f}({av}\u2260{bv})")
-                    elif av != bv:
-                        broken.append(f)
+                    if not isinstance(av, int) or not isinstance(bv, int) \
+                            or abs(av - bv) > TOL_DIM:
+                        broken.append(f"{f}({av}\u2260{bv})")
+                for f, ok, desc in LIMIT:
+                    for label, v in (("기록", a.get(f)), ("재생성", b.get(f))):
+                        if not isinstance(v, (int, float)) or not ok(v):
+                            broken.append(f"{f}[{label}]={v} (계약 {desc})")
                 if broken:
                     changed.append(f"{k}[{','.join(broken)}]")
             if changed:
