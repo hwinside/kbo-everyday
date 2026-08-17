@@ -143,8 +143,11 @@ check("숫자 없는 답은 근거 대조를 요구하지 않는다", () => {
   assert.equal(numericTokensGrounded("타자와 주자가 모두 아웃입니다.", []), true);
 });
 
-check("길이 상한 — tier1·tier2 모두 320자, 초과는 거부", () => {
+check("길이 상한 — tier1·tier2가 같은 값이고, 초과는 거부", () => {
   // 2026-08-10 하린아빠 "긴 답변이 필요한 경우는 충분히 길게": tier2 상한 160→320.
+  // 2026-08-16 하린아빠 "너무 짧게 즉답형": 320→700 (tier1·tier2 동시).
+  // ⚠️ 상한 리터럴을 여기 다시 적지 않는다 — 상수에서 파생시켜야 상향 때 이 검사가
+  //    조용히 "상한 안 표본을 거절 기대로" 검사하는 false-green 이 되지 않는다.
   // 장문 복붙 방지 상한 자체는 양쪽 다 유지된다.
   const long = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 3)}입니다.`;
   const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long });
@@ -154,8 +157,8 @@ check("길이 상한 — tier1·tier2 모두 320자, 초과는 거부", () => {
     validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok }), { numericEvidence: true, evidence: [OFFICIAL] }).kind,
     "grounded",
   );
-  // tier2 도 320 까지 허용, 초과는 거부 (숨은 무제한화 방지)
-  assert.equal(RAG_ANSWER_MAX_CHARS, RAG_OFFICIAL_ANSWER_MAX_CHARS, "tier2 상한은 320이다");
+  // tier2 도 같은 상한까지 허용, 초과는 거부 (숨은 무제한화 방지)
+  assert.equal(RAG_ANSWER_MAX_CHARS, RAG_OFFICIAL_ANSWER_MAX_CHARS, "tier1·tier2 상한이 갈라지면 같은 질문이 경로별로 다르게 잘린다");
   assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok })).kind, "grounded");
   assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long })).kind, "insufficient");
 });

@@ -8,8 +8,8 @@
  *   (1) **무손실** — 정리본의 어떤 문단도 유실되지 않는다. 특히 900자를 넘는 문단을
  *       `slice`로 잘라 버리면 "100%"가 거짓이 되므로, 분할되었더라도 이어 붙이면
  *       원문 문자열이 복원되어야 한다.
- *   (2) **서빙 노출 불변** — 저장을 100%로 올려도 답변에 나가는 근거 총량은
- *       `RAG_EVIDENCE_LIMIT × RAG_EVIDENCE_MAX_CHARS`로 그대로다.
+ *   (2) **서빙 노출 유한** — 저장을 100%로 올려도 답변에 나가는 근거 총량은
+ *       `RAG_EVIDENCE_LIMIT × RAG_EVIDENCE_MAX_CHARS`로 고정된 유한값이다.
  *       저장 100% ≠ 노출 100%. 이게 깨지면 원문이 외부로 새는 것이다.
  *   (3) **minimal 계약 무회귀** — 정책을 명시하면 기존 §12.2(c) 상한이 그대로 동작한다.
  *       full 전환이 기존 계약 코드를 삭제한 것이 아님을 증명한다.
@@ -87,16 +87,29 @@ function verifyStubDocumentRetained(): void {
   ok("스텁 문서 보존 — full은 저장, minimal은 종전대로 fail-close");
 }
 
-/** (2) 서빙 노출량은 저장 정책과 무관하게 불변. */
-function verifyServingExposureUnchanged(): void {
-  assert.equal(RAG_EVIDENCE_LIMIT, 4, "서빙 근거 건수가 바뀌면 노출량 계약이 깨진다");
-  assert.equal(RAG_EVIDENCE_MAX_CHARS, 600, "서빙 근거 길이가 바뀌면 노출량 계약이 깨진다");
-  assert.equal(
-    RAG_EVIDENCE_LIMIT * RAG_EVIDENCE_MAX_CHARS,
-    RETENTION_MAX_CHARS,
-    "노출 총량(2,400자)이 minimal 보존 상한과 같다는 원래 근거가 유지되어야 한다",
+/**
+ * (2) 서빙 노출량은 **저장 정책과 독립적으로 유한**하다.
+ *
+ * ⚠️ 2026-08-16 계약 정정. 종전에는 `노출 총량 === RETENTION_MAX_CHARS` 라는 **등식**이었다.
+ * 그 등식은 "minimal 보존 상한을 서빙이 실제 소비 가능한 양에 맞춘다"는 §12.2(c) 근거를
+ * 굳힌 것이었는데, 근거의 본체는 **"서빙이 쓰지도 않을 원문을 보관하지 않는다"** 라는
+ * 부등식(`저장 ≤ 소비가능`)이지 등식이 아니다. 노출량을 올리면(4→6건, 600→800자)
+ * 등식은 깨지지만 부등식은 그대로 성립한다 — 오히려 더 보수적인 쪽이다.
+ *
+ * 그래서 여기서 잠그는 것은 두 가지다.
+ *  (a) minimal 보존 상한은 서빙이 소비 가능한 총량을 **넘지 않는다**(§12.2(c) 본체).
+ *  (b) 노출 총량은 여전히 **유한하고 고정된 상수의 곱**이다 — 저장 100%가 노출 100%로
+ *      새지 않는다는 것이 이 파일이 지키는 진짜 계약이다.
+ */
+function verifyServingExposureBounded(): void {
+  assert.equal(RAG_EVIDENCE_LIMIT, 6, "서빙 근거 건수가 바뀌면 노출량 계약이 깨진다");
+  assert.equal(RAG_EVIDENCE_MAX_CHARS, 800, "서빙 근거 길이가 바뀌면 노출량 계약이 깨진다");
+  const exposure = RAG_EVIDENCE_LIMIT * RAG_EVIDENCE_MAX_CHARS;
+  assert.ok(
+    RETENTION_MAX_CHARS <= exposure,
+    `minimal 보존 상한(${RETENTION_MAX_CHARS})이 서빙 소비 가능 총량(${exposure})을 넘으면 §12.2(c) 위반이다`,
   );
-  ok(`서빙 노출 불변 — 근거 ${RAG_EVIDENCE_LIMIT}건 × ${RAG_EVIDENCE_MAX_CHARS}자 = 최대 ${RAG_EVIDENCE_LIMIT * RAG_EVIDENCE_MAX_CHARS}자 (저장 100%와 무관)`);
+  ok(`서빙 노출 유한 — 근거 ${RAG_EVIDENCE_LIMIT}건 × ${RAG_EVIDENCE_MAX_CHARS}자 = 최대 ${exposure}자, minimal 보존 상한 ${RETENTION_MAX_CHARS}자 ≤ 그 값 (저장 100%와 무관)`);
 }
 
 /** (3) minimal 계약 무회귀 — full 전환이 기존 계약을 지운 것이 아니다. */
@@ -157,7 +170,7 @@ function run(): void {
   verifyOperatingPolicy();
   verifyLossless();
   verifyStubDocumentRetained();
-  verifyServingExposureUnchanged();
+  verifyServingExposureBounded();
   verifyMinimalContractIntact();
   verifyEntitySetNotTruncated();
   console.log(`\nbaseball QA RAG full-retention PASS (${passed} 섹션)`);

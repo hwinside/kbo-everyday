@@ -1,0 +1,1566 @@
+{
+ "captured_at": "2026-08-16",
+ "window_hours": 120,
+ "source": "genius_question_logs 120h — production matchGlossary 를 질문 전체(exact)와 각 어절에 적용해 판정. evidence=전체 exact 또는 어절 매칭 / incidental=후보엔 들지만 어느 어절도 이 용어가 아님",
+ "terms": [
+  {
+   "term": "1루수",
+   "aliases": [
+    "일루수",
+    "first baseman",
+    "1b",
+    "퍼스트"
+   ],
+   "evidence": [
+    {
+     "question": "1B이뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1루수 병살타 아웃이 뭐야",
+     "matchPath": "dictionary",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 3,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1루수",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "1루타",
+   "aliases": [
+    "단타",
+    "single",
+    "싱글",
+    "일루타"
+   ],
+   "evidence": [
+    {
+     "question": "1루타가 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "단타가 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1루타가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "1루타랑 안타랑 뭐가 달라",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1루타랑 안타랑 같은 뜻이야?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "2루수",
+   "aliases": [
+    "이루수",
+    "second baseman",
+    "2b",
+    "세컨"
+   ],
+   "evidence": [
+    {
+     "question": "2루수는",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "2루수는 영어로 뭐냐고 씨발아",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "3루수",
+   "aliases": [
+    "삼루수",
+    "third baseman",
+    "3b",
+    "핫코너"
+   ],
+   "evidence": [],
+   "incidental": [
+    {
+     "question": "어제 경기있자나 8월 15일 엔씨랑 한거 거기서 전민재가 수비할때 공을 잡은 다음에 2루주자가 3루로 뛸때 태그하는척 햇다가 3루수한테 던진거는 뭐야?",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "우익수 좌익수 중견수 1,2,3루수 말고 또 무슨 포지션이 있어?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 4,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "set_completeness",
+   "siblings": [
+    "1루수",
+    "2루수"
+   ]
+  },
+  {
+   "term": "3피트룰",
+   "aliases": [
+    "3피트 룰",
+    "쓰리피트",
+    "three foot rule",
+    "3피트 라인",
+    "스리피트"
+   ],
+   "evidence": [
+    {
+     "question": "쓰리 피트",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "3피트룰",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "쓰리피트",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "쓰리피트",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "쓰리피트",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "3피트룰",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "3피트룰",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "쓰리피트라인알려줘",
+     "matchPath": "question_correction",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "쓰리피트라인알려줘",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "BABIP",
+   "aliases": [
+    "바빕",
+    "babip",
+    "인플레이타구타율",
+    "인플레이 타구 타율"
+   ],
+   "evidence": [
+    {
+     "question": "바빕이 므ㅓ야",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "바빕이 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "그라운드홈런",
+   "aliases": [
+    "그라운드 홈런",
+    "인사이드파크홈런",
+    "inside the park home run",
+    "장내홈런"
+   ],
+   "evidence": [
+    {
+     "question": "그라운드 홈런은?",
+     "matchPath": "stat_clarify",
+     "exactAfter": true,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "인정 4루타가 그라운드홈런?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "아니 그냥 그라운드 홈런",
+     "matchPath": "stat_clarify",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "내야수",
+   "aliases": [
+    "내야",
+    "infielder",
+    "내야 수비",
+    "내야진"
+   ],
+   "evidence": [
+    {
+     "question": "내야수가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "내야수가 뭐야?",
+     "matchPath": "rag",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "폰으로 야구생중계못해?티빙에 꼭 돈내야만 생중계볼수있어?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "루킹삼진",
+   "aliases": [
+    "루킹 삼진",
+    "스탠딩삼진",
+    "called strikeout",
+    "서서삼진",
+    "스탠딩 삼진"
+   ],
+   "evidence": [
+    {
+     "question": "루킹삼진",
+     "matchPath": "stat_clarify",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "루킹삼진",
+     "matchPath": "stat_clarify",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "만루",
+   "aliases": [
+    "bases loaded",
+    "만루상황",
+    "만루 상황",
+    "풀베이스"
+   ],
+   "evidence": [
+    {
+     "question": "만루",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "만루",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "만루가 1,2,3루에 선수들이 다 있는건가?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1사 만루는 뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "그럼 2사 만루는 2아웃에 만루겠네",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "만루",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "만루일때 볼넷이면 어떻해돼요,?",
+     "matchPath": "rag",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루만루가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루만루가뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "만루에서 초구?",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "만루찬스",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "B가 다 있음 만루지",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "무사만루 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "무사만루",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "무사2루 2사만루 뜻이뭐야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "무사만루가 뭔가요",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "백투백",
+   "aliases": [
+    "백 투 백",
+    "back to back",
+    "연속타자홈런",
+    "백투백홈런"
+   ],
+   "evidence": [
+    {
+     "question": "백투백",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "백투백",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "백투백",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "백투백이 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "백투백이뭐냐고",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "사사구",
+   "aliases": [
+    "사사구란",
+    "四死球",
+    "볼넷과 몸에 맞는 공"
+   ],
+   "evidence": [
+    {
+     "question": "사사구",
+     "matchPath": "blocked",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "사사구",
+     "matchPath": "blocked",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "사사구",
+     "matchPath": "blocked",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "사사구",
+     "matchPath": "blocked",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "사사구 뜻",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "무사사구가 뭐야?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "상무",
+   "aliases": [
+    "상무야구단",
+    "국군체육부대",
+    "상무 피닉스",
+    "상무피닉스"
+   ],
+   "evidence": [
+    {
+     "question": "상무",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "상무",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "윤도현이랑 정해영이 가는 상무",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "실점",
+   "aliases": [
+    "runs allowed",
+    "실점이란",
+    "실점이",
+    "총실점"
+   ],
+   "evidence": [
+    {
+     "question": "1회초에 4 실점은 무슨 뜻이야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "실점이 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "실점은?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "1회초 4실점은 뭔말이야",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "완봉승은 선발투수가 9회까지 쭉 던져서 무실점으로 이닝을 끝내는 건가요?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 4,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "1실점 9탈삼진 이게 뭔 뜻이야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "퀄리티스타트가 몇이닝동안 무실점이어야 됐던거지??",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 3,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "6회까지 3실점으로 막고 7회에 2실점을 더했으면 QS는 깨진거야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "영구결번",
+   "aliases": [
+    "영구 결번",
+    "retired number",
+    "등번호 영구결번"
+   ],
+   "evidence": [
+    {
+     "question": "영구결번",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "와인드업",
+   "aliases": [
+    "windup",
+    "wind up",
+    "와인드업 자세",
+    "와인드업 투구"
+   ],
+   "evidence": [
+    {
+     "question": "와인드업",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "와인드업이 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "와인드업이 뭐냐고",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "외야수",
+   "aliases": [
+    "외야",
+    "outfielder",
+    "외야 수비",
+    "외야진"
+   ],
+   "evidence": [
+    {
+     "question": "너는 수비 못하는 외야수 vs 제구 안되는 투수",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "외야는?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "우익수",
+   "aliases": [
+    "라이트",
+    "right fielder",
+    "rf",
+    "우익"
+   ],
+   "evidence": [
+    {
+     "question": "우익수가 영어로 뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "LF, RF가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "우익수 좌익수 중견수 1,2,3루수 말고 또 무슨 포지션이 있어?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 4,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "우익수",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "RF뜻",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "잔루",
+   "aliases": [
+    "lob",
+    "left on base",
+    "잔루만루",
+    "루상잔루",
+    "잔루수"
+   ],
+   "evidence": [
+    {
+     "question": "잔루만루가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루만루가뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "잔루가 뭐얌",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "전광판",
+   "aliases": [
+    "스코어보드",
+    "scoreboard",
+    "전광판 보는 법",
+    "전광판 보는법",
+    "bso",
+    "rheb",
+    "b s o"
+   ],
+   "evidence": [
+    {
+     "question": "RHEB 가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "전광판 보는 법 알려줘",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "전광판",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "전광판 보는법 알려줘",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "야구 전광판 어케 봐",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "야구 전광판 보는 법 알려줘",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "그 전광판에 B S O 이게 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "전광판에 뜨는 r h 그거 다 설명좀",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "그 전광판에 H랑 그런거 가 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "전광판에 b는 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "점수판에 RHEB뜻좀",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "좌익수",
+   "aliases": [
+    "레프트",
+    "left fielder",
+    "lf",
+    "좌익"
+   ],
+   "evidence": [
+    {
+     "question": "LF, RF가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "우익수 좌익수 중견수 1,2,3루수 말고 또 무슨 포지션이 있어?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 4,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "베이스 레프트가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "중견수",
+   "aliases": [
+    "센터",
+    "center fielder",
+    "cf",
+    "중견"
+   ],
+   "evidence": [
+    {
+     "question": "중견수는",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "C, CF는?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "아니 그니까 만약에 정수빈을 1번 타자로 놓고싶어, 근데 중견수는 1번에 못하지 않아?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "우익수 좌익수 중견수 1,2,3루수 말고 또 무슨 포지션이 있어?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 4,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "중견수가뭐냐",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "커리어하이",
+   "aliases": [
+    "커리어 하이",
+    "career high",
+    "개인 최고 기록"
+   ],
+   "evidence": [
+    {
+     "question": "커리어하이가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "커리어하이가 뭐냐고",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "타석",
+   "aliases": [
+    "plate appearance",
+    "pa",
+    "타석수",
+    "타석이란"
+   ],
+   "evidence": [
+    {
+     "question": "타석",
+     "matchPath": "blocked",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "투수는 타석 못들어가?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "아니 타석에 들어서서 번트자세 취했다가 타격하는거",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "아니 그럼 수비 자리에 상관 없이 타석만 생각해서 순서를 짠 다음에 수비를 붙이는거야?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "연타석홈런있어",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "EPA가 뭐야",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "그러면 다음타석부터는 레이예스말고 김동혁이 타석에 들어오나?",
+     "matchPath": "blocked",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "타수",
+   "aliases": [
+    "at bat",
+    "ab",
+    "타수란",
+    "타수가"
+   ],
+   "evidence": [
+    {
+     "question": "거기서 타수가 의미하는건 뭐애??",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "타수가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "타수는 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "타수가 뭐야",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "타수가 뭐야??",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 1,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "네이버에 보면 경기정보에 고승민 4타수 3안타 이렇게되어잇던데",
+     "matchPath": "kbo_structured",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "3타수 무안타",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "박해민의 통산 안타수는?",
+     "matchPath": "kbo_structured",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "박해민의 통산 안타 수는?",
+     "matchPath": "kbo_structured",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "그럼 박해민은 통산 안타 수로 몇위이고 박해민보다 안타를 많이 친 사람들은 누구누구야?",
+     "matchPath": "history_hold",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "피OPS",
+   "aliases": [
+    "피ops",
+    "opponent ops",
+    "피오피에스"
+   ],
+   "evidence": [
+    {
+     "question": "피안타, 피ops, 탈삼진이 뭐야?",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 5,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피ops가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [],
+   "admission": "log_evidence"
+  },
+  {
+   "term": "피안타",
+   "aliases": [
+    "피안타수",
+    "hits allowed",
+    "피안타율",
+    "피안타가"
+   ],
+   "evidence": [
+    {
+     "question": "피안타가 뭐야?",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피안타가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피안타, 피ops, 탈삼진이 뭐야?",
+     "matchPath": "unsure",
+     "exactAfter": false,
+     "eojeolMatch": true,
+     "candidateCount": 5,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피안타가 뭐야",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피안타",
+     "matchPath": "llm",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    },
+    {
+     "question": "피안타",
+     "matchPath": "unsure",
+     "exactAfter": true,
+     "eojeolMatch": true,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "incidental": [
+    {
+     "question": "안타를 맞고 점수를 얻지 못한거를 피안타라고 불러?",
+     "matchPath": "llm",
+     "exactAfter": false,
+     "eojeolMatch": false,
+     "candidateCount": 2,
+     "baseCandidate": false,
+     "baseExact": false
+    }
+   ],
+   "admission": "log_evidence"
+  }
+ ]
+}

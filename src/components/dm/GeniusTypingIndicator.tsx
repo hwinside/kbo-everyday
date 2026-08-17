@@ -3,9 +3,9 @@
 import {
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_NAME,
-  geniusMascotSrc,
   type GeniusMascotState,
 } from "@/lib/constants/baseball-genius";
+import GeniusMascotImage from "@/components/dm/GeniusMascotImage";
 
 export type GeniusTypingState = "idle" | "waiting" | "retrying" | "failed";
 
@@ -61,15 +61,7 @@ export function GeniusThinkingBubble({ pending, showMascot = true }: { pending: 
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
           {showMascot && (
-            // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
-            <img
-              src={geniusMascotSrc("thinking")}
-              alt=""
-              aria-hidden
-              data-testid="genius-thinking-mascot"
-              data-mascot="thinking"
-              className="h-8 w-auto max-w-none object-contain"
-            />
+            <GeniusMascotImage state="thinking" testId="genius-thinking-mascot" />
           )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
@@ -122,15 +114,7 @@ export default function GeniusTypingIndicator({
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
           {showMascot && (
-            // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG
-            <img
-              src={geniusMascotSrc(STATE_TO_MASCOT[state])}
-              alt=""
-              aria-hidden
-              data-testid="genius-typing-mascot"
-              data-mascot={STATE_TO_MASCOT[state]}
-              className="h-8 w-auto max-w-none object-contain"
-            />
+            <GeniusMascotImage state={STATE_TO_MASCOT[state]} testId="genius-typing-mascot" />
           )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>

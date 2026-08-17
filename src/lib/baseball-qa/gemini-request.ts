@@ -1,4 +1,5 @@
-import { BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
+import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
 
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
@@ -59,8 +60,8 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   // **답변이 자기 맥락을 담게** 만든다.
   "답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다. 야구·KBO·구단명·포지션 같은 말을",
   "최소 한 번 넣어 문장만 떼어 읽어도 야구 답변임을 알 수 있게 쓴다(예: '야구에서 와이어 투 와이어는 …').",
-  "단순 사실 확인은 한두 문장으로 짧게, 이유·배경·사연·과정을 묻는 질문은 두세 문장으로 충분히 설명한다. 확실하지 않은 내용으로 길이를 채우지 않는다.",
-  '반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 320자 이하 답변"}',
+  BASEBALL_GENIUS_DEPTH_PROMPT,
+  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변"}`,
   // ⚠️ 2026-08-08 계약 불일치 수정. 이 줄은 위에서 범위를 ①～④로 선언해 놓고도
   // 판정 기준을 **"룰/용어"만**으로 좁혀 모델에게 지시했다. 즉 구단·선수·기록 질문은
   // 선언상 범위 안인데 마지막 줄이 "룰/용어가 아니면 UNSURE" 로 닫으라고 말하는 꼴이다.
@@ -80,6 +81,28 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
  * 코드 고정문 2개뿐이라 환각 표면이 구조적으로 사라진다. 토큰 외 출력은 코드가
  * 되묻기로 fail-close 한다.
  */
+/**
+ * 사전 정의 매퍼(①-b) system prompt (SSOT) — **런타임이 실제로 조립해 보내는 문자열**.
+ *
+ * `server.ts` 가 아니라 여기 있는 이유는 위 `BASEBALL_QA_SYSTEM_PROMPT` 와 같다:
+ * 부작용 없는 순수 모듈이라 게이트가 supabase/env 배선 없이 import 해
+ * **배포되는 그 프롬프트**를 직접 검사할 수 있다.
+ *
+ * 🔴 2026-08-16 삼순 NO-GO: 게이트가 `server.ts` 소스 텍스트를 `includes` 로 검사하면
+ *   실제 literal 을 주석 처리해도 문면이 남아 GREEN 이 된다. 조립 결과를 검사해야 한다.
+ */
+export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
+  "너는 KBO 야구 용어 사전의 질문 분류기다.",
+  "아래 후보 용어 목록 중, 사용자의 질문이 **그 용어 자체의 뜻·정의**를 묻는 것일 때만 그 용어를 고른다.",
+  "다음은 정의 질문이 아니므로 반드시 null 이다:",
+  "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
+  "· 두 용어의 비교·차이 질문 (예: 유격수와 2루수 차이가 뭐야? — 한 용어의 정의문으로 답할 수 없다)",
+  "· 특정 선수·구단의 기록 수치나 오늘·특정 경기의 조회 질문 (예: 오늘 유격수 누구야?)",
+  "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
+  "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
+  '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
+].join("\n");
+
 export const STAT_INTENT_PROMPT = [
   "이번 질문은 등록되지 않은 대상의 기록 질문일 수 있다. 자유로운 문장으로 답하지 말고 의도만 판정한다.",
   "answer 에는 반드시 다음 두 토큰 중 하나만 쓴다:",
@@ -122,7 +145,8 @@ export function buildBaseballQaGeminiRequest(
     contents,
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 256,
+      // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
+      maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
     },
   };

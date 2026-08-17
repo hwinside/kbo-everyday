@@ -1,5 +1,6 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
 import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
+import { BASEBALL_GENIUS_ANSWER_MAX_CHARS } from "@/lib/baseball-qa/answer-budget";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -8,9 +9,11 @@ export const BASEBALL_GENIUS_NAME = "야잘알봇";
 /** 하린아빠 확정 대기 중인 권장 기본값(spec §8). */
 export const BASEBALL_GENIUS_DAILY_LIMIT = 20;
 export const BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE = false;
-// 320 = tier1/tier2 RAG 상한과 동일 (2026-08-10 성의 계약 — 유형별 목표는 프롬프트가,
-// 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약 그대로면 adaptive-length 미완").
-export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = 320;
+// tier1/tier2 RAG 상한과 **같은 예산 SSOT 를 파생**한다 (2026-08-10 성의 계약 — 유형별
+// 목표 길이는 프롬프트가, 안전 상한은 이 값이 고정한다. 삼순: "generic 200자 계약
+// 그대로면 adaptive-length 미완"). 200 → 320(08-10) → 700(08-16 "너무 짧게 즉답형").
+// ⚠️ 리터럴 재기술 금지 — 세 상한이 갈라지면 같은 질문이 경로에 따라 다른 길이로 잘린다.
+export const BASEBALL_GENIUS_MAX_ANSWER_LENGTH = BASEBALL_GENIUS_ANSWER_MAX_CHARS;
 export const BASEBALL_GENIUS_MIN_QUESTION_LENGTH = 2;
 export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
 /**
@@ -310,6 +313,39 @@ export function mascotStateForReplyKind(replyKind: GeniusReplyKind | null | unde
 export function geniusMascotSrc(state: GeniusMascotState): string {
   return `/mascot/reply/yajalal-${state}-96.png`;
 }
+
+/**
+ * 대화 마스코트 렌더 규격 **SSOT** (2026-08-16 하린아빠 지시 — "캐릭터가 너무 작아서
+ * 잘 안보임. 상단의 캐릭터 크기만큼 키워주고").
+ *
+ * 종전 `h-8`(32px)은 헤더 마스코트(`h-24` = 96px)의 1/3 이라 실기기에서 캐릭터가
+ * 식별되지 않았다. 자산은 96px 원본(`yajalal-<state>-96.png`, 실측 77x96)이라
+ * 96px 렌더는 **원본 크기 그대로**다 — 확대 보간이 아니다.
+ *
+ * ⚠️ 클래스 문자열을 사용처마다 복제하지 않는다. 복제하면 한쪽만 고쳐져도 게이트가
+ * 못 잡는다(M90 `게이트가 상수를 재구현하면 결함을 못 본다` 계약과 같은 축).
+ * 게이트는 이 상수를 **직접 import 해서** 검사한다.
+ */
+export const GENIUS_MASCOT_HEIGHT_PX = 96;
+export const GENIUS_MASCOT_IMG_CLASS = "h-24 w-auto max-w-none object-contain";
+
+/**
+ * 상시 idle 미세 모션 클래스 (2026-08-16 하린아빠 지시 — "캐릭터가 안움직이는 것 같은데
+ * 움직이게 해줘").
+ *
+ * §7.6 감정 모션(excited/headspin/bored)은 **감정 반응 전용**이라 지식 답변에는 아예
+ * 붙지 않는다(`geniusMotionForResult` → undefined). 그래서 캡처처럼 일반 질문에
+ * 답할 때는 캐릭터가 완전히 정지해 보인다.
+ *
+ * idle 은 감정 모션과 **별개 축**이다:
+ *  · 부착 대상 = 화면에 실제로 렌더되는 그 마스코트 1개(소유권 판정은 page 가 그대로 소유).
+ *  · 감정 모션과 **겹쳐 돈다** — idle 은 wrapper 에, 감정 모션은 img 에 걸어 transform
+ *    충돌을 구조적으로 없앤다(같은 엘리먼트에 두 animation 을 걸면 뒤 선언이 transform 을
+ *    통째로 덮어써 한쪽이 조용히 죽는다).
+ *  · §7.4 "모션 30초 1회"는 **감정 반응 남용** 방지 계약이므로 idle 은 그 대상이 아니다.
+ *    idle 은 DB claim 을 타지 않고 payload 에도 실리지 않는다(순수 표시 계층).
+ */
+export const GENIUS_MASCOT_IDLE_MOTION_CLASS = "genius-motion-idle inline-flex";
 
 /**
  * 동명이인 picker 선택지 1개.

@@ -16,6 +16,7 @@ import TeamBadge from "@/components/ui/TeamBadge";
 import { linkifyText } from "@/lib/linkify";
 import NewsClippingCard from "@/components/dm/NewsClippingCard";
 import GeniusTypingIndicator, { GeniusThinkingBubble } from "@/components/dm/GeniusTypingIndicator";
+import GeniusMascotImage from "@/components/dm/GeniusMascotImage";
 import { resolveGeniusThinkingRender } from "@/lib/baseball-qa/thinking-bubble";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import GeniusQuestionCorrectionPicker from "@/components/dm/GeniusQuestionCorrectionPicker";
@@ -27,7 +28,6 @@ import {
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
-  geniusMascotSrc,
   geniusMotionFromPayload,
   isGeniusPickerDisabled,
   isGeniusReplyPayload,
@@ -574,18 +574,13 @@ export default function DMChatPage() {
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
                       {mascotState ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- 정적 마스코트 PNG(모션은 CSS 애니메이션)
-                        <img
-                          src={geniusMascotSrc(mascotState)}
-                          alt=""
-                          aria-hidden
-                          data-testid="genius-reply-mascot"
-                          data-state={mascotState}
-                          // 마스코트 자체가 최신 1개뿐이므로 모션도 구조적으로 최대 1개다.
-                          data-motion={mascotMotion ?? undefined}
-                          className={`h-8 w-auto max-w-none object-contain${
-                            mascotMotion ? ` genius-motion-${mascotMotion}` : ""
-                          }`}
+                        // 마스코트 자체가 최신 1개뿐이므로 모션도 구조적으로 최대 1개다.
+                        // 크기·idle 모션 계약은 GeniusMascotImage 단일 지점이 소유한다.
+                        <GeniusMascotImage
+                          state={mascotState}
+                          motion={mascotMotion}
+                          motionAttr
+                          testId="genius-reply-mascot"
                         />
                       ) : (
                         msg.sender_team_id && <TeamBadge teamId={msg.sender_team_id} size="xs" />

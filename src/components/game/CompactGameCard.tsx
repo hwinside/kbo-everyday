@@ -258,7 +258,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
             </span>
             {isScheduled && (
               <span className="max-w-full truncate text-[9.5px] text-text-tertiary" title={game.awayStarter || "미정"}>
-                선발 {game.awayStarter || "미정"}
+                {game.awayStarter || "미정"}
               </span>
             )}
           </span>
@@ -291,7 +291,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
             </span>
             {isScheduled && (
               <span className="max-w-full truncate text-[9.5px] text-text-tertiary" title={game.homeStarter || "미정"}>
-                선발 {game.homeStarter || "미정"}
+                {game.homeStarter || "미정"}
               </span>
             )}
           </span>

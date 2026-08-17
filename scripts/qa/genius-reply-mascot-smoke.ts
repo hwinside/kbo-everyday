@@ -297,11 +297,19 @@ check("말풍선 마스코트는 봇 발신일 때만 붙는다", () => {
   assert.ok(BASEBALL_GENIUS_USER_ID.length === 36, "봇 ID 상수 이상");
 });
 check("말풍선이 매핑 결과로 자산을 고른다(고정 src 아님)", () => {
-  assert.match(chat, /geniusMascotSrc\(mascotState\)/, "동적 src 아님");
+  assert.match(chat, /<GeniusMascotImage[\s\S]{0,200}?state=\{mascotState\}/, "동적 state 전달 아님");
   assert.match(chat, /mascotStateForReplyKind\(geniusReply\?\.reply_kind\)/, "의미 분류 매핑 미사용");
 });
 check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
-  assert.match(typing, /geniusMascotSrc\(STATE_TO_MASCOT\[state\]\)/, "인디케이터 마스코트 없음");
+  // 2026-08-16: <img> 자체는 공유 컴포넌트 소유 — 사용처는 state 전달만 책임진다.
+  assert.match(typing, /<GeniusMascotImage state="thinking"/, "대기 인디케이터 마스코트 없음");
+  assert.match(typing, /<GeniusMascotImage state=\{STATE_TO_MASCOT\[state\]\}/, "실패 인디케이터 마스코트 없음");
+  // 공유 컴포넌트가 그 state 를 실제 자산으로 바꾸는지도 같이 잠긴다(고정 src 로 바뀌면 같은 결함).
+  assert.match(
+    read("src/components/dm/GeniusMascotImage.tsx"),
+    /src=\{geniusMascotSrc\(state\)\}/,
+    "공유 컴포넌트가 동적 src 를 안 쓴다",
+  );
   assert.match(typing, /waiting:\s*"thinking"/, "대기 상태 매핑 없음");
   assert.match(typing, /failed:\s*"unknown"/, "실패 상태 매핑 없음");
   // 종전 ⚾ 이모지가 남아 있으면 표정이 안 바뀐다.

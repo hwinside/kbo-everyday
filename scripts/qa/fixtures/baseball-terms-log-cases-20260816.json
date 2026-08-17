@@ -1,0 +1,222 @@
+{
+  "captured_at": "2026-08-16",
+  "source": "genius_question_logs 120h — term/alias 포함 질문을 기계 추출(단일용어·정의형 우선, 실패종결 우선, 최단)",
+  "cases": [
+    {
+      "term": "내야수",
+      "question": "내야수가 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "외야수",
+      "question": "외야는?",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "1루수",
+      "question": "1루수",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "2루수",
+      "question": "2루수는",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "3루수",
+      "question": "우익수 좌익수 중견수 1,2,3루수 말고 또 무슨 포지션이 있어?",
+      "loggedPath": "llm",
+      "single": false,
+      "otherTerms": 3,
+      "expect": "multi_term"
+    },
+    {
+      "term": "중견수",
+      "question": "중견수는",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "좌익수",
+      "question": "베이스 레프트가 뭐야",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "mapper"
+    },
+    {
+      "term": "우익수",
+      "question": "우익수",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "타석",
+      "question": "타석",
+      "loggedPath": "blocked",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "타수",
+      "question": "타수가 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "잔루",
+      "question": "잔루",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "사사구",
+      "question": "사사구",
+      "loggedPath": "blocked",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "피안타",
+      "question": "피안타",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "BABIP",
+      "question": "바빕이 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "피OPS",
+      "question": "피ops가 뭐야",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "커리어하이",
+      "question": "커리어하이가 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "실점",
+      "question": "실점이 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "와인드업",
+      "question": "와인드업",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "1루타",
+      "question": "단타가 뭐야?",
+      "loggedPath": "llm",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "백투백",
+      "question": "백투백",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "루킹삼진",
+      "question": "루킹삼진",
+      "loggedPath": "stat_clarify",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "그라운드홈런",
+      "question": "그라운드 홈런은?",
+      "loggedPath": "stat_clarify",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "3피트룰",
+      "question": "3피트룰",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "만루",
+      "question": "만루",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "전광판",
+      "question": "RHEB 가 뭐야",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "영구결번",
+      "question": "영구결번",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    },
+    {
+      "term": "상무",
+      "question": "상무",
+      "loggedPath": "unsure",
+      "single": true,
+      "otherTerms": 0,
+      "expect": "exact"
+    }
+  ]
+}
