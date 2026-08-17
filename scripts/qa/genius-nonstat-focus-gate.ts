@@ -95,6 +95,13 @@ async function runE2E(): Promise<void> {
     pageTitle: "KIA 타이거즈", canonicalUrl: "https://namu.wiki/w/KIA%20타이거즈",
     revision: "r1", sectionPath: "문화", asOf: "2026-08-17", sourceGrade: "tier2", sourceKind: "namu_document",
   };
+  // 선수 서술 근거 — 지표어 없는 서술질문(`최근 변화 알려줘`·`타격 비결 알려줘`)이
+  //   player RAG 에 착지하는지 검증하려고 둔다(해당 선수 entity 일 때만 반환).
+  const playerEvidenceFor = (name: string): RagEvidence => ({
+    content: `${name} 선수는 최근 타격감이 오르면서 기여도가 높아지고 있다고 팬들 사이에서 평가받는다.`,
+    pageTitle: name, canonicalUrl: `https://namu.wiki/w/${encodeURIComponent(name)}`,
+    revision: "r1", sectionPath: "선수", asOf: "2026-08-17", sourceGrade: "tier2", sourceKind: "namu_document",
+  });
 
   interface Calls { teamLlm: number; searchRag: number; playerLlm: number; genericLlm: number }
   function makeDeps(): { deps: QaDeps; calls: Calls } {
@@ -114,9 +121,11 @@ async function runE2E(): Promise<void> {
         calls.genericLlm += 1;
         return { text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구 이야기로 이해했습니다." }), inputTokens: 1, outputTokens: 1 };
       },
-      searchRag: async (candidate: { entityType?: string }) => {
+      searchRag: async (candidate: { entityType?: string; entityId?: string; name?: string }) => {
         calls.searchRag += 1;
-        return candidate.entityType === "team" ? [CEREMONY_EVIDENCE] : [];
+        if (candidate.entityType === "team") return [CEREMONY_EVIDENCE];
+        const nm = candidate.name ?? nameOf(candidate.entityId ?? "");
+        return nm ? [playerEvidenceFor(nm)] : [];
       },
       callTeamRagLlm: async () => {
         calls.teamLlm += 1;
@@ -161,9 +170,12 @@ async function runE2E(): Promise<void> {
   ];
   for (const o of ORIGINALS) {
     await check(`원문 종단 — "${o.q.slice(0, 26)}…" (${o.note})`, async () => {
-      const { result } = await ask(o.q);
+      const { result, calls } = await ask(o.q);
       if (o.antiStat) {
-        assert.notEqual(result.source, "kbo_structured", `동문서답(시즌누적 스탯) 재발: ${result.answer}`);
+        // 삼순 2026-08-17 3차 NO-GO — 고승민 문장제보는 계약대로 history_hold + RAG/LLM 0.
+        assert.equal(result.source, "history_hold", `특정경기 회상이 ${result.source} 로 새다: ${result.answer}`);
+        assert.equal(calls.searchRag, 0, `RAG 누수 — searchRag ${calls.searchRag}회`);
+        assert.equal(calls.genericLlm, 0, `LLM 누수 — genericLlm ${calls.genericLlm}회`);
       } else {
         assert.equal(result.source, o.source, `종단 source=${result.source} (기대 ${o.source}): ${result.answer}`);
       }
@@ -179,6 +191,18 @@ async function runE2E(): Promise<void> {
     const { result } = await ask("문보경 타율 최근 변화는 어때?");
     assert.equal(result.source, "history_hold", `추세 질문이 ${result.source} 로 끝났다: ${result.answer}`);
   });
+
+  // ── ①′ false-close 방지 (삼순 2026-08-17 3차 NO-GO) ─────────────────────────
+  //   지표어 없는 선수 서술(`최근 변화 알려줘`·`타격 비결 알려줘`)은 정상 player RAG 서술 경로다.
+  //   fail-close 를 stat_scope 만으로 걸면 이들이 죽는다 → 명시 지표(boundIntent.kind!==none)에만 결속.
+  for (const q of ["문보경 최근 변화 알려줘", "김도영 타격 비결 알려줘"]) {
+    await check(`false-close 방지 — "${q}" → rag (history_hold 아님)`, async () => {
+      const { result, calls } = await ask(q);
+      assert.notEqual(result.source, "history_hold", `지표어 없는 서술이 fail-close 됐다: source=${result.source}`);
+      assert.equal(result.source, "rag", `player RAG 착지 실패: source=${result.source} ${result.answer}`);
+      assert.ok(calls.searchRag >= 1, `player RAG 검색 미도달: searchRag=${calls.searchRag}`);
+    });
+  }
 
   // ── ② 정상 스탯은 그대로 kbo_structured (가드가 정상 답을 죽이지 않음) ──────
   await check("정상 — 김재윤 세이브 몇 개야? → kbo_structured 실값", async () => {

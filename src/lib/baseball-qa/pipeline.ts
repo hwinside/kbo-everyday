@@ -61,6 +61,7 @@ import {
   UNTRUSTED_METRIC_ANSWER,
   hasNonStatFocus,
   classifyNonStatFocus,
+  isDayLevelRecall,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -3117,6 +3118,13 @@ export function routeQuestion(
   if (hasStat && !hasTeam && classifyNonStatFocus(question, { rankIsMismatch: true }) === "stat_scope") {
     return "history_hold";
   }
+  // 특정경기·일단위 회상(삼순 2026-08-17 3차 NO-GO) — `경기정보에 고승민 4타수 3안타`처럼
+  //   지표어 토큰화 실패로 hasStat 이 거짓이면 위 가드를 빠져 llm_scope_gate 로 새다.
+  //   특정경기 수치는 시즌 누적도 서술 RAG 도 정본이 없으므로 비팀이면 명시 fail-close(RAG/LLM 0).
+  //   (추세·방법 `문보경 최근 변화 알려줘` 는 day-level 이 아니라 안 걸린다 → player RAG 유지.)
+  if (!hasTeam && isDayLevelRecall(question)) {
+    return "history_hold";
+  }
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
   // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
@@ -5698,11 +5706,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
       if (record) return record;
-      // 동문서답 방지 (삼순 2026-08-17 2차 NO-GO) — 선수 stat_scope(시점·순위·추세·방법)는
-      //   정본이 없다. season none 으로 양보하면 아래 descriptive RAG/generic LLM 이 순위·추세를
-      //   지어낸다(`김재윤 세이브 순위` → 26 개수 대신 "1위"를 환각). 명시 fail-close 한다.
-      //   (문화 cultural 은 여기 안 걸린다 — 선수 서술은 아래 RAG 가 근거로 답할 수 있다.)
-      if (classifyNonStatFocus(question, { rankIsMismatch: true }) === "stat_scope") {
+      // 동문서답 방지 (삼순 2026-08-17 2·3차 NO-GO) — 명시 지표를 특정했는데
+      //   그 지표가 시점·순위·추세·방법(stat_scope) 초점이면 정본이 없다. season none 으로
+      //   양보하면 아래 descriptive RAG/generic LLM 이 순위·추세를 지어낸다. 명시 fail-close.
+      //   ⚠️ **`boundIntent.kind !== "none"` 으로 결속한다** (삼순 2026-08-17 3차 NO-GO):
+      //     지표어 없는 선수 서술(`문보경 최근 변화 알려줘`·`김도영 타격 비결 알려줘`)은
+      //     kind=none 이므로 여기서 닫지 않고 아래 player RAG 가 근거로 답하게 둔다.
+      //     지표를 특정한 추세·시점 질문(`문보경 타율 최근 변화`)만 fail-close 된다.
+      if (boundIntent.kind !== "none" && classifyNonStatFocus(question, { rankIsMismatch: true }) === "stat_scope") {
         const holdAnswer = resolveHoldAnswer(question);
         await deps.log({ userId, question, questionNorm, matchPath: "history_hold", answer: holdAnswer, inputTokens: null, outputTokens: null });
         return { status: 200, answer: holdAnswer, source: "history_hold", remaining };

@@ -310,6 +310,16 @@ const NUMERIC_VALUE_ASK = /몇|얼마|개\s*(?:였|야|나|임)/;
  * 순서가 계약이다 — 조건절(cultural) 먼저. `안타를 쳤을때` 같은 배경 지표는
  * 수치 질문이 아니므로 team_rag 가 먼저 소유하게 한다.
  */
+/**
+ * 일(日)단위·특정경기 회상인가 — `경기정보에 고승민 4타수 3안타`처럼 특정 경기의 수치 회상.
+ * 이런 질문은 시즌 누적도 descriptive RAG 도 정본이 없다(특정경기 박스스코어는 서빙 안 함).
+ * route 에서 지표어 토큰화 실패(`3안타`)로 hasStat 이 거짓이어도 명시 fail-close 하려고 따로 낸다.
+ * (추세·방법 `문보경 최근 변화 알려줘` 는 여기 안 걸린다 — 그건 서술 RAG 가 답할 수 있다.)
+ */
+export function isDayLevelRecall(question: string): boolean {
+  return DAY_LEVEL_TEMPORAL.test(normalize(question));
+}
+
 export type NonStatFocus = "none" | "cultural" | "stat_scope";
 export function classifyNonStatFocus(
   question: string,
