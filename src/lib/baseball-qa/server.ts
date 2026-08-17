@@ -63,6 +63,7 @@ import {
   type RagNewsCandidate,
 } from "@/lib/baseball-qa/rag/retrieve";
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
+import type { EvidenceProjector } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
 import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
@@ -386,6 +387,14 @@ const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRu
 export async function searchRag(
   candidate: RagEntityCandidate,
   question: string,
+  /**
+   * 상위 N 절단 **앞**에서 도는 근거 변환(선수 서술형 소개 전용).
+   *
+   * ⚠️ `slice(0, 6)` 뒤에 후처리로 걸면 앞 6건을 기록 chunk 가 먹어버린 뒤라 rank 7 이하의
+   *   clean 소개 근거를 영원히 못 본다(삼순 2026-08-16 P1-a). 그래서 이 인자를 seam 안까지
+   *   내려보낸다 — 호출자가 반환값을 가공하는 형태로는 순서 계약을 지킬 수 없다.
+   */
+  project?: EvidenceProjector,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
 ): Promise<RagEvidence[]> {
   const embedded = await runtime.embed(question);
@@ -400,6 +409,7 @@ export async function searchRag(
     // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
     tier2WeightForQuestion(question),
+    project,
   );
 }
 
