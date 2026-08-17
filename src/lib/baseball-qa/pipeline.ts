@@ -1118,10 +1118,38 @@ function ragObservation(
   };
 }
 
+/**
+ * 단독으로 서비스 문의 판정 근거가 되는 어휘. 야구 경기 안에서는 쓰이지 않는 말들만 둔다.
+ * 야구 용어와 겹치는 말(`에러`·`오류`)을 여기 넣으면 사전보다 앞서 오답을 낸다 —
+ * `isServiceInquiry` 문서 참조.
+ */
 const SERVICE_WORDS = [
-  "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "오류", "에러", "건의",
+  "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "건의",
   "피드백", "알림", "쪽지", "업데이트", "결제", "계정",
 ];
+/**
+ * 서비스 문의 판정 — `service_redirect` 라우팅의 유일한 근거 (2026-08-16 운영 로그 전수조사).
+ *
+ * 종전에는 `에러`·`오류` 가 `SERVICE_WORDS` 에 들어 있었다. 그런데 `에러` 는 `실책` 의 정식
+ * alias 로 검수 사전(`baseball_terms`)에 **이미 등재돼 있고**, `오류` 는 유저가 그 뜻으로 쓰는
+ * 동의어다. 이 라우터는 사전(①)보다 **앞**이라, 답을 갖고 있으면서 "마이페이지 > 피드백
+ * 보내기"로 돌려보내고 있었다. 72시간 운영 로그의 `service_redirect` 7건 중 5건이 이 경로다:
+ *   `에러가 뜻하는 건 뭐야?` · `에러` · `그거말고 에러 옆에 잇능거`(전광판 맥락)
+ *   `공이 높이 뜨면 오류가 가능해?` · `감독이 3연전의 첫 번째 경기에러 퇴장당하면...`
+ * 마지막 건은 `경기에러`(`경기에서` 의 오타)가 부분문자열로 걸린 것이라 퇴장 규정 질문이었다.
+ *
+ * ⚠️ 계약: **야구 용어와 표기가 겹치는 어휘는 단독으로 서비스 판정 근거가 될 수 없다.**
+ * 둘을 리스트에서 뺐으므로 이제 그런 질문은 비모호 어휘가 같이 있을 때만 잡힌다
+ * (`앱에서 에러 나요` → `앱`, `크보팬 오류` → `크보팬`). 단독이면 그대로 아래로 흘러
+ * 사전·RAG·LLM 이 야구 질문으로 처리한다. 어휘를 늘려 메꾸는 축이 아니라 **판정 근거의
+ * 강도를 나누는** 구조 변경이다.
+ *
+ * ⚠️ `normalized` 는 호출측이 이미 NFKC + lowercase 한 문자열이다. 여기서 다시 정규화하지
+ * 않는다 — 두 곳의 정규화가 어긋나면 판정이 조용히 갈라진다.
+ */
+export function isServiceInquiry(normalized: string): boolean {
+  return SERVICE_WORDS.some((word) => normalized.includes(word));
+}
 /**
  * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
  *
@@ -2873,7 +2901,7 @@ export function routeQuestion(
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
   if (isScopeAskPhrase(question)) return "scope_guide";
-  if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
+  if (isServiceInquiry(normalized)) return "service_redirect";
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
