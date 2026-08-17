@@ -8,7 +8,15 @@
  *    여기서는 배포될 자산·manifest 를 **실제로 훼손**하고 게이트가 RED 인지 확인한 뒤
  *    반드시 원복한다.
  *
- * 실행: node scripts/qa/genius-mascot-asset-mutations.mjs
+ * 실행:
+ *   node scripts/qa/genius-mascot-asset-mutations.mjs                ← 원본 **불필요** 축만(prebuild·CI)
+ *   node scripts/qa/genius-mascot-asset-mutations.mjs --with-source  ← 전체(원본 mp4 보유 환경)
+ *
+ * 🔴 왜 나누는가 (삼순 2026-08-17 NO-GO): `build --check` 를 호출하는 축(M6·M7·L1·L2)은
+ *    repo 밖 `assets/mascot/v2-regen` 원본 mp4 가 있어야 돌아간다. 원본이 없는 CI(Vercel)에서는
+ *    의도한 assertion 에 닿기 전에 **source-missing 으로 먼저 죽어** "게이트가 결함을 통과시킨다"로
+ *    오판된다. 실제로 2026-08-17 02:35Z Vercel 빌드가 정확히 이 4건으로 죽었다(로그 실측).
+ *    → 기본 실행은 **자산+manifest 축만** 돌리고, 원본이 필요한 축은 `--with-source` 로 분리한다.
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -18,6 +26,20 @@ import sharp from "sharp";
 const DIR = "public/mascot/motion";
 const MANIFEST = `${DIR}/DERIVED.json`;
 const LEDGER = "scripts/assets/mascot-motion-SOURCES.sha256";
+
+// 원본 mp4 가 있어야 돌아가는 축을 포함할지. 기본은 제외(CI 안전).
+const WITH_SOURCE = process.argv.includes("--with-source");
+// ⚠️ 이 경로는 생성기의 `VIDEO_SRC_ROOT` 와 **같은 의미**여야 한다 — `VIDEO_SOURCES` 값이
+//    `v2-regen/xxx.mp4` 라서 여기엔 그 **부모**(`.../assets/mascot`)를 넣는다.
+//    v2-regen 까지 넣으면 `v2-regen/v2-regen/...` 으로 이중된다(실제로 한 번 당함).
+const SRC_ROOT = process.env.MASCOT_VIDEO_SRC
+  || path.join(process.env.HOME ?? "", ".openclaw/workspace/assets/mascot");
+if (WITH_SOURCE && !fs.existsSync(path.join(SRC_ROOT, "v2-regen"))) {
+  // 🔴 원본이 없는데 --with-source 를 줘으면 **조용히 건너뛰지 않고** 멈춴야 한다.
+  //    "돌렸다"고 믿게 만드는 것이 가장 나쁘다.
+  console.error(`❌ --with-source 인데 원본이 없다: ${path.join(SRC_ROOT, "v2-regen")}`);
+  process.exit(2);
+}
 
 // 원복 대상 — 훼손 전 바이트를 통째로 들고 있는다.
 const BACKUP = new Map();
@@ -37,8 +59,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 process.on("uncaughtException", (err) => { restore(); throw err; });
 
 /** 게이트를 돌리고 RED 인지 + 기대한 assertion 이 실패했는지 본다. */
-function runGate(cmd, args, expect) {
-  const res = spawnSync(cmd, args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+function runGate(cmd, args, expect, env) {
+  const res = spawnSync(cmd, args,
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...(env ? { env } : {}) });
   const out = `${res.stdout ?? ""}${res.stderr ?? ""}`;
   const red = res.status !== 0;
   // "그냥 실패"가 아니라 **의도한 축**이 실패해야 한다. 다른 이유로 죽으면 검출력 증명이 아니다.
@@ -49,7 +72,8 @@ const visual = () => runGate("npx", ["tsx", "scripts/qa/genius-mascot-visual-qa.
 const visualExpect = (needle) =>
   runGate("npx", ["tsx", "scripts/qa/genius-mascot-visual-qa.mjs"], needle);
 const buildCheck = (needle) =>
-  runGate("python3", ["scripts/assets/build-mascot-motion.py", "--check"], needle);
+  runGate("python3", ["scripts/assets/build-mascot-motion.py", "--check"], needle,
+    { ...process.env, MASCOT_VIDEO_SRC: SRC_ROOT });
 
 /** WebP 애니메이션의 한 프레임에 실제로 구멍을 뚫는다(알파 0). */
 async function punchHole(clip, frameIdx, box) {
@@ -96,6 +120,83 @@ async function freezeClip(clip) {
   await writeAnimated(clip, data, w, h, pages);
 }
 
+/**
+ * 재생 구간 **전체**에서 소품의 끝 조각을 지운다 — "지속하는 분리 조각이 사라졌다"의 재현.
+ * 🔴 A3(클립 통째 삭제)는 소품 삭제가 아니다는 삼순 지적에 대응한다.
+ * 불투명 픽셀 중 무게중심에서 가장 먼 모서리 쪽 14x14 묶음을 전 프레임에서 알파 0 으로.
+ */
+async function erasePropTip(clip) {
+  stash(clip);
+  const buf = fs.readFileSync(clip);
+  const { width: w, height: h } = await sharp(buf, { pages: 1 }).metadata();
+  const raw = await sharp(buf, { animated: true }).ensureAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const pages = Math.round(raw.info.height / h);
+  const data = Buffer.from(raw.data);
+  for (let p = 0; p < pages; p += 1) {
+    const base = p * h * w * 4;
+    let sx = 0; let sy = 0; let n = 0;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        if (data[base + (y * w + x) * 4 + 3] > 128) { sx += x; sy += y; n += 1; }
+      }
+    }
+    if (n === 0) continue;
+    const cx = sx / n; const cy = sy / n;
+    let bx = 0; let by = 0; let best = -1;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        if (data[base + (y * w + x) * 4 + 3] <= 128) continue;
+        const d = (x - cx) ** 2 + (y - cy) ** 2;
+        if (d > best) { best = d; bx = x; by = y; }
+      }
+    }
+    for (let y = Math.max(0, by - 7); y < Math.min(h, by + 7); y += 1) {
+      for (let x = Math.max(0, bx - 7); x < Math.min(w, bx + 7); x += 1) {
+        data[base + (y * w + x) * 4 + 3] = 0;
+      }
+    }
+  }
+  await writeAnimated(clip, data, w, h, pages);
+}
+
+/**
+ * 정상 음공간(전경으로 둘러싸지 않은 바깥쪽 투명 영역 중 내부 종방향 틈)을 메운다.
+ * `fill_holes` 가 다리 사이까지 메우면 생기는 상태의 재현 — 과채움 축이 RED 여야 한다.
+ */
+async function fillNegativeSpace(clip) {
+  stash(clip);
+  const buf = fs.readFileSync(clip);
+  const { width: w, height: h } = await sharp(buf, { pages: 1 }).metadata();
+  const raw = await sharp(buf, { animated: true }).ensureAlpha().raw()
+    .toBuffer({ resolveWithObject: true });
+  const pages = Math.round(raw.info.height / h);
+  const data = Buffer.from(raw.data);
+  for (let p = 0; p < pages; p += 1) {
+    const base = p * h * w * 4;
+    for (let y = 0; y < h; y += 1) {
+      // 가로로 전경 → 투명 → 전경 이 나타나는 구간이 바로 음공간이다.
+      let left = -1;
+      for (let x = 0; x < w; x += 1) {
+        const a = data[base + (y * w + x) * 4 + 3];
+        if (a > 128) {
+          if (left >= 0 && x - left > 2 && x - left < 40) {
+            for (let k = left + 1; k < x; k += 1) {
+              const o = base + (y * w + k) * 4;
+              data[o] = data[base + (y * w + left) * 4];
+              data[o + 1] = data[base + (y * w + left) * 4 + 1];
+              data[o + 2] = data[base + (y * w + left) * 4 + 2];
+              data[o + 3] = 255;
+            }
+          }
+          left = x;
+        }
+      }
+    }
+  }
+  await writeAnimated(clip, data, w, h, pages);
+}
+
 function patchManifest(mutate) {
   stash(MANIFEST);
   const m = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
@@ -131,8 +232,22 @@ await mutation(
 await mutation(
   "A3 클립 1종 삭제 (파서가 헛돌면 fail-close)",
   () => { stash(`${DIR}/swing.webp`); fs.unlinkSync(`${DIR}/swing.webp`); },
-  visual,
-  null,
+  visualExpect,
+  // 🔴 종전엔 `expect=null` 이라 **아무 이유로 죽어도 통과**했다(삼순 지적).
+  //    13종 전수 검사 축이 정확히 죽는지 지목한다.
+  "13종 전부 검사됐다",
+);
+await mutation(
+  "A4 응원도구 끝 조각만 지우기 — **진짜 소품 삭제**(클립 전체 아님)",
+  () => erasePropTip(`${DIR}/cheerstick.webp`),
+  visualExpect,
+  "삭제된 조각의 연속 지속",
+);
+await mutation(
+  "A5 정상 음공간(다리 사이 등)을 불투명으로 메움 — **과채움**",
+  () => fillNegativeSpace(`${DIR}/excited.webp`),
+  visualExpect,
+  "과채움",
 );
 
 // ── manifest 를 훼손한다 (게이트가 여기서 임계값·측정치를 읽는다) ─────────
@@ -166,37 +281,43 @@ await mutation(
   visualExpect,
   "edge-run 0",
 );
-await mutation(
-  "M6 임계값 자체를 풀어버림 (hole_px_max 9999) — build --check 가 잡아야 한다",
-  () => patchManifest((m) => { m.params.hole_px_max = 9999; }),
-  buildCheck,
-  "DERIVED.json",
-);
-await mutation(
-  "M7 manifest 에서 클립 1종 삭제 — build --check 가 잡아야 한다",
-  () => patchManifest((m) => { delete m.clips.headspin; }),
-  buildCheck,
-  "DERIVED.json",
-);
+// ── 원본 mp4 가 있어야 돌아가는 축 (`build --check`) ─────────────────────
+if (WITH_SOURCE) {
+  await mutation(
+    "M6 임계값 자체를 풀어버림 (hole_px_max 9999) — build --check 가 잡아야 한다",
+    () => patchManifest((m) => { m.params.hole_px_max = 9999; }),
+    buildCheck,
+    "DERIVED.json",
+  );
+  await mutation(
+    "M7 manifest 에서 클립 1종 삭제 — build --check 가 잡아야 한다",
+    () => patchManifest((m) => { delete m.clips.headspin; }),
+    buildCheck,
+    "DERIVED.json",
+  );
 
-// ── 원본 해시 대장을 훼손한다 ──────────────────────────────────────────
-await mutation(
-  "L1 대장 삭제 (원본 증명 불가 → 통과시키면 안 된다)",
-  () => { stash(LEDGER); fs.unlinkSync(LEDGER); },
-  buildCheck,
-  "대장이 없다",
-);
-await mutation(
-  "L2 대장 해시 위조 (다른 원본으로 바꿔치기)",
-  () => {
-    stash(LEDGER);
-    const lines = fs.readFileSync(LEDGER, "utf8").split("\n").map((ln) =>
-      ln.startsWith("#") || !ln.includes("  ") ? ln : `${"0".repeat(64)}${ln.slice(64)}`);
-    fs.writeFileSync(LEDGER, lines.join("\n"));
-  },
-  buildCheck,
-  "해시가 대장과 다르다",
-);
+  // ── 원본 해시 대장을 훼손한다 ──────────────────────────────────────────
+  await mutation(
+    "L1 대장 삭제 (원본 증명 불가 → 통과시키면 안 된다)",
+    () => { stash(LEDGER); fs.unlinkSync(LEDGER); },
+    buildCheck,
+    "대장이 없다",
+  );
+  await mutation(
+    "L2 대장 해시 위조 (다른 원본으로 바꿔치기)",
+    () => {
+      stash(LEDGER);
+      const lines = fs.readFileSync(LEDGER, "utf8").split("\n").map((ln) =>
+        ln.startsWith("#") || !ln.includes("  ") ? ln : `${"0".repeat(64)}${ln.slice(64)}`);
+      fs.writeFileSync(LEDGER, lines.join("\n"));
+    },
+    buildCheck,
+    "해시가 대장과 다르다",
+  );
+} else {
+  console.log("  ⏭ M6·M7·L1·L2 생략 — `build --check` 는 repo 밖 원본 mp4 가 필요하다.");
+  console.log("     원본 보유 환경에서 `npm run qa:genius-mascot-assets:mutations:full` 로 검증한다.");
+}
 
 restore();
 
@@ -221,7 +342,8 @@ if (tampered.length > 0) {
   process.exit(1);
 }
 
+const scope = WITH_SOURCE ? "전체" : "원본불필요 축";
 console.log(failed === 0
-  ? `\n✅ 자산 결함주입 ${results.length}/${results.length} RED — 게이트 검출력 확인 (워킹트리 clean)`
+  ? `\n✅ 자산 결함주입 ${results.length}/${results.length} RED (${scope}) — 검출력 확인, 원본 무손`
   : `\n❌ 자산 결함주입 ${failed}건이 RED 를 못 냈다 — 게이트가 결함을 통과시킨다`);
 process.exit(failed === 0 ? 0 : 1);

@@ -14,10 +14,16 @@ name: Genius Mascot Motion Gate
 #   · selftest — 임계값을 반전시켜 게이트가 실제로 RED 를 내는지 증명(검출력 검사)
 #   · motion   — 매핑 SSOT·단일 배선·폐쇄집합
 #   · mutations— 변이 주입 시 전부 RED
+#   · assets   — **실제 결함주입**(구멍 뚫기·소품 조각 삭제·음공간 메움·manifest 위조)
+#
+# ⚠️ 자산 mutation 중 `build --check` 를 호출하는 축(M6·M7·L1·L2)은 repo 밖 원본 mp4 가
+#    있어야 돌아간다. 여기(CI)에도 원본이 없으므로 `--with-source` 없이 돌린다 —
+#    그래야 의도한 assertion 대신 source-missing 으로 먼저 죽는 false-RED 가 안 난다.
+#    원본 보유 환경에서는 `npm run qa:genius-mascot-assets:mutations:full` 로 전체를 돌린다.
 
 on:
   pull_request:
-    paths:
+    paths: &gate_paths
       - "public/mascot/motion/**"
       - "scripts/assets/build-mascot-motion.py"
       - "scripts/assets/mascot-motion-SOURCES.sha256"
@@ -25,22 +31,15 @@ on:
       - "scripts/qa/genius-mascot-visual-qa.mjs"
       - "scripts/qa/genius-mascot-motion.ts"
       - "scripts/qa/genius-mascot-motion-mutations.mjs"
+      - "scripts/qa/genius-mascot-asset-mutations.mjs"
+      - "package.json"
       - "src/components/dm/GeniusMascotImage.tsx"
       - "src/lib/constants/baseball-genius.ts"
       - ".github/workflows/genius-mascot-motion-gate.yml"
   push:
     branches:
       - main
-    paths:
-      - "public/mascot/motion/**"
-      - "scripts/assets/build-mascot-motion.py"
-      - "scripts/assets/mascot-motion-SOURCES.sha256"
-      - "scripts/qa/genius-mascot-render-gate.mjs"
-      - "scripts/qa/genius-mascot-visual-qa.mjs"
-      - "scripts/qa/genius-mascot-motion.ts"
-      - "scripts/qa/genius-mascot-motion-mutations.mjs"
-      - "src/components/dm/GeniusMascotImage.tsx"
-      - "src/lib/constants/baseball-genius.ts"
+    paths: *gate_paths
 
 jobs:
   genius-mascot-motion:
@@ -70,6 +69,10 @@ jobs:
 
       - name: 매핑 변이 주입 (전부 RED 여야 한다)
         run: npm run qa:genius-mascot-motion:mutations
+
+      - name: 자산 결함주입 (실제 훼손 → 전부 RED 여야 한다)
+        # 원본 mp4 가 없는 환경이므로 `--with-source` 없이 = 자산·manifest 축만.
+        run: npm run qa:genius-mascot-assets:mutations
 
       - name: 실렌더 게이트 — 브라우저 강제 (SKIP 금지, fail-closed)
         # MASCOT_RENDER_REQUIRE_BROWSER=1 → chromium 이 없거나 launch 실패해도 exit 1.

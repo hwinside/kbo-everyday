@@ -86,8 +86,12 @@ import {
   type EventRecordAnswer,
 } from "./stats/event-records";
 import {
+  composeTeamPairAnswer,
   composeTeamRecordAnswer,
+  isTeamPairMetric,
   isTeamScoreQuestion,
+  mentionsUnservedTeamTopic,
+  resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
   type TeamRecordFetchers,
@@ -1166,10 +1170,38 @@ function ragObservation(
   };
 }
 
+/**
+ * 단독으로 서비스 문의 판정 근거가 되는 어휘. 야구 경기 안에서는 쓰이지 않는 말들만 둔다.
+ * 야구 용어와 겹치는 말(`에러`·`오류`)을 여기 넣으면 사전보다 앞서 오답을 낸다 —
+ * `isServiceInquiry` 문서 참조.
+ */
 const SERVICE_WORDS = [
-  "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "오류", "에러", "건의",
+  "크보팬", "앱", "로그인", "회원가입", "탈퇴", "버그", "건의",
   "피드백", "알림", "쪽지", "업데이트", "결제", "계정",
 ];
+/**
+ * 서비스 문의 판정 — `service_redirect` 라우팅의 유일한 근거 (2026-08-16 운영 로그 전수조사).
+ *
+ * 종전에는 `에러`·`오류` 가 `SERVICE_WORDS` 에 들어 있었다. 그런데 `에러` 는 `실책` 의 정식
+ * alias 로 검수 사전(`baseball_terms`)에 **이미 등재돼 있고**, `오류` 는 유저가 그 뜻으로 쓰는
+ * 동의어다. 이 라우터는 사전(①)보다 **앞**이라, 답을 갖고 있으면서 "마이페이지 > 피드백
+ * 보내기"로 돌려보내고 있었다. 72시간 운영 로그의 `service_redirect` 7건 중 5건이 이 경로다:
+ *   `에러가 뜻하는 건 뭐야?` · `에러` · `그거말고 에러 옆에 잇능거`(전광판 맥락)
+ *   `공이 높이 뜨면 오류가 가능해?` · `감독이 3연전의 첫 번째 경기에러 퇴장당하면...`
+ * 마지막 건은 `경기에러`(`경기에서` 의 오타)가 부분문자열로 걸린 것이라 퇴장 규정 질문이었다.
+ *
+ * ⚠️ 계약: **야구 용어와 표기가 겹치는 어휘는 단독으로 서비스 판정 근거가 될 수 없다.**
+ * 둘을 리스트에서 뺐으므로 이제 그런 질문은 비모호 어휘가 같이 있을 때만 잡힌다
+ * (`앱에서 에러 나요` → `앱`, `크보팬 오류` → `크보팬`). 단독이면 그대로 아래로 흘러
+ * 사전·RAG·LLM 이 야구 질문으로 처리한다. 어휘를 늘려 메꾸는 축이 아니라 **판정 근거의
+ * 강도를 나누는** 구조 변경이다.
+ *
+ * ⚠️ `normalized` 는 호출측이 이미 NFKC + lowercase 한 문자열이다. 여기서 다시 정규화하지
+ * 않는다 — 두 곳의 정규화가 어긋나면 판정이 조용히 갈라진다.
+ */
+export function isServiceInquiry(normalized: string): boolean {
+  return SERVICE_WORDS.some((word) => normalized.includes(word));
+}
 /**
  * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
  *
@@ -1274,6 +1306,21 @@ const STAT_WORDS = [
  *
  * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
  * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
+ *
+ * ⚠️ **알파벳 구단명은 한글 음독도 같이 둔다** (2026-08-16 운영 로그 전수조사).
+ * `LG`·`KIA` 는 처음부터 `엘지`·`기아` 를 갖고 있었는데 `KT`·`SSG`·`NC` 는 알파벳만 있었다.
+ * 그래서 **같은 질문이 표기만 바뀌어도 결과가 갈라졌다** — 72시간 로그 실측:
+ *   `Kt wiz와 삼성과 몇게임 차야?`      → `team_record` (정상 답변)
+ *   `케이티랑 삼성이랑 몇게임 차야?`    → `unsure`  (똑같은 질문인데 못 답함)
+ *   `삼성이랑 케이티랑 2게임 차라고?`   → `unsure`
+ * 지표 판정(`resolveTeamRecordIntent`)은 세 문장 모두 `gamesBehind` 를 정확히 잡았고,
+ * **구단 결속만 실패**해 라우팅이 갈라졌다.
+ *
+ * ⚠️ 수록 기준 — **반례를 찾아보고 오탐이 없는 음독만** 넣는다.
+ * `쓱`(SSG 팬 은어)은 로그에 나왔지만 **넣지 않았다** — 국어 부사 `쓱`(공이 쓱 빠졌다)과
+ * 토큰이 완전히 같아 `tokenIsWord` 가 구분할 수 없다. 문맥으로 가르려면 규칙을 쌓아야
+ * 하므로(`open_language_never_closes_with_rules`) 미수록으로 둔다.
+ * 이 목록은 구단 10개라는 **닫힌 집합**의 원소 표기라 무한히 늘어나는 축이 아니다.
  */
 const TEAM_ALIASES: ReadonlyArray<{
   readonly canonical: string;
@@ -1289,9 +1336,9 @@ const TEAM_ALIASES: ReadonlyArray<{
   { canonical: "삼성", teamId: 8, shorts: ["삼성"], nicks: ["라이온즈"] },
   { canonical: "한화", teamId: 9, shorts: ["한화"], nicks: ["이글스"] },
   { canonical: "키움", teamId: 10, shorts: ["키움"], nicks: ["히어로즈"] },
-  { canonical: "KT", teamId: 3, shorts: ["kt"], nicks: ["위즈"] },
-  { canonical: "SSG", teamId: 4, shorts: ["ssg"], nicks: ["랜더스"] },
-  { canonical: "NC", teamId: 5, shorts: ["nc"], nicks: ["다이노스"] },
+  { canonical: "KT", teamId: 3, shorts: ["kt", "케이티"], nicks: ["위즈"] },
+  { canonical: "SSG", teamId: 4, shorts: ["ssg", "에스에스지"], nicks: ["랜더스"] },
+  { canonical: "NC", teamId: 5, shorts: ["nc", "엔씨"], nicks: ["다이노스"] },
 ];
 const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
 
@@ -2102,9 +2149,24 @@ function injectionNormalize(value: string): string {
     .join("");
 }
 
+/**
+ * 토큰 꼬리에서 떼어낼 조사·어미의 **폐쇄집합**.
+ *
+ * ⚠️ `랑`·`이랑` 은 2026-08-16 운영 로그 전수조사에서 추가했다. 한국어 **공동격 조사**로
+ * `과`·`와` 와 같은 부류인데 이것만 빠져 있어서, 나열형 질문이 통째로 결속에 실패했다:
+ *   `엘지와 두산 몇게임 차야?`   → 구단 2개 결속 → `team_record` (정상)
+ *   `엘지랑 두산이랑 몇게임 차야?` → 구단 **0개** 결속 → `unsure` (같은 질문인데 못 답함)
+ * 72시간 로그의 순위·게임차 미답변 8건 중 다수가 이 형태였다. 구단뿐 아니라 선수·용어
+ * 결속도 같은 함수를 타므로 영향 범위가 넓다(`이승엽이랑`·`잔루랑`).
+ *
+ * ⚠️ 반례 탐색 실측 — 이 두 꼬리를 떼어도 **다른 실단어가 되는 경우가 없다**:
+ *   사전 term+alias 583개 → `W+랑`/`W+이랑` 이 다른 어휘와 충돌: 0건
+ *   현재 로스터 선수명 295명 → `랑` 으로 끝나는 이름 0명, 충돌 0건
+ * 이 목록은 한국어 조사라는 닫힌 부류라 반례마다 늘어나는 축이 아니다.
+ */
 const TOKEN_TRIM_SUFFIXES = [
   "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
-  "과", "와", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "과", "와", "이랑", "랑", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
   "인데", "인가", "예요", "이에요", "뭐야", "뜻",
 ];
 
@@ -2921,7 +2983,7 @@ export function routeQuestion(
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
   if (isScopeAskPhrase(question)) return "scope_guide";
-  if (SERVICE_WORDS.some((word) => normalized.includes(word))) return "service_redirect";
+  if (isServiceInquiry(normalized)) return "service_redirect";
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
@@ -3488,18 +3550,47 @@ export interface TodayGameStarters {
 }
 
 /**
- * 오늘 선발 질문 판정 — full-string 폐쇄 문법 (열린 의도 판정 금지, M90 계약).
+ * 선발 질문이 가리키는 **날짜 범위**. 폐쇄집합이며 여기 없는 시점은 이 경로가 소유하지 않는다.
  *
- * 구단 언급을 지운 잔여 문장이 `(오늘|금일) + 선발 + (명사|요청 꼬리)?` 로만 분해될 때만
- * 참이다. 시점어(오늘|금일)는 필수다 — 무일자 `선발 누구야` 까지 열면 `어제 선발`·
- * `다음 경기 선발` 과의 경계를 어미 열거로 그어야 한다(발산). 오늘 밖 시점은 전부
- * 기존 경로가 소유한다.
+ * ⚠️ `내일` 은 2026-08-16 운영 로그 전수조사에서 추가했다. `오늘 선발` 은 답하면서
+ * `내일 기아 선발 누구?` 는 `unsure`("질문을 정확히 이해하지 못했어요")로 끝났는데,
+ * **같은 `/api/games` 가 내일 경기도 서빙한다**(실측: 8/18·8/19 각 5경기, sourceOk 5/5).
+ * 우리가 갖고 있는 데이터를 봇만 "이해 못 했다"고 하는 건 거짓 안내다 — `오늘 선발` 을
+ * 열었던 것과 정확히 같은 논거(2026-08-11 삼순 A안).
+ *
+ * ⚠️ 선발이 아직 발표되지 않았으면 그대로 `미발표` 로 답한다. 그것이 사실이고,
+ * "이해 못 했다" 보다 유저에게 훨씬 정확한 정보다. 지어내지 않는다.
+ *
+ * ⚠️ `어제`·`모레`·`다음주` 는 **넣지 않는다**. 어제는 선발이 아니라 결과 질문에 가깝고
+ * (기존 경로 소유), 모레 이후는 KBO 가 선발을 발표하지 않아 전 경기 `미발표` 만 나온다.
+ */
+const STARTER_DATE_SCOPES = [
+  { offsetDays: 0, words: ["오늘", "금일"] },
+  { offsetDays: 1, words: ["내일", "명일"] },
+] as const;
+
+export type StarterDateScope = (typeof STARTER_DATE_SCOPES)[number]["offsetDays"];
+
+/**
+ * 선발 매치업 질문 판정 — full-string 폐쇄 문법 (열린 의도 판정 금지, M90 계약).
+ *
+ * 구단 언급을 지운 잔여 문장이 `<시점어> + 선발 + (명사|요청 꼬리)?` 로만 분해될 때만
+ * 참이다. 시점어는 **필수**다 — 무일자 `선발 누구야` 까지 열면 `어제 선발`·`다음 경기 선발`
+ * 과의 경계를 어미 열거로 그어야 한다(발산). 지원 시점 밖은 전부 기존 경로가 소유한다.
+ *
+ * ⚠️ 시점어가 둘 이상이면(`오늘이랑 내일 선발`) 소유하지 않는다 — 어느 날짜를 답해야
+ * 하는지 확정할 수 없다. 해석 불확실 → 기존 경로 양보(fail-close 방향, 복수 구단과 동일 축).
  */
 export function resolveTodayStartersIntent(
   question: string,
-): { team: string | null } | null {
+): { team: string | null; offsetDays: number } | null {
   const compact = question.normalize("NFKC").toLowerCase().replace(/[\s?!.~,]+/g, "");
-  if (!/(오늘|금일)/.test(compact) || !compact.includes("선발")) return null;
+  if (!compact.includes("선발")) return null;
+  const matchedScopes = STARTER_DATE_SCOPES.filter(({ words }) =>
+    words.some((word) => compact.includes(word)));
+  // 시점어 0개 → 무일자(비소유) / 2개 이상 → 모호(fail-close). 정확히 1개일 때만 소유한다.
+  if (matchedScopes.length !== 1) return null;
+  const scope = matchedScopes[0];
   // 복수 구단 언급은 소유하지 않는다 (삼순 #1147 ②축): `오늘 LG 두산 선발` 을 전체 5경기로
   // 답하면 묻지 않은 경기까지 섞인다. 해석 불확실 → 기존 경로 양보(fail-close 방향).
   if (mentionedTeamCanonicals(question).length >= 2) return null;
@@ -3511,10 +3602,16 @@ export function resolveTodayStartersIntent(
   }
   // `우리팀/우리` 는 소유하지 않는다 (삼순 #1147 ②축): 사용자의 응원팀 결속이 없는 채
   // 전체 경기를 답하면 질문과 다른 답이다. 결속 배선 전까지 기존 경로로 양보한다.
-  const grammar =
-    /^(오늘|금일)(의)?(경기)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$/;
+  //
+  // ⚠️ 시점어를 `(오늘|금일)` 하드코딩이 아니라 **`STARTER_DATE_SCOPES` 에서 생성**한다.
+  //   두 곳에 따로 적으면 시점을 추가할 때 한쪽만 고쳐져 판정이 조용히 갈라진다.
+  const scopeWords = STARTER_DATE_SCOPES.flatMap(({ words }) => words).join("|");
+  const grammar = new RegExp(
+    `^(${scopeWords})(의)?(경기)?(선발)(투수)?(라인업|매치업|명단)?(은|는|이|가|을|를|좀)?` +
+    `(누구(야|예요|인가요|니|지)?|누가나와(요)?|알려줘(요)?|알려주세요|보여줘(요)?|보여주세요|뭐야|어떻게(돼|되나요))?$`,
+  );
   if (!grammar.test(rest)) return null;
-  return { team: resolveMentionedTeam(question) };
+  return { team: resolveMentionedTeam(question), offsetDays: scope.offsetDays };
 }
 
 /**
@@ -3552,7 +3649,19 @@ export function adaptTodayStarters(
 
 export const TODAY_NO_GAMES_ANSWER =
   "오늘은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.";
+export const TOMORROW_NO_GAMES_ANSWER =
+  "내일은 예정된 KBO 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.";
 export const STARTER_TBD = "미발표";
+
+/**
+ * 시점 오프셋 → 유저에게 보여줄 시점 표기. `STARTER_DATE_SCOPES` 와 짝을 이룬다.
+ *
+ * ⚠️ 렌더가 이 표기를 **직접 만들지 않는다** — 헤더·경기없음 안내문을 각자 조립하면
+ * `오늘 경기 선발입니다` 아래에 내일 경기가 붙는 식으로 조용히 갈라진다.
+ */
+function starterScopeLabel(offsetDays: number): string {
+  return offsetDays === 1 ? "내일" : "오늘";
+}
 
 /** 구단 canonical ↔ 경기 데이터의 약칭(`LG`·`한화`) 매칭. */
 function teamMatchesGameName(canonical: string, gameName: string): boolean {
@@ -3571,15 +3680,16 @@ function teamMatchesGameName(canonical: string, gameName: string): boolean {
 export function renderTodayStartersAnswer(
   games: TodayGameStarters[],
   team: string | null,
+  offsetDays = 0,
 ): string {
+  const when = starterScopeLabel(offsetDays);
   const rows = team === null
     ? games
     : games.filter((game) =>
         teamMatchesGameName(team, game.awayName) || teamMatchesGameName(team, game.homeName));
   if (rows.length === 0) {
-    return team === null
-      ? TODAY_NO_GAMES_ANSWER
-      : `오늘은 ${team} 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.`;
+    if (team === null) return offsetDays === 1 ? TOMORROW_NO_GAMES_ANSWER : TODAY_NO_GAMES_ANSWER;
+    return `${when}은 ${team} 경기가 없습니다. 다음 경기 일정이 생긴 뒤 질문하면 확인하겠습니다.`;
   }
   const lines = rows.map((game) => {
     // 취소 경기는 매치업이 아니다 — 시간·선발 대신 취소를 명시한다 (삼순 #1147 ③축).
@@ -3594,7 +3704,7 @@ export function renderTodayStartersAnswer(
     const home = game.homeStarterName.trim() || STARTER_TBD;
     return `· ${game.awayName} ${away} vs ${game.homeName} ${home} (${game.time} ${game.stadium})`;
   });
-  const header = team === null ? "오늘의 선발 매치업입니다" : `오늘 ${team} 경기 선발입니다`;
+  const header = team === null ? `${when}의 선발 매치업입니다` : `${when} ${team} 경기 선발입니다`;
   return `${header}\n${lines.join("\n")}`;
 }
 
@@ -4966,6 +5076,58 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
     const intent = resolveTeamRecordIntent(question);
     const canonicalTeam = resolveMentionedTeam(question);
+    // ── 두 구단 질문 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────
+    //
+    // 🔴 `resolveMentionedTeam()` 은 구단이 **정확히 1개**일 때만 값을 준다. 그런데
+    //   운영 로그의 순위·게임차 질문은 전부 2개 구단이라(`엘지랑 두산이랑 몇게임 차야?`),
+    //   조사·음독 결속을 고쳐 구단 2개가 잡히게 만들어도 여기서 `null → history_hold` 로
+    //   끝나 **유저가 받는 답은 바뀌지 않았다**. 그 구멍을 여기서 닫는다.
+    //
+    // 단일 구단과 같은 계약: 원값 그대로 · 한 팀이라도 없으면 통째로 fail-close · LLM 미경유.
+    // 3개 이상은 열지 않는다(폐쇄집합 2 고정) — 열거 대상이 늘면 질문 의도가 모호해진다.
+    const mentionedTeams = mentionedTeamCanonicals(question);
+    // ⚠️ 진입 조건 (2026-08-16 삼순 NO-GO):
+    //   ① 지표가 pair 폐쇄집합(`ranking`·`gamesBehind`) 안일 것
+    //      — 시즌 집계 나열(`전적`·`승`·`홈런`·`타율`)은 견주기 질문의 답이 아니다.
+    //   ② 구단이 정확히 2개일 것
+    //
+    //   ③ 미서빙 주제어(맞대결·상대전적·우승 등)가 없을 것
+    //
+    // ③은 **새 정규식이 아니라 기존 SSOT(`TEAM_UNSERVED_PATTERNS`) 재사용**이다.
+    // `resolveTeamRecordIntent` 는 그 패턴을 값 요구어와 AND 로 묶어 서사 질문을 살리는데,
+    // pair 경로는 이미 지표가 잡힌 상태라 서사가 아니다 — `LG와 두산 맞대결 순위` 처럼
+    // 값 요구어가 없어도 답은 수치로 확정되므로 여기서는 주제어만으로 닫는다.
+    // 3차 반영에서 별도 판정기(`isHeadToHeadQuestion`)를 세웠다가 제거했다:
+    // 같은 판정을 두 곳에서 하면 한쪽만 고쳤을 때 조용히 갈라진다.
+    if (
+      intent.kind === "query"
+      && isTeamPairMetric(intent.metric)
+      && !mentionsUnservedTeamTopic(question)
+      && !canonicalTeam
+      && mentionedTeams.length === 2
+      && deps.fetchTeamRecord
+    ) {
+      let pairStandings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
+      let pairRecords: Awaited<ReturnType<TeamRecordFetchers["fetchTeamRecords"]>>;
+      try {
+        [pairStandings, pairRecords] = await Promise.all([
+          deps.fetchTeamRecord.fetchStandings(),
+          deps.fetchTeamRecord.fetchTeamRecords(),
+        ]);
+      } catch {
+        // 조회 실패는 "기록 없음"이 아니다 — 재시도 가능한 실패로 알린다(단일 경로와 동일).
+        return settleTeam(SYSTEM_ERROR_ANSWER, "error");
+      }
+      const pair = resolveTeamPairRecord(
+        intent.metric,
+        [mentionedTeams[0], mentionedTeams[1]],
+        pairStandings,
+        pairRecords,
+        teamIdOfCanonical,
+      );
+      if (pair.kind === "ok") return settleTeam(composeTeamPairAnswer(pair), "kbo_structured");
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
     // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
     // 지어내지 않고 닫는다. `TEAM_STAT_HOLD_ANSWER` 는 "순위표에서 보세요" 안내다.
     if (intent.kind !== "query" || !canonicalTeam || !deps.fetchTeamRecord) {
@@ -5307,9 +5469,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return { status: 200, answer, source: matchPath, remaining };
     };
     const now = deps.now ? new Date(deps.now()) : new Date();
-    // KST 당일 — UTC 기준으로 날짜를 자르면  00시~09시 사이에 전날 경기가 "오늘"이 된다.
+    // KST 기준일 — UTC 기준으로 날짜를 자르면 00시~09시 사이에 전날 경기가 "오늘"이 된다.
+    //
+    // ⚠️ 시점 오프셋은 **KST 로 옮긴 뒤에** 더한다. UTC 에서 더하고 KST 로 옮기면 같은
+    //   결과가 나오지만, 순서를 바꾼 변종이 조용히 통과하지 않도록 한 줄로 붙여 둔다.
     const kst = new Date(now.getTime() + 9 * 3_600_000);
-    const dateYyyymmdd = kst.toISOString().slice(0, 10).replace(/-/g, "");
+    const target = new Date(kst.getTime() + startersIntent.offsetDays * 86_400_000);
+    const dateYyyymmdd = target.toISOString().slice(0, 10).replace(/-/g, "");
     let games: TodayGameStarters[];
     try {
       games = await deps.fetchTodayStarters(dateYyyymmdd);
@@ -5318,7 +5484,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       return settleStarters(SYSTEM_ERROR_ANSWER, "error");
     }
     return settleStarters(
-      renderTodayStartersAnswer(games, startersIntent.team),
+      renderTodayStartersAnswer(games, startersIntent.team, startersIntent.offsetDays),
       "kbo_structured",
     );
   }

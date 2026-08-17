@@ -33,11 +33,41 @@ function check(name: string, cond: boolean) {
     !/setInterval\(\s*\(\)\s*=>\s*loadGames/.test(src) && !src.includes("setInterval(loadGames"));
 }
 
-// ── 승인 범위: FavoritePlayersSection은 이번 PR에서 제외 ──
+// ── 홈 최애선수 오늘경기 (45s) ──
 {
   const src = readFileSync("src/components/home/FavoritePlayersSection.tsx", "utf8");
-  check("fav: 공용 훅 미채택(다음 슬라이스)", !src.includes("useVisibilityAwareInterval"));
-  check("fav: 기존 45초 setInterval 보존", src.includes("setInterval(load, 45000)"));
+  check("fav: 공용 훅 import", src.includes('from "@/lib/hooks/useVisibilityAwareInterval"'));
+  check("fav: 45초 cadence를 훅에 배선(loadTodayGames)",
+    /useVisibilityAwareInterval\(\s*loadTodayGames\s*,\s*45000/.test(src));
+  check("fav: 최애선수 있을 때만 폴링(enabled: hasFavPlayers)",
+    /useVisibilityAwareInterval\([^)]*enabled:\s*hasFavPlayers/.test(src));
+  check("fav: 최애선수 변경 시 즉시 갱신(resetKey: favKey)",
+    /useVisibilityAwareInterval\([^)]*resetKey:\s*`\$\{favKey\}/.test(src));
+  check("fav: 백그라운드 정지를 우회하는 bare setInterval(load) 폴링 없음",
+    !/setInterval\(\s*load\s*,/.test(src));
+  check("fav: generation fence로 late 응답 폐기(A→B 덮어쓰기 방지)",
+    src.includes("todayGamesGenRef") && /if \(gen !== todayGamesGenRef\.current\) return/.test(src));
+  check("fav: gen 증가를 대상변경 effect+cleanup에 두어 empty·unmount까지 fence",
+    /todayGamesGenRef\.current \+= 1;[\s\S]*?return \(\) => \{ todayGamesGenRef\.current \+= 1;/.test(src)
+      && /\}, \[favKey, refreshNonce, hasFavPlayers\]\)/.test(src));
+  check("fav: load는 gen을 증가없이 캡처만(load 시작 증가 금지)",
+    /const gen = todayGamesGenRef\.current;/.test(src) && !/\+\+todayGamesGenRef/.test(src));
+}
+
+// ── 경기상세 game-detail (pollInterval, 기본 30s) ──
+{
+  const src = readFileSync("src/lib/hooks/useGameDetail.ts", "utf8");
+  check("game-detail: 공용 훅 import", src.includes('from "@/lib/hooks/useVisibilityAwareInterval"'));
+  check("game-detail: 콜백이 fetchDetail Promise를 반환(single-flight 결속) + stop 가드",
+    /useVisibilityAwareInterval\(\s*\(\)\s*=>\s*\(stoppedRef\.current\s*\?\s*undefined\s*:\s*fetchDetail\(\)\)/.test(src));
+  check("game-detail: void fetchDetail 사용 안 함(await single-flight 미결속 방지)",
+    !/void fetchDetail\(/.test(src));
+  check("game-detail: gameId 전환 즉시 갱신(resetKey: gameId)",
+    /useVisibilityAwareInterval\([\s\S]*?resetKey:\s*gameId/.test(src));
+  check("game-detail: resume owner 1개 — 별도 focus/visibility 복구 effect 없음(중복·leak 방지)",
+    !src.includes('addEventListener("focus"') && !src.includes('addEventListener("visibilitychange"'));
+  check("game-detail: 백그라운드 정지를 우회하는 bare setInterval 폴링 없음",
+    !/setInterval\(/.test(src));
 }
 
 console.log(`\nvisibility-poller-adoption: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);

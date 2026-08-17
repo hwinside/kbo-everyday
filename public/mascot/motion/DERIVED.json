@@ -1,6 +1,6 @@
 {
  "generator": "scripts/assets/build-mascot-motion.py",
- "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
+ "ssot": "assets/mascot/v2-regen (repo 밖 mp4 13종 · 해시 대장 scripts/assets/mascot-motion-SOURCES.sha256)",
  "params": {
   "target_h": 192,
   "frame_step": 2,

@@ -278,6 +278,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
   if (!isOpen) return null;
 
   return (
+    <>
     <AnimatePresence>
       <motion.div
         className="fixed inset-0 z-[10000] flex items-end"
@@ -533,7 +534,8 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
         overlayZClassName="z-[10002]"
         title="어느 선수를 추가할까요?"
       />
-      {allTeamsScopeDialog}
     </AnimatePresence>
+      {allTeamsScopeDialog}
+    </>
   );
 }

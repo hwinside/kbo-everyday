@@ -44,6 +44,7 @@ import {
   BASEBALL_QA_GEMINI_MODEL,
   BASEBALL_QA_SYSTEM_PROMPT,
   buildBaseballQaGeminiRequest,
+  GLOSSARY_MAPPER_SYSTEM_PROMPT,
 } from "@/lib/baseball-qa/gemini-request";
 import {
   buildRagLlmRequest,
@@ -181,17 +182,7 @@ export async function mapGlossaryDefinition(
   candidateTerms: string[],
 ): Promise<{ term: string | null; inputTokens: number | null; outputTokens: number | null }> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
-  const systemPrompt = [
-    "너는 KBO 야구 용어 사전의 질문 분류기다.",
-    "아래 후보 용어 목록 중, 사용자의 질문이 **그 용어 자체의 뜻·정의**를 묻는 것일 때만 그 용어를 고른다.",
-    "다음은 정의 질문이 아니므로 반드시 null 이다:",
-    "· 용어를 적용한 결과·규칙 질문 (예: 보크하면 주자 몇 루 가? — 보크의 뜻이 아니라 결과를 묻는다)",
-    "· 두 용어의 비교·차이 질문 (예: 유격수와 2루수 차이가 뭐야? — 한 용어의 정의문으로 답할 수 없다)",
-    "· 특정 선수·구단의 기록 수치나 오늘·특정 경기의 조회 질문 (예: 오늘 유격수 누구야?)",
-    "· 용어가 문장에 스쳐 지나갈 뿐인 질문",
-    "확실하지 않으면 null 을 고른다 — 정의문을 잘못 주는 쪽이 안 주는 쪽보다 나쁘다.",
-    '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
-  ].join("\n");
+  const systemPrompt = GLOSSARY_MAPPER_SYSTEM_PROMPT;
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

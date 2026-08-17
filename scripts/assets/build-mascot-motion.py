@@ -568,7 +568,9 @@ def main() -> int:
 
     payload = {
         "generator": "scripts/assets/build-mascot-motion.py",
-        "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
+        # 🔴 v1 은 더 이상 입력이 아니다 — 전 종을 v2-regen mp4 에서 뽑는다(삼순 P1).
+        "ssot": "assets/mascot/v2-regen (repo 밖 mp4 13종 · 해시 대장 "
+                "scripts/assets/mascot-motion-SOURCES.sha256)",
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
                    "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
                    "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
