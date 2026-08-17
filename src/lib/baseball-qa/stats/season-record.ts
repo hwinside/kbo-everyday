@@ -269,6 +269,50 @@ const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|�
 const DESCRIPTIVE_ASK =
   /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*선수|유명|이야기|역사|유래|별명|소개|누구/;
 
+/**
+ * 동문서답 방지 가드 — "엔티티 + 지표어"만 보고 시즌 누적을 던지는 걸 막는다.
+ *
+ * 질문의 **실제 초점이 비(非)스탯**이면(일단위 시점·방법/추세·조건절 안의 지표·순위 오요청)
+ * 구조화 스탯 경로를 비우고(`kind:"none"`) LLM/RAG 로 위임한다. 시즌 누적 숫자로 답하면
+ * 유저가 물은 것과 초점이 어긋난 동문서답이 되기 때문이다.
+ *   · `안타를 쳤을때 …세레머니 있어?`  → 팀 안타 988 (X)  →  세레머니 이야기 (O)
+ *   · `김재윤 세이브 순위`             → 세이브 26개 (X)  →  순위표 위임 (O)
+ *   · `어제 롯데 홈런 몇번`             → 시즌 홈런 81 (X)  →  일단위 위임 (O)
+ *   · `타율 3할 되려면 어떻게`          → 현재 타율 (X)    →  방법 위임 (O)
+ * (2026-08-17 72h 로그 동문서답 전수조사 — kbo_structured 동문서답 7건 전부 이 4신호에 걸린다.)
+ *
+ * ⚠️ **닫힌 신호만** 잡는다(열린 언어 룰 남발 금지 — lessons `open_language_never_closes_with_rules`).
+ * ⚠️ 시즌 스코프 표현(`올해`·`이번 시즌`·`통산`·`작년`)은 **절대** 잡지 않는다 — 그건 정상 스탯 질문이다.
+ */
+// 일(日)단위 시점 — 시즌 누적으로 답하면 틀린다. `올해`·`이번 시즌`은 시즌 스코프라 여기 없다.
+const DAY_LEVEL_TEMPORAL =
+  /어제|오늘|그제|엊그제|엊저녁|어젯밤|방금|아까|저번\s*경기|지난\s*경기|이번\s*경기|그\s*경기|당일|경기\s*정보/;
+// 방법·추세 — 단일 숫자로는 못 답한다. `변화구`(구종)는 제외한다.
+const METHOD_TREND_ASK =
+  /되려면|하려면|어떻게\s*해야|어떻게\s*하면|어찌\s*해야|추이|추세|변화(?!구)|흐름|비결/;
+// 조건·가정절 안의 지표 — 지표는 배경이고 진짜 질문은 딴 데 있다(`안타를 쳤을때 …`).
+const METRIC_IN_SUBORDINATE =
+  /(?:쳤|쳐|때렸|맞았|던졌|잡았|나왔|출루|득점)[가-힣]{0,2}(?:을\s*때|\s*때|다면|으면|면)/;
+// 순위 오요청 — 선수 시즌 축엔 순위 지표가 없다(순위는 팀·리그 순위표 담당).
+const RANK_FOCUS = /순위|몇\s*위|랭킹|순위권/;
+
+/**
+ * 질문의 초점이 비(非)스탯인가 — 구조화 스탯 경로를 건너뛰어야 하는가.
+ * @param opts.rankIsMismatch 순위어가 곧 오요청인 축인가(선수 시즌 축 = true, 팀 축 = false).
+ *   팀 축은 `순위`가 실제 서빙 지표라 순위 신호로 비켜세우면 안 된다.
+ */
+export function hasNonStatFocus(
+  question: string,
+  opts: { rankIsMismatch: boolean },
+): boolean {
+  const compact = normalize(question);
+  if (DAY_LEVEL_TEMPORAL.test(compact)) return true;
+  if (METHOD_TREND_ASK.test(compact)) return true;
+  if (METRIC_IN_SUBORDINATE.test(compact)) return true;
+  if (opts.rankIsMismatch && RANK_FOCUS.test(compact)) return true;
+  return false;
+}
+
 export interface SeasonRecordQuery {
   /** 'batter' | 'pitcher' — 어느 테이블을 볼지. */
   table: "batter" | "pitcher";
@@ -319,6 +363,9 @@ export function resolveSeasonRecordIntent(
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
+  // 동문서답 방지 — 질문 초점이 비스탯(시점특정·방법/추세·조건절 지표·순위 오요청)이면
+  //   시즌 누적을 던지지 않고 LLM/RAG 로 위임한다. 선수 축엔 순위 지표가 없으므로 rank 도 미스매치.
+  if (hasNonStatFocus(question, { rankIsMismatch: true })) return { kind: "none" };
   // bare `wRC` 는 **명시 거절**한다(삼순 #1100 8차 P0-1).
   // wRC(가중 득점 생산량) ≠ wRC+(리그·구장 보정 지수). 우린 wRC+ 만 계산하므로
   // bare wRC 에 wRC+ 값을 주면 다른 지표를 속여 답하는 것이다 — 도루·OPS·WAR 은
