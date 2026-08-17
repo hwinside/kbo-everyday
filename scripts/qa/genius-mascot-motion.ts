@@ -11,6 +11,10 @@
  *  ④ 전체 마스코트 최대 1개 (하린아빠 13:34·13:53 + 삼순 P0): reply·thinking·failed **3종 합산**이
  *     항상 ≤1. 실제 DMChatPage + 실제 Realtime 배달 + 실제 전송(rpc)으로 생각중→답변 교체,
  *     failed 소유권, 역순 Realtime, reload 재진입까지 DOM 실행 검증.
+ *  ⑤ 렌더 규격·상시 idle 모션 (2026-08-16 하린아빠 "캐릭터가 너무 작아서 잘 안보임" +
+ *     "안움직이는 것 같은데 움직이게 해줘"): 3종 마스코트가 전부 96px 공유 규격으로 렌더되고,
+ *     감정 모션이 없는 지식 답변에서도 idle 미세 모션이 돌며, idle 과 감정 모션이 **다른
+ *     엘리먼트**에 걸려 transform 이 서로를 죽이지 않는다. DOM 실측 + CSS 실파일 검사.
  *
  * 실행: npm run qa:genius-mascot-motion
  */
@@ -240,6 +244,8 @@ async function partDom() {
     BASEBALL_QA_MAX_ATTEMPTS,
     BASEBALL_QA_OUTBOX_KEY,
   } = await import("../../src/lib/baseball-qa/client-outbox");
+  // 렌더 규격은 문자열로 재작성하지 않고 배포 상수를 그대로 읽는다.
+  const { GENIUS_MASCOT_IMG_CLASS } = await import("../../src/lib/constants/baseball-genius");
   const DMChatPage = (await import("../../src/app/(main)/messages/[conversationId]/page")).default;
 
   const profile = { id: "me", nickname: "테스터", team_id: 1, favorite_players: [], points: 0, grade: "rookie", avatar_url: null, invited_by: null };
@@ -384,6 +390,28 @@ async function partDom() {
     container.querySelectorAll('[data-testid="genius-thinking-mascot"]').length;
   const failedMascots = (container: HTMLElement) =>
     container.querySelectorAll('[data-testid="genius-typing-mascot"]').length;
+  // 렌더된 그 마스코트 1개의 실제 표시 계약(크기·idle)을 DOM 에서 직접 읽는다.
+  //   JSDOM 은 CSS 를 계산하지 않으므로 "몇 px 로 보이느냐"는 여기서 증명할 수 없다
+  //   — 그건 실브라우저 게이트(qa:genius-reply-mascot-browser)가 맡는다.
+  //   여기서는 "공유 규격 상수가 실제 그 엘리먼트에 붙었는가"를 잠그다.
+  const renderContractOf = (img: Element | null) => {
+    if (!img) return null;
+    const wrapper = img.parentElement;
+    return {
+      sized: img.getAttribute("class")?.includes(GENIUS_MASCOT_IMG_CLASS) ?? false,
+      // idle 은 **래퍼**에 걸려야 한다 — img 에 같이 걸면 감정 모션 transform 을 덮어쓴다.
+      idleOnWrapper: wrapper?.classList.contains("genius-motion-idle") ?? false,
+      idleOnImg: img.classList.contains("genius-motion-idle"),
+    };
+  };
+  const everyRenderedMascotOk = (container: HTMLElement) => {
+    const imgs = [...container.querySelectorAll('img[src*="/mascot/reply/"]')];
+    if (imgs.length === 0) return false;
+    return imgs.every((img) => {
+      const c = renderContractOf(img);
+      return !!c && c.sized && c.idleOnWrapper && !c.idleOnImg;
+    });
+  };
 
   const typeAndSend = async (container: HTMLElement, value: string) => {
     const textarea = container.querySelector("textarea") as HTMLTextAreaElement;
@@ -409,6 +437,16 @@ async function partDom() {
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
     });
     check("DOM: 초기 로드 — reply excited, 전체 마스코트 1개", true);
+
+    // ⑤ 렌더 계약 — 감정 모션이 있는 마스코트도 공유 규격 + idle 을 따로 갖는다.
+    {
+      const contract = renderContractOf(replyMascotOf(container, 150));
+      check("렌더: 답변 마스코트가 공유 96px 규격으로 붙는다", contract?.sized === true, JSON.stringify(contract));
+      check("렌더: idle 은 래퍼에, 감정 모션은 img 에 — transform 충돌 없음",
+        contract?.idleOnWrapper === true && contract?.idleOnImg === false, JSON.stringify(contract));
+      check("렌더: 감정 모션은 기존대로 img 에 유지된다",
+        replyMascotOf(container, 150)?.classList.contains("genius-motion-excited") === true);
+    }
 
     await act(async () => {
       await deliver({
@@ -454,14 +492,42 @@ async function partDom() {
     });
     check("DOM: 거절 bored 도 같은 규칙", true);
 
+    // ⑤ 지식 답변(감정 모션 없음) — 캐프처의 "안 움직임" 재현 지점이다.
+    //   geniusMotionForResult 가 undefined 를 돌려주는 경로라 payload 에 motion 이 없다.
+    //   그래도 idle 은 돌아야 한다(이번 변경의 핵심).
+    await act(async () => {
+      await deliver({
+        id: 450, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID,
+        content: "김현수 선수는 두산·볼티모어·LG 를 거쳤습니다.",
+        is_read: false, created_at: "2026-08-15T00:00:07Z", dedup_key: "baseball-genius:401",
+        payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag", question_message_id: 401 },
+      });
+    });
+    await waitFor(() => {
+      assert.ok(replyMascotOf(container, 450), "지식 답변에도 마스코트는 붙는다");
+      assert.equal(motionOf(container, 450), null, "지식 답변에는 감정 모션이 없다(§7.6 불변)");
+      assert.equal(totalMascots(container), 1);
+    });
+    {
+      const img = replyMascotOf(container, 450)!;
+      const contract = renderContractOf(img);
+      check("렌더: 감정 모션 없는 지식 답변도 idle 미세 모션이 돌다(캡처 재현 지점)",
+        contract?.idleOnWrapper === true, JSON.stringify(contract));
+      check("렌더: 그 경우에도 감정 모션 클래스는 붙지 않는다",
+        !["excited", "headspin", "bored"].some((m) => img.classList.contains(`genius-motion-${m}`)));
+      check("렌더: 지식 답변 마스코트도 공유 96px 규격", contract?.sized === true);
+    }
+
     // 새 질문 전송 → 생각중 말풍선이 마스코트를 소유한다 (reply 마스코트는 사라진다).
     await typeAndSend(container, "새 질문입니다");
     await waitFor(() => {
       assert.equal(thinkingMascots(container), 1, "생각중 마스코트가 소유권을 가진다");
-      assert.equal(replyMascotOf(container, 350) === null, true, "생각중이 뜨면 이전 답변 마스코트는 사라진다");
+      assert.equal(replyMascotOf(container, 450) === null, true, "생각중이 뜨면 이전 답변 마스코트는 사라진다");
       assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
     });
     check("DOM: 새 질문 → thinking 소유권 이동(답변 마스코트 제거)", true);
+    check("렌더: 생각중 마스코트도 공유 규격 + idle (대기 중에도 움직임)",
+      everyRenderedMascotOk(container));
 
     // failed — 같은 질문의 재시도 버블이 소유권을 가진다(생각중 말풍선 마스코트는 숨는다).
     const stored = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<Record<string, unknown>>;
@@ -477,6 +543,8 @@ async function partDom() {
       assert.equal(totalMascots(container), 1);
     });
     check("DOM: failed → 재시도 버블 소유권(동일 질문 우선순위 failed>thinking)", true);
+    check("렌더: 실패 마스코트도 공유 규격 + idle (3종 전부 동일 계약)",
+      everyRenderedMascotOk(container));
 
     // failed 가 남아 있는 채 두 번째 질문 → 최신 thinking 이 소유. failed 마스코트는 숨는다.
     await typeAndSend(container, "두 번째 질문입니다");
@@ -549,9 +617,54 @@ async function partDom() {
   }
 }
 
+// ── ⑤ 렌더 규격 + 상시 idle 모션 CSS 계약 (2026-08-16) ─────────────────────────
+async function partRenderContract() {
+  const {
+    GENIUS_MASCOT_HEIGHT_PX, GENIUS_MASCOT_IMG_CLASS, GENIUS_MASCOT_IDLE_MOTION_CLASS,
+  } = await import("../../src/lib/constants/baseball-genius");
+
+  // 규격은 상수가 SSOT — 게이트가 문자열을 재구현하면 사용처가 되돌아가도 GREEN 이다
+  // (M90 `게이트가 상수를 재구현하면 결함을 못 본다`). 상수 자체를 판정한다.
+  check(`규격 SSOT: 마스코트 높이 ${GENIUS_MASCOT_HEIGHT_PX}px (헤더 h-24 동일)`,
+    GENIUS_MASCOT_HEIGHT_PX === 96 && /(^|\s)h-24(\s|$)/.test(GENIUS_MASCOT_IMG_CLASS),
+    GENIUS_MASCOT_IMG_CLASS);
+  check("규격 SSOT: 종전 h-8(32px) 으로 되돌아가지 않는다",
+    !/(^|\s)h-8(\s|$)/.test(GENIUS_MASCOT_IMG_CLASS), GENIUS_MASCOT_IMG_CLASS);
+  check("idle 상수가 CSS 클래스명을 포함한다",
+    GENIUS_MASCOT_IDLE_MOTION_CLASS.split(/\s+/).includes("genius-motion-idle"),
+    GENIUS_MASCOT_IDLE_MOTION_CLASS);
+
+  // 사용처 복제 차단 — 3종 마스코트는 공유 컴포넌트를 통해서만 렌더한다.
+  // 한 곳이라도 인라인 <img> 로 되돌아가면 다음 변경에서 조용히 어긋난다.
+  const pageSrc = readFileSync(resolve(process.cwd(), "src/app/(main)/messages/[conversationId]/page.tsx"), "utf8");
+  const typingSrc = readFileSync(resolve(process.cwd(), "src/components/dm/GeniusTypingIndicator.tsx"), "utf8");
+  const mascotSrc = readFileSync(resolve(process.cwd(), "src/components/dm/GeniusMascotImage.tsx"), "utf8");
+  check("단일 지점: 답변·생각중·실패 마스코트가 공유 컴포넌트를 쓴다",
+    /<GeniusMascotImage\b/.test(pageSrc) &&
+    (typingSrc.match(/<GeniusMascotImage\b/g) ?? []).length === 2);
+  check("단일 지점: 사용처에 마스코트 크기 클래스가 복제되지 않는다",
+    !/h-8 w-auto/.test(pageSrc) && !/h-8 w-auto/.test(typingSrc) &&
+    !/h-24 w-auto/.test(typingSrc));
+  check("공유 컴포넌트가 상수를 그대로 소비한다(리터럴 재작성 아님)",
+    mascotSrc.includes("GENIUS_MASCOT_IMG_CLASS") && mascotSrc.includes("GENIUS_MASCOT_IDLE_MOTION_CLASS"));
+
+  // CSS 실파일 — 클래스만 붙고 keyframes 가 없으면 아무 일도 안 일어난다(조용한 무효화).
+  const css = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
+  check("CSS: @keyframes genius-motion-idle 가 존재한다", /@keyframes\s+genius-motion-idle\s*\{/.test(css));
+  check("CSS: .genius-motion-idle 가 그 keyframes 를 무한 반복으로 쓴다(상시 움직임)",
+    /\.genius-motion-idle\s*\{[^}]*animation:\s*genius-motion-idle[^;}]*infinite/.test(css));
+  check("CSS: prefers-reduced-motion 에서 idle 도 정지한다",
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{[^}]*\.genius-motion-idle[^}]*animation:\s*none/.test(css));
+  check("CSS: 감정 모션 3종은 유한 반복 그대로(§7.4 남용방지 불변)",
+    !/\.genius-motion-excited\s*\{[^}]*infinite/.test(css) &&
+    !/\.genius-motion-headspin\s*\{[^}]*infinite/.test(css) &&
+    !/\.genius-motion-bored\s*\{[^}]*infinite/.test(css));
+}
+
 async function main() {
   await partMapping();
   await partPayload();
+  await partRenderContract();
   await partDom();
   if (failures.length > 0) {
     console.error(`\n❌ genius mascot motion FAIL: ${failures.length}건 — ${failures.join(" | ")}`);
