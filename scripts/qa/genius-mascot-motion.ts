@@ -657,6 +657,30 @@ async function partDom() {
     });
     check("DOM: failed 잔존 + 새 질문 → 최신 thinking 소유권", true);
 
+    // ── 🔴 대기 중인데 소유권이 thinking 이 **아닌** 경우 (원복 후 M7 관측 지점) ──────
+    //
+    // 원복으로 생각중 말풍선이 `pending` 일 때만 렌더되면서, "말풍선은 떠 있는데 마스코트
+    // 소유권은 남에게 있는" 조합을 만들 무대가 사라질 뻔했다(그 조합이 없으면
+    // `showMascot={true}` 훼손이 화면에 아무 차이를 못 만들어 **검출 불가**가 된다).
+    // 그 조합은 여전히 실재한다: **더 큰 id 의 답변이 다른(과거) 질문에 도착**하면
+    // 소유권은 reply 로 가고, 현재 질문은 계속 대기 상태다.
+    await act(async () => {
+      await deliver({
+        id: 640, conversation_id: CONVERSATION_ID, sender_id: GENIUS_ID, content: "과거 질문에 대한 답변입니다.",
+        is_read: false, created_at: "2026-08-15T00:00:15Z", dedup_key: "baseball-genius:501",
+        payload: { type: "baseball_genius_reply", reply_kind: "answer", match_path: "rag", question_message_id: 501 },
+      });
+    });
+    await waitFor(() => {
+      assert.ok(container.querySelector('[data-testid="genius-thinking-bubble"]'),
+        "선행 조건: 현재 질문(601)은 아직 대기 중이라 말풍선이 떠 있어야 한다");
+      assert.ok(replyMascotOf(container, 640), "더 큰 id 답변이 마스코트 소유권을 가져간다");
+      assert.equal(thinkingMascots(container), 0,
+        "대기 중이어도 소유권이 없으면 생각중 마스코트는 숨는다");
+      assert.equal(totalMascots(container), 1, "전체 마스코트는 항상 1개");
+    });
+    check("DOM: 대기 중 + 타 질문 답변 도착 → 생각중 마스코트는 숨는다(소유권 우선)", true);
+
     // 답변 도착 → reply 가 소유권을 되찾고 모션이 입혀진다.
     await act(async () => {
       await deliver({
