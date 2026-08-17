@@ -61,6 +61,14 @@ export function GeniusThinkingBubble({ pending, showMascot = true }: { pending: 
    */
   showMascot?: boolean;
 }) {
+  // 🔴 원복됨 (하린아빠 2026-08-17 19:46 "생각중 대화내용 남기기로 한거 원복해줘").
+  //    #1102 는 이 말풍선을 대화 기록으로 남겼다(답변 도착 후에도 잔존). 지시대로 되돌린다 —
+  //    생각중은 **기다리는 동안만** 존재한다.
+  //
+  //    여기서 끊는 이유: page 의 `show` 판정만 바꾸면 이 컴포넌트는 여전히 `pending=false` 에도
+  //    말풍선을 그릴 수 있어, 다른 호출자가 하나 생기는 순간 잔존이 되살아난다.
+  //    반환을 막아 **잔존이 구조적으로 불가능**하게 한다.
+  if (!pending) return null;
   return (
     <div className="flex justify-start" data-testid="genius-thinking-bubble" data-pending={pending}>
       <div className="max-w-[75%]">

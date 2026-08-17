@@ -225,14 +225,14 @@ async function main() {
     await waitFor(() => {
       assert.match(container.querySelector('[data-message-id="150"]')?.textContent ?? "", /첫 답변입니다/,
         "실제 Realtime 답변 INSERT가 DOM에 보여야 한다");
-      assert.equal(attachedThinking(container, 101), true, "답변 도착 후에도 Q1 생각중 말풍선 기록이 남아야 한다");
-      const bubble = container.querySelector('[data-message-id="101"]')?.nextElementSibling;
-      assert.equal(bubble?.getAttribute("data-pending"), "false", "답변 도착 후 pending 점/status는 해제돼야 한다");
-      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
+      // 🔴 원복 (하린아빠 2026-08-17 19:46): 답변이 도착하면 생각중은 **사라진다**.
+      assert.equal(attachedThinking(container, 101), false, "답변 도착 후 Q1 생각중 말풍선이 사라져야 한다");
+      assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 0,
+        "답변 도착 후 남아 있는 생각중 말풍선이 없어야 한다");
       const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
       assert.equal(outbox.some((entry) => entry.messageId === 101), false, "답변 관측 뒤 outbox 101 항목은 제거돼야 한다");
     }, act);
-    console.log("✅ actual Realtime answer → answer DOM + bubble retained + pending cleared");
+    console.log("✅ actual Realtime answer → answer DOM + bubble removed");
 
     await typeAndSend(container, "둘째 질문");
     await waitFor(() => {
@@ -243,7 +243,8 @@ async function main() {
     }, act);
     console.log("✅ actual Q2 send → latest thinking only");
 
-    // 실제 hook의 online 처리로 Q2를 failed 상태로 바꾼다. 기록은 남되 pending 점/status는 멈춘다.
+    // 실제 hook의 online 처리로 Q2를 failed 상태로 바꾼다.
+    // 🔴 원복: 실패하면 생각중이 **사라지고** 바로 아래 실패·재시도 버블만 상태를 말한다.
     const stored = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<Record<string, unknown>>;
     for (const entry of stored) {
       if (entry.messageId === 202) { entry.attempts = BASEBALL_QA_MAX_ATTEMPTS; entry.acknowledged = false; }
@@ -251,12 +252,12 @@ async function main() {
     dom.window.localStorage.setItem(BASEBALL_QA_OUTBOX_KEY, JSON.stringify(stored));
     await act(async () => { dom.window.dispatchEvent(new dom.window.Event("online")); });
     await waitFor(() => {
-      const bubble = container.querySelector('[data-message-id="202"]')?.nextElementSibling;
-      assert.equal(bubble?.getAttribute("data-pending"), "false");
-      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
-      assert.ok(container.querySelector('[data-state="failed"] button'));
+      assert.equal(attachedThinking(container, 202), false, "실패 시 Q2 생각중이 사라져야 한다");
+      assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 0,
+        "실패 상태에서 생각중과 재시도 버블이 동시에 뜨면 안 된다");
+      assert.ok(container.querySelector('[data-state="failed"] button'), "재시도 버튼은 떠야 한다");
     }, act);
-    console.log("✅ actual failed → thinking record retained, pending stopped, retry shown");
+    console.log("✅ actual failed → thinking removed, retry shown");
 
     // RPC 반환 전 답변 선도착: rpc mock이 single() 안에서 답변 350을 먼저 Realtime으로 배달한다.
     await typeAndSend(container, "셋째 질문");
@@ -264,24 +265,43 @@ async function main() {
       assert.match(container.querySelector('[data-message-id="303"]')?.textContent ?? "", /셋째 질문/);
       assert.match(container.querySelector('[data-message-id="350"]')?.textContent ?? "", /선도착 답변입니다/,
         "RPC 반환 전에 선도착한 답변이 DOM에 보여야 한다");
-      assert.equal(attachedThinking(container, 303), true,
-        "답변 선도착(outbox 이전)이어도 전송 marker로 Q3 말풍선이 남아야 한다");
-      const bubble = container.querySelector('[data-message-id="303"]')?.nextElementSibling;
-      assert.equal(bubble?.getAttribute("data-pending"), "false");
-      assert.equal(bubble?.querySelector('[role="status"]') == null, true, "role=status 가 남아 있다");
+      // 🔴 원복: 답변이 이미 왔으므로 기다릴 게 없어 생각중이 보이지 않는 것이 정상이다.
+      //    다만 **outbox skip 계약**(답변 선도착 시 enqueue 안 함)은 그대로 지킨다.
+      assert.equal(attachedThinking(container, 303), false,
+        "답변이 선도착했으면 Q3 생각중이 보이지 않아야 한다");
       const outbox = JSON.parse(dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
       assert.equal(outbox.some((entry) => entry.messageId === 303), false,
         "답변 선도착이면 enqueue를 건너뛰어 outbox에 303이 없어야 한다");
-      assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 1);
+      assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 0);
     }, act);
-    console.log("✅ actual answer-before-outbox → outbox skipped + bubble retained");
+    console.log("✅ actual answer-before-outbox → outbox skipped + bubble absent");
 
     // 같은 stale localStorage를 둔 채 새 hook/page 인스턴스로 재진입한다.
+    //
+    // 🔴 원복 후 이 시나리오에는 **대기 상태인 stale 항목**이 반드시 있어야 한다.
+    //    생각중이 이제 `pending` 에만 붙으므로, outbox 가 전부 answered/failed 면 reload 후
+    //    말풍선이 0개인 게 당연해서 "marker 를 stale outbox 에서 재유도"하는 회귀(M5)를
+    //    **관측할 수 없다**. waiting 항목을 남겨 두면, marker 를 잘못 되살리는 코드가
+    //    그 항목을 근거로 말풍선을 그려 M5 가 RED 가 된다.
+    const staleForReload = JSON.parse(
+      dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<Record<string, unknown>>;
+    staleForReload.push({
+      messageId: 202, conversationId: CONVERSATION_ID, question: "둘째 질문",
+      attempts: 0, acknowledged: false, createdAt: Date.now(),
+    });
+    dom.window.localStorage.setItem(BASEBALL_QA_OUTBOX_KEY, JSON.stringify(staleForReload));
+
     await act(async () => { root.unmount(); });
     container.replaceChildren();
     root = createRoot(container);
     await act(async () => { root.render(React.createElement(Harness, { initialConversationId: CONVERSATION_ID })); });
     await waitFor(() => assert.match(container.querySelector('[data-message-id="202"]')?.textContent ?? "", /둘째 질문/), act);
+    {
+      const staleNow = JSON.parse(
+        dom.window.localStorage.getItem(BASEBALL_QA_OUTBOX_KEY) ?? "[]") as Array<{ messageId: number }>;
+      assert.equal(staleNow.some((e) => e.messageId === 202), true,
+        "선행 조건: 대기 중인 stale outbox 항목이 남아 있어야 M5 를 관측할 수 있다");
+    }
     assert.equal(container.querySelectorAll('[data-testid="genius-thinking-bubble"]').length, 0,
       "reload/re-entry에서 stale outbox로 thinking이 되살아나면 안 된다");
     console.log("✅ actual reload/re-entry with stale localStorage → thinking0");

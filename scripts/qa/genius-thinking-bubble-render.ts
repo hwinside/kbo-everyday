@@ -1,5 +1,10 @@
 /**
- * "생각중입니다" 말풍선이 **답변 도착 후에도 대화에 남는가** — 실제 렌더로 고정.
+ * "생각중입니다" 말풍선이 **기다리는 동안만 보이는가** — 실제 렌더로 고정.
+ *
+ * 🔴 원복됨 (하린아빠 2026-08-17 19:46 "생각중 대화내용 남기기로 한거 원복해줘").
+ *    아래 배경은 #1102 가 왜 잔존을 택했는지의 기록이며, 그 결론만 뒤집혔다.
+ *    ⚠️ 되돌린 대가: 빠른 답변에서 캐릭터가 눈에 안 잡히는 문제(아래 500ms 실측)는
+ *       **다시 열린 상태**다. 하린아빠 지시로 감수한다.
  *
  * ⚠️ 이 게이트가 생긴 이유 (2026-08-04 하린아빠 실사용 지적 → Production 실측).
  *
@@ -18,8 +23,9 @@
  * "생각중입니다도 대화로 남겨. 캐릭터도 그대로 남아있게"). 지나가는 UI 가 아니라
  * 질문 바로 아래 머무르는 말풍선이므로 노출시간 문제가 사라진다.
  *
- * 그래서 여기서 고정하는 계약은 하나다:
- *   **답변이 도착해 대기 상태가 사라져도 말풍선과 thinking 마스코트가 그대로 남는다.**
+ * 그래서 여기서 고정하는 계약은 하나다 (🔴 원복 후):
+ *   **답변이 도착하면(또는 실패하면) 말풍선과 thinking 마스코트가 사라진다.**
+ *   대기 중에만 보이고, `show` 는 `pending` 과 항상 같은 값이다.
  *
  * 실행: npm run qa:genius-thinking-bubble
  */
@@ -98,7 +104,10 @@ async function main() {
       // 2026-08-16 전면 교체: 정적 PNG 상태(data-mascot) → 영상 클립(data-clip).
       mascotClip: mascot?.getAttribute("data-clip") ?? null,
       dots: host.querySelectorAll(".animate-bounce").length,
-      status: bubble?.querySelector('[role="status"]') !== null,
+      // ⚠️ `bubble?.querySelector(...)` 는 말풍선이 **없을 때** `undefined` 를 낸다.
+      //    그대로 `!== null` 로 보던 자리가 있어서, 사라진 상황을 "status 있음(true)"으로
+      //    읽었다(원복 직후 이 게이트가 실제로 그렇게 오톡되었다). 명시적으로 Boolean 판정한다.
+      status: Boolean(bubble?.querySelector('[role="status"]')),
     };
   };
 
@@ -116,19 +125,22 @@ async function main() {
     r.cleanup();
   }
 
-  // ── 계약 ②(핵심): **답변 도착 후에도 말풍선과 캐릭터가 남는다** ─────────────
-  // 이게 이번 지시의 전부다. pending 만 false 로 바뀌고 말풍선 자체는 사라지지 않는다.
+  // ── 계약 ②(핵심): **답변이 도착하면 말풍선이 사라진다** ─────────────────────
+  //
+  // 🔴 원복됨 (하린아빠 2026-08-17 19:46 "생각중 대화내용 남기기로 한거 원복해줘").
+  //    #1102 는 반대 계약(답변 후에도 잔존)을 이 자리에서 고정하고 있었다. 지시대로 뒤집는다.
+  //    잔존을 되살리려면 이 블록이 **먼저** 실패하므로, 코드만 바꾸고 게이트를 두는 사고는 없다.
   {
     const r = render(React.createElement(GeniusThinkingBubble, { pending: true }));
     assert.equal(readBubble(r.host).exists, true, "선행 조건: 대기 중 렌더");
     r.rerender(React.createElement(GeniusThinkingBubble, { pending: false }));
     const after = readBubble(r.host);
-    check("답변 도착 후에도 말풍선이 남는다", () => assert.equal(after.exists, true));
-    check("답변 도착 후에도 캐릭터가 남는다", () => assert.equal(after.mascotClip, "thinking"));
-    check("답변 도착 후에도 문구가 남는다", () => assert.ok(after.text.includes(GENIUS_THINKING_TEXT)));
-    check("답변 도착 후 점 애니메이션은 멈춘다", () => assert.equal(after.dots, 0));
-    check("답변 도착 후 role=status 해제(스크린리더 반복 고지 방지)", () => assert.equal(after.status, false));
-    check("pending 플래그가 화면 상태를 반영", () => assert.equal(after.pending, "false"));
+    check("답변 도착 후 말풍선이 사라진다", () => assert.equal(after.exists, false));
+    check("답변 도착 후 캐릭터도 사라진다", () => assert.equal(after.mascotClip, null));
+    check("답변 도착 후 문구가 남지 않는다",
+      () => assert.equal(after.text.includes(GENIUS_THINKING_TEXT), false));
+    check("답변 도착 후 점 애니메이션 0", () => assert.equal(after.dots, 0));
+    check("답변 도착 후 role=status 해제", () => assert.equal(after.status, false));
     r.cleanup();
   }
 
@@ -168,25 +180,29 @@ async function main() {
       assert.deepEqual(attachedTo([101], thinkingId, { 101: "waiting" } as States), [101]);
     });
 
-    // 답변 도착 → outbox 비움. 마커는 그대로라 말풍선이 남는다.
-    check("Q1 답변 도착 후에도 말풍선 유지", () => {
-      assert.deepEqual(attachedTo([101, 102], thinkingId, {} as States), [101]);
+    // 답변 도착 → outbox 비움. 🔴 원복 후에는 이 시점에 말풍선이 **사라진다**.
+    check("Q1 답변 도착 후 말풍선이 사라진다", () => {
+      assert.deepEqual(attachedTo([101, 102], thinkingId, {} as States), []);
     });
-    check("답변 도착 후 pending=false(점 정지)", () => {
+    check("답변 도착 후 show·pending 동시에 false", () => {
       const r = render1(101, thinkingId, {} as States);
-      assert.equal(r.show, true);
+      assert.equal(r.show, false);
       assert.equal(r.pending, false);
     });
 
     // ⚠️ Blocker 1 (삼순 2차): **답변이 outbox 보다 먼저** 오는 경로.
     // 이때 enqueue 가 통째로 스킵돼 outbox 는 끝까지 비어 있다. outbox 파생이었으면
     // 생각중이 한 번도 안 생겼다 — 전송 트리거라 정상 생성된다.
-    check("Blocker1: 답변이 먼저 와 outbox 가 비어도 생각중이 생긴다", () => {
+    // 🔴 원복으로 이 축의 기대값이 바뀐다: 예전엔 "outbox 0 인데도 생각중이 남는다"가 계약이었지만
+    //    (잔존 설계였으므로), 지금은 답변이 이미 와 있으니 **기다릴 게 없어 안 보이는 것이 정상**이다.
+    //    단 **마커는 여전히 전송 시점에 찍혀야** 한다 — 그게 outbox 파생 회귀를 막는 지점이다.
+    check("Blocker1: 답변이 먼저 와도 마커는 전송 시점에 찍힌다(outbox 파생 아님)", () => {
       const early = markGeniusThinkingMessageId(9001, null);
-      assert.equal(early, 9001);
-      assert.deepEqual(attachedTo([9001], early, {} as States), [9001],
-        "outbox 0 인데 생각중이 안 붙었다 — outbox 파생 회귀");
-      assert.equal(render1(9001, early, {} as States).pending, false);
+      assert.equal(early, 9001, "전송 트리거가 outbox 에 업혀 있으면 회귀");
+      assert.deepEqual(attachedTo([9001], early, {} as States), [],
+        "답변이 이미 도착한 상황엔 생각중을 보이지 않는다(원복된 계약)");
+      assert.deepEqual(attachedTo([9001], early, { 9001: "waiting" } as States), [9001],
+        "그 마커로 대기 중엔 정상 표시되어야 한다");
     });
 
     // Q2 전송 → 생각중이 Q2 로 이동, Q1 것은 사라진다
@@ -218,13 +234,15 @@ async function main() {
     check("Blocker2: 재진입 후 다시 전송하면 그때부터 붙는다", () => {
       const afterReload = markGeniusThinkingMessageId(303, null);
       assert.equal(afterReload, 303);
-      assert.deepEqual(attachedTo([202, 303], afterReload, {} as States), [303]);
+      assert.deepEqual(attachedTo([202, 303], afterReload, { 303: "waiting" } as States), [303]);
     });
 
-    // ⚠️ 실패는 pending 이 아니다 (삼순 #1102 1차 P0-2).
-    check("failed 는 pending=false (재시도 버블과 충돌 방지)", () => {
+    // 🔴 원복: 실패하면 생각중이 **사라진다**. 바로 아래 실패·재시도 버블이 상태를 말하므로,
+    //    생각중이 같이 남으면 화면이 "생각 중"과 "답변 못 받았어요"를 동시에 말하는 모순이 된다
+    //    (삼순 #1102 1차 P0-2 와 같은 축 — 그때는 pending=false 로 풀었고 지금은 사라진다).
+    check("failed 면 생각중이 사라진다 (재시도 버블과 충돌 방지)", () => {
       const r = render1(303, 303, { 303: "failed" } as States);
-      assert.equal(r.show, true, "실패해도 생각중 기록 자체는 남는다");
+      assert.equal(r.show, false);
       assert.equal(r.pending, false, "실패 상태에서 점 3개가 돌면 안 된다");
     });
     check("retrying 은 pending=true", () =>
@@ -346,7 +364,7 @@ async function main() {
     console.error(`\n❌ genius thinking bubble: PASS=${pass} FAIL=${failures.length}`);
     process.exit(1);
   }
-  console.log(`\n✅ genius thinking bubble: ${pass} PASS (답변 도착 후 잔존 + 중복 방지 + 실패 재시도)`);
+  console.log(`\n✅ genius thinking bubble: ${pass} PASS (대기 중에만 노출 + 중복 방지 + 실패 시 제거)`);
 }
 
 main().catch((error) => {
