@@ -18,6 +18,8 @@ import {
   type SourceGrade,
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
+// 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
+import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "../answer-budget";
 
@@ -183,12 +185,14 @@ export async function searchSourcePriorityCandidates(
    * 순서 강제(hard sort)가 아니라 재점수화라, 더 가까운 반대편 근거는 살아남는다.
    */
   weightFor: (canonicalUrl: string) => number,
+  /** 상위 N 절단 **앞**에서 돌 근거 projection. `rankEvidenceByQuery` 참조. */
+  project?: EvidenceProjector,
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
     fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
     fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
-  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor);
+  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor, project);
 }
 /**
  * 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(`MAX_CHUNK_CHARS` 900자)보다 짧게 잡아
@@ -432,6 +436,186 @@ export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
   return selected;
 }
 
+/** `rankEvidenceByQuery` 가 상위 N 절단 앞에서 돌리는 근거 변환기. 빈 문자열이면 탈락. */
+export type EvidenceProjector = (row: RagEvidence) => string;
+
+/**
+ * 선수 소개형 질문용 evidence projector.
+ *
+ * 적용 경계는 선수 **서술형 소개** 경로뿐이다. 전역 sanitize/selectEvidence,
+ * tier1/team/news, 출력 validator는 건드리지 않는다.
+ *
+ * tier2 위키는 수치 정본이 아니므로 답변에는 숫자를 쓰지 않는다. 그런데 "어떤 선수야" 같은
+ * 소개 질문에 기록표·계약·연봉·연도 chunk를 그대로 넣으면 모델이 `276개 홈런` 같은 수치를
+ * `많은 홈런`·`굵직한 기록`처럼 정성 평가어로 바꿔 새어 나간다. 출력 validator에 평가어
+ * 사전을 붙이면 정상 서술까지 막는 누더기 규칙이 되므로, 생성 전에 숫자가 든 문장을 넘기지
+ * 않는다.
+ *
+ * ⚠️ 이 함수는 **상위 6건 cap 앞**에서 불려야 한다(`rankEvidenceByQuery` 의 `project` 인자).
+ *   cap 뒤에 걸면 rank 7 이하의 clean 소개 근거를 영원히 못 본다(삼순 2026-08-16 P1-a).
+ */
+export const projectPlayerDescriptiveRow: EvidenceProjector = (row) => {
+  const sanitized = sanitizeEvidenceContent(row.content, row);
+  if (sanitized.length < 20) return "";
+  return projectPlayerDescriptiveContent(sanitized, row);
+};
+
+/**
+ * 위키피디아 선수 프로필의 **리드 문장**. 진짜 폐쇄형이다.
+ *
+ * `김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.`
+ * 이 한 형태만 괄호를 떼고 살린다.
+ *
+ * 🔴 "숫자·괄호만 없으면 통과"는 **폐쇄형이 아니다**(삼순 2026-08-17 P0 2차).
+ *   그러면 `최다 홈런(276개)은 현 KBO 리그 SSG 랜더스의 기록이다.` 도 매치해
+ *   막으려던 규모 추론이 **예외 조항으로 되살아난다**. 이름·구단·포지션 칸은
+ *   와일드카드가 아니라 각각 **정본에 결속**돼야 한다:
+ *     ① 근거 자체가 위키피디아 문서이고 프로필 본문 section 일 것
+ *     ② 이름 == `pageTitle`(문서 주제) exact — 임의 명사구가 이름 칸에 들어올 수 없다
+ *     ③ 괄호 안은 **생년월일 형태**일 것(기록 괄호 `(276개)` 불가)
+ *     ④ 포지션은 **폐쇄집합**일 것(`기록`·`수상` 같은 명사 불가)
+ *   숫자 판정은 그래도 항상 **원문 문장** 기준이고, 예외는 이 하나뿐이다.
+ */
+const WIKIPEDIA_PROFILE_LEAD =
+  /^(.{1,24}?)\(([^()]*)\)(은|는)\s*현\s*KBO\s*리그\s*([^()\[\]\p{N}]{1,32})의\s*([^()\[\]\p{N}]{1,24})이다\.?$/u;
+
+/**
+ * 리드 괄호 안은 생년월일(한자·영문표기 동반 허용)만 허용한다.
+ * `1988년 9월 22일 ~ ` · `金宰煥, 1988년 9월 22일 ~ ` · `1988년 9월 22일 ~ 2020년 ...`
+ * `276개` 같은 기록 괄호는 연월일 토큰이 없어 탈락한다.
+ */
+const PROFILE_LEAD_BIRTH_PAREN = /\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일/u;
+
+/**
+ * 리드 문장의 포지션 칸 폐쇄집합.
+ * KBO 선수 프로필이 쓰는 표현만 놓는다 — 여기 없는 명사(`기록`·`수상`…)는 리드가 아니다.
+ * 숫자 포지션(`1루수`)은 원문 숫자 판정에서 이미 걱러진다.
+ */
+const PROFILE_LEAD_POSITIONS = new Set([
+  "투수", "포수", "내야수", "외야수", "유격수", "지명타자", "야수",
+  "좌익수", "중견수", "우익수", "투수이자 야수",
+]);
+
+/**
+ * 리드 문장의 구단 칸 폐쇄집합 — KBO 10개 구단.
+ *
+ * 🔴 이 칸을 와일드카드로 두면 다른 칸을 전부 닫아도 뚚린다(삼순 2026-08-17 3차 P0):
+ *   `김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 최다 홈런의 외야수이다.`
+ *   — 소스·section·이름·괄호·포지션이 전부 적법인데 구단 자리에 규모 표현이 살아난다.
+ *
+ * SSOT 는 `TEAMS`(정규 10구단, 올스타 별도 레지스트리로 분리됨) 하나다 — 여기서 구단명을
+ * 재열거하면 향후 구단명 변경(예: SK→SSG)에서 조용히 어긋난다.
+ * 표기 변이는 정식명(`SSG 랜더스`)·약칭(`SSG`)·별칭(`랜더스`) 세 형태만 허용한다.
+ */
+const PROFILE_LEAD_TEAMS: ReadonlySet<string> = new Set(
+  KBO_TEAMS.flatMap(({ name, shortName }) => {
+    const nickname = name.slice(shortName.length).trim();
+    return nickname.length > 0 ? [name, shortName, nickname] : [name, shortName];
+  }),
+);
+
+function normalizeWikipediaProfileLead(part: string, row: RagEvidence): string | null {
+  // ① 위키피디아 프로필 본문에서 온 근거에만 적용한다.
+  //    나무위키·하위 section 은 이 예외 자체를 못 탄다.
+  if (evidenceSourceKindOf(row) !== "wikipedia_document") return null;
+  if (!isProfileLeadSection(row.sectionPath)) return null;
+
+  const match = part.match(WIKIPEDIA_PROFILE_LEAD);
+  if (!match) return null;
+  const [, name, paren, particle, team, role] = match;
+  if (!name || !paren || !particle || !team || !role) return null;
+
+  // ② 이름 칸은 문서 주제(`pageTitle`) exact 여야 한다.
+  //    `최다 홈런` 같은 임의 명사구가 이름 자리를 차지하는 경로를 여기서 닫는다.
+  //    위키 표제어는 `김재환(야구선수)` 처럼 한정어가 붙으므로 그것까지 벗긴 후 비교한다.
+  if (name.trim() !== stripTitleQualifier(row.pageTitle)) return null;
+
+  // ③ 괄호 안은 생년월일 형태만.
+  if (!PROFILE_LEAD_BIRTH_PAREN.test(paren)) return null;
+
+  // ④ 구단은 KBO 10개 폐쇄집합. `최다 홈런` 같은 규모 표현이 이 칸을 차지할 수 없다.
+  if (!PROFILE_LEAD_TEAMS.has(team.trim())) return null;
+
+  // ⑤ 포지션은 폐쇄집합.
+  if (!PROFILE_LEAD_POSITIONS.has(role.trim())) return null;
+
+  // 조사는 원문 그대로 보존한다(이름 받침에 따라 `은`/`는`).
+  return `${name.trim()}${particle} 현 KBO 리그 ${team.trim()}의 ${role.trim()}이다.`;
+}
+
+/** 리드 문장이 있는 프로필 본문 section 인가. 하위 section 은 리드가 아니다. */
+function isProfileLeadSection(sectionPath: string): boolean {
+  const head = sectionPath.trim();
+  return head === "" || head === "본문" || head === "개요" || head === "lead";
+}
+
+/** `김재환(야구선수)` → `김재환`. 동명이인 한정어를 벗긴다. */
+function stripTitleQualifier(pageTitle: string): string {
+  return pageTitle.replace(/\s*\([^()]*\)\s*$/u, "").trim();
+}
+
+/** 근거의 소스 종류. `sourceKind` 가 없으면 canonical 호스트로 판정하고, 못 하면 null. */
+function evidenceSourceKindOf(row: RagEvidence): RagDocumentSourceKind | null {
+  if (row.sourceKind === "wikipedia_document" || row.sourceKind === "namu_document") {
+    return row.sourceKind;
+  }
+  let host: string;
+  try {
+    host = new URL(row.canonicalUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host === "ko.wikipedia.org" || host.endsWith(".wikipedia.org")) return "wikipedia_document";
+  if (host === "namu.wiki" || host.endsWith(".namu.wiki")) return "namu_document";
+  return null;
+}
+
+function projectPlayerDescriptiveContent(content: string, row: RagEvidence): string {
+  if (isPlayerDescriptiveRecordSection(row.sectionPath)) return "";
+  // 🔴 원문 그대로 문장 분해한다. 전처리로 숫자를 지우고 검사하면 그 자리의 규모 추론이
+  //   살아남는다(`홈런(276개)을 쳤다` → `홈런을 쳤다`).
+  const parts = content
+    .split(/(?<=[.!?。]|[다요]\.)\s+|\n+/u)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  // 🔴 판정은 **구조**로만 한다 — `sectionPath`(어디서 온 조각인가) + 숫자문자(수치인가) +
+  //   문장 형태(서술인가 색인/헤더인가). 본문 단어 사전(`국가대표`·`기록`·`시즌`…)으로
+  //   지우면 두 방향으로 동시에 틀린다(삼순 2026-08-16 P1):
+  //     ① `국가대표로도 발탁되어 국제 대회에 참가했다` 같은 **정상 직접근거를 과삭제**하고
+  //     ② `통산 홈런 일지` 처럼 사전에 없는 **비수치 기록 헤더는 그대로 통과**시킨다.
+  //   구조 판정은 사전을 늘리지 않고도 양쪽을 닫는다.
+  const clean: string[] = [];
+  for (const part of parts) {
+    if (/\p{N}/u.test(part)) {
+      // 유일한 예외: 위키피디아 프로필 리드 폐쇄형(소스·section·이름·괄호·포지션 전부 결속).
+      const lead = normalizeWikipediaProfileLead(part, row);
+      if (lead) clean.push(lead);
+      continue;
+    }
+    if (isDescriptiveSentence(part)) clean.push(part);
+  }
+  return clean.join(" ").replace(/\s+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
+}
+
+/**
+ * 서술 문장인가, 색인/헤더 조각인가.
+ *
+ * 위키 chunk 본문에는 `프런트 ｜ 코칭스태프 ｜ 투수`, `통산 홈런 일지`, `주요 기록`처럼
+ * **문장이 아닌 조각**이 섞여 들어온다. 이런 조각은 소개 답변의 근거가 될 수 없는데도
+ * 숫자가 없어서 수치 필터를 그대로 통과한다. 종결어미와 구분자 나열이라는 구조로 가른다.
+ */
+function isDescriptiveSentence(part: string): boolean {
+  // 목록 구분자가 반복되면 문장이 아니라 색인 나열이다.
+  const separators = part.match(/[｜|·ㆍ‧・]/gu);
+  if (separators && separators.length >= 2) return false;
+  // 한국어 서술 종결(…다 / …요 / …함)로 끝나야 문장이다. 종결부호는 있어도 없어도 된다.
+  return /(?:다|요|함)[.!?。]?$/u.test(part);
+}
+
+function isPlayerDescriptiveRecordSection(sectionPath: string): boolean {
+  return /(?:^|[/›>])\s*(?:주요 기록|통산[^/›>]*|기록[^/›>]*|수상[^/›>]*|연도별 성적|시즌별 성적|역대 성적|성적[^/›>]*|계약|연봉|선수 경력\/\d{4}년)\s*(?:$|[/›>])/u.test(sectionPath);
+}
+
 /**
  * 선별된 근거의 단일 등급.
  * `selectEvidence`가 등급을 하나로 고정하므로 여기서는 첫 근거의 등급이 곧 전체 등급이다.
@@ -473,6 +657,12 @@ export const RAG_SYSTEM_PROMPT = [
   "'~이에요', '~예요', '~해요', '~네요', '~랍니다', '~있어요', '~왔어요' 같은 해요체·요체 표현은 절대 쓰지 않는다.",
   "답변 초안이 해요체라면 출력 전에 반드시 합니다체로 다시 고쳐 쓴다.",
   "답변은 자료를 그대로 옮기지 말고 한국어 합니다체로 다시 서술한다.",
+  "자료에 없는 팬 반응·기대·응원·팀 내 비중·강점·중심 역할·활약 평가를 덧붙이지 않는다.",
+  "근거가 소속·투타·포지션뿐이면 그 사실만 간단히 답한다. 멋진 선수·핵심 선수·많은 팬·앞으로의 활약 같은 미화 문장은 쓰지 않는다.",
+  "최선을 다한다·성실하다·소중하다·구슬땀·깊은 매력·팀을 위해 뛴다처럼 자료에 없는 태도·가치 평가도 쓰지 않는다.",
+  "자료가 'X는 Y 소속 Z이다' 한 문장뿐이면 답변도 정확히 한 문장만 쓴다.",
+  "이때 형식은 'X 선수는 Y 소속 Z입니다.'처럼 소속과 포지션만 말한다. 다른 문장을 덧붙이면 계약 위반이다.",
+  "자료가 한 문장뿐이면 '그라운드', '팀의 승리', '역할', '야구 팬', '매력', '최선', '열정' 같은 일반 감상어를 절대 쓰지 않는다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
   `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
@@ -1134,8 +1324,15 @@ export function rankEvidenceByQuery(
    * 무시되어 무관한 근거가 상위를 독점했다(삼순 P0). 지금은 **점수에 곱해** 재정렬한다.
    */
   weightFor?: (canonicalUrl: string) => number,
+  /**
+   * 상위 N 절단 **앞**에서 도는 근거 변환. 빈 문자열을 돌려주면 그 근거는 탈락한다.
+   *
+   * ⚠️ cap 뒤에서 변환하면 앞의 6건을 기록 chunk 가 먹어버린 뒤라 rank 7 이하의
+   *   clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a). 그래서 순서가 계약이다.
+   */
+  project?: EvidenceProjector,
 ): RagEvidence[] {
-  return rows
+  const ranked = rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
       if (vector === null) return null;
@@ -1159,6 +1356,20 @@ export function rankEvidenceByQuery(
       //   삼순 2026-08-07 9라운드 실측: 이 한 줄이 없어서 production 경로에서만
       //   나무위키 판정이 URL 추정으로 떨어졌다(게이트는 직접 주입해 못 봤다).
       sourceKind: row.sourceKind,
-    }))
-    .slice(0, RAG_EVIDENCE_LIMIT);
+    }));
+  if (!project) return ranked.slice(0, RAG_EVIDENCE_LIMIT);
+  // projection 을 쓰는 경로는 `selectEvidence` 와 **동일한 계약**을 cap 앞에서 적용한다:
+  //   등급 단일화(섮으면 tier2 서술을 tier1 근거로 착각) + 명분 없는 근거 탈락 + 상위 N.
+  //   후처리로 바꾸면 rank 7 이하 clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a).
+  const projected: RagEvidence[] = [];
+  let lockedGrade: SourceGrade | null = null;
+  for (const row of ranked) {
+    const content = project(row);
+    if (content.length < 20) continue;
+    if (lockedGrade === null) lockedGrade = row.sourceGrade;
+    else if (row.sourceGrade !== lockedGrade) continue;
+    projected.push({ ...row, content });
+    if (projected.length >= RAG_EVIDENCE_LIMIT) break;
+  }
+  return projected;
 }

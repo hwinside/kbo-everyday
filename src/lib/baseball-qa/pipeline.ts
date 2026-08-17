@@ -33,6 +33,8 @@ import {
   isDescriptivePlayerQuestion,
   RAG_ANSWER_MAX_CHARS,
   selectEvidence,
+  projectPlayerDescriptiveRow,
+  type EvidenceProjector,
   validateRagResponse,
   isRagAttemptPath,
   isRagDiscardReason,
@@ -872,7 +874,15 @@ export interface QaDeps {
    * 선수 entity로 필터된 tier2 근거 검색 (S2b). 미배선이면 RAG 경로 자체가 비활성이라
    * 기존 동작 그대로다.
    */
-  searchRag?: (candidate: RagEntityCandidate, question: string) => Promise<RagEvidence[]>;
+  searchRag?: (
+    candidate: RagEntityCandidate,
+    question: string,
+    /**
+     * 상위 N 절단 **앞**에서 도는 근거 변환(선수 서술형 소개 전용).
+     * 넘기지 않으면 종전 그대로다 — 구단·뉴스·공식 경로는 이 인자를 쓰지 않는다.
+     */
+    project?: EvidenceProjector,
+  ) => Promise<RagEvidence[]>;
   /** 근거를 **비신뢰 데이터**로만 전달하는 재서술 호출 (S2b). */
   callRagLlm?: (question: string, evidence: RagEvidence[], extras?: RagLlmExtras) => Promise<LlmResult>;
   /**
@@ -3984,7 +3994,24 @@ async function answerPlayerDescriptiveQuestion(
   // 근거 검색은 LLM 경계 앞이다 — 근거가 없으면 LLM을 아예 소비하지 않고 종결한다.
   let evidence: RagEvidence[];
   try {
-    evidence = selectEvidence(await deps.searchRag!(candidate, question));
+    // 🔴 projection 은 **production seam 안쪽**에서 돈다 — `searchRag` 가 상위 6건으로
+    //   자르기 **전**에 적용돼야 rank 7 이하의 clean 소개 근거가 도달한다(삼순 P1-a).
+    //   여기서 반환값에 후처리로 걸면 이미 잘린 6건만 보게 되어 계약이 깨진다.
+    //   등급 단일화·명분없는 근거 탈락·상위 N 은 projection 경로 안에 그대로 들어있다.
+    const searched = await deps.searchRag!(candidate, question, projectPlayerDescriptiveRow);
+    // 🔴 그리고 경계에서 **한 번 더** 걱맞다. seam 안 projection 은 rank 7 도달을 위한 것이고,
+    //   이 재적용은 **정제되지 않은 근거가 LLM 에 닿지 않는다**는 불변을 지키기 위한 것이다.
+    //   `searchRag` 구현체가 projector 를 무시해도(다른 배선·미래 구현) 지시문·수치 chunk 가
+    //   프롬프트로 새지 않는다. projection 은 멱등이라 두 번 걸어도 결과가 같다.
+    evidence = [];
+    let boundaryGrade: RagEvidence["sourceGrade"] | null = null;
+    for (const row of searched) {
+      const content = projectPlayerDescriptiveRow(row);
+      if (content.length < 20) continue;
+      if (boundaryGrade === null) boundaryGrade = row.sourceGrade;
+      else if (row.sourceGrade !== boundaryGrade) continue;
+      evidence.push({ ...row, content });
+    }
   } catch {
     // ⚠️ 검색 RPC 실패는 "근거가 없다" 가 아니라 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
     //   둘을 같은 칸에 넣으면 장애가 "근거 부족" 통계에 섞여 조용히 정상처럼 보인다.
