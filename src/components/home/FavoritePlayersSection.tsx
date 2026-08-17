@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
@@ -213,31 +215,49 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
   }, [favKey, refreshNonce]);
 
   // 오늘 경기 활약 — 팀의 당일 경기 박스스코어 라인. 라이브 갱신 위해 45초 폴링.
+  // 숨은 탭(백그라운드)에선 폴링을 멈춰 Edge Request 낭비를 없애고, 복귀 시 즉시 1회 새로고침한다.
+  const hasFavPlayers = favPlayers.length > 0;
   useEffect(() => {
-    if (favPlayers.length === 0) { setTodayGames({}); return; }
-    let cancelled = false;
-    const load = async () => {
-      const entries = await Promise.all(
-        favPlayers.map(async (p) => {
-          const pos = classifyIsPitcher(p) ? "투수" : "타자";
-          const r: TodayGame | null = await fetch(
-            `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
-          )
-            .then((res) => (res.ok ? res.json() : null))
-            .catch(() => null);
-          return [p.playerId, r] as const;
-        }),
-      );
-      if (cancelled) return;
-      const m: Record<string, TodayGame> = {};
-      for (const [id, r] of entries) if (r && r.show) m[id] = r;
-      setTodayGames(m);
-    };
-    load();
-    const iv = setInterval(load, 45000);
-    return () => { cancelled = true; clearInterval(iv); };
+    if (!hasFavPlayers) setTodayGames({});
+  }, [hasFavPlayers]);
+
+  // 대상(favKey/refreshNonce) 전환·최애 0명·unmount 시 late 응답이 최신 state를 덮어쓰지
+  // 못하게 하는 generation fence. 증가 지점을 load 시작이 아니라 *대상 변경 effect*로 두어
+  // hasFavPlayers=false 전환·언마운트처럼 load가 재호출되지 않는 경우에도 진행 중 A를 무효화한다.
+  // (새 poller reset은 진행 중 Promise를 취소하지 않으므로 setState 경로에서 차단한다.)
+  const todayGamesGenRef = useRef(0);
+  useEffect(() => {
+    todayGamesGenRef.current += 1;
+    return () => { todayGamesGenRef.current += 1; };
+  }, [favKey, refreshNonce, hasFavPlayers]);
+
+  const loadTodayGames = useCallback(async () => {
+    if (favPlayers.length === 0) return;
+    const gen = todayGamesGenRef.current;
+    const entries = await Promise.all(
+      favPlayers.map(async (p) => {
+        const pos = classifyIsPitcher(p) ? "투수" : "타자";
+        const r: TodayGame | null = await fetch(
+          `/api/player-today-game?team=${p.teamId}&name=${encodeURIComponent(p.name)}&pos=${encodeURIComponent(pos)}`,
+        )
+          .then((res) => (res.ok ? res.json() : null))
+          .catch(() => null);
+        return [p.playerId, r] as const;
+      }),
+    );
+    // 더 최신 로드(favKey 전환 등)가 시작했으면 late 응답 폐기 — A(old)→B(new) 덮어쓰기 방지.
+    if (gen !== todayGamesGenRef.current) return;
+    const m: Record<string, TodayGame> = {};
+    for (const [id, r] of entries) if (r && r.show) m[id] = r;
+    setTodayGames(m);
+    // favKey로 최애선수 변경만 감지 (favPlayers 배열 identity 변동에 따른 재요청 방지)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [favKey, refreshNonce]);
+
+  useVisibilityAwareInterval(loadTodayGames, 45000, {
+    enabled: hasFavPlayers,
+    resetKey: `${favKey}:${refreshNonce}`,
+  });
 
   if (favPlayers.length === 0) return null;
 
