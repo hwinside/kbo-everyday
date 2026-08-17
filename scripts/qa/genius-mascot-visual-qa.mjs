@@ -231,13 +231,17 @@ if (!(SAFE_PAD > 0)) {
 // 생성기와 조용히 어긋난다(8/15 교훈, 이미 safe_pad 에 적용한 계약).
 const HOLE_MAX = DERIVED?.params?.hole_px_max;
 const MOTION_MIN = DERIVED?.params?.motion_pct_min;
-if (!(HOLE_MAX >= 0) || !(MOTION_MIN > 0)) {
-  console.log(`  ❌ DERIVED.json 에 hole_px_max/motion_pct_min 이 없다 — 생성기 계약을 읽을 수 없다`);
+const OVERFILL_MAX = DERIVED?.params?.overfill_px_max;
+const DROPPED_MAX = DERIVED?.params?.dropped_px_max;
+if (!(HOLE_MAX >= 0) || !(MOTION_MIN > 0) || !(OVERFILL_MAX >= 0) || !(DROPPED_MAX >= 0)) {
+  console.log("  ❌ DERIVED.json 에 hole_px_max/motion_pct_min/overfill_px_max/dropped_px_max 가 없다"
+    + " — 생성기 계약을 읽을 수 없다");
   process.exit(1);
 }
 const T = SELFTEST
   ? { poster: -1, padMax: -1, padMin: 9999, haloDelta: -1, hole: -1, motion: 9999 }
   : { poster: 2, padMax: SAFE_PAD, padMin: 1, haloDelta: 40, hole: HOLE_MAX, motion: MOTION_MIN };
+const TR = SELFTEST ? { overfill: -1, dropped: -1 } : { overfill: OVERFILL_MAX, dropped: DROPPED_MAX };
 
 check(`poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
   rows.every((r) => r.posterAvg < T.poster),
@@ -288,6 +292,23 @@ check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 
     .map(([n, m]) => `${n}=${m.defect_px}px@f${m.defect_frame}`);
   check(`DERIVED.json: 키잉 구멍 <= ${T.hole}px (원본 대조 — 몸을 배경으로 오인해 파먹지 않았다)`,
     SELFTEST ? false : bad.length === 0, bad.join(", "));
+}
+// 🔴 **역방향** — 결함을 지우는 보정(fill_holes·speck 제거)이 정상 요소까지 지우지 않았는가
+//    (삼순 2026-08-17). 위 키잉구멍 축만 보면 "다 메워버리면 항상 통과"하는 서로 반대 방향의
+//    false-green 이 생긴다. 둘 다 생성기가 **원본 픽셀과 대조**해 재고 manifest 에 썼다.
+{
+  const bad = Object.entries(DERIVED.clips ?? {})
+    .filter(([, m]) => !(m.overfill_px <= TR.overfill))
+    .map(([n, m]) => `${n}=${m.overfill_px}px`);
+  check(`DERIVED.json: 과채움 <= ${TR.overfill}px (정상 음공간—다리 사이 등—을 메우지 않았다)`,
+    bad.length === 0, bad.join(", "));
+}
+{
+  const bad = Object.entries(DERIVED.clips ?? {})
+    .filter(([, m]) => !(m.dropped_component_px <= TR.dropped))
+    .map(([n, m]) => `${n}=${m.dropped_component_px}px`);
+  check(`DERIVED.json: 삭제된 분리 조각 <= ${TR.dropped}px (공·응원도구 같은 소품이 안 지워졌다)`,
+    bad.length === 0, bad.join(", "));
 }
 // 파생 자산을 직접 재측정한 값과 생성기 기록이 일치하는가 — **빌드 후 자산이 교체됐다**를 잡는다.
 // (edge_run ↔ padMin 을 둘 다 보는 것과 같은 구조. 한쪽만 보면 조용히 어긋난다.)

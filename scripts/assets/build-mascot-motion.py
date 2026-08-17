@@ -112,6 +112,16 @@ HOLE_PX_MAX = 8
 # 실루에 변화량 하한(%) — "활발하게 움직이는" 요구사항을 숫자로 고정한 것.
 MOTION_PCT_MIN = 1.2
 
+# 🔴 **역방향** 계약 (삼순 2026-08-17). 결함을 지우는 보정이 정상 요소까지 지우면
+# 그것도 똑같은 화면 결함이다. 둘 다 원본 대조로 재기 때문에 임의 임계값이 아니다.
+#   · overfill  = fill_holes 가 원본의 진짜 배경(다리 사이 등)을 메운 양 — 실측 13종 전부 0.
+#   · dropped   = speck 제거로 사라진 최대 조각 — 실측 최대 411px(bored).
+#     411px 는 1280x720 에서 20x20 수준이고, 육안 확인 결과 압축 아티팩트였다
+#     (공·응원도구 같은 의미 있는 요소는 전부 본체와 붙어 있거나 훨씬 크다).
+#     그래도 **언젠가 진짜 소품이 떨어져 나가면** 잡혀야 하므로 상한을 둔다.
+OVERFILL_PX_MAX = 0
+DROPPED_PX_MAX = 500
+
 
 def key_frame(rgb: np.ndarray) -> np.ndarray:
     """flood-fill 키잉 — 네 모서리 색과 **외곽에 연결된** 영역만 배경으로 본다.
@@ -128,23 +138,48 @@ def key_frame(rgb: np.ndarray) -> np.ndarray:
          메워지지 않는다(실측으로 확인).
       ③ 큰 조각 대비 0.5% 미만의 부유 조각은 버린다 — 배경 압축 노이즈 제거.
     """
-    a = rgb.astype(np.int16)
-    h, w, _ = a.shape
-    bgc = np.median(np.array([a[2, 2], a[2, w - 3], a[h - 3, 2], a[h - 3, w - 3]]), axis=0)
-    lab, _ = ndimage.label(np.abs(a - bgc).max(axis=2) <= TOL)
-    edge = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
-    edge.discard(0)
-    fg = ~np.isin(lab, list(edge))
-    comp, ncomp = ndimage.label(fg)
-    if ncomp > 1:
-        sizes = ndimage.sum(fg, comp, range(1, ncomp + 1))
-        keep = [i + 1 for i, s in enumerate(sizes) if s >= sizes.max() * SPECK_FRAC]
-        fg = np.isin(comp, keep)
-    fg = ndimage.binary_fill_holes(fg)
-    al = fg.astype(np.uint8) * 255
+    al, _ = key_frame_audit(rgb)
     # 경계 1px 을 부드럽게 — 계단현상 제거. 배경 쪽은 0.55 로 눌러 halo 를 줄인다.
     af = ndimage.uniform_filter(al.astype(np.float32), size=3)
     return np.where(al > 0, np.maximum(al, af), af * 0.55).clip(0, 255).astype(np.uint8)
+
+
+def key_frame_audit(rgb: np.ndarray):
+    """`key_frame` 의 하드 알파 + **그 과정에서 무엇을 지우고 메웠는지**를 함께 돌려준다.
+
+    🔴 삼순 2026-08-17 — **역방향 false-green**. 위 ②③(fill_holes·speck 제거)는 결함을
+    지우는 도구인 동시에 **정상 요소를 지우는 도구**다. 한 방향(원본 전경 소실=0)만
+    재면 그 부작용이 그대로 통과한다. 그래서 두 수치를 같이 내보낸다:
+      · `overfill` = fill_holes 가 **원본에서 진짜 배경**이었던 곳을 메운 픽셀 수.
+                     다리 사이 같은 정상 음공간을 메우면 여기 걸린다.
+      · `dropped`  = speck 제거로 사라진 분리 조각 중 **최대 조각** 크기.
+                     공·응원도구 같은 의미 있는 작은 요소가 지워졌는지를 본다.
+    둘 다 임의 임계값이 아니라 **원본 픽셀 대조**로 잰다.
+    """
+    a = rgb.astype(np.int16)
+    h, w, _ = a.shape
+    bgc = np.median(np.array([a[2, 2], a[2, w - 3], a[h - 3, 2], a[h - 3, w - 3]]), axis=0)
+    is_bg = np.abs(a - bgc).max(axis=2) <= TOL
+    lab, _ = ndimage.label(is_bg)
+    edge = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
+    edge.discard(0)
+    raw_fg = ~np.isin(lab, list(edge))
+
+    comp, ncomp = ndimage.label(raw_fg)
+    kept, dropped_px = raw_fg, 0
+    if ncomp > 1:
+        sizes = ndimage.sum(raw_fg, comp, range(1, ncomp + 1))
+        keep = [i + 1 for i, s in enumerate(sizes) if s >= sizes.max() * SPECK_FRAC]
+        kept = np.isin(comp, keep)
+        gone = raw_fg & ~kept
+        if gone.any():
+            gl, gn = ndimage.label(gone)
+            dropped_px = int(ndimage.sum(gone, gl, range(1, gn + 1)).max())
+
+    fg = ndimage.binary_fill_holes(kept)
+    # 메운 자리 중 원본에서 **진짜 배경색**이었던 픽셀만 과채움으로 센다.
+    overfill_px = int(((fg & ~kept) & is_bg).sum())
+    return fg.astype(np.uint8) * 255, {"overfill": overfill_px, "dropped": dropped_px}
 
 
 def _read_video_frames(path: str):
@@ -184,7 +219,15 @@ def build(name: str):
         source_kind = f"ssot:{name}-black.webp"
         step = STEP
     idx = list(range(0, len(raw), step))
-    alphas = [key_frame(raw[i]) for i in idx]
+    alphas, audits = [], []
+    for i in idx:
+        hard, au = key_frame_audit(raw[i])
+        soft = ndimage.uniform_filter(hard.astype(np.float32), size=3)
+        alphas.append(np.where(hard > 0, np.maximum(hard, soft), soft * 0.55)
+                      .clip(0, 255).astype(np.uint8))
+        audits.append(au)
+    overfill_px = max(a["overfill"] for a in audits)
+    dropped_px = max(a["dropped"] for a in audits)
 
     # union bbox — 전 프레임 합집합으로 잘라야 동작 중 캐릭터가 잘리지 않는다.
     st = np.stack([a > 96 for a in alphas])
@@ -246,6 +289,7 @@ def build(name: str):
     return out, {"frames": len(out), "w": nw, "h": TARGET_H,
                  "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
                  "source_frames": len(raw), "source": source_kind,
+                 "overfill_px": overfill_px, "dropped_component_px": dropped_px,
                  "src_frames": src_small, "src_bgc": src_bgc}
 
 
@@ -476,6 +520,10 @@ def main() -> int:
             bad.append(f'잘림 {max(er.values())}px')
         if meta["defect_px"] > HOLE_PX_MAX:
             bad.append(f'키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
+        if meta["overfill_px"] > OVERFILL_PX_MAX:
+            bad.append(f'과채움 {meta["overfill_px"]}px')
+        if meta["dropped_component_px"] > DROPPED_PX_MAX:
+            bad.append(f'조각삭제 {meta["dropped_component_px"]}px')
         if meta["motion_pct"] < MOTION_PCT_MIN:
             bad.append(f'idle {meta["motion_pct"]}%')
         mark = "✅" if not bad else "🔴 " + " · ".join(bad)
@@ -492,6 +540,7 @@ def main() -> int:
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
                    "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
                    "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
+                   "overfill_px_max": OVERFILL_PX_MAX, "dropped_px_max": DROPPED_PX_MAX,
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
                        "scripts/assets/mascot-motion-SOURCES.sha256)",

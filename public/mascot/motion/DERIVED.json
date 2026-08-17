@@ -10,6 +10,8 @@
   "speck_frac": 0.005,
   "hole_px_max": 8,
   "motion_pct_min": 1.2,
+  "overfill_px_max": 0,
+  "dropped_px_max": 500,
   "frame_ms": [
    83,
    84
@@ -88,6 +90,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/bored.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 411,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -175,6 +179,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheer.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 87,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -262,6 +268,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheerC.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 9,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -349,6 +357,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheerD.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 16,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -436,6 +446,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheerG.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 11,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -523,6 +535,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheerpom.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 10,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -610,6 +624,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheerstick.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 13,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -697,6 +713,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/cheertowel.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 7,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -784,6 +802,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/excited.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 80,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -871,6 +891,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/headspin.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 17,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -958,6 +980,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/pitching.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 8,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -1045,6 +1069,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/swing.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 8,
    "edge_run": {
     "top": 0,
     "bottom": 0,
@@ -1132,6 +1158,8 @@
    "fps": 11.98,
    "source_frames": 121,
    "source": "video:v2-regen/thinking.mp4",
+   "overfill_px": 0,
+   "dropped_component_px": 254,
    "edge_run": {
     "top": 0,
     "bottom": 0,
