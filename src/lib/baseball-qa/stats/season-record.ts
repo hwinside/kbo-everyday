@@ -297,6 +297,33 @@ const METRIC_IN_SUBORDINATE =
 const RANK_FOCUS = /순위|몇\s*위|랭킹|순위권/;
 
 /**
+ * 비스탯 초점의 **종류**까지 가른다 (삼순 2026-08-17 NO-GO 반영).
+ *
+ * 전부 LLM 으로 넘기면 `어제/순위/추세` 가 다시 환각한다 — 두 갈래로 나눈다:
+ *   · `cultural`  — 조건절 안의 지표(`안타를 쳤을때 …세레머니 있어?`). 지표는 배경이고
+ *     진짜 질문은 문화·서사다 → **team_rag(나무위키 근거)** 로 흘려 근거 답변.
+ *   · `stat_scope` — 시점특정·방법/추세·순위 오요청. 스탯 질문인데 그 스코프의 정본이 없다
+ *     → LLM 환각 금지, **명시 fail-close**(`정확한 자료 없음`/순위표 안내).
+ *
+ * 순서가 계약이다 — 조건절(cultural) 먼저. `안타를 쳤을때` 같은 배경 지표는
+ * 수치 질문이 아니므로 team_rag 가 먼저 소유하게 한다.
+ */
+export type NonStatFocus = "none" | "cultural" | "stat_scope";
+export function classifyNonStatFocus(
+  question: string,
+  opts: { rankIsMismatch: boolean },
+): NonStatFocus {
+  const compact = normalize(question);
+  // 조건·가정절 안의 지표 = 문화·서사 질문 → 근거답(team_rag) 대상.
+  if (METRIC_IN_SUBORDINATE.test(compact)) return "cultural";
+  // 시점·방법/추세·순위 = 정본 없는 스탯 스코프 → 명시 fail-close.
+  if (DAY_LEVEL_TEMPORAL.test(compact)) return "stat_scope";
+  if (METHOD_TREND_ASK.test(compact)) return "stat_scope";
+  if (opts.rankIsMismatch && RANK_FOCUS.test(compact)) return "stat_scope";
+  return "none";
+}
+
+/**
  * 질문의 초점이 비(非)스탯인가 — 구조화 스탯 경로를 건너뛰어야 하는가.
  * @param opts.rankIsMismatch 순위어가 곧 오요청인 축인가(선수 시즌 축 = true, 팀 축 = false).
  *   팀 축은 `순위`가 실제 서빙 지표라 순위 신호로 비켜세우면 안 된다.
@@ -305,12 +332,7 @@ export function hasNonStatFocus(
   question: string,
   opts: { rankIsMismatch: boolean },
 ): boolean {
-  const compact = normalize(question);
-  if (DAY_LEVEL_TEMPORAL.test(compact)) return true;
-  if (METHOD_TREND_ASK.test(compact)) return true;
-  if (METRIC_IN_SUBORDINATE.test(compact)) return true;
-  if (opts.rankIsMismatch && RANK_FOCUS.test(compact)) return true;
-  return false;
+  return classifyNonStatFocus(question, opts) !== "none";
 }
 
 export interface SeasonRecordQuery {

@@ -60,6 +60,7 @@ import {
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
   hasNonStatFocus,
+  classifyNonStatFocus,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -3112,7 +3113,18 @@ export function routeQuestion(
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
   // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
   // 실제 순위표/팀기록을 조회해 답하고, 조회 실패·미지원 지표만 fail-close 한다.
-  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) return "team_record";
+  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) {
+    // 동문서답 방지 (삼순 2026-08-17 NO-GO) — `안타`(지표어) fallback 으로 team_record 가
+    //   비스탯 질문을 선점해 `988` 을 던지거나 `TEAM_STAT_HOLD` 로 삼키는 것을 막는다.
+    //   · cultural(조건절 내 지표 = 세레머니 등): team_record 를 선택하지 **않고** 아래로 흘려
+    //     `llm_scope_gate` → team_rag(나무위키 근거) 에 닿게 한다(source=team_rag).
+    //   · stat_scope(어제·특정경기·순위·추세): 정본 없는 스탯 스코프 → `history_hold` 명시 fail-close
+    //     (source != team_rag). LLM 환각 금지.
+    const nf = classifyNonStatFocus(question, { rankIsMismatch: false });
+    if (nf === "stat_scope") return "history_hold";
+    if (nf !== "cultural") return "team_record";
+    // cultural 은 아래로 흘려 team_rag 진입(종결 return 없음).
+  }
 
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (!supportedRuleTerm) {
