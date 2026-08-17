@@ -168,30 +168,34 @@ UPDATE public.baseball_terms
    AND NOT (aliases @> ARRAY['fc','필더스초이스','필더스 초이스']);
 
 -- ── postcondition ────────────────────────────────────────────────────────────
--- 신규 13행이 전부 들어갔고 최종 176행인지 트랜잭션 안에서 확인한다.
+-- 신규 11행이 전부 들어갔고 최종 174행인지 트랜잭션 안에서 확인한다.
 -- 하나라도 어긋나면 되돌린다(부분 적용 금지).
--- 🔴 삼순 P1: 종전에는 "term 이 존재하는가" 만 봤다. 그러면 행이 있기만 하면 answer·aliases·
---   근거 분류가 무엇이든 통과한다. 신규 11행은 **full-row** 로 확인한다 —
---   answer 앞머리·alias 개수·category·source_kind·source_url·rule_version 까지.
+--
+-- 🔴 삼순 2차 NO-GO P1: 종전 판은 aliases 를 **개수만**, answer 를 `length >= 20` 만 봤다.
+--   이 INSERT 는 `ON CONFLICT (term) DO NOTHING` 이므로 같은 term 의 **틀린 answer** 나
+--   개수만 같은 **엉뚱한 aliases** 가 이미 있으면 INSERT 가 통째로 건너뛰고, 그 상태를
+--   postcondition 이 GREEN 으로 통과시킨다. exact aliases 배열과 answer 의 md5 를 고정한다.
+--   (md5 는 보안용이 아니라 **본문 동일성 지문**이다 — 한 글자만 달라도 EXCEPTION.)
 DO $$
 DECLARE
   expected jsonb := '[
-    {"term":"게임차","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":10},
-    {"term":"할푼리","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","na":8},
-    {"term":"투수","cat":"position","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","na":3},
-    {"term":"1군","cat":"league","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","na":5},
-    {"term":"퀄리티스타트플러스","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","na":6},
-    {"term":"필승조","cat":"pitching","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
-    {"term":"와이어투와이어","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":4},
-    {"term":"가을야구","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
-    {"term":"플라잉캐치","cat":"defense","kind":"editorial_definition","url":null,"ver":"not_applicable","na":4},
-    {"term":"설욕","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3},
-    {"term":"집관","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","na":3}
+    {"term":"게임차","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["게임 차", "게임차이", "게임 차이", "반게임", "반게임차", "반 게임차", "0.5게임차", "0.5게임", "games behind", "승차"],"answer_md5":"522186162d3a64e5eb7281c5b438711f"},
+    {"term":"할푼리","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["할", "푼", "리", "할 푼 리", "할푼", "몇할몇푼몇리", "몇 할 몇 푼 몇 리", "사할"],"answer_md5":"87cd8cc9494c1a2e75b838953f50b3a3"},
+    {"term":"투수","cat":"position","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","aliases":["피처", "pitcher", "투수진"],"answer_md5":"7a4558ea9b939abd2fa28ddbde0b420d"},
+    {"term":"1군","cat":"league","kind":"official_rule","url":"https://www.koreabaseball.com/Reference/Etc/GameRule.aspx","ver":"2026","aliases":["일군", "1군 2군", "1군2군", "일군 이군", "1군 등록"],"answer_md5":"179630a6d6c9b235c3f98e38ccfa3bf0"},
+    {"term":"퀄리티스타트플러스","cat":"record","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["퀄리티 스타트 플러스", "qs+", "qs 플러스", "큐에스플러스", "퀄스플러스", "퀄리티스타트+"],"answer_md5":"771fa2de790c9b699d61595f9fc8adf0"},
+    {"term":"필승조","cat":"pitching","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["필승 조", "승리조", "필승계투조"],"answer_md5":"2392096f745b318ed49e4c9c5b54ced4"},
+    {"term":"와이어투와이어","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["와이어 투 와이어", "wire to wire", "와이어투와이어 우승", "와투와"],"answer_md5":"a95446d2cdd5af0725fb43e08ea9b291"},
+    {"term":"가을야구","cat":"league","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["가을 야구", "가을야구 진출", "가을야구 가다"],"answer_md5":"d57307d69b4c5defb658d192666dafb7"},
+    {"term":"플라잉캐치","cat":"defense","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["플라잉 캐치", "flying catch", "다이빙캐치", "다이빙 캐치"],"answer_md5":"11e391c6cfce4df847d965696bdf0d28"},
+    {"term":"설욕","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["설욕전", "복수전", "리벤지"],"answer_md5":"8e567ce404aa63e928e8e1e595137806"},
+    {"term":"집관","cat":"culture","kind":"editorial_definition","url":null,"ver":"not_applicable","aliases":["집관러", "집관하다", "집에서 관람"],"answer_md5":"0d40722c3c450da058d508e074a17824"}
   ]'::jsonb;
   e jsonb;
   row_rec record;
   total int;
   fc_aliases text[] := ARRAY['fc','필더스초이스','필더스 초이스'];
+  exp_aliases text[];
 BEGIN
   IF jsonb_array_length(expected) <> 11 THEN
     RAISE EXCEPTION '배치 term 목록이 11개가 아니다 (실제 %)', jsonb_array_length(expected);
@@ -215,13 +219,20 @@ BEGIN
     IF row_rec.rule_version IS DISTINCT FROM (e->>'ver') THEN
       RAISE EXCEPTION 'rule_version 불일치: term=% 기대=% 실제=%', e->>'term', e->>'ver', row_rec.rule_version;
     END IF;
-    IF coalesce(array_length(row_rec.aliases, 1), 0) <> (e->>'na')::int THEN
-      RAISE EXCEPTION 'alias 개수 불일치: term=% 기대=% 실제=%',
-        e->>'term', e->>'na', coalesce(array_length(row_rec.aliases, 1), 0);
+
+    -- exact aliases (순서까지 동일해야 한다 — 개수 일치는 증명이 아니다)
+    SELECT array_agg(value ORDER BY ord) INTO exp_aliases
+      FROM jsonb_array_elements_text(e->'aliases') WITH ORDINALITY AS t(value, ord);
+    IF row_rec.aliases IS DISTINCT FROM exp_aliases THEN
+      RAISE EXCEPTION 'aliases 불일치: term=% 기대=% 실제=%', e->>'term', exp_aliases, row_rec.aliases;
     END IF;
-    IF row_rec.answer IS NULL OR length(row_rec.answer) < 20 THEN
-      RAISE EXCEPTION 'answer 가 비었거나 너무 짧다: term=%', e->>'term';
+
+    -- exact answer (md5 지문 — 한 글자만 달라도 잡힌다)
+    IF md5(row_rec.answer) IS DISTINCT FROM (e->>'answer_md5') THEN
+      RAISE EXCEPTION 'answer 본문 불일치: term=% 기대md5=% 실제md5=%',
+        e->>'term', e->>'answer_md5', md5(row_rec.answer);
     END IF;
+
     IF row_rec.reviewed_at IS DISTINCT FROM DATE '2026-08-17' THEN
       RAISE EXCEPTION 'reviewed_at 불일치: term=% 실제=%', e->>'term', row_rec.reviewed_at;
     END IF;

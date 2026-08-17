@@ -433,5 +433,10 @@
       "reason": "조회 — 되묻기가 소유. 주루를 넣으면 여기가 RED",
       "relatedTerm": "주루(제외)"
     }
-  ]
+  ],
+  "mapper_live": {
+    "captured_at": "2026-08-17",
+    "how": "scripts/qa/genius-terms-log-gap2-mapper-live.ts — 배포 server.ts mapGlossaryDefinition 을 batch2 적용 사전 후보로 3회 반복 호출",
+    "contract": "후보가 생기는 선점 질문 전건에 대해 3/3 null"
+  }
 }

@@ -2,14 +2,14 @@
  * 검수 사전 2차 로그 기반 확장 게이트 (2026-08-17).
  *
  * 무엇을 증명하는가:
- *  ① migration 을 **실제로 실행**해 행 수가 163 → 176 로 늘어나는지 (PGlite, production 스키마)
- *  ② 신규 13항목이 `answerQuestion` **종단**에서 실제 답변으로 나오는지 — 운영 로그 원문 그대로
+ *  ① migration 을 **실제로 실행**해 행 수가 163 → 174 로 늘어나는지 (PGlite, production 스키마)
+ *  ② 신규 11항목이 `answerQuestion` **종단**에서 실제 답변으로 나오는지 — 운영 로그 원문 그대로
  *  ③ 신규 전건이 **회수 가능**한지 — production `matchGlossary` 로 exact 또는 어절 매칭
  *  ④ 답변 톤이 합니다체 SSOT 를 지키는지 (`isBaseballGeniusToneCompliant`)
  *  ⑤ 근거 분류 계약(official ↔ source_url ↔ rule_version)
  *  ⑥ 멱등 — 두 번 실행해도 행 수·내용이 변하지 않는지
  *  ⑦ 정규화 키 충돌 0 — 신규 term/alias 가 **기존 항목의 키를 가로채지 않는지**
- *  ⑧ 신규 13항목 전부 운영 로그 근거 보유 — 게이트가 fixture 원문을 **다시 세어** 판정
+ *  ⑧ 신규 11항목 전부 운영 로그 근거 보유 — 게이트가 fixture 원문을 **다시 세어** 판정
  *  ⑨ alias 보강이 기존 `answer` 를 한 글자도 바꾸지 않는지 (톤 migration CAS 보호)
  *
  * ⚠️ 이 게이트는 사전 **행 데이터**를 검증한다. 룰(코드) 추가가 아니므로 파서·정규식이 늘지 않는다.
@@ -37,6 +37,7 @@ import { isBaseballGeniusToneCompliant } from "../../src/lib/baseball-qa/tone";
 const ROOT = process.cwd();
 const SELFTEST = process.argv.includes("--selftest");
 const SELFTEST_PREEMPT = process.argv.includes("--selftest-preempt");
+const SELFTEST_POSTCOND = process.argv.includes("--selftest-postcondition");
 
 const seedSql = fs.readFileSync(path.join(ROOT, "supabase/migrations/20260730_baseball_qa_seed.sql"), "utf8");
 const clubSql = fs.readFileSync(path.join(ROOT, "supabase/migrations/20260730_baseball_qa.sql"), "utf8");
@@ -128,13 +129,15 @@ interface TermRow {
   reviewed_at: string | Date | null;
 }
 
-async function loadDb(applyBatch2Times: number, extraSql?: string): Promise<PGlite> {
+async function loadDb(applyBatch2Times: number, extraSql?: string, preSql?: string): Promise<PGlite> {
   const db = new PGlite();
   const createStmt = clubSql.match(/CREATE TABLE[\s\S]*?baseball_terms[\s\S]*?\);/i)?.[0];
   assert.ok(createStmt, "baseball_terms CREATE TABLE 을 찾지 못했다");
   await db.exec(createStmt.replace(/public\./g, ""));
   await db.exec(seedSql.replace(/public\./g, ""));
   await db.exec(batch1Sql.replace(/public\./g, ""));
+  // 결함 주입 전용 — batch2 **이전** 상태를 오염시킨다(`--selftest-postcondition`).
+  if (preSql) await db.exec(preSql);
   // 🔴 batch2 의 postcondition DO 블록은 `public.` 을 떼면 안 되는 게 아니라, 떼야 PGlite 에서 돈다.
   for (let i = 0; i < applyBatch2Times; i += 1) await db.exec(batch2Sql.replace(/public\./g, ""));
   // 결함 주입 전용 — 정상 실행 경로에서는 절대 쓰이지 않는다(`--selftest-preempt`).
@@ -281,6 +284,29 @@ async function runChecks(applyBatch2: boolean, injectPreempt = false): Promise<C
     check(
       pageSum === logEvidence.total_rows,
       `page 합(${pageSum}) 이 total_rows(${logEvidence.total_rows}) 와 다르다 — 모집단 주장이 근거와 어긋난다`,
+    );
+    // 🔴 삼순 2차 NO-GO P1: 합계만 보면 **중복 페이지·공백 구간**도 통과한다
+    //   (예: 0-999 를 두 번 받아도 합은 2000). `range` 문자열을 실제로 파싱해
+    //   ①0 에서 시작 ②앞 page 의 end+1 == 다음 page 의 start (겹침·구멍 0)
+    //   ③각 page 의 선언 rows 가 그 range 폭과 일치 하는지 본다.
+    let cursor = 0;
+    for (const [i, pg] of pages.entries()) {
+      const m = /^(\d+)-(\d+)$/.exec(pg.range ?? "");
+      check(!!m, `page[${i}] range 형식이 아니다 (${JSON.stringify(pg.range)}) — 연속성을 검증할 수 없다`);
+      if (!m) continue;
+      const start = Number(m[1]);
+      const end = Number(m[2]);
+      check(start === cursor, `page[${i}] 가 ${cursor} 에서 이어지지 않는다 (start=${start}) — 겹침 또는 구멍`);
+      check(end >= start, `page[${i}] range 가 뒤집혔다 (${pg.range})`);
+      check(
+        pg.rows === end - start + 1 || (i === pages.length - 1 && pg.rows <= end - start + 1),
+        `page[${i}] 선언 rows(${pg.rows}) 가 range 폭(${end - start + 1}) 과 다르다`,
+      );
+      cursor = start + pg.rows;
+    }
+    check(
+      cursor === logEvidence.total_rows,
+      `page 연속 커버가 ${cursor} 에서 끝났다 — total_rows(${logEvidence.total_rows}) 와 다르다`,
     );
     const last = pages[pages.length - 1];
     check(
@@ -432,7 +458,70 @@ async function runChecks(applyBatch2: boolean, injectPreempt = false): Promise<C
   return { pass, fail };
 }
 
+/**
+ * 🔴 postcondition 검출력 증명 (`--selftest-postcondition`, 삼순 2차 NO-GO P1).
+ *
+ * INSERT 는 `ON CONFLICT (term) DO NOTHING` 이다. 그러므로 **같은 term 의 틀린 행이 이미 있으면**
+ * INSERT 가 통째로 건너뛰고, 약한 postcondition(개수·길이)은 그 상태를 GREEN 으로 통과시킨다.
+ * 여기서는 그 오염 상태를 batch2 **이전에** 만들어 두고, postcondition 이 실제로 EXCEPTION 을
+ * 내는지 확인한다. 오염이 통과하면 이 게이트는 아무것도 증명하지 않는다.
+ */
+const POSTCOND_INJECTIONS: Array<{ label: string; sql: string }> = [
+  {
+    label: "answer 본문 변조(길이·개수는 동일)",
+    sql: `INSERT INTO baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
+VALUES ('투수', ARRAY['피처','pitcher','투수진'],
+ '마운드에서 타자에게 공을 던지는 수비 포지션입니다.
+선발투수와 불펜투수로 나뉘고, 불펜은 다시 중간계투와 마무리로 나뉜다.
+수비 팀에서 모든 플레이를 시작하는 자리입니다.',
+ 'position', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-17');`,
+  },
+  {
+    label: "aliases 내용 변조(개수는 동일)",
+    sql: `INSERT INTO baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
+VALUES ('가을야구', ARRAY['가을 야구','가을야구 진출','포스트시즌'],
+ '정규시즌이 끝난 뒤 치르는 포스트시즌을 부르는 말입니다.
+가을에 열려서 붙은 별칭이며, 정규시즌 상위 다섯 팀이 나갑니다.
+와일드카드 결정전부터 시작해 한국시리즈로 끝납니다.',
+ 'league', 'editorial_definition', NULL, 'not_applicable', DATE '2026-08-17');`,
+  },
+  {
+    label: "근거 분류 변조(출처를 몰래 official 로)",
+    sql: `INSERT INTO baseball_terms(term, aliases, answer, category, source_kind, source_url, rule_version, reviewed_at)
+VALUES ('설욕', ARRAY['설욕전','복수전','리벤지'],
+ '앞선 경기에서 진 상대를 다음 맞대결에서 이기는 것을 뜻합니다.
+같은 시리즈 안에서 첫 판을 내준 뒤 이겼을 때 자주 씁니다.
+공식 기록 용어는 아니고 중계와 기사에서 쓰는 표현입니다.',
+ 'culture', 'official_rule', 'https://www.koreabaseball.com/Reference/Etc/GameRule.aspx', '2026', DATE '2026-08-17');`,
+  },
+];
+
 async function main() {
+  if (SELFTEST_POSTCOND) {
+    const survived: string[] = [];
+    for (const inj of POSTCOND_INJECTIONS) {
+      let raised: string | null = null;
+      try {
+        const db = await loadDb(1, undefined, inj.sql);
+        await db.close();
+      } catch (e) {
+        raised = String((e as Error)?.message ?? e);
+      }
+      if (raised) {
+        console.log(`   ✅ RED  ${inj.label}\n        → ${raised.split("\n")[0].slice(0, 140)}`);
+      } else {
+        survived.push(inj.label);
+        console.log(`   ❌ 통과 ${inj.label} — postcondition 이 오염을 못 잡는다`);
+      }
+    }
+    if (survived.length > 0) {
+      console.error(`❌ selftest-postcondition: ${survived.length}건이 오염된 채 통과했다`);
+      process.exit(1);
+    }
+    console.log(`✅ selftest-postcondition: ON CONFLICT DO NOTHING 오염 ${POSTCOND_INJECTIONS.length}종 전부 EXCEPTION. 검출력 확인`);
+    return;
+  }
+
   if (SELFTEST_PREEMPT) {
     // 제외한 2행을 도로 넣으면 선점축이 RED 를 내야 한다.
     const injected = await runChecks(true, true);
