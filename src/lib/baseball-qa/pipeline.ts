@@ -479,6 +479,15 @@ const SCOPE_FILLER_RE = new RegExp(
  */
 const SCOPE_META_WORDS_LONGEST_FIRST = [...SCOPE_META_WORDS].sort((a, b) => b.length - a.length);
 
+/**
+ * 메타어를 떼어낸 **자리 표시**. 정상 입력에 나올 수 없는 제어문자를 쓴다.
+ *
+ * 잔여 조각이 메타어 앞이었는지 뒤였는지를 재려면 뗀 위치가 남아 있어야 한다.
+ * 만에 하나 입력에 이 문자가 섞여 오면 판정은 "물은 대상이 있다" 쪽으로 기울어
+ * 안내문을 **덜** 주는 방향으로 닫힌다(fail-close).
+ */
+const SCOPE_META_MARK = "\u0000";
+
 /** 조사 꼬리 — 긴 것 우선으로 써야 `에는` 이 `는` 으로 잘리지 않는다. */
 const PARTICLE_TAIL_RE =
   /(?:에는|에서|으로|부터|까지|처럼|만큼|밖에|이랑|하고|은|는|이|가|을|를|에|도|만|랑|과|와|의|로)$/u;
@@ -521,16 +530,23 @@ export function isScopeAskPhrase(question: string): boolean {
     //   mutation 으로 그 함수를 통째로 무력화해도 15케이스 전수 결과가 동일했다
     //   (= 반증 불가능한 죽은 코드). 아래 `isParticleOnly` 가 이미 자수기를 다 처리하므로
     //   제거했다 — 검증할 수 없는 분기를 남기면 다음 사람이 그걸 계약으로 오독한다.
-    let token = raw;
+    let marked = raw;
     let matchedMeta = false;
     // 한 토큰이 메타어 여러 개를 붙인 경우(`야구룰`)를 벘겨낸다.
     // 긴 것부터 떼야 `프로야구` 가 `프로` + (야구) 로 쪼개지지 않는다.
+    //
+    // ⚠️ 뗀 자리를 **마커로 남긴 본**(`marked`)과 **지운 본**(`token`)을 둘 다 든다.
+    //   마커본은 아래 조사 판정에서 "조각이 메타어 앞이었나 뒤였나"를 가리는 데 쓰고,
+    //   지운 본은 기존 집합 대조(`SCOPE_META_SET`·`SCOPE_SINGLE_FILLER_SET`)에 그대로 쓴다.
+    //   마커본만 남기면 `질문할` → `\0할` 이 돼 한 글자 꺼풀 `할` 이 집합에서 어깋난다
+    //   (작성 직후 게이트가 `뭐 질문할 수 있어?` 로 먼저 잡았다).
     for (const meta of SCOPE_META_WORDS_LONGEST_FIRST) {
-      if (token.includes(meta)) {
-        token = token.split(meta).join("");
+      if (marked.includes(meta)) {
+        marked = marked.split(meta).join(SCOPE_META_MARK);
         matchedMeta = true;
       }
     }
+    const token = marked.split(SCOPE_META_MARK).join("");
     if (matchedMeta) sawMeta = true;
     if (SCOPE_META_SET.has(token)) {
       sawMeta = true;
@@ -541,7 +557,7 @@ export function isScopeAskPhrase(question: string): boolean {
     if (SCOPE_SINGLE_FILLER_SET.has(token)) continue;
     // 꺼풀을 전부 떼어내고 남는 게 조사뿐이면 그 토큰은 "물음의 형식"일 뿐이다.
     //
-    // ⚠️ 단 **잔여물이 원래 토큰의 꼬리일 때만** 조사로 인정한다 (2026-08-16 운영 로그).
+    // ⚠️ 단 **잔여물이 메타어보다 뒤에 있었을 때만** 조사로 인정한다 (2026-08-16 운영 로그).
     //   한국어 조사는 내용어 **뒤**에 붙는다. 그런데 종전 구현은 잔여물의 위치를 보지 않아,
     //   메타어 **앞**에 있던 수식어까지 조사로 분해했다:
     //     `가을야구` → 메타어 `야구` 제거 → 잔여 `가을` → `을` 떼고 `가` 떼면 빈 문자열
@@ -552,15 +568,30 @@ export function isScopeAskPhrase(question: string): boolean {
     //
     //   `가을` 을 `가`+`을` 로 보는 것은 조사 두 개를 연달아 붙인 셈이라 애초에 문법적으로
     //   성립하지 않는다. 위치 조건 하나로 이 부류가 통째로 닫힌다(어휘 열거 아님).
-    //     `룰은`   → 메타어 `룰` 제거 → 잔여 `은` 은 원래 토큰의 꼬리 → 조사 ✅
-    //     `가을야구` → 잔여 `가을` 은 꼬리가 아님(머리) → 물은 대상 ✅
     //
-    // ⚠️ 그리고 **무언가 실제로 제거됐을 때만** 조사 판정을 적용한다(`residue !== raw`).
-    //   조사는 단독으로 발화되지 않으므로, 아무것도 안 떼어낸 토큰이 "조사뿐"일 수는 없다.
+    // 🔴 위치는 **원문(raw)의 꼬리가 아니라 꺼풀 제거 후 형태**에서 봐야 한다
+    //   (삼순 2026-08-17 NO-GO). `raw.endsWith(residue)` 로 재면 무공백 질문이 통째로 깨진다:
+    //     `야구룰은뭐가있어` → 잔여 `은` 인데 원문은 `있어` 로 끝남 → false → 범위 안내 소실
+    //   그래서 마커를 기준으로 **머리(메타어 앞) / 꼬리(메타어 뒤)** 를 갈라 판정한다.
+    //     `야구룰은뭐가있어` → `\0\0은뭐가있어` → 머리 `` · 꼬리 `은`   → 조사 ✅
+    //     `가을야구`          → `가을\0`         → 머리 `가을`         → 물은 대상 ✅
+    //
+    // ⚠️ 그리고 **메타어가 실제로 떼어졌을 때만** 조사 판정을 적용한다(마커 존재).
+    //   조사는 단독으로 발화되지 않으므로, 메타어와 붙어 있지 않은 토큰이 "조사뿐"일 수는 없다.
     //   이 조건이 없으면 띄어쓴 `가을 야구` 의 `가을` 토큰이 그대로 조사로 분해된다
     //   (붙여쓴 `가을야구` 만 고치고 띄어쓴 쪽을 놓치는 반쪽 수정이 된다).
-    const residue = token.replace(SCOPE_FILLER_RE, "");
-    if (residue !== raw && raw.endsWith(residue) && isParticleOnly(residue)) continue;
+    const stripped = marked.replace(SCOPE_FILLER_RE, "");
+    const lastMark = stripped.lastIndexOf(SCOPE_META_MARK);
+    if (lastMark === -1) {
+      // 메타어를 안 떼어낸 토큰 — 남은 게 아예 없을 때만 통과시킨다(`뭔가있어` 같은 순수 꺼풀).
+      if (stripped === "") continue;
+    } else {
+      // 머리는 마지막 마커 **이전 전부**로 잡는다. 메타어 사이에 낀 조각(`야구X룰`의 `X`)도
+      // 물은 대상이므로 첫 마커 앞만 보면 놓친다.
+      const head = stripped.slice(0, lastMark).split(SCOPE_META_MARK).join("");
+      const tail = stripped.slice(lastMark + SCOPE_META_MARK.length);
+      if (head === "" && isParticleOnly(tail)) continue;
+    }
     // 범위어도 꺼풀도 아닌 무언가가 남았다 = 물은 대상이 있다 = 진짜 질문이다.
     sawRemainder = true;
     break;
