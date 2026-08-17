@@ -13,8 +13,12 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
-        <!-- 상태바 다크톤 일체화: 배경 #0A0A0B + 밝은 아이콘(windowLightStatusBar=false). -->
-        <item name="android:statusBarColor">@color/status_bar</item>
+        <!-- 상태바는 런타임에 앱 테마(라이트/다크·인앱 토글)에 맞춰 동기화한다.
+             targetSdk 35+에서는 edge-to-edge가 강제되어 android:statusBarColor가 무시되므로,
+             웹뷰가 상태바 뒤까지 그리도록 투명으로 두고(StatusBarThemeSync + @capacitor/status-bar
+             오버레이), 아이콘 명암도 런타임에 setStyle로 맞춘다. windowLightStatusBar=false는
+             JS 로드 전(스플래시 구간)의 기본값일 뿐이다. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 
