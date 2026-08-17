@@ -295,6 +295,8 @@ const METRIC_IN_SUBORDINATE =
   /(?:쳤|쳐|때렸|맞았|던졌|잡았|나왔|출루|득점)[가-힣]{0,2}(?:을\s*때|\s*때|다면|으면|면)/;
 // 순위 오요청 — 선수 시즌 축엔 순위 지표가 없다(순위는 팀·리그 순위표 담당).
 const RANK_FOCUS = /순위|몇\s*위|랭킹|순위권/;
+// 수치 값 요청 — 조건절이어도 수치를 물으면 문화 질문이 아니라 스탯 질문이다(`…쳤을 때 몇 개였어`).
+const NUMERIC_VALUE_ASK = /몇|얼마|개\s*(?:였|야|나|임)/;
 
 /**
  * 비스탯 초점의 **종류**까지 가른다 (삼순 2026-08-17 NO-GO 반영).
@@ -314,12 +316,18 @@ export function classifyNonStatFocus(
   opts: { rankIsMismatch: boolean },
 ): NonStatFocus {
   const compact = normalize(question);
-  // 조건·가정절 안의 지표 = 문화·서사 질문 → 근거답(team_rag) 대상.
-  if (METRIC_IN_SUBORDINATE.test(compact)) return "cultural";
-  // 시점·방법/추세·순위 = 정본 없는 스탯 스코프 → 명시 fail-close.
+  // ⚠️ **stat_scope 신호가 조건절보다 먼저다** (삼순 2026-08-17 2차 NO-GO).
+  //   `어제 롯데가 홈런 쳤을 때 몇 개였어` 는 조건절(쳤을때)이지만 시점(어제)+수치(몇개)라
+  //   문화 질문이 아니다 — 조건절을 먼저 보면 team_rag 로 새다. 시점·방법·순위를 먼저 닫는다.
   if (DAY_LEVEL_TEMPORAL.test(compact)) return "stat_scope";
   if (METHOD_TREND_ASK.test(compact)) return "stat_scope";
   if (opts.rankIsMismatch && RANK_FOCUS.test(compact)) return "stat_scope";
+  // 조건·가정절 안의 지표 — 수치 값을 물으면 스탯 질문(stat_scope), 아니면 문화·서사(cultural).
+  //   `안타를 쳤을때 세레머니 있어?`(비수치) → cultural(team_rag) /
+  //   `홈런 쳤을때 몇개였어`(수치) → stat_scope(정본 없음 → fail-close).
+  if (METRIC_IN_SUBORDINATE.test(compact)) {
+    return NUMERIC_VALUE_ASK.test(compact) ? "stat_scope" : "cultural";
+  }
   return "none";
 }
 
