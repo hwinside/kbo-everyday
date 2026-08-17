@@ -12,7 +12,8 @@ import LinkPreview from "./LinkPreview";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getTeamById } from "@/lib/constants/teams";
-import { hasRequiredTeamTag } from "@/lib/utils/post-scope";
+import { hasRequiredTeamTag, isAllTeamsSelected } from "@/lib/utils/post-scope";
+import { useAllTeamsScopeConfirm } from "./useAllTeamsScopeConfirm";
 
 export interface SeatInfo {
   zone: string;
@@ -88,6 +89,8 @@ export default function WritePost({
 
   // V3 태그(팀·선수 복수). enableTags일 때만 사용.
   const [teamSlugs, setTeamSlugs] = useState<string[]>([]);
+  // 전체공개(10구단 전부 선택) 시 예/아니요 확인창.
+  const { confirmAllTeamsScope, allTeamsScopeDialog } = useAllTeamsScopeConfirm();
   const [taggedPlayers, setTaggedPlayers] = useState<PlayerTag[]>([]);
 
   // 최애팀(profile.team_id) — board 컨텍스트가 없을 때 기본 선택 칩으로 사용.
@@ -196,6 +199,15 @@ export default function WritePost({
     if (seatTipMode && !effectiveZone) return; // 구역 필수
     // 최소 1팀 태그 — 버튼 disabled 우회(Enter 제출 등) 방어.
     if (enableTags && !seatTipMode && !hasRequiredTeamTag(teamSlugs)) return;
+
+    // 전체공개(10구단 전부 선택) 시도 → 확인창. 예=그대로 등록 / 아니요=초안 유지 + 최애팀 1개 축소.
+    if (enableTags && !seatTipMode && isAllTeamsSelected(teamSlugs)) {
+      const yes = await confirmAllTeamsScope();
+      if (!yes) {
+        if (favoriteSlug) setTeamSlugs([favoriteSlug]);
+        return; // 등록하지 않고 작성중 유지.
+      }
+    }
 
     submittingRef.current = true;
     setSubmitting(true);
@@ -349,6 +361,7 @@ export default function WritePost({
               {/* V3 태그 피커 — 팀·선수 복수태그 (enableTags, 좌석팁 제외) */}
               {enableTags && !seatTipMode && (
                 <div className="space-y-4">
+                  {/* 전체 선택 칩 제거(2026-08-16) — 전체공개는 10구단 개별 선택으로만 */}
                   <TeamTagger
                     selectedSlugs={teamSlugs}
                     onToggle={(slug) =>
@@ -356,10 +369,9 @@ export default function WritePost({
                         prev.includes(slug) ? prev.filter((s) => s !== slug) : [...prev, slug],
                       )
                     }
-                    onSetAll={setTeamSlugs}
                   />
                   {!hasTeamScope && (
-                    <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 ‘전체 선택’).</p>
+                    <p className="text-xs text-[#FF453A]">팀을 최소 1개 선택해주세요 (모든 팀에 공개하려면 10개 구단을 모두 선택).</p>
                   )}
                   <PlayerTagger
                     game={null}
@@ -413,6 +425,7 @@ export default function WritePost({
               )}
             </div>
           </motion.div>
+          {allTeamsScopeDialog}
         </>
       )}
     </AnimatePresence>

@@ -10,6 +10,9 @@ const TARGETS = [
   "src/lib/constants/baseball-genius.ts",
   "src/lib/baseball-qa/server.ts",
   "src/lib/supabase/dm-messages.ts",
+  "src/styles/globals.css",
+  "src/components/dm/GeniusMascotImage.tsx",
+  "src/components/dm/GeniusTypingIndicator.tsx",
 ];
 const originals = new Map(TARGETS.map((file) => [file, fs.readFileSync(file, "utf8")]));
 const restore = () => {
@@ -123,6 +126,49 @@ const mutations = [
     from: "      if (latest === null || m.id > latest) latest = m.id;",
     to: "      latest = m.id;",
     expect: "역순",
+  },
+  // ── 2026-08-16 렌더 규격·상시 idle 모션 (하린아빠 지시) ──────────────────
+  {
+    name: "M15 마스코트 크기를 종전 32px 로 되돌림 (안 보이는 상태 재현)",
+    file: TARGETS[2],
+    from: 'export const GENIUS_MASCOT_IMG_CLASS = "h-24 w-auto max-w-none object-contain";',
+    to: 'export const GENIUS_MASCOT_IMG_CLASS = "h-8 w-auto max-w-none object-contain";',
+    expect: "규격 SSOT",
+  },
+  {
+    name: "M16 idle CSS 무한반복 제거 (1회 재생 후 정지 — 사실상 안 움직임)",
+    file: TARGETS[5],
+    from: ".genius-motion-idle { animation: genius-motion-idle 2.4s ease-in-out infinite; }",
+    to: ".genius-motion-idle { animation: genius-motion-idle 2.4s ease-in-out 1; }",
+    expect: "무한 반복",
+  },
+  {
+    name: "M17 idle @keyframes 삭제 (클래스만 남고 조용히 무효화)",
+    file: TARGETS[5],
+    from: "@keyframes genius-motion-idle {",
+    to: "@keyframes genius-motion-idle-unused {",
+    expect: "@keyframes genius-motion-idle",
+  },
+  {
+    name: "M18 idle 을 img 에 같이 거는다 (감정 모션 transform 을 덮어쓰는 배선)",
+    file: TARGETS[6],
+    from: "className={`${GENIUS_MASCOT_IMG_CLASS}${motion ? ` genius-motion-${motion}` : \"\"}`}",
+    to: "className={`${GENIUS_MASCOT_IMG_CLASS} genius-motion-idle${motion ? ` genius-motion-${motion}` : \"\"}`}",
+    expect: "idle 은 래퍼에",
+  },
+  {
+    name: "M19 공유 컴포넌트 우회 (생각중 마스코트를 인라인 img 로 복제)",
+    file: TARGETS[7],
+    from: '<GeniusMascotImage state="thinking" testId="genius-thinking-mascot" />',
+    to: '<img src="/mascot/reply/yajalal-thinking-96.png" alt="" aria-hidden data-testid="genius-thinking-mascot" data-mascot="thinking" className="h-8 w-auto max-w-none object-contain" />',
+    expect: "단일 지점",
+  },
+  {
+    name: "M20 감정 모션을 무한반복으로 (§7.4 남용방지 계약 파괴)",
+    file: TARGETS[5],
+    from: ".genius-motion-bored { animation: genius-motion-bored 2.2s ease-in-out 2; }",
+    to: ".genius-motion-bored { animation: genius-motion-bored 2.2s ease-in-out infinite; }",
+    expect: "유한 반복",
   },
 ];
 
