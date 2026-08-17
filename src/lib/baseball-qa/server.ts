@@ -9,6 +9,7 @@ import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
   answerQuestion,
   BLOCKED_ANSWER,
+  answerTeamIdForResult,
   geniusMotionForResult,
   GENIUS_MOTION_COOLDOWN_MS,
   isAckPhrase,
@@ -1264,8 +1265,16 @@ export async function processBaseballQaQuestion(input: {
   } catch (error) {
     console.error("baseball-genius motion claim failed:", (error as Error).message);
   }
+  // 응원 7종 자격 — 답변 대상 구단 id 를 payload 에 싣는다(하린아빠 2026-08-16 14:09).
+  // 모션과 **같은 단일 지점**에서 (source, question) 결정론 계산 — durable 재시도·조기
+  // blocked 반환도 같은 값을 얻는다(#1197 계약과 동일 축). 최애팀과의 비교는 클라가 한다:
+  // 서버는 "이 답변이 어느 팀 얘기인가"만 알고, "누가 보고 있는가"는 모른다.
+  const answerTeamId = answerTeamIdForResult(result.source, question);
+  // ⚠️ `motion`(부여)과 `motionIntent`(의미)를 **둘 다** 싣는다.
+  //    쿨다운이 거절하면 motion 은 비지만, 그렇다고 "감사"가 "인사"가 되는 건 아니다.
+  //    intent 를 함께 실어야 클라가 의미를 잃지 않는다(삼순 2026-08-16 P0).
   const replyPayload: GeniusReplyPayload = composeGeniusReplyPayload(
-    { ...result, motion },
+    { ...result, motion, motionIntent: candidateMotion, answerTeamId },
     messageId,
   );
   const deliveryDedupKey = result.source === "player_picker"

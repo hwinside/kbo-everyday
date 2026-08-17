@@ -107,6 +107,7 @@ import {
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
+  replyKindForMatchPath,
 } from "@/lib/constants/baseball-genius";
 
 export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
@@ -808,6 +809,53 @@ export function geniusMotionForResult(
   if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
   if (source === "scope_guide" || source === "blocked") return "bored";
   return undefined;
+}
+
+/**
+ * 답변이 다루는 구단의 canonical team id (**응원 클립 자격 판정용**).
+ *
+ * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출" →
+ * 유저 최애팀과 exact 일치할 때만 응원 7종이 붙는다. 그 "답변 대상 팀"을 여기서 정한다.
+ *
+ * ⚠️ **새 판별 룰을 만들지 않는다.** 이미 있는 구단 결속 SSOT(`resolveMentionedTeam`
+ * → `teamIdOfCanonical`)를 그대로 재사용한다. 그 함수는 두 구단 이상이 언급되면
+ * 이미 null 을 돌려주므로(비교 질문), 여기서도 자동으로 자격 없음이 된다.
+ *
+ * ⚠️ **id 로 반환한다.** 팀명 문자열이면 `LG`/`엘지`/`트윈스` 표기 차이로 같은 팀이
+ * 다른 팀이 된다.
+ *
+ * 자격이 없는 경우(전부 null → 응원 안 붙음):
+ *  · 구단이 안 나온 질문(선수·룰·용어)
+ *  · 두 구단 이상(비교 질문)
+ *  · 답을 못 한 경우 — 거절·차단·되묻기·오류에 응원이 붙으면 신호가 뒤집힌다.
+ */
+export function answerTeamIdForResult(source: MatchPath, question: string): number | null {
+  // ⚠️ 거절 경로를 **손으로 열거하지 않는다** (삼순 #1228 4축-③).
+  //    종전엔 `ack`·`blocked`·`unsure`… 를 나열했는데, 새 MatchPath 가 생기면
+  //    그 목록에 없어서 **자동으로 자격을 얻는다**(fail-open). 실제로 `history_hold`·
+  //    `context_missing`·`name_suggest`·`limited`·`pending` 이 목록에서 빠져 있었다.
+    //    `replyKindForMatchPath`(전 경로 명시 열거 SSOT의 공식 접근자)에서 **answer 칸만**
+  //    통과시킨다 — 새 경로가 생기면 그 표에 등록해야 하므로 조용히 새는 경로가 없고,
+  //    표에 없는 값(`pending` 등)은 그 함수가 `unavailable` 로 fail-close 한다.
+  // ⚠️ 타입도 `MatchPath` 로 좁힌다 — 임의 문자열이 들어오면 컴파일에서 막힌다.
+  if (replyKindForMatchPath(source) !== "answer") return null;
+
+  const canonical = resolveMentionedTeam(question);
+  if (canonical === null) return null;
+
+  // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다 —
+  //    `LG랑 두산 중 누가 위야?` 가 **두산 하나만** 지명된 것처럼 보인다.
+  //    그 상태로 응원을 붙이면 "두산 팬에게 LG 비교 답변 + 두산 응원"이 나간다.
+  //    `resolveRagTeamCandidate` 와 **같은 보수 규칙**을 쓴다: 조사와 무관하게 다른
+  //    구단의 약칭·별칭이 문자열로 등장하면 단일 구단으로 보지 않는다.
+  //    과탐지는 응원 미노출(야구 동작 유지)일 뿐이고, 놓치면 남의 팀에 응원이 붙는다.
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
+    team.canonical !== canonical &&
+    [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
+  if (mentionsOtherTeam) return null;
+
+  return teamIdOfCanonical(canonical);
 }
 
 export interface QaDeps {
