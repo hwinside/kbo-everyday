@@ -183,12 +183,14 @@ export async function searchSourcePriorityCandidates(
    * 순서 강제(hard sort)가 아니라 재점수화라, 더 가까운 반대편 근거는 살아남는다.
    */
   weightFor: (canonicalUrl: string) => number,
+  /** 상위 N 절단 **앞**에서 돌 근거 projection. `rankEvidenceByQuery` 참조. */
+  project?: EvidenceProjector,
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
     fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
     fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
-  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor);
+  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor, project);
 }
 /**
  * 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(`MAX_CHUNK_CHARS` 900자)보다 짧게 잡아
@@ -432,45 +434,57 @@ export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
   return selected;
 }
 
+/** `rankEvidenceByQuery` 가 상위 N 절단 앞에서 돌리는 근거 변환기. 빈 문자열이면 탈락. */
+export type EvidenceProjector = (row: RagEvidence) => string;
+
 /**
- * 선수 소개형 질문용 evidence projection.
+ * 선수 소개형 질문용 evidence projector.
  *
- * 적용 경계는 선수 **서술형 소개** 경로의 LLM 직전뿐이다. 전역 sanitize/selectEvidence,
+ * 적용 경계는 선수 **서술형 소개** 경로뿐이다. 전역 sanitize/selectEvidence,
  * tier1/team/news, 출력 validator는 건드리지 않는다.
  *
  * tier2 위키는 수치 정본이 아니므로 답변에는 숫자를 쓰지 않는다. 그런데 "어떤 선수야" 같은
  * 소개 질문에 기록표·계약·연봉·연도 chunk를 그대로 넣으면 모델이 `276개 홈런` 같은 수치를
  * `많은 홈런`·`굵직한 기록`처럼 정성 평가어로 바꿔 새어 나간다. 출력 validator에 평가어
- * 사전을 붙이면 정상 서술까지 막는 누더기 규칙이 되므로, 생성 전에 숫자-heavy 문장/라인을
- * 제외하고 clean 소개 근거만 남긴다.
+ * 사전을 붙이면 정상 서술까지 막는 누더기 규칙이 되므로, 생성 전에 숫자가 든 문장을 넘기지
+ * 않는다.
  *
- * 중요: 최종 6건 cap 전에 projection 한다. 먼저 `selectEvidence`로 자르면 rank 7 이하의
- * clean 소개 근거를 영원히 못 보기 때문이다.
+ * ⚠️ 이 함수는 **상위 6건 cap 앞**에서 불려야 한다(`rankEvidenceByQuery` 의 `project` 인자).
+ *   cap 뒤에 걸면 rank 7 이하의 clean 소개 근거를 영원히 못 본다(삼순 2026-08-16 P1-a).
  */
-export function projectPlayerDescriptiveEvidence(rows: RagEvidence[]): RagEvidence[] {
-  const selected: RagEvidence[] = [];
-  let lockedGrade: SourceGrade | null = null;
-  for (const row of rows) {
-    const sanitized = sanitizeEvidenceContent(row.content, row);
-    if (sanitized.length < 20) continue;
-    if (lockedGrade === null) lockedGrade = row.sourceGrade;
-    else if (row.sourceGrade !== lockedGrade) continue;
+export const projectPlayerDescriptiveRow: EvidenceProjector = (row) => {
+  const sanitized = sanitizeEvidenceContent(row.content, row);
+  if (sanitized.length < 20) return "";
+  return projectPlayerDescriptiveContent(sanitized, row.sectionPath);
+};
 
-    const content = projectPlayerDescriptiveContent(sanitized, row.sectionPath);
-    if (content.length < 20) continue;
-    selected.push({ ...row, content });
-    if (selected.length >= RAG_EVIDENCE_LIMIT) break;
-  }
-  return selected;
+/**
+ * 위키피디아 선수 프로필의 **리드 문장**. 폐쇄형이다.
+ *
+ * `김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.`
+ * 이 한 형태만 괄호를 떼고 살린다. 이름·구단·포지션 칸에는 숫자·괄호가 들어갈 수 없다.
+ *
+ * ⚠️ 이 예외를 "숫자 괄호를 먼저 지우고 숫자를 검사"로 일반화하면
+ *   `가장 많은 홈런(276개)을 쳤다` → `가장 많은 홈런을 쳤다` 로 **규모 추론이 살아난다**
+ *   (삼순 2026-08-17 P0). 그래서 숫자 판정은 항상 **원문 문장** 기준이고,
+ *   예외는 이 폐쇄 패턴 하나뿐이다.
+ */
+const WIKIPEDIA_PROFILE_LEAD =
+  /^([^()\[\]\p{N}]{1,24})\([^()]*\)은\s*현\s*KBO\s*리그\s*([^()\[\]\p{N}]{1,32})의\s*([^()\[\]\p{N}]{1,24})이다\.?$/u;
+
+function normalizeWikipediaProfileLead(part: string): string | null {
+  const match = part.match(WIKIPEDIA_PROFILE_LEAD);
+  if (!match) return null;
+  const [, name, team, role] = match;
+  if (!name || !team || !role) return null;
+  return `${name.trim()}은 현 KBO 리그 ${team.trim()}의 ${role.trim()}이다.`;
 }
 
 function projectPlayerDescriptiveContent(content: string, sectionPath: string): string {
   if (isPlayerDescriptiveRecordSection(sectionPath)) return "";
-  const withoutNumericParentheticals = content
-    // `김재환(金宰煥, 1988년...)은 현 ... 외야수` 같은 프로필 첫문장의 핵심을 살린다.
-    .replace(/\([^)]*\p{N}[^)]*\)/gu, "")
-    .replace(/\[[^\]]*\p{N}[^\]]*\]/gu, "");
-  const parts = withoutNumericParentheticals
+  // 🔴 원문 그대로 문장 분해한다. 전처리로 숫자를 지우고 검사하면 그 자리의 규모 추론이
+  //   살아남는다(`홈런(276개)을 쳤다` → `홈런을 쳤다`).
+  const parts = content
     .split(/(?<=[.!?。]|[다요]\.)\s+|\n+/u)
     .map((part) => part.trim())
     .filter((part) => part.length > 0);
@@ -480,10 +494,16 @@ function projectPlayerDescriptiveContent(content: string, sectionPath: string): 
   //     ① `국가대표로도 발탁되어 국제 대회에 참가했다` 같은 **정상 직접근거를 과삭제**하고
   //     ② `통산 홈런 일지` 처럼 사전에 없는 **비수치 기록 헤더는 그대로 통과**시킨다.
   //   구조 판정은 사전을 늘리지 않고도 양쪽을 닫는다.
-  const clean = parts.filter((part) => {
-    if (/\p{N}/u.test(part)) return false;
-    return isDescriptiveSentence(part);
-  });
+  const clean: string[] = [];
+  for (const part of parts) {
+    if (/\p{N}/u.test(part)) {
+      // 유일한 예외: 위키피디아 프로필 리드 폐쇄형.
+      const lead = normalizeWikipediaProfileLead(part);
+      if (lead) clean.push(lead);
+      continue;
+    }
+    if (isDescriptiveSentence(part)) clean.push(part);
+  }
   return clean.join(" ").replace(/\s+/g, " ").trim().slice(0, RAG_EVIDENCE_MAX_CHARS);
 }
 
@@ -1214,8 +1234,15 @@ export function rankEvidenceByQuery(
    * 무시되어 무관한 근거가 상위를 독점했다(삼순 P0). 지금은 **점수에 곱해** 재정렬한다.
    */
   weightFor?: (canonicalUrl: string) => number,
+  /**
+   * 상위 N 절단 **앞**에서 도는 근거 변환. 빈 문자열을 돌려주면 그 근거는 탈락한다.
+   *
+   * ⚠️ cap 뒤에서 변환하면 앞의 6건을 기록 chunk 가 먹어버린 뒤라 rank 7 이하의
+   *   clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a). 그래서 순서가 계약이다.
+   */
+  project?: EvidenceProjector,
 ): RagEvidence[] {
-  return rows
+  const ranked = rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
       if (vector === null) return null;
@@ -1239,6 +1266,20 @@ export function rankEvidenceByQuery(
       //   삼순 2026-08-07 9라운드 실측: 이 한 줄이 없어서 production 경로에서만
       //   나무위키 판정이 URL 추정으로 떨어졌다(게이트는 직접 주입해 못 봤다).
       sourceKind: row.sourceKind,
-    }))
-    .slice(0, RAG_EVIDENCE_LIMIT);
+    }));
+  if (!project) return ranked.slice(0, RAG_EVIDENCE_LIMIT);
+  // projection 을 쓰는 경로는 `selectEvidence` 와 **동일한 계약**을 cap 앞에서 적용한다:
+  //   등급 단일화(섮으면 tier2 서술을 tier1 근거로 착각) + 명분 없는 근거 탈락 + 상위 N.
+  //   후처리로 바꾸면 rank 7 이하 clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a).
+  const projected: RagEvidence[] = [];
+  let lockedGrade: SourceGrade | null = null;
+  for (const row of ranked) {
+    const content = project(row);
+    if (content.length < 20) continue;
+    if (lockedGrade === null) lockedGrade = row.sourceGrade;
+    else if (row.sourceGrade !== lockedGrade) continue;
+    projected.push({ ...row, content });
+    if (projected.length >= RAG_EVIDENCE_LIMIT) break;
+  }
+  return projected;
 }
