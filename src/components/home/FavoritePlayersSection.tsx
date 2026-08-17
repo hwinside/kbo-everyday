@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 
@@ -221,8 +221,12 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
     if (!hasFavPlayers) setTodayGames({});
   }, [hasFavPlayers]);
 
+  // 대상(favKey) 전환·재요청 late 응답이 최신 state를 덮어쓰지 못하게 하는 generation fence.
+  // (새 poller reset은 진행 중 Promise를 취소하지 않으므로 setState 경로에서 차단한다.)
+  const todayGamesGenRef = useRef(0);
   const loadTodayGames = useCallback(async () => {
     if (favPlayers.length === 0) return;
+    const gen = ++todayGamesGenRef.current;
     const entries = await Promise.all(
       favPlayers.map(async (p) => {
         const pos = classifyIsPitcher(p) ? "투수" : "타자";
@@ -234,6 +238,8 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
         return [p.playerId, r] as const;
       }),
     );
+    // 더 최신 로드(favKey 전환 등)가 시작했으면 late 응답 폐기 — A(old)→B(new) 덮어쓰기 방지.
+    if (gen !== todayGamesGenRef.current) return;
     const m: Record<string, TodayGame> = {};
     for (const [id, r] of entries) if (r && r.show) m[id] = r;
     setTodayGames(m);

@@ -324,7 +324,7 @@
     "qa:contextual-stats-fence": "tsx scripts/qa/contextual-stats-fence-smoke.ts",
     "qa:contextual-naver-failover": "tsx scripts/qa/contextual-stats-naver-failover-smoke.ts",
     "qa:livegame-visibility": "tsx scripts/qa/livegame-visibility-smoke.ts",
-    "qa:visibility-poller-adoption": "tsx scripts/qa/visibility-poller-adoption-smoke.ts && tsx scripts/qa/games-visibility-poller-react-smoke.ts",
+    "qa:visibility-poller-adoption": "tsx scripts/qa/visibility-poller-adoption-smoke.ts && tsx scripts/qa/games-visibility-poller-react-smoke.ts && tsx scripts/qa/game-detail-visibility-react-smoke.ts && tsx scripts/qa/favorite-today-games-react-smoke.ts",
     "qa:polling-fallback": "tsx scripts/qa/polling-fallback-smoke.ts && tsx scripts/qa/polling-fallback-react-smoke.ts",
     "qa:game-live-stream": "tsx scripts/qa/game-live-stream-smoke.ts",
     "qa:home-header-signup-button": "node scripts/qa/home-header-signup-button-smoke.mjs",

@@ -114,33 +114,16 @@ export function useGameDetail(
     setLoading(true);
   }, [gameId]);
 
-  // 숨은 탭(백그라운드)에선 폴링을 멈춰 Edge Request 낭비를 없애고, 복귀 시 즉시 1회
-  // 실행 후 폴링을 재개한다. 보는 유저의 실시간성은 100% 유지된다. stop(final+box) 후엔
-  // fetchDetail이 자체 early-return하므로 폴러 tick은 no-op이 된다.
+  // 숨은 탭(백그라운드)에선 폴링을 멈춰 Edge Request 낭비를 없애고, 복귀 시 즉시 정확히 1회
+  // 실행 후 폴링을 재개한다. resume owner는 이 폴러 하나뿐 — 별도 focus/visibility 복구
+  // effect를 두지 않아 복귀 시 중복 요청·listener leak이 없다. 보는 유저 실시간성은 100% 유지.
+  // 콜백은 fetchDetail의 Promise를 그대로 반환해 코어의 await 기반 single-flight에 실 fetch를
+  // 결속한다. stop(final+box) 후엔 undefined를 반환해 tick이 no-op이 되고, 복귀로도 되살아나지 않는다.
   useVisibilityAwareInterval(
-    () => {
-      if (!stoppedRef.current) void fetchDetail();
-    },
+    () => (stoppedRef.current ? undefined : fetchDetail()),
     pollInterval,
     { resetKey: gameId },
   );
-
-  // 앱 포커스 복귀 시 강제 refetch (폴링 중단 후에도 데이터 복구)
-  useEffect(() => {
-    const onFocus = () => {
-      stoppedRef.current = false;
-      finalSinceRef.current = null;
-      fetchDetail();
-    };
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") onFocus();
-    });
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onFocus);
-    };
-  }, [fetchDetail]);
 
   return { data, loading, error, snapshot, refetch: fetchDetail };
 }
