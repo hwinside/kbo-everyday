@@ -22,6 +22,7 @@ import sharp from "sharp";
 
 const DIR = "public/mascot/motion";
 const SELFTEST = process.argv.includes("--selftest");
+const DERIVED = JSON.parse(readFileSync(`${DIR}/DERIVED.json`, "utf8"));
 
 let pass = 0;
 const failures = [];
@@ -140,9 +141,76 @@ for (const clip of clips) {
   }
   const posterTransDirtyPct = transN ? (transDirty / transN) * 100 : 0;
 
+  // ⑤ 내부 alpha 무결성 — **몸 안이 뚫렸는가** (삼순 2026-08-17 P0-①).
+  //
+  //    🔴 종전 게이트가 이걸 못 봤다. edge-run 은 **캔버스 변**만 보고, 채움률은
+  //       전체 면적의 비율이라 몸통 한가운데가 뚫려도 15% 문턱을 여유롭게 넘는다.
+  //       실측: `cheerC` f17 내부 구멍 509px · `cheertowel` f54 127px · `cheerpom` f48 55px
+  //       인데 세 숫자(edge-run·채움률·bbox)가 **전부 GREEN** 이었다.
+  //
+  //    구멍의 정의는 **바깥과 연결되지 않은 투명 영역**이다. 다리 사이·들어올린 팔과
+  //    몸통 사이의 정상적인 틈은 바깥과 이어져 있으므로 여기 걸리지 않는다
+  //    (그 구분이 안 되면 정상 자산을 RED 로 만든다 — 실측으로 확인했다).
+  //    2-pass flood fill: 변에서 시작해 투명 영역을 채우고, 남은 투명 픽셀이 구멍이다.
+  //    ⚠️ 임계값 **하나로는 흔든다.** 경계가 반투명이라 alpha>128 만 보면 진한
+  //    안티에일리싱 띄가 버팔처럼 작용해 정상 틈을 구멍으로 오보하고, alpha>24 만
+  //    보면 엷은 구멍을 놓친다. **생성기와 똑같은** 2중 임계값 교집합을 쓴다.
+  const stack = new Int32Array(w * h);
+  const enclosed = (base, thr) => {
+    const seen = new Uint8Array(w * h);
+    let sp = 0;
+    const push = (idx) => {
+      if (seen[idx]) return;
+      if (data[base + idx * 4 + 3] > thr) return;   // 불투명 = 몸, 배경 전파 안 됨
+      seen[idx] = 1; stack[sp++] = idx;
+    };
+    for (let x = 0; x < w; x += 1) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y += 1) { push(y * w); push(y * w + w - 1); }
+    while (sp > 0) {
+      const idx = stack[--sp], x = idx % w, y = (idx - x) / w;
+      if (x > 0) push(idx - 1);
+      if (x < w - 1) push(idx + 1);
+      if (y > 0) push(idx - w);
+      if (y < h - 1) push(idx + w);
+    }
+    const out = new Uint8Array(w * h);
+    for (let idx = 0; idx < w * h; idx += 1) {
+      if (data[base + idx * 4 + 3] <= thr && !seen[idx]) out[idx] = 1;
+    }
+    return out;
+  };
+  let holeMax = 0, holeFrame = -1;
+  for (let p = 0; p < n; p += 1) {
+    const base = p * h * w * 4;
+    const hi = enclosed(base, 128), lo = enclosed(base, 24);
+    let holes = 0;
+    for (let idx = 0; idx < w * h; idx += 1) if (hi[idx] && lo[idx]) holes += 1;
+    if (holes > holeMax) { holeMax = holes; holeFrame = p; }
+  }
+
+  // ⑥ 실루엣 변화량 — **정말 움직이는가** (삼순 2026-08-17 P0-①, `pitching`).
+  //
+  //    "활발하게 움직이는 버전"이 요구사항인데, 종전 게이트에는 움직임을 재는 축이
+  //    아예 없었다. `pitching` 은 잘림을 피하려 동작을 축소한 결과 실루엣 변화
+  //    0.48%(13종 중 최저)의 호흡 idle 이 됐고, 게이트는 전부 GREEN 이었다.
+  //    프레임 간 실루엣 IoU 거리의 평균으로 잰다 — 위치 이동·팔 각도 변화가 모두 잡힌다.
+  let motionSum = 0;
+  for (let p = 1; p < n; p += 1) {
+    const a0 = (p - 1) * h * w * 4, a1 = p * h * w * 4;
+    let inter = 0, uni = 0;
+    for (let idx = 0; idx < w * h; idx += 1) {
+      const s0 = data[a0 + idx * 4 + 3] > 128, s1 = data[a1 + idx * 4 + 3] > 128;
+      if (s0 && s1) inter += 1;
+      if (s0 || s1) uni += 1;
+    }
+    motionSum += uni ? 1 - inter / uni : 0;
+  }
+  const motionPct = n > 1 ? (motionSum / (n - 1)) * 100 : 0;
+
   rows.push({ clip, size: `${w}x${h}`, frames: n, posterAvg: +posterAvg.toFixed(2),
               padMax, padMin, ringPx: ring, ringLum: +ringLum.toFixed(0),
-              posterDirty: +posterTransDirtyPct.toFixed(2) });
+              posterDirty: +posterTransDirtyPct.toFixed(2),
+              holeMax, holeFrame, motionPct: +motionPct.toFixed(2) });
 }
 
 console.table(rows);
@@ -154,15 +222,22 @@ console.table(rows);
 //    종전에는 상한만 있었고 하한이 `<= 0` 이라 "잘린 자산"이 오히려 통과했다.
 //    빌드가 사방에 `safe_pad` 를 남기므로, 그 값을 **생성기 manifest 에서 읽어**
 //    기대값으로 쓴다(게이트가 상수를 재구현하면 생성기와 조용히 어긋난다 — 8/15 교훈).
-const DERIVED = JSON.parse(readFileSync(`${DIR}/DERIVED.json`, "utf8"));
 const SAFE_PAD = DERIVED?.params?.safe_pad;
 if (!(SAFE_PAD > 0)) {
   console.log(`  ❌ DERIVED.json 에 safe_pad 가 없다 — 생성기 계약을 읽을 수 없다`);
   process.exit(1);
 }
+// 구멍·움직임 임계값은 **생성기 manifest 에서 읽는다**. 게이트가 상수를 재구현하면
+// 생성기와 조용히 어긋난다(8/15 교훈, 이미 safe_pad 에 적용한 계약).
+const HOLE_MAX = DERIVED?.params?.hole_px_max;
+const MOTION_MIN = DERIVED?.params?.motion_pct_min;
+if (!(HOLE_MAX >= 0) || !(MOTION_MIN > 0)) {
+  console.log(`  ❌ DERIVED.json 에 hole_px_max/motion_pct_min 이 없다 — 생성기 계약을 읽을 수 없다`);
+  process.exit(1);
+}
 const T = SELFTEST
-  ? { poster: -1, padMax: -1, padMin: 9999, haloDelta: -1 }   // 불가능한 기준 → 전부 RED
-  : { poster: 2, padMax: SAFE_PAD, padMin: 1, haloDelta: 40 };
+  ? { poster: -1, padMax: -1, padMin: 9999, haloDelta: -1, hole: -1, motion: 9999 }
+  : { poster: 2, padMax: SAFE_PAD, padMin: 1, haloDelta: 40, hole: HOLE_MAX, motion: MOTION_MIN };
 
 check(`poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
   rows.every((r) => r.posterAvg < T.poster),
@@ -200,6 +275,35 @@ check(`dark halo: 13종 바깥링 밝기 편차 <= 40 (전 클립이 같은 키�
 check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 사각형으로 보이지 않는다)`,
   SELFTEST ? false : rows.every((r) => r.posterDirty === 0),
   rows.filter((r) => r.posterDirty !== 0).map((r) => `${r.clip}=${r.posterDirty}%`).join(", "));
+// 🔴 키잉 구멍 — 모서리가 아니라 **몸 안**이 뚫렸는가 (삼순 2026-08-17 P0-①).
+//
+//    ⚠️ "닫힌 투명 영역"과 "키잉 결함"은 다르다. 두 다리 사이처럼 발끝이 붙으면
+//    정상 음공간도 닫힌다(실측: `excited` 117px). 숫자 크기로는 둘을 가를 수 없고
+//    (37~509px 가 섞인다), 임의 임계값을 고르면 그게 바로 "통과시키려고 고른 값"이 된다.
+//    → **생성기만 원본 mp4 를 볼 수 있으므로**, 거기서 원본 픽셀과 대조해 잰 `defect_px`
+//      (= 닫힌 영역 중 원본에서 배경이 아니었던 픽셀)를 계약값으로 쓴다.
+{
+  const bad = Object.entries(DERIVED.clips ?? {})
+    .filter(([, m]) => !(m.defect_px <= T.hole))
+    .map(([n, m]) => `${n}=${m.defect_px}px@f${m.defect_frame}`);
+  check(`DERIVED.json: 키잉 구멍 <= ${T.hole}px (원본 대조 — 몸을 배경으로 오인해 파먹지 않았다)`,
+    SELFTEST ? false : bad.length === 0, bad.join(", "));
+}
+// 파생 자산을 직접 재측정한 값과 생성기 기록이 일치하는가 — **빌드 후 자산이 교체됐다**를 잡는다.
+// (edge_run ↔ padMin 을 둘 다 보는 것과 같은 구조. 한쪽만 보면 조용히 어긋난다.)
+{
+  const bad = rows.filter((r) => (DERIVED.clips?.[r.clip]?.hole_px ?? -1) !== r.holeMax)
+    .map((r) => `${r.clip}: 재측정=${r.holeMax} manifest=${DERIVED.clips?.[r.clip]?.hole_px}`);
+  check("파생 자산 구멍 측정치 = manifest 기록 (빌드 후 자산 교체 없음)",
+    SELFTEST ? false : bad.length === 0, bad.join(", "));
+}
+// 🔴 움직임 — "활발하게 움직이는 버전"이 요구사항이므로 숫자로 고정한다.
+//    `pitching` 은 잘림을 피하려고 동작을 줄인 결과 0.48% 의 호흡 idle 이 됐는데
+//    종전 게이트에는 움직임을 재는 축이 아예 없어 전부 GREEN 이었다.
+check(`실루에 변화량 >= ${T.motion}% (호흡 idle 이 아니라 실제 동작이다)`,
+  rows.every((r) => r.motionPct >= T.motion),
+  rows.filter((r) => !(r.motionPct >= T.motion))
+    .map((r) => `${r.clip}=${r.motionPct}%`).join(", "));
 check("모든 클립이 실제 애니메이션이다(프레임 2 이상)", rows.every((r) => r.frames >= 2),
   rows.filter((r) => r.frames < 2).map((r) => r.clip).join(", "));
 check("13종 전부 검사됐다(파서가 헛돌면 fail-close)", rows.length === 13, `${rows.length}종`);

@@ -78,8 +78,24 @@ VIDEO_SOURCES = {n: f"v2-regen/{n}.mp4" for n in (
 SAFE_PAD = 6
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "public", "mascot", "motion")
 MANIFEST = os.path.join(OUT, "DERIVED.json")
+# 원본 mp4 해시 대장 — **repo 안**에 산다. 원본 바이너리는 repo 밖(22MB)에 있어서,
+# 어떤 원본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
+SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha256")
 
-TOL = 26          # 배경 색 허용 오차
+# 배경 색 허용 오차.
+# 🔴 종전 26 은 **너무 넓었다**(삼순 #1228 P0-①, 실측으로 확정).
+#    생성 원본의 배경은 완전 평탄한 단색이다(실측: 남색 32,43,70 / 검정 0,0,0 / 회색 46,46,46)
+#    — 그런데 마스코트의 **모자·유니폼도 남색**이라, 26 이면 배경과의 색거리가 26 안에 들어오는
+#    유니폼 픽셀이 배경과 **연결**돼 flood-fill 이 몸통을 바깥에서부터 파먹는다.
+#    실측(cheerC f34 원본): tol26 = 60,712px vs tol6 = 79,234px — **23% 가 사라졌다.**
+#
+#    이게 왜 종전 게이트를 다 통과했나:
+#      · 파먹힌 영역은 **바깥과 연결**돼 있으므로 원본 해상도에서는 '내부 구멍'이 아니다(hole=0).
+#      · 다운스케일(LANCZOS)에서 가느다란 연결 다리가 끊기면서 **그제서야 내부 구멍이 된다**
+#        (실측: 원본 hole 0 → 192px 파생 hole 509px).
+#      · edge-run 은 모서리만 보므로 몸통 한가운데가 뚫려도 0 이다.
+#    → 숫자 3개(edge-run·채움률·bbox)가 전부 GREEN 인데 화면은 속이 빈 마스코트였다.
+TOL = 8
 TARGET_H = 192    # 2x 자산 (렌더 96px)
 STEP = 2          # 24fps → 12fps
 QUALITY = 62
@@ -87,11 +103,30 @@ QUALITY = 62
 FRAME_MS = (83, 84)
 
 
+# 전경 조각 중 **가장 큰 조각의 이 비율 미만**은 키잉 잡티로 보고 버린다.
+# 배경의 압축 노이즈가 섬처럼 남으면 파생 자산에 점이 찍힌다(실측: thinking 365px).
+SPECK_FRAC = 0.005
+
+# 내부 구멍 허용치(px) — 다운스케일 경계에서 1~2px 짜리는 불가피하다.
+HOLE_PX_MAX = 8
+# 실루에 변화량 하한(%) — "활발하게 움직이는" 요구사항을 숫자로 고정한 것.
+MOTION_PCT_MIN = 1.2
+
+
 def key_frame(rgb: np.ndarray) -> np.ndarray:
     """flood-fill 키잉 — 네 모서리 색과 **외곽에 연결된** 영역만 배경으로 본다.
 
     단순 색 거리 판정이면 캐릭터 안쪽의 같은 색 픽셀(모자·유니폼 그림자)까지
     뚫려서 구멍이 난다. 연결성을 봐야 안쪽이 살아남는다.
+
+    연결성만으로는 부족하다는 것이 삼순 #1228 P0-① 로 드러났다. 배경과 **색이 가까운**
+    유니폼을 타고 flood-fill 이 몸 안으로 걸어 들어오면 그 경로 전체가 바깥과
+    연결돼 버려서, 그 순간에는 '구멍'으로 보이지도 않는다. 그래서 세 겹으로 막는다:
+      ① TOL 을 8 로 좁혀 애초에 유니폼을 배경으로 오인하지 않는다(위 상수 주석 참조).
+      ② `binary_fill_holes` — 전경으로 **둘러싸인** 배경 조각은 몸의 일부로 되돌린다.
+         정상적인 틈(다리 사이·들어올린 팔과 몸통 사이)은 바깥과 이어져 있으므로
+         메워지지 않는다(실측으로 확인).
+      ③ 큰 조각 대비 0.5% 미만의 부유 조각은 버린다 — 배경 압축 노이즈 제거.
     """
     a = rgb.astype(np.int16)
     h, w, _ = a.shape
@@ -99,7 +134,14 @@ def key_frame(rgb: np.ndarray) -> np.ndarray:
     lab, _ = ndimage.label(np.abs(a - bgc).max(axis=2) <= TOL)
     edge = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
     edge.discard(0)
-    al = (~np.isin(lab, list(edge))).astype(np.uint8) * 255
+    fg = ~np.isin(lab, list(edge))
+    comp, ncomp = ndimage.label(fg)
+    if ncomp > 1:
+        sizes = ndimage.sum(fg, comp, range(1, ncomp + 1))
+        keep = [i + 1 for i, s in enumerate(sizes) if s >= sizes.max() * SPECK_FRAC]
+        fg = np.isin(comp, keep)
+    fg = ndimage.binary_fill_holes(fg)
+    al = fg.astype(np.uint8) * 255
     # 경계 1px 을 부드럽게 — 계단현상 제거. 배경 쪽은 0.55 로 눌러 halo 를 줄인다.
     af = ndimage.uniform_filter(al.astype(np.float32), size=3)
     return np.where(al > 0, np.maximum(al, af), af * 0.55).clip(0, 255).astype(np.uint8)
@@ -158,10 +200,20 @@ def build(name: str):
     bw, bh = x1 - x0, y1 - y0
     nw = max(1, round(bw * TARGET_H / bh))
 
-    out = []
+    # 원본 배경색 — 키잉 결함 판정에 쓴다(아래 `keying_defect_px`). 첫 프레임 네 모서리.
+    _f0 = raw[0].astype(np.int16)
+    _h0, _w0, _ = _f0.shape
+    src_bgc = np.median(np.array([_f0[2, 2], _f0[2, _w0 - 3],
+                                  _f0[_h0 - 3, 2], _f0[_h0 - 3, _w0 - 3]]), axis=0)
+
+    out, src_small = [], []
     for k, i in enumerate(idx):
         al = (alphas[k][y0:y1, x0:x1].astype(np.float32) / 255.0)[..., None]
         c = raw[i][y0:y1, x0:x1]
+        # 키잉 **전** 원본을 파생 해상도로 줄여 같이 들고 간다 — 구멍이 키잉 결함인지
+        # 정상 음공간인지는 원본 색을 봐야만 갈린다(임의 임계값으로 가르면 false-green).
+        src_small.append(np.asarray(
+            Image.fromarray(c.astype(np.uint8)).resize((nw, TARGET_H), Image.NEAREST)))
         # 검정 배경 합성본이므로 premultiplied 로 보고 un-premultiply → 검정 fringe 제거.
         est = np.clip(np.where(al > 0.02, c / np.maximum(al, 0.02), c), 0, 255)
         rgba = np.concatenate([est, al * 255], axis=2).astype(np.uint8)
@@ -193,7 +245,8 @@ def build(name: str):
     durations = [FRAME_MS[i % len(FRAME_MS)] for i in range(len(out))]
     return out, {"frames": len(out), "w": nw, "h": TARGET_H,
                  "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
-                 "source_frames": len(raw), "source": source_kind}
+                 "source_frames": len(raw), "source": source_kind,
+                 "src_frames": src_small, "src_bgc": src_bgc}
 
 
 def max_edge_run(alpha: np.ndarray) -> dict:
@@ -212,6 +265,68 @@ def max_edge_run(alpha: np.ndarray) -> dict:
             "left": run(alpha[:, 0]), "right": run(alpha[:, -1])}
 
 
+def _enclosed(mask: np.ndarray) -> np.ndarray:
+    """`mask`(불투명) 기준으로 **바깥과 연결되지 않은** 투명 영역."""
+    lab, _ = ndimage.label(~mask)
+    border = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
+    border.discard(0)
+    return (lab > 0) & (~np.isin(lab, list(border)))
+
+
+def enclosed_hole_px(alpha: np.ndarray) -> int:
+    """몸 안의 구멍 픽셀 수 — **두 임계값에서 동시에** 닫힌 영역만 센다.
+
+    edge-run 은 캔버스 **변**만 본다. 몸통 한가운데가 뚫려도 0 이다
+    (삼순 2026-08-17 P0-①: cheerC 509px · cheertowel 127px 이 edge-run 0 으로 통과했다).
+
+    ⚠️ 단일 임계값은 경계가 반투명인 곳에서 흔든다. alpha>128 만 보면 진한
+    안티에일리싱 띄가 버팔처럼 작용해 정상 틈을 구멍으로 오보하고, alpha>24 만
+    보면 엷은 구멍을 놓친다. 둘 다에서 닫힌 영역만 구멍으로 본다.
+    """
+    return int((_enclosed(alpha > 128) & _enclosed(alpha > 24)).sum())
+
+
+def keying_defect_px(alpha: np.ndarray, src_rgb: np.ndarray, bgc: np.ndarray) -> int:
+    """닫힌 투명 영역 중 **원본에서 배경이 아니었던** 픽셀 수 = 키잉이 몸을 먹은 양.
+
+    🔴 이게 이 파일의 핵심 판별자다. "닫힌 투명 영역"은 두 가지가 섞여 있다:
+      · **정상 음공간** — 두 다리 사이처럼 발끝이 붙어 닫힐 수 있다. 원본에서도 거기는
+        진짜 배경이다(실측: `excited` 다리 사이 117px).
+      · **키잉 결함** — 배경과 색이 가까운 유니폼을 배경으로 오인해 몸을 파먹은 경우.
+        원본에서 그 자리는 **배경색이 아니다**(실측: 수정 전 `cheerC` 321px).
+    숫자 크기로는 둘을 가를 수 없고(37~509px 가 섞인다), 임의 임계값을 고르면 그게
+    바로 "통과시키려고 고른 값"이 된다. 그래서 **원본 픽셀을 직접 본다.**
+    """
+    holes = _enclosed(alpha > 128) & _enclosed(alpha > 24)
+    if not holes.any():
+        return 0
+    # 파생 좌표 → 원본 좌표 (동일 비율 축소만 있으므로 매핑은 단순 스케일)
+    h, w = holes.shape
+    sh, sw, _ = src_rgb.shape
+    ys, xs = np.nonzero(holes)
+    sy = np.clip((ys * sh // h), 0, sh - 1)
+    sx = np.clip((xs * sw // w), 0, sw - 1)
+    px = src_rgb[sy, sx].astype(np.int16)
+    # 원본에서 배경색과 멀면 → 거기에 몸이 있었다 → 키잉이 먹은 것.
+    return int((np.abs(px - bgc).max(axis=1) > TOL * 2).sum())
+
+
+def silhouette_motion_pct(masks) -> float:
+    """인접 프레임 실루에 IoU 거리의 평균(%) — **정말 움직이는가**.
+
+    잘림을 피하려고 동작을 줄이면 수치 계약은 전부 통과하면서 화면은 호흡 idle 이 된다
+    (삼순 2026-08-17 P0-① `pitching` 0.48%). 그러니 움직임도 계약으로 재는다.
+    """
+    if len(masks) < 2:
+        return 0.0
+    tot = 0.0
+    for i in range(1, len(masks)):
+        inter = np.logical_and(masks[i], masks[i - 1]).sum()
+        union = np.logical_or(masks[i], masks[i - 1]).sum()
+        tot += 1 - inter / union if union else 0.0
+    return round(tot / (len(masks) - 1) * 100, 2)
+
+
 def sha256(path: str) -> str:
     with open(path, "rb") as fh:
         return hashlib.sha256(fh.read()).hexdigest()
@@ -220,6 +335,8 @@ def sha256(path: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="재현 검사만(쓰기 없음)")
+    ap.add_argument("--rewrite-ledger", action="store_true",
+                    help="원본 mp4 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
     args = ap.parse_args()
 
     if not os.path.isdir(SSOT):
@@ -232,11 +349,49 @@ def main() -> int:
         print(f"SSOT 에 -black.webp 가 없음: {SSOT}", file=sys.stderr)
         return 2
 
+    # 🔴 **원본 mp4 가 없으면 조용히 v1 SSOT 로 fallback 하지 않고 죽는다** (삼순 2026-08-17 P1).
+    #    종전에는 `os.path.exists` 가 False 면 조용히 구 SSOT 로 넘어갔다. 그러면 manifest 는
+    #    "v2 원본에서 뽑았다"고 적혀 있는데 실제 자산은 구본이 되는 — 가장 나쁜 종류의
+    #    조용한 실패다. 여기서 멈추면 "왜 안 돼요"가 바로 보인다.
+    missing = [f"{n} ← {os.path.join(VIDEO_SRC_ROOT, rel)}"
+               for n, rel in sorted(VIDEO_SOURCES.items())
+               if not os.path.exists(os.path.join(VIDEO_SRC_ROOT, rel))]
+    if missing:
+        print(f"❌ 원본 mp4 {len(missing)}개 없음 — 구 SSOT 로 fallback 하지 않고 중단한다:",
+              file=sys.stderr)
+        for m in missing:
+            print(f"   · {m}", file=sys.stderr)
+        print("  → MASCOT_VIDEO_SRC 로 원본 폴더를 지정하세요(v2-regen 포함).", file=sys.stderr)
+        return 2
+
+    # 🔴 원본이 있기만 하면 되는 게 아니라 **그 원본이여야** 한다 (삼순 2026-08-17 P1).
+    #    원본은 repo 밖(13종 22MB, v1 SSOT 와 같은 방식)에 산다. 그러면 "어떤 파일을
+    #    썼는가"를 repo 만 보고는 알 수 없으므로, **sha256 대장을 repo 에 둘다**
+    #    (`SOURCES.sha256`). 해시가 바뀜 상태로 빌드하면 멈춘다 — "원본을 조용히 바꿔놓고
+    #    같은 자산이라고 말하는" 경로를 닫는다.
+    src_hashes = {n: sha256(os.path.join(VIDEO_SRC_ROOT, rel))
+                  for n, rel in sorted(VIDEO_SOURCES.items())}
+    if os.path.exists(SRC_LEDGER):
+        with open(SRC_LEDGER, encoding="utf-8") as fh:
+            recorded = dict(
+                (ln.split("  ", 1)[1].strip(), ln.split("  ", 1)[0].strip())
+                for ln in fh if "  " in ln and not ln.startswith("#"))
+        drift = [f'{n}: 대장={recorded.get(VIDEO_SOURCES[n], "없음")[:12]} 실제={h[:12]}'
+                 for n, h in src_hashes.items()
+                 if recorded.get(VIDEO_SOURCES[n]) != h]
+        if drift and not args.rewrite_ledger:
+            print(f"❌ 원본 mp4 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
+            for d in drift:
+                print(f"   · {d}", file=sys.stderr)
+            print(f"  → 의도한 교체라면 --rewrite-ledger 로 대장을 갱신하고 근거를 남기세요"
+                  f" ({os.path.relpath(SRC_LEDGER)}).", file=sys.stderr)
+            return 2
+
     outdir = os.path.abspath(OUT)
     tmpdir = outdir if not args.check else os.path.join("/tmp", "mascot-motion-check")
     os.makedirs(tmpdir, exist_ok=True)
 
-    report, mismatched, clipped = {}, [], []
+    report, mismatched, clipped, defective = {}, [], [], []
     for n in names:
         frames, meta = build(n)
         clip = os.path.join(tmpdir, f"{n}.webp")
@@ -269,6 +424,8 @@ def main() -> int:
         # union bbox + SAFE_PAD 로 만들어도, 원본 자체가 잘린 종은 여기서 드러난다.
         runs = {"top": 0, "bottom": 0, "left": 0, "right": 0}
         worst_frame = -1
+        hole_px, hole_frame, masks = 0, -1, []
+        defect_px, defect_frame = 0, -1
         with Image.open(clip) as enc:
             for fi in range(enc.n_frames):
                 enc.seek(fi)
@@ -277,13 +434,33 @@ def main() -> int:
                 if max(r.values()) > max(runs.values()):
                     worst_frame = fi
                 runs = {k: max(runs[k], r[k]) for k in runs}
+                # 내부 구멍·움직임도 **같은 디코딩 루프**에서 재다. 게이트가 별도로 재구현하면
+                # 생성기와 조용히 어긋난다(8/15 교훈) — 생성기가 적고 게이트가 대조한다.
+                h = enclosed_hole_px(a)
+                if h > hole_px:
+                    hole_px, hole_frame = h, fi
+                if h > 0:
+                    # 구멍이 있는 프레임만 원본과 대조한다(전부 대조하면 느리다).
+                    src = meta["src_frames"][fi]
+                    d = keying_defect_px(a, src, meta["src_bgc"])
+                    if d > defect_px:
+                        defect_px, defect_frame = d, fi
+                masks.append(a > 128)
         with Image.open(poster) as pim:
             pr = max_edge_run(np.asarray(pim.convert("RGBA"))[..., 3])
         runs = {k: max(runs[k], pr[k]) for k in runs}
         meta["edge_run"] = runs
         meta["edge_run_worst_frame"] = worst_frame
+        meta["hole_px"] = hole_px
+        meta["hole_frame"] = hole_frame
+        meta["defect_px"] = defect_px
+        meta["defect_frame"] = defect_frame
+        meta["motion_pct"] = silhouette_motion_pct(masks)
+        meta.pop("src_frames", None)
+        meta.pop("src_bgc", None)
         if max(runs.values()) > 0:
             clipped.append((n, runs, worst_frame))
+        meta["src_sha256"] = src_hashes.get(n)
         meta["clip_sha256"] = sha256(clip)
         meta["poster_sha256"] = sha256(poster)
         meta["clip_kb"] = round(os.path.getsize(clip) / 1024)
@@ -294,17 +471,30 @@ def main() -> int:
                 if not os.path.exists(shipped) or sha256(shipped) != sha256(built):
                     mismatched.append(os.path.basename(built))
         er = meta["edge_run"]
-        mark = "✅" if max(er.values()) == 0 else f'🔴잘림 {max(er.values())}px'
+        bad = []
+        if max(er.values()) > 0:
+            bad.append(f'잘림 {max(er.values())}px')
+        if meta["defect_px"] > HOLE_PX_MAX:
+            bad.append(f'키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
+        if meta["motion_pct"] < MOTION_PCT_MIN:
+            bad.append(f'idle {meta["motion_pct"]}%')
+        mark = "✅" if not bad else "🔴 " + " · ".join(bad)
+        if bad:
+            defective.append((n, bad))
         print(f'{n:12s} {meta["frames"]:3d}f {meta["w"]:3d}x{meta["h"]} '
               f'{meta["clip_kb"]:5d}KB {meta["fps"]}fps '
+              f'hole={meta["hole_px"]:3d} motion={meta["motion_pct"]:5.2f}% '
               f'[{meta["source"].split(":")[0]}] {mark}', flush=True)
 
     payload = {
         "generator": "scripts/assets/build-mascot-motion.py",
         "ssot": "assets/mascot/v1 (2026-08-07 고정, MANIFEST.sha256)",
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
-                   "safe_pad": SAFE_PAD,
+                   "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
+                   "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
+        "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
+                       "scripts/assets/mascot-motion-SOURCES.sha256)",
         "clips": report,
     }
     if args.check:
@@ -313,6 +503,14 @@ def main() -> int:
             return 1
         print(f"\n✅ 파생 자산 {len(names) * 2}개가 이 스크립트로 재현됨")
         return 0
+
+    if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):
+        with open(SRC_LEDGER, "w", encoding="utf-8") as fh:
+            fh.write("# 마스코트 모션 **원본 mp4** 해시 대장 (생성: build-mascot-motion.py)\n")
+            fh.write("# 원본은 repo 밖에 산다: assets/mascot/v2-regen (MASCOT_VIDEO_SRC 로 경로 지정).\n")
+            fh.write("# 검증: cd $MASCOT_VIDEO_SRC && shasum -a 256 -c <이 파일>\n")
+            for n, rel in sorted(VIDEO_SOURCES.items()):
+                fh.write(f"{src_hashes[n]}  {rel}\n")
 
     with open(MANIFEST, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1, ensure_ascii=False)

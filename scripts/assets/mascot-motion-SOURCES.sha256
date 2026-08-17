@@ -1,0 +1,16 @@
+# 마스코트 모션 **원본 mp4** 해시 대장 (생성: build-mascot-motion.py)
+# 원본은 repo 밖에 산다: assets/mascot/v2-regen (MASCOT_VIDEO_SRC 로 경로 지정).
+# 검증: cd $MASCOT_VIDEO_SRC && shasum -a 256 -c <이 파일>
+293c2b6332e713fb4ba31fd540aa181aa0d14ed3932bfad0b12b95ada2a5fe85  v2-regen/bored.mp4
+46e4b822748b336f21fd75be3936437b47e63fc310526d92b85c8cd69e1c5abf  v2-regen/cheer.mp4
+6bc0047de10896697a45071444687b4d7b7cc430d2fb3e6f7f8f4fb7868994bc  v2-regen/cheerC.mp4
+3d92c3b4883fb0d14e455fd0c157423608e92300ad1c97fc9478beb71609a8cf  v2-regen/cheerD.mp4
+14aa87a95bb05d5fb73f83b40b02d437e1769cf4000df2558bc8170fda7ff925  v2-regen/cheerG.mp4
+d75728b6acbcd8dd793e23b9266a77976a6ceb287d30a3ee3c966e58de9c4921  v2-regen/cheerpom.mp4
+2baebf0603607bda483845e98da3dc0a399b0fe6e23c36b09aefd7c625d1a2b9  v2-regen/cheerstick.mp4
+9852748c3c66e63fa3fc90d2df798d012816d7b7302918cde5b922cdc1321d7f  v2-regen/cheertowel.mp4
+bdcaf35eccc0f3109525c3eb589504c108193ace54b7a2960a10c3c0834eaa02  v2-regen/excited.mp4
+204ed9c7e431d4edb40649262b13c0a84aa939b8e01f0714a3ba11f369391a9a  v2-regen/headspin.mp4
+16cfdf79a1b9668b6651bfd0b1410b3c4c60e1a9c3a9d358c94a9695003400e4  v2-regen/pitching.mp4
+73af8aa60b6a68371732dc48692ffacfe51a62b4f2bbe5b700d783e0933a102c  v2-regen/swing.mp4
+b15f7559330fd9f34f117766c261fe58b443e319a5aa41e0645901bc2669cbbf  v2-regen/thinking.mp4
