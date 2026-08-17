@@ -54,12 +54,22 @@ export function transitionGeniusThinkingMessageId(
 /**
  * 이 메시지 아래에 생각중 말풍선을 그릴지, 그리고 아직 대기 중인지.
  *
- * `pending` 은 **점 3개 애니메이션과 `role=status` 만** 가른다. 말풍선·문구·thinking
- * 마스코트는 답변 도착 후에도 남는다.
+ * 🔴 **원복됨 (하린아빠 2026-08-17 19:46 "생각중 대화내용 남기기로 한거 원복해줘").**
  *
- * ⚠️ `failed` 는 pending 이 아니다 (삼순 #1102 1차 P0-2). 종전엔 "outbox 에 있으면 true"
- * 였는데 그러면 실패 상태에서 점 3개가 계속 돌면서 바로 아래에 실패·재시도 버블이 같이
- * 떠, 화면이 "생각 중"과 "답변 못 받았어요"를 동시에 말하는 모순이 된다.
+ * #1102 에서는 생각중 말풍선을 **대화 기록으로 남겼다**(답변 도착 후에도 말풍선·문구·
+ * thinking 마스코트 잔존, 점 애니메이션만 정지). 하린아빠 지시로 그 설계를 되돌린다 —
+ * 생각중은 **기다리는 동안만** 보이고 답변이 도착하면 사라진다.
+ *
+ * 그래서 `show` 를 `pending` 에 결속한다. 두 값을 따로 두지 않는 이유는, 나뉘어 있으면
+ * "답변 왔는데 말풍선만 남는" 조합이 **구조적으로 다시 가능해지기** 때문이다.
+ *
+ * ⚠️ `failed` 도 사라진다. 실패는 바로 아래 실패·재시도 버블이 말하므로, 생각중이 함께
+ * 남으면 화면이 "생각 중"과 "답변 못 받았어요"를 동시에 말하는 모순이 된다
+ * (삼순 #1102 1차 P0-2 와 같은 축 — 그때는 `pending=false` 로 풀었고 지금은 사라진다).
+ *
+ * ⚠️ 알려진 대가: 사전 히트처럼 빠른 답변에서는 대기 구간이 ~0.5초라 캐릭터가 사람 눈에
+ * 안 잡힌다(#1102 가 애초에 해결하려던 문제 · Production 실측 typing 노출 500ms).
+ * 하린아빠가 그 잔존 설계를 원복하라고 했으므로 대기 노출 시간 문제는 다시 열린 상태로 둔다.
  */
 export function resolveGeniusThinkingRender(input: {
   /** 야잘알봇 대화방인가. */
@@ -71,12 +81,14 @@ export function resolveGeniusThinkingRender(input: {
   thinkingMessageId: number | null;
   replyStates: BaseballQaReplyStates;
 }): { show: boolean; pending: boolean } {
-  const show =
+  const targeted =
     input.isGeniusConversation &&
     input.isMine &&
     input.thinkingMessageId !== null &&
     input.thinkingMessageId === input.messageId;
-  if (!show) return { show: false, pending: false };
+  if (!targeted) return { show: false, pending: false };
   const state = input.replyStates[input.messageId];
-  return { show: true, pending: state === "waiting" || state === "retrying" };
+  const pending = state === "waiting" || state === "retrying";
+  // 🔴 대기 중일 때만 보인다 — `show` 를 `pending` 과 같은 값으로 묶어 잔존 조합을 없앤다.
+  return { show: pending, pending };
 }
