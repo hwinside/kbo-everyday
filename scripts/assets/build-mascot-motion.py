@@ -404,6 +404,15 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="재현 검사만(쓰기 없음)")
     ap.add_argument("--rewrite-ledger", action="store_true",
                     help="원본 mp4 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
+    # 🔴 **source-level 결함주입**을 위한 감사 전용 모드 (삼순 2026-08-17 P0).
+    #    A4/A5 를 최종 WebP 가 아니라 **빌더 입력**에 걸려면, 원본을 변이시킨 임시 폴더로
+    #    빌더를 돌려 `key_frame_audit` 가 실제로 과채움·소품삭제를 뱉는지 봐야 한다.
+    #    13종 전체를 돌리면 회당 5분+ 이라 `--only` 로 대상 1종만 태운다.
+    #    `--audit-only` 는 자산·manifest·대장을 **쓰지 않는다**(판정만).
+    ap.add_argument("--only", default=None,
+                    help="이 클립 1종만 빌드(결함주입 감사용)")
+    ap.add_argument("--audit-only", action="store_true",
+                    help="결함 판정만 하고 자산·manifest·대장을 쓰지 않는다")
     args = ap.parse_args()
 
 
@@ -412,6 +421,11 @@ def main() -> int:
     #    뽑으므로 v1 은 더 이상 입력이 아니다. v1 에 파일을 하나 더 넣거나 빼면
     #    빌드 대상이 조용히 바뀜는 경로였다.
     names = sorted(VIDEO_SOURCES)
+    if args.only:
+        if args.only not in VIDEO_SOURCES:
+            print(f"❌ --only {args.only} 은 VIDEO_SOURCES 에 없다", file=sys.stderr)
+            return 2
+        names = [args.only]
     if not names:
         print("VIDEO_SOURCES 가 비어 있다 — 빌드할 대상이 없다.", file=sys.stderr)
         return 2
@@ -420,11 +434,11 @@ def main() -> int:
     #    종전에는 `os.path.exists` 가 False 면 조용히 구 SSOT 로 넘어갔다. 그러면 manifest 는
     #    "v2 원본에서 뽑았다"고 적혀 있는데 실제 자산은 구본이 되는 — 가장 나쁜 종류의
     #    조용한 실패다. 여기서 멈추면 "왜 안 돼요"가 바로 보인다.
-    missing = [f"{n} ← {os.path.join(VIDEO_SRC_ROOT, rel)}"
-               for n, rel in sorted(VIDEO_SOURCES.items())
-               if not os.path.exists(os.path.join(VIDEO_SRC_ROOT, rel))]
+    missing = [f"{n} ← {os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n])}"
+               for n in names
+               if not os.path.exists(os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n]))]
     if missing:
-        print(f"❌ 원본 mp4 {len(missing)}개 없음 — 구 SSOT 로 fallback 하지 않고 중단한다:",
+        print(f"❌ [B-SRC-MISSING] 원본 mp4 {len(missing)}개 없음 — 구 SSOT 로 fallback 하지 않고 중단한다:",
               file=sys.stderr)
         for m in missing:
             print(f"   · {m}", file=sys.stderr)
@@ -436,13 +450,13 @@ def main() -> int:
     #    썼는가"를 repo 만 보고는 알 수 없으므로, **sha256 대장을 repo 에 둘다**
     #    (`SOURCES.sha256`). 해시가 바뀜 상태로 빌드하면 멈춘다 — "원본을 조용히 바꿔놓고
     #    같은 자산이라고 말하는" 경로를 닫는다.
-    src_hashes = {n: sha256(os.path.join(VIDEO_SRC_ROOT, rel))
-                  for n, rel in sorted(VIDEO_SOURCES.items())}
+    src_hashes = {n: sha256(os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n]))
+                  for n in names}
     # 🔴 대장이 **없으면** 검사를 건너뛰던 것도 false-green 이다 (삼순 2026-08-17).
     #    대장을 지우면 `--check` 가 그냥 통과해버렸다. 검증 모드에선 대장을 **필수**로 둔다
     #    (최초 생성은 빌드 모드에서만 허용).
     if args.check and not os.path.exists(SRC_LEDGER):
-        print(f"❌ 원본 해시 대장이 없다: {os.path.relpath(SRC_LEDGER)}", file=sys.stderr)
+        print(f"❌ [B-LEDGER-MISSING] 원본 해시 대장이 없다: {os.path.relpath(SRC_LEDGER)}", file=sys.stderr)
         print("  → 대장 없이는 '어떤 원본으로 만들었는지'를 증명할 수 없으므로 검증을 통과시키지 않는다.",
               file=sys.stderr)
         return 2
@@ -454,8 +468,8 @@ def main() -> int:
         drift = [f'{n}: 대장={recorded.get(VIDEO_SOURCES[n], "없음")[:12]} 실제={h[:12]}'
                  for n, h in src_hashes.items()
                  if recorded.get(VIDEO_SOURCES[n]) != h]
-        if drift and not args.rewrite_ledger:
-            print(f"❌ 원본 mp4 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
+        if drift and not args.rewrite_ledger and not args.audit_only:
+            print(f"❌ [B-LEDGER-DRIFT] 원본 mp4 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
             for d in drift:
                 print(f"   · {d}", file=sys.stderr)
             print(f"  → 의도한 교체라면 --rewrite-ledger 로 대장을 갱신하고 근거를 남기세요"
@@ -463,7 +477,8 @@ def main() -> int:
             return 2
 
     outdir = os.path.abspath(OUT)
-    tmpdir = outdir if not args.check else os.path.join("/tmp", "mascot-motion-check")
+    tmpdir = outdir if not (args.check or args.audit_only) \
+        else os.path.join("/tmp", "mascot-motion-check")
     os.makedirs(tmpdir, exist_ok=True)
 
     report, mismatched, clipped, defective = {}, [], [], []
@@ -548,16 +563,16 @@ def main() -> int:
         er = meta["edge_run"]
         bad = []
         if max(er.values()) > 0:
-            bad.append(f'잘림 {max(er.values())}px')
+            bad.append(f'[B-CLIP] 잘림 {max(er.values())}px')
         if meta["defect_px"] > HOLE_PX_MAX:
-            bad.append(f'키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
+            bad.append(f'[B-HOLE] 키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
         if meta["overfill_px"] > OVERFILL_PX_MAX:
-            bad.append(f'과채움 {meta["overfill_px"]}px')
+            bad.append(f'[B-OVERFILL] 과채움 {meta["overfill_px"]}px')
         if meta["dropped_persist_frames"] > DROPPED_PERSIST_MAX:
-            bad.append(f'소품삭제 {meta["dropped_persist_frames"]}f 연속')
+            bad.append(f'[B-DROP] 소품삭제 {meta["dropped_persist_frames"]}f 연속')
 
         if meta["motion_pct"] < MOTION_PCT_MIN:
-            bad.append(f'idle {meta["motion_pct"]}%')
+            bad.append(f'[B-IDLE] idle {meta["motion_pct"]}%')
         mark = "✅" if not bad else "🔴 " + " · ".join(bad)
         if bad:
             defective.append((n, bad))
@@ -587,10 +602,20 @@ def main() -> int:
     #    exit 0 으로 끝나 결함 자산이 그대로 썻혔다. 사람이 로그를 읽어야만 알아차리는
     #    경고는 게이트가 아니다.
     if defective:
-        print(f"\n❌ 결함 자산 {len(defective)}종 — 빌드 실패:", file=sys.stderr)
+        print(f"\n❌ [B-DEFECT] 결함 자산 {len(defective)}종 — 빌드 실패:", file=sys.stderr)
+        # 🔴 개별 사유도 `❌ [ID]` 형식으로 찍는다 — mutation runner 가 이 행을 파싱해
+        #    "의도한 축이 죽었는가"를 판정한다. 요약만 `[B-DEFECT]` 로 찍으면
+        #    "뭐가 동자인지"는 사람만 알 수 있고 기계는 구분하지 못한다.
         for n, reasons in defective:
-            print(f"   · {n}: {' · '.join(reasons)}", file=sys.stderr)
+            for reason in reasons:
+                print(f"   ❌ {reason.split(']')[0]}] {n}: {reason}"
+                      if reason.startswith("[") else f"   ❌ {n}: {reason}",
+                      file=sys.stderr)
         return 1
+
+    if args.audit_only:
+        print(f"\n✅ [B-AUDIT] {', '.join(names)} 결함 없음 (감사 전용 — 쓰기 없음)")
+        return 0
 
     if args.check:
         # 🔴 WebP 26개만 비교하면 **`DERIVED.json` 변조·누락을 못 잡는다** (삼순 2026-08-17).
@@ -623,7 +648,7 @@ def main() -> int:
             mismatched.append(f"DERIVED.json({' / '.join(diff) or '내용 불일치'})")
 
         if mismatched:
-            print(f"\n❌ 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
+            print(f"\n❌ [B-REPRO] 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
             return 1
         print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 이 이 스크립트로 재현됨")
         return 0

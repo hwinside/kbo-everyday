@@ -94,3 +94,54 @@ jobs:
           path: .qa-artifacts/mascot/
           if-no-files-found: ignore
           retention-days: 7
+
+  # 🔴 원본 mp4 가 있어야만 도는 축을 **CI 에서도** 돌린다 (삼순 2026-08-17).
+  #    앞 job 은 원본이 없어 M6·M7·L1·L2 를 건너뛴다. 그것만으로 끝내면 source-ledger·
+  #    재현 fail-close 가 다시 **로컬 전용**이 된다 — "내 노트북에서는 돌았다"는 아무도
+  #    강제할 수 없는 증거다.
+  #
+  #    provision 은 **대장(sha256)으로 검증**된다. 다운로드한 무언가가 아니라 *그 원본*
+  #    이어야 증명이 된다. 못 받거나 해시가 다르면 조용히 skip 하지 않고 즉시 실패한다
+  #    (skip 이 곧 false-green 이므로).
+  genius-mascot-motion-source:
+    runs-on: ubuntu-latest
+    env:
+      # 원본 12MB 는 repo 밖에 산다 → Release 자산으로 공급한다.
+      # 원본을 교체하면 새 tag 를 올리고 `--rewrite-ledger` 로 대장을 갱신한다(둘은 함께 움직인다).
+      MASCOT_SRC_TAG: mascot-motion-src-v2
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Python deps (빌더가 쓰는 것)
+        run: python3 -m pip install --quiet --break-system-packages numpy scipy pillow
+
+      - name: 원본 mp4 provision — 대장 해시로 exact 검증
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/mascot-src/v2-regen
+          gh release download "$MASCOT_SRC_TAG" \
+            --repo "${{ github.repository }}" \
+            --pattern '*.mp4' --dir /tmp/mascot-src/v2-regen
+          # "받았다"가 아니라 **"그 원본이다"** 를 증명한다 — repo 안 대장과 대조.
+          cd /tmp/mascot-src && shasum -a 256 -c \
+            "$GITHUB_WORKSPACE/scripts/assets/mascot-motion-SOURCES.sha256"
+
+      - name: 재현 검사 — 파생 자산·manifest 가 이 원본에서 나오는가
+        env:
+          MASCOT_VIDEO_SRC: /tmp/mascot-src
+        run: python3 scripts/assets/build-mascot-motion.py --check
+
+      - name: 자산 결함주입 **전체** (source-level + ledger 축 포함)
+        env:
+          MASCOT_VIDEO_SRC: /tmp/mascot-src
+        run: npm run qa:genius-mascot-assets:mutations:full

@@ -63,10 +63,22 @@ function runGate(cmd, args, expect, env) {
   const res = spawnSync(cmd, args,
     { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...(env ? { env } : {}) });
   const out = `${res.stdout ?? ""}${res.stderr ?? ""}`;
+
+  // 🔴 `status === null` 은 **RED 가 아니다** (삼순 2026-08-17 P0).
+  //    시그널로 죽었거나(OOM·SIGKILL) spawn 자체가 실패한 것이라, "게이트가 결함을
+  //    잡았다"의 증거가 될 수 없다. 판정 불능으로 따로 분류해 시끄럽게 실패시킨다.
+  if (res.error || res.status === null) {
+    return { red: false, hit: false, out, broken: `실행 실패: ${res.error?.message ?? `signal=${res.signal}`}` };
+  }
   const red = res.status !== 0;
-  // "그냥 실패"가 아니라 **의도한 축**이 실패해야 한다. 다른 이유로 죽으면 검출력 증명이 아니다.
-  const hit = expect ? out.includes(expect) : true;
-  return { red, hit, out };
+
+  // 🔴 종전엔 `out.includes("과채움")` 처럼 **문면**으로 매칭했는데, 그 문면은 ✅ 줄에도
+  //    그대로 찍힌다. 그래서 의도 축이 통과하고 **다른 축 하나만 RED** 여도 hit 로 세어졌다
+  //    (삼순 2026-08-17 P0 false-green). 이제 `❌ [ID]` 로만 본다 — 통과 줄과 겹칠 수 없다.
+  const failedIds = new Set(
+    [...out.matchAll(/^\s*❌\s*\[([A-Z0-9-]+)\]/gmu)].map((m) => m[1]));
+  const hit = expect ? failedIds.has(expect) : true;
+  return { red, hit, out, failedIds: [...failedIds] };
 }
 const visual = () => runGate("npx", ["tsx", "scripts/qa/genius-mascot-visual-qa.mjs"]);
 const visualExpect = (needle) =>
@@ -197,6 +209,50 @@ async function fillNegativeSpace(clip) {
   await writeAnimated(clip, data, w, h, pages);
 }
 
+// ── source-level 결함주입 ─────────────────────────────────────────────
+// 원본 mp4 를 변이시킨 **임시 트리**를 만들고, 빌더를 그 트리로 감사 모드 실행한다.
+// 자산·manifest·대장은 건드리지 않으므로 원복할 것이 없다(임시 폴더만 지운다).
+const MUT_SRC = "/tmp/mascot-src-mutation";
+function mutateSource(clip, mode) {
+  fs.rmSync(MUT_SRC, { recursive: true, force: true });
+  const r = spawnSync("python3", [
+    "scripts/qa/mascot-source-mutate.py",
+    "--clip", clip, "--mode", mode, "--src", SRC_ROOT, "--out", MUT_SRC,
+  ], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  if (r.status !== 0) {
+    throw new Error(`원본 변이 실패(${clip}/${mode}): ${r.stderr || r.stdout}`);
+  }
+}
+function sourceAudit(clip, expect) {
+  const res = runGate("python3", [
+    "scripts/assets/build-mascot-motion.py", "--audit-only", "--only", clip,
+  ], expect, { ...process.env, MASCOT_VIDEO_SRC: MUT_SRC });
+  fs.rmSync(MUT_SRC, { recursive: true, force: true });
+  return res;
+}
+
+/**
+ * 빌더 **코드 경로**를 변이시킨다.
+ *
+ * 🔴 왜 여기만 코드 변이인가 — `overfill_px` 는 **원본을 어떻게 바꿔도 안 올라간다.**
+ *    빌더의 전경은 `~(바깥에 연결된 배경)` 이라, 몸 안에 갇힌 배경은 **이미 전경**이다.
+ *    speck 으로 사라진 자리도 바깥쪽 배경과 이어져 있으므로 fill_holes 가 메우지 않는다.
+ *    즉 `overfill > 0` 은 입력이 아니라 **알고리즘이 더 공격적으로 바뀔 때**만 발생한다
+ *    (실측: closing 9→176px / 17→496px / 25→1923px). 이 게이트가 막는 위험이 정확히
+ *    그것이므로, 그 회귀를 실제로 주입해 RED 를 확인한다.
+ */
+const BUILDER = "scripts/assets/build-mascot-motion.py";
+function mutateBuilder(from, to) {
+  stash(BUILDER);
+  const src = fs.readFileSync(BUILDER, "utf8");
+  if (!src.includes(from)) throw new Error(`빌더 변이 앵커 MISS: ${from.trim()}`);
+  fs.writeFileSync(BUILDER, src.replace(from, to));
+}
+function builderAudit(clip, expect) {
+  return runGate("python3", [BUILDER, "--audit-only", "--only", clip], expect,
+    { ...process.env, MASCOT_VIDEO_SRC: SRC_ROOT });
+}
+
 function patchManifest(mutate) {
   stash(MANIFEST);
   const m = JSON.parse(fs.readFileSync(MANIFEST, "utf8"));
@@ -209,8 +265,8 @@ async function mutation(name, apply, gate, expect) {
   process.stdout.write(`  … ${name}\n`);
   try {
     await apply();
-    const { red, hit, out } = gate(expect);
-    results.push({ name, red, hit, out });
+    const r = gate(expect);
+    results.push({ name, expect, ...r });
   } finally {
     restore();
   }
@@ -221,13 +277,13 @@ await mutation(
   "A1 cheerC f17 몸통에 20x20 구멍 (키잉이 몸을 파먹은 상태 재현)",
   () => punchHole(`${DIR}/cheerC.webp`, 17, { x: 60, y: 95, w: 20, h: 20 }),
   visualExpect,
-  "구멍 측정치 = manifest 기록",
+  "V-MANIFEST-SYNC",
 );
 await mutation(
   "A2 pitching 전 프레임 고정 (호흡 idle 재현)",
   () => freezeClip(`${DIR}/pitching.webp`),
   visualExpect,
-  "실루에 변화량",
+  "V-MOTION",
 );
 await mutation(
   "A3 클립 1종 삭제 (파서가 헛돌면 fail-close)",
@@ -235,51 +291,61 @@ await mutation(
   visualExpect,
   // 🔴 종전엔 `expect=null` 이라 **아무 이유로 죽어도 통과**했다(삼순 지적).
   //    13종 전수 검사 축이 정확히 죽는지 지목한다.
-  "13종 전부 검사됐다",
+  "V-COVERAGE",
 );
-await mutation(
-  "A4 응원도구 끝 조각만 지우기 — **진짜 소품 삭제**(클립 전체 아님)",
-  () => erasePropTip(`${DIR}/cheerstick.webp`),
-  visualExpect,
-  "삭제된 조각의 연속 지속",
-);
-await mutation(
-  "A5 정상 음공간(다리 사이 등)을 불투명으로 메움 — **과채움**",
-  () => fillNegativeSpace(`${DIR}/excited.webp`),
-  visualExpect,
-  "과채움",
-);
+// 🔴 A4·A5 는 **원본(빌더 입력)** 을 변이한다 — 최종 WebP 가 아니다 (삼순 2026-08-17 P0).
+//    `overfill_px`·`dropped_persist_frames` 는 빌더가 **원본 픽셀과 대조**해 재는 값이라,
+//    WebP 를 아무리 훼손해도 그 축은 안 움직인다. 종전 구현은 다른 축(V-POSTER)을 죽이고
+//    문면 매칭 덕에 "통과"하던 **정확히 false-green** 이었고, ID 매칭으로 바꾸자마자 드러났다.
+//    이젠 `mascot-source-mutate.py` 로 원본 mp4 프레임을 고치고 빌더를 감사 모드로 돌려
+//    `[B-DROP]`·`[B-OVERFILL]` 이 **실제로** 뜨는지 본다. 원본이 필요하므로 --with-source 전용.
+if (WITH_SOURCE) {
+  await mutation(
+    "A4 원본에 **떨어진 작은 소품** 추가 → speck 제거가 지우는가 (source-level)",
+    () => mutateSource("cheerstick", "add-prop"),
+    () => sourceAudit("cheerstick", "B-DROP"),
+    "B-DROP",
+  );
+  await mutation(
+    "A5 마스크 정리를 공격적으로 바꿈(closing 주입) → 정상 음공간을 메우는가 (code-path)",
+    () => mutateBuilder(
+      "    fg = ndimage.binary_fill_holes(kept)",
+      "    fg = ndimage.binary_fill_holes(ndimage.binary_closing(kept, np.ones((17, 17))))"),
+    () => builderAudit("excited", "B-OVERFILL"),
+    "B-OVERFILL",
+  );
+}
 
 // ── manifest 를 훼손한다 (게이트가 여기서 임계값·측정치를 읽는다) ─────────
 await mutation(
   "M1 defect_px 를 300 으로 위조 (키잉 결함 은폐 시도)",
   () => patchManifest((m) => { m.clips.cheerC.defect_px = 300; }),
   visualExpect,
-  "키잉 구멍",
+  "V-HOLE",
 );
 await mutation(
   "M2 overfill_px 를 500 으로 위조 (정상 음공간 메움)",
   () => patchManifest((m) => { m.clips.excited.overfill_px = 500; }),
   visualExpect,
-  "과채움",
+  "V-OVERFILL",
 );
 await mutation(
   "M3 dropped_persist_frames 를 20 으로 위조 (소품 삭제)",
   () => patchManifest((m) => { m.clips.bored.dropped_persist_frames = 20; }),
   visualExpect,
-  "삭제된 조각의 연속 지속",
+  "V-DROP-PERSIST",
 );
 await mutation(
   "M4 hole_px 를 0 이 아닌 값으로 위조 (자산↔manifest 불일치)",
   () => patchManifest((m) => { m.clips.thinking.hole_px = 77; }),
   visualExpect,
-  "구멍 측정치 = manifest 기록",
+  "V-MANIFEST-SYNC",
 );
 await mutation(
   "M5 edge_run 을 잘림 있음으로 위조",
   () => patchManifest((m) => { m.clips.cheer.edge_run.top = 40; }),
   visualExpect,
-  "edge-run 0",
+  "V-EDGE-RUN",
 );
 // ── 원본 mp4 가 있어야 돌아가는 축 (`build --check`) ─────────────────────
 if (WITH_SOURCE) {
@@ -287,13 +353,13 @@ if (WITH_SOURCE) {
     "M6 임계값 자체를 풀어버림 (hole_px_max 9999) — build --check 가 잡아야 한다",
     () => patchManifest((m) => { m.params.hole_px_max = 9999; }),
     buildCheck,
-    "DERIVED.json",
+    "B-REPRO",
   );
   await mutation(
     "M7 manifest 에서 클립 1종 삭제 — build --check 가 잡아야 한다",
     () => patchManifest((m) => { delete m.clips.headspin; }),
     buildCheck,
-    "DERIVED.json",
+    "B-REPRO",
   );
 
   // ── 원본 해시 대장을 훼손한다 ──────────────────────────────────────────
@@ -301,7 +367,7 @@ if (WITH_SOURCE) {
     "L1 대장 삭제 (원본 증명 불가 → 통과시키면 안 된다)",
     () => { stash(LEDGER); fs.unlinkSync(LEDGER); },
     buildCheck,
-    "대장이 없다",
+    "B-LEDGER-MISSING",
   );
   await mutation(
     "L2 대장 해시 위조 (다른 원본으로 바꿔치기)",
@@ -312,7 +378,7 @@ if (WITH_SOURCE) {
       fs.writeFileSync(LEDGER, lines.join("\n"));
     },
     buildCheck,
-    "해시가 대장과 다르다",
+    "B-LEDGER-DRIFT",
   );
 } else {
   console.log("  ⏭ M6·M7·L1·L2 생략 — `build --check` 는 repo 밖 원본 mp4 가 필요하다.");
@@ -327,8 +393,13 @@ let failed = 0;
 for (const r of results) {
   const ok = r.red && r.hit;
   if (!ok) failed += 1;
-  console.log(`  ${ok ? "✅" : "❌"} ${r.name}` +
-    (ok ? "" : ` — ${r.red ? "다른 이유로 실패(의도한 축이 아님)" : "게이트가 통과시켰다"}`));
+  let why = "";
+  if (!ok) {
+    if (r.broken) why = `판정 불능 — ${r.broken}`;
+    else if (!r.red) why = "게이트가 통과시켰다";
+    else why = `의도 축[${r.expect}] 이 아닌 다른 축이 죽었다 (실패 ID: ${(r.failedIds ?? []).join(",") || "없음"})`;
+  }
+  console.log(`  ${ok ? "✅" : "❌"} ${r.name}${ok ? "" : ` — ${why}`}`);
   if (!ok) console.log(r.out.split("\n").filter((l) => l.includes("❌")).slice(0, 3).join("\n"));
 }
 

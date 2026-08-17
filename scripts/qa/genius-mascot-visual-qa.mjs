@@ -26,9 +26,16 @@ const DERIVED = JSON.parse(readFileSync(`${DIR}/DERIVED.json`, "utf8"));
 
 let pass = 0;
 const failures = [];
-function check(name, ok, detail) {
-  if (ok) { pass += 1; console.log(`  ✅ ${name}`); }
-  else { failures.push(name); console.error(`  ❌ ${name}${detail ? ` — ${detail}` : ""}`); }
+// 🔴 assertion 마다 **안정적인 ID** 를 붙인다 (삼순 2026-08-17 P0).
+//    mutation runner 가 종전엔 `out.includes("과채움")` 처럼 문면으로 매칭했는데,
+//    그 문면은 ✅ 줄에도 그대로 찍히므로 **다른 축이 RED 여도 hit 로 세어졌다**.
+//    이제 runner 는 `❌ [ID]` 만 본다 — 통과 줄과 절대 겹치지 않는다.
+const seenIds = new Set();
+function check(id, name, ok, detail) {
+  if (seenIds.has(id)) { console.error(`  ❌ [GATE] assertion id 중복: ${id}`); process.exit(1); }
+  seenIds.add(id);
+  if (ok) { pass += 1; console.log(`  ✅ [${id}] ${name}`); }
+  else { failures.push(id); console.error(`  ❌ [${id}] ${name}${detail ? ` — ${detail}` : ""}`); }
 }
 
 /** 전 프레임을 (프레임, 폭, 높이) 로 펼쳐 읽는다. */
@@ -248,16 +255,16 @@ const TR = SELFTEST
   ? { overfill: -1, persist: -1 }
   : { overfill: OVERFILL_MAX, persist: DROPPED_PERSIST_MAX };
 
-check(`poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
+check("V-POSTER", `poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
   rows.every((r) => r.posterAvg < T.poster),
   rows.filter((r) => !(r.posterAvg < T.poster)).map((r) => `${r.clip}=${r.posterAvg}`).join(", "));
-check(`전 프레임 union bbox 여백 <= ${T.padMax}px (96px 렌더에서 캐릭터가 안 작아짐)`,
+check("V-PAD-MAX", `전 프레임 union bbox 여백 <= ${T.padMax}px (96px 렌더에서 캐릭터가 안 작아짐)`,
   rows.every((r) => r.padMax <= T.padMax),
   rows.filter((r) => !(r.padMax <= T.padMax)).map((r) => `${r.clip}=${r.padMax}px`).join(", "));
 // 🔴 잘림 계약 — 사방 여백이 **최소 1px 이상**이어야 한다.
 //    여백 0 = 캐릭터 실루엣이 캔버스 변에 그대로 닿음 = 화면에서 "평평하게 잘려" 보인다.
 //    (삼순 #1228 ③. 실측으로 13종 중 8종이 이 상태였고, 원본 재생성으로 닫았다.)
-check(`전 프레임 사방 여백 >= ${T.padMin}px (캐릭터가 캔버스 변에 닿아 잘리지 않는다)`,
+check("V-PAD-MIN", `전 프레임 사방 여백 >= ${T.padMin}px (캐릭터가 캔버스 변에 닿아 잘리지 않는다)`,
   rows.every((r) => r.padMin >= T.padMin),
   rows.filter((r) => !(r.padMin >= T.padMin)).map((r) => `${r.clip}=${r.padMin}px`).join(", "));
 // 생성기가 기록한 edge-run(전 프레임+poster 연속 불투명 런) 도 0 이어야 한다.
@@ -267,21 +274,21 @@ check(`전 프레임 사방 여백 >= ${T.padMin}px (캐릭터가 캔버스 변�
   const bad = Object.entries(DERIVED.clips ?? {})
     .filter(([, m]) => Math.max(...Object.values(m.edge_run ?? { x: 1 })) > 0)
     .map(([n, m]) => `${n}=${Math.max(...Object.values(m.edge_run))}px`);
-  check("DERIVED.json: 전 클립 edge-run 0 (생성 시점 잘림 계약)",
+  check("V-EDGE-RUN", "DERIVED.json: 전 클립 edge-run 0 (생성 시점 잘림 계약)",
     SELFTEST ? false : bad.length === 0, bad.join(", "));
 }
 // 코호트 중앙값보다 유의하게 어두운 클립이 있으면 그 클립만 키잉이 실패한 것이다.
 const lums = rows.map((r) => r.ringLum).sort((a, b) => a - b);
 const median = lums[Math.floor(lums.length / 2)];
-check(`dark halo: 어느 클립도 코호트 중앙값(${median})보다 ${T.haloDelta} 이상 어둡지 않다`,
+check("V-HALO-DARK", `dark halo: 어느 클립도 코호트 중앙값(${median})보다 ${T.haloDelta} 이상 어둡지 않다`,
   rows.every((r) => median - r.ringLum < T.haloDelta),
   rows.filter((r) => !(median - r.ringLum < T.haloDelta))
     .map((r) => `${r.clip}=${r.ringLum}(-${median - r.ringLum})`).join(", "));
 // 균일함 자체도 계약이다 — 편차가 크면 일부 클립만 다른 키잉을 탄 것이다.
 const spread = Math.max(...lums) - Math.min(...lums);
-check(`dark halo: 13종 바깥링 밝기 편차 <= 40 (전 클립이 같은 키잉을 탔다) — 실측 ${spread}`,
+check("V-HALO-SPREAD", `dark halo: 13종 바깥링 밝기 편차 <= 40 (전 클립이 같은 키잉을 탔다) — 실측 ${spread}`,
   SELFTEST ? false : spread <= 40, `min=${Math.min(...lums)} max=${Math.max(...lums)}`);
-check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 사각형으로 보이지 않는다)`,
+check("V-POSTER-DIRTY", `poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 사각형으로 보이지 않는다)`,
   SELFTEST ? false : rows.every((r) => r.posterDirty === 0),
   rows.filter((r) => r.posterDirty !== 0).map((r) => `${r.clip}=${r.posterDirty}%`).join(", "));
 // 🔴 키잉 구멍 — 모서리가 아니라 **몸 안**이 뚫렸는가 (삼순 2026-08-17 P0-①).
@@ -295,7 +302,7 @@ check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 
   const bad = Object.entries(DERIVED.clips ?? {})
     .filter(([, m]) => !(m.defect_px <= T.hole))
     .map(([n, m]) => `${n}=${m.defect_px}px@f${m.defect_frame}`);
-  check(`DERIVED.json: 키잉 구멍 <= ${T.hole}px (원본 대조 — 몸을 배경으로 오인해 파먹지 않았다)`,
+  check("V-HOLE", `DERIVED.json: 키잉 구멍 <= ${T.hole}px (원본 대조 — 몸을 배경으로 오인해 파먹지 않았다)`,
     SELFTEST ? false : bad.length === 0, bad.join(", "));
 }
 // 🔴 **역방향** — 결함을 지우는 보정(fill_holes·speck 제거)이 정상 요소까지 지우지 않았는가
@@ -305,14 +312,14 @@ check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 
   const bad = Object.entries(DERIVED.clips ?? {})
     .filter(([, m]) => !(m.overfill_px <= TR.overfill))
     .map(([n, m]) => `${n}=${m.overfill_px}px`);
-  check(`DERIVED.json: 과채움 <= ${TR.overfill}px (정상 음공간—다리 사이 등—을 메우지 않았다)`,
+  check("V-OVERFILL", `DERIVED.json: 과채움 <= ${TR.overfill}px (정상 음공간—다리 사이 등—을 메우지 않았다)`,
     bad.length === 0, bad.join(", "));
 }
 {
   const bad = Object.entries(DERIVED.clips ?? {})
     .filter(([, m]) => !(m.dropped_persist_frames <= TR.persist))
     .map(([n, m]) => `${n}=${m.dropped_persist_frames}f`);
-  check(`DERIVED.json: 삭제된 조각의 연속 지속 <= ${TR.persist}프레임`
+  check("V-DROP-PERSIST", `DERIVED.json: 삭제된 조각의 연속 지속 <= ${TR.persist}프레임`
     + " (공·응원도구 같은 소품은 연속해서 남는다 — 노이즈는 반짝하고 사라진다)",
     bad.length === 0, bad.join(", "));
 }
@@ -321,19 +328,19 @@ check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 
 {
   const bad = rows.filter((r) => (DERIVED.clips?.[r.clip]?.hole_px ?? -1) !== r.holeMax)
     .map((r) => `${r.clip}: 재측정=${r.holeMax} manifest=${DERIVED.clips?.[r.clip]?.hole_px}`);
-  check("파생 자산 구멍 측정치 = manifest 기록 (빌드 후 자산 교체 없음)",
+  check("V-MANIFEST-SYNC", "파생 자산 구멍 측정치 = manifest 기록 (빌드 후 자산 교체 없음)",
     SELFTEST ? false : bad.length === 0, bad.join(", "));
 }
 // 🔴 움직임 — "활발하게 움직이는 버전"이 요구사항이므로 숫자로 고정한다.
 //    `pitching` 은 잘림을 피하려고 동작을 줄인 결과 0.48% 의 호흡 idle 이 됐는데
 //    종전 게이트에는 움직임을 재는 축이 아예 없어 전부 GREEN 이었다.
-check(`실루에 변화량 >= ${T.motion}% (호흡 idle 이 아니라 실제 동작이다)`,
+check("V-MOTION", `실루에 변화량 >= ${T.motion}% (호흡 idle 이 아니라 실제 동작이다)`,
   rows.every((r) => r.motionPct >= T.motion),
   rows.filter((r) => !(r.motionPct >= T.motion))
     .map((r) => `${r.clip}=${r.motionPct}%`).join(", "));
-check("모든 클립이 실제 애니메이션이다(프레임 2 이상)", rows.every((r) => r.frames >= 2),
+check("V-FRAMES", "모든 클립이 실제 애니메이션이다(프레임 2 이상)", rows.every((r) => r.frames >= 2),
   rows.filter((r) => r.frames < 2).map((r) => r.clip).join(", "));
-check("13종 전부 검사됐다(파서가 헛돌면 fail-close)", rows.length === 13, `${rows.length}종`);
+check("V-COVERAGE", "13종 전부 검사됐다(파서가 헛돌면 fail-close)", rows.length === 13, `${rows.length}종`);
 
 if (SELFTEST) {
   const detected = failures.length >= 3;
