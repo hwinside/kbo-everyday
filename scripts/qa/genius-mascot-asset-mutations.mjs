@@ -21,7 +21,10 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import sharp from "sharp";
+
+const sha256 = (f) => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
 
 const DIR = "public/mascot/motion";
 const MANIFEST = `${DIR}/DERIVED.json`;
@@ -380,8 +383,38 @@ if (WITH_SOURCE) {
     buildCheck,
     "B-LEDGER-DRIFT",
   );
+
+  // ── 🔴 삼순 2026-08-17 P0: "자산 교체 + manifest 동시 갱신" 과 "모드 강등" ──────────
+  //    직전 구조는 툴체인이 다르면(=CI 는 항상) shipped WebP 를 **존재만** 확인했다.
+  //    그래서 아래 S1 이 정확히 GREEN 이었다 — 원본에서 생성되지 않은 자산이 통과했다.
+  //    선택자를 없애고 `semantic_diff`(디코딩 실루엣 IoU)를 넣었으니, 이 두 축을
+  //    **영구 회귀 테스트로 고정**한다. 다시 느슨해지면 여기서 죽는다.
+  await mutation(
+    "S1 자산 교체 + manifest 해시 동시 갱신 (가장 정교한 위조 — 해시 정합성까지 맞춘다)",
+    () => {
+      // swing 자리에 thinking 을 넣는다. 둘 다 **정상 자산**이라 픽셀 결함 축은 안 걸린다.
+      stash(`${DIR}/swing.webp`);
+      stash(`${DIR}/swing-poster.webp`);
+      fs.copyFileSync(`${DIR}/thinking.webp`, `${DIR}/swing.webp`);
+      fs.copyFileSync(`${DIR}/thinking-poster.webp`, `${DIR}/swing-poster.webp`);
+      // manifest 해시도 새 파일 기준으로 맞춰준다 — 해시 대조로는 절대 못 잡게.
+      patchManifest((m) => {
+        m.clips.swing.clip_sha256 = sha256(`${DIR}/swing.webp`);
+        m.clips.swing.poster_sha256 = sha256(`${DIR}/swing-poster.webp`);
+        m.clips.swing.clip_kb = Math.round(fs.statSync(`${DIR}/swing.webp`).size / 1024);
+      });
+    },
+    buildCheck,
+    "B-REPRO",
+  );
+  await mutation(
+    "S2 manifest 에 `toolchain` 키 주입 (검사 강도를 데이터가 고르게 만들려는 시도)",
+    () => patchManifest((m) => { m.toolchain = "webp=9.9.9 / os=Nowhere"; }),
+    buildCheck,
+    "B-REPRO",
+  );
 } else {
-  console.log("  ⏭ M6·M7·L1·L2 생략 — `build --check` 는 repo 밖 원본 mp4 가 필요하다.");
+  console.log("  ⏭ M6·M7·L1·L2·S1·S2 생략 — `build --check` 는 repo 밖 원본 mp4 가 필요하다.");
   console.log("     원본 보유 환경에서 `npm run qa:genius-mascot-assets:mutations:full` 로 검증한다.");
 }
 

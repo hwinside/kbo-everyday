@@ -82,7 +82,9 @@ MANIFEST = os.path.join(OUT, "DERIVED.json")
 # 어떤 원본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
 SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha256")
 # `--check` 가 바이트까지 볼 수 있는 조합인가 (main() 에서 manifest 의 toolchain 과 대조).
-BYTE_EXACT = True
+# 배포본↔생성본 알파 실루엣 IoU 하한. 같은 그림이면 인코더가 달라도 ~0.999 이고,
+# 다른 클립이면 0.6 아래로 떨어진다(실측 근거는 커밋 메시지 참조).
+SILHOUETTE_IOU_MIN = 0.99
 
 # 배경 색 허용 오차.
 # 🔴 종전 26 은 **너무 넓었다**(삼순 #1228 P0-①, 실측으로 확정).
@@ -396,39 +398,74 @@ def silhouette_motion_pct(masks) -> float:
     return round(tot / (len(masks) - 1) * 100, 2)
 
 
-def toolchain_fingerprint() -> str:
-    """WebP 바이트를 좌우하는 인코더/디코더 조합의 지문.
+def _toolchain_note() -> str:
+    """로그에 찍는 **정보 전용** 문자열. 🔴 판정에 쓰지 않는다.
 
-    🔴 왜 필요한가 (2026-08-17 CI 실측): `--check` 를 **바이트 동일성**으로만 판정하면
-    macOS(libwebp 1.5.0 / ffmpeg 9)에서 만든 자산이 Linux CI 에서 재현될 수 없다.
-    실측 차이는 미미하지만 실재한다 — bored 380KB↔382KB, pitching hole 1↔3,
-    headspin motion 1.56%↔1.57%. **디코딩 결과가 비트 단위로 같지 않기 때문**이고,
-    이건 결함이 아니라 플랫폼 사실이다.
-
-    그렇다고 바이트 검사를 버리면 "빌드 후 자산 교체"를 못 잡는다. 그래서 지문을 기록해
-      · 지문이 같다  → **바이트 동일성**(가장 강한 검사)
-      · 지문이 다르다 → **계약 동일성**(원본 해시·클립 목록·임계값 exact +
-                        측정치는 허용오차 안) — 그리고 그 사실을 반드시 출력한다.
-    조용히 약한 검사로 내려가는 것이 가장 나쁘므로, 어떤 모드로 판정했는지 항상 찍는다.
+    종전엔 이 값이 manifest 에 저장돼 검사 강도를 골랐고, 그래서 위조 한 줄로 검사를
+    약화시킬 수 있었다(삼순 P0). 지금은 어디에도 저장하지 않고 사람이 읽기 위해서만 찍는다.
     """
     import platform
     from PIL import features
-    return " / ".join([
-        f"webp={features.version('webp')}",
-        f"pillow={Image.__version__ if hasattr(Image, '__version__') else 'n/a'}",
-        f"ffmpeg={_ffmpeg_version()}",
-        f"os={platform.system()}",
-    ])
+    return f"webp={features.version('webp')} / os={platform.system()}"
 
 
-def _ffmpeg_version() -> str:
-    import subprocess
+def webp_alpha_masks(path: str):
+    """WebP(애니메이션/정지)를 디코딩해 프레임별 알파 실루엣 마스크를 돌려준다.
+
+    바이트가 아니라 **그림 자체**를 비교하기 위한 것이다.
+    """
+    masks, size = [], None
+    with Image.open(path) as im:
+        size = im.size
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            a = np.array(im.convert("RGBA"))[:, :, 3]
+            masks.append(a > 128)
+    return masks, size
+
+
+def semantic_diff(shipped: str, built: str) -> list:
+    """배포된 자산이 **이 원본에서 방금 만든 것과 같은 그림인가**.
+
+    🔴 왜 이게 필요한가 (삼순 2026-08-17 P0):
+    종전 구조는 툴체인이 다르면(=CI 는 항상 그렇다) shipped WebP 를 **존재만** 확인했다.
+    그래서 자산을 다른 정상 클립으로 바꾸고 manifest 해시만 같이 갱신하면
+    **원본에서 생성되지 않은 자산이 `--check` GREEN** 이었다. 바이트 비교가 불가능한
+    환경에서도 "같은 그림인가"는 물어야 한다 — 그걸 디코딩해서 직접 대조한다.
+
+    비교 축(전부 인코더 차이에 둔감하고, 클립이 바뀌면 즉시 깨진다):
+      · 프레임 수      — exact
+      · 캔버스 w·h     — ±2px (crop bbox 디코딩 흔들림)
+      · 알파 실루엣 IoU — 프레임별 교집합/합집합. 같은 그림이면 1.0 에 붙고,
+                         다른 클립이면 급락한다(임계는 실측으로 정한다).
+    """
     try:
-        out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True,
-                             check=True).stdout.splitlines()[0]
-        return out.split(" ")[2]
-    except Exception:
-        return "n/a"
+        sm, ssz = webp_alpha_masks(shipped)
+        bm, bsz = webp_alpha_masks(built)
+    except Exception as exc:  # 디코딩 실패는 통과가 아니라 **판정 불능** → 실패로 다룬다
+        return [f"디코딩 실패({exc})"]
+
+    broken = []
+    if len(sm) != len(bm):
+        broken.append(f"프레임수({len(sm)}\u2260{len(bm)})")
+    for axis, a, b in (("w", ssz[0], bsz[0]), ("h", ssz[1], bsz[1])):
+        if abs(a - b) > 2:
+            broken.append(f"{axis}({a}\u2260{b})")
+    if broken:
+        return broken  # 크기·프레임이 다르면 IoU 는 의미가 없다
+
+    worst, worst_i = 1.0, -1
+    for i, (a, b) in enumerate(zip(sm, bm)):
+        if a.shape != b.shape:
+            n = (min(a.shape[0], b.shape[0]), min(a.shape[1], b.shape[1]))
+            a, b = a[:n[0], :n[1]], b[:n[0], :n[1]]
+        union = np.logical_or(a, b).sum()
+        iou = float(np.logical_and(a, b).sum() / union) if union else 1.0
+        if iou < worst:
+            worst, worst_i = iou, i
+    if worst < SILHOUETTE_IOU_MIN:
+        broken.append(f"실루엣 IoU {worst:.4f}@f{worst_i} (계약 >= {SILHOUETTE_IOU_MIN})")
+    return broken
 
 
 def sha256(path: str) -> str:
@@ -513,25 +550,20 @@ def main() -> int:
                   f" ({os.path.relpath(SRC_LEDGER)}).", file=sys.stderr)
             return 2
 
-    # 🔴 바이트 재현이 **가능한 조합인지** 먼저 판정한다 (2026-08-17 CI 실측).
-    #    macOS(libwebp 1.5.0/ffmpeg 9)에서 만든 자산은 Linux CI 에서 바이트가 안 맞는다
-    #    — 결함이 아니라 플랫폼 사실이다(실측 380KB↔382KB, pitching hole 1↔3).
-    #    같은 툴체인이면 바이트까지, 다르면 계약(원본 해시·목록·임계값 exact + 측정치 오차)만
-    #    본다. **어느 모드로 판정했는지는 항상 출력한다** — 조용히 약해지는 것이 가장 나쁘다.
-    global BYTE_EXACT
-    recorded_toolchain = None
-    if os.path.exists(MANIFEST):
-        try:
-            with open(MANIFEST, encoding="utf-8") as fh:
-                recorded_toolchain = json.load(fh).get("toolchain")
-        except (json.JSONDecodeError, OSError):
-            recorded_toolchain = None
-    BYTE_EXACT = (recorded_toolchain == toolchain_fingerprint())
+    # 🔴 **검사받는 데이터가 자기 검사 강도를 고르게 두지 않는다** (삼순 2026-08-17 P0).
+    #    직전 구조는 `manifest.toolchain` 을 읽어 모드를 골랐다. 그런데 manifest 는
+    #    바로 이 검사가 검증해야 할 대상이다 — 문자열 한 줄만 바꾸면 약한 모드를 강제할 수
+    #    있었고, 약한 모드에서는 shipped WebP 를 **존재만** 확인했으므로
+    #    "자산을 다른 정상 클립으로 교체 + manifest 해시 동시 갱신" 이 GREEN 이었다.
+    #
+    #    → 선택자를 없앤다. 바이트 비교는 **항상 시도**하고, 어긋나면 통과시키는 대신
+    #      `semantic_diff` 로 **디코딩해서 같은 그림인지** 직접 대조한다.
+    #      바이트가 맞으면 그것으로 끝, 아니면 그림으로 증명해야 한다 — 어느 쪽이든
+    #      "존재만 확인"으로 내려가는 경로는 없다.
     if args.check:
-        print(f"툴체인: {toolchain_fingerprint()}")
-        print(f"기록  : {recorded_toolchain or '(없음)'}")
-        print("판정  : " + ("바이트 동일성(같은 툴체인)" if BYTE_EXACT
-                          else "계약 동일성(툴체인이 달라 바이트 비교 불가)"), flush=True)
+        print(f"툴체인: {_toolchain_note()}")
+        print("판정  : 바이트 동일성 우선 → 불일치 시 디코딩 의미 동등성(실루엣 IoU)",
+              flush=True)
 
     outdir = os.path.abspath(OUT)
     tmpdir = outdir if not (args.check or args.audit_only) \
@@ -539,6 +571,8 @@ def main() -> int:
     os.makedirs(tmpdir, exist_ok=True)
 
     report, mismatched, clipped, defective = {}, [], [], []
+    # 바이트는 달랐지만 디코딩 대조로 같은 그림임이 증명된 자산(플랫폼 차이).
+    semantic_only = []
     for n in names:
         frames, meta = build(n)
         clip = os.path.join(tmpdir, f"{n}.webp")
@@ -617,9 +651,14 @@ def main() -> int:
                 shipped = os.path.join(outdir, os.path.basename(built))
                 if not os.path.exists(shipped):
                     mismatched.append(f"{os.path.basename(built)}(없음)")
-                elif BYTE_EXACT and sha256(shipped) != sha256(built):
-                    # 같은 툴체인인데 바이트가 다르다 = **빌드 후 자산 교체**.
-                    mismatched.append(os.path.basename(built))
+                elif sha256(shipped) != sha256(built):
+                    # 바이트가 다르다 = 인코더 차이일 수도, **자산 교체**일 수도 있다.
+                    # 통과시키지 않고 **디코딩해서 같은 그림인지** 증명하게 한다.
+                    broken = semantic_diff(shipped, built)
+                    if broken:
+                        mismatched.append(f"{os.path.basename(built)}[{' · '.join(broken)}]")
+                    else:
+                        semantic_only.append(os.path.basename(built))
         er = meta["edge_run"]
         bad = []
         if max(er.values()) > 0:
@@ -655,8 +694,6 @@ def main() -> int:
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
                        "scripts/assets/mascot-motion-SOURCES.sha256)",
-        # 바이트 재현이 가능한 조합인지 판정하는 데 쓴다(위 toolchain_fingerprint 주석 참조).
-        "toolchain": toolchain_fingerprint(),
         "clips": report,
     }
     # 🔴 결함이 있으면 **빌드 자체가 실패**해야 한다 (삼순 2026-08-17).
@@ -695,6 +732,17 @@ def main() -> int:
         elif json.dumps(shipped_manifest, sort_keys=True, ensure_ascii=False) != \
                 json.dumps(payload, sort_keys=True, ensure_ascii=False):
             diff = []
+            # 🔴 **모르는 최상위 키가 들어오면 실패**한다 (삼순 2026-08-17 P0 파생).
+            #    직전 구조에서 `toolchain` 이 검사 강도를 골랐다. 그 필드는 없앴지만,
+            #    "manifest 에 새 키를 끼워 넣어 동작을 바꾼다"는 **경로 자체**를 막아야
+            #    같은 사고가 재발하지 않는다. 키 집합을 exact 로 고정한다.
+            sk, pk = set(shipped_manifest), set(payload)
+            if sk != pk:
+                extra, missing = sorted(sk - pk), sorted(pk - sk)
+                if extra:
+                    diff.append(f"미지 키 {','.join(extra)}")
+                if missing:
+                    diff.append(f"누락 키 {','.join(missing)}")
             if shipped_manifest.get("params") != payload["params"]:
                 diff.append("params")
             # ssot/source_root/generator 는 어디서 돌리든 같아야 한다(toolchain 만 예외).
@@ -742,9 +790,6 @@ def main() -> int:
                 a, b = sc[k], pc[k]
                 if a == b:
                     continue
-                if BYTE_EXACT:
-                    changed.append(k)
-                    continue
                 broken = [f for f in CONTRACT if a.get(f) != b.get(f)]
                 for f in ("w", "h"):
                     av, bv = a.get(f), b.get(f)
@@ -761,14 +806,18 @@ def main() -> int:
                 diff.append(f"변조 클립 {','.join(changed)}")
             if diff:
                 mismatched.append(f"DERIVED.json({' / '.join(diff)})")
-            elif BYTE_EXACT:
-                mismatched.append("DERIVED.json(내용 불일치)")
+            # 🔴 `clip_sha256`/`poster_sha256` 를 여기서 exact 비교하지 않는 이유:
+            #    인코더가 다르면 정상 자산도 해시가 달라진다. 그래서 **자산의 정당성은
+            #    manifest 가 아니라 자산 자체를 디코딩해 판정**한다(위 `semantic_diff`).
+            #    "자산 교체 + manifest 해시 동시 갱신" 공격은 manifest 를 아무리 맞춰도
+            #    그림이 다르므로 실루엣 IoU 에서 걸린다.
 
         if mismatched:
             print(f"\n❌ [B-REPRO] 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
             return 1
-        mode = "바이트 동일" if BYTE_EXACT else "계약 동일(툴체인 상이 — 바이트 비교 생략)"
-        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 재현 확인 [{mode}]")
+        note = "바이트 동일" if not semantic_only else \
+            f"바이트 {len(names) * 2 - len(semantic_only)}개 + 디코딩 대조 {len(semantic_only)}개"
+        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 재현 확인 [{note}]")
         return 0
 
     if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):
