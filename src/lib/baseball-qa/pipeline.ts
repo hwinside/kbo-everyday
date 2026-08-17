@@ -86,8 +86,12 @@ import {
   type EventRecordAnswer,
 } from "./stats/event-records";
 import {
+  composeTeamPairAnswer,
   composeTeamRecordAnswer,
+  isTeamPairMetric,
   isTeamScoreQuestion,
+  mentionsUnservedTeamTopic,
+  resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
   type TeamRecordFetchers,
@@ -1254,6 +1258,21 @@ const STAT_WORDS = [
  *
  * ⚠️ `kia` 누락으로 `KIA의 역사` 가 구단 질문으로 안 잡혔다(2026-08-04 실측).
  * 로스터 정본의 team 값은 `KIA|KT|LG|NC|SSG|두산|롯데|삼성|키움|한화` 다.
+ *
+ * ⚠️ **알파벳 구단명은 한글 음독도 같이 둔다** (2026-08-16 운영 로그 전수조사).
+ * `LG`·`KIA` 는 처음부터 `엘지`·`기아` 를 갖고 있었는데 `KT`·`SSG`·`NC` 는 알파벳만 있었다.
+ * 그래서 **같은 질문이 표기만 바뀌어도 결과가 갈라졌다** — 72시간 로그 실측:
+ *   `Kt wiz와 삼성과 몇게임 차야?`      → `team_record` (정상 답변)
+ *   `케이티랑 삼성이랑 몇게임 차야?`    → `unsure`  (똑같은 질문인데 못 답함)
+ *   `삼성이랑 케이티랑 2게임 차라고?`   → `unsure`
+ * 지표 판정(`resolveTeamRecordIntent`)은 세 문장 모두 `gamesBehind` 를 정확히 잡았고,
+ * **구단 결속만 실패**해 라우팅이 갈라졌다.
+ *
+ * ⚠️ 수록 기준 — **반례를 찾아보고 오탐이 없는 음독만** 넣는다.
+ * `쓱`(SSG 팬 은어)은 로그에 나왔지만 **넣지 않았다** — 국어 부사 `쓱`(공이 쓱 빠졌다)과
+ * 토큰이 완전히 같아 `tokenIsWord` 가 구분할 수 없다. 문맥으로 가르려면 규칙을 쌓아야
+ * 하므로(`open_language_never_closes_with_rules`) 미수록으로 둔다.
+ * 이 목록은 구단 10개라는 **닫힌 집합**의 원소 표기라 무한히 늘어나는 축이 아니다.
  */
 const TEAM_ALIASES: ReadonlyArray<{
   readonly canonical: string;
@@ -1269,9 +1288,9 @@ const TEAM_ALIASES: ReadonlyArray<{
   { canonical: "삼성", teamId: 8, shorts: ["삼성"], nicks: ["라이온즈"] },
   { canonical: "한화", teamId: 9, shorts: ["한화"], nicks: ["이글스"] },
   { canonical: "키움", teamId: 10, shorts: ["키움"], nicks: ["히어로즈"] },
-  { canonical: "KT", teamId: 3, shorts: ["kt"], nicks: ["위즈"] },
-  { canonical: "SSG", teamId: 4, shorts: ["ssg"], nicks: ["랜더스"] },
-  { canonical: "NC", teamId: 5, shorts: ["nc"], nicks: ["다이노스"] },
+  { canonical: "KT", teamId: 3, shorts: ["kt", "케이티"], nicks: ["위즈"] },
+  { canonical: "SSG", teamId: 4, shorts: ["ssg", "에스에스지"], nicks: ["랜더스"] },
+  { canonical: "NC", teamId: 5, shorts: ["nc", "엔씨"], nicks: ["다이노스"] },
 ];
 const TEAM_WORDS = TEAM_ALIASES.flatMap(({ shorts, nicks }) => [...shorts, ...nicks]);
 
@@ -2082,9 +2101,24 @@ function injectionNormalize(value: string): string {
     .join("");
 }
 
+/**
+ * 토큰 꼬리에서 떼어낼 조사·어미의 **폐쇄집합**.
+ *
+ * ⚠️ `랑`·`이랑` 은 2026-08-16 운영 로그 전수조사에서 추가했다. 한국어 **공동격 조사**로
+ * `과`·`와` 와 같은 부류인데 이것만 빠져 있어서, 나열형 질문이 통째로 결속에 실패했다:
+ *   `엘지와 두산 몇게임 차야?`   → 구단 2개 결속 → `team_record` (정상)
+ *   `엘지랑 두산이랑 몇게임 차야?` → 구단 **0개** 결속 → `unsure` (같은 질문인데 못 답함)
+ * 72시간 로그의 순위·게임차 미답변 8건 중 다수가 이 형태였다. 구단뿐 아니라 선수·용어
+ * 결속도 같은 함수를 타므로 영향 범위가 넓다(`이승엽이랑`·`잔루랑`).
+ *
+ * ⚠️ 반례 탐색 실측 — 이 두 꼬리를 떼어도 **다른 실단어가 되는 경우가 없다**:
+ *   사전 term+alias 583개 → `W+랑`/`W+이랑` 이 다른 어휘와 충돌: 0건
+ *   현재 로스터 선수명 295명 → `랑` 으로 끝나는 이름 0명, 충돌 0건
+ * 이 목록은 한국어 조사라는 닫힌 부류라 반례마다 늘어나는 축이 아니다.
+ */
 const TOKEN_TRIM_SUFFIXES = [
   "이라는", "이란", "란", "은", "는", "이", "가", "을", "를", "에", "의", "도", "만",
-  "과", "와", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
+  "과", "와", "이랑", "랑", "으로", "로", "에서", "에게", "한테", "부터", "까지", "처럼", "보다",
   "인데", "인가", "예요", "이에요", "뭐야", "뜻",
 ];
 
@@ -4946,6 +4980,58 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     };
     const intent = resolveTeamRecordIntent(question);
     const canonicalTeam = resolveMentionedTeam(question);
+    // ── 두 구단 질문 (2026-08-16 삼순 NO-GO 반영) ──────────────────────────────
+    //
+    // 🔴 `resolveMentionedTeam()` 은 구단이 **정확히 1개**일 때만 값을 준다. 그런데
+    //   운영 로그의 순위·게임차 질문은 전부 2개 구단이라(`엘지랑 두산이랑 몇게임 차야?`),
+    //   조사·음독 결속을 고쳐 구단 2개가 잡히게 만들어도 여기서 `null → history_hold` 로
+    //   끝나 **유저가 받는 답은 바뀌지 않았다**. 그 구멍을 여기서 닫는다.
+    //
+    // 단일 구단과 같은 계약: 원값 그대로 · 한 팀이라도 없으면 통째로 fail-close · LLM 미경유.
+    // 3개 이상은 열지 않는다(폐쇄집합 2 고정) — 열거 대상이 늘면 질문 의도가 모호해진다.
+    const mentionedTeams = mentionedTeamCanonicals(question);
+    // ⚠️ 진입 조건 (2026-08-16 삼순 NO-GO):
+    //   ① 지표가 pair 폐쇄집합(`ranking`·`gamesBehind`) 안일 것
+    //      — 시즌 집계 나열(`전적`·`승`·`홈런`·`타율`)은 견주기 질문의 답이 아니다.
+    //   ② 구단이 정확히 2개일 것
+    //
+    //   ③ 미서빙 주제어(맞대결·상대전적·우승 등)가 없을 것
+    //
+    // ③은 **새 정규식이 아니라 기존 SSOT(`TEAM_UNSERVED_PATTERNS`) 재사용**이다.
+    // `resolveTeamRecordIntent` 는 그 패턴을 값 요구어와 AND 로 묶어 서사 질문을 살리는데,
+    // pair 경로는 이미 지표가 잡힌 상태라 서사가 아니다 — `LG와 두산 맞대결 순위` 처럼
+    // 값 요구어가 없어도 답은 수치로 확정되므로 여기서는 주제어만으로 닫는다.
+    // 3차 반영에서 별도 판정기(`isHeadToHeadQuestion`)를 세웠다가 제거했다:
+    // 같은 판정을 두 곳에서 하면 한쪽만 고쳤을 때 조용히 갈라진다.
+    if (
+      intent.kind === "query"
+      && isTeamPairMetric(intent.metric)
+      && !mentionsUnservedTeamTopic(question)
+      && !canonicalTeam
+      && mentionedTeams.length === 2
+      && deps.fetchTeamRecord
+    ) {
+      let pairStandings: Awaited<ReturnType<TeamRecordFetchers["fetchStandings"]>>;
+      let pairRecords: Awaited<ReturnType<TeamRecordFetchers["fetchTeamRecords"]>>;
+      try {
+        [pairStandings, pairRecords] = await Promise.all([
+          deps.fetchTeamRecord.fetchStandings(),
+          deps.fetchTeamRecord.fetchTeamRecords(),
+        ]);
+      } catch {
+        // 조회 실패는 "기록 없음"이 아니다 — 재시도 가능한 실패로 알린다(단일 경로와 동일).
+        return settleTeam(SYSTEM_ERROR_ANSWER, "error");
+      }
+      const pair = resolveTeamPairRecord(
+        intent.metric,
+        [mentionedTeams[0], mentionedTeams[1]],
+        pairStandings,
+        pairRecords,
+        teamIdOfCanonical,
+      );
+      if (pair.kind === "ok") return settleTeam(composeTeamPairAnswer(pair), "kbo_structured");
+      return settleTeam(TEAM_STAT_HOLD_ANSWER, "history_hold");
+    }
     // 지표를 못 잊거나(우승 횟수·상대전적 등 미서빙 값) 구단을 하나로 특정하지 못하면
     // 지어내지 않고 닫는다. `TEAM_STAT_HOLD_ANSWER` 는 "순위표에서 보세요" 안내다.
     if (intent.kind !== "query" || !canonicalTeam || !deps.fetchTeamRecord) {
