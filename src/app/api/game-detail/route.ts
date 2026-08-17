@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { createSingleFlight } from "@/lib/http/single-flight";
 import {
   fetchKboGamesOnly,
   parseGameLinescoreResponse,
@@ -607,8 +608,19 @@ function reportDetailDegradation(
   }
 }
 
+type DetailComputeResult =
+  | { data: GameDetailResponse; isError: false }
+  | {
+      data: { error: string; gameId: string; status: "scheduled"; meta: null; linescore: null; lineup: null; boxScore: null };
+      isError: true;
+    };
+
+// 동시 시청자가 같은 (gameId,seasonId,srId)를 30s 폴링할 때, 이미 진행 중인 계산이 있으면
+// 그 결과를 공유해 upstream fetch+파싱(Fluid Active CPU)을 1회로 접는다. TTL 저장이 없어
+// 시간적으로 겹친 요청만 접으므로 모든 요청은 갓 계산된 결과를 받는다 = staleness 0.
+const gameDetailFlight = createSingleFlight<DetailComputeResult>();
+
 export async function GET(req: NextRequest) {
-  const sourceAtMs = Date.now();
   const gameId = req.nextUrl.searchParams.get("gameId");
   if (!gameId) {
     return NextResponse.json({ error: "gameId is required" }, { status: 400 });
@@ -623,6 +635,22 @@ export async function GET(req: NextRequest) {
   }
 
   const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
+  const overrideSrId = req.nextUrl.searchParams.get("srId");
+  const key = `${gameId}|${seasonId}|${overrideSrId ?? ""}`;
+  const result = await gameDetailFlight.run(
+    key,
+    () => computeGameDetailData(gameId, seasonId, overrideSrId),
+  );
+  if (result.isError) return NextResponse.json(result.data, { status: 200 });
+  return await jsonWithETag(req, result.data);
+}
+
+async function computeGameDetailData(
+  gameId: string,
+  seasonId: string,
+  overrideSrId: string | null,
+): Promise<DetailComputeResult> {
+  const sourceAtMs = Date.now();
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
   const dateStr = gameId.slice(0, 8);
   const kboSessionPromise = fetchKboSessionCookie(deadlineSignal);
@@ -660,7 +688,7 @@ export async function GET(req: NextRequest) {
   // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
   // a single integer srId — NOT comma-separated like GetKboGameList.
   // Try srId=0 (regular) first; if ScoreBoard returns empty, retry with srId=1 (preseason).
-  const overrideSrId = req.nextUrl.searchParams.get("srId");
+  // (overrideSrId는 computeGameDetailData 인자로 주입 — single-flight key의 일부)
 
   async function fetchWithSrId(srId: string) {
     const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
@@ -931,11 +959,11 @@ export async function GET(req: NextRequest) {
     // ETag/304 조건부 응답: 폴링 시 detail이 안 바뀌었으면 304(빈 바디)로
     // Fast Origin Transfer 절감. 폴링 주기 불변 → 실시간성 손실 0. 브라우저가
     // no-cache 저장분을 revalidate하고 304 시 캐시 바디를 JS에 투명 반환(클라 무변경).
-    return await jsonWithETag(req, response);
+    return { data: response, isError: false };
   } catch (e: unknown) {
-    return NextResponse.json(
-      { error: (e as Error).message, gameId, status: "scheduled", meta: null, linescore: null, lineup: null, boxScore: null },
-      { status: 200 },
-    );
+    return {
+      data: { error: (e as Error).message, gameId, status: "scheduled", meta: null, linescore: null, lineup: null, boxScore: null },
+      isError: true,
+    };
   }
 }
