@@ -81,6 +81,8 @@ MANIFEST = os.path.join(OUT, "DERIVED.json")
 # 원본 mp4 해시 대장 — **repo 안**에 산다. 원본 바이너리는 repo 밖(22MB)에 있어서,
 # 어떤 원본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
 SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha256")
+# `--check` 가 바이트까지 볼 수 있는 조합인가 (main() 에서 manifest 의 toolchain 과 대조).
+BYTE_EXACT = True
 
 # 배경 색 허용 오차.
 # 🔴 종전 26 은 **너무 넓었다**(삼순 #1228 P0-①, 실측으로 확정).
@@ -394,6 +396,41 @@ def silhouette_motion_pct(masks) -> float:
     return round(tot / (len(masks) - 1) * 100, 2)
 
 
+def toolchain_fingerprint() -> str:
+    """WebP 바이트를 좌우하는 인코더/디코더 조합의 지문.
+
+    🔴 왜 필요한가 (2026-08-17 CI 실측): `--check` 를 **바이트 동일성**으로만 판정하면
+    macOS(libwebp 1.5.0 / ffmpeg 9)에서 만든 자산이 Linux CI 에서 재현될 수 없다.
+    실측 차이는 미미하지만 실재한다 — bored 380KB↔382KB, pitching hole 1↔3,
+    headspin motion 1.56%↔1.57%. **디코딩 결과가 비트 단위로 같지 않기 때문**이고,
+    이건 결함이 아니라 플랫폼 사실이다.
+
+    그렇다고 바이트 검사를 버리면 "빌드 후 자산 교체"를 못 잡는다. 그래서 지문을 기록해
+      · 지문이 같다  → **바이트 동일성**(가장 강한 검사)
+      · 지문이 다르다 → **계약 동일성**(원본 해시·클립 목록·임계값 exact +
+                        측정치는 허용오차 안) — 그리고 그 사실을 반드시 출력한다.
+    조용히 약한 검사로 내려가는 것이 가장 나쁘므로, 어떤 모드로 판정했는지 항상 찍는다.
+    """
+    import platform
+    from PIL import features
+    return " / ".join([
+        f"webp={features.version('webp')}",
+        f"pillow={Image.__version__ if hasattr(Image, '__version__') else 'n/a'}",
+        f"ffmpeg={_ffmpeg_version()}",
+        f"os={platform.system()}",
+    ])
+
+
+def _ffmpeg_version() -> str:
+    import subprocess
+    try:
+        out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True,
+                             check=True).stdout.splitlines()[0]
+        return out.split(" ")[2]
+    except Exception:
+        return "n/a"
+
+
 def sha256(path: str) -> str:
     with open(path, "rb") as fh:
         return hashlib.sha256(fh.read()).hexdigest()
@@ -475,6 +512,26 @@ def main() -> int:
             print(f"  → 의도한 교체라면 --rewrite-ledger 로 대장을 갱신하고 근거를 남기세요"
                   f" ({os.path.relpath(SRC_LEDGER)}).", file=sys.stderr)
             return 2
+
+    # 🔴 바이트 재현이 **가능한 조합인지** 먼저 판정한다 (2026-08-17 CI 실측).
+    #    macOS(libwebp 1.5.0/ffmpeg 9)에서 만든 자산은 Linux CI 에서 바이트가 안 맞는다
+    #    — 결함이 아니라 플랫폼 사실이다(실측 380KB↔382KB, pitching hole 1↔3).
+    #    같은 툴체인이면 바이트까지, 다르면 계약(원본 해시·목록·임계값 exact + 측정치 오차)만
+    #    본다. **어느 모드로 판정했는지는 항상 출력한다** — 조용히 약해지는 것이 가장 나쁘다.
+    global BYTE_EXACT
+    recorded_toolchain = None
+    if os.path.exists(MANIFEST):
+        try:
+            with open(MANIFEST, encoding="utf-8") as fh:
+                recorded_toolchain = json.load(fh).get("toolchain")
+        except (json.JSONDecodeError, OSError):
+            recorded_toolchain = None
+    BYTE_EXACT = (recorded_toolchain == toolchain_fingerprint())
+    if args.check:
+        print(f"툴체인: {toolchain_fingerprint()}")
+        print(f"기록  : {recorded_toolchain or '(없음)'}")
+        print("판정  : " + ("바이트 동일성(같은 툴체인)" if BYTE_EXACT
+                          else "계약 동일성(툴체인이 달라 바이트 비교 불가)"), flush=True)
 
     outdir = os.path.abspath(OUT)
     tmpdir = outdir if not (args.check or args.audit_only) \
@@ -558,7 +615,10 @@ def main() -> int:
         if args.check:
             for _kind, built in (("clip", clip), ("poster", poster)):
                 shipped = os.path.join(outdir, os.path.basename(built))
-                if not os.path.exists(shipped) or sha256(shipped) != sha256(built):
+                if not os.path.exists(shipped):
+                    mismatched.append(f"{os.path.basename(built)}(없음)")
+                elif BYTE_EXACT and sha256(shipped) != sha256(built):
+                    # 같은 툴체인인데 바이트가 다르다 = **빌드 후 자산 교체**.
                     mismatched.append(os.path.basename(built))
         er = meta["edge_run"]
         bad = []
@@ -595,6 +655,8 @@ def main() -> int:
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
                        "scripts/assets/mascot-motion-SOURCES.sha256)",
+        # 바이트 재현이 가능한 조합인지 판정하는 데 쓴다(위 toolchain_fingerprint 주석 참조).
+        "toolchain": toolchain_fingerprint(),
         "clips": report,
     }
     # 🔴 결함이 있으면 **빌드 자체가 실패**해야 한다 (삼순 2026-08-17).
@@ -635,6 +697,10 @@ def main() -> int:
             diff = []
             if shipped_manifest.get("params") != payload["params"]:
                 diff.append("params")
+            # ssot/source_root/generator 는 어디서 돌리든 같아야 한다(toolchain 만 예외).
+            for key in ("generator", "ssot", "source_root"):
+                if shipped_manifest.get(key) != payload.get(key):
+                    diff.append(key)
             sc, pc = shipped_manifest.get("clips", {}), payload["clips"]
             missing_clips = sorted(set(pc) - set(sc))
             extra_clips = sorted(set(sc) - set(pc))
@@ -642,15 +708,49 @@ def main() -> int:
                 diff.append(f"누락 클립 {','.join(missing_clips)}")
             if extra_clips:
                 diff.append(f"잉여 클립 {','.join(extra_clips)}")
-            changed = sorted(k for k in set(sc) & set(pc) if sc[k] != pc[k])
+            # 🔴 클립 비교는 **툴체인이 같을 때만 전량 대조**한다 (2026-08-17 CI 실측).
+            #    다른 툴체인에서는 인코딩·디코딩이 비트 단위로 같지 않아 파일 크기·해시와
+            #    픽셀 측정치가 미세하게 흔들린다(실측: bored 380↔382KB, pitching hole 1↔3,
+            #    headspin motion 1.56↔1.57%). 그건 결함이 아니라 플랫폼 사실이다.
+            #    그래도 **계약값은 어디서 돌리든 같아야** 한다:
+            #      · src_sha256 = 어떤 원본으로 만들었나        ← 여기가 흔들리면 원본이 바뀐 것
+            #      · frames/fps/w/h/edge_run = 구조·잘림 계약
+            #      · source = 어느 경로로 만들었나
+            #    측정치(defect_px·overfill_px·hole_px·motion_pct·clip_kb)는 오차를 허용하되,
+            #    **임계값을 넘나드는 변화는 어차피 위 [B-*] 축이 잡는다.**
+            CONTRACT = ("src_sha256", "frames", "fps", "w", "h", "edge_run", "source")
+            TOL_NUM = {"defect_px": 8, "overfill_px": 0, "hole_px": 8,
+                       "dropped_persist_frames": 0, "motion_pct": 0.2, "clip_kb": 8}
+            changed = []
+            for k in sorted(set(sc) & set(pc)):
+                a, b = sc[k], pc[k]
+                if a == b:
+                    continue
+                if BYTE_EXACT:
+                    changed.append(k)
+                    continue
+                broken = [f for f in CONTRACT if a.get(f) != b.get(f)]
+                for f, tol in TOL_NUM.items():
+                    av, bv = a.get(f), b.get(f)
+                    if isinstance(av, (int, float)) and isinstance(bv, (int, float)):
+                        if abs(av - bv) > tol:
+                            broken.append(f"{f}({av}\u2260{bv})")
+                    elif av != bv:
+                        broken.append(f)
+                if broken:
+                    changed.append(f"{k}[{','.join(broken)}]")
             if changed:
                 diff.append(f"변조 클립 {','.join(changed)}")
-            mismatched.append(f"DERIVED.json({' / '.join(diff) or '내용 불일치'})")
+            if diff:
+                mismatched.append(f"DERIVED.json({' / '.join(diff)})")
+            elif BYTE_EXACT:
+                mismatched.append("DERIVED.json(내용 불일치)")
 
         if mismatched:
             print(f"\n❌ [B-REPRO] 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
             return 1
-        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 이 이 스크립트로 재현됨")
+        mode = "바이트 동일" if BYTE_EXACT else "계약 동일(툴체인 상이 — 바이트 비교 생략)"
+        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 재현 확인 [{mode}]")
         return 0
 
     if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):

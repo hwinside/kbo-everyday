@@ -21,6 +21,7 @@
   "fps": 11.98
  },
  "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 scripts/assets/mascot-motion-SOURCES.sha256)",
+ "toolchain": "webp=1.5.0 / pillow=11.3.0 / ffmpeg=9.0.1 / os=Darwin",
  "clips": {
   "bored": {
    "frames": 61,
