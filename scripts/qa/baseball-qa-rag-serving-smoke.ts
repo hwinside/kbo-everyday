@@ -2796,11 +2796,13 @@ async function verifyServingContractOnRealDb(): Promise<void> {
     assert.equal(
       projectPlayerDescriptiveRow({
         ...WIKI_LEAD_EVIDENCE,
-        pageTitle: "나성범",
-        content: "나성범(罗利範, 1985년 12월 3일 ~ )는 현 KBO 리그 KIA 타이거즈의 외야수이다.",
+        pageTitle: "최형우",
+        content: "최형우(崔炯宇, 1983년 12월 16일 ~ )는 현 KBO 리그 삼성 라이온즈의 외야수이다.",
       }),
-      "나성범는 현 KBO 리그 KIA 타이거즈의 외야수이다.",
-      "이름 받침에 따른 조사(은/는)를 원문 그대로 보존한다",
+      "최형우는 현 KBO 리그 삼성 라이온즈의 외야수이다.",
+      // ⚠️ `나성범`은 받침 `ㅁ` 이라 `은` 이 맞다(삼순 2026-08-17 3차 P1).
+      //   조사 분기를 증명하려면 **실제 무받침 이름**을 써야 한다 — `최형우`.
+      "받침 없는 이름의 조사 `는` 을 원문 그대로 보존한다",
     );
 
     // 🔴 리드 예외가 **진짜 폐쇄형인가** — 삼순 2026-08-17 2차 P0.
@@ -2848,6 +2850,21 @@ async function verifyServingContractOnRealDb(): Promise<void> {
       {
         label: "프로필 본문이 아닌 하위 section",
         row: { ...WIKI_LEAD_EVIDENCE, sectionPath: "김재환/선수 경력" },
+      },
+      {
+        // 삼순 2026-08-17 3차 P0 — 다른 칸을 다 닫아도 team 칸 하나가 열려 있으면 뚚린다.
+        label: "구단 칸에 규모 표현(`최다 홈런`)",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 최다 홈런의 외야수이다.",
+        },
+      },
+      {
+        label: "구단 칸이 KBO 10개 구단 밖(해외 구단)",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 요미우리 자이언츠의 외야수이다.",
+        },
       },
     ];
     for (const { label, row } of LEAD_BYPASS_CASES) {

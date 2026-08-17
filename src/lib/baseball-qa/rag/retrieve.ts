@@ -18,6 +18,8 @@ import {
   type SourceGrade,
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
+// 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
+import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "../answer-budget";
 
@@ -494,6 +496,24 @@ const PROFILE_LEAD_POSITIONS = new Set([
   "좌익수", "중견수", "우익수", "투수이자 야수",
 ]);
 
+/**
+ * 리드 문장의 구단 칸 폐쇄집합 — KBO 10개 구단.
+ *
+ * 🔴 이 칸을 와일드카드로 두면 다른 칸을 전부 닫아도 뚚린다(삼순 2026-08-17 3차 P0):
+ *   `김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 최다 홈런의 외야수이다.`
+ *   — 소스·section·이름·괄호·포지션이 전부 적법인데 구단 자리에 규모 표현이 살아난다.
+ *
+ * SSOT 는 `TEAMS`(정규 10구단, 올스타 별도 레지스트리로 분리됨) 하나다 — 여기서 구단명을
+ * 재열거하면 향후 구단명 변경(예: SK→SSG)에서 조용히 어긋난다.
+ * 표기 변이는 정식명(`SSG 랜더스`)·약칭(`SSG`)·별칭(`랜더스`) 세 형태만 허용한다.
+ */
+const PROFILE_LEAD_TEAMS: ReadonlySet<string> = new Set(
+  KBO_TEAMS.flatMap(({ name, shortName }) => {
+    const nickname = name.slice(shortName.length).trim();
+    return nickname.length > 0 ? [name, shortName, nickname] : [name, shortName];
+  }),
+);
+
 function normalizeWikipediaProfileLead(part: string, row: RagEvidence): string | null {
   // ① 위키피디아 프로필 본문에서 온 근거에만 적용한다.
   //    나무위키·하위 section 은 이 예외 자체를 못 탄다.
@@ -513,7 +533,10 @@ function normalizeWikipediaProfileLead(part: string, row: RagEvidence): string |
   // ③ 괄호 안은 생년월일 형태만.
   if (!PROFILE_LEAD_BIRTH_PAREN.test(paren)) return null;
 
-  // ④ 포지션은 폐쇄집합.
+  // ④ 구단은 KBO 10개 폐쇄집합. `최다 홈런` 같은 규모 표현이 이 칸을 차지할 수 없다.
+  if (!PROFILE_LEAD_TEAMS.has(team.trim())) return null;
+
+  // ⑤ 포지션은 폐쇄집합.
   if (!PROFILE_LEAD_POSITIONS.has(role.trim())) return null;
 
   // 조사는 원문 그대로 보존한다(이름 받침에 따라 `은`/`는`).
