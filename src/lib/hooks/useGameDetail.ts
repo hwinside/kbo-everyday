@@ -7,6 +7,7 @@ import {
   shouldPreserveCanonicalLineup,
   type SourceSnapshot,
 } from "@/lib/source-snapshot";
+import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 
 export type { GameDetailResponse };
 export type {
@@ -103,6 +104,7 @@ export function useGameDetail(
     }
   }, [gameId]);
 
+  // gameId 전환 시 상태 리셋. 첫 fetch·폴링은 아래 visibility-aware 폴러가 담당한다.
   useEffect(() => {
     responseGenerationRef.current++;
     stoppedRef.current = false;
@@ -110,14 +112,18 @@ export function useGameDetail(
     dataRef.current = null;
     snapshotRef.current = null;
     setLoading(true);
-    fetchDetail();
+  }, [gameId]);
 
-    const interval = setInterval(() => {
-      if (!stoppedRef.current) fetchDetail();
-    }, pollInterval);
-
-    return () => clearInterval(interval);
-  }, [fetchDetail, pollInterval]);
+  // 숨은 탭(백그라운드)에선 폴링을 멈춰 Edge Request 낭비를 없애고, 복귀 시 즉시 1회
+  // 실행 후 폴링을 재개한다. 보는 유저의 실시간성은 100% 유지된다. stop(final+box) 후엔
+  // fetchDetail이 자체 early-return하므로 폴러 tick은 no-op이 된다.
+  useVisibilityAwareInterval(
+    () => {
+      if (!stoppedRef.current) void fetchDetail();
+    },
+    pollInterval,
+    { resetKey: gameId },
+  );
 
   // 앱 포커스 복귀 시 강제 refetch (폴링 중단 후에도 데이터 복구)
   useEffect(() => {
