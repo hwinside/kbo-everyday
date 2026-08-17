@@ -115,12 +115,20 @@ MOTION_PCT_MIN = 1.2
 # 🔴 **역방향** 계약 (삼순 2026-08-17). 결함을 지우는 보정이 정상 요소까지 지우면
 # 그것도 똑같은 화면 결함이다. 둘 다 원본 대조로 재기 때문에 임의 임계값이 아니다.
 #   · overfill  = fill_holes 가 원본의 진짜 배경(다리 사이 등)을 메운 양 — 실측 13종 전부 0.
-#   · dropped   = speck 제거로 사라진 최대 조각 — 실측 최대 411px(bored).
-#     411px 는 1280x720 에서 20x20 수준이고, 육안 확인 결과 압축 아티팩트였다
-#     (공·응원도구 같은 의미 있는 요소는 전부 본체와 붙어 있거나 훨씬 크다).
-#     그래도 **언젠가 진짜 소품이 떨어져 나가면** 잡혀야 하므로 상한을 둔다.
+#   · dropped   = speck 제거로 사라진 조각이 **진짜 소품이었는가**.
+#
+# 🔴 처음엔 `dropped <= 500px` 로 둔었는데 그건 **임의 통과선**이었다(삼순 지적).
+#    크기로는 가를 수 없다 — 실측에서 노이즈가 411px 까지 커졌고, 색거리도 못 가른다
+#    (bored 노이즈는 순백색 dist 255, thinking 은 dist 8 의 엷은 그림자).
+#    가르는 것은 **지속성**이다. 진짜 소품(공·응원도구)은 연속 프레임에 계속 있고,
+#    생성모델의 압축 아티팩트는 한→두 프레임 반짝이고 사라진다.
+#    실측(색이 뚜렷한 30px+ 조각의 최대 연속 프레임): bored 4 · cheer 1 · 나머지 11종 0.
+#    기준 6프레임은 12fps 에서 **0.5초** — 사람이 "물체가 있다"고 인지하는 최소 노출시간이며,
+#    통과시키려고 고른 값이 아니다(현재 최대값 4 와 기준 6 은 같은 자리에서 나오지 않았다).
 OVERFILL_PX_MAX = 0
-DROPPED_PX_MAX = 500
+DROPPED_MIN_PX = 30          # 이보다 작은 조각은 애초에 물체로 안 보인다
+DROPPED_SOLID_DIST = TOL * 3  # 이보다 배경색에서 멀면 '배경 노이즈'가 아니라 진한 물체
+DROPPED_PERSIST_MAX = 5       # 연속 6프레임(0.5초) 이상 지속하면 소품이다 → FAIL
 
 
 def key_frame(rgb: np.ndarray) -> np.ndarray:
@@ -166,20 +174,28 @@ def key_frame_audit(rgb: np.ndarray):
     raw_fg = ~np.isin(lab, list(edge))
 
     comp, ncomp = ndimage.label(raw_fg)
-    kept, dropped_px = raw_fg, 0
+    kept, dropped_px, solid_drop = raw_fg, 0, 0
     if ncomp > 1:
         sizes = ndimage.sum(raw_fg, comp, range(1, ncomp + 1))
         keep = [i + 1 for i, s in enumerate(sizes) if s >= sizes.max() * SPECK_FRAC]
         kept = np.isin(comp, keep)
         gone = raw_fg & ~kept
         if gone.any():
+            dist = np.abs(a - bgc).max(axis=2)
             gl, gn = ndimage.label(gone)
-            dropped_px = int(ndimage.sum(gone, gl, range(1, gn + 1)).max())
+            for c in range(1, gn + 1):
+                m = gl == c
+                px = int(m.sum())
+                dropped_px = max(dropped_px, px)
+                # 크고(물체로 보일 만하고) 색이 배경과 뚜렷한 조각만 '소품 후보'다.
+                if px >= DROPPED_MIN_PX and dist[m].max() > DROPPED_SOLID_DIST:
+                    solid_drop = max(solid_drop, px)
 
     fg = ndimage.binary_fill_holes(kept)
     # 메운 자리 중 원본에서 **진짜 배경색**이었던 픽셀만 과채움으로 센다.
     overfill_px = int(((fg & ~kept) & is_bg).sum())
-    return fg.astype(np.uint8) * 255, {"overfill": overfill_px, "dropped": dropped_px}
+    return fg.astype(np.uint8) * 255, {"overfill": overfill_px, "dropped": dropped_px,
+                                       "solid_drop": solid_drop}
 
 
 def _read_video_frames(path: str):
@@ -228,6 +244,12 @@ def build(name: str):
         audits.append(au)
     overfill_px = max(a["overfill"] for a in audits)
     dropped_px = max(a["dropped"] for a in audits)
+    # 색이 뚜렷한 조각이 **몇 프레임 연속**으로 사라졌는가 — 소품이면 이어진다.
+    persist = best = 0
+    for au in audits:
+        persist = persist + 1 if au["solid_drop"] > 0 else 0
+        best = max(best, persist)
+    dropped_persist = best
 
     # union bbox — 전 프레임 합집합으로 잘라야 동작 중 캐릭터가 잘리지 않는다.
     st = np.stack([a > 96 for a in alphas])
@@ -290,6 +312,7 @@ def build(name: str):
                  "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
                  "source_frames": len(raw), "source": source_kind,
                  "overfill_px": overfill_px, "dropped_component_px": dropped_px,
+                 "dropped_persist_frames": dropped_persist,
                  "src_frames": src_small, "src_bgc": src_bgc}
 
 
@@ -383,14 +406,14 @@ def main() -> int:
                     help="원본 mp4 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
     args = ap.parse_args()
 
-    if not os.path.isdir(SSOT):
-        print(f"SSOT 없음: {SSOT}", file=sys.stderr)
-        print("  → MASCOT_SSOT 로 경로를 지정하거나 8/7 고정본을 준비하세요.", file=sys.stderr)
-        return 2
 
-    names = sorted({f.rsplit("-", 1)[0] for f in os.listdir(SSOT) if f.endswith("-black.webp")})
+    # 🔴 대상 목록은 **`VIDEO_SOURCES` 가 SSOT** 다 (삼순 2026-08-17).
+    #    종전엔 v1 폴더의 `*-black.webp` 목록에서 파생시켰는데, 이젠 전 종을 mp4 에서
+    #    뽑으므로 v1 은 더 이상 입력이 아니다. v1 에 파일을 하나 더 넣거나 빼면
+    #    빌드 대상이 조용히 바뀜는 경로였다.
+    names = sorted(VIDEO_SOURCES)
     if not names:
-        print(f"SSOT 에 -black.webp 가 없음: {SSOT}", file=sys.stderr)
+        print("VIDEO_SOURCES 가 비어 있다 — 빌드할 대상이 없다.", file=sys.stderr)
         return 2
 
     # 🔴 **원본 mp4 가 없으면 조용히 v1 SSOT 로 fallback 하지 않고 죽는다** (삼순 2026-08-17 P1).
@@ -415,6 +438,14 @@ def main() -> int:
     #    같은 자산이라고 말하는" 경로를 닫는다.
     src_hashes = {n: sha256(os.path.join(VIDEO_SRC_ROOT, rel))
                   for n, rel in sorted(VIDEO_SOURCES.items())}
+    # 🔴 대장이 **없으면** 검사를 건너뛰던 것도 false-green 이다 (삼순 2026-08-17).
+    #    대장을 지우면 `--check` 가 그냥 통과해버렸다. 검증 모드에선 대장을 **필수**로 둔다
+    #    (최초 생성은 빌드 모드에서만 허용).
+    if args.check and not os.path.exists(SRC_LEDGER):
+        print(f"❌ 원본 해시 대장이 없다: {os.path.relpath(SRC_LEDGER)}", file=sys.stderr)
+        print("  → 대장 없이는 '어떤 원본으로 만들었는지'를 증명할 수 없으므로 검증을 통과시키지 않는다.",
+              file=sys.stderr)
+        return 2
     if os.path.exists(SRC_LEDGER):
         with open(SRC_LEDGER, encoding="utf-8") as fh:
             recorded = dict(
@@ -510,7 +541,7 @@ def main() -> int:
         meta["clip_kb"] = round(os.path.getsize(clip) / 1024)
         report[n] = meta
         if args.check:
-            for kind, built in (("clip", clip), ("poster", poster)):
+            for _kind, built in (("clip", clip), ("poster", poster)):
                 shipped = os.path.join(outdir, os.path.basename(built))
                 if not os.path.exists(shipped) or sha256(shipped) != sha256(built):
                     mismatched.append(os.path.basename(built))
@@ -522,8 +553,9 @@ def main() -> int:
             bad.append(f'키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
         if meta["overfill_px"] > OVERFILL_PX_MAX:
             bad.append(f'과채움 {meta["overfill_px"]}px')
-        if meta["dropped_component_px"] > DROPPED_PX_MAX:
-            bad.append(f'조각삭제 {meta["dropped_component_px"]}px')
+        if meta["dropped_persist_frames"] > DROPPED_PERSIST_MAX:
+            bad.append(f'소품삭제 {meta["dropped_persist_frames"]}f 연속')
+
         if meta["motion_pct"] < MOTION_PCT_MIN:
             bad.append(f'idle {meta["motion_pct"]}%')
         mark = "✅" if not bad else "🔴 " + " · ".join(bad)
@@ -540,17 +572,58 @@ def main() -> int:
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
                    "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
                    "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
-                   "overfill_px_max": OVERFILL_PX_MAX, "dropped_px_max": DROPPED_PX_MAX,
+                   "overfill_px_max": OVERFILL_PX_MAX,
+                   "dropped_persist_max": DROPPED_PERSIST_MAX,
+                   "dropped_min_px": DROPPED_MIN_PX, "dropped_solid_dist": DROPPED_SOLID_DIST,
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
         "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
                        "scripts/assets/mascot-motion-SOURCES.sha256)",
         "clips": report,
     }
+    # 🔴 결함이 있으면 **빌드 자체가 실패**해야 한다 (삼순 2026-08-17).
+    #    종전엔 `defective` 를 모으기만 하고 exit 에 쓰지 않아, 화면에 🔴 를 찍어놓고도
+    #    exit 0 으로 끝나 결함 자산이 그대로 썻혔다. 사람이 로그를 읽어야만 알아차리는
+    #    경고는 게이트가 아니다.
+    if defective:
+        print(f"\n❌ 결함 자산 {len(defective)}종 — 빌드 실패:", file=sys.stderr)
+        for n, reasons in defective:
+            print(f"   · {n}: {' · '.join(reasons)}", file=sys.stderr)
+        return 1
+
     if args.check:
+        # 🔴 WebP 26개만 비교하면 **`DERIVED.json` 변조·누락을 못 잡는다** (삼순 2026-08-17).
+        #    게이트가 임계값과 측정치를 그 파일에서 읽으므로, manifest 를 고치면
+        #    자산을 건드리지 않고도 전체 게이트를 우회할 수 있었다.
+        shipped_manifest = None
+        if os.path.exists(MANIFEST):
+            with open(MANIFEST, encoding="utf-8") as fh:
+                try:
+                    shipped_manifest = json.load(fh)
+                except json.JSONDecodeError:
+                    shipped_manifest = None
+        if shipped_manifest is None:
+            mismatched.append("DERIVED.json(없거나 깨짐)")
+        elif json.dumps(shipped_manifest, sort_keys=True, ensure_ascii=False) != \
+                json.dumps(payload, sort_keys=True, ensure_ascii=False):
+            diff = []
+            if shipped_manifest.get("params") != payload["params"]:
+                diff.append("params")
+            sc, pc = shipped_manifest.get("clips", {}), payload["clips"]
+            missing_clips = sorted(set(pc) - set(sc))
+            extra_clips = sorted(set(sc) - set(pc))
+            if missing_clips:
+                diff.append(f"누락 클립 {','.join(missing_clips)}")
+            if extra_clips:
+                diff.append(f"잉여 클립 {','.join(extra_clips)}")
+            changed = sorted(k for k in set(sc) & set(pc) if sc[k] != pc[k])
+            if changed:
+                diff.append(f"변조 클립 {','.join(changed)}")
+            mismatched.append(f"DERIVED.json({' / '.join(diff) or '내용 불일치'})")
+
         if mismatched:
             print(f"\n❌ 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
             return 1
-        print(f"\n✅ 파생 자산 {len(names) * 2}개가 이 스크립트로 재현됨")
+        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 이 이 스크립트로 재현됨")
         return 0
 
     if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):

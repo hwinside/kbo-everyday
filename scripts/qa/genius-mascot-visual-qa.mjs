@@ -232,16 +232,21 @@ if (!(SAFE_PAD > 0)) {
 const HOLE_MAX = DERIVED?.params?.hole_px_max;
 const MOTION_MIN = DERIVED?.params?.motion_pct_min;
 const OVERFILL_MAX = DERIVED?.params?.overfill_px_max;
-const DROPPED_MAX = DERIVED?.params?.dropped_px_max;
-if (!(HOLE_MAX >= 0) || !(MOTION_MIN > 0) || !(OVERFILL_MAX >= 0) || !(DROPPED_MAX >= 0)) {
-  console.log("  ❌ DERIVED.json 에 hole_px_max/motion_pct_min/overfill_px_max/dropped_px_max 가 없다"
-    + " — 생성기 계약을 읽을 수 없다");
+// 소품 삭제 판정은 **크기가 아니라 지속 프레임 수**다(삼순 2026-08-17: `<=500px` 는 임의 통과선).
+// 노이즈는 한→두 프레임 반짝이고 진짜 소품은 연속해서 남는다.
+const DROPPED_PERSIST_MAX = DERIVED?.params?.dropped_persist_max;
+if (!(HOLE_MAX >= 0) || !(MOTION_MIN > 0) || !(OVERFILL_MAX >= 0)
+    || !(DROPPED_PERSIST_MAX >= 0)) {
+  console.log("  ❌ DERIVED.json 에 hole_px_max/motion_pct_min/overfill_px_max/dropped_persist_max 가"
+    + " 없다 — 생성기 계약을 읽을 수 없다");
   process.exit(1);
 }
 const T = SELFTEST
   ? { poster: -1, padMax: -1, padMin: 9999, haloDelta: -1, hole: -1, motion: 9999 }
   : { poster: 2, padMax: SAFE_PAD, padMin: 1, haloDelta: 40, hole: HOLE_MAX, motion: MOTION_MIN };
-const TR = SELFTEST ? { overfill: -1, dropped: -1 } : { overfill: OVERFILL_MAX, dropped: DROPPED_MAX };
+const TR = SELFTEST
+  ? { overfill: -1, persist: -1 }
+  : { overfill: OVERFILL_MAX, persist: DROPPED_PERSIST_MAX };
 
 check(`poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced-motion 전환 깜빡임 없음)`,
   rows.every((r) => r.posterAvg < T.poster),
@@ -305,9 +310,10 @@ check(`poster 투명 영역에 배경색 잔재 0% (RGB 만 읽는 도구에서 
 }
 {
   const bad = Object.entries(DERIVED.clips ?? {})
-    .filter(([, m]) => !(m.dropped_component_px <= TR.dropped))
-    .map(([n, m]) => `${n}=${m.dropped_component_px}px`);
-  check(`DERIVED.json: 삭제된 분리 조각 <= ${TR.dropped}px (공·응원도구 같은 소품이 안 지워졌다)`,
+    .filter(([, m]) => !(m.dropped_persist_frames <= TR.persist))
+    .map(([n, m]) => `${n}=${m.dropped_persist_frames}f`);
+  check(`DERIVED.json: 삭제된 조각의 연속 지속 <= ${TR.persist}프레임`
+    + " (공·응원도구 같은 소품은 연속해서 남는다 — 노이즈는 반짝하고 사라진다)",
     bad.length === 0, bad.join(", "));
 }
 // 파생 자산을 직접 재측정한 값과 생성기 기록이 일치하는가 — **빌드 후 자산이 교체됐다**를 잡는다.

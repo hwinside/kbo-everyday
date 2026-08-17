@@ -1,0 +1,93 @@
+name: Genius Mascot Motion Gate
+
+# 야잘알봇 마스코트 영상 모션 자산의 **강제 브라우저** 게이트 (삼순 #1228 ④).
+#
+# 왜 별도 워크플로가 필요한가:
+#   `qa:genius-mascot-render` 는 Vercel 빌드 컨테이너에 chromium 이 없어서 SKIP 된다.
+#   SKIP 은 GREEN 으로 보이므로, 실제 렌더 축(자산이 화면에 그려졌는가 · currentSrc 가
+#   맞는가 · 선택 안 된 자산을 네트워크에서 받지 않는가)이 **아무도 안 보는 상태**가 된다.
+#   여기서 Chromium 을 설치하고 `MASCOT_RENDER_REQUIRE_BROWSER=1` 로 돌려
+#   SKIP 자체를 금지한다(브라우저 launch 실패도 exit 1).
+#
+# 함께 도는 축:
+#   · visual   — 파생 자산 픽셀 재측정(키잉 구멍·과채움·조각삭제·여백·halo·움직임)
+#   · selftest — 임계값을 반전시켜 게이트가 실제로 RED 를 내는지 증명(검출력 검사)
+#   · motion   — 매핑 SSOT·단일 배선·폐쇄집합
+#   · mutations— 변이 주입 시 전부 RED
+
+on:
+  pull_request:
+    paths:
+      - "public/mascot/motion/**"
+      - "scripts/assets/build-mascot-motion.py"
+      - "scripts/assets/mascot-motion-SOURCES.sha256"
+      - "scripts/qa/genius-mascot-render-gate.mjs"
+      - "scripts/qa/genius-mascot-visual-qa.mjs"
+      - "scripts/qa/genius-mascot-motion.ts"
+      - "scripts/qa/genius-mascot-motion-mutations.mjs"
+      - "src/components/dm/GeniusMascotImage.tsx"
+      - "src/lib/constants/baseball-genius.ts"
+      - ".github/workflows/genius-mascot-motion-gate.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "public/mascot/motion/**"
+      - "scripts/assets/build-mascot-motion.py"
+      - "scripts/assets/mascot-motion-SOURCES.sha256"
+      - "scripts/qa/genius-mascot-render-gate.mjs"
+      - "scripts/qa/genius-mascot-visual-qa.mjs"
+      - "scripts/qa/genius-mascot-motion.ts"
+      - "scripts/qa/genius-mascot-motion-mutations.mjs"
+      - "src/components/dm/GeniusMascotImage.tsx"
+      - "src/lib/constants/baseball-genius.ts"
+
+jobs:
+  genius-mascot-motion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: 자산 픽셀 무결성 (키잉 구멍 · 과채움 · 조각삭제 · 여백 · halo · 움직임)
+        run: npm run qa:genius-mascot-visual
+
+      - name: 게이트 검출력 증명 (임계값 반전 → RED 여야 한다)
+        run: npm run qa:genius-mascot-visual:selftest
+
+      - name: 매핑 SSOT · 단일 배선 · 폐쇄집합
+        run: npm run qa:genius-mascot-motion
+
+      - name: 매핑 변이 주입 (전부 RED 여야 한다)
+        run: npm run qa:genius-mascot-motion:mutations
+
+      - name: 실렌더 게이트 — 브라우저 강제 (SKIP 금지, fail-closed)
+        # MASCOT_RENDER_REQUIRE_BROWSER=1 → chromium 이 없거나 launch 실패해도 exit 1.
+        # Vercel prebuild 의 graceful skip 과 달리 여기서는 SKIP 이 곧 실패다.
+        env:
+          MASCOT_RENDER_REQUIRE_BROWSER: "1"
+        run: npm run qa:genius-mascot-render
+
+      - name: 실렌더 게이트 검출력 증명 (기대 반전 → RED 여야 한다)
+        env:
+          MASCOT_RENDER_REQUIRE_BROWSER: "1"
+        run: npm run qa:genius-mascot-render:selftest
+
+      - name: 실패 시 캡처 아티팩트 업로드
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mascot-render-captures
+          path: .qa-artifacts/mascot/
+          if-no-files-found: ignore
+          retention-days: 7
