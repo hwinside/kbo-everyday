@@ -132,6 +132,22 @@ const MOON_EVIDENCE: RagEvidence = {
   sourceGrade: "tier2",
 };
 
+/**
+ * 위키피디아 선수 문서 근거. 프로필 리드 예외는 **이 소스에서만** 살아야 한다.
+ * `MOON_EVIDENCE`(Namu)로 리드 예외를 검증하면 Wikipedia 결속이 전혀 증명되지 않는다
+ * (삼순 2026-08-17 2차 지적).
+ */
+const WIKI_LEAD_EVIDENCE: RagEvidence = {
+  content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.",
+  pageTitle: "김재환 (야구 선수)",
+  canonicalUrl: "https://ko.wikipedia.org/wiki/%EA%B9%80%EC%9E%AC%ED%99%98",
+  revision: "revid:123456",
+  sectionPath: "본문",
+  asOf: "2026-08-01",
+  sourceGrade: "tier2",
+  sourceKind: "wikipedia_document",
+};
+
 function makeDeps(overrides: Partial<QaDeps> = {}): {
   deps: QaDeps;
   logs: {
@@ -2772,14 +2788,72 @@ async function verifyServingContractOnRealDb(): Promise<void> {
       "숫자 괄호를 지우면 규모 추론이 살아난다 — 원문 기준으로 문장 전체를 버려야 한다",
     );
     assert.equal(
-      projectPlayerDescriptiveRow({
-        ...MOON_EVIDENCE,
-        sectionPath: "본문",
-        content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.",
-      }),
+      projectPlayerDescriptiveRow(WIKI_LEAD_EVIDENCE),
       "김재환은 현 KBO 리그 SSG 랜더스의 외야수이다.",
       "위키피디아 프로필 리드는 폐쇄형으로 한 건만 살린다",
     );
+    // 받침 없는 이름은 조사가 `는` 이다 — 원문 조사를 보존해야 한다.
+    assert.equal(
+      projectPlayerDescriptiveRow({
+        ...WIKI_LEAD_EVIDENCE,
+        pageTitle: "나성범",
+        content: "나성범(罗利範, 1985년 12월 3일 ~ )는 현 KBO 리그 KIA 타이거즈의 외야수이다.",
+      }),
+      "나성범는 현 KBO 리그 KIA 타이거즈의 외야수이다.",
+      "이름 받침에 따른 조사(은/는)를 원문 그대로 보존한다",
+    );
+
+    // 🔴 리드 예외가 **진짜 폐쇄형인가** — 삼순 2026-08-17 2차 P0.
+    //   "숫자·괄호만 없으면 통과"로 두면 아래 문장이 매치해
+    //   `최다 홈런은 현 KBO 리그 SSG 랜더스의 기록이다.` 로 **막으려던 규모 추론이
+    //   예외 조항을 타고 되살아난다**. 이름·괄호·포지션·소스·section 결속 각각을 개별로 반증한다.
+    const LEAD_BYPASS_CASES: { label: string; row: RagEvidence }[] = [
+      {
+        label: "이름 칸에 임의 명사구(기록 문장)",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          content: "최다 홈런(276개)은 현 KBO 리그 SSG 랜더스의 기록이다.",
+        },
+      },
+      {
+        label: "이름은 맞는데 괄호가 기록(생년월일 아님)",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          content: "김재환(통산 276개)은 현 KBO 리그 SSG 랜더스의 외야수이다.",
+        },
+      },
+      {
+        label: "포지션 칸이 폐쇄집합 밖",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 간판스타이다.",
+        },
+      },
+      {
+        label: "이름이 문서 주제와 불일치(타인 서술 혼입)",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          pageTitle: "문보경",
+          content: "김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.",
+        },
+      },
+      {
+        label: "같은 문장이지만 나무위키 근거",
+        row: {
+          ...WIKI_LEAD_EVIDENCE,
+          canonicalUrl: "https://namu.wiki/w/%EA%B9%80%EC%9E%AC%ED%99%98",
+          sourceKind: "namu_document",
+        },
+      },
+      {
+        label: "프로필 본문이 아닌 하위 section",
+        row: { ...WIKI_LEAD_EVIDENCE, sectionPath: "김재환/선수 경력" },
+      },
+    ];
+    for (const { label, row } of LEAD_BYPASS_CASES) {
+      assert.equal(projectPlayerDescriptiveRow(row), "",
+        `리드 예외 우회: ${label} — 폐쇄형 결속이 끩끩하면 숫자 문장이 예외로 살아난다`);
+    }
     // (d) 구조 판정 — 비수치 기록 헤더는 탈락하고, 단어가 같아도 정상 서술문은 보존한다.
     assert.equal(
       projectPlayerDescriptiveRow({

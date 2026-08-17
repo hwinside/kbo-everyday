@@ -455,33 +455,100 @@ export type EvidenceProjector = (row: RagEvidence) => string;
 export const projectPlayerDescriptiveRow: EvidenceProjector = (row) => {
   const sanitized = sanitizeEvidenceContent(row.content, row);
   if (sanitized.length < 20) return "";
-  return projectPlayerDescriptiveContent(sanitized, row.sectionPath);
+  return projectPlayerDescriptiveContent(sanitized, row);
 };
 
 /**
- * 위키피디아 선수 프로필의 **리드 문장**. 폐쇄형이다.
+ * 위키피디아 선수 프로필의 **리드 문장**. 진짜 폐쇄형이다.
  *
  * `김재환(金宰煥, 1988년 9월 22일 ~ )은 현 KBO 리그 SSG 랜더스의 외야수이다.`
- * 이 한 형태만 괄호를 떼고 살린다. 이름·구단·포지션 칸에는 숫자·괄호가 들어갈 수 없다.
+ * 이 한 형태만 괄호를 떼고 살린다.
  *
- * ⚠️ 이 예외를 "숫자 괄호를 먼저 지우고 숫자를 검사"로 일반화하면
- *   `가장 많은 홈런(276개)을 쳤다` → `가장 많은 홈런을 쳤다` 로 **규모 추론이 살아난다**
- *   (삼순 2026-08-17 P0). 그래서 숫자 판정은 항상 **원문 문장** 기준이고,
- *   예외는 이 폐쇄 패턴 하나뿐이다.
+ * 🔴 "숫자·괄호만 없으면 통과"는 **폐쇄형이 아니다**(삼순 2026-08-17 P0 2차).
+ *   그러면 `최다 홈런(276개)은 현 KBO 리그 SSG 랜더스의 기록이다.` 도 매치해
+ *   막으려던 규모 추론이 **예외 조항으로 되살아난다**. 이름·구단·포지션 칸은
+ *   와일드카드가 아니라 각각 **정본에 결속**돼야 한다:
+ *     ① 근거 자체가 위키피디아 문서이고 프로필 본문 section 일 것
+ *     ② 이름 == `pageTitle`(문서 주제) exact — 임의 명사구가 이름 칸에 들어올 수 없다
+ *     ③ 괄호 안은 **생년월일 형태**일 것(기록 괄호 `(276개)` 불가)
+ *     ④ 포지션은 **폐쇄집합**일 것(`기록`·`수상` 같은 명사 불가)
+ *   숫자 판정은 그래도 항상 **원문 문장** 기준이고, 예외는 이 하나뿐이다.
  */
 const WIKIPEDIA_PROFILE_LEAD =
-  /^([^()\[\]\p{N}]{1,24})\([^()]*\)은\s*현\s*KBO\s*리그\s*([^()\[\]\p{N}]{1,32})의\s*([^()\[\]\p{N}]{1,24})이다\.?$/u;
+  /^(.{1,24}?)\(([^()]*)\)(은|는)\s*현\s*KBO\s*리그\s*([^()\[\]\p{N}]{1,32})의\s*([^()\[\]\p{N}]{1,24})이다\.?$/u;
 
-function normalizeWikipediaProfileLead(part: string): string | null {
+/**
+ * 리드 괄호 안은 생년월일(한자·영문표기 동반 허용)만 허용한다.
+ * `1988년 9월 22일 ~ ` · `金宰煥, 1988년 9월 22일 ~ ` · `1988년 9월 22일 ~ 2020년 ...`
+ * `276개` 같은 기록 괄호는 연월일 토큰이 없어 탈락한다.
+ */
+const PROFILE_LEAD_BIRTH_PAREN = /\d{4}\s*년\s*\d{1,2}\s*월\s*\d{1,2}\s*일/u;
+
+/**
+ * 리드 문장의 포지션 칸 폐쇄집합.
+ * KBO 선수 프로필이 쓰는 표현만 놓는다 — 여기 없는 명사(`기록`·`수상`…)는 리드가 아니다.
+ * 숫자 포지션(`1루수`)은 원문 숫자 판정에서 이미 걱러진다.
+ */
+const PROFILE_LEAD_POSITIONS = new Set([
+  "투수", "포수", "내야수", "외야수", "유격수", "지명타자", "야수",
+  "좌익수", "중견수", "우익수", "투수이자 야수",
+]);
+
+function normalizeWikipediaProfileLead(part: string, row: RagEvidence): string | null {
+  // ① 위키피디아 프로필 본문에서 온 근거에만 적용한다.
+  //    나무위키·하위 section 은 이 예외 자체를 못 탄다.
+  if (evidenceSourceKindOf(row) !== "wikipedia_document") return null;
+  if (!isProfileLeadSection(row.sectionPath)) return null;
+
   const match = part.match(WIKIPEDIA_PROFILE_LEAD);
   if (!match) return null;
-  const [, name, team, role] = match;
-  if (!name || !team || !role) return null;
-  return `${name.trim()}은 현 KBO 리그 ${team.trim()}의 ${role.trim()}이다.`;
+  const [, name, paren, particle, team, role] = match;
+  if (!name || !paren || !particle || !team || !role) return null;
+
+  // ② 이름 칸은 문서 주제(`pageTitle`) exact 여야 한다.
+  //    `최다 홈런` 같은 임의 명사구가 이름 자리를 차지하는 경로를 여기서 닫는다.
+  //    위키 표제어는 `김재환(야구선수)` 처럼 한정어가 붙으므로 그것까지 벗긴 후 비교한다.
+  if (name.trim() !== stripTitleQualifier(row.pageTitle)) return null;
+
+  // ③ 괄호 안은 생년월일 형태만.
+  if (!PROFILE_LEAD_BIRTH_PAREN.test(paren)) return null;
+
+  // ④ 포지션은 폐쇄집합.
+  if (!PROFILE_LEAD_POSITIONS.has(role.trim())) return null;
+
+  // 조사는 원문 그대로 보존한다(이름 받침에 따라 `은`/`는`).
+  return `${name.trim()}${particle} 현 KBO 리그 ${team.trim()}의 ${role.trim()}이다.`;
 }
 
-function projectPlayerDescriptiveContent(content: string, sectionPath: string): string {
-  if (isPlayerDescriptiveRecordSection(sectionPath)) return "";
+/** 리드 문장이 있는 프로필 본문 section 인가. 하위 section 은 리드가 아니다. */
+function isProfileLeadSection(sectionPath: string): boolean {
+  const head = sectionPath.trim();
+  return head === "" || head === "본문" || head === "개요" || head === "lead";
+}
+
+/** `김재환(야구선수)` → `김재환`. 동명이인 한정어를 벗긴다. */
+function stripTitleQualifier(pageTitle: string): string {
+  return pageTitle.replace(/\s*\([^()]*\)\s*$/u, "").trim();
+}
+
+/** 근거의 소스 종류. `sourceKind` 가 없으면 canonical 호스트로 판정하고, 못 하면 null. */
+function evidenceSourceKindOf(row: RagEvidence): RagDocumentSourceKind | null {
+  if (row.sourceKind === "wikipedia_document" || row.sourceKind === "namu_document") {
+    return row.sourceKind;
+  }
+  let host: string;
+  try {
+    host = new URL(row.canonicalUrl).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (host === "ko.wikipedia.org" || host.endsWith(".wikipedia.org")) return "wikipedia_document";
+  if (host === "namu.wiki" || host.endsWith(".namu.wiki")) return "namu_document";
+  return null;
+}
+
+function projectPlayerDescriptiveContent(content: string, row: RagEvidence): string {
+  if (isPlayerDescriptiveRecordSection(row.sectionPath)) return "";
   // 🔴 원문 그대로 문장 분해한다. 전처리로 숫자를 지우고 검사하면 그 자리의 규모 추론이
   //   살아남는다(`홈런(276개)을 쳤다` → `홈런을 쳤다`).
   const parts = content
@@ -497,8 +564,8 @@ function projectPlayerDescriptiveContent(content: string, sectionPath: string): 
   const clean: string[] = [];
   for (const part of parts) {
     if (/\p{N}/u.test(part)) {
-      // 유일한 예외: 위키피디아 프로필 리드 폐쇄형.
-      const lead = normalizeWikipediaProfileLead(part);
+      // 유일한 예외: 위키피디아 프로필 리드 폐쇄형(소스·section·이름·괄호·포지션 전부 결속).
+      const lead = normalizeWikipediaProfileLead(part, row);
       if (lead) clean.push(lead);
       continue;
     }
