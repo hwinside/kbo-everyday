@@ -68,20 +68,33 @@ const mutations = [
     expect: "stale outbox로 thinking이 되살아나면",
   },
   {
-    name: "M6 답변 관측 때 marker clear (actual Realtime 답변 INSERT)",
-    file: TARGETS[2],
-    from: "        message.dedup_key === `baseball-genius:${messageId}`)) {\n        observedBaseballQaReplyIdsRef.current.add(messageId);\n      }",
-    to: "        message.dedup_key === `baseball-genius:${messageId}`)) {\n        observedBaseballQaReplyIdsRef.current.add(messageId);\n        setGeniusThinkingQuestionId(null);\n      }",
-    script: "qa:genius-thinking-bubble:workflow",
-    expect: "답변 도착 후에도 Q1 생각중 말풍선",
+    // 🔴 원복(2026-08-17)으로 M6·M7 의 **의미가 바뀌었다.**
+    //    옛 M6 = "답변 관측 때 marker 를 지운다", 옛 M7 = "전송 marker 를 observed guard 안으로".
+    //    둘 다 **잔존 계약**을 깨는 결함이었는데, 지금은 답변이 오면 어차피 사라지므로
+    //    두 훼손이 화면에 아무 차이를 만들지 못한다 = **관측 불가**다. 관측 불가한 축을
+    //    억지로 RED 로 만들려 하면 게이트가 거짓말을 하게 되므로, 지금 계약을 지키는
+    //    축으로 **교체**한다. 새 M6·M7 은 "잔존이 되살아나는" 정확히 그 회귀를 잡는다.
+    name: "M6 show 를 pending 에서 분리 (잔존 부활 시도 — SSOT)",
+    file: TARGETS[3],
+    from: "  return { show: pending, pending };",
+    to: "  return { show: true, pending };",
+    expect: "답변 도착 후 말풍선이 사라진다",
   },
   {
-    name: "M7 전송 marker를 observed guard 안으로 이동 (answer-before-outbox)",
+    name: "M7 컴포넌트가 pending=false 에도 말풍선을 그린다 (잔존 부활 시도 — 렌더)",
+    file: TARGETS[0],
+    from: "  if (!pending) return null;",
+    to: "  if (false) return null;",
+    expect: "답변 도착 후 말풍선이 사라진다",
+  },
+  {
+    // 전송 트리거가 outbox 파생으로 되돌아가는 회귀는 **여전히 실재하는 결함**이라 남긴다.
+    // (원복과 무관한 축 — 답변 선도착 시 marker 자체가 안 찍히면 대기 중에도 안 보인다.)
+    name: "M8 전송 marker를 observed guard 안으로 이동 (outbox 파생 회귀)",
     file: TARGETS[2],
     from: "          setGeniusThinkingQuestionId((prev) =>\n            markGeniusThinkingMessageId(result.message_id as number, prev));\n          if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {",
     to: "          if (!observedBaseballQaReplyIdsRef.current.has(result.message_id)) {\n            setGeniusThinkingQuestionId((prev) =>\n              markGeniusThinkingMessageId(result.message_id as number, prev));",
-    script: "qa:genius-thinking-bubble:workflow",
-    expect: "전송 marker로 Q3 말풍선",
+    expect: "마커는 전송 시점에 찍힌다",
   },
 ];
 

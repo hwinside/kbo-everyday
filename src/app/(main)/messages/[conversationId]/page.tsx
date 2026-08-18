@@ -29,6 +29,7 @@ import {
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
   geniusMotionFromPayload,
+  geniusMotionIntentFromPayload,
   isGeniusPickerDisabled,
   isGeniusReplyPayload,
   mascotStateForReplyKind,
@@ -58,7 +59,7 @@ export default function DMChatPage() {
   const router = useRouter();
   const conversationId = params.conversationId as string;
   const draftTargetId = conversationId.startsWith("new-") ? conversationId.slice(4) : null;
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const {
     messages,
     loading,
@@ -515,18 +516,19 @@ export default function DMChatPage() {
               (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
             const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
             // 답변 유형별 마스코트 — 봇 발신일 때만 신뢰한다(유저가 payload 를 훌내내도 붙지 않게).
-            // payload 가 없는 과거 답변(배포 전 생성분)은 mascotStateForReplyKind 가 idle 로 폴백한다.
             const geniusReply =
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
                 ? msg.payload
                 : null;
             // 마스코트는 소유권이 reply 일 때 최신 봇 답변에만 — 이전 답변은 닉네임만 남는다.
-            const mascotState =
+            // ⚠️ 2026-08-16: 어느 **영상 클립**을 재생할지는 GeniusMascotImage 가
+            //    (reply_kind, messageId) 로 결정론 계산한다. 여기서는 "마스코트를 붙일
+            //    자격이 있는가"(소유권)만 판정한다 — 표시 계약과 소유권 계약의 분리.
+            //    payload 가 없는 과거 답변은 reply_kind 가 undefined 로 흘러가 legacy
+            //    분기(야구 동작)를 탄다. 종전 정지 idle 폴백을 대체한 것이다.
+            const showReplyMascot =
               msg.sender_id === BASEBALL_GENIUS_USER_ID && msg.id === latestGeniusMessageId &&
-              mascotOwner.kind === "reply"
-                ? mascotStateForReplyKind(geniusReply?.reply_kind)
-                : null;
-            const mascotMotion = mascotState ? geniusMotionFromPayload(geniusReply) : null;
+              mascotOwner.kind === "reply";
             // 동명이인 선택 카드. 선택은 표시값이 아니라 kbo_id 로 보낸다.
             const pickerOptions =
               geniusReply?.reply_kind === "picker" ? geniusReply.picker_options ?? null : null;
@@ -573,13 +575,16 @@ export default function DMChatPage() {
                 <div className={`${clipping ? "max-w-[88%] min-w-[70%]" : "max-w-[75%]"} ${isMe ? "order-2" : ""}`}>
                   {!isMe && (
                     <div className="flex items-center gap-1.5 mb-1">
-                      {mascotState ? (
-                        // 마스코트 자체가 최신 1개뿐이므로 모션도 구조적으로 최대 1개다.
-                        // 크기·idle 모션 계약은 GeniusMascotImage 단일 지점이 소유한다.
+                      {showReplyMascot ? (
+                        // 마스코트 자체가 최신 1개뿐이므로 재생 중인 클립도 구조적으로 최대 1개다.
+                        // 크기·클립 선택·reduced-motion 계약은 GeniusMascotImage 단일 지점이 소유한다.
                         <GeniusMascotImage
-                          state={mascotState}
-                          motion={mascotMotion}
-                          motionAttr
+                          replyKind={geniusReply?.reply_kind ?? null}
+                          messageId={msg.id}
+                          motion={geniusMotionFromPayload(geniusReply)}
+                          motionIntent={geniusMotionIntentFromPayload(geniusReply)}
+                          answerTeamId={geniusReply?.answer_team_id ?? null}
+                          favoriteTeamId={profile?.team_id ?? null}
                           testId="genius-reply-mascot"
                         />
                       ) : (

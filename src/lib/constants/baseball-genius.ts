@@ -1,6 +1,7 @@
 import type { MatchPath } from "@/lib/baseball-qa/pipeline";
 import { resolveAllowedSource } from "@/lib/baseball-qa/genius-reply-provenance";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS } from "@/lib/baseball-qa/answer-budget";
+import { TEAMS } from "@/lib/constants/teams";
 
 /** 야잘알봇 시스템 계정. 배포 전 동일 UUID의 auth/profiles 계정을 프로비저닝한다. */
 export const BASEBALL_GENIUS_USER_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
@@ -347,6 +348,206 @@ export const GENIUS_MASCOT_IMG_CLASS = "h-24 w-auto max-w-none object-contain";
  */
 export const GENIUS_MASCOT_IDLE_MOTION_CLASS = "genius-motion-idle inline-flex";
 
+/* ══ 영상 모션 클립 13종 (2026-08-16 하린아빠 13:48 — "지금 연결된건 움직이는 것
+   같지도 않아. 모두 폐기하고 활발하게 움직이는 버전들로 교체") ═════════════════
+
+   종전 구조(정적 PNG 5상태 + CSS transform)는 **폐기**한다. CSS 미세 모션은
+   사용자 눈에 "움직이지 않는" 수준이었다(하린아빠 실기기 판정).
+
+   자산 출처 = `assets/mascot/v1`(8/7 고정 SSOT, MANIFEST.sha256). 그 black 합성본을
+   원본으로 **투명배경 WebP 애니메이션**으로 재가공해 `public/mascot/motion/` 에 둔다.
+   (종전 black/white 2벌은 테마 분기가 필요했고, 다크모드 고정인 크보팬에서도
+   말풍선 배경과 정확히 같지 않아 네모가 보였다 — 투명이 유일한 정답이다.)
+
+   ⚠️ **새 판별 룰을 추가하지 않는다**(삼순 확정). 경기일·마이팀 같은 새 입력을 들이지
+   않고, 이미 있는 `reply_kind` + `messageId` 만으로 13종 전부가 도달 가능하다.
+   즉 어휘를 늘리는 방향(M90 `open_language_never_closes_with_rules`)이 아니라
+   **이미 닫힌 집합 안에서 결정론으로 고르는** 구조다. */
+export type GeniusMotionClip =
+  | "swing" | "pitching" | "thinking" | "headspin" | "excited" | "bored"
+  | "cheer" | "cheerC" | "cheerD" | "cheerG"
+  | "cheertowel" | "cheerstick" | "cheerpom";
+
+export const GENIUS_MOTION_CLIPS: readonly GeniusMotionClip[] = [
+  "swing", "pitching", "thinking", "headspin", "excited", "bored",
+  "cheer", "cheerC", "cheerD", "cheerG",
+  "cheertowel", "cheerstick", "cheerpom",
+] as const;
+
+/** 재생되는 애니메이션 WebP. 무한 루프는 자산 자체에 인코딩돼 있다(loop=0). */
+export function geniusMotionSrc(clip: GeniusMotionClip): string {
+  return `/mascot/motion/${clip}.webp`;
+}
+
+/**
+ * 정지 poster (각 클립의 **첫 프레임**).
+ *
+ * ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈춰지지 않는다 — 재생은
+ * 이미지 디코더가 하며 CSS 관여 자체가 없다. 그래서 `prefers-reduced-motion` 에서는
+ * **자산을 교체**해야 한다(삼순 지적). 미디어 쿼리로 poster 를 고르면 정지화된다.
+ */
+export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
+  return `/mascot/motion/${clip}-poster.webp`;
+}
+
+/**
+ * 정상 답변에 교대로 붙는 야구 동작 2종.
+ * 답변이 연속될 때 같은 동작만 반복되면 정적 이미지처럼 보인다.
+ */
+const ANSWER_CLIPS = ["swing", "pitching"] as const;
+
+/**
+ * 중립 클립 — 감정 반응이 **억제됐을 때** 쓰는 자리.
+ *
+ * 30초 쿨다운(#1202)이 감정 모션을 거절하면 감정 클립을 재생하지 않는다. 그렇다고
+ * 아무 감정이나 붙이면(예: 감사에 신남) 쿨다운이 오히려 **틀린 신호**를 만든다.
+ * 중립 야구 동작 하나로 고정해 "억제됨"을 결정론적으로 표현한다.
+ */
+const NEUTRAL_ACK_CLIP = "swing" as const;
+
+/**
+ * 응원 7종 — **유저 최애팀에 관한 답변에만** 붙는다.
+ *
+ * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출".
+ * 즉 응원은 아무 때나 뜨는 장식이 아니라 **"네 팀 얘기다"라는 신호**다.
+ */
+const CHEER_CLIPS = [
+  "cheer", "cheerC", "cheerD", "cheerG",
+  "cheertowel", "cheerstick", "cheerpom",
+] as const;
+
+/**
+ * 응원 7종을 붙일 자격 판정 (**fail-close**).
+ *
+ * 응원은 "이 답변이 당신 팀 얘기다"라는 신호이므로, 그 전제가 **증명될 때만** 붙인다.
+ * 최애팀 미설정·팀 판정 불가·다른 팀이면 전부 자격 없음이다 — 애매하면 안 붙인다
+ * (삼순 #1228 P0: "모두 유효하고 같을 때만").
+ *
+ * ⚠️ 두 값 다 **canonical team id(number)** 여야 한다. 팀명 문자열로 비교하면
+ *   `LG`/`엘지`/`트윈스` 표기 차이로 같은 팀이 다른 팀이 된다. 서버가 질문에서
+ *   canonical 을 해석해 payload 에 id 로 실어야 하는 이유다.
+ */
+export function isFavoriteTeamAnswer(
+  answerTeamId: number | null | undefined,
+  favoriteTeamId: number | null | undefined,
+): boolean {
+  // ⚠️ **실존 구단 id 인지부터 본다** (삼순 #1228 4축-③).
+  //    종전엔 `Number.isFinite` + 동등 비교만 해서, 두 값이 **똑같이 잘못된** 경우
+  //    (0 vs 0 · -1 vs -1 · 1.5 vs 1.5 · 999 vs 999)를 전부 통과시켰다. 동등성만
+  //    보면 "같으니 최애팀" 이 되어 존재하지도 않는 팀에 응원이 붙는다.
+  //    실측: isFav(0,0)=true, isFav(999,999)=true 였다.
+  return isRealTeamId(answerTeamId) && isRealTeamId(favoriteTeamId) &&
+    answerTeamId === favoriteTeamId;
+}
+
+/**
+ * KBO 10개 구단의 실제 team id 인가.
+ *
+ * `TEAMS`(구단 SSOT)에서 파생한다 — 여기에 1..10 을 리터럴로 적으면 구단이 늘거나
+ * 재편될 때 조용히 어긋난다(M90 `게이트가 상수를 재구현하면 결함을 못 본다`와 같은 축).
+ */
+const REAL_TEAM_IDS: ReadonlySet<number> = new Set(TEAMS.map((team) => team.id));
+
+export function isRealTeamId(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && REAL_TEAM_IDS.has(value);
+}
+
+/**
+ * `reply_kind` + `messageId` → 재생할 클립 (**결정론**).
+ *
+ * ⚠️ 무작위가 아니라 messageId 기반이다 — 같은 메시지는 reload·재진입·다른 기기에서도
+ * 항상 같은 동작을 보여준다. `Math.random()` 이면 새로고침마다 동작이 바뀌어
+ * "이 답변은 이 동작"이라는 인과가 깨진다(M90 결정론 계약과 같은 축).
+ *
+ * 매핑(삼순 2026-08-16 확정 + 4축-② 의미 매핑 복원):
+ *  · **인사 → excited / 감사·칭찬 → headspin** — §7.6 의미 구분을 그대로 쓴다.
+ *    ⚠️ 이 둘을 messageId 로 교대시키면 "고마워"에 신남이, "안녕"에 헤드스핀이
+ *       나온다. 시드 교대는 **의미가 없는 축에서만** 쓴다(삼순 #1228 4축-②).
+ *  · answer                    → swing / pitching 교대 (의미 구분 없는 축)
+ *  · ack(motion 미상)          → excited (인사 기본값 — 의미를 모르면 가장 안전한 반응)
+ *  · answer + **최애팀 답변**   → 응원 7종 순환 (하린아빠 2026-08-16 14:09)
+ *  · picker / correction       → thinking (되묻는 중)
+ *  · unavailable · motion=bored → bored (답하지 못함·거절)
+ *  · null/unknown(legacy)      → swing / pitching 교대 — payload 없는 과거 답변도
+ *    멈춰 있지 않게 한다(종전 idle 정지 폴백 대체).
+ *
+ * `motion` 은 서버가 §7.6 SSOT(`geniusMotionForResult`)로 계산해 payload 에 실은 값이다.
+ * 그 계산을 여기서 재현하지 않는다 — 재현하면 두 곳이 조용히 갈라진다.
+ */
+export function geniusMotionClipFor(
+  replyKind: GeniusReplyKind | null | undefined,
+  messageId: number,
+  context?: {
+    /**
+     * 서버가 §7.6 SSOT 로 계산해 payload 에 실은 감정 모션 — **쿨다운이 승인한 것**.
+     * 인사=excited / 감사·칭찬=headspin / 거절=bored 의 **의미**가 여기 들어있다.
+     */
+    readonly motion?: GeniusMascotMotion | null;
+    /**
+     * 쿨다운과 무관한 §7.6 **의도**. 30초 내 재인사면 `motion` 은 비지만 intent 는 남는다.
+     * 의미 판정은 intent 로 하고, 감정 클립을 실제로 **재생할지**는 motion 이 정한다.
+     */
+    readonly motionIntent?: GeniusMascotMotion | null;
+    /** 답변이 다루는 구단의 canonical team id. 서버가 질문에서 해석해 payload 로 싣는다. */
+    readonly answerTeamId?: number | null;
+    /** 보고 있는 유저의 최애팀 id (프로필). */
+    readonly favoriteTeamId?: number | null;
+  },
+): GeniusMotionClip {
+  // 음수·부동소수로 음수 인덱스가 나오면 undefined 가 된다 — 정규화해 닫는다.
+  const seed = Math.abs(Math.trunc(messageId)) || 0;
+  if (replyKind === "picker" || replyKind === "correction") return "thinking";
+
+  // ⚠️ `unavailable` 의 조기 반환을 **제거했다** (삼순 2026-08-16 ①).
+  //    종전에는 여기서 곧장 bored 를 돌려줘, 그 경로만 쿨다운 판정을 건너뛰었다.
+  //    "reply_kind 는 모션이 아니라 유형이니 무관하다"는 내 논리였지만, 결과적으로
+  //    **거절 계열만 쿨다운을 우회**하는 예외가 하나 더 생기는 것이었다(bored 예외화와
+  //    같은 축). 이제 아래 공통 경로에서 intent/granted 로 함께 판정한다.
+  //
+  // ── §7.6 의미 ────────────────────────────────────────────────────────────────
+  //
+  // 🔴 의미(intent)와 부여(granted)를 **분리해서** 읽는다.
+  //    `motion` 하나만 보면, 30초 쿨다운(#1202)이 거절한 순간 payload 에서 motion 이
+  //    사라지고 "감사"·"인사"·"범위 안내"가 전부 같은 폴백으로 무너진다
+  //    (삼순 2026-08-16 P0 — 쿨다운 거절이 **실경로**인데 게이트가 항상 motion 을
+  //    주입해 그 경로를 못 보고 있었다).
+  //
+  //    쿨다운의 목적은 *감정 반응 남용 억제*이지 **의미를 지우는 것이 아니다.** 그래서
+  //      · intent + granted → 그 감정 클립 (감정 반응)
+  //      · intent + 거절    → **중립 클립** (억제하되 다른 감정으로 바꾸지 않는다)
+  //    로 나눈다. 거절됐다고 "고마워"에 신남을 붙이면 그게 더 나쁜 오답이다.
+  //
+  // ⚠️ **전 의미 공통 규칙이다 — bored 도 예외가 아니다** (삼순 2026-08-16 보완).
+  //    직전 회차에서 "범위 안내(bored)는 감정이 아니라 상태 표시"라며 쿨다운 예외로
+  //    뒀다가 철회했다. 그 판단 자체는 그럴듯했지만 **§7.4 계약을 리뷰 승인 없이
+  //    바꾸는 것**이었다. 예외가 필요하다는 근거가 서면 그때 §7.4 를 정식으로 고친다.
+  //    지금 필요한 것은 "오해를 만들지 않는 것"뿐이고, 중립 클립이 그걸 이미 만족한다.
+  // `unavailable` 은 서버가 항상 bored 를 실어 보내는 유형이지만(scope_guide·blocked),
+  // payload 가 없는 legacy 응답도 있다 — 그 경우 유형 자체가 의미이므로 intent 로 승격한다.
+  // (예외가 아니라 **의미 해석**이다: 승격된 intent 도 아래 쿨다운 판정을 똑같이 탄다.)
+  const intent = context?.motionIntent ?? context?.motion
+    ?? (replyKind === "unavailable" ? "bored" : undefined);
+  const granted = context?.motion ?? (replyKind === "unavailable" && !context?.motionIntent
+    // legacy unavailable(payload 없음)은 쿨다운 원장이 없으니 억제 대상이 아니다.
+    ? "bored" : context?.motion);
+
+  if (intent === "excited" || intent === "headspin" || intent === "bored") {
+    // 쿨다운이 승인했을 때만 감정 클립. 거절되면 중립(야구 동작)으로 **일괄** 억제한다.
+    if (granted === intent) return intent;
+    return NEUTRAL_ACK_CLIP;
+  }
+
+  // 의미를 모르는 ack(legacy payload) — 중립. 무작위로 고르면 감사에 신남이 붙는다.
+  if (replyKind === "ack") return NEUTRAL_ACK_CLIP;
+
+  // 최애팀 얘기일 때만 응원 7종 — 그 외엔 야구 동작(fail-close).
+  if (isFavoriteTeamAnswer(context?.answerTeamId, context?.favoriteTeamId)) {
+    return CHEER_CLIPS[seed % CHEER_CLIPS.length];
+  }
+  // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.
+  return ANSWER_CLIPS[seed % ANSWER_CLIPS.length];
+}
+
 /**
  * 동명이인 picker 선택지 1개.
  *
@@ -374,8 +575,30 @@ export interface GeniusReplyPayload {
    * (mascotStateForReplyKind 의 forward-compat 계약과 같은 축).
    */
   motion?: GeniusMascotMotion;
+  /**
+   * §7.6 **의도** 모션 — 쿨다운 승인과 무관하게 항상 실린다.
+   *
+   * `motion` 은 DB 쿨다운(#1202)이 승인해야 실린다. 그래서 30초 내 재인사에서는
+   * `motion` 이 비고, 그 순간 "감사"·"인사"·"범위 안내"가 클라에서 **구분 불가**가
+   * 된다(삼순 2026-08-16 P0). 쿨다운의 목적은 *감정 반응 남용 억제*이지
+   * **의미를 지우는 것이 아니다.**
+   *
+   * 그래서 의미(intent)와 부여(granted)를 분리해 둘 다 싣는다:
+   *   · intent 있음 + granted 있음 → 그 감정 클립
+   *   · intent 있음 + granted 없음 → **중립 클립**(쿨다운 억제. 다른 감정으로 바꾸지 않는다)
+   *   · intent 없음(legacy payload) → reply_kind 기본값
+   */
+  motion_intent?: GeniusMascotMotion;
   /** `reply_kind === "picker"` 일 때만. 클라가 선택 카드를 렌더한다. */
   picker_options?: GeniusPickerOption[];
+  /**
+   * 답변이 다루는 구단의 canonical team id.
+   *
+   * 응원 7종 재생 자격 판정에만 쓴다 — 유저 최애팀과 **exact 일치**할 때만 응원이 붙는다.
+   * 구단이 특정되지 않는 답변(선수·룰·용어·복수 구단)에는 아예 실리지 않는다.
+   * ⚠️ 팀명 문자열이 아니라 id 다. 표기 변형(`LG`/`엘지`/`트윈스`)으로 갈리지 않게.
+   */
+  answer_team_id?: number;
   /** `reply_kind === "correction"` 일 때만. 서버가 발급한 exact 후보만 유저에게 제안한다. */
   correction_options?: string[];
   /**
@@ -415,11 +638,15 @@ export function composeGeniusReplyPayload(
   result: {
     source: string;
     motion?: GeniusMascotMotion;
+    /** 쿨다운 승인 여부와 무관한 §7.6 의도 모션. 의미는 항상 보존한다. */
+    motionIntent?: GeniusMascotMotion;
     pickerOptions?: ReadonlyArray<{
       kboId: string; name: string; team: string | null; position: string | null; backNo: string | null;
     }>;
     correctionOptions?: readonly string[];
     sourceUrl?: string;
+    /** 답변 대상 구단 canonical team id (응원 클립 자격). 호출부가 결정론 계산해 넘긴다. */
+    answerTeamId?: number | null;
   },
   questionMessageId: number,
 ): GeniusReplyPayload {
@@ -429,6 +656,10 @@ export function composeGeniusReplyPayload(
     match_path: result.source,
     question_message_id: questionMessageId,
     ...(result.motion ? { motion: result.motion } : {}),
+    ...(result.motionIntent ? { motion_intent: result.motionIntent } : {}),
+    ...(typeof result.answerTeamId === "number" && Number.isFinite(result.answerTeamId)
+      ? { answer_team_id: result.answerTeamId }
+      : {}),
     ...(result.pickerOptions
       ? {
         picker_options: result.pickerOptions.map((option) => ({
@@ -477,6 +708,20 @@ export function geniusMotionFromPayload(
     : null;
 }
 
+/**
+ * 쿨다운과 무관한 §7.6 **의도** 모션. 클립 선택은 이 값으로 의미를 판정한다.
+ * (`geniusMotionFromPayload` 는 "부여됐는가"에 답한다 — 둘은 다른 질문이다.)
+ */
+export function geniusMotionIntentFromPayload(
+  payload: GeniusReplyPayload | null | undefined,
+): GeniusMascotMotion | null {
+  const intent = payload?.motion_intent;
+  if (intent === undefined) return null;
+  return (GENIUS_MASCOT_MOTIONS as readonly string[]).includes(intent)
+    ? (intent as GeniusMascotMotion)
+    : null;
+}
+
 function isPickerOption(p: unknown): p is GeniusPickerOption {
   if (!p || typeof p !== "object") return false;
   const o = p as Record<string, unknown>;
@@ -507,6 +752,8 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 안 된다. 값 해석은 `geniusMotionFromPayload` 가 폐쇄집합으로 닫는다.
   const motionField = (obj as { motion?: unknown }).motion;
   if (motionField !== undefined && typeof motionField !== "string") return false;
+  const motionIntentField = (obj as { motion_intent?: unknown }).motion_intent;
+  if (motionIntentField !== undefined && typeof motionIntentField !== "string") return false;
   // 선택지가 붙어 있으면 항목까지 검증한다 — 깨진 payload 로 카드를 그리면 빈 버튼이 난다.
   // 상한 초과도 거절한다(무한 목록 렌더 방지).
   if (obj.picker_options !== undefined) {
@@ -526,6 +773,10 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 깨진 값이 통과하면 잘못된 질문에 평가가 붙는다.
   if (obj.reply_kind !== "picker" && obj.reply_kind !== "correction" && obj.question_message_id !== undefined &&
       (!Number.isSafeInteger(obj.question_message_id) || Number(obj.question_message_id) < 1)) return false;
+  // 응원 자격 id — 값이 실려 오면 형식을 검증한다. 깨진 값이 통과하면 엉뚱한 팀 답변에
+  // 응원이 붙는다. 없는 것(undefined)은 정상 — 구단이 특정 안 된 답변이 대부분이다.
+  const answerTeamField = (obj as { answer_team_id?: unknown }).answer_team_id;
+  if (answerTeamField !== undefined && !isRealTeamId(answerTeamField)) return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
   // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.

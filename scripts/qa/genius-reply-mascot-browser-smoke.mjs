@@ -34,13 +34,19 @@ const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 
 // (질문, 답변 유형, 기대 마스코트) — 매핑 5갈래를 화면에서 직접 확인한다.
+// 2026-08-16 전면 교체: 정적 PNG 5표정 → **영상 클립 13종**.
+// 기대값은 클립 이름(data-clip)이다. 어느 클립인지는 (reply_kind, motion, 최애팀)로
+// 결정되며, 여기서 재계산하지 않고 **배포 SSOT 함수**로 뽑는다(게이트가 상수를
+// 재구현하면 결함을 못 본다 — M90).
 const CASES = [
-  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작입니다.", kind: "answer", path: "dictionary", expect: "answering" },
-  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황입니다.", kind: "answer", path: "llm", expect: "answering" },
-  { q: "고마워", a: "도움이 됐다니 다행이에요! ⚾", kind: "ack", path: "ack", expect: "praised" },
-  { q: "오늘 경기 결과 알려줘", a: "야구 룰/용어에 대한 질문만 답할 수 있어요.", kind: "unavailable", path: "blocked", expect: "unknown" },
-  // payload 자체가 없는 과거 답변(배포 전 생성분) — idle 폴백이어야 하고 깨지면 안 된다.
-  { q: "예전 질문", a: "예전에 저장된 답변이에요.", kind: null, path: null, expect: "idle" },
+  { q: "보크가 뭐야?", a: "투수가 주자를 속이는 반칙 동작입니다.", kind: "answer", path: "dictionary" },
+  { q: "낫아웃이 뭐야?", a: "3스트라이크인데 포수가 못 잡은 상황입니다.", kind: "answer", path: "llm" },
+  // §7.6 의미 모션 — 감사·칭찬은 headspin 이어야 한다(시드 교대 아님).
+  { q: "고마워", a: "도움이 됐다니 다행이에요! ⚾", kind: "ack", path: "ack", motion: "headspin" },
+  { q: "안녕", a: "안녕하세요! ⚾", kind: "ack", path: "ack", motion: "excited" },
+  { q: "오늘 경기 결과 알려줘", a: "야구 룰/용어에 대한 질문만 답할 수 있어요.", kind: "unavailable", path: "blocked" },
+  // payload 자체가 없는 과거 답변(배포 전 생성분) — 야구 동작 폴백이어야 하고 깨지면 안 된다.
+  { q: "예전 질문", a: "예전에 저장된 답변이에요.", kind: null, path: null },
 ];
 
 // 출처 표기 케이스 (하린아빠 2026-08-05 P0 — `rev crawled:…` 노출 제거).
@@ -226,37 +232,80 @@ async function main() {
       const out = [];
       for (const img of document.querySelectorAll('[data-testid="genius-reply-mascot"]')) {
         const bubble = img.closest("div")?.parentElement;
+        const picture = img.parentElement;
+        const reduced = picture?.querySelector('source[media*="prefers-reduced-motion"]');
         out.push({
-          state: img.getAttribute("data-state"),
+          clip: img.getAttribute("data-clip"),
+          src: img.getAttribute("src"),
           naturalWidth: img.naturalWidth,
+          // 실제 화면 높이·폭 (96px 규격 + padding 겹침 확인)
           height: Math.round(img.getBoundingClientRect().height),
+          width: Math.round(img.getBoundingClientRect().width),
+          // reduced-motion poster 대체본이 실제 DOM 에 붙어 있는가
+          posterSrcset: reduced?.getAttribute("srcset") ?? null,
+          messageId: Number(img.closest("[data-message-id]")?.getAttribute("data-message-id") ?? 0),
           text: (bubble?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 60),
         });
       }
       return out;
     });
 
+    // 기대 클립은 **배포 SSOT 함수**로 뽑는다 — 여기서 매핑을 재현하면
+    // 배포 매핑이 바뀌어도 게이트는 조용히 GREEN 이 된다.
+    const { geniusMotionClipFor, GENIUS_MASCOT_HEIGHT_PX } =
+      await import("../../src/lib/constants/baseball-genius.ts");
+
     for (const c of CASES) {
       const key = c.a.slice(0, 12);
       const hit = observed.find((o) => o.text.includes(key));
+      const expected = hit
+        ? geniusMotionClipFor(c.kind, hit.messageId, { motion: c.motion ?? null })
+        : null;
       ok(
-        `[${c.path ?? "payload 없음"}] "${c.a.slice(0, 14)}…" → ${c.expect}`,
-        !!hit && hit.state === c.expect,
-        hit ? `실제=${hit.state}` : "말풍선을 찾지 못함",
+        `[${c.path ?? "payload 없음"}] "${c.a.slice(0, 14)}…" → ${expected ?? "?"}`,
+        !!hit && hit.clip === expected,
+        hit ? `실제=${hit.clip} 기대=${expected}` : "말풍선을 찾지 못함",
       );
     }
 
     ok(
-      "모든 마스코트가 실제로 로드됨(404 아님)",
+      "모든 마스코트 영상이 실제로 로드됨(404 아님)",
       observed.length > 0 && observed.every((o) => o.naturalWidth > 0),
       `${observed.filter((o) => o.naturalWidth > 0).length}/${observed.length} :: ` +
-        JSON.stringify(observed.map((o) => [o.state, o.naturalWidth, o.height])),
+        JSON.stringify(observed.map((o) => [o.clip, o.naturalWidth, o.height])),
     );
     ok(
-      "상태가 바뀌어도 렌더 높이가 동일(캐릭터 안 튐)",
-      new Set(observed.map((o) => o.height)).size === 1,
+      "정적 PNG 가 아니라 영상 클립(/mascot/motion/*.webp)을 재생한다",
+      observed.length > 0 && observed.every((o) => /^\/mascot\/motion\/[^/]+\.webp$/.test(o.src ?? "")),
+      JSON.stringify(observed.map((o) => o.src)),
+    );
+    ok(
+      "reduced-motion poster 대체본이 실제 DOM 에 붙어 있다",
+      observed.length > 0 && observed.every((o) => /-poster\.webp$/.test(o.posterSrcset ?? "")),
+      JSON.stringify(observed.map((o) => o.posterSrcset)),
+    );
+    ok(
+      `클립이 바뀌어도 렌더 높이가 ${GENIUS_MASCOT_HEIGHT_PX}px 로 동일(캐릭터 안 튐)`,
+      new Set(observed.map((o) => o.height)).size === 1 &&
+        observed.every((o) => o.height === GENIUS_MASCOT_HEIGHT_PX),
       [...new Set(observed.map((o) => o.height))].join(","),
     );
+    // 클립마다 폭이 다르다(스윙은 배트 때문에 넓다) — 말풍선 밖으로 삐져나가면 안 된다.
+    const overflow = await page.evaluate(() => {
+      const out = [];
+      for (const img of document.querySelectorAll('[data-testid="genius-reply-mascot"]')) {
+        const row = img.closest(".flex");
+        if (!row) continue;
+        const a = img.getBoundingClientRect();
+        const b = row.getBoundingClientRect();
+        if (a.left < b.left - 1 || a.right > b.right + 1) {
+          out.push({ clip: img.getAttribute("data-clip"), imgLeft: a.left, imgRight: a.right, rowLeft: b.left, rowRight: b.right });
+        }
+      }
+      return out;
+    });
+    ok("마스코트가 말풍선 행 밖으로 넘치지 않는다(폭이 넓은 스윙 포함)",
+      overflow.length === 0, JSON.stringify(overflow));
 
     // 위조 방어: 유저 발신 payload 에는 마스코트가 붙지 않아야 한다.
     const forged = await page.evaluate(() => {
@@ -360,7 +409,7 @@ async function main() {
         const rect = img.getBoundingClientRect();
         const host = img.closest('[data-testid="genius-typing-indicator"]');
         return {
-          mascot: img.getAttribute("data-mascot"),
+          clip: img.getAttribute("data-clip"),
           state: host?.getAttribute("data-state") ?? null,
           naturalWidth: img.naturalWidth,
           height: Math.round(rect.height),
@@ -375,12 +424,12 @@ async function main() {
     // waiting / retrying 은 둘 다 "답변을 기다리는 중"이며 같은 thinking 표정이다.
     // 관측 시점에 따라 어느 쪽이든 나올 수 있으므로 둘 다 허용하되, 그 외 상태는 실패다.
     ok(
-      "대기중 생각 마스코트가 실제로 렌더된다(waiting/retrying → thinking)",
-      !!typing && typing.mascot === "thinking" && ["waiting", "retrying"].includes(typing.state),
+      "대기중 생각 마스코트가 실제로 렌더된다(waiting/retrying → thinking 클립)",
+      !!typing && typing.clip === "thinking" && ["waiting", "retrying"].includes(typing.state),
       JSON.stringify(typing),
     );
     ok(
-      "대기중 마스코트 PNG 가 실제 로드된다(404 아님)",
+      "대기중 마스코트 영상이 실제 로드된다(404 아님)",
       !!typing && typing.naturalWidth > 0,
       typing ? `naturalWidth=${typing.naturalWidth}` : "미렌더",
     );
