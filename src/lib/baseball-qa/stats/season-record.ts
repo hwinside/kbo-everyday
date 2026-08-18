@@ -270,87 +270,26 @@ const DESCRIPTIVE_ASK =
   /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*선수|유명|이야기|역사|유래|별명|소개|누구/;
 
 /**
- * 동문서답 방지 가드 — "엔티티 + 지표어"만 보고 시즌 누적을 던지는 걸 막는다.
+ * 동문서답 방지 (A안, #1243 — 최소 범위). 질문의 초점이 **구단 문화·응원 의례**(세레머니 등)인데
+ * "엔티티 + 지표어"(`기아` + `안타`)만 보고 시즌/팀 누적 숫자를 던지는 동문서답을 막는다.
+ *   · `안타를 쳤을때 기아만의 세레머니 있어?` → 팀 안타 988 (X) → 세레머니 이야기(team_rag) (O)
  *
- * 질문의 **실제 초점이 비(非)스탯**이면(일단위 시점·방법/추세·조건절 안의 지표·순위 오요청)
- * 구조화 스탯 경로를 비우고(`kind:"none"`) LLM/RAG 로 위임한다. 시즌 누적 숫자로 답하면
- * 유저가 물은 것과 초점이 어긋난 동문서답이 되기 때문이다.
- *   · `안타를 쳤을때 …세레머니 있어?`  → 팀 안타 988 (X)  →  세레머니 이야기 (O)
- *   · `김재윤 세이브 순위`             → 세이브 26개 (X)  →  순위표 위임 (O)
- *   · `어제 롯데 홈런 몇번`             → 시즌 홈런 81 (X)  →  일단위 위임 (O)
- *   · `타율 3할 되려면 어떻게`          → 현재 타율 (X)    →  방법 위임 (O)
- * (2026-08-17 72h 로그 동문서답 전수조사 — kbo_structured 동문서답 7건 전부 이 4신호에 걸린다.)
- *
- * ⚠️ **닫힌 신호만** 잡는다(열린 언어 룰 남발 금지 — lessons `open_language_never_closes_with_rules`).
- * ⚠️ 시즌 스코프 표현(`올해`·`이번 시즌`·`통산`·`작년`)은 **절대** 잡지 않는다 — 그건 정상 스탯 질문이다.
+ * ⚠️ **닫힌 집합만** 잡는다(lessons `open_language_never_closes_with_rules`). 문화 토픽 키워드는
+ *    스탯 질문에 결코 등장하지 않으므로 거울 회귀(반대 경로 오작동)가 원천 불가능하다.
+ *    시점(어제·오늘)·순위·추세·방법 등 **스탯 스코프 오답**은 이 A안 범위 밖이며, 별도 트랙
+ *    (B: 신호를 함께 보는 단일 분류기 재설계)에서 다룬다 — 여기서 순서 술어로 열면 반대 경로가
+ *    뚫린다(#1243 2~5차 NO-GO = 순서 술어 누적으로 인한 거울 회귀 이력).
  */
-// 일(日)단위 시점 — 시즌 누적으로 답하면 틀린다. `올해`·`이번 시즌`은 시즌 스코프라 여기 없다.
-const DAY_LEVEL_TEMPORAL =
-  /어제|오늘|그제|엊그제|엊저녁|어젯밤|방금|아까|저번\s*경기|지난\s*경기|이번\s*경기|그\s*경기|당일|경기\s*정보/;
-// 방법·추세 — 단일 숫자로는 못 답한다. `변화구`(구종)는 제외한다.
-const METHOD_TREND_ASK =
-  /되려면|하려면|어떻게\s*해야|어떻게\s*하면|어찌\s*해야|추이|추세|변화(?!구)|흐름|비결/;
-// 조건·가정절 안의 지표 — 지표는 배경이고 진짜 질문은 딴 데 있다(`안타를 쳤을때 …`).
-const METRIC_IN_SUBORDINATE =
-  /(?:쳤|쳐|때렸|맞았|던졌|잡았|나왔|출루|득점)[가-힣]{0,2}(?:을\s*때|\s*때|다면|으면|면)/;
-// 순위 오요청 — 선수 시즌 축엔 순위 지표가 없다(순위는 팀·리그 순위표 담당).
-const RANK_FOCUS = /순위|몇\s*위|랭킹|순위권/;
-// 수치 값 요청 — 조건절이어도 수치를 물으면 문화 질문이 아니라 스탯 질문이다(`…쳤을 때 몇 개였어`).
-const NUMERIC_VALUE_ASK = /몇|얼마|개\s*(?:였|야|나|임)/;
+// 구단 문화·응원 의례 — 스탯 질문엔 결코 나오지 않는 순수 문화 어휘의 닫힌 집합.
+const CULTURE_TOPIC =
+  /세레머니|세리머니|셀러브레이션|셀레브레이션|응원가|응원법|응원단|치어리더|마스코트|구단가|응원\s*문화|응원\s*도구/;
 
 /**
- * 비스탯 초점의 **종류**까지 가른다 (삼순 2026-08-17 NO-GO 반영).
- *
- * 전부 LLM 으로 넘기면 `어제/순위/추세` 가 다시 환각한다 — 두 갈래로 나눈다:
- *   · `cultural`  — 조건절 안의 지표(`안타를 쳤을때 …세레머니 있어?`). 지표는 배경이고
- *     진짜 질문은 문화·서사다 → **team_rag(나무위키 근거)** 로 흘려 근거 답변.
- *   · `stat_scope` — 시점특정·방법/추세·순위 오요청. 스탯 질문인데 그 스코프의 정본이 없다
- *     → LLM 환각 금지, **명시 fail-close**(`정확한 자료 없음`/순위표 안내).
- *
- * 순서가 계약이다 — 조건절(cultural) 먼저. `안타를 쳤을때` 같은 배경 지표는
- * 수치 질문이 아니므로 team_rag 가 먼저 소유하게 한다.
+ * 질문 초점이 구단 문화·응원 의례인가 — 그렇다면 구조화 스탯을 양보하고 team_rag(나무위키 근거)에
+ * 맡긴다. 근거가 없으면 team_rag 가 null 로 양보하므로 과탐지도 안전하다.
  */
-/**
- * 일(日)단위·특정경기 회상인가 — `경기정보에 고승민 4타수 3안타`처럼 특정 경기의 수치 회상.
- * 이런 질문은 시즌 누적도 descriptive RAG 도 정본이 없다(특정경기 박스스코어는 서빙 안 함).
- * route 에서 지표어 토큰화 실패(`3안타`)로 hasStat 이 거짓이어도 명시 fail-close 하려고 따로 낸다.
- * (추세·방법 `문보경 최근 변화 알려줘` 는 여기 안 걸린다 — 그건 서술 RAG 가 답할 수 있다.)
- */
-export function isDayLevelRecall(question: string): boolean {
-  return DAY_LEVEL_TEMPORAL.test(normalize(question));
-}
-
-export type NonStatFocus = "none" | "cultural" | "stat_scope";
-export function classifyNonStatFocus(
-  question: string,
-  opts: { rankIsMismatch: boolean },
-): NonStatFocus {
-  const compact = normalize(question);
-  // ⚠️ **stat_scope 신호가 조건절보다 먼저다** (삼순 2026-08-17 2차 NO-GO).
-  //   `어제 롯데가 홈런 쳤을 때 몇 개였어` 는 조건절(쳤을때)이지만 시점(어제)+수치(몇개)라
-  //   문화 질문이 아니다 — 조건절을 먼저 보면 team_rag 로 새다. 시점·방법·순위를 먼저 닫는다.
-  if (DAY_LEVEL_TEMPORAL.test(compact)) return "stat_scope";
-  if (METHOD_TREND_ASK.test(compact)) return "stat_scope";
-  if (opts.rankIsMismatch && RANK_FOCUS.test(compact)) return "stat_scope";
-  // 조건·가정절 안의 지표 — 수치 값을 물으면 스탯 질문(stat_scope), 아니면 문화·서사(cultural).
-  //   `안타를 쳤을때 세레머니 있어?`(비수치) → cultural(team_rag) /
-  //   `홈런 쳤을때 몇개였어`(수치) → stat_scope(정본 없음 → fail-close).
-  if (METRIC_IN_SUBORDINATE.test(compact)) {
-    return NUMERIC_VALUE_ASK.test(compact) ? "stat_scope" : "cultural";
-  }
-  return "none";
-}
-
-/**
- * 질문의 초점이 비(非)스탯인가 — 구조화 스탯 경로를 건너뛰어야 하는가.
- * @param opts.rankIsMismatch 순위어가 곧 오요청인 축인가(선수 시즌 축 = true, 팀 축 = false).
- *   팀 축은 `순위`가 실제 서빙 지표라 순위 신호로 비켜세우면 안 된다.
- */
-export function hasNonStatFocus(
-  question: string,
-  opts: { rankIsMismatch: boolean },
-): boolean {
-  return classifyNonStatFocus(question, opts) !== "none";
+export function isCulturalTopicQuestion(question: string): boolean {
+  return CULTURE_TOPIC.test(normalize(question));
 }
 
 export interface SeasonRecordQuery {
@@ -403,9 +342,9 @@ export function resolveSeasonRecordIntent(
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
-  // 동문서답 방지 — 질문 초점이 비스탯(시점특정·방법/추세·조건절 지표·순위 오요청)이면
-  //   시즌 누적을 던지지 않고 LLM/RAG 로 위임한다. 선수 축엔 순위 지표가 없으므로 rank 도 미스매치.
-  if (hasNonStatFocus(question, { rankIsMismatch: true })) return { kind: "none" };
+  // 동문서답 방지 (A안) — 질문 초점이 구단 문화·응원 의례(세레머니 등)이면 시즌 누적을
+  //   던지지 않고 team_rag/LLM 로 양보한다. 시점·순위·추세 등 스탯 스코프 오답은 B 트랙.
+  if (isCulturalTopicQuestion(question)) return { kind: "none" };
   // bare `wRC` 는 **명시 거절**한다(삼순 #1100 8차 P0-1).
   // wRC(가중 득점 생산량) ≠ wRC+(리그·구장 보정 지수). 우린 wRC+ 만 계산하므로
   // bare wRC 에 wRC+ 값을 주면 다른 지표를 속여 답하는 것이다 — 도루·OPS·WAR 은

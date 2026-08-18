@@ -18,7 +18,7 @@
  * 없으면 답하지 않음, LLM 미경유.
  */
 
-import { hasNonStatFocus } from "./season-record";
+import { isCulturalTopicQuestion } from "./season-record";
 
 /** 공개 도메인 self-fetch — `VERCEL_URL` 은 배포 보호에 막힌다(served-record 와 동일 패턴). */
 const PUBLIC_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan";
@@ -243,10 +243,10 @@ export function resolveTeamRecordIntent(question: string): TeamRecordIntent {
   //   판정기는 한 곳이어야 한다 — 두 군데서 각자 판단하면 반드시 갈라진다.
   if (isTeamScoreQuestion(normalized)) return { kind: "unserved" };
 
-  // 동문서답 방지 — 질문 초점이 비스탯(일단위 시점·방법/추세·조건절 지표)이면 구조화 팀
-  //   집계를 던지지 않고 LLM/RAG 로 위임한다(`안타를 쳤을때 …세레머니`·`어제 홈런`).
-  //   ⚠️ `rankIsMismatch:false` — 팀 축은 `순위`가 실서빙 지표라 순위 신호로 비켜세우면 안 된다.
-  if (hasNonStatFocus(question, { rankIsMismatch: false })) return { kind: "none" };
+  // 동문서답 방지 (A안) — 질문 초점이 구단 문화·응원 의례(세레머니 등)이면 구조화 팀
+  //   집계를 던지지 않고 team_rag/LLM 로 양보한다(`안타를 쳤을때 기아만의 세레머니`).
+  //   시점·순위 등 스탯 스코프 오답은 이 A안 범위 밖(B 트랙).
+  if (isCulturalTopicQuestion(question)) return { kind: "none" };
 
   const hit = TEAM_PATTERNS.find((entry) => entry.pattern.test(normalized));
   if (!hit) return { kind: "none" };

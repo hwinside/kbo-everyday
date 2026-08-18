@@ -59,9 +59,7 @@ import {
   resolveSeasonRecordIntent,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
-  hasNonStatFocus,
-  classifyNonStatFocus,
-  isDayLevelRecall,
+  isCulturalTopicQuestion,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -1959,14 +1957,12 @@ function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: bo
  * 근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
  */
 export function isTeamRagServableQuestion(question: string): boolean {
-  // ⚠️ **cultural(조건절 내 비수치 지표 = 세레머니)만** 서빙 강제한다 (삼순 2026-08-17 2차 NO-GO).
+  // ⚠️ **구단 문화·응원 의례(세레머니 등)만** 서빙 강제한다 (#1243 A안).
   //   `안타를 쳤을때 …세레머니 있어?` 는 `안타`(STAT_WORDS) 때문에 numeric 으로 오판되어
   //   team_rag 가 서빙을 거부하고 generic LLM 으로 새면 나무위키 근거를 못 읽어 환각이 된다.
-  //   그래서 cultural 만 team_rag 이 소유하게 한다(나무위키 근거 존재; 없으면 null 양보라 안전).
-  //   ⚠️ `stat_scope`(어제·순위·추세)까지 true 로 열면 news/team RAG 누수다 — 그건
-  //   route 가 이미 `history_hold` 로 닫지만, 이 술어 단독으로도 닫힌다(방어 이중).
-  //   rank 는 팀 축에서 실서빙 지표(`케이티 순위`)라 rankIsMismatch:false.
-  if (classifyNonStatFocus(question, { rankIsMismatch: false }) === "cultural") return true;
+  //   그래서 문화 토픽만 team_rag 이 소유하게 한다(나무위키 근거 존재; 없으면 null 양보라 안전).
+  //   문화 키워드는 스탯 질문에 안 나오므로 시점·순위·추세 누수가 원천 불가능하다.
+  if (isCulturalTopicQuestion(question)) return true;
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
@@ -3111,34 +3107,16 @@ export function routeQuestion(
     return "history_hold";
   }
   if (hasStat && hasPlayerReference(tokens, players) && !hasTeam) return "history_hold";
-  // 동문서답 방지 (삼순 2026-08-17 2차 NO-GO) — 지표어가 있는 비팀 질문이 시점/순위/추세
-  //   초점(stat_scope)이면 선수 결속 여부·후보 해석과 무관하게 명시 fail-close 한다.
-  //   (`네이버 경기정보에 고승민 4타수 3안타`처럼 후보 미해석이면 llm_scope_gate로 새던 것).
-  //   cultural(세레머니)은 안 걸린다 — 서술 질문이라 아래 RAG 가 근거로 답할 수 있다.
-  if (hasStat && !hasTeam && classifyNonStatFocus(question, { rankIsMismatch: true }) === "stat_scope") {
-    return "history_hold";
-  }
-  // 특정경기·일단위 회상(삼순 2026-08-17 3차 NO-GO) — `경기정보에 고승민 4타수 3안타`처럼
-  //   지표어 토큰화 실패로 hasStat 이 거짓이면 위 가드를 빠져 llm_scope_gate 로 새다.
-  //   특정경기 수치는 시즌 누적도 서술 RAG 도 정본이 없으므로 비팀이면 명시 fail-close(RAG/LLM 0).
-  //   (추세·방법 `문보경 최근 변화 알려줘` 는 day-level 이 아니라 안 걸린다 → player RAG 유지.)
-  if (!hasTeam && isDayLevelRecall(question)) {
-    return "history_hold";
-  }
   // ⚠️ 구단 수치는 더 이상 `history_hold`(고정 안내문)로 닫지 않는다.
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
   // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
   // 실제 순위표/팀기록을 조회해 답하고, 조회 실패·미지원 지표만 fail-close 한다.
   if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) {
-    // 동문서답 방지 (삼순 2026-08-17 NO-GO) — `안타`(지표어) fallback 으로 team_record 가
-    //   비스탯 질문을 선점해 `988` 을 던지거나 `TEAM_STAT_HOLD` 로 삼키는 것을 막는다.
-    //   · cultural(조건절 내 지표 = 세레머니 등): team_record 를 선택하지 **않고** 아래로 흘려
-    //     `llm_scope_gate` → team_rag(나무위키 근거) 에 닿게 한다(source=team_rag).
-    //   · stat_scope(어제·특정경기·순위·추세): 정본 없는 스탯 스코프 → `history_hold` 명시 fail-close
-    //     (source != team_rag). LLM 환각 금지.
-    const nf = classifyNonStatFocus(question, { rankIsMismatch: false });
-    if (nf === "stat_scope") return "history_hold";
-    if (nf !== "cultural") return "team_record";
+    // 동문서답 방지 (#1243 A안) — `안타`(지표어) fallback 으로 team_record 가 비스탯 문화 질문을
+    //   선점해 `988` 을 던지는 것을 막는다. 구단 문화·응원 의례(세레머니 등)면 team_record 를
+    //   선택하지 **않고** 아래로 흘려 `llm_scope_gate` → team_rag(나무위키 근거) 에 닿게 한다.
+    //   그 외(순수 수치 질문)는 team_record 조회 위임 그대로. 시점·순위·추세 오답은 B 트랙.
+    if (!isCulturalTopicQuestion(question)) return "team_record";
     // cultural 은 아래로 흘려 team_rag 진입(종결 return 없음).
   }
 
@@ -5706,18 +5684,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
       if (record) return record;
-      // 동문서답 방지 (삼순 2026-08-17 2·3차 NO-GO) — 명시 지표를 특정했는데
-      //   그 지표가 시점·순위·추세·방법(stat_scope) 초점이면 정본이 없다. season none 으로
-      //   양보하면 아래 descriptive RAG/generic LLM 이 순위·추세를 지어낸다. 명시 fail-close.
-      //   ⚠️ **`boundIntent.kind !== "none"` 으로 결속한다** (삼순 2026-08-17 3차 NO-GO):
-      //     지표어 없는 선수 서술(`문보경 최근 변화 알려줘`·`김도영 타격 비결 알려줘`)은
-      //     kind=none 이므로 여기서 닫지 않고 아래 player RAG 가 근거로 답하게 둔다.
-      //     지표를 특정한 추세·시점 질문(`문보경 타율 최근 변화`)만 fail-close 된다.
-      if (boundIntent.kind !== "none" && classifyNonStatFocus(question, { rankIsMismatch: true }) === "stat_scope") {
-        const holdAnswer = resolveHoldAnswer(question);
-        await deps.log({ userId, question, questionNorm, matchPath: "history_hold", answer: holdAnswer, inputTokens: null, outputTokens: null });
-        return { status: 200, answer: holdAnswer, source: "history_hold", remaining };
-      }
+      // (A안) 시점·순위·추세 등 스탯 스코프 fail-close 는 여기서 하지 않는다 — season 이
+      //   none 으로 양보하면 아래 player RAG/LLM 이 근거로 답한다(main 동작 그대로). 그 오답군은
+      //   거울 회귀를 일으켰던 순서 술어라 B(단일 분류기)로 이관했다(#1243 5차 NO-GO 이력).
     }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       const descriptive = await answerPlayerDescriptiveQuestion(
