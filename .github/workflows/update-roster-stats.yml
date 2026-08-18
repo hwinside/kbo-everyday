@@ -13,7 +13,8 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 크롤+검증 ~15분 + Vercel 대기 최대 30분 (8/16·8/17 run이 job 한도 30분에 걸려 cancelled/failure)
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +35,59 @@ jobs:
       - name: Resolve roster completion evidence path
         run: |
           echo "ROSTER_COMPLETION_EVIDENCE=$RUNNER_TEMP/roster-completion-evidence.json" >> "$GITHUB_ENV"
+
+      # 이전 run이 Vercel 빌드 지연 타임아웃으로 자동 머지 못 하고 남긴 auto PR 복구.
+      # `automerge-pending-vercel` 라벨은 검증·allowlist·급변 가드 전부 통과 후
+      # Vercel 대기 타임아웃 시점에만 붙는다 = 라벨이 게이트 통과 증명.
+      # 복구 시 체크 상태(Vercel SUCCESS·failure 0)와 allowlist를 재검증한 뒤에만 머지한다.
+      - name: Recover pending auto PR from previous run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ALLOWLIST_RE='^(public/players/[^/]+\.(jpg|jpeg|png|webp)|src/lib/constants/(players-roster\.json|player-photos\.ts|player-defense-runs\.json|stats-2026-(batters|pitchers|defense|meta)\.json))$'
+          PRS=$(gh pr list --state open --label automerge-pending-vercel \
+            --json number,headRefName --jq \
+            '[.[] | select(.headRefName | startswith("auto/update-roster-stats-"))] | sort_by(.headRefName)')
+          COUNT=$(echo "$PRS" | jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
+            echo "복구 대상 없음"
+            exit 0
+          fi
+
+          # 브랜치명 날짜 기준 최신 1건만 머지 후보 — 나머지는 하위본이라 close
+          CANDIDATE=$(echo "$PRS" | jq -r '.[-1].number')
+          for NUM in $(echo "$PRS" | jq -r '.[0:-1][].number'); do
+            gh pr close "$NUM" --comment "최신 auto PR #${CANDIDATE}로 대체 — 이전 run Vercel timeout 잔여분 정리" --delete-branch || true
+          done
+
+          ROLLUP=$(gh pr view "$CANDIDATE" --json statusCheckRollup --jq '.statusCheckRollup')
+          VERCEL_STATE=$(echo "$ROLLUP" | jq -r '[.[] | select((.context // .name) == "Vercel") | (.state // .conclusion // "PENDING")] | .[0] // "MISSING"')
+          HAS_FAIL=$(echo "$ROLLUP" | jq '[.[] | (.state // .conclusion // .status) | . == "FAILURE" or . == "ERROR" or . == "TIMED_OUT" or . == "CANCELLED"] | any')
+          OFF_ALLOWLIST=$(gh pr diff "$CANDIDATE" --name-only | grep -Ev "$ALLOWLIST_RE" || true)
+
+          if [ "$VERCEL_STATE" = "SUCCESS" ] && [ "$HAS_FAIL" = "false" ] && [ -z "$OFF_ALLOWLIST" ]; then
+            echo "✅ 복구 머지 진행: #$CANDIDATE (Vercel SUCCESS · failure 0 · allowlist OK)"
+            # errexit 대비: merge 명령 실패를 잡아야 아래 state 재검증이 실행된다
+            if ! gh pr merge "$CANDIDATE" --squash --delete-branch; then
+              echo "⚠️ gh pr merge 명령 비정상 종료 — state 재확인"
+            fi
+            MERGE_STATE=$(gh pr view "$CANDIDATE" --json state --jq .state)
+            if [ "$MERGE_STATE" = "MERGED" ]; then
+              git fetch origin main
+              git reset --hard origin/main
+              echo "✅ 복구 머지 완료 — 워킹트리를 최신 main으로 동기화"
+              {
+                echo "## ✅ 이전 run 잔여 auto PR 복구 머지"
+                echo ""
+                echo "PR: #$CANDIDATE (Vercel SUCCESS · allowlist 재검증 OK)"
+              } >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "❌ 복구 머지 실패 (state=$MERGE_STATE) — open 유지, 이번 run은 계속 진행"
+            fi
+          else
+            echo "❌ 복구 조건 미충족 (#$CANDIDATE vercel=$VERCEL_STATE fail=$HAS_FAIL off_allowlist=[$OFF_ALLOWLIST]) — open 유지"
+          fi
 
       # 자동 머지 급변 가드용 기준값: 크롤 *이전*(= main 현재) roster/batters/pitchers 인원 수
       - name: Baseline counts (main)
@@ -359,7 +413,8 @@ jobs:
           #
           # race 방지: `Vercel` context가 등록되고 SUCCESS인지 *명시 확인*한다.
           # `Vercel Preview Comments`만 올라온 상태는 본 빌드 완료로 간주하지 않는다.
-          MAX_WAIT_MIN=15
+          # 8/16·8/17 Vercel 빌드 15분+ 지연으로 이틀 연속 timeout → 30분으로 상향 (2026-08-18 하린아빠 승인)
+          MAX_WAIT_MIN=30
           SLEEP_SECONDS=20
           ELAPSED=0
 
@@ -413,11 +468,15 @@ jobs:
           done
 
           echo "⏱️  Vercel build timeout (${MAX_WAIT_MIN} min) — PR은 open 상태로 남긴다: $PR_URL"
+          # 게이트(검증·allowlist·급변)는 전부 통과했고 Vercel만 늦은 상태 —
+          # 라벨을 붙여 다음 run의 Recover 스텝이 재확인 후 머지하게 한다.
+          gh label create automerge-pending-vercel --description "auto PR: 게이트 통과, Vercel 대기 timeout — 다음 run이 재확인 후 머지" --color FBCA04 2>/dev/null || true
+          gh pr edit "$PR_URL" --add-label automerge-pending-vercel || true
           {
             echo "## ⏱️ 자동 업데이트 timeout"
             echo ""
             echo "PR: $PR_URL"
-            echo "Vercel: 15분 이내 종료 안 됨 — 수동 검토 필요"
+            echo "Vercel: ${MAX_WAIT_MIN}분 이내 종료 안 됨 — automerge-pending-vercel 라벨 부착, 다음 run이 재확인 후 머지"
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
         env:
