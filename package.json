@@ -439,6 +439,8 @@
     "qa:stats-2025-integrity:mutations": "node scripts/qa/stats-2025-integrity-mutations.mjs",
     "qa:brand-icon-clip": "node scripts/qa/brand-icon-clip-gate.mjs",
     "qa:brand-icon-clip:selftest": "node scripts/qa/brand-icon-clip-gate.mjs --selftest",
+    "qa:genius-matjauk": "tsx scripts/qa/genius-matjauk-determinism-gate.ts",
+    "qa:genius-matjauk:selftest": "tsx scripts/qa/genius-matjauk-determinism-gate.ts --selftest",
     "qa:genius-discard-reason": "tsx scripts/qa/genius-discard-reason-observability.ts",
     "qa:genius-discard-reason:mutations": "node scripts/qa/genius-discard-reason-mutations.mjs",
     "qa:genius-mascot-assets:mutations": "node scripts/qa/genius-mascot-asset-mutations.mjs",

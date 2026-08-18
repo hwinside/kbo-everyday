@@ -35,6 +35,12 @@ import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } f
  */
 export const RAG_RETRIEVAL_MODE = "vector_only" as const;
 
+/**
+ * RAG 생성 temperature — **0 고정** (2026-08-19 맛자욱 P0).
+ * 게이트가 이 상수를 직접 import 해 대조한다(문면 grep 이 아니라 값 결속).
+ */
+export const RAG_GENERATION_TEMPERATURE = 0;
+
 /** 서빙 뷰(genius_rag_serving_chunks)에서 읽어오는 근거 1건. */
 export interface RagEvidence {
   content: string;
@@ -822,7 +828,11 @@ export function buildRagLlmRequest(
       },
     ],
     generationConfig: {
-      temperature: 0.1,
+      // 🔴 0 고정 (2026-08-19 맛자욱 P0 — 동일입력 결정론). 같은 프롬프트(input_tokens 동일)가
+      //   GROUNDED↔INSUFFICIENT 로 실제 플립했다. 0.1은 근거 경계 질문에서 판정 자체를
+      //   흔든다. 0 으로도 provider 변동이 원리적으론 남으므로 검증답 replay
+      //   (`verified-answers.ts`)가 최종 방어선이다 — 이 값만으로 결정론을 주장하지 않는다.
+      temperature: RAG_GENERATION_TEMPERATURE,
       // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
       maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",

@@ -23,6 +23,7 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   UNCLEAR_ANSWER,
+  RAG_INSUFFICIENT_ANSWER,
   SYSTEM_ERROR_ANSWER,
   HISTORY_HOLD_ANSWER,
   resolveRagPlayerCandidate,
@@ -991,6 +992,11 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
     searchThrows?: boolean;
     /** rows 는 있지만 sanitize/selectEvidence 뒤 유효 근거가 0건 — 양보 대상. */
     effectiveEvidenceZero?: boolean;
+    /**
+     * 폐기 시 기대 문구. 기본 UNCLEAR. `model_insufficient` 만 "자료 부족" 문구로 분리된다
+     * (2026-08-19 맛자욱 P0) — 모델이 근거 부족을 판정한 건 이해 실패가 아니다.
+     */
+    discardCopy?: string;
   }[] = [
     { label: "근거 0건(미커버)", rows: [] },
     // 지시문만 있는 chunk 는 selectEvidence 가 걸러 **유효 근거 0건**이 된다 → 양보 대상.
@@ -999,6 +1005,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
       label: "근거부족(RAG LLM INSUFFICIENT)",
       rows: [MOON_EVIDENCE],
       ragLlm: async () => ({ text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 1, outputTokens: 1 }),
+      discardCopy: RAG_INSUFFICIENT_ANSWER,
     },
     {
       label: "수치 오염 답변",
@@ -1059,7 +1066,7 @@ async function verifyFailCloseAgainstAdversarialProvider(): Promise<void> {
         assert.equal(genericLlmCalls, 1, `${label}: generic LLM 호출 수(${genericLlmCalls})`);
       } else {
         assert.equal(result.source, "unsure", `${label}: source=${result.source}`);
-        assert.equal(result.answer, UNCLEAR_ANSWER, label);
+        assert.equal(result.answer, scenario.discardCopy ?? UNCLEAR_ANSWER, label);
         assert.equal(genericLlmCalls, 0, `${label}: 근거를 본 실패인데 generic 으로 샜다(${genericLlmCalls})`);
         // RAG LLM 을 소비하고 검증에서 떨어진 건은 토큰을 null 로 숨기지 않는다.
         assert.equal(logs.at(-1)?.inputTokens, 1, `${label}: 소비한 RAG input token 누락`);
