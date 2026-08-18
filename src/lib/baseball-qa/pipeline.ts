@@ -59,6 +59,7 @@ import {
   resolveSeasonRecordIntent,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
+  isCulturalTopicQuestion,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -1956,6 +1957,12 @@ function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: bo
  * 근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
  */
 export function isTeamRagServableQuestion(question: string): boolean {
+  // ⚠️ **구단 문화·응원 의례(세레머니 등)만** 서빙 강제한다 (#1243 A안).
+  //   `안타를 쳤을때 …세레머니 있어?` 는 `안타`(STAT_WORDS) 때문에 numeric 으로 오판되어
+  //   team_rag 가 서빙을 거부하고 generic LLM 으로 새면 나무위키 근거를 못 읽어 환각이 된다.
+  //   그래서 문화 토픽만 team_rag 이 소유하게 한다(나무위키 근거 존재; 없으면 null 양보라 안전).
+  //   문화 키워드는 스탯 질문에 안 나오므로 시점·순위·추세 누수가 원천 불가능하다.
+  if (isCulturalTopicQuestion(question)) return true;
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
@@ -3104,7 +3111,14 @@ export function routeQuestion(
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
   // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
   // 실제 순위표/팀기록을 조회해 답하고, 조회 실패·미지원 지표만 fail-close 한다.
-  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) return "team_record";
+  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) {
+    // 동문서답 방지 (#1243 A안) — `안타`(지표어) fallback 으로 team_record 가 비스탯 문화 질문을
+    //   선점해 `988` 을 던지는 것을 막는다. 구단 문화·응원 의례(세레머니 등)면 team_record 를
+    //   선택하지 **않고** 아래로 흘려 `llm_scope_gate` → team_rag(나무위키 근거) 에 닿게 한다.
+    //   그 외(순수 수치 질문)는 team_record 조회 위임 그대로. 시점·순위·추세 오답은 B 트랙.
+    if (!isCulturalTopicQuestion(question)) return "team_record";
+    // cultural 은 아래로 흘려 team_rag 진입(종결 return 없음).
+  }
 
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (!supportedRuleTerm) {
@@ -5670,6 +5684,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
       if (record) return record;
+      // (A안) 시점·순위·추세 등 스탯 스코프 fail-close 는 여기서 하지 않는다 — season 이
+      //   none 으로 양보하면 아래 player RAG/LLM 이 근거로 답한다(main 동작 그대로). 그 오답군은
+      //   거울 회귀를 일으켰던 순서 술어라 B(단일 분류기)로 이관했다(#1243 5차 NO-GO 이력).
     }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       const descriptive = await answerPlayerDescriptiveQuestion(

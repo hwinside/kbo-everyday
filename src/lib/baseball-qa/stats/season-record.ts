@@ -269,6 +269,45 @@ const NUMERIC_QUESTION = /몇|얼마|개야|개나|개\?|기록|스탯|성적|�
 const DESCRIPTIVE_ASK =
   /잘\s*(?:치|하|때리|던지|막)|못\s*(?:치|하)|어떤\s*선수|유명|이야기|역사|유래|별명|소개|누구/;
 
+/**
+ * 동문서답 방지 (A안, #1243 — 최소 범위). 질문의 **초점**이 세레머니(의례)인데
+ * "엔티티 + 지표어"(`기아` + `안타`)만 보고 시즌/팀 누적 숫자를 던지는 동문서답을 막는다.
+ *   · `안타를 쳤을때 기아만의 세레머니 있어?` → 팀 안타 988 (X) → 세레머니 이야기(team_rag) (O)
+ *
+ * ⚠️ **키워드 존재가 아니라 초점이다** (삼순 2026-08-18 6차 NO-GO):
+ *   ① 토픽은 `세레머니|세리머니` 원문 축만(응원가·치어리더 등 팬문화 전반 확장은
+ *     실로그·반례 근거가 생기면 별도 PR).
+ *   ② 명시 수치 요구(`몇 개`·`얼마`)가 있으면 문화 양보 미발동 — `세레머니 말고 올해 팀 홈런
+ *     몇 개야?` 는 스탯 질문이다(kbo_structured 유지).
+ *   ③ `세레머니 말고/빼고/됐고` 기각 구문도 미발동 — 세레머니는 배제 대상이지 초점이 아니다.
+ *   세 조건 모두 닫힌 집합(lessons `open_language_never_closes_with_rules`)이라 거울 회귀 불가.
+ *   시점(어제·오늘)·순위·추세·방법 등 스탯 스코프 오답은 A 범위 밖 — B(단일 분류기) 트랙.
+ */
+// 세레머니 원문 축 표기 변형(오탈자 포함) — 닫힌 집합.
+const CEREMONY_TOPIC = /세레머니|세리머니|세레모니|세리모니|쑬레머니/;
+// 기각 분할자 — `…는 말고/빼고/됐고 …`처럼 앞 화제를 버리고 뒤 화제로 넘어가는 표지.
+const DISMISS_SPLIT = /말고|말구|빼고|빼구|됐고|됐으니|제외하고|제외/;
+
+/**
+ * 질문 초점이 세레머니(구단 의례)인가 — 그렇다면 구조화 스탯을 양보하고 team_rag(나무위키
+ * 근거)에 맡긴다. 근거가 없으면 team_rag 가 null 로 양보하므로 과탐지도 안전하다.
+ *
+ * 판정 = **세그먼트 순서** (삼순 2026-08-18 8차 NO-GO — 기각어 근접창 `{0,2}` 방식 금지):
+ *   기각 표지(`말고/빼고/됐고…`)로 문장을 분할하면 질문의 실제 초점은 **마지막 세그먼트**에
+ *   남는다. 세레머니 토큰이 마지막 세그먼트에 있을 때만 문화 초점이다.
+ *   · `세레머니 이야기는 됐고 KIA 팀 타율 알려줘` → 세레머니가 앞 세그먼트 → false(스탯 유지)
+ *   · `홈런 말고 세레머니 알려줘` → 세레머니가 마지막 세그먼트 → true(team_rag)
+ *   거리 제한이 없어 `이야기는/은 일단` 같은 삽입어에 뚛리지 않고, 분할자 집합은 닫혔다.
+ *
+ * ⚠️ 수치어(`몇|얼마`)는 배제조건이 **아니다** (삼순 7차): `세레머니 몇 번 해?`는 세레머니
+ *   수량 질문 — 초점은 여전히 세레머니다.
+ */
+export function isCulturalTopicQuestion(question: string): boolean {
+  const compact = normalize(question);
+  const segments = compact.split(DISMISS_SPLIT);
+  return CEREMONY_TOPIC.test(segments[segments.length - 1] ?? "");
+}
+
 export interface SeasonRecordQuery {
   /** 'batter' | 'pitcher' — 어느 테이블을 볼지. */
   table: "batter" | "pitcher";
@@ -319,6 +358,9 @@ export function resolveSeasonRecordIntent(
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };
+  // 동문서답 방지 (A안) — 질문 초점이 구단 문화·응원 의례(세레머니 등)이면 시즌 누적을
+  //   던지지 않고 team_rag/LLM 로 양보한다. 시점·순위·추세 등 스탯 스코프 오답은 B 트랙.
+  if (isCulturalTopicQuestion(question)) return { kind: "none" };
   // bare `wRC` 는 **명시 거절**한다(삼순 #1100 8차 P0-1).
   // wRC(가중 득점 생산량) ≠ wRC+(리그·구장 보정 지수). 우린 wRC+ 만 계산하므로
   // bare wRC 에 wRC+ 값을 주면 다른 지표를 속여 답하는 것이다 — 도루·OPS·WAR 은
