@@ -316,6 +316,14 @@ if (WITH_SOURCE) {
     () => builderAudit("excited", "B-OVERFILL"),
     "B-OVERFILL",
   );
+  await mutation(
+    "A6 이미 접촉한 top 변을 20px 더 crop → 원본 대비 접촉량 증가 (code-path)",
+    () => mutateBuilder(
+      "    y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)",
+      "    y0 = min(y1 - 1, max(0, y0 - SAFE_PAD) + 20); x0 = max(0, x0 - SAFE_PAD)"),
+    () => builderAudit("bored", "B-EDGE-GROWTH"),
+    "B-EDGE-GROWTH",
+  );
 }
 
 // ── manifest 를 훼손한다 (게이트가 여기서 임계값·측정치를 읽는다) ─────────
@@ -348,6 +356,12 @@ await mutation(
   () => patchManifest((m) => { m.clips.cheerG.edge_run.top = 40; }),
   visualExpect,
   "V-EDGE-RUN",
+);
+await mutation(
+  "M5b 원본 접촉 변 edge_run 을 원본 비율보다 크게 위조",
+  () => patchManifest((m) => { m.clips.cheer.edge_run.top = m.clips.cheer.w; }),
+  visualExpect,
+  "V-EDGE-GROWTH",
 );
 // ── v1 확정본 WebP가 있어야 돌아가는 축 (`build --check`) ───────────────
 if (WITH_SOURCE) {

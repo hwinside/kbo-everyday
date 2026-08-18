@@ -106,6 +106,9 @@ SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha2
 # 🔴 최초에 0.99 로 잡았던 것은 **같은 툴체인 분포만 보고 고른 값**이라 CI 에서
 #    정상 자산 3개가 걸렸다. 크로스플랫폼 임계는 크로스플랫폼 실측으로 정해야 한다.
 SILHOUETTE_IOU_MIN = 0.95
+# 원본과 파생 edge-run 을 각 변 길이로 정규화한 뒤, 파생 쪽 증가를 출력 픽셀로 환산한다.
+# 리사이즈/디코더 경계 흔들림 1px만 허용하고 그보다 더 잘리면 실패한다.
+EDGE_GROWTH_PX_MAX = 1
 
 # 배경 색 허용 오차.
 # 🔴 종전 26 은 **너무 넓었다**(삼순 #1228 P0-①, 실측으로 확정).
@@ -285,15 +288,29 @@ def build(name: str):
     #    캔버스 밖으로는 나갈 수 없으므로 clip 한다 — 원본이 이미 잘린 종은 여기서
     #    여백을 못 얻고, 그 사실은 아래 edge-run 계약 검사로 드러난다.
     H, W = alphas[0].shape
-    # 🔴 **원본이 이미 캔버스 변에 닿은 변**을 기록한다 (2026-08-18 v1 복귀).
-    #    v1 확정본은 생성 단계에서 캐릭터가 프레임을 거의 채워 일부 변에 닿아 있다
-    #    (삼순 #1228 ③ 실측 — 그게 재생성 사가의 발단이었다). 그런데 하린아빠가
-    #    **그 모습 그대로를 컨펌**했으므로(2026-08-18 "맞아"), 원본에서 물려받은 접촉은
-    #    결함이 아니라 확정본의 일부다. 계약은 "edge-run 절대 0"이 아니라
-    #    **"파생이 원본보다 더 잘리지 않는다"** 로 재정의한다: 원본이 닿지 않은 변에서
-    #    파생 edge-run 이 0 이 아니면 그것만 파생 결함(FAIL)이다.
-    src_edge_contact = {"top": bool(y0 == 0), "bottom": bool(y1 == H),
-                        "left": bool(x0 == 0), "right": bool(x1 == W)}
+    # 🔴 원본 접촉량 SSOT — **승인된 canonical crop+resize**를 원본 alpha에 적용한 뒤
+    # 각 변 길이로 정규화한다. raw 480x302와 tight-crop 출력은 정상이어도 비율이 달라
+    # 직접 비교할 수 없다(실측 bored +20px 오보). canonical 기준을 actual crop 대입 전에
+    # 별도로 고정해야, 아래 crop 로직이 더 공격적으로 바뀌어도 기준까지 함께 움직이지 않는다.
+    ref_y0 = max(0, y0 - SAFE_PAD); ref_x0 = max(0, x0 - SAFE_PAD)
+    ref_y1 = min(H, y1 + SAFE_PAD); ref_x1 = min(W, x1 + SAFE_PAD)
+    ref_bw, ref_bh = ref_x1 - ref_x0, ref_y1 - ref_y0
+    ref_nw = max(1, round(ref_bw * TARGET_H / ref_bh))
+    src_edge_run = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+    for alpha in alphas:
+        ref_alpha = np.asarray(Image.fromarray(alpha[ref_y0:ref_y1, ref_x0:ref_x1])
+                               .resize((ref_nw, TARGET_H), Image.LANCZOS))
+        run = max_edge_run(ref_alpha)
+        src_edge_run = {k: max(src_edge_run[k], run[k]) for k in src_edge_run}
+    src_edge_run_ratio = {
+        "top": round(src_edge_run["top"] / ref_nw, 8),
+        "bottom": round(src_edge_run["bottom"] / ref_nw, 8),
+        "left": round(src_edge_run["left"] / TARGET_H, 8),
+        "right": round(src_edge_run["right"] / TARGET_H, 8),
+    }
+    src_edge_contact = {k: src_edge_run[k] > 0 for k in src_edge_run}
+
+    # 실제 파생 crop. mutation은 이 줄만 바꿔 canonical reference와 actual의 차이를 만든다.
     y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)
     y1 = min(H, y1 + SAFE_PAD); x1 = min(W, x1 + SAFE_PAD)
     bw, bh = x1 - x0, y1 - y0
@@ -348,6 +365,8 @@ def build(name: str):
                  "overfill_px": overfill_px, "dropped_component_px": dropped_px,
                  "dropped_persist_frames": dropped_persist,
                  "src_edge_contact": src_edge_contact,
+                 "src_edge_run": src_edge_run,
+                 "src_edge_run_ratio": src_edge_run_ratio,
                  "src_frames": src_small, "src_bgc": src_bgc}
 
 
@@ -686,14 +705,29 @@ def main() -> int:
                     else:
                         semantic_only.append(os.path.basename(built))
         er = meta["edge_run"]
+        edge_len = {"top": meta["w"], "bottom": meta["w"],
+                    "left": meta["h"], "right": meta["h"]}
+        edge_ratio = {k: round(er[k] / edge_len[k], 8) for k in er}
+        edge_growth_px = {
+            k: round((edge_ratio[k] - meta["src_edge_run_ratio"][k]) * edge_len[k], 3)
+            for k in er
+        }
+        meta["edge_run_ratio"] = edge_ratio
+        meta["edge_growth_px"] = edge_growth_px
         bad = []
-        # 🔴 원본이 이미 닿은 변은 상속(확정본의 일부)이고, 원본이 안 닿은 변의
-        #    파생 잘림만 결함이다 (위 `src_edge_contact` 주석 참조).
+        # 🔴 원본 비접촉 변에 새 edge-run이 생기면 파생 신규 잘림이다.
         new_clip = {k: v for k, v in er.items()
                     if v > 0 and not meta["src_edge_contact"].get(k)}
         if new_clip:
             bad.append(f'[B-CLIP] 파생 신규 잘림 {max(new_clip.values())}px'
                        f'({",".join(sorted(new_clip))})')
+        # 🔴 원본이 이미 닿은 변도 **무제한 면제하지 않는다**. 원본·파생을 각각 변 길이로
+        #    정규화한 뒤 출력 픽셀로 환산해 1px 초과 증가면 "더 잘림"으로 실패한다.
+        grown = {k: v for k, v in edge_growth_px.items()
+                 if meta["src_edge_contact"].get(k) and v > EDGE_GROWTH_PX_MAX}
+        if grown:
+            detail = ",".join(f"{k}+{v}px" for k, v in sorted(grown.items()))
+            bad.append(f'[B-EDGE-GROWTH] 원본 대비 접촉량 증가({detail})')
         if meta["defect_px"] > HOLE_PX_MAX:
             bad.append(f'[B-HOLE] 키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
         if meta["overfill_px"] > OVERFILL_PX_MAX:
@@ -718,6 +752,7 @@ def main() -> int:
                 "scripts/assets/mascot-motion-SOURCES.sha256)",
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
                    "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
+                   "edge_growth_px_max": EDGE_GROWTH_PX_MAX,
                    "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
                    "overfill_px_max": OVERFILL_PX_MAX,
                    "dropped_persist_max": DROPPED_PERSIST_MAX,
@@ -799,7 +834,7 @@ def main() -> int:
             #    **임계값을 넘나드는 변화는 어차피 위 [B-*] 축이 잡는다.**
             # 어디서 돌리든 **반드시 같아야** 하는 것 — 여기가 흔들리면 진짜 문제다.
             CONTRACT = ("src_sha256", "frames", "fps", "edge_run", "src_edge_contact",
-                        "source")
+                        "src_edge_run", "src_edge_run_ratio", "source")
             # 디코딩 차이로 1~2px 흔들리는 축(실측: headspin w 163↔164).
             TOL_DIM = 2
             # 🔴 아래 값들은 **일치를 요구하지 않는다** — 계약은 "임계값을 만족하는가"다.

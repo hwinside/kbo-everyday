@@ -289,6 +289,28 @@ check("V-PAD-MIN", `전 프레임 사방 여백 >= ${T.padMin}px (원본 비접�
   check("V-EDGE-RUN", "DERIVED.json: 원본 비접촉 변 edge-run 0 (파생 신규 잘림 계약)",
     SELFTEST ? false : bad.length === 0, bad.join(", "));
 }
+// 🔴 원본 접촉 변도 무제한 면제하지 않는다. 원본·파생 edge-run을 각 변 길이로
+// 정규화해 같은 단위로 비교하고, 출력 픽셀 환산 1px 초과 증가면 더 잘린 것이다.
+{
+  const max = DERIVED.params?.edge_growth_px_max;
+  const bad = [];
+  for (const [n, m] of Object.entries(DERIVED.clips ?? {})) {
+    for (const side of ["top", "bottom", "left", "right"]) {
+      if (!(m.src_edge_contact ?? {})[side]) continue;
+      const len = side === "top" || side === "bottom" ? m.w : m.h;
+      const src = m.src_edge_run_ratio?.[side];
+      const run = m.edge_run?.[side];
+      if (!(Number.isFinite(len) && len > 0 && Number.isFinite(src) && Number.isFinite(run))) {
+        bad.push(`${n}.${side}=측정치 누락`);
+        continue;
+      }
+      const growthPx = (run / len - src) * len;
+      if (!(growthPx <= max + 1e-6)) bad.push(`${n}.${side}=+${growthPx.toFixed(2)}px`);
+    }
+  }
+  check("V-EDGE-GROWTH", `DERIVED.json: 원본 접촉 변 edge-run 증가 <= ${max}px (정규화 비교)`,
+    SELFTEST ? false : Number.isFinite(max) && bad.length === 0, bad.join(", "));
+}
 // 코호트 중앙값보다 유의하게 어두운 클립이 있으면 그 클립만 키잉이 실패한 것이다.
 const lums = rows.map((r) => r.ringLum).sort((a, b) => a - b);
 const median = lums[Math.floor(lums.length / 2)];
