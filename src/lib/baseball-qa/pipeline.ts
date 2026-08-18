@@ -21,7 +21,8 @@ import {
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
   ragEvidenceFingerprint,
-  ragPlayerPromptFingerprint,
+  ragRequestFingerprint,
+  type VerifiedRagAnswerClaim,
   type VerifiedRagAnswerKey,
   type VerifiedRagAnswerStore,
 } from "./rag/verified-answers";
@@ -4127,8 +4128,10 @@ async function answerPlayerDescriptiveQuestion(
   if (evidence.length === 0) return null;
 
   // ── 검증답 replay (맛자욱 P0 — 동일입력 결정론) ────────────────────────
-  // LLM 경계 **앞**이다 — replay 히트는 LLM을 전혀 소비하지 않는다. 키가 근거
-  // fingerprint(내용·revision·순서)까지 결속되므로 corpus가 바뀌면 자동 miss 된다.
+  // LLM 경계 **앞**이다 — replay 히트는 LLM을 전혀 소비하지 않는다.
+  // 키 결속 (삼순 2026-08-19 P0-①): 근거 fingerprint(내용·revision·순서) +
+  // **model + 실제 생성 요청 전체**(원문 질문·context·rosterBlock·프롬프트·generationConfig).
+  // corpus·모델·요청 형태 어느 하나만 바뀌어도 자동 miss 된다.
   // 조회 실패는 replay 없음과 동일(fail-open) — 관측 경로가 답변을 막으면 안 된다.
   const verifiedKey: VerifiedRagAnswerKey | null = deps.verifiedRagAnswers
     ? {
@@ -4136,43 +4139,106 @@ async function answerPlayerDescriptiveQuestion(
         entityId: candidate.entityId,
         questionNorm,
         evidenceFingerprint: ragEvidenceFingerprint(evidence),
-        promptFingerprint: ragPlayerPromptFingerprint(),
+        requestFingerprint: ragRequestFingerprint(question, evidence, {
+          context: extras.context, rosterBlock: extras.rosterBlock,
+        }),
       }
     : null;
-  if (deps.verifiedRagAnswers && verifiedKey) {
+  const replayFromStore = async (): Promise<QaResult | null> => {
+    if (!deps.verifiedRagAnswers || !verifiedKey) return null;
     let replayedAnswer: Awaited<ReturnType<VerifiedRagAnswerStore["get"]>> = null;
     try {
       replayedAnswer = await deps.verifiedRagAnswers.get(verifiedKey);
     } catch {
       replayedAnswer = null;
     }
-    if (replayedAnswer) {
-      const answer = composeRagAnswer(replayedAnswer.answer, evidence[0]);
-      const replaySourceUrl = displayProvenanceOf(evidence[0])?.url;
-      await deps.log({
-        userId, question, questionNorm, matchPath: "rag", answer,
-        inputTokens: null, outputTokens: null,
-        toneCompliant: replayedAnswer.toneCompliant,
-      });
-      return { status: 200, answer, source: "rag", remaining, sourceUrl: replaySourceUrl };
+    if (!replayedAnswer) return null;
+    const answer = composeRagAnswer(replayedAnswer.answer, evidence[0]);
+    const replaySourceUrl = displayProvenanceOf(evidence[0])?.url;
+    await deps.log({
+      userId, question, questionNorm, matchPath: "rag", answer,
+      inputTokens: null, outputTokens: null,
+      toneCompliant: replayedAnswer.toneCompliant,
+    });
+    return { status: 200, answer, source: "rag", remaining, sourceUrl: replaySourceUrl };
+  };
+  const replayed = await replayFromStore();
+  if (replayed) return replayed;
+  // 동시 첫 miss 선점 (삼순 2026-08-19 P0-②): 서로 다른 messageId 가 같은 키의 첫
+  // miss 를 동시에 보면 둘 다 LLM 을 부르고 서로 다른 답을 반환할 수 있다 — DB
+  // ignoreDuplicates 는 첫 행만 지킬 뿐 응답 결정론을 못 지킨다. winner 만 LLM 을
+  // 소비하고, loser 는 settle 을 대기 후 재조회해 같은 답을 재생한다.
+  // claim 실패(예외)는 선점 없이 진행(fail-open) — 결정론 인프라가 답변을 막지 않는다.
+  let replayClaimed = false;
+  if (deps.verifiedRagAnswers?.claim && verifiedKey) {
+    let claim: VerifiedRagAnswerClaim | null = null;
+    try {
+      claim = await deps.verifiedRagAnswers.claim(verifiedKey);
+    } catch {
+      claim = null;
+    }
+    if (claim === "hit") {
+      const settled = await replayFromStore();
+      if (settled) return settled;
+      // claim 은 hit 인데 get 이 비었다(release 경합 등) — 생성 경로로 진행한다.
+    } else if (claim === "wait") {
+      // winner 의 settle 대기 — 상한 내 폴링 후 재조회. 상한 초과는 winner 가 release
+      // 했거나 죽은 경우다 — 이 worker 가 직접 생성으로 내려간다(무응답보다 재생성).
+      const delayMs = deps.verifiedRagAnswers.pollDelayMs ?? 250;
+      const attempts = deps.verifiedRagAnswers.pollAttempts ?? 40;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const settled = await replayFromStore();
+        if (settled) return settled;
+        let again: VerifiedRagAnswerClaim | null = null;
+        try {
+          again = await deps.verifiedRagAnswers.claim(verifiedKey);
+        } catch {
+          again = null;
+        }
+        // winner 가 release 했으면 이번 claim 이 winner 로 넘어온다 — 이 worker 가 생성.
+        if (again === "winner") { replayClaimed = true; break; }
+        if (again === "hit") {
+          const settledNow = await replayFromStore();
+          if (settledNow) return settledNow;
+        }
+      }
+    } else if (claim === "winner") {
+      replayClaimed = true;
     }
   }
+  // winner 가 grounded 를 못 만들면(폐기·예외·재생 종결) claim 을 풀어 loser deadlock 을 막는다.
+  const releaseReplayClaim = async (): Promise<void> => {
+    if (!replayClaimed || !deps.verifiedRagAnswers?.release || !verifiedKey) return;
+    try {
+      await deps.verifiedRagAnswers.release(verifiedKey);
+    } catch {
+      // release 실패는 loser 폴링 상한이 흘수한다(상한 후 직접 생성).
+    }
+  };
 
   // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
+  // ⚠️ 아래 모든 비-settle 종료(오류·pending·폐기)는 replay claim 을 풀고 나간다 —
+  //   winner 가 settle 없이 사라지면 loser 들이 폴링 상한까지 헛대기한다(deadlock 방지).
   let llm: LlmResult | null = null;
   if (deps.getLlmState) {
     let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
       state = await deps.getLlmState();
     } catch {
+      await releaseReplayClaim();
       return failCloseError();
     }
     llm = state.result;
     // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
     // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
     const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
-    if (boundaryReplayed) return boundaryReplayed;
+    if (boundaryReplayed) {
+      await releaseReplayClaim();
+      return boundaryReplayed;
+    }
     if (!llm && state.started) {
+      await releaseReplayClaim();
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       // fence 경과: 공급자 응답/과금이 이미 발생했을 수 있다 — 자동 재호출 없이 종결한다.
@@ -4185,20 +4251,27 @@ async function answerPlayerDescriptiveQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
+        await releaseReplayClaim();
         return failCloseError();
       }
-      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+      if (!won) {
+        await releaseReplayClaim();
+        return { status: 202, answer: "", source: "pending", remaining };
+      }
     }
     try {
       llm = await deps.callRagLlm!(question, evidence, extras);
     } catch {
       // 공급자 호출 실패도 우리 쪽 고장이다 — 근거는 이미 찾았다.
+      await releaseReplayClaim();
       return failCloseError();
     }
   }
 
   const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") {
+    // 폐기 = settle 없음 — claim 을 풀어 다음 질문/loser 가 재생성할 수 있게 한다.
+    await releaseReplayClaim();
     // ②' 문구 분리 (맛자욱 P0): 모델이 "근거 부족"으로 판정한 건 이해 실패가 아니다.
     //   질문을 고쳐 쓰라는 안내는 자료 결손을 유저 탓으로 돌리는 오도다.
     const discardCopy = validated.kind === "insufficient" && validated.reason === "model_insufficient"

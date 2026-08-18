@@ -747,25 +747,29 @@ export function makeDeps(
     callRagLlm,
     /**
      * 검증 완료 RAG 답변 replay 저장소 (2026-08-19 맛자욱 P0 — 동일입력 결정론).
-     * 키가 근거 fingerprint(corpus revision·순서·projection 결과)·프롬프트 fingerprint까지
-     * 결속되므로 corpus/프롬프트 변경은 자동 miss 다. 조회·저장 실패는 pipeline 이
-     * fail-open(재생 없이 생성)으로 달리므로 답변 경로를 막지 않는다.
+     *
+     * 키 = 근거 fingerprint + **request fingerprint(model + 실제 생성 요청 전체)** —
+     * corpus·모델·프롬프트·context/roster 어느 하나만 달라도 자동 miss (삼순 P0-①).
+     * 동시성은 `claim_genius_rag_verified_answer` RPC 가 replay-key 단위 선점으로 잠근다
+     * (삼순 P0-②): pending INSERT 성공 = winner 만 LLM 소비, loser 는 settle 대기·재조회.
+     * 조회·저장·선점 실패는 pipeline 이 fail-open 으로 달리므로 답변 경로를 막지 않는다.
      */
     verifiedRagAnswers: {
       get: async (key) => {
-        // query-guard: bounded -- PK exact 단일 행 조회.
+        // query-guard: bounded -- composite PK exact 단일 행 조회.
         const { data, error } = await supabaseAdmin
           .from("genius_rag_verified_answers")
-          .select("answer, source_url, tone_compliant")
+          .select("answer, source_url, tone_compliant, status")
           .eq("entity_type", key.entityType)
           .eq("entity_id", key.entityId)
           .eq("question_norm", key.questionNorm)
           .eq("evidence_fingerprint", key.evidenceFingerprint)
-          .eq("prompt_fingerprint", key.promptFingerprint)
+          .eq("request_fingerprint", key.requestFingerprint)
           .limit(1);
         if (error || !data?.[0]) return null;
-        const row = data[0] as { answer: string; source_url: string | null; tone_compliant: boolean };
-        if (typeof row.answer !== "string" || row.answer.length === 0) return null;
+        const row = data[0] as { answer: string | null; source_url: string | null; tone_compliant: boolean; status: string };
+        // pending(선점 자리표시자)은 답이 아니다 — settled 만 재생한다.
+        if (row.status !== "settled" || typeof row.answer !== "string" || row.answer.length === 0) return null;
         return {
           answer: row.answer,
           sourceUrl: row.source_url ?? null,
@@ -773,7 +777,8 @@ export function makeDeps(
         };
       },
       put: async (key, record) => {
-        // 멱등 upsert — 같은 키는 같은 검증답이다. 이미 있으면 덮지 않는다(먼저 고정된 답 유지).
+        // settle — winner 의 pending 행을 settled 로 올린다. 이미 settled 면 덮지 않는다
+        // (먼저 고정된 답 유지 = 결정론). claim 없이 온 put(레거시 경로)은 upsert 로 생성된다.
         const { error } = await supabaseAdmin
           .from("genius_rag_verified_answers")
           .upsert({
@@ -781,11 +786,39 @@ export function makeDeps(
             entity_id: key.entityId,
             question_norm: key.questionNorm,
             evidence_fingerprint: key.evidenceFingerprint,
-            prompt_fingerprint: key.promptFingerprint,
+            request_fingerprint: key.requestFingerprint,
+            status: "settled",
             answer: record.answer,
             source_url: record.sourceUrl,
             tone_compliant: record.toneCompliant,
-          }, { onConflict: "entity_type,entity_id,question_norm,evidence_fingerprint,prompt_fingerprint", ignoreDuplicates: true });
+            settled_at: new Date().toISOString(),
+          }, { onConflict: "entity_type,entity_id,question_norm,evidence_fingerprint,request_fingerprint" });
+        if (error) throw error;
+      },
+      claim: async (key) => {
+        // query-guard: bounded -- 단일 행 선점 RPC, scalar 반환.
+        const { data, error } = await supabaseAdmin.rpc("claim_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+        });
+        if (error) throw error;
+        return data === "winner" || data === "wait" || data === "hit" ? data : "winner";
+      },
+      release: async (key) => {
+        // winner 가 settle 못 함 — pending 행만 지운다(settled 는 건드리지 않는다).
+        // query-guard: bounded -- composite PK exact + status 단일 행 삭제.
+        const { error } = await supabaseAdmin
+          .from("genius_rag_verified_answers")
+          .delete()
+          .eq("entity_type", key.entityType)
+          .eq("entity_id", key.entityId)
+          .eq("question_norm", key.questionNorm)
+          .eq("evidence_fingerprint", key.evidenceFingerprint)
+          .eq("request_fingerprint", key.requestFingerprint)
+          .eq("status", "pending");
         if (error) throw error;
       },
     },

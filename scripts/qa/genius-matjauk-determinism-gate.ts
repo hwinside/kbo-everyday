@@ -9,8 +9,10 @@
  *       참조문서를 발견·양방향 결속(canonical + 본문 entity 언급) 후 `{root}/참고:{title}`
  *       sectionPath 로 적재하고, 그 chunk 가 **projection 을 생존**해 근거로 도달한다.
  *   [B] 결정론 계약 — temperature 0 + 검증답 replay(entity+정규화 질문+근거 fingerprint+
- *       프롬프트 fingerprint). **flappy provider**(1회차 grounded, 2회차부터 insufficient)
- *       fixture 에서도 20회×2세션 종단 답이 전부 동일하고 LLM 소비는 정확히 1회다.
+ *       **request fingerprint** = model + 실제 buildRagLlmRequest 요청 전체, 삼순 P0-①).
+ *       **flappy provider**(1회차 grounded, 2회차부터 insufficient) fixture 에서도
+ *       20회×2세션 순차 + **동시 8-way 첫 miss**(삼순 P0-②, claim/대기/재조회) 종단 답이
+ *       전부 동일하고 LLM 소비는 전 구간 합산 정확히 1회다.
  *   [C] 문구 계약 — `model_insufficient` 는 "이해 못함"(UNCLEAR)이 아니라 "자료 부족"
  *       문구로 나간다. 단 맛자욱 exact 는 근거 결속 후 그 분기로 절대 가지 않는다.
  *
@@ -19,6 +21,7 @@
  *   (결함주입을 in-process 로 돌려 게이트가 실제로 RED 를 낼 수 있음을 증명한다)
  * mutation:  --mutate-noreplay  → replay 저장소 제거: flappy provider 에서 반드시 실패(RED)
  *            --mutate-unbind    → 참조 근거 결속 제거: 채수빈 종단이 반드시 실패(RED)
+ *            --mutate-noclaim   → 선점(claim) 제거: 동시 첫 miss 에서 반드시 실패(RED)
  */
 import assert from "node:assert/strict";
 
@@ -38,6 +41,8 @@ import {
 } from "../../src/lib/baseball-qa/rag/reference-docs";
 import {
   ragEvidenceFingerprint,
+  ragRequestFingerprint,
+  type VerifiedRagAnswerClaim,
   type VerifiedRagAnswerKey,
   type VerifiedRagAnswerRecord,
   type VerifiedRagAnswerStore,
@@ -207,22 +212,43 @@ async function runCrawlIngestProjectionChecks(): Promise<RagEvidence> {
   return { ...evidence, content: projectPlayerDescriptiveRow(evidence) };
 }
 
-// ── [B] 20회×2세션 동일입력 결정론 (flappy provider + replay) ────────────────
+// ── [B] 동일입력 결정론 (flappy provider + replay + 선점) ────────────────────
 interface DeterminismOptions {
   withReplayStore: boolean;
   withEvidence: boolean;
+  /** 선점(claim) 제공 여부 — false 면 동시 첫 miss 에서 결정론이 깨져야 한다(mutation 축). */
+  withClaim: boolean;
 }
 
-function memoryStore(): VerifiedRagAnswerStore {
-  const map = new Map<string, VerifiedRagAnswerRecord>();
+/** production 스키마(pending/settled + 원자 claim)의 in-memory 등가물. */
+function memoryStore(options: { withClaim: boolean }): VerifiedRagAnswerStore {
+  const settled = new Map<string, VerifiedRagAnswerRecord>();
+  const pending = new Set<string>();
   const keyOf = (key: VerifiedRagAnswerKey) =>
-    [key.entityType, key.entityId, key.questionNorm, key.evidenceFingerprint, key.promptFingerprint].join("\u0000");
-  return {
-    get: async (key) => map.get(keyOf(key)) ?? null,
+    [key.entityType, key.entityId, key.questionNorm, key.evidenceFingerprint, key.requestFingerprint].join("\u0000");
+  const store: VerifiedRagAnswerStore = {
+    pollDelayMs: 5,
+    pollAttempts: 200,
+    get: async (key) => settled.get(keyOf(key)) ?? null,
     put: async (key, record) => {
-      if (!map.has(keyOf(key))) map.set(keyOf(key), record);
+      const k = keyOf(key);
+      if (!settled.has(k)) settled.set(k, record);
+      pending.delete(k);
     },
   };
+  if (options.withClaim) {
+    store.claim = async (key): Promise<VerifiedRagAnswerClaim> => {
+      const k = keyOf(key);
+      if (settled.has(k)) return "hit";
+      if (pending.has(k)) return "wait";
+      pending.add(k);
+      return "winner";
+    };
+    store.release = async (key) => {
+      pending.delete(keyOf(key));
+    };
+  }
+  return store;
 }
 
 async function runDeterminism(evidence: RagEvidence, options: DeterminismOptions): Promise<void> {
@@ -230,7 +256,7 @@ async function runDeterminism(evidence: RagEvidence, options: DeterminismOptions
   const gja = players.find((p) => p.name === "구자욱");
   assert.ok(gja, "로스터에 구자욱이 없다 — 로더 결함");
   const GLOSSARY: GlossaryEntry[] = [];
-  const store = options.withReplayStore ? memoryStore() : undefined;
+  const store = options.withReplayStore ? memoryStore({ withClaim: options.withClaim }) : undefined;
   let llmCalls = 0;
   let genericCalls = 0;
 
@@ -271,7 +297,22 @@ async function runDeterminism(evidence: RagEvidence, options: DeterminismOptions
   const QUESTION = "구자욱 별명이 왜 맛자욱이야?";
   const answers: string[] = [];
   const sources: string[] = [];
-  // 새 세션 2축 — 세션마다 새 deps(새 캐시·새 컨텍스트), 세션당 10회 = 총 20회.
+
+  // 🔴 동시 첫 miss (삼순 P0-②): 서로 다른 messageId 8개가 같은 키의 첫 miss 를
+  //   동시에 본다. claim 이 없으면 모두 LLM 을 부르고(flappy 라 2회차부터 INSUFFICIENT)
+  //   서로 다른 답을 반환한다 — 그 경로가 이 단계에서 RED 가 된다(--mutate-noclaim).
+  const CONCURRENCY = 8;
+  const concurrent = await Promise.all(
+    Array.from({ length: CONCURRENCY }, (_, index) =>
+      answerQuestion(`u-matjauk-concurrent-${index}`, QUESTION, makeDeps()),
+    ),
+  );
+  for (const result of concurrent) {
+    answers.push(result.answer ?? "");
+    sources.push(result.source ?? "");
+  }
+
+  // 순차 20회×2세션 — 세션마다 새 deps(새 캐시·새 컨텍스트), 세션당 10회.
   for (const sessionUser of ["u-matjauk-session-a", "u-matjauk-session-b"]) {
     for (let run = 0; run < 10; run += 1) {
       const result = await answerQuestion(sessionUser, QUESTION, makeDeps());
@@ -286,10 +327,37 @@ async function runDeterminism(evidence: RagEvidence, options: DeterminismOptions
   assert.ok(answers[0].includes("맛보기한 느낌"), `유래 서술 누락: ${answers[0]}`);
   assert.ok(!answers.some((a) => a.startsWith(UNCLEAR_ANSWER)), "UNCLEAR 상용구가 나갔다");
   assert.ok(!answers.some((a) => a.startsWith(RAG_INSUFFICIENT_ANSWER)), "자료 부족 상용구가 나갔다 — 맛자욱 exact 는 이 분기 금지");
-  assert.equal(llmCalls, 1, `LLM 소비 ${llmCalls}회 (기대 1) — replay 가 일하지 않는다`);
+  assert.equal(llmCalls, 1, `LLM 소비 ${llmCalls}회 (기대 1 — 동시 ${CONCURRENCY} + 순차 20 합산) — 선점/replay 가 일하지 않는다`);
   assert.equal(genericCalls, 0, `generic 경로 누수 ${genericCalls}회`);
   // fingerprint 안정성 — 같은 근거는 같은 fingerprint (검색 결정론의 관측 축).
   assert.equal(ragEvidenceFingerprint([evidence]), ragEvidenceFingerprint([{ ...evidence }]));
+}
+
+// ── [B'] request fingerprint 결속 (삼순 P0-①) — 생성 입력 어느 하나만 바뀌어도 miss ──
+async function runRequestFingerprintChecks(evidence: RagEvidence): Promise<void> {
+  const base = ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [evidence]);
+  await check("request-fp — 동일 입력은 동일 fingerprint (결정론 전제)", () => {
+    assert.equal(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [{ ...evidence }]));
+  });
+  await check("request-fp — 원문 질문이 다르면 miss (questionNorm 동일해도)", () => {
+    assert.notEqual(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야??", [evidence]));
+  });
+  await check("request-fp — 직전 대화 context 가 다르면 miss", () => {
+    assert.notEqual(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [evidence], {
+      context: { question: "직전 질문", answer: "직전 답변" },
+    }));
+  });
+  await check("request-fp — rosterBlock 이 다르면 miss", () => {
+    assert.notEqual(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [evidence], {
+      rosterBlock: "구자욱: 삼성 라이온즈 외야수",
+    }));
+  });
+  await check("request-fp — model 이 다르면 miss (모델 교체 = 과거 답 재생 금지)", () => {
+    assert.notEqual(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [evidence], {}, "gemini-other-model"));
+  });
+  await check("request-fp — 근거 내용이 다르면 miss (corpus 재적재 결속)", () => {
+    assert.notEqual(base, ragRequestFingerprint("구자욱 별명이 왜 맛자욱이야?", [{ ...evidence, content: `${evidence.content} 개정됨` }]));
+  });
 }
 
 // ── [C] model_insufficient 문구 분리 ─────────────────────────────────────────
@@ -330,8 +398,9 @@ async function runAll(options: DeterminismOptions): Promise<void> {
   await runVerifierChecks();
   const evidence = await runCrawlIngestProjectionChecks();
   await runTemperatureCheck(evidence);
+  await runRequestFingerprintChecks(evidence);
   await check(
-    `결정론 — 20회×2세션 동일답 + LLM 1회 (replay=${options.withReplayStore}, 결속=${options.withEvidence})`,
+    `결정론 — 동시 8-way + 20회×2세션 동일답 + LLM 합산 1회 (replay=${options.withReplayStore}, claim=${options.withClaim}, 결속=${options.withEvidence})`,
     () => runDeterminism(evidence, options),
   );
   await runCopySeparationCheck(evidence);
@@ -355,13 +424,15 @@ async function main(): Promise<void> {
       }
       console.log(`SELFTEST RED 확인 — ${label}`);
     };
-    await expectRed("replay 제거(noreplay)", { withReplayStore: false, withEvidence: true });
-    await expectRed("근거 결속 제거(unbind)", { withReplayStore: true, withEvidence: false });
-    console.log("✅ selftest 통과 (mutation RED 2축 증명)");
+    await expectRed("replay 제거(noreplay)", { withReplayStore: false, withClaim: false, withEvidence: true });
+    await expectRed("근거 결속 제거(unbind)", { withReplayStore: true, withClaim: true, withEvidence: false });
+    await expectRed("선점 제거(noclaim) — 동시 첫 miss 결정론 붕괴", { withReplayStore: true, withClaim: false, withEvidence: true });
+    console.log("✅ selftest 통과 (mutation RED 3축 증명)");
     return;
   }
   const options: DeterminismOptions = {
     withReplayStore: !argv.includes("--mutate-noreplay"),
+    withClaim: !argv.includes("--mutate-noclaim") && !argv.includes("--mutate-noreplay"),
     withEvidence: !argv.includes("--mutate-unbind"),
   };
   await runAll(options);

@@ -68,6 +68,7 @@
     "genius_rag_corpus_runs",
     "genius_rag_serving_chunks",
     "genius_rag_sources",
+    "genius_rag_verified_answers",
     "gif_collector_queue",
     "highlights",
     "invitations",
@@ -250,6 +251,12 @@
         "user_id"
       ]
     ],
+    "content_views": [
+      [
+        "content_type",
+        "content_id"
+      ]
+    ],
     "daily_analysis": [
       [
         "date",
@@ -363,6 +370,15 @@
     "genius_question_logs": [
       [
         "id"
+      ]
+    ],
+    "genius_rag_verified_answers": [
+      [
+        "entity_type",
+        "entity_id",
+        "question_norm",
+        "evidence_fingerprint",
+        "request_fingerprint"
       ]
     ],
     "ios_widget_push_state": [
@@ -548,12 +564,6 @@
     "youtube_quota_ledger": [
       [
         "quota_date"
-      ]
-    ],
-    "content_views": [
-      [
-        "content_type",
-        "content_id"
       ]
     ]
   },
