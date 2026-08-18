@@ -151,12 +151,14 @@ function KpiCard({ label, value, icon, onClick }: KpiDef & { onClick?: () => voi
 
 /* ── DAU / PV trend card (self-contained period toggle) ── */
 
-type TrendPeriod = "today" | "7d" | "30d" | "cumulative";
+type TrendPeriod = "today" | "7d" | "30d" | "90d" | "180d" | "cumulative";
 
 const TREND_TABS: { key: TrendPeriod; label: string }[] = [
   { key: "today", label: "당일" },
   { key: "7d", label: "7일" },
   { key: "30d", label: "30일" },
+  { key: "90d", label: "90일" },
+  { key: "180d", label: "180일" },
   { key: "cumulative", label: "누적" },
 ];
 
@@ -224,6 +226,9 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
 
   const isDau = metric === "dau";
   const isCumulative = period === "cumulative";
+  // Long daily windows (90d/180d) pack many points — widen tick spacing like
+  // the cumulative view so the X축 labels don't overlap.
+  const isLongDaily = period === "90d" || period === "180d";
   const color = isDau ? "#6366F1" : "#30D158";
   const lineName = isDau ? (isCumulative ? "누적 방문자" : "DAU") : isCumulative ? "누적 PV" : "PV";
   const caption = isCumulative
@@ -268,7 +273,7 @@ function TrendChartBody({ metric, period }: { metric: "dau" | "pv"; period: Tren
               dataKey="label"
               stroke="#636366"
               fontSize={12}
-              minTickGap={isCumulative ? 28 : 8}
+              minTickGap={isCumulative || isLongDaily ? 28 : 8}
             />
             <YAxis stroke="#636366" fontSize={12} width={44} />
             <Tooltip {...chartTooltipStyle} />
