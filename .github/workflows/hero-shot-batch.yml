@@ -20,6 +20,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  statuses: write # auto-merge-gate commit status 스탬프 (exact SHA 결속)
 
 concurrency:
   group: hero-shot-batch
@@ -82,4 +83,12 @@ jobs:
             --title "chore(hero): 자동 히어로샷 배치 (rembg)" \
             --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 머지 전 qa:foreign-photo + hero webp 규격/approved 정합성 검증 PASS. 저위험 자동 머지(2026-06-17 하린아빠 정책).")
           # 검증(Verify 스텝)을 통과한 경우에만 도달. 생성한 head 커밋만 머지(--match-head-commit).
-          gh pr merge "$PR_URL" --squash --admin --delete-branch --match-head-commit "$HEAD_SHA"
+          # 2026-08-18: main ruleset required check(auto-merge-gate) 도입에 맞춰 --admin 직접 머지를
+          # native auto-merge로 전환 — Verify PASS를 exact SHA에 스탬프하고, Vercel 완료 시 GitHub이 머지.
+          # (브랜치 삭제는 repo 설정 delete_branch_on_merge가 담당)
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success \
+            -f context=auto-merge-gate \
+            -f description="hero-shot verify PASS (run ${GITHUB_RUN_ID})" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh pr merge "$PR_URL" --auto --squash --match-head-commit "$HEAD_SHA"
