@@ -285,8 +285,6 @@ const DESCRIPTIVE_ASK =
  */
 // 세레머니 원문 축 표기 변형(오탈자 포함) — 닫힌 집합.
 const CEREMONY_TOPIC = /세레머니|세리머니|세레모니|세리모니|쑬레머니/;
-// 명시 수치 요구 — 있으면 문화 질문이 아니라 스탯 질문이다.
-const CEREMONY_NUMERIC_ASK = /몇|얼마/;
 // 세레머니 기각 — `세레머니(는/거) 말고…`처럼 세레머니를 배제하고 다른 걸 묻는 구문.
 const CEREMONY_DISMISS =
   /(?:세레머니|세리머니|세레모니|세리모니|쑬레머니)[가-힣]{0,2}\s*(?:말고|말구|빼고|빼구|됐고|됐으니|제외)/;
@@ -294,12 +292,16 @@ const CEREMONY_DISMISS =
 /**
  * 질문 초점이 세레머니(구단 의례)인가 — 그렇다면 구조화 스탯을 양보하고 team_rag(나무위키
  * 근거)에 맡긴다. 근거가 없으면 team_rag 가 null 로 양보하므로 과탐지도 안전하다.
+ *
+ * ⚠️ 수치어(`몇|얼마`)는 배제조건이 **아니다** (삼순 2026-08-18 7차 NO-GO):
+ *   `세레머니 몇 번 해?`·`세레머니 몇 종류야?` 는 세레머니 **수량** 질문 — 초점은 여전히
+ *   세레머니다. 수치어로 끄면 team_record 가 시즌 홈런값을 던져 새 동문서답이 된다.
+ *   유일한 배제는 기각 구문(`말고/빼고/됐고`) — 세레머니가 배제 대상으로 명시된 경우뿐이다.
  */
 export function isCulturalTopicQuestion(question: string): boolean {
   const compact = normalize(question);
   if (!CEREMONY_TOPIC.test(compact)) return false;
-  // 명시 수치 요구·세레머니 기각 → 초점이 세레머니가 아니다 — 스탯 경로 유지(삼순 6차 반례).
-  if (CEREMONY_NUMERIC_ASK.test(compact)) return false;
+  // 세레머니 기각(`말고…`) → 초점이 세레머니가 아니다 — 스탯 경로 유지(삼순 6차 반례).
   if (CEREMONY_DISMISS.test(compact)) return false;
   return true;
 }

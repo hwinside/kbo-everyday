@@ -54,7 +54,10 @@ function runSelftest(): number {
   exp("KIA 홈런 세레머니 말고 올해 팀 홈런 몇 개야?", false, "기각+수치 → 스탯 유지");
   exp("김도영 홈런 세레머니 말고 올해 홈런 몇 개야?", false, "선수축 기각+수치");
   exp("세레머니 말고 팀 타율 알려줘", false, "기각(수치어 없음)");
-  exp("세레머니 몇 번 해?", false, "세레머니+수치 요구");
+  // 세레머니 **수량** 질문은 초점이 여전히 세레머니다 — 수치어는 배제조건이 아니다(삼순 7차).
+  exp("세레머니 몇 번 해?", true, "세레머니 수량 질문 → 문화 유지");
+  exp("KIA는 홈런 쳤을 때 세레머니 몇 번 해?", true, "수량+조건절(삼순 7차 반례)");
+  exp("KIA 홈런 세레머니 몇 종류야?", true, "종류 수량(삼순 7차 반례)");
   // false = 팬문화 확장어 — A 범위 밖(실로그·반례 근거 생기면 별도 PR)
   exp("두산 응원가 알려줘", false, "응원가 — A 범위 밖");
   exp("삼성 치어리더 누구야", false, "치어리더 — A 범위 밖");
@@ -164,13 +167,17 @@ async function runE2E(): Promise<void> {
   const CULTURE_CASES: Array<{ q: string; note: string }> = [
     { q: "안타를 쳤을때 기아타이거즈만에 세레머니거 있어?", note: "스크린샷 원본 오탈자" },
     { q: "기아 세리머니 어떤 거 있어?", note: "세리머니 변형" },
+    // 삼순 7차 NO-GO 반례 — 세레머니 **수량** 질문은 여전히 문화 초점이다.
+    //   수치어로 가드를 끄면 team_record 가 시즌 홈런 143을 던져 새 동문서답이 된다.
+    { q: "KIA는 홈런 쳤을 때 세레머니 몇 번 해?", note: "수량+조건절(삼순 7차)" },
+    { q: "KIA 홈런 세레머니 몇 종류야?", note: "종류 수량(삼순 7차)" },
   ];
   for (const c of CULTURE_CASES) {
     await check(`세레머니 → team_rag — "${c.q.slice(0, 22)}…" (${c.note})`, async () => {
       const { result, calls } = await ask(c.q);
       assert.equal(result.source, "team_rag", `종단 source=${result.source} (기대 team_rag): ${result.answer}`);
       assert.ok(/세리머니|호랑이/.test(result.answer ?? ""), `나무위키 근거답 아님: ${result.answer}`);
-      assert.ok(!/\b988\b|\d+개입니다|\d+입니다/.test(result.answer ?? ""), `스탯 숫자 동문서답 새어나옴: ${result.answer}`);
+      assert.ok(!/\b988\b|\b143\b|\d+개입니다|\d+입니다/.test(result.answer ?? ""), `스탯 숫자 동문서답 새어나옴: ${result.answer}`);
       assert.ok(calls.searchRag >= 1, `team_rag 근거 검색 미도달: searchRag=${calls.searchRag}`);
     });
   }
