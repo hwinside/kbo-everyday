@@ -148,7 +148,9 @@ ${TAILWIND_SHIM}
 //    아무도 못 본다 — 그래서 전수 행이 필요하다(삼순 요구 ②).
 coverageHtml = `<!doctype html><html><head><meta charset="utf-8"><style>
 body{margin:0;background:#333}
-.bg{display:flex;align-items:flex-end;gap:10px;padding:8px}
+/* 13종 총 폭이 viewport를 넘더라도 locator screenshot이 자식 overflow를 자르지 않게
+   coverage 행 자체를 content width로 만든다. (v1 복구에서 1280px 초과 → 마지막 crop width 음수 실측) */
+.bg{display:flex;align-items:flex-end;gap:10px;padding:8px;width:max-content;min-width:100%;box-sizing:border-box}
 ${TAILWIND_SHIM}
 </style></head><body>${
   BACKGROUNDS.map(([bgName, bg]) => `<div class="bg" data-bg="${bgName}" style="background:${bg}">${
@@ -290,9 +292,18 @@ try {
         const weak = [];
         for (const b of boxes) {
           if (!(b.w > 0 && b.h > 0)) { weak.push(`${b.clip}(box 0)`); continue; }
+          // screenshot 경계와 교집합을 명시적으로 구한다. 종전 `min(b.w, width-b.x)`는
+          // 자산이 viewport 밖에 있으면 음수 width를 sharp.extract에 넘겨 예외로 죽었다.
+          // 교집합이 없으면 SKIP/예외가 아니라 해당 자산을 weak로 판정해 fail-close한다.
+          const left = Math.max(0, b.x), top = Math.max(0, b.y);
+          const right = Math.min(info.width, b.x + b.w);
+          const bottom = Math.min(info.height, b.y + b.h);
+          if (!(right > left && bottom > top)) {
+            weak.push(`${b.clip}(capture 밖)`);
+            continue;
+          }
           const { data: cd, info: ci } = await sharp(shot)
-            .extract({ left: Math.max(0, b.x), top: Math.max(0, b.y),
-                       width: Math.min(b.w, info.width - b.x), height: Math.min(b.h, info.height - b.y) })
+            .extract({ left, top, width: right - left, height: bottom - top })
             .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
           let d2 = 0;
           for (let i = 0; i < cd.length; i += 4) {
