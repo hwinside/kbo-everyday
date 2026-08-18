@@ -56,7 +56,7 @@ async function main() {
 
   // env 주입 후에 로드해야 server.ts 모듈 초기화(GEMINI_URL 등)가 산다.
   const { mapGlossaryDefinition } = await import("../../src/lib/baseball-qa/server");
-  const { glossaryCandidatesIn } = await import("../../src/lib/baseball-qa/pipeline");
+  const { answerQuestion, glossaryCandidatesIn } = await import("../../src/lib/baseball-qa/pipeline");
   const { PGlite } = await import("@electric-sql/pglite");
 
   const rd = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8");
@@ -85,7 +85,26 @@ async function main() {
 
   const fixture = JSON.parse(
     rd("scripts/qa/fixtures/baseball-terms-log-evidence-20260817.json"),
-  ) as { preemption: Array<{ question: string; reason: string; relatedTerm: string }> };
+  ) as {
+    preemption: Array<{ question: string; reason: string; relatedTerm: string }>;
+    mapper_live: { delta_questions: string[]; live_checked: number; live_skipped: number };
+  };
+
+  // 배치 이전에 없던 term 집합 — 신규 행이 소유자가 되면 안 된다는 판정에 쓴다.
+  const beforeTerms = new Set(before.map((e) => e.term));
+  const addedTerms = new Set(after.map((e) => e.term).filter((t) => !beforeTerms.has(t)));
+
+  /** 사전 경로 + 실제 배포 mapper 를 물린 deps — 오프라인 게이트와 같은 형태, mapper 만 실 provider. */
+  const liveDeps = (glossary: typeof after) => ({
+    loadGlossary: async () => glossary,
+    loadPlayers: async () => [],
+    getCache: async () => null,
+    setCache: async () => {},
+    callLlm: async () => ({ text: JSON.stringify({ status: "NOT_BASEBALL" }), inputTokens: 1, outputTokens: 1 }),
+    reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
+    log: async () => {},
+    mapGlossaryDefinition,
+  });
 
   const failures: string[] = [];
   let checked = 0;
@@ -119,6 +138,23 @@ async function main() {
       );
       console.log(`   ❌ ${JSON.stringify(results)}  cand=${JSON.stringify(candsAfter)}${delta} | ${p.question}`);
     }
+
+    // 🔴 합성 종단 (삼순 3차 NO-GO P0) — component 호출만으로는 "후보 집합 → pipeline guard →
+    //   mapper → source/term 소유권" 합성이 증명되지 않는다. 같은 질문을 배포 `answerQuestion`
+    //   종단에 실제 mapper 를 물린 채 태워, before/after 소유권이 안 바뀌고 신규 행이
+    //   소유자가 되지 않는 것까지 실 provider 로 고정한다.
+    const e2eAfter = await answerQuestion("mapper-live-e2e", p.question, liveDeps(after));
+    const e2eBefore = await answerQuestion("mapper-live-e2e", p.question, liveDeps(before));
+    const termAfter = (e2eAfter as { term?: string }).term ?? null;
+    const termBefore = (e2eBefore as { term?: string }).term ?? null;
+    if (e2eAfter.source !== e2eBefore.source || termAfter !== termBefore) {
+      failures.push(
+        `[합성 종단] "${p.question}" 소유권이 배치로 바뀌었다 (${e2eBefore.source}/${termBefore ?? "-"} → ${e2eAfter.source}/${termAfter ?? "-"}) — ${p.reason}`,
+      );
+    }
+    if (termAfter !== null && addedTerms.has(termAfter)) {
+      failures.push(`[합성 종단] "${p.question}" 을 신규 행 "${termAfter}" 이 가져갔다 — ${p.reason}`);
+    }
   }
 
   // 🔴 커버리지 결속 — batch2 로 **후보가 새로 생기거나 늘어난** 선점 질문이 전부 실측됐는가.
@@ -132,6 +168,24 @@ async function main() {
   console.log(`\n   후보 delta 질문 ${deltaQuestions.length}건: ${JSON.stringify(deltaQuestions.map((d) => d.question))}`);
   if (deltaQuestions.length === 0) {
     failures.push("후보 delta 질문이 0건 — batch2 가 매퍼 노출을 전혀 안 바꿨을 리 없다. fixture 가 낡았다");
+  }
+  // 🔴 커버리지 exact 결속 (삼순 3차 NO-GO P1) — `length === 0` 만으로는 위험 질문 10건이
+  //   fixture 에서 빠져도 1건만 남으면 GREEN 이다. 계산된 delta 집합·checked·skipped 를 fixture
+  //   선언값에 원소 단위로 묶는다(오프라인 게이트도 같은 선언을 대조 — 한쪽만 고치면 어긋난다).
+  {
+    const computed = [...deltaQuestions.map((d) => d.question)].sort();
+    const declared = [...fixture.mapper_live.delta_questions].sort();
+    if (JSON.stringify(computed) !== JSON.stringify(declared)) {
+      failures.push(
+        `delta 집합이 fixture 선언과 다르다 — 실측 ${computed.length}건 ${JSON.stringify(computed)} ≠ 선언 ${declared.length}건 ${JSON.stringify(declared)}`,
+      );
+    }
+    if (checked !== fixture.mapper_live.live_checked) {
+      failures.push(`live checked ${checked}건 ≠ 선언 ${fixture.mapper_live.live_checked}건 — 실측 범위가 계약과 어긋난다`);
+    }
+    if (skipped !== fixture.mapper_live.live_skipped) {
+      failures.push(`live skipped ${skipped}건 ≠ 선언 ${fixture.mapper_live.live_skipped}건 — 매퍼 미호출 분방가 계약과 어긋난다`);
+    }
   }
 
   if (failures.length > 0) {

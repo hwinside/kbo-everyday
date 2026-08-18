@@ -27,6 +27,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 import {
   answerQuestion,
+  glossaryCandidatesIn,
   matchGlossary,
   type GlossaryEntry,
   type QaDeps,
@@ -38,6 +39,7 @@ const ROOT = process.cwd();
 const SELFTEST = process.argv.includes("--selftest");
 const SELFTEST_PREEMPT = process.argv.includes("--selftest-preempt");
 const SELFTEST_POSTCOND = process.argv.includes("--selftest-postcondition");
+const SELFTEST_GREEDY = process.argv.includes("--selftest-mapper-greedy");
 
 const seedSql = fs.readFileSync(path.join(ROOT, "supabase/migrations/20260730_baseball_qa_seed.sql"), "utf8");
 const clubSql = fs.readFileSync(path.join(ROOT, "supabase/migrations/20260730_baseball_qa.sql"), "utf8");
@@ -81,6 +83,27 @@ const logEvidence = JSON.parse(
    *   여기 적힌 조회·예측·평가 질문은 배치 **후에도** `dictionary` 가 되어서는 안 된다.
    */
   preemption: Array<{ question: string; reason: string; relatedTerm: string; loggedPath?: string }>;
+  /**
+   * 🔴 삼순 3차 NO-GO P0·P1 — mapper seam 계약.
+   *   `seam` 은 선점 질문 전건의 **호출 여부·before/after 후보**를 고정한다. 게이트는 이 값을
+   *   믿지 않고 production `glossaryCandidatesIn` + mapper-aware `answerQuestion` 종단으로
+   *   재실측해 대조한다 — 어긋나면 fixture 가 낡았거나 pipeline guard 가 바뀐 것이고 둘 다 RED 다.
+   *   `delta_questions`/`live_checked`/`live_skipped` 는 live 게이트(`:mapper-live`)와 공유하는
+   *   커버리지 계약이다(둘 중 한쪽만 고치면 어긋나도록 양쪽 모두 이 exact 집합에 결속).
+   */
+  mapper_live: {
+    delta_questions: string[];
+    live_checked: number;
+    live_skipped: number;
+    greedy_red_questions: string[];
+    seam: Array<{
+      question: string;
+      candidatesBefore: string[];
+      candidatesAfter: string[];
+      mapperCalledBefore: boolean;
+      mapperCalledAfter: boolean;
+    }>;
+  };
 };
 
 /**
@@ -183,8 +206,23 @@ function toGlossary(rows: TermRow[]): GlossaryEntry[] {
   return rows.map((r) => ({ term: r.term, aliases: r.aliases, answer: r.answer }));
 }
 
-/** 사전 경로만 태우는 deps — LLM·RAG·캐시가 돌면 그 자체가 결함이다. */
-function dictOnlyDeps(glossary: GlossaryEntry[], counters: { llm: number; cacheGet: number; cacheSet: number }): QaDeps {
+/** mapper seam 관측 기록 — 호출 여부와 pipeline 이 실제로 넘긴 후보를 남긴다. */
+interface MapperRecord { called: boolean; candidates: string[] }
+
+/**
+ * 사전 경로만 태우는 deps — LLM·RAG·캐시가 돌면 그 자체가 결함이다.
+ *
+ * 🔴 삼순 3차 NO-GO P0: mapper seam 을 **빼놓고**(미주입 = 단계 자체 비활성) 종단을 태우면
+ *   "후보 집합 → pipeline guard → mapper → source/term 소유권" 합성 경로가 게이트 밖이다.
+ *   `mapper` 를 주입하면 배포와 같은 seam 이 켜진 채 종단이 돈다 — impl 이 null 을 반환하는
+ *   근거는 가정이 아니라 `qa:genius-terms-log-gap2:mapper-live` 의 실 provider 실측이고,
+ *   greedy impl 주입(`--selftest-mapper-greedy`)이 이 종단의 검출력을 증명한다.
+ */
+function dictOnlyDeps(
+  glossary: GlossaryEntry[],
+  counters: { llm: number; cacheGet: number; cacheSet: number },
+  mapper?: { impl: (question: string, candidates: string[]) => string | null; record: MapperRecord },
+): QaDeps {
   return {
     loadGlossary: async () => glossary,
     loadPlayers: async () => [],
@@ -196,12 +234,28 @@ function dictOnlyDeps(glossary: GlossaryEntry[], counters: { llm: number; cacheG
     },
     reserveDaily: async (_userId, limit) => ({ allowed: true, remaining: limit - 1 }),
     log: async () => {},
+    ...(mapper
+      ? {
+          mapGlossaryDefinition: async (question: string, candidateTerms: string[]) => {
+            mapper.record.called = true;
+            mapper.record.candidates = candidateTerms;
+            return { term: mapper.impl(question, candidateTerms), inputTokens: 1, outputTokens: 1 };
+          },
+        }
+      : {}),
   };
 }
 
 interface CheckResult { pass: number; fail: string[] }
 
-async function runChecks(applyBatch2: boolean, injectPreempt = false): Promise<CheckResult> {
+/** greedy 결함주입 전용 — 후보가 생기기만 하면 첫 항목을 고른다(최악의 매퍼). 정상 경로에서는 쓰이지 않는다. */
+const GREEDY_MAPPER = (_question: string, candidates: string[]): string | null => candidates[0] ?? null;
+
+async function runChecks(
+  applyBatch2: boolean,
+  injectPreempt = false,
+  mapperImpl: (question: string, candidates: string[]) => string | null = () => null,
+): Promise<CheckResult> {
   let pass = 0;
   const fail: string[] = [];
   const check = (ok: boolean, label: string) => { if (ok) pass += 1; else fail.push(label); };
@@ -349,11 +403,64 @@ async function runChecks(applyBatch2: boolean, injectPreempt = false): Promise<C
   //   조회·예측·평가 질문이 배치 후에 사전으로 **선점되지 않는지** production 종단으로 고정한다.
   //   (`주루`·`타이틀홀더` 를 제외한 근거가 바로 이 축에서 나왔다 — 그 둘을 되넣으면 여기가 RED 다.)
   check(logEvidence.preemption.length >= 12, `선점 반대축이 너무 적다 (${logEvidence.preemption.length})`);
+  // 🔴 삼순 3차 NO-GO P0 — mapper seam 을 **켜고** 종단을 태운다.
+  //   종전 판은 mapGlossaryDefinition 미주입 = 단계 자체 비활성 상태로 before/after 를 비교했다.
+  //   그러면 "후보 집합 → pipeline guard → mapper → source/term 소유권" 합성 경로가 통째로 게이트
+  //   밖이다. 여기서는 seam 을 주입해 호출 여부·전달 후보까지 fixture 계약(`mapper_live.seam`)에
+  //   결속한다. null 반환의 근거는 `:mapper-live` 실측, 검출력은 `--selftest-mapper-greedy`.
+  const seamByQuestion = new Map(logEvidence.mapper_live.seam.map((s) => [s.question, s]));
+  check(
+    logEvidence.mapper_live.seam.length === logEvidence.preemption.length,
+    `[매퍼 계약] seam 이 선점 전건을 덮지 않는다 (${logEvidence.mapper_live.seam.length}/${logEvidence.preemption.length})`,
+  );
   for (const p of logEvidence.preemption) {
+    const mapperRec: MapperRecord = { called: false, candidates: [] };
     const counters = { llm: 0, cacheGet: 0, cacheSet: 0 };
-    const result = await answerQuestion("terms-batch2-gate", p.question, dictOnlyDeps(glossary, counters));
+    const result = await answerQuestion(
+      "terms-batch2-gate", p.question,
+      dictOnlyDeps(glossary, counters, { impl: mapperImpl, record: mapperRec }),
+    );
+    const baseMapperRec: MapperRecord = { called: false, candidates: [] };
     const baseCounters = { llm: 0, cacheGet: 0, cacheSet: 0 };
-    const baseResult = await answerQuestion("terms-batch2-gate", p.question, dictOnlyDeps(baseGlossary, baseCounters));
+    const baseResult = await answerQuestion(
+      "terms-batch2-gate", p.question,
+      dictOnlyDeps(baseGlossary, baseCounters, { impl: mapperImpl, record: baseMapperRec }),
+    );
+
+    // 호출 여부·before/after 후보를 fixture 계약에 결속 (삼순 3차 NO-GO P0).
+    //   후보는 production `glossaryCandidatesIn`, 호출 여부는 실제 종단 관측값이다 —
+    //   guard(구단·로스터·오늘 선발·statNumericGuard)가 바뀌면 여기가 먼저 RED 된다.
+    {
+      const seam = seamByQuestion.get(p.question);
+      check(!!seam, `[매퍼 계약] seam 에 없는 선점 질문: "${p.question}"`);
+      if (seam) {
+        const candsAfter = glossaryCandidatesIn(glossary, p.question).map((e) => e.term);
+        const candsBefore = glossaryCandidatesIn(baseGlossary, p.question).map((e) => e.term);
+        check(
+          JSON.stringify(candsAfter) === JSON.stringify(seam.candidatesAfter),
+          `[매퍼 계약] "${p.question}" after 후보 불일치 (실측 ${JSON.stringify(candsAfter)} ≠ 계약 ${JSON.stringify(seam.candidatesAfter)})`,
+        );
+        check(
+          JSON.stringify(candsBefore) === JSON.stringify(seam.candidatesBefore),
+          `[매퍼 계약] "${p.question}" before 후보 불일치 (실측 ${JSON.stringify(candsBefore)} ≠ 계약 ${JSON.stringify(seam.candidatesBefore)})`,
+        );
+        check(
+          mapperRec.called === seam.mapperCalledAfter,
+          `[매퍼 계약] "${p.question}" after 호출 여부 불일치 (실측 ${mapperRec.called} ≠ 계약 ${seam.mapperCalledAfter}) — pipeline guard 가 바뀌었다`,
+        );
+        check(
+          baseMapperRec.called === seam.mapperCalledBefore,
+          `[매퍼 계약] "${p.question}" before 호출 여부 불일치 (실측 ${baseMapperRec.called} ≠ 계약 ${seam.mapperCalledBefore})`,
+        );
+        // pipeline 이 mapper 에 넘긴 후보 = 결정론 추출기의 그 집합이어야 한다(중간 가공 금지).
+        if (mapperRec.called) {
+          check(
+            JSON.stringify(mapperRec.candidates) === JSON.stringify(candsAfter),
+            `[매퍼 계약] "${p.question}" mapper 전달 후보가 추출기와 다르다 (${JSON.stringify(mapperRec.candidates)} ≠ ${JSON.stringify(candsAfter)})`,
+          );
+        }
+      }
+    }
 
     // 🔴 판정 기준은 "dictionary 가 아니다" 가 아니라 **"이 배치가 바꾸지 않았다"** 이다.
     //   `1군 엔트리 알려줘` 는 배치 이전에도 기존 `엔트리` 항목이 답하던 질문이다 — 그것을 선점으로
@@ -373,6 +480,27 @@ async function runChecks(applyBatch2: boolean, injectPreempt = false): Promise<C
     check(
       term === null || !addedTermSet.has(term),
       `[선점] "${p.question}" 을 이번 배치의 신규 행 "${term}" 이 가져갔다 — ${p.reason}`,
+    );
+  }
+
+  // 🔴 ⑪-b delta 집합 결속 (삼순 3차 NO-GO P1) — batch2 로 후보가 생기거나 늘어난 질문의
+  //   **exact 집합**을 fixture 계약에 고정한다. 종전은 live 게이트가 `length === 0` 만 보았다 —
+  //   위험 질문 10건이 fixture 에서 빠져도 1건만 남으면 GREEN 이었다. 여기서는 계산된
+  //   집합이 선언된 집합과 **원소 단위로** 같아야 한다. live 게이트도 같은 선언을 대조하므로
+  //   둘 중 한쪽만 고치면 어긋난다.
+  {
+    const computedDelta = logEvidence.preemption
+      .filter((p) => {
+        const a = glossaryCandidatesIn(glossary, p.question).map((e) => e.term).join("|");
+        const b = glossaryCandidatesIn(baseGlossary, p.question).map((e) => e.term).join("|");
+        return a !== b && a.length > 0;
+      })
+      .map((p) => p.question);
+    const declared = logEvidence.mapper_live.delta_questions;
+    check(computedDelta.length > 0, "[매퍼 계약] 후보 delta 질문 0건 — batch2 가 매퍼 노출을 전혀 안 바꿨을 리 없다");
+    check(
+      JSON.stringify([...computedDelta].sort()) === JSON.stringify([...declared].sort()),
+      `[매퍼 계약] delta 집합 불일치 — 실측 ${computedDelta.length}건 ${JSON.stringify(computedDelta)} ≠ 선언 ${declared.length}건 ${JSON.stringify(declared)}`,
     );
   }
 
@@ -497,6 +625,37 @@ VALUES ('설욕', ARRAY['설욕전','복수전','리벤지'],
 ];
 
 async function main() {
+  if (SELFTEST_GREEDY) {
+    // 🔴 mapper seam 종단의 **검출력 증명** (삼순 3차 NO-GO P0).
+    //   매퍼가 null 대신 첫 후보를 집는 최악(greedy) impl 을 주입하면, 선점축이 그 질문들을
+    //   실제 RED 로 잡아야 한다. 어떤 질문이 RED 가 되는지는 fixture 계약
+    //   (`mapper_live.greedy_red_questions`)에 exact 집합으로 고정한다 — 집합이 줄어들면
+    //   선점 검출이 죽은 것이고, 늘어나면 guard 가 느슨해진 것이다 — 둘 다 여기서 먼저 깨진다.
+    const injected = await runChecks(true, false, GREEDY_MAPPER);
+    const preemptReds = injected.fail.filter((f) => f.startsWith("[선점]"));
+    const redQuestions = new Set<string>();
+    for (const p of logEvidence.preemption) {
+      if (preemptReds.some((f) => f.includes(`"${p.question}"`))) redQuestions.add(p.question);
+    }
+    const declared = [...logEvidence.mapper_live.greedy_red_questions].sort();
+    const actual = [...redQuestions].sort();
+    if (preemptReds.length === 0) {
+      console.error("❌ selftest-mapper-greedy: greedy 매퍼를 주입했는데 선점축 RED 0건 — mapper 종단은 검출력이 없다");
+      process.exit(1);
+    }
+    if (JSON.stringify(actual) !== JSON.stringify(declared)) {
+      console.error(
+        `❌ selftest-mapper-greedy: RED 질문 집합이 계약과 다르다\n   실측 ${actual.length}건: ${JSON.stringify(actual)}\n   계약 ${declared.length}건: ${JSON.stringify(declared)}`,
+      );
+      process.exit(1);
+    }
+    console.log(
+      `✅ selftest-mapper-greedy: greedy 주입 → 선점축 RED ${preemptReds.length}건 / 질문 ${actual.length}건 = 계약 exact 일치. mapper 종단 검출력 확인`,
+    );
+    for (const f of preemptReds) console.log("   ", f);
+    return;
+  }
+
   if (SELFTEST_POSTCOND) {
     const survived: string[] = [];
     for (const inj of POSTCOND_INJECTIONS) {

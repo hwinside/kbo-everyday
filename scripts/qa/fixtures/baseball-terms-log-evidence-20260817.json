@@ -435,8 +435,168 @@
     }
   ],
   "mapper_live": {
-    "captured_at": "2026-08-17",
-    "how": "scripts/qa/genius-terms-log-gap2-mapper-live.ts — 배포 server.ts mapGlossaryDefinition 을 batch2 적용 사전 후보로 3회 반복 호출",
-    "contract": "후보가 생기는 선점 질문 전건에 대해 3/3 null"
+    "captured_at": "2026-08-18",
+    "how": "scripts/qa/genius-terms-log-gap2-mapper-live.ts — 배포 server.ts mapGlossaryDefinition 을 batch2 적용 사전 후보로 3회 반복 호출 + answerQuestion 합성 종단",
+    "contract": "후보가 생기는 선점 질문 전건 3/3 null · delta/checked/skipped 는 아래 exact 값에 결속 · seam 은 오프라인 게이트가 mapper-aware 종단으로 재실측 대조",
+    "delta_questions": [
+      "오늘 선발투수 누구야",
+      "투수 연봉 알려줘",
+      "잘하는 투수의 기준",
+      "투수 등록이랑 말소가 뭐야",
+      "오원석 1군 말소야?",
+      "1군 엔트리 알려줘",
+      "아니 이번 가을야구는 몇일 부터야?",
+      "2026가을야구 갈수있는 확률",
+      "롯데가 가을야구 갈 확률",
+      "엘지랑 두산이랑 몇게임 차야?",
+      "Kt wiz와 삼성과 몇게임 차야?"
+    ],
+    "live_checked": 12,
+    "live_skipped": 2,
+    "greedy_red_questions": [
+      "2026가을야구 갈수있는 확률",
+      "아니 이번 가을야구는 몇일 부터야?",
+      "오원석 1군 말소야?",
+      "잘하는 투수의 기준",
+      "투수 연봉 알려줘"
+    ],
+    "seam": [
+      {
+        "question": "오늘 선발투수 누구야",
+        "candidatesBefore": [
+          "선발투수"
+        ],
+        "candidatesAfter": [
+          "선발투수",
+          "투수"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "투수 연봉 알려줘",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "투수"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "잘하는 투수의 기준",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "투수"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "투수 등록이랑 말소가 뭐야",
+        "candidatesBefore": [
+          "등록말소"
+        ],
+        "candidatesAfter": [
+          "등록말소",
+          "투수"
+        ],
+        "mapperCalledBefore": true,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "오원석 1군 말소야?",
+        "candidatesBefore": [
+          "등록말소"
+        ],
+        "candidatesAfter": [
+          "1군",
+          "등록말소"
+        ],
+        "mapperCalledBefore": true,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "1군 엔트리 알려줘",
+        "candidatesBefore": [
+          "엔트리"
+        ],
+        "candidatesAfter": [
+          "엔트리",
+          "1군"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "아니 이번 가을야구는 몇일 부터야?",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "가을야구"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "2026가을야구 갈수있는 확률",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "가을야구"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "롯데가 가을야구 갈 확률",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "가을야구"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "엘지랑 두산이랑 몇게임 차야?",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "게임차"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "Kt wiz와 삼성과 몇게임 차야?",
+        "candidatesBefore": [],
+        "candidatesAfter": [
+          "게임차"
+        ],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "타율이 몇할이 나와야 잘하는거야?",
+        "candidatesBefore": [
+          "타율"
+        ],
+        "candidatesAfter": [
+          "타율"
+        ],
+        "mapperCalledBefore": true,
+        "mapperCalledAfter": true
+      },
+      {
+        "question": "이번 시즌 타이틀홀더 예측",
+        "candidatesBefore": [],
+        "candidatesAfter": [],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      },
+      {
+        "question": "주루 기록 알려줘",
+        "candidatesBefore": [],
+        "candidatesAfter": [],
+        "mapperCalledBefore": false,
+        "mapperCalledAfter": false
+      }
+    ]
   }
 }
