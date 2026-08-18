@@ -46,14 +46,19 @@ function runSelftest(): number {
     const got = isCulturalTopicQuestion(q);
     if (got !== want) { fail++; console.error(`SELFTEST FAIL [${label}] want=${want} got=${got}  "${q}"`); }
   };
-  // cultural = true (구단 문화·응원 의례)
+  // cultural = true (세레머니 초점 — A 범위)
   exp("안타를 쳤을때 기아타이거즈만에 세레머니거 있어?", true, "세레머니(원본 오탈자)");
   exp("기아 세리머니 뭐 있어", true, "세리머니 변형");
-  exp("두산 응원가 알려줘", true, "응원가");
-  exp("롯데 응원법 어떻게 돼", true, "응원법");
-  exp("삼성 치어리더 누구야", true, "치어리더");
-  exp("한화 마스코트 이름 뭐야", true, "마스코트");
-  exp("엘지 구단가 가사", true, "구단가");
+  exp("홈런 치면 세레모니 하는 거 있어?", true, "세레모니 오탈자");
+  // false = 세레머니 단어가 있어도 초점이 수치/다른 것 (삼순 6차 반례 — 존재≠초점)
+  exp("KIA 홈런 세레머니 말고 올해 팀 홈런 몇 개야?", false, "기각+수치 → 스탯 유지");
+  exp("김도영 홈런 세레머니 말고 올해 홈런 몇 개야?", false, "선수축 기각+수치");
+  exp("세레머니 말고 팀 타율 알려줘", false, "기각(수치어 없음)");
+  exp("세레머니 몇 번 해?", false, "세레머니+수치 요구");
+  // false = 팬문화 확장어 — A 범위 밖(실로그·반례 근거 생기면 별도 PR)
+  exp("두산 응원가 알려줘", false, "응원가 — A 범위 밖");
+  exp("삼성 치어리더 누구야", false, "치어리더 — A 범위 밖");
+  exp("한화 마스코트 이름 뭐야", false, "마스코트 — A 범위 밖");
   // false = 스탯·시점·순위·추세·혼합수치·정상스탯 (A 범위 밖 → guard 미발동, main 동작 유지)
   exp("어제 롯데 홈런 몇번 쳣어", false, "시점(day) — B 트랙");
   exp("오늘 기아 선발 누구야", false, "시점(오늘 선발) — B 트랙");
@@ -94,7 +99,7 @@ async function runE2E(): Promise<void> {
   ];
   const TEAM_RECORDS: TeamRecordsPayload = {
     season: 2026,
-    batting: [{ teamId: kiaId!, slug: "kia", avg: 0.281 }, { teamId: lotteId!, slug: "lotte", avg: 0.27 }],
+    batting: [{ teamId: kiaId!, slug: "kia", avg: 0.281, hr: 143 }, { teamId: lotteId!, slug: "lotte", avg: 0.27, hr: 101 }],
     pitching: [],
   };
 
@@ -193,6 +198,30 @@ async function runE2E(): Promise<void> {
   await check("가드 타이트 — KIA 팀 안타 몇개야 → team_rag 아님", async () => {
     const { result } = await ask("KIA 팀 안타 몇개야");
     assert.notEqual(result.source, "team_rag", `문화 키워드 없는 스탯이 team_rag 로 샜다: ${result.answer}`);
+  });
+
+  // ── ④ 존재≠초점 반례 (삼순 2026-08-18 6차 NO-GO 원문 그대로) — 세레머니 단어가 있어도
+  //   명시 수치 요구/기각 구문이면 팀·선수 구조화 스탯이 유지되어야 한다.
+  await check("반례(팀) — KIA 홈런 세레머니 말고 올해 팀 홈런 몇 개야? → kbo_structured 143", async () => {
+    const { result, calls } = await ask("KIA 홈런 세레머니 말고 올해 팀 홈런 몇 개야?");
+    assert.equal(result.source, "kbo_structured", `팀 스탯이 ${result.source} 로 샜다: ${result.answer}`);
+    assert.ok(/143/.test(result.answer ?? ""), `팀 홈런 실값(143) 없다: ${result.answer}`);
+    assert.equal(calls.teamLlm, 0, `team_rag LLM 누수 — ${calls.teamLlm}회`);
+  });
+  //   선수축 반례 — ⚠️ 이 문형은 **main 자체가** 이름 복합어(`김도영 홈런 세레머니`) 해석을 못 해
+  //   stat_clarify 로 끝난다(실측). 가드는 미발동(명시 수치 `몇`)이고 가드-false 입력은 삽입 4지점
+  //   전부 guard-조건부라 구조상 main 과 동일 경로다. 계약 = 문화 가로채(team_rag/kind:none) 금지
+  //   + main-parity 유지. 이름 복합어 해석 개선은 A 범위 밖(B/backlog).
+  await check("반례(선수) — 김도영 홈런 세레머니 말고 올해 홈런 몇 개야? → 문화 가로채 없음(main-parity)", async () => {
+    const { result, calls } = await ask("김도영 홈런 세레머니 말고 올해 홈런 몇 개야?");
+    assert.notEqual(result.source, "team_rag", `수치 요구 질문이 team_rag 로 강제됐다: ${result.answer}`);
+    assert.equal(result.source, "stat_clarify", `main-parity 이탈 — source=${result.source}: ${result.answer}`);
+    assert.equal(calls.teamLlm, 0, `team_rag LLM 누수 — ${calls.teamLlm}회`);
+  });
+  await check("반례(기각·비수치어) — 세레머니 말고 KIA 팀 타율 알려줘 → kbo_structured 0.281", async () => {
+    const { result } = await ask("세레머니 말고 KIA 팀 타율 알려줘");
+    assert.equal(result.source, "kbo_structured", `기각 구문 팀 스탯이 ${result.source} 로 샜다: ${result.answer}`);
+    assert.ok(/0\.281/.test(result.answer ?? ""), `팀 타율(0.281) 없다: ${result.answer}`);
   });
 }
 
