@@ -94,7 +94,17 @@ for (const clip of clips) {
   }
   const padMax = Math.max(mnY, h - 1 - mxY, mnX, w - 1 - mxX);
   // 최소 여백도 함께 잰다 — **잘림 여부**는 여백의 최댓값이 아니라 최솟값이 말한다.
-  const padMin = Math.min(mnY, h - 1 - mxY, mnX, w - 1 - mxX);
+  // 🔴 2026-08-18 v1 복귀: 변별로 따로 들고 간다 — v1 확정본은 원본 자체가 일부 변에
+  //    닿아 있고(하린아빠가 그 모습 그대로를 컨펌), 그 변은 상속이지 결함이 아니다.
+  //    면제 근거는 생성기가 원본을 재서 기록한 `src_edge_contact`(DERIVED.json)다.
+  const pads = { top: mnY, bottom: h - 1 - mxY, left: mnX, right: w - 1 - mxX };
+  const contact = DERIVED.clips?.[clip]?.src_edge_contact ?? {};
+  const freeSides = Object.keys(pads).filter((k) => !contact[k]);
+  // 원본이 안 닿은 변만으로 재는 최소 여백. 사방 전부 닿은 종(cheerpom)은 비교할
+  // 비접촉 변이 없으므로 Infinity — 면제 근거는 대장에 결속된 원본 해시+contact 기록이다.
+  const padMin = freeSides.length
+    ? Math.min(...freeSides.map((k) => pads[k]))
+    : Number.POSITIVE_INFINITY;
 
   // ③ dark halo — **흰 배경에 합성했을 때 캐릭터 바깥 링이 얼마나 어두워지는가**.
   //
@@ -261,20 +271,22 @@ check("V-POSTER", `poster ↔ 첫 프레임 평균 차이 < ${T.poster} (reduced
 check("V-PAD-MAX", `전 프레임 union bbox 여백 <= ${T.padMax}px (96px 렌더에서 캐릭터가 안 작아짐)`,
   rows.every((r) => r.padMax <= T.padMax),
   rows.filter((r) => !(r.padMax <= T.padMax)).map((r) => `${r.clip}=${r.padMax}px`).join(", "));
-// 🔴 잘림 계약 — 사방 여백이 **최소 1px 이상**이어야 한다.
-//    여백 0 = 캐릭터 실루엣이 캔버스 변에 그대로 닿음 = 화면에서 "평평하게 잘려" 보인다.
-//    (삼순 #1228 ③. 실측으로 13종 중 8종이 이 상태였고, 원본 재생성으로 닫았다.)
-check("V-PAD-MIN", `전 프레임 사방 여백 >= ${T.padMin}px (캐릭터가 캔버스 변에 닿아 잘리지 않는다)`,
+// 🔴 잘림 계약 — **원본이 닿지 않은 변**은 여백이 최소 1px 이상이어야 한다.
+//    v1 확정본 자체가 닿은 변은 `src_edge_contact`로 기록해 상속으로 분리하고,
+//    비접촉 변의 여백 0만 "파생 과정에서 새로 평평하게 잘림"으로 판정한다.
+check("V-PAD-MIN", `전 프레임 사방 여백 >= ${T.padMin}px (원본 비접촉 변 기준 — src_edge_contact 면제)`,
   rows.every((r) => r.padMin >= T.padMin),
   rows.filter((r) => !(r.padMin >= T.padMin)).map((r) => `${r.clip}=${r.padMin}px`).join(", "));
-// 생성기가 기록한 edge-run(전 프레임+poster 연속 불투명 런) 도 0 이어야 한다.
-// 위 padMin 은 **파생 자산**을 직접 재측정한 것이고, 이건 **생성 시점** 계약이다.
-// 둘 다 봐야 "빌드 후 자산이 교체됐다"까지 잡힌다.
+// 생성기가 기록한 edge-run(전 프레임+poster 연속 불투명 런)도 대조한다.
+// 🔴 2026-08-18 v1 복귀: 원본 자체가 닿은 변(`src_edge_contact`)은 상속으로 면제하고,
+// 원본이 닿지 않은 변의 edge-run만 파생 신규 잘림(결함)으로 본다.
+// contact 자체의 위조는 build --check의 DERIVED 대조(CONTRACT 축)가 잡는다.
 {
   const bad = Object.entries(DERIVED.clips ?? {})
-    .filter(([, m]) => Math.max(...Object.values(m.edge_run ?? { x: 1 })) > 0)
-    .map(([n, m]) => `${n}=${Math.max(...Object.values(m.edge_run))}px`);
-  check("V-EDGE-RUN", "DERIVED.json: 전 클립 edge-run 0 (생성 시점 잘림 계약)",
+    .flatMap(([n, m]) => Object.entries(m.edge_run ?? { x: 1 })
+      .filter(([side, v]) => v > 0 && !(m.src_edge_contact ?? {})[side])
+      .map(([side, v]) => `${n}.${side}=${v}px`));
+  check("V-EDGE-RUN", "DERIVED.json: 원본 비접촉 변 edge-run 0 (파생 신규 잘림 계약)",
     SELFTEST ? false : bad.length === 0, bad.join(", "));
 }
 // 코호트 중앙값보다 유의하게 어두운 클립이 있으면 그 클립만 키잉이 실패한 것이다.
@@ -351,6 +363,6 @@ if (SELFTEST) {
 }
 
 console.log(failures.length === 0
-  ? `\n✅ genius mascot visual: ${pass} PASS (poster 정합 + 여백 0 + halo 0)`
+  ? `\n✅ genius mascot visual: ${pass} PASS (poster 정합 + 파생 신규잘림 0 + halo 0)`
   : `\n❌ genius mascot visual FAIL: ${failures.length}건`);
 process.exit(failures.length === 0 ? 0 : 1);

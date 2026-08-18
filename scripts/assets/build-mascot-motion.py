@@ -69,17 +69,29 @@ VIDEO_SRC_ROOT = os.environ.get(
 # (그 경로가 잘림의 원인이었고, 종별로 소스가 갈리면 어느 자산이 어디서 왔는지 추적이 안 된다).
 #   · 9종 = 2026-08-17 재생성본(잘림 0 실측)
 #   · 4종 = 원본 mp4 가 전수 무결이라 그대로 복사(bored·thinking·cheerG·headspin)
-VIDEO_SOURCES = {n: f"v2-regen/{n}.mp4" for n in (
+# 🔴 2026-08-18 하린아빠 재지적으로 **v1 확정본(SSOT WebP)** 로 전면 복귀했다.
+#    직전까지 이 자리는 재생성 mp4(v2-regen→v3-original)를 강제했는데, 그 mp4 들은
+#    하린아빠가 **여러 번 컨펌한 최종본이 아니라 다른 세대**였다(무표정 계약 위반: 응원
+#    클립이 우울/웃는 표정으로 시작, 스윙·투구 모션도 원본과 다름 — 프로덕션 실측).
+#    확정본은 `assets/mascot/v1/*-black.webp`(= SSOT, README 고정 2026-08-07) 하나뿐이다.
+#    v1 자체가 일부 변에 닿는 종은 아래 `src_edge_contact` 로 기록하고, 원본이 닿지 않은
+#    변에 파생 edge-run 이 새로 생길 때만 실패한다(확정본 상속과 파생 결함을 분리).
+#    ⇒ VIDEO_SOURCES 를 비워 **13종 전부 SSOT WebP 경로**로 태운다.
+VIDEO_SOURCES: dict[str, str] = {}
+# 대상 클립 목록 — **닫힌 집합**으로 코드에 고정한다. 종전엔 VIDEO_SOURCES(mp4 시절) 또는
+# v1 폴더 글롭에서 파생시켰는데, 폴더 글롭은 파일 하나가 늘거나 빠지면 빌드 대상이
+# 조용히 바뀌는 경로였다(삼순 2026-08-17). 소스가 없으면 아래 [B-SRC-MISSING] 이 죽는다.
+CLIP_NAMES = (
     "bored", "cheer", "cheerC", "cheerD", "cheerG", "cheerpom", "cheerstick",
     "cheertowel", "excited", "headspin", "pitching", "swing", "thinking",
-)}
+)
 # crop 안전여백 — union bbox 에 사방으로 이만큼을 더 남긴다(삼순 #1228 ③ 계약).
 # 0 이면 캐릭터 실루엣이 캔버스 모서리에 그대로 닿아, 안티에일리어싱 여유조차 없다.
 SAFE_PAD = 6
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "public", "mascot", "motion")
 MANIFEST = os.path.join(OUT, "DERIVED.json")
-# 원본 mp4 해시 대장 — **repo 안**에 산다. 원본 바이너리는 repo 밖(22MB)에 있어서,
-# 어떤 원본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
+# v1 확정본 WebP 해시 대장 — **repo 안**에 산다. 원본 바이너리는 repo 밖에 있어서,
+# 어떤 확정본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
 SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha256")
 # `--check` 가 바이트까지 볼 수 있는 조합인가 (main() 에서 manifest 의 toolchain 과 대조).
 # 배포본↔생성본 알파 실루엣 IoU 하한(프레임별 최악값).
@@ -273,6 +285,15 @@ def build(name: str):
     #    캔버스 밖으로는 나갈 수 없으므로 clip 한다 — 원본이 이미 잘린 종은 여기서
     #    여백을 못 얻고, 그 사실은 아래 edge-run 계약 검사로 드러난다.
     H, W = alphas[0].shape
+    # 🔴 **원본이 이미 캔버스 변에 닿은 변**을 기록한다 (2026-08-18 v1 복귀).
+    #    v1 확정본은 생성 단계에서 캐릭터가 프레임을 거의 채워 일부 변에 닿아 있다
+    #    (삼순 #1228 ③ 실측 — 그게 재생성 사가의 발단이었다). 그런데 하린아빠가
+    #    **그 모습 그대로를 컨펌**했으므로(2026-08-18 "맞아"), 원본에서 물려받은 접촉은
+    #    결함이 아니라 확정본의 일부다. 계약은 "edge-run 절대 0"이 아니라
+    #    **"파생이 원본보다 더 잘리지 않는다"** 로 재정의한다: 원본이 닿지 않은 변에서
+    #    파생 edge-run 이 0 이 아니면 그것만 파생 결함(FAIL)이다.
+    src_edge_contact = {"top": bool(y0 == 0), "bottom": bool(y1 == H),
+                        "left": bool(x0 == 0), "right": bool(x1 == W)}
     y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)
     y1 = min(H, y1 + SAFE_PAD); x1 = min(W, x1 + SAFE_PAD)
     bw, bh = x1 - x0, y1 - y0
@@ -326,6 +347,7 @@ def build(name: str):
                  "source_frames": len(raw), "source": source_kind,
                  "overfill_px": overfill_px, "dropped_component_px": dropped_px,
                  "dropped_persist_frames": dropped_persist,
+                 "src_edge_contact": src_edge_contact,
                  "src_frames": src_small, "src_bgc": src_bgc}
 
 
@@ -486,7 +508,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="재현 검사만(쓰기 없음)")
     ap.add_argument("--rewrite-ledger", action="store_true",
-                    help="원본 mp4 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
+                    help="v1 확정본 WebP 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
     # 🔴 **source-level 결함주입**을 위한 감사 전용 모드 (삼순 2026-08-17 P0).
     #    A4/A5 를 최종 WebP 가 아니라 **빌더 입력**에 걸려면, 원본을 변이시킨 임시 폴더로
     #    빌더를 돌려 `key_frame_audit` 가 실제로 과채움·소품삭제를 뱉는지 봐야 한다.
@@ -499,41 +521,36 @@ def main() -> int:
     args = ap.parse_args()
 
 
-    # 🔴 대상 목록은 **`VIDEO_SOURCES` 가 SSOT** 다 (삼순 2026-08-17).
-    #    종전엔 v1 폴더의 `*-black.webp` 목록에서 파생시켰는데, 이젠 전 종을 mp4 에서
-    #    뽑으므로 v1 은 더 이상 입력이 아니다. v1 에 파일을 하나 더 넣거나 빼면
-    #    빌드 대상이 조용히 바뀜는 경로였다.
-    names = sorted(VIDEO_SOURCES)
+    # 🔴 대상 목록은 **`CLIP_NAMES` 가 SSOT** 다 — 코드에 고정된 닫힌 집합(위 상수 주석 참조).
+    names = sorted(CLIP_NAMES)
     if args.only:
-        if args.only not in VIDEO_SOURCES:
-            print(f"❌ --only {args.only} 은 VIDEO_SOURCES 에 없다", file=sys.stderr)
+        if args.only not in CLIP_NAMES:
+            print(f"❌ --only {args.only} 은 CLIP_NAMES 에 없다", file=sys.stderr)
             return 2
         names = [args.only]
-    if not names:
-        print("VIDEO_SOURCES 가 비어 있다 — 빌드할 대상이 없다.", file=sys.stderr)
-        return 2
 
-    # 🔴 **원본 mp4 가 없으면 조용히 v1 SSOT 로 fallback 하지 않고 죽는다** (삼순 2026-08-17 P1).
-    #    종전에는 `os.path.exists` 가 False 면 조용히 구 SSOT 로 넘어갔다. 그러면 manifest 는
-    #    "v2 원본에서 뽑았다"고 적혀 있는데 실제 자산은 구본이 되는 — 가장 나쁜 종류의
-    #    조용한 실패다. 여기서 멈추면 "왜 안 돼요"가 바로 보인다.
-    missing = [f"{n} ← {os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n])}"
+    # 🔴 **확정본 WebP 가 없으면 조용히 넘어가지 않고 죽는다** (삼순 2026-08-17 P1 계승).
+    #    mp4 시절 이 검사는 "없으면 구 SSOT 로 조용히 fallback" 을 막는 것이었다. v1 복귀
+    #    후에도 원리는 같다 — manifest 가 "v1 확정본에서 뽑았다"고 말하려면 그 파일이
+    #    실제로 있어야 하고, 없으면 여기서 멈춰야 "왜 안 돼요"가 바로 보인다.
+    missing = [f"{n} ← {os.path.join(SSOT, f'{n}-black.webp')}"
                for n in names
-               if not os.path.exists(os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n]))]
+               if not os.path.exists(os.path.join(SSOT, f"{n}-black.webp"))]
     if missing:
-        print(f"❌ [B-SRC-MISSING] 원본 mp4 {len(missing)}개 없음 — 구 SSOT 로 fallback 하지 않고 중단한다:",
+        print(f"❌ [B-SRC-MISSING] v1 확정본 WebP {len(missing)}개 없음 — 중단한다:",
               file=sys.stderr)
         for m in missing:
             print(f"   · {m}", file=sys.stderr)
-        print("  → MASCOT_VIDEO_SRC 로 원본 폴더를 지정하세요(v2-regen 포함).", file=sys.stderr)
+        print("  → MASCOT_SSOT 로 v1 확정본 폴더를 지정하세요.", file=sys.stderr)
         return 2
 
     # 🔴 원본이 있기만 하면 되는 게 아니라 **그 원본이여야** 한다 (삼순 2026-08-17 P1).
-    #    원본은 repo 밖(13종 22MB, v1 SSOT 와 같은 방식)에 산다. 그러면 "어떤 파일을
-    #    썼는가"를 repo 만 보고는 알 수 없으므로, **sha256 대장을 repo 에 둘다**
-    #    (`SOURCES.sha256`). 해시가 바뀜 상태로 빌드하면 멈춘다 — "원본을 조용히 바꿔놓고
-    #    같은 자산이라고 말하는" 경로를 닫는다.
-    src_hashes = {n: sha256(os.path.join(VIDEO_SRC_ROOT, VIDEO_SOURCES[n]))
+    #    v1 확정본은 repo 밖에 산다. 그러면 "어떤 파일을 썼는가"를 repo 만 보고는 알 수
+    #    없으므로, **sha256 대장을 repo 에 둔다** (`SOURCES.sha256`). 해시가 어긋난 상태로
+    #    빌드하면 멈춘다 — "원본을 조용히 바꿔놓고 같은 자산이라고 말하는" 경로를 닫는다.
+    #    이 대장이 바로 이번 사고(#1228)의 재발 방지 장치다: 확정본이 아닌 다른 세대가
+    #    소스 폴더에 들어와도 해시 드리프트로 즉시 드러난다.
+    src_hashes = {n: sha256(os.path.join(SSOT, f"{n}-black.webp"))
                   for n in names}
     # 🔴 대장이 **없으면** 검사를 건너뛰던 것도 false-green 이다 (삼순 2026-08-17).
     #    대장을 지우면 `--check` 가 그냥 통과해버렸다. 검증 모드에선 대장을 **필수**로 둔다
@@ -548,11 +565,11 @@ def main() -> int:
             recorded = dict(
                 (ln.split("  ", 1)[1].strip(), ln.split("  ", 1)[0].strip())
                 for ln in fh if "  " in ln and not ln.startswith("#"))
-        drift = [f'{n}: 대장={recorded.get(VIDEO_SOURCES[n], "없음")[:12]} 실제={h[:12]}'
+        drift = [f'{n}: 대장={recorded.get(f"{n}-black.webp", "없음")[:12]} 실제={h[:12]}'
                  for n, h in src_hashes.items()
-                 if recorded.get(VIDEO_SOURCES[n]) != h]
+                 if recorded.get(f"{n}-black.webp") != h]
         if drift and not args.rewrite_ledger and not args.audit_only:
-            print(f"❌ [B-LEDGER-DRIFT] 원본 mp4 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
+            print(f"❌ [B-LEDGER-DRIFT] v1 확정본 WebP 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
             for d in drift:
                 print(f"   · {d}", file=sys.stderr)
             print(f"  → 의도한 교체라면 --rewrite-ledger 로 대장을 갱신하고 근거를 남기세요"
@@ -670,8 +687,13 @@ def main() -> int:
                         semantic_only.append(os.path.basename(built))
         er = meta["edge_run"]
         bad = []
-        if max(er.values()) > 0:
-            bad.append(f'[B-CLIP] 잘림 {max(er.values())}px')
+        # 🔴 원본이 이미 닿은 변은 상속(확정본의 일부)이고, 원본이 안 닿은 변의
+        #    파생 잘림만 결함이다 (위 `src_edge_contact` 주석 참조).
+        new_clip = {k: v for k, v in er.items()
+                    if v > 0 and not meta["src_edge_contact"].get(k)}
+        if new_clip:
+            bad.append(f'[B-CLIP] 파생 신규 잘림 {max(new_clip.values())}px'
+                       f'({",".join(sorted(new_clip))})')
         if meta["defect_px"] > HOLE_PX_MAX:
             bad.append(f'[B-HOLE] 키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
         if meta["overfill_px"] > OVERFILL_PX_MAX:
@@ -691,8 +713,8 @@ def main() -> int:
 
     payload = {
         "generator": "scripts/assets/build-mascot-motion.py",
-        # 🔴 v1 은 더 이상 입력이 아니다 — 전 종을 v2-regen mp4 에서 뽑는다(삼순 P1).
-        "ssot": "assets/mascot/v2-regen (repo 밖 mp4 13종 · 해시 대장 "
+        # 🔴 2026-08-18 v1 확정본 복귀 — 하린아빠가 컨펌한 최종본은 v1 하나뿐이다.
+        "ssot": "assets/mascot/v1 (repo 밖 확정본 WebP 13종 · 해시 대장 "
                 "scripts/assets/mascot-motion-SOURCES.sha256)",
         "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
                    "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
@@ -701,7 +723,7 @@ def main() -> int:
                    "dropped_persist_max": DROPPED_PERSIST_MAX,
                    "dropped_min_px": DROPPED_MIN_PX, "dropped_solid_dist": DROPPED_SOLID_DIST,
                    "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
-        "source_root": "assets/mascot/v2-regen (repo 밖 · MASCOT_VIDEO_SRC 로 지정, 해시 대장은 "
+        "source_root": "assets/mascot/v1 (repo 밖 · MASCOT_SSOT 로 지정, 해시 대장은 "
                        "scripts/assets/mascot-motion-SOURCES.sha256)",
         "clips": report,
     }
@@ -776,7 +798,8 @@ def main() -> int:
             #    측정치(defect_px·overfill_px·hole_px·motion_pct·clip_kb)는 오차를 허용하되,
             #    **임계값을 넘나드는 변화는 어차피 위 [B-*] 축이 잡는다.**
             # 어디서 돌리든 **반드시 같아야** 하는 것 — 여기가 흔들리면 진짜 문제다.
-            CONTRACT = ("src_sha256", "frames", "fps", "edge_run", "source")
+            CONTRACT = ("src_sha256", "frames", "fps", "edge_run", "src_edge_contact",
+                        "source")
             # 디코딩 차이로 1~2px 흔들리는 축(실측: headspin w 163↔164).
             TOL_DIM = 2
             # 🔴 아래 값들은 **일치를 요구하지 않는다** — 계약은 "임계값을 만족하는가"다.
@@ -831,11 +854,11 @@ def main() -> int:
 
     if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):
         with open(SRC_LEDGER, "w", encoding="utf-8") as fh:
-            fh.write("# 마스코트 모션 **원본 mp4** 해시 대장 (생성: build-mascot-motion.py)\n")
-            fh.write("# 원본은 repo 밖에 산다: assets/mascot/v2-regen (MASCOT_VIDEO_SRC 로 경로 지정).\n")
-            fh.write("# 검증: cd $MASCOT_VIDEO_SRC && shasum -a 256 -c <이 파일>\n")
-            for n, rel in sorted(VIDEO_SOURCES.items()):
-                fh.write(f"{src_hashes[n]}  {rel}\n")
+            fh.write("# 마스코트 모션 **v1 확정본 WebP** 해시 대장 (생성: build-mascot-motion.py)\n")
+            fh.write("# 원본은 repo 밖에 산다: assets/mascot/v1 (MASCOT_SSOT 로 경로 지정).\n")
+            fh.write("# 검증: cd $MASCOT_SSOT && shasum -a 256 -c <이 파일>\n")
+            for n in sorted(src_hashes):
+                fh.write(f"{src_hashes[n]}  {n}-black.webp\n")
 
     with open(MANIFEST, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1, ensure_ascii=False)
