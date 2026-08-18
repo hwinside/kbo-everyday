@@ -19,6 +19,8 @@
 import { readFileSync } from "node:fs";
 
 const MIGRATION = "supabase/migrations/20260811230000_admin_active_visitors.sql";
+// admin_traffic_trend RPC를 90d/180d로 확장한 후속 마이그레이션 (CREATE OR REPLACE).
+const MIGRATION_90D = "supabase/migrations/20260818140000_admin_traffic_trend_90d_180d.sql";
 const ROUTE = "src/app/api/admin/active-users/route.ts";
 const PAGE = "src/app/admin/page.tsx";
 const HYBRID = "src/lib/admin/active-users-hybrid.ts";
@@ -31,6 +33,7 @@ function check(id, desc, ok, detail = "") {
 }
 
 const sql = readFileSync(MIGRATION, "utf8");
+const sql90 = readFileSync(MIGRATION_90D, "utf8");
 const route = readFileSync(ROUTE, "utf8");
 const page = readFileSync(PAGE, "utf8");
 const hybrid = readFileSync(HYBRID, "utf8");
@@ -191,6 +194,57 @@ const hybrid = readFileSync(HYBRID, "utf8");
     "신규 원장 테이블 RLS 활성 (deny-all)",
     /ALTER TABLE admin_visitor_first_seen ENABLE ROW LEVEL SECURITY/.test(sql) &&
       /ALTER TABLE admin_traffic_daily_stats ENABLE ROW LEVEL SECURITY/.test(sql),
+  );
+}
+
+/* ── [C7] 90d/180d 추가 — RPC·route·page 3계층 일관 + 완료일 경계 유지 ── */
+{
+  // 최신 admin_traffic_trend 정의(90d 마이그레이션)의 일별 분기를 파싱한다.
+  const daily90 = sql90.match(/ELSIF p_period IN \([^)]*\)[\s\S]*?ORDER BY d\.day_kst;/);
+  check("C7", "90d 마이그레이션이 admin_traffic_trend를 재정의", /CREATE OR REPLACE FUNCTION admin_traffic_trend/.test(sql90));
+  check(
+    "C7",
+    "일별 분기가 7d/30d/90d/180d 네 period 모두 허용",
+    !!daily90 &&
+      /'7d'/.test(daily90[0]) && /'30d'/.test(daily90[0]) &&
+      /'90d'/.test(daily90[0]) && /'180d'/.test(daily90[0]),
+  );
+  check(
+    "C7",
+    "v_days 매핑 90d→90·180d→180 (잠재 오측 방지)",
+    !!daily90 &&
+      /WHEN '180d' THEN 180/.test(daily90[0]) &&
+      /WHEN '90d'\s+THEN 90/.test(daily90[0]) &&
+      /WHEN '30d'\s+THEN 30/.test(daily90[0]),
+  );
+  check(
+    "C7",
+    "90d/180d도 당일 제외 상한(day_kst < v_today) 유지 (완료일만)",
+    !!daily90 && /day_kst\s*<\s*v_today/.test(daily90[0]) && /day_kst\s*>=\s*v_today - v_days/.test(daily90[0]),
+  );
+  check(
+    "C7",
+    "90d/180d는 일별 롤업(admin_traffic_daily_visitors) 기반 — bounded",
+    !!daily90 && /FROM admin_traffic_daily_visitors/.test(daily90[0]),
+  );
+  check(
+    "C7",
+    "90d 마이그레이션도 service_role 전용 권한",
+    /REVOKE EXECUTE ON FUNCTION admin_traffic_trend\(text\) FROM public, anon, authenticated/.test(sql90) &&
+      /GRANT EXECUTE ON FUNCTION admin_traffic_trend\(text\) TO service_role/.test(sql90),
+  );
+  // route 검증집합과 page 토글이 3계층 일관되게 90d/180d를 포함.
+  check(
+    "C7",
+    "route TREND_PERIODS가 90d/180d 허용 (400 방지)",
+    /TREND_PERIODS = new Set\(\[[^\]]*"90d"[^\]]*"180d"[^\]]*\]\)/.test(route),
+  );
+  check(
+    "C7",
+    "page TrendPeriod 유니언 + TREND_TABS에 90d/180d 토글",
+    /TrendPeriod =[^;]*"90d"[^;]*"180d"/.test(page) &&
+      /key: "90d", label: "90일"/.test(page) &&
+      /key: "180d", label: "180일"/.test(page),
   );
 }
 

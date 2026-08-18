@@ -12,7 +12,7 @@ import {
 
 // 자체 집계 활성 사용자 (앱+웹 통합).
 // - ?period 없음: KPI 4개 모두 자체 DISTINCT/영구 원장 (GA4 미혼합)
-// - ?period=today|7d|30d: 자체 추이 (시간대별/일별 전역 DISTINCT)
+// - ?period=today|7d|30d|90d|180d: 자체 추이 (시간대별/일별 전역 DISTINCT)
 // - ?period=cumulative: 2026-06-24까지 GA4, 06-25부터 자체 영구 원장을
 //   이어 붙인다. 화면에는 경계를 노출하지 않고 산식은 코드/PR에만 남긴다.
 //
@@ -25,7 +25,7 @@ const CACHE_HEADERS = {
   "Cache-Control": "private, max-age=60",
   Vary: "Cookie, x-admin-pin",
 };
-const TREND_PERIODS = new Set(["today", "7d", "30d", "cumulative"]);
+const TREND_PERIODS = new Set(["today", "7d", "30d", "90d", "180d", "cumulative"]);
 
 type TrendRow = { label: string; users: number; pv: number };
 type GaPrehistory = { series: TrendPoint[] };
@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: "Invalid period" }, { status: 400 });
       }
       // query-guard: bounded -- admin_traffic_trend는 집계 결과만 반환: today=시간대 최대
-      // 24행, 7d/30d=최대 30행, cumulative=자체 수집일수 하루 1행(영구 원장).
+      // 24행, 7d/30d/90d/180d=최대 180행, cumulative=자체 수집일수 하루 1행(영구 원장).
       const { data, error } = await supabase.rpc("admin_traffic_trend", {
         p_period: period,
       });
@@ -117,6 +117,7 @@ export async function GET(req: NextRequest) {
         }));
       } else {
         series = ownRows.map((r) => ({
+          // today=HH시, 그 외(7d/30d/90d/180d)=MM/DD.
           label:
             period === "today"
               ? `${Number(r.label)}시`
