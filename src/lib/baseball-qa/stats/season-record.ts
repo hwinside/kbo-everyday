@@ -285,25 +285,27 @@ const DESCRIPTIVE_ASK =
  */
 // 세레머니 원문 축 표기 변형(오탈자 포함) — 닫힌 집합.
 const CEREMONY_TOPIC = /세레머니|세리머니|세레모니|세리모니|쑬레머니/;
-// 세레머니 기각 — `세레머니(는/거) 말고…`처럼 세레머니를 배제하고 다른 걸 묻는 구문.
-const CEREMONY_DISMISS =
-  /(?:세레머니|세리머니|세레모니|세리모니|쑬레머니)[가-힣]{0,2}\s*(?:말고|말구|빼고|빼구|됐고|됐으니|제외)/;
+// 기각 분할자 — `…는 말고/빼고/됐고 …`처럼 앞 화제를 버리고 뒤 화제로 넘어가는 표지.
+const DISMISS_SPLIT = /말고|말구|빼고|빼구|됐고|됐으니|제외하고|제외/;
 
 /**
  * 질문 초점이 세레머니(구단 의례)인가 — 그렇다면 구조화 스탯을 양보하고 team_rag(나무위키
  * 근거)에 맡긴다. 근거가 없으면 team_rag 가 null 로 양보하므로 과탐지도 안전하다.
  *
- * ⚠️ 수치어(`몇|얼마`)는 배제조건이 **아니다** (삼순 2026-08-18 7차 NO-GO):
- *   `세레머니 몇 번 해?`·`세레머니 몇 종류야?` 는 세레머니 **수량** 질문 — 초점은 여전히
- *   세레머니다. 수치어로 끄면 team_record 가 시즌 홈런값을 던져 새 동문서답이 된다.
- *   유일한 배제는 기각 구문(`말고/빼고/됐고`) — 세레머니가 배제 대상으로 명시된 경우뿐이다.
+ * 판정 = **세그먼트 순서** (삼순 2026-08-18 8차 NO-GO — 기각어 근접창 `{0,2}` 방식 금지):
+ *   기각 표지(`말고/빼고/됐고…`)로 문장을 분할하면 질문의 실제 초점은 **마지막 세그먼트**에
+ *   남는다. 세레머니 토큰이 마지막 세그먼트에 있을 때만 문화 초점이다.
+ *   · `세레머니 이야기는 됐고 KIA 팀 타율 알려줘` → 세레머니가 앞 세그먼트 → false(스탯 유지)
+ *   · `홈런 말고 세레머니 알려줘` → 세레머니가 마지막 세그먼트 → true(team_rag)
+ *   거리 제한이 없어 `이야기는/은 일단` 같은 삽입어에 뚛리지 않고, 분할자 집합은 닫혔다.
+ *
+ * ⚠️ 수치어(`몇|얼마`)는 배제조건이 **아니다** (삼순 7차): `세레머니 몇 번 해?`는 세레머니
+ *   수량 질문 — 초점은 여전히 세레머니다.
  */
 export function isCulturalTopicQuestion(question: string): boolean {
   const compact = normalize(question);
-  if (!CEREMONY_TOPIC.test(compact)) return false;
-  // 세레머니 기각(`말고…`) → 초점이 세레머니가 아니다 — 스탯 경로 유지(삼순 6차 반례).
-  if (CEREMONY_DISMISS.test(compact)) return false;
-  return true;
+  const segments = compact.split(DISMISS_SPLIT);
+  return CEREMONY_TOPIC.test(segments[segments.length - 1] ?? "");
 }
 
 export interface SeasonRecordQuery {

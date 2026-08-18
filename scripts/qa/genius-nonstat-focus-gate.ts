@@ -54,6 +54,11 @@ function runSelftest(): number {
   exp("KIA 홈런 세레머니 말고 올해 팀 홈런 몇 개야?", false, "기각+수치 → 스탯 유지");
   exp("김도영 홈런 세레머니 말고 올해 홈런 몇 개야?", false, "선수축 기각+수치");
   exp("세레머니 말고 팀 타율 알려줘", false, "기각(수치어 없음)");
+  // 삼순 8차 반례 — 기각어가 세레머니에서 2음절 넘게 떨어져도 기각이다(세그먼트 순서 판정).
+  exp("세레머니 이야기는 됐고 KIA 팀 타율 알려줘", false, "원거리 기각(삼순 8차)");
+  exp("세레머니는 일단 빼고 팀 홈런 몇 개야?", false, "삽입어 기각(삼순 8차)");
+  // 순서 검증 — 기각어가 세레머니 **앞**이면 세레머니가 마지막 세그먼트 = 문화 초점 유지.
+  exp("홈런 기록 말고 세레머니 알려줘", true, "역순 기각 → 세레머니 초점");
   // 세레머니 **수량** 질문은 초점이 여전히 세레머니다 — 수치어는 배제조건이 아니다(삼순 7차).
   exp("세레머니 몇 번 해?", true, "세레머니 수량 질문 → 문화 유지");
   exp("KIA는 홈런 쳤을 때 세레머니 몇 번 해?", true, "수량+조건절(삼순 7차 반례)");
@@ -229,6 +234,34 @@ async function runE2E(): Promise<void> {
     const { result } = await ask("세레머니 말고 KIA 팀 타율 알려줘");
     assert.equal(result.source, "kbo_structured", `기각 구문 팀 스탯이 ${result.source} 로 샜다: ${result.answer}`);
     assert.ok(/0\.281/.test(result.answer ?? ""), `팀 타율(0.281) 없다: ${result.answer}`);
+  });
+
+  // ── ⑤ 원거리 기각 (삼순 2026-08-18 8차 NO-GO 원문 그대로) — 기각어가 세레머니에서 멀리
+  //   떨어져도(삽입어 `이야기는/은 일단`) 구조화 스탯이 유지되어야 한다(세그먼트 순서 판정).
+  //   ⚠️ `세레머니 이야기는 됐고 팀 타율` 문형은 **main 자체가** `이야기`(서술어) 때문에
+  //   team_rag 서빙을 택한다(실측: 세레머니 없는 `이야기는 됐고 KIA 팀 타율 알려줘`도
+  //   isTeamRagServableQuestion=true). 이건 세레머니 가드와 무관한 main 서술 라우팅 축으로,
+  //   A에서 손대면 거울 회귀 재발 — B 트랙. 여기서는 **가드 무개입**(세레머니 유무가 결과를
+  //   바꾸지 않음 = main-parity)만 잠귔다.
+  await check("반례(원거리 기각) — 세레머니 이야기는 됐고 KIA 팀 타율 → 가드 미발동 + main-parity", async () => {
+    const q = "세레머니 이야기는 됐고 KIA 팀 타율 알려줘";
+    assert.equal(isCulturalTopicQuestion(q), false, "원거리 기각이 cultural 로 오판됐다");
+    const { result } = await ask(q);
+    const { result: baseline } = await ask("이야기는 됐고 KIA 팀 타율 알려줘");
+    assert.equal(result.source, baseline.source,
+      `세레머니 유무가 결과를 바꿨다(main-parity 이탈): 세레머니=${result.source} vs 베이스=${baseline.source}`);
+  });
+  await check("반례(삽입어 기각) — 세레머니는 일단 빼고 KIA 팀 홈런 몇 개야? → kbo_structured 143", async () => {
+    const { result, calls } = await ask("세레머니는 일단 빼고 KIA 팀 홈런 몇 개야?");
+    assert.equal(result.source, "kbo_structured", `삽입어 기각 팀 스탯이 ${result.source} 로 샜다: ${result.answer}`);
+    assert.ok(/143/.test(result.answer ?? ""), `팀 홈런(143) 없다: ${result.answer}`);
+    assert.equal(calls.teamLlm, 0, `team_rag LLM 누수 — ${calls.teamLlm}회`);
+  });
+  // 순서 검증 — 기각어가 세레머니 **앞**이면 세레머니가 마지막 세그먼트 = 문화 초점(team_rag).
+  await check("역순 기각 — 홈런 기록 말고 KIA 세레머니 알려줘 → team_rag", async () => {
+    const { result } = await ask("홈런 기록 말고 KIA 세레머니 알려줘");
+    assert.equal(result.source, "team_rag", `역순 기각 세레머니가 ${result.source} 로 끝났다: ${result.answer}`);
+    assert.ok(/세리머니|호랑이/.test(result.answer ?? ""), `근거답 아님: ${result.answer}`);
   });
 }
 
