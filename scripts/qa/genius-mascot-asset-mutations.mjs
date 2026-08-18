@@ -10,10 +10,10 @@
  *
  * 실행:
  *   node scripts/qa/genius-mascot-asset-mutations.mjs                ← 원본 **불필요** 축만(prebuild·CI)
- *   node scripts/qa/genius-mascot-asset-mutations.mjs --with-source  ← 전체(원본 mp4 보유 환경)
+ *   node scripts/qa/genius-mascot-asset-mutations.mjs --with-source  ← 전체(v1 확정본 보유 환경)
  *
  * 🔴 왜 나누는가 (삼순 2026-08-17 NO-GO): `build --check` 를 호출하는 축(M6·M7·L1·L2)은
- *    repo 밖 `assets/mascot/v2-regen` 원본 mp4 가 있어야 돌아간다. 원본이 없는 CI(Vercel)에서는
+ *    repo 밖 `assets/mascot/v1` 확정본 WebP가 있어야 돌아간다. 원본이 없는 CI(Vercel)에서는
  *    의도한 assertion 에 닿기 전에 **source-missing 으로 먼저 죽어** "게이트가 결함을 통과시킨다"로
  *    오판된다. 실제로 2026-08-17 02:35Z Vercel 빌드가 정확히 이 4건으로 죽었다(로그 실측).
  *    → 기본 실행은 **자산+manifest 축만** 돌리고, 원본이 필요한 축은 `--with-source` 로 분리한다.
@@ -30,17 +30,16 @@ const DIR = "public/mascot/motion";
 const MANIFEST = `${DIR}/DERIVED.json`;
 const LEDGER = "scripts/assets/mascot-motion-SOURCES.sha256";
 
-// 원본 mp4 가 있어야 돌아가는 축을 포함할지. 기본은 제외(CI 안전).
+// v1 확정본 WebP가 있어야 돌아가는 축을 포함할지. 기본은 제외(CI 안전).
 const WITH_SOURCE = process.argv.includes("--with-source");
-// ⚠️ 이 경로는 생성기의 `VIDEO_SRC_ROOT` 와 **같은 의미**여야 한다 — `VIDEO_SOURCES` 값이
-//    `v2-regen/xxx.mp4` 라서 여기엔 그 **부모**(`.../assets/mascot`)를 넣는다.
-//    v2-regen 까지 넣으면 `v2-regen/v2-regen/...` 으로 이중된다(실제로 한 번 당함).
-const SRC_ROOT = process.env.MASCOT_VIDEO_SRC
-  || path.join(process.env.HOME ?? "", ".openclaw/workspace/assets/mascot");
-if (WITH_SOURCE && !fs.existsSync(path.join(SRC_ROOT, "v2-regen"))) {
+// 이 경로는 생성기의 `SSOT`(MASCOT_SSOT)와 같은 의미여야 한다 —
+// `bored-black.webp` 등 v1 확정본 13종이 바로 이 폴더 아래에 있어야 한다.
+const SRC_ROOT = process.env.MASCOT_SSOT
+  || path.join(process.env.HOME ?? "", ".openclaw/workspace/assets/mascot/v1");
+if (WITH_SOURCE && !fs.existsSync(path.join(SRC_ROOT, "bored-black.webp"))) {
   // 🔴 원본이 없는데 --with-source 를 줘으면 **조용히 건너뛰지 않고** 멈춴야 한다.
   //    "돌렸다"고 믿게 만드는 것이 가장 나쁘다.
-  console.error(`❌ --with-source 인데 원본이 없다: ${path.join(SRC_ROOT, "v2-regen")}`);
+  console.error(`❌ --with-source 인데 v1 확정본이 없다: ${SRC_ROOT}`);
   process.exit(2);
 }
 
@@ -88,7 +87,7 @@ const visualExpect = (needle) =>
   runGate("npx", ["tsx", "scripts/qa/genius-mascot-visual-qa.mjs"], needle);
 const buildCheck = (needle) =>
   runGate("python3", ["scripts/assets/build-mascot-motion.py", "--check"], needle,
-    { ...process.env, MASCOT_VIDEO_SRC: SRC_ROOT });
+    { ...process.env, MASCOT_SSOT: SRC_ROOT });
 
 /** WebP 애니메이션의 한 프레임에 실제로 구멍을 뚫는다(알파 0). */
 async function punchHole(clip, frameIdx, box) {
@@ -213,7 +212,7 @@ async function fillNegativeSpace(clip) {
 }
 
 // ── source-level 결함주입 ─────────────────────────────────────────────
-// 원본 mp4 를 변이시킨 **임시 트리**를 만들고, 빌더를 그 트리로 감사 모드 실행한다.
+// v1 확정본 WebP를 변이시킨 **임시 트리**를 만들고, 빌더를 그 트리로 감사 모드 실행한다.
 // 자산·manifest·대장은 건드리지 않으므로 원복할 것이 없다(임시 폴더만 지운다).
 const MUT_SRC = "/tmp/mascot-src-mutation";
 function mutateSource(clip, mode) {
@@ -229,7 +228,7 @@ function mutateSource(clip, mode) {
 function sourceAudit(clip, expect) {
   const res = runGate("python3", [
     "scripts/assets/build-mascot-motion.py", "--audit-only", "--only", clip,
-  ], expect, { ...process.env, MASCOT_VIDEO_SRC: MUT_SRC });
+  ], expect, { ...process.env, MASCOT_SSOT: MUT_SRC });
   fs.rmSync(MUT_SRC, { recursive: true, force: true });
   return res;
 }
@@ -253,7 +252,7 @@ function mutateBuilder(from, to) {
 }
 function builderAudit(clip, expect) {
   return runGate("python3", [BUILDER, "--audit-only", "--only", clip], expect,
-    { ...process.env, MASCOT_VIDEO_SRC: SRC_ROOT });
+    { ...process.env, MASCOT_SSOT: SRC_ROOT });
 }
 
 function patchManifest(mutate) {
@@ -300,7 +299,7 @@ await mutation(
 //    `overfill_px`·`dropped_persist_frames` 는 빌더가 **원본 픽셀과 대조**해 재는 값이라,
 //    WebP 를 아무리 훼손해도 그 축은 안 움직인다. 종전 구현은 다른 축(V-POSTER)을 죽이고
 //    문면 매칭 덕에 "통과"하던 **정확히 false-green** 이었고, ID 매칭으로 바꾸자마자 드러났다.
-//    이젠 `mascot-source-mutate.py` 로 원본 mp4 프레임을 고치고 빌더를 감사 모드로 돌려
+//    이젠 `mascot-source-mutate.py` 로 v1 확정본 WebP 프레임을 고치고 빌더를 감사 모드로 돌려
 //    `[B-DROP]`·`[B-OVERFILL]` 이 **실제로** 뜨는지 본다. 원본이 필요하므로 --with-source 전용.
 if (WITH_SOURCE) {
   await mutation(
@@ -316,6 +315,14 @@ if (WITH_SOURCE) {
       "    fg = ndimage.binary_fill_holes(ndimage.binary_closing(kept, np.ones((17, 17))))"),
     () => builderAudit("excited", "B-OVERFILL"),
     "B-OVERFILL",
+  );
+  await mutation(
+    "A6 이미 접촉한 top 변을 20px 더 crop → 원본 대비 접촉량 증가 (code-path)",
+    () => mutateBuilder(
+      "    y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)",
+      "    y0 = min(y1 - 1, max(0, y0 - SAFE_PAD) + 20); x0 = max(0, x0 - SAFE_PAD)"),
+    () => builderAudit("bored", "B-EDGE-GROWTH"),
+    "B-EDGE-GROWTH",
   );
 }
 
@@ -345,12 +352,18 @@ await mutation(
   "V-MANIFEST-SYNC",
 );
 await mutation(
-  "M5 edge_run 을 잘림 있음으로 위조",
-  () => patchManifest((m) => { m.clips.cheer.edge_run.top = 40; }),
+  "M5 원본 비접촉 변 edge_run 을 잘림 있음으로 위조",
+  () => patchManifest((m) => { m.clips.cheerG.edge_run.top = 40; }),
   visualExpect,
   "V-EDGE-RUN",
 );
-// ── 원본 mp4 가 있어야 돌아가는 축 (`build --check`) ─────────────────────
+await mutation(
+  "M5b 원본 접촉 변 edge_run 을 원본 비율보다 크게 위조",
+  () => patchManifest((m) => { m.clips.cheer.edge_run.top = m.clips.cheer.w; }),
+  visualExpect,
+  "V-EDGE-GROWTH",
+);
+// ── v1 확정본 WebP가 있어야 돌아가는 축 (`build --check`) ───────────────
 if (WITH_SOURCE) {
   await mutation(
     "M6 임계값 자체를 풀어버림 (hole_px_max 9999) — build --check 가 잡아야 한다",
@@ -414,7 +427,7 @@ if (WITH_SOURCE) {
     "B-REPRO",
   );
 } else {
-  console.log("  ⏭ M6·M7·L1·L2·S1·S2 생략 — `build --check` 는 repo 밖 원본 mp4 가 필요하다.");
+  console.log("  ⏭ M6·M7·L1·L2·S1·S2 생략 — `build --check` 는 repo 밖 v1 확정본 WebP가 필요하다.");
   console.log("     원본 보유 환경에서 `npm run qa:genius-mascot-assets:mutations:full` 로 검증한다.");
 }
 

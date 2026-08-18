@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""마스코트 **원본 mp4** 에 결함을 주입해 임시 소스 트리를 만든다 (삼순 2026-08-17 P0).
+"""마스코트 **v1 확정본 WebP** 에 결함을 주입해 임시 소스 트리를 만든다 (삼순 2026-08-17 P0).
 
 왜 필요한가
 -----------
@@ -25,47 +25,40 @@
 
 사용:
   python3 scripts/qa/mascot-source-mutate.py --clip cheerstick --mode add-prop \
-      --src ~/.openclaw/workspace/assets/mascot --out /tmp/mut-src
+      --src ~/.openclaw/workspace/assets/mascot/v1 --out /tmp/mut-src
 """
 from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 
 import numpy as np
+from PIL import Image
 from scipy import ndimage
 
-REL = "v2-regen/{clip}.mp4"
+REL = "{clip}-black.webp"
 
 
-def read_frames(path: str) -> tuple[np.ndarray, float]:
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height,r_frame_rate", "-of", "csv=p=0", path],
-        capture_output=True, text=True, check=True).stdout.strip().split(",")
-    w, h = int(probe[0]), int(probe[1])
-    num, den = probe[2].split("/")
-    fps = float(num) / float(den)
-    raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-        capture_output=True, check=True).stdout
-    return np.frombuffer(raw, dtype=np.uint8).reshape(-1, h, w, 3).copy(), fps
+def read_frames(path: str) -> np.ndarray:
+    """v1 확정본 WebP 전 프레임을 RGB로 읽는다.
+
+    빌더도 v1 WebP를 RGB로 디코딩한 뒤 키잉하므로 mutation이 정확히 같은 입력 seam을 탄다.
+    """
+    frames = []
+    with Image.open(path) as im:
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            frames.append(np.asarray(im.convert("RGB")).copy())
+    return np.stack(frames)
 
 
-def write_frames(frames: np.ndarray, fps: float, path: str) -> None:
-    n, h, w, _ = frames.shape
+def write_frames(frames: np.ndarray, path: str) -> None:
+    """변이 WebP를 무손실로 쓴다 — 재인코딩 노이즈가 판정을 흔들지 않게 한다."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    proc = subprocess.Popen(
-        ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24",
-         "-s", f"{w}x{h}", "-r", f"{fps}", "-i", "-",
-         # 무손실에 가깝게 — 재인코딩 노이즈가 판정을 흔들면 결함주입이 아니라 노이즈 실험이 된다.
-         "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv444p", path],
-        stdin=subprocess.PIPE)
-    proc.communicate(frames.tobytes())
-    if proc.returncode != 0:
-        raise SystemExit(f"ffmpeg 인코딩 실패: {path}")
+    images = [Image.fromarray(frame) for frame in frames]
+    images[0].save(path, save_all=True, append_images=images[1:], format="WEBP",
+                   lossless=True, method=6, duration=83, loop=0, exact=True)
 
 
 def bg_color(frame: np.ndarray) -> np.ndarray:
@@ -88,14 +81,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--clip", required=True)
     ap.add_argument("--mode", required=True, choices=["add-prop", "seal-gap"])
-    ap.add_argument("--src", required=True, help="원본 루트(v2-regen 의 부모)")
+    ap.add_argument("--src", required=True, help="v1 확정본 WebP 루트")
     ap.add_argument("--out", required=True, help="변이본을 쓸 루트")
     ap.add_argument("--tol", type=int, default=8)
     args = ap.parse_args()
 
     src = os.path.join(os.path.expanduser(args.src), REL.format(clip=args.clip))
     dst = os.path.join(os.path.expanduser(args.out), REL.format(clip=args.clip))
-    frames, fps = read_frames(src)
+    frames = read_frames(src)
     n, h, w, _ = frames.shape
     fg0 = foreground(frames[0], args.tol)
     comp, ncomp = ndimage.label(fg0)
@@ -148,7 +141,7 @@ def main() -> int:
               f"(이게 그대로 과채움이 된다) · 칠한 색 {tuple(int(v) for v in paint)}",
               flush=True)
 
-    write_frames(frames, fps, dst)
+    write_frames(frames, dst)
     print(f"→ {dst} ({n}f {w}x{h})")
     return 0
 
