@@ -3734,7 +3734,10 @@ function canonicalizeTeam(value: string): string | null {
   return null;
 }
 
-const TEAM_AFFILIATION_AFTER = /^\s*(?:소속|에서 뛰|의 유니폼|구단 소속)/;
+// 🔴 `의 유니폼` 만으로는 소속이 아니다 (삼순 2026-08-19 6차).
+//   "두산의 유니폼이 예쁘다", "롯데 유니폼을 좋아한다" 는 디자인·선호 서술이라 정상이다.
+//   실제 귀속은 **착용**(입/입고/입은)일 때만 성립한다.
+const TEAM_AFFILIATION_AFTER = /^\s*(?:소속|에서 뛰|구단 소속|의 유니폼을 입|유니폼을 입)/;
 const TEAM_AFFILIATION_BEFORE = /소속(?:은|이|:)?\s*$/;
 function attributedTeams(sentence: string): string[] {
   const lowered = sentence.toLowerCase();
@@ -3821,9 +3824,13 @@ export function detectIdentityConflict(
       //   봤습니다" 같은 정상 문장이 unsure 로 죽는다.
       const attributed = tokenizePositions(sentence)
         .filter((t) => isAttributivePredicate(sentence, t.token, t.index));
-      if (attributed.length > 0
-        && !attributed.some((t) => positionCompatible(identity.position!, t.token))) {
-        return { field: "position", expected: identity.position, mentioned: attributed[0].token };
+      // 🔴 정답이 오답을 **가리지 못하게** 한다 (삼순 2026-08-19 6차).
+      //   종전엔 호환 토큰이 하나라도 있으면 통과시켰다. 그러면 "투수이며 내야수입니다"
+      //   처럼 정답과 오답이 섞인 답변이 그대로 서빙된다 — 유저가 보는 건 오답 쪽이다.
+      //   귀속 자리에 온 토큰은 **전부** 주인공과 호환이어야 한다.
+      const incompatible = attributed.find((t) => !positionCompatible(identity.position!, t.token));
+      if (incompatible) {
+        return { field: "position", expected: identity.position, mentioned: incompatible.token };
       }
     }
 
@@ -3834,8 +3841,10 @@ export function detectIdentityConflict(
       const subjectTeam = canonicalizeTeam(identity.team);
       const teams = attributedTeams(sentence);
       // 주인공 구단을 못 접으면 판정 근거가 없다 — 억지로 충돌을 만들지 않는다.
-      if (subjectTeam && teams.length > 0 && !teams.includes(subjectTeam)) {
-        return { field: "team", expected: identity.team, mentioned: teams[0] };
+      // 포지션과 같은 규칙: 정답 소속이 함께 있어도 **다른 소속이 하나라도** 귀속되면 충돌이다.
+      const wrongTeam = subjectTeam ? teams.find((team) => team !== subjectTeam) : undefined;
+      if (wrongTeam) {
+        return { field: "team", expected: identity.team, mentioned: wrongTeam };
       }
     }
   }

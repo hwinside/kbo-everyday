@@ -305,6 +305,21 @@ async function main() {
       "K2: 야수 등록 선수를 내야수로 서술한 것은 모순이 아닌데 충돌로 셌다",
     );
   }
+  // 🔴 같은 토큰이 **2회** 등장하고 첫 번째만 비귀속인 경우.
+  //   indexOf 기반 토큰화는 첫 매치만 보므로 "…내야수들의 호수비 … 본인도 내야수입니다"
+  //   에서 앞의 비귀속 위치만 읽고 뒤의 진짜 귀속을 놓친다(확정 false-negative).
+  //   matchAll 은 전 출현을 훑어 뒤쪽 귀속 자리를 잡는다.
+  const repeatSubject = players.find((p) => p.position === "외야수" && p.team)!;
+  assert.ok(
+    detectIdentityConflict(
+      `${repeatSubject.name} 선수는 내야수들의 호수비 덕을 봤고 본인도 내야수입니다.`,
+      buildPlayerIdentity(
+        { entityId: repeatSubject.kboId, name: repeatSubject.name, team: repeatSubject.team }, players,
+      ),
+      players,
+    ),
+    "K3: 같은 토큰 2회 중 뒤쪽 귀속을 놓쳤다 — 첫 매치만 보는 토큰화",
+  );
   pass("K 최장 토큰 우선(내야수⊅야수 오인 차단)");
 
   // ── L. 이름 없는 후속 문장 귀속 (삼순 4차) ────────────────────────────────
@@ -401,11 +416,52 @@ async function main() {
   }
   pass("P 상대팀·롤모델 통과 + 귀속 표현 오소속 검출");
 
-  // 종단으로도 닫히는지 본다.
-  const teamConflictDeps = makeDeps(teamA, () => `${teamA.name} 선수는 LG 소속의 투수입니다.`);
-  const teamResult = await answerQuestion("qa-team", `${teamA.name} 어떤 선수야?`, teamConflictDeps);
-  assert.equal(teamResult.source, "unsure", `M3: team 충돌인데 source=${teamResult.source}`);
-  pass("M team 오귀속 양방향 + 별칭 통과 + 종단 차단");
+  pass("M team 오귀속 양방향 + 별칭 통과");
+
+  // ── Q. `의 유니폼` 은 소속이 아니다 — 착용일 때만 귀속 (삼순 2026-08-19 6차) ──
+  //   "두산의 유니폼이 예쁘다"·"롯데 유니폼 디자인을 좋아한다" 는 디자인·선호 서술이라 정상이다.
+  for (const sentence of [
+    `${teamA.name} 선수는 두산의 유니폼이 예쁘다고 말했습니다.`,
+    `${teamA.name} 선수는 롯데 유니폼 디자인을 좋아합니다.`,
+  ]) {
+    assert.equal(
+      detectIdentityConflict(sentence, teamIdentity, players), null,
+      `Q: 유니폼 디자인·선호 서술을 소속 귀속으로 오판했다: ${sentence}`,
+    );
+  }
+  // 실제 착용은 귀속이다.
+  const worn = detectIdentityConflict(
+    `${teamA.name} 선수는 두산의 유니폼을 입고 뛰었습니다.`, teamIdentity, players,
+  );
+  assert.ok(worn, "Q2: 다른 팀 유니폼 착용(소속 귀속)이 미검출");
+  assert.equal(worn!.field, "team", "Q2: field 가 team 이 아니다");
+  pass("Q 유니폼 디자인·선호 통과 + 착용 검출");
+
+  // ── R. 정답이 오답을 가리면 안 된다 — 혼합 서술 양방향 (삼순 2026-08-19 6차) ──
+  //   "투수이며 내야수입니다" 처럼 정답과 오답이 섞이면 유저가 보는 건 오답 쪽이다.
+  //   호환 토큰이 하나라도 있으면 통과시키던 종전 규칙은 이걸 그대로 서빙했다.
+  for (const { id, right, wrong } of [
+    { id: "56840", right: "투수", wrong: "내야수" },
+    { id: "53893", right: "내야수", wrong: "투수" },
+  ]) {
+    const row = players.find((p) => p.kboId === id)!;
+    const rowIdentity = buildPlayerIdentity({ entityId: id, name: row.name, team: row.team }, players);
+    for (const sentence of [
+      `${row.name} 선수는 ${right}이며 ${wrong}입니다.`,
+      `${row.name} 선수는 ${right}입니다. 포지션은 ${wrong}입니다.`,
+    ]) {
+      const hit = detectIdentityConflict(sentence, rowIdentity, players);
+      assert.ok(hit, `R: 정답이 오답을 가렸다(position) — ${sentence}`);
+      assert.equal(hit!.mentioned, wrong, `R: 검출 토큰이 오답(${wrong})이 아니다`);
+    }
+  }
+  // team 도 같은 규칙 — 정답 소속이 함께 있어도 다른 소속이 귀속되면 충돌이다.
+  const teamMixed = detectIdentityConflict(
+    `${teamA.name} 선수는 ${teamA.team} 소속이며 두산 소속입니다.`, teamIdentity, players,
+  );
+  assert.ok(teamMixed, "R2: 정답 소속이 오답 소속을 가렸다");
+  assert.equal(teamMixed!.mentioned, "두산", "R2: 검출 구단이 오답이 아니다");
+  pass("R 혼합 서술 양방향(position·team) — 정답이 오답을 못 가린다");
 
   // ── O. 다른 선수 이름이 든 문장은 귀속 대상이 아니다 ────────────────────
   //   "김민준 선수는 투수입니다. 팀 동료 홍길동은 내야수입니다." — 동료 소개가
@@ -482,6 +538,12 @@ async function main() {
     );
     pass(label);
   }
+
+  // ── M3(종단). team 충돌도 종단에서 닫히는가 ───────────────────────────────
+  const teamConflictDeps = makeDeps(teamA, () => `${teamA.name} 선수는 LG 소속의 투수입니다.`);
+  const teamResult = await answerQuestion("qa-team", `${teamA.name} 어떤 선수야?`, teamConflictDeps);
+  assert.equal(teamResult.source, "unsure", `M3: team 충돌인데 source=${teamResult.source}`);
+  pass("M3 team 충돌 종단 차단");
 
   // ── J. 정상 답변은 막지 않는다 — 다른 포지션 단어가 **주인공 문장 밖**에 있는 경우 ──
   //   투수 서술에 "내야수들의 호수비" 같은 문장은 정상이다. 단어 등장만으로 막으면
