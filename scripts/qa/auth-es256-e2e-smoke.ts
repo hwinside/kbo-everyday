@@ -237,11 +237,27 @@ async function main() {
     ["T12h role=service_role rejected", { role: "service_role" }],
     ["T12i role=anon rejected", { role: "anon" }],
     ["T12j missing session_id rejected", { session_id: undefined }],
+    // sub 는 이 시스템의 유일한 주체 식별자다. 서명이 유효한데 sub 가 없거나
+    // 비어 있는 토큰을 받아들이면 `id: ""` 인 유저가 생기고, 그 빈 문자열이
+    // 하류 조회의 필터로 들어가면 소유권 경계가 무너진다. T10 은 객체를 직접
+    // 넣는 단위검사라, 서명된 실물 토큰으로 종단에서 다시 잠그다(삼순 지적).
+    ["T12o missing sub rejected", { sub: undefined }],
+    ["T12p blank sub rejected", { sub: "" }],
+    ["T12q whitespace-only sub rejected", { sub: "   " }],
+    ["T12r non-string sub rejected", { sub: 12345 }],
   ];
   for (const [label, over] of contractCases) {
     fresh();
     const claims = baseClaims(over);
-    if (over.session_id === undefined) delete (claims as Record<string, unknown>).session_id;
+    // 🔴 `in` 으로 물어야 한다. `over.session_id === undefined` 로 쓰면 **그 키가
+    // 아예 없는 케이스에서도 true** 가 돼, sub 케이스(T12o~r)의 멀짓한
+    // session_id 까지 지워버렸다. 그러면 sub 가드를 통째로 삭제해도
+    // session_id 가드가 대신 막아서 전부 PASS — 거짓 GREEN 이다.
+    // M15(sub 검사 제거) 가 RED 가 안 되는 것으로 이 결함이 드러났다.
+    if ("session_id" in over && over.session_id === undefined) {
+      delete (claims as Record<string, unknown>).session_id;
+    }
+    if ("sub" in over && over.sub === undefined) delete (claims as Record<string, unknown>).sub;
     const token = await signWith(keyPair.privateKey, claims);
     const user = await verifyAccessToken(token);
     assert(label, user === null, user);
