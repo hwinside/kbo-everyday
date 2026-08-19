@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { TEAMS } from "@/lib/constants/teams";
 import { NEWS_CLIPPER_BY_TEAM, NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
-import { buildTeamClipping, kstDateString } from "@/lib/news-clipping";
+import { buildTeamClipping, kstDateString, toRefClippingPayload } from "@/lib/news-clipping";
 import type { RawCandidateSink } from "@/lib/news-clipping";
 import { toNewsArticleRows } from "@/lib/baseball-qa/rag/news-articles";
 import { ingestNewsArticles, type TeamCollection } from "@/lib/baseball-qa/rag/news-ingest";
 import { mapWithConcurrency } from "@/lib/naver-news";
 import { fetchStandings } from "@/lib/crawler/kbo-api";
 import { formatStandingsTable } from "@/lib/ai/standings-guard";
-import type { NewsClippingPayload } from "@/types/news-clipping";
+import type {
+  NewsClippingLegacyPayload,
+  NewsClippingPayload,
+  NewsClippingRefPayload,
+} from "@/types/news-clipping";
 
 // 팀별 뉴스클리핑 발송 cron — 매일 09:00 KST(UTC 0시, vercel.json).
 // 어제 팀 기사 상위 5개(중복 제외 + Gemini 3줄 요약)를 최애팀 팬 전원에게 쪽지로.
@@ -225,9 +229,14 @@ async function sendTeamClipping(
   clipDate: string,
   teamId: number,
   teamShort: string,
-  payload: NewsClippingPayload,
+  // 집계·문구용 원본(articles 포함). 여기서 union 을 받으면 articles 가 optional 이 돼 건수 집계가 깨진다.
+  payload: NewsClippingLegacyPayload,
+  // 실제 쪽지에 저장할 형태. digest upsert 성공 시 참조형, 실패 시 null → legacy 폴백.
+  refPayload: NewsClippingRefPayload | null,
 ): Promise<TeamSendResult> {
   const content = clippingContent(payload.team_name);
+  // 쪽지에 저장되는 기본형 — intro 는 유저별로 여기에 덧붙는다(digest 에 넣으면 공유돼버린다).
+  const storedPayload: NewsClippingPayload = refPayload ?? payload;
 
   const fans = await fetchTeamFans(admin, teamId, systemUserId);
   const optedIn = await filterByClippingPref(admin, fans);
@@ -254,8 +263,8 @@ async function sendTeamClipping(
         sender_id: senderId,
         content,
         payload: prior.has(userId)
-          ? payload
-          : { ...payload, intro: firstIntro(payload.team_name, nicknames.get(userId) ?? "팬") },
+          ? storedPayload
+          : { ...storedPayload, intro: firstIntro(payload.team_name, nicknames.get(userId) ?? "팬") },
       }));
     if (rows.length === 0) continue;
     const { error } = await admin.from("dm_messages").insert(rows);
@@ -362,8 +371,14 @@ export async function GET(req: NextRequest) {
       continue;
     }
     try {
+      // 기사 묶음을 digest 1행으로 올리고 쪽지엔 참조만 넣는다. 실패하면 null 이 돌아와
+      // legacy 형태(articles 포함)로 그대로 발송된다 — 정규화는 용량 최적화이지 기능이 아니므로
+      // 여기서 막으면 그날 클리핑이 안 나간다.
+      const ref = await toRefClippingPayload(admin, clipDate, payload);
       results.push(
-        await sendTeamClipping(admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload),
+        await sendTeamClipping(
+          admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload, ref,
+        ),
       );
     } catch (e) {
       console.error(`[news-clipping] send failed (${team.shortName}):`, (e as Error).message);

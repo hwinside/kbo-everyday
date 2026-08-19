@@ -7,7 +7,11 @@
 // 선정하지 않도록 프롬프트로 게이트, 삼순 조건).
 
 import type { NewsItem } from "@/types/api";
-import type { NewsClippingPayload, NewsClippingArticle } from "@/types/news-clipping";
+import type {
+  NewsClippingArticle,
+  NewsClippingLegacyPayload,
+  NewsClippingRefPayload,
+} from "@/types/news-clipping";
 import {
   TEAM_SEARCH,
   fetchNaverNews,
@@ -475,7 +479,10 @@ export async function buildTeamClipping(
   teamName: string,
   standingsText: string | null = null,
   onRawCandidates?: RawCandidateSink,
-): Promise<NewsClippingPayload | null> {
+  // 빌더는 항상 **legacy 형태**(articles 포함)를 만든다. 참조형 변환은 발송 직전
+  // toRefClippingPayload 가 맡는다 — 그래야 샘플 발송·건수 집계 같은 기존 소비처가 그대로 동작하고,
+  // digest upsert 실패 시 legacy 로 발송하는 폴백도 성립한다.
+): Promise<NewsClippingLegacyPayload | null> {
   const yesterday = kstDateString(-1);
 
   const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday, onRawCandidates);
@@ -505,5 +512,56 @@ export async function buildTeamClipping(
     date: yesterday,
     overview: selection.overview,
     articles,
+  };
+}
+
+/**
+ * 발송 직전 정규화: 기사 묶음을 digest 1행으로 올리고 쪽지에 넣을 참조형 payload 를 만든다.
+ *
+ * 이전엔 buildTeamClipping 이 만든 payload(평균 2KB, 그중 articles 가 3.5KB)를 수신자 수만큼
+ * 그대로 복제해 dm_messages 에 넣었다 — 2026-08-20 실측으로 8/18 KIA 가 6,102행인데 서로 다른
+ * payload 는 120개(중복률 98%)였고, 하루 27,208건 × 2KB ≈ 55MB/일 이 전부 이 복제다.
+ *
+ * digest upsert 가 실패하면 null 을 돌려 **호출부가 legacy 형태로 발송하게** 한다.
+ * 정규화는 용량 최적화이지 기능이 아니다 — 여기서 던지면 그날 클리핑이 안 나간다.
+ *
+ * ⚠️ intro(유저별 닉네임 치환)는 digest 에 넣지 않는다. digest 는 (clip_date, team_id) 공유
+ *    행이라 거기 넣으면 한 사람의 닉네임이 그 팀 전체에게 보인다. intro 는 쌍지 payload 단에 남는다.
+ */
+export async function toRefClippingPayload(
+  admin: {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  },
+  clipDate: string,
+  payload: NewsClippingLegacyPayload,
+): Promise<NewsClippingRefPayload | null> {
+  const { data, error } = await admin.rpc("upsert_news_clipping_digest", {
+    p_clip_date: clipDate,
+    p_team_id: payload.team_id,
+    p_team_name: payload.team_name,
+    p_overview: payload.overview,
+    p_articles: payload.articles,
+  });
+  if (error) {
+    console.error(
+      `[news-clipping] digest upsert failed (team ${payload.team_id}) — legacy 형태로 발송:`,
+      error.message,
+    );
+    return null;
+  }
+  const digestId = Number(data);
+  if (!Number.isFinite(digestId) || digestId <= 0) {
+    console.error(`[news-clipping] digest id 불량 (team ${payload.team_id}):`, data);
+    return null;
+  }
+  return {
+    type: "news_clipping",
+    team_id: payload.team_id,
+    team_name: payload.team_name,
+    date: payload.date,
+    digest_id: digestId,
   };
 }

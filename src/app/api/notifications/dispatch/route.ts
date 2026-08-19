@@ -129,14 +129,31 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
   // 뉴스클리핑 쪽지 — 일반 쪽지 알림과 분리된 전용 문구 + 전용 prefKey (스펙 확정 문구).
   // payload는 클라 insert로도 채울 수 있으므로 클리퍼 계정 발신일 때만 신뢰 — 아니면 일반
   // 쪽지로 처리해 위조 payload가 클리핑 문구/prefKey를 타지 못하게 한다 (PR #619 리뷰 blocker 2).
-  const clipping = record.payload as { type?: string; team_name?: string; overview?: string } | null;
+  const clipping = record.payload as {
+    type?: string;
+    team_name?: string;
+    overview?: string;
+    digest_id?: number;
+  } | null;
   if (NEWS_CLIPPER_IDS.has(senderId)) {
     if (clipping?.type === "news_clipping") {
+      // 2026-08-20 정규화: 참조형 payload 에는 overview 가 없다(digest 행에 있다).
+      // 이 조회를 빼면 푸시 본문이 전부 기본 문구로 조용히 열화된다 — 타입은 통과하고
+      // 200 으로 나가기 때문에 아무도 모른다(대표적인 조용한 회귀).
+      let overview = clipping.overview;
+      if (!overview && typeof clipping.digest_id === "number") {
+        const { data: digest } = await supabase
+          .from("news_clipping_digests")
+          .select("overview")
+          .eq("id", clipping.digest_id)
+          .maybeSingle();
+        overview = (digest?.overview as string | undefined) || undefined;
+      }
       return [{
         userIds: [receiver as string],
         payload: {
           title: `📰 오늘의 ${clipping.team_name || "내 팀"} 뉴스클리핑이 쪽지로 도착했습니다`,
-          body: truncate(clipping.overview || "어제의 주요 뉴스를 확인해보세요"),
+          body: truncate(overview || "어제의 주요 뉴스를 확인해보세요"),
           url: `/messages/${conversationId}`,
         },
         prefKey: "news_clipping",
