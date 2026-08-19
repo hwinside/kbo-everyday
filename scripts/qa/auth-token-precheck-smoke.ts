@@ -345,6 +345,10 @@ async function main() {
     // 경로를 추가해도 통과했다. 이제 각 auth 호출의 위치가 실제로 wrapper 인자
     // 범위 안(괄호 매칭)인지 검사한다.
     const vu = readFileSync(join(root, "src/lib/auth/verified-user.ts"), "utf8");
+    // ⚠️ 아래 판정은 전부 주석을 제거한 본문으로 한다. 주석에 적힌 예시·설명
+    // 문구(`auth.getClaims()` 같은)가 호출로 세져 실제 회귀를 덮는 것을 막는다 —
+    // mutation 실측에서 getClaims→getUser 회귀가 주석 때문에 GREEN 으로 샘다.
+    const vuCode = blankComments(vu);
     assert(
       "T7c verified-user routes every auth call through verifyAccessTokenWith",
       authCallsAllInsideGuard(vu),
@@ -353,17 +357,17 @@ async function main() {
     // 목적(‑1 GoTrue 왕복/요청)이 사라진다. 조용한 회귀 차단.
     assert(
       "T7c2 default verifier uses local getClaims (not a server round trip)",
-      /getClaims\(/.test(vu),
+      /auth\.getClaims\s*\(/.test(vuCode),
     );
     // 즉시 폐기 반영이 필요한 경로용 탈출구가 살아 있어야 한다.
     assert(
       "T7c3 live (server-authoritative) verifier exists for revocation-sensitive routes",
-      /export async function verifyAccessTokenLive\b/.test(vu) && /auth\.getUser\(/.test(vu),
+      /export async function verifyAccessTokenLive\b/.test(vuCode) && /auth\.getUser\s*\(/.test(vuCode),
     );
     // welcome-dm 은 auth.users.created_at(=JWT 에 없는 값)으로 “기존 유저 오발송
     // 방지” 컷오프를 건다. 로컬 claims 경로로 바꾸면 값이 undefined 가 되어 컷오프
     // 조건이 통째로 falsy → 전체 기존 유저에게 환영 DM 이 나간다. 반드시 Live.
-    const welcome = readFileSync(join(root, "src/app/api/welcome-dm/route.ts"), "utf8");
+    const welcome = blankComments(readFileSync(join(root, "src/app/api/welcome-dm/route.ts"), "utf8"));
     assert(
       "T7e welcome-dm uses the live verifier (needs auth.users.created_at cutoff)",
       /verifyAccessTokenLive\(/.test(welcome) && !/\bverifyAccessToken\(/.test(welcome),
