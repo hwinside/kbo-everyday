@@ -27,8 +27,6 @@ import {
 } from "@/lib/notifications/live-fast-path";
 import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
 import { runBeforeDeadline } from "@/lib/async-deadline";
-import { getGameEventsRouteResult } from "@/lib/services/game-events";
-import { getGameRelayRouteResult } from "@/lib/services/game-relay";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -37,8 +35,8 @@ import { getGameRelayRouteResult } from "@/lib/services/game-relay";
  * first pitch and the first client visit are emitted as `game_start` only —
  * the BoxScore stat lines accrued in that window never become events.
  *
- * Calls the same shared game-events service used by the route so the warm-up
- * traverses the exact diff path without an extra same-origin invocation.
+ * Self-fetches the same game-events route used by clients so the warm-up
+ * traverses the exact diff path; no parallel logic to keep in sync.
  */
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -99,7 +97,11 @@ export async function GET(req: NextRequest) {
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
     .map(g => g.G_ID as string);
 
-  // Android 위젯 갱신은 여전히 절대 URL이 필요하므로 baseUrl 계산은 유지한다.
+  // Self-fetch to traverse the same generateEvents path the client takes.
+  // ⚠️ VERCEL_URL은 *배포별 URL*이라 Deployment Protection(인증)이 걸려 self-fetch가
+  // 401로 막힐 수 있다(S5 득점/선수활약 알림이 조용히 0건 나던 원인). 따라서 보호가 없는
+  // *공개 프로덕션 도메인* VERCEL_PROJECT_PRODUCTION_URL을 먼저 쓴다. (S4/Live Activity는
+  // games를 직접 써서 self-fetch 의존이 없어 영향 없었음.)
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL ??
     (process.env.VERCEL_PROJECT_PRODUCTION_URL
@@ -115,20 +117,21 @@ export async function GET(req: NextRequest) {
     liveGameIds,
     async (gameId, evidenceDeadlineAtMs) => {
       const remainingMs = Math.max(1, evidenceDeadlineAtMs - Date.now());
-      // 내부 호출도 동일한 절대 deadline을 공유한다. HTTP timeout이 사라졌으므로
-      // runBeforeDeadline으로 기존 bounded fetch 의미를 그대로 유지한다.
-      const result = await runBeforeDeadline(
-        () => getGameEventsRouteResult(gameId),
-        Date.now() + remainingMs,
-      ).catch(() => null);
-      const json = result?.body ?? null;
+      const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+        cache: "no-store",
+        headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+        signal: AbortSignal.timeout(remainingMs),
+      });
+      const json = r.ok
+        ? await runBeforeDeadline(() => r.json(), evidenceDeadlineAtMs).catch(() => null)
+        : null;
       const events = (json?.events ?? []) as GameEvent[];
       return {
         gameId,
-        ok: (result?.status ?? 200) < 400,
-        status: result?.status ?? 200,
+        ok: r.ok,
+        status: r.status,
         events,
-        eventCount: (result?.status ?? 200) < 400 ? events.length : null,
+        eventCount: r.ok ? events.length : null,
         startPlateAppearance: (json?.startPlateAppearance ?? null) as StartPlateAppearanceEvidence | null,
       };
     },
@@ -142,18 +145,19 @@ export async function GET(req: NextRequest) {
     | { games: number; sent: number; failed: number; cleaned: number; skipped: number; retryableFailed: number }
     | { error: string };
 
-  // 서브틱 fast path도 같은 service 함수를 태운다. route와 module instance를 공유해
-  // 같은 in-process 캐시/단일비행 경로를 재사용하고, 점수축 변화 경기만 호출한다.
+  // 서브틱 fast path의 game-events self-fetch — 본체와 동일 경로(공개 도메인 baseUrl).
+  // 점수축 변화 경기만 호출되므로 타석 단위 변화마다 이벤트 생성 fetch가 돌지 않는다.
   const fetchGameEventsForFastPath = async (gameIds: string[]): Promise<Map<string, GameEvent[]>> => {
     const out = new Map<string, GameEvent[]>();
     const settled = await Promise.allSettled(
       gameIds.map(async (gameId) => {
-        const result = await runBeforeDeadline(
-          () => getGameEventsRouteResult(gameId),
-          Date.now() + 10_000,
-        ).catch(() => null);
-        if (!result || (result.status ?? 200) >= 400) return null;
-        const json = result.body;
+        const r = await fetch(`${baseUrl}/api/game-events?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const json = await r.json().catch(() => null);
         return { gameId, events: (json?.events ?? []) as GameEvent[] };
       }),
     );
@@ -162,18 +166,18 @@ export async function GET(req: NextRequest) {
     }
     return out;
   };
-  // 서브틱 fast path의 중계 한 줄도 service 직접 호출로 바꾼다. HTTP timeout 대신
-  // 동일 10초 deadline을 걸어 무한 대기 경로를 만들지 않는다.
+  // 서브틱 fast path의 중계 한 줄 수집 — 본체와 동일 패턴(실패 격리, 줄만 안 뜨임).
   const fetchRelayLinesForFastPath = async (gameIds: string[]): Promise<Map<string, string>> => {
     const out = new Map<string, string>();
     const settled = await Promise.allSettled(
       gameIds.map(async (gameId) => {
-        const result = await runBeforeDeadline(
-          () => getGameRelayRouteResult({ gameId }),
-          Date.now() + 10_000,
-        ).catch(() => null);
-        if (!result || result.status >= 400) return null;
-        const j = result.body;
+        const r = await fetch(`${baseUrl}/api/game-relay?gameId=${gameId}`, {
+          cache: "no-store",
+          headers: { "User-Agent": "kbo-everyday-warmup/1.0" },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!r.ok) return null;
+        const j = await r.json().catch(() => null);
         const line = latestRelayLine(j);
         return line ? { gameId, line } : null;
       }),

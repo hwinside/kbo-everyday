@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
     (async () => {
       try {
         const result = await getStatsRouteResult({ type: isPitcher ? "pitcher" : "batter", season: "2026" });
-        const json = await result.json() as { stats?: StatLike[] };
+        const json = result.body as { stats?: StatLike[] };
         return Array.isArray(json.stats) ? json.stats : [];
       } catch {
         return [];

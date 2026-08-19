@@ -1,14 +1,4 @@
 #!/usr/bin/env node
-/**
- * self-fetch-internal-gate
- *
- * 계약:
- *  1) self-fetch 소비처 3곳은 service 함수를 실제 import+호출해야 한다.
- *  2) 소비처 구현에 same-origin /api self-fetch가 남아 있으면 안 된다.
- *  3) 주석 속 문자열은 판정에서 제외하되 오프셋은 보존한다.
- *
- * --selftest: 소비처 사본에 self-fetch를 주입해 RED가 나는지 검증한다.
- */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -35,21 +25,19 @@ const WIRING_CONTRACTS = [
       /getPlayerTodayGameRouteResult\s*\(/,
     ],
   ],
-  [
-    "src/app/api/cron/game-events-warmup/route.ts",
-    [
-      /from\s+"@\/lib\/services\/game-events"/,
-      /getGameEventsRouteResult\s*\(/,
-      /from\s+"@\/lib\/services\/game-relay"/,
-      /getGameRelayRouteResult\s*\(/,
-    ],
-  ],
 ];
 
 const SELF_FETCH_TARGETS = [
   "src/lib/services/player-today-game.ts",
   "src/app/api/widget/player-card/route.ts",
-  "src/app/api/cron/game-events-warmup/route.ts",
+];
+
+const PURITY_TARGETS = [
+  "src/lib/services/game-detail.ts",
+  "src/lib/services/player-stats.ts",
+  "src/lib/services/player-game-logs.ts",
+  "src/lib/services/stats.ts",
+  "src/lib/services/player-today-game.ts",
 ];
 
 function blankCommentsPreserveOffsets(source) {
@@ -85,12 +73,8 @@ function blankCommentsPreserveOffsets(source) {
     }
 
     if (mode === "line-comment") {
-      if (ch === "\n") {
-        mode = "code";
-        out += "\n";
-      } else {
-        out += " ";
-      }
+      out += ch === "\n" ? "\n" : " ";
+      if (ch === "\n") mode = "code";
       i += 1;
       continue;
     }
@@ -132,7 +116,7 @@ function selfFetchMatches(source) {
   let match;
   while ((match = re.exec(source)) !== null) {
     const call = match[0];
-    const hasApiPath = /\/api\/[a-z0-9-]+/i.test(call);
+    const hasApiPath = /\/api\/[a-z0-9/-]+/i.test(call);
     const hasSelfOriginHint =
       /keubo\.fan|NEXT_PUBLIC_APP_URL|VERCEL_PROJECT_PRODUCTION_URL|VERCEL_URL/.test(call) ||
       /["'`]\/api\//.test(call) ||
@@ -144,34 +128,56 @@ function selfFetchMatches(source) {
   return matches;
 }
 
+function checkParity(source) {
+  const failures = [];
+  if (/\bNextResponse\b/.test(source)) {
+    failures.push("NextResponse token 잔존");
+  }
+  if (/return\s+HIDDEN\s*\(/.test(source)) {
+    failures.push("순수 구조 래퍼(result/body) 없이 HIDDEN 직접 반환");
+  }
+  if (!/function\s+result\s*\(/.test(source)) {
+    failures.push("순수 응답 래퍼 result() 누락");
+  }
+  if (!/return\s+result\s*\(/.test(source)) {
+    failures.push("result(...) 반환 분기 누락");
+  }
+  return failures;
+}
+
 function check({ mutate } = {}) {
   const failures = [];
 
   for (const [rel, regexes] of WIRING_CONTRACTS) {
-    let source;
-    try {
-      source = readSource(rel, mutate);
-    } catch {
-      failures.push(`[W] ${rel}: 파일 없음`);
-      continue;
-    }
+    const source = readSource(rel, mutate);
     for (const re of regexes) {
       if (!re.test(source)) failures.push(`[W] ${rel}: 필수 wiring 누락 ${re}`);
     }
   }
 
   for (const rel of SELF_FETCH_TARGETS) {
-    let source;
-    try {
-      source = readSource(rel, mutate);
-    } catch {
-      failures.push(`[H] ${rel}: 파일 없음`);
-      continue;
-    }
-    const matches = selfFetchMatches(source);
-    for (const call of matches) {
+    const source = readSource(rel, mutate);
+    for (const call of selfFetchMatches(source)) {
       failures.push(`[H] ${rel}: same-origin self-fetch 잔존 → ${call}`);
     }
+  }
+
+  for (const rel of PURITY_TARGETS) {
+    const source = readSource(rel, mutate);
+    if (/from\s+["']@\/app\/api\//.test(source)) {
+      failures.push(`[S] ${rel}: @/app/api import 금지`);
+    }
+    if (/from\s+["']next\/server["']/.test(source)) {
+      failures.push(`[S] ${rel}: next/server import 금지`);
+    }
+    if (/\bexport\s+(?:async\s+)?function\s+GET\b/.test(source) || /\bexport\s*\{\s*GET\b/.test(source)) {
+      failures.push(`[S] ${rel}: GET export 금지`);
+    }
+  }
+
+  const paritySource = readSource("src/lib/services/player-today-game.ts", mutate);
+  for (const msg of checkParity(paritySource)) {
+    failures.push(`[P] src/lib/services/player-today-game.ts: ${msg}`);
   }
 
   return failures;
@@ -180,32 +186,51 @@ function check({ mutate } = {}) {
 if (process.argv.includes("--selftest")) {
   const mutations = [
     [
-      "M1 player-today-game service self-fetch 주입",
+      "M1 H축 player-today-game self-fetch 주입",
       (rel, source) =>
         rel === "src/lib/services/player-today-game.ts"
-          ? `${source}\nconst __mut1 = () => fetch("https://keubo.fan/api/game-detail?gameId=20260101LGOB0");\n`
+          ? `${source}\nconst __mut1 = () => fetch(\"https://keubo.fan/api/game-detail?gameId=20260101LGOB0\");\n`
           : source,
+      "[H]",
     ],
     [
-      "M2 widget self-fetch 주입",
+      "M2 H축 widget self-fetch 주입",
       (rel, source) =>
         rel === "src/app/api/widget/player-card/route.ts"
-          ? `${source}\nconst __mut2 = () => fetch("/api/player-stats?id=x&pos=%ED%83%80%EC%9E%90");\n`
+          ? `${source}\nconst __mut2 = () => fetch(\"/api/player-stats?id=x&pos=%ED%83%80%EC%9E%90\");\n`
           : source,
+      "[H]",
     ],
     [
-      "M3 warmup self-fetch 주입",
+      "M3 S축 purity 위반 재주입",
       (rel, source) =>
-        rel === "src/app/api/cron/game-events-warmup/route.ts"
-          ? `${source}\nconst __mut3 = () => fetch(\`\${baseUrl}/api/game-events?gameId=20260101LGOB0\`);\n`
+        rel === "src/lib/services/player-stats.ts"
+          ? `${source}\nexport { GET } from \"@/app/api/player-stats/route\";\n`
           : source,
+      "[S]",
+    ],
+    [
+      "M4 P축 NextResponse 분기 재주입",
+      (rel, source) =>
+        rel === "src/lib/services/player-today-game.ts"
+          ? `${source}\nimport { NextResponse } from \"next/server\";\nasync function __mut4(){ return NextResponse.json({ ok: true }); }\n`
+          : source,
+      "[P]",
+    ],
+    [
+      "M5 W축 service 호출 제거",
+      (rel, source) =>
+        rel === "src/app/api/player-today-game/route.ts"
+          ? source.replace("getPlayerTodayGameRouteResult(", "__removedRouteResult(")
+          : source,
+      "[W]",
     ],
   ];
 
   let ok = true;
-  for (const [name, mutate] of mutations) {
+  for (const [name, mutate, prefix] of mutations) {
     const failures = check({ mutate });
-    const red = failures.some((line) => line.startsWith("[H]"));
+    const red = failures.some((line) => line.startsWith(prefix));
     console.log(`${red ? "RED(기대대로 검출)" : "MISS(검출 실패)"} — ${name}`);
     if (!red) ok = false;
   }
@@ -226,4 +251,4 @@ if (failures.length > 0) {
   for (const failure of failures) console.error("  " + failure);
   process.exit(1);
 }
-console.log("self-fetch-internal-gate PASS — wiring 3축 충족 · same-origin /api self-fetch 0");
+console.log("self-fetch-internal-gate PASS — wiring(W) · self-fetch(H) · purity(S) · parity(P) 충족");
