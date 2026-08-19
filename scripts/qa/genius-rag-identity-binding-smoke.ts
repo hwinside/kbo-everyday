@@ -185,6 +185,56 @@ async function main() {
   );
   pass("D production seam 결속 전달");
 
+  // ── F. 실측 사고 케이스 **양방향** 결속 (삼순 2026-08-19 재리뷰 조건) ──────
+  //   53893('04 내야수) ↔ 56840('06 투수) — SSG 같은 팀 동명이인이다.
+  //   한 방향만 보면 "항상 투수로 결속" 같은 고정값 버그를 못 잡는다.
+  const SSG_PAIR = [
+    { id: "56840", counterpart: "53893" },
+    { id: "53893", counterpart: "56840" },
+  ];
+  for (const { id, counterpart } of SSG_PAIR) {
+    const row = players.find((p) => p.kboId === id);
+    if (!row) {
+      // 로스터가 바뀌어 이 쌍이 사라졌으면 조용히 넘어가지 않는다 — 사고 재현 케이스는 명시적으로 갱신해야 한다.
+      throw new Error(`F: 실측 사고 케이스 kboId ${id} 가 로스터에 없다 — 픽스처 갱신 필요`);
+    }
+    const b = buildIdentityBlock({ entityId: id, name: row.name, team: row.team }, players);
+    assert.ok(b, `F: ${id} identity 블록이 비었다`);
+    assert.ok(b!.includes(id), `F: ${id} 블록에 본인 kboId 가 없다`);
+    assert.ok(
+      !row.position || b!.includes(row.position),
+      `F: ${id} 블록의 포지션이 roster(${row.position})와 다르다`,
+    );
+    // 상대방은 "주인공 아님"으로만 등장해야 한다.
+    const counterpartRow = players.find((p) => p.kboId === counterpart);
+    if (counterpartRow) {
+      const namesakeLine = b!.split("\n").find((line) => line.startsWith("동명이인"));
+      assert.ok(
+        namesakeLine?.includes(counterpart),
+        `F: ${id} 블록의 동명이인 줄에 ${counterpart} 이 없다 — 제3자 구분 신호 소실`,
+      );
+      assert.ok(
+        !b!.split("\n")[0].includes(counterpart),
+        `F: ${id} 블록 첫 줄(주인공)에 상대방 ${counterpart} 이 섞였다`,
+      );
+    }
+  }
+  pass("F 53893/56840 양방향 결속");
+
+  // ── G. 충돌 fail-close — kboId 와 이름이 어긋나면 결속하지 않는다 ────────
+  //   손상된 pick payload·상류 버그로 kboId 가 다른 사람을 가리키면, 잘못된 주인공을
+  //   당당하게 명시한 블록이 나가 오귀속을 **확정**시킨다 — 막는 장치가 가해자가 된다.
+  const conflict = buildIdentityBlock(
+    { entityId: target.kboId, name: `${target.name}_다른사람`, team: target.team },
+    players,
+  );
+  assert.equal(
+    conflict,
+    null,
+    "G: kboId↔이름 불일치인데 블록을 만들었다 — 오결속 fail-close 미작동",
+  );
+  pass("G kboId↔이름 충돌 fail-close");
+
   console.log(`\ngenius-rag-identity-binding-smoke PASS (${passed} checks)`);
 }
 

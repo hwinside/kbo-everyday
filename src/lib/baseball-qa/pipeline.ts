@@ -3601,6 +3601,11 @@ export function buildIdentityBlock(
   const player = players.find((row) => row.kboId === candidate.entityId);
   // roster 에 없는 kboId 는 결속할 사실이 없다 — 빈 블록을 싸서 "결속했다"는 착각을 만들지 않는다.
   if (!player) return null;
+  // 🔴 충돌 fail-close — candidate 의 이름과 roster 의 이름이 다르면 **결속하지 않는다**.
+  //   kboId 가 어떤 경로로든(오타이핑·상류 버그·손상된 pick payload) 다른 사람을 가리키게 되면,
+  //   잘못된 주인공을 당당하게 명시한 블록이 나가 **오귀속을 막는 장치가 오귀속을 확정시킨다.**
+  //   불일치면 블록 없이 기존 동작(무결속)으로 내려보내는 것이 안전한 쪽이다.
+  if (candidate.name && player.name !== candidate.name) return null;
   const team = player.team ?? candidate.team ?? null;
   const parts = [`kboId: ${player.kboId}`, `이름: ${player.name}`];
   if (team) parts.push(`소속: ${team}`);
