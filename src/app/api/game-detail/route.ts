@@ -5,6 +5,7 @@ import {
   type KboGame,
 } from "@/lib/crawler/kbo-api";
 import { jsonWithETag } from "@/lib/http/conditional";
+import { memoizeByContentHash } from "@/lib/http/parse-memo";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
@@ -203,7 +204,7 @@ function stripHtml(s: string): string {
 
 // ===== Parsers =====
 
-function parseScoreBoard(data: unknown[]): {
+function parseScoreBoardImpl(data: unknown[]): {
   meta: GameDetailResponse["meta"];
   linescore: GameDetailResponse["linescore"];
   status: GameDetailResponse["status"];
@@ -248,7 +249,7 @@ function parseScoreBoard(data: unknown[]): {
   };
 }
 
-function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
+function parseLineupImpl(data: unknown[]): GameDetailResponse["lineup"] {
   if (!Array.isArray(data) || data.length < 5) return null;
 
   // data[0] = [{LINEUP_CK: true/false}]
@@ -290,7 +291,7 @@ function parseLineup(data: unknown[]): GameDetailResponse["lineup"] {
   return { isToday, away, home };
 }
 
-function parseBoxScore(data: unknown): GameDetailResponse["boxScore"] {
+function parseBoxScoreImpl(data: unknown): GameDetailResponse["boxScore"] {
   const obj = data as { tables?: unknown[]; code?: string };
   if (!obj?.tables || !Array.isArray(obj.tables) || obj.tables.length < 5) return null;
 
@@ -427,6 +428,14 @@ const POS_SHORT_TO_FULL: Record<string, string> = {
   "투": "P", "포": "C", "1": "1B", "2": "2B", "3": "3B",
   "유": "SS", "좌": "LF", "중": "CF", "우": "RF", "지": "DH",
 };
+
+// raw content-hash bounded memoize (삼순 A안, Fluid CPU 절감).
+// upstream raw 조회는 매 요청 그대로(최신성 유지)고, 동일 raw(KBO next:{revalidate} 캐시로
+// 동시 시청자가 공유)의 순수 파싱만 1회로 접는다. raw가 바뀌면 키가 바뀜 즉시 재계산해
+// staleness 0. 결과는 deepFreeze되므로 downstream mergeAvg 등은 새 객체를 만들어 읽기만 한다.
+const parseScoreBoard = memoizeByContentHash(parseScoreBoardImpl);
+const parseLineup = memoizeByContentHash(parseLineupImpl);
+const parseBoxScore = memoizeByContentHash(parseBoxScoreImpl);
 
 function countNaverRecordExtraBaseHits(batter: Record<string, unknown>): {
   h2b: number;
@@ -809,7 +818,12 @@ export async function GET(req: NextRequest) {
     // 안에서만 기다린다. Naver가 없거나 partial이면 그대로 둔다(fail-safe).
     if (boxScore && boxScoreSource === "kbo" && hasPureSubPositions(boxScore)) {
       naver = naver ?? await untilDeadline(naverRecordPromise, deadlineSignal, null);
-      if (naver?.boxScore) mergeNaverSubPositions(boxScore, naver.boxScore);
+      if (naver?.boxScore) {
+        // boxScore는 memoize 캐시의 frozen 공유 객체일 수 있다 — in-place 병합 전 복사해
+        // 캐시 오염(다른 요청에 병합 결과 누출)과 frozen throw를 모두 차단한다.
+        boxScore = structuredClone(boxScore);
+        mergeNaverSubPositions(boxScore, naver.boxScore);
+      }
     }
 
     const hasRealBoxScoreFinal = boxScore &&
@@ -856,7 +870,9 @@ export async function GET(req: NextRequest) {
         ...(broadcastChannels?.length ? { broadcastChannels } : {}),
       };
     } else if (meta && broadcastChannels?.length) {
-      meta.broadcastChannels = broadcastChannels;
+      // meta는 content-hash memoize 캐시에서 온 frozen 객체일 수 있다(공유 캐시 오염 방지).
+      // 직접 mutate하면 strict mode에서 throw → catch-all(scheduled) 열화. 복사 생성으로 병합한다.
+      meta = { ...meta, broadcastChannels };
     }
 
     const status: GameDetailResponse["status"] =
