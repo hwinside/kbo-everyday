@@ -3734,11 +3734,25 @@ function canonicalizeTeam(value: string): string | null {
   return null;
 }
 
-// 🔴 `의 유니폼` 만으로는 소속이 아니다 (삼순 2026-08-19 6차).
-//   "두산의 유니폼이 예쁘다", "롯데 유니폼을 좋아한다" 는 디자인·선호 서술이라 정상이다.
-//   실제 귀속은 **착용**(입/입고/입은)일 때만 성립한다.
-const TEAM_AFFILIATION_AFTER = /^\s*(?:소속|에서 뛰|구단 소속|의 유니폼을 입|유니폼을 입)/;
-const TEAM_AFFILIATION_BEFORE = /소속(?:은|이|:)?\s*$/;
+// 🔴 구단 뒤에 `소속`·`유니폼을 입`이 **있기만 하면** 주인공 귀속이 아니다
+//   (삼순 2026-08-19 7차, 실측 재현).
+//     정상: "두산 소속 선수와 친합니다" / "두산 유니폼을 입은 팬과 사진을 찍었습니다"
+//     충돌: "두산 소속입니다" / "두산 소속의 투수입니다" / "두산 유니폼을 입고 뛰었습니다"
+//   차이는 구단 뒤 구절이 **주인공 술어로 닫히는가**다. 제3자 명사(선수와·팬과)로
+//   이어지면 주인공 귀속이 아니다. 열린 자연어 전체를 분류하지 않고, 닫힌 계사·활약
+//   술어만 인정한다 — 놓치는 표현(fail-open)이 정상 답변을 죽이는 false-positive보다 낫다.
+const TEAM_COPULA = "(?:입니다|이다|이며|이고|이었(?:습니다)?|였(?:습니다)?|예요|이에요)";
+const TEAM_AFFILIATION_AFTER = new RegExp(
+  "^\\s*(?:"
+    + `(?:구단\\s+)?소속(?:의\\s+(?:투수|포수|내야수|외야수|야수|선수))?\\s*${TEAM_COPULA}`
+    + "|에서\\s+(?:뛰|활약)(?:고\\s+있|었|했)"
+    + "|(?:의\\s+)?유니폼을\\s+입(?:고\\s+(?:뛰|활약|경기)|었|었습니다)"
+    + ")",
+);
+const TEAM_AFFILIATION_BEFORE = new RegExp(
+  `소속(?:은|이|:)?\\s*$`,
+);
+const TEAM_AFFILIATION_BEFORE_TAIL = new RegExp(`^\\s*${TEAM_COPULA}`);
 function attributedTeams(sentence: string): string[] {
   const lowered = sentence.toLowerCase();
   const hit = new Set<string>();
@@ -3750,9 +3764,12 @@ function attributedTeams(sentence: string): string[] {
         const index = lowered.indexOf(lowerAlias, from);
         if (index < 0) break;
         from = index + lowerAlias.length;
-        // 구단 표기 **직후**가 소속 표현이거나, **직전**이 "소속은/소속:" 인 자리만 귀속으로 본다.
-        if (TEAM_AFFILIATION_AFTER.test(sentence.slice(from))
-          || TEAM_AFFILIATION_BEFORE.test(sentence.slice(0, index))) {
+        const before = sentence.slice(0, index);
+        const after = sentence.slice(from);
+        // 구단 뒤 구절이 **주인공 술어로 닫히는 경우**만 귀속이다.
+        // `소속은 두산입니다`처럼 구단 앞에 마커가 올 때도 구단 뒤 계사까지 함께 확인한다.
+        if (TEAM_AFFILIATION_AFTER.test(after)
+          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after))) {
           hit.add(canonical);
           break;
         }

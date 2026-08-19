@@ -423,6 +423,9 @@ async function main() {
   for (const sentence of [
     `${teamA.name} 선수는 두산의 유니폼이 예쁘다고 말했습니다.`,
     `${teamA.name} 선수는 롯데 유니폼 디자인을 좋아합니다.`,
+    // 🔴 마커가 문장에 있어도 **제3자의 술어**면 주인공 귀속이 아니다(삼순 7차).
+    `${teamA.name} 선수는 두산 소속 선수와 친합니다.`,
+    `${teamA.name} 선수는 두산의 유니폼을 입은 팬과 사진을 찍었습니다.`,
   ]) {
     assert.equal(
       detectIdentityConflict(sentence, teamIdentity, players), null,

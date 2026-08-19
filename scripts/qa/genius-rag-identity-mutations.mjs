@@ -239,8 +239,8 @@ const MUTATIONS = [
     // 🔴 삼순 5차 실재 결함: 구단 "등장"을 소속으로 세면 상대팀 문장이 정상인데 죽는다.
     id: "M22 구단 등장만으로 소속 판정(귀속 마커 무시)",
     file: PIPELINE,
-    find: `        if (TEAM_AFFILIATION_AFTER.test(sentence.slice(from))
-          || TEAM_AFFILIATION_BEFORE.test(sentence.slice(0, index))) {`,
+    find: `        if (TEAM_AFFILIATION_AFTER.test(after)
+          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after))) {`,
     replace: `        if (true) {`,
     expect: "소속이 아닌 구단 언급을 오귀속으로 셌다",
   },
@@ -248,8 +248,9 @@ const MUTATIONS = [
     // 🔴 삼순 6차: `의 유니폼` 만으로 소속을 세면 디자인·선호 서술이 오귀속으로 죽는다.
     id: "M23 유니폼 언급만으로 소속 판정",
     file: PIPELINE,
-    find: `const TEAM_AFFILIATION_AFTER = /^\\s*(?:소속|에서 뛰|구단 소속|의 유니폼을 입|유니폼을 입)/;`,
-    replace: `const TEAM_AFFILIATION_AFTER = /^\\s*(?:소속|에서 뛰|구단 소속|의 유니폼|유니폼)/;`,
+    find: `    + "|(?:의\\\\s+)?유니폼을\\\\s+입(?:고\\\\s+(?:뛰|활약|경기)|었|었습니다)"`,
+    // 착용 술어로 닫히는지 보지 않고 `유니폼` 등장만 소속으로 세던 결함을 재현한다.
+    replace: `    + "|(?:의\\\\s+)?유니폼"`,
     expect: "유니폼 디자인·선호 서술을 소속 귀속으로 오판했다",
   },
   {
@@ -286,6 +287,59 @@ const MUTATIONS = [
     expect: "roster 밖 kboId 인데 블록을 만들었다",
   },
 ];
+
+/**
+ * mutation **분모 자체**의 고정 계약 (삼순 2026-08-19 7차).
+ *
+ * 🔴 `detected === MUTATIONS.length` 만 보면 mutation 하나를 실수로 삭제해도 24/24 PASS 다.
+ *   실제로 M13 블록 재작성 때 M1~M6·M8~M12를 날리고도 남은 11/11이 PASS 해 누락을 못 봤다.
+ *   따라서 실행 전에 고정 기대 ID M1~M25와 **완전일치**하고 중복이 0인지 먼저 증명한다.
+ */
+const EXPECTED_MUTATION_IDS = Array.from({ length: 25 }, (_, index) => `M${index + 1}`);
+
+function mutationIdOf(mutation) {
+  const match = /^M\d+\b/.exec(mutation.id);
+  if (!match) throw new Error(`형식이 잘못된 mutation id: ${mutation.id}`);
+  return match[0];
+}
+
+function verifyMutationManifest(mutations) {
+  const ids = mutations.map(mutationIdOf);
+  const duplicates = [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))].sort();
+  const actual = new Set(ids);
+  const expected = new Set(EXPECTED_MUTATION_IDS);
+  const missing = EXPECTED_MUTATION_IDS.filter((id) => !actual.has(id));
+  const extra = [...actual].filter((id) => !expected.has(id)).sort();
+  if (duplicates.length > 0 || missing.length > 0 || extra.length > 0 || ids.length !== expected.size) {
+    throw new Error(
+      `mutation manifest 불일치 — expected=${EXPECTED_MUTATION_IDS.join(",")} `
+      + `actual=${ids.join(",")} missing=${missing.join(",") || "-"} `
+      + `extra=${extra.join(",") || "-"} duplicate=${duplicates.join(",") || "-"}`,
+    );
+  }
+}
+
+// 분모 가드 자체의 검출력 — 누락 1개와 중복 1개가 둘 다 RED 인지 확인한다.
+if (process.argv.includes("--selftest-manifest")) {
+  let missingDetected = false;
+  let duplicateDetected = false;
+  try { verifyMutationManifest(MUTATIONS.slice(1)); } catch { missingDetected = true; }
+  try { verifyMutationManifest([...MUTATIONS, MUTATIONS[0]]); } catch { duplicateDetected = true; }
+  if (!missingDetected || !duplicateDetected) {
+    console.error(`manifest selftest FAIL — missing=${missingDetected} duplicate=${duplicateDetected}`);
+    process.exit(1);
+  }
+  console.log("manifest selftest PASS — 누락 1개·중복 1개 모두 RED");
+  process.exit(0);
+}
+
+try {
+  verifyMutationManifest(MUTATIONS);
+} catch (error) {
+  console.error(`❌ ${(error).message}`);
+  process.exit(1);
+}
+console.log("PASS mutation manifest exact M1~M25 + duplicate 0");
 
 function runGate() {
   const res = spawnSync("npm", ["run", "--silent", "qa:genius-rag-identity"], {
