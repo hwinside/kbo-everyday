@@ -113,11 +113,39 @@ export function decideRun(changedFiles, basePkg, headPkg) {
 }
 
 // ── selftest ───────────────────────────────────────────────────────
-function extractTriggerPaths(workflowText) {
+export function extractTriggerPaths(workflowText) {
   // `paths: &gate_paths` 앵커 블록의 - "..." 항목 추출
   const m = workflowText.match(/paths: &gate_paths\n((?:\s+- "[^"]+"\n)+)/);
   if (!m) return null;
   return [...m[1].matchAll(/- "([^"]+)"/g)].map((x) => x[1]);
+}
+
+function normalizeTriggerPath(p) {
+  return p.replace(/\/\*\*$/, "/"); // glob → prefix 표기로 정규화
+}
+
+/** 분류 SSOT가 기대하는 전체 경로 set (정규화 표기) */
+export function ssotPaths() {
+  return [...MOTION_ONLY, ...SOURCE_IMPACT, ...BOTH_SHARED, "package.json"];
+}
+
+/** 삼순 #1254 3차 blocker: 단방향(trigger ⊆ 분류)만 검사하면 workflow에서 trigger를
+ *  삭제해도 GREEN → 정규화한 양쪽 경로 set equality를 검사한다.
+ *  반환: 오류 문자열 배열(빈 배열 = 결속 정상). */
+export function checkTriggerBinding(workflowText) {
+  const trig = extractTriggerPaths(workflowText);
+  if (!trig || trig.length === 0) return ["trigger paths 추출 실패"];
+  const errors = [];
+  const normTrig = trig.map(normalizeTriggerPath);
+  const trigSet = new Set(normTrig);
+  const ssotSet = new Set(ssotPaths());
+  for (const p of normTrig) {
+    if (!ssotSet.has(p)) errors.push(`trigger에 있으나 분류 SSOT에 없음: ${p}`);
+  }
+  for (const p of ssotSet) {
+    if (!trigSet.has(p)) errors.push(`분류 SSOT에 있으나 trigger에서 누락: ${p}`);
+  }
+  return errors;
 }
 
 function selftest(workflowPath) {
@@ -127,18 +155,29 @@ function selftest(workflowPath) {
     console.log(`  ${ok ? "✅" : "❌ SELFTEST-FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
   };
 
-  // ① trigger ↔ 분류 SSOT 결속 (누락 시 RED)
-  let paths = null;
+  // ① trigger ↔ 분류 SSOT 양방향 set equality (어느 쪽 누락이든 RED)
+  let wfText = null;
   try {
-    paths = extractTriggerPaths(readFileSync(workflowPath, "utf8"));
+    wfText = readFileSync(workflowPath, "utf8");
   } catch { /* fall through */ }
-  check("T0 trigger paths 추출", Array.isArray(paths) && paths.length > 0, workflowPath);
-  for (const p of paths ?? []) {
-    const norm = p.replace(/\/\*\*$/, "/"); // glob → prefix
-    check(`T1 trigger 경로 분류 결속: ${p}`, classifyPath(norm) !== null, "분류 SSOT에 누락 — MOTION_ONLY/SOURCE_IMPACT/BOTH_SHARED에 추가 필요");
-  }
-  // 미지 경로는 분류 불가(null)여야 결속 검사가 의미를 가진다(항상 non-null이면 T1이 공허)
+  check("T0 workflow 읽기", wfText !== null, workflowPath);
+  const bindErrors = wfText ? checkTriggerBinding(wfText) : ["workflow 없음"];
+  check("T1 trigger ↔ 분류 SSOT set equality", bindErrors.length === 0, bindErrors.join(" / "));
+  // 미지 경로는 분류 불가(null)여야 결속 검사가 의미를 가진다(항상 non-null이면 결속이 공허)
   check("T2 미지 경로는 분류 불가", classifyPath("src/some/unknown-file.ts") === null);
+
+  // ①' 결속 검사 검출력 mutant: workflow fixture에서 trigger 한 줄 삭제 → 반드시 RED
+  if (wfText) {
+    const wfMutants = [
+      ["T-M1 trigger 삭제(public/mascot/motion/**)", wfText.replace(/[^\S\n]*- "public\/mascot\/motion\/\*\*"\n/, "")],
+      ["T-M2 trigger 삭제(GeniusMascotImage.tsx)", wfText.replace(/[^\S\n]*- "src\/components\/dm\/GeniusMascotImage\.tsx"\n/, "")],
+    ];
+    for (const [name, mutated] of wfMutants) {
+      const changedActually = mutated !== wfText;
+      const red = changedActually && checkTriggerBinding(mutated).length > 0;
+      check(`${name} → RED 검출`, red, changedActually ? "삭제했는데 GREEN — 결속 검사 무력" : "mutant가 원본을 못 바꿈(정규식 확인)");
+    }
+  }
 
   // ② run_motion/run_source fixture
   const basePkg = {
@@ -184,6 +223,10 @@ function selftest(workflowPath) {
   // 혼합: 무관 package + component → motion만
   fx("혼합(무관 package + component)", ["package.json", "src/components/dm/GeniusMascotImage.tsx"],
     (() => { const p = clone(); p.scripts["qa:foo"] = "echo"; return p; })(), true, false);
+  // rename-away: --no-renames 전제 — 구 경로가 D로, 새 경로가 A로 둘 다 나타난다.
+  // 구 경로(D)가 목록에 있으므로 게이트가 반드시 돈다(rename으로 감시 대상을 옮겨도 skip 불가).
+  fx("rename-away(component 구경로 D+새경로 A)", ["src/components/dm/GeniusMascotImage.tsx", "src/components/dm/RenamedMascot.tsx"], null, true, false);
+  fx("rename-away(ledger 구경로 D+새경로 A)", ["scripts/assets/mascot-motion-SOURCES.sha256", "scripts/assets/renamed-ledger.sha256"], null, true, true);
 
   console.log(`SELFTEST: ${fail === 0 ? "GREEN" : "RED"}`);
   if (fail > 0) process.exit(1);
