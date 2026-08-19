@@ -1,0 +1,907 @@
+#!/usr/bin/env python3
+"""마스코트 영상 모션 파생 빌드 — SSOT → public/mascot/motion (재현 가능).
+
+사용:  python3 scripts/assets/build-mascot-motion.py [--check]
+  (기본)   파생 자산 26개 + DERIVED.json 을 새로 쓴다.
+  --check  현재 커밋된 자산이 이 스크립트로 재현되는지만 검사한다(쓰기 없음).
+
+왜 스크립트를 커밋하나 (삼순 #1228 P1):
+  파생 WebP 만 있으면 "이 26개가 어디서 어떻게 나왔는가"를 아무도 재현할 수 없다.
+  자산을 다시 뽑아야 할 때(해상도 변경·fps 변경·SSOT 갱신) 손으로 다시 만들면
+  그때마다 다른 결과가 나온다.
+
+⚠️ 2벌 역산(black+white 연립방정식으로 알파를 정확히 구하는 방법)을 먼저 시도했고
+   **13종 중 3종만 성공**해서 폐기했다. black/white 인코딩에서 WebP 중복 프레임 제거
+   개수가 달라 프레임 수가 어긋난다(bored 119 vs 121, swing 98 vs 120, cheerD 90 vs 100).
+   → 8/5 에 검증된 flood-fill 키잉(외곽 연결성 판정)으로 전환.
+     밝기 threshold 는 유니폼·모자가 남색이라 캐릭터 몸이 같이 날아간다(8/5 실측).
+
+⚠️ 프레임 duration 은 **12fps 고정**이다 (삼순 #1228 4축-①).
+   종전에는 "원본 타이밍 보존"이라며 원본 duration 을 합산했는데, SSOT WebP 의
+   frame duration 이 **전 종 0** 이라(실측) 합산이 무의미했고 100~200ms 로 제각각
+   갈렸다. 재생 속도가 종마다 다르면 같은 마스코트가 클립마다 다른 인물처럼 보인다.
+   12fps = 83.33ms → 정수로 쓸 수 없으므로 **83/84 를 번갈아** 넣어 평균을 맞춘다.
+"""
+import argparse
+import hashlib
+import json
+import os
+import sys
+
+import numpy as np
+from PIL import Image
+from scipy import ndimage
+
+# SSOT — 8/7 고정본(MANIFEST.sha256 포함). repo 밖이라 경로를 env 로 덮을 수 있다.
+SSOT = os.environ.get("MASCOT_SSOT", os.path.expanduser("~/.openclaw/workspace/assets/mascot/v1"))
+
+# ⚠️ **일부 SSOT WebP 는 캐릭터가 프레임 밖으로 잘려 있다** (삼순 #1228 ③, 실측).
+#    SSOT 13종 중 8종에서 머리가 캔버스 위쪽에 **평평하게** 붙어 있었다
+#    (`cheerpom` 상단 202px · `excited` 149px · `cheerC`/`cheer` 112px · `pitching` 109px ·
+#     `bored`/`cheerD` 74px · `thinking` 49px — 전 프레임 상단 **연속 불투명 런** 측정).
+#
+#    원본 생성물(Seedance 2.0 i2v, 1280x720 mp4)을 실측해보니 **6종은 원본이 무결**했다.
+#    → 잘림은 생성 결함이 아니라 **이 스크립트의 union-bbox crop 이 만든 파생 결함**이다.
+#      원본에서 다시 뽑으면 닫힌다.
+#
+#    아래 6종만 mp4 원본을 1차 소스로 쓴다. 나머지는 SSOT WebP 를 그대로 쓴다
+#    (`cheerpom` 은 SSOT 가 **모자 로고 제거본**이라 mp4 로 되돌리면 로고가 부활한다;
+#     `cheerD` 는 mp4 원본도 상단 28px 잘려 있어 원본 교체로 닫히지 않는다 — 둘 다
+#     하린아빠 판단 대기 상태이며, 여기서 임의로 바꾸지 않는다).
+#
+#    🔴 그런데 원본 mp4 도 **전 프레임 전수**로 재보니 무결한 것은 3종뿐이었다
+#       (`bored`·`thinking`·`cheer`). 7프레임 샘플로는 무결해 보였는데, 잘린 프레임이
+#       동작 중 한순간(1~18프레임)에만 나타나 샘플에 안 걸린 것이었다.
+#       → **분모를 잘라놓고 전체라고 말하지 않는다.**
+#
+#    그래서 하린아빠 승인(2026-08-17 01:24 "재생성")을 받아 잘린 종을 Seedance 2.0 i2v 로
+#    **재생성**했다(`assets/mascot/v2-regen/*.mp4`). 재생성 계약 2가지가 핵심이다:
+#      ① **시작 이미지에 여백을 만든다** — 깨끗한 프레임에서 캐릭터를 떼어 캔버스의
+#         38~55% 크기로 줄이고 사방 여백을 준 레퍼런스를 쓴다. 기존 원본은 캐릭터가
+#         프레임을 꽉 채워서 팔만 올려도 잘렸다.
+#      ② **프롬프트에 잘림 금지를 명시** — "never touches or crosses the edge" +
+#         고정 카메라·스케일 유지. `pitching` 은 이래도 3회 잘려(좌측 276px) 동작 자체를
+#         "팔꿈치만 움직이는 작은 동작"으로 축소해서야 통과했다.
+#    전 재생성본은 아래 edge-run 계약을 **전 프레임 전수**로 통과했다(실측 여백 107~214px).
+VIDEO_SRC_ROOT = os.environ.get(
+    "MASCOT_VIDEO_SRC", os.path.expanduser("~/.openclaw/workspace/assets/mascot"))
+# 13종 **전부** 이 폴더의 mp4 에서 뽑는다. SSOT WebP 경유 경로는 더 이상 쓰지 않는다
+# (그 경로가 잘림의 원인이었고, 종별로 소스가 갈리면 어느 자산이 어디서 왔는지 추적이 안 된다).
+#   · 9종 = 2026-08-17 재생성본(잘림 0 실측)
+#   · 4종 = 원본 mp4 가 전수 무결이라 그대로 복사(bored·thinking·cheerG·headspin)
+# 🔴 2026-08-18 하린아빠 재지적으로 **v1 확정본(SSOT WebP)** 로 전면 복귀했다.
+#    직전까지 이 자리는 재생성 mp4(v2-regen→v3-original)를 강제했는데, 그 mp4 들은
+#    하린아빠가 **여러 번 컨펌한 최종본이 아니라 다른 세대**였다(무표정 계약 위반: 응원
+#    클립이 우울/웃는 표정으로 시작, 스윙·투구 모션도 원본과 다름 — 프로덕션 실측).
+#    확정본은 `assets/mascot/v1/*-black.webp`(= SSOT, README 고정 2026-08-07) 하나뿐이다.
+#    v1 자체가 일부 변에 닿는 종은 아래 `src_edge_contact` 로 기록하고, 원본이 닿지 않은
+#    변에 파생 edge-run 이 새로 생길 때만 실패한다(확정본 상속과 파생 결함을 분리).
+#    ⇒ VIDEO_SOURCES 를 비워 **13종 전부 SSOT WebP 경로**로 태운다.
+VIDEO_SOURCES: dict[str, str] = {}
+# 대상 클립 목록 — **닫힌 집합**으로 코드에 고정한다. 종전엔 VIDEO_SOURCES(mp4 시절) 또는
+# v1 폴더 글롭에서 파생시켰는데, 폴더 글롭은 파일 하나가 늘거나 빠지면 빌드 대상이
+# 조용히 바뀌는 경로였다(삼순 2026-08-17). 소스가 없으면 아래 [B-SRC-MISSING] 이 죽는다.
+CLIP_NAMES = (
+    "bored", "cheer", "cheerC", "cheerD", "cheerG", "cheerpom", "cheerstick",
+    "cheertowel", "excited", "headspin", "pitching", "swing", "thinking",
+)
+# crop 안전여백 — union bbox 에 사방으로 이만큼을 더 남긴다(삼순 #1228 ③ 계약).
+# 0 이면 캐릭터 실루엣이 캔버스 모서리에 그대로 닿아, 안티에일리어싱 여유조차 없다.
+SAFE_PAD = 6
+OUT = os.path.join(os.path.dirname(__file__), "..", "..", "public", "mascot", "motion")
+MANIFEST = os.path.join(OUT, "DERIVED.json")
+# v1 확정본 WebP 해시 대장 — **repo 안**에 산다. 원본 바이너리는 repo 밖에 있어서,
+# 어떤 확정본으로 빌드됐는지를 repo 만 보고도 판정할 수 있게 하는 것이 목적이다.
+SRC_LEDGER = os.path.join(os.path.dirname(__file__), "mascot-motion-SOURCES.sha256")
+# `--check` 가 바이트까지 볼 수 있는 조합인가 (main() 에서 manifest 의 toolchain 과 대조).
+# 배포본↔생성본 알파 실루엣 IoU 하한(프레임별 최악값).
+#
+# 🔴 임계는 **두 실측 분포 사이의 빈 구간**에서 고른다 — 임의 통과선 금지.
+#      · 다른 클립 쌍(78개 전수, 같은 툴체인)      최대 **0.8095**  ← 위조는 여기 아래
+#      · 같은 그림 크로스플랫폼(mac 생성 ↔ Linux 재생성) 최악 **0.9832** ← 정상은 여기 위
+#        (CI 실측: excited 0.9832@f50 · headspin 0.9847@f59 · headspin-poster 0.9855@f0)
+#    두 분포 사이 0.8095~0.9832 가 통째로 비어 있고, 0.95 는 그 한가운데다.
+#    위조 쪽 여유 +0.14 · 정상 쪽 여유 -0.033 으로 양쪽 모두 오탐/누락이 없다.
+#
+# 🔴 최초에 0.99 로 잡았던 것은 **같은 툴체인 분포만 보고 고른 값**이라 CI 에서
+#    정상 자산 3개가 걸렸다. 크로스플랫폼 임계는 크로스플랫폼 실측으로 정해야 한다.
+SILHOUETTE_IOU_MIN = 0.95
+# 원본과 파생 edge-run 을 각 변 길이로 정규화한 뒤, 파생 쪽 증가를 출력 픽셀로 환산한다.
+# 리사이즈/디코더 경계 흔들림 1px만 허용하고 그보다 더 잘리면 실패한다.
+EDGE_GROWTH_PX_MAX = 1
+
+# 배경 색 허용 오차.
+# 🔴 종전 26 은 **너무 넓었다**(삼순 #1228 P0-①, 실측으로 확정).
+#    생성 원본의 배경은 완전 평탄한 단색이다(실측: 남색 32,43,70 / 검정 0,0,0 / 회색 46,46,46)
+#    — 그런데 마스코트의 **모자·유니폼도 남색**이라, 26 이면 배경과의 색거리가 26 안에 들어오는
+#    유니폼 픽셀이 배경과 **연결**돼 flood-fill 이 몸통을 바깥에서부터 파먹는다.
+#    실측(cheerC f34 원본): tol26 = 60,712px vs tol6 = 79,234px — **23% 가 사라졌다.**
+#
+#    이게 왜 종전 게이트를 다 통과했나:
+#      · 파먹힌 영역은 **바깥과 연결**돼 있으므로 원본 해상도에서는 '내부 구멍'이 아니다(hole=0).
+#      · 다운스케일(LANCZOS)에서 가느다란 연결 다리가 끊기면서 **그제서야 내부 구멍이 된다**
+#        (실측: 원본 hole 0 → 192px 파생 hole 509px).
+#      · edge-run 은 모서리만 보므로 몸통 한가운데가 뚫려도 0 이다.
+#    → 숫자 3개(edge-run·채움률·bbox)가 전부 GREEN 인데 화면은 속이 빈 마스코트였다.
+TOL = 8
+TARGET_H = 192    # 2x 자산 (렌더 96px)
+STEP = 2          # 24fps → 12fps
+QUALITY = 62
+# 12fps = 83.33ms/frame. 정수만 쓸 수 있어 83/84 를 번갈아 넣어 평균을 맞춘다.
+FRAME_MS = (83, 84)
+
+
+# 전경 조각 중 **가장 큰 조각의 이 비율 미만**은 키잉 잡티로 보고 버린다.
+# 배경의 압축 노이즈가 섬처럼 남으면 파생 자산에 점이 찍힌다(실측: thinking 365px).
+SPECK_FRAC = 0.005
+
+# 내부 구멍 허용치(px) — 다운스케일 경계에서 1~2px 짜리는 불가피하다.
+HOLE_PX_MAX = 8
+# 실루에 변화량 하한(%) — "활발하게 움직이는" 요구사항을 숫자로 고정한 것.
+MOTION_PCT_MIN = 1.2
+
+# 🔴 **역방향** 계약 (삼순 2026-08-17). 결함을 지우는 보정이 정상 요소까지 지우면
+# 그것도 똑같은 화면 결함이다. 둘 다 원본 대조로 재기 때문에 임의 임계값이 아니다.
+#   · overfill  = fill_holes 가 원본의 진짜 배경(다리 사이 등)을 메운 양 — 실측 13종 전부 0.
+#   · dropped   = speck 제거로 사라진 조각이 **진짜 소품이었는가**.
+#
+# 🔴 처음엔 `dropped <= 500px` 로 둔었는데 그건 **임의 통과선**이었다(삼순 지적).
+#    크기로는 가를 수 없다 — 실측에서 노이즈가 411px 까지 커졌고, 색거리도 못 가른다
+#    (bored 노이즈는 순백색 dist 255, thinking 은 dist 8 의 엷은 그림자).
+#    가르는 것은 **지속성**이다. 진짜 소품(공·응원도구)은 연속 프레임에 계속 있고,
+#    생성모델의 압축 아티팩트는 한→두 프레임 반짝이고 사라진다.
+#    실측(색이 뚜렷한 30px+ 조각의 최대 연속 프레임): bored 4 · cheer 1 · 나머지 11종 0.
+#    기준 6프레임은 12fps 에서 **0.5초** — 사람이 "물체가 있다"고 인지하는 최소 노출시간이며,
+#    통과시키려고 고른 값이 아니다(현재 최대값 4 와 기준 6 은 같은 자리에서 나오지 않았다).
+OVERFILL_PX_MAX = 0
+DROPPED_MIN_PX = 30          # 이보다 작은 조각은 애초에 물체로 안 보인다
+DROPPED_SOLID_DIST = TOL * 3  # 이보다 배경색에서 멀면 '배경 노이즈'가 아니라 진한 물체
+DROPPED_PERSIST_MAX = 5       # 연속 6프레임(0.5초) 이상 지속하면 소품이다 → FAIL
+
+
+def key_frame(rgb: np.ndarray) -> np.ndarray:
+    """flood-fill 키잉 — 네 모서리 색과 **외곽에 연결된** 영역만 배경으로 본다.
+
+    단순 색 거리 판정이면 캐릭터 안쪽의 같은 색 픽셀(모자·유니폼 그림자)까지
+    뚫려서 구멍이 난다. 연결성을 봐야 안쪽이 살아남는다.
+
+    연결성만으로는 부족하다는 것이 삼순 #1228 P0-① 로 드러났다. 배경과 **색이 가까운**
+    유니폼을 타고 flood-fill 이 몸 안으로 걸어 들어오면 그 경로 전체가 바깥과
+    연결돼 버려서, 그 순간에는 '구멍'으로 보이지도 않는다. 그래서 세 겹으로 막는다:
+      ① TOL 을 8 로 좁혀 애초에 유니폼을 배경으로 오인하지 않는다(위 상수 주석 참조).
+      ② `binary_fill_holes` — 전경으로 **둘러싸인** 배경 조각은 몸의 일부로 되돌린다.
+         정상적인 틈(다리 사이·들어올린 팔과 몸통 사이)은 바깥과 이어져 있으므로
+         메워지지 않는다(실측으로 확인).
+      ③ 큰 조각 대비 0.5% 미만의 부유 조각은 버린다 — 배경 압축 노이즈 제거.
+    """
+    al, _ = key_frame_audit(rgb)
+    # 경계 1px 을 부드럽게 — 계단현상 제거. 배경 쪽은 0.55 로 눌러 halo 를 줄인다.
+    af = ndimage.uniform_filter(al.astype(np.float32), size=3)
+    return np.where(al > 0, np.maximum(al, af), af * 0.55).clip(0, 255).astype(np.uint8)
+
+
+def key_frame_audit(rgb: np.ndarray):
+    """`key_frame` 의 하드 알파 + **그 과정에서 무엇을 지우고 메웠는지**를 함께 돌려준다.
+
+    🔴 삼순 2026-08-17 — **역방향 false-green**. 위 ②③(fill_holes·speck 제거)는 결함을
+    지우는 도구인 동시에 **정상 요소를 지우는 도구**다. 한 방향(원본 전경 소실=0)만
+    재면 그 부작용이 그대로 통과한다. 그래서 두 수치를 같이 내보낸다:
+      · `overfill` = fill_holes 가 **원본에서 진짜 배경**이었던 곳을 메운 픽셀 수.
+                     다리 사이 같은 정상 음공간을 메우면 여기 걸린다.
+      · `dropped`  = speck 제거로 사라진 분리 조각 중 **최대 조각** 크기.
+                     공·응원도구 같은 의미 있는 작은 요소가 지워졌는지를 본다.
+    둘 다 임의 임계값이 아니라 **원본 픽셀 대조**로 잰다.
+    """
+    a = rgb.astype(np.int16)
+    h, w, _ = a.shape
+    bgc = np.median(np.array([a[2, 2], a[2, w - 3], a[h - 3, 2], a[h - 3, w - 3]]), axis=0)
+    is_bg = np.abs(a - bgc).max(axis=2) <= TOL
+    lab, _ = ndimage.label(is_bg)
+    edge = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
+    edge.discard(0)
+    raw_fg = ~np.isin(lab, list(edge))
+
+    comp, ncomp = ndimage.label(raw_fg)
+    kept, dropped_px, solid_drop = raw_fg, 0, 0
+    if ncomp > 1:
+        sizes = ndimage.sum(raw_fg, comp, range(1, ncomp + 1))
+        keep = [i + 1 for i, s in enumerate(sizes) if s >= sizes.max() * SPECK_FRAC]
+        kept = np.isin(comp, keep)
+        gone = raw_fg & ~kept
+        if gone.any():
+            dist = np.abs(a - bgc).max(axis=2)
+            gl, gn = ndimage.label(gone)
+            for c in range(1, gn + 1):
+                m = gl == c
+                px = int(m.sum())
+                dropped_px = max(dropped_px, px)
+                # 크고(물체로 보일 만하고) 색이 배경과 뚜렷한 조각만 '소품 후보'다.
+                if px >= DROPPED_MIN_PX and dist[m].max() > DROPPED_SOLID_DIST:
+                    solid_drop = max(solid_drop, px)
+
+    fg = ndimage.binary_fill_holes(kept)
+    # 메운 자리 중 원본에서 **진짜 배경색**이었던 픽셀만 과채움으로 센다.
+    overfill_px = int(((fg & ~kept) & is_bg).sum())
+    return fg.astype(np.uint8) * 255, {"overfill": overfill_px, "dropped": dropped_px,
+                                       "solid_drop": solid_drop}
+
+
+def _read_video_frames(path: str):
+    """mp4 원본을 디코딩해 RGB 프레임 배열로 돌려준다 (ffmpeg → rawvideo 파이프)."""
+    import subprocess
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", path],
+        capture_output=True, text=True, check=True)
+    w, h = (int(v) for v in probe.stdout.strip().split(",")[:2])
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True)
+    buf = np.frombuffer(proc.stdout, dtype=np.uint8)
+    n = buf.size // (w * h * 3)
+    return [buf[i * w * h * 3:(i + 1) * w * h * 3].reshape(h, w, 3).astype(np.float32)
+            for i in range(n)], (w, h)
+
+
+def build(name: str):
+    video_rel = VIDEO_SOURCES.get(name)
+    video_path = os.path.join(VIDEO_SRC_ROOT, video_rel) if video_rel else None
+    if video_path and os.path.exists(video_path):
+        # 잘리지 않은 원본에서 다시 뽑는다. mp4 는 1280x720 이라 SSOT(480px)보다
+        # 프레임당 화소가 7배 많다 — 다운스케일 품질도 함께 좋아진다.
+        raw, _ = _read_video_frames(video_path)
+        source_kind = f"video:{video_rel}"
+        # 원본은 24fps 121프레임. SSOT 경유(STEP=2)와 같은 12fps 로 맞춘다.
+        step = 2
+    else:
+        src = os.path.join(SSOT, f"{name}-black.webp")
+        im = Image.open(src)
+        raw = []
+        for i in range(im.n_frames):
+            im.seek(i)
+            raw.append(np.asarray(im.convert("RGB")).astype(np.float32))
+        source_kind = f"ssot:{name}-black.webp"
+        step = STEP
+    idx = list(range(0, len(raw), step))
+    alphas, audits = [], []
+    for i in idx:
+        hard, au = key_frame_audit(raw[i])
+        soft = ndimage.uniform_filter(hard.astype(np.float32), size=3)
+        alphas.append(np.where(hard > 0, np.maximum(hard, soft), soft * 0.55)
+                      .clip(0, 255).astype(np.uint8))
+        audits.append(au)
+    overfill_px = max(a["overfill"] for a in audits)
+    dropped_px = max(a["dropped"] for a in audits)
+    # 색이 뚜렷한 조각이 **몇 프레임 연속**으로 사라졌는가 — 소품이면 이어진다.
+    persist = best = 0
+    for au in audits:
+        persist = persist + 1 if au["solid_drop"] > 0 else 0
+        best = max(best, persist)
+    dropped_persist = best
+
+    # union bbox — 전 프레임 합집합으로 잘라야 동작 중 캐릭터가 잘리지 않는다.
+    st = np.stack([a > 96 for a in alphas])
+    ys, xs = np.where(st.any(axis=0))
+    y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    # ⚠️ **안전여백**. 여백 0 이면 캐릭터가 캔버스 모서리에 그대로 닿아, 원본이 멀쩡해도
+    #    파생 자산이 "평평하게 잘린" 것처럼 보인다(삼순 #1228 ③ 의 실제 원인).
+    #    캔버스 밖으로는 나갈 수 없으므로 clip 한다 — 원본이 이미 잘린 종은 여기서
+    #    여백을 못 얻고, 그 사실은 아래 edge-run 계약 검사로 드러난다.
+    H, W = alphas[0].shape
+    # 🔴 원본 접촉량 SSOT — **승인된 canonical crop+resize**를 원본 alpha에 적용한 뒤
+    # 각 변 길이로 정규화한다. raw 480x302와 tight-crop 출력은 정상이어도 비율이 달라
+    # 직접 비교할 수 없다(실측 bored +20px 오보). canonical 기준을 actual crop 대입 전에
+    # 별도로 고정해야, 아래 crop 로직이 더 공격적으로 바뀌어도 기준까지 함께 움직이지 않는다.
+    ref_y0 = max(0, y0 - SAFE_PAD); ref_x0 = max(0, x0 - SAFE_PAD)
+    ref_y1 = min(H, y1 + SAFE_PAD); ref_x1 = min(W, x1 + SAFE_PAD)
+    ref_bw, ref_bh = ref_x1 - ref_x0, ref_y1 - ref_y0
+    ref_nw = max(1, round(ref_bw * TARGET_H / ref_bh))
+    src_edge_run = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+    for alpha in alphas:
+        ref_alpha = np.asarray(Image.fromarray(alpha[ref_y0:ref_y1, ref_x0:ref_x1])
+                               .resize((ref_nw, TARGET_H), Image.LANCZOS))
+        run = max_edge_run(ref_alpha)
+        src_edge_run = {k: max(src_edge_run[k], run[k]) for k in src_edge_run}
+    src_edge_run_ratio = {
+        "top": round(src_edge_run["top"] / ref_nw, 8),
+        "bottom": round(src_edge_run["bottom"] / ref_nw, 8),
+        "left": round(src_edge_run["left"] / TARGET_H, 8),
+        "right": round(src_edge_run["right"] / TARGET_H, 8),
+    }
+    src_edge_contact = {k: src_edge_run[k] > 0 for k in src_edge_run}
+
+    # 실제 파생 crop. mutation은 이 줄만 바꿔 canonical reference와 actual의 차이를 만든다.
+    y0 = max(0, y0 - SAFE_PAD); x0 = max(0, x0 - SAFE_PAD)
+    y1 = min(H, y1 + SAFE_PAD); x1 = min(W, x1 + SAFE_PAD)
+    bw, bh = x1 - x0, y1 - y0
+    nw = max(1, round(bw * TARGET_H / bh))
+
+    # 원본 배경색 — 키잉 결함 판정에 쓴다(아래 `keying_defect_px`). 첫 프레임 네 모서리.
+    _f0 = raw[0].astype(np.int16)
+    _h0, _w0, _ = _f0.shape
+    src_bgc = np.median(np.array([_f0[2, 2], _f0[2, _w0 - 3],
+                                  _f0[_h0 - 3, 2], _f0[_h0 - 3, _w0 - 3]]), axis=0)
+
+    out, src_small = [], []
+    for k, i in enumerate(idx):
+        al = (alphas[k][y0:y1, x0:x1].astype(np.float32) / 255.0)[..., None]
+        c = raw[i][y0:y1, x0:x1]
+        # 키잉 **전** 원본을 파생 해상도로 줄여 같이 들고 간다 — 구멍이 키잉 결함인지
+        # 정상 음공간인지는 원본 색을 봐야만 갈린다(임의 임계값으로 가르면 false-green).
+        src_small.append(np.asarray(
+            Image.fromarray(c.astype(np.uint8)).resize((nw, TARGET_H), Image.NEAREST)))
+        # 검정 배경 합성본이므로 premultiplied 로 보고 un-premultiply → 검정 fringe 제거.
+        est = np.clip(np.where(al > 0.02, c / np.maximum(al, 0.02), c), 0, 255)
+        rgba = np.concatenate([est, al * 255], axis=2).astype(np.uint8)
+        small = np.asarray(Image.fromarray(rgba).resize((nw, TARGET_H), Image.LANCZOS))
+        # ⚠️ **완전투명 픽셀의 RGB 를 0 으로 지운다** — 반드시 **리사이즈 뒤에** (삼순 P0-②).
+        #    ① un-premultiply 는 alpha 로 나누므로 alpha≈0 인 곳의 RGB 에 원본 배경색
+        #       (검정/남색)이 그대로 남는다.
+        #    ② LANCZOS 는 이웃 색을 섞으므로, 리사이즈 **전에** 지워도 유니폼 남색이
+        #       투명 영역으로 다시 번진다(실측: 지우고 재빌드했는데 swing 투명 영역에
+        #       (11,11,68) 7,486px 이 그대로 남았다 — 순서가 틀렸던 것).
+        #    화면에는 안 보이지만 **알파를 무시하고 RGB 만 읽는 도구**(raw 뷰어·썸네일러·
+        #    일부 이미지 파이프라인)에서는 "큰 남색 직사각형"으로 보인다 — 삼순이 실제로
+        #    그렇게 관측했다. 안 보인다고 쓰레기를 남기면 다른 소비 경로에서 그대로 터진다.
+        #    (`exact=True` 로 저장하므로 이 0 이 인코딩에서도 보존된다.)
+        small = small.copy()
+        small[..., :3][small[..., 3] == 0] = 0
+        # ⚠️ Pillow WebP 인코더는 **연속된 동일 프레임을 합치고 duration 을 더한다.**
+        #    그러면 83+84=167ms 프레임이 생겨 "전 프레임 12fps" 계약이 깨진다
+        #    (실측: pitching·thinking·cheerD 각 1프레임). 원본 정지 구간에서 발생한다.
+        #    ⚠️ **RGB 만 흔들면 소용없다** — alpha=0 픽셀의 RGB 는 lossy 인코딩이 평탄화해
+        #       병합이 되살아난다. WebP 는 **alpha 를 무손실로** 저장하므로 alpha 를 흔든다.
+        #       alpha 1~3/255 ≈ 0.4~1.2% + RGB 0 → 화면에서는 보이지 않는다.
+        #    (numpy 단계에서 넣는다 — `Image.fromarray` 결과는 readonly 라 `load()` 로
+        #     쓰면 `ValueError: image is readonly` 가 난다. 실측으로 빌드가 죽었다.)
+        small[0, 0] = (0, 0, 0, 1 + (k % 3))
+        out.append(Image.fromarray(small))
+
+    # 프레임별 duration — 83/84 교대. Pillow 는 리스트를 받아 프레임마다 적용한다.
+    durations = [FRAME_MS[i % len(FRAME_MS)] for i in range(len(out))]
+    return out, {"frames": len(out), "w": nw, "h": TARGET_H,
+                 "durations_ms": durations, "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2),
+                 "source_frames": len(raw), "source": source_kind,
+                 "overfill_px": overfill_px, "dropped_component_px": dropped_px,
+                 "dropped_persist_frames": dropped_persist,
+                 "src_edge_contact": src_edge_contact,
+                 "src_edge_run": src_edge_run,
+                 "src_edge_run_ratio": src_edge_run_ratio,
+                 "src_frames": src_small, "src_bgc": src_bgc}
+
+
+def max_edge_run(alpha: np.ndarray) -> dict:
+    """네 변에서 **연속 불투명 런**의 최댓값. 이게 0 이 아니면 캐릭터가 잘린 것이다.
+
+    단순 "모서리에 불투명 픽셀이 있나"로는 부족하다 — 안티에일리어싱 1~2px 접촉과
+    머리가 평평하게 잘린 것은 **연속 길이**로만 구분된다(실측으로 확정).
+    """
+    def run(line):
+        best = cur = 0
+        for v in line:
+            cur = cur + 1 if v >= 250 else 0
+            best = max(best, cur)
+        return best
+    return {"top": run(alpha[0]), "bottom": run(alpha[-1]),
+            "left": run(alpha[:, 0]), "right": run(alpha[:, -1])}
+
+
+def _enclosed(mask: np.ndarray) -> np.ndarray:
+    """`mask`(불투명) 기준으로 **바깥과 연결되지 않은** 투명 영역."""
+    lab, _ = ndimage.label(~mask)
+    border = set(lab[0, :]) | set(lab[-1, :]) | set(lab[:, 0]) | set(lab[:, -1])
+    border.discard(0)
+    return (lab > 0) & (~np.isin(lab, list(border)))
+
+
+def enclosed_hole_px(alpha: np.ndarray) -> int:
+    """몸 안의 구멍 픽셀 수 — **두 임계값에서 동시에** 닫힌 영역만 센다.
+
+    edge-run 은 캔버스 **변**만 본다. 몸통 한가운데가 뚫려도 0 이다
+    (삼순 2026-08-17 P0-①: cheerC 509px · cheertowel 127px 이 edge-run 0 으로 통과했다).
+
+    ⚠️ 단일 임계값은 경계가 반투명인 곳에서 흔든다. alpha>128 만 보면 진한
+    안티에일리싱 띄가 버팔처럼 작용해 정상 틈을 구멍으로 오보하고, alpha>24 만
+    보면 엷은 구멍을 놓친다. 둘 다에서 닫힌 영역만 구멍으로 본다.
+    """
+    return int((_enclosed(alpha > 128) & _enclosed(alpha > 24)).sum())
+
+
+def keying_defect_px(alpha: np.ndarray, src_rgb: np.ndarray, bgc: np.ndarray) -> int:
+    """닫힌 투명 영역 중 **원본에서 배경이 아니었던** 픽셀 수 = 키잉이 몸을 먹은 양.
+
+    🔴 이게 이 파일의 핵심 판별자다. "닫힌 투명 영역"은 두 가지가 섞여 있다:
+      · **정상 음공간** — 두 다리 사이처럼 발끝이 붙어 닫힐 수 있다. 원본에서도 거기는
+        진짜 배경이다(실측: `excited` 다리 사이 117px).
+      · **키잉 결함** — 배경과 색이 가까운 유니폼을 배경으로 오인해 몸을 파먹은 경우.
+        원본에서 그 자리는 **배경색이 아니다**(실측: 수정 전 `cheerC` 321px).
+    숫자 크기로는 둘을 가를 수 없고(37~509px 가 섞인다), 임의 임계값을 고르면 그게
+    바로 "통과시키려고 고른 값"이 된다. 그래서 **원본 픽셀을 직접 본다.**
+    """
+    holes = _enclosed(alpha > 128) & _enclosed(alpha > 24)
+    if not holes.any():
+        return 0
+    # 파생 좌표 → 원본 좌표 (동일 비율 축소만 있으므로 매핑은 단순 스케일)
+    h, w = holes.shape
+    sh, sw, _ = src_rgb.shape
+    ys, xs = np.nonzero(holes)
+    sy = np.clip((ys * sh // h), 0, sh - 1)
+    sx = np.clip((xs * sw // w), 0, sw - 1)
+    px = src_rgb[sy, sx].astype(np.int16)
+    # 원본에서 배경색과 멀면 → 거기에 몸이 있었다 → 키잉이 먹은 것.
+    return int((np.abs(px - bgc).max(axis=1) > TOL * 2).sum())
+
+
+def silhouette_motion_pct(masks) -> float:
+    """인접 프레임 실루에 IoU 거리의 평균(%) — **정말 움직이는가**.
+
+    잘림을 피하려고 동작을 줄이면 수치 계약은 전부 통과하면서 화면은 호흡 idle 이 된다
+    (삼순 2026-08-17 P0-① `pitching` 0.48%). 그러니 움직임도 계약으로 재는다.
+    """
+    if len(masks) < 2:
+        return 0.0
+    tot = 0.0
+    for i in range(1, len(masks)):
+        inter = np.logical_and(masks[i], masks[i - 1]).sum()
+        union = np.logical_or(masks[i], masks[i - 1]).sum()
+        tot += 1 - inter / union if union else 0.0
+    return round(tot / (len(masks) - 1) * 100, 2)
+
+
+def _toolchain_note() -> str:
+    """로그에 찍는 **정보 전용** 문자열. 🔴 판정에 쓰지 않는다.
+
+    종전엔 이 값이 manifest 에 저장돼 검사 강도를 골랐고, 그래서 위조 한 줄로 검사를
+    약화시킬 수 있었다(삼순 P0). 지금은 어디에도 저장하지 않고 사람이 읽기 위해서만 찍는다.
+    """
+    import platform
+    from PIL import features
+    return f"webp={features.version('webp')} / os={platform.system()}"
+
+
+def webp_alpha_masks(path: str):
+    """WebP(애니메이션/정지)를 디코딩해 프레임별 알파 실루엣 마스크를 돌려준다.
+
+    바이트가 아니라 **그림 자체**를 비교하기 위한 것이다.
+    """
+    masks, size = [], None
+    with Image.open(path) as im:
+        size = im.size
+        for i in range(getattr(im, "n_frames", 1)):
+            im.seek(i)
+            a = np.array(im.convert("RGBA"))[:, :, 3]
+            masks.append(a > 128)
+    return masks, size
+
+
+def semantic_diff(shipped: str, built: str) -> list:
+    """배포된 자산이 **이 원본에서 방금 만든 것과 같은 그림인가**.
+
+    🔴 왜 이게 필요한가 (삼순 2026-08-17 P0):
+    종전 구조는 툴체인이 다르면(=CI 는 항상 그렇다) shipped WebP 를 **존재만** 확인했다.
+    그래서 자산을 다른 정상 클립으로 바꾸고 manifest 해시만 같이 갱신하면
+    **원본에서 생성되지 않은 자산이 `--check` GREEN** 이었다. 바이트 비교가 불가능한
+    환경에서도 "같은 그림인가"는 물어야 한다 — 그걸 디코딩해서 직접 대조한다.
+
+    비교 축(전부 인코더 차이에 둔감하고, 클립이 바뀌면 즉시 깨진다):
+      · 프레임 수      — exact
+      · 캔버스 w·h     — ±2px (crop bbox 디코딩 흔들림)
+      · 알파 실루엣 IoU — 프레임별 교집합/합집합. 같은 그림이면 1.0 에 붙고,
+                         다른 클립이면 급락한다(임계는 실측으로 정한다).
+    """
+    try:
+        sm, ssz = webp_alpha_masks(shipped)
+        bm, bsz = webp_alpha_masks(built)
+    except Exception as exc:  # 디코딩 실패는 통과가 아니라 **판정 불능** → 실패로 다룬다
+        return [f"디코딩 실패({exc})"]
+
+    broken = []
+    if len(sm) != len(bm):
+        broken.append(f"프레임수({len(sm)}\u2260{len(bm)})")
+    for axis, a, b in (("w", ssz[0], bsz[0]), ("h", ssz[1], bsz[1])):
+        if abs(a - b) > 2:
+            broken.append(f"{axis}({a}\u2260{b})")
+    if broken:
+        return broken  # 크기·프레임이 다르면 IoU 는 의미가 없다
+
+    worst, worst_i = 1.0, -1
+    for i, (a, b) in enumerate(zip(sm, bm)):
+        if a.shape != b.shape:
+            n = (min(a.shape[0], b.shape[0]), min(a.shape[1], b.shape[1]))
+            a, b = a[:n[0], :n[1]], b[:n[0], :n[1]]
+        union = np.logical_or(a, b).sum()
+        iou = float(np.logical_and(a, b).sum() / union) if union else 1.0
+        if iou < worst:
+            worst, worst_i = iou, i
+    if worst < SILHOUETTE_IOU_MIN:
+        broken.append(f"실루엣 IoU {worst:.4f}@f{worst_i} (계약 >= {SILHOUETTE_IOU_MIN})")
+    return broken
+
+
+def sha256(path: str) -> str:
+    with open(path, "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true", help="재현 검사만(쓰기 없음)")
+    ap.add_argument("--rewrite-ledger", action="store_true",
+                    help="v1 확정본 WebP 해시 대장을 현재 파일 기준으로 갱신(의도한 교체일 때만)")
+    # 🔴 **source-level 결함주입**을 위한 감사 전용 모드 (삼순 2026-08-17 P0).
+    #    A4/A5 를 최종 WebP 가 아니라 **빌더 입력**에 걸려면, 원본을 변이시킨 임시 폴더로
+    #    빌더를 돌려 `key_frame_audit` 가 실제로 과채움·소품삭제를 뱉는지 봐야 한다.
+    #    13종 전체를 돌리면 회당 5분+ 이라 `--only` 로 대상 1종만 태운다.
+    #    `--audit-only` 는 자산·manifest·대장을 **쓰지 않는다**(판정만).
+    ap.add_argument("--only", default=None,
+                    help="이 클립 1종만 빌드(결함주입 감사용)")
+    ap.add_argument("--audit-only", action="store_true",
+                    help="결함 판정만 하고 자산·manifest·대장을 쓰지 않는다")
+    args = ap.parse_args()
+
+
+    # 🔴 대상 목록은 **`CLIP_NAMES` 가 SSOT** 다 — 코드에 고정된 닫힌 집합(위 상수 주석 참조).
+    names = sorted(CLIP_NAMES)
+    if args.only:
+        if args.only not in CLIP_NAMES:
+            print(f"❌ --only {args.only} 은 CLIP_NAMES 에 없다", file=sys.stderr)
+            return 2
+        names = [args.only]
+
+    # 🔴 **확정본 WebP 가 없으면 조용히 넘어가지 않고 죽는다** (삼순 2026-08-17 P1 계승).
+    #    mp4 시절 이 검사는 "없으면 구 SSOT 로 조용히 fallback" 을 막는 것이었다. v1 복귀
+    #    후에도 원리는 같다 — manifest 가 "v1 확정본에서 뽑았다"고 말하려면 그 파일이
+    #    실제로 있어야 하고, 없으면 여기서 멈춰야 "왜 안 돼요"가 바로 보인다.
+    missing = [f"{n} ← {os.path.join(SSOT, f'{n}-black.webp')}"
+               for n in names
+               if not os.path.exists(os.path.join(SSOT, f"{n}-black.webp"))]
+    if missing:
+        print(f"❌ [B-SRC-MISSING] v1 확정본 WebP {len(missing)}개 없음 — 중단한다:",
+              file=sys.stderr)
+        for m in missing:
+            print(f"   · {m}", file=sys.stderr)
+        print("  → MASCOT_SSOT 로 v1 확정본 폴더를 지정하세요.", file=sys.stderr)
+        return 2
+
+    # 🔴 원본이 있기만 하면 되는 게 아니라 **그 원본이여야** 한다 (삼순 2026-08-17 P1).
+    #    v1 확정본은 repo 밖에 산다. 그러면 "어떤 파일을 썼는가"를 repo 만 보고는 알 수
+    #    없으므로, **sha256 대장을 repo 에 둔다** (`SOURCES.sha256`). 해시가 어긋난 상태로
+    #    빌드하면 멈춘다 — "원본을 조용히 바꿔놓고 같은 자산이라고 말하는" 경로를 닫는다.
+    #    이 대장이 바로 이번 사고(#1228)의 재발 방지 장치다: 확정본이 아닌 다른 세대가
+    #    소스 폴더에 들어와도 해시 드리프트로 즉시 드러난다.
+    src_hashes = {n: sha256(os.path.join(SSOT, f"{n}-black.webp"))
+                  for n in names}
+    # 🔴 대장이 **없으면** 검사를 건너뛰던 것도 false-green 이다 (삼순 2026-08-17).
+    #    대장을 지우면 `--check` 가 그냥 통과해버렸다. 검증 모드에선 대장을 **필수**로 둔다
+    #    (최초 생성은 빌드 모드에서만 허용).
+    if args.check and not os.path.exists(SRC_LEDGER):
+        print(f"❌ [B-LEDGER-MISSING] 원본 해시 대장이 없다: {os.path.relpath(SRC_LEDGER)}", file=sys.stderr)
+        print("  → 대장 없이는 '어떤 원본으로 만들었는지'를 증명할 수 없으므로 검증을 통과시키지 않는다.",
+              file=sys.stderr)
+        return 2
+    if os.path.exists(SRC_LEDGER):
+        with open(SRC_LEDGER, encoding="utf-8") as fh:
+            recorded = dict(
+                (ln.split("  ", 1)[1].strip(), ln.split("  ", 1)[0].strip())
+                for ln in fh if "  " in ln and not ln.startswith("#"))
+        drift = [f'{n}: 대장={recorded.get(f"{n}-black.webp", "없음")[:12]} 실제={h[:12]}'
+                 for n, h in src_hashes.items()
+                 if recorded.get(f"{n}-black.webp") != h]
+        if drift and not args.rewrite_ledger and not args.audit_only:
+            print(f"❌ [B-LEDGER-DRIFT] v1 확정본 WebP 해시가 대장과 다르다({len(drift)}건) — 중단:", file=sys.stderr)
+            for d in drift:
+                print(f"   · {d}", file=sys.stderr)
+            print(f"  → 의도한 교체라면 --rewrite-ledger 로 대장을 갱신하고 근거를 남기세요"
+                  f" ({os.path.relpath(SRC_LEDGER)}).", file=sys.stderr)
+            return 2
+
+    # 🔴 **검사받는 데이터가 자기 검사 강도를 고르게 두지 않는다** (삼순 2026-08-17 P0).
+    #    직전 구조는 `manifest.toolchain` 을 읽어 모드를 골랐다. 그런데 manifest 는
+    #    바로 이 검사가 검증해야 할 대상이다 — 문자열 한 줄만 바꾸면 약한 모드를 강제할 수
+    #    있었고, 약한 모드에서는 shipped WebP 를 **존재만** 확인했으므로
+    #    "자산을 다른 정상 클립으로 교체 + manifest 해시 동시 갱신" 이 GREEN 이었다.
+    #
+    #    → 선택자를 없앤다. 바이트 비교는 **항상 시도**하고, 어긋나면 통과시키는 대신
+    #      `semantic_diff` 로 **디코딩해서 같은 그림인지** 직접 대조한다.
+    #      바이트가 맞으면 그것으로 끝, 아니면 그림으로 증명해야 한다 — 어느 쪽이든
+    #      "존재만 확인"으로 내려가는 경로는 없다.
+    if args.check:
+        print(f"툴체인: {_toolchain_note()}")
+        print("판정  : 바이트 동일성 우선 → 불일치 시 디코딩 의미 동등성(실루엣 IoU)",
+              flush=True)
+
+    outdir = os.path.abspath(OUT)
+    tmpdir = outdir if not (args.check or args.audit_only) \
+        else os.path.join("/tmp", "mascot-motion-check")
+    os.makedirs(tmpdir, exist_ok=True)
+
+    report, mismatched, clipped, defective = {}, [], [], []
+    # 바이트는 달랐지만 디코딩 대조로 같은 그림임이 증명된 자산(플랫폼 차이).
+    semantic_only = []
+    for n in names:
+        frames, meta = build(n)
+        clip = os.path.join(tmpdir, f"{n}.webp")
+        poster = os.path.join(tmpdir, f"{n}-poster.webp")
+        frames[0].save(clip, save_all=True, append_images=frames[1:],
+                       duration=meta["durations_ms"], loop=0, format="WEBP",
+                       quality=QUALITY, method=6, exact=True)
+        # poster = **인코딩된 클립의 첫 프레임을 그대로 다시 꺼내** 저장한다.
+        # ⚠️ 원본 프레임을 따로 인코딩하면 lossy 재인코딩 노이즈로 poster 와 첫 프레임이
+        #    미세하게 달라진다(실측 평균 4~5, 최대 54). reduced-motion 으로 전환되는
+        #    순간 그 차이가 깜빡임으로 보인다. 같은 인코딩 결과에서 꺼내면 원리적으로 같다.
+        # ⚠️ **무손실**로 저장한다. lossy 로 다시 인코딩하면 클립 첫 프레임과 평균 3 정도
+        #    어긋나고, reduced-motion 으로 전환되는 순간 그 차이가 깜빡임으로 보인다.
+        #    poster 는 reduced-motion 에서만 로드되므로 용량 증가가 상시 비용이 아니다.
+        with Image.open(clip) as enc:
+            enc.seek(0)
+            first = np.asarray(enc.convert("RGBA")).copy()
+        # ⚠️ poster 는 **lossy 로 인코딩된 클립을 디코딩해서** 뽑는다. 그 디코딩 결과의
+        #    투명 영역 RGB 에는 인코더가 번지게 한 배경색이 남아 있고, 무손실로 저장하면
+        #    그 쓰레기까지 **그대로 보존**된다(실측: swing-poster 투명 영역에 (11,11,68)
+        #    7,486px). 클립 프레임을 정리해도 poster 는 별도 경로라 따로 지워야 한다.
+        first[..., :3][first[..., 3] == 0] = 0
+        # ⚠️ `exact=True` 필수. libwebp 는 기본적으로 **투명 픽셀의 RGB 를 압축이 잘 되는
+        #    값으로 마음대로 바꾼다**(무손실 모드에서도). 그래서 위에서 0 으로 지워도
+        #    저장 과정에서 다시 채워진다(실측: thinking-poster 투명영역 88.7% 가 비검정).
+        #    클립 저장에는 이미 exact=True 가 있었는데 poster 만 빠져 있었다.
+        Image.fromarray(first).save(poster, format="WEBP", lossless=True, method=6, exact=True)
+        # ── 잘림 계약 검사 (삼순 #1228 ③) ──────────────────────────────────
+        # **전 프레임 + poster** 를 디코딩해 네 변의 연속 불투명 런을 잰다.
+        # union bbox + SAFE_PAD 로 만들어도, 원본 자체가 잘린 종은 여기서 드러난다.
+        runs = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        worst_frame = -1
+        hole_px, hole_frame, masks = 0, -1, []
+        defect_px, defect_frame = 0, -1
+        with Image.open(clip) as enc:
+            for fi in range(enc.n_frames):
+                enc.seek(fi)
+                a = np.asarray(enc.convert("RGBA"))[..., 3]
+                r = max_edge_run(a)
+                if max(r.values()) > max(runs.values()):
+                    worst_frame = fi
+                runs = {k: max(runs[k], r[k]) for k in runs}
+                # 내부 구멍·움직임도 **같은 디코딩 루프**에서 재다. 게이트가 별도로 재구현하면
+                # 생성기와 조용히 어긋난다(8/15 교훈) — 생성기가 적고 게이트가 대조한다.
+                h = enclosed_hole_px(a)
+                if h > hole_px:
+                    hole_px, hole_frame = h, fi
+                if h > 0:
+                    # 구멍이 있는 프레임만 원본과 대조한다(전부 대조하면 느리다).
+                    src = meta["src_frames"][fi]
+                    d = keying_defect_px(a, src, meta["src_bgc"])
+                    if d > defect_px:
+                        defect_px, defect_frame = d, fi
+                masks.append(a > 128)
+        with Image.open(poster) as pim:
+            pr = max_edge_run(np.asarray(pim.convert("RGBA"))[..., 3])
+        runs = {k: max(runs[k], pr[k]) for k in runs}
+        meta["edge_run"] = runs
+        meta["edge_run_worst_frame"] = worst_frame
+        meta["hole_px"] = hole_px
+        meta["hole_frame"] = hole_frame
+        meta["defect_px"] = defect_px
+        meta["defect_frame"] = defect_frame
+        meta["motion_pct"] = silhouette_motion_pct(masks)
+        meta.pop("src_frames", None)
+        meta.pop("src_bgc", None)
+        if max(runs.values()) > 0:
+            clipped.append((n, runs, worst_frame))
+        meta["src_sha256"] = src_hashes.get(n)
+        meta["clip_sha256"] = sha256(clip)
+        meta["poster_sha256"] = sha256(poster)
+        meta["clip_kb"] = round(os.path.getsize(clip) / 1024)
+        report[n] = meta
+        if args.check:
+            for _kind, built in (("clip", clip), ("poster", poster)):
+                shipped = os.path.join(outdir, os.path.basename(built))
+                if not os.path.exists(shipped):
+                    mismatched.append(f"{os.path.basename(built)}(없음)")
+                elif sha256(shipped) != sha256(built):
+                    # 바이트가 다르다 = 인코더 차이일 수도, **자산 교체**일 수도 있다.
+                    # 통과시키지 않고 **디코딩해서 같은 그림인지** 증명하게 한다.
+                    broken = semantic_diff(shipped, built)
+                    if broken:
+                        mismatched.append(f"{os.path.basename(built)}[{' · '.join(broken)}]")
+                    else:
+                        semantic_only.append(os.path.basename(built))
+        er = meta["edge_run"]
+        edge_len = {"top": meta["w"], "bottom": meta["w"],
+                    "left": meta["h"], "right": meta["h"]}
+        edge_ratio = {k: round(er[k] / edge_len[k], 8) for k in er}
+        edge_growth_px = {
+            k: round((edge_ratio[k] - meta["src_edge_run_ratio"][k]) * edge_len[k], 3)
+            for k in er
+        }
+        meta["edge_run_ratio"] = edge_ratio
+        meta["edge_growth_px"] = edge_growth_px
+        bad = []
+        # 🔴 원본 비접촉 변에 새 edge-run이 생기면 파생 신규 잘림이다.
+        new_clip = {k: v for k, v in er.items()
+                    if v > 0 and not meta["src_edge_contact"].get(k)}
+        if new_clip:
+            bad.append(f'[B-CLIP] 파생 신규 잘림 {max(new_clip.values())}px'
+                       f'({",".join(sorted(new_clip))})')
+        # 🔴 원본이 이미 닿은 변도 **무제한 면제하지 않는다**. 원본·파생을 각각 변 길이로
+        #    정규화한 뒤 출력 픽셀로 환산해 1px 초과 증가면 "더 잘림"으로 실패한다.
+        grown = {k: v for k, v in edge_growth_px.items()
+                 if meta["src_edge_contact"].get(k) and v > EDGE_GROWTH_PX_MAX}
+        if grown:
+            detail = ",".join(f"{k}+{v}px" for k, v in sorted(grown.items()))
+            bad.append(f'[B-EDGE-GROWTH] 원본 대비 접촉량 증가({detail})')
+        if meta["defect_px"] > HOLE_PX_MAX:
+            bad.append(f'[B-HOLE] 키잉구멍 {meta["defect_px"]}px@f{meta["defect_frame"]}')
+        if meta["overfill_px"] > OVERFILL_PX_MAX:
+            bad.append(f'[B-OVERFILL] 과채움 {meta["overfill_px"]}px')
+        if meta["dropped_persist_frames"] > DROPPED_PERSIST_MAX:
+            bad.append(f'[B-DROP] 소품삭제 {meta["dropped_persist_frames"]}f 연속')
+
+        if meta["motion_pct"] < MOTION_PCT_MIN:
+            bad.append(f'[B-IDLE] idle {meta["motion_pct"]}%')
+        mark = "✅" if not bad else "🔴 " + " · ".join(bad)
+        if bad:
+            defective.append((n, bad))
+        print(f'{n:12s} {meta["frames"]:3d}f {meta["w"]:3d}x{meta["h"]} '
+              f'{meta["clip_kb"]:5d}KB {meta["fps"]}fps '
+              f'hole={meta["hole_px"]:3d} motion={meta["motion_pct"]:5.2f}% '
+              f'[{meta["source"].split(":")[0]}] {mark}', flush=True)
+
+    payload = {
+        "generator": "scripts/assets/build-mascot-motion.py",
+        # 🔴 2026-08-18 v1 확정본 복귀 — 하린아빠가 컨펌한 최종본은 v1 하나뿐이다.
+        "ssot": "assets/mascot/v1 (repo 밖 확정본 WebP 13종 · 해시 대장 "
+                "scripts/assets/mascot-motion-SOURCES.sha256)",
+        "params": {"target_h": TARGET_H, "frame_step": STEP, "quality": QUALITY, "tol": TOL,
+                   "safe_pad": SAFE_PAD, "speck_frac": SPECK_FRAC,
+                   "edge_growth_px_max": EDGE_GROWTH_PX_MAX,
+                   "hole_px_max": HOLE_PX_MAX, "motion_pct_min": MOTION_PCT_MIN,
+                   "overfill_px_max": OVERFILL_PX_MAX,
+                   "dropped_persist_max": DROPPED_PERSIST_MAX,
+                   "dropped_min_px": DROPPED_MIN_PX, "dropped_solid_dist": DROPPED_SOLID_DIST,
+                   "frame_ms": list(FRAME_MS), "fps": round(1000 / (sum(FRAME_MS) / len(FRAME_MS)), 2)},
+        "source_root": "assets/mascot/v1 (repo 밖 · MASCOT_SSOT 로 지정, 해시 대장은 "
+                       "scripts/assets/mascot-motion-SOURCES.sha256)",
+        "clips": report,
+    }
+    # 🔴 결함이 있으면 **빌드 자체가 실패**해야 한다 (삼순 2026-08-17).
+    #    종전엔 `defective` 를 모으기만 하고 exit 에 쓰지 않아, 화면에 🔴 를 찍어놓고도
+    #    exit 0 으로 끝나 결함 자산이 그대로 썻혔다. 사람이 로그를 읽어야만 알아차리는
+    #    경고는 게이트가 아니다.
+    if defective:
+        print(f"\n❌ [B-DEFECT] 결함 자산 {len(defective)}종 — 빌드 실패:", file=sys.stderr)
+        # 🔴 개별 사유도 `❌ [ID]` 형식으로 찍는다 — mutation runner 가 이 행을 파싱해
+        #    "의도한 축이 죽었는가"를 판정한다. 요약만 `[B-DEFECT]` 로 찍으면
+        #    "뭐가 동자인지"는 사람만 알 수 있고 기계는 구분하지 못한다.
+        for n, reasons in defective:
+            for reason in reasons:
+                print(f"   ❌ {reason.split(']')[0]}] {n}: {reason}"
+                      if reason.startswith("[") else f"   ❌ {n}: {reason}",
+                      file=sys.stderr)
+        return 1
+
+    if args.audit_only:
+        print(f"\n✅ [B-AUDIT] {', '.join(names)} 결함 없음 (감사 전용 — 쓰기 없음)")
+        return 0
+
+    if args.check:
+        # 🔴 WebP 26개만 비교하면 **`DERIVED.json` 변조·누락을 못 잡는다** (삼순 2026-08-17).
+        #    게이트가 임계값과 측정치를 그 파일에서 읽으므로, manifest 를 고치면
+        #    자산을 건드리지 않고도 전체 게이트를 우회할 수 있었다.
+        shipped_manifest = None
+        if os.path.exists(MANIFEST):
+            with open(MANIFEST, encoding="utf-8") as fh:
+                try:
+                    shipped_manifest = json.load(fh)
+                except json.JSONDecodeError:
+                    shipped_manifest = None
+        if shipped_manifest is None:
+            mismatched.append("DERIVED.json(없거나 깨짐)")
+        elif json.dumps(shipped_manifest, sort_keys=True, ensure_ascii=False) != \
+                json.dumps(payload, sort_keys=True, ensure_ascii=False):
+            diff = []
+            # 🔴 **모르는 최상위 키가 들어오면 실패**한다 (삼순 2026-08-17 P0 파생).
+            #    직전 구조에서 `toolchain` 이 검사 강도를 골랐다. 그 필드는 없앴지만,
+            #    "manifest 에 새 키를 끼워 넣어 동작을 바꾼다"는 **경로 자체**를 막아야
+            #    같은 사고가 재발하지 않는다. 키 집합을 exact 로 고정한다.
+            sk, pk = set(shipped_manifest), set(payload)
+            if sk != pk:
+                extra, missing = sorted(sk - pk), sorted(pk - sk)
+                if extra:
+                    diff.append(f"미지 키 {','.join(extra)}")
+                if missing:
+                    diff.append(f"누락 키 {','.join(missing)}")
+            if shipped_manifest.get("params") != payload["params"]:
+                diff.append("params")
+            # ssot/source_root/generator 는 어디서 돌리든 같아야 한다(toolchain 만 예외).
+            for key in ("generator", "ssot", "source_root"):
+                if shipped_manifest.get(key) != payload.get(key):
+                    diff.append(key)
+            sc, pc = shipped_manifest.get("clips", {}), payload["clips"]
+            missing_clips = sorted(set(pc) - set(sc))
+            extra_clips = sorted(set(sc) - set(pc))
+            if missing_clips:
+                diff.append(f"누락 클립 {','.join(missing_clips)}")
+            if extra_clips:
+                diff.append(f"잉여 클립 {','.join(extra_clips)}")
+            # 🔴 클립 비교는 **툴체인이 같을 때만 전량 대조**한다 (2026-08-17 CI 실측).
+            #    다른 툴체인에서는 인코딩·디코딩이 비트 단위로 같지 않아 파일 크기·해시와
+            #    픽셀 측정치가 미세하게 흔들린다(실측: bored 380↔382KB, pitching hole 1↔3,
+            #    headspin motion 1.56↔1.57%). 그건 결함이 아니라 플랫폼 사실이다.
+            #    그래도 **계약값은 어디서 돌리든 같아야** 한다:
+            #      · src_sha256 = 어떤 원본으로 만들었나        ← 여기가 흔들리면 원본이 바뀐 것
+            #      · frames/fps/w/h/edge_run = 구조·잘림 계약
+            #      · source = 어느 경로로 만들었나
+            #    측정치(defect_px·overfill_px·hole_px·motion_pct·clip_kb)는 오차를 허용하되,
+            #    **임계값을 넘나드는 변화는 어차피 위 [B-*] 축이 잡는다.**
+            # 어디서 돌리든 **반드시 같아야** 하는 것 — 여기가 흔들리면 진짜 문제다.
+            CONTRACT = ("src_sha256", "frames", "fps", "edge_run", "src_edge_contact",
+                        "src_edge_run", "src_edge_run_ratio", "source")
+            # 디코딩 차이로 1~2px 흔들리는 축(실측: headspin w 163↔164).
+            TOL_DIM = 2
+            # 🔴 아래 값들은 **일치를 요구하지 않는다** — 계약은 "임계값을 만족하는가"다.
+            #    · hole_px  : 닫힌 투명영역의 raw 관측치. 정상 음공간(다리 사이)도 포함되고,
+            #                 플랫폼에 따라 그 틈이 닫히냐 마냐가 갈린다
+            #                 (실측: excited 117↔0, 그런데 **defect_px 는 양쪽 다 0**).
+            #                 실제 결함 판정은 원본과 대조하는 `defect_px` 가 한다.
+            #    · clip_kb  : 인코더 차이 그 자체.
+            #    · motion_pct: 디코딩 오차로 소수 둘째 자리가 흔들린다.
+            #    이 값들이 **임계를 넘는 순간**은 어차피 위 [B-*] 축이 빌드에서 먼저 잡는다.
+            LIMIT = (
+                ("defect_px", lambda v: v <= HOLE_PX_MAX, f"<= {HOLE_PX_MAX}"),
+                ("overfill_px", lambda v: v <= OVERFILL_PX_MAX, f"<= {OVERFILL_PX_MAX}"),
+                ("dropped_persist_frames", lambda v: v <= DROPPED_PERSIST_MAX,
+                 f"<= {DROPPED_PERSIST_MAX}"),
+                ("motion_pct", lambda v: v >= MOTION_PCT_MIN, f">= {MOTION_PCT_MIN}"),
+            )
+            changed = []
+            for k in sorted(set(sc) & set(pc)):
+                a, b = sc[k], pc[k]
+                if a == b:
+                    continue
+                broken = [f for f in CONTRACT if a.get(f) != b.get(f)]
+                for f in ("w", "h"):
+                    av, bv = a.get(f), b.get(f)
+                    if not isinstance(av, int) or not isinstance(bv, int) \
+                            or abs(av - bv) > TOL_DIM:
+                        broken.append(f"{f}({av}\u2260{bv})")
+                for f, ok, desc in LIMIT:
+                    for label, v in (("기록", a.get(f)), ("재생성", b.get(f))):
+                        if not isinstance(v, (int, float)) or not ok(v):
+                            broken.append(f"{f}[{label}]={v} (계약 {desc})")
+                if broken:
+                    changed.append(f"{k}[{','.join(broken)}]")
+            if changed:
+                diff.append(f"변조 클립 {','.join(changed)}")
+            if diff:
+                mismatched.append(f"DERIVED.json({' / '.join(diff)})")
+            # 🔴 `clip_sha256`/`poster_sha256` 를 여기서 exact 비교하지 않는 이유:
+            #    인코더가 다르면 정상 자산도 해시가 달라진다. 그래서 **자산의 정당성은
+            #    manifest 가 아니라 자산 자체를 디코딩해 판정**한다(위 `semantic_diff`).
+            #    "자산 교체 + manifest 해시 동시 갱신" 공격은 manifest 를 아무리 맞춰도
+            #    그림이 다르므로 실루엣 IoU 에서 걸린다.
+
+        if mismatched:
+            print(f"\n❌ [B-REPRO] 재현 불일치 {len(mismatched)}건: {', '.join(mismatched[:6])}", file=sys.stderr)
+            return 1
+        note = "바이트 동일" if not semantic_only else \
+            f"바이트 {len(names) * 2 - len(semantic_only)}개 + 디코딩 대조 {len(semantic_only)}개"
+        print(f"\n✅ 파생 자산 {len(names) * 2}개 + DERIVED.json 재현 확인 [{note}]")
+        return 0
+
+    if args.rewrite_ledger or not os.path.exists(SRC_LEDGER):
+        with open(SRC_LEDGER, "w", encoding="utf-8") as fh:
+            fh.write("# 마스코트 모션 **v1 확정본 WebP** 해시 대장 (생성: build-mascot-motion.py)\n")
+            fh.write("# 원본은 repo 밖에 산다: assets/mascot/v1 (MASCOT_SSOT 로 경로 지정).\n")
+            fh.write("# 검증: cd $MASCOT_SSOT && shasum -a 256 -c <이 파일>\n")
+            for n in sorted(src_hashes):
+                fh.write(f"{src_hashes[n]}  {n}-black.webp\n")
+
+    with open(MANIFEST, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=1, ensure_ascii=False)
+        fh.write("\n")
+    tot = sum(r["clip_kb"] for r in report.values())
+    print(f"\n합계 {tot}KB · manifest → {os.path.relpath(MANIFEST)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

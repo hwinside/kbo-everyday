@@ -82,3 +82,6 @@ scripts/qa/.llm-delegation-e2e-tmp.mts
 
 # 카드 실렌더 캡처 산출물(증거용, 로컬 생성 — qa:games-card-render)
 /state/games-card-render/
+
+# 마스코트 실렌더 게이트 캡처 산출물 (로컬/CI 아티팩트)
+.qa-artifacts/

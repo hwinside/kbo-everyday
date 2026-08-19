@@ -59,6 +59,7 @@ import {
   resolveSeasonRecordIntent,
   UNSUPPORTED_SEASON_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
+  isCulturalTopicQuestion,
   type SeasonRecordRow,
 } from "./stats/season-record";
 import {
@@ -107,6 +108,7 @@ import {
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
+  replyKindForMatchPath,
 } from "@/lib/constants/baseball-genius";
 
 export const DAILY_LIMIT = BASEBALL_GENIUS_DAILY_LIMIT;
@@ -808,6 +810,53 @@ export function geniusMotionForResult(
   if (source === "ack") return isGreetingPhrase(question) ? "excited" : "headspin";
   if (source === "scope_guide" || source === "blocked") return "bored";
   return undefined;
+}
+
+/**
+ * 답변이 다루는 구단의 canonical team id (**응원 클립 자격 판정용**).
+ *
+ * 하린아빠 2026-08-16 14:09 "응원세트는 최애팀 관련 답변 이후에 랜덤으로 노출" →
+ * 유저 최애팀과 exact 일치할 때만 응원 7종이 붙는다. 그 "답변 대상 팀"을 여기서 정한다.
+ *
+ * ⚠️ **새 판별 룰을 만들지 않는다.** 이미 있는 구단 결속 SSOT(`resolveMentionedTeam`
+ * → `teamIdOfCanonical`)를 그대로 재사용한다. 그 함수는 두 구단 이상이 언급되면
+ * 이미 null 을 돌려주므로(비교 질문), 여기서도 자동으로 자격 없음이 된다.
+ *
+ * ⚠️ **id 로 반환한다.** 팀명 문자열이면 `LG`/`엘지`/`트윈스` 표기 차이로 같은 팀이
+ * 다른 팀이 된다.
+ *
+ * 자격이 없는 경우(전부 null → 응원 안 붙음):
+ *  · 구단이 안 나온 질문(선수·룰·용어)
+ *  · 두 구단 이상(비교 질문)
+ *  · 답을 못 한 경우 — 거절·차단·되묻기·오류에 응원이 붙으면 신호가 뒤집힌다.
+ */
+export function answerTeamIdForResult(source: MatchPath, question: string): number | null {
+  // ⚠️ 거절 경로를 **손으로 열거하지 않는다** (삼순 #1228 4축-③).
+  //    종전엔 `ack`·`blocked`·`unsure`… 를 나열했는데, 새 MatchPath 가 생기면
+  //    그 목록에 없어서 **자동으로 자격을 얻는다**(fail-open). 실제로 `history_hold`·
+  //    `context_missing`·`name_suggest`·`limited`·`pending` 이 목록에서 빠져 있었다.
+    //    `replyKindForMatchPath`(전 경로 명시 열거 SSOT의 공식 접근자)에서 **answer 칸만**
+  //    통과시킨다 — 새 경로가 생기면 그 표에 등록해야 하므로 조용히 새는 경로가 없고,
+  //    표에 없는 값(`pending` 등)은 그 함수가 `unavailable` 로 fail-close 한다.
+  // ⚠️ 타입도 `MatchPath` 로 좁힌다 — 임의 문자열이 들어오면 컴파일에서 막힌다.
+  if (replyKindForMatchPath(source) !== "answer") return null;
+
+  const canonical = resolveMentionedTeam(question);
+  if (canonical === null) return null;
+
+  // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다 —
+  //    `LG랑 두산 중 누가 위야?` 가 **두산 하나만** 지명된 것처럼 보인다.
+  //    그 상태로 응원을 붙이면 "두산 팬에게 LG 비교 답변 + 두산 응원"이 나간다.
+  //    `resolveRagTeamCandidate` 와 **같은 보수 규칙**을 쓴다: 조사와 무관하게 다른
+  //    구단의 약칭·별칭이 문자열로 등장하면 단일 구단으로 보지 않는다.
+  //    과탐지는 응원 미노출(야구 동작 유지)일 뿐이고, 놓치면 남의 팀에 응원이 붙는다.
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
+    team.canonical !== canonical &&
+    [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
+  if (mentionsOtherTeam) return null;
+
+  return teamIdOfCanonical(canonical);
 }
 
 export interface QaDeps {
@@ -1908,6 +1957,12 @@ function isTeamNumericQuestion(normalized: string, tokens: string[], hasStat: bo
  * 근거가 없으면 `answerTeamRagQuestion` 이 null 로 양보하므로 과탐지는 안전하다.
  */
 export function isTeamRagServableQuestion(question: string): boolean {
+  // ⚠️ **구단 문화·응원 의례(세레머니 등)만** 서빙 강제한다 (#1243 A안).
+  //   `안타를 쳤을때 …세레머니 있어?` 는 `안타`(STAT_WORDS) 때문에 numeric 으로 오판되어
+  //   team_rag 가 서빙을 거부하고 generic LLM 으로 새면 나무위키 근거를 못 읽어 환각이 된다.
+  //   그래서 문화 토픽만 team_rag 이 소유하게 한다(나무위키 근거 존재; 없으면 null 양보라 안전).
+  //   문화 키워드는 스탯 질문에 안 나오므로 시점·순위·추세 누수가 원천 불가능하다.
+  if (isCulturalTopicQuestion(question)) return true;
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
@@ -3056,7 +3111,14 @@ export function routeQuestion(
   // 우리가 이미 서빙하는 값을 봇만 "못 답한다"고 하면 유저에겐 거짓말이다.
   // `team_record` 는 종결 라우트가 아니라 **조회 위임**이다 — `answerQuestion` 이
   // 실제 순위표/팀기록을 조회해 답하고, 조회 실패·미지원 지표만 fail-close 한다.
-  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) return "team_record";
+  if (hasTeam && isTeamNumericQuestion(normalized, tokens, hasStat)) {
+    // 동문서답 방지 (#1243 A안) — `안타`(지표어) fallback 으로 team_record 가 비스탯 문화 질문을
+    //   선점해 `988` 을 던지는 것을 막는다. 구단 문화·응원 의례(세레머니 등)면 team_record 를
+    //   선택하지 **않고** 아래로 흘려 `llm_scope_gate` → team_rag(나무위키 근거) 에 닿게 한다.
+    //   그 외(순수 수치 질문)는 team_record 조회 위임 그대로. 시점·순위·추세 오답은 B 트랙.
+    if (!isCulturalTopicQuestion(question)) return "team_record";
+    // cultural 은 아래로 흘려 team_rag 진입(종결 return 없음).
+  }
 
   const supportedRuleTerm = isSupportedRuleTermQuestion(question, glossary, players);
   if (!supportedRuleTerm) {
@@ -5622,6 +5684,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
       if (record) return record;
+      // (A안) 시점·순위·추세 등 스탯 스코프 fail-close 는 여기서 하지 않는다 — season 이
+      //   none 으로 양보하면 아래 player RAG/LLM 이 근거로 답한다(main 동작 그대로). 그 오답군은
+      //   거울 회귀를 일으켰던 순서 술어라 B(단일 분류기)로 이관했다(#1243 5차 NO-GO 이력).
     }
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       const descriptive = await answerPlayerDescriptiveQuestion(

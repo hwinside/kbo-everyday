@@ -462,54 +462,24 @@ html.postdetail-open > body {
 .dark .myteam-card .text-text-secondary { color: #D1D1D6 !important; }
 .dark .myteam-card .text-text-tertiary { color: #A1A1A6 !important; }
 
-/* ── 야잘알봇 마스코트 모션 (SSOT §7.6 — 2026-08-15 하린아빠 착수 지시) ─────────
-   인사→excited(신남 바운스) / 감사·칭찬→headspin(헤드스핀) / 거절→bored(심심함 스웨이).
-   애니메이션 이미지 자산 없이 정적 PNG 에 CSS transform 만 입힌다.
-   유한 반복(무한 루프 금지) — 재생 후 정적 마스코트로 자연 정착해 남용을 구조적으로 막는다.
-   채팅창에는 최신 모션 1개만 존재한다(부착 판정은 page 의 latestMotionMessageId). */
-@keyframes genius-motion-excited {
-  0%, 100% { transform: translateY(0); }
-  20% { transform: translateY(-4px) rotate(-3deg); }
-  40% { transform: translateY(0); }
-  60% { transform: translateY(-3px) rotate(3deg); }
-  80% { transform: translateY(0); }
-}
-@keyframes genius-motion-headspin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-@keyframes genius-motion-bored {
-  0%, 100% { transform: rotate(0deg); }
-  30% { transform: rotate(-8deg) translateY(1px); }
-  70% { transform: rotate(8deg) translateY(1px); }
-}
-.genius-motion-excited { animation: genius-motion-excited 0.9s ease-in-out 3; }
-.genius-motion-headspin { animation: genius-motion-headspin 0.8s ease-in-out 2; }
-.genius-motion-bored { animation: genius-motion-bored 2.2s ease-in-out 2; }
+/* ── 야잘알봇 마스코트 모션 — CSS transform 전량 폐기 (2026-08-16 하린아빠 13:48) ────
 
-/* ── 상시 idle 미세 모션 (2026-08-16 하린아빠 "캐릭터가 안움직이는 것 같은데") ────────
-   위 감정 모션 3종은 **감정 반응 전용**이라 지식 답변(선수·기록·룰)에는 아예 붙지
-   않는다(`geniusMotionForResult` → undefined). 그래서 일반 질문에서는 캐릭터가 완전히
-   멈춰 있었다. idle 은 "살아있다"만 말하는 수준의 미세한 상하 bob 이다.
+   하린아빠 판정: "지금 연결된건 움직이는 것 같지도 않아. 모두 폐기하고 활발하게
+   움직이는 버전들로 교체".
 
-   ⚠️ 감정 모션과 **별도 엘리먼트**에 건다(idle=래퍼 span, 감정=img). 같은 엘리먼트에
-   두 animation 을 걸면 둘 다 `transform` 을 건드려 뒤 선언이 앞 선언을 통째로 덮어쓴다
-   (감정 모션이 조용히 죽는다). 분리하면 부모·자식 transform 이 곱으로 합성된다.
+   종전에는 정적 PNG 5장에 CSS `transform`(excited 바운스 / headspin 회전 /
+   bored 스웨이 / idle -2.5px bob)을 입혔다. 두 가지가 동시에 문제였다:
+     ① 감정 모션 3종은 인사·칭찬·거절 **전용**이라 지식 답변에는 아예 안 붙었다.
+     ② 그걸 메우려 넣은 idle bob 은 진폭이 너무 작아 실기기에서 "안 움직인다"로 읽혔다.
+   자산이 정지 이미지인 한 CSS 로는 스윙·투구 같은 실제 동작을 만들 수 없다.
 
-   §7.4 "모션 30초 1회 / 유한 반복"은 **감정 반응 남용** 방지 계약이므로 idle 은 대상이
-   아니다 — idle 은 DB claim 을 타지 않고 payload 에도 실리지 않는 순수 표시 계층이며,
-   화면에 존재하는 마스코트 1개에만 붙으므로 개수도 구조적으로 최대 1이다. */
-@keyframes genius-motion-idle {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2.5px); }
-}
-.genius-motion-idle { animation: genius-motion-idle 2.4s ease-in-out infinite; }
+   이제 `public/mascot/motion/*.webp` (assets/mascot/v1 SSOT 에서 재가공한
+   투명배경 애니메이션 13종)를 **자산 자체가 재생**한다. 무한 루프는 WebP 에
+   인코딩돼 있고(loop=0), `prefers-reduced-motion` 정지는 CSS 가 아니라
+   `<picture><source media>` 로 **poster 자산을 대신 로드**해 처리한다
+   (애니메이션 WebP 는 `animation: none` 으로 멈추지 않는다 — 재생 주체가
+   이미지 디코더라 CSS 가 관여할 여지가 없다).
 
-@media (prefers-reduced-motion: reduce) {
-  .genius-motion-excited,
-  .genius-motion-headspin,
-  .genius-motion-bored,
-  .genius-motion-idle {
-    animation: none;
-  }
-}
+   그래서 여기에 남길 마스코트 모션 CSS 는 없다. 클래스만 남기고 keyframes 를
+   지우는 식의 부분 정리는 "클래스는 붙는데 아무 일도 안 일어나는" 조용한 무효화라
+   더 나쁘다 — 전량 제거한다. */

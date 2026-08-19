@@ -20,6 +20,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  statuses: write # auto-merge-gate commit status 스탬프 (exact SHA 결속)
 
 concurrency:
   group: hero-shot-batch
@@ -82,4 +83,19 @@ jobs:
             --title "chore(hero): 자동 히어로샷 배치 (rembg)" \
             --body "공식 헤드샷(public/players/) → rembg 로컬 컷아웃(scripts/hero/build-hero.py)으로 신규 히어로샷 생성. 외부 API/시크릿 없음. 결정적 파이프라인. 머지 전 qa:foreign-photo + hero webp 규격/approved 정합성 검증 PASS. 저위험 자동 머지(2026-06-17 하린아빠 정책).")
           # 검증(Verify 스텝)을 통과한 경우에만 도달. 생성한 head 커밋만 머지(--match-head-commit).
-          gh pr merge "$PR_URL" --squash --admin --delete-branch --match-head-commit "$HEAD_SHA"
+          # 2026-08-18: main ruleset required check(auto-merge-gate) 도입에 맞춰 --admin 직접 머지를
+          # native auto-merge로 전환 — Verify PASS를 exact SHA(HEAD_SHA는 push 전 git rev-parse로
+          # 고정된 로컬 커밋)에 스탬프하고, required check 완료 시 GitHub이 머지.
+          # P0(fail-open 차단): ruleset 미구성이면 --auto가 즉시 머지될 수 있으므로 fail-close.
+          REQUIRED_CTX=$(gh api "repos/${GITHUB_REPOSITORY}/rules/branches/main" \
+            --jq '[.[] | select(.type=="required_status_checks") | .parameters.required_status_checks[].context]')
+          if [ "$(echo "$REQUIRED_CTX" | jq 'index("Vercel") != null and index("auto-merge-gate") != null' )" != "true" ]; then
+            echo "❌ main required check ruleset 미구성 (required=$REQUIRED_CTX) — fail-close, PR open 유지: $PR_URL"
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=success \
+            -f context=auto-merge-gate \
+            -f description="hero-shot verify PASS (run ${GITHUB_RUN_ID})" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          gh pr merge "$PR_URL" --auto --squash --delete-branch --match-head-commit "$HEAD_SHA"

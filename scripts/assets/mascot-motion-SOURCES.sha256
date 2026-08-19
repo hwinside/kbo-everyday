@@ -1,0 +1,16 @@
+# 마스코트 모션 **v1 확정본 WebP** 해시 대장 (생성: build-mascot-motion.py)
+# 원본은 repo 밖에 산다: assets/mascot/v1 (MASCOT_SSOT 로 경로 지정).
+# 검증: cd $MASCOT_SSOT && shasum -a 256 -c <이 파일>
+1d6945a18dca34c12412ec275352885ac4c4857a2484f5751fa05075d335a3b0  bored-black.webp
+5044763c4c86e8789a4a98f2c61bf5332ad67e6b28091737eb96dbecf0468f33  cheer-black.webp
+eaed49fef76d85ea1fd2726a76329e64fc7943210df488a03a97333fbf642ab2  cheerC-black.webp
+af41e7dfd512661645bd15d43d9d7c9f9360a8d7a3c1997944a6e90ea47c032b  cheerD-black.webp
+adb4c980bd629f63584bfc4f92b7037b81c1307c21c84c8014f66334886e58ed  cheerG-black.webp
+5235a095305a129a77c74f71ae01eb20b1d8f63e6c5f05654b2969c68dac1eed  cheerpom-black.webp
+2b93683252a0e5b220caebd1da2d2860509618f2137d2abb55c79ad7986cca3e  cheerstick-black.webp
+ba7e843c6467d7bc7ac074e2b55e7b3e0b296db3d4b4e4d793d790740412e04f  cheertowel-black.webp
+d8ad846458ec75a96d485196cd63ae4a8c22d281ef8e8468e2be4a55e439d1ec  excited-black.webp
+11152f3bf727aab8bb74f672b44508ae5ddd577683e0598c7cc2de8e4e20217c  headspin-black.webp
+a557392da8a91a6a00ea5f612aaeda5015d7e773f87365d0eb8fe7bef4d8296f  pitching-black.webp
+84ba1774d68cb06db8c31e57402a4b23937c5787eb170abb310f6110f9b7a068  swing-black.webp
+af36207314ccd6382f48c5bb075c7ceb86e5a08fdcf1231d3526c8ed248e7b35  thinking-black.webp

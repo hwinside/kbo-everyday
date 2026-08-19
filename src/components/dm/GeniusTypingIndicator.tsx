@@ -3,7 +3,7 @@
 import {
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_NAME,
-  type GeniusMascotState,
+  type GeniusReplyKind,
 } from "@/lib/constants/baseball-genius";
 import GeniusMascotImage from "@/components/dm/GeniusMascotImage";
 
@@ -15,13 +15,18 @@ export const GENIUS_THINKING_TEXT = "생각중입니다…";
 /**
  * 대기/실패 상태도 마스코트를 같이 띄운다 (2026-08-02 하린아빠 지시).
  * 답변이 온 뒤에만 마스코트가 보이면 기다리는 동안 자리가 비어 말풍선이 튀다.
- * - waiting/retrying → thinking(생각하는 표정)
- * - failed → unknown(몸하는 표정) — 답변 자체가 안 온 상황과 의미가 같다
+ *
+ * ⚠️ 2026-08-16 영상 모션 전환: 종전에는 표정(GeniusMascotState)을 직접 골랐지만,
+ * 이젠 클립 선택은 `geniusMotionClipFor(replyKind, messageId)` 단일 지점이 한다.
+ * 그래서 여기서는 대기·실패를 **같은 의미 분류(reply_kind)** 로 번역해 넘긴다:
+ * - waiting/retrying → `picker`(= 되묻는 중 = thinking 클립)
+ * - failed → `unavailable`(= 답하지 못함 = bored 클립)
+ * 매핑표를 여기서 재구현하지 않으므로 단일 지점이 바뀌면 여기도 같이 바뀐다.
  */
-const STATE_TO_MASCOT: Record<Exclude<GeniusTypingState, "idle">, GeniusMascotState> = {
-  waiting: "thinking",
-  retrying: "thinking",
-  failed: "unknown",
+const STATE_TO_REPLY_KIND: Record<Exclude<GeniusTypingState, "idle">, GeniusReplyKind> = {
+  waiting: "picker",
+  retrying: "picker",
+  failed: "unavailable",
 };
 
 /**
@@ -56,12 +61,24 @@ export function GeniusThinkingBubble({ pending, showMascot = true }: { pending: 
    */
   showMascot?: boolean;
 }) {
+  // 🔴 원복됨 (하린아빠 2026-08-17 19:46 "생각중 대화내용 남기기로 한거 원복해줘").
+  //    #1102 는 이 말풍선을 대화 기록으로 남겼다(답변 도착 후에도 잔존). 지시대로 되돌린다 —
+  //    생각중은 **기다리는 동안만** 존재한다.
+  //
+  //    여기서 끊는 이유: page 의 `show` 판정만 바꾸면 이 컴포넌트는 여전히 `pending=false` 에도
+  //    말풍선을 그릴 수 있어, 다른 호출자가 하나 생기는 순간 잔존이 되살아난다.
+  //    반환을 막아 **잔존이 구조적으로 불가능**하게 한다.
+  if (!pending) return null;
   return (
     <div className="flex justify-start" data-testid="genius-thinking-bubble" data-pending={pending}>
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
           {showMascot && (
-            <GeniusMascotImage state="thinking" testId="genius-thinking-mascot" />
+            <GeniusMascotImage
+              replyKind="picker"
+              messageId={0}
+              testId="genius-thinking-mascot"
+            />
           )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
@@ -114,7 +131,11 @@ export default function GeniusTypingIndicator({
       <div className="max-w-[75%]">
         <div className="flex items-center gap-1.5 mb-1">
           {showMascot && (
-            <GeniusMascotImage state={STATE_TO_MASCOT[state]} testId="genius-typing-mascot" />
+            <GeniusMascotImage
+              replyKind={STATE_TO_REPLY_KIND[state]}
+              messageId={questionMessageId ?? 0}
+              testId="genius-typing-mascot"
+            />
           )}
           <span className="text-xs font-semibold text-text-secondary">{BASEBALL_GENIUS_NAME}</span>
         </div>
