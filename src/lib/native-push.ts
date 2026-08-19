@@ -114,11 +114,40 @@ function showForegroundBanner(title: string, body: string, url: string | null): 
   }, 6000);
 }
 
+// ── 등록 dedupe 캐시 ────────────────────────────────────────────────────────
+// register-device는 매 앱 부팅(syncNativePushToken)마다 호출돼 동일 payload 재등록이
+// Edge Request/Fluid CPU를 소모한다(observability 실측: /api/push/register-device 122K+).
+// 같은 (userId, fcmToken, platform, appBuild)를 TTL 내 성공 등록한 적 있으면 skip.
+// 토큰 rotate·앱 업데이트·계정 전환은 signature가 달라져 자연히 재등록된다.
+const PUSH_REG_CACHE_KEY = "kbo-push-reg-v1";
+const PUSH_REG_TTL_MS = 24 * 60 * 60 * 1000; // 24h — 서버 stale 판정 주기보다 짧게 유지
+
+function readRegCache(): { sig: string; at: number } | null {
+  try {
+    const raw = localStorage.getItem(PUSH_REG_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { sig?: unknown; at?: unknown };
+    if (typeof parsed.sig !== "string" || typeof parsed.at !== "number") return null;
+    return { sig: parsed.sig, at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+function writeRegCache(sig: string): void {
+  try {
+    localStorage.setItem(PUSH_REG_CACHE_KEY, JSON.stringify({ sig, at: Date.now() }));
+  } catch {
+    /* storage 불가 환경 — dedupe 없이 기존 동작 */
+  }
+}
+
 /** 서버에 FCM 토큰 등록 (로그인 필수 — 세션 없으면 조용히 skip) */
 export async function registerTokenWithServer(fcmToken: string): Promise<boolean> {
   const { data: { session } } = await supabase.auth.getSession();
   const accessToken = session?.access_token;
-  if (!accessToken) return false;
+  const userId = session?.user?.id;
+  if (!accessToken || !userId) return false;
 
   // 앱 빌드 번호 동봉(실패 시 null) — 서버가 빌드 게이트 필터에 사용(widget_live는 17+만,
   // 삼순 #674 blocker⑤). 원격로드 JS라 구빌드도 다음 앱 실행 시 자연스럽게 재보고된다.
@@ -132,6 +161,13 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
     // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
   }
 
+  // dedupe: 동일 signature를 TTL 내 성공 등록했으면 서버 호출 생략(등록된 상태로 간주)
+  const sig = JSON.stringify({ u: userId, t: fcmToken, p: platform, b: appBuild });
+  const cached = readRegCache();
+  if (cached && cached.sig === sig && Date.now() - cached.at < PUSH_REG_TTL_MS) {
+    return true;
+  }
+
   const res = await fetch("/api/push/register-device", {
     method: "POST",
     headers: {
@@ -140,6 +176,7 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
     },
     body: JSON.stringify({ fcmToken, platform, appBuild }),
   });
+  if (res.ok) writeRegCache(sig); // 실패 시 캐시 안 씀 → 다음 기회에 재시도
   return res.ok;
 }
 

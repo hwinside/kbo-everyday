@@ -252,16 +252,49 @@ let lastPushToStartToken: string | null = null;
 // 네이티브가 토큰과 함께 보고한 메타(osMajor/frequentPushes, 빌드 16+) — 재등록에도 동봉.
 let lastPushToStartMeta: { osMajor?: number; frequentPushes?: boolean } = {};
 
+// ── register-start dedupe 캐시 ──────────────────────────────────────────────
+// push-to-start 토큰은 디바이스 단위라 매 부팅 같은 값이 재보고되고, 발사되는
+// register-start가 Edge Request/Fluid CPU 상위 축이다(observability 실측 240K/2h).
+// 동일 signature(유저·토큰·빌드·os·frequentPushes)를 TTL 내 "서버가 실제 저장"한
+// 적 있으면 skip. 서버가 W3c 토글 off로 skip한 응답({skipped})은 캐시하지 않아
+// 토글 on 복귀 후 다음 토큰 이벤트에서 정상 저장된다(기존 의미론 보존).
+const LA_START_REG_CACHE_KEY = "kbo-la-start-reg-v1";
+const LA_START_REG_TTL_MS = 24 * 60 * 60 * 1000;
+
+function readStartRegCache(): { sig: string; at: number } | null {
+  try {
+    const raw = localStorage.getItem(LA_START_REG_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { sig?: unknown; at?: unknown };
+    if (typeof parsed.sig !== "string" || typeof parsed.at !== "number") return null;
+    return { sig: parsed.sig, at: parsed.at };
+  } catch {
+    return null;
+  }
+}
+
+function writeStartRegCache(sig: string): void {
+  try {
+    localStorage.setItem(LA_START_REG_CACHE_KEY, JSON.stringify({ sig, at: Date.now() }));
+  } catch {
+    /* storage 불가 — dedupe 없이 기존 동작 */
+  }
+}
+
 async function registerPushToStartToken(token: string): Promise<void> {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const accessToken = session?.access_token;
-    if (!accessToken) return; // 비로그인 → 등록 불가(로그인 후 재부팅 시 재시도)
+    const userId = session?.user?.id;
+    if (!accessToken || !userId) return; // 비로그인 → 등록 불가(로그인 후 재부팅 시 재시도)
     // appBuild/osMajor(빌드 16+) — 서버 p2s input-push-channel 게이트 판정(os>=18 && build>=16,
     // 미보고 null = 레거시 payload, 스펙 v4 blocker③). frequentPushes는 진단용 보고.
     const appBuild = await getAppBuild();
     const { osMajor, frequentPushes } = lastPushToStartMeta;
-    await fetch("/api/live-activity/register-start", {
+    const sig = JSON.stringify({ u: userId, t: token, b: appBuild ?? null, o: osMajor ?? null, f: frequentPushes ?? null });
+    const cached = readStartRegCache();
+    if (cached && cached.sig === sig && Date.now() - cached.at < LA_START_REG_TTL_MS) return;
+    const res = await fetch("/api/live-activity/register-start", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -274,6 +307,12 @@ async function registerPushToStartToken(token: string): Promise<void> {
         ...(typeof frequentPushes === "boolean" ? { frequentPushes } : {}),
       }),
     });
+    if (res.ok) {
+      // 서버가 저장을 skip한 경우({success, skipped:"live_activity_off"})는 캐시 금지 —
+      // 토글 on 복귀 후에도 skip이 이어져 토큰 미저장 상태가 고정되는 것을 막는다.
+      const json = (await res.json().catch(() => null)) as { skipped?: unknown } | null;
+      if (!json?.skipped) writeStartRegCache(sig);
+    }
   } catch {
     /* silent — 등록 실패가 앱에 영향 주지 않게 */
   }

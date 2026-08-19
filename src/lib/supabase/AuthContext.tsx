@@ -29,6 +29,36 @@ interface AuthContextType {
   refreshProfile: () => Promise<void>;
 }
 
+// ── /api/me dedupe 상태 (모듈 스코프 — AuthProvider는 앱에 1회 마운트) ──────────────
+// loadProfile은 부팅 syncSession + onAuthStateChange(INITIAL_SESSION/TOKEN_REFRESHED/
+// SIGNED_IN) + visibilitychange 복귀마다 호출돼 같은 유저 프로필을 반복 조회한다
+// (observability 실측: /api/me 218K/24h). 같은 유저로 이미 성공 로드했고 TTL 내면
+// skip, 동시 호출은 in-flight promise 공유. 명시 갱신(refreshProfile)은 force로 우회.
+const PROFILE_TTL_MS = 10 * 60 * 1000; // 10분 — 타기기 변경 반영 지연 상한
+let profileLoadedState: { userId: string; at: number } | null = null;
+let profileInFlight: { userId: string; promise: Promise<void> } | null = null;
+
+/** dedupe 장부를 거쳐 run()을 실행. run은 프로필 set 성공 시 true 반환. */
+function dedupedProfileLoad(userId: string, force: boolean, run: () => Promise<boolean>): Promise<void> {
+  const loaded = profileLoadedState;
+  if (!force && loaded && loaded.userId === userId && Date.now() - loaded.at < PROFILE_TTL_MS) {
+    return Promise.resolve(); // 같은 유저 프로필이 이미 fresh — 서버 호출 생략
+  }
+  const inFlight = profileInFlight;
+  if (!force && inFlight && inFlight.userId === userId) {
+    return inFlight.promise; // 동시 호출(부팅 syncSession + INITIAL_SESSION 등) 공유
+  }
+  const promise = run()
+    .then((ok) => {
+      if (ok) profileLoadedState = { userId, at: Date.now() };
+    })
+    .finally(() => {
+      if (profileInFlight?.promise === promise) profileInFlight = null;
+    });
+  profileInFlight = { userId, promise };
+  return promise;
+}
+
 const AuthContext = createContext<AuthContextType>({
   user: null,
   profile: null,
@@ -53,7 +83,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setFavoritePlayers(p.favorite_players?.length ? p.favorite_players : []);
   }
 
-  async function loadProfile(accessToken: string, userId: string) {
+  async function loadProfile(accessToken: string, userId: string, opts?: { force?: boolean }) {
+    return dedupedProfileLoad(userId, opts?.force === true, () => loadProfileNow(accessToken, userId));
+  }
+
+  /** 실제 프로필 조회(3단 fallback). 프로필을 성공적으로 set했으면 true. */
+  async function loadProfileNow(accessToken: string, userId: string): Promise<boolean> {
     // 1차: 서버 API (Bearer 토큰 + service role — 가장 안정적)
     try {
       const res = await fetch("/api/me", {
@@ -64,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (json.profile) {
           setProfile(json.profile);
           syncProfileToLocal(json.profile);
-          return;
+          return true;
         }
       }
     } catch { /* continue to fallback */ }
@@ -84,7 +119,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data && data.id) {
           setProfile(data);
           syncProfileToLocal(data);
-          return;
+          return true;
         }
       }
     } catch { /* continue */ }
@@ -99,6 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!error && data) {
         setProfile(data);
         syncProfileToLocal(data);
+        return true;
       } else {
         // 1회 retry (1초 후) - 네트워크 일시 실패 대비
         console.warn("[AuthContext] profile load failed, retrying in 1s...", error?.message);
@@ -107,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!retry.error && retry.data) {
           setProfile(retry.data);
           syncProfileToLocal(retry.data);
+          return true;
         } else {
           setProfile(null);
         }
@@ -114,12 +151,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setProfile(null);
     }
+    return false;
   }
 
   async function refreshProfile() {
     const { data: { session } } = await supabase.auth.getSession();
     if (session?.user && session.access_token) {
-      await loadProfile(session.access_token, session.user.id);
+      // 명시 갱신(프로필 편집 직후 등) — dedupe 캐시 우회
+      await loadProfile(session.access_token, session.user.id, { force: true });
     }
   }
 
