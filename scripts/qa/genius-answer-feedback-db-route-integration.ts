@@ -142,15 +142,30 @@ function makeQueryBuilder(db: PGlite, table: string) {
 async function installSupabaseShim(db: PGlite) {
   const adminModule = await import("../../src/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
-    auth: { getUser: (token: string) => Promise<unknown> };
+    auth: {
+      getUser: (token: string) => Promise<unknown>;
+      getClaims: (token: string) => Promise<unknown>;
+    };
     from: (table: string) => unknown;
     rpc: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   };
+  const resolveTestUser = (token: string) =>
+    token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
   client.auth.getUser = async (token: string) => {
-    const userId = token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
+    const userId = resolveTestUser(token);
     return userId
       ? { data: { user: { id: userId } }, error: null }
       : { data: { user: null }, error: { message: "invalid token" } };
+  };
+  // verifyAccessToken 은 이제 getClaims(JWKS 로컬 검증) 경로를 탄다. 실제
+  // getClaims 는 토큰의 `sub` 을 그대로 돌려주므로, 테스트 JWT 의 sub("owner")
+  // 가 그대로 나가면 UUID 가 아니라 라우트가 깨진다. 서명 검증을 shim 이
+  // 대신하는 것과 동일하게, 토큰→유저 매핑도 shim 이 맞춰준다.
+  client.auth.getClaims = async (token: string) => {
+    const userId = resolveTestUser(token);
+    return userId
+      ? { data: { claims: { sub: userId, email: null } }, error: null }
+      : { data: null, error: { message: "invalid token", code: "bad_jwt" } };
   };
   client.from = (table: string) => makeQueryBuilder(db, table);
   client.rpc = async (name: string, args: Record<string, unknown>) => {
