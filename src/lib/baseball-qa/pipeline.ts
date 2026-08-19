@@ -896,16 +896,48 @@ export function answerPlayerRoleForResult(
   const matched = findPlayerReferences(tokens, players);
   if (matched.length === 0) return null;
 
-  const roles = new Set<AnswerPlayerRole | null>(matched.map((player) => {
-    const position = player.position ?? "";
-    // 기존 관례와 동일한 단일 술어 — 기록 테이블 선택(preferredTable)이 같은 기준을 쓴다.
-    if (position.includes("투수")) return "pitcher";
-    return position.trim().length > 0 ? "batter" : null;
-  }));
+  const roles = new Set<AnswerPlayerRole | null>(matched.map((player) => playerRoleOfPosition(player.position)));
   // 역할이 하나로 수렴할 때만 준다. null(포지션 미상)이 섞여도 확정하지 않는다.
   if (roles.size !== 1) return null;
   const [role] = roles;
   return role;
+}
+
+/** 포지션 문자열 → 역할. 기존 관례(기록 테이블 선택의 `position?.includes("투수")`)과 동일 술어. */
+function playerRoleOfPosition(position: string | null | undefined): AnswerPlayerRole | null {
+  const value = position ?? "";
+  if (value.includes("투수")) return "pitcher";
+  return value.trim().length > 0 ? "batter" : null;
+}
+
+/**
+ * 역할을 **실제 답변 대상**에 결속한다 (삼순 #1251 P1 반영).
+ *
+ * raw question 만 보면 picker 에서 한 명을 골라도(예: 동명이인 김동현 야수 1·투수 2)
+ * 역할 혼재로 null→시드 교대로 내려가 같은 오모션이 재발한다. 수락된 교정문·ready
+ * 재발송도 동일 누락. 우선순위는 답변 파이프라인의 대상 확정 순서와 같다:
+ *   ① persisted picked_player_kbo_id — 유저가 picker 에서 고른 그 선수(job 행 SSOT).
+ *      로스터에 없는 kboId 면 **null 로 fail-close** — 질문 기반으로 내려가면 유저가
+ *      고르지 않은 동명이인의 역할이 붙을 수 있다.
+ *   ② picked_normalized_question — 수락된 교정문(실제로 답변된 질문).
+ *   ③ raw question.
+ */
+export function answerPlayerRoleForTarget(
+  source: MatchPath,
+  target: {
+    pickedPlayerKboId?: string | null;
+    correctedQuestion?: string | null;
+    question: string;
+  },
+  players: PlayerRef[],
+): AnswerPlayerRole | null {
+  if (replyKindForMatchPath(source) !== "answer") return null;
+  const pickedKboId = target.pickedPlayerKboId?.normalize("NFKC").trim() ?? "";
+  if (pickedKboId.length > 0) {
+    const picked = players.find((player) => player.kboId === pickedKboId);
+    return picked ? playerRoleOfPosition(picked.position) : null;
+  }
+  return answerPlayerRoleForResult(source, target.correctedQuestion ?? target.question, players);
 }
 
 export interface QaDeps {

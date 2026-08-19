@@ -231,11 +231,15 @@ async function partMapping() {
   // 여기 말고 다른 곳에서 계산하면 durable 재시도에서 값이 소실된다(#1197 계약과 동일 축).
   check("server 배선: 응원 자격 팀 id 를 단일 지점에서 계산한다",
     /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/.test(serverSrc));
-  // 선수 역할도 같은 단일 지점에서 로스터 SSOT 로 계산해야 한다 — 다른 곳에서 계산하면
-  // durable 재시도에서 값이 소실된다(#1197 계약과 동일 축).
-  check("server 배선: 선수 역할을 단일 지점에서 로스터 SSOT 로 계산한다",
-    /const answerPlayerRole = answerPlayerRoleForResult\(/.test(serverSrc) &&
-    /answerPlayerRoleForResult\(\s*result\.source,\s*question,\s*await loadRosterPlayers\(\),\s*\)/.test(serverSrc));
+  // 선수 역할은 raw question 이 아니라 **실제 답변 대상**에 결속되어야 한다(삼순 #1251 P1):
+  // persisted picked_player_kbo_id → picked_normalized_question → raw question. job 행을 안 읽으면
+  // picker 선택·교정 승인·ready 재발송에서 동명이인 역할 혼재로 시드 교대가 재발한다.
+  check("server 배선: 역할을 실제 답변 대상(job 행 SSOT)에 결속한다",
+    /answerPlayerRole = answerPlayerRoleForTarget\(/.test(serverSrc) &&
+    serverSrc.includes('.select("picked_player_kbo_id, picked_normalized_question")') &&
+    /pickedPlayerKboId: input\.pickedPlayerKboId\s*\?\? \(targetJob\?\.picked_player_kbo_id as string \| null \?\? null\)/.test(serverSrc) &&
+    /correctedQuestion: targetJob\?\.picked_normalized_question as string \| null \?\? null/.test(serverSrc) &&
+    /await loadRosterPlayers\(\),\s*\);/.test(serverSrc));
   check("server 배선: 쿨다운은 원자 claim RPC 가 정한다(SELECT→INSERT race 차단)",
     serverSrc.includes('.rpc("claim_baseball_genius_motion"') &&
     /p_decided_at: decidedAt/.test(serverSrc) &&
@@ -968,6 +972,34 @@ async function partRenderContract() {
     check("역할: 선수 미언급(팀·용어 질문) → null",
       answerPlayerRoleForResult("kbo_structured" as never, "번트가 뭐야?", roster) === null &&
       answerPlayerRoleForResult("kbo_structured" as never, "LG 순위 알려줘", roster) === null);
+
+    // ── 실제 답변 대상 결속 (삼순 #1251 P1) — picker 선택·교정 승인·ready 재시도 종단 ───
+    const { answerPlayerRoleForTarget } = await import("../../src/lib/baseball-qa/pipeline");
+    // 동명이인 역할 혼재(김철수: 투수 11111 · 내야수 22222) — raw question 만으로는 null 이지만,
+    // picker 에서 한 명을 고르면 **그 선수의 역할**이 나와야 한다(야수/투수 각각).
+    check("역할 결속: picker 에서 투수를 고르면 pitcher (raw question 은 혼재→null 이어도)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster) === "pitcher");
+    check("역할 결속: picker 에서 야수를 고르면 batter",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "22222", question: "김철수 성적" }, roster) === "batter");
+    check("역할 결속: picked 가 로스터에 없으면 null (질문 기반으로 내려가지 않는다)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "99999", question: "손주영 평균자책점" }, roster) === null);
+    check("역할 결속: 수락된 교정문이 raw question 보다 우선한다",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { correctedQuestion: "손주영 평균자책점", question: "손주슘 평균자책점" }, roster) === "pitcher");
+    check("역할 결속: picked 없으면 질문 기반과 동일 (비회귀)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { question: "박동원 타율" }, roster) === "batter");
+    check("역할 결속: 거절 경로는 picked 가 있어도 null",
+      answerPlayerRoleForTarget("blocked" as never,
+        { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster) === null);
+    // ready 재시도·reload 동일성 — 같은 durable 입력이면 몇 번을 불러도 같은 역할이다.
+    check("역할 결속: 같은 durable 입력 → 항상 같은 역할 (ready 재시도·reload 동일성)",
+      new Set(Array.from({ length: 5 }, () =>
+        answerPlayerRoleForTarget("kbo_structured" as never,
+          { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster))).size === 1);
   }
 
   check("클립 선택: 되묻기(picker/correction) → thinking",

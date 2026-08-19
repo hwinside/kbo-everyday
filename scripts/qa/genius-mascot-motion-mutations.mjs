@@ -270,6 +270,27 @@ const mutations = [
     expect: "역할",
   },
   {
+    name: "M35 picked 결속 제거 — raw question 재계산으로 회귀 (picker 선택 무시, 삼순 P1 재현)",
+    file: TARGETS[0],
+    from: '  const pickedKboId = target.pickedPlayerKboId?.normalize("NFKC").trim() ?? "";\n  if (pickedKboId.length > 0) {\n    const picked = players.find((player) => player.kboId === pickedKboId);\n    return picked ? playerRoleOfPosition(picked.position) : null;\n  }',
+    to: '',
+    expect: "역할 결속",
+  },
+  {
+    name: "M36 picked 미존재 시 질문 기반으로 fallback (안 고른 동명이인 역할 부착)",
+    file: TARGETS[0],
+    from: '    return picked ? playerRoleOfPosition(picked.position) : null;',
+    to: '    if (picked) return playerRoleOfPosition(picked.position);\n  }\n  if (false) {',
+    expect: "역할 결속",
+  },
+  {
+    name: "M37 server 가 job 행 대신 raw question 만 쓴다 (durable 경로 결속 삭제)",
+    file: TARGETS[3],
+    from: '        pickedPlayerKboId: input.pickedPlayerKboId\n          ?? (targetJob?.picked_player_kbo_id as string | null ?? null),\n        correctedQuestion: targetJob?.picked_normalized_question as string | null ?? null,',
+    to: '        pickedPlayerKboId: null,\n        correctedQuestion: null,',
+    expect: "역할",
+  },
+  {
     name: "M21 legacy(payload 없는 과거 답변)를 정지 상태로 되돌림",
     file: TARGETS[2],
     from: '  // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.\n  return ANSWER_CLIPS[seed % ANSWER_CLIPS.length];',

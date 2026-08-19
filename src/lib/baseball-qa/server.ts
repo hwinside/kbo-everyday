@@ -10,7 +10,7 @@ import {
   answerQuestion,
   BLOCKED_ANSWER,
   answerTeamIdForResult,
-  answerPlayerRoleForResult,
+  answerPlayerRoleForTarget,
   geniusMotionForResult,
   GENIUS_MOTION_COOLDOWN_MS,
   isAckPhrase,
@@ -1272,13 +1272,36 @@ export async function processBaseballQaQuestion(input: {
   // 서버는 "이 답변이 어느 팀 얘기인가"만 알고, "누가 보고 있는가"는 모른다.
   const answerTeamId = answerTeamIdForResult(result.source, question);
   // 답변 대상 선수의 역할(투수/타자) — 답변 모션을 포지션에 맞춤다(하린아빠 2026-08-19).
-  // answerTeamId 와 같은 단일 지점·같은 계약: (source, question, 로스터 SSOT) 결정론 입력만
-  // 쓰므로 durable 재시도·조기 반환 어느 경로로 와도 같은 값이 나온다(#1197 계약과 동일 축).
-  const answerPlayerRole = answerPlayerRoleForResult(
-    result.source,
-    question,
-    await loadRosterPlayers(),
-  );
+  // ⚠️ raw question 이 아니라 **실제 답변 대상**에 결속한다(삼순 #1251 P1):
+  //   persisted picked_player_kbo_id → picked_normalized_question → raw question.
+  //   picker 에서 한 명을 골랐는데 raw question 으로 재계산하면 동명이인 역할 혼재로
+  //   null→시드 교대가 되어 같은 오모션이 재발한다. job 행이 SSOT 라 즉시 경로·교정 승인·
+  //   ready 재시도(cron drain) 어느 경로로 와도 같은 대상으로 같은 역할이 나온다(#1197 축).
+  //   조회 실패는 질문 기반 fallback 이 아니라 **역할 없음**으로 fail-close 한다 —
+  //   picked 가 있었을지 모르는 상태에서 질문 기반으로 내려가면 오결속이 된다.
+  // query-guard: bounded -- message_id PK 단일 행 조회.
+  let answerPlayerRole: ReturnType<typeof answerPlayerRoleForTarget> = null;
+  try {
+    const { data: targetJob, error: targetJobError } = await supabaseAdmin
+      .from("genius_question_jobs")
+      .select("picked_player_kbo_id, picked_normalized_question")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (targetJobError) throw targetJobError;
+    answerPlayerRole = answerPlayerRoleForTarget(
+      result.source,
+      {
+        // 입력값이 있으면 우선(이번 요청이 방금 고정한 값), 없으면 job 행(durable 재시도).
+        pickedPlayerKboId: input.pickedPlayerKboId
+          ?? (targetJob?.picked_player_kbo_id as string | null ?? null),
+        correctedQuestion: targetJob?.picked_normalized_question as string | null ?? null,
+        question,
+      },
+      await loadRosterPlayers(),
+    );
+  } catch (error) {
+    console.error("baseball-genius answer player role lookup failed:", (error as Error).message);
+  }
   // ⚠️ `motion`(부여)과 `motionIntent`(의미)를 **둘 다** 싣는다.
   //    쿨다운이 거절하면 motion 은 비지만, 그렇다고 "감사"가 "인사"가 되는 건 아니다.
   //    intent 를 함께 실어야 클라가 의미를 잃지 않는다(삼순 2026-08-16 P0).

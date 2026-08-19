@@ -258,9 +258,12 @@ check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", 
   );
   assert.match(server, /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/,
     "응원 자격 팀 id 를 단일 지점에서 계산하지 않음");
-  // 선수 역할도 같은 단일 지점에서 로스터 SSOT 로 계산되어야 한다(하린아빠 2026-08-19).
-  assert.match(server, /const answerPlayerRole = answerPlayerRoleForResult\(/,
-    "선수 역할을 단일 지점에서 계산하지 않음");
+  // 선수 역할은 실제 답변 대상(job 행 SSOT: picked → 교정문 → raw)에 결속되어야 한다
+  // (삼순 #1251 P1 — picker 선택·교정 승인·ready 재발송에서 raw question 재계산 금지).
+  assert.match(server, /answerPlayerRole = answerPlayerRoleForTarget\(/,
+    "선수 역할을 실제 답변 대상에 결속하지 않음");
+  assert.match(server, /\.select\("picked_player_kbo_id, picked_normalized_question"\)/,
+    "역할 결속이 durable job 행을 읽지 않음");
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
   assert.ok(call.indexOf("replyPayload") > 0 && call.indexOf("replyPayload") < 400, "발송 호출에 payload 미전달");
