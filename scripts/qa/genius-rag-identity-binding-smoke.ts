@@ -65,6 +65,61 @@ function findNamesakePair(): { target: PlayerRef; other: PlayerRef } {
   throw new Error("로스터에서 동명이인·이종 포지션 쌍을 찾지 못했다 — 픽스처 전제 붕괴");
 }
 
+/** 재작성 지시가 **실제 프롬프트 본문**에 실렸는가 — 모델이 볼 수 있는 유일한 표면이다. */
+function promptHasRewriteInstruction(extras?: RagLlmExtras): boolean {
+  if (!extras) return false;
+  const req = buildRagLlmRequest("q", [{
+    pageTitle: "t", sectionPath: "s", content: "c",
+    canonicalUrl: "https://namu.wiki/w/x", sourceGrade: "tier2",
+  } as never], undefined, {
+    identityBlock: extras.identityBlock,
+    identityConflict: extras.identityConflict,
+  });
+  return String(req.contents[0].parts[0].text).includes("<재작성 지시");
+}
+
+/**
+ * 종단 `answerQuestion` 을 태우기 위한 deps 팩토리.
+ *
+ * 🔴 `answerFor` 를 **호출자가 준다**는 점이 핵심이다 (삼순 2026-08-19 3차).
+ *   종전 stub 은 정답을 직접 반환해서 "프롬프트에 실렸다"만 봤다. 실제 사고는 모델이
+ *   지시를 어긴 것이므로, 게이트는 **어기는 모델**도 태울 수 있어야 한다.
+ *   재생성 호출도 같은 stub 을 다시 부르므로 호출 횟수·응답 변화를 호출자가 통제한다.
+ */
+function makeDeps(
+  subject: PlayerRef,
+  answerFor: (extras?: RagLlmExtras) => string,
+  onExtras?: (extras: RagLlmExtras | undefined) => void,
+): QaDeps {
+  const evidenceRow = {
+    pageTitle: `${subject.name} 문서`, sectionPath: "개요",
+    // 실측 사고 재현: 주인공 문서 안에 **동명이인의 다른 포지션** 서술이 함께 있다.
+    content: `${subject.name}. ${subject.team ?? ""} 소속 ${subject.position ?? ""}. 같은 팀에 동명이인인 선수가 있습니다. 데뷔 이후 꾸준히 출전하고 있습니다.`,
+    canonicalUrl: "https://namu.wiki/w/test", sourceGrade: "tier2",
+  };
+  return {
+    loadGlossary: async () => [],
+    loadPlayers: async () => players,
+    getCache: async () => null,
+    loadPreviousTurn: async () => null,
+    setCache: async () => {},
+    callLlm: async () => ({ text: "{}", inputTokens: null, outputTokens: null }),
+    reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
+    log: async () => {},
+    now: () => Date.now(),
+    enablePlayerRag: true,
+    pickedPlayerKboId: subject.kboId,
+    searchRag: async () => [evidenceRow],
+    callRagLlm: async (_q: string, _ev: unknown, extras?: RagLlmExtras) => {
+      onExtras?.(extras);
+      return {
+        text: JSON.stringify({ status: "GROUNDED", answer: answerFor(extras) }),
+        inputTokens: 1, outputTokens: 1,
+      };
+    },
+  } as unknown as QaDeps;
+}
+
 async function main() {
   let passed = 0;
   const pass = (name: string) => { passed += 1; console.log(`  PASS ${name}`); };
@@ -150,27 +205,8 @@ async function main() {
     content: `${target.name}. ${target.team ?? ""} 소속 ${target.position ?? ""}. 같은 팀에 동명이인인 선수가 있습니다. 데뷔 이후 꾸준히 출전하고 있습니다.`,
     canonicalUrl: "https://namu.wiki/w/test", sourceGrade: "tier2",
   };
-  const deps = {
-    loadGlossary: async () => [],
-    loadPlayers: async () => players,
-    getCache: async () => null,
-    loadPreviousTurn: async () => null,
-    setCache: async () => {},
-    callLlm: async () => ({ text: "{}", inputTokens: null, outputTokens: null }),
-    reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
-    log: async () => {},
-    now: () => Date.now(),
-    enablePlayerRag: true,
-    pickedPlayerKboId: target.kboId,
-    searchRag: async () => [evidenceRow],
-    callRagLlm: async (_q: string, _ev: unknown, extras?: RagLlmExtras) => {
-      observed = extras;
-      return {
-        text: JSON.stringify({ status: "GROUNDED", answer: `${target.name} 선수는 ${target.team} 소속 ${target.position}입니다.` }),
-        inputTokens: 1, outputTokens: 1,
-      };
-    },
-  } as unknown as QaDeps;
+  const deps = makeDeps(target, () => `${target.name} 선수는 ${target.team} 소속 ${target.position}입니다.`,
+    (extras) => { observed = extras; });
 
   const result = await answerQuestion("qa-identity", `${target.name} 어떤 선수야?`, deps);
   assert.equal(result.source, "rag", `D: RAG 경로를 타지 않았다 (source=${result.source})`);
@@ -234,6 +270,80 @@ async function main() {
     "G: kboId↔이름 불일치인데 블록을 만들었다 — 오결속 fail-close 미작동",
   );
   pass("G kboId↔이름 충돌 fail-close");
+
+  // ── H/I. 종단 오귀속 차단 — stub 이 **틀린 포지션**을 반환해도 서빙되지 않는가 ─────
+  //
+  //   🔴 삼순 3차 NO-GO 의 핵심: 종전 D축 stub 은 **정답을 직접 반환**했다. 그러면
+  //      "프롬프트에 실렸다"만 보고 "모델이 틀렸을 때 막히는가"는 아무것도 증명하지 못한다.
+  //      실제 사고는 모델이 지시를 어긴 것이었으므로, 게이트도 **어기는 모델**을 태워야 한다.
+  //
+  //   재생성 1회 후에도 계속 틀리면 unsure 로 닫혀야 한다(fail-close).
+  //   양방향으로 본다 — 56840(투수)에 "내야수", 53893(내야수)에 "투수".
+  const CONFLICT_CASES = [
+    { id: "56840", wrong: "내야수", label: "H 56840 투수 → 내야수 오귀속" },
+    { id: "53893", wrong: "투수", label: "I 53893 내야수 → 투수 오귀속" },
+  ];
+  for (const { id, wrong, label } of CONFLICT_CASES) {
+    const row = players.find((p) => p.kboId === id);
+    if (!row) throw new Error(`${label}: kboId ${id} 가 로스터에 없다 — 픽스처 갱신 필요`);
+
+    // 오귀속을 **끝까지 고집하는** stub — 재생성해도 같은 오답을 준다.
+    let calls = 0;
+    const stubbornDeps = makeDeps(row, () => {
+      calls += 1;
+      return `${row.name} 선수는 ${row.team} 소속의 ${wrong}입니다. 꾸준히 출전하고 있습니다.`;
+    });
+    const stubborn = await answerQuestion("qa-conflict", `${row.name} 어떤 선수야?`, stubbornDeps);
+    assert.notEqual(
+      stubborn.answer.includes(wrong) && stubborn.source === "rag",
+      true,
+      `${label}: 주인공(${row.position})과 다른 "${wrong}" 서술이 그대로 서빙됐다 — fail-open`,
+    );
+    assert.equal(
+      stubborn.source,
+      "unsure",
+      `${label}: 충돌이 남았는데 source=${stubborn.source} — unsure 로 닫히지 않았다`,
+    );
+    // 재생성은 1회만 — 공급자 과금이 무한히 늘어나면 안 된다.
+    assert.equal(calls, 2, `${label}: callRagLlm 호출 ${calls}회 — 초기 1 + 재생성 1 이어야 한다`);
+
+    // 재생성에서 고쳐주면 정상 서빙돼야 한다(과잉 차단 금지).
+    // 🔴 재생성 신호를 **프롬프트 본문에서 읽고** 고치는 stub.
+    //   `extras.identityConflict` 를 직접 보면 안 된다 — 실제 모델은 extras 가 아니라
+    //   `buildRagLlmRequest` 가 만든 **프롬프트만** 본다. extras 를 보게 하면 적재 계약을
+    //   훼손해도(신호를 프롬프트에 안 실어도) stub 이 고쳐버려 게이트가 GREEN 이 된다.
+    const fixableDeps = makeDeps(row, (extras) =>
+      promptHasRewriteInstruction(extras)
+        ? `${row.name} 선수는 ${row.team} 소속의 ${row.position}입니다.`
+        : `${row.name} 선수는 ${row.team} 소속의 ${wrong}입니다.`);
+    const fixed = await answerQuestion("qa-conflict-fix", `${row.name} 어떤 선수야?`, fixableDeps);
+    assert.equal(
+      fixed.source,
+      "rag",
+      `${label}: 재생성이 고쳤는데도 source=${fixed.source} — 과잉 차단`,
+    );
+    assert.ok(
+      fixed.answer.includes(row.position!),
+      `${label}: 재생성 정답(${row.position})이 서빙 답변에 없다`,
+    );
+    pass(label);
+  }
+
+  // ── J. 정상 답변은 막지 않는다 — 다른 포지션 단어가 **주인공 문장 밖**에 있는 경우 ──
+  //   투수 서술에 "내야수들의 호수비" 같은 문장은 정상이다. 단어 등장만으로 막으면
+  //   멀쩡한 답변이 unsure 로 죽는다(과잉 차단).
+  //   ⚠️ 주인공 문장에 진짜 포지션을 같이 넣으면 안 된다 — 그러면 답변 전체를 한 덩어리로
+  //      봐도 통과해버려서 "문장 범위" 계약이 관측 불가가 된다(M13 이 GREEN 이 된다).
+  const pitcher = players.find((p) => p.position === "투수" && p.team)!;
+  const contextualDeps = makeDeps(pitcher, () =>
+    `${pitcher.name} 선수는 ${pitcher.team} 소속입니다. 뒤를 받치는 내야수들의 호수비 덕을 봤습니다.`);
+  const contextual = await answerQuestion("qa-context", `${pitcher.name} 어떤 선수야?`, contextualDeps);
+  assert.equal(
+    contextual.source,
+    "rag",
+    "J: 주인공 문장 밖의 포지션 단어를 충돌로 오판했다 — 정상 답변 과잉 차단",
+  );
+  pass("J 주인공 문장 밖 포지션 언급은 통과");
 
   console.log(`\ngenius-rag-identity-binding-smoke PASS (${passed} checks)`);
 }

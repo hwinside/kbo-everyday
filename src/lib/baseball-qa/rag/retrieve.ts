@@ -794,6 +794,13 @@ export interface RagRequestExtras {
    * 속성으로 새는 경로를 막는 유일한 신호라 rosterBlock 으로 대체할 수 없다.
    */
   identityBlock?: string;
+  /**
+   * 직전 생성이 **주인공이 아닌 사람의 속성**을 붙였을 때 넘어오는 재생성 신호 (2026-08-19 3차).
+   *
+   * 재생성에 같은 프롬프트를 그대로 다시 보내면 같은 답이 나올 확률이 높다 — 무엇이 왜
+   * 틀렸는지를 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
+   */
+  identityConflict?: { field: "position"; expected: string; mentioned: string };
 }
 
 export function buildRagLlmRequest(
@@ -833,6 +840,16 @@ export function buildRagLlmRequest(
       "<질문 대상 — 이 답변의 유일한 주인공, 동명이인과 혼동 금지>",
       extras.identityBlock,
       "<질문 대상 끝>",
+    );
+  }
+  // 재생성 신호는 주인공 블록 **바로 뒤**에 둔다 — 무엇이 틀렸는지가 주인공 사실과 붙어 읽혀야 한다.
+  if (extras.identityConflict) {
+    const { expected, mentioned } = extras.identityConflict;
+    sections.push(
+      "<재작성 지시 — 직전 답변이 질문 대상이 아닌 인물의 속성을 붙였다>",
+      `직전 답변은 질문 대상을 "${mentioned}"로 서술했다. 질문 대상의 포지션은 "${expected}"다.`,
+      "동명이인이나 자료에 함께 등장하는 다른 인물의 포지션을 질문 대상에게 붙이지 말고 다시 답한다.",
+      "<재작성 지시 끝>",
     );
   }
   sections.push(`질문: ${question}`);

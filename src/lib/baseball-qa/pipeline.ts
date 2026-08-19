@@ -3577,6 +3577,17 @@ export interface RagLlmExtras {
   rosterBlock?: string;
   /** 질문 대상(주인공) 인물 결속 블록 — 동명이인 오귀속 차단 (2026-08-19 P0). */
   identityBlock?: string;
+  /**
+   * 생성 답변 검증용 주인공 사실 — `identityBlock` 과 **같은 roster 행**에서 나온다.
+   * 프롬프트 준수는 지시일 뿐이라, 실제로 지켰는지를 생성 후에 관측한다(삼순 2026-08-19 3차).
+   */
+  identity?: PlayerIdentity;
+  /**
+   * 직전 생성이 주인공 아닌 인물의 속성을 붙였을 때 넘어오는 **재생성 신호** (2026-08-19 3차).
+   * 같은 프롬프트를 그대로 재전송하면 같은 오답이 나올 확률이 높다 — 무엇이 왜 틀렸는지를
+   * 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
+   */
+  identityConflict?: { field: "position"; expected: string; mentioned: string };
 }
 
 /**
@@ -3621,6 +3632,92 @@ export function buildIdentityBlock(
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * 주인공의 **검증 가능한 사실** — 블록과 같은 SSOT 에서 나온다.
+ *
+ * 🔴 왜 블록과 함께 만드는가 (삼순 2026-08-19 3차).
+ *   프롬프트에 실려 보낸 값과 생성 답변을 검증하는 값이 **따로 만들어지면**, 한쪽이
+ *   바뀌어도 다른 쪽은 그대로라 검증이 조용히 엉뚱한 기준을 보게 된다.
+ *   둘은 반드시 같은 roster 행에서 한 번에 나와야 한다.
+ */
+export interface PlayerIdentity {
+  /** 프롬프트에 실리는 블록 본문. */
+  block: string;
+  kboId: string;
+  name: string;
+  team: string | null;
+  position: string | null;
+}
+
+/** 주인공 결속 — 블록과 검증값을 **한 번에** 만들어 둘이 어긋나지 않게 한다. */
+export function buildPlayerIdentity(
+  candidate: { entityId: string; name: string; team?: string | null },
+  players: PlayerRef[],
+): PlayerIdentity | null {
+  const block = buildIdentityBlock(candidate, players);
+  if (!block) return null;
+  const player = players.find((row) => row.kboId === candidate.entityId)!;
+  return {
+    block,
+    kboId: player.kboId,
+    name: player.name,
+    team: player.team ?? candidate.team ?? null,
+    position: player.position ?? null,
+  };
+}
+
+/**
+ * 포지션 상하위 — `야수` 는 내야·외야·포수를 포함하는 **상위 범주**다.
+ *
+ * roster 의 position 값은 닫힌 집합 5종(투수·내야수·외야수·야수·포수)이다. `야수` 로
+ * 등록된 선수가 답변에서 `내야수` 로 서술되는 것은 모순이 아니므로 충돌로 세지 않는다.
+ * 반대로 `투수` ↔ `내야수` 는 서로 성립할 수 없다 — 이게 이번 사고의 축이다.
+ */
+const POSITION_TOKENS = ["투수", "포수", "내야수", "외야수", "야수"] as const;
+function positionCompatible(subject: string, mentioned: string): boolean {
+  if (subject === mentioned) return true;
+  // `야수` 는 상위 범주 — 어느 쪽이 상위여도 모순이 아니다.
+  const fielders = ["내야수", "외야수", "포수", "야수"];
+  if (subject === "야수" && fielders.includes(mentioned)) return true;
+  if (mentioned === "야수" && fielders.includes(subject)) return true;
+  return false;
+}
+
+/**
+ * 생성된 답변이 주인공에게 **다른 사람의 속성**을 붙였는가 (삼순 2026-08-19 3차 P0).
+ *
+ * 🔴 왜 프롬프트 준수만으로는 부족한가.
+ *   "동명이인 속성을 옮기지 마라" 는 **지시**일 뿐이다. 지키는지는 관측해야 안다.
+ *   지키는 것을 전제하면 그것은 계약이 아니라 **희망**이다. `buildIdentityBlock` 이 null 이라
+ *   블록이 안 실렸을 때도 생성은 그대로 진행되므로(fail-open), 마지막 방어선은 여기다.
+ *
+ * 🔴 왜 "답변에 다른 포지션 단어가 있다" 가 아닌가.
+ *   투수 서술에 "내야수들의 호수비" 같은 문장은 **정상**이다. 단어 등장을 충돌로 세면
+ *   멀짐한 답변이 unsure 로 죽는다. 귀속은 **주인공 이름이 들어있는 문장**에서만 본다.
+ *   그 문장에 주인공의 진짜 포지션도 같이 있으면("A는 투수로, 동명의 내야수와 다르다")
+ *   구분해 쓴 것이므로 통과시킨다.
+ *
+ * 판정 입력은 전부 **닫힌 집합**이다(roster position 5종·주인공 이름 1개) — 열린 의도 분류가
+ * 아니므로 룰이 맞다(M90 `open_language_never_closes_with_rules` 판정 기준).
+ */
+export function detectIdentityConflict(
+  answer: string,
+  identity: PlayerIdentity | null | undefined,
+): { field: "position"; expected: string; mentioned: string } | null {
+  if (!identity?.position || !answer) return null;
+  const subject = identity.position;
+  // 주인공 이름이 들어있는 문장만 본다 — 귀속 문장이 아닌 곳의 포지션 언급은 정상이다.
+  const sentences = answer.split(/(?<=[.!?\n])\s*/).filter((s) => s.includes(identity.name));
+  for (const sentence of sentences) {
+    const mentioned = POSITION_TOKENS.filter((token) => sentence.includes(token));
+    if (mentioned.length === 0) continue;
+    // 주인공의 진짜 포지션이 같은 문장에 있으면 구분해 쓴 것으로 본다.
+    if (mentioned.some((token) => positionCompatible(subject, token))) continue;
+    return { field: "position", expected: subject, mentioned: mentioned[0] };
+  }
+  return null;
 }
 
 /**
@@ -4283,19 +4380,57 @@ async function answerPlayerDescriptiveQuestion(
     // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
     return failClose(llm, ragObservation("player", question, validated));
   }
-  const answer = composeRagAnswer(validated.answer, evidence[0]);
+  // 🔴 생성 답변 귀속 검증 — 프롬프트 준수에 **기대지 않고 관측한다** (삼순 2026-08-19 3차 P0).
+  //   `identityBlock` 은 지시일 뿐이다. 모델이 지켰는지는 생성물을 봐야 알고, 안 지켰는데
+  //   그대로 서빙하면 **막으려던 사고가 그대로 유저에게 간다**(직전까지가 fail-open 이었다).
+  //   재생성은 **1회만** 한다 — 공급자 과금이 무한으로 늘어나면 안 되고, 두 번 틀리면 그건
+  //   프롬프트로 못 고치는 것이므로 unsure 로 닫는 편이 오귀속을 서빙하는 것보다 낫다.
+  let finalValidated = validated;
+  let conflict = detectIdentityConflict(validated.answer, extras.identity);
+  if (conflict && deps.callRagLlm) {
+    let retryLlm: LlmResult | null = null;
+    try {
+      retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflict: conflict });
+    } catch {
+      retryLlm = null;
+    }
+    if (retryLlm) {
+      // 재생성 토큰은 반드시 누적한다 — 재시도가 공짜로 보이면 비용 분모가 깨진다.
+      llm = {
+        ...retryLlm,
+        inputTokens: (llm.inputTokens ?? 0) + (retryLlm.inputTokens ?? 0),
+        outputTokens: (llm.outputTokens ?? 0) + (retryLlm.outputTokens ?? 0),
+      };
+      const revalidated = validateRagResponse(retryLlm.text);
+      if (revalidated.kind === "grounded") {
+        finalValidated = revalidated;
+        conflict = detectIdentityConflict(revalidated.answer, extras.identity);
+      }
+      // 재생성이 grounded 가 아니면 충돌이 남은 것으로 보고 아래에서 닫는다.
+    }
+  }
+  if (conflict) {
+    // 주인공이 아닌 사람의 속성이 붙은 답변은 **서빙하지 않는다.**
+    //   유저는 틀렸다는 걸 알 방법이 없으므로 모른다고 말하는 편이 오귀속보다 낫다.
+    const observation = ragObservation("player", question, finalValidated);
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+      answer: UNCLEAR_ANSWER, source: "unsure", ...observation,
+    }, llm));
+    return failClose(llm, observation);
+  }
+  const answer = composeRagAnswer(finalValidated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
     answer, source: "rag", sourceUrl,
-    toneCompliant: validated.toneCompliant, ...ragObservation("player", question, validated),
+    toneCompliant: finalValidated.toneCompliant, ...ragObservation("player", question, finalValidated),
   }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-    toneCompliant: validated.toneCompliant,
-    ...ragObservation("player", question, validated),
+    toneCompliant: finalValidated.toneCompliant,
+    ...ragObservation("player", question, finalValidated),
   });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -5824,9 +5959,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
           context: context ?? undefined,
           rosterBlock,
           // 주인공 결속 — 동명이인 문서의 제3자 서술이 주인공 속성으로 새는 경로를 막는다.
-          ...(buildIdentityBlock(playerCandidate, players)
-            ? { identityBlock: buildIdentityBlock(playerCandidate, players)! }
-            : {}),
+          // 블록(프롬프트 입력)과 identity(생성 답변 검증값)를 **한 번에** 만들어 둘이 어긋나지 않게 한다.
+          ...(() => {
+            const identity = buildPlayerIdentity(playerCandidate, players);
+            return identity ? { identityBlock: identity.block, identity } : {};
+          })(),
         },
       );
       // null = 근거 0건 양보 — generic LLM(roster 블록·직전 턴·숫자 계약 보유)으로 내려간다.

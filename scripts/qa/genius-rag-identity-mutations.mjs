@@ -51,9 +51,10 @@ const MUTATIONS = [
   {
     id: "M1 seam 배선 끊김",
     file: PIPELINE,
-    find: `          ...(buildIdentityBlock(playerCandidate, players)
-            ? { identityBlock: buildIdentityBlock(playerCandidate, players)! }
-            : {}),`,
+    find: `          ...(() => {
+            const identity = buildPlayerIdentity(playerCandidate, players);
+            return identity ? { identityBlock: identity.block, identity } : {};
+          })(),`,
     replace: "",
     expect: "종단 answerQuestion 이 callRagLlm 에 identityBlock 을 넘기지 않았다",
   },
@@ -119,6 +120,43 @@ const MUTATIONS = [
     find: `  if (player.position) parts.push(\`포지션: \${player.position}\`);`,
     replace: `  if (player.position) parts.push(\`포지션: 투수\`);`,
     expect: "블록의 포지션이 roster",
+  },
+  {
+    // 🔴 삼순 3차 NO-GO 의 본체: 생성 답변 검증이 없으면 오귀속이 그대로 서빙된다(fail-open).
+    id: "M10 생성 답변 귀속 검증 제거",
+    file: PIPELINE,
+    find: `  let conflict = detectIdentityConflict(validated.answer, extras.identity);`,
+    replace: `  let conflict: ReturnType<typeof detectIdentityConflict> = null;`,
+    // 검증이 없으면 오귀속이 그대로 나간다 — H축이 정확히 그 지점을 잡는다.
+    expect: "그대로 서빙됐다 — fail-open",
+  },
+  {
+    // 검증은 남기고 **차단만** 없앤 경우 — 재생성 후에도 틀린 답이 서빙되면 안 된다.
+    id: "M11 충돌 확정 후 차단 제거",
+    file: PIPELINE,
+    find: `    return failClose(llm, observation);
+  }
+  const answer = composeRagAnswer(finalValidated.answer, evidence[0]);`,
+    replace: `  }
+  const answer = composeRagAnswer(finalValidated.answer, evidence[0]);`,
+    // M10 과 증상은 같지만 기전이 다르다(검증은 하되 차단만 없앤 경우).
+    expect: "그대로 서빙됐다 — fail-open",
+  },
+  {
+    // 재생성 신호를 안 실으면 두 번째 시도가 첫 번째와 같은 조건이 된다 — 고칠 기회가 없다.
+    id: "M12 재생성 신호 미적재",
+    file: RETRIEVE,
+    find: `  if (extras.identityConflict) {`,
+    replace: `  if (false && extras.identityConflict) {`,
+    expect: "재생성이 고쳤는데도",
+  },
+  {
+    // 포지션 상하위(야수⊃내야수) 를 충돌로 세면 정상 답변이 unsure 로 죽는다.
+    id: "M13 문장 범위 무시(단어 등장만으로 충돌)",
+    file: PIPELINE,
+    find: `  const sentences = answer.split(/(?<=[.!?\\n])\\s*/).filter((s) => s.includes(identity.name));`,
+    replace: `  const sentences = [answer];`,
+    expect: "정상 답변 과잉 차단",
   },
   {
     id: "M7 미결속 kboId 빈 블록 생성",
