@@ -20,6 +20,39 @@ function expect(condition: unknown, failures: Failure[], label: string): void {
   if (!condition) failures.push(label);
 }
 
+/**
+ * route ↔ service 직접 대조(삼순 3차 NO-GO ②).
+ *
+ * thin route 의 GET 을 실제로 실행해 같은 fixture 에서 service 가 낸 결과와
+ * body·status·Cache-Control 을 직접 비교한다. hard-code 기대값 비교만으로는
+ * route 래퍼가 status/header 를 떨굜도 못 잡는다.
+ *
+ * 주의: 이 대조는 "route 가 service 를 그대로 흔리는가"만 증명한다. service 값 자체의
+ * 회귀는 같은 harness 의 hard-code 계약 fixture(checkPlayerStats 등)가 잡는다 — 둘을
+ * 함께 두어야 양방향 mutant 가 RED 가 된다.
+ */
+async function compareRouteToService(
+  failures: Failure[],
+  label: string,
+  response: Response,
+  service: { body: unknown; status?: number; headers?: HeadersInit },
+): Promise<void> {
+  expectEqual(failures, `[P] ${label} route↔service status`, response.status, service.status ?? 200);
+  expectEqual(
+    failures,
+    `[P] ${label} route↔service Cache-Control`,
+    response.headers.get("Cache-Control"),
+    cacheControlOf(service.headers),
+  );
+  const routeBody = await response.json();
+  expectEqual(
+    failures,
+    `[P] ${label} route↔service body`,
+    JSON.stringify(routeBody),
+    JSON.stringify(service.body),
+  );
+}
+
 function hitterHtml(): string {
   const tbody = (cells: string[]) => `<tbody><tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr></tbody>`;
   return [
@@ -270,6 +303,29 @@ async function checkPlayerStats(failures: Failure[]): Promise<void> {
     expectEqual(failures, "[P] player-stats error status", errored.status, 500);
     expectEqual(failures, "[P] player-stats error cache", cacheControlOf(errored.headers), "no-store");
     expectEqual(failures, "[P] player-stats error body.shape", JSON.stringify(Object.keys(errored.body as Record<string, unknown>).sort()), JSON.stringify(["error", "stats"]));
+
+    // route↔service 직접 대조 — thin route 의 GET 을 실제 실행해 같은 fixture 결과와 비교한다.
+    const route = await import("../../src/app/api/player-stats/route");
+    globalThis.fetch = (async () => new Response(hitterHtml(), { status: 200 })) as typeof fetch;
+    await compareRouteToService(
+      failures,
+      "player-stats success",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-stats?id=12345&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerStatsRouteResult("12345", "타자"),
+    );
+    await compareRouteToService(
+      failures,
+      "player-stats missing-id",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-stats")),
+      await getPlayerStatsRouteResult(null, "타자"),
+    );
+    globalThis.fetch = (async () => new Response("upstream unavailable", { status: 503 })) as typeof fetch;
+    await compareRouteToService(
+      failures,
+      "player-stats error",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-stats?id=54321&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerStatsRouteResult("54321", "타자"),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -304,6 +360,33 @@ async function checkPlayerGameLogs(failures: Failure[]): Promise<void> {
     const errored = await getPlayerGameLogsRouteResult("12345", "타자");
     expectEqual(failures, "[P] player-game-logs error status", errored.status, 500);
     expectEqual(failures, "[P] player-game-logs error body.error", (errored.body as { error: string }).error, "db exploded");
+
+    // route↔service 직접 대조
+    const route = await import("../../src/app/api/player-game-logs/route");
+    await compareRouteToService(
+      failures,
+      "player-game-logs error",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-game-logs?id=12345&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerGameLogsRouteResult("12345", "타자"),
+    );
+    await compareRouteToService(
+      failures,
+      "player-game-logs missing-id",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-game-logs")),
+      await getPlayerGameLogsRouteResult(null, "타자"),
+    );
+    supabaseAdmin.from = (() => makeGameLogBuilder({
+      data: [
+        { game_id: "1", game_date: "2026-07-01", ab: 4, h: 2, hr: 0, rbi: 1, bb: 0, so: 0, ip_outs: 0, er: 0, h_allowed: 0, k: 0, bb_allowed: 0 },
+      ],
+      error: null,
+    })) as typeof supabaseAdmin.from;
+    await compareRouteToService(
+      failures,
+      "player-game-logs success",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-game-logs?id=12345&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerGameLogsRouteResult("12345", "타자"),
+    );
   } finally {
     supabaseAdmin.from = originalFrom as typeof supabaseAdmin.from;
   }
@@ -326,9 +409,27 @@ async function checkStats(failures: Failure[]): Promise<void> {
     expectEqual(failures, "[P] stats current error status", errored.status, 500);
     expectEqual(failures, "[P] stats current error cache", cacheControlOf(errored.headers), "no-store");
     expectEqual(failures, "[P] stats current error body.shape", JSON.stringify(Object.keys(errored.body as Record<string, unknown>).sort()), JSON.stringify(["error", "stats"]));
+
+    // route↔service 직접 대조 (error 분기 — fetch 스텀 유지 상태)
+    const route = await import("../../src/app/api/stats/route");
+    await compareRouteToService(
+      failures,
+      "stats current error",
+      await route.GET(new NextRequest("https://keubo.fan/api/stats?type=batter&season=2027")),
+      await getStatsRouteResult({ type: "batter", season: "2027" }),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
+
+  // route↔service 직접 대조 (정상 분기 — 스텀 복원 후)
+  const route = await import("../../src/app/api/stats/route");
+  await compareRouteToService(
+    failures,
+    "stats 2025 success",
+    await route.GET(new NextRequest("https://keubo.fan/api/stats?type=batter&season=2025")),
+    await getStatsRouteResult({ type: "batter", season: "2025" }),
+  );
 }
 
 async function checkPlayerTodayGame(failures: Failure[]): Promise<void> {
@@ -348,8 +449,70 @@ async function checkPlayerTodayGame(failures: Failure[]): Promise<void> {
     expectEqual(failures, "[P] player-today-game live body.status", (live.body as { status: string }).status, "live");
     expectEqual(failures, "[P] player-today-game live batter.onBase", (live.body as { batter: { onBase: number } }).batter.onBase, 1);
     expectEqual(failures, "[P] player-today-game live deferred count", deferred.length, 0);
+
+    // route↔service 직접 대조 (live)
+    const route = await import("../../src/app/api/player-today-game/route");
+    await compareRouteToService(
+      failures,
+      "player-today-game live",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" }),
+    );
+
+    // 분기 결속: row-missing (박스스코어에 없는 이름) — HIDDEN + s-maxage=20
+    const rowMissing = await getPlayerTodayGameRouteResult({ teamId: 1, name: "없는선수", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game row-missing cache", cacheControlOf(rowMissing.headers), "s-maxage=20");
+    expectEqual(failures, "[P] player-today-game row-missing show", (rowMissing.body as { show: boolean }).show, false);
+    await compareRouteToService(
+      failures,
+      "player-today-game row-missing",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%EC%97%86%EB%8A%94%EC%84%A0%EC%88%98&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "없는선수", pos: "타자" }),
+    );
+
+    // 분기 결속: no-game (해당 팀 경기 없음) — HIDDEN("none") + s-maxage=60
+    const noGame = await getPlayerTodayGameRouteResult({ teamId: 8, name: "홍길동", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game no-game cache", cacheControlOf(noGame.headers), "s-maxage=60");
+    expectEqual(failures, "[P] player-today-game no-game status", (noGame.body as { status: string }).status, "none");
+    await compareRouteToService(
+      failures,
+      "player-today-game no-game",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=8&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 8, name: "홍길동", pos: "타자" }),
+    );
+
+    // 분기 결속: bad-params (teamId/name 미지정) — no-store
+    const badParams = await getPlayerTodayGameRouteResult({ teamId: 0, name: "", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game bad-params cache", cacheControlOf(badParams.headers), "no-store");
+    await compareRouteToService(
+      failures,
+      "player-today-game bad-params",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game")),
+      await getPlayerTodayGameRouteResult({ teamId: NaN, name: "", pos: "" }),
+    );
   } finally {
     globalThis.fetch = originalFetch;
+  }
+
+  // 분기 결속: catch (상류 전면 장애) — no-store + status 200 명시
+  const originalFetchCatch = globalThis.fetch;
+  try {
+    globalThis.fetch = (async () => {
+      throw new Error("kbo down");
+    }) as typeof fetch;
+    const crashed = await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game catch status", crashed.status, 200);
+    expectEqual(failures, "[P] player-today-game catch cache", cacheControlOf(crashed.headers), "no-store");
+    expectEqual(failures, "[P] player-today-game catch body.status", (crashed.body as { status: string }).status, "none");
+    const route = await import("../../src/app/api/player-today-game/route");
+    await compareRouteToService(
+      failures,
+      "player-today-game catch",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" }),
+    );
+  } finally {
+    globalThis.fetch = originalFetchCatch;
   }
 
   const originalFetch2 = installTodayFetch("scheduled");
@@ -359,6 +522,13 @@ async function checkPlayerTodayGame(failures: Failure[]): Promise<void> {
     expectEqual(failures, "[P] player-today-game scheduled cache", cacheControlOf(scheduled.headers), "s-maxage=60");
     expectEqual(failures, "[P] player-today-game scheduled body.shape", JSON.stringify(Object.keys(scheduled.body as Record<string, unknown>).sort()), JSON.stringify(["isLive", "opponentName", "show", "status", "type"]));
     expectEqual(failures, "[P] player-today-game scheduled show", (scheduled.body as { show: boolean }).show, false);
+    const route = await import("../../src/app/api/player-today-game/route");
+    await compareRouteToService(
+      failures,
+      "player-today-game scheduled",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" }),
+    );
   } finally {
     globalThis.fetch = originalFetch2;
   }

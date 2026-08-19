@@ -332,6 +332,76 @@ function runSelfTest() {
       ),
       "[W]",
     ],
+    [
+      "M9 W축 widget/player-card service 호출 제거 (player-stats)",
+      () => mutateFile(
+        "src/app/api/widget/player-card/route.ts",
+        "        const result = await getPlayerStatsRouteResult(kboId, pos);",
+        "        const result = await __removedStatsResult(kboId, pos);",
+        "M9",
+      ),
+      "[W]",
+    ],
+    [
+      "M10 W축 widget/player-card service 호출 제거 (player-today-game)",
+      () => mutateFile(
+        "src/app/api/widget/player-card/route.ts",
+        "        const result = await getPlayerTodayGameRouteResult({",
+        "        const result = await __removedTodayResult({",
+        "M10",
+      ),
+      "[W]",
+    ],
+    [
+      "M11 W축 widget/player-card service import 제거 (stats)",
+      () => mutateFile(
+        "src/app/api/widget/player-card/route.ts",
+        "import { getStatsRouteResult } from \"@/lib/services/stats\";",
+        "const getStatsRouteResult = async (_: unknown) => ({ body: { stats: [] } });",
+        "M11",
+      ),
+      "[W]",
+    ],
+    [
+      "M12 P축 widget deferred effect 실행 제거",
+      () => mutateFile(
+        "src/app/api/widget/player-card/route.ts",
+        "    scheduleDeferred(() => effect());",
+        "    void effect;",
+        "M12",
+      ),
+      "[P]",
+    ],
+    [
+      "M13 P축 player-stats route status 누락(route 래퍼 파손)",
+      () => mutateFile(
+        "src/app/api/player-stats/route.ts",
+        "    status: result.status,",
+        "    status: 200,",
+        "M13",
+      ),
+      "[P]",
+    ],
+    [
+      "M14 P축 stats route Cache-Control 누락(route 래퍼 파손)",
+      () => mutateFile(
+        "src/app/api/stats/route.ts",
+        "    headers: result.headers,",
+        "    headers: undefined,",
+        "M14",
+      ),
+      "[P]",
+    ],
+    [
+      "M15 P축 player-game-logs route body 변조(route 래퍼 파손)",
+      () => mutateFile(
+        "src/app/api/player-game-logs/route.ts",
+        "  return NextResponse.json(result.body, {",
+        "  return NextResponse.json({ ...result.body, __injected: true }, {",
+        "M15",
+      ),
+      "[P]",
+    ],
   ];
 
   let ok = true;

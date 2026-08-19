@@ -17,6 +17,6 @@ export async function GET(req: NextRequest) {
   });
   return NextResponse.json(result.body, {
     status: result.status,
-    headers: result.headers,
+    headers: undefined,
   });
 }
