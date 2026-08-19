@@ -3706,11 +3706,16 @@ function tokenizePositions(text: string): { token: string; index: number }[] {
 }
 
 /**
- * 문장에 등장한 구단들 — 별칭을 정규 코드로 접어서 돌려준다.
+ * 문장에서 **주인공의 소속으로 서술된** 구단만 골라 정규 코드로 돌려준다.
  *
- * 🔴 별칭 표를 새로 만들지 않는다. 이미 이 파일에 `TEAM_ALIASES`(canonical/shorts/nicks)가
- *   구단 라우팅용 SSOT 로 있다. 같은 사실을 두 곳에 두면 한쪽만 갱신됐을 때 검증이
- *   조용히 다른 기준을 보게 된다(이번 PR 에서 identity 블록/검증값을 한 번에 만든 것과 같은 축).
+ * 🔴 왜 "등장한 구단" 이 아닌가 (삼순 2026-08-19 5차, 실측 재현).
+ *   `김민준 선수는 투수입니다. 두산과의 경기에서 호투했습니다.` 에서 `두산` 은 **상대팀**이다.
+ *   등장만으로 소속으로 세면 이 정상 답변이 conflict → 재생성 → unsure 로 죽는다.
+ *   상대팀·과거팀·롤모델 구단은 답변에 정상적으로 등장하므로, 소속 판정은 **귀속 표현이
+ *   붙은 자리**에서만 한다(포지션을 서술어 위치로만 본 것과 같은 축).
+ *
+ *   화이트리스트라 놓치는 표현이 있을 수 있다 — 그건 fail-open 이고(오귀속 1건 통과),
+ *   반대(정상 답변을 죽이는 것)보다 낫다. 여기 있는 건 전부 **닫힌 형태소**다.
  */
 /**
  * 구단 표기를 정규 코드로 접는다 — 없으면 `null`.
@@ -3729,11 +3734,27 @@ function canonicalizeTeam(value: string): string | null {
   return null;
 }
 
-function mentionedTeams(sentence: string): string[] {
+const TEAM_AFFILIATION_AFTER = /^\s*(?:소속|에서 뛰|의 유니폼|구단 소속)/;
+const TEAM_AFFILIATION_BEFORE = /소속(?:은|이|:)?\s*$/;
+function attributedTeams(sentence: string): string[] {
   const lowered = sentence.toLowerCase();
   const hit = new Set<string>();
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) hit.add(canonical);
+    for (const alias of [...shorts, ...nicks]) {
+      const lowerAlias = alias.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const index = lowered.indexOf(lowerAlias, from);
+        if (index < 0) break;
+        from = index + lowerAlias.length;
+        // 구단 표기 **직후**가 소속 표현이거나, **직전**이 "소속은/소속:" 인 자리만 귀속으로 본다.
+        if (TEAM_AFFILIATION_AFTER.test(sentence.slice(from))
+          || TEAM_AFFILIATION_BEFORE.test(sentence.slice(0, index))) {
+          hit.add(canonical);
+          break;
+        }
+      }
+    }
   }
   return [...hit];
 }
@@ -3811,7 +3832,7 @@ export function detectIdentityConflict(
     if (identity.team) {
       // 양쪽 다 같은 함수로 접는다 — 한쪽만 정규화하면 정상 표기가 충돌로 오판된다.
       const subjectTeam = canonicalizeTeam(identity.team);
-      const teams = mentionedTeams(sentence);
+      const teams = attributedTeams(sentence);
       // 주인공 구단을 못 접으면 판정 근거가 없다 — 억지로 충돌을 만들지 않는다.
       if (subjectTeam && teams.length > 0 && !teams.includes(subjectTeam)) {
         return { field: "team", expected: identity.team, mentioned: teams[0] };

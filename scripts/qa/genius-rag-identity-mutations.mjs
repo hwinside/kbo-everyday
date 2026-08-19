@@ -110,16 +110,17 @@ const MUTATIONS = [
   {
     id: "M19 team 충돌 검출 제거",
     file: PIPELINE,
-    find: `      const teams = mentionedTeams(sentence);`,
+    find: `      const teams = attributedTeams(sentence);`,
     replace: `      const teams = [] as string[];`,
+    // M축(양방향 team 오귀속)이 먼저 잡는다 — P2 와 같은 team 검출 축이라 정당하다.
     expect: "소속 오귀속",
   },
   {
     // 별칭을 정규 코드로 접지 않으면 `에스에스지` 가 SSG 와 다른 값으로 보여 정상이 죽는다.
     id: "M20 team 별칭 정규화 제거",
     file: PIPELINE,
-    find: `    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) hit.add(canonical);`,
-    replace: `    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) hit.add(shorts[0]);`,
+    find: `          hit.add(canonical);`,
+    replace: `          hit.add(alias);`,
     expect: "같은 구단의 다른 표기를 오귀속으로 셌다",
   },
   {
@@ -129,6 +130,15 @@ const MUTATIONS = [
     find: `      const subjectTeam = canonicalizeTeam(identity.team);`,
     replace: `      const subjectTeam = identity.team;`,
     expect: "풀네임 구단 표기를 오귀속으로 셌다",
+  },
+  {
+    // 🔴 삼순 5차 실재 결함: 구단 "등장"을 소속으로 세면 상대팀 문장이 정상인데 죽는다.
+    id: "M22 구단 등장만으로 소속 판정(귀속 마커 무시)",
+    file: PIPELINE,
+    find: `        if (TEAM_AFFILIATION_AFTER.test(sentence.slice(from))
+          || TEAM_AFFILIATION_BEFORE.test(sentence.slice(0, index))) {`,
+    replace: `        if (true) {`,
+    expect: "소속이 아닌 구단 언급을 오귀속으로 셌다",
   },
   {
     id: "M7 미결속 kboId 빈 블록 생성",

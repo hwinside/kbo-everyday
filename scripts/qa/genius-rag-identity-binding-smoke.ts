@@ -368,6 +368,39 @@ async function main() {
     "M4: 풀네임 구단 표기를 오귀속으로 셌다 — 한쪽만 정규화한 비교",
   );
 
+  // 🔴 P축: 상대팀·롤모델·과거 상대 구단은 **소속이 아니다** (삼순 2026-08-19 5차 실측 재현).
+  //   `김민준 선수는 투수입니다. 두산과의 경기에서 호투했습니다.` 에서 `두산` 을 소속으로
+  //   세면 이 정상 답변이 conflict → 재생성 → unsure 로 죽는다. 구단 등장은 정상이고,
+  //   소속 판정은 **귀속 표현이 붙은 자리**에서만 해야 한다(포지션을 서술어로 본 것과 같은 축).
+  const teamIdentity = buildPlayerIdentity(
+    { entityId: teamA.kboId, name: teamA.name, team: teamA.team }, players,
+  );
+  const NON_AFFILIATION = [
+    `${teamA.name} 선수는 투수입니다. 두산과의 경기에서 호투했습니다.`,
+    `${teamA.name} 선수는 투수입니다. 롤모델은 롯데의 에이스입니다.`,
+    `${teamA.name} 선수는 투수입니다. 한화를 상대로 완봉승을 거뒀습니다.`,
+    `${teamA.name} 선수는 투수입니다. LG전에서 데뷔했습니다.`,
+  ];
+  for (const sentence of NON_AFFILIATION) {
+    assert.equal(
+      detectIdentityConflict(sentence, teamIdentity, players),
+      null,
+      `P: 소속이 아닌 구단 언급을 오귀속으로 셌다 — 정상 답변 과잉 차단: ${sentence}`,
+    );
+  }
+  // 반대로 **귀속 표현**이 붙은 잘못된 소속은 반드시 잡아야 한다(양방향).
+  const AFFILIATION_WRONG = [
+    `${teamA.name} 선수는 두산 소속의 투수입니다.`,
+    `${teamA.name} 선수는 투수입니다. 소속은 롯데입니다.`,
+    `${teamA.name} 선수는 투수입니다. 현재 KIA에서 뛰고 있습니다.`,
+  ];
+  for (const sentence of AFFILIATION_WRONG) {
+    const hit = detectIdentityConflict(sentence, teamIdentity, players);
+    assert.ok(hit, `P2: 귀속 표현이 붙은 잘못된 소속이 미검출: ${sentence}`);
+    assert.equal(hit!.field, "team", `P2: field 가 team 이 아니다: ${sentence}`);
+  }
+  pass("P 상대팀·롤모델 통과 + 귀속 표현 오소속 검출");
+
   // 종단으로도 닫히는지 본다.
   const teamConflictDeps = makeDeps(teamA, () => `${teamA.name} 선수는 LG 소속의 투수입니다.`);
   const teamResult = await answerQuestion("qa-team", `${teamA.name} 어떤 선수야?`, teamConflictDeps);
