@@ -23,10 +23,12 @@ async function fetchPlayerStats(playerId: string, position: string) {
 
 const cache: Record<string, { data: PlayerDetailStats; ts: number }> = {};
 
-export async function GET(req: NextRequest) {
-  const rawId = req.nextUrl.searchParams.get("id");
-  const pos = req.nextUrl.searchParams.get("pos") || "타자";
-  if (!rawId) return NextResponse.json({ error: "id required" }, { status: 400 });
+export async function getPlayerStatsRouteResult(rawId: string | null, pos = "타자"): Promise<{
+  body: { stats: PlayerDetailStats | null; cached?: boolean; error?: string };
+  status?: number;
+  headers?: HeadersInit;
+}> {
+  if (!rawId) return { body: { error: "id required", stats: null }, status: 400 };
 
   // KBO 공식 사이트는 숫자 ID만 인식 → resolvePlayer가 외국인 alpha→numeric 변환 처리
   const id = resolvePlayer(rawId)?.numericId || rawId;
@@ -37,15 +39,26 @@ export async function GET(req: NextRequest) {
   const OK_HEADERS = { "Cache-Control": "public, s-maxage=60" } as const;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < 3600000) {
-    return NextResponse.json({ stats: cached.data, cached: true }, { headers: OK_HEADERS });
+    return { body: { stats: cached.data, cached: true }, headers: OK_HEADERS };
   }
 
   try {
     const stats = await fetchPlayerStats(id, pos);
     if (stats) cache[cacheKey] = { data: stats, ts: Date.now() };
     // stats null = 명시적 '기록이 없습니다.'만 도달(장애는 throw) — 동일 60초 캐시.
-    return NextResponse.json({ stats, cached: false }, { headers: OK_HEADERS });
+    return { body: { stats, cached: false }, headers: OK_HEADERS };
   } catch (e: unknown) {
-    return NextResponse.json({ error: (e as Error).message, stats: null }, { status: 500, headers: { "Cache-Control": "no-store" } });
+    return { body: { error: (e as Error).message, stats: null }, status: 500, headers: { "Cache-Control": "no-store" } };
   }
+}
+
+export async function GET(req: NextRequest) {
+  const result = await getPlayerStatsRouteResult(
+    req.nextUrl.searchParams.get("id"),
+    req.nextUrl.searchParams.get("pos") || "타자",
+  );
+  return NextResponse.json(result.body, {
+    status: result.status,
+    headers: result.headers,
+  });
 }

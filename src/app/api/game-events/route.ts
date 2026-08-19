@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
-import { fetchNaverRecord, type GameDetailResponse } from "@/app/api/game-detail/route";
+import { fetchNaverRecord, type GameDetailResponse } from "@/lib/services/game-detail";
 import type { GameSnapshot } from "@/types/game-events";
 import { generateEvents, type PrevGameState } from "@/lib/event-generator";
 import type { GameEvent } from "@/types/game-events";
@@ -119,10 +119,19 @@ function parseBoxScoreMinimal(data: unknown): GameDetailResponse["boxScore"] {
   };
 }
 
-export async function GET(req: NextRequest) {
-  const gameId = req.nextUrl.searchParams.get("gameId");
+export interface GameEventsResponseBody {
+  events: GameEvent[];
+  currentState: GameSnapshot | null;
+  startPlateAppearance?: ReturnType<typeof deriveStartPlateAppearanceEvidence> | null;
+  error?: string;
+}
+
+export async function getGameEventsRouteResult(gameId: string): Promise<{
+  body: GameEventsResponseBody;
+  status?: number;
+}> {
   if (!gameId) {
-    return NextResponse.json({ error: "gameId is required" }, { status: 400 });
+    return { body: { error: "gameId is required", events: [], currentState: null }, status: 400 };
   }
 
   const date = gameId.slice(0, 8); // YYYYMMDD from game ID
@@ -156,7 +165,7 @@ export async function GET(req: NextRequest) {
         runners: { first: null, second: null, third: null },
         pitcher: "", batter: "",
       };
-      return NextResponse.json({ events: existing, currentState: emptySnapshot });
+      return { body: { events: existing, currentState: emptySnapshot } };
     }
 
     const status = isKboGameCancelled(rawGame.CANCEL_SC_ID) ? "cancelled"
@@ -279,7 +288,7 @@ export async function GET(req: NextRequest) {
       currentLive.currentBatter,
     );
 
-    return NextResponse.json({ events: history, currentState, startPlateAppearance });
+    return { body: { events: history, currentState, startPlateAppearance } };
   } catch (e: unknown) {
     // Best-effort fallback — if Supabase itself is down, the original error
     // would have surfaced from the supabase client too, so wrap defensively
@@ -295,9 +304,14 @@ export async function GET(req: NextRequest) {
     } catch {
       // swallow — fallback stays []
     }
-    return NextResponse.json(
-      { error: (e as Error).message, events: fallback, currentState: null },
-      { status: 200 },
-    );
+    return {
+      body: { error: (e as Error).message, events: fallback, currentState: null },
+      status: 200,
+    };
   }
+}
+
+export async function GET(req: NextRequest) {
+  const result = await getGameEventsRouteResult(req.nextUrl.searchParams.get("gameId") ?? "");
+  return NextResponse.json(result.body, result.status ? { status: result.status } : undefined);
 }

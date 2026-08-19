@@ -616,22 +616,24 @@ function reportDetailDegradation(
   }
 }
 
-export async function GET(req: NextRequest) {
-  const sourceAtMs = Date.now();
-  const gameId = req.nextUrl.searchParams.get("gameId");
+export async function getGameDetailRouteResult(params: {
+  gameId: string;
+  seasonId?: string;
+  overrideSrId?: string | null;
+  sourceAtMs?: number;
+}): Promise<GameDetailResponse | { error: string; gameId: string; status: "scheduled"; meta: null; linescore: null; lineup: null; boxScore: null }> {
+  const sourceAtMs = params.sourceAtMs ?? Date.now();
+  const gameId = params.gameId;
   if (!gameId) {
-    return NextResponse.json({ error: "gameId is required" }, { status: 400 });
+    throw new Error("gameId is required");
   }
   // canonical 형식이 아니면 업스트림 도달 전 400 fail-close(2026-08-11 오판 사고
   // 재발 방지 — src/lib/game/game-id.ts 주석 참조).
   if (!isCanonicalKboGameId(gameId)) {
-    return NextResponse.json(
-      { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
-      { status: 400 },
-    );
+    throw new Error("invalid gameId format");
   }
 
-  const seasonId = req.nextUrl.searchParams.get("seasonId") || new Date().getFullYear().toString();
+  const seasonId = params.seasonId || new Date().getFullYear().toString();
   const deadlineSignal = AbortSignal.timeout(USER_FACING_GAME_DETAIL_DEADLINE_MS);
   const dateStr = gameId.slice(0, 8);
   const kboSessionPromise = fetchKboSessionCookie(deadlineSignal);
@@ -669,7 +671,7 @@ export async function GET(req: NextRequest) {
   // KBO Schedule API (GetScoreBoard/GetBoxScore/GetLineUpAnalysis) only accepts
   // a single integer srId — NOT comma-separated like GetKboGameList.
   // Try srId=0 (regular) first; if ScoreBoard returns empty, retry with srId=1 (preseason).
-  const overrideSrId = req.nextUrl.searchParams.get("srId");
+  const overrideSrId = params.overrideSrId;
 
   async function fetchWithSrId(srId: string) {
     const body = `leId=1&srId=${srId}&seasonId=${seasonId}&gameId=${gameId}`;
@@ -947,11 +949,30 @@ export async function GET(req: NextRequest) {
     // ETag/304 조건부 응답: 폴링 시 detail이 안 바뀌었으면 304(빈 바디)로
     // Fast Origin Transfer 절감. 폴링 주기 불변 → 실시간성 손실 0. 브라우저가
     // no-cache 저장분을 revalidate하고 304 시 캐시 바디를 JS에 투명 반환(클라 무변경).
-    return await jsonWithETag(req, response);
+    return response;
   } catch (e: unknown) {
+    return { error: (e as Error).message, gameId, status: "scheduled", meta: null, linescore: null, lineup: null, boxScore: null };
+  }
+}
+
+export async function GET(req: NextRequest) {
+  const gameId = req.nextUrl.searchParams.get("gameId");
+  if (!gameId) {
+    return NextResponse.json({ error: "gameId is required" }, { status: 400 });
+  }
+  if (!isCanonicalKboGameId(gameId)) {
     return NextResponse.json(
-      { error: (e as Error).message, gameId, status: "scheduled", meta: null, linescore: null, lineup: null, boxScore: null },
-      { status: 200 },
+      { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
+      { status: 400 },
     );
   }
+
+  const response = await getGameDetailRouteResult({
+    gameId,
+    seasonId: req.nextUrl.searchParams.get("seasonId") || undefined,
+    overrideSrId: req.nextUrl.searchParams.get("srId"),
+    sourceAtMs: Date.now(),
+  });
+
+  return jsonWithETag(req, response);
 }

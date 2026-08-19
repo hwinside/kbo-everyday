@@ -999,32 +999,42 @@ function setCachedResponse(key: string, data: GameRelayResponse): void {
   responseCache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
-export async function GET(req: NextRequest) {
-  const gameId = req.nextUrl.searchParams.get("gameId");
+export async function getGameRelayRouteResult(params: {
+  gameId: string;
+  inningHint?: number;
+  sinceInning?: number;
+}): Promise<{
+  body: GameRelayResponse | Record<string, unknown>;
+  status: number;
+  headers: HeadersInit;
+}> {
+  const gameId = params.gameId;
   if (!gameId) {
-    return NextResponse.json(
-      { error: "gameId is required" },
-      { status: 400, headers: NO_STORE_HEADERS },
-    );
+    return {
+      body: { error: "gameId is required" },
+      status: 400,
+      headers: NO_STORE_HEADERS,
+    };
   }
   // canonical 형식이 아니면 업스트림 도달 전 400 fail-close. 네이버식 긴 ID가
   // 들어오면 toNaverGameId가 연도를 이중으로 붙여 자기유발 404가 난다
   // (2026-08-11 오판 사고 재발 방지 — src/lib/game/game-id.ts 주석 참조).
   if (!isCanonicalKboGameId(gameId)) {
-    return NextResponse.json(
-      { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
-      { status: 400, headers: NO_STORE_HEADERS },
-    );
+    return {
+      body: { error: "invalid gameId format", hint: GAME_ID_FORMAT_HINT },
+      status: 400,
+      headers: NO_STORE_HEADERS,
+    };
   }
 
   // 클라이언트에서 현재 이닝을 힌트로 전달 (네이버 API의 inn이 부정확할 때 대비)
-  const inningHint = parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0;
+  const inningHint = params.inningHint ?? 0;
 
   // Incremental(delta) 폴링: 클라이언트가 이미 보유한 마지막 이닝 번호를 넘기면
   // 그 이닝 이후(현재/직전 이닝)만 돌려준다. 끝난 이닝의 play-by-play는 불변이라
   // 매 폴링마다 전체 이닝을 재전송할 필요가 없다 → origin transfer 절감.
   // 값이 없거나 0 이하이면 종전대로 전체 이닝을 반환한다(첫 로드/self-heal).
-  const sinceInning = parseInt(req.nextUrl.searchParams.get("since") || "0") || 0;
+  const sinceInning = params.sinceInning ?? 0;
 
   const naverGameId = toNaverGameId(gameId);
 
@@ -1042,9 +1052,11 @@ export async function GET(req: NextRequest) {
     // 단 TTL 은 full 이 아니라 **남은 수명**만 준다(삼순 NO-GO 2026-08-06):
     // route 캐시에서 이미 소비한 age 를 엣지가 또 2초 얹으면 총 age 가 직렬로
     // 누적된다. 남은 수명이 1초 미만이면 no-store 로 fail-close.
-    return NextResponse.json(toDeltaResponse(cached.data, sinceInning), {
+    return {
+      body: toDeltaResponse(cached.data, sinceInning),
+      status: 200,
       headers: edgeCacheHeadersForRemaining(cached.remainingMs, RELAY_EDGE_TTL_SECONDS),
-    });
+    };
   }
 
   // fresh 경로 — 본문은 buildFresh 클로저로 묶어 single-flight로 공유한다.
@@ -1365,20 +1377,36 @@ export async function GET(req: NextRequest) {
     }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.
-    return NextResponse.json(toDeltaResponse(response, sinceInning), {
+    return {
+      body: toDeltaResponse(response, sinceInning),
+      status: 200,
       headers: liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
-    });
+    };
   } catch (e) {
     if (e instanceof RelayUpstreamError) {
-      return NextResponse.json(e.body, {
+      return {
+        body: e.body,
         status: e.status,
         headers: NO_STORE_HEADERS,
-      });
+      };
     }
     // buildFresh가 모든 예외를 RelayUpstreamError로 정규화하므로 여기는 방어적 최후단.
-    return NextResponse.json(
-      { error: "relay_internal_error" },
-      { status: 500, headers: NO_STORE_HEADERS },
-    );
+    return {
+      body: { error: "relay_internal_error" },
+      status: 500,
+      headers: NO_STORE_HEADERS,
+    };
   }
+}
+
+export async function GET(req: NextRequest) {
+  const result = await getGameRelayRouteResult({
+    gameId: req.nextUrl.searchParams.get("gameId") ?? "",
+    inningHint: parseInt(req.nextUrl.searchParams.get("inning") || "0") || 0,
+    sinceInning: parseInt(req.nextUrl.searchParams.get("since") || "0") || 0,
+  });
+  return NextResponse.json(result.body, {
+    status: result.status,
+    headers: result.headers,
+  });
 }

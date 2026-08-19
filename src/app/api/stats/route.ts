@@ -902,10 +902,14 @@ export function handleStatsGetFailure(
   return NextResponse.json({ error: (error as Error).message, stats: [] }, { status: 500, headers: NO_STORE });
 }
 
-export async function GET(req: NextRequest) {
-  const type = req.nextUrl.searchParams.get("type") || "batter";
-  const season = req.nextUrl.searchParams.get("season") || "current";
-  const full = req.nextUrl.searchParams.get("full") === "1";
+export async function getStatsRouteResult(params: {
+  type?: string | null;
+  season?: string | null;
+  full?: boolean;
+}) {
+  const type = params.type || "batter";
+  const season = params.season || "current";
+  const full = params.full === true;
 
   // 2025 시즌 — 확정 static data (300 batters + 277 pitchers)
   // ⚠️ static 은 외국인을 숫자ID 로 든다(실측 2025 타자 1·투수 4명) → canonical rewrite 후 반환
@@ -1015,4 +1019,12 @@ export async function GET(req: NextRequest) {
     //   그 헤더는 handleStatsGetFailure 안에서 붙인다(분기마다 빠뜨리지 않게).
     return handleStatsGetFailure(e, season, type);
   }
+}
+
+export async function GET(req: NextRequest) {
+  return getStatsRouteResult({
+    type: req.nextUrl.searchParams.get("type"),
+    season: req.nextUrl.searchParams.get("season"),
+    full: req.nextUrl.searchParams.get("full") === "1",
+  });
 }

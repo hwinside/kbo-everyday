@@ -13,7 +13,17 @@ import {
 } from "@/lib/stats/weekly-trend";
 import { getPlayerTitles } from "@/lib/stats/title-rankings";
 import { getTeamById } from "@/lib/constants/teams";
-import type { PlayerTodayGameResponse } from "@/app/api/player-today-game/route";
+import {
+  getPlayerGameLogsRouteResult,
+} from "@/lib/services/player-game-logs";
+import {
+  getPlayerStatsRouteResult,
+} from "@/lib/services/player-stats";
+import {
+  getPlayerTodayGameRouteResult,
+  type PlayerTodayGameResponse,
+} from "@/lib/services/player-today-game";
+import { getStatsRouteResult } from "@/lib/services/stats";
 
 export const dynamic = "force-dynamic";
 
@@ -39,23 +49,10 @@ interface RosterEntry {
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 const ROSTER = new Map((rosterData as RosterEntry[]).map((r) => [r.kboId, r]));
 
-// 공개 도메인으로 self-fetch (VERCEL_URL은 배포 보호에 막힘 → NEXT_PUBLIC_APP_URL/공개 도메인)
-const PUBLIC_BASE = process.env.NEXT_PUBLIC_APP_URL || "https://keubo.fan";
-
 type StatLike = Record<string, string | number | undefined>;
 
 function fmtAvg(n: number): string {
   return n.toFixed(3).replace(/^0\./, ".");
-}
-
-async function getJson<T>(path: string): Promise<T | null> {
-  try {
-    const res = await fetch(`${PUBLIC_BASE}${path}`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as T;
-  } catch {
-    return null;
-  }
 }
 
 // 최근 경기 채움 줄 — 오늘 경기 활약이 없는 날 카드 중앙 공백 대신 표시(위젯 네이티브는 그리기만)
@@ -116,22 +113,41 @@ export async function GET(req: NextRequest) {
 
   const isPitcher = roster.position === "투수";
   const pos = isPitcher ? "투수" : "타자";
-  const idQ = encodeURIComponent(kboId);
-  const posQ = encodeURIComponent(pos);
 
   const [stats, logsRes, league, today] = await Promise.all([
-    getJson<{ stats: StatLike | null }>(`/api/player-stats?id=${idQ}&pos=${posQ}`).then(
-      (d) => d?.stats ?? null,
-    ),
-    getJson<{ rows: GameLogRow[] }>(`/api/player-game-logs?id=${idQ}&pos=${posQ}`).then(
-      (d) => (Array.isArray(d?.rows) ? d.rows : []),
-    ),
-    getJson<{ stats: StatLike[] }>(`/api/stats?type=${isPitcher ? "pitcher" : "batter"}&season=2026`).then(
-      (d) => (Array.isArray(d?.stats) ? d.stats : []),
-    ),
-    getJson<PlayerTodayGameResponse>(
-      `/api/player-today-game?team=${roster.teamId}&name=${encodeURIComponent(roster.name)}&pos=${posQ}`,
-    ),
+    (async () => {
+      try {
+        const result = await getPlayerStatsRouteResult(kboId, pos);
+        return result.status && result.status >= 400 ? null : (result.body.stats as StatLike | null);
+      } catch {
+        return null;
+      }
+    })(),
+    (async () => {
+      try {
+        const result = await getPlayerGameLogsRouteResult(kboId, pos);
+        return Array.isArray(result.body.rows) ? (result.body.rows as GameLogRow[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+    (async () => {
+      try {
+        const result = await getStatsRouteResult({ type: isPitcher ? "pitcher" : "batter", season: "2026" });
+        const json = await result.json() as { stats?: StatLike[] };
+        return Array.isArray(json.stats) ? json.stats : [];
+      } catch {
+        return [];
+      }
+    })(),
+    (async () => {
+      try {
+        const result = await getPlayerTodayGameRouteResult({ teamId: roster.teamId, name: roster.name, pos });
+        return result.body as PlayerTodayGameResponse;
+      } catch {
+        return null;
+      }
+    })(),
   ]);
 
   // 헤드라인: 타자=최근 3경기 타율 / 투수=최근 9이닝(이상) ERA → 없으면 시즌 누적 폴백 (앱 카드 동일)

@@ -19,6 +19,7 @@
     "qa:live-detail-provenance": "tsx scripts/qa/live-detail-provenance-gate.ts",
     "qa:player-link-prefetch": "node scripts/qa/player-link-prefetch-gate.mjs",
     "qa:player-link-prefetch:selftest": "node scripts/qa/player-link-prefetch-gate.mjs --selftest",
+    "qa:self-fetch-internal": "node scripts/qa/self-fetch-internal-gate.mjs",
     "qa:player-stats-parser": "tsx scripts/qa/player-stats-parser-smoke.ts",
     "qa:readonly-api-edge-cache": "node scripts/qa/readonly-api-edge-cache-gate.mjs",
     "qa:readonly-api-edge-cache:selftest": "node scripts/qa/readonly-api-edge-cache-gate.mjs --selftest",

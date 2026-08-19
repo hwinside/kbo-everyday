@@ -29,12 +29,13 @@ function didPlay(r: GameLogRecord, playerType: "batter" | "pitcher"): boolean {
  *   - 응답: game_date 오름차순(시즌누적 AVG/ERA 계산 자연스럽게). 호출부에서 표시 정렬.
  *   - 출전 안 한 경기는 제외(타자 무타석 / 투수 무등판) — 표·최근10 카운트 양쪽 반영.
  */
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const rawId = searchParams.get("id");
-  const pos = searchParams.get("pos") ?? "";
+export async function getPlayerGameLogsRouteResult(rawId: string | null, pos = ""): Promise<{
+  body: { rows?: unknown[]; count?: number; error?: string };
+  status?: number;
+  headers?: HeadersInit;
+}> {
   if (!rawId) {
-    return NextResponse.json({ error: "id required" }, { status: 400 });
+    return { body: { error: "id required" }, status: 400 };
   }
 
   const resolved = resolvePlayer(rawId);
@@ -54,13 +55,25 @@ export async function GET(request: NextRequest) {
     .order("game_id", { ascending: true });
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return { body: { error: error.message }, status: 500 };
   }
 
   const rows = (data ?? []).filter((r) => didPlay(r as GameLogRecord, playerType));
 
-  return NextResponse.json(
-    { rows, count: rows.length },
-    { headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=120" } },
+  return {
+    body: { rows, count: rows.length },
+    headers: { "Cache-Control": "s-maxage=60, stale-while-revalidate=120" },
+  };
+}
+
+export async function GET(request: NextRequest) {
+  const searchParams = new URL(request.url).searchParams;
+  const result = await getPlayerGameLogsRouteResult(
+    searchParams.get("id"),
+    searchParams.get("pos") ?? "",
   );
+  return NextResponse.json(result.body, {
+    status: result.status,
+    headers: result.headers,
+  });
 }
