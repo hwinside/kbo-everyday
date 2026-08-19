@@ -29,7 +29,7 @@ import path from "node:path";
 
 import { PGlite } from "@electric-sql/pglite";
 
-import { answerQuestion, RAG_INSUFFICIENT_ANSWER, UNCLEAR_ANSWER, type GlossaryEntry, type PlayerRef, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, RAG_INSUFFICIENT_ANSWER, SYSTEM_ERROR_ANSWER, UNCLEAR_ANSWER, type GlossaryEntry, type PlayerRef, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import {
   buildRagLlmRequest,
   RAG_GENERATION_TEMPERATURE,
@@ -445,14 +445,19 @@ async function runCopySeparationCheck(evidence: RagEvidence): Promise<void> {
   });
 }
 
-// ── [B*] 역방향 flappy — 첫 INSUFFICIENT → 이후 GROUNDED (삼순 3차 NO-GO) ────────
-// non-grounded winner 가 release 로 claim 을 풀면 같은 동시입력의 waiter 가 새 winner 가
-// 되어 GROUNDED 를 재생성 → 한 질문이 2답(자료부족 vs 채수빈)·LLM 2회가 된다.
-// flight-terminal 마킹이면 전원 같은 폐기 문구 + LLM 1회, lease TTL 후 새 flight 가
-// 재생성해 채수빈 포함 정답으로 복구된다(오답 영구 캐시 아님).
+// ── [B*] 역방향 flappy (삼순 3·4차 NO-GO) ────────────────────────────────────
+// 계약(4차): 역방향 플립(첫 INSUFFICIENT → 이후 GROUNDED)에서도 한 flight 는
+// **전원 채수빈 grounded**(owner 내부 재시도 복구) 또는 **전원 시스템 오류**다.
+// 자료부족 negative cache 확산 금지. release 회귀(waiter 재생성 → 2답·LLM 초과)도 금지.
+interface ReverseFlappyOptions {
+  /** provider 가 INSUFFICIENT 를 내는 앞 호출 수. 1=재시도로 복구, 2=owner 재시도까지 실패. */
+  insufficientCalls: number;
+}
+
 async function runReverseFlappyDeterminism(
   evidence: RagEvidence,
   storeOptions: MemoryStoreOptions,
+  flappy: ReverseFlappyOptions,
 ): Promise<void> {
   const players: PlayerRef[] = await loadRosterPlayers();
   const store = memoryStore(storeOptions);
@@ -469,10 +474,10 @@ async function runReverseFlappyDeterminism(
       log: async () => {},
       callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
       searchRag: async () => [evidence],
-      // 🔴 역방향 flappy — 1회차만 INSUFFICIENT, 이후 전부 GROUNDED.
+      // 🔴 역방향 flappy — 앞 insufficientCalls 회만 INSUFFICIENT, 이후 전부 GROUNDED.
       callRagLlm: async () => {
         llmCalls += 1;
-        if (llmCalls === 1) {
+        if (llmCalls <= flappy.insufficientCalls) {
           return { text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 100, outputTokens: 2 };
         }
         return {
@@ -487,7 +492,6 @@ async function runReverseFlappyDeterminism(
     }) as unknown as QaDeps;
 
   const QUESTION = "구자욱 별명이 왜 맛자욱이야?";
-  // ① 동시 8-way: winner 만 LLM(INSUFFICIENT) → flight-terminal → 전원 같은 폐기 문구.
   const concurrent = await Promise.all(
     Array.from({ length: 8 }, (_, index) =>
       answerQuestion(`u-reverse-concurrent-${index}`, QUESTION, makeDeps()),
@@ -496,24 +500,38 @@ async function runReverseFlappyDeterminism(
   const answers = concurrent.map((r) => r.answer ?? "");
   assert.ok(answers.every((a) => a === answers[0]),
     `역방향 플립 — 동일 동시입력이 2답으로 갈렸다: ${[...new Set(answers)].join(" ||| ")}`);
-  assert.equal(answers[0], RAG_INSUFFICIENT_ANSWER, `폐기 문구가 아니다: ${answers[0]}`);
-  assert.ok(!answers.some((a) => a.includes("채수빈")),
-    "같은 flight 안에서 재생성된 GROUNDED 가 새어나갔다(2답 분기)");
-  assert.equal(llmCalls, 1, `LLM 소비 ${llmCalls}회 (기대 1 — non-grounded 종결 후 같은 flight 재생성 금지)`);
-  // ② TTL 내 재질문 — 같은 폐기 문구 재생, LLM 그대로.
+  assert.ok(!answers.some((a) => a === RAG_INSUFFICIENT_ANSWER || a === UNCLEAR_ANSWER),
+    `일시 플립이 자료부족/이해못함 negative cache 로 확산됐다: ${answers[0]}`);
+
+  if (flappy.insufficientCalls === 1) {
+    // 플립 1회 = owner 내부 재시도가 복구 — 첫 사용자부터 전원 채수빈 grounded (4차 계약).
+    assert.ok(answers.every((a) => a.includes("채수빈")),
+      `첫 사용자부터 채수빈 grounded 가 아니다: ${answers[0]}`);
+    assert.equal(llmCalls, 2, `LLM 소비 ${llmCalls}회 (기대 2 — 초호출+재시도 1회, waiter 재생성 0회)`);
+    // settled 재생 — LLM 불변.
+    const replayed = await answerQuestion("u-reverse-replay", QUESTION, makeDeps());
+    assert.ok(replayed.answer?.includes("채수빈"), `settled 재생 실패: ${replayed.answer}`);
+    assert.equal(llmCalls, 2, `settled 재생이 LLM 을 소비했다(${llmCalls})`);
+    return;
+  }
+  // 플립 2회(재시도까지 실패) = 전원 시스템 오류 — 자료부족 확산도, 채수빈 유출도 없다.
+  assert.ok(answers.every((a) => a === SYSTEM_ERROR_ANSWER),
+    `재시도 실패 flight 가 전원 시스템 오류가 아니다: ${[...new Set(answers)].join(" ||| ")}`);
+  assert.equal(llmCalls, 2, `LLM 소비 ${llmCalls}회 (기대 2 — 초호출+재시도, waiter 재생성 금지)`);
+  // TTL 내 재질문 — 같은 시스템 오류 공유, LLM 불변.
   const withinTtl = await answerQuestion("u-reverse-within-ttl", QUESTION, makeDeps());
-  assert.equal(withinTtl.answer, RAG_INSUFFICIENT_ANSWER, `TTL 내 재질문이 다른 답: ${withinTtl.answer}`);
-  assert.equal(llmCalls, 1, `TTL 내 재질문이 LLM 을 소비했다(${llmCalls})`);
-  // ③ lease TTL 만료 → 새 flight 가 재생성 — 이번엔 GROUNDED, 채수빈 필수(정상 종결 잠금).
+  assert.equal(withinTtl.answer, SYSTEM_ERROR_ANSWER, `TTL 내 재질문이 다른 답: ${withinTtl.answer}`);
+  assert.equal(llmCalls, 2, `TTL 내 재질문이 LLM 을 소비했다(${llmCalls})`);
+  // lease TTL 만료 → 새 flight 가 재생성 — 이번엔 GROUNDED(3회차부터), 채수빈 필수.
   await new Promise((resolve) => setTimeout(resolve, (storeOptions.leaseMs ?? 60_000) + 30));
   const recovered = await answerQuestion("u-reverse-recovered", QUESTION, makeDeps());
-  assert.equal(llmCalls, 2, `TTL 후 새 flight 가 재생성하지 않았다(LLM ${llmCalls}회) — 오답 영구 캐시`);
+  assert.ok(llmCalls >= 3, `TTL 후 새 flight 가 재생성하지 않았다(LLM ${llmCalls}회) — 실패 영구 고정`);
   assert.equal(recovered.source, "rag", `복구 답 source 가 ${recovered.source}`);
   assert.ok(recovered.answer?.includes("채수빈"), `맛자욱 정상 종결에 채수빈이 없다: ${recovered.answer}`);
-  // ④ 복구 후 재질문 — settled 재생, LLM 그대로.
+  const finalLlm = llmCalls;
   const replayed = await answerQuestion("u-reverse-replay", QUESTION, makeDeps());
   assert.ok(replayed.answer?.includes("채수빈"), `settled 재생 실패: ${replayed.answer}`);
-  assert.equal(llmCalls, 2, `settled 재생이 LLM 을 소비했다(${llmCalls})`);
+  assert.equal(llmCalls, finalLlm, `settled 재생이 LLM 을 소비했다(${llmCalls})`);
 }
 
 // ── [B''] store 계약 — lease takeover · stale owner fencing (삼순 2차 NO-GO) ──────
@@ -610,6 +628,64 @@ async function runFailureModeChecks(evidence: RagEvidence): Promise<void> {
     }, () => { llm += 1; }));
     assert.equal(result.source, "error", `상한 초과가 ${result.source} 로 샐다: ${result.answer}`);
     assert.equal(llm, 0, `claim 없이 생성했다(${llm}) — 느린 winner 중복 호출 축(2차 NO-GO)`);
+  });
+  await check("mark CAS 패배(takeover) + canonical 존재 — 내 폐기 대신 canonical 을 반환한다 (4차 NO-GO-②)", async () => {
+    let llm = 0;
+    let markAttempted = false;
+    const canonical = { answer: "takeover winner 의 canonical 답입니다. 채수빈 유래입니다.", sourceUrl: null, toneCompliant: true };
+    const result = await answerQuestion("u-mark-cas-loser", "구자욱 별명이 왜 맛자욱이야?", ({
+      enablePlayerRag: true,
+      loadGlossary: async () => [],
+      loadPlayers: async () => players,
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      releaseDaily: async () => {},
+      log: async () => {},
+      callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
+      searchRag: async () => [evidence],
+      // 재시도까지 non-grounded — mark 경로로 간다.
+      callRagLlm: async () => {
+        llm += 1;
+        return { text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 10, outputTokens: 2 };
+      },
+      verifiedRagAnswers: {
+        pollDelayMs: 5, pollAttempts: 10,
+        get: async () => (markAttempted ? canonical : null),
+        put: async () => true,
+        claim: async () => ({ verdict: "winner", ownerToken: "my-token" }),
+        // lease 가 이미 인수되어 mark 는 CAS 패배 — 새 owner 가 grounded 를 settle 했다.
+        markInsufficient: async () => { markAttempted = true; return false; },
+        release: async () => {},
+      },
+    }) as unknown as QaDeps);
+    assert.equal(result.source, "rag", `mark 패배가 ${result.source} 로 끝났다: ${result.answer}`);
+    assert.ok(result.answer?.includes("takeover winner 의 canonical"), `canonical 이 아니다: ${result.answer}`);
+    assert.equal(llm, 2, `LLM 소비 ${llm}회 (기대 2 — 초호출+재시도)`);
+  });
+  await check("mark throw + canonical 없음 — 내 폐기 문구를 보내지 않고 시스템 오류로 닫는다 (4차 NO-GO-②)", async () => {
+    const result = await answerQuestion("u-mark-throw", "구자욱 별명이 왜 맛자욱이야?", ({
+      enablePlayerRag: true,
+      loadGlossary: async () => [],
+      loadPlayers: async () => players,
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      releaseDaily: async () => {},
+      log: async () => {},
+      callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
+      searchRag: async () => [evidence],
+      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 10, outputTokens: 2 }),
+      verifiedRagAnswers: {
+        pollDelayMs: 5, pollAttempts: 10,
+        get: async () => null,
+        put: async () => true,
+        claim: async () => ({ verdict: "winner", ownerToken: "my-token" }),
+        markInsufficient: async () => { throw new Error("rpc down"); },
+        release: async () => {},
+      },
+    }) as unknown as QaDeps);
+    assert.equal(result.source, "error", `mark throw 가 ${result.source} 로 샐다: ${result.answer}`);
   });
   await check("settle CAS 패자 — 자기 생성답을 버리고 canonical 을 재조회해 반환한다", async () => {
     let llm = 0;
@@ -783,8 +859,10 @@ async function runAll(options: DeterminismOptions): Promise<void> {
   );
   await check("결정론 — 느린 winner(응답 지연 > 폴링 여러 회)에서도 동일답 + LLM 1회 (2차 NO-GO 축)", () =>
     runDeterminism(evidence, { ...options, slowWinnerMs: 150 }));
-  await check("역방향 flappy — 첫 INSUFFICIENT 동시 8-way 전원 동일 폐기문구 + LLM 1회, TTL 후 새 flight 가 채수빈 포함 정답 복구 (3차 NO-GO 축)", () =>
-    runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300 }));
+  await check("역방향 flappy(플립 1회) — owner 내부 재시도로 첫 사용자부터 전원 채수빈 grounded + LLM 2회 (4차 NO-GO 축)", () =>
+    runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300 }, { insufficientCalls: 1 }));
+  await check("역방향 flappy(재시도까지 실패) — 전원 시스템 오류(negative cache 확산 금지), TTL 후 새 flight 가 채수빈 복구 (3·4차 NO-GO 축)", () =>
+    runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300 }, { insufficientCalls: 2 }));
   await check("store 계약 — lease takeover token 교체 + stale release/settle 무효 + first-writer-wins", () =>
     runStoreOwnerTokenContract(memoryStore({ withClaim: true, leaseMs: 30, ignoreOwnerToken: !options.withClaim && false })));
   await runFailureModeChecks(evidence);
@@ -835,7 +913,11 @@ async function main(): Promise<void> {
       const evidence = await runCrawlIngestProjectionChecks();
       let failed = false;
       try {
-        await runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300, markBehavesAsRelease: true });
+        await runReverseFlappyDeterminism(
+          evidence,
+          { withClaim: true, leaseMs: 300, markBehavesAsRelease: true },
+          { insufficientCalls: 2 },
+        );
       } catch {
         failed = true;
       }

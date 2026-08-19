@@ -172,6 +172,9 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
     }
     if (expr === "null") continue;
     if (canned.has(expr)) continue;
+    // failClose 파라미터 — 값은 고정 문구 상수뿐이다(UNCLEAR/RAG_INSUFFICIENT/SYSTEM_ERROR
+    // 또는 flight 공유 폐기 문구). 생성 답변은 이 파라미터로 들어오지 않는다(맛자욱 P0).
+    if (expr === "answerCopy" || expr === "flightCopy") continue;
     if (GENERATED.has(expr)) { answering.add(literal); continue; }
     if (expr === "answer") {
       const kind = LOCAL_ANSWER_PATHS.get(literal);

@@ -4293,36 +4293,77 @@ async function answerPlayerDescriptiveQuestion(
     }
   }
 
-  const validated = validateRagResponse(llm.text);
+  let validated = validateRagResponse(llm.text);
+  // 🔴 owner 내부 복구 (삼순 4차 NO-GO-①): winner 가 non-grounded 를 받았을 때 바로
+  //   종결하면 provider 1회 플립이 flight 전원의 자료부족(negative cache)으로 확산된다.
+  //   근거는 이미 찾았으므로 **같은 입력으로 1회 재시도**한다 — 플립이면 grounded 로
+  //   복구돼 첫 사용자부터 전원이 정답을 받는다. replay 키는 요청 fingerprint 결속이라
+  //   재시도 입력이 동일하므로 결정론 계약을 깨지 않는다(성공한 한 번만 settle 된다).
+  //   재시도는 winner(claim 보유)에게만 허용 — claim 없는 경로의 재호출은 금지 그대로.
+  if (validated.kind !== "grounded" && replayOwnerToken !== null && deps.callRagLlm) {
+    let retried: LlmResult | null = null;
+    try {
+      retried = await deps.callRagLlm(question, evidence, extras);
+    } catch {
+      retried = null; // 재시도 호출 실패는 아래 non-grounded 종결 경로가 닫는다.
+    }
+    if (retried) {
+      // 관측 계측(토큰)은 누적 — 소비된 양을 숨기지 않는다.
+      llm = {
+        ...retried,
+        inputTokens: (llm.inputTokens ?? 0) + (retried.inputTokens ?? 0),
+        outputTokens: (llm.outputTokens ?? 0) + (retried.outputTokens ?? 0),
+      };
+      validated = validateRagResponse(retried.text);
+    }
+  }
   if (validated.kind !== "grounded") {
     // ②' 문구 분리 (맛자욱 P0): 모델이 "근거 부족"으로 판정한 건 이해 실패가 아니다.
-    //   질문을 고쳐 쓰라는 안내는 자료 결손을 유저 탓으로 돌리는 오도다.
     const discardCopy = validated.kind === "insufficient" && validated.reason === "model_insufficient"
       ? RAG_INSUFFICIENT_ANSWER
       : UNCLEAR_ANSWER;
-    // 폐기 = settle 없음. 🔴 release 가 아니라 **flight-terminal 마킹**이다 (삼순 3차
-    // NO-GO) — release 로 풀면 같은 동시입력의 waiter 가 새 winner 로 재생성해 한 질문이
-    // 2답(자료부족 vs GROUNDED)·LLM 2회가 된다. 같은 flight 는 같은 폐기 문구를 공유하고,
-    // lease TTL 후 새 flight 가 재생성한다(오답 영구 캐시 아님). mark 실패(CAS 패배·오류)는
-    // 무시 — 이미 lease 가 인수됐다면 새 flight 의 문제고, 내 사용자 답변은 확정됐다.
+    // 폐기 = settle 없음. 🔴 재시도까지 non-grounded 면 **flight 전원 시스템 오류**로
+    // 닫는다 (삼순 4차 NO-GO-①) — 자료부족 문구를 flight 에 공유하면 provider 일시 플립이
+    // TTL 동안 negative cache 로 확산된다. 계약: 전원 grounded 또는 전원 시스템 오류.
+    //   • markInsufficient(token CAS)로 SYSTEM_ERROR 문구를 flight 에 공유 — waiter 가 새
+    //     winner 로 재생성하는 역방향 플립(2답·LLM 2회, 3차 NO-GO)은 여전히 차단.
+    //   • mark 실패(false=lease 인수·throw)는 무시하지 않는다 (4차 NO-GO-②) — 새 owner 가
+    //     grounded 를 settle 했을 수 있으므로 canonical 을 재조회해 있으면 그 답을 반환
+    //     (2답 분기 방지), 없으면 fail-close 한다.
+    //   • lease TTL 후 새 flight 가 재생성한다(실패 영구 고정 아님).
+    // flight 공유 문구: claim 있는 경로는 SYSTEM_ERROR(전원 동일답 — 결정론),
+    // claim 없는 경로(테스트 전용 저장소·미배선)는 기존 폐기 문구 유지(문구 분리 계약).
+    let flightCopy = discardCopy;
     if (replayOwnerToken !== null && deps.verifiedRagAnswers?.markInsufficient && verifiedKey) {
+      flightCopy = SYSTEM_ERROR_ANSWER;
+      let marked = false;
       try {
-        await deps.verifiedRagAnswers.markInsufficient(verifiedKey, replayOwnerToken, discardCopy);
+        marked = await deps.verifiedRagAnswers.markInsufficient(verifiedKey, replayOwnerToken, SYSTEM_ERROR_ANSWER);
       } catch {
-        // mark 실패 복구는 lease 만료 인수가 담당한다.
+        marked = false;
+      }
+      if (!marked) {
+        // 🔴 mark 실패(false=lease 인수·throw)는 무시 금지 (삼순 4차 NO-GO-②) — 새 owner 가
+        // grounded 를 settle 했을 수 있다. canonical 이 있으면 그 답을 재생해 2답 분기를
+        // 막고, 없으면 내 폐기 문구를 보내지 않고 시스템 오류로 닫는다(fail-close).
+        try {
+          const canonical = await replayFromStore();
+          if (canonical) return canonical;
+        } catch {
+          return failCloseError();
+        }
+        return failCloseError();
       }
     } else {
       await releaseReplayClaim();
     }
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
-    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
-    // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다(toneCompliant 와 같은 축).
+    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — 사용자 발송문과 동일값.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: discardCopy, source: "unsure", ...ragObservation("player", question, validated),
+      answer: flightCopy, source: "unsure", ...ragObservation("player", question, validated),
     }, llm));
-    // 폐기 사유를 남긴다 — 이게 없으면 `unsure` 를 만든 게 숫자 가드인지 JSON 깨짐인지
-    // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
-    return failClose(llm, ragObservation("player", question, validated), discardCopy);
+    // 폐기 사유(ragObservation)는 그대로 남긴다 — 분모 계측 유지(2026-08-16).
+    return failClose(llm, ragObservation("player", question, validated), flightCopy);
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
