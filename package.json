@@ -379,7 +379,7 @@
     "qa:genius-motion-cooldown:db:mutations": "node scripts/qa/genius-motion-cooldown-db-mutations.mjs",
     "qa:btree-gist-schema": "tsx scripts/qa/btree-gist-schema-gate.ts",
     "qa:kbo-select": "node scripts/qa/kbo-select-smoke.mjs",
-    "qa:stats-gate-trigger": "node scripts/qa/stats-gate-trigger-smoke.mjs",
+    "qa:stats-gate-trigger": "node scripts/qa/stats-gate-trigger-smoke.mjs && tsx scripts/qa/stats-cron-naver-failover-smoke.ts",
     "qa:genius-push-exclusion": "tsx scripts/qa/genius-push-exclusion-smoke.ts",
     "qa:genius-rag-real-corpus": "tsx scripts/qa/genius-rag-real-corpus-probe.ts",
     "qa:genius-provenance-privacy": "tsx scripts/qa/genius-provenance-privacy-smoke.ts",

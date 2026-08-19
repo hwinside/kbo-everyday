@@ -499,16 +499,26 @@ async function collect(
   };
 
   const primary = PRIMARY_SOURCE[kind];
+  const fallbackSource: Source = primary === "kbo" ? "naver" : "kbo";
   const [tryFirst, trySecond] = primary === "kbo" ? [fromKbo, fromNaver] : [fromNaver, fromKbo];
   try {
     return await tryFirst();
   } catch (e) {
-    const msg = (e as Error).message || "";
+    const primaryMsg = (e as Error).message || "";
     // apiName은 "실패한 1차 소스" 기준. 기존 kbo-player-stats-* 계약은 투수(kbo 1차)에서 유지된다.
     void trackFallback(`${primary}-player-stats-${kind}`, classifyFallbackReason(e as Error), {
-      errorMessage: msg,
+      errorMessage: primaryMsg,
     }).catch(() => {});
-    return await trySecond();
+    try {
+      return await trySecond();
+    } catch (e2) {
+      // dual-fail에서 마지막(폴백) 오류만 남기면 실제 원인인 1차 오류가 job/API에서
+      // 유실된다(tracker는 fire-and-forget이라 보장 안 됨) — 두 원인을 합성해 던진다(삼순 3차).
+      const fallbackMsg = (e2 as Error).message || "";
+      throw new Error(
+        `${kind} dual-fail — primary(${primary}): ${primaryMsg}; fallback(${fallbackSource}): ${fallbackMsg}`,
+      );
+    }
   }
 }
 

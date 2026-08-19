@@ -310,7 +310,10 @@ async function main() {
     assert.equal(status, 500, "타자 Naver 실패 시 절단 KBO 폴백 채택 금지");
     assert.equal(upserts.length, 0, "부분 40행 upsert 없음(투수 포함 원자적 fail-close)");
     assert.equal(jobStatuses.at(-1), "error", "타자 수집 실패는 job error");
-    ok("1b. Naver 타자 실패 → KBO 절단 폴백 채택 금지(500·upsert 0·error)");
+    const m = String(jobMessages.at(-1));
+    assert.ok(m.includes("primary(naver)") && m.includes("Naver HTTP 500"), `1차 Naver 원인 보존: ${m}`);
+    assert.ok(m.includes("fallback(kbo)") && m.includes("coverage collapse"), `폴백 KBO 원인 병기: ${m}`);
+    ok("1b. Naver 타자 실패 → KBO 절단 폴백 채택 금지 + 두 원인 합성 기록(500·upsert 0·error)");
   }
 
   // ── 2~5. KBO 하드실패(503/204/200-empty/timeout) → 투수 Naver 폴백(타자는 원래 Naver 1차) ──
@@ -455,7 +458,10 @@ async function main() {
     assert.equal(status, 500, "30행 폴백은 부분 채택 없이 fail-close");
     assert.equal(upserts.length, 0, "30행만으로 상위 30명만 덮어쓰지 않음");
     assert.equal(jobStatuses.at(-1), "error");
-    ok("18. KBO 타자 30행 페이지 경계 → 폴백 채택 금지(fail-close, 기존행 보존)");
+    const m = String(jobMessages.at(-1));
+    assert.ok(m.includes("primary(naver)"), `1차 Naver 원인 보존: ${m}`);
+    assert.ok(m.includes("fallback(kbo)") && m.includes("coverage"), `폴백 KBO 30행 원인 병기: ${m}`);
+    ok("18. KBO 타자 30행 페이지 경계 → 폴백 채택 금지(fail-close) + 두 원인 합성 기록");
   }
 
   // ── 19. 균등 160명(팀당 16명) 절단 — 타자 단독 결속(투수 KBO는 정상인 상태) ──
@@ -466,7 +472,13 @@ async function main() {
     assert.equal(status, 500, "균등 절단 응답은 채택 없이 500 (타자 단독 결속)");
     assert.equal(upserts.length, 0, "160명 부분 upsert 없음 → 나머지 172명 stale 은폐 차단");
     assert.equal(jobStatuses.at(-1), "error", "coverage collapse 는 job error");
-    ok("19. 균등 160명 절단(정적 하한 통과) → 타자 가드 단독 fail-close(500·upsert 0·error)");
+    const m = String(jobMessages.at(-1));
+    assert.ok(
+      m.includes("primary(naver)") && m.includes("fetched 160"),
+      `실제 원인(Naver 균등 160명 절단)이 job 기록에 보존: ${m}`,
+    );
+    assert.ok(m.includes("fallback(kbo)"), `폴백 KBO 원인 병기: ${m}`);
+    ok("19. 균등 160명 절단 → 타자 가드 단독 fail-close + 원인 합성(160명 명시) 기록");
   }
 
   // ── 20. KBO 복구 비고착: 투수 Naver 폴백(281명 갱신) 다음날 KBO 96명 복귀 허용 ──
