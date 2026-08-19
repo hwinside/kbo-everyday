@@ -27,6 +27,8 @@ interface UpsertCall {
 let upserts: UpsertCall[] = [];
 let jobStatuses: string[] = [];
 let jobMessages: (string | null)[] = [];
+// trusted baseline 가드용: 최근 7일 내 갱신 행 count 응답(null이면 content-range 미제공 → count null → baseline 0)
+let baselineCounts: { batter: number; pitcher: number } | null = null;
 
 const TEAMS10 = ["LG", "두산", "KT", "SSG", "NC", "KIA", "롯데", "삼성", "한화", "키움"];
 
@@ -124,7 +126,8 @@ type NaverMode =
   | "pagesize-full"
   | "duplicate-names"
   | "team-skew"
-  | "bad-inning";
+  | "bad-inning"
+  | "uniform-160";
 
 const realFetch = globalThis.fetch;
 
@@ -140,6 +143,19 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
         upserts.push({ table, rows: body });
         if (dbFail) return Response.json({ message: "forced upsert failure" }, { status: 500 });
         return Response.json([]);
+      }
+      // baseline count 조회(HEAD/GET, head:true + count=exact) → content-range 로 응답
+      if (
+        table.startsWith("player_stats_") &&
+        (!init?.method || init.method === "GET" || init.method === "HEAD")
+      ) {
+        const kind = table.endsWith("batter") ? ("batter" as const) : ("pitcher" as const);
+        const n = baselineCounts?.[kind];
+        if (n == null) return Response.json([]);
+        return new Response(null, {
+          status: 200,
+          headers: { "content-range": `0-0/${n}` },
+        });
       }
       if (table === "admin_job_logs") {
         // startJob/finishJob 은 .single() 을 쓰므로 배열이 아닌 단일 객체로 응답해야
@@ -232,6 +248,9 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
           for (const row of fixture.result.seasonPlayerStats) row.teamName = "LG";
           return Response.json(fixture);
         }
+        case "uniform-160":
+          // 팀당 16명씩 균등 160명 — 정적 하한(150명·팀당 15명)은 전부 통과하는 절단 응답
+          return Response.json(isPitcher ? naverPitchers(160) : naverHitters(160));
         case "bad-inning": {
           const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
           if (isPitcher) fixture.result.seasonPlayerStats[0].pitcherInning = "not-an-inning";
@@ -260,6 +279,7 @@ async function run(kbo: KboMode, naver: NaverMode, dbFail = false) {
   upserts = [];
   jobStatuses = [];
   jobMessages = [];
+  // baselineCounts 는 케이스가 직접 설정한 값을 유지한다(기본 null → 가드 무해통과).
   installFetch(kbo, naver, dbFail);
   const res = await GET(req());
   const body = (await res.json()) as Record<string, never>;
@@ -459,6 +479,31 @@ async function main() {
     assert.equal(upserts.length, 0, "30행만으로 상위 30명만 덮어쓰지 않음");
     assert.equal(jobStatuses.at(-1), "error");
     ok("18. KBO 타자 30행 페이지 경계 → 폴백 채택 금지(fail-close, 기존행 보존)");
+  }
+
+  // ── 19. trusted baseline 급감 가드: 균등 160명(팀당 16명) 절단 응답 차단 ──
+  {
+    // 정적 하한(150명·팀당 15명)은 전부 통과하지만 직전 수집 baseline 332명의 90% 미만
+    baselineCounts = { batter: 332, pitcher: 276 };
+    const { status } = await run("503", "uniform-160");
+    assert.equal(status, 500, "균등 절단 응답은 채택 없이 500");
+    assert.equal(upserts.length, 0, "160명 부분 upsert 없음 → 나머지 172명 stale 은폐 차단");
+    assert.equal(jobStatuses.at(-1), "error", "coverage collapse 는 job error");
+    baselineCounts = null;
+    ok("19. 균등 160명 절단(정적 하한 통과) → baseline 급감 가드 fail-close(500·upsert 0·error)");
+  }
+
+  // ── 20. baseline 존재 + 정상 전량 수집은 가드 무해통과 ────────────────────
+  {
+    // 픽스처 규모와 일치하는 baseline(타자 Naver 329명·투수 KBO 19명) — 전량 수집이면 통과해야 한다
+    baselineCounts = { batter: 329, pitcher: 19 };
+    const { status, body } = await run("ok", "ok");
+    assert.equal(status, 200, "전량 수집은 baseline 가드 통과");
+    assert.equal(body["sources"]["batter"], "naver");
+    assert.equal(body["sources"]["pitcher"], "kbo");
+    assert.equal(jobStatuses.at(-1), "success", "정상 경로 success 유지");
+    baselineCounts = null;
+    ok("20. baseline 존재 + 전량 수집 → 가드 무해통과(success)");
   }
 
   globalThis.fetch = realFetch;

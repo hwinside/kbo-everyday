@@ -427,6 +427,41 @@ const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
   pitcher: "kbo",
 };
 
+/**
+ * 직전 성공 수집 대비 급감 가드(trusted baseline).
+ * 정적 하한(NAVER_MIN_COVERAGE·팀당 최소)만으로는 "균등하게 잘린 부분응답"(예: 332명 중
+ * 팀당 16명씩 160명)이 개별 행 검증을 전부 통과해 나머지 선수를 경보 없이 stale로
+ * 남긴다(2026-08-19 삼순 P0). 최근 7일 내 갱신된 행 수 = 직전 성공 수집의 전량 baseline으로
+ * 삼아, 이번 수집이 그 90% 미만이면 채택 자체를 거부한다(폴백 시도 → 둘 다 실패면
+ * fail-close·upsert 0건). 시즌 초에는 최근 7일 행이 없어 baseline=0 → 가드 무해통과,
+ * 정적 하한이 그대로 1차 방어선으로 남는다. baseline 조회 오류는 가드 우회가 아니라
+ * fail-close다(조용한 바이패스 금지).
+ */
+const BASELINE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const BASELINE_MIN_RATIO = 0.9;
+
+async function assertNoCoverageCollapse(
+  kind: "batter" | "pitcher",
+  source: Source,
+  fetchedCount: number,
+): Promise<void> {
+  const table = kind === "batter" ? "player_stats_batter" : "player_stats_pitcher";
+  const since = new Date(Date.now() - BASELINE_WINDOW_MS).toISOString();
+  const { count, error } = await supabaseAdmin
+    .from(table)
+    .select("player_key", { count: "exact", head: true })
+    .gte("updated_at", since);
+  const label = source === "kbo" ? "KBO" : "Naver";
+  if (error) throw new Error(`${label} ${kind} baseline query failed: ${error.message}`);
+  const baseline = count ?? 0;
+  const floor = Math.ceil(baseline * BASELINE_MIN_RATIO);
+  if (baseline > 0 && fetchedCount < floor) {
+    throw new Error(
+      `${label} ${kind} coverage collapse: fetched ${fetchedCount} < ${floor} (90% of baseline ${baseline})`,
+    );
+  }
+}
+
 function classifyFallbackReason(e: Error): "timeout" | "http-error" | "schema-error" | "network-error" {
   const msg = e.message || "";
   return e.name === "TimeoutError" || e.name === "AbortError"
@@ -444,18 +479,20 @@ async function collect(
   roster: RosterPlayer[],
   season: number,
 ): Promise<Collected> {
-  const fromKbo = async (): Promise<Collected> => ({
-    stats:
+  const fromKbo = async (): Promise<Collected> => {
+    const stats =
       kind === "batter"
         ? await fetchKboBatterStats(roster)
-        : await fetchKboPitcherStats(roster),
-    source: "kbo",
-  });
+        : await fetchKboPitcherStats(roster);
+    await assertNoCoverageCollapse(kind, "kbo", stats.length);
+    return { stats, source: "kbo" };
+  };
   const fromNaver = async (): Promise<Collected> => {
     const rows = await fetchNaverPlayerStats(kind === "batter" ? "HITTER" : "PITCHER", season);
     const stats =
       kind === "batter" ? mapNaverBatters(rows, roster) : mapNaverPitchers(rows, roster);
     if (stats.length === 0) throw new Error(`Naver ${kind} empty after map`);
+    await assertNoCoverageCollapse(kind, "naver", stats.length);
     return { stats, source: "naver" };
   };
 
