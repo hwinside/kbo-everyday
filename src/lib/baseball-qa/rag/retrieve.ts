@@ -800,7 +800,7 @@ export interface RagRequestExtras {
    * 재생성에 같은 프롬프트를 그대로 다시 보내면 같은 답이 나올 확률이 높다 — 무엇이 왜
    * 틀렸는지를 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
    */
-  identityConflict?: { field: "position"; expected: string; mentioned: string };
+  identityConflict?: { field: "position" | "team"; expected: string; mentioned: string };
 }
 
 export function buildRagLlmRequest(
@@ -844,11 +844,12 @@ export function buildRagLlmRequest(
   }
   // 재생성 신호는 주인공 블록 **바로 뒤**에 둔다 — 무엇이 틀렸는지가 주인공 사실과 붙어 읽혀야 한다.
   if (extras.identityConflict) {
-    const { expected, mentioned } = extras.identityConflict;
+    const { field, expected, mentioned } = extras.identityConflict;
+    const label = field === "team" ? "소속 구단" : "포지션";
     sections.push(
       "<재작성 지시 — 직전 답변이 질문 대상이 아닌 인물의 속성을 붙였다>",
-      `직전 답변은 질문 대상을 "${mentioned}"로 서술했다. 질문 대상의 포지션은 "${expected}"다.`,
-      "동명이인이나 자료에 함께 등장하는 다른 인물의 포지션을 질문 대상에게 붙이지 말고 다시 답한다.",
+      `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.`,
+      `동명이인이나 자료에 함께 등장하는 다른 인물의 ${label}을 질문 대상에게 붙이지 말고 다시 답한다.`,
       "<재작성 지시 끝>",
     );
   }

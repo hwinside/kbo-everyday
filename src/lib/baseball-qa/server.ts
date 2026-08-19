@@ -496,7 +496,17 @@ async function callRagLlmWithPrompt(
         evidence,
         systemPrompt ?? RAG_SYSTEM_PROMPT,
         // identityBlock 은 선수 경로에서만 온다(구단·공식 경로는 미주입) — 여기서는 그대로 전달한다.
-        { context: extras?.context, rosterBlock: extras?.rosterBlock, identityBlock: extras?.identityBlock },
+        //
+        // 🔴 `identityConflict` 를 빠뜨리면 재생성이 **직전과 완전히 같은 프롬프트**가 된다
+        //    (삼순 2026-08-19 4차). 파이프라인이 "무엇이 왜 틀렸는지" 를 만들어 넘겨도
+        //    실제 Gemini 요청에 안 실리면 두 번째 시도가 첫 번째와 같은 조건이라 고칠 기회가
+        //    없다 — 재생성 비용만 쓰고 같은 오답을 받는다. 여기가 유일한 실제 전송 지점이다.
+        {
+          context: extras?.context,
+          rosterBlock: extras?.rosterBlock,
+          identityBlock: extras?.identityBlock,
+          identityConflict: extras?.identityConflict,
+        },
       ),
     ),
     signal: AbortSignal.timeout(15000),

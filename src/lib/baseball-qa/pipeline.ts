@@ -3587,7 +3587,9 @@ export interface RagLlmExtras {
    * 같은 프롬프트를 그대로 재전송하면 같은 오답이 나올 확률이 높다 — 무엇이 왜 틀렸는지를
    * 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
    */
-  identityConflict?: { field: "position"; expected: string; mentioned: string };
+  identityConflict?: { field: "position" | "team"; expected: string; mentioned: string };
+  /** 제3자 문장 배제용 로스터 — 답변에 다른 선수가 등장했는지 보는 데만 쓴다. */
+  identityPlayers?: PlayerRef[];
 }
 
 /**
@@ -3675,7 +3677,6 @@ export function buildPlayerIdentity(
  * 등록된 선수가 답변에서 `내야수` 로 서술되는 것은 모순이 아니므로 충돌로 세지 않는다.
  * 반대로 `투수` ↔ `내야수` 는 서로 성립할 수 없다 — 이게 이번 사고의 축이다.
  */
-const POSITION_TOKENS = ["투수", "포수", "내야수", "외야수", "야수"] as const;
 function positionCompatible(subject: string, mentioned: string): boolean {
   if (subject === mentioned) return true;
   // `야수` 는 상위 범주 — 어느 쪽이 상위여도 모순이 아니다.
@@ -3686,7 +3687,75 @@ function positionCompatible(subject: string, mentioned: string): boolean {
 }
 
 /**
- * 생성된 답변이 주인공에게 **다른 사람의 속성**을 붙였는가 (삼순 2026-08-19 3차 P0).
+ * 포지션 토큰화 — **최장 우선 단일 매칭** (삼순 2026-08-19 4차 P0).
+ *
+ * 🔴 `내야수` 는 문자열로 `야수` 를 포함한다. 종전처럼 토큰마다 `includes` 를 돌리면
+ *   "외야수인 선수를 내야수라고 서술한" 답변에서 `[내야수, 야수]` 가 함께 잡히고,
+ *   그 중 `야수` 가 외야수와 호환이라 **충돌이 통과해버린다**(확정 false-negative).
+ *   부분 문자열이 상위 범주로 오인되는 구조라, 임계 조정이 아니라 **토큰화 자체**를
+ *   고쳐야 한다. 정규식 교체는 leftmost 매칭에서 먼저 나열된 대안을 취하므로 3글자를
+ *   앞에 둔다 — `내야수` 위치에서 `야수` 가 따로 잡히지 않는다.
+ */
+const POSITION_PATTERN = /내야수|외야수|포수|투수|야수/g;
+function tokenizePositions(text: string): { token: string; index: number }[] {
+  const found: { token: string; index: number }[] = [];
+  for (const match of text.matchAll(POSITION_PATTERN)) {
+    found.push({ token: match[0], index: match.index ?? 0 });
+  }
+  return found;
+}
+
+/**
+ * 문장에 등장한 구단들 — 별칭을 정규 코드로 접어서 돌려준다.
+ *
+ * 🔴 별칭 표를 새로 만들지 않는다. 이미 이 파일에 `TEAM_ALIASES`(canonical/shorts/nicks)가
+ *   구단 라우팅용 SSOT 로 있다. 같은 사실을 두 곳에 두면 한쪽만 갱신됐을 때 검증이
+ *   조용히 다른 기준을 보게 된다(이번 PR 에서 identity 블록/검증값을 한 번에 만든 것과 같은 축).
+ */
+/**
+ * 구단 표기를 정규 코드로 접는다 — 없으면 `null`.
+ *
+ * 🔴 왜 필요한가 (2026-08-19 회귀 실측).
+ *   `identity.team` 은 호출자가 준 값이라 `삼성`(roster) 일 수도 `삼성 라이온즈`(풀네임)
+ *   일 수도 있다. 문장 쪽만 정규화하고 이쪽을 raw 로 비교하면 **정상 답변이 오귀속으로**
+ *   판정된다(`["삼성"]` vs `"삼성 라이온즈"` 불일치). 양쪽을 같은 함수로 접어야 한다.
+ */
+function canonicalizeTeam(value: string): string | null {
+  const lowered = value.toLowerCase();
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    if (canonical.toLowerCase() === lowered) return canonical;
+    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) return canonical;
+  }
+  return null;
+}
+
+function mentionedTeams(sentence: string): string[] {
+  const lowered = sentence.toLowerCase();
+  const hit = new Set<string>();
+  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
+    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) hit.add(canonical);
+  }
+  return [...hit];
+}
+
+/**
+ * 서술이 **주인공에게 귀속**되는 형태인가 — 이름 없는 후속 문장 판정용.
+ *
+ * 🔴 왜 필요한가 (삼순 2026-08-19 4차).
+ *   `김민준 선수입니다. 포지션은 내야수입니다.` 처럼 **다음 문장**으로 넘어가면 이름이
+ *   없어 종전 판정이 통째로 빠져나갔다. 그렇다고 이름 없는 문장을 전부 주인공 것으로
+ *   보면 `뒤를 받치는 내야수들의 호수비` 같은 정상 문장이 죽는다.
+ *   가르는 축은 **서술어 위치**다 — 귀속은 계사(…입니다/…이다/…로 활약)로 끝나고,
+ *   제3자 언급은 조사(들의·와·과·의)로 이어진다. 둘 다 닫힌 형태소 집합이다.
+ */
+const PREDICATE_SUFFIXES = ["입니다", "이다", "이며", "예요", "이에요", "이었", "였", "로 ", "으로 ", "로서", "다."];
+function isAttributivePredicate(sentence: string, token: string, index: number): boolean {
+  const tail = sentence.slice(index + token.length);
+  return PREDICATE_SUFFIXES.some((suffix) => tail.startsWith(suffix));
+}
+
+/**
+ * 생성된 답변이 주인공에게 **다른 사람의 속성**을 붙였는가 (삼순 2026-08-19 3차 P0 / 4차 보강).
  *
  * 🔴 왜 프롬프트 준수만으로는 부족한가.
  *   "동명이인 속성을 옮기지 마라" 는 **지시**일 뿐이다. 지키는지는 관측해야 안다.
@@ -3695,27 +3764,59 @@ function positionCompatible(subject: string, mentioned: string): boolean {
  *
  * 🔴 왜 "답변에 다른 포지션 단어가 있다" 가 아닌가.
  *   투수 서술에 "내야수들의 호수비" 같은 문장은 **정상**이다. 단어 등장을 충돌로 세면
- *   멀짐한 답변이 unsure 로 죽는다. 귀속은 **주인공 이름이 들어있는 문장**에서만 본다.
- *   그 문장에 주인공의 진짜 포지션도 같이 있으면("A는 투수로, 동명의 내야수와 다르다")
- *   구분해 쓴 것이므로 통과시킨다.
+ *   멀쩡한 답변이 unsure 로 죽는다. 귀속은 ①주인공 이름이 든 문장, 또는 ②그 뒤를 잇는
+ *   이름 없는 문장의 **서술어 위치**에서만 본다.
  *
- * 판정 입력은 전부 **닫힌 집합**이다(roster position 5종·주인공 이름 1개) — 열린 의도 분류가
- * 아니므로 룰이 맞다(M90 `open_language_never_closes_with_rules` 판정 기준).
+ * 판정 입력은 전부 **닫힌 집합**이다(roster position 5종·구단 10개·주인공 이름 1개) —
+ * 열린 의도 분류가 아니므로 룰이 맞다(M90 `open_language_never_closes_with_rules` 판정 기준).
  */
 export function detectIdentityConflict(
   answer: string,
   identity: PlayerIdentity | null | undefined,
-): { field: "position"; expected: string; mentioned: string } | null {
-  if (!identity?.position || !answer) return null;
-  const subject = identity.position;
-  // 주인공 이름이 들어있는 문장만 본다 — 귀속 문장이 아닌 곳의 포지션 언급은 정상이다.
-  const sentences = answer.split(/(?<=[.!?\n])\s*/).filter((s) => s.includes(identity.name));
+  players: PlayerRef[] = [],
+): { field: "position" | "team"; expected: string; mentioned: string } | null {
+  if (!identity || !answer) return null;
+  const sentences = answer.split(/(?<=[.!?\n])\s*/).filter((line) => line.trim().length > 0);
+  // 같은 답변에 등장할 수 있는 **다른 사람**의 이름 — 그 사람 문장은 귀속 대상이 아니다.
+  const otherNames = players
+    .map((row) => row.name)
+    .filter((name) => name !== identity.name);
+  let subjectContext = false;
+
   for (const sentence of sentences) {
-    const mentioned = POSITION_TOKENS.filter((token) => sentence.includes(token));
-    if (mentioned.length === 0) continue;
-    // 주인공의 진짜 포지션이 같은 문장에 있으면 구분해 쓴 것으로 본다.
-    if (mentioned.some((token) => positionCompatible(subject, token))) continue;
-    return { field: "position", expected: subject, mentioned: mentioned[0] };
+    if (sentence.includes(identity.name)) subjectContext = true;
+    // 주인공이 아직 등장하지 않았으면 볼 필요가 없다.
+    if (!subjectContext) continue;
+    // 🔴 주인공 이름 없이 **다른 선수 이름**이 있는 문장은 그 사람 서술이다.
+    //   ("김민준 선수는 투수입니다. 팀 동료 홍길동은 내야수입니다.")
+    //   이걸 거르지 않으면 동료 소개가 주인공 오귀속으로 오판된다.
+    if (!sentence.includes(identity.name) && otherNames.some((name) => sentence.includes(name))) continue;
+
+    // ── 포지션 ──────────────────────────────────────────────────────────
+    if (identity.position) {
+      // 🔴 **서술어 위치**만 귀속으로 본다 — 이름 유무로 가르지 않는다.
+      //   `…내야수입니다`(계사) = 귀속 / `내야수들의 호수비`(조사) = 제3자 언급.
+      //   이름이 든 문장이라고 전부 귀속으로 보면 "김민준 선수는 내야수들의 호수비 덕을
+      //   봤습니다" 같은 정상 문장이 unsure 로 죽는다.
+      const attributed = tokenizePositions(sentence)
+        .filter((t) => isAttributivePredicate(sentence, t.token, t.index));
+      if (attributed.length > 0
+        && !attributed.some((t) => positionCompatible(identity.position!, t.token))) {
+        return { field: "position", expected: identity.position, mentioned: attributed[0].token };
+      }
+    }
+
+    // ── 소속 구단 ───────────────────────────────────────────────────────
+    //   포지션과 같은 사고 축이다 — 동명이인이 다른 팀이면 소속도 그대로 새어 나온다.
+    if (identity.team) {
+      // 양쪽 다 같은 함수로 접는다 — 한쪽만 정규화하면 정상 표기가 충돌로 오판된다.
+      const subjectTeam = canonicalizeTeam(identity.team);
+      const teams = mentionedTeams(sentence);
+      // 주인공 구단을 못 접으면 판정 근거가 없다 — 억지로 충돌을 만들지 않는다.
+      if (subjectTeam && teams.length > 0 && !teams.includes(subjectTeam)) {
+        return { field: "team", expected: identity.team, mentioned: teams[0] };
+      }
+    }
   }
   return null;
 }
@@ -4386,7 +4487,7 @@ async function answerPlayerDescriptiveQuestion(
   //   재생성은 **1회만** 한다 — 공급자 과금이 무한으로 늘어나면 안 되고, 두 번 틀리면 그건
   //   프롬프트로 못 고치는 것이므로 unsure 로 닫는 편이 오귀속을 서빙하는 것보다 낫다.
   let finalValidated = validated;
-  let conflict = detectIdentityConflict(validated.answer, extras.identity);
+  let conflict = detectIdentityConflict(validated.answer, extras.identity, extras.identityPlayers ?? []);
   if (conflict && deps.callRagLlm) {
     let retryLlm: LlmResult | null = null;
     try {
@@ -4404,7 +4505,7 @@ async function answerPlayerDescriptiveQuestion(
       const revalidated = validateRagResponse(retryLlm.text);
       if (revalidated.kind === "grounded") {
         finalValidated = revalidated;
-        conflict = detectIdentityConflict(revalidated.answer, extras.identity);
+        conflict = detectIdentityConflict(revalidated.answer, extras.identity, extras.identityPlayers ?? []);
       }
       // 재생성이 grounded 가 아니면 충돌이 남은 것으로 보고 아래에서 닫는다.
     }
@@ -5962,7 +6063,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
           // 블록(프롬프트 입력)과 identity(생성 답변 검증값)를 **한 번에** 만들어 둘이 어긋나지 않게 한다.
           ...(() => {
             const identity = buildPlayerIdentity(playerCandidate, players);
-            return identity ? { identityBlock: identity.block, identity } : {};
+            return identity ? { identityBlock: identity.block, identity, identityPlayers: players } : {};
           })(),
         },
       );

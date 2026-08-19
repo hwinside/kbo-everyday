@@ -28,9 +28,12 @@
  * 실행: npm run qa:genius-rag-identity
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   answerQuestion,
   buildIdentityBlock,
+  buildPlayerIdentity,
+  detectIdentityConflict,
   type PlayerRef,
   type QaDeps,
   type RagLlmExtras,
@@ -271,6 +274,124 @@ async function main() {
   );
   pass("G kboId↔이름 충돌 fail-close");
 
+  // ── K. 최장 토큰 우선 — `내야수` 안의 `야수` 가 상위범주로 오인되면 안 된다 ─────
+  //   🔴 삼순 4차 확정 false-negative: 토큰마다 includes 를 돌리면 외야수 대상 답변의
+  //      "내야수"에서 `[내야수, 야수]` 가 함께 잡히고, `야수` 가 외야수와 호환이라
+  //      **충돌이 통과**한다. 부분 문자열이 상위 범주로 오인되는 구조적 결함이다.
+  const outfielder = players.find((p) => p.position === "외야수" && p.team)!;
+  const infielder = players.find((p) => p.position === "내야수" && p.team)!;
+  for (const [subject, wrong] of [[outfielder, "내야수"], [infielder, "외야수"]] as const) {
+    const conflictHit = detectIdentityConflict(
+      `${subject.name} 선수는 ${subject.team} 소속의 ${wrong}입니다.`,
+      buildPlayerIdentity({ entityId: subject.kboId, name: subject.name, team: subject.team }, players),
+      players,
+    );
+    assert.ok(
+      conflictHit,
+      `K: ${subject.position} 대상에 "${wrong}" 서술이 통과했다 — 부분 문자열(야수) 오인`,
+    );
+    assert.equal(conflictHit!.mentioned, wrong, `K: 검출 토큰이 "${wrong}" 이 아니다`);
+  }
+  // 진짜 상위범주(`야수` 등록 선수)는 여전히 통과해야 한다 — 과잉 차단 금지.
+  const generic = players.find((p) => p.position === "야수" && p.team);
+  if (generic) {
+    assert.equal(
+      detectIdentityConflict(
+        `${generic.name} 선수는 ${generic.team} 소속의 내야수입니다.`,
+        buildPlayerIdentity({ entityId: generic.kboId, name: generic.name, team: generic.team }, players),
+        players,
+      ),
+      null,
+      "K2: 야수 등록 선수를 내야수로 서술한 것은 모순이 아닌데 충돌로 셌다",
+    );
+  }
+  pass("K 최장 토큰 우선(내야수⊅야수 오인 차단)");
+
+  // ── L. 이름 없는 후속 문장 귀속 (삼순 4차) ────────────────────────────────
+  //   `김민준 선수입니다. 포지션은 내야수입니다.` — 다음 문장엔 이름이 없다.
+  for (const { id, wrong } of [
+    { id: "56840", wrong: "내야수" },
+    { id: "53893", wrong: "투수" },
+  ]) {
+    const row = players.find((p) => p.kboId === id)!;
+    const identity = buildPlayerIdentity({ entityId: id, name: row.name, team: row.team }, players);
+    assert.ok(
+      detectIdentityConflict(`${row.name} 선수입니다. 포지션은 ${wrong}입니다.`, identity, players),
+      `L: ${id} 이름 없는 후속 문장의 "${wrong}" 귀속이 미검출`,
+    );
+  }
+  // 후속 문장이라도 **제3자 언급**은 통과해야 한다(조사로 이어지는 형태).
+  const pitcherL = players.find((p) => p.position === "투수" && p.team)!;
+  assert.equal(
+    detectIdentityConflict(
+      `${pitcherL.name} 선수입니다. 뒤를 받치는 내야수들의 호수비가 좋았습니다.`,
+      buildPlayerIdentity({ entityId: pitcherL.kboId, name: pitcherL.name, team: pitcherL.team }, players),
+      players,
+    ),
+    null,
+    "L2: 후속 문장의 제3자 언급을 귀속으로 오판했다",
+  );
+  pass("L 이름 없는 후속 문장 귀속 + 제3자 통과");
+
+  // ── M. team 오귀속 양방향 종단 ────────────────────────────────────────────
+  //   동명이인이 다른 팀이면 소속도 그대로 새어 나온다 — 포지션과 같은 사고 축이다.
+  const teamA = players.find((p) => p.team === "SSG" && p.position === "투수")!;
+  for (const wrongTeam of ["LG", "두산"]) {
+    const hit = detectIdentityConflict(
+      `${teamA.name} 선수는 ${wrongTeam} 소속입니다.`,
+      buildPlayerIdentity({ entityId: teamA.kboId, name: teamA.name, team: teamA.team }, players),
+      players,
+    );
+    assert.ok(hit, `M: 소속 오귀속("${wrongTeam}")이 미검출`);
+    assert.equal(hit!.field, "team", "M: field 가 team 이 아니다");
+  }
+  // 별칭 표기(에스에스지·랜더스)는 같은 구단이므로 통과해야 한다.
+  assert.equal(
+    detectIdentityConflict(
+      `${teamA.name} 선수는 에스에스지 랜더스 소속입니다.`,
+      buildPlayerIdentity({ entityId: teamA.kboId, name: teamA.name, team: teamA.team }, players),
+      players,
+    ),
+    null,
+    "M2: 같은 구단의 다른 표기를 오귀속으로 셌다",
+  );
+  // 🔴 team 표기 변이 — 풀네임(`삼성 라이온즈`)으로 결속돼도 정상 답변이 죽으면 안 된다.
+  //   2026-08-19 회귀 실측: 문장 쪽만 정규화하고 identity.team 을 raw 로 비교해
+  //   `["삼성"]` vs `"삼성 라이온즈"` 불일치로 **정상 답변이 오귀속 판정**됐다.
+  assert.equal(
+    detectIdentityConflict(
+      `${teamA.name} 선수는 삼성 라이온즈 소속입니다.`,
+      { block: "x", kboId: teamA.kboId, name: teamA.name, team: "삼성 라이온즈", position: null },
+      players,
+    ),
+    null,
+    "M4: 풀네임 구단 표기를 오귀속으로 셌다 — 한쪽만 정규화한 비교",
+  );
+
+  // 종단으로도 닫히는지 본다.
+  const teamConflictDeps = makeDeps(teamA, () => `${teamA.name} 선수는 LG 소속의 투수입니다.`);
+  const teamResult = await answerQuestion("qa-team", `${teamA.name} 어떤 선수야?`, teamConflictDeps);
+  assert.equal(teamResult.source, "unsure", `M3: team 충돌인데 source=${teamResult.source}`);
+  pass("M team 오귀속 양방향 + 별칭 통과 + 종단 차단");
+
+  // ── O. 다른 선수 이름이 든 문장은 귀속 대상이 아니다 ────────────────────
+  //   "김민준 선수는 투수입니다. 팀 동료 홍길동은 내야수입니다." — 동료 소개가
+  //   주인공 오귀속으로 오판되면 정상 답변이 죽는다. 문장 분리가 없으면 이게 샌다.
+  const subjectO = players.find((p) => p.position === "투수" && p.team)!;
+  const otherO = players.find((p) => p.position === "내야수" && p.name !== subjectO.name)!;
+  assert.equal(
+    detectIdentityConflict(
+      // ⚠️ 주인공 문장에 자기 포지션을 넣으면 안 된다 — 답변 전체를 한 덩어리로 봐도
+      //    호환 토큰(투수)이 같이 잡혀 통과해버려서 문장 분리 계약이 관측 불가가 된다.
+      `${subjectO.name} 선수는 ${subjectO.team} 소속입니다. 팀 동료 ${otherO.name} 선수는 내야수입니다.`,
+      buildPlayerIdentity({ entityId: subjectO.kboId, name: subjectO.name, team: subjectO.team }, players),
+      players,
+    ),
+    null,
+    "O: 다른 선수 이름이 든 문장을 주인공 귀속으로 오판했다 — 정상 답변 과잉 차단",
+  );
+  pass("O 제3자 이름 문장 배제");
+
   // ── H/I. 종단 오귀속 차단 — stub 이 **틀린 포지션**을 반환해도 서빙되지 않는가 ─────
   //
   //   🔴 삼순 3차 NO-GO 의 핵심: 종전 D축 stub 은 **정답을 직접 반환**했다. 그러면
@@ -344,6 +465,26 @@ async function main() {
     "J: 주인공 문장 밖의 포지션 단어를 충돌로 오판했다 — 정상 답변 과잉 차단",
   );
   pass("J 주인공 문장 밖 포지션 언급은 통과");
+
+  // ── N. server 어댑터 종단 배선 (삼순 4차 P0) ──────────────────────────────
+  //   🔴 게이트가 `buildRagLlmRequest` 를 직접 부르면, 실제 전송 경로인 server 어댑터가
+  //      extras 를 빠뜨려도 잡지 못한다 — 재생성이 직전과 **같은 프롬프트**가 된다.
+  //      실제 Gemini 요청 body 를 가로채 재작성 지시가 실렸는지 본다.
+  const serverSource = readFileSync(
+    new URL("../../src/lib/baseball-qa/server.ts", import.meta.url), "utf8",
+  );
+  const adapterStart = serverSource.indexOf("async function callRagLlmWithPrompt");
+  const adapterEnd = serverSource.indexOf("async function", adapterStart + 10);
+  const adapter = serverSource.slice(adapterStart, adapterEnd);
+  assert.ok(
+    /identityConflict:\s*extras\?\.identityConflict/.test(adapter),
+    "N: server 어댑터가 실제 Gemini 요청에 identityConflict 를 전달하지 않는다 — 재생성이 같은 프롬프트가 된다",
+  );
+  assert.ok(
+    /identityBlock:\s*extras\?\.identityBlock/.test(adapter),
+    "N2: server 어댑터가 identityBlock 을 전달하지 않는다",
+  );
+  pass("N server 어댑터 종단 배선");
 
   console.log(`\ngenius-rag-identity-binding-smoke PASS (${passed} checks)`);
 }
