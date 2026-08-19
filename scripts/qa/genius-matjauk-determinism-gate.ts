@@ -462,6 +462,9 @@ async function runReverseFlappyDeterminism(
   const players: PlayerRef[] = await loadRosterPlayers();
   const store = memoryStore(storeOptions);
   let llmCalls = 0;
+  // 로그 측면까지 검증한다 (삼순 5차 NO-GO-①) — answer 만 보면 source/matchPath 가
+  // unsure 로 샐는 회귀를 못 잡는다(false-GREEN).
+  const logs: Array<{ matchPath: string; inputTokens: number | null; outputTokens: number | null }> = [];
   const makeDeps = (): QaDeps =>
     ({
       enablePlayerRag: true,
@@ -471,7 +474,9 @@ async function runReverseFlappyDeterminism(
       setCache: async () => {},
       reserveDaily: async () => ({ allowed: true, remaining: 19 }),
       releaseDaily: async () => {},
-      log: async () => {},
+      log: async (entry: { matchPath: string; inputTokens: number | null; outputTokens: number | null }) => {
+        logs.push({ matchPath: entry.matchPath, inputTokens: entry.inputTokens, outputTokens: entry.outputTokens });
+      },
       callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
       searchRag: async () => [evidence],
       // 🔴 역방향 flappy — 앞 insufficientCalls 회만 INSUFFICIENT, 이후 전부 GROUNDED.
@@ -517,10 +522,23 @@ async function runReverseFlappyDeterminism(
   // 플립 2회(재시도까지 실패) = 전원 시스템 오류 — 자료부족 확산도, 채수빈 유출도 없다.
   assert.ok(answers.every((a) => a === SYSTEM_ERROR_ANSWER),
     `재시도 실패 flight 가 전원 시스템 오류가 아니다: ${[...new Set(answers)].join(" ||| ")}`);
+  // 🔴 answer 만으로는 부족하다 (삼순 5차 NO-GO-①) — 반환 source 와 로그 matchPath 까지
+  // error 여야 장애가 자료부족/판정불명으로 집계되지 않는다.
+  const sources = concurrent.map((r) => r.source);
+  assert.ok(sources.every((s) => s === "error"),
+    `재시도 실패 flight 의 source 가 error 가 아니다: ${[...new Set(sources)].join(", ")}`);
+  const errorLogs = logs.filter((entry) => entry.matchPath === "error");
+  assert.equal(errorLogs.length, 8, `error 로그 ${errorLogs.length}건 (기대 8 — unsure 등 타 경로 집계 금지: ${logs.map((entry) => entry.matchPath).join(",")})`);
+  assert.ok(!logs.some((entry) => entry.matchPath === "unsure"),
+    "시스템 오류 종결이 unsure 로 집계됐다(5차 NO-GO-① 회귀)");
+  // 🔴 재시도 토큰 합산 보존 (5차 NO-GO-②) — winner 의 error 로그에 초호출+재시도가 합산된다.
+  assert.ok(errorLogs.some((entry) => entry.inputTokens === 200 && entry.outputTokens === 4),
+    `winner error 로그에 합산 토큰(200/4)이 없다: ${JSON.stringify(errorLogs)}`);
   assert.equal(llmCalls, 2, `LLM 소비 ${llmCalls}회 (기대 2 — 초호출+재시도, waiter 재생성 금지)`);
-  // TTL 내 재질문 — 같은 시스템 오류 공유, LLM 불변.
+  // TTL 내 재질문 — 같은 시스템 오류 공유, LLM 불변, source 도 error.
   const withinTtl = await answerQuestion("u-reverse-within-ttl", QUESTION, makeDeps());
   assert.equal(withinTtl.answer, SYSTEM_ERROR_ANSWER, `TTL 내 재질문이 다른 답: ${withinTtl.answer}`);
+  assert.equal(withinTtl.source, "error", `TTL 내 재질문 source 가 ${withinTtl.source}`);
   assert.equal(llmCalls, 2, `TTL 내 재질문이 LLM 을 소비했다(${llmCalls})`);
   // lease TTL 만료 → 새 flight 가 재생성 — 이번엔 GROUNDED(3회차부터), 채수빈 필수.
   await new Promise((resolve) => setTimeout(resolve, (storeOptions.leaseMs ?? 60_000) + 30));
@@ -629,11 +647,17 @@ async function runFailureModeChecks(evidence: RagEvidence): Promise<void> {
     assert.equal(result.source, "error", `상한 초과가 ${result.source} 로 샐다: ${result.answer}`);
     assert.equal(llm, 0, `claim 없이 생성했다(${llm}) — 느린 winner 중복 호출 축(2차 NO-GO)`);
   });
-  await check("mark CAS 패배(takeover) + canonical 존재 — 내 폐기 대신 canonical 을 반환한다 (4차 NO-GO-②)", async () => {
+  // mark 실패 회귀 공통 하니스 — 로그 토큰 합산 보존까지 검증한다 (삼순 5차 NO-GO-②).
+  const runMarkFailure = async (options: {
+    user: string;
+    markMode: "false" | "throw";
+    canonicalAfterMark: boolean;
+  }) => {
     let llm = 0;
     let markAttempted = false;
+    const logs: Array<{ matchPath: string; inputTokens: number | null; outputTokens: number | null }> = [];
     const canonical = { answer: "takeover winner 의 canonical 답입니다. 채수빈 유래입니다.", sourceUrl: null, toneCompliant: true };
-    const result = await answerQuestion("u-mark-cas-loser", "구자욱 별명이 왜 맛자욱이야?", ({
+    const result = await answerQuestion(options.user, "구자욱 별명이 왜 맛자욱이야?", ({
       enablePlayerRag: true,
       loadGlossary: async () => [],
       loadPlayers: async () => players,
@@ -641,7 +665,9 @@ async function runFailureModeChecks(evidence: RagEvidence): Promise<void> {
       setCache: async () => {},
       reserveDaily: async () => ({ allowed: true, remaining: 19 }),
       releaseDaily: async () => {},
-      log: async () => {},
+      log: async (entry: { matchPath: string; inputTokens: number | null; outputTokens: number | null }) => {
+        logs.push({ matchPath: entry.matchPath, inputTokens: entry.inputTokens, outputTokens: entry.outputTokens });
+      },
       callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
       searchRag: async () => [evidence],
       // 재시도까지 non-grounded — mark 경로로 간다.
@@ -651,41 +677,43 @@ async function runFailureModeChecks(evidence: RagEvidence): Promise<void> {
       },
       verifiedRagAnswers: {
         pollDelayMs: 5, pollAttempts: 10,
-        get: async () => (markAttempted ? canonical : null),
+        get: async () => (options.canonicalAfterMark && markAttempted ? canonical : null),
         put: async () => true,
         claim: async () => ({ verdict: "winner", ownerToken: "my-token" }),
-        // lease 가 이미 인수되어 mark 는 CAS 패배 — 새 owner 가 grounded 를 settle 했다.
-        markInsufficient: async () => { markAttempted = true; return false; },
+        markInsufficient: async () => {
+          markAttempted = true;
+          if (options.markMode === "throw") throw new Error("rpc down");
+          return false;
+        },
         release: async () => {},
       },
     }) as unknown as QaDeps);
+    return { result, llm, logs };
+  };
+  await check("mark CAS 패배(takeover grounded) — canonical 반환 + 소비 토큰 합산 보존 (4·5차 NO-GO-②)", async () => {
+    const { result, llm, logs } = await runMarkFailure({ user: "u-mark-false-canonical", markMode: "false", canonicalAfterMark: true });
     assert.equal(result.source, "rag", `mark 패배가 ${result.source} 로 끝났다: ${result.answer}`);
     assert.ok(result.answer?.includes("takeover winner 의 canonical"), `canonical 이 아니다: ${result.answer}`);
     assert.equal(llm, 2, `LLM 소비 ${llm}회 (기대 2 — 초호출+재시도)`);
+    // 🔴 canonical 재생 로그에 이 worker 가 소비한 합산 토큰(20/4)이 보존된다 (5차 NO-GO-②).
+    assert.ok(logs.some((entry) => entry.matchPath === "rag" && entry.inputTokens === 20 && entry.outputTokens === 4),
+      `canonical 재생 로그에 합산 토큰이 없다(유실): ${JSON.stringify(logs)}`);
   });
-  await check("mark throw + canonical 없음 — 내 폐기 문구를 보내지 않고 시스템 오류로 닫는다 (4차 NO-GO-②)", async () => {
-    const result = await answerQuestion("u-mark-throw", "구자욱 별명이 왜 맛자욱이야?", ({
-      enablePlayerRag: true,
-      loadGlossary: async () => [],
-      loadPlayers: async () => players,
-      getCache: async () => null,
-      setCache: async () => {},
-      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
-      releaseDaily: async () => {},
-      log: async () => {},
-      callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
-      searchRag: async () => [evidence],
-      callRagLlm: async () => ({ text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 10, outputTokens: 2 }),
-      verifiedRagAnswers: {
-        pollDelayMs: 5, pollAttempts: 10,
-        get: async () => null,
-        put: async () => true,
-        claim: async () => ({ verdict: "winner", ownerToken: "my-token" }),
-        markInsufficient: async () => { throw new Error("rpc down"); },
-        release: async () => {},
-      },
-    }) as unknown as QaDeps);
+  await check("mark throw + takeover grounded — canonical 반환(2답 분기 방지) + 토큰 보존 (5차 NO-GO-③ actual)", async () => {
+    const { result, llm, logs } = await runMarkFailure({ user: "u-mark-throw-canonical", markMode: "throw", canonicalAfterMark: true });
+    assert.equal(result.source, "rag", `mark throw+canonical 이 ${result.source} 로 끝났다: ${result.answer}`);
+    assert.ok(result.answer?.includes("takeover winner 의 canonical"), `canonical 이 아니다: ${result.answer}`);
+    assert.equal(llm, 2, `LLM 소비 ${llm}회 (기대 2)`);
+    assert.ok(logs.some((entry) => entry.matchPath === "rag" && entry.inputTokens === 20 && entry.outputTokens === 4),
+      `canonical 재생 로그에 합산 토큰이 없다(유실): ${JSON.stringify(logs)}`);
+  });
+  await check("mark throw + canonical 없음 — 시스템 오류 종결 + 소비 토큰·관측 보존 (4·5차 NO-GO-②)", async () => {
+    const { result, llm, logs } = await runMarkFailure({ user: "u-mark-throw-none", markMode: "throw", canonicalAfterMark: false });
     assert.equal(result.source, "error", `mark throw 가 ${result.source} 로 샐다: ${result.answer}`);
+    assert.equal(llm, 2, `LLM 소비 ${llm}회 (기대 2)`);
+    // 🔴 error 로그에 합산 토큰(20/4) 보존 — failCloseError null 기록 회귀 차단 (5차 NO-GO-②).
+    assert.ok(logs.some((entry) => entry.matchPath === "error" && entry.inputTokens === 20 && entry.outputTokens === 4),
+      `error 로그에 합산 토큰이 없다(유실): ${JSON.stringify(logs)}`);
   });
   await check("settle CAS 패자 — 자기 생성답을 버리고 canonical 을 재조회해 반환한다", async () => {
     let llm = 0;
