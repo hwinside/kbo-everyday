@@ -16,6 +16,8 @@ interface FallbackEvent {
   timestamp: Date;
   statusCode?: number;
   errorMessage?: string;
+  /** dedupe 축(예: gameId). 같은 (api, reason, scope, 1분 버킷)은 DB 1행으로 합산된다. */
+  scope?: string;
 }
 
 // In-memory 추적 (서버리스 인스턴스별 독립)
@@ -46,7 +48,7 @@ export function getRecentFallbackBufferSizeForTest(): number {
 export async function trackFallback(
   apiName: string,
   reason: FallbackEvent["reason"],
-  options?: { statusCode?: number; errorMessage?: string }
+  options?: { statusCode?: number; errorMessage?: string; scope?: string }
 ) {
   const event: FallbackEvent = {
     apiName,
@@ -54,6 +56,7 @@ export async function trackFallback(
     timestamp: new Date(),
     statusCode: options?.statusCode,
     errorMessage: options?.errorMessage,
+    scope: options?.scope,
   };
 
   // Supabase 영구 저장 — 반드시 await 한다. fire-and-forget은 응답 반환 직후
@@ -170,14 +173,17 @@ ${reasonText}${errorInfo}
 /**
  * Supabase 저장
  */
+// 폴백 1회당 1행 INSERT 였다. 라이브 경기 중 유저 폴링 수만큼 쌓여 `kbo-game-detail` 하나가
+// 하루 138,708행(2026-08-20 실측, gameId 하나에 52,297건)을 만들었다 — "장애 13.8만 회"가
+// 아니라 계측 설계 결함이다. 이제 (api, reason, scope, 1분 버킷) 단위 upsert 로 합산한다.
+// 창 집계는 반드시 sum(event_count) 로 읽어야 임계치 의미가 보존된다(migration 참조).
 async function saveToSupabase(event: FallbackEvent) {
-  const { error } = await supabase.from("api_fallback_events").insert({
-    api_name: event.apiName,
-    reason: event.reason,
-    status_code: event.statusCode || null,
-    error_message: event.errorMessage || null,
-    timestamp: event.timestamp.toISOString(),
-    alert_sent: false, // 알림 발송 전이므로 false
+  const { error } = await supabase.rpc("record_api_fallback_bucket", {
+    p_api_name: event.apiName,
+    p_reason: event.reason,
+    p_status_code: event.statusCode ?? null,
+    p_error_message: event.errorMessage ?? null,
+    p_scope: event.scope ?? null,
   });
 
   if (error) {
@@ -238,6 +244,9 @@ export async function trackApiDegradation(
       p_threshold: policy.threshold,
       p_cooldown_minutes: policy.cooldownMinutes,
       p_lease_seconds: policy.leaseSeconds,
+      // scope 는 DB 버킷 dedupe 축이자 복구 알림 귀속 축이다. 미전달 시 옛 8-인자 시그니처로
+      // 조용히 떨어지지 않도록 migration 이 옛 시그니처를 drop 했다(fail-close).
+      p_scope: options.scope ?? null,
     });
     if (error) {
       console.error("[API Degradation] claim RPC failed:", error.message);

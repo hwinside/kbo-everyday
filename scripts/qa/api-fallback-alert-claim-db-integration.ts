@@ -35,12 +35,31 @@ async function claim(
   api: string,
   p: Policy,
   errMsg = "test",
+  scope: string | null = null,
 ): Promise<{ send: boolean; token: string | null }> {
   const r = await db.query<{ should_send: boolean; attempt_token: string | null }>(
-    "select should_send, attempt_token from public.claim_api_fallback_alert($1,'schema-error',null,$2,$3,$4,$5,$6)",
-    [api, errMsg, p.win, p.thr, p.cd, p.lease],
+    "select should_send, attempt_token from public.claim_api_fallback_alert($1,'schema-error',null,$2,$3,$4,$5,$6,$7)",
+    [api, errMsg, p.win, p.thr, p.cd, p.lease, scope],
   );
   return { send: r.rows[0]?.should_send === true, token: r.rows[0]?.attempt_token ?? null };
+}
+
+/** 버킷 행 수(= DB 쓰기 량). 폴링 증폭 차단 여부는 이 값으로 본다. */
+async function rowCount(db: PGlite, api: string): Promise<number> {
+  const r = await db.query<{ c: number | string }>(
+    "select count(*)::int as c from public.api_fallback_events where api_name=$1",
+    [api],
+  );
+  return Number(r.rows[0]?.c ?? 0);
+}
+
+/** 발생 횟수(= sum(event_count)). 임계치 판정은 반드시 이 값이어야 한다. */
+async function occurrenceCount(db: PGlite, api: string): Promise<number> {
+  const r = await db.query<{ c: number | string }>(
+    "select coalesce(sum(coalesce(event_count,1)),0)::int as c from public.api_fallback_events where api_name=$1",
+    [api],
+  );
+  return Number(r.rows[0]?.c ?? 0);
 }
 async function drain(
   db: PGlite,
@@ -68,12 +87,12 @@ async function nack(db: PGlite, api: string, token: string, backoff = 60): Promi
   );
   return r.rows[0]?.ok === true;
 }
+/**
+ * 기존 단언("이벤트 N건 durable")은 버킷 도입 전엔 row 수 == 발생 횟수였다.
+ * 이제 둘은 갈라진다 — 의미상 "몇 번 일어났는가"를 묻는 검증은 occurrenceCount 를 쓴다.
+ */
 async function eventCount(db: PGlite, api: string): Promise<number> {
-  const r = await db.query<{ c: number | string }>(
-    "select count(*)::int as c from public.api_fallback_events where api_name=$1",
-    [api],
-  );
-  return Number(r.rows[0]?.c ?? 0);
+  return occurrenceCount(db, api);
 }
 async function sentIds(db: PGlite, api: string): Promise<number[]> {
   const r = await db.query<{ id: number | string }>(
@@ -110,6 +129,7 @@ async function main() {
       create index if not exists idx_afe_composite on public.api_fallback_events(api_name, timestamp desc);
     `);
     await db.exec(migration("20260729_api_fallback_alert_claim.sql"));
+    await db.exec(migration("20260820000000_api_fallback_events_bucket.sql"));
 
     const A = "kbo-scoreboard-linescore";
 
@@ -217,8 +237,113 @@ async function main() {
     };
     ok(
       "anon claim RPC 차단",
-      (await fnPriv("anon", "public.claim_api_fallback_alert(text,text,int,text,int,int,int,int)")) === false,
+      (await fnPriv("anon", "public.claim_api_fallback_alert(text,text,int,text,int,int,int,int,text)")) === false,
     );
+    ok(
+      "anon record_api_fallback_bucket RPC 차단",
+      (await fnPriv("anon", "public.record_api_fallback_bucket(text,text,int,text,text)")) === false,
+    );
+
+    // ── fail-close: 옛 8-인자 claim 시그니처가 남아 있으면 scope 미전달 호출이 조용히
+    //    즌 경로로 떨어져 폴링 증폭이 계속되는데 아무도 모른다. migration 이 drop 했는지 고정한다.
+    {
+      const r = await db.query<{ c: number | string }>(
+        `select count(*)::int as c
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname = 'claim_api_fallback_alert'
+            and p.pronargs = 8`,
+      );
+      ok("옛 8-인자 claim 시그니처 제거됨(fail-close)", Number(r.rows[0]?.c) === 0);
+    }
+    {
+      const r = await db.query<{ c: number | string }>(
+        `select count(*)::int as c
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname = 'claim_api_fallback_alert'
+            and p.pronargs = 9`,
+      );
+      ok("신규 9-인자 claim 시그니처 존재", Number(r.rows[0]?.c) === 1);
+    }
+
+    // ── 폴링 증폭 차단: 같은 (api, reason, scope, 1분버킷) 은 1행 + count 증가 ──
+    // 2026-08-20 사고 축: 라이브 경기 중 같은 gameId 가 52,297행을 만들었다.
+    {
+      const B = "bucket-api";
+      for (let i = 0; i < 50; i++) {
+        await db.query("select public.record_api_fallback_bucket($1,'schema-error',null,'x',$2)", [
+          B,
+          "20260819HTHH0",
+        ]);
+      }
+      ok("같은 scope 50회 → DB 1행", (await rowCount(db, B)) === 1);
+      ok("같은 scope 50회 → 발생 횟수 50 보존", (await occurrenceCount(db, B)) === 50);
+
+      // scope 가 다르면 별도 행(경기별 분리 관측이 죽지 않음)
+      await db.query("select public.record_api_fallback_bucket($1,'schema-error',null,'x',$2)", [
+        B,
+        "20260819SKSS0",
+      ]);
+      ok("다른 scope → 별도 행", (await rowCount(db, B)) === 2);
+
+      // reason 이 다르면 별도 행(실패 종류 분리 계측 보존)
+      await db.query("select public.record_api_fallback_bucket($1,'timeout',null,'x',$2)", [
+        B,
+        "20260819HTHH0",
+      ]);
+      ok("다른 reason → 별도 행", (await rowCount(db, B)) === 3);
+
+      // scope 가 null 이어도 동일 버킷으로 묶인다(coalesce(scope,'')).
+      const N = "bucket-null-scope";
+      for (let i = 0; i < 10; i++) {
+        await db.query("select public.record_api_fallback_bucket($1,'timeout',null,'x',null)", [N]);
+      }
+      ok("scope null 10회 → DB 1행", (await rowCount(db, N)) === 1);
+      ok("scope null 10회 → 발생 횟수 10", (await occurrenceCount(db, N)) === 10);
+    }
+
+    // ── 임계치가 버킷링 때문에 헐거워지지 않는다(sum(event_count) 판정) ──
+    // 이게 이 PR 의 핵심 위험이다: row 로 세면 같은 scope 가 몇 번 터져도 영원히 1행이라
+    // 임계치 3에 도달하지 못해 **경보가 영원히 안 나간다**.
+    {
+      const T = "threshold-same-scope";
+      const c1 = await claim(db, T, SUCCESS, "e", "same-game");
+      ok("같은 scope 1회차 → 미달", c1.send === false);
+      const c2 = await claim(db, T, SUCCESS, "e", "same-game");
+      ok("같은 scope 2회차 → 미달", c2.send === false);
+      const c3s = await claim(db, T, SUCCESS, "e", "same-game");
+      ok("같은 scope 3회차 → 임계 도달(should_send=true)", c3s.send === true);
+      ok("그런데 DB 는 1행만(증폭 차단)", (await rowCount(db, T)) === 1);
+      ok("발생 횟수는 3 보존", (await occurrenceCount(db, T)) === 3);
+      ok("confirm 은 그 버킷 행에 귀속", (await confirm(db, T, c3s.token!)) === true);
+      ok("confirm 후 sent 정확히 1행", (await sentIds(db, T)).length === 1);
+    }
+
+    // ── 마이그레이션 이전 행(bucket_start null) 호환 ──
+    // ⚠️ 실측 정정: `add column event_count int not null default 1` 은 기존 행을 **1로 백필**한다.
+    //    따라서 과거 행의 event_count 는 null 이 아니라 1 이다(코드의 coalesce 는 방어적 잉여).
+    //    진짜 구분자는 bucket_start 가 null 이라는 점 — 그래서 unique 부분인덱스 밖이고
+    //    대량 UPDATE 없이 그대로 공존한다.
+    {
+      const L = "legacy-rows-api";
+      await db.exec(
+        `insert into public.api_fallback_events(api_name, reason, timestamp, bucket_start) values
+         ('legacy-rows-api','schema-error', now(), null),
+         ('legacy-rows-api','schema-error', now(), null)`,
+      );
+      ok("과거 행은 event_count=1 로 백필됨", (await occurrenceCount(db, L)) === 2);
+      {
+        const r = await db.query<{ c: number | string }>(
+          "select count(*)::int as c from public.api_fallback_events where api_name='legacy-rows-api' and bucket_start is null and event_count = 1",
+        );
+        ok("과거 행은 bucket_start null 로 남음(unique 부분인덱스 밖)", Number(r.rows[0]?.c) === 2);
+      }
+      // 과거 행 2건 + 신규 1건 = 3 → 임계 도달. 과거 행이 임계 판정에서 누락되면 false 가 된다.
+      ok("과거 행도 임계 판정에 합산됨", (await claim(db, L, SUCCESS, "e", "g1")).send === true);
+      // 과거 행은 unique 부분인덱스 밖(bucket_start null)이라 중복 insert 가 막히지 않는다 — 의도.
+      ok("과거 행 2개가 그대로 공존(대량 UPDATE 안 함)", (await rowCount(db, L)) === 3);
+    }
     ok(
       "anon drain RPC 차단",
       (await fnPriv("anon", "public.drain_api_fallback_alerts(int,int,int)")) === false,

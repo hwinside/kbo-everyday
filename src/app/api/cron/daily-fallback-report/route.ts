@@ -48,14 +48,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ message: "No events yesterday" });
     }
 
+    // 2026-08-20: 1행 = 1발생이 아니다. (api, reason, scope, 1분버킷) 1행 + event_count 합산이므로
+    // 리포트의 "N건"은 sum(event_count)로 읽는다. row count로 읽으면 폴링 증폭 차단 이후
+    // 장애가 줄어든 것처럼 보이는 오보가 된다. 마이그레이션 이전 행은 event_count null → 1.
+    const occurrences = (e: { event_count?: number | null }) => e.event_count ?? 1;
+    const totalOccurrences = events.reduce((n, e) => n + occurrences(e), 0);
+
     // API별 집계
     const byApi = events.reduce((acc, e) => {
       const api = e.api_name;
       if (!acc[api]) {
         acc[api] = { total: 0, reasons: {} as Record<string, number> };
       }
-      acc[api].total += 1;
-      acc[api].reasons[e.reason] = (acc[api].reasons[e.reason] || 0) + 1;
+      acc[api].total += occurrences(e);
+      acc[api].reasons[e.reason] = (acc[api].reasons[e.reason] || 0) + occurrences(e);
       return acc;
     }, {} as Record<string, { total: number; reasons: Record<string, number> }>);
 
@@ -69,7 +75,7 @@ export async function GET(req: NextRequest) {
 
     let message = `📊 *API 장애 일일 리포트*\n\n`;
     message += `날짜: ${dateStr}\n`;
-    message += `총 이벤트: ${events.length}건\n\n`;
+    message += `총 이벤트: ${totalOccurrences}건 (기록 ${events.length}행)\n\n`;
 
     // API별 상세
     message += `*API별 장애 내역*\n`;
@@ -116,7 +122,7 @@ export async function GET(req: NextRequest) {
 
     if (telegramData.ok) {
       console.log("[Daily Report] Sent successfully");
-      return NextResponse.json({ message: "Report sent", events: events.length });
+      return NextResponse.json({ message: "Report sent", events: totalOccurrences, rows: events.length });
     } else {
       console.error("[Daily Report] Telegram send failed:", telegramData);
       return NextResponse.json(

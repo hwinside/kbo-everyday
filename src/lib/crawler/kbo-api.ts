@@ -296,7 +296,7 @@ export async function fetchGames(
     // A route-scoped absolute deadline must leave no detached DB write after
     // the response. Callers without such a deadline retain fallback telemetry.
     if (opts?.deadlineAtMs == null) {
-      void trackFallback("kbo-games", reason, { errorMessage: error.message }).catch(() => undefined);
+      void trackFallback("kbo-games", reason, { errorMessage: error.message, scope: date }).catch(() => undefined);
     }
 
     // Fallback: Naver schedule/games. srId 계약 보존(특정 시리즈는 fetchNaverGames 내부 fail-close).
@@ -780,6 +780,7 @@ export async function fetchBoxScore(
       void trackFallback("kbo-boxscore", "http-error", {
         statusCode: res.status,
         errorMessage: `HTTP ${res.status} ${res.statusText}`,
+        scope: gameId,
       }).catch(() => {});
       // KBO 하드실패 → Naver record boxscore 로 failover (summary·daily 공용).
       return await failoverToNaver();
@@ -791,6 +792,7 @@ export async function fetchBoxScore(
       // KBO 응답 파싱 실패(스키마 열화) → Naver failover. 관제는 응답 경로를 블록하지 않게 fire-and-forget.
       void trackFallback("kbo-boxscore", "schema-error", {
         errorMessage: "parseBoxScore returned null",
+        scope: gameId,
       }).catch(() => {});
       return await failoverToNaver();
     }
@@ -809,6 +811,7 @@ export async function fetchBoxScore(
     // 관제 fire-and-forget: 남은 reserve 를 관제가 소진하지 않도록 await 제거(부수효과는 유지).
     void trackFallback("kbo-boxscore", reason, {
       errorMessage: error.message,
+      scope: gameId,
     }).catch(() => {});
 
     // KBO throw(timeout/network/response·body stall 등) → 남은 reserve 안에서 Naver failover.

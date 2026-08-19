@@ -42,25 +42,34 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // 2026-08-20: 1행 = 1발생이 아니다. (api, reason, scope, 1분버킷) 1행 + event_count 합산이므로
+    // 발생 횟수는 반드시 sum(event_count)로 읽는다. row count 로 읽으면 폴링 증폭 차단 이후
+    // "장애가 줄었다"는 착시가 생긴다(실제로는 로그 행만 줄어든 것).
+    // 마이그레이션 이전 행은 event_count 가 null 일 수 있어 1로 취급한다.
+    const occurrences = (e: { event_count?: number | null }) => e.event_count ?? 1;
+
     // API별 그룹화 통계
     const byApi = data.reduce((acc, event) => {
       const api = event.api_name;
       if (!acc[api]) {
         acc[api] = {
           total: 0,
+          rows: 0,
           reasons: {} as Record<string, number>,
           latestTimestamp: event.timestamp,
         };
       }
-      acc[api].total += 1;
-      acc[api].reasons[event.reason] = (acc[api].reasons[event.reason] || 0) + 1;
+      acc[api].total += occurrences(event);
+      acc[api].rows += 1;
+      acc[api].reasons[event.reason] = (acc[api].reasons[event.reason] || 0) + occurrences(event);
       return acc;
-    }, {} as Record<string, { total: number; reasons: Record<string, number>; latestTimestamp: string }>);
+    }, {} as Record<string, { total: number; rows: number; reasons: Record<string, number>; latestTimestamp: string }>);
 
     return NextResponse.json({
       events: data,
       summary: {
-        total: data.length,
+        total: data.reduce((n, e) => n + occurrences(e), 0),
+        rows: data.length,
         byApi,
         period: {
           startDate: startDate.toISOString(),
