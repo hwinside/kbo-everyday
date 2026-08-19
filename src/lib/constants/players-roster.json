@@ -7227,6 +7227,15 @@
     "birthDate": "1987-03-21"
   },
   {
+    "name": "케네디",
+    "kboId": "56168",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "68",
+    "team": "LG",
+    "birthDate": "1994-09-20"
+  },
+  {
     "name": "케일럽 보쉴리",
     "kboId": "FP012",
     "teamId": 3,
