@@ -65,14 +65,17 @@ export interface SingleFlight<T> {
 }
 
 export function createSingleFlight<T>(): SingleFlight<T> {
-  let current: { key: string; promise: Promise<T> } | null = null;
+  // 삼순 #1253 2차 blocker①: current 1칸은 A→B→A interleave에서 두 번째 A가
+  // 새로 실행돼 계약이 깨진다 → key별 Map으로 보관.
+  const flights = new Map<string, Promise<T>>();
   return {
     run(key: string, fn: () => Promise<T>): Promise<T> {
-      if (current && current.key === key) return current.promise;
+      const existing = flights.get(key);
+      if (existing) return existing;
       const promise = fn().finally(() => {
-        if (current?.promise === promise) current = null;
+        if (flights.get(key) === promise) flights.delete(key);
       });
-      current = { key, promise };
+      flights.set(key, promise);
       return promise;
     },
   };

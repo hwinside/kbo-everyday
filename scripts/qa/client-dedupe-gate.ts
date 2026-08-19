@@ -15,6 +15,9 @@
  * single-flight 제거)가 반드시 RED가 되는지 확인한다(항상 GREEN인 게이트 방지).
  */
 
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createSignatureCache,
   createSingleFlight,
@@ -22,6 +25,8 @@ import {
   shouldCacheRegisterResponse,
   type StorageLike,
 } from "../../src/lib/client-dedupe";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 let pass = 0;
 let fail = 0;
@@ -134,6 +139,22 @@ async function runScenarios(deps: {
     check("F2 flight-clears-after-settle", calls === 2, `calls=${calls}`);
   }
 
+  // ── F3. A→B→A interleave (삼순 2차 blocker①) ──
+  {
+    const flight = deps.flightFactory<boolean>();
+    let aCalls = 0;
+    let bCalls = 0;
+    const slowA = deferred<boolean>();
+    const slowB = deferred<boolean>();
+    const pA1 = flight.run("sig-a", () => { aCalls += 1; return slowA.promise; });
+    const pB = flight.run("sig-b", () => { bCalls += 1; return slowB.promise; }); // B 시작
+    const pA2 = flight.run("sig-a", () => { aCalls += 1; return slowA.promise; }); // A 재호출 — 기존 A에 합쳍져야
+    slowA.resolve(true);
+    slowB.resolve(true);
+    await Promise.all([pA1, pB, pA2]);
+    check("F3 a-b-a-interleave", aCalls === 1 && bCalls === 1, `aCalls=${aCalls} bCalls=${bCalls}`);
+  }
+
   // ── G. signature 캐시 TTL/유저 전환/스토리지 ──
   {
     const storage = makeStorage();
@@ -170,6 +191,59 @@ async function runScenarios(deps: {
   await tick();
 }
 
+// ── production wiring 검증 (삼순 2차 blocker②) ────────────────────────
+// 순수 helper만 GREEN이고 소비처 배선이 빠져도 모르는 것을 막는다: 실제 소스를 읽어
+// 핵심 계약 배선(임포트·invalidate 호출·isCurrent 관통·캐시 판정·single-flight·
+// cacheable 보고)을 assert. 선택자는 파일명이 아니라 식별자/호출 문면(8/17 lesson).
+interface WiringCheck { id: string; ok: boolean; detail?: string }
+
+export function checkWiring(files: {
+  authContext: string;
+  nativePush: string;
+  nativeLiveActivity: string;
+  registerDeviceRoute: string;
+}): WiringCheck[] {
+  const c: WiringCheck[] = [];
+  const add = (id: string, ok: boolean, detail?: string) => c.push({ id, ok, detail });
+  const { authContext: ac, nativePush: np, nativeLiveActivity: la, registerDeviceRoute: rt } = files;
+
+  // AuthContext — ledger 배선 + fencing 관통 + no-session invalidate 2곳 + force 우회
+  add("W1 authctx-imports-ledger", /createProfileLoadLedger.*from "@\/lib\/client-dedupe"/.test(ac));
+  add("W2 authctx-ledger-load", /profileLedger\.load\(userId,/.test(ac));
+  add("W3 authctx-invalidate-both-branches", (ac.match(/profileLedger\.invalidate\(\)/g) ?? []).length >= 2,
+    `count=${(ac.match(/profileLedger\.invalidate\(\)/g) ?? []).length}`);
+  add("W4 authctx-isCurrent-threaded", /loadProfileNow\(accessToken, userId, isCurrent\)/.test(ac));
+  add("W5 authctx-isCurrent-guards", (ac.match(/isCurrent\(\)/g) ?? []).length >= 5,
+    `count=${(ac.match(/isCurrent\(\)/g) ?? []).length}`);
+  add("W6 authctx-refresh-force", /force:\s*true/.test(ac));
+
+  // native-push — 캐시·single-flight·캐시 판정 배선
+  add("W7 push-imports", /createSignatureCache, createSingleFlight, shouldCacheRegisterResponse.*client-dedupe/.test(np));
+  add("W8 push-cache-check", /regCache\.has\(sig\)/.test(np));
+  add("W9 push-single-flight", /regFlight\.run\(sig,/.test(np));
+  add("W10 push-cache-decision", /shouldCacheRegisterResponse\(res\.ok, body\)/.test(np) && /regCache\.put\(sig\)/.test(np));
+
+  // native-live-activity — 동일 배선
+  add("W11 la-imports", /createSignatureCache, createSingleFlight, shouldCacheRegisterResponse.*client-dedupe/.test(la));
+  add("W12 la-cache-check", /startRegCache\.has\(sig\)/.test(la));
+  add("W13 la-single-flight", /startRegFlight\.run\(sig,/.test(la));
+  add("W14 la-cache-decision", /shouldCacheRegisterResponse\(res\.ok, body\)/.test(la) && /startRegCache\.put\(sig\)/.test(la));
+
+  // register-device route — 긴급공지 실패 cacheable:false 보고
+  add("W15 route-cacheable-flag", /let cacheable = true/.test(rt) && /cacheable = false/.test(rt));
+  add("W16 route-returns-cacheable", /NextResponse\.json\(\{ success: true, cacheable \}\)/.test(rt));
+  return c;
+}
+
+function loadRealFiles() {
+  return {
+    authContext: readFileSync(join(ROOT, "src/lib/supabase/AuthContext.tsx"), "utf8"),
+    nativePush: readFileSync(join(ROOT, "src/lib/native-push.ts"), "utf8"),
+    nativeLiveActivity: readFileSync(join(ROOT, "src/lib/native-live-activity.ts"), "utf8"),
+    registerDeviceRoute: readFileSync(join(ROOT, "src/app/api/push/register-device/route.ts"), "utf8"),
+  };
+}
+
 // ── selftest mutants: 결함주입 시 게이트가 RED가 되는지 증명 ──────────
 function mutantLedgerNoFencing(ttlMs: number, now: () => number = Date.now): ReturnType<typeof createProfileLoadLedger> {
   // 결함: force가 세대를 올리지 않고, invalidate가 fresh만 지움 → B·C 계열이 뚫린다
@@ -200,6 +274,10 @@ async function main(): Promise<void> {
       cacheDecision: shouldCacheRegisterResponse,
       flightFactory: createSingleFlight,
     });
+    console.log("[client-dedupe-gate] production wiring 검증");
+    for (const w of checkWiring(loadRealFiles())) {
+      check(w.id, w.ok, w.detail);
+    }
     console.log(`\nRESULT: ${fail === 0 ? "GREEN" : "RED"} (${pass} pass / ${fail} fail)`);
     if (fail > 0) {
       console.error("FAILED:", failures.join(", "));
@@ -235,6 +313,22 @@ async function main(): Promise<void> {
     console.log(`  ${red ? "✅" : "❌ SELFTEST-FAIL"} mutant ${name} → ${red ? "RED (검출됨)" : "GREEN (검출 실패!)"}`);
     if (!red) selftestOk = false;
   }
+
+  // wiring mutants: 실제 소스에서 핵심 배선을 제거해도 wiring 검사가 RED가 되는지
+  const real = loadRealFiles();
+  const wiringMutants: Array<[string, Parameters<typeof checkWiring>[0]]> = [
+    ["W-M1 authctx-no-invalidate", { ...real, authContext: real.authContext.replaceAll("profileLedger.invalidate()", "/* removed */") }],
+    ["W-M2 authctx-no-isCurrent", { ...real, authContext: real.authContext.replaceAll("loadProfileNow(accessToken, userId, isCurrent)", "loadProfileNow(accessToken, userId, () => true)") }],
+    ["W-M3 push-ignore-decision", { ...real, nativePush: real.nativePush.replace("shouldCacheRegisterResponse(res.ok, body)", "res.ok") }],
+    ["W-M4 la-no-flight", { ...real, nativeLiveActivity: real.nativeLiveActivity.replace("startRegFlight.run(sig,", "((_s: string, fn: () => Promise<void>) => fn())(sig,") }],
+    ["W-M5 route-always-cacheable", { ...real, registerDeviceRoute: real.registerDeviceRoute.replace("cacheable = false", "cacheable = true") }],
+  ];
+  for (const [name, files] of wiringMutants) {
+    const red = checkWiring(files).some((w) => !w.ok);
+    console.log(`  ${red ? "✅" : "❌ SELFTEST-FAIL"} wiring mutant ${name} → ${red ? "RED (검출됨)" : "GREEN (검출 실패!)"}`);
+    if (!red) selftestOk = false;
+  }
+
   console.log(`\nSELFTEST: ${selftestOk ? "GREEN" : "RED"}`);
   if (!selftestOk) process.exit(1);
 }
