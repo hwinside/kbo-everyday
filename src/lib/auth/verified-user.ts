@@ -29,6 +29,59 @@ function getBearerToken(request: Request): string {
   return match?.[1]?.trim() || "";
 }
 
+/** Expected `iss` for this project's access tokens: `<project url>/auth/v1`. */
+export function expectedIssuer(supabaseUrl: string): string {
+  return `${supabaseUrl.replace(/\/+$/, "")}/auth/v1`;
+}
+
+/**
+ * Turn verified JWT claims into a principal, or null.
+ *
+ * `getClaims()` proves the token was signed by a key in the project JWKS and
+ * is unexpired — it does NOT assert the token is an end-user access token for
+ * THIS project's authenticated role. Those are separate claims, and they are
+ * what an attacker would vary. So every one of them is checked fail-close:
+ *
+ *  - `iss`      must be this project's auth issuer. Rejects a validly-signed
+ *               token minted by a different Supabase project.
+ *  - `aud`      must contain `authenticated` (spec allows string or array).
+ *  - `role`     must be exactly `authenticated`. Notably rejects
+ *               `service_role`, which would otherwise be accepted as a user
+ *               and hand an admin-privileged token a normal user's identity.
+ *  - `sub`      must be a non-empty string — it becomes the user id.
+ *  - `session_id` must be present. A token with no session cannot be tied to
+ *               a real sign-in.
+ *
+ * Pure and exported so the gate can feed it forged claim sets directly
+ * (삼순 필수②) without needing a signing key.
+ */
+export function principalFromClaims(
+  claims: unknown,
+  expectedIss: string,
+): VerifiedUser | null {
+  if (!claims || typeof claims !== "object") return null;
+  const c = claims as Record<string, unknown>;
+
+  if (typeof c.iss !== "string" || c.iss !== expectedIss) return null;
+
+  const aud = c.aud;
+  const audOk =
+    aud === "authenticated" ||
+    (Array.isArray(aud) && aud.includes("authenticated"));
+  if (!audOk) return null;
+
+  if (c.role !== "authenticated") return null;
+
+  const sub = typeof c.sub === "string" ? c.sub.trim() : "";
+  if (!sub) return null;
+
+  const sessionId = typeof c.session_id === "string" ? c.session_id.trim() : "";
+  if (!sessionId) return null;
+
+  const email = typeof c.email === "string" && c.email ? c.email : null;
+  return { id: sub, email };
+}
+
 /** Verify a Supabase access token, with local precheck and dead-token caching
  * (see token-precheck.ts for why).
  *
@@ -52,18 +105,26 @@ function getBearerToken(request: Request): string {
  * call {@link verifyAccessTokenLive} instead. */
 export async function verifyAccessToken(token: string): Promise<VerifiedUser | null> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // No project URL means no issuer to check against — refuse rather than
+  // verifying with the issuer check silently disabled.
+  if (!supabaseUrl) return null;
+  const expectedIss = expectedIssuer(supabaseUrl);
   const adminClient = getSupabaseAdmin();
   return verifyAccessTokenWith<VerifiedUser>(async (t) => {
     const { data, error } = await adminClient.auth.getClaims(t);
-    const claims = data?.claims;
-    // `sub` is the user id. A verified JWT without one is malformed — treat as
-    // unauthenticated rather than inventing an identity.
-    const sub = typeof claims?.sub === "string" ? claims.sub : "";
-    if (error || !sub) {
+    if (error) {
       return { data: { user: null }, error: error as { status?: number; code?: string } | null };
     }
-    const email = typeof claims?.email === "string" ? claims.email : null;
-    return { data: { user: { id: sub, email } }, error: null };
+    // Signature/exp are verified above; the claim SHAPE is verified here.
+    const user = principalFromClaims(data?.claims, expectedIss);
+    if (!user) {
+      // A validly-signed token that fails the claim contract is not a
+      // transient failure — it can never become valid, so report it with a
+      // dead-token code so the negative cache short-circuits repeats.
+      return { data: { user: null }, error: { code: "bad_jwt" } };
+    }
+    return { data: { user }, error: null };
   }, token);
 }
 
@@ -97,6 +158,38 @@ export async function getVerifiedUserFromRequest(request: Request): Promise<{ us
   if (!user) return null;
 
   return { user, token };
+}
+
+/**
+ * Confirm an email-based PRIVILEGE decision against the Auth server.
+ *
+ * Background (삼순 필수③ — "admin/email 우회 같은 고위험 mutation 은 원격 검증 유지
+ * 여부를 분리 설계"). Ordinary routes only need `sub`, which is immutable, so
+ * local claim verification is fine. A few routes instead branch on `email`
+ * against an allowlist, and email is MUTABLE server state — the claim holds
+ * the value at token issuance, which can be up to `jwt_exp` (3600s) stale.
+ * Privilege should be decided on current state.
+ *
+ * Cost is kept at zero for normal traffic by checking the (signed, unforgeable)
+ * claim first: if the claim email is not an allowlist candidate, the answer is
+ * already false and no round trip happens. Only a candidate pays one call, and
+ * only to confirm the address still holds. So this cannot reintroduce the
+ * `/user` volume that saturated CPU — the callers are admin-only/QA paths.
+ *
+ * @param claimEmail email from the locally-verified claims
+ * @param token      the caller's access token
+ * @param predicate  allowlist test (isAdminEmail / canBypassVenueGeofenceForQa)
+ */
+export async function confirmEmailPrivilege(
+  claimEmail: string | null,
+  token: string,
+  predicate: (email?: string | null) => boolean,
+): Promise<boolean> {
+  // Fast path: not a candidate by the signed claim → definitively not privileged.
+  if (!predicate(claimEmail)) return false;
+  // Candidate → confirm the address against the Auth server (fail-close).
+  const live = await verifyAccessTokenLive(token);
+  return !!live && predicate(live.email);
 }
 
 /** Extract the Supabase access token from `sb-<ref>-auth-token` cookies by

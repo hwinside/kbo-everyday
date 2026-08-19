@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { getVerifiedUserFromRequest, confirmEmailPrivilege } from "@/lib/auth/verified-user";
 import { isAdminEmail } from "@/lib/admin/admin-users";
 import { canDeleteComment } from "@/lib/venue-stories/comments";
 
@@ -36,7 +36,8 @@ export async function DELETE(
   const allowed = canDeleteComment(
     row.user_id as string,
     verified.user.id,
-    isAdminEmail(verified.user.email),
+    // 타인 댓글 삭제 권한이 갈리는 지점 → 서버 권위 확인(삼순 필수③).
+    await confirmEmailPrivilege(verified.user.email, verified.token, isAdminEmail),
   );
   if (!allowed) {
     return NextResponse.json({ error: "본인 댓글만 삭제할 수 있어요" }, { status: 403 });

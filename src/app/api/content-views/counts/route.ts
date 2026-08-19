@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { getVerifiedUserFromRequest, confirmEmailPrivilege } from "@/lib/auth/verified-user";
 import { isAdminEmail } from "@/lib/admin/admin-users";
 import {
   contentViewKey,
@@ -27,7 +27,8 @@ export async function POST(request: NextRequest) {
   if (!verified) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  if (!isAdminEmail(verified.user.email)) {
+  // 관리자 판정은 권한 부여 → 서버 권위 확인(삼순 필수③).
+  if (!(await confirmEmailPrivilege(verified.user.email, verified.token, isAdminEmail))) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

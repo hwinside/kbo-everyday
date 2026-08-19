@@ -40,6 +40,9 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "test-anon-key";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "test-service-role-key";
 type ExtractFn = (all: Array<{ name: string; value: string }>) => string | null;
 let extractAccessTokenFromCookies!: ExtractFn;
+type PrincipalFn = (claims: unknown, expectedIss: string) => { id: string; email: string | null } | null;
+let principalFromClaims!: PrincipalFn;
+let expectedIssuer!: (url: string) => string;
 
 let failed = 0;
 function assert(label: string, cond: boolean, detail?: unknown) {
@@ -183,8 +186,97 @@ export function authCallsAllInsideGuard(rawSrc: string): boolean {
 }
 
 async function main() {
-  extractAccessTokenFromCookies = (await import("../../src/lib/auth/verified-user"))
-    .extractAccessTokenFromCookies;
+  const verifiedUserModule = await import("../../src/lib/auth/verified-user");
+  extractAccessTokenFromCookies = verifiedUserModule.extractAccessTokenFromCookies;
+  principalFromClaims = verifiedUserModule.principalFromClaims;
+  expectedIssuer = verifiedUserModule.expectedIssuer;
+
+  // --- T10: CLAIM CONTRACT (삼순 필수①②)
+  //
+  // getClaims() proves signature + exp. It does NOT prove the token is an
+  // end-user access token for THIS project. Those claims are exactly what an
+  // attacker varies, so each one is fed here as a forged claim set and must
+  // come back null. Driving the real exported predicate (not a copy) means a
+  // future edit that drops a check turns this RED.
+  {
+    const ISS = expectedIssuer("https://auth-precheck-test.supabase.co");
+    const base = {
+      iss: ISS,
+      aud: "authenticated",
+      role: "authenticated",
+      sub: "11111111-1111-4111-8111-111111111111",
+      session_id: "sess-1",
+      email: "u@example.com",
+      exp: Math.floor((NOW + 3_600_000) / 1000),
+    };
+
+    assert(
+      "T10a issuer helper builds <url>/auth/v1",
+      ISS === "https://auth-precheck-test.supabase.co/auth/v1",
+      ISS,
+    );
+    const okUser = principalFromClaims(base, ISS);
+    assert("T10b valid claim set → principal", okUser?.id === base.sub, okUser);
+    assert("T10c principal carries email", okUser?.email === "u@example.com", okUser);
+
+    // — each forgery below must be rejected —
+    assert(
+      "T10d wrong issuer (another Supabase project) rejected",
+      principalFromClaims({ ...base, iss: "https://evil.supabase.co/auth/v1" }, ISS) === null,
+    );
+    assert(
+      "T10e missing issuer rejected",
+      principalFromClaims({ ...base, iss: undefined }, ISS) === null,
+    );
+    assert(
+      "T10f wrong aud rejected",
+      principalFromClaims({ ...base, aud: "anon" }, ISS) === null,
+    );
+    assert(
+      "T10g aud array containing authenticated accepted",
+      principalFromClaims({ ...base, aud: ["authenticated", "other"] }, ISS)?.id === base.sub,
+    );
+    assert(
+      "T10h aud array without authenticated rejected",
+      principalFromClaims({ ...base, aud: ["anon"] }, ISS) === null,
+    );
+    // The one that matters most: a service_role token must never be accepted
+    // as a user principal — it would hand admin privileges a user identity.
+    assert(
+      "T10i role=service_role rejected",
+      principalFromClaims({ ...base, role: "service_role" }, ISS) === null,
+    );
+    assert(
+      "T10j role=anon rejected",
+      principalFromClaims({ ...base, role: "anon" }, ISS) === null,
+    );
+    assert(
+      "T10k missing role rejected",
+      principalFromClaims({ ...base, role: undefined }, ISS) === null,
+    );
+    assert(
+      "T10l missing sub rejected",
+      principalFromClaims({ ...base, sub: undefined }, ISS) === null,
+    );
+    assert(
+      "T10m blank sub rejected",
+      principalFromClaims({ ...base, sub: "   " }, ISS) === null,
+    );
+    assert(
+      "T10n missing session_id rejected",
+      principalFromClaims({ ...base, session_id: undefined }, ISS) === null,
+    );
+    assert(
+      "T10o blank session_id rejected",
+      principalFromClaims({ ...base, session_id: "" }, ISS) === null,
+    );
+    assert("T10p null claims rejected", principalFromClaims(null, ISS) === null);
+    assert("T10q non-object claims rejected", principalFromClaims("nope", ISS) === null);
+    assert(
+      "T10r non-string email degrades to null (not a crash)",
+      principalFromClaims({ ...base, email: 42 }, ISS)?.email === null,
+    );
+  }
   // --- T1: expired token → local reject, zero remote calls
   _clearDeadTokenCache();
   {
