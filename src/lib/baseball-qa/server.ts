@@ -815,7 +815,27 @@ export function makeDeps(
         }
         if (row?.verdict === "wait") return { verdict: "wait" };
         if (row?.verdict === "hit") return { verdict: "hit" };
+        // flight-terminal insufficient (삼순 3차 NO-GO) — 같은 flight 전원 같은 폐기 문구 재생.
+        if (row?.verdict === "insufficient" && typeof (row as { answer?: string }).answer === "string"
+          && ((row as { answer?: string }).answer as string).length > 0) {
+          return { verdict: "insufficient", answer: (row as { answer?: string }).answer as string };
+        }
         throw new Error(`claim_genius_rag_verified_answer invalid verdict: ${JSON.stringify(data)}`);
+      },
+      markInsufficient: async (key, ownerToken, answer) => {
+        // non-grounded 종결을 같은 flight 에 공유 — token CAS(stale winner 는 no-op).
+        // query-guard: bounded -- token CAS 단일 행 UPDATE RPC, boolean 반환.
+        const { data, error } = await supabaseAdmin.rpc("mark_insufficient_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+          p_answer: answer,
+        });
+        if (error) throw error;
+        return data === true;
       },
       release: async (key, ownerToken) => {
         // winner 가 settle 못 함 — token 이 소유한 pending 만 지운다(stale 는 no-op).

@@ -117,14 +117,19 @@ export interface VerifiedRagAnswerRecord {
 /**
  * claim 판정.
  *   `winner` = 이 worker 가 선점했다 — **ownerToken** 을 받아 LLM 을 소비하고
- *              `put`(settle, token CAS) 또는 `release`(token CAS) 책임을 진다.
+ *              `put`(settle, token CAS) 또는 `markInsufficient`(token CAS) 책임을 진다.
  *   `wait`   = 다른 worker 가 생성 중이다 — settle 을 대기 후 `get` 재조회.
  *   `hit`    = 이미 settle 된 답이 있다 — `get` 재조회로 즉시 재생.
+ *   `insufficient` = 이 flight 의 winner 가 non-grounded 로 종결했다 — 같은 flight 의
+ *              전원이 **같은 폐기 문구**(answer)를 받는다. 재생성 금지(역방향 플립 차단,
+ *              삼순 3차 NO-GO). lease TTL 만료 후 새 요청은 새 flight 로 재클레임(token
+ *              교체)되므로 일시 실패가 영구 고정되지 않는다(오답 캐시 금지 유지).
  */
 export type VerifiedRagAnswerClaim =
   | { verdict: "winner"; ownerToken: string }
   | { verdict: "wait" }
-  | { verdict: "hit" };
+  | { verdict: "hit" }
+  | { verdict: "insufficient"; answer: string };
 
 export interface VerifiedRagAnswerStore {
   /** 키 exact 일치·settle 완료 시에만 답을 돌려준다 — fingerprint 하나라도 다르면 null. */
@@ -142,7 +147,17 @@ export interface VerifiedRagAnswerStore {
    */
   claim?: (key: VerifiedRagAnswerKey) => Promise<VerifiedRagAnswerClaim>;
   /**
-   * winner 가 grounded 를 만들지 못했을 때 claim 을 푼다 — loser deadlock 방지.
+   * winner 가 non-grounded 로 종결했다 — flight 를 `insufficient` 상태로 마킹해 같은
+   * flight 의 waiter 전원이 같은 폐기 문구를 재생하게 한다(재생성 금지 — release 로 풀면
+   * waiter 가 새 winner 가 되어 같은 동시입력이 2답·LLM 2회가 된다, 삼순 3차 NO-GO).
+   * **token CAS** — lease 인수 뒤 구 winner 의 stale mark 는 새 claim 을 건드리지 못한다.
+   * lease TTL 까지만 유효 — TTL 후 재클레임이 상태를 인수해 재생성한다(영구 캐시 아님).
+   */
+  markInsufficient?: (key: VerifiedRagAnswerKey, ownerToken: string, answer: string) => Promise<boolean>;
+  /**
+   * winner 가 응답 불능(예외·crash 경로)일 때 claim 을 푼다 — loser deadlock 방지.
+   * ⚠️ 사용자에게 답을 보낸 뒤에는 쓰지 않는다 — 그 경우는 `markInsufficient` 로 종결해야
+   * 같은 flight 재생성(2답 분기)을 막는다.
    * **token CAS** — lease 인수 뒤 구 winner 의 stale release 는 새 claim 을 지우지 못한다.
    */
   release?: (key: VerifiedRagAnswerKey, ownerToken: string) => Promise<void>;

@@ -4189,6 +4189,12 @@ async function answerPlayerDescriptiveQuestion(
       }
       return failCloseError();
     }
+    // flight-terminal insufficient (삼순 3차 NO-GO): 이 flight 의 winner 가 non-grounded 로
+    // 종결했다 — 같은 폐기 문구를 재생한다. 재생성하면 같은 동시입력이 2답(자료부족 vs
+    // GROUNDED)·LLM 2회로 갈라진다(역방향 플립). lease TTL 후 새 flight 가 재생성한다.
+    if (claim.verdict === "insufficient") {
+      return failClose(null, null, claim.answer);
+    }
     if (claim.verdict === "wait") {
       const delayMs = store.pollDelayMs ?? 250;
       const attempts = store.pollAttempts ?? 80;
@@ -4202,10 +4208,13 @@ async function answerPlayerDescriptiveQuestion(
         } catch {
           return failCloseError();
         }
-        // winner 가 release 했거나 lease 가 만료되면 이번 claim 이 winner(새 token)로
-        // 넘어온다 — 그때만 이 worker 가 생성 권한을 얻는다.
+        // winner 가 응답 불능 release 했거나 lease 가 만료되면 이번 claim 이 winner(새
+        // token)로 넘어온다 — 그때만 이 worker 가 생성 권한을 얻는다.
         if (again.verdict === "winner") replayOwnerToken = again.ownerToken;
-        else if (again.verdict === "hit") {
+        else if (again.verdict === "insufficient") {
+          // winner 가 non-grounded 로 종결 — 같은 flight 는 같은 폐기 문구(재생성 금지).
+          return failClose(null, null, again.answer);
+        } else if (again.verdict === "hit") {
           try {
             const settledNow = await replayFromStore();
             if (settledNow) return settledNow;
@@ -4218,7 +4227,7 @@ async function answerPlayerDescriptiveQuestion(
       // 상한 초과 & winner 미획득 — claim 없는 생성은 금지다. 시스템 오류로 닫는다
       // (유저는 재질문으로 복구하고, 그때는 settled 재생 또는 새 claim 이 성립한다).
       if (replayOwnerToken === null) return failCloseError();
-    } else {
+    } else if (claim.verdict === "winner") {
       replayOwnerToken = claim.ownerToken;
     }
   }
@@ -4286,13 +4295,25 @@ async function answerPlayerDescriptiveQuestion(
 
   const validated = validateRagResponse(llm.text);
   if (validated.kind !== "grounded") {
-    // 폐기 = settle 없음 — claim 을 풀어 다음 질문/loser 가 재생성할 수 있게 한다.
-    await releaseReplayClaim();
     // ②' 문구 분리 (맛자욱 P0): 모델이 "근거 부족"으로 판정한 건 이해 실패가 아니다.
     //   질문을 고쳐 쓰라는 안내는 자료 결손을 유저 탓으로 돌리는 오도다.
     const discardCopy = validated.kind === "insufficient" && validated.reason === "model_insufficient"
       ? RAG_INSUFFICIENT_ANSWER
       : UNCLEAR_ANSWER;
+    // 폐기 = settle 없음. 🔴 release 가 아니라 **flight-terminal 마킹**이다 (삼순 3차
+    // NO-GO) — release 로 풀면 같은 동시입력의 waiter 가 새 winner 로 재생성해 한 질문이
+    // 2답(자료부족 vs GROUNDED)·LLM 2회가 된다. 같은 flight 는 같은 폐기 문구를 공유하고,
+    // lease TTL 후 새 flight 가 재생성한다(오답 영구 캐시 아님). mark 실패(CAS 패배·오류)는
+    // 무시 — 이미 lease 가 인수됐다면 새 flight 의 문제고, 내 사용자 답변은 확정됐다.
+    if (replayOwnerToken !== null && deps.verifiedRagAnswers?.markInsufficient && verifiedKey) {
+      try {
+        await deps.verifiedRagAnswers.markInsufficient(verifiedKey, replayOwnerToken, discardCopy);
+      } catch {
+        // mark 실패 복구는 lease 만료 인수가 담당한다.
+      }
+    } else {
+      await releaseReplayClaim();
+    }
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
     // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다(toneCompliant 와 같은 축).

@@ -235,6 +235,12 @@ interface MemoryStoreOptions {
   leaseMs?: number;
   /** 🔴 결함주입(mutation staleowner): release/settle 이 token 검증을 생략한다. */
   ignoreOwnerToken?: boolean;
+  /**
+   * 🔴 결함주입(mutation markrelease): markInsufficient 가 flight-terminal 마킹 대신
+   * release 처럼 행을 지운다 — 삼순 3차 NO-GO 의 역방향 플립(같은 동시입력 2답·LLM 2회)을
+   * 재현한다. 역방향 flappy 결정론 테스트가 반드시 RED 여야 한다.
+   */
+  markBehavesAsRelease?: boolean;
 }
 
 /** production 스키마(pending/settled + owner-token CAS)의 in-memory 등가물. */
@@ -266,15 +272,32 @@ function memoryStore(options: MemoryStoreOptions): VerifiedRagAnswerStore {
     },
   };
   if (options.withClaim) {
+    const insufficient = new Map<string, { token: string; at: number; answer: string }>();
     store.claim = async (key): Promise<VerifiedRagAnswerClaim> => {
       const k = keyOf(key);
       if (settled.has(k)) return { verdict: "hit" };
+      const terminal = insufficient.get(k);
+      if (terminal) {
+        // flight-terminal: TTL 내에는 같은 폐기 문구 재생, TTL 후엔 새 flight 로 인수.
+        if (Date.now() - terminal.at < leaseMs) return { verdict: "insufficient", answer: terminal.answer };
+        insufficient.delete(k);
+      }
       const current = pending.get(k);
       if (current && Date.now() - current.at < leaseMs) return { verdict: "wait" };
       // 신규 선점 또는 lease 만료 인수 — **token 교체**(fencing).
       const token = `owner-${(seq += 1)}`;
       pending.set(k, { token, at: Date.now() });
       return { verdict: "winner", ownerToken: token };
+    };
+    store.markInsufficient = async (key, ownerToken, answer) => {
+      const k = keyOf(key);
+      const current = pending.get(k);
+      if (!options.ignoreOwnerToken && (!current || current.token !== ownerToken)) return false;
+      pending.delete(k);
+      // 🔴 mutation markrelease: 마킹 없이 행만 지운다(=release) → waiter 가 새 winner 로
+      // 재생성해 역방향 플립이 재현된다.
+      if (!options.markBehavesAsRelease) insufficient.set(k, { token: ownerToken, at: Date.now(), answer });
+      return true;
     };
     store.release = async (key, ownerToken) => {
       const k = keyOf(key);
@@ -420,6 +443,77 @@ async function runCopySeparationCheck(evidence: RagEvidence): Promise<void> {
     assert.notEqual(result.answer, UNCLEAR_ANSWER);
     assert.notEqual(RAG_INSUFFICIENT_ANSWER, UNCLEAR_ANSWER, "두 문구가 같으면 분리가 아니다");
   });
+}
+
+// ── [B*] 역방향 flappy — 첫 INSUFFICIENT → 이후 GROUNDED (삼순 3차 NO-GO) ────────
+// non-grounded winner 가 release 로 claim 을 풀면 같은 동시입력의 waiter 가 새 winner 가
+// 되어 GROUNDED 를 재생성 → 한 질문이 2답(자료부족 vs 채수빈)·LLM 2회가 된다.
+// flight-terminal 마킹이면 전원 같은 폐기 문구 + LLM 1회, lease TTL 후 새 flight 가
+// 재생성해 채수빈 포함 정답으로 복구된다(오답 영구 캐시 아님).
+async function runReverseFlappyDeterminism(
+  evidence: RagEvidence,
+  storeOptions: MemoryStoreOptions,
+): Promise<void> {
+  const players: PlayerRef[] = await loadRosterPlayers();
+  const store = memoryStore(storeOptions);
+  let llmCalls = 0;
+  const makeDeps = (): QaDeps =>
+    ({
+      enablePlayerRag: true,
+      loadGlossary: async () => [],
+      loadPlayers: async () => players,
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      releaseDaily: async () => {},
+      log: async () => {},
+      callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
+      searchRag: async () => [evidence],
+      // 🔴 역방향 flappy — 1회차만 INSUFFICIENT, 이후 전부 GROUNDED.
+      callRagLlm: async () => {
+        llmCalls += 1;
+        if (llmCalls === 1) {
+          return { text: JSON.stringify({ status: RAG_INSUFFICIENT_SENTINEL }), inputTokens: 100, outputTokens: 2 };
+        }
+        return {
+          text: JSON.stringify({
+            status: RAG_GROUNDED_SENTINEL,
+            answer: "구자욱 선수의 별명 맛자욱은 배우 채수빈 님이 열애설 당시 열애설을 맛보기한 느낌이라고 말한 데서 유래했습니다.",
+          }),
+          inputTokens: 100, outputTokens: 40,
+        };
+      },
+      verifiedRagAnswers: store,
+    }) as unknown as QaDeps;
+
+  const QUESTION = "구자욱 별명이 왜 맛자욱이야?";
+  // ① 동시 8-way: winner 만 LLM(INSUFFICIENT) → flight-terminal → 전원 같은 폐기 문구.
+  const concurrent = await Promise.all(
+    Array.from({ length: 8 }, (_, index) =>
+      answerQuestion(`u-reverse-concurrent-${index}`, QUESTION, makeDeps()),
+    ),
+  );
+  const answers = concurrent.map((r) => r.answer ?? "");
+  assert.ok(answers.every((a) => a === answers[0]),
+    `역방향 플립 — 동일 동시입력이 2답으로 갈렸다: ${[...new Set(answers)].join(" ||| ")}`);
+  assert.equal(answers[0], RAG_INSUFFICIENT_ANSWER, `폐기 문구가 아니다: ${answers[0]}`);
+  assert.ok(!answers.some((a) => a.includes("채수빈")),
+    "같은 flight 안에서 재생성된 GROUNDED 가 새어나갔다(2답 분기)");
+  assert.equal(llmCalls, 1, `LLM 소비 ${llmCalls}회 (기대 1 — non-grounded 종결 후 같은 flight 재생성 금지)`);
+  // ② TTL 내 재질문 — 같은 폐기 문구 재생, LLM 그대로.
+  const withinTtl = await answerQuestion("u-reverse-within-ttl", QUESTION, makeDeps());
+  assert.equal(withinTtl.answer, RAG_INSUFFICIENT_ANSWER, `TTL 내 재질문이 다른 답: ${withinTtl.answer}`);
+  assert.equal(llmCalls, 1, `TTL 내 재질문이 LLM 을 소비했다(${llmCalls})`);
+  // ③ lease TTL 만료 → 새 flight 가 재생성 — 이번엔 GROUNDED, 채수빈 필수(정상 종결 잠금).
+  await new Promise((resolve) => setTimeout(resolve, (storeOptions.leaseMs ?? 60_000) + 30));
+  const recovered = await answerQuestion("u-reverse-recovered", QUESTION, makeDeps());
+  assert.equal(llmCalls, 2, `TTL 후 새 flight 가 재생성하지 않았다(LLM ${llmCalls}회) — 오답 영구 캐시`);
+  assert.equal(recovered.source, "rag", `복구 답 source 가 ${recovered.source}`);
+  assert.ok(recovered.answer?.includes("채수빈"), `맛자욱 정상 종결에 채수빈이 없다: ${recovered.answer}`);
+  // ④ 복구 후 재질문 — settled 재생, LLM 그대로.
+  const replayed = await answerQuestion("u-reverse-replay", QUESTION, makeDeps());
+  assert.ok(replayed.answer?.includes("채수빈"), `settled 재생 실패: ${replayed.answer}`);
+  assert.equal(llmCalls, 2, `settled 재생이 LLM 을 소비했다(${llmCalls})`);
 }
 
 // ── [B''] store 계약 — lease takeover · stale owner fencing (삼순 2차 NO-GO) ──────
@@ -610,6 +704,50 @@ async function runPgliteMigrationRaceChecks(): Promise<void> {
     assert.equal(row.rows[0].answer, "canonical 답입니다", "canonical 이 보존되지 않았다");
   });
 
+  await check("PGlite — mark-insufficient token CAS + flight 공유 + TTL 후 pending 복귀 인수", async () => {
+    const K2 = { ...K, rf: "fp-req-pg-insufficient" };
+    const claim2 = async (lease = 60) => {
+      const res = await db.query<{ v: { verdict: string; owner_token?: string; answer?: string } }>(
+        "select claim_genius_rag_verified_answer($1,$2,$3,$4,$5,$6) as v",
+        [K2.t, K2.id, K2.q, K2.ef, K2.rf, lease],
+      );
+      return res.rows[0].v;
+    };
+    const mark2 = async (token: string, answer: string) => {
+      const res = await db.query<{ v: boolean }>(
+        "select mark_insufficient_genius_rag_verified_answer($1,$2,$3,$4,$5,$6,$7) as v",
+        [K2.t, K2.id, K2.q, K2.ef, K2.rf, token, answer],
+      );
+      return res.rows[0].v;
+    };
+    const first = await claim2();
+    assert.equal(first.verdict, "winner");
+    // 타 token 의 mark 는 CAS 패배.
+    assert.equal(await mark2("00000000-0000-0000-0000-000000000000", "위조 문구"), false, "타 token mark 가 성공했다");
+    // 정당 token 의 mark → 같은 flight 의 claim 은 같은 폐기 문구를 받는다.
+    assert.equal(await mark2(first.owner_token!, "자료 부족 문구"), true, "정당 mark 실패");
+    const shared = await claim2();
+    assert.equal(shared.verdict, "insufficient", `flight 공유 판정이 ${shared.verdict}`);
+    assert.equal(shared.answer, "자료 부족 문구", "공유 문구 불일치");
+    // settled 가 아니므로 get 은 여전히 빈다 — 오답이 검증답으로 재생되면 안 된다.
+    const notSettled = await db.query<{ status: string }>(
+      "select status from genius_rag_verified_answers where request_fingerprint=$1", [K2.rf],
+    );
+    assert.equal(notSettled.rows[0].status, "insufficient");
+    // TTL 만료 → 새 flight 가 pending 복귀 + token 교체로 인수(재생성 허용 — 영구 캐시 금지).
+    await db.query(
+      "update genius_rag_verified_answers set claimed_at = now() - interval '10 minutes' where request_fingerprint=$1", [K2.rf],
+    );
+    const takeover2 = await claim2();
+    assert.equal(takeover2.verdict, "winner", `TTL 후 인수 실패: ${JSON.stringify(takeover2)}`);
+    assert.notEqual(takeover2.owner_token, first.owner_token, "인수가 token 을 교체하지 않았다");
+    const backToPending = await db.query<{ status: string; answer: string | null }>(
+      "select status, answer from genius_rag_verified_answers where request_fingerprint=$1", [K2.rf],
+    );
+    assert.equal(backToPending.rows[0].status, "pending");
+    assert.equal(backToPending.rows[0].answer, null, "pending 복귀가 폐기 문구를 남겼다");
+  });
+
   await check("PGlite — RLS 활성 + 함수 권한이 service_role 로만 제한", async () => {
     const rls = await db.query<{ relrowsecurity: boolean }>(
       "select relrowsecurity from pg_class where relname='genius_rag_verified_answers'",
@@ -645,6 +783,8 @@ async function runAll(options: DeterminismOptions): Promise<void> {
   );
   await check("결정론 — 느린 winner(응답 지연 > 폴링 여러 회)에서도 동일답 + LLM 1회 (2차 NO-GO 축)", () =>
     runDeterminism(evidence, { ...options, slowWinnerMs: 150 }));
+  await check("역방향 flappy — 첫 INSUFFICIENT 동시 8-way 전원 동일 폐기문구 + LLM 1회, TTL 후 새 flight 가 채수빈 포함 정답 복구 (3차 NO-GO 축)", () =>
+    runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300 }));
   await check("store 계약 — lease takeover token 교체 + stale release/settle 무효 + first-writer-wins", () =>
     runStoreOwnerTokenContract(memoryStore({ withClaim: true, leaseMs: 30, ignoreOwnerToken: !options.withClaim && false })));
   await runFailureModeChecks(evidence);
@@ -688,7 +828,24 @@ async function main(): Promise<void> {
       }
       console.log("SELFTEST RED 확인 — stale-owner(token 검증 생략)");
     }
-    console.log("✅ selftest 통과 (mutation RED 4축 증명)");
+    // 🔴 mark→release 회귀 mutation (3차 NO-GO 축): non-grounded 종결이 flight-terminal
+    //   마킹 대신 release 처럼 행을 지우면 역방향 flappy 동시 8-way 에서 waiter 가 새
+    //   winner 로 재생성 → 2답·LLM 2회 — 반드시 RED 여야 한다.
+    {
+      const evidence = await runCrawlIngestProjectionChecks();
+      let failed = false;
+      try {
+        await runReverseFlappyDeterminism(evidence, { withClaim: true, leaseMs: 300, markBehavesAsRelease: true });
+      } catch {
+        failed = true;
+      }
+      if (!failed) {
+        console.error("SELFTEST FAIL — mutation [mark→release 회귀(역방향 플립)] 이 GREEN 이다");
+        process.exit(1);
+      }
+      console.log("SELFTEST RED 확인 — mark→release 회귀(역방향 플립 재생성)");
+    }
+    console.log("✅ selftest 통과 (mutation RED 5축 증명)");
     return;
   }
   const options: DeterminismOptions = {
