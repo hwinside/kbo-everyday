@@ -497,12 +497,34 @@ async function main() {
     process.env.SUPABASE_SERVICE_ROLE_KEY ||= "qa-service-role-key";
     const adminMod = await import("../../src/lib/supabase/admin");
     const admin = adminMod.getSupabaseAdmin() as unknown as {
-      auth: { getUser: (t: string) => Promise<unknown> };
+      auth: {
+        getUser: (t: string) => Promise<unknown>;
+        getClaims: (t: string) => Promise<unknown>;
+      };
       from: unknown;
       rpc: unknown;
     };
+    const QA_UID = "00000000-0000-0000-0000-0000000000qa".slice(0, 36);
     admin.auth.getUser = async () => ({
-      data: { user: { id: "00000000-0000-0000-0000-0000000000qa".slice(0, 36) } },
+      data: { user: { id: QA_UID } },
+      error: null,
+    });
+    // verifyAccessToken 은 이제 getClaims(JWKS 로컬 검증) 경로를 타고, claim 계약
+    // (iss/aud/role/sub/session_id)을 fail-close 로 검증한다(삼순 blocker④).
+    // getUser 만 스텁하면 인증이 통째로 null 이 되어 라우트가 400 이 아니라 401 을
+    // 돌려주고, 이 게이트가 검증하려던 "공개범위 경계"에 도달조차 못 한다.
+    admin.auth.getClaims = async () => ({
+      data: {
+        claims: {
+          iss: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1`,
+          aud: "authenticated",
+          role: "authenticated",
+          sub: QA_UID,
+          session_id: `sess-${QA_UID}`,
+          email: null,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        },
+      },
       error: null,
     });
     // RPC 까지 도달하면 그건 경계를 통과했다는 뜻 — 실 DB 를 치지 않게 막고 표시만 남긴다.
