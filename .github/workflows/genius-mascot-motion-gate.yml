@@ -33,7 +33,6 @@ on:
       - "scripts/qa/genius-mascot-motion-mutations.mjs"
       - "scripts/qa/genius-mascot-asset-mutations.mjs"
       - "scripts/qa/mascot-source-mutate.py"
-      - "package.json"
       - "src/components/dm/GeniusMascotImage.tsx"
       - "src/lib/constants/baseball-genius.ts"
       - ".github/workflows/genius-mascot-motion-gate.yml"
