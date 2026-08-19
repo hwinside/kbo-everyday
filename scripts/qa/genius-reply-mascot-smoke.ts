@@ -253,11 +253,14 @@ check("답변 발송이 실제 유형(result.source)을 payload 로 넘긴다", 
   // durable 재시도(claimState="ready")에서 그 값이 소실된다.
   assert.match(
     server,
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \},\s*messageId,?\s*\)/,
-    "server 가 조립 함수를 단일 지점 motion·응원자격 계산과 함께 소비하지 않음",
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole \},\s*messageId,?\s*\)/,
+    "server 가 조립 함수를 단일 지점 motion·응원자격·역할 계산과 함께 소비하지 않음",
   );
   assert.match(server, /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/,
     "응원 자격 팀 id 를 단일 지점에서 계산하지 않음");
+  // 선수 역할도 같은 단일 지점에서 로스터 SSOT 로 계산되어야 한다(하린아빠 2026-08-19).
+  assert.match(server, /const answerPlayerRole = answerPlayerRoleForResult\(/,
+    "선수 역할을 단일 지점에서 계산하지 않음");
   // payload 를 만들어놓고 sendOpsMessageToUser 에 안 넘기면 화면은 영원히 idle 이다.
   const call = server.slice(server.indexOf("const sent = await sendOpsMessageToUser("));
   assert.ok(call.indexOf("replyPayload") > 0 && call.indexOf("replyPayload") < 400, "발송 호출에 payload 미전달");
@@ -326,8 +329,8 @@ check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
   // §7.6 의미 모션(motion)·응원 자격(answerTeamId/favoriteTeamId)이 **전부** 전달돼야 한다.
   // 하나라도 빠지면 그 축이 조용히 죽는다(motion 누락 → 감사에 신남, team 누락 → 응원 미도달).
   assert.match(mascotComponent,
-    /geniusMotionClipFor\(replyKind, messageId, \{ motion, motionIntent, answerTeamId, favoriteTeamId \}\)/,
-    "클립 선택 SSOT 미사용(또는 의미 모션·응원 최애팀 결속 누락)");
+    /geniusMotionClipFor\(replyKind, messageId, \{ motion, motionIntent, answerTeamId, favoriteTeamId, answerPlayerRole \}\)/,
+    "클립 선택 SSOT 미사용(또는 의미 모션·응원 최애팀·선수 역할 결속 누락)");
   // 사용처가 payload 값을 실제로 넘기는지 — 넘기지 않으면 위 계약이 허공이다.
   //
   // ⚠️ "태그로부터 N자 이내"로 찾지 **않는다**. prop 을 하나 추가할 때마다 뒤쪽 prop 이
@@ -342,6 +345,8 @@ check("대기·실패 인디케이터도 마스코트를 띄운다", () => {
     ["쿨다운 무관 의도 모션", /motionIntent=\{geniusMotionIntentFromPayload\(geniusReply\)\}/],
     ["응원 자격 팀 id", /answerTeamId=\{geniusReply\?\.answer_team_id \?\? null\}/],
     ["유저 최애팀", /favoriteTeamId=\{profile\?\.team_id \?\? null\}/],
+    // 역할은 폐쇄집합 reader 로만 읽는다 — raw 필드 직접 전달이면 밖의 값이 그대로 흥른다.
+    ["답변 대상 선수 역할", /answerPlayerRole=\{geniusAnswerPlayerRoleFromPayload\(geniusReply\)\}/],
   ] as const) {
     assert.match(mascotUsage, re, `사용처가 ${label} 을(를) 전달하지 않는다`);
   }

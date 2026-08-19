@@ -859,6 +859,55 @@ export function answerTeamIdForResult(source: MatchPath, question: string): numb
   return teamIdOfCanonical(canonical);
 }
 
+/** 답변 대상 선수의 야구 역할 — 모션 클립 선택 전용 폐쇄집합. */
+export type AnswerPlayerRole = "pitcher" | "batter";
+
+/**
+ * 답변이 다루는 **선수의 역할** (투수/타자) — 답변 모션 클립 자격 판정용.
+ *
+ * 하린아빠 2026-08-19 06:25 "박동원은 타자인데 스윙 말고 투구모션이 나옴" +
+ * 8/18 23:41 "투수 문의 했는데 투구가 아니라 스윙" — 답변 모션이 messageId 교대라
+ * 선수 포지션과 어긋난 동작이 나갔다. 선수가 특정되는 답변은 역할에 맞는 동작
+ * (투수→pitching / 타자·야수→swing)을 재생한다.
+ *
+ * ⚠️ **새 판별 룰을 만들지 않는다** (answerTeamIdForResult 와 같은 축).
+ *   선수 인식은 기존 SSOT(`questionTokens` + `findPlayerReferences`)를 그대로 재사용한다.
+ *   투수 판정도 기존 관례(`position?.includes("투수")`, 기록 테이블 선택과 동일)를 따른다.
+ *
+ * 자격이 없는 경우(전부 null → 기존 swing/pitching 교대 유지, fail-close):
+ *  · answer 가 아닌 경로 — 거절·차단·되묻기·오류에 역할 모션을 붙이면 신호가 뒤집힌다.
+ *  · 질문에 로스터 선수가 안 잡힘(팀·룰·용어 질문).
+ *  · 잡힌 선수들의 역할이 갈림 — 동명이인(투수 vs 야수)·투타 비교 질문에서 한쪽을
+ *    고르면 엉뚱한 신호다. 같은 역할로만 수렴할 때 그 역할을 준다(타자 둘 비교 → swing).
+ *  · position 이 비거나 없음 — 모르는 값을 추측하지 않는다.
+ */
+export function answerPlayerRoleForResult(
+  source: MatchPath,
+  question: string,
+  players: PlayerRef[],
+): AnswerPlayerRole | null {
+  // 거절 경로를 손으로 열거하지 않는다 — answerTeamIdForResult 와 동일하게
+  // `replyKindForMatchPath` SSOT 의 answer 칸만 통과시킨다(새 경로 fail-close).
+  // (문면을 응원 쪽 가드와 다르게 둔다 — mutation 앵커는 파일당 유일해야 한다.)
+  const replyKindOfSource = replyKindForMatchPath(source);
+  if (replyKindOfSource !== "answer") return null;
+
+  const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
+  const matched = findPlayerReferences(tokens, players);
+  if (matched.length === 0) return null;
+
+  const roles = new Set<AnswerPlayerRole | null>(matched.map((player) => {
+    const position = player.position ?? "";
+    // 기존 관례와 동일한 단일 술어 — 기록 테이블 선택(preferredTable)이 같은 기준을 쓴다.
+    if (position.includes("투수")) return "pitcher";
+    return position.trim().length > 0 ? "batter" : null;
+  }));
+  // 역할이 하나로 수렴할 때만 준다. null(포지션 미상)이 섞여도 확정하지 않는다.
+  if (roles.size !== 1) return null;
+  const [role] = roles;
+  return role;
+}
+
 export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;
