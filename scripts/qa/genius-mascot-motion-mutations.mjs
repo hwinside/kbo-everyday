@@ -67,7 +67,7 @@ const mutations = [
   {
     name: "M6 server 단일 지점 motion 배선 제거 (ready 재시도 소실 재현)",
     file: TARGETS[3],
-    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId },\n    messageId,",
+    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole },\n    messageId,",
     to: "result,\n    messageId,",
     expect: "compose 가 DB 가 승인한 motion",
   },
@@ -174,8 +174,8 @@ const mutations = [
     // 서버가 intent 를 안 실으면 위 계약 전체가 허공이다.
     name: "M29 server 가 motionIntent 를 payload 에 안 싣는다",
     file: TARGETS[3],
-    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId },",
-    to: "{ ...result, motion, answerTeamId },",
+    from: "{ ...result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole },",
+    to: "{ ...result, motion, answerTeamId, answerPlayerRole },",
     expect: "motionIntent",
   },
   {
@@ -195,8 +195,8 @@ const mutations = [
   {
     name: "M24 server 가 응원 자격 팀 id 를 payload 에 안 싣는다 (응원 영영 미도달)",
     file: TARGETS[3],
-    from: '{ ...result, motion, motionIntent: candidateMotion, answerTeamId }',
-    to: '{ ...result, motion, motionIntent: candidateMotion }',
+    from: '{ ...result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole }',
+    to: '{ ...result, motion, motionIntent: candidateMotion, answerPlayerRole }',
     expect: "응원 자격",
   },
   {
@@ -233,6 +233,62 @@ const mutations = [
     from: '  return `/mascot/motion/${clip}.webp`;',
     to: '  return `/mascot/motion/${clip}-poster.webp`;',
     expect: "실제 애니메이션",
+  },
+  {
+    name: "M30 역할 클립 매핑 반전 (투수에 스윙 — 제보 사고 재현)",
+    file: TARGETS[2],
+    from: '  pitcher: "pitching",\n  batter: "swing",',
+    to: '  pitcher: "swing",\n  batter: "pitching",',
+    expect: "역할 클립",
+  },
+  {
+    name: "M31 역할 분기 제거 (교대로 회귀 — 타자에 투구모션 재발)",
+    file: TARGETS[2],
+    from: '  const role = context?.answerPlayerRole;\n  if (role === "pitcher" || role === "batter") return ROLE_CLIPS[role];',
+    to: '',
+    expect: "역할 클립",
+  },
+  {
+    name: "M32 server 가 선수 역할을 payload 에 안 싣는다 (역할 모션 영영 미도달)",
+    file: TARGETS[3],
+    from: '{ ...result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole },',
+    to: '{ ...result, motion, motionIntent: candidateMotion, answerTeamId },',
+    expect: "server 배선",
+  },
+  {
+    name: "M33 역할 판정을 거절 경로에도 부여 (차단인데 역할 모션)",
+    file: TARGETS[0],
+    from: '  const replyKindOfSource = replyKindForMatchPath(source);\n  if (replyKindOfSource !== "answer") return null;',
+    to: '  if (false) return null;',
+    expect: "역할",
+  },
+  {
+    name: "M34 동명이인 역할 혼재 수렴 제거 (한쪽 역할을 먋대로 확정)",
+    file: TARGETS[0],
+    from: '  if (roles.size !== 1) return null;',
+    to: '  if (roles.size === 0) return null;',
+    expect: "역할",
+  },
+  {
+    name: "M35 picked 결속 제거 — raw question 재계산으로 회귀 (picker 선택 무시, 삼순 P1 재현)",
+    file: TARGETS[0],
+    from: '  const pickedKboId = target.pickedPlayerKboId?.normalize("NFKC").trim() ?? "";\n  if (pickedKboId.length > 0) {\n    const picked = players.find((player) => player.kboId === pickedKboId);\n    return picked ? playerRoleOfPosition(picked.position) : null;\n  }',
+    to: '',
+    expect: "역할 결속",
+  },
+  {
+    name: "M36 picked 미존재 시 질문 기반으로 fallback (안 고른 동명이인 역할 부착)",
+    file: TARGETS[0],
+    from: '    return picked ? playerRoleOfPosition(picked.position) : null;',
+    to: '    if (picked) return playerRoleOfPosition(picked.position);\n  }\n  if (false) {',
+    expect: "역할 결속",
+  },
+  {
+    name: "M37 server 가 job 행 대신 raw question 만 쓴다 (durable 경로 결속 삭제)",
+    file: TARGETS[3],
+    from: '        pickedPlayerKboId: input.pickedPlayerKboId\n          ?? (targetJob?.picked_player_kbo_id as string | null ?? null),\n        correctedQuestion: targetJob?.picked_normalized_question as string | null ?? null,',
+    to: '        pickedPlayerKboId: null,\n        correctedQuestion: null,',
+    expect: "역할",
   },
   {
     name: "M21 legacy(payload 없는 과거 답변)를 정지 상태로 되돌림",

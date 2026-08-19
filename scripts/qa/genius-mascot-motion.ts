@@ -225,12 +225,21 @@ async function partMapping() {
   // 실행 검증은 supabase 의존이라 여기서는 소스 결속으로 잠그고, 제거 mutation(M6)이 RED 를 증명한다.
   const serverSrc = readFileSync(resolve(process.cwd(), "src/lib/baseball-qa/server.ts"), "utf8");
   check("server 배선: compose 가 DB 가 승인한 motion 을 싣는다",
-    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \}/
+    /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole \}/
       .test(serverSrc));
   // 응원 자격(답변 대상 구단)도 **같은 단일 지점**에서 결정론 계산해야 한다 —
   // 여기 말고 다른 곳에서 계산하면 durable 재시도에서 값이 소실된다(#1197 계약과 동일 축).
   check("server 배선: 응원 자격 팀 id 를 단일 지점에서 계산한다",
     /const answerTeamId = answerTeamIdForResult\(result\.source, question\);/.test(serverSrc));
+  // 선수 역할은 raw question 이 아니라 **실제 답변 대상**에 결속되어야 한다(삼순 #1251 P1):
+  // persisted picked_player_kbo_id → picked_normalized_question → raw question. job 행을 안 읽으면
+  // picker 선택·교정 승인·ready 재발송에서 동명이인 역할 혼재로 시드 교대가 재발한다.
+  check("server 배선: 역할을 실제 답변 대상(job 행 SSOT)에 결속한다",
+    /answerPlayerRole = answerPlayerRoleForTarget\(/.test(serverSrc) &&
+    serverSrc.includes('.select("picked_player_kbo_id, picked_normalized_question")') &&
+    /pickedPlayerKboId: input\.pickedPlayerKboId\s*\?\? \(targetJob\?\.picked_player_kbo_id as string \| null \?\? null\)/.test(serverSrc) &&
+    /correctedQuestion: targetJob\?\.picked_normalized_question as string \| null \?\? null/.test(serverSrc) &&
+    /await loadRosterPlayers\(\),\s*\);/.test(serverSrc));
   check("server 배선: 쿨다운은 원자 claim RPC 가 정한다(SELECT→INSERT race 차단)",
     serverSrc.includes('.rpc("claim_baseball_genius_motion"') &&
     /p_decided_at: decidedAt/.test(serverSrc) &&
@@ -283,6 +292,25 @@ async function partPayload() {
       isGeniusReplyPayload(foreign) && geniusMotionFromPayload(foreign as never) === null);
     const garbage = { ...foreign, motion: 42 };
     check("validator: motion 비문자열은 거부", !isGeniusReplyPayload(garbage));
+  }
+  // ── 선수 역할 payload 계약 (하린아빠 2026-08-19) ────────────────────────────
+  {
+    const { geniusAnswerPlayerRoleFromPayload } = await import("../../src/lib/constants/baseball-genius");
+    const withRole = composeGeniusReplyPayload({ source: "kbo_structured", answerPlayerRole: "batter" }, 11);
+    check("compose: 역할이 payload 에 실린다 + validator 통과",
+      withRole.answer_player_role === "batter" && isGeniusReplyPayload(withRole));
+    check("accessor: 유효 역할 → 그대로", geniusAnswerPlayerRoleFromPayload(withRole) === "batter");
+    const withoutRole = composeGeniusReplyPayload({ source: "kbo_structured", answerPlayerRole: null }, 12);
+    check("compose: 역할 미상(null)은 필드 자체를 안 싣는다(legacy 구분 유지)",
+      !("answer_player_role" in withoutRole) && geniusAnswerPlayerRoleFromPayload(withoutRole) === null);
+    const foreignRole = {
+      type: "baseball_genius_reply", reply_kind: "answer", match_path: "kbo_structured",
+      question_message_id: 2, answer_player_role: "coach",
+    };
+    check("폐쇄집합: 밖의 역할 값은 payload 를 살리고 역할만 null (forward-compat)",
+      isGeniusReplyPayload(foreignRole) && geniusAnswerPlayerRoleFromPayload(foreignRole as never) === null);
+    check("validator: 역할 비문자열은 거부",
+      !isGeniusReplyPayload({ ...foreignRole, answer_player_role: 7 }));
   }
 }
 
@@ -910,6 +938,70 @@ async function partRenderContract() {
         .map((q) => answerTeamIdForResult("rag", q))).size === 1);
   }
 
+  // ── 선수 역할 계산 함수를 **직접 태운다** (하린아빠 2026-08-19 "박동원은 타자인데 투구모션") ─
+  // 응원 자격과 같은 이유: payload 에 실리는 값이므로 그 함수 자체를 검사해야 한다.
+  {
+    const { answerPlayerRoleForResult } = await import("../../src/lib/baseball-qa/pipeline");
+    // 결정론 fixture — 실 로스터 패턴(포수/투수/내야수/미상/동명이인)을 재현한다.
+    const roster = [
+      { name: "박동원", kboId: "60443", team: "LG", position: "포수" },
+      { name: "손주영", kboId: "51350", team: "LG", position: "투수" },
+      { name: "문보경", kboId: "52354", team: "LG", position: "내야수" },
+      { name: "김철수", kboId: "11111", team: "A", position: "투수" },
+      { name: "김철수", kboId: "22222", team: "B", position: "내야수" },
+      { name: "이몽룡", kboId: "33333", team: "C", position: "" },
+    ] as never;
+    const rejecting = ["ack", "scope_guide", "blocked", "unsure", "error", "player_picker",
+      "question_correction", "quota", "no_context", "service_redirect", "stat_clarify"];
+    const leaked = rejecting.filter((src) =>
+      answerPlayerRoleForResult(src as never, "박동원 타율", roster) !== null);
+    check("역할: 답하지 못한 경로는 역할을 싣지 않는다(fail-close)",
+      leaked.length === 0, leaked.join(","));
+    check("역할: 타자(포수) 질문 → batter (박동원 제보 재현)",
+      answerPlayerRoleForResult("kbo_structured" as never, "박동원 타율", roster) === "batter");
+    check("역할: 투수 질문 → pitcher (8/18 투수→스윙 제보 재현)",
+      answerPlayerRoleForResult("kbo_structured" as never, "손주영 평균자책점", roster) === "pitcher");
+    check("역할: 투·타 비교 질문 → null (한쪽 역할 확정 금지)",
+      answerPlayerRoleForResult("kbo_structured" as never, "손주영이랑 박동원 중 누가 잘해?", roster) === null);
+    check("역할: 같은 역할 복수 선수 → 그 역할 (타자 둘 비교 → batter)",
+      answerPlayerRoleForResult("kbo_structured" as never, "문보경이랑 박동원 타율 비교", roster) === "batter");
+    check("역할: 동명이인 역할 혼재(투수 vs 야수) → null",
+      answerPlayerRoleForResult("kbo_structured" as never, "김철수 성적", roster) === null);
+    check("역할: position 미상 → null (추측 금지)",
+      answerPlayerRoleForResult("kbo_structured" as never, "이몽룡 기록", roster) === null);
+    check("역할: 선수 미언급(팀·용어 질문) → null",
+      answerPlayerRoleForResult("kbo_structured" as never, "번트가 뭐야?", roster) === null &&
+      answerPlayerRoleForResult("kbo_structured" as never, "LG 순위 알려줘", roster) === null);
+
+    // ── 실제 답변 대상 결속 (삼순 #1251 P1) — picker 선택·교정 승인·ready 재시도 종단 ───
+    const { answerPlayerRoleForTarget } = await import("../../src/lib/baseball-qa/pipeline");
+    // 동명이인 역할 혼재(김철수: 투수 11111 · 내야수 22222) — raw question 만으로는 null 이지만,
+    // picker 에서 한 명을 고르면 **그 선수의 역할**이 나와야 한다(야수/투수 각각).
+    check("역할 결속: picker 에서 투수를 고르면 pitcher (raw question 은 혼재→null 이어도)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster) === "pitcher");
+    check("역할 결속: picker 에서 야수를 고르면 batter",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "22222", question: "김철수 성적" }, roster) === "batter");
+    check("역할 결속: picked 가 로스터에 없으면 null (질문 기반으로 내려가지 않는다)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { pickedPlayerKboId: "99999", question: "손주영 평균자책점" }, roster) === null);
+    check("역할 결속: 수락된 교정문이 raw question 보다 우선한다",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { correctedQuestion: "손주영 평균자책점", question: "손주슘 평균자책점" }, roster) === "pitcher");
+    check("역할 결속: picked 없으면 질문 기반과 동일 (비회귀)",
+      answerPlayerRoleForTarget("kbo_structured" as never,
+        { question: "박동원 타율" }, roster) === "batter");
+    check("역할 결속: 거절 경로는 picked 가 있어도 null",
+      answerPlayerRoleForTarget("blocked" as never,
+        { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster) === null);
+    // ready 재시도·reload 동일성 — 같은 durable 입력이면 몇 번을 불러도 같은 역할이다.
+    check("역할 결속: 같은 durable 입력 → 항상 같은 역할 (ready 재시도·reload 동일성)",
+      new Set(Array.from({ length: 5 }, () =>
+        answerPlayerRoleForTarget("kbo_structured" as never,
+          { pickedPlayerKboId: "11111", question: "김철수 성적" }, roster))).size === 1);
+  }
+
   check("클립 선택: 되묻기(picker/correction) → thinking",
     geniusMotionClipFor("picker", 3) === "thinking" && geniusMotionClipFor("correction", 8) === "thinking");
   check("클립 선택: 답하지 못함(unavailable) → bored",
@@ -919,6 +1011,23 @@ async function partRenderContract() {
     check("클립 선택: 정상답변은 야구 동작 2종 교대(같은 동작 반복 없음)",
       answers.size === 2 && [...answers].every((c) => c === "swing" || c === "pitching"),
       [...answers].join(","));
+    // ── 선수 역할 확정 답변 (하린아빠 2026-08-19) — 의미 있는 축이므로 시드 교대 금지 ─
+    check("역할 클립: 투수 답변 → pitching, 시드와 무관",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("answer", i, { answerPlayerRole: "pitcher" })).every((c) => c === "pitching"));
+    check("역할 클립: 타자·야수 답변 → swing, 시드와 무관",
+      Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("answer", i, { answerPlayerRole: "batter" })).every((c) => c === "swing"));
+    check("역할 클립: 역할 미상(null)은 기존 교대 그대로(legacy 비회귀)",
+      new Set(Array.from({ length: 40 }, (_, i) =>
+        geniusMotionClipFor("answer", i, { answerPlayerRole: null }))).size === 2);
+    // 응원(최애팀)은 "네 팀 얘기다"라는 더 강한 신호 — 역할보다 앞선다(기존 우선순위 유지).
+    check("역할 클립: 최애팀 응원이 역할보다 우선한다",
+      (GENIUS_MOTION_CLIPS as readonly string[]).includes(
+        geniusMotionClipFor("answer", 3,
+          { answerPlayerRole: "batter", answerTeamId: 1, favoriteTeamId: 1 })) &&
+      geniusMotionClipFor("answer", 3,
+        { answerPlayerRole: "batter", answerTeamId: 1, favoriteTeamId: 1 }).startsWith("cheer"));
     // ── §7.6 의미 매핑 (삼순 #1228 4축-②) ─────────────────────────────────────
     // 인사=excited / 감사·칭찬=headspin 은 **의미**다. 시드로 교대시키면
     // "고마워"에 신남이, "안녕"에 헤드스핀이 나온다 — 그게 종전 회귀였다.
@@ -994,7 +1103,7 @@ async function partRenderContract() {
 
     // 서버가 실제로 두 값을 **모두** 싣는지 — 하나라도 빠지면 위 계약이 허공이다.
     check("서버가 motion(부여)과 motionIntent(의미)를 둘 다 payload 에 싣는다",
-      /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId \}/
+      /composeGeniusReplyPayload\(\s*\{ \.\.\.result, motion, motionIntent: candidateMotion, answerTeamId, answerPlayerRole \}/
         .test(serverSrc),
       "쿨다운이 거절하면 의미가 사라진다");
     check("payload 계약에 motion_intent 칸이 있다",
