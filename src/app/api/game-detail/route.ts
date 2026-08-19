@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { jsonWithETag } from "@/lib/http/conditional";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import {
+  fetchNaverDetailLineup,
   fetchNaverRecord,
   getGameDetailRouteResult,
   setGameDetailDegradationObserverForTest,
@@ -12,7 +13,10 @@ import {
   type PitcherRecord,
 } from "@/lib/services/game-detail";
 
+// ⚠️ main 에서 route 가 내보내던 helper 전수 재-export(구현만 service 로 이동).
+//   기존 게이트·소비처가 route 경로로 import 하므로 빠뜨리면 하류가 죽는다.
 export {
+  fetchNaverDetailLineup,
   fetchNaverRecord,
   getGameDetailRouteResult,
   setGameDetailDegradationObserverForTest,

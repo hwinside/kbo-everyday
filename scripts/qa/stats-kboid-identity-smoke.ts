@@ -580,7 +580,9 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     // ⚠️ 이건 **구조 결속 검사**다(행동 검사 아님). 현재 static defense 는 전 행이 raw 형태라
     // 호출부를 우회해도 응답이 똑같다(쪼개짐이 안 생긴다). 그래서 크롤러가 일부를 canonical 로
     // 바꾸는 날 조용히 깨지는 것을 막으려면 순서 자체를 소스에서 묶어두는 수밖에 없다.
-    const src = readFileSync(new URL("../../src/app/api/stats/route.ts", import.meta.url), "utf8");
+    // PR #1257: GET 구현이 src/lib/services/stats.ts 로 물리 이동 — 결속 검사 대상도 구현 파일을 본다
+    // (route 는 얇은 래퍼라 여기엔 분기 자체가 없다. 계약 완화 아님 — 같은 순서를 같은 강도로 본다).
+    const src = readFileSync(new URL("../../src/lib/services/stats.ts", import.meta.url), "utf8");
     assert.ok(
       /aggregateDefense\(\s*canonicalizeDefenseRows\(/.test(src) ||
       /const canonicalRows = canonicalizeDefenseRows\([\s\S]{0,200}?aggregateDefense\(canonicalRows\)/.test(src),
@@ -608,7 +610,8 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
     // ⚠️ 구조 결속 검사. assertNoRowLoss 를 떼기만 하면 현재 static 으로는 응답이 똑같아
     // 행동 검사로는 잡힐 수 없다(가드는 앞으로 유입될 소스 변형을 막는 장치다).
     // 그래서 “응답 직전에 두 계약이 실제로 호출된다”를 소스에서 결속한다.
-    const src = readFileSync(new URL("../../src/app/api/stats/route.ts", import.meta.url), "utf8");
+    // PR #1257: 구현 이동에 맞춰 결속 검사 대상 파일도 service 로 이관(계약 동일).
+    const src = readFileSync(new URL("../../src/lib/services/stats.ts", import.meta.url), "utf8");
     assert.ok(/renumberRanks\(collapseIdenticalStatRows\(/.test(src), "2025 분기가 renumberRanks 를 거치지 않는다");
     assert.ok(/assertNoRowLoss\(\s*stats\s*,\s*raw\s*,/.test(src), "2025 분기에 assertNoRowLoss 호출이 없다");
   });
@@ -660,9 +663,14 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
   await check("handleStatsGetFailure: 오염 fallback 은 200 이 아니라 500/no-store · 정상은 rewrite 후 200", async () => {
     const { handleStatsGetFailure } = await import("../../src/app/api/stats/route");
     // 정상 static 은 200 fallback (identity 검증 통과) + 외국인 canonical rewrite.
+    // PR #1257: helper 가 Response 대신 순수 { body, status?, headers } 를 돌려준다.
+    //   route 래퍼는 status 미지정 시 200 을 쓴다 → "실효 status" 로 같은 강도의 계약을 본다.
+    const effectiveStatus = (r: { status?: number }) => r.status ?? 200;
+    const headerOf = (r: { headers?: HeadersInit }, key: string) =>
+      r.headers ? new Headers(r.headers).get(key) : null;
     const okRes = handleStatsGetFailure(new Error("crawl failed"), "current", "batter");
-    assert.equal(okRes.status, 200);
-    const okJson = await okRes.json();
+    assert.equal(effectiveStatus(okRes), 200);
+    const okJson = okRes.body as { source: string; stats: unknown[] };
     assert.equal(okJson.source, "fallback");
     const foreign = findStaticForeign();
     assert.ok(
@@ -676,15 +684,15 @@ async function runPureChecks(): Promise<{ pass: number; failures: string[] }> {
       { rank: 2, name: "무명", team: "두산", kboId: "" },
     ];
     const bad = handleStatsGetFailure(new Error("crawl failed"), "current", "batter", new Date(), corrupt as never);
-    assert.equal(bad.status, 500, `status=${bad.status}`);
-    assert.equal(bad.headers.get("cache-control"), "no-store");
+    assert.equal(effectiveStatus(bad), 500, `status=${bad.status}`);
+    assert.equal(headerOf(bad, "cache-control"), "no-store");
     // 중복 ID 오염도 동일.
     const dup = [
       { rank: 1, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
       { rank: 2, name: HOMONYM.name, team: HOMONYM.team, kboId: ID_A },
     ];
     const badDup = handleStatsGetFailure(new Error("crawl failed"), "current", "batter", new Date(), dup as never);
-    assert.equal(badDup.status, 500);
+    assert.equal(effectiveStatus(badDup), 500);
   });
   await check("assertFullEntryIdentity: 동명이인 정상쌍 통과 · 빈 id throw · 중복 id throw", async () => {
     const { assertFullEntryIdentity } = await import("../../src/app/api/stats/route");
