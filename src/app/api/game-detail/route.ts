@@ -818,7 +818,12 @@ export async function GET(req: NextRequest) {
     // 안에서만 기다린다. Naver가 없거나 partial이면 그대로 둔다(fail-safe).
     if (boxScore && boxScoreSource === "kbo" && hasPureSubPositions(boxScore)) {
       naver = naver ?? await untilDeadline(naverRecordPromise, deadlineSignal, null);
-      if (naver?.boxScore) mergeNaverSubPositions(boxScore, naver.boxScore);
+      if (naver?.boxScore) {
+        // boxScore는 memoize 캐시의 frozen 공유 객체일 수 있다 — in-place 병합 전 복사해
+        // 캐시 오염(다른 요청에 병합 결과 누출)과 frozen throw를 모두 차단한다.
+        boxScore = structuredClone(boxScore);
+        mergeNaverSubPositions(boxScore, naver.boxScore);
+      }
     }
 
     const hasRealBoxScoreFinal = boxScore &&
@@ -865,7 +870,9 @@ export async function GET(req: NextRequest) {
         ...(broadcastChannels?.length ? { broadcastChannels } : {}),
       };
     } else if (meta && broadcastChannels?.length) {
-      meta.broadcastChannels = broadcastChannels;
+      // meta는 content-hash memoize 캐시에서 온 frozen 객체일 수 있다(공유 캐시 오염 방지).
+      // 직접 mutate하면 strict mode에서 throw → catch-all(scheduled) 열화. 복사 생성으로 병합한다.
+      meta = { ...meta, broadcastChannels };
     }
 
     const status: GameDetailResponse["status"] =
