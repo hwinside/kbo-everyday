@@ -3751,11 +3751,17 @@ const TEAM_COPULA = "(?:입니다|이다|이며|이고|예요|이에요)";
 // 🔴 무의형 보강 (같은 8차): `소속의 투수` 만 허용하면 흔한 `소속 선수입니다`·`소속 투수입니다`
 //   (조사 `의` 없는 형태)를 못 잡는다. `의` 와 공백을 선택형으로 둔다.
 //   `소속 선수와 친합니다` 는 뒤에 계사가 오지 않으므로 여전히 통과한다(제3자 술어 GREEN 유지).
+// 🔴 현재진행은 **닫힌 술어**로만 인정한다 (삼순 2026-08-19 9차, 실측 재현).
+//   bare stem `있` 에서 끝내면 `과거 두산에서 뛰고 있었습니다`(과거진행)와
+//   `두산에서 뛰고 있는 친구와 친합니다`(관형절→제3자)도 현재 소속으로 잡힌다.
+//   `있습니다/있어요/있다` 로 술어가 닫힐 때만 주인공의 현재 귀속이다 —
+//   `있었`(과거)·`있는`(관형절)은 여기 걸리지 않는다.
+const PRESENT_PROGRESSIVE = "있(?:습니다|어요|다)";
 const TEAM_AFFILIATION_AFTER = new RegExp(
   "^\\s*(?:"
     + `(?:구단\\s+)?소속(?:의)?(?:\\s+(?:투수|포수|내야수|외야수|야수|선수))?\\s*${TEAM_COPULA}`
-    + "|에서\\s+(?:뛰|활약하)고\\s+있"
-    + "|(?:의\\s+)?유니폼을\\s+입고\\s+(?:뛰|활약하)고\\s+있"
+    + `|에서\\s+(?:뛰|활약하)고\\s+${PRESENT_PROGRESSIVE}`
+    + `|(?:의\\s+)?유니폼을\\s+입고\\s+(?:뛰|활약하)고\\s+${PRESENT_PROGRESSIVE}`
     + ")",
 );
 const TEAM_AFFILIATION_BEFORE = new RegExp(
@@ -3798,10 +3804,20 @@ function attributedTeams(sentence: string): string[] {
  *   가르는 축은 **서술어 위치**다 — 귀속은 계사(…입니다/…이다/…로 활약)로 끝나고,
  *   제3자 언급은 조사(들의·와·과·의)로 이어진다. 둘 다 닫힌 형태소 집합이다.
  */
-const PREDICATE_SUFFIXES = ["입니다", "이다", "이며", "예요", "이에요", "이었", "였", "로 ", "으로 ", "로서", "다."];
+// 🔴 position 도 team 과 같은 **현재 시간축·주인공 술어 결속**이다 (삼순 2026-08-19 9차).
+//   종전엔 `이었/였`(과거 계사)과 bare `로 `(조사)를 귀속 suffix 로 받아서
+//   `고교 시절 투수였습니다`(정상 이력)·`투수로 뛰는 친구와 훈련했습니다`(제3자 관형절)가
+//   현재 포지션 충돌로 죽었다. 계사는 현재형만, `로/로서` 는 뒤가 **닫힌 현재 활약
+//   술어**(활약하고 있습니다 등)일 때만 귀속이다 — `로 뛰는`(관형절)은 걸리지 않는다.
+const POSITION_PREDICATE_TAIL = new RegExp(
+  "^(?:"
+    + "(?:입니다|이다|이며|이고|예요|이에요|다\\.)"
+    + `|(?:로서?|으로)\\s*(?:뛰|활약하)고\\s+있(?:습니다|어요|다)`
+    + ")",
+);
 function isAttributivePredicate(sentence: string, token: string, index: number): boolean {
   const tail = sentence.slice(index + token.length);
-  return PREDICATE_SUFFIXES.some((suffix) => tail.startsWith(suffix));
+  return POSITION_PREDICATE_TAIL.test(tail);
 }
 
 /**

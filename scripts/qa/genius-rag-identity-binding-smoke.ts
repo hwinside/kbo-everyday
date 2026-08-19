@@ -474,6 +474,42 @@ async function main() {
   );
   pass("S 시간축 — 과거 이력 GREEN + 현재 무의형 RED 양방향");
 
+  // ── T. 현재진행 종결 + position 시간축·주인공 결속 (삼순 2026-08-19 9차) ────
+  //   team: bare stem `있` 에서 끝내면 과거진행(`뛰고 있었습니다`)·관형절(`뛰고 있는
+  //   친구`)도 현재 소속으로 잡힌다. 술어가 닫힐 때(있습니다/있어요/있다)만 귀속이다.
+  //   position: `이었/였`(과거 계사)·bare `로 `(조사)를 suffix 로 받으면 정상
+  //   이력·제3자 관형절이 현재 포지션 충돌로 죽는다. team 과 같은 축이다.
+  const TIME_AXIS_GREEN = [
+    `${teamA.name} 선수는 과거 두산에서 뛰고 있었습니다.`,
+    `${teamA.name} 선수는 두산에서 뛰고 있는 친구와 친합니다.`,
+  ];
+  for (const sentence of TIME_AXIS_GREEN) {
+    assert.equal(
+      detectIdentityConflict(sentence, teamIdentity, players), null,
+      `T: 과거진행·관형절을 현재 소속으로 오판했다: ${sentence}`,
+    );
+  }
+  const infielderT = players.find((p) => p.kboId === "53893")!;
+  const infielderIdentity = buildPlayerIdentity(
+    { entityId: "53893", name: infielderT.name, team: infielderT.team }, players,
+  );
+  for (const sentence of [
+    `${infielderT.name} 선수는 고교 시절 투수였습니다.`,
+    `${infielderT.name} 선수는 투수로 뛰는 친구와 훈련했습니다.`,
+  ]) {
+    assert.equal(
+      detectIdentityConflict(sentence, infielderIdentity, players), null,
+      `T2: 과거 이력·제3자 포지션을 현재 충돌로 오판했다: ${sentence}`,
+    );
+  }
+  // 현재 직접형은 여전히 RED — 닫힌 현재 활약 술어의 오포지션도 잡는다.
+  const activeWrong = detectIdentityConflict(
+    `${infielderT.name} 선수는 투수로 활약하고 있습니다.`, infielderIdentity, players,
+  );
+  assert.ok(activeWrong, "T3: 닫힌 현재 활약 술어의 오포지션이 미검출");
+  assert.equal(activeWrong!.mentioned, "투수", "T3: 검출 토큰이 투수가 아니다");
+  pass("T 현재진행 종결 + position 시간축·주인공 결속 양방향");
+
   // ── R. 정답이 오답을 가리면 안 된다 — 혼합 서술 양방향 (삼순 2026-08-19 6차) ──
   //   "투수이며 내야수입니다" 처럼 정답과 오답이 섞이면 유저가 보는 건 오답 쪽이다.
   //   호환 토큰이 하나라도 있으면 통과시키던 종전 규칙은 이걸 그대로 서빙했다.

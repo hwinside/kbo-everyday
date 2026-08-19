@@ -248,7 +248,7 @@ const MUTATIONS = [
     // 🔴 삼순 6차: `의 유니폼` 만으로 소속을 세면 디자인·선호 서술이 오귀속으로 죽는다.
     id: "M23 유니폼 언급만으로 소속 판정",
     file: PIPELINE,
-    find: `    + "|(?:의\\\\s+)?유니폼을\\\\s+입고\\\\s+(?:뛰|활약하)고\\\\s+있"`,
+    find: `    + \`|(?:의\\\\s+)?유니폼을\\\\s+입고\\\\s+(?:뛰|활약하)고\\\\s+\${PRESENT_PROGRESSIVE}\``,
     // 착용 술어로 닫히는지 보지 않고 `유니폼` 등장만 소속으로 세던 결함을 재현한다.
     replace: `    + "|(?:의\\\\s+)?유니폼"`,
     expect: "유니폼 디자인·선호 서술을 소속 귀속으로 오판했다",
@@ -296,6 +296,22 @@ const MUTATIONS = [
     expect: "현재형 무의형 소속 오귀속이 미검출",
   },
   {
+    // 🔴 삼순 9차 false-positive: bare stem `있` 은 과거진행(`있었`)·관형절(`있는`)까지 잡는다.
+    id: "M28 현재진행 bare stem 판정(술어 미종결)",
+    file: PIPELINE,
+    find: `const PRESENT_PROGRESSIVE = "있(?:습니다|어요|다)";`,
+    replace: `const PRESENT_PROGRESSIVE = "있";`,
+    expect: "T: 과거진행·관형절을 현재 소속으로 오판했다",
+  },
+  {
+    // 🔴 삼순 9차 false-positive: position 이 과거 계사(`이었/였`)를 귀속으로 받으면 이력이 죽는다.
+    id: "M29 position 과거 계사 귀속(시간축 붕괴)",
+    file: PIPELINE,
+    find: `    + "(?:입니다|이다|이며|이고|예요|이에요|다\\\\.)"`,
+    replace: `    + "(?:입니다|이다|이며|이고|예요|이에요|이었|였|다\\\\.)"`,
+    expect: "T2: 과거 이력·제3자 포지션을 현재 충돌로 오판했다",
+  },
+  {
     id: "M7 미결속 kboId 빈 블록 생성",
     file: PIPELINE,
     find: `  if (!player) return null;`,
@@ -311,7 +327,7 @@ const MUTATIONS = [
  *   실제로 M13 블록 재작성 때 M1~M6·M8~M12를 날리고도 남은 11/11이 PASS 해 누락을 못 봤다.
  *   따라서 실행 전에 고정 기대 ID M1~M25와 **완전일치**하고 중복이 0인지 먼저 증명한다.
  */
-const EXPECTED_MUTATION_IDS = Array.from({ length: 27 }, (_, index) => `M${index + 1}`);
+const EXPECTED_MUTATION_IDS = Array.from({ length: 29 }, (_, index) => `M${index + 1}`);
 
 function mutationIdOf(mutation) {
   const match = /^M\d+\b/.exec(mutation.id);
