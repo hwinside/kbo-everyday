@@ -931,7 +931,9 @@ export function answerPlayerRoleForTarget(
   },
   players: PlayerRef[],
 ): AnswerPlayerRole | null {
-  if (replyKindForMatchPath(source) !== "answer") return null;
+  // (문면을 응원/질문기반 가드와 다르게 둔다 — mutation 앵커는 파일당 유일해야 한다.)
+  const targetReplyKind = replyKindForMatchPath(source);
+  if (targetReplyKind !== "answer") return null;
   const pickedKboId = target.pickedPlayerKboId?.normalize("NFKC").trim() ?? "";
   if (pickedKboId.length > 0) {
     const picked = players.find((player) => player.kboId === pickedKboId);
