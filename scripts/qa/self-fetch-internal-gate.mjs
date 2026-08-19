@@ -1,8 +1,23 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+/**
+ * 외부 cleanup selftest 전용 프로브 모드(--cleanup-probe=<throw|exit|sigint|sigterm>).
+ * 변이를 적용한 직후 해당 경로로 강제 이탈해, 부모 프로세스가
+ * "이탈 후 전 대상 byte-identical"을 검증할 수 있게 한다.
+ */
+const CLEANUP_PROBE = (() => {
+  const arg = process.argv.find((a) => a.startsWith("--cleanup-probe="));
+  return arg ? arg.slice("--cleanup-probe=".length) : null;
+})();
+
+function sha256(file) {
+  return createHash("sha256").update(readFileSync(file)).digest("hex").slice(0, 16);
+}
 
 const WIRING_CONTRACTS = [
   [
@@ -249,13 +264,73 @@ function runSelfTest() {
     writeFileSync(file, source.replace(from, to));
   };
 
+  // ── 잔재 방지 계약 ──
+  // 변이는 tracked source 를 직접 쓴다. 복원이 **정상 종료 경로에만** 있으면
+  // runGate 예외·Ctrl-C(SIGINT)·SIGTERM 에서 변이가 워킹트리에 그대로 남고,
+  // 그대로 커밋되어 프로덕션 응답계약이 깨진다(#1257 실제 사고).
+  // → 모든 이탈 경로에서 idempotent 로 복원한다.
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    try {
+      restoreAll();
+    } catch (error) {
+      console.error(`CLEANUP FAILED — ${error?.message ?? error}`);
+    }
+  };
+  const onSignal = (signal) => {
+    cleanup();
+    // 복원은 끝났으니 신호 기본 동작을 그대로 따른다(exit code 128+n).
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("SIGINT", () => onSignal("SIGINT"));
+  process.on("SIGTERM", () => onSignal("SIGTERM"));
+  process.on("exit", cleanup);
+  process.on("uncaughtException", (error) => {
+    cleanup();
+    console.error(`UNCAUGHT — ${error?.stack ?? error}`);
+    process.exit(1);
+  });
+
+  // 외부 selftest(--selftest-cleanup) 전용 강제 이탈 프로브.
+  // 변이를 적용한 직후 각 이탈 경로를 실제로 타워서, 부모가 "전 대상 byte-identical"을 검증한다.
+  // 적용 사실을 해시로 출력해 — 변이가 실제로 일어난 뒤 죽었음을 증명한다(공허한 통과 방지).
+  if (CLEANUP_PROBE) {
+    const probeFile = "src/app/api/stats/route.ts";
+    mutateFile(probeFile, "    headers: result.headers,", "    headers: undefined,", "PROBE");
+    console.log(`PROBE_MUTATED ${sha256(probeFile)}`);
+    if (CLEANUP_PROBE === "sigint" || CLEANUP_PROBE === "sigterm") {
+      // 신호 대기(Ctrl-C 재현). try/finally 밖이라 복원은 신호 핸들러만이 할 수 있다.
+      setInterval(() => {}, 1000);
+      return;
+    }
+    if (CLEANUP_PROBE === "exit") {
+      // process.exit 은 finally 를 건너뛴다 — 'exit' 핸들러만이 복원할 수 있다.
+      process.exit(3);
+    }
+    // "throw": try/finally 경로
+    try {
+      throw new Error("forced failure after mutation (cleanup contract probe)");
+    } finally {
+      cleanup();
+      rmSync(backupDir, { recursive: true, force: true });
+    }
+  }
+
+  try {
+    runMutations();
+  } finally {
+    cleanup();
+    rmSync(backupDir, { recursive: true, force: true });
+  }
+
+  function runMutations() {
   const runGate = () => check();
   const base = runGate();
   if (base.length > 0) {
     console.error("BASE NOT GREEN:");
     for (const failure of base) console.error("  " + failure);
-    restoreAll();
-    rmSync(backupDir, { recursive: true, force: true });
     process.exit(1);
   }
 
@@ -425,7 +500,7 @@ function runSelfTest() {
     }
   }
 
-  restoreAll();
+  cleanup();
   // 복원 검증: 변이 잔재가 워킹트리에 남으면 selftest 자체를 실패로 본다.
   for (const [file, backup] of backups) {
     if (readFileSync(file, "utf8") !== readFileSync(backup, "utf8")) {
@@ -433,8 +508,8 @@ function runSelfTest() {
       ok = false;
     }
   }
-  rmSync(backupDir, { recursive: true, force: true });
   process.exit(ok ? 0 : 1);
+  }
 }
 
 if (process.argv.includes("--selftest")) {
