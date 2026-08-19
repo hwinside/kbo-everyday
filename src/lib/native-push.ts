@@ -2,6 +2,7 @@
 
 import { isNative, platform } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
+import { createSignatureCache, createSingleFlight, shouldCacheRegisterResponse } from "@/lib/client-dedupe";
 
 // 네이티브(iOS/Android) FCM 푸시 토큰 유틸.
 // 웹 Web Push는 기존 usePushNotification 경로 유지 — 여기는 native 전용.
@@ -119,28 +120,8 @@ function showForegroundBanner(title: string, body: string, url: string | null): 
 // Edge Request/Fluid CPU를 소모한다(observability 실측: /api/push/register-device 122K+).
 // 같은 (userId, fcmToken, platform, appBuild)를 TTL 내 성공 등록한 적 있으면 skip.
 // 토큰 rotate·앱 업데이트·계정 전환은 signature가 달라져 자연히 재등록된다.
-const PUSH_REG_CACHE_KEY = "kbo-push-reg-v1";
-const PUSH_REG_TTL_MS = 24 * 60 * 60 * 1000; // 24h — 서버 stale 판정 주기보다 짧게 유지
-
-function readRegCache(): { sig: string; at: number } | null {
-  try {
-    const raw = localStorage.getItem(PUSH_REG_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { sig?: unknown; at?: unknown };
-    if (typeof parsed.sig !== "string" || typeof parsed.at !== "number") return null;
-    return { sig: parsed.sig, at: parsed.at };
-  } catch {
-    return null;
-  }
-}
-
-function writeRegCache(sig: string): void {
-  try {
-    localStorage.setItem(PUSH_REG_CACHE_KEY, JSON.stringify({ sig, at: Date.now() }));
-  } catch {
-    /* storage 불가 환경 — dedupe 없이 기존 동작 */
-  }
-}
+const regCache = createSignatureCache("kbo-push-reg-v1", 24 * 60 * 60 * 1000); // 24h
+const regFlight = createSingleFlight<boolean>(); // 동일 signature 동시 호출 합치기
 
 /** 서버에 FCM 토큰 등록 (로그인 필수 — 세션 없으면 조용히 skip) */
 export async function registerTokenWithServer(fcmToken: string): Promise<boolean> {
@@ -161,23 +142,26 @@ export async function registerTokenWithServer(fcmToken: string): Promise<boolean
     // 판별 실패 = null(구버전 취급) — 등록 자체는 계속
   }
 
-  // dedupe: 동일 signature를 TTL 내 성공 등록했으면 서버 호출 생략(등록된 상태로 간주)
+  // dedupe: 동일 signature를 TTL 내 성공 등록했으면 서버 호출 생략(등록된 상태로 간주).
+  // 동일 signature 동시 호출(부팅 sync + tokenReceived 레이스)은 single-flight로 합친다.
   const sig = JSON.stringify({ u: userId, t: fcmToken, p: platform, b: appBuild });
-  const cached = readRegCache();
-  if (cached && cached.sig === sig && Date.now() - cached.at < PUSH_REG_TTL_MS) {
-    return true;
-  }
-
-  const res = await fetch("/api/push/register-device", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ fcmToken, platform, appBuild }),
+  if (regCache.has(sig)) return true;
+  return regFlight.run(sig, async () => {
+    if (regCache.has(sig)) return true; // flight 대기 중 선행 성공 반영
+    const res = await fetch("/api/push/register-device", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ fcmToken, platform, appBuild }),
+    });
+    // 삼순 #1253 blocker②: 서버가 긴급공지 catch-up 실패를 cacheable:false로 알리면
+    // 등록 자체는 성공이어도 캐시하지 않아 다음 부팅 재시도(공지 재발송 기회)를 보존.
+    const body: unknown = res.ok ? await res.json().catch(() => null) : null;
+    if (shouldCacheRegisterResponse(res.ok, body)) regCache.put(sig);
+    return res.ok;
   });
-  if (res.ok) writeRegCache(sig); // 실패 시 캐시 안 씀 → 다음 기회에 재시도
-  return res.ok;
 }
 
 /**

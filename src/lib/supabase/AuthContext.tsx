@@ -6,6 +6,7 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
+import { createProfileLoadLedger } from "@/lib/client-dedupe";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -34,30 +35,10 @@ interface AuthContextType {
 // SIGNED_IN) + visibilitychange 복귀마다 호출돼 같은 유저 프로필을 반복 조회한다
 // (observability 실측: /api/me 218K/24h). 같은 유저로 이미 성공 로드했고 TTL 내면
 // skip, 동시 호출은 in-flight promise 공유. 명시 갱신(refreshProfile)은 force로 우회.
+// 삼순 #1253 blocker①: generation fencing — no-session/로그아웃은 invalidate()로 장부를
+// 비우고, force는 세대를 올려 늦은 옛 응답이 최신 profile을 덮지 못하게 한다.
 const PROFILE_TTL_MS = 10 * 60 * 1000; // 10분 — 타기기 변경 반영 지연 상한
-let profileLoadedState: { userId: string; at: number } | null = null;
-let profileInFlight: { userId: string; promise: Promise<void> } | null = null;
-
-/** dedupe 장부를 거쳐 run()을 실행. run은 프로필 set 성공 시 true 반환. */
-function dedupedProfileLoad(userId: string, force: boolean, run: () => Promise<boolean>): Promise<void> {
-  const loaded = profileLoadedState;
-  if (!force && loaded && loaded.userId === userId && Date.now() - loaded.at < PROFILE_TTL_MS) {
-    return Promise.resolve(); // 같은 유저 프로필이 이미 fresh — 서버 호출 생략
-  }
-  const inFlight = profileInFlight;
-  if (!force && inFlight && inFlight.userId === userId) {
-    return inFlight.promise; // 동시 호출(부팅 syncSession + INITIAL_SESSION 등) 공유
-  }
-  const promise = run()
-    .then((ok) => {
-      if (ok) profileLoadedState = { userId, at: Date.now() };
-    })
-    .finally(() => {
-      if (profileInFlight?.promise === promise) profileInFlight = null;
-    });
-  profileInFlight = { userId, promise };
-  return promise;
-}
+const profileLedger = createProfileLoadLedger(PROFILE_TTL_MS);
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
@@ -84,11 +65,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function loadProfile(accessToken: string, userId: string, opts?: { force?: boolean }) {
-    return dedupedProfileLoad(userId, opts?.force === true, () => loadProfileNow(accessToken, userId));
+    return profileLedger.load(userId, opts?.force === true, (isCurrent) =>
+      loadProfileNow(accessToken, userId, isCurrent));
   }
 
-  /** 실제 프로필 조회(3단 fallback). 프로필을 성공적으로 set했으면 true. */
-  async function loadProfileNow(accessToken: string, userId: string): Promise<boolean> {
+  /** 실제 프로필 조회(3단 fallback). 프로필을 성공적으로 set했으면 true.
+   *  isCurrent(): ledger 세대 가드 — 늦게 도착한 옛 응답이 force 갱신 결과나
+   *  다른 유저 상태를 덮지 못하게 모든 setProfile 적용 직전에 확인한다. */
+  async function loadProfileNow(accessToken: string, userId: string, isCurrent: () => boolean): Promise<boolean> {
     // 1차: 서버 API (Bearer 토큰 + service role — 가장 안정적)
     try {
       const res = await fetch("/api/me", {
@@ -97,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const json = await res.json();
         if (json.profile) {
+          if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
           setProfile(json.profile);
           syncProfileToLocal(json.profile);
           return true;
@@ -117,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const rows = await res.json();
         const data = Array.isArray(rows) ? rows[0] : null;
         if (data && data.id) {
+          if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
           setProfile(data);
           syncProfileToLocal(data);
           return true;
@@ -132,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq("id", userId)
         .maybeSingle();
       if (!error && data) {
+        if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
         setProfile(data);
         syncProfileToLocal(data);
         return true;
@@ -141,15 +128,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await new Promise(r => setTimeout(r, 1000));
         const retry = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
         if (!retry.error && retry.data) {
+          if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
           setProfile(retry.data);
           syncProfileToLocal(retry.data);
           return true;
         } else {
-          setProfile(null);
+          if (isCurrent()) setProfile(null);
         }
       }
     } catch {
-      setProfile(null);
+      if (isCurrent()) setProfile(null);
     }
     return false;
   }
@@ -205,6 +193,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch { /* SSR safety */ }
         await loadProfile(session.access_token, session.user.id);
       } else {
+        // 삼순 #1253 blocker①: no-session은 장부도 무효화 — 같은 UID가 TTL 내 재인증되면
+        // fresh 마커 때문에 재조회 없이 profile=null로 고정되는 것을 막는다.
+        profileLedger.invalidate();
         setProfile(null);
       }
       setLoading(false);
@@ -234,6 +225,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Google Ads 전환은 ProfileSetupModal.handleComplete()에서 발화함
           // (닉네임+팀 선택 완료 시점 = 실제 회원가입 완료)
         } else {
+          // SIGNED_OUT 포함 no-session — 장부 무효화(동일 UID 재로그인 시 재조회 보장)
+          profileLedger.invalidate();
           setProfile(null);
         }
         setLoading(false);

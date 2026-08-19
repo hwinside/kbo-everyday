@@ -3,6 +3,7 @@ import { isIosNativeRuntime } from "@/lib/capacitor/platform";
 import { supabase } from "@/lib/supabase/client";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
+import { createSignatureCache, createSingleFlight, shouldCacheRegisterResponse } from "@/lib/client-dedupe";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -258,28 +259,8 @@ let lastPushToStartMeta: { osMajor?: number; frequentPushes?: boolean } = {};
 // 동일 signature(유저·토큰·빌드·os·frequentPushes)를 TTL 내 "서버가 실제 저장"한
 // 적 있으면 skip. 서버가 W3c 토글 off로 skip한 응답({skipped})은 캐시하지 않아
 // 토글 on 복귀 후 다음 토큰 이벤트에서 정상 저장된다(기존 의미론 보존).
-const LA_START_REG_CACHE_KEY = "kbo-la-start-reg-v1";
-const LA_START_REG_TTL_MS = 24 * 60 * 60 * 1000;
-
-function readStartRegCache(): { sig: string; at: number } | null {
-  try {
-    const raw = localStorage.getItem(LA_START_REG_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { sig?: unknown; at?: unknown };
-    if (typeof parsed.sig !== "string" || typeof parsed.at !== "number") return null;
-    return { sig: parsed.sig, at: parsed.at };
-  } catch {
-    return null;
-  }
-}
-
-function writeStartRegCache(sig: string): void {
-  try {
-    localStorage.setItem(LA_START_REG_CACHE_KEY, JSON.stringify({ sig, at: Date.now() }));
-  } catch {
-    /* storage 불가 — dedupe 없이 기존 동작 */
-  }
-}
+const startRegCache = createSignatureCache("kbo-la-start-reg-v1", 24 * 60 * 60 * 1000); // 24h
+const startRegFlight = createSingleFlight<void>(); // 동일 signature 동시 호출 합치기
 
 async function registerPushToStartToken(token: string): Promise<void> {
   try {
@@ -292,27 +273,27 @@ async function registerPushToStartToken(token: string): Promise<void> {
     const appBuild = await getAppBuild();
     const { osMajor, frequentPushes } = lastPushToStartMeta;
     const sig = JSON.stringify({ u: userId, t: token, b: appBuild ?? null, o: osMajor ?? null, f: frequentPushes ?? null });
-    const cached = readStartRegCache();
-    if (cached && cached.sig === sig && Date.now() - cached.at < LA_START_REG_TTL_MS) return;
-    const res = await fetch("/api/live-activity/register-start", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({
-        pushToStartToken: token,
-        ...(appBuild != null ? { appBuild } : {}),
-        ...(Number.isInteger(osMajor) ? { osMajor } : {}),
-        ...(typeof frequentPushes === "boolean" ? { frequentPushes } : {}),
-      }),
-    });
-    if (res.ok) {
+    if (startRegCache.has(sig)) return;
+    await startRegFlight.run(sig, async () => {
+      if (startRegCache.has(sig)) return; // flight 대기 중 선행 성공 반영
+      const res = await fetch("/api/live-activity/register-start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          pushToStartToken: token,
+          ...(appBuild != null ? { appBuild } : {}),
+          ...(Number.isInteger(osMajor) ? { osMajor } : {}),
+          ...(typeof frequentPushes === "boolean" ? { frequentPushes } : {}),
+        }),
+      });
       // 서버가 저장을 skip한 경우({success, skipped:"live_activity_off"})는 캐시 금지 —
       // 토글 on 복귀 후에도 skip이 이어져 토큰 미저장 상태가 고정되는 것을 막는다.
-      const json = (await res.json().catch(() => null)) as { skipped?: unknown } | null;
-      if (!json?.skipped) writeStartRegCache(sig);
-    }
+      const body: unknown = res.ok ? await res.json().catch(() => null) : null;
+      if (shouldCacheRegisterResponse(res.ok, body)) startRegCache.put(sig);
+    });
   } catch {
     /* silent — 등록 실패가 앱에 영향 주지 않게 */
   }
