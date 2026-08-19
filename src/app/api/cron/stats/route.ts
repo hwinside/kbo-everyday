@@ -428,36 +428,38 @@ const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
 };
 
 /**
- * 직전 성공 수집 대비 급감 가드(trusted baseline).
+ * kind+source별 검증된 정적 전량 baseline 급감 가드.
  * 정적 하한(NAVER_MIN_COVERAGE·팀당 최소)만으로는 "균등하게 잘린 부분응답"(예: 332명 중
  * 팀당 16명씩 160명)이 개별 행 검증을 전부 통과해 나머지 선수를 경보 없이 stale로
- * 남긴다(2026-08-19 삼순 P0). 최근 7일 내 갱신된 행 수 = 직전 성공 수집의 전량 baseline으로
- * 삼아, 이번 수집이 그 90% 미만이면 채택 자체를 거부한다(폴백 시도 → 둘 다 실패면
- * fail-close·upsert 0건). 시즌 초에는 최근 7일 행이 없어 baseline=0 → 가드 무해통과,
- * 정적 하한이 그대로 1차 방어선으로 남는다. baseline 조회 오류는 가드 우회가 아니라
- * fail-close다(조용한 바이패스 금지).
+ * 남긴다(2026-08-19 삼순 P0 1차). DB 행 count는 소스 구분이 없어 투수 KBO 96명↔Naver
+ * 281명이 섞이고(복구된 KBO가 영구 거부되는 고착), 7일 공백·count=null에서 조용히
+ * 무력화된다(삼순 P0 2차). 그래서 런타임 조회 없이 kind+source별 실측 전량을 정적으로
+ * 결속한다 — 상태가 없으니 고착·공백·조회오류 축이 원천 제거된다.
+ *
+ * 값은 2026-08-19 실측 전량(타자 Naver 332·투수 Naver 281·투수 KBO 병합 96).
+ * 시즌 내 선수 수는 단조증가라 정적 floor는 시간이 갈수록 안전해진다.
+ * ⚠️ 시즌 경계(개막 초기)에는 실제 전량이 이 값 아래로 내려가므로 개막 시 재설정 필요
+ * (그 전까지는 fail-close가 맞다 — 절단 응답을 조용히 받느니 수집 중단이 낫다).
+ * KBO 타자는 실전 30행 단일 페이지라 전량 전달이 원리적으로 불가 → 타자 전량 332를
+ * 그대로 결속해 타자는 사실상 Naver 단독(절단 KBO 폴백 채택 불가)이다.
  */
-const BASELINE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const SOURCE_FULL_BASELINE: Record<"batter" | "pitcher", Record<Source, number>> = {
+  batter: { naver: 332, kbo: 332 },
+  pitcher: { naver: 281, kbo: 96 },
+};
 const BASELINE_MIN_RATIO = 0.9;
 
-async function assertNoCoverageCollapse(
+function assertNoCoverageCollapse(
   kind: "batter" | "pitcher",
   source: Source,
   fetchedCount: number,
-): Promise<void> {
-  const table = kind === "batter" ? "player_stats_batter" : "player_stats_pitcher";
-  const since = new Date(Date.now() - BASELINE_WINDOW_MS).toISOString();
-  const { count, error } = await supabaseAdmin
-    .from(table)
-    .select("player_key", { count: "exact", head: true })
-    .gte("updated_at", since);
-  const label = source === "kbo" ? "KBO" : "Naver";
-  if (error) throw new Error(`${label} ${kind} baseline query failed: ${error.message}`);
-  const baseline = count ?? 0;
+): void {
+  const baseline = SOURCE_FULL_BASELINE[kind][source];
   const floor = Math.ceil(baseline * BASELINE_MIN_RATIO);
-  if (baseline > 0 && fetchedCount < floor) {
+  if (fetchedCount < floor) {
+    const label = source === "kbo" ? "KBO" : "Naver";
     throw new Error(
-      `${label} ${kind} coverage collapse: fetched ${fetchedCount} < ${floor} (90% of baseline ${baseline})`,
+      `${label} ${kind} coverage collapse: fetched ${fetchedCount} < ${floor} (90% of full baseline ${baseline})`,
     );
   }
 }
@@ -484,7 +486,7 @@ async function collect(
       kind === "batter"
         ? await fetchKboBatterStats(roster)
         : await fetchKboPitcherStats(roster);
-    await assertNoCoverageCollapse(kind, "kbo", stats.length);
+    assertNoCoverageCollapse(kind, "kbo", stats.length);
     return { stats, source: "kbo" };
   };
   const fromNaver = async (): Promise<Collected> => {
@@ -492,7 +494,7 @@ async function collect(
     const stats =
       kind === "batter" ? mapNaverBatters(rows, roster) : mapNaverPitchers(rows, roster);
     if (stats.length === 0) throw new Error(`Naver ${kind} empty after map`);
-    await assertNoCoverageCollapse(kind, "naver", stats.length);
+    assertNoCoverageCollapse(kind, "naver", stats.length);
     return { stats, source: "naver" };
   };
 
