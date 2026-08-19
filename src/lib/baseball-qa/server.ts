@@ -495,7 +495,8 @@ async function callRagLlmWithPrompt(
         question,
         evidence,
         systemPrompt ?? RAG_SYSTEM_PROMPT,
-        { context: extras?.context, rosterBlock: extras?.rosterBlock },
+        // identityBlock 은 선수 경로에서만 온다(구단·공식 경로는 미주입) — 여기서는 그대로 전달한다.
+        { context: extras?.context, rosterBlock: extras?.rosterBlock, identityBlock: extras?.identityBlock },
       ),
     ),
     signal: AbortSignal.timeout(15000),

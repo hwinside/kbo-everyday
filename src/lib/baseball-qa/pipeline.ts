@@ -3575,6 +3575,47 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 export interface RagLlmExtras {
   context?: ContextTurn;
   rosterBlock?: string;
+  /** 질문 대상(주인공) 인물 결속 블록 — 동명이인 오귀속 차단 (2026-08-19 P0). */
+  identityBlock?: string;
+}
+
+/**
+ * 질문 대상(주인공) 인물 결속 블록.
+ *
+ * 🔴 왜 필요한가 (2026-08-19 Production 실측, 5/5 재현).
+ *   `김민준`(SSG)은 로스터에 2명이다 — 53893('04 내야수) / 56840('06 투수).
+ *   picker 에서 56840 을 골라 그 선수의 문서만 근거로 줘도, 그 문서 본문에 "같은 팀에
+ *   동명이인인 **내야수** 김민준이 있다" 라는 서술이 있어 모델이 그걸 주인공 속성으로
+ *   끌어다 붙였다 — evidence 는 "우완 투수"인데 답변은 "내야수"가 났다(삼순 P0①).
+ *
+ * 근거 선별로는 막힐 수 없다 — 오귀속 문장은 **주인공 본인 문서의 정당한 일부**라
+ * 버리면 별명·일화 같은 정보까지 같이 잎는다. 그래서 근거를 자르는 대신 **주인공이 누구인지를
+ * 명시**해 제3자 서술과 구분하게 한다. 값은 전부 roster SSOT 에서 온다(모델 기억 아님).
+ *
+ * `null` 을 돌려주면 블록을 싶지 않는다 — 기존 동작 그대로다(미주입 호출부 무변경).
+ */
+export function buildIdentityBlock(
+  candidate: { entityId: string; name: string; team?: string | null },
+  players: PlayerRef[],
+): string | null {
+  const player = players.find((row) => row.kboId === candidate.entityId);
+  // roster 에 없는 kboId 는 결속할 사실이 없다 — 빈 블록을 싸서 "결속했다"는 착각을 만들지 않는다.
+  if (!player) return null;
+  const team = player.team ?? candidate.team ?? null;
+  const parts = [`kboId: ${player.kboId}`, `이름: ${player.name}`];
+  if (team) parts.push(`소속: ${team}`);
+  if (player.position) parts.push(`포지션: ${player.position}`);
+  // 같은 이름의 다른 로스터 인물을 명시해 "이 사람은 주인공이 아니다"를 닫힌 집합으로 준다.
+  const namesakes = players.filter((row) => row.name === player.name && row.kboId !== player.kboId);
+  const lines = [parts.join(" / ")];
+  if (namesakes.length > 0) {
+    lines.push(
+      `동명이인(주인공 아님): ${namesakes
+        .map((row) => [row.kboId, row.team, row.position].filter(Boolean).join(" "))
+        .join(", ")}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -5774,7 +5815,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (deps.enablePlayerRag && deps.searchRag && deps.callRagLlm) {
       const descriptive = await answerPlayerDescriptiveQuestion(
         userId, question, questionNorm, playerCandidate, remaining, deps,
-        { context: context ?? undefined, rosterBlock },
+        {
+          context: context ?? undefined,
+          rosterBlock,
+          // 주인공 결속 — 동명이인 문서의 제3자 서술이 주인공 속성으로 새는 경로를 막는다.
+          ...(buildIdentityBlock(playerCandidate, players)
+            ? { identityBlock: buildIdentityBlock(playerCandidate, players)! }
+            : {}),
+        },
       );
       // null = 근거 0건 양보 — generic LLM(roster 블록·직전 턴·숫자 계약 보유)으로 내려간다.
       if (descriptive) return descriptive;
