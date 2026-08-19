@@ -510,6 +510,32 @@ async function main() {
   assert.equal(activeWrong!.mentioned, "투수", "T3: 검출 토큰이 투수가 아니다");
   pass("T 현재진행 종결 + position 시간축·주인공 결속 양방향");
 
+  // ── U. 술어 종결 ≠ 주인공 결속 — 소유격·대명사 제3자 (삼순 2026-08-19 10차) ─
+  //   `김민준 선수의 형은 두산 소속 투수입니다` 는 정상 제3자 문장이다. 문장에 주인공
+  //   이름이 있다고 닫힌 술어를 전부 귀속으로 세면 team·position 양쪽이 다 죽는다.
+  //   다음 문장 대명사 주어(`그의 형은 …`)도 같은 축이다.
+  for (const sentence of [
+    `${infielderT.name} 선수의 형은 두산 소속 투수입니다.`,
+    `${infielderT.name} 선수는 내야수입니다. 그의 형은 두산 소속 투수입니다.`,
+  ]) {
+    assert.equal(
+      detectIdentityConflict(sentence, infielderIdentity, players), null,
+      `U: 소유격·대명사 제3자를 주인공 귀속으로 오판했다: ${sentence}`,
+    );
+  }
+  // 주어가 주인공인 직접 현재형은 여전히 RED — 과차단 수정이 검출력을 죽이면 안 된다.
+  const ownedWrong = detectIdentityConflict(
+    `${infielderT.name} 선수는 두산 소속 투수입니다.`, infielderIdentity, players,
+  );
+  assert.ok(ownedWrong, "U2: 주인공 주어 직접형 오귀속이 미검출");
+  // 무주어(주어 생략=주인공) 후속 문장도 여전히 RED — P2 와 같은 축을 재확인한다.
+  const proDrop = detectIdentityConflict(
+    `${infielderT.name} 선수는 내야수입니다. 현재 두산에서 뛰고 있습니다.`, infielderIdentity, players,
+  );
+  assert.ok(proDrop, "U3: 무주어 후속 문장의 오소속이 미검출");
+  assert.equal(proDrop!.field, "team", "U3: field 가 team 이 아니다");
+  pass("U 소유격·대명사 제3자 GREEN + 주인공 주어·무주어 RED 유지");
+
   // ── R. 정답이 오답을 가리면 안 된다 — 혼합 서술 양방향 (삼순 2026-08-19 6차) ──
   //   "투수이며 내야수입니다" 처럼 정답과 오답이 섞이면 유저가 보는 건 오답 쪽이다.
   //   호환 토큰이 하나라도 있으면 통과시키던 종전 규칙은 이걸 그대로 서빙했다.
@@ -552,7 +578,21 @@ async function main() {
     null,
     "O: 다른 선수 이름이 든 문장을 주인공 귀속으로 오판했다 — 정상 답변 과잉 차단",
   );
-  pass("O 제3자 이름 문장 배제");
+  // 🔴 team 변형 — 문장 분리 계약의 **관측 무대** (삼순 10차 반영 중 재구성).
+  //   주어 결속(ownedBySubject)이 생기면서 위 position 픽스처는 문장 분리 없이도
+  //   `홍길동은` 주어에서 걸러져 살아남는다 — 문장 분리 제거(M13)가 관측 불가로 변한다.
+  //   `소속은 롯데입니다` 는 명시 속성 마커라 주어 결속을 통과하므로, 이 변형은
+  //   **문장 분리(제3자 이름 문장 skip)만이** 지키는 GREEN 이다.
+  assert.equal(
+    detectIdentityConflict(
+      `${subjectO.name} 선수는 ${subjectO.team} 소속입니다. 팀 동료 ${otherO.name} 선수의 소속은 롯데입니다.`,
+      buildPlayerIdentity({ entityId: subjectO.kboId, name: subjectO.name, team: subjectO.team }, players),
+      players,
+    ),
+    null,
+    "O: 다른 선수 이름이 든 문장을 주인공 귀속으로 오판했다(team) — 정상 답변 과잉 차단",
+  );
+  pass("O 제3자 이름 문장 배제 (position·team)");
 
   // ── H/I. 종단 오귀속 차단 — stub 이 **틀린 포지션**을 반환해도 서빙되지 않는가 ─────
   //

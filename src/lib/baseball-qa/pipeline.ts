@@ -3768,7 +3768,32 @@ const TEAM_AFFILIATION_BEFORE = new RegExp(
   `소속(?:은|이|:)?\\s*$`,
 );
 const TEAM_AFFILIATION_BEFORE_TAIL = new RegExp(`^\\s*${TEAM_COPULA}`);
-function attributedTeams(sentence: string): string[] {
+
+// 🔴 술어 종결 ≠ 주인공 결속 (삼순 2026-08-19 10차, 실측 재현).
+//   `김민준 선수의 형은 두산 소속 투수입니다` 는 정상 제3자 문장이다. 문장에 주인공
+//   이름이 있다는 이유로 닫힌 술어를 전부 주인공 귀속으로 세면 소유격·대명사
+//   제3자가 죽는다. 귀속은 토큰 앞의 **가장 가까운 주어/주제어**가 ①주인공(이름·
+//   이름+선수) ②명시 속성 마커(`소속은/포지션은`) ③무주어(한국어 주어 생략=주인공)
+//   일 때만 인정한다. `형은`·`그는` 같은 다른 주어가 앞에 있으면 그 사람 서술이다.
+//   ⚠️ 관형형 `-는`(받치는·활약하는)이 주제어로 오인될 수 있다 — 그 방향은
+//   fail-open(귀속을 놓침)이라 정상 답변을 죽이는 반대 방향보다 안전하다.
+const SUBJECT_MARKER = /([가-힣A-Za-z0-9]+)(?:은|는|이|가)(?=\s)/g;
+function ownedBySubject(sentence: string, index: number, subjectName: string): boolean {
+  const before = sentence.slice(0, index);
+  const matches = [...before.matchAll(SUBJECT_MARKER)];
+  if (matches.length === 0) return true; // 주어 생략 = 주인공 (pro-drop)
+  const last = matches[matches.length - 1];
+  const word = last[1];
+  if (word === "소속" || word === "포지션") return true; // 명시 속성 마커
+  if (word === subjectName) return true; // `김민준은 …`
+  if (word === "선수") {
+    // `김민준 선수는 …` 만 주인공이다 — `동료 선수는` 은 아니다.
+    return before.slice(0, last.index).trimEnd().endsWith(subjectName);
+  }
+  return false;
+}
+
+function attributedTeams(sentence: string, subjectName: string): string[] {
   const lowered = sentence.toLowerCase();
   const hit = new Set<string>();
   for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
@@ -3783,8 +3808,10 @@ function attributedTeams(sentence: string): string[] {
         const after = sentence.slice(from);
         // 구단 뒤 구절이 **주인공 술어로 닫히는 경우**만 귀속이다.
         // `소속은 두산입니다`처럼 구단 앞에 마커가 올 때도 구단 뒤 계사까지 함께 확인한다.
-        if (TEAM_AFFILIATION_AFTER.test(after)
-          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after))) {
+        // 귀속 술어 + **주어가 주인공**일 때만 소속이다 (삼순 10차).
+        if ((TEAM_AFFILIATION_AFTER.test(after)
+          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after)))
+          && ownedBySubject(sentence, index, subjectName)) {
           hit.add(canonical);
           break;
         }
@@ -3865,7 +3892,10 @@ export function detectIdentityConflict(
       //   이름이 든 문장이라고 전부 귀속으로 보면 "김민준 선수는 내야수들의 호수비 덕을
       //   봤습니다" 같은 정상 문장이 unsure 로 죽는다.
       const attributed = tokenizePositions(sentence)
-        .filter((t) => isAttributivePredicate(sentence, t.token, t.index));
+        .filter((t) => isAttributivePredicate(sentence, t.token, t.index)
+          // 서술어 위치여도 **주어가 제3자**면 그 사람 서술이다 (삼순 10차 —
+          //   `선수의 형은 두산 소속 투수입니다`·`그의 형은 …`).
+          && ownedBySubject(sentence, t.index, identity.name));
       // 🔴 정답이 오답을 **가리지 못하게** 한다 (삼순 2026-08-19 6차).
       //   종전엔 호환 토큰이 하나라도 있으면 통과시켰다. 그러면 "투수이며 내야수입니다"
       //   처럼 정답과 오답이 섞인 답변이 그대로 서빙된다 — 유저가 보는 건 오답 쪽이다.
@@ -3881,7 +3911,7 @@ export function detectIdentityConflict(
     if (identity.team) {
       // 양쪽 다 같은 함수로 접는다 — 한쪽만 정규화하면 정상 표기가 충돌로 오판된다.
       const subjectTeam = canonicalizeTeam(identity.team);
-      const teams = attributedTeams(sentence);
+      const teams = attributedTeams(sentence, identity.name);
       // 주인공 구단을 못 접으면 판정 근거가 없다 — 억지로 충돌을 만들지 않는다.
       // 포지션과 같은 규칙: 정답 소속이 함께 있어도 **다른 소속이 하나라도** 귀속되면 충돌이다.
       const wrongTeam = subjectTeam ? teams.find((team) => team !== subjectTeam) : undefined;

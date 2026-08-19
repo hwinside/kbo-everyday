@@ -207,14 +207,20 @@ const MUTATIONS = [
     id: "M18 후속 문장 서술어 판정 제거(과잉 차단)",
     file: PIPELINE,
     find: `      const attributed = tokenizePositions(sentence)
-        .filter((t) => isAttributivePredicate(sentence, t.token, t.index));`,
-    replace: `      const attributed = tokenizePositions(sentence);`,
-    expect: "제3자 언급을 귀속으로 오판했다",
+        .filter((t) => isAttributivePredicate(sentence, t.token, t.index)
+          // 서술어 위치여도 **주어가 제3자**면 그 사람 서술이다 (삼순 10차 —
+          //   \`선수의 형은 두산 소속 투수입니다\`·\`그의 형은 …\`).
+          && ownedBySubject(sentence, t.index, identity.name));`,
+    replace: `      const attributed = tokenizePositions(sentence)
+        .filter((t) => ownedBySubject(sentence, t.index, identity.name));`,
+    // 서술어 판정을 지우면 과거 계사 필터까지 같이 사라져 T2(시간축)가 가장 먼저 잡는다
+    // — 주어 결속(10차) 도입 후 J축 제3자 픽스처는 ownedBySubject 가 구제해 관측 경로가 이동했다.
+    expect: "T2: 과거 이력·제3자 포지션을 현재 충돌로 오판했다",
   },
   {
     id: "M19 team 충돌 검출 제거",
     file: PIPELINE,
-    find: `      const teams = attributedTeams(sentence);`,
+    find: `      const teams = attributedTeams(sentence, identity.name);`,
     replace: `      const teams = [] as string[];`,
     // M축(양방향 team 오귀속)이 먼저 잡는다 — P2 와 같은 team 검출 축이라 정당하다.
     expect: "소속 오귀속",
@@ -239,9 +245,10 @@ const MUTATIONS = [
     // 🔴 삼순 5차 실재 결함: 구단 "등장"을 소속으로 세면 상대팀 문장이 정상인데 죽는다.
     id: "M22 구단 등장만으로 소속 판정(귀속 마커 무시)",
     file: PIPELINE,
-    find: `        if (TEAM_AFFILIATION_AFTER.test(after)
-          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after))) {`,
-    replace: `        if (true) {`,
+    find: `        if ((TEAM_AFFILIATION_AFTER.test(after)
+          || (TEAM_AFFILIATION_BEFORE.test(before) && TEAM_AFFILIATION_BEFORE_TAIL.test(after)))
+          && ownedBySubject(sentence, index, subjectName)) {`,
+    replace: `        if (ownedBySubject(sentence, index, subjectName)) {`,
     expect: "소속이 아닌 구단 언급을 오귀속으로 셌다",
   },
   {
@@ -312,6 +319,19 @@ const MUTATIONS = [
     expect: "T2: 과거 이력·제3자 포지션을 현재 충돌로 오판했다",
   },
   {
+    // 🔴 삼순 10차 false-positive: 주어 결속을 없애면 소유격·대명사 제3자가 주인공 귀속으로 죽는다.
+    id: "M30 주어 결속 제거(술어 종결만으로 귀속)",
+    file: PIPELINE,
+    find: `  const before = sentence.slice(0, index);
+  const matches = [...before.matchAll(SUBJECT_MARKER)];
+  if (matches.length === 0) return true; // 주어 생략 = 주인공 (pro-drop)`,
+    replace: `  return true;
+  const before = sentence.slice(0, index);
+  const matches = [...before.matchAll(SUBJECT_MARKER)];
+  if (matches.length === 0) return true; // 주어 생략 = 주인공 (pro-drop)`,
+    expect: "U: 소유격·대명사 제3자를 주인공 귀속으로 오판했다",
+  },
+  {
     id: "M7 미결속 kboId 빈 블록 생성",
     file: PIPELINE,
     find: `  if (!player) return null;`,
@@ -327,7 +347,7 @@ const MUTATIONS = [
  *   실제로 M13 블록 재작성 때 M1~M6·M8~M12를 날리고도 남은 11/11이 PASS 해 누락을 못 봤다.
  *   따라서 실행 전에 고정 기대 ID M1~M25와 **완전일치**하고 중복이 0인지 먼저 증명한다.
  */
-const EXPECTED_MUTATION_IDS = Array.from({ length: 29 }, (_, index) => `M${index + 1}`);
+const EXPECTED_MUTATION_IDS = Array.from({ length: 30 }, (_, index) => `M${index + 1}`);
 
 function mutationIdOf(mutation) {
   const match = /^M\d+\b/.exec(mutation.id);
