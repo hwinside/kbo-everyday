@@ -4155,9 +4155,14 @@ async function answerPlayerDescriptiveQuestion(
       }
     : null;
   // settled 답 재생. 오류는 throw 전파 — 호출부가 failCloseError 로 닫는다(fail-close).
-  // consumed: 이 worker 가 canonical 재생 전에 이미 소비한 LLM 토큰(mark/settle CAS 패자
-  // 경로) — 재생 로그에 합산 기록해 소비량 유실을 막는다 (삼순 5차 NO-GO-②).
-  const replayFromStore = async (consumed?: LlmResult | null): Promise<QaResult | null> => {
+  // consumed/observation: 이 worker 가 canonical 재생 전에 이미 소비한 LLM 토큰과
+  // 폐기 관측(mark/settle CAS 패자 경로) — 재생 로그에 함께 기록해 소비량·관측
+  // 유실을 막는다 (삼순 5·6차 NO-GO — 토큰만 보존하면 ragAttemptPath·ragDiscardReason·
+  // numeric 2칸이 유실되어 폐기 분모 계측이 깨진다).
+  const replayFromStore = async (
+    consumed?: LlmResult | null,
+    observation?: ReturnType<typeof ragObservation> | null,
+  ): Promise<QaResult | null> => {
     if (!deps.verifiedRagAnswers || !verifiedKey) return null;
     const replayedAnswer = await deps.verifiedRagAnswers.get(verifiedKey);
     if (!replayedAnswer) return null;
@@ -4167,6 +4172,7 @@ async function answerPlayerDescriptiveQuestion(
       userId, question, questionNorm, matchPath: "rag", answer,
       inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
       toneCompliant: replayedAnswer.toneCompliant,
+      ...(observation ?? {}),
     });
     return { status: 200, answer, source: "rag", remaining, sourceUrl: replaySourceUrl };
   };
@@ -4364,7 +4370,7 @@ async function answerPlayerDescriptiveQuestion(
         // (소비 토큰 합산 기록)해 2답 분기를 막고, 없으면 시스템 오류로 닫는다 —
         // 양쪽 모두 consumed+observation 보존 (5차 NO-GO-②, throw 포함 = NO-GO-③).
         try {
-          const canonical = await replayFromStore(llm);
+          const canonical = await replayFromStore(llm, observation);
           if (canonical) return canonical;
         } catch {
           return failCloseError(llm, observation);
@@ -4395,6 +4401,8 @@ async function answerPlayerDescriptiveQuestion(
   // **내 생성답을 버리고 canonical 을 재조회해 반환**한다(응답 결정론, 삼순 2차 NO-GO).
   // settle 오류는 fail-close — 내 답이 canonical 인지 모른 채 발송하지 않는다.
   if (deps.verifiedRagAnswers && verifiedKey) {
+    // grounded 관측 — put throw·CAS 패자 종결에도 소비 토큰과 함께 보존한다 (6차 NO-GO).
+    const groundedObservation = ragObservation("player", question, validated);
     let settledAsCanonical: boolean;
     try {
       settledAsCanonical = await deps.verifiedRagAnswers.put(verifiedKey, {
@@ -4404,19 +4412,20 @@ async function answerPlayerDescriptiveQuestion(
       }, replayOwnerToken ?? undefined);
     } catch {
       await releaseReplayClaim();
-      return failCloseError();
+      // 🔴 put throw 는 LLM 을 이미 소비한 뒤다 — 무인자 종결은 토큰·관측 유실 (6차 NO-GO-②).
+      return failCloseError(llm, groundedObservation);
     }
     if (!settledAsCanonical && deps.verifiedRagAnswers.claim) {
       // CAS 패배 — lease 인수된 새 winner 가 먼저 settle 했다. canonical 을 재생한다
-      // (이 worker 가 소비한 토큰은 재생 로그에 합산 — 5차 NO-GO-②와 같은 축).
+      // (이 worker 가 소비한 토큰·관측은 재생 로그에 합산 — 5·6차 NO-GO 동일 축).
       try {
-        const canonical = await replayFromStore(llm);
+        const canonical = await replayFromStore(llm, groundedObservation);
         if (canonical) return canonical;
       } catch {
-        return failCloseError(llm);
+        return failCloseError(llm, groundedObservation);
       }
       // canonical 도 없다(새 winner 가 아직 생성 중) — 내 답을 보내면 그 답과 갈린다. fail-close.
-      return failCloseError(llm);
+      return failCloseError(llm, groundedObservation);
     }
   }
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
