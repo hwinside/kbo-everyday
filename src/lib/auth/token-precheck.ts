@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { User } from "@supabase/supabase-js";
 
 // ---------------------------------------------------------------------------
 // Local token precheck + dead-token negative cache (pure logic, no Supabase
@@ -100,14 +99,21 @@ const DEAD_TOKEN_ERROR_CODES = new Set([
   "user_banned",
 ]);
 
-type GetUserFn = (
+/** Injected verifier. Generic over the user shape so the caller can return a
+ * narrow projection (see verified-user.ts `VerifiedUser`) instead of the full
+ * supabase `User` — narrowing is what makes tsc prove no route reads a field
+ * the local-claims path cannot supply. */
+type VerifyFn<TUser> = (
   token: string,
-) => Promise<{ data: { user: User | null }; error: { status?: number; code?: string } | null }>;
+) => Promise<{ data: { user: TUser | null }; error: { status?: number; code?: string } | null }>;
 
 // Single-flight: concurrent verifications of the SAME token share one
 // in-flight Supabase call instead of each firing /auth/v1/user (a burst of
 // parallel requests from one stale client was the observed pattern).
-const inFlight = new Map<string, Promise<User | null>>();
+// Keyed by token hash; the stored promise's user type is whatever the caller
+// injected (one verifier per token in practice — the app has a single
+// verifyAccessToken entry point).
+const inFlight = new Map<string, Promise<unknown>>();
 
 /** Test hook: reset single-flight state between smoke scenarios. */
 export function _clearInFlight(): void {
@@ -115,17 +121,17 @@ export function _clearInFlight(): void {
 }
 
 /** Core verifier with an injectable Supabase call (unit-testable). */
-export async function verifyAccessTokenWith(
-  getUserFn: GetUserFn,
+export async function verifyAccessTokenWith<TUser>(
+  getUserFn: VerifyFn<TUser>,
   token: string,
   nowMs = Date.now(),
-): Promise<User | null> {
+): Promise<TUser | null> {
   if (!token) return null;
   if (!passesLocalPrecheck(token, nowMs)) return null;
   if (isKnownDeadToken(token, nowMs)) return null;
 
   const key = tokenKey(token);
-  const existing = inFlight.get(key);
+  const existing = inFlight.get(key) as Promise<TUser | null> | undefined;
   if (existing) return existing;
 
   const task = (async () => {

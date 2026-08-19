@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { verifyAccessToken } from "@/lib/auth/verified-user";
+import { verifyAccessTokenLive } from "@/lib/auth/verified-user";
 import { NextRequest, NextResponse } from "next/server";
 
 const WELCOME_MESSAGE = `안녕하세요, 크보팬 운영팀입니다 ⚾
@@ -31,8 +31,13 @@ export async function POST(request: NextRequest) {
   try {
     const admin = getSupabaseAdmin();
 
-    // 토큰으로 유저 검증
-    const user = await verifyAccessToken(token);
+    // 토큰으로 유저 검증.
+    // ⚠️ 여기만 Live(서버 왕복) 검증을 쓴다 — 아래 가입일 컷오프가 auth 유저의
+    // `created_at`을 필요로 하는데, 이 값은 JWT claims에 없다. 로컬 검증으로
+    // 바꾸면 created_at이 undefined가 되어 컷오프 조건이 통째로 falsy가 되고
+    // → 기존 유저 전원에게 환영 DM이 발송된다. 신규 가입 시 1회만 호출되는
+    // 저빈도 경로라 왕복 1회를 유지해도 CPU 영향이 없다.
+    const user = await verifyAccessTokenLive(token);
     if (!user) {
       return NextResponse.json({ ok: false }, { status: 401 });
     }
@@ -44,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     // 가입일 기준: 배포 이후 가입한 유저에게만 발송 (기존 유저 오발송 방지)
     const DEPLOY_DATE = process.env.WELCOME_DM_CUTOFF || "2026-04-08T00:00:00Z";
-    const userCreatedAt = user.created_at;
+    const userCreatedAt = user.createdAt;
     if (userCreatedAt && new Date(userCreatedAt) < new Date(DEPLOY_DATE)) {
       return NextResponse.json({ ok: true, skipped: true, reason: "existing_user" });
     }

@@ -1,7 +1,27 @@
-import type { User } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { verifyAccessTokenWith } from "@/lib/auth/token-precheck";
+
+/** The identity fields API routes are allowed to read off a verified token.
+ *
+ * Deliberately NARROW (not supabase `User`): the local-claims path below can
+ * only supply what the JWT itself carries. Typing the return as the full
+ * `User` would let a route read e.g. `user.created_at` — a field that is
+ * present on the server-verified path and silently `undefined` on the local
+ * path. Narrowing makes tsc, not a reviewer, prove no such read exists.
+ * Adding a field here requires checking the JWT actually carries it. */
+export interface VerifiedUser {
+  id: string;
+  email: string | null;
+}
+
+/** Identity fields that ONLY the server-authoritative path can supply, because
+ * they live on the auth user row rather than in the JWT. Separate type so a
+ * route needing one of these cannot compile against the local-claims path. */
+export interface LiveVerifiedUser extends VerifiedUser {
+  /** auth.users.created_at (ISO). Not a JWT claim. */
+  createdAt: string | null;
+}
 
 function getBearerToken(request: Request): string {
   const authHeader = request.headers.get("authorization") || "";
@@ -9,17 +29,67 @@ function getBearerToken(request: Request): string {
   return match?.[1]?.trim() || "";
 }
 
-/** Verify a Supabase access token against Auth, with local precheck and
- * dead-token caching (see token-precheck.ts for why). Returns the user or
- * null. Drop-in replacement for direct `adminClient.auth.getUser(token)`
- * calls in API routes. */
-export async function verifyAccessToken(token: string): Promise<User | null> {
+/** Verify a Supabase access token, with local precheck and dead-token caching
+ * (see token-precheck.ts for why).
+ *
+ * Verification goes through `auth.getClaims()`, which verifies the JWT
+ * signature LOCALLY against the project's JWKS when the signing key is
+ * asymmetric (this project: ES256 `in_use`, HS256 only `previously_used`).
+ * That removes one GoTrue `/auth/v1/user` round trip per authenticated API
+ * request — the observed load was `/user` = 94.8% of all Auth traffic, called
+ * from Vercel server-side, because this helper backs 23 API routes.
+ *
+ * auth-js falls back to a server `getUser()` call by itself when the token is
+ * HS256-signed, has no `kid`, or WebCrypto is unavailable — so a signing-key
+ * rollback degrades to the old behaviour instead of failing open.
+ *
+ * ⚠️ TRADE-OFF — revocation latency. Local verification proves the token was
+ * issued by this project and is unexpired; it CANNOT see that the session was
+ * signed out, or the user deleted/banned, after issuance. Such a token stays
+ * accepted until it expires (`jwt_exp` = 3600s). The server path had no such
+ * lag. This is accepted here because every caller is an ordinary
+ * user-scoped route; anything that must observe revocation immediately must
+ * call {@link verifyAccessTokenLive} instead. */
+export async function verifyAccessToken(token: string): Promise<VerifiedUser | null> {
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
   const adminClient = getSupabaseAdmin();
-  return verifyAccessTokenWith((t) => adminClient.auth.getUser(t), token);
+  return verifyAccessTokenWith<VerifiedUser>(async (t) => {
+    const { data, error } = await adminClient.auth.getClaims(t);
+    const claims = data?.claims;
+    // `sub` is the user id. A verified JWT without one is malformed — treat as
+    // unauthenticated rather than inventing an identity.
+    const sub = typeof claims?.sub === "string" ? claims.sub : "";
+    if (error || !sub) {
+      return { data: { user: null }, error: error as { status?: number; code?: string } | null };
+    }
+    const email = typeof claims?.email === "string" ? claims.email : null;
+    return { data: { user: { id: sub, email } }, error: null };
+  }, token);
 }
 
-export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: User; token: string } | null> {
+/** Server-authoritative verification — one GoTrue round trip, sees sign-out /
+ * deletion / ban immediately. Use ONLY where that immediacy is required;
+ * `verifyAccessToken` is the default because this path is what saturated CPU. */
+export async function verifyAccessTokenLive(token: string): Promise<LiveVerifiedUser | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const adminClient = getSupabaseAdmin();
+  return verifyAccessTokenWith<LiveVerifiedUser>(async (t) => {
+    const { data, error } = await adminClient.auth.getUser(t);
+    if (error || !data.user) return { data: { user: null }, error };
+    return {
+      data: {
+        user: {
+          id: data.user.id,
+          email: data.user.email ?? null,
+          createdAt: data.user.created_at ?? null,
+        },
+      },
+      error: null,
+    };
+  }, token);
+}
+
+export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: VerifiedUser; token: string } | null> {
   const token = getBearerToken(request);
   if (!token) return null;
 

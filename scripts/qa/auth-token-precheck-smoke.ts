@@ -75,6 +75,113 @@ function stubGetUser(
   };
 }
 
+/** Replace comment bodies with spaces, keeping string offsets identical.
+ * Length-preserving so callers can still report positions against the original. */
+export function blankComments(src: string): string {
+  const out = src.split("");
+  let i = 0;
+  let mode: "code" | "line" | "block" | "str" = "code";
+  let quote = "";
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (mode === "code") {
+      if (c === "/" && n === "/") {
+        mode = "line";
+        out[i] = " ";
+        out[i + 1] = " ";
+        i += 2;
+        continue;
+      }
+      if (c === "/" && n === "*") {
+        mode = "block";
+        out[i] = " ";
+        out[i + 1] = " ";
+        i += 2;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === "`") {
+        mode = "str";
+        quote = c;
+        i++;
+        continue;
+      }
+      i++;
+      continue;
+    }
+    if (mode === "str") {
+      if (c === "\\") {
+        i += 2;
+        continue;
+      }
+      if (c === quote) mode = "code";
+      i++;
+      continue;
+    }
+    if (mode === "line") {
+      if (c === "\n") mode = "code";
+      else out[i] = " ";
+      i++;
+      continue;
+    }
+    // block
+    if (c === "*" && n === "/") {
+      out[i] = " ";
+      out[i + 1] = " ";
+      mode = "code";
+      i += 2;
+      continue;
+    }
+    if (c !== "\n") out[i] = " ";
+    i++;
+  }
+  return out.join("");
+}
+
+/** True when EVERY `<client>.auth.<method>(` call in `src` lexically sits
+ * inside a `verifyAccessTokenWith(...)` argument list. Brace/paren matched so
+ * a bypass added anywhere in the file — before, after, or between the guarded
+ * calls — is caught, unlike a bare "does the string appear" check. */
+export function authCallsAllInsideGuard(rawSrc: string): boolean {
+  // Blank out comments FIRST, preserving offsets, so prose like
+  // "goes through `auth.getClaims()`" in a doc block is not judged as a call
+  // site. Replacing with spaces (not deleting) keeps every index stable.
+  const src = blankComments(rawSrc);
+  const guardRanges: Array<[number, number]> = [];
+  // allow an optional generic argument list: verifyAccessTokenWith<Foo>(
+  const guardRe = /verifyAccessTokenWith\s*(?:<[^>()]*>)?\s*\(/g;
+  let g: RegExpExecArray | null;
+  while ((g = guardRe.exec(src)) !== null) {
+    const open = g.index + g[0].length - 1; // index of '('
+    let depth = 0;
+    let end = -1;
+    for (let i = open; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end === -1) return false; // unbalanced — refuse to judge
+    guardRanges.push([open, end]);
+  }
+  const authRe = /\bauth\.(getUser|getClaims|getSession)\s*\(/g;
+  let a: RegExpExecArray | null;
+  let sawAuthCall = false;
+  while ((a = authRe.exec(src)) !== null) {
+    sawAuthCall = true;
+    const at = a.index;
+    if (!guardRanges.some(([s, e]) => at > s && at < e)) return false;
+  }
+  // A file with no auth call at all is not "safe", it is unexpected — the
+  // verifier must exist. Fail rather than silently green.
+  return sawAuthCall && guardRanges.length > 0;
+}
+
 async function main() {
   extractAccessTokenFromCookies = (await import("../../src/lib/auth/verified-user"))
     .extractAccessTokenFromCookies;
@@ -232,11 +339,34 @@ async function main() {
         rel,
       );
     }
-    // 공용 verified-user.ts 자체는 가드 경유가 유일한 auth.getUser 호출점이어야 한다
+    // 공용 verified-user.ts 자체는 가드 경유가 유일한 auth 호출점이어야 한다.
+    // 문자열 존재 확인(구 T7c)은 약했다 — `verifyAccessTokenWith(` 가 파일 어딘가
+    // 있기만 하면, 그 밖에서 adminClient.auth.getUser(token) 를 직접 부르는 우회
+    // 경로를 추가해도 통과했다. 이제 각 auth 호출의 위치가 실제로 wrapper 인자
+    // 범위 안(괄호 매칭)인지 검사한다.
     const vu = readFileSync(join(root, "src/lib/auth/verified-user.ts"), "utf8");
     assert(
-      "T7c verified-user routes getUser through verifyAccessTokenWith",
-      /verifyAccessTokenWith\(/.test(vu),
+      "T7c verified-user routes every auth call through verifyAccessTokenWith",
+      authCallsAllInsideGuard(vu),
+    );
+    // 로컬 claims 경로는 실효성이 핵심 — getClaims 를 쓰지 않으면 이 PR 의
+    // 목적(‑1 GoTrue 왕복/요청)이 사라진다. 조용한 회귀 차단.
+    assert(
+      "T7c2 default verifier uses local getClaims (not a server round trip)",
+      /getClaims\(/.test(vu),
+    );
+    // 즉시 폐기 반영이 필요한 경로용 탈출구가 살아 있어야 한다.
+    assert(
+      "T7c3 live (server-authoritative) verifier exists for revocation-sensitive routes",
+      /export async function verifyAccessTokenLive\b/.test(vu) && /auth\.getUser\(/.test(vu),
+    );
+    // welcome-dm 은 auth.users.created_at(=JWT 에 없는 값)으로 “기존 유저 오발송
+    // 방지” 컷오프를 건다. 로컬 claims 경로로 바꾸면 값이 undefined 가 되어 컷오프
+    // 조건이 통째로 falsy → 전체 기존 유저에게 환영 DM 이 나간다. 반드시 Live.
+    const welcome = readFileSync(join(root, "src/app/api/welcome-dm/route.ts"), "utf8");
+    assert(
+      "T7e welcome-dm uses the live verifier (needs auth.users.created_at cutoff)",
+      /verifyAccessTokenLive\(/.test(welcome) && !/\bverifyAccessToken\(/.test(welcome),
     );
     // 쿠키 fallback은 순수 쿠키 파싱만 — auth-js 클라이언트 금지(getSession은
     // 만료 임박 시 /auth/v1/token refresh를 내보낸다 — 삼순 2차 리뷰)
