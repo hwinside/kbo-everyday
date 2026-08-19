@@ -432,13 +432,47 @@ async function main() {
       `Q: 유니폼 디자인·선호 서술을 소속 귀속으로 오판했다: ${sentence}`,
     );
   }
-  // 실제 착용은 귀속이다.
+  // 실제 착용은 귀속이다 — 단, **현재형만** (과거형은 이력 서술이라 S축에서 GREEN 으로 본다).
   const worn = detectIdentityConflict(
-    `${teamA.name} 선수는 두산의 유니폼을 입고 뛰었습니다.`, teamIdentity, players,
+    `${teamA.name} 선수는 두산 유니폼을 입고 뛰고 있습니다.`, teamIdentity, players,
   );
-  assert.ok(worn, "Q2: 다른 팀 유니폼 착용(소속 귀속)이 미검출");
+  assert.ok(worn, "Q2: 다른 팀 유니폼 착용 현재형(소속 귀속)이 미검출");
   assert.equal(worn!.field, "team", "Q2: field 가 team 이 아니다");
-  pass("Q 유니폼 디자인·선호 통과 + 착용 검출");
+  pass("Q 유니폼 디자인·선호 통과 + 착용 현재형 검출");
+
+  // ── S. 시간축 — 과거 이력은 오귀속이 아니다 (삼순 2026-08-19 8차, 실측 재현 5/5) ─
+  //   선수 문서에서 전 소속 이력은 흔하다. 과거형(이었/뛰었/입었)을 귀속으로 세면
+  //   정상 이력 답변이 unsure 로 죽는다. 반대로 현재형 무의형(`소속 선수입니다`)은
+  //   조사 없이도 흔한 오귀속 형태라 반드시 잡아야 한다. 양방향으로 본다.
+  const PAST_HISTORY_GREEN = [
+    `${teamA.name} 선수는 과거 두산 소속이었고 현재 ${teamA.team} 소속입니다.`,
+    `${teamA.name} 선수는 과거 두산에서 뛰었습니다.`,
+    `${teamA.name} 선수는 두산 유니폼을 입고 뛰었습니다.`,
+    `${teamA.name} 선수는 두산에서 활약했습니다.`,
+  ];
+  for (const sentence of PAST_HISTORY_GREEN) {
+    assert.equal(
+      detectIdentityConflict(sentence, teamIdentity, players), null,
+      `S: 과거 소속 이력을 오귀속으로 죽였다 — 정상 답변 과잉 차단: ${sentence}`,
+    );
+  }
+  const PRESENT_BARE_RED = [
+    `${teamA.name} 선수는 두산 소속 선수입니다.`,
+    `${teamA.name} 선수는 두산 소속 투수입니다.`,
+  ];
+  for (const sentence of PRESENT_BARE_RED) {
+    const hit = detectIdentityConflict(sentence, teamIdentity, players);
+    assert.ok(hit, `S2: 현재형 무의형 소속 오귀속이 미검출: ${sentence}`);
+    assert.equal(hit!.field, "team", `S2: field 가 team 이 아니다: ${sentence}`);
+    assert.equal(hit!.mentioned, "두산", `S2: 검출 구단이 두산이 아니다: ${sentence}`);
+  }
+  // 자기 소속 무의형은 당연히 통과해야 한다.
+  assert.equal(
+    detectIdentityConflict(`${teamA.name} 선수는 ${teamA.team} 소속 투수입니다.`, teamIdentity, players),
+    null,
+    "S3: 자기 소속 무의형을 오귀속으로 세었다",
+  );
+  pass("S 시간축 — 과거 이력 GREEN + 현재 무의형 RED 양방향");
 
   // ── R. 정답이 오답을 가리면 안 된다 — 혼합 서술 양방향 (삼순 2026-08-19 6차) ──
   //   "투수이며 내야수입니다" 처럼 정답과 오답이 섞이면 유저가 보는 건 오답 쪽이다.

@@ -248,7 +248,7 @@ const MUTATIONS = [
     // 🔴 삼순 6차: `의 유니폼` 만으로 소속을 세면 디자인·선호 서술이 오귀속으로 죽는다.
     id: "M23 유니폼 언급만으로 소속 판정",
     file: PIPELINE,
-    find: `    + "|(?:의\\\\s+)?유니폼을\\\\s+입(?:고\\\\s+(?:뛰|활약|경기)|었|었습니다)"`,
+    find: `    + "|(?:의\\\\s+)?유니폼을\\\\s+입고\\\\s+(?:뛰|활약하)고\\\\s+있"`,
     // 착용 술어로 닫히는지 보지 않고 `유니폼` 등장만 소속으로 세던 결함을 재현한다.
     replace: `    + "|(?:의\\\\s+)?유니폼"`,
     expect: "유니폼 디자인·선호 서술을 소속 귀속으로 오판했다",
@@ -280,6 +280,22 @@ const MUTATIONS = [
     expect: "정답 소속이 오답 소속을 가렸다",
   },
   {
+    // 🔴 삼순 8차 false-positive: 과거형을 귀속으로 세면 전 소속 이력이 unsure 로 죽는다.
+    id: "M26 과거형을 귀속으로 판정(시간축 붕괴)",
+    file: PIPELINE,
+    find: `const TEAM_COPULA = "(?:입니다|이다|이며|이고|예요|이에요)";`,
+    replace: `const TEAM_COPULA = "(?:입니다|이다|이며|이고|예요|이에요|이었|였)";`,
+    expect: "과거 소속 이력을 오귀속으로 죽였다",
+  },
+  {
+    // 🔴 삼순 8차 false-negative: `소속의 투수` 만 허용하면 무의형 `소속 선수입니다` 가 샌다.
+    id: "M27 무의형 소속 미검출(의 필수화)",
+    file: PIPELINE,
+    find: `    + \`(?:구단\\\\s+)?소속(?:의)?(?:\\\\s+(?:투수|포수|내야수|외야수|야수|선수))?\\\\s*\${TEAM_COPULA}\``,
+    replace: `    + \`(?:구단\\\\s+)?소속(?:의\\\\s+(?:투수|포수|내야수|외야수|야수|선수))?\\\\s*\${TEAM_COPULA}\``,
+    expect: "현재형 무의형 소속 오귀속이 미검출",
+  },
+  {
     id: "M7 미결속 kboId 빈 블록 생성",
     file: PIPELINE,
     find: `  if (!player) return null;`,
@@ -295,7 +311,7 @@ const MUTATIONS = [
  *   실제로 M13 블록 재작성 때 M1~M6·M8~M12를 날리고도 남은 11/11이 PASS 해 누락을 못 봤다.
  *   따라서 실행 전에 고정 기대 ID M1~M25와 **완전일치**하고 중복이 0인지 먼저 증명한다.
  */
-const EXPECTED_MUTATION_IDS = Array.from({ length: 25 }, (_, index) => `M${index + 1}`);
+const EXPECTED_MUTATION_IDS = Array.from({ length: 27 }, (_, index) => `M${index + 1}`);
 
 function mutationIdOf(mutation) {
   const match = /^M\d+\b/.exec(mutation.id);
@@ -339,7 +355,7 @@ try {
   console.error(`❌ ${(error).message}`);
   process.exit(1);
 }
-console.log("PASS mutation manifest exact M1~M25 + duplicate 0");
+console.log(`PASS mutation manifest exact M1~M${EXPECTED_MUTATION_IDS.length} + duplicate 0`);
 
 function runGate() {
   const res = spawnSync("npm", ["run", "--silent", "qa:genius-rag-identity"], {
