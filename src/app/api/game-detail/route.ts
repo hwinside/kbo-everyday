@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { jsonWithETag } from "@/lib/http/conditional";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import {
@@ -20,6 +20,14 @@ export {
 };
 export type { BatterRecord, GameDetailResponse, LineupEntry, PitcherRecord };
 
+function scheduleDeferred(effect: () => Promise<void>): void {
+  try {
+    after(() => effect());
+  } catch {
+    void effect().catch(() => undefined);
+  }
+}
+
 export async function GET(req: NextRequest) {
   // Bounded fallback의 shared absolute deadline 계약은 service 구현에서 유지된다: signal: deadlineSignal
   const gameId = req.nextUrl.searchParams.get("gameId");
@@ -38,6 +46,9 @@ export async function GET(req: NextRequest) {
     seasonId: req.nextUrl.searchParams.get("seasonId") || undefined,
     overrideSrId: req.nextUrl.searchParams.get("srId"),
     sourceAtMs: Date.now(),
+    onDeferredEffect: (effect) => {
+      scheduleDeferred(() => effect());
+    },
   });
 
   return jsonWithETag(req, response);

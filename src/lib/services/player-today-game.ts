@@ -1,7 +1,10 @@
 import { fetchGames } from "@/lib/crawler/kbo-api";
 import { getKSTToday } from "@/lib/utils/date-kst";
 import { getTeamById } from "@/lib/constants/teams";
-import { getGameDetailRouteResult } from "@/lib/services/game-detail";
+import {
+  getGameDetailRouteResult,
+  type GameDetailDeferredEffect,
+} from "@/lib/services/game-detail";
 
 interface BatterLine {
   ab: number;
@@ -94,6 +97,7 @@ export async function getPlayerTodayGameRouteResult(params: {
   teamId: number;
   name: string;
   pos?: string;
+  onDeferredEffect?: (effect: GameDetailDeferredEffect) => void;
 }): Promise<PlayerTodayGameResult> {
   const teamId = params.teamId;
   const name = params.name.trim();
@@ -118,7 +122,10 @@ export async function getPlayerTodayGameRouteResult(params: {
       return result(HIDDEN(game.status, type), { "Cache-Control": "s-maxage=60" });
     }
 
-    const detail = await getGameDetailRouteResult({ gameId: game.gameId }).catch(() => null);
+    const detail = await getGameDetailRouteResult({
+      gameId: game.gameId,
+      onDeferredEffect: params.onDeferredEffect,
+    }).catch(() => null);
     const box: DetailBox | null = detail?.boxScore ?? null;
     if (!box) return result(HIDDEN(game.status, type), { "Cache-Control": "s-maxage=20" });
 

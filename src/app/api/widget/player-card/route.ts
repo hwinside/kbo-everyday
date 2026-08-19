@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { resolvePlayer } from "@/lib/utils/resolve-player";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import heroApprovedList from "@/lib/constants/hero-approved-kboids.json";
@@ -102,6 +102,14 @@ function todayChips(today: PlayerTodayGameResponse): string[] {
   return [];
 }
 
+function scheduleDeferred(effect: () => Promise<void>): void {
+  try {
+    after(() => effect());
+  } catch {
+    void effect().catch(() => undefined);
+  }
+}
+
 export async function GET(req: NextRequest) {
   const rawId = req.nextUrl.searchParams.get("id");
   if (!rawId) return NextResponse.json({ error: "id required" }, { status: 400 });
@@ -113,6 +121,7 @@ export async function GET(req: NextRequest) {
 
   const isPitcher = roster.position === "투수";
   const pos = isPitcher ? "투수" : "타자";
+  const deferredEffects: Array<() => Promise<void>> = [];
 
   const [stats, logsRes, league, today] = await Promise.all([
     (async () => {
@@ -142,7 +151,14 @@ export async function GET(req: NextRequest) {
     })(),
     (async () => {
       try {
-        const result = await getPlayerTodayGameRouteResult({ teamId: roster.teamId, name: roster.name, pos });
+        const result = await getPlayerTodayGameRouteResult({
+          teamId: roster.teamId,
+          name: roster.name,
+          pos,
+          onDeferredEffect: (effect) => {
+            deferredEffects.push(effect);
+          },
+        });
         return result.body as PlayerTodayGameResponse;
       } catch {
         return null;
@@ -186,6 +202,9 @@ export async function GET(req: NextRequest) {
   );
 
   const backNo = roster.backNo ? Number(roster.backNo) : null;
+  for (const effect of deferredEffects) {
+    scheduleDeferred(() => effect());
+  }
 
   return NextResponse.json(
     {

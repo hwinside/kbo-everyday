@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-const ROOT = join(new URL("../..", import.meta.url).pathname);
 
 const WIRING_CONTRACTS = [
   [
@@ -38,6 +38,34 @@ const PURITY_TARGETS = [
   "src/lib/services/player-game-logs.ts",
   "src/lib/services/stats.ts",
   "src/lib/services/player-today-game.ts",
+];
+
+const DEFERRED_ROUTE_CONTRACTS = [
+  [
+    "src/app/api/game-detail/route.ts",
+    [
+      /import\s+\{\s*NextRequest,\s*NextResponse,\s*after\s*\}\s+from\s+"next\/server"/,
+      /function\s+scheduleDeferred\s*\(/,
+      /after\(\(\)\s*=>\s*effect\(\)\)/,
+      /onDeferredEffect:\s*\(effect\)\s*=>\s*\{\s*scheduleDeferred\(\(\)\s*=>\s*effect\(\)\);\s*\}/s,
+    ],
+  ],
+  [
+    "src/app/api/player-today-game/route.ts",
+    [
+      /import\s+\{\s*NextRequest,\s*NextResponse,\s*after\s*\}\s+from\s+"next\/server"/,
+      /onDeferredEffect:\s*\(effect\)\s*=>\s*\{\s*scheduleDeferred\(\(\)\s*=>\s*effect\(\)\);\s*\}/s,
+    ],
+  ],
+  [
+    "src/app/api/widget/player-card/route.ts",
+    [
+      /import\s+\{\s*NextRequest,\s*NextResponse,\s*after\s*\}\s+from\s+"next\/server"/,
+      /const\s+deferredEffects:\s+Array<\(\)\s*=>\s*Promise<void>>\s*=\s*\[\]/,
+      /onDeferredEffect:\s*\(effect\)\s*=>\s*\{\s*deferredEffects\.push\(effect\);\s*\}/s,
+      /for\s*\(const\s+effect\s+of\s+deferredEffects\)\s*\{\s*scheduleDeferred\(\(\)\s*=>\s*effect\(\)\);\s*\}/s,
+    ],
+  ],
 ];
 
 function blankCommentsPreserveOffsets(source) {
@@ -104,8 +132,7 @@ function blankCommentsPreserveOffsets(source) {
 }
 
 function readSource(rel, mutate) {
-  const abs = join(ROOT, rel);
-  let source = readFileSync(abs, "utf8");
+  let source = readFileSync(rel, "utf8");
   if (mutate) source = mutate(rel, source);
   return blankCommentsPreserveOffsets(source);
 }
@@ -128,21 +155,21 @@ function selfFetchMatches(source) {
   return matches;
 }
 
-function checkParity(source) {
-  const failures = [];
-  if (/\bNextResponse\b/.test(source)) {
-    failures.push("NextResponse token 잔존");
+function runParityHarness() {
+  try {
+    execFileSync("npx", ["tsx", "scripts/qa/self-fetch-internal-parity.ts"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 240000,
+    });
+    return [];
+  } catch (error) {
+    const output = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+    return output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("[P]"));
   }
-  if (/return\s+HIDDEN\s*\(/.test(source)) {
-    failures.push("순수 구조 래퍼(result/body) 없이 HIDDEN 직접 반환");
-  }
-  if (!/function\s+result\s*\(/.test(source)) {
-    failures.push("순수 응답 래퍼 result() 누락");
-  }
-  if (!/return\s+result\s*\(/.test(source)) {
-    failures.push("result(...) 반환 분기 누락");
-  }
-  return failures;
 }
 
 function check({ mutate } = {}) {
@@ -175,80 +202,164 @@ function check({ mutate } = {}) {
     }
   }
 
-  const paritySource = readSource("src/lib/services/player-today-game.ts", mutate);
-  for (const msg of checkParity(paritySource)) {
-    failures.push(`[P] src/lib/services/player-today-game.ts: ${msg}`);
+  for (const [rel, regexes] of DEFERRED_ROUTE_CONTRACTS) {
+    const source = readSource(rel, mutate);
+    for (const re of regexes) {
+      if (!re.test(source)) failures.push(`[P] ${rel}: deferred parity 누락 ${re}`);
+    }
   }
 
+  failures.push(...runParityHarness());
   return failures;
 }
 
-if (process.argv.includes("--selftest")) {
+function runSelfTest() {
+  const targets = [
+    "src/lib/services/player-today-game.ts",
+    "src/app/api/widget/player-card/route.ts",
+    "src/lib/services/player-stats.ts",
+    "src/app/api/player-today-game/route.ts",
+    "src/app/api/game-detail/route.ts",
+  ];
+  const backupDir = mkdtempSync(join(tmpdir(), "self-fetch-internal-gate-"));
+  const backups = new Map();
+  for (const file of targets) {
+    const backup = join(backupDir, file.replaceAll("/", "__"));
+    copyFileSync(file, backup);
+    backups.set(file, backup);
+  }
+
+  const restoreAll = () => {
+    for (const [file, backup] of backups) copyFileSync(backup, file);
+  };
+
+  const mutateFile = (file, from, to, label) => {
+    const source = readFileSync(file, "utf8");
+    if (!source.includes(from)) {
+      throw new Error(`${label}: mutation anchor not found in ${file}`);
+    }
+    writeFileSync(file, source.replace(from, to));
+  };
+
+  const runGate = () => check();
+  const base = runGate();
+  if (base.length > 0) {
+    console.error("BASE NOT GREEN:");
+    for (const failure of base) console.error("  " + failure);
+    restoreAll();
+    rmSync(backupDir, { recursive: true, force: true });
+    process.exit(1);
+  }
+
   const mutations = [
     [
       "M1 H축 player-today-game self-fetch 주입",
-      (rel, source) =>
-        rel === "src/lib/services/player-today-game.ts"
-          ? `${source}\nconst __mut1 = () => fetch(\"https://keubo.fan/api/game-detail?gameId=20260101LGOB0\");\n`
-          : source,
+      () => mutateFile(
+        "src/lib/services/player-today-game.ts",
+        "const HIDDEN = (",
+        "const __mut1 = () => fetch(\"https://keubo.fan/api/game-detail?gameId=20260101LGOB0\");\n\nconst HIDDEN = (",
+        "M1",
+      ),
       "[H]",
     ],
     [
       "M2 H축 widget self-fetch 주입",
-      (rel, source) =>
-        rel === "src/app/api/widget/player-card/route.ts"
-          ? `${source}\nconst __mut2 = () => fetch(\"/api/player-stats?id=x&pos=%ED%83%80%EC%9E%90\");\n`
-          : source,
+      () => mutateFile(
+        "src/app/api/widget/player-card/route.ts",
+        "function fmtAvg(n: number): string {",
+        "const __mut2 = () => fetch(\"/api/player-stats?id=x&pos=%ED%83%80%EC%9E%90\");\n\nfunction fmtAvg(n: number): string {",
+        "M2",
+      ),
       "[H]",
     ],
     [
       "M3 S축 purity 위반 재주입",
-      (rel, source) =>
-        rel === "src/lib/services/player-stats.ts"
-          ? `${source}\nexport { GET } from \"@/app/api/player-stats/route\";\n`
-          : source,
+      () => mutateFile(
+        "src/lib/services/player-stats.ts",
+        "const KBO_BASE = \"https://www.koreabaseball.com\";",
+        "import { NextResponse } from \"next/server\";\n\nconst KBO_BASE = \"https://www.koreabaseball.com\";",
+        "M3",
+      ),
       "[S]",
     ],
     [
-      "M4 P축 NextResponse 분기 재주입",
-      (rel, source) =>
-        rel === "src/lib/services/player-today-game.ts"
-          ? `${source}\nimport { NextResponse } from \"next/server\";\nasync function __mut4(){ return NextResponse.json({ ok: true }); }\n`
-          : source,
+      "M4 P축 status 변조",
+      () => mutateFile(
+        "src/lib/services/player-today-game.ts",
+        "        status: game.status,\n        isLive,\n        opponentName,\n        type,\n        batter: {",
+        "        status: \"scheduled\",\n        isLive,\n        opponentName,\n        type,\n        batter: {",
+        "M4",
+      ),
       "[P]",
     ],
     [
-      "M5 W축 service 호출 제거",
-      (rel, source) =>
-        rel === "src/app/api/player-today-game/route.ts"
-          ? source.replace("getPlayerTodayGameRouteResult(", "__removedRouteResult(")
-          : source,
+      "M5 P축 Cache-Control 변조",
+      () => mutateFile(
+        "src/lib/services/player-today-game.ts",
+        "const okHeaders = { \"Cache-Control\": \"s-maxage=20, stale-while-revalidate=40\" };",
+        "const okHeaders = { \"Cache-Control\": \"s-maxage=999, stale-while-revalidate=999\" };",
+        "M5",
+      ),
+      "[P]",
+    ],
+    [
+      "M6 P축 body 구조 변조",
+      () => mutateFile(
+        "src/lib/services/player-today-game.ts",
+        "onBase: row.hits + row.bb,",
+        "totalBases: row.hits + row.bb,",
+        "M6",
+      ),
+      "[P]",
+    ],
+    [
+      "M7 P축 game-detail deferred scheduler 제거",
+      () => mutateFile(
+        "src/app/api/game-detail/route.ts",
+        "      scheduleDeferred(() => effect());",
+        "      void effect;",
+        "M7",
+      ),
+      "[P]",
+    ],
+    [
+      "M8 W축 player-today-game service 호출 제거",
+      () => mutateFile(
+        "src/app/api/player-today-game/route.ts",
+        "getPlayerTodayGameRouteResult({",
+        "__removedRouteResult({",
+        "M8",
+      ),
       "[W]",
     ],
   ];
 
   let ok = true;
   for (const [name, mutate, prefix] of mutations) {
-    const failures = check({ mutate });
+    restoreAll();
+    mutate();
+    const failures = runGate();
     const red = failures.some((line) => line.startsWith(prefix));
     console.log(`${red ? "RED(기대대로 검출)" : "MISS(검출 실패)"} — ${name}`);
-    if (!red) ok = false;
+    if (!red) {
+      ok = false;
+      for (const failure of failures) console.log("  " + failure);
+    }
   }
 
-  const base = check();
-  if (base.length > 0) {
-    ok = false;
-    console.log("BASE NOT GREEN:");
-    for (const failure of base) console.log("  " + failure);
-  }
-
+  restoreAll();
+  rmSync(backupDir, { recursive: true, force: true });
   process.exit(ok ? 0 : 1);
 }
 
-const failures = check();
-if (failures.length > 0) {
-  console.error(`self-fetch-internal-gate FAIL (${failures.length}건)`);
-  for (const failure of failures) console.error("  " + failure);
-  process.exit(1);
+if (process.argv.includes("--selftest")) {
+  runSelfTest();
+} else {
+  const failures = check();
+  if (failures.length > 0) {
+    console.error(`self-fetch-internal-gate FAIL (${failures.length}건)`);
+    for (const failure of failures) console.error("  " + failure);
+    process.exit(1);
+  }
+  console.log("self-fetch-internal-gate PASS — wiring(W) · self-fetch(H) · purity(S) · parity(P) 충족");
 }
-console.log("self-fetch-internal-gate PASS — wiring(W) · self-fetch(H) · purity(S) · parity(P) 충족");

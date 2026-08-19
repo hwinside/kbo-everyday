@@ -121,6 +121,8 @@ interface DetailDegradationEvent {
   apiName: "kbo-game-detail" | "game-detail-dual-source-outage";
   reason: DegradationReason;
 }
+export type GameDetailDeferredEffect = () => Promise<void>;
+
 let degradationObserverForTest: ((event: DetailDegradationEvent) => void) | null = null;
 
 /** actual GET 관제 분기 회귀에서만 사용. production 호출부는 등록하지 않는다. */
@@ -592,25 +594,22 @@ function reportDetailDegradation(
   gameId: string,
   bothSourcesUnavailable: boolean,
   reason: DegradationReason,
+  onDeferredEffect?: (effect: GameDetailDeferredEffect) => void,
 ): void {
   const apiName = bothSourcesUnavailable ? "game-detail-dual-source-outage" : "kbo-game-detail";
   const policy = bothSourcesUnavailable
     ? { windowMinutes: 5, threshold: 1, cooldownMinutes: 10, leaseSeconds: 120 }
     : { windowMinutes: 5, threshold: 3, cooldownMinutes: 30, leaseSeconds: 120 };
   degradationObserverForTest?.({ apiName, reason });
-  try {
-    // route wrapper가 응답을 내보낸 뒤여도 관제는 best-effort 비동기로 이어간다.
-    void import("@/lib/monitoring/api-fallback-tracker").then(({ trackApiDegradation }) =>
-      trackApiDegradation(
-        apiName,
-        reason,
-        { errorMessage: `${gameId}: bounded game-detail fallback` },
-        policy,
-      ),
+  onDeferredEffect?.(async () => {
+    const { trackApiDegradation } = await import("@/lib/monitoring/api-fallback-tracker");
+    await trackApiDegradation(
+      apiName,
+      reason,
+      { errorMessage: `${gameId}: bounded game-detail fallback` },
+      policy,
     );
-  } catch {
-    // 직접 함수 호출 스모크처럼 Next request context가 없는 환경에서는 관제를 생략한다.
-  }
+  });
 }
 
 export async function getGameDetailRouteResult(params: {
@@ -618,6 +617,7 @@ export async function getGameDetailRouteResult(params: {
   seasonId?: string;
   overrideSrId?: string | null;
   sourceAtMs?: number;
+  onDeferredEffect?: (effect: GameDetailDeferredEffect) => void;
 }): Promise<GameDetailResponse | { error: string; gameId: string; status: "scheduled"; meta: null; linescore: null; lineup: null; boxScore: null }> {
   const sourceAtMs = params.sourceAtMs ?? Date.now();
   const gameId = params.gameId;
@@ -940,6 +940,7 @@ export async function getGameDetailRouteResult(params: {
         gameId,
         bothSourcesUnavailable,
         actualKboFailure ?? "schema-error",
+        params.onDeferredEffect,
       );
     }
 
