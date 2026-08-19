@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     searchParams.get("id"),
     searchParams.get("pos") ?? "",
   );
-  return NextResponse.json({ ...result.body, __injected: true }, {
+  return NextResponse.json(result.body, {
     status: result.status,
     headers: result.headers,
   });

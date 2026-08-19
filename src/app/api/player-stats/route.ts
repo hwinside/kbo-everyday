@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     req.nextUrl.searchParams.get("pos") || "타자",
   );
   return NextResponse.json(result.body, {
-    status: 200,
+    status: result.status,
     headers: result.headers,
   });
 }

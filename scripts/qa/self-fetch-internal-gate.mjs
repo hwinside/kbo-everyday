@@ -214,12 +214,17 @@ function check({ mutate } = {}) {
 }
 
 function runSelfTest() {
+  // 변이 대상 파일은 전부 백업 목록에 있어야 한다. 하나라도 빠지면 selftest 종료 후
+  // 변이가 워킹트리에 남고, 그대로 커밋되어 프로덕션 응답계약이 깨진다(#1257 실제 사고).
   const targets = [
     "src/lib/services/player-today-game.ts",
     "src/app/api/widget/player-card/route.ts",
     "src/lib/services/player-stats.ts",
     "src/app/api/player-today-game/route.ts",
     "src/app/api/game-detail/route.ts",
+    "src/app/api/player-stats/route.ts",
+    "src/app/api/stats/route.ts",
+    "src/app/api/player-game-logs/route.ts",
   ];
   const backupDir = mkdtempSync(join(tmpdir(), "self-fetch-internal-gate-"));
   const backups = new Map();
@@ -234,6 +239,9 @@ function runSelfTest() {
   };
 
   const mutateFile = (file, from, to, label) => {
+    if (!backups.has(file)) {
+      throw new Error(`${label}: ${file} 이 백업 목록(targets)에 없다 — 변이가 워킹트리에 남는다`);
+    }
     const source = readFileSync(file, "utf8");
     if (!source.includes(from)) {
       throw new Error(`${label}: mutation anchor not found in ${file}`);
@@ -418,6 +426,13 @@ function runSelfTest() {
   }
 
   restoreAll();
+  // 복원 검증: 변이 잔재가 워킹트리에 남으면 selftest 자체를 실패로 본다.
+  for (const [file, backup] of backups) {
+    if (readFileSync(file, "utf8") !== readFileSync(backup, "utf8")) {
+      console.error(`RESTORE FAILED — ${file} 에 변이 잔재가 남았다`);
+      ok = false;
+    }
+  }
   rmSync(backupDir, { recursive: true, force: true });
   process.exit(ok ? 0 : 1);
 }
