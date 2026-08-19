@@ -23,10 +23,12 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import type { User } from "@supabase/supabase-js";
 import {
   _clearDeadTokenCache,
   _clearInFlight,
+  _inFlightSize,
   decodeJwtExpMs,
   isKnownDeadToken,
   markTokenDead,
@@ -145,6 +147,77 @@ export function blankComments(src: string): string {
  * inside a `verifyAccessTokenWith(...)` argument list. Brace/paren matched so
  * a bypass added anywhere in the file — before, after, or between the guarded
  * calls — is caught, unlike a bare "does the string appear" check. */
+/**
+ * AST-based binding check (삼순 blocker⑤).
+ *
+ * The regex/brace version below judges the FILE, not the FUNCTION, so
+ * swapping the two implementations — default calls `getUser`, live calls
+ * `getClaims` — kept every assertion satisfied while inverting the meaning of
+ * the whole PR. It was also fooled by method names appearing inside string
+ * literals. Parsing with the TypeScript compiler removes both classes:
+ * strings are not call expressions, and each call is attributed to the
+ * function that lexically encloses it.
+ *
+ * Returns the set of `auth.<method>` calls found inside the named function.
+ */
+export function authCallsInsideFunction(src: string, fnName: string): Set<string> {
+  const sf = ts.createSourceFile("verified-user.ts", src, ts.ScriptTarget.Latest, true);
+  const found = new Set<string>();
+
+  function isAuthAccess(expr: ts.Expression): string | null {
+    // matches `<anything>.auth.<method>` — including `x.auth["getUser"]`
+    if (ts.isPropertyAccessExpression(expr)) {
+      const obj = expr.expression;
+      if (ts.isPropertyAccessExpression(obj) && obj.name.text === "auth") {
+        return expr.name.text;
+      }
+    }
+    if (ts.isElementAccessExpression(expr)) {
+      const obj = expr.expression;
+      const arg = expr.argumentExpression;
+      if (
+        ts.isPropertyAccessExpression(obj) &&
+        obj.name.text === "auth" &&
+        arg &&
+        ts.isStringLiteralLike(arg)
+      ) {
+        return arg.text;
+      }
+    }
+    return null;
+  }
+
+  function walkBody(node: ts.Node): void {
+    if (ts.isCallExpression(node)) {
+      const m = isAuthAccess(node.expression);
+      if (m) found.add(m);
+    }
+    ts.forEachChild(node, walkBody);
+  }
+
+  let seen = false;
+  function findFn(node: ts.Node): void {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === fnName) {
+      seen = true;
+      if (node.body) walkBody(node.body);
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === fnName &&
+      node.initializer
+    ) {
+      seen = true;
+      walkBody(node.initializer);
+    }
+    ts.forEachChild(node, findFn);
+  }
+  findFn(sf);
+  // Missing function is not "no calls" — signal it so callers fail closed.
+  if (!seen) found.add("<function-not-found>");
+  return found;
+}
+
 export function authCallsAllInsideGuard(rawSrc: string): boolean {
   // Blank out comments FIRST, preserving offsets, so prose like
   // "goes through `auth.getClaims()`" in a doc block is not judged as a call
@@ -190,6 +263,64 @@ async function main() {
   extractAccessTokenFromCookies = verifiedUserModule.extractAccessTokenFromCookies;
   principalFromClaims = verifiedUserModule.principalFromClaims;
   expectedIssuer = verifiedUserModule.expectedIssuer;
+
+  // --- T11: CROSS-SCOPE SINGLE-FLIGHT (삼순 blocker①)
+  //
+  // The two verifiers return different shapes (live adds `createdAt`). If a
+  // flight is keyed on the token alone, a concurrent live call joins the
+  // local call already in progress and receives an object with no
+  // `createdAt` — re-arming the welcome-DM mass-send. tsc cannot see it (the
+  // promise is stored as `unknown`), so it must be pinned here.
+  {
+    _clearDeadTokenCache();
+    _clearInFlight();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let localCalls = 0;
+    let liveCalls = 0;
+    const localFn = async (_token: string) => {
+      localCalls++;
+      await gate;
+      return { data: { user: { id: "u1", email: null } }, error: null };
+    };
+    const liveFn = async (_token: string) => {
+      liveCalls++;
+      await gate;
+      return {
+        data: { user: { id: "u1", email: null, createdAt: "2026-01-01T00:00:00Z" } },
+        error: null,
+      };
+    };
+    const pLocal = verifyAccessTokenWith(localFn, LIVE, Date.now(), "local");
+    const pLive = verifyAccessTokenWith(liveFn, LIVE, Date.now(), "live");
+    assert("T11a local+live are two separate flights", _inFlightSize() === 2, _inFlightSize());
+    release();
+    const [rLocal, rLive] = await Promise.all([pLocal, pLive]);
+    assert("T11b local verifier actually ran", localCalls === 1, localCalls);
+    assert("T11c live verifier actually ran (not coalesced into local)", liveCalls === 1, liveCalls);
+    assert(
+      "T11d live result carries createdAt (would be undefined if flights merged)",
+      (rLive as { createdAt?: string } | null)?.createdAt === "2026-01-01T00:00:00Z",
+      rLive,
+    );
+    assert("T11e local result has no createdAt", (rLocal as { createdAt?: string } | null)?.createdAt === undefined);
+
+    // same scope still coalesces — the CPU saving must survive the fix
+    _clearInFlight();
+    let release2!: () => void;
+    const gate2 = new Promise<void>((r) => { release2 = r; });
+    let sameScopeCalls = 0;
+    const sameFn = async (_token: string) => {
+      sameScopeCalls++;
+      await gate2;
+      return { data: { user: { id: "u1", email: null } }, error: null };
+    };
+    const a1 = verifyAccessTokenWith(sameFn, LIVE, Date.now(), "local");
+    const a2 = verifyAccessTokenWith(sameFn, LIVE, Date.now(), "local");
+    release2();
+    await Promise.all([a1, a2]);
+    assert("T11f same scope still single-flights (1 call for 2 waiters)", sameScopeCalls === 1, sameScopeCalls);
+  }
 
   // --- T10: CLAIM CONTRACT (삼순 필수①②)
   //
@@ -445,16 +576,32 @@ async function main() {
       "T7c verified-user routes every auth call through verifyAccessTokenWith",
       authCallsAllInsideGuard(vu),
     );
-    // 로컬 claims 경로는 실효성이 핵심 — getClaims 를 쓰지 않으면 이 PR 의
-    // 목적(‑1 GoTrue 왕복/요청)이 사라진다. 조용한 회귀 차단.
+    // 🔴 T7c2/T7c3 는 AST 판정이다(삼순 blocker⑤).
+    // 종전엔 "파일 어딘가에 getClaims 하나, getUser 하나"만 봤기 때문에
+    // **두 구현을 서로 맞바꿔도**(default가 getUser, live 가 getClaims) 전 게이트
+    // GREEN 이었다 — PR 의미가 정반대로 된 상태가 통과한다. 또 문자열 안의
+    // 메서드명에도 속았다. 이제 함수별로 실제 호출을 귀속시켜 판정한다.
+    const defaultCalls = authCallsInsideFunction(vu, "verifyAccessToken");
+    const liveCalls = authCallsInsideFunction(vu, "verifyAccessTokenLive");
     assert(
-      "T7c2 default verifier uses local getClaims (not a server round trip)",
-      /auth\.getClaims\s*\(/.test(vuCode),
+      "T7c2 default verifier body calls auth.getClaims and NOT auth.getUser",
+      defaultCalls.has("getClaims") && !defaultCalls.has("getUser"),
+      [...defaultCalls],
     );
-    // 즉시 폐기 반영이 필요한 경로용 탈출구가 살아 있어야 한다.
     assert(
-      "T7c3 live (server-authoritative) verifier exists for revocation-sensitive routes",
-      /export async function verifyAccessTokenLive\b/.test(vuCode) && /auth\.getUser\s*\(/.test(vuCode),
+      "T7c3 live verifier body calls auth.getUser and NOT auth.getClaims",
+      liveCalls.has("getUser") && !liveCalls.has("getClaims"),
+      [...liveCalls],
+    );
+    assert(
+      "T7c4 live verifier is exported for revocation-sensitive routes",
+      /export async function verifyAccessTokenLive\b/.test(vuCode),
+    );
+    // scope 분리(삼순 blocker①)가 배선되어 있는지 — 둘이 같은 scope 로
+    // 들어가면 single-flight 가 결과를 섞어 createdAt 이 사라진다.
+    assert(
+      "T7c5 the two verifiers pass distinct single-flight scopes",
+      /"local"/.test(vuCode) && /"live"/.test(vuCode),
     );
     // welcome-dm 은 auth.users.created_at(=JWT 에 없는 값)으로 “기존 유저 오발송
     // 방지” 컷오프를 건다. 로컬 claims 경로로 바꾸면 값이 undefined 가 되어 컷오프
@@ -463,6 +610,31 @@ async function main() {
     assert(
       "T7e welcome-dm uses the live verifier (needs auth.users.created_at cutoff)",
       /verifyAccessTokenLive\(/.test(welcome) && !/\bverifyAccessToken\(/.test(welcome),
+    );
+    // 🔴 T7e2 — 컷오프가 fail-CLOSED 인지(삼순 blocker③).
+    // 종전 조건은 `createdAt && createdAt < cutoff` 이어서 createdAt 이 없거나
+    // 파싱 불가하면 조건이 falsy → 그대로 발송으로 진행했다. 값을 못 믿는
+    // 상황에서 "발송"이 기본값이면 대량 오발송 방어선이 없다.
+    assert(
+      "T7e2 welcome-dm fails CLOSED when createdAt is missing/unparseable",
+      /Number\.isFinite\(createdAtMs\)/.test(welcome) &&
+        /unknown_created_at/.test(welcome),
+      "expected a finite-check on createdAt with a skip/refuse branch",
+    );
+    assert(
+      "T7e3 welcome-dm fails CLOSED on an invalid cutoff env value",
+      /Number\.isFinite\(cutoffMs\)/.test(welcome) && /invalid_cutoff/.test(welcome),
+    );
+    // 🔴 T7f — 계정 영구 삭제는 서버 권위 검증이어야 한다(삼순 blocker②).
+    // 로컬 claim 검증은 exp(3600s) 까지 유효해서 이미 폐기된 세션으로도
+    // 되돌릴 수 없는 삭제가 실행된다.
+    const del = blankComments(
+      readFileSync(join(root, "src/app/api/auth/delete-account/route.ts"), "utf8"),
+    );
+    assert(
+      "T7f delete-account uses the LIVE cookie verifier (irreversible action)",
+      /getVerifiedUserIdFromCookiesLive\(/.test(del) &&
+        !/getVerifiedUserIdFromCookies\(/.test(del),
     );
     // 쿠키 fallback은 순수 쿠키 파싱만 — auth-js 클라이언트 금지(getSession은
     // 만료 임박 시 /auth/v1/token refresh를 내보낸다 — 삼순 2차 리뷰)

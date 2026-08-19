@@ -110,27 +110,48 @@ type VerifyFn<TUser> = (
 // Single-flight: concurrent verifications of the SAME token share one
 // in-flight Supabase call instead of each firing /auth/v1/user (a burst of
 // parallel requests from one stale client was the observed pattern).
-// Keyed by token hash; the stored promise's user type is whatever the caller
-// injected (one verifier per token in practice — the app has a single
-// verifyAccessToken entry point).
+//
+// ⚠️ The key MUST include the verifier scope, not just the token hash.
+// Two verifiers now exist and they return DIFFERENT shapes: the local
+// `getClaims` path yields `{id,email}`, the live `getUser` path additionally
+// yields `createdAt`. Sharing one flight across scopes would hand a live
+// caller a local result whose `createdAt` is `undefined` — silently
+// re-arming the welcome-DM mass-send this PR set out to prevent (삼순 blocker①).
+// TypeScript cannot catch it: the promise is stored as `unknown` and cast
+// back on read, so the mismatch only appears at runtime under concurrency.
 const inFlight = new Map<string, Promise<unknown>>();
+
+/** Verifier identity for single-flight keying. Callers pass their own scope;
+ * different scopes never share an in-flight call. */
+export type VerifyScope = "local" | "live";
 
 /** Test hook: reset single-flight state between smoke scenarios. */
 export function _clearInFlight(): void {
   inFlight.clear();
 }
 
-/** Core verifier with an injectable Supabase call (unit-testable). */
+/** Test hook: how many flights are currently in progress (concurrency tests). */
+export function _inFlightSize(): number {
+  return inFlight.size;
+}
+
+/** Core verifier with an injectable Supabase call (unit-testable).
+ *
+ * @param scope which verifier this is. Single-flight coalescing happens only
+ *   within the same scope; the dead-token cache stays token-only because a
+ *   dead token is dead for every verifier.
+ */
 export async function verifyAccessTokenWith<TUser>(
   getUserFn: VerifyFn<TUser>,
   token: string,
   nowMs = Date.now(),
+  scope: VerifyScope = "local",
 ): Promise<TUser | null> {
   if (!token) return null;
   if (!passesLocalPrecheck(token, nowMs)) return null;
   if (isKnownDeadToken(token, nowMs)) return null;
 
-  const key = tokenKey(token);
+  const key = `${scope}:${tokenKey(token)}`;
   const existing = inFlight.get(key) as Promise<TUser | null> | undefined;
   if (existing) return existing;
 

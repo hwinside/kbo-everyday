@@ -47,10 +47,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, skipped: true });
     }
 
-    // 가입일 기준: 배포 이후 가입한 유저에게만 발송 (기존 유저 오발송 방지)
+    // 가입일 기준: 배포 이후 가입한 유저에게만 발송 (기존 유저 오발송 방지).
+    //
+    // ⚠️ fail-CLOSED (삼순 blocker③). 종전 조건은 `createdAt && …` 이라
+    // createdAt 이 없거나 파싱 불가하면 조건이 통째로 falsy → 그대로 발송으로
+    // 진행했다. 즉 이 컷오프의 유일한 방어선이 "값이 항상 온다"는 가정 위에
+    // 있었고, single-flight 혼선이나 응답 드리프트 한 번이면 **전체 기존
+    // 유저에게 환영 DM** 이 나간다. 값을 못 믿으면 보내지 않는다.
     const DEPLOY_DATE = process.env.WELCOME_DM_CUTOFF || "2026-04-08T00:00:00Z";
+    const cutoffMs = new Date(DEPLOY_DATE).getTime();
+    if (!Number.isFinite(cutoffMs)) {
+      console.error("[welcome-dm] invalid WELCOME_DM_CUTOFF:", DEPLOY_DATE);
+      return NextResponse.json(
+        { ok: false, skipped: true, reason: "invalid_cutoff" },
+        { status: 500 },
+      );
+    }
     const userCreatedAt = user.createdAt;
-    if (userCreatedAt && new Date(userCreatedAt) < new Date(DEPLOY_DATE)) {
+    const createdAtMs = userCreatedAt ? new Date(userCreatedAt).getTime() : NaN;
+    if (!Number.isFinite(createdAtMs)) {
+      // 가입일을 확인할 수 없으면 신규 여부를 판정할 수 없다 → 발송하지 않는다.
+      console.error("[welcome-dm] missing/invalid createdAt — skipping (fail-closed)");
+      return NextResponse.json(
+        { ok: false, skipped: true, reason: "unknown_created_at" },
+        { status: 500 },
+      );
+    }
+    if (createdAtMs < cutoffMs) {
       return NextResponse.json({ ok: true, skipped: true, reason: "existing_user" });
     }
 

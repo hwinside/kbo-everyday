@@ -125,7 +125,9 @@ export async function verifyAccessToken(token: string): Promise<VerifiedUser | n
       return { data: { user: null }, error: { code: "bad_jwt" } };
     }
     return { data: { user }, error: null };
-  }, token);
+    // scope "local": must never share an in-flight call with the live
+    // verifier below — their result shapes differ (삼순 blocker①).
+  }, token, Date.now(), "local");
 }
 
 /** Server-authoritative verification — one GoTrue round trip, sees sign-out /
@@ -147,7 +149,7 @@ export async function verifyAccessTokenLive(token: string): Promise<LiveVerified
       },
       error: null,
     };
-  }, token);
+  }, token, Date.now(), "live");
 }
 
 export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: VerifiedUser; token: string } | null> {
@@ -249,5 +251,22 @@ export async function getVerifiedUserIdFromCookies(): Promise<string | null> {
   const token = extractAccessTokenFromCookies(cookieStore.getAll());
   if (!token) return null;
   const user = await verifyAccessToken(token);
+  return user?.id ?? null;
+}
+
+/** Cookie-session identity verified against the Auth server.
+ *
+ * Same cookie parsing as {@link getVerifiedUserIdFromCookies} (still zero
+ * network to read the token), but the identity itself is confirmed by GoTrue.
+ * Required where the action is IRREVERSIBLE and must not run on a session
+ * that was already signed out / deleted / banned — account deletion is the
+ * case that forced this (삼순 blocker②): local claims stay valid up to `exp`
+ * (3600s), so a stale cookie could permanently delete an account after the
+ * session was revoked. */
+export async function getVerifiedUserIdFromCookiesLive(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const token = extractAccessTokenFromCookies(cookieStore.getAll());
+  if (!token) return null;
+  const user = await verifyAccessTokenLive(token);
   return user?.id ?? null;
 }
