@@ -415,35 +415,61 @@ interface Collected {
   source: Source;
 }
 
-/** KBO 우선 → 하드실패/열화 시 Naver. 둘 다 실패면 throw(=fail-close, upsert 미수행). */
+/**
+ * 종류별 공식 1차 소스.
+ * 타자: KBO 공홈 타자 표는 페이지당 30행 단일 페이지만 내려와 coverage 계약(31행, 위
+ * KBO_MIN_COVERAGE.batter)을 구조상 통과할 수 없다 — 2026-08-19 실측: 8/5부터 14일 연속
+ * 매일 Naver failover(타자 330~332명 온전 수집). 따라서 타자는 Naver가 공식 1차다.
+ * 상태 판정도 이 공식 1차 기준으로 한다(1차 성공=success, 폴백 수집=warning).
+ */
+const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
+  batter: "naver",
+  pitcher: "kbo",
+};
+
+function classifyFallbackReason(e: Error): "timeout" | "http-error" | "schema-error" | "network-error" {
+  const msg = e.message || "";
+  return e.name === "TimeoutError" || e.name === "AbortError"
+    ? "timeout"
+    : msg.includes("HTTP")
+      ? "http-error"
+      : msg.includes("KBO") || msg.includes("Naver")
+        ? "schema-error"
+        : "network-error";
+}
+
+/** 공식 1차 우선 → 하드실패/열화 시 폴백 소스. 둘 다 실패면 throw(=fail-close, upsert 미수행). */
 async function collect(
   kind: "batter" | "pitcher",
   roster: RosterPlayer[],
   season: number,
 ): Promise<Collected> {
-  try {
-    const stats =
+  const fromKbo = async (): Promise<Collected> => ({
+    stats:
       kind === "batter"
         ? await fetchKboBatterStats(roster)
-        : await fetchKboPitcherStats(roster);
-    return { stats, source: "kbo" };
-  } catch (e) {
-    const msg = (e as Error).message || "";
-    const reason: "timeout" | "http-error" | "schema-error" | "network-error" =
-      (e as Error).name === "TimeoutError" || (e as Error).name === "AbortError"
-        ? "timeout"
-        : msg.includes("HTTP")
-          ? "http-error"
-          : msg.includes("KBO")
-            ? "schema-error"
-            : "network-error";
-    void trackFallback(`kbo-player-stats-${kind}`, reason, { errorMessage: msg }).catch(() => {});
-
+        : await fetchKboPitcherStats(roster),
+    source: "kbo",
+  });
+  const fromNaver = async (): Promise<Collected> => {
     const rows = await fetchNaverPlayerStats(kind === "batter" ? "HITTER" : "PITCHER", season);
     const stats =
       kind === "batter" ? mapNaverBatters(rows, roster) : mapNaverPitchers(rows, roster);
     if (stats.length === 0) throw new Error(`Naver ${kind} empty after map`);
     return { stats, source: "naver" };
+  };
+
+  const primary = PRIMARY_SOURCE[kind];
+  const [tryFirst, trySecond] = primary === "kbo" ? [fromKbo, fromNaver] : [fromNaver, fromKbo];
+  try {
+    return await tryFirst();
+  } catch (e) {
+    const msg = (e as Error).message || "";
+    // apiName은 "실패한 1차 소스" 기준. 기존 kbo-player-stats-* 계약은 투수(kbo 1차)에서 유지된다.
+    void trackFallback(`${primary}-player-stats-${kind}`, classifyFallbackReason(e as Error), {
+      errorMessage: msg,
+    }).catch(() => {});
+    return await trySecond();
   }
 }
 
@@ -559,8 +585,21 @@ export async function GET(req: NextRequest) {
         },
         { status: 500 },
       );
-    } else if (batterRes.source === "naver" || pitcherRes.source === "naver") {
-      await finishJob(logId, "warning", summary, "KBO 실패 → Naver failover");
+    } else if (
+      batterRes.source !== PRIMARY_SOURCE.batter ||
+      pitcherRes.source !== PRIMARY_SOURCE.pitcher
+    ) {
+      // 공식 1차 소스가 아닌 폴백으로 수집된 종류만 경보(warning). 1차 성공은 success.
+      const fellBack = (
+        [
+          ["타자", batterRes.source, PRIMARY_SOURCE.batter],
+          ["투수", pitcherRes.source, PRIMARY_SOURCE.pitcher],
+        ] as const
+      )
+        .filter(([, actual, primary]) => actual !== primary)
+        .map(([label, actual, primary]) => `${label} 1차(${primary}) 실패 → ${actual} 폴백`)
+        .join("; ");
+      await finishJob(logId, "warning", summary, fellBack);
     } else {
       await finishJob(logId, "success", summary);
     }
