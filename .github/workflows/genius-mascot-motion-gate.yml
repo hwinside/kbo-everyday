@@ -33,6 +33,7 @@ on:
       - "scripts/qa/genius-mascot-motion-mutations.mjs"
       - "scripts/qa/genius-mascot-asset-mutations.mjs"
       - "scripts/qa/mascot-source-mutate.py"
+      - "scripts/qa/mascot-gate-change-detector.mjs"
       - "package.json"
       - "src/components/dm/GeniusMascotImage.tsx"
       - "src/lib/constants/baseball-genius.ts"
@@ -43,39 +44,107 @@ on:
     paths: *gate_paths
 
 jobs:
-  genius-mascot-motion:
+  # package.json은 트리거에 남긴다 — 빼면 package-only 변경(mascot 게이트 script를 true로
+  # 바꾸거나 삭제)이 workflow 자체를 안 띄워 GREEN이 된다(삼순 #1254 blocker). 대신
+  # semantic change-detector로 mascot 관련 표면(mascot 명명 script 전체 · 타 script 값 속
+  # mascot 토큰 · playwright 의존성)이 실제로 바뀌었는지 판정해, 무관 package.json 변경은
+  # heavy job들을 **성공-skip** 시킨다. 판정 불능은 fail-closed(heavy).
+  detect:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run_motion: ${{ steps.decide.outputs.run_motion }}
+      run_source: ${{ steps.decide.outputs.run_source }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: detector 검출력 증명 (관련/무관 fixture selftest)
+        run: node scripts/qa/mascot-gate-change-detector.mjs --selftest
+
+      - name: mascot 관련 변경 판정 (run_motion / run_source 분리)
+        id: decide
+        run: |
+          set -euo pipefail
+          BASE="${{ github.event.pull_request.base.sha || github.event.before }}"
+          HEAD="${{ github.sha }}"
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "base 확인 불가 → fail-closed both"
+            echo "run_motion=true" >> "$GITHUB_OUTPUT"
+            echo "run_source=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git diff --name-only --no-renames "$BASE" "$HEAD" > /tmp/changed-files.txt
+          echo "changed files:"; cat /tmp/changed-files.txt
+          if grep -qx 'package.json' /tmp/changed-files.txt; then
+            git show "$BASE:package.json" > /tmp/base-package.json
+          else
+            cp package.json /tmp/base-package.json
+          fi
+          # 경로 분류·package semantic 판정은 detector 스크립트가 SSOT.
+          # (trigger paths ↔ 분류 결속은 위 selftest 스텝이 매 실행 강제 — 누락 시 RED)
+          node scripts/qa/mascot-gate-change-detector.mjs --decide \
+            --changed /tmp/changed-files.txt \
+            --base-pkg /tmp/base-package.json \
+            --head-pkg package.json | tee -a "$GITHUB_OUTPUT"
+
+  genius-mascot-motion:
+    needs: detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 무관 변경 성공-skip
+        if: needs.detect.outputs.run_motion != 'true'
+        run: echo "mascot 표면과 무관한 변경 — motion 축 skip (성공)"
+
+      - uses: actions/checkout@v4
+        if: needs.detect.outputs.run_motion == 'true'
 
       - name: Setup Node
+        if: needs.detect.outputs.run_motion == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
+        if: needs.detect.outputs.run_motion == 'true'
         run: npm ci --no-audit --no-fund
 
+      - name: Cache Playwright browsers
+        if: needs.detect.outputs.run_motion == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install Playwright Chromium
+        timeout-minutes: 15
+        if: needs.detect.outputs.run_motion == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: 자산 픽셀 무결성 (키잉 구멍 · 과채움 · 조각삭제 · 여백 · halo · 움직임)
+        if: needs.detect.outputs.run_motion == 'true'
         run: npm run qa:genius-mascot-visual
 
       - name: 게이트 검출력 증명 (임계값 반전 → RED 여야 한다)
+        if: needs.detect.outputs.run_motion == 'true'
         run: npm run qa:genius-mascot-visual:selftest
 
       - name: 매핑 SSOT · 단일 배선 · 폐쇄집합
+        if: needs.detect.outputs.run_motion == 'true'
         run: npm run qa:genius-mascot-motion
 
       - name: 매핑 변이 주입 (전부 RED 여야 한다)
+        if: needs.detect.outputs.run_motion == 'true'
         run: npm run qa:genius-mascot-motion:mutations
 
       - name: 자산 결함주입 (실제 훼손 → 전부 RED 여야 한다)
+        if: needs.detect.outputs.run_motion == 'true'
         # v1 확정본 WebP가 없는 환경이므로 `--with-source` 없이 = 자산·manifest 축만.
         run: npm run qa:genius-mascot-assets:mutations
 
       - name: 실렌더 게이트 — 브라우저 강제 (SKIP 금지, fail-closed)
+        if: needs.detect.outputs.run_motion == 'true'
         # MASCOT_RENDER_REQUIRE_BROWSER=1 → chromium 이 없거나 launch 실패해도 exit 1.
         # Vercel prebuild 의 graceful skip 과 달리 여기서는 SKIP 이 곧 실패다.
         env:
@@ -83,12 +152,13 @@ jobs:
         run: npm run qa:genius-mascot-render
 
       - name: 실렌더 게이트 검출력 증명 (기대 반전 → RED 여야 한다)
+        if: needs.detect.outputs.run_motion == 'true'
         env:
           MASCOT_RENDER_REQUIRE_BROWSER: "1"
         run: npm run qa:genius-mascot-render:selftest
 
       - name: 실패 시 캡처 아티팩트 업로드
-        if: failure()
+        if: failure() && needs.detect.outputs.run_motion == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: mascot-render-captures
@@ -105,26 +175,37 @@ jobs:
   #    이어야 증명이 된다. 못 받거나 해시가 다르면 조용히 skip 하지 않고 즉시 실패한다
   #    (skip 이 곧 false-green 이므로).
   genius-mascot-motion-source:
+    needs: detect
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     env:
       # v1 확정본 13종은 repo 밖에 산다 → Release 자산으로 공급한다.
       # 확정본을 교체하면 새 tag를 올리고 `--rewrite-ledger`로 대장을 갱신한다(둘은 함께 움직인다).
       MASCOT_SRC_TAG: mascot-motion-src-v1-confirmed
     steps:
+      - name: source 영향 없음 성공-skip
+        if: needs.detect.outputs.run_source != 'true'
+        run: echo "원본·빌더·ledger 영향 변경 아님 — source 축 skip (성공)"
+
       - uses: actions/checkout@v4
+        if: needs.detect.outputs.run_source == 'true'
 
       - name: Setup Node
+        if: needs.detect.outputs.run_source == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
+        if: needs.detect.outputs.run_source == 'true'
         run: npm ci --no-audit --no-fund
 
       - name: Install Python deps (빌더가 쓰는 것)
+        if: needs.detect.outputs.run_source == 'true'
         run: python3 -m pip install --quiet --break-system-packages numpy scipy pillow
 
       - name: v1 확정본 WebP provision — 대장 해시로 exact 검증
+        if: needs.detect.outputs.run_source == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -138,11 +219,13 @@ jobs:
             "$GITHUB_WORKSPACE/scripts/assets/mascot-motion-SOURCES.sha256"
 
       - name: 재현 검사 — 파생 자산·manifest 가 이 원본에서 나오는가
+        if: needs.detect.outputs.run_source == 'true'
         env:
           MASCOT_SSOT: /tmp/mascot-src/v1
         run: python3 scripts/assets/build-mascot-motion.py --check
 
       - name: 자산 결함주입 **전체** (source-level + ledger 축 포함)
+        if: needs.detect.outputs.run_source == 'true'
         env:
           MASCOT_SSOT: /tmp/mascot-src/v1
         run: npm run qa:genius-mascot-assets:mutations:full
