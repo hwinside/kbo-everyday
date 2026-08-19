@@ -2,24 +2,28 @@
 /**
  * 외부 cleanup selftest — "mutation 후 강제 예외/종료 → 전 대상 byte-identical" (삼순 4차 NO-GO).
  * 게이트 자신이 아니라 부모 프로세스가 판정한다: 게이트를 죽이고 나서 워킹트리를 검사한다.
+ *
+ * 대상 목록은 게이트와 같은 SSOT(self-fetch-mutation-targets.mjs)를 쓴다 — 목록을 복제하면
+ * 새 mutation target 을 한쪽에만 추가하는 순간 list drift 가 생기고, 그게 이번 사고의 형태다.
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { MUTATION_TARGETS as TARGETS } from "./self-fetch-mutation-targets.mjs";
 
-const TARGETS = [
-  "src/lib/services/player-today-game.ts",
-  "src/app/api/widget/player-card/route.ts",
-  "src/lib/services/player-stats.ts",
-  "src/app/api/player-today-game/route.ts",
-  "src/app/api/game-detail/route.ts",
-  "src/app/api/player-stats/route.ts",
-  "src/app/api/stats/route.ts",
-  "src/app/api/player-game-logs/route.ts",
-];
 const snap = () => Object.fromEntries(
   TARGETS.map((f) => [f, createHash("sha256").update(readFileSync(f)).digest("hex")]),
 );
+
+/** 게이트가 만드는 백업 temp 디렉토리 — 이탈 경로에서도 새지 않아야 한다. */
+const tempBackups = () => {
+  try {
+    return readdirSync(tmpdir()).filter((n) => n.startsWith("self-fetch-internal-gate-"));
+  } catch {
+    return [];
+  }
+};
 
 function run(mode) {
   return new Promise((resolve) => {
@@ -42,19 +46,45 @@ function run(mode) {
 }
 
 const before = snap();
+const tempBefore = new Set(tempBackups());
 let ok = true;
 for (const mode of ["throw", "exit", "sigint", "sigterm"]) {
   const { out, code, sig } = await run(mode);
   const mutated = /PROBE_MUTATED/.test(out);
   const after = snap();
   const dirty = TARGETS.filter((f) => before[f] !== after[f]);
-  const pass = mutated && dirty.length === 0;
+  const leaked = tempBackups().filter((n) => !tempBefore.has(n));
+  const pass = mutated && dirty.length === 0 && leaked.length === 0;
   if (!pass) ok = false;
   console.log(
-    `${pass ? "PASS" : "FAIL"} — ${mode}: mutation_applied=${mutated} exit=${code ?? sig} residue=${dirty.length}` +
-    (dirty.length ? ` → ${dirty.join(", ")}` : ""),
+    `${pass ? "PASS" : "FAIL"} — ${mode}: mutation_applied=${mutated} exit=${code ?? sig} ` +
+    `residue=${dirty.length} temp_leak=${leaked.length}` +
+    (dirty.length ? ` → ${dirty.join(", ")}` : "") +
+    (leaked.length ? ` → temp ${leaked.join(", ")}` : ""),
   );
   if (!mutated) console.log("  (변이 미적용 — 이 회차는 아무것도 증명하지 않는다)");
 }
-console.log(ok ? "cleanup-selftest PASS — 4개 이탈 경로 전부 잔재 0" : "cleanup-selftest FAIL");
+
+// 정상 경로(프로브 없이 전체 selftest)도 temp 를 남기지 않는지 본다 — 삼순 지적:
+// 정상 process.exit 이 outer rmSync 를 건너뛰어 backup 이 매번 남던 경로.
+const normal = await new Promise((resolve) => {
+  const child = spawn("node", ["scripts/qa/self-fetch-internal-gate.mjs", "--selftest"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  child.stdout.on("data", (d) => { out += d; });
+  child.stderr.on("data", (d) => { out += d; });
+  child.on("exit", (code) => resolve({ out, code }));
+});
+const normalLeak = tempBackups().filter((n) => !tempBefore.has(n));
+const normalDirty = TARGETS.filter((f) => before[f] !== snap()[f]);
+const normalPass = normal.code === 0 && normalLeak.length === 0 && normalDirty.length === 0;
+if (!normalPass) ok = false;
+console.log(
+  `${normalPass ? "PASS" : "FAIL"} — normal: exit=${normal.code} ` +
+  `residue=${normalDirty.length} temp_leak=${normalLeak.length}` +
+  (normalLeak.length ? ` → temp ${normalLeak.join(", ")}` : ""),
+);
+
+console.log(ok ? "cleanup-selftest PASS — 5개 경로(throw/exit/sigint/sigterm/normal) 잔재 0 · temp 누수 0" : "cleanup-selftest FAIL");
 process.exit(ok ? 0 : 1);

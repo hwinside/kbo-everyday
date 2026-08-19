@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MUTATION_TARGETS } from "./self-fetch-mutation-targets.mjs";
 
 /**
  * 외부 cleanup selftest 전용 프로브 모드(--cleanup-probe=<throw|exit|sigint|sigterm>).
@@ -231,16 +232,9 @@ function check({ mutate } = {}) {
 function runSelfTest() {
   // 변이 대상 파일은 전부 백업 목록에 있어야 한다. 하나라도 빠지면 selftest 종료 후
   // 변이가 워킹트리에 남고, 그대로 커밋되어 프로덕션 응답계약이 깨진다(#1257 실제 사고).
-  const targets = [
-    "src/lib/services/player-today-game.ts",
-    "src/app/api/widget/player-card/route.ts",
-    "src/lib/services/player-stats.ts",
-    "src/app/api/player-today-game/route.ts",
-    "src/app/api/game-detail/route.ts",
-    "src/app/api/player-stats/route.ts",
-    "src/app/api/stats/route.ts",
-    "src/app/api/player-game-logs/route.ts",
-  ];
+  // 목록은 SSOT 한 곳(self-fetch-mutation-targets.mjs)에서만 온다 — 외부 cleanup selftest 와
+  // 따로 적으면 list drift 가 생기고, 그 drift 가 정확히 이번 사고의 형태다.
+  const targets = MUTATION_TARGETS;
   const backupDir = mkdtempSync(join(tmpdir(), "self-fetch-internal-gate-"));
   const backups = new Map();
   for (const file of targets) {
@@ -249,8 +243,22 @@ function runSelfTest() {
     backups.set(file, backup);
   }
 
+  // 복원은 "바이트가 실제로 같아졌는가"까지 확인해야 성공이다. copyFileSync 가 예외 없이
+  // 돌아왔다는 사실만으로는 부족하다(부분 복원·디스크 오류).
   const restoreAll = () => {
-    for (const [file, backup] of backups) copyFileSync(backup, file);
+    const unrestored = [];
+    for (const [file, backup] of backups) {
+      try {
+        copyFileSync(backup, file);
+      } catch (error) {
+        unrestored.push(`${file} (copy 실패: ${error?.message ?? error})`);
+        continue;
+      }
+      if (readFileSync(file, "utf8") !== readFileSync(backup, "utf8")) {
+        unrestored.push(`${file} (바이트 불일치)`);
+      }
+    }
+    return unrestored;
   };
 
   const mutateFile = (file, from, to, label) => {
@@ -269,24 +277,46 @@ function runSelfTest() {
   // runGate 예외·Ctrl-C(SIGINT)·SIGTERM 에서 변이가 워킹트리에 그대로 남고,
   // 그대로 커밋되어 프로덕션 응답계약이 깨진다(#1257 실제 사고).
   // → 모든 이탈 경로에서 idempotent 로 복원한다.
+  // cleanedUp 은 **복원 성공 + byte 검증 통과** 뒤에만 세운다. 실패했는데 완료로 찍으면
+  // 이후 exit/uncaught 재시도가 전부 no-op 이 되어 잔재가 그대로 남는다(false-green).
   let cleanedUp = false;
   const cleanup = () => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    try {
-      restoreAll();
-    } catch (error) {
-      console.error(`CLEANUP FAILED — ${error?.message ?? error}`);
+    if (cleanedUp) return true;
+    let unrestored = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        unrestored = restoreAll();
+      } catch (error) {
+        unrestored = [`restoreAll 예외: ${error?.message ?? error}`];
+      }
+      if (unrestored.length === 0) {
+        cleanedUp = true;
+        try {
+          rmSync(backupDir, { recursive: true, force: true });
+        } catch {
+          /* temp 정리 실패는 잔재 판정과 무관 */
+        }
+        return true;
+      }
+      console.error(`CLEANUP RETRY ${attempt}/3 — 미복원 ${unrestored.length}건`);
     }
+    // fail-close: 완료로 찍지 않는다(다음 이탈 경로가 다시 시도할 수 있어야 한다).
+    for (const item of unrestored) console.error(`  CLEANUP FAILED — ${item}`);
+    console.error(`  백업 원본은 남겨둔다(수동 복구용): ${backupDir}`);
+    return false;
   };
   const onSignal = (signal) => {
-    cleanup();
-    // 복원은 끝났으니 신호 기본 동작을 그대로 따른다(exit code 128+n).
+    const ok = cleanup();
+    // 복원 실패는 신호 기본 코드로 덮지 않는다 — 잔재가 남았음을 종료코드로 드러낸다.
+    if (!ok) process.exit(1);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.on("SIGINT", () => onSignal("SIGINT"));
   process.on("SIGTERM", () => onSignal("SIGTERM"));
-  process.on("exit", cleanup);
+  process.on("exit", () => {
+    // 'exit' 핸들러에서는 종료코드를 바꿀 수 없다 → 실패 사실만 남긴다(부모 selftest 가 잔재로 잡는다).
+    cleanup();
+  });
   process.on("uncaughtException", (error) => {
     cleanup();
     console.error(`UNCAUGHT — ${error?.stack ?? error}`);
@@ -314,7 +344,6 @@ function runSelfTest() {
       throw new Error("forced failure after mutation (cleanup contract probe)");
     } finally {
       cleanup();
-      rmSync(backupDir, { recursive: true, force: true });
     }
   }
 
@@ -500,13 +529,11 @@ function runSelfTest() {
     }
   }
 
-  cleanup();
-  // 복원 검증: 변이 잔재가 워킹트리에 남으면 selftest 자체를 실패로 본다.
-  for (const [file, backup] of backups) {
-    if (readFileSync(file, "utf8") !== readFileSync(backup, "utf8")) {
-      console.error(`RESTORE FAILED — ${file} 에 변이 잔재가 남았다`);
-      ok = false;
-    }
+  // 복원 검증은 cleanup() 안에 있다(restoreAll 이 byte 대조해 미복원 목록을 돌려준다).
+  // 여기서 따로 백업본을 읽지 않는다 — 성공 시 temp 는 이미 지워졌기 때문이다.
+  if (!cleanup()) {
+    console.error("RESTORE FAILED — 변이 잔재가 워킹트리에 남았다");
+    ok = false;
   }
   process.exit(ok ? 0 : 1);
   }
