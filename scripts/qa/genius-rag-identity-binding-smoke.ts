@@ -536,6 +536,37 @@ async function main() {
   assert.equal(proDrop!.field, "team", "U3: field 가 team 이 아니다");
   pass("U 소유격·대명사 제3자 GREEN + 주인공 주어·무주어 RED 유지");
 
+  // ── V. 명시 마커도 소유자를 본다 — 제3자 소유격 마커 (삼순 2026-08-19 11차) ──
+  //   `김민준 선수의 형의 소속은 두산입니다` 는 형의 속성이다. 마커(`소속은/포지션은`)를
+  //   만나면 소유자를 안 보고 무조건 주인공 귀속으로 세면 이 정상 문장이 죽는다.
+  for (const sentence of [
+    `${infielderT.name} 선수의 형의 소속은 두산입니다.`,
+    `${infielderT.name} 선수의 형의 포지션은 투수입니다.`,
+    `${infielderT.name} 선수는 내야수입니다. 형의 소속은 두산입니다.`,
+  ]) {
+    assert.equal(
+      detectIdentityConflict(sentence, infielderIdentity, players), null,
+      `V: 제3자 소유격 마커를 주인공 귀속으로 오판했다: ${sentence}`,
+    );
+  }
+  // 소유격 없는 무주어 마커는 주인공이다 — 양방향 RED 유지(과차단 수정이 검출력을 죽이면 안 된다).
+  const markerTeam = detectIdentityConflict(
+    `${infielderT.name} 선수는 내야수입니다. 소속은 두산입니다.`, infielderIdentity, players,
+  );
+  assert.ok(markerTeam, "V2: 무주어 소속 마커 오귀속이 미검출");
+  assert.equal(markerTeam!.field, "team", "V2: field 가 team 이 아니다");
+  const markerPos = detectIdentityConflict(
+    `${infielderT.name} 선수는 ${infielderT.team} 소속입니다. 포지션은 투수입니다.`, infielderIdentity, players,
+  );
+  assert.ok(markerPos, "V3: 무주어 포지션 마커 오귀속이 미검출");
+  assert.equal(markerPos!.field, "position", "V3: field 가 position 이 아니다");
+  // 소유자가 주인공 본인이면 귀속이다 — `김민준 선수의 소속은 두산입니다` RED.
+  const ownMarker = detectIdentityConflict(
+    `${infielderT.name} 선수의 소속은 두산입니다.`, infielderIdentity, players,
+  );
+  assert.ok(ownMarker, "V4: 주인공 소유격 마커 오귀속이 미검출");
+  pass("V 제3자 소유격 마커 GREEN + 무주어·주인공 소유격 마커 RED 양방향");
+
   // ── R. 정답이 오답을 가리면 안 된다 — 혼합 서술 양방향 (삼순 2026-08-19 6차) ──
   //   "투수이며 내야수입니다" 처럼 정답과 오답이 섞이면 유저가 보는 건 오답 쪽이다.
   //   호환 토큰이 하나라도 있으면 통과시키던 종전 규칙은 이걸 그대로 서빙했다.
@@ -578,14 +609,15 @@ async function main() {
     null,
     "O: 다른 선수 이름이 든 문장을 주인공 귀속으로 오판했다 — 정상 답변 과잉 차단",
   );
-  // 🔴 team 변형 — 문장 분리 계약의 **관측 무대** (삼순 10차 반영 중 재구성).
-  //   주어 결속(ownedBySubject)이 생기면서 위 position 픽스처는 문장 분리 없이도
-  //   `홍길동은` 주어에서 걸러져 살아남는다 — 문장 분리 제거(M13)가 관측 불가로 변한다.
-  //   `소속은 롯데입니다` 는 명시 속성 마커라 주어 결속을 통과하므로, 이 변형은
+  // 🔴 team 변형 — 문장 분리 계약의 **관측 무대** (삼순 10·11차 반영 중 2회 재구성).
+  //   주어 결속·마커 소유자 확인이 생기면서 주어/소유격이 든 제3자 픽스처는 문장
+  //   분리 없이도 살아남아 M13(문장 분리 제거)이 관측 불가로 변했다. 그래서 주어
+  //   마커도 소유격도 없는 보조사 `도` 형태로 만든다 — 문장을 합치면 1문장의
+  //   `선수는`(주인공)이 마지막 주어가 돼 귀속으로 잡힌다. 이 변형은
   //   **문장 분리(제3자 이름 문장 skip)만이** 지키는 GREEN 이다.
   assert.equal(
     detectIdentityConflict(
-      `${subjectO.name} 선수는 ${subjectO.team} 소속입니다. 팀 동료 ${otherO.name} 선수의 소속은 롯데입니다.`,
+      `${subjectO.name} 선수는 ${subjectO.team} 소속입니다. 팀 동료 ${otherO.name} 선수도 롯데 소속입니다.`,
       buildPlayerIdentity({ entityId: subjectO.kboId, name: subjectO.name, team: subjectO.team }, players),
       players,
     ),

@@ -332,6 +332,19 @@ const MUTATIONS = [
     expect: "U: 소유격·대명사 제3자를 주인공 귀속으로 오판했다",
   },
   {
+    // 🔴 삼순 11차 false-positive: 명시 마커가 소유자를 안 보면 `형의 소속은` 이 주인공 귀속으로 죽는다.
+    id: "M31 마커 소유자 확인 제거(소속은/포지션은 무조건 귀속)",
+    file: PIPELINE,
+    find: `    const markerPrefix = before.slice(0, last.index).trimEnd();
+    const ownerMatch = /([가-힣A-Za-z0-9]+)의$/.exec(markerPrefix);
+    if (!ownerMatch) return true; // 소유격 없는 무주어 마커 = 주인공`,
+    replace: `    return true;
+    const markerPrefix = before.slice(0, last.index).trimEnd();
+    const ownerMatch = /([가-힣A-Za-z0-9]+)의$/.exec(markerPrefix);
+    if (!ownerMatch) return true; // 소유격 없는 무주어 마커 = 주인공`,
+    expect: "V: 제3자 소유격 마커를 주인공 귀속으로 오판했다",
+  },
+  {
     id: "M7 미결속 kboId 빈 블록 생성",
     file: PIPELINE,
     find: `  if (!player) return null;`,
@@ -347,7 +360,7 @@ const MUTATIONS = [
  *   실제로 M13 블록 재작성 때 M1~M6·M8~M12를 날리고도 남은 11/11이 PASS 해 누락을 못 봤다.
  *   따라서 실행 전에 고정 기대 ID M1~M25와 **완전일치**하고 중복이 0인지 먼저 증명한다.
  */
-const EXPECTED_MUTATION_IDS = Array.from({ length: 30 }, (_, index) => `M${index + 1}`);
+const EXPECTED_MUTATION_IDS = Array.from({ length: 31 }, (_, index) => `M${index + 1}`);
 
 function mutationIdOf(mutation) {
   const match = /^M\d+\b/.exec(mutation.id);

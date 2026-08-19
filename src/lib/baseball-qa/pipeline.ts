@@ -3784,7 +3784,22 @@ function ownedBySubject(sentence: string, index: number, subjectName: string): b
   if (matches.length === 0) return true; // 주어 생략 = 주인공 (pro-drop)
   const last = matches[matches.length - 1];
   const word = last[1];
-  if (word === "소속" || word === "포지션") return true; // 명시 속성 마커
+  if (word === "소속" || word === "포지션") {
+    // 🔴 명시 마커도 **소유자**를 본다 (삼순 2026-08-19 11차, 실측 재현).
+    //   `김민준 선수의 형의 소속은 두산입니다` 는 형의 속성이다. 마커를 만나면
+    //   무조건 주인공 귀속으로 세던 종전 코드는 이 정상 제3자 문장을 죽였다.
+    //   소유격(`X의`)이 없거나(무주어 `소속은 두산입니다` = 주인공) 소유자가
+    //   주인공(이름·이름+선수·대명사 그/그녀)일 때만 귀속이다.
+    const markerPrefix = before.slice(0, last.index).trimEnd();
+    const ownerMatch = /([가-힣A-Za-z0-9]+)의$/.exec(markerPrefix);
+    if (!ownerMatch) return true; // 소유격 없는 무주어 마커 = 주인공
+    const owner = ownerMatch[1];
+    if (owner === subjectName || owner === "그" || owner === "그녀") return true;
+    if (owner === "선수") {
+      return markerPrefix.slice(0, ownerMatch.index).trimEnd().endsWith(subjectName);
+    }
+    return false; // `형의 소속은` — 제3자 소유격
+  }
   if (word === subjectName) return true; // `김민준은 …`
   if (word === "선수") {
     // `김민준 선수는 …` 만 주인공이다 — `동료 선수는` 은 아니다.
