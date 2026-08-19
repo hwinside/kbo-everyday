@@ -20,14 +20,23 @@
  * replay 는 **grounded(검증 통과) 답변만** 저장·재생한다. insufficient/폐기를 저장하면
  * 일시적 생성 실패가 영구 고정된다 — 그건 결정론이 아니라 오답 캐시다.
  *
- * ── 동시성 (삼순 2026-08-19 P0-②) ──────────────────────────────────────────
+ * ── 동시성 — owner-token CAS (삼순 2026-08-19 P0-② + 2차 NO-GO) ────────────
  * 서로 다른 messageId 가 같은 replay 키의 첫 miss 를 동시에 보면 둘 다 LLM 을 부르고
- * 서로 다른 답을 각자 반환할 수 있다 — DB `ignoreDuplicates` 는 첫 행만 지킬 뿐 응답
- * 결정론을 지키지 못한다. 그래서 저장소가 **replay-key 단위 선점(claim)** 을 제공한다:
- *   winner = pending claim 삽입에 성공한 한 명만 LLM 을 소비하고, `put` 으로 settle.
- *   loser  = winner 의 settle 을 **대기 후 재조회**해 같은 답을 재생한다.
- *   winner 가 grounded 를 못 만들면 `release` 로 claim 을 풀어 deadlock 을 막는다.
- * claim 미제공 저장소는 replay(hit)만 쓰고 선점 없이 동작한다(기존 fail-open).
+ * 서로 다른 답을 각자 반환할 수 있다. 그래서 저장소가 **replay-key 단위 선점**을
+ * 제공하고, 선점은 **owner token** 으로 결속된다(2차 NO-GO — token 없는 선점은
+ * lease 인수 뒤 구 winner 의 stale release/settle 이 새 claim 을 지우거나 덮어쓴다):
+ *   - `claim` 은 winner 에게 **ownerToken** 을 발급한다. lease 만료 인수는 새 token 으로
+ *     교체되므로 죽은 구 winner 의 token 은 그 순간 무효다(fencing).
+ *   - `put`(settle)과 `release` 는 그 token 보유자만 성공한다(CAS). settled 는 절대
+ *     덮어쓰지 않는다(first-writer-wins). settle CAS 패자는 자기 답을 버리고
+ *     canonical(먼저 settle 된) 답을 재조회해 반환한다.
+ *   - loser 는 settle 대기 후 재조회하며, **claim(winner) 없이는 절대 생성하지 않는다**
+ *     — 폴링 상한 뒤 직접 생성 폴백은 느린 정상 winner(provider 최대 15초)에서
+ *     LLM 중복 호출을 만든다(2차 NO-GO 재현 축).
+ *   - 저장소 오류(get/claim/put throw)와 invalid 반환은 **fail-close** 다 — 오류를
+ *     winner 로 오인해 생성하면 결정론이 조용히 깨진다.
+ * claim 미제공 저장소(테스트 전용)는 replay(hit)만 쓰고 선점 없이 동작한다 — 동시 창
+ * 결정론을 보장하지 않으므로 production 배선은 반드시 claim 을 구현한다.
  *
  * 순수 함수만 담는다(네트워크·DB 없음). 저장소 배선은 `QaDeps` 주입이 담당한다.
  */
@@ -107,26 +116,41 @@ export interface VerifiedRagAnswerRecord {
 
 /**
  * claim 판정.
- *   `winner` = 이 worker 가 선점했다 — LLM 을 소비하고 `put`(settle) 또는 `release` 책임.
+ *   `winner` = 이 worker 가 선점했다 — **ownerToken** 을 받아 LLM 을 소비하고
+ *              `put`(settle, token CAS) 또는 `release`(token CAS) 책임을 진다.
  *   `wait`   = 다른 worker 가 생성 중이다 — settle 을 대기 후 `get` 재조회.
  *   `hit`    = 이미 settle 된 답이 있다 — `get` 재조회로 즉시 재생.
  */
-export type VerifiedRagAnswerClaim = "winner" | "wait" | "hit";
+export type VerifiedRagAnswerClaim =
+  | { verdict: "winner"; ownerToken: string }
+  | { verdict: "wait" }
+  | { verdict: "hit" };
 
 export interface VerifiedRagAnswerStore {
   /** 키 exact 일치·settle 완료 시에만 답을 돌려준다 — fingerprint 하나라도 다르면 null. */
   get: (key: VerifiedRagAnswerKey) => Promise<VerifiedRagAnswerRecord | null>;
-  /** grounded 검증 통과 답변만 저장(settle)한다. 실패는 조용히 무시된다(답변 경로 불차단). */
-  put: (key: VerifiedRagAnswerKey, record: VerifiedRagAnswerRecord) => Promise<void>;
   /**
-   * replay-key 단위 선점 — 동시 첫 miss 에서 정확히 한 worker 만 `winner` 를 받는다.
-   * 미구현 저장소는 선점 없이 동작한다(동시 창에서 결정론 보장 없음 — production 은 구현).
+   * settle — grounded 검증 통과 답변을 **token CAS** 로 고정한다.
+   * true = 내 답이 canonical. false = CAS 패배(다른 winner 가 먼저 settle 했거나 lease
+   * 인수로 token 이 무효) — 호출자는 자기 답을 버리고 canonical 을 재조회해야 한다.
+   * settled 행은 어떤 경우에도 덮어쓰지 않는다(first-writer-wins).
+   */
+  put: (key: VerifiedRagAnswerKey, record: VerifiedRagAnswerRecord, ownerToken?: string) => Promise<boolean>;
+  /**
+   * replay-key 단위 선점 — 동시 첫 miss 에서 정확히 한 worker 만 winner(token 보유)가 된다.
+   * 미구현 저장소(테스트 전용)는 선점 없이 동작한다 — production 은 반드시 구현.
    */
   claim?: (key: VerifiedRagAnswerKey) => Promise<VerifiedRagAnswerClaim>;
-  /** winner 가 grounded 를 만들지 못했을 때 claim 을 푼다 — loser deadlock 방지. */
-  release?: (key: VerifiedRagAnswerKey) => Promise<void>;
+  /**
+   * winner 가 grounded 를 만들지 못했을 때 claim 을 푼다 — loser deadlock 방지.
+   * **token CAS** — lease 인수 뒤 구 winner 의 stale release 는 새 claim 을 지우지 못한다.
+   */
+  release?: (key: VerifiedRagAnswerKey, ownerToken: string) => Promise<void>;
   /** loser 대기 폴링 간격(ms). 기본 250. 테스트 저장소가 줄인다. */
   pollDelayMs?: number;
-  /** loser 대기 폴링 횟수 상한. 기본 40 (≈10초). */
+  /**
+   * loser 대기 폴링 횟수 상한. 기본 80 (≈20초) — provider timeout(15초)보다 길게 잡아
+   * 느린 정상 winner 를 기다리는 동안 중복 생성으로 새지 않게 한다(2차 NO-GO).
+   */
   pollAttempts?: number;
 }

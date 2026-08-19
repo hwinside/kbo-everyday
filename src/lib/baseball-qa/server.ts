@@ -748,11 +748,12 @@ export function makeDeps(
     /**
      * 검증 완료 RAG 답변 replay 저장소 (2026-08-19 맛자욱 P0 — 동일입력 결정론).
      *
-     * 키 = 근거 fingerprint + **request fingerprint(model + 실제 생성 요청 전체)** —
-     * corpus·모델·프롬프트·context/roster 어느 하나만 달라도 자동 miss (삼순 P0-①).
-     * 동시성은 `claim_genius_rag_verified_answer` RPC 가 replay-key 단위 선점으로 잠근다
-     * (삼순 P0-②): pending INSERT 성공 = winner 만 LLM 소비, loser 는 settle 대기·재조회.
-     * 조회·저장·선점 실패는 pipeline 이 fail-open 으로 달리므로 답변 경로를 막지 않는다.
+     * 키 = 근거 fingerprint + **request fingerprint(model + 실제 생성 요청 전체)** (삼순 P0-①).
+     * 동시성은 **owner-token CAS 3 RPC** 가 잠근다(삼순 2차 NO-GO):
+     *   claim → winner 에게 owner_token 발급(lease 인수는 token 교체 = fencing),
+     *   settle → token CAS 로만 성공(settled 덮어쓰기 불가, first-writer-wins),
+     *   release → token 소유 pending 만 삭제(stale winner 의 release 는 no-op).
+     * invalid RPC 결과는 throw — pipeline 이 fail-close 한다(오류를 winner 로 오인 금지).
      */
     verifiedRagAnswers: {
       get: async (key) => {
@@ -766,7 +767,8 @@ export function makeDeps(
           .eq("evidence_fingerprint", key.evidenceFingerprint)
           .eq("request_fingerprint", key.requestFingerprint)
           .limit(1);
-        if (error || !data?.[0]) return null;
+        if (error) throw error;
+        if (!data?.[0]) return null;
         const row = data[0] as { answer: string | null; source_url: string | null; tone_compliant: boolean; status: string };
         // pending(선점 자리표시자)은 답이 아니다 — settled 만 재생한다.
         if (row.status !== "settled" || typeof row.answer !== "string" || row.answer.length === 0) return null;
@@ -776,27 +778,27 @@ export function makeDeps(
           toneCompliant: row.tone_compliant === true,
         };
       },
-      put: async (key, record) => {
-        // settle — winner 의 pending 행을 settled 로 올린다. 이미 settled 면 덮지 않는다
-        // (먼저 고정된 답 유지 = 결정론). claim 없이 온 put(레거시 경로)은 upsert 로 생성된다.
-        const { error } = await supabaseAdmin
-          .from("genius_rag_verified_answers")
-          .upsert({
-            entity_type: key.entityType,
-            entity_id: key.entityId,
-            question_norm: key.questionNorm,
-            evidence_fingerprint: key.evidenceFingerprint,
-            request_fingerprint: key.requestFingerprint,
-            status: "settled",
-            answer: record.answer,
-            source_url: record.sourceUrl,
-            tone_compliant: record.toneCompliant,
-            settled_at: new Date().toISOString(),
-          }, { onConflict: "entity_type,entity_id,question_norm,evidence_fingerprint,request_fingerprint" });
+      put: async (key, record, ownerToken) => {
+        // settle — token CAS. token 이 없으면(레거시/미claim 경로) settle 할 수 없다 —
+        // 결정론 계약상 claim 없는 생성은 금지되어 있으므로 이 경로는 도달하면 안 된다.
+        if (!ownerToken) return false;
+        // query-guard: bounded -- token CAS 단일 행 UPDATE RPC, boolean 반환.
+        const { data, error } = await supabaseAdmin.rpc("settle_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+          p_answer: record.answer,
+          p_source_url: record.sourceUrl,
+          p_tone_compliant: record.toneCompliant,
+        });
         if (error) throw error;
+        return data === true;
       },
       claim: async (key) => {
-        // query-guard: bounded -- 단일 행 선점 RPC, scalar 반환.
+        // query-guard: bounded -- 단일 행 선점 RPC, jsonb 반환.
         const { data, error } = await supabaseAdmin.rpc("claim_genius_rag_verified_answer", {
           p_entity_type: key.entityType,
           p_entity_id: key.entityId,
@@ -805,20 +807,27 @@ export function makeDeps(
           p_request_fingerprint: key.requestFingerprint,
         });
         if (error) throw error;
-        return data === "winner" || data === "wait" || data === "hit" ? data : "winner";
+        const row = data as { verdict?: string; owner_token?: string } | null;
+        // 🔴 invalid 결과를 winner 로 읽지 않는다 (삼순 2차 NO-GO) — 모르면 throw 해
+        //   pipeline 의 fail-close 경로로 보낸다. 오인된 winner 는 중복 생성을 만든다.
+        if (row?.verdict === "winner" && typeof row.owner_token === "string" && row.owner_token.length > 0) {
+          return { verdict: "winner", ownerToken: row.owner_token };
+        }
+        if (row?.verdict === "wait") return { verdict: "wait" };
+        if (row?.verdict === "hit") return { verdict: "hit" };
+        throw new Error(`claim_genius_rag_verified_answer invalid verdict: ${JSON.stringify(data)}`);
       },
-      release: async (key) => {
-        // winner 가 settle 못 함 — pending 행만 지운다(settled 는 건드리지 않는다).
-        // query-guard: bounded -- composite PK exact + status 단일 행 삭제.
-        const { error } = await supabaseAdmin
-          .from("genius_rag_verified_answers")
-          .delete()
-          .eq("entity_type", key.entityType)
-          .eq("entity_id", key.entityId)
-          .eq("question_norm", key.questionNorm)
-          .eq("evidence_fingerprint", key.evidenceFingerprint)
-          .eq("request_fingerprint", key.requestFingerprint)
-          .eq("status", "pending");
+      release: async (key, ownerToken) => {
+        // winner 가 settle 못 함 — token 이 소유한 pending 만 지운다(stale 는 no-op).
+        // query-guard: bounded -- token CAS 단일 행 DELETE RPC.
+        const { error } = await supabaseAdmin.rpc("release_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+        });
         if (error) throw error;
       },
     },

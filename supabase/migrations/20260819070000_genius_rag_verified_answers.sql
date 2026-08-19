@@ -9,13 +9,15 @@
 -- corpus 재적재·모델 교체·프롬프트/요청 형태 변경은 fingerprint 불일치로 자동 무효.
 -- insufficient/폐기 답변은 settle 하지 않는다 — 일시적 생성 실패를 영구 고정하면 오답 캐시다.
 --
--- ── 동시성 (삼순 P0-②) ────────────────────────────────────────────────────
--- status 2상으로 replay-key 단위 선점을 겸한다:
---   'pending' = winner 가 생성 중 (claim 성공 = 이 행 INSERT 성공. 동시 첫 miss 에서
---               PK 충돌로 정확히 한 worker 만 winner 가 된다)
---   'settled' = grounded 답 고정 완료 — get 은 settled 만 재생한다.
--- winner 가 grounded 를 못 만들면 pending 행을 DELETE(release)해 loser deadlock 을 막고,
--- 죽은 winner 는 claimed_at 만료(기본 60초)로 다음 claim 이 인수한다.
+-- ── 동시성 — owner-token CAS (삼순 P0-② + 2차 NO-GO) ───────────────────────
+-- status 2상 + owner_token fencing 으로 replay-key 단위 선점을 겸한다:
+--   'pending' = winner 가 생성 중. claim 은 owner_token(uuid)을 발급하며, lease 만료
+--               인수(takeover)는 **token 을 교체**한다 — 죽은 구 winner 의 token 은 그
+--               순간 무효가 되어 stale settle/release 가 새 claim 을 건드릴 수 없다.
+--   'settled' = grounded 답 고정 완료 — get 은 settled 만 재생하고, settled 는 어떤
+--               경로로도 덮어쓰지 않는다(first-writer-wins).
+-- settle/release 는 **token CAS** 로만 성공한다. settle CAS 패자는 앱이 canonical 답을
+-- 재조회해 반환한다(자기 생성답 발송 금지 — 응답 결정론).
 
 create table if not exists public.genius_rag_verified_answers (
   entity_type text not null check (entity_type = 'player'),
@@ -24,6 +26,8 @@ create table if not exists public.genius_rag_verified_answers (
   evidence_fingerprint text not null,
   request_fingerprint text not null,
   status text not null default 'pending' check (status in ('pending', 'settled')),
+  -- pending 선점의 fencing token. settled 로 올라간 뒤에는 비교 대상이 아니다.
+  owner_token uuid not null default gen_random_uuid(),
   -- settled 에서만 채워진다. pending 은 자리표시자 없이 NULL.
   answer text check (answer is null or char_length(answer) between 1 and 1200),
   source_url text,
@@ -38,15 +42,15 @@ create table if not exists public.genius_rag_verified_answers (
 );
 
 comment on table public.genius_rag_verified_answers is
-  '검증(출력 가드) 통과 RAG 답변 replay 원장 + replay-key 선점(pending/settled) — 동일입력 결정론 (맛자욱 P0). 키 exact 일치·settled 만 재생.';
+  '검증(출력 가드) 통과 RAG 답변 replay 원장 + owner-token CAS 선점(pending/settled) — 동일입력 결정론 (맛자욱 P0). 키 exact 일치·settled 만 재생.';
 
 -- service role 전용 — 클라이언트 직접 접근 경로 없음 (정책 미부여 = anon/auth 전면 차단).
 alter table public.genius_rag_verified_answers enable row level security;
 
--- claim RPC: 원자적 선점/판정. 반환 'winner' | 'wait' | 'hit'.
---   INSERT 성공        → winner (이 worker 가 생성 책임)
---   기존 행 settled    → hit
---   기존 행 pending    → 만료 전 wait / 만료 후 인수(winner — 죽은 winner 복구)
+-- claim RPC: 원자적 선점/판정. jsonb 반환:
+--   {"verdict":"winner","owner_token":"<uuid>"} — INSERT 성공 또는 lease 만료 인수(token 교체)
+--   {"verdict":"hit"}   — settled 답 존재
+--   {"verdict":"wait"}  — 다른 winner 가 유효 lease 로 생성 중
 create or replace function public.claim_genius_rag_verified_answer(
   p_entity_type text,
   p_entity_id text,
@@ -54,23 +58,24 @@ create or replace function public.claim_genius_rag_verified_answer(
   p_evidence_fingerprint text,
   p_request_fingerprint text,
   p_lease_seconds integer default 60
-) returns text
+) returns jsonb
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
+  v_token uuid := gen_random_uuid();
   v_status text;
   v_claimed_at timestamptz;
 begin
-  insert into genius_rag_verified_answers as t
-    (entity_type, entity_id, question_norm, evidence_fingerprint, request_fingerprint, status, claimed_at)
+  insert into genius_rag_verified_answers
+    (entity_type, entity_id, question_norm, evidence_fingerprint, request_fingerprint, status, owner_token, claimed_at)
   values
-    (p_entity_type, p_entity_id, p_question_norm, p_evidence_fingerprint, p_request_fingerprint, 'pending', now())
+    (p_entity_type, p_entity_id, p_question_norm, p_evidence_fingerprint, p_request_fingerprint, 'pending', v_token, now())
   on conflict (entity_type, entity_id, question_norm, evidence_fingerprint, request_fingerprint)
     do nothing;
   if found then
-    return 'winner';
+    return jsonb_build_object('verdict', 'winner', 'owner_token', v_token);
   end if;
 
   select status, claimed_at into v_status, v_claimed_at
@@ -81,31 +86,90 @@ begin
      and request_fingerprint = p_request_fingerprint
    for update;
   if v_status is null then
-    -- 충돌 직후 release 로 사라진 창 — 재삽입 시도 없이 winner 인수(다음 claim 이 정리).
-    insert into genius_rag_verified_answers
-      (entity_type, entity_id, question_norm, evidence_fingerprint, request_fingerprint, status, claimed_at)
-    values
-      (p_entity_type, p_entity_id, p_question_norm, p_evidence_fingerprint, p_request_fingerprint, 'pending', now())
-    on conflict do nothing;
-    return case when found then 'winner' else 'wait' end;
+    -- 충돌 직후 release 로 행이 사라진 좁은 창 — 이번 호출은 wait 로 물러난다.
+    -- (즉시 재삽입하면 release 직후 두 worker 가 동시에 winner 가 되는 창이 생긴다.
+    --  다음 폴링의 claim 이 정상 INSERT 경로로 승자를 다시 정한다.)
+    return jsonb_build_object('verdict', 'wait');
   end if;
   if v_status = 'settled' then
-    return 'hit';
+    return jsonb_build_object('verdict', 'hit');
   end if;
-  -- pending: 만료된 lease 는 인수한다(죽은 winner 복구).
+  -- pending: 만료된 lease 는 **token 을 교체하며** 인수한다(fencing — 구 winner 무효화).
   if v_claimed_at < now() - make_interval(secs => greatest(p_lease_seconds, 1)) then
     update genius_rag_verified_answers
-       set claimed_at = now()
+       set claimed_at = now(), owner_token = v_token
      where entity_type = p_entity_type and entity_id = p_entity_id
        and question_norm = p_question_norm
        and evidence_fingerprint = p_evidence_fingerprint
        and request_fingerprint = p_request_fingerprint
        and status = 'pending';
-    return 'winner';
+    return jsonb_build_object('verdict', 'winner', 'owner_token', v_token);
   end if;
-  return 'wait';
+  return jsonb_build_object('verdict', 'wait');
+end;
+$$;
+
+-- settle RPC: token CAS — 이 token 이 여전히 pending 의 소유자일 때만 settled 로 올린다.
+-- 반환 true = 내 답이 canonical. false = CAS 패배(이미 settled / token 교체됨 / 행 없음).
+-- settled 는 어떤 경우에도 갱신하지 않는다(first-writer-wins).
+create or replace function public.settle_genius_rag_verified_answer(
+  p_entity_type text,
+  p_entity_id text,
+  p_question_norm text,
+  p_evidence_fingerprint text,
+  p_request_fingerprint text,
+  p_owner_token uuid,
+  p_answer text,
+  p_source_url text,
+  p_tone_compliant boolean
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update genius_rag_verified_answers
+     set status = 'settled', answer = p_answer, source_url = p_source_url,
+         tone_compliant = p_tone_compliant, settled_at = now()
+   where entity_type = p_entity_type and entity_id = p_entity_id
+     and question_norm = p_question_norm
+     and evidence_fingerprint = p_evidence_fingerprint
+     and request_fingerprint = p_request_fingerprint
+     and status = 'pending'
+     and owner_token = p_owner_token;
+  return found;
+end;
+$$;
+
+-- release RPC: token CAS — 이 token 이 소유한 pending 행만 지운다.
+-- lease 인수로 token 이 교체된 뒤 구 winner 의 stale release 는 no-op 이다.
+create or replace function public.release_genius_rag_verified_answer(
+  p_entity_type text,
+  p_entity_id text,
+  p_question_norm text,
+  p_evidence_fingerprint text,
+  p_request_fingerprint text,
+  p_owner_token uuid
+) returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from genius_rag_verified_answers
+   where entity_type = p_entity_type and entity_id = p_entity_id
+     and question_norm = p_question_norm
+     and evidence_fingerprint = p_evidence_fingerprint
+     and request_fingerprint = p_request_fingerprint
+     and status = 'pending'
+     and owner_token = p_owner_token;
+  return found;
 end;
 $$;
 
 revoke all on function public.claim_genius_rag_verified_answer(text, text, text, text, text, integer) from public, anon, authenticated;
 grant execute on function public.claim_genius_rag_verified_answer(text, text, text, text, text, integer) to service_role;
+revoke all on function public.settle_genius_rag_verified_answer(text, text, text, text, text, uuid, text, text, boolean) from public, anon, authenticated;
+grant execute on function public.settle_genius_rag_verified_answer(text, text, text, text, text, uuid, text, text, boolean) to service_role;
+revoke all on function public.release_genius_rag_verified_answer(text, text, text, text, text, uuid) from public, anon, authenticated;
+grant execute on function public.release_genius_rag_verified_answer(text, text, text, text, text, uuid) to service_role;

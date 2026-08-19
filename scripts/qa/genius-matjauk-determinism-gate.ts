@@ -24,6 +24,10 @@
  *            --mutate-noclaim   → 선점(claim) 제거: 동시 첫 miss 에서 반드시 실패(RED)
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+import { PGlite } from "@electric-sql/pglite";
 
 import { answerQuestion, RAG_INSUFFICIENT_ANSWER, UNCLEAR_ANSWER, type GlossaryEntry, type PlayerRef, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import {
@@ -218,34 +222,64 @@ interface DeterminismOptions {
   withEvidence: boolean;
   /** 선점(claim) 제공 여부 — false 면 동시 첫 miss 에서 결정론이 깨져야 한다(mutation 축). */
   withClaim: boolean;
+  /**
+   * 느린 winner 재현(삼순 2차 NO-GO) — 1회차 LLM 응답을 이만큼 지연시켜 waiter 들이
+   * 여러 폴링을 거치게 한다. 이 구간에서 waiter 가 직접 생성으로 새면 LLM 중복이 난다.
+   */
+  slowWinnerMs?: number;
 }
 
-/** production 스키마(pending/settled + 원자 claim)의 in-memory 등가물. */
-function memoryStore(options: { withClaim: boolean }): VerifiedRagAnswerStore {
+interface MemoryStoreOptions {
+  withClaim: boolean;
+  /** lease 기간(ms). 이 시간이 지난 pending 은 다음 claim 이 token 교체로 인수한다. */
+  leaseMs?: number;
+  /** 🔴 결함주입(mutation staleowner): release/settle 이 token 검증을 생략한다. */
+  ignoreOwnerToken?: boolean;
+}
+
+/** production 스키마(pending/settled + owner-token CAS)의 in-memory 등가물. */
+function memoryStore(options: MemoryStoreOptions): VerifiedRagAnswerStore {
   const settled = new Map<string, VerifiedRagAnswerRecord>();
-  const pending = new Set<string>();
+  const pending = new Map<string, { token: string; at: number }>();
+  const leaseMs = options.leaseMs ?? 60_000;
+  let seq = 0;
   const keyOf = (key: VerifiedRagAnswerKey) =>
     [key.entityType, key.entityId, key.questionNorm, key.evidenceFingerprint, key.requestFingerprint].join("\u0000");
   const store: VerifiedRagAnswerStore = {
     pollDelayMs: 5,
     pollAttempts: 200,
     get: async (key) => settled.get(keyOf(key)) ?? null,
-    put: async (key, record) => {
+    // settle — token CAS + first-writer-wins. settled 는 어떤 경우에도 덮어쓰지 않는다.
+    put: async (key, record, ownerToken) => {
       const k = keyOf(key);
-      if (!settled.has(k)) settled.set(k, record);
-      pending.delete(k);
+      if (settled.has(k)) return false;
+      if (options.withClaim) {
+        const current = pending.get(k);
+        if (!options.ignoreOwnerToken && (!current || current.token !== ownerToken)) return false;
+        settled.set(k, record);
+        pending.delete(k);
+        return true;
+      }
+      // claim 미지원(레거시 테스트 전용) — 첫 쓰기만 고정.
+      settled.set(k, record);
+      return true;
     },
   };
   if (options.withClaim) {
     store.claim = async (key): Promise<VerifiedRagAnswerClaim> => {
       const k = keyOf(key);
-      if (settled.has(k)) return "hit";
-      if (pending.has(k)) return "wait";
-      pending.add(k);
-      return "winner";
+      if (settled.has(k)) return { verdict: "hit" };
+      const current = pending.get(k);
+      if (current && Date.now() - current.at < leaseMs) return { verdict: "wait" };
+      // 신규 선점 또는 lease 만료 인수 — **token 교체**(fencing).
+      const token = `owner-${(seq += 1)}`;
+      pending.set(k, { token, at: Date.now() });
+      return { verdict: "winner", ownerToken: token };
     };
-    store.release = async (key) => {
-      pending.delete(keyOf(key));
+    store.release = async (key, ownerToken) => {
+      const k = keyOf(key);
+      const current = pending.get(k);
+      if (options.ignoreOwnerToken || (current && current.token === ownerToken)) pending.delete(k);
     };
   }
   return store;
@@ -278,9 +312,13 @@ async function runDeterminism(evidence: RagEvidence, options: DeterminismOptions
       // 🔴 flappy provider — 1회차만 grounded, 이후 전부 INSUFFICIENT.
       //   temperature 0 이어도 provider 변동은 원리적으로 남는다는 실측(GROUNDED↔INSUFFICIENT
       //   플립)의 재현이다. replay 가 없으면 2회차부터 반드시 흔들린다 → mutation RED 의 축.
+      //   slowWinnerMs 가 설정되면 1회차 응답을 지연시켜 느린 정상 winner 를 재현한다.
       callRagLlm: async () => {
         llmCalls += 1;
         if (llmCalls === 1) {
+          if (options.slowWinnerMs) {
+            await new Promise((resolve) => setTimeout(resolve, options.slowWinnerMs));
+          }
           return {
             text: JSON.stringify({
               status: RAG_GROUNDED_SENTINEL,
@@ -384,6 +422,208 @@ async function runCopySeparationCheck(evidence: RagEvidence): Promise<void> {
   });
 }
 
+// ── [B''] store 계약 — lease takeover · stale owner fencing (삼순 2차 NO-GO) ──────
+function storeContractKey(): VerifiedRagAnswerKey {
+  return {
+    entityType: "player",
+    entityId: "62404",
+    questionNorm: "구자욱 별명이 왜 맛자욱이야",
+    evidenceFingerprint: "fp-evidence-contract",
+    requestFingerprint: "fp-request-contract",
+  };
+}
+
+async function runStoreOwnerTokenContract(store: VerifiedRagAnswerStore): Promise<void> {
+  const key = storeContractKey();
+  const record = (answer: string) => ({ answer, sourceUrl: null, toneCompliant: true });
+  const first = await store.claim!(key);
+  assert.equal(first.verdict, "winner", "첫 claim 이 winner 가 아니다");
+  const tokenA = first.verdict === "winner" ? first.ownerToken : "";
+  // lease 만료 대기 → takeover 가 **token 을 교체**해야 한다(fencing).
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const second = await store.claim!(key);
+  assert.equal(second.verdict, "winner", "lease 만료 인수가 winner 가 아니다");
+  const tokenB = second.verdict === "winner" ? second.ownerToken : "";
+  assert.notEqual(tokenB, tokenA, "takeover 가 token 을 교체하지 않았다 — fencing 부재");
+  // 구 winner 의 stale release 는 새 claim 을 지우지 못한다(no-op).
+  await store.release!(key, tokenA);
+  const afterStaleRelease = await store.claim!(key);
+  assert.equal(afterStaleRelease.verdict, "wait",
+    `stale release 가 새 claim 을 지웠다 — 판정 ${afterStaleRelease.verdict}`);
+  // 구 winner 의 stale settle 은 CAS 패배다.
+  assert.equal(await store.put(key, record("구 winner 의 답"), tokenA), false, "stale settle 이 성공했다");
+  // 새 winner 의 settle 만 성공하고, settled 는 재쓰기 불가(first-writer-wins).
+  assert.equal(await store.put(key, record("canonical 답"), tokenB), true, "정당 winner settle 이 실패했다");
+  assert.equal(await store.put(key, record("덮어쓰기 시도"), tokenB), false, "settled 가 덮어쓰여졌다");
+  const settled = await store.get(key);
+  assert.equal(settled?.answer, "canonical 답", "canonical 이 보존되지 않았다");
+  const afterSettle = await store.claim!(key);
+  assert.equal(afterSettle.verdict, "hit", "settle 후 claim 이 hit 가 아니다");
+}
+
+// ── [B'''] 저장소 오류 fail-close · settle CAS 패자 canonical 재조회 ────────────
+async function runFailureModeChecks(evidence: RagEvidence): Promise<void> {
+  const players: PlayerRef[] = await loadRosterPlayers();
+  const baseDeps = (store: Partial<VerifiedRagAnswerStore>, onLlm: () => void) =>
+    ({
+      enablePlayerRag: true,
+      loadGlossary: async () => [],
+      loadPlayers: async () => players,
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      releaseDaily: async () => {},
+      log: async () => {},
+      callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_PLAYER", answer: "일반 답변입니다." }), inputTokens: 1, outputTokens: 1 }),
+      searchRag: async () => [evidence],
+      callRagLlm: async () => {
+        onLlm();
+        return {
+          text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "생성된 내 답입니다. 채수빈 유래입니다." }),
+          inputTokens: 10, outputTokens: 5,
+        };
+      },
+      verifiedRagAnswers: { pollDelayMs: 5, pollAttempts: 10, ...store },
+    }) as unknown as QaDeps;
+
+  await check("fail-close — get 오류는 시스템 오류로 닫고 LLM 을 소비하지 않는다", async () => {
+    let llm = 0;
+    const result = await answerQuestion("u-err-get", "구자욱 별명이 왜 맛자욱이야?", baseDeps({
+      get: async () => { throw new Error("db down"); },
+      put: async () => true,
+    }, () => { llm += 1; }));
+    assert.equal(result.source, "error", `오류가 ${result.source} 로 샐다: ${result.answer}`);
+    assert.equal(llm, 0, `저장소 오류인데 LLM 을 소비했다(${llm}) — 중복 생성 경로`);
+  });
+  await check("fail-close — claim 오류는 winner 오인 없이 시스템 오류로 닫는다", async () => {
+    let llm = 0;
+    const result = await answerQuestion("u-err-claim", "구자욱 별명이 왜 맛자욱이야?", baseDeps({
+      get: async () => null,
+      put: async () => true,
+      claim: async () => { throw new Error("rpc down"); },
+      release: async () => {},
+    }, () => { llm += 1; }));
+    assert.equal(result.source, "error", `claim 오류가 ${result.source} 로 샐다: ${result.answer}`);
+    assert.equal(llm, 0, `claim 오류인데 LLM 을 소비했다(${llm})`);
+  });
+  await check("fail-close — wait 상한 초과(느린 winner 생존) 시 직접 생성하지 않는다", async () => {
+    let llm = 0;
+    const result = await answerQuestion("u-wait-cap", "구자욱 별명이 왜 맛자욱이야?", baseDeps({
+      get: async () => null,
+      put: async () => true,
+      claim: async () => ({ verdict: "wait" }),
+      release: async () => {},
+    }, () => { llm += 1; }));
+    assert.equal(result.source, "error", `상한 초과가 ${result.source} 로 샐다: ${result.answer}`);
+    assert.equal(llm, 0, `claim 없이 생성했다(${llm}) — 느린 winner 중복 호출 축(2차 NO-GO)`);
+  });
+  await check("settle CAS 패자 — 자기 생성답을 버리고 canonical 을 재조회해 반환한다", async () => {
+    let llm = 0;
+    let settledByOther = false;
+    const canonical = { answer: "먼저 고정된 canonical 답입니다. 채수빈 유래입니다.", sourceUrl: null, toneCompliant: true };
+    const result = await answerQuestion("u-cas-loser", "구자욱 별명이 왜 맛자욱이야?", baseDeps({
+      get: async () => (settledByOther ? canonical : null),
+      claim: async () => ({ verdict: "winner", ownerToken: "my-token" }),
+      // lease 인수된 다른 winner 가 먼저 settle 했다 — 내 settle 은 CAS 패배.
+      put: async () => { settledByOther = true; return false; },
+      release: async () => {},
+    }, () => { llm += 1; }));
+    assert.equal(result.source, "rag", `CAS 패자가 ${result.source} 로 끝났다: ${result.answer}`);
+    assert.ok(result.answer?.includes("먼저 고정된 canonical"), `canonical 이 아니라 내 생성답이 나갔다: ${result.answer}`);
+    assert.ok(!result.answer?.includes("생성된 내 답"), `CAS 패자의 자기 답이 발송됐다: ${result.answer}`);
+    assert.equal(llm, 1, `LLM 소비 ${llm}회 (기대 1)`);
+  });
+}
+
+// ── [B''''] 실제 migration 경쟁 (PGlite — 배포될 SQL 그대로) ──────────────────
+async function runPgliteMigrationRaceChecks(): Promise<void> {
+  const db = new PGlite();
+  await db.exec("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN;");
+  const sql = readFileSync(
+    path.join(process.cwd(), "supabase/migrations/20260819070000_genius_rag_verified_answers.sql"),
+    "utf8",
+  );
+  await db.exec(sql);
+  const K = {
+    t: "player", id: "62404", q: "구자욱 별명이 왜 맛자욱이야",
+    ef: "fp-ev-pg", rf: "fp-req-pg",
+  };
+  const claim = async (lease = 60) => {
+    const res = await db.query<{ v: { verdict: string; owner_token?: string } }>(
+      "select claim_genius_rag_verified_answer($1,$2,$3,$4,$5,$6) as v",
+      [K.t, K.id, K.q, K.ef, K.rf, lease],
+    );
+    return res.rows[0].v;
+  };
+  const settle = async (token: string, answer: string) => {
+    const res = await db.query<{ v: boolean }>(
+      "select settle_genius_rag_verified_answer($1,$2,$3,$4,$5,$6,$7,$8,$9) as v",
+      [K.t, K.id, K.q, K.ef, K.rf, token, answer, null, true],
+    );
+    return res.rows[0].v;
+  };
+  const release = async (token: string) => {
+    const res = await db.query<{ v: boolean }>(
+      "select release_genius_rag_verified_answer($1,$2,$3,$4,$5,$6) as v",
+      [K.t, K.id, K.q, K.ef, K.rf, token],
+    );
+    return res.rows[0].v;
+  };
+
+  await check("PGlite — 동시 claim 8회에서 winner 정확히 1명", async () => {
+    const verdicts = await Promise.all(Array.from({ length: 8 }, () => claim()));
+    const winners = verdicts.filter((entry) => entry.verdict === "winner");
+    const waits = verdicts.filter((entry) => entry.verdict === "wait");
+    assert.equal(winners.length, 1, `winner ${winners.length}명: ${JSON.stringify(verdicts)}`);
+    assert.equal(waits.length, 7, `wait ${waits.length}명`);
+    assert.ok(winners[0].owner_token, "winner 에 owner_token 이 없다");
+  });
+
+  await check("PGlite — lease 만료 인수가 token 을 교체하고 구 token 은 전부 무효(fencing)", async () => {
+    // 현재 pending 의 token 확보 후 lease 를 강제 만료시킨다.
+    const staleRow = await db.query<{ owner_token: string }>(
+      "select owner_token from genius_rag_verified_answers where request_fingerprint=$1", [K.rf],
+    );
+    const staleToken = staleRow.rows[0].owner_token;
+    await db.query(
+      "update genius_rag_verified_answers set claimed_at = now() - interval '10 minutes' where request_fingerprint=$1",
+      [K.rf],
+    );
+    const takeover = await claim();
+    assert.equal(takeover.verdict, "winner", `만료 lease 인수 실패: ${JSON.stringify(takeover)}`);
+    assert.notEqual(takeover.owner_token, staleToken, "takeover 가 token 을 교체하지 않았다");
+    // 구 winner 의 stale release → no-op (새 claim 생존).
+    assert.equal(await release(staleToken), false, "stale release 가 성공했다");
+    const still = await claim();
+    assert.equal(still.verdict, "wait", `stale release 뒤 claim 이 ${still.verdict} — pending 이 지워졌다`);
+    // 구 winner 의 stale settle → CAS 패배.
+    assert.equal(await settle(staleToken, "구 winner 답"), false, "stale settle 이 성공했다");
+    // 새 winner settle → 성공, 이후 first-writer-wins.
+    assert.equal(await settle(takeover.owner_token!, "canonical 답입니다"), true, "정당 settle 실패");
+    assert.equal(await settle(takeover.owner_token!, "덮어쓰기"), false, "settled 가 다시 settle 됐다");
+    const hit = await claim();
+    assert.equal(hit.verdict, "hit", `settle 후 claim 이 ${hit.verdict}`);
+    const row = await db.query<{ answer: string; status: string }>(
+      "select answer, status from genius_rag_verified_answers where request_fingerprint=$1", [K.rf],
+    );
+    assert.equal(row.rows[0].status, "settled");
+    assert.equal(row.rows[0].answer, "canonical 답입니다", "canonical 이 보존되지 않았다");
+  });
+
+  await check("PGlite — RLS 활성 + 함수 권한이 service_role 로만 제한", async () => {
+    const rls = await db.query<{ relrowsecurity: boolean }>(
+      "select relrowsecurity from pg_class where relname='genius_rag_verified_answers'",
+    );
+    assert.equal(rls.rows[0].relrowsecurity, true, "RLS 미활성");
+    const acl = await db.query<{ ok: boolean }>(
+      "select has_function_privilege('anon', 'claim_genius_rag_verified_answer(text,text,text,text,text,integer)', 'execute') as ok",
+    );
+    assert.equal(acl.rows[0].ok, false, "anon 이 claim RPC 를 실행할 수 있다");
+  });
+
+  await db.close();
+}
+
 // ── temperature 계약 ─────────────────────────────────────────────────────────
 async function runTemperatureCheck(evidence: RagEvidence): Promise<void> {
   await check("temperature — RAG 생성은 0 고정 (문면 grep 아니라 값 결속)", () => {
@@ -403,6 +643,12 @@ async function runAll(options: DeterminismOptions): Promise<void> {
     `결정론 — 동시 8-way + 20회×2세션 동일답 + LLM 합산 1회 (replay=${options.withReplayStore}, claim=${options.withClaim}, 결속=${options.withEvidence})`,
     () => runDeterminism(evidence, options),
   );
+  await check("결정론 — 느린 winner(응답 지연 > 폴링 여러 회)에서도 동일답 + LLM 1회 (2차 NO-GO 축)", () =>
+    runDeterminism(evidence, { ...options, slowWinnerMs: 150 }));
+  await check("store 계약 — lease takeover token 교체 + stale release/settle 무효 + first-writer-wins", () =>
+    runStoreOwnerTokenContract(memoryStore({ withClaim: true, leaseMs: 30, ignoreOwnerToken: !options.withClaim && false })));
+  await runFailureModeChecks(evidence);
+  await runPgliteMigrationRaceChecks();
   await runCopySeparationCheck(evidence);
 }
 
@@ -427,7 +673,22 @@ async function main(): Promise<void> {
     await expectRed("replay 제거(noreplay)", { withReplayStore: false, withClaim: false, withEvidence: true });
     await expectRed("근거 결속 제거(unbind)", { withReplayStore: true, withClaim: true, withEvidence: false });
     await expectRed("선점 제거(noclaim) — 동시 첫 miss 결정론 붕괴", { withReplayStore: true, withClaim: false, withEvidence: true });
-    console.log("✅ selftest 통과 (mutation RED 3축 증명)");
+    // 🔴 stale-owner mutation: release/settle 이 token 검증을 생략하면 store 계약 테스트가
+    //   반드시 RED 여야 한다 — stale release 가 새 claim 을 지우는 결함(2차 NO-GO 축).
+    {
+      let failed = false;
+      try {
+        await runStoreOwnerTokenContract(memoryStore({ withClaim: true, leaseMs: 30, ignoreOwnerToken: true }));
+      } catch {
+        failed = true;
+      }
+      if (!failed) {
+        console.error("SELFTEST FAIL — mutation [stale-owner(token 검증 생략)] 이 GREEN 이다");
+        process.exit(1);
+      }
+      console.log("SELFTEST RED 확인 — stale-owner(token 검증 생략)");
+    }
+    console.log("✅ selftest 통과 (mutation RED 4축 증명)");
     return;
   }
   const options: DeterminismOptions = {

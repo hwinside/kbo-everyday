@@ -4132,7 +4132,8 @@ async function answerPlayerDescriptiveQuestion(
   // 키 결속 (삼순 2026-08-19 P0-①): 근거 fingerprint(내용·revision·순서) +
   // **model + 실제 생성 요청 전체**(원문 질문·context·rosterBlock·프롬프트·generationConfig).
   // corpus·모델·요청 형태 어느 하나만 바뀌어도 자동 miss 된다.
-  // 조회 실패는 replay 없음과 동일(fail-open) — 관측 경로가 답변을 막으면 안 된다.
+  // 🔴 저장소 오류(get/claim/put throw)는 **fail-close** 다 (삼순 2차 NO-GO) — 오류를
+  // "replay 없음"이나 winner 로 오인해 생성하면 중복 생성으로 결정론이 조용히 깨진다.
   const verifiedKey: VerifiedRagAnswerKey | null = deps.verifiedRagAnswers
     ? {
         entityType: "player",
@@ -4144,14 +4145,10 @@ async function answerPlayerDescriptiveQuestion(
         }),
       }
     : null;
+  // settled 답 재생. 오류는 throw 전파 — 호출부가 failCloseError 로 닫는다(fail-close).
   const replayFromStore = async (): Promise<QaResult | null> => {
     if (!deps.verifiedRagAnswers || !verifiedKey) return null;
-    let replayedAnswer: Awaited<ReturnType<VerifiedRagAnswerStore["get"]>> = null;
-    try {
-      replayedAnswer = await deps.verifiedRagAnswers.get(verifiedKey);
-    } catch {
-      replayedAnswer = null;
-    }
+    const replayedAnswer = await deps.verifiedRagAnswers.get(verifiedKey);
     if (!replayedAnswer) return null;
     const answer = composeRagAnswer(replayedAnswer.answer, evidence[0]);
     const replaySourceUrl = displayProvenanceOf(evidence[0])?.url;
@@ -4162,58 +4159,77 @@ async function answerPlayerDescriptiveQuestion(
     });
     return { status: 200, answer, source: "rag", remaining, sourceUrl: replaySourceUrl };
   };
-  const replayed = await replayFromStore();
-  if (replayed) return replayed;
-  // 동시 첫 miss 선점 (삼순 2026-08-19 P0-②): 서로 다른 messageId 가 같은 키의 첫
-  // miss 를 동시에 보면 둘 다 LLM 을 부르고 서로 다른 답을 반환할 수 있다 — DB
-  // ignoreDuplicates 는 첫 행만 지킬 뿐 응답 결정론을 못 지킨다. winner 만 LLM 을
-  // 소비하고, loser 는 settle 을 대기 후 재조회해 같은 답을 재생한다.
-  // claim 실패(예외)는 선점 없이 진행(fail-open) — 결정론 인프라가 답변을 막지 않는다.
-  let replayClaimed = false;
+  try {
+    const replayed = await replayFromStore();
+    if (replayed) return replayed;
+  } catch {
+    return failCloseError();
+  }
+  // 동시 첫 miss 선점 — owner-token CAS (삼순 P0-② + 2차 NO-GO). winner 만 token 을
+  // 받아 LLM 을 소비하고, loser 는 settle 을 대기 후 재조회해 같은 답을 재생한다.
+  // 🔴 **claim(winner token) 없이는 절대 생성하지 않는다** — 폴링 상한 뒤 직접 생성
+  // 폴백은 느린 정상 winner(provider 최대 15초)에서 LLM 중복 호출을 만든다.
+  // 상한(기본 80×250ms≈20초 > provider 15초) 초과에도 winner 가 못 되면 fail-close.
+  let replayOwnerToken: string | null = null;
   if (deps.verifiedRagAnswers?.claim && verifiedKey) {
-    let claim: VerifiedRagAnswerClaim | null = null;
+    const store = deps.verifiedRagAnswers;
+    let claim: VerifiedRagAnswerClaim;
     try {
-      claim = await deps.verifiedRagAnswers.claim(verifiedKey);
+      claim = await store.claim!(verifiedKey);
     } catch {
-      claim = null;
+      return failCloseError();
     }
-    if (claim === "hit") {
-      const settled = await replayFromStore();
-      if (settled) return settled;
-      // claim 은 hit 인데 get 이 비었다(release 경합 등) — 생성 경로로 진행한다.
-    } else if (claim === "wait") {
-      // winner 의 settle 대기 — 상한 내 폴링 후 재조회. 상한 초과는 winner 가 release
-      // 했거나 죽은 경우다 — 이 worker 가 직접 생성으로 내려간다(무응답보다 재생성).
-      const delayMs = deps.verifiedRagAnswers.pollDelayMs ?? 250;
-      const attempts = deps.verifiedRagAnswers.pollAttempts ?? 40;
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (claim.verdict === "hit") {
+      // settled 는 지워지지 않는다 — hit 인데 get 이 비는 상태는 저장소 불변식 위반이다.
+      try {
         const settled = await replayFromStore();
         if (settled) return settled;
-        let again: VerifiedRagAnswerClaim | null = null;
+      } catch {
+        return failCloseError();
+      }
+      return failCloseError();
+    }
+    if (claim.verdict === "wait") {
+      const delayMs = store.pollDelayMs ?? 250;
+      const attempts = store.pollAttempts ?? 80;
+      for (let attempt = 0; attempt < attempts && replayOwnerToken === null; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        let again: VerifiedRagAnswerClaim;
         try {
-          again = await deps.verifiedRagAnswers.claim(verifiedKey);
+          const settled = await replayFromStore();
+          if (settled) return settled;
+          again = await store.claim!(verifiedKey);
         } catch {
-          again = null;
+          return failCloseError();
         }
-        // winner 가 release 했으면 이번 claim 이 winner 로 넘어온다 — 이 worker 가 생성.
-        if (again === "winner") { replayClaimed = true; break; }
-        if (again === "hit") {
-          const settledNow = await replayFromStore();
-          if (settledNow) return settledNow;
+        // winner 가 release 했거나 lease 가 만료되면 이번 claim 이 winner(새 token)로
+        // 넘어온다 — 그때만 이 worker 가 생성 권한을 얻는다.
+        if (again.verdict === "winner") replayOwnerToken = again.ownerToken;
+        else if (again.verdict === "hit") {
+          try {
+            const settledNow = await replayFromStore();
+            if (settledNow) return settledNow;
+          } catch {
+            return failCloseError();
+          }
+          return failCloseError();
         }
       }
-    } else if (claim === "winner") {
-      replayClaimed = true;
+      // 상한 초과 & winner 미획득 — claim 없는 생성은 금지다. 시스템 오류로 닫는다
+      // (유저는 재질문으로 복구하고, 그때는 settled 재생 또는 새 claim 이 성립한다).
+      if (replayOwnerToken === null) return failCloseError();
+    } else {
+      replayOwnerToken = claim.ownerToken;
     }
   }
   // winner 가 grounded 를 못 만들면(폐기·예외·재생 종결) claim 을 풀어 loser deadlock 을 막는다.
+  // release 는 token CAS 다 — lease 인수로 token 이 교체됐으면 이 호출은 no-op(새 claim 보호).
   const releaseReplayClaim = async (): Promise<void> => {
-    if (!replayClaimed || !deps.verifiedRagAnswers?.release || !verifiedKey) return;
+    if (replayOwnerToken === null || !deps.verifiedRagAnswers?.release || !verifiedKey) return;
     try {
-      await deps.verifiedRagAnswers.release(verifiedKey);
+      await deps.verifiedRagAnswers.release(verifiedKey, replayOwnerToken);
     } catch {
-      // release 실패는 loser 폴링 상한이 흘수한다(상한 후 직접 생성).
+      // release 실패는 lease 만료 인수가 회수한다.
     }
   };
 
@@ -4291,17 +4307,32 @@ async function answerPlayerDescriptiveQuestion(
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
-  // 검증(출력 가드 전부)을 통과한 답만 replay 저장소에 고정한다 (맛자욱 P0 결정론).
-  // 저장 실패는 무시 — 다음 질문이 한 번 더 생성할 뿐, 이번 답변을 막지 않는다.
+  // 검증(출력 가드 전부)을 통과한 답만 replay 저장소에 settle 한다 (맛자욱 P0 결정론).
+  // settle 은 token CAS — 패배(false)는 다른 winner 의 답이 먼저 canonical 이 된 것이므로
+  // **내 생성답을 버리고 canonical 을 재조회해 반환**한다(응답 결정론, 삼순 2차 NO-GO).
+  // settle 오류는 fail-close — 내 답이 canonical 인지 모른 채 발송하지 않는다.
   if (deps.verifiedRagAnswers && verifiedKey) {
+    let settledAsCanonical: boolean;
     try {
-      await deps.verifiedRagAnswers.put(verifiedKey, {
+      settledAsCanonical = await deps.verifiedRagAnswers.put(verifiedKey, {
         answer: validated.answer,
         sourceUrl: sourceUrl ?? null,
         toneCompliant: validated.toneCompliant,
-      });
+      }, replayOwnerToken ?? undefined);
     } catch {
-      // 관측/고정 경로 실패는 답변 경로를 막지 않는다.
+      await releaseReplayClaim();
+      return failCloseError();
+    }
+    if (!settledAsCanonical && deps.verifiedRagAnswers.claim) {
+      // CAS 패배 — lease 인수된 새 winner 가 먼저 settle 했다. canonical 을 재생한다.
+      try {
+        const canonical = await replayFromStore();
+        if (canonical) return canonical;
+      } catch {
+        return failCloseError();
+      }
+      // canonical 도 없다(새 winner 가 아직 생성 중) — 내 답을 보내면 그 답과 갈린다. fail-close.
+      return failCloseError();
     }
   }
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
