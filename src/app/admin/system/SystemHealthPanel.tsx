@@ -21,8 +21,11 @@ type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 interface SystemHealthResponse {
   level: HealthLevel;
   metrics: {
-    cpuLoadPercent: number | null;
+    cpuUsedPercent: number | null;
+    cpuSampleSeconds: number | null;
     cpuCores: number | null;
+    load1: number | null;
+    load1PerCore: number | null;
     memoryUsedPercent: number | null;
     diskUsedPercent: number | null;
     postgresUp: boolean | null;
@@ -218,10 +221,25 @@ export default function SystemHealthPanel() {
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <MetricCard
           icon={Cpu}
-          label="CPU 부하 (1분)"
-          value={metrics?.cpuLoadPercent === null || metrics?.cpuLoadPercent === undefined ? "—" : `${metrics.cpuLoadPercent}%`}
-          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores 기준` : "코어 정보 없음"}
-          level={percentLevel(metrics?.cpuLoadPercent ?? null, 70, 85)}
+          label="CPU 사용률"
+          value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
+          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 counter 실측` : "counter delta 필요"}
+          level={percentLevel(metrics?.cpuUsedPercent ?? null, 70, 85)}
+        />
+        <MetricCard
+          icon={Activity}
+          label="시스템 Load (1분)"
+          value={metrics?.load1 === null || metrics?.load1 === undefined ? "—" : `${metrics.load1}`}
+          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores · 코어당 ${metrics.load1PerCore ?? "—"}` : "코어 정보 없음"}
+          level={
+            metrics?.load1PerCore === null || metrics?.load1PerCore === undefined
+              ? "unknown"
+              : metrics.load1PerCore >= 2
+                ? "critical"
+                : metrics.load1PerCore >= 1
+                  ? "warning"
+                  : "healthy"
+          }
         />
         <MetricCard
           icon={MemoryStick}

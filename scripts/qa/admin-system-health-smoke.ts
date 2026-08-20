@@ -8,8 +8,10 @@ import { GET } from "../../src/app/api/admin/system-health/route";
 import { parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
 
 const sample = (overrides = "") => `
-node_cpu_seconds_total{cpu="0",mode="idle"} 100
-node_cpu_seconds_total{cpu="1",mode="idle"} 100
+node_cpu_seconds_total{cpu="0",mode="idle"} 100.6
+node_cpu_seconds_total{cpu="0",mode="user"} 50.4
+node_cpu_seconds_total{cpu="1",mode="idle"} 100.6
+node_cpu_seconds_total{cpu="1",mode="user"} 50.4
 node_load1 0.8
 node_memory_MemTotal_bytes 1000
 node_memory_MemFree_bytes 200
@@ -27,6 +29,14 @@ pg_stat_activity_xact_runtime 0.1
 ${overrides}
 `;
 
+const previousSample = (overrides = "") => `
+node_cpu_seconds_total{cpu="0",mode="idle"} 100
+node_cpu_seconds_total{cpu="0",mode="user"} 50
+node_cpu_seconds_total{cpu="1",mode="idle"} 100
+node_cpu_seconds_total{cpu="1",mode="user"} 50
+${overrides}
+`;
+
 test("parses labels and scientific notation", () => {
   const rows = parsePrometheusText('metric_name{mountpoint="/",device="nvme0"} 8.1e+09\n');
   assert.equal(rows.length, 1);
@@ -35,13 +45,50 @@ test("parses labels and scientific notation", () => {
 });
 
 test("summarizes healthy server and DB metrics", () => {
-  const result = summarizeSystemMetrics(sample());
+  const result = summarizeSystemMetrics(sample(), previousSample(), 1);
   assert.equal(result.level, "healthy");
-  assert.equal(result.cpuLoadPercent, 40);
+  assert.equal(result.cpuUsedPercent, 40);
+  assert.equal(result.load1, 0.8);
+  assert.equal(result.load1PerCore, 0.4);
+  assert.equal(result.cpuSampleSeconds, 1);
   assert.equal(result.memoryUsedPercent, 60);
   assert.equal(result.diskUsedPercent, 70);
   assert.equal(result.postgresConnections, 26);
   assert.equal(result.poolActiveConnections, 5);
+});
+
+test("high load average is not mislabeled or escalated as CPU usage", () => {
+  const result = summarizeSystemMetrics(
+    sample().replace("node_load1 0.8", "node_load1 8"),
+    previousSample(),
+    1,
+  );
+  assert.equal(result.cpuUsedPercent, 40);
+  assert.equal(result.load1, 8);
+  assert.equal(result.load1PerCore, 4);
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.startsWith("CPU")));
+});
+
+test("actual CPU counter delta still drives critical health", () => {
+  const result = summarizeSystemMetrics(
+    sample()
+      .replaceAll('mode="idle"} 100.6', 'mode="idle"} 100.1')
+      .replaceAll('mode="user"} 50.4', 'mode="user"} 50.9'),
+    previousSample(),
+    1,
+  );
+  assert.equal(result.cpuUsedPercent, 90);
+  assert.equal(result.level, "critical");
+  assert.ok(result.reasons.includes("CPU 사용률 90%"));
+});
+
+test("CPU stays unknown without a counter delta instead of falling back to load average", () => {
+  const result = summarizeSystemMetrics(sample().replace("node_load1 0.8", "node_load1 8"));
+  assert.equal(result.cpuUsedPercent, null);
+  assert.equal(result.load1, 8);
+  assert.equal(result.level, "warning");
+  assert.ok(result.reasons.includes("핵심 메트릭 누락: CPU"));
 });
 
 test("raises warning at resource thresholds", () => {
@@ -138,6 +185,28 @@ async function routeWith(fetchImpl: typeof fetch) {
   }
 }
 
+test("route derives actual CPU from two counter snapshots and keeps high load separate", async () => {
+  let metricCalls = 0;
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      metricCalls += 1;
+      return new Response(
+        metricCalls === 1 ? previousSample() : sample().replace("node_load1 0.8", "node_load1 8"),
+        { status: 200 },
+      );
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(metricCalls, 2);
+  assert.equal(payload.level, "healthy");
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.load1, 8);
+  assert.equal(payload.metrics.load1PerCore, 4);
+  assert.ok(payload.metrics.cpuSampleSeconds >= 1);
+});
+
 test("route degrades overall health when Metrics is unavailable", async () => {
   const response = await routeWith(async (input) => {
     const url = String(input);
@@ -205,7 +274,7 @@ test("UI marks retained data stale after a successful load then refresh failure"
     if (calls > 1) return new Response("unavailable", { status: 503 });
     return Response.json({
       level: "healthy",
-      metrics: summarizeSystemMetrics(sample()),
+      metrics: summarizeSystemMetrics(sample(), previousSample(), 1),
       services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
       sourceErrors: { metrics: null, management: null },
       checkedAt: new Date().toISOString(),
@@ -223,7 +292,11 @@ test("UI marks retained data stale after a successful load then refresh failure"
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    assert.match(container.textContent || "", /정상/);
+    const initialText = container.textContent || "";
+    assert.match(initialText, /정상/);
+    assert.match(initialText, /CPU 사용률/);
+    assert.match(initialText, /시스템 Load \(1분\)/);
+    assert.doesNotMatch(initialText, /CPU 부하 \(1분\)/);
     const refresh = container.querySelector('button[aria-label="서버 상태 새로고침"]') as HTMLButtonElement | null;
     assert.ok(refresh);
     await act(async () => {
@@ -268,7 +341,7 @@ test("UI shows date and age when checkedAt is stale", async () => {
   const oldCheckedAt = new Date(Date.now() - 26 * 60 * 60 * 1000);
   globalThis.fetch = (async () => Response.json({
     level: "healthy",
-    metrics: summarizeSystemMetrics(sample()),
+    metrics: summarizeSystemMetrics(sample(), previousSample(), 1),
     services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
     sourceErrors: { metrics: null, management: null },
     checkedAt: oldCheckedAt.toISOString(),
