@@ -192,6 +192,8 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
  * stats 225K + player-stats 198K ≈ 0.73M 회/일, 8/12 실측) 전부가 no-op middleware 를 1회씩
  * 태우고 있었다. → /api 는 matcher 에서 제외하되, 워치 계측이 있는 /api/standings 만 예외로
  * 유지한다(계측은 CDN 캐시 앞단인 proxy 에서만 전량을 잡는다 — 상단 주석 참조).
+ * 예외는 **exact** 만이다: classifyWatchPlatform 이 pathname === "/api/standings" 엄격 비교라
+ * trailing slash·하위경로·/api 자체는 전부 제외된다(삼순 #1263 1차 ② 경계 고정).
  *
  * 문서/페이지 경로는 그대로 매칭되어 canonical redirect(308)와 top-level 세션 갱신(#890)을
  * 보존한다. 함수 본문의 `pathname.startsWith("/api/")` 패스스루는 방어적으로 유지한다
@@ -199,6 +201,6 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
  */
 export const config = {
   matcher: [
-    "/((?!api/(?!standings(?:/|$))|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api(?:$|/(?!standings$))|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
