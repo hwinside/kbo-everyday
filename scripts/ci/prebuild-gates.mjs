@@ -237,38 +237,49 @@ export function buildChains(gates) {
 // lock 은 node_modules 아래(gitignored)라 verify-clean 을 오염시키지 않는다.
 const LOCK_FILE = path.join(ROOT, "node_modules", ".prebuild-gates.lock");
 const activeChildren = new Set(); // 실행 중 게이트 child pid (detached process-group leader)
-// pgid snapshot(삼순): leader 가 먼저 죽어도 그룹에 손자가 남을 수 있다.
-// activeChildren 은 close 시 빠지므로, 종료 전파는 이 누적 집합으로 한다(제거하지 않는다).
+// pgid 추적(삼순 3차): leader 가 먼저 죽어도 그룹에 손자가 남을 수 있으므로
+// close 시 즉시 제거하지 않고 **그룹 생존 확인(kill(-pgid, 0))** 후에만 제거한다 —
+// 종료된 pgid 를 영구 누적하면 OS 가 pgid 를 재사용했을 때 무관한 그룹을 죽인다.
 const spawnedGroups = new Set();
+let terminating = false;
+
+function groupAlive(pgid) {
+  try { process.kill(-pgid, 0); return true; } catch { return false; }
+}
+
+function pruneDeadGroups() {
+  for (const pgid of [...spawnedGroups]) {
+    if (!groupAlive(pgid)) spawnedGroups.delete(pgid);
+  }
+}
 
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function acquireLock() {
-  // 원자적 획득(삼순): exists→write 는 TOCTOU race — 'wx' 는 커널이 원자성을 보장한다.
-  // 동시 시작 N개 중 정확히 1개만 wx 생성에 성공한다.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      writeFileSync(LOCK_FILE, String(process.pid), { flag: "wx" });
-      return;
-    } catch (err) {
-      if (err.code !== "EEXIST") {
-        console.error(`[prebuild-gates] lock FAIL — lock 파일을 만들 수 없다: ${err.message}`);
-        process.exit(1);
-      }
-      let prev = NaN;
-      try { prev = Number(readFileSync(LOCK_FILE, "utf8").trim()); } catch { /* 방금 해제됐을 수 있음 — 재시도 */ }
-      if (Number.isFinite(prev) && prev > 0 && pidAlive(prev)) {
-        console.error(`[prebuild-gates] lock FAIL — 다른 러너(pid ${prev})가 같은 checkout 에서 실행 중이다. 동시 실행은 in-place mutation 게이트를 서로 오염시킨다.`);
-        process.exit(1);
-      }
-      // stale lock(소유 pid 사망) — 회수 후 1회만 재시도(재시도도 wx 원자 생성)
-      try { unlinkSync(LOCK_FILE); } catch { /* 다른 프로세스가 먼저 회수 — 재시도 */ }
+  // 원자적 획득: 'wx' 는 커널이 원자성을 보장한다 — 동시 시작 N개 중 정확히 1개만 성공.
+  // stale(소유 pid 사망) 자동 회수는 하지 않는다(삼순 3차): B가 죽은 pid 를 읽은 사이
+  // C가 새 lock 을 얻으면 B의 unlink 가 C의 유효 lock 을 지워 이중 소유가 된다.
+  // race-free 회수 primitive 가 없으므로 stale 도 fail-close — 사람이 확인 후 지운다.
+  try {
+    writeFileSync(LOCK_FILE, String(process.pid), { flag: "wx" });
+    return;
+  } catch (err) {
+    if (err.code !== "EEXIST") {
+      console.error(`[prebuild-gates] lock FAIL — lock 파일을 만들 수 없다: ${err.message}`);
+      process.exit(1);
     }
+    let prev = "unknown";
+    try { prev = readFileSync(LOCK_FILE, "utf8").trim(); } catch { /* 표시용 */ }
+    const prevPid = Number(prev);
+    const alive = Number.isFinite(prevPid) && prevPid > 0 && pidAlive(prevPid);
+    console.error(`[prebuild-gates] lock FAIL — lock 이 이미 존재한다(pid ${prev}, ${alive ? "실행 중" : "사망(stale) 추정"}).`);
+    console.error(alive
+      ? "동시 실행은 in-place mutation 게이트를 서로 오염시킨다 — 기존 러너 종료 후 재실행."
+      : `stale 자동 회수는 이중 소유 race 때문에 하지 않는다 — pid ${prev} 부재를 확인한 뒤 수동으로 삭제하고 재실행: rm ${LOCK_FILE}`);
+    process.exit(1);
   }
-  console.error("[prebuild-gates] lock FAIL — stale lock 회수 경합에서 획득 실패");
-  process.exit(1);
 }
 
 function releaseLock() {
@@ -283,20 +294,20 @@ function killGroups(pgids, signal) {
   }
 }
 
-let terminating = false;
 function installSignalHandlers() {
   for (const sig of ["SIGINT", "SIGTERM"]) {
     process.on(sig, () => {
       if (terminating) return;
-      terminating = true;
-      // snapshot 을 SIGKILL 완료까지 보존(삼순): 시그널 시점의 전체 spawn 이력 pgid.
-      // leader 가 이미 종료해 activeChildren 에서 빠졌어도 손자가 그룹에 남아있으면 여기로 잡힌다.
+      terminating = true; // 이 시점부터 runGate 가 신규 spawn 을 거부한다
+      // 살아있는 그룹만 snapshot(종료 pgid 재사용 오살 방지), SIGKILL 완료까지 보존.
+      pruneDeadGroups();
       const snapshot = [...spawnedGroups];
-      console.error(`[prebuild-gates] ${sig} — spawn 이력 ${snapshot.length}개 process-group 에 SIGTERM 전파 후 종료한다`);
+      console.error(`[prebuild-gates] ${sig} — 생존 ${snapshot.length}개 process-group 에 SIGTERM 전파 후 종료한다`);
       killGroups(snapshot, "SIGTERM");
-      // 유예 후 같은 snapshot 에 SIGKILL — mutation 게이트의 restore 핸들러가 돌 시간을 준다
+      // 유예 후 SIGKILL 은 snapshot ∪ 현재 추적 그룹 합집합에 — 시그널과 spawn 이
+      // 엇갈린 극단 케이스도 잡는다(신규 spawn 차단과 이중 방어).
       setTimeout(() => {
-        killGroups(snapshot, "SIGKILL");
+        killGroups(new Set([...snapshot, ...spawnedGroups]), "SIGKILL");
         releaseLock();
         process.exit(130);
       }, 3000);
@@ -308,6 +319,12 @@ function installSignalHandlers() {
 // ── 실행 ───────────────────────────────────────────────────────────
 function runGate(name) {
   return new Promise((resolve) => {
+    // 시그널 종료 중 신규 spawn 금지(삼순 3차) — 직전 자식이 exit 0 으로 곱게 죽어도
+    // scheduler 가 다음 게이트를 새로 띄우면 그 그룹은 snapshot 밖이라 잔존한다.
+    if (terminating) {
+      resolve({ name, code: 130, secs: 0, log: "[runner] terminating — 신규 spawn 차단" });
+      return;
+    }
     const start = Date.now();
     // selftest 전용 합성 게이트 — 실코드 경로(runAll/runChain/report)를 그대로 태운다
     const isSynthetic = name.startsWith("__synthetic_");
@@ -315,6 +332,12 @@ function runGate(name) {
       name === "__synthetic_fail__" ? "process.exit(1)"
       : name === "__synthetic_sleep__"
         ? "require('fs').writeFileSync(process.env.SYNTH_PID_FILE, String(process.pid)); setTimeout(() => process.exit(0), 30000)"
+      : name === "__synthetic_graceful__"
+        // SIGTERM 을 받으면 곱게 exit 0 — "정상종료 자식 뒤 신규 spawn" 회귀용
+        ? "process.on('SIGTERM', () => process.exit(0)); require('fs').writeFileSync(process.env.SYNTH_PID_FILE, String(process.pid)); setTimeout(() => process.exit(0), 30000)"
+      : name === "__synthetic_marker__"
+        // spawn 되기만 하면 marker 파일을 남긴다 — 신규 spawn 0 증명용
+        ? "require('fs').writeFileSync(process.env.SYNTH_MARKER_FILE, String(process.pid)); process.exit(0)"
       : name === "__synthetic_orphan__"
         // leader: SIGTERM 무시하는 손자를 같은 pgid 로 남기고 자신은 먼저 종료한다
         ? "require('child_process').spawn(process.execPath, ['-e', \"process.on('SIGTERM',()=>{}); require('fs').writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); setTimeout(()=>{}, 30000)\"], { stdio: 'ignore', env: process.env }); setTimeout(() => process.exit(0), 500)"
@@ -335,7 +358,11 @@ function runGate(name) {
     child.stdout.on("data", cap);
     child.stderr.on("data", cap);
     child.on("close", (code) => {
-      if (child.pid) activeChildren.delete(child.pid);
+      if (child.pid) {
+        activeChildren.delete(child.pid);
+        // 그룹에 손자가 안 남았으면 pgid 추적에서도 제거(재사용 pgid 오살 방지)
+        if (!groupAlive(child.pid)) spawnedGroups.delete(child.pid);
+      }
       resolve({ name, code: code ?? 1, secs: (Date.now() - start) / 1000, log: buf });
     });
     child.on("error", (err) => {
@@ -527,6 +554,63 @@ async function selftest() {
     }
   })();
 
+  // stale lock fail-close 회귀 (삼순 3차 ①): 죽은 pid 의 stale lock 이 있어도
+  // 자동 회수하지 않고 실패해야 한다 — 자동 unlink 는 새 획득과 경합해 이중 소유를 만든다.
+  await (async () => {
+    const fs = await import("node:fs");
+    let backup = null;
+    try { backup = fs.readFileSync(LOCK_FILE, "utf8"); } catch { /* 없음 */ }
+    try {
+      // 확실히 죽어 있는 pid: 방금 종료된 자기 자식의 pid 를 쓴다
+      const dead = spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore" });
+      await new Promise((r) => dead.on("close", r));
+      fs.writeFileSync(LOCK_FILE, String(dead.pid));
+      const code = await new Promise((resolve) => {
+        const c = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", "lock-hold"], {
+          cwd: ROOT, stdio: ["ignore", "pipe", "pipe"],
+        });
+        c.on("close", (cd) => resolve(cd ?? 1));
+      });
+      if (code !== 1) errors.push(`stale fail-close: stale lock 존재에서 exit=${code} (기대 1 — 자동 회수 금지)`);
+    } finally {
+      try { fs.unlinkSync(LOCK_FILE); } catch { /* 정리 */ }
+      if (backup !== null) { try { fs.writeFileSync(LOCK_FILE, backup, { flag: "wx" }); } catch { /* 소유자 아님 */ } }
+    }
+  })();
+
+  // 신규 spawn 차단 회귀 (삼순 3차 ②): SIGTERM 뒤 실행 중이던 자식이 exit 0 으로
+  // 곱게 죽어도 scheduler 가 다음 게이트를 새로 spawn 하면 안 된다.
+  await (async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const pidFile = path.join(os.tmpdir(), `prebuild-gates-graceful-${process.pid}.pid`);
+    const markerFile = path.join(os.tmpdir(), `prebuild-gates-marker-${process.pid}.txt`);
+    for (const f of [pidFile, markerFile]) { try { fs.unlinkSync(f); } catch { /* 없으면 통과 */ } }
+    const runner = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", "spawn-block"], {
+      cwd: ROOT,
+      env: { ...process.env, SYNTH_PID_FILE: pidFile, SYNTH_MARKER_FILE: markerFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const deadline = Date.now() + 10_000;
+    let ok = false;
+    while (Date.now() < deadline) {
+      try { if (Number(fs.readFileSync(pidFile, "utf8").trim()) > 0) { ok = true; break; } } catch { /* 아직 */ }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!ok) {
+      errors.push("spawn-block: graceful 게이트가 뜨지 않았다");
+      runner.kill("SIGKILL");
+      return;
+    }
+    runner.kill("SIGTERM"); // graceful 자식은 TERM 전파에 exit 0 으로 곱게 종료
+    await new Promise((resolve) => runner.on("close", resolve));
+    await new Promise((r) => setTimeout(r, 300));
+    if (fs.existsSync(markerFile)) {
+      errors.push("spawn-block: SIGTERM 후 자식 exit 0 인데 다음 게이트가 신규 spawn 됐다(marker 존재)");
+    }
+    for (const f of [pidFile, markerFile]) { try { fs.unlinkSync(f); } catch { /* 정리 */ } }
+  })();
+
   // 중단-잔존 회귀 (삼순 blocker ②): 러너를 SIGTERM 으로 중단하면
   // 실행 중이던 자식 게이트 process-group 까지 함께 죽어야 한다.
   await (async () => {
@@ -669,6 +753,11 @@ if (argv[0] === "--selftest") {
     await new Promise((r) => setTimeout(r, 2500));
     releaseLock();
     process.exit(0);
+  } else if (fixture === "spawn-block") {
+    await runAll([
+      { name: "__synthetic_graceful__", lane: "serial" },
+      { name: "__synthetic_marker__", lane: "serial" },
+    ]);
   } else if (fixture === "sleep") {
     await runAll([
       { name: "__synthetic_sleep__", lane: "pool" },
