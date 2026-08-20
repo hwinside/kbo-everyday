@@ -377,7 +377,7 @@ export async function GET(req: NextRequest) {
       const ref = await toRefClippingPayload(admin, payload);
       results.push(
         await sendTeamClipping(
-          admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload, ref,
+          admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload, ref?.ref ?? null,
         ),
       );
     } catch (e) {
@@ -450,10 +450,18 @@ export async function POST(req: NextRequest) {
   // ⚠️ 삼순 blocker 4 (2026-08-20): 샘플 발송이 legacy 를 저장하면 **신규 참조형 경로를
   //    E2E 로 검증할 수가 없다** — 포맷 검수용인데 정작 실제 발송과 다른 형태를 보게 된다.
   //    cron 과 동일하게 digest 로 올리고 참조형을 저장한다(실패 시 legacy 폴백도 동일).
-  const sampleRef = await toRefClippingPayload(admin, payload);
-  const samplePayload: NewsClippingPayload = sampleRef
-    ? { ...sampleRef, intro: payload.intro }
+  const sampleResult = await toRefClippingPayload(admin, payload);
+  const samplePayload: NewsClippingPayload = sampleResult
+    ? { ...sampleResult.ref, intro: payload.intro }
     : payload;
+  // ⚠️ 삼순 blocker (4차): 응답은 **실제로 전송된 내용**이어야 한다.
+  //    digest 가 이미 있으면(cron 재실행·샘플 선점) 수신자가 보는 건 저장된 A 인데,
+  //    방금 만든 B 의 overview/titles 를 보고하면 검수자가 화면과 다른 목록을 보고
+  //    "맞다"고 판정하게 된다. RPC 가 돌려준 canonical 을 기준으로 삼는다.
+  const canonical = sampleResult?.canonical ?? {
+    overview: payload.overview,
+    articles: payload.articles,
+  };
 
   const content = clippingContent(payload.team_name);
   const convMap = new Map<string, string>();
@@ -491,8 +499,11 @@ export async function POST(req: NextRequest) {
     conversationId: convId,
     sender: `${team.shortName} 뉴스클리퍼`,
     team: team.shortName,
-    articles: payload.articles.length,
-    overview: payload.overview,
-    titles: payload.articles.map((a) => a.title),
+    articles: canonical.articles.length,
+    overview: canonical.overview,
+    titles: canonical.articles.map((a) => a.title),
+    // 이 응답이 방금 만든 것인지, 이미 저장돼 있던 것인지 검수자가 알 수 있게 한다.
+    digestReused:
+      sampleResult != null && canonical.overview !== payload.overview,
   });
 }

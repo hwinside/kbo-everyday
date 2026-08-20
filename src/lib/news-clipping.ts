@@ -532,6 +532,17 @@ export async function buildTeamClipping(
  * ⚠️ intro(유저별 닉네임 치환)는 digest 에 넣지 않는다. digest 는 (clip_date, team_id) 공유
  *    행이라 거기 넣으면 한 사람의 닉네임이 그 팀 전체에게 보인다. intro 는 쌍지 payload 단에 남는다.
  */
+export interface RefClippingResult {
+  ref: NewsClippingRefPayload;
+  /**
+   * **실제로 저장된**(= 수신자가 보게 될) 내용. 신규면 방금 넣은 값, 충돌이면 기존 값이다.
+   *
+   * ⚠️ 삼순 4차: 샘플 발송 응답이 "방금 만든 B" 를 보고하면 검수자가 화면과 다른 목록을
+   *    보고 판정하게 된다. E2E 증거는 canonical(저장된 것) 기준이어야 한다.
+   */
+  canonical: { overview: string; articles: NewsClippingArticle[] };
+}
+
 export async function toRefClippingPayload(
   admin: {
     rpc: (
@@ -540,7 +551,7 @@ export async function toRefClippingPayload(
     ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   },
   payload: NewsClippingLegacyPayload,
-): Promise<NewsClippingRefPayload | null> {
+): Promise<RefClippingResult | null> {
   // ⚠️ 삼순 blocker 3 (2026-08-20): 1차는 호출부의 `clipDate`(= 오늘, kstDateString(0))를
   //    digest 에 넣고 쪽지 payload 에는 `payload.date`(= 어제, 기사 기준일)를 넣었다.
   //    같은 문서의 날짜 SSOT 가 하루 어긋나고, 클라가 digest.clip_date 로 폴백하는 순간
@@ -569,7 +580,7 @@ export async function toRefClippingPayload(
     console.error(`[news-clipping] digest 행 불량 (team ${payload.team_id}):`, data);
     return null;
   }
-  return {
+  const ref: NewsClippingRefPayload = {
     type: "news_clipping",
     team_id: payload.team_id,
     team_name: payload.team_name,
@@ -583,16 +594,32 @@ export async function toRefClippingPayload(
     //    총평이 비어도 makePushPreview 가 기본 문구를 채우므로 preview 는 절대 비지 않는다.
     push_preview: makePushPreview(row.stored_overview),
   };
+  return {
+    ref,
+    canonical: {
+      overview: row.stored_overview,
+      // 저장된 articles 를 못 읽으면 방금 만든 것으로 떨어지되, 그건 신규 insert 인 경우
+      // (= 같은 값) 뿐이다. 충돌인데 못 읽는 상황은 RPC 계약 위반이라 게이트가 잡는다.
+      articles: row.stored_articles ?? payload.articles,
+    },
+  };
 }
 
-/** RPC 반환(단일 행 또는 1행 배열)에서 digest_id/stored_overview 를 뽑는다. */
-function resolveDigestRow(
-  data: unknown,
-): { digest_id: number; stored_overview: string } | null {
+/** RPC 반환(단일 행 또는 1행 배열)에서 digest_id/stored_overview/stored_articles 를 뽑는다. */
+function resolveDigestRow(data: unknown): {
+  digest_id: number;
+  stored_overview: string;
+  stored_articles: NewsClippingArticle[] | null;
+} | null {
   const first = Array.isArray(data) ? data[0] : data;
   if (!first || typeof first !== "object") return null;
   const id = Number((first as { digest_id?: unknown }).digest_id);
   if (!Number.isFinite(id) || id <= 0) return null;
   const overview = (first as { stored_overview?: unknown }).stored_overview;
-  return { digest_id: id, stored_overview: typeof overview === "string" ? overview : "" };
+  const articles = (first as { stored_articles?: unknown }).stored_articles;
+  return {
+    digest_id: id,
+    stored_overview: typeof overview === "string" ? overview : "",
+    stored_articles: Array.isArray(articles) ? (articles as NewsClippingArticle[]) : null,
+  };
 }

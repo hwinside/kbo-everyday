@@ -85,7 +85,10 @@ create or replace function public.upsert_news_clipping_digest(
   p_overview text,
   p_articles jsonb
 )
-returns table (digest_id bigint, stored_overview text)
+-- stored_articles 까지 돌려주는 이유(삼순 4차): 샘플 발송 응답이 "실제 전송된 내용"을 보고해야
+-- E2E 증거로 쓸 수 있다. 충돌이면 전송된 건 저장된 A 인데 호출부가 방금 만든 B 의 titles 를
+-- 보고하면, 검수자가 화면과 다른 목록을 보고 "맞다"고 판정하게 된다.
+returns table (digest_id bigint, stored_overview text, stored_articles jsonb)
 language plpgsql
 security definer
 set search_path = public, pg_temp
@@ -105,7 +108,7 @@ begin
   values (p_clip_date, p_team_id, p_team_name, coalesce(p_overview, ''), p_articles)
   on conflict (clip_date, team_id) do update set
     clip_date = d.clip_date
-  returning d.id, d.overview;
+  returning d.id, d.overview, d.articles;
 end;
 $$;
 

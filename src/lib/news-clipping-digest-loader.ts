@@ -34,6 +34,15 @@ export type DigestFetcher = (ids: number[]) => Promise<DigestFetchResult>;
 export interface DigestLoaderOptions {
   /** 새 digest 가 들어왔을 때만 호출된다(불필요한 리렌더 방지). */
   onChange: (digests: Map<number, NewsClippingDigest>) => void;
+  /**
+   * **호출부가 소유하는 공유 캐시.** 로더는 이 Map 을 그대로 쓴다(복사하지 않는다).
+   *
+   * ⚠️ StrictMode(Next 16 App Router 기본)에서 effect 는 setup→cleanup→setup 으로 두 번 돈다.
+   *    로더가 자기 Map 을 가지면 첫 로더의 응답이 버려져 재조회가 생기고, 재마운트마다
+   *    같은 digest 를 다시 받아온다. 캐시를 밖에 두면 **폐기된 로더의 늦은 응답도 캐시에
+   *    남아** 다음 로더가 그걸 이어받는다.
+   */
+  cache?: Map<number, NewsClippingDigest>;
   /** 테스트에서 가짜 타이머를 주입하기 위한 구멍. 기본은 전역 setTimeout. */
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
@@ -41,11 +50,20 @@ export interface DigestLoaderOptions {
 }
 
 export class NewsClippingDigestLoader {
-  private digestMap = new Map<number, NewsClippingDigest>();
+  private digestMap: Map<number, NewsClippingDigest>;
   private wanted = new Set<number>();
   private inFlight = new Set<number>();
   /** id 별 누적 실패 횟수. 성공하면 지운다. */
   private attempts = new Map<number, number>();
+  /**
+   * **이 로더가** 호출부에 알린 id.
+   *
+   * ⚠️ 캐시를 공유하면 "map 에 이미 있다"를 변경 없음으로 읽을 수 없다 — StrictMode 에서
+   *    폐기된 로더가 먼저 캐시를 채우면 살아있는 로더가 "바뀜 게 없다"고 판단해
+   *    onChange 를 안 불러 **화면이 영원히 빈다**(4차 수정 중 실측으로 발견).
+   *    그래서 기준을 "내가 알렸는가"로 바꿄다.
+   */
+  private notified = new Set<number>();
   private timer: unknown = null;
   private disposed = false;
   private readonly setTimeoutFn: (fn: () => void, ms: number) => unknown;
@@ -59,6 +77,8 @@ export class NewsClippingDigestLoader {
       options.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms) as unknown);
     this.clearTimeoutFn =
       options.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+    // 호출부가 공유 캐시를 주면 그걸 그대로 쓴고(복사 안 함), 없으면 자기 Map 을 갖는다.
+    this.digestMap = options.cache ?? new Map();
   }
 
   /** 현재까지 확보한 digest. 호출부는 이 Map 을 그대로 렌더에 쓴다. */
@@ -144,7 +164,9 @@ export class NewsClippingDigestLoader {
     for (const row of rows) {
       if (!ids.includes(row.id)) continue; // 요청하지 않은 행은 무시(응답 오염 방어)
       received.add(row.id);
-      if (!this.digestMap.has(row.id)) changed = true;
+      if (!this.notified.has(row.id)) changed = true;
+      // ⚠️ dispose 됐어도 **캐시에는 쓴다.** 공유 캐시라 다음 로더(StrictMode 재-setup,
+      //    재마운트)가 그걸 이어받는다. 상태 갱신(onChange)만 살아있을 때 한다.
       this.digestMap.set(row.id, row);
       this.attempts.delete(row.id);
     }
@@ -156,7 +178,10 @@ export class NewsClippingDigestLoader {
 
     // 언마운트 뒤에는 상태를 갱신하지 않는다. 다만 digestMap 은 이미 채워져 있으므로
     // 재마운트 시 재조회가 줄어든다.
-    if (changed && !this.disposed) this.options.onChange(new Map(this.digestMap));
+    if (changed && !this.disposed) {
+      for (const id of received) this.notified.add(id);
+      this.options.onChange(new Map(this.digestMap));
+    }
 
     this.scheduleRetry();
   }
