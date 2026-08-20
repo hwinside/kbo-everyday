@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cpuUsedPercentFromSnapshots, type CpuCounterSnapshot } from "@/lib/admin/system-health";
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +24,7 @@ interface SystemHealthResponse {
   metrics: {
     cpuUsedPercent: number | null;
     cpuSampleSeconds: number | null;
+    cpuCounter: CpuCounterSnapshot | null;
     cpuCores: number | null;
     load1: number | null;
     load1PerCore: number | null;
@@ -137,8 +139,13 @@ export default function SystemHealthPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cpuBaseline = useRef<{ counter: CpuCounterSnapshot; checkedAt: string } | null>(null);
+  const lastCpuSample = useRef<{ usedPercent: number; sampleSeconds: number } | null>(null);
+  const latestRequest = useRef(0);
+  const latestAppliedAt = useRef(Number.NEGATIVE_INFINITY);
 
   const load = useCallback(async (background = false) => {
+    const requestId = ++latestRequest.current;
     if (background) setRefreshing(true);
     try {
       const response = await fetch("/api/admin/system-health", {
@@ -146,13 +153,51 @@ export default function SystemHealthPanel() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`서버 상태 조회 실패 (${response.status})`);
-      setData((await response.json()) as SystemHealthResponse);
+      const next = (await response.json()) as SystemHealthResponse;
+      const checkedAtMs = Date.parse(next.checkedAt);
+      if (requestId !== latestRequest.current || checkedAtMs < latestAppliedAt.current) return;
+      latestAppliedAt.current = checkedAtMs;
+      const counter = next.metrics?.cpuCounter ?? null;
+      if (counter && next.metrics) {
+        const previous = cpuBaseline.current;
+        if (previous) {
+          const sameSnapshot =
+            counter.seriesFingerprint === previous.counter.seriesFingerprint &&
+            counter.totalSeconds === previous.counter.totalSeconds &&
+            counter.idleSeconds === previous.counter.idleSeconds;
+          const used = cpuUsedPercentFromSnapshots(counter, previous.counter);
+          const seconds = (Date.parse(next.checkedAt) - Date.parse(previous.checkedAt)) / 1_000;
+          if (used !== null && seconds > 0) {
+            const sample = {
+              usedPercent: Math.round(used * 10) / 10,
+              sampleSeconds: Math.round(seconds * 10) / 10,
+            };
+            next.metrics.cpuUsedPercent = sample.usedPercent;
+            next.metrics.cpuSampleSeconds = sample.sampleSeconds;
+            lastCpuSample.current = sample;
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+          } else if (sameSnapshot && lastCpuSample.current) {
+            next.metrics.cpuUsedPercent = lastCpuSample.current.usedPercent;
+            next.metrics.cpuSampleSeconds = lastCpuSample.current.sampleSeconds;
+          } else {
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+            lastCpuSample.current = null;
+          }
+        } else {
+          cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+        }
+      }
+      setData(next);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      if (requestId === latestRequest.current) {
+        setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === latestRequest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -227,7 +272,7 @@ export default function SystemHealthPanel() {
           icon={Cpu}
           label="CPU 사용률"
           value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
-          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "counter delta 필요"}
+          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "첫 샘플 수집 중 · 약 1~2분 후 표시"}
           level={null}
         />
         <MetricCard
