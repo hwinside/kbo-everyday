@@ -118,10 +118,15 @@ def rest_probe(env):
 
 
 def snapshot(env):
+    metrics_started = time.monotonic()
     text = metrics(env)
+    metrics_finished = time.monotonic()
     pg = query(env, SQL_PG_STATS)[0]
     publication = query(env, SQL_PUBLICATION)
     return {
+        # Counter deltas must be normalized by the actual interval between metric snapshots,
+        # not by the requested wall-clock window.
+        "metrics_sample_monotonic": (metrics_started + metrics_finished) / 2,
         "cpu": cpu(text),
         "routes": gotrue_routes(text),
         "pg_exec_ms": float(pg["exec_ms"]),
@@ -147,6 +152,19 @@ def successful(values):
 def median_or_none(values):
     ok = successful(values)
     return round(statistics.median(ok), 1) if ok else None
+
+
+def validate_probe_config(window, burst_probes, distributed_probes, min_success, max_counter_overrun):
+    if not 60 <= window <= 600:
+        raise ValueError("--window must be 60..600 seconds (metrics scrape resolution)")
+    if min_success < 1:
+        raise ValueError("--min-success must be >= 1")
+    if burst_probes < 1 or distributed_probes < 1:
+        raise ValueError("probe counts must be positive")
+    if burst_probes < min_success or distributed_probes < min_success:
+        raise ValueError("probe counts must be >= --min-success")
+    if max_counter_overrun < 0:
+        raise ValueError("--max-counter-overrun must be >= 0")
 
 
 def run_selftest():
@@ -179,7 +197,23 @@ def run_selftest():
             raise AssertionError(f"rejected={rejected}/{len(attempts)} network_calls={network_calls}")
     finally:
         urllib.request.urlopen = original
+    invalid_probe_configs = [
+        (70, 5, 6, 0, 15),
+        (70, 0, 6, 1, 15),
+        (70, 5, 0, 1, 15),
+        (70, 1, 1, 2, 15),
+        (70, 5, 6, 1, -1),
+    ]
+    for config in invalid_probe_configs:
+        try:
+            validate_probe_config(*config)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid probe config unexpectedly allowed: {config}")
+    validate_probe_config(70, 5, 6, 1, 15)
     print(f"PASS exact-SQL rejection selftest: {rejected}/{len(attempts)} RED, network_calls=0")
+    print(f"PASS probe config selftest: {len(invalid_probe_configs)}/{len(invalid_probe_configs)} RED")
 
 
 def main():
@@ -190,6 +224,7 @@ def main():
     ap.add_argument("--distributed-probes", type=int, default=6)
     ap.add_argument("--min-success", type=int, default=3)
     ap.add_argument("--baseline-non-user-per-min", type=float)
+    ap.add_argument("--max-counter-overrun", type=float, default=15.0)
     ap.add_argument("--label", default="PEAK")
     ap.add_argument("--output")
     ap.add_argument("--selftest", action="store_true")
@@ -197,10 +232,16 @@ def main():
     if args.selftest:
         run_selftest()
         return
-    if not 60 <= args.window <= 600:
-        raise SystemExit("--window must be 60..600 seconds (metrics scrape resolution)")
-    if args.burst_probes < args.min_success or args.distributed_probes < args.min_success:
-        raise SystemExit("probe counts must be >= --min-success")
+    try:
+        validate_probe_config(
+            args.window,
+            args.burst_probes,
+            args.distributed_probes,
+            args.min_success,
+            args.max_counter_overrun,
+        )
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
 
     env = load_env(args.env)
     before = snapshot(env)
@@ -249,7 +290,15 @@ def main():
     user_requests = route_deltas.get("/user", 0)
     all_gotrue = sum(route_deltas.values())
     non_user_requests = all_gotrue - user_requests
-    non_user_per_min = non_user_requests * 60 / args.window
+    counter_interval = after["metrics_sample_monotonic"] - before["metrics_sample_monotonic"]
+    if counter_interval <= 0:
+        raise RuntimeError(f"invalid metrics counter interval: {counter_interval}")
+    if counter_interval > args.window + args.max_counter_overrun:
+        raise RuntimeError(
+            f"metrics counter interval exceeded window: actual={counter_interval:.2f}s "
+            f"requested={args.window}s max_overrun={args.max_counter_overrun}s"
+        )
+    non_user_per_min = non_user_requests * 60 / counter_interval
 
     baseline = args.baseline_non_user_per_min
     if baseline is None:
@@ -263,6 +312,8 @@ def main():
     result = {
         "label": args.label,
         "window_seconds": args.window,
+        "metrics_counter_interval_seconds": round(counter_interval, 2),
+        "max_counter_overrun_seconds": args.max_counter_overrun,
         "captured_at_epoch": int(time.time()),
         "cpu_busy_pct": round(100 * busy_seconds / total, 2),
         "cpu_busy_seconds": round(busy_seconds, 2),
