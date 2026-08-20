@@ -18,7 +18,13 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "get", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "set", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "remove", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "removeIfValueMatches", returnType: CAPPluginReturnPromise),
     ]
+
+    /// 읽기-비교-삭제의 원자성 보장 직렬 큐 (삼순 4차: 네이티브 원자적 compare-and-delete).
+    /// 모든 쓰기 경로(set/remove/removeIfValueMatches)가 같은 큐를 타서
+    /// CAS 의 비교↔삭제 사이에 다른 쓰기가 끼어들 수 없다.
+    private let storeQueue = DispatchQueue(label: "fan.keubo.secure-session-store.queue")
 
     private let service = "fan.keubo.secure-session-store"
 
@@ -93,20 +99,35 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
             call.resolve(["value": NSNull()])
             return
         }
+        storeQueue.async { [weak self] in
+            guard let self else { return }
+            switch self.readValue(key: key) {
+            case .found(let value): call.resolve(["value": value])
+            case .notFound: call.resolve(["value": NSNull()])
+            case .failure(let status): call.reject("keychain get failed: \(status)")
+            }
+        }
+    }
+
+    private enum ReadResult {
+        case found(String)
+        case notFound
+        case failure(OSStatus)
+    }
+
+    /// storeQueue 위에서만 호출할 것.
+    private func readValue(key: String) -> ReadResult {
         var query = baseQuery(key: key)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
-
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data,
            let value = String(data: data, encoding: .utf8) {
-            call.resolve(["value": value])
-        } else if status == errSecItemNotFound {
-            call.resolve(["value": NSNull()])
-        } else {
-            call.reject("keychain get failed: \(status)")
+            return .found(value)
         }
+        if status == errSecItemNotFound { return .notFound }
+        return .failure(status)
     }
 
     @objc func set(_ call: CAPPluginCall) {
@@ -124,16 +145,19 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        // upsert: 삭제 후 추가 (SecItemUpdate 분기보다 단순·결정적)
-        SecItemDelete(baseQuery(key: key) as CFDictionary)
-        var attrs = baseQuery(key: key)
-        attrs[kSecValueData as String] = data
-        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(attrs as CFDictionary, nil)
-        if status == errSecSuccess {
-            call.resolve()
-        } else {
-            call.reject("keychain set failed: \(status)")
+        storeQueue.async { [weak self] in
+            guard let self else { return }
+            // upsert: 삭제 후 추가 (SecItemUpdate 분기보다 단순·결정적)
+            SecItemDelete(self.baseQuery(key: key) as CFDictionary)
+            var attrs = self.baseQuery(key: key)
+            attrs[kSecValueData as String] = data
+            attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            let status = SecItemAdd(attrs as CFDictionary, nil)
+            if status == errSecSuccess {
+                call.resolve()
+            } else {
+                call.reject("keychain set failed: \(status)")
+            }
         }
     }
 
@@ -146,11 +170,50 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("store not ready (install lifecycle gate)")
             return
         }
-        let status = SecItemDelete(baseQuery(key: key) as CFDictionary)
-        if status == errSecSuccess || status == errSecItemNotFound {
-            call.resolve()
-        } else {
-            call.reject("keychain remove failed: \(status)")
+        storeQueue.async { [weak self] in
+            guard let self else { return }
+            let status = SecItemDelete(self.baseQuery(key: key) as CFDictionary)
+            if status == errSecSuccess || status == errSecItemNotFound {
+                call.resolve()
+            } else {
+                call.reject("keychain remove failed: \(status)")
+            }
+        }
+    }
+
+    /// 원자적 compare-and-delete (삼순 4차): 저장된 값이 expectedValue 와 일치할 때만 삭제.
+    /// 비교↔삭제가 storeQueue 직렬 안에서 실행돼 그 사이 set 이 끼어들 수 없다 —
+    /// 늦은 확정 refresh 거부가 rotation 된 새 백업을 지우는 윈도우를 원천 제거.
+    /// 반환: { removed: Bool } — 불일치/부재는 removed=false 로 정상 resolve.
+    @objc func removeIfValueMatches(_ call: CAPPluginCall) {
+        guard let key = call.getString("key"), !key.isEmpty,
+              let expected = call.getString("expectedValue") else {
+            call.reject("key and expectedValue are required")
+            return
+        }
+        guard storeReady else {
+            call.reject("store not ready (install lifecycle gate)")
+            return
+        }
+        storeQueue.async { [weak self] in
+            guard let self else { return }
+            switch self.readValue(key: key) {
+            case .found(let current):
+                if current == expected {
+                    let status = SecItemDelete(self.baseQuery(key: key) as CFDictionary)
+                    if status == errSecSuccess || status == errSecItemNotFound {
+                        call.resolve(["removed": true])
+                    } else {
+                        call.reject("keychain remove failed: \(status)")
+                    }
+                } else {
+                    call.resolve(["removed": false])
+                }
+            case .notFound:
+                call.resolve(["removed": false])
+            case .failure(let status):
+                call.reject("keychain get failed: \(status)")
+            }
         }
     }
 }

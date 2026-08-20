@@ -53,6 +53,9 @@ class SecureSessionStorePlugin : Plugin() {
         }
     }
 
+    /** 읽기-비교-삭제 원자성 보장 모니터 (삼순 4차: 네이티브 원자적 compare-and-delete) */
+    private val storeLock = Any()
+
     @PluginMethod
     fun get(call: PluginCall) {
         val key = call.getString("key")
@@ -61,12 +64,46 @@ class SecureSessionStorePlugin : Plugin() {
             return
         }
         try {
-            val value = prefs.getString(key, null)
+            val value = synchronized(storeLock) { prefs.getString(key, null) }
             val result = JSObject()
             if (value == null) result.put("value", JSObject.NULL) else result.put("value", value)
             call.resolve(result)
         } catch (e: Exception) {
             call.reject("secure get failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 원자적 compare-and-delete: 저장값이 expectedValue 와 일치할 때만 삭제(commit 결속).
+     * 비교↔삭제가 storeLock 안이라 그 사이 set 이 끼어들 수 없다 — 늦은 확정 refresh
+     * 거부가 rotation 된 새 백업을 지우는 윈도우 원천 제거. 반환 { removed: Boolean }.
+     */
+    @PluginMethod
+    fun removeIfValueMatches(call: PluginCall) {
+        val key = call.getString("key")
+        val expected = call.getString("expectedValue")
+        if (key.isNullOrEmpty() || expected == null) {
+            call.reject("key and expectedValue are required")
+            return
+        }
+        try {
+            val removed = synchronized(storeLock) {
+                val current = prefs.getString(key, null)
+                if (current != null && current == expected) {
+                    if (!prefs.edit().remove(key).commit()) {
+                        call.reject("secure remove failed: commit returned false")
+                        return
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            val result = JSObject()
+            result.put("removed", removed)
+            call.resolve(result)
+        } catch (e: Exception) {
+            call.reject("secure compare-and-delete failed: ${e.message}")
         }
     }
 
@@ -81,7 +118,8 @@ class SecureSessionStorePlugin : Plugin() {
         try {
             // 삼순 3차 P1: apply()는 비동기 디스크 반영이라 반영 전 프로세스 종료 시
             // 백업 유실/로그아웃 토큰 잔존 여지 → 브릿지 작업 스레드에서 commit() 결과까지 확인.
-            if (prefs.edit().putString(key, value).commit()) {
+            val ok = synchronized(storeLock) { prefs.edit().putString(key, value).commit() }
+            if (ok) {
                 call.resolve()
             } else {
                 call.reject("secure set failed: commit returned false")
@@ -100,7 +138,8 @@ class SecureSessionStorePlugin : Plugin() {
         }
         try {
             // remove 도 동일 — 로그아웃 직후 종료해도 토큰이 디스크에 남지 않게 commit().
-            if (prefs.edit().remove(key).commit()) {
+            val ok = synchronized(storeLock) { prefs.edit().remove(key).commit() }
+            if (ok) {
                 call.resolve()
             } else {
                 call.reject("secure remove failed: commit returned false")

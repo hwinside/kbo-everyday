@@ -38,6 +38,8 @@ interface SecureStoreLike {
   get(options: { key: string }): Promise<{ value: string | null }>;
   set(options: { key: string; value: string }): Promise<void>;
   remove(options: { key: string }): Promise<void>;
+  /** 네이티브 원자적 compare-and-delete (삼순 4차) — 구버전 바이너리엔 없을 수 있음(optional) */
+  removeIfValueMatches?(options: { key: string; expectedValue: string }): Promise<{ removed: boolean }>;
 }
 
 interface InjectedCapacitor {
@@ -128,6 +130,14 @@ export function _resetLogoutFenceForTest(): void {
 // 백업 원장 조작
 // ---------------------------------------------------------------------------
 
+/** 백업 직렬화 단일점 — CAS 비교가 문자열 동등이므로 필드 순서를 고정한다 */
+function serializeTokens(tokens: SessionTokens): string {
+  return JSON.stringify({
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+  });
+}
+
 /**
  * 세션 토큰을 네이티브 secure storage 에 백업. SIGNED_IN / TOKEN_REFRESHED 마다 호출해
  * refresh token rotation 이후에도 백업이 최신을 유지하게 한다. best-effort.
@@ -139,7 +149,7 @@ export async function backupSessionTokens(tokens: SessionTokens): Promise<void> 
   if (!store) return;
   if (!tokens.access_token || !tokens.refresh_token) return;
   await withTimeout(
-    store.set({ key: BACKUP_KEY, value: JSON.stringify(tokens) }),
+    store.set({ key: BACKUP_KEY, value: serializeTokens(tokens) }),
     undefined,
   );
 }
@@ -175,12 +185,35 @@ export async function readSessionBackup(): Promise<SessionTokens | null> {
 }
 
 /**
- * 백업 제거 — 명시적 로그아웃, 또는 확정적 refresh 거부 시.
+ * 백업 제거 — 명시적 로그아웃 전용 (무조건 삭제).
  */
 export async function clearSessionBackup(): Promise<void> {
   const store = getSecureStore();
   if (!store) return;
   await withTimeout(store.remove({ key: BACKUP_KEY }), undefined);
+}
+
+/**
+ * 확정적 refresh 거부 시의 백업 제거 — "실패한 그 토큰"일 때만 지운다.
+ * 네이티브 removeIfValueMatches 가 있으면 원자적 compare-and-delete (삼순 4차 —
+ * JS read↔delete 사이 rotation 윈도우 원천 제거), 없는 구버전 브릿지엔
+ * read-compare-delete 폴백 (기존 동작 — single-flight+lease 가 창을 최소화).
+ */
+async function clearSessionBackupIfMatches(expected: SessionTokens): Promise<void> {
+  const store = getSecureStore();
+  if (!store) return;
+  const expectedValue = serializeTokens(expected);
+  if (typeof store.removeIfValueMatches === "function") {
+    await withTimeout<{ removed: boolean }>(
+      store.removeIfValueMatches({ key: BACKUP_KEY, expectedValue }),
+      { removed: false },
+    );
+    return;
+  }
+  const current = await readSessionBackup();
+  if (current && current.refresh_token === expected.refresh_token) {
+    await clearSessionBackup();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,35 +260,63 @@ interface AuthLike<S> {
   }>;
 }
 
+/** 복원 lease (삼순 4차) — 원본 setSession 이 settle 될 때까지 유지.
+ * 타임아웃으로 제어가 돌아와 single-flight 가 풀려도, 원본 setSession 이 아직
+ * 진행 중이면 새 복원 시도가 같은 refresh token 을 재생하지 않도록 막는다. */
+let restoreLease: Promise<unknown> | null = null;
+
+/** 테스트 전용 — lease 상태 리셋 */
+export function _resetRestoreLeaseForTest(): void {
+  restoreLease = null;
+}
+
 /**
  * 쿠키/pending 세션이 없을 때만 호출되는 복원 경로.
  * - 백업 없음 → null (기존 로그아웃 흐름 그대로, setSession 미호출)
+ * - 이전 복원의 setSession 이 아직 진행 중(lease) → 재생 없이 null (토큰 2회 재생 방지)
  * - setSession 성공 → 복원된 세션 반환
- * - 확정적 refresh 거부 → 백업 제거 후 null (실패 복원 무한 반복 방지)
+ * - 확정적 refresh 거부 → 원자적 CAS 로 "실패한 그 토큰"일 때만 백업 제거 후 null
  * - transient(네트워크 error·throw·타임아웃) → 백업 보존하고 null (다음 부팅 재시도)
+ * - 타임아웃 후 원본이 늦게 확정 거부로 settle 되면 그 시점에 CAS 제거 (늦은 실패 처리)
  * - setSession 자체에 타임아웃 상한 — auth lock hang 이 부팅을 영구 정지시키지 않게
  */
 export async function restoreSessionFromBackup<S>(
   auth: AuthLike<S>,
 ): Promise<S | null> {
+  if (restoreLease) {
+    // 이전 복원의 원본 setSession 이 아직 진행 중 — 같은 토큰 재생 금지.
+    // (늦게 성공하면 onAuthStateChange 가 이어받고, 실패하면 다음 부팅이 재시도)
+    return null;
+  }
   const backup = await readSessionBackup();
   if (!backup) return null;
   try {
-    const result = await withTimeoutSentinel(auth.setSession(backup));
+    const raw = auth.setSession(backup);
+    restoreLease = raw
+      .catch(() => null)
+      .finally(() => {
+        restoreLease = null;
+      });
+    const result = await withTimeoutSentinel(raw);
     if (result === TIMEOUT_SENTINEL) {
-      // hang/지연 — transient 취급, 백업 보존. (늦게 성공하면 onAuthStateChange 가 이어받는다)
+      // hang/지연 — transient 취급, 백업 보존. lease 는 원본 settle 까지 유지된다.
+      // 원본이 늦게 확정 거부로 끝나면 그 시점에 CAS 제거 (best-effort).
+      void raw
+        .then(late => {
+          if (!late.data.session && late.error && isDefinitiveRefreshRejection(late.error)) {
+            void clearSessionBackupIfMatches(backup);
+          }
+        })
+        .catch(() => {});
       return null;
     }
     const { data, error } = result;
     if (data.session) return data.session;
     if (error && isDefinitiveRefreshRejection(error)) {
-      // CAS 삭제(삼순 2차 NO-GO ①): 늦은 확정 거부가 도착했을 때, 그 사이 다른
-      // 경로가 이미 새 토큰으로 백업을 갱신했을 수 있다. "실패한 바로 그 토큰"이
-      // 여전히 저장된 경우에만 삭제 — 갱신된 유효 백업을 늦은 실패가 지우지 못하게.
-      const current = await readSessionBackup();
-      if (current && current.refresh_token === backup.refresh_token) {
-        await clearSessionBackup();
-      }
+      // CAS 삭제(삼순 2차 ① + 4차 원자화): "실패한 바로 그 토큰"일 때만 삭제 —
+      // 그 사이 rotation 된 새 백업을 늦은 실패가 지우지 못하게. 네이티브 원자적
+      // compare-and-delete 우선, 구버전은 read-compare-delete 폴백.
+      await clearSessionBackupIfMatches(backup);
     }
   } catch {
     /* transient 실패 — 백업 보존, 이번 부팅은 로그아웃 상태로 진행 */

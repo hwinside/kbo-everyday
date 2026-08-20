@@ -32,10 +32,12 @@ function makeBridge(opts?: {
   calls?: StoreCall[];
   hangGet?: boolean;
   omitPlugin?: boolean;
+  /** 구버전 바이너리 모의 — removeIfValueMatches 미노출(JS 폴백 경로 검증용) */
+  omitCompareAndDelete?: boolean;
 }) {
   const store = opts?.store ?? new Map<string, string>();
   const calls = opts?.calls ?? [];
-  const SecureSessionStore = {
+  const SecureSessionStore: Record<string, (o?: any) => Promise<any>> = {
     async get({ key }: { key: string }) {
       calls.push({ method: "get", key });
       if (opts?.hangGet) return new Promise<never>(() => {});
@@ -50,6 +52,17 @@ function makeBridge(opts?: {
       store.delete(key);
     },
   };
+  if (!opts?.omitCompareAndDelete) {
+    // 네이티브 원자적 compare-and-delete 모의 — 비교↔삭제 사이 끼어듦 없음(동기 블록)
+    SecureSessionStore["removeIfValueMatches"] = async ({ key, expectedValue }: { key: string; expectedValue: string }) => {
+      calls.push({ method: "removeIfValueMatches", key, value: expectedValue });
+      if (store.get(key) === expectedValue) {
+        store.delete(key);
+        return { removed: true };
+      }
+      return { removed: false };
+    };
+  }
   return {
     bridge: {
       isNativePlatform: () => true,
@@ -305,6 +318,7 @@ async function main() {
   {
     const { bridge, calls, store } = makeBridge();
     setWindow(bridge);
+    mod._resetRestoreLeaseForTest();
     store.set(
       "kbo-native-session-backup",
       JSON.stringify({ access_token: "at-b", refresh_token: "rt-b" }),
@@ -328,6 +342,7 @@ async function main() {
   {
     const { bridge, store } = makeBridge();
     setWindow(bridge);
+    mod._resetRestoreLeaseForTest();
     store.set(
       "kbo-native-session-backup",
       JSON.stringify({ access_token: "at-b2", refresh_token: "rt-b2" }),
@@ -368,6 +383,7 @@ async function main() {
     const { bridge, store } = makeBridge();
     setWindow(bridge);
     mod._resetAcquireSessionForTest();
+    mod._resetRestoreLeaseForTest();
     store.set(
       "kbo-native-session-backup",
       JSON.stringify({ access_token: "at-sf", refresh_token: "rt-sf" }),
@@ -402,6 +418,7 @@ async function main() {
   {
     const { bridge, store } = makeBridge();
     setWindow(bridge);
+    mod._resetRestoreLeaseForTest();
     store.set(
       "kbo-native-session-backup",
       JSON.stringify({ access_token: "at-old", refresh_token: "rt-old" }),
@@ -420,6 +437,81 @@ async function main() {
     const restoredResult = await mod.restoreSessionFromBackup(auth);
     check("null 반환", restoredResult === null);
     check("갱신된 백업 보존 (CAS)", store.get("kbo-native-session-backup") === rotated);
+  }
+
+  console.log("[24] restore lease interleave: 타임아웃 탈출 후에도 원본 settle 까지 재생 금지 + 늦은 확정실패 CAS (삼순 4차)");
+  {
+    const { bridge, store } = makeBridge();
+    setWindow(bridge);
+    mod._resetAcquireSessionForTest();
+    mod._resetRestoreLeaseForTest();
+    await mod.backupSessionTokens(tokens);
+    let setSessionCalls = 0;
+    let settleLate: (v: { data: { session: null }; error: { code: string; message: string } }) => void = () => {};
+    const latePromise = new Promise<{ data: { session: null }; error: { code: string; message: string } }>(r => {
+      settleLate = r;
+    });
+    const auth = {
+      setSession: async () => {
+        setSessionCalls++;
+        return latePromise; // 3s 타임아웃을 넘기고 나중에 settle
+      },
+    };
+    const t0 = Date.now();
+    const r1 = await mod.restoreSessionFromBackup(auth as any); // 타임아웃 탈출
+    check(`1차 타임아웃 null (${Date.now() - t0}ms)`, r1 === null);
+    check("setSession 1회", setSessionCalls === 1);
+    // 원본이 아직 진행 중 — 두 번째 복원 시도는 lease 에 막혀 재생 없음
+    const r2 = await mod.restoreSessionFromBackup(auth as any);
+    check("lease 중 재생 금지 (setSession 여전히 1회)", r2 === null && setSessionCalls === 1, `calls=${setSessionCalls}`);
+    check("lease 중 백업 보존", store.size === 1);
+    // 원본이 늦게 확정 거부로 settle → 늦은 CAS 제거
+    settleLate({ data: { session: null }, error: { code: "refresh_token_not_found", message: "Invalid Refresh Token" } });
+    await settle();
+    check("늦은 확정실패 → CAS 제거", store.size === 0, `size=${store.size}`);
+    // lease 해제 확인 — 새 복원 시도는 다시 진행(백업 없으므로 setSession 미호출로 null)
+    const r3 = await mod.restoreSessionFromBackup(auth as any);
+    check("settle 후 lease 해제", r3 === null && setSessionCalls === 1);
+  }
+
+  console.log("[25] 원자적 CAD: read 이후 rotation 돼도 네이티브 비교가 새 백업을 지킨다 + 폴백 경로 (삼순 4차)");
+  {
+    // (a) 네이티브 CAD 경로: JS 가 backup 을 read 한 뒤 rotation → CAD 가 불일치로 보존
+    const { bridge, store, calls } = makeBridge();
+    setWindow(bridge);
+    mod._resetRestoreLeaseForTest();
+    await mod.backupSessionTokens(tokens); // 원본 백업 (at-1/rt-1 직렬)
+    const rotatedValue = () => store.get("kbo-native-session-backup");
+    const auth = {
+      setSession: async () => {
+        // JS 가 이미 backup 을 읽은 뒤 시점 — rotation 발생
+        await mod.backupSessionTokens({ access_token: "at-rot", refresh_token: "rt-rot" });
+        return {
+          data: { session: null },
+          error: { code: "refresh_token_not_found", message: "Invalid Refresh Token" },
+        };
+      },
+    };
+    await mod.restoreSessionFromBackup(auth as any);
+    const cadCalls = calls.filter(c => c.method === "removeIfValueMatches").length;
+    check("네이티브 CAD 사용됨", cadCalls === 1, `cad=${cadCalls}`);
+    check("rotation 백업 보존 (불일치 → 미삭제)", rotatedValue() !== undefined, `value=${rotatedValue()}`);
+
+    // (b) 구버전 브릿지(CAD 없음) 폴백: 동일 토큰이면 read-compare-delete 로 삭제
+    const fb = makeBridge({ omitCompareAndDelete: true });
+    setWindow(fb.bridge);
+    mod._resetRestoreLeaseForTest();
+    await mod.backupSessionTokens(tokens);
+    const fbAuth = {
+      setSession: async () => ({
+        data: { session: null },
+        error: { code: "refresh_token_not_found", message: "Invalid Refresh Token" },
+      }),
+    };
+    await mod.restoreSessionFromBackup(fbAuth as any);
+    check("폴백: 동일 토큰 삭제", fb.store.size === 0, `size=${fb.store.size}`);
+    const fbCad = fb.calls.filter(c => c.method === "removeIfValueMatches").length;
+    check("폴백: CAD 미호출", fbCad === 0);
   }
 
   console.log("[23] not-ready 네이티브 저장소(iOS 설치 게이트 fail-close) → JS 전부 무해 (삼순 3차)");
