@@ -49,7 +49,7 @@
     "qa:genius-mascot-motion:mutations": "node scripts/qa/genius-mascot-motion-mutations.mjs",
     "qa:genius-answer-feedback": "tsx scripts/qa/genius-answer-feedback-contract.ts",
     "qa:genius-answer-feedback:selftest": "tsx scripts/qa/genius-answer-feedback-contract.ts --selftest",
-    "qa:team-fullname-routing": "tsx scripts/qa/team-fullname-routing-smoke.ts",
+    "qa:team-fullname-routing": "npm run qa:supabase-peak-readonly:selftest && npm run qa:team-fullname-routing:core && npm run qa:team-fullname-routing:selftest",
     "qa:relay-gameid-guard": "tsx scripts/qa/relay-gameid-guard.ts",
     "qa:team-rag-wiring": "tsx scripts/qa/team-rag-wiring-smoke.ts",
     "qa:genius-served-metrics": "tsx scripts/qa/genius-served-metrics-smoke.ts",
@@ -449,7 +449,10 @@
     "qa:genius-mascot-assets:mutations:full": "node scripts/qa/genius-mascot-asset-mutations.mjs --with-source",
     "qa:client-dedupe": "tsx scripts/qa/client-dedupe-gate.ts",
     "qa:client-dedupe:selftest": "tsx scripts/qa/client-dedupe-gate.ts --selftest",
-    "qa:self-fetch-internal:cleanup": "node scripts/qa/self-fetch-cleanup-selftest.mjs"
+    "qa:self-fetch-internal:cleanup": "node scripts/qa/self-fetch-cleanup-selftest.mjs",
+    "qa:supabase-peak-readonly:selftest": "python3 scripts/qa/supabase-peak-readonly.py --selftest",
+    "qa:team-fullname-routing:core": "tsx scripts/qa/team-fullname-routing-smoke.ts",
+    "qa:team-fullname-routing:selftest": "bash scripts/qa/team-fullname-routing-snapshot-selftest.sh"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
