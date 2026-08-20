@@ -6,6 +6,11 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
+import {
+  backupSessionTokens,
+  clearSessionBackup,
+  restoreSessionFromBackup,
+} from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
@@ -180,6 +185,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch { sessionStorage.removeItem("kbo-pending-session"); }
       }
 
+      // 3차: 네이티브 백업 복원 (앱 전용 — WKWebView 저장소 퍼지로 쿠키가 사라진 경우)
+      // 쿠키 세션이 이미 있으면 여기 도달하지 않으므로 정상 로그인 경로는 무영향.
+      if (!session) {
+        try {
+          // 복원 의미론(성공/무효 refresh 시 백업 제거/transient 시 보존)은
+          // restoreSessionFromBackup 이 단일 책임으로 보유 — QA 스모크가 직접 검증한다.
+          const restored = await restoreSessionFromBackup(supabase.auth);
+          if (restored) session = restored;
+        } catch { /* best-effort — 복원 실패는 기존 로그아웃 흐름 그대로 */ }
+      }
+
+      // 세션 확보 시 네이티브 백업 갱신 (웹/플러그인 미포함 바이너리는 내부에서 no-op)
+      if (session?.access_token && session.refresh_token) {
+        void backupSessionTokens({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        });
+      }
+
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
         // 계정 전환 감지 (syncSession 경로)
@@ -208,6 +232,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        // 로그인/토큰 갱신마다 네이티브 백업을 최신화 (refresh token rotation 대응).
+        // SIGNED_OUT(session=null)에서는 백업을 지우지 않는다 — 일시적 세션 소실에서
+        // 백업이 유일한 복구 수단이라, 제거는 명시적 signOut()에서만 수행.
+        if (session?.access_token && session.refresh_token) {
+          void backupSessionTokens({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          });
+        }
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
           // 계정 전환 감지: userId가 바뀌면 이전 계정 localStorage 즉시 정리
@@ -253,6 +286,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
+        // 명시적 로그아웃 = 네이티브 세션 백업도 함께 제거 (안 지우면 다음 부팅에서
+        // 백업 복원으로 로그인이 "살아나는" 역효과). best-effort + 타임아웃 내장.
+        try { await clearSessionBackup(); } catch { /* ignore */ }
         // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
         // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게
         // 항상 로컬 정리 + 홈 이동이 실행되도록 보장한다. (#209/#419 네이티브 hang 패턴)

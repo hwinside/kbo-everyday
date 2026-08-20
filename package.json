@@ -258,6 +258,7 @@
     "qa:ios-app-keyboard": "node scripts/qa/browserstack-ios-app-keyboard.mjs",
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
+    "qa:native-session-backup": "tsx scripts/qa/native-session-backup-smoke.ts",
     "qa:native-push-deeplink": "tsx --test scripts/qa/native-push-deeplink-smoke.ts",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
@@ -467,6 +468,7 @@
     "@capacitor/core": "^8.3.1",
     "@capacitor/geolocation": "^8.2.0",
     "@capacitor/ios": "^8.3.1",
+    "@capacitor/preferences": "^8.0.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -507,6 +509,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "js-yaml": "^4.3.1",
@@ -516,7 +519,6 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.0",
     "typescript": "^5",
-    "@types/ws": "^8.18.1",
     "ws": "^8.19.0"
   }
 }
