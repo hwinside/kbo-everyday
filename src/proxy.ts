@@ -183,8 +183,22 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   return supabaseResponse;
 }
 
+/**
+ * matcher 슬림 (2026-08-20, Vercel 비용 3순위):
+ *
+ * /api/* 는 proxy 안에서 이미 순수 통과다 — canonical redirect 제외(의도적)·세션 갱신 없음·
+ * 쿠키 무변경으로 `NextResponse.next()` 만 반환한다. 유일한 실제 일은 /api/standings 워치 UA
+ * 계측(fire-and-forget)뿐이다. 그런데 matcher 가 catch-all 이라 폴링 API(counts 307K +
+ * stats 225K + player-stats 198K ≈ 0.73M 회/일, 8/12 실측) 전부가 no-op middleware 를 1회씩
+ * 태우고 있었다. → /api 는 matcher 에서 제외하되, 워치 계측이 있는 /api/standings 만 예외로
+ * 유지한다(계측은 CDN 캐시 앞단인 proxy 에서만 전량을 잡는다 — 상단 주석 참조).
+ *
+ * 문서/페이지 경로는 그대로 매칭되어 canonical redirect(308)와 top-level 세션 갱신(#890)을
+ * 보존한다. 함수 본문의 `pathname.startsWith("/api/")` 패스스루는 방어적으로 유지한다
+ * (matcher 가 넘겨도 행동 동일 — 계약은 qa:proxy-matcher-slim 이 고정).
+ */
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!api/(?!standings(?:/|$))|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
