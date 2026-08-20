@@ -25,34 +25,37 @@ const ROOT = join(new URL("../..", import.meta.url).pathname);
 
 /** [파일, [ [설명, 필수 정규식] ... ], [ [설명, 금지 정규식] ... ]] */
 const CONTRACTS = [
+  // PR #1257: stats/player-stats GET 구현이 route → src/lib/services/* 로 물리 이동.
+  //   계약 대상도 구현 파일을 따라간다(완화 아님 — 같은 계약을 같은 강도로 본다).
+  //   route 는 얇은 래퍼이며 route↔service 동등성은 qa:self-fetch-internal P축이 별도 강제한다.
   [
-    "src/app/api/stats/route.ts",
+    "src/lib/services/stats.ts",
     [
       ["remaining-TTL 파생(TTL 누적 금지)", /Math\.floor\(\(getCacheTtl\(\) - ageMs\) \/ 1000\)/],
       ["degraded 판정 헬퍼: runner static-fallback → no-store", /runnerSource === "static-fallback" \|\| result\.source === "fallback"\) return NO_STORE/],
       ["2025 static 응답 s-maxage", /season: 2025[\s\S]{0,200}?s-maxage=3600/],
       ["defense static 응답 s-maxage", /statsMeta\.defenseGeneratedAt[\s\S]{0,200}?s-maxage=3600/],
-      ["인메모리 HIT 응답이 degraded 판정 경유 + 실측 age", /NextResponse\.json\(cached\.data, \{ headers: statsEdgeHeaders\(cached\.data, cached\.ageMs\) \}\)/],
-      ["live 성공 응답이 degraded 판정 경유", /NextResponse\.json\(result, \{ headers: statsEdgeHeaders\(result, 0\) \}\)/],
+      ["인메모리 HIT 응답이 degraded 판정 경유 + 실측 age", /return \{ body: cached\.data, headers: statsEdgeHeaders\(cached\.data, cached\.ageMs\) \}/],
+      ["live 성공 응답이 degraded 판정 경유", /return \{ body: result, headers: statsEdgeHeaders\(result, 0\) \}/],
       ["크롤 실패 fallback 응답 no-store", /source: "fallback"[\s\S]{0,300}?NO_STORE/],
       ["500 응답 no-store", /status: 500, headers: NO_STORE/],
     ],
     [["SWR 금지", /stale-while-revalidate/]],
   ],
   [
-    "src/app/api/player-stats/route.ts",
+    "src/lib/services/player-stats.ts",
     [
-      ["성공 응답 60초 상한(revalidate+memory+edge 누적 방지)", /OK_HEADERS = \{ "Cache-Control": "public, s-maxage=60" \}/],
+      ["성공 응답 60초 상한(revalidate+memory+edge 누적 방지)", /okHeaders = \{ "Cache-Control": "public, s-maxage=60" \}/],
       ["upstream 비정상 상태코드 throw", /if \(!res\.ok\) throw new Error\(`upstream \$\{res\.status\}`\)/],
       ["fail-close 파서 모듈 사용(자체 파싱 금지)", /import \{ parsePlayerStats, type PlayerDetailStats \} from "@\/lib\/kbo\/player-stats-parser"/],
-      ["인메모리 HIT 응답에 엣지 헤더", /cached: true \}, \{ headers: OK_HEADERS \}/],
-      ["성공/기록없음 응답에 엣지 헤더", /\{ stats, cached: false \}, \{ headers: OK_HEADERS \}/],
-      ["500 응답 no-store", /status: 500, headers: \{ "Cache-Control": "no-store" \}/],
+      ["인메모리 HIT 응답에 엣지 헤더", /cached: true \}, headers: okHeaders \}/],
+      ["성공/기록없음 응답에 엣지 헤더", /\{ stats, cached: false \}, headers: okHeaders \}/],
+      ["500 응답 no-store", /status: 500,\s*headers: \{ "Cache-Control": "no-store" \}/],
     ],
     [
       ["SWR 금지", /stale-while-revalidate/],
       ["60초 초과 s-maxage 금지", /s-maxage=(?!60\b)\d+/],
-      ["라우트 내 자체 tbody 파싱 잔존 금지(파서 우회)", /<tbody/],
+      ["서비스 내 자체 tbody 파싱 잔존 금지(파서 우회)", /<tbody/],
     ],
   ],
   [
@@ -118,13 +121,13 @@ function check({ mutate } = {}) {
 
 if (process.argv.includes("--selftest")) {
   const mutations = [
-    ["M1 stats 엣지 헤더 제거", (rel, s) => (rel.includes("api/stats") ? s.replaceAll("statsEdgeHeaders", "noHeaders") : s)],
-    ["M2 stats 크롤 실패 fallback을 캐시로 오염", (rel, s) => (rel.includes("api/stats") ? s.replace('source: "fallback"', 'source: "fallback" /* s-maxage */').replaceAll("NO_STORE", '{ "Cache-Control": "public, s-maxage=60" }') : s)],
-    ["M3 player-stats 500 no-store 제거", (rel, s) => (rel.includes("player-stats") ? s.replace('status: 500, headers: { "Cache-Control": "no-store" }', "status: 500") : s)],
+    ["M1 stats 엣지 헤더 제거", (rel, s) => (rel.includes("services/stats") ? s.replaceAll("statsEdgeHeaders", "noHeaders") : s)],
+    ["M2 stats 크롤 실패 fallback을 캐시로 오염", (rel, s) => (rel.includes("services/stats") ? s.replace('source: "fallback"', 'source: "fallback" /* s-maxage */').replaceAll("NO_STORE", '{ "Cache-Control": "public, s-maxage=60" }') : s)],
+    ["M3 player-stats 500 no-store 제거", (rel, s) => (rel.includes("services/player-stats") ? s.replace('headers: { "Cache-Control": "no-store" },', "") : s)],
     ["M4 counts GET 제거", (rel, s) => (rel.includes("discussion/counts") ? s.replace("export async function GET(", "async function disabledGET(") : s)],
     ["M5 클라 GET→POST 회귀", (rel, s) => (rel.includes("NewsCarousel") ? s.replace("fetch(`/api/news/discussion/counts?${query}`)", 'fetch("/api/news/discussion/counts", { method: "POST", body: JSON.stringify({}) }) // discussion/counts') : s)],
-    ["M6 stats remaining-TTL을 고정 TTL로 회귀(누적 재발)", (rel, s) => (rel.includes("api/stats") ? s.replace("Math.floor((getCacheTtl() - ageMs) / 1000)", "Math.floor(getCacheTtl() / 1000)") : s)],
-    ["M7 stats runner static-fallback degraded 캐시 오염", (rel, s) => (rel.includes("api/stats") ? s.replace('runnerSource === "static-fallback" || result.source === "fallback") return NO_STORE', 'result.source === "never") return NO_STORE') : s)],
+    ["M6 stats remaining-TTL을 고정 TTL로 회귀(누적 재발)", (rel, s) => (rel.includes("services/stats") ? s.replace("Math.floor((getCacheTtl() - ageMs) / 1000)", "Math.floor(getCacheTtl() / 1000)") : s)],
+    ["M7 stats runner static-fallback degraded 캐시 오염", (rel, s) => (rel.includes("services/stats") ? s.replace('runnerSource === "static-fallback" || result.source === "fallback") return NO_STORE', 'result.source === "never") return NO_STORE') : s)],
     ["M8 player-stats res.ok 검사 제거", (rel, s) => (rel.includes("player-stats") ? s.replace("if (!res.ok) throw new Error(`upstream ${res.status}`);", "") : s)],
     ["M9 player-stats 테이블 부재를 null로 회귀(장애가 60초 캐시됨)", (rel, s) => (rel.includes("player-stats") ? s.replace('throw new Error("upstream parse anomaly: hitter tables missing")', "return null") : s)],
     ["M10 player-stats 60초 상한 초과(3600s)", (rel, s) => (rel.includes("player-stats") ? s.replace('"public, s-maxage=60"', '"public, s-maxage=3600"') : s)],

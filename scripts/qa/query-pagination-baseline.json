@@ -30,6 +30,13 @@
       "subject": "comments",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
+    "039ed094ae6c1936256b": {
+      "count": 1,
+      "kind": "unbounded_growing_select",
+      "file": "src/lib/services/player-game-logs.ts",
+      "subject": "player_game_logs",
+      "detail": "add a bound, unique-key lookup, or query-guard annotation"
+    },
     "042e5895f8079ad518f4": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1036,13 +1043,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/send-nickname-apology-dm.ts",
       "subject": "profiles",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "c101904ccc2c989618cb": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/player-game-logs/route.ts",
-      "subject": "player_game_logs",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "c6cf6ca816af48df4c89": {
