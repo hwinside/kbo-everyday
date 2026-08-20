@@ -248,21 +248,25 @@ test("route returns one cumulative CPU snapshot for the client refresh delta", a
   assert.equal(metricCalls, 1);
   assert.equal(payload.level, "healthy");
   assert.equal(payload.metrics.cpuUsedPercent, null);
-  assert.deepEqual(payload.metrics.cpuCounter, { totalSeconds: 302, idleSeconds: 201.2 });
+  assert.deepEqual(payload.metrics.cpuCounter, {
+    totalSeconds: 302,
+    idleSeconds: 201.2,
+    seriesFingerprint: "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user",
+  });
   assert.equal(payload.metrics.load1, 8);
   assert.equal(payload.metrics.load1PerCore, 4);
 });
 
 test("client CPU delta derives busy percent across exporter scrape intervals", () => {
   const used = cpuUsedPercentFromSnapshots(
-    { totalSeconds: 304, idleSeconds: 202.4 },
-    { totalSeconds: 302, idleSeconds: 201.2 },
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: "cpu0" },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
   );
   assert.ok(used !== null && Math.abs(used - 40) < 0.001);
   assert.equal(
     cpuUsedPercentFromSnapshots(
-      { totalSeconds: 302, idleSeconds: 201.2 },
-      { totalSeconds: 302, idleSeconds: 201.2 },
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
     ),
     null,
   );
@@ -297,16 +301,27 @@ domTest("UI turns the first cumulative counter into CPU percent on refresh", asy
   second.cpuCounter = {
     totalSeconds: first.cpuCounter.totalSeconds + 240,
     idleSeconds: first.cpuCounter.idleSeconds + 144,
+    seriesFingerprint: first.cpuCounter.seriesFingerprint,
   };
+  const unchanged = structuredClone(second);
+  const reset = structuredClone(second);
+  reset.cpuCounter = { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: first.cpuCounter.seriesFingerprint };
+  const recovered = structuredClone(reset);
+  recovered.cpuCounter = { totalSeconds: 110, idleSeconds: 76, seriesFingerprint: first.cpuCounter.seriesFingerprint };
+  const seriesChanged = structuredClone(recovered);
+  seriesChanged.cpuCounter = { ...recovered.cpuCounter, seriesFingerprint: `${first.cpuCounter.seriesFingerprint};cpu=2|mode=idle` };
+  const seriesRecovered = structuredClone(seriesChanged);
+  seriesRecovered.cpuCounter = { totalSeconds: seriesChanged.cpuCounter.totalSeconds + 100, idleSeconds: seriesChanged.cpuCounter.idleSeconds + 80, seriesFingerprint: seriesChanged.cpuCounter.seriesFingerprint };
+  const snapshots = [first, second, unchanged, reset, recovered, seriesChanged, seriesRecovered];
   let calls = 0;
   globalThis.fetch = (async () => {
-    calls += 1;
+    const index = calls++;
     return Response.json({
       level: "healthy",
-      metrics: calls === 1 ? first : second,
+      metrics: snapshots[index],
       services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
       sourceErrors: { metrics: null, management: null },
-      checkedAt: calls === 1 ? "2026-08-20T14:00:00.000Z" : "2026-08-20T14:01:00.000Z",
+      checkedAt: new Date(Date.parse("2026-08-20T14:00:00.000Z") + index * 60_000).toISOString(),
     });
   }) as typeof fetch;
 
@@ -324,10 +339,127 @@ domTest("UI turns the first cumulative counter into CPU percent on refresh", asy
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
     assert.match(container.textContent || "", /CPU 사용률순간값40%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값40%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중.*약 1~2분 후 표시/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값30%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중.*약 1~2분 후 표시/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값20%60초 실측/);
   } finally {
     await act(async () => root.unmount());
     globalThis.fetch = previous.fetch;
     for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
+domTest("UI ignores an older refresh response that arrives last", async () => {
+  const { React, act, createRoot, SystemHealthPanel } =
+    await loadReactHarness();
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+    url: "http://localhost/admin/system",
+    },
+  );
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previousGlobals = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const baseline = summarizeSystemMetrics(sample());
+  assert.ok(baseline.cpuCounter);
+  const older = structuredClone(baseline);
+  older.cpuCounter = {
+    totalSeconds: baseline.cpuCounter.totalSeconds + 100,
+    idleSeconds: baseline.cpuCounter.idleSeconds + 90,
+    seriesFingerprint: baseline.cpuCounter.seriesFingerprint,
+  };
+  const newer = structuredClone(baseline);
+  newer.cpuCounter = {
+    totalSeconds: baseline.cpuCounter.totalSeconds + 200,
+    idleSeconds: baseline.cpuCounter.idleSeconds + 100,
+    seriesFingerprint: baseline.cpuCounter.seriesFingerprint,
+  };
+  const pending: Array<(response: Response) => void> = [];
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return Response.json({
+        level: "healthy",
+        metrics: baseline,
+        services: healthyServices.map((service) => ({
+          ...service,
+          level: "healthy",
+        })),
+        sourceErrors: { metrics: null, management: null },
+        checkedAt: "2026-08-20T14:00:00.000Z",
+      });
+    }
+    return new Promise<Response>((resolve) => pending.push(resolve));
+  }) as typeof fetch;
+
+  const payload = (metrics: typeof baseline, checkedAt: string) =>
+    Response.json({
+      level: "healthy",
+      metrics,
+      services: healthyServices.map((service) => ({
+        ...service,
+        level: "healthy",
+      })),
+      sourceErrors: { metrics: null, management: null },
+      checkedAt,
+    });
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(React.createElement(SystemHealthPanel)));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    const refresh = container.querySelector(
+      'button[aria-label="서버 상태 새로고침"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(refresh);
+    await act(async () => {
+      refresh.click();
+      refresh.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+    assert.equal(pending.length, 2);
+    await act(async () => {
+      pending[1](payload(newer, "2026-08-20T14:02:00.000Z"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값50%120초 실측/);
+    await act(async () => {
+      pending[0](payload(older, "2026-08-20T14:01:00.000Z"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값50%120초 실측/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previousGlobals.fetch;
+    for (const [key, value] of Object.entries(previousGlobals)) {
       if (key !== "fetch") globals[key] = value;
     }
     dom.window.close();

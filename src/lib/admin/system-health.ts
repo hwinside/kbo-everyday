@@ -1,9 +1,15 @@
 export type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 
+export interface CpuCounterSnapshot {
+  totalSeconds: number;
+  idleSeconds: number;
+  seriesFingerprint: string;
+}
+
 export interface SystemMetricSummary {
   cpuUsedPercent: number | null;
   cpuSampleSeconds: number | null;
-  cpuCounter: { totalSeconds: number; idleSeconds: number } | null;
+  cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
   load1: number | null;
   load1PerCore: number | null;
@@ -90,17 +96,27 @@ function round(value: number | null): number | null {
 function cpuCounterSnapshot(samples: PrometheusSample[]) {
   const cpu = values(samples, "node_cpu_seconds_total");
   if (cpu.length === 0) return null;
+  const seriesFingerprint = cpu
+    .map((sample) =>
+      Object.entries(sample.labels)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => `${name}=${value}`)
+        .join("|"),
+    )
+    .sort()
+    .join(";");
   const totalSeconds = cpu.reduce((sum, sample) => sum + sample.value, 0);
   const idleSeconds = cpu
     .filter((sample) => sample.labels.mode === "idle")
     .reduce((sum, sample) => sum + sample.value, 0);
-  return { totalSeconds, idleSeconds };
+  return { totalSeconds, idleSeconds, seriesFingerprint };
 }
 
 export function cpuUsedPercentFromSnapshots(
-  current: { totalSeconds: number; idleSeconds: number },
-  previous: { totalSeconds: number; idleSeconds: number },
+  current: CpuCounterSnapshot,
+  previous: CpuCounterSnapshot,
 ): number | null {
+  if (current.seriesFingerprint !== previous.seriesFingerprint) return null;
   const totalDelta = current.totalSeconds - previous.totalSeconds;
   const idleDelta = current.idleSeconds - previous.idleSeconds;
   if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) return null;
