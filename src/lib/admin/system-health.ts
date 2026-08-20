@@ -193,20 +193,17 @@ export function summarizeSystemMetrics(
     if (diskUsedPercent >= 85) critical(`디스크 ${round(diskUsedPercent)}%`);
     else if (diskUsedPercent >= 75) warn(`디스크 ${round(diskUsedPercent)}%`);
   }
-  if (cpuUsedPercent !== null) {
-    if (cpuUsedPercent >= 85) critical(`CPU 사용률 ${round(cpuUsedPercent)}%`);
-    else if (cpuUsedPercent >= 70) warn(`CPU 사용률 ${round(cpuUsedPercent)}%`);
-  }
-
+  // The CPU value is a one-second point-in-time sample. Keep it informational:
+  // production alerts require sustained 70%/5m or 85%/3m, so applying those
+  // thresholds here would recreate "dashboard critical, no alert" contradictions.
   const missingCoreMetrics = [
-    cpuUsedPercent === null ? "CPU" : null,
     memoryUsedPercent === null ? "메모리" : null,
     diskUsedPercent === null ? "디스크" : null,
     pgUpValue === null ? "PostgreSQL" : null,
     poolerUpValue === null ? "PgBouncer" : null,
   ].filter((name): name is string => name !== null);
 
-  if (missingCoreMetrics.length === 5) {
+  if (missingCoreMetrics.length === 4) {
     reasons.push("핵심 메트릭 없음");
     if (!hasCritical) level = "unknown";
   } else if (missingCoreMetrics.length > 0) {

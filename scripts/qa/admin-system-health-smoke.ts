@@ -70,7 +70,7 @@ test("high load average is not mislabeled or escalated as CPU usage", () => {
   assert.ok(result.reasons.every((reason) => !reason.startsWith("CPU")));
 });
 
-test("actual CPU counter delta still drives critical health", () => {
+test("instant CPU stays informational instead of impersonating sustained alert health", () => {
   const result = summarizeSystemMetrics(
     sample()
       .replaceAll('mode="idle"} 100.6', 'mode="idle"} 100.1')
@@ -79,16 +79,16 @@ test("actual CPU counter delta still drives critical health", () => {
     1,
   );
   assert.equal(result.cpuUsedPercent, 90);
-  assert.equal(result.level, "critical");
-  assert.ok(result.reasons.includes("CPU 사용률 90%"));
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.startsWith("CPU")));
 });
 
 test("CPU stays unknown without a counter delta instead of falling back to load average", () => {
   const result = summarizeSystemMetrics(sample().replace("node_load1 0.8", "node_load1 8"));
   assert.equal(result.cpuUsedPercent, null);
   assert.equal(result.load1, 8);
-  assert.equal(result.level, "warning");
-  assert.ok(result.reasons.includes("핵심 메트릭 누락: CPU"));
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.includes("CPU")));
 });
 
 test("raises warning at resource thresholds", () => {
@@ -205,6 +205,72 @@ test("route derives actual CPU from two counter snapshots and keeps high load se
   assert.equal(payload.metrics.load1, 8);
   assert.equal(payload.metrics.load1PerCore, 4);
   assert.ok(payload.metrics.cpuSampleSeconds >= 1);
+});
+
+test("high load and instant CPU render as informational without critical badges", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const metrics = summarizeSystemMetrics(
+    sample().replace("node_load1 0.8", "node_load1 8"),
+    previousSample(),
+    1,
+  );
+  globalThis.fetch = (async () => Response.json({
+    level: "healthy",
+    metrics,
+    services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+    sourceErrors: { metrics: null, management: null },
+    checkedAt: new Date().toISOString(),
+  })) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(SystemHealthPanel));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const cards = [...container.querySelectorAll(".rounded-xl")];
+    const cpuCard = cards.find((card) => card.textContent?.includes("CPU 사용률"));
+    const loadCard = cards.find((card) => card.textContent?.includes("시스템 Load (1분)"));
+    assert.ok(cpuCard);
+    assert.ok(loadCard);
+    assert.match(cpuCard.textContent || "", /CPU 사용률순간값40%.*알림 70% 5분 \/ 85% 3분/);
+    assert.match(loadCard.textContent || "", /시스템 Load \(1분\)순간값8.*CPU와 별도/);
+    assert.equal([...cpuCard.querySelectorAll("span")].some((span) => span.textContent === "긴급"), false);
+    assert.equal([...loadCard.querySelectorAll("span")].some((span) => span.textContent === "긴급"), false);
+    assert.match(container.textContent || "", /서버·DB Health정상/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
 });
 
 test("route degrades overall health when Metrics is unavailable", async () => {
