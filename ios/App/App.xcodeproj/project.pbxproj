@@ -37,6 +37,7 @@
 		A1B2C3D42FE000000000003 /* FacebookCore in Frameworks */ = {isa = PBXBuildFile; productRef = A1B2C3D42FE000000000004 /* FacebookCore */; };
 		AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000002 /* AppReviewPlugin.swift */; };
 		AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */; };
+		AAEE11D52FE000000000021 /* SecureSessionStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAEE11D52FE000000000022 /* SecureSessionStorePlugin.swift */; };
 		B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */; };
 		B001A7732FE0000000000001 /* PushDeepLinkPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */; };
 		B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */; };
@@ -141,6 +142,7 @@
 		A4C1D752B8E5F1912873A2F0 /* WatchData.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchData.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000002 /* AppReviewPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppReviewPlugin.swift; sourceTree = "<group>"; };
 		AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VenueMediaLibraryPlugin.swift; sourceTree = "<group>"; };
+		AAEE11D52FE000000000022 /* SecureSessionStorePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureSessionStorePlugin.swift; sourceTree = "<group>"; };
 		B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserPlugin.swift; sourceTree = "<group>"; };
 		B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushDeepLinkPlugin.swift; sourceTree = "<group>"; };
 		B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsArticleBrowserSupport.swift; sourceTree = "<group>"; };
@@ -297,6 +299,7 @@
 				A1B2C3D42FE000000000002 /* MetaAppEventsPlugin.swift */,
 				AAEE11D52FE000000000002 /* AppReviewPlugin.swift */,
 				AAEE11D52FE000000000012 /* VenueMediaLibraryPlugin.swift */,
+				AAEE11D52FE000000000022 /* SecureSessionStorePlugin.swift */,
 				B001A7712FE0000000000002 /* NewsArticleBrowserPlugin.swift */,
 				B001A7722FE0000000000002 /* NewsArticleBrowserSupport.swift */,
 				B001A7732FE0000000000002 /* PushDeepLinkPlugin.swift */,
@@ -537,6 +540,7 @@
 				A1B2C3D42FE000000000001 /* MetaAppEventsPlugin.swift in Sources */,
 				AAEE11D52FE000000000001 /* AppReviewPlugin.swift in Sources */,
 				AAEE11D52FE000000000011 /* VenueMediaLibraryPlugin.swift in Sources */,
+				AAEE11D52FE000000000021 /* SecureSessionStorePlugin.swift in Sources */,
 				B001A7712FE0000000000001 /* NewsArticleBrowserPlugin.swift in Sources */,
 				B001A7722FE0000000000001 /* NewsArticleBrowserSupport.swift in Sources */,
 				B001A7732FE0000000000001 /* PushDeepLinkPlugin.swift in Sources */,

@@ -20,6 +20,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(AppReviewPlugin.class);
         registerPlugin(NewsArticleBrowserPlugin.class);
         registerPlugin(VenueMediaLibraryPlugin.class);
+        registerPlugin(SecureSessionStorePlugin.class);
         super.onCreate(savedInstanceState);
         lockWebViewTextZoom();
         // 잠금화면 카드 탭으로 (콜드 스타트) 진입 시 해당 경기룸으로 바로 이동(②).
