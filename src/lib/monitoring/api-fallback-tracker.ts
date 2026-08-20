@@ -9,6 +9,7 @@
  */
 
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { drainFallbackBuffer, observeFallback } from "@/lib/monitoring/fallback-buffer";
 
 interface FallbackEvent {
   apiName: string;
@@ -171,25 +172,47 @@ ${reasonText}${errorInfo}
 }
 
 /**
- * Supabase 저장
+ * Supabase 저장 — delta 버퍼 경유.
+ *
+ * 폴백 1회당 1행 INSERT 였다. 라이브 경기 중 유저 폴링 수만큼 쌓여 `kbo-game-detail` 하나가
+ * 하루 138,708행(2026-08-20 실측, gameId 하나에 52,297건)을 만들었다 — "장애 13.8만 회"가
+ * 아니라 계측 설계 결함이다.
+ *
+ * ⚠️ 이벤트마다 `UPSERT count+1` 로 바꾸는 것은 불충분하다(삼순 blocker 1) — 행 수만 줄고
+ *    **쓰기 횟수·WAL 은 그대로**이며 같은 행을 계속 갱신해 HOT 가 막히고 hot-row lock 이 생긴다.
+ *    그래서 버퍼에 모았다가 주기적으로 1회 batch flush 한다.
  */
-// 폴백 1회당 1행 INSERT 였다. 라이브 경기 중 유저 폴링 수만큼 쌓여 `kbo-game-detail` 하나가
-// 하루 138,708행(2026-08-20 실측, gameId 하나에 52,297건)을 만들었다 — "장애 13.8만 회"가
-// 아니라 계측 설계 결함이다. 이제 (api, reason, scope, 1분 버킷) 단위 upsert 로 합산한다.
-// 창 집계는 반드시 sum(event_count) 로 읽어야 임계치 의미가 보존된다(migration 참조).
 async function saveToSupabase(event: FallbackEvent) {
-  const { error } = await supabase.rpc("record_api_fallback_bucket", {
-    p_api_name: event.apiName,
-    p_reason: event.reason,
-    p_status_code: event.statusCode ?? null,
-    p_error_message: event.errorMessage ?? null,
-    p_scope: event.scope ?? null,
+  const shouldFlush = observeFallback({
+    apiName: event.apiName,
+    reason: event.reason,
+    statusCode: event.statusCode ?? null,
+    errorMessage: event.errorMessage ?? null,
+    scope: event.scope ?? null,
+    policy: LEGACY_TRACK_POLICY,
   });
+  if (!shouldFlush) return;
 
+  const deltas = drainFallbackBuffer();
+  if (deltas.length === 0) return;
+
+  const { error } = await supabase.rpc("flush_api_fallback_buckets", { p_events: deltas });
   if (error) {
     throw new Error(`Supabase insert failed: ${error.message}`);
   }
 }
+
+/**
+ * legacy trackFallback 경로의 임계치 정책. 종전 상수(ALERT_THRESHOLD/WINDOW/COOLDOWN)와
+ * 같은 값을 쓴다 — 이 경로는 텐레그램 전송을 in-memory 로 판정하므로 DB 측 임계치는
+ * 사실상 쓰이지 않지만, flush RPC 가 공통 경로라 값을 명시해야 한다.
+ */
+const LEGACY_TRACK_POLICY = {
+  windowMinutes: ALERT_WINDOW_MS / 60_000,
+  threshold: ALERT_THRESHOLD,
+  cooldownMinutes: COOLDOWN_MS / 60_000,
+  leaseSeconds: 120,
+} as const;
 
 // ============================================================================
 // Durable 열화 감지·경보 (장애대책 슬라이스1 — 삼순 NO-GO 반영)

@@ -1,14 +1,28 @@
 /**
  * API Fallback 이벤트 조회
- * 
+ *
  * GET /api/monitoring/fallbacks
  * Query params:
  * - days: 조회 기간 (기본 7일)
  * - api: 특정 API만 필터 (선택)
+ *
+ * 2026-08-20 (삼순 blocker 3): 종전엔 `.select("*")` 무페이지 조회라 Supabase 기본 1,000행
+ * cap 에 조용히 잘렸다. 분당 버킷이라도 경기일엔 하루 1,000행을 넘을 수 있어 합계가 오보가 된다.
+ * → 집계를 DB 로 내린다(행을 가져오지 않는다). 발생 횟수는 sum(event_count) 다 — row count 로
+ *   읽으면 폴링 증폭 차단 이후 "장애가 줄었다"는 착시가 생긴다(실제로는 로그 행만 줄어든 것).
  */
 
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { NextRequest, NextResponse } from "next/server";
+
+interface FallbackSummaryRow {
+  api_name: string;
+  reason: string;
+  occurrences: number;
+  rows_stored: number;
+  latest_at: string;
+  latest_message: string | null;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,19 +34,14 @@ export async function GET(request: NextRequest) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    // 기본 쿼리
-    let query = supabase
-      .from("api_fallback_events")
-      .select("*")
-      .gte("timestamp", startDate.toISOString())
-      .order("timestamp", { ascending: false });
-
-    // API 필터
-    if (apiFilter) {
-      query = query.eq("api_name", apiFilter);
-    }
-
-    const { data, error } = await query;
+    // query-guard: bounded -- summarize_api_fallbacks 는 서버에서 group by 한 집계만 반환한다.
+    // 행 수 상한 = (api_name × reason) 카디널리티로, 관제 대상 API 수(수십)에 묶인다.
+    // 원본 이벤트 행은 클라로 오지 않으므로 1,000행 cap 에 잘릴 수 없다.
+    const { data, error } = await supabase.rpc("summarize_api_fallbacks", {
+      p_since: startDate.toISOString(),
+      p_until: null,
+      p_api_name: apiFilter,
+    });
 
     if (error) {
       console.error("[API Fallback] Query error:", error);
@@ -42,34 +51,34 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 2026-08-20: 1행 = 1발생이 아니다. (api, reason, scope, 1분버킷) 1행 + event_count 합산이므로
-    // 발생 횟수는 반드시 sum(event_count)로 읽는다. row count 로 읽으면 폴링 증폭 차단 이후
-    // "장애가 줄었다"는 착시가 생긴다(실제로는 로그 행만 줄어든 것).
-    // 마이그레이션 이전 행은 event_count 가 null 일 수 있어 1로 취급한다.
-    const occurrences = (e: { event_count?: number | null }) => e.event_count ?? 1;
+    const rows = (data ?? []) as FallbackSummaryRow[];
 
     // API별 그룹화 통계
-    const byApi = data.reduce((acc, event) => {
-      const api = event.api_name;
+    const byApi = rows.reduce((acc, row) => {
+      const api = row.api_name;
       if (!acc[api]) {
         acc[api] = {
           total: 0,
           rows: 0,
           reasons: {} as Record<string, number>,
-          latestTimestamp: event.timestamp,
+          latestTimestamp: row.latest_at,
         };
       }
-      acc[api].total += occurrences(event);
-      acc[api].rows += 1;
-      acc[api].reasons[event.reason] = (acc[api].reasons[event.reason] || 0) + occurrences(event);
+      acc[api].total += Number(row.occurrences);
+      acc[api].rows += Number(row.rows_stored);
+      acc[api].reasons[row.reason] =
+        (acc[api].reasons[row.reason] || 0) + Number(row.occurrences);
+      if (row.latest_at > acc[api].latestTimestamp) acc[api].latestTimestamp = row.latest_at;
       return acc;
     }, {} as Record<string, { total: number; rows: number; reasons: Record<string, number>; latestTimestamp: string }>);
 
     return NextResponse.json({
-      events: data,
+      // `events`(원본 행)는 더 이상 반환하지 않는다 — 잘린 목록을 전체인 양 내보내는 것이
+      // 이 엔드포인트의 원래 결함이었다. 필요하면 별도 페이징 엔드포인트를 만든다.
+      breakdown: rows,
       summary: {
-        total: data.reduce((n, e) => n + occurrences(e), 0),
-        rows: data.length,
+        total: rows.reduce((n, r) => n + Number(r.occurrences), 0),
+        rows: rows.reduce((n, r) => n + Number(r.rows_stored), 0),
         byApi,
         period: {
           startDate: startDate.toISOString(),

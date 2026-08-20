@@ -587,6 +587,7 @@
     "delete_own_chat_message": "deletes one message",
     "drain_api_fallback_alerts": "returns at most p_max_batch due alert outboxes to re-send (bounded batch)",
     "finish_admin_broadcast_recipient": "state transition for one recipient",
+    "flush_api_fallback_buckets": "applies a batch of buffered fallback deltas and returns at most one alert-claim row per api_name in that batch (bounded by monitored API count, tens)",
     "increment_content_view": "increments one content counter",
     "increment_post_view": "increments one post counter",
     "leaderboard_invite_rollup_refresh": "full snapshot recompute of the invite leaderboard rollup (advisory-locked, idempotent), returns text",
@@ -601,6 +602,7 @@
     "report_venue_story": "creates one report",
     "reserve_youtube_quota": "returns one atomic quota decision",
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
+    "summarize_api_fallbacks": "server-side group by (api_name, reason) aggregate; row count is bounded by monitored API count times reason enum (4), raw event rows never leave the DB",
     "upsert_baseball_genius_news_articles": "upserts a jsonb batch (hard-capped at 500 rows inside the function) and returns exactly one summary row",
     "upsert_naver_identity": "upserts one authenticated identity",
     "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)"
