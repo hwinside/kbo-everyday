@@ -249,7 +249,13 @@ export async function restoreSessionFromBackup<S>(
     const { data, error } = result;
     if (data.session) return data.session;
     if (error && isDefinitiveRefreshRejection(error)) {
-      await clearSessionBackup();
+      // CAS 삭제(삼순 2차 NO-GO ①): 늦은 확정 거부가 도착했을 때, 그 사이 다른
+      // 경로가 이미 새 토큰으로 백업을 갱신했을 수 있다. "실패한 바로 그 토큰"이
+      // 여전히 저장된 경우에만 삭제 — 갱신된 유효 백업을 늦은 실패가 지우지 못하게.
+      const current = await readSessionBackup();
+      if (current && current.refresh_token === backup.refresh_token) {
+        await clearSessionBackup();
+      }
     }
   } catch {
     /* transient 실패 — 백업 보존, 이번 부팅은 로그아웃 상태로 진행 */
@@ -279,13 +285,38 @@ export interface SessionLadderDeps<S extends SessionLike> {
   }>;
 }
 
+/** 동시 호출 단일화 — mount·visibilitychange 가 겹칠 때 같은 refresh token 을
+ * 2회 재생(rotation 안에서 2번째가 already_used 로 죽는 문제)하지 않게 한다.
+ * 진행 중이면 같은 promise 를 공유하고(첫 호출의 deps 기준), 완료 후에는 새 실행. */
+let inFlightAcquire: Promise<unknown> | null = null;
+
+/** 테스트 전용 — single-flight 상태 리셋 */
+export function _resetAcquireSessionForTest(): void {
+  inFlightAcquire = null;
+}
+
 /**
  * 세션 획득 사다리. 상위 단계에서 세션을 얻으면 하위 단계는 절대 실행되지 않는다 —
  * 특히 쿠키/pending 세션이 있으면 네이티브 백업 read 0회 (정상 로그인 무영향 계약,
  * QA 스모크가 call count 로 직접 검증).
+ * 동시 호출은 single-flight 로 합쳌진다 (삼순 2차 NO-GO ① — 겹친 복원 방지).
  * 세션 확보 시 네이티브 백업을 갱신한다 (웹/구버전은 내부에서 no-op).
  */
-export async function acquireSession<S extends SessionLike>(
+export function acquireSession<S extends SessionLike>(
+  deps: SessionLadderDeps<S>,
+): Promise<S | null> {
+  if (inFlightAcquire) return inFlightAcquire as Promise<S | null>;
+  inFlightAcquire = (async () => {
+    try {
+      return await acquireSessionOnce(deps);
+    } finally {
+      inFlightAcquire = null;
+    }
+  })();
+  return inFlightAcquire as Promise<S | null>;
+}
+
+async function acquireSessionOnce<S extends SessionLike>(
   deps: SessionLadderDeps<S>,
 ): Promise<S | null> {
   let session: S | null = null;

@@ -363,6 +363,65 @@ async function main() {
     mod._resetLogoutFenceForTest();
   }
 
+  console.log("[21] single-flight: 동시 acquireSession 2회 → 복원 1회만 실행·결과 공유 (삼순 2차 ①)");
+  {
+    const { bridge, store } = makeBridge();
+    setWindow(bridge);
+    mod._resetAcquireSessionForTest();
+    store.set(
+      "kbo-native-session-backup",
+      JSON.stringify({ access_token: "at-sf", refresh_token: "rt-sf" }),
+    );
+    let cookieCalls = 0;
+    let setSessionCalls = 0;
+    const restoredSession = { access_token: "at-sf2", refresh_token: "rt-sf2", user: { id: "u" } };
+    const deps = {
+      getCookieSession: async () => {
+        cookieCalls++;
+        await new Promise(r => setTimeout(r, 50)); // mount·visibility 겹침 재현 창
+        return null;
+      },
+      consumePendingTokens: () => null,
+      setSession: async () => {
+        setSessionCalls++;
+        return { data: { session: restoredSession }, error: null };
+      },
+    };
+    const [s1, s2] = await Promise.all([mod.acquireSession(deps), mod.acquireSession(deps)]);
+    await settle();
+    check("두 호출 동일 세션", s1 === restoredSession && s2 === restoredSession);
+    check("쿠키 조회 1회", cookieCalls === 1, `cookieCalls=${cookieCalls}`);
+    check("setSession 1회 (토큰 2회 재생 없음)", setSessionCalls === 1, `setSessionCalls=${setSessionCalls}`);
+    // 완료 후 새 호출은 새 실행 (영구 캐시 아님)
+    const s3 = await mod.acquireSession(deps);
+    await settle();
+    check("완료 후 새 실행", cookieCalls === 2 && s3 === restoredSession, `cookieCalls=${cookieCalls}`);
+  }
+
+  console.log("[22] CAS 삭제: 늦은 확정 거부가 그사이 갱신된 새 백업을 못 지운다 (삼순 2차 ①)");
+  {
+    const { bridge, store } = makeBridge();
+    setWindow(bridge);
+    store.set(
+      "kbo-native-session-backup",
+      JSON.stringify({ access_token: "at-old", refresh_token: "rt-old" }),
+    );
+    const rotated = JSON.stringify({ access_token: "at-new", refresh_token: "rt-new" });
+    const auth = {
+      setSession: async () => {
+        // 이 복원이 실패로 돌아오기 전, 다른 경로가 새 토큰으로 백업을 갱신함
+        store.set("kbo-native-session-backup", rotated);
+        return {
+          data: { session: null },
+          error: { message: "Invalid Refresh Token: Already Used", status: 400, code: "refresh_token_already_used" },
+        };
+      },
+    };
+    const restoredResult = await mod.restoreSessionFromBackup(auth);
+    check("null 반환", restoredResult === null);
+    check("갱신된 백업 보존 (CAS)", store.get("kbo-native-session-backup") === rotated);
+  }
+
   console.log("[20] isDefinitiveRefreshRejection 분류 경계");
   {
     const f = mod.isDefinitiveRefreshRejection;

@@ -22,6 +22,33 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
 
     private let service = "fan.keubo.secure-session-store"
 
+    /// 설치 생명주기 계약(삼순 2차 NO-GO ②): 업데이트=유지 / 재설치=삭제 / WebView 퍼지=복원.
+    /// iOS Keychain 은 앱 삭제 후에도 남을 수 있어, 그대로 두면 재설치 시 이전 계정이
+    /// 자동 부활한다. 앱 샘드박스 Library 디렉토리(삭제 시 확실히 증발)에 first-install
+    /// marker 파일을 두고, 부팅 시 marker 가 없으면(=신규/재설치) 이 서비스의 Keychain
+    /// 항목을 전부 지운 뒤 marker 를 생성한다. (UserDefaults 를 쓰지 않는 이유:
+    /// required-reason API 라 PrivacyInfo 사유 등재가 필요해짐 — 파일 존재 확인은 무관)
+    override public func load() {
+        wipeOnFreshInstall()
+    }
+
+    private var installMarkerURL: URL? {
+        FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("fan.keubo.secure-session-store.installed")
+    }
+
+    private func wipeOnFreshInstall() {
+        guard let marker = installMarkerURL else { return }
+        if FileManager.default.fileExists(atPath: marker.path) { return } // 업데이트/재실행 = 유지
+        // 신규 또는 재설치 — 잔존 Keychain 항목 전부 삭제 (이전 계정 부활 차단)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        SecItemDelete(query as CFDictionary)
+        FileManager.default.createFile(atPath: marker.path, contents: Data())
+    }
+
     private func baseQuery(key: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
