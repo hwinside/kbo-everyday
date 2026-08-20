@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import {
   isRefNewsClippingPayload,
@@ -14,63 +14,108 @@ import {
  * 복제 저장됐다(8/18 KIA 6,102행 / distinct 120). 이제 digest 1행을 참조하므로 클라가
  * 한 번 조회해서 여러 쪽지에 공유한다.
  *
- * 계약:
- *  - 이미 받은 id 는 다시 조회하지 않는다(대화 스크롤/Realtime 추가 때 재요청 방지).
- *  - 조회 실패·미도착 상태에서는 해당 id 가 Map 에 없다 → 호출부의 toNewsClippingView 가
- *    null 을 돌려 카드 대신 텍스트 본문으로 fail-close 된다. 빈 카드를 그리지 않는다.
- *  - 언마운트/대화 전환 뒤 늦게 도착한 응답이 다른 대화 상태를 오염시키지 않도록 generation fence 를 쓴다.
+ * ⚠️ 삼순 blocker 1 (2026-08-20): 1차 구현은 요청 단위 generation fence 를 썼다. A 조회 중
+ *    Realtime 으로 B 가 들어오면 generation 이 바뀌어 **A 응답이 통째로 폐기**되는데, A 의 id 는
+ *    이미 `attempted` 에 들어가 있어 **영원히 재조회되지 않았다**. 그 쪽지는 계속 텍스트로 남는다.
+ *    → generation fence 를 버리고 요청별 in-flight 추적 + 결과 merge 로 바꾼다.
+ *       - 성공한 id 만 캐시에 남는다.
+ *       - 실패/미해결 id 는 in-flight 에서 풀려 다음 렌더에 재시도된다.
+ *       - 언마운트 뒤에는 setState 를 하지 않는다(폐기 대상은 상태 갱신뿐, 재시도 자격은 유지).
  */
 export function useNewsClippingDigests(
   payloads: unknown[],
 ): Map<number, NewsClippingDigest> {
   const [digests, setDigests] = useState<Map<number, NewsClippingDigest>>(new Map());
-  // 조회를 이미 시도한 id(성공/실패 무관) — 실패 id 를 매 렌더마다 재조회하는 루프를 막는다.
-  // ⚠️ 렌더 중에는 읽지 않는다(react-hooks/refs). 필터링은 effect 안에서 한다.
-  const attemptedRef = useRef<Set<number>>(new Set());
-  const generationRef = useRef(0);
+  /** 지금 요청 중인 id — 같은 id 를 동시에 두 번 조회하지 않기 위한 것뿐이다. */
+  const inFlightRef = useRef<Set<number>>(new Set());
+  /** 이미 성공적으로 받은 id — 재조회 불필요. */
+  const resolvedRef = useRef<Set<number>>(new Set());
+  /** 실패 id 별 시도 횟수 — 무한 재시도를 막되, 영구 차단은 하지 않는다. */
+  const failureRef = useRef<Map<number, number>>(new Map());
+  const mountedRef = useRef(true);
 
-  // 렌더 중엔 "무엇을 원하는가"만 순수 계산한다. 중복 제거는 effect 의 일.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  /** 같은 id 를 계속 두드리지 않도록 하는 상한. 넘으면 그 세션에서는 텍스트로 렌더된다. */
+  const MAX_ATTEMPTS = 3;
+
   const wantedIds: number[] = [];
   for (const p of payloads) {
-    if (isRefNewsClippingPayload(p) && !wantedIds.includes(p.digest_id)) {
-      wantedIds.push(p.digest_id);
-    }
+    if (!isRefNewsClippingPayload(p)) continue;
+    if (!wantedIds.includes(p.digest_id)) wantedIds.push(p.digest_id);
   }
   // 의존성 안정화: 배열 자체는 매 렌더 새 참조이므로 정렬된 키 문자열로 비교한다.
   const wantedKey = wantedIds.slice().sort((a, b) => a - b).join(",");
+
+  const fetchDigests = useCallback(async (ids: number[]) => {
+    if (ids.length === 0) return;
+    for (const id of ids) inFlightRef.current.add(id);
+
+    try {
+      // query-guard: bounded -- ids 는 현재 화면 메시지에서 뽑은 digest_id 집합(대화 1개당
+      // 최대 100 메시지)이고 PK(id) 일치 조회다.
+      const { data, error } = await supabase
+        .from("news_clipping_digests")
+        .select("id, clip_date, team_id, team_name, overview, articles")
+        .in("id", ids);
+
+      const received = new Set<number>();
+      if (!error && data) {
+        const rows = (data as NewsClippingDigest[]).filter(
+          (row) => Array.isArray(row.articles) && row.articles.length > 0,
+        );
+        for (const row of rows) {
+          received.add(row.id);
+          resolvedRef.current.add(row.id);
+        }
+        // ⚠️ 언마운트됐어도 resolvedRef 는 갱신한다 — 그래야 재마운트 시 재조회가 준다.
+        //    다만 setState 는 마운트 상태에서만 한다.
+        if (mountedRef.current && rows.length > 0) {
+          setDigests((prev) => {
+            const next = new Map(prev);
+            for (const row of rows) next.set(row.id, row);
+            return next;
+          });
+        }
+      } else if (error) {
+        // 실패는 조용히 둔다 — 카드가 아니라 텍스트 본문이 렌더된다(fail-close).
+        console.error("[news-clipping] digest fetch failed:", error.message);
+      }
+
+      // 못 받은 id 는 실패로 기록하고 in-flight 에서 풀어 재시도 자격을 남긴다.
+      // (1차 구현은 여기서 영구 차단됐다 — 그게 blocker 1 이다.)
+      for (const id of ids) {
+        if (received.has(id)) {
+          failureRef.current.delete(id);
+        } else {
+          failureRef.current.set(id, (failureRef.current.get(id) ?? 0) + 1);
+        }
+      }
+    } finally {
+      for (const id of ids) inFlightRef.current.delete(id);
+    }
+  }, []);
 
   useEffect(() => {
     if (!wantedKey) return;
     const ids = wantedKey
       .split(",")
       .map((v) => Number(v))
-      .filter((v) => Number.isFinite(v) && !attemptedRef.current.has(v));
+      .filter(
+        (v) =>
+          Number.isFinite(v) &&
+          !resolvedRef.current.has(v) &&
+          !inFlightRef.current.has(v) &&
+          (failureRef.current.get(v) ?? 0) < MAX_ATTEMPTS,
+      );
     if (ids.length === 0) return;
-
-    const generation = ++generationRef.current;
-    for (const id of ids) attemptedRef.current.add(id);
-
-    (async () => {
-      const { data, error } = await supabase
-        .from("news_clipping_digests")
-        .select("id, clip_date, team_id, team_name, overview, articles")
-        .in("id", ids);
-
-      if (generation !== generationRef.current) return; // stale 응답 폐기
-      if (error || !data) {
-        // 실패는 조용히 둔다 — 카드가 아니라 텍스트 본문이 렌더된다(fail-close).
-        console.error("[news-clipping] digest fetch failed:", error?.message);
-        return;
-      }
-      setDigests((prev) => {
-        const next = new Map(prev);
-        for (const row of data as NewsClippingDigest[]) {
-          if (Array.isArray(row.articles) && row.articles.length > 0) next.set(row.id, row);
-        }
-        return next;
-      });
-    })();
-  }, [wantedKey]);
+    void fetchDigests(ids);
+  }, [wantedKey, fetchDigests]);
 
   return digests;
 }

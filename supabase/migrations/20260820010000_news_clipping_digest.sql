@@ -61,7 +61,13 @@ grant select on public.news_clipping_digests to authenticated;
 grant select, insert, update, delete on public.news_clipping_digests to service_role;
 grant usage, select on sequence public.news_clipping_digests_id_seq to service_role;
 
--- ── digest upsert: 같은 (clip_date, team_id) 재실행은 갱신하고 항상 id 를 돌려준다 ──
+-- ── digest 확보(insert-once): 같은 (clip_date, team_id) 는 **덮어쓰지 않는다** ──
+--
+-- ⚠️ 삼순 blocker 3 (2026-08-20): 1차는 `do update set articles = excluded.articles` 였다.
+--    cron 이 재실행되면 같은 (날짜, 팀) digest 의 기사·요약이 갱신되는데, **이미 발송된
+--    과거 쪽지들이 전부 그 digest 를 참조**하므로 유저가 어제 읽은 쪽지 내용이 소급 변경된다.
+--    복제 저장에는 없던 부작용이다(각자 사본을 갖고 있었으므로).
+--    → 존재하면 그대로 두고 기존 id 만 돌려준다. 발송 시점 사실을 보존한다.
 create or replace function public.upsert_news_clipping_digest(
   p_clip_date date,
   p_team_id int,
@@ -83,12 +89,12 @@ begin
     raise exception 'articles must be a non-empty jsonb array';
   end if;
 
+  -- insert-once: 충돌 시 아무 컬럼도 바꾸지 않는다. (do nothing 은 id 를 못 돌려주므로
+  -- 자기 자신 대입으로 RETURNING 만 얻는다 — 값은 그대로다.)
   insert into public.news_clipping_digests (clip_date, team_id, team_name, overview, articles)
   values (p_clip_date, p_team_id, p_team_name, coalesce(p_overview, ''), p_articles)
   on conflict (clip_date, team_id) do update set
-    team_name = excluded.team_name,
-    overview = excluded.overview,
-    articles = excluded.articles
+    clip_date = public.news_clipping_digests.clip_date
   returning id into v_id;
 
   return v_id;

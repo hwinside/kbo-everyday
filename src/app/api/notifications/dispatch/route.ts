@@ -133,14 +133,21 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
     type?: string;
     team_name?: string;
     overview?: string;
+    push_preview?: string;
     digest_id?: number;
   } | null;
   if (NEWS_CLIPPER_IDS.has(senderId)) {
     if (clipping?.type === "news_clipping") {
       // 2026-08-20 정규화: 참조형 payload 에는 overview 가 없다(digest 행에 있다).
-      // 이 조회를 빼면 푸시 본문이 전부 기본 문구로 조용히 열화된다 — 타입은 통과하고
+      // 이 값을 못 읽으면 푸시 본문이 전부 기본 문구로 조용히 열화된다 — 타입은 통과하고
       // 200 으로 나가기 때문에 아무도 모른다(대표적인 조용한 회귀).
-      let overview = clipping.overview;
+      //
+      // ⚠️ 삼순 blocker 2: 1차는 여기서 digest 를 매번 SELECT 했다 — 하루 27,208건 발송이면
+      //    **DB 조회 27,208회가 추가**된다. 디스크 줄이려다 읽기 부하를 만드는 교환은 손해다.
+      //    → 발송 시점에 push_preview(수십 바이트)를 payload 에 실어두고 그걸 읽는다.
+      //    전체 articles(3.5KB)는 여전히 digest 에만 있으므로 용량 이득은 그대로다.
+      //    구형 ref payload(push_preview 이전 발송분)만 조회로 폴백한다.
+      let overview = clipping.overview ?? clipping.push_preview;
       if (!overview && typeof clipping.digest_id === "number") {
         const { data: digest } = await supabase
           .from("news_clipping_digests")

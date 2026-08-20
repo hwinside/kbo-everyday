@@ -44,9 +44,30 @@ export interface NewsClippingLegacyPayload extends NewsClippingBase {
 /** 2026-08-20 이후 발송분 — 기사 묶음은 news_clipping_digests 에 1행으로 존재한다. */
 export interface NewsClippingRefPayload extends NewsClippingBase {
   digest_id: number;
-  /** 참조형에는 없다. 총평은 digest 에서 읽는다. */
+  /**
+   * 푸시 본문용 짧은 미리보기(총평 앞부분).
+   *
+   * ⚠️ 삼순 blocker 2 (2026-08-20): 참조형은 overview 가 없어서 푸시 디스패쳐가 매번 digest 를
+   *    다시 SELECT 해야 했다 — 하루 27,208건 발송이면 **DB 조회 27,208회가 추가**된다.
+   *    디스크 줄이려다 읽기 부하를 만드는 교환은 손해다.
+   *    → 푸시에 필요한 만큼만(수십 바이트) 쪽지 payload 에 남긴다. 전체 articles(3.5KB)는 여전히 digest 에만.
+   */
+  push_preview?: string;
+  /** 참조형에는 없다. 카드용 총평은 digest 에서 읽는다. */
   overview?: undefined;
   articles?: undefined;
+}
+
+/** 푸시 미리보기 최대 길이 — 푸시 본문은 어차피 잘리므로 길게 가질 이유가 없다. */
+export const NEWS_CLIPPING_PUSH_PREVIEW_MAX = 120;
+
+/** 총평에서 푸시용 미리보기를 만든다. */
+export function toPushPreview(overview: string | null | undefined): string | undefined {
+  const text = (overview ?? "").trim();
+  if (!text) return undefined;
+  return text.length <= NEWS_CLIPPING_PUSH_PREVIEW_MAX
+    ? text
+    : `${text.slice(0, NEWS_CLIPPING_PUSH_PREVIEW_MAX - 1)}…`;
 }
 
 export type NewsClippingPayload = NewsClippingLegacyPayload | NewsClippingRefPayload;

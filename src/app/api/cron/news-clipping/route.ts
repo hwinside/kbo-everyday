@@ -374,7 +374,7 @@ export async function GET(req: NextRequest) {
       // 기사 묶음을 digest 1행으로 올리고 쪽지엔 참조만 넣는다. 실패하면 null 이 돌아와
       // legacy 형태(articles 포함)로 그대로 발송된다 — 정규화는 용량 최적화이지 기능이 아니므로
       // 여기서 막으면 그날 클리핑이 안 나간다.
-      const ref = await toRefClippingPayload(admin, clipDate, payload);
+      const ref = await toRefClippingPayload(admin, payload);
       results.push(
         await sendTeamClipping(
           admin, senderId, systemUserId, clipDate, team.id, team.shortName, payload, ref,
@@ -447,6 +447,14 @@ export async function POST(req: NextRequest) {
   const nicknames = await fetchNicknames(admin, [userId]);
   payload.intro = firstIntro(payload.team_name, nicknames.get(userId) ?? "팬");
 
+  // ⚠️ 삼순 blocker 4 (2026-08-20): 샘플 발송이 legacy 를 저장하면 **신규 참조형 경로를
+  //    E2E 로 검증할 수가 없다** — 포맷 검수용인데 정작 실제 발송과 다른 형태를 보게 된다.
+  //    cron 과 동일하게 digest 로 올리고 참조형을 저장한다(실패 시 legacy 폴백도 동일).
+  const sampleRef = await toRefClippingPayload(admin, payload);
+  const samplePayload: NewsClippingPayload = sampleRef
+    ? { ...sampleRef, intro: payload.intro }
+    : payload;
+
   const content = clippingContent(payload.team_name);
   const convMap = new Map<string, string>();
   const { data: existing } = await admin
@@ -467,7 +475,7 @@ export async function POST(req: NextRequest) {
     conversation_id: convId,
     sender_id: senderId,
     content,
-    payload,
+    payload: samplePayload,
   });
   if (msgError) {
     return NextResponse.json({ error: `send_failed: ${msgError.message}` }, { status: 500 });

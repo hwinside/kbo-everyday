@@ -18,14 +18,17 @@
  *     (clip_date, team_id) 공유 행이라 거기 넣으면 한 사람 닉네임이 팀 전체에 보인다.
  *  5) 식별 술어가 두 형태를 모두 인정한다 — 기존 isNewsClippingPayload 는 articles.length>0 을
  *     요구했고, 그대로 뒀으면 신규 쪽지가 전부 일반 텍스트로 렌더됐다.
+ *  6) [삼순 blocker 2] push_preview 가 ref payload 에 실려 푸시가 digest 를 재조회하지 않는다.
  *
  * 실행: npx tsx scripts/qa/news-clipping-digest-smoke.ts  (npm run qa:news-clip-digest)
  */
 import {
+  NEWS_CLIPPING_PUSH_PREVIEW_MAX,
   isLegacyNewsClippingPayload,
   isNewsClippingPayload,
   isRefNewsClippingPayload,
   toNewsClippingView,
+  toPushPreview,
   type NewsClippingArticle,
   type NewsClippingDigest,
   type NewsClippingLegacyPayload,
@@ -70,6 +73,7 @@ const REF: NewsClippingRefPayload = {
   team_name: "LG 트윈스",
   date: "2026-08-19",
   digest_id: 42,
+  push_preview: "4연승 질주",
 };
 
 const DIGEST: NewsClippingDigest = {
@@ -116,11 +120,10 @@ ok(
   ok("ref overview 는 digest 에서", view?.overview === "4연승 질주");
 }
 {
-  // ⚠️ 관측 가능성: payload 와 digest 의 team_name/date 가 같은 픽스처로는 "어느 \audf을 우선하는가"
+  // ⚠️ 관측 가능성: payload 와 digest 의 team_name/date 가 같은 픽스처로는 "어느 쪽을 우선하는가"
   //    계약이 원리적으로 관측되지 않는다(훼손해도 결과가 같다). 값을 달리 부여해 무대를 만든다.
   //    왜 쪽지 payload 가 우선인가: digest 는 (clip_date, team_id) 단일 행이라 나중에 갱신될 수
-  //    있고(upsert), 그러면 **과거 쪽지의 팀명이 소급 변경**된다. 발송 당시 사실을 지키는 것은
-  //    쪽지 payload 쪽이다.
+  //    있고(현재는 insert-once 지만), 발송 당시 사실을 지키는 것은 쪽지 payload 쪽이다.
   const renamedDigest: NewsClippingDigest = {
     ...DIGEST,
     team_name: "서울 LG 트윈스(개명)",
@@ -168,13 +171,35 @@ ok(
   ok("legacy intro 도 보존", toNewsClippingView(legacyWithIntro, null)?.intro === "영희님 반갑습니다");
 }
 
-// ── 5) 정규화 효과(용량) — 이 PR 의 존재 이유를 수치로 고정 ───────────────
+// ── 5) push_preview (삼순 blocker 2) ──────────────────────────────────────
+// 1차는 ref payload 에 overview 가 없어 푸시 디스패처가 매번 digest 를 다시 SELECT 했다.
+// 하루 27,208건 발송이면 DB 조회 27,208회 추가 — 디스크 줄이려다 읽기 부하를 만드는 교환.
+{
+  ok("toPushPreview 가 짧은 총평을 그대로 반환", toPushPreview("4연승 질주") === "4연승 질주");
+  ok("빈 총평은 undefined", toPushPreview("") === undefined && toPushPreview(null) === undefined);
+  const long = "가".repeat(NEWS_CLIPPING_PUSH_PREVIEW_MAX + 50);
+  const clipped = toPushPreview(long);
+  ok(
+    `긴 총평은 ${NEWS_CLIPPING_PUSH_PREVIEW_MAX}자로 잘린다 (실측 ${clipped?.length})`,
+    clipped !== undefined && clipped.length === NEWS_CLIPPING_PUSH_PREVIEW_MAX,
+  );
+  ok("잘린 미리보기는 말줄임표로 끝난다", clipped?.endsWith("…") === true);
+
+  // 핵심 계약: ref payload 만으로 푸시 본문을 만들 수 있어야 한다(digest 조회 불필요).
+  ok("ref payload 에 push_preview 가 실린다", typeof REF.push_preview === "string");
+  ok("push_preview 만으로 푸시 본문 확보", (REF.overview ?? REF.push_preview) === "4연승 질주");
+
+  // 그래도 전체 articles 는 payload 에 없다 — 용량 이득이 유지되는지 확인.
+  ok("ref payload 에 articles 는 여전히 없다", REF.articles === undefined);
+}
+
+// ── 6) 정규화 효과(용량) — 이 PR 의 존재 이유를 수치로 고정 ───────────────
 {
   const legacyBytes = JSON.stringify(LEGACY).length;
   const refBytes = JSON.stringify(REF).length;
   ok(`ref payload 가 legacy 보다 작다 (${refBytes}B < ${legacyBytes}B)`, refBytes < legacyBytes);
-  // 실측 기준: legacy 평균 2,025B → ref 는 100~200B 대. 최소 5배는 줄어야 의미가 있다.
-  ok(`ref 가 legacy 의 1/5 미만 (${(legacyBytes / refBytes).toFixed(1)}배 감소)`, refBytes * 5 < legacyBytes);
+  // push_preview 를 실어도 이득이 유지되어야 한다. 실측 기준 legacy 평균 2,025B.
+  ok(`ref 가 legacy 의 1/3 미만 (${(legacyBytes / refBytes).toFixed(1)}배 감소)`, refBytes * 3 < legacyBytes);
 }
 
 console.log(`\nnews-clipping digest: ${fail === 0 ? "PASS" : `${fail} FAILED`}`);

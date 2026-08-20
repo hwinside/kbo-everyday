@@ -12,6 +12,7 @@ import type {
   NewsClippingLegacyPayload,
   NewsClippingRefPayload,
 } from "@/types/news-clipping";
+import { toPushPreview as makePushPreview } from "@/types/news-clipping";
 import {
   TEAM_SEARCH,
   fetchNaverNews,
@@ -535,11 +536,15 @@ export async function toRefClippingPayload(
       args: Record<string, unknown>,
     ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   },
-  clipDate: string,
   payload: NewsClippingLegacyPayload,
 ): Promise<NewsClippingRefPayload | null> {
+  // ⚠️ 삼순 blocker 3 (2026-08-20): 1차는 호출부의 `clipDate`(= 오늘, kstDateString(0))를
+  //    digest 에 넣고 쪽지 payload 에는 `payload.date`(= 어제, 기사 기준일)를 넣었다.
+  //    같은 문서의 날짜 SSOT 가 하루 어긋나고, 클라가 digest.clip_date 로 폴백하는 순간
+  //    헤더 날짜가 틀리게 된다. digest 는 "어느 날 기사 묶음인가"를 뜻하므로
+  //    기준은 **기사 기준일(payload.date)** 이다. 발송일이 아니다.
   const { data, error } = await admin.rpc("upsert_news_clipping_digest", {
-    p_clip_date: clipDate,
+    p_clip_date: payload.date,
     p_team_id: payload.team_id,
     p_team_name: payload.team_name,
     p_overview: payload.overview,
@@ -563,5 +568,9 @@ export async function toRefClippingPayload(
     team_name: payload.team_name,
     date: payload.date,
     digest_id: digestId,
+    // ⚠️ 삼순 blocker 2: 참조형에 푸시 본문이 없으면 디스패쳐가 발송건마다 digest 를 재조회한다
+    //    (하루 27,208건 = DB 조회 27,208회 추가). 짧은 미리보기만 실어보낸다 —
+    //    전체 articles(3.5KB)는 여전히 digest 에만 있어 용량 이득은 유지된다.
+    push_preview: makePushPreview(payload.overview),
   };
 }
