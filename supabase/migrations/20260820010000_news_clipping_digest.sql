@@ -88,7 +88,11 @@ create or replace function public.upsert_news_clipping_digest(
 -- stored_articles 까지 돌려주는 이유(삼순 4차): 샘플 발송 응답이 "실제 전송된 내용"을 보고해야
 -- E2E 증거로 쓸 수 있다. 충돌이면 전송된 건 저장된 A 인데 호출부가 방금 만든 B 의 titles 를
 -- 보고하면, 검수자가 화면과 다른 목록을 보고 "맞다"고 판정하게 된다.
-returns table (digest_id bigint, stored_overview text, stored_articles jsonb)
+-- was_inserted: 이번 호출이 실제로 INSERT 했는가(= 이 digest 의 최초 생성자인가).
+-- ⚠️ 삼순 5차: 호출부가 "overview 가 내가 보낸 것과 다른가"로 재사용을 추정하면,
+--    같은 overview 로 재실행되거나 overview 는 같고 articles 만 바뀐 충돌을 **재사용 아님**으로
+--    잘못 보고한다. 추정하지 말고 DB 가 사실을 돌려준다(xmax=0 이면 이 트랜잭션의 INSERT).
+returns table (digest_id bigint, stored_overview text, stored_articles jsonb, was_inserted boolean)
 language plpgsql
 security definer
 set search_path = public, pg_temp
@@ -108,7 +112,7 @@ begin
   values (p_clip_date, p_team_id, p_team_name, coalesce(p_overview, ''), p_articles)
   on conflict (clip_date, team_id) do update set
     clip_date = d.clip_date
-  returning d.id, d.overview, d.articles;
+  returning d.id, d.overview, d.articles, (xmax = 0);
 end;
 $$;
 

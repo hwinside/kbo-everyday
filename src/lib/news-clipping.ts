@@ -541,6 +541,13 @@ export interface RefClippingResult {
    *    보고 판정하게 된다. E2E 증거는 canonical(저장된 것) 기준이어야 한다.
    */
   canonical: { overview: string; articles: NewsClippingArticle[] };
+  /**
+   * 이 digest 가 **이미 존재해서 재사용됐는가**(= 이번 호출이 INSERT 하지 않았는가).
+   *
+   * ⚠️ 삼순 5차: overview 비교로 추정하면 같은 overview 재실행·overview 동일/articles 변경
+   *    충돌을 재사용 아님으로 오보한다. DB 가 돌려준 사실(was_inserted)만 쓴다.
+   */
+  reused: boolean;
 }
 
 export async function toRefClippingPayload(
@@ -594,14 +601,20 @@ export async function toRefClippingPayload(
     //    총평이 비어도 makePushPreview 가 기본 문구를 채우므로 preview 는 절대 비지 않는다.
     push_preview: makePushPreview(row.stored_overview),
   };
+  if (row.stored_articles === null || row.was_inserted === null) {
+    // ⚠️ 삼순 5차: 여기서 payload.articles 로 폴백하면 **SQL 이 계약을 안 지켜도 GREEN** 이 된다
+    //    (충돌인데 B 를 canonical 로 보고 = 카드/푸시 불일치가 그대로 살아남는다).
+    //    RPC 계약 위반은 조용히 메우지 않고 legacy 발송으로 fail-close 한다.
+    console.error(
+      `[news-clipping] digest RPC 계약 위반 (team ${payload.team_id}) — legacy 형태로 발송:`,
+      JSON.stringify({ hasArticles: row.stored_articles !== null, hasInserted: row.was_inserted !== null }),
+    );
+    return null;
+  }
   return {
     ref,
-    canonical: {
-      overview: row.stored_overview,
-      // 저장된 articles 를 못 읽으면 방금 만든 것으로 떨어지되, 그건 신규 insert 인 경우
-      // (= 같은 값) 뿐이다. 충돌인데 못 읽는 상황은 RPC 계약 위반이라 게이트가 잡는다.
-      articles: row.stored_articles ?? payload.articles,
-    },
+    canonical: { overview: row.stored_overview, articles: row.stored_articles },
+    reused: row.was_inserted === false,
   };
 }
 
@@ -610,6 +623,7 @@ function resolveDigestRow(data: unknown): {
   digest_id: number;
   stored_overview: string;
   stored_articles: NewsClippingArticle[] | null;
+  was_inserted: boolean | null;
 } | null {
   const first = Array.isArray(data) ? data[0] : data;
   if (!first || typeof first !== "object") return null;
@@ -617,9 +631,11 @@ function resolveDigestRow(data: unknown): {
   if (!Number.isFinite(id) || id <= 0) return null;
   const overview = (first as { stored_overview?: unknown }).stored_overview;
   const articles = (first as { stored_articles?: unknown }).stored_articles;
+  const inserted = (first as { was_inserted?: unknown }).was_inserted;
   return {
     digest_id: id,
     stored_overview: typeof overview === "string" ? overview : "",
     stored_articles: Array.isArray(articles) ? (articles as NewsClippingArticle[]) : null,
+    was_inserted: typeof inserted === "boolean" ? inserted : null,
   };
 }

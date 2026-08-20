@@ -184,6 +184,70 @@ async function main(): Promise<void> {
     });
   }
 
+  // ── S-2b) 반대 순서 race: 폐기 로더 A 성공 → 현재 로더 B 실패 ────────────
+  // ⚠️ 삼순 blocker (5차): 공유 캐시를 도입하자 생긴 구멍이다.
+  //    A 가 성공해 캐시만 채우고(dispose 돼 onChange 못 함), B 가 실패하면
+  //    B 는 받은 행이 없어 changed=false → onChange 안 부름,
+  //    그리고 eligible() 은 캐시 존재로 재시도를 멈춘다.
+  //    결과: 캐시엔 있는데 state 는 0 = **카드가 영원히 안 뜨고 텍스트로 남는다.**
+  //    (S-2 는 A 실패 → B 성공만 봐서 이 방향을 못 봤다.)
+  {
+    let calls = 0;
+    const fetcher = async (ids: number[]): Promise<DigestFetchResult> => {
+      calls++;
+      // 1번째(폐기될 A)만 성공, 2번째(살아남는 B)는 실패시킨다.
+      if (calls === 1) return { rows: ids.map(digestRow) };
+      return { rows: [], error: "B failed" };
+    };
+    const { root, latest } = await mountStrict([refPayload(21)], fetcher);
+    ok(`S-2b 무대 성립: 조회가 2회 일어났다 (실측 ${calls})`, calls >= 2);
+    ok(
+      `S-2b A 성공 → B 실패여도 카드 데이터가 화면에 도달한다 (실측 ${latest().size}건)`,
+      latest().size === 1,
+    );
+    ok("S-2b 도달한 digest 내용 확인", latest().get(21)?.overview === "4연승 질주");
+    await act(async () => {
+      root.unmount();
+      await flushAsync();
+    });
+  }
+
+  // ── S-2c) 두 로더 응답이 역순으로 도착해도 도달한다 ──────────────────────
+  // A(폐기될 쪽)의 응답이 B 보다 **늦게** 오는 경우. B 는 이미 실패로 끝나 있고
+  // A 는 dispose 상태라 onChange 를 못 부른다 — 그래도 최종적으로 화면에 떠야 한다.
+  {
+    let calls = 0;
+    let releaseA: (() => void) | null = null;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const fetcher = async (ids: number[]): Promise<DigestFetchResult> => {
+      calls++;
+      if (calls === 1) {
+        await gateA; // A 를 붙잡아 둔다 → B 가 먼저 끝난다
+        return { rows: ids.map(digestRow) };
+      }
+      return { rows: [], error: "B failed first" };
+    };
+    const { root, latest } = await mountStrict([refPayload(22)], fetcher);
+    ok(`S-2c 무대 성립: B 가 먼저 실패로 끝났다 (실측 ${calls}회, digests ${latest().size})`, calls >= 2);
+    await act(async () => {
+      releaseA?.();
+      await flushAsync();
+      // 남은 backoff 재시도까지 흘려준다.
+      await new Promise((r) => dom.window.setTimeout(r, 900));
+      await flushAsync();
+    });
+    ok(
+      `S-2c 늦게 온 A 의 성공이 화면에 반영된다 (실측 ${latest().size}건)`,
+      latest().size === 1,
+    );
+    await act(async () => {
+      root.unmount();
+      await flushAsync();
+    });
+  }
+
   // ── S-3) 조회는 유한하고, 리렌더가 조회를 늘리지 않는다 ──────────────────
   // ⚠️ 실측으로 기대값을 고쳤다: StrictMode 의 setup→cleanup→setup 은 **dev 전용**이고,
   //    두 번째 setup 시점엔 첫 요청이 아직 in-flight 라 같은 id 를 한 번 더 조회한다.

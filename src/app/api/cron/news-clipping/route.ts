@@ -503,7 +503,8 @@ export async function POST(req: NextRequest) {
     overview: canonical.overview,
     titles: canonical.articles.map((a) => a.title),
     // 이 응답이 방금 만든 것인지, 이미 저장돼 있던 것인지 검수자가 알 수 있게 한다.
-    digestReused:
-      sampleResult != null && canonical.overview !== payload.overview,
+    // ⚠️ overview 비교로 추정하지 않는다(같은 overview 재실행·articles 만 바뀐 충돌을 놓친다).
+    //    DB 가 돌려준 was_inserted 사실만 쓴다.
+    digestReused: sampleResult?.reused ?? false,
   });
 }

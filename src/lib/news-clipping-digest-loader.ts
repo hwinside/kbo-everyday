@@ -112,9 +112,36 @@ export class NewsClippingDigestLoader {
         added = true;
       }
     }
+    // 캐시에 이미 있는 id 를 먼저 털어낸다 — 조회를 안 해도 호출부는 알아야 한다.
+    this.flushCached();
     // 새 id 가 없고 이미 굴러가고 있으면 아무것도 하지 않는다(겹침 방지).
     if (!added && (this.inFlight.size > 0 || this.timer !== null)) return;
     void this.pump();
+  }
+
+  /**
+   * **캐시에는 있지만 아직 호출부에 알리지 않은** id 를 털어낸다.
+   *
+   * ⚠️ 삼순 blocker (5차, 2026-08-20): 공유 캐시를 도입하자 **반대 순서 race** 가 생겼다.
+   *    StrictMode 에서 폐기된 로더 A 가 성공해 캐시만 채우고(A 는 dispose 돼 onChange 못 함),
+   *    현재 로더 B 가 실패하면 — B 는 받은 행이 없으니 changed=false, 그러므로 onChange 도 안 부르고,
+   *    다음 eligible() 은 `digestMap.has(id)` 로 재시도를 멈췄다. 결과: 캐시엔 있는데 state 는 0 —
+   *    **카드가 영원히 안 뜨고 텍스트로 남는다.**
+   *    캐시를 버리면(=A 의 성공을 버리면) 재조회가 늘고 깜박임이 생기므로,
+   *    **캐시 히트도 알림 대상**으로 삼아 소유권을 보장하는 쪽을 택했다.
+   */
+  private flushCached(): boolean {
+    if (this.disposed) return false;
+    let changed = false;
+    for (const id of this.wanted) {
+      if (!this.digestMap.has(id)) continue;
+      if (this.notified.has(id)) continue;
+      this.notified.add(id);
+      this.attempts.delete(id);
+      changed = true;
+    }
+    if (changed) this.options.onChange(new Map(this.digestMap));
+    return changed;
   }
 
   dispose(): void {
@@ -139,6 +166,8 @@ export class NewsClippingDigestLoader {
 
   private async pump(): Promise<void> {
     if (this.disposed) return;
+    // 조회 전에 캐시 히트분을 먼저 털어낸다(다른 로더가 채워둔 것).
+    this.flushCached();
     const ids = this.eligible();
     if (ids.length === 0) return;
     for (const id of ids) this.inFlight.add(id);
@@ -182,6 +211,10 @@ export class NewsClippingDigestLoader {
       for (const id of received) this.notified.add(id);
       this.options.onChange(new Map(this.digestMap));
     }
+
+    // 조회하는 사이에 다른 로더가 캐시를 채웠을 수 있다(반대 순서 race).
+    // 이 호출이 없으면 "캐시엔 있는데 화면은 빈" 상태로 굳는다.
+    this.flushCached();
 
     this.scheduleRetry();
   }
