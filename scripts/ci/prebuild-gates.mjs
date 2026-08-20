@@ -370,6 +370,10 @@ function runGate(name) {
       : name === "__synthetic_orphan__"
         // leader: SIGTERM 무시하는 손자를 같은 pgid 로 남기고 자신은 먼저 종료한다
         ? "require('child_process').spawn(process.execPath, ['-e', \"process.on('SIGTERM',()=>{}); require('fs').writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); setTimeout(()=>{}, 30000)\"], { stdio: 'ignore', env: process.env }); setTimeout(() => process.exit(0), 500)"
+      : name === "__synthetic_orphan_pass__"
+        // 정상 종료 경로 회귀용(삼순 4차): leader 는 exit 0 으로 '성공'하고,
+        // SIGTERM 무시 손자만 같은 pgid 에 잔존을 시도한다 — reapResidualGroups 가 잡아야 한다
+        ? "require('child_process').spawn(process.execPath, ['-e', \"process.on('SIGTERM',()=>{}); require('fs').writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); setTimeout(()=>{}, 30000)\"], { stdio: 'ignore', env: process.env }); setTimeout(() => process.exit(0), 500)"
         : "process.exit(0)";
     const [cmd, args] = isSynthetic ? [process.execPath, ["-e", syntheticBody]] : ["npm", ["run", name]];
     const child = spawn(cmd, args, {
@@ -400,11 +404,13 @@ function runGate(name) {
   });
 }
 
-// Vercel 플랫폼이 빌드 전에 스스로 변형하는 파일 — 이 목록만 시작 dirty 허용(해시 고정)
-const PLATFORM_MUTATED_ALLOWLIST = ["vercel.json"];
+// Vercel 플랫폼이 빌드 전에 스스로 변형하는 파일 — 이 예외는 Vercel 빌드 환경(VERCEL=1)
+// 에서만 허용한다(삼순 4차). 로컬/GH CI 에서 vercel.json dirty 는 사람 실수 → FAIL.
+const PLATFORM_MUTATED_ALLOWLIST = process.env.VERCEL === "1" ? ["vercel.json"] : [];
 
+/** hash 읽기 실패는 fail-close(삼순 4차) — null 반환, 호출부가 즉시 FAIL 처리. */
 function fileHash(rel) {
-  try { return createHash("sha256").update(readFileSync(path.join(ROOT, rel))).digest("hex"); } catch { return "<unreadable>"; }
+  try { return createHash("sha256").update(readFileSync(path.join(ROOT, rel))).digest("hex"); } catch { return null; }
 }
 
 /** 시작 검사: 빈 값 exact 또는 allowlist 파일의 M 만 허용(해시 스냅샷). */
@@ -419,7 +425,12 @@ function verifyCleanStart() {
         console.error(before);
         return { ok: false };
       }
-      hashes.set(rel, fileHash(rel));
+      const h = fileHash(rel);
+      if (h === null) {
+        console.error("[prebuild-gates] verify-clean FAIL — 허용 파일(" + rel + ") hash 읽기 실패 (fail-close)");
+        return { ok: false };
+      }
+      hashes.set(rel, h);
     }
   }
   return { ok: true, before, hashes };
@@ -435,6 +446,10 @@ function verifyCleanEnd(baseline) {
   }
   for (const [rel, h] of baseline.hashes) {
     const now = fileHash(rel);
+    if (now === null) {
+      console.error("[prebuild-gates] verify-clean FAIL — 허용 파일(" + rel + ") 종료 시 hash 읽기 실패 (fail-close)");
+      return false;
+    }
     if (now !== h) {
       console.error(`[prebuild-gates] verify-clean FAIL — 플랫폼 변형 허용 파일(${rel})의 내용이 run 중 바뀌었다 (hash ${h.slice(0, 12)} → ${now.slice(0, 12)})`);
       return false;
@@ -448,7 +463,9 @@ function verifyCleanEnd(baseline) {
 
 function gitPorcelain() {
   // -uall: untracked를 개별 파일 단위까지 전부 나열 (디렉터리 축약 방지)
-  return execSync("git status --porcelain -uall", { cwd: ROOT, encoding: "utf8" }).trim();
+  // trimEnd 만: 앞 공백은 porcelain 상태 필드다 — trim() 은 첫 줄 " M x" 를 "M x" 로 깎아
+  // 시작검사 접두 판정을 깨뜼린다(VERCEL=1 예외가 첫 줄일 때 오판, 8/21 실측)
+  return execSync("git status --porcelain -uall", { cwd: ROOT, encoding: "utf8" }).trimEnd();
 }
 
 const CANONICAL_FILE = path.join(ROOT, "scripts", "ci", "prebuild-gates-canonical.json");
@@ -729,6 +746,40 @@ async function selftest() {
     try { fs.unlinkSync(pidFile); } catch { /* 정리 */ }
   })();
 
+  // 정상(성공·실패) 종료 orphan→pgid 0 회귀 (삼순 4차): 시그널이 아니라 **일반 종료**
+  // 경로에서도 게이트가 남긴 SIGTERM-무시 손자가 reapResidualGroups 로 정리돼야 한다.
+  for (const [fixture, expectExit] of [["orphan-normal-pass", 0], ["orphan-normal-fail", 1]]) {
+    const gpidFile = path.join(os.tmpdir(), `prebuild-gates-gpid-${fixture}-${process.pid}`);
+    try { unlinkSync(gpidFile); } catch {}
+    const runner = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", fixture], {
+      cwd: ROOT,
+      env: { ...process.env, GRANDCHILD_PID_FILE: gpidFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let rout = "";
+    runner.stdout.on("data", (d) => { rout += d.toString(); });
+    runner.stderr.on("data", (d) => { rout += d.toString(); });
+    const exitCode = await new Promise((r) => runner.on("close", (c) => r(c)));
+    if (exitCode !== expectExit) {
+      errors.push(`${fixture}: 러너 exit=${exitCode} (기대 ${expectExit})\n${rout.slice(-400)}`);
+    }
+    let gPid = null;
+    try { gPid = Number(readFileSync(gpidFile, "utf8")); } catch {}
+    if (!gPid) {
+      errors.push(`${fixture}: 손자 프로세스가 뜨지 않았다`);
+    } else {
+      await new Promise((r) => setTimeout(r, 300));
+      let alive = true;
+      try { process.kill(gPid, 0); } catch { alive = false; }
+      if (alive) {
+        try { process.kill(-gPid, "SIGKILL"); } catch {}
+        try { process.kill(gPid, "SIGKILL"); } catch {}
+        errors.push(`${fixture}: 정상 종료 경로에서 손자(pid ${gPid})가 잔존 — reapResidualGroups 미동작`);
+      }
+    }
+    try { unlinkSync(gpidFile); } catch {}
+  }
+
   // orphan 잔존 0 회귀 (삼순 ②): leader 는 이미 종료·손자는 SIGTERM 무시인 조건에서도
   // snapshot 이 SIGKILL 완료까지 보존돼 잔존이 0 이어야 한다.
   await (async () => {
@@ -787,21 +838,22 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
 installSignalHandlers();
 const argv = process.argv.slice(2);
-// unknown argv fail-close(삼순 hardening): 오타·미지 플래그로 lock/clean 없는
-// full run 이 돌면 안 된다 — 알려진 인자 외에는 즉시 실패한다.
-const KNOWN_FLAGS = new Set(["--selftest", "--list", "--synthetic", "--verify-clean"]);
-for (const a of argv) {
-  if (a.startsWith("--") && !KNOWN_FLAGS.has(a)) {
-    console.error(`[prebuild-gates] unknown argv fail-close: ${a}`);
-    process.exit(1);
-  }
-}
-if (argv[0] !== "--synthetic" && argv.some((a) => !a.startsWith("--"))) {
-  console.error(`[prebuild-gates] unknown argv fail-close: ${argv.find((a) => !a.startsWith("--"))}`);
+// argv 조합 shape exact fail-close(삼순 4차): 개별 플래그 allowlist 만으로는
+// `--verify-clean --synthetic` 같은 조합이 selftest lock 경로로 실게이트 full run 을
+// 만들 수 있다. 허용 shape 를 exact 로 제한한다:
+//   []                  실게이트 full run — clean 검증 **항상** 포함(건너뛸 방법 없음)
+//   ["--verify-clean"]  위와 동일(하위호환 별칭)
+//   ["--selftest"] / ["--list"]
+//   ["--synthetic", <fixture>]  selftest 전용 합성 픽스처 1개(비플래그)
+const shapeOk =
+  argv.length === 0 ||
+  (argv.length === 1 && ["--verify-clean", "--selftest", "--list"].includes(argv[0])) ||
+  (argv.length === 2 && argv[0] === "--synthetic" && !argv[1].startsWith("--"));
+if (!shapeOk) {
+  console.error("[prebuild-gates] argv shape fail-close — 허용되지 않는 조합: " + JSON.stringify(argv));
   process.exit(1);
 }
-// lock 은 실게이트 풀런에만 — selftest 의 synthetic 픽스처는 실제 repo 게이트를 돌리지 않는다.
-const isRealRun = argv[0] === undefined || argv[0] === "--verify-clean";
+const isRealRun = argv.length === 0 || argv[0] === "--verify-clean";
 if (isRealRun) acquireLock();
 if (argv[0] === "--selftest") {
   await selftest();
@@ -834,6 +886,18 @@ if (argv[0] === "--selftest") {
       { name: "__synthetic_orphan__", lane: "pool" },
       { name: "__synthetic_sleep__", lane: "pool" },
     ]);
+  } else if (fixture === "orphan-normal-pass") {
+    // 정상 성공 종료 경로: leader 는 exit 0, 손자는 잔존 시도 → reap 후 pgid 0 이어야 한다
+    await runAll([
+      { name: "__synthetic_orphan_pass__", lane: "pool" },
+      { name: "__synthetic_pass__", lane: "pool" },
+    ]);
+  } else if (fixture === "orphan-normal-fail") {
+    // 정상 실패 종료 경로: 실패 게이트 + orphan 잔존 → exit 1 이면서 pgid 0 이어야 한다
+    await runAll([
+      { name: "__synthetic_orphan_pass__", lane: "pool" },
+      { name: "__synthetic_fail__", lane: "pool" },
+    ]);
   } else if (fixture === "lock-hold") {
     acquireLock();
     await new Promise((r) => setTimeout(r, 2500));
@@ -860,6 +924,7 @@ if (argv[0] === "--selftest") {
     process.exit(1);
   }
 } else {
-  await runAll(GATES, { verifyClean: argv.includes("--verify-clean"), canonical: true });
+  // 삼순 4차: 실게이트 full run 은 무인자 포함 항상 clean 검증 — argv 로 못 끈다.
+  await runAll(GATES, { verifyClean: true, canonical: true });
 }
 }
