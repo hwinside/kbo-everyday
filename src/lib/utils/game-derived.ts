@@ -70,10 +70,15 @@ export function normalizeFieldPosition(raw: string | null | undefined): string |
  *  - 좁료 후 역변환: 한 위치에 정확히 1명이면 확정, 2명 이상이면 모순(이벤트 결손)
  *    → 그 위치는 맵에서 제외(fail-close).
  *  - 적용된 이벤트가 0개면 null → 호출측이 기존(boxScore) 로직 사용.
+ *  - 팀 귀속 모호(삼순 NO-GO P0): 이벤트 주체 이름이 수비팀 상태와 상대팀 명단
+ *    (opponentNames = 상대 라인업+boxScore) *양쪽에 동시 존재*하면 그 이벤트가 어느
+ *    팀 것인지 증명할 수 없다 → 부분 skip 은 퇴장 유령을 남기므로 *타임라인 전체 폐기*
+ *    (null 반환 → 기존 로직 fail-close).
  */
 export function replayFieldingTimeline(
   lineupEntries: LineupEntry[] | null | undefined,
   events: FieldingEvent[] | null | undefined,
+  opponentNames?: Set<string> | null,
 ): Map<string, string> | null {
   if (!lineupEntries || lineupEntries.length === 0 || !events || events.length === 0) return null;
   // 이름 → 현재 위치(null = 재중이나 수비 미배치: DH·대타·대주자 등).
@@ -83,13 +88,16 @@ export function replayFieldingTimeline(
   }
   let applied = 0;
   for (const ev of events) {
+    const subject = ev.kind === "replace" ? ev.outName : ev.name;
+    const inDefense = posByName.has(subject);
+    // 양팀 동명이인 귀속 모호 → 타임라인 전체 폐기(fail-close).
+    if (inDefense && opponentNames?.has(subject)) return null;
+    if (!inDefense) continue; // 상대팀/투수 이벤트 — 무시
     if (ev.kind === "replace") {
-      if (!posByName.has(ev.outName)) continue; // 다른 팀/투수 교체 — 무시
       posByName.delete(ev.outName);
       posByName.set(ev.inName, normalizeFieldPosition(ev.inPosKr));
       applied++;
     } else {
-      if (!posByName.has(ev.name)) continue;
       posByName.set(ev.name, normalizeFieldPosition(ev.toPosKr));
       applied++;
     }
@@ -136,8 +144,9 @@ function toDefenders(
   lineupEntries: LineupEntry[] | null | undefined,
   teamId?: number,
   fieldingEvents?: FieldingEvent[] | null,
+  opponentNames?: Set<string> | null,
 ) {
-  const timeline = replayFieldingTimeline(lineupEntries, fieldingEvents);
+  const timeline = replayFieldingTimeline(lineupEntries, fieldingEvents, opponentNames);
 
   // BoxScore 미수신/빈 배열 → 타임라인 확정분 우선, 없으면 선발 라인업 폴백 (기존 동작 유지).
   if (!boxBatters || boxBatters.length === 0) {
@@ -388,8 +397,15 @@ export function deriveGameState(
   // 이벤트는 이닝 순서대로 평탄화(이닝 내도 시간순). 팀 귀속은 replay가 수비팀 라인업
   // 이름 기준으로 자연 필터링하므로 양팀 이벤트를 섮어 넘겨도 안전하다.
   const fieldingEvents = relayInnings?.flatMap(inn => inn.fielding ?? []) ?? null;
+  // 상대(공격)팀 명단 = 라인업 + boxScore 전체(교체 투입 포함). 이벤트 주체가 양팀에
+  // 동시 존재하는 동명이인이면 replay가 타임라인 전체를 폐기한다(삼순 P0 fail-close).
+  const offensiveLineup = detailLineup ? (isTop ? detailLineup.away : detailLineup.home) : null;
+  const offensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.awayBatters : detailBoxScore.homeBatters) : null;
+  const opponentNames = new Set<string>();
+  for (const e of offensiveLineup ?? []) if (e.name) opponentNames.add(e.name);
+  for (const b of offensiveBoxBatters ?? []) if (b.name) opponentNames.add(b.name);
   const defensiveSide = (defensiveLineup || (defensiveBoxBatters && defensiveBoxBatters.length > 0))
-    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId, fieldingEvents)
+    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId, fieldingEvents, opponentNames)
     : null;
 
   // On-deck batters from lineup

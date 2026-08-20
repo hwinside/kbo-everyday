@@ -542,6 +542,20 @@ process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
 const { parseFieldingEvent, parseInningRelays } = require("../../src/app/api/game-relay/route") as typeof import("../../src/app/api/game-relay/route");
 import type { NaverTextRelay, FieldingEvent } from "../../src/app/api/game-relay/route";
 
+// 공격팀(LG) 라인업 — 수비팀과 이름이 겹치지 않게 분리(기존 homeLineup 픽스처는 최원준·
+// 허경민 등을 공유해 양팀 동명이인 가드가 타임라인을 전체 폐기해버린다 — 가드가 실제로
+// 동작한다는 방증이기도 하다. 동명이인 케이스 자체는 case22에서 명시적으로 검증).
+const lgLineup0820: LineupEntry[] = [
+  lineupEntry(1, "2B", "신민재"),
+  lineupEntry(2, "CF", "박해민"),
+  lineupEntry(3, "DH", "오스틴"),
+  lineupEntry(4, "1B", "문정빈"),
+  lineupEntry(5, "LF", "송찬의"),
+  lineupEntry(6, "3B", "문보경"),
+  lineupEntry(7, "SS", "오지환"),
+  lineupEntry(8, "C", "박동원"),
+  lineupEntry(9, "RF", "홍창기"),
+];
 const ktLineup0820: LineupEntry[] = [
   lineupEntry(1, "CF", "최원준"),
   lineupEntry(2, "1B", "김현수"),
@@ -595,7 +609,7 @@ const ktEvents0820: FieldingEvent[] = ktEvents0820raw
   ];
   const detail = {
     status: "live",
-    lineup: { away: ktLineup0820, home: homeLineup },
+    lineup: { away: ktLineup0820, home: lgLineup0820 },
     boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
   } as unknown as GameDetailResponse;
   const relayInnings = [{ fielding: ktEvents0820 }];
@@ -621,7 +635,7 @@ const ktEvents0820: FieldingEvent[] = ktEvents0820raw
   ];
   const detail = {
     status: "live",
-    lineup: { away: awayLineup0820, home: homeLineup },
+    lineup: { away: awayLineup0820, home: lgLineup0820 },
     boxScore: { awayBatters: awayBox0820(), homeBatters: [], awayPitchers: [], homePitchers: [] },
   } as unknown as GameDetailResponse;
   const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
@@ -640,7 +654,7 @@ const ktEvents0820: FieldingEvent[] = ktEvents0820raw
   ];
   const detail = {
     status: "live",
-    lineup: { away: awayLineup0820, home: homeLineup },
+    lineup: { away: awayLineup0820, home: lgLineup0820 },
     boxScore: { awayBatters: awayBox0820(), homeBatters: [], awayPitchers: [], homePitchers: [] },
   } as unknown as GameDetailResponse;
   const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
@@ -678,6 +692,86 @@ const ktEvents0820: FieldingEvent[] = ktEvents0820raw
   })());
   check("비패턴 텍스트 null", parseFieldingEvent("류현인 : 중견수 플라이 아웃") === null);
   check("홈인 텍스트 null", parseFieldingEvent("3루주자 장준원 : 홈인") === null);
+}
+
+// ── 케이스 22: 양팀 동명이인 — 상대팀 교체 이벤트가 수비 맵을 바꾸면 안 된다(삼순 P0) ──
+// 수비팀(KT)과 공격팀(LG) 양쪽에 '김민준'이 있는 상황에서 상대팀의
+// "우익수 김민준 : 대타 홍길동 교체"가 평탄화된 이벤트로 들어오면, 귀속을 증명할 수
+// 없으므로 *타임라인 전체 폐기* → 기존(legacy) 결과 그대로가 계약이다.
+{
+  const dupLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "최원준"),
+    lineupEntry(2, "1B", "김현수"),
+    lineupEntry(3, "RF", "김민준"), // 수비팀 RF 김민준 (공격팀에도 동명이인)
+    lineupEntry(4, "LF", "힌리어드"),
+    lineupEntry(5, "3B", "허경민"),
+    lineupEntry(6, "2B", "류현인"),
+    lineupEntry(7, "DH", "이정범"),
+    lineupEntry(8, "C", "한승택"),
+    lineupEntry(9, "SS", "권동진"),
+  ];
+  // 공격팀(home) 라인업에 동명이인 김민준 포함
+  const oppLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "박해민"),
+    lineupEntry(2, "RF", "김민준"), // 동명이인
+    lineupEntry(3, "DH", "오스틴"),
+  ];
+  const box: BatterRecord[] = [
+    batter(3, "RF", "김민준"),
+    batter(6, "二", "류현인"),
+  ];
+  const events = [
+    // 실제로는 상대팀(LG) 김민준 교체지만 평탄화 이벤트엔 팀 정보가 없다
+    parseFieldingEvent("우익수 김민준 : 대타 홍길동 (으)로 교체")!,
+    // 유효했을 이벤트(수비팀 류현인 이동)도 같이 있지만 전체 폐기되어야 함
+    parseFieldingEvent("2루수 류현인 : 3루수(으)로 수비위치 변경")!,
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: dupLineup, home: oppLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
+  console.log("[case22] 양팀 동명이인 주체 이벤트 → 타임라인 전체 폐기(fail-close)");
+  check("RF = 김민준 유지 (상대 교체가 수비팀을 지우지 않음)", defenderAt(s, "RF") === "김민준", `got ${defenderAt(s, "RF")}`);
+  check("홍길동 미포함 (상대 선수 필드 진입 차단)", !(s ?? []).some(d => d.name === "홍길동"));
+  check("3B = 허경민 (타임라인 폐기 → legacy 유지, 류현인 이동 미적용)", defenderAt(s, "3B") === "허경민", `got ${defenderAt(s, "3B")}`);
+  check("2B = 류현인 (legacy)", defenderAt(s, "2B") === "류현인", `got ${defenderAt(s, "2B")}`);
+}
+
+// ── 케이스 23: 동명이인이 있어도 *이벤트 주체가 아니면* 타임라인 정상 동작 ──
+{
+  const dupLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "최원준"),
+    lineupEntry(2, "1B", "김현수"),
+    lineupEntry(3, "RF", "김민준"), // 동명이인 존재하지만 이벤트 주체 아님
+    lineupEntry(4, "LF", "힌리어드"),
+    lineupEntry(5, "3B", "허경민"),
+    lineupEntry(6, "2B", "류현인"),
+    lineupEntry(7, "DH", "이정범"),
+    lineupEntry(8, "C", "한승택"),
+    lineupEntry(9, "SS", "권동진"),
+  ];
+  const oppLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "박해민"),
+    lineupEntry(2, "RF", "김민준"),
+  ];
+  const box: BatterRecord[] = [batter(6, "二", "류현인")];
+  // 현실 순서: 허경민이 먼저 교체로 빠져야 류현인 3B 이동이 무모순(미교체면 3B 2명 모순로 그 위치 fail-close되는 것이 계약).
+  const events = [
+    parseFieldingEvent("3루수 허경민 : 2루수 오윤석 (으)로 교체")!,
+    parseFieldingEvent("2루수 류현인 : 3루수(으)로 수비위치 변경")!,
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: dupLineup, home: oppLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
+  console.log("[case23] 동명이인 존재 + 주체 무관 → 타임라인 정상 적용");
+  check("3B = 류현인 (타임라인 적용)", defenderAt(s, "3B") === "류현인", `got ${defenderAt(s, "3B")}`);
+  check("2B = 오윤석 (교체 진입)", defenderAt(s, "2B") === "오윤석", `got ${defenderAt(s, "2B")}`);
+  check("RF = 김민준 유지", defenderAt(s, "RF") === "김민준", `got ${defenderAt(s, "RF")}`);
 }
 
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);
