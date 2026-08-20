@@ -309,6 +309,13 @@ async function checkPlayerStats(failures: Failure[]): Promise<void> {
     const missing = await getPlayerStatsRouteResult(null, "타자");
     expectEqual(failures, "[P] player-stats missing-id status", missing.status, 400);
     expectEqual(failures, "[P] player-stats missing-id body.error", (missing.body as { error: string }).error, "id required");
+    // 삼순 5차 권고: base route 계약 그대로 키가 **정확히** ["error"] 만이어야 한다(stats 등 추가 필드 금지).
+    expectEqual(
+      failures,
+      "[P] player-stats missing-id body keys exact",
+      JSON.stringify(Object.keys(missing.body as Record<string, unknown>)),
+      JSON.stringify(["error"]),
+    );
 
     globalThis.fetch = (async () => new Response("upstream unavailable", { status: 503 })) as typeof fetch;
     const errored = await getPlayerStatsRouteResult("54321", "타자");
@@ -364,6 +371,12 @@ async function checkPlayerGameLogs(failures: Failure[]): Promise<void> {
     const missing = await getPlayerGameLogsRouteResult(null, "타자");
     expectEqual(failures, "[P] player-game-logs missing-id status", missing.status, 400);
     expectEqual(failures, "[P] player-game-logs missing-id body.error", (missing.body as { error: string }).error, "id required");
+    expectEqual(
+      failures,
+      "[P] player-game-logs missing-id body keys exact",
+      JSON.stringify(Object.keys(missing.body as Record<string, unknown>)),
+      JSON.stringify(["error"]),
+    );
 
     supabaseAdmin.from = (() => makeGameLogBuilder({
       data: null,

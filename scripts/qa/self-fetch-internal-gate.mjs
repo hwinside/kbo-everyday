@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MUTATION_TARGETS } from "./self-fetch-mutation-targets.mjs";
@@ -327,6 +327,31 @@ function runSelfTest() {
   // 변이를 적용한 직후 각 이탈 경로를 실제로 타워서, 부모가 "전 대상 byte-identical"을 검증한다.
   // 적용 사실을 해시로 출력해 — 변이가 실제로 일어난 뒤 죽었음을 증명한다(공허한 통과 방지).
   if (CLEANUP_PROBE) {
+    // restore-fail: 복원 실패 시 fail-close 계약(삼순 #1257 5차 잔여 조건) 외부 검증용.
+    // tracked source 는 건드리지 않는다 — temp sandbox 파일을 backup 맵에 등록하고 변이한 뒤,
+    // 대상을 디렉토리로 바꿔 copyFileSync 복원을 **결정적으로** 실패시킨다.
+    // 기대 계약: cleanup()=false · exit 1 · backupDir(복구 원본) 보존 · tracked 전수 무결.
+    if (CLEANUP_PROBE === "restore-fail") {
+      const sandboxDir = mkdtempSync(join(tmpdir(), "self-fetch-restore-fail-"));
+      const sandboxTarget = join(sandboxDir, "target.txt");
+      writeFileSync(sandboxTarget, "original");
+      const sandboxBackup = join(backupDir, "sandbox__target.txt");
+      copyFileSync(sandboxTarget, sandboxBackup);
+      backups.set(sandboxTarget, sandboxBackup);
+      writeFileSync(sandboxTarget, "mutated");
+      console.log(`PROBE_MUTATED ${sha256(sandboxTarget)}`);
+      // 복원 실패 주입: 파일 → 디렉토리 (copyFileSync EISDIR, 권한·OS 무관 결정적)
+      rmSync(sandboxTarget);
+      mkdirSync(sandboxTarget);
+      const ok = cleanup();
+      console.log(
+        `RESTORE_FAIL_PROBE cleanedUp=${ok} backupDirPreserved=${existsSync(backupDir)} ` +
+        `backupIntact=${existsSync(sandboxBackup) && readFileSync(sandboxBackup, "utf8") === "original"}`,
+      );
+      // 검증 후 sandbox 잔재는 직접 정리(부모가 backupDir 보존을 확인한 뒤 부모가 삭제).
+      rmSync(sandboxDir, { recursive: true, force: true });
+      process.exit(ok ? 0 : 1);
+    }
     const probeFile = "src/app/api/stats/route.ts";
     mutateFile(probeFile, "    headers: result.headers,", "    headers: undefined,", "PROBE");
     console.log(`PROBE_MUTATED ${sha256(probeFile)}`);

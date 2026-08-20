@@ -8,7 +8,8 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MUTATION_TARGETS as TARGETS } from "./self-fetch-mutation-targets.mjs";
 
@@ -48,6 +49,28 @@ function run(mode) {
 const before = snap();
 const tempBefore = new Set(tempBackups());
 let ok = true;
+
+// 6번째 경로: 복원 실패 주입(restore-fail) — 삼순 #1257 5차 잔여 조건.
+// 계약: cleanup()=false → exit 1, backupDir(복구 원본) **보존**, tracked source 전수 무결.
+// 이 회차만은 temp 잔존이 누수가 아니라 계약이다 — 검증 후 부모가 직접 정리한다.
+{
+  const { out, code } = await run("restore-fail");
+  const mutated = /PROBE_MUTATED/.test(out);
+  const contract = /RESTORE_FAIL_PROBE cleanedUp=false backupDirPreserved=true backupIntact=true/.test(out);
+  const after = snap();
+  const dirty = TARGETS.filter((f) => before[f] !== after[f]);
+  const preserved = tempBackups().filter((n) => !tempBefore.has(n));
+  const pass = mutated && contract && code === 1 && dirty.length === 0 && preserved.length >= 1;
+  if (!pass) ok = false;
+  console.log(
+    `${pass ? "PASS" : "FAIL"} — restore-fail: mutation_applied=${mutated} contract=${contract} ` +
+    `exit=${code} residue=${dirty.length} backup_preserved=${preserved.length >= 1}`,
+  );
+  if (!mutated) console.log("  (변이 미적용 — 이 회차는 아무것도 증명하지 않는다)");
+  // 보존 확인을 마친 뒤 부모가 정리 — 다음 회차의 temp_leak 판정 오염 방지.
+  for (const n of preserved) rmSync(join(tmpdir(), n), { recursive: true, force: true });
+}
+
 for (const mode of ["throw", "exit", "sigint", "sigterm"]) {
   const { out, code, sig } = await run(mode);
   const mutated = /PROBE_MUTATED/.test(out);
@@ -86,5 +109,5 @@ console.log(
   (normalLeak.length ? ` → temp ${normalLeak.join(", ")}` : ""),
 );
 
-console.log(ok ? "cleanup-selftest PASS — 5개 경로(throw/exit/sigint/sigterm/normal) 잔재 0 · temp 누수 0" : "cleanup-selftest FAIL");
+console.log(ok ? "cleanup-selftest PASS — 6개 경로(restore-fail/throw/exit/sigint/sigterm/normal) 잔재 0 · 복원실패 fail-close · temp 누수 0" : "cleanup-selftest FAIL");
 process.exit(ok ? 0 : 1);
