@@ -31,7 +31,7 @@
  *  ④ GREEN 능력 증명: 성공 합성 게이트 2개(pool+serial) 실행이 exit 0
  */
 
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -263,7 +263,23 @@ function runGate(name) {
   });
 }
 
-async function runAll(gates) {
+function gitPorcelain() {
+  // -uall: untracked를 개별 파일 단위까지 전부 나열 (디렉터리 축약 방지)
+  return execSync("git status --porcelain -uall", { cwd: ROOT, encoding: "utf8" }).trim();
+}
+
+async function runAll(gates, { verifyClean = false } = {}) {
+  if (verifyClean) {
+    // 삼순 교정(2026-08-20): 전후 snapshot "동일" 비교는 시작부터 dirty인 파일의
+    // 내용 변화·untracked 덮어쓰기를 못 본다(같은 M/?? 경로로 통과).
+    // 시작 시 빈 값이 아니면 즉시 FAIL, 종료 시에도 빈 값 exact를 요구한다.
+    const before = gitPorcelain();
+    if (before !== "") {
+      console.error("[prebuild-gates] verify-clean FAIL — 시작 시 worktree가 clean이 아니다 (porcelain -uall):");
+      console.error(before);
+      process.exit(1);
+    }
+  }
   const chains = buildChains(gates);
   const poolChains = chains.filter((c) => c.lane === "pool");
   const serialChains = chains.filter((c) => c.lane === "serial");
@@ -331,6 +347,15 @@ async function runAll(gates) {
     console.error("[prebuild-gates] 실패 게이트: " + failures.map((r) => r.name).join(", "));
     process.exit(1);
   }
+  if (verifyClean) {
+    const after = gitPorcelain();
+    if (after !== "") {
+      console.error("[prebuild-gates] verify-clean FAIL — 종료 시 worktree가 clean이 아니다 (게이트 잔재/오염, porcelain -uall):");
+      console.error(after);
+      process.exit(1);
+    }
+    console.log("[prebuild-gates] verify-clean PASS — 시작·종료 모두 porcelain -uall 빈 값 exact");
+  }
 }
 
 // ── selftest ───────────────────────────────────────────────────────
@@ -370,7 +395,9 @@ async function selftest() {
       });
     });
   };
-  await synth("red", true);
+  await synth("red-pool", true);
+  await synth("red-serial", true);
+  await synth("red-exclusive", true);
   await synth("green", false);
 
   if (errors.length) {
@@ -394,22 +421,35 @@ if (argv[0] === "--selftest") {
 } else if (argv[0] === "--synthetic") {
   // selftest 전용 합성 픽스처 — 실게이트 이름은 받지 않는다(검사 강도 선택자 차단)
   const fixture = argv[1];
-  if (fixture === "red") {
+  if (fixture === "red" || fixture === "red-pool") {
     await runAll([
       { name: "__synthetic_pass__", lane: "pool" },
       { name: "__synthetic_fail__", lane: "pool" },
       { name: "__synthetic_pass2__", lane: "serial" },
-    ].map((g) => g));
+    ]);
+  } else if (fixture === "red-serial") {
+    await runAll([
+      { name: "__synthetic_pass__", lane: "pool" },
+      { name: "__synthetic_fail__", lane: "serial" },
+      { name: "__synthetic_pass2__", lane: "exclusive" },
+    ]);
+  } else if (fixture === "red-exclusive") {
+    await runAll([
+      { name: "__synthetic_pass__", lane: "pool" },
+      { name: "__synthetic_pass2__", lane: "serial" },
+      { name: "__synthetic_fail__", lane: "exclusive" },
+    ]);
   } else if (fixture === "green") {
     await runAll([
       { name: "__synthetic_pass__", lane: "pool" },
       { name: "__synthetic_pass2__", lane: "serial" },
+      { name: "__synthetic_pass3__", lane: "exclusive" },
     ]);
   } else {
     console.error("unknown synthetic fixture: " + fixture);
     process.exit(1);
   }
 } else {
-  await runAll(GATES);
+  await runAll(GATES, { verifyClean: argv.includes("--verify-clean") });
 }
 }
