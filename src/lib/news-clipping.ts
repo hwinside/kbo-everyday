@@ -7,7 +7,15 @@
 // 선정하지 않도록 프롬프트로 게이트, 삼순 조건).
 
 import type { NewsItem } from "@/types/api";
-import type { NewsClippingPayload, NewsClippingArticle } from "@/types/news-clipping";
+import type {
+  NewsClippingArticle,
+  NewsClippingLegacyPayload,
+  NewsClippingRefPayload,
+} from "@/types/news-clipping";
+import {
+  NEWS_CLIPPING_REF_VERSION,
+  toPushPreview as makePushPreview,
+} from "@/types/news-clipping";
 import {
   TEAM_SEARCH,
   fetchNaverNews,
@@ -475,7 +483,10 @@ export async function buildTeamClipping(
   teamName: string,
   standingsText: string | null = null,
   onRawCandidates?: RawCandidateSink,
-): Promise<NewsClippingPayload | null> {
+  // 빌더는 항상 **legacy 형태**(articles 포함)를 만든다. 참조형 변환은 발송 직전
+  // toRefClippingPayload 가 맡는다 — 그래야 샘플 발송·건수 집계 같은 기존 소비처가 그대로 동작하고,
+  // digest upsert 실패 시 legacy 로 발송하는 폴백도 성립한다.
+): Promise<NewsClippingLegacyPayload | null> {
   const yesterday = kstDateString(-1);
 
   const candidates = await collectYesterdayCandidates(teamShort, teamId, yesterday, onRawCandidates);
@@ -505,5 +516,126 @@ export async function buildTeamClipping(
     date: yesterday,
     overview: selection.overview,
     articles,
+  };
+}
+
+/**
+ * 발송 직전 정규화: 기사 묶음을 digest 1행으로 올리고 쪽지에 넣을 참조형 payload 를 만든다.
+ *
+ * 이전엔 buildTeamClipping 이 만든 payload(평균 2KB, 그중 articles 가 3.5KB)를 수신자 수만큼
+ * 그대로 복제해 dm_messages 에 넣었다 — 2026-08-20 실측으로 8/18 KIA 가 6,102행인데 서로 다른
+ * payload 는 120개(중복률 98%)였고, 하루 27,208건 × 2KB ≈ 55MB/일 이 전부 이 복제다.
+ *
+ * digest upsert 가 실패하면 null 을 돌려 **호출부가 legacy 형태로 발송하게** 한다.
+ * 정규화는 용량 최적화이지 기능이 아니다 — 여기서 던지면 그날 클리핑이 안 나간다.
+ *
+ * ⚠️ intro(유저별 닉네임 치환)는 digest 에 넣지 않는다. digest 는 (clip_date, team_id) 공유
+ *    행이라 거기 넣으면 한 사람의 닉네임이 그 팀 전체에게 보인다. intro 는 쌍지 payload 단에 남는다.
+ */
+export interface RefClippingResult {
+  ref: NewsClippingRefPayload;
+  /**
+   * **실제로 저장된**(= 수신자가 보게 될) 내용. 신규면 방금 넣은 값, 충돌이면 기존 값이다.
+   *
+   * ⚠️ 삼순 4차: 샘플 발송 응답이 "방금 만든 B" 를 보고하면 검수자가 화면과 다른 목록을
+   *    보고 판정하게 된다. E2E 증거는 canonical(저장된 것) 기준이어야 한다.
+   */
+  canonical: { overview: string; articles: NewsClippingArticle[] };
+  /**
+   * 이 digest 가 **이미 존재해서 재사용됐는가**(= 이번 호출이 INSERT 하지 않았는가).
+   *
+   * ⚠️ 삼순 5차: overview 비교로 추정하면 같은 overview 재실행·overview 동일/articles 변경
+   *    충돌을 재사용 아님으로 오보한다. DB 가 돌려준 사실(was_inserted)만 쓴다.
+   */
+  reused: boolean;
+}
+
+export async function toRefClippingPayload(
+  admin: {
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>,
+    ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  },
+  payload: NewsClippingLegacyPayload,
+): Promise<RefClippingResult | null> {
+  // ⚠️ 삼순 blocker 3 (2026-08-20): 1차는 호출부의 `clipDate`(= 오늘, kstDateString(0))를
+  //    digest 에 넣고 쪽지 payload 에는 `payload.date`(= 어제, 기사 기준일)를 넣었다.
+  //    같은 문서의 날짜 SSOT 가 하루 어긋나고, 클라가 digest.clip_date 로 폴백하는 순간
+  //    헤더 날짜가 틀리게 된다. digest 는 "어느 날 기사 묶음인가"를 뜻하므로
+  //    기준은 **기사 기준일(payload.date)** 이다. 발송일이 아니다.
+  const { data, error } = await admin.rpc("upsert_news_clipping_digest", {
+    p_clip_date: payload.date,
+    p_team_id: payload.team_id,
+    p_team_name: payload.team_name,
+    p_overview: payload.overview,
+    p_articles: payload.articles,
+  });
+  if (error) {
+    console.error(
+      `[news-clipping] digest upsert failed (team ${payload.team_id}) — legacy 형태로 발송:`,
+      error.message,
+    );
+    return null;
+  }
+  // ⚠️ 삼순 blocker 3 (3차): RPC 는 이제 (digest_id, stored_overview) 1행을 돌려준다.
+  //    **저장된 overview** 를 써야 충돌(이미 존재) 시 카드와 푸시가 같은 기사를 가리킨다.
+  //    1차 수정은 id 만 받고 preview 는 이번에 생성한 payload.overview 로 만들어서,
+  //    cron 재실행·샘플 선점이면 카드=A / 푸시=B 가 됐다.
+  const row = resolveDigestRow(data);
+  if (!row) {
+    console.error(`[news-clipping] digest 행 불량 (team ${payload.team_id}):`, data);
+    return null;
+  }
+  const ref: NewsClippingRefPayload = {
+    type: "news_clipping",
+    team_id: payload.team_id,
+    team_name: payload.team_name,
+    date: payload.date,
+    digest_id: row.digest_id,
+    // 신규 참조형 스키마 버전. dispatch 는 이 값이 있으면 digest 를 조회하지 않는다.
+    v: NEWS_CLIPPING_REF_VERSION,
+    // ⚠️ 삼순 blocker 2: 참조형에 푸시 본문이 없으면 디스패쳐가 발송건마다 digest 를 재조회한다
+    //    (하루 27,208건 = DB 조회 27,208회 추가). 짧은 미리보기만 실어보낸다 —
+    //    전체 articles(3.5KB)는 여전히 digest 에만 있어 용량 이득은 유지된다.
+    //    총평이 비어도 makePushPreview 가 기본 문구를 채우므로 preview 는 절대 비지 않는다.
+    push_preview: makePushPreview(row.stored_overview),
+  };
+  if (row.stored_articles === null || row.was_inserted === null) {
+    // ⚠️ 삼순 5차: 여기서 payload.articles 로 폴백하면 **SQL 이 계약을 안 지켜도 GREEN** 이 된다
+    //    (충돌인데 B 를 canonical 로 보고 = 카드/푸시 불일치가 그대로 살아남는다).
+    //    RPC 계약 위반은 조용히 메우지 않고 legacy 발송으로 fail-close 한다.
+    console.error(
+      `[news-clipping] digest RPC 계약 위반 (team ${payload.team_id}) — legacy 형태로 발송:`,
+      JSON.stringify({ hasArticles: row.stored_articles !== null, hasInserted: row.was_inserted !== null }),
+    );
+    return null;
+  }
+  return {
+    ref,
+    canonical: { overview: row.stored_overview, articles: row.stored_articles },
+    reused: row.was_inserted === false,
+  };
+}
+
+/** RPC 반환(단일 행 또는 1행 배열)에서 digest_id/stored_overview/stored_articles 를 뽑는다. */
+function resolveDigestRow(data: unknown): {
+  digest_id: number;
+  stored_overview: string;
+  stored_articles: NewsClippingArticle[] | null;
+  was_inserted: boolean | null;
+} | null {
+  const first = Array.isArray(data) ? data[0] : data;
+  if (!first || typeof first !== "object") return null;
+  const id = Number((first as { digest_id?: unknown }).digest_id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const overview = (first as { stored_overview?: unknown }).stored_overview;
+  const articles = (first as { stored_articles?: unknown }).stored_articles;
+  const inserted = (first as { was_inserted?: unknown }).was_inserted;
+  return {
+    digest_id: id,
+    stored_overview: typeof overview === "string" ? overview : "",
+    stored_articles: Array.isArray(articles) ? (articles as NewsClippingArticle[]) : null,
+    was_inserted: typeof inserted === "boolean" ? inserted : null,
   };
 }
