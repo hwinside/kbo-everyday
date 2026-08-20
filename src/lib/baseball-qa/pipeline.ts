@@ -20,6 +20,13 @@ import {
 } from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  ragEvidenceFingerprint,
+  ragRequestFingerprint,
+  type VerifiedRagAnswerClaim,
+  type VerifiedRagAnswerKey,
+  type VerifiedRagAnswerStore,
+} from "./rag/verified-answers";
+import {
   kstYear,
   parseSeriesPrize,
   renderSeriesPrizeAnswer,
@@ -103,6 +110,7 @@ import {
   BASEBALL_GENIUS_DAILY_LIMIT,
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
+  BASEBALL_GENIUS_INSUFFICIENT_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
   BASEBALL_GENIUS_MAX_ANSWER_LENGTH,
@@ -131,6 +139,12 @@ export const BLOCKED_ANSWER = BASEBALL_GENIUS_FALLBACK_ANSWER;
  * 전부 ① 문구로 나갔다 — 야구 질문을 한 유저에게 "야구 질문만 하라"고 답한 꼴이다.
  */
 export const UNCLEAR_ANSWER = BASEBALL_GENIUS_UNCLEAR_ANSWER;
+/**
+ * ②' 자료 부족 — 질문은 이해했지만 근거 자료가 부족해 답을 못 만든 경우
+ * (`model_insufficient` 전용, 2026-08-19 맛자욱 P0 문구 분리).
+ * ②(UNCLEAR)로 보내면 유저가 문장을 고쳐 재질문하게 만든다 — 우리 자료 결손을 유저 탓으로 돌리는 오도다.
+ */
+export const RAG_INSUFFICIENT_ANSWER = BASEBALL_GENIUS_INSUFFICIENT_ANSWER;
 /**
  * ④ 이름 교정 제안 — 로스터에 없는 실명이지만 한 글자만 다른 선수가 정확히 1명일 때.
  * `임창규` → `혹시 임찬규 선수를 말씀하신 건가요?` (2026-08-08 하린아빠 제보).
@@ -1163,6 +1177,14 @@ export interface QaDeps {
   acquireLlmStart?: () => Promise<boolean>;
   /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
   storeLlm?: (result: LlmResult) => Promise<void>;
+  /**
+   * 검증 완료 RAG 답변 replay 저장소 (2026-08-19 맛자욱 P0 — 동일입력 결정론).
+   * 키 = entity + 정규화 질문 + 근거 fingerprint(corpus revision·순서·projection 결과 결속)
+   * + 프롬프트 fingerprint. 키 exact 일치 시에만 재생하며, corpus 재적재·프롬프트 변경은
+   * fingerprint 불일치로 자동 무효된다. **grounded(출력 가드 전부 통과) 답변만** 저장한다.
+   * 미주입이면 replay 없이 매번 생성한다(기존 동작).
+   */
+  verifiedRagAnswers?: VerifiedRagAnswerStore;
   log: (entry: {
     userId: string;
     question: string;
@@ -4114,16 +4136,27 @@ async function answerPlayerDescriptiveQuestion(
   const failClose = async (
     consumed?: LlmResult | null,
     observation?: ReturnType<typeof ragObservation> | null,
+    // ②' 문구 분리 (맛자욱 P0): `model_insufficient` 는 "이해 못함"이 아니라 "자료 부족"이다.
+    answerCopy: string = UNCLEAR_ANSWER,
   ): Promise<QaResult> => {
     await deps.log({
-      userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
+      userId, question, questionNorm, matchPath: "unsure", answer: answerCopy,
       inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
       ...(observation ?? {}),
     });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    return { status: 200, answer: answerCopy, source: "unsure", remaining };
   };
-  const failCloseError = async (): Promise<QaResult> => {
-    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+  // 🔴 오류 종결도 소비 토큰·폐기 관측을 보존한다 (삼순 5차 NO-GO-②) — null 고정이면
+  //   재시도 토큰 합산이 유실되고 장애 분모 계측이 깨진다.
+  const failCloseError = async (
+    consumed?: LlmResult | null,
+    observation?: ReturnType<typeof ragObservation> | null,
+  ): Promise<QaResult> => {
+    await deps.log({
+      userId, question, questionNorm, matchPath: "error", answer: null,
+      inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
+      ...(observation ?? {}),
+    });
     return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
   };
 
@@ -4186,21 +4219,155 @@ async function answerPlayerDescriptiveQuestion(
   //   것이 unsure 상용구보다 낫다("잘못을 지적하니 모르겠다고 나오는 건 더 문제").
   if (evidence.length === 0) return null;
 
+  // ── 검증답 replay (맛자욱 P0 — 동일입력 결정론) ────────────────────────
+  // LLM 경계 **앞**이다 — replay 히트는 LLM을 전혀 소비하지 않는다.
+  // 키 결속 (삼순 2026-08-19 P0-①): 근거 fingerprint(내용·revision·순서) +
+  // **model + 실제 생성 요청 전체**(원문 질문·context·rosterBlock·프롬프트·generationConfig).
+  // corpus·모델·요청 형태 어느 하나만 바뀌어도 자동 miss 된다.
+  // 🔴 저장소 오류(get/claim/put throw)는 **fail-close** 다 (삼순 2차 NO-GO) — 오류를
+  // "replay 없음"이나 winner 로 오인해 생성하면 중복 생성으로 결정론이 조용히 깨진다.
+  const verifiedKey: VerifiedRagAnswerKey | null = deps.verifiedRagAnswers
+    ? {
+        entityType: "player",
+        entityId: candidate.entityId,
+        questionNorm,
+        evidenceFingerprint: ragEvidenceFingerprint(evidence),
+        requestFingerprint: ragRequestFingerprint(question, evidence, {
+          context: extras.context, rosterBlock: extras.rosterBlock,
+        }),
+      }
+    : null;
+  // settled 답 재생. 오류는 throw 전파 — 호출부가 failCloseError 로 닫는다(fail-close).
+  // consumed/observation: 이 worker 가 canonical 재생 전에 이미 소비한 LLM 토큰과
+  // 폐기 관측(mark/settle CAS 패자 경로) — 재생 로그에 함께 기록해 소비량·관측
+  // 유실을 막는다 (삼순 5·6차 NO-GO — 토큰만 보존하면 ragAttemptPath·ragDiscardReason·
+  // numeric 2칸이 유실되어 폐기 분모 계측이 깨진다).
+  const replayFromStore = async (
+    consumed?: LlmResult | null,
+    observation?: ReturnType<typeof ragObservation> | null,
+  ): Promise<QaResult | null> => {
+    if (!deps.verifiedRagAnswers || !verifiedKey) return null;
+    const replayedAnswer = await deps.verifiedRagAnswers.get(verifiedKey);
+    if (!replayedAnswer) return null;
+    const answer = composeRagAnswer(replayedAnswer.answer, evidence[0]);
+    const replaySourceUrl = displayProvenanceOf(evidence[0])?.url;
+    await deps.log({
+      userId, question, questionNorm, matchPath: "rag", answer,
+      inputTokens: consumed?.inputTokens ?? null, outputTokens: consumed?.outputTokens ?? null,
+      toneCompliant: replayedAnswer.toneCompliant,
+      ...(observation ?? {}),
+    });
+    return { status: 200, answer, source: "rag", remaining, sourceUrl: replaySourceUrl };
+  };
+  try {
+    const replayed = await replayFromStore();
+    if (replayed) return replayed;
+  } catch {
+    return failCloseError();
+  }
+  // 동시 첫 miss 선점 — owner-token CAS (삼순 P0-② + 2차 NO-GO). winner 만 token 을
+  // 받아 LLM 을 소비하고, loser 는 settle 을 대기 후 재조회해 같은 답을 재생한다.
+  // 🔴 **claim(winner token) 없이는 절대 생성하지 않는다** — 폴링 상한 뒤 직접 생성
+  // 폴백은 느린 정상 winner(provider 최대 15초)에서 LLM 중복 호출을 만든다.
+  // 상한(기본 80×250ms≈20초 > provider 15초) 초과에도 winner 가 못 되면 fail-close.
+  let replayOwnerToken: string | null = null;
+  if (deps.verifiedRagAnswers?.claim && verifiedKey) {
+    const store = deps.verifiedRagAnswers;
+    let claim: VerifiedRagAnswerClaim;
+    try {
+      claim = await store.claim!(verifiedKey);
+    } catch {
+      return failCloseError();
+    }
+    if (claim.verdict === "hit") {
+      // settled 는 지워지지 않는다 — hit 인데 get 이 비는 상태는 저장소 불변식 위반이다.
+      try {
+        const settled = await replayFromStore();
+        if (settled) return settled;
+      } catch {
+        return failCloseError();
+      }
+      return failCloseError();
+    }
+    // flight-terminal insufficient (삼순 3차 NO-GO): 이 flight 의 winner 가 non-grounded 로
+    // 종결했다 — 같은 폐기 문구를 재생한다. 재생성하면 같은 동시입력이 2답(자료부족 vs
+    // GROUNDED)·LLM 2회로 갈라진다(역방향 플립). lease TTL 후 새 flight 가 재생성한다.
+    if (claim.verdict === "insufficient") {
+      // 🔴 flight 공유 종결은 시스템 오류 계약이다 (삼순 5차 NO-GO-①) — unsure 로 적으면
+      // 장애가 자료부족/판정불명으로 집계된다. 이 worker 는 LLM 소비 0(토큰 null 정확).
+      await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+      return { status: 200, answer: claim.answer, source: "error", remaining };
+    }
+    if (claim.verdict === "wait") {
+      const delayMs = store.pollDelayMs ?? 250;
+      const attempts = store.pollAttempts ?? 80;
+      for (let attempt = 0; attempt < attempts && replayOwnerToken === null; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        let again: VerifiedRagAnswerClaim;
+        try {
+          const settled = await replayFromStore();
+          if (settled) return settled;
+          again = await store.claim!(verifiedKey);
+        } catch {
+          return failCloseError();
+        }
+        // winner 가 응답 불능 release 했거나 lease 가 만료되면 이번 claim 이 winner(새
+        // token)로 넘어온다 — 그때만 이 worker 가 생성 권한을 얻는다.
+        if (again.verdict === "winner") replayOwnerToken = again.ownerToken;
+        else if (again.verdict === "insufficient") {
+          // winner 가 재시도까지 실패 — flight 공유 종결 = 시스템 오류(5차 NO-GO-①).
+          await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+          return { status: 200, answer: again.answer, source: "error", remaining };
+        } else if (again.verdict === "hit") {
+          try {
+            const settledNow = await replayFromStore();
+            if (settledNow) return settledNow;
+          } catch {
+            return failCloseError();
+          }
+          return failCloseError();
+        }
+      }
+      // 상한 초과 & winner 미획득 — claim 없는 생성은 금지다. 시스템 오류로 닫는다
+      // (유저는 재질문으로 복구하고, 그때는 settled 재생 또는 새 claim 이 성립한다).
+      if (replayOwnerToken === null) return failCloseError();
+    } else if (claim.verdict === "winner") {
+      replayOwnerToken = claim.ownerToken;
+    }
+  }
+  // winner 가 grounded 를 못 만들면(폐기·예외·재생 종결) claim 을 풀어 loser deadlock 을 막는다.
+  // release 는 token CAS 다 — lease 인수로 token 이 교체됐으면 이 호출은 no-op(새 claim 보호).
+  const releaseReplayClaim = async (): Promise<void> => {
+    if (replayOwnerToken === null || !deps.verifiedRagAnswers?.release || !verifiedKey) return;
+    try {
+      await deps.verifiedRagAnswers.release(verifiedKey, replayOwnerToken);
+    } catch {
+      // release 실패는 lease 만료 인수가 회수한다.
+    }
+  };
+
   // ── durable LLM 경계 (일반 LLM 경로와 동일 계약) ──────────────────────────
+  // ⚠️ 아래 모든 비-settle 종료(오류·pending·폐기)는 replay claim 을 풀고 나간다 —
+  //   winner 가 settle 없이 사라지면 loser 들이 폴링 상한까지 헛대기한다(deadlock 방지).
   let llm: LlmResult | null = null;
   if (deps.getLlmState) {
     let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
       state = await deps.getLlmState();
     } catch {
+      await releaseReplayClaim();
       return failCloseError();
     }
     llm = state.result;
     // TOCTOU 방어 (삼순 3차): front 가 null 을 본 뒤 다른 worker 가 envelope 를 저장했을
     // 수 있다 — 경계도 공용 helper 로 envelope 를 반드시 인식한다(raw 재검증 금지).
     const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });
-    if (boundaryReplayed) return boundaryReplayed;
+    if (boundaryReplayed) {
+      await releaseReplayClaim();
+      return boundaryReplayed;
+    }
     if (!llm && state.started) {
+      await releaseReplayClaim();
       // winner가 아직 LLM 경계에 있을 수 있는 창 — loser는 어떤 답변도 발송하지 않는다.
       if (state.ownerActive) return { status: 202, answer: "", source: "pending", remaining };
       // fence 경과: 공급자 응답/과금이 이미 발생했을 수 있다 — 자동 재호출 없이 종결한다.
@@ -4213,34 +4380,137 @@ async function answerPlayerDescriptiveQuestion(
       try {
         won = await deps.acquireLlmStart();
       } catch {
+        await releaseReplayClaim();
         return failCloseError();
       }
-      if (!won) return { status: 202, answer: "", source: "pending", remaining };
+      if (!won) {
+        await releaseReplayClaim();
+        return { status: 202, answer: "", source: "pending", remaining };
+      }
     }
     try {
       llm = await deps.callRagLlm!(question, evidence, extras);
     } catch {
       // 공급자 호출 실패도 우리 쪽 고장이다 — 근거는 이미 찾았다.
+      await releaseReplayClaim();
       return failCloseError();
     }
   }
 
-  const validated = validateRagResponse(llm.text);
+  let validated = validateRagResponse(llm.text);
+  // 🔴 owner 내부 복구 (삼순 4차 NO-GO-①): winner 가 non-grounded 를 받았을 때 바로
+  //   종결하면 provider 1회 플립이 flight 전원의 자료부족(negative cache)으로 확산된다.
+  //   근거는 이미 찾았으므로 **같은 입력으로 1회 재시도**한다 — 플립이면 grounded 로
+  //   복구돼 첫 사용자부터 전원이 정답을 받는다. replay 키는 요청 fingerprint 결속이라
+  //   재시도 입력이 동일하므로 결정론 계약을 깨지 않는다(성공한 한 번만 settle 된다).
+  //   재시도는 winner(claim 보유)에게만 허용 — claim 없는 경로의 재호출은 금지 그대로.
+  if (validated.kind !== "grounded" && replayOwnerToken !== null && deps.callRagLlm) {
+    let retried: LlmResult | null = null;
+    try {
+      retried = await deps.callRagLlm(question, evidence, extras);
+    } catch {
+      retried = null; // 재시도 호출 실패는 아래 non-grounded 종결 경로가 닫는다.
+    }
+    if (retried) {
+      // 관측 계측(토큰)은 누적 — 소비된 양을 숨기지 않는다.
+      llm = {
+        ...retried,
+        inputTokens: (llm.inputTokens ?? 0) + (retried.inputTokens ?? 0),
+        outputTokens: (llm.outputTokens ?? 0) + (retried.outputTokens ?? 0),
+      };
+      validated = validateRagResponse(retried.text);
+    }
+  }
   if (validated.kind !== "grounded") {
-    // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
-    // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
-    // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다(toneCompliant 와 같은 축).
+    // ②' 문구 분리 (맛자욱 P0): 모델이 "근거 부족"으로 판정한 건 이해 실패가 아니다.
+    const discardCopy = validated.kind === "insufficient" && validated.reason === "model_insufficient"
+      ? RAG_INSUFFICIENT_ANSWER
+      : UNCLEAR_ANSWER;
+    // 폐기 = settle 없음. 🔴 재시도까지 non-grounded 면 **flight 전원 시스템 오류**로
+    // 닫는다 (삼순 4차 NO-GO-①) — 자료부족 문구를 flight 에 공유하면 provider 일시 플립이
+    // TTL 동안 negative cache 로 확산된다. 계약: 전원 grounded 또는 전원 시스템 오류.
+    //   • markInsufficient(token CAS)로 SYSTEM_ERROR 문구를 flight 에 공유 — waiter 가 새
+    //     winner 로 재생성하는 역방향 플립(2답·LLM 2회, 3차 NO-GO)은 여전히 차단.
+    //   • mark 실패(false=lease 인수·throw)는 무시하지 않는다 (4차 NO-GO-②) — 새 owner 가
+    //     grounded 를 settle 했을 수 있으므로 canonical 을 재조회해 있으면 그 답을 반환
+    //     (2답 분기 방지), 없으면 fail-close 한다.
+    //   • lease TTL 후 새 flight 가 재생성한다(실패 영구 고정 아님).
+    const observation = ragObservation("player", question, validated);
+    if (replayOwnerToken !== null && deps.verifiedRagAnswers?.markInsufficient && verifiedKey) {
+      // 🔴 재시도 소진 = **시스템 오류 종결**이다 (삼순 5차 NO-GO-①) — 문구만 바꾸면
+      // envelope·반환 source·로그가 여전히 unsure 로 남아 장애가 자료부족/판정불명으로
+      // 집계된다. 반환 source=error · 로그 matchPath=error · envelope source=error 까지
+      // 전부 잠근다. 폐기 관측(ragObservation)과 합산 토큰은 그대로 보존한다(NO-GO-②).
+      let marked = false;
+      try {
+        marked = await deps.verifiedRagAnswers.markInsufficient(verifiedKey, replayOwnerToken, SYSTEM_ERROR_ANSWER);
+      } catch {
+        marked = false;
+      }
+      if (!marked) {
+        // 🔴 mark 실패(false=lease 인수 / throw=상태 불명)는 무시 금지 (4차 NO-GO-②) —
+        // 새 owner 가 grounded 를 settle 했을 수 있다. canonical 이 있으면 그 답을 재생
+        // (소비 토큰 합산 기록)해 2답 분기를 막고, 없으면 시스템 오류로 닫는다 —
+        // 양쪽 모두 consumed+observation 보존 (5차 NO-GO-②, throw 포함 = NO-GO-③).
+        try {
+          const canonical = await replayFromStore(llm, observation);
+          if (canonical) return canonical;
+        } catch {
+          return failCloseError(llm, observation);
+        }
+        return failCloseError(llm, observation);
+      }
+      // mark 성공 — flight 전원(내 사용자 포함) 시스템 오류. envelope 도 error 로 보존해
+      // 재생 경로(TOCTOU envelope 재인식)가 같은 종결을 재생하게 한다.
+      if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+        answer: SYSTEM_ERROR_ANSWER, source: "error", ...observation,
+      }, llm));
+      return failCloseError(llm, observation);
+    }
+    // claim 없는 경로(테스트 전용 저장소·미배선) — flight 확산이 없으므로 기존 폐기
+    // 문구(문구 분리 계약) 유지. 관측도 기존 unsure 계약 그대로.
+    await releaseReplayClaim();
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("player", question, validated),
+      answer: discardCopy, source: "unsure", ...observation,
     }, llm));
-    // 폐기 사유를 남긴다 — 이게 없으면 `unsure` 를 만든 게 숫자 가드인지 JSON 깨짐인지
-    // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
-    return failClose(llm, ragObservation("player", question, validated));
+    return failClose(llm, observation, discardCopy);
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
   // allowlist 밖이면 null — payload 에도 링크를 싣지 않는다.
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
+  // 검증(출력 가드 전부)을 통과한 답만 replay 저장소에 settle 한다 (맛자욱 P0 결정론).
+  // settle 은 token CAS — 패배(false)는 다른 winner 의 답이 먼저 canonical 이 된 것이므로
+  // **내 생성답을 버리고 canonical 을 재조회해 반환**한다(응답 결정론, 삼순 2차 NO-GO).
+  // settle 오류는 fail-close — 내 답이 canonical 인지 모른 채 발송하지 않는다.
+  if (deps.verifiedRagAnswers && verifiedKey) {
+    // grounded 관측 — put throw·CAS 패자 종결에도 소비 토큰과 함께 보존한다 (6차 NO-GO).
+    const groundedObservation = ragObservation("player", question, validated);
+    let settledAsCanonical: boolean;
+    try {
+      settledAsCanonical = await deps.verifiedRagAnswers.put(verifiedKey, {
+        answer: validated.answer,
+        sourceUrl: sourceUrl ?? null,
+        toneCompliant: validated.toneCompliant,
+      }, replayOwnerToken ?? undefined);
+    } catch {
+      await releaseReplayClaim();
+      // 🔴 put throw 는 LLM 을 이미 소비한 뒤다 — 무인자 종결은 토큰·관측 유실 (6차 NO-GO-②).
+      return failCloseError(llm, groundedObservation);
+    }
+    if (!settledAsCanonical && deps.verifiedRagAnswers.claim) {
+      // CAS 패배 — lease 인수된 새 winner 가 먼저 settle 했다. canonical 을 재생한다
+      // (이 worker 가 소비한 토큰·관측은 재생 로그에 합산 — 5·6차 NO-GO 동일 축).
+      try {
+        const canonical = await replayFromStore(llm, groundedObservation);
+        if (canonical) return canonical;
+      } catch {
+        return failCloseError(llm, groundedObservation);
+      }
+      // canonical 도 없다(새 winner 가 아직 생성 중) — 내 답을 보내면 그 답과 갈린다. fail-close.
+      return failCloseError(llm, groundedObservation);
+    }
+  }
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
     answer, source: "rag", sourceUrl,
     toneCompliant: validated.toneCompliant, ...ragObservation("player", question, validated),

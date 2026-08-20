@@ -219,7 +219,12 @@ const MUTATIONS = [
   {
     id: "N35 경계 envelope 재인식 제거 (TOCTOU — raw 재검증 회귀)",
     file: PIPELINE,
-    anchor: "    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });\n    if (boundaryReplayed) return boundaryReplayed;",
+    // ⚠️ 앵커는 **player 경로의 현재 문면**이어야 한다 (2026-08-19 실측 교훈).
+    //   맛자욱 P0 가 player 경로에 releaseReplayClaim 을 끼워 문면이 바뀌자, 이 앵커가
+    //   official/team/news 경로에 먼저 매치돼 mutation 이 엉뚱한 경로에 주입됐고,
+    //   게이트는 player 만 검사해 **검출 실패(GREEN)** 으로 Vercel 빌드가 죽었다.
+    //   계약 변경 하류는 파일명이 아니라 술어 문면으로 훑는다 — 이 앵커도 그 하류다.
+    anchor: "    const boundaryReplayed = await replayStoredFinalResult(llm, { userId, question, questionNorm, remaining, deps });\n    if (boundaryReplayed) {\n      await releaseReplayClaim();\n      return boundaryReplayed;\n    }",
     replacement: "",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "front null → 경계 envelope 전이에서 정상 final 이 unsure 로 재저장·덮어쓰기 된다 (삼순 3차)",

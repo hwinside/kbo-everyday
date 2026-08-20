@@ -43,6 +43,11 @@ import {
   verifyCanonicalSubdocumentIdentity,
   type PlayerDocumentIdentity,
 } from "../../../src/lib/baseball-qa/rag/canonical";
+import {
+  extractNamuReferenceDocLinks,
+  NAMU_MAX_REFERENCE_DOCS_PER_ENTITY,
+  verifyCanonicalReferenceDocumentIdentity,
+} from "../../../src/lib/baseball-qa/rag/reference-docs";
 
 /**
  * 요청 간 최소 간격 (bounded rate, §12.2 b).
@@ -87,6 +92,12 @@ export interface NamuEntityCrawlOptions extends BrowserFetchOptions {
 }
 
 export interface NamuCrawledDocument {
+  /**
+   * `entity` = 메인/하위문서(root prefix 계약). `reference` = entity 본문의 닫힌 참조
+   * 표기(`<a>X</a> 문서 참고`)에서 발견돼 양방향 결속 게이트를 통과한 standalone 문서
+   * (2026-08-19 맛자욱 P0 — `reference-docs.ts` 계약 참조).
+   */
+  kind: "entity" | "reference";
   depth: number;
   requestedUrl: string;
   canonicalUrl: string;
@@ -169,20 +180,29 @@ export async function crawlNamuEntityDocuments(
   const normalizedRoot = normalizeDocumentUrl(rootUrl);
   if (!normalizedRoot) return { ok: false, status: "invalid", reason: "root_url_out_of_contract" };
   const fetchDocument = options.fetchDocument ?? ((url: string) => fetchNamuDocumentViaBrowser(url, options));
-  const queue: { url: string; depth: number }[] = [{ url: normalizedRoot, depth: 1 }];
+  interface QueueEntry {
+    url: string;
+    depth: number;
+    kind: "entity" | "reference";
+    /** reference 전용 — 발견 시점 앵커 제목(canonical 대조 대상). */
+    anchorTitle?: string;
+  }
+  const queue: QueueEntry[] = [{ url: normalizedRoot, depth: 1, kind: "entity" }];
   const seen = new Set<string>([normalizedRoot]);
   const documents: NamuCrawledDocument[] = [];
   const rejected: { url: string; reason: string }[] = [];
   let entityRootTitle: string | null = null;
+  let referenceCount = 0;
 
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (current.depth > maxDepth) {
+    // 참조문서는 leaf(자식 확장 없음)라 depth 상한 계약의 대상이 아니다 — 개수 상한이 방어선이다.
+    if (current.kind === "entity" && current.depth > maxDepth) {
       return { ok: false, status: "invalid", reason: "crawl_depth_limit_exceeded" };
     }
     const fetched = await fetchDocument(current.url);
     if (!fetched.ok) {
-      // 메인 문서 부재는 source 전체 실패. 하위문서의 stale/missing 링크는 적재하지 않고 추적만 남긴다.
+      // 메인 문서 부재는 source 전체 실패. 하위문서·참조문서의 stale/missing 링크는 적재하지 않고 추적만 남긴다.
       if (current.depth > 1 && fetched.status === "missing") {
         rejected.push({ url: current.url, reason: `${fetched.status}:${fetched.reason}` });
         continue;
@@ -192,6 +212,36 @@ export async function crawlNamuEntityDocuments(
         status: fetched.status === "blocked" ? "blocked" : "invalid",
         reason: `${fetched.status}:${fetched.reason}`,
       };
+    }
+
+    if (current.kind === "reference") {
+      // standalone 참조문서 — canonical + 양방향 결속 게이트. 실패는 entity 전체를 죽이지 않고
+      // 해당 문서만 rejected 로 남긴다(하위문서 canonical 실패와 같은 계약).
+      if (!entityRootTitle) return { ok: false, status: "invalid", reason: "root_identity_absent" };
+      const refVerdict = verifyCanonicalReferenceDocumentIdentity({
+        requestedUrl: fetched.requestedUrl,
+        finalUrl: fetched.url,
+        html: fetched.html,
+        entityRootTitle,
+        anchorTitle: current.anchorTitle ?? "",
+        entityName: identity.name,
+      });
+      if (!refVerdict.ok) {
+        rejected.push({ url: current.url, reason: `reference:${refVerdict.reason}` });
+        continue;
+      }
+      documents.push({
+        kind: "reference",
+        depth: current.depth,
+        requestedUrl: fetched.requestedUrl,
+        canonicalUrl: refVerdict.canonicalUrl,
+        pageTitle: refVerdict.pageTitle,
+        sectionPath: refVerdict.sectionPath,
+        html: fetched.html,
+        revision: fetched.revision,
+        crawledAt: fetched.crawledAt,
+      });
+      continue;
     }
 
     if (current.depth === 1) {
@@ -206,6 +256,7 @@ export async function crawlNamuEntityDocuments(
       }
       entityRootTitle = rootVerdict.pageTitle;
       documents.push({
+        kind: "entity",
         depth: 1,
         requestedUrl: fetched.requestedUrl,
         canonicalUrl: rootVerdict.canonicalUrl,
@@ -229,6 +280,7 @@ export async function crawlNamuEntityDocuments(
         continue;
       }
       documents.push({
+        kind: "entity",
         depth: current.depth,
         requestedUrl: fetched.requestedUrl,
         canonicalUrl: subVerdict.canonicalUrl,
@@ -253,7 +305,27 @@ export async function crawlNamuEntityDocuments(
         return { ok: false, status: "invalid", reason: "document_limit_exceeded" };
       }
       seen.add(child);
-      queue.push({ url: child, depth: current.depth + 1 });
+      queue.push({ url: child, depth: current.depth + 1, kind: "entity" });
+    }
+
+    // 닫힌 참조 표기(`<a>X</a> 문서 참고`)에서 발견한 standalone 참조문서 (맛자욱 P0).
+    // entity 문서에서만 발견을 허용하고, 참조문서 자신은 자식을 확장하지 않는다(leaf).
+    const references = extractNamuReferenceDocLinks(
+      fetched.html,
+      fetched.url,
+      entityRootTitle ?? identity.name,
+    ).filter((link) => !seen.has(link.url));
+    for (const reference of references) {
+      referenceCount += 1;
+      // 폭주는 truncate 하지 않고 entity 전체 fail-close 한다(하위문서 상한과 같은 계약).
+      if (referenceCount > NAMU_MAX_REFERENCE_DOCS_PER_ENTITY) {
+        return { ok: false, status: "invalid", reason: "reference_document_limit_exceeded" };
+      }
+      if (seen.size >= maxDocuments) {
+        return { ok: false, status: "invalid", reason: "document_limit_exceeded" };
+      }
+      seen.add(reference.url);
+      queue.push({ url: reference.url, depth: current.depth + 1, kind: "reference", anchorTitle: reference.title });
     }
   }
 

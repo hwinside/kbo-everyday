@@ -746,6 +746,112 @@ export function makeDeps(
     correctionDeclined: correctionDeclined === true,
     searchRag,
     callRagLlm,
+    /**
+     * 검증 완료 RAG 답변 replay 저장소 (2026-08-19 맛자욱 P0 — 동일입력 결정론).
+     *
+     * 키 = 근거 fingerprint + **request fingerprint(model + 실제 생성 요청 전체)** (삼순 P0-①).
+     * 동시성은 **owner-token CAS 3 RPC** 가 잠근다(삼순 2차 NO-GO):
+     *   claim → winner 에게 owner_token 발급(lease 인수는 token 교체 = fencing),
+     *   settle → token CAS 로만 성공(settled 덮어쓰기 불가, first-writer-wins),
+     *   release → token 소유 pending 만 삭제(stale winner 의 release 는 no-op).
+     * invalid RPC 결과는 throw — pipeline 이 fail-close 한다(오류를 winner 로 오인 금지).
+     */
+    verifiedRagAnswers: {
+      get: async (key) => {
+        // query-guard: bounded -- composite PK exact 단일 행 조회.
+        const { data, error } = await supabaseAdmin
+          .from("genius_rag_verified_answers")
+          .select("answer, source_url, tone_compliant, status")
+          .eq("entity_type", key.entityType)
+          .eq("entity_id", key.entityId)
+          .eq("question_norm", key.questionNorm)
+          .eq("evidence_fingerprint", key.evidenceFingerprint)
+          .eq("request_fingerprint", key.requestFingerprint)
+          .limit(1);
+        if (error) throw error;
+        if (!data?.[0]) return null;
+        const row = data[0] as { answer: string | null; source_url: string | null; tone_compliant: boolean; status: string };
+        // pending(선점 자리표시자)은 답이 아니다 — settled 만 재생한다.
+        if (row.status !== "settled" || typeof row.answer !== "string" || row.answer.length === 0) return null;
+        return {
+          answer: row.answer,
+          sourceUrl: row.source_url ?? null,
+          toneCompliant: row.tone_compliant === true,
+        };
+      },
+      put: async (key, record, ownerToken) => {
+        // settle — token CAS. token 이 없으면(레거시/미claim 경로) settle 할 수 없다 —
+        // 결정론 계약상 claim 없는 생성은 금지되어 있으므로 이 경로는 도달하면 안 된다.
+        if (!ownerToken) return false;
+        // query-guard: bounded -- token CAS 단일 행 UPDATE RPC, boolean 반환.
+        const { data, error } = await supabaseAdmin.rpc("settle_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+          p_answer: record.answer,
+          p_source_url: record.sourceUrl,
+          p_tone_compliant: record.toneCompliant,
+        });
+        if (error) throw error;
+        return data === true;
+      },
+      claim: async (key) => {
+        // query-guard: bounded -- 단일 행 선점 RPC, jsonb 반환.
+        const { data, error } = await supabaseAdmin.rpc("claim_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+        });
+        if (error) throw error;
+        const row = data as { verdict?: string; owner_token?: string } | null;
+        // 🔴 invalid 결과를 winner 로 읽지 않는다 (삼순 2차 NO-GO) — 모르면 throw 해
+        //   pipeline 의 fail-close 경로로 보낸다. 오인된 winner 는 중복 생성을 만든다.
+        if (row?.verdict === "winner" && typeof row.owner_token === "string" && row.owner_token.length > 0) {
+          return { verdict: "winner", ownerToken: row.owner_token };
+        }
+        if (row?.verdict === "wait") return { verdict: "wait" };
+        if (row?.verdict === "hit") return { verdict: "hit" };
+        // flight-terminal insufficient (삼순 3차 NO-GO) — 같은 flight 전원 같은 폐기 문구 재생.
+        if (row?.verdict === "insufficient" && typeof (row as { answer?: string }).answer === "string"
+          && ((row as { answer?: string }).answer as string).length > 0) {
+          return { verdict: "insufficient", answer: (row as { answer?: string }).answer as string };
+        }
+        throw new Error(`claim_genius_rag_verified_answer invalid verdict: ${JSON.stringify(data)}`);
+      },
+      markInsufficient: async (key, ownerToken, answer) => {
+        // non-grounded 종결을 같은 flight 에 공유 — token CAS(stale winner 는 no-op).
+        // query-guard: bounded -- token CAS 단일 행 UPDATE RPC, boolean 반환.
+        const { data, error } = await supabaseAdmin.rpc("mark_insufficient_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+          p_answer: answer,
+        });
+        if (error) throw error;
+        return data === true;
+      },
+      release: async (key, ownerToken) => {
+        // winner 가 settle 못 함 — token 이 소유한 pending 만 지운다(stale 는 no-op).
+        // query-guard: bounded -- token CAS 단일 행 DELETE RPC.
+        const { error } = await supabaseAdmin.rpc("release_genius_rag_verified_answer", {
+          p_entity_type: key.entityType,
+          p_entity_id: key.entityId,
+          p_question_norm: key.questionNorm,
+          p_evidence_fingerprint: key.evidenceFingerprint,
+          p_request_fingerprint: key.requestFingerprint,
+          p_owner_token: ownerToken,
+        });
+        if (error) throw error;
+      },
+    },
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
     // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
     enablePlayerRag: true,
