@@ -139,22 +139,47 @@ function toDefenders(
     if (vacated && !byPosition.has(vacated)) byPosition.set(vacated, cur);
   }
 
+  // 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체·이동됐으면 억제(stale 방지).
+  // 최종 렌더와 4)의 빈자리 판정이 같은 술어를 쓰도록 단일 함수로 묶는다.
+  const fallbackFor = (pos: string): LineupEntry | null => {
+    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+    if (!entry) return null;
+    if (typeof entry.order === "number") {
+      const slotCur = currentBySlot.get(entry.order);
+      if (slotCur) {
+        const slotPosition = normalizeFieldPosition(slotCur.position);
+        if (slotCur.name !== entry.name || slotPosition !== pos) return null; // 교체·포지션 이동 stale 억제
+      }
+    }
+    return entry;
+  };
+
+  // 4) 포지션 충돌 패자 → 단일 빈자리 배치 — 소스가 수비 이동을 미갱신해 *현재 선수
+  //    2명이 같은 위치*로 표기되는 경우(실측: 20260820KTLG0 오윤석 二 + 류현인 二,
+  //    三 공석 — 류현인 2B→3B 이동 미반영 → 필드뷰 3루수 실종·류현인 소실).
+  //    2)의 first-wins에서 밀려난 현재 선수(패자)가 정확히 1명이고, 최종 렌더가 비게 될
+  //    필드 위치(폴백 포함)도 정확히 1개일 때만 그 자리에 배치한다. 패자 2명 이상
+  //    또는 빈자리 2개 이상은 데이터로 배치를 구분할 수 없으므로 추정하지 않고 기존
+  //    fail-empty(#932)를 유지한다.
+  const collisionLosers: BatterRecord[] = [];
+  for (const b of currentBySlot.values()) {
+    const pos = normalizeFieldPosition(b.position);
+    if (pos && byPosition.get(pos) !== b) collisionLosers.push(b);
+  }
+  if (collisionLosers.length === 1) {
+    const vacancies = FIELD_POSITIONS.filter(pos => !byPosition.has(pos) && !fallbackFor(pos));
+    if (vacancies.length === 1) byPosition.set(vacancies[0], collisionLosers[0]);
+  }
+
   return FIELD_POSITIONS.flatMap(pos => {
     // 2-1) BoxScore의 현재 수비수 우선.
     const cur = byPosition.get(pos);
     if (cur) {
       return [{ order: cur.order, name: cur.name, position: pos, avg: cur.avg ?? "", teamId }];
     }
-    // 2-2) 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체됐으면 억제.
-    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+    // 2-2) 선발 라인업 폴백(위 fallbackFor 계약).
+    const entry = fallbackFor(pos);
     if (!entry) return [];
-    if (typeof entry.order === "number") {
-      const slotCur = currentBySlot.get(entry.order);
-      if (slotCur) {
-        const slotPosition = normalizeFieldPosition(slotCur.position);
-        if (slotCur.name !== entry.name || slotPosition !== pos) return []; // 교체·포지션 이동 stale 억제
-      }
-    }
     return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
   });
 }
