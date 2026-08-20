@@ -1,11 +1,58 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
-import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
-import SystemHealthPanel from "../../src/app/admin/system/SystemHealthPanel";
 import { GET } from "../../src/app/api/admin/system-health/route";
 import { parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+
+const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
+const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
+
+let reactHarness: Promise<{
+  React: typeof import("react");
+  act: typeof import("react").act;
+  createRoot: typeof import("react-dom/client").createRoot;
+  SystemHealthPanel: typeof import("../../src/app/admin/system/SystemHealthPanel").default;
+}> | null = null;
+
+function loadReactHarness() {
+  if (reactHarness) return reactHarness;
+  reactHarness = Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("../../src/app/admin/system/SystemHealthPanel"),
+  ]).then(([React, reactDom, panel]) => ({
+    React,
+    act: React.act,
+    createRoot: reactDom.createRoot,
+    SystemHealthPanel: panel.default,
+  }));
+  return reactHarness;
+}
+
+test("production prebuild executes DOM regressions with the test React build", {
+  skip: process.env.NODE_ENV !== "production" || isDomChild,
+}, () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--test", "scripts/qa/admin-system-health-smoke.ts"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        ADMIN_SYSTEM_HEALTH_DOM_CHILD: "1",
+      },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `DOM regression child failed:\n${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+  );
+});
 
 const sample = (overrides = "") => `
 node_cpu_seconds_total{cpu="0",mode="idle"} 100.6
@@ -161,11 +208,13 @@ async function routeWith(fetchImpl: typeof fetch) {
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     ADMIN_PIN: process.env.ADMIN_PIN,
+    ADMIN_PIN_HASH: process.env.ADMIN_PIN_HASH,
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_MANAGEMENT_TOKEN: process.env.SUPABASE_MANAGEMENT_TOKEN,
   };
   process.env.ADMIN_PIN = "health-test-pin";
+  delete process.env.ADMIN_PIN_HASH;
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://health-test.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role";
   process.env.SUPABASE_MANAGEMENT_TOKEN = "test-management-token";
@@ -207,7 +256,8 @@ test("route derives actual CPU from two counter snapshots and keeps high load se
   assert.ok(payload.metrics.cpuSampleSeconds >= 1);
 });
 
-test("high load and instant CPU render as informational without critical badges", async () => {
+domTest("high load and instant CPU render as informational without critical badges", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
   });
@@ -244,7 +294,6 @@ test("high load and instant CPU render as informational without critical badges"
 
   const container = dom.window.document.getElementById("root");
   assert.ok(container);
-  const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
     await act(async () => {
@@ -312,7 +361,8 @@ test("route does not report healthy for HTTP 200 unrelated metrics", async () =>
   assert.equal(payload.sourceErrors.metrics, null);
 });
 
-test("UI marks retained data stale after a successful load then refresh failure", async () => {
+domTest("UI marks retained data stale after a successful load then refresh failure", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
   });
@@ -349,7 +399,6 @@ test("UI marks retained data stale after a successful load then refresh failure"
 
   const container = dom.window.document.getElementById("root");
   assert.ok(container);
-  const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
     await act(async () => {
@@ -382,7 +431,8 @@ test("UI marks retained data stale after a successful load then refresh failure"
   }
 });
 
-test("UI shows date and age when checkedAt is stale", async () => {
+domTest("UI shows date and age when checkedAt is stale", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
   });
@@ -415,7 +465,6 @@ test("UI shows date and age when checkedAt is stale", async () => {
 
   const container = dom.window.document.getElementById("root");
   assert.ok(container);
-  const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
     await act(async () => {
