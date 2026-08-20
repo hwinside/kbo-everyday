@@ -3,6 +3,7 @@ export type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 export interface SystemMetricSummary {
   cpuUsedPercent: number | null;
   cpuSampleSeconds: number | null;
+  cpuCounter: { totalSeconds: number; idleSeconds: number } | null;
   cpuCores: number | null;
   load1: number | null;
   load1PerCore: number | null;
@@ -86,6 +87,26 @@ function round(value: number | null): number | null {
   return value === null ? null : Math.round(value * 10) / 10;
 }
 
+function cpuCounterSnapshot(samples: PrometheusSample[]) {
+  const cpu = values(samples, "node_cpu_seconds_total");
+  if (cpu.length === 0) return null;
+  const totalSeconds = cpu.reduce((sum, sample) => sum + sample.value, 0);
+  const idleSeconds = cpu
+    .filter((sample) => sample.labels.mode === "idle")
+    .reduce((sum, sample) => sum + sample.value, 0);
+  return { totalSeconds, idleSeconds };
+}
+
+export function cpuUsedPercentFromSnapshots(
+  current: { totalSeconds: number; idleSeconds: number },
+  previous: { totalSeconds: number; idleSeconds: number },
+): number | null {
+  const totalDelta = current.totalSeconds - previous.totalSeconds;
+  const idleDelta = current.idleSeconds - previous.idleSeconds;
+  if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) return null;
+  return percent(totalDelta - idleDelta, totalDelta);
+}
+
 function cpuUsedPercentFromCounters(
   currentSamples: PrometheusSample[],
   previousSamples: PrometheusSample[] | null,
@@ -153,6 +174,7 @@ export function summarizeSystemMetrics(
   const cpuCores = cpuCoresSet.size || null;
   const load1 = firstValue(samples, "node_load1");
   const load1PerCore = load1 !== null && cpuCores ? load1 / cpuCores : null;
+  const cpuCounter = cpuCounterSnapshot(samples);
   const cpuUsedPercent = cpuUsedPercentFromCounters(samples, previousSamples);
 
   // Multiple exporters/instances may emit these gauges. Any explicit down sample
@@ -216,6 +238,7 @@ export function summarizeSystemMetrics(
       cpuUsedPercent === null || cpuSampleSeconds === undefined || !Number.isFinite(cpuSampleSeconds)
         ? null
         : round(cpuSampleSeconds),
+    cpuCounter,
     cpuCores,
     load1: round(load1),
     load1PerCore: round(load1PerCore),

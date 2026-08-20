@@ -5,7 +5,6 @@ import { summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-hea
 export const dynamic = "force-dynamic";
 
 const REQUIRED_SERVICES = ["db", "rest", "auth", "storage"] as const;
-const CPU_SAMPLE_MS = 1_000;
 
 type ServiceName = (typeof REQUIRED_SERVICES)[number];
 type ServiceLevel = "healthy" | "critical" | "unknown";
@@ -42,11 +41,7 @@ async function fetchMetricsText(ref: string) {
 }
 
 async function fetchMetrics(ref: string) {
-  const before = await fetchMetricsText(ref);
-  const startedAt = performance.now();
-  await new Promise((resolve) => setTimeout(resolve, CPU_SAMPLE_MS));
-  const after = await fetchMetricsText(ref);
-  return summarizeSystemMetrics(after, before, (performance.now() - startedAt) / 1_000);
+  return summarizeSystemMetrics(await fetchMetricsText(ref));
 }
 
 async function fetchServices(ref: string) {

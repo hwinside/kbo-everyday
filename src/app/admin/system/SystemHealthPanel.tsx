@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cpuUsedPercentFromSnapshots } from "@/lib/admin/system-health";
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +24,7 @@ interface SystemHealthResponse {
   metrics: {
     cpuUsedPercent: number | null;
     cpuSampleSeconds: number | null;
+    cpuCounter: { totalSeconds: number; idleSeconds: number } | null;
     cpuCores: number | null;
     load1: number | null;
     load1PerCore: number | null;
@@ -137,6 +139,7 @@ export default function SystemHealthPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cpuBaseline = useRef<{ counter: { totalSeconds: number; idleSeconds: number }; checkedAt: string } | null>(null);
 
   const load = useCallback(async (background = false) => {
     if (background) setRefreshing(true);
@@ -146,7 +149,23 @@ export default function SystemHealthPanel() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`서버 상태 조회 실패 (${response.status})`);
-      setData((await response.json()) as SystemHealthResponse);
+      const next = (await response.json()) as SystemHealthResponse;
+      const counter = next.metrics?.cpuCounter ?? null;
+      if (counter && next.metrics) {
+        const previous = cpuBaseline.current;
+        if (previous) {
+          const used = cpuUsedPercentFromSnapshots(counter, previous.counter);
+          const seconds = (Date.parse(next.checkedAt) - Date.parse(previous.checkedAt)) / 1_000;
+          if (used !== null && seconds > 0) {
+            next.metrics.cpuUsedPercent = Math.round(used * 10) / 10;
+            next.metrics.cpuSampleSeconds = Math.round(seconds * 10) / 10;
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+          }
+        } else {
+          cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+        }
+      }
+      setData(next);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
@@ -227,7 +246,7 @@ export default function SystemHealthPanel() {
           icon={Cpu}
           label="CPU 사용률"
           value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
-          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "counter delta 필요"}
+          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "첫 샘플 수집 중 · 최대 1분 후 표시"}
           level={null}
         />
         <MetricCard

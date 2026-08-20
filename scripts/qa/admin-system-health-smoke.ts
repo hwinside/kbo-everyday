@@ -4,7 +4,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import { cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -234,26 +234,104 @@ async function routeWith(fetchImpl: typeof fetch) {
   }
 }
 
-test("route derives actual CPU from two counter snapshots and keeps high load separate", async () => {
+test("route returns one cumulative CPU snapshot for the client refresh delta", async () => {
   let metricCalls = 0;
   const response = await routeWith(async (input) => {
     const url = String(input);
     if (url.includes("privileged/metrics")) {
       metricCalls += 1;
-      return new Response(
-        metricCalls === 1 ? previousSample() : sample().replace("node_load1 0.8", "node_load1 8"),
-        { status: 200 },
-      );
+      return new Response(sample().replace("node_load1 0.8", "node_load1 8"), { status: 200 });
     }
     return Response.json(healthyServices);
   });
   const payload = await response.json();
-  assert.equal(metricCalls, 2);
+  assert.equal(metricCalls, 1);
   assert.equal(payload.level, "healthy");
-  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.cpuUsedPercent, null);
+  assert.deepEqual(payload.metrics.cpuCounter, { totalSeconds: 302, idleSeconds: 201.2 });
   assert.equal(payload.metrics.load1, 8);
   assert.equal(payload.metrics.load1PerCore, 4);
-  assert.ok(payload.metrics.cpuSampleSeconds >= 1);
+});
+
+test("client CPU delta derives busy percent across exporter scrape intervals", () => {
+  const used = cpuUsedPercentFromSnapshots(
+    { totalSeconds: 304, idleSeconds: 202.4 },
+    { totalSeconds: 302, idleSeconds: 201.2 },
+  );
+  assert.ok(used !== null && Math.abs(used - 40) < 0.001);
+  assert.equal(
+    cpuUsedPercentFromSnapshots(
+      { totalSeconds: 302, idleSeconds: 201.2 },
+      { totalSeconds: 302, idleSeconds: 201.2 },
+    ),
+    null,
+  );
+});
+
+domTest("UI turns the first cumulative counter into CPU percent on refresh", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const first = summarizeSystemMetrics(sample());
+  const second = summarizeSystemMetrics(sample());
+  assert.ok(first.cpuCounter && second.cpuCounter);
+  second.cpuCounter = {
+    totalSeconds: first.cpuCounter.totalSeconds + 240,
+    idleSeconds: first.cpuCounter.idleSeconds + 144,
+  };
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return Response.json({
+      level: "healthy",
+      metrics: calls === 1 ? first : second,
+      services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+      sourceErrors: { metrics: null, management: null },
+      checkedAt: calls === 1 ? "2026-08-20T14:00:00.000Z" : "2026-08-20T14:01:00.000Z",
+    });
+  }) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(React.createElement(SystemHealthPanel)));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중첫 샘플 수집 중/);
+    const refresh = container.querySelector('button[aria-label="서버 상태 새로고침"]') as HTMLButtonElement | null;
+    assert.ok(refresh);
+    await act(async () => {
+      refresh.click();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값40%60초 실측/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
 });
 
 domTest("high load and instant CPU render as informational without critical badges", async () => {
