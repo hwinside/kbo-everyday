@@ -237,26 +237,38 @@ export function buildChains(gates) {
 // lock 은 node_modules 아래(gitignored)라 verify-clean 을 오염시키지 않는다.
 const LOCK_FILE = path.join(ROOT, "node_modules", ".prebuild-gates.lock");
 const activeChildren = new Set(); // 실행 중 게이트 child pid (detached process-group leader)
+// pgid snapshot(삼순): leader 가 먼저 죽어도 그룹에 손자가 남을 수 있다.
+// activeChildren 은 close 시 빠지므로, 종료 전파는 이 누적 집합으로 한다(제거하지 않는다).
+const spawnedGroups = new Set();
 
 function pidAlive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function acquireLock() {
-  try {
-    if (existsSync(LOCK_FILE)) {
-      const prev = Number(readFileSync(LOCK_FILE, "utf8").trim());
+  // 원자적 획득(삼순): exists→write 는 TOCTOU race — 'wx' 는 커널이 원자성을 보장한다.
+  // 동시 시작 N개 중 정확히 1개만 wx 생성에 성공한다.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(LOCK_FILE, String(process.pid), { flag: "wx" });
+      return;
+    } catch (err) {
+      if (err.code !== "EEXIST") {
+        console.error(`[prebuild-gates] lock FAIL — lock 파일을 만들 수 없다: ${err.message}`);
+        process.exit(1);
+      }
+      let prev = NaN;
+      try { prev = Number(readFileSync(LOCK_FILE, "utf8").trim()); } catch { /* 방금 해제됐을 수 있음 — 재시도 */ }
       if (Number.isFinite(prev) && prev > 0 && pidAlive(prev)) {
         console.error(`[prebuild-gates] lock FAIL — 다른 러너(pid ${prev})가 같은 checkout 에서 실행 중이다. 동시 실행은 in-place mutation 게이트를 서로 오염시킨다.`);
         process.exit(1);
       }
-      // stale lock — 소유 pid 가 죽었으면 회수
+      // stale lock(소유 pid 사망) — 회수 후 1회만 재시도(재시도도 wx 원자 생성)
+      try { unlinkSync(LOCK_FILE); } catch { /* 다른 프로세스가 먼저 회수 — 재시도 */ }
     }
-    writeFileSync(LOCK_FILE, String(process.pid));
-  } catch (err) {
-    console.error(`[prebuild-gates] lock FAIL — lock 파일을 만들 수 없다: ${err.message}`);
-    process.exit(1);
   }
+  console.error("[prebuild-gates] lock FAIL — stale lock 회수 경합에서 획득 실패");
+  process.exit(1);
 }
 
 function releaseLock() {
@@ -265,9 +277,9 @@ function releaseLock() {
   } catch { /* 종료 경로 — 무시 */ }
 }
 
-function killChildGroups(signal) {
-  for (const pid of activeChildren) {
-    try { process.kill(-pid, signal); } catch { /* 이미 종료 */ }
+function killGroups(pgids, signal) {
+  for (const pid of pgids) {
+    try { process.kill(-pid, signal); } catch { /* 그룹 전체 이미 종료 */ }
   }
 }
 
@@ -277,11 +289,14 @@ function installSignalHandlers() {
     process.on(sig, () => {
       if (terminating) return;
       terminating = true;
-      console.error(`[prebuild-gates] ${sig} — 자식 게이트 process-group 전체에 SIGTERM 전파 후 종료한다`);
-      killChildGroups("SIGTERM");
-      // 유예 후 SIGKILL — mutation 게이트의 restore 핸들러가 돌 시간을 준다
+      // snapshot 을 SIGKILL 완료까지 보존(삼순): 시그널 시점의 전체 spawn 이력 pgid.
+      // leader 가 이미 종료해 activeChildren 에서 빠졌어도 손자가 그룹에 남아있으면 여기로 잡힌다.
+      const snapshot = [...spawnedGroups];
+      console.error(`[prebuild-gates] ${sig} — spawn 이력 ${snapshot.length}개 process-group 에 SIGTERM 전파 후 종료한다`);
+      killGroups(snapshot, "SIGTERM");
+      // 유예 후 같은 snapshot 에 SIGKILL — mutation 게이트의 restore 핸들러가 돌 시간을 준다
       setTimeout(() => {
-        killChildGroups("SIGKILL");
+        killGroups(snapshot, "SIGKILL");
         releaseLock();
         process.exit(130);
       }, 3000);
@@ -300,6 +315,9 @@ function runGate(name) {
       name === "__synthetic_fail__" ? "process.exit(1)"
       : name === "__synthetic_sleep__"
         ? "require('fs').writeFileSync(process.env.SYNTH_PID_FILE, String(process.pid)); setTimeout(() => process.exit(0), 30000)"
+      : name === "__synthetic_orphan__"
+        // leader: SIGTERM 무시하는 손자를 같은 pgid 로 남기고 자신은 먼저 종료한다
+        ? "require('child_process').spawn(process.execPath, ['-e', \"process.on('SIGTERM',()=>{}); require('fs').writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); setTimeout(()=>{}, 30000)\"], { stdio: 'ignore', env: process.env }); setTimeout(() => process.exit(0), 500)"
         : "process.exit(0)";
     const [cmd, args] = isSynthetic ? [process.execPath, ["-e", syntheticBody]] : ["npm", ["run", name]];
     const child = spawn(cmd, args, {
@@ -308,7 +326,7 @@ function runGate(name) {
       stdio: ["ignore", "pipe", "pipe"],
       detached: true, // 자기 process-group 리더로 — 러너 중단 시 그룹째 종료 가능
     });
-    if (child.pid) activeChildren.add(child.pid);
+    if (child.pid) { activeChildren.add(child.pid); spawnedGroups.add(child.pid); }
     let buf = "";
     const cap = (d) => {
       buf += d.toString();
@@ -416,6 +434,10 @@ async function runAll(gates, { verifyClean = false, canonical = false } = {}) {
 
   await Promise.all([serialWorker, ...workers]);
 
+  // 시그널 종료 중이면 여기서 멈춘다 — runAll 의 실패 exit 가 3초 SIGKILL 타이머보다
+  // 먼저 프로세스를 죽이면 TERM 을 무시하는 손자가 잔존한다(orphan 회귀가 잡은 race).
+  if (terminating) await new Promise(() => {});
+
   // phase 2 — exclusive: repo 파일을 in-place 변이/생성하는 게이트.
   // 다른 게이트가 같은 파일을 읽는 순간을 원리적으로 제거하기 위해
   // 모든 병렬 레인이 끝난 뒤 한 번에 1개씩만 돈다.
@@ -423,6 +445,7 @@ async function runAll(gates, { verifyClean = false, canonical = false } = {}) {
     if (failed) break;
     await runChain(chain);
   }
+  if (terminating) await new Promise(() => {});
 
   const total = (Date.now() - t0) / 1000;
   const ran = results.length;
@@ -487,6 +510,23 @@ async function selftest() {
   await synth("red-exclusive", true);
   await synth("green", false);
 
+  // lock 동시획득 회귀 (삼순 ①): 동시에 시작한 러너 2개 중 정확히 1개만 lock 을 얻는다.
+  await (async () => {
+    const spawnHolder = () =>
+      new Promise((resolve) => {
+        const c = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", "lock-hold"], {
+          cwd: ROOT,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        c.on("close", (code) => resolve(code ?? 1));
+      });
+    const [a, b] = await Promise.all([spawnHolder(), spawnHolder()]);
+    const codes = [a, b].sort();
+    if (!(codes[0] === 0 && codes[1] === 1)) {
+      errors.push(`lock 동시획득: 기대 [0,1] — 실제 [${a},${b}] (둘 다 획득 또는 둘 다 실패)`);
+    }
+  })();
+
   // 중단-잔존 회귀 (삼순 blocker ②): 러너를 SIGTERM 으로 중단하면
   // 실행 중이던 자식 게이트 process-group 까지 함께 죽어야 한다.
   await (async () => {
@@ -529,6 +569,50 @@ async function selftest() {
       try { process.kill(childPid, "SIGKILL"); } catch { /* 정리 */ }
     }
     try { fs.unlinkSync(pidFile); } catch { /* 정리 */ }
+  })();
+
+  // orphan 잔존 0 회귀 (삼순 ②): leader 는 이미 종료·손자는 SIGTERM 무시인 조건에서도
+  // snapshot 이 SIGKILL 완료까지 보존돼 잔존이 0 이어야 한다.
+  await (async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const gPidFile = path.join(os.tmpdir(), `prebuild-gates-grandchild-${process.pid}.pid`);
+    const sPidFile = path.join(os.tmpdir(), `prebuild-gates-sleep2-${process.pid}.pid`);
+    for (const f of [gPidFile, sPidFile]) { try { fs.unlinkSync(f); } catch { /* 없으면 통과 */ } }
+    const runner = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", "orphan"], {
+      cwd: ROOT,
+      env: { ...process.env, GRANDCHILD_PID_FILE: gPidFile, SYNTH_PID_FILE: sPidFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const readPid = (f) => { try { return Number(fs.readFileSync(f, "utf8").trim()); } catch { return 0; } };
+    const deadline = Date.now() + 10_000;
+    let gPid = 0;
+    while (Date.now() < deadline) {
+      gPid = readPid(gPidFile);
+      if (gPid > 0) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!(gPid > 0)) {
+      errors.push("orphan: 손자 프로세스가 뜨지 않았다");
+      runner.kill("SIGKILL");
+      return;
+    }
+    // leader(500ms 뒤 종료)가 죽을 시간을 준 뒤 러너를 중단한다 — leader 부재 + 손자 TERM 무시 조건
+    await new Promise((r) => setTimeout(r, 800));
+    runner.kill("SIGTERM");
+    await new Promise((resolve) => runner.on("close", resolve));
+    const killDeadline = Date.now() + 6_000;
+    let alive2 = true;
+    while (Date.now() < killDeadline) {
+      alive2 = pidAlive(gPid);
+      if (!alive2) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (alive2) {
+      errors.push(`orphan: leader 종료·손자 SIGTERM 무시 조건에서 손자(pid ${gPid})가 잔존 — snapshot 전파 실패`);
+      try { process.kill(gPid, "SIGKILL"); } catch { /* 정리 */ }
+    }
+    for (const f of [gPidFile, sPidFile]) { try { fs.unlinkSync(f); } catch { /* 정리 */ } }
   })();
 
   if (errors.length) {
@@ -575,6 +659,16 @@ if (argv[0] === "--selftest") {
       { name: "__synthetic_pass2__", lane: "serial" },
       { name: "__synthetic_fail__", lane: "exclusive" },
     ]);
+  } else if (fixture === "orphan") {
+    await runAll([
+      { name: "__synthetic_orphan__", lane: "pool" },
+      { name: "__synthetic_sleep__", lane: "pool" },
+    ]);
+  } else if (fixture === "lock-hold") {
+    acquireLock();
+    await new Promise((r) => setTimeout(r, 2500));
+    releaseLock();
+    process.exit(0);
   } else if (fixture === "sleep") {
     await runAll([
       { name: "__synthetic_sleep__", lane: "pool" },
