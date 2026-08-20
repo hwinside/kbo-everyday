@@ -1,8 +1,11 @@
 export type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 
 export interface SystemMetricSummary {
-  cpuLoadPercent: number | null;
+  cpuUsedPercent: number | null;
+  cpuSampleSeconds: number | null;
   cpuCores: number | null;
+  load1: number | null;
+  load1PerCore: number | null;
   memoryUsedPercent: number | null;
   diskUsedPercent: number | null;
   postgresUp: boolean | null;
@@ -83,8 +86,44 @@ function round(value: number | null): number | null {
   return value === null ? null : Math.round(value * 10) / 10;
 }
 
-export function summarizeSystemMetrics(text: string): SystemMetricSummary {
+function cpuUsedPercentFromCounters(
+  currentSamples: PrometheusSample[],
+  previousSamples: PrometheusSample[] | null,
+): number | null {
+  if (!previousSamples) return null;
+
+  const current = values(currentSamples, "node_cpu_seconds_total");
+  const previous = values(previousSamples, "node_cpu_seconds_total");
+  if (current.length === 0 || current.length !== previous.length) return null;
+
+  const seriesKey = (sample: PrometheusSample) =>
+    Object.entries(sample.labels)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name}=${value}`)
+      .join("|");
+  const previousByKey = new Map(previous.map((sample) => [seriesKey(sample), sample.value]));
+  let totalDelta = 0;
+  let idleDelta = 0;
+  for (const sample of current) {
+    const key = seriesKey(sample);
+    const before = previousByKey.get(key);
+    if (before === undefined) return null;
+    const delta = sample.value - before;
+    if (!Number.isFinite(delta) || delta < 0) return null;
+    totalDelta += delta;
+    if (sample.labels.mode === "idle") idleDelta += delta;
+  }
+  if (totalDelta <= 0) return null;
+  return percent(totalDelta - idleDelta, totalDelta);
+}
+
+export function summarizeSystemMetrics(
+  text: string,
+  previousText?: string,
+  cpuSampleSeconds?: number,
+): SystemMetricSummary {
   const samples = parsePrometheusText(text);
+  const previousSamples = previousText === undefined ? null : parsePrometheusText(previousText);
   const totalMemory = firstValue(samples, "node_memory_MemTotal_bytes");
   const freeMemory = firstValue(samples, "node_memory_MemFree_bytes");
   const buffers = firstValue(samples, "node_memory_Buffers_bytes") ?? 0;
@@ -113,7 +152,8 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   );
   const cpuCores = cpuCoresSet.size || null;
   const load1 = firstValue(samples, "node_load1");
-  const cpuLoadPercent = load1 !== null && cpuCores ? percent(load1, cpuCores) : null;
+  const load1PerCore = load1 !== null && cpuCores ? load1 / cpuCores : null;
+  const cpuUsedPercent = cpuUsedPercentFromCounters(samples, previousSamples);
 
   // Multiple exporters/instances may emit these gauges. Any explicit down sample
   // must fail closed instead of being hidden by a healthy sibling sample.
@@ -153,20 +193,17 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
     if (diskUsedPercent >= 85) critical(`디스크 ${round(diskUsedPercent)}%`);
     else if (diskUsedPercent >= 75) warn(`디스크 ${round(diskUsedPercent)}%`);
   }
-  if (cpuLoadPercent !== null) {
-    if (cpuLoadPercent >= 85) critical(`CPU 부하 ${round(cpuLoadPercent)}%`);
-    else if (cpuLoadPercent >= 70) warn(`CPU 부하 ${round(cpuLoadPercent)}%`);
-  }
-
+  // The CPU value is a one-second point-in-time sample. Keep it informational:
+  // production alerts require sustained 70%/5m or 85%/3m, so applying those
+  // thresholds here would recreate "dashboard critical, no alert" contradictions.
   const missingCoreMetrics = [
-    cpuLoadPercent === null ? "CPU" : null,
     memoryUsedPercent === null ? "메모리" : null,
     diskUsedPercent === null ? "디스크" : null,
     pgUpValue === null ? "PostgreSQL" : null,
     poolerUpValue === null ? "PgBouncer" : null,
   ].filter((name): name is string => name !== null);
 
-  if (missingCoreMetrics.length === 5) {
+  if (missingCoreMetrics.length === 4) {
     reasons.push("핵심 메트릭 없음");
     if (!hasCritical) level = "unknown";
   } else if (missingCoreMetrics.length > 0) {
@@ -174,8 +211,14 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   }
 
   return {
-    cpuLoadPercent: round(cpuLoadPercent),
+    cpuUsedPercent: round(cpuUsedPercent),
+    cpuSampleSeconds:
+      cpuUsedPercent === null || cpuSampleSeconds === undefined || !Number.isFinite(cpuSampleSeconds)
+        ? null
+        : round(cpuSampleSeconds),
     cpuCores,
+    load1: round(load1),
+    load1PerCore: round(load1PerCore),
     memoryUsedPercent: round(memoryUsedPercent),
     diskUsedPercent: round(diskUsedPercent),
     postgresUp: pgUpValue === null ? null : pgUpValue >= 1,

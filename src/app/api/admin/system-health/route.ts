@@ -5,6 +5,7 @@ import { summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-hea
 export const dynamic = "force-dynamic";
 
 const REQUIRED_SERVICES = ["db", "rest", "auth", "storage"] as const;
+const CPU_SAMPLE_MS = 1_000;
 
 type ServiceName = (typeof REQUIRED_SERVICES)[number];
 type ServiceLevel = "healthy" | "critical" | "unknown";
@@ -27,7 +28,7 @@ function combineLevel(metricLevel: HealthLevel, services: Array<{ level: Service
   return "healthy";
 }
 
-async function fetchMetrics(ref: string) {
+async function fetchMetricsText(ref: string) {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRole) throw new Error("SUPABASE_SERVICE_ROLE_KEY 미설정");
   const auth = Buffer.from(`service_role:${serviceRole}`).toString("base64");
@@ -37,7 +38,15 @@ async function fetchMetrics(ref: string) {
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Metrics HTTP ${response.status}`);
-  return summarizeSystemMetrics(await response.text());
+  return response.text();
+}
+
+async function fetchMetrics(ref: string) {
+  const before = await fetchMetricsText(ref);
+  const startedAt = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, CPU_SAMPLE_MS));
+  const after = await fetchMetricsText(ref);
+  return summarizeSystemMetrics(after, before, (performance.now() - startedAt) / 1_000);
 }
 
 async function fetchServices(ref: string) {
