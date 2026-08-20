@@ -1,5 +1,6 @@
 import type { GameDetailResponse, LineupEntry, PitcherRecord, BatterRecord } from "@/lib/hooks/useGameDetail";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
+import type { FieldingEvent } from "@/app/api/game-relay/route";
 
 interface GameBase {
   inning?: string | null;
@@ -56,6 +57,74 @@ export function normalizeFieldPosition(raw: string | null | undefined): string |
 }
 
 /**
+ * 교체·수비위치 변경 이벤트(Naver textRelay 원문, 시간순)를 선발 라인업 위에 재생해
+ * *확정 수비 맵*(필드 위치 → 선수 이름)을 만든다. 추정이 아니라 소스 진실 기반이다
+ * (삼순 재설계 지시 — "독립 소스·교체 타임라인으로 위치가 확정되는 경우만 보정").
+ *
+ * 규칙:
+ *  - 상태 = 이름 → 현재 위치(선발 라인업으로 초기화, DH·투수는 null 유지).
+ *  - replace "{posA} A : {posB} B 교체": A가 상태에 있을 때만 적용(팀 귀속 — 상대팀·
+ *    투수 교체는 자연 무시). A 제거, B는 posB의 정규화 위치로 진입(대타/대주자는 null
+ *    — 이후 reposition이 오면 그때 확정).
+ *  - reposition "{posA} A : {posB} 수비위치 변경": A가 상태에 있을 때만 posB로 갱신.
+ *  - 좁료 후 역변환: 한 위치에 정확히 1명이면 확정, 2명 이상이면 모순(이벤트 결손)
+ *    → 그 위치는 맵에서 제외(fail-close).
+ *  - 적용된 이벤트가 0개면 null → 호출측이 기존(boxScore) 로직 사용.
+ *  - 팀 귀속 모호(삼순 NO-GO P0): 이벤트 주체 이름이 수비팀 상태와 상대팀 명단
+ *    (opponentNames = 상대 라인업+boxScore) *양쪽에 동시 존재*하면 그 이벤트가 어느
+ *    팀 것인지 증명할 수 없다 → 부분 skip 은 퇴장 유령을 남기므로 *타임라인 전체 폐기*
+ *    (null 반환 → 기존 로직 fail-close).
+ */
+export function replayFieldingTimeline(
+  lineupEntries: LineupEntry[] | null | undefined,
+  events: FieldingEvent[] | null | undefined,
+  opponentNames?: Set<string> | null,
+): Map<string, string> | null {
+  if (!lineupEntries || lineupEntries.length === 0 || !events || events.length === 0) return null;
+  // 이름 → 현재 위치(null = 재중이나 수비 미배치: DH·대타·대주자 등).
+  const posByName = new Map<string, string | null>();
+  for (const e of lineupEntries) {
+    if (e.name) posByName.set(e.name, normalizeFieldPosition(e.position));
+  }
+  let applied = 0;
+  for (const ev of events) {
+    const subject = ev.kind === "replace" ? ev.outName : ev.name;
+    const subjectPosKr = ev.kind === "replace" ? ev.outPosKr : ev.fromPosKr;
+    // 주체가 투수인 이벤트는 귀속 판단 전에 안전 제외(삼순 3차 조건) — 투수는 타순
+    // 라인업에 없어 수비 8자리에 영향이 없고, 상대 투수와 수비 야수가 동명이인이면
+    // 이 이벤트가 수비 야수를 잘못 지우는 구멍이 된다. 폐기가 아니라 개별 skip이므로
+    // 나머지 타임라인은 유지된다(투수 이벤트는 원래도 필드 배치와 무관).
+    if (subjectPosKr === "투수") continue;
+    const inDefense = posByName.has(subject);
+    // 양팀 동명이인 귀속 모호 → 타임라인 전체 폐기(fail-close).
+    if (inDefense && opponentNames?.has(subject)) return null;
+    if (!inDefense) continue; // 상대팀/투수 이벤트 — 무시
+    if (ev.kind === "replace") {
+      posByName.delete(ev.outName);
+      posByName.set(ev.inName, normalizeFieldPosition(ev.inPosKr));
+      applied++;
+    } else {
+      posByName.set(ev.name, normalizeFieldPosition(ev.toPosKr));
+      applied++;
+    }
+  }
+  if (applied === 0) return null;
+  // 역변환 + 모순 감지.
+  const namesByPos = new Map<string, string[]>();
+  for (const [name, pos] of posByName) {
+    if (!pos) continue;
+    const arr = namesByPos.get(pos);
+    if (arr) arr.push(name);
+    else namesByPos.set(pos, [name]);
+  }
+  const result = new Map<string, string>();
+  for (const [pos, names] of namesByPos) {
+    if (names.length === 1) result.set(pos, names[0]); // 2명 이상 = 이벤트 결손 → fail-close
+  }
+  return result;
+}
+
+/**
  * 필드뷰 수비 다이어그램용 수비수 목록을 만든다.
  *
  * 선발 라인업(detailLineup)만 보면 대타·대주·수비교체 이후 필드 위치가 선발 선수
@@ -80,10 +149,20 @@ function toDefenders(
   boxBatters: BatterRecord[] | null | undefined,
   lineupEntries: LineupEntry[] | null | undefined,
   teamId?: number,
+  fieldingEvents?: FieldingEvent[] | null,
+  opponentNames?: Set<string> | null,
 ) {
-  // BoxScore 미수신/빈 배열 → 선발 라인업 전체 폴백 (기존 동작 유지).
+  const timeline = replayFieldingTimeline(lineupEntries, fieldingEvents, opponentNames);
+
+  // BoxScore 미수신/빈 배열 → 타임라인 확정분 우선, 없으면 선발 라인업 폴백 (기존 동작 유지).
   if (!boxBatters || boxBatters.length === 0) {
     return FIELD_POSITIONS.flatMap(pos => {
+      const timelineName = timeline?.get(pos);
+      if (timelineName) {
+        const entry = lineupEntries?.find(e => e.name === timelineName);
+        return [{ order: entry?.order ?? 0, name: timelineName, position: pos, avg: "", teamId }];
+      }
+      if (timeline) return []; // 타임라인 존재 + 미확정/모순 위치 → fail-close
       const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
       return entry
         ? [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }]
@@ -196,15 +275,55 @@ function toDefenders(
     }
   }
 
+  // 0) 타임라인 확정분 최우선 — 단, relay가 끪겨 오래된 타임라인이 이미 교체된 선수를
+  //    가리키는 경우를 막기 위해 boxScore 교차검증: 해당 선수가 boxScore상 어떤 타순에
+  //    기록돼 있는데 그 타순의 현재 선수가 다른 사람이면(=이미 교체되어 퇴장) 타임라인
+  //    배정을 불신하고 기존 로직으로 폴백한다.
+  const leftGame = (name: string): boolean => {
+    let seen = false;
+    for (const b of boxBatters) {
+      if (b.name === name && typeof b.order === "number" && b.order > 0) {
+        seen = true;
+        const cur = currentBySlot.get(b.order);
+        if (cur && cur.name === name) return false; // 어느 타순에서든 현재 선수면 재중
+      }
+    }
+    return seen; // 기록은 있는데 어느 타순의 현재도 아님 = 퇴장
+  };
+
+  // 퇴장 교차검증을 통과한 타임라인 배정만 유효화하고, 그 선수들은 legacy 경로에서 제외한다
+  // — 타임라인이 3B로 확정한 선수를 boxScore stale 표기(二)가 2B에 한 번 더 그리는
+  // 이중 노출을 구조적으로 차단.
+  const effectiveTimeline = new Map<string, string>();
+  if (timeline) {
+    for (const [pos, name] of timeline) {
+      if (!leftGame(name)) effectiveTimeline.set(pos, name);
+    }
+  }
+  const timelineNames = new Set(effectiveTimeline.values());
+
   return FIELD_POSITIONS.flatMap(pos => {
-    // 2-1) BoxScore의 현재 수비수 우선.
+    // 0) 교체 타임라인 확정분(소스 진실) 최우선.
+    const timelineName = effectiveTimeline.get(pos);
+    if (timelineName) {
+      const box = boxBatters.find(b => b.name === timelineName);
+      const entry = lineupEntries?.find(e => e.name === timelineName);
+      return [{
+        order: box?.order ?? entry?.order ?? 0,
+        name: timelineName,
+        position: pos,
+        avg: box?.avg ?? "",
+        teamId,
+      }];
+    }
+    // 2-1) BoxScore의 현재 수비수 우선 — 타임라인이 다른 위치로 확정한 선수는 제외.
     const cur = byPosition.get(pos);
-    if (cur) {
+    if (cur && !timelineNames.has(cur.name)) {
       return [{ order: cur.order, name: cur.name, position: pos, avg: cur.avg ?? "", teamId }];
     }
-    // 2-2) 선발 라인업 폴백(위 fallbackFor 계약).
+    // 2-2) 선발 라인업 폴백(위 fallbackFor 계약) — 동일 제외 규칙.
     const entry = fallbackFor(pos);
-    if (!entry) return [];
+    if (!entry || timelineNames.has(entry.name)) return [];
     return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
   });
 }
@@ -249,6 +368,8 @@ export function deriveGameState(
   liveGame: LiveGameData | undefined,
   game: GameBase,
   gameDetail: GameDetailResponse | null,
+  /** game-relay 응답의 이닝별 교체·수비위치 이벤트. 있으면 필드뷰 수비 배치의 소스 진실로 사용. */
+  relayInnings?: Array<{ fielding?: FieldingEvent[] }> | null,
 ) {
   const currentBalls = liveGame?.balls ?? 0;
   const currentStrikes = liveGame?.strikes ?? 0;
@@ -279,8 +400,22 @@ export function deriveGameState(
 
   const defensiveLineup = detailLineup ? (isTop ? detailLineup.home : detailLineup.away) : null;
   const defensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.homeBatters : detailBoxScore.awayBatters) : null;
+  // 이벤트는 이닝 순서대로 평탄화(이닝 내도 시간순). 팀 귀속은 replay가 수비팀 라인업
+  // 이름 기준으로 자연 필터링하므로 양팀 이벤트를 섮어 넘겨도 안전하다.
+  const fieldingEvents = relayInnings?.flatMap(inn => inn.fielding ?? []) ?? null;
+  // 상대(공격)팀 명단 = 라인업 + boxScore 전체(교체 투입 포함). 이벤트 주체가 양팀에
+  // 동시 존재하는 동명이인이면 replay가 타임라인 전체를 폐기한다(삼순 P0 fail-close).
+  const offensiveLineup = detailLineup ? (isTop ? detailLineup.away : detailLineup.home) : null;
+  const offensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.awayBatters : detailBoxScore.homeBatters) : null;
+  // 투수는 타순 라인업에 없어 batters 결속만으로는 상대 투수↔수비 야수 동명이인이 새어온다
+  // (삼순 3차 조건) → 상대 pitchers까지 명단 결속.
+  const offensiveBoxPitchers = detailBoxScore ? (isTop ? detailBoxScore.awayPitchers : detailBoxScore.homePitchers) : null;
+  const opponentNames = new Set<string>();
+  for (const e of offensiveLineup ?? []) if (e.name) opponentNames.add(e.name);
+  for (const b of offensiveBoxBatters ?? []) if (b.name) opponentNames.add(b.name);
+  for (const pRec of offensiveBoxPitchers ?? []) if (pRec.name) opponentNames.add(pRec.name);
   const defensiveSide = (defensiveLineup || (defensiveBoxBatters && defensiveBoxBatters.length > 0))
-    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId)
+    ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId, fieldingEvents, opponentNames)
     : null;
 
   // On-deck batters from lineup

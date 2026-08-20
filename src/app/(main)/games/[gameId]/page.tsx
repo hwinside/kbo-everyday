@@ -405,7 +405,8 @@ export default function GameDetailPage() {
   const myTeamInGame = myTeamId && (myTeamId === game.homeTeamId || myTeamId === game.awayTeamId);
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
-  const d = deriveGameState(liveGame, game, gameDetail);
+  // gameRelay 교체·수비위치 이벤트를 넘겨 필드뷰 수비 배치를 소스 진실(타임라인) 기반으로 확정한다.
+  const d = deriveGameState(liveGame, game, gameDetail, gameRelay?.innings);
   // 두 API의 요청시각은 payload revision이 아니다. live 성공 여부만 전달하고,
   // 불일치 시 confirmed lineup 우선 정책은 resolveLineupStarter가 담당한다.
   const liveStarterFresh = Boolean(liveSnapshot);
