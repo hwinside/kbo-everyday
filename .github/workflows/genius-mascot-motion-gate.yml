@@ -34,6 +34,7 @@ on:
       - "scripts/qa/genius-mascot-asset-mutations.mjs"
       - "scripts/qa/mascot-source-mutate.py"
       - "scripts/qa/mascot-gate-change-detector.mjs"
+      - "scripts/ci/prebuild-gates.mjs"
       - "package.json"
       - "src/components/dm/GeniusMascotImage.tsx"
       - "src/lib/constants/baseball-genius.ts"

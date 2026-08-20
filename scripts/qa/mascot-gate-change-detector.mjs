@@ -53,6 +53,7 @@ const SOURCE_IMPACT = [ // 원본·빌더·ledger — source 포함 둘 다 실�
   "scripts/qa/mascot-source-mutate.py",
 ];
 const BOTH_SHARED = [
+  "scripts/ci/prebuild-gates.mjs", // prebuild 게이트 러너 — GATES 목록 변경은 fail-closed로 둘 다 실행
   "scripts/qa/genius-mascot-asset-mutations.mjs",
   "scripts/qa/mascot-gate-change-detector.mjs",
   ".github/workflows/genius-mascot-motion-gate.yml",

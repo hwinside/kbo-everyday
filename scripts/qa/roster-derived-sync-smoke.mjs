@@ -136,8 +136,10 @@ check("prebuild runs both the relationship gate and this smoke", () => {
   // 이 smoke 자체가 CI에 안 묶이면 위 검사가 전부 false-green이 된다(삼순 2차 NO-GO).
   assert.ok(gate.includes("sync-roster-derived-artifacts.mjs --check"), "relationship gate가 빠졌다");
   assert.ok(gate.includes("roster-derived-sync-smoke.mjs"), "smoke 가 CI에 결속되지 않았다");
-  assert.ok(pkg.scripts.prebuild.includes("qa:roster-derived-sync"));
-  assert.ok(pkg.scripts.prebuild.includes("qa:roster-preservation"), "군입대 선수 보존 회귀가 prebuild에서 빠졌다");
+  assert.ok(pkg.scripts.prebuild.includes("prebuild-gates.mjs"), "prebuild가 게이트 러너를 호출하지 않는다");
+  const gateList = execFileSync("node", ["scripts/ci/prebuild-gates.mjs", "--list"], { encoding: "utf8" });
+  assert.match(gateList, /^(pool|serial|exclusive)\tqa:roster-derived-sync$/m);
+  assert.match(gateList, /^(pool|serial|exclusive)\tqa:roster-preservation$/m, "군입대 선수 보존 회귀가 prebuild에서 빠졌다");
   assert.equal(pkg.scripts["build:baseball-source-inventory"], "tsx scripts/baseball-qa/build-source-inventory.ts");
 });
 

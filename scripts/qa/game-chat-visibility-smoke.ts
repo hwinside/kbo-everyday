@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { canRenderGameChat } from "../../src/lib/game-chat-visibility";
 
 assert.equal(canRenderGameChat({ status: "ready", visible: true }), true);
@@ -10,7 +11,9 @@ assert.equal(canRenderGameChat({ status: "error", visible: false }), false);
 const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
 const workflow = readFileSync(".github/workflows/game-chat-visibility-gate.yml", "utf8");
 const browser = readFileSync("scripts/qa/ui-smoke-game-chat-visibility.mjs", "utf8");
-assert.match(pkg.scripts.prebuild, /qa:game-chat-visibility/, "pure gate must be in prebuild");
+assert.match(pkg.scripts.prebuild, /prebuild-gates\.mjs/, "prebuild must invoke the gate runner");
+const gateList = execSync("node scripts/ci/prebuild-gates.mjs --list", { encoding: "utf8" });
+assert.match(gateList, /^(pool|serial|exclusive)\tqa:game-chat-visibility$/m, "pure gate must be in prebuild gate list");
 assert.match(workflow, /npm run qa:game-chat-visibility/, "required workflow must run pure gate");
 assert.match(workflow, /npm run qa:ui:game-chat-visibility/, "required workflow must run browser gate");
 assert.match(browser, /document\.body\.classList\.contains\("kbd-open"\)/, "browser gate must assert keyboard focus cleanup");

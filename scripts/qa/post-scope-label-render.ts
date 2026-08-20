@@ -19,6 +19,7 @@
  * 자체검증: npm run qa:post-scope-label:selftest  (결함주입 RED 확인)
  */
 import { JSDOM } from "jsdom";
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -595,9 +596,11 @@ async function main() {
       scripts: Record<string, string>;
     };
     ok("§4 DB 경계 게이트 스크립트가 등록돼 있다", typeof pkg.scripts["qa:post-scope-db-trigger"] === "string");
+    const gateList = execSync("node scripts/ci/prebuild-gates.mjs --list", { encoding: "utf8" });
     ok(
       "§4 DB 경계 게이트가 prebuild(required) 에 물려 있다",
-      (pkg.scripts.prebuild ?? "").includes("qa:post-scope-db-trigger"),
+      /prebuild-gates\.mjs/.test(pkg.scripts.prebuild ?? "") &&
+        /^(pool|serial|exclusive)\tqa:post-scope-db-trigger$/m.test(gateList),
     );
   }
 
