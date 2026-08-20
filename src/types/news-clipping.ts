@@ -45,6 +45,16 @@ export interface NewsClippingLegacyPayload extends NewsClippingBase {
 export interface NewsClippingRefPayload extends NewsClippingBase {
   digest_id: number;
   /**
+   * payload 스키마 버전. **신규 발송분에만 붙는다.**
+   *
+   * ⚠️ 삼순 blocker 2 (2026-08-20, 3차): `push_preview` 유무로 신구를 구분하면 "신규인데
+   *    총평이 비어 preview 가 undefined" 인 경우와 "구형 ref" 가 원리적으로 구분되지 않는다.
+   *    그러면 dispatch 가 per-DM digest SELECT 로 떨어지고(하루 27,208회) 그 사실이 조용하다.
+   *    → 버전을 명시 필드로 갖고, **v1 이상이면 preview 는 반드시 비어있지 않다**를 계약으로 건다.
+   *    조회 폴백은 버전이 없는 구형 ref 에만 허용한다.
+   */
+  v?: number;
+  /**
    * 푸시 본문용 짧은 미리보기(총평 앞부분).
    *
    * ⚠️ 삼순 blocker 2 (2026-08-20): 참조형은 overview 가 없어서 푸시 디스패쳐가 매번 digest 를
@@ -61,13 +71,73 @@ export interface NewsClippingRefPayload extends NewsClippingBase {
 /** 푸시 미리보기 최대 길이 — 푸시 본문은 어차피 잘리므로 길게 가질 이유가 없다. */
 export const NEWS_CLIPPING_PUSH_PREVIEW_MAX = 120;
 
-/** 총평에서 푸시용 미리보기를 만든다. */
-export function toPushPreview(overview: string | null | undefined): string | undefined {
+/** 신규 참조형 payload 스키마 버전. 이 값이 붙어 있으면 push_preview 는 비어있지 않다. */
+export const NEWS_CLIPPING_REF_VERSION = 1;
+
+/**
+ * 총평이 비었을 때 쓰는 기본 푸시 문구.
+ *
+ * ⚠️ 이 상수의 존재 이유: 총평이 빈 날에도 preview 를 **반드시 채워** dispatch 가
+ *    digest 를 재조회하지 않게 한다. dispatch 의 `truncate(... || "어제의 주요 뉴스를
+ *    확인해보세요")` 와 같은 문구라 유저가 보는 결과는 종전과 동일하다.
+ */
+export const NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK = "어제의 주요 뉴스를 확인해보세요";
+
+/**
+ * 총평에서 푸시용 미리보기를 만든다. **절대 빈 값을 돌려주지 않는다.**
+ *
+ * 빈 값을 허용하면 신규 발송에서도 push_preview 가 사라져 per-DM digest 조회가 부활한다
+ * (삼순 blocker 2, 3차). 총평이 비면 기본 문구로 채운다.
+ */
+export function toPushPreview(overview: string | null | undefined): string {
   const text = (overview ?? "").trim();
-  if (!text) return undefined;
+  if (!text) return NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK;
   return text.length <= NEWS_CLIPPING_PUSH_PREVIEW_MAX
     ? text
     : `${text.slice(0, NEWS_CLIPPING_PUSH_PREVIEW_MAX - 1)}…`;
+}
+
+/**
+ * 이 참조형 payload 가 **자기 힘으로 푸시 본문을 만들 수 있는가**(digest 조회 불필요).
+ *
+ * dispatch 는 이 술어가 false 일 때만 digest 를 SELECT 한다. 신규 발송분(v>=1)은 항상
+ * true 여야 하며, 그 불변식은 게이트가 고정한다.
+ */
+export function hasSelfContainedPushBody(p: NewsClippingRefPayload): boolean {
+  return typeof p.push_preview === "string" && p.push_preview.trim().length > 0;
+}
+
+/** 구형 참조형(버전 필드 없음) — dispatch 의 digest 조회 폴백이 허용되는 유일한 경우. */
+export function isLegacyRefPayload(p: NewsClippingRefPayload): boolean {
+  return typeof p.v !== "number";
+}
+
+/** 푸시 디스패쳐가 보는 쪽지 payload 의 최소 형태(패스스루 검증 전이라 전부 optional). */
+export interface PushDispatchClipping {
+  overview?: string;
+  push_preview?: string;
+  digest_id?: number;
+  v?: number;
+}
+
+/**
+ * 푸시 발송 시 **digest 를 추가 SELECT 해야 하는가**.
+ *
+ * 이 술어가 이 PR 의 비용 계약이다 — 하루 27,208건 발송이므로 true 가 되는 경우가 늘어나면
+ * 디스크를 줄이고 읽기 부하를 사는 교환이 된다. 그래서 dispatch 안에 묻지 않고 꺼내
+ * 게이트가 직접 대조한다.
+ *
+ * 계약:
+ *  - 사용 가능한 본문(overview | push_preview)이 있으면 조회 안 함.
+ *  - **신규 참조형(v>=1)은 어떤 입력에서도 조회 안 함** — 총평이 비어 preview 가 비더라도.
+ *    (preview 유무로 신·구를 가르면 이 경우가 구형과 구분되지 않아 조회가 조용히 부활한다.)
+ *  - 구형 ref(버전 없음) + 본문 없음 + digest_id 있음 → 그때만 true.
+ */
+export function shouldFetchDigestForPush(p: PushDispatchClipping): boolean {
+  const body = p.overview ?? p.push_preview;
+  if (typeof body === "string" && body.trim().length > 0) return false;
+  if (typeof p.v === "number" && p.v >= 1) return false;
+  return typeof p.digest_id === "number" && Number.isFinite(p.digest_id) && p.digest_id > 0;
 }
 
 export type NewsClippingPayload = NewsClippingLegacyPayload | NewsClippingRefPayload;

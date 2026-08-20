@@ -68,6 +68,16 @@ grant usage, select on sequence public.news_clipping_digests_id_seq to service_r
 --    과거 쪽지들이 전부 그 digest 를 참조**하므로 유저가 어제 읽은 쪽지 내용이 소급 변경된다.
 --    복제 저장에는 없던 부작용이다(각자 사본을 갖고 있었으므로).
 --    → 존재하면 그대로 두고 기존 id 만 돌려준다. 발송 시점 사실을 보존한다.
+-- ⚠️ 삼순 blocker 3 (2026-08-20, 3차): 1차 수정은 id 만 돌려줘서, 충돌(이미 존재) 시
+--    카드는 **저장된 A** 를 보여주는데 푸시 preview 는 **이번에 생성한 B** 에서 만들어졌다.
+--    cron 재실행·샘플 선점·부분 재시도면 카드와 푸시가 서로 다른 기사를 가리킨다.
+--    → **저장된 overview 와 id 를 함께 반환**하고, 호출부는 그 값으로 preview 를 만든다.
+--    그러면 "푸시는 항상 그 digest 의 내용"이 구조적으로 보장된다.
+--
+-- 구(bigint) 시그니처는 남기지 않는다 — 배포 직후 구코드가 그걸 부르면 카드/푸시 불일치가
+-- 그대로 살아남는다. 반환형이 바뀌면 구코드는 즉시 실패하고 legacy 폴백으로 떨어진다(안전).
+drop function if exists public.upsert_news_clipping_digest(date, int, text, text, jsonb);
+
 create or replace function public.upsert_news_clipping_digest(
   p_clip_date date,
   p_team_id int,
@@ -75,13 +85,11 @@ create or replace function public.upsert_news_clipping_digest(
   p_overview text,
   p_articles jsonb
 )
-returns bigint
+returns table (digest_id bigint, stored_overview text)
 language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
-declare
-  v_id bigint;
 begin
   if p_articles is null or jsonb_typeof(p_articles) <> 'array' or jsonb_array_length(p_articles) = 0 then
     -- 기사 0건 digest 는 만들지 않는다. 만들면 쪽지가 "기사 없음" 카드를 참조하게 되고,
@@ -89,15 +97,15 @@ begin
     raise exception 'articles must be a non-empty jsonb array';
   end if;
 
-  -- insert-once: 충돌 시 아무 컬럼도 바꾸지 않는다. (do nothing 은 id 를 못 돌려주므로
+  -- insert-once: 충돌 시 아무 컬럼도 바꾸지 않는다. (do nothing 은 행을 못 돌려주므로
   -- 자기 자신 대입으로 RETURNING 만 얻는다 — 값은 그대로다.)
-  insert into public.news_clipping_digests (clip_date, team_id, team_name, overview, articles)
+  -- 반환되는 overview 는 **저장된 값**이다: 신규면 방금 넣은 값, 충돌이면 기존 값.
+  return query
+  insert into public.news_clipping_digests as d (clip_date, team_id, team_name, overview, articles)
   values (p_clip_date, p_team_id, p_team_name, coalesce(p_overview, ''), p_articles)
   on conflict (clip_date, team_id) do update set
-    clip_date = public.news_clipping_digests.clip_date
-  returning id into v_id;
-
-  return v_id;
+    clip_date = d.clip_date
+  returning d.id, d.overview;
 end;
 $$;
 

@@ -6,6 +6,7 @@ import { NEWS_CLIPPER_IDS } from "@/lib/constants/news-clippers";
 import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 import { URGENT_NOTICE_USER_ID } from "@/lib/constants/urgent-notice";
 import { isNoReplySender, noReplyAutoReplyText } from "@/lib/constants/no-reply-senders";
+import { shouldFetchDigestForPush } from "@/types/news-clipping";
 import { fetchFavoritePlayerFanIds } from "@/lib/notifications/audience";
 
 // 푸시 알림 디스패처 (push-notifications-v1 S3).
@@ -135,6 +136,7 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
     overview?: string;
     push_preview?: string;
     digest_id?: number;
+    v?: number;
   } | null;
   if (NEWS_CLIPPER_IDS.has(senderId)) {
     if (clipping?.type === "news_clipping") {
@@ -145,14 +147,19 @@ async function handleDm(record: Record<string, unknown>): Promise<Dispatch[]> {
       // ⚠️ 삼순 blocker 2: 1차는 여기서 digest 를 매번 SELECT 했다 — 하루 27,208건 발송이면
       //    **DB 조회 27,208회가 추가**된다. 디스크 줄이려다 읽기 부하를 만드는 교환은 손해다.
       //    → 발송 시점에 push_preview(수십 바이트)를 payload 에 실어두고 그걸 읽는다.
-      //    전체 articles(3.5KB)는 여전히 digest 에만 있으므로 용량 이득은 그대로다.
-      //    구형 ref payload(push_preview 이전 발송분)만 조회로 폴백한다.
+      //
+      // ⚠️ 3차 교정: 폴백 조건을 "preview 가 비었나"가 아니라 **스키마 버전(v)** 으로 바꾼다.
+      //    전자로 두면 "신규인데 총평이 비어 preview 가 빈" 경우가 구형과 구분되지 않아
+      //    per-DM 조회가 조용히 부활한다. 신규(v>=1)는 어떤 입력에서도 조회 0 이다.
+      // 판정은 공유 술어 1개로 모은다 — 게이트(qa:news-clip-digest)가 이 술어를 직접 대조한다.
+      // 여기서 조건을 복제하면 게이트가 보는 것과 실행되는 것이 갈라진다.
       let overview = clipping.overview ?? clipping.push_preview;
-      if (!overview && typeof clipping.digest_id === "number") {
+      if (shouldFetchDigestForPush(clipping)) {
+        // 구형 ref payload(버전 필드 이전 발송분)만 여기로 떨어진다.
         const { data: digest } = await supabase
           .from("news_clipping_digests")
           .select("overview")
-          .eq("id", clipping.digest_id)
+          .eq("id", clipping.digest_id as number)
           .maybeSingle();
         overview = (digest?.overview as string | undefined) || undefined;
       }

@@ -12,7 +12,10 @@ import type {
   NewsClippingLegacyPayload,
   NewsClippingRefPayload,
 } from "@/types/news-clipping";
-import { toPushPreview as makePushPreview } from "@/types/news-clipping";
+import {
+  NEWS_CLIPPING_REF_VERSION,
+  toPushPreview as makePushPreview,
+} from "@/types/news-clipping";
 import {
   TEAM_SEARCH,
   fetchNaverNews,
@@ -557,9 +560,13 @@ export async function toRefClippingPayload(
     );
     return null;
   }
-  const digestId = Number(data);
-  if (!Number.isFinite(digestId) || digestId <= 0) {
-    console.error(`[news-clipping] digest id 불량 (team ${payload.team_id}):`, data);
+  // ⚠️ 삼순 blocker 3 (3차): RPC 는 이제 (digest_id, stored_overview) 1행을 돌려준다.
+  //    **저장된 overview** 를 써야 충돌(이미 존재) 시 카드와 푸시가 같은 기사를 가리킨다.
+  //    1차 수정은 id 만 받고 preview 는 이번에 생성한 payload.overview 로 만들어서,
+  //    cron 재실행·샘플 선점이면 카드=A / 푸시=B 가 됐다.
+  const row = resolveDigestRow(data);
+  if (!row) {
+    console.error(`[news-clipping] digest 행 불량 (team ${payload.team_id}):`, data);
     return null;
   }
   return {
@@ -567,10 +574,25 @@ export async function toRefClippingPayload(
     team_id: payload.team_id,
     team_name: payload.team_name,
     date: payload.date,
-    digest_id: digestId,
+    digest_id: row.digest_id,
+    // 신규 참조형 스키마 버전. dispatch 는 이 값이 있으면 digest 를 조회하지 않는다.
+    v: NEWS_CLIPPING_REF_VERSION,
     // ⚠️ 삼순 blocker 2: 참조형에 푸시 본문이 없으면 디스패쳐가 발송건마다 digest 를 재조회한다
     //    (하루 27,208건 = DB 조회 27,208회 추가). 짧은 미리보기만 실어보낸다 —
     //    전체 articles(3.5KB)는 여전히 digest 에만 있어 용량 이득은 유지된다.
-    push_preview: makePushPreview(payload.overview),
+    //    총평이 비어도 makePushPreview 가 기본 문구를 채우므로 preview 는 절대 비지 않는다.
+    push_preview: makePushPreview(row.stored_overview),
   };
+}
+
+/** RPC 반환(단일 행 또는 1행 배열)에서 digest_id/stored_overview 를 뽑는다. */
+function resolveDigestRow(
+  data: unknown,
+): { digest_id: number; stored_overview: string } | null {
+  const first = Array.isArray(data) ? data[0] : data;
+  if (!first || typeof first !== "object") return null;
+  const id = Number((first as { digest_id?: unknown }).digest_id);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const overview = (first as { stored_overview?: unknown }).stored_overview;
+  return { digest_id: id, stored_overview: typeof overview === "string" ? overview : "" };
 }

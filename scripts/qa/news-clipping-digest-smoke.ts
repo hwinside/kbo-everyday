@@ -23,10 +23,15 @@
  * 실행: npx tsx scripts/qa/news-clipping-digest-smoke.ts  (npm run qa:news-clip-digest)
  */
 import {
+  NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK,
   NEWS_CLIPPING_PUSH_PREVIEW_MAX,
+  NEWS_CLIPPING_REF_VERSION,
+  hasSelfContainedPushBody,
   isLegacyNewsClippingPayload,
+  isLegacyRefPayload,
   isNewsClippingPayload,
   isRefNewsClippingPayload,
+  shouldFetchDigestForPush,
   toNewsClippingView,
   toPushPreview,
   type NewsClippingArticle,
@@ -34,6 +39,12 @@ import {
   type NewsClippingLegacyPayload,
   type NewsClippingRefPayload,
 } from "@/types/news-clipping";
+import {
+  DIGEST_MAX_ATTEMPTS,
+  NewsClippingDigestLoader,
+  digestRetryDelayMs,
+  type DigestFetchResult,
+} from "@/lib/news-clipping-digest-loader";
 
 let fail = 0;
 function ok(name: string, cond: boolean) {
@@ -73,6 +84,7 @@ const REF: NewsClippingRefPayload = {
   team_name: "LG 트윈스",
   date: "2026-08-19",
   digest_id: 42,
+  v: NEWS_CLIPPING_REF_VERSION,
   push_preview: "4연승 질주",
 };
 
@@ -176,7 +188,13 @@ ok(
 // 하루 27,208건 발송이면 DB 조회 27,208회 추가 — 디스크 줄이려다 읽기 부하를 만드는 교환.
 {
   ok("toPushPreview 가 짧은 총평을 그대로 반환", toPushPreview("4연승 질주") === "4연승 질주");
-  ok("빈 총평은 undefined", toPushPreview("") === undefined && toPushPreview(null) === undefined);
+  // ⚠️ 3차 변경: 빈 총평도 **기본 문구로 채운다**. undefined 를 돌려주면 신규 발송에서
+  //    push_preview 가 사라져 per-DM digest 조회가 부활한다(삼순 blocker 2, 3차).
+  ok(
+    "빈 총평은 기본 문구(undefined 아님)",
+    toPushPreview("") === NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK &&
+      toPushPreview(null) === NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK,
+  );
   const long = "가".repeat(NEWS_CLIPPING_PUSH_PREVIEW_MAX + 50);
   const clipped = toPushPreview(long);
   ok(
@@ -202,5 +220,243 @@ ok(
   ok(`ref 가 legacy 의 1/3 미만 (${(legacyBytes / refBytes).toFixed(1)}배 감소)`, refBytes * 3 < legacyBytes);
 }
 
-console.log(`\nnews-clipping digest: ${fail === 0 ? "PASS" : `${fail} FAILED`}`);
-if (fail > 0) process.exit(1);
+// ── 7) 푸시 조회 계약 (삼순 blocker 2, 3차) ────────────────────────────────
+// "신규 발송은 어떤 입력에서도 per-DM digest 조회 0" 을 술어로 고정한다.
+// preview 유무로 신구를 가르면 "신규인데 총평이 비어 preview 가 빈" 경우가 구형과
+// 구분되지 않아 조회가 조용히 부활한다 — 그래서 버전 필드로 가른다.
+{
+  ok("신규 ref(v1, preview 있음) → 조회 안 함", !shouldFetchDigestForPush(REF));
+  ok(
+    "신규 ref 인데 preview 가 비어도 조회 안 함(버전으로 판정)",
+    !shouldFetchDigestForPush({ ...REF, push_preview: "" }) &&
+      !shouldFetchDigestForPush({ ...REF, push_preview: undefined }) &&
+      !shouldFetchDigestForPush({ ...REF, push_preview: "   " }),
+  );
+  ok(
+    "구형 ref(버전 없음) + 본문 없음 → 조회 함(유일한 폴백)",
+    shouldFetchDigestForPush({ digest_id: 42 }),
+  );
+  ok(
+    "구형 ref 라도 preview 있으면 조회 안 함",
+    !shouldFetchDigestForPush({ digest_id: 42, push_preview: "4연승" }),
+  );
+  ok("legacy(overview 보유) → 조회 안 함", !shouldFetchDigestForPush({ overview: "4연승" }));
+  ok("digest_id 도 본문도 없으면 조회 안 함", !shouldFetchDigestForPush({}));
+
+  // 발송 파이프라인 불변식: 신규 ref 는 항상 자기 힘으로 푸시 본문을 만든다.
+  ok("신규 ref 는 self-contained", hasSelfContainedPushBody(REF));
+  ok("구형 ref 판정", isLegacyRefPayload({ ...REF, v: undefined } as NewsClippingRefPayload));
+  ok("신규 ref 는 구형이 아님", !isLegacyRefPayload(REF));
+
+  // 총평이 비어도 preview 는 절대 비지 않는다 → 신규 발송의 조회 0 이 구조적으로 보장된다.
+  ok("빈 총평도 기본 문구로 채워짐", toPushPreview("") === NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK);
+  ok("null 총평도 기본 문구", toPushPreview(null) === NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK);
+  ok("공백만 있는 총평도 기본 문구", toPushPreview("   ") === NEWS_CLIPPING_PUSH_PREVIEW_FALLBACK);
+}
+
+async function runLoaderSuite(): Promise<void> {
+  // ── 8) 로더 — 재시도·겹침·부분누락 (삼순 blocker 1, 3차) ───────────────────
+  // 2차 구현은 실패 시 ref 만 갱신해 effect 가 다시 돌지 않았다 = **재시도가 한 번도
+  // 일어나지 않았다**. 리렌더를 트리거로 쓰면 조용한 대화에서 영구 실패한다.
+  // 여기서는 hook 을 렌더링하지 않고 로더의 스케줄링을 가짜 타이머로 직접 태운다.
+  type Timer = { fn: () => void; ms: number; id: number };
+
+  class FakeClock {
+    private timers: Timer[] = [];
+    private seq = 0;
+    set = (fn: () => void, ms: number): unknown => {
+      const id = ++this.seq;
+      this.timers.push({ fn, ms, id });
+      return id;
+    };
+    clear = (h: unknown): void => {
+      this.timers = this.timers.filter((t) => t.id !== h);
+    };
+    pending(): number {
+      return this.timers.length;
+    }
+    nextDelay(): number | null {
+      return this.timers.length > 0 ? this.timers[0].ms : null;
+    }
+    /** 예약된 타이머 하나를 실행한다(실제 시간 경과 없이). */
+    async tick(): Promise<void> {
+      const t = this.timers.shift();
+      if (!t) return;
+      t.fn();
+      // pump 는 async 라 마이크로태스크를 몇 번 흘려준다.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    }
+  }
+
+  function makeDigest(id: number): NewsClippingDigest {
+    return { ...DIGEST, id };
+  }
+
+  async function flush() {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  // 8-1) 실패 → 타이머 재시도 → 성공. (리렌더 없이 회복되는가)
+  {
+    const clock = new FakeClock();
+    let calls = 0;
+    const fetcher = async (ids: number[]): Promise<DigestFetchResult> => {
+      calls++;
+      if (calls === 1) return { rows: [], error: "network down" };
+      return { rows: ids.map(makeDigest) };
+    };
+    let changes = 0;
+    const loader = new NewsClippingDigestLoader(fetcher, {
+      onChange: () => { changes++; },
+      setTimeoutFn: clock.set,
+      clearTimeoutFn: clock.clear,
+    });
+
+    loader.request([7]);
+    await flush();
+    ok("8-1 1회 실패 후 digest 없음", loader.digests.size === 0);
+    // 핵심: 리렌더(request 재호출) 없이도 재시도가 예약돼 있어야 한다.
+    ok("8-1 실패 후 재시도 타이머가 예약된다(리렌더 불필요)", loader.hasPendingRetry());
+    ok(`8-1 첫 backoff 는 ${digestRetryDelayMs(1)}ms`, clock.nextDelay() === digestRetryDelayMs(1));
+
+    await clock.tick();
+    ok("8-1 재시도로 회복", loader.digests.get(7)?.id === 7);
+    ok("8-1 fetcher 2회 호출", calls === 2);
+    ok("8-1 onChange 1회(성공 시에만)", changes === 1);
+    ok("8-1 성공 후 재시도 타이머 없음", !loader.hasPendingRetry());
+    loader.dispose();
+  }
+
+  // 8-2) 시도 상한 — 무한 재시도 금지, 상한 뒤에는 조용히 텍스트 렌더.
+  {
+    const clock = new FakeClock();
+    let calls = 0;
+    const loader = new NewsClippingDigestLoader(
+      async () => { calls++; return { rows: [], error: "boom" }; },
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([9]);
+    await flush();
+    for (let i = 0; i < DIGEST_MAX_ATTEMPTS + 2; i++) await clock.tick();
+    ok(`8-2 시도는 ${DIGEST_MAX_ATTEMPTS}회에서 멈춘다 (실측 ${calls})`, calls === DIGEST_MAX_ATTEMPTS);
+    ok("8-2 상한 후 타이머 없음(무한 재시도 아님)", !loader.hasPendingRetry());
+    ok("8-2 backoff 는 지수", digestRetryDelayMs(2) === digestRetryDelayMs(1) * 2);
+    loader.dispose();
+  }
+
+  // 8-3) 부분 누락 — 요청 3개 중 2개만 오면 나머지 1개만 재시도한다.
+  {
+    const clock = new FakeClock();
+    const seen: number[][] = [];
+    const loader = new NewsClippingDigestLoader(
+      async (ids) => {
+        seen.push([...ids]);
+        return { rows: ids.filter((id) => id !== 3).map(makeDigest) };
+      },
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([1, 2, 3]);
+    await flush();
+    ok("8-3 받은 2건은 확정", loader.digests.has(1) && loader.digests.has(2));
+    ok("8-3 못 받은 1건은 미확정", !loader.digests.has(3));
+    await clock.tick();
+    ok(
+      `8-3 재시도는 누락분만 (실측 ${JSON.stringify(seen[1])})`,
+      seen.length === 2 && seen[1].length === 1 && seen[1][0] === 3,
+    );
+    ok("8-3 성공분은 재요청 안 함", seen[1].includes(1) === false && seen[1].includes(2) === false);
+    loader.dispose();
+  }
+
+  // 8-4) 요청 겹침 — 조회 중 새 메시지가 들어와도 진행 중 응답이 폐기되지 않는다.
+  //      (1차 구현의 generation fence 가 정확히 이걸 깨뜨렸다: A 응답 폐기 + A 는 재조회 불가)
+  {
+    const clock = new FakeClock();
+    let release: (() => void) | null = null;
+    const gate = new Promise<void>((res) => { release = res; });
+    const seen: number[][] = [];
+    const loader = new NewsClippingDigestLoader(
+      async (ids) => {
+        seen.push([...ids]);
+        if (seen.length === 1) await gate;
+        return { rows: ids.map(makeDigest) };
+      },
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([10]);
+    await flush();
+    ok("8-4 첫 요청 in-flight", loader.inFlightIds().join(",") === "10");
+    // 조회 중 새 digest 요구가 들어온다(Realtime 새 쪽지).
+    loader.request([11]);
+    await flush();
+    // 계약은 "동시 발사 금지"가 아니라 **같은 id 를 두 번 조회하지 않는다** 이다.
+    // 새로 들어온 B 를 A 가 끝날 때까지 붙잡아둘 이유는 없다(카드가 늦게 뜬다).
+    ok(
+      `8-4 in-flight 인 A(10)를 다시 요청하지 않는다 (실측 ${JSON.stringify(seen)})`,
+      seen.every((batch, i) => (i === 0 ? true : !batch.includes(10))),
+    );
+    release?.();
+    await flush();
+    ok("8-4 A 응답이 반영된다(폐기되지 않음)", loader.digests.has(10));
+    // 남은 11 은 타이머 없이도 이어서 조회되거나, 재시도 타이머로 예약돼야 한다.
+    if (!loader.digests.has(11)) await clock.tick();
+    ok("8-4 겹쳐 들어온 B 도 결국 조회된다", loader.digests.has(11));
+    ok("8-4 A 는 그대로 유지", loader.digests.has(10));
+    loader.dispose();
+  }
+
+  // 8-5) 응답 오염 방어 — 요청하지 않은 행이 섞여 오면 버린다.
+  {
+    const clock = new FakeClock();
+    const loader = new NewsClippingDigestLoader(
+      async (ids) => ({ rows: [...ids.map(makeDigest), makeDigest(999)] }),
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([5]);
+    await flush();
+    ok("8-5 요청한 행은 수용", loader.digests.has(5));
+    ok("8-5 요청 안 한 행은 무시", !loader.digests.has(999));
+    loader.dispose();
+  }
+
+  // 8-6) dispose 후에는 아무 일도 하지 않는다(언마운트 누수 방지).
+  {
+    const clock = new FakeClock();
+    let calls = 0;
+    const loader = new NewsClippingDigestLoader(
+      async (ids) => { calls++; return { rows: ids.map(makeDigest) }; },
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.dispose();
+    loader.request([1]);
+    await flush();
+    ok("8-6 dispose 후 조회 안 함", calls === 0);
+    ok("8-6 dispose 후 타이머 없음", clock.pending() === 0);
+  }
+
+  // 8-7) 재시도 대기 중 언마운트 — 예약된 타이머가 취소된다.
+  //      대화 화면을 떠난 뒤에도 백오프 타이머가 살아 DB 를 두드리면 안 된다.
+  //      (8-6 은 "dispose 후 새 요청"만 봐서 이 경로가 관측되지 않았다 — 무대를 따로 만든다.)
+  {
+    const clock = new FakeClock();
+    let calls = 0;
+    const loader = new NewsClippingDigestLoader(
+      async () => { calls++; return { rows: [], error: "boom" }; },
+      { onChange: () => {}, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([4]);
+    await flush();
+    ok("8-7 실패 후 재시도 타이머 예약됨(무대 성립)", clock.pending() === 1);
+    const before = calls;
+    loader.dispose();
+    ok("8-7 dispose 가 예약 타이머를 취소한다", clock.pending() === 0);
+    await clock.tick();
+    ok("8-7 언마운트 후 추가 조회 없음", calls === before);
+  }
+}
+
+// top-level await 는 이 스크립트의 cjs 트랜스폼에서 못 쓴다 — 명시적으로 태우고 종료 코드를 낸다.
+void runLoaderSuite().then(() => {
+  console.log(`\nnews-clipping digest: ${fail === 0 ? "PASS" : `${fail} FAILED`}`);
+  if (fail > 0) process.exit(1);
+});
