@@ -6,6 +6,7 @@ import {
   geniusMotionClipFor,
   geniusMotionPosterSrc,
   geniusMotionSrc,
+  type GeniusAnswerPlayerRole,
   type GeniusReplyKind,
 } from "@/lib/constants/baseball-genius";
 
@@ -36,6 +37,7 @@ export default function GeniusMascotImage({
   motionIntent = null,
   answerTeamId = null,
   favoriteTeamId = null,
+  answerPlayerRole = null,
   testId,
 }: {
   /** 답변 의미 분류. null 이면 legacy(payload 없는 과거 답변)로 보고 야구 동작을 준다. */
@@ -63,10 +65,15 @@ export default function GeniusMascotImage({
   answerTeamId?: number | null;
   /** 보고 있는 유저의 최애팀 id (프로필). 미설정이면 응원 없음. */
   favoriteTeamId?: number | null;
+  /**
+   * 답변 대상 선수의 역할 (서버 payload). 확정되면 투수=pitching / 타자·야수=swing 으로
+   * 재생한다(하린아빠 2026-08-19). 없으면 기존 교대 그대로다(fail-close).
+   */
+  answerPlayerRole?: GeniusAnswerPlayerRole | null;
   /** 게이트가 소유권을 세는 앵커. 사용처마다 다르므로 호출부가 준다. */
   testId: string;
 }) {
-  const clip = geniusMotionClipFor(replyKind, messageId, { motion, motionIntent, answerTeamId, favoriteTeamId });
+  const clip = geniusMotionClipFor(replyKind, messageId, { motion, motionIntent, answerTeamId, favoriteTeamId, answerPlayerRole });
   return (
     // ⚠️ 애니메이션 WebP 는 CSS `animation: none` 으로 멈출 수 없다 — 재생 주체가
     // 이미지 디코더라 CSS 가 관여하지 못한다. `prefers-reduced-motion` 에서는

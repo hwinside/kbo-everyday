@@ -28,6 +28,7 @@ import {
   BASEBALL_GENIUS_MIN_QUESTION_LENGTH,
   BASEBALL_GENIUS_PINNED_ROOM_LEAVABLE,
   BASEBALL_GENIUS_USER_ID,
+  geniusAnswerPlayerRoleFromPayload,
   geniusMotionFromPayload,
   geniusMotionIntentFromPayload,
   isGeniusPickerDisabled,
@@ -585,6 +586,7 @@ export default function DMChatPage() {
                           motionIntent={geniusMotionIntentFromPayload(geniusReply)}
                           answerTeamId={geniusReply?.answer_team_id ?? null}
                           favoriteTeamId={profile?.team_id ?? null}
+                          answerPlayerRole={geniusAnswerPlayerRoleFromPayload(geniusReply)}
                           testId="genius-reply-mascot"
                         />
                       ) : (

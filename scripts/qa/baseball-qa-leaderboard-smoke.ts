@@ -258,7 +258,8 @@ check("P0: full=1 freshness는 모든 구성시각 검증 후 가장 오래된 �
     null,
     "미래 static을 min 계산으로 숨기면 안 된다",
   );
-  const routeSource = readFileSync("src/app/api/stats/route.ts", "utf8");
+  // PR #1257: GET 구현이 route → src/lib/services/stats.ts 로 물리 이동 — 결속 검사도 구현 파일을 본다(계약 동일).
+  const routeSource = readFileSync("src/lib/services/stats.ts", "utf8");
   assert.match(routeSource, /const updatedAt = full\s*\? requireOldestFullEntryTimestamp\(\[currentUpdatedAt, staticGeneratedAt\]\)/);
   assert.match(routeSource, /statsMeta\.battersGeneratedAt/);
 });
@@ -475,14 +476,16 @@ checkAsync("GET 경계: freshness 계약 오류는 fallback 200으로 우회하�
     oldestFullEntryTimestamp([statsMeta.battersGeneratedAt], nowAfterGeneration),
     "파생 시계에서 fallback freshness 가 invalid — 이 검사는 mutant 를 검출할 수 없다",
   );
-  const response = handleStatsGetFailure(
+  // PR #1257: handleStatsGetFailure 는 Response 대신 순수 { body, status?, headers } 를 반환한다
+  // (route 래퍼가 status 미지정 시 200 으로 직렬화). 계약 강도는 동일 — 실효 status 로 판정한다.
+  const result = handleStatsGetFailure(
     new StatsFreshnessContractError(),
     "2026",
     "batter",
     nowAfterGeneration,
   );
-  assert.equal(response.status, 500);
-  const body = await response.json();
+  assert.equal(result.status ?? 200, 500);
+  const body = result.body as { stats: unknown[]; source?: string };
   assert.equal(body.stats.length, 0);
   assert.notEqual(body.source, "fallback");
 });

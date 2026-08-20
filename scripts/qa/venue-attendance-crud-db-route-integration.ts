@@ -279,16 +279,47 @@ function makeQueryBuilder(db: PGlite, table: string) {
 async function installSupabaseShim(db: PGlite) {
   const adminModule = await import("../../src/lib/supabase/admin");
   const client = adminModule.supabaseAdmin as unknown as {
-    auth: { getUser: (token: string) => Promise<unknown> };
+    auth: {
+      getUser: (token: string) => Promise<unknown>;
+      getClaims: (token: string) => Promise<unknown>;
+    };
     from: (table: string) => unknown;
     rpc: (name: string, args: Record<string, unknown>) => Promise<unknown>;
   };
 
+  const resolveTestUser = (token: string) =>
+    token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
   client.auth.getUser = async (token: string) => {
-    const userId = token === OWNER_TOKEN ? OWNER : token === OTHER_TOKEN ? OTHER : null;
+    const userId = resolveTestUser(token);
     return userId
       ? { data: { user: { id: userId } }, error: null }
       : { data: { user: null }, error: { message: "invalid token" } };
+  };
+  // verifyAccessToken 은 이제 getClaims(JWKS 로컬 검증) 경로를 탄다. 서명 검증을
+  // shim 이 대신하는 것처럼 토큰→유저 매핑도 shim 이 맞춰준다(테스트 JWT 의
+  // sub 은 UUID 가 아니라서 그대로 흘려보내면 라우트가 깨진다).
+  client.auth.getClaims = async (token: string) => {
+    const userId = resolveTestUser(token);
+    if (!userId) {
+      return { data: null, error: { message: "invalid token", code: "bad_jwt" } };
+    }
+    // verifyAccessToken 은 이제 iss/aud/role/sub/session_id 를 fail-close 로
+    // 검증한다(삼순 blocker④). {sub,email} 만 돌려주면 이 fixture 가 실제 계약을
+    // 우회해버리므로, 정상 access token 과 같은 full claim shape 를 돌려준다.
+    return {
+      data: {
+        claims: {
+          iss: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1`,
+          aud: "authenticated",
+          role: "authenticated",
+          sub: userId,
+          session_id: `sess-${userId}`,
+          email: null,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+        },
+      },
+      error: null,
+    };
   };
   client.from = (table: string) => makeQueryBuilder(db, table);
   client.rpc = async (name: string, args: Record<string, unknown>) => {

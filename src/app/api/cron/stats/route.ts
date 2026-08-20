@@ -415,35 +415,110 @@ interface Collected {
   source: Source;
 }
 
-/** KBO 우선 → 하드실패/열화 시 Naver. 둘 다 실패면 throw(=fail-close, upsert 미수행). */
+/**
+ * 종류별 공식 1차 소스.
+ * 타자: KBO 공홈 타자 표는 페이지당 30행 단일 페이지만 내려와 coverage 계약(31행, 위
+ * KBO_MIN_COVERAGE.batter)을 구조상 통과할 수 없다 — 2026-08-19 실측: 8/5부터 14일 연속
+ * 매일 Naver failover(타자 330~332명 온전 수집). 따라서 타자는 Naver가 공식 1차다.
+ * 상태 판정도 이 공식 1차 기준으로 한다(1차 성공=success, 폴백 수집=warning).
+ */
+const PRIMARY_SOURCE: Record<"batter" | "pitcher", Source> = {
+  batter: "naver",
+  pitcher: "kbo",
+};
+
+/**
+ * kind+source별 검증된 정적 전량 baseline 급감 가드.
+ * 정적 하한(NAVER_MIN_COVERAGE·팀당 최소)만으로는 "균등하게 잘린 부분응답"(예: 332명 중
+ * 팀당 16명씩 160명)이 개별 행 검증을 전부 통과해 나머지 선수를 경보 없이 stale로
+ * 남긴다(2026-08-19 삼순 P0 1차). DB 행 count는 소스 구분이 없어 투수 KBO 96명↔Naver
+ * 281명이 섞이고(복구된 KBO가 영구 거부되는 고착), 7일 공백·count=null에서 조용히
+ * 무력화된다(삼순 P0 2차). 그래서 런타임 조회 없이 kind+source별 실측 전량을 정적으로
+ * 결속한다 — 상태가 없으니 고착·공백·조회오류 축이 원천 제거된다.
+ *
+ * 값은 2026-08-19 실측 전량(타자 Naver 332·투수 Naver 281·투수 KBO 병합 96).
+ * 시즌 내 선수 수는 단조증가라 정적 floor는 시간이 갈수록 안전해진다.
+ * ⚠️ 시즌 경계(개막 초기)에는 실제 전량이 이 값 아래로 내려가므로 개막 시 재설정 필요
+ * (그 전까지는 fail-close가 맞다 — 절단 응답을 조용히 받느니 수집 중단이 낫다).
+ * KBO 타자는 실전 30행 단일 페이지라 전량 전달이 원리적으로 불가 → 타자 전량 332를
+ * 그대로 결속해 타자는 사실상 Naver 단독(절단 KBO 폴백 채택 불가)이다.
+ */
+const SOURCE_FULL_BASELINE: Record<"batter" | "pitcher", Record<Source, number>> = {
+  batter: { naver: 332, kbo: 332 },
+  pitcher: { naver: 281, kbo: 96 },
+};
+const BASELINE_MIN_RATIO = 0.9;
+
+function assertNoCoverageCollapse(
+  kind: "batter" | "pitcher",
+  source: Source,
+  fetchedCount: number,
+): void {
+  const baseline = SOURCE_FULL_BASELINE[kind][source];
+  const floor = Math.ceil(baseline * BASELINE_MIN_RATIO);
+  if (fetchedCount < floor) {
+    const label = source === "kbo" ? "KBO" : "Naver";
+    throw new Error(
+      `${label} ${kind} coverage collapse: fetched ${fetchedCount} < ${floor} (90% of full baseline ${baseline})`,
+    );
+  }
+}
+
+function classifyFallbackReason(e: Error): "timeout" | "http-error" | "schema-error" | "network-error" {
+  const msg = e.message || "";
+  return e.name === "TimeoutError" || e.name === "AbortError"
+    ? "timeout"
+    : msg.includes("HTTP")
+      ? "http-error"
+      : msg.includes("KBO") || msg.includes("Naver")
+        ? "schema-error"
+        : "network-error";
+}
+
+/** 공식 1차 우선 → 하드실패/열화 시 폴백 소스. 둘 다 실패면 throw(=fail-close, upsert 미수행). */
 async function collect(
   kind: "batter" | "pitcher",
   roster: RosterPlayer[],
   season: number,
 ): Promise<Collected> {
-  try {
+  const fromKbo = async (): Promise<Collected> => {
     const stats =
       kind === "batter"
         ? await fetchKboBatterStats(roster)
         : await fetchKboPitcherStats(roster);
+    assertNoCoverageCollapse(kind, "kbo", stats.length);
     return { stats, source: "kbo" };
-  } catch (e) {
-    const msg = (e as Error).message || "";
-    const reason: "timeout" | "http-error" | "schema-error" | "network-error" =
-      (e as Error).name === "TimeoutError" || (e as Error).name === "AbortError"
-        ? "timeout"
-        : msg.includes("HTTP")
-          ? "http-error"
-          : msg.includes("KBO")
-            ? "schema-error"
-            : "network-error";
-    void trackFallback(`kbo-player-stats-${kind}`, reason, { errorMessage: msg }).catch(() => {});
-
+  };
+  const fromNaver = async (): Promise<Collected> => {
     const rows = await fetchNaverPlayerStats(kind === "batter" ? "HITTER" : "PITCHER", season);
     const stats =
       kind === "batter" ? mapNaverBatters(rows, roster) : mapNaverPitchers(rows, roster);
     if (stats.length === 0) throw new Error(`Naver ${kind} empty after map`);
+    assertNoCoverageCollapse(kind, "naver", stats.length);
     return { stats, source: "naver" };
+  };
+
+  const primary = PRIMARY_SOURCE[kind];
+  const fallbackSource: Source = primary === "kbo" ? "naver" : "kbo";
+  const [tryFirst, trySecond] = primary === "kbo" ? [fromKbo, fromNaver] : [fromNaver, fromKbo];
+  try {
+    return await tryFirst();
+  } catch (e) {
+    const primaryMsg = (e as Error).message || "";
+    // apiName은 "실패한 1차 소스" 기준. 기존 kbo-player-stats-* 계약은 투수(kbo 1차)에서 유지된다.
+    void trackFallback(`${primary}-player-stats-${kind}`, classifyFallbackReason(e as Error), {
+      errorMessage: primaryMsg,
+    }).catch(() => {});
+    try {
+      return await trySecond();
+    } catch (e2) {
+      // dual-fail에서 마지막(폴백) 오류만 남기면 실제 원인인 1차 오류가 job/API에서
+      // 유실된다(tracker는 fire-and-forget이라 보장 안 됨) — 두 원인을 합성해 던진다(삼순 3차).
+      const fallbackMsg = (e2 as Error).message || "";
+      throw new Error(
+        `${kind} dual-fail — primary(${primary}): ${primaryMsg}; fallback(${fallbackSource}): ${fallbackMsg}`,
+      );
+    }
   }
 }
 
@@ -559,8 +634,21 @@ export async function GET(req: NextRequest) {
         },
         { status: 500 },
       );
-    } else if (batterRes.source === "naver" || pitcherRes.source === "naver") {
-      await finishJob(logId, "warning", summary, "KBO 실패 → Naver failover");
+    } else if (
+      batterRes.source !== PRIMARY_SOURCE.batter ||
+      pitcherRes.source !== PRIMARY_SOURCE.pitcher
+    ) {
+      // 공식 1차 소스가 아닌 폴백으로 수집된 종류만 경보(warning). 1차 성공은 success.
+      const fellBack = (
+        [
+          ["타자", batterRes.source, PRIMARY_SOURCE.batter],
+          ["투수", pitcherRes.source, PRIMARY_SOURCE.pitcher],
+        ] as const
+      )
+        .filter(([, actual, primary]) => actual !== primary)
+        .map(([label, actual, primary]) => `${label} 1차(${primary}) 실패 → ${actual} 폴백`)
+        .join("; ");
+      await finishJob(logId, "warning", summary, fellBack);
     } else {
       await finishJob(logId, "success", summary);
     }

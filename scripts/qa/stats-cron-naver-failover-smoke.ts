@@ -26,6 +26,7 @@ interface UpsertCall {
 }
 let upserts: UpsertCall[] = [];
 let jobStatuses: string[] = [];
+let jobMessages: (string | null)[] = [];
 
 const TEAMS10 = ["LG", "두산", "KT", "SSG", "NC", "KIA", "롯데", "삼성", "한화", "키움"];
 
@@ -46,7 +47,8 @@ function pitcherRow(i: number): string {
 }
 const KBO_HITTER_HTML = `<table><tbody>${Array.from({ length: 40 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
 const KBO_HITTER_PAGE_BOUNDARY_HTML = `<table><tbody>${Array.from({ length: 30 }, (_, i) => hitterRow(i)).join("")}</tbody></table>`;
-const KBO_PITCHER_HTML = `<table><tbody>${Array.from({ length: 19 }, (_, i) => pitcherRow(i)).join("")}</tbody></table>`;
+// 투수 100행 — kind+source 정적 baseline(투수 KBO 병합 96명)의 90% floor(87)를 실전 규모로 통과
+const KBO_PITCHER_HTML = `<table><tbody>${Array.from({ length: 100 }, (_, i) => pitcherRow(i)).join("")}</tbody></table>`;
 const EMPTY_TABLE_HTML = "<table><tbody></tbody></table>";
 // KBO 503/302 본문에는 표가 아예 없다(실측: 302 본문 <tbody> 부재).
 const ERROR_BODY = "<html><body>Service Unavailable</body></html>";
@@ -123,7 +125,8 @@ type NaverMode =
   | "pagesize-full"
   | "duplicate-names"
   | "team-skew"
-  | "bad-inning";
+  | "bad-inning"
+  | "uniform-160";
 
 const realFetch = globalThis.fetch;
 
@@ -145,7 +148,10 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
         // logId 가 정상 반환된다(배열이면 logId=undefined → finishJob 조기 return).
         if (init?.method === "POST") return Response.json({ id: 1 });
         if (init?.method === "PATCH") {
-          if (body?.status) jobStatuses.push(String(body.status));
+          if (body?.status) {
+            jobStatuses.push(String(body.status));
+            jobMessages.push(body.error_message == null ? null : String(body.error_message));
+          }
           return Response.json({});
         }
         return Response.json({ started_at: new Date().toISOString() });
@@ -217,24 +223,27 @@ function installFetch(kbo: KboMode, naver: NaverMode, dbFail = false) {
           // pageSize 에 꿉 차게 반환 → 더 받을 게 남았을 수 있음
           return Response.json(isPitcher ? naverPitchers(500) : naverHitters(500));
         case "duplicate-names": {
-          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          const fixture = isPitcher ? naverPitchers(281) : naverHitters(300);
           const rows = fixture.result.seasonPlayerStats;
           rows[1].playerName = rows[0].playerName;
           rows[1].teamName = rows[0].teamName;
           return Response.json(fixture);
         }
         case "team-skew": {
-          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          const fixture = isPitcher ? naverPitchers(281) : naverHitters(300);
           for (const row of fixture.result.seasonPlayerStats) row.teamName = "LG";
           return Response.json(fixture);
         }
+        case "uniform-160":
+          // 팀당 16명씩 균등 160명 — 정적 하한(150명·팀당 15명)은 전부 통과하는 절단 응답
+          return Response.json(isPitcher ? naverPitchers(160) : naverHitters(160));
         case "bad-inning": {
-          const fixture = isPitcher ? naverPitchers(200) : naverHitters(300);
+          const fixture = isPitcher ? naverPitchers(281) : naverHitters(300);
           if (isPitcher) fixture.result.seasonPlayerStats[0].pitcherInning = "not-an-inning";
           return Response.json(fixture);
         }
         default:
-          return Response.json(isPitcher ? naverPitchers(200) : naverHitters(329));
+          return Response.json(isPitcher ? naverPitchers(281) : naverHitters(329));
       }
     }
 
@@ -255,6 +264,7 @@ function req() {
 async function run(kbo: KboMode, naver: NaverMode, dbFail = false) {
   upserts = [];
   jobStatuses = [];
+  jobMessages = [];
   installFetch(kbo, naver, dbFail);
   const res = await GET(req());
   const body = (await res.json()) as Record<string, never>;
@@ -273,23 +283,40 @@ function ok(name: string) {
 
 async function main() {
 
-  // ── 1. KBO 정상 → KBO 소스 유지, pa/sac/sf 포함(기존 계약 무변경) ─────────
+  // ── 1. 정상 경로: 타자=Naver(공식 1차)·투수=KBO(공식 1차) → success·경보 없음 ───
   {
     const { status, body } = await run("ok", "ok");
     assert.equal(status, 200);
-    assert.equal(body["sources"]["batter"], "kbo");
-    assert.equal(body["sources"]["pitcher"], "kbo");
+    assert.equal(body["sources"]["batter"], "naver", "타자 공식 1차는 Naver");
+    assert.equal(body["sources"]["pitcher"], "kbo", "투수 공식 1차는 KBO");
     const rows = allRows(batterUpserts());
     assert.ok(rows.length > 0, "타자 upsert 수행");
-    assert.ok("pa" in rows[0] && "sac" in rows[0] && "sf" in rows[0], "KBO 경로는 pa/sac/sf 포함");
-    assert.equal(rows[0].pa, 432);
-    assert.equal(rows[0].sac, 7);
-    assert.equal(rows[0].sf, 3);
+    assert.ok(
+      rows.every((r) => !("pa" in r) && !("sac" in r) && !("sf" in r)),
+      "Naver 미커버 컴럼(pa/sac/sf)은 페이로드 제외 → 기존값 보존",
+    );
+    const p = allRows(pitcherUpserts());
+    assert.ok("hbp" in p[0], "투수 KBO 경로 컴럼 유지");
     assert.equal(jobStatuses.at(-1), "success");
-    ok("1. KBO 정상 경로 무변경 (pa/sac/sf 원값 upsert, job=success)");
+    assert.equal(jobMessages.at(-1), null, "공식 1차 수집은 경보 메시지 없음");
+    ok("1. 정상 경로: 타자 Naver 1차·투수 KBO 1차 = success(경보 없음)");
   }
 
-  // ── 2~5. KBO 하드실패(503/204/200-empty/timeout) → Naver 복구 ─────────────
+  // ── 1b. Naver 타자 실패 → KBO 40행 폴백도 전량 baseline(332) 미달 → fail-close ──
+  // 타자 전량은 KBO가 원리적으로 전달 불가(실전 30행)이므로 타자는 사실상 Naver 단독.
+  // 절단된 KBO 응답(40행)을 폴백으로 조용히 채택하면 292명이 stale로 남는다 → 차단.
+  {
+    const { status } = await run("ok", "500");
+    assert.equal(status, 500, "타자 Naver 실패 시 절단 KBO 폴백 채택 금지");
+    assert.equal(upserts.length, 0, "부분 40행 upsert 없음(투수 포함 원자적 fail-close)");
+    assert.equal(jobStatuses.at(-1), "error", "타자 수집 실패는 job error");
+    const m = String(jobMessages.at(-1));
+    assert.ok(m.includes("primary(naver)") && m.includes("Naver HTTP 500"), `1차 Naver 원인 보존: ${m}`);
+    assert.ok(m.includes("fallback(kbo)") && m.includes("coverage collapse"), `폴백 KBO 원인 병기: ${m}`);
+    ok("1b. Naver 타자 실패 → KBO 절단 폴백 채택 금지 + 두 원인 합성 기록(500·upsert 0·error)");
+  }
+
+  // ── 2~5. KBO 하드실패(503/204/200-empty/timeout) → 투수 Naver 폴백(타자는 원래 Naver 1차) ──
   for (const mode of ["503", "204", "empty", "timeout"] as KboMode[]) {
     const { status, body } = await run(mode, "ok");
     assert.equal(status, 200, `${mode}: Naver 복구로 200`);
@@ -311,8 +338,16 @@ async function main() {
     assert.equal(p[0].ip, "105 2/3", `${mode}: IP 분수 문자열 보존`);
     assert.equal(p[0].whip, "1.30", `${mode}: whip 표기`);
     assert.equal(p[0].wpct, "0.750", `${mode}: wpct 표기`);
-    assert.equal(jobStatuses.at(-1), "warning", `${mode}: failover 는 warning`);
-    ok(`KBO ${mode} → Naver 복구 + 미커버 컬럼 보존 + 표기계약 유지`);
+    assert.equal(jobStatuses.at(-1), "warning", `${mode}: 투수 failover 는 warning`);
+    assert.ok(
+      String(jobMessages.at(-1)).includes("투수 1차(kbo) 실패 → naver 폴백"),
+      `${mode}: 경보 메시지에 투수 폴백 명시 (${jobMessages.at(-1)})`,
+    );
+    assert.ok(
+      !String(jobMessages.at(-1)).includes("타자"),
+      `${mode}: 타자는 공식 1차(naver) 성공이므로 경보 미포함`,
+    );
+    ok(`KBO ${mode} → 투수 Naver 복구 + 미커버 컬럼 보존 + 표기계약 유지`);
   }
 
   // ── 6. KBO partial(안내문 행) → 0/".000" 오염 upsert 금지 ─────────────────
@@ -416,14 +451,55 @@ async function main() {
     ok(`17. Naver ${mode} malformed 200 → upsert 0`);
   }
 
-  // ── 18. KBO 실제 30행 페이지 경계는 완전 목록이 아니므로 Naver 전량 복구 ──
+  // ── 18. KBO 30행 페이지 경계는 폴백으로도 채택 금지(31위 이하 stale 방지 계약 유지) ──
   {
-    const { status, body } = await run("page-boundary", "ok");
+    // 타자: Naver(1차) 실패 → KBO 폴백이 30행 단일 페이지 → coverage invalid → dual-fail
+    const { status } = await run("page-boundary", "500");
+    assert.equal(status, 500, "30행 폴백은 부분 채택 없이 fail-close");
+    assert.equal(upserts.length, 0, "30행만으로 상위 30명만 덮어쓰지 않음");
+    assert.equal(jobStatuses.at(-1), "error");
+    const m = String(jobMessages.at(-1));
+    assert.ok(m.includes("primary(naver)"), `1차 Naver 원인 보존: ${m}`);
+    assert.ok(m.includes("fallback(kbo)") && m.includes("coverage"), `폴백 KBO 30행 원인 병기: ${m}`);
+    ok("18. KBO 타자 30행 페이지 경계 → 폴백 채택 금지(fail-close) + 두 원인 합성 기록");
+  }
+
+  // ── 19. 균등 160명(팀당 16명) 절단 — 타자 단독 결속(투수 KBO는 정상인 상태) ──
+  {
+    // 정적 하한(150명·팀당 15명)은 전부 통과하지만 타자 전량 baseline 332의 90%(299) 미만.
+    // kbo=ok 이므로 투수는 KBO 1차로 정상 — 500은 오로지 타자 가드가 만든 결과다.
+    const { status } = await run("ok", "uniform-160");
+    assert.equal(status, 500, "균등 절단 응답은 채택 없이 500 (타자 단독 결속)");
+    assert.equal(upserts.length, 0, "160명 부분 upsert 없음 → 나머지 172명 stale 은폐 차단");
+    assert.equal(jobStatuses.at(-1), "error", "coverage collapse 는 job error");
+    const m = String(jobMessages.at(-1));
+    assert.ok(
+      m.includes("primary(naver)") && m.includes("fetched 160"),
+      `실제 원인(Naver 균등 160명 절단)이 job 기록에 보존: ${m}`,
+    );
+    assert.ok(m.includes("fallback(kbo)"), `폴백 KBO 원인 병기: ${m}`);
+    ok("19. 균등 160명 절단 → 타자 가드 단독 fail-close + 원인 합성(160명 명시) 기록");
+  }
+
+  // ── 20. KBO 복구 비고착: 투수 Naver 폴백(281명 갱신) 다음날 KBO 96명 복귀 허용 ──
+  {
+    // 정적 kind+source baseline이라 "직전 Naver 전량 281명"이 KBO 복구 판정에 섞이지 않는다.
+    // (table-wide 동적 baseline이면 96 < 253으로 영구 Naver 고착 — 삼순 2차 NO-GO 축)
+    await run("503", "ok"); // 투수 Naver 폴백으로 281명 갱신된 상황
+    const { status, body } = await run("ok", "ok"); // 다음날 KBO 복구
     assert.equal(status, 200);
-    assert.equal(body["sources"]["batter"], "naver");
-    assert.equal(body["batters"], 329);
-    assert.equal(allRows(batterUpserts()).length, 329);
-    ok("18. KBO 타자 30행 페이지 경계 → Naver 전량 복구(부분 30행 채택 금지)");
+    assert.equal(body["sources"]["pitcher"], "kbo", "복구된 KBO(100명)가 거부 없이 재채택됨");
+    assert.equal(jobStatuses.at(-1), "success", "복구 후 success 복원(영구 warning 고착 없음)");
+    ok("20. 투수 Naver 폴백 이후 KBO 복구 재채택(고착 없음) — kind+source 정적 결속 검증");
+  }
+
+  // ── 21. 균등 절단은 투수 폴백 경로에도 결속(dual-fail) ────────────────────
+  {
+    const { status } = await run("503", "uniform-160");
+    assert.equal(status, 500, "투수도 Naver 160 < 253 로 폴백 채택 거부 → dual-fail");
+    assert.equal(upserts.length, 0);
+    assert.equal(jobStatuses.at(-1), "error");
+    ok("21. KBO 503 + Naver 균등 160명 → 타자·투수 모두 fail-close(500·upsert 0·error)");
   }
 
   globalThis.fetch = realFetch;

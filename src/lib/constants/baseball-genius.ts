@@ -409,6 +409,20 @@ export function geniusMotionPosterSrc(clip: GeniusMotionClip): string {
 const ANSWER_CLIPS = ["swing", "pitching"] as const;
 
 /**
+ * 답변 대상 선수 역할 폐쇄집합 (서버 payload ↔ 클라 공유 계약).
+ * 역할이 확정된 답변은 교대 대신 역할에 맞는 동작을 재생한다
+ * (하린아빠 2026-08-19 "박동원은 타자인데 투구모션" / 8-18 "투수인데 스윙").
+ */
+export const GENIUS_ANSWER_PLAYER_ROLES = ["pitcher", "batter"] as const;
+export type GeniusAnswerPlayerRole = (typeof GENIUS_ANSWER_PLAYER_ROLES)[number];
+
+/** 역할 → 클립 단일 매핑 — 투수는 던지고 타자는 친다. 의미가 있는 축이므로 시드 교대 금지. */
+const ROLE_CLIPS: Readonly<Record<GeniusAnswerPlayerRole, GeniusMotionClip>> = {
+  pitcher: "pitching",
+  batter: "swing",
+};
+
+/**
  * 중립 클립 — 감정 반응이 **억제됐을 때** 쓰는 자리.
  *
  * 30초 쿨다운(#1202)이 감정 모션을 거절하면 감정 클립을 재생하지 않는다. 그렇다고
@@ -475,7 +489,8 @@ export function isRealTeamId(value: unknown): value is number {
  *  · **인사 → excited / 감사·칭찬 → headspin** — §7.6 의미 구분을 그대로 쓴다.
  *    ⚠️ 이 둘을 messageId 로 교대시키면 "고마워"에 신남이, "안녕"에 헤드스핀이
  *       나온다. 시드 교대는 **의미가 없는 축에서만** 쓴다(삼순 #1228 4축-②).
- *  · answer                    → swing / pitching 교대 (의미 구분 없는 축)
+ *  · answer + **선수 역할 확정**  → 투수=pitching / 타자·야수=swing (하린아빠 2026-08-19)
+ *  · answer(역할 미상)         → swing / pitching 교대 (의미 구분 없는 축)
  *  · ack(motion 미상)          → excited (인사 기본값 — 의미를 모르면 가장 안전한 반응)
  *  · answer + **최애팀 답변**   → 응원 7종 순환 (하린아빠 2026-08-16 14:09)
  *  · picker / correction       → thinking (되묻는 중)
@@ -504,6 +519,11 @@ export function geniusMotionClipFor(
     readonly answerTeamId?: number | null;
     /** 보고 있는 유저의 최애팀 id (프로필). */
     readonly favoriteTeamId?: number | null;
+    /**
+     * 답변 대상 선수의 역할 (서버 payload). 확정되면 교대 대신 역할 동작을 재생한다.
+     * null/미상(legacy 포함)은 기존 교대 그대로다(fail-close).
+     */
+    readonly answerPlayerRole?: GeniusAnswerPlayerRole | null;
   },
 ): GeniusMotionClip {
   // 음수·부동소수로 음수 인덱스가 나오면 undefined 가 된다 — 정규화해 닫는다.
@@ -556,6 +576,10 @@ export function geniusMotionClipFor(
   if (isFavoriteTeamAnswer(context?.answerTeamId, context?.favoriteTeamId)) {
     return CHEER_CLIPS[seed % CHEER_CLIPS.length];
   }
+  // 선수 역할이 확정된 답변 — 의미 있는 축이므로 시드 교대보다 앞서고, 응원(최애팀)보다는
+  // 뒤다 — 응원은 "네 팀 얘기다"라는 더 강한 신호다(하린아빠 2026-08-16 14:09 유지).
+  const role = context?.answerPlayerRole;
+  if (role === "pitcher" || role === "batter") return ROLE_CLIPS[role];
   // answer + legacy(null/undefined/모르는 값) — 둘 다 야구 동작으로 살아있게 둔다.
   return ANSWER_CLIPS[seed % ANSWER_CLIPS.length];
 }
@@ -611,6 +635,11 @@ export interface GeniusReplyPayload {
    * ⚠️ 팀명 문자열이 아니라 id 다. 표기 변형(`LG`/`엘지`/`트윈스`)으로 갈리지 않게.
    */
   answer_team_id?: number;
+  /**
+   * 답변 대상 선수의 역할 ("pitcher" | "batter"). 답변 모션을 포지션에 맞추는 데만 쓴다.
+   * 선수가 특정 안 되거나(팀·룰·용어) 역할이 갈리면(투타 비교·동명이인) 아예 안 실린다.
+   */
+  answer_player_role?: GeniusAnswerPlayerRole;
   /** `reply_kind === "correction"` 일 때만. 서버가 발급한 exact 후보만 유저에게 제안한다. */
   correction_options?: string[];
   /**
@@ -659,6 +688,8 @@ export function composeGeniusReplyPayload(
     sourceUrl?: string;
     /** 답변 대상 구단 canonical team id (응원 클립 자격). 호출부가 결정론 계산해 넘긴다. */
     answerTeamId?: number | null;
+    /** 답변 대상 선수 역할 (모션 클립 자격). 호출부가 로스터 SSOT 로 결정론 계산해 넘긴다. */
+    answerPlayerRole?: GeniusAnswerPlayerRole | null;
   },
   questionMessageId: number,
 ): GeniusReplyPayload {
@@ -671,6 +702,10 @@ export function composeGeniusReplyPayload(
     ...(result.motionIntent ? { motion_intent: result.motionIntent } : {}),
     ...(typeof result.answerTeamId === "number" && Number.isFinite(result.answerTeamId)
       ? { answer_team_id: result.answerTeamId }
+      : {}),
+    // 폐쇄집합 값만 실는다 — null(미상)은 필드 자체를 안 실어 legacy 와 구분되지 않게 한다.
+    ...(result.answerPlayerRole === "pitcher" || result.answerPlayerRole === "batter"
+      ? { answer_player_role: result.answerPlayerRole }
       : {}),
     ...(result.pickerOptions
       ? {
@@ -734,6 +769,20 @@ export function geniusMotionIntentFromPayload(
     : null;
 }
 
+/**
+ * payload 에서 답변 대상 선수 역할을 읽는다 — 폐쇄집합 대조는 이 함수 하나뿐이다 (SSOT).
+ * 모르는 값(미래 역할·외부 조작)은 null — 교대 폴백으로 내려갈 뿐 화면은 그대로다.
+ */
+export function geniusAnswerPlayerRoleFromPayload(
+  payload: GeniusReplyPayload | null | undefined,
+): GeniusAnswerPlayerRole | null {
+  const role = payload?.answer_player_role;
+  if (role === undefined) return null;
+  return (GENIUS_ANSWER_PLAYER_ROLES as readonly string[]).includes(role)
+    ? (role as GeniusAnswerPlayerRole)
+    : null;
+}
+
 function isPickerOption(p: unknown): p is GeniusPickerOption {
   if (!p || typeof p !== "object") return false;
   const o = p as Record<string, unknown>;
@@ -789,6 +838,10 @@ export function isGeniusReplyPayload(p: unknown): p is GeniusReplyPayload {
   // 응원이 붙는다. 없는 것(undefined)은 정상 — 구단이 특정 안 된 답변이 대부분이다.
   const answerTeamField = (obj as { answer_team_id?: unknown }).answer_team_id;
   if (answerTeamField !== undefined && !isRealTeamId(answerTeamField)) return false;
+  // 역할은 문자열만 통과시킨다. 폐쇄집합 대조는 여기서 하지 **않는다** — motion 과 같은
+  // forward-compat 계약이다(미래 역할 값이 구 클라 payload 전체를 죽이면 안 된다).
+  const answerPlayerRoleField = (obj as { answer_player_role?: unknown }).answer_player_role;
+  if (answerPlayerRoleField !== undefined && typeof answerPlayerRoleField !== "string") return false;
   // 입력이 외부에서 오므로 **allowlist hostname 을 실제 URL 파서로 대조**한다 (삼순 P0-2).
   // `https://` 접두 문자열 검사는 `https://namu.wiki@evil.com/` 같은 형태에 뚫리고,
   // 임의 외부 주소가 그대로 출처 링크가 되면서 `KBO 공식 자료` 라벨까지 달릴 수 있다.

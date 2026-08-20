@@ -17,13 +17,17 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const ROUTE = "src/app/api/game-detail/route.ts";
+// PR #1257: game-detail GET 구현이 route → src/lib/services/game-detail.ts 로 물리 이동했다.
+// route 는 얇은 래퍼가 됐으므로 병합 배선 mutation 의 대상 파일도 service 로 따라간다.
+// (의미론 완화 아님 — 같은 배선을 같은 방식으로 죽이고, 판정은 여전히 route GET 을 태우는
+//  game-detail-bounded-fallback-smoke 의 assertion marker 로만 인정한다.)
+const SERVICE = "src/lib/services/game-detail.ts";
 const HELPER = "src/lib/utils/sub-position-merge.ts";
 const SMOKE = "scripts/qa/game-detail-bounded-fallback-smoke.ts";
 
 const backupDir = mkdtempSync(join(tmpdir(), "sub-merge-mutation-"));
 const backups = new Map();
-for (const file of [ROUTE, HELPER]) {
+for (const file of [SERVICE, HELPER]) {
   const backup = join(backupDir, file.replaceAll("/", "__"));
   copyFileSync(file, backup);
   backups.set(file, backup);
@@ -73,8 +77,8 @@ let failures = 0;
 
 const MUTATIONS = [
   {
-    label: "M1 route 병합 배선 제거 (hasPureSubPositions 게이트 무력화)",
-    file: ROUTE,
+    label: "M1 병합 배선 제거 (hasPureSubPositions 게이트 무력화)",
+    file: SERVICE,
     from: "if (boxScore && boxScoreSource === \"kbo\" && hasPureSubPositions(boxScore)) {",
     to: "if (false && boxScore && boxScoreSource === \"kbo\" && hasPureSubPositions(boxScore)) {",
     marker: "route가 Naver 복합 위치(타중)로 병합",
