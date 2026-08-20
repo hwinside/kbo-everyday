@@ -449,7 +449,7 @@
     "qa:client-dedupe:selftest": "tsx scripts/qa/client-dedupe-gate.ts --selftest",
     "qa:news-clip-digest": "tsx scripts/qa/news-clipping-digest-smoke.ts",
     "qa:news-clip-digest:mutations": "bash scripts/qa/news-clipping-digest-mutations.sh",
-    "qa:news-clip-digest:hook": "tsx scripts/qa/news-clipping-digest-hook-strict.ts",
+    "qa:news-clip-digest:hook": "NODE_ENV=development tsx scripts/qa/news-clipping-digest-hook-strict.ts",
     "qa:news-clip-digest:db": "tsx scripts/qa/news-clipping-digest-db-integration.ts"
   },
   "dependencies": {
