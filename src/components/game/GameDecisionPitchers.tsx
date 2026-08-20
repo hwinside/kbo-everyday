@@ -43,7 +43,7 @@ export default function GameDecisionPitchers({ pitchers }: GameDecisionPitchersP
               >
                 {style.label}
               </span>
-              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name, resolveRosterPlayer({ name: p.name, teamId: p.teamId })?.kboId, p.teamId)} size={48} />
+              <PlayerAvatar name={p.name} teamId={p.teamId} photoUrl={getPlayerPhotoUrl(p.name, resolveRosterPlayer({ name: p.name, teamId: p.teamId, positionHint: "투수" })?.kboId, p.teamId, "투수")} size={48} />
               <span className="text-sm font-semibold text-text-primary">{p.name}</span>
               <span className="text-xs text-text-tertiary">{p.record} · ERA {p.era}</span>
             </div>

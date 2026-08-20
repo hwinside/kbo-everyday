@@ -63,13 +63,14 @@ export default function LiveScoreboard({
   // Defensive team is the fielding team
   const defensiveSide = isTop ? lineup?.home : lineup?.away;
 
-  const pitcherRoster = state.currentPitcher ? resolveRosterPlayer({ name: state.currentPitcher, teamId: pitcherTeamId }) : null;
-  const batterRoster = state.currentBatter ? resolveRosterPlayer({ name: state.currentBatter, teamId: batterTeamId }) : null;
+  // 투수/타석 슬롯은 역할이 확실하므로 positionHint 로 같은 팀 동명이인(삼성 김태훈 투/야)을 분리한다.
+  const pitcherRoster = state.currentPitcher ? resolveRosterPlayer({ name: state.currentPitcher, teamId: pitcherTeamId, positionHint: "투수" }) : null;
+  const batterRoster = state.currentBatter ? resolveRosterPlayer({ name: state.currentBatter, teamId: batterTeamId, positionHint: "야수" }) : null;
   const pitcherPhotoUrl = state.currentPitcher
-    ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId, pitcherTeamId)
+    ? getPlayerPhotoUrl(state.currentPitcher, pitcherRoster?.kboId, pitcherTeamId, "투수")
     : null;
   const batterPhotoUrl = state.currentBatter
-    ? getPlayerPhotoUrl(state.currentBatter, batterRoster?.kboId, batterTeamId)
+    ? getPlayerPhotoUrl(state.currentBatter, batterRoster?.kboId, batterTeamId, "야수")
     : null;
 
   return (

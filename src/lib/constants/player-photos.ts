@@ -1,4 +1,4 @@
-import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import { resolvePlayerIdentity, rosterNameMatchCount } from "@/lib/utils/resolve-player";
 
 /**
  * KBO playerId → 선수 사진 URL 매핑
@@ -960,8 +960,9 @@ export function getPlayerPhotoUrl(
   name: string,
   kboId?: string | null,
   teamId?: number | string | null,
+  positionHint?: "투수" | "야수" | null,
 ): string | null {
-  const resolved = resolvePlayerIdentity({ name, kboId, teamId });
+  const resolved = resolvePlayerIdentity({ name, kboId, teamId, positionHint });
 
   // Canonical resolver 우선: 외국인 숫자 ID(53827)·짧은이름(에레디아)을
   // 로스터 canonical ID(FP008)로 수렴시킨 뒤 사진을 찾는다.
@@ -977,8 +978,19 @@ export function getPlayerPhotoUrl(
   // kboId가 명시적으로 들어왔는데 resolver/photo 모두 실패하면 다른 동명이인 사진을 붙이지 않는다.
   if (kboId) return null;
 
-  // ID 없는 라이브 텍스트 등은 마지막으로 사진맵을 사용하되, 이름 alias를 resolver로 먼저 정규화한다.
-  const mappedId = PLAYER_PHOTO_MAP[resolved?.name ?? name];
+  /* 본인으로 resolve 됐는데 사진 파일만 없는 경우 — 예전에는 이름 키 사진맵으로
+   * 대체했는데, 사진맵은 동명이인 중 한 명만 들고 있어서 *다른 사람* 사진이 붙을 수
+   * 있다. 본인 사진이 없으면 빈 아바타가 맞다 — fail-close. */
+  if (resolved) return null;
+
+  /* 이름만 있는 라이브 텍스트 fallback (2026-08-20 CS 제보 수정):
+   * 로스터에 동명이인이 있으면 사진맵(이름 키)을 쓰면 안 된다 — 삼성 김태훈 투수
+   * 자리에 NC 김태훈(55995) 사진이 붙은 사고. resolver 가 fail-close 해도 이
+   * 경로가 이름 키로 우회해 오사진을 만들었다.
+   *   - 동명이인(2+) → null (엉뚱한 사람 금지)
+   *   - 로스터 밖 이름(0명: 은퇴/레거시) → 기존 사진맵 fallback 유지 */
+  if (rosterNameMatchCount(name) > 1) return null;
+  const mappedId = PLAYER_PHOTO_MAP[name];
   if (!mappedId || !PLAYER_PHOTO_ID_SET.has(mappedId)) return null;
   return `/players/${mappedId}.jpg`;
 }
