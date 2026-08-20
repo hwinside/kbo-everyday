@@ -31,18 +31,69 @@ export interface DigestFetchResult {
 /** id 배열을 받아 digest 행을 돌려주는 함수. 실패는 throw 하거나 error 를 채운다. */
 export type DigestFetcher = (ids: number[]) => Promise<DigestFetchResult>;
 
+/**
+ * 로더 수명을 넘어 살아남는 digest 캐시. **변경을 토하는 스토어**다.
+ *
+ * ⚠️ 삼순 blocker (6차, 2026-08-20): 단순 Map 을 공유하면 **terminal race** 가 남는다.
+ *    B(현재 로더)가 3회 시도를 모두 소진해 timer=null 이 된 뒤에 A(폐기된 로더)가 성공하면,
+ *    A 는 Map 에만 쓰고 B 는 request/pump/flushCached 가 다시 호출되지 않아
+ *    **state 0 이 영원히 유지된다**(카드가 텍스트로 굳는다).
+ *    5차의 flushCached() 는 "다시 토해지는 시점"이 있을 때만 유효했다.
+ *    → 캐시 자승이 구독자에게 알리게 해서, 쓰는 쪽이 도달을 밀어준다(push).
+ *    폴링 타이머나 "dispose 로더의 write 금지"(=A 의 성공을 버림) 대심 구조로 해결한다.
+ */
+export class NewsClippingDigestCache {
+  private readonly map = new Map<number, NewsClippingDigest>();
+  private readonly listeners = new Set<(id: number) => void>();
+
+  get size(): number {
+    return this.map.size;
+  }
+  has(id: number): boolean {
+    return this.map.has(id);
+  }
+  get(id: number): NewsClippingDigest | undefined {
+    return this.map.get(id);
+  }
+  snapshot(): Map<number, NewsClippingDigest> {
+    return new Map(this.map);
+  }
+
+  /** 로더가 받은 행을 쓴다. **쓰기 자체가 구독자를 깨운다.** */
+  set(id: number, row: NewsClippingDigest): void {
+    const isNew = !this.map.has(id);
+    this.map.set(id, row);
+    if (!isNew) return;
+    // 리스너 안에서 국독이 변할 수 있으므로 사본을 순회한다.
+    for (const fn of [...this.listeners]) fn(id);
+  }
+
+  /** 캐시에 새 행이 들어오면 토해달라고 든다. 반환값은 구독 해지 함수. */
+  subscribe(fn: (id: number) => void): () => void {
+    this.listeners.add(fn);
+    return () => {
+      this.listeners.delete(fn);
+    };
+  }
+
+  /** 테스트/관족용 — 구독자 수(누수 감지). */
+  listenerCountForTest(): number {
+    return this.listeners.size;
+  }
+}
+
 export interface DigestLoaderOptions {
   /** 새 digest 가 들어왔을 때만 호출된다(불필요한 리렌더 방지). */
   onChange: (digests: Map<number, NewsClippingDigest>) => void;
   /**
-   * **호출부가 소유하는 공유 캐시.** 로더는 이 Map 을 그대로 쓴다(복사하지 않는다).
+   * **호출부가 소유하는 공유 캐시.** 로더는 이 스토어를 국독한다.
    *
    * ⚠️ StrictMode(Next 16 App Router 기본)에서 effect 는 setup→cleanup→setup 으로 두 번 돈다.
    *    로더가 자기 Map 을 가지면 첫 로더의 응답이 버려져 재조회가 생기고, 재마운트마다
    *    같은 digest 를 다시 받아온다. 캐시를 밖에 두면 **폐기된 로더의 늦은 응답도 캐시에
    *    남아** 다음 로더가 그걸 이어받는다.
    */
-  cache?: Map<number, NewsClippingDigest>;
+  cache?: NewsClippingDigestCache;
   /** 테스트에서 가짜 타이머를 주입하기 위한 구멍. 기본은 전역 setTimeout. */
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
@@ -50,7 +101,18 @@ export interface DigestLoaderOptions {
 }
 
 export class NewsClippingDigestLoader {
-  private digestMap: Map<number, NewsClippingDigest>;
+  private readonly cache: NewsClippingDigestCache;
+  private unsubscribe: (() => void) | null = null;
+  /**
+   * **내가 캐시에 쓰는 동안** 구독 알림을 억제한다.
+   *
+   * ⚠️ 6차에 캐시 구독을 달자 배치가 깨졌다: 한 번의 조회로 id 2개를 받으면 cache.set 이
+   *    두 번 일어나고 그때마다 구독이 깨어 **같은 조회에 onChange 가 2회** 발생한다
+   *    (스모크 8-9 가 잡았다 — 불필요한 리렌더).
+   *    내 쓰기는 pump 끝의 flushCached() 한 번으로 배치해 알리고, 구독은
+   *    **다른 로더의 쓰기**를 받는 용도로만 남긴다(terminal race 방어).
+   */
+  private writingOwnRows = false;
   private wanted = new Set<number>();
   private inFlight = new Set<number>();
   /** id 별 누적 실패 횟수. 성공하면 지운다. */
@@ -77,13 +139,22 @@ export class NewsClippingDigestLoader {
       options.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms) as unknown);
     this.clearTimeoutFn =
       options.clearTimeoutFn ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
-    // 호출부가 공유 캐시를 주면 그걸 그대로 쓴고(복사 안 함), 없으면 자기 Map 을 갖는다.
-    this.digestMap = options.cache ?? new Map();
+    // 호출부가 공유 캐시를 주면 그걸 쓰고, 없으면 자기 스토어를 갖는다.
+    this.cache = options.cache ?? new NewsClippingDigestCache();
+    // ⚠️ terminal race 방어(6차): 다른 로더가 캐시를 채우면 **그 쓰기가** 우리를 깨운다.
+    //    내 재시도가 모든 소진되어 timer 가 없어도 도달이 보장된다.
+    this.unsubscribe = this.cache.subscribe((id) => {
+      if (this.disposed) return;
+      // 내 조회 결과를 쓰는 중이면 여기서 알리지 않는다 — pump 끝에서 한 번에 배치한다.
+      if (this.writingOwnRows) return;
+      if (!this.wanted.has(id)) return;
+      this.flushCached();
+    });
   }
 
-  /** 현재까지 확보한 digest. 호출부는 이 Map 을 그대로 렌더에 쓴다. */
+  /** 현재까지 확보한 digest 스냅샷. */
   get digests(): Map<number, NewsClippingDigest> {
-    return this.digestMap;
+    return this.cache.snapshot();
   }
 
   /** 테스트/관측용 — 이 id 가 몇 번 실패했나. */
@@ -134,18 +205,21 @@ export class NewsClippingDigestLoader {
     if (this.disposed) return false;
     let changed = false;
     for (const id of this.wanted) {
-      if (!this.digestMap.has(id)) continue;
+      if (!this.cache.has(id)) continue;
       if (this.notified.has(id)) continue;
       this.notified.add(id);
       this.attempts.delete(id);
       changed = true;
     }
-    if (changed) this.options.onChange(new Map(this.digestMap));
+    if (changed) this.options.onChange(this.cache.snapshot());
     return changed;
   }
 
   dispose(): void {
     this.disposed = true;
+    // 국독을 도려줘야 폐기된 로더가 캐시 이벤트를 불잡지 않는다(리스너 누수 방지).
+    this.unsubscribe?.();
+    this.unsubscribe = null;
     if (this.timer !== null) {
       this.clearTimeoutFn(this.timer);
       this.timer = null;
@@ -156,7 +230,7 @@ export class NewsClippingDigestLoader {
   private eligible(): number[] {
     const out: number[] = [];
     for (const id of this.wanted) {
-      if (this.digestMap.has(id)) continue;
+      if (this.cache.has(id)) continue;
       if (this.inFlight.has(id)) continue;
       if ((this.attempts.get(id) ?? 0) >= DIGEST_MAX_ATTEMPTS) continue;
       out.push(id);
@@ -189,15 +263,18 @@ export class NewsClippingDigestLoader {
     }
 
     const received = new Set<number>();
-    let changed = false;
-    for (const row of rows) {
-      if (!ids.includes(row.id)) continue; // 요청하지 않은 행은 무시(응답 오염 방어)
-      received.add(row.id);
-      if (!this.notified.has(row.id)) changed = true;
-      // ⚠️ dispose 됐어도 **캐시에는 쓴다.** 공유 캐시라 다음 로더(StrictMode 재-setup,
-      //    재마운트)가 그걸 이어받는다. 상태 갱신(onChange)만 살아있을 때 한다.
-      this.digestMap.set(row.id, row);
-      this.attempts.delete(row.id);
+    this.writingOwnRows = true;
+    try {
+      for (const row of rows) {
+        if (!ids.includes(row.id)) continue; // 요청하지 않은 행은 무시(응답 오염 방어)
+        received.add(row.id);
+        // ⚠️ dispose 됐어도 **캐시에는 쓴다.** 공유 캐시라 다음 로더(StrictMode 재-setup,
+        //    재마운트)가 그걸 이어받고, 쓰기가 구독자를 깨워 살아있는 로더에 도달된다.
+        this.cache.set(row.id, row);
+        this.attempts.delete(row.id);
+      }
+    } finally {
+      this.writingOwnRows = false;
     }
     // ⚠️ 부분 누락: 요청 3개 중 2개만 왔다면 나머지 1개만 실패로 센다. 성공분은 확정이다.
     for (const id of ids) {
@@ -205,15 +282,12 @@ export class NewsClippingDigestLoader {
       this.attempts.set(id, (this.attempts.get(id) ?? 0) + 1);
     }
 
-    // 언마운트 뒤에는 상태를 갱신하지 않는다. 다만 digestMap 은 이미 채워져 있으므로
-    // 재마운트 시 재조회가 줄어든다.
-    if (changed && !this.disposed) {
-      for (const id of received) this.notified.add(id);
-      this.options.onChange(new Map(this.digestMap));
-    }
-
-    // 조회하는 사이에 다른 로더가 캐시를 채웠을 수 있다(반대 순서 race).
-    // 이 호출이 없으면 "캐시엔 있는데 화면은 빈" 상태로 굳는다.
+    // ⚠️ 알림 경로는 **flushCached() 하나로 통합**한다.
+    //    6차에 캐시 구독을 달았는데, 여기서 또 onChange 를 부르면 cache.set 이 깨운
+    //    flushCached 와 겹쳐 **같은 데이터로 onChange 가 2회** 발생한다(불필요한 리렌더).
+    //    스모크 8-1 이 그걸 잡았다 — 기대값을 낮추는 대신 경로를 합쳤다.
+    //    dispose 상태면 flushCached 가 자체 거부하므로 언마운트 후 상태 갱신도 없다.
+    //    조회하는 사이 다른 로더가 채운 분까지 이 한 번에 다 털린다(반대 순서 race).
     this.flushCached();
 
     this.scheduleRetry();

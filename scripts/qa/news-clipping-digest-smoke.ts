@@ -41,6 +41,7 @@ import {
 } from "@/types/news-clipping";
 import {
   DIGEST_MAX_ATTEMPTS,
+  NewsClippingDigestCache,
   NewsClippingDigestLoader,
   digestRetryDelayMs,
   type DigestFetchResult,
@@ -432,6 +433,72 @@ async function runLoaderSuite(): Promise<void> {
     await flush();
     ok("8-6 dispose 후 조회 안 함", calls === 0);
     ok("8-6 dispose 후 타이머 없음", clock.pending() === 0);
+  }
+
+  // 8-8) terminal race — 시도를 모두 소진해 타이머가 없는 로더에도 캐시 쓰기가 도달한다.
+  //
+  // ⚠️ 삼순 blocker (6차): 5차의 flushCached() 는 "다시 털어지는 시점"이 있을 때만 유효했다.
+  //    B 가 3회 실패로 attempts=상한, timer=null 이 된 뒤 A(폐기된 로더)가 성공하면
+  //    request/pump/flushCached 가 다시 불릴 일이 없어 **state 0 이 영구 유지**된다.
+  //    → 캐시가 구독 가능한 스토어가 되어, **쓰기가 구독자를 깨운다.**
+  {
+    const clock = new FakeClock();
+    const cache = new NewsClippingDigestCache();
+    let changes = 0;
+    let lastSize = 0;
+    // B: 살아있는 로더. 항상 실패한다.
+    const b = new NewsClippingDigestLoader(
+      async () => ({ rows: [], error: "always fails" }),
+      {
+        onChange: (m) => { changes++; lastSize = m.size; },
+        cache,
+        setTimeoutFn: clock.set,
+        clearTimeoutFn: clock.clear,
+      },
+    );
+    b.request([31]);
+    await flush();
+    // 상한까지 소진시킨다(초기 1회 + 재시도 2회 = 3회).
+    for (let i = 0; i < DIGEST_MAX_ATTEMPTS + 1; i++) await clock.tick();
+    // 무대 성립 확인 — 이 두 줄이 없으면 아래 검사는 아무것도 증명하지 않는다.
+    ok(`8-8 무대: B 가 시도를 모두 소진 (attempts ${b.attemptsOf(31)})`, b.attemptsOf(31) === DIGEST_MAX_ATTEMPTS);
+    ok("8-8 무대: B 에 재시도 타이머가 없다", !b.hasPendingRetry());
+    ok("8-8 무대: 아직 화면은 비어있다", changes === 0);
+
+    // A: 폐기된 로더가 늦게 성공해 캐시에 쓴다(A 는 dispose 상태라 onChange 를 못 부른다).
+    const a = new NewsClippingDigestLoader(
+      async (ids) => ({ rows: ids.map(makeDigest) }),
+      { onChange: () => {}, cache, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    a.request([31]);
+    a.dispose();          // 먼저 폐기 — StrictMode cleanup 상황
+    await flush();        // 그 뒤 응답이 도착한다
+
+    // 핵심: B 에 대해 **추가 request 를 하지 않았는데** 화면에 도달해야 한다.
+    ok(`8-8 캐시 쓰기가 B 에 도달한다 (onChange ${changes}회, size ${lastSize})`, changes === 1 && lastSize === 1);
+    ok("8-8 B 의 digest 에 실제로 들어있다", b.digests.get(31)?.id === 31);
+    b.dispose();
+    ok("8-8 dispose 후 구독이 해지된다(리스너 누수 방지)", cache.listenerCountForTest() === 0);
+  }
+
+  // 8-9) 같은 데이터로 onChange 가 중복 발생하지 않는다.
+  //      구독(캐시 쓰기)과 조회 완료가 각각 알리면 동일 데이터로 2회 리렌더가 난다.
+  {
+    const clock = new FakeClock();
+    const cache = new NewsClippingDigestCache();
+    let changes = 0;
+    const loader = new NewsClippingDigestLoader(
+      async (ids) => ({ rows: ids.map(makeDigest) }),
+      { onChange: () => { changes++; }, cache, setTimeoutFn: clock.set, clearTimeoutFn: clock.clear },
+    );
+    loader.request([41, 42]);
+    await flush();
+    ok(`8-9 성공 1회에 onChange 도 1회 (실측 ${changes})`, changes === 1);
+    // 같은 id 를 다시 요청해도(캐시 히트) 추가 알림은 없다.
+    loader.request([41, 42]);
+    await flush();
+    ok(`8-9 캐시 히트 재요청은 추가 알림 없음 (실측 ${changes})`, changes === 1);
+    loader.dispose();
   }
 
   // 8-7) 재시도 대기 중 언마운트 — 예약된 타이머가 취소된다.

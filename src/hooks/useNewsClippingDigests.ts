@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import {
+  NewsClippingDigestCache,
   NewsClippingDigestLoader,
   type DigestFetchResult,
 } from "@/lib/news-clipping-digest-loader";
@@ -53,8 +54,15 @@ export function useNewsClippingDigests(
 ): Map<number, NewsClippingDigest> {
   const [digests, setDigests] = useState<Map<number, NewsClippingDigest>>(new Map());
   const loaderRef = useRef<NewsClippingDigestLoader | null>(null);
-  /** 훅이 소유하는 digest 캐시 — 로더 교체를 넘어 살아남는다. */
-  const cacheRef = useRef<Map<number, NewsClippingDigest>>(new Map());
+  /**
+   * 훅이 소유하는 digest 캐시 — 로더 교체를 넘어 살아남는다.
+   *
+   * ⚠️ 단순 Map 이 아니라 **국독 가능한 스토어**다(6차). 폐기된 로더가 늦게 성공해
+   *    캐시를 채울 때, 재시도를 모든 소진해 타이머가 없는 현재 로더에게도 도달하게 하려면
+   *    쓰기 자체가 국독자를 깨워야 한다.
+   */
+  const cacheRef = useRef<NewsClippingDigestCache | null>(null);
+  if (cacheRef.current === null) cacheRef.current = new NewsClippingDigestCache();
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
@@ -74,7 +82,7 @@ export function useNewsClippingDigests(
       (ids) => fetcherRef.current(ids),
       {
         onChange: (next) => setDigests(next),
-        cache: cacheRef.current,
+        cache: cacheRef.current ?? undefined,
         onError: (message) => {
           // 실패는 조용히 둔다 — 카드가 아니라 텍스트 본문이 렌더된다(fail-close).
           console.error("[news-clipping] digest fetch failed:", message);
@@ -83,7 +91,9 @@ export function useNewsClippingDigests(
     );
     loaderRef.current = loader;
     // 캐시에 이미 있는 digest 를 상태에 즉시 반영한다 — 재마운트 시 카드가 깜박이지 않는다.
-    if (cacheRef.current.size > 0) setDigests(new Map(cacheRef.current));
+    if ((cacheRef.current?.size ?? 0) > 0) {
+      setDigests(cacheRef.current!.snapshot());
+    }
     // 재-setup 이면 render 없이 여기로 오므로, 현재 필요한 id 를 여기서 곧바로 요청한다.
     // (아래 request effect 는 wantedKey 가 안 바뀌면 다시 돌지 않는다.)
     if (wantedKeyRef.current) {
