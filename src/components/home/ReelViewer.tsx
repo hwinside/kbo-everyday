@@ -114,7 +114,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
       onTouchEnd={handleTouchEnd}
     >
       {/* Header — outside player */}
-      <div className="shrink-0 flex items-center justify-between px-4 pt-[var(--safe-area-inset-top, env(safe-area-inset-top))] py-3">
+      <div className="shrink-0 flex items-center justify-between px-4 pt-[var(--safe-area-inset-top,env(safe-area-inset-top))] py-3">
         <button onClick={onClose} className="p-2 rounded-full bg-white/10">
           <X size={22} className="text-white" />
         </button>
@@ -140,7 +140,7 @@ export default function ReelViewer({ videos, startIndex, onClose }: ReelViewerPr
       </div>
 
       {/* Title + actions + nav — outside player */}
-      <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom))+12px)]">
+      <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(var(--safe-area-inset-bottom,env(safe-area-inset-bottom))+12px)]">
         <p className="text-white text-sm font-medium line-clamp-2 mb-3">{video.title}</p>
         <div className="flex items-center gap-5">
           <button onClick={toggleMute} className="flex items-center gap-1.5 active:scale-95 transition-transform">

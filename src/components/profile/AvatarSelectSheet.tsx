@@ -294,7 +294,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   />
                 </div>
 
-                <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))] flex-shrink-0">
+                <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] flex-shrink-0">
                   <button
                     onClick={handleCropConfirm}
                     disabled={uploading}
@@ -397,7 +397,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   </div>
                 </div>
 
-                <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)))] flex-shrink-0">
+                <div className="border-t border-black/10 dark:border-white/10 px-5 pt-3 pb-[calc(16px+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))] flex-shrink-0">
                   <button
                     onClick={handleConfirm}
                     disabled={saving}
