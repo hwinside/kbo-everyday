@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "28b1fd80659221d4e8f21b7be5aa4e2d188b35c4",
+  "generatedFrom": "faaf5a6a186d1345bb1448c2d3d09f76fbb3eb3f",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -77,13 +77,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/roster-supabase-purge.mjs",
       "subject": "players_roster",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "1348c35b1f52f4a554c5": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/cron/daily-fallback-report/route.ts",
-      "subject": "api_fallback_events",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "14cf65c3264ff6216f1d": {
@@ -637,13 +630,6 @@
       "kind": "unbounded_growing_select",
       "file": "src/lib/notifications/live-activity.ts",
       "subject": "live_activity_channels",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "79e7ad58ae2163f877ba": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/monitoring/fallbacks/route.ts",
-      "subject": "api_fallback_events",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "7a8286d1214613c78970": {

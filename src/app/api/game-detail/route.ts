@@ -607,7 +607,9 @@ function reportDetailDegradation(
       await trackApiDegradation(
         apiName,
         reason,
-        { errorMessage: `${gameId}: bounded game-detail fallback` },
+        // scope=gameId: DB 버킷 dedupe 축. 라이브 경기 중에는 유저 폴링마다 이 함수가 불리므로
+        // scope 없이는 같은 경기·같은 사유가 분당 수백 행으로 쌓인다(2026-08-20 실측 52,297행/gameId).
+        { errorMessage: `${gameId}: bounded game-detail fallback`, scope: gameId },
         policy,
       );
     });

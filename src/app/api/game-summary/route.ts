@@ -134,7 +134,7 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
           trackApiDegradation(
             "kbo-scoreboard-linescore",
             "schema-error",
-            { errorMessage: `${gameId}: KBO 이닝표 결측 → Naver record fallback 성공` },
+            { errorMessage: `${gameId}: KBO 이닝표 결측 → Naver record fallback 성공`, scope: gameId },
             { windowMinutes: 5, threshold: 3, cooldownMinutes: 30, leaseSeconds: 120 },
           ),
         );
@@ -145,7 +145,7 @@ async function fetchCanonicalSummarySource(gameId: string, includeBoxScore: bool
           trackApiDegradation(
             "kbo-scoreboard-linescore-outage",
             "schema-error",
-            { errorMessage: `${gameId}: KBO 이닝표 결측 + Naver fallback 실패 → canonical-not-settled 예상` },
+            { errorMessage: `${gameId}: KBO 이닝표 결측 + Naver fallback 실패 → canonical-not-settled 예상`, scope: gameId },
             { windowMinutes: 5, threshold: 1, cooldownMinutes: 10, leaseSeconds: 120 },
           ),
         );

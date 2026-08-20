@@ -30,6 +30,49 @@ type Policy = { win: number; thr: number; cd: number; lease: number };
 const SUCCESS: Policy = { win: 5, thr: 3, cd: 30, lease: 120 };
 const OUTAGE: Policy = { win: 5, thr: 1, cd: 10, lease: 120 };
 
+/**
+ * 신규 경로: 버퍼가 모은 delta batch 를 1회 flush 한다.
+ * scope/fingerprint/count 를 명시적으로 실어 보낸다.
+ */
+async function flush(
+  db: PGlite,
+  events: Array<{
+    api: string;
+    p: Policy;
+    reason?: string;
+    errMsg?: string | null;
+    scope?: string | null;
+    fingerprint?: string | null;
+    count?: number;
+    claim?: boolean;
+  }>,
+): Promise<Array<{ api_name: string; attempt_token: string; scope: string | null }>> {
+  const payload = events.map((e) => ({
+    api_name: e.api,
+    reason: e.reason ?? "schema-error",
+    status_code: null,
+    error_message: e.errMsg === undefined ? "test" : e.errMsg,
+    scope: e.scope ?? null,
+    fingerprint: e.fingerprint ?? null,
+    count: e.count ?? 1,
+    window_minutes: e.p.win,
+    threshold: e.p.thr,
+    cooldown_minutes: e.p.cd,
+    lease_seconds: e.p.lease,
+    // 기본은 경보 claim 대상(기존 durable 경보 경로 재현). record-only 는 명시적으로 false.
+    claim: e.claim ?? true,
+  }));
+  const r = await db.query<{ api_name: string; attempt_token: string; scope: string | null }>(
+    "select out_api_name as api_name, out_attempt_token as attempt_token, out_scope as scope from public.flush_api_fallback_buckets($1::jsonb)",
+    [JSON.stringify(payload)],
+  );
+  return r.rows;
+}
+
+/**
+ * 구버전 8-인자 경로(EXPAND 단계 wrapper). 배포 순서 어느 쪽이든 동작해야 한다.
+ * 시그니처를 drop 하지 않았으므로 이 호출이 살아있는지가 blocker 2 의 핵심 계약이다.
+ */
 async function claim(
   db: PGlite,
   api: string,
@@ -41,6 +84,24 @@ async function claim(
     [api, errMsg, p.win, p.thr, p.cd, p.lease],
   );
   return { send: r.rows[0]?.should_send === true, token: r.rows[0]?.attempt_token ?? null };
+}
+
+/** 버킷 행 수(= 저장된 행). 폴링 증폭 차단 여부는 이 값으로 본다. */
+async function rowCount(db: PGlite, api: string): Promise<number> {
+  const r = await db.query<{ c: number | string }>(
+    "select count(*)::int as c from public.api_fallback_events where api_name=$1",
+    [api],
+  );
+  return Number(r.rows[0]?.c ?? 0);
+}
+
+/** 발생 횟수(= sum(event_count)). 임계치 판정은 반드시 이 값이어야 한다. */
+async function occurrenceCount(db: PGlite, api: string): Promise<number> {
+  const r = await db.query<{ c: number | string }>(
+    "select coalesce(sum(coalesce(event_count,1)),0)::int as c from public.api_fallback_events where api_name=$1",
+    [api],
+  );
+  return Number(r.rows[0]?.c ?? 0);
 }
 async function drain(
   db: PGlite,
@@ -68,12 +129,12 @@ async function nack(db: PGlite, api: string, token: string, backoff = 60): Promi
   );
   return r.rows[0]?.ok === true;
 }
+/**
+ * 기존 단언("이벤트 N건 durable")은 버킷 도입 전엔 row 수 == 발생 횟수였다.
+ * 이제 둘은 갈라진다 — 의미상 "몇 번 일어났는가"를 묻는 검증은 occurrenceCount 를 쓴다.
+ */
 async function eventCount(db: PGlite, api: string): Promise<number> {
-  const r = await db.query<{ c: number | string }>(
-    "select count(*)::int as c from public.api_fallback_events where api_name=$1",
-    [api],
-  );
-  return Number(r.rows[0]?.c ?? 0);
+  return occurrenceCount(db, api);
 }
 async function sentIds(db: PGlite, api: string): Promise<number[]> {
   const r = await db.query<{ id: number | string }>(
@@ -110,6 +171,7 @@ async function main() {
       create index if not exists idx_afe_composite on public.api_fallback_events(api_name, timestamp desc);
     `);
     await db.exec(migration("20260729_api_fallback_alert_claim.sql"));
+    await db.exec(migration("20260820000000_api_fallback_events_bucket.sql"));
 
     const A = "kbo-scoreboard-linescore";
 
@@ -219,6 +281,186 @@ async function main() {
       "anon claim RPC 차단",
       (await fnPriv("anon", "public.claim_api_fallback_alert(text,text,int,text,int,int,int,int)")) === false,
     );
+    ok(
+      "anon flush_api_fallback_buckets RPC 차단",
+      (await fnPriv("anon", "public.flush_api_fallback_buckets(jsonb)")) === false,
+    );
+    ok(
+      "anon summarize_api_fallbacks RPC 차단",
+      (await fnPriv("anon", "public.summarize_api_fallbacks(timestamptz,timestamptz,text)")) === false,
+    );
+
+    // ── EXPAND 계약(삼순 blocker 2): 옛 8-인자 claim 을 **살려둔다** ──
+    //
+    // 1차엔 이걸 drop 해놓고 "fail-close"라 불렀는데, 그러면 `migration→배포` 순서에서
+    // 구버전 인스턴스가 없는 RPC 를 부르게 된다(반대 순서도 대칭적으로 깨짐).
+    // 제거는 앱 배포 + old deployment drain 확인 후 별도 contract migration 의 일이다.
+    {
+      const r = await db.query<{ c: number | string }>(
+        `select count(*)::int as c
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname = 'claim_api_fallback_alert'
+            and p.pronargs = 8`,
+      );
+      ok("EXPAND: 옛 8-인자 claim 이 wrapper 로 보존됨", Number(r.rows[0]?.c) === 1);
+    }
+    {
+      // ⚠️ "8-인자가 존재하는가"만으로는 부족하다 — 그 시그니처는 20260729 migration 에도
+      //    있으므로 이번 wrapper 를 통째로 지워도 **존재 검사는 통과**한다(관측 불가능한 계약).
+      //    진짜 계약은 "구버전 호출도 신규 버킷 경로를 탄다"이다. 그래야 배포 순서가
+      //    `migration→앱` 이어도 구버전 인스턴스의 쓰기가 증폭되지 않는다.
+      const W = "expand-wrapper-api";
+      await claim(db, W, SUCCESS, "legacy-call");
+      const r = await db.query<{ bucketed: number | string; total: number | string }>(
+        `select count(*) filter (where bucket_start is not null)::int as bucketed,
+                count(*)::int as total
+           from public.api_fallback_events where api_name = $1`,
+        [W],
+      );
+      ok("EXPAND: 구버전 8-인자 호출도 신규 버킷 경로를 탄다", Number(r.rows[0]?.bucketed) === 1);
+      ok("EXPAND: 구버전 호출이 이중 기록하지 않는다", Number(r.rows[0]?.total) === 1);
+
+      // 구버전 호출을 반복해도 같은 버킷에 합산된다(증폭 차단이 구버전에도 적용).
+      await claim(db, W, SUCCESS, "legacy-call");
+      await claim(db, W, SUCCESS, "legacy-call");
+      ok("EXPAND: 구버전 반복 호출도 1행으로 합산", (await rowCount(db, W)) === 1);
+      ok("EXPAND: 구버전 발생 횟수 3 보존", (await occurrenceCount(db, W)) === 3);
+    }
+    {
+      const r = await db.query<{ c: number | string }>(
+        `select count(*)::int as c
+           from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname = 'flush_api_fallback_buckets'`,
+      );
+      ok("신규 batch flush RPC 존재", Number(r.rows[0]?.c) === 1);
+    }
+
+    // ── 폴링 증폭 차단: 같은 (api, reason, scope, fingerprint, 1분버킷) 은 1행 + count ──
+    // 2026-08-20 사고 축: 라이브 경기 중 같은 gameId 가 52,297행을 만들었다.
+    //
+    // ⚠️ 삼순 blocker 1: 이전 게이트는 `rowCount = DB 쓰기량` 을 전제했는데 틀렸다.
+    //    UPSERT 도 write 다. 쓰기 **횟수**는 앱 단 버퍼(qa:fallback-buffer)가 책임지고,
+    //    여기서는 "batch 1회 호출이 몇 행을 남기는가"만 검증한다.
+    {
+      const B = "bucket-api";
+      // 버퍼가 50건을 모아 count=50 으로 1회 flush 한 상황
+      await flush(db, [{ api: B, p: SUCCESS, scope: "20260819HTHH0", count: 50 }]);
+      ok("batch 1회(count=50) → DB 1행", (await rowCount(db, B)) === 1);
+      ok("발생 횟수 50 보존", (await occurrenceCount(db, B)) === 50);
+
+      // 같은 버킷에 다시 flush 되면 누적된다(주기 flush 재현)
+      await flush(db, [{ api: B, p: SUCCESS, scope: "20260819HTHH0", count: 7 }]);
+      ok("같은 버킷 재-flush → 여전히 1행", (await rowCount(db, B)) === 1);
+      ok("누적 합산 57", (await occurrenceCount(db, B)) === 57);
+
+      // scope 가 다르면 별도 행(경기별 분리 관측이 죽지 않음)
+      await flush(db, [{ api: B, p: SUCCESS, scope: "20260819SKSS0" }]);
+      ok("다른 scope → 별도 행", (await rowCount(db, B)) === 2);
+
+      // reason 이 다르면 별도 행(실패 종류 분리 계측 보존)
+      await flush(db, [{ api: B, p: SUCCESS, reason: "timeout", scope: "20260819HTHH0" }]);
+      ok("다른 reason → 별도 행", (await rowCount(db, B)) === 3);
+
+      // fingerprint 가 다르면 별도 행 — 삼순 blocker 4:
+      // coarse reason 만 키로 쓰면 같은 분의 서로 다른 오류가 마지막 메시지 하나로 합쳐진다.
+      await flush(db, [
+        { api: B, p: SUCCESS, scope: "20260819HTHH0", fingerprint: "aaaa1111", errMsg: "conn reset" },
+      ]);
+      await flush(db, [
+        { api: B, p: SUCCESS, scope: "20260819HTHH0", fingerprint: "bbbb2222", errMsg: "bad inning" },
+      ]);
+      ok("다른 fingerprint → 별도 행(오류 뭉갬 방지)", (await rowCount(db, B)) === 5);
+      {
+        const r = await db.query<{ c: number | string }>(
+          "select count(*)::int as c from public.api_fallback_events where api_name=$1 and error_message in ('conn reset','bad inning')",
+          [B],
+        );
+        ok("두 오류 메시지가 각각 보존됨", Number(r.rows[0]?.c) === 2);
+      }
+
+      // scope 가 null 이어도 동일 버킷으로 묶인다(coalesce(scope,'')).
+      const N = "bucket-null-scope";
+      await flush(db, [{ api: N, p: SUCCESS, reason: "timeout", scope: null, count: 10 }]);
+      ok("scope null → DB 1행", (await rowCount(db, N)) === 1);
+      ok("scope null 발생 횟수 10", (await occurrenceCount(db, N)) === 10);
+    }
+
+    // ── batch 안에 여러 api 가 섞여도 각각 판정된다 ──
+    {
+      const X = "multi-a";
+      const Y = "multi-b";
+      const rows = await flush(db, [
+        { api: X, p: OUTAGE, scope: "g1" },
+        { api: Y, p: OUTAGE, scope: "g2" },
+      ]);
+      ok("batch 1회로 두 api 모두 임계 도달", rows.length === 2);
+      ok("각 api 당 토큰 1개", new Set(rows.map((r) => r.api_name)).size === 2);
+    }
+
+    // ── 임계치가 버킷링 때문에 헐거워지지 않는다(sum(event_count) 판정) ──
+    // 이게 이 PR 의 핵심 위험이다: row 로 세면 같은 scope 가 몇 번 터져도 영원히 1행이라
+    // 임계치 3에 도달하지 못해 **경보가 영원히 안 나간다**.
+    {
+      const T = "threshold-same-scope";
+      const rows = await flush(db, [{ api: T, p: SUCCESS, scope: "same-game", count: 3 }]);
+      ok("같은 scope count=3 → 임계 도달(토큰 발급)", rows.length === 1);
+      ok("그런데 DB 는 1행만(증폭 차단)", (await rowCount(db, T)) === 1);
+      ok("발생 횟수는 3 보존", (await occurrenceCount(db, T)) === 3);
+      ok("confirm 은 그 버킷 행에 귀속", (await confirm(db, T, rows[0].attempt_token)) === true);
+      ok("confirm 후 sent 정확히 1행", (await sentIds(db, T)).length === 1);
+    }
+    {
+      // 반대 방향: count 가 임계 미달이면 경보가 나가지 않는다.
+      const U = "threshold-under";
+      const rows = await flush(db, [{ api: U, p: SUCCESS, scope: "g", count: 2 }]);
+      ok("count=2 (임계 3) → 경보 없음", rows.length === 0);
+      ok("그래도 이벤트는 durable 로 남음", (await occurrenceCount(db, U)) === 2);
+    }
+
+    // ── 서버 집계 RPC (삼순 blocker 3: 무페이지 select 가 1,000행 cap 에 잘리던 문제) ──
+    {
+      const S = "summary-api";
+      await flush(db, [{ api: S, p: SUCCESS, scope: "g1", count: 1000 }]);
+      await flush(db, [{ api: S, p: SUCCESS, reason: "timeout", scope: "g2", count: 500 }]);
+      const r = await db.query<{ api_name: string; reason: string; occurrences: string; rows_stored: string }>(
+        "select api_name, reason, occurrences, rows_stored from public.summarize_api_fallbacks($1, null, $2)",
+        [new Date(Date.now() - 60 * 60 * 1000).toISOString(), S],
+      );
+      ok("집계 RPC 가 reason 별로 묶어 반환", r.rows.length === 2);
+      const total = r.rows.reduce((n, x) => n + Number(x.occurrences), 0);
+      ok(`집계 occurrences = 1500 (실측 ${total})`, total === 1500);
+      const stored = r.rows.reduce((n, x) => n + Number(x.rows_stored), 0);
+      ok(`저장 행은 2행뿐 (실측 ${stored})`, stored === 2);
+      // 핵심: 1,500건을 보고하려고 1,500행을 클라이언트로 가져오지 않는다.
+      ok("반환 행 수가 발생 횟수와 무관하게 작다(cap 회피)", r.rows.length < 10);
+    }
+
+    // ── 마이그레이션 이전 행(bucket_start null) 호환 ──
+    // ⚠️ 실측 정정: `add column event_count int not null default 1` 은 기존 행을 **1로 백필**한다.
+    //    따라서 과거 행의 event_count 는 null 이 아니라 1 이다(코드의 coalesce 는 방어적 잉여).
+    //    진짜 구분자는 bucket_start 가 null 이라는 점 — 그래서 unique 부분인덱스 밖이고
+    //    대량 UPDATE 없이 그대로 공존한다.
+    {
+      const L = "legacy-rows-api";
+      await db.exec(
+        `insert into public.api_fallback_events(api_name, reason, timestamp, bucket_start) values
+         ('legacy-rows-api','schema-error', now(), null),
+         ('legacy-rows-api','schema-error', now(), null)`,
+      );
+      ok("과거 행은 event_count=1 로 백필됨", (await occurrenceCount(db, L)) === 2);
+      {
+        const r = await db.query<{ c: number | string }>(
+          "select count(*)::int as c from public.api_fallback_events where api_name='legacy-rows-api' and bucket_start is null and event_count = 1",
+        );
+        ok("과거 행은 bucket_start null 로 남음(unique 부분인덱스 밖)", Number(r.rows[0]?.c) === 2);
+      }
+      // 과거 행 2건 + 신규 1건 = 3 → 임계 도달. 과거 행이 임계 판정에서 누락되면 false 가 된다.
+      ok("과거 행도 임계 판정에 합산됨", (await claim(db, L, SUCCESS, "e")).send === true);
+      // 과거 행은 unique 부분인덱스 밖(bucket_start null)이라 중복 insert 가 막히지 않는다 — 의도.
+      ok("과거 행 2개가 그대로 공존(대량 UPDATE 안 함)", (await rowCount(db, L)) === 3);
+    }
     ok(
       "anon drain RPC 차단",
       (await fnPriv("anon", "public.drain_api_fallback_alerts(int,int,int)")) === false,
