@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "prebuild": "node scripts/ci/prebuild-gates.mjs",
+    "prebuild": "node scripts/ci/prebuild-gates.mjs --verify-clean",
     "qa:game-detail-parse-memo": "tsx scripts/qa/game-detail-parse-memo.ts",
     "qa:genius-mascot-render": "tsx scripts/qa/genius-mascot-render-gate.mjs",
     "qa:genius-mascot-render:selftest": "tsx scripts/qa/genius-mascot-render-gate.mjs --selftest",

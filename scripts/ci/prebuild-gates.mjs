@@ -32,7 +32,7 @@
  */
 
 import { spawn, execSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -233,20 +233,82 @@ export function buildChains(gates) {
   return chains;
 }
 
+// ── 단일소유 lock + 자식 process-group 종료 (삼순 blocker ② 반영) ─────
+// lock 은 node_modules 아래(gitignored)라 verify-clean 을 오염시키지 않는다.
+const LOCK_FILE = path.join(ROOT, "node_modules", ".prebuild-gates.lock");
+const activeChildren = new Set(); // 실행 중 게이트 child pid (detached process-group leader)
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function acquireLock() {
+  try {
+    if (existsSync(LOCK_FILE)) {
+      const prev = Number(readFileSync(LOCK_FILE, "utf8").trim());
+      if (Number.isFinite(prev) && prev > 0 && pidAlive(prev)) {
+        console.error(`[prebuild-gates] lock FAIL — 다른 러너(pid ${prev})가 같은 checkout 에서 실행 중이다. 동시 실행은 in-place mutation 게이트를 서로 오염시킨다.`);
+        process.exit(1);
+      }
+      // stale lock — 소유 pid 가 죽었으면 회수
+    }
+    writeFileSync(LOCK_FILE, String(process.pid));
+  } catch (err) {
+    console.error(`[prebuild-gates] lock FAIL — lock 파일을 만들 수 없다: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+function releaseLock() {
+  try {
+    if (existsSync(LOCK_FILE) && readFileSync(LOCK_FILE, "utf8").trim() === String(process.pid)) unlinkSync(LOCK_FILE);
+  } catch { /* 종료 경로 — 무시 */ }
+}
+
+function killChildGroups(signal) {
+  for (const pid of activeChildren) {
+    try { process.kill(-pid, signal); } catch { /* 이미 종료 */ }
+  }
+}
+
+let terminating = false;
+function installSignalHandlers() {
+  for (const sig of ["SIGINT", "SIGTERM"]) {
+    process.on(sig, () => {
+      if (terminating) return;
+      terminating = true;
+      console.error(`[prebuild-gates] ${sig} — 자식 게이트 process-group 전체에 SIGTERM 전파 후 종료한다`);
+      killChildGroups("SIGTERM");
+      // 유예 후 SIGKILL — mutation 게이트의 restore 핸들러가 돌 시간을 준다
+      setTimeout(() => {
+        killChildGroups("SIGKILL");
+        releaseLock();
+        process.exit(130);
+      }, 3000);
+    });
+  }
+  process.on("exit", releaseLock);
+}
+
 // ── 실행 ───────────────────────────────────────────────────────────
 function runGate(name) {
   return new Promise((resolve) => {
     const start = Date.now();
     // selftest 전용 합성 게이트 — 실코드 경로(runAll/runChain/report)를 그대로 태운다
     const isSynthetic = name.startsWith("__synthetic_");
-    const [cmd, args] = isSynthetic
-      ? [process.execPath, ["-e", name === "__synthetic_fail__" ? "process.exit(1)" : "process.exit(0)"]]
-      : ["npm", ["run", name]];
+    const syntheticBody =
+      name === "__synthetic_fail__" ? "process.exit(1)"
+      : name === "__synthetic_sleep__"
+        ? "require('fs').writeFileSync(process.env.SYNTH_PID_FILE, String(process.pid)); setTimeout(() => process.exit(0), 30000)"
+        : "process.exit(0)";
+    const [cmd, args] = isSynthetic ? [process.execPath, ["-e", syntheticBody]] : ["npm", ["run", name]];
     const child = spawn(cmd, args, {
       cwd: ROOT,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true, // 자기 process-group 리더로 — 러너 중단 시 그룹째 종료 가능
     });
+    if (child.pid) activeChildren.add(child.pid);
     let buf = "";
     const cap = (d) => {
       buf += d.toString();
@@ -255,6 +317,7 @@ function runGate(name) {
     child.stdout.on("data", cap);
     child.stderr.on("data", cap);
     child.on("close", (code) => {
+      if (child.pid) activeChildren.delete(child.pid);
       resolve({ name, code: code ?? 1, secs: (Date.now() - start) / 1000, log: buf });
     });
     child.on("error", (err) => {
@@ -268,7 +331,31 @@ function gitPorcelain() {
   return execSync("git status --porcelain -uall", { cwd: ROOT, encoding: "utf8" }).trim();
 }
 
-async function runAll(gates, { verifyClean = false } = {}) {
+const CANONICAL_FILE = path.join(ROOT, "scripts", "ci", "prebuild-gates-canonical.json");
+
+/** GATES ↔ canonical 목록 set+순서 equality — 실행마다 인라인 검증(삼순 blocker ③) */
+function assertCanonicalEquality(gates) {
+  let canonical;
+  try {
+    canonical = JSON.parse(readFileSync(CANONICAL_FILE, "utf8"));
+  } catch (err) {
+    console.error(`[prebuild-gates] canonical FAIL — ${CANONICAL_FILE} 읽기 불가: ${err.message}`);
+    process.exit(1);
+  }
+  const names = gates.map((g) => g.name);
+  const same = names.length === canonical.length && names.every((n, i) => n === canonical[i]);
+  if (!same) {
+    const a = new Set(names), b = new Set(canonical);
+    const missing = canonical.filter((n) => !a.has(n));
+    const extra = names.filter((n) => !b.has(n));
+    console.error(`[prebuild-gates] canonical FAIL — GATES ↔ canonical set+순서 불일치 (canonical에만: ${missing.join(",") || "-"} / GATES에만: ${extra.join(",") || "-"} / 순서 불일치 여부 포함)`);
+    console.error("게이트 추가·삭제·재배열은 GATES 와 prebuild-gates-canonical.json 을 함께 바꿔야 한다.");
+    process.exit(1);
+  }
+}
+
+async function runAll(gates, { verifyClean = false, canonical = false } = {}) {
+  if (canonical) assertCanonicalEquality(gates);
   if (verifyClean) {
     // 삼순 교정(2026-08-20): 전후 snapshot "동일" 비교는 시작부터 dirty인 파일의
     // 내용 변화·untracked 덮어쓰기를 못 본다(같은 M/?? 경로로 통과).
@@ -400,6 +487,50 @@ async function selftest() {
   await synth("red-exclusive", true);
   await synth("green", false);
 
+  // 중단-잔존 회귀 (삼순 blocker ②): 러너를 SIGTERM 으로 중단하면
+  // 실행 중이던 자식 게이트 process-group 까지 함께 죽어야 한다.
+  await (async () => {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const pidFile = path.join(os.tmpdir(), `prebuild-gates-synth-${process.pid}.pid`);
+    try { fs.unlinkSync(pidFile); } catch { /* 없으면 통과 */ }
+    const runner = spawn(process.execPath, [fileURLToPath(import.meta.url), "--synthetic", "sleep"], {
+      cwd: ROOT,
+      env: { ...process.env, SYNTH_PID_FILE: pidFile },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // 자식 게이트가 떠서 pid 를 쓸 때까지 대기 (최대 10초)
+    const deadline = Date.now() + 10_000;
+    let childPid = 0;
+    while (Date.now() < deadline) {
+      try {
+        childPid = Number(fs.readFileSync(pidFile, "utf8").trim());
+        if (childPid > 0) break;
+      } catch { /* 아직 */ }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (!(childPid > 0)) {
+      errors.push("interrupt: synthetic sleep 게이트가 뜨지 않았다");
+      runner.kill("SIGKILL");
+      return;
+    }
+    runner.kill("SIGTERM");
+    await new Promise((resolve) => runner.on("close", resolve));
+    // 유예 포함 최대 6초 안에 자식이 죽어야 한다
+    const killDeadline = Date.now() + 6_000;
+    let alive = true;
+    while (Date.now() < killDeadline) {
+      alive = pidAlive(childPid);
+      if (!alive) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    if (alive) {
+      errors.push(`interrupt: 러너 SIGTERM 후에도 자식 게이트(pid ${childPid})가 살아있다 — process-group 전파 실패`);
+      try { process.kill(childPid, "SIGKILL"); } catch { /* 정리 */ }
+    }
+    try { fs.unlinkSync(pidFile); } catch { /* 정리 */ }
+  })();
+
   if (errors.length) {
     console.error("[prebuild-gates selftest] FAIL");
     for (const e of errors) console.error(" - " + e);
@@ -412,7 +543,12 @@ async function selftest() {
 // main 가드: 다른 게이트가 GATES 를 import 할 때 실행되면 안 된다
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+installSignalHandlers();
 const argv = process.argv.slice(2);
+// lock 은 실게이트 풀런에만 — selftest 의 synthetic 픽스처는 repo 파일을 건드리지 않고,
+// selftest 가 lock 을 쥐면 자기 synthetic 서브프로세스가 lock FAIL 로 죽는다.
+const isRealRun = argv[0] === undefined || argv[0] === "--verify-clean";
+if (isRealRun) acquireLock();
 if (argv[0] === "--selftest") {
   await selftest();
 } else if (argv[0] === "--list") {
@@ -439,6 +575,11 @@ if (argv[0] === "--selftest") {
       { name: "__synthetic_pass2__", lane: "serial" },
       { name: "__synthetic_fail__", lane: "exclusive" },
     ]);
+  } else if (fixture === "sleep") {
+    await runAll([
+      { name: "__synthetic_sleep__", lane: "pool" },
+      { name: "__synthetic_pass__", lane: "pool" },
+    ]);
   } else if (fixture === "green") {
     await runAll([
       { name: "__synthetic_pass__", lane: "pool" },
@@ -450,6 +591,6 @@ if (argv[0] === "--selftest") {
     process.exit(1);
   }
 } else {
-  await runAll(GATES, { verifyClean: argv.includes("--verify-clean") });
+  await runAll(GATES, { verifyClean: argv.includes("--verify-clean"), canonical: true });
 }
 }
