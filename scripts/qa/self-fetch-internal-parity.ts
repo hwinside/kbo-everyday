@@ -138,7 +138,7 @@ function boxScore() {
   };
 }
 
-function kboList(state: "live" | "scheduled" | "final") {
+function kboList(state: "live" | "scheduled" | "final" | "cancelled") {
   return {
     game: [{
       G_ID: "20260729WOLG0",
@@ -151,10 +151,11 @@ function kboList(state: "live" | "scheduled" | "final") {
       HOME_NM: "LG",
       T_SCORE_CN: "3",
       B_SCORE_CN: "2",
-      GAME_INN_NO: state === "scheduled" ? 0 : 9,
+      GAME_INN_NO: state === "scheduled" || state === "cancelled" ? 0 : 9,
       GAME_TB_SC: "T",
       GAME_STATE_SC: state === "final" ? "3" : state === "live" ? "2" : "1",
-      CANCEL_SC_ID: "",
+      // cancelled: 양의 정수 코드 = 취소 사유(isKboGameCancelled SSOT 계약)
+      CANCEL_SC_ID: state === "cancelled" ? "1" : "",
       T_PIT_P_NM: "",
       B_PIT_P_NM: "",
       W_PIT_P_NM: "",
@@ -261,11 +262,22 @@ function naverRecord(state: "live" | "final") {
   };
 }
 
-function installTodayFetch(state: "live" | "scheduled" | "final"): typeof fetch {
+type TodayFixtureState = "live" | "scheduled" | "final" | "cancelled" | "no-box";
+
+function installTodayFetch(rawState: TodayFixtureState): typeof fetch {
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
-    if (url.includes("GetKboGameList")) return json(kboList(state));
+    // no-box: 경기 목록은 live 로 주되, game-detail 내부 fetch(스코어보드·박스·naver)는
+    // 전부 장애 → boxScore 결손 분기(HIDDEN + s-maxage=20)가 실제로 타진다.
+    if (rawState === "no-box") {
+      if (url.includes("GetKboGameList")) return json(kboList("live"));
+      if (url.includes("api-gw.sports.naver.com/schedule/games")) return json(naverSchedule("live"));
+      return new Response("upstream down (no-box fixture)", { status: 503 });
+    }
+    // cancelled: 목록 단계에서 상태가 확정되므로 상세 fetch 는 scheduled 픽스처로 충분하다.
+    const state: "live" | "scheduled" | "final" = rawState === "cancelled" ? "scheduled" : rawState;
+    if (url.includes("GetKboGameList")) return json(kboList(rawState === "cancelled" ? "cancelled" : state));
     if (url.includes("GetScoreBoard")) return json(scoreboard(state));
     if (url.includes("GetLineUpAnalysis")) return json(state === "scheduled" ? [] : lineup());
     if (url.includes("GetBoxScore")) return json(state === "scheduled" ? { tables: [] } : boxScore());
@@ -532,6 +544,42 @@ async function checkPlayerTodayGame(failures: Failure[]): Promise<void> {
   } finally {
     globalThis.fetch = originalFetch2;
   }
+
+  // 분기 결속: cancelled — HIDDEN(cancelled) + s-maxage=60 (삼순 4차 ① 명시 요구)
+  const originalFetch3 = installTodayFetch("cancelled");
+  try {
+    const cancelled = await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game cancelled cache", cacheControlOf(cancelled.headers), "s-maxage=60");
+    expectEqual(failures, "[P] player-today-game cancelled body.status", (cancelled.body as { status: string }).status, "cancelled");
+    expectEqual(failures, "[P] player-today-game cancelled show", (cancelled.body as { show: boolean }).show, false);
+    const route = await import("../../src/app/api/player-today-game/route");
+    await compareRouteToService(
+      failures,
+      "player-today-game cancelled",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" }),
+    );
+  } finally {
+    globalThis.fetch = originalFetch3;
+  }
+
+  // 분기 결속: no-box — 목록은 live 인데 상세(박스스코어) 결손 → HIDDEN(live) + s-maxage=20 (삼순 4차 ①)
+  const originalFetch4 = installTodayFetch("no-box");
+  try {
+    const noBox = await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" });
+    expectEqual(failures, "[P] player-today-game no-box cache", cacheControlOf(noBox.headers), "s-maxage=20");
+    expectEqual(failures, "[P] player-today-game no-box body.status", (noBox.body as { status: string }).status, "live");
+    expectEqual(failures, "[P] player-today-game no-box show", (noBox.body as { show: boolean }).show, false);
+    const route = await import("../../src/app/api/player-today-game/route");
+    await compareRouteToService(
+      failures,
+      "player-today-game no-box",
+      await route.GET(new NextRequest("https://keubo.fan/api/player-today-game?team=1&name=%ED%99%8D%EA%B8%B8%EB%8F%99&pos=%ED%83%80%EC%9E%90")),
+      await getPlayerTodayGameRouteResult({ teamId: 1, name: "홍길동", pos: "타자" }),
+    );
+  } finally {
+    globalThis.fetch = originalFetch4;
+  }
 }
 
 async function checkGameDetail(failures: Failure[]): Promise<void> {
@@ -551,9 +599,25 @@ async function checkGameDetail(failures: Failure[]): Promise<void> {
       gameId: "20260729WOLG0",
       onDeferredEffect: (effect) => deferred.push(effect),
     });
-    expectEqual(failures, "[P] game-detail service body.status", servicePayload.status, "final");
-    expectEqual(failures, "[P] game-detail service lineup shape", Array.isArray(servicePayload.lineup?.away), true);
     expectEqual(failures, "[P] game-detail service deferred count", deferred.length, 0);
+
+    // 삼순 4차 ①: 동일 fixture 에서 route GET 전체 body 를 service 결과와 **직접 대조**한다.
+    // 유일한 시계 파생 필드(trace.sourceAtMs·fetchedAtMs)만 정규화하고 나머지 전 필드를 비교
+    // (제외 사유 명시: 두 호출의 wall-clock 이 다를 뿐 계약 필드가 아니다).
+    const normalizeClock = (p: unknown): unknown => {
+      const clone = JSON.parse(JSON.stringify(p)) as { trace?: { sourceAtMs?: number; fetchedAtMs?: number } };
+      if (clone.trace) {
+        clone.trace.sourceAtMs = 0;
+        clone.trace.fetchedAtMs = 0;
+      }
+      return clone;
+    };
+    expectEqual(
+      failures,
+      "[P] game-detail route↔service full body",
+      JSON.stringify(normalizeClock(payload)),
+      JSON.stringify(normalizeClock(servicePayload)),
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

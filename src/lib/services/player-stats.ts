@@ -23,11 +23,12 @@ const cache: Record<string, { data: PlayerDetailStats; ts: number }> = {};
 export type { PlayerDetailStats };
 
 export async function getPlayerStatsRouteResult(rawId: string | null, pos = "타자"): Promise<{
-  body: { stats: PlayerDetailStats | null; cached?: boolean; error?: string };
+  // missing-id 분기는 base route 계약 그대로 `{ error }` 만 반환한다(stats 필드 추가 금지 — 삼순 #1257 4차 ②).
+  body: { stats?: PlayerDetailStats | null; cached?: boolean; error?: string };
   status?: number;
   headers?: HeadersInit;
 }> {
-  if (!rawId) return { body: { error: "id required", stats: null }, status: 400 };
+  if (!rawId) return { body: { error: "id required" }, status: 400 };
 
   const id = resolvePlayer(rawId)?.numericId || rawId;
   const cacheKey = `player-${id}-${pos}`;

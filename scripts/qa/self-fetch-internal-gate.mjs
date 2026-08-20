@@ -350,8 +350,9 @@ function runSelfTest() {
   try {
     runMutations();
   } finally {
-    cleanup();
-    rmSync(backupDir, { recursive: true, force: true });
+    // 삼순 #1257 4차 ③: 복원 실패 시 backupDir 는 유일한 복구 원본이다 — 무조건 삭제 금지.
+    // 성공 경로의 temp 삭제는 cleanup() 내부(byte 검증 통과 후)가 담당한다.
+    if (!cleanup()) process.exitCode = 1;
   }
 
   function runMutations() {
