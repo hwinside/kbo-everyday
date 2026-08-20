@@ -774,5 +774,54 @@ const ktEvents0820: FieldingEvent[] = ktEvents0820raw
   check("RF = 김민준 유지", defenderAt(s, "RF") === "김민준", `got ${defenderAt(s, "RF")}`);
 }
 
+// ── 케이스 24: 상대 투수 ↔ 수비 야수 동명이인 (삼순 3차 조건) ──
+// 투수는 타순 라인업에 없어 batters 결속만으로는 새는 구멍: 상대 투수 '김민준' 교체
+// 이벤트가 수비팀 RF '김민준'을 지우면 안 된다. 주체가 투수인 이벤트는 귀속 전
+// 개별 skip(필드 8자리와 무관) → 나머지 타임라인은 유지되는 것까지 계약.
+{
+  const dupLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "최원준"),
+    lineupEntry(2, "1B", "김현수"),
+    lineupEntry(3, "RF", "김민준"), // 상대 투수와 동명이인
+    lineupEntry(4, "LF", "힌리어드"),
+    lineupEntry(5, "3B", "허경민"),
+    lineupEntry(6, "2B", "류현인"),
+    lineupEntry(7, "DH", "이정범"),
+    lineupEntry(8, "C", "한승택"),
+    lineupEntry(9, "SS", "권동진"),
+  ];
+  const oppLineup: LineupEntry[] = [
+    lineupEntry(1, "CF", "박해민"),
+    lineupEntry(2, "RF", "홍창기"),
+  ];
+  const box: BatterRecord[] = [
+    batter(3, "RF", "김민준"),
+    batter(5, "三", "허경민"),
+    batter(5, "二", "오윤석", true),
+    batter(6, "二", "류현인"),
+  ];
+  const oppPitchers = [
+    { name: "김민준", decision: "", inningsPitched: "5", hits: 3, runs: 1, earnedRuns: 1, walks: 1, strikeouts: 4, hr: 0, battersFaced: 20, atBats: 18, pitchCount: 80, era: "3.10" },
+  ];
+  const events = [
+    // 상대 투수 김민준 교체 — 수비팀 RF 김민준을 지우면 안 됨(주체=투수 → skip)
+    parseFieldingEvent("투수 김민준 : 투수 홍길동 (으)로 교체")!,
+    // 유효한 수비팀 이벤트는 계속 적용돼야 함(전체 폐기 아님)
+    parseFieldingEvent("3루수 허경민 : 2루수 오윤석 (으)로 교체")!,
+    parseFieldingEvent("2루수 류현인 : 3루수(으)로 수비위치 변경")!,
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: dupLineup, home: oppLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: oppPitchers },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
+  console.log("[case24] 상대 투수 동명이인 교체 → 수비 야수 보존 + 타임라인 유지");
+  check("RF = 김민준 유지 (투수 교체가 야수를 지우지 않음)", defenderAt(s, "RF") === "김민준", `got ${defenderAt(s, "RF")}`);
+  check("홍길동 미포함", !(s ?? []).some(d => d.name === "홍길동"));
+  check("3B = 류현인 (투수 이벤트 skip이 전체 폐기로 번지지 않음)", defenderAt(s, "3B") === "류현인", `got ${defenderAt(s, "3B")}`);
+  check("2B = 오윤석 (타임라인 유지)", defenderAt(s, "2B") === "오윤석", `got ${defenderAt(s, "2B")}`);
+}
+
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);

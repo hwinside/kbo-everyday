@@ -89,6 +89,12 @@ export function replayFieldingTimeline(
   let applied = 0;
   for (const ev of events) {
     const subject = ev.kind === "replace" ? ev.outName : ev.name;
+    const subjectPosKr = ev.kind === "replace" ? ev.outPosKr : ev.fromPosKr;
+    // 주체가 투수인 이벤트는 귀속 판단 전에 안전 제외(삼순 3차 조건) — 투수는 타순
+    // 라인업에 없어 수비 8자리에 영향이 없고, 상대 투수와 수비 야수가 동명이인이면
+    // 이 이벤트가 수비 야수를 잘못 지우는 구멍이 된다. 폐기가 아니라 개별 skip이므로
+    // 나머지 타임라인은 유지된다(투수 이벤트는 원래도 필드 배치와 무관).
+    if (subjectPosKr === "투수") continue;
     const inDefense = posByName.has(subject);
     // 양팀 동명이인 귀속 모호 → 타임라인 전체 폐기(fail-close).
     if (inDefense && opponentNames?.has(subject)) return null;
@@ -401,9 +407,13 @@ export function deriveGameState(
   // 동시 존재하는 동명이인이면 replay가 타임라인 전체를 폐기한다(삼순 P0 fail-close).
   const offensiveLineup = detailLineup ? (isTop ? detailLineup.away : detailLineup.home) : null;
   const offensiveBoxBatters = detailBoxScore ? (isTop ? detailBoxScore.awayBatters : detailBoxScore.homeBatters) : null;
+  // 투수는 타순 라인업에 없어 batters 결속만으로는 상대 투수↔수비 야수 동명이인이 새어온다
+  // (삼순 3차 조건) → 상대 pitchers까지 명단 결속.
+  const offensiveBoxPitchers = detailBoxScore ? (isTop ? detailBoxScore.awayPitchers : detailBoxScore.homePitchers) : null;
   const opponentNames = new Set<string>();
   for (const e of offensiveLineup ?? []) if (e.name) opponentNames.add(e.name);
   for (const b of offensiveBoxBatters ?? []) if (b.name) opponentNames.add(b.name);
+  for (const pRec of offensiveBoxPitchers ?? []) if (pRec.name) opponentNames.add(pRec.name);
   const defensiveSide = (defensiveLineup || (defensiveBoxBatters && defensiveBoxBatters.length > 0))
     ? toDefenders(defensiveBoxBatters, defensiveLineup, defensiveTeamId, fieldingEvents, opponentNames)
     : null;
