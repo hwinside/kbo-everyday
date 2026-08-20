@@ -528,5 +528,157 @@ const awayLineupRev: LineupEntry[] = [
   check("류현인 미포함", !(s ?? []).some(d => d.name === "류현인"));
 }
 
+// ── 케이스 18: 교체 타임라인(20260820KTLG0 실측 이벤트) — 미확정 2명 케이스를 소스 진실로 완성 ──
+// boxScore만으로는 배정대 '주'·김상수 '대'(미확정 2명+빈자리 2개 → fail-empty)였던 상황을
+// Naver textRelay 교체 공지 재생으로 8명 확정. 이벤트 문자열은 원문 그대로.
+// route.ts 는 import 시 supabase admin 싱글톤을 즉시 생성한다(모듈 사이드이펙트).
+// 파싱 순수함수만 검증하므로 더미 env 를 route import 전에 주입한다
+// (pitch-inning-parser-smoke 와 동일 패턴 — 정적 import 는 호이스팅되므로 await import).
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke.local";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
+// 이 파일은 tsx가 CJS로 변환하므로(상단 정적 import 구성) top-level await 불가 →
+// env 주입 뒤 시점에 실행되는 require로 로드(정적 import는 호이스팅돼 env보다 먼저 돌아감).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { parseFieldingEvent, parseInningRelays } = require("../../src/app/api/game-relay/route") as typeof import("../../src/app/api/game-relay/route");
+import type { NaverTextRelay, FieldingEvent } from "../../src/app/api/game-relay/route";
+
+const ktLineup0820: LineupEntry[] = [
+  lineupEntry(1, "CF", "최원준"),
+  lineupEntry(2, "1B", "김현수"),
+  lineupEntry(3, "RF", "안현민"),
+  lineupEntry(4, "LF", "힌리어드"),
+  lineupEntry(5, "3B", "허경민"),
+  lineupEntry(6, "2B", "류현인"),
+  lineupEntry(7, "DH", "이정범"),
+  lineupEntry(8, "C", "한승택"),
+  lineupEntry(9, "SS", "권동진"),
+];
+const ktEvents0820raw = [
+  "3루수 허경민 : 2루수 오윤석 (으)로 교체",
+  "2루수 류현인 : 3루수(으)로 수비위치 변경",
+  "5번타자 오윤석 : 대타 김민혁 (으)로 교체",
+  "대타 김민혁 : 유격수 장준원 (으)로 교체",
+  "유격수 권동진 : 대타 김상수 (으)로 교체",
+  "유격수 김상수 : 2루수(으)로 수비위치 변경",
+  "포수 한승택 : 포수 조대현 (으)로 교체",
+  "좌익수 힌리어드 : 좌익수 장진혁 (으)로 교체",
+  "1루주자 안현민 : 대주자 배정대 (으)로 교체",
+  "대주자 배정대 : 중견수(으)로 수비위치 변경",
+  "중견수 최원준 : 우익수(으)로 수비위치 변경",
+  // 상대팀(LG)·투수 이벤트 — KT replay에서 무시되어야 함
+  "3번타자 오스틴 : 대타 천성호 (으)로 교체",
+  "투수 고영표 : 투수 주권 (으)로 교체",
+];
+const ktEvents0820: FieldingEvent[] = ktEvents0820raw
+  .map(parseFieldingEvent)
+  .filter((e): e is FieldingEvent => e !== null);
+{
+  check("[case18] 원문 13줄 전부 이벤트로 파싱됨", ktEvents0820.length === 13, `got ${ktEvents0820.length}`);
+  // boxScore: 실측 형태(배정대 '주'·김상수 '대' 미갱신, 장준원 SS 등)
+  const box: BatterRecord[] = [
+    batter(1, "CF", "최원준"),
+    batter(2, "一", "김현수"),
+    batter(3, "우", "안현민"),
+    batter(3, "주", "배정대", true),
+    batter(4, "좌", "힌리어드"),
+    batter(4, "좌", "장진혁", true),
+    batter(5, "三", "허경민"),
+    batter(5, "二", "오윤석", true),
+    batter(5, "대", "김민혁", true),
+    batter(5, "SS", "장준원", true),
+    batter(6, "二", "류현인"),
+    batter(7, "DH", "이정범"),
+    batter(8, "C", "한승택"),
+    batter(8, "C", "조대현", true),
+    batter(9, "SS", "권동진"),
+    batter(9, "대", "김상수", true),
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: ktLineup0820, home: homeLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const relayInnings = [{ fielding: ktEvents0820 }];
+  const s = deriveGameState(undefined, gameKTLG, detail, relayInnings).defensiveSide;
+  console.log("[case18] 교체 타임라인 재생 → 미확정 2명 케이스 소스 진실로 8명 완성");
+  check("3B = 류현인", defenderAt(s, "3B") === "류현인", `got ${defenderAt(s, "3B")}`);
+  check("2B = 김상수 (대타→SS→2B 체인)", defenderAt(s, "2B") === "김상수", `got ${defenderAt(s, "2B")}`);
+  check("SS = 장준원", defenderAt(s, "SS") === "장준원", `got ${defenderAt(s, "SS")}`);
+  check("CF = 배정대 (대주→CF)", defenderAt(s, "CF") === "배정대", `got ${defenderAt(s, "CF")}`);
+  check("RF = 최원준 (CF→RF 이동)", defenderAt(s, "RF") === "최원준", `got ${defenderAt(s, "RF")}`);
+  check("LF = 장진혁", defenderAt(s, "LF") === "장진혁", `got ${defenderAt(s, "LF")}`);
+  check("C = 조대현", defenderAt(s, "C") === "조대현", `got ${defenderAt(s, "C")}`);
+  check("1B = 김현수 (무이벤트 유지)", defenderAt(s, "1B") === "김현수", `got ${defenderAt(s, "1B")}`);
+  check("수비수 8명 완성", (s?.length ?? 0) === 8, `got ${s?.length}`);
+  check("퇴장 허경민·권동진·오윤석 미포함", !(s ?? []).some(d => ["허경민","권동진","오윤석"].includes(d.name)));
+}
+
+// ── 케이스 19: 이벤트 결손(류현인 변경 누락) → 모순 위치는 타임라인 배정 없음(fail-close 후 기존 로직) ──
+{
+  const events = [
+    parseFieldingEvent("3루수 허경민 : 2루수 오윤석 (으)로 교체")!,
+    // "2루수 류현인 : 3루수 변경" 이벤트가 안 온 상황 → 오윤석·류현인 둘 다 2B → 모순
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: awayLineup0820, home: homeLineup },
+    boxScore: { awayBatters: awayBox0820(), homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
+  console.log("[case19] 이벤트 결손 → 모순 위치 fail-close, 기존(case12) 경로 유지");
+  // 타임라인 2B 모순 → 타임라인 미배정 → 기존 독립신호 규칙(case12)이 그대로 동작
+  check("2B = 오윤석 (기존 규칙)", defenderAt(s, "2B") === "오윤석", `got ${defenderAt(s, "2B")}`);
+  check("3B = 류현인 (기존 독립신호 규칙)", defenderAt(s, "3B") === "류현인", `got ${defenderAt(s, "3B")}`);
+}
+
+// ── 케이스 20: stale 타임라인 교차검증 — 타임라인이 지목한 선수가 boxScore상 이미 퇴장 → 불신 ──
+{
+  // 타임라인은 "허경민 3B 유지"를 말하지만(이벤트 1개만 도착한 오래된 relay),
+  // boxScore는 허경민 퇴장(5번 현재=오윤석)을 안다 → 타임라인 배정 무시.
+  const events = [
+    parseFieldingEvent("유격수 권동진 : 대타 김상수 (으)로 교체")!, // 허경민 이벤트는 유실된 상황
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: awayLineup0820, home: homeLineup },
+    boxScore: { awayBatters: awayBox0820(), homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail, [{ fielding: events }]).defensiveSide;
+  console.log("[case20] 타임라인 결손 + 퇴장 교차검증");
+  // 허경민은 타임라인상 3B로 남아있지만 boxScore상 퇴장 → 3B는 기존 규칙(류현인)로
+  check("3B ≠ 허경민 (퇴장 교차검증)", defenderAt(s, "3B") !== "허경민", `got ${defenderAt(s, "3B")}`);
+  check("SS = 김상수 (타임라인 재생... 미배정이므로 기존 상속 규칙)", defenderAt(s, "SS") === "김상수", `got ${defenderAt(s, "SS")}`);
+}
+
+// ── 케이스 21: production parseInningRelays가 교체 공지를 inning.fielding으로 구조화 ──
+{
+  const textRelays: NaverTextRelay[] = [
+    // reverse-chronological 입력(원본 API 순서) — 파서가 flip 함
+    {
+      title: "3번타자 오스틴", titleStyle: "8",
+      // textOptions는 relay 항목 내에서 시간순(파서의 pendingPitches 소비와 동일 가정).
+      textOptions: [
+        { seqno: 1, type: 2, text: "3루수 허경민 : 2루수 오윤석 (으)로 교체" },
+        { seqno: 2, type: 2, text: "2루수 류현인 : 3루수(으)로 수비위치 변경" },
+      ],
+    },
+    { title: "5회말 LG 공격", titleStyle: "0" },
+  ];
+  const innings = parseInningRelays(textRelays);
+  console.log("[case21] parseInningRelays → fielding 구조화");
+  check("이닝 1개 파싱", innings.length === 1, `got ${innings.length}`);
+  const f = innings[0]?.fielding ?? [];
+  check("fielding 이벤트 2개", f.length === 2, `got ${f.length}`);
+  check("replace 구조화", f[0]?.kind === "replace" && (f[0] as {inName:string}).inName === "오윤석");
+  check("reposition 구조화", f[1]?.kind === "reposition" && (f[1] as {toPosKr:string}).toPosKr === "3루수");
+  // 패턴 밖 텍스트·공백 이름 가드
+  check("외국인 공백 이름 파싱", (() => {
+    const e = parseFieldingEvent("좌익수 밴 헤켄 : 좌익수 장진혁 (으)로 교체");
+    return e?.kind === "replace" && e.outName === "밴 헤켄";
+  })());
+  check("비패턴 텍스트 null", parseFieldingEvent("류현인 : 중견수 플라이 아웃") === null);
+  check("홈인 텍스트 null", parseFieldingEvent("3루주자 장준원 : 홈인") === null);
+}
+
 console.log(`\n[field-defense-boxscore] ${pass} passed, ${fail} failed`);
 process.exit(fail === 0 ? 0 : 1);
