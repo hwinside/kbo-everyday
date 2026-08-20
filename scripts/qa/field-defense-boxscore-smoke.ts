@@ -357,7 +357,8 @@ function detailWO(homeBatters: BatterRecord[]): GameDetailResponse {
 // ── 케이스 12: 실제 제보 경기(20260820KTLG0) — 현재 선수 2명이 같은 포지션(二) 충돌 ──
 // KBO·Naver 양쪽 모두 류현인 2B→3B 이동을 미갱신: 오윤석(5번 교체입) 二 + 류현인(6번
 // 선발) 二, 三 공석. 구 동작 = 류현인 필드 탈락 + 3B 실종(하린아빠 제보 스크린샷).
-// 신규 규칙 = 충돌 패자 1명 + 빈자리 1개일 때만 배치 → 3B = 류현인.
+// 신규 규칙 = 독립 신호 판별: fresh(본인 선발 슬롯과 다름/명단에 없음) 1명 + stale(선발
+// 위치 그대로) 1명 + 빈자리 1개일 때만 fresh가 충돌 위치, stale이 빈자리 → 3B = 류현인.
 const awayLineup0820: LineupEntry[] = [
   lineupEntry(1, "CF", "최원준"),
   lineupEntry(2, "1B", "김현수"),
@@ -416,6 +417,97 @@ const gameKTLG = { status: "live", inning: "5회말", awayScore: 1, homeScore: 3
   console.log("[case13] 충돌 패자 2명 → 추정 금지");
   check("3B 비움 (배치 안 함)", defenderAt(s, "3B") === undefined, `got ${defenderAt(s, "3B")}`);
   check("C 비움 (배치 안 함)", defenderAt(s, "C") === undefined, `got ${defenderAt(s, "C")}`);
+}
+
+// ── 케이스 15: 역순 타순 동형 — stale 선발이 더 앞 타순(first-wins 승자)여도 fresh가 이긴다 ──
+// 삼순 NO-GO P0 반례: first-wins(배열 순서)로 승자를 정하면 타순이 반대일 때 두 선수가
+// 뒤바뀝. 독립 신호(선발 슬롯 대비 위치 변경)로만 판별해야 양방향 동일 결과가 나온다.
+const awayLineupRev: LineupEntry[] = [
+  lineupEntry(1, "CF", "최원준"),
+  lineupEntry(2, "1B", "김현수"),
+  lineupEntry(3, "RF", "안현민"),
+  lineupEntry(4, "LF", "힌리어드"),
+  lineupEntry(5, "2B", "류현인"),   // 선발 2B가 교체 슬롯(6번)보다 앞 타순
+  lineupEntry(6, "3B", "허경민"),
+  lineupEntry(7, "DH", "이정범"),
+  lineupEntry(8, "C", "한승택"),
+  lineupEntry(9, "SS", "권동진"),
+];
+{
+  const box: BatterRecord[] = [
+    batter(1, "CF", "최원준"),
+    batter(2, "一", "김현수"),
+    batter(3, "RF", "안현민"),
+    batter(4, "LF", "힌리어드"),
+    batter(5, "二", "류현인"),        // stale-의심(선발 2B 그대로)이 first-wins 승자 위치
+    batter(6, "三", "허경민"),
+    batter(6, "二", "오윤석", true),   // fresh(교체 투입)가 뒤 타순
+    batter(7, "DH", "이정범"),
+    batter(8, "C", "한승택"),
+    batter(9, "SS", "권동진"),
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: awayLineupRev, home: homeLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail).defensiveSide;
+  console.log("[case15] 역순 타순 — fresh가 충돌 위치 획득(first-wins 교정), stale이 빈자리");
+  check("2B = 오윤석 (fresh, first-wins 지지 아님)", defenderAt(s, "2B") === "오윤석", `got ${defenderAt(s, "2B")}`);
+  check("3B = 류현인 (stale → 빈자리)", defenderAt(s, "3B") === "류현인", `got ${defenderAt(s, "3B")}`);
+  check("수비수 8명 완성", (s?.length ?? 0) === 8, `got ${s?.length}`);
+}
+
+// ── 케이스 16: 양쪽 모두 fresh(교체 투입 2명 충돌) → 독립 신호 부재, 추정 금지 ──
+{
+  const box: BatterRecord[] = [
+    batter(1, "CF", "최원준"),
+    batter(2, "一", "김현수"),
+    batter(3, "RF", "안현민"),
+    batter(4, "LF", "힌리어드"),
+    batter(5, "三", "허경민"),
+    batter(5, "二", "오윤석", true),   // fresh 1 (3B 선발 슬롯 투입)
+    batter(6, "二", "류현인"),
+    batter(6, "二", "장준원", true),   // fresh 2 (2B 선발 슬롯 투입) — 둘 다 위치변경/신규
+    batter(7, "DH", "이정범"),
+    batter(8, "C", "한승택"),
+    batter(9, "SS", "권동진"),
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: awayLineup0820, home: homeLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail).defensiveSide;
+  console.log("[case16] 양쪽 모두 fresh → 배치 억제(fail-empty)");
+  check("3B 비움 (추정 안 함)", defenderAt(s, "3B") === undefined, `got ${defenderAt(s, "3B")}`);
+  check("2B는 소스 충실 first-wins 유지", defenderAt(s, "2B") === "오윤석", `got ${defenderAt(s, "2B")}`);
+}
+
+// ── 케이스 17: 양쪽 모두 stale(데이터 오염으로 선발 2B 2명) → 추정 금지 ──
+{
+  const corruptLineup: LineupEntry[] = awayLineup0820.map(e =>
+    e.name === "허경민" ? lineupEntry(5, "2B", "허경민") : e,
+  );
+  const box: BatterRecord[] = [
+    batter(1, "CF", "최원준"),
+    batter(2, "一", "김현수"),
+    batter(3, "RF", "안현민"),
+    batter(4, "LF", "힌리어드"),
+    batter(5, "二", "허경민"),          // stale 1 (선발 2B 그대로)
+    batter(6, "二", "류현인"),          // stale 2 (선발 2B 그대로)
+    batter(7, "DH", "이정범"),
+    batter(8, "C", "한승택"),
+    batter(9, "SS", "권동진"),
+  ];
+  const detail = {
+    status: "live",
+    lineup: { away: corruptLineup, home: homeLineup },
+    boxScore: { awayBatters: box, homeBatters: [], awayPitchers: [], homePitchers: [] },
+  } as unknown as GameDetailResponse;
+  const s = deriveGameState(undefined, gameKTLG, detail).defensiveSide;
+  console.log("[case17] 양쪽 모두 stale → 배치 억제(fail-empty)");
+  check("3B 비움 (추정 안 함)", defenderAt(s, "3B") === undefined, `got ${defenderAt(s, "3B")}`);
 }
 
 // ── 케이스 14: 패자 1명 + 빈자리 2개 → 추정 금지(fail-empty 유지) ──
