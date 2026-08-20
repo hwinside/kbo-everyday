@@ -17,6 +17,10 @@ const SERVED_RECORD = "src/lib/baseball-qa/stats/served-record.ts";
 const FULL_ENTRY = "src/lib/stats/full-entry.ts";
 const FULL_ENTRY_ROSTER = "src/lib/stats/full-entry-roster.ts";
 const STATS_ROUTE = "src/app/api/stats/route.ts";
+// PR #1257: stats GET 구현이 route → service 로 물리 이동 — freshness/fallback 결속 mutation 의
+// 주입 대상도 구현 파일을 따라간다(판정은 여전히 route GET 을 태우는 smoke 의 FAIL 마커로만).
+const STATS_SERVICE = "src/lib/services/stats.ts";
+void STATS_ROUTE;
 const TONE = "src/lib/baseball-qa/tone.ts";
 const GEMINI_REQUEST = "src/lib/baseball-qa/gemini-request.ts";
 const ANSWER_BUDGET = "src/lib/baseball-qa/answer-budget.ts";
@@ -224,7 +228,7 @@ const MUTATIONS = [
   },
   {
     name: "m6h route static 생성시각 결속 제거 — full=1이 live now만 노출",
-    file: STATS_ROUTE,
+    file: STATS_SERVICE,
     from: 'requireOldestFullEntryTimestamp([currentUpdatedAt, staticGeneratedAt])',
     to: 'requireOldestFullEntryTimestamp([currentUpdatedAt, currentUpdatedAt])',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
@@ -238,16 +242,16 @@ const MUTATIONS = [
   },
   {
     name: "m6j GET catch 의 handler 결속 제거 — 옛 인라인 fallback 이 freshness 를 우회",
-    file: STATS_ROUTE,
+    file: STATS_SERVICE,
     from: "    return handleStatsGetFailure(e, season, type);",
     to: `    if (season === "2026" || season === "current") {
       const fb = type === "pitcher"
         ? (pitcherStats2026 as unknown as PlayerStat[])
         : (batterStats2026 as unknown as PlayerStat[]);
       const fbAt = type === "pitcher" ? statsMeta.pitchersGeneratedAt : statsMeta.battersGeneratedAt;
-      return NextResponse.json({ stats: fb, type, count: fb.length, season: 2026, source: "fallback", updatedAt: fbAt });
+      return { body: { stats: fb, type, count: fb.length, season: 2026, source: "fallback", updatedAt: fbAt } };
     }
-    return NextResponse.json({ error: (e as Error).message, stats: [] }, { status: 500 });`,
+    return { body: { error: (e as Error).message, stats: [] }, status: 500 };`,
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
   },
   {
@@ -291,7 +295,7 @@ const MUTATIONS = [
   },
   {
     name: "m9b freshness 계약 오류 분리 제거 — GET catch가 static fallback 200으로 우회",
-    file: STATS_ROUTE,
+    file: STATS_SERVICE,
     from: '  if (error instanceof StatsFreshnessContractError) {',
     to: '  if (false && error instanceof StatsFreshnessContractError) {',
     smoke: "scripts/qa/baseball-qa-leaderboard-smoke.ts",
