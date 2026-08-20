@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API ≤ 30 auto-backup 규칙 (android:fullBackupContent).
+     SecureSessionStore(EncryptedSharedPreferences)는 Keystore 마스터키가 기기 밖으로
+     나가지 않으므로 백업/복원돼도 복호화 불가 — 백업 제외로 이전 계정 부활·복원 크래시 차단
+     (PR #1265 삼순 2차 NO-GO ②설치 생명주기). -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="fan.keubo.secure-session-store.xml" />
+</full-backup-content>

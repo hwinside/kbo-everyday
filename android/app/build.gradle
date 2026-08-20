@@ -91,6 +91,8 @@ dependencies {
     implementation "com.facebook.android:facebook-android-sdk:18.3.0"
     // 인앱 Google Play 리뷰 요청(AppReviewPlugin) — Play In-App Review API
     implementation "com.google.android.play:review:2.0.2"
+    // SecureSessionStorePlugin — 세션 백업 EncryptedSharedPreferences(Keystore 마스터키)
+    implementation "androidx.security:security-crypto:1.1.0"
     // 갤럭시워치(Wear OS) 최애팀 동기화 — GameNotificationPlugin.setMyTeam이 Data Layer push.
     // 워치 미연결 기기에선 no-op(안전).
     implementation "com.google.android.gms:play-services-wearable:18.2.0"

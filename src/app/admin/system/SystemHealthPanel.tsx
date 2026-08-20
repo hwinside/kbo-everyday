@@ -21,8 +21,11 @@ type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 interface SystemHealthResponse {
   level: HealthLevel;
   metrics: {
-    cpuLoadPercent: number | null;
+    cpuUsedPercent: number | null;
+    cpuSampleSeconds: number | null;
     cpuCores: number | null;
+    load1: number | null;
+    load1PerCore: number | null;
     memoryUsedPercent: number | null;
     diskUsedPercent: number | null;
     postgresUp: boolean | null;
@@ -105,7 +108,7 @@ function MetricCard({
   label: string;
   value: string;
   detail: string;
-  level: HealthLevel;
+  level: HealthLevel | null;
 }) {
   return (
     <div className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
@@ -114,10 +117,14 @@ function MetricCard({
           <Icon className="w-4 h-4" />
           <span className="text-xs">{label}</span>
         </div>
-        <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
-          <LevelIcon level={level} className="w-3.5 h-3.5" />
-          {levelLabel(level)}
-        </span>
+        {level === null ? (
+          <span className="text-[11px] text-[#636366]">순간값</span>
+        ) : (
+          <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
+            <LevelIcon level={level} className="w-3.5 h-3.5" />
+            {levelLabel(level)}
+          </span>
+        )}
       </div>
       <p className="mt-3 text-2xl font-bold tabular-nums">{value}</p>
       <p className="mt-1 text-xs text-[#636366]">{detail}</p>
@@ -218,10 +225,17 @@ export default function SystemHealthPanel() {
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <MetricCard
           icon={Cpu}
-          label="CPU 부하 (1분)"
-          value={metrics?.cpuLoadPercent === null || metrics?.cpuLoadPercent === undefined ? "—" : `${metrics.cpuLoadPercent}%`}
-          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores 기준` : "코어 정보 없음"}
-          level={percentLevel(metrics?.cpuLoadPercent ?? null, 70, 85)}
+          label="CPU 사용률"
+          value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
+          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "counter delta 필요"}
+          level={null}
+        />
+        <MetricCard
+          icon={Activity}
+          label="시스템 Load (1분)"
+          value={metrics?.load1 === null || metrics?.load1 === undefined ? "—" : `${metrics.load1}`}
+          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores · 코어당 ${metrics.load1PerCore ?? "—"} · CPU와 별도` : "코어 정보 없음"}
+          level={null}
         />
         <MetricCard
           icon={MemoryStick}

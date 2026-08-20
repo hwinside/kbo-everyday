@@ -139,22 +139,72 @@ function toDefenders(
     if (vacated && !byPosition.has(vacated)) byPosition.set(vacated, cur);
   }
 
+  // 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체·이동됐으면 억제(stale 방지).
+  // 최종 렌더와 4)의 빈자리 판정이 같은 술어를 쓰도록 단일 함수로 묶는다.
+  const fallbackFor = (pos: string): LineupEntry | null => {
+    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+    if (!entry) return null;
+    if (typeof entry.order === "number") {
+      const slotCur = currentBySlot.get(entry.order);
+      if (slotCur) {
+        const slotPosition = normalizeFieldPosition(slotCur.position);
+        if (slotCur.name !== entry.name || slotPosition !== pos) return null; // 교체·포지션 이동 stale 억제
+      }
+    }
+    return entry;
+  };
+
+  // 4) 포지션 충돌 해소 — 소스가 수비 이동을 미갱신해 *현재 선수 2명이 같은 위치*로
+  //    표기되는 경우(실측: 20260820KTLG0 오윤석 二 + 류현인 二, 三 공석 — 류현인
+  //    2B→3B 이동 미반영 → 필드뷰 3루수 실종·류현인 소실).
+  //
+  //    누가 충돌 위치를 지키고 누가 빈자리로 가는지는 first-wins(타순/배열 순서)로
+  //    증명할 수 없다(삼순 NO-GO P0 — 타순이 반대인 동형 케이스에서 두 선수가
+  //    뒤바뀜다). 대신 *독립 신호*로만 판별한다:
+  //      · fresh = 현재 표기가 본인 선발 슬롯 위치와 다름(이동이 기록됨) 또는 선발
+  //        명단에 없음(교체 투입 — 투입 시점에 기록된 위치) → 충돌 위치의 근거가 있다.
+  //      · stale-의심 = 현재 표기가 본인 선발 위치 그대로(갱신 이력 없음) → 미갱신
+  //        가능성이 있는 쪽.
+  //    충돌 위치가 정확히 1곳·후보 정확히 2명·fresh 1명+stale 1명·최종 렌더가 비게
+  //    될 필드 위치(폴백 포함)도 정확히 1개일 때만: fresh가 충돌 위치를 갖고(first-wins
+  //    결과가 반대면 교정), stale이 빈자리로 간다. 그 외(양쪽 모호·후보 3명 이상·
+  //    충돌 2곳 이상·빈자리 2개 이상)는 추정하지 않고 기존 fail-empty(#932) 유지.
+  const candidatesByPos = new Map<string, BatterRecord[]>();
+  for (const b of currentBySlot.values()) {
+    const pos = normalizeFieldPosition(b.position);
+    if (!pos) continue;
+    const arr = candidatesByPos.get(pos);
+    if (arr) arr.push(b);
+    else candidatesByPos.set(pos, [b]);
+  }
+  const contested = [...candidatesByPos.entries()].filter(([, arr]) => arr.length >= 2);
+  if (contested.length === 1 && contested[0][1].length === 2) {
+    const [pos, pair] = contested[0];
+    // 본인 선발 슬롯(타순+이름 일치)의 위치 — 이름 단독 매칭 금지(동명이인 오귀속 방지).
+    const startingPosOf = (b: BatterRecord): string | null => {
+      const entry = lineupEntries?.find(e => e.order === b.order && e.name === b.name);
+      return entry ? normalizeFieldPosition(entry.position) : null;
+    };
+    const freshOnes = pair.filter(b => startingPosOf(b) !== pos);
+    const staleOnes = pair.filter(b => startingPosOf(b) === pos);
+    if (freshOnes.length === 1 && staleOnes.length === 1) {
+      const vacancies = FIELD_POSITIONS.filter(p => !byPosition.has(p) && !fallbackFor(p));
+      if (vacancies.length === 1) {
+        byPosition.set(pos, freshOnes[0]);
+        byPosition.set(vacancies[0], staleOnes[0]);
+      }
+    }
+  }
+
   return FIELD_POSITIONS.flatMap(pos => {
     // 2-1) BoxScore의 현재 수비수 우선.
     const cur = byPosition.get(pos);
     if (cur) {
       return [{ order: cur.order, name: cur.name, position: pos, avg: cur.avg ?? "", teamId }];
     }
-    // 2-2) 선발 라인업 폴백 — 단 그 선발 슬롯이 이미 다른 선수로 교체됐으면 억제.
-    const entry = lineupEntries?.find(e => normalizeFieldPosition(e.position) === pos);
+    // 2-2) 선발 라인업 폴백(위 fallbackFor 계약).
+    const entry = fallbackFor(pos);
     if (!entry) return [];
-    if (typeof entry.order === "number") {
-      const slotCur = currentBySlot.get(entry.order);
-      if (slotCur) {
-        const slotPosition = normalizeFieldPosition(slotCur.position);
-        if (slotCur.name !== entry.name || slotPosition !== pos) return []; // 교체·포지션 이동 stale 억제
-      }
-    }
     return [{ order: entry.order, name: entry.name, position: pos, avg: "", teamId }];
   });
 }
