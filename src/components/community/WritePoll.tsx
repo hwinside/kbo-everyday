@@ -310,7 +310,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
           </div>
 
           {/* Body (scroll) */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom)))]">
             {/* 질문 */}
             <div>
               <label className="block text-xs font-semibold text-text-tertiary mb-1.5">질문</label>
@@ -515,7 +515,7 @@ export default function WritePoll({ isOpen, onClose, onCreated }: WritePollProps
       {teamSheetOpen && (
         <div className="fixed inset-0 z-[10001] flex items-end">
           <div className="absolute inset-0 bg-black/60" onClick={() => setTeamSheetOpen(false)} />
-          <div className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+          <div className="relative w-full max-w-lg mx-auto bg-bg-secondary rounded-t-3xl p-5 pb-[calc(1.25rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom)))]">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base font-bold text-text-primary">팀 선지 선택</h3>
               <button onClick={() => setTeamSheetOpen(false)} className="text-sm font-semibold text-accent">완료</button>

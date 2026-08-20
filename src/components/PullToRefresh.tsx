@@ -152,7 +152,7 @@ export default function PullToRefresh({ onRefresh, children, className }: PullTo
       <div
         className="pointer-events-none fixed left-0 right-0 flex items-center justify-center overflow-hidden bg-bg-primary transition-[height] duration-150 ease-out"
         style={{
-          top: "env(safe-area-inset-top, 0px)",
+          top: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))",
           height: pullDistance > 5 ? pullDistance : 0,
           zIndex: PTR_INDICATOR_Z,
         }}

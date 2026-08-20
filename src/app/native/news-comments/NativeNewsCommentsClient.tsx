@@ -110,7 +110,7 @@ export default function NativeNewsCommentsClient() {
   if (error) {
     return (
       <main className="fixed inset-0 flex items-end bg-black/45">
-        <div className="w-full rounded-t-3xl bg-bg-secondary px-5 pb-[calc(env(safe-area-inset-bottom)+20px)] pt-5 text-center">
+        <div className="w-full rounded-t-3xl bg-bg-secondary px-5 pb-[calc(var(--safe-area-inset-bottom,env(safe-area-inset-bottom))+20px)] pt-5 text-center">
           <p className="text-sm text-text-secondary">댓글을 불러오지 못했어요</p>
           <button type="button" onClick={close} className="mt-4 rounded-full bg-accent px-5 py-2 text-sm font-semibold text-white">
             닫기
@@ -123,7 +123,7 @@ export default function NativeNewsCommentsClient() {
   if (postId === null) {
     return (
       <main className="fixed inset-0 flex items-end bg-black/25">
-        <div className="w-full rounded-t-3xl bg-bg-secondary px-5 pb-[calc(env(safe-area-inset-bottom)+24px)] pt-6 text-center text-sm text-text-secondary">
+        <div className="w-full rounded-t-3xl bg-bg-secondary px-5 pb-[calc(var(--safe-area-inset-bottom,env(safe-area-inset-bottom))+24px)] pt-6 text-center text-sm text-text-secondary">
           댓글을 불러오는 중...
         </div>
       </main>

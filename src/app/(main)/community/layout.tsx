@@ -131,8 +131,8 @@ export default function CommunityLayout({
           // main layout already applies safe-area padding-top. Here we keep the notch-safe background
           // without pushing the title row down (baseline alignment with other root menus).
           style={{
-            paddingTop: "env(safe-area-inset-top, 0px)",
-            marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+            paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))",
+            marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)",
           }}
         >
           <div className="mx-auto max-w-lg">

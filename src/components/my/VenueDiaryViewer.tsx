@@ -231,14 +231,14 @@ export default function VenueDiaryViewer({ gameId, header, isOpen, onClose, onCh
   // VenueStoryViewer 가 #795/#843 에서 이미 같은 사고를 겪고 쓰는 보정을 그대로 따른다.
   // Android·웹/PWA 는 env() 순수값 유지(#843 NO-GO — 전 플랫폼 44px 강제 회귀 방지).
   const safeTop = isIosNativeRuntime()
-    ? "max(env(safe-area-inset-top, 0px), 44px)"
-    : "env(safe-area-inset-top, 0px)";
+    ? "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 44px)"
+    : "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))";
   // 하단 시트는 Android 제스처/3버튼 내비바에 캡션이 가렸다(하린아빠 같은 날 A17 리포트).
   // Capacitor WebView 는 env(safe-area-inset-bottom) 이 0 으로 오는 경우가 있어
   // 네이티브 런타임에서만 최소 48px 을 보장한다. 웹은 기존 여백(24px) 그대로.
   const safeBottom = isNativeRuntime()
-    ? "max(env(safe-area-inset-bottom, 0px), 48px)"
-    : "env(safe-area-inset-bottom, 0px)";
+    ? "max(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)), 48px)"
+    : "var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))";
 
   return createPortal(
     <motion.div

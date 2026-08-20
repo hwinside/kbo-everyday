@@ -9,14 +9,16 @@
 import { isIosNativeRuntime } from "../../src/lib/capacitor/platform";
 
 // VenueStoryViewer 와 동일한 분기식 (SSOT 복제 — 뷰어 인라인 로직 회귀 감지용)
+// #1264: Android 네이티브가 주입하는 --safe-area-inset-* 변수를 1순위로 소비하고
+// (Capacitor 8 SystemBars, API 35+), 미주입 플랫폼(iOS·웹)은 env()로 폴백하는 단일 계약.
 function safeAreaInsetTop(): string {
   return isIosNativeRuntime()
-    ? "max(env(safe-area-inset-top, 0px), 44px)"
-    : "env(safe-area-inset-top, 0px)";
+    ? "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 44px)"
+    : "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))";
 }
 
-const FALLBACK = "max(env(safe-area-inset-top, 0px), 44px)";
-const PURE = "env(safe-area-inset-top, 0px)";
+const FALLBACK = "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 44px)";
+const PURE = "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))";
 
 let pass = 0;
 let fail = 0;

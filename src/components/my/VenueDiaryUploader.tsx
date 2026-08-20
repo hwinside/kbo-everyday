@@ -514,7 +514,7 @@ export default function VenueDiaryUploader({ game, isOpen, onBack, onClose, onUp
 
           <div
             className="shrink-0 border-t border-border p-4 flex flex-col gap-2.5"
-            style={{ paddingBottom: "max(env(safe-area-inset-bottom), 12px)" }}
+            style={{ paddingBottom: "max(var(--safe-area-inset-bottom, env(safe-area-inset-bottom)), 12px)" }}
           >
             <label className="flex items-start gap-2 text-[11px] text-text-tertiary leading-relaxed cursor-pointer select-none">
               <input

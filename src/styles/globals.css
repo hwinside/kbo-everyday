@@ -257,7 +257,7 @@ body {
 
 /* ===== Tab bar safe area ===== */
 .pb-tab-bar {
-  padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(72px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 
 /*
@@ -313,7 +313,7 @@ body.kbd-open main.pb-tab-bar {
  * keeping the composer docked flush above the keyboard.
  */
 .postdetail-chat-container {
-  height: calc(100svh - var(--global-tabbar-h) - env(safe-area-inset-bottom, 0px));
+  height: calc(100svh - var(--global-tabbar-h) - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 body.kbd-open .postdetail-chat-container {
   height: 100dvh;
@@ -329,16 +329,16 @@ body.kbd-open .postdetail-chat-container {
  * The reply chip + GIF picker ride 3.75rem (~composer height) above the input.
  */
 [data-composer="postdetail"] {
-  bottom: calc(var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   transition: bottom 80ms ease-out;
 }
 [data-postdetail-reply],
 [data-postdetail-gif] {
-  bottom: calc(var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px) + 3.75rem);
+  bottom: calc(var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 3.75rem);
   transition: bottom 80ms ease-out;
 }
 [data-postdetail-scroll] {
-  padding-bottom: calc(64px + var(--global-tabbar-h) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(64px + var(--global-tabbar-h) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 body.kbd-open [data-composer="postdetail"] {
   bottom: 0;
@@ -369,7 +369,7 @@ html.postdetail-open > body {
 
 /* Safe area for notch/dynamic island */
 .pt-safe {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
 }
 
 /*
@@ -394,7 +394,7 @@ html.postdetail-open > body {
  * `p-5 pb-safe` element resolves to the safe value.
  */
 .pb-safe {
-  padding-bottom: calc(var(--pb-safe-base, 1.25rem) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--pb-safe-base, 1.25rem) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
 }
 
 @keyframes slide-up {

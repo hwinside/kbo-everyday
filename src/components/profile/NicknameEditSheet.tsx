@@ -157,7 +157,7 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
               </button>
             </div>
 
-            <div className="px-5 pb-[calc(20px+env(safe-area-inset-bottom,0px))]">
+            <div className="px-5 pb-[calc(20px+var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)))]">
               <div className="rounded-2xl bg-bg-glass p-4">
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5 rounded-full bg-accent/15 p-2 text-accent">

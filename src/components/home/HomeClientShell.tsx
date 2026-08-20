@@ -650,8 +650,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         className="sticky top-0 z-30 -mx-5 px-5 border-b bg-bg-primary mb-2"
         style={{
           borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)',
-          paddingTop: "env(safe-area-inset-top, 0px)",
-          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+          paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))",
+          marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)",
         }}
       >
         <div className="flex items-center justify-between min-h-[44px]">
