@@ -95,7 +95,7 @@ export default function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       {/* Progress indicator */}
       <motion.div
         key="progress"
-        className="fixed top-0 left-0 right-0 z-[110] bg-bg-primary px-6 pt-[calc(env(safe-area-inset-top,0px)+12px)] pb-4"
+        className="fixed top-0 left-0 right-0 z-[110] bg-bg-primary px-6 pt-[calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px))+12px)] pb-4"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
       >

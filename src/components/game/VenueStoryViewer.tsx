@@ -672,8 +672,8 @@ export default function VenueStoryViewer({
   // Android·웹/PWA는 env() 순수값 유지(삼순 #843 NO-GO — 전 플랫폼 44px 강제 회귀 방지).
   // 원격 로드 설치 앱은 core 가 'web' false-negative 될 수 있어 주입 브릿지까지 보는 런타임 판정 사용(#484/#833).
   const safeAreaInsetTop = isIosNativeRuntime()
-    ? "max(env(safe-area-inset-top, 0px), 44px)"
-    : "env(safe-area-inset-top, 0px)";
+    ? "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 44px)"
+    : "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))";
 
   return createPortal(
     <motion.div
@@ -694,7 +694,7 @@ export default function VenueStoryViewer({
       exit={{ opacity: 0 }}
     >
       {/* 진행바 — iOS 네이티브 상태바(시계/배터리)는 z-index로 못 덮으므로 safe-area 아래로 (삼순 #795 blocker).
-          원격 로드 WebView(server.url=keubo.fan)에서 env(safe-area-inset-top)이 0으로 잡히는 기기가 있어
+          원격 로드 WebView(server.url=keubo.fan)에서 var(--safe-area-inset-top, env(safe-area-inset-top))이 0으로 잡히는 기기가 있어
           상태바와 겹침(하린아빠 iOS 리포트) → iOS 네이티브 런타임에서만 최소 44px 보장(safeAreaInsetTop).
           Android·웹/PWA는 env() 순수값 유지(삼순 #843 NO-GO — 전 플랫폼 44px 강제 회귀 방지). */}
       <div
@@ -1094,7 +1094,7 @@ export default function VenueStoryViewer({
             <div
               data-composer="venue-story"
               className="flex-none border-t border-border px-4 py-3"
-              style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}
+              style={{ paddingBottom: "calc(0.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))" }}
             >
               {commentError && (
                 <p

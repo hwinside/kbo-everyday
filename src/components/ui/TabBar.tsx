@@ -38,7 +38,7 @@ export default function TabBar() {
   }
 
   return (
-    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border pb-[env(safe-area-inset-bottom,0px)]">
+    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border pb-[var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))]">
       {/*
         Defensive iOS WKWebView hardening: keep the fixed <nav> free of compositing
         effects while preserving the glass appearance on an inner absolute layer.

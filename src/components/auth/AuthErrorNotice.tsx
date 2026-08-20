@@ -55,7 +55,7 @@ export default function AuthErrorNotice() {
     <div
       role="alert"
       aria-live="assertive"
-      className="fixed left-4 right-4 top-[calc(env(safe-area-inset-top)+1rem)] z-[12000] mx-auto flex max-w-lg items-start gap-3 rounded-2xl border border-red-500/30 bg-bg-secondary px-4 py-3 shadow-xl"
+      className="fixed left-4 right-4 top-[calc(var(--safe-area-inset-top, env(safe-area-inset-top))+1rem)] z-[12000] mx-auto flex max-w-lg items-start gap-3 rounded-2xl border border-red-500/30 bg-bg-secondary px-4 py-3 shadow-xl"
     >
       <p className="flex-1 text-sm leading-5 text-text-primary">
         {AUTH_ERROR_MESSAGES[errorCode]}

@@ -279,7 +279,7 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
       >
         <div
           className="flex items-center justify-between p-5 border-b border-white/8"
-          style={mobile ? { paddingTop: "calc(env(safe-area-inset-top) + 1.25rem)" } : undefined}
+          style={mobile ? { paddingTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top)) + 1.25rem)" } : undefined}
         >
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="크보팬" style={{height: "28px", objectFit: "contain"}} />
@@ -323,7 +323,7 @@ function Sidebar({ mobile, onClose, unreadDM, batchProblems }: { mobile?: boolea
         </nav>
         <div
           className="p-4 border-t border-white/8 space-y-2"
-          style={mobile ? { paddingBottom: "calc(env(safe-area-inset-bottom) + 1rem)" } : undefined}
+          style={mobile ? { paddingBottom: "calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom)) + 1rem)" } : undefined}
         >
           <AdminPushToggle />
           <p className="text-xs text-[#636366]">크보팬 v0.9</p>
@@ -400,7 +400,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
             시계/배터리와 겹쳐 탭이 안 먹던 문제 → safe-area-inset-top 만큼 내립니다 (2026-07-19). */}
         <header
           className="sticky top-0 z-40 flex items-center gap-4 px-4 py-3 border-b border-white/8 backdrop-blur-xl bg-[#0A0A0B]/80 lg:hidden"
-          style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.75rem)" }}
+          style={{ paddingTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top)) + 0.75rem)" }}
         >
           <button
             onClick={() => setMobileOpen(true)}

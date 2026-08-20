@@ -104,7 +104,7 @@ export default function StadiumDetailPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Sticky Header */}
-      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : undefined, paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: primaryTeam?.colorPrimary ? getTeamBorderColor(primaryTeam.colorPrimary, primaryTeam.colorLight) : undefined, paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
         <div className="flex items-center gap-3 px-4 min-h-[44px]">
           <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors -ml-2.5">
             <ChevronLeft size={24} />

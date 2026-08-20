@@ -87,7 +87,7 @@ function ReelSlide({
       </div>
 
       {/* Info + actions — OUTSIDE the player */}
-      <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
+      <div className="shrink-0 bg-black px-4 pt-3 pb-[calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom))+12px)]">
         <div className="flex items-center gap-2 mb-1">
           {t && (
             <span className="w-6 h-6 rounded-full bg-white p-0.5 flex items-center justify-center shrink-0">

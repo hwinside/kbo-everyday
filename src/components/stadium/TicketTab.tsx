@@ -339,7 +339,7 @@ function WriteTicketModal({ isOpen, onClose, venueId, teamIds, onSubmit }: Write
         </div>
 
         {/* Sticky submit button — always visible above tab bar */}
-        <div className="flex-shrink-0 px-5 pt-2 pb-[calc(16px+env(safe-area-inset-bottom))] border-t border-border bg-bg-secondary">
+        <div className="flex-shrink-0 px-5 pt-2 pb-[calc(16px+var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))] border-t border-border bg-bg-secondary">
           <button
             onClick={handleSubmit}
             disabled={submitting || !agreed || !form.gameDate || !form.seatArea || !parseInt(form.price) || !form.teamId}

@@ -133,7 +133,7 @@ function RankingContent() {
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary px-5 pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
       <div className="min-h-[44px] flex items-center gap-3">
         <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2 text-xl">←</button>
         <h1 className="text-lg font-bold tracking-tight flex-1">{def.emoji} {def.desc}</h1>

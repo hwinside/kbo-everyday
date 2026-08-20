@@ -104,7 +104,7 @@ export default function LeaderboardPage() {
   return (
     <div className="min-h-screen bg-[#0A0A0B] text-white pb-24">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-10 bg-[#0A0A0B]/90 backdrop-blur border-b border-white/10" style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
         <div className="max-w-screen-sm mx-auto px-5 min-h-[44px] flex items-center gap-3">
           <button
             onClick={goBack}
