@@ -9,7 +9,13 @@
  */
 
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { drainFallbackBuffer, observeFallback } from "@/lib/monitoring/fallback-buffer";
+import {
+  ackFallbackFlush,
+  observeFallback,
+  requeueFallbackFlush,
+  takeFallbackBuffer,
+  type FallbackDelta,
+} from "@/lib/monitoring/fallback-buffer";
 
 interface FallbackEvent {
   apiName: string;
@@ -190,17 +196,67 @@ async function saveToSupabase(event: FallbackEvent) {
     errorMessage: event.errorMessage ?? null,
     scope: event.scope ?? null,
     policy: LEGACY_TRACK_POLICY,
+    // legacy 경로는 경보를 in-memory 로 판정한다. 서버 outbox 를 잡으면 아무도 settle 하지
+    // 않아 outbox 가 남고 drainer 와 중복 발송된다(삼순 2차 blocker 3).
+    claim: false,
   });
   if (!shouldFlush) return;
 
-  const deltas = drainFallbackBuffer();
-  if (deltas.length === 0) return;
-
-  const { error } = await supabase.rpc("flush_api_fallback_buckets", { p_events: deltas });
-  if (error) {
-    throw new Error(`Supabase insert failed: ${error.message}`);
+  const result = await flushFallbackDeltas();
+  if (result?.error) {
+    throw new Error(`Supabase insert failed: ${result.error}`);
   }
 }
+
+/** flush RPC 가 돌려주는 경보 claim 행. claim:true 로 보낌 delta 에만 따라온다. */
+interface FlushAlertClaim {
+  out_api_name: string;
+  out_attempt_token: string;
+  out_reason: string;
+  out_error_message: string | null;
+  out_scope: string | null;
+}
+
+/**
+ * 버퍼를 꺼내 1회 batch RPC 로 보낸다. 성공하면 ack, 실패하면 requeue 한다.
+ *
+ * ⚠️ 삼순 2차 blocker 3: 종전엔 take 직후 pending 을 지우고 끝났다. RPC 가 실패하면
+ *    첫 관측을 포함한 delta 가 그대로 증발했고, "방금 보냈다"고 기록돼 재시도도 막혔다.
+ */
+async function flushFallbackDeltas(): Promise<{ error?: string; claims: FlushAlertClaim[] }> {
+  const deltas = takeFallbackBuffer();
+  if (deltas.length === 0) return { claims: [] };
+
+  const { data, error } = await supabase.rpc("flush_api_fallback_buckets", { p_events: deltas });
+  if (error) {
+    requeueFallbackFlush(deltas);
+    return { error: error.message, claims: [] };
+  }
+  ackFallbackFlush(deltas);
+  return { claims: (Array.isArray(data) ? data : []) as FlushAlertClaim[] };
+}
+
+/** 테스트·종단 게이트용 — 프로덕션이 실제로 부르는 RPC 이름과 인자 집합을 노출한다. */
+export const FALLBACK_RPC_CONTRACT = {
+  flush: {
+    name: "flush_api_fallback_buckets",
+    args: ["p_events"] as const,
+  },
+  deltaFields: [
+    "api_name",
+    "reason",
+    "status_code",
+    "error_message",
+    "scope",
+    "fingerprint",
+    "count",
+    "window_minutes",
+    "threshold",
+    "cooldown_minutes",
+    "lease_seconds",
+    "claim",
+  ] as const,
+} as const;
 
 /**
  * legacy trackFallback 경로의 임계치 정책. 종전 상수(ALERT_THRESHOLD/WINDOW/COOLDOWN)와
@@ -258,38 +314,55 @@ export async function trackApiDegradation(
   policy: DegradationAlertPolicy,
 ): Promise<void> {
   try {
-    const { data, error } = await supabase.rpc("claim_api_fallback_alert", {
-      p_api_name: apiName,
-      p_reason: reason,
-      p_status_code: options.statusCode ?? null,
-      p_error_message: options.errorMessage ?? null,
-      p_window_minutes: policy.windowMinutes,
-      p_threshold: policy.threshold,
-      p_cooldown_minutes: policy.cooldownMinutes,
-      p_lease_seconds: policy.leaseSeconds,
-      // scope 는 DB 버킷 dedupe 축이자 복구 알림 귀속 축이다. 미전달 시 옛 8-인자 시그니처로
-      // 조용히 떨어지지 않도록 migration 이 옛 시그니처를 drop 했다(fail-close).
-      p_scope: options.scope ?? null,
+    // ⚠️ 삼순 2차 blocker 1: 종전엔 이 함수가 이벤트마다 claim_api_fallback_alert 를
+    //    직접 불렀다. 그게 **하루 13.8만건을 만든 바로 그 경로**인데 버퍼를 안 타고 있었고,
+    //    더구나 EXPAND 재작성 후엔 9-인자 시그니처가 DB 에 없어 RPC 가 전량 실패했다.
+    //    이제 단일 batch 경로(flush_api_fallback_buckets)로 통합한다.
+    //    claim:true 로 보내야 서버가 임계 판정 후 attempt_token 을 돌려준다.
+    const shouldFlush = observeFallback({
+      apiName,
+      reason,
+      statusCode: options.statusCode ?? null,
+      errorMessage: options.errorMessage ?? null,
+      scope: options.scope ?? null,
+      policy,
+      claim: true,
     });
+    if (!shouldFlush) return;
+
+    const { error, claims } = await flushFallbackDeltas();
     if (error) {
-      console.error("[API Degradation] claim RPC failed:", error.message);
+      console.error("[API Degradation] flush RPC failed:", error);
       return;
     }
-    const row = firstRow<{ should_send: boolean; attempt_token: string | null }>(data);
-    if (!row || row.should_send !== true || !row.attempt_token) return;
+    if (claims.length === 0) return;
 
-    // 복구 알림 등록은 반드시 **경보 전송 confirm 이후** (삼순 Blocker 2).
-    // should_send 시점에 등록하면 전송 실패 → 복구 시 ✅가 먼저 나가고 drainer의
-    // 🚨가 나중에 가는 순서 역전이 생긴다. 전송 실패분은 outbox/drainer가 이어받지만
-    // 그 경우 복구 알림은 생략된다(best-effort 계약 유지).
-    const delivered = await deliverAndSettle(apiName, reason, options, policy, row.attempt_token);
-    if (delivered) {
-      // scope(예: gameId) 단위로 묶는다 — 경보를 유발한 scope가 정상으로 돌아왔을
-      // 때만 복구로 인정(삼순 2차 ③: game A 경보 후 game B 정상 200이 즉시 ✅를
-      // 보내는 오보 차단). scope 미지정 경보는 "*"로 등록돼 임의 성공이 복구다.
-      const scopes = pendingRecoveryNotice.get(apiName) ?? new Set<string>();
-      scopes.add(options.scope ?? "*");
-      pendingRecoveryNotice.set(apiName, scopes);
+    for (const claim of claims) {
+      if (!claim.out_attempt_token) continue;
+      // 경보 귀속은 서버가 돌려준 행 기준이다 — batch 안에 여러 api 가 섞여 있을 수 있으므로
+      // 호출 당시의 apiName/scope 를 그대로 쓰면 엉뚜한 경보에 붙을 수 있다.
+      const claimOptions = {
+        statusCode: options.statusCode,
+        errorMessage: claim.out_error_message ?? undefined,
+        scope: claim.out_scope ?? undefined,
+      };
+      // 복구 알림 등록은 반드시 **경보 전송 confirm 이후** (삼순 Blocker 2).
+      // should_send 시점에 등록하면 전송 실패 → 복구 시 ✅가 먼저 나가고 drainer의
+      // 🚨가 나중에 가는 순서 역전이 생긴다.
+      const delivered = await deliverAndSettle(
+        claim.out_api_name,
+        claim.out_reason,
+        claimOptions,
+        policy,
+        claim.out_attempt_token,
+      );
+      if (delivered) {
+        // scope(예: gameId) 단위로 묶는다 — 경보를 유발한 scope가 정상으로 돌아왔을
+        // 때만 복구로 인정(삼순 2차 ③). scope 미지정 경보는 "*"로 등록된다.
+        const scopes = pendingRecoveryNotice.get(claim.out_api_name) ?? new Set<string>();
+        scopes.add(claim.out_scope ?? "*");
+        pendingRecoveryNotice.set(claim.out_api_name, scopes);
+      }
     }
   } catch (err) {
     console.error(

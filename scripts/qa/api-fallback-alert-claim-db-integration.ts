@@ -44,8 +44,9 @@ async function flush(
     scope?: string | null;
     fingerprint?: string | null;
     count?: number;
+    claim?: boolean;
   }>,
-): Promise<Array<{ api_name: string; attempt_token: string }>> {
+): Promise<Array<{ api_name: string; attempt_token: string; scope: string | null }>> {
   const payload = events.map((e) => ({
     api_name: e.api,
     reason: e.reason ?? "schema-error",
@@ -58,9 +59,11 @@ async function flush(
     threshold: e.p.thr,
     cooldown_minutes: e.p.cd,
     lease_seconds: e.p.lease,
+    // 기본은 경보 claim 대상(기존 durable 경보 경로 재현). record-only 는 명시적으로 false.
+    claim: e.claim ?? true,
   }));
-  const r = await db.query<{ api_name: string; attempt_token: string }>(
-    "select out_api_name as api_name, out_attempt_token as attempt_token from public.flush_api_fallback_buckets($1::jsonb)",
+  const r = await db.query<{ api_name: string; attempt_token: string; scope: string | null }>(
+    "select out_api_name as api_name, out_attempt_token as attempt_token, out_scope as scope from public.flush_api_fallback_buckets($1::jsonb)",
     [JSON.stringify(payload)],
   );
   return r.rows;

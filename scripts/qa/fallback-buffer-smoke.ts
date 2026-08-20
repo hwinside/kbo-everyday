@@ -16,12 +16,28 @@ import {
   MAX_PENDING_KEYS,
   __resetBufferForTest,
   __setClockForTest,
-  drainFallbackBuffer,
+  ackFallbackFlush,
   fingerprintOf,
+  inFlightKeyCountForTest,
   observeFallback,
   pendingKeyCountForTest,
+  requeueFallbackFlush,
+  takeFallbackBuffer,
+  type FallbackDelta,
   type FallbackObservation,
 } from "@/lib/monitoring/fallback-buffer";
+
+/**
+ * 성공한 flush 1회 = take → ack. 프로덕션 경로와 같은 순서로 태운다.
+ *
+ * ⚠️ 삼순 2차 blocker 3: 예전 게이트는 flushOk() 하나만 부르고 "보존됨"이라
+ *    적었다. take 만으로는 아무것도 확정되지 않는다 — ack 를 부르는 것이 flush 의 성공이다.
+ */
+function flushOk(): FallbackDelta[] {
+  const deltas = takeFallbackBuffer();
+  ackFallbackFlush(deltas);
+  return deltas;
+}
 
 let fail = 0;
 function ok(name: string, cond: boolean) {
@@ -56,7 +72,7 @@ function simulate(
   for (const o of observations) {
     const should = observeFallback(o);
     if (should) {
-      const deltas = drainFallbackBuffer();
+      const deltas = flushOk();
       if (deltas.length > 0) {
         flushes++;
         deltaRows += deltas.length;
@@ -76,13 +92,27 @@ function simulate(
   // 라이브 경기 재현: 같은 gameId·같은 사유 5,000건이 30초 안에 몰린다.
   const burst = Array.from({ length: 5000 }, () => obs());
   const r = simulate(burst, 0); // 시간 정지 = 최악(주기 flush 기회 없음)
-  ok(`버스트 5,000건 → RPC 호출 1회 (실측 ${r.flushes})`, r.flushes === 1);
+  // ⚠️ 삼순 2차 blocker 2 반영으로 계약이 바뀌었다: **임계치까지는 즉시 durable**.
+  //    threshold=3 이므로 앞 3건은 각각 즉시 flush 되고, 그 뒤부터 batch 로 모인다.
+  //    (임계 3건이 2초 안에 오고 멈추면 경보가 안 나가는 구멍을 없애기 위한 대가다.)
+  ok(
+    `버스트 5,000건 → RPC 호출은 임계(${POLICY.threshold})회뿐 (실측 ${r.flushes})`,
+    r.flushes === POLICY.threshold,
+  );
+  ok(
+    `임계 초과분은 단 1회도 개별 write 하지 않는다 (5000 대비 ${Math.round(5000 / r.flushes)}배 감소)`,
+    r.flushes * 100 <= 5000,
+  );
   ok("첫 관측은 즉시 나간다(경보 임계 지연 없음)", r.totalCounted >= 1);
+  ok(`임계까지 durable 확정 ${POLICY.threshold}건`, r.totalCounted === POLICY.threshold);
   ok(`잔여는 버퍼에 누적 (pending ${pendingKeyCountForTest()})`, pendingKeyCountForTest() === 1);
   // 잔여를 flush 하면 나머지가 1행 1회로 나간다.
-  const rest = drainFallbackBuffer();
+  const rest = flushOk();
   ok("잔여 flush 는 1행", rest.length === 1);
-  ok(`잔여 count 가 4,999 (실측 ${rest[0]?.count})`, rest[0]?.count === 4999);
+  ok(
+    `잔여 count 가 ${5000 - POLICY.threshold} (실측 ${rest[0]?.count})`,
+    rest[0]?.count === 5000 - POLICY.threshold,
+  );
   ok("총 발생 횟수 5,000 보존", r.totalCounted + (rest[0]?.count ?? 0) === 5000);
 }
 
@@ -109,18 +139,18 @@ function simulate(
   __resetBufferForTest();
   clock = 1_000_000;
   observeFallback(obs({ scope: "gameA" }));
-  drainFallbackBuffer();
+  flushOk();
   observeFallback(obs({ scope: "gameB" }));
-  const deltas = drainFallbackBuffer();
+  const deltas = flushOk();
   ok("다른 scope 는 별도 delta", deltas.length === 1 && deltas[0].scope === "gameB");
 }
 {
   __resetBufferForTest();
   clock = 1_000_000;
   observeFallback(obs({ reason: "timeout" }));
-  drainFallbackBuffer();
+  flushOk();
   observeFallback(obs({ reason: "http-error" }));
-  const deltas = drainFallbackBuffer();
+  const deltas = flushOk();
   ok("다른 reason 은 별도 delta", deltas.length === 1 && deltas[0].reason === "http-error");
 }
 
@@ -147,7 +177,7 @@ function simulate(
   //    같은 api·reason·scope 인데 서로 다른 오류 → delta 2개여야 한다.
   observeFallback(obs({ errorMessage: "connection reset by peer" }));
   observeFallback(obs({ errorMessage: "malformed inning array" }));
-  const deltas = drainFallbackBuffer();
+  const deltas = flushOk();
   ok("같은 reason·scope 라도 다른 오류는 별도 delta 2개", deltas.length === 2);
   const prints = deltas.map((d) => d.fingerprint).sort();
   const expected = [
@@ -167,7 +197,7 @@ function simulate(
   // 반대 방향: 같은 지문(gameId 만 다름)은 하나로 묶여야 한다 — 이게 증폭 차단의 본체다.
   observeFallback(obs({ errorMessage: "20260819HTHH0: bounded game-detail fallback" }));
   observeFallback(obs({ errorMessage: "20260819SKSS0: bounded game-detail fallback" }));
-  const deltas = drainFallbackBuffer();
+  const deltas = flushOk();
   ok("같은 지문·같은 scope 는 1개 delta 로 합산", deltas.length === 1 && deltas[0].count === 2);
 }
 
@@ -177,27 +207,30 @@ function simulate(
   clock = 1_000_000;
   const keyCount = MAX_PENDING_KEYS + 50;
 
-  // ⚠️ 관측 가능성: 신규 키는 "첫 관측" 분기에서 이미 true 를 돌려주므로, 매번 drain 하면
-  //    상한 방어 분기가 **원리적으로 도달 불가**하다(훼손해도 결과가 같다).
-  //    상한은 "이미 한 번 flush 된 키들이 주기 안에 다시 쌓일 때" 의미가 있다 → 무대를 만든다.
-  for (let i = 0; i < keyCount; i++) observeFallback(obs({ scope: `game-${i}` }));
-  drainFallbackBuffer(); // 모든 키가 lastFlushedAt 을 갖게 된다
-  ok("drain 후 버퍼는 비어있다", pendingKeyCountForTest() === 0);
+  // ⚠️ 관측 가능성: 상한 분기는 앞선 두 분기(임계 즉시 durable, 신규 키)가 먼저 true 를
+  //    돌려주면 **원리적으로 도달 불가**하다(훼손해도 결과가 같다).
+  //    → threshold=1 정책으로 "이미 durable 확정된 키가 주기 안에 다시 쌓이는" 무대를 만든다.
+  const capPolicy = { windowMinutes: 5, threshold: 1, cooldownMinutes: 30, leaseSeconds: 120 };
+  for (let i = 0; i < keyCount; i++) {
+    observeFallback(obs({ scope: `game-${i}`, policy: capPolicy }));
+  }
+  flushOk(); // 모든 키가 durable 확정 + lastFlushedAt 을 갖게 된다
+  ok("flush 후 버퍼는 비어있다", pendingKeyCountForTest() === 0);
 
-  // 이제 2회차 관측 — 주기 안이므로 원래는 계속 false(누적만 됨). 상한에 닿으면 true 가 나와야 한다.
+  // 2회차 관측 — 임계를 이미 넘겼고 주기 안이므로 원래는 false(누적만). 상한에 닿으면 true.
   let maxObservedPending = 0;
   let capTriggered = false;
   for (let i = 0; i < keyCount; i++) {
-    const should = observeFallback(obs({ scope: `game-${i}` }));
+    const should = observeFallback(obs({ scope: `game-${i}`, policy: capPolicy }));
     maxObservedPending = Math.max(maxObservedPending, pendingKeyCountForTest());
     if (should) {
       capTriggered = true;
-      drainFallbackBuffer();
+      flushOk();
     }
   }
   ok(`상한 도달 시 flush 신호가 나온다 (max pending ${maxObservedPending})`, capTriggered);
   ok(
-    `pending 이 상한을 크게 넘지 않는다 (${maxObservedPending} <= ${MAX_PENDING_KEYS})`,
+    `pending 이 상한을 넘지 않는다 (${maxObservedPending} <= ${MAX_PENDING_KEYS})`,
     maxObservedPending <= MAX_PENDING_KEYS,
   );
 }
@@ -208,11 +241,21 @@ function simulate(
   let flushed = 0;
   for (let i = 0; i < 10; i++) {
     if (observeFallback(obs({ scope: `fresh-${i}` }))) {
-      drainFallbackBuffer();
+      flushOk();
       flushed++;
     }
   }
   ok("신규 키 10개 → 10회 즉시 반영", flushed === 10);
+}
+{
+  __resetBufferForTest();
+  clock = 1_000_000;
+  // flush 신호를 호출부가 흘려도(예: I/O 실패로 못 보냄) 다음 관측이 계속 신호를 준다.
+  // 이 분기가 죽으면 "한 번 놓친 키는 주기가 올 때까지 갇힌다".
+  const p1 = { windowMinutes: 5, threshold: 1, cooldownMinutes: 30, leaseSeconds: 120 };
+  observeFallback(obs({ scope: "stuck", policy: p1 })); // true (임계 이내) — 무시한다
+  const second = observeFallback(obs({ scope: "stuck", policy: p1 }));
+  ok("flush 신호를 무시해도 다음 관측이 다시 신호를 준다(갇힘 방지)", second === true);
 }
 
 // ── 6) delta 는 정책을 함께 실어 보낸다(서버가 임계 판정에 쓴다) ──────────
@@ -220,7 +263,7 @@ function simulate(
   __resetBufferForTest();
   clock = 1_000_000;
   observeFallback(obs());
-  const deltas = drainFallbackBuffer();
+  const deltas = flushOk();
   const d = deltas[0];
   ok("window_minutes 전달", d.window_minutes === POLICY.windowMinutes);
   ok("threshold 전달", d.threshold === POLICY.threshold);
@@ -233,7 +276,69 @@ function simulate(
 // ── 7) 빈 버퍼 drain 은 빈 배열(불필요 RPC 안 만든다) ─────────────────────
 {
   __resetBufferForTest();
-  ok("빈 버퍼 drain → 빈 배열", drainFallbackBuffer().length === 0);
+  ok("빈 버퍼 drain → 빈 배열", flushOk().length === 0);
+}
+
+// ── 8) take → ack / requeue (삼순 2차 blocker 3) ──────────────────────────
+// 종전 drainFallbackBuffer() 는 pending 을 지우고 lastFlushedAt 까지 갱신했다.
+// RPC 가 실패하면 첫 관측을 포함한 delta 가 그대로 증발했고, "방금 보냈다"고 기록돼
+// 다음 30초 동안 재시도도 막혔다. 이제 take 는 in-flight 로 옮기기만 한다.
+{
+  __resetBufferForTest();
+  clock = 1_000_000;
+  observeFallback(obs());
+  observeFallback(obs());
+  const taken = takeFallbackBuffer();
+  ok("take 는 delta 를 꺼낸다", taken.length === 1 && taken[0].count === 2);
+  ok("take 후 pending 은 비고", pendingKeyCountForTest() === 0);
+  ok("take 후 in-flight 에 남는다(아직 확정 아님)", inFlightKeyCountForTest() === 1);
+
+  // RPC 실패 → requeue: delta 가 pending 으로 복원된다.
+  requeueFallbackFlush(taken);
+  ok("requeue 후 in-flight 는 빈다", inFlightKeyCountForTest() === 0);
+  ok("requeue 로 pending 복원", pendingKeyCountForTest() === 1);
+  const again = takeFallbackBuffer();
+  ok(`실패한 delta 의 count 가 보존된다 (실측 ${again[0]?.count})`, again[0]?.count === 2);
+  ackFallbackFlush(again);
+  ok("ack 후 in-flight 는 빈다", inFlightKeyCountForTest() === 0);
+}
+{
+  __resetBufferForTest();
+  clock = 1_000_000;
+  // 실패했는데 "방금 보냈다"고 기록하면 다음 주기까지 재시도가 막힌다.
+  observeFallback(obs());
+  const taken = takeFallbackBuffer();
+  requeueFallbackFlush(taken);
+  clock += 1_000; // 주기(30초) 훨씬 이내
+  const should = observeFallback(obs());
+  ok("RPC 실패 후에는 주기를 기다리지 않고 즉시 재시도한다", should === true);
+}
+{
+  __resetBufferForTest();
+  clock = 1_000_000;
+  // in-flight 중 같은 키에 새 관측이 들어오면, 나중 take 가 그 delta 를 별도로 가져간다.
+  // (in-flight 를 pending 에 합치지 않으므로 중복 전송이 생기지 않는다.)
+  observeFallback(obs());
+  const first = takeFallbackBuffer();
+  observeFallback(obs());
+  const second = takeFallbackBuffer();
+  ackFallbackFlush(first);
+  ackFallbackFlush(second);
+  const total = first.reduce((a, d) => a + d.count, 0) + second.reduce((a, d) => a + d.count, 0);
+  ok(`in-flight 중 유입분도 정확히 1회씩 전달 (합 ${total})`, total === 2);
+  ok("모두 ack 되면 in-flight 는 빈다", inFlightKeyCountForTest() === 0);
+}
+{
+  __resetBufferForTest();
+  clock = 1_000_000;
+  // ack 는 durable 확정 카운트를 올린다 — 이게 "임계까지 즉시" 판정의 기준이다.
+  // 안 올리면 영원히 임계 미달로 읽혀 매 관측이 즉시 flush 된다(쓰기 감소가 무효화).
+  const p = { windowMinutes: 5, threshold: 2, cooldownMinutes: 30, leaseSeconds: 120 };
+  for (let i = 0; i < 5; i++) {
+    if (observeFallback(obs({ scope: "ackcnt", policy: p }))) flushOk();
+  }
+  const shouldAfter = observeFallback(obs({ scope: "ackcnt", policy: p }));
+  ok("임계를 넘긴 뒤에는 즉시 flush 하지 않는다(ack 가 durable 카운트를 올렸다)", shouldAfter === false);
 }
 
 __setClockForTest(null);

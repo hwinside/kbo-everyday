@@ -61,7 +61,10 @@ returns table(
   out_api_name text,
   out_attempt_token uuid,
   out_reason text,
-  out_error_message text
+  out_error_message text,
+  -- 경보를 유발한 scope(예: gameId). 복구 알림 귀속 축이라 호출부가 반드시 알아야 한다.
+  -- batch 안에 여러 api·scope 가 섞이므로 "호출 당시 scope" 를 쓰면 엉뚱한 경보에 붙는다.
+  out_scope text
 )
 language plpgsql
 security definer
@@ -118,19 +121,26 @@ begin
       timestamp = excluded.timestamp
     returning id into v_event_id;
 
-    -- api_name 별 정책·대표 이벤트 기억(마지막 것 사용)
-    v_policies := v_policies || jsonb_build_object(
-      v_api,
-      jsonb_build_object(
-        'window_minutes', coalesce((e->>'window_minutes')::int, 5),
-        'threshold', coalesce((e->>'threshold')::int, 3),
-        'cooldown_minutes', coalesce((e->>'cooldown_minutes')::int, 30),
-        'lease_seconds', coalesce((e->>'lease_seconds')::int, 120),
-        'reason', e->>'reason',
-        'error_message', e->>'error_message',
-        'event_id', v_event_id
-      )
-    );
+    -- 경보 claim 대상만 임계 판정에 올린다.
+    --
+    -- ⚠️ 삼순 2차 blocker 3: legacy trackFallback 경로는 경보를 in-memory 로 판정한다.
+    --    그 delta 로 서버 outbox 를 만들면 아무도 settle 하지 않아 outbox 가 남고,
+    --    기존 in-memory 경보와 drainer 가 중복 발송한다. record-only 는 기록만 하고 끝낸다.
+    if coalesce((e->>'claim')::boolean, false) then
+      v_policies := v_policies || jsonb_build_object(
+        v_api,
+        jsonb_build_object(
+          'window_minutes', coalesce((e->>'window_minutes')::int, 5),
+          'threshold', coalesce((e->>'threshold')::int, 3),
+          'cooldown_minutes', coalesce((e->>'cooldown_minutes')::int, 30),
+          'lease_seconds', coalesce((e->>'lease_seconds')::int, 120),
+          'reason', e->>'reason',
+          'error_message', e->>'error_message',
+          'scope', e->>'scope',
+          'event_id', v_event_id
+        )
+      );
+    end if;
   end loop;
 
   -- (2) api_name 별 임계 판정 + outbox claim
@@ -190,6 +200,7 @@ begin
     out_attempt_token := v_token;
     out_reason := v_last_event->>'reason';
     out_error_message := v_last_event->>'error_message';
+    out_scope := v_last_event->>'scope';
     return next;
   end loop;
 end;
@@ -235,6 +246,8 @@ begin
         'scope', null,
         'fingerprint', null,
         'count', 1,
+        -- 구버전 8-인자 호출은 durable 경보 경로였다 → claim 대상.
+        'claim', true,
         'window_minutes', p_window_minutes,
         'threshold', p_threshold,
         'cooldown_minutes', p_cooldown_minutes,
