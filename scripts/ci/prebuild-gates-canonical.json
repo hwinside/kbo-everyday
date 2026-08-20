@@ -16,6 +16,8 @@
  "qa:btree-gist-schema",
  "qa:css-build-parse",
  "qa:bottom-safe-inset",
+ "qa:safe-area-var-contract",
+ "qa:safe-area-var-contract:selftest",
  "qa:query-guard",
  "qa:shorts-player-route",
  "qa:naver-existing-user",
@@ -163,5 +165,10 @@
  "qa:client-dedupe:selftest",
  "qa:self-fetch-internal",
  "qa:self-fetch-internal:selftest",
- "qa:self-fetch-internal:cleanup"
+ "qa:self-fetch-internal:cleanup",
+ "qa:news-clip-digest",
+ "qa:news-clip-digest:mutations",
+ "qa:news-clip-digest:hook",
+ "qa:news-clip-digest:db",
+ "qa:admin-system-health"
 ]

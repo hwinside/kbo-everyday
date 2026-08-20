@@ -33,6 +33,7 @@
 
 import { spawn, execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -59,6 +60,8 @@ export const GATES = [
   { name: "qa:btree-gist-schema", lane: "pool" },
   { name: "qa:css-build-parse", lane: "pool" },
   { name: "qa:bottom-safe-inset", lane: "exclusive" },
+  { name: "qa:safe-area-var-contract", lane: "pool" },
+  { name: "qa:safe-area-var-contract:selftest", lane: "pool" },
   { name: "qa:query-guard", lane: "pool" },
   { name: "qa:shorts-player-route", lane: "pool" },
   { name: "qa:naver-existing-user", lane: "pool" },
@@ -207,6 +210,11 @@ export const GATES = [
   { name: "qa:self-fetch-internal", lane: "exclusive" },
   { name: "qa:self-fetch-internal:selftest", lane: "exclusive" },
   { name: "qa:self-fetch-internal:cleanup", lane: "exclusive" },
+  { name: "qa:news-clip-digest", lane: "pool" },
+  { name: "qa:news-clip-digest:mutations", lane: "exclusive" }, // src seam in-place 변이(trap restore) — 격리
+  { name: "qa:news-clip-digest:hook", lane: "pool" },
+  { name: "qa:news-clip-digest:db", lane: "pool" },
+  { name: "qa:admin-system-health", lane: "pool" },
 ];
 
 const POOL_CONCURRENCY = Math.max(2, Math.min(6, os.cpus().length - 1));
@@ -235,7 +243,10 @@ export function buildChains(gates) {
 
 // ── 단일소유 lock + 자식 process-group 종료 (삼순 blocker ② 반영) ─────
 // lock 은 node_modules 아래(gitignored)라 verify-clean 을 오염시키지 않는다.
-const LOCK_FILE = path.join(ROOT, "node_modules", ".prebuild-gates.lock");
+// selftest/synthetic 픽스처는 실제 lock 파일을 건드리지 않는다(삼순 hardening) —
+// 실게이트 러너가 실행 중일 때 selftest 의 stale 회귀가 진짜 lock 을 overwrite/unlink 하면 안 된다.
+const IS_TEST_MODE = process.argv.includes("--selftest") || process.argv.includes("--synthetic");
+const LOCK_FILE = path.join(ROOT, "node_modules", IS_TEST_MODE ? ".prebuild-gates.lock.selftest" : ".prebuild-gates.lock");
 const activeChildren = new Set(); // 실행 중 게이트 child pid (detached process-group leader)
 // pgid 추적(삼순 3차): leader 가 먼저 죽어도 그룹에 손자가 남을 수 있으므로
 // close 시 즉시 제거하지 않고 **그룹 생존 확인(kill(-pgid, 0))** 후에만 제거한다 —
@@ -251,6 +262,24 @@ function pruneDeadGroups() {
   for (const pgid of [...spawnedGroups]) {
     if (!groupAlive(pgid)) spawnedGroups.delete(pgid);
   }
+}
+
+/** 정상(성공·실패) 종료 직전 생존 pgid 0 보장 — 게이트가 남긴 데몬성 자식 정리(삼순 hardening) */
+async function reapResidualGroups() {
+  pruneDeadGroups();
+  if (spawnedGroups.size === 0) return true;
+  const residual = [...spawnedGroups];
+  console.error(`[prebuild-gates] 종료 시점 생존 process-group ${residual.length}개 — SIGTERM→SIGKILL 정리: ${residual.join(",")}`);
+  killGroups(residual, "SIGTERM");
+  await new Promise((r) => setTimeout(r, 500));
+  killGroups(residual, "SIGKILL");
+  await new Promise((r) => setTimeout(r, 200));
+  pruneDeadGroups();
+  if (spawnedGroups.size > 0) {
+    console.error(`[prebuild-gates] 잔존 정리 실패 — 생존 pgid: ${[...spawnedGroups].join(",")}`);
+    return false;
+  }
+  return true;
 }
 
 function pidAlive(pid) {
@@ -371,6 +400,52 @@ function runGate(name) {
   });
 }
 
+// Vercel 플랫폼이 빌드 전에 스스로 변형하는 파일 — 이 목록만 시작 dirty 허용(해시 고정)
+const PLATFORM_MUTATED_ALLOWLIST = ["vercel.json"];
+
+function fileHash(rel) {
+  try { return createHash("sha256").update(readFileSync(path.join(ROOT, rel))).digest("hex"); } catch { return "<unreadable>"; }
+}
+
+/** 시작 검사: 빈 값 exact 또는 allowlist 파일의 M 만 허용(해시 스냅샷). */
+function verifyCleanStart() {
+  const before = gitPorcelain();
+  const hashes = new Map();
+  if (before !== "") {
+    for (const line of before.split("\n")) {
+      const rel = line.slice(3);
+      if (!(line.startsWith(" M ") || line.startsWith("M  ") || line.startsWith("MM ")) || !PLATFORM_MUTATED_ALLOWLIST.includes(rel)) {
+        console.error("[prebuild-gates] verify-clean FAIL — 시작 시 worktree가 clean이 아니다 (porcelain -uall, 허용: 플랫폼 변형 " + PLATFORM_MUTATED_ALLOWLIST.join(",") + " M 만):");
+        console.error(before);
+        return { ok: false };
+      }
+      hashes.set(rel, fileHash(rel));
+    }
+  }
+  return { ok: true, before, hashes };
+}
+
+/** 종료 검사: porcelain 이 시작과 동일 집합(allowlist 부분집합)이고 allowlist 파일 해시 불변. */
+function verifyCleanEnd(baseline) {
+  const after = gitPorcelain();
+  if (after !== baseline.before) {
+    console.error("[prebuild-gates] verify-clean FAIL — 종료 시 worktree 상태가 시작과 다르다 (게이트 잔재/오염, porcelain -uall):");
+    console.error("--- 시작 ---\n" + baseline.before + "\n--- 종료 ---\n" + after);
+    return false;
+  }
+  for (const [rel, h] of baseline.hashes) {
+    const now = fileHash(rel);
+    if (now !== h) {
+      console.error(`[prebuild-gates] verify-clean FAIL — 플랫폼 변형 허용 파일(${rel})의 내용이 run 중 바뀌었다 (hash ${h.slice(0, 12)} → ${now.slice(0, 12)})`);
+      return false;
+    }
+  }
+  console.log(baseline.before === ""
+    ? "[prebuild-gates] verify-clean PASS — 시작·종료 모두 porcelain -uall 빈 값 exact"
+    : `[prebuild-gates] verify-clean PASS — 플랫폼 변형(${[...baseline.hashes.keys()].join(",")}) hash 불변 + 그 외 빈 값 exact`);
+  return true;
+}
+
 function gitPorcelain() {
   // -uall: untracked를 개별 파일 단위까지 전부 나열 (디렉터리 축약 방지)
   return execSync("git status --porcelain -uall", { cwd: ROOT, encoding: "utf8" }).trim();
@@ -401,16 +476,16 @@ function assertCanonicalEquality(gates) {
 
 async function runAll(gates, { verifyClean = false, canonical = false } = {}) {
   if (canonical) assertCanonicalEquality(gates);
+  let cleanBaseline = null;
   if (verifyClean) {
     // 삼순 교정(2026-08-20): 전후 snapshot "동일" 비교는 시작부터 dirty인 파일의
-    // 내용 변화·untracked 덮어쓰기를 못 본다(같은 M/?? 경로로 통과).
-    // 시작 시 빈 값이 아니면 즉시 FAIL, 종료 시에도 빈 값 exact를 요구한다.
-    const before = gitPorcelain();
-    if (before !== "") {
-      console.error("[prebuild-gates] verify-clean FAIL — 시작 시 worktree가 clean이 아니다 (porcelain -uall):");
-      console.error(before);
-      process.exit(1);
-    }
+    // 내용 변화·untracked 덮어쓰기를 못 본다. 원칙은 "시작·종료 모두 빈 값 exact".
+    // 단 Vercel 은 빌드 시작 전에 플랫폼이 vercel.json 을 변형한다(Preview FAILURE 실측
+    // — `M vercel.json` 단독). 그래서 그 1개 경로만 시작 dirty 를 허용하되,
+    // 시작 시점 content hash 를 잡아 종료 시 hash 불변까지 요구한다 —
+    // "같은 M 경로인데 내용이 더 바뀐" 경우는 hash 로 잡힌다(allowlist 구멍 봉쇄).
+    cleanBaseline = verifyCleanStart();
+    if (!cleanBaseline.ok) process.exit(1);
   }
   const chains = buildChains(gates);
   const poolChains = chains.filter((c) => c.lane === "pool");
@@ -480,18 +555,17 @@ async function runAll(gates, { verifyClean = false, canonical = false } = {}) {
   const top = [...results].sort((a, b) => b.secs - a.secs).slice(0, 10);
   console.log(`\n[prebuild-gates] ${failed ? "FAIL" : "PASS"} — ${ran}/${gates.length} 실행, ${total.toFixed(1)}s, pool 워커 ${POOL_CONCURRENCY}, exclusive ${exclusiveChains.reduce((n, c) => n + c.gates.length, 0)}개`);
   console.log("[prebuild-gates] 최장 게이트 top10: " + top.map((r) => `${r.name}=${r.secs.toFixed(0)}s`).join(", "));
+  const reaped = await reapResidualGroups();
   if (failed) {
     console.error("[prebuild-gates] 실패 게이트: " + failures.map((r) => r.name).join(", "));
     process.exit(1);
   }
+  if (!reaped) {
+    console.error("[prebuild-gates] FAIL — 정상 종료 경로에서 생존 pgid 0 을 만들지 못했다");
+    process.exit(1);
+  }
   if (verifyClean) {
-    const after = gitPorcelain();
-    if (after !== "") {
-      console.error("[prebuild-gates] verify-clean FAIL — 종료 시 worktree가 clean이 아니다 (게이트 잔재/오염, porcelain -uall):");
-      console.error(after);
-      process.exit(1);
-    }
-    console.log("[prebuild-gates] verify-clean PASS — 시작·종료 모두 porcelain -uall 빈 값 exact");
+    if (!verifyCleanEnd(cleanBaseline)) process.exit(1);
   }
 }
 
@@ -713,8 +787,20 @@ const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv
 if (isMain) {
 installSignalHandlers();
 const argv = process.argv.slice(2);
-// lock 은 실게이트 풀런에만 — selftest 의 synthetic 픽스처는 repo 파일을 건드리지 않고,
-// selftest 가 lock 을 쥐면 자기 synthetic 서브프로세스가 lock FAIL 로 죽는다.
+// unknown argv fail-close(삼순 hardening): 오타·미지 플래그로 lock/clean 없는
+// full run 이 돌면 안 된다 — 알려진 인자 외에는 즉시 실패한다.
+const KNOWN_FLAGS = new Set(["--selftest", "--list", "--synthetic", "--verify-clean"]);
+for (const a of argv) {
+  if (a.startsWith("--") && !KNOWN_FLAGS.has(a)) {
+    console.error(`[prebuild-gates] unknown argv fail-close: ${a}`);
+    process.exit(1);
+  }
+}
+if (argv[0] !== "--synthetic" && argv.some((a) => !a.startsWith("--"))) {
+  console.error(`[prebuild-gates] unknown argv fail-close: ${argv.find((a) => !a.startsWith("--"))}`);
+  process.exit(1);
+}
+// lock 은 실게이트 풀런에만 — selftest 의 synthetic 픽스처는 실제 repo 게이트를 돌리지 않는다.
 const isRealRun = argv[0] === undefined || argv[0] === "--verify-clean";
 if (isRealRun) acquireLock();
 if (argv[0] === "--selftest") {
