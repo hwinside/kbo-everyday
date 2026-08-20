@@ -101,9 +101,12 @@ function main() {
     check("⑦ 원시값 통과", deepFreeze(3) === 3 && deepFreeze(null) === null);
   }
 
-  // ── B. route 배선 정적 검사 ──
+  // ── B. 배선 정적 검사 ──
+  // PR #1257: GET 구현(파서·memoize·fetch·reportDetailDegradation)이 route →
+  // src/lib/services/game-detail.ts 로 물리 이동 — 계약 검사도 구현 파일을 본다(강도 동일).
+  // 단 관측(after) 실행은 route 경계 책임이 됐으므로 route↔service 양쪽을 분리 검사한다.
   {
-    const src = readFileSync("src/app/api/game-detail/route.ts", "utf8");
+    const src = readFileSync("src/lib/services/game-detail.ts", "utf8");
     check("B: memoize 헬퍼 import", src.includes('from "@/lib/http/parse-memo"'));
     check("B: 파서 순수 impl 분리(parseScoreBoardImpl 등)",
       src.includes("function parseScoreBoardImpl(") &&
@@ -121,8 +124,12 @@ function main() {
       /next: \{ revalidate \}/.test(src));
     check("B: full-route single-flight 미도입(신선도 하드제약)",
       !src.includes("createSingleFlight") && !src.includes("gameDetailFlight"));
-    check("B: report/after 경로 불변(관측 parity)",
-      src.includes("reportDetailDegradation(") && src.includes("after(async () =>"));
+    // 관측 parity: service 는 순수(effect 반환), route 경계가 after() 로 실행한다(삼순 #1257 2차 ②).
+    const routeSrc = readFileSync("src/app/api/game-detail/route.ts", "utf8");
+    check("B: report/after 경로 불변(관측 parity — service 보고 + route after 실행)",
+      src.includes("reportDetailDegradation(") &&
+      src.includes("onDeferredEffect?.(async () =>") &&
+      routeSrc.includes("after(() => effect())"));
   }
 
   console.log(`\ngame-detail-parse-memo: ${pass}/${pass + fail} pass${fail ? `, ${fail} FAIL` : ""}`);

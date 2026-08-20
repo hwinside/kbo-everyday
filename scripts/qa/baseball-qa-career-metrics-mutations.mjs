@@ -18,7 +18,8 @@ const CATALOG = "src/lib/baseball-qa/stats/career-metric-catalog.ts";
 const LEADERBOARD = "src/lib/baseball-qa/stats/career-metric-leaderboard.ts";
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const SERVED = "src/lib/baseball-qa/stats/served-record.ts";
-const STATS_ROUTE = "src/app/api/stats/route.ts";
+// PR #1257: stats GET 구현이 route → src/lib/services/stats.ts 로 물리 이동 — 주입 대상도 구현 파일을 따라간다.
+const STATS_SERVICE = "src/lib/services/stats.ts";
 const SMOKE = "scripts/qa/baseball-qa-career-metrics-smoke.ts";
 
 const MUTATIONS = [
@@ -98,7 +99,7 @@ const MUTATIONS = [
   },
   {
     name: "m11e KBO 공식 playerId 보존 제거 — 동명이인 live 행이 blank ID가 된다",
-    file: STATS_ROUTE,
+    file: STATS_SERVICE,
     from: "  const officialId = canonicalKboId(c.playerId);",
     to: "  const officialId = \"\";",
   },
