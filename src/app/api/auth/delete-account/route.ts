@@ -1,14 +1,16 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { getVerifiedUserIdFromCookies } from "@/lib/auth/verified-user";
+import { getVerifiedUserIdFromCookiesLive } from "@/lib/auth/verified-user";
 
 export async function POST() {
   const cookieStore = await cookies();
 
-  // 쿠키 직접파싱 → dead-token guard 경유(만료/폐기 세션은 /auth/v1/user에
-  // 도달하지 않음). supabase-js 서버 클라 제거 — refresh 유발 0.
-  const userId = await getVerifiedUserIdFromCookies();
+  // 쿠키 직접파싱 → dead-token guard 경유. supabase-js 서버 클라 제거 — refresh 유발 0.
+  // ⚠️ 여기만 Live(서버 왕복) 검증을 쓴다 — 계정 영구 삭제는 되돌릴 수 없으므로
+  // 이미 로그아웃/폐기된 세션으로 실행되면 안 된다. 로컬 claim 검증은 exp(3600s)
+  // 까지 유효해서 폐기를 못 본다(삼순 blocker②). 저빈도 경로라 CPU 영향 없음.
+  const userId = await getVerifiedUserIdFromCookiesLive();
 
   if (!userId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

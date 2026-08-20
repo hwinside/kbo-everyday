@@ -42,6 +42,11 @@ import {
 import { loadRosterPlayers } from "../../src/lib/baseball-qa/roster/load-roster-players";
 import { BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { isBaseballGeniusToneCompliant } from "../../src/lib/baseball-qa/tone";
+import type {
+  StandingsRow,
+  TeamRecordFetchers,
+  TeamRecordsPayload,
+} from "../../src/lib/baseball-qa/stats/team-record";
 
 /**
  * 로스터는 **실제 배포 함수**로 읽는다.
@@ -231,15 +236,155 @@ async function verifyTeamQuestionsAnswerable() {
 //        우리가 서빙하는 값을 봇만 "못 답한다"고 하는 건 유저에겐 거짓말이다.
 //
 // 그래서 이 게이트가 고정하는 것은 **환각 0**과 **거짓 안내 0** 둘 다다.
-async function verifyTeamNumericAnswers() {
-  // 실제 서빙 값을 한 번 읽어 기대값을 만든다. 하드코딩하면 순위가 바뀔 때마다 게이트가
-  // 깨지고, 결국 누군가 값을 지워버린다(그게 검증력 0의 시작이다).
-  const { createTeamRecordFetchers } = await import("@/lib/baseball-qa/stats/team-record");
-  const fetchers = createTeamRecordFetchers();
-  const [standings, teamRecords] = await Promise.all([
-    fetchers.fetchStandings(),
-    fetchers.fetchTeamRecords(),
+const REQUIRED_STANDING_FIELDS = [
+  "teamId", "teamName", "games", "wins", "losses", "draws", "winRate", "gamesBehind", "ranking",
+] as const;
+const REQUIRED_BATTING_FIELDS = ["avg", "ops", "hr", "runs", "sb", "hits"] as const;
+const REQUIRED_PITCHING_FIELDS = ["era", "whip", "so", "sv"] as const;
+
+function assertStrictNumericField(row: Record<string, unknown>, field: string, label: string): void {
+  assert.ok(Object.hasOwn(row, field), `${label}: 필드 '${field}' 결손`);
+  const value = row[field];
+  const validNumber = typeof value === "number" && Number.isFinite(value);
+  const validNumericString = typeof value === "string"
+    && value.trim().length > 0
+    && Number.isFinite(Number(value));
+  assert.ok(validNumber || validNumericString, `${label}: 필드 '${field}' 가 strict numeric이 아니다`);
+}
+
+const EXACT_TEAM_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
+
+function assertExactTeamIds(rows: Array<{ teamId: number }>, label: string): void {
+  const ids = rows.map((row) => row.teamId);
+  for (const id of ids) {
+    assert.ok(typeof id === "number" && Number.isInteger(id), `${label}: teamId가 정수가 아니다`);
+  }
+  assert.deepEqual([...ids].sort((a, b) => a - b), EXACT_TEAM_IDS, `${label}: teamId 집합이 1..10이 아니다`);
+}
+
+/**
+ * 라이브 값의 내용이 아니라 응답 스키마/계약만 검증한다.
+ * 경기 결과가 바뀌는 것은 정상이고, 필드 결손·중복 팀·행 누락만 fail-close 한다.
+ */
+function assertTeamSnapshotContract(
+  standings: StandingsRow[],
+  teamRecords: TeamRecordsPayload,
+): void {
+  assert.equal(standings.length, 10, `standings 팀 수=${standings.length} (기대 10)`);
+  assertExactTeamIds(standings, "standings");
+  for (const row of standings) {
+    for (const field of REQUIRED_STANDING_FIELDS) {
+      if (field === "teamName") {
+        assert.ok(typeof row.teamName === "string" && row.teamName.length > 0, `teamId=${row.teamId}: teamName 결손`);
+      } else {
+        assertStrictNumericField(row as unknown as Record<string, unknown>, field, `standings teamId=${row.teamId}`);
+      }
+    }
+  }
+  for (const [kind, rows, fields] of [
+    ["batting", teamRecords.batting, REQUIRED_BATTING_FIELDS],
+    ["pitching", teamRecords.pitching, REQUIRED_PITCHING_FIELDS],
+  ] as const) {
+    assert.ok(Array.isArray(rows), `${kind} 배열 결손`);
+    assert.equal(rows.length, 10, `${kind} 팀 수=${rows.length} (기대 10)`);
+    assertExactTeamIds(rows, kind);
+    for (const row of rows) {
+      for (const field of fields) assertStrictNumericField(row as Record<string, unknown>, field, `${kind} teamId=${row.teamId}`);
+    }
+  }
+}
+
+function cloneSnapshot<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function snapshotFetchers(
+  standings: StandingsRow[],
+  teamRecords: TeamRecordsPayload,
+): TeamRecordFetchers {
+  const frozenStandings = cloneSnapshot(standings);
+  const frozenRecords = cloneSnapshot(teamRecords);
+  return {
+    fetchStandings: async () => cloneSnapshot(frozenStandings),
+    fetchTeamRecords: async () => cloneSnapshot(frozenRecords),
+  };
+}
+
+function makeTeamContractFixture(): { standings: StandingsRow[]; teamRecords: TeamRecordsPayload } {
+  const standings = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId,
+    teamName: `팀${teamId}`,
+    games: 100,
+    wins: 50,
+    losses: 45,
+    draws: 5,
+    winRate: 0.5,
+    gamesBehind: 0,
+    ranking: teamId,
+  }));
+  const batting = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId, slug: `team-${teamId}`, avg: "0.250", ops: "0.700", hr: 80, runs: 400, sb: 50, hits: 800,
+  }));
+  const pitching = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId, slug: `team-${teamId}`, era: "3.50", whip: "1.20", so: 700, sv: 20,
+  }));
+  return { standings, teamRecords: { season: 2026, batting, pitching } };
+}
+
+function verifyTeamSnapshotContractSelftest(): void {
+  const base = makeTeamContractFixture();
+  assertTeamSnapshotContract(base.standings, base.teamRecords);
+  const mutants: Array<[string, (fixture: ReturnType<typeof makeTeamContractFixture>) => void, RegExp]> = [
+    ["missing_wins", (f) => { delete (f.standings[0] as unknown as Record<string, unknown>).wins; }, /필드 'wins' 결손/],
+    ["missing_batting", (f) => { delete f.teamRecords.batting; }, /batting 배열 결손/],
+    ["null_avg", (f) => { f.teamRecords.batting![0].avg = null; }, /strict numeric/],
+    ["blank_era", (f) => { f.teamRecords.pitching![0].era = ""; }, /strict numeric/],
+    ["boolean_whip", (f) => { f.teamRecords.pitching![0].whip = true; }, /strict numeric/],
+    ["wrong_ids", (f) => { f.standings[9].teamId = 11; }, /teamId 집합이 1\.\.10/],
+    ["payload_id_mismatch", (f) => { f.teamRecords.batting![9].teamId = 11; }, /teamId 집합이 1\.\.10/],
+  ];
+  for (const [name, mutate, expected] of mutants) {
+    const fixture = makeTeamContractFixture();
+    mutate(fixture);
+    assert.throws(
+      () => assertTeamSnapshotContract(fixture.standings, fixture.teamRecords),
+      expected,
+      `${name} mutant가 GREEN`,
+    );
+  }
+  console.log(`✅ team snapshot contract selftest: ${mutants.length}/${mutants.length} RED (no network)`);
+}
+
+async function captureTeamSnapshot(
+  source: TeamRecordFetchers,
+): Promise<{
+  standings: StandingsRow[];
+  teamRecords: TeamRecordsPayload;
+  fetchers: TeamRecordFetchers;
+}> {
+  const [liveStandings, liveTeamRecords] = await Promise.all([
+    source.fetchStandings(),
+    source.fetchTeamRecords(),
   ]);
+  const standings = cloneSnapshot(liveStandings);
+  const teamRecords = cloneSnapshot(liveTeamRecords);
+  assertTeamSnapshotContract(standings, teamRecords);
+  return { standings, teamRecords, fetchers: snapshotFetchers(standings, teamRecords) };
+}
+
+async function verifyTeamNumericAnswers() {
+  // production server.makeDeps의 실제 fetchTeamRecord 배선을 통해 라이브 응답을 딱 한 번
+  // 읽고 그 스냅샷으로 기대값과 answerQuestion 종단을 모두 태운다.
+  // 종전에는 1차 live read로 기대값을 만든 뒤 server.makeDeps가 2차 live read를 해,
+  // 두 읽기 사이 경기 결과가 바뀌면 코드와 무관하게 false-RED가 났다(8/18 배포 차단).
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-placeholder";
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-placeholder";
+  const { makeDeps: makeServerDeps } = await import("../../src/lib/baseball-qa/server");
+  const wired = makeServerDeps(9_110_001);
+  assert.ok(wired.fetchTeamRecord, "server.makeDeps의 fetchTeamRecord 주입이 끊겼다");
+
+  const { standings, teamRecords, fetchers } = await captureTeamSnapshot(wired.fetchTeamRecord);
   const lg = standings.find((row) => row.teamId === 1);
   const lgBatting = (teamRecords.batting ?? []).find((row) => Number(row.teamId) === 1);
   assert.ok(lg, "표본 팀(LG) 순위 행이 없다 — 게이트가 검증할 대상이 없다");
@@ -250,21 +395,54 @@ async function verifyTeamNumericAnswers() {
     fetchTeamRecord: fetchers,
   });
 
+  // 시점 변동 주입: source는 두 번째 읽기부터 승수를 바꾸지만 capture는 source를 1회만 읽고
+  // 이후 snapshot fetcher만 사용해야 한다. 경기 결과가 두 검증 사이 바뀌어도 기대값/답변은
+  // 같은 snapshot에 결속되어 false-RED가 나지 않는다는 양방향의 GREEN 축이다.
+  await check("mutable live 값이 다음 읽기에서 바뀌어도 단일 snapshot 유지", async () => {
+    let standingsReads = 0;
+    let recordsReads = 0;
+    const movingSource: TeamRecordFetchers = {
+      fetchStandings: async () => {
+        standingsReads += 1;
+        const rows = cloneSnapshot(standings);
+        if (standingsReads > 1) rows[0].wins += 1;
+        return rows;
+      },
+      fetchTeamRecords: async () => {
+        recordsReads += 1;
+        const payload = cloneSnapshot(teamRecords);
+        if (recordsReads > 1 && payload.batting?.[0]) payload.batting[0].hr = Number(payload.batting[0].hr) + 1;
+        return payload;
+      },
+    };
+    const captured = await captureTeamSnapshot(movingSource);
+    const capturedLg = captured.standings.find((row) => row.teamId === 1);
+    const capturedLgBatting = captured.teamRecords.batting?.find((row) => Number(row.teamId) === 1);
+    assert.ok(capturedLg && capturedLgBatting, "moving-source fixture에 LG 행이 없다");
+
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const deps: QaDeps = { ...makeDeps(state), fetchTeamRecord: captured.fetchers };
+    const rankResult = await answerQuestion("u-moving-rank", "LG 지금 몇 위야?", deps);
+    const hrResult = await answerQuestion("u-moving-hr", "LG 홈런 알려줘", deps);
+    assert.equal(rankResult.source, "kbo_structured", `moving rank source=${rankResult.source}`);
+    assert.ok(rankResult.answer?.includes(`${capturedLg.ranking}위`), `moving rank answer=${rankResult.answer}`);
+    assert.equal(hrResult.source, "kbo_structured", `moving hr source=${hrResult.source}`);
+    assert.ok(hrResult.answer?.includes(String(capturedLgBatting.hr)), `moving hr answer=${hrResult.answer}`);
+    assert.equal(state.llmCalls, 0, "moving source를 generic LLM으로 보냈다");
+    assert.equal(standingsReads, 1, `live standings를 ${standingsReads}회 읽었다`);
+    assert.equal(recordsReads, 1, `live team-records를 ${recordsReads}회 읽었다`);
+  });
+
   // production server.makeDeps의 실제 fetchTeamRecord 주입을 그대로 태운다. 테스트가 fetcher를
   // 직접 조립하면 server.ts 배선을 제거해도 GREEN이었던 5차 P0를 다시 만든다.
   await check("production server.makeDeps → team_record → 최종답 종단", async () => {
-    process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://example.supabase.co";
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "gate-placeholder";
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||= "gate-placeholder";
-    const { makeDeps: makeServerDeps } = await import("../../src/lib/baseball-qa/server");
-    const wired = makeServerDeps(9_110_001);
-    assert.ok(wired.fetchTeamRecord, "server.makeDeps의 fetchTeamRecord 주입이 끊겼다");
     const state: RunState = { llmCalls: 0, logs: [] };
     const deps: QaDeps = {
-      ...wired,
       ...makeDeps(state),
-      // 핵심: fetchTeamRecord는 wired 값을 덮지 않는다.
-      fetchTeamRecord: wired.fetchTeamRecord,
+      // fetcher 자체는 production server.makeDeps seam에서 얻은 단일 snapshot이다.
+      // server의 claim/outbox 같은 다른 live dependency까지 섞으면 게이트가 DB 상태에 따라
+      // pending이 되어, 지금 검증하는 team-record 배선과 무관한 false-RED가 생긴다.
+      fetchTeamRecord: fetchers,
     };
     const result = await answerQuestion("u-server-team-wiring", "LG 지금 몇 위야?", deps);
     assert.equal(result.source, "kbo_structured", `server 종단 source=${result.source}`);
@@ -1327,6 +1505,10 @@ async function verifySystemPromptContract() {
 }
 
 async function main() {
+  if (process.env.QA_TEAM_CONTRACT_SELFTEST === "1") {
+    verifyTeamSnapshotContractSelftest();
+    return;
+  }
   players = await loadRosterPlayers();
   assert.ok(
     players.length > 100,

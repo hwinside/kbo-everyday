@@ -1,7 +1,27 @@
-import type { User } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { verifyAccessTokenWith } from "@/lib/auth/token-precheck";
+
+/** The identity fields API routes are allowed to read off a verified token.
+ *
+ * Deliberately NARROW (not supabase `User`): the local-claims path below can
+ * only supply what the JWT itself carries. Typing the return as the full
+ * `User` would let a route read e.g. `user.created_at` — a field that is
+ * present on the server-verified path and silently `undefined` on the local
+ * path. Narrowing makes tsc, not a reviewer, prove no such read exists.
+ * Adding a field here requires checking the JWT actually carries it. */
+export interface VerifiedUser {
+  id: string;
+  email: string | null;
+}
+
+/** Identity fields that ONLY the server-authoritative path can supply, because
+ * they live on the auth user row rather than in the JWT. Separate type so a
+ * route needing one of these cannot compile against the local-claims path. */
+export interface LiveVerifiedUser extends VerifiedUser {
+  /** auth.users.created_at (ISO). Not a JWT claim. */
+  createdAt: string | null;
+}
 
 function getBearerToken(request: Request): string {
   const authHeader = request.headers.get("authorization") || "";
@@ -9,17 +29,130 @@ function getBearerToken(request: Request): string {
   return match?.[1]?.trim() || "";
 }
 
-/** Verify a Supabase access token against Auth, with local precheck and
- * dead-token caching (see token-precheck.ts for why). Returns the user or
- * null. Drop-in replacement for direct `adminClient.auth.getUser(token)`
- * calls in API routes. */
-export async function verifyAccessToken(token: string): Promise<User | null> {
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
-  const adminClient = getSupabaseAdmin();
-  return verifyAccessTokenWith((t) => adminClient.auth.getUser(t), token);
+/** Expected `iss` for this project's access tokens: `<project url>/auth/v1`. */
+export function expectedIssuer(supabaseUrl: string): string {
+  return `${supabaseUrl.replace(/\/+$/, "")}/auth/v1`;
 }
 
-export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: User; token: string } | null> {
+/**
+ * Turn verified JWT claims into a principal, or null.
+ *
+ * `getClaims()` proves the token was signed by a key in the project JWKS and
+ * is unexpired — it does NOT assert the token is an end-user access token for
+ * THIS project's authenticated role. Those are separate claims, and they are
+ * what an attacker would vary. So every one of them is checked fail-close:
+ *
+ *  - `iss`      must be this project's auth issuer. Rejects a validly-signed
+ *               token minted by a different Supabase project.
+ *  - `aud`      must contain `authenticated` (spec allows string or array).
+ *  - `role`     must be exactly `authenticated`. Notably rejects
+ *               `service_role`, which would otherwise be accepted as a user
+ *               and hand an admin-privileged token a normal user's identity.
+ *  - `sub`      must be a non-empty string — it becomes the user id.
+ *  - `session_id` must be present. A token with no session cannot be tied to
+ *               a real sign-in.
+ *
+ * Pure and exported so the gate can feed it forged claim sets directly
+ * (삼순 필수②) without needing a signing key.
+ */
+export function principalFromClaims(
+  claims: unknown,
+  expectedIss: string,
+): VerifiedUser | null {
+  if (!claims || typeof claims !== "object") return null;
+  const c = claims as Record<string, unknown>;
+
+  if (typeof c.iss !== "string" || c.iss !== expectedIss) return null;
+
+  const aud = c.aud;
+  const audOk =
+    aud === "authenticated" ||
+    (Array.isArray(aud) && aud.includes("authenticated"));
+  if (!audOk) return null;
+
+  if (c.role !== "authenticated") return null;
+
+  const sub = typeof c.sub === "string" ? c.sub.trim() : "";
+  if (!sub) return null;
+
+  const sessionId = typeof c.session_id === "string" ? c.session_id.trim() : "";
+  if (!sessionId) return null;
+
+  const email = typeof c.email === "string" && c.email ? c.email : null;
+  return { id: sub, email };
+}
+
+/** Verify a Supabase access token, with local precheck and dead-token caching
+ * (see token-precheck.ts for why).
+ *
+ * Verification goes through `auth.getClaims()`, which verifies the JWT
+ * signature LOCALLY against the project's JWKS when the signing key is
+ * asymmetric (this project: ES256 `in_use`, HS256 only `previously_used`).
+ * That removes one GoTrue `/auth/v1/user` round trip per authenticated API
+ * request — the observed load was `/user` = 94.8% of all Auth traffic, called
+ * from Vercel server-side, because this helper backs 23 API routes.
+ *
+ * auth-js falls back to a server `getUser()` call by itself when the token is
+ * HS256-signed, has no `kid`, or WebCrypto is unavailable — so a signing-key
+ * rollback degrades to the old behaviour instead of failing open.
+ *
+ * ⚠️ TRADE-OFF — revocation latency. Local verification proves the token was
+ * issued by this project and is unexpired; it CANNOT see that the session was
+ * signed out, or the user deleted/banned, after issuance. Such a token stays
+ * accepted until it expires (`jwt_exp` = 3600s). The server path had no such
+ * lag. This is accepted here because every caller is an ordinary
+ * user-scoped route; anything that must observe revocation immediately must
+ * call {@link verifyAccessTokenLive} instead. */
+export async function verifyAccessToken(token: string): Promise<VerifiedUser | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  // No project URL means no issuer to check against — refuse rather than
+  // verifying with the issuer check silently disabled.
+  if (!supabaseUrl) return null;
+  const expectedIss = expectedIssuer(supabaseUrl);
+  const adminClient = getSupabaseAdmin();
+  return verifyAccessTokenWith<VerifiedUser>(async (t) => {
+    const { data, error } = await adminClient.auth.getClaims(t);
+    if (error) {
+      return { data: { user: null }, error: error as { status?: number; code?: string } | null };
+    }
+    // Signature/exp are verified above; the claim SHAPE is verified here.
+    const user = principalFromClaims(data?.claims, expectedIss);
+    if (!user) {
+      // A validly-signed token that fails the claim contract is not a
+      // transient failure — it can never become valid, so report it with a
+      // dead-token code so the negative cache short-circuits repeats.
+      return { data: { user: null }, error: { code: "bad_jwt" } };
+    }
+    return { data: { user }, error: null };
+    // scope "local": must never share an in-flight call with the live
+    // verifier below — their result shapes differ (삼순 blocker①).
+  }, token, Date.now(), "local");
+}
+
+/** Server-authoritative verification — one GoTrue round trip, sees sign-out /
+ * deletion / ban immediately. Use ONLY where that immediacy is required;
+ * `verifyAccessToken` is the default because this path is what saturated CPU. */
+export async function verifyAccessTokenLive(token: string): Promise<LiveVerifiedUser | null> {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) return null;
+  const adminClient = getSupabaseAdmin();
+  return verifyAccessTokenWith<LiveVerifiedUser>(async (t) => {
+    const { data, error } = await adminClient.auth.getUser(t);
+    if (error || !data.user) return { data: { user: null }, error };
+    return {
+      data: {
+        user: {
+          id: data.user.id,
+          email: data.user.email ?? null,
+          createdAt: data.user.created_at ?? null,
+        },
+      },
+      error: null,
+    };
+  }, token, Date.now(), "live");
+}
+
+export async function getVerifiedUserFromRequest(request: Request): Promise<{ user: VerifiedUser; token: string } | null> {
   const token = getBearerToken(request);
   if (!token) return null;
 
@@ -27,6 +160,38 @@ export async function getVerifiedUserFromRequest(request: Request): Promise<{ us
   if (!user) return null;
 
   return { user, token };
+}
+
+/**
+ * Confirm an email-based PRIVILEGE decision against the Auth server.
+ *
+ * Background (삼순 필수③ — "admin/email 우회 같은 고위험 mutation 은 원격 검증 유지
+ * 여부를 분리 설계"). Ordinary routes only need `sub`, which is immutable, so
+ * local claim verification is fine. A few routes instead branch on `email`
+ * against an allowlist, and email is MUTABLE server state — the claim holds
+ * the value at token issuance, which can be up to `jwt_exp` (3600s) stale.
+ * Privilege should be decided on current state.
+ *
+ * Cost is kept at zero for normal traffic by checking the (signed, unforgeable)
+ * claim first: if the claim email is not an allowlist candidate, the answer is
+ * already false and no round trip happens. Only a candidate pays one call, and
+ * only to confirm the address still holds. So this cannot reintroduce the
+ * `/user` volume that saturated CPU — the callers are admin-only/QA paths.
+ *
+ * @param claimEmail email from the locally-verified claims
+ * @param token      the caller's access token
+ * @param predicate  allowlist test (isAdminEmail / canBypassVenueGeofenceForQa)
+ */
+export async function confirmEmailPrivilege(
+  claimEmail: string | null,
+  token: string,
+  predicate: (email?: string | null) => boolean,
+): Promise<boolean> {
+  // Fast path: not a candidate by the signed claim → definitively not privileged.
+  if (!predicate(claimEmail)) return false;
+  // Candidate → confirm the address against the Auth server (fail-close).
+  const live = await verifyAccessTokenLive(token);
+  return !!live && predicate(live.email);
 }
 
 /** Extract the Supabase access token from `sb-<ref>-auth-token` cookies by
@@ -86,5 +251,22 @@ export async function getVerifiedUserIdFromCookies(): Promise<string | null> {
   const token = extractAccessTokenFromCookies(cookieStore.getAll());
   if (!token) return null;
   const user = await verifyAccessToken(token);
+  return user?.id ?? null;
+}
+
+/** Cookie-session identity verified against the Auth server.
+ *
+ * Same cookie parsing as {@link getVerifiedUserIdFromCookies} (still zero
+ * network to read the token), but the identity itself is confirmed by GoTrue.
+ * Required where the action is IRREVERSIBLE and must not run on a session
+ * that was already signed out / deleted / banned — account deletion is the
+ * case that forced this (삼순 blocker②): local claims stay valid up to `exp`
+ * (3600s), so a stale cookie could permanently delete an account after the
+ * session was revoked. */
+export async function getVerifiedUserIdFromCookiesLive(): Promise<string | null> {
+  const cookieStore = await cookies();
+  const token = extractAccessTokenFromCookies(cookieStore.getAll());
+  if (!token) return null;
+  const user = await verifyAccessTokenLive(token);
   return user?.id ?? null;
 }

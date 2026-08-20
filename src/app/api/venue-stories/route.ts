@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
-import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
+import { getVerifiedUserFromRequest, confirmEmailPrivilege } from "@/lib/auth/verified-user";
 import { resolveGameVenue } from "@/lib/venue-stories/venue-resolve";
 import { evaluateGeofence, isVenueUploadBlocked } from "@/lib/venue-stories/geofence";
 import { probeMediaObject } from "@/lib/venue-stories/media-probe";
@@ -268,7 +268,10 @@ export async function GET(req: NextRequest) {
   // 조회수는 일단 관리자만(하린아빠 2026-07-29) — #735 게시글 배지와 동일하게 관리자 세션에만
   // clickCount/impressionCount 를 붙인다. 일반·익명 응답에는 필드 자체 부재(withAdminViewCounts 가 보장,
   // 회귀는 qa:venue-story-views 클라 스모크가 고정). 조회 실패는 목록 응답을 막지 않는다(부가 지표).
-  const isAdmin = auth.kind === "user" && isAdminEmail(verified?.user.email);
+  const isAdmin =
+    auth.kind === "user" &&
+    !!verified &&
+    (await confirmEmailPrivilege(verified.user.email, verified.token, isAdminEmail));
   let viewCounts = new Map<number, { click: number; impression: number }>();
   if (isAdmin && stories.length > 0) {
     // query-guard: bounded -- 목록은 최대 100 스토리, active 스토리 수명(종료+24h)상 스토리당 daily 행 수일 이내
@@ -359,7 +362,12 @@ export async function POST(req: NextRequest) {
   // 관리자 QA 계정은 지오펜스와 마찬가지로 업로드 시간창(종료·마감)도 우회한다 —
   // 종료 경기에도 QA 업로드가 가능해야 한다(하린아빠 7/25 04:38 리포트: 종료 경기 올리기 비활성).
   // 좌표·gameDate 미상은 QA도 fail-closed(경기 자체가 없거나 미매핑이면 검증 불가).
-  const qaBypass = canBypassVenueGeofenceForQa(verified.user.email);
+  // 지오펜스·시간창 우회 = 권한 부여 → 서버 권위 확인(삼순 필수③).
+  const qaBypass = await confirmEmailPrivilege(
+    verified.user.email,
+    verified.token,
+    canBypassVenueGeofenceForQa,
+  );
   const venue = await resolveGameVenue(gameId);
   if (!venue.exists) {
     return NextResponse.json({ error: venue.reason ?? "경기를 확인할 수 없어요" }, { status: 404 });
