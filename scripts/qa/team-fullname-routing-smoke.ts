@@ -242,9 +242,24 @@ const REQUIRED_STANDING_FIELDS = [
 const REQUIRED_BATTING_FIELDS = ["avg", "ops", "hr", "runs", "sb", "hits"] as const;
 const REQUIRED_PITCHING_FIELDS = ["era", "whip", "so", "sv"] as const;
 
-function assertFiniteField(row: Record<string, unknown>, field: string, label: string): void {
+function assertStrictNumericField(row: Record<string, unknown>, field: string, label: string): void {
   assert.ok(Object.hasOwn(row, field), `${label}: 필드 '${field}' 결손`);
-  assert.ok(Number.isFinite(Number(row[field])), `${label}: 필드 '${field}' 가 유한 수가 아니다`);
+  const value = row[field];
+  const validNumber = typeof value === "number" && Number.isFinite(value);
+  const validNumericString = typeof value === "string"
+    && value.trim().length > 0
+    && Number.isFinite(Number(value));
+  assert.ok(validNumber || validNumericString, `${label}: 필드 '${field}' 가 strict numeric이 아니다`);
+}
+
+const EXACT_TEAM_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
+
+function assertExactTeamIds(rows: Array<{ teamId: number }>, label: string): void {
+  const ids = rows.map((row) => row.teamId);
+  for (const id of ids) {
+    assert.ok(typeof id === "number" && Number.isInteger(id), `${label}: teamId가 정수가 아니다`);
+  }
+  assert.deepEqual([...ids].sort((a, b) => a - b), EXACT_TEAM_IDS, `${label}: teamId 집합이 1..10이 아니다`);
 }
 
 /**
@@ -256,13 +271,13 @@ function assertTeamSnapshotContract(
   teamRecords: TeamRecordsPayload,
 ): void {
   assert.equal(standings.length, 10, `standings 팀 수=${standings.length} (기대 10)`);
-  assert.equal(new Set(standings.map((row) => row.teamId)).size, 10, "standings teamId 중복");
+  assertExactTeamIds(standings, "standings");
   for (const row of standings) {
     for (const field of REQUIRED_STANDING_FIELDS) {
       if (field === "teamName") {
         assert.ok(typeof row.teamName === "string" && row.teamName.length > 0, `teamId=${row.teamId}: teamName 결손`);
       } else {
-        assertFiniteField(row as unknown as Record<string, unknown>, field, `standings teamId=${row.teamId}`);
+        assertStrictNumericField(row as unknown as Record<string, unknown>, field, `standings teamId=${row.teamId}`);
       }
     }
   }
@@ -272,10 +287,9 @@ function assertTeamSnapshotContract(
   ] as const) {
     assert.ok(Array.isArray(rows), `${kind} 배열 결손`);
     assert.equal(rows.length, 10, `${kind} 팀 수=${rows.length} (기대 10)`);
-    assert.equal(new Set(rows.map((row) => Number(row.teamId))).size, 10, `${kind} teamId 중복`);
+    assertExactTeamIds(rows, kind);
     for (const row of rows) {
-      assertFiniteField(row as Record<string, unknown>, "teamId", `${kind} row`);
-      for (const field of fields) assertFiniteField(row as Record<string, unknown>, field, `${kind} teamId=${row.teamId}`);
+      for (const field of fields) assertStrictNumericField(row as Record<string, unknown>, field, `${kind} teamId=${row.teamId}`);
     }
   }
 }
@@ -296,26 +310,53 @@ function snapshotFetchers(
   };
 }
 
-function injectTeamSnapshotFault(
-  standings: StandingsRow[],
-  teamRecords: TeamRecordsPayload,
-): void {
-  const fault = process.env.QA_TEAM_SNAPSHOT_FAULT;
-  if (!fault) return;
-  if (fault === "missing_wins") {
-    delete (standings[0] as unknown as Record<string, unknown>).wins;
-    return;
+function makeTeamContractFixture(): { standings: StandingsRow[]; teamRecords: TeamRecordsPayload } {
+  const standings = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId,
+    teamName: `팀${teamId}`,
+    games: 100,
+    wins: 50,
+    losses: 45,
+    draws: 5,
+    winRate: 0.5,
+    gamesBehind: 0,
+    ranking: teamId,
+  }));
+  const batting = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId, slug: `team-${teamId}`, avg: "0.250", ops: "0.700", hr: 80, runs: 400, sb: 50, hits: 800,
+  }));
+  const pitching = EXACT_TEAM_IDS.map((teamId) => ({
+    teamId, slug: `team-${teamId}`, era: "3.50", whip: "1.20", so: 700, sv: 20,
+  }));
+  return { standings, teamRecords: { season: 2026, batting, pitching } };
+}
+
+function verifyTeamSnapshotContractSelftest(): void {
+  const base = makeTeamContractFixture();
+  assertTeamSnapshotContract(base.standings, base.teamRecords);
+  const mutants: Array<[string, (fixture: ReturnType<typeof makeTeamContractFixture>) => void, RegExp]> = [
+    ["missing_wins", (f) => { delete (f.standings[0] as unknown as Record<string, unknown>).wins; }, /필드 'wins' 결손/],
+    ["missing_batting", (f) => { delete f.teamRecords.batting; }, /batting 배열 결손/],
+    ["null_avg", (f) => { f.teamRecords.batting![0].avg = null; }, /strict numeric/],
+    ["blank_era", (f) => { f.teamRecords.pitching![0].era = ""; }, /strict numeric/],
+    ["boolean_whip", (f) => { f.teamRecords.pitching![0].whip = true; }, /strict numeric/],
+    ["wrong_ids", (f) => { f.standings[9].teamId = 11; }, /teamId 집합이 1\.\.10/],
+    ["payload_id_mismatch", (f) => { f.teamRecords.batting![9].teamId = 11; }, /teamId 집합이 1\.\.10/],
+  ];
+  for (const [name, mutate, expected] of mutants) {
+    const fixture = makeTeamContractFixture();
+    mutate(fixture);
+    assert.throws(
+      () => assertTeamSnapshotContract(fixture.standings, fixture.teamRecords),
+      expected,
+      `${name} mutant가 GREEN`,
+    );
   }
-  if (fault === "missing_batting") {
-    delete teamRecords.batting;
-    return;
-  }
-  throw new Error(`unknown QA_TEAM_SNAPSHOT_FAULT=${fault}`);
+  console.log(`✅ team snapshot contract selftest: ${mutants.length}/${mutants.length} RED (no network)`);
 }
 
 async function captureTeamSnapshot(
   source: TeamRecordFetchers,
-  injectFault = false,
 ): Promise<{
   standings: StandingsRow[];
   teamRecords: TeamRecordsPayload;
@@ -327,7 +368,6 @@ async function captureTeamSnapshot(
   ]);
   const standings = cloneSnapshot(liveStandings);
   const teamRecords = cloneSnapshot(liveTeamRecords);
-  if (injectFault) injectTeamSnapshotFault(standings, teamRecords);
   assertTeamSnapshotContract(standings, teamRecords);
   return { standings, teamRecords, fetchers: snapshotFetchers(standings, teamRecords) };
 }
@@ -344,10 +384,7 @@ async function verifyTeamNumericAnswers() {
   const wired = makeServerDeps(9_110_001);
   assert.ok(wired.fetchTeamRecord, "server.makeDeps의 fetchTeamRecord 주입이 끊겼다");
 
-  const { standings, teamRecords, fetchers } = await captureTeamSnapshot(
-    wired.fetchTeamRecord,
-    true,
-  );
+  const { standings, teamRecords, fetchers } = await captureTeamSnapshot(wired.fetchTeamRecord);
   const lg = standings.find((row) => row.teamId === 1);
   const lgBatting = (teamRecords.batting ?? []).find((row) => Number(row.teamId) === 1);
   assert.ok(lg, "표본 팀(LG) 순위 행이 없다 — 게이트가 검증할 대상이 없다");
@@ -379,11 +416,21 @@ async function verifyTeamNumericAnswers() {
       },
     };
     const captured = await captureTeamSnapshot(movingSource);
-    const first = await captured.fetchers.fetchStandings();
-    const second = await captured.fetchers.fetchStandings();
+    const capturedLg = captured.standings.find((row) => row.teamId === 1);
+    const capturedLgBatting = captured.teamRecords.batting?.find((row) => Number(row.teamId) === 1);
+    assert.ok(capturedLg && capturedLgBatting, "moving-source fixture에 LG 행이 없다");
+
+    const state: RunState = { llmCalls: 0, logs: [] };
+    const deps: QaDeps = { ...makeDeps(state), fetchTeamRecord: captured.fetchers };
+    const rankResult = await answerQuestion("u-moving-rank", "LG 지금 몇 위야?", deps);
+    const hrResult = await answerQuestion("u-moving-hr", "LG 홈런 알려줘", deps);
+    assert.equal(rankResult.source, "kbo_structured", `moving rank source=${rankResult.source}`);
+    assert.ok(rankResult.answer?.includes(`${capturedLg.ranking}위`), `moving rank answer=${rankResult.answer}`);
+    assert.equal(hrResult.source, "kbo_structured", `moving hr source=${hrResult.source}`);
+    assert.ok(hrResult.answer?.includes(String(capturedLgBatting.hr)), `moving hr answer=${hrResult.answer}`);
+    assert.equal(state.llmCalls, 0, "moving source를 generic LLM으로 보냈다");
     assert.equal(standingsReads, 1, `live standings를 ${standingsReads}회 읽었다`);
     assert.equal(recordsReads, 1, `live team-records를 ${recordsReads}회 읽었다`);
-    assert.deepEqual(second, first, "snapshot fetcher가 호출 사이 값이 바뀌었다");
   });
 
   // production server.makeDeps의 실제 fetchTeamRecord 주입을 그대로 태운다. 테스트가 fetcher를
@@ -1458,6 +1505,10 @@ async function verifySystemPromptContract() {
 }
 
 async function main() {
+  if (process.env.QA_TEAM_CONTRACT_SELFTEST === "1") {
+    verifyTeamSnapshotContractSelftest();
+    return;
+  }
   players = await loadRosterPlayers();
   assert.ok(
     players.length > 100,
