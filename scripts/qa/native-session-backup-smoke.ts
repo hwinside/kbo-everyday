@@ -422,6 +422,47 @@ async function main() {
     check("갱신된 백업 보존 (CAS)", store.get("kbo-native-session-backup") === rotated);
   }
 
+  console.log("[23] not-ready 네이티브 저장소(iOS 설치 게이트 fail-close) → JS 전부 무해 (삼순 3차)");
+  {
+    // iOS 게이트 미통과 시 계약: get 은 항상 null, set/remove 는 reject.
+    // JS 측이 reject 를 삼키고(throw 전파 금지) 복원을 시도하지 않는지 검증.
+    const NotReadyStore = {
+      async get(_o: { key: string }) {
+        return { value: null };
+      },
+      async set(_o: { key: string; value: string }): Promise<void> {
+        throw new Error("store not ready (install lifecycle gate)");
+      },
+      async remove(_o: { key: string }): Promise<void> {
+        throw new Error("store not ready (install lifecycle gate)");
+      },
+    };
+    setWindow({
+      isNativePlatform: () => true,
+      getPlatform: () => "ios",
+      Plugins: { SecureSessionStore: NotReadyStore },
+    });
+    let threw = false;
+    let setSessionCalls = 0;
+    try {
+      await mod.backupSessionTokens(tokens);
+      await mod.clearSessionBackup();
+      const read = await mod.readSessionBackup();
+      check("read null", read === null);
+      const restored = await mod.restoreSessionFromBackup({
+        setSession: async () => {
+          setSessionCalls++;
+          return { data: { session: { ok: true } }, error: null };
+        },
+      });
+      check("복원 미시도(null)", restored === null);
+    } catch {
+      threw = true;
+    }
+    check("reject 전파 없음 (backup/clear/restore 전부 무해)", threw === false);
+    check("setSession 0회", setSessionCalls === 0, `calls=${setSessionCalls}`);
+  }
+
   console.log("[20] isDefinitiveRefreshRejection 분류 경계");
   {
     const f = mod.isDefinitiveRefreshRejection;

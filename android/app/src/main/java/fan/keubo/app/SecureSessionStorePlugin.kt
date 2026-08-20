@@ -79,8 +79,13 @@ class SecureSessionStorePlugin : Plugin() {
             return
         }
         try {
-            prefs.edit().putString(key, value).apply()
-            call.resolve()
+            // 삼순 3차 P1: apply()는 비동기 디스크 반영이라 반영 전 프로세스 종료 시
+            // 백업 유실/로그아웃 토큰 잔존 여지 → 브릿지 작업 스레드에서 commit() 결과까지 확인.
+            if (prefs.edit().putString(key, value).commit()) {
+                call.resolve()
+            } else {
+                call.reject("secure set failed: commit returned false")
+            }
         } catch (e: Exception) {
             call.reject("secure set failed: ${e.message}")
         }
@@ -94,8 +99,12 @@ class SecureSessionStorePlugin : Plugin() {
             return
         }
         try {
-            prefs.edit().remove(key).apply()
-            call.resolve()
+            // remove 도 동일 — 로그아웃 직후 종료해도 토큰이 디스크에 남지 않게 commit().
+            if (prefs.edit().remove(key).commit()) {
+                call.resolve()
+            } else {
+                call.reject("secure remove failed: commit returned false")
+            }
         } catch (e: Exception) {
             call.reject("secure remove failed: ${e.message}")
         }

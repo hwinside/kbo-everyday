@@ -22,14 +22,20 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
 
     private let service = "fan.keubo.secure-session-store"
 
-    /// 설치 생명주기 계약(삼순 2차 NO-GO ②): 업데이트=유지 / 재설치=삭제 / WebView 퍼지=복원.
-    /// iOS Keychain 은 앱 삭제 후에도 남을 수 있어, 그대로 두면 재설치 시 이전 계정이
-    /// 자동 부활한다. 앱 샘드박스 Library 디렉토리(삭제 시 확실히 증발)에 first-install
-    /// marker 파일을 두고, 부팅 시 marker 가 없으면(=신규/재설치) 이 서비스의 Keychain
-    /// 항목을 전부 지운 뒤 marker 를 생성한다. (UserDefaults 를 쓰지 않는 이유:
-    /// required-reason API 라 PrivacyInfo 사유 등재가 필요해짐 — 파일 존재 확인은 무관)
+    /// 설치 생명주기 게이트 통과 여부. false 면 fail-close:
+    /// get 은 항상 null(잔존 계정 비노출), set/remove 는 reject.
+    private var storeReady = false
+
+    /// 설치 생명주기 계약(삼순 2차 NO-GO ② + 3차 iOS P0): 업데이트=유지 / 재설치=삭제 / WebView 퍼지=복원.
+    /// iOS Keychain 은 앱 삭제 후에도 남을 수 있어 재설치 시 이전 계정이 부활할 수 있다.
+    /// Library 의 first-install marker 파일로 판정하되(UserDefaults 미사용 — required-reason
+    /// 회피), 의사결정은 전부 SecureSessionStoreInstallGate 순수 함수가 담당한다
+    /// (scripts/qa/native-session-backup-installgate.swift 가 삭제 실패·marker 생성 실패를
+    /// 실제 실행으로 주입 검증):
+    /// - 삭제 실패 → marker 미생성(다음 실행 재시도) + ready=false → 잔존 계정 복원 불가.
+    /// - marker 생성 실패 → ready=false → set 거부라 "매 실행 wipe"는 빈 저장소 no-op.
     override public func load() {
-        wipeOnFreshInstall()
+        storeReady = evaluateInstallLifecycle()
     }
 
     private var installMarkerURL: URL? {
@@ -37,16 +43,36 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
             .appendingPathComponent("fan.keubo.secure-session-store.installed")
     }
 
-    private func wipeOnFreshInstall() {
-        guard let marker = installMarkerURL else { return }
-        if FileManager.default.fileExists(atPath: marker.path) { return } // 업데이트/재실행 = 유지
-        // 신규 또는 재설치 — 잔존 Keychain 항목 전부 삭제 (이전 계정 부활 차단)
+    private func evaluateInstallLifecycle() -> Bool {
+        guard let marker = installMarkerURL else { return false }
+        let markerExists = FileManager.default.fileExists(atPath: marker.path)
+        if markerExists {
+            // 업데이트/재실행 — 유지
+            return SecureSessionStoreInstallGate.isReady(
+                markerExists: true, deleteStatus: errSecSuccess, markerCreated: false)
+        }
+        // 신규 또는 재설치 — 잔존 Keychain 항목 전부 삭제 시도, 결과를 버리지 않고 판정에 사용
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
         ]
-        SecItemDelete(query as CFDictionary)
-        FileManager.default.createFile(atPath: marker.path, contents: Data())
+        let deleteStatus = SecItemDelete(query as CFDictionary)
+        var markerCreated = false
+        if SecureSessionStoreInstallGate.shouldCreateMarker(
+            markerExists: false, deleteStatus: deleteStatus) {
+            markerCreated = FileManager.default.createFile(atPath: marker.path, contents: Data())
+                && FileManager.default.fileExists(atPath: marker.path)
+            if markerCreated {
+                // marker 백업 제외(삼순 3차) — best-effort. 실패해도 타기기 복원 시
+                // Keychain(ThisDeviceOnly)은 이전되지 않아 계정 부활 경로는 없다(심층방어).
+                var mutableMarker = marker
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? mutableMarker.setResourceValues(values)
+            }
+        }
+        return SecureSessionStoreInstallGate.isReady(
+            markerExists: false, deleteStatus: deleteStatus, markerCreated: markerCreated)
     }
 
     private func baseQuery(key: String) -> [String: Any] {
@@ -60,6 +86,11 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func get(_ call: CAPPluginCall) {
         guard let key = call.getString("key"), !key.isEmpty else {
             call.reject("key is required")
+            return
+        }
+        guard storeReady else {
+            // fail-close: wipe 미확정 상태에서 잔존 계정을 절대 노출하지 않는다
+            call.resolve(["value": NSNull()])
             return
         }
         var query = baseQuery(key: key)
@@ -84,6 +115,10 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
             call.reject("key and value are required")
             return
         }
+        guard storeReady else {
+            call.reject("store not ready (install lifecycle gate)")
+            return
+        }
         guard let data = value.data(using: .utf8) else {
             call.reject("value encoding failed")
             return
@@ -105,6 +140,10 @@ public class SecureSessionStorePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func remove(_ call: CAPPluginCall) {
         guard let key = call.getString("key"), !key.isEmpty else {
             call.reject("key is required")
+            return
+        }
+        guard storeReady else {
+            call.reject("store not ready (install lifecycle gate)")
             return
         }
         let status = SecItemDelete(baseQuery(key: key) as CFDictionary)

@@ -259,6 +259,7 @@
     "validate:player-identity": "node scripts/validate-player-identity.mjs",
     "qa:native-ios-naver-smoke-preflight": "node scripts/qa/native-ios-naver-smoke-preflight.mjs",
     "qa:native-session-backup": "tsx scripts/qa/native-session-backup-smoke.ts",
+    "qa:native-session-backup:installgate": "bash scripts/qa/native-session-backup-installgate.sh",
     "qa:native-push-deeplink": "tsx --test scripts/qa/native-push-deeplink-smoke.ts",
     "qa:full-entry": "tsx scripts/qa/full-entry-smoke.ts",
     "qa:admin-alerts": "tsx scripts/qa/admin-alerts-smoke.ts",
