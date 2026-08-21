@@ -70,6 +70,8 @@ interface ResolveRosterPlayerOptions {
   kboId?: string | null;
   teamId?: number | null;
   team?: string | null;
+  /** 같은 팀 동명이인 분리용 역할 힌트 — resolvePlayerIdentity 로 그대로 전달. */
+  positionHint?: "투수" | "야수" | null;
 }
 
 /**
@@ -85,8 +87,9 @@ export function resolveRosterPlayer({
   kboId,
   teamId,
   team,
+  positionHint,
 }: ResolveRosterPlayerOptions): RosterPlayer | null {
-  const resolved = resolvePlayerIdentity({ name, kboId, teamId, team });
+  const resolved = resolvePlayerIdentity({ name, kboId, teamId, team, positionHint });
   if (!resolved) return null;
 
   return {

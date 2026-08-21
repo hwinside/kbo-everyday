@@ -71,6 +71,13 @@ export type PlayerQuery =
       id?: string | number | null;
       team?: string | null;
       teamId?: number | string | null;
+      /**
+       * 같은 팀 동명이인(예: 삼성 김태훈 — 투수 62360 · 야수 65040) 분리용 역할 힌트.
+       * 호출부가 슬롯의 역할을 아는 경우(투수 자리/타석)에만 넘긴다.
+       * "투수" = position === "투수"만, "야수" = position !== "투수"만.
+       * 힌트로도 유일하게 좁혀지지 않으면 기존대로 null(fail-close).
+       */
+      positionHint?: "투수" | "야수" | null;
     };
 
 /**
@@ -214,7 +221,7 @@ function resolveInternal(
   }
 
   // Object query: ID/token 우선 → 이름+팀 → unique name/suffix 순서.
-  const { name, team, teamId } = query;
+  const { name, team, teamId, positionHint } = query;
   const rawId = query.kboId ?? query.playerId ?? query.id;
   if (rawId !== undefined && rawId !== null && String(rawId).trim()) {
     const byId = resolveInternal(String(rawId), roster);
@@ -243,13 +250,25 @@ function resolveInternal(
     (numericTeamId !== null && Number(p.teamId) === numericTeamId) ||
     Boolean(cleanTeam && p.team === cleanTeam);
 
+  /* positionHint 좁히기: 같은 팀 동명이인이라도 호출부가 슬롯 역할을 안다면
+   * (투수 자리 → 투수만, 타석/주자/야수 슬롯 → 비투수만) 유일하면 확정한다.
+   * 힌트로도 2+명이면 여전히 null — 배열 순서로 찍는 경로는 만들지 않는다. */
+  const narrowByHint = (matches: RosterPlayer[]): ResolvedPlayer | null => {
+    if (matches.length === 1) return toResolved(matches[0]);
+    if (matches.length > 1 && (positionHint === "투수" || positionHint === "야수")) {
+      const hinted = matches.filter((p) =>
+        positionHint === "투수" ? p.position === "투수" : p.position !== "투수",
+      );
+      if (hinted.length === 1) return toResolved(hinted[0]);
+    }
+    return null; // 동명이인 특정 불가 — fail-close
+  };
+
   const exactAndTeam = roster.filter((p) => p.name === cleanName && teamMatches(p));
-  if (exactAndTeam.length === 1) return toResolved(exactAndTeam[0]);
-  if (exactAndTeam.length > 1) return null; // 동명이인 — 배열 순서로 찍지 않는다
+  if (exactAndTeam.length > 0) return narrowByHint(exactAndTeam);
 
   const partialAndTeam = roster.filter((p) => nameLooseMatch(p.name, cleanName) && teamMatches(p));
-  if (partialAndTeam.length === 1) return toResolved(partialAndTeam[0]);
-  if (partialAndTeam.length > 1) return null;
+  if (partialAndTeam.length > 0) return narrowByHint(partialAndTeam);
 
   // 표기 변형 alias — 팀 가드 일치 시에만 적용(팀 정보 없는 쿼리엔 미적용 → 오매칭 방지)
   const aliasId = NAME_ALIASES[cleanName];
@@ -304,6 +323,23 @@ export function resolveRosterCandidates(
   const exact = roster.filter((p) => p.name === cleanName && teamMatches(p));
   if (exact.length > 0) return exact.map(toResolved);
   return roster.filter((p) => nameLooseMatch(p.name, cleanName) && teamMatches(p)).map(toResolved);
+}
+
+/**
+ * 이름(exact 우선, 없으면 느슨한 매칭)으로 로스터에 걸리는 선수 수.
+ * 0 = 로스터 밖 이름(레거시/은퇴), 1 = 유일, 2+ = 동명이인.
+ * 사진 등 name-only fallback 경로가 "동명이인이면 금지, 로스터 밖이면 허용"을
+ * 구분하는 데 쓴다 (resolveUniquePlayerByName 은 둘 다 null 이라 구분 불가).
+ */
+export function rosterNameMatchCount(
+  name: string,
+  roster: RosterPlayer[] = DEFAULT_ROSTER,
+): number {
+  const q = name?.trim();
+  if (!q) return 0;
+  const exact = roster.filter((p) => p.name === q).length;
+  if (exact > 0) return exact;
+  return roster.filter((p) => nameLooseMatch(p.name, q)).length;
 }
 
 /** 명시적인 이름의 alias. 신규 코드에서는 이 이름을 우선 사용한다. */

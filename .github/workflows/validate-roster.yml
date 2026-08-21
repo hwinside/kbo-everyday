@@ -19,6 +19,7 @@ on:
       - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
       - "scripts/qa/foreign-photo-coverage.ts"
+      - "scripts/qa/dup-name-photo-smoke.ts"
       - ".github/workflows/validate-roster.yml"
   push:
     branches:
@@ -37,6 +38,7 @@ on:
       - "public/players-hero/**"
       - "scripts/validate-roster.mjs"
       - "scripts/qa/foreign-photo-coverage.ts"
+      - "scripts/qa/dup-name-photo-smoke.ts"
 
 jobs:
   validate:
@@ -67,3 +69,8 @@ jobs:
         # 외국인 30명 × 5 ID 변형 + hero approved 28명에 대해 resolver/photo/파일 일관성 강제.
         # 어떤 외국인이라도 1개 변형에서 사진이 안 잡히면 fail → 머지 차단.
         run: npm run qa:foreign-photo
+
+      - name: Run duplicate-name photo gate
+        # 2026-08-20 CS 제보(#1269): 동명이인 name-only 사진맵 fallback fail-close +
+        # positionHint 역할 분리. 로스터/사진맵이 바뀌어 동명이인 계약이 깨지면 머지 차단.
+        run: npm run qa:dup-name-photo
