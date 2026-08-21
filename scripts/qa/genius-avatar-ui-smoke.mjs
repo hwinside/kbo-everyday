@@ -219,13 +219,10 @@ const probeChat = (expect) => {
 };
 
 async function openGeniusRoom(page) {
-  await page.evaluate(() => {
-    const el = [...document.querySelectorAll("*")].find(
-      (e) => e.children.length === 0 && e.textContent.trim() === "야잘알봇");
-    let c = el;
-    for (let i = 0; i < 8 && c; i++) { if (c.onclick || c.getAttribute("role")) break; c = c.parentElement; }
-    (c ?? el)?.click();
-  });
+  // 2026-08-21 "기본 쪽지함에서 야잘알봇 대화창 제거" — 목록 카드가 없으므로
+  // 카드 클릭 대신 초안 방 URL로 직접 진입한다(홈 헤더 진입점과 동일 라우팅 계약).
+  const base = new URL(page.url()).origin;
+  await page.goto(`${base}/messages/new-45ae7419-6a9a-4c6b-9101-8d65df7e242e`, { waitUntil: "networkidle" });
   // otherId 해결 전에는 아이콘이 없어 잘못된 높이를 잰다. 등장까지 기다린다.
   await page.waitForFunction(() => {
     const h = document.querySelector("header");
@@ -274,24 +271,13 @@ try {
   await aPage.goto(`${BASE_URL}/messages`, { waitUntil: "networkidle" });
   await aPage.waitForTimeout(2000);
 
+  // 2026-08-21 "기본 쪽지함에서 야잘알봇 대화창 제거" — 목록은 이제 **부재**가 계약이다.
   const aList = await aPage.evaluate(probeList, EXPECT_SRC);
-  ok("목록: 마스코트 아바타 렌더", aList.hasImg);
-  ok("목록: 이미지 실제 로드됨(404 아님)", !!aList.loaded, `natural=${aList.natural}`);
-  // ⚠️ <img> 박스가 아니라 **알파 bbox 실측**으로 판정한다 (삼순 NO-GO).
-  // 자산에 투명 패딩이 생기면 박스 높이는 그대로인데 캐릭터만 작아진다 — 박스 기준은 못 잡는다.
-  const alphaList = await alphaBboxRatio(EXPECT_SRC);
-  const listVisible = Math.round(aList.visibleH * alphaList.ratio);
-  ok(`목록: 캐릭터 실제(알파) 가시 높이 >= ${LIST_MIN_VISIBLE}px`,
-     listVisible >= LIST_MIN_VISIBLE,
-     `${listVisible}px = 박스 ${aList.visibleH}px x 알파비 ${alphaList.ratio.toFixed(3)} (슬롯 ${aList.slotH}px)`);
-  ok("자산에 상하 투명 패딩이 없다(크롭 유지)",
-     alphaList.ratio >= 0.98,
-     `알파비 ${alphaList.ratio.toFixed(3)} (top=${alphaList.top} bottom=${alphaList.bottom} h=${alphaList.height})`);
-  ok("목록: 캐릭터가 카드 세로 안에 담김(한 줄 구조 유지)", aList.withinCard);
-  ok("목록: 가로 overflow 0", aList.docOverflow <= 0, `${aList.docOverflow}px`);
+  ok("목록: 야잘알봇 마스코트 미노출(쪽지함 제거 계약)", !aList.hasImg);
+  ok("목록: 야잘알봇 텍스트 카드 잔존 0",
+     await aPage.evaluate(() => !document.body.innerText.includes("야잘알봇")));
   ok("목록: ⚾ 이모지 잔존 0", aList.emoji === 0, `발견 ${aList.emoji}개`);
-  ok("목록: 카드 높이 불변", aList.cardH === CARD_H, `${aList.cardH}px (기대 ${CARD_H})`);
-  ok("목록: 증거 스크린샷에 설정 모달 없음", !aList.modal);
+  const alphaList = await alphaBboxRatio(EXPECT_SRC);
   await aPage.screenshot({ path: "tmp/qa-screenshots/genius-avatar-list.png" });
 
   await openGeniusRoom(aPage);
@@ -330,9 +316,8 @@ try {
   await gPage.waitForTimeout(2000);
 
   const gList = await gPage.evaluate(probeList, EXPECT_SRC);
-  ok("목록: 일반 사용자 B도 마스코트 노출", gList.hasImg);
+  ok("목록: 일반 사용자 B도 야잘알봇 미노출(쪽지함 제거 계약)", !gList.hasImg);
   ok("목록: 일반 사용자 B ⚾ 폴백 0", gList.emoji === 0, `${gList.emoji}개`);
-  ok("목록: 사용자 간 카드 높이 동일", gList.cardH === CARD_H, `${gList.cardH}px`);
 
   await openGeniusRoom(gPage);
   const gChat = await gPage.evaluate(probeChat, EXPECT_SRC);

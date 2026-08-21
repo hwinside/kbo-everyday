@@ -136,7 +136,9 @@ const setupSource = readFileSync(
   "utf8",
 );
 assert.equal(existsSync(path.join(process.cwd(), "src/app/(main)/learn/ask/page.tsx")), false);
-assert.match(dmHookSource, /pinnedGenius/);
+// 2026-08-21 하린아빠 "기본 쪽지함에서 야잘알봇 대화창 제거" — 고정방(pinnedGenius)은 폐기됐다.
+// 진입점은 홈 헤더 GeniusEntryButton 단일화(qa:genius-entry가 배선을 강제한다).
+assert.doesNotMatch(dmHookSource, /pinnedGenius/);
 assert.match(dmHookSource, /enqueueBaseballQaQuestion/);
 assert.match(outboxSource, /\/api\/baseball-qa/);
 assert.doesNotMatch(
