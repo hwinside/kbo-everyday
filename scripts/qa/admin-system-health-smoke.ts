@@ -4,7 +4,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import { cpuUsedPercentFromSnapshots, parsePrometheusText, pickCpuBaseline, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -270,6 +270,104 @@ test("client CPU delta derives busy percent across exporter scrape intervals", (
     ),
     null,
   );
+});
+
+test("pickCpuBaseline picks the freshest advanced stored snapshot", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  const picked = pickCpuBaseline(
+    [
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 60_000 },
+      { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 120_000 },
+    ],
+    current,
+    now,
+  );
+  assert.ok(picked);
+  assert.equal(picked.baseline.totalSeconds, 302);
+  assert.ok(Math.abs(picked.usedPercent - 40) < 0.001);
+  assert.equal(picked.windowSeconds, 60);
+});
+
+test("pickCpuBaseline fails closed on identical/foreign/stale/reset rows", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  // 같은 scrape tick(동일 counter)은 건너뛰고 더 오래된 전진 row로 계산한다
+  const fallback = pickCpuBaseline(
+    [
+      { ...current, capturedAtMs: now - 10_000 },
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 70_000 },
+    ],
+    current,
+    now,
+  );
+  assert.ok(fallback);
+  assert.equal(fallback.baseline.totalSeconds, 302);
+  // fingerprint 불일치 → null
+  assert.equal(
+    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: "other", capturedAtMs: now - 60_000 }], current, now),
+    null,
+  );
+  // 보존창(10분) 초과된 오래된 baseline → null (오랍된 평균을 현재값으로 위장 금지)
+  assert.equal(
+    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 700_000 }], current, now),
+    null,
+  );
+  // counter 리셋(역전) → null
+  assert.equal(
+    pickCpuBaseline([{ totalSeconds: 400, idleSeconds: 300, seriesFingerprint: fp, capturedAtMs: now - 60_000 }], current, now),
+    null,
+  );
+  // 빈 원장 → null
+  assert.equal(pickCpuBaseline([], current, now), null);
+});
+
+test("route fills CPU instantly from the stored baseline ledger", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const baselineCapturedAt = new Date(Date.now() - 60_000).toISOString();
+  let ledgerReads = 0;
+  let ledgerWrites = 0;
+  const response = await routeWith(async (input, init) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("admin_metric_snapshots")) {
+      const method = (init?.method || "GET").toUpperCase();
+      if (method === "GET") {
+        ledgerReads += 1;
+        return Response.json([
+          { captured_at: baselineCapturedAt, fingerprint: fp, total_seconds: 300, idle_seconds: 200 },
+        ]);
+      }
+      ledgerWrites += 1;
+      return new Response(null, { status: 201 });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(ledgerReads, 1);
+  assert.equal(ledgerWrites, 1); // counter가 전진했으므로 새 스냅샷 적재
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.ok(payload.metrics.cpuSampleSeconds !== null && payload.metrics.cpuSampleSeconds >= 59 && payload.metrics.cpuSampleSeconds <= 62);
+});
+
+test("route degrades to client-delta path when the ledger is unavailable", async () => {
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("admin_metric_snapshots")) {
+      return new Response("ledger down", { status: 500 });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 원장 실패 = 즉시값 비활성 (기존 계약 유지)
+  assert.deepEqual(payload.metrics.cpuCounter?.totalSeconds, 302);
 });
 
 domTest("UI turns the first cumulative counter into CPU percent on refresh", async () => {

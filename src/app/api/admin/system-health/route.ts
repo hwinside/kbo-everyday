@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import { pickCpuBaseline, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import { loadRecentCpuSnapshots, storeCpuSnapshotIfAdvanced } from "@/lib/admin/cpu-snapshot-store";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +41,27 @@ async function fetchMetricsText(ref: string) {
   return response.text();
 }
 
+/**
+ * 메트릭 요약 + 서버 저장 baseline 기반 즉시 CPU% (2026-08-21).
+ * Supabase scrape가 ~60초 주기라 브라우저 단독으로는 첫 ~60초간 "측정 중"이된다.
+ * cron(1분)·이전 health 호출이 적재해둔 스냅샷과의 delta로 첫 응답부터 값을 채운다.
+ * 원장 조회/적재 실패는 기능 비활성(null)로만 떨어지고 기존 클라이언트 60초 경로는 그대로 동작한다.
+ */
 async function fetchMetrics(ref: string) {
-  return summarizeSystemMetrics(await fetchMetricsText(ref));
+  const [text, stored] = await Promise.all([fetchMetricsText(ref), loadRecentCpuSnapshots()]);
+  const summary = summarizeSystemMetrics(text);
+  const counter = summary.cpuCounter;
+  if (!counter) return summary;
+  const now = new Date();
+  if (summary.cpuUsedPercent === null && stored !== null) {
+    const picked = pickCpuBaseline(stored, counter, now.getTime());
+    if (picked) {
+      summary.cpuUsedPercent = Math.round(picked.usedPercent * 10) / 10;
+      summary.cpuSampleSeconds = Math.round(picked.windowSeconds * 10) / 10;
+    }
+  }
+  await storeCpuSnapshotIfAdvanced(counter, stored?.[0] ?? null, now);
+  return summary;
 }
 
 async function fetchServices(ref: string) {

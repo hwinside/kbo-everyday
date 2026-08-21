@@ -112,6 +112,39 @@ function cpuCounterSnapshot(samples: PrometheusSample[]) {
   return { totalSeconds, idleSeconds, seriesFingerprint };
 }
 
+/** Prometheus 텍스트에서 CPU counter 스냅샷만 추출 (cron/route 공용). */
+export function extractCpuCounterSnapshot(text: string): CpuCounterSnapshot | null {
+  return cpuCounterSnapshot(parsePrometheusText(text));
+}
+
+export interface StoredCpuSnapshot extends CpuCounterSnapshot {
+  capturedAtMs: number;
+}
+
+/**
+ * 저장된 스냅샷 중 현재 counter와 delta 계산이 가능한 가장 최신 baseline을 고른다.
+ * 계약: 같은 fingerprint + counter 전진(cpuUsedPercentFromSnapshots가 null이 아님) +
+ * 창이 maxWindowSeconds 이하. 조건 미충족 시 null (fail-close — 오래된 평균을 현재값처럼 보여주지 않는다).
+ */
+export function pickCpuBaseline(
+  stored: StoredCpuSnapshot[],
+  current: CpuCounterSnapshot,
+  nowMs: number,
+  maxWindowSeconds = 600,
+): { baseline: StoredCpuSnapshot; usedPercent: number; windowSeconds: number } | null {
+  const candidates = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs < nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+  for (const row of candidates) {
+    const windowSeconds = (nowMs - row.capturedAtMs) / 1_000;
+    if (windowSeconds > maxWindowSeconds) continue;
+    const usedPercent = cpuUsedPercentFromSnapshots(current, row);
+    if (usedPercent === null) continue;
+    return { baseline: row, usedPercent, windowSeconds };
+  }
+  return null;
+}
+
 export function cpuUsedPercentFromSnapshots(
   current: CpuCounterSnapshot,
   previous: CpuCounterSnapshot,
