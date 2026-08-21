@@ -21,8 +21,8 @@ export const maxDuration = 30;
  * 저장소: Vercel Edge Config — 감시 대상 Supabase DB 밖(순환 의존 제거).
  * health 경로는 읽기 전용이고 쓰기는 이 cron만 한다.
  * 동시성: Vercel 공식 계약상 cron은 중복·동시 실행될 수 있고 Edge Config PATCH에는
- * CAS가 없다. 따라서 commitCpuSnapshot이 read→단조 병합→PATCH→재조회 검증으로
- * 최신값 퇴행을 막는다(삼순 3차 P1).
+ * CAS가 없다. 따라서 스냅샷 1개 = 독립 key 1개로 append한다(삼순 4차 P1) —
+ * 쓰기에 read-modify-write가 없어 stale write가 다른 작업자의 최신값을 덮을 수 없다.
  *
  * 실패 계약: 어떤 실패든 5xx로 노출해 Vercel cron 실패 집계에 잡히게 한다.
  * cron이 죽으면 baseline이 90초를 넘겨 즉시값이 자연 소멸(stale fail-close)하고,
