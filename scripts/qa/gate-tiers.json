@@ -53,7 +53,7 @@
     },
     {
       "name": "qa:genius-motion-cooldown:db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-motion-cooldown:db:mutations",
@@ -73,11 +73,11 @@
     },
     {
       "name": "qa:safe-area-var-contract",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:safe-area-var-contract:selftest",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:query-guard",
@@ -89,7 +89,7 @@
     },
     {
       "name": "qa:naver-existing-user",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-source-inventory",
@@ -97,11 +97,11 @@
     },
     {
       "name": "qa:baseball-rag-contract",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-rag-serving",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-news-rag",
@@ -121,19 +121,19 @@
     },
     {
       "name": "qa:baseball-corpus-loader",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:namu-cdp-raw",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-official-loader",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-official-rag",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:baseball-qa",
@@ -141,7 +141,7 @@
     },
     {
       "name": "qa:genius-stat-clarify",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-nonstat-focus",
@@ -153,7 +153,7 @@
     },
     {
       "name": "qa:genius-tone-ssot",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-team-copy",
@@ -165,11 +165,11 @@
     },
     {
       "name": "qa:genius-tone-migration",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-terms-log-gap",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-terms-log-gap:selftest",
@@ -185,7 +185,7 @@
     },
     {
       "name": "qa:genius-match-path-db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:foreign-photo",
@@ -253,11 +253,11 @@
     },
     {
       "name": "qa:stats-gate-trigger",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:stats-kboid-identity",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:stats-2025-integrity",
@@ -273,7 +273,7 @@
     },
     {
       "name": "qa:videos-rss-status",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:diary-contrast",
@@ -301,7 +301,7 @@
     },
     {
       "name": "qa:venue-stats-s1b-aggregate",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:venue-stats-expected",
@@ -353,7 +353,7 @@
     },
     {
       "name": "qa:nickname-api",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:post-detail-header-nowrap",
@@ -381,11 +381,11 @@
     },
     {
       "name": "qa:genius-feedback-db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-answer-feedback",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-feedback-mutation",
@@ -393,11 +393,11 @@
     },
     {
       "name": "qa:team-fullname-routing",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:team-rag-wiring",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:team-rag-audit:self-test",
@@ -405,7 +405,7 @@
     },
     {
       "name": "qa:genius-served-metrics",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-push-exclusion",
@@ -413,7 +413,7 @@
     },
     {
       "name": "qa:genius-reply-payload-db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:venue-attendance",
@@ -421,7 +421,7 @@
     },
     {
       "name": "qa:venue-attendance-crud:db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:venue-multi-pick",
@@ -445,11 +445,11 @@
     },
     {
       "name": "qa:static-asset-cache-headers",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:live-edge-cache",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:post-scope-label",
@@ -457,11 +457,11 @@
     },
     {
       "name": "qa:post-scope-db-trigger",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:news-rag-wiring",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-refusal-scope",
@@ -485,11 +485,11 @@
     },
     {
       "name": "qa:genius-glossary-map",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-question-normalize",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-question-normalize:mutations",
@@ -497,7 +497,7 @@
     },
     {
       "name": "qa:genius-question-correction-db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-correction-dm-race",
@@ -517,11 +517,11 @@
     },
     {
       "name": "qa:relay-gameid-guard",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:active-users-contract",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:active-users-hybrid",
@@ -529,7 +529,7 @@
     },
     {
       "name": "qa:player-link-prefetch",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:player-link-prefetch:selftest",
@@ -541,7 +541,7 @@
     },
     {
       "name": "qa:readonly-api-edge-cache",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:readonly-api-edge-cache:selftest",
@@ -557,7 +557,7 @@
     },
     {
       "name": "qa:genius-career-metric-leak",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:genius-career-metric-leak:mutations",
@@ -581,23 +581,23 @@
     },
     {
       "name": "qa:auth-token-precheck",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:auth-es256-e2e",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:advisor-step1-migration",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:content-views",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:content-views:news-wiring",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:content-views:news-wiring:mutations",
@@ -605,11 +605,11 @@
     },
     {
       "name": "qa:advisor-step2-rls",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:native-push-deeplink",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:featured-card-contrast",
@@ -621,7 +621,7 @@
     },
     {
       "name": "qa:live-detail-provenance",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:live-detail-provenance:selftest",
@@ -645,7 +645,7 @@
     },
     {
       "name": "qa:visibility-poller-adoption",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:game-detail-parse-memo",
@@ -653,7 +653,7 @@
     },
     {
       "name": "qa:client-dedupe",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:client-dedupe:selftest",
@@ -673,31 +673,31 @@
     },
     {
       "name": "qa:news-clip-digest",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:news-clip-digest:mutations",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:news-clip-digest:hook",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:news-clip-digest:db",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:admin-system-health",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:proxy-matcher-slim",
-      "tier": "deploy"
+      "tier": "ci"
     },
     {
       "name": "qa:proxy-matcher-slim:selftest",
-      "tier": "deploy"
+      "tier": "ci"
     }
   ],
   "_comment": "배포/CI 게이트 티어 SSOT. 새 qa 게이트 추가 시 반드시 여기에 tier와 함께 등록해야 한다(미등록 qa:* 스크립트는 runner가 fail-close). tier=deploy: Vercel prebuild마다 실행. tier=ci: GitHub Actions PR required check + nightly full에서 실행."
