@@ -31,7 +31,11 @@ try {
         const include = parsed.searchParams.get("include");
         const encoder = new TextEncoder();
 
-        if (currentRequest === 1) {
+        // 시나리오 결속을 요청 순번이 아니라 의미(qa-game-a의 첫 include 요청)에 건다.
+        // dev StrictMode 이중 마운트로 prime 경기 요청이 첫 순번을 먹는 레이스가 있었다.
+        const isTargetGame = parsed.searchParams.get("gameId") === "qa-game-a";
+        if (isTargetGame && include && include.includes("live") && !window.__qaSlowServed) {
+          window.__qaSlowServed = true;
           const stream = new ReadableStream({
             start(controller) {
               const send = (payload, delayMs) => {
@@ -72,7 +76,7 @@ try {
           }));
         }
 
-        if (include === "live") {
+        if (include && include.includes("live")) {
           return Promise.resolve(new Response([
             JSON.stringify({ channel: "relay", ok: true, status: 200, data: { gameId: "qa-game-a", innings: [], updatedAt: `relay-${currentRequest}` } }),
             JSON.stringify({ channel: "live", ok: true, status: 200, data: { updatedAt: "live-fresh" } }),
