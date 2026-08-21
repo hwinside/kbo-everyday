@@ -75,22 +75,28 @@ function evaluateBaseHeadChanges(
 function assertTickCadence() {
   return import("../../src/lib/game/live-poll-stream.ts").then((mod) => {
     const intervalMs = 3000;
-    const liveSeq = Array.from({ length: 21 }, (_, i) => mod.shouldEmbedLive(i, intervalMs));
-    const detailSeq = Array.from({ length: 21 }, (_, i) => mod.shouldEmbedDetail(i, intervalMs));
-    const expectedLive = Array.from({ length: 21 }, (_, i) => [0, 4, 7, 10, 14, 17, 20].includes(i));
-    const expectedDetail = Array.from({ length: 21 }, (_, i) => [0, 10, 20].includes(i));
-    ok("tick/live cadence 0..20", JSON.stringify(liveSeq) === JSON.stringify(expectedLive));
-    ok("tick/detail cadence 0..20", JSON.stringify(detailSeq) === JSON.stringify(expectedDetail));
-    ok("tick/live count preserved in 60s window", liveSeq.filter(Boolean).length === 7);
-    ok("tick/detail count preserved in 60s window", detailSeq.filter(Boolean).length === 3);
+    const indices = Array.from({ length: 20 }, (_, i) => i);
+    const liveSeq = indices.map((i) => mod.shouldEmbedLive(i, intervalMs));
+    const detailSeq = indices.map((i) => mod.shouldEmbedDetail(i, intervalMs));
+    const includeSeq = indices.map((i) => mod.buildIncludeChannels({
+      pollIndex: i,
+      isLive: true,
+      isFinal: false,
+    }));
+    ok("tick/live cadence 0..19", JSON.stringify(liveSeq) === JSON.stringify(indices.map((i) => [0, 3, 6, 9, 12, 15, 18].includes(i))));
+    ok("tick/detail cadence 0..19", JSON.stringify(detailSeq) === JSON.stringify(indices.map((i) => [0, 10].includes(i))));
+    ok("tick/events cadence 0..19", JSON.stringify(includeSeq.map((include) => include.includes("events"))) === JSON.stringify(indices.map((i) => [0, 5, 10, 15].includes(i))));
+    ok("tick/live count in 60s window", liveSeq.filter(Boolean).length === 7);
+    ok("tick/detail count in 60s window", detailSeq.filter(Boolean).length === 2);
+    ok("tick/events count in 60s window", includeSeq.filter((include) => include.includes("events")).length === 4);
   });
 }
 
 function assertIncludeWiring() {
   const src = stripComments(read("src/lib/hooks/useGameRelay.ts"));
   ok(
-    "relay hook computes include from forceEmbed + interval cadence",
-    /const forceEmbed = opts\?\.forceEmbed === true;[\s\S]*const includeLive = isLive && \(forceEmbed \|\| shouldEmbedLive\(n, interval\)\);[\s\S]*const includeDetail = isLive && \(forceEmbed \|\| shouldEmbedDetail\(n, interval\)\);/.test(src),
+    "relay hook delegates include SSOT to buildIncludeChannels",
+    /const forceEmbed = opts\?\.forceEmbed === true;[\s\S]*const include = buildIncludeChannels\(\{[\s\S]*pollIndex: n,[\s\S]*isLive,[\s\S]*isFinal,[\s\S]*forceEmbed,[\s\S]*\}\);[\s\S]*wantEvents = include\.includes\("events"\);/.test(src),
   );
   ok(
     "relay hook visibility resume force-embeds live/detail in one request",
@@ -98,7 +104,7 @@ function assertIncludeWiring() {
   );
   ok(
     "relay hook sends include through combined endpoint",
-    /if \(wantEvents \|\| include\.length > 0\)[\s\S]*fetch\(`\/api\/game-relay-events\?\$\{params\}`/.test(src),
+    /if \(include\.length > 0\)[\s\S]*fetch\(`\/api\/game-relay-events\?\$\{params\}`/.test(src),
   );
   ok(
     "relay hook preserves game-live date on multiplex",
@@ -122,7 +128,9 @@ function assertFrameFencing() {
 
 function assertRouteIncludeWiring() {
   const src = stripComments(read("src/app/api/game-relay-events/route.ts"));
-  ok("route parses include allowlist", /function parseInclude\(req: NextRequest\)[\s\S]*trimmed === "live" \|\| trimmed === "detail"/.test(src));
+  ok("route parses include allowlist", /function parseInclude\(req: NextRequest\)[\s\S]*trimmed === "events" \|\| trimmed === "live" \|\| trimmed === "detail"/.test(src));
+  ok("route creates events task only when included or include is absent",
+    /const rawInclude = req\.nextUrl\.searchParams\.get\("include"\);[\s\S]*if \(rawInclude === null \|\| include\.has\("events"\)\)\s*\{\s*tasks\.push\(\{ channel: "events", task: getEvents\(internalRequest\(req, "\/api\/game-events"\)\) \}\);\s*\}/.test(src));
   ok("route creates live task only when included",
     /if \(include\.has\("live"\)\)\s*\{\s*tasks\.push\(\{ channel: "live", task: getLive\(internalRequest\(req, "\/api\/game-live"\)\) \}\);\s*\}/.test(src));
   ok("route creates detail task only when included",
@@ -229,11 +237,19 @@ function runSelfTest() {
       ),
     },
     {
-      name: "tick cadence mutant",
+      name: "12s total-preserving live cadence mutant",
       apply: () => mutate(
         "src/lib/game/live-poll-stream.ts",
-        "  return ((pollIndex * intervalMs) % 10_000) < intervalMs;\n",
         "  return pollIndex % 3 === 0;\n",
+        "  return ((pollIndex * _intervalMs) % 10_000) < _intervalMs;\n",
+      ),
+    },
+    {
+      name: "events always-on combined mutant",
+      apply: () => mutate(
+        "src/app/api/game-relay-events/route.ts",
+        "  if (rawInclude === null || include.has(\"events\")) {\n    tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\")) });\n  }\n",
+        "  tasks.push({ channel: \"events\", task: getEvents(internalRequest(req, \"/api/game-events\")) });\n",
       ),
     },
     {

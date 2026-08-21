@@ -11,10 +11,8 @@ import {
   shouldReleaseInFlight,
 } from "@/lib/game/relay-delta";
 import {
+  buildIncludeChannels,
   consumeLivePollStream,
-  shouldEmbedDetail,
-  shouldEmbedLive,
-  shouldCombineGameEvents,
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
@@ -152,13 +150,14 @@ export function useGameRelay(
       let relaySucceeded = false;
       let eventsSucceeded = false;
       let eventsReceived = false;
+      let wantEvents = false;
       let eventsTailTimeout: ReturnType<typeof setTimeout> | null = null;
       const clearEventsTailTimeout = () => {
         if (eventsTailTimeout) clearTimeout(eventsTailTimeout);
         eventsTailTimeout = null;
       };
       const armEventsTailTimeout = () => {
-        if (!eventsTailTimeoutMs || eventsReceived || eventsTailTimeout) return;
+        if (!wantEvents || !eventsTailTimeoutMs || eventsReceived || eventsTailTimeout) return;
         eventsTailTimeout = setTimeout(() => controller.abort(), eventsTailTimeoutMs);
       };
       try {
@@ -166,15 +165,14 @@ export function useGameRelay(
         // full 조건: 보유한 이닝이 없거나(첫 로드) 주기적 self-heal 차례.
         const n = pollCountRef.current++;
         const wantFull = cache.size === 0 || n % FULL_REFRESH_EVERY === 0;
-        // 첫 poll + 이후 기존 15초 cadence마다 events를 같은 Edge Request에 싣는다.
-        // final 전환은 game_end/victory 발화를 위해 항상 events 포함.
-        const wantEvents = shouldCombineGameEvents(n, isFinal);
         const forceEmbed = opts?.forceEmbed === true;
-        const includeLive = isLive && (forceEmbed || shouldEmbedLive(n, interval));
-        const includeDetail = isLive && (forceEmbed || shouldEmbedDetail(n, interval));
-        const include: string[] = [];
-        if (includeLive) include.push("live");
-        if (includeDetail) include.push("detail");
+        const include = buildIncludeChannels({
+          pollIndex: n,
+          isLive,
+          isFinal,
+          forceEmbed,
+        });
+        wantEvents = include.includes("events");
 
         const params = new URLSearchParams({ gameId: requestGameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
@@ -263,7 +261,7 @@ export function useGameRelay(
           onFrame(data);
         };
 
-        if (wantEvents || include.length > 0) {
+        if (include.length > 0) {
           const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
           if (!res.ok) {
             settleRelay(false);

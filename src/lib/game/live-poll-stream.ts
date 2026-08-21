@@ -18,20 +18,35 @@ export function shouldCombineGameEvents(
 }
 
 /**
- * 3초 그리드에서는 10초를 정확히 찍을 수 없으므로, 60초 창 총량 6회를 보존한다.
- * 식: (pollIndex * intervalMs) % 10_000 < intervalMs
- * 3초 cadence면 0,4,7,10,14,17,20... 번째 poll이 선택되어 개별 간격은 9~12초다.
+ * live frame은 3초 grid에서 9초 cadence로 싣는다.
+ * 종전 독립 live 10초 poll보다 1초 촘촘하지만 최대 지연을 늘리지 않으며,
+ * internal live는 60초 창 기준 약 7회/분으로 종전 6회/분 대비 +1회(≈ +11%)다.
  */
-export function shouldEmbedLive(pollIndex: number, intervalMs: number): boolean {
-  return ((pollIndex * intervalMs) % 10_000) < intervalMs;
+export function shouldEmbedLive(pollIndex: number, _intervalMs: number): boolean {
+  return pollIndex % 3 === 0;
 }
 
 /**
- * detail은 30초 cadence를 그대로 유지한다.
- * 식: (pollIndex * intervalMs) % 30_000 < intervalMs
+ * detail은 3초 grid에서 30초 cadence를 그대로 유지한다.
  */
-export function shouldEmbedDetail(pollIndex: number, intervalMs: number): boolean {
-  return ((pollIndex * intervalMs) % 30_000) < intervalMs;
+export function shouldEmbedDetail(pollIndex: number, _intervalMs: number): boolean {
+  return pollIndex % 10 === 0;
+}
+
+export function buildIncludeChannels(opts: {
+  pollIndex: number;
+  isLive: boolean;
+  isFinal: boolean;
+  forceEmbed?: boolean;
+}): Array<"events" | "live" | "detail"> {
+  const { pollIndex, isLive, isFinal, forceEmbed = false } = opts;
+  const include: Array<"events" | "live" | "detail"> = [];
+
+  if (shouldCombineGameEvents(pollIndex, isFinal)) include.push("events");
+  if (isLive && (forceEmbed || shouldEmbedLive(pollIndex, 3000))) include.push("live");
+  if (isLive && (forceEmbed || shouldEmbedDetail(pollIndex, 3000))) include.push("detail");
+
+  return include;
 }
 
 const encoder = new TextEncoder();

@@ -16,13 +16,13 @@ function internalRequest(req: NextRequest, pathname: string): NextRequest {
   });
 }
 
-function parseInclude(req: NextRequest): Set<"live" | "detail"> {
+function parseInclude(req: NextRequest): Set<"events" | "live" | "detail"> {
   const include = req.nextUrl.searchParams.get("include");
-  const values = new Set<"live" | "detail">();
+  const values = new Set<"events" | "live" | "detail">();
   if (!include) return values;
   for (const entry of include.split(",")) {
     const trimmed = entry.trim();
-    if (trimmed === "live" || trimmed === "detail") values.add(trimmed);
+    if (trimmed === "events" || trimmed === "live" || trimmed === "detail") values.add(trimmed);
   }
   return values;
 }
@@ -43,10 +43,13 @@ export async function GET(req: NextRequest) {
   }
 
   const include = parseInclude(req);
+  const rawInclude = req.nextUrl.searchParams.get("include");
   const tasks: Array<{ channel: "relay" | "events" | "live" | "detail"; task: Promise<Response> }> = [
     { channel: "relay", task: getRelay(internalRequest(req, "/api/game-relay")) },
-    { channel: "events", task: getEvents(internalRequest(req, "/api/game-events")) },
   ];
+  if (rawInclude === null || include.has("events")) {
+    tasks.push({ channel: "events", task: getEvents(internalRequest(req, "/api/game-events")) });
+  }
   if (include.has("live")) {
     tasks.push({ channel: "live", task: getLive(internalRequest(req, "/api/game-live")) });
   }

@@ -40,6 +40,9 @@ try {
             start(controller) {
               const send = (payload, delayMs) => {
                 setTimeout(() => {
+                  if (payload.data?.updatedAt === "live-slow-accepted") {
+                    window.__qaSlowDelivered = true;
+                  }
                   controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
                 }, delayMs);
               };
@@ -77,6 +80,15 @@ try {
         }
 
         if (include && include.includes("live")) {
+          if (!window.__qaSlowDelivered) {
+            return Promise.resolve(new Response([
+              JSON.stringify({ channel: "relay", ok: true, status: 200, data: { gameId: "qa-game-a", innings: [], updatedAt: `relay-${currentRequest}` } }),
+              "",
+            ].join("\n"), {
+              status: 200,
+              headers: { "content-type": "application/x-ndjson" },
+            }));
+          }
           return Promise.resolve(new Response([
             JSON.stringify({ channel: "relay", ok: true, status: 200, data: { gameId: "qa-game-a", innings: [], updatedAt: `relay-${currentRequest}` } }),
             JSON.stringify({ channel: "live", ok: true, status: 200, data: { updatedAt: "live-fresh" } }),
@@ -133,8 +145,8 @@ try {
       throw new Error(`stale reverse-order live frame should be dropped, got count ${finalLiveCount}`);
     }
     const slowFrameRequests = await page.evaluate(() => window.__qaSlowFrameRequestCount());
-    if (slowFrameRequests < 5) {
-      throw new Error(`expected later live embed poll for stale-frame fencing, got ${slowFrameRequests} requests`);
+    if (slowFrameRequests < 4) {
+      throw new Error(`expected 9s live cadence to reach a later embed poll, got ${slowFrameRequests} requests`);
     }
     await page.close();
   }
