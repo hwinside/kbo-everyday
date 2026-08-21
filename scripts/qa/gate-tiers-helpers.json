@@ -224,6 +224,7 @@
     "qa:ui:game-relay-hook",
     "qa:ui:gamechat-giphy",
     "qa:ui:kgwan-pitches",
+    "qa:ui:live-multiplex-frames",
     "qa:ui:news-comment-report",
     "qa:ui:relay-font",
     "qa:ui:score-layout",
