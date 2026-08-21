@@ -7,6 +7,7 @@ import { ChevronRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import PullToRefresh from "@/components/PullToRefresh";
 import GlassCard from "@/components/ui/GlassCard";
+import GeniusEntryButton from "@/components/ui/GeniusEntryButton";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -661,6 +662,10 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
         <div className="flex items-center gap-1">
           {user ? (
+            <>
+            {/* 야잘알봇 진입점 — 쪽지 아이콘 **왼쪽** (2026-08-21 하린아빠 "홈에 야잘알봇 꺼내기").
+                비로그인 미노출은 버튼 내부 가드가 책임진다(여기서는 user 분기 안이라 이중 보강). */}
+            <GeniusEntryButton />
             <Link prefetch={false} href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
               {unreadDMCount > 0 && (
@@ -669,6 +674,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
                 </span>
               )}
             </Link>
+            </>
           ) : (
             <button
               onClick={() => setShowLogin(true)}

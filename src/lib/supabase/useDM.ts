@@ -147,23 +147,13 @@ export function useDMList() {
         !blockedIds.has(conv.other_user_id)
       );
 
-    const geniusConversation = mapped.find(
-      (conversation) => conversation.other_user_id === BASEBALL_GENIUS_USER_ID,
+    // 야잘알봇은 쪽지함 목록에서 **제외**한다 (2026-08-21 하린아빠 "기본 쪽지함에서
+    // 야잘알봇 대화창 제거"). 진입점은 홈 헤더의 GeniusEntryButton 단일화 —
+    // 종전 최상단 고정방(#1090)은 이 지시로 폐기됐다.
+    // 대화 row 자체는 DB에 그대로 있고 /messages/{convId} 직접 진입은 계속 동작한다.
+    setConversations(
+      mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
     );
-    const pinnedGenius: DMConversation = geniusConversation ?? {
-      id: `new-${BASEBALL_GENIUS_USER_ID}`,
-      other_user_id: BASEBALL_GENIUS_USER_ID,
-      other_nickname: BASEBALL_GENIUS_NAME,
-      other_team_id: null,
-      other_avatar_url: null,
-      last_message: "야구 룰이나 용어를 물어보세요 ⚾",
-      last_message_at: new Date(0).toISOString(),
-      unread_count: 0,
-    };
-    setConversations([
-      pinnedGenius,
-      ...mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
-    ]);
     setLoading(false);
   }, [user, blockedIds]);
 

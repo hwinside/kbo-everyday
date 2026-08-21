@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 import { usePollingFallback } from "./usePollingFallback";
+import { BASEBALL_GENIUS_USER_ID } from "@/lib/constants/baseball-genius";
 
 // Realtime 구독이 죽어 있는 동안(피크 구독풀 타임아웃)만 도는 안전망 폴링 주기.
 const DM_UNREAD_POLL_MS = 30_000;
@@ -20,14 +21,21 @@ export function useUnreadDMCount() {
     // query-guard: bounded -- 미읽음 배지는 최신 대화 500개만 집계하며 RPC도 동일 상한을 강제한다.
     const { data: convs } = await supabase
       .from("dm_conversations")
-      .select("id")
+      .select("id, user1_id, user2_id")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
       .order("last_message_at", { ascending: false })
       .limit(500);
 
     if (!convs || convs.length === 0) { setCount(0); return; }
 
-    const convIds = convs.map((c: { id: string }) => c.id);
+    // 야잘알봇 대화는 배지에서 제외한다 (2026-08-21) — 쪽지함 목록에서 숨겼으므로
+    // 여기 포함되면 유저가 지울 수 없는 배지가 된다(목록에 해당 방이 안 보임).
+    const convIds = convs
+      .filter((c: { user1_id: string | null; user2_id: string | null }) =>
+        c.user1_id !== BASEBALL_GENIUS_USER_ID && c.user2_id !== BASEBALL_GENIUS_USER_ID)
+      .map((c: { id: string }) => c.id);
+
+    if (convIds.length === 0) { setCount(0); return; }
 
     // query-guard: bounded -- RPC는 요청 대화당 최대 한 행을 반환하고 501개 이상은 빈 결과로 fail-close
     const { data: unreadRows } = await supabase

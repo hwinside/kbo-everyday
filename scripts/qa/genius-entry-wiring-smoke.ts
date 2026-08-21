@@ -1,9 +1,12 @@
-// 야잘알봇 헤더 진입점 핫픽스 회귀 (2026-08-03 하린아빠 지시).
+// 야잘알봇 헤더 진입점 배선 계약.
 //
-// 답변 실패 경로를 고치는 동안 헤더 진입점을 노출하지 않는 계약을 검사한다.
+// 이력: 2026-08-02 헤더 노출(#1057) → 2026-08-03 핫픽스로 미노출 계약 →
+// **2026-08-21 하린아빠 "홈에 야잘알봇 꺼내기"로 재노출**. 홈 헤더(HomeClientShell)
+// 쪽지 아이콘 왼쪽에 반드시 배선되어야 하고, 그 외 헤더(HeaderProfileLink)에는
+// 붙이지 않는다(지시 범위가 "홈"). 같은 지시로 쪽지함 고정방은 제거됐으므로
+// 이 버튼이 유일한 진입점이다 — 배선 누락은 진입점 증발이라 계약으로 잡는다.
 // 브라우저 E2E(qa:genius-entry-browser)와 역할이 다르다 — 여기는 배선 계약,
-// 저기는 실제 렌더/클릭. 배선 계약을 따로 두는 이유는 컴포넌트만 만들고
-// 헤더에 안 붙이거나, 라우팅을 /messages 목록으로 되돌리는 회귀를 잡기 위함.
+// 저기는 실제 렌더/클릭.
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -22,16 +25,52 @@ function check(name: string, fn: () => void) {
 
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 const entry = read("src/components/ui/GeniusEntryButton.tsx");
+const HOME_HEADER = "src/components/home/HomeClientShell.tsx";
 const HEADERS_WITH_DM = [
   "src/components/ui/HeaderProfileLink.tsx",
-  "src/components/home/HomeClientShell.tsx",
+  HOME_HEADER,
 ] as const;
 
-for (const file of HEADERS_WITH_DM) {
-  const header = read(file);
-  check(`[${path.basename(file)}] GeniusEntryButton을 노출하지 않는다`, () => {
+// 홈 헤더: 반드시 노출 (2026-08-21 지시)
+{
+  const home = read(HOME_HEADER);
+  check("[HomeClientShell] GeniusEntryButton을 노출한다", () => {
+    assert.ok(/import\s+GeniusEntryButton\s+from/.test(home), "import 없음");
+    assert.ok(/<GeniusEntryButton\s*\/>/.test(home), "렌더 없음");
+  });
+  check("[HomeClientShell] 버튼이 쪽지 링크 **왼쪽**에 있다", () => {
+    const btnIdx = home.indexOf("<GeniusEntryButton");
+    const dmIdx = home.indexOf('aria-label="\ucabd\uc9c0"');
+    assert.ok(btnIdx >= 0 && dmIdx >= 0, "버튼 또는 쪽지 링크를 찾지 못함");
+    assert.ok(btnIdx < dmIdx, "버튼이 쪽지 링크 뒤에 있다(지시: 왼쪽)");
+  });
+}
+
+// 홈 외 헤더: 미노출 유지 (지시 범위는 홈)
+{
+  const header = read("src/components/ui/HeaderProfileLink.tsx");
+  check("[HeaderProfileLink.tsx] GeniusEntryButton을 노출하지 않는다", () => {
     assert.ok(!/import\s+GeniusEntryButton\s+from/.test(header), "import가 남아 있음");
     assert.ok(!/<GeniusEntryButton\s*\/>/.test(header), "렌더가 남아 있음");
+  });
+}
+
+// 쪽지함 목록: 야잘알봇 고정방 제거 (2026-08-21 "기본 쪽지함에서 야잘알봇 대화창 제거")
+{
+  const dmHook = read("src/lib/supabase/useDM.ts");
+  check("[useDM.ts] 야잘알봇 고정방(pinnedGenius)이 없다", () => {
+    assert.ok(!/pinnedGenius/.test(dmHook), "고정방이 남아 있음");
+  });
+  check("[useDM.ts] 목록에서 야잘알봇 대화를 필터한다", () => {
+    assert.ok(
+      /filter\(\(conversation\) => conversation\.other_user_id !== BASEBALL_GENIUS_USER_ID\)/.test(dmHook),
+      "야잘알봇 제외 필터 없음",
+    );
+  });
+  const unreadHook = read("src/lib/supabase/useUnreadDMCount.ts");
+  check("[useUnreadDMCount.ts] 배지에서 야잘알봇 대화를 제외한다", () => {
+    // 목록에서 숨긴 대화가 배지만 올리면 유저가 지울 수 없는 배지가 된다.
+    assert.ok(/BASEBALL_GENIUS_USER_ID/.test(unreadHook), "야잘알봇 제외 필터 없음");
   });
 }
 
