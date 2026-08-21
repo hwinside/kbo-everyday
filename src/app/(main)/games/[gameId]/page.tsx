@@ -191,8 +191,14 @@ export default function GameDetailPage() {
     if (tabParam) setActiveTab(tabParam);
   }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
-  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = useLiveGame(gameId, 10000);
-  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  const [multiplexActive, setMultiplexActive] = useState(false);
+  const liveHook = useLiveGame(gameId, multiplexActive ? 0 : 10000);
+  const detailHook = useGameDetail(gameId, multiplexActive ? 0 : 30000);
+  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = liveHook;
+  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = detailHook;
+  useEffect(() => {
+    setMultiplexActive(liveGame?.isLive === true);
+  }, [liveGame?.isLive]);
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
@@ -212,6 +218,10 @@ export default function GameDetailPage() {
     relayPollInterval,
     liveGame?.inning ?? 0,
     liveIsFinal,
+    {
+      onLiveFrame: liveHook.ingestExternal,
+      onDetailFrame: detailHook.ingestExternal,
+    },
   );
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 

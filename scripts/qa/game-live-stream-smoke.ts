@@ -1,6 +1,8 @@
 import {
   consumeLivePollStream,
   createLivePollStream,
+  shouldEmbedDetail,
+  shouldEmbedLive,
   shouldCombineGameEvents,
   type LivePollEnvelope,
 } from "../../src/lib/game/live-poll-stream";
@@ -32,13 +34,18 @@ async function main() {
     check("first live poll includes events immediately", combined[0] === true);
     check("combined polling cuts 15s-window Edge Requests 6→5", 5 < 5 + combined.filter(Boolean).length);
     check("final transition always includes events", shouldCombineGameEvents(3, true) === true);
+    check("live embed cadence stays every 3 polls", shouldEmbedLive(0) && shouldEmbedLive(3) && !shouldEmbedLive(1));
+    check("detail embed cadence stays every 10 polls", shouldEmbedDetail(0) && shouldEmbedDetail(10) && !shouldEmbedDetail(9));
   }
 
   // events가 멈춰도 relay frame은 먼저 도착한다(추가 지연 0 + 부분 장애 격리).
   {
     const relay = deferred<Response>();
     const events = deferred<Response>();
-    const response = new Response(createLivePollStream(relay.promise, events.promise));
+    const response = new Response(createLivePollStream([
+      { channel: "relay", task: relay.promise },
+      { channel: "events", task: events.promise },
+    ]));
     const envelopes: LivePollEnvelope[] = [];
     const consumed = consumeLivePollStream(response, (envelope) => envelopes.push(envelope));
 
@@ -58,7 +65,10 @@ async function main() {
   {
     const relay = deferred<Response>();
     const events = deferred<Response>();
-    const response = new Response(createLivePollStream(relay.promise, events.promise));
+    const response = new Response(createLivePollStream([
+      { channel: "relay", task: relay.promise },
+      { channel: "events", task: events.promise },
+    ]));
     const channels: string[] = [];
     const consumed = consumeLivePollStream(response, (envelope) => channels.push(envelope.channel));
 

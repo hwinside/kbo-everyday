@@ -43,6 +43,7 @@ try {
     );
   });
   await page.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(2500);
   if (fetchCount !== 1) throw new Error(`live initial fetch expected 1, got ${fetchCount}`);
   if (legacyEventsFetchCount !== 0) {
     throw new Error(`legacy /api/game-events fetch must be removed, got ${legacyEventsFetchCount}`);
@@ -77,6 +78,10 @@ try {
   });
   await delayedPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "domcontentloaded" });
   await delayedPage.waitForFunction(() => document.querySelector('[data-qa="relay-status"]')?.textContent === "live");
+  await delayedPage.waitForTimeout(2500);
+  if (delayedFetchCount !== 1) {
+    throw new Error(`expected first live fetch to start before final transition, got ${delayedFetchCount}`);
+  }
   await delayedPage.locator('[data-qa="finish-game"]').click();
   await delayedPage.waitForFunction(() => document.querySelector('[data-qa="relay-status"]')?.textContent === "final");
   releaseInitialFetch();
@@ -135,6 +140,10 @@ try {
     });
     await inflightPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "domcontentloaded" });
     await inflightPage.waitForFunction(() => document.querySelector('[data-qa="relay-status"]')?.textContent === "live");
+    await inflightPage.waitForTimeout(2500);
+    if (!inflightUrls.some((u) => u.includes("gameId=qa-game-a"))) {
+      throw new Error("expected first A fetch to start before switch-game");
+    }
     // A 요청이 보류(slow-body)된 상태에서 B로 전환
     await inflightPage.locator('[data-qa="switch-game"]').click();
     // (a) A 가 아직 안 끝났는데 B 요청이 즉시 나가야 한다(막힘 없음).
@@ -245,6 +254,11 @@ try {
       };
     });
     await finalRetryPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+    await finalRetryPage.waitForTimeout(2500);
+    const initialFinalFetchCount = await finalRetryPage.evaluate(() => window.__qaFinalFetchCount());
+    if (initialFinalFetchCount !== 1) {
+      throw new Error(`expected first live fetch before final retry scenario, got ${initialFinalFetchCount}`);
+    }
     await finalRetryPage.locator('[data-qa="finish-game"]').click();
     await finalRetryPage.waitForFunction(() =>
       document.querySelector('[data-qa="relay-updated"]')?.textContent === "final-retry-2"
@@ -319,6 +333,11 @@ try {
       };
     });
     await slowRelayPage.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "networkidle" });
+    await slowRelayPage.waitForTimeout(2500);
+    const initialSlowRelayFetchCount = await slowRelayPage.evaluate(() => window.__qaSlowRelayFetchCount());
+    if (initialSlowRelayFetchCount !== 1) {
+      throw new Error(`expected first live fetch before slow-final scenario, got ${initialSlowRelayFetchCount}`);
+    }
     await slowRelayPage.locator('[data-qa="finish-game"]').click();
     await slowRelayPage.waitForFunction(() =>
       document.querySelector('[data-qa="relay-updated"]')?.textContent === "slow-relay-2",

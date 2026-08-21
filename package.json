@@ -17,6 +17,8 @@
     "qa:games-card-render": "tsx scripts/qa/featured-card-render-capture.mts",
     "qa:games-card-render:mutations": "node scripts/qa/games-card-render-mutations.mjs",
     "qa:live-detail-provenance": "tsx scripts/qa/live-detail-provenance-gate.ts",
+    "qa:live-multiplex": "tsx scripts/qa/live-multiplex-gate.mjs",
+    "qa:live-multiplex:selftest": "tsx scripts/qa/live-multiplex-gate.mjs --selftest",
     "qa:player-link-prefetch": "node scripts/qa/player-link-prefetch-gate.mjs",
     "qa:player-link-prefetch:selftest": "node scripts/qa/player-link-prefetch-gate.mjs --selftest",
     "qa:self-fetch-internal": "node scripts/qa/self-fetch-internal-gate.mjs",

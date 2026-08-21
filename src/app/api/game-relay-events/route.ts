@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GET as getRelay } from "@/app/api/game-relay/route";
 import { GET as getEvents } from "@/app/api/game-events/route";
+import { GET as getLive } from "@/app/api/game-live/route";
+import { GET as getDetail } from "@/app/api/game-detail/route";
 import { createLivePollStream } from "@/lib/game/live-poll-stream";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +14,17 @@ function internalRequest(req: NextRequest, pathname: string): NextRequest {
     headers: req.headers,
     signal: req.signal,
   });
+}
+
+function parseInclude(req: NextRequest): Set<"live" | "detail"> {
+  const include = req.nextUrl.searchParams.get("include");
+  const values = new Set<"live" | "detail">();
+  if (!include) return values;
+  for (const entry of include.split(",")) {
+    const trimmed = entry.trim();
+    if (trimmed === "live" || trimmed === "detail") values.add(trimmed);
+  }
+  return values;
 }
 
 /**
@@ -29,9 +42,18 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const relayTask = getRelay(internalRequest(req, "/api/game-relay"));
-  const eventsTask = getEvents(internalRequest(req, "/api/game-events"));
-  const stream = createLivePollStream(relayTask, eventsTask);
+  const include = parseInclude(req);
+  const tasks: Array<{ channel: "relay" | "events" | "live" | "detail"; task: Promise<Response> }> = [
+    { channel: "relay", task: getRelay(internalRequest(req, "/api/game-relay")) },
+    { channel: "events", task: getEvents(internalRequest(req, "/api/game-events")) },
+  ];
+  if (include.has("live")) {
+    tasks.push({ channel: "live", task: getLive(internalRequest(req, "/api/game-live")) });
+  }
+  if (include.has("detail")) {
+    tasks.push({ channel: "detail", task: getDetail(internalRequest(req, "/api/game-detail")) });
+  }
+  const stream = createLivePollStream(tasks);
 
   return new Response(stream, {
     status: 200,

@@ -21,6 +21,8 @@ export interface GameDetailSnapshot extends SourceSnapshot {
   boxScoreSource: NonNullable<GameDetailResponse["trace"]>["boxScoreSource"];
 }
 
+type GameDetailPayload = GameDetailResponse & { error?: string };
+
 export function useGameDetail(
   gameId: string | undefined,
   pollInterval = 30000,
@@ -34,65 +36,69 @@ export function useGameDetail(
   const responseGenerationRef = useRef(0);
   const dataRef = useRef<GameDetailResponse | null>(null);
   const snapshotRef = useRef<GameDetailSnapshot | null>(null);
+  const commitPayloadRef = useRef<(json: GameDetailPayload, responseGeneration: number) => void>(() => {});
 
   // Max 30 min of polling after final (KBO can take time to fill boxScore, especially preseason)
   const FINAL_MAX_POLL_MS = 30 * 60 * 1000;
+
+  commitPayloadRef.current = (json, responseGeneration) => {
+    if (!shouldCommitResponse(responseGenerationRef.current, responseGeneration)) return;
+    if (json.error || !json.trace) {
+      setError(json.error || "invalid_game_detail_payload");
+      return;
+    }
+    const incomingSnapshot: GameDetailSnapshot = {
+      generation: responseGeneration,
+      sourceAtMs: json.trace.sourceAtMs,
+      fetchedAtMs: json.trace.fetchedAtMs,
+      lineupSource: json.trace.lineupSource,
+      boxScoreSource: json.trace.boxScoreSource,
+    };
+    const preserveLineup = shouldPreserveCanonicalLineup(
+      snapshotRef.current?.lineupSource,
+      incomingSnapshot.lineupSource,
+    );
+    const committedSnapshot = preserveLineup && snapshotRef.current
+      ? { ...incomingSnapshot, lineupSource: snapshotRef.current.lineupSource }
+      : incomingSnapshot;
+    const committedData = preserveLineup && dataRef.current?.lineup
+      ? {
+          ...json,
+          lineup: dataRef.current.lineup,
+          trace: { ...json.trace, lineupSource: committedSnapshot.lineupSource },
+        }
+      : json;
+    dataRef.current = committedData;
+    snapshotRef.current = committedSnapshot;
+    setData(committedData);
+    setSnapshot(committedSnapshot);
+    setError(null);
+
+    const isFinalOrCancelled = json.status === "final" || json.status === "cancelled";
+    const hasRealBox = json.boxScore &&
+      (json.boxScore.awayBatters?.length > 0 || json.boxScore.homeBatters?.length > 0);
+
+    if (isFinalOrCancelled) {
+      if (hasRealBox) {
+        stoppedRef.current = true;
+      } else if (!finalSinceRef.current) {
+        finalSinceRef.current = Date.now();
+      } else if (Date.now() - finalSinceRef.current > FINAL_MAX_POLL_MS) {
+        stoppedRef.current = true;
+      }
+    }
+  };
 
   const fetchDetail = useCallback(async () => {
     if (!gameId || stoppedRef.current) return;
     const responseGeneration = ++responseGenerationRef.current;
     try {
       const res = await fetch(`/api/game-detail?gameId=${encodeURIComponent(gameId)}`);
-      const json = await res.json() as GameDetailResponse & { error?: string };
-      if (!shouldCommitResponse(responseGenerationRef.current, responseGeneration)) return;
-      if (!res.ok || json.error || !json.trace) {
-        setError(json.error || `HTTP ${res.status}`);
-        return;
-      }
-      const incomingSnapshot: GameDetailSnapshot = {
-        generation: responseGeneration,
-        sourceAtMs: json.trace.sourceAtMs,
-        fetchedAtMs: json.trace.fetchedAtMs,
-        lineupSource: json.trace.lineupSource,
-        boxScoreSource: json.trace.boxScoreSource,
-      };
-      const preserveLineup = shouldPreserveCanonicalLineup(
-        snapshotRef.current?.lineupSource,
-        incomingSnapshot.lineupSource,
+      const json = await res.json() as GameDetailPayload;
+      commitPayloadRef.current(
+        res.ok ? json : { ...json, error: json.error || `HTTP ${res.status}` },
+        responseGeneration,
       );
-      const committedSnapshot = preserveLineup && snapshotRef.current
-        ? { ...incomingSnapshot, lineupSource: snapshotRef.current.lineupSource }
-        : incomingSnapshot;
-      const committedData = preserveLineup && dataRef.current?.lineup
-        ? {
-            ...json,
-            lineup: dataRef.current.lineup,
-            trace: { ...json.trace, lineupSource: committedSnapshot.lineupSource },
-          }
-        : json;
-      dataRef.current = committedData;
-      snapshotRef.current = committedSnapshot;
-      setData(committedData);
-      setSnapshot(committedSnapshot);
-      setError(null);
-
-      const isFinalOrCancelled = json.status === "final" || json.status === "cancelled";
-      const hasRealBox = json.boxScore &&
-        (json.boxScore.awayBatters?.length > 0 || json.boxScore.homeBatters?.length > 0);
-
-      if (isFinalOrCancelled) {
-        if (hasRealBox) {
-          // Got real data — stop immediately
-          stoppedRef.current = true;
-        } else {
-          // Final but no boxScore — keep polling up to FINAL_MAX_POLL_MS
-          if (!finalSinceRef.current) {
-            finalSinceRef.current = Date.now();
-          } else if (Date.now() - finalSinceRef.current > FINAL_MAX_POLL_MS) {
-            stoppedRef.current = true;
-          }
-        }
-      }
     } catch (e: unknown) {
       if (shouldCommitResponse(responseGenerationRef.current, responseGeneration)) {
         setError((e as Error).message);
@@ -122,8 +128,16 @@ export function useGameDetail(
   useVisibilityAwareInterval(
     () => (stoppedRef.current ? undefined : fetchDetail()),
     pollInterval,
-    { resetKey: gameId },
+    { enabled: pollInterval > 0, resetKey: gameId },
   );
 
-  return { data, loading, error, snapshot, refetch: fetchDetail };
+  const ingestExternal = useCallback((json: unknown): void => {
+    const responseGeneration = ++responseGenerationRef.current;
+    commitPayloadRef.current((json ?? {}) as GameDetailPayload, responseGeneration);
+    if (shouldCommitResponse(responseGenerationRef.current, responseGeneration)) {
+      setLoading(false);
+    }
+  }, []);
+
+  return { data, loading, error, snapshot, refetch: fetchDetail, ingestExternal };
 }

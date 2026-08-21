@@ -12,9 +12,12 @@ import {
 } from "@/lib/game/relay-delta";
 import {
   consumeLivePollStream,
+  shouldEmbedDetail,
+  shouldEmbedLive,
   shouldCombineGameEvents,
   type LivePollEnvelope,
 } from "@/lib/game/live-poll-stream";
+import { resolveGameLiveDate } from "@/lib/game-live-date";
 
 // delta(증분) 폴링: 매 N번째 폴링마다 한 번은 full로 받아 지난 이닝의 드문 정정을 self-heal 한다.
 const FULL_REFRESH_EVERY = 10;
@@ -69,6 +72,11 @@ interface GameEventsPayload {
   error?: string | null;
 }
 
+interface UseGameRelayOptions {
+  onLiveFrame?: (data: unknown) => void;
+  onDetailFrame?: (data: unknown) => void;
+}
+
 export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
 export function useGameRelay(
@@ -77,6 +85,7 @@ export function useGameRelay(
   interval = 30000,
   currentInning = 0,
   isFinal = false,
+  options?: UseGameRelayOptions,
 ) {
   const [data, setData] = useState<GameRelayResponse | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
@@ -99,6 +108,7 @@ export function useGameRelay(
   // 시작될 수 있으므로 controller를 Set으로 추적한다. gameId 전환 시 전부 abort한다.
   const abortControllersRef = useRef(new Set<AbortController>());
   const seenEventIdsRef = useRef(new Set<string>());
+  const previousLiveGameIdRef = useRef<string | undefined>(undefined);
 
   const fetchRelay = useCallback((eventsTailTimeoutMs?: number): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
@@ -154,9 +164,18 @@ export function useGameRelay(
         // 첫 poll + 이후 기존 15초 cadence마다 events를 같은 Edge Request에 싣는다.
         // final 전환은 game_end/victory 발화를 위해 항상 events 포함.
         const wantEvents = shouldCombineGameEvents(n, isFinal);
+        const includeLive = isLive && shouldEmbedLive(n);
+        const includeDetail = isLive && shouldEmbedDetail(n);
+        const include: string[] = [];
+        if (includeLive) include.push("live");
+        if (includeDetail) include.push("detail");
 
         const params = new URLSearchParams({ gameId: requestGameId });
         if (currentInning > 0) params.set("inning", String(currentInning));
+        if (include.length > 0) {
+          params.set("include", include.join(","));
+          params.set("date", resolveGameLiveDate(requestGameId));
+        }
         // since 는 로컬 보유 이닝이 아니라 **공유 canonical 이닝**과 일치할 때만 보낸다.
         // 로컬 최대값을 그대로 보내면 클라이언트별로 쿼리가 갈라져 엣지 캐시 키가
         // 시청자 수만큼 폭발한다(캐시 적중 불가 → 절감 무효화). 상세 계약은
@@ -223,7 +242,24 @@ export function useGameRelay(
           eventsSucceeded = envelope.ok && !payload.error;
         };
 
-        if (wantEvents) {
+        const applyFrame = (
+          onFrame: ((data: unknown) => void) | undefined,
+          data: unknown,
+        ) => {
+          if (
+            !onFrame
+            || !shouldApplyRelayResponse({
+              mounted: mountedRef.current,
+              requestSeq: mySeq,
+              currentSeq: requestSeqRef.current,
+              requestGameId,
+              activeGameId: activeGameIdRef.current,
+            })
+          ) return;
+          onFrame(data);
+        };
+
+        if (wantEvents || include.length > 0) {
           const res = await fetch(`/api/game-relay-events?${params}`, { signal: controller.signal });
           if (!res.ok) {
             settleRelay(false);
@@ -238,8 +274,12 @@ export function useGameRelay(
                 releaseRelaySlot();
                 armEventsTailTimeout();
               }
-            } else {
+            } else if (envelope.channel === "events") {
               applyEvents(envelope);
+            } else if (envelope.channel === "live") {
+              applyFrame(options?.onLiveFrame, envelope.data);
+            } else if (envelope.channel === "detail") {
+              applyFrame(options?.onDetailFrame, envelope.data);
             }
           });
         } else {
@@ -260,7 +300,7 @@ export function useGameRelay(
       return relaySucceeded && (!isFinal || eventsSucceeded);
     })();
     return isFinal ? request : relayResult;
-  }, [gameId, currentInning, isFinal]);
+  }, [gameId, currentInning, isFinal, isLive, options?.onDetailFrame, options?.onLiveFrame]);
 
   // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
   // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
@@ -292,11 +332,19 @@ export function useGameRelay(
 
     if (isLive) {
       finalFetchedRef.current = false;
-      // bounded jitter: 첫 fetch와 interval 시작점을 0~min(interval, 2s) 랜덤 지연.
-      // live 전환 직후 최대 2초 지연은 UX 영향이 미미하고, 이후 주기는 시작점
-      // 오프셋을 유지해 클라이언트 간 그리드 정렬이 해소된다. 계약은
-      // scheduleJitteredRelayPolling(prebuild 게이트 고정)에 있다.
-      const { cleanup } = scheduleJitteredRelayPolling({ fetchRelay, interval });
+      const switchedLiveGame =
+        previousLiveGameIdRef.current !== undefined
+        && previousLiveGameIdRef.current !== gameId;
+      previousLiveGameIdRef.current = gameId;
+      // gameId 전환은 이전 경기 in-flight와 무관하게 즉시 첫 fetch를 시작해야 한다.
+      // scheduled→live 진입 때만 bounded jitter를 유지해 cross-instance burst를 흩뿌린다.
+      const cleanup = switchedLiveGame
+        ? (() => {
+            void fetchRelay();
+            const timer = setInterval(fetchRelay, interval);
+            return () => clearInterval(timer);
+          })()
+        : scheduleJitteredRelayPolling({ fetchRelay, interval }).cleanup;
       const onVisibilityChange = () => {
         if (document.visibilityState === "visible") fetchRelay();
       };

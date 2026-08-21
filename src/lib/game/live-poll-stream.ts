@@ -1,4 +1,4 @@
-export type LivePollChannel = "relay" | "events";
+export type LivePollChannel = "relay" | "events" | "live" | "detail";
 
 export interface LivePollEnvelope {
   channel: LivePollChannel;
@@ -15,6 +15,16 @@ export function shouldCombineGameEvents(
   isFinal: boolean,
 ): boolean {
   return isFinal || pollIndex % EVENTS_REFRESH_EVERY === 0;
+}
+
+/** 3초 cadence에서 9초마다 live 스냅샷을 relay poll에 동봉한다. */
+export function shouldEmbedLive(pollIndex: number): boolean {
+  return pollIndex % 3 === 0;
+}
+
+/** 3초 cadence에서 30초마다 detail 스냅샷을 relay poll에 동봉한다. */
+export function shouldEmbedDetail(pollIndex: number): boolean {
+  return pollIndex % 10 === 0;
 }
 
 const encoder = new TextEncoder();
@@ -56,10 +66,9 @@ async function responseEnvelope(
  * relay frame 전달을 막지 않는다. 두 작업은 호출자가 이미 동시에 시작한 Promise다.
  */
 export function createLivePollStream(
-  relayTask: Promise<Response>,
-  eventsTask: Promise<Response>,
+  tasks: Array<{ channel: LivePollChannel; task: Promise<Response> }>,
 ): ReadableStream<Uint8Array> {
-  let open = 2;
+  let open = tasks.length;
   let cancelled = false;
 
   return new ReadableStream<Uint8Array>({
@@ -75,9 +84,9 @@ export function createLivePollStream(
         open -= 1;
         if (open === 0 && !cancelled) controller.close();
       };
-
-      void send("relay", relayTask);
-      void send("events", eventsTask);
+      for (const { channel, task } of tasks) {
+        void send(channel, task);
+      }
     },
     cancel() {
       cancelled = true;
