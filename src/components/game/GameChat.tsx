@@ -574,8 +574,8 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
             {/* 문장마다 줄바꿈 (하린아빠 2026-08-21 지시) — 문구 자체는 원문 불변 */}
             <span className="block min-w-0">
               <span className="block">크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다.</span>
-              <span className="block">매너 있는 글은 응원팀을 더 멋지게 만들고,</span>
-              <span className="block">그렇지 않은 글은 응원팀을 부끄럽게 만듭니다.</span>
+              <span className="block">매너 있는 글은 응원팀과 그 팀의 팬들을 더 멋지게 만들고,</span>
+              <span className="block">그렇지 않은 글은 응원팀과 그 팀의 팬들을 부끄럽게 만듭니다.</span>
               <span className="block">매너를 꼭 지켜주세요.</span>
             </span>
           </p>
