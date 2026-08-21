@@ -182,11 +182,14 @@ function assertFrameFencing() {
   ok("relay hook defines per-channel owner seq refs",
     /const liveFrameOwnerSeqRef = useRef\(0\);[\s\S]*const detailFrameOwnerSeqRef = useRef\(0\);/.test(src));
   ok("relay hook applies frame only when channel seq increases for active game",
-    /!\s*mountedRef\.current[\s\S]*activeGameIdRef\.current !== requestGameId[\s\S]*mySeq <= channelRef\.current[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(data\);/.test(src));
+    /!\s*mountedRef\.current[\s\S]*activeGameIdRef\.current !== requestGameId[\s\S]*mySeq <= channelRef\.current[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(envelope\.data\);/.test(src));
+  // 삼순 6차: 실패 frame fail-open 차단 — envelope.ok 아니면 seq 미소유 + 미커밋(last-good 보존).
+  ok("relay hook drops failed live/detail frames before seq ownership (envelope.ok gate)",
+    /if \(!envelope\.ok\) return;[\s\S]*if \(mySeq <= channelRef\.current\) return;[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(envelope\.data\);/.test(src));
   ok("relay hook resets channel owner seq refs on game switch",
     /liveFrameOwnerSeqRef\.current = 0;[\s\S]*detailFrameOwnerSeqRef\.current = 0;/.test(src));
   ok("relay hook forwards live\/detail frames through channel refs",
-    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\.data\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\.data\);/.test(src));
+    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\);/.test(src));
   ok("relay frame fencing remains on shouldApplyRelayResponse",
     /if \(shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
 }
@@ -404,8 +407,8 @@ function runSelfTest() {
       name: "global seq frame mutant",
       apply: () => mutate(
         "src/lib/hooks/useGameRelay.ts",
-        "            || mySeq <= channelRef.current\n",
-        "            || mySeq !== requestSeqRef.current\n",
+        "          if (mySeq <= channelRef.current) return;\n",
+        "          if (mySeq !== requestSeqRef.current) return;\n",
       ),
     },
     {

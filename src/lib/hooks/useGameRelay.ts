@@ -109,6 +109,10 @@ export function useGameRelay(
   const previousLiveGameIdRef = useRef<string | undefined>(undefined);
   const liveFrameOwnerSeqRef = useRef(0);
   const detailFrameOwnerSeqRef = useRef(0);
+  // 삼순 runtime blocker(r5): 느린 in-flight 중 foreground 복귀하면 forceEmbed 요청이
+  // 조기 반환으로 유실돼 live/detail 즉시 포함이 다음 cadence(최대 9s/30s)까지 밀린다.
+  // 유실 대신 1회만 queue 해두고, in-flight 해제 직후 정확히 1회 후행 발사한다.
+  const pendingForceEmbedRef = useRef(false);
 
   const fetchRelay = useCallback((
     eventsTailTimeoutMs?: number,
@@ -118,7 +122,13 @@ export function useGameRelay(
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       return Promise.resolve(false);
     }
-    if (inFlightRef.current) return Promise.resolve(false);
+    if (inFlightRef.current) {
+      // forceEmbed 요청만 보존(일반 주기 폴은 종전처럼 단순 스킵). 여러 번 복귀해도 1회로 합쳐진다.
+      if (opts?.forceEmbed === true) pendingForceEmbedRef.current = true;
+      return Promise.resolve(false);
+    }
+    // 이 요청이 forceEmbed 를 직접 실행하면 보류분은 이 요청으로 흡수된 것이므로 소멸시킨다.
+    if (opts?.forceEmbed === true) pendingForceEmbedRef.current = false;
     const requestGameId = gameId;
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
@@ -144,6 +154,20 @@ export function useGameRelay(
       inFlightRef.current = false;
       inFlightPromiseRef.current = null;
       if (mountedRef.current) setIsLoading(false);
+      // queued force-embed 소비: in-flight 해제 직후 정확히 1회만 후행 발사한다.
+      // hidden 이면 발사하지 않고 보류를 유지해 다음 visible 복귀/해제 시점으로 넘긴다.
+      if (
+        pendingForceEmbedRef.current
+        && mountedRef.current
+        && !(typeof document !== "undefined" && document.visibilityState === "hidden")
+      ) {
+        pendingForceEmbedRef.current = false;
+        queueMicrotask(() => {
+          if (mountedRef.current && activeGameIdRef.current === requestGameId) {
+            void fetchRelayRef.current?.(undefined, { forceEmbed: true });
+          }
+        });
+      }
     };
 
     const request = (async (): Promise<boolean> => {
@@ -249,16 +273,21 @@ export function useGameRelay(
         const applyFrame = (
           channelRef: MutableRefObject<number>,
           onFrame: ((data: unknown) => void) | undefined,
-          data: unknown,
+          envelope: LivePollEnvelope,
         ) => {
           if (
             !onFrame
             || !mountedRef.current
             || activeGameIdRef.current !== requestGameId
-            || mySeq <= channelRef.current
           ) return;
+          // 실패 frame(서버측 embed 5xx 등)은 ingest 하지 않는다 — last-good 을
+          // 보존하고 seq 도 소유하지 않아, 이후 성공 frame 이 그대로 복구된다.
+          // (실패 frame 을 커밋하면 games:[] 가 isLive 를 꺼서 multiplex 가
+          //  플리커하고 standalone 폴링·리렌더 폭풍이 난다 — Preview 실측.)
+          if (!envelope.ok) return;
+          if (mySeq <= channelRef.current) return;
           channelRef.current = mySeq;
-          onFrame(data);
+          onFrame(envelope.data);
         };
 
         if (include.length > 0) {
@@ -279,9 +308,9 @@ export function useGameRelay(
             } else if (envelope.channel === "events") {
               applyEvents(envelope);
             } else if (envelope.channel === "live") {
-              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope.data);
+              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope);
             } else if (envelope.channel === "detail") {
-              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope.data);
+              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope);
             }
           });
         } else {
@@ -304,6 +333,11 @@ export function useGameRelay(
     return isFinal ? request : relayResult;
   }, [gameId, currentInning, isFinal, isLive, options?.onDetailFrame, options?.onLiveFrame]);
 
+  // queued force-embed 가 해제 시점의 최신 fetchRelay 를 타도록 ref 로 간접 참조한다
+  // (클로저가 오래된 fetchRelay 를 잡으면 gameId 전환 후 stale 요청을 발사할 수 있다).
+  const fetchRelayRef = useRef<typeof fetchRelay | null>(null);
+  fetchRelayRef.current = fetchRelay;
+
   // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
   // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
   // delta 를 병합한다(교차 오염). 선언 순서상 폴링 effect 보다 먼저 실행된다.
@@ -317,6 +351,8 @@ export function useGameRelay(
     requestSeqRef.current++;
     inFlightRef.current = false;
     inFlightPromiseRef.current = null;
+    // 이전 경기에서 queue 된 force-embed 는 새 경기와 무관하므로 폐기한다.
+    pendingForceEmbedRef.current = false;
     inningsRef.current = new Map();
     seenEventIdsRef.current.clear();
     pollCountRef.current = 0;

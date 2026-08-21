@@ -200,7 +200,105 @@ try {
     await page.close();
   }
 
-  console.log("live multiplex frames UI: 2 passed, 0 failed");
+  {
+    // 시나리오 3 (삼순 6차): 실패 live/detail frame 은 커밋하지 않는다 —
+    // last-good 보존 + seq 미소유 + 이후 성공 frame 정상 복구.
+    // include 없는 3초 poll 은 legacy JSON 경로라 frame 을 안 태운다(1차 설계의
+    // 검출력 0 원인). visibility resume 이 include=live,detail 을 강제하는 것을
+    // 이용해 실패 embed 를 결정론적으로 2번째 embed 에 싣는다.
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      const originalFetch = window.fetch.bind(window);
+      let embeds = 0;
+      window.__qaFailFlowEmbeds = () => embeds;
+      window.fetch = (input, init = {}) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+        if (!url.includes("/api/game-relay")) return originalFetch(input, init);
+        const parsed = new URL(url, window.location.origin);
+        const include = (parsed.searchParams.get("include") ?? "").split(",").filter(Boolean);
+        if (include.length === 0) {
+          return Promise.resolve(new Response(JSON.stringify({ gameId: "qa-game-a", innings: [], updatedAt: "ff-relay-plain" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }));
+        }
+        embeds++;
+        const embedNo = embeds;
+        const failed = embedNo === 2;
+        const frames = [
+          JSON.stringify({ channel: "relay", ok: true, status: 200, data: { gameId: "qa-game-a", innings: [], updatedAt: `ff-relay-${embedNo}` } }),
+        ];
+        if (include.includes("events")) {
+          frames.push(JSON.stringify({ channel: "events", ok: true, status: 200, data: { events: [] } }));
+        }
+        if (include.includes("live")) {
+          frames.push(failed
+            ? JSON.stringify({ channel: "live", ok: false, status: 503, data: { error: "starter witness unavailable", games: [] } })
+            : JSON.stringify({ channel: "live", ok: true, status: 200, data: { updatedAt: `ff-live-${embedNo}` } }));
+        }
+        if (include.includes("detail")) {
+          frames.push(failed
+            ? JSON.stringify({ channel: "detail", ok: false, status: 503, data: { error: "detail unavailable" } })
+            : JSON.stringify({ channel: "detail", ok: true, status: 200, data: { updatedAt: `ff-detail-${embedNo}` } }));
+        }
+        return Promise.resolve(new Response([...frames, ""].join("\n"), {
+          status: 200,
+          headers: { "content-type": "application/x-ndjson" },
+        }));
+      };
+    });
+    await page.goto(`${BASE_URL}/qa/game-relay-hook`, { waitUntil: "domcontentloaded" });
+    await page.waitForFunction(() =>
+      document.querySelector('[data-qa="live-frame-updated"]')?.textContent === "ff-live-1"
+      && document.querySelector('[data-qa="detail-frame-updated"]')?.textContent === "ff-detail-1",
+      null, { timeout: 10000 });
+    const forceResume = async () => {
+      await page.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+      await page.waitForTimeout(300);
+      await page.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+      });
+    };
+    // embed 2 = 실패 frame — 소비 확인 후 last-good·seq 미소유 판정
+    await forceResume();
+    await page.waitForFunction(() => window.__qaFailFlowEmbeds() >= 2, null, { timeout: 8000 });
+    await page.waitForTimeout(700);
+    const liveAfterFail = await page.locator('[data-qa="live-frame-updated"]').textContent();
+    const liveCountAfterFail = await page.locator('[data-qa="live-frame-count"]').textContent();
+    const detailAfterFail = await page.locator('[data-qa="detail-frame-updated"]').textContent();
+    const detailCountAfterFail = await page.locator('[data-qa="detail-frame-count"]').textContent();
+    if (liveAfterFail !== "ff-live-1" || liveCountAfterFail !== "1") {
+      throw new Error(`failed live frame must not commit (last-good), got ${liveAfterFail} count=${liveCountAfterFail}`);
+    }
+    if (detailAfterFail !== "ff-detail-1" || detailCountAfterFail !== "1") {
+      throw new Error(`failed detail frame must not commit (last-good), got ${detailAfterFail} count=${detailCountAfterFail}`);
+    }
+    // embed 3 = 성공 frame — 실패 frame 이 seq 를 소유하지 않았음을 복구로 증명
+    await forceResume();
+    await page.waitForFunction(() =>
+      document.querySelector('[data-qa="live-frame-count"]')?.textContent === "2"
+      && document.querySelector('[data-qa="detail-frame-count"]')?.textContent === "2",
+      null, { timeout: 8000 });
+    const liveRecovered = await page.locator('[data-qa="live-frame-updated"]').textContent();
+    const detailRecovered = await page.locator('[data-qa="detail-frame-updated"]').textContent();
+    if (liveRecovered !== "ff-live-3") {
+      throw new Error(`success live frame after failure must recover, got ${liveRecovered}`);
+    }
+    if (detailRecovered !== "ff-detail-3") {
+      throw new Error(`success detail frame after failure must recover, got ${detailRecovered}`);
+    }
+    await page.close();
+  }
+
+  console.log("live multiplex frames UI: 3 passed, 0 failed");
 } finally {
   await browser.close();
 }
