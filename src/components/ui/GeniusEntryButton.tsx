@@ -75,7 +75,10 @@ export default function GeniusEntryButton() {
       {/* ⚠️ 애니메이션 WebP 는 CSS 로 멈출 수 없다(재생 주체가 이미지 디코더) —
           prefers-reduced-motion 에서는 <source media> 로 정지 poster 자산을 대신
           로드해야 실제로 멈춘다(GeniusMascotImage 와 동일 계약). */}
-      <picture>
+      {/* 모션 프레임(268×192)은 h-10 에서 폭 ~56px 로 44px 슬롯을 넘친다.
+          pointer-events-none 으로 이미지 overflow 가 이웃(쪽지 버튼) hit-area 를
+          잡아먹지 않게 한다 — 탭 판정은 44px 버튼 자신만 한다(삼순 NO-GO ①). */}
+      <picture className="pointer-events-none">
         <source
           media="(prefers-reduced-motion: reduce)"
           srcSet={geniusMotionPosterSrc(clip)}

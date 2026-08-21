@@ -68,11 +68,36 @@ const HEADERS_WITH_DM = [
     );
   });
   const unreadHook = read("src/lib/supabase/useUnreadDMCount.ts");
-  check("[useUnreadDMCount.ts] 배지에서 야잘알봇 대화를 제외한다", () => {
-    // 목록에서 숨긴 대화가 배지만 올리면 유저가 지울 수 없는 배지가 된다.
-    assert.ok(/BASEBALL_GENIUS_USER_ID/.test(unreadHook), "야잘알봇 제외 필터 없음");
+  // ⚠️ 문자열 존재 검사는 필터를 지워도 PASS 하는 false-green 이었다(삼순 NO-GO ②).
+  // 실제 필터 **식**을 검사한다 — 서버쪽 .not() 양쪽 participant 제외 + 클라 방어 필터.
+  const SERVER_NOT_U1 = /\.not\(\s*"user1_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
+  const SERVER_NOT_U2 = /\.not\(\s*"user2_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
+  check("[useUnreadDMCount.ts] 서버쪽 쿼리에서 야잘알봇 양쪽 participant 를 제외한다", () => {
+    assert.ok(SERVER_NOT_U1.test(unreadHook), "user1_id 서버쪽 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(unreadHook), "user2_id 서버쪽 제외 없음");
+  });
+  check("[useUnreadDMCount.ts] 클라 방어 필터도 양쪽 participant 를 본다", () => {
+    assert.ok(
+      /c\.user1_id !== BASEBALL_GENIUS_USER_ID && c\.user2_id !== BASEBALL_GENIUS_USER_ID/.test(unreadHook),
+      "클라 방어 필터 없음",
+    );
+  });
+  check("[useDM.ts] 목록 서버쪽 쿼리도 야잘알봇을 제외한다(limit 500 경계)", () => {
+    // 클라 필터만 있으면 봇방이 500개 한도에서 일반방 1칸을 먹는다.
+    assert.ok(SERVER_NOT_U1.test(dmHook), "useDMList user1_id 서버쪽 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(dmHook), "useDMList user2_id 서버쪽 제외 없음");
   });
 }
+
+// hit-area: 마스코트 overflow 가 이웃 버튼 탭을 가로채면 안 된다 (삼순 NO-GO ①)
+check("마스코트 이미지는 pointer-events-none — 탭 판정은 44px 버튼만", () => {
+  // 268×192 프레임은 h-10 에서 폭 ~56px 로 44px 슬롯을 넘친다. overflow 가
+  // 쪽지 버튼 위에 그려지므로 이미지가 이벤트를 먹으면 가장자리 탭이 오동작한다.
+  const pictureIdx = entry.indexOf("<picture");
+  assert.ok(pictureIdx >= 0, "picture 요소 없음");
+  const pictureTag = entry.slice(pictureIdx, entry.indexOf(">", pictureIdx));
+  assert.ok(/pointer-events-none/.test(pictureTag), "picture 에 pointer-events-none 없음");
+});
 
 check("쪽지 링크를 가진 헤더가 회귀 목록에서 누락되지 않는다", () => {
   const found: string[] = [];

@@ -19,10 +19,14 @@ export function useUnreadDMCount() {
     if (!user) { setCount(0); return; }
 
     // query-guard: bounded -- 미읽음 배지는 최신 대화 500개만 집계하며 RPC도 동일 상한을 강제한다.
+    // 야잘알봇 제외는 **서버쪽**에서 한다(삼순 NO-GO ②) — limit(500) 뒤 클라 필터만 있으면
+    // 봇방이 일반방 1칸을 먹는 경계가 생긴다. 클라 필터는 방어용으로 유지.
     const { data: convs } = await supabase
       .from("dm_conversations")
       .select("id, user1_id, user2_id")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+      .not("user1_id", "eq", BASEBALL_GENIUS_USER_ID)
+      .not("user2_id", "eq", BASEBALL_GENIUS_USER_ID)
       .order("last_message_at", { ascending: false })
       .limit(500);
 

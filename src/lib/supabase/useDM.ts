@@ -80,10 +80,14 @@ export function useDMList() {
     if (!user) return;
 
     // query-guard: bounded -- 쪽지함은 최신 대화 500개 UI 페이지만 제공한다.
+    // 야잘알봇 제외는 서버쪽에서 한다(삼순 NO-GO ②) — 클라 필터만 있으면 봇방이
+    // limit(500) 안에서 일반방 1칸을 먹는다. 아래 클라 필터는 방어용.
     const { data } = await supabase
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+      .not("user1_id", "eq", BASEBALL_GENIUS_USER_ID)
+      .not("user2_id", "eq", BASEBALL_GENIUS_USER_ID)
       .not("last_message", "is", null)
       .order("last_message_at", { ascending: false })
       .limit(500);

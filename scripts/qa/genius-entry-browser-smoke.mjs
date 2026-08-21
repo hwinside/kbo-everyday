@@ -76,6 +76,8 @@ async function measure(page) {
 async function main() {
   const browser = await playwright.chromium.launch();
   let testUser = null;
+  let buddyUser = null;
+  const qaConvIds = [];
 
   try {
     // ---------- 비로그인: 진입 자체가 불가능해야 한다 ----------
@@ -242,6 +244,88 @@ async function main() {
       );
     }
 
+    // edge-click 회귀 (삼순 NO-GO ①): 마스코트 overflow(폭 ~56px)가 쪽지 버튼 위에
+    // 그려져도 탭 판정은 44px 버튼만 해야 한다. 쪽지 버튼 왼쪽 가장자리(overflow 겁침
+    // 영역)를 클릭하면 야잘알봇이 아니라 쪽지 목록으로 가야 한다.
+    {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(1500);
+      const m = await measure(page);
+      if (!m.dmRect) {
+        ok("[로그인·홈] edge-click 회귀: 쪽지 버튼 좌표 확보", false, "dmRect 없음");
+      } else {
+        // 쪽지 버튼 왼쪽 가장자리 안쪽 2px — 마스코트 overflow 가 겁치는 지점이다.
+        await page.mouse.click(m.dmRect.x + 2, m.dmRect.y + m.dmRect.height / 2);
+        await page.waitForTimeout(2500);
+        const edgePath = new URL(page.url()).pathname;
+        ok(
+          "[로그인·홈] 쪽지 버튼 왼쪽 가장자리 탭 → 쪽지 목록(마스코트 overflow 가 탭을 안 먹음)",
+          edgePath === "/messages",
+          `path=${edgePath} clickX=${Math.round(m.dmRect.x + 2)}`,
+        );
+      }
+    }
+
+    // 배지 동작 검증 (삼순 NO-GO ②): 봇 unread 는 배지에서 제외, 일반 unread 는 유지.
+    // service-role 로 봇방 unread 1건 + 일반방 unread 1건을 만들고 홈 배지가 1인지 본다.
+    {
+      const { data: buddy, error: buddyErr } = await admin.auth.admin.createUser({
+        email: `qa-genius-buddy-${Date.now()}@keubo-qa.invalid`,
+        email_confirm: true,
+        password: `Qa!${Math.random().toString(36).slice(2)}Bb2`,
+      });
+      if (buddyErr) throw new Error(`buddy 계정 생성 실패: ${buddyErr.message}`);
+      buddyUser = buddy.user;
+      const { error: buddyProfErr } = await admin.from("profiles").upsert(
+        { id: buddyUser.id, nickname: `QA버디${Date.now() % 100000}`, team_id: 2 },
+        { onConflict: "id" },
+      );
+      if (buddyProfErr) throw new Error(`buddy 프로필 생성 실패: ${buddyProfErr.message}`);
+
+      const mkConv = async (a, b, lastMessage) => {
+        const [u1, u2] = [a, b].sort();
+        const { data: conv, error } = await admin
+          .from("dm_conversations")
+          .insert({ user1_id: u1, user2_id: u2, last_message: lastMessage, last_message_at: new Date().toISOString() })
+          .select("id")
+          .single();
+        if (error) throw new Error(`conv 생성 실패: ${error.message}`);
+        qaConvIds.push(conv.id);
+        return conv.id;
+      };
+      // ⚠️ 절대값(=1) 판정은 하니스 결함이었다 — 홈 진입 시 useHomeInit 이 운영팀
+      // 웰컴 쪽지(/api/welcome-dm)를 보내 신규 QA 계정 배지에 +1 이 섞인다.
+      // 그래서 **baseline 대비 delta** 로 판정한다: 봇 unread 1 + 일반 unread 1 을
+      // 넣었을 때 delta 가 정확히 +1(일반만)이면 봇 제외·일반 유지 둘 다 증명된다.
+      // 봇이 세지면 +2, 일반까지 새면 +0 이라 양방향 모두 걸린다.
+      const readBadge = async () => {
+        await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+        await page.waitForTimeout(2500); // 배지 load + realtime 안정화
+        return page.evaluate(() => {
+          const dm = document.querySelector('header a[href="/messages"]');
+          const span = dm?.querySelector("span");
+          const text = span ? span.textContent.trim() : null;
+          return text === null ? 0 : text === "9+" ? 10 : Number(text);
+        });
+      };
+      const baseline = await readBadge();
+
+      const geniusConv = await mkConv(testUser.id, GENIUS_ID, "[QA] 봇 unread");
+      const buddyConv = await mkConv(testUser.id, buddyUser.id, "[QA] 일반 unread");
+      const { error: msgErr } = await admin.from("dm_messages").insert([
+        { conversation_id: geniusConv, sender_id: GENIUS_ID, content: "[QA] 봇 unread", is_read: false },
+        { conversation_id: buddyConv, sender_id: buddyUser.id, content: "[QA] 일반 unread", is_read: false },
+      ]);
+      if (msgErr) throw new Error(`unread 메시지 생성 실패: ${msgErr.message}`);
+
+      const after = await readBadge();
+      ok(
+        "[로그인·배지] 봇 unread 제외·일반 unread 유지 — delta 정확히 +1",
+        after - baseline === 1,
+        `baseline=${baseline} after=${after} (봇이 세면 +2, 일반까지 빠지면 +0)`,
+      );
+    }
+
     // 뉴스(HeaderProfileLink 헤더): 미노출 유지 — 지시 범위는 홈이다.
     {
       await page.goto(`${BASE_URL}/news`, { waitUntil: "networkidle" });
@@ -314,6 +398,22 @@ async function main() {
 
     await ctx.close();
   } finally {
+    // QA 대화/메시지 정리 — 유저 삭제보다 먼저(FK). 삭제 실패는 예외로 드러낸다(fail-open 금지).
+    for (const convId of qaConvIds) {
+      const { error: msgDelErr } = await admin.from("dm_messages").delete().eq("conversation_id", convId);
+      if (msgDelErr) throw new Error(`dm_messages cleanup: ${msgDelErr.message}`);
+      const { error: convDelErr } = await admin.from("dm_conversations").delete().eq("id", convId);
+      if (convDelErr) throw new Error(`dm_conversations cleanup: ${convDelErr.message}`);
+      const { count: convLeft, error: convChkErr } = await admin
+        .from("dm_conversations").select("id", { count: "exact", head: true }).eq("id", convId);
+      if (convChkErr || convLeft !== 0) throw new Error(`conv cleanup postcondition: ${convChkErr?.message ?? convLeft}`);
+    }
+    if (buddyUser?.id) {
+      const { error: buddyProfDelErr } = await admin.from("profiles").delete().eq("id", buddyUser.id);
+      if (buddyProfDelErr) throw new Error(`buddy profile cleanup: ${buddyProfDelErr.message}`);
+      const { error: buddyAuthDelErr } = await admin.auth.admin.deleteUser(buddyUser.id);
+      if (buddyAuthDelErr) throw new Error(`buddy auth cleanup: ${buddyAuthDelErr.message}`);
+    }
     if (testUser?.id) {
       const { error: profileDeleteError } = await admin.from("profiles").delete().eq("id", testUser.id);
       if (profileDeleteError) throw new Error(`profile cleanup: ${profileDeleteError.message}`);
