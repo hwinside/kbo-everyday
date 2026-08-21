@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const SELFTEST = process.argv.includes("--selftest");
@@ -40,6 +41,50 @@ function stripComments(src) {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length))
     .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+}
+
+// Vercel 빌드는 shallow single-branch clone이라 refs/remotes/origin/main이 없다.
+// 그 환경에서 chat base-diff 축이 false-RED로 배포를 죽였다(1afb4643a 실측).
+// fallback 1: origin/main을 depth-1로 fetch해 FETCH_HEAD 기준 diff.
+// fallback 2(네트워크/자격 불가): merge-base 시점 채팅 transport 파일의 sha256 핀과
+// 워킹트리 해시를 대조 — 불일치는 fail-close(진짜 변경이든 stale 핀이든 사람이 봐야 한다).
+// 핀 갱신: 채팅 파일을 정당하게 바꾸는 PR이 이 표를 같은 PR에서 갱신한다.
+const CHAT_TRANSPORT_SHA256 = {
+  "src/lib/supabase/useChat.ts": "1a3253dfb9bb01c94ddd820673661c2f6ac226c97e9887932904c0a24b388548",
+  "src/components/game/GameChat.tsx": "5a3fba682abf496fa2df2e0425d2ade1cfdeaa4bf0e4f71bb22439e892cb4bcc",
+  "src/components/game/LiveChat.tsx": "7bd019886e682c9d930729b25ee99dec780109ec4f1a85fb21d8217a9496548c",
+  "src/app/api/game-chat/prefs/route.ts": "036a254346d128c5d12574a66f56b69864a578674b4edfbebb2abb8d827f320d",
+};
+
+function sha256OfFile(path) {
+  return createHash("sha256").update(readFileSync(`${ROOT}/${path}`)).digest("hex");
+}
+
+function tryFetchOriginMain(spawn = spawnSync) {
+  const fetched = spawn(
+    "git",
+    ["fetch", "--no-tags", "--depth=1", "origin", "main"],
+    { cwd: ROOT },
+  );
+  if (fetched.status !== 0) return null;
+  const head = spawn("git", ["rev-parse", "--verify", "FETCH_HEAD"], { cwd: ROOT, encoding: "utf8" });
+  if (head.status !== 0) return null;
+  return head.stdout.trim();
+}
+
+function evaluatePinnedChatHashes({ hashOf = sha256OfFile } = {}) {
+  const mismatched = [];
+  for (const [path, expected] of Object.entries(CHAT_TRANSPORT_SHA256)) {
+    let actual;
+    try {
+      actual = hashOf(path);
+    } catch {
+      mismatched.push(`${path} (unreadable)`);
+      continue;
+    }
+    if (actual !== expected) mismatched.push(path);
+  }
+  return { ok: mismatched.length === 0, mismatched };
 }
 
 function hasOriginMainRef(spawn = spawnSync) {
@@ -199,9 +244,25 @@ function assertChatGateBaseDiff() {
 }
 
 function assertUntouchedFiles() {
-  const diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS);
-  ok("chat base-diff gate resolved origin/main", diff.ok, diff.reason ?? "");
-  ok("chat transport untouched vs merge-base", diff.ok && diff.changed.length === 0, diff.changed.join(", "));
+  let diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS);
+  if (!diff.ok && diff.reason === "origin/main missing") {
+    const fetchedBase = tryFetchOriginMain();
+    if (fetchedBase) {
+      diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS, { baseRef: fetchedBase });
+    } else {
+      const pinned = evaluatePinnedChatHashes();
+      ok(
+        "chat transport untouched (pinned-hash fallback — shallow clone, fetch unavailable)",
+        pinned.ok,
+        pinned.mismatched.join(", "),
+      );
+      diff = null;
+    }
+  }
+  if (diff !== null) {
+    ok("chat base-diff gate resolved base ref", diff.ok, diff.reason ?? "");
+    ok("chat transport untouched vs merge-base", diff.ok && diff.changed.length === 0, diff.changed.join(", "));
+  }
 }
 
 function mutate(path, from, to) {
