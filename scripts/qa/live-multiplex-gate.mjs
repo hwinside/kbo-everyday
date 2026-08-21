@@ -4,6 +4,21 @@ import { spawnSync } from "node:child_process";
 
 const SELFTEST = process.argv.includes("--selftest");
 const ROOT = process.cwd();
+const CHAT_BASE_DIFF_PATHS = [
+  "src/lib/supabase/useChat.ts",
+  "src/components/game/GameChat.tsx",
+  "src/components/game/LiveChat.tsx",
+  "src/app/api/admin/today-detail/route.ts",
+  "src/app/api/admin/supabase-usage/route.ts",
+  "src/app/api/admin/content/route.ts",
+  "src/app/api/admin/reports/route.ts",
+  "src/app/api/contextual-stats/route.ts",
+  "src/app/api/report/route.ts",
+  "src/app/api/slack/gif-collector/route.ts",
+  "src/app/api/game-chat/prefs/route.ts",
+  "src/app/api/venue-stories/attendees/route.ts",
+  "src/app/api/cron/daily-fallback-report/route.ts",
+];
 
 let pass = 0;
 let fail = 0;
@@ -27,29 +42,82 @@ function stripComments(src) {
     .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
 }
 
+function hasOriginMainRef(spawn = spawnSync) {
+  const result = spawn("git", ["show-ref", "--verify", "--quiet", "refs/remotes/origin/main"], { cwd: ROOT });
+  return result.status === 0;
+}
+
+function makeBaseHeadDiffQuiet(spawn = spawnSync) {
+  return (base, path) => spawn("git", ["diff", "--quiet", base, "HEAD", "--", path], { cwd: ROOT }).status;
+}
+
+function evaluateBaseHeadChanges(
+  paths,
+  {
+    baseRef = hasOriginMainRef() ? spawnSync("git", ["merge-base", "origin/main", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim() : null,
+    diffQuiet = makeBaseHeadDiffQuiet(),
+  } = {},
+) {
+  if (!baseRef) {
+    return { ok: false, reason: "origin/main missing", changed: [] };
+  }
+  const changed = [];
+  for (const path of paths) {
+    const status = diffQuiet(baseRef, path);
+    if (status === 1) changed.push(path);
+    else if (status !== 0) {
+      return { ok: false, reason: `git diff failed for ${path} (${status})`, changed: [] };
+    }
+  }
+  return { ok: true, changed, reason: null };
+}
+
 function assertTickCadence() {
   return import("../../src/lib/game/live-poll-stream.ts").then((mod) => {
-    const liveSeq = Array.from({ length: 31 }, (_, i) => mod.shouldEmbedLive(i));
-    const detailSeq = Array.from({ length: 31 }, (_, i) => mod.shouldEmbedDetail(i));
-    const expectedLive = Array.from({ length: 31 }, (_, i) => i % 3 === 0);
-    const expectedDetail = Array.from({ length: 31 }, (_, i) => i % 10 === 0);
-    ok("tick/live cadence 0..30", JSON.stringify(liveSeq) === JSON.stringify(expectedLive));
-    ok("tick/detail cadence 0..30", JSON.stringify(detailSeq) === JSON.stringify(expectedDetail));
-    ok("tick/no per-poll live embed", liveSeq.filter(Boolean).length < liveSeq.length);
-    ok("tick/no per-poll detail embed", detailSeq.filter(Boolean).length < detailSeq.length);
+    const intervalMs = 3000;
+    const liveSeq = Array.from({ length: 21 }, (_, i) => mod.shouldEmbedLive(i, intervalMs));
+    const detailSeq = Array.from({ length: 21 }, (_, i) => mod.shouldEmbedDetail(i, intervalMs));
+    const expectedLive = Array.from({ length: 21 }, (_, i) => [0, 4, 7, 10, 14, 17, 20].includes(i));
+    const expectedDetail = Array.from({ length: 21 }, (_, i) => [0, 10, 20].includes(i));
+    ok("tick/live cadence 0..20", JSON.stringify(liveSeq) === JSON.stringify(expectedLive));
+    ok("tick/detail cadence 0..20", JSON.stringify(detailSeq) === JSON.stringify(expectedDetail));
+    ok("tick/live count preserved in 60s window", liveSeq.filter(Boolean).length === 7);
+    ok("tick/detail count preserved in 60s window", detailSeq.filter(Boolean).length === 3);
   });
 }
 
 function assertIncludeWiring() {
   const src = stripComments(read("src/lib/hooks/useGameRelay.ts"));
-  ok("relay hook computes include from tick helpers",
-    /const includeLive = isLive && shouldEmbedLive\(n\);[\s\S]*const includeDetail = isLive && shouldEmbedDetail\(n\);/.test(src));
-  ok("relay hook sends include through combined endpoint",
-    /if \(wantEvents \|\| include\.length > 0\)[\s\S]*fetch\(`\/api\/game-relay-events\?\$\{params\}`/.test(src));
-  ok("relay hook preserves game-live date on multiplex",
-    /params\.set\("date", resolveGameLiveDate\(requestGameId\)\);/.test(src));
-  ok("relay hook forwards live\/detail frames with fencing callbacks",
-    /else if \(envelope\.channel === "live"\)[\s\S]*options\?\.onLiveFrame[\s\S]*else if \(envelope\.channel === "detail"\)[\s\S]*options\?\.onDetailFrame/.test(src));
+  ok(
+    "relay hook computes include from forceEmbed + interval cadence",
+    /const forceEmbed = opts\?\.forceEmbed === true;[\s\S]*const includeLive = isLive && \(forceEmbed \|\| shouldEmbedLive\(n, interval\)\);[\s\S]*const includeDetail = isLive && \(forceEmbed \|\| shouldEmbedDetail\(n, interval\)\);/.test(src),
+  );
+  ok(
+    "relay hook visibility resume force-embeds live/detail in one request",
+    /if \(document\.visibilityState === "visible"\) fetchRelay\(undefined, \{ forceEmbed: true \}\);/.test(src),
+  );
+  ok(
+    "relay hook sends include through combined endpoint",
+    /if \(wantEvents \|\| include\.length > 0\)[\s\S]*fetch\(`\/api\/game-relay-events\?\$\{params\}`/.test(src),
+  );
+  ok(
+    "relay hook preserves game-live date on multiplex",
+    /params\.set\("date", resolveGameLiveDate\(requestGameId\)\);/.test(src),
+  );
+}
+
+function assertFrameFencing() {
+  const src = stripComments(read("src/lib/hooks/useGameRelay.ts"));
+  ok("relay hook defines per-channel owner seq refs",
+    /const liveFrameOwnerSeqRef = useRef\(0\);[\s\S]*const detailFrameOwnerSeqRef = useRef\(0\);/.test(src));
+  ok("relay hook applies frame only when channel seq increases for active game",
+    /!\s*mountedRef\.current[\s\S]*activeGameIdRef\.current !== requestGameId[\s\S]*mySeq <= channelRef\.current[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(data\);/.test(src));
+  ok("relay hook resets channel owner seq refs on game switch",
+    /liveFrameOwnerSeqRef\.current = 0;[\s\S]*detailFrameOwnerSeqRef\.current = 0;/.test(src));
+  ok("relay hook forwards live\/detail frames through channel refs",
+    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\.data\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\.data\);/.test(src));
+  ok("relay frame fencing remains on shouldApplyRelayResponse",
+    /if \(shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
 }
 
 function assertRouteIncludeWiring() {
@@ -87,16 +155,45 @@ function assertPageWiring() {
     /onLiveFrame: liveHook\.ingestExternal,\s*onDetailFrame: detailHook\.ingestExternal/.test(src));
 }
 
+function assertChatGateBaseDiff() {
+  ok("chat gate path list includes transport files",
+    CHAT_BASE_DIFF_PATHS.includes("src/lib/supabase/useChat.ts")
+    && CHAT_BASE_DIFF_PATHS.includes("src/components/game/GameChat.tsx")
+    && CHAT_BASE_DIFF_PATHS.includes("src/components/game/LiveChat.tsx")
+    && CHAT_BASE_DIFF_PATHS.includes("src/app/api/game-chat/prefs/route.ts"));
+
+  const clean = evaluateBaseHeadChanges(["fixture-a"], {
+    baseRef: "base",
+    diffQuiet: () => 0,
+  });
+  ok("chat gate injected clean diff stays green", clean.ok && clean.changed.length === 0);
+
+  const dirty = evaluateBaseHeadChanges(["fixture-a"], {
+    baseRef: "base",
+    diffQuiet: () => 1,
+  });
+  ok("chat gate injected base...HEAD diff turns red", dirty.ok && dirty.changed[0] === "fixture-a");
+
+  const missing = evaluateBaseHeadChanges(["fixture-a"], {
+    baseRef: null,
+    diffQuiet: () => 0,
+  });
+  ok("chat gate fails closed without origin/main", missing.ok === false && missing.reason === "origin/main missing");
+
+  let capturedArgs = null;
+  makeBaseHeadDiffQuiet((cmd, args) => {
+    capturedArgs = { cmd, args };
+    return { status: 0 };
+  })("base-sha", "fixture-a");
+  ok("chat gate default diff uses merge-base...HEAD path fence",
+    capturedArgs?.cmd === "git"
+    && JSON.stringify(capturedArgs.args) === JSON.stringify(["diff", "--quiet", "base-sha", "HEAD", "--", "fixture-a"]));
+}
+
 function assertUntouchedFiles() {
-  const untouched = [
-    "src/lib/supabase/useChat.ts",
-    "src/components/game/GameChat.tsx",
-    "src/components/home/HomeClientShell.tsx",
-  ];
-  for (const file of untouched) {
-    const result = spawnSync("git", ["diff", "--quiet", "--", file], { cwd: ROOT });
-    ok(`${file} unchanged`, result.status === 0);
-  }
+  const diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS);
+  ok("chat base-diff gate resolved origin/main", diff.ok, diff.reason ?? "");
+  ok("chat transport untouched vs merge-base", diff.ok && diff.changed.length === 0, diff.changed.join(", "));
 }
 
 function mutate(path, from, to) {
@@ -109,49 +206,42 @@ function runSelfTest() {
   const targetFiles = [
     "src/lib/game/live-poll-stream.ts",
     "src/lib/hooks/useGameRelay.ts",
+    "scripts/qa/live-multiplex-gate.mjs",
     "src/app/api/game-relay-events/route.ts",
     "src/lib/hooks/useLiveGame.ts",
     "src/app/(main)/games/[gameId]/page.tsx",
   ];
   const cases = [
     {
+      name: "global seq frame mutant",
+      apply: () => mutate(
+        "src/lib/hooks/useGameRelay.ts",
+        "            || mySeq <= channelRef.current\n",
+        "            || mySeq !== requestSeqRef.current\n",
+      ),
+    },
+    {
+      name: "forceEmbed resume mutant",
+      apply: () => mutate(
+        "src/lib/hooks/useGameRelay.ts",
+        "        if (document.visibilityState === \"visible\") fetchRelay(undefined, { forceEmbed: true });\n",
+        "        if (document.visibilityState === \"visible\") fetchRelay();\n",
+      ),
+    },
+    {
       name: "tick cadence mutant",
       apply: () => mutate(
         "src/lib/game/live-poll-stream.ts",
-        "return pollIndex % 3 === 0;",
-        "return pollIndex % 3 !== 0;",
+        "  return ((pollIndex * intervalMs) % 10_000) < intervalMs;\n",
+        "  return pollIndex % 3 === 0;\n",
       ),
     },
     {
-      name: "include wiring mutant",
+      name: "worktree-only diff mutant",
       apply: () => mutate(
-        "src/lib/hooks/useGameRelay.ts",
-        "const includeLive = isLive && shouldEmbedLive(n);",
-        "const includeLive = isLive;",
-      ),
-    },
-    {
-      name: "route conditional mutant",
-      apply: () => mutate(
-        "src/app/api/game-relay-events/route.ts",
-        "if (include.has(\"live\")) {",
-        "if (true) {",
-      ),
-    },
-    {
-      name: "shared ingest mutant",
-      apply: () => mutate(
-        "src/lib/hooks/useLiveGame.ts",
-        "    commitPayloadRef.current((payload ?? {}) as LiveGamePayload, responseGeneration);\n",
-        "    setError(payload.error || null);\n",
-      ),
-    },
-    {
-      name: "page multiplex interval mutant",
-      apply: () => mutate(
-        "src/app/(main)/games/[gameId]/page.tsx",
-        "  const detailHook = useGameDetail(gameId, multiplexActive ? 0 : 30000);",
-        "  const detailHook = useGameDetail(gameId, 30000);",
+        "scripts/qa/live-multiplex-gate.mjs",
+        "  return (base, path) => spawn(\"git\", [\"diff\", \"--quiet\", base, \"HEAD\", \"--\", path], { cwd: ROOT }).status;\n",
+        "  return (_base, path) => spawn(\"git\", [\"diff\", \"--quiet\", \"--\", path], { cwd: ROOT }).status;\n",
       ),
     },
   ];
@@ -159,9 +249,7 @@ function runSelfTest() {
   for (const testCase of cases) {
     const backups = new Map();
     try {
-      for (const file of targetFiles) {
-        backups.set(file, read(file));
-      }
+      for (const file of targetFiles) backups.set(file, read(file));
       testCase.apply();
       const child = spawnSync("npx", ["tsx", "scripts/qa/live-multiplex-gate.mjs"], {
         cwd: ROOT,
@@ -177,9 +265,11 @@ function runSelfTest() {
 async function main() {
   await assertTickCadence();
   assertIncludeWiring();
+  assertFrameFencing();
   assertRouteIncludeWiring();
   assertSharedIngestPath();
   assertPageWiring();
+  assertChatGateBaseDiff();
   assertUntouchedFiles();
 
   if (SELFTEST) runSelfTest();

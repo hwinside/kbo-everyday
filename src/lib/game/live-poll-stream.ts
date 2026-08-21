@@ -17,14 +17,21 @@ export function shouldCombineGameEvents(
   return isFinal || pollIndex % EVENTS_REFRESH_EVERY === 0;
 }
 
-/** 3초 cadence에서 9초마다 live 스냅샷을 relay poll에 동봉한다. */
-export function shouldEmbedLive(pollIndex: number): boolean {
-  return pollIndex % 3 === 0;
+/**
+ * 3초 그리드에서는 10초를 정확히 찍을 수 없으므로, 60초 창 총량 6회를 보존한다.
+ * 식: (pollIndex * intervalMs) % 10_000 < intervalMs
+ * 3초 cadence면 0,4,7,10,14,17,20... 번째 poll이 선택되어 개별 간격은 9~12초다.
+ */
+export function shouldEmbedLive(pollIndex: number, intervalMs: number): boolean {
+  return ((pollIndex * intervalMs) % 10_000) < intervalMs;
 }
 
-/** 3초 cadence에서 30초마다 detail 스냅샷을 relay poll에 동봉한다. */
-export function shouldEmbedDetail(pollIndex: number): boolean {
-  return pollIndex % 10 === 0;
+/**
+ * detail은 30초 cadence를 그대로 유지한다.
+ * 식: (pollIndex * intervalMs) % 30_000 < intervalMs
+ */
+export function shouldEmbedDetail(pollIndex: number, intervalMs: number): boolean {
+  return ((pollIndex * intervalMs) % 30_000) < intervalMs;
 }
 
 const encoder = new TextEncoder();

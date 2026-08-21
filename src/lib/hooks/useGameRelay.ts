@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type MutableRefObject } from "react";
 import type { GameRelayResponse, InningRelay } from "@/app/api/game-relay/route";
 import type { GameEvent } from "@/types/game-events";
 import { planFinalFetch, afterFinalFetch } from "@/lib/hooks/final-relay-fetch";
@@ -109,8 +109,13 @@ export function useGameRelay(
   const abortControllersRef = useRef(new Set<AbortController>());
   const seenEventIdsRef = useRef(new Set<string>());
   const previousLiveGameIdRef = useRef<string | undefined>(undefined);
+  const liveFrameOwnerSeqRef = useRef(0);
+  const detailFrameOwnerSeqRef = useRef(0);
 
-  const fetchRelay = useCallback((eventsTailTimeoutMs?: number): Promise<boolean> => {
+  const fetchRelay = useCallback((
+    eventsTailTimeoutMs?: number,
+    opts?: { forceEmbed?: boolean },
+  ): Promise<boolean> => {
     if (!gameId) return Promise.resolve(false);
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       return Promise.resolve(false);
@@ -164,8 +169,9 @@ export function useGameRelay(
         // 첫 poll + 이후 기존 15초 cadence마다 events를 같은 Edge Request에 싣는다.
         // final 전환은 game_end/victory 발화를 위해 항상 events 포함.
         const wantEvents = shouldCombineGameEvents(n, isFinal);
-        const includeLive = isLive && shouldEmbedLive(n);
-        const includeDetail = isLive && shouldEmbedDetail(n);
+        const forceEmbed = opts?.forceEmbed === true;
+        const includeLive = isLive && (forceEmbed || shouldEmbedLive(n, interval));
+        const includeDetail = isLive && (forceEmbed || shouldEmbedDetail(n, interval));
         const include: string[] = [];
         if (includeLive) include.push("live");
         if (includeDetail) include.push("detail");
@@ -243,19 +249,17 @@ export function useGameRelay(
         };
 
         const applyFrame = (
+          channelRef: MutableRefObject<number>,
           onFrame: ((data: unknown) => void) | undefined,
           data: unknown,
         ) => {
           if (
             !onFrame
-            || !shouldApplyRelayResponse({
-              mounted: mountedRef.current,
-              requestSeq: mySeq,
-              currentSeq: requestSeqRef.current,
-              requestGameId,
-              activeGameId: activeGameIdRef.current,
-            })
+            || !mountedRef.current
+            || activeGameIdRef.current !== requestGameId
+            || mySeq <= channelRef.current
           ) return;
+          channelRef.current = mySeq;
           onFrame(data);
         };
 
@@ -277,9 +281,9 @@ export function useGameRelay(
             } else if (envelope.channel === "events") {
               applyEvents(envelope);
             } else if (envelope.channel === "live") {
-              applyFrame(options?.onLiveFrame, envelope.data);
+              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope.data);
             } else if (envelope.channel === "detail") {
-              applyFrame(options?.onDetailFrame, envelope.data);
+              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope.data);
             }
           });
         } else {
@@ -318,6 +322,8 @@ export function useGameRelay(
     inningsRef.current = new Map();
     seenEventIdsRef.current.clear();
     pollCountRef.current = 0;
+    liveFrameOwnerSeqRef.current = 0;
+    detailFrameOwnerSeqRef.current = 0;
     finalFetchedRef.current = false;
     setData(null);
     setEvents([]);
@@ -346,7 +352,7 @@ export function useGameRelay(
           })()
         : scheduleJitteredRelayPolling({ fetchRelay, interval }).cleanup;
       const onVisibilityChange = () => {
-        if (document.visibilityState === "visible") fetchRelay();
+        if (document.visibilityState === "visible") fetchRelay(undefined, { forceEmbed: true });
       };
       document.addEventListener("visibilitychange", onVisibilityChange);
       return () => {
