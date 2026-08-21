@@ -293,9 +293,14 @@ function assertChatGateBaseDiff() {
   ok("pin base GREEN: 워킹트리 13개 전부 핀과 일치", allPinsClean.ok, allPinsClean.mismatched.join(", "));
 }
 
-function assertUntouchedFiles() {
+function assertUntouchedFiles({
+  evalBase = evaluateBaseHeadChanges,
+  fetchBase = tryFetchOriginMain,
+  evalPins = evaluatePinnedChatHashes,
+  report = ok,
+} = {}) {
   const pinContract = evaluatePinSetEquality();
-  ok(
+  report(
     "chat pin set === base-diff path set (fail-open 방지 계약)",
     pinContract.ok,
     [
@@ -303,14 +308,14 @@ function assertUntouchedFiles() {
       pinContract.orphanPins.length ? `orphan pins: ${pinContract.orphanPins.join(", ")}` : "",
     ].filter(Boolean).join(" / "),
   );
-  let diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS);
+  let diff = evalBase(CHAT_BASE_DIFF_PATHS);
   if (!diff.ok && diff.reason === "origin/main missing") {
-    const fetchedBase = tryFetchOriginMain();
+    const fetchedBase = fetchBase();
     if (fetchedBase) {
-      diff = evaluateBaseHeadChanges(CHAT_BASE_DIFF_PATHS, { baseRef: fetchedBase });
+      diff = evalBase(CHAT_BASE_DIFF_PATHS, { baseRef: fetchedBase });
     } else {
-      const pinned = evaluatePinnedChatHashes();
-      ok(
+      const pinned = evalPins();
+      report(
         "chat transport untouched (pinned-hash fallback — shallow clone, fetch unavailable)",
         pinned.ok,
         pinned.mismatched.join(", "),
@@ -319,9 +324,64 @@ function assertUntouchedFiles() {
     }
   }
   if (diff !== null) {
-    ok("chat base-diff gate resolved base ref", diff.ok, diff.reason ?? "");
-    ok("chat transport untouched vs merge-base", diff.ok && diff.changed.length === 0, diff.changed.join(", "));
+    report("chat base-diff gate resolved base ref", diff.ok, diff.reason ?? "");
+    report("chat transport untouched vs merge-base", diff.ok && diff.changed.length === 0, diff.changed.join(", "));
   }
+}
+
+// —— 삼순 5차 NO-GO: fallback 제어흐름을 assertUntouchedFiles 최종 판정까지 관통해 검증 ——
+// report 심으로 최종 verdict를 포집한다 — primitive 단위가 아니라 게이트 함수 자체를 실행.
+function runUntouchedFilesFlow({ evalBase, fetchBase, evalPins }) {
+  const verdicts = [];
+  assertUntouchedFiles({
+    evalBase,
+    fetchBase,
+    evalPins,
+    report: (name, condition) => verdicts.push({ name, red: !condition }),
+  });
+  return verdicts;
+}
+
+function assertFallbackControlFlow() {
+  // ① origin/main 없음 → fetch 성공 → dirty diff → 최종 RED
+  let evalCalls = 0;
+  const dirtyFlow = runUntouchedFilesFlow({
+    evalBase: (paths, opts) => {
+      evalCalls += 1;
+      if (!opts?.baseRef) return { ok: false, reason: "origin/main missing", changed: [] };
+      return { ok: true, changed: ["src/lib/supabase/useChat.ts"] };
+    },
+    fetchBase: () => "fetched-base-sha",
+    evalPins: () => { throw new Error("pins must not run when fetch succeeds"); },
+  });
+  ok("flow ①: origin 없음→fetch 성공 시 FETCH_HEAD 기준으로 재평가",
+    evalCalls === 2);
+  ok("flow ①: fetch 성공 + dirty chat diff → 최종 RED",
+    dirtyFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === true));
+  ok("flow ①: fetch 성공 경로에선 pinned fallback 미실행",
+    !dirtyFlow.some((v) => v.name.includes("pinned-hash fallback")));
+
+  // ② fetch 실패 → 13핀 전부 clean → 최종 GREEN (pinned fallback 단독 판정)
+  const pinFlow = runUntouchedFilesFlow({
+    evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
+    fetchBase: () => null,
+    evalPins: () => evaluatePinnedChatHashes(),
+  });
+  const pinVerdict = pinFlow.find((v) => v.name.includes("pinned-hash fallback"));
+  ok("flow ②: fetch 실패 → pinned fallback 실행됨", pinVerdict !== undefined);
+  ok("flow ②: 13핀 clean → 최종 GREEN", pinVerdict !== undefined && pinVerdict.red === false);
+  ok("flow ②: fallback 경로에선 base-diff 판정 미출력(이중 판정 방지)",
+    !pinFlow.some((v) => v.name === "chat transport untouched vs merge-base"));
+
+  // ②-RED 대조: fetch 실패 + 핀 mismatch → 최종 RED (GREEN이 조건 무관 고정이 아님을 증명)
+  const pinRedFlow = runUntouchedFilesFlow({
+    evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
+    fetchBase: () => null,
+    evalPins: () => ({ ok: false, mismatched: ["src/lib/supabase/useChat.ts"] }),
+  });
+  const pinRedVerdict = pinRedFlow.find((v) => v.name.includes("pinned-hash fallback"));
+  ok("flow ②-대조: fetch 실패 + pin mismatch → 최종 RED",
+    pinRedVerdict !== undefined && pinRedVerdict.red === true);
 }
 
 function mutate(path, from, to) {
@@ -406,6 +466,7 @@ async function main() {
   assertSharedIngestPath();
   assertPageWiring();
   assertChatGateBaseDiff();
+  assertFallbackControlFlow();
   assertUntouchedFiles();
 
   if (SELFTEST) runSelfTest();
