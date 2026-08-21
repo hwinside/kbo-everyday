@@ -2,6 +2,10 @@
 # gate-tiers.json SSOT 기반. 4샤드 병렬. PR required check로 결속(ruleset은 별도 콘솔 작업).
 name: qa-ci-gates
 
+# 보안: PR 코드를 실행하는 워크플로 — 토큰 권한 최소화 + credential 비지속 (삼순 1차 보안 P0)
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -21,6 +25,8 @@ jobs:
         shard: ["0/4", "1/4", "2/4", "3/4"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24

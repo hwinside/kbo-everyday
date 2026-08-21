@@ -30,6 +30,54 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 
 export const TIERS = ["deploy", "ci"];
 
+// prebuild 결속 exact 계약 — 이 문자열이 package.json scripts.prebuild 와 정확히 일치해야 한다.
+// prebuild 가 러너에서 풀리면(배포 게이트 해제) 모든 실행면(CI·nightly·selftest)이 즉시 RED.
+export const PREBUILD_BINDING = "node scripts/qa/run-gate-tiers.mjs --tier deploy";
+
+export function validatePrebuildBinding(pkgScripts) {
+  if (pkgScripts?.prebuild !== PREBUILD_BINDING) {
+    return [
+      `package.json scripts.prebuild 가 게이트 러너에 결속되지 않음 (exact 불일치): "${pkgScripts?.prebuild}" !== "${PREBUILD_BINDING}"`,
+    ];
+  }
+  return [];
+}
+
+// 허용 argv 조합 exact — 이 외의 모든 조합은 fail-close.
+//   [--selftest] 단독 / [--tier X] / [--tier X --list] / [--tier ci --shard i/N] / [--tier ci --shard i/N --list]
+export function parseArgv(argv) {
+  const flags = { tier: null, shard: null, list: false, selftest: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === "--selftest") flags.selftest = true;
+    else if (a === "--list") flags.list = true;
+    else if (a === "--tier") {
+      if (flags.tier !== null || i + 1 >= argv.length) return { error: "--tier 중복 또는 값 누락" };
+      flags.tier = argv[(i += 1)];
+    } else if (a === "--shard") {
+      if (flags.shard !== null || i + 1 >= argv.length) return { error: "--shard 중복 또는 값 누락" };
+      flags.shard = argv[(i += 1)];
+    } else return { error: `알 수 없는 인자: ${a}` };
+  }
+  if (flags.selftest) {
+    if (flags.tier !== null || flags.shard !== null || flags.list) {
+      return { error: "--selftest 는 단독으로만 허용" };
+    }
+    return { mode: "selftest" };
+  }
+  if (!flags.tier || !["deploy", "ci", "all"].includes(flags.tier)) {
+    return { error: "--tier deploy|ci|all 필수" };
+  }
+  let shard = { index: 0, total: 1 };
+  if (flags.shard !== null) {
+    if (flags.tier !== "ci") return { error: "--shard는 --tier ci에서만 허용" };
+    const parsed = parseShard(flags.shard);
+    if (parsed === null) return { error: "--shard i/N 형식 오류 (0<=i<N)" };
+    shard = parsed;
+  }
+  return { mode: "run", tier: flags.tier, shard, list: flags.list };
+}
+
 export function validateManifest(manifest, helpers, pkgScripts) {
   const errors = [];
   const gates = manifest?.gates;
@@ -68,8 +116,7 @@ export function selectGates(manifest, tier) {
 }
 
 export function parseShard(spec) {
-  if (spec == null) return { index: 0, total: 1 };
-  const m = /^([0-9]+)\/([0-9]+)$/.exec(spec);
+  const m = /^([0-9]+)\/([0-9]+)$/.exec(spec ?? "");
   if (!m) return null;
   const index = Number(m[1]);
   const total = Number(m[2]);
@@ -174,6 +221,49 @@ function selftest() {
         return errors.length === 0;
       },
     ],
+    [
+      "M10 실제 package.json prebuild 가 러너 deploy 티어에 exact 결속",
+      () => {
+        const errors = validatePrebuildBinding(loadJson("package.json").scripts);
+        if (errors.length) console.error(errors.join("\n"));
+        return errors.length === 0;
+      },
+    ],
+    [
+      "M11 prebuild 결속 mutation RED — 해제/변조/부분문자열 전부 FAIL",
+      () =>
+        validatePrebuildBinding({ prebuild: "npm run qa:query-guard" }).length > 0 &&
+        validatePrebuildBinding({}).length > 0 &&
+        validatePrebuildBinding({ prebuild: `${PREBUILD_BINDING} && echo extra` }).length > 0 &&
+        validatePrebuildBinding({ prebuild: "node scripts/qa/run-gate-tiers.mjs --tier ci" }).length > 0,
+    ],
+    [
+      "M12 argv 조합 exact — 허용 5종만 통과",
+      () =>
+        parseArgv(["--selftest"]).mode === "selftest" &&
+        parseArgv(["--tier", "deploy"]).mode === "run" &&
+        parseArgv(["--tier", "all", "--list"]).list === true &&
+        parseArgv(["--tier", "ci", "--shard", "1/4"]).mode === "run" &&
+        parseArgv(["--tier", "ci", "--shard", "1/4", "--list"]).list === true,
+    ],
+    [
+      "M13 argv 거부 mutation RED — 비허용 조합 전부 error",
+      () =>
+        [
+          ["--list"],
+          ["--selftest", "--tier", "deploy"],
+          ["--selftest", "--list"],
+          ["--tier", "deploy", "--shard", "0/2"],
+          ["--tier", "all", "--shard", "0/2"],
+          ["--tier", "bogus"],
+          ["--tier"],
+          ["--shard", "0/2"],
+          ["--tier", "ci", "--shard", "2/2"],
+          ["--tier", "deploy", "--unknown"],
+          ["--tier", "deploy", "--tier", "ci"],
+          ["extra"],
+        ].every((argv) => Boolean(parseArgv(argv).error)),
+    ],
   ];
   let failed = 0;
   for (const [label, fn] of cases) {
@@ -194,43 +284,27 @@ function selftest() {
 }
 
 function main() {
-  const argv = process.argv.slice(2);
-  const canonical = new Set(["--tier", "--shard", "--list", "--selftest"]);
-  for (const a of argv) {
-    if (a.startsWith("--") && !canonical.has(a)) {
-      // 값 인자(deploy, 0/3 등)는 -- 로 시작하지 않으므로 여기서 걸리지 않는다
-      console.error(`[gate-tiers] 알 수 없는 플래그: ${a}`);
-      process.exit(1);
-    }
+  const parsed = parseArgv(process.argv.slice(2));
+  if (parsed.error) {
+    console.error(`[gate-tiers] argv 거부 (fail-close): ${parsed.error}`);
+    process.exit(1);
   }
-  if (argv.includes("--selftest")) {
+  if (parsed.mode === "selftest") {
     selftest();
     return;
   }
-  const tierIdx = argv.indexOf("--tier");
-  const tier = tierIdx >= 0 ? argv[tierIdx + 1] : null;
-  if (!tier || !["deploy", "ci", "all"].includes(tier)) {
-    console.error("[gate-tiers] --tier deploy|ci|all 필수");
-    process.exit(1);
-  }
-  const shardIdx = argv.indexOf("--shard");
-  const shard = parseShard(shardIdx >= 0 ? argv[shardIdx + 1] : null);
-  if (shard === null) {
-    console.error("[gate-tiers] --shard i/N 형식 오류 (0<=i<N)");
-    process.exit(1);
-  }
-  if (shardIdx >= 0 && tier !== "ci") {
-    console.error("[gate-tiers] --shard는 --tier ci에서만 허용");
-    process.exit(1);
-  }
+  const { tier, shard } = parsed;
 
-  // fail-close 검증 — 실행 전
+  // fail-close 검증 — 실행 전 (manifest 정합 + prebuild 결속 exact)
   const manifest = loadJson("scripts/qa/gate-tiers.json");
   const helpers = loadJson("scripts/qa/gate-tiers-helpers.json");
   const pkg = loadJson("package.json");
-  const errors = validateManifest(manifest, helpers, pkg.scripts);
+  const errors = [
+    ...validateManifest(manifest, helpers, pkg.scripts),
+    ...validatePrebuildBinding(pkg.scripts),
+  ];
   if (errors.length) {
-    console.error(`[gate-tiers] manifest 검증 실패 (fail-close):\n${errors.join("\n")}`);
+    console.error(`[gate-tiers] 검증 실패 (fail-close):\n${errors.join("\n")}`);
     process.exit(1);
   }
 
@@ -238,7 +312,7 @@ function main() {
   console.log(
     `[gate-tiers] tier=${tier} shard=${shard.index}/${shard.total} — ${selected.length}개 게이트`,
   );
-  if (argv.includes("--list")) {
+  if (parsed.list) {
     for (const name of selected) console.log(name);
     return;
   }
