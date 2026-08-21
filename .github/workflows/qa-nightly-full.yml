@@ -1,0 +1,28 @@
+# nightly full QA — 172개 게이트 전체를 매일 1회 완주 (티어 분리의 커버리지 백스톱)
+name: qa-nightly-full
+
+permissions:
+  contents: read
+
+on:
+  schedule:
+    - cron: "30 17 * * *" # 02:30 KST
+  workflow_dispatch:
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: gate-tiers selftest (fail-close)
+        run: node scripts/qa/run-gate-tiers.mjs --selftest
+      - name: run all 172 gates
+        run: node scripts/qa/run-gate-tiers.mjs --tier all

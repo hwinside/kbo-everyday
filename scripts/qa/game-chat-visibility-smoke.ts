@@ -10,7 +10,13 @@ assert.equal(canRenderGameChat({ status: "error", visible: false }), false);
 const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { scripts: Record<string, string> };
 const workflow = readFileSync(".github/workflows/game-chat-visibility-gate.yml", "utf8");
 const browser = readFileSync("scripts/qa/ui-smoke-game-chat-visibility.mjs", "utf8");
-assert.match(pkg.scripts.prebuild, /qa:game-chat-visibility/, "pure gate must be in prebuild");
+const gateTiers = JSON.parse(readFileSync("scripts/qa/gate-tiers.json", "utf8")) as {
+  gates: Array<{ name: string; tier: string }>;
+};
+assert.ok(
+  gateTiers.gates.some((g) => g.name === "qa:game-chat-visibility"),
+  "pure gate must be registered in gate-tiers manifest",
+);
 assert.match(workflow, /npm run qa:game-chat-visibility/, "required workflow must run pure gate");
 assert.match(workflow, /npm run qa:ui:game-chat-visibility/, "required workflow must run browser gate");
 assert.match(browser, /document\.body\.classList\.contains\("kbd-open"\)/, "browser gate must assert keyboard focus cleanup");
