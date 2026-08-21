@@ -70,14 +70,14 @@ export default function GeniusEntryButton() {
       data-testid="genius-entry-button"
       className="relative flex h-11 w-11 items-center justify-center rounded-full transition-colors hover:bg-bg-tertiary disabled:opacity-50"
     >
-      {/* 컨테이너는 헤더 공용 44px 터치 타깃 유지, 캐릭터만 40px 높이로 그린다.
-          원형 크롭을 하면 세로로 긴 캐릭터의 머리·발이 잘려 누군지 안 보인다. */}
+      {/* 컨테이너는 헤더 공용 44px 터치 타깃 유지. 캐릭터 그림은 **22px** — 쪽지
+          (MessageCircle size=22)·마이페이지(HeaderAvatar 22px)와 세로 크기를 맞춘다
+          (2026-08-21 하린아빠 "헤더가 커지지 않게 아이콘과 세로 크기를 맞춰줘"). */}
       {/* ⚠️ 애니메이션 WebP 는 CSS 로 멈출 수 없다(재생 주체가 이미지 디코더) —
           prefers-reduced-motion 에서는 <source media> 로 정지 poster 자산을 대신
           로드해야 실제로 멈춘다(GeniusMascotImage 와 동일 계약). */}
-      {/* 모션 프레임(268×192)은 h-10 에서 폭 ~56px 로 44px 슬롯을 넘친다.
-          pointer-events-none 으로 이미지 overflow 가 이웃(쪽지 버튼) hit-area 를
-          잡아먹지 않게 한다 — 탭 판정은 44px 버튼 자신만 한다(삼순 NO-GO ①). */}
+      {/* pointer-events-none: 탭 판정은 44px 버튼 자신만 한다(삼순 NO-GO ①).
+          22px 축소로 overflow 는 사라졌지만(폭 ~31px) 방어로 유지한다. */}
       <picture className="pointer-events-none">
         <source
           media="(prefers-reduced-motion: reduce)"
@@ -91,7 +91,7 @@ export default function GeniusEntryButton() {
           alt=""
           aria-hidden
           data-clip={clip}
-          className="h-10 w-auto max-w-none object-contain"
+          className="h-[22px] w-auto max-w-none object-contain"
         />
       </picture>
     </button>

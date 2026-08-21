@@ -86,8 +86,10 @@ export function useDMList() {
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
-      .not("user1_id", "eq", BASEBALL_GENIUS_USER_ID)
-      .not("user2_id", "eq", BASEBALL_GENIUS_USER_ID)
+      // ⚠️ `.not(col, "eq", v)` 는 NULL 비안전 — 탈퇴 상대(participant NULL) 대화까지
+      // 사라진다(삼순 NO-GO). `IS NULL OR != bot` 으로 NULL-safe 제외.
+      .or(`user1_id.is.null,user1_id.neq.${BASEBALL_GENIUS_USER_ID}`)
+      .or(`user2_id.is.null,user2_id.neq.${BASEBALL_GENIUS_USER_ID}`)
       .not("last_message", "is", null)
       .order("last_message_at", { ascending: false })
       .limit(500);

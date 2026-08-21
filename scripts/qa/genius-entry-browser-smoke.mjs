@@ -78,6 +78,7 @@ async function main() {
   let testUser = null;
   let buddyUser = null;
   const qaConvIds = [];
+  let anonHomeHeaderH = null; // 비로그인 홈 헤더 높이 — 로그인(버튼 있음)과 동일해야 한다
 
   try {
     // ---------- 비로그인: 진입 자체가 불가능해야 한다 ----------
@@ -106,6 +107,7 @@ async function main() {
         m.headerRect ? `${Math.round(m.headerRect.height)}px` : "(헤더 없음)",
       );
       ok(`${T} 가로 overflow 없음`, !m.docOverflowX);
+      if (pg.path === "/" && m.headerRect) anonHomeHeaderH = Math.round(m.headerRect.height);
 
       await ctx.close();
     }
@@ -231,6 +233,27 @@ async function main() {
         !!measured.headerRect && measured.headerRect.height >= HEADER_MIN && measured.headerRect.height <= HEADER_MAX,
         measured.headerRect ? `${Math.round(measured.headerRect.height)}px` : "",
       );
+      // 헤더 전후 동일: 진입점 없는 비로그인 홈과 있는 로그인 홈이 같은 높이여야 한다
+      // (2026-08-21 하린아빠 "야잘알봇 때문에 헤더가 커지지 않게").
+      ok(
+        "[로그인·홈] 헤더 높이가 진입점 없는 헤더와 동일(커지지 않음)",
+        anonHomeHeaderH !== null && !!measured.headerRect && Math.round(measured.headerRect.height) === anonHomeHeaderH,
+        `비로그인 ${anonHomeHeaderH}px vs 로그인 ${measured.headerRect ? Math.round(measured.headerRect.height) : "?"}px`,
+      );
+      // 세 아이콘 세로 크기 정합: 마스코트 그림·쪽지 아이콘·마이페이지 아이콘 전부 22px
+      const iconHeights = await page.evaluate(() => {
+        const r = (el) => (el ? Math.round(el.getBoundingClientRect().height) : null);
+        const mascot = document.querySelector('[data-testid="genius-entry-button"] img');
+        const dmSvg = document.querySelector('header a[href="/messages"] svg');
+        const myLink = document.querySelector('header a[href="/my"]');
+        const myIcon = myLink?.querySelector("img, svg, div");
+        return { mascot: r(mascot), dm: r(dmSvg), my: r(myIcon) };
+      });
+      ok(
+        "[로그인·홈] 아이콘 세로 22px 정합(마스코트·쪽지·마이페이지)",
+        iconHeights.mascot === 22 && iconHeights.dm === 22 && iconHeights.my === 22,
+        `mascot=${iconHeights.mascot} dm=${iconHeights.dm} my=${iconHeights.my}`,
+      );
       ok("[로그인·홈] 가로 overflow 없음", !measured.docOverflowX);
 
       // 탭하면 대화창 직행 (목록 경유 금지)
@@ -283,7 +306,8 @@ async function main() {
       if (buddyProfErr) throw new Error(`buddy 프로필 생성 실패: ${buddyProfErr.message}`);
 
       const mkConv = async (a, b, lastMessage) => {
-        const [u1, u2] = [a, b].sort();
+        // b=null 은 탈퇴 상대(participant NULL) fixture — NULL-safe 제외식 검증용(삼순 NO-GO 2차).
+        const [u1, u2] = b === null ? [a, null] : [a, b].sort();
         const { data: conv, error } = await admin
           .from("dm_conversations")
           .insert({ user1_id: u1, user2_id: u2, last_message: lastMessage, last_message_at: new Date().toISOString() })
@@ -312,17 +336,21 @@ async function main() {
 
       const geniusConv = await mkConv(testUser.id, GENIUS_ID, "[QA] 봇 unread");
       const buddyConv = await mkConv(testUser.id, buddyUser.id, "[QA] 일반 unread");
+      // 탈퇴 상대 fixture: participant NULL + sender NULL unread. NULL 비안전 제외식이면
+      // 이 방이 목록·배지에서 통째로 사라진다(삼순 NO-GO 2차).
+      const departedConv = await mkConv(testUser.id, null, "[QA] 탈퇴 unread");
       const { error: msgErr } = await admin.from("dm_messages").insert([
         { conversation_id: geniusConv, sender_id: GENIUS_ID, content: "[QA] 봇 unread", is_read: false },
         { conversation_id: buddyConv, sender_id: buddyUser.id, content: "[QA] 일반 unread", is_read: false },
+        { conversation_id: departedConv, sender_id: null, content: "[QA] 탈퇴 unread", is_read: false },
       ]);
       if (msgErr) throw new Error(`unread 메시지 생성 실패: ${msgErr.message}`);
 
       const after = await readBadge();
       ok(
-        "[로그인·배지] 봇 unread 제외·일반 unread 유지 — delta 정확히 +1",
-        after - baseline === 1,
-        `baseline=${baseline} after=${after} (봇이 세면 +2, 일반까지 빠지면 +0)`,
+        "[로그인·배지] 봇 제외·일반 유지·탈퇴(NULL) 유지 — delta 정확히 +2",
+        after - baseline === 2,
+        `baseline=${baseline} after=${after} (봇이 세면 +3, 탈퇴가 사라지면 +1, 전부 빠지면 +0)`,
       );
     }
 
@@ -345,9 +373,13 @@ async function main() {
       const inbox = await page.evaluate(() => ({
         hasGeniusCard: document.body.innerText.includes("야잘알봇"),
         hasMascotImg: !!document.querySelector('img[src*="/mascot/"]'),
+        hasDeparted: document.body.innerText.includes("탈퇴한 사용자"),
       }));
       ok("[로그인·쪽지함] 야잘알봇 카드 미노출", !inbox.hasGeniusCard && !inbox.hasMascotImg,
          `text=${inbox.hasGeniusCard} img=${inbox.hasMascotImg}`);
+      // NULL-safe 제외식 종단 검증: 탈퇴 상대 대화는 목록에 살아 있어야 한다.
+      ok("[로그인·쪽지함] 탈퇴 상대(participant NULL) 대화는 목록에 유지", inbox.hasDeparted,
+         `departed=${inbox.hasDeparted}`);
     }
 
     await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });

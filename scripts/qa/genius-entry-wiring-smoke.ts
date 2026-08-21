@@ -70,11 +70,15 @@ const HEADERS_WITH_DM = [
   const unreadHook = read("src/lib/supabase/useUnreadDMCount.ts");
   // ⚠️ 문자열 존재 검사는 필터를 지워도 PASS 하는 false-green 이었다(삼순 NO-GO ②).
   // 실제 필터 **식**을 검사한다 — 서버쪽 .not() 양쪽 participant 제외 + 클라 방어 필터.
-  const SERVER_NOT_U1 = /\.not\(\s*"user1_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
-  const SERVER_NOT_U2 = /\.not\(\s*"user2_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
-  check("[useUnreadDMCount.ts] 서버쪽 쿼리에서 야잘알봇 양쪽 participant 를 제외한다", () => {
-    assert.ok(SERVER_NOT_U1.test(unreadHook), "user1_id 서버쪽 제외 없음");
-    assert.ok(SERVER_NOT_U2.test(unreadHook), "user2_id 서버쪽 제외 없음");
+  // NULL-safe 제외식: `IS NULL OR != bot`. `.not(col,"eq",v)` 는 탈퇴(participant NULL)
+  // 대화까지 사라지게 하는 NULL 비안전 식이라 금지한다(삼순 NO-GO 2차).
+  const SERVER_NOT_U1 = /\.or\(`user1_id\.is\.null,user1_id\.neq\.\$\{BASEBALL_GENIUS_USER_ID\}`\)/;
+  const SERVER_NOT_U2 = /\.or\(`user2_id\.is\.null,user2_id\.neq\.\$\{BASEBALL_GENIUS_USER_ID\}`\)/;
+  const NULL_UNSAFE_NOT = /\.not\(\s*"user[12]_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
+  check("[useUnreadDMCount.ts] 서버쪽 쿼리에서 야잘알봇 양쪽 participant 를 NULL-safe 로 제외한다", () => {
+    assert.ok(SERVER_NOT_U1.test(unreadHook), "user1_id NULL-safe 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(unreadHook), "user2_id NULL-safe 제외 없음");
+    assert.ok(!NULL_UNSAFE_NOT.test(unreadHook), "NULL 비안전 .not(eq) 잔존");
   });
   check("[useUnreadDMCount.ts] 클라 방어 필터도 양쪽 participant 를 본다", () => {
     assert.ok(
@@ -82,12 +86,20 @@ const HEADERS_WITH_DM = [
       "클라 방어 필터 없음",
     );
   });
-  check("[useDM.ts] 목록 서버쪽 쿼리도 야잘알봇을 제외한다(limit 500 경계)", () => {
+  check("[useDM.ts] 목록 서버쪽 쿼리도 야잘알봇을 NULL-safe 로 제외한다(limit 500 경계)", () => {
     // 클라 필터만 있으면 봇방이 500개 한도에서 일반방 1칸을 먹는다.
-    assert.ok(SERVER_NOT_U1.test(dmHook), "useDMList user1_id 서버쪽 제외 없음");
-    assert.ok(SERVER_NOT_U2.test(dmHook), "useDMList user2_id 서버쪽 제외 없음");
+    assert.ok(SERVER_NOT_U1.test(dmHook), "useDMList user1_id NULL-safe 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(dmHook), "useDMList user2_id NULL-safe 제외 없음");
+    assert.ok(!NULL_UNSAFE_NOT.test(dmHook), "NULL 비안전 .not(eq) 잔존");
   });
 }
+
+// 세로 크기: 마스코트 그림은 이웃 아이콘(쪽지 22·아바타 22px)과 동일해야 한다
+// (2026-08-21 하린아빠 "헤더가 커지지 않게 아이콘과 세로 크기를 맞춰줘").
+check("마스코트 그림 높이 = 22px (아이콘 규격 정합)", () => {
+  assert.ok(/h-\[22px\]/.test(entry), "h-[22px] 아님 — 헤더 아이콘 규격(22px)과 불일치");
+  assert.ok(!/\bh-10\b/.test(entry), "구 40px 클래스 잔존");
+});
 
 // hit-area: 마스코트 overflow 가 이웃 버튼 탭을 가로채면 안 된다 (삼순 NO-GO ①)
 check("마스코트 이미지는 pointer-events-none — 탭 판정은 44px 버튼만", () => {
