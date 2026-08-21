@@ -309,11 +309,6 @@ export function useGameRelay(
     return isFinal ? request : relayResult;
   }, [gameId, currentInning, isFinal, isLive, options?.onDetailFrame, options?.onLiveFrame]);
 
-  // queued force-embed 가 해제 시점의 최신 fetchRelay 를 타도록 ref 로 간접 참조한다
-  // (클로저가 오래된 fetchRelay 를 잡으면 gameId 전환 후 stale 요청을 발사할 수 있다).
-  const fetchRelayRef = useRef<typeof fetchRelay | null>(null);
-  fetchRelayRef.current = fetchRelay;
-
   // gameId 전환 시 누적 이닝 캐시·폴링 카운터·표시 데이터를 초기화한다. 이것이 없으면
   // 새 경기 첫 폴링이 이전 경기의 캐시(size>0) 때문에 since 를 보내 이전 경기 이닝 위에
   // delta 를 병합한다(교차 오염). 선언 순서상 폴링 effect 보다 먼저 실행된다.
