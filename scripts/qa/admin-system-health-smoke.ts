@@ -4,7 +4,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { cpuUsedPercentFromSnapshots, parsePrometheusText, pickCpuBaseline, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import { computeInstantCpuFromStore, cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -274,11 +274,11 @@ test("client CPU delta derives busy percent across exporter scrape intervals", (
   );
 });
 
-test("pickCpuBaseline picks the freshest advanced stored snapshot", () => {
+test("computeInstantCpuFromStore rates current against the freshest stored snapshot", () => {
   const fp = "cpu0";
   const now = Date.parse("2026-08-21T10:00:00.000Z");
   const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
-  const picked = pickCpuBaseline(
+  const result = computeInstantCpuFromStore(
     [
       { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 60_000 },
       { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 120_000 },
@@ -286,44 +286,68 @@ test("pickCpuBaseline picks the freshest advanced stored snapshot", () => {
     current,
     now,
   );
-  assert.ok(picked);
-  assert.equal(picked.baseline.totalSeconds, 302);
-  assert.ok(Math.abs(picked.usedPercent - 40) < 0.001);
-  assert.equal(picked.windowSeconds, 60);
+  assert.ok(result);
+  assert.ok(Math.abs(result.usedPercent - 40) < 0.001);
+  assert.equal(result.windowSeconds, 60);
+  assert.equal(result.sampleEndedAtMs, now); // 현재 counter가 전진 → rate 종료 = now
 });
 
-test("pickCpuBaseline fails closed on identical/foreign/stale/reset rows", () => {
+// 삼순 2차 blocker 1: 정상 주기의 [최신 C=-31초, 직전 B=-91초] + 현재=C 상황도 값이 나와야 한다.
+test("computeInstantCpuFromStore keeps the value when current equals the newest stored tick", () => {
   const fp = "cpu0";
   const now = Date.parse("2026-08-21T10:00:00.000Z");
   const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
-  // 같은 scrape tick(동일 counter)은 건너뛰고 더 오래된 전진 row로 계산한다
-  const fallback = pickCpuBaseline(
+  const result = computeInstantCpuFromStore(
     [
-      { ...current, capturedAtMs: now - 10_000 },
-      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 70_000 },
+      { ...current, capturedAtMs: now - 31_000 }, // C — 현재와 동일 tick
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 91_000 }, // B
     ],
     current,
     now,
   );
-  assert.ok(fallback);
-  assert.equal(fallback.baseline.totalSeconds, 302);
+  assert.ok(result, "동일 최신 tick + 직전 91쓸에서도 측정 중이 되면 안 된다");
+  assert.ok(Math.abs(result.usedPercent - 40) < 0.001);
+  assert.equal(result.windowSeconds, 60); // C↔B 창
+  assert.equal(result.sampleEndedAtMs, now - 31_000); // freshness 기준은 C 시각
+});
+
+// 삼순 2차 blocker 2: counter가 2분 이상 멈추면 현재값으로 위장하지 않는다.
+test("computeInstantCpuFromStore fails closed when the counter has been frozen", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  const frozen = computeInstantCpuFromStore(
+    [
+      { ...current, capturedAtMs: now - 130_000 }, // 동일 counter, 2분 이상 정지
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 190_000 },
+    ],
+    current,
+    now,
+  );
+  assert.equal(frozen, null);
+});
+
+test("computeInstantCpuFromStore fails closed on foreign/stale/reset/empty rows", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
   // fingerprint 불일치 → null
   assert.equal(
-    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: "other", capturedAtMs: now - 60_000 }], current, now),
+    computeInstantCpuFromStore([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: "other", capturedAtMs: now - 60_000 }], current, now),
     null,
   );
-  // freshness 상한(90초) 초과 baseline → null (오래된 평균을 현재값으로 위장 금지 — 삼순 게이트)
+  // 창 상한(150초) 초과 → null (장기 평균을 순간값으로 위장 금지)
   assert.equal(
-    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 91_000 }], current, now),
+    computeInstantCpuFromStore([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 151_000 }], current, now),
     null,
   );
   // counter 리셋(역전) → null
   assert.equal(
-    pickCpuBaseline([{ totalSeconds: 400, idleSeconds: 300, seriesFingerprint: fp, capturedAtMs: now - 60_000 }], current, now),
+    computeInstantCpuFromStore([{ totalSeconds: 400, idleSeconds: 300, seriesFingerprint: fp, capturedAtMs: now - 60_000 }], current, now),
     null,
   );
-  // 빈 원장 → null
-  assert.equal(pickCpuBaseline([], current, now), null);
+  // 빈 저장소 → null
+  assert.equal(computeInstantCpuFromStore([], current, now), null);
 });
 
 test("route fills CPU instantly from the Edge Config baseline (read-only enforced)", async () => {
@@ -356,7 +380,34 @@ test("route fills CPU instantly from the Edge Config baseline (read-only enforce
   assert.ok(payload.metrics.cpuSampleSeconds !== null && payload.metrics.cpuSampleSeconds >= 59 && payload.metrics.cpuSampleSeconds <= 62);
 });
 
-test("route rejects a stale (>90s) Edge Config baseline", async () => {
+// 삼순 2차 blocker 1 회귀: 동일 최신 tick(C=-31초) + 직전(B=-91초)에서도 값이 유지되고
+// freshness 기준은 rate 종료 시각(C)으로 고정된다.
+test("route keeps the value when current equals the newest stored tick (no 측정 중 gap)", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const cAtMs = Date.now() - 31_000;
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json({
+        key: "cpuSnapshots",
+        value: [
+          { t: cAtMs, fp, total: 302, idle: 201.2 }, // 현재 counter와 동일 tick
+          { t: cAtMs - 60_000, fp, total: 300, idle: 200 },
+        ],
+      });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.cpuSampleSeconds, 60);
+  assert.equal(Date.parse(payload.metrics.cpuSampleEndedAt), cAtMs);
+});
+
+test("route rejects a frozen counter (rate older than 90s) as 측정 중", async () => {
   const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
   const response = await routeWith(async (input) => {
     const url = String(input);
@@ -366,13 +417,36 @@ test("route rejects a stale (>90s) Edge Config baseline", async () => {
     if (url.includes("api.vercel.com/v1/edge-config")) {
       return Response.json({
         key: "cpuSnapshots",
-        value: [{ t: Date.now() - 120_000, fp, total: 300, idle: 200 }],
+        value: [
+          { t: Date.now() - 130_000, fp, total: 302, idle: 201.2 }, // 현재와 동일 = 2분 이상 정지
+          { t: Date.now() - 190_000, fp, total: 300, idle: 200 },
+        ],
       });
     }
     return Response.json(healthyServices);
   });
   const payload = await response.json();
-  assert.equal(payload.metrics.cpuUsedPercent, null); // 90초 초과 baseline = 현재값 위장 금지
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 멈춘 counter를 현재값으로 위장 금지
+  assert.equal(payload.metrics.cpuSampleEndedAt, null);
+});
+
+test("route rejects a window longer than the 150s cap", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json({
+        key: "cpuSnapshots",
+        value: [{ t: Date.now() - 151_000, fp, total: 300, idle: 200 }],
+      });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 장기 평균을 순간값으로 위장 금지
 });
 
 test("route degrades to client-delta path when the snapshot store is unavailable", async () => {

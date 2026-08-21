@@ -9,6 +9,8 @@ export interface CpuCounterSnapshot {
 export interface SystemMetricSummary {
   cpuUsedPercent: number | null;
   cpuSampleSeconds: number | null;
+  /** cpuUsedPercent가 기반한 rate의 종료 시각(ISO). 소비처는 이 시각으로 freshness를 판정한다. */
+  cpuSampleEndedAt: string | null;
   cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
   load1: number | null;
@@ -121,26 +123,53 @@ export interface StoredCpuSnapshot extends CpuCounterSnapshot {
   capturedAtMs: number;
 }
 
+export interface InstantCpuResult {
+  usedPercent: number;
+  windowSeconds: number;
+  /** 이 rate가 끝난 시각(최신 쪽 스냅샷의 시각). freshness 판정은 이 값 기준. */
+  sampleEndedAtMs: number;
+}
+
+/** freshness 상한: rate 종료 시각이 이보다 오래되면 현재값으로 표시 금지 (삼순 게이트 ≤90초). */
+export const CPU_SAMPLE_MAX_AGE_SECONDS = 90;
+/** delta 창 상한: cron 1분 주기 + 지터. 초과는 장기 평균이라 순간값으로 부적합. */
+export const CPU_SAMPLE_MAX_WINDOW_SECONDS = 150;
+
 /**
- * 저장된 스냅샷 중 현재 counter와 delta 계산이 가능한 가장 최신 baseline을 고른다.
- * 계약: 같은 fingerprint + counter 전진(cpuUsedPercentFromSnapshots가 null이 아님) +
- * 창이 maxWindowSeconds 이하. 조건 미충족 시 null (fail-close — 오래된 평균을 현재값처럼 보여주지 않는다).
+ * 저장 스냅샷 + 현재 counter로 즉시 CPU%를 계산한다 (삼순 2차 NO-GO 반영).
+ *
+ * freshness는 baseline 나이가 아니라 **rate가 끝난 시각(sampleEndedAt)** 기준이다:
+ * - 현재 counter가 최신 저장분보다 전진 → (현재, stored[0]) 쌍, endedAt = now.
+ * - 현재가 최신 저장분과 동일(같은 scrape tick) → (stored[0], stored[1]) 쌍,
+ *   endedAt = stored[0] 시각. ← "최신 C=-31초·직전 B=-91초"에서도 C 기준 신선도로
+ *   값을 유지해 주기마다 "측정 중" 공백이 생기던 blocker 1을 닫는다.
+ * 공통 검증: fingerprint 일치·counter 전진(역전/리셋 거부), 창 ≤ maxWindow,
+ * 나이(now-endedAt) ≤ maxAge. 미충족은 null (fail-close — counter가 멈추면
+ * endedAt이 공진하므로 오래된 값이 현재값으로 위장되지 않는다).
  */
-export function pickCpuBaseline(
+export function computeInstantCpuFromStore(
   stored: StoredCpuSnapshot[],
   current: CpuCounterSnapshot,
   nowMs: number,
-  maxWindowSeconds = 90,
-): { baseline: StoredCpuSnapshot; usedPercent: number; windowSeconds: number } | null {
-  const candidates = [...stored]
-    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs < nowMs)
+  maxAgeSeconds = CPU_SAMPLE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
     .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
-  for (const row of candidates) {
-    const windowSeconds = (nowMs - row.capturedAtMs) / 1_000;
-    if (windowSeconds > maxWindowSeconds) continue;
-    const usedPercent = cpuUsedPercentFromSnapshots(current, row);
-    if (usedPercent === null) continue;
-    return { baseline: row, usedPercent, windowSeconds };
+
+  const pairs: Array<{ newer: CpuCounterSnapshot; newerAtMs: number; older: StoredCpuSnapshot }> = [];
+  if (rows[0]) pairs.push({ newer: current, newerAtMs: nowMs, older: rows[0] });
+  if (rows[0] && rows[1]) pairs.push({ newer: rows[0], newerAtMs: rows[0].capturedAtMs, older: rows[1] });
+
+  for (const pair of pairs) {
+    const usedPercent = cpuUsedPercentFromSnapshots(pair.newer, pair.older);
+    if (usedPercent === null) continue; // 동일 tick·역전·fingerprint 불일치
+    const windowSeconds = (pair.newerAtMs - pair.older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
+    const ageSeconds = (nowMs - pair.newerAtMs) / 1_000;
+    if (ageSeconds > maxAgeSeconds) continue;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: pair.newerAtMs };
   }
   return null;
 }
@@ -287,6 +316,7 @@ export function summarizeSystemMetrics(
       cpuUsedPercent === null || cpuSampleSeconds === undefined || !Number.isFinite(cpuSampleSeconds)
         ? null
         : round(cpuSampleSeconds),
+    cpuSampleEndedAt: null,
     cpuCounter,
     cpuCores,
     load1: round(load1),

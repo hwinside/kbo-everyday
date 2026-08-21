@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cpuUsedPercentFromSnapshots, type CpuCounterSnapshot } from "@/lib/admin/system-health";
+import {
+  CPU_SAMPLE_MAX_AGE_SECONDS,
+  CPU_SAMPLE_MAX_WINDOW_SECONDS,
+  cpuUsedPercentFromSnapshots,
+  type CpuCounterSnapshot,
+} from "@/lib/admin/system-health";
 import {
   Activity,
   AlertTriangle,
@@ -24,6 +29,7 @@ interface SystemHealthResponse {
   metrics: {
     cpuUsedPercent: number | null;
     cpuSampleSeconds: number | null;
+    cpuSampleEndedAt: string | null;
     cpuCounter: CpuCounterSnapshot | null;
     cpuCores: number | null;
     load1: number | null;
@@ -173,7 +179,9 @@ export default function SystemHealthPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cpuBaseline = useRef<{ counter: CpuCounterSnapshot; checkedAt: string } | null>(null);
-  const lastCpuSample = useRef<{ usedPercent: number; sampleSeconds: number } | null>(null);
+  // sampleEndedAtMs = 이 rate가 끝난 시각. 재사용 시에도 갱신하지 않고 그 시각으로
+  // freshness를 판정한다(삼순 2차 blocker 2: counter 정지 시 오래된 값이 순간값으로 위장되는 경로 차단).
+  const lastCpuSample = useRef<{ usedPercent: number; sampleSeconds: number; sampleEndedAtMs: number } | null>(null);
   const latestRequest = useRef(0);
   const latestAppliedAt = useRef(Number.NEGATIVE_INFINITY);
 
@@ -200,29 +208,57 @@ export default function SystemHealthPanel() {
             counter.idleSeconds === previous.counter.idleSeconds;
           const used = cpuUsedPercentFromSnapshots(counter, previous.counter);
           const seconds = (Date.parse(next.checkedAt) - Date.parse(previous.checkedAt)) / 1_000;
-          if (used !== null && seconds > 0) {
+          const serverFilled =
+            next.metrics.cpuUsedPercent !== null && next.metrics.cpuUsedPercent !== undefined;
+          if (used !== null && seconds > 0 && seconds <= CPU_SAMPLE_MAX_WINDOW_SECONDS) {
             const sample = {
               usedPercent: Math.round(used * 10) / 10,
               sampleSeconds: Math.round(seconds * 10) / 10,
+              sampleEndedAtMs: checkedAtMs,
             };
             next.metrics.cpuUsedPercent = sample.usedPercent;
             next.metrics.cpuSampleSeconds = sample.sampleSeconds;
+            next.metrics.cpuSampleEndedAt = next.checkedAt;
             lastCpuSample.current = sample;
             cpuBaseline.current = { counter, checkedAt: next.checkedAt };
-          } else if (sameSnapshot && lastCpuSample.current) {
-            next.metrics.cpuUsedPercent = lastCpuSample.current.usedPercent;
-            next.metrics.cpuSampleSeconds = lastCpuSample.current.sampleSeconds;
-          } else {
+          } else if (sameSnapshot && lastCpuSample.current && !serverFilled) {
+            // 동일 scrape tick 재사용 — 단, rate 종료 시각 기준 90초까지만.
+            const ageSeconds = (checkedAtMs - lastCpuSample.current.sampleEndedAtMs) / 1_000;
+            if (ageSeconds <= CPU_SAMPLE_MAX_AGE_SECONDS) {
+              next.metrics.cpuUsedPercent = lastCpuSample.current.usedPercent;
+              next.metrics.cpuSampleSeconds = lastCpuSample.current.sampleSeconds;
+              next.metrics.cpuSampleEndedAt = new Date(lastCpuSample.current.sampleEndedAtMs).toISOString();
+            } else {
+              lastCpuSample.current = null; // 정지된 counter를 현재값으로 위장하지 않는다
+            }
+          } else if (!sameSnapshot) {
             cpuBaseline.current = { counter, checkedAt: next.checkedAt };
             lastCpuSample.current = null;
           }
         } else {
           cpuBaseline.current = { counter, checkedAt: next.checkedAt };
         }
+        // 서버가 즉시값을 채운 경우에도 재사용 기준을 그 rate 종료 시각로 맞춘다.
+        const serverEndedAtMs = next.metrics.cpuSampleEndedAt ? Date.parse(next.metrics.cpuSampleEndedAt) : NaN;
+        if (
+          next.metrics.cpuUsedPercent !== null &&
+          next.metrics.cpuUsedPercent !== undefined &&
+          Number.isFinite(serverEndedAtMs) &&
+          (!lastCpuSample.current || lastCpuSample.current.sampleEndedAtMs < serverEndedAtMs)
+        ) {
+          lastCpuSample.current = {
+            usedPercent: next.metrics.cpuUsedPercent,
+            sampleSeconds: next.metrics.cpuSampleSeconds ?? 0,
+            sampleEndedAtMs: serverEndedAtMs,
+          };
+        }
       }
       if (next.metrics && next.metrics.cpuUsedPercent !== null && next.metrics.cpuUsedPercent !== undefined) {
-        const atMs = Date.parse(next.checkedAt);
-        if (Number.isFinite(atMs)) writeCpuLastGood({ percent: next.metrics.cpuUsedPercent, atMs });
+        // last-good 시각은 응답 시각(checkedAt)이 아니라 **rate 종료 시각**으로 고정한다.
+        const endedAtMs = next.metrics.cpuSampleEndedAt ? Date.parse(next.metrics.cpuSampleEndedAt) : NaN;
+        if (Number.isFinite(endedAtMs)) {
+          writeCpuLastGood({ percent: next.metrics.cpuUsedPercent, atMs: endedAtMs });
+        }
       }
       setData(next);
       setError(null);

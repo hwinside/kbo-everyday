@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { pickCpuBaseline, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import { computeInstantCpuFromStore, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
 import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store";
 
 export const dynamic = "force-dynamic";
@@ -48,8 +48,8 @@ async function fetchMetricsText(ref: string) {
  * delta로 첫 응답부터 값을 채운다.
  * 계약: 이 경로는 읽기 전용(write 없음)·bounded timeout. 저장소 실패는 즉시값만
  * 비활성(null)하고 기존 클라이언트 60초 경로는 그대로 동작한다.
- * freshness: baseline 90초 초과 = 사용 금지(pickCpuBaseline 기본값) — 오래된 평균을
- * 현재값처럼 표시하지 않는다.
+ * freshness: rate 종료 시각(sampleEndedAt) 기준 90초 상한(computeInstantCpuFromStore) —
+ * counter가 멈추거나 오래된 평균이면 현재값으로 표시하지 않는다(삼순 2차 NO-GO 반영).
  */
 async function fetchMetrics(ref: string) {
   const [text, stored] = await Promise.all([fetchMetricsText(ref), loadRecentCpuSnapshots()]);
@@ -57,10 +57,11 @@ async function fetchMetrics(ref: string) {
   const counter = summary.cpuCounter;
   if (!counter) return summary;
   if (summary.cpuUsedPercent === null && stored !== null) {
-    const picked = pickCpuBaseline(stored, counter, Date.now());
-    if (picked) {
-      summary.cpuUsedPercent = Math.round(picked.usedPercent * 10) / 10;
-      summary.cpuSampleSeconds = Math.round(picked.windowSeconds * 10) / 10;
+    const instant = computeInstantCpuFromStore(stored, counter, Date.now());
+    if (instant) {
+      summary.cpuUsedPercent = Math.round(instant.usedPercent * 10) / 10;
+      summary.cpuSampleSeconds = Math.round(instant.windowSeconds * 10) / 10;
+      summary.cpuSampleEndedAt = new Date(instant.sampleEndedAtMs).toISOString();
     }
   }
   return summary;
