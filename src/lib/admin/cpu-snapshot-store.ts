@@ -33,6 +33,8 @@ async function adminClient() {
 export async function loadRecentCpuSnapshots(limit = 10): Promise<StoredCpuSnapshot[] | null> {
   try {
     const supabase = await adminClient();
+    // query-guard: bounded -- admin_metric_snapshots는 1분 cron 적재 + 60분 보존(pruneCpuSnapshots)이라
+    // 원장 자체가 상한 ~60행이고, 여기서는 delta 계산에 필요한 최신 limit(기본 10)행만 읽는다.
     const { data, error } = await supabase
       .from(TABLE)
       .select("captured_at,fingerprint,total_seconds,idle_seconds")
