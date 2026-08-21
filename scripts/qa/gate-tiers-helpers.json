@@ -45,6 +45,7 @@
     "qa:daily-live",
     "qa:dm-atomic",
     "qa:dm-preservation",
+    "qa:dup-name-photo",
     "qa:end-streak",
     "qa:exclusive-badges:db",
     "qa:exclusive-badges:live",

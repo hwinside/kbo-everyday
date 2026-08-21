@@ -67,9 +67,11 @@ function lookupPitcherEra(name: string, teamId?: number): string | null {
   return found?.era ?? null;
 }
 
-function PlayerPhoto({ name, teamId }: { name: string; type: "pitcher" | "batter"; teamId?: number }) {
-  const rosterPlayer = resolveRosterPlayer({ name, teamId });
-  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId);
+function PlayerPhoto({ name, type, teamId }: { name: string; type: "pitcher" | "batter"; teamId?: number }) {
+  // 투수/타석 슬롯 역할로 같은 팀 동명이인(투/야)을 분리한다.
+  const positionHint = type === "pitcher" ? ("투수" as const) : ("야수" as const);
+  const rosterPlayer = resolveRosterPlayer({ name, teamId, positionHint });
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId, positionHint);
   const borderColor = "#7ecb4a";
 
   return (
