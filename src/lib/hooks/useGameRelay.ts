@@ -109,10 +109,6 @@ export function useGameRelay(
   const previousLiveGameIdRef = useRef<string | undefined>(undefined);
   const liveFrameOwnerSeqRef = useRef(0);
   const detailFrameOwnerSeqRef = useRef(0);
-  // 삼순 runtime blocker(r5): 느린 in-flight 중 foreground 복귀하면 forceEmbed 요청이
-  // 조기 반환으로 유실돼 live/detail 즉시 포함이 다음 cadence(최대 9s/30s)까지 밀린다.
-  // 유실 대신 1회만 queue 해두고, in-flight 해제 직후 정확히 1회 후행 발사한다.
-  const pendingForceEmbedRef = useRef(false);
 
   const fetchRelay = useCallback((
     eventsTailTimeoutMs?: number,
@@ -122,13 +118,7 @@ export function useGameRelay(
     if (typeof document !== "undefined" && document.visibilityState === "hidden") {
       return Promise.resolve(false);
     }
-    if (inFlightRef.current) {
-      // forceEmbed 요청만 보존(일반 주기 폴은 종전처럼 단순 스킵). 여러 번 복귀해도 1회로 합쳐진다.
-      if (opts?.forceEmbed === true) pendingForceEmbedRef.current = true;
-      return Promise.resolve(false);
-    }
-    // 이 요청이 forceEmbed 를 직접 실행하면 보류분은 이 요청으로 흡수된 것이므로 소멸시킨다.
-    if (opts?.forceEmbed === true) pendingForceEmbedRef.current = false;
+    if (inFlightRef.current) return Promise.resolve(false);
     const requestGameId = gameId;
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
@@ -154,20 +144,6 @@ export function useGameRelay(
       inFlightRef.current = false;
       inFlightPromiseRef.current = null;
       if (mountedRef.current) setIsLoading(false);
-      // queued force-embed 소비: in-flight 해제 직후 정확히 1회만 후행 발사한다.
-      // hidden 이면 발사하지 않고 보류를 유지해 다음 visible 복귀/해제 시점으로 넘긴다.
-      if (
-        pendingForceEmbedRef.current
-        && mountedRef.current
-        && !(typeof document !== "undefined" && document.visibilityState === "hidden")
-      ) {
-        pendingForceEmbedRef.current = false;
-        queueMicrotask(() => {
-          if (mountedRef.current && activeGameIdRef.current === requestGameId) {
-            void fetchRelayRef.current?.(undefined, { forceEmbed: true });
-          }
-        });
-      }
     };
 
     const request = (async (): Promise<boolean> => {
@@ -351,8 +327,6 @@ export function useGameRelay(
     requestSeqRef.current++;
     inFlightRef.current = false;
     inFlightPromiseRef.current = null;
-    // 이전 경기에서 queue 된 force-embed 는 새 경기와 무관하므로 폐기한다.
-    pendingForceEmbedRef.current = false;
     inningsRef.current = new Map();
     seenEventIdsRef.current.clear();
     pollCountRef.current = 0;
