@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff } from "lucide-react";
+import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff, Megaphone } from "lucide-react";
 import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
@@ -562,13 +562,19 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
             <Send className="w-5 h-5" />
           </motion.button>
         </div>
-        {/* 매너 안내 — 모든 크관 입력창 바로 아래 상시 노출 (2026-08-21 하린아빠 지시, 문구 원문 고정) */}
-        <p
-          data-testid="kgwan-manner-notice"
-          className="max-w-[640px] mx-auto px-3 pb-2 text-[11px] leading-4 text-text-tertiary"
-        >
-          크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다. 매너 있는 글은 응원팀을 더 멋지게 만들고, 그렇지 않은 글은 응원팀을 부끄럽게 만듭니다. 매너를 꼭 지켜주세요.
-        </p>
+        {/* 매너 안내 — 모든 크관 입력창 바로 아래 상시 노출 (2026-08-21 하린아빠 지시, 문구 원문 고정).
+            가시성 요구("너무 안보임")로 11px/tertiary → 13px/secondary + accent 틴틸 배경·좌측 바. */}
+        <div className="max-w-[640px] mx-auto px-3 pb-2">
+          <p
+            data-testid="kgwan-manner-notice"
+            className="flex items-start gap-2 rounded-lg border-l-[3px] border-accent bg-accent/10 px-3 py-2 text-[13px] leading-5 font-medium text-text-secondary"
+          >
+            <Megaphone size={14} className="shrink-0 mt-0.5 text-accent" aria-hidden="true" />
+            <span>
+              크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다. 매너 있는 글은 응원팀을 더 멋지게 만들고, 그렇지 않은 글은 응원팀을 부끄럽게 만듭니다. 매너를 꼭 지켜주세요.
+            </span>
+          </p>
+        </div>
         <AnimatePresence initial={false}>
           {showGifPicker && (
             <motion.div
