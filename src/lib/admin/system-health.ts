@@ -158,20 +158,43 @@ export function computeInstantCpuFromStore(
     .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
     .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
 
-  const pairs: Array<{ newer: CpuCounterSnapshot; newerAtMs: number; older: StoredCpuSnapshot }> = [];
-  if (rows[0]) pairs.push({ newer: current, newerAtMs: nowMs, older: rows[0] });
-  if (rows[0] && rows[1]) pairs.push({ newer: rows[0], newerAtMs: rows[0].capturedAtMs, older: rows[1] });
+  const latest = rows[0];
+  if (!latest) return null;
 
-  for (const pair of pairs) {
-    const usedPercent = cpuUsedPercentFromSnapshots(pair.newer, pair.older);
-    if (usedPercent === null) continue; // 동일 tick·역전·fingerprint 불일치
-    const windowSeconds = (pair.newerAtMs - pair.older.capturedAtMs) / 1_000;
-    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
-    const ageSeconds = (nowMs - pair.newerAtMs) / 1_000;
-    if (ageSeconds > maxAgeSeconds) continue;
-    return { usedPercent, windowSeconds, sampleEndedAtMs: pair.newerAtMs };
+  const sameCounter = (left: CpuCounterSnapshot, right: CpuCounterSnapshot) =>
+    left.seriesFingerprint === right.seriesFingerprint &&
+    left.totalSeconds === right.totalSeconds &&
+    left.idleSeconds === right.idleSeconds;
+
+  const evaluate = (
+    newer: CpuCounterSnapshot,
+    newerAtMs: number,
+    older: StoredCpuSnapshot,
+  ): InstantCpuResult | null => {
+    const usedPercent = cpuUsedPercentFromSnapshots(newer, older);
+    if (usedPercent === null) return null; // 동일 tick·역전·fingerprint 불일치
+    const windowSeconds = (newerAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) return null;
+    const ageSeconds = (nowMs - newerAtMs) / 1_000;
+    if (ageSeconds > maxAgeSeconds) return null;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newerAtMs };
+  };
+
+  if (sameCounter(current, latest)) {
+    // 현재 counter가 최신 저장분과 **정확히 동일**한 경우에만 과거 쌍(latest, prev)으로 대체한다.
+    // (삼순 3차 P0-1: 첫 쌍이 실패했다고 무조건 fallback 하면 current 리셋·fingerprint
+    //  변경 상황에서 과거 rate를 실시간처럼 보여준다.)
+    const previous = rows[1];
+    if (!previous) return null;
+    return evaluate(latest, latest.capturedAtMs, previous);
   }
-  return null;
+
+  // current ↔ stored[0] 경로: 현재 scrape 시각을 모르므로 baseline 신선도를 별도로 제한한다.
+  // (삼순 3차 P0-2: C가 정지해도 sampleEndedAt=now로 매번 찍혀 90초 freshness를
+  //  150초 window까지 우회하는 경로 차단.)
+  const baselineAgeSeconds = (nowMs - latest.capturedAtMs) / 1_000;
+  if (baselineAgeSeconds > maxAgeSeconds) return null;
+  return evaluate(current, nowMs, latest);
 }
 
 export function cpuUsedPercentFromSnapshots(

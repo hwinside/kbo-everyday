@@ -327,6 +327,56 @@ test("computeInstantCpuFromStore fails closed when the counter has been frozen",
   assert.equal(frozen, null);
 });
 
+// 삼순 3차 P0-1: current가 최신 저장분과 정확히 동일할 때만 과거 쌍을 쓴다.
+// reset/fingerprint 변경으로 첫 쌍이 실패했다고 과거 rate를 실시간처럼 보여주면 안 된다.
+test("computeInstantCpuFromStore never falls back to a past pair when current diverges", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const storedPair = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 20_000 }, // C
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 80_000 }, // B
+  ];
+  // current가 리셋(counter 역전) — 과거 C↔B 가 유효해도 null 이어야 한다
+  assert.equal(
+    computeInstantCpuFromStore(storedPair, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+  );
+  // current fingerprint 변경 — 마찬가지로 null
+  assert.equal(
+    computeInstantCpuFromStore(
+      storedPair,
+      { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: `${fp};cpu2|mode=idle` },
+      now,
+    ),
+    null,
+  );
+});
+
+// 삼순 3차 P0-2: current=C 가 정지했고 store 최신=B 일 때
+// sampleEndedAt=now 로 매번 찍어 90초 freshness 를 150초 window 까지 우회하면 안 된다.
+test("computeInstantCpuFromStore caps the current↔stored path by stored freshness", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  // B 가 91초 전 — 창(91s)은 150s 이내지만 baseline 신선도가 90초를 넘으므로 null
+  assert.equal(
+    computeInstantCpuFromStore(
+      [{ totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 91_000 }],
+      current,
+      now,
+    ),
+    null,
+  );
+  // 89초 전이면 정상 계산
+  const ok = computeInstantCpuFromStore(
+    [{ totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 89_000 }],
+    current,
+    now,
+  );
+  assert.ok(ok);
+  assert.equal(ok.sampleEndedAtMs, now);
+});
+
 test("computeInstantCpuFromStore fails closed on foreign/stale/reset/empty rows", () => {
   const fp = "cpu0";
   const now = Date.parse("2026-08-21T10:00:00.000Z");
@@ -888,5 +938,97 @@ domTest("UI shows date and age when checkedAt is stale", async () => {
       if (key !== "fetch") globals[key] = value;
     }
     dom.window.close();
+  }
+});
+
+// 삼순 3차 P1: Vercel cron 은 중복·동시 실행될 수 있고 Edge Config PATCH 에는 CAS 가 없다.
+// read→whole-array PATCH 가 최신값을 되돌리지 않는지 단조 병합 계약으로 고정한다.
+test("mergeCpuSnapshots keeps monotonic newest under overlapping cron writes", async () => {
+  const { mergeCpuSnapshots } = await import("../../src/lib/admin/cpu-snapshot-store");
+  const fp = "cpu0";
+  const t0 = Date.parse("2026-08-21T10:00:00.000Z");
+  const B = { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: t0 - 60_000 };
+  const C = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: t0 };
+  const D = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: t0 + 60_000 };
+
+  // 빠른 작업자가 D 를 이미 반영한 상태에서, 느린 작업자가 stale read([C,B]) 로 C 를 쓰려 한다
+  const afterFast = mergeCpuSnapshots([C, B], D);
+  assert.equal(afterFast[0].totalSeconds, 304);
+  const afterSlow = mergeCpuSnapshots(afterFast, C);
+  assert.equal(afterSlow[0].totalSeconds, 304, "느린 작업자의 stale write 가 최신값을 덮으면 안 된다");
+
+  // 동일 counter 중복 적재는 dedupe 되고, 가장 이른 관측 시각이 유지된다
+  const duplicated = mergeCpuSnapshots([C, B], { ...C, capturedAtMs: t0 + 30_000 });
+  assert.equal(duplicated.length, 2);
+  assert.equal(duplicated[0].capturedAtMs, t0);
+});
+
+test("commitCpuSnapshot retries when a concurrent writer wins the PATCH", async () => {
+  const { commitCpuSnapshot } = await import("../../src/lib/admin/cpu-snapshot-store");
+  const fp = "cpu0";
+  const t0 = Date.parse("2026-08-21T10:00:00.000Z");
+  const previousToken = process.env.VERCEL_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.VERCEL_TOKEN = "***";
+
+  // 1회차 PATCH 는 성공하지만 재조회에서 다른 작업자가 덮어써 내 값이 사라진 것으로 관측된다.
+  let reads = 0;
+  let patches = 0;
+  const older = { t: t0 - 60_000, fp, total: 300, idle: 200 };
+  const mine = { t: t0, fp, total: 302, idle: 201.2 };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.includes("api.vercel.com/v1/edge-config")) throw new Error(`unexpected call ${url}`);
+    if ((init?.method || "GET").toUpperCase() !== "GET") {
+      patches += 1;
+      return new Response(null, { status: 200 });
+    }
+    reads += 1;
+    // read1: 기존만 / verify1: 내 값 유실(경쟁 패배) / read2: 기존만 / verify2: 내 값 반영
+    const value = reads >= 4 ? [mine, older] : [older];
+    return Response.json({ key: "cpuSnapshots", value });
+  }) as typeof fetch;
+
+  try {
+    const result = await commitCpuSnapshot({
+      capturedAtMs: t0,
+      seriesFingerprint: fp,
+      totalSeconds: 302,
+      idleSeconds: 201.2,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.wrote, true);
+    assert.ok(patches >= 2, "경쟁 패배 시 PATCH 를 재시도해야 한다");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = previousToken;
+  }
+});
+
+// E2E 실측으로 발견한 결함 회귀: Edge Config 는 키 부재 시 404 가 아니라 **204 No Content**(빈 본문)를
+// 반환한다. 204 에 response.json() 을 호출하면 예외가 나서 "조회 실패(null)"로 오판되고,
+// cron 이 첫 적재를 영영 못 한다(E2E 1회차 500 으로 재현됨).
+test("loadRecentCpuSnapshots treats 204/empty body as an empty store, not a failure", async () => {
+  const { loadRecentCpuSnapshots } = await import("../../src/lib/admin/cpu-snapshot-store");
+  const previousToken = process.env.VERCEL_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.VERCEL_TOKEN = "***";
+  try {
+    globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+    assert.deepEqual(await loadRecentCpuSnapshots(), [], "204 는 빈 저장소여야 한다");
+
+    globalThis.fetch = (async () => new Response("", { status: 200 })) as typeof fetch;
+    assert.deepEqual(await loadRecentCpuSnapshots(), [], "빈 본문 200 도 빈 저장소여야 한다");
+
+    globalThis.fetch = (async () => new Response("not json", { status: 200 })) as typeof fetch;
+    assert.equal(await loadRecentCpuSnapshots(), null, "파싱 불가 본문은 판정 불능(null)이어야 한다");
+
+    globalThis.fetch = (async () => new Response("boom", { status: 500 })) as typeof fetch;
+    assert.equal(await loadRecentCpuSnapshots(), null, "5xx 는 판정 불능(null)이어야 한다");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = previousToken;
   }
 });

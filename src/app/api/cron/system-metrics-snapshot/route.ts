@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractCpuCounterSnapshot } from "@/lib/admin/system-health";
 import {
+  commitCpuSnapshot,
   counterAdvanced,
   loadRecentCpuSnapshots,
-  replaceCpuSnapshots,
 } from "@/lib/admin/cpu-snapshot-store";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -19,8 +19,10 @@ export const maxDuration = 30;
  * 측정은 첫 ~60초가 "측정 중"이 된다(#1275 스레드 — 다급한 상황에서 1분 대기 불가).
  *
  * 저장소: Vercel Edge Config — 감시 대상 Supabase DB 밖(순환 의존 제거).
- * 작성자: 이 cron 하나뿐(단일 작성자). 전체 배열 단일 upsert = 원자적 교체라
- * read→insert race가 없다. health 경로는 읽기 전용.
+ * health 경로는 읽기 전용이고 쓰기는 이 cron만 한다.
+ * 동시성: Vercel 공식 계약상 cron은 중복·동시 실행될 수 있고 Edge Config PATCH에는
+ * CAS가 없다. 따라서 commitCpuSnapshot이 read→단조 병합→PATCH→재조회 검증으로
+ * 최신값 퇴행을 막는다(삼순 3차 P1).
  *
  * 실패 계약: 어떤 실패든 5xx로 노출해 Vercel cron 실패 집계에 잡히게 한다.
  * cron이 죽으면 baseline이 90초를 넘겨 즉시값이 자연 소멸(stale fail-close)하고,
@@ -72,19 +74,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, inserted: false, capturedAt: new Date(now).toISOString() });
   }
 
-  const next = [
-    {
-      capturedAtMs: now,
-      seriesFingerprint: counter.seriesFingerprint,
-      totalSeconds: counter.totalSeconds,
-      idleSeconds: counter.idleSeconds,
-    },
-    ...stored,
-  ];
-  const replaced = await replaceCpuSnapshots(next);
-  if (!replaced) {
+  const committed = await commitCpuSnapshot({
+    capturedAtMs: now,
+    seriesFingerprint: counter.seriesFingerprint,
+    totalSeconds: counter.totalSeconds,
+    idleSeconds: counter.idleSeconds,
+  });
+  if (!committed.ok) {
     return NextResponse.json({ error: "snapshot 적재 실패" }, { status: 500 });
   }
 
-  return NextResponse.json({ ok: true, inserted: true, capturedAt: new Date(now).toISOString() });
+  return NextResponse.json({
+    ok: true,
+    inserted: committed.wrote,
+    capturedAt: new Date(now).toISOString(),
+  });
 }
