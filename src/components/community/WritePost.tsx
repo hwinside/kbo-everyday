@@ -275,7 +275,7 @@ export default function WritePost({
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
             className="fixed inset-0 z-50 bg-bg-primary overflow-y-auto flex flex-col"
           >
-            <div className="flex items-center justify-between px-5 py-3" style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 12px)" }}>
+            <div className="flex items-center justify-between px-5 py-3" style={{ paddingTop: "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 12px)" }}>
               <button onClick={onClose} className="text-text-secondary p-1">
                 <X size={24} />
               </button>

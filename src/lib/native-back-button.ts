@@ -44,7 +44,7 @@ function showExitToast(): void {
     "left:50%",
     "transform:translateX(-50%)",
     // 탭바(--global-tabbar-h 51px) 위에 뜨도록
-    "bottom:calc(env(safe-area-inset-bottom, 0px) + 70px)",
+    "bottom:calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 70px)",
     "z-index:9999",
     "background:rgba(0,0,0,0.82)",
     "color:#fff",

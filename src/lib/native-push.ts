@@ -75,7 +75,7 @@ function showForegroundBanner(title: string, body: string, url: string | null): 
     "position:fixed",
     "left:12px",
     "right:12px",
-    "top:calc(env(safe-area-inset-top, 0px) + 12px)",
+    "top:calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 12px)",
     "z-index:2147483647",
     "display:block",
     "border:1px solid rgba(255,255,255,0.14)",

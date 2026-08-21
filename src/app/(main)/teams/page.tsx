@@ -37,7 +37,7 @@ export default function TeamsPage() {
 
   return (
     <div className="mx-auto max-w-lg px-5">
-      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 -mx-5 border-b border-border bg-bg-primary px-5" style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
       <header className="min-h-[44px] flex items-center justify-between gap-3">
         <h1 className="truncate text-lg font-bold text-text-primary">구단 선택</h1>
         <HeaderProfileLink />

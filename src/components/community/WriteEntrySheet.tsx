@@ -41,7 +41,7 @@ export default function WriteEntrySheet({ isOpen, onClose, onChoosePhoto, onChoo
           <div className="px-5 py-4 border-b border-border">
             <h2 className="text-lg font-bold text-text-primary">어떤 글을 쓸까요?</h2>
           </div>
-          <div className={`px-5 py-4 grid ${onChoosePoll ? "grid-cols-3" : "grid-cols-2"} gap-3 pb-[calc(1rem+env(safe-area-inset-bottom))]`}>
+          <div className={`px-5 py-4 grid ${onChoosePoll ? "grid-cols-3" : "grid-cols-2"} gap-3 pb-[calc(1rem+var(--safe-area-inset-bottom,env(safe-area-inset-bottom)))]`}>
             <button
               onClick={onChoosePhoto}
               className="flex flex-col items-center gap-2 p-5 rounded-2xl bg-bg-tertiary active:scale-95 transition-transform"

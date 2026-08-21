@@ -239,7 +239,7 @@ export default function PlayerSelectModal({ isOpen, teamId, onComplete, onSkip, 
           맨 아래 "나중에 할게요"가 네비바 뒤로 밀려 닿지 않던 문제). 하단은 safe-area +
           여유 패딩으로 시스템 네비바 위로 띄운다. 상단도 safe-area 기준 — 엣지투엣지
           기기에서 고정 pt-10이면 타이틀이 상태바/온보딩 진행 바(z-110)와 겹친다. */}
-      <div className="w-full max-w-lg mx-auto px-6 pt-[calc(env(safe-area-inset-top,0px)+44px)] pb-[calc(env(safe-area-inset-bottom,0px)+24px)]">
+      <div className="w-full max-w-lg mx-auto px-6 pt-[calc(var(--safe-area-inset-top,env(safe-area-inset-top,0px))+44px)] pb-[calc(var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))+24px)]">
         <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.1 }} className="text-center mb-4">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Image src={team.logoPath} alt="" width={32} height={32} unoptimized className="object-contain" />

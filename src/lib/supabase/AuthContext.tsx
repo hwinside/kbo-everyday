@@ -6,6 +6,12 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
+import {
+  acquireSession,
+  backupSessionTokens,
+  beginLogoutFence,
+  clearSessionBackup,
+} from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
@@ -152,33 +158,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     async function syncSession() {
-      let session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] = null;
-
-      // 1차: 일반 세션 (쿠키 기반)
-      try {
-        const result = await supabase.auth.getSession();
-        session = result.data.session;
-      } catch { /* getSession fail */ }
-
-      // 2차: sessionStorage에 pending token이 있으면 setSession으로 복원
-      // (iOS Safari에서 쿠키가 안 붙을 때의 fallback)
-      if (!session && typeof window !== "undefined") {
-        try {
-          const pending = sessionStorage.getItem("kbo-pending-session");
-          if (pending) {
-            const { access_token, refresh_token } = JSON.parse(pending);
-            if (access_token && refresh_token) {
-              const { data } = await supabase.auth.setSession({
-                access_token,
-                refresh_token,
-              });
-              session = data.session;
-            }
-            // 사용 후 제거 (1회성)
+      // 세션 획득 사다리: ① 쿠키 → ② pending 토큰 → ③ 네이티브 백업 복원.
+      // 기존 1·2차 로직을 semantics 그대로 acquireSession 으로 이동 — 상위 단계에서
+      // 세션을 얻으면 하위 단계는 실행되지 않는다(정상 로그인 = 네이티브 read 0회,
+      // QA 스모크가 call count 로 직접 검증). 웹/플러그인 미포함 바이너리는 ③이 no-op.
+      const session = await acquireSession<
+        NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]>
+      >({
+        getCookieSession: async () => (await supabase.auth.getSession()).data.session,
+        consumePendingTokens: () => {
+          // (iOS Safari에서 쿠키가 안 붙을 때의 fallback — 사용 후 제거, 1회성)
+          if (typeof window === "undefined") return null;
+          try {
+            const pending = sessionStorage.getItem("kbo-pending-session");
+            if (!pending) return null;
             sessionStorage.removeItem("kbo-pending-session");
-          }
-        } catch { sessionStorage.removeItem("kbo-pending-session"); }
-      }
+            const { access_token, refresh_token } = JSON.parse(pending);
+            if (access_token && refresh_token) return { access_token, refresh_token };
+          } catch { sessionStorage.removeItem("kbo-pending-session"); }
+          return null;
+        },
+        setSession: tokens => supabase.auth.setSession(tokens),
+      });
 
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
@@ -208,6 +209,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
+        // 로그인/토큰 갱신마다 네이티브 백업을 최신화 (refresh token rotation 대응).
+        // SIGNED_OUT(session=null)에서는 백업을 지우지 않는다 — 일시적 세션 소실에서
+        // 백업이 유일한 복구 수단이라, 제거는 명시적 signOut()에서만 수행.
+        if (session?.access_token && session.refresh_token) {
+          void backupSessionTokens({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          });
+        }
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
           // 계정 전환 감지: userId가 바뀌면 이전 계정 localStorage 즉시 정리
@@ -253,6 +263,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
+        // 명시적 로그아웃 = 네이티브 세션 백업도 제거. fence 를 먼저 올려 signOut 과
+        // 동시에 도착하는 TOKEN_REFRESHED/SIGNED_IN 이 백업을 되살리는 race 를 차단하고
+        // (이후 backupSessionTokens 전부 no-op), 마지막에 한 번 더 지운다. best-effort.
+        beginLogoutFence();
+        try { await clearSessionBackup(); } catch { /* ignore */ }
         // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
         // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게
         // 항상 로컬 정리 + 홈 이동이 실행되도록 보장한다. (#209/#419 네이티브 hang 패턴)
@@ -277,6 +292,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
           });
         } catch { /* SSR safety */ }
+        // 마지막 재삭제 — signOut 진행 중 끼어든 단계가 백업을 다시 썼을 가능성 방어.
+        try { await clearSessionBackup(); } catch { /* ignore */ }
         window.location.href = "/";
       },
       refreshProfile,

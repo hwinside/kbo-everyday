@@ -80,7 +80,7 @@ export default function MemeEditor({ imageUrl, onSave, onCancel }: MemeEditorPro
       {/* Header */}
       <div
         className="flex items-center justify-between px-4 py-2"
-        style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 8px)" }}
+        style={{ paddingTop: "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 8px)" }}
       >
         <button onClick={onCancel} className="text-text-secondary p-2">
           <X size={24} />

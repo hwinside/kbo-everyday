@@ -371,7 +371,7 @@ export default function WritePhotoPost({
             {/* Header */}
             <div
               className="flex items-center justify-between px-4 py-2"
-              style={{ paddingTop: "max(env(safe-area-inset-top, 0px), 12px)" }}
+              style={{ paddingTop: "max(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)), 12px)" }}
             >
               <button onClick={step === 1 ? handleClose : undefined} className="flex items-center gap-0.5 text-text-secondary p-1">
                 {step === 1 ? <X size={24} /> : <div className="w-6" />}
@@ -583,7 +583,7 @@ export default function WritePhotoPost({
             {/* Fixed bottom action bar */}
             <div
               className="sticky bottom-0 px-5 pt-3 pb-3 bg-bg-primary border-t border-border"
-              style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 12px)" }}
+              style={{ paddingBottom: "max(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)), 12px)" }}
             >
               {step === 1 && (
                 <button

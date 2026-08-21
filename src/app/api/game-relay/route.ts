@@ -56,6 +56,46 @@ export interface InningRelay {
     batOrder?: number;
     pitches: PitchDetail[];
   };
+  /**
+   * 교체·수비위치 변경 이벤트(이닝 내 시간순). Naver textRelay 원문의
+   * "{pos} {A} : {pos} {B} (으)로 교체" / "{pos} {A} : {pos}(으)로 수비위치 변경"을
+   * 구조화한 것. 필드뷰 수비 배치의 독립 소스 진실(추정 아님). 이벤트 없으면 생략.
+   */
+  fielding?: FieldingEvent[];
+}
+
+/** 교체(replace) 또는 수비위치 변경(reposition) 이벤트. 포지션은 Naver 원문 한글 그대로. */
+export type FieldingEvent =
+  | { kind: "replace"; outName: string; outPosKr: string; inName: string; inPosKr: string }
+  | { kind: "reposition"; name: string; fromPosKr: string; toPosKr: string };
+
+// 교체 공지 텍스트의 역할 토큰(폐쇄집합) — 이름에 공백이 있는 외국인 선수(예: "밴 헤켄")를
+// 위해 \S+ 대신 토큰 집합으로 경계를 잡는다.
+// ⚠️ 문자열 리터럴이므로 정규식 이스케이프는 \\d 처럼 이중 백슬래시로 써야 한다("\d"는 "d"로 소실).
+const FIELDING_POS_TOKEN = "(?:투수|포수|[123]루수|유격수|좌익수|중견수|우익수|지명타자|대타|대주자|\\d+번타자|[123]루주자)";
+const FIELDING_REPLACE_RE = new RegExp(
+  `^(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*:\\s*(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*\\(으\\)로 교체$`,
+);
+const FIELDING_REPOSITION_RE = new RegExp(
+  `^(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*:\\s*(${FIELDING_POS_TOKEN})\\(으\\)로 수비위치 변경$`,
+);
+
+/**
+ * textOption 한 줄을 FieldingEvent로 파싱. 교체/수비위치 변경 패턴이 아니면 null.
+ * type 코드가 아니라 텍스트 패턴으로 판별한다(원문이 type:2 범용 텍스트로 옴 — 실측).
+ */
+export function parseFieldingEvent(text: string): FieldingEvent | null {
+  const t = text.trim();
+  if (!t) return null;
+  const rep = FIELDING_REPLACE_RE.exec(t);
+  if (rep) {
+    return { kind: "replace", outPosKr: rep[1], outName: rep[2].trim(), inPosKr: rep[3], inName: rep[4].trim() };
+  }
+  const mov = FIELDING_REPOSITION_RE.exec(t);
+  if (mov) {
+    return { kind: "reposition", fromPosKr: mov[1], name: mov[2].trim(), toPosKr: mov[3] };
+  }
+  return null;
 }
 
 export interface MatchupStats {
@@ -358,6 +398,15 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     // skip.
 
     for (const opt of relay.textOptions) {
+      // 교체·수비위치 변경 공지(type:2 범용 텍스트)는 패턴으로 식별해 이닝 시간순으로 적재.
+      // 타석 파싱 상태머신(pendingPitches 등)과 무관하므로 소비 후 다음 옵션으로 넘어간다.
+      if (typeof opt.text === "string") {
+        const fieldingEvent = parseFieldingEvent(opt.text);
+        if (fieldingEvent) {
+          (current.fielding ??= []).push(fieldingEvent);
+          continue;
+        }
+      }
       if (opt.type === 8) {
         // 새 타석 시작 마커("5번타자 한준수"/"대타 문정빈" 등). 직전 타석이 정상
         // terminal(13/23) 없이 끝났다면(외부 relay 스키마 변형) 남은 투구가 다음

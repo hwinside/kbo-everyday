@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { cpuUsedPercentFromSnapshots, type CpuCounterSnapshot } from "@/lib/admin/system-health";
 import {
   Activity,
   AlertTriangle,
@@ -21,8 +22,12 @@ type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 interface SystemHealthResponse {
   level: HealthLevel;
   metrics: {
-    cpuLoadPercent: number | null;
+    cpuUsedPercent: number | null;
+    cpuSampleSeconds: number | null;
+    cpuCounter: CpuCounterSnapshot | null;
     cpuCores: number | null;
+    load1: number | null;
+    load1PerCore: number | null;
     memoryUsedPercent: number | null;
     diskUsedPercent: number | null;
     postgresUp: boolean | null;
@@ -105,7 +110,7 @@ function MetricCard({
   label: string;
   value: string;
   detail: string;
-  level: HealthLevel;
+  level: HealthLevel | null;
 }) {
   return (
     <div className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
@@ -114,10 +119,14 @@ function MetricCard({
           <Icon className="w-4 h-4" />
           <span className="text-xs">{label}</span>
         </div>
-        <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
-          <LevelIcon level={level} className="w-3.5 h-3.5" />
-          {levelLabel(level)}
-        </span>
+        {level === null ? (
+          <span className="text-[11px] text-[#636366]">순간값</span>
+        ) : (
+          <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
+            <LevelIcon level={level} className="w-3.5 h-3.5" />
+            {levelLabel(level)}
+          </span>
+        )}
       </div>
       <p className="mt-3 text-2xl font-bold tabular-nums">{value}</p>
       <p className="mt-1 text-xs text-[#636366]">{detail}</p>
@@ -130,8 +139,13 @@ export default function SystemHealthPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cpuBaseline = useRef<{ counter: CpuCounterSnapshot; checkedAt: string } | null>(null);
+  const lastCpuSample = useRef<{ usedPercent: number; sampleSeconds: number } | null>(null);
+  const latestRequest = useRef(0);
+  const latestAppliedAt = useRef(Number.NEGATIVE_INFINITY);
 
   const load = useCallback(async (background = false) => {
+    const requestId = ++latestRequest.current;
     if (background) setRefreshing(true);
     try {
       const response = await fetch("/api/admin/system-health", {
@@ -139,13 +153,51 @@ export default function SystemHealthPanel() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`서버 상태 조회 실패 (${response.status})`);
-      setData((await response.json()) as SystemHealthResponse);
+      const next = (await response.json()) as SystemHealthResponse;
+      const checkedAtMs = Date.parse(next.checkedAt);
+      if (requestId !== latestRequest.current || checkedAtMs < latestAppliedAt.current) return;
+      latestAppliedAt.current = checkedAtMs;
+      const counter = next.metrics?.cpuCounter ?? null;
+      if (counter && next.metrics) {
+        const previous = cpuBaseline.current;
+        if (previous) {
+          const sameSnapshot =
+            counter.seriesFingerprint === previous.counter.seriesFingerprint &&
+            counter.totalSeconds === previous.counter.totalSeconds &&
+            counter.idleSeconds === previous.counter.idleSeconds;
+          const used = cpuUsedPercentFromSnapshots(counter, previous.counter);
+          const seconds = (Date.parse(next.checkedAt) - Date.parse(previous.checkedAt)) / 1_000;
+          if (used !== null && seconds > 0) {
+            const sample = {
+              usedPercent: Math.round(used * 10) / 10,
+              sampleSeconds: Math.round(seconds * 10) / 10,
+            };
+            next.metrics.cpuUsedPercent = sample.usedPercent;
+            next.metrics.cpuSampleSeconds = sample.sampleSeconds;
+            lastCpuSample.current = sample;
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+          } else if (sameSnapshot && lastCpuSample.current) {
+            next.metrics.cpuUsedPercent = lastCpuSample.current.usedPercent;
+            next.metrics.cpuSampleSeconds = lastCpuSample.current.sampleSeconds;
+          } else {
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+            lastCpuSample.current = null;
+          }
+        } else {
+          cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+        }
+      }
+      setData(next);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      if (requestId === latestRequest.current) {
+        setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === latestRequest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -218,10 +270,17 @@ export default function SystemHealthPanel() {
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         <MetricCard
           icon={Cpu}
-          label="CPU 부하 (1분)"
-          value={metrics?.cpuLoadPercent === null || metrics?.cpuLoadPercent === undefined ? "—" : `${metrics.cpuLoadPercent}%`}
-          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores 기준` : "코어 정보 없음"}
-          level={percentLevel(metrics?.cpuLoadPercent ?? null, 70, 85)}
+          label="CPU 사용률"
+          value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
+          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "첫 샘플 수집 중 · 약 1~2분 후 표시"}
+          level={null}
+        />
+        <MetricCard
+          icon={Activity}
+          label="시스템 Load (1분)"
+          value={metrics?.load1 === null || metrics?.load1 === undefined ? "—" : `${metrics.load1}`}
+          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores · 코어당 ${metrics.load1PerCore ?? "—"} · CPU와 별도` : "코어 정보 없음"}
+          level={null}
         />
         <MetricCard
           icon={MemoryStick}

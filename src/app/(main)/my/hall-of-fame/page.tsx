@@ -217,8 +217,8 @@ export default function HallOfFamePage() {
           borderColor: profile?.team_id
             ? getTeamBorderColorById(profile.team_id)
             : "var(--color-border)",
-          paddingTop: "env(safe-area-inset-top, 0px)",
-          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+          paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))",
+          marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)",
         }}
       >
         <header className="min-h-[44px] flex items-center gap-3">

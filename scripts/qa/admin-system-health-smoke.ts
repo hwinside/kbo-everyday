@@ -1,15 +1,64 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
-import React, { act } from "react";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
-import SystemHealthPanel from "../../src/app/admin/system/SystemHealthPanel";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import { cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+
+const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
+const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
+
+let reactHarness: Promise<{
+  React: typeof import("react");
+  act: typeof import("react").act;
+  createRoot: typeof import("react-dom/client").createRoot;
+  SystemHealthPanel: typeof import("../../src/app/admin/system/SystemHealthPanel").default;
+}> | null = null;
+
+function loadReactHarness() {
+  if (reactHarness) return reactHarness;
+  reactHarness = Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("../../src/app/admin/system/SystemHealthPanel"),
+  ]).then(([React, reactDom, panel]) => ({
+    React,
+    act: React.act,
+    createRoot: reactDom.createRoot,
+    SystemHealthPanel: panel.default,
+  }));
+  return reactHarness;
+}
+
+test("production prebuild executes DOM regressions with the test React build", {
+  skip: process.env.NODE_ENV !== "production" || isDomChild,
+}, () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--test", "scripts/qa/admin-system-health-smoke.ts"],
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        ADMIN_SYSTEM_HEALTH_DOM_CHILD: "1",
+      },
+    },
+  );
+  assert.equal(
+    result.status,
+    0,
+    `DOM regression child failed:\n${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+  );
+});
 
 const sample = (overrides = "") => `
-node_cpu_seconds_total{cpu="0",mode="idle"} 100
-node_cpu_seconds_total{cpu="1",mode="idle"} 100
+node_cpu_seconds_total{cpu="0",mode="idle"} 100.6
+node_cpu_seconds_total{cpu="0",mode="user"} 50.4
+node_cpu_seconds_total{cpu="1",mode="idle"} 100.6
+node_cpu_seconds_total{cpu="1",mode="user"} 50.4
 node_load1 0.8
 node_memory_MemTotal_bytes 1000
 node_memory_MemFree_bytes 200
@@ -27,6 +76,14 @@ pg_stat_activity_xact_runtime 0.1
 ${overrides}
 `;
 
+const previousSample = (overrides = "") => `
+node_cpu_seconds_total{cpu="0",mode="idle"} 100
+node_cpu_seconds_total{cpu="0",mode="user"} 50
+node_cpu_seconds_total{cpu="1",mode="idle"} 100
+node_cpu_seconds_total{cpu="1",mode="user"} 50
+${overrides}
+`;
+
 test("parses labels and scientific notation", () => {
   const rows = parsePrometheusText('metric_name{mountpoint="/",device="nvme0"} 8.1e+09\n');
   assert.equal(rows.length, 1);
@@ -35,13 +92,50 @@ test("parses labels and scientific notation", () => {
 });
 
 test("summarizes healthy server and DB metrics", () => {
-  const result = summarizeSystemMetrics(sample());
+  const result = summarizeSystemMetrics(sample(), previousSample(), 1);
   assert.equal(result.level, "healthy");
-  assert.equal(result.cpuLoadPercent, 40);
+  assert.equal(result.cpuUsedPercent, 40);
+  assert.equal(result.load1, 0.8);
+  assert.equal(result.load1PerCore, 0.4);
+  assert.equal(result.cpuSampleSeconds, 1);
   assert.equal(result.memoryUsedPercent, 60);
   assert.equal(result.diskUsedPercent, 70);
   assert.equal(result.postgresConnections, 26);
   assert.equal(result.poolActiveConnections, 5);
+});
+
+test("high load average is not mislabeled or escalated as CPU usage", () => {
+  const result = summarizeSystemMetrics(
+    sample().replace("node_load1 0.8", "node_load1 8"),
+    previousSample(),
+    1,
+  );
+  assert.equal(result.cpuUsedPercent, 40);
+  assert.equal(result.load1, 8);
+  assert.equal(result.load1PerCore, 4);
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.startsWith("CPU")));
+});
+
+test("instant CPU stays informational instead of impersonating sustained alert health", () => {
+  const result = summarizeSystemMetrics(
+    sample()
+      .replaceAll('mode="idle"} 100.6', 'mode="idle"} 100.1')
+      .replaceAll('mode="user"} 50.4', 'mode="user"} 50.9'),
+    previousSample(),
+    1,
+  );
+  assert.equal(result.cpuUsedPercent, 90);
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.startsWith("CPU")));
+});
+
+test("CPU stays unknown without a counter delta instead of falling back to load average", () => {
+  const result = summarizeSystemMetrics(sample().replace("node_load1 0.8", "node_load1 8"));
+  assert.equal(result.cpuUsedPercent, null);
+  assert.equal(result.load1, 8);
+  assert.equal(result.level, "healthy");
+  assert.ok(result.reasons.every((reason) => !reason.includes("CPU")));
 });
 
 test("raises warning at resource thresholds", () => {
@@ -114,11 +208,13 @@ async function routeWith(fetchImpl: typeof fetch) {
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     ADMIN_PIN: process.env.ADMIN_PIN,
+    ADMIN_PIN_HASH: process.env.ADMIN_PIN_HASH,
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_MANAGEMENT_TOKEN: process.env.SUPABASE_MANAGEMENT_TOKEN,
   };
   process.env.ADMIN_PIN = "health-test-pin";
+  delete process.env.ADMIN_PIN_HASH;
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://health-test.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role";
   process.env.SUPABASE_MANAGEMENT_TOKEN = "test-management-token";
@@ -137,6 +233,304 @@ async function routeWith(fetchImpl: typeof fetch) {
     }
   }
 }
+
+test("route returns one cumulative CPU snapshot for the client refresh delta", async () => {
+  let metricCalls = 0;
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      metricCalls += 1;
+      return new Response(sample().replace("node_load1 0.8", "node_load1 8"), { status: 200 });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(metricCalls, 1);
+  assert.equal(payload.level, "healthy");
+  assert.equal(payload.metrics.cpuUsedPercent, null);
+  assert.deepEqual(payload.metrics.cpuCounter, {
+    totalSeconds: 302,
+    idleSeconds: 201.2,
+    seriesFingerprint: "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user",
+  });
+  assert.equal(payload.metrics.load1, 8);
+  assert.equal(payload.metrics.load1PerCore, 4);
+});
+
+test("client CPU delta derives busy percent across exporter scrape intervals", () => {
+  const used = cpuUsedPercentFromSnapshots(
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: "cpu0" },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
+  );
+  assert.ok(used !== null && Math.abs(used - 40) < 0.001);
+  assert.equal(
+    cpuUsedPercentFromSnapshots(
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
+    ),
+    null,
+  );
+});
+
+domTest("UI turns the first cumulative counter into CPU percent on refresh", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const first = summarizeSystemMetrics(sample());
+  const second = summarizeSystemMetrics(sample());
+  assert.ok(first.cpuCounter && second.cpuCounter);
+  second.cpuCounter = {
+    totalSeconds: first.cpuCounter.totalSeconds + 240,
+    idleSeconds: first.cpuCounter.idleSeconds + 144,
+    seriesFingerprint: first.cpuCounter.seriesFingerprint,
+  };
+  const unchanged = structuredClone(second);
+  const reset = structuredClone(second);
+  reset.cpuCounter = { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: first.cpuCounter.seriesFingerprint };
+  const recovered = structuredClone(reset);
+  recovered.cpuCounter = { totalSeconds: 110, idleSeconds: 76, seriesFingerprint: first.cpuCounter.seriesFingerprint };
+  const seriesChanged = structuredClone(recovered);
+  seriesChanged.cpuCounter = { ...recovered.cpuCounter, seriesFingerprint: `${first.cpuCounter.seriesFingerprint};cpu=2|mode=idle` };
+  const seriesRecovered = structuredClone(seriesChanged);
+  seriesRecovered.cpuCounter = { totalSeconds: seriesChanged.cpuCounter.totalSeconds + 100, idleSeconds: seriesChanged.cpuCounter.idleSeconds + 80, seriesFingerprint: seriesChanged.cpuCounter.seriesFingerprint };
+  const snapshots = [first, second, unchanged, reset, recovered, seriesChanged, seriesRecovered];
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    const index = calls++;
+    return Response.json({
+      level: "healthy",
+      metrics: snapshots[index],
+      services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+      sourceErrors: { metrics: null, management: null },
+      checkedAt: new Date(Date.parse("2026-08-20T14:00:00.000Z") + index * 60_000).toISOString(),
+    });
+  }) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(React.createElement(SystemHealthPanel)));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중첫 샘플 수집 중/);
+    const refresh = container.querySelector('button[aria-label="서버 상태 새로고침"]') as HTMLButtonElement | null;
+    assert.ok(refresh);
+    await act(async () => {
+      refresh.click();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값40%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값40%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중.*약 1~2분 후 표시/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값30%60초 실측/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값측정 중.*약 1~2분 후 표시/);
+    await act(async () => { refresh.click(); await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.match(container.textContent || "", /CPU 사용률순간값20%60초 실측/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
+domTest("UI ignores an older refresh response that arrives last", async () => {
+  const { React, act, createRoot, SystemHealthPanel } =
+    await loadReactHarness();
+  const dom = new JSDOM(
+    '<!doctype html><html><body><div id="root"></div></body></html>',
+    {
+    url: "http://localhost/admin/system",
+    },
+  );
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previousGlobals = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const baseline = summarizeSystemMetrics(sample());
+  assert.ok(baseline.cpuCounter);
+  const older = structuredClone(baseline);
+  older.cpuCounter = {
+    totalSeconds: baseline.cpuCounter.totalSeconds + 100,
+    idleSeconds: baseline.cpuCounter.idleSeconds + 90,
+    seriesFingerprint: baseline.cpuCounter.seriesFingerprint,
+  };
+  const newer = structuredClone(baseline);
+  newer.cpuCounter = {
+    totalSeconds: baseline.cpuCounter.totalSeconds + 200,
+    idleSeconds: baseline.cpuCounter.idleSeconds + 100,
+    seriesFingerprint: baseline.cpuCounter.seriesFingerprint,
+  };
+  const pending: Array<(response: Response) => void> = [];
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    if (calls === 1) {
+      return Response.json({
+        level: "healthy",
+        metrics: baseline,
+        services: healthyServices.map((service) => ({
+          ...service,
+          level: "healthy",
+        })),
+        sourceErrors: { metrics: null, management: null },
+        checkedAt: "2026-08-20T14:00:00.000Z",
+      });
+    }
+    return new Promise<Response>((resolve) => pending.push(resolve));
+  }) as typeof fetch;
+
+  const payload = (metrics: typeof baseline, checkedAt: string) =>
+    Response.json({
+      level: "healthy",
+      metrics,
+      services: healthyServices.map((service) => ({
+        ...service,
+        level: "healthy",
+      })),
+      sourceErrors: { metrics: null, management: null },
+      checkedAt,
+    });
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(React.createElement(SystemHealthPanel)));
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+    const refresh = container.querySelector(
+      'button[aria-label="서버 상태 새로고침"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(refresh);
+    await act(async () => {
+      refresh.click();
+      refresh.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+    assert.equal(pending.length, 2);
+    await act(async () => {
+      pending[1](payload(newer, "2026-08-20T14:02:00.000Z"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값50%120초 실측/);
+    await act(async () => {
+      pending[0](payload(older, "2026-08-20T14:01:00.000Z"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.match(container.textContent || "", /CPU 사용률순간값50%120초 실측/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previousGlobals.fetch;
+    for (const [key, value] of Object.entries(previousGlobals)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
+domTest("high load and instant CPU render as informational without critical badges", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+
+  const metrics = summarizeSystemMetrics(
+    sample().replace("node_load1 0.8", "node_load1 8"),
+    previousSample(),
+    1,
+  );
+  globalThis.fetch = (async () => Response.json({
+    level: "healthy",
+    metrics,
+    services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+    sourceErrors: { metrics: null, management: null },
+    checkedAt: new Date().toISOString(),
+  })) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(SystemHealthPanel));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const cards = [...container.querySelectorAll(".rounded-xl")];
+    const cpuCard = cards.find((card) => card.textContent?.includes("CPU 사용률"));
+    const loadCard = cards.find((card) => card.textContent?.includes("시스템 Load (1분)"));
+    assert.ok(cpuCard);
+    assert.ok(loadCard);
+    assert.match(cpuCard.textContent || "", /CPU 사용률순간값40%.*알림 70% 5분 \/ 85% 3분/);
+    assert.match(loadCard.textContent || "", /시스템 Load \(1분\)순간값8.*CPU와 별도/);
+    assert.equal([...cpuCard.querySelectorAll("span")].some((span) => span.textContent === "긴급"), false);
+    assert.equal([...loadCard.querySelectorAll("span")].some((span) => span.textContent === "긴급"), false);
+    assert.match(container.textContent || "", /서버·DB Health정상/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
 
 test("route degrades overall health when Metrics is unavailable", async () => {
   const response = await routeWith(async (input) => {
@@ -177,7 +571,8 @@ test("route does not report healthy for HTTP 200 unrelated metrics", async () =>
   assert.equal(payload.sourceErrors.metrics, null);
 });
 
-test("UI marks retained data stale after a successful load then refresh failure", async () => {
+domTest("UI marks retained data stale after a successful load then refresh failure", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
   });
@@ -205,7 +600,7 @@ test("UI marks retained data stale after a successful load then refresh failure"
     if (calls > 1) return new Response("unavailable", { status: 503 });
     return Response.json({
       level: "healthy",
-      metrics: summarizeSystemMetrics(sample()),
+      metrics: summarizeSystemMetrics(sample(), previousSample(), 1),
       services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
       sourceErrors: { metrics: null, management: null },
       checkedAt: new Date().toISOString(),
@@ -214,7 +609,6 @@ test("UI marks retained data stale after a successful load then refresh failure"
 
   const container = dom.window.document.getElementById("root");
   assert.ok(container);
-  const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
     await act(async () => {
@@ -223,7 +617,11 @@ test("UI marks retained data stale after a successful load then refresh failure"
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    assert.match(container.textContent || "", /정상/);
+    const initialText = container.textContent || "";
+    assert.match(initialText, /정상/);
+    assert.match(initialText, /CPU 사용률/);
+    assert.match(initialText, /시스템 Load \(1분\)/);
+    assert.doesNotMatch(initialText, /CPU 부하 \(1분\)/);
     const refresh = container.querySelector('button[aria-label="서버 상태 새로고침"]') as HTMLButtonElement | null;
     assert.ok(refresh);
     await act(async () => {
@@ -243,7 +641,8 @@ test("UI marks retained data stale after a successful load then refresh failure"
   }
 });
 
-test("UI shows date and age when checkedAt is stale", async () => {
+domTest("UI shows date and age when checkedAt is stale", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "http://localhost/admin/system",
   });
@@ -268,7 +667,7 @@ test("UI shows date and age when checkedAt is stale", async () => {
   const oldCheckedAt = new Date(Date.now() - 26 * 60 * 60 * 1000);
   globalThis.fetch = (async () => Response.json({
     level: "healthy",
-    metrics: summarizeSystemMetrics(sample()),
+    metrics: summarizeSystemMetrics(sample(), previousSample(), 1),
     services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
     sourceErrors: { metrics: null, management: null },
     checkedAt: oldCheckedAt.toISOString(),
@@ -276,7 +675,6 @@ test("UI shows date and age when checkedAt is stale", async () => {
 
   const container = dom.window.document.getElementById("root");
   assert.ok(container);
-  const { createRoot } = await import("react-dom/client");
   const root = createRoot(container);
   try {
     await act(async () => {

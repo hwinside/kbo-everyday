@@ -74,7 +74,7 @@ export default function TeamHubPage() {
     <div className="mx-auto max-w-lg pb-24">
       <div
         className="sticky top-0 z-30 border-b px-5 bg-bg-primary"
-        style={{ borderColor: getTeamBorderColorById(team.id), paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}
+        style={{ borderColor: getTeamBorderColorById(team.id), paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}
       >
         <header className="flex items-center gap-3 min-h-[44px]">
           <button

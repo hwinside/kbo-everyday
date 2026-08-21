@@ -27,7 +27,7 @@ function combineLevel(metricLevel: HealthLevel, services: Array<{ level: Service
   return "healthy";
 }
 
-async function fetchMetrics(ref: string) {
+async function fetchMetricsText(ref: string) {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRole) throw new Error("SUPABASE_SERVICE_ROLE_KEY 미설정");
   const auth = Buffer.from(`service_role:${serviceRole}`).toString("base64");
@@ -37,7 +37,11 @@ async function fetchMetrics(ref: string) {
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Metrics HTTP ${response.status}`);
-  return summarizeSystemMetrics(await response.text());
+  return response.text();
+}
+
+async function fetchMetrics(ref: string) {
+  return summarizeSystemMetrics(await fetchMetricsText(ref));
 }
 
 async function fetchServices(ref: string) {
