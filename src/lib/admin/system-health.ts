@@ -130,7 +130,7 @@ export function pickCpuBaseline(
   stored: StoredCpuSnapshot[],
   current: CpuCounterSnapshot,
   nowMs: number,
-  maxWindowSeconds = 600,
+  maxWindowSeconds = 90,
 ): { baseline: StoredCpuSnapshot; usedPercent: number; windowSeconds: number } | null {
   const candidates = [...stored]
     .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs < nowMs)

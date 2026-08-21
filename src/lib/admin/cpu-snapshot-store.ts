@@ -1,109 +1,147 @@
 import type { CpuCounterSnapshot, StoredCpuSnapshot } from "@/lib/admin/system-health";
 
 /**
- * admin_metric_snapshots 접근 계층 (service role 전용 테이블).
+ * CPU counter 스냅샷 저장소 — Vercel Edge Config (Supabase 밖).
  *
- * Supabase 메트릭 scrape가 ~60초 주기라 브라우저 단독으로는 첫 ~60초 동안
- * CPU busy%를 계산할 수 없다(#1266 QA 회귀 → #1270). 서버가 1분 cron과
- * health API 호출 시점에 counter 스냅샷을 적재해두면, 대시보드를 여는 즉시
- * 직전 스냅샷과의 delta로 값을 표시할 수 있다.
+ * 삼순 리뷰(#1275 NO-GO) 반영:
+ * - 감시 대상 Supabase DB에 원장을 두면 DB 장애 시 긴급 CPU 화면이 같이 무너지는
+ *   순환 의존성이 생긴다 → 저장소를 Vercel Edge Config로 분리.
+ * - health 경로는 읽기 전용(write 없음). 쓰기는 1분 cron 단일 작성자만 수행하고,
+ *   전체 스냅샷 배열을 단일 upsert로 교체해 read→insert race 자체가 없다.
+ * - 모든 네트워크 호출은 bounded timeout. 실패는 null(판정 불능)로 반환하고
+ *   호출부는 즉시값만 비활성한 채 기존 클라이언트 60초 경로로 동작한다.
  *
- * 계약:
- * - 조회/저장 실패는 이 기능의 실패일 뿐 health API의 실패가 아니다 →
- *   호출부는 null/false를 받고 기존(클라이언트 60초 baseline) 경로로 동작한다.
- * - 저장은 counter가 실제로 전진했을 때만 (같은 scrape tick 중복 적재 방지).
+ * 스토어: kbo-admin-metrics (id는 비밀 아님 — 접근에는 VERCEL_TOKEN 필요).
  */
 
-const TABLE = "admin_metric_snapshots";
-export const SNAPSHOT_RETENTION_MINUTES = 60;
+export const EDGE_CONFIG_ID = "ecfg_grvkzbhpv3rmtyymi7z3akznsm8o";
+export const EDGE_CONFIG_TEAM_ID = "team_8reKtsBJZRXGdVNEsD58gHCG";
+export const CPU_SNAPSHOTS_KEY = "cpuSnapshots";
+/** 유지 스냅샷 수 — 최신 + 직전 distinct tick 하나면 delta에 충분. */
+export const CPU_SNAPSHOTS_KEEP = 2;
 
-interface SnapshotRow {
-  captured_at: string;
-  fingerprint: string;
-  total_seconds: number;
-  idle_seconds: number;
+interface WireSnapshot {
+  t: number; // capturedAt epoch ms
+  fp: string;
+  total: number;
+  idle: number;
 }
 
-async function adminClient() {
-  const { supabaseAdmin } = await import("@/lib/supabase/admin");
-  return supabaseAdmin;
+function itemUrl(): string {
+  return `https://api.vercel.com/v1/edge-config/${EDGE_CONFIG_ID}/item/${CPU_SNAPSHOTS_KEY}?teamId=${EDGE_CONFIG_TEAM_ID}`;
 }
 
-/** 최근 스냅샷을 최신순으로 읽는다. 실패 시 null (빈 배열과 구분 — 조회 실패를 "없음"으로 오독 금지). */
-export async function loadRecentCpuSnapshots(limit = 10): Promise<StoredCpuSnapshot[] | null> {
+function itemsUrl(): string {
+  return `https://api.vercel.com/v1/edge-config/${EDGE_CONFIG_ID}/items?teamId=${EDGE_CONFIG_TEAM_ID}`;
+}
+
+function token(): string | null {
+  return process.env.VERCEL_TOKEN || null;
+}
+
+function toWire(snapshot: StoredCpuSnapshot): WireSnapshot {
+  return {
+    t: snapshot.capturedAtMs,
+    fp: snapshot.seriesFingerprint,
+    total: snapshot.totalSeconds,
+    idle: snapshot.idleSeconds,
+  };
+}
+
+function fromWire(raw: unknown): StoredCpuSnapshot | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const wire = raw as Partial<WireSnapshot>;
+  if (
+    typeof wire.t !== "number" ||
+    !Number.isFinite(wire.t) ||
+    typeof wire.fp !== "string" ||
+    typeof wire.total !== "number" ||
+    !Number.isFinite(wire.total) ||
+    typeof wire.idle !== "number" ||
+    !Number.isFinite(wire.idle)
+  ) {
+    return null;
+  }
+  return {
+    capturedAtMs: wire.t,
+    seriesFingerprint: wire.fp,
+    totalSeconds: wire.total,
+    idleSeconds: wire.idle,
+  };
+}
+
+/**
+ * 저장 스냅샷 조회 (읽기 전용).
+ * 반환 계약: 성공 = 배열(빈 배열 = 아직 적재 없음), 실패/형 위반 = null (판정 불능 fail-close).
+ */
+export async function loadRecentCpuSnapshots(timeoutMs = 1_500): Promise<StoredCpuSnapshot[] | null> {
+  const bearer = token();
+  if (!bearer) return null;
   try {
-    const supabase = await adminClient();
-    // query-guard: bounded -- admin_metric_snapshots는 1분 cron 적재 + 60분 보존(pruneCpuSnapshots)이라
-    // 원장 자체가 상한 ~60행이고, 여기서는 delta 계산에 필요한 최신 limit(기본 10)행만 읽는다.
-    const { data, error } = await supabase
-      .from(TABLE)
-      .select("captured_at,fingerprint,total_seconds,idle_seconds")
-      .order("captured_at", { ascending: false })
-      .limit(limit);
-    if (error || !Array.isArray(data)) return null;
+    const response = await fetch(itemUrl(), {
+      headers: { Authorization: `Bearer ${bearer}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (response.status === 404) return []; // 키 미존재 = 아직 적재 없음
+    if (!response.ok) return null;
+    const payload = (await response.json()) as { value?: unknown };
+    const value = payload?.value;
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value)) return null;
     const rows: StoredCpuSnapshot[] = [];
-    for (const raw of data as SnapshotRow[]) {
-      const capturedAtMs = Date.parse(raw.captured_at);
-      if (
-        !Number.isFinite(capturedAtMs) ||
-        typeof raw.fingerprint !== "string" ||
-        !Number.isFinite(raw.total_seconds) ||
-        !Number.isFinite(raw.idle_seconds)
-      ) {
-        return null; // 형 계약 위반 = 판정 불능 (fail-close)
-      }
-      rows.push({
-        capturedAtMs,
-        seriesFingerprint: raw.fingerprint,
-        totalSeconds: raw.total_seconds,
-        idleSeconds: raw.idle_seconds,
-      });
+    for (const raw of value) {
+      const parsed = fromWire(raw);
+      if (!parsed) return null; // 형 계약 위반 = 판정 불능
+      rows.push(parsed);
     }
-    return rows;
+    return rows.sort((left, right) => right.capturedAtMs - left.capturedAtMs);
   } catch {
     return null;
   }
 }
 
 /**
- * counter가 최신 저장분 대비 전진했을 때만 insert.
- * latestStored가 null(조회 실패/빈 원장)이면 무조건 insert (첫 적재).
+ * 스냅샷 배열 전체를 단일 upsert로 교체 (cron 전용 — 단일 작성자, 원자적 교체).
+ * health 경로에서 호출 금지.
  */
-export async function storeCpuSnapshotIfAdvanced(
-  current: CpuCounterSnapshot,
-  latestStored: StoredCpuSnapshot | null,
-  capturedAt: Date,
+export async function replaceCpuSnapshots(
+  snapshots: StoredCpuSnapshot[],
+  timeoutMs = 3_000,
 ): Promise<boolean> {
-  if (
-    latestStored &&
-    latestStored.seriesFingerprint === current.seriesFingerprint &&
-    latestStored.totalSeconds === current.totalSeconds &&
-    latestStored.idleSeconds === current.idleSeconds
-  ) {
-    return false; // 같은 scrape tick — 적재 불필요
-  }
+  const bearer = token();
+  if (!bearer) return false;
   try {
-    const supabase = await adminClient();
-    const { error } = await supabase.from(TABLE).insert({
-      captured_at: capturedAt.toISOString(),
-      fingerprint: current.seriesFingerprint,
-      total_seconds: current.totalSeconds,
-      idle_seconds: current.idleSeconds,
+    const response = await fetch(itemsUrl(), {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          {
+            operation: "upsert",
+            key: CPU_SNAPSHOTS_KEY,
+            value: snapshots.slice(0, CPU_SNAPSHOTS_KEEP).map(toWire),
+          },
+        ],
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    return !error;
+    return response.ok;
   } catch {
     return false;
   }
 }
 
-/** 보존 기간을 지난 스냅샷 정리 (cron 전용). */
-export async function pruneCpuSnapshots(now: Date): Promise<boolean> {
-  try {
-    const supabase = await adminClient();
-    const cutoff = new Date(now.getTime() - SNAPSHOT_RETENTION_MINUTES * 60_000).toISOString();
-    const { error } = await supabase.from(TABLE).delete().lt("captured_at", cutoff);
-    return !error;
-  } catch {
-    return false;
-  }
+/** cron용: counter가 최신 저장분 대비 전진했는지 판정 (동일 scrape tick 중복 적재 방지). */
+export function counterAdvanced(
+  current: CpuCounterSnapshot,
+  latestStored: StoredCpuSnapshot | null,
+): boolean {
+  if (!latestStored) return true;
+  return (
+    latestStored.seriesFingerprint !== current.seriesFingerprint ||
+    latestStored.totalSeconds !== current.totalSeconds ||
+    latestStored.idleSeconds !== current.idleSeconds
+  );
 }

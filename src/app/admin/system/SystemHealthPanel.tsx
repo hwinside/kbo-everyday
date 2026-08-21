@@ -60,6 +60,39 @@ function getPin(): string {
   return sessionStorage.getItem("admin_pin") || "";
 }
 
+// 마지막 유효 CPU값 보존 (삼순 게이트: 소스 실패 시 last-good+시각 표시, 현재값 위장 금지)
+const CPU_LAST_GOOD_KEY = "admin_cpu_last_good";
+const CPU_LAST_GOOD_TTL_MS = 30 * 60_000;
+
+interface CpuLastGood {
+  percent: number;
+  atMs: number;
+}
+
+function readCpuLastGood(): CpuLastGood | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CPU_LAST_GOOD_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CpuLastGood>;
+    if (typeof parsed.percent !== "number" || typeof parsed.atMs !== "number") return null;
+    if (!Number.isFinite(parsed.percent) || !Number.isFinite(parsed.atMs)) return null;
+    if (Date.now() - parsed.atMs > CPU_LAST_GOOD_TTL_MS) return null; // TTL 초과 = 미표시
+    return { percent: parsed.percent, atMs: parsed.atMs };
+  } catch {
+    return null;
+  }
+}
+
+function writeCpuLastGood(entry: CpuLastGood): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CPU_LAST_GOOD_KEY, JSON.stringify(entry));
+  } catch {
+    // 저장 불가는 기능 비활성일 뿐
+  }
+}
+
 function levelStyle(level: HealthLevel) {
   if (level === "healthy") return "text-[#30D158] bg-[#30D158]/10 border-[#30D158]/20";
   if (level === "warning") return "text-[#FFD60A] bg-[#FFD60A]/10 border-[#FFD60A]/20";
@@ -187,6 +220,10 @@ export default function SystemHealthPanel() {
           cpuBaseline.current = { counter, checkedAt: next.checkedAt };
         }
       }
+      if (next.metrics && next.metrics.cpuUsedPercent !== null && next.metrics.cpuUsedPercent !== undefined) {
+        const atMs = Date.parse(next.checkedAt);
+        if (Number.isFinite(atMs)) writeCpuLastGood({ percent: next.metrics.cpuUsedPercent, atMs });
+      }
       setData(next);
       setError(null);
     } catch (loadError) {
@@ -268,13 +305,42 @@ export default function SystemHealthPanel() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <MetricCard
-          icon={Cpu}
-          label="CPU 사용률"
-          value={metrics?.cpuUsedPercent === null || metrics?.cpuUsedPercent === undefined ? "측정 중" : `${metrics.cpuUsedPercent}%`}
-          detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "첫 샘플 수집 중 · 약 1~2분 후 표시"}
-          level={null}
-        />
+        {(() => {
+          const current = metrics?.cpuUsedPercent;
+          if (current !== null && current !== undefined) {
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`${current}%`}
+                detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "실측치"}
+                level={null}
+              />
+            );
+          }
+          const lastGood = readCpuLastGood();
+          if (lastGood) {
+            const ageMinutes = Math.max(1, Math.round((Date.now() - lastGood.atMs) / 60_000));
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`직전 ${lastGood.percent}%`}
+                detail={`직전 측정 ${ageMinutes}분 전 · 실시간 아님 · 새 실측 대기 중`}
+                level={"unknown"}
+              />
+            );
+          }
+          return (
+            <MetricCard
+              icon={Cpu}
+              label="CPU 사용률"
+              value="측정 중"
+              detail="첫 샘플 수집 중 · 약 1~2분 후 표시"
+              level={null}
+            />
+          );
+        })()}
         <MetricCard
           icon={Activity}
           label="시스템 Load (1분)"

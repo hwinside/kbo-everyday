@@ -212,12 +212,14 @@ async function routeWith(fetchImpl: typeof fetch) {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_MANAGEMENT_TOKEN: process.env.SUPABASE_MANAGEMENT_TOKEN,
+    VERCEL_TOKEN: process.env.VERCEL_TOKEN,
   };
   process.env.ADMIN_PIN = "health-test-pin";
   delete process.env.ADMIN_PIN_HASH;
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://health-test.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role";
   process.env.SUPABASE_MANAGEMENT_TOKEN = "test-management-token";
+  process.env.VERCEL_TOKEN = "test-vercel-token";
   globalThis.fetch = fetchImpl;
   try {
     return await GET(
@@ -310,9 +312,9 @@ test("pickCpuBaseline fails closed on identical/foreign/stale/reset rows", () =>
     pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: "other", capturedAtMs: now - 60_000 }], current, now),
     null,
   );
-  // 보존창(10분) 초과된 오래된 baseline → null (오랍된 평균을 현재값으로 위장 금지)
+  // freshness 상한(90초) 초과 baseline → null (오래된 평균을 현재값으로 위장 금지 — 삼순 게이트)
   assert.equal(
-    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 700_000 }], current, now),
+    pickCpuBaseline([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 91_000 }], current, now),
     null,
   );
   // counter 리셋(역전) → null
@@ -324,49 +326,68 @@ test("pickCpuBaseline fails closed on identical/foreign/stale/reset rows", () =>
   assert.equal(pickCpuBaseline([], current, now), null);
 });
 
-test("route fills CPU instantly from the stored baseline ledger", async () => {
+test("route fills CPU instantly from the Edge Config baseline (read-only enforced)", async () => {
   const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
-  const baselineCapturedAt = new Date(Date.now() - 60_000).toISOString();
-  let ledgerReads = 0;
-  let ledgerWrites = 0;
+  let storeReads = 0;
+  let storeWrites = 0;
   const response = await routeWith(async (input, init) => {
     const url = String(input);
     if (url.includes("privileged/metrics")) {
       return new Response(sample(), { status: 200 });
     }
-    if (url.includes("admin_metric_snapshots")) {
+    if (url.includes("api.vercel.com/v1/edge-config")) {
       const method = (init?.method || "GET").toUpperCase();
-      if (method === "GET") {
-        ledgerReads += 1;
-        return Response.json([
-          { captured_at: baselineCapturedAt, fingerprint: fp, total_seconds: 300, idle_seconds: 200 },
-        ]);
+      if (method !== "GET") {
+        storeWrites += 1;
+        return new Response(null, { status: 200 });
       }
-      ledgerWrites += 1;
-      return new Response(null, { status: 201 });
+      storeReads += 1;
+      return Response.json({
+        key: "cpuSnapshots",
+        value: [{ t: Date.now() - 60_000, fp, total: 300, idle: 200 }],
+      });
     }
     return Response.json(healthyServices);
   });
   const payload = await response.json();
-  assert.equal(ledgerReads, 1);
-  assert.equal(ledgerWrites, 1); // counter가 전진했으므로 새 스냅샷 적재
+  assert.equal(storeReads, 1);
+  assert.equal(storeWrites, 0); // 삼순 게이트: health 경로는 읽기 전용 — write 0 강제
   assert.equal(payload.metrics.cpuUsedPercent, 40);
   assert.ok(payload.metrics.cpuSampleSeconds !== null && payload.metrics.cpuSampleSeconds >= 59 && payload.metrics.cpuSampleSeconds <= 62);
 });
 
-test("route degrades to client-delta path when the ledger is unavailable", async () => {
+test("route rejects a stale (>90s) Edge Config baseline", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
   const response = await routeWith(async (input) => {
     const url = String(input);
     if (url.includes("privileged/metrics")) {
       return new Response(sample(), { status: 200 });
     }
-    if (url.includes("admin_metric_snapshots")) {
-      return new Response("ledger down", { status: 500 });
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json({
+        key: "cpuSnapshots",
+        value: [{ t: Date.now() - 120_000, fp, total: 300, idle: 200 }],
+      });
     }
     return Response.json(healthyServices);
   });
   const payload = await response.json();
-  assert.equal(payload.metrics.cpuUsedPercent, null); // 원장 실패 = 즉시값 비활성 (기존 계약 유지)
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 90초 초과 baseline = 현재값 위장 금지
+});
+
+test("route degrades to client-delta path when the snapshot store is unavailable", async () => {
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return new Response("store down", { status: 500 });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 저장소 실패 = 즉시값만 비활성 (기존 계약 유지)
   assert.deepEqual(payload.metrics.cpuCounter?.totalSeconds, 302);
 });
 

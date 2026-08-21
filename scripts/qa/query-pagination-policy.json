@@ -14,7 +14,6 @@
     "admin_dwell_session_slices",
     "admin_dwell_sessions",
     "admin_job_logs",
-    "admin_metric_snapshots",
     "admin_page_dwell",
     "admin_page_view_user_days",
     "admin_page_views",
