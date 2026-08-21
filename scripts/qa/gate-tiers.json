@@ -1,0 +1,696 @@
+{
+  "version": 1,
+  "generated": "2026-08-21",
+  "source_audit": "state/prebuild-gate-audit-20260820.md",
+  "gates": [
+    {
+      "name": "qa:fav-player-interview",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:fav-player-interview:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-thinking-bubble",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-thinking-bubble:workflow",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-thinking-bubble:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-motion",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-motion:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-visual",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-visual:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-assets:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-render",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-mascot-render:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-motion-cooldown:db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-motion-cooldown:db:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:btree-gist-schema",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:css-build-parse",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:bottom-safe-inset",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:safe-area-var-contract",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:safe-area-var-contract:selftest",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:query-guard",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:shorts-player-route",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:naver-existing-user",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-source-inventory",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-rag-contract",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-rag-serving",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-news-rag",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-rag-full-retention",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-corpus-identity",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-corpus-identity:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-corpus-loader",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:namu-cdp-raw",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-official-loader",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-official-rag",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:baseball-qa",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-stat-clarify",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-nonstat-focus",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-nonstat-focus:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-tone-ssot",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-team-copy",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-team-copy:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-tone-migration",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-terms-log-gap",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-terms-log-gap:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-genius-context",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-genius-context:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-match-path-db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:foreign-photo",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:photos-helper-signature",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:feed-scroll-restore",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:roster-count-consistency",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:roster-derived-sync",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:roster-preservation",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:roster-crawl-completion",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:roster-scope-trust",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:starter-era",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:game-detail-bounded-fallback",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:game-detail-sub-merge:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:stats-snapshot-guard",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:atomic-promote",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:kbo-pagination",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:source-row-stability",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:kbo-select",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:stats-gate-trigger",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:stats-kboid-identity",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:stats-2025-integrity",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:stats-2025-integrity:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:war-benchmark-coverage",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:videos-rss-status",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:diary-contrast",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-typing",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-avatar-static",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:next-game-date-badge",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:exclusive-badges",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:player-popularity-order",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-stats-s1b-aggregate",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:venue-stats-expected",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-header-signup-button",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-stats-s2-effect-guard",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-stats-s2-header-guard",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-diary-public",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-diary-season",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-diary-viewer-chrome",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-diary-games-fold",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-stats-s2-browser",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:game-chat-visibility",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-game-errors",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-error-tags",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:nickname-api",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:post-detail-header-nowrap",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:post-detail-header-nowrap-browser",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-entry",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-reply-mascot",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-provenance-privacy",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-picker-disabled",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-feedback-db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-answer-feedback",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-feedback-mutation",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:team-fullname-routing",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:team-rag-wiring",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:team-rag-audit:self-test",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-served-metrics",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-push-exclusion",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-reply-payload-db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:venue-attendance",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-attendance-crud:db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:venue-multi-pick",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-video-poster",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-progress-waapi",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-chrome-tap",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:venue-story-media-flash",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:static-asset-cache-headers",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:live-edge-cache",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:post-scope-label",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:post-scope-db-trigger",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:news-rag-wiring",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-refusal-scope",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-unbound-name",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-unbound-name:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-draft-year",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-draft-year:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-glossary-map",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-question-normalize",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-question-normalize:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-question-correction-db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-correction-dm-race",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-today-starters",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:collector-author-team",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:collector-player-tags:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:relay-gameid-guard",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:active-users-contract",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:active-users-hybrid",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:player-link-prefetch",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:player-link-prefetch:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:player-stats-parser",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:readonly-api-edge-cache",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:readonly-api-edge-cache:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-leaderboard",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:baseball-leaderboard:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-career-metric-leak",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-career-metric-leak:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:career-metrics",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:career-metrics:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:event-records",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:event-records:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:auth-token-precheck",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:auth-es256-e2e",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:advisor-step1-migration",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:content-views",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:content-views:news-wiring",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:content-views:news-wiring:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:advisor-step2-rls",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:native-push-deeplink",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:featured-card-contrast",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:featured-card-contrast:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:live-detail-provenance",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:live-detail-provenance:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:brand-icon-clip:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-discard-reason",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-discard-reason:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:post-scope-all-teams-confirm",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:visibility-poller-adoption",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:game-detail-parse-memo",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:client-dedupe",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:client-dedupe:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:self-fetch-internal",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:self-fetch-internal:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:self-fetch-internal:cleanup",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:news-clip-digest",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:news-clip-digest:mutations",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:news-clip-digest:hook",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:news-clip-digest:db",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:admin-system-health",
+      "tier": "deploy"
+    }
+  ],
+  "_comment": "배포/CI 게이트 티어 SSOT. 새 qa 게이트 추가 시 반드시 여기에 tier와 함께 등록해야 한다(미등록 qa:* 스크립트는 runner가 fail-close). tier=deploy: Vercel prebuild마다 실행. tier=ci: GitHub Actions PR required check + nightly full에서 실행."
+}

@@ -589,15 +589,18 @@ async function main() {
   //   (삼순 NO-GO 2026-08-06 2차). 검증기가 대상 SQL 을 읽고 '문자열이 있나' 를 보는 방식은
   //   그 SQL 이 무엇을 거절하는지에 대해 검출력이 0 이다.
   //   → `scripts/qa/post-scope-db-trigger-integration.ts` (npm run qa:post-scope-db-trigger)
-  //   여기서는 그 게이트가 **prebuild 에 실제로 물려 있는지**만 확인한다(배선 누락 방지).
+  //   여기서는 그 게이트가 **게이트 배선 SSOT(gate-tiers.json)에 실제로 등재돼 있는지**만 확인한다(배선 누락 방지).
   {
     const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8")) as {
       scripts: Record<string, string>;
     };
     ok("§4 DB 경계 게이트 스크립트가 등록돼 있다", typeof pkg.scripts["qa:post-scope-db-trigger"] === "string");
+    const tiers = JSON.parse(
+      readFileSync(resolve(process.cwd(), "scripts/qa/gate-tiers.json"), "utf8"),
+    ) as { gates: Array<{ name: string; tier: string }> };
     ok(
-      "§4 DB 경계 게이트가 prebuild(required) 에 물려 있다",
-      (pkg.scripts.prebuild ?? "").includes("qa:post-scope-db-trigger"),
+      "§4 DB 경계 게이트가 gate-tiers manifest(required) 에 물려 있다",
+      tiers.gates.some((g) => g.name === "qa:post-scope-db-trigger"),
     );
   }
 

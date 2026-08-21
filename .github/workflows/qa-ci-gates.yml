@@ -1,0 +1,45 @@
+# CI 티어 QA 게이트 — Vercel prebuild에서 이관된 결정론 게이트(PR-only/path-only) 112개
+# gate-tiers.json SSOT 기반. 4샤드 병렬. PR required check로 결속(ruleset은 별도 콘솔 작업).
+name: qa-ci-gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: qa-ci-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0/4", "1/4", "2/4", "3/4"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: gate-tiers selftest (fail-close)
+        run: node scripts/qa/run-gate-tiers.mjs --selftest
+      - name: run ci-tier gates (shard ${{ matrix.shard }})
+        run: node scripts/qa/run-gate-tiers.mjs --tier ci --shard ${{ matrix.shard }}
+
+  # 브랜치 보호 required check용 단일 수렴 잡 — 모든 샤드 성공 시에만 성공
+  gates-green:
+    needs: gates
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: all shards green?
+        run: |
+          if [ "${{ needs.gates.result }}" != "success" ]; then
+            echo "ci-tier gates failed: ${{ needs.gates.result }}"; exit 1
+          fi
+          echo ok
