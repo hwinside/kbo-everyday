@@ -570,8 +570,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
             className="flex items-start gap-2 rounded-lg border-l-[3px] border-accent bg-accent/10 px-3 py-2 text-[13px] leading-5 font-medium text-text-secondary"
           >
             <Megaphone size={14} className="shrink-0 mt-0.5 text-accent" aria-hidden="true" />
-            <span>
-              크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다. 매너 있는 글은 응원팀을 더 멋지게 만들고, 그렇지 않은 글은 응원팀을 부끄럽게 만듭니다. 매너를 꼭 지켜주세요.
+            {/* 문장마다 줄바꿈 (하린아빠 2026-08-21 지시) — 문구 자체는 원문 불변 */}
+            <span className="min-w-0">
+              <span className="block">크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다.</span>
+              <span className="block">매너 있는 글은 응원팀을 더 멋지게 만들고, 그렇지 않은 글은 응원팀을 부끄럽게 만듭니다.</span>
+              <span className="block">매너를 꼭 지켜주세요.</span>
             </span>
           </p>
         </div>
