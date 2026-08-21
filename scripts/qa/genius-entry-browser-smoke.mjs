@@ -250,8 +250,8 @@ async function main() {
         return { mascot: r(mascot), dm: r(dmSvg), my: r(myIcon) };
       });
       ok(
-        "[로그인·홈] 아이콘 세로 22px 정합(마스코트·쪽지·마이페이지)",
-        iconHeights.mascot === 22 && iconHeights.dm === 22 && iconHeights.my === 22,
+        "[로그인·홈] 아이콘 세로 규격(마스코트 29px·30% 확대·쪽지/마이페이지 22px)",
+        iconHeights.mascot === 29 && iconHeights.dm === 22 && iconHeights.my === 22,
         `mascot=${iconHeights.mascot} dm=${iconHeights.dm} my=${iconHeights.my}`,
       );
       ok("[로그인·홈] 가로 overflow 없음", !measured.docOverflowX);

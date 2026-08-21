@@ -70,9 +70,10 @@ export default function GeniusEntryButton() {
       data-testid="genius-entry-button"
       className="relative flex h-11 w-11 items-center justify-center rounded-full transition-colors hover:bg-bg-tertiary disabled:opacity-50"
     >
-      {/* 컨테이너는 헤더 공용 44px 터치 타깃 유지. 캐릭터 그림은 **22px** — 쪽지
-          (MessageCircle size=22)·마이페이지(HeaderAvatar 22px)와 세로 크기를 맞춘다
-          (2026-08-21 하린아빠 "헤더가 커지지 않게 아이콘과 세로 크기를 맞춰줘"). */}
+      {/* 컨테이너는 헤더 공용 44px 터치 타깃 유지. 캐릭터 그림은 **29px** — 최초 22px
+          (아이콘 정합)에서 2026-08-21 23:06 하린아빠 "너무 작아서 잘 안보인다,
+          30% 키워줘"로 22×1.3≈29px. 폭 ~40px로 44px 슬롯 안이라 헤더 불증가
+          (20:48 지시)는 그대로 유지된다. */}
       {/* ⚠️ 애니메이션 WebP 는 CSS 로 멈출 수 없다(재생 주체가 이미지 디코더) —
           prefers-reduced-motion 에서는 <source media> 로 정지 poster 자산을 대신
           로드해야 실제로 멈춘다(GeniusMascotImage 와 동일 계약). */}
@@ -91,7 +92,7 @@ export default function GeniusEntryButton() {
           alt=""
           aria-hidden
           data-clip={clip}
-          className="h-[22px] w-auto max-w-none object-contain"
+          className="h-[29px] w-auto max-w-none object-contain"
         />
       </picture>
     </button>
