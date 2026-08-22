@@ -1,0 +1,90 @@
+{
+ "stamp": "mt3wz9pl",
+ "room": "qa-fixture:p95run",
+ "loadGameId": "20260821LGHH0",
+ "supabaseRef": "kygfpcvtszkwdxdspjnv",
+ "baselineBase": "http://localhost:3012",
+ "a1Base": "http://localhost:3011",
+ "rounds": 14,
+ "warmup": 2,
+ "baseline": {
+  "n": 12,
+  "p50": 256,
+  "p95": 351,
+  "samples": [
+   291,
+   209,
+   256,
+   246,
+   260,
+   351,
+   158,
+   339,
+   174,
+   322,
+   184,
+   258
+  ],
+  "sendFail": 0,
+  "missing": 0
+ },
+ "a1": {
+  "n": 12,
+  "p50": 251,
+  "p95": 266,
+  "samples": [
+   262,
+   246,
+   255,
+   243,
+   266,
+   237,
+   251,
+   260,
+   241,
+   253,
+   240,
+   263
+  ],
+  "sendFail": 0,
+  "missing": 0
+ },
+ "blockedWrites": 0,
+ "results": [
+  {
+   "name": "[baseline] 부하 페이지 렌더 (경기 데이터 존재)",
+   "ok": true,
+   "detail": "ok"
+  },
+  {
+   "name": "[a1] 부하 페이지 렌더 (경기 데이터 존재)",
+   "ok": true,
+   "detail": "ok"
+  },
+  {
+   "name": "측정 중 chat write 차단 0 (부하 페이지 읽기 전용 실증)",
+   "ok": true,
+   "detail": "blocked=0"
+  },
+  {
+   "name": "send 실패 0",
+   "ok": true,
+   "detail": "baseline=0 a1=0"
+  },
+  {
+   "name": "누락 0",
+   "ok": true,
+   "detail": "baseline=0 a1=0"
+  },
+  {
+   "name": "동일 표본수",
+   "ok": true,
+   "detail": "baseline=12 a1=12 기대=12"
+  },
+  {
+   "name": "A1 p95 ≤ baseline p95 (원계약)",
+   "ok": true,
+   "detail": "baseline=351ms a1=266ms"
+  }
+ ]
+}
