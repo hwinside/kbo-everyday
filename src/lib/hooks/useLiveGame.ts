@@ -30,6 +30,11 @@ export interface LiveGameData {
   currentInning: string;
   stadium: string;
   status?: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(예: `우천취소`/`폭염취소`/`그라운드사정`). cancelled 일 때만 채운다.
+   * null/undefined = 사유를 못 받았다(폴백 경로 등) — "사유 없음"으로 단정하지 말 것.
+   */
+  cancelReason?: string | null;
   isLive: boolean;
   time?: string;
   awayStarterName: string | null;

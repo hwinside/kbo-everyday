@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamShortName, getTeamColor, getTeamLogo, getTeamName, getTeamBgColorById } from "@/lib/utils/team";
 import { daysFromKSTToday } from "@/lib/utils/date-kst";
+import { cancelReasonBadge } from "@/lib/utils/cancel-reason";
 
 interface HomeGame {
   id: string;
@@ -15,6 +16,8 @@ interface HomeGame {
   homeScore: number;
   awayScore: number;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /** 취소 사유 원문. status=cancelled 일 때만 유의미며, 미수신이면 고정 문구로 fallback. */
+  cancelReason?: string | null;
   inning: string | null;
 }
 
@@ -56,7 +59,7 @@ function CompactRowCard({ game, isPreseason, isMyGame, myTeamId }: { game: HomeG
               isCancelled ? "bg-text-tertiary/20 text-text-tertiary" :
               isFinal ? "bg-text-tertiary/20 text-text-tertiary" : "bg-accent/20 text-accent"
             }`}>
-              {isCancelled ? "취소" : isFinal ? "종료" : game.time}
+              {isCancelled ? cancelReasonBadge(game.cancelReason) : isFinal ? "종료" : game.time}
             </span>
           )}
         </div>

@@ -86,6 +86,8 @@ interface ApiGameData {
   awayScore?: number | null;
   homeScore?: number | null;
   status: HomeGame["status"];
+  /** 취소 사유 원문(KBO `CANCEL_SC_NM`). 미수신이면 부재 — "사유 없음"으로 단정하지 않는다. */
+  cancelReason?: string | null;
   inning?: number | string | null;
   isTop?: boolean;
   awayStarterName?: string | null;
@@ -150,6 +152,8 @@ function mapApiGame(g: ApiGameData): HomeGame {
     homeScore: g.homeScore ?? 0,
     awayScore: g.awayScore ?? 0,
     status: g.status,
+    // 사유는 취소 상태일 때만 실는다(값-플래그 결속) — 상태가 바뀌면 사유도 함께 사라진다.
+    cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
     inning: g.status === "live" && g.inning ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
     awayStarterName: g.awayStarterName ?? null,
     homeStarterName: g.homeStarterName ?? null,

@@ -3,6 +3,7 @@ import type { KboRawGame } from "@/types/api";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
 import { PLAYER_PHOTO_MAP } from "@/lib/constants/player-photos";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
+import { parseCancelReason } from "@/lib/crawler/kbo-api";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -319,6 +320,8 @@ export async function gameLiveRoute(
         date: g.G_DT,
         stadium: g.S_NM,
         status,
+        // 취소 사유는 status 와 같은 조건으로만 실는다(값-플래그 결속). 사유 미수신은 null.
+        cancelReason: parseCancelReason(status, g.CANCEL_SC_NM),
         currentInning: g.GAME_INN_NO ? `${g.GAME_INN_NO}회${g.GAME_TB_SC === "T" ? "초" : "말"}` : "",
         isLive: g.GAME_STATE_SC === "2",
         time: g.G_TM || "",

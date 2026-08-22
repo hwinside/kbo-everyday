@@ -22,6 +22,7 @@ import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
+import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 
 interface KgwanTabProps {
   /** 당겨서 새로고침 epoch — 증가 시 종료 요약(FinalView)이 GET 재조회(오류 카드 stuck 해소). */
@@ -32,6 +33,11 @@ interface KgwanTabProps {
   gameDate?: string | null;
   gameStartTime?: string | null;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(`우천취소`/`폭염취소`/`그라운드사정` 등). status=cancelled 일 때만 유의미.
+   * 미수신(null/undefined)이면 기존 고정 문구로 fallback 한다.
+   */
+  cancelReason?: string | null;
   gameEvents: GameEvent[];
   plays: GamePlay[];
   teamColor: string;
@@ -981,12 +987,15 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
   );
 }
 
-function CancelledView() {
+function CancelledView({ cancelReason }: { cancelReason?: string | null }) {
+  // 사유를 받았을 때만 원문 노출. 받지 못했으면(폴백 경로) 기존 고정 문구 —
+  // 부재를 "사유 없음"으로 단정하지 않는다(provenance 계약).
+  const detail = cancelReasonDetail(cancelReason);
   return (
     <div className="px-4 py-6">
       <div className="glass-card p-5 text-center space-y-3">
         <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
-        <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
+        <p className="text-sm text-text-tertiary">{detail ?? "우천 등 경기 운영 사유로 취소된 경기입니다."}</p>
       </div>
     </div>
   );
@@ -1013,6 +1022,7 @@ export default function KgwanTab({
   gameDate,
   gameStartTime,
   status,
+  cancelReason,
   gameEvents,
   teamColor: _teamColor,
   plays: _plays,
@@ -1065,7 +1075,7 @@ export default function KgwanTab({
     return (
       <>
         {allStarNotice}
-        <CancelledView />
+        <CancelledView cancelReason={cancelReason} />
       </>
     );
   }

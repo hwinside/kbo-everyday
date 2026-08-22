@@ -1,5 +1,6 @@
 import {
   fetchKboGamesOnly,
+  parseCancelReason,
   parseGameLinescoreResponse,
   type KboGame,
 } from "@/lib/crawler/kbo-api";
@@ -36,6 +37,12 @@ function findPlayerByNumericId(numericId: string): { name: string } | undefined 
 export interface GameDetailResponse {
   gameId: string;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(KBO `CANCEL_SC_NM`, 예: `우천취소`/`폭염취소`/`그라운드사정`).
+   * `status === "cancelled"` 일 때만 채우며, 사유를 못 받았으면 null(= 미확인).
+   * null 을 "사유 없음"으로 단정하지 말 것 — Naver 폴백에는 이 필드가 원리적으로 없다.
+   */
+  cancelReason?: string | null;
   meta: {
     stadium: string;
     crowd: string | null;
@@ -208,9 +215,10 @@ function parseScoreBoardImpl(data: unknown[]): {
   meta: GameDetailResponse["meta"];
   linescore: GameDetailResponse["linescore"];
   status: GameDetailResponse["status"];
+  cancelReason: string | null;
 } {
   if (!Array.isArray(data) || data.length === 0) {
-    return { meta: null, linescore: null, status: "scheduled" };
+    return { meta: null, linescore: null, status: "scheduled", cancelReason: null };
   }
 
   // data[0] = meta array
@@ -240,12 +248,16 @@ function parseScoreBoardImpl(data: unknown[]): {
   } : null;
 
   const sharedLinescore = parseGameLinescoreResponse(data);
+  const finalStatus = sharedLinescore?.status ?? status;
   return {
     meta,
     linescore: sharedLinescore
       ? { away: sharedLinescore.away, home: sharedLinescore.home }
       : null,
-    status: sharedLinescore?.status ?? status,
+    status: finalStatus,
+    // 사유는 취소 판정과 **같은 조건**으로만 실는다(값-플래그 결속).
+    // 정상 경기에 사유가 남아 UI 가 취소로 오표기하는 경로를 구조적으로 막는다.
+    cancelReason: parseCancelReason(finalStatus, m ? safeStr(m.CANCEL_SC_NM) : null),
   };
 }
 
@@ -732,7 +744,11 @@ export async function getGameDetailRouteResult(params: {
 
     const parsedScoreBoard = parseScoreBoard(scoreBoardRes ?? []);
     let meta = parsedScoreBoard.meta;
-    const { linescore: kboLinescore, status: scoreBoardStatus } = parsedScoreBoard;
+    const {
+      linescore: kboLinescore,
+      status: scoreBoardStatus,
+      cancelReason: scoreBoardCancelReason,
+    } = parsedScoreBoard;
     let lineup = parseLineup(lineupRes ?? []);
     if (lineup) lineupSource = lineup.isToday ? "kbo-confirmed" : "kbo-unconfirmed";
     // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃)면 Naver preview 라인업으로 표시 폴백.
@@ -880,9 +896,18 @@ export async function getGameDetailRouteResult(params: {
       scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" :
       liveListStatus ?? scoreBoardStatus;
 
+    // 사유 출처는 두 곳(scoreBoard 메타 / KBO 경기목록)이다. **최종 status 가 cancelled 일 때만**
+    // 실어 값과 판정을 같은 조건에 묶는다 — 상태가 뒤집힌(live/final) 경기에 사유가 남으면
+    // UI 가 취소로 오표기한다. 둘 다 없으면 null(= 미확인) — 빈 문자열로 합성하지 않는다.
+    const cancelReason =
+      status === "cancelled"
+        ? (scoreBoardCancelReason ?? listGame?.cancelReason ?? null)
+        : null;
+
     const response: GameDetailResponse = {
       gameId,
       status,
+      cancelReason,
       meta,
       linescore,
       lineup: (() => {

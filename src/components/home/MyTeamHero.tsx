@@ -10,6 +10,7 @@ import Diamond from "@/components/game/Diamond";
 import type { TeamData } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import { pickGameWeather, type GameWeather, type StadiumWeatherMap } from "@/lib/weather/stadium-weather";
+import { normalizeCancelReason } from "@/lib/utils/cancel-reason";
 
 interface HomeGame {
   id: string;
@@ -35,6 +36,8 @@ interface HomeGame {
   winPitcher?: string | null;
   losePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
+  /** 취소 사유 원문. status=cancelled 일 때만 유의미며, 미수신이면 고정 문구로 fallback. */
+  cancelReason?: string | null;
   dateLabel?: string | null; // 예정 경기 날짜 라벨 ('7월 12일 (일)') — 시간 pill에 병기
   dateISO?: string; // 날씨 조회용 경기 날짜 (YYYY-MM-DD)
 }
@@ -112,7 +115,11 @@ export default function MyTeamHero({ myTeam, myTeamGame, embedded = false }: { m
                 </div>
               ) : myTeamGame.status === "cancelled" ? (
                 <div className="px-3 py-1 rounded-full bg-white/10">
-                  <span className="text-sm font-semibold text-text-primary">경기 취소</span>
+                  {/* 사유를 받았으면 원문(`우천취소` 등), 못 받았으면 기존 `경기 취소` —
+                      부재를 "사유 없음"으로 단정하지 않는다(provenance 계약). */}
+                  <span className="text-sm font-semibold text-text-primary">
+                    {normalizeCancelReason(myTeamGame.cancelReason) ?? "경기 취소"}
+                  </span>
                 </div>
               ) : (
                 <div className="flex items-center gap-3">
