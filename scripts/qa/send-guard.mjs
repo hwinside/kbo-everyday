@@ -237,3 +237,25 @@ export async function installChatWriteInterceptor(context, guardedRoomId, onBloc
     return route.fallback();
   });
 }
+
+/**
+ * 하니스측 fixture 라우팅 (앱 코드 무변경 — `chat transport untouched` 계약 유지).
+ * 브라우저가 실경기방(`game:*`)으로 보내는 chat insert 의 body.room_id 를 격리 fixture
+ * room 으로 재작성한다. 반드시 installChatWriteInterceptor **뒤에** 설치해야 한다:
+ * Playwright 는 마지막 등록 핸들러부터 실행하므로 rewrite 가 먼저 돌고, fallback 으로
+ * 넘어간 guard 가 **재작성된 최종 body** 를 검증한다(= 실제 write target 을 검증).
+ */
+export async function installFixtureRoomRewrite(context, fixtureRoom) {
+  if (!/^qa-fixture:[a-z0-9-]{4,}$/.test(String(fixtureRoom ?? ""))) {
+    throw new Error(`[SEND GUARD] fixture room 패턴 위반: ${fixtureRoom}`);
+  }
+  await context.route("**/rest/v1/chat_messages*", (route) => {
+    const req = route.request();
+    if (req.method() !== "POST") return route.fallback();
+    let body;
+    try { body = JSON.parse(req.postData() ?? "null"); } catch { return route.fallback(); }
+    const rewrite = (r) => (r && typeof r === "object" ? { ...r, room_id: fixtureRoom } : r);
+    const next = Array.isArray(body) ? body.map(rewrite) : rewrite(body);
+    return route.fallback({ postData: JSON.stringify(next) });
+  });
+}

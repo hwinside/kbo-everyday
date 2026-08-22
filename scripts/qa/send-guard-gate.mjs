@@ -166,6 +166,29 @@ if (mutated === src) {
     const mut = await firePost(np, PROD_URL, "qa-fixture:abcd");
     check("[actual-browser mutant] 인터셉터 제거 시 production POST 가 통과 (차단이 결속에서 나옴을 실증)", mut.fetched === true && nakedHits.length === 1, JSON.stringify({ mut, nakedHits: nakedHits.length }));
     await naked.close();
+    // (3) 하니스측 fixture 라우팅: guard 먼저 등록 → rewrite 나중 등록(= 먼저 실행) →
+    //     guard 는 재작성된 최종 body 를 본다. 앱 코드 무변경으로 실경기방 write 가
+    //     격리 fixture room 으로만 나가는지 실브라우저로 실증한다.
+    const { installFixtureRoomRewrite } = await import("./send-guard.mjs");
+    const routed = await browser.newContext({ serviceWorkers: "block" });
+    const routedBodies = [];
+    await routed.route("**/rest/v1/chat_messages*", (route) => {
+      routedBodies.push(route.request().postData());
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    });
+    const routedBlocked = [];
+    await installChatWriteInterceptor(routed, "qa-fixture:p95run", (i) => routedBlocked.push(i), "qastaginginjected");
+    await installFixtureRoomRewrite(routed, "qa-fixture:p95run");
+    const rp2 = await routed.newPage();
+    await rp2.goto("about:blank");
+    const rr = await firePost(rp2, STG_URL, "game:20260822LGHH0");
+    const seen = routedBodies.length === 1 ? JSON.parse(routedBodies[0]) : null;
+    check("[fixture-route] 실경기방 body 는 fixture room 으로 재작성되어 통과 (앱 코드 무변경)", rr.fetched === true && rr.status === 200 && seen?.room_id === "qa-fixture:p95run" && routedBlocked.length === 0, JSON.stringify({ rr, seen, routedBlocked }));
+    // rewrite 가 있어도 guard 는 여전히 ref 축을 강제한다 (production ref 는 차단)
+    const rprod = await firePost(rp2, PROD_URL, "game:20260822LGHH0");
+    check("[fixture-route] rewrite 가 있어도 production ref 는 차단(ref 축 유지)", rprod.fetched === false && routedBlocked.at(-1)?.reason === WRITE_REASONS.PRODUCTION_WRITE_TARGET, JSON.stringify({ rprod, last: routedBlocked.at(-1) }));
+    check("[fixture-route] 차단된 요청은 mock 에 도달하지 않음", routedBodies.length === 1, `bodies=${routedBodies.length}`);
+    await routed.close();
   } finally {
     await browser.close();
   }
