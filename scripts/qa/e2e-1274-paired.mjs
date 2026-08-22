@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { readFileSync, writeFileSync } from "node:fs";
-import { assertSendAllowed, installChatWriteInterceptor } from "./send-guard.mjs";
+import { assertSendAllowed, installChatWriteInterceptor, installFixtureRoomRewrite } from "./send-guard.mjs";
 
 const ENV_PATH = "/Users/harinclaw/Projects/kbo-everyday/.env.local";
 for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
@@ -30,6 +30,8 @@ assertSendAllowed({ roomId: ROOM_ID, purpose: "chat send QA" });
 
 // [P0 GUARD 2026-08-21] 라이브/당일/미래 경기 방 발송 절대 금지 (실유저 노출 사고 재발 방지)
 // 종료가 확정된 과거 날짜 경기 또는 더미 room_id만 허용. QA_ALLOW_LIVE 같은 우회 플래그 금지.
+// (2026-08-22: 격리 staging 도입 후에도 이 가드는 유지한다 — 방어는 겹칠수록 좋고,
+//  p95 부하는 라이브 경기가 아니라 합성 부하 발생기로 재현한다.)
 {
   const ymd = String(GAME_ID).slice(0, 8);
   const todayKst = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10).replace(/-/g, "");
@@ -37,8 +39,7 @@ assertSendAllowed({ roomId: ROOM_ID, purpose: "chat send QA" });
     console.error(`[GUARD-FAIL] GAME_ID=${GAME_ID} — 당일/미래/형식불명 경기 방은 발송 금지. 과거(종료) 경기로만 실행하세요.`);
     process.exit(1);
   }
-}
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+}const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PAIRS = Number(process.env.QA_PAIRS || 12);
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
@@ -73,6 +74,8 @@ async function openPage(a, base) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   // 단일 결속: guard 승인 room 밖으로 나가는 chat write 는 네트워크 경계에서 abort (fail-close)
   await installChatWriteInterceptor(context, ROOM_ID);
+  // rewrite 는 guard 뒤에 등록 → 먼저 실행 → guard 가 재작성된 최종 body 를 검증한다.
+  await installFixtureRoomRewrite(context, ROOM_ID);
   await context.addInitScript(([at, rt]) => {
     sessionStorage.setItem("kbo-pending-session", JSON.stringify({ access_token: at, refresh_token: rt }));
   }, [a.session.access_token, a.session.refresh_token]);
