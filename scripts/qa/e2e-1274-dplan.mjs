@@ -196,6 +196,59 @@ async function composerOf(page) {
  *  재렌더 된 순간 stale 해지거나 fill 한 값이 지워져 POST 가 영영 안 나간다.
  *  그런데 baseline 은 standalone 폴링(live+detail+relay)이 더 잔아 재렌더 빈도가 높다
  *  → 하니스 결함이 **arm 에 상관**해 baseline 만 손해를 본다. 매 시도마다 재조회한다. */
+/* ── 앱 전송 계약(useChat.sendMessage) ────────────────────────────────────────
+ * 서비스는 도배방지를 위해 아래 조건에서 **조용히 `return false`** 한다(POST 없음):
+ *   ① 기본 쿨다운  : now - lastSent < 3000ms
+ *   ② 슬라이딩 윈도: 최근 60초 내 10건 이상 → 30초 뮤트
+ *   ③ 중복/변형 도배: 정규화 키가 최근 5건에 있음
+ *   ④ 모더레이션 차단
+ * 즉 'clicked:true 인데 POST 없음'은 하니스 버그도 환경 잡음도 아니라
+ * **서비스가 설계대로 거절한 것**이다. 측정 하니스는 이 계약을 우회하지 말고
+ * **지켜야** 한다 — 우회하면 실유저가 못 하는 속도로 재는 셈이라 측정 자체가 무효다.
+ * 그래서 페이지(=유저)별로 발송 간격을 앱 계약보다 보수적으로 페이싱한다. */
+const SEND_MIN_GAP_MS = 3500;      // ① 3000 + 여유
+const SEND_WINDOW_MS = 60_000;     // ②
+const SEND_MAX_IN_WINDOW = 9;      // ② 10 미만으로 유지(경계 절대 접근 금지)
+const sendHistory = new Map();     // page → number[]
+
+/** 앱 계약을 만족할 때까지 대기한다. 반환: 실제로 기다린 ms(원장 기록용). */
+async function awaitSendSlot(page) {
+  const hist = sendHistory.get(page) ?? [];
+  let waited = 0;
+  for (;;) {
+    const now = Date.now();
+    const recent = hist.filter((t) => now - t < SEND_WINDOW_MS);
+    const last = hist.length ? hist[hist.length - 1] : -Infinity;
+    const gapWait = Math.max(0, SEND_MIN_GAP_MS - (now - last));
+    // 윈도가 찼으면 가장 오래된 항목이 창 밖으로 나갈 때까지.
+    const winWait = recent.length >= SEND_MAX_IN_WINDOW
+      ? Math.max(0, SEND_WINDOW_MS - (now - recent[0]) + 250)
+      : 0;
+    const wait = Math.max(gapWait, winWait);
+    if (wait <= 0) break;
+    await page.waitForTimeout(Math.min(wait, 5000));
+    waited += Math.min(wait, 5000);
+  }
+  return waited;
+}
+function noteSent(page) {
+  const hist = sendHistory.get(page) ?? [];
+  hist.push(Date.now());
+  sendHistory.set(page, hist.filter((t) => Date.now() - t < SEND_WINDOW_MS * 2));
+}
+
+/** 실패 시 서비스가 왜 거절했는지 DOM 에서 직접 읽는다(원인 결속 — 삼순 요구). */
+async function readRejectReason(page) {
+  try {
+    const c = await composerOf(page);
+    const box = c.locator('textarea[name="chat-message"]');
+    const ph = await box.getAttribute("placeholder").catch(() => null);
+    const btnDisabled = await c.locator("button:has(svg.lucide-send)").first()
+      .isDisabled().catch(() => null);
+    return { placeholder: ph, sendDisabled: btnDisabled };
+  } catch { return { placeholder: null, sendDisabled: null }; }
+}
+
 async function sendOn(page, text, diag) {
   const postAt = page.waitForRequest(
     (r) => r.method() === "POST" && /\/rest\/v1\/chat_messages/.test(r.url()) && (r.postData() ?? "").includes(text),
@@ -324,14 +377,21 @@ async function main() {
         for (const side of ["A", "B"]) {
           await arm[side].page.evaluate((t) => window.__qaTargets.push(t), text);
         }
+        // 앱의 도배방지 계약을 만족할 때까지 대기 — 우회가 아니라 준수다.
+        const paced = await awaitSendSlot(arm[from].page);
         let t0 = null;
-        const diag = {};
-        try { t0 = await sendOn(arm[from].page, text, diag); sentTexts.push(text); }
+        const diag = { pacedMs: paced };
+        try {
+          t0 = await sendOn(arm[from].page, text, diag);
+          noteSent(arm[from].page);
+          sentTexts.push(text);
+        }
         catch (e) {
           sendFail[label]++;
-          // 재시도로 덮지 않고 **증상을 원장에 남긴다** — 어느 라운드·방향에서
-          // 몇 번 재시도하고 입력값이 무엇이었는지까지 보이면 하니스 결함과 서비스 결함을 가를 수 있다.
-          sendFailDetail.push({ arm: label, round: i, dir: `${from}${to}`, err: e?.name ?? String(e), ...diag });
+          // 재시도로 덮지 않고 **증상 + 거절 사유를 원장에 남긴다**.
+          // placeholder/버튼 상태로 서비스가 쉬거나 쿨다운으로 거절했는지를 직접 결속한다.
+          const why = await readRejectReason(arm[from].page);
+          sendFailDetail.push({ arm: label, round: i, dir: `${from}${to}`, err: e?.name ?? String(e), ...diag, ...why });
           continue;
         }
         const at = await waitArrival(arm[to].page, text);
