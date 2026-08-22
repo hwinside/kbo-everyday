@@ -60,14 +60,8 @@ function MoodGauge({ homeTeamId, awayTeamId, homePct }: { homeTeamId: number; aw
 }
 
 /* ===== Room ID builder ===== */
-// 격리 staging QA 전용 분기: NEXT_PUBLIC_QA_FIXTURE_ROOM 이 qa-fixture:* 패턴으로
-// 설정된 빌드에서만 fixture room 을 읽는다. Production 빌드는 env 부재 → 기존 경로 그대로.
-// (send-guard 의 room·ref 이중 결속과 짝: 실경기방 write 는 네트워크 경계에서 차단된다.)
-const QA_FIXTURE_ROOM = /^qa-fixture:[a-z0-9-]{4,}$/.test(process.env.NEXT_PUBLIC_QA_FIXTURE_ROOM ?? "")
-  ? (process.env.NEXT_PUBLIC_QA_FIXTURE_ROOM as string)
-  : null;
 function getRoomId(gameId: string): string {
-  return QA_FIXTURE_ROOM ?? `game:${gameId}`;
+  return `game:${gameId}`;
 }
 
 export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggleDisabled = false }: GameChatProps) {
