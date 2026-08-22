@@ -1,0 +1,18 @@
+{
+ "gameId": "20260821LGHH0",
+ "liveState": {
+  "inning": 6,
+  "isTop": false,
+  "balls": 1,
+  "strikes": 2,
+  "outs": 1,
+  "currentInning": "6회말",
+  "status": "live",
+  "isLive": true
+ },
+ "files": {
+  "game-live.json": "949ffd9c7f8069f2c79da60de61b5e08f57b918496b360bcbcad601c10395375",
+  "game-detail.json": "cf5a2743f90e94657925c0c92aaf981ae146a47ffc5ddfdb8ccf8dcbcbde7eaf",
+  "game-relay.json": "d270272ad9849c84c3fc791093712f14f10aa7c9201836240d802a94ab7f3297"
+ }
+}
