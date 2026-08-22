@@ -300,7 +300,7 @@ test("stored baseline older than 90s yields no instant value but a stale value (
     "90초 초과 baseline 을 현재값으로 쓰면 안 된다(기존 계약 유지)",
   );
 
-  const stale = computeStaleCpuFromStore(stored, now);
+  const stale = computeStaleCpuFromStore(stored, current, now);
   assert.ok(stale, "cron 누락 구간에서도 직전 실측값은 있어야 한다");
   assert.ok(Math.abs(stale.usedPercent - 40) < 0.001);
   assert.equal(stale.windowSeconds, 60.1); // 저장분끼리의 창
@@ -312,31 +312,61 @@ test("stored baseline older than 90s yields no instant value but a stale value (
 test("computeStaleCpuFromStore fails closed beyond the stale cap and never stamps now", () => {
   const fp = "cpu0";
   const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const current = { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp };
   const frozen = [
     { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 301_000 },
     { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 361_000 },
   ];
-  assert.equal(computeStaleCpuFromStore(frozen, now), null, "5분 초과는 직전값도 보여주지 않는다");
+  assert.equal(computeStaleCpuFromStore(frozen, current, now), null, "5분 초과는 직전값도 보여주지 않는다");
 
   // 창 상한(150초) 초과 쌍만 있으면 장기평균을 직전값으로 위장하지 않는다
   const wideWindow = [
     { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
     { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 260_000 },
   ];
-  assert.equal(computeStaleCpuFromStore(wideWindow, now), null, "창 160초는 순간값으로 부적합");
+  assert.equal(computeStaleCpuFromStore(wideWindow, current, now), null, "창 160초는 순간값으로 부적합");
 
-  // 빈 저장소 / fingerprint 불일치는 null
-  assert.equal(computeStaleCpuFromStore([], now), null);
+  // 빈 저장소는 null
+  assert.equal(computeStaleCpuFromStore([], current, now), null);
+});
+
+// 삼순 #1283 P1: 최신 row 의 쌍이 실패했다고 **과거 series** 로 내려가 탐색하면
+// "fingerprint 불일치 fail-close" 계약이 우회된다. stale 계산은 현재 series 에만 결속된다.
+test("computeStaleCpuFromStore binds to the current series (no past-series fallback)", () => {
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const newFp = "cpu-new";
+  const oldFp = "cpu-old";
+  const current = { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: newFp }; // reset 직후
+
+  // [new-fp 최신(페어 불가), old-fp, old-fp] — 과거 old 쌍은 유효하지만 써서는 안 된다
+  const afterReset = [
+    { totalSeconds: 8, idleSeconds: 5, seriesFingerprint: newFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: oldFp, capturedAtMs: now - 160_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: oldFp, capturedAtMs: now - 220_000 },
+  ];
   assert.equal(
-    computeStaleCpuFromStore(
-      [
-        { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 60_000 },
-        { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "other", capturedAtMs: now - 120_000 },
-      ],
-      now,
-    ),
+    computeStaleCpuFromStore(afterReset, current, now),
     null,
+    "현재 series 에 페어가 없으면 과거 series 쌍으로 대체하면 안 된다",
   );
+
+  // 최신 저장분이 현재와 다른 series 면(current 가 바뀜) 즉시 null
+  const staleSeriesOnly = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: oldFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: oldFp, capturedAtMs: now - 160_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(staleSeriesOnly, current, now),
+    null,
+    "최신 저장분이 현재 series 가 아니면 fail-close",
+  );
+
+  // 동일 series 로 유효 쌍이 있으면 정상 반환(위 반례가 과방어가 아님을 증명)
+  const healthy = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: newFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: newFp, capturedAtMs: now - 160_000 },
+  ];
+  assert.ok(computeStaleCpuFromStore(healthy, { ...current, seriesFingerprint: newFp }, now));
 });
 
 test("computeInstantCpuFromStore rates current against the freshest stored snapshot", () => {
