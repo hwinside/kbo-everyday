@@ -348,6 +348,8 @@ try {
   // 포화된 결과를 전수로 오독하지 않게 한다.
   const del = await admin.from("chat_messages").delete().eq("room_id", ROOM_ID).like("content", `%${stamp}%`).select("id").limit(PAIRS * 8);
   check("cleanup — 삭제 error 없음", !del.error, del.error?.message ?? `deleted=${del.data?.length ?? "?"}`);
+  // query-guard: bounded -- 이번 런 고유 stamp 한정 잔존 확인. 상한은 기대치(PAIRS*4)보다
+  // 크게 잡아 포화된 결과를 전수로 오독하지 않게 한다.
   const left = await admin.from("chat_messages").select("id").eq("room_id", ROOM_ID).like("content", `%${stamp}%`).limit(PAIRS * 8);
   check("postcondition — 잔존 0 (조회 성공 전제)",
     !left.error && Array.isArray(left.data) && left.data.length === 0,
