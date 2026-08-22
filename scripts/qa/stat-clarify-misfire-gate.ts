@@ -98,6 +98,20 @@ const NORMAL_ANSWER = JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: RUL
  *   (2026-08-22 재프로브). 추측이 아니라 실측값이며, 가드가 소유하는 질문에만 있다.
  * `expect` 는 "이 질문에 무엇이 나가야 옳은가" 를 사람이 판정한 값이다 —
  *   현재 출력을 그대로 베끼지 않는다(틀린 종단을 정답으로 고정하는 사고 방지).
+ *
+ * 🔴 `normalizedObserved` — **이 게이트가 2026-08-23 에 놓친 것** (배포 후 end-user QA 실측).
+ *
+ *   배포 파이프라인은 residual 질문을 **LLM 표기 정규화**(`normalizeQuestionLlm`)에 먼저 태우고,
+ *   수용(`accepted_surface`)되면 그 **정규화된 문자열로** 이후 판정을 한다. 그런데 이 게이트는
+ *   원문만 태워서, 정규화가 라우팅을 뒤집는 케이스를 **구조적으로 볼 수 없었다**:
+ *     `직관기록`  → 매치 없음(guard=false) → 게이트 GREEN
+ *     `직관 기록`  → `<직관> <기록>` 매치(guard=true) → **유저는 되묻기를 받았다**(3/3 고정 재현)
+ *   즉 28축 PASS · mutations 8/8 RED · CI 19 checks SUCCESS 를 전부 통과한 채 배포됐다.
+ *   seam 동일성은 *함수*만의 속성이 아니라 **(함수, 입력) 쌍**의 속성이다.
+ *
+ *   값은 추측이 아니라 **프로덕션 로그 `question_normalized` 실측치**다
+ *   (2026-08-23 06:1x 일회용 계정 종단 QA, 원장 `e2e-1286-repro-mt4vqarr.json`).
+ *   정규화가 안 일어나거나 거절된 케이스는 이 필드가 없다 — **없다고 추측해 채우지 않는다**.
  */
 const LOG_CASES: Array<{
   question: string;
@@ -107,6 +121,19 @@ const LOG_CASES: Array<{
   /** 그 종단이 왜 옳은지 — 리뷰어가 기대값 자체를 검증할 수 있게 남긴다. */
   why: string;
   llmCalls: number;
+  /**
+   * 배포에서 정규화가 **수용**된 경우 그 결과 문자열(로그 `question_normalized` 실측치).
+   * 있으면 이 문자열로도 종단을 한 번 더 태운다 — 유저가 실제로 받는 경로기 때문이다.
+   */
+  normalizedObserved?: string;
+  /**
+   * 그 정규화문을 **실 provider 에 그대로 태워 받은** 의도 토큰(2026-08-23 프로브 3/3).
+   *
+   * ⚠️ 이 필드가 있어야 정규화 축이 의미를 갖는다. stub 에 편의대로 `RULE_TERM` 을 주면
+   *   게이트는 "provider 가 협조하면 잘 된다" 만 증명한다 — 실측은 그 반대였다
+   *   (`직관 기록` → 3/3 `RECORD` → 되묻기). 가드 비소유면 이 필드는 불필요하다.
+   */
+  normalizedProbedIntent?: "record" | "narrative" | "rule_term";
 }> = [
   {
     question: "오늘 롯데 경기 누가 안타쳐서 7점 득점 낸거야",
@@ -190,6 +217,12 @@ const LOG_CASES: Array<{
     expect: "llm",
     why: "`<X> <지표>` 매치 자체가 없다 — 가드 대상이 아니다",
     llmCalls: 1,
+    // 🔴 배포 정규화가 띄어쓰기를 넣어 `<직관> <기록>` 이 매치되게 만든다.
+    //   유저가 실제로 받는 것은 이쪽이다 — 원문만 태우면 이 케이스는 영영 안 보인다.
+    normalizedObserved: "직관 기록",
+    // 실 provider 프로브 3/3 `RECORD` — 즉 `RULE_TERM` 재질의 경로로 구제되지 **않는다**.
+    //   가드가 소유하는 한 이 질문은 구조적으로 되묻기로 끝난다(배포 3/3 재현과 일치).
+    normalizedProbedIntent: "record",
   },
 ];
 
@@ -319,6 +352,58 @@ async function main() {
     const clarify = LOG_CASES.filter((c) => c.expect === "stat_clarify");
     assert.equal(clarify.length, 1, `되묻기 종결이 ${clarify.length}건 — 11건 중 1건(값 요구)이어야 한다`);
   });
+
+  console.log("── B2. 정규화 후 문자열도 **같은 종단**으로 끝나야 한다 (2026-08-23 배포 후 QA) ──");
+  //
+  // 왜 이 축이 별도로 필요한가 — 게이트가 원문만 태우면 정규화가 라우팅을 뒤집는 경우를
+  // 구조적으로 볼 수 없다. `직관기록` 은 가드 비소유라 GREEN 이었지만, 배포가 실제로
+  // 판정하는 `직관 기록` 은 가드 소유라 유저가 되묻기를 받았다(3/3 고정 재현).
+  //
+  // ⚠️ 정규화문은 추측이 아니라 **프로덕션 로그 실측치**만 쓴다. 이 게이트는 정규화기를
+  //   호출하지 않고(오프라인 계약 유지) 그 산출물을 **입력으로** 받아 종단을 태운다.
+  const normalizedCases = LOG_CASES.filter((c) => typeof c.normalizedObserved === "string");
+  await check("B2-0 정규화 실측치가 있는 케이스가 최소 1건 존재한다", () => {
+    // 0 건이면 아래 루프가 통째로 안 돌아 "PASS" 가 된다 — 빈 루프 false-GREEN 방지.
+    assert.ok(normalizedCases.length >= 1, "normalizedObserved 케이스가 0 건 — 정규화 축이 검증되지 않는다");
+  });
+  for (const c of normalizedCases) {
+    const normalized = c.normalizedObserved!;
+    await check(`B2 [${c.expect}] "${c.question}" → 정규화 "${normalized}"`, async () => {
+      // ⚠️ **축에 이빨이 있는지 먼저 증명한다** (2026-08-23 mutation 실측).
+      //   처음엔 이 단언이 없었고, `normalizedObserved` 를 원문과 같게 바꾸는
+      //   mutation 을 넘겼다 — 축이 무효화됐는데도 GREEN(바로 그 false-GREEN 형태).
+      assert.notEqual(
+        normalized, c.question,
+        "정규화문이 원문과 같다 — 이 케이스는 정규화 축을 검증하지 못한다(무효 fixture)",
+      );
+      // ⚠️ 가드가 소유하면 **실측 의도 토큰**만 태운다. 여기서 `RULE_TERM` 을 임의로 주면
+      //   게이트가 현실이 아니라 희망을 검증한다 — 실측은 3/3 `RECORD` 였다.
+      const normGuard = statGuardOwnsQuestion(normalized, glossary, players);
+      if (normGuard) {
+        assert.ok(
+          c.normalizedProbedIntent,
+          "가드 소유 정규화문인데 실측 의도 토큰이 없다 — 추측 토큰으로 태우면 false-GREEN 이다",
+        );
+      }
+      const texts = normGuard
+        ? [INTENT(c.normalizedProbedIntent!.toUpperCase()), NORMAL_ANSWER]
+        : [NORMAL_ANSWER];
+      const state = freshState(...texts);
+      const r = await answerQuestion("u-norm", normalized, makeDeps(state));
+      assert.equal(
+        r.source, c.expect,
+        `정규화 후 종단이 원문과 다르다 (원문 ${c.expect} ≠ 정규화 ${r.source}) — ${c.why}`,
+      );
+      assert.notEqual(
+        r.answer, STAT_CLARIFY_ANSWER,
+        "정규화문이 되묻기로 끝난다 — 질문에 사람 이름이 없는데 이름을 되묻는 동문서답이다",
+      );
+      assert.deepEqual(
+        state.logs.map((l) => l.matchPath), [c.expect],
+        `로그 경로 불일치: ${state.logs.map((l) => l.matchPath).join(",")}`,
+      );
+    });
+  }
 
   console.log("── C. 과잉 완화 방지 · 기존 계약 무회귀 ──");
   await check("C1 숫자 시작이 아닌 미결속은 그대로 가드 소유", () => {

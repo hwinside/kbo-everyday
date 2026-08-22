@@ -89,6 +89,13 @@ const mutations = [
     to: 'const final: StoredQaFinal = intent === null\n      ? { answer: "임의 자유문장", source: "llm" }\n      : intent === "narrative"',
     why: "자유문장 서빙 0 계약(D4)이 깨진다",
   },
+  {
+    name: "M9 어휘집에서 `직관` 제거 (2026-08-23 배포 후 QA 수정 무력화)",
+    file: PIPELINE,
+    re: /\n  \/\/ `직관` = 직접 관람[\s\S]*?\n  "직관",/,
+    to: "",
+    why: "`직관 기록`(정규화 산출물)이 다시 미결속이 되어 되묻기로 종결 — 프로덕션 3/3 재현 축",
+  },
 ];
 
 let failed = 0;
