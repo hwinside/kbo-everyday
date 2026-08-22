@@ -903,12 +903,20 @@ export async function getGameDetailRouteResult(params: {
       scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" :
       liveListStatus ?? scoreBoardStatus;
 
-    // 사유 출처는 두 곳(scoreBoard 메타 / KBO 경기목록)이다. **최종 status 가 cancelled 일 때만**
-    // 실어 값과 판정을 같은 조건에 묶는다 — 상태가 뒤집힌(live/final) 경기에 사유가 남으면
-    // UI 가 취소로 오표기한다. 둘 다 없으면 null(= 미확인) — 빈 문자열로 합성하지 않는다.
+    // 사유 출처는 세 곳(scoreBoard 메타 / KBO 경기목록 / canonical listGame)이다.
+    //
+    // **kboListGame 을 listGame 보다 먼저 본다**(삼순 3차 NO-GO): detail 이 열화하면
+    // canonical status source 가 Naver 로 바뀌는데, Naver 매퍼는 사유를 원리적으로
+    // 모르므로(cancelReason: null) 같은 deadline 안에 정상 settle 된 KBO 목록의 사유까지
+    // 버려진다. 상태와 사유는 독립 축이다 — 방송채널(broadcastChannels)이 이미 똑같은
+    // 이유로 kboListGame 우선 병합을 하고 있고, 사유도 동일 계약을 따른다.
+    //
+    // 단 **최종 status 가 cancelled 일 때만** 실어 값과 판정을 같은 조건에 묶는다 — 상태가
+    // 뒤집힌(live/final) 경기에 사유가 남으면 UI 가 취소로 오표기한다.
+    // 세 곳 모두 없으면 null(= 미확인) — 빈 문자열로 합성하지 않고 소비처가 고정 문구로 fallback.
     const cancelReason =
       status === "cancelled"
-        ? (scoreBoardCancelReason ?? listGame?.cancelReason ?? null)
+        ? (scoreBoardCancelReason ?? kboListGame?.cancelReason ?? listGame?.cancelReason ?? null)
         : null;
 
     const response: GameDetailResponse = {
