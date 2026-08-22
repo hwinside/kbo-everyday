@@ -48,9 +48,14 @@ check("[actual] 실경기방 room → exit 3", game.status === 3, `status=${game
 
 // ── C. mutant: production 차단 무력화 사본은 통과해버림을 실증 (검출력 증명)
 const src = readFileSync(GUARD_PATH, "utf8");
+// mutation 은 상수 문면 리터럴이 아니라 선언 정규식으로 재타깃한다 — allowlist 등재로
+// 문면이 바뀌어도 mutation 이 조용히 미적용되어 false-GREEN 이 되지 않게 한다.
+const PROD_DECL = /const PRODUCTION_PROJECT_REFS = Object\.freeze\(\[[^\]]*\]\);/;
+const STG_DECL = /const STAGING_PROJECT_REFS = Object\.freeze\(\[[^\]]*\]\);/;
+check("[mutant] mutation 대상 선언 2개를 소스에서 찾음", PROD_DECL.test(src) && STG_DECL.test(src));
 const mutated = src
-  .replace('const PRODUCTION_PROJECT_REFS = Object.freeze(["lbmbdjgsnenqjwjotoei"]);', "const PRODUCTION_PROJECT_REFS = Object.freeze([]);")
-  .replace("const STAGING_PROJECT_REFS = Object.freeze([]);", 'const STAGING_PROJECT_REFS = Object.freeze(["lbmbdjgsnenqjwjotoei"]);');
+  .replace(PROD_DECL, "const PRODUCTION_PROJECT_REFS = Object.freeze([]);")
+  .replace(STG_DECL, 'const STAGING_PROJECT_REFS = Object.freeze(["lbmbdjgsnenqjwjotoei"]);');
 if (mutated === src) {
   check("[mutant] 소스 패치 적용", false, "mutation 대상 상수 문면을 찾지 못함 — 게이트/가드 문면 불일치");
 } else {

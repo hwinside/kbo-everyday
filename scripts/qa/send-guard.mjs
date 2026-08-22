@@ -23,8 +23,11 @@
 // 크보팬 Production project ref — 영구 차단 목록. 절대 allowlist 로 옮기지 않는다.
 const PRODUCTION_PROJECT_REFS = Object.freeze(["lbmbdjgsnenqjwjotoei"]);
 
-// 격리 staging project ref allowlist. 현재 비어 있음 = 발송형 QA 실행 불가(의도된 상태).
-const STAGING_PROJECT_REFS = Object.freeze([]);
+// 격리 staging project ref allowlist — keubo-qa-staging (2026-08-22 신설, 실유저 0,
+// Production 과 조직 내 별개 프로젝트). 등재 커밋은 삼순 리뷰 대상이라는 계약에 따라
+// 이 변경 자체가 리뷰 라인에 올라간다. Production ref 는 절대 여기 못 들어온다
+// (PRODUCTION_PROJECT_REFS 차단이 allowlist 보다 먼저 평가된다).
+const STAGING_PROJECT_REFS = Object.freeze(["kygfpcvtszkwdxdspjnv"]);
 
 // 비공개 fixture room 만 허용. 실제 경기 방(`game:<gameId>`) 은 패턴상 매치되지 않는다.
 const PRIVATE_FIXTURE_ROOM = /^qa-fixture:[a-z0-9-]{4,}$/;
