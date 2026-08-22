@@ -933,13 +933,14 @@ domTest("UI shows date and age when checkedAt is stale", async () => {
   }
 });
 
-// 삼순 4차 P1: Vercel cron 은 중복·동시 실행될 수 있고 Edge Config PATCH 에는 CAS 가 없다.
-// 단일 배열 key RMW 를 폐기하고 스냅샷 1개 = 독립 key 1개 append 로 전환 —
-// 삼순 반례 read/read/write(D)/write(C) exact interleaving 을 in-memory 스토어로 재현해 고정한다.
+// 삼순 4·5차 P1: Vercel cron 은 중복·동시 실행될 수 있고 Edge Config PATCH 에는 CAS 가 없다.
+// 단일 배열 key RMW 를 폐기하고 스냅샷 1개 = 독립 key 1개 · **create 전용(non-overwrite append)** 로 전환 —
+// 삼순 반례 read/read/write(D)/write(C) exact interleaving 과 동일 counter 양방향 write 를
+// in-memory 스토어(create 실패 의미론 포함)로 재현해 고정한다.
 
 type WireItem = { key: string; value: { t: number; fp: string; total: number; idle: number } };
 
-/** in-memory Edge Config 스토어 — GET /items 는 배열, PATCH /items 는 upsert/delete 적용. */
+/** in-memory Edge Config 스토어 — GET /items 는 배열, PATCH /items 는 create/delete 적용(create 는 기존 key 있으면 실패). */
 function makeFakeEdgeConfig(initial: WireItem[] = []) {
   const store = new Map<string, WireItem["value"]>(initial.map((item) => [item.key, item.value]));
   const log: Array<{ method: string; ops?: Array<{ operation: string; key: string }> }> = [];
@@ -955,8 +956,13 @@ function makeFakeEdgeConfig(initial: WireItem[] = []) {
       items?: Array<{ operation: string; key: string; value?: WireItem["value"] }>;
     };
     log.push({ method, ops: (body.items ?? []).map((op) => ({ operation: op.operation, key: op.key })) });
+    // 실제 Edge Config 계약: create 는 이미 존재하는 key 에 대해 실패하며 배치 전체가 거부된다.
     for (const op of body.items ?? []) {
-      if (op.operation === "upsert" && op.value) store.set(op.key, op.value);
+      if (op.operation === "create" && store.has(op.key)) return new Response("conflict", { status: 400 });
+      if (op.operation === "upsert") return new Response("upsert forbidden in append design", { status: 400 });
+    }
+    for (const op of body.items ?? []) {
+      if (op.operation === "create" && op.value) store.set(op.key, op.value);
       if (op.operation === "delete") store.delete(op.key);
     }
     return new Response(null, { status: 200 });
@@ -1008,30 +1014,82 @@ test("independent-key commits survive the read/read/write(D)/write(C) interleavi
     assert.equal(rows![0].totalSeconds, 304, "느린 작업자의 stale write 가 최신값을 되돌리면 안 된다");
     assert.equal(rows![1].totalSeconds, 302);
 
-    // 구조 보증: 어떤 PATCH 도 자기 key 밖의 스냅샷 key 를 upsert 하지 않는다
-    const upserts = fake.log.flatMap((entry) => entry.ops ?? []).filter((op) => op.operation === "upsert");
+    // 구조 보증: 모든 쓰기는 create 전용이고, 어떤 PATCH 도 자기 key 밖의 스냅샷 key 를 쓰지 않는다
+    const writes = fake.log.flatMap((entry) => entry.ops ?? []).filter((op) => op.operation !== "delete");
     const allowed = new Set([cpuSnapshotKey(C), cpuSnapshotKey(D)]);
-    for (const op of upserts) assert.ok(allowed.has(op.key), `자기 key 외 upsert 금지: ${op.key}`);
+    for (const op of writes) {
+      assert.equal(op.operation, "create", "append 설계에서 upsert 는 금지다");
+      assert.ok(allowed.has(op.key), `자기 key 외 쓰기 금지: ${op.key}`);
+    }
   });
 });
 
-test("duplicate crons writing the same counter sample collapse into one idempotent key", async () => {
+// 삼순 5차 P1 핵심 회귀: 동일 counter 중복 cron 의 **양방향** write.
+// 종전(upsert LWW)엔 늦은 write(옆 t)가 저장된 시각을 퇴행시켰다. create 전용에선
+// 먼저 쓰인 값이 불변이므로 어느 순서로도 항목 1개 · freshness(저장 t) 무퇴행이다.
+test("same-counter duplicate writes are idempotent in both orders (immutable value, no freshness regression)", async () => {
   const { commitCpuSnapshot, loadRecentCpuSnapshots, cpuSnapshotKey } = await import(
     "../../src/lib/admin/cpu-snapshot-store"
   );
   const fp = "cpu0";
   const now = Date.now();
-  const sampleA = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 5_000 };
-  const sampleB = { ...sampleA, capturedAtMs: now }; // 같은 counter 를 몇 ms 뒤에 잡은 중복 cron
-  const fake = makeFakeEdgeConfig();
+  const tOld = now - 5_000;
+  const sampleOld = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: tOld };
+  const sampleNew = { ...sampleOld, capturedAtMs: now }; // 같은 counter 를 다른 시각에 잡은 중복 cron
+  assert.equal(cpuSnapshotKey(sampleOld), cpuSnapshotKey(sampleNew), "동일 counter 는 시각과 무관하게 동일 key 여야 한다");
 
-  await withFakeEdgeConfig(fake, async () => {
-    assert.equal((await commitCpuSnapshot(sampleA)).ok, true);
-    assert.equal((await commitCpuSnapshot(sampleB)).ok, true);
-    assert.equal(cpuSnapshotKey(sampleA), cpuSnapshotKey(sampleB), "동일 counter 는 동일 key 여야 한다(멱등)");
+  // 순방향: 옆 t 먼저 → 새 t 나중. 저장값은 첫 write(옆 t) 그대로.
+  const forward = makeFakeEdgeConfig();
+  await withFakeEdgeConfig(forward, async () => {
+    const first = await commitCpuSnapshot(sampleOld);
+    assert.equal(first.ok, true);
+    assert.equal(first.wrote, true);
+    const second = await commitCpuSnapshot(sampleNew);
+    assert.equal(second.ok, true, "중복 write 는 멱등 성공이어야 한다");
+    assert.equal(second.wrote, false, "두 번째 write 는 create 실패(불변)로 아무것도 쓰지 않는다");
     const rows = await loadRecentCpuSnapshots();
     assert.ok(rows);
     assert.equal(rows!.length, 1, "동일 counter 중복 적재는 항목 1개로 수렴해야 한다");
+    assert.equal(rows![0].capturedAtMs, tOld, "저장 시각은 첫 write 그대로여야 한다");
+  });
+
+  // 역순(삼순 반례): 새 t 먼저 → 늦은 작업자가 옆 t 로 나중에 쓴다.
+  // 종전 LWW upsert 는 여기서 시각을 tOld 로 퇴행시켰다 — create 전용은 새 t 를 지킨다.
+  const reverse = makeFakeEdgeConfig();
+  await withFakeEdgeConfig(reverse, async () => {
+    assert.equal((await commitCpuSnapshot(sampleNew)).ok, true);
+    const late = await commitCpuSnapshot(sampleOld); // 늦게 도착한 옆 시각의 stale write
+    assert.equal(late.ok, true);
+    assert.equal(late.wrote, false);
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows);
+    assert.equal(rows!.length, 1);
+    assert.equal(rows![0].capturedAtMs, now, "늦은 옆-t write 가 저장 시각을 퇴행시키면 안 된다");
+  });
+});
+
+// sha256 충돌(사실상 불가) 방어 경로: 내 key 를 다른 counter 가 선점했을 때도
+// 기존 항목을 건드리지 않고 폴백 key 로 append 한다.
+test("digest-collision fallback appends under a suffixed key without touching the occupant", async () => {
+  const { commitCpuSnapshot, loadRecentCpuSnapshots, cpuSnapshotKey } = await import(
+    "../../src/lib/admin/cpu-snapshot-store"
+  );
+  const fp = "cpu0";
+  const now = Date.now();
+  const incoming = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now };
+  const key = cpuSnapshotKey(incoming);
+  const foreign = { t: now - 60_000, fp: "other", total: 999, idle: 500 }; // 충돌 시뮬: 다른 counter 가 내 key 선점
+  const fake = makeFakeEdgeConfig([{ key, value: foreign }]);
+
+  await withFakeEdgeConfig(fake, async () => {
+    const result = await commitCpuSnapshot(incoming);
+    assert.equal(result.ok, true, "충돌에서도 폴백 key 로 적재는 성공해야 한다");
+    assert.deepEqual(fake.store.get(key), foreign, "선점 항목은 어떤 경우에도 변경되면 안 된다");
+    assert.ok(fake.store.has(`${key}_c1`), "폴백 key(_c1)에 append 돼야 한다");
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows);
+    assert.ok(rows!.some((row) => row.totalSeconds === 302), "내 스냅샷이 조회돼야 한다");
+    assert.ok(rows!.some((row) => row.totalSeconds === 999), "선점 스냅샷도 그대로 조회돼야 한다");
   });
 });
 
