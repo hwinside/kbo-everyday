@@ -1026,6 +1026,75 @@ domTest("UI marks retained data stale after a successful load then refresh failu
   }
 });
 
+// 삼순 #1283 요구: cron 누락 구간에서 화면이 "측정 중"으로 비지 않고
+// "N초 전 측정 · 실시간 아님"으로 나오는지를 **실제 DOM**으로 고정한다.
+domTest("UI renders the stale CPU value as '실시간 아님' instead of '측정 중' (2026-08-22 gap)", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    localStorage: globals.localStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.localStorage = dom.window.localStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+  dom.window.localStorage.clear(); // last-good 분기가 아니라 **서버 stale 분기**를 타게 한다
+
+  const now = Date.now();
+  const metrics = summarizeSystemMetrics(sample());
+  metrics.cpuUsedPercent = null; // 90초 초과 → 현재값 없음
+  metrics.cpuSampleSeconds = null;
+  metrics.cpuSampleEndedAt = null;
+  metrics.cpuStalePercent = 4.9;
+  metrics.cpuStaleEndedAt = new Date(now - 107_100).toISOString();
+
+  globalThis.fetch = (async () => Response.json({
+    level: "healthy",
+    metrics,
+    services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+    sourceErrors: { metrics: null, management: null },
+    checkedAt: new Date(now).toISOString(),
+  })) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(SystemHealthPanel));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const text = container.textContent || "";
+    assert.doesNotMatch(text, /측정 중/, "cron 누락 구간에서 화면이 비면 안 된다");
+    assert.match(text, /4\.9%/, "직전 실측값이 보여야 한다");
+    assert.match(text, /실시간 아님/, "현재값이 아니라는 사실을 명시해야 한다");
+    assert.match(text, /초 전 측정|분 전 측정/, "측정 나이를 밝혀야 한다");
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
 domTest("UI shows date and age when checkedAt is stale", async () => {
   const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
