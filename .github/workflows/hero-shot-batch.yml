@@ -67,6 +67,21 @@ jobs:
           npm run qa:foreign-photo
           python scripts/hero/build-hero.py --verify
 
+      # gates-green enforcement (#1276 삼순 P0): 봇 PR은 pull_request 워크플로 미발화로
+      # qa-ci-gates가 안 돌므로, 아래 스텝에서 ci 티어를 직접 실행해 exact head에 fail-close 스탬프.
+      - name: Setup Node 24 (gates-green ci 티어 런타임 정렬)
+        if: steps.gen.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # P0(삼순 #1282): 의존성은 Node 20에서 설치됨 — qa-ci와 동일 증명이 되려면
+      # Node 24 전환 후 npm ci 재설치가 필요하다(네이티브 모듈/engines 불일치 방지).
+      - name: Reinstall deps under Node 24 (gates-green 런타임 정합)
+        if: steps.gen.outputs.changed == 'true'
+        run: npm ci
+
       - name: Create + auto-merge PR (verified changes only)
         if: steps.gen.outputs.changed == 'true'
         run: |
@@ -98,4 +113,24 @@ jobs:
             -f context=auto-merge-gate \
             -f description="hero-shot verify PASS (run ${GITHUB_RUN_ID})" \
             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # gates-green enforcement (#1276 삼순 P0): ci 티어 전체를 exact head에서 실제 실행 후
+          # 결과를 fail-close 스탬프. 실패면 auto-merge 미활성(PR open 유지) + run failure.
+          LOCAL_SHA=$(git rev-parse HEAD)
+          if [ "$LOCAL_SHA" != "$HEAD_SHA" ]; then
+            echo "❌ gates-green: 로컬 HEAD($LOCAL_SHA) ≠ 생성 SHA($HEAD_SHA) — 스탬프 없이 fail-close"; exit 1
+          fi
+          set +e
+          node scripts/qa/run-gate-tiers.mjs --tier ci
+          GRC=$?
+          set -e
+          if [ "$GRC" -eq 0 ]; then GSTATE=success; GDESC="ci 티어 게이트 전체 PASS (run ${GITHUB_RUN_ID})"
+          else GSTATE=failure; GDESC="ci 티어 게이트 FAIL exit=${GRC} (run ${GITHUB_RUN_ID})"; fi
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="$GSTATE" \
+            -f context=gates-green \
+            -f description="$GDESC" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if [ "$GRC" -ne 0 ]; then
+            echo "❌ gates-green FAIL — auto-merge 미활성, PR open 유지: $PR_URL"; exit "$GRC"
+          fi
           gh pr merge "$PR_URL" --auto --squash --delete-branch --match-head-commit "$HEAD_SHA"
