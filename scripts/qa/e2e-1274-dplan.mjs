@@ -107,6 +107,8 @@ const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToke
 let dbProof = null;
 // non-inferiority 판정 결과 — 원장에 그대로 실려 Δ·상한이 사후에 바뀌지 않음을 보장한다.
 let niResult = null;
+// 원장은 cleanup 까지 끝난 뒤에 쓴다(삼순 4차 ③) — main() 이 던져도 지금까지의 근거를 남긴다.
+let pendingLedger = null;
 const results = [];
 
 /* ── NI 게이트 순수함수 산출 ───────────────────────────────────────────
@@ -128,6 +130,11 @@ function computeNonInferiority({ baseline, a1, marginRaw, sendFail, provenance }
     return { ok: false, reason: "send_fail", detail: JSON.stringify(sendFail) };
   if (!Array.isArray(baseline) || !Array.isArray(a1) || baseline.length === 0 || baseline.length !== a1.length)
     return { ok: false, reason: "pairing", detail: `b=${baseline?.length} a1=${a1?.length}` };
+  // [삼순 4차 ②] 표본수가 blockSize 로 나누어떨어지지 않으면 마지막 block 이 짧아져
+  // 라운드 경계가 깨진다(부분 라운드가 온전한 라운드와 같은 가중치로 리샘플됨).
+  // 조용히 보정하지 말고 fail-close — 측정 설계가 어긋난 것이다.
+  if (baseline.length % NI_BLOCK_PAIRS !== 0)
+    return { ok: false, reason: "block_alignment", detail: `n=${baseline.length} % blockSize=${NI_BLOCK_PAIRS} ≠ 0` };
 
   // env 는 더 엄격하게만 — 상한을 넘길 수 없다.
   const requested = marginRaw === undefined || marginRaw === "" ? NI_MARGIN_MAX_MS : Number(marginRaw);
@@ -154,6 +161,8 @@ function computeNonInferiority({ baseline, a1, marginRaw, sendFail, provenance }
   boots.sort((x, y) => x - y);
   const upper95 = boots[Math.floor(0.95 * boots.length)];   // 단측 95% 상한
   const P = baseline.map((b, i) => a1[i] - b);
+  // [삼순 4차 ②] 경계는 **엄격한 미만**이다. upper95 === margin 은 "Δ 만큼 나쁘다"라
+  // non-inferiority 를 증명하지 못한다 → FAIL. (`<` 로 고정, `<=` 아님)
   return {
     ok: true, pass: upper95 < margin,
     detail: `upper95=${upper95.toFixed(1)}ms observed=${(q95(a1) - q95(baseline)) >= 0 ? "+" : ""}${q95(a1) - q95(baseline)}ms blocks=${blocks.length} n=${baseline.length}`,
@@ -210,6 +219,17 @@ if (process.argv.includes("--selftest-ni")) {
   t("0 표본 → fail-close", !r.ok && r.reason === "pairing");
   r = computeNonInferiority({ baseline: base, a1: base.slice(0, 199), marginRaw: "100", sendFail: Z, provenance: OK_PROV });
   t("불균형 쌍 → fail-close", !r.ok && r.reason === "pairing");
+  // [삼순 4차 ②-a] block 경계 미정렬 — 마지막 라운드가 짧으면 리샘플 가중치가 깨진다.
+  const odd = base.slice(0, 199);
+  r = computeNonInferiority({ baseline: odd, a1: [...odd], marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("홀수 표본(block 미정렬) → fail-close", !r.ok && r.reason === "block_alignment", r.detail);
+  // [삼순 4차 ②-b] 경계는 엄격한 미만 — upper95 === Δ 는 "Δ 만큼 나쁘다"라 PASS 가 아니다.
+  // 전구간 +100ms 면 모든 리샘플에서 p95 delta 가 정확히 100 → upper95 === 100 === Δ.
+  r = computeNonInferiority({ baseline: base, a1: base.map((x) => x + 100), marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("upper95 === Δ → FAIL (경계는 엄격한 미만)", r.ok && !r.pass && r.ni.upper95 === 100, `upper95=${r.ni?.upper95} Δ=${r.ni?.marginMs}`);
+  // 상한 바로 아래(+99ms)는 PASS — 경계가 한 칸 차이를 실제로 가른다는 증명.
+  r = computeNonInferiority({ baseline: base, a1: base.map((x) => x + 99), marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("upper95 = Δ-1 → PASS (경계 해상도 1ms)", r.ok && r.pass && r.ni.upper95 === 99, `upper95=${r.ni?.upper95} Δ=${r.ni?.marginMs}`);
   // 결정론 — 같은 입력 2회 호출이 동일해야 재현 가능한 근거다
   const j = base.map((x, i) => x + (i % 7) * 13);
   const r1 = computeNonInferiority({ baseline: base, a1: j, marginRaw: "100", sendFail: Z, provenance: OK_PROV });
@@ -651,59 +671,28 @@ async function main() {
     const provenanceOk = !!(BASELINE_SHA && A1_SHA && BASELINE_SHA !== A1_SHA
       && patchSha && manifest?.files && Object.keys(manifest.files).length > 0);
 
-    if (dRaw !== undefined && dRaw !== "" && !/^\d+$/.test(dRaw)) {
-      check("non-inferiority margin Δ (QA_NI_MARGIN_MS — 숫자만)", false, `불정 값: ${dRaw}`);
-    } else if (dRaw !== undefined && dRaw !== "" && Number(dRaw) <= 0) {
-      check("non-inferiority margin Δ (QA_NI_MARGIN_MS > 0)", false, `불정 값: ${dRaw}`);
-    } else if (!provenanceOk) {
-      // provenance 가 깨지면 수치가 어느 빌드·어느 fixture 에서 나왔는지 모른다 → 판정 불가.
-      check("non-inferiority — full provenance (build·fixture·patch, fail-close)", false,
-        `baseline=${BASELINE_SHA?.slice(0, 9)} a1=${A1_SHA?.slice(0, 9)} patch=${patchSha?.slice(0, 8)} fixtures=${Object.keys(manifest?.files ?? {}).length}`);
-    } else if (sendFail.baseline !== 0 || sendFail.a1 !== 0) {
-      // 전송이 샤진 라운드는 지연 표본이 통째로 빠진다 → 분포가 왜곡된다.
-      check("non-inferiority — sendFail 0 (fail-close)", false, JSON.stringify(sendFail));
-    } else if (lat.baseline.length !== lat.a1.length || lat.baseline.length === 0) {
-      check("non-inferiority — 동표본·paired 쌍 성립 (fail-close)", false,
-        `b=${lat.baseline.length} a1=${lat.a1.length}`);
+    // [삼순 4차 ①] measure 경로가 selftest 순수함수를 안 타면 15/15 는 **실제 게이트를
+    // 검증하지 못한다**(둘이 갈라져 selftest 가 거짓말을 한다). 동일 함수를 호출한다.
+    const niOut = computeNonInferiority({
+      baseline: lat.baseline, a1: lat.a1, marginRaw: dRaw, sendFail,
+      provenance: {
+        ok: provenanceOk,
+        detail: `baseline=${BASELINE_SHA?.slice(0, 9)} a1=${A1_SHA?.slice(0, 9)} patch=${patchSha?.slice(0, 8)} fixtures=${Object.keys(manifest?.files ?? {}).length}`,
+      },
+    });
+    niResult = niOut.ni ?? { failed: true, reason: niOut.reason, detail: niOut.detail };
+    if (!niOut.ok) {
+      check(`non-inferiority — fail-close (${niOut.reason})`, false, niOut.detail);
     } else {
-      // Δ 미설정이면 상한값을 쓴다(계약 자체는 항상 살아있다). env 는 더 엄격하게만 바꿀 수 있다.
-      const requested = dRaw === undefined || dRaw === "" ? NI_MARGIN_MAX_MS : Number(dRaw);
-      const NI = Math.min(requested, NI_MARGIN_MAX_MS);
-      const PAIR_PER_ROUND = 2;   // 라운드당 AB·BA 두 방향 = arm 당 2표본
-      const q95 = (v) => { const s = [...v].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]; };
-      // 라운드 블록 — 같은 라운드의 baseline/a1 관측치를 한 덩어리로 묶는다.
-      const blocks = [];
-      for (let i = 0; i < lat.baseline.length; i += PAIR_PER_ROUND) {
-        blocks.push({ b: lat.baseline.slice(i, i + PAIR_PER_ROUND), a: lat.a1.slice(i, i + PAIR_PER_ROUND) });
-      }
-      let seed = 1274 >>> 0;   // 결정론 — 같은 원장이면 같은 판정
-      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
-      const boots = [];
-      for (let it = 0; it < 20000; it++) {
-        const bb = [], aa = [];
-        for (let k = 0; k < blocks.length; k++) {
-          const blk = blocks[Math.floor(rnd() * blocks.length)];
-          bb.push(...blk.b); aa.push(...blk.a);
-        }
-        boots.push(q95(aa) - q95(bb));   // 판정 통계량 = p95 delta
-      }
-      boots.sort((a, b) => a - b);
-      const upper = boots[Math.floor(0.95 * boots.length)];   // 단측 95% 상한
-      const P = lat.baseline.map((b, i) => lat.a1[i] - b);
-      niResult = {
-        statistic: "p95_delta", method: "round_block_bootstrap", blockSize: PAIR_PER_ROUND,
-        blocks: blocks.length, iterations: 20000, seed: 1274,
-        marginMs: NI, marginMaxMs: NI_MARGIN_MAX_MS, marginRequested: requested,
-        observedP95Delta: ap95 - bp95, upper95: upper, n: lat.baseline.length,
-        aSlowerPairs: P.filter((x) => x > 0).length, aFasterPairs: P.filter((x) => x < 0).length,
-      };
-      check(`non-inferiority — p95 delta 라운드 block bootstrap 단측 95% 상한 < Δ=${NI}ms`,
-        upper < NI,
-        `upper95=${upper.toFixed(1)}ms observed=${(ap95 - bp95) >= 0 ? "+" : ""}${ap95 - bp95}ms blocks=${blocks.length} n=${lat.baseline.length}`);
+      check(`non-inferiority — p95 delta 라운드 block bootstrap 단측 95% 상한 < Δ=${niOut.ni.marginMs}ms`,
+        niOut.pass, niOut.detail);
     }
   }
 
-  const ledger = {
+  // [삼순 4차 ③] 원장을 여기서 바로 쓰면 **cleanup 결과가 파일에 남지 않는다**
+  // (cleanup 은 finally 에서 돌아 이 시점 이후에 실행된다).
+  // 잔존·계정 삭제 증명은 원장의 핵심 근거이므로, 쓰기를 finally 끝으로 미룬다.
+  pendingLedger = {
     stamp, mode: PREFLIGHT_ONLY ? "preflight" : "measure",
     room: ROOM_ID, gameId: GAME_ID,
     supabaseRef: new URL(SUPABASE_URL).hostname.split(".")[0],
@@ -712,11 +701,8 @@ async function main() {
     pairs: PAIRS, warmupPairs: WARMUP_PAIRS, signatureWindowMs: elapsed, signature: sig,
     baseline: { n: lat.baseline.length, p50: bp50, p95: bp95, samples: lat.baseline, sendFail: sendFail.baseline, missing: missing.baseline.length, dups: dups.baseline.length },
     a1: { n: lat.a1.length, p50: ap50, p95: ap95, samples: lat.a1, sendFail: sendFail.a1, missing: missing.a1.length, dups: dups.a1.length },
-    blockedWrites: blockedWrites.length, dbProof, sendFailDetail, nonInferiority: niResult, results,
+    blockedWrites: blockedWrites.length, dbProof, sendFailDetail, nonInferiority: niResult,
   };
-  const out = `scripts/qa/evidence/dplan-${PREFLIGHT_ONLY ? "preflight" : "p95"}-${stamp}.json`;
-  writeFileSync(out, JSON.stringify(ledger, null, 1));
-  console.log(`원장: ${out}`);
 }
 
 try {
@@ -744,6 +730,14 @@ try {
     const probe = await admin.auth.admin.getUserById(a.userId);
     const gone = probe.error && (probe.error.status === 404 || /user_not_found/i.test(probe.error.code ?? ""));
     check(`postcondition — ${a.label} not-found 증명`, !!gone, probe.error ? `${probe.error.status} ${probe.error.code ?? ""}` : "still exists");
+  }
+  // [삼순 4차 ③] cleanup 결과까지 results 에 들어온 뒤에 원장을 쓴다.
+  // 잔존 0·계정 not-found 는 원장의 핵심 근거인데, 종전에는 파일에 안 남았다.
+  // main() 이 던져 pendingLedger 가 없으면 쓸 것도 없으므로 건너뛴다.
+  if (pendingLedger) {
+    const out = `scripts/qa/evidence/dplan-${pendingLedger.mode === "preflight" ? "preflight" : "p95"}-${pendingLedger.stamp}.json`;
+    writeFileSync(out, JSON.stringify({ ...pendingLedger, results }, null, 1));
+    console.log(`원장: ${out}`);
   }
   const pass = results.filter((r) => r.ok).length;
   console.log(`\n=== 요약 === 총 ${results.length} · PASS ${pass} · FAIL ${results.length - pass}`);
