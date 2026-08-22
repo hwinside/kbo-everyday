@@ -1,0 +1,77 @@
+name: Profile Posts Paging Gate
+
+# 프로필 작성글 목록의 **DOM 축**을 required CI 에서 fail-close 로 고정한다.
+#
+# 배경(삼순 NO-GO 2026-08-22): qa-ci-gates 러너에는 Chromium 이 없어서
+# `qa:profile-posts-paging` 이 "chromium 없음 — DOM 축 생략" 으로 통과했고,
+# Chromium 을 설치하는 community-profile-ui 워크플로에는 이 게이트 실행 명령이 없었다.
+# 그 결과 source+pure 축만 증명된 상태를 "12/12 RED" 로 보고하게 됐다.
+# 이 워크플로가 그 공백을 메운다 — DOM 축이 실제로 도는 유일한 실행면이다.
+#
+# paths allowlist 를 쓰지 않는 이유: 하네스가 ProfilePage·PostScopeBadge·GlassCard 등
+# 실물 의존성을 번들한다. allowlist 는 새 의존이 생길 때 워크플로 자체를 SKIP 시켜
+# trigger false-green 을 만든다(community-profile-ui-gate.yml 과 같은 판단).
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: profile-posts-paging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  profile-posts-paging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      # ① 브라우저가 없는데 DOM 축을 요구하면 RED 여야 한다.
+      #    이 단계가 없으면 "Chromium 설치가 조용히 실패했는데 게이트는 통과" 가 가능해진다.
+      - name: Prove missing-browser path is RED (fail-close 증명)
+        run: |
+          missing_browsers="$(mktemp -d)"
+          if PLAYWRIGHT_BROWSERS_PATH="$missing_browsers" PROFILE_POSTS_REQUIRE_BROWSER=1 \
+             node scripts/qa/profile-posts-paging-gate.mjs; then
+            echo "FAIL: baseline passed without Chromium (DOM 축 요구가 무시됨)"
+            exit 1
+          fi
+          if PLAYWRIGHT_BROWSERS_PATH="$missing_browsers" PROFILE_POSTS_REQUIRE_BROWSER=1 \
+             node scripts/qa/profile-posts-paging-gate.mjs --mutations; then
+            echo "FAIL: mutations passed without Chromium (DOM 축 요구가 무시됨)"
+            exit 1
+          fi
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Lint harness
+        run: npx eslint --max-warnings=0 scripts/qa/profile-posts-paging-gate.mjs
+
+      # ② baseline GREEN — DOM 축 포함 전체 시나리오(B~G)가 실제로 통과해야 한다.
+      - name: Baseline GREEN (DOM 축 포함)
+        env:
+          PROFILE_POSTS_REQUIRE_BROWSER: "1"
+        run: node scripts/qa/profile-posts-paging-gate.mjs
+
+      # ③ mutations 12종 — 각 mutation 이 DOM 축에서도 RED 인지 확인한다.
+      #    (러너는 dom:true mutation 이 dom 섹션에서 안 깨지면 실패로 센다.)
+      - name: Mutations RED (DOM 축 결속)
+        env:
+          PROFILE_POSTS_REQUIRE_BROWSER: "1"
+        run: node scripts/qa/profile-posts-paging-gate.mjs --mutations
