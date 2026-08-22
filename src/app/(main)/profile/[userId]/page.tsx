@@ -21,6 +21,7 @@ import DMButton from "@/components/ui/DMButton";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import CommunityProfilePostRow, { type CommunityProfilePost } from "@/components/profile/CommunityProfilePostRow";
+import { nextProfilePostsPage, profilePostsRange, splitProfilePostsPage } from "@/lib/utils/profile-posts-page";
 
 interface UserProfile {
   id: string;
@@ -48,6 +49,31 @@ interface UserBadge {
 
 type UserPost = CommunityProfilePost;
 
+/**
+ * 프로필 작성글 목록 한 페이지.
+ *
+ * 2026-08-22 이전에는 `.limit(20)` 하나로 끝나 21번째 글부터는 **어떤 경로로도 도달할 수 없었다**
+ * (하린아빠 #cs 제보 "최근 글만 보이고 예전 글이 안 보인다"). 헤더 카운트는 `count: exact` 라
+ * 숫자와 목록이 서로 어긋나 보이기까지 했다. 그래서 range 페이저로 바꾼다.
+ *
+ * 정렬은 `created_at desc, id desc` — created_at 단독은 유니크가 아니라 같은 초에 쓴 글이
+ * 페이지 경계에서 중복·누락될 수 있다(query-pagination-guard 의 non_unique_pagination 계약).
+ */
+async function fetchProfilePostsPage(authorId: string, page: number): Promise<{ rows: UserPost[]; hasMore: boolean }> {
+  const { from, to } = profilePostsRange(page);
+  // query-guard: bounded-page -- 프로필 글 탭 더보기 페이저(한 페이지 20건, 유니크 정렬 created_at+id)
+  const { data, error } = await supabase
+    .from("posts")
+    .select("id, title, board_type, board_id, content_type, image_urls, like_count, comment_count, created_at, team_tags, player_tags")
+    .eq("author_id", authorId)
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .range(from, to);
+  // 조회 실패를 빈 페이지로 삼키면 "글이 없다"로 오독된다 — 더보기는 남겨두고 rows 만 비운다.
+  if (error || !data) return { rows: [], hasMore: page > 0 };
+  return splitProfilePostsPage(data as UserPost[]);
+}
+
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
@@ -58,6 +84,8 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badges, setBadges] = useState<UserBadge[]>([]);
   const [posts, setPosts] = useState<UserPost[]>([]);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
   const [activeTab, setActiveTab] = useState<"badges" | "posts" | "invite">("badges");
@@ -118,20 +146,32 @@ export default function ProfilePage() {
       }
 
       if (p?.show_posts) {
-        // query-guard: bounded-page -- 프로필 글 탭은 최신 20건만 보여주는 고정 UI 페이지
-        const { data: posts } = await supabase
-          .from("posts")
-          .select("id, title, board_type, board_id, like_count, comment_count, created_at, team_tags, player_tags")
-          .eq("author_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(20);
-        if (posts) setPosts(posts);
+        const first = await fetchProfilePostsPage(String(userId), 0);
+        setPosts(first.rows);
+        setPostsHasMore(first.hasMore);
       }
 
       setLoading(false);
     }
     load();
   }, [userId, user]);
+
+  // 더보기 — page 상태 대신 이미 받은 개수로 다음 페이지를 유도한다(중복 클릭 시 같은 페이지 재요청 방지).
+  async function loadMorePosts() {
+    if (postsLoadingMore || !postsHasMore) return;
+    setPostsLoadingMore(true);
+    try {
+      const next = await fetchProfilePostsPage(String(userId), nextProfilePostsPage(posts.length));
+      setPosts(prev => {
+        // 같은 글이 두 번 들어오면 React key 가 충돌한다 — id 기준으로 합친다.
+        const seen = new Set(prev.map(p => p.id));
+        return [...prev, ...next.rows.filter(p => !seen.has(p.id))];
+      });
+      setPostsHasMore(next.hasMore);
+    } finally {
+      setPostsLoadingMore(false);
+    }
+  }
 
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!profile) return <div className="flex items-center justify-center h-screen text-text-secondary">유저를 찾을 수 없습니다</div>;
@@ -287,14 +327,28 @@ export default function ProfilePage() {
           ) : posts.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">아직 작성한 글이 없어요</div>
           ) : (
-            posts.map(post => (
-              <CommunityProfilePostRow
-                key={post.id}
-                post={post}
-                timeLabel={timeAgo(post.created_at)}
-                onNavigate={(href) => router.push(href)}
-              />
-            ))
+            <>
+              {posts.map(post => (
+                <CommunityProfilePostRow
+                  key={post.id}
+                  post={post}
+                  timeLabel={timeAgo(post.created_at)}
+                  onNavigate={(href) => router.push(href)}
+                />
+              ))}
+              {/* 더보기 — 이게 없으면 21번째 글은 영영 도달 불가능하다(2026-08-22 제보). */}
+              {postsHasMore && (
+                <button
+                  type="button"
+                  data-profile-posts-load-more
+                  onClick={loadMorePosts}
+                  disabled={postsLoadingMore}
+                  className="w-full rounded-xl border border-border py-3 text-sm font-medium text-text-secondary transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
+                >
+                  {postsLoadingMore ? "불러오는 중..." : "더보기"}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
