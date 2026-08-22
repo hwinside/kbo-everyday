@@ -64,7 +64,7 @@ async function fetchProfilePostsPage(authorId: string, page: number): Promise<{ 
   // query-guard: bounded-page -- 프로필 글 탭 더보기 페이저(한 페이지 20건, 유니크 정렬 created_at+id)
   const { data, error } = await supabase
     .from("posts")
-    .select("id, title, board_type, board_id, content_type, image_urls, like_count, comment_count, created_at, team_tags, player_tags")
+    .select("id, title, content, board_type, board_id, content_type, image_urls, like_count, comment_count, created_at, team_tags, player_tags")
     .eq("author_id", authorId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })

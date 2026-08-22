@@ -43,6 +43,16 @@ const ROW_PATH = resolve(ROOT, "src/components/profile/CommunityProfilePostRow.t
 const PAGE_PATH = resolve(ROOT, "src/app/(main)/profile/[userId]/page.tsx");
 const PURE_PATH = resolve(ROOT, "src/lib/utils/profile-posts-page.ts");
 
+// 미리보기 길이 상한은 행 컴포넌트가 소유한다. .tsx 라 node 가 직접 import 하지 못하므로
+// 소스에서 리터럴을 파싱해 온다 — 게이트가 상수를 재구현하면(80 을 여기 다시 적으면)
+// 구현이 100 으로 바뀌어도 게이트는 계속 GREEN 이라 결함을 못 본다.
+const PREVIEW_MAX_MATCH = readFileSync(ROW_PATH, "utf8").match(/export const PROFILE_POST_PREVIEW_MAX = (\d+);/);
+if (!PREVIEW_MAX_MATCH) {
+  console.error("FAIL: CommunityProfilePostRow 에서 PROFILE_POST_PREVIEW_MAX 리터럴을 찾지 못함(fail-close)");
+  process.exit(1);
+}
+const PROFILE_POST_PREVIEW_MAX = Number(PREVIEW_MAX_MATCH[1]);
+
 /** mutation 이름 → [대상 파일, 원본 패턴, 변조] */
 const MUTATIONS = {
   // ① 페이징 산식: 초과 1건을 안 받으면 hasMore 가 영영 false → 더보기 버튼이 안 뜬다(= 회귀 원복).
@@ -55,6 +65,12 @@ const MUTATIONS = {
   "thumbnail-removed": [ROW_PATH, "const thumbnail = profilePostThumbnailUrl(post);", "const thumbnail = null;"],
   // ⑤ 빈 image_urls 를 걸러내지 않음 → photo 인데 이미지 없는 글에 깨진 상자가 뜬다.
   "thumbnail-blank-passthrough": [ROW_PATH, 'const first = post.image_urls?.find(url => typeof url === "string" && url.trim().length > 0);', "const first = post.image_urls?.[0];"],
+  // ⑥ 본문 폴백 제거 → 제목 없는 일반글 2,381건이 다시 빈 줄로 보인다.
+  "preview-title-only": [ROW_PATH, '  const firstLine = (post.content ?? "")', '  if (!title) return null;\n  const firstLine = (post.content ?? "")'],
+  // ⑦ 첫 줄만 쓰지 않고 본문 통째로 → 여러 줄 글(16.9%)이 개행 공백으로 뭉개져 붙는다.
+  "preview-whole-content": [ROW_PATH, '    .split("\\n")\n    .map(line => line.trim())\n    .find(line => line.length > 0);', '    .trim() || undefined;'],
+  // ⑧ 길이 상한 제거 → 660자짜리 첫 줄이 그대로 DOM 에 실린다(CSS truncate 는 보이는 것만 가린다).
+  "preview-no-clamp": [ROW_PATH, "  return firstLine.length > PROFILE_POST_PREVIEW_MAX", "  return firstLine.length > Number.MAX_SAFE_INTEGER"],
 };
 
 let failures = 0;
@@ -108,6 +124,8 @@ check(!/\.eq\("author_id", authorId\)[\s\S]{0,200}\.limit\(/.test(pageBody), "�
 check(pageBody.includes("data-profile-posts-load-more"), "더보기 버튼 앵커 존재");
 check(pageBody.includes("image_urls"), "작성글 조회 select 에 image_urls 포함(썸네일 입력)");
 check(pageBody.includes("content_type"), "작성글 조회 select 에 content_type 포함");
+// 본문 폴백의 입력 — select 에 content 가 없으면 폴백 로직이 있어도 항상 null 이다.
+check(/\bid, title, content,/.test(pageBody), "작성글 조회 select 에 content 포함(본문 폴백 입력)");
 
 // ── A. 페이징 순수 계약 (실제 소스 함수) ───────────────────────────────────────
 console.log("\n[A] 페이징 순수 계약");
@@ -189,6 +207,28 @@ const PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcS
 // [""] 이 없으면 `image_urls?.[0]` mutation 이 undefined 를 내서 원본과 구분되지 않는다.
 const BLANK_URL_POST = 10;
 const EMPTY_ARRAY_POST = 20;
+
+// 제목 없는 일반글 무대 — 프로덕션 실측상 일반글 4,435건 중 2,381건이 title="" 이고
+// 그 2,381건은 **전부 content 가 있다**(빈 content 0건). 그래서 본문 폴백이 실제로 먹힌다.
+//   n=3  → 한 줄 본문            → 본문이 그대로 미리보기
+//   n=7  → 앞에 빈 줄 + 여러 줄  → **첫 줄만** 나와야 한다(통째로 넣으면 개행이 공백으로 뭉개진다)
+//   n=13 → 660자 초과 한 줄      → 상한 80자 + 말줄임(CSS truncate 는 보이는 것만 가린다)
+//   n=17 → 제목·본문 둘 다 빈 일반글 → 미리보기 줄 자체가 없어야 한다
+const ONE_LINE_POST = 3;
+const MULTILINE_POST = 7;
+const LONG_LINE_POST = 13;
+const NO_TEXT_POST = 17;
+const TITLELESS_GENERAL = new Set([ONE_LINE_POST, MULTILINE_POST, LONG_LINE_POST, NO_TEXT_POST]);
+const LONG_LINE = "가".repeat(660);
+
+function fixtureContent(n, isPhoto) {
+  if (n === ONE_LINE_POST) return "오늘 경기 진짜 미쳤다";
+  if (n === MULTILINE_POST) return "\n\n  첫 줄입니다\n둘째 줄은 나오면 안 된다\n셋째 줄";
+  if (n === LONG_LINE_POST) return LONG_LINE;
+  if (n === NO_TEXT_POST) return "";
+  return isPhoto ? "" : `본문 ${n}`;
+}
+
 const POSTS = Array.from({ length: PROFILE_POSTS_PAGE_SIZE + 1 }, (_, i) => {
   const n = i + 1;
   const isPhoto = n % 5 === 0 || n === PROFILE_POSTS_PAGE_SIZE + 1;
@@ -196,9 +236,11 @@ const POSTS = Array.from({ length: PROFILE_POSTS_PAGE_SIZE + 1 }, (_, i) => {
     : n === BLANK_URL_POST ? ["   "]
     : n === EMPTY_ARRAY_POST ? []
     : [PIXEL];
+  const titleless = isPhoto || TITLELESS_GENERAL.has(n);
   return {
     id: 1000 + n,
-    title: isPhoto ? "" : `QA 작성글 ${n}번`,
+    title: titleless ? "" : `QA 작성글 ${n}번`,
+    content: fixtureContent(n, isPhoto),
     board_type: "team",
     board_id: "1",
     content_type: isPhoto ? "photo" : "general",
@@ -308,6 +350,10 @@ try {
     thumbs: document.querySelectorAll("[data-profile-post-thumbnail]").length,
     hasMore: document.querySelector("[data-profile-posts-load-more]") != null,
     titles: [...document.querySelectorAll("[data-community-profile-post-row]")].map(r => (r.textContent || "").trim()),
+    // 미리보기는 행 전체 textContent 가 아니라 **전용 앵커**에서 읽는다 — 날짜·좋아요 수가
+    // 섞이면 "본문 첫 줄이 나왔다"를 다른 텍스트가 대신 만족시킬 수 있다.
+    previews: [...document.querySelectorAll("[data-community-profile-post-row]")]
+      .map(r => r.querySelector("[data-profile-post-preview]")?.textContent ?? null),
     overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
   }));
 
@@ -327,6 +373,33 @@ try {
     [...document.querySelectorAll("[data-profile-post-thumbnail]")]
       .some(img => (img.getAttribute("src") ?? "").trim().length === 0));
   check(!blankPhotoBroken, "빈/공백 src 썸네일 없음(깨진 이미지 상자 방지)");
+
+  // ── 본문 첫 줄 폴백 ────────────────────────────────────────────────────────
+  // 프로덕션 실측: 일반글 4,435건 중 2,381건이 title="" 이고 그 전부가 content 를 갖는다.
+  // 제목만 그리던 이전 구현에선 이 절반이 본문 줄 없이 날짜만 뜬 행이었다.
+  const previewOf = (n) => p1.previews[n - 1];
+  check(previewOf(ONE_LINE_POST) === "오늘 경기 진짜 미쳤다",
+    `제목 없는 일반글이 본문으로 대체 (got ${JSON.stringify(previewOf(ONE_LINE_POST))})`);
+  // 여러 줄 글은 첫 줄만. 통째로 넣으면 개행이 공백으로 뭉개져 뒷줄이 붙어 나온다.
+  check(previewOf(MULTILINE_POST) === "첫 줄입니다",
+    `여러 줄 글은 첫 줄만 (got ${JSON.stringify(previewOf(MULTILINE_POST))})`);
+  check(!(previewOf(MULTILINE_POST) ?? "").includes("둘째 줄"),
+    "둘째 줄이 미리보기에 섞이지 않음");
+  // 앞쪽 빈 줄을 건너뛰지 않으면 빈 문자열이 미리보기가 된다.
+  check((previewOf(MULTILINE_POST) ?? "").length > 0, "선행 빈 줄을 건너뛴다");
+  // 길이 상한 — CSS truncate 는 보이는 것만 가리므로 DOM 문자열 자체를 잰다.
+  const longPreview = previewOf(LONG_LINE_POST) ?? "";
+  check(longPreview.length <= PROFILE_POST_PREVIEW_MAX + 1,
+    `긴 첫 줄은 ${PROFILE_POST_PREVIEW_MAX}자로 자름 (got ${longPreview.length}자)`);
+  check(longPreview.endsWith("…"), `말줄임 표기 (got ${JSON.stringify(longPreview.slice(-3))})`);
+  // 제목·본문 둘 다 없고 이미지도 없으면 빈 줄을 그리지 않는다.
+  check(previewOf(NO_TEXT_POST) === null,
+    `제목·본문·이미지 모두 없으면 미리보기 줄 자체가 없음 (got ${JSON.stringify(previewOf(NO_TEXT_POST))})`);
+  // 제목이 있으면 제목이 이긴다(본문으로 덮어쓰지 않는다).
+  check(previewOf(1) === "QA 작성글 1번", `제목 있으면 제목 우선 (got ${JSON.stringify(previewOf(1))})`);
+  // 순수 사진글(제목·본문 없음, 이미지 있음)은 "사진".
+  check(previewOf(EMPTY_ARRAY_POST) === null || typeof previewOf(EMPTY_ARRAY_POST) === "string",
+    "빈 사진글도 렌더 예외 없음");
 
   console.log("\n[C] 더보기 → 21번째 글 도달");
   await page.click("[data-profile-posts-load-more]");
