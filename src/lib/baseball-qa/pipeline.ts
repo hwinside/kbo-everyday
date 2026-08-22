@@ -5924,6 +5924,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
   //   · RULE_TERM(룰·용어 질문) → **가드 소유 부정** → 일반 경로로 재질의(아래)
   //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
+  //     (⚠️ 이 줄은 **의도 판정 응답 자체**가 계약 밖일 때만 해당한다. 재질의 단계의
+  //      오류·판정은 되묻기가 아니라 `error`/`blocked`/`unsure` 로 간다 — 아래 주석 참조.)
   // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
   // 저장 envelope 방어는 replayStoredFinalResult 의 구조 판정(cache 전량 거절 ·
   // llm 은 고정 응대문 exact 만)이 담당한다 — 수사 파서 의존 0.
@@ -5938,7 +5940,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ⚠️ `RULE_TERM` 은 **판정 응답의 자유문장을 서빙하지 않는다**. 그 응답은 의도 토큰용
   //   프롬프트로 받은 것이라 톤·길이·범위 검증을 거치지 않았다. 대신 **가드를 내려놓고
   //   일반 프롬프트로 다시 묻는다** — 그래야 아래 `validateLlmResponse`(톤·길이·링크·범위)가
-  //   종전과 똑같은 강도로 적용된다. 재질의 실패는 되묻기 fail-close(기존 동작 유지).
+  //   종전과 똑같은 강도로 적용된다.
+  //
+  // ⚠️ 재질의 단계의 결과는 **되묻기로 뭉개지 않고 일반 경로의 의미 그대로** 종결한다
+  //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
+  //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
+  //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
   if (statNumericGuard) {
     const intent = parseStatIntentToken(llm.text);
     if (intent === "rule_term") {
