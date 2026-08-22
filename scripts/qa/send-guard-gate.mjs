@@ -93,7 +93,22 @@ if (mutated === src) {
   // ── actual: 실제 Playwright BrowserContext + POST 실측 (스텁 아님) + 결속 제거 mutant
   const { chromium } = await import("playwright");
   const { installChatWriteInterceptor } = await import("./send-guard.mjs");
-  const browser = await chromium.launch({ headless: true });
+  // CI gates 샤드 러너에는 브라우저 바이너리가 없다(전용 게이트 워크플로만 playwright install 수행).
+  // 실행 환경에서 바이너리 부재 시 이 게이트가 스스로 설치 후 1회 재시도한다 — skip 은 없다(fail-close).
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (e) {
+    if (!/Executable doesn't exist/.test(String(e))) throw e;
+    console.log("[send-guard-gate] chromium 바이너리 부재 — playwright install 후 재시도");
+    const inst = spawnSync("npx", ["playwright", "install", "chromium"], { encoding: "utf8", stdio: "inherit", timeout: 300000 });
+    if (inst.status !== 0) {
+      check("[actual-browser] chromium 설치 실패 — 브라우저 실측 불가는 게이트 FAIL(fail-close)", false, `install exit=${inst.status}`);
+      console.log(`\nsend-guard-gate: ${pass} passed, ${fail} failed`);
+      process.exit(1);
+    }
+    browser = await chromium.launch({ headless: true });
+  }
   const STG_URL = "https://qastaginginjected.supabase.co/rest/v1/chat_messages";
   const PROD_URL = "https://lbmbdjgsnenqjwjotoei.supabase.co/rest/v1/chat_messages";
   // simple-request(text/plain)로 preflight 없이 POST 를 확정 발화시킨다.
