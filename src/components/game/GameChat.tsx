@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff } from "lucide-react";
+import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff, Megaphone } from "lucide-react";
 import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
@@ -561,6 +561,24 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
           >
             <Send className="w-5 h-5" />
           </motion.button>
+        </div>
+        {/* 매너 안내 — 모든 크관 입력창 바로 아래 상시 노출 (2026-08-21 하린아빠 지시, 문구 원문 고정).
+            가시성은 accent 틴트 배경·좌측 바·font-medium으로 확보. */}
+        <div className="max-w-[640px] mx-auto px-3 pb-2">
+          {/* 폰트 11px · 아이콘 제거 — 첫 문장이 한 줄에 끝나도록 폭 확보(하린아빠 2026-08-21).
+              가시성은 accent 배경·좌측 바·font-medium으로 유지. */}
+          <p
+            data-testid="kgwan-manner-notice"
+            className="rounded-lg border-l-[3px] border-accent bg-accent/10 px-2.5 py-2 text-[11px] leading-[17px] font-medium text-text-secondary"
+          >
+            {/* 문장마다 줄바꿈 (하린아빠 2026-08-21 지시) — 문구 자체는 원문 불변 */}
+            <span className="block min-w-0">
+              <span className="block">크보팬 내 여러분들의 닉네임 옆에는 팀 명이 언제나 함께 붙어다닙니다.</span>
+              <span className="block">매너 있는 글은 응원팀과 그 팀의 팬들을 더 멋지게 만들고,</span>
+              <span className="block">그렇지 않은 글은 응원팀과 그 팀의 팬들을 부끄럽게 만듭니다.</span>
+              <span className="block">매너를 꼭 지켜주세요.</span>
+            </span>
+          </p>
         </div>
         <AnimatePresence initial={false}>
           {showGifPicker && (
