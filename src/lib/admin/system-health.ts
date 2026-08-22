@@ -11,6 +11,16 @@ export interface SystemMetricSummary {
   cpuSampleSeconds: number | null;
   /** cpuUsedPercent가 기반한 rate의 종료 시각(ISO). 소비처는 이 시각으로 freshness를 판정한다. */
   cpuSampleEndedAt: string | null;
+  /**
+   * 신선도 상한(90초)을 넘겨 `cpuUsedPercent`로 쓸 수 없는 **직전 서버 실측값**.
+   * cron 회차 누락·스케줄러 지터로 baseline이 잠시 닭을 때, 화면을 "측정 중"으로
+   * 비우지 않고 "N초 전 측정"으로 정직하게 보이기 위해 분리해 내려보낸다.
+   * 계약: 현재값이 아니므로 소비처는 건강도 판정·알림에 사용하지 않고 정보성으로만 표시한다.
+   * `cpuUsedPercent`가 채워진 응답에서는 항상 null이다(둘 중 하나만 존재).
+   */
+  cpuStalePercent: number | null;
+  /** cpuStalePercent가 기반한 rate의 종료 시각(ISO). 나이 표기는 이 값 기준. */
+  cpuStaleEndedAt: string | null;
   cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
   load1: number | null;
@@ -134,6 +144,13 @@ export interface InstantCpuResult {
 export const CPU_SAMPLE_MAX_AGE_SECONDS = 90;
 /** delta 창 상한: cron 1분 주기 + 지터. 초과는 장기 평균이라 순간값으로 부적합. */
 export const CPU_SAMPLE_MAX_WINDOW_SECONDS = 150;
+/**
+ * 직전값(stale) 표시 상한. 신선도 90초를 넘어도 이 상한 이내면 "N초 전 측정"으로
+ * 보여준다(현재값 아님을 명시). 이것도 넘으면 측정 불능으로 취급한다.
+ * 근거(2026-08-22 라이브 실측): cron 회차 누락으로 baseline 나이가 일시적으로
+ * 107초까지 밀렸다(90초 초과 → 화면이 "측정 중"으로 비는 공백 재현).
+ */
+export const CPU_SAMPLE_STALE_MAX_AGE_SECONDS = 300;
 
 /**
  * 저장 스냅샷 + 현재 counter로 즉시 CPU%를 계산한다 (삼순 2차 NO-GO 반영).
@@ -195,6 +212,39 @@ export function computeInstantCpuFromStore(
   const baselineAgeSeconds = (nowMs - latest.capturedAtMs) / 1_000;
   if (baselineAgeSeconds > maxAgeSeconds) return null;
   return evaluate(current, nowMs, latest);
+}
+
+/**
+ * 신선도 상한을 넘겨 현재값으로 쓸 수 없을 때, **저장된 스냅샷끼리의 마지막 유효 rate**를
+ * 돌려준다(직전 실측값). 현재 counter는 쓰지 않는다 — now 를 종료 시각으로 찍으면
+ * 멈춘 counter가 영우히 "현재값"으로 위장되기 때문이다(삼순 3차 P0-2 계약 유지).
+ *
+ * 사용처 계약: 반환값은 `cpuUsedPercent`가 아니라 정보성 표시전용이며, 건강도 판정·알림에
+ * 쓰지 않는다. 나이가 staleMaxAgeSeconds 를 넘으면 null(측정 불능).
+ */
+export function computeStaleCpuFromStore(
+  stored: StoredCpuSnapshot[],
+  nowMs: number,
+  staleMaxAgeSeconds = CPU_SAMPLE_STALE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const newer = rows[index];
+    const ageSeconds = (nowMs - newer.capturedAtMs) / 1_000;
+    if (ageSeconds > staleMaxAgeSeconds) return null; // 더 오래된 것만 남음
+    for (const older of rows.slice(index + 1)) {
+      const usedPercent = cpuUsedPercentFromSnapshots(newer, older);
+      if (usedPercent === null) continue;
+      const windowSeconds = (newer.capturedAtMs - older.capturedAtMs) / 1_000;
+      if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
+      return { usedPercent, windowSeconds, sampleEndedAtMs: newer.capturedAtMs };
+    }
+  }
+  return null;
 }
 
 export function cpuUsedPercentFromSnapshots(
@@ -340,6 +390,8 @@ export function summarizeSystemMetrics(
         ? null
         : round(cpuSampleSeconds),
     cpuSampleEndedAt: null,
+    cpuStalePercent: null,
+    cpuStaleEndedAt: null,
     cpuCounter,
     cpuCores,
     load1: round(load1),

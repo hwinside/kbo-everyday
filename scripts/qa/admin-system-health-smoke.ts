@@ -4,7 +4,13 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { computeInstantCpuFromStore, cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import {
+  computeInstantCpuFromStore,
+  computeStaleCpuFromStore,
+  cpuUsedPercentFromSnapshots,
+  parsePrometheusText,
+  summarizeSystemMetrics,
+} from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -269,6 +275,65 @@ test("client CPU delta derives busy percent across exporter scrape intervals", (
     cpuUsedPercentFromSnapshots(
       { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
       { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "cpu0" },
+    ),
+    null,
+  );
+});
+
+// 2026-08-22 라이브 공백 재현 회귀(하린아빠 13:27 스크린샷 → 13:31:20 관측으로 재현).
+// cron 회차가 하나 누락되면 저장 최신 나이가 107초까지 밀려 90초 freshness 상한을 넘기고,
+// 그 순간 화면이 "측정 중"으로 비었다. 즉시값은 여전히 null 이어야 하지만(계약 유지),
+// 직전 실측값은 내려보내 화면을 비우지 않는다.
+test("stored baseline older than 90s yields no instant value but a stale value (2026-08-22 gap)", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const current = { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp };
+  const stored = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 107_100 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 167_200 },
+    { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 226_800 },
+  ];
+
+  assert.equal(
+    computeInstantCpuFromStore(stored, current, now),
+    null,
+    "90초 초과 baseline 을 현재값으로 쓰면 안 된다(기존 계약 유지)",
+  );
+
+  const stale = computeStaleCpuFromStore(stored, now);
+  assert.ok(stale, "cron 누락 구간에서도 직전 실측값은 있어야 한다");
+  assert.ok(Math.abs(stale.usedPercent - 40) < 0.001);
+  assert.equal(stale.windowSeconds, 60.1); // 저장분끼리의 창
+  assert.equal(stale.sampleEndedAtMs, now - 107_100, "종료 시각은 저장 시각이지 now 가 아니다");
+});
+
+// 삼순 3차 P0-2 계약 유지: stale 경로도 now 를 종료 시각으로 재각인하지 않고,
+// 상한(5분)을 넘기면 측정 불능으로 fail-close 한다.
+test("computeStaleCpuFromStore fails closed beyond the stale cap and never stamps now", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const frozen = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 301_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 361_000 },
+  ];
+  assert.equal(computeStaleCpuFromStore(frozen, now), null, "5분 초과는 직전값도 보여주지 않는다");
+
+  // 창 상한(150초) 초과 쌍만 있으면 장기평균을 직전값으로 위장하지 않는다
+  const wideWindow = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 260_000 },
+  ];
+  assert.equal(computeStaleCpuFromStore(wideWindow, now), null, "창 160초는 순간값으로 부적합");
+
+  // 빈 저장소 / fingerprint 불일치는 null
+  assert.equal(computeStaleCpuFromStore([], now), null);
+  assert.equal(
+    computeStaleCpuFromStore(
+      [
+        { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 60_000 },
+        { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: "other", capturedAtMs: now - 120_000 },
+      ],
+      now,
     ),
     null,
   );

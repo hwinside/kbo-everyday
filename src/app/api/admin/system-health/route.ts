@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { computeInstantCpuFromStore, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import {
+  computeInstantCpuFromStore,
+  computeStaleCpuFromStore,
+  summarizeSystemMetrics,
+  type HealthLevel,
+} from "@/lib/admin/system-health";
 import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store";
 
 export const dynamic = "force-dynamic";
