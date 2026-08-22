@@ -1,0 +1,51 @@
+{
+  "incident": "2026-08-21 live chat QA send",
+  "ledgers": [
+    {
+      "file": "ab-1274-mt2w0wbp.json",
+      "sha256": "29f90c113b6867c60968b187e7c65bdef40b2662115722e5b6e4f151588fa4d9",
+      "bytes": 9391
+    },
+    {
+      "file": "ab-1274-mt2wg51y.json",
+      "sha256": "87715568e5a705992abed32a60045d4ae207d0fab09f0a9787e604c00d2bd9b2",
+      "bytes": 8382
+    },
+    {
+      "file": "ab-1274-mt2x3b8z.json",
+      "sha256": "a4e5c15d69c7af96081472965358418dc3f8868398b65b5ba98412ab3bc19e77",
+      "bytes": 8541
+    },
+    {
+      "file": "ab-1274-mt2xo6z8.json",
+      "sha256": "d0e1c2e72fad87b28c329f9371aa3cf1f7319d2e5923be3f9b8f2cc65ccb857c",
+      "bytes": 8548
+    },
+    {
+      "file": "ab-1274-mt2y7t7h.json",
+      "sha256": "9cd96b41c4aa1dae7222420f494d9b59e50ce7bebc06c23e3ac6f1b030aa9e2a",
+      "bytes": 8548
+    },
+    {
+      "file": "ab-1274-mt2yt03h.json",
+      "sha256": "507f9f26bf87651c678f35aa15ab88ddcaee7d81b4fe162a31d602780f9b6d0f",
+      "bytes": 3766
+    },
+    {
+      "file": "ab-1274-mt2yzhy0.json",
+      "sha256": "a19476385a5b22d8d04c4e18f8dad96c8553bf139eaec27ebf7156bd931a23a3",
+      "bytes": 8683
+    },
+    {
+      "file": "ab-1274-mt2z4g2c.json",
+      "sha256": "96433af822dd987db425cf6850fcf397d726903425cb1ef8a6aa5a33c92cf6ed",
+      "bytes": 10297
+    },
+    {
+      "file": "paired-1274-mt2zcnoo.json",
+      "sha256": "bc721ca56aefc6e56ab1fbb3e8c9388d838246d0af430995c55a8654f8d1a790",
+      "bytes": 3219
+    }
+  ],
+  "note": "원장 원본은 state/qa/ (gateway workspace). 이 manifest 의 sha256 과 대조해 무결성 검증."
+}

@@ -15,7 +15,7 @@
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { readFileSync, writeFileSync } from "node:fs";
-import { assertSendAllowed } from "./send-guard.mjs";
+import { assertSendAllowed, installChatWriteInterceptor } from "./send-guard.mjs";
 
 const ENV_PATH = process.env.QA_ENV_PATH || "/Users/harinclaw/Projects/kbo-everyday/.env.local";
 for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
@@ -117,6 +117,8 @@ function newNetCounter() {
 
 async function openUi(a, base, { fulfillLivePayload = null } = {}) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  // 단일 결속: guard 승인 room 밖으로 나가는 chat write 는 네트워크 경계에서 abort (fail-close)
+  await installChatWriteInterceptor(context, ROOM_ID);
   await context.addInitScript(
     ([at, rt]) => {
       sessionStorage.setItem("kbo-pending-session", JSON.stringify({
@@ -340,6 +342,7 @@ async function measureEnv(envName, base, { fulfillLivePayload = null } = {}) {
   for (const m of sentTexts.filter((x) => x.env === envName)) {
     const receiver = accounts[m.senderIdx === 0 ? 1 : 0];
     const domCount = await receiver.page.locator(`[data-chat-msg]:has-text(${JSON.stringify(m.text)})`).count();
+    // query-guard: bounded -- 이번 런 고유 stamp content 완전일치 1건 기대 조회다.
     const { data: rows, error } = await admin
       .from("chat_messages").select("id").eq("room_id", ROOM_ID).eq("content", m.text);
     if (error || domCount !== 1 || (rows?.length ?? -1) !== 1) {
@@ -368,6 +371,7 @@ async function cleanup() {
   }
   check("cleanup — 삭제 호출 error 없음", errs.length === 0, errs.join(" / ") || "all null");
   // postcondition: 조회 성공 + 잔존 0 (fail-open 방지 — error 를 0 으로 읽지 않는다)
+  // query-guard: bounded -- 이번 런 QA 계정(최대 4명) user_id in() 한정 조회다.
   const left = await admin.from("chat_messages").select("id")
     .eq("room_id", ROOM_ID).in("user_id", accounts.map((a) => a.userId).filter(Boolean));
   check("postcondition — QA 메시지 잔존 0 (조회 성공 전제)",

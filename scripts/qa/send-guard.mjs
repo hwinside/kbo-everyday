@@ -141,3 +141,65 @@ export function selftestCases() {
     { name: "RED: 런타임 allowlist 는 빈 상태 (주입 없으면 staging URL 도 차단)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "qa-fixture:abcd" }, opts: {}, expect: REASONS.REF_NOT_ALLOWLISTED },
   ];
 }
+
+/* ── 실제 write target 단일 결속 (삼순 9차) ──────────────────────────────
+ * guard 가 승인한 room 과 브라우저가 실제로 write 하는 room 이 분리될 수 있던
+ * 간극(guard/query/cleanup 은 QA_FIXTURE_ROOM, GameChat 은 game:${gameId})을
+ * 네트워크 경계에서 닫는다: chat_messages POST 의 body.room_id 가 guarded room 과
+ * 정확히 일치하지 않으면 요청 자체를 abort 한다(fail-close).
+ */
+
+export const WRITE_REASONS = Object.freeze({
+  OK: "OK",
+  GUARD_ROOM_MISSING: "GUARD_ROOM_MISSING", // 결속할 guarded room 자체가 없음
+  BODY_ROOM_UNRESOLVED: "BODY_ROOM_UNRESOLVED", // POST body 에서 room_id 판정 불능
+  WRITE_TARGET_MISMATCH: "WRITE_TARGET_MISMATCH", // 실제 write room ≠ guarded room
+});
+
+/** 순수 evaluator — 부수효과 0. guarded room 과 실제 write body room 의 완전 일치만 허용. */
+export function evaluateChatWrite(bodyRoomId, guardedRoomId) {
+  if (!guardedRoomId) {
+    return { allowed: false, reason: WRITE_REASONS.GUARD_ROOM_MISSING, detail: "guarded room 부재 — 결속 대상이 없으면 모든 write 차단." };
+  }
+  if (typeof bodyRoomId !== "string" || bodyRoomId.length === 0) {
+    return { allowed: false, reason: WRITE_REASONS.BODY_ROOM_UNRESOLVED, detail: "write body 의 room_id 판정 불능 — 판정할 수 없으면 차단." };
+  }
+  if (bodyRoomId !== guardedRoomId) {
+    return { allowed: false, reason: WRITE_REASONS.WRITE_TARGET_MISMATCH, detail: `write room '${bodyRoomId}' ≠ guarded room '${guardedRoomId}' — 단일 결속 위반.` };
+  }
+  return { allowed: true, reason: WRITE_REASONS.OK, detail: `write room == guarded room '${guardedRoomId}'` };
+}
+
+/** POST body(단건 객체 또는 배열)에서 room_id 를 추출한다. 판정 불능은 null. */
+export function roomIdOfChatInsertBody(postData) {
+  try {
+    const body = JSON.parse(postData ?? "null");
+    if (Array.isArray(body)) {
+      const rooms = [...new Set(body.map((r) => r?.room_id))];
+      return rooms.length === 1 && typeof rooms[0] === "string" ? rooms[0] : null;
+    }
+    return typeof body?.room_id === "string" ? body.room_id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Playwright BrowserContext 에 chat_messages write 인터셉터를 설치한다.
+ * 발송형 하니스는 컨텍스트 생성 직후 반드시 호출한다 — 이것이 guard 승인 room 과
+ * 실제 브라우저 write 를 잇는 유일한 결속점이다.
+ */
+export async function installChatWriteInterceptor(context, guardedRoomId, onBlocked = null) {
+  await context.route("**/rest/v1/chat_messages*", (route) => {
+    const req = route.request();
+    if (req.method() !== "POST") return route.continue();
+    const bodyRoom = roomIdOfChatInsertBody(req.postData());
+    const v = evaluateChatWrite(bodyRoom, guardedRoomId);
+    if (!v.allowed) {
+      console.error(`[SEND GUARD] chat write ABORT ${v.reason} — ${v.detail}`);
+      if (onBlocked) onBlocked({ reason: v.reason, bodyRoom });
+      return route.abort("blockedbyclient");
+    }
+    return route.continue();
+  });
+}

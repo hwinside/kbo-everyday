@@ -14,7 +14,7 @@
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { readFileSync } from "node:fs";
-import { assertSendAllowed } from "./send-guard.mjs";
+import { assertSendAllowed, installChatWriteInterceptor } from "./send-guard.mjs";
 
 const ENV_PATH = process.env.QA_ENV_PATH || "/Users/harinclaw/Projects/kbo-everyday/.env.local";
 for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
@@ -103,6 +103,8 @@ async function setupAccount(a) {
 
 async function openUi(a) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  // 단일 결속: guard 승인 room 밖으로 나가는 chat write 는 네트워크 경계에서 abort (fail-close)
+  await installChatWriteInterceptor(context, ROOM_ID);
   await context.addInitScript(
     ([at, rt]) => {
       sessionStorage.setItem("kbo-pending-session", JSON.stringify({
@@ -218,6 +220,7 @@ async function main() {
   check("새로고침 후 A 화면에 두 메시지 모두 보존", keptA && keptB, `A=${keptA} B=${keptB}`);
 
   console.log("\n[7] 교차 오염 — 각 메시지가 자기 발신자로만 저장됐는가");
+  // query-guard: bounded -- 이번 런 고유 stamp 메시지 2건(content 완전일치)만 대상이다.
   const { data: rows, error: rowsErr } = await admin
     .from("chat_messages").select("id,user_id,content")
     .eq("room_id", ROOM_ID).in("content", [MSG_A, MSG_B]).order("created_at");
@@ -266,6 +269,7 @@ async function cleanup() {
   );
   // postcondition — fail-close.
   // 조회 자체가 실패하면 data 는 null 이고 `?.length ?? 0` 은 0 이 된다.
+  // query-guard: bounded -- 이번 런의 고유 stamp 메시지 2건 content 완전일치 조회다.
   // 그걸 "잔존 0" 으로 읽으면 정리 실패를 PASS 로 보고하게 된다 → error 와 data 존재를 모두 요구.
   const msgRes = await admin.from(pcTable("chat_messages")).select("id").in("content", [MSG_A, MSG_B]);
   check(
@@ -274,6 +278,7 @@ async function cleanup() {
     msgRes.error ? `select error: ${msgRes.error.message}` : `left=${msgRes.data?.length ?? "null"}`,
   );
 
+    // query-guard: bounded -- 방금 생성한 QA 계정 id 목록(최대 2건)에 대한 in() 조회다.
   const ids = accounts.map((a) => a.userId).filter(Boolean);
   if (ids.length) {
     const profRes = await admin.from(pcTable("profiles")).select("id").in("id", ids);

@@ -8,7 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
 import { readFileSync, writeFileSync } from "node:fs";
-import { assertSendAllowed } from "./send-guard.mjs";
+import { assertSendAllowed, installChatWriteInterceptor } from "./send-guard.mjs";
 
 const ENV_PATH = "/Users/harinclaw/Projects/kbo-everyday/.env.local";
 for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
@@ -71,6 +71,8 @@ async function setupAccount(a) {
 
 async function openPage(a, base) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  // 단일 결속: guard 승인 room 밖으로 나가는 chat write 는 네트워크 경계에서 abort (fail-close)
+  await installChatWriteInterceptor(context, ROOM_ID);
   await context.addInitScript(([at, rt]) => {
     sessionStorage.setItem("kbo-pending-session", JSON.stringify({ access_token: at, refresh_token: rt }));
   }, [a.session.access_token, a.session.refresh_token]);
@@ -166,6 +168,7 @@ async function cleanup(pages) {
     if (u.error) errs.push(`user ${a.label}: ${u.error.message}`);
   }
   check("cleanup — 삭제 error 없음", errs.length === 0, errs.join(" / ") || "all null");
+  // query-guard: bounded -- 이번 런 QA 계정(최대 4명) user_id in() 한정 조회다.
   const left = await admin.from("chat_messages").select("id").eq("room_id", ROOM_ID)
     .in("user_id", accounts.map((a) => a.userId).filter(Boolean));
   check("postcondition — 잔존 0 (조회 성공 전제)", !left.error && Array.isArray(left.data) && left.data.length === 0,
@@ -211,6 +214,7 @@ async function main() {
   for (const m of sent) {
     const rp = m.env === "PROD" ? prodB.page : a1B.page;
     const dom = await rp.locator(`[data-chat-msg]:has-text(${JSON.stringify(m.text)})`).count();
+    // query-guard: bounded -- 이번 런 고유 stamp content 완전일치 1건 기대 조회다.
     const { data: rows, error } = await admin.from("chat_messages").select("id").eq("room_id", ROOM_ID).eq("content", m.text);
     if (error || dom !== 1 || (rows?.length ?? -1) !== 1) {
       dupFail++;

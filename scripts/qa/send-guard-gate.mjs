@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { evaluateSend, selftestCases, REASONS } from "./send-guard.mjs";
+import { evaluateSend, selftestCases, REASONS, evaluateChatWrite, roomIdOfChatInsertBody, WRITE_REASONS } from "./send-guard.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUARD_PATH = join(HERE, "send-guard.mjs");
@@ -67,6 +67,41 @@ if (mutated === src) {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+// ── D. write-target 단일 결속 (삼순 9차: guard room 과 실제 write room 의 완전 일치 강제)
+{
+  const w = (b, g) => evaluateChatWrite(b, g);
+  check("[write-bind] guarded room 과 완전 일치만 허용", w("qa-fixture:abcd", "qa-fixture:abcd").reason === WRITE_REASONS.OK);
+  check("[write-bind] 실경기방 write 는 guarded room 과 불일치로 차단", w("game:20260821LGHH0", "qa-fixture:abcd").reason === WRITE_REASONS.WRITE_TARGET_MISMATCH);
+  check("[write-bind] guarded room 부재 시 모든 write 차단", w("game:x", null).reason === WRITE_REASONS.GUARD_ROOM_MISSING);
+  check("[write-bind] body room 판정 불능은 차단(fail-close)", w(null, "qa-fixture:abcd").reason === WRITE_REASONS.BODY_ROOM_UNRESOLVED);
+  check("[write-bind] 배열 insert 혼합 room 은 판정 불능(null)", roomIdOfChatInsertBody(JSON.stringify([{ room_id: "r1" }, { room_id: "r2" }])) === null);
+  check("[write-bind] 배열 insert 단일 room 은 그 room", roomIdOfChatInsertBody(JSON.stringify([{ room_id: "r1" }, { room_id: "r1" }])) === "r1");
+  // 하니스 결속 실재 확인: 발송형 하니스 4개 전부 newContext 직후 인터셉터를 설치하는가 (구조 grep)
+  const HARNESSES = ["e2e-1274-ab-measure.mjs", "e2e-1274-paired.mjs", "e2e-1274-chat-preview.mjs", "e2e-1256-chat-realtime.mjs"];
+  for (const h of HARNESSES) {
+    const src2 = readFileSync(join(HERE, h), "utf8");
+    check(`[write-bind] ${h} 가 installChatWriteInterceptor(context, ROOM_ID) 결속`, /installChatWriteInterceptor\(context, ROOM_ID\)/.test(src2));
+  }
+  // actual room mutant: 인터셉터가 route.abort 로 실제 차단하는지 — Playwright 계약을 스텁 route 로 실측
+  const { installChatWriteInterceptor } = await import("./send-guard.mjs");
+  const calls = [];
+  const fakeContext = {
+    route: async (_pattern, handler) => { fakeContext._handler = handler; },
+  };
+  await installChatWriteInterceptor(fakeContext, "qa-fixture:abcd", (info) => calls.push(info));
+  const mkRoute = (room) => ({
+    request: () => ({ method: () => "POST", postData: () => JSON.stringify({ room_id: room }) }),
+    continue: () => { mkRoute.last = "continue"; },
+    abort: (r) => { mkRoute.last = `abort:${r}`; },
+  });
+  const r1 = mkRoute("game:20260821LGHH0");
+  await fakeContext._handler(r1);
+  check("[write-bind actual] 실경기방 POST 는 abort(blockedbyclient) 실차단", mkRoute.last === "abort:blockedbyclient" && calls.at(-1)?.reason === WRITE_REASONS.WRITE_TARGET_MISMATCH);
+  const r2 = mkRoute("qa-fixture:abcd");
+  await fakeContext._handler(r2);
+  check("[write-bind actual] guarded room POST 는 continue", mkRoute.last === "continue");
 }
 
 console.log(`\nsend-guard-gate: ${pass} passed, ${fail} failed`);

@@ -81,6 +81,7 @@ let residual = 0;
 let queryFailed = false;
 const roomAudit = [];
 for (const room of ROOMS) {
+  // query-guard: bounded -- 감사 대상 5개 방의 QA prefix(⚾) 메시지 한정 잔존 감사 조회다.
   const { data, error, count } = await admin
     .from("chat_messages")
     .select("id,content,user_id,created_at", { count: "exact" })
@@ -99,6 +100,7 @@ console.log(`  → 감사 스냅샷 잔존 합계: ${residual}건 ${queryFailed 
 
 // ── 3) QA 계정 잔존
 console.log("\n=== 3) QA 계정 잔존 ===");
+// query-guard: bounded -- qa 닉네임 prefix 4종 잔존검사, QA 계정은 런당 최대 4건이다.
 const { data: profs, error: profErr } = await admin
   .from("profiles").select("id,nickname").or("nickname.like.qaAb%,nickname.like.qaPr%,nickname.like.qaChat%,nickname.like.qaA1%");
 const profResidual = profErr ? null : profs.length;
