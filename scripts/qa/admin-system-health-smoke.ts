@@ -366,7 +366,54 @@ test("computeStaleCpuFromStore binds to the current series (no past-series fallb
     { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: newFp, capturedAtMs: now - 100_000 },
     { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: newFp, capturedAtMs: now - 160_000 },
   ];
-  assert.ok(computeStaleCpuFromStore(healthy, { ...current, seriesFingerprint: newFp }, now));
+  assert.ok(computeStaleCpuFromStore(healthy, { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: newFp }, now));
+});
+
+// 삼순 #1283 P1(재지적): fingerprint 는 CPU label 집합이라 **counter reset 에도 그대로**일 수 있다.
+// 그러면 series 결속만으로는 reset 을 걸러낼 수 없으므로, newer 를 최신 row 에 고정하고
+// current 가 최신 저장분보다 작으면 즉시 fail-close 해야 한다.
+test("computeStaleCpuFromStore fails closed on same-fingerprint counter reset", () => {
+  const fp = "cpu0"; // reset 이지만 label 집합은 동일
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+
+  // ① post-reset 최신 + pre-reset 2개 — 과거 쌍(40%)으로 내려가면 안 된다
+  const postThenPre = [
+    { totalSeconds: 8, idleSeconds: 5, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 160_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 220_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(postThenPre, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+    "reset 직후 pre-reset 구간의 rate 를 직전값으로 내보내면 안 된다",
+  );
+
+  // ② current 가 최신 저장분보다 작음(total 역전) — same-fp reset
+  const resetTotal = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 160_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(resetTotal, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+    "current.total 이 최신 저장분보다 작으면 reset 으로 fail-close",
+  );
+
+  // ③ idle 만 역전해도 reset 으로 본다
+  assert.equal(
+    computeStaleCpuFromStore(resetTotal, { totalSeconds: 306, idleSeconds: 100, seriesFingerprint: fp }, now),
+    null,
+    "current.idle 역전도 reset 으로 fail-close",
+  );
+
+  // ④ 과방어 아님 증명: current 가 전진한 정상 상황은 그대로 반환된다
+  const ok = computeStaleCpuFromStore(
+    resetTotal,
+    { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp },
+    now,
+  );
+  assert.ok(ok);
+  assert.equal(ok.sampleEndedAtMs, now - 100_000);
 });
 
 test("computeInstantCpuFromStore rates current against the freshest stored snapshot", () => {

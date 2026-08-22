@@ -219,12 +219,13 @@ export function computeInstantCpuFromStore(
  * 돌려준다(직전 실측값). 현재 counter 의 **값**은 rate 계산에 쓰지 않는다 — now 를 종료
  * 시각으로 찍으면 멈춘 counter 가 영우히 "현재값"으로 위장되기 때문이다(삼순 3차 P0-2 계약).
  *
- * 단 **series 결속은 현재 counter 기준**이다(삼순 #1283 P1):
- * - 사용할 쌍은 `current.seriesFingerprint` 와 같은 series 에서만 고른다.
- * - 그래서 current 가 reset/fingerprint 변경되면 과거 series 의 오래된 쌍이 직전값으로
- *   노출되지 않는다("fingerprint 불일치 fail-close" 우회 차단).
- * - 또한 가장 최신 row 가 다른 series 면(즉 current 와 불일치) 즉시 null — 과거로
- *   계속 내려가며 탐색하지 않는다.
+ * 단 **현재 counter 와의 호환성은 게이트로 검사**한다(삼순 #1283 P1):
+ * - `newer` 는 반드시 **최신 저장 row 하나에 고정**한다. 더 오래된 pre-reset 쌍으로
+ *   내려가면, reset 직후에 과거 구간의 rate 를 "직전값"으로 내보내게 된다.
+ * - 최신 row 가 current 와 다른 series 면(fingerprint 불일치) 즉시 null.
+ * - **fingerprint 가 같아도** current 의 total/idle 이 최신 저장분보다 작으면 counter reset
+ *   이므로 즉시 null (fingerprint 는 CPU label 집합이라 reset 에도 그대로일 수 있다).
+ *   이때 current 의 값은 **호환성 게이트에만** 쓰고 rate 계산엔 여전히 쓰지 않는다.
  *
  * 사용처 계약: 반환값은 `cpuUsedPercent`가 아니라 정보성 표시전용이며, 건강도 판정·알림에
  * 쓰지 않는다. 나이가 staleMaxAgeSeconds 를 넘으면 null(측정 불능).
@@ -241,21 +242,23 @@ export function computeStaleCpuFromStore(
     .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
 
   const newest = rows[0];
-  // 최신 저장분이 현재 series 가 아니면(current reset/fingerprint 변경) 과거를 뒤지지 않고 fail-close.
+  // 최신 저장분이 현재 series 가 아니면(fingerprint 변경) 과거를 뒤지지 않고 fail-close.
   if (!newest || newest.seriesFingerprint !== current.seriesFingerprint) return null;
+  // fingerprint 가 같아도 current 가 최신 저장분보다 작으면 counter reset — 즉시 fail-close.
+  // (값은 호환성 게이트에만 사용, rate 계산엔 미사용 — now 재각인 금지 계약 유지.)
+  if (current.totalSeconds < newest.totalSeconds || current.idleSeconds < newest.idleSeconds) return null;
 
-  const sameSeries = rows.filter((row) => row.seriesFingerprint === current.seriesFingerprint);
-  for (let index = 0; index < sameSeries.length; index += 1) {
-    const newer = sameSeries[index];
-    const ageSeconds = (nowMs - newer.capturedAtMs) / 1_000;
-    if (ageSeconds > staleMaxAgeSeconds) return null; // 더 오래된 것만 남음
-    for (const older of sameSeries.slice(index + 1)) {
-      const usedPercent = cpuUsedPercentFromSnapshots(newer, older);
-      if (usedPercent === null) continue; // 동일 tick·역전(reset)
-      const windowSeconds = (newer.capturedAtMs - older.capturedAtMs) / 1_000;
-      if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
-      return { usedPercent, windowSeconds, sampleEndedAtMs: newer.capturedAtMs };
-    }
+  // newer 는 최신 row 하나에 고정한다 — 더 오래된 pre-reset 쌍으로 내려가지 않는다.
+  const ageSeconds = (nowMs - newest.capturedAtMs) / 1_000;
+  if (ageSeconds > staleMaxAgeSeconds) return null;
+
+  for (const older of rows.slice(1)) {
+    if (older.seriesFingerprint !== current.seriesFingerprint) continue;
+    const usedPercent = cpuUsedPercentFromSnapshots(newest, older);
+    if (usedPercent === null) continue; // 동일 tick·역전(reset)
+    const windowSeconds = (newest.capturedAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newest.capturedAtMs };
   }
   return null;
 }
