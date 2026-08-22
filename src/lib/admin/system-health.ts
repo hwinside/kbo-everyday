@@ -9,6 +9,8 @@ export interface CpuCounterSnapshot {
 export interface SystemMetricSummary {
   cpuUsedPercent: number | null;
   cpuSampleSeconds: number | null;
+  /** cpuUsedPercent가 기반한 rate의 종료 시각(ISO). 소비처는 이 시각으로 freshness를 판정한다. */
+  cpuSampleEndedAt: string | null;
   cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
   load1: number | null;
@@ -110,6 +112,89 @@ function cpuCounterSnapshot(samples: PrometheusSample[]) {
     .filter((sample) => sample.labels.mode === "idle")
     .reduce((sum, sample) => sum + sample.value, 0);
   return { totalSeconds, idleSeconds, seriesFingerprint };
+}
+
+/** Prometheus 텍스트에서 CPU counter 스냅샷만 추출 (cron/route 공용). */
+export function extractCpuCounterSnapshot(text: string): CpuCounterSnapshot | null {
+  return cpuCounterSnapshot(parsePrometheusText(text));
+}
+
+export interface StoredCpuSnapshot extends CpuCounterSnapshot {
+  capturedAtMs: number;
+}
+
+export interface InstantCpuResult {
+  usedPercent: number;
+  windowSeconds: number;
+  /** 이 rate가 끝난 시각(최신 쪽 스냅샷의 시각). freshness 판정은 이 값 기준. */
+  sampleEndedAtMs: number;
+}
+
+/** freshness 상한: rate 종료 시각이 이보다 오래되면 현재값으로 표시 금지 (삼순 게이트 ≤90초). */
+export const CPU_SAMPLE_MAX_AGE_SECONDS = 90;
+/** delta 창 상한: cron 1분 주기 + 지터. 초과는 장기 평균이라 순간값으로 부적합. */
+export const CPU_SAMPLE_MAX_WINDOW_SECONDS = 150;
+
+/**
+ * 저장 스냅샷 + 현재 counter로 즉시 CPU%를 계산한다 (삼순 2차 NO-GO 반영).
+ *
+ * freshness는 baseline 나이가 아니라 **rate가 끝난 시각(sampleEndedAt)** 기준이다:
+ * - 현재 counter가 최신 저장분보다 전진 → (현재, stored[0]) 쌍, endedAt = now.
+ * - 현재가 최신 저장분과 동일(같은 scrape tick) → (stored[0], stored[1]) 쌍,
+ *   endedAt = stored[0] 시각. ← "최신 C=-31초·직전 B=-91초"에서도 C 기준 신선도로
+ *   값을 유지해 주기마다 "측정 중" 공백이 생기던 blocker 1을 닫는다.
+ * 공통 검증: fingerprint 일치·counter 전진(역전/리셋 거부), 창 ≤ maxWindow,
+ * 나이(now-endedAt) ≤ maxAge. 미충족은 null (fail-close — counter가 멈추면
+ * endedAt이 공진하므로 오래된 값이 현재값으로 위장되지 않는다).
+ */
+export function computeInstantCpuFromStore(
+  stored: StoredCpuSnapshot[],
+  current: CpuCounterSnapshot,
+  nowMs: number,
+  maxAgeSeconds = CPU_SAMPLE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+
+  const latest = rows[0];
+  if (!latest) return null;
+
+  const sameCounter = (left: CpuCounterSnapshot, right: CpuCounterSnapshot) =>
+    left.seriesFingerprint === right.seriesFingerprint &&
+    left.totalSeconds === right.totalSeconds &&
+    left.idleSeconds === right.idleSeconds;
+
+  const evaluate = (
+    newer: CpuCounterSnapshot,
+    newerAtMs: number,
+    older: StoredCpuSnapshot,
+  ): InstantCpuResult | null => {
+    const usedPercent = cpuUsedPercentFromSnapshots(newer, older);
+    if (usedPercent === null) return null; // 동일 tick·역전·fingerprint 불일치
+    const windowSeconds = (newerAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) return null;
+    const ageSeconds = (nowMs - newerAtMs) / 1_000;
+    if (ageSeconds > maxAgeSeconds) return null;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newerAtMs };
+  };
+
+  if (sameCounter(current, latest)) {
+    // 현재 counter가 최신 저장분과 **정확히 동일**한 경우에만 과거 쌍(latest, prev)으로 대체한다.
+    // (삼순 3차 P0-1: 첫 쌍이 실패했다고 무조건 fallback 하면 current 리셋·fingerprint
+    //  변경 상황에서 과거 rate를 실시간처럼 보여준다.)
+    const previous = rows[1];
+    if (!previous) return null;
+    return evaluate(latest, latest.capturedAtMs, previous);
+  }
+
+  // current ↔ stored[0] 경로: 현재 scrape 시각을 모르므로 baseline 신선도를 별도로 제한한다.
+  // (삼순 3차 P0-2: C가 정지해도 sampleEndedAt=now로 매번 찍혀 90초 freshness를
+  //  150초 window까지 우회하는 경로 차단.)
+  const baselineAgeSeconds = (nowMs - latest.capturedAtMs) / 1_000;
+  if (baselineAgeSeconds > maxAgeSeconds) return null;
+  return evaluate(current, nowMs, latest);
 }
 
 export function cpuUsedPercentFromSnapshots(
@@ -254,6 +339,7 @@ export function summarizeSystemMetrics(
       cpuUsedPercent === null || cpuSampleSeconds === undefined || !Number.isFinite(cpuSampleSeconds)
         ? null
         : round(cpuSampleSeconds),
+    cpuSampleEndedAt: null,
     cpuCounter,
     cpuCores,
     load1: round(load1),

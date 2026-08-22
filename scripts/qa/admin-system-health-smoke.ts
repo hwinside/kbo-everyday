@@ -4,7 +4,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import { computeInstantCpuFromStore, cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -212,12 +212,14 @@ async function routeWith(fetchImpl: typeof fetch) {
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_MANAGEMENT_TOKEN: process.env.SUPABASE_MANAGEMENT_TOKEN,
+    VERCEL_TOKEN: process.env.VERCEL_TOKEN,
   };
   process.env.ADMIN_PIN = "health-test-pin";
   delete process.env.ADMIN_PIN_HASH;
   process.env.NEXT_PUBLIC_SUPABASE_URL = "https://health-test.supabase.co";
   process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-role";
   process.env.SUPABASE_MANAGEMENT_TOKEN = "test-management-token";
+  process.env.VERCEL_TOKEN = "test-vercel-token";
   globalThis.fetch = fetchImpl;
   try {
     return await GET(
@@ -270,6 +272,239 @@ test("client CPU delta derives busy percent across exporter scrape intervals", (
     ),
     null,
   );
+});
+
+test("computeInstantCpuFromStore rates current against the freshest stored snapshot", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  const result = computeInstantCpuFromStore(
+    [
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 60_000 },
+      { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 120_000 },
+    ],
+    current,
+    now,
+  );
+  assert.ok(result);
+  assert.ok(Math.abs(result.usedPercent - 40) < 0.001);
+  assert.equal(result.windowSeconds, 60);
+  assert.equal(result.sampleEndedAtMs, now); // 현재 counter가 전진 → rate 종료 = now
+});
+
+// 삼순 2차 blocker 1: 정상 주기의 [최신 C=-31초, 직전 B=-91초] + 현재=C 상황도 값이 나와야 한다.
+test("computeInstantCpuFromStore keeps the value when current equals the newest stored tick", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  const result = computeInstantCpuFromStore(
+    [
+      { ...current, capturedAtMs: now - 31_000 }, // C — 현재와 동일 tick
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 91_000 }, // B
+    ],
+    current,
+    now,
+  );
+  assert.ok(result, "동일 최신 tick + 직전 91쓸에서도 측정 중이 되면 안 된다");
+  assert.ok(Math.abs(result.usedPercent - 40) < 0.001);
+  assert.equal(result.windowSeconds, 60); // C↔B 창
+  assert.equal(result.sampleEndedAtMs, now - 31_000); // freshness 기준은 C 시각
+});
+
+// 삼순 2차 blocker 2: counter가 2분 이상 멈추면 현재값으로 위장하지 않는다.
+test("computeInstantCpuFromStore fails closed when the counter has been frozen", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  const frozen = computeInstantCpuFromStore(
+    [
+      { ...current, capturedAtMs: now - 130_000 }, // 동일 counter, 2분 이상 정지
+      { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 190_000 },
+    ],
+    current,
+    now,
+  );
+  assert.equal(frozen, null);
+});
+
+// 삼순 3차 P0-1: current가 최신 저장분과 정확히 동일할 때만 과거 쌍을 쓴다.
+// reset/fingerprint 변경으로 첫 쌍이 실패했다고 과거 rate를 실시간처럼 보여주면 안 된다.
+test("computeInstantCpuFromStore never falls back to a past pair when current diverges", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const storedPair = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 20_000 }, // C
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 80_000 }, // B
+  ];
+  // current가 리셋(counter 역전) — 과거 C↔B 가 유효해도 null 이어야 한다
+  assert.equal(
+    computeInstantCpuFromStore(storedPair, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+  );
+  // current fingerprint 변경 — 마찬가지로 null
+  assert.equal(
+    computeInstantCpuFromStore(
+      storedPair,
+      { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: `${fp};cpu2|mode=idle` },
+      now,
+    ),
+    null,
+  );
+});
+
+// 삼순 3차 P0-2: current=C 가 정지했고 store 최신=B 일 때
+// sampleEndedAt=now 로 매번 찍어 90초 freshness 를 150초 window 까지 우회하면 안 된다.
+test("computeInstantCpuFromStore caps the current↔stored path by stored freshness", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  // B 가 91초 전 — 창(91s)은 150s 이내지만 baseline 신선도가 90초를 넘으므로 null
+  assert.equal(
+    computeInstantCpuFromStore(
+      [{ totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 91_000 }],
+      current,
+      now,
+    ),
+    null,
+  );
+  // 89초 전이면 정상 계산
+  const ok = computeInstantCpuFromStore(
+    [{ totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 89_000 }],
+    current,
+    now,
+  );
+  assert.ok(ok);
+  assert.equal(ok.sampleEndedAtMs, now);
+});
+
+test("computeInstantCpuFromStore fails closed on foreign/stale/reset/empty rows", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-21T10:00:00.000Z");
+  const current = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp };
+  // fingerprint 불일치 → null
+  assert.equal(
+    computeInstantCpuFromStore([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: "other", capturedAtMs: now - 60_000 }], current, now),
+    null,
+  );
+  // 창 상한(150초) 초과 → null (장기 평균을 순간값으로 위장 금지)
+  assert.equal(
+    computeInstantCpuFromStore([{ totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 151_000 }], current, now),
+    null,
+  );
+  // counter 리셋(역전) → null
+  assert.equal(
+    computeInstantCpuFromStore([{ totalSeconds: 400, idleSeconds: 300, seriesFingerprint: fp, capturedAtMs: now - 60_000 }], current, now),
+    null,
+  );
+  // 빈 저장소 → null
+  assert.equal(computeInstantCpuFromStore([], current, now), null);
+});
+
+test("route fills CPU instantly from the Edge Config baseline (read-only enforced)", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  let storeReads = 0;
+  let storeWrites = 0;
+  const response = await routeWith(async (input, init) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      const method = (init?.method || "GET").toUpperCase();
+      if (method !== "GET") {
+        storeWrites += 1;
+        return new Response(null, { status: 200 });
+      }
+      storeReads += 1;
+      return Response.json([
+        { key: "cpuSnap_a", value: { t: Date.now() - 60_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(storeReads, 1);
+  assert.equal(storeWrites, 0); // 삼순 게이트: health 경로는 읽기 전용 — write 0 강제
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.ok(payload.metrics.cpuSampleSeconds !== null && payload.metrics.cpuSampleSeconds >= 59 && payload.metrics.cpuSampleSeconds <= 62);
+});
+
+// 삼순 2차 blocker 1 회귀: 동일 최신 tick(C=-31초) + 직전(B=-91초)에서도 값이 유지되고
+// freshness 기준은 rate 종료 시각(C)으로 고정된다.
+test("route keeps the value when current equals the newest stored tick (no 측정 중 gap)", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const cAtMs = Date.now() - 31_000;
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json([
+        { key: "cpuSnap_c", value: { t: cAtMs, fp, total: 302, idle: 201.2 } }, // 현재 counter와 동일 tick
+        { key: "cpuSnap_b", value: { t: cAtMs - 60_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.cpuSampleSeconds, 60);
+  assert.equal(Date.parse(payload.metrics.cpuSampleEndedAt), cAtMs);
+});
+
+test("route rejects a frozen counter (rate older than 90s) as 측정 중", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json([
+        { key: "cpuSnap_c", value: { t: Date.now() - 130_000, fp, total: 302, idle: 201.2 } }, // 현재와 동일 = 2분 이상 정지
+        { key: "cpuSnap_b", value: { t: Date.now() - 190_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 멈춘 counter를 현재값으로 위장 금지
+  assert.equal(payload.metrics.cpuSampleEndedAt, null);
+});
+
+test("route rejects a window longer than the 150s cap", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json([
+        { key: "cpuSnap_a", value: { t: Date.now() - 151_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 장기 평균을 순간값으로 위장 금지
+});
+
+test("route degrades to client-delta path when the snapshot store is unavailable", async () => {
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return new Response("store down", { status: 500 });
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null); // 저장소 실패 = 즉시값만 비활성 (기존 계약 유지)
+  assert.deepEqual(payload.metrics.cpuCounter?.totalSeconds, 302);
 });
 
 domTest("UI turns the first cumulative counter into CPU percent on refresh", async () => {
@@ -695,5 +930,216 @@ domTest("UI shows date and age when checkedAt is stale", async () => {
       if (key !== "fetch") globals[key] = value;
     }
     dom.window.close();
+  }
+});
+
+// 삼순 4·5차 P1: Vercel cron 은 중복·동시 실행될 수 있고 Edge Config PATCH 에는 CAS 가 없다.
+// 단일 배열 key RMW 를 폐기하고 스냅샷 1개 = 독립 key 1개 · **create 전용(non-overwrite append)** 로 전환 —
+// 삼순 반례 read/read/write(D)/write(C) exact interleaving 과 동일 counter 양방향 write 를
+// in-memory 스토어(create 실패 의미론 포함)로 재현해 고정한다.
+
+type WireItem = { key: string; value: { t: number; fp: string; total: number; idle: number } };
+
+/** in-memory Edge Config 스토어 — GET /items 는 배열, PATCH /items 는 create/delete 적용(create 는 기존 key 있으면 실패). */
+function makeFakeEdgeConfig(initial: WireItem[] = []) {
+  const store = new Map<string, WireItem["value"]>(initial.map((item) => [item.key, item.value]));
+  const log: Array<{ method: string; ops?: Array<{ operation: string; key: string }> }> = [];
+  const handler = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.includes("api.vercel.com/v1/edge-config")) throw new Error(`unexpected call ${url}`);
+    const method = (init?.method || "GET").toUpperCase();
+    if (method === "GET") {
+      log.push({ method });
+      return Response.json([...store.entries()].map(([key, value]) => ({ key, value })));
+    }
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      items?: Array<{ operation: string; key: string; value?: WireItem["value"] }>;
+    };
+    log.push({ method, ops: (body.items ?? []).map((op) => ({ operation: op.operation, key: op.key })) });
+    // 실제 Edge Config 계약: create 는 이미 존재하는 key 에 대해 실패하며 배치 전체가 거부된다.
+    for (const op of body.items ?? []) {
+      if (op.operation === "create" && store.has(op.key)) return new Response("conflict", { status: 400 });
+      if (op.operation === "upsert") return new Response("upsert forbidden in append design", { status: 400 });
+    }
+    for (const op of body.items ?? []) {
+      if (op.operation === "create" && op.value) store.set(op.key, op.value);
+      if (op.operation === "delete") store.delete(op.key);
+    }
+    return new Response(null, { status: 200 });
+  }) as typeof fetch;
+  return { store, log, handler };
+}
+
+async function withFakeEdgeConfig<T>(
+  fake: ReturnType<typeof makeFakeEdgeConfig>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previousToken = process.env.VERCEL_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.VERCEL_TOKEN = "***";
+  globalThis.fetch = fake.handler;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = previousToken;
+  }
+}
+
+// 삼순 반례 exact interleaving: C/D 가 같은 B 를 본 상태에서 D 가 먼저 쓰고, 느린 C 가 나중에 쓴다.
+// 종전 설계에선 마지막 write(C) 가 저장소를 C 로 퇴행시켰다. 독립 key 설계에선 C 의 쓰기가
+// D 의 key 를 건드릴 수 없어 최종 최신값이 항상 D 로 유지된다.
+test("independent-key commits survive the read/read/write(D)/write(C) interleaving (no regression)", async () => {
+  const { commitCpuSnapshot, loadRecentCpuSnapshots, cpuSnapshotKey } = await import(
+    "../../src/lib/admin/cpu-snapshot-store"
+  );
+  const fp = "cpu0";
+  const now = Date.now();
+  const B = { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 120_000 };
+  const C = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 60_000 };
+  const D = { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now };
+  const fake = makeFakeEdgeConfig([{ key: cpuSnapshotKey(B), value: { t: B.capturedAtMs, fp, total: 300, idle: 200 } }]);
+
+  await withFakeEdgeConfig(fake, async () => {
+    // 두 작업자 모두 B 만 있는 스토어를 읽은 후(읽기는 쓰기 경로와 무관), 빠른 D → 느린 C 순으로 쓴다
+    const dResult = await commitCpuSnapshot(D);
+    assert.equal(dResult.ok, true);
+    const cResult = await commitCpuSnapshot(C); // stale 작업자의 느린 write
+    assert.equal(cResult.ok, true);
+
+    // 핵심 계약: 마지막 write 가 C 였는데도 최신값은 D — 퇴행 없음
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows && rows.length >= 2);
+    assert.equal(rows![0].totalSeconds, 304, "느린 작업자의 stale write 가 최신값을 되돌리면 안 된다");
+    assert.equal(rows![1].totalSeconds, 302);
+
+    // 구조 보증: 모든 쓰기는 create 전용이고, 어떤 PATCH 도 자기 key 밖의 스냅샷 key 를 쓰지 않는다
+    const writes = fake.log.flatMap((entry) => entry.ops ?? []).filter((op) => op.operation !== "delete");
+    const allowed = new Set([cpuSnapshotKey(C), cpuSnapshotKey(D)]);
+    for (const op of writes) {
+      assert.equal(op.operation, "create", "append 설계에서 upsert 는 금지다");
+      assert.ok(allowed.has(op.key), `자기 key 외 쓰기 금지: ${op.key}`);
+    }
+  });
+});
+
+// 삼순 5차 P1 핵심 회귀: 동일 counter 중복 cron 의 **양방향** write.
+// 종전(upsert LWW)엔 늦은 write(옆 t)가 저장된 시각을 퇴행시켰다. create 전용에선
+// 먼저 쓰인 값이 불변이므로 어느 순서로도 항목 1개 · freshness(저장 t) 무퇴행이다.
+test("same-counter duplicate writes are idempotent in both orders (immutable value, no freshness regression)", async () => {
+  const { commitCpuSnapshot, loadRecentCpuSnapshots, cpuSnapshotKey } = await import(
+    "../../src/lib/admin/cpu-snapshot-store"
+  );
+  const fp = "cpu0";
+  const now = Date.now();
+  const tOld = now - 5_000;
+  const sampleOld = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: tOld };
+  const sampleNew = { ...sampleOld, capturedAtMs: now }; // 같은 counter 를 다른 시각에 잡은 중복 cron
+  assert.equal(cpuSnapshotKey(sampleOld), cpuSnapshotKey(sampleNew), "동일 counter 는 시각과 무관하게 동일 key 여야 한다");
+
+  // 순방향: 옆 t 먼저 → 새 t 나중. 저장값은 첫 write(옆 t) 그대로.
+  const forward = makeFakeEdgeConfig();
+  await withFakeEdgeConfig(forward, async () => {
+    const first = await commitCpuSnapshot(sampleOld);
+    assert.equal(first.ok, true);
+    assert.equal(first.wrote, true);
+    const second = await commitCpuSnapshot(sampleNew);
+    assert.equal(second.ok, true, "중복 write 는 멱등 성공이어야 한다");
+    assert.equal(second.wrote, false, "두 번째 write 는 create 실패(불변)로 아무것도 쓰지 않는다");
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows);
+    assert.equal(rows!.length, 1, "동일 counter 중복 적재는 항목 1개로 수렴해야 한다");
+    assert.equal(rows![0].capturedAtMs, tOld, "저장 시각은 첫 write 그대로여야 한다");
+  });
+
+  // 역순(삼순 반례): 새 t 먼저 → 늦은 작업자가 옆 t 로 나중에 쓴다.
+  // 종전 LWW upsert 는 여기서 시각을 tOld 로 퇴행시켰다 — create 전용은 새 t 를 지킨다.
+  const reverse = makeFakeEdgeConfig();
+  await withFakeEdgeConfig(reverse, async () => {
+    assert.equal((await commitCpuSnapshot(sampleNew)).ok, true);
+    const late = await commitCpuSnapshot(sampleOld); // 늦게 도착한 옆 시각의 stale write
+    assert.equal(late.ok, true);
+    assert.equal(late.wrote, false);
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows);
+    assert.equal(rows!.length, 1);
+    assert.equal(rows![0].capturedAtMs, now, "늦은 옆-t write 가 저장 시각을 퇴행시키면 안 된다");
+  });
+});
+
+// sha256 충돌(사실상 불가) 방어 경로: 내 key 를 다른 counter 가 선점했을 때도
+// 기존 항목을 건드리지 않고 폴백 key 로 append 한다.
+test("digest-collision fallback appends under a suffixed key without touching the occupant", async () => {
+  const { commitCpuSnapshot, loadRecentCpuSnapshots, cpuSnapshotKey } = await import(
+    "../../src/lib/admin/cpu-snapshot-store"
+  );
+  const fp = "cpu0";
+  const now = Date.now();
+  const incoming = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now };
+  const key = cpuSnapshotKey(incoming);
+  const foreign = { t: now - 60_000, fp: "other", total: 999, idle: 500 }; // 충돌 시뮬: 다른 counter 가 내 key 선점
+  const fake = makeFakeEdgeConfig([{ key, value: foreign }]);
+
+  await withFakeEdgeConfig(fake, async () => {
+    const result = await commitCpuSnapshot(incoming);
+    assert.equal(result.ok, true, "충돌에서도 폴백 key 로 적재는 성공해야 한다");
+    assert.deepEqual(fake.store.get(key), foreign, "선점 항목은 어떤 경우에도 변경되면 안 된다");
+    assert.ok(fake.store.has(`${key}_c1`), "폴백 key(_c1)에 append 돼야 한다");
+    const rows = await loadRecentCpuSnapshots();
+    assert.ok(rows);
+    assert.ok(rows!.some((row) => row.totalSeconds === 302), "내 스냅샷이 조회돼야 한다");
+    assert.ok(rows!.some((row) => row.totalSeconds === 999), "선점 스냅샷도 그대로 조회돼야 한다");
+  });
+});
+
+test("GC deletes only snapshots older than the age cap and the legacy array key", async () => {
+  const { commitCpuSnapshot, cpuSnapshotKey, CPU_SNAPSHOTS_LEGACY_KEY } = await import(
+    "../../src/lib/admin/cpu-snapshot-store"
+  );
+  const fp = "cpu0";
+  const now = Date.now();
+  const stale = { totalSeconds: 100, idleSeconds: 60, seriesFingerprint: fp, capturedAtMs: now - 11 * 60_000 };
+  const fresh = { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 60_000 };
+  const incoming = { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now };
+  const fake = makeFakeEdgeConfig([
+    { key: cpuSnapshotKey(stale), value: { t: stale.capturedAtMs, fp, total: 100, idle: 60 } },
+    { key: cpuSnapshotKey(fresh), value: { t: fresh.capturedAtMs, fp, total: 300, idle: 200 } },
+    { key: CPU_SNAPSHOTS_LEGACY_KEY, value: { t: 0, fp: "legacy", total: 0, idle: 0 } },
+  ]);
+
+  await withFakeEdgeConfig(fake, async () => {
+    assert.equal((await commitCpuSnapshot(incoming)).ok, true);
+    assert.ok(!fake.store.has(cpuSnapshotKey(stale)), "10분 초과 스냅샷은 GC 돼야 한다");
+    assert.ok(!fake.store.has(CPU_SNAPSHOTS_LEGACY_KEY), "레거시 배열 key 는 GC 돼야 한다");
+    assert.ok(fake.store.has(cpuSnapshotKey(fresh)), "신선한 스냅샷은 삭제되면 안 된다");
+    assert.ok(fake.store.has(cpuSnapshotKey(incoming)));
+  });
+});
+
+// E2E 실측으로 발견한 결함 회귀: Edge Config 는 키 부재 시 404 가 아니라 **204 No Content**(빈 본문)를
+// 반환한다. 204 에 response.json() 을 호출하면 예외가 나서 "조회 실패(null)"로 오판되고,
+// cron 이 첫 적재를 영영 못 한다(E2E 1회차 500 으로 재현됨).
+test("loadRecentCpuSnapshots treats 204/empty body as an empty store, not a failure", async () => {
+  const { loadRecentCpuSnapshots } = await import("../../src/lib/admin/cpu-snapshot-store");
+  const previousToken = process.env.VERCEL_TOKEN;
+  const previousFetch = globalThis.fetch;
+  process.env.VERCEL_TOKEN = "***";
+  try {
+    globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+    assert.deepEqual(await loadRecentCpuSnapshots(), [], "204 는 빈 저장소여야 한다");
+
+    globalThis.fetch = (async () => new Response("", { status: 200 })) as typeof fetch;
+    assert.deepEqual(await loadRecentCpuSnapshots(), [], "빈 본문 200 도 빈 저장소여야 한다");
+
+    globalThis.fetch = (async () => new Response("not json", { status: 200 })) as typeof fetch;
+    assert.equal(await loadRecentCpuSnapshots(), null, "파싱 불가 본문은 판정 불능(null)이어야 한다");
+
+    globalThis.fetch = (async () => new Response("boom", { status: 500 })) as typeof fetch;
+    assert.equal(await loadRecentCpuSnapshots(), null, "5xx 는 판정 불능(null)이어야 한다");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.VERCEL_TOKEN;
+    else process.env.VERCEL_TOKEN = previousToken;
   }
 });

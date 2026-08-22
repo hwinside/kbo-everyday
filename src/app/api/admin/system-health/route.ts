@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import { computeInstantCpuFromStore, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +41,30 @@ async function fetchMetricsText(ref: string) {
   return response.text();
 }
 
+/**
+ * 메트릭 요약 + 저장 baseline 기반 즉시 CPU% (2026-08-21, 삼순 NO-GO 반영 v2).
+ * Supabase scrape가 ~60초 주기라 브라우저 단독으로는 첫 ~60초간 "측정 중"이 된다.
+ * 1분 cron이 Vercel Edge Config(감시 대상 Supabase 밖)에 적재해둔 스냅샷과의
+ * delta로 첫 응답부터 값을 채운다.
+ * 계약: 이 경로는 읽기 전용(write 없음)·bounded timeout. 저장소 실패는 즉시값만
+ * 비활성(null)하고 기존 클라이언트 60초 경로는 그대로 동작한다.
+ * freshness: rate 종료 시각(sampleEndedAt) 기준 90초 상한(computeInstantCpuFromStore) —
+ * counter가 멈추거나 오래된 평균이면 현재값으로 표시하지 않는다(삼순 2차 NO-GO 반영).
+ */
 async function fetchMetrics(ref: string) {
-  return summarizeSystemMetrics(await fetchMetricsText(ref));
+  const [text, stored] = await Promise.all([fetchMetricsText(ref), loadRecentCpuSnapshots()]);
+  const summary = summarizeSystemMetrics(text);
+  const counter = summary.cpuCounter;
+  if (!counter) return summary;
+  if (summary.cpuUsedPercent === null && stored !== null) {
+    const instant = computeInstantCpuFromStore(stored, counter, Date.now());
+    if (instant) {
+      summary.cpuUsedPercent = Math.round(instant.usedPercent * 10) / 10;
+      summary.cpuSampleSeconds = Math.round(instant.windowSeconds * 10) / 10;
+      summary.cpuSampleEndedAt = new Date(instant.sampleEndedAtMs).toISOString();
+    }
+  }
+  return summary;
 }
 
 async function fetchServices(ref: string) {
