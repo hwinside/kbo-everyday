@@ -70,7 +70,7 @@ async function setupAccount(a) {
 }
 
 async function openPage(a, base) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   // 단일 결속: guard 승인 room 밖으로 나가는 chat write 는 네트워크 경계에서 abort (fail-close)
   await installChatWriteInterceptor(context, ROOM_ID);
   await context.addInitScript(([at, rt]) => {

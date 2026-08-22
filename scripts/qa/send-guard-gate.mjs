@@ -87,6 +87,7 @@ if (mutated === src) {
   for (const h of HARNESSES) {
     const src2 = readFileSync(join(HERE, h), "utf8");
     check(`[write-bind] ${h} 가 installChatWriteInterceptor(context, ROOM_ID) 결속`, /installChatWriteInterceptor\(context, ROOM_ID\)/.test(src2));
+    check(`[sw-block] ${h} context 가 serviceWorkers: "block" 고정`, /serviceWorkers:\s*"block"/.test(src2));
   }
 
   // ── actual: 실제 Playwright BrowserContext + POST 실측 (스텁 아님) + 결속 제거 mutant
@@ -109,7 +110,7 @@ if (mutated === src) {
   }
   try {
     // (1) guard 설치 컨텍스트 — mock 을 먼저 등록해 abort 되지 않은 요청이 production 실네트워크로 나가지 않게 한다.
-    const guarded = await browser.newContext();
+    const guarded = await browser.newContext({ serviceWorkers: "block" });
     const mockHits = [];
     await guarded.route("**/rest/v1/chat_messages*", (route) => { mockHits.push(route.request().url()); return route.fulfill({ status: 200, contentType: "application/json", body: "[]" }); });
     const blockedEvents = [];
@@ -128,17 +129,16 @@ if (mutated === src) {
     check("[actual-browser] 실경기방 body POST 는 abort", rb.fetched === false, JSON.stringify(rb));
     check("[actual-browser] 실경기방 차단 콜백 = WRITE_TARGET_MISMATCH", blockedEvents.at(-1)?.reason === WRITE_REASONS.WRITE_TARGET_MISMATCH, JSON.stringify(blockedEvents.at(-1)));
     check("[actual-browser] RED 요청은 mock/네트워크에 도달하지 않음 (abort 가 경계)", mockHits.length === 0, `mockHits=${mockHits.length}`);
-    // GREEN: staging ref + guarded fixture body — 차단 없이 통과 (continue → 네트워크 경로).
-    // 판정은 GREEN 발화 이후 신규 실패 이벤트만 본다 (RED-b 가 같은 URL 로 남긴 기록과 격리).
-    const failsBefore = gFails.length;
+    // GREEN: staging ref + guarded fixture body — fallback 체인으로 mock 에 실도달해야 한다.
+    // (continue 는 mock 을 우회해 DNS/CORS 실패도 '차단 아님' 으로 오독시킨다 — 삼순 11차)
     const blockedBefore = blockedEvents.length;
+    check("[actual-browser] GREEN 발화 전 mock 도달 0 (RED 가 mock 앞에서 끊겼음을 고정)", mockHits.length === 0, `mockHits=${mockHits.length}`);
     const g1 = await firePost(gp, STG_URL, "qa-fixture:abcd");
-    const newFails = gFails.slice(failsBefore);
-    const greenBlocked = newFails.some((f) => /BLOCKED_BY_CLIENT/.test(f.err));
-    check("[actual-browser] guarded room+ref POST 는 BLOCKED_BY_CLIENT 아님 (통과)", greenBlocked === false && blockedEvents.length === blockedBefore, JSON.stringify({ g1, newFails }));
+    check("[actual-browser] guarded room+ref POST 는 status 200 + mock 실도달 1건 (fallback 체인 증명)", g1.fetched === true && g1.status === 200 && mockHits.length === 1 && mockHits[0].startsWith(STG_URL), JSON.stringify({ g1, mockHits }));
+    check("[actual-browser] GREEN 은 차단 콜백을 만들지 않음", blockedEvents.length === blockedBefore, JSON.stringify(blockedEvents.slice(blockedBefore)));
     await guarded.close();
     // (2) mutant: 결속 제거(인터셉터 미설치) 컨텍스트 — 같은 production POST 가 통과해버린다 (검출력 실증)
-    const naked = await browser.newContext();
+    const naked = await browser.newContext({ serviceWorkers: "block" });
     const nakedHits = [];
     await naked.route("**/rest/v1/chat_messages*", (route) => { nakedHits.push(route.request().url()); return route.fulfill({ status: 200, contentType: "application/json", body: "[]" }); });
     const np = await naked.newPage();

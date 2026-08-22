@@ -228,6 +228,9 @@ export async function installChatWriteInterceptor(context, guardedRoomId, onBloc
       if (onBlocked) onBlocked({ reason: v.reason, bodyRoom });
       return route.abort("blockedbyclient");
     }
-    return route.continue();
+    // 허용 경로는 fallback 으로 체인한다 — 뒤에 등록된 다른 route(테스트 mock 포함)를
+    // 건너뛰지 않고, 남은 핸들러가 없으면 네트워크로 간다(실사용 동작 동일).
+    // continue() 는 mock 을 우회해 GREEN 증거를 네트워크 실패와 구분 불가하게 만든다.
+    return route.fallback();
   });
 }
