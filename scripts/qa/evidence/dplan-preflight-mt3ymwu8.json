@@ -1,0 +1,133 @@
+{
+ "stamp": "mt3ymwu8",
+ "mode": "preflight",
+ "room": "game:20260821-qa-p95run",
+ "gameId": "20260821LGHH0",
+ "supabaseRef": "kygfpcvtszkwdxdspjnv",
+ "builds": {
+  "baseline": "500d053d88c081564368015c2049a92da9fa1ea6",
+  "a1": "ed1e3d46004699cb57d3165248b20e27ff8dffcc"
+ },
+ "fixtures": {
+  "game-live.json": "949ffd9c7f8069f2c79da60de61b5e08f57b918496b360bcbcad601c10395375",
+  "game-detail.json": "cf5a2743f90e94657925c0c92aaf981ae146a47ffc5ddfdb8ccf8dcbcbde7eaf",
+  "game-relay.json": "d270272ad9849c84c3fc791093712f14f10aa7c9201836240d802a94ab7f3297"
+ },
+ "patchSha256": "98df29ca4bfa8e7291437cc3c7761010b91b8ee2ff4f1d2fd96f8d1dd90ca7e9",
+ "pairs": 2,
+ "warmupPairs": 1,
+ "signatureWindowMs": 60688,
+ "signature": {
+  "baseline": {
+   "ndjson": 4,
+   "embedded": 0,
+   "standaloneLive": 6,
+   "standaloneDetail": 2,
+   "standaloneRelay": 16
+  },
+  "a1": {
+   "ndjson": 9,
+   "embedded": 8,
+   "standaloneLive": 0,
+   "standaloneDetail": 0,
+   "standaloneRelay": 11
+  }
+ },
+ "baseline": {
+  "n": 2,
+  "p50": 497,
+  "p95": 627,
+  "samples": [
+   627,
+   497
+  ],
+  "sendFail": 0,
+  "missing": 0,
+  "dups": 0
+ },
+ "a1": {
+  "n": 2,
+  "p50": 528,
+  "p95": 560,
+  "samples": [
+   528,
+   560
+  ],
+  "sendFail": 0,
+  "missing": 0,
+  "dups": 0
+ },
+ "blockedWrites": 0,
+ "results": [
+  {
+   "name": "[baseline:A] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[baseline:B] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1:A] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1:B] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[baseline] draft 보존 (미전송 입력이 폴링에 안 날아감)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1] draft 보존 (미전송 입력이 폴링에 안 날아감)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "측정 중 chat write 차단 0 (전부 QA room 으로만 나감)",
+   "ok": true,
+   "detail": "blocked=0"
+  },
+  {
+   "name": "send 실패 0",
+   "ok": true,
+   "detail": "{\"baseline\":0,\"a1\":0}"
+  },
+  {
+   "name": "누락 0",
+   "ok": true,
+   "detail": "b=0 a1=0"
+  },
+  {
+   "name": "중복 0 (DOM 노출 1회)",
+   "ok": true,
+   "detail": "b=0 a1=0"
+  },
+  {
+   "name": "A1 멀티플렉스 활성 (include=live|detail NDJSON 실측)",
+   "ok": true,
+   "detail": "{\"ndjson\":9,\"embedded\":8,\"standaloneLive\":0,\"standaloneDetail\":0,\"standaloneRelay\":11}"
+  },
+  {
+   "name": "A1 standalone live/detail 폴링 감소 (baseline 대비)",
+   "ok": true,
+   "detail": "baseline=8 a1=0"
+  },
+  {
+   "name": "signature 관측창 ≥ 60s",
+   "ok": true,
+   "detail": "61s"
+  },
+  {
+   "name": "표본 집계 성립 (n>0 — n=0 false-GREEN 방지)",
+   "ok": true,
+   "detail": "baseline=2 a1=2"
+  }
+ ]
+}

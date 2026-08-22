@@ -34,11 +34,21 @@ const BASELINE_BASE = process.env.QA_BASELINE_BASE || "http://localhost:3012";
 const A1_BASE = process.env.QA_A1_BASE || "http://localhost:3011";
 const GAME_ID = process.env.QA_LOAD_GAME_ID || "20260821LGHH0";
 const ROOM_ID = process.env.QA_TEST_ROOM ?? null;
-const PAIRS = Number(process.env.QA_PAIRS || 22);      // arm당 PAIRS*2, warmup 제외 40+
-const WARMUP_PAIRS = Number(process.env.QA_WARMUP_PAIRS || 1);
 const PREFLIGHT_ONLY = process.env.QA_PREFLIGHT === "1";
-const MIN_SAMPLES = Number(process.env.QA_MIN_SAMPLES || 40);
-const SIG_WINDOW_MS = Number(process.env.QA_SIG_WINDOW_MS || 60000);
+
+// [P0-1] env 하한 강제 — 계약값은 env 로 **낮출 수 없다**(올리는 것만 허용).
+// 하한을 env 에 맡기면 측정자가 계약을 스스로 완화할 수 있고, 그건 게이트가 아니다.
+const MIN_SAMPLES_FLOOR = 40;
+const SIG_WINDOW_FLOOR_MS = 60000;
+const MIN_SAMPLES = Math.max(MIN_SAMPLES_FLOOR, Number(process.env.QA_MIN_SAMPLES || 0));
+const SIG_WINDOW_MS = Math.max(SIG_WINDOW_FLOOR_MS, Number(process.env.QA_SIG_WINDOW_MS || 0));
+const WARMUP_PAIRS = Math.max(1, Number(process.env.QA_WARMUP_PAIRS || 1));
+// arm당 표본 = (PAIRS - WARMUP_PAIRS) * 2(A→B, B→A). MIN_SAMPLES 를 만족하는 최소 PAIRS 를
+// 하한으로 깐다 → env 로 표본을 줄여 계약을 우회할 수 없다.
+const PAIRS_FLOOR = Math.ceil(MIN_SAMPLES / 2) + WARMUP_PAIRS;
+const PAIRS = PREFLIGHT_ONLY
+  ? WARMUP_PAIRS + 1                                   // [P0-2] preflight 도 실표본 1쌍은 만든다
+  : Math.max(PAIRS_FLOOR, Number(process.env.QA_PAIRS || 0));
 
 // [P0] 발송형 QA 관문 — staging ref + 승인 room 패턴이 아니면 여기서 죽는다(우회 없음).
 assertSendAllowed({ roomId: ROOM_ID, purpose: "D-plan p95 measure" });
@@ -76,6 +86,21 @@ for (const [k, name] of [["live", "game-live.json"], ["detail", "game-detail.jso
 const patchSha = createHash("sha256")
   .update(readFileSync("scripts/qa/patches/test-only-room.patch"))
   .digest("hex");
+
+// [P0-3] build SHA fail-close — 어느 빌드를 쟀는지 모르는 원장은 재현 근거가 되지 못한다.
+// 40자 hex 가 아니면 측정 자체를 시작하지 않는다.
+const BASELINE_SHA = process.env.QA_BASELINE_SHA ?? "";
+const A1_SHA = process.env.QA_A1_SHA ?? "";
+for (const [k, v] of [["QA_BASELINE_SHA", BASELINE_SHA], ["QA_A1_SHA", A1_SHA]]) {
+  if (!/^[0-9a-f]{40}$/.test(v)) {
+    console.error(`[GUARD-FAIL] ${k} 미설정/형식오류 — 원장에 build SHA 가 없으면 측정 무효.`);
+    process.exit(1);
+  }
+}
+if (BASELINE_SHA === A1_SHA) {
+  console.error(`[GUARD-FAIL] baseline SHA == a1 SHA (${A1_SHA}) — 같은 빌드를 두 번 재고 있다.`);
+  process.exit(1);
+}
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
 const results = [];
@@ -246,10 +271,13 @@ async function main() {
   const missing = { baseline: [], a1: [] };
   const dups = { baseline: [], a1: [] };
   const sendFail = { baseline: 0, a1: 0 };
-  const total = PREFLIGHT_ONLY ? 1 : PAIRS;
+  const total = PAIRS;
 
   for (let i = 1; i <= total; i++) {
-    for (const label of ["baseline", "a1"]) {
+    // [P1] arm 순서 교대 — 매 라운드 먼저 재는 arm 을 바꿔 순서 편향(선행 arm 이 캐시·
+    // 커넥션 워밍을 떠안는 효과)을 상쇄한다. 순차 측정이라도 순서가 고정이면 편향이 남는다.
+    const order = i % 2 === 1 ? ["baseline", "a1"] : ["a1", "baseline"];
+    for (const label of order) {
       const arm = arms[label];
       // A→B, B→A 교대(방향 편향 제거). 각 방향이 1 표본.
       for (const [from, to] of [["A", "B"], ["B", "A"]]) {
@@ -312,8 +340,14 @@ async function main() {
     `baseline=${sig.baseline.standaloneLive + sig.baseline.standaloneDetail} a1=${sig.a1.standaloneLive + sig.a1.standaloneDetail}`);
   check(`signature 관측창 ≥ ${SIG_WINDOW_MS / 1000}s`, elapsed >= SIG_WINDOW_MS, `${Math.round(elapsed / 1000)}s`);
 
+  // [P0-2] preflight 도 실표본을 만들고 집계한다 — n=0 으로 누락·중복 검사를 건너뛰면
+  // "PASS" 가 아무것도 증명하지 않는 false-GREEN 이다.
+  check("표본 집계 성립 (n>0 — n=0 false-GREEN 방지)",
+    lat.baseline.length > 0 && lat.a1.length > 0,
+    `baseline=${lat.baseline.length} a1=${lat.a1.length}`);
+
   if (!PREFLIGHT_ONLY) {
-    check(`arm당 표본 ≥ ${MIN_SAMPLES} (fail-close)`,
+    check(`arm당 표본 ≥ ${MIN_SAMPLES} (fail-close, env 로 하향 불가)`,
       lat.baseline.length >= MIN_SAMPLES && lat.a1.length >= MIN_SAMPLES,
       `baseline=${lat.baseline.length} a1=${lat.a1.length}`);
     check("동일 표본수", lat.baseline.length === lat.a1.length, `b=${lat.baseline.length} a1=${lat.a1.length}`);
@@ -324,7 +358,7 @@ async function main() {
     stamp, mode: PREFLIGHT_ONLY ? "preflight" : "measure",
     room: ROOM_ID, gameId: GAME_ID,
     supabaseRef: new URL(SUPABASE_URL).hostname.split(".")[0],
-    builds: { baseline: process.env.QA_BASELINE_SHA ?? null, a1: process.env.QA_A1_SHA ?? null },
+    builds: { baseline: BASELINE_SHA, a1: A1_SHA },
     fixtures: manifest.files, patchSha256: patchSha,
     pairs: PAIRS, warmupPairs: WARMUP_PAIRS, signatureWindowMs: elapsed, signature: sig,
     baseline: { n: lat.baseline.length, p50: bp50, p95: bp95, samples: lat.baseline, sendFail: sendFail.baseline, missing: missing.baseline.length, dups: dups.baseline.length },
