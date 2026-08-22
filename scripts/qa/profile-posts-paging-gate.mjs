@@ -173,9 +173,18 @@ function finish() {
 if (process.argv.includes("--mutations")) {
   const names = Object.keys(MUTATIONS);
   const hasBrowser = chromiumAvailable();
+
+  // 호출자가 REQUIRE_BROWSER=1 로 **DOM 축을 명시 요구**했는데 브라우저가 없으면 즉시 RED.
+  // 이게 없으면 "브라우저 워크플로가 덮는다"고 적어놓고 실제로는 아무도 DOM 축을 돌리지
+  // 않는 상태가 조용히 성립한다 — 실제로 그랬다(삼순 NO-GO 2026-08-22:
+  // required CI 어디에서도 profile-posts DOM 축이 실행되지 않았는데 12/12 RED 로 보고됨).
+  if (REQUIRE_BROWSER && !hasBrowser) {
+    console.error("FAIL: PROFILE_POSTS_REQUIRE_BROWSER=1 인데 chromium 이 없다(fail-close) — DOM 축 요구가 충족되지 않음");
+    process.exit(1);
+  }
   console.log(hasBrowser
-    ? "[axes] source + pure + dom (chromium 사용 가능)"
-    : "[axes] source + pure (chromium 없음 — dom 축 생략, 브라우저 워크플로가 별도로 덮는다)");
+    ? `[axes] source + pure + dom (chromium 사용 가능${REQUIRE_BROWSER ? ", DOM 축 필수 요구됨" : ""})`
+    : "[axes] source + pure (chromium 없음 — DOM 축 생략. 이 실행은 DOM 회귀를 증명하지 않는다)");
   let bad = 0;
   const run = (name) => spawnSync(process.execPath, [resolve(ROOT, "scripts/qa/profile-posts-paging-gate.mjs")], {
     cwd: ROOT, encoding: "utf8",
@@ -203,7 +212,10 @@ if (process.argv.includes("--mutations")) {
     console.log(`${ok ? "  ok" : "FAIL"} - mutation '${name}' RED (${note})`);
     if (!ok) { console.log(r.stdout?.slice(-2000) ?? ""); bad += 1; }
   }
-  console.log(bad === 0 ? `\n✅ mutations ${names.length}/${names.length} RED + baseline GREEN` : `\n❌ ${bad} 건 실패`);
+  const axisNote = hasBrowser ? "source+pure+dom 축" : "source+pure 축만 (DOM 회귀 미증명)";
+  console.log(bad === 0
+    ? `\n✅ mutations ${names.length}/${names.length} RED + baseline GREEN — ${axisNote}`
+    : `\n❌ ${bad} 건 실패 — ${axisNote}`);
   process.exit(bad === 0 ? 0 : 1);
 }
 
