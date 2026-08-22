@@ -579,8 +579,11 @@ export function parseGameLinescoreResponse(data: unknown): GameLinescore | null 
   if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
   const meta = Array.isArray(data[0]) && data[0].length > 0 ? data[0][0] : null;
   const cancelName = String(meta?.CANCEL_SC_NM ?? "");
+  // 취소 판정은 **코드(CANCEL_SC_ID) 우선**, 사유명은 보조다(삼순 NO-GO ② — game-detail
+  // parseScoreBoard 와 동일 계약). 실측 사유 `그라운드사정`(ID 6)은 "취소"도 "우천"도
+  // 포함하지 않아 문자열 검사만으로는 놓친다. 사유명은 열린 집합, 코드는 닫힌 집합이다.
   const status: GameLinescore["status"] =
-    cancelName.includes("취소") || cancelName.includes("우천")
+    isKboGameCancelled(meta?.CANCEL_SC_ID) || cancelName.includes("취소") || cancelName.includes("우천")
       ? "cancelled"
       : String(meta?.END_TM ?? "").trim()
         ? "final"

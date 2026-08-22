@@ -167,6 +167,30 @@ const WIRING = [
       ],
     ],
   ],
+  // 홈 **초기 진입(SSR)** 경로 — useHomeInit 은 initialGames 가 있으면 클라이언트 재조회를
+  // 건너뛰므로, 이 경로가 사유를 버리면 첫 화면은 영영 고정 문구로 남는다(삼순 NO-GO ①).
+  [
+    "src/app/(main)/page.tsx",
+    [[/cancelReason:\s*g\.status\s*===\s*"cancelled"/, "홈 SSR 경기목록 매핑이 사유를 버린다"]],
+  ],
+  [
+    "src/lib/crawler/home-live-games.ts",
+    [[/cancelReason:\s*g\.status\s*===\s*"cancelled"/, "홈 SSR live 변환이 사유를 버린다"]],
+  ],
+  [
+    "src/components/home/HomeClientShell.tsx",
+    [
+      [
+        /cancelReason:\s*merged\s*===\s*"cancelled"/,
+        "myTeamLive 병합이 사유를 버려 MyTeamHero 가 고정 문구로 남는다",
+      ],
+    ],
+  ],
+  // ScoreBoard 파서는 문자열 포함이 아니라 **코드**에 결속돼야 한다(삼순 NO-GO ②).
+  [
+    "src/lib/services/game-detail.ts",
+    [[/isKboGameCancelled\(m\.CANCEL_SC_ID\)/, "ScoreBoard 취소 판정이 CANCEL_SC_ID 에 결속되지 않았다"]],
+  ],
 ];
 for (const [file, contracts] of WIRING) {
   const src = readStripped(file);

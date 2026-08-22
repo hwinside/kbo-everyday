@@ -1,5 +1,6 @@
 import {
   fetchKboGamesOnly,
+  isKboGameCancelled,
   parseCancelReason,
   parseGameLinescoreResponse,
   type KboGame,
@@ -229,7 +230,13 @@ function parseScoreBoardImpl(data: unknown[]): {
   if (m) {
     const cancelNm = safeStr(m.CANCEL_SC_NM);
     const endTm = safeStr(m.END_TM);
-    if (cancelNm.includes("취소") || cancelNm.includes("우천")) {
+    // 취소 판정은 **코드(CANCEL_SC_ID) 우선**, 사유명은 보조 신호다(삼순 NO-GO ②).
+    // 이유: 실측 사유 중 `그라운드사정`(ID 6)은 "취소"도 "우천"도 포함하지 않아
+    // 문자열 포함 검사만으로는 scheduled 로 오판된다. 사유명은 열린 집합이라
+    // 문자열 룰을 늘리는 방향은 반례마다 룰이 쌓인다 — 닫힌 집합인 코드에 결속한다.
+    // 사유명 검사를 남기는 이유: 이 응답은 ID 가 결측될 수 있고(2026-08-22 실측상
+    // ScoreBoard meta 에는 CANCEL_* 가 아예 없다), 그때 기존 판정을 잃지 않기 위해.
+    if (isKboGameCancelled(m.CANCEL_SC_ID) || cancelNm.includes("취소") || cancelNm.includes("우천")) {
       status = "cancelled";
     } else if (endTm) {
       // END_TM이 있으면 경기 종료
