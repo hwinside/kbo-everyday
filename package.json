@@ -471,7 +471,10 @@
     "qa:gate-tiers:selftest": "node scripts/qa/run-gate-tiers.mjs --selftest",
     "qa:gate-tiers:list": "node scripts/qa/run-gate-tiers.mjs --tier all --list",
     "qa:profile-posts-paging": "node scripts/qa/profile-posts-paging-gate.mjs",
-    "qa:profile-posts-paging:mutations": "node scripts/qa/profile-posts-paging-gate.mjs --mutations"
+    "qa:profile-posts-paging:mutations": "node scripts/qa/profile-posts-paging-gate.mjs --mutations",
+    "qa:stat-clarify-misfire": "tsx scripts/qa/stat-clarify-misfire-gate.ts",
+    "qa:stat-clarify-misfire:selftest": "tsx scripts/qa/stat-clarify-misfire-gate.ts --selftest",
+    "qa:stat-clarify-misfire:mutations": "node scripts/qa/stat-clarify-misfire-mutations.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

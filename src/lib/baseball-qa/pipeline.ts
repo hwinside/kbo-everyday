@@ -1837,6 +1837,21 @@ function classifyOneNamedStat(
   //   섞은 일반 집합을 쓰면 같은 함정이 되살아난다(`GRAMMATICAL_TAIL_UNITS` 주석의 `도어`).
   if (decomposesToUnits(head, HEAD_NON_ENTITY_LONGEST_FIRST)) return "none";
 
+  // ②-c **숫자로 시작하는 head 는 엔티티일 수 없다**(2026-08-22 48h 로그 전수 실측).
+  //
+  //   `31호 홈런`·`무사 주자1루 4점차면 세이브`·`1루타 2루타 3루카 홈런` 에서 정규식이 잡는
+  //   head 는 `31호`·`4점차면`·`3루카` 다. 전부 수사(數詞)인데 로스터·구단·사전 어디에도
+  //   없어 미결속으로 떨어졌고, 그 결과 **질문에 사람 이름이 아예 없는데 "앞말이 선수
+  //   이름인지 확인하지 못했습니다" 되묻기**가 나갔다(48h 로그 stat_clarify 11건 중 3건).
+  //
+  // ⚠️ 이 판정은 **닫힌 집합**이다 — KBO 등록 선수명·구단명·별칭은 숫자로 시작하지 않는다.
+  //   열거가 자랄 자리가 없으므로 `open_language_never_closes_with_rules` 축과 무관하다.
+  //   열린 축(문장이 룰 질문인지 기록 요청인지)은 아래 ③ + LLM 3분기가 맡는다.
+  //
+  // ⚠️ 순서가 계약이다. ②-b 와 같은 이유로 **근거 검사 뒤**여야 한다. 앞에 두면 사전에
+  //   실제로 수록된 수사형 용어(`3루타`·`1루타`·`2사만루`)가 근거 확인 전에 잘려 나간다.
+  if (/^[0-9]/u.test(head)) return "none";
+
   // ③ 근거가 없다 — **미결속**. 여기서 판정을 멈춘다 (2026-08-10 하린아빠 방향 확정).
   //
   //   종전에는 잔여(prefix/suffix)를 룰 문법(요청 어간·감탄사·과거 시제 받침·처소 표지)으로
@@ -3359,12 +3374,16 @@ export interface StoredQaFinal {
   ragDiscardNumericCount?: number | null;
 }
 /**
- * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
+ * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안, 2026-08-22 `rule_term` 추가).
  *
- * 반환이 "record"/"narrative" 가 아니면 무조건 null — 호출측이 되묻기로 fail-close 한다.
- * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(서빙 경로 없음).
+ * 반환이 폐쇄집합 3토큰 밖이면 무조건 null — 호출측이 되묻기로 fail-close 한다.
+ * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(자유문장 서빙 경로 없음 — 이 계약은 불변).
+ *
+ * ⚠️ `rule_term` 은 **자유문장을 서빙하라는 토큰이 아니다**. "이 질문은 대상의 값이
+ *   아니라 룰·용어를 묻는다" 는 **가드 소유 부정** 신호일 뿐이고, 호출측은 그 신호를 받으면
+ *   일반 경로로 **재질의**해 `validateLlmResponse` 전수 검증을 그대로 통과시킨다.
  */
-export function parseStatIntentToken(rawText: string): "record" | "narrative" | null {
+export function parseStatIntentToken(rawText: string): "record" | "narrative" | "rule_term" | null {
   let row: Record<string, unknown>;
   try {
     row = JSON.parse(rawText.trim()) as Record<string, unknown>;
@@ -3378,6 +3397,7 @@ export function parseStatIntentToken(rawText: string): "record" | "narrative" | 
   const token = row.answer.trim();
   if (token === "RECORD") return "record";
   if (token === "NARRATIVE") return "narrative";
+  if (token === "RULE_TERM") return "rule_term";
   return null;
 }
 
@@ -5863,18 +5883,55 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  // ── statNumericGuard 의도 2분기 (#1132 A안 — 하린아빠 2026-08-14 확정, 삼순 구조 제안) ──
+  // ── statNumericGuard 의도 3분기 (#1132 A안 — 2026-08-22 `RULE_TERM` 추가) ──
   //
-  // 가드 소유 질문은 LLM 자유문장을 **절대 서빙하지 않는다**. LLM 은 의도 토큰만
-  // 반환하고(RECORD/NARRATIVE), 유저 노출 문구는 코드 고정문 2개뿐이다:
+  // 가드 소유 질문은 의도 판정 응답의 **자유문장을 절대 그대로 서빙하지 않는다**.
+  // LLM 은 의도 토큰만 반환하고, 유저 노출 문구는 코드가 정한다:
   //   · RECORD(기록 요구) → `STAT_CLARIFY_ANSWER` 되묻기 (미결속 대상은 값을 못 준다)
   //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
+  //   · RULE_TERM(룰·용어 질문) → **가드 소유 부정** → 일반 경로로 재질의(아래)
   //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
   // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
   // 저장 envelope 방어는 replayStoredFinalResult 의 구조 판정(cache 전량 거절 ·
   // llm 은 고정 응대문 exact 만)이 담당한다 — 수사 파서 의존 0.
+  //
+  // ⚠️ **`RULE_TERM` 은 왜 필요한가** (2026-08-22 48h 로그 실측). 가드는 `<X> <지표>` 의
+  //   X 가 미결속이면 소유하는데, 그 X 가 애초에 엔티티가 아닌 문장이 있다 —
+  //   `점수 차가 많이 날때 도루를 왜 하면 안 돼?` 같은 **룰 질문**이다. 이걸 어떤 토큰을
+  //   받아도 되묻기로 끝내면, 질문에 사람 이름이 없는데 이름을 되묻는 동문서답이 된다.
+  //   `열린 자연어`(룰 질문인가 기록 요구인가)는 룰로 닫을 수 없으므로 판정 주체를 LLM 으로
+  //   옮기고, 출력 표면은 그대로 닫아둔다(`open_language_never_closes_with_rules`).
+  //
+  // ⚠️ `RULE_TERM` 은 **판정 응답의 자유문장을 서빙하지 않는다**. 그 응답은 의도 토큰용
+  //   프롬프트로 받은 것이라 톤·길이·범위 검증을 거치지 않았다. 대신 **가드를 내려놓고
+  //   일반 프롬프트로 다시 묻는다** — 그래야 아래 `validateLlmResponse`(톤·길이·링크·범위)가
+  //   종전과 똑같은 강도로 적용된다. 재질의 실패는 되묻기 fail-close(기존 동작 유지).
   if (statNumericGuard) {
     const intent = parseStatIntentToken(llm.text);
+    if (intent === "rule_term") {
+      // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
+      // 재질의 실패(timeout·공급자 오류)는 되묻기로 fail-close — 종전 동작보다 나빠지지 않는다.
+      let reasked: LlmResult | null = null;
+      try {
+        reasked = await deps.callLlm(question, context ?? undefined, rosterBlock, false);
+      } catch {
+        reasked = null;
+      }
+      if (reasked) {
+        const revalidated = validateLlmResponse(reasked.text, question);
+        if (revalidated.kind === "answer" && revalidated.answer) {
+          // ⚠️ 캐시하지 않는다 — 가드 소유 질문은 `cacheable:false` 계약 그대로이고,
+          //   `replayStoredFinalResult` 가 가드 소유 질문의 `cache`·자유문장 `llm` envelope 를
+          //   전량 거절하므로 저장 envelope 도 남기지 않는다(재생 시 되묻기로 fail-close).
+          await deps.log({
+            userId, question, questionNorm, matchPath: "llm",
+            answer: revalidated.answer,
+            inputTokens: reasked.inputTokens, outputTokens: reasked.outputTokens,
+          });
+          return { status: 200, answer: revalidated.answer, source: "llm", remaining };
+        }
+      }
+    }
     const final: StoredQaFinal = intent === "narrative"
       ? { answer: STAT_NARRATIVE_ANSWER, source: "llm" }
       : { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };
