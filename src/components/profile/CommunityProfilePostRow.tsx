@@ -1,6 +1,6 @@
 "use client";
 
-import { Heart, MessageCircle } from "lucide-react";
+import { Heart, MessageCircle, Play } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import PostScopeBadge from "@/components/community/PostScopeBadge";
 import { scopeInputForPost } from "@/lib/utils/post-scope-input";
@@ -18,7 +18,16 @@ export interface CommunityProfilePost {
   player_tags?: string[] | null;
   content_type?: string | null;
   image_urls?: string[] | null;
+  video_urls?: string[] | null;
   content?: string | null;
+}
+
+/** 사진글 판정의 SSOT — posts.content_type 의 값. */
+export const PHOTO_CONTENT_TYPE = "photo";
+
+/** 빈 문자열·공백·비문자열을 걸러낸 첫 유효 URL. */
+function firstUsableUrl(urls: string[] | null | undefined): string | null {
+  return urls?.find(url => typeof url === "string" && url.trim().length > 0) ?? null;
 }
 
 /**
@@ -56,15 +65,35 @@ export function profilePostPreviewText(post: CommunityProfilePost): string | nul
 }
 
 /**
- * 사진글은 작성 시 `title: ""` 로 저장된다(WritePhotoPost). 그래서 제목만 그리던 이전 구현은
- * 프로필 목록에서 본문 줄이 통째로 비어 보였다(2026-08-22 하린아빠 지시). 첫 이미지를 썸네일로 쓴다.
+ * 목록 행 왼쪽 썸네일 슬롯의 모양.
  *
- * 판정은 `content_type` 단독이 아니라 **실제 이미지 존재**까지 본다 — photo 인데 image_urls 가 빈
- * 레코드가 실제로 있어서(프로덕션 샘플 200건 중 11건) 그때 깨진 썸네일 상자를 띄우면 더 나쁘다.
+ *   image — 첫 이미지를 그대로
+ *   video — 재생 아이콘 플레이스홀더(영상은 포스터 URL 이 따로 없다)
+ *   null  — 슬롯 자체를 그리지 않음
  */
-export function profilePostThumbnailUrl(post: CommunityProfilePost): string | null {
-  const first = post.image_urls?.find(url => typeof url === "string" && url.trim().length > 0);
-  return first ?? null;
+export type ProfilePostThumbnail =
+  | { kind: "image"; url: string }
+  | { kind: "video" };
+
+/**
+ * 사진글은 작성 시 `title: ""` 로 저장된다(WritePhotoPost). 그래서 제목만 그리던 이전 구현은
+ * 프로필 목록에서 본문 줄이 통째로 비어 보였다(2026-08-22 하린아빠 지시).
+ *
+ * **사진글에만** 썸네일을 단다(삼순 NO-GO 2026-08-22). 이전 판본은 content_type 을 안 보고
+ * image_urls 만 봐서 이미지가 달린 일반글에도 썸네일을 그렸다 — 일반글은 제목·본문이
+ * 주인공이므로 사진을 앞에 세우면 목록의 읽힘이 깨진다. 전수 실측상 일반글 4,440건 중
+ * 이미지 보유는 5건으로 적지만 0 이 아니라 실제로 오작동하는 경로다.
+ *
+ * 사진글인데 이미지가 없는 경우는 **전수 1,424건 중 161건**이고 그 **161건이 전부 영상을
+ * 가진다** — 그래서 이미지 부재를 "미디어 없음"으로 취급하면 영상글이 다시 날짜만 남는
+ * 행이 된다(내가 앞서 "샘플 200건 중 11건"이라 보고한 것은 절단된 분모였다).
+ */
+export function profilePostThumbnail(post: CommunityProfilePost): ProfilePostThumbnail | null {
+  if (post.content_type !== PHOTO_CONTENT_TYPE) return null;
+  const image = firstUsableUrl(post.image_urls);
+  if (image) return { kind: "image", url: image };
+  if (firstUsableUrl(post.video_urls)) return { kind: "video" };
+  return null;
 }
 
 export default function CommunityProfilePostRow({
@@ -77,10 +106,10 @@ export default function CommunityProfilePostRow({
   timeLabel: string;
 }) {
   const href = getPostDetailHref(post);
-  const thumbnail = profilePostThumbnailUrl(post);
+  const thumbnail = profilePostThumbnail(post);
   const preview = profilePostPreviewText(post);
-  // 제목도 본문도 없는 순수 사진글은 썸네일이 내용을 대신하므로 "사진"으로 표기한다.
-  const previewText = preview ?? (thumbnail ? "사진" : null);
+  // 제목도 본문도 없는 순수 미디어글은 썸네일이 내용을 대신하므로 종류를 글로 밝힌다.
+  const previewText = preview ?? (thumbnail === null ? null : thumbnail.kind === "video" ? "영상" : "사진");
   const previewMuted = preview == null;
   return (
     <GlassCard
@@ -96,14 +125,24 @@ export default function CommunityProfilePostRow({
         <PostScopeBadge post={scopeInputForPost(post)} variant="full" />
       </div>
       <div className="flex min-w-0 items-center gap-3">
-        {thumbnail && (
+        {thumbnail?.kind === "image" && (
           <img
-            src={thumbnail}
+            src={thumbnail.url}
             alt=""
             loading="lazy"
-            data-profile-post-thumbnail
+            data-profile-post-thumbnail="image"
             className="h-14 w-14 shrink-0 rounded-lg object-cover"
           />
+        )}
+        {/* 영상글은 포스터 URL 이 없어 재생 아이콘 플레이스홀더로 대신한다(161건). */}
+        {thumbnail?.kind === "video" && (
+          <div
+            data-profile-post-thumbnail="video"
+            aria-label="영상"
+            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-black/10 text-text-tertiary dark:bg-white/10"
+          >
+            <Play size={20} className="fill-current" />
+          </div>
         )}
         <div className="min-w-0 flex-1">
           {/* 제목 → 본문 첫 줄 → (사진만 있으면) "사진". 세 경우 모두 아니면 빈 줄을 그리지 않는다. */}
