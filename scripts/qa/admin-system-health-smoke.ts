@@ -568,6 +568,61 @@ test("route rejects a frozen counter (rate older than 90s) as 측정 중", async
   assert.equal(payload.metrics.cpuSampleEndedAt, null);
 });
 
+// 삼순 #1283 P0 회귀: route 가 stale 필드를 실제로 채우는지(배선 단절 검출).
+// helper 만 직접 호출하는 테스트는 import-만-하고-미호출 상태를 못 잡았다.
+// 2026-08-22 라이브 재현 값(저장 최신 나이 107초)을 그대로 쓴다.
+test("route fills stale CPU fields when the baseline is 107s old (2026-08-22 gap, wiring)", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const now = Date.now();
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      // 현재 counter(total 302/idle 201.2)보다 이전 값들만 있고, 최신이 107초 전 → 90초 상한 초과
+      return Response.json([
+        { key: "cpuSnap_c", value: { t: now - 107_100, fp, total: 300, idle: 200 } },
+        { key: "cpuSnap_b", value: { t: now - 167_200, fp, total: 298, idle: 198.8 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null, "90초 초과 baseline 은 현재값이 아니다");
+  assert.equal(payload.metrics.cpuSampleEndedAt, null);
+  assert.ok(
+    payload.metrics.cpuStalePercent !== null && payload.metrics.cpuStalePercent !== undefined,
+    "route 가 stale 필드를 실제로 채워야 한다(import 만 하고 미호출이면 이 assertion 이 죽는다)",
+  );
+  assert.ok(Math.abs(payload.metrics.cpuStalePercent - 40) < 0.001);
+  const endedAtMs = Date.parse(payload.metrics.cpuStaleEndedAt);
+  assert.ok(Number.isFinite(endedAtMs));
+  assert.ok(Math.abs(endedAtMs - (now - 107_100)) < 1_500, "종료 시각은 저장 시각이지 now 가 아니다");
+  assert.ok(now - endedAtMs > 90_000, "stale 값은 90초보다 오래된 측정임을 밝혀야 한다");
+});
+
+// 현재값이 살아있으면 stale 은 반드시 null (배타 계약).
+test("route keeps stale fields null whenever the instant value is present", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json([
+        { key: "cpuSnap_a", value: { t: Date.now() - 60_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.cpuStalePercent, null, "현재값과 stale 은 배타여야 한다");
+  assert.equal(payload.metrics.cpuStaleEndedAt, null);
+});
+
 test("route rejects a window longer than the 150s cap", async () => {
   const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
   const response = await routeWith(async (input) => {
