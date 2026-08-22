@@ -11,6 +11,16 @@ export interface SystemMetricSummary {
   cpuSampleSeconds: number | null;
   /** cpuUsedPercent가 기반한 rate의 종료 시각(ISO). 소비처는 이 시각으로 freshness를 판정한다. */
   cpuSampleEndedAt: string | null;
+  /**
+   * 신선도 상한(90초)을 넘겨 `cpuUsedPercent`로 쓸 수 없는 **직전 서버 실측값**.
+   * cron 회차 누락·스케줄러 지터로 baseline이 잠시 닭을 때, 화면을 "측정 중"으로
+   * 비우지 않고 "N초 전 측정"으로 정직하게 보이기 위해 분리해 내려보낸다.
+   * 계약: 현재값이 아니므로 소비처는 건강도 판정·알림에 사용하지 않고 정보성으로만 표시한다.
+   * `cpuUsedPercent`가 채워진 응답에서는 항상 null이다(둘 중 하나만 존재).
+   */
+  cpuStalePercent: number | null;
+  /** cpuStalePercent가 기반한 rate의 종료 시각(ISO). 나이 표기는 이 값 기준. */
+  cpuStaleEndedAt: string | null;
   cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
   load1: number | null;
@@ -134,6 +144,13 @@ export interface InstantCpuResult {
 export const CPU_SAMPLE_MAX_AGE_SECONDS = 90;
 /** delta 창 상한: cron 1분 주기 + 지터. 초과는 장기 평균이라 순간값으로 부적합. */
 export const CPU_SAMPLE_MAX_WINDOW_SECONDS = 150;
+/**
+ * 직전값(stale) 표시 상한. 신선도 90초를 넘어도 이 상한 이내면 "N초 전 측정"으로
+ * 보여준다(현재값 아님을 명시). 이것도 넘으면 측정 불능으로 취급한다.
+ * 근거(2026-08-22 라이브 실측): cron 회차 누락으로 baseline 나이가 일시적으로
+ * 107초까지 밀렸다(90초 초과 → 화면이 "측정 중"으로 비는 공백 재현).
+ */
+export const CPU_SAMPLE_STALE_MAX_AGE_SECONDS = 300;
 
 /**
  * 저장 스냅샷 + 현재 counter로 즉시 CPU%를 계산한다 (삼순 2차 NO-GO 반영).
@@ -195,6 +212,55 @@ export function computeInstantCpuFromStore(
   const baselineAgeSeconds = (nowMs - latest.capturedAtMs) / 1_000;
   if (baselineAgeSeconds > maxAgeSeconds) return null;
   return evaluate(current, nowMs, latest);
+}
+
+/**
+ * 신선도 상한을 넘겨 현재값으로 쓸 수 없을 때, **저장된 스냅샷끼리의 마지막 유효 rate**를
+ * 돌려준다(직전 실측값). 현재 counter 의 **값**은 rate 계산에 쓰지 않는다 — now 를 종료
+ * 시각으로 찍으면 멈춘 counter 가 영우히 "현재값"으로 위장되기 때문이다(삼순 3차 P0-2 계약).
+ *
+ * 단 **현재 counter 와의 호환성은 게이트로 검사**한다(삼순 #1283 P1):
+ * - `newer` 는 반드시 **최신 저장 row 하나에 고정**한다. 더 오래된 pre-reset 쌍으로
+ *   내려가면, reset 직후에 과거 구간의 rate 를 "직전값"으로 내보내게 된다.
+ * - 최신 row 가 current 와 다른 series 면(fingerprint 불일치) 즉시 null.
+ * - **fingerprint 가 같아도** current 의 total/idle 이 최신 저장분보다 작으면 counter reset
+ *   이므로 즉시 null (fingerprint 는 CPU label 집합이라 reset 에도 그대로일 수 있다).
+ *   이때 current 의 값은 **호환성 게이트에만** 쓰고 rate 계산엔 여전히 쓰지 않는다.
+ *
+ * 사용처 계약: 반환값은 `cpuUsedPercent`가 아니라 정보성 표시전용이며, 건강도 판정·알림에
+ * 쓰지 않는다. 나이가 staleMaxAgeSeconds 를 넘으면 null(측정 불능).
+ */
+export function computeStaleCpuFromStore(
+  stored: StoredCpuSnapshot[],
+  current: CpuCounterSnapshot,
+  nowMs: number,
+  staleMaxAgeSeconds = CPU_SAMPLE_STALE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+
+  const newest = rows[0];
+  // 최신 저장분이 현재 series 가 아니면(fingerprint 변경) 과거를 뒤지지 않고 fail-close.
+  if (!newest || newest.seriesFingerprint !== current.seriesFingerprint) return null;
+  // fingerprint 가 같아도 current 가 최신 저장분보다 작으면 counter reset — 즉시 fail-close.
+  // (값은 호환성 게이트에만 사용, rate 계산엔 미사용 — now 재각인 금지 계약 유지.)
+  if (current.totalSeconds < newest.totalSeconds || current.idleSeconds < newest.idleSeconds) return null;
+
+  // newer 는 최신 row 하나에 고정한다 — 더 오래된 pre-reset 쌍으로 내려가지 않는다.
+  const ageSeconds = (nowMs - newest.capturedAtMs) / 1_000;
+  if (ageSeconds > staleMaxAgeSeconds) return null;
+
+  for (const older of rows.slice(1)) {
+    if (older.seriesFingerprint !== current.seriesFingerprint) continue;
+    const usedPercent = cpuUsedPercentFromSnapshots(newest, older);
+    if (usedPercent === null) continue; // 동일 tick·역전(reset)
+    const windowSeconds = (newest.capturedAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newest.capturedAtMs };
+  }
+  return null;
 }
 
 export function cpuUsedPercentFromSnapshots(
@@ -340,6 +406,8 @@ export function summarizeSystemMetrics(
         ? null
         : round(cpuSampleSeconds),
     cpuSampleEndedAt: null,
+    cpuStalePercent: null,
+    cpuStaleEndedAt: null,
     cpuCounter,
     cpuCores,
     load1: round(load1),

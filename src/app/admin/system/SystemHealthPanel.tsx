@@ -30,6 +30,8 @@ interface SystemHealthResponse {
     cpuUsedPercent: number | null;
     cpuSampleSeconds: number | null;
     cpuSampleEndedAt: string | null;
+    cpuStalePercent?: number | null;
+    cpuStaleEndedAt?: string | null;
     cpuCounter: CpuCounterSnapshot | null;
     cpuCores: number | null;
     load1: number | null;
@@ -351,6 +353,29 @@ export default function SystemHealthPanel() {
                 value={`${current}%`}
                 detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "실측치"}
                 level={null}
+              />
+            );
+          }
+          // 서버가 내려보낸 직전 실측값(90초 상한 초과) — cron 회차 누락 구간에도 화면을 비우지 않는다.
+          const staleServer = metrics?.cpuStalePercent;
+          if (staleServer !== null && staleServer !== undefined) {
+            const endedAtMs = metrics?.cpuStaleEndedAt ? Date.parse(metrics.cpuStaleEndedAt) : NaN;
+            const ageSeconds = Number.isFinite(endedAtMs)
+              ? Math.max(1, Math.round((Date.now() - endedAtMs) / 1_000))
+              : null;
+            const ageLabel =
+              ageSeconds === null
+                ? "직전 측정"
+                : ageSeconds < 120
+                  ? `${ageSeconds}초 전 측정`
+                  : `${Math.round(ageSeconds / 60)}분 전 측정`;
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`${staleServer}%`}
+                detail={`${ageLabel} · 실시간 아님 · 새 실측 대기 중`}
+                level={"unknown"}
               />
             );
           }

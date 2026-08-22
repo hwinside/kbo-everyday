@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { computeInstantCpuFromStore, summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import {
+  computeInstantCpuFromStore,
+  computeStaleCpuFromStore,
+  summarizeSystemMetrics,
+  type HealthLevel,
+} from "@/lib/admin/system-health";
 import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store";
 
 export const dynamic = "force-dynamic";
@@ -57,11 +62,22 @@ async function fetchMetrics(ref: string) {
   const counter = summary.cpuCounter;
   if (!counter) return summary;
   if (summary.cpuUsedPercent === null && stored !== null) {
-    const instant = computeInstantCpuFromStore(stored, counter, Date.now());
+    const now = Date.now();
+    const instant = computeInstantCpuFromStore(stored, counter, now);
     if (instant) {
       summary.cpuUsedPercent = Math.round(instant.usedPercent * 10) / 10;
       summary.cpuSampleSeconds = Math.round(instant.windowSeconds * 10) / 10;
       summary.cpuSampleEndedAt = new Date(instant.sampleEndedAtMs).toISOString();
+    } else {
+      // cron 회차 누락·스케줄러 지터로 baseline 이 90초 상한을 넘긴 구간(2026-08-22 라이브 실측:
+      // 저장 최신 나이 107초)에서도 화면을 "측정 중"으로 비우지 않는다. 현재값은 여전히 null 로
+      // 두고(계약 유지), 직전 서버 실측값만 별도 필드로 내려 "N초 전 측정 · 실시간 아님" 표기.
+      // 계약: cpuUsedPercent 와 배타 · 건강도/알림 미사용 · 현재 counter 미사용(now 재각인 금지).
+      const stale = computeStaleCpuFromStore(stored, counter, now);
+      if (stale) {
+        summary.cpuStalePercent = Math.round(stale.usedPercent * 10) / 10;
+        summary.cpuStaleEndedAt = new Date(stale.sampleEndedAtMs).toISOString();
+      }
     }
   }
   return summary;

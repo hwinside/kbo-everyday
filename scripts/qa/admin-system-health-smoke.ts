@@ -4,7 +4,13 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import { NextRequest } from "next/server";
 import { GET } from "../../src/app/api/admin/system-health/route";
-import { computeInstantCpuFromStore, cpuUsedPercentFromSnapshots, parsePrometheusText, summarizeSystemMetrics } from "../../src/lib/admin/system-health";
+import {
+  computeInstantCpuFromStore,
+  computeStaleCpuFromStore,
+  cpuUsedPercentFromSnapshots,
+  parsePrometheusText,
+  summarizeSystemMetrics,
+} from "../../src/lib/admin/system-health";
 
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
@@ -274,6 +280,142 @@ test("client CPU delta derives busy percent across exporter scrape intervals", (
   );
 });
 
+// 2026-08-22 라이브 공백 재현 회귀(하린아빠 13:27 스크린샷 → 13:31:20 관측으로 재현).
+// cron 회차가 하나 누락되면 저장 최신 나이가 107초까지 밀려 90초 freshness 상한을 넘기고,
+// 그 순간 화면이 "측정 중"으로 비었다. 즉시값은 여전히 null 이어야 하지만(계약 유지),
+// 직전 실측값은 내려보내 화면을 비우지 않는다.
+test("stored baseline older than 90s yields no instant value but a stale value (2026-08-22 gap)", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const current = { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp };
+  const stored = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 107_100 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 167_200 },
+    { totalSeconds: 300, idleSeconds: 200, seriesFingerprint: fp, capturedAtMs: now - 226_800 },
+  ];
+
+  assert.equal(
+    computeInstantCpuFromStore(stored, current, now),
+    null,
+    "90초 초과 baseline 을 현재값으로 쓰면 안 된다(기존 계약 유지)",
+  );
+
+  const stale = computeStaleCpuFromStore(stored, current, now);
+  assert.ok(stale, "cron 누락 구간에서도 직전 실측값은 있어야 한다");
+  assert.ok(Math.abs(stale.usedPercent - 40) < 0.001);
+  assert.equal(stale.windowSeconds, 60.1); // 저장분끼리의 창
+  assert.equal(stale.sampleEndedAtMs, now - 107_100, "종료 시각은 저장 시각이지 now 가 아니다");
+});
+
+// 삼순 3차 P0-2 계약 유지: stale 경로도 now 를 종료 시각으로 재각인하지 않고,
+// 상한(5분)을 넘기면 측정 불능으로 fail-close 한다.
+test("computeStaleCpuFromStore fails closed beyond the stale cap and never stamps now", () => {
+  const fp = "cpu0";
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const current = { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp };
+  const frozen = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 301_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 361_000 },
+  ];
+  assert.equal(computeStaleCpuFromStore(frozen, current, now), null, "5분 초과는 직전값도 보여주지 않는다");
+
+  // 창 상한(150초) 초과 쌍만 있으면 장기평균을 직전값으로 위장하지 않는다
+  const wideWindow = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 260_000 },
+  ];
+  assert.equal(computeStaleCpuFromStore(wideWindow, current, now), null, "창 160초는 순간값으로 부적합");
+
+  // 빈 저장소는 null
+  assert.equal(computeStaleCpuFromStore([], current, now), null);
+});
+
+// 삼순 #1283 P1: 최신 row 의 쌍이 실패했다고 **과거 series** 로 내려가 탐색하면
+// "fingerprint 불일치 fail-close" 계약이 우회된다. stale 계산은 현재 series 에만 결속된다.
+test("computeStaleCpuFromStore binds to the current series (no past-series fallback)", () => {
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+  const newFp = "cpu-new";
+  const oldFp = "cpu-old";
+  const current = { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: newFp }; // reset 직후
+
+  // [new-fp 최신(페어 불가), old-fp, old-fp] — 과거 old 쌍은 유효하지만 써서는 안 된다
+  const afterReset = [
+    { totalSeconds: 8, idleSeconds: 5, seriesFingerprint: newFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: oldFp, capturedAtMs: now - 160_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: oldFp, capturedAtMs: now - 220_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(afterReset, current, now),
+    null,
+    "현재 series 에 페어가 없으면 과거 series 쌍으로 대체하면 안 된다",
+  );
+
+  // 최신 저장분이 현재와 다른 series 면(current 가 바뀜) 즉시 null
+  const staleSeriesOnly = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: oldFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: oldFp, capturedAtMs: now - 160_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(staleSeriesOnly, current, now),
+    null,
+    "최신 저장분이 현재 series 가 아니면 fail-close",
+  );
+
+  // 동일 series 로 유효 쌍이 있으면 정상 반환(위 반례가 과방어가 아님을 증명)
+  const healthy = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: newFp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: newFp, capturedAtMs: now - 160_000 },
+  ];
+  assert.ok(computeStaleCpuFromStore(healthy, { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: newFp }, now));
+});
+
+// 삼순 #1283 P1(재지적): fingerprint 는 CPU label 집합이라 **counter reset 에도 그대로**일 수 있다.
+// 그러면 series 결속만으로는 reset 을 걸러낼 수 없으므로, newer 를 최신 row 에 고정하고
+// current 가 최신 저장분보다 작으면 즉시 fail-close 해야 한다.
+test("computeStaleCpuFromStore fails closed on same-fingerprint counter reset", () => {
+  const fp = "cpu0"; // reset 이지만 label 집합은 동일
+  const now = Date.parse("2026-08-22T04:31:20.000Z");
+
+  // ① post-reset 최신 + pre-reset 2개 — 과거 쌍(40%)으로 내려가면 안 된다
+  const postThenPre = [
+    { totalSeconds: 8, idleSeconds: 5, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 160_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 220_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(postThenPre, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+    "reset 직후 pre-reset 구간의 rate 를 직전값으로 내보내면 안 된다",
+  );
+
+  // ② current 가 최신 저장분보다 작음(total 역전) — same-fp reset
+  const resetTotal = [
+    { totalSeconds: 304, idleSeconds: 202.4, seriesFingerprint: fp, capturedAtMs: now - 100_000 },
+    { totalSeconds: 302, idleSeconds: 201.2, seriesFingerprint: fp, capturedAtMs: now - 160_000 },
+  ];
+  assert.equal(
+    computeStaleCpuFromStore(resetTotal, { totalSeconds: 10, idleSeconds: 6, seriesFingerprint: fp }, now),
+    null,
+    "current.total 이 최신 저장분보다 작으면 reset 으로 fail-close",
+  );
+
+  // ③ idle 만 역전해도 reset 으로 본다
+  assert.equal(
+    computeStaleCpuFromStore(resetTotal, { totalSeconds: 306, idleSeconds: 100, seriesFingerprint: fp }, now),
+    null,
+    "current.idle 역전도 reset 으로 fail-close",
+  );
+
+  // ④ 과방어 아님 증명: current 가 전진한 정상 상황은 그대로 반환된다
+  const ok = computeStaleCpuFromStore(
+    resetTotal,
+    { totalSeconds: 306, idleSeconds: 203.6, seriesFingerprint: fp },
+    now,
+  );
+  assert.ok(ok);
+  assert.equal(ok.sampleEndedAtMs, now - 100_000);
+});
+
 test("computeInstantCpuFromStore rates current against the freshest stored snapshot", () => {
   const fp = "cpu0";
   const now = Date.parse("2026-08-21T10:00:00.000Z");
@@ -471,6 +613,61 @@ test("route rejects a frozen counter (rate older than 90s) as 측정 중", async
   const payload = await response.json();
   assert.equal(payload.metrics.cpuUsedPercent, null); // 멈춘 counter를 현재값으로 위장 금지
   assert.equal(payload.metrics.cpuSampleEndedAt, null);
+});
+
+// 삼순 #1283 P0 회귀: route 가 stale 필드를 실제로 채우는지(배선 단절 검출).
+// helper 만 직접 호출하는 테스트는 import-만-하고-미호출 상태를 못 잡았다.
+// 2026-08-22 라이브 재현 값(저장 최신 나이 107초)을 그대로 쓴다.
+test("route fills stale CPU fields when the baseline is 107s old (2026-08-22 gap, wiring)", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const now = Date.now();
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      // 현재 counter(total 302/idle 201.2)보다 이전 값들만 있고, 최신이 107초 전 → 90초 상한 초과
+      return Response.json([
+        { key: "cpuSnap_c", value: { t: now - 107_100, fp, total: 300, idle: 200 } },
+        { key: "cpuSnap_b", value: { t: now - 167_200, fp, total: 298, idle: 198.8 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, null, "90초 초과 baseline 은 현재값이 아니다");
+  assert.equal(payload.metrics.cpuSampleEndedAt, null);
+  assert.ok(
+    payload.metrics.cpuStalePercent !== null && payload.metrics.cpuStalePercent !== undefined,
+    "route 가 stale 필드를 실제로 채워야 한다(import 만 하고 미호출이면 이 assertion 이 죽는다)",
+  );
+  assert.ok(Math.abs(payload.metrics.cpuStalePercent - 40) < 0.001);
+  const endedAtMs = Date.parse(payload.metrics.cpuStaleEndedAt);
+  assert.ok(Number.isFinite(endedAtMs));
+  assert.ok(Math.abs(endedAtMs - (now - 107_100)) < 1_500, "종료 시각은 저장 시각이지 now 가 아니다");
+  assert.ok(now - endedAtMs > 90_000, "stale 값은 90초보다 오래된 측정임을 밝혀야 한다");
+});
+
+// 현재값이 살아있으면 stale 은 반드시 null (배타 계약).
+test("route keeps stale fields null whenever the instant value is present", async () => {
+  const fp = "cpu=0|mode=idle;cpu=0|mode=user;cpu=1|mode=idle;cpu=1|mode=user";
+  const response = await routeWith(async (input) => {
+    const url = String(input);
+    if (url.includes("privileged/metrics")) {
+      return new Response(sample(), { status: 200 });
+    }
+    if (url.includes("api.vercel.com/v1/edge-config")) {
+      return Response.json([
+        { key: "cpuSnap_a", value: { t: Date.now() - 60_000, fp, total: 300, idle: 200 } },
+      ]);
+    }
+    return Response.json(healthyServices);
+  });
+  const payload = await response.json();
+  assert.equal(payload.metrics.cpuUsedPercent, 40);
+  assert.equal(payload.metrics.cpuStalePercent, null, "현재값과 stale 은 배타여야 한다");
+  assert.equal(payload.metrics.cpuStaleEndedAt, null);
 });
 
 test("route rejects a window longer than the 150s cap", async () => {
@@ -866,6 +1063,75 @@ domTest("UI marks retained data stale after a successful load then refresh failu
     assert.match(container.textContent || "", /최근 갱신 실패/);
     assert.match(container.textContent || "", /이전 정상값일 수 있음/);
     assert.match(container.textContent || "", /주의/);
+  } finally {
+    await act(async () => root.unmount());
+    globalThis.fetch = previous.fetch;
+    for (const [key, value] of Object.entries(previous)) {
+      if (key !== "fetch") globals[key] = value;
+    }
+    dom.window.close();
+  }
+});
+
+// 삼순 #1283 요구: cron 누락 구간에서 화면이 "측정 중"으로 비지 않고
+// "N초 전 측정 · 실시간 아님"으로 나오는지를 **실제 DOM**으로 고정한다.
+domTest("UI renders the stale CPU value as '실시간 아님' instead of '측정 중' (2026-08-22 gap)", async () => {
+  const { React, act, createRoot, SystemHealthPanel } = await loadReactHarness();
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "http://localhost/admin/system",
+  });
+  const globals = globalThis as typeof globalThis & Record<string, unknown>;
+  const previous = {
+    window: globals.window,
+    document: globals.document,
+    navigator: globals.navigator,
+    HTMLElement: globals.HTMLElement,
+    sessionStorage: globals.sessionStorage,
+    localStorage: globals.localStorage,
+    IS_REACT_ACT_ENVIRONMENT: globals.IS_REACT_ACT_ENVIRONMENT,
+    fetch: globalThis.fetch,
+  };
+  globals.window = dom.window;
+  globals.document = dom.window.document;
+  globals.navigator = dom.window.navigator;
+  globals.HTMLElement = dom.window.HTMLElement;
+  globals.sessionStorage = dom.window.sessionStorage;
+  globals.localStorage = dom.window.localStorage;
+  globals.IS_REACT_ACT_ENVIRONMENT = true;
+  dom.window.sessionStorage.setItem("admin_pin", "health-test-pin");
+  dom.window.localStorage.clear(); // last-good 분기가 아니라 **서버 stale 분기**를 타게 한다
+
+  const now = Date.now();
+  const metrics = summarizeSystemMetrics(sample());
+  metrics.cpuUsedPercent = null; // 90초 초과 → 현재값 없음
+  metrics.cpuSampleSeconds = null;
+  metrics.cpuSampleEndedAt = null;
+  metrics.cpuStalePercent = 4.9;
+  metrics.cpuStaleEndedAt = new Date(now - 107_100).toISOString();
+
+  globalThis.fetch = (async () => Response.json({
+    level: "healthy",
+    metrics,
+    services: healthyServices.map((service) => ({ ...service, level: "healthy" })),
+    sourceErrors: { metrics: null, management: null },
+    checkedAt: new Date(now).toISOString(),
+  })) as typeof fetch;
+
+  const container = dom.window.document.getElementById("root");
+  assert.ok(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(React.createElement(SystemHealthPanel));
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    const text = container.textContent || "";
+    assert.doesNotMatch(text, /측정 중/, "cron 누락 구간에서 화면이 비면 안 된다");
+    assert.match(text, /4\.9%/, "직전 실측값이 보여야 한다");
+    assert.match(text, /실시간 아님/, "현재값이 아니라는 사실을 명시해야 한다");
+    assert.match(text, /초 전 측정|분 전 측정/, "측정 나이를 밝혀야 한다");
   } finally {
     await act(async () => root.unmount());
     globalThis.fetch = previous.fetch;
