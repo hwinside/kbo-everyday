@@ -31,6 +31,19 @@ const STAGING_PROJECT_REFS = Object.freeze(["kygfpcvtszkwdxdspjnv"]);
 
 // 비공개 fixture room 만 허용. 실제 경기 방(`game:<gameId>`) 은 패턴상 매치되지 않는다.
 const PRIVATE_FIXTURE_ROOM = /^qa-fixture:[a-z0-9-]{4,}$/;
+// 앱이 실제로 만드는 room 은 `game:${gameId}` 다. gameId 를 `qa-<slug>` 로 주면
+// room 은 `game:qa-<slug>` 가 되고, **write 와 subscribe 가 같은 room** 이 된다
+// (rewrite 로 write 만 다른 room 으로 보내면 도착을 관측할 수 없다 = n=0).
+// 실제 KBO gameId 는 항상 YYYYMMDD 로 시작하므로 `qa-` 접두는 구조적으로 충돌 불가.
+// 이 패턴은 **staging ref 에서만** 의미가 있다 — production ref 는 이 검사보다
+// 먼저 평가되는 PRODUCTION_REF 축에서 무조건 차단된다(순서가 안전의 근거).
+const QA_GAME_ROOM = /^game:(?:qa-|\d{8}-qa-)[a-z0-9-]{4,}$/;
+// `game:<YYYYMMDD>-qa-<slug>` 형태도 허용한다. 이유: 하니스의 P0 날짜 가드는
+// GAME_ID 가 YYYYMMDD 로 시작하고 **과거**일 것을 요구하는데(완화 금지), 앱은
+// room 을 `game:${gameId}` 로 만든다 → 두 계약을 동시에 만족하려면 gameId 가
+// `20260821-qa-p95run` 처럼 과거 날짜 + QA 네임스페이스여야 한다.
+// 실제 KBO gameId 는 `20260821LGHH0` 형식이라 `-qa-` 를 절대 포함하지 않으므로
+// 실경기방과 구조적으로 충돌 불가 — 어느 가드도 약화되지 않는다.
 
 /** 판정 사유 코드 — 각 RED 축이 독립적으로 식별된다. */
 export const REASONS = Object.freeze({
@@ -99,11 +112,11 @@ export function evaluateSend(ctx = {}, opts = {}) {
       detail: "roomId 누락 — 발송 대상 room 이 특정되지 않으면 중단.",
     };
   }
-  if (!PRIVATE_FIXTURE_ROOM.test(roomId)) {
+  if (!PRIVATE_FIXTURE_ROOM.test(roomId) && !QA_GAME_ROOM.test(roomId)) {
     return {
       allowed: false,
       reason: REASONS.ROOM_NOT_FIXTURE,
-      detail: `room '${roomId}' 은 비공개 fixture 가 아니다. 허용 패턴: qa-fixture:<slug> (실제 경기 방 'game:*' 은 영구 불가)`,
+      detail: `room '${roomId}' 은 비공개 fixture 가 아니다. 허용 패턴: qa-fixture:<slug> 또는 game:qa-<slug> (실제 경기 방 'game:<YYYYMMDD>...' 은 영구 불가)`,
     };
   }
   return { allowed: true, reason: REASONS.OK, detail: `staging ref='${ref}', fixture room='${roomId}'` };
@@ -140,6 +153,14 @@ export function selftestCases() {
     { name: "RED: allowlist 미등재 ref", ctx: { supabaseUrl: "https://someotherproject.supabase.co", roomId: "qa-fixture:abcd" }, opts: { stagingRefs: injected }, expect: REASONS.REF_NOT_ALLOWLISTED },
     { name: "RED: ref 판정 불능 (localhost)", ctx: { supabaseUrl: "http://localhost:54321", roomId: "qa-fixture:abcd" }, opts: { stagingRefs: injected }, expect: REASONS.REF_UNRESOLVED },
     { name: "RED: 실제 경기방 (staging 이어도 차단)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:20260821LGHH0" }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_NOT_FIXTURE },
+    { name: "GREEN: staging + QA 네임스페이스 경기방 (write==subscribe 동일 room)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:qa-p95run" }, opts: { stagingRefs: injected }, expect: REASONS.OK },
+    { name: "RED: production + QA 네임스페이스 경기방 (room 무관 production 우선 차단)", ctx: { supabaseUrl: "https://lbmbdjgsnenqjwjotoei.supabase.co", roomId: "game:qa-p95run" }, opts: { stagingRefs: injected }, expect: REASONS.PRODUCTION_REF },
+    { name: "RED: game:qa 위장 — 날짜 경기방에 qa 접미 (game:2026qa-x)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:2026qa-x" }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_NOT_FIXTURE },
+    { name: "RED: game:qa- 뒤 slug 미달 (4자 미만)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:qa-ab" }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_NOT_FIXTURE },
+    { name: "GREEN: staging + 과거날짜 QA 네임스페이스 (날짜가드·room가드 동시 충족)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:20260821-qa-p95run" }, opts: { stagingRefs: injected }, expect: REASONS.OK },
+    { name: "RED: production + 과거날짜 QA 네임스페이스 (production 우선 차단)", ctx: { supabaseUrl: "https://lbmbdjgsnenqjwjotoei.supabase.co", roomId: "game:20260821-qa-p95run" }, opts: { stagingRefs: injected }, expect: REASONS.PRODUCTION_REF },
+    { name: "RED: 실경기방은 여전히 차단 (game:20260821LGHH0)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:20260821LGHH0" }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_NOT_FIXTURE },
+    { name: "RED: 날짜+qa 위장이지만 slug 미달", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "game:20260821-qa-ab" }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_NOT_FIXTURE },
     { name: "RED: room 누락", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: undefined }, opts: { stagingRefs: injected }, expect: REASONS.ROOM_MISSING },
     { name: "RED: 런타임 allowlist 는 빈 상태 (주입 없으면 staging URL 도 차단)", ctx: { supabaseUrl: "https://qastaginginjected.supabase.co", roomId: "qa-fixture:abcd" }, opts: {}, expect: REASONS.REF_NOT_ALLOWLISTED },
   ];
@@ -246,7 +267,9 @@ export async function installChatWriteInterceptor(context, guardedRoomId, onBloc
  * 넘어간 guard 가 **재작성된 최종 body** 를 검증한다(= 실제 write target 을 검증).
  */
 export async function installFixtureRoomRewrite(context, fixtureRoom) {
-  if (!/^qa-fixture:[a-z0-9-]{4,}$/.test(String(fixtureRoom ?? ""))) {
+  // 허용 패턴은 evaluateSend 와 같은 두 가지: qa-fixture:<slug> · game:qa-<slug>.
+  // 후자를 쓰면 write 와 subscribe 가 같은 room 이라 rewrite 는 멱등 no-op 이 된다.
+  if (!PRIVATE_FIXTURE_ROOM.test(String(fixtureRoom ?? "")) && !QA_GAME_ROOM.test(String(fixtureRoom ?? ""))) {
     throw new Error(`[SEND GUARD] fixture room 패턴 위반: ${fixtureRoom}`);
   }
   await context.route("**/rest/v1/chat_messages*", (route) => {

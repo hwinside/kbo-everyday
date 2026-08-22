@@ -18,7 +18,10 @@ for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const PROD_BASE = "https://keubo.fan";
+// baseline(비교군) origin. 기본값은 Production 이지만, 격리 staging 측정에서는
+// QA_BASELINE_BASE 로 로컬 baseline 빌드(main HEAD)를 가리킨다. 그래야 A1 과
+// baseline 이 **같은 DB·같은 네트워크 조건**에서 비교된다(원계약의 "동일 조건").
+const PROD_BASE = process.env.QA_BASELINE_BASE || "https://keubo.fan";
 const A1_BASE = process.env.QA_A1_BASE || "http://localhost:3103";
 const GAME_ID = process.env.QA_GAME_ID || "20260821LGHH0";
 // 격리 staging 전용 — 실경기방(game:*) 은 send-guard 가 차단한다. 반드시 qa-fixture:* 를 env 로 지정.
