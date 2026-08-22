@@ -108,6 +108,116 @@ let dbProof = null;
 // non-inferiority 판정 결과 — 원장에 그대로 실려 Δ·상한이 사후에 바뀌지 않음을 보장한다.
 let niResult = null;
 const results = [];
+
+/* ── NI 게이트 순수함수 산출 ───────────────────────────────────────────
+ * [삼순 3차 ④] NI 분기는 measure 모드에서만 돌아 실행 0건이었다. 검증 불가능한
+ * 게이트는 게이트가 아니다 → 순수함수로 분리해 synthetic 데이터로 경계를 검증한다.
+ * 반환: { ok, reason, detail, ni } — ok=false 면 무조건 FAIL(fail-close). */
+const NI_MARGIN_MAX_MS = 100;   // 코드 상한 — env 로 높일 수 없다(낮추기만 허용)
+const NI_BLOCK_PAIRS = 2;       // 라운드당 AB·BA → arm 당 2표본
+const NI_ITERS = 20000;
+
+function computeNonInferiority({ baseline, a1, marginRaw, sendFail, provenance }) {
+  if (marginRaw !== undefined && marginRaw !== "" && !/^\d+$/.test(String(marginRaw)))
+    return { ok: false, reason: "margin_invalid", detail: `불정 값: ${marginRaw}` };
+  if (marginRaw !== undefined && marginRaw !== "" && Number(marginRaw) <= 0)
+    return { ok: false, reason: "margin_invalid", detail: `불정 값: ${marginRaw}` };
+  if (!provenance?.ok)
+    return { ok: false, reason: "provenance", detail: provenance?.detail ?? "provenance 미비" };
+  if (sendFail?.baseline !== 0 || sendFail?.a1 !== 0)
+    return { ok: false, reason: "send_fail", detail: JSON.stringify(sendFail) };
+  if (!Array.isArray(baseline) || !Array.isArray(a1) || baseline.length === 0 || baseline.length !== a1.length)
+    return { ok: false, reason: "pairing", detail: `b=${baseline?.length} a1=${a1?.length}` };
+
+  // env 는 더 엄격하게만 — 상한을 넘길 수 없다.
+  const requested = marginRaw === undefined || marginRaw === "" ? NI_MARGIN_MAX_MS : Number(marginRaw);
+  const margin = Math.min(requested, NI_MARGIN_MAX_MS);
+
+  const q95 = (v) => { const s = [...v].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]; };
+  // 라운드 block — 같은 라운드 관측치는 부하·네트워크를 공유해 독립이 아니다.
+  // 독립 가정으로 리샘플하면 CI 를 과소추정한다 → 라운드를 통째 리샘플.
+  const blocks = [];
+  for (let i = 0; i < baseline.length; i += NI_BLOCK_PAIRS)
+    blocks.push({ b: baseline.slice(i, i + NI_BLOCK_PAIRS), a: a1.slice(i, i + NI_BLOCK_PAIRS) });
+
+  let seed = 1274 >>> 0;   // 결정론 — 같은 입력이면 같은 판정
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+  const boots = new Array(NI_ITERS);
+  for (let it = 0; it < NI_ITERS; it++) {
+    const bb = [], aa = [];
+    for (let k = 0; k < blocks.length; k++) {
+      const blk = blocks[Math.floor(rnd() * blocks.length)];
+      bb.push(...blk.b); aa.push(...blk.a);
+    }
+    boots[it] = q95(aa) - q95(bb);   // estimand = p95 차이
+  }
+  boots.sort((x, y) => x - y);
+  const upper95 = boots[Math.floor(0.95 * boots.length)];   // 단측 95% 상한
+  const P = baseline.map((b, i) => a1[i] - b);
+  return {
+    ok: true, pass: upper95 < margin,
+    detail: `upper95=${upper95.toFixed(1)}ms observed=${(q95(a1) - q95(baseline)) >= 0 ? "+" : ""}${q95(a1) - q95(baseline)}ms blocks=${blocks.length} n=${baseline.length}`,
+    ni: {
+      statistic: "p95_delta", method: "round_block_bootstrap", blockSize: NI_BLOCK_PAIRS,
+      blocks: blocks.length, iterations: NI_ITERS, seed: 1274,
+      marginMs: margin, marginMaxMs: NI_MARGIN_MAX_MS, marginRequested: requested,
+      observedP95Delta: q95(a1) - q95(baseline), upper95, n: baseline.length,
+      aSlowerPairs: P.filter((x) => x > 0).length, aFasterPairs: P.filter((x) => x < 0).length,
+    },
+  };
+}
+
+/* ── --selftest-ni — synthetic 데이터로 NI 경계를 결정론적으로 검증 ────────────────
+ * 삼순 ④ 요구: PASS/FAIL 경계 · 미설정/불법/상한초과 Δ · 0/불균형 쌍.
+ * 이게 통과해야 NI 분기가 "실행된 적 있는 게이트"가 된다. */
+if (process.argv.includes("--selftest-ni")) {
+  const OK_PROV = { ok: true };
+  const Z = { baseline: 0, a1: 0 };
+  let pass = 0, fail = 0;
+  const t = (name, cond, detail = "") => {
+    if (cond) { pass++; console.log(`  PASS — ${name}${detail ? ` :: ${detail}` : ""}`); }
+    else { fail++; console.log(`  FAIL — ${name}${detail ? ` :: ${detail}` : ""}`); }
+  };
+  // 동일 분포(차이 0) → 상한이 Δ 아래 → PASS
+  const base = Array.from({ length: 200 }, (_, i) => 400 + (i % 40) * 10);
+  let r = computeNonInferiority({ baseline: base, a1: [...base], marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("동일 분포 → NI PASS", r.ok && r.pass, r.detail);
+  // A1 이 전구간 +400ms 느림 → 상한이 Δ 초과 → FAIL
+  r = computeNonInferiority({ baseline: base, a1: base.map((x) => x + 400), marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("+400ms 회귀 → NI FAIL (경계 검출력)", r.ok && !r.pass, r.detail);
+  // Δ 미설정 → 상한값(100)으로 계약이 살아있다
+  r = computeNonInferiority({ baseline: base, a1: base.map((x) => x + 400), marginRaw: undefined, sendFail: Z, provenance: OK_PROV });
+  t("Δ 미설정이어도 계약 살아있음(=100 적용, FAIL)", r.ok && !r.pass && r.ni.marginMs === 100, `margin=${r.ni?.marginMs}`);
+  // 상한 초과 Δ 주입 → 상한으로 clamp (999 주입해도 100)
+  r = computeNonInferiority({ baseline: base, a1: base.map((x) => x + 400), marginRaw: "999", sendFail: Z, provenance: OK_PROV });
+  t("Δ=999 주입 → 100 으로 clamp 되어 FAIL 유지", r.ok && !r.pass && r.ni.marginMs === 100, `margin=${r.ni?.marginMs} requested=${r.ni?.marginRequested}`);
+  // 더 엄격한 Δ 는 허용
+  r = computeNonInferiority({ baseline: base, a1: [...base], marginRaw: "10", sendFail: Z, provenance: OK_PROV });
+  t("Δ=10 (더 엄격) 허용", r.ok && r.ni.marginMs === 10, `margin=${r.ni?.marginMs}`);
+  // 불법 Δ
+  for (const bad of ["abc", "-5", "0", "1e3", "50.5"]) {
+    r = computeNonInferiority({ baseline: base, a1: [...base], marginRaw: bad, sendFail: Z, provenance: OK_PROV });
+    t(`불법 Δ 거부: ${JSON.stringify(bad)}`, !r.ok && r.reason === "margin_invalid");
+  }
+  // sendFail ≠ 0 → fail-close
+  r = computeNonInferiority({ baseline: base, a1: [...base], marginRaw: "100", sendFail: { baseline: 1, a1: 0 }, provenance: OK_PROV });
+  t("sendFail≠0 → fail-close", !r.ok && r.reason === "send_fail");
+  // provenance 깨짐 → fail-close
+  r = computeNonInferiority({ baseline: base, a1: [...base], marginRaw: "100", sendFail: Z, provenance: { ok: false, detail: "same sha" } });
+  t("provenance 깨짐 → fail-close", !r.ok && r.reason === "provenance");
+  // 0 표본 / 불균형 쌍 → fail-close
+  r = computeNonInferiority({ baseline: [], a1: [], marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("0 표본 → fail-close", !r.ok && r.reason === "pairing");
+  r = computeNonInferiority({ baseline: base, a1: base.slice(0, 199), marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("불균형 쌍 → fail-close", !r.ok && r.reason === "pairing");
+  // 결정론 — 같은 입력 2회 호출이 동일해야 재현 가능한 근거다
+  const j = base.map((x, i) => x + (i % 7) * 13);
+  const r1 = computeNonInferiority({ baseline: base, a1: j, marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  const r2 = computeNonInferiority({ baseline: base, a1: j, marginRaw: "100", sendFail: Z, provenance: OK_PROV });
+  t("결정론 — 동일 입력 → 동일 upper95", r1.ni.upper95 === r2.ni.upper95, `${r1.ni.upper95} vs ${r2.ni.upper95}`);
+  console.log(`\n=== selftest-ni === 총 ${pass + fail} · PASS ${pass} · FAIL ${fail}`);
+  process.exit(fail === 0 ? 0 : 1);
+}
 let failed = 0;
 function check(name, ok, detail = "") {
   results.push({ name, ok, detail });
@@ -515,7 +625,11 @@ async function main() {
       lat.baseline.length >= MIN_SAMPLES && lat.a1.length >= MIN_SAMPLES,
       `baseline=${lat.baseline.length} a1=${lat.a1.length}`);
     check("동일 표본수", lat.baseline.length === lat.a1.length, `b=${lat.baseline.length} a1=${lat.a1.length}`);
-    check("A1 p95 ≤ baseline p95 (원계약)", bp95 != null && ap95 != null && ap95 <= bp95, `baseline=${bp95}ms a1=${ap95}ms`);
+    // [삼순 3차 ③] legacy 부등호는 **informational** 로 내린다(blocking 아님).
+    // 4회 런에서 방향이 2:2 로 갈렸다 = 재현성이 없는 게이트다. 그걸 blocking 으로
+    // 두면 NI 가 PASS 해도 legacy 가 동전던지기로 전체를 FAIL 시킨다.
+    // 값은 버리지 않고 원장·출력에 남겨 추이를 볼 수 있게 한다.
+    console.log(`  INFO — [참고·비판정] A1 p95 vs baseline p95 :: baseline=${bp95}ms a1=${ap95}ms delta=${(ap95 - bp95) >= 0 ? "+" : ""}${ap95 - bp95}ms`);
 
     // ── non-inferiority 게이트 (삼순 요구) ───────────────────────────────
     // 위 부등호 게이트는 4회 런에서 방향이 2:2 로 갈렸다 = 재현성이 없다.
