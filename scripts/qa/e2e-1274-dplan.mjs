@@ -190,28 +190,40 @@ async function composerOf(page) {
   return c;
 }
 
-/** 전송: matching POST **시작시각**을 반환한다(삼순 ④ — 도착 후 clamp 방지). */
-async function sendOn(page, text) {
-  const c = await composerOf(page);
-  const box = c.locator('textarea[name="chat-message"]');
-  await box.waitFor({ state: "visible", timeout: 20000 });
+/** 전송: matching POST **시작시각**을 반환한다(삼순 ④ — 도착 후 clamp 방지).
+ *
+ *  ⚠️ composer 는 폴링 응답마다 리렌더된다. locator 를 밖에서 한 번만 잡아두면
+ *  재렌더 된 순간 stale 해지거나 fill 한 값이 지워져 POST 가 영영 안 나간다.
+ *  그런데 baseline 은 standalone 폴링(live+detail+relay)이 더 잔아 재렌더 빈도가 높다
+ *  → 하니스 결함이 **arm 에 상관**해 baseline 만 손해를 본다. 매 시도마다 재조회한다. */
+async function sendOn(page, text, diag) {
   const postAt = page.waitForRequest(
     (r) => r.method() === "POST" && /\/rest\/v1\/chat_messages/.test(r.url()) && (r.postData() ?? "").includes(text),
     { timeout: 20000 },
   ).then(() => Date.now());
+  let attempts = 0, lastVal = null, clicked = false;
   for (let attempt = 1; attempt <= 10; attempt++) {
-    await box.click();
-    await box.fill(text);
-    if ((await box.inputValue().catch(() => "")) !== text) continue;
-    const btn = c.locator("button:has(svg.lucide-send)").first();
-    if (await btn.isEnabled().catch(() => false)) {
-      try { await btn.click({ timeout: 2000 }); break; } catch { /* retry */ }
-    } else {
+    attempts = attempt;
+    try {
+      const c = await composerOf(page);                       // ← 매 시도 재조회(stale 방지)
+      const box = c.locator('textarea[name="chat-message"]');
+      await box.waitFor({ state: "visible", timeout: 5000 });
+      await box.click({ timeout: 3000 });
+      await box.fill(text, { timeout: 3000 });
+      lastVal = await box.inputValue().catch(() => null);
+      if (lastVal !== text) continue;                          // 재렌더로 값이 날아감 → 재시도
+      const btn = c.locator("button:has(svg.lucide-send)").first();
+      if (await btn.isEnabled().catch(() => false)) {
+        await btn.click({ timeout: 2000 });
+        clicked = true;
+        break;
+      }
       await box.press("Enter").catch(() => {});
       await page.waitForTimeout(400);
-      if ((await box.inputValue().catch(() => "x")) === "") break;
-    }
+      if ((await box.inputValue().catch(() => "x")) === "") { clicked = true; break; }
+    } catch { await page.waitForTimeout(200); /* 재시도 */ }
   }
+  if (diag) Object.assign(diag, { attempts, clicked, lastVal });
   return postAt;   // POST 가 안 나가면 timeout → 호출부에서 sendFail 로 집계
 }
 
@@ -297,6 +309,7 @@ async function main() {
   const dups = { baseline: [], a1: [] };
   const sendFail = { baseline: 0, a1: 0 };
   const sentTexts = [];   // [P0-2] DB exact-1 대조용 — 실제 POST 가 나간 content 만
+  const sendFailDetail = [];   // 전송 실패의 증상(라운드·방향·재시도횟수·입력값) — 원장에 실린다
   const total = PAIRS;
 
   for (let i = 1; i <= total; i++) {
@@ -312,8 +325,15 @@ async function main() {
           await arm[side].page.evaluate((t) => window.__qaTargets.push(t), text);
         }
         let t0 = null;
-        try { t0 = await sendOn(arm[from].page, text); sentTexts.push(text); }
-        catch { sendFail[label]++; continue; }
+        const diag = {};
+        try { t0 = await sendOn(arm[from].page, text, diag); sentTexts.push(text); }
+        catch (e) {
+          sendFail[label]++;
+          // 재시도로 덮지 않고 **증상을 원장에 남긴다** — 어느 라운드·방향에서
+          // 몇 번 재시도하고 입력값이 무엇이었는지까지 보이면 하니스 결함과 서비스 결함을 가를 수 있다.
+          sendFailDetail.push({ arm: label, round: i, dir: `${from}${to}`, err: e?.name ?? String(e), ...diag });
+          continue;
+        }
         const at = await waitArrival(arm[to].page, text);
         if (at == null) { if (i > WARMUP_PAIRS) missing[label].push(text); continue; }
         if (i > WARMUP_PAIRS) lat[label].push(at - t0);
@@ -391,7 +411,8 @@ async function main() {
   console.log(`A1       n=${lat.a1.length} p50=${ap50}ms p95=${ap95}ms`);
 
   check("측정 중 chat write 차단 0 (전부 QA room 으로만 나감)", blockedWrites.length === 0, `blocked=${blockedWrites.length}`);
-  check("send 실패 0", sendFail.baseline === 0 && sendFail.a1 === 0, JSON.stringify(sendFail));
+  check("send 실패 0", sendFail.baseline === 0 && sendFail.a1 === 0,
+    `${JSON.stringify(sendFail)} ${sendFailDetail.length ? JSON.stringify(sendFailDetail.slice(0, 4)) : ""}`);
   check("누락 0", missing.baseline.length === 0 && missing.a1.length === 0, `b=${missing.baseline.length} a1=${missing.a1.length}`);
   check("중복 0 (DOM 노출 1회)", dups.baseline.length === 0 && dups.a1.length === 0, `b=${dups.baseline.length} a1=${dups.a1.length}`);
   // [P0-1] network fail-close — 범위로 잠근다("감소"로는 불충분).
@@ -444,7 +465,7 @@ async function main() {
     pairs: PAIRS, warmupPairs: WARMUP_PAIRS, signatureWindowMs: elapsed, signature: sig,
     baseline: { n: lat.baseline.length, p50: bp50, p95: bp95, samples: lat.baseline, sendFail: sendFail.baseline, missing: missing.baseline.length, dups: dups.baseline.length },
     a1: { n: lat.a1.length, p50: ap50, p95: ap95, samples: lat.a1, sendFail: sendFail.a1, missing: missing.a1.length, dups: dups.a1.length },
-    blockedWrites: blockedWrites.length, dbProof, results,
+    blockedWrites: blockedWrites.length, dbProof, sendFailDetail, results,
   };
   const out = `scripts/qa/evidence/dplan-${PREFLIGHT_ONLY ? "preflight" : "p95"}-${stamp}.json`;
   writeFileSync(out, JSON.stringify(ledger, null, 1));
