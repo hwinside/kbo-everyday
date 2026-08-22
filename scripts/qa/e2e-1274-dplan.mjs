@@ -105,6 +105,8 @@ if (BASELINE_SHA === A1_SHA) {
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
 // [P0-2] DB exact-1 증명 결과 — 원장에 그대로 실린다(측정 실패 시 null 로 남아 부재가 드러남).
 let dbProof = null;
+// non-inferiority 판정 결과 — 원장에 그대로 실려 Δ·상한이 사후에 바뀌지 않음을 보장한다.
+let niResult = null;
 const results = [];
 let failed = 0;
 function check(name, ok, detail = "") {
@@ -514,6 +516,48 @@ async function main() {
       `baseline=${lat.baseline.length} a1=${lat.a1.length}`);
     check("동일 표본수", lat.baseline.length === lat.a1.length, `b=${lat.baseline.length} a1=${lat.a1.length}`);
     check("A1 p95 ≤ baseline p95 (원계약)", bp95 != null && ap95 != null && ap95 <= bp95, `baseline=${bp95}ms a1=${ap95}ms`);
+
+    // ── non-inferiority 게이트 (삼순 요구) ───────────────────────────────
+    // 위 부등호 게이트는 4회 런에서 방향이 2:2 로 갈렸다 = 재현성이 없다.
+    // 그렇다고 "CI 가 0 을 포함"은 동등성 증명이 아니다 — [-80,+142] 는
+    // "차이 없음"이 아니라 "최대 +142ms 회귀도 배제 못 함"이다(검정력 부족).
+    // 올바른 형태는 **사전 정의된 margin Δ 에 대한 단측 상한 검정**이다:
+    //     paired delta 의 95% 단측 upper bound < Δ  ⇒ "Δ 보다 나쁘지 않다"가 증명됨
+    // Δ 는 통계가 아니라 **제품 판단**이므로 env 로 외부 주입받고,
+    // 미설정이면 게이트를 건너뛰지 않고 **FAIL** 한다(fail-close).
+    // ⚠️ 결과를 보고 Δ 를 고르면 그게 사후선택이다. Δ 는 런 전에 확정해 원장에 박힌다.
+    const dRaw = process.env.QA_NI_MARGIN_MS;
+    if (dRaw === undefined || dRaw === "") {
+      check("non-inferiority margin Δ 설정됨 (QA_NI_MARGIN_MS, fail-close)", false,
+        "미설정 — Δ 는 제품 판단이라 런 전에 확정되어야 한다");
+    } else if (!/^\d+$/.test(dRaw) || Number(dRaw) <= 0) {
+      check("non-inferiority margin Δ 설정됨 (QA_NI_MARGIN_MS, fail-close)", false, `불정 값: ${dRaw}`);
+    } else if (lat.baseline.length !== lat.a1.length || lat.baseline.length === 0) {
+      check("non-inferiority — paired 쌍 성립", false,
+        `b=${lat.baseline.length} a1=${lat.a1.length} (동일 인덱스 쌍이 아니면 paired 불가)`);
+    } else {
+      const NI = Number(dRaw);
+      // runner 는 매 라운드 두 arm 을 교대로 태우므로 같은 인덱스 = 같은 시점의 쌍.
+      // 쌍끼리 빼면 라운드 단위 잡음(서버 부하·네트워크)이 소거돼 검정력이 가장 높다.
+      const P = lat.baseline.map((b, i) => lat.a1[i] - b);
+      const med = (v) => { const s = [...v].sort((x, y) => x - y); const h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
+      // 결정론 RNG — 같은 원장이면 같은 판정이 나와야 재현 가능한 근거가 된다.
+      let seed = 1274 >>> 0;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
+      const boots = [];
+      for (let i = 0; i < 20000; i++) {
+        let acc = new Array(P.length);
+        for (let j = 0; j < P.length; j++) acc[j] = P[Math.floor(rnd() * P.length)];
+        boots.push(med(acc));
+      }
+      boots.sort((a, b) => a - b);
+      // 단측 95% upper bound = 95 백분위수.
+      const upper = boots[Math.floor(0.95 * boots.length)];
+      niResult = { marginMs: NI, pairedMedian: med(P), upper95: upper, n: P.length,
+        aSlower: P.filter((x) => x > 0).length, aFaster: P.filter((x) => x < 0).length };
+      check(`non-inferiority — paired delta 단측 95% 상한 < Δ=${NI}ms`,
+        upper < NI, `upper95=${upper.toFixed(1)}ms median=${med(P).toFixed(1)}ms n=${P.length}`);
+    }
   }
 
   const ledger = {
@@ -525,7 +569,7 @@ async function main() {
     pairs: PAIRS, warmupPairs: WARMUP_PAIRS, signatureWindowMs: elapsed, signature: sig,
     baseline: { n: lat.baseline.length, p50: bp50, p95: bp95, samples: lat.baseline, sendFail: sendFail.baseline, missing: missing.baseline.length, dups: dups.baseline.length },
     a1: { n: lat.a1.length, p50: ap50, p95: ap95, samples: lat.a1, sendFail: sendFail.a1, missing: missing.a1.length, dups: dups.a1.length },
-    blockedWrites: blockedWrites.length, dbProof, sendFailDetail, results,
+    blockedWrites: blockedWrites.length, dbProof, sendFailDetail, nonInferiority: niResult, results,
   };
   const out = `scripts/qa/evidence/dplan-${PREFLIGHT_ONLY ? "preflight" : "p95"}-${stamp}.json`;
   writeFileSync(out, JSON.stringify(ledger, null, 1));
