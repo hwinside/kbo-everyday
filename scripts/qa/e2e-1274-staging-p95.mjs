@@ -194,7 +194,15 @@ try {
   console.log("\n[cleanup]");
   const del = await admin.from("chat_messages").delete().eq("room_id", ROOM_ID).like("content", `%${stamp}%`).select("id");
   check("cleanup — 삭제 error 없음", !del.error, del.error?.message ?? `deleted=${del.data?.length ?? "?"}`);
-  const left = await admin.from("chat_messages").select("id").eq("room_id", ROOM_ID).like("content", `%${stamp}%`);
+  // query-guard: bounded -- 이번 런 고유 stamp 를 포함한 메시지만 조회한다(최대 ROUNDS*2).
+  // 잔존 0 을 증명하는 postcondition 이므로 상한을 둘 때는 **기대치보다 크게** 잡는다 —
+  // 상한이 기대치와 같으면 포화된 결과를 "전수"로 오독해 잔존을 놓칠 수 있다.
+  const left = await admin
+    .from("chat_messages")
+    .select("id")
+    .eq("room_id", ROOM_ID)
+    .like("content", `%${stamp}%`)
+    .limit(ROUNDS * 4);
   check("postcondition — 잔존 0 (조회 성공 전제)",
     !left.error && Array.isArray(left.data) && left.data.length === 0,
     left.error ? `ERR ${left.error.message}` : `left=${left.data?.length}`);
