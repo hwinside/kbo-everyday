@@ -41,6 +41,17 @@ export interface LiveGameSnapshot extends SourceSnapshot {
   stage: string;
 }
 
+type LiveGamePayload = {
+  games?: LiveGameData[];
+  error?: string;
+  trace?: {
+    source?: string;
+    stage?: string;
+    sourceAtMs?: number;
+    fetchedAtMs?: number;
+  };
+};
+
 export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const [games, setGames] = useState<LiveGameData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +66,10 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const refreshQueuedRef = useRef(false);
   const mountedRef = useRef(true);
   const responseGenerationRef = useRef(0);
+
+  const commitPayloadRef = useRef<(payload: LiveGamePayload, responseGeneration: number) => void>(
+    () => {},
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -82,6 +97,32 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
 
   useEffect(() => {
     const generation = requestGenerationRef.current;
+    commitPayloadRef.current = (payload, responseGeneration) => {
+      if (
+        !mountedRef.current
+        || generation !== requestGenerationRef.current
+        || !shouldCommitResponse(responseGenerationRef.current, responseGeneration)
+      ) return;
+      const trace = payload.trace;
+      if (
+        Array.isArray(payload.games)
+        && trace
+        && Number.isFinite(trace.sourceAtMs)
+        && Number.isFinite(trace.fetchedAtMs)
+      ) {
+        setGames(payload.games);
+        setSnapshot({
+          generation: responseGeneration,
+          source: trace.source || "unknown",
+          stage: trace.stage || "unknown",
+          sourceAtMs: trace.sourceAtMs!,
+          fetchedAtMs: trace.fetchedAtMs!,
+        });
+        setError(null);
+      } else {
+        setError(payload.error || "invalid_live_payload");
+      }
+    };
     fetchCurrentGenerationRef.current = async () => {
       const responseGeneration = ++responseGenerationRef.current;
       const controller = new AbortController();
@@ -90,41 +131,11 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
         const res = await fetch(`/api/game-live?date=${gameDate}`, {
           signal: controller.signal,
         });
-        const data = await res.json() as {
-          games?: LiveGameData[];
-          error?: string;
-          trace?: {
-            source?: string;
-            stage?: string;
-            sourceAtMs?: number;
-            fetchedAtMs?: number;
-          };
-        };
-        if (
-          !mountedRef.current
-          || generation !== requestGenerationRef.current
-          || !shouldCommitResponse(responseGenerationRef.current, responseGeneration)
-        ) return;
-        const trace = data.trace;
-        if (
-          res.ok
-          && Array.isArray(data.games)
-          && trace
-          && Number.isFinite(trace.sourceAtMs)
-          && Number.isFinite(trace.fetchedAtMs)
-        ) {
-          setGames(data.games);
-          setSnapshot({
-            generation: responseGeneration,
-            source: trace.source || "unknown",
-            stage: trace.stage || "unknown",
-            sourceAtMs: trace.sourceAtMs!,
-            fetchedAtMs: trace.fetchedAtMs!,
-          });
-          setError(null);
-        } else {
-          setError(data.error || `HTTP ${res.status}`);
-        }
+        const data = await res.json() as LiveGamePayload;
+        commitPayloadRef.current(
+          res.ok ? data : { ...data, error: data.error || `HTTP ${res.status}` },
+          responseGeneration,
+        );
       } catch (e: unknown) {
         if (
           mountedRef.current
@@ -195,5 +206,16 @@ export function useLiveGame(gameId?: string, pollInterval = 30000) {
   const game = gameId ? games.find(g => g.gameId === gameId) : undefined;
   const liveGames = games.filter(g => g.isLive);
 
-  return { games, game, liveGames, loading, error, snapshot, refetch: fetchGames };
+  const ingestExternal = useCallback((payload: unknown): void => {
+    const responseGeneration = ++responseGenerationRef.current;
+    commitPayloadRef.current((payload ?? {}) as LiveGamePayload, responseGeneration);
+    if (
+      mountedRef.current
+      && shouldCommitResponse(responseGenerationRef.current, responseGeneration)
+    ) {
+      setLoading(false);
+    }
+  }, []);
+
+  return { games, game, liveGames, loading, error, snapshot, refetch: fetchGames, ingestExternal };
 }

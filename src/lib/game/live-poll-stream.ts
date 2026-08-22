@@ -1,4 +1,4 @@
-export type LivePollChannel = "relay" | "events";
+export type LivePollChannel = "relay" | "events" | "live" | "detail";
 
 export interface LivePollEnvelope {
   channel: LivePollChannel;
@@ -15,6 +15,38 @@ export function shouldCombineGameEvents(
   isFinal: boolean,
 ): boolean {
   return isFinal || pollIndex % EVENTS_REFRESH_EVERY === 0;
+}
+
+/**
+ * live frame은 3초 grid에서 9초 cadence로 싣는다.
+ * 종전 독립 live 10초 poll보다 1초 촘촘하지만 최대 지연을 늘리지 않으며,
+ * internal live는 60초 창 기준 약 7회/분으로 종전 6회/분 대비 +1회(≈ +11%)다.
+ */
+export function shouldEmbedLive(pollIndex: number, _intervalMs: number): boolean {
+  return pollIndex % 3 === 0;
+}
+
+/**
+ * detail은 3초 grid에서 30초 cadence를 그대로 유지한다.
+ */
+export function shouldEmbedDetail(pollIndex: number, _intervalMs: number): boolean {
+  return pollIndex % 10 === 0;
+}
+
+export function buildIncludeChannels(opts: {
+  pollIndex: number;
+  isLive: boolean;
+  isFinal: boolean;
+  forceEmbed?: boolean;
+}): Array<"events" | "live" | "detail"> {
+  const { pollIndex, isLive, isFinal, forceEmbed = false } = opts;
+  const include: Array<"events" | "live" | "detail"> = [];
+
+  if (shouldCombineGameEvents(pollIndex, isFinal)) include.push("events");
+  if (isLive && (forceEmbed || shouldEmbedLive(pollIndex, 3000))) include.push("live");
+  if (isLive && (forceEmbed || shouldEmbedDetail(pollIndex, 3000))) include.push("detail");
+
+  return include;
 }
 
 const encoder = new TextEncoder();
@@ -56,10 +88,9 @@ async function responseEnvelope(
  * relay frame 전달을 막지 않는다. 두 작업은 호출자가 이미 동시에 시작한 Promise다.
  */
 export function createLivePollStream(
-  relayTask: Promise<Response>,
-  eventsTask: Promise<Response>,
+  tasks: Array<{ channel: LivePollChannel; task: Promise<Response> }>,
 ): ReadableStream<Uint8Array> {
-  let open = 2;
+  let open = tasks.length;
   let cancelled = false;
 
   return new ReadableStream<Uint8Array>({
@@ -75,9 +106,9 @@ export function createLivePollStream(
         open -= 1;
         if (open === 0 && !cancelled) controller.close();
       };
-
-      void send("relay", relayTask);
-      void send("events", eventsTask);
+      for (const { channel, task } of tasks) {
+        void send(channel, task);
+      }
     },
     cancel() {
       cancelled = true;

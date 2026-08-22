@@ -1362,8 +1362,9 @@ const guardCalls = collectIn(
 ) as ts.CallExpression[];
 assert.equal(
   guardCalls.length,
-  3,
-  "성공·예외·finally 세 커밋 지점 전부 generation 펌스를 통과해야 한다",
+  2,
+  "예외·finally 두 커밋 지점은 fetchDetail 안에서 generation 펜스를 직접 통과해야 한다"
+    + "(성공 경로 커밋은 공용 커밋 함수(commitPayloadRef.current)의 선두 펜스가 담당 — 아래에서 AST로 별도 결속)",
 );
 for (const guard of guardCalls) {
   const secondArg = guard.arguments[1];
@@ -1377,12 +1378,87 @@ for (const guard of guardCalls) {
     "모든 generation 펌스는 첫 await 앞에서 캡처한 바로 그 선언을 참조해야 한다",
   );
 }
+
+// ⑤ 성공 경로 이관 결속(멀티플렉스 리팩터) — fetchDetail은 파싱 결과를 공용 커밋 함수
+// commitPayloadRef.current에 캡처한 바로 그 generation과 함께 넘겨야 한다.
+// (ingestExternal(멀티플렉스 frame)과 fetch가 같은 커밋 함수를 공유하는 구조)
+const commitCalls = collectIn(
+  fetchBody,
+  (node) =>
+    ts.isCallExpression(node)
+    && ts.isPropertyAccessExpression(node.expression)
+    && node.expression.name.text === "current"
+    && ts.isIdentifier(node.expression.expression)
+    && node.expression.expression.text === "commitPayloadRef",
+) as ts.CallExpression[];
+assert.equal(
+  commitCalls.length,
+  1,
+  "fetchDetail 성공 경로의 commitPayloadRef.current 호출은 정확히 1개여야 한다",
+);
+const commitCallGenArg = commitCalls[0].arguments[1];
+assert.ok(
+  commitCallGenArg && ts.isIdentifier(commitCallGenArg),
+  "커밋 호출 두 번째 인자는 캡처한 generation 변수여야 한다",
+);
+assert.equal(
+  hookChecker.getSymbolAtLocation(commitCallGenArg as ts.Identifier),
+  generationSymbol,
+  "커밋 호출은 첫 await 앞에서 캡처한 바로 그 generation을 넘겨야 한다",
+);
+// 런타임 순서: 응답 파싱(await res.json()) 뒤에 커밋 호출 — 펜스가 파싱 뒤에 실행되는
+// 기존 계약의 이관형(커밋 함수가 텍스트상 앞에 있어도 실행은 파싱 뒤다).
+const jsonAwaits = collectIn(
+  fetchBody,
+  (node) =>
+    ts.isAwaitExpression(node)
+    && ts.isCallExpression(node.expression)
+    && ts.isPropertyAccessExpression(node.expression.expression)
+    && node.expression.expression.name.text === "json",
+) as ts.AwaitExpression[];
+assert.ok(jsonAwaits.length > 0, "res.json() await를 찾을 수 있어야 한다");
+assert.ok(
+  jsonAwaits[0].end <= commitCalls[0].pos,
+  "커밋 호출은 응답 파싱(await res.json()) 뒤여야 한다(파싱 전 커밋이면 경쟁 창을 닫지 못함)",
+);
+// 공용 커밋 함수의 선두 펜스 — 성공·오류 커밋 지점이 전부 이 함수 안이므로,
+// 펜스가 첫 statement면 모든 커밋이 구조적으로 펜스 뒤가 된다(조건·순서 우회 불가).
+const commitAssigns = collectIn(
+  hookSource,
+  (node) =>
+    ts.isBinaryExpression(node)
+    && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && ts.isPropertyAccessExpression(node.left)
+    && node.left.name.text === "current"
+    && ts.isIdentifier(node.left.expression)
+    && node.left.expression.text === "commitPayloadRef"
+    && (ts.isArrowFunction(node.right) || ts.isFunctionExpression(node.right)),
+) as ts.BinaryExpression[];
+assert.equal(commitAssigns.length, 1, "commitPayloadRef.current 함수 할당은 정확히 1개여야 한다");
+const commitFnNode = commitAssigns[0].right as ts.ArrowFunction;
+const commitBody = commitFnNode.body;
+assert.ok(ts.isBlock(commitBody), "커밋 함수 본문은 블록이어야 한다");
+const commitFirstStmt = (commitBody as ts.Block).statements[0];
+assert.ok(
+  commitFirstStmt
+    && ts.isIfStatement(commitFirstStmt)
+    && ts.isPrefixUnaryExpression(commitFirstStmt.expression)
+    && commitFirstStmt.expression.operator === ts.SyntaxKind.ExclamationToken
+    && ts.isCallExpression(commitFirstStmt.expression.operand)
+    && ts.isIdentifier(commitFirstStmt.expression.operand.expression)
+    && commitFirstStmt.expression.operand.expression.text === "shouldCommitResponse"
+    && (ts.isReturnStatement(commitFirstStmt.thenStatement)
+      || (ts.isBlock(commitFirstStmt.thenStatement)
+        && commitFirstStmt.thenStatement.statements.length === 1
+        && ts.isReturnStatement(commitFirstStmt.thenStatement.statements[0]))),
+  "커밋 함수 첫 statement는 generation 펜스 조기 반환이어야 한다(모든 커밋 지점의 구조적 펜스)",
+);
 assert.equal(
   (detailHook.match(
     /shouldCommitResponse\(responseGenerationRef\.current, responseGeneration\)/g,
   ) ?? []).length,
-  3,
-  "성공·예외·finally 세 커밋 지점 전부 generation 펌스를 통과해야 한다",
+  4,
+  "커밋 함수 선두 펜스 + 예외·finally + ingestExternal loading 커밋 — 네 지점 전부 generation 펜스를 통과해야 한다",
 );
 
 const guardIdx = detailHook.indexOf(
@@ -1390,12 +1466,8 @@ const guardIdx = detailHook.indexOf(
 );
 assert.ok(guardIdx >= 0, "fetch 직후 구세대 응답은 조기 반환되어야 한다");
 
-const parseIdx = detailHook.indexOf("const json = await res.json()");
-assert.ok(parseIdx >= 0, "응답 파싱 지점을 찾을 수 있어야 한다");
-assert.ok(
-  parseIdx < guardIdx,
-  "generation 펌스는 응답 파싱 뒤에 있어야 한다(파싱 전이면 경쟁 창을 닫지 못함)",
-);
+// (구) parseIdx < guardIdx 텍스트 순서 검사는 커밋 함수 추출로 실행 순서와 역전됨.
+// 파싱→커밋 순서는 위 ⑤의 AST 결속(jsonAwaits[0].end <= commitCalls[0].pos)이 담당한다.
 
 // 늦게 도착한 응답이 닿을 수 있는 모든 상태 커밋 지점. 하나라도 펌스보다 앞이면
 // stale 응답이 현재 데이터를 덮어쓴다.
