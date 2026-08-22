@@ -526,37 +526,66 @@ async function main() {
     // Δ 는 통계가 아니라 **제품 판단**이므로 env 로 외부 주입받고,
     // 미설정이면 게이트를 건너뛰지 않고 **FAIL** 한다(fail-close).
     // ⚠️ 결과를 보고 Δ 를 고르면 그게 사후선택이다. Δ 는 런 전에 확정해 원장에 박힌다.
+    //
+    // [삼순 2차] 판정 통계량은 median 이 아니라 **p95 delta** 여야 한다.
+    //   계약이 보호하려는 것은 꼬리 지연이지 중앙값이 아니다. median 이 안정적이라
+    //   쉽게 통과하지만, 그건 보호 대상을 안 재는 것이다.
+    //   또한 단순 표본 부트스트랩은 같은 라운드의 관측치가 서로 독립이라고 가정해
+    //   CI 를 과소추정한다 → **라운드 단위 block bootstrap** 으로 라운드를 통째 리샘플한다.
+    const NI_MARGIN_MAX_MS = 100;   // 코드 상한 — env 로 높일 수 없다(낮추기만 허용)
     const dRaw = process.env.QA_NI_MARGIN_MS;
-    if (dRaw === undefined || dRaw === "") {
-      check("non-inferiority margin Δ 설정됨 (QA_NI_MARGIN_MS, fail-close)", false,
-        "미설정 — Δ 는 제품 판단이라 런 전에 확정되어야 한다");
-    } else if (!/^\d+$/.test(dRaw) || Number(dRaw) <= 0) {
-      check("non-inferiority margin Δ 설정됨 (QA_NI_MARGIN_MS, fail-close)", false, `불정 값: ${dRaw}`);
+    const provenanceOk = !!(BASELINE_SHA && A1_SHA && BASELINE_SHA !== A1_SHA
+      && patchSha && manifest?.files && Object.keys(manifest.files).length > 0);
+
+    if (dRaw !== undefined && dRaw !== "" && !/^\d+$/.test(dRaw)) {
+      check("non-inferiority margin Δ (QA_NI_MARGIN_MS — 숫자만)", false, `불정 값: ${dRaw}`);
+    } else if (dRaw !== undefined && dRaw !== "" && Number(dRaw) <= 0) {
+      check("non-inferiority margin Δ (QA_NI_MARGIN_MS > 0)", false, `불정 값: ${dRaw}`);
+    } else if (!provenanceOk) {
+      // provenance 가 깨지면 수치가 어느 빌드·어느 fixture 에서 나왔는지 모른다 → 판정 불가.
+      check("non-inferiority — full provenance (build·fixture·patch, fail-close)", false,
+        `baseline=${BASELINE_SHA?.slice(0, 9)} a1=${A1_SHA?.slice(0, 9)} patch=${patchSha?.slice(0, 8)} fixtures=${Object.keys(manifest?.files ?? {}).length}`);
+    } else if (sendFail.baseline !== 0 || sendFail.a1 !== 0) {
+      // 전송이 샤진 라운드는 지연 표본이 통째로 빠진다 → 분포가 왜곡된다.
+      check("non-inferiority — sendFail 0 (fail-close)", false, JSON.stringify(sendFail));
     } else if (lat.baseline.length !== lat.a1.length || lat.baseline.length === 0) {
-      check("non-inferiority — paired 쌍 성립", false,
-        `b=${lat.baseline.length} a1=${lat.a1.length} (동일 인덱스 쌍이 아니면 paired 불가)`);
+      check("non-inferiority — 동표본·paired 쌍 성립 (fail-close)", false,
+        `b=${lat.baseline.length} a1=${lat.a1.length}`);
     } else {
-      const NI = Number(dRaw);
-      // runner 는 매 라운드 두 arm 을 교대로 태우므로 같은 인덱스 = 같은 시점의 쌍.
-      // 쌍끼리 빼면 라운드 단위 잡음(서버 부하·네트워크)이 소거돼 검정력이 가장 높다.
-      const P = lat.baseline.map((b, i) => lat.a1[i] - b);
-      const med = (v) => { const s = [...v].sort((x, y) => x - y); const h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
-      // 결정론 RNG — 같은 원장이면 같은 판정이 나와야 재현 가능한 근거가 된다.
-      let seed = 1274 >>> 0;
+      // Δ 미설정이면 상한값을 쓴다(계약 자체는 항상 살아있다). env 는 더 엄격하게만 바꿀 수 있다.
+      const requested = dRaw === undefined || dRaw === "" ? NI_MARGIN_MAX_MS : Number(dRaw);
+      const NI = Math.min(requested, NI_MARGIN_MAX_MS);
+      const PAIR_PER_ROUND = 2;   // 라운드당 AB·BA 두 방향 = arm 당 2표본
+      const q95 = (v) => { const s = [...v].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.ceil(0.95 * s.length) - 1)]; };
+      // 라운드 블록 — 같은 라운드의 baseline/a1 관측치를 한 덩어리로 묶는다.
+      const blocks = [];
+      for (let i = 0; i < lat.baseline.length; i += PAIR_PER_ROUND) {
+        blocks.push({ b: lat.baseline.slice(i, i + PAIR_PER_ROUND), a: lat.a1.slice(i, i + PAIR_PER_ROUND) });
+      }
+      let seed = 1274 >>> 0;   // 결정론 — 같은 원장이면 같은 판정
       const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 0x100000000; };
       const boots = [];
-      for (let i = 0; i < 20000; i++) {
-        let acc = new Array(P.length);
-        for (let j = 0; j < P.length; j++) acc[j] = P[Math.floor(rnd() * P.length)];
-        boots.push(med(acc));
+      for (let it = 0; it < 20000; it++) {
+        const bb = [], aa = [];
+        for (let k = 0; k < blocks.length; k++) {
+          const blk = blocks[Math.floor(rnd() * blocks.length)];
+          bb.push(...blk.b); aa.push(...blk.a);
+        }
+        boots.push(q95(aa) - q95(bb));   // 판정 통계량 = p95 delta
       }
       boots.sort((a, b) => a - b);
-      // 단측 95% upper bound = 95 백분위수.
-      const upper = boots[Math.floor(0.95 * boots.length)];
-      niResult = { marginMs: NI, pairedMedian: med(P), upper95: upper, n: P.length,
-        aSlower: P.filter((x) => x > 0).length, aFaster: P.filter((x) => x < 0).length };
-      check(`non-inferiority — paired delta 단측 95% 상한 < Δ=${NI}ms`,
-        upper < NI, `upper95=${upper.toFixed(1)}ms median=${med(P).toFixed(1)}ms n=${P.length}`);
+      const upper = boots[Math.floor(0.95 * boots.length)];   // 단측 95% 상한
+      const P = lat.baseline.map((b, i) => lat.a1[i] - b);
+      niResult = {
+        statistic: "p95_delta", method: "round_block_bootstrap", blockSize: PAIR_PER_ROUND,
+        blocks: blocks.length, iterations: 20000, seed: 1274,
+        marginMs: NI, marginMaxMs: NI_MARGIN_MAX_MS, marginRequested: requested,
+        observedP95Delta: ap95 - bp95, upper95: upper, n: lat.baseline.length,
+        aSlowerPairs: P.filter((x) => x > 0).length, aFasterPairs: P.filter((x) => x < 0).length,
+      };
+      check(`non-inferiority — p95 delta 라운드 block bootstrap 단측 95% 상한 < Δ=${NI}ms`,
+        upper < NI,
+        `upper95=${upper.toFixed(1)}ms observed=${(ap95 - bp95) >= 0 ? "+" : ""}${ap95 - bp95}ms blocks=${blocks.length} n=${lat.baseline.length}`);
     }
   }
 
