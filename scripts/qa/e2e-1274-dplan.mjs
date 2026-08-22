@@ -103,6 +103,8 @@ if (BASELINE_SHA === A1_SHA) {
 }
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { autoRefreshToken: false, persistSession: false } });
+// [P0-2] DB exact-1 증명 결과 — 원장에 그대로 실린다(측정 실패 시 null 로 남아 부재가 드러남).
+let dbProof = null;
 const results = [];
 let failed = 0;
 function check(name, ok, detail = "") {
@@ -221,19 +223,42 @@ async function waitArrival(page, text, timeoutMs = 20000) {
 }
 
 /** A1 멀티플렉스 활성 증명: include=live|detail 를 실은 NDJSON 요청이 있고,
- *  standalone live/detail 폴링이 그 창에서 반복되지 않아야 한다. */
-function signature(netLog, sinceMs) {
-  const w = netLog.filter((r) => r.t >= sinceMs);
+ *  standalone live/detail 폴링이 그 창에서 반복되지 않아야 한다.
+ *  창은 **고정 60초**(sinceMs ~ sinceMs+SIG_WINDOW_MS)만 재서 전체 실행시간에 따라
+ *  기대 횟수가 변하지 않게 한다(삼순 P0-1). */
+function signature(netLog, sinceMs, windowMs = SIG_WINDOW_MS) {
+  const until = sinceMs + windowMs;
+  const w = netLog.filter((r) => r.t >= sinceMs && r.t < until);
   const ndjson = w.filter((r) => r.path === "/api/game-relay-events");
-  const embedded = ndjson.filter((r) => /live|detail/.test(r.include));
+  const inc = (name) => ndjson.filter((r) => r.include.split(",").includes(name)).length;
   return {
+    windowMs,
     ndjson: ndjson.length,
-    embedded: embedded.length,
+    embedded: ndjson.filter((r) => /live|detail/.test(r.include)).length,
+    incEvents: inc("events"),
+    incLive: inc("live"),
+    incDetail: inc("detail"),
     standaloneLive: w.filter((r) => r.path === "/api/game-live").length,
     standaloneDetail: w.filter((r) => r.path === "/api/game-detail").length,
     standaloneRelay: w.filter((r) => r.path === "/api/game-relay").length,
   };
 }
+
+// [P0-1] 고정 60초 창의 relay-family 총량 계약.
+// 3초 cadence → 20회 ± jitter/지터 허용치. "감소했다"가 아니라 **범위**로 잠그어
+// embedded 1건짜리나 standalone 잔존이 통과하는 구먹을 없앨다.
+const RELAY_FAMILY_MIN = 18;
+const RELAY_FAMILY_MAX = 22;
+// 기대 횟수는 **생성기 계약에서 유도**한다(임의의 감으로 정하면 게이트가 거짓말을 한다).
+//   shouldCombineGameEvents: pollIndex % 5 === 0  → fam 의 약 1/5
+//   shouldEmbedLive:         pollIndex % 3 === 0  → fam 의 약 1/3
+//   shouldEmbedDetail:       pollIndex % 10 === 0 → fam 의 약 1/10
+// 지터·경계 절상을 감안해 ±1 허용폭을 둔다. 범위의 **양방향**을 잠그어
+// "너무 적음"(멀티플렉스 미작동)과 "너무 많음"(중복 요청) 둘 다 잡는다.
+const cadenceRange = (fam, everyN) => {
+  const exp = fam / everyN;
+  return [Math.max(1, Math.floor(exp) - 1), Math.ceil(exp) + 1];
+};
 
 async function main() {
   console.log(`[dplan] game=${GAME_ID} room=${ROOM_ID} pairs=${PAIRS} (warmup ${WARMUP_PAIRS}) preflight=${PREFLIGHT_ONLY}`);
@@ -271,6 +296,7 @@ async function main() {
   const missing = { baseline: [], a1: [] };
   const dups = { baseline: [], a1: [] };
   const sendFail = { baseline: 0, a1: 0 };
+  const sentTexts = [];   // [P0-2] DB exact-1 대조용 — 실제 POST 가 나간 content 만
   const total = PAIRS;
 
   for (let i = 1; i <= total; i++) {
@@ -286,7 +312,7 @@ async function main() {
           await arm[side].page.evaluate((t) => window.__qaTargets.push(t), text);
         }
         let t0 = null;
-        try { t0 = await sendOn(arm[from].page, text); }
+        try { t0 = await sendOn(arm[from].page, text); sentTexts.push(text); }
         catch { sendFail[label]++; continue; }
         const at = await waitArrival(arm[to].page, text);
         if (at == null) { if (i > WARMUP_PAIRS) missing[label].push(text); continue; }
@@ -296,6 +322,41 @@ async function main() {
       }
     }
     if (i % 5 === 0) console.log(`  ...${i}/${total} pairs (baseline n=${lat.baseline.length} a1 n=${lat.a1.length})`);
+  }
+
+  // [P0-2] 중복 증명의 DB exact-1 — DOM 카운트(`__qaSeen`)만으로는 "렌더링 1회"만
+  // 말할 뿐, 서버가 같은 메시지를 2번 썼는지는 모른다(클라이언트 dedupe 가
+  // 가리면 DOM 은 1회이다). cleanup **전에** stamp 한정 bounded 조회로
+  // content별 DB 1건·총 기대 건수·포화 아님을 강제한다.
+  {
+    const expected = sentTexts.length;
+    const cap = Math.max(expected * 3, 12);   // 상한 > 기대치 → 포화 여부를 판정할 수 있다
+    // query-guard: bounded -- 이번 런 고유 stamp 한정 조회. 상한은 기대치의 3배로
+    // 잡아 포화된 결과를 전수로 오독하지 않게 한다.
+    const rows = await admin
+      .from("chat_messages")
+      .select("id,content")
+      .eq("room_id", ROOM_ID)
+      .like("content", `%${stamp}%`)
+      .limit(cap);
+    const ok = !rows.error && Array.isArray(rows.data);
+    const counts = new Map();
+    for (const r of rows.data ?? []) counts.set(r.content, (counts.get(r.content) ?? 0) + 1);
+    const over = [...counts.entries()].filter(([, n]) => n !== 1);
+    const unknown = sentTexts.filter((t) => !counts.has(t));
+    dbProof = {
+      expected, fetched: rows.data?.length ?? null, cap,
+      distinct: counts.size, over: over.length, missing: unknown.length,
+      error: rows.error?.message ?? null,
+    };
+    check("[DB] 조회 성공 (error 없음 · 전수 전제)", ok, rows.error?.message ?? `fetched=${rows.data?.length}`);
+    check("[DB] 포화 아님 (fetched < cap — 상한 도달은 전수 아님)",
+      ok && rows.data.length < cap, `fetched=${rows.data?.length} cap=${cap}`);
+    check("[DB] 전송 content 별 exact-1 (서버 중복 insert 0)",
+      ok && over.length === 0, over.length ? JSON.stringify(over.slice(0, 3)) : "all 1");
+    check("[DB] 총 건수 == 전송 건수", ok && rows.data.length === expected,
+      `db=${rows.data?.length} sent=${expected}`);
+    check("[DB] 누락된 전송 0", ok && unknown.length === 0, `missing=${unknown.length}`);
   }
 
   // draft 보존: 전송하지 않은 입력이 폴링/리렌더로 날아가지 않아야 한다.
@@ -333,11 +394,31 @@ async function main() {
   check("send 실패 0", sendFail.baseline === 0 && sendFail.a1 === 0, JSON.stringify(sendFail));
   check("누락 0", missing.baseline.length === 0 && missing.a1.length === 0, `b=${missing.baseline.length} a1=${missing.a1.length}`);
   check("중복 0 (DOM 노출 1회)", dups.baseline.length === 0 && dups.a1.length === 0, `b=${dups.baseline.length} a1=${dups.a1.length}`);
-  check("A1 멀티플렉스 활성 (include=live|detail NDJSON 실측)",
-    sig.a1.embedded > 0, JSON.stringify(sig.a1));
-  check("A1 standalone live/detail 폴링 감소 (baseline 대비)",
-    sig.a1.standaloneLive + sig.a1.standaloneDetail < sig.baseline.standaloneLive + sig.baseline.standaloneDetail,
-    `baseline=${sig.baseline.standaloneLive + sig.baseline.standaloneDetail} a1=${sig.a1.standaloneLive + sig.a1.standaloneDetail}`);
+  // [P0-1] network fail-close — 범위로 잠근다("감소"로는 불충분).
+  const famA1 = sig.a1.ndjson + sig.a1.standaloneRelay;
+  const famBl = sig.baseline.ndjson + sig.baseline.standaloneRelay;
+  check(`[a1] relay-family 총량 ${RELAY_FAMILY_MIN}~${RELAY_FAMILY_MAX} (고정 60s 창)`,
+    famA1 >= RELAY_FAMILY_MIN && famA1 <= RELAY_FAMILY_MAX, `famA1=${famA1} ${JSON.stringify(sig.a1)}`);
+  check(`[baseline] relay-family 총량 ${RELAY_FAMILY_MIN}~${RELAY_FAMILY_MAX} (동일 cadence 확인)`,
+    famBl >= RELAY_FAMILY_MIN && famBl <= RELAY_FAMILY_MAX, `famBl=${famBl} ${JSON.stringify(sig.baseline)}`);
+  check("[a1] standalone live == 0 (fail-close)", sig.a1.standaloneLive === 0, `${sig.a1.standaloneLive}`);
+  check("[a1] standalone detail == 0 (fail-close)", sig.a1.standaloneDetail === 0, `${sig.a1.standaloneDetail}`);
+  {
+    const [liveMin, liveMax] = cadenceRange(famA1, 3);
+    const [detMin, detMax] = cadenceRange(famA1, 10);
+    const [evMin, evMax] = cadenceRange(famA1, 5);
+    check(`[a1] include=live ${liveMin}~${liveMax} (shouldEmbedLive: pollIndex%3)`,
+      sig.a1.incLive >= liveMin && sig.a1.incLive <= liveMax, `incLive=${sig.a1.incLive} fam=${famA1}`);
+    check(`[a1] include=detail ${detMin}~${detMax} (shouldEmbedDetail: pollIndex%10)`,
+      sig.a1.incDetail >= detMin && sig.a1.incDetail <= detMax, `incDetail=${sig.a1.incDetail} fam=${famA1}`);
+    check(`[a1] include=events ${evMin}~${evMax} (shouldCombineGameEvents: pollIndex%5)`,
+      sig.a1.incEvents >= evMin && sig.a1.incEvents <= evMax, `incEvents=${sig.a1.incEvents} fam=${famA1}`);
+  }
+  check("[baseline] embedded == 0 (대조군은 멀티플렉스 미사용)",
+    sig.baseline.embedded === 0, `${sig.baseline.embedded}`);
+  check("[baseline] standalone live+detail > 0 (A1 감소가 유의미함을 보장)",
+    sig.baseline.standaloneLive + sig.baseline.standaloneDetail > 0,
+    `${sig.baseline.standaloneLive + sig.baseline.standaloneDetail}`);
   check(`signature 관측창 ≥ ${SIG_WINDOW_MS / 1000}s`, elapsed >= SIG_WINDOW_MS, `${Math.round(elapsed / 1000)}s`);
 
   // [P0-2] preflight 도 실표본을 만들고 집계한다 — n=0 으로 누락·중복 검사를 건너뛰면
@@ -363,7 +444,7 @@ async function main() {
     pairs: PAIRS, warmupPairs: WARMUP_PAIRS, signatureWindowMs: elapsed, signature: sig,
     baseline: { n: lat.baseline.length, p50: bp50, p95: bp95, samples: lat.baseline, sendFail: sendFail.baseline, missing: missing.baseline.length, dups: dups.baseline.length },
     a1: { n: lat.a1.length, p50: ap50, p95: ap95, samples: lat.a1, sendFail: sendFail.a1, missing: missing.a1.length, dups: dups.a1.length },
-    blockedWrites: blockedWrites.length, results,
+    blockedWrites: blockedWrites.length, dbProof, results,
   };
   const out = `scripts/qa/evidence/dplan-${PREFLIGHT_ONLY ? "preflight" : "p95"}-${stamp}.json`;
   writeFileSync(out, JSON.stringify(ledger, null, 1));
