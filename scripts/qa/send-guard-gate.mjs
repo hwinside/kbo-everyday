@@ -69,39 +69,86 @@ if (mutated === src) {
   }
 }
 
-// ── D. write-target 단일 결속 (삼순 9차: guard room 과 실제 write room 의 완전 일치 강제)
+// ── D. write-target 단일 결속 (삼순 9·10차: room 축 + ref 축, 실제 BrowserContext 실증)
 {
-  const w = (b, g) => evaluateChatWrite(b, g);
-  check("[write-bind] guarded room 과 완전 일치만 허용", w("qa-fixture:abcd", "qa-fixture:abcd").reason === WRITE_REASONS.OK);
-  check("[write-bind] 실경기방 write 는 guarded room 과 불일치로 차단", w("game:20260821LGHH0", "qa-fixture:abcd").reason === WRITE_REASONS.WRITE_TARGET_MISMATCH);
+  const w = (b, g, u, r) => evaluateChatWrite(b, g, u, r);
+  check("[write-bind] room+ref 완전 일치만 허용", w("qa-fixture:abcd", "qa-fixture:abcd", "https://qastaginginjected.supabase.co/rest/v1/chat_messages", "qastaginginjected").reason === WRITE_REASONS.OK);
+  check("[write-bind] 실경기방 write 는 room 불일치로 차단", w("game:20260821LGHH0", "qa-fixture:abcd", "https://qastaginginjected.supabase.co/rest/v1/chat_messages", "qastaginginjected").reason === WRITE_REASONS.WRITE_TARGET_MISMATCH);
+  check("[write-bind] Production ref 로 향하는 요청은 별도 사유로 영구 차단", w("qa-fixture:abcd", "qa-fixture:abcd", "https://lbmbdjgsnenqjwjotoei.supabase.co/rest/v1/chat_messages", "qastaginginjected").reason === WRITE_REASONS.PRODUCTION_WRITE_TARGET);
+  check("[write-bind] 요청 ref ≠ expected staging ref 차단", w("qa-fixture:abcd", "qa-fixture:abcd", "https://otherstaging.supabase.co/rest/v1/chat_messages", "qastaginginjected").reason === WRITE_REASONS.REF_MISMATCH);
+  check("[write-bind] expected ref 부재 시 모든 write 차단", w("qa-fixture:abcd", "qa-fixture:abcd", "https://qastaginginjected.supabase.co/x", null).reason === WRITE_REASONS.GUARD_REF_MISSING);
+  check("[write-bind] 요청 URL ref 판정 불능 차단 (production page 등 비-supabase host)", w("qa-fixture:abcd", "qa-fixture:abcd", "https://keubo.fan/api/chat", "qastaginginjected").reason === WRITE_REASONS.URL_REF_UNRESOLVED);
   check("[write-bind] guarded room 부재 시 모든 write 차단", w("game:x", null).reason === WRITE_REASONS.GUARD_ROOM_MISSING);
   check("[write-bind] body room 판정 불능은 차단(fail-close)", w(null, "qa-fixture:abcd").reason === WRITE_REASONS.BODY_ROOM_UNRESOLVED);
   check("[write-bind] 배열 insert 혼합 room 은 판정 불능(null)", roomIdOfChatInsertBody(JSON.stringify([{ room_id: "r1" }, { room_id: "r2" }])) === null);
   check("[write-bind] 배열 insert 단일 room 은 그 room", roomIdOfChatInsertBody(JSON.stringify([{ room_id: "r1" }, { room_id: "r1" }])) === "r1");
-  // 하니스 결속 실재 확인: 발송형 하니스 4개 전부 newContext 직후 인터셉터를 설치하는가 (구조 grep)
+  // 하니스 결속 실재 확인
   const HARNESSES = ["e2e-1274-ab-measure.mjs", "e2e-1274-paired.mjs", "e2e-1274-chat-preview.mjs", "e2e-1256-chat-realtime.mjs"];
   for (const h of HARNESSES) {
     const src2 = readFileSync(join(HERE, h), "utf8");
     check(`[write-bind] ${h} 가 installChatWriteInterceptor(context, ROOM_ID) 결속`, /installChatWriteInterceptor\(context, ROOM_ID\)/.test(src2));
   }
-  // actual room mutant: 인터셉터가 route.abort 로 실제 차단하는지 — Playwright 계약을 스텁 route 로 실측
+
+  // ── actual: 실제 Playwright BrowserContext + POST 실측 (스텁 아님) + 결속 제거 mutant
+  const { chromium } = await import("playwright");
   const { installChatWriteInterceptor } = await import("./send-guard.mjs");
-  const calls = [];
-  const fakeContext = {
-    route: async (_pattern, handler) => { fakeContext._handler = handler; },
-  };
-  await installChatWriteInterceptor(fakeContext, "qa-fixture:abcd", (info) => calls.push(info));
-  const mkRoute = (room) => ({
-    request: () => ({ method: () => "POST", postData: () => JSON.stringify({ room_id: room }) }),
-    continue: () => { mkRoute.last = "continue"; },
-    abort: (r) => { mkRoute.last = `abort:${r}`; },
-  });
-  const r1 = mkRoute("game:20260821LGHH0");
-  await fakeContext._handler(r1);
-  check("[write-bind actual] 실경기방 POST 는 abort(blockedbyclient) 실차단", mkRoute.last === "abort:blockedbyclient" && calls.at(-1)?.reason === WRITE_REASONS.WRITE_TARGET_MISMATCH);
-  const r2 = mkRoute("qa-fixture:abcd");
-  await fakeContext._handler(r2);
-  check("[write-bind actual] guarded room POST 는 continue", mkRoute.last === "continue");
+  const browser = await chromium.launch({ headless: true });
+  const STG_URL = "https://qastaginginjected.supabase.co/rest/v1/chat_messages";
+  const PROD_URL = "https://lbmbdjgsnenqjwjotoei.supabase.co/rest/v1/chat_messages";
+  // simple-request(text/plain)로 preflight 없이 POST 를 확정 발화시킨다.
+  async function firePost(page, url, room) {
+    return page.evaluate(async (a) => {
+      try {
+        const r = await fetch(a.url, { method: "POST", headers: { "content-type": "text/plain" }, body: JSON.stringify({ room_id: a.room }) });
+        return { fetched: true, status: r.status };
+      } catch (e) { return { fetched: false, msg: String(e) }; }
+    }, { url, room });
+  }
+  function trackFailures(page, sink) {
+    page.on("requestfailed", (req) => { if (req.method() === "POST") sink.push({ url: req.url(), err: req.failure()?.errorText ?? "" }); });
+  }
+  try {
+    // (1) guard 설치 컨텍스트 — mock 을 먼저 등록해 abort 되지 않은 요청이 production 실네트워크로 나가지 않게 한다.
+    const guarded = await browser.newContext();
+    const mockHits = [];
+    await guarded.route("**/rest/v1/chat_messages*", (route) => { mockHits.push(route.request().url()); return route.fulfill({ status: 200, contentType: "application/json", body: "[]" }); });
+    const blockedEvents = [];
+    await installChatWriteInterceptor(guarded, "qa-fixture:abcd", (info) => blockedEvents.push(info), "qastaginginjected");
+    const gp = await guarded.newPage();
+    const gFails = [];
+    trackFailures(gp, gFails);
+    await gp.goto("about:blank");
+    // RED a: production ref + qa-fixture body — ref 축이 차단해야 하고 production 네트워크/mock 도달 0
+    const ra = await firePost(gp, PROD_URL, "qa-fixture:abcd");
+    check("[actual-browser] production ref POST 는 abort (fetch 실패)", ra.fetched === false, JSON.stringify(ra));
+    check("[actual-browser] production ref abort 사유 = ERR_BLOCKED_BY_CLIENT", gFails.some((f) => f.url.startsWith(PROD_URL) && /BLOCKED_BY_CLIENT/.test(f.err)), JSON.stringify(gFails));
+    check("[actual-browser] production ref 차단 콜백 = PRODUCTION_WRITE_TARGET", blockedEvents.at(-1)?.reason === WRITE_REASONS.PRODUCTION_WRITE_TARGET, JSON.stringify(blockedEvents.at(-1)));
+    // RED b: staging ref + 실경기방 body — room 축 차단
+    const rb = await firePost(gp, STG_URL, "game:20260821LGHH0");
+    check("[actual-browser] 실경기방 body POST 는 abort", rb.fetched === false, JSON.stringify(rb));
+    check("[actual-browser] 실경기방 차단 콜백 = WRITE_TARGET_MISMATCH", blockedEvents.at(-1)?.reason === WRITE_REASONS.WRITE_TARGET_MISMATCH, JSON.stringify(blockedEvents.at(-1)));
+    check("[actual-browser] RED 요청은 mock/네트워크에 도달하지 않음 (abort 가 경계)", mockHits.length === 0, `mockHits=${mockHits.length}`);
+    // GREEN: staging ref + guarded fixture body — 차단 없이 통과 (continue → 네트워크 경로).
+    // 판정은 GREEN 발화 이후 신규 실패 이벤트만 본다 (RED-b 가 같은 URL 로 남긴 기록과 격리).
+    const failsBefore = gFails.length;
+    const blockedBefore = blockedEvents.length;
+    const g1 = await firePost(gp, STG_URL, "qa-fixture:abcd");
+    const newFails = gFails.slice(failsBefore);
+    const greenBlocked = newFails.some((f) => /BLOCKED_BY_CLIENT/.test(f.err));
+    check("[actual-browser] guarded room+ref POST 는 BLOCKED_BY_CLIENT 아님 (통과)", greenBlocked === false && blockedEvents.length === blockedBefore, JSON.stringify({ g1, newFails }));
+    await guarded.close();
+    // (2) mutant: 결속 제거(인터셉터 미설치) 컨텍스트 — 같은 production POST 가 통과해버린다 (검출력 실증)
+    const naked = await browser.newContext();
+    const nakedHits = [];
+    await naked.route("**/rest/v1/chat_messages*", (route) => { nakedHits.push(route.request().url()); return route.fulfill({ status: 200, contentType: "application/json", body: "[]" }); });
+    const np = await naked.newPage();
+    await np.goto("about:blank");
+    const mut = await firePost(np, PROD_URL, "qa-fixture:abcd");
+    check("[actual-browser mutant] 인터셉터 제거 시 production POST 가 통과 (차단이 결속에서 나옴을 실증)", mut.fetched === true && nakedHits.length === 1, JSON.stringify({ mut, nakedHits: nakedHits.length }));
+    await naked.close();
+  } finally {
+    await browser.close();
+  }
 }
 
 console.log(`\nsend-guard-gate: ${pass} passed, ${fail} failed`);

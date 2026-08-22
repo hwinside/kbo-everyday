@@ -154,12 +154,37 @@ export const WRITE_REASONS = Object.freeze({
   GUARD_ROOM_MISSING: "GUARD_ROOM_MISSING", // 결속할 guarded room 자체가 없음
   BODY_ROOM_UNRESOLVED: "BODY_ROOM_UNRESOLVED", // POST body 에서 room_id 판정 불능
   WRITE_TARGET_MISMATCH: "WRITE_TARGET_MISMATCH", // 실제 write room ≠ guarded room
+  GUARD_REF_MISSING: "GUARD_REF_MISSING", // 결속할 expected staging ref 자체가 없음
+  URL_REF_UNRESOLVED: "URL_REF_UNRESOLVED", // 요청 URL 에서 project ref 판정 불능
+  PRODUCTION_WRITE_TARGET: "PRODUCTION_WRITE_TARGET", // 요청이 Production ref 로 향함
+  REF_MISMATCH: "REF_MISMATCH", // 요청 ref ≠ expected staging ref
 });
 
-/** 순수 evaluator — 부수효과 0. guarded room 과 실제 write body room 의 완전 일치만 허용. */
-export function evaluateChatWrite(bodyRoomId, guardedRoomId) {
+/**
+ * 순수 evaluator — 부수효과 0. 두 축을 모두 요구한다(삼순 10차):
+ *   room 축: body.room_id == guarded room 완전 일치
+ *   ref 축: 요청 URL 의 project ref == expected staging ref 완전 일치
+ *           (staging env + production page + qa-fixture body 조합의
+ *            Production POST 통과 경로를 차단 — production ref 는 별도 사유로 RED)
+ */
+export function evaluateChatWrite(bodyRoomId, guardedRoomId, requestUrl = undefined, expectedRef = undefined) {
   if (!guardedRoomId) {
     return { allowed: false, reason: WRITE_REASONS.GUARD_ROOM_MISSING, detail: "guarded room 부재 — 결속 대상이 없으면 모든 write 차단." };
+  }
+  if (requestUrl !== undefined || expectedRef !== undefined) {
+    if (!expectedRef) {
+      return { allowed: false, reason: WRITE_REASONS.GUARD_REF_MISSING, detail: "expected staging ref 부재 — ref 결속 대상이 없으면 모든 write 차단." };
+    }
+    const urlRef = projectRefOf(requestUrl);
+    if (!urlRef) {
+      return { allowed: false, reason: WRITE_REASONS.URL_REF_UNRESOLVED, detail: `요청 URL 의 project ref 판정 불능 (url=${requestUrl ? "set" : "unset"}) — 차단.` };
+    }
+    if (PRODUCTION_PROJECT_REFS.includes(urlRef)) {
+      return { allowed: false, reason: WRITE_REASONS.PRODUCTION_WRITE_TARGET, detail: `요청이 Production ref '${urlRef}' 로 향한다 — 영구 차단.` };
+    }
+    if (urlRef !== expectedRef) {
+      return { allowed: false, reason: WRITE_REASONS.REF_MISMATCH, detail: `요청 ref '${urlRef}' ≠ expected staging ref '${expectedRef}' — 단일 결속 위반.` };
+    }
   }
   if (typeof bodyRoomId !== "string" || bodyRoomId.length === 0) {
     return { allowed: false, reason: WRITE_REASONS.BODY_ROOM_UNRESOLVED, detail: "write body 의 room_id 판정 불능 — 판정할 수 없으면 차단." };
@@ -189,12 +214,15 @@ export function roomIdOfChatInsertBody(postData) {
  * 발송형 하니스는 컨텍스트 생성 직후 반드시 호출한다 — 이것이 guard 승인 room 과
  * 실제 브라우저 write 를 잇는 유일한 결속점이다.
  */
-export async function installChatWriteInterceptor(context, guardedRoomId, onBlocked = null) {
+export async function installChatWriteInterceptor(context, guardedRoomId, onBlocked = null, expectedRef = undefined) {
+  // expectedRef 미지정 시 assertSendAllowed 와 동일한 env 에서 유도한다 — 단, 유도
+  // 실패(null)여도 ref 축은 GUARD_REF_MISSING 으로 fail-close 된다(우회 아님).
+  const boundRef = expectedRef ?? projectRefOf(process.env.NEXT_PUBLIC_SUPABASE_URL);
   await context.route("**/rest/v1/chat_messages*", (route) => {
     const req = route.request();
     if (req.method() !== "POST") return route.continue();
     const bodyRoom = roomIdOfChatInsertBody(req.postData());
-    const v = evaluateChatWrite(bodyRoom, guardedRoomId);
+    const v = evaluateChatWrite(bodyRoom, guardedRoomId, req.url(), boundRef);
     if (!v.allowed) {
       console.error(`[SEND GUARD] chat write ABORT ${v.reason} — ${v.detail}`);
       if (onBlocked) onBlocked({ reason: v.reason, bodyRoom });

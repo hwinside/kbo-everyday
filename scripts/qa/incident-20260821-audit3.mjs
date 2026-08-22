@@ -81,20 +81,32 @@ let residual = 0;
 let queryFailed = false;
 const roomAudit = [];
 for (const room of ROOMS) {
-  // query-guard: bounded -- 감사 대상 5개 방의 QA prefix(⚾) 메시지 한정 잔존 감사 조회다.
-  const { data, error, count } = await admin
-    .from("chat_messages")
-    .select("id,content,user_id,created_at", { count: "exact" })
-    .eq("room_id", room)
-    .like("content", "⚾ %")
-    .order("created_at", { ascending: true });
-  if (error) { queryFailed = true; roomAudit.push({ room, error: error.message }); console.log(`  ${room}: 조회 실패 ${error.message}`); continue; }
-  const rows = data ?? [];
-  const qa = rows.filter((r) => [...stamps].some((s) => r.content.includes(s)));
-  residual += qa.length;
-  roomAudit.push({ room, ballPrefixTotal: count ?? rows.length, qaStampResidual: qa.length });
-  console.log(`  ${room}: ⚾-prefix ${count ?? rows.length}건 중 9-stamp 일치 잔존 ${qa.length}건`);
-  qa.slice(0, 5).forEach((r) => console.log(`      잔존! ${r.created_at} ${r.content}`));
+  // 서버측 exact-stamp 조건 (삼순 10차): 방 전체 like 후 클라이언트 필터가 아니라,
+  // stamp 별 정확 prefix 를 서버 where 조건으로 걸어 방×stamp 단위로 조회한다.
+  let roomResidual = 0;
+  let roomErr = null;
+  const perStamp = {};
+  for (const stamp of stamps) {
+    // query-guard: bounded -- 방 id + 해당 stamp 정확 prefix 서버측 조건, 기대 잔존 0 의 잔존감사 조회다.
+    const { data, error, count } = await admin
+      .from("chat_messages")
+      .select("id,content,created_at", { count: "exact" })
+      .eq("room_id", room)
+      .like("content", `⚾ ${stamp}-%`)
+      .order("created_at", { ascending: true })
+      .limit(100);
+    if (error) { roomErr = error.message; break; }
+    const n = count ?? (data ?? []).length;
+    if (n > 0) {
+      perStamp[stamp] = n;
+      (data ?? []).slice(0, 5).forEach((r) => console.log(`      잔존! ${room} ${r.created_at} ${r.content}`));
+    }
+    roomResidual += n;
+  }
+  if (roomErr) { queryFailed = true; roomAudit.push({ room, error: roomErr }); console.log(`  ${room}: 조회 실패 ${roomErr}`); continue; }
+  residual += roomResidual;
+  roomAudit.push({ room, qaStampResidual: roomResidual, perStamp });
+  console.log(`  ${room}: 9-stamp 서버측 exact-prefix 잔존 ${roomResidual}건`);
 }
 console.log(`  → 감사 스냅샷 잔존 합계: ${residual}건 ${queryFailed ? "(⚠️ 조회 실패 존재 — 판정 불능=FAIL)" : residual === 0 ? "✅ (이 시점 한정)" : "❌"}`);
 

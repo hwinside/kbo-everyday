@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-22T01:03:23.759Z",
+  "generatedAt": "2026-08-22T02:57:16.887Z",
   "manifest": [
     {
       "file": "ab-1274-mt2w0wbp.json",
@@ -123,33 +123,33 @@
   "rooms": [
     {
       "room": "game:20260821KTSK0",
-      "ballPrefixTotal": 0,
-      "qaStampResidual": 0
+      "qaStampResidual": 0,
+      "perStamp": {}
     },
     {
       "room": "game:20260821LGHH0",
-      "ballPrefixTotal": 0,
-      "qaStampResidual": 0
+      "qaStampResidual": 0,
+      "perStamp": {}
     },
     {
       "room": "game:20260821SSNC0",
-      "ballPrefixTotal": 0,
-      "qaStampResidual": 0
+      "qaStampResidual": 0,
+      "perStamp": {}
     },
     {
       "room": "game:20260821HTWO0",
-      "ballPrefixTotal": 0,
-      "qaStampResidual": 0
+      "qaStampResidual": 0,
+      "perStamp": {}
     },
     {
       "room": "game:20260821LTOB0",
-      "ballPrefixTotal": 0,
-      "qaStampResidual": 0
+      "qaStampResidual": 0,
+      "perStamp": {}
     }
   ],
   "qaResidualAtSnapshot": 0,
   "qaProfileResidual": 0,
   "userMessageVerdict": "QA UUID 한정 구조 · 오삭제 증거 없음 (before 스냅샷 부재 명시)",
   "sendProcessesRunning": 0,
-  "verdict": "발송 시도 216 / exact insert·delete 미확인 / 2026-08-22T01:03:23.759Z 감사 스냅샷 잔존 0"
+  "verdict": "발송 시도 216 / exact insert·delete 미확인 / 2026-08-22T02:57:16.887Z 감사 스냅샷 잔존 0"
 }
