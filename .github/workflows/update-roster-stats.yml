@@ -14,7 +14,9 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # P0(삼순 #1282): gates-green ci 티어 전체 실행이 추가되어 예산 상향(30→60) —
+    # 실측 pre-PR ~15분 + unsharded full 11분+ → 30분은 스탬프 전 timeout 위험.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -286,6 +288,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+
+      # P0(삼순 #1282): 의존성은 Node 22에서 설치됨 — qa-ci와 동일 증명이 되려면
+      # Node 24 전환 후 npm ci 재설치가 필요하다(네이티브 모듈/engines 불일치 방지).
+      - name: Reinstall deps under Node 24 (gates-green 런타임 정합)
+        if: steps.changes.outputs.changed == 'true'
+        run: npm ci
 
       - name: gates-green — ci 티어 전체 실행 + fail-close 스탬프 (exact head)
         if: steps.changes.outputs.changed == 'true'
@@ -293,7 +302,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           PR_URL="${{ steps.pr.outputs.pr_url }}"
-          if [ -z "$PR_URL" ]; then echo "No PR URL captured"; exit 0; fi
+          # P1(삼순 #1282): changed=true인데 PR_URL 미확보는 이상 상태 — fail-close(exit 1)
+          if [ -z "$PR_URL" ]; then echo "❌ gates-green: PR URL 미확보 — fail-close"; exit 1; fi
           HEAD_SHA="${{ steps.pr.outputs.head_sha }}"
           LOCAL_SHA=$(git rev-parse HEAD)
           if [ -z "$HEAD_SHA" ] || [ "$LOCAL_SHA" != "$HEAD_SHA" ]; then
@@ -321,8 +331,9 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         run: |
           PR_URL="${{ steps.pr.outputs.pr_url }}"
+          # P1(삼순 #1282): changed=true인데 PR_URL 미확보는 이상 상태 — fail-close(exit 1)
           if [ -z "$PR_URL" ]; then
-            echo "No PR URL captured"; exit 0
+            echo "❌ auto-merge: PR URL 미확보 — fail-close"; exit 1
           fi
 
           # 운영 원칙 개정 (2026-07-18, 하린아빠 지시):

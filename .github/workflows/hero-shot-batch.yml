@@ -74,6 +74,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: npm
+
+      # P0(삼순 #1282): 의존성은 Node 20에서 설치됨 — qa-ci와 동일 증명이 되려면
+      # Node 24 전환 후 npm ci 재설치가 필요하다(네이티브 모듈/engines 불일치 방지).
+      - name: Reinstall deps under Node 24 (gates-green 런타임 정합)
+        if: steps.gen.outputs.changed == 'true'
+        run: npm ci
 
       - name: Create + auto-merge PR (verified changes only)
         if: steps.gen.outputs.changed == 'true'
