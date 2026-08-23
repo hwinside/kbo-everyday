@@ -49,11 +49,16 @@ function stripComments(src) {
 // fallback 2(네트워크/자격 불가): merge-base 시점 채팅 transport 파일의 sha256 핀과
 // 워킹트리 해시를 대조 — 불일치는 fail-close(진짜 변경이든 stale 핀이든 사람이 봐야 한다).
 // 핀 갱신: 채팅 파일을 정당하게 바꾸는 PR이 이 표를 같은 PR에서 갱신한다.
-// merge-base diff 축도 같은 계약을 따른다(2026-08-23 #1291 교정): 변경된 파일이
-// 있어도 워킹트리 해시가 같은 PR에서 갱신된 핀과 일치하면 "핀 갱신으로 명시
-// 승인된 변경"으로 GREEN(게이트 파일 diff에 핀 갱신이 드러나 리뷰어가 본다).
-// 핀 미갱신 변경(우발 수정)은 종전처럼 fail-close RED. — 종전에는 핀을 갱신해도
-// merge-base 축이 무조건 RED라 "같은 PR 갱신" 계약이 실제로는 성립 불가했다.
+// (핀은 shallow-clone fallback 전용이다 — git diff 가능한 경로에서는 핀이 판정에
+// 일절 관여하지 않는다. 같은 PR 코드+핀 동시 변경은 '승인'이 아니라 자기서명이므로
+// 핀 갱신으로 merge-base 축 RED를 우회할 수 없다 — 삼순 2026-08-23 #1291.)
+//
+// merge-base 축 scope 계약 (2026-08-23 #1291 교정):
+//  · multiplex 민감 경로(MULTIPLEX_SENSITIVE_PATHS)가 변경된 PR에서만
+//    chat transport 무변경을 강제한다(동시 변경 = RED, 핀 상태 무관).
+//  · chat-only UI PR은 이 축에서 GREEN — 행위 검증은 전용 게이트
+//    (qa:kgwan-autofocus + game-chat-visibility 스모크/게이트)가 담당한다.
+//  · multiplex-only PR도 GREEN(채팅 무변경이므로).
 // 계약: 핀 집합은 CHAT_BASE_DIFF_PATHS 와 정확히 같아야 한다(set equality — 부분 핀은 fail-open이라 금지,
 // 게이트 시작 시점에 항상 검사하므로 핀 누락/윴여는 fallback 경로와 무관하게 즉시 RED).
 const CHAT_TRANSPORT_SHA256 = {
@@ -71,6 +76,17 @@ const CHAT_TRANSPORT_SHA256 = {
   "src/app/api/venue-stories/attendees/route.ts": "e1c21c12d3ce1bbfc25b0f2cb17ef2b6ccb7cbf0cca531bfb1ad055f9d05552a",
   "src/app/api/cron/daily-fallback-report/route.ts": "d598b2bd32d335810e1303f903359258b20efe63cdec69167e16edd2fd6a0b95",
 };
+
+// multiplex 민감 경로 — 이 파일들이 merge-base 대비 변경된 PR에서만 chat transport
+// 무변경을 강제한다(scope 게이트). #1274 멀티플렉스 런타임 종단 경로 전체.
+const MULTIPLEX_SENSITIVE_PATHS = [
+  "src/lib/game/live-poll-stream.ts",
+  "src/lib/hooks/useGameRelay.ts",
+  "src/app/api/game-relay-events/route.ts",
+  "src/lib/hooks/useLiveGame.ts",
+  "src/lib/hooks/useGameDetail.ts",
+  "src/app/(main)/games/[gameId]/page.tsx",
+];
 
 // path set === pin set 계약 — fallback 발동 여부와 무관하게 항상 검사한다.
 function evaluatePinSetEquality(paths = CHAT_BASE_DIFF_PATHS, pins = CHAT_TRANSPORT_SHA256) {
@@ -316,11 +332,13 @@ function assertUntouchedFiles({
       pinContract.orphanPins.length ? `orphan pins: ${pinContract.orphanPins.join(", ")}` : "",
     ].filter(Boolean).join(" / "),
   );
-  let diff = evalBase(CHAT_BASE_DIFF_PATHS);
-  if (!diff.ok && diff.reason === "origin/main missing") {
+  let baseOpts;
+  let chatDiff = evalBase(CHAT_BASE_DIFF_PATHS);
+  if (!chatDiff.ok && chatDiff.reason === "origin/main missing") {
     const fetchedBase = fetchBase();
     if (fetchedBase) {
-      diff = evalBase(CHAT_BASE_DIFF_PATHS, { baseRef: fetchedBase });
+      baseOpts = { baseRef: fetchedBase };
+      chatDiff = evalBase(CHAT_BASE_DIFF_PATHS, baseOpts);
     } else {
       const pinned = evalPins();
       report(
@@ -328,26 +346,25 @@ function assertUntouchedFiles({
         pinned.ok,
         pinned.mismatched.join(", "),
       );
-      diff = null;
+      return;
     }
   }
-  if (diff !== null) {
-    report("chat base-diff gate resolved base ref", diff.ok, diff.reason ?? "");
-    // 핀 승인 변경: merge-base 대비 변경됐지만 워킹트리가 (같은 PR에서 갱신된)
-    // 핀과 일치하는 파일은 명시적 승인 변경으로 취급 — 핀 미갱신 변경만 RED.
-    const pins = evalPins();
-    const isAcknowledged = (path) => !pins.mismatched.some((m) => m === path || m.startsWith(`${path} (`));
-    const acknowledged = diff.changed.filter(isAcknowledged);
-    const unacknowledged = diff.changed.filter((p) => !isAcknowledged(p));
-    if (acknowledged.length > 0) {
-      console.log(`  ℹ pin-renewed chat change (같은 PR 핀 갱신으로 승인된 변경): ${acknowledged.join(", ")}`);
-    }
-    report(
-      "chat transport untouched vs merge-base",
-      diff.ok && unacknowledged.length === 0,
-      unacknowledged.join(", "),
-    );
+  const muxDiff = evalBase(MULTIPLEX_SENSITIVE_PATHS, baseOpts);
+  report("chat base-diff gate resolved base ref", chatDiff.ok && muxDiff.ok, chatDiff.reason ?? muxDiff.reason ?? "");
+  // scope 판정: multiplex 민감 경로와 chat transport가 *동시에* 변경된 PR만 RED.
+  // 핀 상태는 이 판정에 관여하지 않는다(핀 동시변경 자기서명 우회 불가 — 삼순 계약).
+  const muxChanged = muxDiff.changed;
+  const chatChanged = chatDiff.changed;
+  if (muxChanged.length === 0 && chatChanged.length > 0) {
+    console.log(`  ℹ chat-only 변경(전용 행위 게이트가 검증): ${chatChanged.join(", ")}`);
   }
+  report(
+    "chat transport untouched vs merge-base",
+    chatDiff.ok && muxDiff.ok && !(muxChanged.length > 0 && chatChanged.length > 0),
+    muxChanged.length > 0 && chatChanged.length > 0
+      ? `multiplex+chat 동시 변경 — mux: ${muxChanged.join(", ")} / chat: ${chatChanged.join(", ")}`
+      : "",
+  );
 }
 
 // —— 삼순 5차 NO-GO: fallback 제어흐름을 assertUntouchedFiles 최종 판정까지 관통해 검증 ——
@@ -363,24 +380,32 @@ function runUntouchedFilesFlow({ evalBase, fetchBase, evalPins }) {
   return verdicts;
 }
 
+// scope 스텁: paths 인자가 chat 집합인지 mux 집합인지로 구분해 응답한다.
+function makeScopeEvalBase({ chatChanged = [], muxChanged = [], requireFetch = false }) {
+  const calls = { chat: 0, mux: 0 };
+  const fn = (paths, opts) => {
+    const isMux = paths === MULTIPLEX_SENSITIVE_PATHS || paths.includes("src/lib/hooks/useGameRelay.ts");
+    if (isMux) calls.mux += 1;
+    else calls.chat += 1;
+    if (requireFetch && !opts?.baseRef) return { ok: false, reason: "origin/main missing", changed: [] };
+    return { ok: true, changed: isMux ? muxChanged : chatChanged };
+  };
+  return { fn, calls };
+}
+
 function assertFallbackControlFlow() {
-  // ① origin/main 없음 → fetch 성공 → dirty diff(핀 미갱신) → 최종 RED
-  let evalCalls = 0;
-  const dirtyFlow = runUntouchedFilesFlow({
-    evalBase: (paths, opts) => {
-      evalCalls += 1;
-      if (!opts?.baseRef) return { ok: false, reason: "origin/main missing", changed: [] };
-      return { ok: true, changed: ["src/lib/supabase/useChat.ts"] };
-    },
+  // ① origin/main 없음 → fetch 성공 → FETCH_HEAD 기준 재평가(chat 재호출 + mux 호출)
+  const fetched = makeScopeEvalBase({ chatChanged: [], muxChanged: [], requireFetch: true });
+  const fetchedFlow = runUntouchedFilesFlow({
+    evalBase: fetched.fn,
     fetchBase: () => "fetched-base-sha",
-    evalPins: () => ({ ok: false, mismatched: ["src/lib/supabase/useChat.ts"] }),
+    evalPins: () => { throw new Error("pins must not run when fetch succeeds"); },
   });
-  ok("flow ①: origin 없음→fetch 성공 시 FETCH_HEAD 기준으로 재평가",
-    evalCalls === 2);
-  ok("flow ①: fetch 성공 + dirty chat diff → 최종 RED",
-    dirtyFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === true));
-  ok("flow ①: fetch 성공 경로에선 pinned fallback 미실행",
-    !dirtyFlow.some((v) => v.name.includes("pinned-hash fallback")));
+  ok("flow ①: origin 없음→fetch 성공 시 FETCH_HEAD 기준으로 chat 재평가 + mux 평가",
+    fetched.calls.chat === 2 && fetched.calls.mux === 1);
+  ok("flow ①: 무변경 → 최종 GREEN + pinned fallback 미실행",
+    fetchedFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === false)
+    && !fetchedFlow.some((v) => v.name.includes("pinned-hash fallback")));
 
   // ② fetch 실패 → 13핀 전부 clean → 최종 GREEN (pinned fallback 단독 판정)
   const pinFlow = runUntouchedFilesFlow({
@@ -404,34 +429,51 @@ function assertFallbackControlFlow() {
   ok("flow ②-대조: fetch 실패 + pin mismatch → 최종 RED",
     pinRedVerdict !== undefined && pinRedVerdict.red === true);
 
-  // ③ 핀 승인 변경: dirty diff지만 워킹트리가 갱신된 핀과 일치 → 최종 GREEN
-  const ackFlow = runUntouchedFilesFlow({
-    evalBase: (paths, opts) => (opts?.baseRef
-      ? { ok: true, changed: ["src/components/game/GameChat.tsx"] }
-      : { ok: true, changed: ["src/components/game/GameChat.tsx"] }),
-    fetchBase: () => "fetched-base-sha",
-    evalPins: () => ({ ok: true, mismatched: [] }),
-  });
-  ok("flow ③: 변경 + 핀 일치(승인) → 최종 GREEN",
-    ackFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === false));
+  // ③ scope 4축 (삼순 2026-08-23 계약: chat-only GREEN / mux-only GREEN /
+  //    mux+chat RED / 핀 동시변경으로 RED 우회 불가)
+  const verdictOf = (flow) => flow.find((v) => v.name === "chat transport untouched vs merge-base");
 
-  // ③-대조: 같은 변경이어도 핀이 stale이면 RED — 승인 판정이 조건 무관 GREEN이 아님을 증명
-  const ackRedFlow = runUntouchedFilesFlow({
-    evalBase: () => ({ ok: true, changed: ["src/components/game/GameChat.tsx"] }),
-    fetchBase: () => "fetched-base-sha",
+  // ③-a chat-only 변경 → GREEN (행위 검증은 전용 게이트 담당)
+  const chatOnly = runUntouchedFilesFlow({
+    evalBase: makeScopeEvalBase({ chatChanged: ["src/components/game/GameChat.tsx"] }).fn,
+    fetchBase: () => { throw new Error("fetch must not run when origin/main resolves"); },
     evalPins: () => ({ ok: false, mismatched: ["src/components/game/GameChat.tsx"] }),
   });
-  ok("flow ③-대조: 변경 + 핀 stale(미승인) → 최종 RED",
-    ackRedFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === true));
+  ok("flow ③-a: chat-only 변경 → 최종 GREEN (핀 stale여도 무관)",
+    verdictOf(chatOnly)?.red === false);
 
-  // ③-대조2: unreadable 핀도 미승인으로 취급(fail-close)
-  const ackUnreadableFlow = runUntouchedFilesFlow({
-    evalBase: () => ({ ok: true, changed: ["src/components/game/GameChat.tsx"] }),
-    fetchBase: () => "fetched-base-sha",
-    evalPins: () => ({ ok: false, mismatched: ["src/components/game/GameChat.tsx (unreadable)"] }),
+  // ③-b multiplex-only 변경 → GREEN
+  const muxOnly = runUntouchedFilesFlow({
+    evalBase: makeScopeEvalBase({ muxChanged: ["src/lib/hooks/useGameRelay.ts"] }).fn,
+    fetchBase: () => { throw new Error("fetch must not run when origin/main resolves"); },
+    evalPins: () => ({ ok: true, mismatched: [] }),
   });
-  ok("flow ③-대조2: 변경 + 핀 unreadable → 최종 RED(fail-close)",
-    ackUnreadableFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === true));
+  ok("flow ③-b: multiplex-only 변경 → 최종 GREEN",
+    verdictOf(muxOnly)?.red === false);
+
+  // ③-c multiplex+chat 동시 변경 → RED
+  const both = runUntouchedFilesFlow({
+    evalBase: makeScopeEvalBase({
+      chatChanged: ["src/components/game/GameChat.tsx"],
+      muxChanged: ["src/lib/hooks/useGameRelay.ts"],
+    }).fn,
+    fetchBase: () => { throw new Error("fetch must not run when origin/main resolves"); },
+    evalPins: () => ({ ok: false, mismatched: ["src/components/game/GameChat.tsx"] }),
+  });
+  ok("flow ③-c: multiplex+chat 동시 변경 → 최종 RED",
+    verdictOf(both)?.red === true);
+
+  // ③-d 핀 동시변경(자기서명)으로 RED 우회 불가 — 핀이 전부 일치(ok)라도 RED 유지
+  const pinBypass = runUntouchedFilesFlow({
+    evalBase: makeScopeEvalBase({
+      chatChanged: ["src/components/game/GameChat.tsx"],
+      muxChanged: ["src/lib/hooks/useGameRelay.ts"],
+    }).fn,
+    fetchBase: () => { throw new Error("fetch must not run when origin/main resolves"); },
+    evalPins: () => ({ ok: true, mismatched: [] }),
+  });
+  ok("flow ③-d: mux+chat 변경 + 핀 동시갱신(전부 일치) → 그래도 RED (자기서명 우회 불가)",
+    verdictOf(pinBypass)?.red === true);
 }
 
 function mutate(path, from, to) {
