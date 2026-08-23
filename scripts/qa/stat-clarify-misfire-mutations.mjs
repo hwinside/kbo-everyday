@@ -90,11 +90,25 @@ const mutations = [
     why: "자유문장 서빙 0 계약(D4)이 깨진다",
   },
   {
-    name: "M9 어휘집에서 `직관` 제거 (2026-08-23 배포 후 QA 수정 무력화)",
+    name: "M9 제품 기능 결합형 폐쇄집합 비움 (2026-08-23 배포 후 QA 수정 무력화)",
     file: PIPELINE,
-    re: /\n  \/\/ `직관` = 직접 관람[\s\S]*?\n  "직관",/,
-    to: "",
+    re: /const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set\(\[[\s\S]*?\]\);/,
+    to: "const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set<string>([]);",
     why: "`직관 기록`(정규화 산출물)이 다시 미결속이 되어 되묻기로 종결 — 프로덕션 3/3 재현 축",
+  },
+  {
+    name: "M10 결합형 판정을 head 단독 판정으로 교체 (다의어 과확장 방향)",
+    file: PIPELINE,
+    re: /if \(PRODUCT_FEATURE_COMPOUNDS\.has\(combined\.toLowerCase\(\)\)\) return "term_question";/,
+    to: 'if (PRODUCT_FEATURE_COMPOUNDS.has(head.toLowerCase())) return "term_question";',
+    why: "결합형 exact 계약이 깨져 `직관 기록` 이 다시 미결속 — 동시에 head 단독 승격은 C6 다의어 축이 잡는다",
+  },
+  {
+    name: "M11 정규화 seam 결과를 버리고 원문으로 진행 (full seam 무력화)",
+    file: PIPELINE,
+    re: /\n    if \(accepted\) \{\n      question = candidate;\n      questionNorm = normalizeQuestion\(candidate\);/,
+    to: "\n    if (false) {\n      question = candidate;\n      questionNorm = normalizeQuestion(candidate);",
+    why: "정규화가 수용돼도 재라우팅이 안 일어난다 — B2 full seam 축(로그 필드·최종 source)이 잡아야 한다",
   },
 ];
 
