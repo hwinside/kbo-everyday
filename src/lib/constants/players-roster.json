@@ -712,7 +712,7 @@
     "kboId": "54511",
     "teamId": 7,
     "position": "외야수",
-    "backNo": "",
+    "backNo": "-",
     "team": "롯데",
     "birthDate": "2003-11-15"
   },
@@ -1378,7 +1378,7 @@
     "kboId": "55216",
     "teamId": 2,
     "position": "포수",
-    "backNo": "",
+    "backNo": "-",
     "team": "두산",
     "birthDate": "2006-05-16"
   },
@@ -1753,7 +1753,7 @@
     "kboId": "53619",
     "teamId": 6,
     "position": "내야수",
-    "backNo": "",
+    "backNo": "-",
     "team": "KIA",
     "birthDate": "2000-12-02"
   },
@@ -1981,7 +1981,7 @@
     "kboId": "51393",
     "teamId": 10,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "키움",
     "birthDate": "2002-07-12"
   },
@@ -2206,7 +2206,7 @@
     "kboId": "67956",
     "teamId": 5,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "NC",
     "birthDate": "1998-03-21"
   },
@@ -3160,7 +3160,7 @@
     "kboId": "52864",
     "teamId": 4,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "SSG",
     "birthDate": "2003-08-05"
   },
@@ -3280,7 +3280,7 @@
     "kboId": "55568",
     "teamId": 7,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "롯데",
     "birthDate": "2006-01-21"
   },
@@ -3640,7 +3640,7 @@
     "kboId": "55002",
     "teamId": 3,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "KT",
     "birthDate": "2006-03-10"
   },
@@ -3658,7 +3658,7 @@
     "kboId": "69363",
     "teamId": 10,
     "position": "포수",
-    "backNo": "",
+    "backNo": "-",
     "team": "키움",
     "birthDate": "1999-03-07"
   },
@@ -4198,7 +4198,7 @@
     "kboId": "55118",
     "teamId": 1,
     "position": "투수",
-    "backNo": "",
+    "backNo": "-",
     "team": "LG",
     "birthDate": "2006-04-09"
   },
@@ -5860,7 +5860,7 @@
     "kboId": "56538",
     "teamId": 7,
     "position": "내야수",
-    "backNo": "",
+    "backNo": "-",
     "team": "롯데",
     "birthDate": "2006-07-31"
   },
@@ -6064,7 +6064,7 @@
     "kboId": "55224",
     "teamId": 2,
     "position": "내야수",
-    "backNo": "",
+    "backNo": "-",
     "team": "두산",
     "birthDate": "2006-04-04"
   },
@@ -6184,7 +6184,7 @@
     "kboId": "54011",
     "teamId": 3,
     "position": "내야수",
-    "backNo": "",
+    "backNo": "-",
     "team": "KT",
     "birthDate": "2005-01-26"
   },

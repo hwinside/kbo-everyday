@@ -1,0 +1,1964 @@
+{
+  "generatedAt": "2026-08-23T22:45+09:00",
+  "instruction": {
+    "futures": "10개 구단 소속이 명확히 있는 futures 선수들만 (하린아빠 2026-08-23 21:50)",
+    "sangmu": "상무는 원소속팀 소속으로 표시하되 상무를 프로필에 별도 명시 (하린아빠 2026-08-23 21:51)",
+    "criteria_samsoon": "포함=KBO 공식 선수조회 현재 소속이 10구단으로 명확한 Futures / 제외=대학·독립·해외·원소속 확정불가"
+  },
+  "collection": {
+    "method": "KBO Player/Search.aspx playwright 렌더 — 팀 드롭다운 10구단 × 페이지네이션 전수 (팀별 5~6p, 끝 페이지는 '맨끝으로' 앵커 위치로 검증)",
+    "teamScanTotal": 1008,
+    "futuresLinks": 315,
+    "sangmuScan": "성씨 82개 × 페이지네이션 전수 재검색 (팀 드롭다운에 상무 없음 → 이름 substring 매칭으로 커버, 체크포인트 flush)",
+    "sangmuFound": 46
+  },
+  "futuresIntake": {
+    "count": 135,
+    "players": [
+      {
+        "kboId": "53049",
+        "name": "김건웅",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "98",
+        "birthDate": "2004-04-12",
+        "path": "서울영화초-성남중-성남고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53049"
+      },
+      {
+        "kboId": "56016",
+        "name": "김규한",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "116",
+        "birthDate": "2005-07-26",
+        "path": "대전구봉초(계룡시리틀)-충남중-부천고-부산과학기술대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56016"
+      },
+      {
+        "kboId": "54094",
+        "name": "김민성",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "101",
+        "birthDate": "2005-08-28",
+        "path": "언북초-홍은중-선린인터넷고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54094"
+      },
+      {
+        "kboId": "66064",
+        "name": "김태오",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "20",
+        "birthDate": "1997-07-29",
+        "path": "연현초-양천중-서울고-KT-상무",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=66064"
+      },
+      {
+        "kboId": "56013",
+        "name": "김휘연",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "113",
+        "birthDate": "2007-08-10",
+        "path": "군포신기초(군포시리틀)-평촌중-장안고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56013"
+      },
+      {
+        "kboId": "56020",
+        "name": "박성준",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "내야수",
+        "backNo": "120",
+        "birthDate": "2003-07-28",
+        "path": "삼일초-매향중-라온고-디지털문예대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56020"
+      },
+      {
+        "kboId": "55002",
+        "name": "박준혁",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "2006-03-10",
+        "path": "서울대왕초(강남구리틀)-휘문중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55002"
+      },
+      {
+        "kboId": "56015",
+        "name": "박치성",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "포수",
+        "backNo": "115",
+        "birthDate": "2003-04-26",
+        "path": "연현초-평촌중-유신고-경희대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56015"
+      },
+      {
+        "kboId": "54010",
+        "name": "이근혁",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "96",
+        "birthDate": "2001-05-29",
+        "path": "고명초-잠신중-경기고-한일장신대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54010"
+      },
+      {
+        "kboId": "56012",
+        "name": "이민준",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "112",
+        "birthDate": "2007-06-14",
+        "path": "고양동산초(일산자이언츠유소년)-양천중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56012"
+      },
+      {
+        "kboId": "52063",
+        "name": "이상우",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "48",
+        "birthDate": "2003-10-14",
+        "path": "연현초-수원북중-유신고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52063"
+      },
+      {
+        "kboId": "54011",
+        "name": "이승현",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "내야수",
+        "backNo": "",
+        "birthDate": "2005-01-26",
+        "path": "비전초(평택리틀)-개군중-북일고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54011"
+      },
+      {
+        "kboId": "55006",
+        "name": "이용현",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "내야수",
+        "backNo": "106",
+        "birthDate": "2006-01-06",
+        "path": "평택부용초(안성시리틀)-평택청담중-강릉고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55006"
+      },
+      {
+        "kboId": "53001",
+        "name": "이준희",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "포수",
+        "backNo": "110",
+        "birthDate": "2004-01-06",
+        "path": "중대초-잠신중-휘문고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53001"
+      },
+      {
+        "kboId": "53004",
+        "name": "정진호",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "119",
+        "birthDate": "2004-09-20",
+        "path": "서원초-세광중-청담고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53004"
+      },
+      {
+        "kboId": "56091",
+        "name": "정현우",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "111",
+        "birthDate": "2007-02-10",
+        "path": "단봉초(인천서구리틀)-동산중-인천고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56091"
+      },
+      {
+        "kboId": "51060",
+        "name": "지명성",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "39",
+        "birthDate": "2002-02-15",
+        "path": "의정부청룡초(의정부리틀)-배명중-신일고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=51060"
+      },
+      {
+        "kboId": "54006",
+        "name": "최윤서",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "투수",
+        "backNo": "121",
+        "birthDate": "2003-03-21",
+        "path": "대모초(강남구리틀)-휘문중-포항제철고-동의대(얼리 드래프트)",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54006"
+      },
+      {
+        "kboId": "53003",
+        "name": "황의준",
+        "team": "KT",
+        "teamColumn": "KT",
+        "position": "외야수",
+        "backNo": "118",
+        "birthDate": "2002-04-06",
+        "path": "칠성초-경복중-경북고-수성대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53003"
+      },
+      {
+        "kboId": "54402",
+        "name": "김동현",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "123",
+        "birthDate": "2001-05-25",
+        "path": "용현초(인천남구리틀)-동인천중-인천고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54402"
+      },
+      {
+        "kboId": "52460",
+        "name": "김서준",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "103",
+        "birthDate": "2003-09-01",
+        "path": "희망대초-대원중-경기항공고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52460"
+      },
+      {
+        "kboId": "53469",
+        "name": "박권후",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "160",
+        "birthDate": "2004-05-28",
+        "path": "진북초-전라중-전주고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53469"
+      },
+      {
+        "kboId": "53409",
+        "name": "박시원",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "104",
+        "birthDate": "2004-03-16",
+        "path": "신도초-안산중앙중-유신고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53409"
+      },
+      {
+        "kboId": "50411",
+        "name": "박주혁",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "101",
+        "birthDate": "2001-05-18",
+        "path": "남정초-덕수중-휘문고-삼성-상무",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50411"
+      },
+      {
+        "kboId": "56439",
+        "name": "석예헌",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "139",
+        "birthDate": "2004-03-24",
+        "path": "안평초-잠신중-경기고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56439"
+      },
+      {
+        "kboId": "55415",
+        "name": "진희성",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "115",
+        "birthDate": "2006-05-18",
+        "path": "인천서림초-우신중-동산고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55415"
+      },
+      {
+        "kboId": "52400",
+        "name": "차동영",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "포수",
+        "backNo": "106",
+        "birthDate": "2002-11-01",
+        "path": "갈곡초(기흥구리틀)-모가중-강릉고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52400"
+      },
+      {
+        "kboId": "55414",
+        "name": "천겸",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "114",
+        "birthDate": "2006-01-25",
+        "path": "부산수영초-개성중-부산고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55414"
+      },
+      {
+        "kboId": "55419",
+        "name": "최예한",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "109",
+        "birthDate": "2002-06-02",
+        "path": "양정초-포항제철중-포항제철고-성균관대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55419"
+      },
+      {
+        "kboId": "51462",
+        "name": "홍무원",
+        "team": "삼성",
+        "teamColumn": "삼성",
+        "position": "투수",
+        "backNo": "102",
+        "birthDate": "2002-01-11",
+        "path": "신남초(인천시리틀)-서울신월중-경기고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=51462"
+      },
+      {
+        "kboId": "54104",
+        "name": "강석현",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "110",
+        "birthDate": "2005-05-17",
+        "path": "명동초(광진리틀)-구리인창중-구리인창고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54104"
+      },
+      {
+        "kboId": "54103",
+        "name": "김종우",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "103",
+        "birthDate": "2005-02-07",
+        "path": "의왕부곡초-이수중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54103"
+      },
+      {
+        "kboId": "56114",
+        "name": "박성진",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "114",
+        "birthDate": "2007-10-11",
+        "path": "중대초-건대부중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56114"
+      },
+      {
+        "kboId": "54116",
+        "name": "배강",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "포수",
+        "backNo": "122",
+        "birthDate": "2005-11-04",
+        "path": "학강초-광주북성중-광주제일고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54116"
+      },
+      {
+        "kboId": "55118",
+        "name": "성준서",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "2006-04-09",
+        "path": "빛가온초(광명리틀)-평촌중-경기항공고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55118"
+      },
+      {
+        "kboId": "56099",
+        "name": "심기정",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "포수",
+        "backNo": "115",
+        "birthDate": "2001-02-01",
+        "path": "석교초-세광중-세광고-경희대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56099"
+      },
+      {
+        "kboId": "52124",
+        "name": "엄태경",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "외야수",
+        "backNo": "104",
+        "birthDate": "2003-05-03",
+        "path": "광명광덕초(광명시리틀)-휘문중-휘문고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52124"
+      },
+      {
+        "kboId": "54105",
+        "name": "오승윤",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "123",
+        "birthDate": "2001-06-25",
+        "path": "광주화정초-광주동성중-광주동성고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54105"
+      },
+      {
+        "kboId": "51110",
+        "name": "이믿음",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "투수",
+        "backNo": "105",
+        "birthDate": "2000-07-18",
+        "path": "노암초-경포중-강릉고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=51110"
+      },
+      {
+        "kboId": "53160",
+        "name": "이준서",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "외야수",
+        "backNo": "133",
+        "birthDate": "2004-11-18",
+        "path": "역삼초-언북중-서울고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53160"
+      },
+      {
+        "kboId": "55165",
+        "name": "이태훈",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "내야수",
+        "backNo": "130",
+        "birthDate": "2006-08-21",
+        "path": "가동초-덕수중-경동고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55165"
+      },
+      {
+        "kboId": "55100",
+        "name": "이한림",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "포수",
+        "backNo": "106",
+        "birthDate": "2006-11-18",
+        "path": "해남동초(해남군리틀)-화순중-전주고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55100"
+      },
+      {
+        "kboId": "54112",
+        "name": "최명경",
+        "team": "LG",
+        "teamColumn": "LG",
+        "position": "외야수",
+        "backNo": "116",
+        "birthDate": "2001-06-14",
+        "path": "여수서초-여수중-효천고-동아대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54112"
+      },
+      {
+        "kboId": "69627",
+        "name": "김민수",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "외야수",
+        "backNo": "104",
+        "birthDate": "2000-04-05",
+        "path": "부산수영초-경남중-경남고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=69627"
+      },
+      {
+        "kboId": "53619",
+        "name": "김재현",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "내야수",
+        "backNo": "",
+        "birthDate": "2000-12-02",
+        "path": "광주화정초-건대부중-경기고-송원대-KIA",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53619"
+      },
+      {
+        "kboId": "52661",
+        "name": "김찬민",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "110",
+        "birthDate": "2003-09-13",
+        "path": "부안동초-이평중-전주고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52661"
+      },
+      {
+        "kboId": "54609",
+        "name": "김태윤",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "115",
+        "birthDate": "2004-10-07",
+        "path": "동궁초(사상구리틀)-대동중-개성고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54609"
+      },
+      {
+        "kboId": "55629",
+        "name": "나연우",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "129",
+        "birthDate": "2006-07-24",
+        "path": "서울상일초-배재중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55629"
+      },
+      {
+        "kboId": "55637",
+        "name": "박헌",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "외야수",
+        "backNo": "113",
+        "birthDate": "2006-01-05",
+        "path": "광주수창초-충장중-광주제일고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55637"
+      },
+      {
+        "kboId": "53663",
+        "name": "이송찬",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "123",
+        "birthDate": "2004-08-08",
+        "path": "화순초-광주동성중-광주동성고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53663"
+      },
+      {
+        "kboId": "51668",
+        "name": "이승재",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "108",
+        "birthDate": "2000-10-04",
+        "path": "잠신초(강남구리틀)-강남중-휘문고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=51668"
+      },
+      {
+        "kboId": "51605",
+        "name": "이영재",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "외야수",
+        "backNo": "109",
+        "birthDate": "2002-01-11",
+        "path": "연현초-평촌중-유신고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51605"
+      },
+      {
+        "kboId": "51602",
+        "name": "이준범",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "내야수",
+        "backNo": "111",
+        "birthDate": "2002-07-16",
+        "path": "광주대성초-광주동성중-광주동성고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51602"
+      },
+      {
+        "kboId": "56624",
+        "name": "이호진",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "124",
+        "birthDate": "2003-10-22",
+        "path": "방배초-서울이수중-충암고-동원대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56624"
+      },
+      {
+        "kboId": "56636",
+        "name": "차상현",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "내야수",
+        "backNo": "134",
+        "birthDate": "2003-01-26",
+        "path": "희망대초-매송중-야탑고-강릉영동대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56636"
+      },
+      {
+        "kboId": "56639",
+        "name": "천정민",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "외야수",
+        "backNo": "136",
+        "birthDate": "2002-09-26",
+        "path": "아라초-마산동중-용마고-중앙대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56639"
+      },
+      {
+        "kboId": "54611",
+        "name": "최지웅",
+        "team": "KIA",
+        "teamColumn": "KIA",
+        "position": "투수",
+        "backNo": "150",
+        "birthDate": "2004-05-14",
+        "path": "탄천초-송전중-청담고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54611"
+      },
+      {
+        "kboId": "54268",
+        "name": "강태완",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "외야수",
+        "backNo": "124",
+        "birthDate": "2004-09-17",
+        "path": "대청초(장유리틀)-원동중-대구상원고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54268"
+      },
+      {
+        "kboId": "55216",
+        "name": "김성재",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "포수",
+        "backNo": "",
+        "birthDate": "2006-05-16",
+        "path": "온곡초(남양주야놀유소년)-청원중-선린인터넷고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55216"
+      },
+      {
+        "kboId": "56208",
+        "name": "남태웅",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "내야수",
+        "backNo": "118",
+        "birthDate": "2007-01-08",
+        "path": "복명초(수성리틀)-대구중-대구상원고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56208"
+      },
+      {
+        "kboId": "50205",
+        "name": "박강민",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "투수",
+        "backNo": "57",
+        "birthDate": "1997-11-12",
+        "path": "북정초-원동중-경남고-강릉영동대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50205"
+      },
+      {
+        "kboId": "53298",
+        "name": "백승우",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "투수",
+        "backNo": "112",
+        "birthDate": "2000-01-04",
+        "path": "장산초(부산동래마린스리틀)-대신중-부산고-동아대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53298"
+      },
+      {
+        "kboId": "56220",
+        "name": "안치호",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "투수",
+        "backNo": "120",
+        "birthDate": "2004-11-30",
+        "path": "서원초-세광중-세광고-동의과학대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56220"
+      },
+      {
+        "kboId": "51200",
+        "name": "양현진",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "외야수",
+        "backNo": "100",
+        "birthDate": "2002-01-03",
+        "path": "길주초(안동시리틀)-포항중-영문고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51200"
+      },
+      {
+        "kboId": "56214",
+        "name": "엄지민",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "외야수",
+        "backNo": "114",
+        "birthDate": "2005-11-22",
+        "path": "대전유천초-한밭중-공주고-동의과학대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56214"
+      },
+      {
+        "kboId": "55224",
+        "name": "이선우",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "내야수",
+        "backNo": "",
+        "birthDate": "2006-04-04",
+        "path": "일산신일초(일산서구리틀)-충암중-충암고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55224"
+      },
+      {
+        "kboId": "56226",
+        "name": "이종혁",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "내야수",
+        "backNo": "126",
+        "birthDate": "2000-02-22",
+        "path": "사당초-언북중-서울디자인고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56226"
+      },
+      {
+        "kboId": "53293",
+        "name": "임서준",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "내야수",
+        "backNo": "125",
+        "birthDate": "2004-07-11",
+        "path": "중대초-양천중-경동고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53293"
+      },
+      {
+        "kboId": "50211",
+        "name": "제환유",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "투수",
+        "backNo": "93",
+        "birthDate": "2000-09-30",
+        "path": "둔산초-공주중-공주고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50211"
+      },
+      {
+        "kboId": "69093",
+        "name": "지강혁",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "내야수",
+        "backNo": "105",
+        "birthDate": "2000-08-14",
+        "path": "광주서석초-광주동성중-광주동성고-KT",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=69093"
+      },
+      {
+        "kboId": "52208",
+        "name": "천현재",
+        "team": "두산",
+        "teamColumn": "두산",
+        "position": "외야수",
+        "backNo": "58",
+        "birthDate": "1999-07-05",
+        "path": "연제초(부산남구리틀)-신정중-부경고-성균관대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52208"
+      },
+      {
+        "kboId": "54511",
+        "name": "김대현",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "외야수",
+        "backNo": "",
+        "birthDate": "2003-11-15",
+        "path": "광주서림초-광주충장BC-광주제일고-부산과학기술대-롯데",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54511"
+      },
+      {
+        "kboId": "52140",
+        "name": "김주완",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "106",
+        "birthDate": "2003-08-27",
+        "path": "감천초-대동중-경남고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52140"
+      },
+      {
+        "kboId": "55507",
+        "name": "김태균",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "107",
+        "birthDate": "2006-07-31",
+        "path": "(부산동래구리틀)-대신중-경남고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55507"
+      },
+      {
+        "kboId": "56541",
+        "name": "김현수",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "141",
+        "birthDate": "2007-09-19",
+        "path": "부안초(안양시리틀)-영동중-장충고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56541"
+      },
+      {
+        "kboId": "56539",
+        "name": "남해담",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "139",
+        "birthDate": "2007-06-05",
+        "path": "감천초-신정중-물금고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56539"
+      },
+      {
+        "kboId": "54502",
+        "name": "박성준",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "145",
+        "birthDate": "2005-11-28",
+        "path": "강남초-휘문중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54502"
+      },
+      {
+        "kboId": "55568",
+        "name": "박세현",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "2006-01-21",
+        "path": "중화초(중랑구리틀)-상명중-배명고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55568"
+      },
+      {
+        "kboId": "55508",
+        "name": "박지훈",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "내야수",
+        "backNo": "108",
+        "birthDate": "2002-05-14",
+        "path": "서흥초-동산중-동산고-송원대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55508"
+      },
+      {
+        "kboId": "53560",
+        "name": "석상호",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "133",
+        "birthDate": "2000-04-14",
+        "path": "효제초-덕수중-청원고-고려대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53560"
+      },
+      {
+        "kboId": "54512",
+        "name": "소한빈",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "외야수",
+        "backNo": "147",
+        "birthDate": "2005-08-23",
+        "path": "서울중대초-배명중-서울고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54512"
+      },
+      {
+        "kboId": "56544",
+        "name": "손준이",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "143",
+        "birthDate": "2004-01-07",
+        "path": "부천신도초-부천중-야탑고-부산과학기술대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56544"
+      },
+      {
+        "kboId": "54509",
+        "name": "안우진",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "내야수",
+        "backNo": "148",
+        "birthDate": "2005-07-22",
+        "path": "서울학동초-덕수중-휘문고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54509"
+      },
+      {
+        "kboId": "54513",
+        "name": "유제모",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "외야수",
+        "backNo": "142",
+        "birthDate": "2003-02-26",
+        "path": "안양부흥초(안양시동안구리틀)-평촌중-야탑고-동의과학대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54513"
+      },
+      {
+        "kboId": "56538",
+        "name": "이로화",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "내야수",
+        "backNo": "",
+        "birthDate": "2006-07-31",
+        "path": "송정동초(광주광산구리틀)-충장중-광주제일고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56538"
+      },
+      {
+        "kboId": "54595",
+        "name": "이선우",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "외야수",
+        "backNo": "146",
+        "birthDate": "2005-02-22",
+        "path": "충암초(서대문구리틀)-서울신월중-덕수고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54595"
+      },
+      {
+        "kboId": "56514",
+        "name": "이지훈",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "내야수",
+        "backNo": "114",
+        "birthDate": "2003-01-13",
+        "path": "수유초-자양중-신일고-동원과학기술대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56514"
+      },
+      {
+        "kboId": "53594",
+        "name": "이태연",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "121",
+        "birthDate": "2004-02-21",
+        "path": "화곡초-영남중-충암고-롯데-상무",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53594"
+      },
+      {
+        "kboId": "54505",
+        "name": "전하원",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "투수",
+        "backNo": "144",
+        "birthDate": "2005-10-30",
+        "path": "수유초-충암중-서울자동차고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54505"
+      },
+      {
+        "kboId": "55506",
+        "name": "한승현",
+        "team": "롯데",
+        "teamColumn": "롯데",
+        "position": "외야수",
+        "backNo": "136",
+        "birthDate": "2006-10-29",
+        "path": "신양초(강동구리틀)-건대부중-장충고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55506"
+      },
+      {
+        "kboId": "54708",
+        "name": "권현",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "포수",
+        "backNo": "105",
+        "birthDate": "2005-02-23",
+        "path": "사당초-언북중-장충고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54708"
+      },
+      {
+        "kboId": "56713",
+        "name": "김동휘",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "외야수",
+        "backNo": "113",
+        "birthDate": "2000-03-30",
+        "path": "송정동초-충장중-진흥고-송원대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56713"
+      },
+      {
+        "kboId": "53702",
+        "name": "김해찬",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "외야수",
+        "backNo": "118",
+        "birthDate": "2004-05-25",
+        "path": "대전유천초-한밭중-대전고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53702"
+      },
+      {
+        "kboId": "50720",
+        "name": "남지민",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "투수",
+        "backNo": "107",
+        "birthDate": "2001-02-12",
+        "path": "양정초-개성중-부산정보고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50720"
+      },
+      {
+        "kboId": "55711",
+        "name": "박부성",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "투수",
+        "backNo": "111",
+        "birthDate": "2000-01-17",
+        "path": "마포초(용산구리틀)-선린중-배명고-동의대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55711"
+      },
+      {
+        "kboId": "56702",
+        "name": "박상목",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "외야수",
+        "backNo": "102",
+        "birthDate": "2001-03-23",
+        "path": "(덕양구리틀)-단월중-신일고-홍익대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56702"
+      },
+      {
+        "kboId": "54701",
+        "name": "승지환",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "투수",
+        "backNo": "106",
+        "birthDate": "2005-07-25",
+        "path": "안흥초(이천시리틀)-모가중-유신고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=54701"
+      },
+      {
+        "kboId": "55708",
+        "name": "엄요셉",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "투수",
+        "backNo": "108",
+        "birthDate": "2006-05-29",
+        "path": "오산광성초(오산시리틀)-성일중-구리인창고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55708"
+      },
+      {
+        "kboId": "53795",
+        "name": "이민준",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "내야수",
+        "backNo": "109",
+        "birthDate": "2004-02-02",
+        "path": "화곡초-강남중-장충고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53795"
+      },
+      {
+        "kboId": "54706",
+        "name": "이승현",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "포수",
+        "backNo": "110",
+        "birthDate": "2005-06-08",
+        "path": "도산초-경상중-경북고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54706"
+      },
+      {
+        "kboId": "56705",
+        "name": "이재환",
+        "team": "한화",
+        "teamColumn": "한화",
+        "position": "외야수",
+        "backNo": "05",
+        "birthDate": "2006-05-03",
+        "path": "호계초(함안리틀)-경남함안BSC-물금고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56705"
+      },
+      {
+        "kboId": "50905",
+        "name": "강태경",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "100",
+        "birthDate": "2001-07-26",
+        "path": "양덕초-잠신중-배명고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50905"
+      },
+      {
+        "kboId": "55933",
+        "name": "김동현",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "포수",
+        "backNo": "103",
+        "birthDate": "2002-08-30",
+        "path": "부산대연초-사직중-부산공고-성균관대",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=55933"
+      },
+      {
+        "kboId": "56936",
+        "name": "김요엘",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "136",
+        "birthDate": "2007-04-04",
+        "path": "방배초-서울이수중-휘문고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56936"
+      },
+      {
+        "kboId": "54909",
+        "name": "김재민",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "포수",
+        "backNo": "117",
+        "birthDate": "2005-08-31",
+        "path": "광주서림초-진흥중-진흥고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54909"
+      },
+      {
+        "kboId": "68454",
+        "name": "김태우",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "114",
+        "birthDate": "1999-09-15",
+        "path": "대구옥산초-경운중-경북고-삼성",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=68454"
+      },
+      {
+        "kboId": "67956",
+        "name": "김태현",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "1998-03-21",
+        "path": "김해삼성초-내동중-김해고-NC-경찰-NC",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=67956"
+      },
+      {
+        "kboId": "52980",
+        "name": "박성재",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "포수",
+        "backNo": "102",
+        "birthDate": "2003-03-21",
+        "path": "가고파초(창원리틀)-마산동중-용마고-상무",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52980"
+      },
+      {
+        "kboId": "56943",
+        "name": "윤성환",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "143",
+        "birthDate": "2003-06-19",
+        "path": "범계초(안양시리틀)-개군중-경기항공고-연세대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56943"
+      },
+      {
+        "kboId": "52907",
+        "name": "이한",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "내야수",
+        "backNo": "122",
+        "birthDate": "2003-08-25",
+        "path": "안산해양초(안산리틀)-수원북중-유신고-NC",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52907"
+      },
+      {
+        "kboId": "56940",
+        "name": "정튼튼",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "투수",
+        "backNo": "140",
+        "birthDate": "2003-06-01",
+        "path": "광주서림초-진흥중-효천고-고려대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56940"
+      },
+      {
+        "kboId": "51701",
+        "name": "조현진",
+        "team": "NC",
+        "teamColumn": "NC",
+        "position": "내야수",
+        "backNo": "116",
+        "birthDate": "2002-09-10",
+        "path": "아라초(함안리틀)-창원신월중-마산고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51701"
+      },
+      {
+        "kboId": "50811",
+        "name": "길지석",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "112",
+        "birthDate": "2001-11-02",
+        "path": "(미추홀구리틀)-매송중-야탑고-SK",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50811"
+      },
+      {
+        "kboId": "53708",
+        "name": "김예준",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "내야수",
+        "backNo": "117",
+        "birthDate": "2004-10-28",
+        "path": "인천당하초(인천서구리틀)-재능중-강릉고-한화",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=53708"
+      },
+      {
+        "kboId": "56810",
+        "name": "김재훈",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "110",
+        "birthDate": "2007-03-12",
+        "path": "솔빛초-솔빛중-한광BC",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56810"
+      },
+      {
+        "kboId": "53805",
+        "name": "김준영",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "03",
+        "birthDate": "2003-11-18",
+        "path": "변동초(대전중구리틀)-충남중-세광고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=53805"
+      },
+      {
+        "kboId": "56809",
+        "name": "김태현",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "109",
+        "birthDate": "2007-01-03",
+        "path": "광주수창초-진흥중-진흥고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56809"
+      },
+      {
+        "kboId": "55895",
+        "name": "김현재",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "09",
+        "birthDate": "2006-07-03",
+        "path": "대전새여울초(대전유성리틀)-한밭중-대전고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55895"
+      },
+      {
+        "kboId": "52864",
+        "name": "박상후",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "2003-08-05",
+        "path": "칠성초(수성리틀)-대구중-경북고-SSG",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52864"
+      },
+      {
+        "kboId": "56816",
+        "name": "이명원",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "포수",
+        "backNo": "116",
+        "birthDate": "2000-01-25",
+        "path": "상우고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56816"
+      },
+      {
+        "kboId": "56806",
+        "name": "이승빈",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "외야수",
+        "backNo": "106",
+        "birthDate": "2006-11-24",
+        "path": "대구옥산초(영남리틀)-경운중-경북고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=56806"
+      },
+      {
+        "kboId": "51295",
+        "name": "임태윤",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "내야수",
+        "backNo": "118",
+        "birthDate": "2002-08-12",
+        "path": "영랑초-설악중-경동고-두산",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51295"
+      },
+      {
+        "kboId": "67123",
+        "name": "전준호",
+        "team": "SSG",
+        "teamColumn": "SSG",
+        "position": "포수",
+        "backNo": "44",
+        "birthDate": "1998-07-01",
+        "path": "양도초-강남중-청원고-LG",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=67123"
+      },
+      {
+        "kboId": "50360",
+        "name": "김동혁",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "101",
+        "birthDate": "2001-12-27",
+        "path": "서울대왕초(강남구리틀)-영동중-덕수고-키움-상무",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=50360"
+      },
+      {
+        "kboId": "52398",
+        "name": "김리안",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "포수",
+        "backNo": "103",
+        "birthDate": "2003-11-25",
+        "path": "가동초-휘문중-휘문고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=52398"
+      },
+      {
+        "kboId": "51303",
+        "name": "김시앙",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "포수",
+        "backNo": "121",
+        "birthDate": "2001-10-31",
+        "path": "광주대성초-광주동성중-광주동성고-키움-상무",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=51303"
+      },
+      {
+        "kboId": "51393",
+        "name": "김준형",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "",
+        "birthDate": "2002-07-12",
+        "path": "서울이수초-성남중-성남고-키움",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=51393"
+      },
+      {
+        "kboId": "56313",
+        "name": "김태언",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "113",
+        "birthDate": "2006-07-25",
+        "path": "진북초-수원북중-세광고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56313"
+      },
+      {
+        "kboId": "69363",
+        "name": "박준형",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "포수",
+        "backNo": "",
+        "birthDate": "1999-03-07",
+        "path": "화순초-무등중-광주제일고-키움",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=69363"
+      },
+      {
+        "kboId": "55300",
+        "name": "손힘찬",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "100",
+        "birthDate": "2002-07-17",
+        "path": "화산초(수원영통구리틀)-현도중-세광고-동아대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=55300"
+      },
+      {
+        "kboId": "54306",
+        "name": "심휘윤",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "외야수",
+        "backNo": "111",
+        "birthDate": "2005-05-28",
+        "path": "사당초-언북중-배재고",
+        "detailHref": "/Futures/Player/HitterDetail.aspx?playerId=54306"
+      },
+      {
+        "kboId": "52397",
+        "name": "이명종",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "85",
+        "birthDate": "2002-12-05",
+        "path": "석교초-세광중-세광고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52397"
+      },
+      {
+        "kboId": "56308",
+        "name": "이승재",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "118",
+        "birthDate": "2005-04-07",
+        "path": "사당초-대치중-배명고-용인예술과학대",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=56308"
+      },
+      {
+        "kboId": "67603",
+        "name": "이승호",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "47",
+        "birthDate": "1999-02-08",
+        "path": "김해삼성초-개성중-경남고-KIA-넥센",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=67603"
+      },
+      {
+        "kboId": "52396",
+        "name": "주승빈",
+        "team": "키움",
+        "teamColumn": "고양",
+        "position": "투수",
+        "backNo": "120",
+        "birthDate": "2004-03-06",
+        "path": "구운초(수원권선구리틀)-영동중-서울고",
+        "detailHref": "/Futures/Player/PitcherDetail.aspx?playerId=52396"
+      }
+    ]
+  },
+  "sangmuIntake": {
+    "scanned": 46,
+    "activeFutures": 41,
+    "excludedRetired": [
+      {
+        "kboId": "60911",
+        "name": "김영수",
+        "href": "/Record/Retire/Pitcher.aspx?playerId=60911"
+      },
+      {
+        "kboId": "79903",
+        "name": "김정혁",
+        "href": "/Record/Retire/Hitter.aspx?playerId=79903"
+      },
+      {
+        "kboId": "79181",
+        "name": "윤찬수",
+        "href": "/Record/Retire/Pitcher.aspx?playerId=79181"
+      },
+      {
+        "kboId": "79933",
+        "name": "홍순민",
+        "href": "/Record/Retire/Hitter.aspx?playerId=79933"
+      },
+      {
+        "kboId": "61363",
+        "name": "문우람",
+        "href": "/Record/Retire/Hitter.aspx?playerId=61363"
+      }
+    ],
+    "originJudgement": "출신교 경로의 마지막 구단 토큰 (SK→SSG, 넥센→키움 정규화)",
+    "manualOrigin": {
+      "50441": {
+        "name": "황동재",
+        "origin": "삼성",
+        "evidence": [
+          "https://www.yna.co.kr/view/AKR20250814115000007 (연합뉴스 2025-08-14: 삼성 황동재 상무 입대)",
+          "https://www.idaegu.co.kr/news/articleView.html?idxno=519955 (대구신문: 삼성 황동재·양도근 상무 입대)",
+          "https://sports.donga.com/sports/article/all/20250814/132188790/1 (동아: 삼성 황동재 등 14명 합격)"
+        ]
+      }
+    },
+    "players": [
+      {
+        "kboId": "54810",
+        "name": "김규민",
+        "origin": "SSG",
+        "position": "포수",
+        "backNo": "10",
+        "birthDate": "2002-08-23",
+        "path": "동수원초(수원영통구리틀)-매향중-공주고-여주대-SSG-상무"
+      },
+      {
+        "kboId": "51713",
+        "name": "김규연",
+        "origin": "한화",
+        "position": "투수",
+        "backNo": "60",
+        "birthDate": "2002-08-23",
+        "path": "동수원초(수원영통구리틀)-매향중-공주고-한화-상무"
+      },
+      {
+        "kboId": "51715",
+        "name": "김기중",
+        "origin": "한화",
+        "position": "투수",
+        "backNo": "47",
+        "birthDate": "2002-11-16",
+        "path": "의왕부곡초-매송중-유신고-한화-상무"
+      },
+      {
+        "kboId": "54401",
+        "name": "김대호",
+        "origin": "삼성",
+        "position": "투수",
+        "backNo": "41",
+        "birthDate": "2001-10-15",
+        "path": "제주신광초-이평중-군산상고-고려대-삼성-상무"
+      },
+      {
+        "kboId": "54614",
+        "name": "김두현",
+        "origin": "KIA",
+        "position": "내야수",
+        "backNo": "52",
+        "birthDate": "2003-04-25",
+        "path": "수원신곡초-공주중-공주고-동원대-KIA-상무"
+      },
+      {
+        "kboId": "54913",
+        "name": "김민규",
+        "origin": "NC",
+        "position": "투수",
+        "backNo": "15",
+        "birthDate": "2001-09-07",
+        "path": "광주서석초-진흥중-광주동성고-경성대-NC-상무"
+      },
+      {
+        "kboId": "54608",
+        "name": "김민재",
+        "origin": "KIA",
+        "position": "투수",
+        "backNo": "30",
+        "birthDate": "2003-07-08",
+        "path": "효제초-청량중-신일고-동원과학기술대-KIA-상무"
+      },
+      {
+        "kboId": "52002",
+        "name": "김병준",
+        "origin": "KT",
+        "position": "외야수",
+        "backNo": "14",
+        "birthDate": "2003-07-03",
+        "path": "창촌초(안산리틀)-안산중앙중-유신고-KT-상무"
+      },
+      {
+        "kboId": "52105",
+        "name": "김성우",
+        "origin": "LG",
+        "position": "포수",
+        "backNo": "63",
+        "birthDate": "2003-11-15",
+        "path": "성동초-건대부중-배재고-LG-상무"
+      },
+      {
+        "kboId": "54905",
+        "name": "김세훈",
+        "origin": "NC",
+        "position": "내야수",
+        "backNo": "25",
+        "birthDate": "2005-04-04",
+        "path": "매호초(경산시리틀)-경운중-경북고-NC-상무"
+      },
+      {
+        "kboId": "55043",
+        "name": "김재원",
+        "origin": "KT",
+        "position": "투수",
+        "backNo": "43",
+        "birthDate": "2006-08-21",
+        "path": "서울청구초-홍은중-장충고-KT-상무"
+      },
+      {
+        "kboId": "55122",
+        "name": "김종운",
+        "origin": "LG",
+        "position": "투수",
+        "backNo": "49",
+        "birthDate": "2006-09-11",
+        "path": "국산초(거제시리틀)-동강중-창원공고-LG-상무"
+      },
+      {
+        "kboId": "54460",
+        "name": "김호진",
+        "origin": "삼성",
+        "position": "내야수",
+        "backNo": "53",
+        "birthDate": "2005-07-16",
+        "path": "송정동초-충장중-진흥고-삼성-상무"
+      },
+      {
+        "kboId": "55710",
+        "name": "이민재",
+        "origin": "한화",
+        "position": "외야수",
+        "backNo": "9",
+        "birthDate": "2004-03-07",
+        "path": "호동초(안산리틀)-안산중-비봉고-동원과학기술대-한화-상무"
+      },
+      {
+        "kboId": "52704",
+        "name": "이상혁",
+        "origin": "한화",
+        "position": "외야수",
+        "backNo": "31",
+        "birthDate": "2001-09-14",
+        "path": "수원영화초(군포시리틀)-수원북중-장안고-강릉영동대-한화-상무"
+      },
+      {
+        "kboId": "53302",
+        "name": "이승원",
+        "origin": "키움",
+        "position": "내야수",
+        "backNo": "50",
+        "birthDate": "2004-07-02",
+        "path": "도봉초(노원구리틀)-상명중-덕수고-키움-상무"
+      },
+      {
+        "kboId": "55712",
+        "name": "이승현",
+        "origin": "한화",
+        "position": "내야수",
+        "backNo": "8",
+        "birthDate": "2002-07-23",
+        "path": "부천상인초(원미구리틀)-부천중-포항제철고-성균관대-한화-상무"
+      },
+      {
+        "kboId": "55832",
+        "name": "이율예",
+        "origin": "SSG",
+        "position": "포수",
+        "backNo": "22",
+        "birthDate": "2006-11-21",
+        "path": "중리초(함안리틀)-원동중-강릉고-SSG-상무"
+      },
+      {
+        "kboId": "50354",
+        "name": "이종민",
+        "origin": "키움",
+        "position": "투수",
+        "backNo": "48",
+        "birthDate": "2001-06-04",
+        "path": "성동초-덕수중-성남고-키움-상무"
+      },
+      {
+        "kboId": "55511",
+        "name": "이태경",
+        "origin": "롯데",
+        "position": "내야수",
+        "backNo": "11",
+        "birthDate": "2002-11-24",
+        "path": "광주송정동초-무등중-광주제일고-한일장신대-롯데-상무"
+      },
+      {
+        "kboId": "55663",
+        "name": "이호민",
+        "origin": "KIA",
+        "position": "투수",
+        "backNo": "38",
+        "birthDate": "2006-08-26",
+        "path": "해남북일초(해남군리틀)-이평중BC-전주고-KIA-상무"
+      },
+      {
+        "kboId": "55164",
+        "name": "박관우",
+        "origin": "LG",
+        "position": "외야수",
+        "backNo": "64",
+        "birthDate": "2006-03-22",
+        "path": "욱수초(경산시리틀)-경운중-경북고-LG-상무"
+      },
+      {
+        "kboId": "53139",
+        "name": "박명근",
+        "origin": "LG",
+        "position": "투수",
+        "backNo": "39",
+        "birthDate": "2004-03-27",
+        "path": "수택초(구리리틀)-구리인창중-라온고-LG-상무"
+      },
+      {
+        "kboId": "54807",
+        "name": "박성빈",
+        "origin": "SSG",
+        "position": "투수",
+        "backNo": "19",
+        "birthDate": "2003-12-29",
+        "path": "서울도곡초(강남구리틀)-대치중-휘문고-사이버한국외대(얼리 D)-SSG-상무"
+      },
+      {
+        "kboId": "54213",
+        "name": "박지호",
+        "origin": "두산",
+        "position": "투수",
+        "backNo": "59",
+        "birthDate": "2003-07-02",
+        "path": "부성초(천안유소년리틀)-모가중-장안고-동강대-두산-상무"
+      },
+      {
+        "kboId": "54805",
+        "name": "박지환",
+        "origin": "SSG",
+        "position": "외야수",
+        "backNo": "0",
+        "birthDate": "2005-07-12",
+        "path": "군산남초-군산중-세광고-SSG-상무"
+      },
+      {
+        "kboId": "53992",
+        "name": "박한결",
+        "origin": "NC",
+        "position": "외야수",
+        "backNo": "13",
+        "birthDate": "2004-04-26",
+        "path": "본리초-경복중-경북고-NC-상무"
+      },
+      {
+        "kboId": "54803",
+        "name": "최현석",
+        "origin": "SSG",
+        "position": "투수",
+        "backNo": "21",
+        "birthDate": "2003-10-16",
+        "path": "서흥초-동산중-동산고-부산과학기술대-SSG-상무"
+      },
+      {
+        "kboId": "54149",
+        "name": "정지헌",
+        "origin": "LG",
+        "position": "투수",
+        "backNo": "75",
+        "birthDate": "2003-01-01",
+        "path": "동수원초(수원영통리틀)-매향중-유신고-고려대(얼리 드래프트)-LG-상무"
+      },
+      {
+        "kboId": "54815",
+        "name": "정현승",
+        "origin": "SSG",
+        "position": "외야수",
+        "backNo": "17",
+        "birthDate": "2001-10-24",
+        "path": "현산초-부천중-덕수고-인하대-SSG-상무"
+      },
+      {
+        "kboId": "54567",
+        "name": "강성우",
+        "origin": "롯데",
+        "position": "내야수",
+        "backNo": "51",
+        "birthDate": "2005-04-12",
+        "path": "대전유천초-한밭중-청주고-롯데-상무"
+      },
+      {
+        "kboId": "51359",
+        "name": "장재영",
+        "origin": "키움",
+        "position": "외야수",
+        "backNo": "16",
+        "birthDate": "2002-05-10",
+        "path": "갈산초-서울신월중-덕수고-키움-상무"
+      },
+      {
+        "kboId": "53991",
+        "name": "신용석",
+        "origin": "NC",
+        "position": "포수",
+        "backNo": "42",
+        "birthDate": "2003-10-11",
+        "path": "양덕초-마산동중-마산고-NC-상무"
+      },
+      {
+        "kboId": "52873",
+        "name": "신헌민",
+        "origin": "SSG",
+        "position": "투수",
+        "backNo": "33",
+        "birthDate": "2002-07-19",
+        "path": "학강초-광주동성중-광주동성고-SSG-상무"
+      },
+      {
+        "kboId": "50441",
+        "name": "황동재",
+        "origin": "삼성",
+        "position": "투수",
+        "backNo": "18",
+        "birthDate": "2001-11-03",
+        "path": "율하초-경운중-경북고-상무"
+      },
+      {
+        "kboId": "53898",
+        "name": "송영진",
+        "origin": "SSG",
+        "position": "투수",
+        "backNo": "55",
+        "birthDate": "2004-05-28",
+        "path": "대전유천초-한밭중-대전고-SSG-상무"
+      },
+      {
+        "kboId": "54561",
+        "name": "전미르",
+        "origin": "롯데",
+        "position": "투수",
+        "backNo": "66",
+        "birthDate": "2005-08-15",
+        "path": "본리초-협성경복중-경북고-롯데-상무"
+      },
+      {
+        "kboId": "54344",
+        "name": "고영우",
+        "origin": "키움",
+        "position": "내야수",
+        "backNo": "23",
+        "birthDate": "2001-06-21",
+        "path": "부산대연초(사상구리틀)-대동중-경남고-성균관대-키움-상무"
+      },
+      {
+        "kboId": "54408",
+        "name": "양도근",
+        "origin": "삼성",
+        "position": "내야수",
+        "backNo": "68",
+        "birthDate": "2003-02-06",
+        "path": "인천동막초-상인천중-장안고-강릉영동대-삼성-상무"
+      },
+      {
+        "kboId": "52558",
+        "name": "진승현",
+        "origin": "롯데",
+        "position": "투수",
+        "backNo": "20",
+        "birthDate": "2003-09-05",
+        "path": "본리초-협성경복중-경북고-롯데-상무"
+      },
+      {
+        "kboId": "54205",
+        "name": "여동건",
+        "origin": "두산",
+        "position": "내야수",
+        "backNo": "27",
+        "birthDate": "2005-08-04",
+        "path": "가동초-자양중-서울고-두산-상무"
+      }
+    ]
+  },
+  "photoQueue": {
+    "policy": "사진 유무는 등록 조건 아님 — 공식 CDN 200이면 선적, 404는 blank state fallback + 이 큐에서 census 트랙이 재시도",
+    "cdn404": [
+      {
+        "kboId": "54104"
+      },
+      {
+        "kboId": "56099"
+      },
+      {
+        "kboId": "52661"
+      },
+      {
+        "kboId": "53663"
+      },
+      {
+        "kboId": "54611"
+      },
+      {
+        "kboId": "54502"
+      },
+      {
+        "kboId": "54512"
+      },
+      {
+        "kboId": "54509"
+      },
+      {
+        "kboId": "54595"
+      },
+      {
+        "kboId": "54708"
+      },
+      {
+        "kboId": "50720"
+      },
+      {
+        "kboId": "56702"
+      },
+      {
+        "kboId": "54701"
+      }
+    ],
+    "downloaded": 155
+  }
+}

@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import CountryFlag from "@/components/player/CountryFlag";
 import type { Nationality } from "@/lib/utils/player-nationality";
+import { militaryLabel } from "@/lib/utils/military-label";
 
 // Hero 이미지: 검수 통과 선수만 노출 (default deny).
 // v2 cutout 품질 이슈로 allowlist 방식 전환 (2026-04-28).
@@ -204,9 +205,12 @@ export default function PlayerHero({
                 {position}
               </div>
             )}
-            {military && (
-              <div className="inline-flex w-fit items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-bold text-white/80 whitespace-nowrap">
-                🎖️ {military} 복무 중
+            {militaryLabel(military) && (
+              <div
+                data-testid="military-badge"
+                className="inline-flex w-fit items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-bold text-white/80 whitespace-nowrap"
+              >
+                🎖️ {militaryLabel(military)}
               </div>
             )}
             {nationality && (
