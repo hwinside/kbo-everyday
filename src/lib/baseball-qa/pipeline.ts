@@ -1610,6 +1610,20 @@ function mentionsTeam(tokens: string[]): boolean {
           rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
       })));
 }
+/**
+ * 우리 앱에 **실재하는 기능명**의 `<head><metric>` 결합형 폐쇄집합 (2026-08-23).
+ *
+ * `<X> <지표>` 정규식이 잡는 head 는 지표어 바로 앞 토큰이라, 기능명이 띄어 써지면
+ * (`직관 기록`) head 가 기능명의 앞부분(`직관`)이 되어 미결속 엔티티로 오인된다.
+ *
+ * ⚠️ **결합형 exact 일치 전용**이다. 구성 낱말을 어휘집에 넣으면 동음이의 일반어까지
+ *   야구 어휘로 승격된다(`직관` = 直觀 intuition). 그 축은 여기서 열지 않는다.
+ * ⚠️ 항목 추가 기준은 "우리 앱에 그 기능이 실제로 있는가" 하나다 — 표현 변이를 쫓지 않는다.
+ */
+const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set([
+  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
+  "직관기록",
+]);
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
@@ -1726,6 +1740,11 @@ const HEAD_NON_ENTITY_UNITS: readonly string[] = [
   "그러면", "그래서", "그리고", "그런데", "그럼", "근데", "혹시", "일단",
   "무엇", "무슨", "어떤", "어느", "언제", "어디", "누구", "얼마", "뭔지", "뭔가", "뭔데",
   "뭐라고", "뭐라", "뭐야", "뭐지", "뭐", "뭔", "왜", "몇",
+  // `누` — `누가` 는 `누구+가` 의 축약형이라 `stripNameParticle` 이 조사 `가` 를 떼면
+  //   `누` 만 남고, 그랬 `누구` 항목으로는 안 잡힌다 (2026-08-22 48h 로그 실측:
+  //   `오늘 롯데 경기 누가 안타쳐서 7점 득점 낸거야` 가 head=`누가` → 미결속 → 되묻기).
+  // ⚠️ 의문사는 위 주석과 같은 근거로 **문법적으로 닫힌 부류**라 이 항목 추가로 열거가 자라지 않는다.
+  "누",
   "이랑", "하고", "이고", "이며", "예요", "에요", "인가", "인지",
   "고", "랑", "며", "은", "는", "이", "가", "을", "를", "도", "만", "과", "와",
   "의", "에", "요", "야", "나",
@@ -1823,6 +1842,19 @@ function classifyOneNamedStat(
   if (matchGlossary(glossary, combined) !== null) return "term_question";
   if (BASEBALL_VOCABULARY.includes(head.toLowerCase())) return "term_question";
   if (BASEBALL_VOCABULARY.includes(combined.toLowerCase())) return "term_question";
+  // ②-a **우리 서비스 기능명 결합형**(2026-08-23 배포 후 end-user QA).
+  //
+  //   `직관 기록` 은 head `직관` 이 로스터·사전·어휘집 어디에도 없어 미결속으로 떨어졌고,
+  //   실 provider 의도 프로브가 3/3 `RECORD` 를 내서 **질문에 사람 이름이 없는데 "앞말이
+  //   선수 이름인지 확인하지 못했습니다"** 로 끝났다(프로덕션 3/3 고정 재현).
+  //
+  // ⚠️ **결합형 exact 일치로만 판정한다** — bare `직관` 을 어휘집에 넣으면 'intuition'
+  //   일반어(`내 직관이 맞아?`·`직관은 논리와 달라?`)까지 라우터·validator 어휘로 승격된다
+  //   (삼순 2026-08-23 NO-GO ②). 여기서 여는 것은 `직관`+`기록` 이 붙은 그 한 결합형뿐이고,
+  //   `직관` 단독은 종전 그대로 야구 어휘가 아니다.
+  //
+  // ⚠️ 폐쇄집합이다 — 우리 앱에 실재하는 기능명만 넣는다. 반례를 따라 자랄 자리가 없다.
+  if (PRODUCT_FEATURE_COMPOUNDS.has(combined.toLowerCase())) return "term_question";
 
   // ②-b **head 가 지시어·의문사뿐이면 `<X>` 자체가 없다**(2026-08-08 전건 감사 실측).
   //   `그 안타 기준이 머야`·`안타는 뭐고 홈런은 뭐에요?` 는 지시어/의문사 + 지표어일 뿐인데
@@ -1836,6 +1868,21 @@ function classifyOneNamedStat(
   // ⚠️ 분해 단위도 **문법 표지만** 쓴다(`HEAD_NON_ENTITY_UNITS`). 요청 동사(`주`·`해`)까지
   //   섞은 일반 집합을 쓰면 같은 함정이 되살아난다(`GRAMMATICAL_TAIL_UNITS` 주석의 `도어`).
   if (decomposesToUnits(head, HEAD_NON_ENTITY_LONGEST_FIRST)) return "none";
+
+  // ②-c **숫자로 시작하는 head 는 엔티티일 수 없다**(2026-08-22 48h 로그 전수 실측).
+  //
+  //   `31호 홈런`·`무사 주자1루 4점차면 세이브`·`1루타 2루타 3루카 홈런` 에서 정규식이 잡는
+  //   head 는 `31호`·`4점차면`·`3루카` 다. 전부 수사(數詞)인데 로스터·구단·사전 어디에도
+  //   없어 미결속으로 떨어졌고, 그 결과 **질문에 사람 이름이 아예 없는데 "앞말이 선수
+  //   이름인지 확인하지 못했습니다" 되묻기**가 나갔다(48h 로그 stat_clarify 11건 중 3건).
+  //
+  // ⚠️ 이 판정은 **닫힌 집합**이다 — KBO 등록 선수명·구단명·별칭은 숫자로 시작하지 않는다.
+  //   열거가 자랄 자리가 없으므로 `open_language_never_closes_with_rules` 축과 무관하다.
+  //   열린 축(문장이 룰 질문인지 기록 요청인지)은 아래 ③ + LLM 3분기가 맡는다.
+  //
+  // ⚠️ 순서가 계약이다. ②-b 와 같은 이유로 **근거 검사 뒤**여야 한다. 앞에 두면 사전에
+  //   실제로 수록된 수사형 용어(`3루타`·`1루타`·`2사만루`)가 근거 확인 전에 잘려 나간다.
+  if (/^[0-9]/u.test(head)) return "none";
 
   // ③ 근거가 없다 — **미결속**. 여기서 판정을 멈춘다 (2026-08-10 하린아빠 방향 확정).
   //
@@ -3357,14 +3404,33 @@ export interface StoredQaFinal {
   ragQuestionNumericCount?: number | null;
   ragDiscardReason?: RagDiscardReason | null;
   ragDiscardNumericCount?: number | null;
+  /**
+   * 가드 소유 질문이지만 **`RULE_TERM` 재질의 답이 정규 검증을 통과**했음 표식
+   * (2026-08-22, 삼순 NO-GO P0②).
+   *
+   * 왜 필요한가 — `replayStoredFinalResult` 는 가드 소유 질문의 `llm` envelope 를
+   * 고정 응대문 exact 만 허용하고 나머지를 전량 거절한다(자유문장 서빙 0 계약).
+   * 그 계약을 그대로 둔 채 재질의 답을 저장하면 **재생이 정상답을 되묻기로 덮어쓴다**.
+   * 반대로 저장을 생략하면 `답 생성 → log 전 crash → 재시도` 에서 정상답을 잃고
+   * LLM 을 다시 태우거나 되묻기로 끝난다(message 단위 1회 소비 계약 위반).
+   *
+   * ⚠️ 이 표식은 **원시점 검증 결과**이지 재생 시점 재판정이 아니다(`toneCompliant` 와 같은 축).
+   *   재생 경로는 이 값이 `true` 일 때만 `llm` envelope 를 통과시킨다 — 구버전 envelope 에는
+   *   이 칸이 없으므로 자동으로 거절된다(fail-close 방향 기본값).
+   */
+  statRuleTermVerified?: boolean;
 }
 /**
- * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
+ * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안, 2026-08-22 `rule_term` 추가).
  *
- * 반환이 "record"/"narrative" 가 아니면 무조건 null — 호출측이 되묻기로 fail-close 한다.
- * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(서빙 경로 없음).
+ * 반환이 폐쇄집합 3토큰 밖이면 무조건 null — 호출측이 되묻기로 fail-close 한다.
+ * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(자유문장 서빙 경로 없음 — 이 계약은 불변).
+ *
+ * ⚠️ `rule_term` 은 **자유문장을 서빙하라는 토큰이 아니다**. "이 질문은 대상의 값이
+ *   아니라 룰·용어를 묻는다" 는 **가드 소유 부정** 신호일 뿐이고, 호출측은 그 신호를 받으면
+ *   일반 경로로 **재질의**해 `validateLlmResponse` 전수 검증을 그대로 통과시킨다.
  */
-export function parseStatIntentToken(rawText: string): "record" | "narrative" | null {
+export function parseStatIntentToken(rawText: string): "record" | "narrative" | "rule_term" | null {
   let row: Record<string, unknown>;
   try {
     row = JSON.parse(rawText.trim()) as Record<string, unknown>;
@@ -3378,6 +3444,7 @@ export function parseStatIntentToken(rawText: string): "record" | "narrative" | 
   const token = row.answer.trim();
   if (token === "RECORD") return "record";
   if (token === "NARRATIVE") return "narrative";
+  if (token === "RULE_TERM") return "rule_term";
   return null;
 }
 
@@ -3413,6 +3480,9 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
       ? { ragQuestionNumericCount: final.ragQuestionNumericCount } : {}),
     ...(isNonNegativeInteger(final.ragDiscardNumericCount)
       ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
+    // ⚠️ `=== true` 로만 복원한다 — 구버전·손상 envelope 의 truthy 값이 검증 통과로
+    //   오인되면 자유문장 서빙 0 계약이 조용히 뚚린다(provenance 는 값과 같은 조건에 결속).
+    ...(final.statRuleTermVerified === true ? { statRuleTermVerified: true } : {}),
   };
 }
 
@@ -3433,13 +3503,23 @@ async function replayStoredFinalResult(
   // 삼순 2026-08-14 재생 P0 + 결속 ③: 가드 소유 질문의 저장 envelope 재생은 수사 파서가
   // 아니라 **구조 판정**으로 닫는다 (A안과 동일 축 — 자유문장 서빙 0):
   //   · `cache` envelope → 전량 거절 (가드 소유 질문은 캐시 밖이다 — 존재 자체가 구버전)
-  //   · `llm` envelope → 현행 고정 응대문(`STAT_NARRATIVE_ANSWER`) exact 만 허용
+  //   · `llm` envelope → 현행 고정 응대문(`STAT_NARRATIVE_ANSWER`) exact,
+  //     또는 **원시점 검증을 통과한 `RULE_TERM` 재질의 답**(`statRuleTermVerified === true`)만 허용
   //   · 그 외는 전부 되묻기로 교체·재저장 (구버전 `374개` 단정 envelope 포함)
   // (소유 판정 재계산은 fail-close 방향 전용이다 — cacheable 재계산 금지 계약과 무관.)
+  //
+  // ⚠️ `statRuleTermVerified` 는 **자유문장 서빙 허가가 아니라 원시점 검증 완료 표식**이다
+  //   (2026-08-22 삼순 NO-GO P0②). 그 답은 생성 시점에 `validateLlmResponse`(톤·길이·링크·
+  //   범위)를 이미 전수 통과했고, 그 사실을 envelope 에 결속해 보존한 것이다. 이게 없으면
+  //   `답 생성 → log 전 crash → 재시도` 에서 정상답이 되묻기로 덮어쓰여 유저가 답을 잃는다.
+  //   구버전 envelope 에는 이 칸이 없으므로 자동 거절된다(fail-close 기본값).
   if (storedFinal.source === "llm" || storedFinal.source === "cache") {
     const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
     if (statGuardOwnsQuestion(question, glossary, players) && !(
-      storedFinal.source === "llm" && storedFinal.answer === STAT_NARRATIVE_ANSWER
+      storedFinal.source === "llm" && (
+        storedFinal.answer === STAT_NARRATIVE_ANSWER ||
+        storedFinal.statRuleTermVerified === true
+      )
     )) {
       if (deps.storeLlm) {
         await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
@@ -5863,18 +5943,103 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  // ── statNumericGuard 의도 2분기 (#1132 A안 — 하린아빠 2026-08-14 확정, 삼순 구조 제안) ──
+  // ── statNumericGuard 의도 3분기 (#1132 A안 — 2026-08-22 `RULE_TERM` 추가) ──
   //
-  // 가드 소유 질문은 LLM 자유문장을 **절대 서빙하지 않는다**. LLM 은 의도 토큰만
-  // 반환하고(RECORD/NARRATIVE), 유저 노출 문구는 코드 고정문 2개뿐이다:
+  // 가드 소유 질문은 의도 판정 응답의 **자유문장을 절대 그대로 서빙하지 않는다**.
+  // LLM 은 의도 토큰만 반환하고, 유저 노출 문구는 코드가 정한다:
   //   · RECORD(기록 요구) → `STAT_CLARIFY_ANSWER` 되묻기 (미결속 대상은 값을 못 준다)
   //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
+  //   · RULE_TERM(룰·용어 질문) → **가드 소유 부정** → 일반 경로로 재질의(아래)
   //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
+  //     (⚠️ 이 줄은 **의도 판정 응답 자체**가 계약 밖일 때만 해당한다. 재질의 단계의
+  //      오류·판정은 되묻기가 아니라 `error`/`blocked`/`unsure` 로 간다 — 아래 주석 참조.)
   // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
   // 저장 envelope 방어는 replayStoredFinalResult 의 구조 판정(cache 전량 거절 ·
   // llm 은 고정 응대문 exact 만)이 담당한다 — 수사 파서 의존 0.
+  //
+  // ⚠️ **`RULE_TERM` 은 왜 필요한가** (2026-08-22 48h 로그 실측). 가드는 `<X> <지표>` 의
+  //   X 가 미결속이면 소유하는데, 그 X 가 애초에 엔티티가 아닌 문장이 있다 —
+  //   `점수 차가 많이 날때 도루를 왜 하면 안 돼?` 같은 **룰 질문**이다. 이걸 어떤 토큰을
+  //   받아도 되묻기로 끝내면, 질문에 사람 이름이 없는데 이름을 되묻는 동문서답이 된다.
+  //   `열린 자연어`(룰 질문인가 기록 요구인가)는 룰로 닫을 수 없으므로 판정 주체를 LLM 으로
+  //   옮기고, 출력 표면은 그대로 닫아둔다(`open_language_never_closes_with_rules`).
+  //
+  // ⚠️ `RULE_TERM` 은 **판정 응답의 자유문장을 서빙하지 않는다**. 그 응답은 의도 토큰용
+  //   프롬프트로 받은 것이라 톤·길이·범위 검증을 거치지 않았다. 대신 **가드를 내려놓고
+  //   일반 프롬프트로 다시 묻는다** — 그래야 아래 `validateLlmResponse`(톤·길이·링크·범위)가
+  //   종전과 똑같은 강도로 적용된다.
+  //
+  // ⚠️ 재질의 단계의 결과는 **되묻기로 뭉개지 않고 일반 경로의 의미 그대로** 종결한다
+  //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
+  //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
+  //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
   if (statNumericGuard) {
     const intent = parseStatIntentToken(llm.text);
+    if (intent === "rule_term") {
+      // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
+      //
+      // ⚠️ 오류 의미를 지킨다 (2026-08-22 삼순 NO-GO P0③). 재질의 timeout·공급자 오류는
+      //   **우리 쪽 고장**이다 — `stat_clarify`(="앞말이 선수 이름인지 모르겠다")로 접으면
+      //   멀정한 문장을 유저 탓으로 돌리고 고쳐 다시 쓰게 만든다(삼순 2026-08-08 ①과 같은 축).
+      //   위 1차 `callLlm` 실패 처리와 **동일하게** `error` 로 종결한다.
+      let reasked: LlmResult | null = null;
+      try {
+        reasked = await deps.callLlm(question, context ?? undefined, rosterBlock, false);
+      } catch {
+        await deps.log({
+          userId, question, questionNorm, matchPath: "error", answer: null,
+          // 두 호출 토큰 합산 — 1차는 이미 소비됐다(과금 관측 누락 방지).
+          inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+        });
+        return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+      }
+      // ⚠️ 재질의 결과는 **일반 경로의 의미 그대로** 종결한다(삼순 P0③).
+      //   종전에는 blocked·unsure 를 전부 되묻기로 접어 "범위 밖"·"못 알아들음" 이 전부
+      //   "앞말이 선수 이름인지 모르겠다" 로 둘갑했다 — 세 상황은 유저의 다음 행동이 다르다.
+      // 토큰 계측은 두 호출을 합산한다 — 한 질문에 LLM 을 두 번 태웠으므로 한 쪽만 적으면 과소계측이다.
+      const sumIn = (llm.inputTokens ?? 0) + (reasked.inputTokens ?? 0);
+      const sumOut = (llm.outputTokens ?? 0) + (reasked.outputTokens ?? 0);
+      const tokens = {
+        inputTokens: llm.inputTokens === null && reasked.inputTokens === null ? null : sumIn,
+        outputTokens: llm.outputTokens === null && reasked.outputTokens === null ? null : sumOut,
+      };
+      const revalidated = validateLlmResponse(reasked.text, question);
+      if (revalidated.kind === "answer" && revalidated.answer) {
+        // ⚠️ **durable store 를 먼저**, 그 다음 log (삼순 P0② — store-before-log).
+        //   검증 완료 표식(`statRuleTermVerified`)을 envelope 에 결속해, `log 전 crash → 재시도`
+        //   에서 재생 경로가 이 정상답을 그대로 복원하게 한다(미저장이면 정상답을 잃는다).
+        // ⚠️ `cacheable` 은 붙이지 않는다 — global 캐시 미저장 계약은 그대로이다
+        //   (message 단위 final 저장과 global 캐시는 별개의 계층이다).
+        if (deps.storeLlm) {
+          await deps.storeLlm(packStoredQaFinal(
+            { answer: revalidated.answer, source: "llm", statRuleTermVerified: true },
+            { text: reasked.text, ...tokens },
+          ));
+        }
+        await deps.log({
+          userId, question, questionNorm, matchPath: "llm",
+          answer: revalidated.answer, ...tokens,
+        });
+        return { status: 200, answer: revalidated.answer, source: "llm", remaining };
+      }
+      if (revalidated.kind === "blocked") {
+        if (deps.storeLlm) {
+          await deps.storeLlm(packStoredQaFinal(
+            { answer: BLOCKED_ANSWER, source: "blocked" }, { text: reasked.text, ...tokens },
+          ));
+        }
+        await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, ...tokens });
+        return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
+      }
+      // unsure — 재질의 답이 검증을 못 넘었다. 일반 경로와 같은 의미로 보류 안내.
+      if (deps.storeLlm) {
+        await deps.storeLlm(packStoredQaFinal(
+          { answer: UNCLEAR_ANSWER, source: "unsure" }, { text: reasked.text, ...tokens },
+        ));
+      }
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, ...tokens });
+      return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    }
     const final: StoredQaFinal = intent === "narrative"
       ? { answer: STAT_NARRATIVE_ANSWER, source: "llm" }
       : { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };

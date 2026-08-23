@@ -105,10 +105,13 @@ export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
 
 export const STAT_INTENT_PROMPT = [
   "이번 질문은 등록되지 않은 대상의 기록 질문일 수 있다. 자유로운 문장으로 답하지 말고 의도만 판정한다.",
-  "answer 에는 반드시 다음 두 토큰 중 하나만 쓴다:",
+  "answer 에는 반드시 다음 세 토큰 중 하나만 쓴다:",
   "RECORD — 특정 인물·대상의 기록·수치·순위 값을 요구하는 질문",
   "NARRATIVE — 값 요구가 아닌 서사·감상·매체 공유·일상 대화(예: 친구가 홈런 영상을 보내줬다는 이야기)",
-  '출력 형식은 동일하게 JSON 하나다: {"status":"BASEBALL_RULE_TERM","answer":"RECORD 또는 NARRATIVE"}',
+  "RULE_TERM — 특정 대상의 값이 아니라 야구 규칙·용어·기록 기준 자체를 묻는 질문",
+  "  (RULE_TERM 예: '무사 주자1루 4점차면 세이브 조건인가요?', '점수 차가 클 때 도루를 왜 하면 안 돼?',",
+  "   '인사이드 더 파크 홈런이 뭐야?' — 어느 선수의 수치가 아니라 기준·정의를 묻는다)",
+  '출력 형식은 동일하게 JSON 하나다: {"status":"BASEBALL_RULE_TERM","answer":"RECORD 또는 NARRATIVE 또는 RULE_TERM"}',
 ].join("\n");
 
 /**

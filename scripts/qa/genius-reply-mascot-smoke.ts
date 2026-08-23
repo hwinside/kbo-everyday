@@ -142,7 +142,10 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
   // (rag=생성값, blocked=고정문구 삼항식) 단독으로 신뢰하지 않고 아래에서 따로 판정한다.
   // `mappedEntry.answer` = 사전 정의 LLM 매핑(②-z)이 서빙하는 검수 사전 답변 — `hit.answer` 와
   // 같은 dictionary 답변이다 (2026-08-11 C 질문 정규화).
-  const GENERATED = new Set(["hit.answer", "cached", "validated.answer", "mappedEntry.answer"]);
+  // `revalidated.answer` = 가드 소유 질문이 `RULE_TERM` 토큰을 받아 **일반 프롬프트로 재질의**한
+  // 뒤 `validateLlmResponse` 를 통과한 답변 (2026-08-22 stat_clarify 오발동 수정).
+  // `validated.answer` 와 **같은 함수의 같은 반환값**이라 분류도 같다 — 경로만 다르다.
+  const GENERATED = new Set(["hit.answer", "cached", "validated.answer", "mappedEntry.answer", "revalidated.answer"]);
   // matchPath 가 리터럴이 아닌 호출부(`route`)와 지역 `answer` 를 쓰는 호출부는
   // 등록제로 둔다. 새로 생기면 RED 로 세워 사람이 분류를 명시하게 한다.
   const LOCAL_ANSWER_PATHS = new Map<string, "generated" | "canned">([

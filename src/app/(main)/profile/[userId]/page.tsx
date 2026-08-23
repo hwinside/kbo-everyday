@@ -21,6 +21,14 @@ import DMButton from "@/components/ui/DMButton";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import CommunityProfilePostRow, { type CommunityProfilePost } from "@/components/profile/CommunityProfilePostRow";
+import {
+  PROFILE_POSTS_FETCH_LIMIT,
+  appendProfilePosts,
+  profilePostsCursorFilter,
+  profilePostsCursorFrom,
+  splitProfilePostsPage,
+  type ProfilePostsCursor,
+} from "@/lib/utils/profile-posts-page";
 
 interface UserProfile {
   id: string;
@@ -48,6 +56,37 @@ interface UserBadge {
 
 type UserPost = CommunityProfilePost;
 
+/**
+ * 프로필 작성글 목록 한 페이지 — (created_at, id) 커서 페이저.
+ *
+ * 2026-08-22 이전에는 `.limit(20)` 하나로 끝나 21번째 글부터는 **어떤 경로로도 도달할 수 없었다**
+ * (하린아빠 #cs 제보 "최근 글만 보이고 예전 글이 안 보인다"). 헤더 카운트는 `count: exact` 라
+ * 숫자와 목록이 서로 어긋나 보이기까지 했다.
+ *
+ * offset 이 아니라 **커서**를 쓴다(삼순 NO-GO 2026-08-22). offset 은 "몇 번째부터"를 세는데
+ * 그 사이 목록이 움직이면 기준이 어긋난다 — 글이 하나 추가되면 경계가 겹쳐 dedupe 되고
+ * 다음 페이지 번호가 제자리를 돌아 더보기가 먹통되며, 지워지면 경계 글이 조용히 묻힌다.
+ */
+async function fetchProfilePostsPage(
+  authorId: string,
+  cursor: ProfilePostsCursor | null,
+): Promise<{ rows: UserPost[]; hasMore: boolean; ok: boolean }> {
+  // query-guard: bounded-page -- 프로필 글 탭 커서 더보기(한 페이지 20건, 유니크 정렬 created_at+id)
+  let query = supabase
+    .from("posts")
+    .select("id, title, content, board_type, board_id, content_type, image_urls, video_urls, like_count, comment_count, created_at, team_tags, player_tags")
+    .eq("author_id", authorId);
+  if (cursor) query = query.or(profilePostsCursorFilter(cursor));
+  const { data, error } = await query
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(PROFILE_POSTS_FETCH_LIMIT);
+  // 조회 실패를 빈 페이지로 삼키면 "글이 없다"로 오독된다 — ok=false 로 구분해
+  // 호출부가 더보기를 살려둔다(재시도 가능). 개수 0 과 조회 실패는 다른 사건이다.
+  if (error || !data) return { rows: [], hasMore: false, ok: false };
+  return { ...splitProfilePostsPage(data as UserPost[]), ok: true };
+}
+
 export default function ProfilePage() {
   const { userId } = useParams();
   const router = useRouter();
@@ -58,6 +97,10 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [badges, setBadges] = useState<UserBadge[]>([]);
   const [posts, setPosts] = useState<UserPost[]>([]);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [postsLoadingMore, setPostsLoadingMore] = useState(false);
+  // 조회 실패와 "글이 0건"을 구분한다 — 같은 빈 화면으로 보이면 유저는 글이 사라졌다고 오독한다.
+  const [postsLoadFailed, setPostsLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
   const [activeTab, setActiveTab] = useState<"badges" | "posts" | "invite">("badges");
@@ -117,21 +160,45 @@ export default function ProfilePage() {
           .catch(() => {});
       }
 
-      if (p?.show_posts) {
-        // query-guard: bounded-page -- 프로필 글 탭은 최신 20건만 보여주는 고정 UI 페이지
-        const { data: posts } = await supabase
-          .from("posts")
-          .select("id, title, board_type, board_id, like_count, comment_count, created_at, team_tags, player_tags")
-          .eq("author_id", userId)
-          .order("created_at", { ascending: false })
-          .limit(20);
-        if (posts) setPosts(posts);
+      // 비공개(show_posts=false)라도 **본인은** 자기 글을 볼 수 있어야 한다.
+      // 종전엔 조회 자체를 건너뛰면서 UI 는 "아직 작성한 글이 없어요"를 보여줘
+      // 비공개로 둔 본인이 자기 글을 잃은 것처럼 보였다(삼순 NO-GO 2026-08-22).
+      // 타인에게는 아래 렌더 분기가 "비공개 프로필"을 그대로 띄우므로 노출되지 않는다.
+      if (p?.show_posts || user?.id === userId) {
+        const first = await fetchProfilePostsPage(String(userId), null);
+        setPosts(first.rows);
+        setPostsHasMore(first.hasMore);
+        setPostsLoadFailed(!first.ok);
       }
 
       setLoading(false);
     }
     load();
   }, [userId, user]);
+
+  // 더보기 — 마지막으로 받은 행에서 커서를 만든다. 목록이 그 사이 움직여도
+  // "마지막으로 본 글 다음"은 변하지 않으므로 경계 중복·누락이 생기지 않는다.
+  async function loadMorePosts() {
+    if (postsLoadingMore || !postsHasMore) return;
+    const cursor = profilePostsCursorFrom(posts);
+    // 커서를 만들 수 없으면(목록이 비었거나 created_at 결측) 처음부터 다시 받는 대신
+    // 아무것도 하지 않는다 — cursor=null 로 재요청하면 1페이지를 무한히 다시 불러온다.
+    if (!cursor) return;
+    setPostsLoadingMore(true);
+    try {
+      const next = await fetchProfilePostsPage(String(userId), cursor);
+      if (!next.ok) {
+        // 조회 실패는 "끝"이 아니다 — 더보기를 살려두어 재시도할 수 있게 한다.
+        setPostsLoadFailed(true);
+        return;
+      }
+      setPostsLoadFailed(false);
+      setPosts(prev => appendProfilePosts(prev, next.rows));
+      setPostsHasMore(next.hasMore);
+    } finally {
+      setPostsLoadingMore(false);
+    }
+  }
 
   if (loading) return <div className="flex items-center justify-center h-screen text-text-secondary">로딩 중...</div>;
   if (!profile) return <div className="flex items-center justify-center h-screen text-text-secondary">유저를 찾을 수 없습니다</div>;
@@ -284,17 +351,41 @@ export default function ProfilePage() {
         <div className="space-y-3">
           {!profile.show_posts && !isOwn ? (
             <div className="text-center py-8 text-text-tertiary text-sm">비공개 프로필입니다</div>
+          ) : posts.length === 0 && postsLoadFailed ? (
+            /* 조회 실패를 "글이 없다"로 그리면 유저는 자기 글이 사라졌다고 오독한다. */
+            <div className="text-center py-8 text-text-tertiary text-sm" data-profile-posts-load-failed>
+              글을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
+            </div>
           ) : posts.length === 0 ? (
             <div className="text-center py-8 text-text-tertiary text-sm">아직 작성한 글이 없어요</div>
           ) : (
-            posts.map(post => (
-              <CommunityProfilePostRow
-                key={post.id}
-                post={post}
-                timeLabel={timeAgo(post.created_at)}
-                onNavigate={(href) => router.push(href)}
-              />
-            ))
+            <>
+              {posts.map(post => (
+                <CommunityProfilePostRow
+                  key={post.id}
+                  post={post}
+                  timeLabel={timeAgo(post.created_at)}
+                  onNavigate={(href) => router.push(href)}
+                />
+              ))}
+              {/* 더보기 — 이게 없으면 21번째 글은 영영 도달 불가능하다(2026-08-22 제보). */}
+              {postsLoadFailed && (
+                <p className="text-center text-xs text-text-tertiary" data-profile-posts-load-failed>
+                  다음 글을 불러오지 못했어요. 다시 시도해 주세요.
+                </p>
+              )}
+              {postsHasMore && (
+                <button
+                  type="button"
+                  data-profile-posts-load-more
+                  onClick={loadMorePosts}
+                  disabled={postsLoadingMore}
+                  className="w-full rounded-xl border border-border py-3 text-sm font-medium text-text-secondary transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
+                >
+                  {postsLoadingMore ? "불러오는 중..." : "더보기"}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
