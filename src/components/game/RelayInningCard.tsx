@@ -116,7 +116,12 @@ function substitutionsAt(subs: (ReplaceEvent & { playIndex: number })[], index: 
 function SubstitutionRow({ event }: { event: Extract<FieldingEvent, { kind: "replace" }> }) {
   const label = substitutionLabel(event);
   return (
-    <div className="flex items-center gap-2 py-1 border-b border-border/20">
+    <div
+      data-testid="relay-sub-row"
+      data-sub-label={label}
+      data-sub-in={event.inName}
+      className="flex items-center gap-2 py-1 border-b border-border/20"
+    >
       <span className="text-text-tertiary text-xs shrink-0 w-3 text-center">⇄</span>
       <span
         className={clsx(
@@ -145,7 +150,7 @@ function PlayRow({ play, isLast }: { play: PlayEvent; isLast: boolean }) {
   const hasPitches = !!play.pitches && play.pitches.length > 0;
 
   return (
-    <div className={clsx(!isLast && "border-b border-border/20")}>
+    <div data-testid="relay-play-row" data-play-batter={play.batterName} className={clsx(!isLast && "border-b border-border/20")}>
       <button
         type="button"
         onClick={() => hasPitches && setExpanded((v) => !v)}
