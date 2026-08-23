@@ -75,7 +75,7 @@ interface UseGameRelayOptions {
   onDetailFrame?: (data: unknown) => void;
 }
 
-export type { GameRelayResponse, InningRelay, PlayEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
+export type { GameRelayResponse, InningRelay, PlayEvent, FieldingEvent, MatchupStats, RelayPlayerStats, RelayBatterStat, RelayPitcherStat } from "@/app/api/game-relay/route";
 
 export function useGameRelay(
   gameId: string | undefined,

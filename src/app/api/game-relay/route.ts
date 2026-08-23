@@ -64,10 +64,16 @@ export interface InningRelay {
   fielding?: FieldingEvent[];
 }
 
-/** 교체(replace) 또는 수비위치 변경(reposition) 이벤트. 포지션은 Naver 원문 한글 그대로. */
+/**
+ * 교체(replace) 또는 수비위치 변경(reposition) 이벤트. 포지션은 Naver 원문 한글 그대로.
+ * `playIndex`는 이 이벤트가 속한 이닝의 `plays` 배열 기준 삽입 위치 — “이 인덱스의
+ * 타석(결과) *직전*에 일어났다”는 시간순 결속. 진행 중 타석(아직 plays 미확정)의
+ * 교체는 `playIndex === plays.length`로 떨어져 피드 맨 끝에 붙는다(라이브 즉시 노출).
+ * 구버전 캐시 응답에는 없을 수 있어 optional — 소비처는 미정의 시 인라인 렌더를 생략(fail-safe).
+ */
 export type FieldingEvent =
-  | { kind: "replace"; outName: string; outPosKr: string; inName: string; inPosKr: string }
-  | { kind: "reposition"; name: string; fromPosKr: string; toPosKr: string };
+  | { kind: "replace"; outName: string; outPosKr: string; inName: string; inPosKr: string; playIndex?: number }
+  | { kind: "reposition"; name: string; fromPosKr: string; toPosKr: string; playIndex?: number };
 
 // 교체 공지 텍스트의 역할 토큰(폐쇄집합) — 이름에 공백이 있는 외국인 선수(예: "밴 헤켄")를
 // 위해 \S+ 대신 토큰 집합으로 경계를 잡는다.
@@ -403,7 +409,10 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
       if (typeof opt.text === "string") {
         const fieldingEvent = parseFieldingEvent(opt.text);
         if (fieldingEvent) {
-          (current.fielding ??= []).push(fieldingEvent);
+          // playIndex = 현재 plays 길이 — 이 교체 공지는 아직 terminal(13/23)이 안 온
+          // 현재 타석에 속하므로, 그 타석이 확정되면 정확히 이 인덱스에 push 된다.
+          // 클라이언트는 plays[playIndex] 직전에 교체 행을 끼워 시간순을 복원한다.
+          (current.fielding ??= []).push({ ...fieldingEvent, playIndex: current.plays.length });
           continue;
         }
       }
