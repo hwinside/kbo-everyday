@@ -704,6 +704,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:live-multiplex:ci",
+      "tier": "ci"
+    },
+    {
       "name": "qa:live-multiplex:selftest",
       "tier": "ci"
     },

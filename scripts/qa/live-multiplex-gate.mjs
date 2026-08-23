@@ -322,6 +322,7 @@ function assertUntouchedFiles({
   fetchBase = tryFetchOriginMain,
   evalPins = evaluatePinnedChatHashes,
   report = ok,
+  isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true",
 } = {}) {
   const pinContract = evaluatePinSetEquality();
   report(
@@ -340,17 +341,29 @@ function assertUntouchedFiles({
       baseOpts = { baseRef: fetchedBase };
       chatDiff = evalBase(CHAT_BASE_DIFF_PATHS, baseOpts);
     } else {
-      // base 미확보(fetch도 불가) — fail-close. 핀은 repo에 커밋되므로 같은 PR이
-      // 코드+핀을 동시 갱신하면(자기서명) 핀 대조로는 mux+chat 동시 변경을
-      // 원리적으로 검출할 수 없다 — 신뢰할 base 없는 scope 판정은 불가능이므로
-      // GREEN 대신 RED로 사람에게 넘긴다(삼순 2026-08-23 3차: fallback 자기서명 우회 차단).
-      // 핀 대조는 진단 정보로만 출력한다.
+      // base 미확보(fetch도 불가) — 신뢰할 base 없는 scope 판정은 불가능하다.
+      // 핀은 repo에 커밋되므로 같은 PR 코드+핀 동시 갱신(자기서명)을 핀 대조로는
+      // 검출할 수 없다(삼순 2026-08-23 3차) — 핀은 진단 정보로만 출력.
+      // · Vercel 빌드: 자격 없는 shallow clone이라 base 확보가 원리적 불가
+      //   (2026-08-23 dpl_6oqxj2Lx 실측: fail-close가 배포를 죽임 — 1afb4643a 재발).
+      //   이 축은 base가 있는 CI(qa:live-multiplex:ci)가 강제하므로 여기서는
+      //   판정 없이 '스킵'을 명시 보고한다(GREEN 판정이 아니라 축 미실행 공지).
+      // · 그 외 환경(CI 등 base를 확보할 수 있어야 하는 곳): fail-close RED.
       const pinned = evalPins();
-      report(
-        "chat transport untouched (base unavailable — fail-close)",
-        false,
-        `origin/main 미확보 + fetch 불가 — scope 판정 불가, 사람 확인 필요 (pins: ${pinned.ok ? "clean" : pinned.mismatched.join(", ")})`,
-      );
+      if (isVercel) {
+        console.log(`  ℹ pins diagnostic: ${pinned.ok ? "clean" : pinned.mismatched.join(", ")}`);
+        report(
+          "chat scope axis SKIPPED on Vercel (base unavailable — 실판정은 CI qa:live-multiplex:ci 강제)",
+          true,
+          "",
+        );
+      } else {
+        report(
+          "chat transport untouched (base unavailable — fail-close)",
+          false,
+          `origin/main 미확보 + fetch 불가 — scope 판정 불가, 사람 확인 필요 (pins: ${pinned.ok ? "clean" : pinned.mismatched.join(", ")})`,
+        );
+      }
       return;
     }
   }
@@ -374,12 +387,13 @@ function assertUntouchedFiles({
 
 // —— 삼순 5차 NO-GO: fallback 제어흐름을 assertUntouchedFiles 최종 판정까지 관통해 검증 ——
 // report 심으로 최종 verdict를 포집한다 — primitive 단위가 아니라 게이트 함수 자체를 실행.
-function runUntouchedFilesFlow({ evalBase, fetchBase, evalPins }) {
+function runUntouchedFilesFlow({ evalBase, fetchBase, evalPins, isVercel = false }) {
   const verdicts = [];
   assertUntouchedFiles({
     evalBase,
     fetchBase,
     evalPins,
+    isVercel,
     report: (name, condition) => verdicts.push({ name, red: !condition }),
   });
   return verdicts;
@@ -435,6 +449,22 @@ function assertFallbackControlFlow() {
   const bypassVerdict = pinBypassFallback.find((v) => v.name.includes("base unavailable"));
   ok("flow ②-대조: base 미확보 + 핀 동시갱신 전부일치 → 그래도 RED (fallback 자기서명 우회 불가)",
     bypassVerdict !== undefined && bypassVerdict.red === true);
+
+  // ②-Vercel: base 미확보 + Vercel 빌드 → 명시 SKIP(배포 비차단)이며 판정 미출력 —
+  //    GREEN 판정("untouched")도 fail-close RED도 아닌 축 미실행 공지임을 증명
+  //    (2026-08-23 dpl_6oqxj2Lx 실측: Vercel은 base 확보 원리적 불가 → fail-close가 배포를 죽였다).
+  const vercelFlow = runUntouchedFilesFlow({
+    evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
+    fetchBase: () => null,
+    evalPins: () => ({ ok: true, mismatched: [] }),
+    isVercel: true,
+  });
+  const vercelSkip = vercelFlow.find((v) => v.name.includes("SKIPPED on Vercel"));
+  ok("flow ②-Vercel: base 미확보 + Vercel → 명시 SKIP 보고(배포 비차단)",
+    vercelSkip !== undefined && vercelSkip.red === false);
+  ok("flow ②-Vercel: SKIP 경로에서 판정 미출력(untouched GREEN도 fail-close RED도 아님)",
+    !vercelFlow.some((v) => v.name === "chat transport untouched vs merge-base")
+    && !vercelFlow.some((v) => v.name.includes("base unavailable — fail-close")));
 
   // ③ scope 4축 (삼순 2026-08-23 계약: chat-only GREEN / mux-only GREEN /
   //    mux+chat RED / 핀 동시변경으로 RED 우회 불가)
