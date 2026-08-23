@@ -9,6 +9,10 @@ on:
       - "src/components/game/GameChatSlot.tsx"
       - "src/components/game/KgwanTab.tsx"
       - "src/hooks/useGameChatVisibility.ts"
+      - "src/hooks/useKgwanAutoFocus.ts"
+      - "src/app/qa/kgwan-autofocus/**"
+      - "src/components/game/LivePitchByPitch.tsx"
+      - "scripts/qa/kgwan-autofocus-gate.mjs"
       - "src/lib/game-chat-visibility.ts"
       - "scripts/qa/game-chat-visibility-smoke.ts"
       - "scripts/qa/ui-smoke-game-chat-visibility.mjs"
@@ -24,6 +28,10 @@ on:
       - "src/components/game/GameChatSlot.tsx"
       - "src/components/game/KgwanTab.tsx"
       - "src/hooks/useGameChatVisibility.ts"
+      - "src/hooks/useKgwanAutoFocus.ts"
+      - "src/app/qa/kgwan-autofocus/**"
+      - "src/components/game/LivePitchByPitch.tsx"
+      - "scripts/qa/kgwan-autofocus-gate.mjs"
       - "src/lib/game-chat-visibility.ts"
       - "scripts/qa/game-chat-visibility-smoke.ts"
       - "scripts/qa/ui-smoke-game-chat-visibility.mjs"
@@ -42,11 +50,13 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - name: Focused lint
-        run: npx eslint --quiet src/app/api/game-chat/prefs/route.ts src/components/game/GameChat.tsx src/components/game/GameChatSlot.tsx src/components/game/KgwanTab.tsx src/hooks/useGameChatVisibility.ts src/lib/game-chat-visibility.ts scripts/qa/game-chat-visibility-smoke.ts scripts/qa/ui-smoke-game-chat-visibility.mjs
+        run: npx eslint --quiet src/app/api/game-chat/prefs/route.ts src/components/game/GameChat.tsx src/components/game/GameChatSlot.tsx src/components/game/KgwanTab.tsx src/hooks/useGameChatVisibility.ts src/lib/game-chat-visibility.ts scripts/qa/game-chat-visibility-smoke.ts scripts/qa/ui-smoke-game-chat-visibility.mjs src/hooks/useKgwanAutoFocus.ts src/app/qa/kgwan-autofocus scripts/qa/kgwan-autofocus-gate.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Pure visibility and required wiring gate
         run: npm run qa:game-chat-visibility
+      - name: Kgwan autofocus gate + selftest
+        run: npm run qa:kgwan-autofocus && npm run qa:kgwan-autofocus:selftest
       - name: Start guest browser fixture
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
