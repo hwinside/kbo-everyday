@@ -263,6 +263,15 @@ export const MATCH_PATH_REPLY_KIND = {
   context_missing: "unavailable",
   service_redirect: "unavailable",
   history_hold: "unavailable",
+  // 우리 앱에 실재하는 기능을 물어 그 경로를 안내한 경로 (2026-08-23).
+  //
+  // ⚠️ `unavailable`(못 답함)이 아니라 **`ack`** 이다. 유저 질문에 대해
+  //   실제로 쓸모있는 답을 준 경우다 — "마이페이지에서 보실 수 있습니다" 는
+  //   바로 다음 행동이 가능한 안내라 마스콓이 실망 표정을 지을 이유가 없다.
+  //   `scope_guide`(범위 안내)를 `ack` 으로 둔 것과 같은 축이다.
+  // ⚠️ #983 모니터의 "못 답한 질문" 분모에도 들어가면 안 된다 — 들어가면
+  //   개선한 케이스가 실패로 집계돼 지표가 거꾸로 움직인다.
+  product_feature_guide: "ack",
   // `satisfies` 가 계약을 **컴파일타임에** 강제한다:
   //  - 새 MatchPath 를 추가하고 여기 안 적으면 → 타입 에러(누락 불가)
   //  - union 에 없는 키를 적으면 → 타입 에러(죽은 키 불가)

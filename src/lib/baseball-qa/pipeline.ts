@@ -194,6 +194,24 @@ export const STAT_NARRATIVE_ANSWER =
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기에서 운영팀이 확인합니다. 저는 야구 이야기를 함께 살펴보겠습니다.";
 /**
+ * **우리 앱에 실재하는 기능**을 물었을 때의 경로 안내 (2026-08-23 하린아빠 확정).
+ *
+ * #1288 배포 후 종단 QA 실측: `직관기록` 은 되묻기(`stat_clarify`)는 멈추었지만
+ * 실 provider 가 3/3 로 **범위 밖(BLOCKED)** 으로 판정해 "제가 확인할 수 있는 범위는
+ * …" 를 내보냈다. 그런데 `직관 기록` 은 **우리 앱의 기능**(마이페이지 > 직관 기록)
+ * 이다 — 유저는 우리가 가진 것을 물었는데 "범위 밖" 이라고 답하는 셈이라 여전히 어깋나가 있다.
+ *
+ * ⚠️ `SERVICE_REDIRECT_ANSWER`(피드백 안내)와 **같은 칸을 쓰지 않는다**. 그쪽은
+ *   "운영팀에게 문의하세요"(= 나는 모른다)이고, 이쪽은 "그 기능은 여기 있습니다"
+ *   (= 바로 다음 행동이 가능하다)다. 유저의 다음 행동이 다르면 문구도 라벨도 나눈다.
+ */
+export const PRODUCT_FEATURE_GUIDE_ANSWERS: ReadonlyMap<string, string> = new Map([
+  [
+    "직관기록",
+    "직관 기록은 마이페이지에서 확인하실 수 있습니다. 직관한 경기가 쌓이면 승률·구장별 통계도 함께 보실 수 있습니다.",
+  ],
+]);
+/**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
  * ⚠️ 이전 문구(`선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요 … 앱의 기록 탭`)는
@@ -684,6 +702,12 @@ export type QuestionRoute =
   | "event_record"
   // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
   | "name_suggest"
+  // 우리 앱에 실재하는 기능을 물은 질문 — 서비스 경로를 안내한다(2026-08-23).
+  //
+  // ⚠️ 이 라벨은 `match_path` 로도 그대로 기록된다 — DB CHECK 확장 migration 이 필요하다.
+  //   `blocked`·`service_redirect` 에 섮지 않는 이유는 감사 축이 다르기 때문이다:
+  //   "우리 기능을 물었는데 못 찾아준 건이 몇 건인가" 를 세려면 전용 라벨이 유일한 식별자다.
+  | "product_feature_guide"
   | "baseball_rule_term"
   // 룰베이스가 야구인지 아닌지 확정하지 못한 나머지 — 종결하지 않고 LLM 범위판정에 위임한다.
   // 이 라벨로는 로그를 쓰지 않는다(아래 answerQuestion에서 dictionary/cache/llm/blocked/unsure 중
@@ -749,6 +773,8 @@ export type MatchPath =
   //   `unsure` 는 LLM 까지 갔는데 확신 못 한 것, 이것은 애초에 대상을 특정 못 한 것이다.
   //   원인도 처방도 달라 한 칸에 두면 과차단 감사의 분모를 만들 수 없다.
   | "stat_clarify"
+  // 우리 앱에 실재하는 기능을 물어 서비스 경로를 안내한 경로 (2026-08-23).
+  | "product_feature_guide"
   | "limited"
   | "error"
   // LLM winner가 다른 worker — 이 worker는 답변 발송 없이 물러난다 (로그/DB 미기록).
@@ -1346,6 +1372,30 @@ const SERVICE_WORDS = [
  */
 export function isServiceInquiry(normalized: string): boolean {
   return SERVICE_WORDS.some((word) => normalized.includes(word));
+}
+/**
+ * 질문이 **우리 앱에 실재하는 기능**을 가리키는가 — 가리킨다면 그 기능명을 돌려준다.
+ *
+ * ⚠️ 판정 SSOT 는 `PRODUCT_FEATURE_COMPOUNDS` **하나**다(#1288 에서 신설).
+ *   어휘를 따로 열거하면 "결합형은 용어로 열리는데 안내는 안 나가는" 반쪽 상태가 된다.
+ * ⚠️ 공백은 제거하고 비교한다 — 유저는 `직관기록`·`직관 기록` 둘 다 쓰고,
+ *   LLM 표기 정규화가 그 사이를 오가는 것이 #1288 의 근원이었다.
+ * ⚠️ **부분문자열이 아니라 토큰 포함**으로 본다. `includes` 로 두면
+ *   `직관기록이 아니라 선수 기록` 같은 문장까지 가로채다.
+ */
+export function resolveProductFeature(question: string): string | null {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+  for (const feature of PRODUCT_FEATURE_COMPOUNDS) {
+    if (!compact.startsWith(feature)) continue;
+    // 기능명 뒤에 남는 것이 **문법 꾸리뿐**일 때만 인정한다.
+    //   `직관기록`·`직관 기록이 뭐야`·`직관기록은` → 기능 질문 ⭕️
+    //   `직관기록보다 중요한거`             → 잔여가 문법 꾸리가 아니므로 ❌
+    // ⚠️ 새 어휘 열거를 만들지 않고 기존 폐쇄집합을 그대로 쓴다 — 그 집합은
+    //   `아웃도어`·`도루묵` 같은 범위 밖 합성어를 닫기 위해 설계·검증된 것이고,
+    //   여기서도 정확히 같은 성질이 필요하다(반례마다 자라는 표면을 만들지 않는다).
+    if (isGrammaticalTail(compact.slice(feature.length))) return feature;
+  }
+  return null;
 }
 /**
  * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
@@ -3181,6 +3231,13 @@ export function routeQuestion(
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
   if (isScopeAskPhrase(question)) return "scope_guide";
+  // 우리 기능을 물은 질문은 서비스 경로를 안내한다 (2026-08-23 하린아빠 확정).
+  //
+  // ⚠️ `service_redirect`(피드백 안내) **앞**에 둔다. 둘 다 "서비스 이야기"지만
+  //   유저의 다음 행동이 다르다 — 기능을 물은 사람은 그 기능을 쓰러 가면 되고,
+  //   피드백으로 보내면 한 단계 멀어진다. 구체적인 판정이 먼저다.
+  // ⚠️ `blocked` 보다는 뒤다 — 인젝션 차단은 어떤 안내보다도 앞이다(fail-close 우선).
+  if (resolveProductFeature(question) !== null) return "product_feature_guide";
   if (isServiceInquiry(normalized)) return "service_redirect";
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
@@ -5474,7 +5531,17 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
+    // 기능 안내 문구는 **같은 판정기**로 다시 푸는다 — `name_suggest` 와 같은 계약이다.
+    //   라우터는 라벨만 돌려주므로 문구에 넣을 기능명이 여기에 없다.
+    //   판정기와 문구 생성이 갈라지면 "안내하기로 라우팅해놓고 정작 문구가 없는" 모순이 되므로
+    //   그 경우 fail-close(범위 안내)한다.
+    const productFeature = route === "product_feature_guide" ? resolveProductFeature(question) : null;
+    const productFeatureAnswer = productFeature === null
+      ? null
+      : PRODUCT_FEATURE_GUIDE_ANSWERS.get(productFeature) ?? null;
     let answer =
+      // ⚠️ 문구가 없으면 안내를 내지 않는다 — 빈 안내보다 기존 범위 안내가 낫다.
+      route === "product_feature_guide" && productFeatureAnswer !== null ? productFeatureAnswer :
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
