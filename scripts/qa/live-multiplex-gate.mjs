@@ -23,6 +23,22 @@ const CHAT_BASE_DIFF_PATHS = [
 
 let pass = 0;
 let fail = 0;
+let skip = 0;
+
+// Vercel 판정 SSOT — --ci 명시 모드에서는 ambient VERCEL env와 무관하게 항상 false
+// (삼순 5차: 동일 명령이면 CI 러너에 VERCEL=1이 있을 때 CI까지 SKIP되는 구멍).
+// CI(qa:live-multiplex:ci)는 base 확보가 가능해야 하는 환경이므로 무조건 fail-close.
+export function resolveIsVercel({ argv = process.argv, env = process.env } = {}) {
+  if (argv.includes("--ci")) return false;
+  return env.VERCEL === "1" || env.VERCEL === "true";
+}
+
+// 명시 SKIP — pass로 세지 않고 별도 카운터 + 항상 출력(삼순 5차: report(...,true)는
+// 로그 없이 pass만 증가해 '명시 SKIP' 계약과 불일치했다).
+function markSkip(name, detail = "") {
+  skip += 1;
+  console.log(`  ○ SKIP ${name}${detail ? ` (${detail})` : ""}`);
+}
 
 function ok(name, condition, detail = "") {
   if (condition) {
@@ -322,7 +338,8 @@ function assertUntouchedFiles({
   fetchBase = tryFetchOriginMain,
   evalPins = evaluatePinnedChatHashes,
   report = ok,
-  isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true",
+  isVercel = resolveIsVercel(),
+  reportSkip = markSkip,
 } = {}) {
   const pinContract = evaluatePinSetEquality();
   report(
@@ -352,10 +369,8 @@ function assertUntouchedFiles({
       const pinned = evalPins();
       if (isVercel) {
         console.log(`  ℹ pins diagnostic: ${pinned.ok ? "clean" : pinned.mismatched.join(", ")}`);
-        report(
-          "chat scope axis SKIPPED on Vercel (base unavailable — 실판정은 CI qa:live-multiplex:ci 강제)",
-          true,
-          "",
+        reportSkip(
+          "chat scope axis on Vercel (base unavailable — 실판정은 CI qa:live-multiplex:ci가 --ci로 강제)",
         );
       } else {
         report(
@@ -394,6 +409,7 @@ function runUntouchedFilesFlow({ evalBase, fetchBase, evalPins, isVercel = false
     fetchBase,
     evalPins,
     isVercel,
+    reportSkip: (name) => verdicts.push({ name: `SKIP ${name}`, red: false, skipped: true }),
     report: (name, condition) => verdicts.push({ name, red: !condition }),
   });
   return verdicts;
@@ -459,12 +475,31 @@ function assertFallbackControlFlow() {
     evalPins: () => ({ ok: true, mismatched: [] }),
     isVercel: true,
   });
-  const vercelSkip = vercelFlow.find((v) => v.name.includes("SKIPPED on Vercel"));
-  ok("flow ②-Vercel: base 미확보 + Vercel → 명시 SKIP 보고(배포 비차단)",
+  const vercelSkip = vercelFlow.find((v) => v.skipped === true && v.name.includes("chat scope axis on Vercel"));
+  ok("flow ②-Vercel: base 미확보 + Vercel → 명시 SKIP 보고(배포 비차단, skipped 플래그)",
     vercelSkip !== undefined && vercelSkip.red === false);
   ok("flow ②-Vercel: SKIP 경로에서 판정 미출력(untouched GREEN도 fail-close RED도 아님)",
     !vercelFlow.some((v) => v.name === "chat transport untouched vs merge-base")
     && !vercelFlow.some((v) => v.name.includes("base unavailable — fail-close")));
+
+  // ②-CI: --ci 명시 모드는 ambient VERCEL env와 무관하게 isVercel=false → base 미확보 시 fail-close
+  //    (삼순 5차: 동일 명령이면 CI 러너의 VERCEL=1이 CI까지 SKIP시키는 구멍)
+  ok("flow ②-CI: resolveIsVercel — --ci면 VERCEL=1이어도 false(무조건 실판정)",
+    resolveIsVercel({ argv: ["node", "gate", "--ci"], env: { VERCEL: "1" } }) === false
+    && resolveIsVercel({ argv: ["node", "gate"], env: { VERCEL: "1" } }) === true
+    && resolveIsVercel({ argv: ["node", "gate"], env: {} }) === false);
+  const ciFlow = runUntouchedFilesFlow({
+    evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
+    fetchBase: () => null,
+    evalPins: () => ({ ok: true, mismatched: [] }),
+    isVercel: resolveIsVercel({ argv: ["node", "gate", "--ci"], env: { VERCEL: "1" } }),
+  });
+  ok("flow ②-CI: --ci + VERCEL=1 + base 미확보 → SKIP 없이 fail-close RED",
+    ciFlow.some((v) => v.name.includes("base unavailable — fail-close") && v.red === true)
+    && !ciFlow.some((v) => v.skipped === true));
+  // seam 동일성: 기본값 배선이 resolveIsVercel을 쓴다(주석 blank 후 구조 확인).
+  ok("flow ②-CI: assertUntouchedFiles 기본값이 resolveIsVercel에 결속",
+    /isVercel = resolveIsVercel\(\)/.test(stripComments(read("scripts/qa/live-multiplex-gate.mjs"))));
 
   // ③ scope 4축 (삼순 2026-08-23 계약: chat-only GREEN / mux-only GREEN /
   //    mux+chat RED / 핀 동시변경으로 RED 우회 불가)
@@ -600,7 +635,7 @@ async function main() {
 
   if (SELFTEST) runSelfTest();
 
-  console.log(`live-multiplex-gate: ${pass} passed, ${fail} failed`);
+  console.log(`live-multiplex-gate: ${pass} passed, ${fail} failed, ${skip} skipped`);
   if (fail > 0) process.exit(1);
 }
 
