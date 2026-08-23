@@ -42,12 +42,16 @@ import {
   mentionsTeamForGate,
   packStoredQaFinal,
   parseStatIntentToken,
+  resolveProductFeature,
   routeQuestion,
   statGuardOwnsQuestion,
+  PRODUCT_FEATURE_KEYS,
+  productFeatureGuideAnswer,
   unpackStoredQaFinal,
   BLOCKED_ANSWER,
   HISTORY_HOLD_ANSWER,
   STAT_CLARIFY_ANSWER,
+  SCOPE_GUIDE_ANSWER,
   STAT_NARRATIVE_ANSWER,
   SYSTEM_ERROR_ANSWER,
   UNCLEAR_ANSWER,
@@ -215,15 +219,26 @@ const LOG_CASES: Array<{
   {
     question: "직관기록",
     guard: false,
-    expect: "llm",
-    why: "`<X> <지표>` 매치 자체가 없다 — 가드 대상이 아니다",
-    llmCalls: 1,
-    // 🔴 배포 정규화가 띄어쓰기를 넣어 `<직관> <기록>` 이 매치되게 만든다.
-    //   유저가 실제로 받는 것은 이쪽이다 — 원문만 태우면 이 케이스는 영영 안 보인다.
+    // 🔁 기대값 변경 이력 (2026-08-23) — 종전 `llm` → 현 `product_feature_guide`.
+    //
+    //   #1288 까지는 `llm` 을 기대했는데, 그건 **stub 답변에 결속된 값**이었다.
+    //   배포 후 종단 QA 실측에서 실 provider 는 `직관 기록` 을 3/3 **범위 밖(BLOCKED)**
+    //   으로 판정해 "제가 확인할 수 있는 범위는 …" 를 내보냈다. 즉 `llm` 은 달성 불가능한
+    //   기대였고, 삼순가 2차 리뷰에서 "#11 기대를 `llm` 인지 제품의 직관기록 서비스
+    //   경로인지 먼저 확정하라" 고 지적한 지점이 바로 이것이다.
+    //
+    //   하린아빠가 2026-08-23 에 **서비스 경로 안내**로 확정했다 — `직관 기록` 은
+    //   우리 앱의 기능(마이페이지)이므로 "범위 밖" 이 아니라 그 경로를 알려줌다.
+    //
+    // ⚠️ 기대값을 현재 출력에 맞춰 베낀 것이 아니라 **제품 결정이 먼저 났고** 그것을
+    //   반영한 것이다. 그 순서가 지켜지지 않으면 게이트는 틀린 종단을 정답으로 고정하는 도구가 된다.
+    expect: "product_feature_guide",
+    why: "우리 앱에 실재하는 기능(마이페이지 > 직관 기록)을 물었다 — 범위 밖이라 말하거나 이름을 되묻는 것이 아니라 그 경로를 안내해야 한다",
+    llmCalls: 0,
+    // 🔴 배포 정규화가 띄어쓰기를 넣어 `직관 기록` 으로 바꾸지만, 이제 둘 다
+    //   같은 종단으로 간다(공백 제거 후 비교 + 문법 꾸리 허용). 정규화가 라우팅을
+    //   뒤집지 않는 것 자체가 #1288 이 고친 결함의 재발 방지다.
     normalizedObserved: "직관 기록",
-    // 실 provider 프로브 3/3 `RECORD` — 즉 `RULE_TERM` 재질의 경로로 구제되지 **않는다**.
-    //   가드가 소유하는 한 이 질문은 구조적으로 되묻기로 끝난다(배포 3/3 재현과 일치).
-    normalizedProbedIntent: "record",
   },
 ];
 
@@ -389,6 +404,15 @@ async function main() {
         assert.equal(r.answer, STAT_CLARIFY_ANSWER);
       } else if (c.expect === "history_hold") {
         assert.equal(r.answer, HISTORY_HOLD_ANSWER);
+      } else if (c.expect === "product_feature_guide") {
+        // 우리 앱 기능 안내 — 코드가 정한 고정문이고, 판정기와 **같은 함수**로 다시 푼다.
+        //   게이트가 문구를 복제하면 상수가 바뀔 때 게이트만 낡는다(생성기 값을 읽는다).
+        const feature = resolveProductFeature(c.question);
+        assert.ok(feature, "판정기가 기능을 못 풀었다 — 라우팅과 문구가 갈라진다");
+        assert.equal(r.answer, productFeatureGuideAnswer(feature!), "기능 안내 문구 불일치");
+        // 되묻기·범위 밖 안내로 새지 않는다 — 이 PR 이 고치는 두 오답 형태다.
+        assert.notEqual(r.answer, STAT_CLARIFY_ANSWER, "되묻기로 끝났다");
+        assert.notEqual(r.answer, BLOCKED_ANSWER, "범위 밖 안내로 끝났다");
       } else {
         assert.equal(r.answer, RULE_ANSWER, "정상 답변이 서빙되지 않음");
         assert.notEqual(r.answer, STAT_CLARIFY_ANSWER);
@@ -449,17 +473,29 @@ async function main() {
       state.normalizeTo = normalized;              // seam 주입 — 배포의 provider 자리에 앉는다
       const r = await answerQuestion("u-seam", c.question, makeDeps(state));  // ← **원문** 1회 호출
 
-      // ① seam 이 실제로 탔는가. 안 탔으면 아래 결과는 정규화와 무관한 것이다.
-      assert.equal(state.normalizeCalls, 1, `정규화 seam 미호출 (calls=${state.normalizeCalls})`);
-      // ② 수용 판정 — 배포가 이 후보를 accepted_surface 로 받아야 재라우팅이 일어난다.
+      // ⚠️ 정규화는 **residual(`llm_scope_gate`)** 에서만 발동한다(배포 계약).
+      //   전용 라우트가 먼저 확정되면 정규화 자체가 안 타므로, 이 축은 두 경우를 나누어 본다:
+      //     · residual 문장 → seam 호출·수용·로그 필드까지 전부 고정
+      //     · 전용 라우트 문장 → 정규화 미발동이 정상이고, 대신 **원문·정규화문 둘 다**
+      //       같은 종단으로 가는지를 본다(정규화가 라우팅을 뒤집지 못하는 것이 계약이다).
+      const routedBeforeNormalize = routeQuestion(c.question, glossary, players, false);
       const log = state.logs.at(-1);
       assert.ok(log, "로그 없음");
-      assert.equal(log!.normalizeStatus, "accepted_surface",
-        `정규화가 수용되지 않았다 (status=${log!.normalizeStatus}) — 재라우팅 자체가 안 일어난다`);
-      // ③ 로그 필드 계약: question 은 **원문**, question_normalized 는 **수용문**.
+      if (routedBeforeNormalize === "llm_scope_gate") {
+        assert.equal(state.normalizeCalls, 1, `정규화 seam 미호출 (calls=${state.normalizeCalls})`);
+        assert.equal(log!.normalizeStatus, "accepted_surface",
+          `정규화가 수용되지 않았다 (status=${log!.normalizeStatus}) — 재라우팅 자체가 안 일어난다`);
+        assert.equal(log!.questionNormalized, normalized,
+          `question_normalized 불일치 (${log!.questionNormalized})`);
+      } else {
+        assert.equal(state.normalizeCalls, 0,
+          `전용 라우트(${routedBeforeNormalize})인데 정규화가 발동했다 — residual 전용 계약 위반`);
+        assert.equal(
+          routeQuestion(normalized, glossary, players, false), routedBeforeNormalize,
+          `정규화문의 라우팅이 원문과 다르다 — #1288 결함의 재발이다`);
+      }
+      // 로그 필드 계약: question 은 항상 **원문**이다.
       assert.equal(log!.question, c.question, "로그 question 이 원문이 아니다 — 감사 분모가 깨진다");
-      assert.equal(log!.questionNormalized, normalized,
-        `question_normalized 불일치 (${log!.questionNormalized})`);
       // ④ 최종 종단 — 정규화를 거친 뒤에도 원문 기대와 같아야 한다.
       assert.equal(
         r.source, c.expect,
@@ -712,6 +748,69 @@ async function main() {
     failures = before;
     console.log("  ✅ selftest RED 2/2 확인");
   }
+
+  await check("C9 registry 전수 — 모든 기능 키가 라우팅·문구·종단까지 결속된다 (삼순 4차 ③·5차 ①)", async () => {
+    // ⚠️ `직관기록` 하나만 검사하면 두 번째 기능을 추가했을 때 그 항목은 **검증 밖**이다.
+    //   registry 를 SSOT 로 전수 순회해, 키가 늘면 검사도 자동으로 늘게 한다.
+    //
+    // ⚠️ **`await check(async …)` 여야 한다** (삼순 5차 ①). 종전엔 await 없이 불렀는데,
+    //   body 가 동기라 우연히 잡혔을 뿐이다. 누가 async 검증을 하나라도 넣는 순간
+    //   그 rejection 은 최종 `failures` 판정 **뒤**에 도착해 false-GREEN 이 된다.
+    //   실제로 아래에서 `answerQuestion` 을 태우므로 이제 body 가 async 다.
+    assert.ok(PRODUCT_FEATURE_KEYS.length >= 1, "registry 가 비었다 — 아래 대조가 공허해진다");
+    for (const key of PRODUCT_FEATURE_KEYS) {
+      // ① 문구가 존재하고 비어 있지 않다(총함수라 undefined 는 타입상 불가).
+      const answer = productFeatureGuideAnswer(key);
+      assert.ok(answer.trim().length > 0, `${key}: 안내 문구가 비어 있다`);
+      // ② generic 거절·되묻기 문구로 새지 않는다 — M13 이 노리는 구멍.
+      assert.notEqual(answer, BLOCKED_ANSWER, `${key}: 기능 안내가 범위 밖 문구다`);
+      assert.notEqual(answer, STAT_CLARIFY_ANSWER, `${key}: 기능 안내가 되묻기 문구다`);
+      // ③ 붙여쓴 표기·띄어쓴 표기·조사 결합이 모두 같은 키로 판정·라우팅된다.
+      //    (정규화가 표기 사이를 오가는 것이 #1288 결함의 근원이었다)
+      for (const surface of [key, key.replace(/^(..)/u, "$1 "), `${key}이 뭐야`]) {
+        assert.equal(resolveProductFeature(surface), key, `${surface}: 판정 불일치`);
+        assert.equal(
+          routeQuestion(surface, glossary, players, false), "product_feature_guide",
+          `${surface}: 라우팅이 기능 안내가 아니다`,
+        );
+      }
+      // ④ **종단 1회** — 라우팅·문구가 맞아도 파이프라인이 다른 답을 서빙할 수 있다.
+      //    새 기능을 registry 에 넣으면 이 종단 검증이 자동으로 따라붙는다.
+      const state = freshState();
+      const r = await answerQuestion("u-registry", key, makeDeps(state));
+      assert.equal(r.source, "product_feature_guide", `${key}: 종단 source 불일치 (${r.source})`);
+      assert.equal(r.answer, answer, `${key}: 종단 답변이 registry 문구와 다르다`);
+      assert.deepEqual(
+        state.logs.map((l) => l.matchPath), ["product_feature_guide"],
+        `${key}: 로그 경로 불일치 (${state.logs.map((l) => l.matchPath).join(",")})`,
+      );
+      // ⑤ 결정론 — 전용 라우트가 먼저 확정되므로 normalizer·LLM 을 부를 이유가 없다.
+      //    (부르면 provider 비결정성이 안내 문구에까지 들어온다)
+      assert.equal(state.llmCalls, 0, `${key}: LLM 을 ${state.llmCalls}회 호출했다 — 결정론 위반`);
+      assert.equal(state.normalizeCalls, 0, `${key}: 정규화를 호출했다 — 전용 라우트가 먼저다`);
+    }
+  });
+
+  await check("C10 미등록 앱 기능은 열리지 않는다 — 범위 문구 과약속 반대축 (삼순 5차 ②)", async () => {
+    // ⚠️ 범위 안내 문구가 "일부 앱 기능 안내" 인 이유가 여기 있다.
+    //   registry 에 없는 기능명을 물으면 **안내하지 않는다** — 넓게 적어놓고 못 답하면
+    //   그건 좀 전에 고친 거짓말을 반대 방향으로 다시 만드는 것이다.
+    for (const unregistered of ["알림설정", "차단목록", "포인트내역"]) {
+      assert.equal(resolveProductFeature(unregistered), null, `${unregistered}: 미등록인데 열렸다`);
+      assert.notEqual(
+        routeQuestion(unregistered, glossary, players, false), "product_feature_guide",
+        `${unregistered}: 미등록인데 기능 안내로 라우팅됐다`,
+      );
+    }
+    // 범위 문구는 **부분 지원**을 밝힌다 — `앱 기능 안내`(전부 되는 것처럼 읽힘) 금지.
+    for (const [name, text] of Object.entries({ BLOCKED_ANSWER, SCOPE_GUIDE_ANSWER })) {
+      assert.ok(text.includes("일부 앱 기능"), `${name}: 부분 지원 표기가 없다`);
+      assert.ok(
+        !/(?<!일부 )앱 기능 안내입니다/.test(text),
+        `${name}: 앱 기능 전체를 안내하는 것처럼 읽힌다 — 과약속`,
+      );
+    }
+  });
 
   // ⚠️ 실행 카운터가 SSOT. 더불어 **하한**을 걸어 축이 통째로 빠지는 것을 막는다 —
   //   카운터만 쓰면 "0축 실행 · 실패 0" 도 PASS 로 보이기 때문이다(빈 실행 false-GREEN).

@@ -90,11 +90,13 @@ const mutations = [
     why: "자유문장 서빙 0 계약(D4)이 깨진다",
   },
   {
-    name: "M9 제품 기능 결합형 폐쇄집합 비움 (2026-08-23 배포 후 QA 수정 무력화)",
+    name: "M9 제품 기능 registry 비움 (2026-08-23 배포 후 QA 수정 무력화)",
     file: PIPELINE,
-    re: /const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set\(\[[\s\S]*?\]\);/,
-    to: "const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set<string>([]);",
-    why: "`직관 기록`(정규화 산출물)이 다시 미결속이 되어 되묻기로 종결 — 프로덕션 3/3 재현 축",
+    // ⚠️ registry 통합(삼순 NO-GO ①)으로 선언 형태가 바뀌었다 — 종전 `Set` 앵커를
+    //   그대로 뒀다면 MISS 로 검증력 0 이 됐을 자리다. 항목만 비워 키 부재를 만든다.
+    re: /const PRODUCT_FEATURE_REGISTRY = \{[\s\S]*?\} as const;/,
+    to: "const PRODUCT_FEATURE_REGISTRY = {} as unknown as { readonly \u0022\uc9c1\uad00\uae30\ub85d\u0022: string };",
+    why: "`직관기록`·`직관 기록` 이 다시 미결속이 되어 안내가 사라진다 — 프로덕션 3/3 재현 축",
   },
   {
     // ⚠️ 종전 M10 은 set 에 `직관기록` 을 둔 채 `head`(=`직관`) 를 조회해 **항상 false** 였다.
@@ -113,6 +115,28 @@ const mutations = [
     re: /\n    if \(accepted\) \{\n      question = candidate;\n      questionNorm = normalizeQuestion\(candidate\);/,
     to: "\n    if (false) {\n      question = candidate;\n      questionNorm = normalizeQuestion(candidate);",
     why: "정규화가 수용돼도 재라우팅이 안 일어난다 — B2 full seam 축(로그 필드·최종 source)이 잡아야 한다",
+  },
+  {
+    // 삼순 2026-08-23 4차 완료조건 ③-a. registry 는 살아 있는데 **라우트만** 죽인다.
+    //   M9(registry 비움)와 동치가 아니다 — 이쪽은 판정기가 정상 동작하고
+    //   `resolveProductFeature` 도 기능명을 돌려주지만, 라우터가 그 라벨을 안 낸다.
+    //   실제 회귀 모양(누가 라우트 한 줄을 지움)을 그대로 재현한다.
+    name: "M12 기능 안내 라우트 제거 (라벨이 안 나가고 generic 경로로 흡수)",
+    file: PIPELINE,
+    re: /  if \(resolveProductFeature\(question\) !== null\) return "product_feature_guide";/,
+    to: '  if (false) return "product_feature_guide";',
+    why: "`직관기록` 이 기능 안내로 라우팅되지 않아 범위 밖 안내로 흡수된다 — B 축이 잡아야 한다",
+  },
+  {
+    // 삼순 2026-08-23 4차 완료조건 ③-b. **유저가 실제로 받는 문자열**을 되돌린다.
+    //   라우팅·로그 라벨은 성공(`product_feature_guide`)인데 답만 범위 밖 안내가 되는,
+    //   registry 분리 시절에 구조적으로 가능했던 바로 그 구멍이다.
+    //   source 만 보는 게이트는 이걸 못 잡는다 — 문면 대조 축이 있어야 RED 가 된다.
+    name: "M13 기능 안내 문구를 generic blocked 로 회귀 (라벨은 성공, 답만 범위 밖)",
+    file: PIPELINE,
+    re: /(\n      route === "product_feature_guide" && productFeatureAnswer !== null \? )productFeatureAnswer( :)/,
+    to: "$1BLOCKED_ANSWER$2",
+    why: "로그는 기능 안내 성공인데 유저는 범위 밖 문구를 받는다 — B 축 문면 대조가 잡아야 한다",
   },
 ];
 

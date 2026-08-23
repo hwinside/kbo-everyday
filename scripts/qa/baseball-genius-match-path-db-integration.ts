@@ -73,6 +73,9 @@ async function main() {
   //   덮어썼다(삼순 2026-08-14 DB P0 실측). 이 게이트는 그 유형을 잡기 위해 운영 적용 순서
   //   그대로 재현하고 아래 전수 INSERT 로 전 라벨 생존을 검증한다.
   await db.exec(readMigration("20260814215000_baseball_genius_stat_clarify_match_path.sql"));
+  // 우리 앱 기능 안내 라벨 (2026-08-23, #1288 후속). 최신 CHECK 위에 얹는다 —
+  //   부분 union 으로 재선언하면 선행 라벨이 조용히 사라진다(구 `20260809150000` 사고 축).
+  await db.exec(readMigration("20260823120000_baseball_genius_product_feature_guide_match_path.sql"));
 
   await verifyFinalAllowlistIsExactUnion(db);
 
@@ -156,6 +159,7 @@ const FINAL_MATCH_PATH_ALLOWLIST = [
   "name_suggest",
   "news_rag",
   "player_picker",
+  "product_feature_guide",
   "question_correction",
   "rag",
   "scope_guide",
