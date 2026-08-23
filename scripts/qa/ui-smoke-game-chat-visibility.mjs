@@ -99,6 +99,41 @@ async function autofocusSmoke() {
   await page.waitForFunction(() => window.scrollY > 0, undefined, { timeout: 3000 });
   pass("ON 복귀: 새 투구 → 자동 스크롤 재개");
   await page.close();
+
+  // ③ localStorage.setItem throw actual — 쓰기 실패 환경(사파리 시크릿 등)에서도
+  //    세션 내 토글이 실제로 동작해야 한다 (삼순 blocker — 정적 검사 아닌 행위 실측).
+  const throwPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await throwPage.addInitScript(() => {
+    const orig = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItemBlocked(key, ...args) {
+      if (key === "***") throw new Error("qa: setItem blocked");
+      return orig.call(this, key, ...args);
+    };
+  });
+  const throwPitch = () => throwPage.locator('[data-qa="add-live-pitch"]').dispatchEvent("click");
+  await throwPage.goto(`${baseUrl}${fixturePath}`, { waitUntil: "networkidle" });
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible" });
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).click();
+  // 쓰기가 throw해도 버튼 상태가 전환되어야 한다(메모리 1차 소스 계약).
+  await throwPage.getByRole("button", { name: "자동 포커싱 켜기" }).waitFor({ state: "visible", timeout: 3000 });
+  assert.equal(
+    await throwPage.evaluate(() => window.localStorage.getItem("***")),
+    null,
+    "setItem이 실제로 차단되었는지 확인(영속 안 됨) — 안 막혔으면 이 축 자체가 무효",
+  );
+  await throwPage.evaluate(() => window.scrollTo(0, 0));
+  await throwPage.waitForTimeout(100);
+  await throwPitch();
+  await throwPage.waitForTimeout(700);
+  assert.equal(await throwPage.evaluate(() => window.scrollY), 0, "쓰기 실패 환경에서도 OFF가 적용되어 무스크롤이어야 한다");
+  await throwPage.getByRole("button", { name: "자동 포커싱 켜기" }).click();
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible", timeout: 3000 });
+  await throwPage.evaluate(() => window.scrollTo(0, 0));
+  await throwPage.waitForTimeout(100);
+  await throwPitch();
+  await throwPage.waitForFunction(() => window.scrollY > 0, undefined, { timeout: 3000 });
+  pass("localStorage.setItem throw: 토글 OFF→무스크롤→ON 복귀 세션 내 정상(영속만 포기)");
+  await throwPage.close();
 }
 
 async function injectSession(context, session) {

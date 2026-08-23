@@ -340,11 +340,16 @@ function assertUntouchedFiles({
       baseOpts = { baseRef: fetchedBase };
       chatDiff = evalBase(CHAT_BASE_DIFF_PATHS, baseOpts);
     } else {
+      // base 미확보(fetch도 불가) — fail-close. 핀은 repo에 커밋되므로 같은 PR이
+      // 코드+핀을 동시 갱신하면(자기서명) 핀 대조로는 mux+chat 동시 변경을
+      // 원리적으로 검출할 수 없다 — 신뢰할 base 없는 scope 판정은 불가능이므로
+      // GREEN 대신 RED로 사람에게 넘긴다(삼순 2026-08-23 3차: fallback 자기서명 우회 차단).
+      // 핀 대조는 진단 정보로만 출력한다.
       const pinned = evalPins();
       report(
-        "chat transport untouched (pinned-hash fallback — shallow clone, fetch unavailable)",
-        pinned.ok,
-        pinned.mismatched.join(", "),
+        "chat transport untouched (base unavailable — fail-close)",
+        false,
+        `origin/main 미확보 + fetch 불가 — scope 판정 불가, 사람 확인 필요 (pins: ${pinned.ok ? "clean" : pinned.mismatched.join(", ")})`,
       );
       return;
     }
@@ -407,27 +412,29 @@ function assertFallbackControlFlow() {
     fetchedFlow.some((v) => v.name === "chat transport untouched vs merge-base" && v.red === false)
     && !fetchedFlow.some((v) => v.name.includes("pinned-hash fallback")));
 
-  // ② fetch 실패 → 13핀 전부 clean → 최종 GREEN (pinned fallback 단독 판정)
+  // ② fetch 실패(base 미확보) → fail-close RED — 핀 clean이어도 GREEN 금지
+  //    (삼순 3차: 핀은 같은 PR 동시갱신으로 자기서명 가능 → base 없으면 판정 불가 = RED)
   const pinFlow = runUntouchedFilesFlow({
     evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
     fetchBase: () => null,
-    evalPins: () => evaluatePinnedChatHashes(),
+    evalPins: () => ({ ok: true, mismatched: [] }),
   });
-  const pinVerdict = pinFlow.find((v) => v.name.includes("pinned-hash fallback"));
-  ok("flow ②: fetch 실패 → pinned fallback 실행됨", pinVerdict !== undefined);
-  ok("flow ②: 13핀 clean → 최종 GREEN", pinVerdict !== undefined && pinVerdict.red === false);
+  const pinVerdict = pinFlow.find((v) => v.name.includes("base unavailable"));
+  ok("flow ②: fetch 실패 → fail-close 경로 실행됨", pinVerdict !== undefined);
+  ok("flow ②: base 미확보면 핀 clean이어도 최종 RED(fail-close)",
+    pinVerdict !== undefined && pinVerdict.red === true);
   ok("flow ②: fallback 경로에선 base-diff 판정 미출력(이중 판정 방지)",
     !pinFlow.some((v) => v.name === "chat transport untouched vs merge-base"));
 
-  // ②-RED 대조: fetch 실패 + 핀 mismatch → 최종 RED (GREEN이 조건 무관 고정이 아님을 증명)
-  const pinRedFlow = runUntouchedFilesFlow({
+  // ②-대조: fetch 실패 + mux+chat+핀 동시갱신(자기서명 시도) → 여전히 RED — ③-d가 fallback에서도 관통
+  const pinBypassFallback = runUntouchedFilesFlow({
     evalBase: () => ({ ok: false, reason: "origin/main missing", changed: [] }),
     fetchBase: () => null,
-    evalPins: () => ({ ok: false, mismatched: ["src/lib/supabase/useChat.ts"] }),
+    evalPins: () => ({ ok: true, mismatched: [] }),
   });
-  const pinRedVerdict = pinRedFlow.find((v) => v.name.includes("pinned-hash fallback"));
-  ok("flow ②-대조: fetch 실패 + pin mismatch → 최종 RED",
-    pinRedVerdict !== undefined && pinRedVerdict.red === true);
+  const bypassVerdict = pinBypassFallback.find((v) => v.name.includes("base unavailable"));
+  ok("flow ②-대조: base 미확보 + 핀 동시갱신 전부일치 → 그래도 RED (fallback 자기서명 우회 불가)",
+    bypassVerdict !== undefined && bypassVerdict.red === true);
 
   // ③ scope 4축 (삼순 2026-08-23 계약: chat-only GREEN / mux-only GREEN /
   //    mux+chat RED / 핀 동시변경으로 RED 우회 불가)
