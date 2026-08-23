@@ -51,6 +51,7 @@ check("군입대 선수는 기록 수집에 없어도 기존 SSG roster에서 �
     backNo: "22",
     team: "SSG",
     birthDate: "2006-11-21",
+    military: "상무",
   };
   const collected = new Map();
   const existing = new Map([[armyPlayer.kboId, armyPlayer]]);
@@ -68,6 +69,8 @@ check("이율예 roster·사진 매핑·JPEG가 함께 선적됨", () => {
     backNo: "22",
     team: "SSG",
     birthDate: "2006-11-21",
+    // 군 복무 표기 — team은 원소속(SSG) 유지, 프로필에 상무 별도 명시 (2026-08-23 하린아빠 지시)
+    military: "상무",
   }]);
   const photoIndex = fs.readFileSync(path.join(ROOT, "src/lib/constants/player-photos.ts"), "utf8");
   assert.match(photoIndex, /"이율예": "55832"/);

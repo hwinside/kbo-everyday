@@ -102,6 +102,8 @@ interface PlayerHeroProps {
   teamBg: string;
   backNo?: number | null;
   position?: string | null;
+  /** 군 복무 구단 표기 (예: "상무"). 있으면 포지션 아래 별도 명시 */
+  military?: string | null;
   /** 생년월일 표시 문자열 (예: "2000.07.17 · 만 25세"). 없으면 미표시 */
   birthText?: string | null;
   /** 외국인 선수 국적 (국기+국가명). 내국인은 null */
@@ -124,6 +126,7 @@ export default function PlayerHero({
   teamBg,
   backNo,
   position,
+  military,
   birthText,
   nationality,
   stats = [],
@@ -199,6 +202,11 @@ export default function PlayerHero({
             {position && (
               <div className="text-lg font-bold text-white/60 whitespace-nowrap" style={{ letterSpacing: "-0.05em" }}>
                 {position}
+              </div>
+            )}
+            {military && (
+              <div className="inline-flex w-fit items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-bold text-white/80 whitespace-nowrap">
+                🎖️ {military} 복무 중
               </div>
             )}
             {nationality && (

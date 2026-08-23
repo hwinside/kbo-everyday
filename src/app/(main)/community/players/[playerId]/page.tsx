@@ -364,6 +364,7 @@ export default function PlayerBoardPage() {
           teamBg={teamColor}
           backNo={player.number}
           position={player.position}
+          military={(rosterPlayer as { military?: string } | undefined)?.military ?? null}
           birthText={birthText}
           nationality={nationality}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
