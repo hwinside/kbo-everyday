@@ -118,7 +118,11 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
     if (isLoadMore) setLoadingMore(true); else setLoading(true);
     try {
       // GIPHY 직접 호출 → 서버 프록시 (키 공유 429 방지, CDN 캐시)
-      const params = new URLSearchParams({ type: "stickers", offset: String(offset) });
+      const params = new URLSearchParams({
+        type: "stickers",
+        offset: String(offset),
+        limit: String(PAGE_SIZE), // hasMore 판정(newData.length === PAGE_SIZE)과 결속
+      });
       if (searchQuery) params.set("q", searchQuery);
       const res = await fetch(`/api/community/giphy?${params.toString()}`);
       if (!res.ok) throw new Error(`giphy proxy ${res.status}`);

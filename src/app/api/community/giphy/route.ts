@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
  * 이 라우트는 서버에서 GIPHY를 호출하고 CDN 캐시(s-maxage)를 걸어
  * 동일 쿼리의 GIPHY 실호출을 캐시 TTL당 1회로 줄인다.
  *
- * GET /api/community/giphy?type=gifs|stickers&q=<검색어>&offset=<n>
+ * GET /api/community/giphy?type=gifs|stickers&q=<검색어>&offset=<n>&limit=<n>
  * 응답: { data: GiphyItem[], pagination: { total_count: number } }
  */
 
@@ -17,7 +17,8 @@ type GiphyType = "gifs" | "stickers";
 
 const MAX_QUERY_LEN = 80;
 const MAX_OFFSET = 200;
-const LIMIT = 24;
+const DEFAULT_LIMIT = 24;
+const MAX_LIMIT = 50;
 
 // CDN 캐시 TTL(초). 트렌딩은 변화가 느려 길게, 검색은 짧게.
 const TRENDING_SMAXAGE = 600;
@@ -29,15 +30,22 @@ interface GiphyImageSlim {
   height: string;
 }
 
-interface GiphyItemSlim {
-  id: string;
-  title: string;
-  images: {
-    fixed_height: GiphyImageSlim;
-    fixed_height_still: GiphyImageSlim;
-    original: GiphyImageSlim;
-  };
-}
+/** 소비처(GifPicker·StickerTool)가 읽는 이미지 렌디션 전부. */
+const IMAGE_KEYS = [
+  "fixed_height", // GifPicker: 목록 렌더·선택
+  "fixed_height_still", // GifPicker 인터페이스 계약
+  "original", // GifPicker 선택 / StickerTool 추가 폴백
+  "original_still", // StickerTool: addImage 1순위
+  "fixed_width_small", // StickerTool: 목록 src 폴백
+  "fixed_width_small_still", // StickerTool: 목록 src 1순위, addImage 폴백
+] as const;
+type ImageKey = (typeof IMAGE_KEYS)[number];
+
+/** 타입별 필수 렌디션 — 없으면 소비처 렌더가 깨지므로 그 아이템은 제외. */
+const REQUIRED_KEYS: Record<GiphyType, ImageKey[]> = {
+  gifs: ["fixed_height", "original"], // GifPicker는 non-optional 접근
+  stickers: [], // StickerTool은 전부 optional chaining + 폴백 체인
+};
 
 function slimImage(raw: unknown): GiphyImageSlim | null {
   if (!raw || typeof raw !== "object") return null;
@@ -50,21 +58,29 @@ function slimImage(raw: unknown): GiphyImageSlim | null {
   };
 }
 
-/** GIPHY 원본 아이템에서 앱이 쓰는 필드만 남긴다 (payload 축소 + 스키마 고정). */
-function slimItem(raw: unknown): GiphyItemSlim | null {
+/** GIPHY 원본 아이템에서 소비처가 쓰는 필드만 남긴다 (payload 축소 + 스키마 고정). */
+function slimItem(raw: unknown, type: GiphyType): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   if (typeof r.id !== "string" || !r.images || typeof r.images !== "object") return null;
-  const images = r.images as Record<string, unknown>;
-  const fixedHeight = slimImage(images.fixed_height);
-  const original = slimImage(images.original);
-  if (!fixedHeight || !original) return null;
-  // still은 일부 아이템에 없을 수 있어 fixed_height로 폴백(썸네일 용도라 안전)
-  const still = slimImage(images.fixed_height_still) ?? fixedHeight;
+  const rawImages = r.images as Record<string, unknown>;
+
+  const images: Partial<Record<ImageKey, GiphyImageSlim>> = {};
+  for (const key of IMAGE_KEYS) {
+    const slim = slimImage(rawImages[key]);
+    if (slim) images[key] = slim;
+  }
+
+  for (const key of REQUIRED_KEYS[type]) {
+    if (!images[key]) return null;
+  }
+  // 렌더 가능한 렌디션이 하나도 없으면 제외
+  if (Object.keys(images).length === 0) return null;
+
   return {
     id: r.id,
     title: typeof r.title === "string" ? r.title : "",
-    images: { fixed_height: fixedHeight, fixed_height_still: still, original },
+    images,
   };
 }
 
@@ -89,6 +105,13 @@ export async function GET(request: NextRequest) {
     ? Math.min(Math.max(offsetRaw, 0), MAX_OFFSET)
     : 0;
 
+  // 소비처별 페이지 크기 유지 (GifPicker 24, StickerTool 20) — hasMore 판정이
+  // `newData.length === PAGE_SIZE`에 결속돼 있어 limit을 그대로 전달해야 한다.
+  const limitRaw = Number.parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10);
+  const limit = Number.isFinite(limitRaw)
+    ? Math.min(Math.max(limitRaw, 1), MAX_LIMIT)
+    : DEFAULT_LIMIT;
+
   const upstream = new URL(
     q
       ? `https://api.giphy.com/v1/${type}/search`
@@ -99,7 +122,7 @@ export async function GET(request: NextRequest) {
     upstream.searchParams.set("q", q);
     upstream.searchParams.set("lang", "ko");
   }
-  upstream.searchParams.set("limit", String(LIMIT));
+  upstream.searchParams.set("limit", String(limit));
   upstream.searchParams.set("offset", String(offset));
   upstream.searchParams.set("rating", "g");
 
@@ -125,8 +148,8 @@ export async function GET(request: NextRequest) {
         ? ((json as { data: unknown[] }).data)
         : [];
     const data = rawData
-      .map(slimItem)
-      .filter((item): item is GiphyItemSlim => item !== null);
+      .map((item) => slimItem(item, type))
+      .filter((item): item is Record<string, unknown> => item !== null);
     const totalCount =
       json && typeof json === "object"
         ? Number(
