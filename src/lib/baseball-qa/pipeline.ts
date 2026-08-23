@@ -1610,6 +1610,20 @@ function mentionsTeam(tokens: string[]): boolean {
           rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
       })));
 }
+/**
+ * 우리 앱에 **실재하는 기능명**의 `<head><metric>` 결합형 폐쇄집합 (2026-08-23).
+ *
+ * `<X> <지표>` 정규식이 잡는 head 는 지표어 바로 앞 토큰이라, 기능명이 띄어 써지면
+ * (`직관 기록`) head 가 기능명의 앞부분(`직관`)이 되어 미결속 엔티티로 오인된다.
+ *
+ * ⚠️ **결합형 exact 일치 전용**이다. 구성 낱말을 어휘집에 넣으면 동음이의 일반어까지
+ *   야구 어휘로 승격된다(`직관` = 直觀 intuition). 그 축은 여기서 열지 않는다.
+ * ⚠️ 항목 추가 기준은 "우리 앱에 그 기능이 실제로 있는가" 하나다 — 표현 변이를 쫓지 않는다.
+ */
+const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set([
+  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
+  "직관기록",
+]);
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
@@ -1828,6 +1842,19 @@ function classifyOneNamedStat(
   if (matchGlossary(glossary, combined) !== null) return "term_question";
   if (BASEBALL_VOCABULARY.includes(head.toLowerCase())) return "term_question";
   if (BASEBALL_VOCABULARY.includes(combined.toLowerCase())) return "term_question";
+  // ②-a **우리 서비스 기능명 결합형**(2026-08-23 배포 후 end-user QA).
+  //
+  //   `직관 기록` 은 head `직관` 이 로스터·사전·어휘집 어디에도 없어 미결속으로 떨어졌고,
+  //   실 provider 의도 프로브가 3/3 `RECORD` 를 내서 **질문에 사람 이름이 없는데 "앞말이
+  //   선수 이름인지 확인하지 못했습니다"** 로 끝났다(프로덕션 3/3 고정 재현).
+  //
+  // ⚠️ **결합형 exact 일치로만 판정한다** — bare `직관` 을 어휘집에 넣으면 'intuition'
+  //   일반어(`내 직관이 맞아?`·`직관은 논리와 달라?`)까지 라우터·validator 어휘로 승격된다
+  //   (삼순 2026-08-23 NO-GO ②). 여기서 여는 것은 `직관`+`기록` 이 붙은 그 한 결합형뿐이고,
+  //   `직관` 단독은 종전 그대로 야구 어휘가 아니다.
+  //
+  // ⚠️ 폐쇄집합이다 — 우리 앱에 실재하는 기능명만 넣는다. 반례를 따라 자랄 자리가 없다.
+  if (PRODUCT_FEATURE_COMPOUNDS.has(combined.toLowerCase())) return "term_question";
 
   // ②-b **head 가 지시어·의문사뿐이면 `<X>` 자체가 없다**(2026-08-08 전건 감사 실측).
   //   `그 안타 기준이 머야`·`안타는 뭐고 홈런은 뭐에요?` 는 지시어/의문사 + 지표어일 뿐인데

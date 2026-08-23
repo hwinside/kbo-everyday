@@ -89,6 +89,31 @@ const mutations = [
     to: 'const final: StoredQaFinal = intent === null\n      ? { answer: "임의 자유문장", source: "llm" }\n      : intent === "narrative"',
     why: "자유문장 서빙 0 계약(D4)이 깨진다",
   },
+  {
+    name: "M9 제품 기능 결합형 폐쇄집합 비움 (2026-08-23 배포 후 QA 수정 무력화)",
+    file: PIPELINE,
+    re: /const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set\(\[[\s\S]*?\]\);/,
+    to: "const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set<string>([]);",
+    why: "`직관 기록`(정규화 산출물)이 다시 미결속이 되어 되묻기로 종결 — 프로덕션 3/3 재현 축",
+  },
+  {
+    // ⚠️ 종전 M10 은 set 에 `직관기록` 을 둔 채 `head`(=`직관`) 를 조회해 **항상 false** 였다.
+    //   그래서 RED 원인이 M9 와 같은 "compound fix 제거" 였고, 정작 막으려던
+    //   **bare-head 과확장은 한 번도 주입되지 않았다**(삼순 2026-08-23 3차 NO-GO ②).
+    //   이제 실제로 bare `직관` 을 전역 어휘집에 승격시켜 그 위험을 그대로 만든다.
+    name: "M10 bare `직관` 을 전역 어휘집에 승격 (다의어 과확장 — 실제 주입)",
+    file: PIPELINE,
+    re: /(\n  "타율", "방어율", "평균자책", "기록", "스탯", "war",)(\n\];)/,
+    to: '$1\n  "직관",$2',
+    why: "`직관 스탯`·`직관 타율` 같은 임의 결합이 검증 근거 없이 용어로 열린다 — C7 이 잡아야 한다",
+  },
+  {
+    name: "M11 정규화 seam 결과를 버리고 원문으로 진행 (full seam 무력화)",
+    file: PIPELINE,
+    re: /\n    if \(accepted\) \{\n      question = candidate;\n      questionNorm = normalizeQuestion\(candidate\);/,
+    to: "\n    if (false) {\n      question = candidate;\n      questionNorm = normalizeQuestion(candidate);",
+    why: "정규화가 수용돼도 재라우팅이 안 일어난다 — B2 full seam 축(로그 필드·최종 source)이 잡아야 한다",
+  },
 ];
 
 let failed = 0;

@@ -42,6 +42,7 @@ import {
   mentionsTeamForGate,
   packStoredQaFinal,
   parseStatIntentToken,
+  routeQuestion,
   statGuardOwnsQuestion,
   unpackStoredQaFinal,
   BLOCKED_ANSWER,
@@ -98,6 +99,20 @@ const NORMAL_ANSWER = JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: RUL
  *   (2026-08-22 재프로브). 추측이 아니라 실측값이며, 가드가 소유하는 질문에만 있다.
  * `expect` 는 "이 질문에 무엇이 나가야 옳은가" 를 사람이 판정한 값이다 —
  *   현재 출력을 그대로 베끼지 않는다(틀린 종단을 정답으로 고정하는 사고 방지).
+ *
+ * 🔴 `normalizedObserved` — **이 게이트가 2026-08-23 에 놓친 것** (배포 후 end-user QA 실측).
+ *
+ *   배포 파이프라인은 residual 질문을 **LLM 표기 정규화**(`normalizeQuestionLlm`)에 먼저 태우고,
+ *   수용(`accepted_surface`)되면 그 **정규화된 문자열로** 이후 판정을 한다. 그런데 이 게이트는
+ *   원문만 태워서, 정규화가 라우팅을 뒤집는 케이스를 **구조적으로 볼 수 없었다**:
+ *     `직관기록`  → 매치 없음(guard=false) → 게이트 GREEN
+ *     `직관 기록`  → `<직관> <기록>` 매치(guard=true) → **유저는 되묻기를 받았다**(3/3 고정 재현)
+ *   즉 28축 PASS · mutations 8/8 RED · CI 19 checks SUCCESS 를 전부 통과한 채 배포됐다.
+ *   seam 동일성은 *함수*만의 속성이 아니라 **(함수, 입력) 쌍**의 속성이다.
+ *
+ *   값은 추측이 아니라 **프로덕션 로그 `question_normalized` 실측치**다
+ *   (2026-08-23 06:1x 일회용 계정 종단 QA, 원장 `e2e-1286-repro-mt4vqarr.json`).
+ *   정규화가 안 일어나거나 거절된 케이스는 이 필드가 없다 — **없다고 추측해 채우지 않는다**.
  */
 const LOG_CASES: Array<{
   question: string;
@@ -107,6 +122,19 @@ const LOG_CASES: Array<{
   /** 그 종단이 왜 옳은지 — 리뷰어가 기대값 자체를 검증할 수 있게 남긴다. */
   why: string;
   llmCalls: number;
+  /**
+   * 배포에서 정규화가 **수용**된 경우 그 결과 문자열(로그 `question_normalized` 실측치).
+   * 있으면 이 문자열로도 종단을 한 번 더 태운다 — 유저가 실제로 받는 경로기 때문이다.
+   */
+  normalizedObserved?: string;
+  /**
+   * 그 정규화문을 **실 provider 에 그대로 태워 받은** 의도 토큰(2026-08-23 프로브 3/3).
+   *
+   * ⚠️ 이 필드가 있어야 정규화 축이 의미를 갖는다. stub 에 편의대로 `RULE_TERM` 을 주면
+   *   게이트는 "provider 가 협조하면 잘 된다" 만 증명한다 — 실측은 그 반대였다
+   *   (`직관 기록` → 3/3 `RECORD` → 되묻기). 가드 비소유면 이 필드는 불필요하다.
+   */
+  normalizedProbedIntent?: "record" | "narrative" | "rule_term";
 }> = [
   {
     question: "오늘 롯데 경기 누가 안타쳐서 7점 득점 낸거야",
@@ -190,6 +218,12 @@ const LOG_CASES: Array<{
     expect: "llm",
     why: "`<X> <지표>` 매치 자체가 없다 — 가드 대상이 아니다",
     llmCalls: 1,
+    // 🔴 배포 정규화가 띄어쓰기를 넣어 `<직관> <기록>` 이 매치되게 만든다.
+    //   유저가 실제로 받는 것은 이쪽이다 — 원문만 태우면 이 케이스는 영영 안 보인다.
+    normalizedObserved: "직관 기록",
+    // 실 provider 프로브 3/3 `RECORD` — 즉 `RULE_TERM` 재질의 경로로 구제되지 **않는다**.
+    //   가드가 소유하는 한 이 질문은 구조적으로 되묻기로 끝난다(배포 3/3 재현과 일치).
+    normalizedProbedIntent: "record",
   },
 ];
 
@@ -198,7 +232,26 @@ interface StubState {
   llmTexts: string[];
   llmCalls: number;
   guardModes: Array<boolean | undefined>;
-  logs: Array<{ matchPath: MatchPath; answer: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  logs: Array<{
+    matchPath: MatchPath;
+    answer: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    /** 배포가 `question_normalized` 칸에 적는 값 — 수용된 정규화문만 채워진다. */
+    questionNormalized?: string | null;
+    /** 미호출·수용·거절·오류를 구분하는 관측 상태. */
+    normalizeStatus?: string | null;
+    /** 로그에 남은 질문(원문이어야 한다 — 정규화문으로 덮이면 감사 분모가 깨진다). */
+    question?: string;
+  }>;
+  /**
+   * `normalizeQuestionLlm` seam stub (2026-08-23 삼순 NO-GO ①).
+   * 지정하면 그 질문에 대해 이 문자열을 표기 교정 결과로 돌려준다 —
+   * 정규화문을 **새 질문으로 직접 태우지 않고** 원문 1회 호출 안에서 seam 을 태우기 위함.
+   */
+  normalizeTo?: string | null;
+  /** 정규화 seam 이 실제로 호출됐는지 — 미호출이면 그 축은 검증되지 않은 것이다. */
+  normalizeCalls: number;
   cache: Map<string, string>;
   stored: LlmResult | null;
   storeCalls: number;
@@ -208,7 +261,10 @@ interface StubState {
   crashAfterStore?: boolean;
 }
 function freshState(...llmTexts: string[]): StubState {
-  return { llmTexts, llmCalls: 0, guardModes: [], logs: [], cache: new Map(), stored: null, storeCalls: 0 };
+  return {
+    llmTexts, llmCalls: 0, guardModes: [], logs: [], cache: new Map(),
+    stored: null, storeCalls: 0, normalizeCalls: 0,
+  };
 }
 function makeDeps(state: StubState): QaDeps {
   return {
@@ -231,8 +287,19 @@ function makeDeps(state: StubState): QaDeps {
         answer: entry.answer ?? null,
         inputTokens: entry.inputTokens ?? null,
         outputTokens: entry.outputTokens ?? null,
+        questionNormalized: entry.questionNormalized ?? null,
+        normalizeStatus: entry.normalizeStatus ?? null,
+        question: entry.question,
       });
     },
+    // ⚠️ 정규화 seam (삼순 2026-08-23 NO-GO ①). 미지정이면 주입하지 않아 종전 계약 그대로다
+    //   — `normalizeQuestionLlm` 미주입 = 정규화 단계 비활성(배포도 같은 계약).
+    ...(state.normalizeTo === undefined ? {} : {
+      normalizeQuestionLlm: async (_q: string) => {
+        state.normalizeCalls += 1;
+        return { text: state.normalizeTo ?? null, inputTokens: 7, outputTokens: 3 };
+      },
+    }),
     storeLlm: async (result) => {
       state.storeCalls += 1;
       state.stored = result;
@@ -244,7 +311,22 @@ function makeDeps(state: StubState): QaDeps {
 }
 
 let failures = 0;
+/**
+ * 실제로 **실행된** 축 수. 하드코딩 합계를 쓰면 축을 늘리고 숫자를 안 고쳤을 때
+ * 보고가 조용히 틀리고(2026-08-23 삼순 3차: 실제 33축인데 28로 표기), 더 나쁘게는
+ * 축이 통째로 안 돌아도 숫자가 그대로라 **누락이 안 보인다**. 카운터가 유일한 SSOT다.
+ */
+let executed = 0;
+/** 축 이름 중복 검출 — 같은 이름이 둘이면 어느 쪽이 돌았는지 로그로 특정할 수 없다. */
+const seenNames = new Set<string>();
 async function check(name: string, fn: () => void | Promise<void>): Promise<void> {
+  if (seenNames.has(name)) {
+    failures += 1;
+    console.log(`  ❌ [SCM-FAIL] 축 이름 중복: ${name}`);
+    return;
+  }
+  seenNames.add(name);
+  executed += 1;
   try {
     await fn();
     console.log(`  ✅ ${name}`);
@@ -318,6 +400,179 @@ async function main() {
   await check("B-총계 되묻기로 끝나는 건 '값 요구' 1건뿐", () => {
     const clarify = LOG_CASES.filter((c) => c.expect === "stat_clarify");
     assert.equal(clarify.length, 1, `되묻기 종결이 ${clarify.length}건 — 11건 중 1건(값 요구)이어야 한다`);
+  });
+
+  console.log("── B2. **full normalization seam** — 원문 1회 호출 안에서 정규화까지 (삼순 NO-GO ①) ──");
+  //
+  // 왜 이 축이 필요한가 — 게이트가 원문만 태우면 정규화가 라우팅을 뒤집는 경우를 구조적으로
+  // 볼 수 없다. `직관기록` 은 가드 비소유라 GREEN 이었지만, 배포가 실제로 판정하는
+  // `직관 기록` 은 가드 소유라 유저가 되묻기를 받았다(프로덕션 3/3 고정 재현).
+  //
+  // ⚠️ **정규화문을 새 질문으로 직접 태우지 않는다** (삼순 2026-08-23 NO-GO ①).
+  //   그건 여전히 prod seam 우회다 — `normalizeQuestionLlm → accepted_surface →
+  //   question_normalized → 재라우팅` 이 한 흐름으로 이어지는지를 증명하지 못한다.
+  //   여기서는 **원문을 1회 `answerQuestion` 에 넣고** normalizer seam 을 stub 으로 주입해
+  //   ①정규화 호출 ②수용 판정 ③로그 필드 ④최종 source 를 한 흐름으로 고정한다.
+  //
+  // ⚠️ 정규화 산출물은 추측이 아니라 **프로덕션 로그 `question_normalized` 실측치**다.
+  const normalizedCases = LOG_CASES.filter((c) => typeof c.normalizedObserved === "string");
+  await check("B2-0 정규화 실측치가 있는 케이스가 최소 1건 존재한다", () => {
+    // 0 건이면 아래 루프가 통째로 안 돌아 "PASS" 가 된다 — 빈 루프 false-GREEN 방지.
+    assert.ok(normalizedCases.length >= 1, "normalizedObserved 케이스가 0 건 — 정규화 축이 검증되지 않는다");
+  });
+  for (const c of normalizedCases) {
+    const normalized = c.normalizedObserved!;
+    await check(`B2 [${c.expect}] "${c.question}" ―(정규화)→ "${normalized}" full seam`, async () => {
+      // ⚠️ **축에 이빨이 있는지 먼저 증명한다** (2026-08-23 mutation 실측).
+      //   처음엔 이 단언이 없었고, 산출물을 원문과 같게 바꾸는 mutation 을 넘겼다 —
+      //   축이 무효화됐는데도 GREEN(바로 그 false-GREEN 형태).
+      assert.notEqual(
+        normalized, c.question,
+        "정규화문이 원문과 같다 — 이 케이스는 정규화 축을 검증하지 못한다(무효 fixture)",
+      );
+
+      // 가드 소유 여부는 **정규화문 기준**으로 갈린다 — 실측 의도 토큰이 필요한지 그것으로 정한다.
+      const normGuard = statGuardOwnsQuestion(normalized, glossary, players);
+      if (normGuard) {
+        // 여기서 `RULE_TERM` 을 임의로 주면 게이트가 현실이 아니라 희망을 검증한다
+        //   — 실 provider 프로브 실측은 3/3 `RECORD` 였다.
+        assert.ok(
+          c.normalizedProbedIntent,
+          "가드 소유 정규화문인데 실측 의도 토큰이 없다 — 추측 토큰으로 태우면 false-GREEN 이다",
+        );
+      }
+      const texts = normGuard
+        ? [INTENT(c.normalizedProbedIntent!.toUpperCase()), NORMAL_ANSWER]
+        : [NORMAL_ANSWER];
+
+      const state = freshState(...texts);
+      state.normalizeTo = normalized;              // seam 주입 — 배포의 provider 자리에 앉는다
+      const r = await answerQuestion("u-seam", c.question, makeDeps(state));  // ← **원문** 1회 호출
+
+      // ① seam 이 실제로 탔는가. 안 탔으면 아래 결과는 정규화와 무관한 것이다.
+      assert.equal(state.normalizeCalls, 1, `정규화 seam 미호출 (calls=${state.normalizeCalls})`);
+      // ② 수용 판정 — 배포가 이 후보를 accepted_surface 로 받아야 재라우팅이 일어난다.
+      const log = state.logs.at(-1);
+      assert.ok(log, "로그 없음");
+      assert.equal(log!.normalizeStatus, "accepted_surface",
+        `정규화가 수용되지 않았다 (status=${log!.normalizeStatus}) — 재라우팅 자체가 안 일어난다`);
+      // ③ 로그 필드 계약: question 은 **원문**, question_normalized 는 **수용문**.
+      assert.equal(log!.question, c.question, "로그 question 이 원문이 아니다 — 감사 분모가 깨진다");
+      assert.equal(log!.questionNormalized, normalized,
+        `question_normalized 불일치 (${log!.questionNormalized})`);
+      // ④ 최종 종단 — 정규화를 거친 뒤에도 원문 기대와 같아야 한다.
+      assert.equal(
+        r.source, c.expect,
+        `정규화 후 종단이 기대와 다르다 (기대 ${c.expect} ≠ 실제 ${r.source}) — ${c.why}`,
+      );
+      assert.notEqual(
+        r.answer, STAT_CLARIFY_ANSWER,
+        "정규화문이 되묻기로 끝난다 — 질문에 사람 이름이 없는데 이름을 되묻는 동문서답이다",
+      );
+      assert.deepEqual(
+        state.logs.map((l) => l.matchPath), [c.expect],
+        `로그 경로 불일치: ${state.logs.map((l) => l.matchPath).join(",")}`,
+      );
+    });
+  }
+  await check("B2-2 반대축 — 정규화가 라우팅을 **정당하게** 바꾸면 그 결과를 따른다", async () => {
+    // ⚠️ 이 축이 없으면 M11(정규화 결과를 버리고 원문 진행)이 **무증상**이다
+    //   (2026-08-23 mutation 실측: 게이트가 못 잡음). `직관기록` 은 수정 후 원문·정규화문이
+    //   둘 다 `llm` 로 끝나서, 정규화를 버려도 종단이 같아 관측 자체가 불가능하다.
+    //   관측 가능성은 mutation 의 1급 속성이다 — 무대가 없으면 결함이 아니라 무증상이 된다.
+    //
+    //   `오타니홈런몇개` 는 정반대 방향의 실제 케이스다:
+    //     원문      `오타니홈런몇개`   → `<X> <지표>` 매치 없음(guard=false) → llm
+    //     정규화문  `오타니 홈런 몇개` → 미결속 엔티티(guard=true)          → 되묻기
+    //   여기서 되묻기는 **옳다** — 오타니는 로스터에 없는 실제 미결속 대상이라 값을 줄 수 없다.
+    //   즉 정규화가 라우팅을 바꾸는 것이 정상 동작이며, 그 결과를 따라야 한다.
+    //
+    // ⚠️ 이 축은 삼순 2026-08-23 요구(`오타니홈런몇개` 무회귀)와 같은 대상이다 —
+    //   폐기한 blanket route-invariance 안이 바로 이 정당한 교정을 막았다.
+    const raw = "오타니홈런몇개";
+    const corrected = "오타니 홈런 몇개";
+    assert.equal(statGuardOwnsQuestion(raw, glossary, players), false, "원문이 이미 가드 소유 — 무대가 사라졌다");
+    assert.equal(statGuardOwnsQuestion(corrected, glossary, players), true, "정규화문이 가드 비소유 — 무대가 사라졌다");
+
+    const state = freshState(INTENT("RECORD"));
+    state.normalizeTo = corrected;
+    const r = await answerQuestion("u-seam2", raw, makeDeps(state));
+
+    assert.equal(state.normalizeCalls, 1, "정규화 seam 미호출");
+    const log = state.logs.at(-1)!;
+    assert.equal(log.normalizeStatus, "accepted_surface", `수용되지 않음 (${log.normalizeStatus})`);
+    assert.equal(log.questionNormalized, corrected, "question_normalized 불일치");
+    assert.equal(log.question, raw, "로그 question 이 원문이 아니다");
+    // 핵심: 정규화 결과를 버리면 여기가 `llm` 이 된다 — M11 이 잡히는 지점.
+    assert.equal(r.source, "stat_clarify",
+      `정규화 결과가 라우팅에 반영되지 않았다 (${r.source}) — 미결속 대상에 값을 줄 수 없으므로 되묻기가 정답이다`);
+    assert.equal(r.answer, STAT_CLARIFY_ANSWER);
+  });
+  await check("C7 bare-head 과확장 반대축 — `직관 <지표>` 임의 결합은 열리지 않는다 (삼순 3차 NO-GO ②)", () => {
+    // ⚠️ C6 은 **지표어가 없는 문장**만 봐서 bare-head 승격 위험을 못 잡는다
+    //   (`내 직관이 맞아?` 는 `<X> <지표>` 매치 자체가 없어 어느 구현에서도 `[]`).
+    //   실제 위험은 `직관` 이 전역 어휘집에 오르면 **`직관`+아무 지표어** 결합이
+    //   검증 근거 없이 용어로 열리는 것이다. 그 차이가 관측되는 무대가 여기다:
+    //
+    //     구현            `직관 스탯` / `직관 타율`
+    //     compound-only   ambiguous     (열리지 않음 — 계약)
+    //     bare 승격       term_question (검증 근거 없이 열림 — M10 이 주입하는 결함)
+    //
+    //   `직관 기록` 만 열리는 이유는 그것이 **우리 앱에 실재하는 기능명**이기 때문이고,
+    //   `직관 스탯`·`직관 타율` 은 실재하지 않으므로 근거가 없다.
+    for (const q of ["직관 스탯", "직관 타율"]) {
+      const kinds = classifyNamedStatMatches(q.normalize("NFKC").toLowerCase(), glossary, players);
+      assert.ok(
+        kinds.includes("ambiguous"),
+        `bare-head 과확장: "${q}" 가 근거 없이 열렸다 → ${JSON.stringify(kinds)}`,
+      );
+      assert.ok(
+        !kinds.includes("term_question"),
+        `"${q}" 가 검증 근거 없이 용어로 판정됐다`,
+      );
+    }
+    // 무회귀: 실재 기능명 결합형은 그대로 열려 있어야 한다(과잉 차단 방지).
+    assert.ok(
+      classifyNamedStatMatches("직관 기록".normalize("NFKC").toLowerCase(), glossary, players)
+        .includes("term_question"),
+      "제품 기능 결합형이 닫혔다",
+    );
+  });
+  await check("C8 route 축 — bare 승격이 라우팅 판정을 바꾸지 않는다", () => {
+    // classifier 뿐 아니라 **라우터**로도 본다 — 어휘집은 `routeQuestion` 의 범위 판정에도
+    // 쓰이므로, 한 축만 보면 다른 축의 과확장을 놓친다(삼순 3차 NO-GO ② 'route/classifier').
+    for (const q of ["내 직관이 맞아?", "직관은 논리와 달라?", "직관적으로 이해가 안 돼",
+                     "직관력이 뭐야", "직관 가고싶다", "직관 승률"]) {
+      assert.equal(
+        routeQuestion(q, glossary, players, false), "llm_scope_gate",
+        `다의어 문장의 라우팅이 바뀌었다: "${q}"`,
+      );
+      assert.equal(
+        statGuardOwnsQuestion(q, glossary, players), false,
+        `다의어 문장이 가드 소유가 됐다: "${q}"`,
+      );
+    }
+  });
+  await check("C6 다의어 반대축 — bare `직관`(intuition)은 야구 어휘가 아니다 (삼순 NO-GO ②)", () => {
+    // 전역 `BASEBALL_WORDS` 에 bare `직관` 을 넣으면 일반어까지 라우터·validator 어휘로
+    // 승격된다. 결합형 exact 폐쇄집합으로만 여는 계약을 여기서 못 박는다.
+    for (const q of ["내 직관이 맞아?", "직관은 논리와 달라?", "직관적으로 이해가 안 돼", "직관력이 뭐야"]) {
+      const kinds = classifyNamedStatMatches(q.normalize("NFKC").toLowerCase(), glossary, players);
+      assert.deepEqual(kinds, [], `다의어 일반어가 야구 판정에 걸렸다: "${q}" → ${JSON.stringify(kinds)}`);
+    }
+    // 결합형만 열린다 — head 단독 승격이면 위 4건이 깨진다(M10 이 이 축을 태운다).
+    assert.ok(
+      classifyNamedStatMatches("직관 기록".normalize("NFKC").toLowerCase(), glossary, players)
+        .includes("term_question"),
+      "제품 기능 결합형이 안 열린다",
+    );
+  });
+  await check("B2-1 정규화 seam 무회귀 — 미주입이면 정규화 단계 자체가 비활성", async () => {
+    // 배포도 `normalizeQuestionLlm` 미주입이면 이 단계를 타지 않는다(기존 계약).
+    const state = freshState(NORMAL_ANSWER);
+    await answerQuestion("u-noseam", "직관기록", makeDeps(state));
+    assert.equal(state.normalizeCalls, 0, "seam 미주입인데 정규화가 호출됐다");
+    assert.equal(state.logs.at(-1)!.normalizeStatus, null, "미호출인데 normalizeStatus 가 채워졌다");
   });
 
   console.log("── C. 과잉 완화 방지 · 기존 계약 무회귀 ──");
@@ -458,8 +713,15 @@ async function main() {
     console.log("  ✅ selftest RED 2/2 확인");
   }
 
-  const total = 2 + LOG_CASES.length + 1 + 5 + 4 + 5;
-  console.log(`\n총 ${total}축 검사 · 실패 ${failures}`);
+  // ⚠️ 실행 카운터가 SSOT. 더불어 **하한**을 걸어 축이 통째로 빠지는 것을 막는다 —
+  //   카운터만 쓰면 "0축 실행 · 실패 0" 도 PASS 로 보이기 때문이다(빈 실행 false-GREEN).
+  //   하한은 구조에서 유도한다(고정축 + 로그 전수) — 손으로 적은 합계를 다시 만들지 않는다.
+  const MIN_AXES = LOG_CASES.length + 20;
+  console.log(`\n총 ${executed}축 실행 · 실패 ${failures}`);
+  if (executed < MIN_AXES) {
+    console.log(`  ❌ [SCM-FAIL] 실행 축이 하한 미만 (${executed} < ${MIN_AXES}) — 축이 누락됐다`);
+    process.exit(1);
+  }
   if (failures > 0) process.exit(1);
   console.log("✅ stat-clarify 오발동 게이트 PASS");
 }
