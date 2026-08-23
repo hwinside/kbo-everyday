@@ -5,8 +5,6 @@ import { Search, X, Loader2 } from "lucide-react";
 
 const SWIPE_THRESHOLD = 60;
 
-const GIPHY_API_KEY = process.env.NEXT_PUBLIC_GIPHY_API_KEY!;
-const GIPHY_LIMIT = 24;
 
 interface GiphyImage {
   url: string;
@@ -40,11 +38,14 @@ export default function GifPicker({ onSelect, onClose }: GifPickerProps) {
   const fetchGifs = useCallback(async (searchQuery: string) => {
     setLoading(true);
     try {
-      const endpoint = searchQuery.trim()
-        ? `https://api.giphy.com/v1/gifs/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchQuery.trim())}&limit=${GIPHY_LIMIT}&rating=g&lang=ko`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${GIPHY_API_KEY}&limit=${GIPHY_LIMIT}&rating=g`;
+      // GIPHY 직접 호출 → 서버 프록시 (키 공유 429 방지, CDN 캐시)
+      const trimmed = searchQuery.trim();
+      const endpoint = trimmed
+        ? `/api/community/giphy?q=${encodeURIComponent(trimmed)}`
+        : `/api/community/giphy`;
 
       const res = await fetch(endpoint);
+      if (!res.ok) throw new Error(`giphy proxy ${res.status}`);
       const json = await res.json();
       setGifs(json.data ?? []);
     } catch {

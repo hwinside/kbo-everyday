@@ -27,7 +27,6 @@ interface StickerToolProps {
   addImage: (url: string) => Promise<unknown>;
 }
 
-const GIPHY_API_KEY = process.env.NEXT_PUBLIC_GIPHY_API_KEY;
 
 export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
   const [tab, setTab] = useState<"default" | "giphy">("default");
@@ -47,16 +46,14 @@ export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
         >
           기본 스티커
         </button>
-        {GIPHY_API_KEY && (
-          <button
-            onClick={() => setTab("giphy")}
-            className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${
-              tab === "giphy" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
-            }`}
-          >
-            GIPHY
-          </button>
-        )}
+        <button
+          onClick={() => setTab("giphy")}
+          className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${
+            tab === "giphy" ? "bg-accent text-white" : "bg-bg-tertiary text-text-secondary"
+          }`}
+        >
+          GIPHY
+        </button>
       </div>
 
       {tab === "default" ? (
@@ -117,14 +114,14 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
   const lastQueryRef = useRef("");
 
   const fetchStickers = useCallback(async (searchQuery: string, offset = 0) => {
-    if (!GIPHY_API_KEY) return;
     const isLoadMore = offset > 0;
     if (isLoadMore) setLoadingMore(true); else setLoading(true);
     try {
-      const base = searchQuery
-        ? `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
-        : `https://api.giphy.com/v1/stickers/trending?api_key=${GIPHY_API_KEY}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
-      const res = await fetch(base);
+      // GIPHY 직접 호출 → 서버 프록시 (키 공유 429 방지, CDN 캐시)
+      const params = new URLSearchParams({ type: "stickers", offset: String(offset) });
+      if (searchQuery) params.set("q", searchQuery);
+      const res = await fetch(`/api/community/giphy?${params.toString()}`);
+      if (!res.ok) throw new Error(`giphy proxy ${res.status}`);
       const json = await res.json();
       const newData: GiphySticker[] = json.data ?? [];
       const total = json.pagination?.total_count ?? 0;
