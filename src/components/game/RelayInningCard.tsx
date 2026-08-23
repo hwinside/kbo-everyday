@@ -5,7 +5,7 @@ import { clsx } from "clsx";
 import { ChevronDown } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { TeamData } from "@/lib/constants/teams";
-import type { InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
+import type { FieldingEvent, InningRelay, PlayEvent } from "@/lib/hooks/useGameRelay";
 import type { PitchDetail } from "@/lib/game/pitch-provider";
 
 /**
@@ -83,6 +83,65 @@ function PitchSequence({ pitches }: { pitches: PitchDetail[] }) {
   );
 }
 
+/**
+ * 교체 이벤트 라벨 — 들어오는 쪽(inPosKr) 기준. 폐쇄집합(FIELDING_POS_TOKEN)이라 룰로 충분.
+ * 수비위치 변경(reposition)은 피드 소음이라 중계 피드에서는 숨긴다(필드뷰 전용 유지).
+ */
+function substitutionLabel(e: Extract<FieldingEvent, { kind: "replace" }>): string {
+  if (e.inPosKr === "투수") return "투수교체";
+  if (e.inPosKr === "대타") return "대타";
+  if (e.inPosKr === "대주자") return "대주자";
+  return "교체";
+}
+
+type ReplaceEvent = Extract<FieldingEvent, { kind: "replace" }>;
+
+/**
+ * 피드에 노출할 교체 이벤트만 추린다 — replace 이면서 playIndex 가 있는 것만.
+ * playIndex 미정의(구버전 응답)는 위치를 복원할 수 없으므로 오배치 대신 생략(fail-safe,
+ * 기존 동작과 동일). reposition(수비위치 변경)은 필드뷰 전용으로 유지.
+ */
+function feedSubstitutions(fielding: FieldingEvent[] | undefined): (ReplaceEvent & { playIndex: number })[] {
+  return (fielding ?? []).filter(
+    (e): e is ReplaceEvent & { playIndex: number } =>
+      e.kind === "replace" && typeof e.playIndex === "number",
+  );
+}
+
+function substitutionsAt(subs: (ReplaceEvent & { playIndex: number })[], index: number) {
+  return subs.filter((e) => e.playIndex === index);
+}
+
+/** 타석 사이 교체 인포 행 — "투수교체 · 올러 → 조상우" */
+function SubstitutionRow({ event }: { event: Extract<FieldingEvent, { kind: "replace" }> }) {
+  const label = substitutionLabel(event);
+  return (
+    <div
+      data-testid="relay-sub-row"
+      data-sub-label={label}
+      data-sub-in={event.inName}
+      className="flex items-center gap-2 py-1 border-b border-border/20"
+    >
+      <span className="text-text-tertiary text-xs shrink-0 w-3 text-center">⇄</span>
+      <span
+        className={clsx(
+          "text-[10px] font-bold px-1 py-0.5 rounded shrink-0",
+          label === "투수교체"
+            ? "text-amber-400 bg-amber-400/10"
+            : "text-text-secondary bg-bg-tertiary",
+        )}
+      >
+        {label}
+      </span>
+      <span className="text-xs text-text-secondary">
+        {event.outName}
+        <span className="text-text-tertiary"> → </span>
+        <span className="text-text-primary font-medium">{event.inName}</span>
+      </span>
+    </div>
+  );
+}
+
 function PlayRow({ play, isLast }: { play: PlayEvent; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const hasScoring = play.extras?.some(
@@ -91,7 +150,7 @@ function PlayRow({ play, isLast }: { play: PlayEvent; isLast: boolean }) {
   const hasPitches = !!play.pitches && play.pitches.length > 0;
 
   return (
-    <div className={clsx(!isLast && "border-b border-border/20")}>
+    <div data-testid="relay-play-row" data-play-batter={play.batterName} className={clsx(!isLast && "border-b border-border/20")}>
       <button
         type="button"
         onClick={() => hasPitches && setExpanded((v) => !v)}
@@ -160,6 +219,9 @@ export default function RelayInningCard({
 }) {
   const teamColor = inning.half === "top" ? awayTeam.colorPrimary : homeTeam.colorPrimary;
   const halfLabel = inning.half === "top" ? "초" : "말";
+  const substitutions = feedSubstitutions(inning.fielding);
+  // 마지막 확정 타석 이후(= 진행 중 타석 중) 교체 — 라이브에서 즉시 노출되는 케이스.
+  const trailingSubstitutions = substitutions.filter((e) => e.playIndex >= inning.plays.length);
 
   return (
     <div className="glass-card overflow-hidden">
@@ -178,16 +240,25 @@ export default function RelayInningCard({
         )}
       </div>
       <div className="px-3 py-1.5">
-        {inning.plays.length === 0 ? (
+        {inning.plays.length === 0 && substitutions.length === 0 ? (
           <p className="text-xs text-text-tertiary py-1">기록 없음</p>
         ) : (
-          inning.plays.map((play, i) => (
-            <PlayRow
-              key={`${play.batterName}-${i}`}
-              play={play}
-              isLast={i === inning.plays.length - 1}
-            />
-          ))
+          <>
+            {inning.plays.map((play, i) => (
+              <div key={`${play.batterName}-${i}`}>
+                {substitutionsAt(substitutions, i).map((e, j) => (
+                  <SubstitutionRow key={`sub-${i}-${j}`} event={e} />
+                ))}
+                <PlayRow
+                  play={play}
+                  isLast={i === inning.plays.length - 1 && trailingSubstitutions.length === 0}
+                />
+              </div>
+            ))}
+            {trailingSubstitutions.map((e, j) => (
+              <SubstitutionRow key={`sub-tail-${j}`} event={e} />
+            ))}
+          </>
         )}
       </div>
     </div>
