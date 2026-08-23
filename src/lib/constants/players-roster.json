@@ -97,7 +97,9 @@
     "backNo": "51",
     "team": "롯데",
     "birthDate": "2005-04-12",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "강승구",
@@ -215,7 +217,9 @@
     "backNo": "23",
     "team": "키움",
     "birthDate": "2001-06-21",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "고영표",
@@ -594,7 +598,9 @@
     "backNo": "44",
     "team": "SSG",
     "birthDate": "2002-08-23",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김규성",
@@ -613,7 +619,9 @@
     "backNo": "60",
     "team": "한화",
     "birthDate": "2002-08-23",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김규한",
@@ -650,7 +658,9 @@
     "backNo": "47",
     "team": "한화",
     "birthDate": "2002-11-16",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김기훈",
@@ -723,7 +733,9 @@
     "backNo": "41",
     "team": "삼성",
     "birthDate": "2001-10-15",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김도빈",
@@ -904,7 +916,9 @@
     "backNo": "52",
     "team": "KIA",
     "birthDate": "2003-04-25",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김리안",
@@ -968,7 +982,9 @@
     "backNo": "15",
     "team": "NC",
     "birthDate": "2001-09-07",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김민규",
@@ -1086,7 +1102,9 @@
     "backNo": "30",
     "team": "KIA",
     "birthDate": "2003-07-08",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김민준",
@@ -1168,7 +1186,9 @@
     "backNo": "14",
     "team": "KT",
     "birthDate": "2003-07-03",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김병휘",
@@ -1331,7 +1351,9 @@
     "backNo": "63",
     "team": "LG",
     "birthDate": "2003-11-15",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김성욱",
@@ -1413,7 +1435,9 @@
     "backNo": "25",
     "team": "NC",
     "birthDate": "2005-04-04",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김수윤",
@@ -1702,7 +1726,9 @@
     "backNo": "43",
     "team": "KT",
     "birthDate": "2006-08-21",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김재윤",
@@ -1838,7 +1864,9 @@
     "backNo": "103",
     "team": "LG",
     "birthDate": "2006-09-11",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김주성",
@@ -2406,7 +2434,9 @@
     "backNo": "53",
     "team": "삼성",
     "birthDate": "2005-07-16",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "김화중",
@@ -2965,7 +2995,9 @@
     "backNo": "64",
     "team": "LG",
     "birthDate": "2006-03-22",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박권후",
@@ -3020,7 +3052,9 @@
     "backNo": "39",
     "team": "LG",
     "birthDate": "2004-03-27",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박명현",
@@ -3147,7 +3181,9 @@
     "backNo": "19",
     "team": "SSG",
     "birthDate": "2003-12-29",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박성재",
@@ -3652,7 +3688,9 @@
     "backNo": "59",
     "team": "두산",
     "birthDate": "2003-07-02",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박지환",
@@ -3662,7 +3700,9 @@
     "backNo": "0",
     "team": "SSG",
     "birthDate": "2005-07-12",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박지훈",
@@ -3780,7 +3820,9 @@
     "backNo": "13",
     "team": "NC",
     "birthDate": "2004-04-26",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "박한결",
@@ -4339,7 +4381,9 @@
     "backNo": "90",
     "team": "SSG",
     "birthDate": "2004-05-28",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "송재영",
@@ -4511,7 +4555,9 @@
     "backNo": "42",
     "team": "NC",
     "birthDate": "2003-10-11",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "신우열",
@@ -4575,7 +4621,9 @@
     "backNo": "33",
     "team": "SSG",
     "birthDate": "2002-07-19",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "심건보",
@@ -4801,7 +4849,9 @@
     "backNo": "68",
     "team": "삼성",
     "birthDate": "2003-02-06",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "양석환",
@@ -5018,7 +5068,9 @@
     "backNo": "27",
     "team": "두산",
     "birthDate": "2005-08-04",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "여동욱",
@@ -5856,7 +5908,9 @@
     "backNo": "68",
     "team": "한화",
     "birthDate": "2004-03-07",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이민준",
@@ -5965,7 +6019,9 @@
     "backNo": "31",
     "team": "한화",
     "birthDate": "2001-09-14",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이서준",
@@ -6083,7 +6139,9 @@
     "backNo": "50",
     "team": "키움",
     "birthDate": "2004-07-02",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이승재",
@@ -6147,7 +6205,9 @@
     "backNo": "8",
     "team": "한화",
     "birthDate": "2002-07-23",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이승현",
@@ -6301,7 +6361,9 @@
     "backNo": "22",
     "team": "SSG",
     "birthDate": "2006-11-21",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이의리",
@@ -6473,7 +6535,9 @@
     "backNo": "48",
     "team": "키움",
     "birthDate": "2001-06-04",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이종준",
@@ -6735,7 +6799,9 @@
     "backNo": "11",
     "team": "롯데",
     "birthDate": "2002-11-24",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이태양",
@@ -6853,7 +6919,9 @@
     "backNo": "63",
     "team": "KIA",
     "birthDate": "2006-08-26",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "이호범",
@@ -7196,7 +7264,9 @@
     "backNo": "16",
     "team": "키움",
     "birthDate": "2002-05-10",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "장재율",
@@ -7323,7 +7393,9 @@
     "backNo": "66",
     "team": "롯데",
     "birthDate": "2005-08-15",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "전민재",
@@ -7693,7 +7765,9 @@
     "backNo": "75",
     "team": "LG",
     "birthDate": "2003-01-01",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "정진호",
@@ -7766,7 +7840,9 @@
     "backNo": "17",
     "team": "SSG",
     "birthDate": "2001-10-24",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "정현우",
@@ -8127,7 +8203,9 @@
     "backNo": "20",
     "team": "롯데",
     "birthDate": "2003-09-05",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "진우영",
@@ -8695,7 +8773,9 @@
     "backNo": "21",
     "team": "SSG",
     "birthDate": "2003-10-16",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "최현우",
@@ -9407,7 +9487,9 @@
     "backNo": "18",
     "team": "삼성",
     "birthDate": "2001-11-03",
-    "military": "상무"
+    "military": "상무",
+    "militaryAsOf": "2026-08-23",
+    "militarySource": "kbo-player-search"
   },
   {
     "name": "황동하",
