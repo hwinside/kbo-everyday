@@ -97,11 +97,15 @@ const mutations = [
     why: "`직관 기록`(정규화 산출물)이 다시 미결속이 되어 되묻기로 종결 — 프로덕션 3/3 재현 축",
   },
   {
-    name: "M10 결합형 판정을 head 단독 판정으로 교체 (다의어 과확장 방향)",
+    // ⚠️ 종전 M10 은 set 에 `직관기록` 을 둔 채 `head`(=`직관`) 를 조회해 **항상 false** 였다.
+    //   그래서 RED 원인이 M9 와 같은 "compound fix 제거" 였고, 정작 막으려던
+    //   **bare-head 과확장은 한 번도 주입되지 않았다**(삼순 2026-08-23 3차 NO-GO ②).
+    //   이제 실제로 bare `직관` 을 전역 어휘집에 승격시켜 그 위험을 그대로 만든다.
+    name: "M10 bare `직관` 을 전역 어휘집에 승격 (다의어 과확장 — 실제 주입)",
     file: PIPELINE,
-    re: /if \(PRODUCT_FEATURE_COMPOUNDS\.has\(combined\.toLowerCase\(\)\)\) return "term_question";/,
-    to: 'if (PRODUCT_FEATURE_COMPOUNDS.has(head.toLowerCase())) return "term_question";',
-    why: "결합형 exact 계약이 깨져 `직관 기록` 이 다시 미결속 — 동시에 head 단독 승격은 C6 다의어 축이 잡는다",
+    re: /(\n  "타율", "방어율", "평균자책", "기록", "스탯", "war",)(\n\];)/,
+    to: '$1\n  "직관",$2',
+    why: "`직관 스탯`·`직관 타율` 같은 임의 결합이 검증 근거 없이 용어로 열린다 — C7 이 잡아야 한다",
   },
   {
     name: "M11 정규화 seam 결과를 버리고 원문으로 진행 (full seam 무력화)",

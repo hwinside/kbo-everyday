@@ -42,6 +42,7 @@ import {
   mentionsTeamForGate,
   packStoredQaFinal,
   parseStatIntentToken,
+  routeQuestion,
   statGuardOwnsQuestion,
   unpackStoredQaFinal,
   BLOCKED_ANSWER,
@@ -310,7 +311,22 @@ function makeDeps(state: StubState): QaDeps {
 }
 
 let failures = 0;
+/**
+ * 실제로 **실행된** 축 수. 하드코딩 합계를 쓰면 축을 늘리고 숫자를 안 고쳤을 때
+ * 보고가 조용히 틀리고(2026-08-23 삼순 3차: 실제 33축인데 28로 표기), 더 나쁘게는
+ * 축이 통째로 안 돌아도 숫자가 그대로라 **누락이 안 보인다**. 카운터가 유일한 SSOT다.
+ */
+let executed = 0;
+/** 축 이름 중복 검출 — 같은 이름이 둘이면 어느 쪽이 돌았는지 로그로 특정할 수 없다. */
+const seenNames = new Set<string>();
 async function check(name: string, fn: () => void | Promise<void>): Promise<void> {
+  if (seenNames.has(name)) {
+    failures += 1;
+    console.log(`  ❌ [SCM-FAIL] 축 이름 중복: ${name}`);
+    return;
+  }
+  seenNames.add(name);
+  executed += 1;
   try {
     await fn();
     console.log(`  ✅ ${name}`);
@@ -492,6 +508,51 @@ async function main() {
       `정규화 결과가 라우팅에 반영되지 않았다 (${r.source}) — 미결속 대상에 값을 줄 수 없으므로 되묻기가 정답이다`);
     assert.equal(r.answer, STAT_CLARIFY_ANSWER);
   });
+  await check("C7 bare-head 과확장 반대축 — `직관 <지표>` 임의 결합은 열리지 않는다 (삼순 3차 NO-GO ②)", () => {
+    // ⚠️ C6 은 **지표어가 없는 문장**만 봐서 bare-head 승격 위험을 못 잡는다
+    //   (`내 직관이 맞아?` 는 `<X> <지표>` 매치 자체가 없어 어느 구현에서도 `[]`).
+    //   실제 위험은 `직관` 이 전역 어휘집에 오르면 **`직관`+아무 지표어** 결합이
+    //   검증 근거 없이 용어로 열리는 것이다. 그 차이가 관측되는 무대가 여기다:
+    //
+    //     구현            `직관 스탯` / `직관 타율`
+    //     compound-only   ambiguous     (열리지 않음 — 계약)
+    //     bare 승격       term_question (검증 근거 없이 열림 — M10 이 주입하는 결함)
+    //
+    //   `직관 기록` 만 열리는 이유는 그것이 **우리 앱에 실재하는 기능명**이기 때문이고,
+    //   `직관 스탯`·`직관 타율` 은 실재하지 않으므로 근거가 없다.
+    for (const q of ["직관 스탯", "직관 타율"]) {
+      const kinds = classifyNamedStatMatches(q.normalize("NFKC").toLowerCase(), glossary, players);
+      assert.ok(
+        kinds.includes("ambiguous"),
+        `bare-head 과확장: "${q}" 가 근거 없이 열렸다 → ${JSON.stringify(kinds)}`,
+      );
+      assert.ok(
+        !kinds.includes("term_question"),
+        `"${q}" 가 검증 근거 없이 용어로 판정됐다`,
+      );
+    }
+    // 무회귀: 실재 기능명 결합형은 그대로 열려 있어야 한다(과잉 차단 방지).
+    assert.ok(
+      classifyNamedStatMatches("직관 기록".normalize("NFKC").toLowerCase(), glossary, players)
+        .includes("term_question"),
+      "제품 기능 결합형이 닫혔다",
+    );
+  });
+  await check("C8 route 축 — bare 승격이 라우팅 판정을 바꾸지 않는다", () => {
+    // classifier 뿐 아니라 **라우터**로도 본다 — 어휘집은 `routeQuestion` 의 범위 판정에도
+    // 쓰이므로, 한 축만 보면 다른 축의 과확장을 놓친다(삼순 3차 NO-GO ② 'route/classifier').
+    for (const q of ["내 직관이 맞아?", "직관은 논리와 달라?", "직관적으로 이해가 안 돼",
+                     "직관력이 뭐야", "직관 가고싶다", "직관 승률"]) {
+      assert.equal(
+        routeQuestion(q, glossary, players, false), "llm_scope_gate",
+        `다의어 문장의 라우팅이 바뀌었다: "${q}"`,
+      );
+      assert.equal(
+        statGuardOwnsQuestion(q, glossary, players), false,
+        `다의어 문장이 가드 소유가 됐다: "${q}"`,
+      );
+    }
+  });
   await check("C6 다의어 반대축 — bare `직관`(intuition)은 야구 어휘가 아니다 (삼순 NO-GO ②)", () => {
     // 전역 `BASEBALL_WORDS` 에 bare `직관` 을 넣으면 일반어까지 라우터·validator 어휘로
     // 승격된다. 결합형 exact 폐쇄집합으로만 여는 계약을 여기서 못 박는다.
@@ -652,8 +713,15 @@ async function main() {
     console.log("  ✅ selftest RED 2/2 확인");
   }
 
-  const total = 2 + LOG_CASES.length + 1 + 5 + 4 + 5;
-  console.log(`\n총 ${total}축 검사 · 실패 ${failures}`);
+  // ⚠️ 실행 카운터가 SSOT. 더불어 **하한**을 걸어 축이 통째로 빠지는 것을 막는다 —
+  //   카운터만 쓰면 "0축 실행 · 실패 0" 도 PASS 로 보이기 때문이다(빈 실행 false-GREEN).
+  //   하한은 구조에서 유도한다(고정축 + 로그 전수) — 손으로 적은 합계를 다시 만들지 않는다.
+  const MIN_AXES = LOG_CASES.length + 20;
+  console.log(`\n총 ${executed}축 실행 · 실패 ${failures}`);
+  if (executed < MIN_AXES) {
+    console.log(`  ❌ [SCM-FAIL] 실행 축이 하한 미만 (${executed} < ${MIN_AXES}) — 축이 누락됐다`);
+    process.exit(1);
+  }
   if (failures > 0) process.exit(1);
   console.log("✅ stat-clarify 오발동 게이트 PASS");
 }
