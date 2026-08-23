@@ -40,6 +40,7 @@ import CountryFlag from "@/components/player/CountryFlag";
 
 // kboId → player 역매핑 (roster 기반 — 전체 선수 커버)
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
+import { militaryLabel } from "@/lib/utils/military-label";
 
 interface RawPlayerInfo {
   kboId: string;
@@ -84,6 +85,8 @@ export default function PlayerBoardPage() {
   const playerName = resolvedPlayer?.name;
   // 동명이인 대응: roster에서 canonical kboId로 직접 찾기
   const rosterPlayer = PLAYERS_ROSTER.find((p) => p.kboId === kboId);
+  // 상무 등 군 복무 표기 — hero/fallback 두 분기가 같은 값을 쓴다 (삼순 #1292 P0: hero 분기 한정 표기 누락 방지)
+  const rosterMilitary = (rosterPlayer as { military?: string } | undefined)?.military ?? null;
   // 생년월일 표시 (roster SSOT의 birthDate 기반, 없으면 null → 미표시)
   const birthText = formatBirthDisplay(rosterPlayer?.birthDate);
   // 외국인·아시아쿼터 선수 국적 (국기+국가명). 내국인은 null → 미표시
@@ -364,6 +367,7 @@ export default function PlayerBoardPage() {
           teamBg={teamColor}
           backNo={player.number}
           position={player.position}
+          military={rosterMilitary}
           birthText={birthText}
           nationality={nationality}
           stats={buildHeroStats(realStats ?? {}, player.position ?? "", playerRanks)}
@@ -388,6 +392,14 @@ export default function PlayerBoardPage() {
               <p className="text-base text-text-tertiary">
                 {[getTeamShortName(player.teamId) || player.team, player.position].filter(Boolean).join(" · ") || "선수"}
               </p>
+              {militaryLabel(rosterMilitary) && (
+                <span
+                  data-testid="military-badge"
+                  className="mt-0.5 inline-flex w-fit items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-xs font-semibold text-text-secondary"
+                >
+                  🎖️ {militaryLabel(rosterMilitary)}
+                </span>
+              )}
               {nationality && (
                 <CountryFlag
                   nationality={nationality}

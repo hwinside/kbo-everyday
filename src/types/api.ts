@@ -8,6 +8,12 @@ export interface RosterPlayer {
   teamId: number;
   position: string;
   backNo: string;
+  /** 군 복무 구단 표기 (예: "상무"). team/teamId는 원소속 구단 유지, 프로필에 별도 명시용 */
+  military?: string;
+  /** military 상태 확인 기준일 (YYYY-MM-DD) — 전역/복귀 감지 census의 staleness 판정용 */
+  militaryAsOf?: string;
+  /** military 상태 출처 (예: "kbo-player-search") */
+  militarySource?: string;
 }
 
 /** YouTube search result item (from YouTube Data API v3) */

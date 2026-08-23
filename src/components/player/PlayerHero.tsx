@@ -5,6 +5,7 @@ import { ChevronLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import CountryFlag from "@/components/player/CountryFlag";
 import type { Nationality } from "@/lib/utils/player-nationality";
+import { militaryLabel } from "@/lib/utils/military-label";
 
 // Hero 이미지: 검수 통과 선수만 노출 (default deny).
 // v2 cutout 품질 이슈로 allowlist 방식 전환 (2026-04-28).
@@ -102,6 +103,8 @@ interface PlayerHeroProps {
   teamBg: string;
   backNo?: number | null;
   position?: string | null;
+  /** 군 복무 구단 표기 (예: "상무"). 있으면 포지션 아래 별도 명시 */
+  military?: string | null;
   /** 생년월일 표시 문자열 (예: "2000.07.17 · 만 25세"). 없으면 미표시 */
   birthText?: string | null;
   /** 외국인 선수 국적 (국기+국가명). 내국인은 null */
@@ -124,6 +127,7 @@ export default function PlayerHero({
   teamBg,
   backNo,
   position,
+  military,
   birthText,
   nationality,
   stats = [],
@@ -199,6 +203,14 @@ export default function PlayerHero({
             {position && (
               <div className="text-lg font-bold text-white/60 whitespace-nowrap" style={{ letterSpacing: "-0.05em" }}>
                 {position}
+              </div>
+            )}
+            {militaryLabel(military) && (
+              <div
+                data-testid="military-badge"
+                className="inline-flex w-fit items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-[12px] font-bold text-white/80 whitespace-nowrap"
+              >
+                🎖️ {militaryLabel(military)}
               </div>
             )}
             {nationality && (

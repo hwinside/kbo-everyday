@@ -26,6 +26,8 @@ interface RosterPlayer {
   teamId: number;
   position: string;
   backNo: string;
+  /** 군 복무 구단 표기 (예: "상무"). team/teamId는 원소속 구단 유지 */
+  military?: string;
 }
 
 function dedupeForeignAliases(players: RosterPlayer[]): RosterPlayer[] {
@@ -61,6 +63,7 @@ function staticFallback(): RosterPlayer[] {
     teamId: number;
     position: string;
     backNo: string;
+    military?: string;
   }>).map((p) => ({
     kboId: String(p.kboId),
     name: p.name,
@@ -68,6 +71,7 @@ function staticFallback(): RosterPlayer[] {
     teamId: p.teamId,
     position: p.position,
     backNo: p.backNo ?? "",
+    ...(p.military ? { military: p.military } : {}),
   }));
 
   return dedupeForeignAliases(staticPlayers);
