@@ -205,12 +205,38 @@ export const SERVICE_REDIRECT_ANSWER =
  *   "운영팀에게 문의하세요"(= 나는 모른다)이고, 이쪽은 "그 기능은 여기 있습니다"
  *   (= 바로 다음 행동이 가능하다)다. 유저의 다음 행동이 다르면 문구도 라벨도 나눈다.
  */
-export const PRODUCT_FEATURE_GUIDE_ANSWERS: ReadonlyMap<string, string> = new Map([
-  [
-    "직관기록",
+/**
+ * ⚠️ **단일 registry** — 판정 키와 안내 문구를 한 자리에서 선언한다 (삼순 NO-GO ①).
+ *
+ *   종전에는 판정이 `Set`, 문구가 별도 `Map` 이었다. 그러면 `Set` 에만 기능을
+ *   추가했을 때 **라우팅은 성공으로 잡히고 문구는 없는** 상태가 되어, 유저에겐
+ *   `BLOCKED_ANSWER`(범위 밖)를 보내면서 로그는 `product_feature_guide` 성공으로
+ *   남는다. 감사 지표가 거짓말을 하게 되므로 구조적으로 막는다.
+ *
+ *   키를 값에서 파생시키면(`as const` 객체) 둘이 갈라질 수 있는 표면 자체가 없어진다.
+ */
+const PRODUCT_FEATURE_REGISTRY = {
+  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
+  //   문구는 실제 화면을 근거로 한다 — `/my/venue-stats` 에 승률·구장별 통계가 실재한다.
+  "직관기록":
     "직관 기록은 마이페이지에서 확인하실 수 있습니다. 직관한 경기가 쌓이면 승률·구장별 통계도 함께 보실 수 있습니다.",
-  ],
-]);
+} as const;
+
+/** registry 키 — 문구가 없는 기능명은 **타입상 존재할 수 없다**. */
+export type ProductFeatureKey = keyof typeof PRODUCT_FEATURE_REGISTRY;
+
+/**
+ * 기능명 → 안내 문구. **총함수(total)** 라 반환형에 `undefined` 가 없다.
+ *   호출처가 `?? BLOCKED_ANSWER` 같은 fallback 을 쓸 자리가 생기지 않는다.
+ */
+export function productFeatureGuideAnswer(feature: ProductFeatureKey): string {
+  return PRODUCT_FEATURE_REGISTRY[feature];
+}
+
+/** 게이트·감사용 전수 열거(단일 SSOT 에서 파생). */
+export const PRODUCT_FEATURE_KEYS = Object.keys(
+  PRODUCT_FEATURE_REGISTRY,
+) as readonly ProductFeatureKey[];
 /**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
@@ -276,8 +302,8 @@ export const LLM_AMBIGUOUS_ANSWER =
  * 골라야 하고, 그 고르는 부담 때문에 그냥 나간다.
  */
 export const SCOPE_GUIDE_ANSWER =
-  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
-  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식, 앱 기능 안내입니다. " +
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\" \"직관기록\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 기쁩니다!";
 
@@ -1376,16 +1402,17 @@ export function isServiceInquiry(normalized: string): boolean {
 /**
  * 질문이 **우리 앱에 실재하는 기능**을 가리키는가 — 가리킨다면 그 기능명을 돌려준다.
  *
- * ⚠️ 판정 SSOT 는 `PRODUCT_FEATURE_COMPOUNDS` **하나**다(#1288 에서 신설).
+ * ⚠️ 판정·문구 SSOT 는 `PRODUCT_FEATURE_REGISTRY` **하나**다.
+ *   반환값이 `ProductFeatureKey` 라 호출처는 문구를 **반드시 받을 수 있다**(총함수).
  *   어휘를 따로 열거하면 "결합형은 용어로 열리는데 안내는 안 나가는" 반쪽 상태가 된다.
  * ⚠️ 공백은 제거하고 비교한다 — 유저는 `직관기록`·`직관 기록` 둘 다 쓰고,
  *   LLM 표기 정규화가 그 사이를 오가는 것이 #1288 의 근원이었다.
  * ⚠️ **부분문자열이 아니라 토큰 포함**으로 본다. `includes` 로 두면
  *   `직관기록이 아니라 선수 기록` 같은 문장까지 가로채다.
  */
-export function resolveProductFeature(question: string): string | null {
+export function resolveProductFeature(question: string): ProductFeatureKey | null {
   const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
-  for (const feature of PRODUCT_FEATURE_COMPOUNDS) {
+  for (const feature of PRODUCT_FEATURE_KEYS) {
     if (!compact.startsWith(feature)) continue;
     // 기능명 뒤에 남는 것이 **문법 꾸리뿐**일 때만 인정한다.
     //   `직관기록`·`직관 기록이 뭐야`·`직관기록은` → 기능 질문 ⭕️
@@ -1670,10 +1697,6 @@ function mentionsTeam(tokens: string[]): boolean {
  *   야구 어휘로 승격된다(`직관` = 直觀 intuition). 그 축은 여기서 열지 않는다.
  * ⚠️ 항목 추가 기준은 "우리 앱에 그 기능이 실제로 있는가" 하나다 — 표현 변이를 쫓지 않는다.
  */
-const PRODUCT_FEATURE_COMPOUNDS: ReadonlySet<string> = new Set([
-  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
-  "직관기록",
-]);
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
@@ -1904,7 +1927,7 @@ function classifyOneNamedStat(
   //   `직관` 단독은 종전 그대로 야구 어휘가 아니다.
   //
   // ⚠️ 폐쇄집합이다 — 우리 앱에 실재하는 기능명만 넣는다. 반례를 따라 자랄 자리가 없다.
-  if (PRODUCT_FEATURE_COMPOUNDS.has(combined.toLowerCase())) return "term_question";
+  if (resolveProductFeature(combined) !== null) return "term_question";
 
   // ②-b **head 가 지시어·의문사뿐이면 `<X>` 자체가 없다**(2026-08-08 전건 감사 실측).
   //   `그 안타 기준이 머야`·`안타는 뭐고 홈런은 뭐에요?` 는 지시어/의문사 + 지표어일 뿐인데
@@ -5535,10 +5558,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     //   라우터는 라벨만 돌려주므로 문구에 넣을 기능명이 여기에 없다.
     //   판정기와 문구 생성이 갈라지면 "안내하기로 라우팅해놓고 정작 문구가 없는" 모순이 되므로
     //   그 경우 fail-close(범위 안내)한다.
+    // ⚠️ registry 가 총함수라 **문구 미존재로 인한 fallback 이 없다**(삼순 NO-GO ①).
+    //   종전에는 `?? null` 로 떨어져 `BLOCKED_ANSWER` 를 보내면서도 로그는
+    //   성공 라벨로 남는 구멍이 있었다. 이제 타입상 닫혀 있다.
     const productFeature = route === "product_feature_guide" ? resolveProductFeature(question) : null;
     const productFeatureAnswer = productFeature === null
       ? null
-      : PRODUCT_FEATURE_GUIDE_ANSWERS.get(productFeature) ?? null;
+      : productFeatureGuideAnswer(productFeature);
     let answer =
       // ⚠️ 문구가 없으면 안내를 내지 않는다 — 빈 안내보다 기존 범위 안내가 낫다.
       route === "product_feature_guide" && productFeatureAnswer !== null ? productFeatureAnswer :

@@ -45,7 +45,8 @@ import {
   resolveProductFeature,
   routeQuestion,
   statGuardOwnsQuestion,
-  PRODUCT_FEATURE_GUIDE_ANSWERS,
+  PRODUCT_FEATURE_KEYS,
+  productFeatureGuideAnswer,
   unpackStoredQaFinal,
   BLOCKED_ANSWER,
   HISTORY_HOLD_ANSWER,
@@ -407,7 +408,7 @@ async function main() {
         //   게이트가 문구를 복제하면 상수가 바뀔 때 게이트만 낡는다(생성기 값을 읽는다).
         const feature = resolveProductFeature(c.question);
         assert.ok(feature, "판정기가 기능을 못 풀었다 — 라우팅과 문구가 갈라진다");
-        assert.equal(r.answer, PRODUCT_FEATURE_GUIDE_ANSWERS.get(feature!), "기능 안내 문구 불일치");
+        assert.equal(r.answer, productFeatureGuideAnswer(feature!), "기능 안내 문구 불일치");
         // 되묻기·범위 밖 안내로 새지 않는다 — 이 PR 이 고치는 두 오답 형태다.
         assert.notEqual(r.answer, STAT_CLARIFY_ANSWER, "되묻기로 끝났다");
         assert.notEqual(r.answer, BLOCKED_ANSWER, "범위 밖 안내로 끝났다");
@@ -746,6 +747,29 @@ async function main() {
     failures = before;
     console.log("  ✅ selftest RED 2/2 확인");
   }
+
+  check("C9 registry 전수 — 모든 기능 키가 라우팅·문구·종단까지 결속된다 (삼순 4차 ③)", () => {
+    // ⚠️ `직관기록` 하나만 검사하면 두 번째 기능을 추가했을 때 그 항목은 **검증 밖**이다.
+    //   registry 를 SSOT 로 전수 순회해, 키가 늘면 검사도 자동으로 늘게 한다.
+    assert.ok(PRODUCT_FEATURE_KEYS.length >= 1, "registry 가 비었다 — 아래 대조가 공허해진다");
+    for (const key of PRODUCT_FEATURE_KEYS) {
+      // ① 문구가 존재하고 비어 있지 않다(총함수라 undefined 는 타입상 불가).
+      const answer = productFeatureGuideAnswer(key);
+      assert.ok(answer.trim().length > 0, `${key}: 안내 문구가 비어 있다`);
+      // ② generic 거절·되묻기 문구로 새지 않는다 — M13 이 노리는 구멍.
+      assert.notEqual(answer, BLOCKED_ANSWER, `${key}: 기능 안내가 범위 밖 문구다`);
+      assert.notEqual(answer, STAT_CLARIFY_ANSWER, `${key}: 기능 안내가 되묻기 문구다`);
+      // ③ 붙여쓴 표기·띄어쓴 표기·조사 결합이 모두 같은 키로 판정·라우팅된다.
+      //    (정규화가 표기 사이를 오가는 것이 #1288 결함의 근원이었다)
+      for (const surface of [key, key.replace(/^(..)/u, "$1 "), `${key}이 뭐야`]) {
+        assert.equal(resolveProductFeature(surface), key, `${surface}: 판정 불일치`);
+        assert.equal(
+          routeQuestion(surface, glossary, players, false), "product_feature_guide",
+          `${surface}: 라우팅이 기능 안내가 아니다`,
+        );
+      }
+    }
+  });
 
   // ⚠️ 실행 카운터가 SSOT. 더불어 **하한**을 걸어 축이 통째로 빠지는 것을 막는다 —
   //   카운터만 쓰면 "0축 실행 · 실패 0" 도 PASS 로 보이기 때문이다(빈 실행 false-GREEN).
