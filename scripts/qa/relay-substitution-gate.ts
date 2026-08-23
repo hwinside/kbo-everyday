@@ -11,7 +11,16 @@
  * selftest: 알려진 결함(playIndex 미결속/오결속)을 주입한 mutant 판정으로 게이트 검증력을 증명한다.
  * 실행: npm run qa:relay-substitution [-- --selftest]
  */
-import { parseInningRelays, type NaverTextRelay, type FieldingEvent } from "../../src/app/api/game-relay/route";
+// route.ts 는 import 시 supabase admin 싱글톤을 즉시 생성한다(모듈 사이드이펙트).
+// 파싱 순수함수만 검증하므로 실제 연결이 필요 없다 → 더미 env 를 route import 전에 주입
+// (CI shard 에는 Supabase env 가 없다 — pitch-inning-parser-smoke.ts 와 동일 패턴, 삼순 NO-GO 반영).
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://smoke.local";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "smoke-anon-key";
+
+import type { NaverTextRelay, FieldingEvent } from "../../src/app/api/game-relay/route";
+
+type RouteModule = typeof import("../../src/app/api/game-relay/route");
+type ParseInningRelays = RouteModule["parseInningRelays"];
 
 // ── 픽스처: 7회말 — 선두타자 타석 중 투수교체 → 안타, 대타 교체 후 사구, 진행 중 타석에서 대주자 교체
 const FIXTURE: NaverTextRelay[] = [
@@ -97,7 +106,7 @@ function judge(fielding: FieldingEvent[] | undefined, playsLen: number): string[
   return failures;
 }
 
-function run(): number {
+function run(parseInningRelays: ParseInningRelays): number {
   const innings = parseInningRelays(FIXTURE);
   if (innings.length !== 1) {
     console.error(`GATE-INNING: 이닝 수 ${innings.length} ≠ 1`);
@@ -113,7 +122,7 @@ function run(): number {
   return 0;
 }
 
-function selftest(): number {
+function selftest(parseInningRelays: ParseInningRelays): number {
   // 게이트 검증력 증명 — 실제 파서 출력을 변조(mutation)해 judge 가 RED 를 내는지 확인.
   // 사본이 아니라 run() 과 동일한 judge seam 을 태운다.
   const base = parseInningRelays(FIXTURE)[0];
@@ -142,4 +151,12 @@ function selftest(): number {
   return 0;
 }
 
-process.exit(process.argv.includes("--selftest") ? selftest() : run());
+// tsx 가 .ts 를 CJS 로 변환해 top-level await 불가 → async 램퍼에서 동적 import
+// (env 주입은 모듈 최상단에서 이미 완료 — pitch-inning-parser-smoke.ts 동일 패턴).
+void (async () => {
+  const { parseInningRelays } = await import("../../src/app/api/game-relay/route");
+  process.exit(process.argv.includes("--selftest") ? selftest(parseInningRelays) : run(parseInningRelays));
+})().catch((e) => {
+  console.error("GATE-CRASH:", e);
+  process.exit(1);
+});
