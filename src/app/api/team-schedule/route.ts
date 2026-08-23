@@ -57,6 +57,8 @@ export async function GET(req: NextRequest) {
           : { id: oppId, slug: "", shortName: "", name: "" },
         home: isHome,
         status: g.status,
+        // 취소 사유는 취소 상태일 때만 실는다(값-플래그 결속). Naver 폴백 경로는 null.
+        cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
         result,
         score: {
           for: isHome ? g.homeScore : g.awayScore,

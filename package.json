@@ -16,6 +16,8 @@
     "qa:featured-card-contrast:selftest": "tsx scripts/qa/featured-card-contrast-gate.mjs --selftest",
     "qa:games-card-render": "tsx scripts/qa/featured-card-render-capture.mts",
     "qa:games-card-render:mutations": "node scripts/qa/games-card-render-mutations.mjs",
+    "qa:cancel-reason": "tsx scripts/qa/cancel-reason-gate.mjs",
+    "qa:cancel-reason:selftest": "tsx scripts/qa/cancel-reason-gate.mjs --selftest",
     "qa:live-detail-provenance": "tsx scripts/qa/live-detail-provenance-gate.ts",
     "qa:live-multiplex": "tsx scripts/qa/live-multiplex-gate.mjs",
     "qa:live-multiplex:selftest": "tsx scripts/qa/live-multiplex-gate.mjs --selftest",

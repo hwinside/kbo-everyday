@@ -28,6 +28,7 @@ import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
+import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
 import BroadcastBadges from "@/components/game/BroadcastBadges";
@@ -487,7 +488,11 @@ export default function GameDetailPage() {
         <div className="px-5 py-5">
           <div className="rounded-2xl border border-border bg-bg-secondary px-4 py-5 text-center">
             <p className="text-base font-semibold text-text-primary">경기가 취소되었습니다</p>
-            <p className="text-sm text-text-tertiary mt-1">우천 등 경기 운영 사유로 정상 진행되지 않았습니다.</p>
+            {/* 사유를 받았을 때만 원문 노출. 못 받았으면(폴백 경로 등) 기존 고정 문구로 fallback —
+                사유 부재를 "사유 없음"으로 단정하지 않는다(provenance 계약). */}
+            <p className="text-sm text-text-tertiary mt-1">
+              {cancelReasonDetail(d.cancelReason) ?? "우천 등 경기 운영 사유로 정상 진행되지 않았습니다."}
+            </p>
           </div>
         </div>
       ) : d.isLive ? (
@@ -662,6 +667,7 @@ export default function GameDetailPage() {
                     gameDate={game.date}
                     gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
                     status={d.derivedStatus}
+                    cancelReason={d.cancelReason}
                     gameEvents={gameEvents}
                     plays={plays}
                     teamColor={battingTeamColor}

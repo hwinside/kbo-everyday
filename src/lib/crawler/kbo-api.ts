@@ -7,9 +7,9 @@ import { RosterCollectionError, validateRosterCollection } from "@/lib/roster-mo
 // 수집 sanity 검증/예외는 순수 모듈(roster-moves/collection.ts)에 두고 재노출(스모크가 supabase 의존 없이 import).
 export { RosterCollectionError, validateRosterCollection } from "@/lib/roster-moves/collection";
 import { decodeBroadcast, type BroadcastChannel } from "@/lib/broadcast-channels";
-import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+import { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status";
 // 순수 상태 헬퍼 재노출 — 스모크가 supabase 의존 없이 import.
-export { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+export { isKboGameCancelled, parseCancelReason } from "@/lib/crawler/kbo-status";
 import { ALLSTAR_CODE_TO_ID, allstarTeamIdByName } from "@/lib/constants/teams";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
@@ -85,6 +85,15 @@ export interface KboGame {
    * KBO 원본에서 온 값일 때만 true, degrade/미확인이면 false.
    */
   liveDetailFromKbo: boolean;
+  /**
+   * 취소 사유 원문(KBO `CANCEL_SC_NM`). `status === "cancelled"` 일 때만 채운다.
+   *
+   * 왜 nullable 인가 (provenance): Naver 폴백 매핑에는 이 필드가 원리적으로 없다.
+   * 값이 없다 == "사유가 없는 취소"가 아니라 "사유를 못 받았다" 이므로, 소비처는
+   * null 을 "사유 미상"으로 단정하지 말고 기존 고정 문구로 fallback 해야 한다.
+   * 실측 사유(2026-08): `우천취소` `폭염취소` `그라운드사정`.
+   */
+  cancelReason: string | null;
   // 순위
   awayRank: number;
   homeRank: number;
@@ -114,6 +123,8 @@ interface KboGameRaw {
   GAME_TB_SC: string;
   GAME_STATE_SC: string;
   CANCEL_SC_ID: string;
+  /** 취소 사유 원문("우천취소"/"폭염취소"/"그라운드사정"). 정상 경기는 빈 문자열. */
+  CANCEL_SC_NM?: string;
   T_PIT_P_NM: string;
   B_PIT_P_NM: string;
   W_PIT_P_NM: string;
@@ -158,7 +169,8 @@ function hasValidLiveDetail(raw: KboGameRaw, status: KboGame["status"]): boolean
   );
 }
 
-function parseGame(raw: KboGameRaw): KboGame {
+/** KBO raw game → KboGame 순수 매퍼. `mapNaverGameToKbo` 와 동일하게 테스트용으로 export 한다. */
+export function parseGame(raw: KboGameRaw): KboGame {
   const status = parseGameStatus(raw.GAME_STATE_SC?.toString(), raw.CANCEL_SC_ID?.toString());
   const isTop = raw.GAME_TB_SC === "T";
   // 상세 유효성을 한 번만 판정해 **값과 플래그를 같은 조건으로** 묶는다.
@@ -193,6 +205,7 @@ function parseGame(raw: KboGameRaw): KboGame {
     },
     // 값과 동일한 조건 — 유효한 원본을 그대로 실은 때만 "실제 관측값"이다.
     liveDetailFromKbo: liveDetailOk,
+    cancelReason: parseCancelReason(status, raw.CANCEL_SC_NM),
     currentPitcher: isTop ? (raw.B_P_NM?.trim() ?? "") : (raw.T_P_NM?.trim() ?? ""),
     currentBatter: isTop ? (raw.T_P_NM?.trim() ?? "") : (raw.B_P_NM?.trim() ?? ""),
     awayRank: raw.T_RANK_NO ?? 0,
@@ -566,8 +579,11 @@ export function parseGameLinescoreResponse(data: unknown): GameLinescore | null 
   if (!Array.isArray(data) || data.length < 2 || !data[1]) return null;
   const meta = Array.isArray(data[0]) && data[0].length > 0 ? data[0][0] : null;
   const cancelName = String(meta?.CANCEL_SC_NM ?? "");
+  // 취소 판정은 **코드(CANCEL_SC_ID) 우선**, 사유명은 보조다(삼순 NO-GO ② — game-detail
+  // parseScoreBoard 와 동일 계약). 실측 사유 `그라운드사정`(ID 6)은 "취소"도 "우천"도
+  // 포함하지 않아 문자열 검사만으로는 놓친다. 사유명은 열린 집합, 코드는 닫힌 집합이다.
   const status: GameLinescore["status"] =
-    cancelName.includes("취소") || cancelName.includes("우천")
+    isKboGameCancelled(meta?.CANCEL_SC_ID) || cancelName.includes("취소") || cancelName.includes("우천")
       ? "cancelled"
       : String(meta?.END_TM ?? "").trim()
         ? "final"

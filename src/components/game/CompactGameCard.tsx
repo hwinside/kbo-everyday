@@ -6,6 +6,7 @@ import { getTeamById } from "@/lib/constants/teams";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
 import type { GameWeather } from "@/lib/weather/stadium-weather";
 import BroadcastBadges from "@/components/game/BroadcastBadges";
+import { cancelReasonBadge } from "@/lib/utils/cancel-reason";
 
 interface CompactGameCardProps {
   isPreseason?: boolean;
@@ -30,6 +31,11 @@ interface CompactGameCardProps {
     awayScore: number | null;
     homeScore: number | null;
     status: "scheduled" | "live" | "final" | "cancelled";
+    /**
+     * 취소 사유 원문(`우천취소`/`폭염취소`/`그라운드사정` 등). status=cancelled 일 때만 유의미.
+     * 미수신은 "사유 없음"이 아니라 "못 받았다" — 기존 `취소` 문구로 fallback 한다.
+     */
+    cancelReason?: string | null;
     inning?: string;
     time: string;
     stadium: string;
@@ -213,7 +219,7 @@ export default function CompactGameCard({ game, isPreseason, myTeamId, weather, 
                   "bg-text-tertiary/15 text-text-primary"
             }`}
           >
-            {isLive ? `LIVE ${game.inning}` : isCancelled ? "취소" : isFinal ? "종료" : dateStr ? `${formatBadgeDate(dateStr)} ${game.time}` : game.time}
+            {isLive ? `LIVE ${game.inning}` : isCancelled ? cancelReasonBadge(game.cancelReason) : isFinal ? "종료" : dateStr ? `${formatBadgeDate(dateStr)} ${game.time}` : game.time}
           </span>
           {isPreseason && (
             <span className="rounded bg-yellow-500/15 px-1 text-[9px] font-medium leading-[14px] text-yellow-500">시범</span>

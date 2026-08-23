@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
+import { cancelReasonBadge } from "@/lib/utils/cancel-reason";
 import {
   RESULT_TONE_BG,
   gameResultTone,
@@ -19,6 +20,8 @@ interface ScheduleDay {
   opponent: { id: number; slug: string; shortName: string; name: string };
   home: boolean;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /** 취소 사유 원문. status=cancelled 일 때만 유의미며, 미수신이면 기존 `취소` 문구로 fallback. */
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   score: { for: number | null; against: number | null };
   stadium: string;
@@ -218,7 +221,7 @@ export default function TeamSchedulePage() {
                         : game.status === "live"
                         ? "LIVE"
                         : game.status === "cancelled"
-                        ? "취소"
+                        ? cancelReasonBadge(game.cancelReason)
                         : game.home ? "홈" : "@"}
                     </span>
                   )}

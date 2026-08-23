@@ -17,6 +17,8 @@ interface RawGameData {
   homeScore?: number;
   awayScore?: number;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /** 취소 사유 원문(KBO `CANCEL_SC_NM`). 미수신이면 부재 — "사유 없음"으로 단정하지 않는다. */
+  cancelReason?: string | null;
   inning?: string;
   isTop?: boolean;
   awayStarterName?: string | null;
@@ -35,6 +37,11 @@ export interface HomeGame {
   homeScore: number;
   awayScore: number;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(`우천취소`/`폭염취소`/`그라운드사정` 등). status=cancelled 일 때만 유의미.
+   * null = 사유를 못 받았다(폴백 경로) — 소비처는 기존 고정 문구로 fallback 한다.
+   */
+  cancelReason?: string | null;
   inning: string | null;
   // 팀카드 경기카드 모드용 (예정=예고선발 / 종료=승·패투수). 없으면 미표시.
   awayStarterName?: string | null;
@@ -114,6 +121,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           homeScore: g.homeScore ?? 0,
           awayScore: g.awayScore ?? 0,
           status: g.status,
+          // 사유는 취소 상태일 때만 실는다(값-플래그 결속) — HomeClientShell.mapApiGame 과 동일 계약.
+          cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
           // 예고선발(예정)·승·패투수(종료) 보존 — HomeClientShell.mapApiGame과 동일. pull 재페치 시 카드 필드/위젯 snapshot 유지.
           awayStarterName: g.awayStarterName ?? null,

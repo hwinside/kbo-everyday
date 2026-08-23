@@ -27,7 +27,7 @@ async function getInitialData(): Promise<{
     // 1) 경기 목록 — 유저 대면 하이브리드: Naver primary(스코어/이닝) + KBO enrich(BSO/주자/투타).
     // KBO 열화여도 빠르게 수렴하고, KBO 살아있으면 라이브 상세까지 보존.
     const gamesData = await fetchGamesUserFacing(yyyymmdd);
-    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
+    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; cancelReason?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,
       awayTeamId: g.awayTeamId,
@@ -36,6 +36,9 @@ async function getInitialData(): Promise<{
       homeScore: g.homeScore ?? 0,
       awayScore: g.awayScore ?? 0,
       status: g.status as HomeGame["status"],
+      // 취소 사유 — 홈 초기 진입(SSR)이 이걸 버리면, useHomeInit 은 initialGames 가 있을 때
+      // 클라이언트 재조회를 건너뛰므로 첫 화면이 영영 고정 문구로 남는다(삼순 NO-GO ①).
+      cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
       inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
       awayStarterName: g.awayStarterName ?? null,
       homeStarterName: g.homeStarterName ?? null,

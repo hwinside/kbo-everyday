@@ -54,10 +54,15 @@ function cells(values: unknown[]) {
 
 function scoreboard(state: GameState) {
   if (state === "scheduled" || state === "cancelled") {
+    // ⚠️ CANCEL_* 를 심지 않는다 — 2026-08-22 실측: 취소 경기 3건(그라운드사정/우천/폭염)의
+    // GetScoreBoard meta 키 집합에 CANCEL_SC_ID·CANCEL_SC_NM 이 아예 없다.
+    //   실측 키: LE_ID,SR_ID,G_ID,G_DT,SEASON_ID,HOME_NM,…,START_TM,END_TM,USE_TM,FULL_*_NM
+    // 즉 상세 응답은 취소 사유를 주지 않고, 사유는 **경기목록(GetKboGameList)에만** 있다.
+    // 종전 픽스처는 여기에 CANCEL_SC_NM 을 넣어두어 상세만으로도 사유가 채워지는 — 현실에 없는
+    // — 경로를 가정해, 목록 결속이 깨져도 초록으로 보이게 했다(false-green).
     return [[{
       STADIUM_NM: "잠실",
       GAME_START_TM: "18:30",
-      CANCEL_SC_NM: state === "cancelled" ? "우천취소" : "",
       T_SCORE_CN: "0",
       B_SCORE_CN: "0",
     }]];
@@ -127,6 +132,9 @@ function kboList(state: GameState) {
       GAME_TB_SC: "T",
       GAME_STATE_SC: stateCode,
       CANCEL_SC_ID: state === "cancelled" ? "1" : "",
+      // 취소 사유 원문 — KBO 경기목록에만 있다(Naver 스케줄에는 이 필드가 없음).
+      // detail 열화 시 canonical 은 Naver 로 넘어가지만, 사유는 여기서 살아야 한다.
+      CANCEL_SC_NM: state === "cancelled" ? "폭염취소" : "",
       T_PIT_P_NM: "",
       B_PIT_P_NM: "",
       W_PIT_P_NM: "",
@@ -718,6 +726,38 @@ async function main() {
     "대",
     "sub-merge: 동일 선수 부재 시 no-op",
   );
+
+  // ── 취소 사유 provenance 회귀 (삼순 3차 NO-GO)
+  //
+  // detail 3종이 열화하면 canonical status source 가 Naver 로 바뀜다. Naver 스케줄에는
+  // 사유 필드가 원리적으로 없어 listGame.cancelReason 은 null 이다. 그러나 같은 deadline
+  // 안에 KBO 경기목록이 정상 settle 되었다면 그 사유는 살아 있어야 한다 — 버리면
+  // "KBO 가 사유를 줬는데도 상세/크관만 일반 문구"가 된다.
+  //
+  // 존재 확인이 아니라 **detail 열화 3종 × cancelled** 를 전부 태워 actual GET 응답을 본다.
+  for (const mode of ["detail-schema-error", "detail-http-error", "detail-timeout"] as const) {
+    const degraded = await scenario(`KBO ${mode} + Naver cancelled`, mode, "normal", "cancelled");
+    assert.equal(degraded.body.status, "cancelled", `${mode}: canonical status 유지`);
+    assert.equal(
+      degraded.body.cancelReason,
+      "폭염취소",
+      `${mode}: detail 열화로 canonical 이 Naver 여도 KBO 목록 사유는 보존돼야 한다`,
+    );
+  }
+
+  // KBO 목록까지 죽으면 사유 출처가 아예 없다 — 빈 문자열로 합성하지 말고 null(= 미확인).
+  // 소비처는 이 null 에서 기존 고정 문구로 fallback 한다("사유 없음"으로 단정 금지).
+  const listDown = await scenario("KBO list-http-error + Naver cancelled", "list-http-error", "normal", "cancelled");
+  assert.equal(listDown.body.status, "cancelled", "list 열화: canonical status 유지");
+  assert.equal(
+    listDown.body.cancelReason,
+    null,
+    "list 열화: 사유 출처가 없으면 null(미확인) — 빈 문자열 합성 금지",
+  );
+
+  // 정상 경로 취소도 사유가 실려야 하고, 취소가 아닌 상태에는 절대 샤리면 안 된다(값-플래그 결속).
+  assert.equal(cancelled.body.cancelReason, "폭염취소", "normal cancelled: 사유 원문 보존");
+  assert.equal(scheduled.body.cancelReason, null, "scheduled: 사유가 실리면 안 된다");
 
   // mutation guard: 후속 fetchGames() 기본 10초 경로가 route에 재유입되면 즉시 red.
   const routeSource = readFileSync("src/app/api/game-detail/route.ts", "utf8");

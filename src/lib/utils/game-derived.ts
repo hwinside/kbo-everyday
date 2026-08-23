@@ -391,6 +391,12 @@ export function deriveGameState(
     || gameDetail?.status === "final"
     || (!!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0));
   const derivedStatus: "live" | "final" | "scheduled" | "cancelled" = isLive ? "live" : isCancelled ? "cancelled" : isFinal ? "final" : "scheduled";
+  // 취소 사유는 **derivedStatus 가 cancelled 일 때만** 실는다(값-플래그 결속).
+  // 이렇게 묶어야 상태가 live/final 로 뒤집힌 경기에 사유만 남아 UI 가 취소로
+  // 오표기하는 경로가 구조적으로 불가능해진다. 둘 다 부재면 null(= 미확인, 고정문구 fallback).
+  const cancelReason: string | null = derivedStatus === "cancelled"
+    ? (gameDetail?.cancelReason ?? liveGame?.cancelReason ?? null)
+    : null;
 
   const isTop = currentInning.includes("초");
   const detailLineup = gameDetail?.lineup ?? null;
@@ -469,6 +475,7 @@ export function deriveGameState(
     isCancelled,
     isFinal,
     derivedStatus,
+    cancelReason,
     isTop,
     detailLineup,
     defensiveSide,

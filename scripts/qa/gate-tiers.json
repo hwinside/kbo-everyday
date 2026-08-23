@@ -712,6 +712,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:cancel-reason",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:cancel-reason:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:profile-posts-paging",
       "tier": "deploy"
     },
