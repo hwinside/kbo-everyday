@@ -22,6 +22,7 @@ import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
+import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
 import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 
 interface KgwanTabProps {
@@ -340,6 +341,9 @@ function LiveView({
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
   const [showPreviousInnings, setShowPreviousInnings] = useState(false);
+  // 자동 포커싱(새 투구 시 현재 타석으로 scrollIntoView) 사용자 설정 — 채팅 카드의
+  // "자동 포커싱 끄기" 버튼(GameChat)과 localStorage+이벤트로 동기화된다.
+  const { enabled: autoFocusEnabled } = useKgwanAutoFocus();
 
   // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
   const hasRelay = gameRelay && gameRelay.innings.length > 0;
@@ -461,7 +465,7 @@ function LiveView({
                     strikes={strikes}
                     outs={outs}
                     updatedAt={gameRelay?.updatedAt}
-                    scrollOnUpdate
+                    scrollOnUpdate={autoFocusEnabled}
                   />
                 )}
               </div>
