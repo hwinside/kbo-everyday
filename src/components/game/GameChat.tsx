@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff, Megaphone } from "lucide-react";
+import { Send, Users, Flame, Trash2, Flag, Ban, MoreHorizontal, Reply, X, ImagePlay, EyeOff, Megaphone, LocateFixed, LocateOff } from "lucide-react";
 import { clsx } from "clsx";
 import TeamBadge from "@/components/ui/TeamBadge";
 import { getTeamById, isAllStarGame } from "@/lib/constants/teams";
@@ -16,6 +16,7 @@ import ReportSheet from "@/components/community/ReportSheet";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
 import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
 import { shouldShowVenueBadge, type VenueAttendees } from "@/lib/venue-stories/chat-badge";
+import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
 
 interface GameChatProps {
   gameId: string;
@@ -65,6 +66,7 @@ function getRoomId(gameId: string): string {
 }
 
 export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggleDisabled = false }: GameChatProps) {
+  const { enabled: autoFocusEnabled, toggle: toggleAutoFocus } = useKgwanAutoFocus();
   const roomId = getRoomId(gameId);
   const { messages, loading, loadingMore, hasMore, loadMore, sendMessage, deleteMyMessage, deleteAnyMessage, cooldown, cooldownReason, isLoggedIn, countReconcileKey } = useChat(roomId);
   const { homePct } = useMoodGauge(gameId, homeTeamId, awayTeamId);
@@ -438,7 +440,18 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
       <MoodGauge homeTeamId={homeTeamId} awayTeamId={awayTeamId} homePct={homePct} />
 
       {onHide && (
-        <div className="flex justify-end border-b border-border px-4 py-2">
+        <div className="flex justify-end gap-2 border-b border-border px-4 py-2">
+          {/* 자동 포커싱 토글 — 크관 문자중계 "현재 타석" 카드의 새 투구 시 자동 스크롤을
+              끄고 켤 수 있다 (하린아빠 2026-08-23 요청 — 채팅 끄기 왼쪽 배치). */}
+          <button
+            type="button"
+            onClick={toggleAutoFocus}
+            className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-text-secondary"
+            aria-label={autoFocusEnabled ? "자동 포커싱 끄기" : "자동 포커싱 켜기"}
+          >
+            {autoFocusEnabled ? <LocateOff size={14} /> : <LocateFixed size={14} />}
+            {autoFocusEnabled ? "자동 포커싱 끄기" : "자동 포커싱 켜기"}
+          </button>
           <button
             type="button"
             onClick={onHide}
