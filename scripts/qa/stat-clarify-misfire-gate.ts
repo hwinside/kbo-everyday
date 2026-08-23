@@ -51,6 +51,7 @@ import {
   BLOCKED_ANSWER,
   HISTORY_HOLD_ANSWER,
   STAT_CLARIFY_ANSWER,
+  SCOPE_GUIDE_ANSWER,
   STAT_NARRATIVE_ANSWER,
   SYSTEM_ERROR_ANSWER,
   UNCLEAR_ANSWER,
@@ -748,9 +749,14 @@ async function main() {
     console.log("  ✅ selftest RED 2/2 확인");
   }
 
-  check("C9 registry 전수 — 모든 기능 키가 라우팅·문구·종단까지 결속된다 (삼순 4차 ③)", () => {
+  await check("C9 registry 전수 — 모든 기능 키가 라우팅·문구·종단까지 결속된다 (삼순 4차 ③·5차 ①)", async () => {
     // ⚠️ `직관기록` 하나만 검사하면 두 번째 기능을 추가했을 때 그 항목은 **검증 밖**이다.
     //   registry 를 SSOT 로 전수 순회해, 키가 늘면 검사도 자동으로 늘게 한다.
+    //
+    // ⚠️ **`await check(async …)` 여야 한다** (삼순 5차 ①). 종전엔 await 없이 불렀는데,
+    //   body 가 동기라 우연히 잡혔을 뿐이다. 누가 async 검증을 하나라도 넣는 순간
+    //   그 rejection 은 최종 `failures` 판정 **뒤**에 도착해 false-GREEN 이 된다.
+    //   실제로 아래에서 `answerQuestion` 을 태우므로 이제 body 가 async 다.
     assert.ok(PRODUCT_FEATURE_KEYS.length >= 1, "registry 가 비었다 — 아래 대조가 공허해진다");
     for (const key of PRODUCT_FEATURE_KEYS) {
       // ① 문구가 존재하고 비어 있지 않다(총함수라 undefined 는 타입상 불가).
@@ -768,6 +774,41 @@ async function main() {
           `${surface}: 라우팅이 기능 안내가 아니다`,
         );
       }
+      // ④ **종단 1회** — 라우팅·문구가 맞아도 파이프라인이 다른 답을 서빙할 수 있다.
+      //    새 기능을 registry 에 넣으면 이 종단 검증이 자동으로 따라붙는다.
+      const state = freshState();
+      const r = await answerQuestion("u-registry", key, makeDeps(state));
+      assert.equal(r.source, "product_feature_guide", `${key}: 종단 source 불일치 (${r.source})`);
+      assert.equal(r.answer, answer, `${key}: 종단 답변이 registry 문구와 다르다`);
+      assert.deepEqual(
+        state.logs.map((l) => l.matchPath), ["product_feature_guide"],
+        `${key}: 로그 경로 불일치 (${state.logs.map((l) => l.matchPath).join(",")})`,
+      );
+      // ⑤ 결정론 — 전용 라우트가 먼저 확정되므로 normalizer·LLM 을 부를 이유가 없다.
+      //    (부르면 provider 비결정성이 안내 문구에까지 들어온다)
+      assert.equal(state.llmCalls, 0, `${key}: LLM 을 ${state.llmCalls}회 호출했다 — 결정론 위반`);
+      assert.equal(state.normalizeCalls, 0, `${key}: 정규화를 호출했다 — 전용 라우트가 먼저다`);
+    }
+  });
+
+  await check("C10 미등록 앱 기능은 열리지 않는다 — 범위 문구 과약속 반대축 (삼순 5차 ②)", async () => {
+    // ⚠️ 범위 안내 문구가 "일부 앱 기능 안내" 인 이유가 여기 있다.
+    //   registry 에 없는 기능명을 물으면 **안내하지 않는다** — 넓게 적어놓고 못 답하면
+    //   그건 좀 전에 고친 거짓말을 반대 방향으로 다시 만드는 것이다.
+    for (const unregistered of ["알림설정", "차단목록", "포인트내역"]) {
+      assert.equal(resolveProductFeature(unregistered), null, `${unregistered}: 미등록인데 열렸다`);
+      assert.notEqual(
+        routeQuestion(unregistered, glossary, players, false), "product_feature_guide",
+        `${unregistered}: 미등록인데 기능 안내로 라우팅됐다`,
+      );
+    }
+    // 범위 문구는 **부분 지원**을 밝힌다 — `앱 기능 안내`(전부 되는 것처럼 읽힘) 금지.
+    for (const [name, text] of Object.entries({ BLOCKED_ANSWER, SCOPE_GUIDE_ANSWER })) {
+      assert.ok(text.includes("일부 앱 기능"), `${name}: 부분 지원 표기가 없다`);
+      assert.ok(
+        !/(?<!일부 )앱 기능 안내입니다/.test(text),
+        `${name}: 앱 기능 전체를 안내하는 것처럼 읽힌다 — 과약속`,
+      );
     }
   });
 

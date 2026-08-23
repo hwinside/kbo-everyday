@@ -45,7 +45,7 @@ export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
  * 반대 방향으로 다시 만드는 셈이다.
  */
 export const BASEBALL_GENIUS_FALLBACK_ANSWER =
-  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식, 앱 기능 안내입니다. 예: \"보크가 뭐야?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식, 일부 앱 기능 안내입니다. 예: \"보크가 뭐야?\"";
 
 /**
  * **답변 가능 경로 → 유저에게 밝혀야 하는 범위어** (SSOT).
@@ -99,7 +99,10 @@ export const ANSWER_PATH_SCOPE_WORD = {
   // ⚠️ 범위를 넓히는 문구이므로 "그 경로가 실제로 배포된 뒤에만 넣는다"는
   //   이 표의 계약을 지킨다 — 이 PR 이 바로 그 경로를 배포한다.
   //   반대로 여기 안 넣으면 답할 수 있는데 못 한다고 말하는 종전 사고의 재발이다.
-  product_feature_guide: "앱 기능",
+  // ⚠️ **`일부 앱 기능`** 이지 `앱 기능` 이 아니다(삼순 2026-08-23 5차 ② — 과장 방지).
+  //   registry 에 등록된 기능만 안내한다. 넓게 적으면 위 `kbo_structured` 의
+  //   `일부 기록` 과 정확히 같은 사고를 반대 방향으로 다시 만드는 셈이다.
+  product_feature_guide: "일부 앱 기능",
 } satisfies Record<AnswerableMatchPath, string>;
 
 /**
