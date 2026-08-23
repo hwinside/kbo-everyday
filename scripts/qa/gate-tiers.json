@@ -708,6 +708,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:kgwan-autofocus",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:kgwan-autofocus:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:send-guard",
       "tier": "ci"
     },
