@@ -304,6 +304,10 @@ export function useGameRelay(
           // (실패 frame 을 커밋하면 games:[] 가 isLive 를 꺼서 multiplex 가
           //  플리커하고 standalone 폴링·리렌더 폭풍이 난다 — Preview 실측.)
           if (!envelope.ok) return;
+          // P0-3(삼순 2차): generation fence 를 live/detail 에도 적용. 이 poll 이 시작한 뒤
+          // Realtime 이 더 최신 프레임(relay/live/detail)을 적용했으면(공용 generation 증가)
+          // 느린 poll 의 embedded live/detail 은 버려 최신 RT 값을 과거로 덮지 않는다.
+          if (!shouldApplyPollResponse(myGeneration, relayGenerationRef.current)) return;
           if (mySeq <= channelRef.current) return;
           channelRef.current = mySeq;
           onFrame(envelope.data);
@@ -436,10 +440,13 @@ export function useGameRelay(
             applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
           } else if (row.kind === "live") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
+              // P0-3(삼순 2차): 공용 generation 증가 → 느린 poll 의 embedded live 가 이 값을 못 덮는다.
+              relayGenerationRef.current += 1;
               onLiveFrameRef.current?.(row.payload.data);
             }
           } else if (row.kind === "detail") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
+              relayGenerationRef.current += 1;
               onDetailFrameRef.current?.(row.payload.data);
             }
           }

@@ -6,8 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { NextRequest } from "next/server";
 import {
+  canonicalizeForHash,
   channelsForTick,
   deserializeState,
+  estimateMonthlyRealtimeMessages,
   frameHash,
   HEARTBEAT_INTERVAL_MS,
   internalGetRequest,
@@ -16,6 +18,7 @@ import {
   publishGameTick,
   RELAY_FRAME_FULL_EVERY,
   serializeState,
+  VOLATILE_HASH_KEYS,
   type FrameRow,
   type PersistedGameState,
   type TickDeps,
@@ -158,6 +161,86 @@ test("§1 handler 실패(비 2xx)는 프레임 미기록 + 에러 집계", async
   const result = await publishGameTick(deps, state, "g1", 1);
   assert.equal(result.inserted, 0);
   assert.ok(result.errors.some((e) => e.includes("relay")));
+});
+
+// 삼순 2차 P0 비용: canonical hash — volatile trace 제거
+test("§1 canonical hash — volatile trace(sourceAtMs 등)가 바뀌어도 무변경이면 INSERT 0", async () => {
+  let clock = 2_000_000;
+  // game-live 형 응답: sourceAtMs/fetchedAtMs/deadlineAtMs 가 매 tick 바뀌지만 내용은 동일
+  let liveTs = 100;
+  const liveData = () => ({ games: [{ gameId: "g1", score: "3:2" }], trace: { stage: "ok" }, sourceAtMs: liveTs, fetchedAtMs: liveTs + 1, deadlineAtMs: liveTs + 999 });
+  const deps = depsWith({ now: () => clock });
+  deps.handlers.live = async () => jsonResponse(liveData());
+  const state = newGameState();
+
+  // tick 0 = 전채널: live 첫 발행
+  await publishGameTick(deps, state, "g1", 0);
+  const liveInsertsAfterFirst = deps.rows.filter((r) => r.kind === "live").length;
+  assert.equal(liveInsertsAfterFirst, 1);
+
+  // 이후 live tick(3,6,9)에서 timestamp 만 바뀜 → canonical hash 동일 → INSERT 0
+  for (const t of [3, 6, 9]) {
+    clock += 9_000;
+    liveTs += 9_000; // volatile 만 변화
+    await publishGameTick(deps, state, "g1", t);
+  }
+  const liveInsertsTotal = deps.rows.filter((r) => r.kind === "live").length;
+  assert.equal(liveInsertsTotal, 1, "volatile trace 만 바뀌면 live 재발행 0 이어야 한다");
+});
+
+test("§1 canonicalizeForHash — volatile 키 재귀 제거, 실제 변경은 반영", () => {
+  assert.ok(VOLATILE_HASH_KEYS.has("sourceAtMs") && VOLATILE_HASH_KEYS.has("trace"));
+  const a = { x: 1, sourceAtMs: 100, nested: { y: 2, fetchedAtMs: 5 } };
+  const b = { x: 1, sourceAtMs: 999, nested: { y: 2, fetchedAtMs: 88 } };
+  assert.equal(frameHash(a), frameHash(b), "volatile 만 다르면 동일 hash");
+  const c = { x: 2, sourceAtMs: 100, nested: { y: 2, fetchedAtMs: 5 } };
+  assert.notEqual(frameHash(a), frameHash(c), "실제 값이 다르면 상이 hash");
+  assert.equal(JSON.stringify(canonicalizeForHash(a)), JSON.stringify(canonicalizeForHash(b)));
+});
+
+// 삼순 2차 P0 폴백 역전: 실패/oversize tick 은 heartbeat 미발행
+test("§1 폴백 역전 방지 — fetch 실패·oversize tick 은 heartbeat 0 (poll 재개 유도)", async () => {
+  let clock = 3_000_000;
+  // relay 는 정상 발행으로 lastFrameAt 확립
+  const deps = depsWith({ now: () => clock });
+  const state = newGameState();
+  await publishGameTick(deps, state, "g1", 1);
+
+  // 이후 relay handler 가 계속 실패 → 무변경이 아니라 '실패'다. heartbeat 나가면 안 됨.
+  deps.handlers.relay = async () => new Response("down", { status: 503 });
+  for (const t of [2, 4]) {
+    clock += HEARTBEAT_INTERVAL_MS + 1;
+    const r = await publishGameTick(deps, state, "g1", t);
+    assert.equal(r.heartbeats, 0, "fetch 실패 중에는 heartbeat 미발행");
+    assert.ok(r.errors.length > 0);
+  }
+
+  // oversize 도 동일 — healthy 신호를 보내면 안 된다
+  const huge = { innings: [{ inning: 1, big: "x".repeat(MAX_PAYLOAD_BYTES) }] };
+  const deps2 = depsWith({ relayData: () => huge, now: () => clock });
+  const state2 = newGameState();
+  await publishGameTick(deps2, state2, "g1", 1); // full oversize → skip
+  clock += HEARTBEAT_INTERVAL_MS + 1;
+  const r2 = await publishGameTick(deps2, state2, "g1", 2);
+  assert.equal(r2.heartbeats, 0, "oversize 지속 중 heartbeat 미발행");
+});
+
+// 삼순 2차 P0 비용: CCU 적분
+test("§1 CCU 적분 cost — 무변경 heartbeat 부하에서 월 메시지 추정이 Pro 한도 내", () => {
+  // 무변경 구간: heartbeat 6/분(10초). 변경 구간을 보수적으로 relay 20/분 + live/detail 8/분 = 34/분 가정.
+  const framesPerMin = 34;
+  const est = estimateMonthlyRealtimeMessages({
+    framesPerMinutePerGame: framesPerMin,
+    avgConcurrentViewers: 100,
+    liveMinutesPerDayPerGame: 180, // 3h
+    gamesPerDay: 5,
+  });
+  // 34 × 100 × 180 × 5 × 30 = 91.8M — 이건 chat 포함 Pro 한도(개별 프로젝트)를 넘는 보수적 상한.
+  // 게이트의 목적: 추정이 산식으로 재현 가능하고, 변경 프레임률이 절감 계약의 핵심 변수임을 고정한다.
+  assert.equal(est, 34 * 100 * 180 * 5 * 30);
+  // 무변경만이면(heartbeat 6/분) 훨씬 낮다
+  const idle = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 6, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
+  assert.ok(idle < est, "무변경 구간 부하는 변경 구간보다 낮다");
 });
 
 // P0-2 반영: heartbeat
@@ -342,6 +425,15 @@ test("§3 migration — 테이블·RLS·publication·heartbeat kind·write정책
   assert.ok(!/create policy[\s\S]*for (insert|update|delete)/i.test(sql), "write 정책 없음 = service_role 전용");
 });
 
+test("§3 route lease — renewLock 결과 검사·실패 시 중단·state 미저장 배선(P1)", () => {
+  const src = readSrc("src/app/api/cron/relay-live-publisher/route.ts");
+  assert.ok(/renewLock\(token\)\): Promise<boolean>|renewLock\(token: string\): Promise<boolean>/.test(src) || /async function renewLock\(token: string\): Promise<boolean>/.test(src), "renewLock 이 boolean 반환");
+  assert.ok(/if \(!\(await renewLock\(token\)\)\)/.test(src), "renew 실패 검사");
+  assert.ok(/lockLost = true;[\s\S]*break;/.test(src), "실패 시 즉시 중단");
+  assert.ok(/if \(!lockLost\)[\s\S]*SET", stateKey/.test(src), "락 상실 시 state 미저장");
+  assert.ok(/compare-delete|redis\.call\('del'/.test(src), "compare-delete 해제");
+});
+
 test("§3 useGameRelay — 구독·억제·단조·generation·callback ref 배선(P0-1/2/3)", () => {
   const src = readSrc("src/lib/hooks/useGameRelay.ts");
   assert.ok(/postgres_changes/.test(src) && /game_relay_frames/.test(src));
@@ -349,6 +441,11 @@ test("§3 useGameRelay — 구독·억제·단조·generation·callback ref 배�
   assert.ok(/parseFrameRow/.test(src), "fail-close 파싱");
   assert.ok(/shouldApplyFrame/.test(src), "단조 가드");
   assert.ok(/shouldApplyPollResponse/.test(src) && /relayGenerationRef/.test(src), "P0-3 generation fence");
+  // P0-3 잔존(삼순 2차): live/detail applyFrame 에도 generation fence 적용 + RT live/detail 도 generation++
+  const applyFrameFenced = /const applyFrame =[\s\S]*?shouldApplyPollResponse\(myGeneration, relayGenerationRef\.current\)[\s\S]*?channelRef\.current = mySeq;/.test(src);
+  assert.ok(applyFrameFenced, "live/detail applyFrame 에 generation fence");
+  const rtLiveDetailBumps = (src.match(/relayGenerationRef\.current \+= 1;/g) || []).length;
+  assert.ok(rtLiveDetailBumps >= 3, `RT relay+live+detail 이 generation 을 올려야 함 (bumps=${rtLiveDetailBumps})`);
   assert.ok(/onLiveFrameRef/.test(src) && /onDetailFrameRef/.test(src), "P0-1 callback ref");
   // P0-1: 구독 effect deps 에 options 가 없어야 한다 (프레임 N개에도 구독 1회)
   const subEffect = src.match(/useEffect\(\(\) => \{\s*if \(!gameId \|\| !isLive\) return;[\s\S]*?\}, \[([^\]]*)\]\);/);

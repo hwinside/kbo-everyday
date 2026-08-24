@@ -44,6 +44,31 @@ export const STATE_TTL_SECONDS = 6 * 3_600;
 
 export type FrameKind = "relay-full" | "relay-delta" | "events" | "live" | "detail" | "heartbeat";
 
+/**
+ * Realtime 메시지 월 비용 적분 추정 (삼순 2차 P0 비용 게이트).
+ * DB change 는 listener 1명당 1 메시지이므로 월 메시지 ≈
+ *   (발행 프레임/분) × (평균 CCU) × (경기일 라이브 분/월) × (동시 경기 수).
+ * canonical hash 로 무변경 tick 이 INSERT 0 이 되면 발행은 사실상 변경 프레임+
+ * heartbeat(무변경 구간 6/분)만 남는다.
+ */
+export function estimateMonthlyRealtimeMessages(params: {
+  framesPerMinutePerGame: number;
+  avgConcurrentViewers: number;
+  liveMinutesPerDayPerGame: number;
+  gamesPerDay: number;
+  daysPerMonth?: number;
+}): number {
+  const { framesPerMinutePerGame, avgConcurrentViewers, liveMinutesPerDayPerGame, gamesPerDay } = params;
+  const days = params.daysPerMonth ?? 30;
+  return (
+    framesPerMinutePerGame *
+    avgConcurrentViewers *
+    liveMinutesPerDayPerGame *
+    gamesPerDay *
+    days
+  );
+}
+
 export interface FrameRow {
   game_id: string;
   seq: number;
@@ -109,8 +134,42 @@ export function internalGetRequest(
   return new NextRequest(url);
 }
 
+/**
+ * 변경 감지 hash 에서 제거하는 volatile trace 키 (삼순 2차 P0 비용).
+ * game-live/detail 응답은 매 호출 바뀌는 타임스탬프(sourceAtMs 등)를 싣는데,
+ * 이를 그대로 hash 하면 내용이 같아도 무변경 tick 마다 INSERT 되어 realtime
+ * 메시지 fanout 이 폭증한다. hash 는 이 키들을 재귀 제거한 canonical 형태로 잡는다.
+ * (저장되는 payload 자체는 원본 그대로 — 클라이언트가 trace 를 쓸 수 있으므로.)
+ */
+export const VOLATILE_HASH_KEYS: ReadonlySet<string> = new Set([
+  "sourceAtMs",
+  "fetchedAtMs",
+  "deadlineAtMs",
+  "remainingMs",
+  "servedAtMs",
+  "checkedAt",
+  "generatedAt",
+  "ageMs",
+  "latencyMs",
+  "trace",
+]);
+
+/** volatile 키를 재귀 제거한 canonical 값. 배열 순서·객체 키 정렬로 안정 직렬화. */
+export function canonicalizeForHash(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeForHash);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      if (VOLATILE_HASH_KEYS.has(key)) continue;
+      out[key] = canonicalizeForHash((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function frameHash(data: unknown): string {
-  return createHash("sha256").update(JSON.stringify(data)).digest("hex");
+  return createHash("sha256").update(JSON.stringify(canonicalizeForHash(data))).digest("hex");
 }
 
 const CHANNEL_PATH: Record<"relay" | "events" | "live" | "detail", string> = {
@@ -259,9 +318,14 @@ export async function publishGameTick(
     }
   }
 
-  // heartbeat: 이번 tick 에 아무 프레임도 발행하지 않았고, 마지막 발행 이후
-  // HEARTBEAT_INTERVAL_MS 가 지났으면 경량 프레임 1건으로 '수집기 건강'을 알린다.
-  if (result.inserted === 0 && now() - state.lastFrameAtMs >= HEARTBEAT_INTERVAL_MS) {
+  // heartbeat: 이번 tick 이 **정상 무변경**(발행 0 · 실패 0 · oversize 0)이고 마지막
+  // 발행 이후 HEARTBEAT_INTERVAL_MS 가 지났을 때만 '수집기 건강' 신호를 보낸다.
+  // 삼순 2차 P0(폴백 역전): 반복 fetch 실패·250KB 초과 중에는 heartbeat 를 보내지
+  // 않아야 클라 신선도가 끊기고 임계 경과에 폴링이 자동 재개된다. errors/oversize 가
+  // 있는데 healthy 신호를 계속 보내면 poll 이 영구 억제된다.
+  const healthyIdleTick =
+    result.inserted === 0 && result.errors.length === 0 && result.skippedOversize === 0;
+  if (healthyIdleTick && now() - state.lastFrameAtMs >= HEARTBEAT_INTERVAL_MS) {
     state.seq += 1;
     const ok = await deps.insertFrame({
       game_id: gameId,

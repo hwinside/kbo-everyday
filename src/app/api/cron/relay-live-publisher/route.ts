@@ -83,10 +83,13 @@ async function acquireLock(token: string): Promise<boolean> {
   return result === "OK";
 }
 
-/** 내 토큰일 때만 TTL 연장. */
-async function renewLock(token: string): Promise<void> {
-  // GET 후 일치 시 PEXPIRE — Upstash EVAL 로 원자화
-  await redisCommand([
+/**
+ * 내 토큰일 때만 TTL 연장. 연장 성공 시 true. 토큰 불일치(다른 writer 가 잡음)·
+ * 키 소멸·Redis 오류는 false — 호출자는 즉시 중단해야 한다(삼순 2차 P1 lease).
+ */
+async function renewLock(token: string): Promise<boolean> {
+  // GET 후 일치 시 PEXPIRE — Upstash EVAL 로 원자화. 성공 시 pexpire 가 1 반환.
+  const result = await redisCommand([
     "EVAL",
     "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
     "1",
@@ -94,6 +97,7 @@ async function renewLock(token: string): Promise<void> {
     token,
     LOCK_TTL_MS,
   ]);
+  return result === 1;
 }
 
 /** 내 토큰일 때만 해제(compare-delete). */
@@ -189,12 +193,19 @@ export async function GET(req: NextRequest) {
     };
     const startedAt = Date.now();
     let lastRenewAt = startedAt;
+    let lockLost = false;
 
     for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
       const tickStartedAt = Date.now();
 
       if (tickStartedAt - lastRenewAt >= LOCK_RENEW_EVERY_MS) {
-        await renewLock(token);
+        // P1 lease: renew 실패(토큰 불일치/키 소멸/Redis 오류)면 다른 writer 가
+        // 이미 락을 잡았을 수 있으므로 즉시 중단하고 state 저장도 건너뛴다
+        // (old writer 가 INSERT·state 덮어쓰기 방지).
+        if (!(await renewLock(token))) {
+          lockLost = true;
+          break;
+        }
         lastRenewAt = tickStartedAt;
       }
 
@@ -216,16 +227,20 @@ export async function GET(req: NextRequest) {
       if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
     }
 
-    // 상태 저장 (다음 인보케이션이 이어받음)
-    await Promise.all(
-      gameIds.map((gameId) =>
-        redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
-      ),
-    );
+    // 상태 저장 (다음 인보케이션이 이어받음). 단 락을 잃었으면 저장하지 않는다 —
+    // 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기 위함(P1 lease).
+    if (!lockLost) {
+      await Promise.all(
+        gameIds.map((gameId) =>
+          redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
+        ),
+      );
+    }
 
     return NextResponse.json({
       ok: true,
       liveGames: gameIds.length,
+      lockLost,
       gc: gcError ? `error:${gcError.message}` : "ok",
       ...totals,
       errors: totals.errors.slice(0, 20),
