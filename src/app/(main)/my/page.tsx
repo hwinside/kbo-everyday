@@ -125,13 +125,15 @@ export default function MyPage() {
     setShowTeamSelect(false);
     const seq = ++saveSeqRef.current;
     if (user) {
+      let saved;
       try {
-        await saveMyFavorites({ team_id: newTeamId, favorite_players: [] });
+        saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] });
       } catch (e) {
         if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return; // 로컬 미변경 — 기존 팀/선수 유지(조용한 롤백 대신 오류 노출)
       }
+      if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== saveSeqRef.current) return;
     }
     setMyTeamId(newTeamId);
@@ -157,6 +159,7 @@ export default function MyPage() {
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return;
       }
+      if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== saveSeqRef.current) return;
       // 서버가 반환한 저장된 row(exact)로만 로컬 확정
       const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];

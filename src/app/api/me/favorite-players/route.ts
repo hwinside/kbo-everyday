@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { verifyAccessToken } from "@/lib/auth/verified-user";
 import { getTeamById } from "@/lib/constants/teams";
+import { resolvePlayer } from "@/lib/utils/resolve-player";
 
 /**
  * PUT /api/me/favorite-players — 최애선수(+옵션 팀) 저장.
@@ -24,7 +25,16 @@ interface FavoritePayload {
   number: number;
 }
 
-/** 배열이 아니거나 항목 형태가 깨졌거나(중복 제거 후) 5명 초과면 null. */
+/**
+ * 배열이 아니거나 항목 형태가 깨졌거나 로스터에 없는 선수거나(중복 제거 후)
+ * 5명 초과면 null.
+ *
+ * roster canonical 검증(삼순 NO-GO ③): playerId는 로스터 실존 선수만 허용하고
+ * (레거시 ID는 resolvePlayer가 현행 canonical로 교정, 미해석은 fail-close 400),
+ * name/teamId/position/number는 클라이언트 제출값을 버리고 **로스터 canonical
+ * 값으로 교체**해 위조 메타데이터가 service-role로 저장되는 것을 차단한다.
+ * 선택 순서는 제출 순서 그대로 유지.
+ */
 function parseFavorites(raw: unknown): FavoritePayload[] | null {
   if (!Array.isArray(raw)) return null;
   const out: FavoritePayload[] = [];
@@ -32,23 +42,18 @@ function parseFavorites(raw: unknown): FavoritePayload[] | null {
   for (const entry of raw) {
     if (typeof entry !== "object" || entry === null) return null;
     const r = entry as Record<string, unknown>;
-    if (
-      typeof r.playerId !== "string" || !r.playerId.trim() ||
-      typeof r.name !== "string" || !r.name.trim() ||
-      typeof r.teamId !== "number" || !Number.isFinite(r.teamId) ||
-      typeof r.position !== "string" ||
-      typeof r.number !== "number" || !Number.isFinite(r.number)
-    ) {
-      return null;
-    }
-    if (seen.has(r.playerId)) continue; // 같은 선수 중복 → 1명으로
-    seen.add(r.playerId);
+    if (typeof r.playerId !== "string" || !r.playerId.trim()) return null;
+    const resolved = resolvePlayer({ kboId: r.playerId });
+    if (!resolved) return null; // 로스터에 없는 선수 — fail-close
+    if (seen.has(resolved.kboId)) continue; // 같은 선수 중복 → 1명으로(canonical 기준)
+    seen.add(resolved.kboId);
+    const backNo = Number(resolved.backNo);
     out.push({
-      playerId: r.playerId,
-      name: r.name,
-      teamId: r.teamId,
-      position: r.position,
-      number: r.number,
+      playerId: resolved.kboId,
+      name: resolved.name,
+      teamId: resolved.teamId,
+      position: resolved.position,
+      number: Number.isFinite(backNo) ? backNo : 0,
     });
   }
   if (out.length > MAX_FAVORITES) return null;

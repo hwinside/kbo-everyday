@@ -276,6 +276,7 @@ export function useHomeInit(options?: UseHomeInitOptions) {
         setShowPlayerSetupCTA(true); // 저장 안 됨 — CTA 유지(성공으로 위장 금지)
         return;
       }
+      if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== favSaveSeqRef.current) return;
       // 서버가 반환한 저장된 row(exact)로만 로컬 확정
       const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];

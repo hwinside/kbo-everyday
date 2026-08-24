@@ -1,28 +1,23 @@
-import { supabase } from "@/lib/supabase/client";
+import { supabase, getSafeSession } from "@/lib/supabase/client";
 import type { FavoritePlayer } from "@/lib/store/favorites";
+import {
+  createFavoritesSaver,
+  ProfileSaveError,
+  type FavoriteSaveUpdates,
+} from "@/lib/profile/favorites-saver-core";
 
 /**
- * 최애선수/팀 저장 클라이언트 헬퍼 (2026-08-24 최애선수 설정 유실 수정).
+ * 최애선수/팀 저장 wiring (2026-08-24 최애선수 설정 유실 수정).
  *
- * 계약:
- * - 서버 라우트(/api/me/favorite-players)에 Bearer로 저장하고 **저장된 row를
- *   반환**한다. 호출자는 이 반환값으로만 로컬 상태를 확정한다(성공 전 commit 금지).
- * - 401(만료 토큰)이면 refreshSession **1회만** 시도 후 **1회만** 재시도한다
- *   (bounded — 무한 루프 없음). 그래도 실패하면 needsRelogin 오류로 던져
- *   호출자가 재로그인 안내를 노출한다. 조용한 롤백 금지.
+ * 실제 로직·계약(직렬화 latest-wins, bounded auth/fetch, 401 refresh 1회
+ * +재시도 1회)은 favorites-saver-core.ts — tsx로 직접 회귀를 태운다
+ * (`npm run qa:favorites-save`). 이 파일은 브라우저 의존성 결선만 담당:
+ * - getToken: getSafeSession (auth-lock hang 방어가 이미 내장된 repo 표준)
+ * - refreshToken: supabase.auth.refreshSession (core가 timeout bound)
+ * - putFavorites: fetch + AbortSignal.timeout (core race와 이중 방어)
  */
 
-const RELOGIN_MESSAGE = "로그인이 만료됐어요. 다시 로그인한 뒤 시도해주세요.";
-const GENERIC_MESSAGE = "저장에 실패했어요. 잠시 후 다시 시도해주세요.";
-
-export class ProfileSaveError extends Error {
-  needsRelogin: boolean;
-  constructor(message: string, needsRelogin = false) {
-    super(message);
-    this.name = "ProfileSaveError";
-    this.needsRelogin = needsRelogin;
-  }
-}
+export { ProfileSaveError };
 
 /** 서버가 반환한 저장된 profiles row 중 호출자가 쓰는 필드. */
 export interface SavedProfileRow {
@@ -31,73 +26,50 @@ export interface SavedProfileRow {
   favorite_players: FavoritePlayer[];
 }
 
-async function getAccessToken(): Promise<string | null> {
-  try {
-    const { data } = await supabase.auth.getSession();
-    return data.session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
+const REQUEST_TIMEOUT_MS = 10000;
 
-async function refreshAccessToken(): Promise<string | null> {
-  try {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error) return null;
-    return data.session?.access_token ?? null;
-  } catch {
-    return null;
-  }
-}
-
-async function putOnce(
-  token: string,
-  updates: { team_id?: number; favorite_players: FavoritePlayer[] }
-): Promise<Response> {
-  return fetch("/api/me/favorite-players", {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(updates),
-  });
-}
-
-export async function saveMyFavorites(updates: {
-  team_id?: number;
-  favorite_players: FavoritePlayer[];
-}): Promise<SavedProfileRow> {
-  let token = await getAccessToken();
-  if (!token) token = await refreshAccessToken();
-  if (!token) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
-
-  let res: Response;
-  try {
-    res = await putOnce(token, updates);
-  } catch {
-    throw new ProfileSaveError(GENERIC_MESSAGE);
-  }
-
-  if (res.status === 401) {
-    const refreshed = await refreshAccessToken();
-    if (!refreshed) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
+const saver = createFavoritesSaver<SavedProfileRow>({
+  getToken: async () => (await getSafeSession())?.access_token ?? null,
+  refreshToken: async () => {
     try {
-      res = await putOnce(refreshed, updates);
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) return null;
+      return data.session?.access_token ?? null;
     } catch {
-      throw new ProfileSaveError(GENERIC_MESSAGE);
+      return null;
     }
-    if (res.status === 401) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
-  }
+  },
+  putFavorites: async (token, updates) => {
+    const res = await fetch("/api/me/favorite-players", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(updates),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    return { status: res.status, body };
+  },
+  requestTimeoutMs: REQUEST_TIMEOUT_MS,
+});
 
-  if (!res.ok) throw new ProfileSaveError(GENERIC_MESSAGE);
-
-  let json: { ok?: boolean; profile?: SavedProfileRow };
-  try {
-    json = await res.json();
-  } catch {
-    throw new ProfileSaveError(GENERIC_MESSAGE);
-  }
-  if (!json.ok || !json.profile) throw new ProfileSaveError(GENERIC_MESSAGE);
-  return json.profile;
+/**
+ * 최애선수(+옵션 팀) 저장.
+ * @returns 저장된 row. 더 최신 저장 요청에 의해 대체(superseded)됐으면 null —
+ *          호출자는 아무 것도 commit하지 않고 최신 요청의 결과를 기다린다.
+ * @throws ProfileSaveError 저장 실패(needsRelogin이면 재로그인 안내).
+ */
+export async function saveMyFavorites(
+  updates: FavoriteSaveUpdates & { favorite_players: FavoritePlayer[] }
+): Promise<SavedProfileRow | null> {
+  const outcome = await saver.save(updates);
+  if (outcome.superseded) return null;
+  return outcome.profile;
 }
