@@ -1,12 +1,21 @@
-// 최애선수 저장 행동 회귀 (PR #1297 삼순 NO-GO 3축) — tsx 실행, 네트워크/브라우저 불요.
+// 최애선수 저장 행동 회귀 (PR #1297) — tsx 실행, 네트워크/브라우저 불요.
 // ① 직렬화 latest-wins: delayed-A/fast-B에서 DB 최종 = 최신 선택 (도착 순서 보존)
 // ② bounded: never-settle auth/fetch가 상한 안에 실패로 종료
 // ③ 401 → refresh 1회 + 재시도 1회, 실패 시 needsRelogin
+// ④ A 성공/B 실패 → 오류에 마지막 성공값(lastSaved) 동반 (로컬↔DB 정합)
+// ⑤ ID-only canonical 검증 — 라우트가 import하는 같은 함수(production seam) 직접 타격,
+//    name-as-ID("손호영") fallback 통과 금지 + 구현이 fallback이었다면 RED임을 실증
 // 사용: npm run qa:favorites-save
 import {
   createFavoritesSaver,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
+import {
+  parseFavorites,
+  resolveFavoriteById,
+} from "../../src/lib/profile/favorite-players-validation.ts";
+import { resolvePlayer } from "../../src/lib/utils/resolve-player.ts";
+import rosterJson from "../../src/lib/constants/players-roster.json" with { type: "json" };
 
 const results = [];
 function check(name, ok, detail) {
@@ -191,6 +200,105 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   });
   const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
   check("200이어도 저장 row 없으면 실패 처리", err instanceof ProfileSaveError, String(err?.name));
+}
+
+// ── ④ A 성공/B 실패 — 마지막 성공값 정합 ───────────────────────────────
+{
+  // A 성공(지연) 후 최신 B 실패 → B 오류의 lastSaved == A의 저장 row
+  const saver = createFavoritesSaver({
+    getToken: async () => "t",
+    refreshToken: async () => null,
+    putFavorites: async (_t, updates) => {
+      const id = updates.favorite_players[0].playerId;
+      if (id === "A") { await sleep(80); return { status: 200, body: okBody(updates.favorite_players) }; }
+      return { status: 500, body: null };
+    },
+  });
+  const pA = saver.save({ favorite_players: fav("A") });
+  await sleep(10); // A in-flight 진입 후 B 접수
+  const pB = saver.save({ favorite_players: fav("B") });
+  const rA = await pA;
+  const errB = await pB.then(() => null, (e) => e);
+  check(
+    "A성공/B실패: B 오류에 lastSaved=A row 동반(로컬↔DB 정합 근거)",
+    rA.superseded === false &&
+    errB instanceof ProfileSaveError &&
+    errB.lastSaved?.favorite_players?.[0]?.playerId === "A",
+    `lastSaved=${errB?.lastSaved?.favorite_players?.[0]?.playerId}`
+  );
+}
+{
+  // 사전 성공 없이 첫 저장부터 실패 → lastSaved는 null(정합 대상 없음 — 기존값 유지)
+  const saver = createFavoritesSaver({
+    getToken: async () => "t",
+    refreshToken: async () => null,
+    putFavorites: async () => ({ status: 500, body: null }),
+  });
+  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  check("첫 저장 실패: lastSaved=null(기존값 유지)", err instanceof ProfileSaveError && err.lastSaved === null, `lastSaved=${err?.lastSaved}`);
+}
+
+// ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──
+{
+  const roster = rosterJson;
+  const real = roster.filter((p) => /^\d+$/.test(p.kboId)).sort((a, b) => a.kboId.localeCompare(b.kboId));
+  const toPayload = (p, forge = false) => ({
+    playerId: p.kboId,
+    name: forge ? "위조이름" : p.name,
+    teamId: forge ? 99 : p.teamId,
+    position: forge ? "가짜" : p.position,
+    number: forge ? 999 : Number(p.backNo) || 0,
+  });
+
+  // name-as-ID 차단: 이름 문자열은 어떤 경로로도 해석 금지
+  const nameAsId = real[10].name; // 실존 선수의 "이름"을 ID 자리에
+  check(
+    "ID-only: name-as-ID 해석 거절(fail-close)",
+    resolveFavoriteById(nameAsId) === null &&
+    parseFavorites([{ playerId: nameAsId, name: "x", teamId: 1, position: "p", number: 1 }]) === null,
+    `name="${nameAsId}"`
+  );
+  // mutation RED 실증: 구 구현(resolvePlayer)은 같은 입력을 이름 fallback으로 통과시킨다
+  //  — 구현을 resolvePlayer로 되돌리면 위 축이 실제로 RED가 됨을 증명(무대 있는 mutation)
+  const fallbackResolved = resolvePlayer({ kboId: nameAsId });
+  check(
+    "mutation-RED 실증: resolvePlayer는 같은 입력을 이름 fallback으로 통과시킴(구 구현=결함)",
+    fallbackResolved !== null && fallbackResolved.name === nameAsId,
+    `resolvePlayer("${nameAsId}") → ${fallbackResolved?.kboId ?? "null"}`
+  );
+  // 미존재 ID fail-close
+  check("ID-only: 미존재 ID 거절", parseFavorites([toPayload({ ...real[0], kboId: "00000999" })]) === null);
+  // 위조 메타데이터 → canonical 교체(제출값 폐기)
+  {
+    const p = real[10];
+    const parsed = parseFavorites([toPayload(p, true)]);
+    check(
+      "canonical: 위조 name/team/number → 로스터값 교체",
+      parsed?.length === 1 && parsed[0].name === p.name && parsed[0].teamId === p.teamId && parsed[0].position === p.position,
+      `stored=${JSON.stringify(parsed?.[0])}`
+    );
+  }
+  // 선택 순서 유지 + canonical dedupe + 5명 경계
+  {
+    const scrambled = [real[20], real[5], real[40]];
+    const parsed = parseFavorites(scrambled.map((p) => toPayload(p)));
+    check(
+      "canonical: 선택 순서 유지",
+      JSON.stringify(parsed?.map((x) => x.playerId)) === JSON.stringify(scrambled.map((p) => p.kboId)),
+      `ids=${parsed?.map((x) => x.playerId).join(",")}`
+    );
+    const dup = parseFavorites([...real.slice(0, 5), real[0]].map((p) => toPayload(p)));
+    check("canonical: 중복 dedupe로 5명", dup?.length === 5, `len=${dup?.length}`);
+    check("canonical: 6명(유니크) 거절", parseFavorites(real.slice(0, 6).map((p) => toPayload(p))) === null);
+    check("canonical: 5명(상한) 허용", parseFavorites(real.slice(0, 5).map((p) => toPayload(p)))?.length === 5);
+  }
+  // 레거시 은퇴/통합 ID 교정 (AQ008 → 56548)
+  {
+    const parsed = parseFavorites([{ playerId: "AQ008", name: "x", teamId: 1, position: "p", number: 1 }]);
+    check("canonical: 레거시 AQ008→56548 교정", parsed?.[0]?.playerId === "56548", `id=${parsed?.[0]?.playerId}`);
+  }
+  // non-array 거절
+  check("canonical: non-array 거절", parseFavorites("nope") === null);
 }
 
 // ── selftest: 검증력 증명(RED) — 계약을 어기는 가짜 구현이 실제로 잡히는가 ──

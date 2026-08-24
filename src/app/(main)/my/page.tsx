@@ -16,7 +16,7 @@ import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { saveMyFavorites, ProfileSaveError } from "@/lib/profile/save-my-profile";
+import { saveMyFavorites, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
@@ -121,6 +121,18 @@ export default function MyPage() {
   // 결함). seq 가드는 연속 저장에서 이전 응답이 최신 선택을 덮는 것을 막는다.
   const saveSeqRef = useRef(0);
 
+  // 저장 실패 시 마지막 성공값(= DB 현재값)으로 로컬 정합 — A 성공/B 실패에서
+  // 로컬=기존값·DB=A로 갈라지는 불일치 방지(삼순 3차 리뷰).
+  const commitServerRow = (row: SavedProfileRow) => {
+    setMyTeamId(row.team_id);
+    const code = ID_TO_KBO_CODE[row.team_id];
+    if (code) void setWidgetMyTeam(code);
+    setTeamId(row.team_id);
+    const favs = Array.isArray(row.favorite_players) ? row.favorite_players : [];
+    setFavoritePlayers(favs);
+    setFavPlayers(favs);
+  };
+
   const handleTeamChange = async (newTeamId: number) => {
     setShowTeamSelect(false);
     const seq = ++saveSeqRef.current;
@@ -130,8 +142,9 @@ export default function MyPage() {
         saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] });
       } catch (e) {
         if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
+        if (e instanceof ProfileSaveError && e.lastSaved) commitServerRow(e.lastSaved as SavedProfileRow);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
-        return; // 로컬 미변경 — 기존 팀/선수 유지(조용한 롤백 대신 오류 노출)
+        return; // 로컬 = 마지막 성공값(DB 현재값) 또는 기존값 — 오류 노출
       }
       if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== saveSeqRef.current) return;
@@ -156,6 +169,7 @@ export default function MyPage() {
         saved = await saveMyFavorites({ favorite_players: players });
       } catch (e) {
         if (seq !== saveSeqRef.current) return;
+        if (e instanceof ProfileSaveError && e.lastSaved) commitServerRow(e.lastSaved as SavedProfileRow);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return;
       }

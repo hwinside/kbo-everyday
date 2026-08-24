@@ -22,6 +22,12 @@ export const GENERIC_MESSAGE = "저장에 실패했어요. 잠시 후 다시 시
 
 export class ProfileSaveError extends Error {
   needsRelogin: boolean;
+  /**
+   * 이 saver에서 마지막으로 **성공한 저장의 서버 row**(없으면 null).
+   * A 성공 후 최신 B 실패 시 로컬=기존값·DB=A로 갈라지므로, 호출자는 실패 시
+   * 이 값(= DB 현재값)으로 로컬을 정합한다.
+   */
+  lastSaved: unknown = null;
   constructor(message: string, needsRelogin = false) {
     super(message);
     this.name = "ProfileSaveError";
@@ -142,6 +148,9 @@ export function createFavoritesSaver<TProfile>(
   // 단일 체인 직렬화. 실패해도 체인은 끊기지 않는다.
   let chain: Promise<void> = Promise.resolve();
   let latestSeq = 0;
+  // 마지막 성공 저장의 서버 row — 최신 요청 실패 시 호출자가 로컬을 DB 현재값으로
+  // 정합할 수 있도록 오류(ProfileSaveError.lastSaved)에 실어 내보낸다.
+  let lastSaved: TProfile | null = null;
 
   return {
     save(updates: FavoriteSaveUpdates): Promise<SaveOutcome<TProfile>> {
@@ -150,8 +159,14 @@ export function createFavoritesSaver<TProfile>(
         // 실행 차례에 더 최신 요청이 접수돼 있으면 이 요청은 서버로 보내지
         // 않는다 — 중간값이 최신값 뒤에 도착해 DB를 되돌리는 것을 원리적으로 차단.
         if (seq !== latestSeq) return { superseded: true as const, profile: null };
-        const profile = await performSave<TProfile>(deps, updates);
-        return { superseded: false as const, profile };
+        try {
+          const profile = await performSave<TProfile>(deps, updates);
+          lastSaved = profile;
+          return { superseded: false as const, profile };
+        } catch (e) {
+          if (e instanceof ProfileSaveError) e.lastSaved = lastSaved;
+          throw e;
+        }
       });
       chain = run.then(
         () => undefined,
