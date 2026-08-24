@@ -49,6 +49,7 @@
     "game_event_state",
     "game_lineup_notify_state",
     "game_notify_state",
+    "game_relay_frames",
     "game_start_delivery_ledger",
     "game_starter_notify_state",
     "game_starter_observation",

@@ -696,6 +696,10 @@
       "tier": "deploy"
     },
     {
+      "tier": "deploy",
+      "name": "qa:relay-realtime"
+    },
+    {
       "name": "qa:proxy-matcher-slim",
       "tier": "deploy"
     },
