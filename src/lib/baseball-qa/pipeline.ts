@@ -50,7 +50,7 @@ import {
 } from "./rag/retrieve";
 import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
-import { isBaseballGeniusToneCompliant } from "./tone";
+import { isBaseballGeniusToneCompliant, normalizeToFormalTone } from "./tone";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -1009,7 +1009,14 @@ export interface QaDeps {
    */
   pickTeamFanCopy?: () => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
-  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean) => Promise<LlmResult>;
+  callLlm: (
+    question: string,
+    context?: ContextTurn,
+    rosterBlock?: string,
+    statIntentMode?: boolean,
+    /** A′ ②: ① 정규화 뒤에도 톤만 남았을 때 붙이는 1회성 강화 프롬프트. */
+    toneRetryMode?: boolean,
+  ) => Promise<LlmResult>;
   /**
    * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
    *
@@ -3444,6 +3451,19 @@ function dismissesDetectedBaseballTerm(question: string, terms: readonly string[
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
+  /**
+   * `unsure` 사유. **값이 아니라 별도 축으로 둔다** — 종전에는 링크·길이·톤·범위가 전부
+   * 같은 `unsure` 로 접혀서, 로그만 보고는 "못 알아들었다" 와 "톤 때문에 버렸다" 를
+   * 원리적으로 구분할 수 없었다(48h 실측에서 이것 때문에 원인 규명이 늦었다).
+   */
+  reason?: "unsafe_or_length" | "tone_noncompliant" | "out_of_question_scope";
+  /**
+   * 톤만 걸려서 폐기된 **원문**. ② 톤 재작성의 입력으로만 쓴다.
+   *
+   * ⚠️ `answer` 와 이름을 나눈 이유: 호출부가 실수로 이걸 서빙하면 톤 계약이 뚫린다.
+   *    `kind === "answer"` 가 아니면 유저에게 나가는 경로가 없어야 한다.
+   */
+  rejectedAnswer?: string;
 }
 
 /**
@@ -3720,14 +3740,92 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   if (
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
-    /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
-    !isBaseballGeniusToneCompliant(answer) ||
-    // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
-    !answerInQuestionScope(question, answer)
+    /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer)
   ) {
-    return { kind: "unsure" };
+    return { kind: "unsure", reason: "unsafe_or_length" };
   }
-  return { kind: "answer", answer };
+  // 톤 — 버리기 전에 **닫힌집합 정규화**를 먼저 시도한다 (2026-08-24 A′ ①).
+  //
+  // 48h 실측: LLM 이 답을 낸 213런 중 135런을 버렸고 그 **128런(94.8%)이 톤 하나**
+  // 때문이었다. 내용은 맞는데 `~예요` 로 끝나서 죽은 것이다. 계사·하다·되다·있다
+  // 같은 **어간 불변** 어미만 바꿔도 이 코호트의 64.6%(82/127)가 그대로 살아난다.
+  //
+  // ⚠️ 정규화 결과를 **무조건 믿지 않는다**. `normalizeToFormalTone` 은 자기 출력을
+  //    다시 SSOT 검증기에 통과시켜 `compliant` 를 돌려주며, 그게 true 일 때만 채택한다.
+  //    열린 활용(`만들어져요`·`흥미로워요`)은 어간 복원이 필요해 룰로 닫지 않았고,
+  //    그런 문장은 여기서 그대로 폐기되어 ② 재작성으로 간다.
+  let toned = answer;
+  if (!isBaseballGeniusToneCompliant(answer)) {
+    const normalized = normalizeToFormalTone(answer);
+    // 정규화로도 안 되면 폐기하되, 원문을 ② 입력으로 넘긴다(서빙 경로 없음).
+    if (!normalized.compliant) {
+      return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: answer };
+    }
+    toned = normalized.answer;
+  }
+  // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
+  // 정규화된 문자열로 판정한다 — 서빙되는 것이 그것이므로 검증 대상도 그것이어야 한다.
+  if (!answerInQuestionScope(question, toned)) {
+    return { kind: "unsure", reason: "out_of_question_scope" };
+  }
+  return { kind: "answer", answer: toned };
+}
+
+interface ToneRecoveryResult {
+  readonly validated: ValidatedLlmAnswer;
+  /** 최종 저장·토큰 계측에 쓸 응답. 재생성 성공/실패 응답까지 소비량을 합산한다. */
+  readonly llm: LlmResult;
+  readonly retried: boolean;
+}
+
+/**
+ * A′ ② — ① 닫힌집합 정규화 뒤에도 **톤 하나만** 남은 답변을 한 번 재생성한다.
+ *
+ * - 길이·링크·범위 등 다른 결함에는 재호출하지 않는다(비용/공격면 상한).
+ * - 재생성도 `validateLlmResponse` 전수 게이트를 다시 통과해야만 답이 된다.
+ * - 두 번째 결과가 실패하면 세 번째 호출은 없다. 원래대로 `unsure` fail-close 한다.
+ * - 재생성 공급자 오류도 기존 정상 경로를 `error` 로 악화시키지 않는다. 이 기능이 없었을
+ *   때의 결과(`unsure`)를 유지한다. 다만 첫 호출 토큰은 그대로 계측한다.
+ *
+ * durable 경계: stat RULE_TERM 재질의가 이미 쓰는 것과 같은 패턴이다. 최종 envelope 를
+ * store-before-log 하므로 성공 결과는 재생된다. 응답 후 store 전 crash 창에서는 1회가
+ * 다시 소비될 수 있지만 유저 가시 결과는 전수 검증 후 동일 계약이고, 호출 상한은 한 처리당 1회다.
+ */
+async function validateWithToneRecovery(
+  llm: LlmResult,
+  question: string,
+  context: ContextTurn | null,
+  rosterBlock: string | undefined,
+  callLlm: QaDeps["callLlm"],
+): Promise<ToneRecoveryResult> {
+  const first = validateLlmResponse(llm.text, question);
+  if (first.reason !== "tone_noncompliant" || !first.rejectedAnswer) {
+    return { validated: first, llm, retried: false };
+  }
+  let retry: LlmResult;
+  try {
+    // statIntentMode=false: 이번 호출은 의도 enum이 아니라 정규 답변 생성이다.
+    // toneRetryMode=true: 같은 원질문/맥락/로스터 위에 합니다체 강화 계약만 붙인다.
+    retry = await callLlm(question, context ?? undefined, rosterBlock, false, true);
+  } catch {
+    return { validated: first, llm, retried: true };
+  }
+  const sumTokens = (a: number | null, b: number | null): number | null =>
+    a === null && b === null ? null : (a ?? 0) + (b ?? 0);
+  const combined: LlmResult = {
+    text: retry.text,
+    inputTokens: sumTokens(llm.inputTokens, retry.inputTokens),
+    outputTokens: sumTokens(llm.outputTokens, retry.outputTokens),
+  };
+  const retriedValidation = validateLlmResponse(retry.text, question);
+  // 이 기능은 **톤 회수**만 한다. 재생성 모델이 판정을 뒤집어 NOT_BASEBALL/UNSURE 를
+  // 내더라도 최초의 `tone_noncompliant` 를 blocked/다른 unsure 로 바꾸지 않는다.
+  // 유저 가시 의미가 바뀌는 유일한 허용 전이는 `tone-unsure → 전수검증 answer` 다.
+  return {
+    validated: retriedValidation.kind === "answer" ? retriedValidation : first,
+    llm: combined,
+    retried: true,
+  };
 }
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
@@ -6089,14 +6187,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // ⚠️ 재질의 결과는 **일반 경로의 의미 그대로** 종결한다(삼순 P0③).
       //   종전에는 blocked·unsure 를 전부 되묻기로 접어 "범위 밖"·"못 알아들음" 이 전부
       //   "앞말이 선수 이름인지 모르겠다" 로 둘갑했다 — 세 상황은 유저의 다음 행동이 다르다.
-      // 토큰 계측은 두 호출을 합산한다 — 한 질문에 LLM 을 두 번 태웠으므로 한 쪽만 적으면 과소계측이다.
-      const sumIn = (llm.inputTokens ?? 0) + (reasked.inputTokens ?? 0);
-      const sumOut = (llm.outputTokens ?? 0) + (reasked.outputTokens ?? 0);
-      const tokens = {
-        inputTokens: llm.inputTokens === null && reasked.inputTokens === null ? null : sumIn,
-        outputTokens: llm.outputTokens === null && reasked.outputTokens === null ? null : sumOut,
+      const toneRecovery = await validateWithToneRecovery(
+        reasked, question, context, rosterBlock, deps.callLlm,
+      );
+      const revalidated = toneRecovery.validated;
+      // 1차 intent + 2차 일반답변 합계에, 필요하면 3차(톤 1회)까지 더한다.
+      const recovered = toneRecovery.llm;
+      const recoveredTokens = {
+        inputTokens: llm.inputTokens === null && recovered.inputTokens === null
+          ? null : (llm.inputTokens ?? 0) + (recovered.inputTokens ?? 0),
+        outputTokens: llm.outputTokens === null && recovered.outputTokens === null
+          ? null : (llm.outputTokens ?? 0) + (recovered.outputTokens ?? 0),
       };
-      const revalidated = validateLlmResponse(reasked.text, question);
       if (revalidated.kind === "answer" && revalidated.answer) {
         // ⚠️ **durable store 를 먼저**, 그 다음 log (삼순 P0② — store-before-log).
         //   검증 완료 표식(`statRuleTermVerified`)을 envelope 에 결속해, `log 전 crash → 재시도`
@@ -6106,31 +6208,31 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         if (deps.storeLlm) {
           await deps.storeLlm(packStoredQaFinal(
             { answer: revalidated.answer, source: "llm", statRuleTermVerified: true },
-            { text: reasked.text, ...tokens },
+            { text: recovered.text, ...recoveredTokens },
           ));
         }
         await deps.log({
           userId, question, questionNorm, matchPath: "llm",
-          answer: revalidated.answer, ...tokens,
+          answer: revalidated.answer, ...recoveredTokens,
         });
         return { status: 200, answer: revalidated.answer, source: "llm", remaining };
       }
       if (revalidated.kind === "blocked") {
         if (deps.storeLlm) {
           await deps.storeLlm(packStoredQaFinal(
-            { answer: BLOCKED_ANSWER, source: "blocked" }, { text: reasked.text, ...tokens },
+            { answer: BLOCKED_ANSWER, source: "blocked" }, { text: recovered.text, ...recoveredTokens },
           ));
         }
-        await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, ...tokens });
+        await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, ...recoveredTokens });
         return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
       }
       // unsure — 재질의 답이 검증을 못 넘었다. 일반 경로와 같은 의미로 보류 안내.
       if (deps.storeLlm) {
         await deps.storeLlm(packStoredQaFinal(
-          { answer: UNCLEAR_ANSWER, source: "unsure" }, { text: reasked.text, ...tokens },
+          { answer: UNCLEAR_ANSWER, source: "unsure" }, { text: recovered.text, ...recoveredTokens },
         ));
       }
-      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, ...tokens });
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, ...recoveredTokens });
       return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
     }
     const final: StoredQaFinal = intent === "narrative"
@@ -6144,7 +6246,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
-  const validated = validateLlmResponse(llm.text, question);
+  const toneRecovery = await validateWithToneRecovery(
+    llm, question, context, rosterBlock, deps.callLlm,
+  );
+  const validated = toneRecovery.validated;
+  // 재생성까지 소비했다면 저장·로그 토큰은 두 호출 합계를 쓴다. 성공/실패 모두 관측한다.
+  llm = toneRecovery.llm;
   if (validated.kind === "blocked") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: BLOCKED_ANSWER, source: "blocked" }, llm));

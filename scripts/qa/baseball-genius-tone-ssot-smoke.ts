@@ -165,9 +165,15 @@ for (const nonFormal of [
 ]) {
   assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `비합니다체를 통과시키면 안 된다: ${nonFormal}`);
 }
+// A′ ①: 어간 불변 닫힌집합 해요체는 결정론 정규화 후 살린다.
 assert.deepEqual(
   validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 반칙 동작이에요." }), "보크가 뭐야?"),
-  { kind: "unsure" },
+  { kind: "answer", answer: "야구에서 보크는 반칙 동작입니다." },
+);
+// 열린 일반용언 활용은 룰로 추측 변환하지 않고 ② 재생성 대상으로 남긴다.
+assert.deepEqual(
+  validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크를 반칙으로 여겨요." }), "보크가 뭐야?"),
+  { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: "야구에서 보크를 반칙으로 여겨요." },
 );
 assert.deepEqual(
   validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 보크는 반칙 동작이에요." }), { numericEvidence: true, evidence: [] }),
@@ -180,8 +186,8 @@ for (const nonFormal of [
 ]) {
   assert.deepEqual(
     validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
-    { kind: "unsure" },
-    `generic LLM 비합니다체 fail-close: ${nonFormal}`,
+    { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: nonFormal },
+    `generic LLM 비합니다체 fail-close + 원인 결속: ${nonFormal}`,
   );
   assert.deepEqual(
     validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: nonFormal }), { numericEvidence: true, evidence: [] }),

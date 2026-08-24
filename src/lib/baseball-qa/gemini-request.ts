@@ -103,6 +103,24 @@ export const GLOSSARY_MAPPER_SYSTEM_PROMPT = [
   '반드시 JSON 하나만 출력한다: {"term":"후보 목록에 있는 용어 그대로"} 또는 {"term":null}',
 ].join("\n");
 
+/**
+ * A′ ② — ① 닫힌집합 정규화로도 남은 답변을 **한 번만** 재생성할 때 붙이는 계약.
+ *
+ * 첫 호출의 자유문장을 다시 입력으로 주지 않는다. 초안 교정으로 보내면 모델이 초안 속
+ * 잘못된 사실까지 보존하라는 명령을 받는 셈이고, 반대로 "고쳐라" 는 범위를 열면 내용이
+ * 조용히 바뀐다. 원질문·원맥락·현재 로스터를 그대로 다시 보내고, **출력 말투만 더 강하게**
+ * 제약하는 편이 기존 생성 경로와 같은 안전계약을 유지한다.
+ *
+ * 재생성 결과도 `validateLlmResponse` 전수 검증(길이·링크·톤·질문범위)을 다시 통과해야
+ * 서빙된다. 실패하면 두 번째 재시도 없이 기존 `unsure` 로 fail-close 한다.
+ */
+export const TONE_RETRY_PROMPT = [
+  "직전 생성은 내용이 아니라 문장 종결 말투 때문에 폐기되었다. 이번이 마지막 재생성 기회다.",
+  "모든 한국어 문장을 반드시 합니다체(~입니다, ~합니다, ~됩니다, ~있습니다)로 끝낸다.",
+  "해요체(~이에요, ~예요, ~해요, ~돼요, ~어요, ~아요, ~네요, ~지요, ~죠)는 한 문장도 쓰지 않는다.",
+  "질문의 사실관계·범위·숫자 안전 규칙과 JSON 출력 형식은 위 지시를 그대로 따른다.",
+].join("\n");
+
 export const STAT_INTENT_PROMPT = [
   "이번 질문은 등록되지 않은 대상의 기록 질문일 수 있다. 자유로운 문장으로 답하지 말고 의도만 판정한다.",
   "answer 에는 반드시 다음 세 토큰 중 하나만 쓴다:",
@@ -124,6 +142,7 @@ export function buildBaseballQaGeminiRequest(
   context?: { question: string; answer: string },
   rosterBlock?: string,
   statIntentMode = false,
+  toneRetryMode = false,
 ) {
   // 로스터 블록은 **데이터**로 user turn 안에 구획해 넣는다 — 지시는 systemInstruction에만.
   const finalQuestion = rosterBlock
@@ -143,7 +162,11 @@ export function buildBaseballQaGeminiRequest(
     : [{ role: "user", parts: [{ text: finalQuestion }] }];
   return {
     systemInstruction: {
-      parts: [{ text: statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt }],
+      parts: [{ text: statIntentMode
+        ? `${systemPrompt}\n${STAT_INTENT_PROMPT}`
+        : toneRetryMode
+          ? `${systemPrompt}\n${TONE_RETRY_PROMPT}`
+          : systemPrompt }],
     },
     contents,
     generationConfig: {

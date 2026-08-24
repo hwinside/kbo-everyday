@@ -152,12 +152,15 @@ export async function callLlm(
   context?: ContextTurn,
   rosterBlock?: string,
   statIntentMode = false,
+  toneRetryMode = false,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode)),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(
+      question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode, toneRetryMode,
+    )),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);

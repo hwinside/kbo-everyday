@@ -108,6 +108,154 @@ export function isBaseballGeniusToneCompliant(
   return true;
 }
 
+/**
+ * 해요체 → 합니다체 **닫힌집합** 정규화 (2026-08-24 A′).
+ *
+ * ## 왜 만드는가
+ * 48h 로그 A0 shadow replay 실측: LLM 이 답을 낸 213런 중 135런을 게이트가 버렸고
+ * 그 중 **128런(94.8%)이 톤 하나** 때문이었다. 내용은 맞는데 `~예요` 로 끝나서 죽었다.
+ * 프롬프트에 이미 "해요체를 쓰지 않는다" 가 명시돼 있는데도 그렇다 — 지시로는 안 닫힌다.
+ *
+ * ## 왜 닫힌집합만 하는가 (⚠️ 이 모듈의 핵심 계약)
+ * 위반 373문장을 어미별로 가르면 경계가 선명하다.
+ *   - **닫힘 323문장(86.6%)**: 계사(이다)·하다·되다·있다/없다. 어간이 **변하지 않는다**.
+ *   - **열림  50문장(13.4%)**: 일반 용언 활용(`만들어져요`·`흥미로워요`·`나뉘어요`).
+ *     ㅂ/ㅅ/르 불규칙이라 어간을 **복원**해야 하고, 그건 룰로 닫히지 않는다.
+ *
+ * 🔴 실제로 당했다: 초안에서 `이에요 → 입니다` 를 `아니에요` 보다 **먼저** 뒀더니
+ *    `아니에요 → 아니입니다` 비문이 나왔다. 그런데 내가 짠 오변환 검사기는
+ *    "`니다` 로 끝나는가" 만 보고 **0건**이라 통과시켰다(육안으로 잡았다).
+ *    → 검사기를 늘리는 게 아니라 **변환 자체를 어간 불변으로 좁히는 것**이 답이다.
+ *    열린 활용은 여기서 손대지 않고 ②재생성으로 넘긴다
+ *    (`open_language_never_closes_with_rules`).
+ *
+ * ## 받침 가드가 곧 한국어 규칙이다
+ * `이에요` 는 받침 있는 체언 뒤, `예요` 는 받침 없는 체언 뒤에만 붙는다. 이 조건을
+ * 그대로 가드로 쓰면 `아이에요`(체언이 `아이`) 를 `아`+`입니다` 로 쪼개는 사고가
+ * **원리적으로** 일어나지 않는다. 조건을 못 만족하면 변환하지 않고 남긴다 —
+ * 남은 문장은 게이트가 그대로 잡는다.
+ *
+ * ## fail-close
+ * 정규화 결과는 **다시 `isBaseballGeniusToneCompliant` 를 통과해야만** 쓴다.
+ * 통과 못 하면 `compliant:false` 로 알리고, 호출측은 원문을 그대로 폐기 경로에 둔다.
+ * 즉 이 모듈은 **살릴 수 있는 답만 살리고, 못 살리면 아무것도 바꾸지 않는다**.
+ */
+function hasBatchim(char: string | undefined): boolean | null {
+  if (!char) return null;
+  const code = char.codePointAt(0);
+  if (code === undefined || code < 0xac00 || code > 0xd7a3) return null;
+  return (code - 0xac00) % 28 !== 0;
+}
+
+interface ClosedToneRule {
+  /** 문장 말미(장식 제거 후)에서만 매칭한다. */
+  readonly ending: string;
+  readonly replacement: string;
+  /**
+   * 어미 **앞 글자**의 받침 조건. `null` 이면 조건 없음.
+   * 조건을 못 만족하면 **변환하지 않는다** — 오변환보다 미변환이 안전하다.
+   */
+  readonly requireBatchim: boolean | null;
+}
+
+/**
+ * ⚠️ 순서가 계약이다. 더 길고 구체적인 어미가 먼저 와야 한다.
+ *   `아니에요` 가 `이에요` 뒤에 있으면 `아니입니다` 비문이 나온다(위 주석 사고).
+ *   받침 가드만으로도 막히지만, 순서로 한 번 더 막아 둔다.
+ *
+ * ⚠️ 여기에 **일반 용언 어미(`-어요`·`-아요`·bare `-지요`)를 추가하지 마라.**
+ *   `나오지요 → 나오입니다`, `흥미로워요 → 흥미로우ㅂ니다` 처럼 어간 복원이 필요해
+ *   룰로 닫히지 않는다. 커버리지를 늘리고 싶으면 재생성(②)으로 간다.
+ */
+const CLOSED_TONE_RULES: readonly ClosedToneRule[] = [
+  // ① 계사 부정 — 반드시 최상단. `아니예요` 는 흔한 오표기라 함께 받는다.
+  { ending: "아니에요", replacement: "아닙니다", requireBatchim: null },
+  { ending: "아니예요", replacement: "아닙니다", requireBatchim: null },
+  { ending: "아녜요", replacement: "아닙니다", requireBatchim: null },
+  // ② 계사 — 받침 규칙이 곧 체언 경계 보증이다.
+  { ending: "이에요", replacement: "입니다", requireBatchim: true },
+  { ending: "이예요", replacement: "입니다", requireBatchim: true },
+  { ending: "예요", replacement: "입니다", requireBatchim: false },
+  { ending: "이지요", replacement: "입니다", requireBatchim: true },
+  { ending: "이죠", replacement: "입니다", requireBatchim: true },
+  // ③ 되다 — `되어요`가 `돼요`보다 길므로 먼저.
+  { ending: "되어요", replacement: "됩니다", requireBatchim: null },
+  { ending: "되지요", replacement: "됩니다", requireBatchim: null },
+  { ending: "되죠", replacement: "됩니다", requireBatchim: null },
+  { ending: "돼요", replacement: "됩니다", requireBatchim: null },
+  // ④ 하다.
+  { ending: "하지요", replacement: "합니다", requireBatchim: null },
+  { ending: "하죠", replacement: "합니다", requireBatchim: null },
+  { ending: "해요", replacement: "합니다", requireBatchim: null },
+  // ⑤ 있다/없다 — 어간이 그대로 남는 유일한 일반 용언쌍이라 닫힌집합에 든다.
+  { ending: "있어요", replacement: "있습니다", requireBatchim: null },
+  { ending: "있지요", replacement: "있습니다", requireBatchim: null },
+  { ending: "있죠", replacement: "있습니다", requireBatchim: null },
+  { ending: "없어요", replacement: "없습니다", requireBatchim: null },
+  { ending: "없지요", replacement: "없습니다", requireBatchim: null },
+  { ending: "없죠", replacement: "없습니다", requireBatchim: null },
+];
+
+/** 문장 끝 장식(문장부호·따옴표·괄호닫기)만 떼어낸다. 본문은 건드리지 않는다. */
+const TRAILING_DECORATION_RE = /[.!?…\s"'’”)\]}]*$/u;
+
+export interface FormalToneNormalization {
+  /** 정규화된 답변. 바꿀 게 없었으면 입력과 동일하다. */
+  readonly answer: string;
+  /** 정규화 결과가 톤 SSOT 를 통과하는가. **이게 false 면 쓰면 안 된다.** */
+  readonly compliant: boolean;
+  /** 실제로 바꾼 문장 수 (관측용). */
+  readonly converted: number;
+}
+
+/**
+ * 닫힌집합 어미만 합니다체로 바꾼다. 어간은 절대 건드리지 않는다.
+ *
+ * 반환값의 `compliant` 가 true 일 때만 `answer` 를 채택할 것 — 이 함수는 판정하지 않고
+ * **정규화 시도 결과와 그 결과의 SSOT 통과 여부**를 함께 돌려줄 뿐이다.
+ */
+export function normalizeToFormalTone(
+  answer: string,
+  options: { mode?: ToneValidationMode } = {},
+): FormalToneNormalization {
+  let converted = 0;
+  const normalized = answer
+    .split(/\n/u)
+    .map((line) =>
+      splitSentences(line)
+        .map((rawSentence) => {
+          const decoration = TRAILING_DECORATION_RE.exec(rawSentence);
+          const cut = decoration ? decoration.index : rawSentence.length;
+          const core = rawSentence.slice(0, cut);
+          const tail = rawSentence.slice(cut);
+          if (!core || !HANGUL_RE.test(core)) return rawSentence;
+          // 이미 합니다체면 손대지 않는다.
+          if (FORMAL_SENTENCE_ENDING_RE.test(core)) return rawSentence;
+          for (const rule of CLOSED_TONE_RULES) {
+            if (!core.endsWith(rule.ending)) continue;
+            const stem = core.slice(0, core.length - rule.ending.length);
+            // 어간이 비면 `예요` 단독 같은 조각이다 — 문장이 아니므로 두고 본다.
+            if (!stem) return rawSentence;
+            if (rule.requireBatchim !== null) {
+              const batchim = hasBatchim(stem[stem.length - 1]);
+              // 받침을 판정할 수 없거나(영문·숫자) 조건과 다르면 **변환하지 않는다**.
+              if (batchim === null || batchim !== rule.requireBatchim) return rawSentence;
+            }
+            converted += 1;
+            return `${stem}${rule.replacement}${tail}`;
+          }
+          return rawSentence;
+        })
+        .join(""),
+    )
+    .join("\n");
+  return {
+    answer: normalized,
+    compliant: isBaseballGeniusToneCompliant(normalized, options),
+    converted,
+  };
+}
+
 export const BASEBALL_GENIUS_SIGNATURE = "승리를 위하여!";
 export function appendSparsePositiveSignature(answer: string, recentPositiveAnswers: string[]): string {
   const usedRecently = recentPositiveAnswers.slice(0, 5).some((recent) => recent.includes(BASEBALL_GENIUS_SIGNATURE));
