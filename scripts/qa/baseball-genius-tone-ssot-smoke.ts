@@ -167,8 +167,8 @@ for (const nonFormal of [
 }
 // A′ ①: 어간 불변 닫힌집합 해요체는 결정론 정규화 후 살린다.
 assert.deepEqual(
-  validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 반칙 동작이에요." }), "보크가 뭐야?"),
-  { kind: "answer", answer: "야구에서 보크는 반칙 동작입니다." },
+  validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "야구에서 보크는 규칙이에요." }), "보크가 뭐야?"),
+  { kind: "answer", answer: "야구에서 보크는 규칙입니다." },
 );
 // 열린 일반용언 활용은 룰로 추측 변환하지 않고 ② 재생성 대상으로 남긴다.
 assert.deepEqual(

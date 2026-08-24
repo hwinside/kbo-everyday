@@ -64,7 +64,9 @@ const mutations = [
   {
     name: "M5 재질의 답 검증 우회 (validateLlmResponse 생략)",
     file: PIPELINE,
-    re: /const revalidated = validateLlmResponse\(reasked\.text, question\);/,
+    // A′ 톤 회수 도입 후 검증 seam은 `validateWithToneRecovery` 결과다. 종전
+    // direct validator 앵커는 패치 MISS로 CI를 RED 냈으므로 production seam에 재결속한다.
+    re: /const revalidated = toneRecovery\.validated;/,
     to: 'const revalidated = { kind: "answer", answer: reasked.text } as ReturnType<typeof validateLlmResponse>;',
     why: "검증 없이 원문을 서빙하면 D5(검증 실패→되묻기) 축이 깨진다",
   },

@@ -45,6 +45,7 @@ import {
   BASEBALL_QA_GEMINI_MODEL,
   BASEBALL_QA_SYSTEM_PROMPT,
   buildBaseballQaGeminiRequest,
+  buildBaseballQaToneRewriteRequest,
   GLOSSARY_MAPPER_SYSTEM_PROMPT,
 } from "@/lib/baseball-qa/gemini-request";
 import {
@@ -152,15 +153,34 @@ export async function callLlm(
   context?: ContextTurn,
   rosterBlock?: string,
   statIntentMode = false,
-  toneRetryMode = false,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildBaseballQaGeminiRequest(
-      question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode, toneRetryMode,
+      question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode,
     )),
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  const text: string =
+    data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+  return {
+    text,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
+/** A′ ②: 폐기 원문의 문장 종결 어절만 rewrite. 호출측 보존 게이트 통과 전엔 서빙 금지. */
+export async function rewriteLlmTone(originalAnswer: string): Promise<LlmResult> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(buildBaseballQaToneRewriteRequest(originalAnswer)),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
@@ -739,6 +759,7 @@ export function makeDeps(
     // 로스터가 끊기는 변종을 RED 로 잡는다(삼순 8차 P0-2).
     loadPlayers: loadRosterPlayers,
     callLlm,
+    rewriteLlmTone,
     // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
     // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
     mapGlossaryDefinition,

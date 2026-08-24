@@ -160,6 +160,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-tone-recovery:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-team-copy",
       "tier": "ci"
     },

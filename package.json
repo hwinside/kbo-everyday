@@ -450,6 +450,7 @@
     "qa:event-records:mutations": "node scripts/qa/baseball-qa-event-records-mutations.mjs",
     "qa:genius-tone-ssot": "tsx scripts/qa/baseball-genius-tone-ssot-smoke.ts",
     "qa:genius-tone-recovery": "tsx scripts/qa/genius-tone-recovery-smoke.ts",
+    "qa:genius-tone-recovery:mutations": "node scripts/qa/genius-tone-recovery-mutations.mjs",
     "qa:genius-team-copy": "tsc --noEmit -p tsconfig.team-copy-gate.json && tsx scripts/qa/baseball-genius-team-copy-smoke.ts",
     "qa:genius-team-copy:smoke-only": "tsx scripts/qa/baseball-genius-team-copy-smoke.ts",
     "qa:genius-team-copy:mutations": "node scripts/qa/baseball-genius-team-copy-mutations.mjs",

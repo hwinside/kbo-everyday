@@ -1,14 +1,14 @@
 /**
  * 야잘알봇 A′ 톤 회수 종단 게이트 (2026-08-24).
  *
- * 검증하는 계약:
- *  ① 어간 불변 닫힌집합만 결정론 정규화하고, 결과를 tone SSOT 로 재검증한다.
- *  ② ①로 못 닫은 일반 용언은 원질문으로 딱 1회 재생성한다.
- *  ③ 재생성 결과도 전수 게이트를 통과해야만 서빙된다. 실패하면 3차 호출 없이 unsure.
- *  ④ 톤 외 결함에는 재호출하지 않는다(비용·공격면 상한).
- *  ⑤ 두 호출 토큰은 합산해 log/store 관측에 남긴다.
+ * ① A0 actual 373문장에서 검토된 완전 어절 106쌍만 정규화한다.
+ * ② 잔존분은 폐기 원문의 마지막 어절만 provider rewrite 1회.
+ * ③ rewrite는 prefix/문장부호/수치/식별자 보존 + 기존 validator를 모두 통과해야 서빙.
+ * ④ 실패·비톤 결함은 재호출/3차 호출 없이 기존 unsure를 유지한다.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import {
   answerQuestion,
@@ -17,164 +17,305 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import {
   isBaseballGeniusToneCompliant,
+  isToneRewriteContentPreserving,
   normalizeToFormalTone,
 } from "../../src/lib/baseball-qa/tone";
-import { buildBaseballQaGeminiRequest, TONE_RETRY_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
+import {
+  buildBaseballQaGeminiRequest,
+  buildBaseballQaToneRewriteRequest,
+  TONE_REWRITE_PROMPT,
+} from "../../src/lib/baseball-qa/gemini-request";
+
+interface ActualLedger {
+  kind: string;
+  sourceSha256: string;
+  counts: { sentences: number; mapped: number; unchanged: number };
+  rows: Array<{
+    runId: string;
+    rep: number;
+    sentenceIndex: number;
+    input: string;
+    expected: string;
+    action: "mapped" | "unchanged";
+  }>;
+}
 
 async function main(): Promise<void> {
-let passed = 0;
-const ok = (label: string): void => { passed += 1; console.log(`PASS ${label}`); };
+  let passed = 0;
+  const ok = (label: string): void => { passed += 1; console.log(`PASS ${label}`); };
 
-// ── ① 닫힌집합 단위 계약 ──────────────────────────────────────────────
-const closed: Array<[string, string]> = [
-  ["야구에서 보크는 투수의 반칙이에요.", "야구에서 보크는 투수의 반칙입니다."],
-  ["야구는 재미있는 스포츠예요!", "야구는 재미있는 스포츠입니다!"],
-  ["야구 규칙이 아니에요.", "야구 규칙이 아닙니다."], // 원 사고: 아니입니다 금지
-  ["야구에서 득점이 가능해요.", "야구에서 득점이 가능합니다."],
-  ["야구 팬은 이 장면을 흥미로워해요.", "야구 팬은 이 장면을 흥미로워합니다."],
-  ["야구에서 판정이 뒤집혀요. 결과는 확정돼요.", "야구에서 판정이 뒤집혀요. 결과는 확정됩니다."],
-  ["야구에 기록이 있어요. 예외는 없어요.", "야구에 기록이 있습니다. 예외는 없습니다."],
-  ["야구에서 이 상황은 규칙이지요.", "야구에서 이 상황은 규칙입니다."],
-];
-for (const [before, expected] of closed) {
-  const result = normalizeToFormalTone(before);
-  assert.equal(result.answer, expected, `닫힌 정규화 불일치: ${before}`);
-  // 문장 하나라도 열린 활용이 남은 복합문은 compliant=false 여야 한다.
-  assert.equal(result.compliant, isBaseballGeniusToneCompliant(expected));
-}
-ok("닫힌집합 — 계사/부정/하다/되다/있다·없다/지요 정확 변환");
+  // ── ① A0 actual 373문장 전수 원장 ────────────────────────────────────
+  const ledger = JSON.parse(readFileSync(
+    "scripts/qa/fixtures/genius-tone-a0-373.json", "utf8",
+  )) as ActualLedger;
+  assert.equal(ledger.kind, "genius-tone-a0-actual-v1");
+  assert.match(ledger.sourceSha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(ledger.counts, { sentences: 373, mapped: 323, unchanged: 50 });
+  assert.equal(ledger.rows.length, 373);
+  const ids = new Set<string>();
+  let mapped = 0;
+  let unchanged = 0;
+  for (const row of ledger.rows) {
+    const id = `${row.runId}:${row.rep}:${row.sentenceIndex}`;
+    assert.ok(!ids.has(id), `actual ledger duplicate: ${id}`);
+    ids.add(id);
+    const out = normalizeToFormalTone(row.input);
+    assert.equal(out.answer, row.expected, `actual mismatch: ${id}`);
+    if (row.action === "mapped") {
+      mapped += 1;
+      assert.notEqual(out.answer, row.input, `mapped row no-op: ${id}`);
+    } else {
+      unchanged += 1;
+      assert.equal(out.answer, row.input, `unchanged row modified: ${id}`);
+    }
+  }
+  assert.equal(mapped, 323);
+  assert.equal(unchanged, 50);
+  ok("① A0 actual 373 — mapped 323 / unchanged 50 exact");
 
-// `아이에요`를 `아입니다`로 쪼개는 류의 체언 경계 오변환을 받침 가드가 막는다.
-const invalidBoundary = normalizeToFormalTone("야구 마스코트는 아이에요.");
-assert.equal(invalidBoundary.answer, "야구 마스코트는 아이에요.");
-assert.equal(invalidBoundary.compliant, false);
-assert.doesNotMatch(invalidBoundary.answer, /아입니다/u);
-ok("받침 가드 — 체언 경계 오분할 fail-close");
+  // 일반 suffix가 아니라 완전 어절 allowlist다. 지정 반례는 byte-identical + RED여야 한다.
+  for (const answer of [
+    "야구에서 이건 거예요.",
+    "야구에서 그건 뭐예요?",
+    "야구에서 왜예요?",
+    "야구 마스코트는 아이에요.",
+    "야구 규칙은 상황에 따라 나뉘어요.",
+  ]) {
+    const out = normalizeToFormalTone(answer);
+    assert.equal(out.answer, answer, `미등록형을 바꾸면 안 됨: ${answer}`);
+    assert.equal(out.compliant, false, `미등록형은 기존 validator가 RED여야 함: ${answer}`);
+  }
+  ok("① 미등록형 fail-close — 거/뭐/왜예요·일반활용 byte-identical");
 
-// 열린 활용은 절대 추측 변환하지 않는다.
-for (const answer of [
-  "야구에서 기록이 만들어져요.",
-  "야구 규칙은 상황에 따라 나뉘어요.",
-  "야구에서는 그렇게 여기지 않아요.",
-]) {
-  const result = normalizeToFormalTone(answer);
-  assert.equal(result.answer, answer, `열린 활용을 건드리면 안 됨: ${answer}`);
-  assert.equal(result.compliant, false);
-}
-ok("열린집합 — 일반 용언 활용 무변환 + SSOT RED");
+  // 대표 유한 매핑과 원 사고를 명시적으로 고정한다.
+  const finite: Array<[string, string]> = [
+    ["야구에서 보크는 규칙이에요.", "야구에서 보크는 규칙입니다."],
+    ["야구 규칙이 아니에요.", "야구 규칙이 아닙니다."],
+    ["야구에서 득점이 가능해요.", "야구에서 득점이 가능합니다."],
+    ["야구에 기록이 있어요. 중요한 기록이에요.", "야구에 기록이 있습니다. 중요한 기록입니다."],
+  ];
+  for (const [before, expected] of finite) {
+    const out = normalizeToFormalTone(before);
+    assert.equal(out.answer, expected);
+    assert.equal(out.compliant, true);
+    assert.doesNotMatch(out.answer, /아니입니다/u);
+  }
+  ok("① 유한 매핑 — 대표 4축 + 아니입니다 음성");
 
-// 이미 정상인 답은 byte-identical/no-op.
-const formal = "야구에서 보크는 투수의 반칙입니다. 주자는 진루합니다.";
-assert.deepEqual(normalizeToFormalTone(formal), { answer: formal, compliant: true, converted: 0 });
-ok("정상 합니다체 byte-identical no-op");
+  // 이미 정상인 답은 byte-identical/no-op.
+  const formal = "야구에서 보크는 투수의 반칙입니다. 주자는 진루합니다.";
+  assert.deepEqual(normalizeToFormalTone(formal), { answer: formal, compliant: true, converted: 0 });
+  ok("① 정상 합니다체 byte-identical no-op");
 
-// retry prompt는 실제 request 조립 결과에 결속돼야 한다. 상수 존재만 검사하면 배선 누락 false-GREEN.
-const retryRequest = buildBaseballQaGeminiRequest("보크가 뭐야?", "BASE", undefined, undefined, false, true);
-const retrySystem = retryRequest.systemInstruction.parts[0].text;
-assert.ok(retrySystem.startsWith("BASE\n"));
-assert.ok(retrySystem.includes(TONE_RETRY_PROMPT));
-assert.match(retrySystem, /한 문장도 쓰지 않는다/u);
-const normalRequest = buildBaseballQaGeminiRequest("보크가 뭐야?", "BASE");
-assert.equal(normalRequest.systemInstruction.parts[0].text, "BASE");
-ok("② retry prompt — 실제 provider request seam 결속");
+  // ── ② rewrite 보존 계약 ─────────────────────────────────────────────
+  assert.equal(
+    isToneRewriteContentPreserving(
+      "야구에서 이 플레이를 반칙으로 여겨요.",
+      "야구에서 이 플레이를 반칙으로 여깁니다.",
+    ),
+    true,
+  );
+  assert.equal(
+    isToneRewriteContentPreserving(
+      "첫 문장은 이미 정상입니다. 다음 장면을 반칙으로 여겨요.",
+      "첫 문장은 이미 정상입니다. 다음 장면을 반칙으로 여깁니다.",
+    ),
+    true,
+    "이미 formal인 문장은 byte-identical로 보존하며 열린 문장만 rewrite",
+  );
+  for (const [before, after] of [
+    // prefix 재서술/내용 변경
+    ["야구에서 이 플레이를 반칙으로 여겨요.", "야구에서 저 플레이를 반칙으로 여깁니다."],
+    // 숫자 변경
+    ["야구에서 3점을 주면 어려워요.", "야구에서 4점을 주면 어렵습니다."],
+    // 구단명 변경
+    ["LG가 이기면 좋아요.", "두산이 이기면 좋습니다."],
+    // 문장부호/문장 개수 변경
+    ["야구에서 이건 어려워요.", "야구에서 이건 어렵습니다!"],
+    ["야구에서 이건 어려워요.", "야구에서 이건 어렵습니다. 추가합니다."],
+    // 마지막 어절만 바뀌어도 의미가 뒤집히는 반례 — 유사도 규칙이면 통과한다.
+    ["야구에서 좋아요.", "야구에서 싫습니다."],
+    ["야구에서는 그러지 않아요.", "야구에서는 그렇게 합니다."],
+    ["야구에서 맞아요.", "야구에서 틀립니다."],
+    // copula는 ① 미등록형이며 ②로 우회하지 않는다.
+    ["야구에서 이건 거예요.", "야구에서 이건 겁니다."],
+  ]) {
+    assert.equal(isToneRewriteContentPreserving(before, after), false, `보존 위반 통과: ${before} -> ${after}`);
+  }
+  ok("② 보존 게이트 — prefix/수치/구단/문장부호/문장수/copula 음성");
 
-interface RunResult {
-  source: string;
-  answer: string;
-  calls: Array<{ toneRetry: boolean }>;
-  logs: Array<Record<string, unknown>>;
-  stores: string[];
-}
+  // provider request는 실제 폐기 원문을 데이터로 포함해야 한다. 상수만 존재하면 false-GREEN.
+  const originalDraft = "야구에서 이 플레이를 반칙으로 여겨요.";
+  const rewriteRequest = buildBaseballQaToneRewriteRequest(originalDraft);
+  assert.equal(rewriteRequest.systemInstruction.parts[0].text, TONE_REWRITE_PROMPT);
+  assert.match(rewriteRequest.contents[0].parts[0].text, /<원문>/u);
+  assert.ok(rewriteRequest.contents[0].parts[0].text.includes(originalDraft));
+  assert.equal(rewriteRequest.generationConfig.temperature, 0);
+  const normalRequest = buildBaseballQaGeminiRequest("보크가 뭐야?", "BASE");
+  assert.equal(normalRequest.systemInstruction.parts[0].text, "BASE");
+  assert.ok(!normalRequest.contents[0].parts[0].text.includes(originalDraft));
+  ok("② provider seam — 폐기 원문 rewrite request 결속");
 
-async function runWith(responses: string[]): Promise<RunResult> {
-  const calls: Array<{ toneRetry: boolean }> = [];
-  const logs: Array<Record<string, unknown>> = [];
-  const stores: string[] = [];
-  let index = 0;
-  const deps: QaDeps = {
-    loadGlossary: async () => [],
-    loadPlayers: async () => [],
-    getCache: async () => null,
-    setCache: async () => {},
-    reserveDaily: async () => ({ allowed: true, remaining: 19 }),
-    callLlm: async (_question, _context, _roster, _stat, toneRetry) => {
-      calls.push({ toneRetry: toneRetry === true });
-      const text = responses[index++];
-      if (text === undefined) throw new Error("unexpected extra LLM call");
-      // 호출별 토큰을 다르게 줘 합산을 증명한다.
-      return { text, inputTokens: calls.length * 10, outputTokens: calls.length * 3 };
-    },
-    storeLlm: async (text) => { stores.push(text); },
-    log: async (row) => { logs.push(row as unknown as Record<string, unknown>); },
+  // ── ② 실 provider shadow 원장 ───────────────────────────────────────
+  const rewriteFixtureBytes = readFileSync("scripts/qa/fixtures/genius-tone-a0-rewrite45.json");
+  const rewriteFixture = JSON.parse(rewriteFixtureBytes.toString("utf8")) as {
+    kind: string;
+    sourceSha256: string;
+    rows: Array<{ runId: string; rep: number; afterFiniteMap: string }>;
   };
-  const result = await answerQuestion("tone-user", "보크가 뭐야?", deps);
-  return { source: result.source, answer: result.answer, calls, logs, stores };
-}
+  const shadow = JSON.parse(readFileSync(
+    "scripts/qa/fixtures/genius-tone-a0-rewrite45-shadow.json", "utf8",
+  )) as {
+    kind: string;
+    fixtureSha256: string;
+    sourceSha256: string;
+    summary: {
+      total: number; tonePass: number; preservationPass: number; accepted: number;
+      latencyMs: { min: number; median: number; p95: number; max: number };
+      tokens: { inputTotal: number; outputTotal: number; inputMean: number; outputMean: number };
+    };
+    results: Array<{
+      index: number; runId: string; rep: number; inputSha256: string;
+      rewritten: string | null; tonePass: boolean; preservationPass: boolean; accepted: boolean;
+    }>;
+  };
+  assert.equal(rewriteFixture.kind, "genius-tone-a0-rewrite45-v1");
+  assert.equal(rewriteFixture.rows.length, 45);
+  assert.equal(shadow.kind, "genius-tone-a0-rewrite45-shadow-v1");
+  assert.equal(shadow.sourceSha256, rewriteFixture.sourceSha256);
+  assert.equal(
+    shadow.fixtureSha256,
+    createHash("sha256").update(rewriteFixtureBytes).digest("hex"),
+    "shadow가 현재 45 fixture와 결속돼야 함",
+  );
+  assert.deepEqual(
+    { total: shadow.summary.total, tonePass: shadow.summary.tonePass,
+      preservationPass: shadow.summary.preservationPass, accepted: shadow.summary.accepted },
+    { total: 45, tonePass: 33, preservationPass: 23, accepted: 23 },
+  );
+  assert.deepEqual(shadow.summary.latencyMs, { min: 932, median: 1208, p95: 1741, max: 1991 });
+  assert.deepEqual(
+    { inputTotal: shadow.summary.tokens.inputTotal, outputTotal: shadow.summary.tokens.outputTotal },
+    { inputTotal: 13931, outputTotal: 7144 },
+  );
+  assert.equal(shadow.results.length, 45);
+  for (const result of shadow.results) {
+    const fixtureRow = rewriteFixture.rows[result.index];
+    assert.equal(result.runId, fixtureRow.runId);
+    assert.equal(result.rep, fixtureRow.rep);
+    assert.equal(
+      result.inputSha256,
+      createHash("sha256").update(fixtureRow.afterFiniteMap).digest("hex"),
+    );
+    const rewritten = result.rewritten ?? "";
+    const tonePass = rewritten.length > 0 && isBaseballGeniusToneCompliant(rewritten);
+    const preservationPass = tonePass
+      && isToneRewriteContentPreserving(fixtureRow.afterFiniteMap, rewritten);
+    assert.equal(result.tonePass, tonePass, `shadow tone 판정 drift: ${result.index}`);
+    assert.equal(result.preservationPass, preservationPass, `shadow 보존 판정 drift: ${result.index}`);
+    assert.equal(result.accepted, tonePass && preservationPass, `shadow accepted drift: ${result.index}`);
+  }
+  ok("② 실 provider shadow 45 — accepted 23(51.1%) · p95 1741ms · tokens 13931/7144");
 
-const json = (answer: string): string => JSON.stringify({ status: "BASEBALL_RULE_TERM", answer });
+  interface RunResult {
+    source: string;
+    answer: string;
+    primaryCalls: number;
+    rewriteCalls: string[];
+    logs: Array<Record<string, unknown>>;
+    stores: string[];
+  }
 
-// ①만으로 닫히면 provider 추가 호출 0.
-{
-  const r = await runWith([json("야구에서 보크는 투수의 반칙이에요.")]);
-  assert.equal(r.source, "llm");
-  assert.equal(r.answer, "야구에서 보크는 투수의 반칙입니다.");
-  assert.deepEqual(r.calls, [{ toneRetry: false }]);
-  assert.equal(r.logs.at(-1)?.inputTokens, 10);
-  ok("종단 ① — 닫힌 정규화 회수, 추가 호출 0");
-}
+  async function runWith(primary: string, rewrites: string[] = [], injectRewrite = true): Promise<RunResult> {
+    let primaryCalls = 0;
+    let rewriteIndex = 0;
+    const rewriteCalls: string[] = [];
+    const logs: Array<Record<string, unknown>> = [];
+    const stores: string[] = [];
+    const deps: QaDeps = {
+      loadGlossary: async () => [],
+      loadPlayers: async () => [],
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      callLlm: async () => {
+        primaryCalls += 1;
+        if (primaryCalls > 1) throw new Error("generic LLM duplicate call");
+        return { text: primary, inputTokens: 10, outputTokens: 3 };
+      },
+      ...(injectRewrite ? {
+        rewriteLlmTone: async (draft: string) => {
+          rewriteCalls.push(draft);
+          const text = rewrites[rewriteIndex++];
+          if (text === undefined) throw new Error("unexpected rewrite call");
+          return { text, inputTokens: 20, outputTokens: 6 };
+        },
+      } : {}),
+      storeLlm: async (text) => { stores.push(text); },
+      log: async (row) => { logs.push(row as unknown as Record<string, unknown>); },
+    };
+    const result = await answerQuestion("tone-user", "보크가 뭐야?", deps);
+    return { source: result.source, answer: result.answer, primaryCalls, rewriteCalls, logs, stores };
+  }
 
-// 열린 활용이면 ② 딱 1회, 성공 결과만 서빙 + 토큰 합산.
-{
-  const r = await runWith([
-    json("야구에서 보크는 투수의 반칙으로 여겨요."),
-    json("야구에서 보크는 투수의 반칙으로 여깁니다."),
-  ]);
-  assert.equal(r.source, "llm");
-  assert.equal(r.answer, "야구에서 보크는 투수의 반칙으로 여깁니다.");
-  assert.deepEqual(r.calls, [{ toneRetry: false }, { toneRetry: true }]);
-  assert.equal(r.logs.at(-1)?.inputTokens, 30);  // 10 + 20
-  assert.equal(r.logs.at(-1)?.outputTokens, 9); // 3 + 6
-  assert.equal(r.stores.length, 1, "최종 envelope store-before-log 1회");
-  ok("종단 ② — 열린 활용 1회 재생성 + 전수검증 + 토큰 합산");
-}
+  const json = (answer: string): string => JSON.stringify({ status: "BASEBALL_RULE_TERM", answer });
 
-// retry도 톤 위반이면 3차 호출 없이 unsure.
-{
-  const r = await runWith([
-    json("야구에서 보크는 투수의 반칙으로 여겨요."),
-    json("야구에서 보크는 투수의 반칙으로 보여요."),
-  ]);
-  assert.equal(r.source, "unsure");
-  assert.equal(r.answer, UNCLEAR_ANSWER);
-  assert.equal(r.calls.length, 2);
-  assert.equal(r.logs.at(-1)?.inputTokens, 30);
-  ok("종단 fail-close — retry 실패 시 3차 호출 0 + unsure");
-}
+  // ①만으로 닫히면 provider rewrite 0.
+  {
+    const draft = "야구에서 보크는 규칙이에요.";
+    const r = await runWith(json(draft));
+    assert.equal(r.source, "llm");
+    assert.equal(r.answer, "야구에서 보크는 규칙입니다.");
+    assert.equal(r.primaryCalls, 1);
+    assert.deepEqual(r.rewriteCalls, []);
+    assert.equal(r.logs.at(-1)?.inputTokens, 10);
+    ok("종단 ① — 유한 매핑 회수, rewrite 0");
+  }
 
-// retry가 판정을 NOT_BASEBALL로 뒤집어도 원래 tone-unsure 의미를 유지한다.
-{
-  const r = await runWith([
-    json("야구에서 보크는 투수의 반칙으로 여겨요."),
-    JSON.stringify({ status: "NOT_BASEBALL", answer: "" }),
-  ]);
-  assert.equal(r.source, "unsure", "톤 회수가 blocked 로 의미를 바꾸면 안 됨");
-  assert.equal(r.answer, UNCLEAR_ANSWER);
-  assert.equal(r.calls.length, 2);
-  ok("의미 불변 — retry 판정 뒤집힘을 버리고 최초 tone-unsure 유지");
-}
+  // 열린 활용이면 폐기 원문으로 ② 딱 1회. 보존+전수검증 결과만 서빙, 토큰 합산.
+  {
+    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const r = await runWith(json(draft), [json("야구에서 보크를 반칙으로 여깁니다.")]);
+    assert.equal(r.source, "llm");
+    assert.equal(r.answer, "야구에서 보크를 반칙으로 여깁니다.");
+    assert.equal(r.primaryCalls, 1);
+    assert.deepEqual(r.rewriteCalls, [draft]);
+    assert.equal(r.logs.at(-1)?.inputTokens, 30);
+    assert.equal(r.logs.at(-1)?.outputTokens, 9);
+    assert.equal(r.stores.length, 1, "최종 envelope store-before-log 1회");
+    ok("종단 ② — 원문 rewrite 1회 + 보존/전수검증 + 토큰 합산");
+  }
 
-// 링크/길이/범위 결함은 톤 retry 대상이 아니다.
-{
-  const r = await runWith([json("야구 답변은 https://example.com 입니다.")]);
-  assert.equal(r.source, "unsure");
-  assert.equal(r.calls.length, 1);
-  ok("비톤 결함 — 재호출 0");
-}
+  // 내용이 바뀌거나 tone 실패면 3차 호출 없이 최초 unsure.
+  for (const rewritten of [
+    "야구에서 보크를 정당한 플레이로 여깁니다.",
+    "야구에서 보크를 반칙으로 보여요.",
+  ]) {
+    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const r = await runWith(json(draft), [json(rewritten)]);
+    assert.equal(r.source, "unsure");
+    assert.equal(r.answer, UNCLEAR_ANSWER);
+    assert.equal(r.primaryCalls, 1);
+    assert.equal(r.rewriteCalls.length, 1);
+  }
+  ok("종단 fail-close — 내용변경/tone 실패, 3차 호출 0");
 
-console.log(`ALL PASS (${passed})`);
+  // seam 미주입·비톤 결함은 rewrite 0.
+  {
+    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const noSeam = await runWith(json(draft), [], false);
+    assert.equal(noSeam.source, "unsure");
+    assert.equal(noSeam.rewriteCalls.length, 0);
+    const unsafe = await runWith(json("야구 답변은 https://example.com 입니다."));
+    assert.equal(unsafe.source, "unsure");
+    assert.equal(unsafe.rewriteCalls.length, 0);
+    ok("종단 비활성/비톤 결함 — rewrite 0");
+  }
+
+  console.log(`ALL PASS (${passed})`);
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error("[GTR-FAIL]", error);
   process.exitCode = 1;
 });

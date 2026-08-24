@@ -109,92 +109,159 @@ export function isBaseballGeniusToneCompliant(
 }
 
 /**
- * 해요체 → 합니다체 **닫힌집합** 정규화 (2026-08-24 A′).
+ * 해요체 → 합니다체 **명시적 유한 어절 매핑** (2026-08-24 A′).
  *
- * ## 왜 만드는가
- * 48h 로그 A0 shadow replay 실측: LLM 이 답을 낸 213런 중 135런을 게이트가 버렸고
- * 그 중 **128런(94.8%)이 톤 하나** 때문이었다. 내용은 맞는데 `~예요` 로 끝나서 죽었다.
- * 프롬프트에 이미 "해요체를 쓰지 않는다" 가 명시돼 있는데도 그렇다 — 지시로는 안 닫힌다.
+ * 48h A0 actual 에서 tone 위반 373문장을 전수 분해해, 사람이 검토한 106개
+ * `마지막 어절 전체 → 합니다체 어절 전체` 쌍만 등록한다. suffix 규칙이 아니다.
  *
- * ## 왜 닫힌집합만 하는가 (⚠️ 이 모듈의 핵심 계약)
- * 위반 373문장을 어미별로 가르면 경계가 선명하다.
- *   - **닫힘 323문장(86.6%)**: 계사(이다)·하다·되다·있다/없다. 어간이 **변하지 않는다**.
- *   - **열림  50문장(13.4%)**: 일반 용언 활용(`만들어져요`·`흥미로워요`·`나뉘어요`).
- *     ㅂ/ㅅ/르 불규칙이라 어간을 **복원**해야 하고, 그건 룰로 닫히지 않는다.
+ * 🔴 폐기한 초안과 반례:
+ * - `예요 → 입니다` 일반 suffix는 `거예요 → 거입니다`, `뭐예요 → 뭐입니다`를 만들고
+ *   기존 validator도 `니다`만 보므로 비문을 통과시킨다.
+ * - `이에요` 순서 버그는 `아니에요 → 아니입니다`를 만들었다.
+ * - 받침 가드도 문법 전체를 증명하지 못한다. 따라서 **등록된 완전 어절만** 바꾼다.
  *
- * 🔴 실제로 당했다: 초안에서 `이에요 → 입니다` 를 `아니에요` 보다 **먼저** 뒀더니
- *    `아니에요 → 아니입니다` 비문이 나왔다. 그런데 내가 짠 오변환 검사기는
- *    "`니다` 로 끝나는가" 만 보고 **0건**이라 통과시켰다(육안으로 잡았다).
- *    → 검사기를 늘리는 게 아니라 **변환 자체를 어간 불변으로 좁히는 것**이 답이다.
- *    열린 활용은 여기서 손대지 않고 ②재생성으로 넘긴다
- *    (`open_language_never_closes_with_rules`).
- *
- * ## 받침 가드가 곧 한국어 규칙이다
- * `이에요` 는 받침 있는 체언 뒤, `예요` 는 받침 없는 체언 뒤에만 붙는다. 이 조건을
- * 그대로 가드로 쓰면 `아이에요`(체언이 `아이`) 를 `아`+`입니다` 로 쪼개는 사고가
- * **원리적으로** 일어나지 않는다. 조건을 못 만족하면 변환하지 않고 남긴다 —
- * 남은 문장은 게이트가 그대로 잡는다.
- *
- * ## fail-close
- * 정규화 결과는 **다시 `isBaseballGeniusToneCompliant` 를 통과해야만** 쓴다.
- * 통과 못 하면 `compliant:false` 로 알리고, 호출측은 원문을 그대로 폐기 경로에 둔다.
- * 즉 이 모듈은 **살릴 수 있는 답만 살리고, 못 살리면 아무것도 바꾸지 않는다**.
+ * 미등록형은 byte-identical로 남고 기존 tone validator가 폐기한다. 매핑은 문장 마지막
+ * 어절만 교체하므로 그 앞 본문·숫자·고유명사·출처는 byte-identical이다.
+ * 실제 373문장 원장(`fixtures/genius-tone-a0-373.json`)에서 323 mapped / 50 unchanged를
+ * 고정하며, `거/뭐/왜예요`와 매핑 삭제·오염 mutation은 게이트가 RED를 내야 한다.
  */
-function hasBatchim(char: string | undefined): boolean | null {
-  if (!char) return null;
-  const code = char.codePointAt(0);
-  if (code === undefined || code < 0xac00 || code > 0xd7a3) return null;
-  return (code - 0xac00) % 28 !== 0;
-}
-
-interface ClosedToneRule {
-  /** 문장 말미(장식 제거 후)에서만 매칭한다. */
-  readonly ending: string;
-  readonly replacement: string;
-  /**
-   * 어미 **앞 글자**의 받침 조건. `null` 이면 조건 없음.
-   * 조건을 못 만족하면 **변환하지 않는다** — 오변환보다 미변환이 안전하다.
-   */
-  readonly requireBatchim: boolean | null;
-}
+const FORMAL_TONE_WORD_MAP = new Map<string, string>([
+  ["가능해요", "가능합니다"],
+  ["개념이에요", "개념입니다"],
+  ["개념이지요", "개념입니다"],
+  ["결과예요", "결과입니다"],
+  ["결정돼요", "결정됩니다"],
+  ["결정전이에요", "결정전입니다"],
+  ["경우예요", "경우입니다"],
+  ["공식이에요", "공식입니다"],
+  ["공이에요", "공입니다"],
+  ["과정이에요", "과정입니다"],
+  ["구종이에요", "구종입니다"],
+  ["구종이지요", "구종입니다"],
+  ["규정이에요", "규정입니다"],
+  ["규칙이에요", "규칙입니다"],
+  ["규칙이지요", "규칙입니다"],
+  ["기록돼요", "기록됩니다"],
+  ["기록이에요", "기록입니다"],
+  ["기준이에요", "기준입니다"],
+  ["까다로워해요", "까다로워합니다"],
+  ["단어예요", "단어입니다"],
+  ["담당해요", "담당합니다"],
+  ["대기록이에요", "대기록입니다"],
+  ["대지결이에요", "대지결입니다"],
+  ["돼요", "됩니다"],
+  ["되어요", "됩니다"],
+  ["등판해요", "등판합니다"],
+  ["때문이에요", "때문입니다"],
+  ["뜻해요", "뜻합니다"],
+  ["룰이에요", "룰입니다"],
+  ["말이에요", "말입니다"],
+  ["말해요", "말합니다"],
+  ["매력이에요", "매력입니다"],
+  ["매력이지요", "매력입니다"],
+  ["명장면이에요", "명장면입니다"],
+  ["명칭이에요", "명칭입니다"],
+  ["모습이지요", "모습입니다"],
+  ["무대예요", "무대입니다"],
+  ["발생해요", "발생합니다"],
+  ["발표해요", "발표합니다"],
+  ["발휘해요", "발휘합니다"],
+  ["방식이에요", "방식입니다"],
+  ["변화구예요", "변화구입니다"],
+  ["별칭이에요", "별칭입니다"],
+  ["뿐이에요", "뿐입니다"],
+  ["상황이에요", "상황입니다"],
+  ["상황이지요", "상황입니다"],
+  ["선언돼요", "선언됩니다"],
+  ["선언되어요", "선언됩니다"],
+  ["선언되지요", "선언됩니다"],
+  ["선언해요", "선언합니다"],
+  ["선정돼요", "선정됩니다"],
+  ["선정해요", "선정합니다"],
+  ["성립해요", "성립합니다"],
+  ["수단이에요", "수단입니다"],
+  ["순간이에요", "순간입니다"],
+  ["순간이지요", "순간입니다"],
+  ["승리해요", "승리합니다"],
+  ["시작돼요", "시작됩니다"],
+  ["아니에요", "아닙니다"],
+  ["아웃되어요", "아웃됩니다"],
+  ["아웃이에요", "아웃입니다"],
+  ["약속이에요", "약속입니다"],
+  ["완성돼요", "완성됩니다"],
+  ["요소예요", "요소입니다"],
+  ["용어예요", "용어입니다"],
+  ["운영해요", "운영합니다"],
+  ["원리예요", "원리입니다"],
+  ["은어예요", "은어입니다"],
+  ["의미해요", "의미합니다"],
+  ["있어요", "있습니다"],
+  ["자산이에요", "자산입니다"],
+  ["작동해요", "작동합니다"],
+  ["장면이에요", "장면입니다"],
+  ["장면이지요", "장면입니다"],
+  ["장비예요", "장비입니다"],
+  ["장이에요", "장입니다"],
+  ["장치예요", "장치입니다"],
+  ["적용돼요", "적용됩니다"],
+  ["전술이에요", "전술입니다"],
+  ["존재해요", "존재합니다"],
+  ["종료돼요", "종료됩니다"],
+  ["종류예요", "종류입니다"],
+  ["종목이에요", "종목입니다"],
+  ["줄임말이에요", "줄임말입니다"],
+  ["즐거움이에요", "즐거움입니다"],
+  ["지표예요", "지표입니다"],
+  ["진기록이에요", "진기록입니다"],
+  ["진행돼요", "진행됩니다"],
+  ["처리되어요", "처리됩니다"],
+  ["충족되어요", "충족됩니다"],
+  ["칭호예요", "칭호입니다"],
+  ["카운트예요", "카운트입니다"],
+  ["타이틀이에요", "타이틀입니다"],
+  ["투구예요", "투구입니다"],
+  ["투수예요", "투수입니다"],
+  ["특징이에요", "특징입니다"],
+  ["판정이에요", "판정입니다"],
+  ["패치예요", "패치입니다"],
+  ["포지션이에요", "포지션입니다"],
+  ["포지션이지요", "포지션입니다"],
+  ["포함돼요", "포함됩니다"],
+  ["표현이에요", "표현입니다"],
+  ["필요해요", "필요합니다"],
+  ["하나예요", "하나입니다"],
+  ["해요", "합니다"],
+  ["활용되어요", "활용됩니다"],
+]);
 
 /**
- * ⚠️ 순서가 계약이다. 더 길고 구체적인 어미가 먼저 와야 한다.
- *   `아니에요` 가 `이에요` 뒤에 있으면 `아니입니다` 비문이 나온다(위 주석 사고).
- *   받침 가드만으로도 막히지만, 순서로 한 번 더 막아 둔다.
- *
- * ⚠️ 여기에 **일반 용언 어미(`-어요`·`-아요`·bare `-지요`)를 추가하지 마라.**
- *   `나오지요 → 나오입니다`, `흥미로워요 → 흥미로우ㅂ니다` 처럼 어간 복원이 필요해
- *   룰로 닫히지 않는다. 커버리지를 늘리고 싶으면 재생성(②)으로 간다.
+ * A′ ② 실 provider shadow 45런에서 tone+내용보존을 함께 통과한 **완전 어절쌍 20개**.
+ * provider가 이 쌍 밖의 마지막 어절을 내면 prefix가 같아도 의미 동등성을 증명할 수 없으므로
+ * 폐기한다. `좋아요→싫습니다` 같은 짧은 반의어가 edit-distance를 통과하는 반례 때문에
+ * 유사도 규칙을 폐기하고 exact allowlist로 닫았다. 신규 쌍은 shadow+사람 검토+PR이 필요하다.
  */
-const CLOSED_TONE_RULES: readonly ClosedToneRule[] = [
-  // ① 계사 부정 — 반드시 최상단. `아니예요` 는 흔한 오표기라 함께 받는다.
-  { ending: "아니에요", replacement: "아닙니다", requireBatchim: null },
-  { ending: "아니예요", replacement: "아닙니다", requireBatchim: null },
-  { ending: "아녜요", replacement: "아닙니다", requireBatchim: null },
-  // ② 계사 — 받침 규칙이 곧 체언 경계 보증이다.
-  { ending: "이에요", replacement: "입니다", requireBatchim: true },
-  { ending: "이예요", replacement: "입니다", requireBatchim: true },
-  { ending: "예요", replacement: "입니다", requireBatchim: false },
-  { ending: "이지요", replacement: "입니다", requireBatchim: true },
-  { ending: "이죠", replacement: "입니다", requireBatchim: true },
-  // ③ 되다 — `되어요`가 `돼요`보다 길므로 먼저.
-  { ending: "되어요", replacement: "됩니다", requireBatchim: null },
-  { ending: "되지요", replacement: "됩니다", requireBatchim: null },
-  { ending: "되죠", replacement: "됩니다", requireBatchim: null },
-  { ending: "돼요", replacement: "됩니다", requireBatchim: null },
-  // ④ 하다.
-  { ending: "하지요", replacement: "합니다", requireBatchim: null },
-  { ending: "하죠", replacement: "합니다", requireBatchim: null },
-  { ending: "해요", replacement: "합니다", requireBatchim: null },
-  // ⑤ 있다/없다 — 어간이 그대로 남는 유일한 일반 용언쌍이라 닫힌집합에 든다.
-  { ending: "있어요", replacement: "있습니다", requireBatchim: null },
-  { ending: "있지요", replacement: "있습니다", requireBatchim: null },
-  { ending: "있죠", replacement: "있습니다", requireBatchim: null },
-  { ending: "없어요", replacement: "없습니다", requireBatchim: null },
-  { ending: "없지요", replacement: "없습니다", requireBatchim: null },
-  { ending: "없죠", replacement: "없습니다", requireBatchim: null },
-];
+const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([
+  ["겪어요", "겪습니다"],
+  ["기려요", "기립니다"],
+  ["깊어요", "깊습니다"],
+  ["나뉘어요", "나뉩니다"],
+  ["도입되었어요", "도입되었습니다"],
+  ["들어서지요", "들어섭니다"],
+  ["만들어져요", "만들어집니다"],
+  ["많아요", "많습니다"],
+  ["바뀌었어요", "바뀌었습니다"],
+  ["받아요", "받습니다"],
+  ["보여요", "보여줍니다"],
+  ["보여줘요", "보여줍니다"],
+  ["붙여졌어요", "붙여졌습니다"],
+  ["생겨요", "생깁니다"],
+  ["쓰여요", "쓰입니다"],
+  ["않아요", "않습니다"],
+  ["여겨요", "여깁니다"],
+  ["유래했어요", "유래했습니다"],
+  ["주어져요", "주어집니다"],
+  ["했어요", "했습니다"],
+]);
 
 /** 문장 끝 장식(문장부호·따옴표·괄호닫기)만 떼어낸다. 본문은 건드리지 않는다. */
 const TRAILING_DECORATION_RE = /[.!?…\s"'’”)\]}]*$/u;
@@ -231,20 +298,14 @@ export function normalizeToFormalTone(
           if (!core || !HANGUL_RE.test(core)) return rawSentence;
           // 이미 합니다체면 손대지 않는다.
           if (FORMAL_SENTENCE_ENDING_RE.test(core)) return rawSentence;
-          for (const rule of CLOSED_TONE_RULES) {
-            if (!core.endsWith(rule.ending)) continue;
-            const stem = core.slice(0, core.length - rule.ending.length);
-            // 어간이 비면 `예요` 단독 같은 조각이다 — 문장이 아니므로 두고 본다.
-            if (!stem) return rawSentence;
-            if (rule.requireBatchim !== null) {
-              const batchim = hasBatchim(stem[stem.length - 1]);
-              // 받침을 판정할 수 없거나(영문·숫자) 조건과 다르면 **변환하지 않는다**.
-              if (batchim === null || batchim !== rule.requireBatchim) return rawSentence;
-            }
-            converted += 1;
-            return `${stem}${rule.replacement}${tail}`;
-          }
-          return rawSentence;
+          const wordStart = Math.max(
+            core.lastIndexOf(" "), core.lastIndexOf("\t"), core.lastIndexOf("\u00a0"),
+          ) + 1;
+          const word = core.slice(wordStart);
+          const replacement = FORMAL_TONE_WORD_MAP.get(word);
+          if (replacement === undefined) return rawSentence;
+          converted += 1;
+          return `${core.slice(0, wordStart)}${replacement}${tail}`;
         })
         .join(""),
     )
@@ -254,6 +315,70 @@ export function normalizeToFormalTone(
     compliant: isBaseballGeniusToneCompliant(normalized, options),
     converted,
   };
+}
+
+
+interface ToneSentenceShape {
+  readonly prefix: string;
+  readonly word: string;
+  readonly decoration: string;
+}
+
+function toneSentenceShape(sentence: string): ToneSentenceShape {
+  const decorationMatch = TRAILING_DECORATION_RE.exec(sentence);
+  const cut = decorationMatch ? decorationMatch.index : sentence.length;
+  const core = sentence.slice(0, cut);
+  const wordStart = Math.max(
+    core.lastIndexOf(" "), core.lastIndexOf("\t"), core.lastIndexOf("\u00a0"),
+  ) + 1;
+  return {
+    prefix: core.slice(0, wordStart),
+    word: core.slice(wordStart),
+    decoration: sentence.slice(cut),
+  };
+}
+
+function stableTokens(text: string): string[] {
+  // 수치·영문 식별자·10구단명은 rewrite 마지막 어절 안에 있어도 exact multiset 보존한다.
+  // 문장 마지막 어절 밖의 한국어 고유명사는 prefix byte-identical 계약이 더 강하게 보호한다.
+  return text.match(/\d+(?:[.,]\d+)*|[A-Za-z][A-Za-z0-9._-]*|LG|두산|KT|SSG|NC|KIA|롯데|삼성|한화|키움/gu)
+    ?.sort() ?? [];
+}
+
+/**
+ * A′ ② rewrite가 **말투 외 내용을 바꾸지 않았는지** 판정한다.
+ *
+ * 허용 변화는 각 문장의 마지막 어절 하나뿐이다. 그 앞 prefix와 문장부호·줄/문장 개수는
+ * byte-identical, 수치·영문 식별자·구단명 multiset도 exact여야 한다. 마지막 어절도
+ * `요` 종결(단, ①에서 의도적으로 미등록한 copula `예요/이에요/에요` 제외) → 합니다체이며,
+ * shadow에서 검토된 완전 어절쌍 20개 중 하나여야 한다. 조건 하나라도 어기면 폐기한다.
+ *
+ * 이 함수는 의미 동등성을 "추정"하지 않는다. 모델이 문장을 재서술할 자유를 구조적으로
+ * 없애고, 관측 가능한 문자 변화 표면을 마지막 어절로 닫는다.
+ */
+export function isToneRewriteContentPreserving(original: string, rewritten: string): boolean {
+  if (original === rewritten || !isBaseballGeniusToneCompliant(rewritten)) return false;
+  if (JSON.stringify(stableTokens(original)) !== JSON.stringify(stableTokens(rewritten))) return false;
+  const originalLines = original.split(/\n/u).map(splitSentences);
+  const rewrittenLines = rewritten.split(/\n/u).map(splitSentences);
+  if (originalLines.length !== rewrittenLines.length) return false;
+  for (let line = 0; line < originalLines.length; line += 1) {
+    if (originalLines[line].length !== rewrittenLines[line].length) return false;
+    for (let sentence = 0; sentence < originalLines[line].length; sentence += 1) {
+      const originalSentence = originalLines[line][sentence];
+      const rewrittenSentence = rewrittenLines[line][sentence];
+      // 이미 합니다체인 문장은 provider가 byte-identical로 보존해야 한다.
+      if (originalSentence === rewrittenSentence) {
+        if (!isBaseballGeniusToneCompliant(originalSentence)) return false;
+        continue;
+      }
+      const before = toneSentenceShape(originalSentence);
+      const after = toneSentenceShape(rewrittenSentence);
+      if (before.prefix !== after.prefix || before.decoration !== after.decoration) return false;
+      if (FORMAL_TONE_REWRITE_WORD_MAP.get(before.word) !== after.word) return false;
+    }
+  }
+  return true;
 }
 
 export const BASEBALL_GENIUS_SIGNATURE = "승리를 위하여!";

@@ -50,7 +50,11 @@ import {
 } from "./rag/retrieve";
 import { resolveNewsRecency, type NewsRecencyIntent } from "./rag/news-recency";
 import { displayProvenanceOf } from "./genius-reply-provenance";
-import { isBaseballGeniusToneCompliant, normalizeToFormalTone } from "./tone";
+import {
+  isBaseballGeniusToneCompliant,
+  isToneRewriteContentPreserving,
+  normalizeToFormalTone,
+} from "./tone";
 import {
   composeSeasonRecordAnswer,
   isServedOnlyMetric,
@@ -1014,9 +1018,12 @@ export interface QaDeps {
     context?: ContextTurn,
     rosterBlock?: string,
     statIntentMode?: boolean,
-    /** A′ ②: ① 정규화 뒤에도 톤만 남았을 때 붙이는 1회성 강화 프롬프트. */
-    toneRetryMode?: boolean,
   ) => Promise<LlmResult>;
+  /**
+   * A′ ②: 폐기 원문의 마지막 어절만 합니다체로 rewrite. 미주입이면 ②는 비활성이고
+   * 기존 tone-unsure를 유지한다(테스트/구버전 seam fail-close).
+   */
+  rewriteLlmTone?: (originalAnswer: string) => Promise<LlmResult>;
   /**
    * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
    *
@@ -3747,8 +3754,8 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   // 톤 — 버리기 전에 **닫힌집합 정규화**를 먼저 시도한다 (2026-08-24 A′ ①).
   //
   // 48h 실측: LLM 이 답을 낸 213런 중 135런을 버렸고 그 **128런(94.8%)이 톤 하나**
-  // 때문이었다. 내용은 맞는데 `~예요` 로 끝나서 죽은 것이다. 계사·하다·되다·있다
-  // 같은 **어간 불변** 어미만 바꿔도 이 코호트의 64.6%(82/127)가 그대로 살아난다.
+  // 때문이었다. 내용은 맞는데 `~예요` 로 끝나서 죽은 것이다. A0 actual에서 검토한
+  // **완전 어절 106쌍만** 바꾸면 이 코호트의 64.6%(82/127)가 그대로 살아난다.
   //
   // ⚠️ 정규화 결과를 **무조건 믿지 않는다**. `normalizeToFormalTone` 은 자기 출력을
   //    다시 SSOT 검증기에 통과시켜 `compliant` 를 돌려주며, 그게 true 일 때만 채택한다.
@@ -3757,9 +3764,11 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   let toned = answer;
   if (!isBaseballGeniusToneCompliant(answer)) {
     const normalized = normalizeToFormalTone(answer);
-    // 정규화로도 안 되면 폐기하되, 원문을 ② 입력으로 넘긴다(서빙 경로 없음).
+    // ① 유한 매핑으로 닫힌 문장은 먼저 고정하고, **잔존 열린 문장만 있는 결과**를
+    // ② 입력으로 넘긴다. 원문 전체를 다시 쓰게 하면 이미 안전하게 고친 문장까지 provider가
+    // 재작성할 표면이 생긴다. 이 값도 아직 answer가 아니며 서빙 경로는 없다.
     if (!normalized.compliant) {
-      return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: answer };
+      return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: normalized.answer };
     }
     toned = normalized.answer;
   }
@@ -3773,40 +3782,37 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 
 interface ToneRecoveryResult {
   readonly validated: ValidatedLlmAnswer;
-  /** 최종 저장·토큰 계측에 쓸 응답. 재생성 성공/실패 응답까지 소비량을 합산한다. */
+  /** 최종 저장·토큰 계측에 쓸 응답. rewrite 성공/실패 응답까지 소비량을 합산한다. */
   readonly llm: LlmResult;
   readonly retried: boolean;
 }
 
 /**
- * A′ ② — ① 닫힌집합 정규화 뒤에도 **톤 하나만** 남은 답변을 한 번 재생성한다.
+ * A′ ② — ① 유한 매핑 뒤에도 **톤 하나만** 남은 원문을 한 번 rewrite한다.
  *
- * - 길이·링크·범위 등 다른 결함에는 재호출하지 않는다(비용/공격면 상한).
- * - 재생성도 `validateLlmResponse` 전수 게이트를 다시 통과해야만 답이 된다.
- * - 두 번째 결과가 실패하면 세 번째 호출은 없다. 원래대로 `unsure` fail-close 한다.
- * - 재생성 공급자 오류도 기존 정상 경로를 `error` 로 악화시키지 않는다. 이 기능이 없었을
- *   때의 결과(`unsure`)를 유지한다. 다만 첫 호출 토큰은 그대로 계측한다.
+ * 새 답변 생성이 아니다. provider에는 폐기 원문만 주고, 결과는
+ * `isToneRewriteContentPreserving`(문장별 마지막 어절 외 byte-identical·수치/식별자 exact)
+ * + `validateLlmResponse` 전수 게이트를 모두 통과해야만 answer가 된다.
  *
- * durable 경계: stat RULE_TERM 재질의가 이미 쓰는 것과 같은 패턴이다. 최종 envelope 를
- * store-before-log 하므로 성공 결과는 재생된다. 응답 후 store 전 crash 창에서는 1회가
- * 다시 소비될 수 있지만 유저 가시 결과는 전수 검증 후 동일 계약이고, 호출 상한은 한 처리당 1회다.
+ * 길이·링크·범위 등 다른 결함은 재호출하지 않는다. 실패/공급자 오류/보존 불일치는
+ * 최초 tone-unsure를 유지하며 세 번째 호출은 없다. 두 호출 토큰은 합산한다.
  */
 async function validateWithToneRecovery(
   llm: LlmResult,
   question: string,
-  context: ContextTurn | null,
-  rosterBlock: string | undefined,
-  callLlm: QaDeps["callLlm"],
+  rewriteLlmTone: QaDeps["rewriteLlmTone"],
 ): Promise<ToneRecoveryResult> {
   const first = validateLlmResponse(llm.text, question);
-  if (first.reason !== "tone_noncompliant" || !first.rejectedAnswer) {
+  if (
+    first.reason !== "tone_noncompliant"
+    || !first.rejectedAnswer
+    || !rewriteLlmTone
+  ) {
     return { validated: first, llm, retried: false };
   }
   let retry: LlmResult;
   try {
-    // statIntentMode=false: 이번 호출은 의도 enum이 아니라 정규 답변 생성이다.
-    // toneRetryMode=true: 같은 원질문/맥락/로스터 위에 합니다체 강화 계약만 붙인다.
-    retry = await callLlm(question, context ?? undefined, rosterBlock, false, true);
+    retry = await rewriteLlmTone(first.rejectedAnswer);
   } catch {
     return { validated: first, llm, retried: true };
   }
@@ -3818,11 +3824,12 @@ async function validateWithToneRecovery(
     outputTokens: sumTokens(llm.outputTokens, retry.outputTokens),
   };
   const retriedValidation = validateLlmResponse(retry.text, question);
-  // 이 기능은 **톤 회수**만 한다. 재생성 모델이 판정을 뒤집어 NOT_BASEBALL/UNSURE 를
-  // 내더라도 최초의 `tone_noncompliant` 를 blocked/다른 unsure 로 바꾸지 않는다.
-  // 유저 가시 의미가 바뀌는 유일한 허용 전이는 `tone-unsure → 전수검증 answer` 다.
+  const preserved = retriedValidation.kind === "answer"
+    && typeof retriedValidation.answer === "string"
+    && isToneRewriteContentPreserving(first.rejectedAnswer, retriedValidation.answer);
   return {
-    validated: retriedValidation.kind === "answer" ? retriedValidation : first,
+    // 허용되는 유일한 의미 전이는 tone-unsure → 보존 게이트 통과 answer다.
+    validated: preserved ? retriedValidation : first,
     llm: combined,
     retried: true,
   };
@@ -6187,9 +6194,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // ⚠️ 재질의 결과는 **일반 경로의 의미 그대로** 종결한다(삼순 P0③).
       //   종전에는 blocked·unsure 를 전부 되묻기로 접어 "범위 밖"·"못 알아들음" 이 전부
       //   "앞말이 선수 이름인지 모르겠다" 로 둘갑했다 — 세 상황은 유저의 다음 행동이 다르다.
-      const toneRecovery = await validateWithToneRecovery(
-        reasked, question, context, rosterBlock, deps.callLlm,
-      );
+      const toneRecovery = await validateWithToneRecovery(reasked, question, deps.rewriteLlmTone);
       const revalidated = toneRecovery.validated;
       // 1차 intent + 2차 일반답변 합계에, 필요하면 3차(톤 1회)까지 더한다.
       const recovered = toneRecovery.llm;
@@ -6246,11 +6251,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
-  const toneRecovery = await validateWithToneRecovery(
-    llm, question, context, rosterBlock, deps.callLlm,
-  );
+  const toneRecovery = await validateWithToneRecovery(llm, question, deps.rewriteLlmTone);
   const validated = toneRecovery.validated;
-  // 재생성까지 소비했다면 저장·로그 토큰은 두 호출 합계를 쓴다. 성공/실패 모두 관측한다.
+  // rewrite까지 소비했다면 저장·로그 토큰은 두 호출 합계를 쓴다. 성공/실패 모두 관측한다.
   llm = toneRecovery.llm;
   if (validated.kind === "blocked") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
