@@ -20,6 +20,7 @@ import { supabase } from "@/lib/supabase/client";
 import {
   parseFrameRow,
   shouldApplyFrame,
+  shouldApplyPollResponse,
   shouldSuppressPoll,
 } from "@/lib/game/relay-frames-client";
 
@@ -115,11 +116,23 @@ export function useGameRelay(
   const previousLiveGameIdRef = useRef<string | undefined>(undefined);
   const liveFrameOwnerSeqRef = useRef(0);
   const detailFrameOwnerSeqRef = useRef(0);
-  // Realtime(B안): 마지막 relay 프레임 도착 시각. 신선하면 폴링 tick 을 억제하고,
-  // 끓기면(수집기 중단·재연결 지연) 폴링이 자동 재개된다 — 플래그 없는 신선도 협상.
-  const lastRealtimeRelayAtRef = useRef<number | null>(null);
+  // Realtime(B안): 마지막 프레임(heartbeat 포함) 도착 시각. 신선하면 폴링 tick 을
+  // 억제하고, 끊기면(수집기 중단·재연결 지연) 폴링이 자동 재개된다 — 플래그 없는
+  // 신선도 협상(P0-2). heartbeat 로 무변경 2분에도 poll=0 을 유지한다.
+  const lastRealtimeFrameAtRef = useRef<number | null>(null);
   // 적용한 프레임의 전역 단조 id — 재연결 replay 등 과거 프레임 역행 차단.
   const lastAppliedFrameIdRef = useRef(0);
+  // 최신성 소유권 fence(P0-3): Realtime 이 최신 relay 프레임을 적용할 때마다 증가.
+  // 그보다 먼저 시작해 늦게 끝난 poll 응답은 자기 generation 이 낡았으면 버려진다
+  // → 느린 poll 이 최신 Realtime 값을 과거로 덮는 역행을 원천 차단한다.
+  const relayGenerationRef = useRef(0);
+  // P0-1: onLive/DetailFrame 콜백을 ref 로 안정화한다. 호출부가 매 렌더 inline object 를
+  // 넘겨도 구독 effect 가 재실행(unsubscribe/resubscribe)되지 않게, effect deps 에서
+  // options 를 빼고 이 ref 를 통해 최신 콜백을 읽는다.
+  const onLiveFrameRef = useRef(options?.onLiveFrame);
+  const onDetailFrameRef = useRef(options?.onDetailFrame);
+  onLiveFrameRef.current = options?.onLiveFrame;
+  onDetailFrameRef.current = options?.onDetailFrame;
 
   const fetchRelay = useCallback((
     eventsTailTimeoutMs?: number,
@@ -134,7 +147,7 @@ export function useGameRelay(
     if (
       isLive && !isFinal
       && shouldSuppressPoll({
-        lastRealtimeRelayAtMs: lastRealtimeRelayAtRef.current,
+        lastRealtimeFrameAtMs: lastRealtimeFrameAtRef.current,
         nowMs: Date.now(),
         hasInnings: inningsRef.current.size > 0,
       })
@@ -146,6 +159,9 @@ export function useGameRelay(
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
     const mySeq = ++requestSeqRef.current;
+    // P0-3: 이 poll 이 시작한 시점의 generation 스냅샷. 응답이 도착했을 때 Realtime 이
+    // 더 최신 relay 프레임을 적용해 generation 을 올렸으면 이 poll 응답은 버린다.
+    const myGeneration = relayGenerationRef.current;
     const controller = new AbortController();
     abortControllersRef.current.add(controller);
     inFlightRef.current = true;
@@ -221,7 +237,11 @@ export function useGameRelay(
         const applyRelay = (json: GameRelayResponse) => {
           // parse 후 재확인: gameId 가 headers 통과와 body 파싱 사이에 전환됐을 수 있다(late-body).
           // seq 일치 + 활성 gameId 일치 + 마운트 상태일 때만 setData(삼순 blocker ②).
-          if (shouldApplyRelayResponse({
+          // P0-3: 이 poll 이 시작한 뒤 Realtime 이 더 최신 relay 를 적용했으면(generation 증가)
+          // 이 응답은 과거값이므로 버린다 — 느린 poll 이 최신 Realtime 값을 덮는 역행 차단.
+          if (
+            shouldApplyPollResponse(myGeneration, relayGenerationRef.current)
+            && shouldApplyRelayResponse({
             mounted: mountedRef.current,
             requestSeq: mySeq,
             currentSeq: requestSeqRef.current,
@@ -350,8 +370,9 @@ export function useGameRelay(
     pollCountRef.current = 0;
     liveFrameOwnerSeqRef.current = 0;
     detailFrameOwnerSeqRef.current = 0;
-    lastRealtimeRelayAtRef.current = null;
+    lastRealtimeFrameAtRef.current = null;
     lastAppliedFrameIdRef.current = 0;
+    relayGenerationRef.current = 0;
     finalFetchedRef.current = false;
     setData(null);
     setEvents([]);
@@ -402,19 +423,24 @@ export function useGameRelay(
           if (!row) return;
           if (!shouldApplyFrame(lastAppliedFrameIdRef.current, row.id)) return;
           lastAppliedFrameIdRef.current = row.id;
+          // 어떤 프레임이든(heartbeat 포함) 수집기가 살아있다는 신호 → 신선도 갱신(P0-2).
+          lastRealtimeFrameAtRef.current = Date.now();
+
+          if (row.kind === "heartbeat") return; // 신선도만 갱신, 데이터 없음
 
           if (row.kind === "relay-full" || row.kind === "relay-delta") {
-            lastRealtimeRelayAtRef.current = Date.now();
+            // P0-3: Realtime 최신 relay 적용 → generation 증가. 이후 늦게 끝난 poll 응답은 버려진다.
+            relayGenerationRef.current += 1;
             applyRealtimeRelay(row.payload.data as GameRelayResponse);
           } else if (row.kind === "events") {
             applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
           } else if (row.kind === "live") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
-              options?.onLiveFrame?.(row.payload.data);
+              onLiveFrameRef.current?.(row.payload.data);
             }
           } else if (row.kind === "detail") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
-              options?.onDetailFrame?.(row.payload.data);
+              onDetailFrameRef.current?.(row.payload.data);
             }
           }
         },
@@ -422,11 +448,11 @@ export function useGameRelay(
       .subscribe();
 
     return () => {
-      lastRealtimeRelayAtRef.current = null;
+      lastRealtimeFrameAtRef.current = null;
       void supabase.removeChannel(channel);
     };
-    // options 콜백은 ref 안정성을 보장하지 않으므로 의도적으로 의존에서 제외하지 않는다.
-  }, [gameId, isLive, options]);
+    // P0-1: 콜백은 ref 로 읽으므로 options 를 deps 에서 제외 — 프레임 N개에도 구독 1회.
+  }, [gameId, isLive]);
 
   useEffect(() => {
     mountedRef.current = true;

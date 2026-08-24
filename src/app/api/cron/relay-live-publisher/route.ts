@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { GET as getRelay } from "@/app/api/game-relay/route";
 import { GET as getEvents } from "@/app/api/game-events/route";
@@ -6,12 +7,15 @@ import { GET as getLive } from "@/app/api/game-live/route";
 import { GET as getDetail } from "@/app/api/game-detail/route";
 import { resolveGameLiveDate } from "@/lib/game-live-date";
 import {
+  deserializeState,
   listLiveGameIds,
-  newGameState,
   publishGameTick,
+  serializeState,
+  stateKey,
+  STATE_TTL_SECONDS,
   TICK_INTERVAL_MS,
   type FrameRow,
-  type PublisherGameState,
+  type PersistedGameState,
 } from "@/lib/game/relay-live-publisher";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -20,37 +24,46 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * 크관 relay Realtime 퍼블리셔 cron (1분 주기 · B안, 2026-08-25).
+ * 크관 relay Realtime 퍼블리셔 cron (1분 주기 · B안 v2, 2026-08-25 삼순 NO-GO 반영).
  *
  * 1분 인보케이션 안에서 3초 tick 루프(~50초)를 돌며 라이브 경기의 relay/events/
- * live/detail 프레임을 `game_relay_frames` 에 쓴다. 클라이언트는 postgres_changes
- * 구독으로 받아 3초 Vercel 폴링을 대체한다(폴링 코드는 폴백으로 유지).
+ * live/detail 프레임을 `game_relay_frames` 에 쓴다(무변경 시 heartbeat). 클라이언트는
+ * postgres_changes 구독으로 받아 3초 Vercel 폴링을 대체한다(폴링은 폴백으로 유지).
  *
- * 단일 실행 보장: Upstash `SET NX PX` 락. cron 재시도·중복 스케줄이 겹쳐도
- * 한 인보케이션만 발행한다. 락 획득 실패는 정상 종료(200 {skipped:true}) —
- * 이미 다른 인스턴스가 발행 중이라는 뜻이다.
+ * 단일 실행 (P1 반영): Upstash `SET NX PX` 로 토큰 락을 잡고, loop 중간마다 **소유
+ * 토큰이 여전히 내 것일 때만** PEXPIRE 로 renew 한다. 인보케이션 종료 시 Lua
+ * compare-delete 로 **내 토큰일 때만** 해제해, 만료 후 다른 인보케이션이 잡은 락을
+ * 실수로 지우지 않는다. Redis 미설정/락 실패는 **fail-close**(발행 안 함) — 다중
+ * writer 로 인한 중복·seq 충돌을 원천 차단한다.
  *
- * 라이브 경기 0 이면 즉시 종료(비라이브 시간대 비용 ≈ 0). GC(24h 초과 프레임
- * 삭제)는 라이브 경기 유무와 무관하게 인보케이션당 1회 수행한다.
+ * 상태 지속 (P1 반영): 채널별 lastHash·seq·relayChanges 를 인보케이션 시작에
+ * Redis 에서 로드하고 종료에 저장한다. cron 경계를 넘어 hash 가 유지되므로
+ * 무변경 tick 은 매분 재발행되지 않는다.
  *
  * 실패 계약: 스케줄 조회 실패 등 구조적 실패는 5xx(cron 실패 집계 노출).
  * 개별 경기·채널 실패는 결과에 집계하고 나머지를 계속한다. 이 cron 이 통째로
  * 죽어도 클라이언트는 기존 폴링 폴백으로 동작한다(가용성 회귀 없음).
  */
 
-const LOCK_KEY = "kbo:relay-live-publisher:lock:v1";
-const LOCK_TTL_MS = 55_000;
+const LOCK_KEY = "kbo:relay:publisher:lock:v1";
+const LOCK_TTL_MS = 20_000;
+const LOCK_RENEW_EVERY_MS = 8_000;
 const LOOP_BUDGET_MS = 50_000;
 const FRAME_RETENTION_HOURS = 24;
 
-async function redisCommand(args: Array<string | number>): Promise<unknown | null> {
+function redisConfig(): { url: string; token: string } | null {
   const url = process.env.UPSTASH_REDIS_REST_URL?.replace(/\/+$/, "");
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
+  return url && token ? { url, token } : null;
+}
+
+async function redisCommand(args: Array<string | number>): Promise<unknown | null> {
+  const cfg = redisConfig();
+  if (!cfg) return null;
   try {
-    const response = await fetch(url, {
+    const response = await fetch(cfg.url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" },
       body: JSON.stringify(args),
       cache: "no-store",
       signal: AbortSignal.timeout(3_000),
@@ -64,12 +77,34 @@ async function redisCommand(args: Array<string | number>): Promise<unknown | nul
   }
 }
 
-/** true = 락 획득. Redis 미설정/실패면 락 없이 진행(발행 중복은 클라이언트 병합이 멱등). */
-async function acquireLock(): Promise<boolean | "no-redis"> {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  if (!url) return "no-redis";
-  const result = await redisCommand(["SET", LOCK_KEY, String(Date.now()), "NX", "PX", LOCK_TTL_MS]);
+/** 토큰 락 획득. 성공 시 토큰 문자열, 실패 시 null. */
+async function acquireLock(token: string): Promise<boolean> {
+  const result = await redisCommand(["SET", LOCK_KEY, token, "NX", "PX", LOCK_TTL_MS]);
   return result === "OK";
+}
+
+/** 내 토큰일 때만 TTL 연장. */
+async function renewLock(token: string): Promise<void> {
+  // GET 후 일치 시 PEXPIRE — Upstash EVAL 로 원자화
+  await redisCommand([
+    "EVAL",
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end",
+    "1",
+    LOCK_KEY,
+    token,
+    LOCK_TTL_MS,
+  ]);
+}
+
+/** 내 토큰일 때만 해제(compare-delete). */
+async function releaseLock(token: string): Promise<void> {
+  await redisCommand([
+    "EVAL",
+    "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+    "1",
+    LOCK_KEY,
+    token,
+  ]);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -87,86 +122,115 @@ export async function GET(req: NextRequest) {
   if (!supabaseUrl || !serviceRole) {
     return NextResponse.json({ error: "Supabase env 미설정" }, { status: 503 });
   }
-  const supabase = createClient(supabaseUrl, serviceRole, {
-    auth: { persistSession: false },
-  });
 
-  const lock = await acquireLock();
-  if (lock === false) {
+  // P1: Redis 필수 — 락·상태 지속 없이는 다중 writer 중복이 나므로 fail-close.
+  if (!redisConfig()) {
+    return NextResponse.json({ error: "Redis 미설정 — 단일 writer 보장 불가(fail-close)" }, { status: 503 });
+  }
+
+  const token = randomUUID();
+  const locked = await acquireLock(token);
+  if (!locked) {
     return NextResponse.json({ skipped: true, reason: "lock-held" });
   }
 
-  const date = resolveGameLiveDate();
-
-  // GC: 보존 창 밖 프레임 삭제 (인보케이션당 1회, 라이브 유무 무관)
-  const gcCutoff = new Date(Date.now() - FRAME_RETENTION_HOURS * 3_600_000).toISOString();
-  const { error: gcError } = await supabase
-    .from("game_relay_frames")
-    .delete()
-    .lt("created_at", gcCutoff);
-
-  let gameIds: string[];
   try {
-    gameIds = await listLiveGameIds(date);
-  } catch (e) {
-    return NextResponse.json(
-      { error: "live-games-fetch-failed", detail: e instanceof Error ? e.message : String(e) },
-      { status: 502 },
+    const supabase = createClient(supabaseUrl, serviceRole, { auth: { persistSession: false } });
+    const date = resolveGameLiveDate();
+
+    // GC: 보존 창 밖 프레임 삭제 (인보케이션당 1회, 라이브 유무 무관)
+    const gcCutoff = new Date(Date.now() - FRAME_RETENTION_HOURS * 3_600_000).toISOString();
+    const { error: gcError } = await supabase
+      .from("game_relay_frames")
+      .delete()
+      .lt("created_at", gcCutoff);
+
+    let gameIds: string[];
+    try {
+      gameIds = await listLiveGameIds(date);
+    } catch (e) {
+      return NextResponse.json(
+        { error: "live-games-fetch-failed", detail: e instanceof Error ? e.message : String(e) },
+        { status: 502 },
+      );
+    }
+
+    if (gameIds.length === 0) {
+      return NextResponse.json({ ok: true, liveGames: 0, gc: gcError ? `error:${gcError.message}` : "ok" });
+    }
+
+    const insertFrame = async (row: FrameRow): Promise<boolean> => {
+      const { error } = await supabase.from("game_relay_frames").insert(row);
+      return !error;
+    };
+
+    const deps = {
+      handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
+      insertFrame,
+      date,
+    };
+
+    // 상태 로드 (cron 경계 지속) — 채널별 hash·seq 를 이어받아 무변경 재발행을 막는다.
+    const states = new Map<string, PersistedGameState>();
+    await Promise.all(
+      gameIds.map(async (gameId) => {
+        const raw = await redisCommand(["GET", stateKey(gameId)]);
+        states.set(gameId, deserializeState(raw));
+      }),
     );
-  }
 
-  if (gameIds.length === 0) {
-    return NextResponse.json({
-      ok: true,
-      liveGames: 0,
-      gc: gcError ? `error:${gcError.message}` : "ok",
-    });
-  }
+    const totals = {
+      inserted: 0,
+      skippedUnchanged: 0,
+      skippedOversize: 0,
+      heartbeats: 0,
+      errors: [] as string[],
+      ticks: 0,
+    };
+    const startedAt = Date.now();
+    let lastRenewAt = startedAt;
 
-  const insertFrame = async (row: FrameRow): Promise<boolean> => {
-    const { error } = await supabase.from("game_relay_frames").insert(row);
-    return !error;
-  };
+    for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
+      const tickStartedAt = Date.now();
 
-  const deps = {
-    handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
-    insertFrame,
-    date,
-  };
+      if (tickStartedAt - lastRenewAt >= LOCK_RENEW_EVERY_MS) {
+        await renewLock(token);
+        lastRenewAt = tickStartedAt;
+      }
 
-  const states = new Map<string, PublisherGameState>();
-  for (const gameId of gameIds) states.set(gameId, newGameState());
+      const results = await Promise.all(
+        gameIds.map((gameId) => publishGameTick(deps, states.get(gameId)!, gameId, tickIndex)),
+      );
+      for (const r of results) {
+        totals.inserted += r.inserted;
+        totals.skippedUnchanged += r.skippedUnchanged;
+        totals.skippedOversize += r.skippedOversize;
+        totals.heartbeats += r.heartbeats;
+        totals.errors.push(...r.errors);
+      }
+      totals.ticks += 1;
 
-  const totals = { inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [] as string[], ticks: 0 };
-  const startedAt = Date.now();
+      const elapsed = Date.now() - tickStartedAt;
+      const remaining = LOOP_BUDGET_MS - (Date.now() - startedAt);
+      if (remaining <= TICK_INTERVAL_MS) break;
+      if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
+    }
 
-  for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
-    const tickStartedAt = Date.now();
-    const results = await Promise.all(
+    // 상태 저장 (다음 인보케이션이 이어받음)
+    await Promise.all(
       gameIds.map((gameId) =>
-        publishGameTick(deps, states.get(gameId)!, gameId, tickIndex),
+        redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
       ),
     );
-    for (const r of results) {
-      totals.inserted += r.inserted;
-      totals.skippedUnchanged += r.skippedUnchanged;
-      totals.skippedOversize += r.skippedOversize;
-      totals.errors.push(...r.errors);
-    }
-    totals.ticks += 1;
 
-    const elapsed = Date.now() - tickStartedAt;
-    const remaining = LOOP_BUDGET_MS - (Date.now() - startedAt);
-    if (remaining <= TICK_INTERVAL_MS) break;
-    if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
+    return NextResponse.json({
+      ok: true,
+      liveGames: gameIds.length,
+      gc: gcError ? `error:${gcError.message}` : "ok",
+      ...totals,
+      errors: totals.errors.slice(0, 20),
+    });
+  } finally {
+    await releaseLock(token);
   }
-
-  return NextResponse.json({
-    ok: true,
-    liveGames: gameIds.length,
-    lock: lock === "no-redis" ? "no-redis" : "acquired",
-    gc: gcError ? `error:${gcError.message}` : "ok",
-    ...totals,
-    errors: totals.errors.slice(0, 20),
-  });
 }

@@ -227,8 +227,11 @@ function assertFrameFencing() {
     /liveFrameOwnerSeqRef\.current = 0;[\s\S]*detailFrameOwnerSeqRef\.current = 0;/.test(src));
   ok("relay hook forwards live\/detail frames through channel refs",
     /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\);/.test(src));
+  // fencing 은 shouldApplyRelayResponse 에 유지된다. B안(2026-08-25)에서 그 앞에
+  // P0-3 generation fence(shouldApplyPollResponse)를 AND 로 강화했으므로 `if (` 시작을
+  // 요구하지 않고 fencing 술어 자체의 존재를 확인한다(fencing 제거는 여전히 검출).
   ok("relay frame fencing remains on shouldApplyRelayResponse",
-    /if \(shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
+    /shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
 }
 
 function assertRouteIncludeWiring() {
