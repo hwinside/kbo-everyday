@@ -142,6 +142,19 @@ export interface FavoritesSaver<TProfile> {
   save: (updates: FavoriteSaveUpdates) => Promise<SaveOutcome<TProfile>>;
 }
 
+/**
+ * row 소유 fail-close (삼순 4차 리뷰): row.id가 현재 사용자 ID와 정확히
+ * 일치할 때만 row를 돌려준다. 계정 전환 런타임에서 다른 계정의 row가 로컬에
+ * commit되는 오염을 호출부 마지막 관문에서 차단한다.
+ */
+export function ownedRow<T extends { id?: unknown }>(
+  row: T | null | undefined,
+  userId: string
+): T | null {
+  if (!row || typeof row.id !== "string" || !userId || row.id !== userId) return null;
+  return row;
+}
+
 export function createFavoritesSaver<TProfile>(
   deps: FavoritesSaverDeps
 ): FavoritesSaver<TProfile> {

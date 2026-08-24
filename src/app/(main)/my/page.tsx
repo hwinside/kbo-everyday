@@ -16,7 +16,7 @@ import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { saveMyFavorites, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
@@ -139,10 +139,12 @@ export default function MyPage() {
     if (user) {
       let saved;
       try {
-        saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] });
+        saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] }, user.id);
       } catch (e) {
         if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
-        if (e instanceof ProfileSaveError && e.lastSaved) commitServerRow(e.lastSaved as SavedProfileRow);
+        // 소유 fail-close: 현재 계정 row일 때만 정합 commit(계정 전환 오염 차단)
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        if (last) commitServerRow(last);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return; // 로컬 = 마지막 성공값(DB 현재값) 또는 기존값 — 오류 노출
       }
@@ -166,10 +168,11 @@ export default function MyPage() {
     if (user) {
       let saved;
       try {
-        saved = await saveMyFavorites({ favorite_players: players });
+        saved = await saveMyFavorites({ favorite_players: players }, user.id);
       } catch (e) {
         if (seq !== saveSeqRef.current) return;
-        if (e instanceof ProfileSaveError && e.lastSaved) commitServerRow(e.lastSaved as SavedProfileRow);
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        if (last) commitServerRow(last);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return;
       }

@@ -3,7 +3,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
-import { saveMyFavorites, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
@@ -269,13 +269,13 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     if (user) {
       let saved;
       try {
-        saved = await saveMyFavorites({ favorite_players: players });
+        saved = await saveMyFavorites({ favorite_players: players }, user.id);
       } catch (e) {
         if (seq !== favSaveSeqRef.current) return; // 더 최신 저장 진행 중 — 이 응답 폐기
-        // 마지막 성공값(= DB 현재값)이 있으면 그 값으로 로컬 정합 — A 성공/B 실패
-        // 불일치 방지. 없으면 기존값 유지 + CTA 유지(성공으로 위장 금지).
-        if (e instanceof ProfileSaveError && e.lastSaved) {
-          const row = e.lastSaved as SavedProfileRow;
+        // 마지막 성공값(= DB 현재값)이 **현재 계정 소유일 때만** 로컬 정합 —
+        // A 성공/B 실패 불일치 방지 + 계정 전환 오염 fail-close.
+        const row = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        if (row) {
           const favs = Array.isArray(row.favorite_players) ? row.favorite_players : [];
           setFavoritePlayers(favs);
           setFavPlayers(favs);

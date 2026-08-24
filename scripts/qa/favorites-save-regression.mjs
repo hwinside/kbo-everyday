@@ -8,6 +8,7 @@
 // 사용: npm run qa:favorites-save
 import {
   createFavoritesSaver,
+  ownedRow,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
@@ -236,6 +237,55 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   });
   const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
   check("첫 저장 실패: lastSaved=null(기존값 유지)", err instanceof ProfileSaveError && err.lastSaved === null, `lastSaved=${err?.lastSaved}`);
+}
+
+// ── ⑥ 계정 격리 (삼순 4차): A계정 성공 → B계정 첫 실패 ───────────────────
+{
+  // GREEN: wiring과 동일하게 user별 saver 인스턴스 격리 — B의 오류 lastSaved는 null
+  // (A의 row가 계정 경계를 넘어올 수 없음)
+  const mkDeps = (fail) => ({
+    getToken: async () => "t",
+    refreshToken: async () => null,
+    putFavorites: async (_t, updates) =>
+      fail ? { status: 500, body: null } : { status: 200, body: { ok: true, profile: { id: "user-a", team_id: 1, favorite_players: updates.favorite_players } } },
+  });
+  const saverA = createFavoritesSaver(mkDeps(false)); // 계정 A용 인스턴스
+  const saverB = createFavoritesSaver(mkDeps(true)); // 계정 B용 인스턴스
+  const rA = await saverA.save({ favorite_players: fav("A") });
+  const errB = await saverB.save({ favorite_players: fav("B") }).then(() => null, (e) => e);
+  check(
+    "계정격리 GREEN: A계정 성공 후 B계정 첫 실패 → B의 lastSaved=null(오염 불가)",
+    rA.superseded === false && errB instanceof ProfileSaveError && errB.lastSaved === null,
+    `lastSaved=${errB?.lastSaved}`
+  );
+  // RED 실증: 계정 무관 단일 공유 saver(구 설계의 module singleton)는 B 실패 오류에
+  // A계정 row를 실어 보낸다 — 오염이 실제로 일어남을 증명(무대 있는 mutation)
+  let phase = 0;
+  const shared = createFavoritesSaver({
+    getToken: async () => "t",
+    refreshToken: async () => null,
+    putFavorites: async (_t, updates) => {
+      phase += 1;
+      return phase === 1
+        ? { status: 200, body: { ok: true, profile: { id: "user-a", team_id: 1, favorite_players: updates.favorite_players } } }
+        : { status: 500, body: null };
+    },
+  });
+  await shared.save({ favorite_players: fav("A") }); // 계정 A 성공
+  const errShared = await shared.save({ favorite_players: fav("B") }).then(() => null, (e) => e); // 계정 B 실패(공유 캐시)
+  const leaked = errShared?.lastSaved;
+  check(
+    "계정격리 mutation-RED 실증: 공유 saver는 B 실패에 A계정 row를 실어 보냄(구 설계=결함)",
+    errShared instanceof ProfileSaveError && leaked?.id === "user-a",
+    `leaked.id=${leaked?.id}`
+  );
+  // 호출부 마지막 관문: ownedRow fail-close — 공유 캐시가 새어도 commit 직전에 차단
+  check(
+    "ownedRow fail-close: A row는 B계정으로 commit 불가, 본인 계정만 통과",
+    ownedRow(leaked, "user-b") === null && ownedRow(leaked, "user-a")?.id === "user-a" &&
+    ownedRow(null, "user-a") === null && ownedRow({ id: 123 }, "123") === null,
+    `ownedRow(leaked,"user-b")=${ownedRow(leaked, "user-b")}`
+  );
 }
 
 // ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──
