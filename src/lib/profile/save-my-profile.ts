@@ -3,6 +3,7 @@ import type { FavoritePlayer } from "@/lib/store/favorites";
 import {
   createFavoritesSaver,
   ownedRow,
+  tokenForUser,
   ProfileSaveError,
   GENERIC_MESSAGE,
   type FavoritesSaver,
@@ -40,13 +41,16 @@ const savers = new Map<string, FavoritesSaver<SavedProfileRow>>();
 function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
   const existing = savers.get(userId);
   if (existing) return existing;
+  // 토큰 소유 fail-close(삼순 5차): 초기 세션·401 refresh 모두 세션의 user.id가
+  // 이 saver의 userId와 일치할 때만 토큰 반환 — 계정 전환 중 B 토큰으로 PUT해
+  // B DB를 갱신하는 side effect를 PUT **전**에 차단(tokenForUser).
   const created = createFavoritesSaver<SavedProfileRow>({
-    getToken: async () => (await getSafeSession())?.access_token ?? null,
+    getToken: async () => tokenForUser(await getSafeSession(), userId),
     refreshToken: async () => {
       try {
         const { data, error } = await supabase.auth.refreshSession();
         if (error) return null;
-        return data.session?.access_token ?? null;
+        return tokenForUser(data.session, userId);
       } catch {
         return null;
       }
@@ -57,6 +61,8 @@ function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
+          // 서버측 이중 방어: 토큰 user와 기대 user 불일치면 409(저장 안 함)
+          "X-Expected-User-Id": userId,
         },
         body: JSON.stringify(updates),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

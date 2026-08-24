@@ -35,6 +35,14 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     }
 
+    // 이중 방어(삼순 5차 리뷰): 클라이언트가 기대한 사용자와 토큰 사용자가 다르면
+    // 저장 전에 거절 — 계정 전환 경합에서 엉뚱한 계정 DB가 갱신되는 side effect 차단.
+    // 헤더 미전송(구 클라이언트/타 호출자)은 기존 동작 유지.
+    const expectedUser = request.headers.get("x-expected-user-id");
+    if (expectedUser && expectedUser !== user.id) {
+      return NextResponse.json({ error: "user_mismatch" }, { status: 409 });
+    }
+
     let body: Record<string, unknown>;
     try {
       body = await request.json();

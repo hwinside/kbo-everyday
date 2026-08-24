@@ -155,6 +155,29 @@ export function ownedRow<T extends { id?: unknown }>(
   return row;
 }
 
+/** 세션 모양 — supabase Session의 필요 필드만. */
+export interface SessionLike {
+  access_token?: string | null;
+  user?: { id?: unknown } | null;
+}
+
+/**
+ * 토큰 소유 fail-close (삼순 5차 리뷰): 세션의 `user.id`가 요청 `userId`와
+ * 정확히 일치할 때만 access_token을 반환한다. A 요청이 큐 대기 중 계정이 B로
+ * 바뀌면 실행 시점의 토큰은 B 것 — 그 토큰으로 PUT하면 **B DB가 먼저 갱신**되고
+ * 응답 거절(ownedRow)은 늦는다. 이 가드는 side effect **전**(PUT 전)에 차단한다.
+ * 초기 세션 조회와 401 refresh 경로 모두 이 함수를 거쳐야 한다.
+ */
+export function tokenForUser(
+  session: SessionLike | null | undefined,
+  userId: string
+): string | null {
+  if (!session || !userId) return null;
+  if (typeof session.access_token !== "string" || !session.access_token) return null;
+  if (typeof session.user?.id !== "string" || session.user.id !== userId) return null;
+  return session.access_token;
+}
+
 export function createFavoritesSaver<TProfile>(
   deps: FavoritesSaverDeps
 ): FavoritesSaver<TProfile> {

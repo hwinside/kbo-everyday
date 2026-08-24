@@ -9,6 +9,7 @@
 import {
   createFavoritesSaver,
   ownedRow,
+  tokenForUser,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
@@ -286,6 +287,79 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     ownedRow(null, "user-a") === null && ownedRow({ id: 123 }, "123") === null,
     `ownedRow(leaked,"user-b")=${ownedRow(leaked, "user-b")}`
   );
+}
+
+// ── ⑦ 토큰↔userId 결속 (삼순 5차): side effect 전 차단 ────────────────────
+{
+  // tokenForUser 단위: 일치만 통과, 불일치/결손 전부 null
+  const sessA = { access_token: "tok-a", user: { id: "user-a" } };
+  const sessB = { access_token: "tok-b", user: { id: "user-b" } };
+  check(
+    "tokenForUser: 세션 user 일치만 토큰 반환(fail-close)",
+    tokenForUser(sessA, "user-a") === "tok-a" &&
+    tokenForUser(sessB, "user-a") === null &&
+    tokenForUser(null, "user-a") === null &&
+    tokenForUser({ access_token: "t" }, "user-a") === null &&
+    tokenForUser({ access_token: "", user: { id: "user-a" } }, "user-a") === null,
+    ""
+  );
+
+  // GREEN: A enqueue → 계정 B 전환 → 실행 시점 세션은 B — PUT 0회·DB 불변
+  {
+    let puts = 0;
+    const db = { "user-b": "orig" }; // 가짜 DB — B 계정 현재값
+    const currentSession = () => sessB; // 실행 시점엔 이미 B로 전환됨
+    const saverA = createFavoritesSaver({
+      getToken: async () => tokenForUser(currentSession(), "user-a"),
+      refreshToken: async () => tokenForUser(currentSession(), "user-a"),
+      putFavorites: async () => { puts++; db["user-b"] = "overwritten"; return { status: 200, body: okBody([]) }; },
+      authTimeoutMs: 100,
+    });
+    const err = await saverA.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+    check(
+      "결속 GREEN: A enqueue→B 전환 → PUT 0회·B DB 불변·needsRelogin",
+      err instanceof ProfileSaveError && err.needsRelogin === true && puts === 0 && db["user-b"] === "orig",
+      `puts=${puts} db=${db["user-b"]}`
+    );
+  }
+
+  // GREEN: A 토큰으로 PUT→401 → refresh가 B 세션 반환 → 재시도 0회
+  {
+    let puts = 0;
+    const saver = createFavoritesSaver({
+      getToken: async () => tokenForUser({ access_token: "tok-a-stale", user: { id: "user-a" } }, "user-a"),
+      refreshToken: async () => tokenForUser(sessB, "user-a"), // refresh 결과는 B 세션 → null
+      putFavorites: async () => { puts++; return { status: 401, body: null }; },
+    });
+    const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+    check(
+      "결속 GREEN: A 401→refresh가 B 세션 → 재시도 0(put 1회)·needsRelogin",
+      err instanceof ProfileSaveError && err.needsRelogin === true && puts === 1,
+      `puts=${puts}`
+    );
+  }
+
+  // RED 실증: 구 구현(세션 user 무검증 — access_token만 반환)은 B 토큰으로 PUT을
+  // 실행해 B DB를 실제로 갱신한다 — side effect가 일어남을 증명(무대 있는 mutation)
+  {
+    let puts = 0;
+    const db = { "user-b": "orig" };
+    const unbound = createFavoritesSaver({
+      getToken: async () => sessB.access_token, // 구 구현: user 검증 없음
+      refreshToken: async () => null,
+      putFavorites: async (token) => {
+        puts++;
+        if (token === "tok-b") db["user-b"] = "overwritten-by-A-request";
+        return { status: 200, body: { ok: true, profile: { id: "user-b", team_id: 1, favorite_players: [] } } };
+      },
+    });
+    await unbound.save({ favorite_players: fav("A") }).catch(() => {});
+    check(
+      "결속 mutation-RED 실증: 무검증 토큰 구현은 B DB를 실제로 갱신(구 설계=결함)",
+      puts === 1 && db["user-b"] === "overwritten-by-A-request",
+      `puts=${puts} db=${db["user-b"]}`
+    );
+  }
 }
 
 // ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──
