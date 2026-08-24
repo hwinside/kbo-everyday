@@ -12,6 +12,15 @@ import {
   summarizeSystemMetrics,
 } from "../../src/lib/admin/system-health";
 
+// Deterministic store path: this suite exercises the legacy Edge Config baseline
+// behavior of the admin route. Ambient Upstash credentials (e.g. Vercel build env
+// after the marketplace resource is connected) would silently flip the route to the
+// Redis path and fail these assertions — 2026-08-24 Production build broke exactly
+// this way. Redis-path coverage lives in cpu-upstash-store-smoke.ts, which sets and
+// restores its own credentials explicitly.
+delete process.env.UPSTASH_REDIS_REST_URL;
+delete process.env.UPSTASH_REDIS_REST_TOKEN;
+
 const isDomChild = process.env.ADMIN_SYSTEM_HEALTH_DOM_CHILD === "1";
 const domTest = process.env.NODE_ENV === "production" && !isDomChild ? test.skip : test;
 
