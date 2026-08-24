@@ -156,6 +156,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-tone-recovery",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-team-copy",
       "tier": "ci"
     },
