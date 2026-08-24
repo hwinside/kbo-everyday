@@ -284,6 +284,7 @@
     "qa:admin-traffic": "tsx scripts/qa/admin-traffic-smoke.ts",
     "qa:admin-stacked-tooltip": "tsx scripts/qa/admin-stacked-tooltip-render.ts",
     "qa:admin-system-health": "tsx --test scripts/qa/admin-system-health-smoke.ts",
+    "qa:cpu-upstash-store": "tsx --test scripts/qa/cpu-upstash-store-smoke.ts",
     "qa:admin-traffic:db": "node scripts/qa/admin-traffic-db-integration.mjs",
     "qa:roster-moves": "tsx scripts/qa/roster-moves-diff-smoke.ts",
     "qa:roster-moves:deadline": "tsx scripts/qa/roster-moves-deadline-smoke.ts",
