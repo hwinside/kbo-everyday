@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
@@ -16,7 +16,7 @@ import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { updateProfile } from "@/lib/supabase/auth";
+import { saveMyFavorites, ProfileSaveError } from "@/lib/profile/save-my-profile";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
@@ -116,29 +116,56 @@ export default function MyPage() {
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
 
+  // 2026-08-24 최애선수 설정 유실 수정: 로그인 유저는 서버 저장 **성공 후에만**
+  // 로컬 commit(성공 전 낙관 반영 금지 — 실패 시 DB 옛 값으로 조용히 롤백되던
+  // 결함). seq 가드는 연속 저장에서 이전 응답이 최신 선택을 덮는 것을 막는다.
+  const saveSeqRef = useRef(0);
+
   const handleTeamChange = async (newTeamId: number) => {
+    setShowTeamSelect(false);
+    const seq = ++saveSeqRef.current;
+    if (user) {
+      try {
+        await saveMyFavorites({ team_id: newTeamId, favorite_players: [] });
+      } catch (e) {
+        if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
+        alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
+        return; // 로컬 미변경 — 기존 팀/선수 유지(조용한 롤백 대신 오류 노출)
+      }
+      if (seq !== saveSeqRef.current) return;
+    }
     setMyTeamId(newTeamId);
-    // 위젯/워치 최애팀 즉시 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
+    // 위젯/워치 최애팀 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
     const newTeamCode = ID_TO_KBO_CODE[newTeamId];
     if (newTeamCode) void setWidgetMyTeam(newTeamCode);
     setTeamId(newTeamId);
-    setShowTeamSelect(false);
     setFavoritePlayers([]);
     setFavPlayers([]);
     setShowPlayerSelect(true);
-    if (user) {
-      await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
-      await refreshProfile();
-    }
+    if (user) await refreshProfile();
   };
 
   const handlePlayerChange = async (players: FavoritePlayer[]) => {
-    setFavoritePlayers(players);
-    setFavPlayers(players);
     setShowPlayerSelect(false);
+    const seq = ++saveSeqRef.current;
     if (user) {
-      await updateProfile(user.id, { favorite_players: players });
+      let saved;
+      try {
+        saved = await saveMyFavorites({ favorite_players: players });
+      } catch (e) {
+        if (seq !== saveSeqRef.current) return;
+        alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
+        return;
+      }
+      if (seq !== saveSeqRef.current) return;
+      // 서버가 반환한 저장된 row(exact)로만 로컬 확정
+      const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
+      setFavoritePlayers(savedPlayers);
+      setFavPlayers(savedPlayers);
       await refreshProfile();
+    } else {
+      setFavoritePlayers(players);
+      setFavPlayers(players);
     }
   };
 

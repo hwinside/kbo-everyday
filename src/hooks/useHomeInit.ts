@@ -1,9 +1,9 @@
-import { useState, useEffect, startTransition } from "react";
+import { useState, useEffect, useRef, startTransition } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
-import { updateProfile } from "@/lib/supabase/auth";
+import { saveMyFavorites, ProfileSaveError } from "@/lib/profile/save-my-profile";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
@@ -257,15 +257,36 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     }
   }
 
-  function handlePlayerSelect(players: FavoritePlayer[]) {
-    setFavoritePlayers(players);
-    setFavPlayers(players);
+  // 2026-08-24 최애선수 설정 유실 수정: 기존에는 fire-and-forget updateProfile이라
+  // 저장 실패(만료 토큰 401 등)가 조용히 삼켜져 다음 부팅에서 DB 옛 값으로
+  // 롤백됐다. 로그인 유저는 서버 저장 성공 후에만 commit하고, 실패는 CTA 유지
+  // + 오류 노출로 바꾼다. seq 가드는 연속 저장 레이스 방지.
+  const favSaveSeqRef = useRef(0);
+
+  async function handlePlayerSelect(players: FavoritePlayer[]) {
     setShowPlayerSelect(false);
+    const seq = ++favSaveSeqRef.current;
+    if (user) {
+      let saved;
+      try {
+        saved = await saveMyFavorites({ favorite_players: players });
+      } catch (e) {
+        if (seq !== favSaveSeqRef.current) return; // 더 최신 저장 진행 중 — 이 응답 폐기
+        alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
+        setShowPlayerSetupCTA(true); // 저장 안 됨 — CTA 유지(성공으로 위장 금지)
+        return;
+      }
+      if (seq !== favSaveSeqRef.current) return;
+      // 서버가 반환한 저장된 row(exact)로만 로컬 확정
+      const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
+      setFavoritePlayers(savedPlayers);
+      setFavPlayers(savedPlayers);
+    } else {
+      setFavoritePlayers(players);
+      setFavPlayers(players);
+    }
     setShowPlayerSetupCTA(false);
     setOnboardingStatus("completed");
-    if (user) {
-      updateProfile(user.id, { favorite_players: players });
-    }
     trackEvent(OnboardingEvents.PLAYER_SELECTED, {
       player_count: players.length,
       player_ids: players.map(p => p.playerId),
