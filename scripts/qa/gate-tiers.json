@@ -692,6 +692,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:cpu-upstash-store",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:proxy-matcher-slim",
       "tier": "deploy"
     },

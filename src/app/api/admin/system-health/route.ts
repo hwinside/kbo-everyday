@@ -6,7 +6,7 @@ import {
   summarizeSystemMetrics,
   type HealthLevel,
 } from "@/lib/admin/system-health";
-import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store";
+import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store-redis";
 
 export const dynamic = "force-dynamic";
 
