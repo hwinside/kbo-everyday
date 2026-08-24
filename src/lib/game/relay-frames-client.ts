@@ -13,8 +13,7 @@ export type RelayFrameKind =
   | "relay-delta"
   | "events"
   | "live"
-  | "detail"
-  | "heartbeat";
+  | "detail";
 
 export interface RelayFrameRow {
   id: number;
@@ -30,17 +29,13 @@ const FRAME_KINDS: ReadonlySet<string> = new Set([
   "events",
   "live",
   "detail",
-  "heartbeat",
 ]);
-
-/** heartbeat 는 데이터가 없는 신선도 신호라 payload.data 검증을 면제한다. */
-const DATALESS_KINDS: ReadonlySet<string> = new Set(["heartbeat"]);
 
 /**
  * postgres_changes payload.new 를 fail-close 로 검증한다.
  * - 형상이 깨진 row(payload 없음·kind 미지·game_id 불일치)는 null — 조용히 적용하지 않는다.
  * - max_record_bytes 초과로 payload 가 비어 도착한 row 도 여기서 걸러진다.
- * - heartbeat 는 data 를 요구하지 않는다(신선도 신호).
+ * - content-only(B2): 모든 kind 가 payload.data 를 요구한다(heartbeat 폐기).
  */
 export function parseFrameRow(raw: unknown, expectedGameId: string): RelayFrameRow | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -54,9 +49,7 @@ export function parseFrameRow(raw: unknown, expectedGameId: string): RelayFrameR
   const envelope = payload as Partial<LivePollEnvelope>;
   if (envelope.ok !== true) return null; // 실패 프레임은 발행 안 하지만, 이중 fail-close
   if (typeof envelope.channel !== "string") return null;
-  if (!DATALESS_KINDS.has(row.kind)) {
-    if (!("data" in envelope) || envelope.data === null || envelope.data === undefined) return null;
-  }
+  if (!("data" in envelope) || envelope.data === null || envelope.data === undefined) return null;
   return {
     id: row.id,
     game_id: expectedGameId,
@@ -67,30 +60,32 @@ export function parseFrameRow(raw: unknown, expectedGameId: string): RelayFrameR
 }
 
 /**
- * Realtime 프레임(heartbeat 포함)이 이 시간 안에 왔으면 폴링 tick 을 건너뛴다.
- * 수집기 heartbeat 간격(10초)의 2.5배 — heartbeat 1건만 유실돼도 억제가 유지되고,
- * 수집기가 실제로 멎으면(연속 유실) 자동으로 폴링이 재개된다.
+ * watchdog poll 주기(ms). content-only Realtime(B2)에서 클라는 마지막 성공 relay
+ * 데이터가 이 창 안에 있으면 3초 tick 을 억제하고, 창을 넘기면 poll 한 번을 허용해
+ * self-heal 한다. 무변경 구간엔 publisher 가 프레임을 안 보내므로 watchdog 주기마다
+ * poll 1회가 신선도를 갱신 → idle edge 비용이 (라이브분/watchdog분)으로 상한 고정된다.
+ * 30~60초 범위(삼순 3차 권고).
  */
-export const REALTIME_POLL_SUPPRESS_MS = 25_000;
+export const RELAY_WATCHDOG_MS = 45_000;
 
 /**
- * 폴링 억제 판정 (P0-2 반영).
- * - 첫 로드(보유 이닝 0)는 항상 폴링한다 — mount 직후 프레임을 기다리며 빈 화면을
- *   보여주지 않는다(초기 상태는 즉시 fetch).
- * - 이후에는 **수집기 건강**(= 마지막 realtime 프레임, heartbeat 포함)이 신선하면 억제.
- *   투구 사이 무변경이 길어도 수집기가 heartbeat 를 보내는 한 poll=0 을 유지한다.
- *   수집기가 멎으면(heartbeat 두절 → 임계 경과) 자동으로 폴링이 재개된다.
- *   폴백은 플래그가 아니라 신선도 자체로 협상한다.
+ * 폴링 억제 판정 (B2 watchdog).
+ * - 성공한 relay baseline 이 없으면(초기 로드·초기 fetch 실패) 항상 폴링한다 —
+ *   heartbeat 가 빈 화면/retry 를 가리던 문제 제거(삼순 3차: "성공 relay baseline 보유").
+ * - baseline 이후엔 마지막 성공 relay 데이터(poll 또는 Realtime relay frame)가
+ *   RELAY_WATCHDOG_MS 안에 있으면 억제, 지나면 watchdog poll 로 재개한다.
+ *   content-only 라 무변경 구간에도 watchdog poll 이 신선도를 갱신해 edge 비용을
+ *   명확히 상한화한다(폴백 역전·영구 억제 위험 소멸).
  */
 export function shouldSuppressPoll(params: {
-  lastRealtimeFrameAtMs: number | null;
+  lastRelayFreshAtMs: number | null;
   nowMs: number;
-  hasInnings: boolean;
+  hasRelayBaseline: boolean;
 }): boolean {
-  const { lastRealtimeFrameAtMs, nowMs, hasInnings } = params;
-  if (!hasInnings) return false;
-  if (lastRealtimeFrameAtMs === null) return false;
-  return nowMs - lastRealtimeFrameAtMs < REALTIME_POLL_SUPPRESS_MS;
+  const { lastRelayFreshAtMs, nowMs, hasRelayBaseline } = params;
+  if (!hasRelayBaseline) return false;
+  if (lastRelayFreshAtMs === null) return false;
+  return nowMs - lastRelayFreshAtMs < RELAY_WATCHDOG_MS;
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   TICK_INTERVAL_MS,
   type FrameRow,
   type PersistedGameState,
+  type TickResult,
 } from "@/lib/game/relay-live-publisher";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
@@ -27,8 +28,9 @@ export const maxDuration = 60;
  * 크관 relay Realtime 퍼블리셔 cron (1분 주기 · B안 v2, 2026-08-25 삼순 NO-GO 반영).
  *
  * 1분 인보케이션 안에서 3초 tick 루프(~50초)를 돌며 라이브 경기의 relay/events/
- * live/detail 프레임을 `game_relay_frames` 에 쓴다(무변경 시 heartbeat). 클라이언트는
- * postgres_changes 구독으로 받아 3초 Vercel 폴링을 대체한다(폴링은 폴백으로 유지).
+ * live/detail 프레임을 `game_relay_frames` 에 쓴다(content-only: 무변경 tick 발행 0).
+ * 클라이언트는 postgres_changes 구독으로 받아 3초 Vercel 폴링을 watchdog(30~60초)로
+ * 낮춘다(폴링은 폴백으로 유지).
  *
  * 단일 실행 (P1 반영): Upstash `SET NX PX` 로 토큰 락을 잡고, loop 중간마다 **소유
  * 토큰이 여전히 내 것일 때만** PEXPIRE 로 renew 한다. 인보케이션 종료 시 Lua
@@ -49,6 +51,9 @@ const LOCK_KEY = "kbo:relay:publisher:lock:v1";
 const LOCK_TTL_MS = 20_000;
 const LOCK_RENEW_EVERY_MS = 8_000;
 const LOOP_BUDGET_MS = 50_000;
+// 단일 tick(모든 라이브 경기 채널)의 handler 상한. 업스트림 hang 이 이 값을 넘으면
+// tick 을 실패 집계로 끊어 loop 가 TTL·maxDuration 을 넘기지 않게 한다(삼순 3차 lease).
+const TICK_TIMEOUT_MS = 15_000;
 const FRAME_RETENTION_HOURS = 24;
 
 function redisConfig(): { url: string; token: string } | null {
@@ -163,7 +168,11 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, liveGames: 0, gc: gcError ? `error:${gcError.message}` : "ok" });
     }
 
+    // 락 상실(독립 renewal 타이머가 감지) 후에는 INSERT·state 저장을 전부 중단한다
+    // → old writer 가 새 owner 의 프레임/상태를 덮어쓰지 못하게 한다(삼순 3차 lease).
+    let lockLost = false;
     const insertFrame = async (row: FrameRow): Promise<boolean> => {
+      if (lockLost) return false;
       const { error } = await supabase.from("game_relay_frames").insert(row);
       return !error;
     };
@@ -187,54 +196,73 @@ export async function GET(req: NextRequest) {
       inserted: 0,
       skippedUnchanged: 0,
       skippedOversize: 0,
-      heartbeats: 0,
       errors: [] as string[],
       ticks: 0,
     };
     const startedAt = Date.now();
-    let lastRenewAt = startedAt;
-    let lockLost = false;
 
-    for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
-      const tickStartedAt = Date.now();
+    // 독립 renewal 타이머(삼순 3차 lease): tick 진행과 무관하게 LOCK_RENEW_EVERY_MS 마다
+    // 내 토큰일 때만 TTL 을 연장한다. 실패(토큰 불일치·키 소멸·Redis 오류)면 lockLost 를
+    // 올려 이후 INSERT·state 저장을 전부 막는다. 긴 tick·pre-loop 중 만료도 여기서 감지.
+    let renewInFlight = false;
+    const renewTimer = setInterval(() => {
+      if (renewInFlight || lockLost) return;
+      renewInFlight = true;
+      renewLock(token)
+        .then((ok) => { if (!ok) lockLost = true; })
+        .catch(() => { lockLost = true; })
+        .finally(() => { renewInFlight = false; });
+    }, LOCK_RENEW_EVERY_MS);
 
-      if (tickStartedAt - lastRenewAt >= LOCK_RENEW_EVERY_MS) {
-        // P1 lease: renew 실패(토큰 불일치/키 소멸/Redis 오류)면 다른 writer 가
-        // 이미 락을 잡았을 수 있으므로 즉시 중단하고 state 저장도 건너뛴다
-        // (old writer 가 INSERT·state 덮어쓰기 방지).
-        if (!(await renewLock(token))) {
-          lockLost = true;
-          break;
+    try {
+      for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
+        const tickStartedAt = Date.now();
+        if (lockLost) break; // 독립 타이머가 락 상실 감지 → 즉시 중단
+
+        // handler timeout: 한 tick 이 TICK_TIMEOUT_MS 를 넘으면 실패 집계로 끊는다.
+        // (insertFrame 은 lockLost 시 no-op 이라 늦게 끝난 tick 이 새 owner 를 못 덮는다.)
+        const tickResults = await Promise.all(
+          gameIds.map((gameId) =>
+            Promise.race<TickResult>([
+              publishGameTick(deps, states.get(gameId)!, gameId, tickIndex),
+              new Promise<TickResult>((resolve) =>
+                setTimeout(
+                  () => resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:tick-timeout`] }),
+                  TICK_TIMEOUT_MS,
+                ),
+              ),
+            ]),
+          ),
+        );
+        for (const r of tickResults) {
+          totals.inserted += r.inserted;
+          totals.skippedUnchanged += r.skippedUnchanged;
+          totals.skippedOversize += r.skippedOversize;
+          totals.errors.push(...r.errors);
         }
-        lastRenewAt = tickStartedAt;
-      }
+        totals.ticks += 1;
 
-      const results = await Promise.all(
-        gameIds.map((gameId) => publishGameTick(deps, states.get(gameId)!, gameId, tickIndex)),
-      );
-      for (const r of results) {
-        totals.inserted += r.inserted;
-        totals.skippedUnchanged += r.skippedUnchanged;
-        totals.skippedOversize += r.skippedOversize;
-        totals.heartbeats += r.heartbeats;
-        totals.errors.push(...r.errors);
+        const elapsed = Date.now() - tickStartedAt;
+        const remaining = LOOP_BUDGET_MS - (Date.now() - startedAt);
+        if (remaining <= TICK_INTERVAL_MS) break;
+        if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
       }
-      totals.ticks += 1;
-
-      const elapsed = Date.now() - tickStartedAt;
-      const remaining = LOOP_BUDGET_MS - (Date.now() - startedAt);
-      if (remaining <= TICK_INTERVAL_MS) break;
-      if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
+    } finally {
+      clearInterval(renewTimer);
     }
 
-    // 상태 저장 (다음 인보케이션이 이어받음). 단 락을 잃었으면 저장하지 않는다 —
-    // 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기 위함(P1 lease).
-    if (!lockLost) {
+    // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
+    // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
+    // 위함(삼순 3차 lease: 저장 직전 소유권 재확인).
+    const stillOwner = !lockLost && (await renewLock(token));
+    if (stillOwner) {
       await Promise.all(
         gameIds.map((gameId) =>
           redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
         ),
       );
+    } else {
+      lockLost = true;
     }
 
     return NextResponse.json({

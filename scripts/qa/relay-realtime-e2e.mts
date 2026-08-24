@@ -5,7 +5,7 @@
  * 태워 삼순 요구 축을 검증한다:
  *   ① service_role INSERT → 2-client postgres_changes 수신 (실 fanout)
  *   ② anon SELECT 는 허용(공개 read), anon INSERT 는 RLS deny
- *   ③ heartbeat 프레임도 정상 전파
+ *   ③ content-only: relay-full + relay-delta 프레임 전파(heartbeat 폐기)
  *   ④ cleanup: QA 프레임(game_id 프리픽스 한정) 삭제, 잔존 0
  *
  * 필요한 env: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -54,17 +54,17 @@ await new Promise<void>((resolve, reject) => {
 });
 check("2-client subscribe SUBSCRIBED", true);
 
-// service_role INSERT (relay-full + heartbeat)
+// service_role INSERT (content-only: relay-full + relay-delta)
 const frames = [
   { game_id: QA_GAME_ID, seq: 1, kind: "relay-full", payload: { channel: "relay", ok: true, status: 200, data: { innings: [] } } },
-  { game_id: QA_GAME_ID, seq: 2, kind: "heartbeat", payload: { channel: "relay", ok: true, status: 204, data: { heartbeat: true } } },
+  { game_id: QA_GAME_ID, seq: 2, kind: "relay-delta", payload: { channel: "relay", ok: true, status: 200, data: { innings: [], partial: true } } },
 ];
 const { error: insErr } = await admin.from("game_relay_frames").insert(frames);
 check("service_role INSERT 성공", !insErr, insErr?.message ?? "");
 
 await sleep(3_000);
 check("2-client 이 relay-full 수신", received.some((r) => r.kind === "relay-full"), JSON.stringify(received));
-check("2-client 이 heartbeat 수신", received.some((r) => r.kind === "heartbeat"));
+check("2-client 이 relay-delta 수신", received.some((r) => r.kind === "relay-delta"));
 
 // ── ② RLS ──
 // query-guard: bounded -- QA 전용 game_id(QA-RT-<ts>) 한정 조회, 최대 2행(이 테스트가 넣은 프레임)

@@ -16,7 +16,7 @@ create table public.game_relay_frames (
   -- 순서를 판정하고 seq는 진단·중복검출 보조로 쓴다.
   seq bigint not null,
   -- LivePollEnvelope.channel + full/delta 구분
-  kind text not null check (kind in ('relay-full', 'relay-delta', 'events', 'live', 'detail', 'heartbeat')),
+  kind text not null check (kind in ('relay-full', 'relay-delta', 'events', 'live', 'detail')),
   payload jsonb not null,
   created_at timestamptz not null default now()
 );

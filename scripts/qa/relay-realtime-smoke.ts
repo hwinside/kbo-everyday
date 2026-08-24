@@ -11,7 +11,6 @@ import {
   deserializeState,
   estimateMonthlyRealtimeMessages,
   frameHash,
-  HEARTBEAT_INTERVAL_MS,
   internalGetRequest,
   MAX_PAYLOAD_BYTES,
   newGameState,
@@ -25,7 +24,7 @@ import {
 } from "../../src/lib/game/relay-live-publisher";
 import {
   parseFrameRow,
-  REALTIME_POLL_SUPPRESS_MS,
+  RELAY_WATCHDOG_MS,
   shouldApplyFrame,
   shouldApplyPollResponse,
   shouldSuppressPoll,
@@ -36,8 +35,8 @@ import {
  * 삼순 NO-GO(P0-1 구독 churn·P0-2 절감계약·P0-3 race·P1 단일writer) 반영 v2.
  *
  * 축:
- *  §1 수집기 — cadence·변경감지·full/delta·크기가드·재시도·seq회수·heartbeat·cron경계 지속
- *  §2 클라이언트 — fail-close 파싱·heartbeat 억제(무변경 2분)·단조 apply·generation fence
+ *  §1 수집기 — cadence·변경감지·full/delta·크기가드·재시도·seq회수·content-only·cron경계 지속
+ *  §2 클라이언트 — fail-close 파싱·watchdog 억제·성공 baseline·단조 apply·generation fence
  *  §3 배선 — cron·vercel.json·migration·hook·실 Realtime E2E 스크립트
  */
 
@@ -61,7 +60,6 @@ function depsWith(overrides: {
   relayData?: () => unknown;
   insertResult?: boolean;
   rows?: FrameRow[];
-  now?: () => number;
 }): TickDeps & { rows: FrameRow[] } {
   const rows: FrameRow[] = overrides.rows ?? [];
   const relayData = overrides.relayData ?? (() => RELAY_DATA_A);
@@ -78,7 +76,6 @@ function depsWith(overrides: {
       return true;
     },
     date: "2026-08-25",
-    now: overrides.now,
     rows,
   } as TickDeps & { rows: FrameRow[] };
 }
@@ -93,19 +90,16 @@ test("§1 tick cadence — relay 매 tick, events 15s, live 9s, detail 30s grid"
   assert.deepEqual(channelsForTick(10), ["relay", "events", "detail"]);
 });
 
-test("§1 첫 발행은 relay-full, 무변경 tick 은 relay INSERT 0", async () => {
-  let clock = 1_000_000;
-  const deps = depsWith({ now: () => clock });
+test("§1 첫 발행은 relay-full, 무변경 tick 은 relay INSERT 0 (content-only)", async () => {
+  const deps = depsWith({});
   const state = newGameState();
   const first = await publishGameTick(deps, state, "20260825LGHH0", 1);
   assert.equal(first.inserted, 1);
   assert.equal(deps.rows[0].kind, "relay-full");
 
-  clock += 1_000; // heartbeat 간격 미만
   const second = await publishGameTick(deps, state, "20260825LGHH0", 2);
   assert.equal(second.inserted, 0);
   assert.equal(second.skippedUnchanged, 1);
-  assert.equal(second.heartbeats, 0);
 });
 
 test("§1 변경 시 delta + seq 단조, FULL_EVERY 주기로 full 재발행", async () => {
@@ -130,8 +124,7 @@ test("§1 변경 시 delta + seq 단조, FULL_EVERY 주기로 full 재발행", a
 });
 
 test("§1 INSERT 실패 시 hash·seq 불변 — 다음 tick 재시도(fail-closed)", async () => {
-  // now 를 heartbeat 간격 미만으로 고정해 relay 실패만 격리 검증(heartbeat 재시도 노이즈 제거).
-  const failDeps = depsWith({ insertResult: false, now: () => 5_000 });
+  const failDeps = depsWith({ insertResult: false });
   const state = newGameState();
   const first = await publishGameTick(failDeps, state, "g1", 1);
   assert.equal(first.inserted, 0);
@@ -139,7 +132,7 @@ test("§1 INSERT 실패 시 hash·seq 불변 — 다음 tick 재시도(fail-clos
   assert.equal(state.seq, 0, "실패한 seq 는 회수돼야 한다");
   assert.equal(Object.keys(state.lastHash).length, 0, "실패면 hash 미갱신");
 
-  const okDeps = depsWith({ now: () => 5_000 });
+  const okDeps = depsWith({});
   const second = await publishGameTick(okDeps, state, "g1", 2);
   assert.equal(second.inserted, 1, "실패 프레임은 다음 tick 재발행");
   assert.equal(state.seq, 1);
@@ -165,11 +158,10 @@ test("§1 handler 실패(비 2xx)는 프레임 미기록 + 에러 집계", async
 
 // 삼순 2차 P0 비용: canonical hash — volatile trace 제거
 test("§1 canonical hash — volatile trace(sourceAtMs 등)가 바뀌어도 무변경이면 INSERT 0", async () => {
-  let clock = 2_000_000;
   // game-live 형 응답: sourceAtMs/fetchedAtMs/deadlineAtMs 가 매 tick 바뀌지만 내용은 동일
   let liveTs = 100;
   const liveData = () => ({ games: [{ gameId: "g1", score: "3:2" }], trace: { stage: "ok" }, sourceAtMs: liveTs, fetchedAtMs: liveTs + 1, deadlineAtMs: liveTs + 999 });
-  const deps = depsWith({ now: () => clock });
+  const deps = depsWith({});
   deps.handlers.live = async () => jsonResponse(liveData());
   const state = newGameState();
 
@@ -180,7 +172,6 @@ test("§1 canonical hash — volatile trace(sourceAtMs 등)가 바뀌어도 무�
 
   // 이후 live tick(3,6,9)에서 timestamp 만 바뀜 → canonical hash 동일 → INSERT 0
   for (const t of [3, 6, 9]) {
-    clock += 9_000;
     liveTs += 9_000; // volatile 만 변화
     await publishGameTick(deps, state, "g1", t);
   }
@@ -198,70 +189,59 @@ test("§1 canonicalizeForHash — volatile 키 재귀 제거, 실제 변경은 �
   assert.equal(JSON.stringify(canonicalizeForHash(a)), JSON.stringify(canonicalizeForHash(b)));
 });
 
-// 삼순 2차 P0 폴백 역전: 실패/oversize tick 은 heartbeat 미발행
-test("§1 폴백 역전 방지 — fetch 실패·oversize tick 은 heartbeat 0 (poll 재개 유도)", async () => {
-  let clock = 3_000_000;
-  // relay 는 정상 발행으로 lastFrameAt 확립
-  const deps = depsWith({ now: () => clock });
+// B2: content-only 라 실패/oversize tick 은 어떤 프레임도 안 낸다. heartbeat 로 실패를
+// 가리던 역전이 원천 소멸 — 클라 watchdog 이 신선도 두절로 자동 폴백한다.
+test("§1 폴백 역전 소멸 — fetch 실패·oversize tick 은 발행 0 (마스킹 프레임 없음)", async () => {
+  const deps = depsWith({});
   const state = newGameState();
   await publishGameTick(deps, state, "g1", 1);
 
-  // 이후 relay handler 가 계속 실패 → 무변경이 아니라 '실패'다. heartbeat 나가면 안 됨.
   deps.handlers.relay = async () => new Response("down", { status: 503 });
   for (const t of [2, 4]) {
-    clock += HEARTBEAT_INTERVAL_MS + 1;
     const r = await publishGameTick(deps, state, "g1", t);
-    assert.equal(r.heartbeats, 0, "fetch 실패 중에는 heartbeat 미발행");
+    assert.equal(r.inserted, 0, "실패 tick 은 발행 0");
     assert.ok(r.errors.length > 0);
   }
 
-  // oversize 도 동일 — healthy 신호를 보내면 안 된다
   const huge = { innings: [{ inning: 1, big: "x".repeat(MAX_PAYLOAD_BYTES) }] };
-  const deps2 = depsWith({ relayData: () => huge, now: () => clock });
+  const deps2 = depsWith({ relayData: () => huge });
   const state2 = newGameState();
-  await publishGameTick(deps2, state2, "g1", 1); // full oversize → skip
-  clock += HEARTBEAT_INTERVAL_MS + 1;
-  const r2 = await publishGameTick(deps2, state2, "g1", 2);
-  assert.equal(r2.heartbeats, 0, "oversize 지속 중 heartbeat 미발행");
+  const r2 = await publishGameTick(deps2, state2, "g1", 1);
+  assert.equal(r2.inserted, 0, "oversize tick 은 발행 0");
+  assert.equal(r2.skippedOversize, 1);
 });
 
-// 삼순 2차 P0 비용: CCU 적분
-test("§1 CCU 적분 cost — 무변경 heartbeat 부하에서 월 메시지 추정이 Pro 한도 내", () => {
-  // 무변경 구간: heartbeat 6/분(10초). 변경 구간을 보수적으로 relay 20/분 + live/detail 8/분 = 34/분 가정.
-  const framesPerMin = 34;
-  const est = estimateMonthlyRealtimeMessages({
-    framesPerMinutePerGame: framesPerMin,
-    avgConcurrentViewers: 100,
-    liveMinutesPerDayPerGame: 180, // 3h
-    gamesPerDay: 5,
-  });
-  // 34 × 100 × 180 × 5 × 30 = 91.8M — 이건 chat 포함 Pro 한도(개별 프로젝트)를 넘는 보수적 상한.
-  // 게이트의 목적: 추정이 산식으로 재현 가능하고, 변경 프레임률이 절감 계약의 핵심 변수임을 고정한다.
-  assert.equal(est, 34 * 100 * 180 * 5 * 30);
-  // 무변경만이면(heartbeat 6/분) 훨씬 낮다
-  const idle = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 6, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
-  assert.ok(idle < est, "무변경 구간 부하는 변경 구간보다 낮다");
+// 삼순 3차 P0 비용: content-only 추정을 손익분기(추가 2,600만/월) 절대 임계로 판정.
+// (기존 idle<est 상대비교는 착시 — 절대 임계+기존 chat 합산으로 대체)
+const REALTIME_BREAK_EVEN_MONTHLY = 26_000_000;
+const EXISTING_CHAT_MONTHLY = 3_000_000; // 7/31 실측 기반 보수 추정(chat Realtime)
+test("§1 비용 게이트 — content-only 추정+chat 합산이 손익분기 미만이어야 GREEN", () => {
+  // shadow 입력(다음 라이브 1경기 실측으로 대입). 현재는 보수 가정.
+  const SHADOW = { framesPerMinutePerGame: 8, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 };
+  const est = estimateMonthlyRealtimeMessages(SHADOW);
+  assert.equal(est, SHADOW.framesPerMinutePerGame * SHADOW.avgConcurrentViewers * SHADOW.liveMinutesPerDayPerGame * SHADOW.gamesPerDay * 30);
+  assert.ok(est + EXISTING_CHAT_MONTHLY < REALTIME_BREAK_EVEN_MONTHLY,
+    `content-only 추정(${est})+chat(${EXISTING_CHAT_MONTHLY})가 손익분기(${REALTIME_BREAK_EVEN_MONTHLY}) 미만이어야 GREEN`);
+});
+test("§1 비용 게이트 검출력 — heartbeat 부하 시나리오(34/분)는 손익분기 초과로 RED", () => {
+  // 결함주입: heartbeat 시절 프레임률이면 손익분기를 넘겨 RED 여야 게이트가 유효하다.
+  const withHeartbeat = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
+  assert.ok(withHeartbeat + EXISTING_CHAT_MONTHLY >= REALTIME_BREAK_EVEN_MONTHLY,
+    `heartbeat 부하(${withHeartbeat})는 손익분기 초과여야 검출력 있음`);
 });
 
-// P0-2 반영: heartbeat
-test("§1 heartbeat — 무변경이 HEARTBEAT_INTERVAL 넘으면 경량 프레임 1건 발행", async () => {
-  let clock = 1_000_000;
-  const deps = depsWith({ now: () => clock });
+// B2 content-only: 무변경이 아무리 길어도 heartbeat 없이 발행 0 (edge 는 클라 watchdog)
+test("§1 content-only — 무변경이 길어도 heartbeat 없이 발행 0", async () => {
+  const deps = depsWith({});
   const state = newGameState();
-  await publishGameTick(deps, state, "g1", 1); // relay-only tick, full 발행, lastFrameAt=clock
-
-  // 아직 간격 미만 → heartbeat 없음 (tick 2 = relay-only, 무변경)
-  clock += HEARTBEAT_INTERVAL_MS - 1;
-  let r = await publishGameTick(deps, state, "g1", 2);
-  assert.equal(r.heartbeats, 0);
-
-  // 간격 경과 → heartbeat 1건 (tick 4 = relay-only, 무변경; tick 3 은 live 채널이 껴 제외)
-  clock += 2;
-  r = await publishGameTick(deps, state, "g1", 4);
-  assert.equal(r.heartbeats, 1);
-  const hb = deps.rows.find((x) => x.kind === "heartbeat");
-  assert.ok(hb, "heartbeat 프레임 존재");
-  assert.equal((hb!.payload.data as { heartbeat?: boolean }).heartbeat, true);
+  await publishGameTick(deps, state, "g1", 1); // relay-full 발행
+  const baseRows = deps.rows.length;
+  for (const t of [2, 4, 7, 8, 11]) {
+    const r = await publishGameTick(deps, state, "g1", t);
+    assert.equal(r.inserted, 0);
+  }
+  assert.equal(deps.rows.length, baseRows, "무변경 구간엔 어떤 프레임도 추가 발행되지 않아야 한다(heartbeat 폐기)");
+  assert.equal(deps.rows.filter((x) => (x.kind as string) === "heartbeat").length, 0);
 });
 
 // P1 반영: cron 경계 상태 지속
@@ -286,7 +266,7 @@ test("§1 cron 경계 — 상태 직렬화→역직렬화 후 재개 시 무변�
 test("§1 deserializeState — 깨진 입력은 fresh 상태로 fail-safe", () => {
   assert.deepEqual(deserializeState("not-json"), newGameState());
   assert.deepEqual(deserializeState(null), newGameState());
-  const s = deserializeState(serializeState({ lastHash: { relay: "h" }, relayChanges: 3, seq: 9, publishedFull: true, lastFrameAtMs: 5 }));
+  const s = deserializeState(serializeState({ lastHash: { relay: "h" }, relayChanges: 3, seq: 9, publishedFull: true }));
   assert.equal(s.seq, 9);
   assert.equal(s.relayChanges, 3);
   assert.equal(s.publishedFull, true);
@@ -319,15 +299,12 @@ test("§2 parseFrameRow — 정상 row 통과", () => {
   assert.equal(row.kind, "relay-delta");
 });
 
-test("§2 parseFrameRow — heartbeat 는 data 없이 통과(신선도 신호)", () => {
+test("§2 parseFrameRow — content-only: heartbeat kind 는 미지 kind 로 거부", () => {
   const hb = { id: 11, game_id: "g1", seq: 4, kind: "heartbeat", payload: { channel: "relay", ok: true, status: 204, data: { heartbeat: true } } };
-  assert.ok(parseFrameRow(hb, "g1"));
-  // data 키 자체가 없어도 heartbeat 는 통과
-  const hbNoData = { id: 12, game_id: "g1", seq: 5, kind: "heartbeat", payload: { channel: "relay", ok: true, status: 204 } };
-  assert.ok(parseFrameRow(hbNoData, "g1"));
+  assert.equal(parseFrameRow(hb, "g1"), null, "heartbeat 폐기 — 미지 kind 로 fail-close");
 });
 
-test("§2 parseFrameRow fail-close — 결측·불일치·미지 kind·빈 payload·비-heartbeat data결측 null", () => {
+test("§2 parseFrameRow fail-close — 결측·불일치·미지 kind·빈 payload·data결측 null", () => {
   assert.equal(parseFrameRow(null, "g1"), null);
   assert.equal(parseFrameRow({ ...VALID_ROW, game_id: "g2" }, "g1"), null);
   assert.equal(parseFrameRow({ ...VALID_ROW, kind: "unknown" }, "g1"), null);
@@ -336,36 +313,38 @@ test("§2 parseFrameRow fail-close — 결측·불일치·미지 kind·빈 paylo
   assert.equal(parseFrameRow({ ...VALID_ROW, payload: { channel: "relay", ok: true, status: 200 } }, "g1"), null, "relay 는 data 결측 차단");
 });
 
-// P0-2 반영: 무변경 2분 억제
-test("§2 무변경 2분에도 heartbeat 신선도로 poll=0 (P0-2 절감계약)", () => {
+// B2 watchdog: 무변경(프레임 0) 2분 구간 — edge poll 이 watchdog 주기로 상한된다
+test("§2 watchdog — 무변경 2분 idle edge poll 이 (경과/watchdog) 상한 이내", () => {
   const start = 5_000_000;
-  // 수집기 heartbeat 가 HEARTBEAT_INTERVAL 마다 도착하는 2분 구간 시뮬
-  let lastFrameAt = start;
+  let lastFresh = start; // baseline 직후, 이후 무변경(프레임 0)
   let pollCount = 0;
-  for (let t = start; t <= start + 120_000; t += 1_000) {
-    // heartbeat 수신: 무변경이어도 10초마다 프레임 도착 → lastFrameAt 갱신
-    if ((t - start) % HEARTBEAT_INTERVAL_MS === 0) lastFrameAt = t;
-    const suppress = shouldSuppressPoll({ lastRealtimeFrameAtMs: lastFrameAt, nowMs: t, hasInnings: true });
-    if (!suppress) pollCount += 1;
+  for (let t = start + 1_000; t <= start + 120_000; t += 1_000) {
+    const suppress = shouldSuppressPoll({ lastRelayFreshAtMs: lastFresh, nowMs: t, hasRelayBaseline: true });
+    if (!suppress) {
+      pollCount += 1;
+      lastFresh = t; // 성공 watchdog poll 이 신선도 갱신 → 다시 억제 구간
+    }
   }
-  assert.equal(pollCount, 0, "heartbeat 가 살아있는 동안 무변경 2분에도 poll 은 0 이어야 한다");
+  const cap = Math.ceil(120_000 / RELAY_WATCHDOG_MS);
+  assert.ok(pollCount >= 1 && pollCount <= cap, `idle 2분 edge poll ${pollCount} 이 상한 ${cap} 이내여야 한다`);
+  assert.ok(pollCount < 40, "3초 폴링(약 120회) 대비 대폭 감소");
 });
 
-test("§2 수집기 두절 시 폴링 자동 재개 (신선도 협상 폴백)", () => {
+test("§2 Realtime 두절 시 watchdog poll 자동 재개", () => {
   const start = 6_000_000;
-  const lastFrameAt = start; // 이후 heartbeat 두절
+  const lastFresh = start; // 이후 프레임 두절
   let resumedAt: number | null = null;
-  for (let t = start; t <= start + 60_000; t += 1_000) {
-    const suppress = shouldSuppressPoll({ lastRealtimeFrameAtMs: lastFrameAt, nowMs: t, hasInnings: true });
+  for (let t = start; t <= start + 90_000; t += 1_000) {
+    const suppress = shouldSuppressPoll({ lastRelayFreshAtMs: lastFresh, nowMs: t, hasRelayBaseline: true });
     if (!suppress && resumedAt === null) resumedAt = t - start;
   }
-  assert.ok(resumedAt !== null && resumedAt >= REALTIME_POLL_SUPPRESS_MS && resumedAt <= REALTIME_POLL_SUPPRESS_MS + 1_000,
-    `두절 후 임계(${REALTIME_POLL_SUPPRESS_MS}ms) 경과에 폴링 재개 (resumed=${resumedAt})`);
+  assert.ok(resumedAt !== null && resumedAt >= RELAY_WATCHDOG_MS && resumedAt <= RELAY_WATCHDOG_MS + 1_000,
+    `두절 후 watchdog(${RELAY_WATCHDOG_MS}ms) 경과에 poll 재개 (resumed=${resumedAt})`);
 });
 
-test("§2 첫 로드(보유 이닝 0)는 신선해도 항상 폴링", () => {
+test("§2 baseline 전(성공 relay 미보유)엔 신선해도 항상 폴링 (삼순 3차)", () => {
   const now = 1_000_000;
-  assert.equal(shouldSuppressPoll({ lastRealtimeFrameAtMs: now - 1_000, nowMs: now, hasInnings: false }), false);
+  assert.equal(shouldSuppressPoll({ lastRelayFreshAtMs: now - 1_000, nowMs: now, hasRelayBaseline: false }), false);
 });
 
 test("§2 shouldApplyFrame — 전역 id 단조 가드", () => {
@@ -415,23 +394,25 @@ test("§3 vercel.json — 1분 cron 정확히 1개", () => {
   assert.equal(hits[0].schedule, "* * * * *");
 });
 
-test("§3 migration — 테이블·RLS·publication·heartbeat kind·write정책 부재", () => {
+test("§3 migration — 테이블·RLS·publication·content-only kind·write정책 부재", () => {
   const sql = readFileSync(join(worktreeRoot, "supabase/migrations/20260825020000_game_relay_frames.sql"), "utf-8")
     .replace(/^\s*--.*$/gm, "");
   assert.ok(/create table public\.game_relay_frames/.test(sql));
   assert.ok(/enable row level security/.test(sql));
   assert.ok(/alter publication supabase_realtime add table public\.game_relay_frames/.test(sql));
-  assert.ok(/heartbeat/.test(sql), "heartbeat kind 허용");
+  assert.ok(!/heartbeat/.test(sql), "content-only: heartbeat kind 없음");
   assert.ok(!/create policy[\s\S]*for (insert|update|delete)/i.test(sql), "write 정책 없음 = service_role 전용");
 });
 
-test("§3 route lease — renewLock 결과 검사·실패 시 중단·state 미저장 배선(P1)", () => {
+test("§3 route lease — 독립 renewal·lockLost INSERT 차단·저장 직전 소유권 재확인(삼순 3차)", () => {
   const src = readSrc("src/app/api/cron/relay-live-publisher/route.ts");
-  assert.ok(/renewLock\(token\)\): Promise<boolean>|renewLock\(token: string\): Promise<boolean>/.test(src) || /async function renewLock\(token: string\): Promise<boolean>/.test(src), "renewLock 이 boolean 반환");
-  assert.ok(/if \(!\(await renewLock\(token\)\)\)/.test(src), "renew 실패 검사");
-  assert.ok(/lockLost = true;[\s\S]*break;/.test(src), "실패 시 즉시 중단");
-  assert.ok(/if \(!lockLost\)[\s\S]*SET", stateKey/.test(src), "락 상실 시 state 미저장");
-  assert.ok(/compare-delete|redis\.call\('del'/.test(src), "compare-delete 해제");
+  assert.ok(/setInterval\(\(\) => \{[\s\S]*renewLock\(token\)/.test(src), "tick 독립 renewal 타이머");
+  assert.ok(/clearInterval\(renewTimer\)/.test(src), "renewal 타이머 정리");
+  assert.ok(/if \(lockLost\) return false;/.test(src), "락 상실 시 INSERT 차단(old writer)");
+  assert.ok(/const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src), "저장 직전 소유권 재확인");
+  assert.ok(/if \(stillOwner\)[\s\S]*SET", stateKey/.test(src), "소유일 때만 state 저장");
+  assert.ok(/Promise\.race<TickResult>/.test(src), "tick handler timeout");
+  assert.ok(/redis\.call\('del'/.test(src), "compare-delete 해제");
 });
 
 test("§3 useGameRelay — 구독·억제·단조·generation·callback ref 배선(P0-1/2/3)", () => {
