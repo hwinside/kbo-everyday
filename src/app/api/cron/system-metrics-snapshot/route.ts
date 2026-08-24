@@ -4,7 +4,7 @@ import {
   commitCpuSnapshot,
   counterAdvanced,
   loadRecentCpuSnapshots,
-} from "@/lib/admin/cpu-snapshot-store";
+} from "@/lib/admin/cpu-snapshot-store-redis";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -18,11 +18,9 @@ export const maxDuration = 30;
  * 항상 저장소에 있어야 한다. Supabase 메트릭 scrape가 ~60초 주기라 브라우저 단독
  * 측정은 첫 ~60초가 "측정 중"이 된다(#1275 스레드 — 다급한 상황에서 1분 대기 불가).
  *
- * 저장소: Vercel Edge Config — 감시 대상 Supabase DB 밖(순환 의존 제거).
- * health 경로는 읽기 전용이고 쓰기는 이 cron만 한다.
- * 동시성: Vercel 공식 계약상 cron은 중복·동시 실행될 수 있고 Edge Config PATCH에는
- * CAS가 없다. 따라서 스냅샷 1개 = 독립 key 1개로 append한다(삼순 4차 P1) —
- * 쓰기에 read-modify-write가 없어 stale write가 다른 작업자의 최신값을 덮을 수 없다.
+ * 저장소: Upstash Redis sorted set — 감시 대상 Supabase DB 밖(순환 의존 제거).
+ * health 경로는 읽기 전용이고 쓰기는 이 cron만 한다. `ZADD NX`로 counter identity를
+ * 불변 append하므로 중복·동시 cron도 기존 샘플의 값이나 시각을 덮지 않는다.
  *
  * 실패 계약: 어떤 실패든 5xx로 노출해 Vercel cron 실패 집계에 잡히게 한다.
  * cron이 죽으면 baseline이 90초를 넘겨 즉시값이 자연 소멸(stale fail-close)하고,
