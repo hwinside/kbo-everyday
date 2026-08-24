@@ -78,6 +78,29 @@ export function findUncoveredCodes(
   return emitted.filter((c) => !closedSet.includes(c));
 }
 
+type StripFn = (url: URL) => boolean;
+
+/**
+ * strip 헬퍼 행위 계약을 통째로 판정하는 순수 평가기 — main과 selftest가 같은 함수를 태운다.
+ * 반환: 위반 목록(비어있으면 계약 충족).
+ */
+export function evaluateStripContract(strip: StripFn): string[] {
+  const violations: string[] = [];
+  const url = new URL("https://keubo.fan/?login_error=state_mismatch&auth_error=kakao_email_unverified&tab=home");
+  const removed = strip(url);
+  if (!(removed === true && !url.searchParams.has("login_error") && !url.searchParams.has("auth_error"))) {
+    violations.push("target-params-not-removed");
+  }
+  if (url.searchParams.get("tab") !== "home") {
+    violations.push("unrelated-param-destroyed");
+  }
+  const clean = new URL("https://keubo.fan/?tab=home");
+  if (!(strip(clean) === false && clean.searchParams.get("tab") === "home")) {
+    violations.push("noop-contract-broken");
+  }
+  return violations;
+}
+
 function main() {
   console.log("== login-error-notice-gate ==");
 
@@ -127,13 +150,9 @@ function main() {
   assert("LEGATE-12-param-key", (AUTH_ERROR_PARAM_KEYS as readonly string[]).includes(NAVER_LOGIN_ERROR_PARAM));
   assert("LEGATE-13-native-classify", classifyAppUrlOpen("https://keubo.fan/?login_error=state_mismatch") === "oauth");
 
-  // 6. URL 파라미터 제거 — 대상만 제거·무관 보존
-  const url = new URL("https://keubo.fan/?login_error=state_mismatch&auth_error=kakao_email_unverified&tab=home");
-  const removed = stripAuthErrorNoticeParams(url);
-  assert("LEGATE-14-strip-removed", removed === true && !url.searchParams.has("login_error") && !url.searchParams.has("auth_error"));
-  assert("LEGATE-15-strip-preserves", url.searchParams.get("tab") === "home");
-  const clean = new URL("https://keubo.fan/?tab=home");
-  assert("LEGATE-16-strip-noop", stripAuthErrorNoticeParams(clean) === false && clean.searchParams.get("tab") === "home");
+  // 6. URL 파라미터 제거 — 대상만 제거·무관 보존·noop (순수 평가기 경유, selftest와 동일 seam)
+  const stripViolations = evaluateStripContract(stripAuthErrorNoticeParams);
+  assert("LEGATE-14-strip-contract", stripViolations.length === 0, `violations=${stripViolations.join(",")}`);
 
   // 7. 문의 CTA — 메일 주소 + 진단코드 결속
   const mailto = buildLoginSupportMailto("NV-STATE");
@@ -176,10 +195,20 @@ function selftest() {
   const shrunkSet = NAVER_LOGIN_ERROR_CODES.filter((c) => c !== "user_lookup_error");
   expect("D-shrunk-set-detected", findUncoveredCodes(["user_lookup_error"], shrunkSet).length === 1);
 
-  // mutant E: strip이 무관 파라미터까지 지우는 결함 형상 — 보존 판정이 구분해야 함
-  const u = new URL("https://keubo.fan/?login_error=x&tab=home");
-  stripAuthErrorNoticeParams(u);
-  expect("E-preserve-check-meaningful", u.searchParams.get("tab") === "home");
+  // mutant E: 무관 파라미터까지 전부 지우는 broken helper를 실제 주입 → 평가기가 잡아야 함(삼순 지적: positive check 금지)
+  const brokenStripAll: (url: URL) => boolean = (url) => {
+    const had = url.searchParams.has("login_error") || url.searchParams.has("auth_error");
+    for (const key of [...url.searchParams.keys()]) url.searchParams.delete(key); // 결함: 전수 삭제
+    return had;
+  };
+  expect("E-broken-strip-detected", evaluateStripContract(brokenStripAll).includes("unrelated-param-destroyed"));
+
+  // mutant F: 아무것도 지우지 않는 broken helper → 제거 판정이 잡아야 함
+  const brokenStripNone: (url: URL) => boolean = () => false;
+  expect("F-noop-strip-detected", evaluateStripContract(brokenStripNone).includes("target-params-not-removed"));
+
+  // 양성 대조: 정상 헬퍼는 위반 0 — 평가기가 양방향으로 유효함을 증명
+  expect("G-real-helper-clean", evaluateStripContract(stripAuthErrorNoticeParams).length === 0);
 
   console.log(`\nSELFTEST ok=${ok} bad=${bad}`);
   process.exit(bad === 0 ? 0 : 1);
