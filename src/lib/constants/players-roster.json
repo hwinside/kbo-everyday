@@ -46,21 +46,21 @@
   },
   {
     "name": "강민성",
-    "kboId": "55427",
-    "teamId": 8,
-    "position": "내야수",
-    "backNo": "127",
-    "team": "삼성",
-    "birthDate": "2006-02-22"
-  },
-  {
-    "name": "강민성",
     "kboId": "69064",
     "teamId": 3,
     "position": "내야수",
     "backNo": "5",
     "team": "KT",
     "birthDate": "1999-12-08"
+  },
+  {
+    "name": "강민성",
+    "kboId": "55427",
+    "teamId": 8,
+    "position": "내야수",
+    "backNo": "127",
+    "team": "삼성",
+    "birthDate": "2006-02-22"
   },
   {
     "name": "강민호",
@@ -712,21 +712,21 @@
   },
   {
     "name": "김동현",
-    "kboId": "55040",
-    "teamId": 3,
-    "position": "투수",
-    "backNo": "40",
-    "team": "KT",
-    "birthDate": "2006-01-21"
-  },
-  {
-    "name": "김동현",
     "kboId": "55502",
     "teamId": 7,
     "position": "야수",
     "backNo": "64",
     "team": "롯데",
     "birthDate": "2004-12-30"
+  },
+  {
+    "name": "김동현",
+    "kboId": "55040",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "40",
+    "team": "KT",
+    "birthDate": "2006-01-21"
   },
   {
     "name": "김동현",
@@ -1072,21 +1072,21 @@
   },
   {
     "name": "김성민",
-    "kboId": "50848",
-    "teamId": 4,
-    "position": "투수",
-    "backNo": "11",
-    "team": "SSG",
-    "birthDate": "2001-04-30"
-  },
-  {
-    "name": "김성민",
     "kboId": "67828",
     "teamId": 10,
     "position": "투수",
     "backNo": "8",
     "team": "키움",
     "birthDate": "1994-04-26"
+  },
+  {
+    "name": "김성민",
+    "kboId": "50848",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "11",
+    "team": "SSG",
+    "birthDate": "2001-04-30"
   },
   {
     "name": "김성욱",
@@ -1108,21 +1108,21 @@
   },
   {
     "name": "김성진",
-    "kboId": "51301",
-    "teamId": 10,
-    "position": "투수",
-    "backNo": "21",
-    "team": "키움",
-    "birthDate": "1997-11-14"
-  },
-  {
-    "name": "김성진",
     "kboId": "69105",
     "teamId": 1,
     "position": "내야수",
     "backNo": "36",
     "team": "LG",
     "birthDate": "2000-03-17"
+  },
+  {
+    "name": "김성진",
+    "kboId": "51301",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "21",
+    "team": "키움",
+    "birthDate": "1997-11-14"
   },
   {
     "name": "김성현",
@@ -1756,12 +1756,12 @@
   },
   {
     "name": "김태훈",
-    "kboId": "55995",
-    "teamId": 5,
-    "position": "투수",
-    "backNo": "69",
-    "team": "NC",
-    "birthDate": "2006-10-26"
+    "kboId": "65040",
+    "teamId": 8,
+    "position": "야수",
+    "backNo": "25",
+    "team": "삼성",
+    "birthDate": "1996-03-31"
   },
   {
     "name": "김태훈",
@@ -1774,12 +1774,12 @@
   },
   {
     "name": "김태훈",
-    "kboId": "65040",
-    "teamId": 8,
-    "position": "야수",
-    "backNo": "25",
-    "team": "삼성",
-    "birthDate": "1996-03-31"
+    "kboId": "55995",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "69",
+    "team": "NC",
+    "birthDate": "2006-10-26"
   },
   {
     "name": "김택연",
@@ -1855,12 +1855,12 @@
   },
   {
     "name": "김현수",
-    "kboId": "56664",
-    "teamId": 6,
-    "position": "투수",
-    "backNo": "64",
-    "team": "KIA",
-    "birthDate": "2007-11-08"
+    "kboId": "76290",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "5",
+    "team": "KT",
+    "birthDate": "1988-01-12"
   },
   {
     "name": "김현수",
@@ -1873,12 +1873,12 @@
   },
   {
     "name": "김현수",
-    "kboId": "76290",
-    "teamId": 3,
-    "position": "외야수",
-    "backNo": "5",
-    "team": "KT",
-    "birthDate": "1988-01-12"
+    "kboId": "56664",
+    "teamId": 6,
+    "position": "투수",
+    "backNo": "64",
+    "team": "KIA",
+    "birthDate": "2007-11-08"
   },
   {
     "name": "김현재",
@@ -2404,15 +2404,6 @@
   },
   {
     "name": "박건우",
-    "kboId": "55046",
-    "teamId": 3,
-    "position": "투수",
-    "backNo": "46",
-    "team": "KT",
-    "birthDate": "2006-11-28"
-  },
-  {
-    "name": "박건우",
     "kboId": "55509",
     "teamId": 7,
     "position": "포수",
@@ -2428,6 +2419,15 @@
     "backNo": "37",
     "team": "NC",
     "birthDate": "1990-09-08"
+  },
+  {
+    "name": "박건우",
+    "kboId": "55046",
+    "teamId": 3,
+    "position": "투수",
+    "backNo": "46",
+    "team": "KT",
+    "birthDate": "2006-11-28"
   },
   {
     "name": "박계범",
@@ -4834,21 +4834,21 @@
   },
   {
     "name": "이도훈",
-    "kboId": "56635",
-    "teamId": 6,
-    "position": "포수",
-    "backNo": "135",
-    "team": "KIA",
-    "birthDate": "2007-01-06"
-  },
-  {
-    "name": "이도훈",
     "kboId": "56708",
     "teamId": 9,
     "position": "외야수",
     "backNo": "08",
     "team": "한화",
     "birthDate": "2003-08-27"
+  },
+  {
+    "name": "이도훈",
+    "kboId": "56635",
+    "teamId": 6,
+    "position": "포수",
+    "backNo": "135",
+    "team": "KIA",
+    "birthDate": "2007-01-06"
   },
   {
     "name": "이동영",
@@ -4960,6 +4960,15 @@
   },
   {
     "name": "이서준",
+    "kboId": "56563",
+    "teamId": 7,
+    "position": "내야수",
+    "backNo": "63",
+    "team": "롯데",
+    "birthDate": "2007-10-10"
+  },
+  {
+    "name": "이서준",
     "kboId": "56433",
     "teamId": 8,
     "position": "투수",
@@ -4975,15 +4984,6 @@
     "backNo": "134",
     "team": "삼성",
     "birthDate": "2007-06-25"
-  },
-  {
-    "name": "이서준",
-    "kboId": "56563",
-    "teamId": 7,
-    "position": "내야수",
-    "backNo": "63",
-    "team": "롯데",
-    "birthDate": "2007-10-10"
   },
   {
     "name": "이성규",
@@ -5041,21 +5041,21 @@
   },
   {
     "name": "이승현",
-    "kboId": "51454",
-    "teamId": 8,
-    "position": "투수",
-    "backNo": "57",
-    "team": "삼성",
-    "birthDate": "2002-05-19"
-  },
-  {
-    "name": "이승현",
     "kboId": "60146",
     "teamId": 8,
     "position": "투수",
     "backNo": "26",
     "team": "삼성",
     "birthDate": "1991-11-20"
+  },
+  {
+    "name": "이승현",
+    "kboId": "51454",
+    "teamId": 8,
+    "position": "투수",
+    "backNo": "57",
+    "team": "삼성",
+    "birthDate": "2002-05-19"
   },
   {
     "name": "이영빈",
@@ -5212,21 +5212,21 @@
   },
   {
     "name": "이재원",
-    "kboId": "56005",
-    "teamId": 3,
-    "position": "외야수",
-    "backNo": "105",
-    "team": "KT",
-    "birthDate": "2007-04-27"
-  },
-  {
-    "name": "이재원",
     "kboId": "68106",
     "teamId": 1,
     "position": "외야수",
     "backNo": "52",
     "team": "LG",
     "birthDate": "1999-07-17"
+  },
+  {
+    "name": "이재원",
+    "kboId": "56005",
+    "teamId": 3,
+    "position": "외야수",
+    "backNo": "105",
+    "team": "KT",
+    "birthDate": "2007-04-27"
   },
   {
     "name": "이재원",
@@ -5536,21 +5536,21 @@
   },
   {
     "name": "이태양",
-    "kboId": "56366",
-    "teamId": 10,
-    "position": "투수",
-    "backNo": "66",
-    "team": "키움",
-    "birthDate": "2007-03-03"
-  },
-  {
-    "name": "이태양",
     "kboId": "60768",
     "teamId": 6,
     "position": "투수",
     "backNo": "44",
     "team": "KIA",
     "birthDate": "1990-07-03"
+  },
+  {
+    "name": "이태양",
+    "kboId": "56366",
+    "teamId": 10,
+    "position": "투수",
+    "backNo": "66",
+    "team": "키움",
+    "birthDate": "2007-03-03"
   },
   {
     "name": "이태준",
@@ -6922,15 +6922,6 @@
   },
   {
     "name": "최원준",
-    "kboId": "53705",
-    "teamId": 9,
-    "position": "내야수",
-    "backNo": "3",
-    "team": "한화",
-    "birthDate": "2004-05-01"
-  },
-  {
-    "name": "최원준",
     "kboId": "66606",
     "teamId": 3,
     "position": "외야수",
@@ -6946,6 +6937,15 @@
     "backNo": "61",
     "team": "두산",
     "birthDate": "1994-12-21"
+  },
+  {
+    "name": "최원준",
+    "kboId": "53705",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "3",
+    "team": "한화",
+    "birthDate": "2004-05-01"
   },
   {
     "name": "최원태",
