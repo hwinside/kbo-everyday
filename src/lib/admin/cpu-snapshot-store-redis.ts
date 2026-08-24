@@ -1,4 +1,4 @@
-import type { CpuCounterSnapshot, StoredCpuSnapshot } from "@/lib/admin/system-health";
+import type { StoredCpuSnapshot } from "@/lib/admin/system-health";
 import {
   counterAdvanced,
   loadRecentCpuSnapshots as loadLegacyEdgeConfigSnapshots,
