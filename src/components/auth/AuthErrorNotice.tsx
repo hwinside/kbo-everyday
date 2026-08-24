@@ -7,12 +7,11 @@ import {
   AUTH_ERROR_EVENT,
   AUTH_ERROR_MESSAGES,
   AUTH_ERROR_STORAGE_KEY,
-  NAVER_LOGIN_ERROR_PARAM,
+  buildLoginSupportMailto,
   getUserFacingAuthErrorFromUrl,
+  stripAuthErrorNoticeParams,
   type UserFacingAuthErrorCode,
 } from "@/lib/auth-error";
-
-const SUPPORT_EMAIL = "business@keubo.fan";
 
 function isUserFacingAuthErrorCode(
   value: string | null,
@@ -55,12 +54,7 @@ export default function AuthErrorNotice() {
       sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
     }
 
-    if (
-      url.searchParams.has("auth_error") ||
-      url.searchParams.has(NAVER_LOGIN_ERROR_PARAM)
-    ) {
-      url.searchParams.delete("auth_error");
-      url.searchParams.delete(NAVER_LOGIN_ERROR_PARAM);
+    if (stripAuthErrorNoticeParams(url)) {
       window.history.replaceState(window.history.state, "", url.toString());
     }
 
@@ -112,7 +106,7 @@ export default function AuthErrorNotice() {
             {copied && <span className="text-[10px] text-green-400">복사됨</span>}
           </button>
           <a
-            href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(`[로그인 문의] 진단코드 ${diagCode}`)}`}
+            href={buildLoginSupportMailto(diagCode)}
             className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary"
           >
             문의하기

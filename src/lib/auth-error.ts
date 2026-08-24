@@ -17,6 +17,7 @@ export const NAVER_LOGIN_ERROR_CODES = [
   "token_error",
   "profile_error",
   "no_email",
+  "user_lookup_error",
   "create_user_error",
   "session_error",
   "verify_error",
@@ -57,8 +58,9 @@ export const AUTH_ERROR_MESSAGES: Record<UserFacingAuthErrorCode, string> = {
   [KAKAO_EMAIL_UNVERIFIED_CODE]:
     "카카오 계정의 이메일 인증이 확인되지 않아 가입을 진행하지 않았어요. 카카오 계정에서 이메일을 인증한 뒤 다시 시도해 주세요.",
   state_mismatch:
-    "로그인 확인 정보가 기기에 유지되지 않아 완료하지 못했어요. 다시 시도해도 반복되면 아래 진단코드와 함께 문의해 주세요.",
+    "로그인 확인 과정이 이어지지 않았어요. 다시 시도해도 반복되면 아래 진단코드와 함께 문의해 주세요.",
   no_code: NAVER_LOGIN_GENERIC_MESSAGE,
+  user_lookup_error: NAVER_LOGIN_GENERIC_MESSAGE,
   token_error: NAVER_LOGIN_GENERIC_MESSAGE,
   profile_error: NAVER_LOGIN_GENERIC_MESSAGE,
   no_email:
@@ -80,6 +82,7 @@ export const AUTH_ERROR_DIAG_CODES: Partial<Record<UserFacingAuthErrorCode, stri
   token_error: "NV-TOKEN",
   profile_error: "NV-PROFILE",
   no_email: "NV-NOEMAIL",
+  user_lookup_error: "NV-LOOKUP",
   create_user_error: "NV-CREATE",
   session_error: "NV-SESSION",
   verify_error: "NV-VERIFY",
@@ -89,6 +92,27 @@ export const AUTH_ERROR_DIAG_CODES: Partial<Record<UserFacingAuthErrorCode, stri
 
 function isKnownNaverLoginErrorCode(value: string): value is KnownNaverLoginErrorCode {
   return (NAVER_LOGIN_ERROR_CODES as readonly string[]).includes(value);
+}
+
+/** 로그인 실패 유저는 인앱 문의(로그인 필요)를 못 쓰므로 메일 CTA 사용. */
+export const AUTH_SUPPORT_EMAIL = "business@keubo.fan";
+
+/** 문의 CTA href — 진단코드를 제목에 결속(게이트가 직접 검증하는 순수 헬퍼). */
+export function buildLoginSupportMailto(diagCode: string): string {
+  return `mailto:${AUTH_SUPPORT_EMAIL}?subject=${encodeURIComponent(`[로그인 문의] 진단코드 ${diagCode}`)}`;
+}
+
+/**
+ * 오류 표식 파라미터를 URL에서 제거한다(새로고침/공유 시 재표시 방지).
+ * 제거했으면 true — 호출측이 history.replaceState를 수행한다(순수 함수 유지).
+ */
+export function stripAuthErrorNoticeParams(url: URL): boolean {
+  const had =
+    url.searchParams.has("auth_error") ||
+    url.searchParams.has(NAVER_LOGIN_ERROR_PARAM);
+  url.searchParams.delete("auth_error");
+  url.searchParams.delete(NAVER_LOGIN_ERROR_PARAM);
+  return had;
 }
 
 export function getUserFacingAuthError(
