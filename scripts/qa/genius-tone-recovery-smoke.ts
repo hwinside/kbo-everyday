@@ -139,10 +139,27 @@ async function main(): Promise<void> {
     ["야구에서 맞아요.", "야구에서 틀립니다."],
     // copula는 ① 미등록형이며 ②로 우회하지 않는다.
     ["야구에서 이건 거예요.", "야구에서 이건 겁니다."],
+    // 🔴 2026-08-24 삼순 NO-GO 반례. `보여요`는 자동사/타동사가 같은 어절로 개이므로
+    // 어절 exact key 로는 의미를 닫을 수 없다 — 쌍을 통째 fail-close 했다.
+    ["선수의 긴장감이 얼굴에 보여요.", "선수의 긴장감이 얼굴에 보여줍니다."],
+    ["투수의 표정이 보여요.", "투수의 표정이 보여줍니다."],
+    // 자동사를 올바르게 옮긴 문장도 등록된 쌍이 아니므로 폐기한다(과소가 아니라 fail-close).
+    ["투수의 표정이 보여요.", "투수의 표정이 보입니다."],
   ]) {
     assert.equal(isToneRewriteContentPreserving(before, after), false, `보존 위반 통과: ${before} -> ${after}`);
   }
-  ok("② 보존 게이트 — prefix/수치/구단/문장부호/문장수/copula 음성");
+  ok("② 보존 게이트 — prefix/수치/구단/문장부호/문장수/copula/모호어절 음성");
+
+  // 타동사가 문면에 드러난 쌍은 모호하지 않으므로 유지된다 — 과잎 fail-close 가 아님을 고정.
+  assert.equal(
+    isToneRewriteContentPreserving(
+      "투수가 자신감을 보여줘요.",
+      "투수가 자신감을 보여줍니다.",
+    ),
+    true,
+    "모호하지 않은 타동사 쌍까지 닫으면 회수율만 잃는다",
+  );
+  ok("② 보존 게이트 — 비모호 타동사 쌍 양성 유지");
 
   // provider request는 실제 폐기 원문을 데이터로 포함해야 한다. 상수만 존재하면 false-GREEN.
   const originalDraft = "야구에서 이 플레이를 반칙으로 여겨요.";
@@ -191,7 +208,7 @@ async function main(): Promise<void> {
   assert.deepEqual(
     { total: shadow.summary.total, tonePass: shadow.summary.tonePass,
       preservationPass: shadow.summary.preservationPass, accepted: shadow.summary.accepted },
-    { total: 45, tonePass: 33, preservationPass: 23, accepted: 23 },
+    { total: 45, tonePass: 33, preservationPass: 22, accepted: 22 },
   );
   assert.deepEqual(shadow.summary.latencyMs, { min: 932, median: 1208, p95: 1741, max: 1991 });
   assert.deepEqual(
@@ -215,7 +232,7 @@ async function main(): Promise<void> {
     assert.equal(result.preservationPass, preservationPass, `shadow 보존 판정 drift: ${result.index}`);
     assert.equal(result.accepted, tonePass && preservationPass, `shadow accepted drift: ${result.index}`);
   }
-  ok("② 실 provider shadow 45 — accepted 23(51.1%) · p95 1741ms · tokens 13931/7144");
+  ok("② 실 provider shadow 45 — accepted 22(48.9%) · p95 1741ms · tokens 13931/7144");
 
   interface RunResult {
     source: string;

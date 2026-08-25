@@ -46,6 +46,12 @@ const mutations = [
     to: "&& true;",
   },
   {
+    name: "M7 모호쌍 보여요 rewrite allowlist 재주입",
+    file: TONE,
+    re: /const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>\(\[\n/,
+    to: 'const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([\n  ["\ubcf4\uc5ec\uc694", "\ubcf4\uc5ec\uc90d\ub2c8\ub2e4"],\n',
+  },
+  {
     name: "M6 rewrite 토큰 합산 제거",
     file: PIPELINE,
     re: /inputTokens: sumTokens\(llm\.inputTokens, retry\.inputTokens\),/,

@@ -7,9 +7,9 @@
   "summary": {
     "total": 45,
     "tonePass": 33,
-    "preservationPass": 23,
-    "accepted": 23,
-    "successRate": 0.5111111111111111,
+    "preservationPass": 22,
+    "accepted": 22,
+    "successRate": 0.4888888888888889,
     "latencyMs": {
       "min": 932,
       "median": 1208,
@@ -258,8 +258,8 @@
       "rewritten": "야구에서 포심 패스트볼과 투심 패스트볼은 투수가 던지는 대표적인 구종인 패스트볼의 세부 종류입니다. 포심 패스트볼은 공을 쥐는 실밥의 개수에서 유래한 이름으로, 타자의 앞에서 공이 위로 솟구치는 듯한 착시를 줄 정도로 회전수가 많고 직구에 가까운 빠른 구속을 보여주는 구종입니다. 반면에 투심 패스트볼은 실밥 두 개를 잡고 던지며, 공의 회전 방향 특성상 타자 앞에서 공이 미세하게 가라앉거나 옆으로 휘어지는 움직임을 가지는 구종입니다. 두 구종 모두 패스트볼이라는 큰 틀에 속하지만, 타자의 타이밍을 빼앗는 방식과 공의 궤적에서 뚜렷한 차이를 보여줍니다.",
       "providerStatus": 200,
       "tonePass": true,
-      "preservationPass": true,
-      "accepted": true,
+      "preservationPass": false,
+      "accepted": false,
       "elapsedMs": 1250,
       "inputTokens": 351,
       "outputTokens": 198,
