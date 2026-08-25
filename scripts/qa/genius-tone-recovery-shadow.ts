@@ -113,7 +113,12 @@ const output = {
       inputMean: totalInputTokens / total,
       outputMean: totalOutputTokens / total,
     },
-    productionCallUpperBound: "tone_noncompliant 중 ① 미회수 잔존에만 1회; 처리당 최대 1회, 3차 0",
+    // 🔴 2026-08-25 삼순 P1 교정. "3차 0" 은 틀렸다 — stat `RULE_TERM` 분기는
+    //    의도 1 + 일반답 1 이 선행하므로 rewrite 가 붙으면 총 3회가 된다.
+    //    불변은 "rewrite 는 처리당 최대 1회"이며, 총 호출 상한은 경로별로 2회(일반) / 3회(stat)이다.
+    productionCallUpperBound:
+      "tone_noncompliant 중 ① 미회수 · 범위안 잔존에만 rewrite 1회; "
+      + "rewrite 최대 1회 / 총 최대 3회(stat RULE_TERM: 의도+일반답+rewrite), 일반 경로 총 최대 2회",
   },
   results,
 };

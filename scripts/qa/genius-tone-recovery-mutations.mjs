@@ -52,6 +52,12 @@ const mutations = [
     to: 'const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([\n  ["\ubcf4\uc5ec\uc694", "\ubcf4\uc5ec\uc90d\ub2c8\ub2e4"],\n',
   },
   {
+    name: "M8 scope 판정을 tone 뒤로 되돌림(이중결함 rewrite 소비)",
+    file: PIPELINE,
+    re: /  if \(!answerInQuestionScope\(question, toned\)\) \{\n    return \{ kind: "unsure", reason: "out_of_question_scope" \};\n  \}\n  if \(toneFailed\) \{\n    return \{ kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: toned \};\n  \}\n/,
+    to: '  if (toneFailed) {\n    return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: toned };\n  }\n  if (!answerInQuestionScope(question, toned)) {\n    return { kind: "unsure", reason: "out_of_question_scope" };\n  }\n',
+  },
+  {
     name: "M6 rewrite 토큰 합산 제거",
     file: PIPELINE,
     re: /inputTokens: sumTokens\(llm\.inputTokens, retry\.inputTokens\),/,

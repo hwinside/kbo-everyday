@@ -317,6 +317,135 @@ async function main(): Promise<void> {
   }
   ok("종단 fail-close — 내용변경/tone 실패, 3차 호출 0");
 
+  // 🔴 scope-before-rewrite (2026-08-25 삼순 P0). 범위밖 + 톤 **이중결함**은 톤을
+  //    고쳐도 어차피 폐기되므로 rewrite 호출을 소비하면 안 된다.
+  for (const draft of [
+    "오늘 날씨는 맑아요.",              // 열린 활용(① 미등록) + 범위밖
+    "박태환은 수영 선수예요.",          // 한정 앵커 단독 + 범위밖
+    "오늘 주식 시장은 좀 어려워요.",      // 범위밖 denylist
+  ]) {
+    const r = await runWith(json(draft));
+    assert.equal(r.source, "unsure", `이중결함이 서빙됨: ${draft}`);
+    assert.equal(r.answer, UNCLEAR_ANSWER);
+    assert.equal(r.primaryCalls, 1);
+    assert.deepEqual(r.rewriteCalls, [], `범위밖+톤 이중결함이 rewrite 소비: ${draft}`);
+  }
+  // ① 유한 매핑으로 **톤은 닫히지만 범위밖**인 경우도 rewrite 0 · unsure 로 끝난다.
+  {
+    const r = await runWith(json("오늘 날씨는 맑은 하루예요. 산책하기 좋은 날이에요."));
+    assert.equal(r.source, "unsure");
+    assert.deepEqual(r.rewriteCalls, []);
+  }
+  ok("종단 scope-before-rewrite — 범위밖+톤 이중결함 rewriteCalls=0 (4축)");
+
+  // 반면 **톤 하나만** 남은 범위안 답은 여전히 rewrite 1회를 써야 한다 — scope 선검증이
+  // 과잎 fail-close 로 변질되지 않았음을 고정한다(위 ②축과 독립한 대조군).
+  {
+    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const r = await runWith(json(draft), [json("야구에서 보크를 반칙으로 여깁니다.")]);
+    assert.equal(r.source, "llm");
+    assert.deepEqual(r.rewriteCalls, [draft]);
+    ok("종단 scope-before-rewrite — 범위안 톤 단일결함은 rewrite 1회 유지");
+  }
+
+  // ── P1 stat `RULE_TERM` 분기 호출 상한 ────────────────────────────
+  // 🔴 2026-08-25 삼순 P1. 가드 소유 질문이 `RULE_TERM` 으로 오면 **의도 1회 → 일반답 1회**
+  //    이 이미 소비되고, 그 답이 톤 단일결함이면 rewrite 가 1회 더 붙는다.
+  //    즉 이 분기의 참 상한은 **rewrite 최대 1회 / 총 최대 3회** 이다("3차 0" 이 아니다).
+  //    호출수를 산물이 아니라 **카운터**로 재고, 토큰은 세 호출 전부 합산됨을 고정한다.
+  {
+    const STAT_QUESTION = "이대호 홈런 몇개";
+    // ⚠️ ① 유한 매핑으로 닫히는 어미(`있어요`)를 쓰면 rewrite 무대가 사라진다 —
+    //    열린 활용(`여겨요`)이어야 ② 가 실제로 태워진다.
+    const draft = "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여겨요.";
+    let statCalls = 0;
+    let genericCalls = 0;
+    const rewriteCalls: string[] = [];
+    const logs: Array<Record<string, unknown>> = [];
+    const deps: QaDeps = {
+      loadGlossary: async () => [],
+      loadPlayers: async () => [],
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      callLlm: async (
+        _q: string,
+        _ctx: unknown,
+        _roster: unknown,
+        statNumericGuard?: boolean,
+      ) => {
+        if (statNumericGuard) {
+          statCalls += 1;
+          return {
+            text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "RULE_TERM" }),
+            inputTokens: 11, outputTokens: 1,
+          };
+        }
+        genericCalls += 1;
+        return { text: json(draft), inputTokens: 100, outputTokens: 30 };
+      },
+      rewriteLlmTone: async (d: string) => {
+        rewriteCalls.push(d);
+        return {
+          text: json("이대호 선수의 홈런은 야구 팬들에게 명장면으로 여깁니다."),
+          inputTokens: 1000, outputTokens: 300,
+        };
+      },
+      storeLlm: async () => {},
+      log: async (row) => { logs.push(row as unknown as Record<string, unknown>); },
+    } as unknown as QaDeps;
+    const result = await answerQuestion("tone-stat-user", STAT_QUESTION, deps);
+    assert.equal(result.source, "llm");
+    assert.equal(result.answer, "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여깁니다.");
+    // 호출수 상한 — 의도 1 + 일반답 1 + rewrite 1 = 총 3, rewrite 는 1회만.
+    assert.equal(statCalls, 1, "의도 호출은 1회");
+    assert.equal(genericCalls, 1, "일반 재질의는 1회");
+    assert.deepEqual(rewriteCalls, [draft], "rewrite 는 폐기 원문으로 정확히 1회");
+    assert.equal(statCalls + genericCalls + rewriteCalls.length, 3, "분기 총 호출 상한 3");
+    // 토큰은 세 호출 전부 합산 — 과금 관측 누락 방지.
+    assert.equal(logs.at(-1)?.inputTokens, 11 + 100 + 1000);
+    assert.equal(logs.at(-1)?.outputTokens, 1 + 30 + 300);
+    ok("P1 stat RULE_TERM — rewrite 최대 1회 / 총 최대 3회 · 3호출 토큰 합산");
+  }
+
+  // 같은 분기에서 답이 **범위밖+톤** 이중결함이면 rewrite 는 0 — 총 2회에서 멈춰야 한다.
+  {
+    let statCalls = 0;
+    let genericCalls = 0;
+    const rewriteCalls: string[] = [];
+    const deps: QaDeps = {
+      loadGlossary: async () => [],
+      loadPlayers: async () => [],
+      getCache: async () => null,
+      setCache: async () => {},
+      reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      callLlm: async (
+        _q: string, _ctx: unknown, _roster: unknown, statNumericGuard?: boolean,
+      ) => {
+        if (statNumericGuard) {
+          statCalls += 1;
+          return {
+            text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "RULE_TERM" }),
+            inputTokens: 11, outputTokens: 1,
+          };
+        }
+        genericCalls += 1;
+        return { text: json("오늘 날씨는 맑아요."), inputTokens: 100, outputTokens: 30 };
+      },
+      rewriteLlmTone: async (d: string) => {
+        rewriteCalls.push(d);
+        return { text: json("오늘 날씨는 맑습니다."), inputTokens: 1000, outputTokens: 300 };
+      },
+      storeLlm: async () => {},
+      log: async () => {},
+    } as unknown as QaDeps;
+    const result = await answerQuestion("tone-stat-user", "이대호 홈런 몇개", deps);
+    assert.notEqual(result.source, "llm");
+    assert.deepEqual(rewriteCalls, [], "가드 분기에서도 이중결함은 rewrite 0");
+    assert.equal(statCalls + genericCalls + rewriteCalls.length, 2);
+    ok("P1 stat RULE_TERM — 이중결함은 rewrite 0 · 총 2회");
+  }
+
   // seam 미주입·비톤 결함은 rewrite 0.
   {
     const draft = "야구에서 보크를 반칙으로 여겨요.";

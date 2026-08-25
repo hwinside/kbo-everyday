@@ -3762,20 +3762,29 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   //    열린 활용(`만들어져요`·`흥미로워요`)은 어간 복원이 필요해 룰로 닫지 않았고,
   //    그런 문장은 여기서 그대로 폐기되어 ② 재작성으로 간다.
   let toned = answer;
+  let toneFailed = false;
   if (!isBaseballGeniusToneCompliant(answer)) {
     const normalized = normalizeToFormalTone(answer);
     // ① 유한 매핑으로 닫힌 문장은 먼저 고정하고, **잔존 열린 문장만 있는 결과**를
     // ② 입력으로 넘긴다. 원문 전체를 다시 쓰게 하면 이미 안전하게 고친 문장까지 provider가
     // 재작성할 표면이 생긴다. 이 값도 아직 answer가 아니며 서빙 경로는 없다.
-    if (!normalized.compliant) {
-      return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: normalized.answer };
-    }
     toned = normalized.answer;
+    toneFailed = !normalized.compliant;
   }
   // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
   // 정규화된 문자열로 판정한다 — 서빙되는 것이 그것이므로 검증 대상도 그것이어야 한다.
+  //
+  // 🔴 **scope 는 tone 보다 먼저 판정한다** (2026-08-25 삼순 P0). 종전엔 tone 에서 조기
+  //   반환해서 `보크? → 오늘 날씨는 맑아요.` 같은 **범위밖 + 톤** 이중결함이
+  //   `tone_noncompliant` 로 분류돼 rewrite 호출 1회를 소비했다. 그 답은 톤을 고쳐도
+  //   어차피 폐기되므로 호출은 순수 낭비고, "톤 하나만 남은 답에만 재호출" 계약 위반이다.
+  //   정규화 결과(`toned`)로 scope 를 본다 — 서빙될 후보 문자열이 그것이기 때문이며,
+  //   ① 매핑은 마지막 어절 어미만 바꿔 scope 신호(어휘·구단명)를 움직이지 않는다.
   if (!answerInQuestionScope(question, toned)) {
     return { kind: "unsure", reason: "out_of_question_scope" };
+  }
+  if (toneFailed) {
+    return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: toned };
   }
   return { kind: "answer", answer: toned };
 }

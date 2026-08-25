@@ -22,7 +22,7 @@
       "inputMean": 309.5777777777778,
       "outputMean": 158.75555555555556
     },
-    "productionCallUpperBound": "tone_noncompliant 중 ① 미회수 잔존에만 1회; 처리당 최대 1회, 3차 0"
+    "productionCallUpperBound": "tone_noncompliant 중 ① 미회수 · 범위안 잔존에만 rewrite 1회; rewrite 최대 1회 / 총 최대 3회(stat RULE_TERM: 의도+일반답+rewrite), 일반 경로 총 최대 2회"
   },
   "results": [
     {
