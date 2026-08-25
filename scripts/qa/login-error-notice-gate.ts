@@ -111,7 +111,11 @@ export function evaluateDeferredStrip(src: string): string[] {
   const usesStrip = /stripAuthErrorNoticeParams\s*\(/.test(src);
   const usesReplace = src.includes("replaceState");
   if (usesStrip && usesReplace) {
-    const deferred = /requestAnimationFrame\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?replaceState[\s\S]*?\}\s*\)/.test(src);
+    // replaceState가 requestAnimationFrame 뒤에(= 지연 콜백 안)에서만 호출되어야 함.
+    // 동기 replaceState는 rAF가 없거나(idx -1) replaceState보다 뒤에 있어 clobber된다.
+    const rafIdx = src.indexOf("requestAnimationFrame");
+    const replaceIdx = src.indexOf("replaceState");
+    const deferred = rafIdx !== -1 && rafIdx < replaceIdx;
     if (!deferred) violations.push("strip-not-deferred");
   }
   return violations;

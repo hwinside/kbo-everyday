@@ -54,14 +54,21 @@ export default function AuthErrorNotice() {
       sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
     }
 
-    // Next.js App Router re-syncs the canonical URL during hydration, clobbering
-    // a synchronous replaceState here. Defer past the current frame so the strip
-    // survives (verified on deployment: synchronous strip is reverted, rAF sticks).
+    // Next.js App Router re-syncs the canonical URL during hydration and clobbers
+    // a synchronous (or single-frame) replaceState here, so the strip only survives
+    // on a live build if re-asserted across the hydration window. Verified on
+    // deployment: sync/1-frame strip is reverted; bounded rAF re-assert sticks.
     let stripRaf: number | null = null;
     if (stripAuthErrorNoticeParams(url)) {
-      const strippedUrl = url.toString();
-      stripRaf = window.requestAnimationFrame(() => {
-        window.history.replaceState(window.history.state, "", strippedUrl);
+      let frames = 0;
+      stripRaf = window.requestAnimationFrame(function applyStrip() {
+        const current = new URL(window.location.href);
+        if (stripAuthErrorNoticeParams(current)) {
+          window.history.replaceState(window.history.state, "", current.toString());
+        }
+        if (++frames < 20) {
+          stripRaf = window.requestAnimationFrame(applyStrip);
+        }
       });
     }
 
