@@ -10,12 +10,17 @@ import {
   createFavoritesSaver,
   ownedRow,
   tokenForUser,
-  isActiveUser,
+  saverIdentityKey,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
+  getAuthIdentity,
   getActiveAuthUid,
-  setActiveAuthUid,
+  commitAuthIdentity,
+  beginAuthDispatch,
+  commitAuthIdentityIfCurrent,
+  isSameAuthIdentity,
+  __resetAuthIdentityForTest,
 } from "../../src/lib/supabase/auth-identity.ts";
 import {
   parseFavorites,
@@ -367,84 +372,126 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   }
 }
 
-// ── ⑦ commit 시점 활성 사용자 가드 (삼순 6차 재설계): A 토큰으로 이미 시작된 요청이
-//    B 전환 뒤 200/실패로 도착 → tokenForUser/ownedRow 뒤 마지막 관문. 원인:
-//    passive effect 기반 ref는 setUser(B) 후 effect 전에 A 응답이 오면 stale.
-//    → AuthContext 소유 동기 auth-identity(getActiveAuthUid)를 commit 직전 조회.
+// ── ⑦ {uid,epoch} 신원 + revision fence (삼순 7차 재설계) — 실제 auth-identity 모듈 구동 ──
+//    UID 단독은 A→B→A·동일 UID 재인증을 못 가른다 — 옆 A 응답/옥 lastSaved가 UID
+//    비교를 다시 통과해 새 세션을 덮는다. epoch(uid 전환마다 +1)까지 대조해 닫는다.
+//    또 늘은 async syncSession이 최신 onAuthStateChange를 되돌리는 것을 revision으로 차단.
 {
-  // 단위: 일치만 통과, 불일치/결손 전부 fail-close
+  __resetAuthIdentityForTest();
+
+  // commitAuthIdentity: revision 항상 +1, epoch은 uid 변경 시에만 +1
+  const i0 = getAuthIdentity();      // {null,0}
+  commitAuthIdentity("user-a");      // A: epoch 1
+  const iA = getAuthIdentity();
+  commitAuthIdentity("user-a");      // 동일 uid 재게시(토큰갱신) → epoch 유지
+  const iA2 = getAuthIdentity();
   check(
-    "활성사용자: requestUser 일치만 commit 허가(불일치·null 차단)",
-    isActiveUser("user-a", "user-a") === true &&
-    isActiveUser("user-b", "user-a") === false &&
-    isActiveUser(null, "user-a") === false &&
-    isActiveUser(undefined, "user-a") === false &&
-    isActiveUser("user-a", "") === false,
-    `active=b/req=a → ${isActiveUser("user-b", "user-a")}`
+    "epoch: uid 변경시만 +1(동일 uid 재게시는 epoch 유지)",
+    i0.epoch === 0 && iA.uid === "user-a" && iA.epoch === 1 && iA2.epoch === 1,
+    `i0=${i0.epoch} iA=${iA.epoch} iA2=${iA2.epoch}`
   );
 
-  // handler commit 게이트 — **실제 동기 auth-identity 모듈**을 구동(직접 주입 아님).
-  // AuthContext가 auth 이벤트에서 setActiveAuthUid를 동기 호출한다는 계약을
-  // 그대로 재현: 요청 시작 시 requestUserId 캐치 → (전환) setActiveAuthUid(B) →
-  // A 응답 도착 시 getActiveAuthUid()로 commit 게이트. stale 창을 직접 태운다.
-  //   arrival: "success"(A 200 row commit) | "failure"(ownedRow lastSaved 정합 commit)
-  //   switched: 응답 도착 전 B로 전환했는지
-  //   guarded: commit 직전 getActiveAuthUid() 가드 적용 여부(false=구 설계)
-  const runCommitGate = ({ arrival, switched, guarded }) => {
-    setActiveAuthUid("user-a");            // A 로그인 상태
-    const requestUserId = getActiveAuthUid(); // 요청 시작 시 동기 캐치(=A)
-    const local = { fav: "B-orig" };       // B 화면이 보고 있는 로컬(전환 후)
-    if (switched) setActiveAuthUid("user-b"); // AuthContext가 동기로 B로 전환
-    // ── A 응답 도착(이 시점엔 이미 전환 가능) ──
-    if (arrival === "success") {
-      const savedRowForA = { id: requestUserId, favorite_players: "A-data" };
-      const owned = ownedRow(savedRowForA, requestUserId); // A 기준 → 통과(A row)
-      // 구 설계(guarded=false)는 캐치한 requestUserId 를 활성으로 간주해 항상 commit.
-      const activeNow = guarded ? getActiveAuthUid() : requestUserId;
-      if (isActiveUser(activeNow, requestUserId ?? "") && owned) local.fav = owned.favorite_players;
+  // isSameAuthIdentity: uid+epoch 정확 일치만 통과
+  check(
+    "isSameAuthIdentity: uid+epoch 일치만 true(uid 같고 epoch 다르면 false)",
+    isSameAuthIdentity({ uid: "user-a", epoch: 1 }) === true &&
+    isSameAuthIdentity({ uid: "user-a", epoch: 0 }) === false &&
+    isSameAuthIdentity({ uid: "user-b", epoch: 1 }) === false &&
+    isSameAuthIdentity(null) === false &&
+    isSameAuthIdentity({ uid: null, epoch: 1 }) === false,
+    `same(A,1)=${isSameAuthIdentity({ uid: "user-a", epoch: 1 })}`
+  );
+
+  // commit 게이트 — 실제 모듈로 A→B→A / 동일 UID 재인증 재현.
+  //   scenario: "AtoBtoA" | "reauthSameUid"   arrival: "success"|"failure"
+  //   guarded: true=epoch 대조(isSameAuthIdentity) | false=uid만(구 설계)
+  const runIdentityGate = ({ scenario, arrival, guarded }) => {
+    __resetAuthIdentityForTest();
+    commitAuthIdentity("user-a");        // A 세션(epoch 1)
+    const reqSnap = getAuthIdentity();   // 요청 시작 스냅샷 {A,1}
+    const local = { fav: "new-local" };  // 전환/재인증 뒤 화면 로컬
+    if (scenario === "AtoBtoA") {
+      commitAuthIdentity("user-b");      // B (epoch 2)
+      commitAuthIdentity("user-a");      // 다시 A (epoch 3)
     } else {
-      // failure: lastSaved(= A 값)로 정합 commit 경로
-      const lastSavedForA = { id: requestUserId, favorite_players: "A-data" };
-      const activeNow = guarded ? getActiveAuthUid() : requestUserId;
-      if (isActiveUser(activeNow, requestUserId ?? "")) {
-        const owned = ownedRow(lastSavedForA, requestUserId ?? "");
-        if (owned) local.fav = owned.favorite_players;
-      }
+      commitAuthIdentity(null);          // 로그아웃 (epoch 2)
+      commitAuthIdentity("user-a");      // 재로그인 A (epoch 3)
     }
+    // A 요청의 늘은 응답(성공=A row / 실패=lastSaved A) 도착
+    const rowForA = { id: reqSnap.uid, favorite_players: "A-data" };
+    const owned = ownedRow(rowForA, reqSnap.uid); // uid 기준 → 통과(A row)
+    const pass = guarded
+      ? isSameAuthIdentity(reqSnap)               // epoch까지 대조 → false
+      : (getActiveAuthUid() === reqSnap.uid);     // 구 설계: uid만 → true(A===A)
+    if (pass && owned) local.fav = owned.favorite_players; // commit
+    void arrival;
     return local.fav;
   };
 
-  // GREEN: A in-flight → 동기 B 전환 → A **200** 도착 → B 로컬 불변
+  for (const scenario of ["AtoBtoA", "reauthSameUid"]) {
+    for (const arrival of ["success", "failure"]) {
+      check(
+        `신원 GREEN(${scenario}/${arrival}): epoch 대조로 옆 A 응답 commit 차단 → 새 로컬 불변`,
+        runIdentityGate({ scenario, arrival, guarded: true }) === "new-local",
+        `local=${runIdentityGate({ scenario, arrival, guarded: true })}`
+      );
+      check(
+        `신원 mutation-RED(${scenario}/${arrival}): uid만 비교(구 설계) → 옆 A가 새 로컬 오염`,
+        runIdentityGate({ scenario, arrival, guarded: false }) === "A-data",
+        `local=${runIdentityGate({ scenario, arrival, guarded: false })}`
+      );
+    }
+  }
+
+  // revision fence — 늘은 syncSession이 최신 onAuthStateChange를 되돌리지 못한다
+  {
+    __resetAuthIdentityForTest();
+    commitAuthIdentity("user-a");        // 초기 A
+    const ticket = beginAuthDispatch();  // syncSession 시작(옥 쿼키=A 스냅샷)
+    commitAuthIdentity("user-b");        // 그 사이 onAuthStateChange(B) 도착
+    const applied = commitAuthIdentityIfCurrent("user-a", ticket); // 늘은 syncSession 결과(A)
+    check(
+      "revision fence GREEN: 늘은 syncSession(A) 폐기 → 활성 B 유지",
+      applied === false && getActiveAuthUid() === "user-b",
+      `applied=${applied} active=${getActiveAuthUid()}`
+    );
+  }
+  {
+    // mutation-RED: fence 없이 무조건 게시하면 옥 A가 최신 B를 되돌린다
+    __resetAuthIdentityForTest();
+    commitAuthIdentity("user-a");
+    beginAuthDispatch();
+    commitAuthIdentity("user-b");        // 최신 B
+    commitAuthIdentity("user-a");        // fence 없는 무조건 게시 시뮬 → A 재게시
+    check(
+      "revision fence mutation-RED: fence 없으면 늘은 A 게시가 B를 되돌림(구 설계=결함)",
+      getActiveAuthUid() === "user-a",
+      `active=${getActiveAuthUid()}`
+    );
+  }
+  {
+    // GREEN: 경쟁 없으면(티켓 이후 이벤트 없음) syncSession 결과 정상 적용
+    __resetAuthIdentityForTest();
+    const ticket = beginAuthDispatch();
+    const applied = commitAuthIdentityIfCurrent("user-a", ticket);
+    check(
+      "revision fence GREEN: 경쟁 없으면 syncSession 결과 정상 적용",
+      applied === true && getActiveAuthUid() === "user-a",
+      `applied=${applied} active=${getActiveAuthUid()}`
+    );
+  }
+
+  // saver 격리 — uid:epoch 키. 같은 uid라도 epoch 다르면 다른 saver(옥 lastSaved 격리)
   check(
-    "활성사용자 GREEN(동기모듈): A in-flight→B 전환→A 200 도착 → B 로컬 불변",
-    runCommitGate({ arrival: "success", switched: true, guarded: true }) === "B-orig",
-    `local=${runCommitGate({ arrival: "success", switched: true, guarded: true })}`
+    "saver 격리: uid:epoch 키 — 동일 uid·다른 epoch은 다른 키, 동일 신원은 같은 키",
+    saverIdentityKey({ uid: "user-a", epoch: 1 }) === "user-a:1" &&
+    saverIdentityKey({ uid: "user-a", epoch: 1 }) === saverIdentityKey({ uid: "user-a", epoch: 1 }) &&
+    saverIdentityKey({ uid: "user-a", epoch: 1 }) !== saverIdentityKey({ uid: "user-a", epoch: 2 }) &&
+    saverIdentityKey({ uid: "user-a", epoch: 1 }) !== saverIdentityKey({ uid: "user-b", epoch: 1 }),
+    `A1=${saverIdentityKey({ uid: "user-a", epoch: 1 })} A2=${saverIdentityKey({ uid: "user-a", epoch: 2 })}`
   );
-  // GREEN: A in-flight → 동기 B 전환 → A **실패** 도착 → B 로컬 불변(실패 commit도 차단)
-  check(
-    "활성사용자 GREEN(동기모듈): A in-flight→B 전환→A 실패 도착 → B 로컬 불변",
-    runCommitGate({ arrival: "failure", switched: true, guarded: true }) === "B-orig",
-    `local=${runCommitGate({ arrival: "failure", switched: true, guarded: true })}`
-  );
-  // GREEN: 전환 없으면(활성=req) 정상 commit
-  check(
-    "활성사용자 GREEN(동기모듈): 전환 없음 → 정상 commit(A-data)",
-    runCommitGate({ arrival: "success", switched: false, guarded: true }) === "A-data",
-    `local=${runCommitGate({ arrival: "success", switched: false, guarded: true })}`
-  );
-  // mutation-RED: 구 설계(캐치 requestUserId를 활성으로 간주 = passive/stale)는
-  // 동기 전환 후에도 A 값을 B 로컬에 실제로 덮어쓴다(성공·실패 둘 다)
-  check(
-    "활성사용자 mutation-RED(동기모듈): stale 활성 간주 → A 200이 B 로컬 오염(구 설계=결함)",
-    runCommitGate({ arrival: "success", switched: true, guarded: false }) === "A-data",
-    `local=${runCommitGate({ arrival: "success", switched: true, guarded: false })}`
-  );
-  check(
-    "활성사용자 mutation-RED(동기모듈): stale 활성 간주 → A 실패가 B 로컬 오염(구 설계=결함)",
-    runCommitGate({ arrival: "failure", switched: true, guarded: false }) === "A-data",
-    `local=${runCommitGate({ arrival: "failure", switched: true, guarded: false })}`
-  );
-  setActiveAuthUid(null); // 다른 블록에 상태 누수 방지
+
+  __resetAuthIdentityForTest(); // 다른 블록에 상태 누수 방지
 }
 
 // ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──

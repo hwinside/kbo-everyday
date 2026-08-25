@@ -5,10 +5,12 @@ import {
   ownedRow,
   tokenForUser,
   isActiveUser,
+  saverIdentityKey,
   ProfileSaveError,
   GENERIC_MESSAGE,
   type FavoritesSaver,
   type FavoriteSaveUpdates,
+  type AuthSaveIdentity,
 } from "@/lib/profile/favorites-saver-core";
 
 /**
@@ -25,7 +27,8 @@ import {
  * 가드를 다시 태운다.
  */
 
-export { ProfileSaveError, ownedRow, isActiveUser };
+export { ProfileSaveError, ownedRow, isActiveUser, saverIdentityKey };
+export type { AuthSaveIdentity };
 
 /** 서버가 반환한 저장된 profiles row 중 호출자가 쓰는 필드. */
 export interface SavedProfileRow {
@@ -36,12 +39,18 @@ export interface SavedProfileRow {
 
 const REQUEST_TIMEOUT_MS = 10000;
 
-// user ID별 saver — 직렬화 체인과 lastSaved가 계정 단위로 격리된다.
+// uid:epoch 별 saver — 계정 전환·동일 UID 재인증(epoch 변경)마다 fresh 인스턴스라
+// 예전 세션의 lastSaved가 새 세션으로 넘어올 수 없다(삼순 7차). 한 탭엔 한 시점
+// 하나의 신원만 활성이므로 새 키 생성 시 이전 신원 엔트리를 정리(in-flight 저장은
+// 클로저로 saver 참조를 이미 보유 — Map 삭제가 진행 중 체인을 깨지 않는다).
 const savers = new Map<string, FavoritesSaver<SavedProfileRow>>();
 
-function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
-  const existing = savers.get(userId);
+function saverFor(identity: AuthSaveIdentity): FavoritesSaver<SavedProfileRow> {
+  const key = saverIdentityKey(identity);
+  const existing = savers.get(key);
   if (existing) return existing;
+  const userId = identity.uid;
+  savers.clear(); // 이전 epoch saver 정리(활성 신원은 항상 1개) — 옥 lastSaved 격리
   // 토큰 소유 fail-close(삼순 5차): 초기 세션·401 refresh 모두 세션의 user.id가
   // 이 saver의 userId와 일치할 때만 토큰 반환 — 계정 전환 중 B 토큰으로 PUT해
   // B DB를 갱신하는 side effect를 PUT **전**에 차단(tokenForUser).
@@ -78,25 +87,26 @@ function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
     },
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
-  savers.set(userId, created);
+  savers.set(key, created);
   return created;
 }
 
 /**
- * 최애선수(+옵션 팀) 저장. userId는 현재 로그인 사용자(user.id) — saver 격리
- * 키이자 반환 row 소유 검증 기준.
+ * 최애선수(+옵션 팀) 저장. identity는 요청 시작 시 캡처한 `{uid, epoch}` — saver 격리
+ * 키(uid:epoch)이자 반환 row 소유 검증 기준(uid). epoch 격리로 계정 전환·동일 UID
+ * 재인증 후 옥 lastSaved가 새 세션으로 넘어오지 않는다(삼순 7차).
  * @returns 저장된 row. 더 최신 저장 요청에 의해 대체(superseded)됐으면 null —
  *          호출자는 아무 것도 commit하지 않고 최신 요청의 결과를 기다린다.
  * @throws ProfileSaveError 저장 실패(needsRelogin이면 재로그인 안내).
- *         반환 row가 userId 소유가 아니면 fail-close 실패 처리.
+ *         반환 row가 uid 소유가 아니면 fail-close 실패 처리.
  */
 export async function saveMyFavorites(
   updates: FavoriteSaveUpdates & { favorite_players: FavoritePlayer[] },
-  userId: string
+  identity: AuthSaveIdentity
 ): Promise<SavedProfileRow | null> {
-  const outcome = await saverFor(userId).save(updates);
+  const outcome = await saverFor(identity).save(updates);
   if (outcome.superseded) return null;
-  const owned = ownedRow(outcome.profile, userId);
+  const owned = ownedRow(outcome.profile, identity.uid);
   if (!owned) throw new ProfileSaveError(GENERIC_MESSAGE); // 소유 불일치 — commit 금지
   return owned;
 }

@@ -173,6 +173,21 @@ export function isActiveUser(
   return activeUserId === requestUserId;
 }
 
+/**
+ * 저장 요청 신원 (삼순 7차) — uid + epoch(uid 전환·동일 UID 재인증마다 증가).
+ * saver 격리 키이자 반환 row 소유 검증 기준(uid). 순수 모듈에 둔다 —
+ * 브라우저 client 의존 없이 tsx/node에서 직접 태우기 위함.
+ */
+export interface AuthSaveIdentity {
+  uid: string;
+  epoch: number;
+}
+
+/** saver 격리 키 — `uid:epoch`. 동일 uid·다른 epoch = 다른 saver(옥 lastSaved 격리). */
+export function saverIdentityKey(identity: AuthSaveIdentity): string {
+  return `${identity.uid}:${identity.epoch}`;
+}
+
 /** 세션 모양 — supabase Session의 필요 필드만. */
 export interface SessionLike {
   access_token?: string | null;

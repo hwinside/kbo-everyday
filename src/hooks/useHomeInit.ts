@@ -3,8 +3,8 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
-import { saveMyFavorites, ownedRow, isActiveUser, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
-import { getActiveAuthUid } from "@/lib/supabase/auth-identity";
+import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { getAuthIdentity, isSameAuthIdentity } from "@/lib/supabase/auth-identity";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
@@ -267,19 +267,21 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   async function handlePlayerSelect(players: FavoritePlayer[]) {
     setShowPlayerSelect(false);
     const seq = ++favSaveSeqRef.current;
-    const requestUserId = user?.id ?? null; // 요청 시작 시점 사용자 — commit 직전 활성 사용자와 대조
+    // 요청 시작 시점 신원 스냅샷{uid,epoch} — commit 직전 동일 epoch 대조(A→B→A·동일 UID 재인증 차단)
+    const reqIdentity = getAuthIdentity();
+    const reqUid = reqIdentity.uid ?? user?.id ?? "";
+    const reqSnap = { uid: reqUid, epoch: reqIdentity.epoch };
     if (user) {
       let saved;
       try {
-        saved = await saveMyFavorites({ favorite_players: players }, user.id);
+        saved = await saveMyFavorites({ favorite_players: players }, reqSnap);
       } catch (e) {
         if (seq !== favSaveSeqRef.current) return; // 더 최신 저장 진행 중 — 이 응답 폐기
-        // 계정 전환 가드: A 요청 in-flight 중 B로 전환됐으면 실패 commit도 차단(B 로컬·CTA·오알림 오염 방지).
-        // 동기 getActiveAuthUid() — AuthContext auth 이벤트 tick에 갱신된 값(passive effect 아님).
-        if (!isActiveUser(getActiveAuthUid(), requestUserId ?? "")) return;
+        // 계정 전환 가드: 요청 시작 신원과 현재 신원(uid+epoch) 불일치면 실패 commit도 차단(B 로컬·CTA·오알림 오염 방지).
+        if (!isSameAuthIdentity(reqSnap)) return;
         // 마지막 성공값(= DB 현재값)이 **현재 계정 소유일 때만** 로컬 정합 —
         // A 성공/B 실패 불일치 방지 + 계정 전환 오염 fail-close.
-        const row = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, requestUserId ?? "") : null;
+        const row = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, reqUid) : null;
         if (row) {
           const favs = Array.isArray(row.favorite_players) ? row.favorite_players : [];
           setFavoritePlayers(favs);
@@ -294,8 +296,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
       }
       if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== favSaveSeqRef.current) return;
-      // 계정 전환 가드: A 200 응답이 B 전환 뒤 도착하면 B 로컬을 A로 덮지 않는다(동기 조회)
-      if (!isActiveUser(getActiveAuthUid(), requestUserId ?? "")) return;
+      // 계정 전환 가드: A 200 응답이 B 전환/재인증 뒤 도착하면 동일 epoch가 아니므로 skip
+      if (!isSameAuthIdentity(reqSnap)) return;
       // 서버가 반환한 저장된 row(exact)로만 로컬 확정
       const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
       setFavoritePlayers(savedPlayers);
