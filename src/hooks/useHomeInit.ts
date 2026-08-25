@@ -4,7 +4,7 @@ import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/l
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
 import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
-import { getAuthIdentity, isSameAuthIdentity } from "@/lib/supabase/auth-identity";
+import { getAuthIdentity, isSameAuthIdentity, isAuthIdentityForUser } from "@/lib/supabase/auth-identity";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
@@ -269,9 +269,12 @@ export function useHomeInit(options?: UseHomeInitOptions) {
     const seq = ++favSaveSeqRef.current;
     // 요청 시작 시점 신원 스냅샷{uid,epoch} — commit 직전 동일 epoch 대조(A→B→A·동일 UID 재인증 차단)
     const reqIdentity = getAuthIdentity();
-    const reqUid = reqIdentity.uid ?? user?.id ?? "";
-    const reqSnap = { uid: reqUid, epoch: reqIdentity.epoch };
     if (user) {
+      // PUT 전 fail-close(삼순 8차): auth 모듈 신원이 현재(uid+epoch)이고 React user.id와
+      // uid가 일치할 때만 저장. 전환 중 stale closure(모듈 B / React A)면 저장 안 함.
+      if (!isAuthIdentityForUser(reqIdentity, user.id)) return;
+      const reqUid = reqIdentity.uid as string;
+      const reqSnap = { uid: reqUid, epoch: reqIdentity.epoch };
       let saved;
       try {
         saved = await saveMyFavorites({ favorite_players: players }, reqSnap);

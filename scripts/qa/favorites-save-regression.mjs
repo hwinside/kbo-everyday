@@ -10,7 +10,6 @@ import {
   createFavoritesSaver,
   ownedRow,
   tokenForUser,
-  saverIdentityKey,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
@@ -20,6 +19,7 @@ import {
   beginAuthDispatch,
   commitAuthIdentityIfCurrent,
   isSameAuthIdentity,
+  isAuthIdentityForUser,
   __resetAuthIdentityForTest,
 } from "../../src/lib/supabase/auth-identity.ts";
 import {
@@ -53,9 +53,9 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       return { status: 200, body: okBody(updates.favorite_players) };
     },
   });
-  const pA = saver.save({ favorite_players: fav("A") });
+  const pA = saver.save({ favorite_players: fav("A") }, 1);
   await sleep(30); // A가 서버 호출에 진입(in-flight)한 뒤 B 접수
-  const pB = saver.save({ favorite_players: fav("B") });
+  const pB = saver.save({ favorite_players: fav("B") }, 1);
   const [rA, rB] = await Promise.all([pA, pB]);
   check(
     "serialize: delayed-A/fast-B → DB 최종=B",
@@ -81,9 +81,9 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     },
   });
   const [rA, rB, rC] = await Promise.all([
-    saver.save({ favorite_players: fav("A") }),
-    saver.save({ favorite_players: fav("B") }),
-    saver.save({ favorite_players: fav("C") }),
+    saver.save({ favorite_players: fav("A") }, 1),
+    saver.save({ favorite_players: fav("B") }, 1),
+    saver.save({ favorite_players: fav("C") }, 1),
   ]);
   check(
     "serialize: burst A,B,C → 최종 반영=C, 중간은 superseded(서버 미도달)",
@@ -104,9 +104,9 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       return { status: 200, body: okBody(updates.favorite_players) };
     },
   });
-  const pA = saver.save({ favorite_players: fav("A") });
+  const pA = saver.save({ favorite_players: fav("A") }, 1);
   await sleep(10);
-  const pB = saver.save({ favorite_players: fav("B") });
+  const pB = saver.save({ favorite_players: fav("B") }, 1);
   const rA = await pA.then(() => "resolved", (e) => e);
   const rB = await pB;
   check(
@@ -127,7 +127,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     authTimeoutMs: 100,
   });
   const t0 = Date.now();
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   const elapsed = Date.now() - t0;
   check(
     "bounded: never-settle auth → 상한 내 needsRelogin 종료",
@@ -144,7 +144,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     requestTimeoutMs: 100,
   });
   const t0 = Date.now();
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   const elapsed = Date.now() - t0;
   check(
     "bounded: never-settle fetch → 상한 내 실패 종료(재로그인 아님)",
@@ -166,7 +166,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       return { status: 200, body: okBody(updates.favorite_players) };
     },
   });
-  const r = await saver.save({ favorite_players: fav("A") });
+  const r = await saver.save({ favorite_players: fav("A") }, 1);
   check(
     "401: refresh 1회+재시도 1회로 성공 (put=2, refresh=1)",
     r.superseded === false && puts === 2 && refreshes === 1,
@@ -181,7 +181,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     refreshToken: async () => "t2",
     putFavorites: async () => { puts++; return { status: 401, body: null }; },
   });
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   check(
     "401×2: needsRelogin으로 종료, put 정확히 2회",
     err instanceof ProfileSaveError && err.needsRelogin === true && puts === 2,
@@ -196,7 +196,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     refreshToken: async () => null,
     putFavorites: async () => { puts++; return { status: 401, body: null }; },
   });
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   check(
     "401+refresh실패: needsRelogin, put 1회",
     err instanceof ProfileSaveError && err.needsRelogin === true && puts === 1,
@@ -210,7 +210,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     refreshToken: async () => null,
     putFavorites: async () => ({ status: 200, body: { ok: true } }),
   });
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   check("200이어도 저장 row 없으면 실패 처리", err instanceof ProfileSaveError, String(err?.name));
 }
 
@@ -226,9 +226,9 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       return { status: 500, body: null };
     },
   });
-  const pA = saver.save({ favorite_players: fav("A") });
+  const pA = saver.save({ favorite_players: fav("A") }, 1);
   await sleep(10); // A in-flight 진입 후 B 접수
-  const pB = saver.save({ favorite_players: fav("B") });
+  const pB = saver.save({ favorite_players: fav("B") }, 1);
   const rA = await pA;
   const errB = await pB.then(() => null, (e) => e);
   check(
@@ -246,7 +246,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     refreshToken: async () => null,
     putFavorites: async () => ({ status: 500, body: null }),
   });
-  const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+  const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
   check("첫 저장 실패: lastSaved=null(기존값 유지)", err instanceof ProfileSaveError && err.lastSaved === null, `lastSaved=${err?.lastSaved}`);
 }
 
@@ -262,8 +262,8 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   });
   const saverA = createFavoritesSaver(mkDeps(false)); // 계정 A용 인스턴스
   const saverB = createFavoritesSaver(mkDeps(true)); // 계정 B용 인스턴스
-  const rA = await saverA.save({ favorite_players: fav("A") });
-  const errB = await saverB.save({ favorite_players: fav("B") }).then(() => null, (e) => e);
+  const rA = await saverA.save({ favorite_players: fav("A") }, 1);
+  const errB = await saverB.save({ favorite_players: fav("B") }, 1).then(() => null, (e) => e);
   check(
     "계정격리 GREEN: A계정 성공 후 B계정 첫 실패 → B의 lastSaved=null(오염 불가)",
     rA.superseded === false && errB instanceof ProfileSaveError && errB.lastSaved === null,
@@ -282,8 +282,8 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
         : { status: 500, body: null };
     },
   });
-  await shared.save({ favorite_players: fav("A") }); // 계정 A 성공
-  const errShared = await shared.save({ favorite_players: fav("B") }).then(() => null, (e) => e); // 계정 B 실패(공유 캐시)
+  await shared.save({ favorite_players: fav("A") }, 1); // 계정 A 성공
+  const errShared = await shared.save({ favorite_players: fav("B") }, 1).then(() => null, (e) => e); // 계정 B 실패(공유 캐시)
   const leaked = errShared?.lastSaved;
   check(
     "계정격리 mutation-RED 실증: 공유 saver는 B 실패에 A계정 row를 실어 보냄(구 설계=결함)",
@@ -325,7 +325,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       putFavorites: async () => { puts++; db["user-b"] = "overwritten"; return { status: 200, body: okBody([]) }; },
       authTimeoutMs: 100,
     });
-    const err = await saverA.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+    const err = await saverA.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
     check(
       "결속 GREEN: A enqueue→B 전환 → PUT 0회·B DB 불변·needsRelogin",
       err instanceof ProfileSaveError && err.needsRelogin === true && puts === 0 && db["user-b"] === "orig",
@@ -341,7 +341,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       refreshToken: async () => tokenForUser(sessB, "user-a"), // refresh 결과는 B 세션 → null
       putFavorites: async () => { puts++; return { status: 401, body: null }; },
     });
-    const err = await saver.save({ favorite_players: fav("A") }).then(() => null, (e) => e);
+    const err = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
     check(
       "결속 GREEN: A 401→refresh가 B 세션 → 재시도 0(put 1회)·needsRelogin",
       err instanceof ProfileSaveError && err.needsRelogin === true && puts === 1,
@@ -363,7 +363,7 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
         return { status: 200, body: { ok: true, profile: { id: "user-b", team_id: 1, favorite_players: [] } } };
       },
     });
-    await unbound.save({ favorite_players: fav("A") }).catch(() => {});
+    await unbound.save({ favorite_players: fav("A") }, 1).catch(() => {});
     check(
       "결속 mutation-RED 실증: 무검증 토큰 구현은 B DB를 실제로 갱신(구 설계=결함)",
       puts === 1 && db["user-b"] === "overwritten-by-A-request",
@@ -481,15 +481,109 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     );
   }
 
-  // saver 격리 — uid:epoch 키. 같은 uid라도 epoch 다르면 다른 saver(옥 lastSaved 격리)
-  check(
-    "saver 격리: uid:epoch 키 — 동일 uid·다른 epoch은 다른 키, 동일 신원은 같은 키",
-    saverIdentityKey({ uid: "user-a", epoch: 1 }) === "user-a:1" &&
-    saverIdentityKey({ uid: "user-a", epoch: 1 }) === saverIdentityKey({ uid: "user-a", epoch: 1 }) &&
-    saverIdentityKey({ uid: "user-a", epoch: 1 }) !== saverIdentityKey({ uid: "user-a", epoch: 2 }) &&
-    saverIdentityKey({ uid: "user-a", epoch: 1 }) !== saverIdentityKey({ uid: "user-b", epoch: 1 }),
-    `A1=${saverIdentityKey({ uid: "user-a", epoch: 1 })} A2=${saverIdentityKey({ uid: "user-a", epoch: 2 })}`
-  );
+  // cross-epoch 직렬화: UID별 체인이 epoch를 넘어 유지 → slow-old(e1)/fast-new(e2) DB 최종=new (삼순 8차)
+  {
+    const applied = [];
+    const delays = { A: 120, B: 5 };
+    const mkDeps = () => ({
+      getToken: async () => "t",
+      refreshToken: async () => null,
+      putFavorites: async (_t, updates) => {
+        const id = updates.favorite_players[0].playerId;
+        await sleep(delays[id]);
+        applied.push(id);
+        return { status: 200, body: okBody(updates.favorite_players) };
+      },
+    });
+    const saver = createFavoritesSaver(mkDeps());
+    const pA = saver.save({ favorite_players: fav("A") }, 1); // epoch1 느린 PUT
+    await sleep(20);
+    const pB = saver.save({ favorite_players: fav("B") }, 2); // epoch2 빠른 PUT
+    await Promise.all([pA, pB]);
+    check(
+      "cross-epoch GREEN: UID 체인 유지 → slow-old(e1)/fast-new(e2) DB 최종=new(B)",
+      applied.length === 2 && applied[applied.length - 1] === "B",
+      `applied=${applied.join(",")}`
+    );
+  }
+  {
+    // mutation-RED: uid:epoch로 체인을 쪼개면(구 설계) 두 saver가 동시 진행 →
+    // slow-old(A)가 fast-new(B) 뒤 완료해 DB가 A로 되돌아간다.
+    const applied = [];
+    const delays = { A: 120, B: 5 };
+    const mkDeps = () => ({
+      getToken: async () => "t",
+      refreshToken: async () => null,
+      putFavorites: async (_t, updates) => {
+        const id = updates.favorite_players[0].playerId;
+        await sleep(delays[id]);
+        applied.push(id);
+        return { status: 200, body: okBody(updates.favorite_players) };
+      },
+    });
+    const saverE1 = createFavoritesSaver(mkDeps());
+    const saverE2 = createFavoritesSaver(mkDeps()); // 구 설계: epoch마다 새 saver(체인 분리)
+    const pA = saverE1.save({ favorite_players: fav("A") }, 1);
+    await sleep(20);
+    const pB = saverE2.save({ favorite_players: fav("B") }, 2);
+    await Promise.all([pA, pB]);
+    check(
+      "cross-epoch mutation-RED: 체인 분리(구 설계)면 slow-old(A)가 DB 최종을 되돌림",
+      applied.length === 2 && applied[applied.length - 1] === "A",
+      `applied=${applied.join(",")}`
+    );
+  }
+
+  // lastSaved epoch 격리: 같은 epoch 실패는 그 epoch 성공값, 다른 epoch 실패는 null
+  {
+    let call = 0;
+    const saver = createFavoritesSaver({
+      getToken: async () => "t",
+      refreshToken: async () => null,
+      putFavorites: async (_t, updates) => {
+        call += 1;
+        if (call >= 2) return { status: 500, body: null }; // 1번째만 성공
+        return { status: 200, body: okBody(updates.favorite_players) };
+      },
+    });
+    await saver.save({ favorite_players: fav("A") }, 1); // epoch1 성공 → lastSaved=A
+    const errSame = await saver.save({ favorite_players: fav("A") }, 1).then(() => null, (e) => e);
+    check(
+      "lastSaved GREEN: 같은 epoch 실패 → lastSaved=그 epoch 성공값(A, 정합 가능)",
+      errSame instanceof ProfileSaveError && errSame.lastSaved?.favorite_players?.[0]?.playerId === "A",
+      `lastSaved=${errSame?.lastSaved?.favorite_players?.[0]?.playerId}`
+    );
+    const errNew = await saver.save({ favorite_players: fav("B") }, 2).then(() => null, (e) => e);
+    check(
+      "lastSaved GREEN: 다른 epoch 실패 → lastSaved=null(옥 epoch 성공값 격리)",
+      errNew instanceof ProfileSaveError && errNew.lastSaved === null,
+      `lastSaved=${JSON.stringify(errNew?.lastSaved)}`
+    );
+  }
+
+  // PUT 전 fail-close: auth 모듈 신원과 React user.id 불일치(stale closure) 차단
+  {
+    __resetAuthIdentityForTest();
+    commitAuthIdentity("user-b"); // auth 모듈은 B로 전환(epoch 1)
+    const modB = getAuthIdentity(); // {B,1}
+    check(
+      "stale-mismatch GREEN: 모듈 B / React A → isAuthIdentityForUser false(저장 안 함)",
+      isAuthIdentityForUser(modB, "user-a") === false &&
+      isAuthIdentityForUser(modB, "user-b") === true &&
+      isAuthIdentityForUser({ uid: "user-b", epoch: 999 }, "user-b") === false && // epoch 불일치
+      isAuthIdentityForUser(modB, null) === false,
+      `modB/reactA=${isAuthIdentityForUser(modB, "user-a")}`
+    );
+    // mutation-RED: 구 설계(reqIdentity.uid ?? user.id, 불일치 무검증)는 모듈 B로 저장 진행
+    const oldReqUid = modB.uid ?? "user-a"; // ?? 폴백은 모듈 B를 채택
+    const oldWouldSave = !!oldReqUid;         // user 존재하면 불일치 무시하고 저장
+    check(
+      "stale-mismatch mutation-RED: 구 설계은 React A와 불일치어도 모듈 B(uid=user-b)로 저장 진행",
+      oldWouldSave === true && oldReqUid === "user-b",
+      `oldReqUid=${oldReqUid} wouldSave=${oldWouldSave}`
+    );
+    __resetAuthIdentityForTest();
+  }
 
   __resetAuthIdentityForTest(); // 다른 블록에 상태 누수 방지
 }

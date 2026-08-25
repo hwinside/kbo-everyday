@@ -5,7 +5,6 @@ import {
   ownedRow,
   tokenForUser,
   isActiveUser,
-  saverIdentityKey,
   ProfileSaveError,
   GENERIC_MESSAGE,
   type FavoritesSaver,
@@ -27,7 +26,7 @@ import {
  * 가드를 다시 태운다.
  */
 
-export { ProfileSaveError, ownedRow, isActiveUser, saverIdentityKey };
+export { ProfileSaveError, ownedRow, isActiveUser };
 export type { AuthSaveIdentity };
 
 /** 서버가 반환한 저장된 profiles row 중 호출자가 쓰는 필드. */
@@ -39,18 +38,14 @@ export interface SavedProfileRow {
 
 const REQUEST_TIMEOUT_MS = 10000;
 
-// uid:epoch 별 saver — 계정 전환·동일 UID 재인증(epoch 변경)마다 fresh 인스턴스라
-// 예전 세션의 lastSaved가 새 세션으로 넘어올 수 없다(삼순 7차). 한 탭엔 한 시점
-// 하나의 신원만 활성이므로 새 키 생성 시 이전 신원 엔트리를 정리(in-flight 저장은
-// 클로저로 saver 참조를 이미 보유 — Map 삭제가 진행 중 체인을 깨지 않는다).
+// UID별 saver — 직렬화 체인은 UID 단위로 epoch를 넘어 유지(삼순 8차): 옥 epoch 느린
+// PUT이 새 epoch 빠른 PUT 뒤 완료해 DB를 되돌리는 것을 차단. lastSaved만 epoch 격리는
+// saver 내부(createFavoritesSaver)에서 처리. save(updates, epoch)에 요청 epoch 전달.
 const savers = new Map<string, FavoritesSaver<SavedProfileRow>>();
 
-function saverFor(identity: AuthSaveIdentity): FavoritesSaver<SavedProfileRow> {
-  const key = saverIdentityKey(identity);
-  const existing = savers.get(key);
+function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
+  const existing = savers.get(userId);
   if (existing) return existing;
-  const userId = identity.uid;
-  savers.clear(); // 이전 epoch saver 정리(활성 신원은 항상 1개) — 옥 lastSaved 격리
   // 토큰 소유 fail-close(삼순 5차): 초기 세션·401 refresh 모두 세션의 user.id가
   // 이 saver의 userId와 일치할 때만 토큰 반환 — 계정 전환 중 B 토큰으로 PUT해
   // B DB를 갱신하는 side effect를 PUT **전**에 차단(tokenForUser).
@@ -87,7 +82,7 @@ function saverFor(identity: AuthSaveIdentity): FavoritesSaver<SavedProfileRow> {
     },
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
   });
-  savers.set(key, created);
+  savers.set(userId, created);
   return created;
 }
 
@@ -104,7 +99,8 @@ export async function saveMyFavorites(
   updates: FavoriteSaveUpdates & { favorite_players: FavoritePlayer[] },
   identity: AuthSaveIdentity
 ): Promise<SavedProfileRow | null> {
-  const outcome = await saverFor(identity).save(updates);
+  // saver는 uid로만 격리(체인은 epoch를 넘어 유지) — lastSaved만 epoch 격리.
+  const outcome = await saverFor(identity.uid).save(updates, identity.epoch);
   if (outcome.superseded) return null;
   const owned = ownedRow(outcome.profile, identity.uid);
   if (!owned) throw new ProfileSaveError(GENERIC_MESSAGE); // 소유 불일치 — commit 금지

@@ -88,6 +88,21 @@ export function isSameAuthIdentity(snapshot: AuthIdentity | null | undefined): b
   return snapshot.uid === uid && snapshot.epoch === epoch;
 }
 
+/**
+ * PUT 전 fail-close (삼순 8차): 요청 시작 스냅샷이 현재 신원이고(uid+epoch 일치)
+ * **React 측 user.id와도 uid가 일치**할 때만 true. auth 모듈은 B로 바뀌었는데
+ * React closure가 아직 A인 창에서 A 화면 선택값을 B 토큰으로 B DB에 저장하는
+ * 것을 저장(PUT) 전에 차단한다.
+ */
+export function isAuthIdentityForUser(
+  snapshot: AuthIdentity | null | undefined,
+  reactUserId: string | null | undefined
+): boolean {
+  if (typeof reactUserId !== "string" || !reactUserId) return false;
+  if (!isSameAuthIdentity(snapshot)) return false;
+  return snapshot!.uid === reactUserId;
+}
+
 /** 테스트 전용 — 모듈 상태 초기화(블록 간 상태 누수 방지). */
 export function __resetAuthIdentityForTest(): void {
   uid = null;

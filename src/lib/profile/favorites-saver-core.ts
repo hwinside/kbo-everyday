@@ -139,7 +139,11 @@ async function performSave<TProfile>(
 }
 
 export interface FavoritesSaver<TProfile> {
-  save: (updates: FavoriteSaveUpdates) => Promise<SaveOutcome<TProfile>>;
+  /**
+   * @param epoch 요청 시점 auth epoch. 직렬화 체인은 UID 단위로 epoch를 넘어
+   * 유지되고(latest-wins 순서 보장), lastSaved만 epoch 단위로 격리된다.
+   */
+  save: (updates: FavoriteSaveUpdates, epoch: number) => Promise<SaveOutcome<TProfile>>;
 }
 
 /**
@@ -183,11 +187,6 @@ export interface AuthSaveIdentity {
   epoch: number;
 }
 
-/** saver 격리 키 — `uid:epoch`. 동일 uid·다른 epoch = 다른 saver(옥 lastSaved 격리). */
-export function saverIdentityKey(identity: AuthSaveIdentity): string {
-  return `${identity.uid}:${identity.epoch}`;
-}
-
 /** 세션 모양 — supabase Session의 필요 필드만. */
 export interface SessionLike {
   access_token?: string | null;
@@ -220,20 +219,28 @@ export function createFavoritesSaver<TProfile>(
   // 마지막 성공 저장의 서버 row — 최신 요청 실패 시 호출자가 로컬을 DB 현재값으로
   // 정합할 수 있도록 오류(ProfileSaveError.lastSaved)에 실어 내보낸다.
   let lastSaved: TProfile | null = null;
+  // lastSaved는 epoch 격리(삼순 8차): 계정 전환·동일 UID 재인증(epoch 변경) 뒤에는
+  // 옥 epoch의 성공값을 실패 정합에 쓰지 않는다. 단 직렬화 체인은 UID 단위로
+  // epoch를 넘어 유지 — 옥 epoch 느린 PUT이 새 epoch 빠른 PUT 뒤 완료해 DB를 되돌리지 못하게 한다.
+  let lastSavedEpoch: number | null = null;
 
   return {
-    save(updates: FavoriteSaveUpdates): Promise<SaveOutcome<TProfile>> {
+    save(updates: FavoriteSaveUpdates, epoch: number): Promise<SaveOutcome<TProfile>> {
       const seq = ++latestSeq;
       const run: Promise<SaveOutcome<TProfile>> = chain.then(async () => {
         // 실행 차례에 더 최신 요청이 접수돼 있으면 이 요청은 서버로 보내지
         // 않는다 — 중간값이 최신값 뒤에 도착해 DB를 되돌리는 것을 원리적으로 차단.
         if (seq !== latestSeq) return { superseded: true as const, profile: null };
+        // 새 epoch의 첫 실행 → 옥 epoch의 lastSaved 격리(실패 정합이 옥 값을 안 쓰도록)
+        if (lastSavedEpoch !== epoch) { lastSaved = null; lastSavedEpoch = epoch; }
         try {
           const profile = await performSave<TProfile>(deps, updates);
           lastSaved = profile;
+          lastSavedEpoch = epoch;
           return { superseded: false as const, profile };
         } catch (e) {
-          if (e instanceof ProfileSaveError) e.lastSaved = lastSaved;
+          // 오류에 실는 lastSaved는 같은 epoch의 성공값만(옥 epoch 값 차단)
+          if (e instanceof ProfileSaveError) e.lastSaved = lastSavedEpoch === epoch ? lastSaved : null;
           throw e;
         }
       });

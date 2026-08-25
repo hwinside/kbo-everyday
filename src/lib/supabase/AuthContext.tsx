@@ -189,7 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 동기 활성 사용자 신원 즉시 갱신(setUser React state는 렌더 뒤 — stale 창 방지)
       // 동기 신원 게시(fence) — 시작 티켓 이후 더 최신 이벤트가 왔으면 폐기하고 setUser·loadProfile도 생략
       if (!commitAuthIdentityIfCurrent(session?.user?.id ?? null, dispatchTicket)) {
-        setLoading(false);
+        // 늘은 syncSession 폐기 — loading은 최신 이벤트 경로가 관리(건드리지 않음, 삼순 8차)
         return;
       }
       setUser(session?.user ?? null);
