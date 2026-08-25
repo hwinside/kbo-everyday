@@ -192,13 +192,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, liveGames: 0, gc: gcError ? `error:${gcError.message}` : "ok" });
     }
 
-    // 삼순 4차 ③: INSERT 직전 소유권 검증 — 로컬 lockLost + 실제 Redis 토큰 GET 둘 다.
-    // 로컬 lockLost 는 최대 8초 stale 할 수 있으므로, 쓰기 직전 실시간 토큰을 확인해
-    // 다른 writer 가 이미 락을 잡았으면 쓰지 않고 lockLost 를 올려 이후도 전부 막는다.
-    const insertFrame = async (row: FrameRow): Promise<boolean> => {
-      if (lockLost) return false;
+    // 삼순 4·5차: INSERT 직전 소유권 검증(로컬 lockLost + 실제 Redis 토큰 GET) +
+    // abort fence. abort 된 A tick 이 ownsLock 대기 뒤 깨어나도 INSERT 하지 않고,
+    // Supabase insert 자체에도 abortSignal 을 걸어 진행 중 요청을 취소한다 — 늦은 A row 가
+    // B 이후 더 큰 id 로 커밋되어 stale 로 전파되는 역전을 방지한다.
+    const insertFrame = async (row: FrameRow, signal?: AbortSignal): Promise<boolean> => {
+      if (lockLost || signal?.aborted) return false;
       if (!(await ownsLock(token))) { lockLost = true; return false; }
-      const { error } = await supabase.from("game_relay_frames").insert(row);
+      // ownsLock 은 async — 그 사이에 timeout 이 났을 수 있으므로 insert 직전 재확인(삼순 5차).
+      if (signal?.aborted) return false;
+      const query = supabase.from("game_relay_frames").insert(row);
+      const { error } = await (signal ? query.abortSignal(signal) : query);
       return !error;
     };
 
@@ -225,19 +229,31 @@ export async function GET(req: NextRequest) {
       ticks: 0,
     };
     const startedAt = Date.now();
+    // 삼순 5차: 같은 경기 non-overlap 보장. 이전 tick(A)이 timeout 으로 race 가 끝나도
+    // 실제 publishGameTick 은 계속 돌 수 있다(미정착). 그 사이 다음 tick(B)을 시작하면
+    // A/B 가 공용 state 를 동시 변경하고 B commit 후 A 가 더 큰 id 로 commit 되어 역전된다.
+    // 그래서 경기별 in-flight 를 추적해, 이전 tick 이 진짜로 끝날 때까지 다음 tick 을 skip 한다.
+    const inFlight = new Set<string>();
 
     for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
         const tickStartedAt = Date.now();
         if (lockLost) break; // 독립 타이머가 락 상실 감지 → 즉시 중단
 
-        // 삼순 4차 ③: handler timeout 은 원 tick 을 abort 로 취소해 fence 한다. AbortSignal 을
-        // publishGameTick 에 주입해 timeout 시 진행 중인 handler fetch 를 끊고, tick 은 abort 이후
-        // 어떤 INSERT 도 시도하지 않아 다음 tick 과 같은 state 를 동시 변경하지 못한다.
+        // 삼순 4·5차: handler timeout 은 원 tick 을 abort 로 취소해 fence 하고, 경기별 non-overlap 을
+        // 보장한다. A 가 아직 in-flight 면 그 경기는 이번 라운드를 skip — B 가 A 와 겹치지 않는다.
         const tickResults = await Promise.all(
           gameIds.map((gameId) => {
+            if (inFlight.has(gameId)) {
+              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:overlap-skip`] });
+            }
+            inFlight.add(gameId);
             const ac = new AbortController();
+            // 진짜 종료(settle) 시점에 in-flight 해제 — timeout race 이후에도 A 가 끝나기 전까지
+            // 그 경기는 skip 되어 B 가 안 뜼다.
+            const settle = publishGameTick(deps, states.get(gameId)!, gameId, tickIndex, ac.signal);
+            void settle.finally(() => inFlight.delete(gameId));
             return Promise.race<TickResult>([
-              publishGameTick(deps, states.get(gameId)!, gameId, tickIndex, ac.signal),
+              settle,
               new Promise<TickResult>((resolve) =>
                 setTimeout(
                   () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:tick-timeout`] }); },

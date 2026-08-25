@@ -196,8 +196,8 @@ export interface TickDeps {
     live: (req: NextRequest) => Promise<Response>;
     detail: (req: NextRequest) => Promise<Response>;
   };
-  /** INSERT 실행기. 성공 시 true. */
-  insertFrame: (row: FrameRow) => Promise<boolean>;
+  /** INSERT 실행기. 성공 시 true. signal 이 abort 되면 커밋하지 않고 false (삼순 5차). */
+  insertFrame: (row: FrameRow, signal?: AbortSignal) => Promise<boolean>;
   date: string;
 }
 
@@ -305,30 +305,27 @@ export async function publishGameTick(
       continue;
     }
 
-    // 삼순 4차 ③: INSERT 직전에도 abort 를 다시 확인한다 — hash 계산 사이에 timeout 이 나면
-    // INSERT 자체를 건너뛴다(늦은 tick 의 쓰기 자체 봉쇄). 이 시점엔 seq 미증가 — 감산 금지.
+    // 삼순 5차: INSERT 직전 abort 재확인 — hash 계산 사이에 timeout 이 나면 INSERT 건너뛴.
     if (signal?.aborted) {
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    state.seq += 1;
-    const ok = await deps.insertFrame({ game_id: gameId, seq: state.seq, kind, payload });
-    // 삼순 4차 ③: INSERT 결과 대기 중 timeout 이 난 경우, ok 여부와 무관하게
-    // lastHash/publishedFull 을 변경하지 않는다 — 다음 tick 과 경합하는 old-tick 쓰기 차단.
-    // (insertFrame 은 route 에서 lockLost 시 no-op 이므로 이미 INSERT 되지 않았을 수 있다.)
-    if (signal?.aborted) {
-      state.seq -= 1;
-      result.errors.push(`${gameId}:${channel}:aborted`);
-      continue;
-    }
+    // 삼순 5차: seq 는 **단조 증가만** 한다 — async 경계 뒤 `state.seq -= 1` 감산을 전면
+    // 제거. 겹친 tick(A/B)이 공용 state 를 쓸 때 늦은 A 의 감산이 B 의 seq 를 되감아
+    // 다음 tick 이 seq 를 중복 발급하는 경합을 원천 차단한다. 실패·abort 시 이 번호는
+    // 버려지고(gap 허용) 다음 tick 이 더 큰 seq 로 재시도한다 — 클라이언트는 DB id 로
+    // 순서를 판정하므로 seq gap 은 무해하다.
+    const mySeq = ++state.seq;
+    // signal 을 insertFrame 으로 전달 — route 는 ownsLock 후 abort 재확인 + Supabase insert 에
+    // abortSignal 을 걸어, abort 된 A 는 커밋되지 않는다(늦은 A row 가 최신 id 로 전파 ❌).
+    const ok = await deps.insertFrame({ game_id: gameId, seq: mySeq, kind, payload }, signal);
     if (ok) {
-      // 해시·seq 는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry)
+      // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;
       if (kind === "relay-full") state.publishedFull = true;
       result.inserted += 1;
     } else {
-      state.seq -= 1; // 실패한 seq 는 회수 — 다음 성공이 그 번호를 재사용
-      result.errors.push(`${gameId}:${channel}:insert-failed`);
+      result.errors.push(signal?.aborted ? `${gameId}:${channel}:aborted` : `${gameId}:${channel}:insert-failed`);
     }
   }
 

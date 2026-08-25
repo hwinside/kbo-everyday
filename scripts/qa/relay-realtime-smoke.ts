@@ -129,13 +129,15 @@ test("§1 INSERT 실패 시 hash·seq 불변 — 다음 tick 재시도(fail-clos
   const first = await publishGameTick(failDeps, state, "g1", 1);
   assert.equal(first.inserted, 0);
   assert.equal(first.errors.length, 1);
-  assert.equal(state.seq, 0, "실패한 seq 는 회수돼야 한다");
+  // 삼순 5차: async 경계 뒤 seq 감산 금지 → 실패 seq 는 회수되지 않고 전진한다(gap 허용).
+  assert.equal(state.seq, 1, "실패해도 seq 는 단조증가(되감지 않음)");
   assert.equal(Object.keys(state.lastHash).length, 0, "실패면 hash 미갱신");
 
   const okDeps = depsWith({});
   const second = await publishGameTick(okDeps, state, "g1", 2);
   assert.equal(second.inserted, 1, "실패 프레임은 다음 tick 재발행");
-  assert.equal(state.seq, 1);
+  // 재시도는 이전 실패 seq(1) 재사용 없이 더 큰 seq(2)로 — 단조 보장.
+  assert.equal(state.seq, 2, "재시도는 더 큰 seq 로 — 단조 보장");
 });
 
 test("§1 크기 가드 — MAX_PAYLOAD_BYTES 초과 프레임은 INSERT 안 함", async () => {
@@ -211,37 +213,57 @@ test("§1 폴백 역전 소멸 — fetch 실패·oversize tick 은 발행 0 (마
   assert.equal(r2.skippedOversize, 1);
 });
 
-// 삼순 4차 ③ 실행 결함주입: timeout 이 INSERT 대기 중 발생하면 old tick 은 이후
-// lastHash/publishedFull 을 변경하면 안 된다(다음 tick 과 경합). deferred insertFrame 으로
-// INSERT 대기 중 abort 를 주입해, state 가 오염되지 않음을 실행으로 검증한다.
-// (publisher 의 post-INSERT signal.aborted 가드를 제거하면 이 테스트는 RED.)
-test("§1 abort fence — INSERT 대기 중 abort 시 lastHash/publishedFull 미변경(경합 차단)", async () => {
-  let releaseInsert!: () => void;
-  const insertGate = new Promise<void>((r) => { releaseInsert = r; });
-  const rows: FrameRow[] = [];
-  const deps: TickDeps = {
+// 삼순 5차 실행 결함주입: A deferred insert → abort → B(new) commit → A(old) release.
+// 실제 route 의 insertFrame 은 ownsLock(async) 뒤 abort 를 재확인해 abort 된 A 는 커밋하지
+// 않는다. 이를 모델링한 insertFrame(공용 DB id 카운터) 위에서, A 가 INSERT 대기 중 abort 되고
+// 그 사이 B 가 먼저 커밋한 뒤 A 가 release 돼도: (1) A row 는 DB 에 안 남고 (2) 최종 최신 row 는
+// B (3) 공용 seq 는 단조(A 의 감산으로 B seq 가 되감기지 않음) 임을 함께 고정한다.
+// (post-async seq 감산을 되살리거나 insertFrame 의 abort 재확인을 빼면 이 테스트는 RED.)
+test("§1 abort/overlap fence — A deferred→abort→B commit→A release: A 미커밋·최신=B·seq 단조", async () => {
+  const db: FrameRow[] = [];       // 공용 DB (id = 삽입 순서)
+  let releaseA!: () => void;
+  const aGate = new Promise<void>((r) => { releaseA = r; });
+  const state = newGameState();     // A/B 공용 state (같은 경기)
+  const acA = new AbortController();
+
+  // route 의 insertFrame 계약을 모델링: signal.aborted 면 커밋하지 않는다(async 경계 뒤 재확인).
+  const makeDeps = (gate?: Promise<void>): TickDeps => ({
     handlers: {
-      relay: async () => jsonResponse(RELAY_DATA_A),
+      relay: async () => jsonResponse(gate === aGate ? RELAY_DATA_A : RELAY_DATA_B),
       events: async () => jsonResponse({ events: [] }),
       live: async () => jsonResponse({ games: [] }),
       detail: async () => jsonResponse({ detail: true }),
     },
-    insertFrame: async (row) => { await insertGate; rows.push(row); return true; },
+    insertFrame: async (row, signal) => {
+      if (gate) await gate;             // A 는 gate 에 걸려 대기
+      if (signal?.aborted) return false; // ownsLock 뒤 abort 재확인 계약
+      db.push(row);
+      return true;
+    },
     date: "2026-08-25",
-  };
-  const state = newGameState();
-  const ac = new AbortController();
-  const tickPromise = publishGameTick(deps, state, "g1", 1, ac.signal);
-  // INSERT 가 gate 에 걸려 대기하는 동안 timeout 처럼 abort → INSERT 는 실제로 커밋될 수도 있으나
-  // publisher 는 post-INSERT abort 가드로 state 를 갱신하지 않아야 한다.
+  });
+
+  // A 시작(gate 에 걸림)
+  const aPromise = publishGameTick(makeDeps(aGate), state, "g1", 1, acA.signal);
   await new Promise((r) => setTimeout(r, 10));
-  ac.abort();
-  releaseInsert();
-  const result = await tickPromise;
-  assert.equal(Object.keys(state.lastHash).length, 0, "abort 면 lastHash 미갱신(경합 차단)");
-  assert.equal(state.publishedFull, false, "abort 면 publishedFull 미갱신");
-  assert.equal(result.inserted, 0, "abort tick 은 inserted 집계 0");
-  assert.ok(result.errors.some((e) => e.includes("aborted")), "aborted 에러 집계");
+  // A 를 abort(timeout 모델)
+  acA.abort();
+  // B(new) 가 먼저 커밋 — non-overlap 상황이 깨진 최악 케이스를 강제 재현
+  const acB = new AbortController();
+  await publishGameTick(makeDeps(), state, "g1", 2, acB.signal);
+  // 이제 A release
+  releaseA();
+  await aPromise;
+
+  // (1) A row 는 커밋되지 않았다(abort 재확인).
+  assert.ok(!db.some((r) => JSON.stringify(r.payload.data) === JSON.stringify(RELAY_DATA_A)),
+    "abort 된 A 는 DB 에 커밋되지 않아야 한다");
+  // (2) 최신(마지막) row 는 B.
+  assert.ok(db.length >= 1, "B 는 커밋됐어야 한다");
+  assert.equal(JSON.stringify(db[db.length - 1].payload.data), JSON.stringify(RELAY_DATA_B), "최신 row=B");
+  // (3) 공용 seq 는 단조 — B 커밋 후 A release 가 seq 를 되감지 않았다.
+  const seqs = db.map((r) => r.seq);
+  for (let i = 1; i < seqs.length; i++) assert.ok(seqs[i] > seqs[i - 1], `seq 단조 (idx ${i}: ${seqs[i - 1]}→${seqs[i]})`);
 });
 
 // 삼순 4차 ③ 실행 결함주입: abort 이후 남은 채널은 아예 INSERT 를 시도하지 않는다.
@@ -524,10 +546,17 @@ test("§3 route lease — 독립 renewal·lockLost INSERT 차단·저장 직전 
   const src = readSrc("src/app/api/cron/relay-live-publisher/route.ts");
   assert.ok(/setInterval\(\(\) => \{[\s\S]*renewLock\(token\)/.test(src), "tick 독립 renewal 타이머");
   assert.ok(/clearInterval\(renewTimer\)/.test(src), "renewal 타이머 정리");
-  assert.ok(/if \(lockLost\) return false;/.test(src), "락 상실 시 INSERT 차단(old writer)");
+  // 삼순 5차: INSERT 차단은 lockLost 또는 signal.aborted — 둘 다 있어야 한다.
+  assert.ok(/if \(lockLost \|\| signal\?\.aborted\) return false;/.test(src), "락 상실/abort 시 INSERT 차단(old writer)");
+  // 삼순 5차: ownsLock(async) 뒤 abort 재확인 + Supabase insert 에 abortSignal.
+  assert.ok(/if \(!\(await ownsLock\(token\)\)\)[\s\S]*if \(signal\?\.aborted\) return false;/.test(src), "ownsLock 뒤 abort 재확인");
+  assert.ok(/\.abortSignal\(signal\)/.test(src), "Supabase insert 에 abortSignal 전달");
   assert.ok(/const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src), "저장 직전 소유권 재확인");
   assert.ok(/if \(stillOwner\)[\s\S]*SET", stateKey/.test(src), "소유일 때만 state 저장");
   assert.ok(/Promise\.race<TickResult>/.test(src), "tick handler timeout");
+  // 삼순 5차: 같은 경기 non-overlap — in-flight 중이면 skip.
+  assert.ok(/inFlight\.has\(gameId\)[\s\S]*overlap-skip/.test(src), "같은 경기 non-overlap 가드");
+  assert.ok(/inFlight\.add\(gameId\)[\s\S]*settle\.finally\(\(\) => inFlight\.delete\(gameId\)\)/.test(src), "진짜 settle 시 in-flight 해제");
   assert.ok(/redis\.call\('del'/.test(src), "compare-delete 해제");
 });
 
