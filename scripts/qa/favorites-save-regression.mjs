@@ -10,6 +10,7 @@ import {
   createFavoritesSaver,
   ownedRow,
   tokenForUser,
+  isActiveUser,
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
@@ -360,6 +361,54 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
       `puts=${puts} db=${db["user-b"]}`
     );
   }
+}
+
+// ── ⑦ commit 시점 활성 사용자 가드 (삼순 6차): A 토큰으로 이미 시작된 요청이
+//    B 전환 뒤 200/실패로 도착 → tokenForUser/ownedRow 뒤 마지막 관문. 원인:
+//    handler가 요청 시작 때 캡처한 user.id(=A)로 ownedRow를 통과시켜 B 화면 로컬 오염.
+{
+  // 단위: 일치만 통과, 불일치/결손 전부 fail-close
+  check(
+    "활성사용자: requestUser 일치만 commit 허가(불일치·null 차단)",
+    isActiveUser("user-a", "user-a") === true &&
+    isActiveUser("user-b", "user-a") === false &&
+    isActiveUser(null, "user-a") === false &&
+    isActiveUser(undefined, "user-a") === false &&
+    isActiveUser("user-a", "") === false,
+    `active=b/req=a → ${isActiveUser("user-b", "user-a")}`
+  );
+
+  // handler commit 게이트 시뮬레이션 — A in-flight 중 활성 사용자가 B로 바뀜 뒤
+  // A 응답이 도착. 로컬은 saver 소유/응답 검증을 통과한 row(= A 계정 row)를
+  // 받지만, commit 직전 isActiveUser 가드가 막아야 한다.
+  const runCommitGate = (activeAtCommit, requestUserId, guarded) => {
+    const local = { fav: "B-orig" }; // B 화면이 보고 있는 로컬
+    const serverRowForA = { id: requestUserId, favorite_players: "A-data" };
+    // handler 종단: seq·ownedRow는 이미 통과(requestUserId 기준)된 상태라 가정
+    const owned = ownedRow(serverRowForA, requestUserId); // A 기준 → 통과(A row)
+    if (guarded && !isActiveUser(activeAtCommit, requestUserId)) return local; // 가드: B로 전환 → skip
+    if (owned) local.fav = owned.favorite_players; // commit
+    return local;
+  };
+
+  // GREEN(가드 O): A 요청(req=A) in-flight → 활성 B → A 200 도착 → B 로컬 불변
+  check(
+    "활성사용자 GREEN: A in-flight→B 전환→A 200 도착 → B 로컬 불변",
+    runCommitGate("user-b", "user-a", true).fav === "B-orig",
+    `local=${runCommitGate("user-b", "user-a", true).fav}`
+  );
+  // GREEN(가드 O): 전환 없으면(활성=req) 정상 commit
+  check(
+    "활성사용자 GREEN: 전환 없음(활성=req) → 정상 commit",
+    runCommitGate("user-a", "user-a", true).fav === "A-data",
+    `local=${runCommitGate("user-a", "user-a", true).fav}`
+  );
+  // mutation-RED 실증: 가드 없으면(구 설계) A row가 B 로컬을 실제로 덮어쓴다
+  check(
+    "활성사용자 mutation-RED: 가드 없으면 A row가 B 로컬 오염(구 설계=결함)",
+    runCommitGate("user-b", "user-a", false).fav === "A-data",
+    `local=${runCommitGate("user-b", "user-a", false).fav}`
+  );
 }
 
 // ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──

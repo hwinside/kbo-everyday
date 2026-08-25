@@ -155,6 +155,24 @@ export function ownedRow<T extends { id?: unknown }>(
   return row;
 }
 
+/**
+ * commit 시점 활성 사용자 가드 (삼순 6차 리뷰): 요청 시작 시점 캡처한 사용자
+ * (requestUserId)와 commit **직전** 활성 사용자(activeUserId)가 정확히 일치할
+ * 때만 true. A 요청이 A 토큰으로 이미 시작(tokenForUser 통과)된 뒤 B로 전환되면,
+ * A 응답이 200이든 실패든 성공·실패 commit이 B 화면의 로컬을 오염시킨다.
+ * `ownedRow`(응답 후 소유)·`tokenForUser`(PUT 전 토큰) 뒤의 마지막 관문 —
+ * 성공/실패 commit 직전 호출부가 이 함수로 활성 사용자 일치를 확인한다.
+ * activeUserId는 로그아웃/미로그인이면 null — 그 경우도 fail-close(false).
+ */
+export function isActiveUser(
+  activeUserId: string | null | undefined,
+  requestUserId: string
+): boolean {
+  if (typeof activeUserId !== "string" || !activeUserId) return false;
+  if (!requestUserId) return false;
+  return activeUserId === requestUserId;
+}
+
 /** 세션 모양 — supabase Session의 필요 필드만. */
 export interface SessionLike {
   access_token?: string | null;

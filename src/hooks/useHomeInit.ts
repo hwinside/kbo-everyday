@@ -3,7 +3,7 @@ import { useAuth } from "@/lib/supabase/AuthContext";
 import { getFavoritePlayers, setFavoritePlayers, type FavoritePlayer } from "@/lib/store/favorites";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { getOnboardingStatus, setOnboardingStatus } from "@/lib/store/onboarding";
-import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { saveMyFavorites, ownedRow, isActiveUser, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
 import { trackEvent, OnboardingEvents } from "@/lib/analytics";
 import { PRESEASON_GAMES, PRESEASON_DATES } from "@/lib/constants/preseason-schedule";
 import type { BroadcastChannel } from "@/lib/broadcast-channels";
@@ -263,18 +263,30 @@ export function useHomeInit(options?: UseHomeInitOptions) {
   // + 오류 노출로 바꾼다. seq 가드는 연속 저장 레이스 방지.
   const favSaveSeqRef = useRef(0);
 
+  // 활성 사용자 ID 추적(삼순 6차 리뷰): 저장 요청이 A 토큰으로 시작된 뒤 계정이 B로
+  // 전환되면 요청 시작 때 캡처한 user.id(=A)로는 ownedRow가 통과해 A 데이터가 B 화면
+  // 로컬에 commit될 수 있다. commit 직전 이 ref로 현재 활성 사용자와 요청 사용자의
+  // 일치를 확인한다(성공·실패 양쪽). 로그아웃 시 null → fail-close.
+  const activeUserIdRef = useRef<string | null>(user?.id ?? null);
+  useEffect(() => {
+    activeUserIdRef.current = user?.id ?? null;
+  }, [user]);
+
   async function handlePlayerSelect(players: FavoritePlayer[]) {
     setShowPlayerSelect(false);
     const seq = ++favSaveSeqRef.current;
+    const requestUserId = user?.id ?? null; // 요청 시작 시점 사용자 — commit 직전 활성 사용자와 대조
     if (user) {
       let saved;
       try {
         saved = await saveMyFavorites({ favorite_players: players }, user.id);
       } catch (e) {
         if (seq !== favSaveSeqRef.current) return; // 더 최신 저장 진행 중 — 이 응답 폐기
+        // 계정 전환 가드: A 요청 in-flight 중 B로 전환됐으면 실패 commit도 차단(B 로컬·CTA·오알림 오염 방지)
+        if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
         // 마지막 성공값(= DB 현재값)이 **현재 계정 소유일 때만** 로컬 정합 —
         // A 성공/B 실패 불일치 방지 + 계정 전환 오염 fail-close.
-        const row = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        const row = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, requestUserId ?? "") : null;
         if (row) {
           const favs = Array.isArray(row.favorite_players) ? row.favorite_players : [];
           setFavoritePlayers(favs);
@@ -289,6 +301,8 @@ export function useHomeInit(options?: UseHomeInitOptions) {
       }
       if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== favSaveSeqRef.current) return;
+      // 계정 전환 가드: A 200 응답이 B 전환 뒤 도착하면 B 로컬을 A로 덮지 않는다
+      if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
       // 서버가 반환한 저장된 row(exact)로만 로컬 확정
       const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
       setFavoritePlayers(savedPlayers);

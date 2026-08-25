@@ -4,6 +4,7 @@ import {
   createFavoritesSaver,
   ownedRow,
   tokenForUser,
+  isActiveUser,
   ProfileSaveError,
   GENERIC_MESSAGE,
   type FavoritesSaver,
@@ -24,7 +25,7 @@ import {
  * 가드를 다시 태운다.
  */
 
-export { ProfileSaveError, ownedRow };
+export { ProfileSaveError, ownedRow, isActiveUser };
 
 /** 서버가 반환한 저장된 profiles row 중 호출자가 쓰는 필드. */
 export interface SavedProfileRow {

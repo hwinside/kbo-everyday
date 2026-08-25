@@ -16,7 +16,7 @@ import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { saveMyFavorites, ownedRow, isActiveUser, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
@@ -121,6 +121,15 @@ export default function MyPage() {
   // 결함). seq 가드는 연속 저장에서 이전 응답이 최신 선택을 덮는 것을 막는다.
   const saveSeqRef = useRef(0);
 
+  // 활성 사용자 ID 추적(삼순 6차 리뷰): 저장 요청이 A 토큰으로 시작된 뒤 계정이
+  // B로 전환되면, 요청 시작 때 캡처한 user.id(=A)로는 ownedRow가 통과해 A 데이터가
+  // B 화면 로컬에 commit될 수 있다. commit **직전** 이 ref로 현재 활성 사용자와
+  // 요청 사용자의 일치를 확인한다(성공·실패 양쪽). 로그아웃 시 null → fail-close.
+  const activeUserIdRef = useRef<string | null>(user?.id ?? null);
+  useEffect(() => {
+    activeUserIdRef.current = user?.id ?? null;
+  }, [user]);
+
   // 저장 실패 시 마지막 성공값(= DB 현재값)으로 로컬 정합 — A 성공/B 실패에서
   // 로컬=기존값·DB=A로 갈라지는 불일치 방지(삼순 3차 리뷰).
   const commitServerRow = (row: SavedProfileRow) => {
@@ -136,20 +145,25 @@ export default function MyPage() {
   const handleTeamChange = async (newTeamId: number) => {
     setShowTeamSelect(false);
     const seq = ++saveSeqRef.current;
+    const requestUserId = user?.id ?? null; // 요청 시작 시점 사용자 — commit 직전 활성 사용자와 대조
     if (user) {
       let saved;
       try {
         saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] }, user.id);
       } catch (e) {
         if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
+        // 계정 전환 가드: A 요청 in-flight 중 B로 전환됐으면 실패 commit도 차단(B 로컬 오염·오알림 방지)
+        if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
         // 소유 fail-close: 현재 계정 row일 때만 정합 commit(계정 전환 오염 차단)
-        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, requestUserId ?? "") : null;
         if (last) commitServerRow(last);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return; // 로컬 = 마지막 성공값(DB 현재값) 또는 기존값 — 오류 노출
       }
       if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== saveSeqRef.current) return;
+      // 계정 전환 가드: A 200 응답이 B 전환 뒤 도착하면 B 로컬을 A로 덮지 않는다
+      if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
     }
     setMyTeamId(newTeamId);
     // 위젯/워치 최애팀 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
@@ -165,19 +179,24 @@ export default function MyPage() {
   const handlePlayerChange = async (players: FavoritePlayer[]) => {
     setShowPlayerSelect(false);
     const seq = ++saveSeqRef.current;
+    const requestUserId = user?.id ?? null; // 요청 시작 시점 사용자 — commit 직전 활성 사용자와 대조
     if (user) {
       let saved;
       try {
         saved = await saveMyFavorites({ favorite_players: players }, user.id);
       } catch (e) {
         if (seq !== saveSeqRef.current) return;
-        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, user.id) : null;
+        // 계정 전환 가드: A 요청 in-flight 중 B로 전환됐으면 실패 commit도 차단
+        if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, requestUserId ?? "") : null;
         if (last) commitServerRow(last);
         alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
         return;
       }
       if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
       if (seq !== saveSeqRef.current) return;
+      // 계정 전환 가드: A 200 응답이 B 전환 뒤 도착하면 B 로컬을 A로 덮지 않는다
+      if (!isActiveUser(activeUserIdRef.current, requestUserId ?? "")) return;
       // 서버가 반환한 저장된 row(exact)로만 로컬 확정
       const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
       setFavoritePlayers(savedPlayers);
