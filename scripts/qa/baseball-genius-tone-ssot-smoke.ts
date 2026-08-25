@@ -180,13 +180,38 @@ assert.deepEqual(
   { kind: "grounded", answer: "야구에서 보크는 반칙 동작이에요.", toneCompliant: false },
   "RAG 생성답의 해요체는 서빙하되 toneCompliant=false 로 관측한다",
 );
-for (const nonFormal of [
-  "보크는 반칙이야.", "알겠어.", "그렇다.", "맞아.", "좋아.", "몰라.", "“보크는 반칙이야.”",
-  "정식 답변입니다.\n보크는 반칙이야", "반칙이야.다음은 정식 답변입니다.", "정식 답변입니다.\n출처: 나무위키",
-]) {
+// 🔴 2026-08-25 삼순 P0 — **scope 가 tone 보다 먼저** 판정된다.
+//   둘 다 fail-close(`unsure`)라 서빙 결과는 동일하지만, `reason` 은 달라진다.
+//   이유: 범위밖 답은 톤을 고쳐도 폐기되므로 ② rewrite 호출을 써서는 안 된다.
+//   기대값을 현재 출력에 맞춰 베끼지 않고, **답변에 야구 앵커가 있는가**로 먼저 분류해
+//   고정한다(`answerInQuestionScope` 계약). 앵커 있음 → tone, 없음 → scope.
+const NON_FORMAL_CASES: Array<{ answer: string; reason: "tone_noncompliant" | "out_of_question_scope" }> = [
+  // 답변에 야구 앵커(`보크`/`반칙`)가 있다 → 범위는 통과, 톤만 결함.
+  { answer: "보크는 반칙이야.", reason: "tone_noncompliant" },
+  { answer: "“보크는 반칙이야.”", reason: "tone_noncompliant" },
+  { answer: "정식 답변입니다.\n보크는 반칙이야", reason: "tone_noncompliant" },
+  // 앵커가 없다 → 톤을 고쳐도 범위밖이므로 rewrite 대상이 아니다.
+  { answer: "알겠어.", reason: "out_of_question_scope" },
+  { answer: "그렇다.", reason: "out_of_question_scope" },
+  { answer: "맞아.", reason: "out_of_question_scope" },
+  { answer: "좋아.", reason: "out_of_question_scope" },
+  { answer: "몰라.", reason: "out_of_question_scope" },
+  // 공백 없이 붙어 `반칙이야.다음은` 한 토큰이 돼 앵커 매치가 안 된다(기존 계약, 변경 없음).
+  { answer: "반칙이야.다음은 정식 답변입니다.", reason: "out_of_question_scope" },
+  { answer: "정식 답변입니다.\n출처: 나무위키", reason: "out_of_question_scope" },
+];
+assert.equal(
+  NON_FORMAL_CASES.filter((c) => c.reason === "tone_noncompliant").length, 3,
+  "tone 분기 무대가 사라지면 이 게이트는 scope 만 재검사한다",
+);
+for (const { answer: nonFormal, reason } of NON_FORMAL_CASES) {
+  // 어느 분기든 **톤은 실제로 위반**이어야 한다 — 분류 변경이 톤 검지력을 가리지 않음을 고정.
+  assert.equal(isBaseballGeniusToneCompliant(nonFormal), false, `톤 위반 무대 소실: ${nonFormal}`);
   assert.deepEqual(
     validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: nonFormal }), "보크가 뭐야?"),
-    { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: nonFormal },
+    reason === "tone_noncompliant"
+      ? { kind: "unsure", reason, rejectedAnswer: nonFormal }
+      : { kind: "unsure", reason },
     `generic LLM 비합니다체 fail-close + 원인 결속: ${nonFormal}`,
   );
   assert.deepEqual(
