@@ -143,6 +143,20 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ skipped: true, reason: "lock-held" });
   }
 
+  // 삼순 4차 ③: acquire 직후 renewal 을 시작한다 — GC·live 조회·state GET 같은 pre-loop 작업이
+  // 20초 TTL 을 잡아먹어 다음 writer 가 낙락하는 공백을 없앤다. lockLost 는 이 범위 전체에서
+  // INSERT·state 저장을 막는다(old writer 차단).
+  let lockLost = false;
+  let renewInFlight = false;
+  const renewTimer = setInterval(() => {
+    if (renewInFlight || lockLost) return;
+    renewInFlight = true;
+    renewLock(token)
+      .then((ok) => { if (!ok) lockLost = true; })
+      .catch(() => { lockLost = true; })
+      .finally(() => { renewInFlight = false; });
+  }, LOCK_RENEW_EVERY_MS);
+
   try {
     const supabase = createClient(supabaseUrl, serviceRole, { auth: { persistSession: false } });
     const date = resolveGameLiveDate();
@@ -168,9 +182,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, liveGames: 0, gc: gcError ? `error:${gcError.message}` : "ok" });
     }
 
-    // 락 상실(독립 renewal 타이머가 감지) 후에는 INSERT·state 저장을 전부 중단한다
-    // → old writer 가 새 owner 의 프레임/상태를 덮어쓰지 못하게 한다(삼순 3차 lease).
-    let lockLost = false;
+    // 삼순 4차 ③: INSERT 직전 소유권 검증 — lockLost 면 no-op. 늦게 끝난(timeout 된)
+    // tick 이 이 시점에 INSERT 를 시도해도 새 owner 의 프레임을 덮어쓰지 못한다.
     const insertFrame = async (row: FrameRow): Promise<boolean> => {
       if (lockLost) return false;
       const { error } = await supabase.from("game_relay_frames").insert(row);
@@ -201,38 +214,27 @@ export async function GET(req: NextRequest) {
     };
     const startedAt = Date.now();
 
-    // 독립 renewal 타이머(삼순 3차 lease): tick 진행과 무관하게 LOCK_RENEW_EVERY_MS 마다
-    // 내 토큰일 때만 TTL 을 연장한다. 실패(토큰 불일치·키 소멸·Redis 오류)면 lockLost 를
-    // 올려 이후 INSERT·state 저장을 전부 막는다. 긴 tick·pre-loop 중 만료도 여기서 감지.
-    let renewInFlight = false;
-    const renewTimer = setInterval(() => {
-      if (renewInFlight || lockLost) return;
-      renewInFlight = true;
-      renewLock(token)
-        .then((ok) => { if (!ok) lockLost = true; })
-        .catch(() => { lockLost = true; })
-        .finally(() => { renewInFlight = false; });
-    }, LOCK_RENEW_EVERY_MS);
-
     try {
       for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
         const tickStartedAt = Date.now();
         if (lockLost) break; // 독립 타이머가 락 상실 감지 → 즉시 중단
 
-        // handler timeout: 한 tick 이 TICK_TIMEOUT_MS 를 넘으면 실패 집계로 끊는다.
-        // (insertFrame 은 lockLost 시 no-op 이라 늦게 끝난 tick 이 새 owner 를 못 덮는다.)
+        // 삼순 4차 ③: handler timeout 은 원 tick 을 abort 로 취소해 fence 한다. AbortSignal 을
+        // publishGameTick 에 주입해 timeout 시 진행 중인 handler fetch 를 끊고, tick 은 abort 이후
+        // 어떤 INSERT 도 시도하지 않아 다음 tick 과 같은 state 를 동시 변경하지 못한다.
         const tickResults = await Promise.all(
-          gameIds.map((gameId) =>
-            Promise.race<TickResult>([
-              publishGameTick(deps, states.get(gameId)!, gameId, tickIndex),
+          gameIds.map((gameId) => {
+            const ac = new AbortController();
+            return Promise.race<TickResult>([
+              publishGameTick(deps, states.get(gameId)!, gameId, tickIndex, ac.signal),
               new Promise<TickResult>((resolve) =>
                 setTimeout(
-                  () => resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:tick-timeout`] }),
+                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:tick-timeout`] }); },
                   TICK_TIMEOUT_MS,
                 ),
               ),
-            ]),
-          ),
+            ]);
+          }),
         );
         for (const r of tickResults) {
           totals.inserted += r.inserted;

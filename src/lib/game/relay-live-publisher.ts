@@ -231,6 +231,7 @@ export async function publishGameTick(
   state: PersistedGameState,
   gameId: string,
   tickIndex: number,
+  signal?: AbortSignal,
 ): Promise<TickResult> {
   const result: TickResult = {
     inserted: 0,
@@ -249,7 +250,17 @@ export async function publishGameTick(
   }));
 
   for (const { channel, promise } of tasks) {
+    // 삼순 4차 ③: abort 되면(timeout) 이후 어떤 INSERT 도 시도하지 않는다 — 늦게 끝난 tick 이
+    // 다음 tick 과 같은 state 를 동시 변경·INSERT 하는 것을 차단(fence).
+    if (signal?.aborted) {
+      result.errors.push(`${gameId}:${channel}:aborted`);
+      continue;
+    }
     const envelope = await promise;
+    if (signal?.aborted) {
+      result.errors.push(`${gameId}:${channel}:aborted`);
+      continue;
+    }
     if (!envelope) {
       result.errors.push(`${gameId}:${channel}:fetch-failed`);
       continue;

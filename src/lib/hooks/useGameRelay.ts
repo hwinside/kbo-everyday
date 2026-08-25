@@ -434,12 +434,16 @@ export function useGameRelay(
           if (!row) return;
           if (!shouldApplyFrame(lastAppliedFrameIdRef.current, row.id)) return;
           lastAppliedFrameIdRef.current = row.id;
-          // content-only(B2): 어떤 content 프레임이든 publisher 가 살아있다는 신호 →
-          // watchdog 신선도 갱신(relay 폴링 억제 근거). relay 프레임은 baseline 도 확립.
-          lastRelayFreshAtRef.current = Date.now();
 
           if (row.kind === "relay-full" || row.kind === "relay-delta") {
-            relayBaselineRef.current = true;
+            // 삼순 4차 ①: baseline 은 relay-full 로만 확립한다. baseline 전 delta 는
+            // 빈 cache 에 partial 만 병합해 화면을 가짜로 굳히므로 적용·fence 모두 금지
+            // (다음 full 이 catch-up). full 이 오면 그때 baseline 확립.
+            if (row.kind === "relay-delta" && !relayBaselineRef.current) return;
+            if (row.kind === "relay-full") relayBaselineRef.current = true;
+            // 삼순 4차 ②: watchdog freshness 는 relay 성공에만 갱신한다(타 채널 제외) —
+            // relay 만 죽고 live/events 가 변하면 watchdog 이 계속 가려지는 마스킹 방지.
+            lastRelayFreshAtRef.current = Date.now();
             // P0-3: Realtime 최신 relay 적용 → generation 증가. 이후 늦게 끝난 poll 응답은 버려진다.
             relayGenerationRef.current += 1;
             applyRealtimeRelay(row.payload.data as GameRelayResponse);

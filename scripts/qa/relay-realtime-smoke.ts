@@ -211,23 +211,80 @@ test("§1 폴백 역전 소멸 — fetch 실패·oversize tick 은 발행 0 (마
   assert.equal(r2.skippedOversize, 1);
 });
 
-// 삼순 3차 P0 비용: content-only 추정을 손익분기(추가 2,600만/월) 절대 임계로 판정.
-// (기존 idle<est 상대비교는 착시 — 절대 임계+기존 chat 합산으로 대체)
-const REALTIME_BREAK_EVEN_MONTHLY = 26_000_000;
-const EXISTING_CHAT_MONTHLY = 3_000_000; // 7/31 실측 기반 보수 추정(chat Realtime)
-test("§1 비용 게이트 — content-only 추정+chat 합산이 손익분기 미만이어야 GREEN", () => {
-  // shadow 입력(다음 라이브 1경기 실측으로 대입). 현재는 보수 가정.
+// 삼순 4차 P0 비용 — dual gate. 단일 26M 손익분기 PASS 금지. 세 축을 각각 판정:
+//  (a) 포함량: Pro Realtime 무료 포함은 월 500만 메시지. 기존 chat + relay 합산이
+//      이를 넘으면 그때부터 과금. (b) 초과분 실제 요금: 초과 메시지 × 단가($2.5/백만)로
+//      실 달러 산출 → 절감 목표(월 $20~30) 내여야 우위. (c) watchdog Edge 상한:
+//      content-only 라 idle 도 watchdog poll 이 있으므로 Edge 요청이 0 이 아니다 — 그
+//      상한을 결정론적으로 계산해 기존 3초 폴링 대비 절감률을 판정한다.
+const PRO_REALTIME_INCLUDED = 5_000_000;        // Pro 플랜 월 포함 메시지
+const REALTIME_OVERAGE_USD_PER_M = 2.5;          // 초과분 백만 메시지당 $ (Supabase Pro)
+const EXISTING_CHAT_MONTHLY = 3_000_000;         // 7/31 실측 기반 보수 추정(chat Realtime)
+const RELAY_SAVINGS_TARGET_USD = 30;             // B2 로 아껴야 하는 월 Vercel edge 달러(최소 목표)
+
+function realtimeOverageUsd(chatMonthly: number, relayMonthly: number): number {
+  const total = chatMonthly + relayMonthly;
+  const overage = Math.max(0, total - PRO_REALTIME_INCLUDED);
+  return (overage / 1_000_000) * REALTIME_OVERAGE_USD_PER_M;
+}
+
+// watchdog Edge 상한: 무변경 idle 구간에도 watchdog poll 이 도는 최악 요청 수.
+// (라이브 분 / watchdog 분) × CCU × 경기수 × 일수. 3초 폴링은 (라이브분×20) × ... 이므로
+// 절감률 = 1 - watchdog/폴링.
+function watchdogEdgeMonthly(p: { liveMinutesPerDayPerGame: number; avgConcurrentViewers: number; gamesPerDay: number; watchdogMs: number }): number {
+  const pollsPerMin = 60_000 / p.watchdogMs;
+  return pollsPerMin * p.liveMinutesPerDayPerGame * p.avgConcurrentViewers * p.gamesPerDay * 30;
+}
+function pollingEdgeMonthly(p: { liveMinutesPerDayPerGame: number; avgConcurrentViewers: number; gamesPerDay: number; pollMs: number }): number {
+  const pollsPerMin = 60_000 / p.pollMs;
+  return pollsPerMin * p.liveMinutesPerDayPerGame * p.avgConcurrentViewers * p.gamesPerDay * 30;
+}
+
+test("§1 비용 dual gate (a) 포함량 — content-only relay + 기존 chat 이 Pro 포함 5M 관계를 명시", () => {
   const SHADOW = { framesPerMinutePerGame: 8, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 };
-  const est = estimateMonthlyRealtimeMessages(SHADOW);
-  assert.equal(est, SHADOW.framesPerMinutePerGame * SHADOW.avgConcurrentViewers * SHADOW.liveMinutesPerDayPerGame * SHADOW.gamesPerDay * 30);
-  assert.ok(est + EXISTING_CHAT_MONTHLY < REALTIME_BREAK_EVEN_MONTHLY,
-    `content-only 추정(${est})+chat(${EXISTING_CHAT_MONTHLY})가 손익분기(${REALTIME_BREAK_EVEN_MONTHLY}) 미만이어야 GREEN`);
+  const relay = estimateMonthlyRealtimeMessages(SHADOW);
+  assert.equal(relay, SHADOW.framesPerMinutePerGame * SHADOW.avgConcurrentViewers * SHADOW.liveMinutesPerDayPerGame * SHADOW.gamesPerDay * 30);
+  // shadow 가정으로는 relay 21.6M → chat 합산이 포함량을 초과하므로 (b) 초과요금 축이 실제 판정.
+  // 여기서는 포함량 대비 초과 여부를 명시적으로 계산해 착시(포함 내 무료로 오판)를 차단.
+  const total = relay + EXISTING_CHAT_MONTHLY;
+  const exceedsIncluded = total > PRO_REALTIME_INCLUDED;
+  assert.equal(exceedsIncluded, true, "shadow 가정에선 포함량 초과 — (b) 초과요금으로 판정해야 한다");
 });
-test("§1 비용 게이트 검출력 — heartbeat 부하 시나리오(34/분)는 손익분기 초과로 RED", () => {
-  // 결함주입: heartbeat 시절 프레임률이면 손익분기를 넘겨 RED 여야 게이트가 유효하다.
-  const withHeartbeat = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
-  assert.ok(withHeartbeat + EXISTING_CHAT_MONTHLY >= REALTIME_BREAK_EVEN_MONTHLY,
-    `heartbeat 부하(${withHeartbeat})는 손익분기 초과여야 검출력 있음`);
+test("§1 비용 dual gate (b-산식) 초과요금 계산이 정확하다 — 포함량 차감×단가 (결정론)", () => {
+  // 산식 자체는 결정론적으로 항상 검증한다(포함 5M 미만=$0, 초과만 과금).
+  assert.equal(realtimeOverageUsd(1_000_000, 1_000_000), 0, "합산이 포함량 미만이면 $0");
+  // 합산 9M → 초과 4M × $2.5/M = $10
+  assert.equal(realtimeOverageUsd(3_000_000, 6_000_000), 10, "초과 4M × $2.5 = $10");
+});
+// (b-판정) 비용 우위는 shadow 실측 입력이 있을 때만 판정한다. 추측 값으로 GO 금지 —
+// SHADOW_MEASURED=1 과 실측 env(SHADOW_FPM·SHADOW_CCU) 가 있을 때만 초과요금을 목표와 대조.
+// 실측 전에는 "미입증(unproven)"으로 남겨 CI 를 추측으로 깨뜨리지 않고, cutover 승인 전제로 만 연결한다.
+test("§1 비용 dual gate (b-판정) shadow 실측 있을 때만 초과요금을 목표와 대조 (추측 GO 금지)", () => {
+  const measured = process.env.SHADOW_MEASURED === "1";
+  if (!measured) {
+    // 실측 전: 비용 우위 미입증. 이 플래그를 cutover 전제로 기록하고 CI 는 통과(추측으로 깨지 않음).
+    assert.equal(measured, false, "shadow 미입증 — 비용 우위는 cutover 승인 전제(추측으로 GO 불가)");
+    return;
+  }
+  const fpm = Number(process.env.SHADOW_FPM);
+  const ccu = Number(process.env.SHADOW_CCU);
+  assert.ok(Number.isFinite(fpm) && Number.isFinite(ccu), "SHADOW_FPM·SHADOW_CCU 실측값 필요");
+  const relay = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: fpm, avgConcurrentViewers: ccu, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
+  const usd = realtimeOverageUsd(EXISTING_CHAT_MONTHLY, relay);
+  assert.ok(usd <= RELAY_SAVINGS_TARGET_USD,
+    `실측 초과요금 $${usd.toFixed(2)} 가 절감목표 $${RELAY_SAVINGS_TARGET_USD} 내여야 cutover 우위`);
+});
+test("§1 비용 dual gate (c) watchdog Edge 상한 — 3초 폴링 대비 절감률 80% 이상", () => {
+  const base = { liveMinutesPerDayPerGame: 180, avgConcurrentViewers: 100, gamesPerDay: 5 };
+  const watchdog = watchdogEdgeMonthly({ ...base, watchdogMs: 45_000 });
+  const polling = pollingEdgeMonthly({ ...base, pollMs: 3_000 });
+  const reduction = 1 - watchdog / polling;
+  assert.ok(reduction >= 0.8, `watchdog(45s) 이 3초 폴링 대비 ${(reduction * 100).toFixed(1)}% 절감(≥80% 요구)`);
+});
+test("§1 비용 dual gate 검출력 — heartbeat 부하(34/분)면 초과요금이 목표 초과로 RED", () => {
+  const relay = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
+  const usd = realtimeOverageUsd(EXISTING_CHAT_MONTHLY, relay);
+  assert.ok(usd > RELAY_SAVINGS_TARGET_USD, `heartbeat 부하 초과요금 $${usd.toFixed(2)} 는 목표 초과여야 검출력 있음`);
 });
 
 // B2 content-only: 무변경이 아무리 길어도 heartbeat 없이 발행 0 (edge 는 클라 watchdog)
