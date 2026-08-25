@@ -58,6 +58,24 @@ const mutations = [
     to: '  if (toneFailed) {\n    return { kind: "unsure", reason: "tone_noncompliant", rejectedAnswer: toned };\n  }\n  if (!answerInQuestionScope(question, toned)) {\n    return { kind: "unsure", reason: "out_of_question_scope" };\n  }\n',
   },
   {
+    name: "M9 의문문 mood 가드 제거(서술형 매핑 과적용)",
+    file: TONE,
+    re: /          if \(isInterrogativeSentence\(rawSentence\)\) return rawSentence;\n/,
+    to: "",
+  },
+  {
+    name: "M10 의문 validator 를 평서문 규칙으로 완화(`니다?` 통과)",
+    file: TONE,
+    re: /const FORMAL_INTERROGATIVE_ENDING_RE = \/니까\$\/u;/,
+    to: "const FORMAL_INTERROGATIVE_ENDING_RE = /(?:\\ub2c8\\ub2e4|\\ub2c8\\uae4c)$/u;",
+  },
+  {
+    name: "M11 앞단 normalizer 토큰 합산 제거(full seam 축소 측정)",
+    file: PIPELINE,
+    re: /          inputTokens: \(entry\.inputTokens \?\? 0\) \+ \(normIn \?\? 0\),\n/,
+    to: "          inputTokens: entry.inputTokens ?? 0,\n",
+  },
+  {
     name: "M6 rewrite 토큰 합산 제거",
     file: PIPELINE,
     re: /inputTokens: sumTokens\(llm\.inputTokens, retry\.inputTokens\),/,

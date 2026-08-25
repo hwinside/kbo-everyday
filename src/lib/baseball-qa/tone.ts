@@ -54,6 +54,8 @@ export const BASEBALL_GENIUS_DEPTH_PROMPT = [
 /** 생성 답변은 strict, 코드가 만든 목록형 답변만 structured 면제를 명시적으로 사용한다. */
 export type ToneValidationMode = "strict" | "structured";
 const FORMAL_SENTENCE_ENDING_RE = /(?:니다|니까)$/u;
+/** 합쇼체 의문형은 `니다` 가 아니라 `니까` 만 허용한다 (2026-08-25 삼순 P0). */
+const FORMAL_INTERROGATIVE_ENDING_RE = /니까$/u;
 const HANGUL_RE = /[가-힣]/u;
 
 function splitSentences(line: string): string[] {
@@ -98,6 +100,13 @@ export function isBaseballGeniusToneCompliant(
         .replace(/^["“'‘]+|["”'’]+$/gu, "")
         .trim();
       if (!sentence || !HANGUL_RE.test(sentence)) continue;
+      // 🔴 의문문은 `니까` 만 합쇼체다 (2026-08-25 삼순 P0). 종전엔 장식(`?`)을 떼고
+      //    `니다|니까` 를 보았기 때문에 `가능합니다?` 같은 **비문을 통과**시켰다.
+      //    장식을 지우기 전 원문으로 mood 를 보고, 의문이면 더 좁은 규칙을 적용한다.
+      if (isInterrogativeSentence(rawSentence)) {
+        if (FORMAL_INTERROGATIVE_ENDING_RE.test(sentence)) continue;
+        return false;
+      }
       if (FORMAL_SENTENCE_ENDING_RE.test(sentence)) continue;
       const isStructuredListFragment =
         mode === "structured" && lines.length > 1 && lineIndex > 0 && !/[.!?…]$/u.test(rawSentence.trim());
@@ -244,8 +253,13 @@ const FORMAL_TONE_WORD_MAP = new Map<string, string>([
  * (`표정이 보여요` = 보인다)와 타동사(`자료를 보여요` = 보여준다)를 한 어절로 묶어
  * `선수의 긴장감이 얼굴에 보여요 → …보여줍니다` 같은 의미·문법 훼손을 보존으로 통과시킨다.
  * 어절 단위 exact key 로는 이 모호성을 닫을 수 없으므로 **쌍 자체를 fail-close** 한다
- * (모호한 쌍은 등록하지 않는다 — 잘못 서빙하느니 폐기한다). 타동사가 문면에 드러난
- * `보여줘요 → 보여줍니다` 는 모호하지 않으므로 유지한다.
+ * (모호한 쌍은 등록하지 않는다 — 잘못 서빙하느니 폐기한다).
+ *
+ * 🔴 2026-08-25 삼순 P0 으로 **`보여줘요` 도 제거**했다(20→19→18쌍). 지난번엔 "타동사가
+ * 문면에 드러나니 비모호"라고 판단했으나 틀렸다 — `그래프가 차이를 보여줘요`(서술)와
+ * `기록표를 보여줘요`(요청·명령)가 **같은 key** 라 mood 가 갈리지 않는다. 서술형
+ * `보여줍니다` 로 강제하면 요청문이 서술문으로 둘갑한다. shadow 45 에서 이 쌍은
+ * 1건(index 33)을 수용시켰고, 제거 후 그 1건은 폐기된다(accepted 22→21).
  */
 const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([
   ["겪어요", "겪습니다"],
@@ -258,7 +272,6 @@ const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([
   ["많아요", "많습니다"],
   ["바뀌었어요", "바뀌었습니다"],
   ["받아요", "받습니다"],
-  ["보여줘요", "보여줍니다"],
   ["붙여졌어요", "붙여졌습니다"],
   ["생겨요", "생깁니다"],
   ["쓰여요", "쓰입니다"],
@@ -271,6 +284,20 @@ const FORMAL_TONE_REWRITE_WORD_MAP = new Map<string, string>([
 
 /** 문장 끝 장식(문장부호·따옴표·괄호닫기)만 떼어낸다. 본문은 건드리지 않는다. */
 const TRAILING_DECORATION_RE = /[.!?…\s"'’”)\]}]*$/u;
+
+/**
+ * 의문문인가 — **서술형 매핑을 쓰면 안 되는 문장**을 가린다 (2026-08-25 삼순 P0).
+ *
+ * 🔴 `가능해요?` 가 ①에서 `가능합니다?` 로 바뀌고, validator 는 장식(`?`)을 떼고
+ * `니다` 만 보므로 **비문을 통과시켰다**. 합쇼체 의문형은 `니다` 가 아니라 `니까` 이다.
+ * A0 373·shadow 45 에 `?` 는 각 0건이라 이 무대는 원장이 증명해주지 않는다 —
+ * mood 별 exact 쌍을 사람이 검토해 등록하기 전까지는 **건드리지 않고 폐기**한다.
+ */
+function isInterrogativeSentence(sentence: string): boolean {
+  const decoration = TRAILING_DECORATION_RE.exec(sentence);
+  const tail = decoration ? sentence.slice(decoration.index) : "";
+  return tail.includes("?");
+}
 
 export interface FormalToneNormalization {
   /** 정규화된 답변. 바꿀 게 없었으면 입력과 동일하다. */
@@ -302,6 +329,9 @@ export function normalizeToFormalTone(
           const core = rawSentence.slice(0, cut);
           const tail = rawSentence.slice(cut);
           if (!core || !HANGUL_RE.test(core)) return rawSentence;
+          // 🔴 의문문은 서술형 매핑의 적용 대상이 아니다 — byte-identical 로 남겨 폐기시킨다
+          //    (`가능해요?` → `가능합니다?` 비문 방지, 2026-08-25 삼순 P0).
+          if (isInterrogativeSentence(rawSentence)) return rawSentence;
           // 이미 합니다체면 손대지 않는다.
           if (FORMAL_SENTENCE_ENDING_RE.test(core)) return rawSentence;
           const wordStart = Math.max(

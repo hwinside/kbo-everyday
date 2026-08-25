@@ -7,9 +7,9 @@
   "summary": {
     "total": 45,
     "tonePass": 33,
-    "preservationPass": 22,
-    "accepted": 22,
-    "successRate": 0.4888888888888889,
+    "preservationPass": 21,
+    "accepted": 21,
+    "successRate": 0.4666666666666667,
     "latencyMs": {
       "min": 932,
       "median": 1208,
@@ -22,7 +22,7 @@
       "inputMean": 309.5777777777778,
       "outputMean": 158.75555555555556
     },
-    "productionCallUpperBound": "tone_noncompliant 중 ① 미회수 · 범위안 잔존에만 rewrite 1회; rewrite 최대 1회 / 총 최대 3회(stat RULE_TERM: 의도+일반답+rewrite), 일반 경로 총 최대 2회"
+    "productionCallUpperBound": "tone_noncompliant 중 ① 미회수 · 범위안 · 비의문 잔존에만 rewrite 1회; rewrite 최대 1회 / production full seam 총 최대 4회(stat RULE_TERM: normalizeQuestionLlm+의도+일반답+rewrite), 일반 경로 총 최대 3회(normalizeQuestionLlm+일반답+rewrite)"
   },
   "results": [
     {
@@ -562,8 +562,8 @@
       "rewritten": "야구에서 투구의 기본이 되는 포심 패스트볼과 투심 패스트볼은 그립과 공의 움직임에서 큰 차이가 있습니다. 포심 패스트볼은 공의 실밥 네 개가 회전하며 날아오기 때문에 공기저항을 적게 받아 구속이 빠르고 직진성이 강한 투구입니다. 반면에 투심 패스트볼은 실밥 두 개를 잡고 던져서 회전 축이 약간 기울어지며, 타자의 홈플레이트 앞에서 공이 미세하게 가라앉거나 꺾이는 움직임을 보여줍니다. 타자의 입장에서 포심은 빠른 속도에 집중하게 되고, 투심은 마지막 순간에 변하는 궤적 때문에 정확한 타격점을 잡기 까다로운 특징을 지니고 있습니다.",
       "providerStatus": 200,
       "tonePass": true,
-      "preservationPass": true,
-      "accepted": true,
+      "preservationPass": false,
+      "accepted": false,
       "elapsedMs": 1228,
       "inputTokens": 339,
       "outputTokens": 194,

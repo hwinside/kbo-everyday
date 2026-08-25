@@ -87,6 +87,52 @@ async function main(): Promise<void> {
   }
   ok("① 미등록형 fail-close — 거/뭐/왜예요·일반활용 byte-identical");
 
+  // 🔴 2026-08-25 삼순 P0 — **의문문은 서술형 매핑을 적용하지 않는다.**
+  //    `가능해요?` → `가능합니다?` 는 비문이고, validator 가 장식(`?`)을 떼고 `니다`만
+  //    보므로 **그대로 통과해 서빙될 수 있었다**. A0 373·shadow 45 에 `?` 가 각 0건이라
+  //    원장이 증명해주지 않는 무대 — mood 별 exact 쌍 등록 전까지 fail-close 한다.
+  for (const answer of [
+    "야구에서 그게 가능해요?",
+    "야구에서 이건 규칙이에요?",
+    "야구 기록표를 보여줘요?",
+    "야구에서 그게 가능해요? 이건 규칙이에요?",
+  ]) {
+    const out = normalizeToFormalTone(answer);
+    assert.equal(out.answer, answer, `의문문을 서술형으로 바꿀: ${answer}`);
+    assert.equal(out.converted, 0, `의문문 변환 발생: ${answer}`);
+    assert.equal(out.compliant, false, `의문문은 폐기되어야 함: ${answer}`);
+    assert.doesNotMatch(out.answer, /니다\s*[?]/u, `합니다체 의문 비문 생성: ${answer}`);
+  }
+  // 같은 문단에서 **서술문은 정상 변환**된다 — 의문문 가드가 문단 전체를 죽이지 않음을 고정.
+  {
+    const out = normalizeToFormalTone("야구에서 보크는 규칙이에요. 그게 가능해요?");
+    assert.equal(out.answer, "야구에서 보크는 규칙입니다. 그게 가능해요?");
+    assert.equal(out.converted, 1);
+    assert.equal(out.compliant, false, "잔존 의문문 때문에 전체는 여전히 폐기");
+  }
+  // ② rewrite 게이트도 의문문 쌍을 보존으로 인정하지 않는다.
+  for (const [before, after] of [
+    ["야구에서 그게 가능해요?", "야구에서 그게 가능합니다?"],
+    ["야구 기록표를 보여줘요?", "야구 기록표를 보여줍니다?"],
+    ["야구에서 그런 사례를 많아요?", "야구에서 그런 사례를 많습니다?"],
+  ]) {
+    assert.equal(
+      isToneRewriteContentPreserving(before, after), false,
+      `의문문 rewrite 통과: ${before} -> ${after}`,
+    );
+  }
+  // 요청·명령 mood 모호쌍 `보여줘요` 도 제거됐다 — 서술/요청이 같은 key 라 갈리지 않는다.
+  for (const [before, after] of [
+    ["야구 기록표를 보여줘요.", "야구 기록표를 보여줍니다."],   // 요청 → 서술 둘갑
+    ["그래프가 야구 차이를 보여줘요.", "그래프가 야구 차이를 보여줍니다."], // 같은 key — 함께 폐기
+  ]) {
+    assert.equal(
+      isToneRewriteContentPreserving(before, after), false,
+      `mood 모호쌍 보여줘요 통과: ${before} -> ${after}`,
+    );
+  }
+  ok("①② mood fail-close — 의문문 4축·혼합문단·rewrite 3축 + 보여줘요 모호쌍 제거");
+
   // 대표 유한 매핑과 원 사고를 명시적으로 고정한다.
   const finite: Array<[string, string]> = [
     ["야구에서 보크는 규칙이에요.", "야구에서 보크는 규칙입니다."],
@@ -150,16 +196,14 @@ async function main(): Promise<void> {
   }
   ok("② 보존 게이트 — prefix/수치/구단/문장부호/문장수/copula/모호어절 음성");
 
-  // 타동사가 문면에 드러난 쌍은 모호하지 않으므로 유지된다 — 과잎 fail-close 가 아님을 고정.
-  assert.equal(
-    isToneRewriteContentPreserving(
-      "투수가 자신감을 보여줘요.",
-      "투수가 자신감을 보여줍니다.",
-    ),
-    true,
-    "모호하지 않은 타동사 쌍까지 닫으면 회수율만 잃는다",
-  );
-  ok("② 보존 게이트 — 비모호 타동사 쌍 양성 유지");
+  // 과잎 fail-close 가 아님을 고정 — 등록된 비모호 쌍은 여전히 양성이다.
+  for (const [before, after] of [
+    ["야구에서 그런 사례는 많아요.", "야구에서 그런 사례는 많습니다."],
+    ["야구에서 투수는 공을 받아요.", "야구에서 투수는 공을 받습니다."],
+  ]) {
+    assert.equal(isToneRewriteContentPreserving(before, after), true, `과잎 fail-close: ${before}`);
+  }
+  ok("② 보존 게이트 — 등록 비모호 쌍 양성 유지");
 
   // provider request는 실제 폐기 원문을 데이터로 포함해야 한다. 상수만 존재하면 false-GREEN.
   const originalDraft = "야구에서 이 플레이를 반칙으로 여겨요.";
@@ -208,7 +252,7 @@ async function main(): Promise<void> {
   assert.deepEqual(
     { total: shadow.summary.total, tonePass: shadow.summary.tonePass,
       preservationPass: shadow.summary.preservationPass, accepted: shadow.summary.accepted },
-    { total: 45, tonePass: 33, preservationPass: 22, accepted: 22 },
+    { total: 45, tonePass: 33, preservationPass: 21, accepted: 21 },
   );
   assert.deepEqual(shadow.summary.latencyMs, { min: 932, median: 1208, p95: 1741, max: 1991 });
   assert.deepEqual(
@@ -232,7 +276,16 @@ async function main(): Promise<void> {
     assert.equal(result.preservationPass, preservationPass, `shadow 보존 판정 drift: ${result.index}`);
     assert.equal(result.accepted, tonePass && preservationPass, `shadow accepted drift: ${result.index}`);
   }
-  ok("② 실 provider shadow 45 — accepted 22(48.9%) · p95 1741ms · tokens 13931/7144");
+  // 원장은 mood 무대를 담지 못한다 — 그 사실 자체를 고정해 "shadow 가 증명했다"는 과장 방지.
+  assert.equal(
+    shadow.results.filter((r) => (r.rewritten ?? "").includes("?")).length, 0,
+    "shadow 응답에 의문문 0건 — mood 계약은 반례로만 검증된다",
+  );
+  assert.equal(
+    rewriteFixture.rows.filter((r) => r.afterFiniteMap.includes("?")).length, 0,
+    "shadow 입력에도 의문문 0건",
+  );
+  ok("② 실 provider shadow 45 — accepted 21(46.7%) · ?무대 0 · p95 1741ms · tokens 13931/7144");
 
   interface RunResult {
     source: string;
@@ -348,16 +401,21 @@ async function main(): Promise<void> {
     ok("종단 scope-before-rewrite — 범위안 톤 단일결함은 rewrite 1회 유지");
   }
 
-  // ── P1 stat `RULE_TERM` 분기 호출 상한 ────────────────────────────
+  // ── P1 stat `RULE_TERM` 분기 호출 상한 (production full seam) ───────────────
   // 🔴 2026-08-25 삼순 P1. 가드 소유 질문이 `RULE_TERM` 으로 오면 **의도 1회 → 일반답 1회**
   //    이 이미 소비되고, 그 답이 톤 단일결함이면 rewrite 가 1회 더 붙는다.
-  //    즉 이 분기의 참 상한은 **rewrite 최대 1회 / 총 최대 3회** 이다("3차 0" 이 아니다).
-  //    호출수를 산물이 아니라 **카운터**로 재고, 토큰은 세 호출 전부 합산됨을 고정한다.
+  //
+  // 🔴 그리고 **그것도 부분 집합이었다** — Production 은 `server.ts` 에서 `normalizeQuestionLlm`
+  //    을 주입하고 그게 stat guard 보다 **앞서** 호출된다. 그 seam 을 뺄 채 측정하면
+  //    호출수도 토큰도 **축소 측정**이 된다. 이 게이트는 그 seam 까지 주입해
+  //    참 상한을 **normalizer + 의도 + 일반답 + rewrite = 총 4회** 로 고정한다.
+  //    호출수는 산물이 아니라 **카운터**로 재고, 토큰은 네 호출 전부 합산됨을 고정한다.
   {
     const STAT_QUESTION = "이대호 홈런 몇개";
     // ⚠️ ① 유한 매핑으로 닫히는 어미(`있어요`)를 쓰면 rewrite 무대가 사라진다 —
     //    열린 활용(`여겨요`)이어야 ② 가 실제로 태워진다.
     const draft = "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여겨요.";
+    let normalizerCalls = 0;
     let statCalls = 0;
     let genericCalls = 0;
     const rewriteCalls: string[] = [];
@@ -368,6 +426,12 @@ async function main(): Promise<void> {
       getCache: async () => null,
       setCache: async () => {},
       reserveDaily: async () => ({ allowed: true, remaining: 19 }),
+      // 🔴 Production seam — `server.ts` 가 실제로 주입하는 앞단 LLM 호출.
+      //    교정 없음(no_change)으로 돌려줘 질문은 원문으로 진행하되, 호출은 실제로 일어난다.
+      normalizeQuestionLlm: async () => {
+        normalizerCalls += 1;
+        return { text: null, inputTokens: 7, outputTokens: 2 };
+      },
       callLlm: async (
         _q: string,
         _ctx: unknown,
@@ -397,15 +461,19 @@ async function main(): Promise<void> {
     const result = await answerQuestion("tone-stat-user", STAT_QUESTION, deps);
     assert.equal(result.source, "llm");
     assert.equal(result.answer, "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여깁니다.");
-    // 호출수 상한 — 의도 1 + 일반답 1 + rewrite 1 = 총 3, rewrite 는 1회만.
+    // 호출수 상한 — normalizer 1 + 의도 1 + 일반답 1 + rewrite 1 = 총 4, rewrite 는 1회만.
+    assert.equal(normalizerCalls, 1, "앞단 normalizer 는 1회 — seam 이 빠지면 축소 측정이다");
     assert.equal(statCalls, 1, "의도 호출은 1회");
     assert.equal(genericCalls, 1, "일반 재질의는 1회");
     assert.deepEqual(rewriteCalls, [draft], "rewrite 는 폐기 원문으로 정확히 1회");
-    assert.equal(statCalls + genericCalls + rewriteCalls.length, 3, "분기 총 호출 상한 3");
-    // 토큰은 세 호출 전부 합산 — 과금 관측 누락 방지.
-    assert.equal(logs.at(-1)?.inputTokens, 11 + 100 + 1000);
-    assert.equal(logs.at(-1)?.outputTokens, 1 + 30 + 300);
-    ok("P1 stat RULE_TERM — rewrite 최대 1회 / 총 최대 3회 · 3호출 토큰 합산");
+    assert.equal(
+      normalizerCalls + statCalls + genericCalls + rewriteCalls.length, 4,
+      "production full seam 총 호출 상한 4",
+    );
+    // 토큰은 네 호출 전부 합산 — 과금 관측 누락 방지.
+    assert.equal(logs.at(-1)?.inputTokens, 7 + 11 + 100 + 1000);
+    assert.equal(logs.at(-1)?.outputTokens, 2 + 1 + 30 + 300);
+    ok("P1 stat RULE_TERM — full seam 총 최대 4회(rewrite 1) · 4호출 토큰 합산");
   }
 
   // 같은 분기에서 답이 **범위밖+톤** 이중결함이면 rewrite 는 0 — 총 2회에서 멈춰야 한다.
