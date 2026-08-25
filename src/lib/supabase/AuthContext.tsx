@@ -5,6 +5,8 @@ import { supabase } from "./client";
 import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
+import { clearUserScopedStores } from "@/lib/store/user-scope";
+import { setActiveAuthUid } from "@/lib/supabase/auth-identity";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
 import {
   acquireSession,
@@ -181,13 +183,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSession: tokens => supabase.auth.setSession(tokens),
       });
 
+      // 동기 활성 사용자 신원 즉시 갱신(setUser React state는 렌더 뒤 — stale 창 방지)
+      setActiveAuthUid(session?.user?.id ?? null);
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
-        // 계정 전환 감지 (syncSession 경로)
+        // 계정 전환 감지 (syncSession 경로) — 이전 계정 로컬을 공식 clear helper로
+        // 정리(실제 키 kbo-favorite-players + 팀 localStorage·cookie 모두).
         try {
           const prevId = localStorage.getItem('kbo-auth-uid');
           if (prevId && prevId !== session.user.id) {
-            ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+            clearUserScopedStores();
             sessionStorage.clear();
           }
           localStorage.setItem('kbo-auth-uid', session.user.id);
@@ -218,13 +223,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             refresh_token: session.refresh_token,
           });
         }
+        // 동기 활성 사용자 신원 즉시 갱신 — auth 이벤트 tick에 값 확정(setUser 렌더 전)
+        setActiveAuthUid(session?.user?.id ?? null);
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
-          // 계정 전환 감지: userId가 바뀌면 이전 계정 localStorage 즉시 정리
+          // 계정 전환 감지: userId가 바뀌면 이전 계정 로컬을 공식 clear helper로 즉시 정리
           try {
             const prevId = localStorage.getItem('kbo-auth-uid');
             if (prevId && prevId !== session.user.id) {
-              ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach(k => localStorage.removeItem(k));
+              clearUserScopedStores();
               sessionStorage.clear();
             }
             localStorage.setItem('kbo-auth-uid', session.user.id);
@@ -267,6 +274,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 동시에 도착하는 TOKEN_REFRESHED/SIGNED_IN 이 백업을 되살리는 race 를 차단하고
         // (이후 backupSessionTokens 전부 no-op), 마지막에 한 번 더 지운다. best-effort.
         beginLogoutFence();
+        // 로그아웃 = 활성 사용자 즉시 null(in-flight 저장 응답의 commit 차단)
+        setActiveAuthUid(null);
         try { await clearSessionBackup(); } catch { /* ignore */ }
         // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
         // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게
@@ -277,10 +286,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             new Promise(resolve => setTimeout(resolve, 2500)),
           ]);
         } catch { /* ignore */ }
-        // 계정 전환 시 이전 계정 localStorage 잔존 방지
+        // 계정 전환 시 이전 계정 로컬 잔존 방지 — 공식 clear helper(실제 키·팀 cookie 포함)
         try {
-          const keysToRemove = ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'];
-          keysToRemove.forEach(k => localStorage.removeItem(k));
+          clearUserScopedStores();
           // welcome toast / gads conversion 등 session 키도 정리
           sessionStorage.clear();
           // signOut()이 락 hang으로 세션 토큰을 못 지웠을 수 있어 supabase auth 쿠키를 직접 만료.

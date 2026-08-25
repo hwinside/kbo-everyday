@@ -14,6 +14,10 @@ import {
   ProfileSaveError,
 } from "../../src/lib/profile/favorites-saver-core.ts";
 import {
+  getActiveAuthUid,
+  setActiveAuthUid,
+} from "../../src/lib/supabase/auth-identity.ts";
+import {
   parseFavorites,
   resolveFavoriteById,
 } from "../../src/lib/profile/favorite-players-validation.ts";
@@ -363,9 +367,10 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   }
 }
 
-// ── ⑦ commit 시점 활성 사용자 가드 (삼순 6차): A 토큰으로 이미 시작된 요청이
+// ── ⑦ commit 시점 활성 사용자 가드 (삼순 6차 재설계): A 토큰으로 이미 시작된 요청이
 //    B 전환 뒤 200/실패로 도착 → tokenForUser/ownedRow 뒤 마지막 관문. 원인:
-//    handler가 요청 시작 때 캡처한 user.id(=A)로 ownedRow를 통과시켜 B 화면 로컬 오염.
+//    passive effect 기반 ref는 setUser(B) 후 effect 전에 A 응답이 오면 stale.
+//    → AuthContext 소유 동기 auth-identity(getActiveAuthUid)를 commit 직전 조회.
 {
   // 단위: 일치만 통과, 불일치/결손 전부 fail-close
   check(
@@ -378,37 +383,68 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     `active=b/req=a → ${isActiveUser("user-b", "user-a")}`
   );
 
-  // handler commit 게이트 시뮬레이션 — A in-flight 중 활성 사용자가 B로 바뀜 뒤
-  // A 응답이 도착. 로컬은 saver 소유/응답 검증을 통과한 row(= A 계정 row)를
-  // 받지만, commit 직전 isActiveUser 가드가 막아야 한다.
-  const runCommitGate = (activeAtCommit, requestUserId, guarded) => {
-    const local = { fav: "B-orig" }; // B 화면이 보고 있는 로컬
-    const serverRowForA = { id: requestUserId, favorite_players: "A-data" };
-    // handler 종단: seq·ownedRow는 이미 통과(requestUserId 기준)된 상태라 가정
-    const owned = ownedRow(serverRowForA, requestUserId); // A 기준 → 통과(A row)
-    if (guarded && !isActiveUser(activeAtCommit, requestUserId)) return local; // 가드: B로 전환 → skip
-    if (owned) local.fav = owned.favorite_players; // commit
-    return local;
+  // handler commit 게이트 — **실제 동기 auth-identity 모듈**을 구동(직접 주입 아님).
+  // AuthContext가 auth 이벤트에서 setActiveAuthUid를 동기 호출한다는 계약을
+  // 그대로 재현: 요청 시작 시 requestUserId 캐치 → (전환) setActiveAuthUid(B) →
+  // A 응답 도착 시 getActiveAuthUid()로 commit 게이트. stale 창을 직접 태운다.
+  //   arrival: "success"(A 200 row commit) | "failure"(ownedRow lastSaved 정합 commit)
+  //   switched: 응답 도착 전 B로 전환했는지
+  //   guarded: commit 직전 getActiveAuthUid() 가드 적용 여부(false=구 설계)
+  const runCommitGate = ({ arrival, switched, guarded }) => {
+    setActiveAuthUid("user-a");            // A 로그인 상태
+    const requestUserId = getActiveAuthUid(); // 요청 시작 시 동기 캐치(=A)
+    const local = { fav: "B-orig" };       // B 화면이 보고 있는 로컬(전환 후)
+    if (switched) setActiveAuthUid("user-b"); // AuthContext가 동기로 B로 전환
+    // ── A 응답 도착(이 시점엔 이미 전환 가능) ──
+    if (arrival === "success") {
+      const savedRowForA = { id: requestUserId, favorite_players: "A-data" };
+      const owned = ownedRow(savedRowForA, requestUserId); // A 기준 → 통과(A row)
+      // 구 설계(guarded=false)는 캐치한 requestUserId 를 활성으로 간주해 항상 commit.
+      const activeNow = guarded ? getActiveAuthUid() : requestUserId;
+      if (isActiveUser(activeNow, requestUserId ?? "") && owned) local.fav = owned.favorite_players;
+    } else {
+      // failure: lastSaved(= A 값)로 정합 commit 경로
+      const lastSavedForA = { id: requestUserId, favorite_players: "A-data" };
+      const activeNow = guarded ? getActiveAuthUid() : requestUserId;
+      if (isActiveUser(activeNow, requestUserId ?? "")) {
+        const owned = ownedRow(lastSavedForA, requestUserId ?? "");
+        if (owned) local.fav = owned.favorite_players;
+      }
+    }
+    return local.fav;
   };
 
-  // GREEN(가드 O): A 요청(req=A) in-flight → 활성 B → A 200 도착 → B 로컬 불변
+  // GREEN: A in-flight → 동기 B 전환 → A **200** 도착 → B 로컬 불변
   check(
-    "활성사용자 GREEN: A in-flight→B 전환→A 200 도착 → B 로컬 불변",
-    runCommitGate("user-b", "user-a", true).fav === "B-orig",
-    `local=${runCommitGate("user-b", "user-a", true).fav}`
+    "활성사용자 GREEN(동기모듈): A in-flight→B 전환→A 200 도착 → B 로컬 불변",
+    runCommitGate({ arrival: "success", switched: true, guarded: true }) === "B-orig",
+    `local=${runCommitGate({ arrival: "success", switched: true, guarded: true })}`
   );
-  // GREEN(가드 O): 전환 없으면(활성=req) 정상 commit
+  // GREEN: A in-flight → 동기 B 전환 → A **실패** 도착 → B 로컬 불변(실패 commit도 차단)
   check(
-    "활성사용자 GREEN: 전환 없음(활성=req) → 정상 commit",
-    runCommitGate("user-a", "user-a", true).fav === "A-data",
-    `local=${runCommitGate("user-a", "user-a", true).fav}`
+    "활성사용자 GREEN(동기모듈): A in-flight→B 전환→A 실패 도착 → B 로컬 불변",
+    runCommitGate({ arrival: "failure", switched: true, guarded: true }) === "B-orig",
+    `local=${runCommitGate({ arrival: "failure", switched: true, guarded: true })}`
   );
-  // mutation-RED 실증: 가드 없으면(구 설계) A row가 B 로컬을 실제로 덮어쓴다
+  // GREEN: 전환 없으면(활성=req) 정상 commit
   check(
-    "활성사용자 mutation-RED: 가드 없으면 A row가 B 로컬 오염(구 설계=결함)",
-    runCommitGate("user-b", "user-a", false).fav === "A-data",
-    `local=${runCommitGate("user-b", "user-a", false).fav}`
+    "활성사용자 GREEN(동기모듈): 전환 없음 → 정상 commit(A-data)",
+    runCommitGate({ arrival: "success", switched: false, guarded: true }) === "A-data",
+    `local=${runCommitGate({ arrival: "success", switched: false, guarded: true })}`
   );
+  // mutation-RED: 구 설계(캐치 requestUserId를 활성으로 간주 = passive/stale)는
+  // 동기 전환 후에도 A 값을 B 로컬에 실제로 덮어쓴다(성공·실패 둘 다)
+  check(
+    "활성사용자 mutation-RED(동기모듈): stale 활성 간주 → A 200이 B 로컬 오염(구 설계=결함)",
+    runCommitGate({ arrival: "success", switched: true, guarded: false }) === "A-data",
+    `local=${runCommitGate({ arrival: "success", switched: true, guarded: false })}`
+  );
+  check(
+    "활성사용자 mutation-RED(동기모듈): stale 활성 간주 → A 실패가 B 로컬 오염(구 설계=결함)",
+    runCommitGate({ arrival: "failure", switched: true, guarded: false }) === "A-data",
+    `local=${runCommitGate({ arrival: "failure", switched: true, guarded: false })}`
+  );
+  setActiveAuthUid(null); // 다른 블록에 상태 누수 방지
 }
 
 // ── ⑤ ID-only canonical 검증 (production seam — 라우트가 import하는 그 함수) ──
@@ -492,6 +528,51 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
     "selftest-RED: 비직렬화 구현은 DB 최종=A(결함)를 실제로 만든다",
     applied[applied.length - 1] === "A",
     `applied=${applied.join(",")} (직렬화 없으면 최신 B가 먼저 반영되고 지연된 A가 덮음)`
+  );
+}
+
+// ── ⑧ 공식 clear helper (삼순 6차): 계정 전환·로그아웃 시 실제 키/쿼키 정리 actual (jsdom) ──
+// 삼순 blocker: AuthContext가 `favorite_players`(오타)를 지워 실제 키
+// `kbo-favorite-players`가 남고, 팀은 localStorage만 지워 cookie의 A 값이 남았다.
+// user-scope.clearUserScopedStores가 store 공식 clear로 실제 키·cookie를 닫는지 실측.
+{
+  const { JSDOM } = await import("jsdom");
+  const dom = new JSDOM("", { url: "https://keubo.fan" });
+  globalThis.window = dom.window;
+  globalThis.document = dom.window.document;
+  globalThis.localStorage = dom.window.localStorage;
+
+  // A 계정 로컬 값 심기(실제 키)
+  localStorage.setItem("kbo-favorite-players", JSON.stringify([{ playerId: "A" }]));
+  localStorage.setItem("kbo-my-team", "1");
+  document.cookie = "kbo-my-team=1; path=/";
+  localStorage.setItem("kbo-onboarding-status", "completed");
+
+  const { clearUserScopedStores } = await import("../../src/lib/store/user-scope.ts");
+  clearUserScopedStores();
+
+  const favCleared = localStorage.getItem("kbo-favorite-players") === null;
+  const teamLsCleared = localStorage.getItem("kbo-my-team") === null;
+  const teamCookieCleared = !/(?:^|; )kbo-my-team=/.test(document.cookie);
+  const onbCleared = localStorage.getItem("kbo-onboarding-status") === null;
+  check(
+    "clear helper: 실제 키(kbo-favorite-players)·팀 localStorage+cookie·온보딩 전부 정리",
+    favCleared && teamLsCleared && teamCookieCleared && onbCleared,
+    `fav=${favCleared} teamLs=${teamLsCleared} cookie=${teamCookieCleared} onb=${onbCleared}`
+  );
+
+  // mutation-RED 실증: 구 AuthContext가 지우던 키 배열(오타 favorite_players + 팀 cookie 미정리)는
+  // 실제 최애 값과 팀 cookie를 남긴다.
+  localStorage.setItem("kbo-favorite-players", JSON.stringify([{ playerId: "A" }]));
+  localStorage.setItem("kbo-my-team", "1");
+  document.cookie = "kbo-my-team=1; path=/";
+  ['kbo-my-team', 'kbo-onboarding-status', 'favorite_players'].forEach((k) => localStorage.removeItem(k)); // 구 설계
+  const oldFavStillThere = localStorage.getItem("kbo-favorite-players") !== null;
+  const oldCookieStillThere = /(?:^|; )kbo-my-team=1/.test(document.cookie);
+  check(
+    "clear helper mutation-RED: 구 오타 키·cookie 미정리로 실제 최애 값·팀 cookie 잔존(구 설계=결함)",
+    oldFavStillThere && oldCookieStillThere,
+    `favLeft=${oldFavStillThere} cookieLeft=${oldCookieStillThere}`
   );
 }
 
