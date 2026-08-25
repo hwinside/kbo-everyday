@@ -101,6 +101,22 @@ export function evaluateStripContract(strip: StripFn): string[] {
   return violations;
 }
 
+/**
+ * 컴포넌트가 strip의 replaceState를 requestAnimationFrame으로 지연하는지 구조 판정.
+ * Next App Router 하이드레이션 재동기화가 동기 replaceState를 덮어써 라이브에서만
+ * URL strip이 실패하는 축(순수 헬퍼/게이트는 green) — 동기 회귀를 잡는다.
+ */
+export function evaluateDeferredStrip(src: string): string[] {
+  const violations: string[] = [];
+  const usesStrip = /stripAuthErrorNoticeParams\s*\(/.test(src);
+  const usesReplace = src.includes("replaceState");
+  if (usesStrip && usesReplace) {
+    const deferred = /requestAnimationFrame\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?replaceState[\s\S]*?\}\s*\)/.test(src);
+    if (!deferred) violations.push("strip-not-deferred");
+  }
+  return violations;
+}
+
 function main() {
   console.log("== login-error-notice-gate ==");
 
@@ -163,6 +179,8 @@ function main() {
   assert("LEGATE-18-notice-strip-call", /stripAuthErrorNoticeParams\s*\(/.test(noticeSrc) && noticeSrc.includes("replaceState"));
   assert("LEGATE-19-notice-mailto-call", /buildLoginSupportMailto\s*\(/.test(noticeSrc));
   assert("LEGATE-20-notice-imports", /from\s+"@\/lib\/auth-error"/.test(noticeSrc));
+  // 9. strip replaceState가 rAF로 지연됐는지(라이브 URL strip 회귀 방지)
+  assert("LEGATE-21-notice-strip-deferred", evaluateDeferredStrip(noticeSrc).length === 0);
 
   console.log(`\nRESULT checks=${checks} failures=${failures}`);
   process.exit(failures === 0 ? 0 : 1);
@@ -209,6 +227,14 @@ function selftest() {
 
   // 양성 대조: 정상 헬퍼는 위반 0 — 평가기가 양방향으로 유효함을 증명
   expect("G-real-helper-clean", evaluateStripContract(stripAuthErrorNoticeParams).length === 0);
+
+  // mutant H: 동기 replaceState(rAF 미사용) → 지연 판정이 잡아야 함(라이브 clobber 회귀)
+  const syncStripSrc = `if (stripAuthErrorNoticeParams(url)) { window.history.replaceState(window.history.state, "", url.toString()); }`;
+  expect("H-sync-strip-detected", evaluateDeferredStrip(syncStripSrc).includes("strip-not-deferred"));
+
+  // 양성 대조: 실제 컴포넌트 소스는 지연 계약 충족(주석 blank 후 구조 판정)
+  const realNoticeSrc = blankComments(readFileSync(NOTICE_PATH, "utf-8"));
+  expect("I-real-notice-deferred", evaluateDeferredStrip(realNoticeSrc).length === 0);
 
   console.log(`\nSELFTEST ok=${ok} bad=${bad}`);
   process.exit(bad === 0 ? 0 : 1);

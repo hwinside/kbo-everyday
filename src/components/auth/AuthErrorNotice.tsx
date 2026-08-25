@@ -54,8 +54,15 @@ export default function AuthErrorNotice() {
       sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
     }
 
+    // Next.js App Router re-syncs the canonical URL during hydration, clobbering
+    // a synchronous replaceState here. Defer past the current frame so the strip
+    // survives (verified on deployment: synchronous strip is reverted, rAF sticks).
+    let stripRaf: number | null = null;
     if (stripAuthErrorNoticeParams(url)) {
-      window.history.replaceState(window.history.state, "", url.toString());
+      const strippedUrl = url.toString();
+      stripRaf = window.requestAnimationFrame(() => {
+        window.history.replaceState(window.history.state, "", strippedUrl);
+      });
     }
 
     const handleAuthError = (event: Event) => {
@@ -67,7 +74,10 @@ export default function AuthErrorNotice() {
     };
 
     window.addEventListener(AUTH_ERROR_EVENT, handleAuthError);
-    return () => window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
+    return () => {
+      window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
+      if (stripRaf !== null) window.cancelAnimationFrame(stripRaf);
+    };
   }, []);
 
   if (!errorCode) return null;
