@@ -125,10 +125,13 @@ export async function listLiveGameIds(date: string): Promise<string[]> {
 export function internalGetRequest(
   pathname: string,
   params: Record<string, string>,
+  signal?: AbortSignal,
 ): NextRequest {
   const url = new URL(`https://internal.local${pathname}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  return new NextRequest(url);
+  // 삼순 4차 ③: signal 을 handler 요청에 전달 — timeout abort 시 진행 중인 upstream fetch 가
+  // 이 신호를 상속해 끊릴 수 있다(handler 가 req.signal 을 존중하는 경우).
+  return signal ? new NextRequest(url, { signal }) : new NextRequest(url);
 }
 
 /**
@@ -246,6 +249,7 @@ export async function publishGameTick(
     promise: envelopeFrom(channel, deps.handlers[channel](internalGetRequest(
       CHANNEL_PATH[channel],
       channel === "live" ? { gameId, date: deps.date } : { gameId },
+      signal,
     ))),
   }));
 
@@ -301,8 +305,22 @@ export async function publishGameTick(
       continue;
     }
 
+    // 삼순 4차 ③: INSERT 직전에도 abort 를 다시 확인한다 — hash 계산 사이에 timeout 이 나면
+    // INSERT 자체를 건너뛴다(늦은 tick 의 쓰기 자체 봉쇄). 이 시점엔 seq 미증가 — 감산 금지.
+    if (signal?.aborted) {
+      result.errors.push(`${gameId}:${channel}:aborted`);
+      continue;
+    }
     state.seq += 1;
     const ok = await deps.insertFrame({ game_id: gameId, seq: state.seq, kind, payload });
+    // 삼순 4차 ③: INSERT 결과 대기 중 timeout 이 난 경우, ok 여부와 무관하게
+    // lastHash/publishedFull 을 변경하지 않는다 — 다음 tick 과 경합하는 old-tick 쓰기 차단.
+    // (insertFrame 은 route 에서 lockLost 시 no-op 이므로 이미 INSERT 되지 않았을 수 있다.)
+    if (signal?.aborted) {
+      state.seq -= 1;
+      result.errors.push(`${gameId}:${channel}:aborted`);
+      continue;
+    }
     if (ok) {
       // 해시·seq 는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry)
       state.lastHash[channel] = hash;

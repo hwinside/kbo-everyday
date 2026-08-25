@@ -125,10 +125,13 @@ export function useGameRelay(
   const relayBaselineRef = useRef(false);
   // 적용한 프레임의 전역 단조 id — 재연결 replay 등 과거 프레임 역행 차단.
   const lastAppliedFrameIdRef = useRef(0);
-  // 최신성 소유권 fence(P0-3): Realtime 이 최신 relay 프레임을 적용할 때마다 증가.
-  // 그보다 먼저 시작해 늦게 끝난 poll 응답은 자기 generation 이 낡았으면 버려진다
-  // → 느린 poll 이 최신 Realtime 값을 과거로 덮는 역행을 원천 차단한다.
+  // 최신성 소유권 fence — 삼순 4차 ②: 채널별로 분리한다. 예전엔 공용
+  // relayGenerationRef 를 live/detail RT 도 올려, 그 전에 시작한 성공 watchdog relay
+  // poll 까지 버렸다(채널 간 마스킹). 이젠 relay/live/detail 이 각자의 generation 만
+  // 올리고, 각 poll 응답은 자기 채널의 generation 만 대조해 교차 폐기를 없앱다.
   const relayGenerationRef = useRef(0);
+  const liveGenerationRef = useRef(0);
+  const detailGenerationRef = useRef(0);
   // P0-1: onLive/DetailFrame 콜백을 ref 로 안정화한다. 호출부가 매 렌더 inline object 를
   // 넘겨도 구독 effect 가 재실행(unsubscribe/resubscribe)되지 않게, effect deps 에서
   // options 를 빼고 이 ref 를 통해 최신 콜백을 읽는다.
@@ -162,9 +165,12 @@ export function useGameRelay(
     // 이 요청의 신분증. inFlight 가드 통과 후에만 증가시켜(중복 폴 조기 반환은 seq 미소모)
     // parse/finally 재확인의 기준으로 쓴다. gameId 전환·후행 요청이 이 값을 다시 올리면 stale 이 된다.
     const mySeq = ++requestSeqRef.current;
-    // P0-3: 이 poll 이 시작한 시점의 generation 스냅샷. 응답이 도착했을 때 Realtime 이
-    // 더 최신 relay 프레임을 적용해 generation 을 올렸으면 이 poll 응답은 버린다.
+    // P0-3(삼순 4차 ②): 채널별 generation 스냅샷. relay 응답은 relay generation 만,
+    // embedded live/detail 은 각자 generation 만 대조한다 — live RT 가 relay poll 을, 또는
+    // relay RT 가 live poll 을 교차로 버리는 마스킹 제거.
     const myGeneration = relayGenerationRef.current;
+    const myLiveGeneration = liveGenerationRef.current;
+    const myDetailGeneration = detailGenerationRef.current;
     const controller = new AbortController();
     abortControllersRef.current.add(controller);
     inFlightRef.current = true;
@@ -299,6 +305,8 @@ export function useGameRelay(
           channelRef: MutableRefObject<number>,
           onFrame: ((data: unknown) => void) | undefined,
           envelope: LivePollEnvelope,
+          genSnapshot: number,
+          genRef: MutableRefObject<number>,
         ) => {
           if (
             !onFrame
@@ -310,10 +318,9 @@ export function useGameRelay(
           // (실패 frame 을 커밋하면 games:[] 가 isLive 를 꺼서 multiplex 가
           //  플리커하고 standalone 폴링·리렌더 폭풍이 난다 — Preview 실측.)
           if (!envelope.ok) return;
-          // P0-3(삼순 2차): generation fence 를 live/detail 에도 적용. 이 poll 이 시작한 뒤
-          // Realtime 이 더 최신 프레임(relay/live/detail)을 적용했으면(공용 generation 증가)
-          // 느린 poll 의 embedded live/detail 은 버려 최신 RT 값을 과거로 덮지 않는다.
-          if (!shouldApplyPollResponse(myGeneration, relayGenerationRef.current)) return;
+          // P0-3(삼순 4차 ②): 채널별 generation fence. 이 poll 이 시작한 뒤 같은 채널의
+          // RT 프레임이 더 최신을 적용했을 때만 버린다 — 다른 채널 RT 는 이 폴을 못 버린다.
+          if (!shouldApplyPollResponse(genSnapshot, genRef.current)) return;
           if (mySeq <= channelRef.current) return;
           channelRef.current = mySeq;
           onFrame(envelope.data);
@@ -337,9 +344,9 @@ export function useGameRelay(
             } else if (envelope.channel === "events") {
               applyEvents(envelope);
             } else if (envelope.channel === "live") {
-              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope);
+              applyFrame(liveFrameOwnerSeqRef, options?.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef);
             } else if (envelope.channel === "detail") {
-              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope);
+              applyFrame(detailFrameOwnerSeqRef, options?.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef);
             }
           });
         } else {
@@ -384,6 +391,8 @@ export function useGameRelay(
     relayBaselineRef.current = false;
     lastAppliedFrameIdRef.current = 0;
     relayGenerationRef.current = 0;
+    liveGenerationRef.current = 0;
+    detailGenerationRef.current = 0;
     finalFetchedRef.current = false;
     setData(null);
     setEvents([]);
@@ -451,13 +460,13 @@ export function useGameRelay(
             applyRealtimeEvents(row.payload.data as { events?: GameEvent[] });
           } else if (row.kind === "live") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
-              // P0-3(삼순 2차): 공용 generation 증가 → 느린 poll 의 embedded live 가 이 값을 못 덮는다.
-              relayGenerationRef.current += 1;
+              // 삼순 4차 ②: live 전용 generation 만 올린다 — relay watchdog poll 을 교차로 버리지 않는다.
+              liveGenerationRef.current += 1;
               onLiveFrameRef.current?.(row.payload.data);
             }
           } else if (row.kind === "detail") {
             if (mountedRef.current && activeGameIdRef.current === frameGameId) {
-              relayGenerationRef.current += 1;
+              detailGenerationRef.current += 1;
               onDetailFrameRef.current?.(row.payload.data);
             }
           }

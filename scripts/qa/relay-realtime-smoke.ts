@@ -211,6 +211,61 @@ test("§1 폴백 역전 소멸 — fetch 실패·oversize tick 은 발행 0 (마
   assert.equal(r2.skippedOversize, 1);
 });
 
+// 삼순 4차 ③ 실행 결함주입: timeout 이 INSERT 대기 중 발생하면 old tick 은 이후
+// lastHash/publishedFull 을 변경하면 안 된다(다음 tick 과 경합). deferred insertFrame 으로
+// INSERT 대기 중 abort 를 주입해, state 가 오염되지 않음을 실행으로 검증한다.
+// (publisher 의 post-INSERT signal.aborted 가드를 제거하면 이 테스트는 RED.)
+test("§1 abort fence — INSERT 대기 중 abort 시 lastHash/publishedFull 미변경(경합 차단)", async () => {
+  let releaseInsert!: () => void;
+  const insertGate = new Promise<void>((r) => { releaseInsert = r; });
+  const rows: FrameRow[] = [];
+  const deps: TickDeps = {
+    handlers: {
+      relay: async () => jsonResponse(RELAY_DATA_A),
+      events: async () => jsonResponse({ events: [] }),
+      live: async () => jsonResponse({ games: [] }),
+      detail: async () => jsonResponse({ detail: true }),
+    },
+    insertFrame: async (row) => { await insertGate; rows.push(row); return true; },
+    date: "2026-08-25",
+  };
+  const state = newGameState();
+  const ac = new AbortController();
+  const tickPromise = publishGameTick(deps, state, "g1", 1, ac.signal);
+  // INSERT 가 gate 에 걸려 대기하는 동안 timeout 처럼 abort → INSERT 는 실제로 커밋될 수도 있으나
+  // publisher 는 post-INSERT abort 가드로 state 를 갱신하지 않아야 한다.
+  await new Promise((r) => setTimeout(r, 10));
+  ac.abort();
+  releaseInsert();
+  const result = await tickPromise;
+  assert.equal(Object.keys(state.lastHash).length, 0, "abort 면 lastHash 미갱신(경합 차단)");
+  assert.equal(state.publishedFull, false, "abort 면 publishedFull 미갱신");
+  assert.equal(result.inserted, 0, "abort tick 은 inserted 집계 0");
+  assert.ok(result.errors.some((e) => e.includes("aborted")), "aborted 에러 집계");
+});
+
+// 삼순 4차 ③ 실행 결함주입: abort 이후 남은 채널은 아예 INSERT 를 시도하지 않는다.
+// (pre-INSERT signal.aborted 가드 제거 시 RED — abort 후에도 다음 채널이 INSERT 됨.)
+test("§1 abort fence — abort 이후 채널은 INSERT 시도조차 안 함", async () => {
+  const rows: FrameRow[] = [];
+  const ac = new AbortController();
+  const deps: TickDeps = {
+    handlers: {
+      // tick 0 = 전채널. relay 에서 abort 를 유발한 뒤 events/live/detail 은 스킵돼야 한다.
+      relay: async () => { ac.abort(); return jsonResponse(RELAY_DATA_A); },
+      events: async () => jsonResponse({ events: [{ id: "e1" }] }),
+      live: async () => jsonResponse({ games: [{ x: 1 }] }),
+      detail: async () => jsonResponse({ detail: true }),
+    },
+    insertFrame: async (row) => { rows.push(row); return true; },
+    date: "2026-08-25",
+  };
+  const state = newGameState();
+  const result = await publishGameTick(deps, state, "g1", 0, ac.signal);
+  assert.equal(rows.length, 0, "abort 후 어떤 채널도 INSERT 하지 않아야 한다");
+  assert.equal(result.inserted, 0);
+});
+
 // 삼순 4차 P0 비용 — dual gate. 단일 26M 손익분기 PASS 금지. 세 축을 각각 판정:
 //  (a) 포함량: Pro Realtime 무료 포함은 월 500만 메시지. 기존 chat + relay 합산이
 //      이를 넘으면 그때부터 과금. (b) 초과분 실제 요금: 초과 메시지 × 단가($2.5/백만)로
@@ -276,10 +331,14 @@ test("§1 비용 dual gate (b-판정) shadow 실측 있을 때만 초과요금�
 });
 test("§1 비용 dual gate (c) watchdog Edge 상한 — 3초 폴링 대비 절감률 80% 이상", () => {
   const base = { liveMinutesPerDayPerGame: 180, avgConcurrentViewers: 100, gamesPerDay: 5 };
-  const watchdog = watchdogEdgeMonthly({ ...base, watchdogMs: 45_000 });
+  // 삼순 4차 P1: 하드코딩 45_000 대신 런타임 상수 RELAY_WATCHDOG_MS 를 직접 사용해
+  // 상수 회귀(예: 주기를 3초로 낮추면 절감 소멸)를 게이트가 잡게 한다.
+  const watchdog = watchdogEdgeMonthly({ ...base, watchdogMs: RELAY_WATCHDOG_MS });
   const polling = pollingEdgeMonthly({ ...base, pollMs: 3_000 });
   const reduction = 1 - watchdog / polling;
-  assert.ok(reduction >= 0.8, `watchdog(45s) 이 3초 폴링 대비 ${(reduction * 100).toFixed(1)}% 절감(≥80% 요구)`);
+  assert.ok(reduction >= 0.8, `watchdog(${RELAY_WATCHDOG_MS}ms) 이 3초 폴링 대비 ${(reduction * 100).toFixed(1)}% 절감(≥80% 요구)`);
+  // 상수가 3초 이하로 회귀하면 이 게이트가 RED 임을 명시(검출력).
+  assert.ok(RELAY_WATCHDOG_MS >= 30_000, `watchdog 상수는 30~60초 범위여야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
 });
 test("§1 비용 dual gate 검출력 — heartbeat 부하(34/분)면 초과요금이 목표 초과로 RED", () => {
   const relay = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
@@ -479,11 +538,17 @@ test("§3 useGameRelay — 구독·억제·단조·generation·callback ref 배�
   assert.ok(/parseFrameRow/.test(src), "fail-close 파싱");
   assert.ok(/shouldApplyFrame/.test(src), "단조 가드");
   assert.ok(/shouldApplyPollResponse/.test(src) && /relayGenerationRef/.test(src), "P0-3 generation fence");
-  // P0-3 잔존(삼순 2차): live/detail applyFrame 에도 generation fence 적용 + RT live/detail 도 generation++
-  const applyFrameFenced = /const applyFrame =[\s\S]*?shouldApplyPollResponse\(myGeneration, relayGenerationRef\.current\)[\s\S]*?channelRef\.current = mySeq;/.test(src);
-  assert.ok(applyFrameFenced, "live/detail applyFrame 에 generation fence");
-  const rtLiveDetailBumps = (src.match(/relayGenerationRef\.current \+= 1;/g) || []).length;
-  assert.ok(rtLiveDetailBumps >= 3, `RT relay+live+detail 이 generation 을 올려야 함 (bumps=${rtLiveDetailBumps})`);
+  // 삼순 4차 ②: 채널별 fence 분리. relay/live/detail 이 각자의 generation ref 를 갖고,
+  // applyFrame 은 전달받은 genRef/genSnapshot 으로 판정해야 한다(공용 relayGenerationRef 직참조 ❌).
+  assert.ok(/liveGenerationRef/.test(src) && /detailGenerationRef/.test(src), "삼순 4차 ② 채널별 generation ref");
+  const applyFrameFenced = /const applyFrame =[\s\S]*?genSnapshot: number,[\s\S]*?genRef: MutableRefObject<number>,[\s\S]*?shouldApplyPollResponse\(genSnapshot, genRef\.current\)[\s\S]*?channelRef\.current = mySeq;/.test(src);
+  assert.ok(applyFrameFenced, "applyFrame 은 채널별 genRef/genSnapshot 으로 fence");
+  // 각 채널은 자기 generation 만 올린다: relay 는 relayGenerationRef, live 는 liveGenerationRef, detail 는 detailGenerationRef.
+  assert.ok(/liveGenerationRef\.current \+= 1;/.test(src), "live RT 는 live generation 만 올릴 것");
+  assert.ok(/detailGenerationRef\.current \+= 1;/.test(src), "detail RT 는 detail generation 만 올릴 것");
+  // 마스킹 방지: live/detail RT 바로 앞에서 공용 relayGenerationRef 를 올리면 안 된다.
+  assert.ok(!/onLiveFrameRef\.current\?\.\([\s\S]{0,80}relayGenerationRef\.current \+= 1;/.test(src),
+    "live RT 가 공용 relayGenerationRef 를 올려 relay watchdog poll 을 마스킹하면 안 된다");
   assert.ok(/onLiveFrameRef/.test(src) && /onDetailFrameRef/.test(src), "P0-1 callback ref");
   // P0-1: 구독 effect deps 에 options 가 없어야 한다 (프레임 N개에도 구독 1회)
   const subEffect = src.match(/useEffect\(\(\) => \{\s*if \(!gameId \|\| !isLive\) return;[\s\S]*?\}, \[([^\]]*)\]\);/);

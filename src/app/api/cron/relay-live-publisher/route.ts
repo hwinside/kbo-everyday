@@ -105,6 +105,16 @@ async function renewLock(token: string): Promise<boolean> {
   return result === 1;
 }
 
+/**
+ * 삼순 4차 ③: 실제 Redis 토큰 소유 여부 확인(GET == token). INSERT 직전에 호출해
+ * 로컬 lockLost(최대 8초 stale) 가 아닌 실시간 소유권으로 쓰기를 게이트한다.
+ * Redis 오류·토큰 불일치는 false — fail-close(쓰지 않음).
+ */
+async function ownsLock(token: string): Promise<boolean> {
+  const cur = await redisCommand(["GET", LOCK_KEY]);
+  return cur === token;
+}
+
 /** 내 토큰일 때만 해제(compare-delete). */
 async function releaseLock(token: string): Promise<void> {
   await redisCommand([
@@ -182,10 +192,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: true, liveGames: 0, gc: gcError ? `error:${gcError.message}` : "ok" });
     }
 
-    // 삼순 4차 ③: INSERT 직전 소유권 검증 — lockLost 면 no-op. 늦게 끝난(timeout 된)
-    // tick 이 이 시점에 INSERT 를 시도해도 새 owner 의 프레임을 덮어쓰지 못한다.
+    // 삼순 4차 ③: INSERT 직전 소유권 검증 — 로컬 lockLost + 실제 Redis 토큰 GET 둘 다.
+    // 로컬 lockLost 는 최대 8초 stale 할 수 있으므로, 쓰기 직전 실시간 토큰을 확인해
+    // 다른 writer 가 이미 락을 잡았으면 쓰지 않고 lockLost 를 올려 이후도 전부 막는다.
     const insertFrame = async (row: FrameRow): Promise<boolean> => {
       if (lockLost) return false;
+      if (!(await ownsLock(token))) { lockLost = true; return false; }
       const { error } = await supabase.from("game_relay_frames").insert(row);
       return !error;
     };
@@ -214,8 +226,7 @@ export async function GET(req: NextRequest) {
     };
     const startedAt = Date.now();
 
-    try {
-      for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
+    for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
         const tickStartedAt = Date.now();
         if (lockLost) break; // 독립 타이머가 락 상실 감지 → 즉시 중단
 
@@ -248,9 +259,6 @@ export async function GET(req: NextRequest) {
         const remaining = LOOP_BUDGET_MS - (Date.now() - startedAt);
         if (remaining <= TICK_INTERVAL_MS) break;
         if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
-      }
-    } finally {
-      clearInterval(renewTimer);
     }
 
     // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
@@ -276,6 +284,10 @@ export async function GET(req: NextRequest) {
       errors: totals.errors.slice(0, 20),
     });
   } finally {
+    // 삼순 4차 P1: renewTimer 를 outer-finally 에서 clear — 0경기·502 조기 return 등
+    // 모든 경로에서 타이머가 새지 않도록 보장한다(이전엔 loop 내 finally 만 있어
+    // 조기 return 시 renewTimer 가 간혹 남아 불필요한 renewLock 을 계속 호출했다).
+    clearInterval(renewTimer);
     await releaseLock(token);
   }
 }
