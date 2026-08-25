@@ -319,13 +319,21 @@ export async function publishGameTick(
     // signal 을 insertFrame 으로 전달 — route 는 ownsLock 후 abort 재확인 + Supabase insert 에
     // abortSignal 을 걸어, abort 된 A 는 커밋되지 않는다(늦은 A row 가 최신 id 로 전파 ❌).
     const ok = await deps.insertFrame({ game_id: gameId, seq: mySeq, kind, payload }, signal);
+    // 삼순 6차: post-INSERT abort fence 복원 — INSERT 결과 대기 중 abort 가 나면 그 프레임은
+    // 다음 tick 이 재발행하도록 lastHash/publishedFull 을 갱신하지 않는다. seq 감산은
+    // 하지 않는다(단조 유지) — 이 번호는 gap 으로 버려진다. 단, 누락 감지를 위해 본
+    // 번호의 commit 여부와 무관하게 상태만 멈춘다(durable ordering 은 route await-outstanding 이 보장).
+    if (signal?.aborted) {
+      result.errors.push(`${gameId}:${channel}:aborted`);
+      continue;
+    }
     if (ok) {
       // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;
       if (kind === "relay-full") state.publishedFull = true;
       result.inserted += 1;
     } else {
-      result.errors.push(signal?.aborted ? `${gameId}:${channel}:aborted` : `${gameId}:${channel}:insert-failed`);
+      result.errors.push(`${gameId}:${channel}:insert-failed`);
     }
   }
 

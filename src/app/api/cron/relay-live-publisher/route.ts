@@ -234,6 +234,14 @@ export async function GET(req: NextRequest) {
     // A/B 가 공용 state 를 동시 변경하고 B commit 후 A 가 더 큰 id 로 commit 되어 역전된다.
     // 그래서 경기별 in-flight 를 추적해, 이전 tick 이 진짜로 끝날 때까지 다음 tick 을 skip 한다.
     const inFlight = new Set<string>();
+    // 삼순 6차: durable ordering — 클라이언트는 DB id 단조로 프레임을 적용하므로(shouldApplyFrame),
+    // 늦게 commit 된 stale A 가 더 큰 id 를 받으면 클라가 그걸 최신으로 적용한다. abort 는 fetch 만
+    // 끊고 서버측 PostgREST commit 은 못 막으므로, 이 클래스를 없애는 유일한 보장은
+    // **락 해제 전 모든 outstanding tick 을 await** 하는 것이다. 그러면 이번 invocation 의
+    // 모든 INSERT 가 다음 invocation 이 락을 잡기 전에 끝나서, insert 순서(=DB id)가
+    // (invocation, tick, channel) 순서와 일치 → 늘은 A 가 새 B 보다 큰 id 로 commit 하는 상황
+    // 자체가 생기지 않는다(cross-invocation overlap 원천 차단).
+    const outstanding: Promise<TickResult>[] = [];
 
     for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
         const tickStartedAt = Date.now();
@@ -252,6 +260,7 @@ export async function GET(req: NextRequest) {
             // 그 경기는 skip 되어 B 가 안 뜼다.
             const settle = publishGameTick(deps, states.get(gameId)!, gameId, tickIndex, ac.signal);
             void settle.finally(() => inFlight.delete(gameId));
+            outstanding.push(settle); // 락 해제 전 await 대상
             return Promise.race<TickResult>([
               settle,
               new Promise<TickResult>((resolve) =>
@@ -276,6 +285,12 @@ export async function GET(req: NextRequest) {
         if (remaining <= TICK_INTERVAL_MS) break;
         if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
     }
+
+    // 삼순 6차: 락 해제·state 저장 전에 **모든 outstanding tick 을 await** 한다. abort 된 A 도
+    // 여기서 완전히 settle(commit 또는 실패)되므로, 다음 invocation 이 락을 잡을 때엔
+    // 이번 invocation 의 모든 INSERT 가 이미 끝나 DB id 순서가 확정된다(late-A > new-B 불가).
+    // 저장되는 state.seq 도 A 의 최종값을 반영한다.
+    await Promise.allSettled(outstanding);
 
     // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기

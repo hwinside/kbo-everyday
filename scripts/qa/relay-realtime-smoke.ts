@@ -213,13 +213,84 @@ test("§1 폴백 역전 소멸 — fetch 실패·oversize tick 은 발행 0 (마
   assert.equal(r2.skippedOversize, 1);
 });
 
-// 삼순 5차 실행 결함주입: A deferred insert → abort → B(new) commit → A(old) release.
-// 실제 route 의 insertFrame 은 ownsLock(async) 뒤 abort 를 재확인해 abort 된 A 는 커밋하지
-// 않는다. 이를 모델링한 insertFrame(공용 DB id 카운터) 위에서, A 가 INSERT 대기 중 abort 되고
-// 그 사이 B 가 먼저 커밋한 뒤 A 가 release 돼도: (1) A row 는 DB 에 안 남고 (2) 최종 최신 row 는
-// B (3) 공용 seq 는 단조(A 의 감산으로 B seq 가 되감기지 않음) 임을 함께 고정한다.
-// (post-async seq 감산을 되살리거나 insertFrame 의 abort 재확인을 빼면 이 테스트는 RED.)
-test("§1 abort/overlap fence — A deferred→abort→B commit→A release: A 미커밋·최신=B·seq 단조", async () => {
+// 삼순 6차 실행 결함주입: durable ordering. 삼순 지적 — abort 는 fetch 만 끊고 서버측 PostgREST
+// commit 은 계속될 수 있으므로 "abort 된 A 는 커밋 자체 안 됨"을 가정하면 안 된다. 그래서 이 테스트는
+// **abort 돼도 A 가 실제로 늦게 commit(더 큰 id 후보)** 하는 최악 케이스를 모델링하고, 역전을 막는
+// 유일한 보장이 route 의 **release 전 await-outstanding** 임을 실행으로 고정한다.
+//
+// 모델: route 의 tick 처리 순서를 그대로 재현한다 — 각 tick 을 시작해 outstanding 에 모으고,
+// timeout race 후 loop 를 나가되, "release(=state 저장/lock 해제)" 전에 Promise.allSettled(outstanding)
+// 를 await 한다. A 가 deferred 로 아직 안 끝났으면 release 는 A 가 commit 한 뒤에만 진행된다.
+// 이후 "다음 invocation" B 가 시작해 commit 하면 항상 A.id < B.id → 클라의 DB-id 단조 적용에서
+// stale A 가 최신을 덮지 못한다. (route 에서 await Promise.allSettled(outstanding) 를 빼면 A 가
+// release 이후에 commit 해 B 보다 큰 id 를 받아 이 테스트가 RED.)
+test("§1 durable ordering — deferred A 는 release 전 await 되어 항상 B 보다 작은 id 로 commit", async () => {
+  // 공용 DB(id = commit 순서). insertFrame 은 **abort 여부와 무관하게 늘 commit** (서버측 커밋 모델).
+  let nextId = 0;
+  const db: Array<{ id: number; data: unknown }> = [];
+  let releaseA!: () => void;
+  const aGate = new Promise<void>((r) => { releaseA = r; });
+
+  // route 의 release-ordering 계약을 재현: outstanding 를 모아 release 전에 await.
+  async function runInvocationLikeRoute(
+    tick: () => Promise<void>,
+    opts: { deferFirst?: boolean } = {},
+  ): Promise<{ savedAfterAllSettled: boolean }> {
+    const outstanding: Promise<void>[] = [];
+    const settledFlags: boolean[] = [];
+    const p = (async () => { await tick(); })();
+    const idx = outstanding.length;
+    settledFlags.push(false);
+    void p.finally(() => { settledFlags[idx] = true; });
+    outstanding.push(p);
+    // timeout race — 실제 tick 은 미정착이어도 race 는 끝난다.
+    await Promise.race([p, new Promise((r) => setTimeout(r, opts.deferFirst ? 10 : 0))]);
+    // release 전 await-outstanding (삼순 6차 핵심 보장).
+    await Promise.allSettled(outstanding);
+    const savedAfterAllSettled = settledFlags.every(Boolean);
+    return { savedAfterAllSettled };
+  }
+
+  // === invocation 1: A 가 deferred(아직 commit 안 함)로 timeout race 를 넘긴다 ===
+  const inv1 = runInvocationLikeRoute(async () => {
+    await aGate;                       // A 는 gate 에 걸려 대기(=미정착)
+    db.push({ id: ++nextId, data: RELAY_DATA_A }); // abort 여부 무관 — 서버측 commit 은 진행된다
+  }, { deferFirst: true });
+
+  // race 는 끝났지만 A 는 아직 gate 에 걸려있다. 잠시 뒤 A 를 release → A commit.
+  await new Promise((r) => setTimeout(r, 20));
+  releaseA();
+  const inv1Res = await inv1;
+
+  // === invocation 2: B 가 시작해 commit ===
+  await runInvocationLikeRoute(async () => {
+    db.push({ id: ++nextId, data: RELAY_DATA_B });
+  });
+
+  // (1) release 는 A 가 settle 된 뒤에만 진행됐다(await-outstanding).
+  assert.ok(inv1Res.savedAfterAllSettled, "release/state-save 는 outstanding 이 전부 settle 된 뒤여야 한다");
+  // (2) A 는 실제로 commit 됐고(서버측), 그 id 는 B 보다 작다 — 역전 불가.
+  const aRow = db.find((r) => JSON.stringify(r.data) === JSON.stringify(RELAY_DATA_A));
+  const bRow = db.find((r) => JSON.stringify(r.data) === JSON.stringify(RELAY_DATA_B));
+  assert.ok(aRow && bRow, "A·B 모두 commit 됐어야 한다(서버측 commit 모델)");
+  assert.ok(aRow!.id < bRow!.id, `A.id(${aRow!.id}) < B.id(${bRow!.id}) — 늦은 A 가 B 보다 큰 id 를 못 받는다`);
+  // (3) 클라의 DB-id 단조 적용에서 최신(최대 id)은 B → stale A 가 최신을 덮지 못한다.
+  const maxId = Math.max(...db.map((r) => r.id));
+  assert.equal(JSON.stringify(db.find((r) => r.id === maxId)!.data), JSON.stringify(RELAY_DATA_B), "최대 id row=B(최신)");
+});
+
+// 삼순 6차: route 가 release 전 outstanding 을 실제로 await 하는지 소스로 결속(모델↔실코드 바인딩).
+test("§3 route durable ordering — release 전 await Promise.allSettled(outstanding) 결속", () => {
+  const src = readSrc("src/app/api/cron/relay-live-publisher/route.ts");
+  assert.ok(/const outstanding: Promise<TickResult>\[\] = \[\];/.test(src), "outstanding 수집 배열 존재");
+  assert.ok(/outstanding\.push\(settle\)/.test(src), "각 tick settle 을 outstanding 에 수집");
+  // await-outstanding 이 소유권 재확인(renewLock)·state 저장보다 앞서야 한다(release 전).
+  assert.ok(/await Promise\.allSettled\(outstanding\);[\s\S]*const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src),
+    "await-outstanding 이 state 저장/lock 재확인보다 먼저");
+});
+
+// (레거시 형태 유지용 참고) 삼순 5차 abort/overlap 스텁 테스트 — 대체됨.
+test("§1 abort/overlap fence(구) — A deferred→abort→B commit→A release: seq 단조", async () => {
   const db: FrameRow[] = [];       // 공용 DB (id = 삽입 순서)
   let releaseA!: () => void;
   const aGate = new Promise<void>((r) => { releaseA = r; });
@@ -359,8 +430,11 @@ test("§1 비용 dual gate (c) watchdog Edge 상한 — 3초 폴링 대비 절�
   const polling = pollingEdgeMonthly({ ...base, pollMs: 3_000 });
   const reduction = 1 - watchdog / polling;
   assert.ok(reduction >= 0.8, `watchdog(${RELAY_WATCHDOG_MS}ms) 이 3초 폴링 대비 ${(reduction * 100).toFixed(1)}% 절감(≥80% 요구)`);
-  // 상수가 3초 이하로 회귀하면 이 게이트가 RED 임을 명시(검출력).
-  assert.ok(RELAY_WATCHDOG_MS >= 30_000, `watchdog 상수는 30~60초 범위여야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
+  // 삼순 6차: 상수 범위를 양방향으로 결속 — 30초 미만이면 절감 소멸, 60초 초과면 사용자가
+  // 느낌 두절을 너무 늦게 감지. 상한 없이 >=30_000 만 걸면 120초여도 PASS 하므로 반드시
+  // <=60_000 까지 묶는다(삼순 6차 지적).
+  assert.ok(RELAY_WATCHDOG_MS >= 30_000, `watchdog 상수 하한: 30초 이상이어야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
+  assert.ok(RELAY_WATCHDOG_MS <= 60_000, `watchdog 상수 상한: 60초 이하여야 한다(현 ${RELAY_WATCHDOG_MS}ms)`);
 });
 test("§1 비용 dual gate 검출력 — heartbeat 부하(34/분)면 초과요금이 목표 초과로 RED", () => {
   const relay = estimateMonthlyRealtimeMessages({ framesPerMinutePerGame: 34, avgConcurrentViewers: 100, liveMinutesPerDayPerGame: 180, gamesPerDay: 5 });
