@@ -1,4 +1,5 @@
 import { supabase, getSafeSession } from "@/lib/supabase/client";
+import { getAuthIdentity } from "@/lib/supabase/auth-identity";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 import {
   createFavoritesSaver,
@@ -60,6 +61,11 @@ function saverFor(userId: string): FavoritesSaver<SavedProfileRow> {
         return null;
       }
     },
+    // 실행 시점 current-epoch fail-close(삼순 10차): 요청이 큐에서 대기하는 사이
+    // A→B→A(신원 전환마다 epoch 증가)로 바뀌면 옛 epoch 요청은 token/PUT 직전
+    // ensureCurrent에서 멈춰 PUT 0으로 종료된다(handler enqueue 전 검사만으로는
+    // 못 닫는 큐 대기 창을 saver 실행면에서 닫는다).
+    currentEpoch: () => getAuthIdentity().epoch,
     putFavorites: async (token, updates) => {
       const res = await fetch("/api/me/favorite-players", {
         method: "PUT",

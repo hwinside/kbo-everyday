@@ -28,6 +28,7 @@ import {
 } from "../../src/lib/profile/favorite-players-validation.ts";
 import { resolvePlayer } from "../../src/lib/utils/resolve-player.ts";
 import rosterJson from "../../src/lib/constants/players-roster.json" with { type: "json" };
+import { readFile } from "node:fs/promises";
 
 const results = [];
 function check(name, ok, detail) {
@@ -649,6 +650,94 @@ const okBody = (players) => ({ ok: true, profile: { id: "u", team_id: 1, favorit
   }
   // non-array 거절
   check("canonical: non-array 거절", parseFavorites("nope") === null);
+}
+
+// ── ⑧ 실행 시점 current-epoch fail-close (삼순 10차): 큐 대기 중 A→B→A ──────
+// 삼순 blocker: `isAuthIdentityForUser`는 handler enqueue 전에만 검사. A(epoch1)
+// 요청이 선행 저장 뒤에 대기한 사이 A→B→A(epoch3)가 되고 새 저장이 없으면,
+// 실행 시 getToken은 UID만 확인해 옛 epoch1 PUT을 epoch3 토큰으로 보낸다.
+// currentEpoch 주입 시 saver 실행면(token/PUT 직전)에서 이 창을 닫는지 actual로 타격.
+{
+  __resetAuthIdentityForTest();
+  commitAuthIdentity("A"); // epoch1
+  let curEpoch = getAuthIdentity().epoch; // 1
+  const puts = [];
+  let db = null; // 가짜 DB 최종값
+  const saver = createFavoritesSaver({
+    getToken: async () => "tok",
+    refreshToken: async () => "tok",
+    putFavorites: async (token, updates) => {
+      const id = updates.favorite_players[0].playerId;
+      puts.push(id);
+      await sleep(id === "S0" ? 150 : 1); // S0가 체인을 오래 잡는다
+      db = id;
+      return { status: 200, body: okBody(updates.favorite_players) };
+    },
+    currentEpoch: () => curEpoch,
+    authTimeoutMs: 1000,
+    requestTimeoutMs: 3000,
+  });
+  const pS0 = saver.save({ favorite_players: fav("S0") }, 1); // 선행 저장(epoch1) — 체인 점유
+  await sleep(15); // S0가 putFavorites에 진입해 체인을 잡게
+  const pS1 = saver.save({ favorite_players: fav("S1") }, 1); // 옛 epoch 요청을 큐에 대기
+  commitAuthIdentity("B"); // epoch2
+  commitAuthIdentity("A"); // epoch3 (새 저장 없음)
+  curEpoch = getAuthIdentity().epoch; // 3
+  const [rS0, rS1] = await Promise.all([pS0, pS1]);
+  const s1Put = puts.filter((x) => x === "S1").length;
+  check(
+    "exec-epoch GREEN: 큐 대기 중 A→B→A(새 저장 없음) → 옛 epoch 요청 PUT 0·superseded·DB 불변",
+    rS0.superseded === false && rS1.superseded === true && s1Put === 0 && db === "S0",
+    `rS0.superseded=${rS0.superseded} rS1.superseded=${rS1.superseded} s1Put=${s1Put} db=${db}`
+  );
+}
+
+// ── selftest-RED: currentEpoch 가드 없으면(구 설계) 옛 epoch 요청이 실제로 PUT되어 DB 되돌림 ──
+// currentEpoch 주입 유무만 차이 — 가드가 없으면 옛 epoch1 PUT이 나가 db를 S1으로 되돌린다.
+{
+  __resetAuthIdentityForTest();
+  commitAuthIdentity("A");
+  const puts = [];
+  let db = null;
+  const saver = createFavoritesSaver({
+    getToken: async () => "tok",
+    refreshToken: async () => "tok",
+    putFavorites: async (token, updates) => {
+      const id = updates.favorite_players[0].playerId;
+      puts.push(id);
+      await sleep(id === "S0" ? 120 : 1);
+      db = id;
+      return { status: 200, body: okBody(updates.favorite_players) };
+    },
+    // currentEpoch 미주입 → 실행 시점 가드 비활성(구 설계 재현)
+    authTimeoutMs: 1000,
+    requestTimeoutMs: 3000,
+  });
+  const pS0 = saver.save({ favorite_players: fav("S0") }, 1);
+  await sleep(15);
+  const pS1 = saver.save({ favorite_players: fav("S1") }, 1);
+  commitAuthIdentity("B");
+  commitAuthIdentity("A");
+  await Promise.all([pS0, pS1]);
+  const s1Put = puts.filter((x) => x === "S1").length;
+  check(
+    "selftest-RED: current-epoch 가드 없으면 옛 epoch PUT=1·DB=S1(결함 재현) — 가드 검출력 증명",
+    s1Put === 1 && db === "S1",
+    `s1Put=${s1Put} db=${db} (가드 있으면 이 경우 PUT 0·DB=S0)`
+  );
+}
+
+// ── prod-wiring: save-my-profile.ts가 currentEpoch를 saver deps에 실제 결선했는가(fail-close 활성) ──
+// currentEpoch는 core에서 optional — prod가 생략하면 실행 시점 가드가 꺼져 fail-close가 안 된다.
+// production seam이 가드를 켜둔다는 것을 소스 수준으로 강제(제거 시 RED).
+{
+  const src = await readFile(new URL("../../src/lib/profile/save-my-profile.ts", import.meta.url), "utf8");
+  const wiresCurrentEpoch = /currentEpoch\s*:/.test(src) && /getAuthIdentity\(\)\.epoch/.test(src);
+  check(
+    "prod-wiring: save-my-profile.ts가 currentEpoch: () => getAuthIdentity().epoch 결선(실행면 fail-close 활성)",
+    wiresCurrentEpoch,
+    wiresCurrentEpoch ? "" : "save-my-profile.ts에 currentEpoch 결선 누락 — 실행 시점 가드가 꺼짐"
+  );
 }
 
 // ── selftest: 검증력 증명(RED) — 계약을 어기는 가짜 구현이 실제로 잡히는가 ──

@@ -64,11 +64,30 @@ export interface FavoritesSaverDeps {
   authTimeoutMs?: number;
   /** 저장 요청 타임아웃. 기본 10000ms. */
   requestTimeoutMs?: number;
+  /**
+   * 실행 시점 current-epoch 조회 (삼순 10차 리뷰). 요청이 큐에서 대기하는 사이
+   * `A→B→A`(신원 전환마다 epoch 증가)로 바뀌면, 옛 epoch 요청은 token/PUT을
+   * **보내지 않고** superseded로 끝난다. 미주입이면 가드 비활성(구 설계) —
+   * production wiring(save-my-profile.ts)은 반드시 주입한다(prod-wiring 게이트로 강제).
+   */
+  currentEpoch?: () => number;
 }
 
 export type SaveOutcome<TProfile> =
   | { superseded: true; profile: null }
   | { superseded: false; profile: TProfile };
+
+/**
+ * 실행 시점 신원 초과(superseded) 시그널 — 큐 대기 중 A→B→A로 epoch이 바뀌어
+ * 옛 요청이 token/PUT을 보내면 안 될 때 던진다. save() 호출부가 잡아
+ * `{ superseded: true, profile: null }`로 변환한다(PUT 0).
+ */
+class SaveSupersededError extends Error {
+  constructor() {
+    super("superseded");
+    this.name = "SaveSupersededError";
+  }
+}
 
 /** race 타임아웃 — never-settle promise를 상한 안에 null로 강제 종료. */
 function boundedOrNull<T>(p: Promise<T | null>, ms: number): Promise<T | null> {
@@ -113,21 +132,34 @@ function boundedRequest(p: Promise<PutResult>, ms: number): Promise<PutResult> {
 
 async function performSave<TProfile>(
   deps: FavoritesSaverDeps,
-  updates: FavoriteSaveUpdates
+  updates: FavoriteSaveUpdates,
+  epoch: number
 ): Promise<TProfile> {
   const authMs = deps.authTimeoutMs ?? 6000;
   const reqMs = deps.requestTimeoutMs ?? 10000;
 
+  // 실행 시점 current-epoch fail-close (삼순 10차): 요청이 큐에서 대기하는 사이
+  // `A→B→A`로 신원이 바뀌면 옛 epoch 요청은 여기서 멈춘다. getToken은 세션의
+  // UID(session.user.id)만 보므로 옛 epoch를 못 걸러 옛 PUT이 새 토큰으로 나가던
+  // 창을 닫는다. **token 획득 직전·각 PUT 직전·401 재시도 PUT 직전**마다 재확인
+  // (대기 중에도 신원이 계속 바뀔 수 있으므로 매 side-effect 앞에서).
+  const ensureCurrent = () => {
+    if (deps.currentEpoch && epoch !== deps.currentEpoch()) throw new SaveSupersededError();
+  };
+
+  ensureCurrent();
   let token = await boundedOrNull(deps.getToken(), authMs);
   if (!token) token = await boundedOrNull(deps.refreshToken(), authMs);
   if (!token) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
 
+  ensureCurrent(); // PUT 직전 — 옛 epoch면 DB를 건드리지 않고 superseded
   let res = await boundedRequest(deps.putFavorites(token, updates), reqMs);
 
   if (res.status === 401) {
     // 만료 토큰: refresh 1회 + 재시도 1회 (bounded — 여기서 끝, 루프 없음)
     const refreshed = await boundedOrNull(deps.refreshToken(), authMs);
     if (!refreshed) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
+    ensureCurrent(); // 401 재시도 PUT 직전에도 재확인
     res = await boundedRequest(deps.putFavorites(refreshed, updates), reqMs);
     if (res.status === 401) throw new ProfileSaveError(RELOGIN_MESSAGE, true);
   }
@@ -234,11 +266,13 @@ export function createFavoritesSaver<TProfile>(
         // 새 epoch의 첫 실행 → 옥 epoch의 lastSaved 격리(실패 정합이 옥 값을 안 쓰도록)
         if (lastSavedEpoch !== epoch) { lastSaved = null; lastSavedEpoch = epoch; }
         try {
-          const profile = await performSave<TProfile>(deps, updates);
+          const profile = await performSave<TProfile>(deps, updates, epoch);
           lastSaved = profile;
           lastSavedEpoch = epoch;
           return { superseded: false as const, profile };
         } catch (e) {
+          // 실행 시점 신원 초과 — 옛 epoch 요청은 PUT 0으로 조용히 종료(오류 아님)
+          if (e instanceof SaveSupersededError) return { superseded: true as const, profile: null };
           // 오류에 실는 lastSaved는 같은 epoch의 성공값만(옥 epoch 값 차단)
           if (e instanceof ProfileSaveError) e.lastSaved = lastSavedEpoch === epoch ? lastSaved : null;
           throw e;
