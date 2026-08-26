@@ -19,6 +19,7 @@ import {
   isBaseballGeniusToneCompliant,
   isToneRewriteContentPreserving,
   normalizeToFormalTone,
+  VOLITIONAL_MOOD_AMBIGUOUS_WORDS,
 } from "../../src/lib/baseball-qa/tone";
 import {
   buildBaseballQaGeminiRequest,
@@ -50,7 +51,7 @@ async function main(): Promise<void> {
   )) as ActualLedger;
   assert.equal(ledger.kind, "genius-tone-a0-actual-v1");
   assert.match(ledger.sourceSha256, /^[a-f0-9]{64}$/u);
-  assert.deepEqual(ledger.counts, { sentences: 373, mapped: 323, unchanged: 50 });
+  assert.deepEqual(ledger.counts, { sentences: 373, mapped: 235, unchanged: 138 });
   assert.equal(ledger.rows.length, 373);
   const ids = new Set<string>();
   let mapped = 0;
@@ -69,9 +70,9 @@ async function main(): Promise<void> {
       assert.equal(out.answer, row.input, `unchanged row modified: ${id}`);
     }
   }
-  assert.equal(mapped, 323);
-  assert.equal(unchanged, 50);
-  ok("① A0 actual 373 — mapped 323 / unchanged 50 exact");
+  assert.equal(mapped, 235);
+  assert.equal(unchanged, 138);
+  ok("① A0 actual 373 — mapped 235 / unchanged 138 exact");
 
   // 일반 suffix가 아니라 완전 어절 allowlist다. 지정 반례는 byte-identical + RED여야 한다.
   for (const answer of [
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
 
   // 🔴 2026-08-25 삼순 P0 — **의문문은 서술형 매핑을 적용하지 않는다.**
   //    `가능해요?` → `가능합니다?` 는 비문이고, validator 가 장식(`?`)을 떼고 `니다`만
-  //    보므로 **그대로 통과해 서빙될 수 있었다**. A0 373·shadow 45 에 `?` 가 각 0건이라
+  //    보므로 **그대로 통과해 서빙될 수 있었다**. A0 373·shadow 92 에 `?` 가 각 0건이라
   //    원장이 증명해주지 않는 무대 — mood 별 exact 쌍 등록 전까지 fail-close 한다.
   for (const answer of [
     "야구에서 그게 가능해요?",
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
     ["야구에서 보크는 규칙이에요.", "야구에서 보크는 규칙입니다."],
     ["야구 규칙이 아니에요.", "야구 규칙이 아닙니다."],
     ["야구에서 득점이 가능해요.", "야구에서 득점이 가능합니다."],
-    ["야구에 기록이 있어요. 중요한 기록이에요.", "야구에 기록이 있습니다. 중요한 기록입니다."],
+    ["야구에서 이건 규칙이에요. 저건 기록이에요.", "야구에서 이건 규칙입니다. 저건 기록입니다."],
   ];
   for (const [before, expected] of finite) {
     const out = normalizeToFormalTone(before);
@@ -148,6 +149,43 @@ async function main(): Promise<void> {
   }
   ok("① 유한 매핑 — 대표 4축 + 아니입니다 음성");
 
+  // 🔴 2026-08-25 삼순 P0 — **의지동사는 부분 회수도 하지 않는다.**
+  //    `있어요`·`해요` 는 A0 373 에서 가장 흔한 어절(46·23문장)이었지만, 같은 key 가
+  //    `기록이 있어요`(서술)와 `다시 해요`(요청) 둘 다이므로 서술형으로 강제하면
+  //    **요청문이 서술문으로 둔갑**한다. 회수량을 잃더라도 폐기가 맞다.
+  for (const answer of [
+    "야구 규칙을 다시 해요.",
+    "야구 규칙을 다시 말해요.",
+    "야구 기록표를 보여줘요.",
+    "야구에 기록이 있어요.",
+  ]) {
+    const out = normalizeToFormalTone(answer);
+    assert.equal(out.answer, answer, `의지동사를 서술형으로 바꿈: ${answer}`);
+    assert.equal(out.converted, 0, `의지동사 변환 발생: ${answer}`);
+    assert.equal(out.compliant, false, `의지동사는 폐기되어야 함: ${answer}`);
+  }
+  // ② rewrite 게이트도 의지동사 쌍을 보존으로 인정하지 않는다.
+  for (const [before, after] of [
+    ["야구 규칙을 다시 해요.", "야구 규칙을 다시 합니다."],
+    ["야구 규칙을 다시 말해요.", "야구 규칙을 다시 말합니다."],
+    ["야구에서 그런 사례를 겪어요.", "야구에서 그런 사례를 겪습니다."],
+    ["야구에서 투수는 공을 받아요.", "야구에서 투수는 공을 받습니다."],
+    ["야구에서 이 플레이를 반칙으로 여겨요.", "야구에서 이 플레이를 반칙으로 여깁니다."],
+  ]) {
+    assert.equal(
+      isToneRewriteContentPreserving(before, after), false,
+      `의지동사 쌍 통과: ${before} -> ${after}`,
+    );
+  }
+  // 부류 금지가 **집합으로 강제**되는지 — 주석이 아니라 코드가 SSOT 임을 고정한다.
+  for (const word of ["해요", "말해요", "있어요", "여겨요", "받아요", "보여요", "보여줘요"]) {
+    assert.ok(
+      VOLITIONAL_MOOD_AMBIGUOUS_WORDS.has(word),
+      `의지동사 집합 누락: ${word}`,
+    );
+  }
+  ok("①② 의지동사 부류 fail-close — 4축 정규화 음성 · 5축 보존 음성 · 집합 결속");
+
   // 이미 정상인 답은 byte-identical/no-op.
   const formal = "야구에서 보크는 투수의 반칙입니다. 주자는 진루합니다.";
   assert.deepEqual(normalizeToFormalTone(formal), { answer: formal, compliant: true, converted: 0 });
@@ -156,22 +194,22 @@ async function main(): Promise<void> {
   // ── ② rewrite 보존 계약 ─────────────────────────────────────────────
   assert.equal(
     isToneRewriteContentPreserving(
-      "야구에서 이 플레이를 반칙으로 여겨요.",
-      "야구에서 이 플레이를 반칙으로 여깁니다.",
+      "야구에서 이 플레이에 얽힌 사연이 많아요.",
+      "야구에서 이 플레이에 얽힌 사연이 많습니다.",
     ),
     true,
   );
   assert.equal(
     isToneRewriteContentPreserving(
-      "첫 문장은 이미 정상입니다. 다음 장면을 반칙으로 여겨요.",
-      "첫 문장은 이미 정상입니다. 다음 장면을 반칙으로 여깁니다.",
+      "첫 문장은 이미 정상입니다. 다음 장면에 얽힌 사연이 많아요.",
+      "첫 문장은 이미 정상입니다. 다음 장면에 얽힌 사연이 많습니다.",
     ),
     true,
     "이미 formal인 문장은 byte-identical로 보존하며 열린 문장만 rewrite",
   );
   for (const [before, after] of [
     // prefix 재서술/내용 변경
-    ["야구에서 이 플레이를 반칙으로 여겨요.", "야구에서 저 플레이를 반칙으로 여깁니다."],
+    ["야구에서 이 플레이에 얽힌 사연이 많아요.", "야구에서 저 플레이를 반칙으로 여깁니다."],
     // 숫자 변경
     ["야구에서 3점을 주면 어려워요.", "야구에서 4점을 주면 어렵습니다."],
     // 구단명 변경
@@ -199,14 +237,14 @@ async function main(): Promise<void> {
   // 과잎 fail-close 가 아님을 고정 — 등록된 비모호 쌍은 여전히 양성이다.
   for (const [before, after] of [
     ["야구에서 그런 사례는 많아요.", "야구에서 그런 사례는 많습니다."],
-    ["야구에서 투수는 공을 받아요.", "야구에서 투수는 공을 받습니다."],
+    ["야구에서 이 규칙은 널리 쓰여요.", "야구에서 이 규칙은 널리 쓰입니다."],
   ]) {
     assert.equal(isToneRewriteContentPreserving(before, after), true, `과잎 fail-close: ${before}`);
   }
   ok("② 보존 게이트 — 등록 비모호 쌍 양성 유지");
 
   // provider request는 실제 폐기 원문을 데이터로 포함해야 한다. 상수만 존재하면 false-GREEN.
-  const originalDraft = "야구에서 이 플레이를 반칙으로 여겨요.";
+  const originalDraft = "야구에서 이 플레이에 얽힌 사연이 많아요.";
   const rewriteRequest = buildBaseballQaToneRewriteRequest(originalDraft);
   assert.equal(rewriteRequest.systemInstruction.parts[0].text, TONE_REWRITE_PROMPT);
   assert.match(rewriteRequest.contents[0].parts[0].text, /<원문>/u);
@@ -218,14 +256,14 @@ async function main(): Promise<void> {
   ok("② provider seam — 폐기 원문 rewrite request 결속");
 
   // ── ② 실 provider shadow 원장 ───────────────────────────────────────
-  const rewriteFixtureBytes = readFileSync("scripts/qa/fixtures/genius-tone-a0-rewrite45.json");
+  const rewriteFixtureBytes = readFileSync("scripts/qa/fixtures/genius-tone-a0-rewrite-residual.json");
   const rewriteFixture = JSON.parse(rewriteFixtureBytes.toString("utf8")) as {
     kind: string;
     sourceSha256: string;
     rows: Array<{ runId: string; rep: number; afterFiniteMap: string }>;
   };
   const shadow = JSON.parse(readFileSync(
-    "scripts/qa/fixtures/genius-tone-a0-rewrite45-shadow.json", "utf8",
+    "scripts/qa/fixtures/genius-tone-a0-rewrite-residual-shadow.json", "utf8",
   )) as {
     kind: string;
     fixtureSha256: string;
@@ -240,9 +278,9 @@ async function main(): Promise<void> {
       rewritten: string | null; tonePass: boolean; preservationPass: boolean; accepted: boolean;
     }>;
   };
-  assert.equal(rewriteFixture.kind, "genius-tone-a0-rewrite45-v1");
-  assert.equal(rewriteFixture.rows.length, 45);
-  assert.equal(shadow.kind, "genius-tone-a0-rewrite45-shadow-v1");
+  assert.equal(rewriteFixture.kind, "genius-tone-a0-rewrite-residual-v1");
+  assert.equal(rewriteFixture.rows.length, 92);
+  assert.equal(shadow.kind, "genius-tone-a0-rewrite-residual-shadow-v1");
   assert.equal(shadow.sourceSha256, rewriteFixture.sourceSha256);
   assert.equal(
     shadow.fixtureSha256,
@@ -252,14 +290,14 @@ async function main(): Promise<void> {
   assert.deepEqual(
     { total: shadow.summary.total, tonePass: shadow.summary.tonePass,
       preservationPass: shadow.summary.preservationPass, accepted: shadow.summary.accepted },
-    { total: 45, tonePass: 33, preservationPass: 21, accepted: 21 },
+    { total: 92, tonePass: 78, preservationPass: 5, accepted: 5 },
   );
-  assert.deepEqual(shadow.summary.latencyMs, { min: 932, median: 1208, p95: 1741, max: 1991 });
+  assert.deepEqual(shadow.summary.latencyMs, { min: 841, median: 1374, p95: 2878, max: 3471 });
   assert.deepEqual(
     { inputTotal: shadow.summary.tokens.inputTotal, outputTotal: shadow.summary.tokens.outputTotal },
-    { inputTotal: 13931, outputTotal: 7144 },
+    { inputTotal: 27465, outputTotal: 13622 },
   );
-  assert.equal(shadow.results.length, 45);
+  assert.equal(shadow.results.length, 92);
   for (const result of shadow.results) {
     const fixtureRow = rewriteFixture.rows[result.index];
     assert.equal(result.runId, fixtureRow.runId);
@@ -285,7 +323,7 @@ async function main(): Promise<void> {
     rewriteFixture.rows.filter((r) => r.afterFiniteMap.includes("?")).length, 0,
     "shadow 입력에도 의문문 0건",
   );
-  ok("② 실 provider shadow 45 — accepted 21(46.7%) · ?무대 0 · p95 1741ms · tokens 13931/7144");
+  ok("② 실 provider shadow 92 — accepted 5(5.4%) · ?무대 0 · p95 2878ms · tokens 27465/13622");
 
   interface RunResult {
     source: string;
@@ -344,10 +382,10 @@ async function main(): Promise<void> {
 
   // 열린 활용이면 폐기 원문으로 ② 딱 1회. 보존+전수검증 결과만 서빙, 토큰 합산.
   {
-    const draft = "야구에서 보크를 반칙으로 여겨요.";
-    const r = await runWith(json(draft), [json("야구에서 보크를 반칙으로 여깁니다.")]);
+    const draft = "야구에서 보크로 지목되는 상황이 많아요.";
+    const r = await runWith(json(draft), [json("야구에서 보크로 지목되는 상황이 많습니다.")]);
     assert.equal(r.source, "llm");
-    assert.equal(r.answer, "야구에서 보크를 반칙으로 여깁니다.");
+    assert.equal(r.answer, "야구에서 보크로 지목되는 상황이 많습니다.");
     assert.equal(r.primaryCalls, 1);
     assert.deepEqual(r.rewriteCalls, [draft]);
     assert.equal(r.logs.at(-1)?.inputTokens, 30);
@@ -358,10 +396,10 @@ async function main(): Promise<void> {
 
   // 내용이 바뀌거나 tone 실패면 3차 호출 없이 최초 unsure.
   for (const rewritten of [
-    "야구에서 보크를 정당한 플레이로 여깁니다.",
+    "야구에서 보크로 지목되는 상황이 적습니다.",
     "야구에서 보크를 반칙으로 보여요.",
   ]) {
-    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const draft = "야구에서 보크로 지목되는 상황이 많아요.";
     const r = await runWith(json(draft), [json(rewritten)]);
     assert.equal(r.source, "unsure");
     assert.equal(r.answer, UNCLEAR_ANSWER);
@@ -394,8 +432,8 @@ async function main(): Promise<void> {
   // 반면 **톤 하나만** 남은 범위안 답은 여전히 rewrite 1회를 써야 한다 — scope 선검증이
   // 과잎 fail-close 로 변질되지 않았음을 고정한다(위 ②축과 독립한 대조군).
   {
-    const draft = "야구에서 보크를 반칙으로 여겨요.";
-    const r = await runWith(json(draft), [json("야구에서 보크를 반칙으로 여깁니다.")]);
+    const draft = "야구에서 보크로 지목되는 상황이 많아요.";
+    const r = await runWith(json(draft), [json("야구에서 보크로 지목되는 상황이 많습니다.")]);
     assert.equal(r.source, "llm");
     assert.deepEqual(r.rewriteCalls, [draft]);
     ok("종단 scope-before-rewrite — 범위안 톤 단일결함은 rewrite 1회 유지");
@@ -413,8 +451,8 @@ async function main(): Promise<void> {
   {
     const STAT_QUESTION = "이대호 홈런 몇개";
     // ⚠️ ① 유한 매핑으로 닫히는 어미(`있어요`)를 쓰면 rewrite 무대가 사라진다 —
-    //    열린 활용(`여겨요`)이어야 ② 가 실제로 태워진다.
-    const draft = "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여겨요.";
+    //    ② 전용 어절(`많아요`)이어야 실제로 태워진다.
+    const draft = "이대호 선수의 홈런에 얽힌 야구 명장면이 많아요.";
     let normalizerCalls = 0;
     let statCalls = 0;
     let genericCalls = 0;
@@ -451,7 +489,7 @@ async function main(): Promise<void> {
       rewriteLlmTone: async (d: string) => {
         rewriteCalls.push(d);
         return {
-          text: json("이대호 선수의 홈런은 야구 팬들에게 명장면으로 여깁니다."),
+          text: json("이대호 선수의 홈런에 얽힌 야구 명장면이 많습니다."),
           inputTokens: 1000, outputTokens: 300,
         };
       },
@@ -460,7 +498,7 @@ async function main(): Promise<void> {
     } as unknown as QaDeps;
     const result = await answerQuestion("tone-stat-user", STAT_QUESTION, deps);
     assert.equal(result.source, "llm");
-    assert.equal(result.answer, "이대호 선수의 홈런은 야구 팬들에게 명장면으로 여깁니다.");
+    assert.equal(result.answer, "이대호 선수의 홈런에 얽힌 야구 명장면이 많습니다.");
     // 호출수 상한 — normalizer 1 + 의도 1 + 일반답 1 + rewrite 1 = 총 4, rewrite 는 1회만.
     assert.equal(normalizerCalls, 1, "앞단 normalizer 는 1회 — seam 이 빠지면 축소 측정이다");
     assert.equal(statCalls, 1, "의도 호출은 1회");
@@ -516,7 +554,7 @@ async function main(): Promise<void> {
 
   // seam 미주입·비톤 결함은 rewrite 0.
   {
-    const draft = "야구에서 보크를 반칙으로 여겨요.";
+    const draft = "야구에서 보크로 지목되는 상황이 많아요.";
     const noSeam = await runWith(json(draft), [], false);
     assert.equal(noSeam.source, "unsure");
     assert.equal(noSeam.rewriteCalls.length, 0);
