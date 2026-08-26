@@ -225,10 +225,15 @@ function assertFrameFencing() {
     /if \(!envelope\.ok\) return;[\s\S]*if \(mySeq <= channelRef\.current\) return;[\s\S]*channelRef\.current = mySeq;[\s\S]*onFrame\(envelope\.data\);/.test(src));
   ok("relay hook resets channel owner seq refs on game switch",
     /liveFrameOwnerSeqRef\.current = 0;[\s\S]*detailFrameOwnerSeqRef\.current = 0;/.test(src));
-  ok("relay hook forwards live\/detail frames through channel refs",
-    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope\);/.test(src));
+  // 삼순 4차(2026-08-25) ②: applyFrame 이 채널별 generation fence(genSnapshot, genRef)를 받는다.
+  // live 는 liveGenerationRef, detail 은 detailGenerationRef 로 분리 — 공용 relayGenerationRef ❌.
+  ok("relay hook forwards live\/detail frames through per-channel generation refs",
+    /applyFrame\(liveFrameOwnerSeqRef, options\?\.onLiveFrame, envelope, myLiveGeneration, liveGenerationRef\);[\s\S]*applyFrame\(detailFrameOwnerSeqRef, options\?\.onDetailFrame, envelope, myDetailGeneration, detailGenerationRef\);/.test(src));
+  // fencing 은 shouldApplyRelayResponse 에 유지된다. B안(2026-08-25)에서 그 앞에
+  // P0-3 generation fence(shouldApplyPollResponse)를 AND 로 강화했으므로 `if (` 시작을
+  // 요구하지 않고 fencing 술어 자체의 존재를 확인한다(fencing 제거는 여전히 검출).
   ok("relay frame fencing remains on shouldApplyRelayResponse",
-    /if \(shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
+    /shouldApplyRelayResponse\(\{[\s\S]*requestSeq: mySeq,[\s\S]*currentSeq: requestSeqRef\.current/.test(src));
 }
 
 function assertRouteIncludeWiring() {

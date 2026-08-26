@@ -520,6 +520,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:relay-ordering",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:relay-publisher-state",
+      "tier": "ci"
+    },
+    {
       "name": "qa:active-users-contract",
       "tier": "deploy"
     },
@@ -694,6 +702,10 @@
     {
       "name": "qa:cpu-upstash-store",
       "tier": "deploy"
+    },
+    {
+      "tier": "deploy",
+      "name": "qa:relay-realtime"
     },
     {
       "name": "qa:proxy-matcher-slim",
