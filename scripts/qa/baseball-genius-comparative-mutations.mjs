@@ -211,7 +211,9 @@ const MUTATIONS = [
     id: "N34 generic 저장을 raw 로 회귀 (envelope 미결속)",
     file: PIPELINE,
     // 2026-08-10 #1132: cacheable 에 !statNumericGuard 가 추가돼 앵커 원문 갱신 (앵커 부재 = 러너 fail-close 실측).
-    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },\n      llm,\n    ));',
+    // 2026-08-26 #1310: LLM 경로 톤을 관측값으로 내리면서 `toneCompliant` 가 envelope 에 추가돼
+    //   앵커 재동기화. 게이트가 내 시그니처 변경을 fail-close 로 잡았다 — 이건 게이트가 옷다.
+    anchor: 'await deps.storeLlm(packStoredQaFinal(\n      {\n        answer: validated.answer, source: "llm",\n        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,\n        toneCompliant: validated.toneCompliant,\n      },\n      llm,\n    ));',
     replacement: "await deps.storeLlm(llm);",
     gate: "scripts/qa/baseball-qa-rag-serving-smoke.ts",
     why: "0건→generic 저장 뒤 근거가 생기면 RAG validator 가 ANSWER 를 unsure 로 접는다",
