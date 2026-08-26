@@ -102,10 +102,12 @@ try {
   // advisory xact lock 은 트랜잭션 스코프. 동시 호출 시 하나는 락 획득(inserted/stale),
   // 락 경합 시 다른 하나는 lock_busy 즉시 반환(spin 없음). 어느 경우든 coord unique 로
   // 이중 커밋은 물리적으로 0. epoch=5, 서로 다른 ordinal 로 동시 발사.
+  // query-guard: bounded -- QA 전용 game_id(QA-ORD-<ts>) 한정 count, 이 테스트가 넣은 프레임만
   const before = (await a.from("game_relay_frames").select("id").eq("game_id", GAME)).data?.length ?? 0;
   const [r1, r2] = await Promise.all([publish(a, 5, 1, 401), publish(b, 5, 2, 402)]);
   const valid: Outcome[] = ["inserted", "stale", "lock_busy"];
   check("④ 동시 RPC 결과 유계 {inserted,stale,lock_busy}", valid.includes(r1) && valid.includes(r2), `${r1},${r2}`);
+  // query-guard: bounded -- QA 전용 game_id(QA-ORD-<ts>) 한정 count, 이 테스트가 넣은 프레임만
   const after = (await a.from("game_relay_frames").select("id").eq("game_id", GAME)).data?.length ?? 0;
   const inserted = [r1, r2].filter((r) => r === "inserted").length;
   check("④ 커밋 수 = inserted 결과 수 (이중커밋 0)", after - before === inserted, `Δframes=${after - before} inserted=${inserted}`);
@@ -135,7 +137,9 @@ try {
   // query-guard: bounded -- QA 전용 game_id(QA-ORD-<ts>) 한정
   await a.from("game_relay_frames").delete().eq("game_id", GAME);
   await a.from("game_relay_cursor").delete().eq("game_id", GAME);
+  // query-guard: bounded -- QA 전용 game_id 한정 잔존 확인(삭제 후 0 검증)
   const resFrames = (await a.from("game_relay_frames").select("id").eq("game_id", GAME)).data?.length ?? 0;
+  // query-guard: bounded -- QA 전용 game_id 한정 잔존 확인(삭제 후 0 검증)
   const resCursor = (await a.from("game_relay_cursor").select("game_id").eq("game_id", GAME)).data?.length ?? 0;
   check("cleanup: QA frames+cursor 잔존 0", resFrames === 0 && resCursor === 0, `frames=${resFrames} cursor=${resCursor}`);
 }
