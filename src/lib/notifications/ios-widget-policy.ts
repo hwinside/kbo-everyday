@@ -37,7 +37,26 @@ export function decideWidgetPushClaim(
 ): "skip" | "claim-update" | "claim-insert" {
   if (prevState === null) return "claim-insert"; // 최초 live — 1회 발송
   if (prevState === nextState) return "skip"; // 점수 무변화
+  // 되감김 가드(#1311 삼순 B② 3축 적용): 점수가 뒤로 가는 스냅샷은 발송 skip.
+  // Naver→KBO(stale) fallback 틱이 위젯 점수를 8→5로 되감는 걸 막는다. 점수는 단조.
+  if (isWidgetScoreRetreat(prevState, nextState)) return "skip";
   return "claim-update";
+}
+
+/**
+ * iosWidgetScoreState("away|home") 포맷에서 점수 후퇴 여부 — 점수는 단조라 감소면 되감김.
+ * 위젯 발송 트리거 자체가 *점수-only* 설계(#674)라 가드도 점수만 본다 — 이닝만 후퇴하고
+ * 점수 동일한 스냅샷은 애초에 발송 트리거가 안 되므로(broadcast 축과 기준 불일치는 의도적). */
+export function isWidgetScoreRetreat(prevState: string, nextState: string): boolean {
+  const p = prevState.split("|");
+  const n = nextState.split("|");
+  if (p.length < 2 || n.length < 2) return false;
+  const pa = Number(p[0]);
+  const ph = Number(p[1]);
+  const na = Number(n[0]);
+  const nh = Number(n[1]);
+  if ([pa, ph, na, nh].some((v) => !Number.isFinite(v))) return false;
+  return na < pa || nh < ph;
 }
 
 /** invalid-token 정리분을 제외한 transient 실패 수 — 이게 0이어야 커서 전진 확정. */

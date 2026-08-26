@@ -63,6 +63,49 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+const STATUS_PROGRESS: Record<string, number> = { scheduled: 1, live: 2, final: 3 };
+
+/**
+ * 직전 발송(lastScoreState) 대비 현재 스냅샷이 "뒤로 감기"인가 (#1311 삼순 B②).
+ * Naver-primary fallback 으로 소스가 잠깐 KBO(stale)로 바뀌면 점수/이닝이 후퇴할 수
+ * 있는데, broadcast/catch-up 이 그 옛 값을 덮어 카드가 8→5로 되감기는 P0 을 막는다.
+ * 경기 진행은 단조(점수·이닝·상태는 증가만) — 후퇴는 소스 불일치의 신호. 주자·볼카운트는
+ * 정상적으로 양방향 변하므로 판정에서 제외한다(scoreStateOf 측 0·1·2·3·7만 사용).
+ */
+export function isScoreStateRetreat(
+  lastScoreState: string | null,
+  scoreState: string,
+): boolean {
+  if (lastScoreState === null) return false;
+  const prev = lastScoreState.split("|");
+  const next = scoreState.split("|");
+  if (prev.length < 8 || next.length < 8) return false;
+  const pAway = Number(prev[0]);
+  const pHome = Number(prev[1]);
+  const pInn = Number(prev[2]);
+  const nAway = Number(next[0]);
+  const nHome = Number(next[1]);
+  const nInn = Number(next[2]);
+  if ([pAway, pHome, pInn, nAway, nHome, nInn].some((v) => !Number.isFinite(v))) {
+    return false; // 파싱 불가 → 오탐 방지(후퇴 아님으로)
+  }
+  const pStatus = STATUS_PROGRESS[prev[7]] ?? 0;
+  const nStatus = STATUS_PROGRESS[next[7]] ?? 0;
+  // 알려진 상태(scheduled/live/final)끼리만 판정 — 취소/기타는 개입 안 함.
+  if (pStatus === 0 || nStatus === 0) return false;
+  // 점수 후퇴는 이닝과 무관하게 무조건 되감김이다(야구 점수는 단조) — #1311 삼순 B①.
+  // 이닝교대 lag 로 KBO fallback 이 half-inning 만 먼저 넘어가면(7말→8초) nRank>pRank 가
+  // 되어 rank 동일 구간 검사로는 점수 후퇴(8→5)를 놓친다. rank 이전에 선검사한다.
+  if (nAway < pAway || nHome < pHome) return true;
+  if (nStatus < pStatus) return true; // final→live, live→scheduled = 후퇴
+  if (nStatus > pStatus) return false; // live→final 등 전진
+  // 이닝 순위(회*2 + 말이면 1). 초=0, 말=1. 점수가 같을 때의 이닝 후퇴만 남음.
+  const pRank = pInn * 2 + (prev[3] === "true" ? 0 : 1);
+  const nRank = nInn * 2 + (next[3] === "true" ? 0 : 1);
+  if (nRank < pRank) return true; // 이닝 후퇴
+  return false; // 이닝 전진·동일 + 점수 비후퇴 → 후퇴 아님
+}
+
 /** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
 export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
   /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
@@ -94,6 +137,17 @@ export interface ChannelUpdateResolution {
 export function resolveChannelUpdateDecision(
   i: ChannelUpdateResolutionInput,
 ): ChannelUpdateResolution {
+  // 되감기 가드(#1311 삼순 Blocker②): 직전 발송보다 점수/이닝/상태가 뒤로 가는
+  // 스냅샷은 broadcast·지명 catch-up 모두 스킵한다. Naver-primary 소스가 한 틱 실패해
+  // KBO(stale)로 fallback 되면 카드가 8→5로 되감을 수 있는데(forced catch-up 은 hash-skip
+  // 을 우회해 옥 값을 강제로 덮음), 경기 진행은 단조라 후퇴 = 소스 불일치 신호다.
+  // ⚠️ P1 트레이드오프(삼순 명시): 후퇴 지속 중에는 2분 heartbeat 도 같이 스킵된다.
+  // 이는 의도된 것 — 후퇴 스냅샷을 heartbeat 로 보내면 그게 곧 되감기다. 카드는 마지막
+  // 성공발송(더 높은 값)에 머물고, Naver 회복·실제 전진(점수 ↑) 시 갱신된다. 유실 단말은
+  // 다음 실제 변화에서 복구(이미 높은 값을 1회 성공발송한 뒤 후퇴 구간에 진입한 것).
+  if (isScoreStateRetreat(i.lastScoreState, i.scoreState)) {
+    return { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false };
+  }
   const base = decideChannelPush(i);
   const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
   const naturalP10 = heartbeat.send && heartbeat.priority === "10";
@@ -109,6 +163,8 @@ export function resolveChannelUpdateDecision(
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
   decision: ChannelPushDecision | null;
+  /** 되감김 스냅샷 여부(#1311 삼순 B②) — true 면 catch-up 보다 우선해 무조건 skip. */
+  isRetreat?: boolean;
   /** 토큰 등록/갱신 시각(ms). null = updated_at 미기록(레거시 행). */
   tokenUpdatedAtMs: number | null;
   /** 직전 상태 기록 시각(ms) — 상태 행 updated_at. null = 상태 행 없음. */
@@ -141,6 +197,9 @@ export type LegacyTokenUpdateDecision =
  * 과다 발송은 경기당 bootstrap 틱 1회로 유계(cursor 생성 전 = 기존 매분 p10과 동일 동작).
  */
 export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTokenUpdateDecision {
+  // 되감김은 catch-up(늦은 토큰/bootstrap)보다 우선한다 — 후퇴 스냅샷은 어떤 경로로도 발송하지
+  // 않는다(#1311 삼순 B①: broadcast forceCatchup 우회와 동일 클래스, 여기선 catch-up 이 못 뚫게).
+  if (input.isRetreat === true) return { send: false };
   const isCatchUp =
     input.lastWriteAtMs === null
       // bootstrap 미완료 — 비교 기준(cursor)이 없어 늦은 토큰을 구분할 수 없다. 전 토큰
