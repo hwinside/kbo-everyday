@@ -208,16 +208,31 @@ export interface TickDeps {
     detail: (req: NextRequest) => Promise<Response>;
   };
   /** INSERT 실행기. 성공 시 true. signal 이 abort 되면 커밋하지 않고 false (삼순 5차). */
-  insertFrame: (row: FrameRow, signal?: AbortSignal) => Promise<boolean>;
+  insertFrame: (row: FrameRow, signal?: AbortSignal) => Promise<RelayInsertOutcome>;
   /** 이 인보케이션이 선예약한 단조 epoch(reserve_relay_epoch). 모든 프레임이 공유. */
   epoch: number;
   date: string;
 }
 
+/**
+ * publish_relay_frame RPC 의 원자 결과. durable ordering 은 DB(RPC)가 권위이며,
+ * 이 outcome 은 route/게이트 관측성 전용이다(삼순 4축 게이트 "lock_busy bounded" 검증).
+ * - inserted : 커밋 성공(유일하게 lastHash/publishedFull 갱신)
+ * - stale    : (epoch, ordinal) <= cursor 원자 거부(이미 더 최신이 커밋됨) — 정상
+ * - lock_busy: pg_try_advisory_xact_lock 실패(다른 인보케이션이 경기 락 보유) — 정상
+ * - skipped  : RPC 앞단 게이트(lockLost/abort/ownsLock 실패)로 호출 자체 안 함
+ * - error    : RPC 오류(네트워크/제약 위반 등) — 다음 tick 재시도
+ */
+export type RelayInsertOutcome = "inserted" | "stale" | "lock_busy" | "skipped" | "error";
+
 export interface TickResult {
   inserted: number;
   skippedUnchanged: number;
   skippedOversize: number;
+  /** RPC 가 stale 로 원자 거부한 프레임 수(정상 — 이미 더 최신 커밋). */
+  stale: number;
+  /** advisory xact lock 경합으로 거부된 프레임 수(정상 — 다른 인보케이션이 씀). */
+  lockBusy: number;
   errors: string[];
 }
 
@@ -253,6 +268,8 @@ export async function publishGameTick(
     inserted: 0,
     skippedUnchanged: 0,
     skippedOversize: 0,
+    stale: 0,
+    lockBusy: 0,
     errors: [],
   };
   const channels = channelsForTick(tickIndex);
@@ -336,7 +353,7 @@ export async function publishGameTick(
     // (작은 epoch)을 걸러낸다(durable ordering 근원 보장).
     // signal 을 insertFrame 으로 전달 — route 는 ownsLock 후 abort 재확인 + Supabase insert 에
     // abortSignal 을 걸어, abort 된 A 는 커밋되지 않는다(늦은 A row 가 최신 id 로 전파 ❌).
-    const ok = await deps.insertFrame(
+    const outcome = await deps.insertFrame(
       { game_id: gameId, seq: mySeq, kind, channel, epoch: deps.epoch, ordinal: mySeq, payload },
       signal,
     );
@@ -348,13 +365,20 @@ export async function publishGameTick(
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    if (ok) {
+    if (outcome === "inserted") {
       // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;
       if (kind === "relay-full") state.publishedFull = true;
       result.inserted += 1;
+    } else if (outcome === "stale") {
+      // RPC 원자 거부(이미 더 최신 커밋) — 정상 흐름. 해시 미갱신으로 다음 tick 재시도.
+      result.stale += 1;
+    } else if (outcome === "lock_busy") {
+      // 다른 인보케이션이 경기 락 보유 — 정상 흐름. 그쪽이 쓴다. 해시 미갱신.
+      result.lockBusy += 1;
     } else {
-      result.errors.push(`${gameId}:${channel}:insert-failed`);
+      // skipped(RPC 앞단 게이트) / error(RPC 오류) — 해시 미갱신으로 다음 tick 재시도.
+      result.errors.push(`${gameId}:${channel}:insert-${outcome}`);
     }
   }
 

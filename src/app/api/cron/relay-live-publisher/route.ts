@@ -16,6 +16,7 @@ import {
   TICK_INTERVAL_MS,
   type FrameRow,
   type PersistedGameState,
+  type RelayInsertOutcome,
   type TickResult,
 } from "@/lib/game/relay-live-publisher";
 
@@ -211,10 +212,10 @@ export async function GET(req: NextRequest) {
     // insertFrame: 원자 발행 RPC 호출. 'inserted' = 커밋 성공. 'stale'/'lock_busy' 는 정상
     // 거부(다른 인보케이션이 앞섬 / 경기 락 경합) → false 로 반환하되 루프 budget 이 재시도를
     // 상한한다. Redis 토큰 소유(ownsLock)를 RPC 앞단에서 한 번 더 게이트해 old writer 를 막는다.
-    const insertFrame = async (row: FrameRow, signal?: AbortSignal): Promise<boolean> => {
-      if (lockLost || signal?.aborted) return false;
-      if (!(await ownsLock(token))) { lockLost = true; return false; }
-      if (signal?.aborted) return false;
+    const insertFrame = async (row: FrameRow, signal?: AbortSignal): Promise<RelayInsertOutcome> => {
+      if (lockLost || signal?.aborted) return "skipped";
+      if (!(await ownsLock(token))) { lockLost = true; return "skipped"; }
+      if (signal?.aborted) return "skipped";
       const rpc = supabase.rpc("publish_relay_frame", {
         p_game_id: row.game_id,
         p_channel: row.channel,
@@ -225,7 +226,11 @@ export async function GET(req: NextRequest) {
         p_payload: row.payload,
       });
       const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
-      return !error && data === "inserted";
+      // RPC 는 durable ordering 권위 — 원자 결과를 그대로 전달해 게이트가 lock_busy/stale 을
+      // 관측할 수 있게 한다(삼순 4축 "lock_busy bounded"). 예상 밖 값은 error 로 수렴.
+      if (error) return "error";
+      if (data === "inserted" || data === "stale" || data === "lock_busy") return data;
+      return "error";
     };
 
     const deps = {
@@ -248,6 +253,8 @@ export async function GET(req: NextRequest) {
       inserted: 0,
       skippedUnchanged: 0,
       skippedOversize: 0,
+      stale: 0,
+      lockBusy: 0,
       errors: [] as string[],
       ticks: 0,
     };
@@ -275,7 +282,7 @@ export async function GET(req: NextRequest) {
         const tickResults = await Promise.all(
           gameIds.map((gameId) => {
             if (inFlight.has(gameId)) {
-              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:overlap-skip`] });
+              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:overlap-skip`] });
             }
             inFlight.add(gameId);
             const ac = new AbortController();
@@ -288,7 +295,7 @@ export async function GET(req: NextRequest) {
               settle,
               new Promise<TickResult>((resolve) =>
                 setTimeout(
-                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, errors: [`${gameId}:tick-timeout`] }); },
+                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
                   TICK_TIMEOUT_MS,
                 ),
               ),
@@ -299,6 +306,8 @@ export async function GET(req: NextRequest) {
           totals.inserted += r.inserted;
           totals.skippedUnchanged += r.skippedUnchanged;
           totals.skippedOversize += r.skippedOversize;
+          totals.stale += r.stale;
+          totals.lockBusy += r.lockBusy;
           totals.errors.push(...r.errors);
         }
         totals.ticks += 1;
