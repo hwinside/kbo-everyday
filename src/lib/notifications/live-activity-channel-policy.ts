@@ -63,6 +63,46 @@ export function applyChannelHeartbeat(
   return decision;
 }
 
+const STATUS_PROGRESS: Record<string, number> = { scheduled: 1, live: 2, final: 3 };
+
+/**
+ * 직전 발송(lastScoreState) 대비 현재 스냅샷이 "뒤로 감기"인가 (#1311 삼순 B②).
+ * Naver-primary fallback 으로 소스가 잠깐 KBO(stale)로 바뀌면 점수/이닝이 후퇴할 수
+ * 있는데, broadcast/catch-up 이 그 옛 값을 덮어 카드가 8→5로 되감기는 P0 을 막는다.
+ * 경기 진행은 단조(점수·이닝·상태는 증가만) — 후퇴는 소스 불일치의 신호. 주자·볼카운트는
+ * 정상적으로 양방향 변하므로 판정에서 제외한다(scoreStateOf 측 0·1·2·3·7만 사용).
+ */
+export function isScoreStateRetreat(
+  lastScoreState: string | null,
+  scoreState: string,
+): boolean {
+  if (lastScoreState === null) return false;
+  const prev = lastScoreState.split("|");
+  const next = scoreState.split("|");
+  if (prev.length < 8 || next.length < 8) return false;
+  const pAway = Number(prev[0]);
+  const pHome = Number(prev[1]);
+  const pInn = Number(prev[2]);
+  const nAway = Number(next[0]);
+  const nHome = Number(next[1]);
+  const nInn = Number(next[2]);
+  if ([pAway, pHome, pInn, nAway, nHome, nInn].some((v) => !Number.isFinite(v))) {
+    return false; // 파싱 불가 → 오탐 방지(후퇴 아님으로)
+  }
+  const pStatus = STATUS_PROGRESS[prev[7]] ?? 0;
+  const nStatus = STATUS_PROGRESS[next[7]] ?? 0;
+  // 알려진 상태(scheduled/live/final)끼리만 판정 — 취소/기타는 개입 안 함.
+  if (pStatus === 0 || nStatus === 0) return false;
+  if (nStatus < pStatus) return true; // final→live, live→scheduled = 후퇴
+  if (nStatus > pStatus) return false; // live→final 등 전진
+  // 이닝 순위(회*2 + 말이면 1). 초=0, 말=1.
+  const pRank = pInn * 2 + (prev[3] === "true" ? 0 : 1);
+  const nRank = nInn * 2 + (next[3] === "true" ? 0 : 1);
+  if (nRank < pRank) return true; // 이닝 후퇴
+  if (nRank === pRank) return nAway < pAway || nHome < pHome; // 같은 타석구간에서 점수 감소
+  return false; // 이닝 전진 → 후퇴 아님
+}
+
 /** 채널 update 최종 판정 입력 — base diff + heartbeat + 지명 catch-up 합성. */
 export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
   /** 마지막 성공 p10 broadcast 시각(ms). null = 미기록. */
@@ -94,6 +134,13 @@ export interface ChannelUpdateResolution {
 export function resolveChannelUpdateDecision(
   i: ChannelUpdateResolutionInput,
 ): ChannelUpdateResolution {
+  // 되감기 가드(#1311 삼순 Blocker②): 직전 발송보다 점수/이닝/상태가 뒤로 가는
+  // 스냅샷은 broadcast·지명 catch-up 모두 스킵한다. Naver-primary 소스가 한 틱 실패해
+  // KBO(stale)로 fallback 되면 카드가 8→5로 되감을 수 있는데(forced catch-up 은 hash-skip
+  // 을 우회해 옥 값을 강제로 덮음), 경기 진행은 단조라 후퇴 = 소스 불일치 신호다.
+  if (isScoreStateRetreat(i.lastScoreState, i.scoreState)) {
+    return { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false };
+  }
   const base = decideChannelPush(i);
   const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
   const naturalP10 = heartbeat.send && heartbeat.priority === "10";

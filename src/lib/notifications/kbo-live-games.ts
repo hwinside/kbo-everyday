@@ -2,6 +2,7 @@ import type { KboRawGame } from "@/types/api";
 import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
+import { fetchKboGamesOnly } from "@/lib/crawler/kbo-api";
 import { naverGameId } from "@/lib/crawler/naver-record";
 
 const KBO_MAIN = "https://www.koreabaseball.com/ws/Main.asmx";
@@ -13,6 +14,9 @@ const KBO_PRIMARY_BUDGET_MS = 1_500;
 // Naver-primary 변형(fetchLiveGamesNaverPrimary)에서 Naver schedule 조회에 주는 상한.
 // 이 안에 안 끝나면 KBO-primary fallback 이 남은 deadline 을 쓸 수 있게 유계한다.
 const NAVER_PRIMARY_BUDGET_MS = 3_000;
+// Naver-primary 때 KBO 준정적 필드(선발·승패투·순위) enrich 조회 상한. 비차단·베스트이포트—
+// 실패해도 Naver-only 로 진행(선발만 빈 값, 라이브 상태는 Naver 유지).
+const KBO_ENRICH_BUDGET_MS = 1_500;
 const SOURCE_SETTLE_RESERVE_MS = 100;
 
 async function runSourceBeforeDeadline<T>(
@@ -403,6 +407,30 @@ export async function fetchKboLiveGames(
 }
 
 /**
+ * Naver primary 게임에 KBO 준정적 필드(선발·승패투·세이브·순위)만 오버레이한다.
+ * 이 필드들은 경기 상태와 무관(status-independent)하게 변하지 않아 KBO 값을 썬도 유령 상태
+ * 섞임(#1311 B②)이 안 생긴다. 점수·이닝·카운트·주자 등 라이브 축은 Naver 값을 그대로 둔다.
+ * Naver 값이 비어있을(선발 미확정 등) 때만 KBO 값으로 채운다 — scheduled 카드가 선발을 잃지 않게.
+ */
+function overlayKboQuasiStatic(naverBase: KboGame[], kboGames: KboGame[]): KboGame[] {
+  const kboById = new Map(kboGames.map((g) => [g.gameId, g]));
+  return naverBase.map((base) => {
+    const k = kboById.get(base.gameId);
+    if (!k) return base;
+    return {
+      ...base,
+      awayStarterName: base.awayStarterName || k.awayStarterName,
+      homeStarterName: base.homeStarterName || k.homeStarterName,
+      winPitcher: base.winPitcher || k.winPitcher,
+      losePitcher: base.losePitcher || k.losePitcher,
+      savePitcher: base.savePitcher || k.savePitcher,
+      awayRank: base.awayRank || k.awayRank,
+      homeRank: base.homeRank || k.homeRank,
+    };
+  });
+}
+
+/**
  * Live Activity 카드·위젯용 Naver-primary 라이브 스코어보드.
  * 앱 화면(games-user-facing)과 동일하게 Naver 를 primary 로 쓴다 — KBO 스코어보드가
  * 200 OK 이면서 점수만 stale 인 구간에서도 카드가 밀리지 않게 한다.
@@ -421,6 +449,7 @@ export async function fetchLiveGamesNaverPrimary(
   fetchImpl: typeof fetch = fetch,
   fetchNaverImpl: typeof fetchNaverGames = fetchNaverGames,
   fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher = fetchNaverLiveEvidence,
+  fetchKboGamesImpl: typeof fetchKboGamesOnly = fetchKboGamesOnly,
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
@@ -433,12 +462,24 @@ export async function fetchLiveGamesNaverPrimary(
       absoluteDeadlineAtMs,
       Date.now() + NAVER_PRIMARY_BUDGET_MS,
     );
-    const naverGames = await runSourceBeforeDeadline(
-      (signal) => fetchNaverImpl(date, undefined, { signal }),
-      naverDeadlineAtMs,
+    const kboEnrichDeadlineAtMs = Math.min(
+      absoluteDeadlineAtMs,
+      Date.now() + KBO_ENRICH_BUDGET_MS,
     );
-    // Naver 무경기(빈 배열)는 KBO 교차확인이 필요 → KBO-primary(soft-empty 로직 포함)로 위임.
-    if (naverGames.length === 0) {
+    // Naver(primary, live 상태) + KBO(준정적 enrich)를 병렬 호출. 앱 games-user-facing 과
+    // 동일 철학 — KBO enrich 는 비차단이라 실패해도 Naver-only 로 진행.
+    const [naverResult, kboResult] = await Promise.allSettled([
+      runSourceBeforeDeadline(
+        (signal) => fetchNaverImpl(date, undefined, { signal }),
+        naverDeadlineAtMs,
+      ),
+      runSourceBeforeDeadline(
+        (signal) => fetchKboGamesImpl(date, undefined, { signal }),
+        kboEnrichDeadlineAtMs,
+      ),
+    ]);
+    // Naver schedule 실패/무경기 → KBO-primary(soft-empty 교차확인 포함)로 위임.
+    if (naverResult.status !== "fulfilled" || naverResult.value.length === 0) {
       return fetchKboLiveGames(
         date,
         deadlineAtMs,
@@ -447,8 +488,11 @@ export async function fetchLiveGamesNaverPrimary(
         fetchNaverEvidenceImpl,
       );
     }
+    const enrichedBase = kboResult.status === "fulfilled"
+      ? overlayKboQuasiStatic(naverResult.value, kboResult.value)
+      : naverResult.value;
     const rawGames = await enrichNaverLiveGames(
-      naverGames,
+      enrichedBase,
       absoluteDeadlineAtMs,
       fetchNaverEvidenceImpl,
     );

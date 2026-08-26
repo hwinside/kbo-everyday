@@ -88,9 +88,11 @@ export async function GET(req: NextRequest) {
   const currentTickStartMs = Math.floor(requestStartMs / 60_000) * 60_000;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
-  // LA 카드·위젯의 라이브 점수를 앱 화면(games-user-facing)과 동일하게 Naver-primary 로 둔다.
+  // warmup 가 소비하는 games 축 전체를 앱 화면(games-user-facing)과 동일하게 Naver-primary 로 둔다.
+  // (LA broadcast·위젯·점수알림·시작감지가 같은 games 배열 하나를 공유하므로 "LA 축만"
+  // 분리는 구조적으로 불가 — games 경계에서 통째 바꿔 diff·hash·득점축·위젯을 한 소스로 정합.)
   // 기존 fetchKboLiveGames 는 KBO-primary(200 OK 면 stale 점수도 그대로 쓰고 Naver 미조회)라
-  // KBO 스코어보드가 늦밌 때 카드 점수가 stale 된다. Naver 다운 시에만 KBO fallback.
+  // KBO 스코어보드가 늦밌 때 카드 점수가 stale 된다. Naver 다운/무경기 시에만 KBO fallback.
   const initialFetch = await fetchLiveGamesNaverPrimary(
     date,
     Math.min(deadlineAtMs, Date.now() + 10_000),
@@ -99,6 +101,19 @@ export async function GET(req: NextRequest) {
   const liveGameIds = games
     .filter(g => g.GAME_STATE_SC === "2" && g.G_ID)
     .map(g => g.G_ID as string);
+  // 소스 관측 로그(#1311 삼순 item3) — 향후 "KBO stale vs Naver" 판정을 위해 source와 라이브
+  // 점수를 남긴다. broadcast failedGameIds 는 아래 laBroadcast 결과에서 별도 로깅된다.
+  if (liveGameIds.length > 0) {
+    console.log(
+      `[warmup] live source=${initialFetch.trace.source} stage=${initialFetch.trace.stage} ` +
+      liveGameIds
+        .map((id) => {
+          const g = games.find((x) => x.G_ID === id);
+          return `${id}:${g?.T_SCORE_CN ?? "?"}-${g?.B_SCORE_CN ?? "?"}`;
+        })
+        .join(" "),
+    );
+  }
 
   // Self-fetch to traverse the same generateEvents path the client takes.
   // ⚠️ VERCEL_URL은 *배포별 URL*이라 Deployment Protection(인증)이 걸려 self-fetch가

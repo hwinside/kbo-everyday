@@ -24,6 +24,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { KboGame } from "../../src/lib/crawler/kbo-api";
 import type { KboRawGame } from "../../src/types/api";
+import {
+  isScoreStateRetreat,
+  resolveChannelUpdateDecision,
+} from "../../src/lib/notifications/live-activity-channel-policy";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
@@ -32,6 +36,7 @@ type Mod = typeof import("../../src/lib/notifications/kbo-live-games");
 type FetchLiveGamesNaverPrimary = Mod["fetchLiveGamesNaverPrimary"];
 type NaverImpl = Parameters<FetchLiveGamesNaverPrimary>[3];
 type EvidenceImpl = Parameters<FetchLiveGamesNaverPrimary>[4];
+type KboGamesImpl = Parameters<FetchLiveGamesNaverPrimary>[5];
 
 const GID = "20260826NCLG0";
 
@@ -114,6 +119,8 @@ const freshEvidence = {
 };
 
 const okEvidence: EvidenceImpl = (async () => freshEvidence) as EvidenceImpl;
+// KBO enrich seam — 기본값(실 fetchKboGamesOnly)이 네트워크를 타지 않게 게이트에서 반드시 주입.
+const kboEnrichNone: KboGamesImpl = (async () => []) as KboGamesImpl;
 
 async function main() {
   const { fetchLiveGamesNaverPrimary, fetchKboLiveGames } = (await import(
@@ -144,6 +151,7 @@ async function main() {
     staleKbo,
     naverFresh,
     okEvidence,
+    kboEnrichNone,
   );
   assert.equal(g1.ok, true, "P1 ok");
   assert.equal(g1.trace.source, "naver", "P1 source=naver");
@@ -159,6 +167,7 @@ async function main() {
     staleKbo,
     naverDown,
     okEvidence,
+    kboEnrichNone,
   );
   assert.equal(g2.ok, true, "P2 ok");
   assert.equal(g2.trace.source, "kbo", "P2 source=kbo (fallback)");
@@ -172,6 +181,7 @@ async function main() {
     staleKbo,
     naverEmpty,
     okEvidence,
+    kboEnrichNone,
   );
   assert.equal(g3.ok, true, "P3 ok");
   assert.equal(g3.games.length, 1, "P3 KBO 게임 무손실");
@@ -195,6 +205,7 @@ async function main() {
     staleKbo,
     naverFresh,
     enrichEvidence,
+    kboEnrichNone,
   );
   assert.equal(g4.games[0].BALL_CN, 2, "P4 balls from naver relay");
   assert.equal(g4.games[0].STRIKE_CN, 1, "P4 strikes");
@@ -220,8 +231,58 @@ async function main() {
     staleKbo,
     naverFirstPitch,
     noPlayEvidence,
+    kboEnrichNone,
   );
   assert.equal(g5.games[0].GAME_STATE_SC, "1", "P5 scheduled 강등 (가짜 live 방지)");
+  pass += 1;
+
+  // P7) KBO 준정적 enrich — Naver 선발 빈 값 + KBO 선발 있음 → raw 에 선발 채워짐(라이브 점수는 Naver 유지).
+  const kboEnrichStarters: KboGamesImpl = (async () => [
+    naverGame({ awayStarterName: "박세웅", homeStarterName: "손주영" }),
+  ]) as KboGamesImpl;
+  const g7 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    async () => [naverGame({ awayStarterName: "", homeStarterName: "" })],
+    okEvidence,
+    kboEnrichStarters,
+  );
+  assert.equal(g7.games[0].T_PIT_P_NM, "박세웅", "P7 KBO 선발 enrich (어웨이)");
+  assert.equal(g7.games[0].B_PIT_P_NM, "손주영", "P7 KBO 선발 enrich (홈)");
+  assert.equal(g7.games[0].B_SCORE_CN, "8", "P7 라이브 점수는 Naver 유지");
+  pass += 1;
+
+  // R) 되감김 가드(B②) — 예측/배선 둘 다.
+  // scoreStateOf 포맷: away|home|inning|isTop|on1|on2|on3|status
+  const lastSent = "0|8|7|false|false|false|false|live";
+  assert.equal(isScoreStateRetreat(lastSent, "0|5|7|false|false|false|false|live"), true, "R 점수 후퇴 감지");
+  assert.equal(isScoreStateRetreat(lastSent, "0|9|7|false|false|false|false|live"), false, "R 점수 전진 허용");
+  assert.equal(isScoreStateRetreat(lastSent, "0|8|6|false|false|false|false|live"), true, "R 이닝 후퇴 감지");
+  assert.equal(isScoreStateRetreat(null, "0|5|7|false|false|false|false|live"), false, "R 첫 발송은 후퇴 아님");
+  assert.equal(isScoreStateRetreat(lastSent, "0|8|7|false|true|false|false|live"), false, "R 주자 변화는 후퇴 아님");
+  // 배선: 되감김은 forceCatchup(지명 catch-up)이어도 broadcast skip.
+  const retreatDecision = resolveChannelUpdateDecision({
+    scoreState: "0|5|7|false|false|false|false|live",
+    fullStateHash: "0|5|7|false|false|false|false|live|0|0|0|p|b|",
+    lastScoreState: lastSent,
+    lastStateHash: "different-hash",
+    lastP10AtMs: null,
+    nowMs: Date.now(),
+    forceCatchup: true,
+  });
+  assert.equal(retreatDecision.decision.send, false, "R 되감김은 forceCatchup 이어도 broadcast/catch-up skip");
+  // 대조: 전진(9점)은 정상 발송.
+  const forwardDecision = resolveChannelUpdateDecision({
+    scoreState: "0|9|7|false|false|false|false|live",
+    fullStateHash: "0|9|7|false|false|false|false|live|0|0|0|p|b|",
+    lastScoreState: lastSent,
+    lastStateHash: "different-hash",
+    lastP10AtMs: null,
+    nowMs: Date.now(),
+    forceCatchup: false,
+  });
+  assert.equal(forwardDecision.decision.send, true, "R 전진은 정상 발송");
   pass += 1;
 
   // P6) dual-fail: Naver 다운 + KBO 하드실패(503) → ok:false, [](fail-close).
@@ -231,6 +292,7 @@ async function main() {
     kbo503,
     naverDown,
     okEvidence,
+    kboEnrichNone,
   );
   assert.equal(g6.ok, false, "P6 fail-close ok=false");
   assert.deepEqual(g6.games, [], "P6 empty");
@@ -244,8 +306,8 @@ async function main() {
   assert.doesNotMatch(routeSrc, /fetchKboLiveGames\(/, "warmup 에 fetchKboLiveGames() 직호출 없음");
   pass += 1;
 
-  assert.equal(pass, 8, `expected 8 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/8 PASS`);
+  assert.equal(pass, 10, `expected 10 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/10 PASS`);
 }
 
 main().catch((error) => {
