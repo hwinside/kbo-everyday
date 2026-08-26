@@ -5653,21 +5653,21 @@
   },
   {
     "name": "이희성",
-    "kboId": "56221",
-    "teamId": 2,
-    "position": "포수",
-    "backNo": "121",
-    "team": "두산",
-    "birthDate": "2004-02-02"
-  },
-  {
-    "name": "이희성",
     "kboId": "56932",
     "teamId": 5,
     "position": "포수",
     "backNo": "32",
     "team": "NC",
     "birthDate": "2007-04-01"
+  },
+  {
+    "name": "이희성",
+    "kboId": "56221",
+    "teamId": 2,
+    "position": "포수",
+    "backNo": "121",
+    "team": "두산",
+    "birthDate": "2004-02-02"
   },
   {
     "name": "임근우",
