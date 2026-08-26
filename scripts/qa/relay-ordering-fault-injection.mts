@@ -48,9 +48,9 @@ async function publish(
   seq: number,
   kind = "relay-full",
 ): Promise<Outcome> {
+  // channel 은 전달하지 않는다(삼순 P1) — RPC 가 p_kind 에서 유도. 반환은 jsonb {result,id}.
   const { data, error } = await client.rpc("publish_relay_frame", {
     p_game_id: GAME,
-    p_channel: CH,
     p_kind: kind,
     p_epoch: epoch,
     p_ordinal: ordinal,
@@ -58,7 +58,7 @@ async function publish(
     p_payload: { channel: CH, ok: true, status: 200, data: { innings: [] } },
   });
   if (error) return "error";
-  return (data as Outcome) ?? "error";
+  return ((data as { result?: Outcome } | null)?.result) ?? "error";
 }
 
 async function cursorOf(): Promise<{ epoch: number; ordinal: number } | null> {

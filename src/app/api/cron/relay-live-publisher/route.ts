@@ -216,9 +216,9 @@ export async function GET(req: NextRequest) {
       if (lockLost || signal?.aborted) return "skipped";
       if (!(await ownsLock(token))) { lockLost = true; return "skipped"; }
       if (signal?.aborted) return "skipped";
+      // channel 은 더 이상 전달하지 않는다(삼순 P1) — RPC 가 p_kind 에서 DB 내부에서 유도.
       const rpc = supabase.rpc("publish_relay_frame", {
         p_game_id: row.game_id,
-        p_channel: row.channel,
         p_kind: row.kind,
         p_epoch: row.epoch,
         p_ordinal: row.ordinal,
@@ -226,10 +226,11 @@ export async function GET(req: NextRequest) {
         p_payload: row.payload,
       });
       const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
-      // RPC 는 durable ordering 권위 — 원자 결과를 그대로 전달해 게이트가 lock_busy/stale 을
-      // 관측할 수 있게 한다(삼순 4축 "lock_busy bounded"). 예상 밖 값은 error 로 수렴.
+      // RPC 반환은 jsonb { result, id }(삼순 P1). durable ordering 권위는 DB — result 를
+      // 그대로 전달해 게이트가 lock_busy/stale 을 관측한다(4축 "lock_busy bounded").
       if (error) return "error";
-      if (data === "inserted" || data === "stale" || data === "lock_busy") return data;
+      const result = (data as { result?: string } | null)?.result;
+      if (result === "inserted" || result === "stale" || result === "lock_busy") return result;
       return "error";
     };
 
@@ -259,19 +260,13 @@ export async function GET(req: NextRequest) {
       ticks: 0,
     };
     const startedAt = Date.now();
-    // 삼순 5차: 같은 경기 non-overlap 보장. 이전 tick(A)이 timeout 으로 race 가 끝나도
-    // 실제 publishGameTick 은 계속 돌 수 있다(미정착). 그 사이 다음 tick(B)을 시작하면
-    // A/B 가 공용 state 를 동시 변경하고 B commit 후 A 가 더 큰 id 로 commit 되어 역전된다.
-    // 그래서 경기별 in-flight 를 추적해, 이전 tick 이 진짜로 끝날 때까지 다음 tick 을 skip 한다.
+    // inFlight (목적 재정의 — 삼순 확정): durable ordering 은 이제 DB RPC 가 (epoch, ordinal)
+    // <= cursor 원자 거부로 보장한다(늦은 A 는 INSERT 자체가 거부돼 DB id 를 못 받으므로 역전
+    // 불가). 따라서 과거의 await-outstanding(락 해제 전 전량 await)은 제거했다. inFlight 는 다른
+    // 목적으로 남는다: 같은 경기의 A/B tick 이 **JS 메모리 공용 state(lastHash·seq)** 를 동시
+    // 변경하는 race 를 막는 것으로, 이건 DB 밖 영역이라 RPC 로 못 막는다. 이전 tick 이 settle 될
+    // 때까지 다음 tick 을 skip 한다.
     const inFlight = new Set<string>();
-    // 삼순 6차: durable ordering — 클라이언트는 DB id 단조로 프레임을 적용하므로(shouldApplyFrame),
-    // 늦게 commit 된 stale A 가 더 큰 id 를 받으면 클라가 그걸 최신으로 적용한다. abort 는 fetch 만
-    // 끊고 서버측 PostgREST commit 은 못 막으므로, 이 클래스를 없애는 유일한 보장은
-    // **락 해제 전 모든 outstanding tick 을 await** 하는 것이다. 그러면 이번 invocation 의
-    // 모든 INSERT 가 다음 invocation 이 락을 잡기 전에 끝나서, insert 순서(=DB id)가
-    // (invocation, tick, channel) 순서와 일치 → 늘은 A 가 새 B 보다 큰 id 로 commit 하는 상황
-    // 자체가 생기지 않는다(cross-invocation overlap 원천 차단).
-    const outstanding: Promise<TickResult>[] = [];
 
     for (let tickIndex = 0; Date.now() - startedAt < LOOP_BUDGET_MS; tickIndex++) {
         const tickStartedAt = Date.now();
@@ -290,7 +285,6 @@ export async function GET(req: NextRequest) {
             // 그 경기는 skip 되어 B 가 안 뜼다.
             const settle = publishGameTick(deps, states.get(gameId)!, gameId, tickIndex, ac.signal);
             void settle.finally(() => inFlight.delete(gameId));
-            outstanding.push(settle); // 락 해제 전 await 대상
             return Promise.race<TickResult>([
               settle,
               new Promise<TickResult>((resolve) =>
@@ -318,11 +312,10 @@ export async function GET(req: NextRequest) {
         if (elapsed < TICK_INTERVAL_MS) await sleep(TICK_INTERVAL_MS - elapsed);
     }
 
-    // 삼순 6차: 락 해제·state 저장 전에 **모든 outstanding tick 을 await** 한다. abort 된 A 도
-    // 여기서 완전히 settle(commit 또는 실패)되므로, 다음 invocation 이 락을 잡을 때엔
-    // 이번 invocation 의 모든 INSERT 가 이미 끝나 DB id 순서가 확정된다(late-A > new-B 불가).
-    // 저장되는 state.seq 도 A 의 최종값을 반영한다.
-    await Promise.allSettled(outstanding);
+    // await-outstanding 제거(삼순 확정): durable ordering 은 DB RPC 의 (epoch, ordinal) 원자
+    // 거부가 보장하므로, 락 해제 전 전량 await 는 불필요하다. 늦게 settle 되는 tick 이 있어도
+    // ① insertFrame 이 ownsLock 재확인으로 old writer 를 막고 ② RPC 가 낮은 epoch 을 stale 거부해
+    // late-A > new-B 역전이 원천 불가하다. state 저장은 아래 소유권 재확인 후 진행한다.
 
     // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
