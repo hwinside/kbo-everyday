@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { isAdminAuthedRequest, requireAdmin } from "@/lib/admin/pin";
 
 async function verifyPin(req: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(req);
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await verifyPin(req))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = await requireAdmin(req);
+  if (denied) return denied;
 
   const type = req.nextUrl.searchParams.get("type");
   const status = req.nextUrl.searchParams.get("status");

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { requireAdmin } from "@/lib/admin/pin";
 import { ga4Report, getGa4AccessToken } from "@/lib/admin/ga4";
 import {
   GA_PREHISTORY_END,
@@ -78,9 +78,8 @@ async function loadGaPrehistory(): Promise<GaPrehistory> {
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await isAdminAuthedRequest(req))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = await requireAdmin(req);
+  if (denied) return denied;
 
   const period = req.nextUrl.searchParams.get("period");
   try {

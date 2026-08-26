@@ -39,11 +39,19 @@ function getPin(): string {
   return sessionStorage.getItem("admin_pin") || "";
 }
 
-async function apiFetch<T = unknown>(path: string): Promise<T> {
+async function apiFetch<T = unknown>(path: string, retry = true): Promise<T> {
   const res = await fetch(path, {
     headers: { "x-admin-pin": getPin() },
+    cache: "no-store",
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    // 동시 다발 요청 중 하나가 유령 401나 세션 저장소 일시 장애(503)로 튀면 1회 재시도로 회복 (2026-08-26 삼순 P1).
+    if (retry && (res.status === 401 || res.status === 503 || res.status >= 500)) {
+      await new Promise((r) => setTimeout(r, 400));
+      return apiFetch<T>(path, false);
+    }
+    throw new Error(`API error ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -438,9 +446,13 @@ const feedbackDotColor: Record<FeedbackItem["type"], string> = {
 export default function AdminOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<OverviewData | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [detailModal, setDetailModal] = useState<{ title: string; type: string } | null>(null);
 
   useEffect(() => {
+    let alive = true;
+
     const fetchGA4 = async <T,>(type: string): Promise<T | null> => {
       try {
         return await apiFetch<T>(`/api/admin/analytics?type=${type}`);
@@ -461,17 +473,53 @@ export default function AdminOverviewPage() {
       apiFetch<ActiveUsersResponse>("/api/admin/active-users").catch(() => null),
     ])
       .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers]) => {
-        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers });
+        if (alive) setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers });
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .catch(() => {
+        // 핵심 KPI 5종 중 하나라도 실패(재시도 후에도) → 0으로 도배된 빈 대시보드 대신 명시적 실패 UI (삼순 P1).
+        if (alive) {
+          setData(null);
+          setFailed(true);
+        }
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [reloadKey]);
 
   /* ── loading state ── */
   if (loading) {
     return (
       <div className="flex justify-center py-20">
         <Loader2 className="w-6 h-6 animate-spin text-[#636366]" />
+      </div>
+    );
+  }
+
+  /* ── failure state (빈 0 대시보드 금지) ── */
+  if (failed) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-4 text-center">
+        <AlertTriangle className="w-8 h-8 text-[#EF4444]" />
+        <p className="text-sm text-[#8E8E93]">
+          대시보드 데이터를 불러오지 못했어요.
+          <br />
+          잠시 후 다시 시도해주세요.
+        </p>
+        <button
+          onClick={() => {
+            setFailed(false);
+            setLoading(true);
+            setReloadKey((k) => k + 1);
+          }}
+          className="px-4 py-2 rounded-xl bg-[#6366F1] hover:bg-[#5558E6] text-white text-sm font-semibold transition-colors"
+        >
+          다시 시도
+        </button>
       </div>
     );
   }
