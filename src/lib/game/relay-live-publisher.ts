@@ -73,7 +73,18 @@ export interface FrameRow {
   game_id: string;
   seq: number;
   kind: FrameKind;
+  /** cursor 키: relay-full/relay-delta 는 둘 다 'relay' 로 묶인다(삼순 3-1). */
+  channel: string;
+  /** 인보케이션 단조 epoch(reserve_relay_epoch). 순서 상위 좌표. */
+  epoch: number;
+  /** epoch 내 단조 ordinal(= mySeq). 순서 하위 좌표. */
+  ordinal: number;
   payload: LivePollEnvelope;
+}
+
+/** frame kind → cursor channel. relay-full/relay-delta 는 같은 'relay' 채널로 묶인다. */
+export function channelForKind(kind: FrameKind): string {
+  return kind === "relay-full" || kind === "relay-delta" ? "relay" : kind;
 }
 
 /** cron 인보케이션 경계를 넘어 Redis 에 지속되는 경기 상태. */
@@ -198,6 +209,8 @@ export interface TickDeps {
   };
   /** INSERT 실행기. 성공 시 true. signal 이 abort 되면 커밋하지 않고 false (삼순 5차). */
   insertFrame: (row: FrameRow, signal?: AbortSignal) => Promise<boolean>;
+  /** 이 인보케이션이 선예약한 단조 epoch(reserve_relay_epoch). 모든 프레임이 공유. */
+  epoch: number;
   date: string;
 }
 
@@ -316,9 +329,17 @@ export async function publishGameTick(
     // 버려지고(gap 허용) 다음 tick 이 더 큰 seq 로 재시도한다 — 클라이언트는 DB id 로
     // 순서를 판정하므로 seq gap 은 무해하다.
     const mySeq = ++state.seq;
+    // 삼순 확정 설계: 순서 좌표는 (epoch, ordinal). epoch 는 인보케이션 단위 단조값,
+    // ordinal 은 그 안에서 단조 증가하는 mySeq. cursor channel 은 루프 channel 과 동일
+    // (relay 일 때 kind는 relay-full/delta → channelForKind 와 같음; 그 외엕 kind===channel).
+    // RPC 가 (epoch, ordinal) <= cursor 를 원자 거부해 늦게 커밋된 이전 인보케이션 프레임
+    // (작은 epoch)을 걸러낸다(durable ordering 근원 보장).
     // signal 을 insertFrame 으로 전달 — route 는 ownsLock 후 abort 재확인 + Supabase insert 에
     // abortSignal 을 걸어, abort 된 A 는 커밋되지 않는다(늦은 A row 가 최신 id 로 전파 ❌).
-    const ok = await deps.insertFrame({ game_id: gameId, seq: mySeq, kind, payload }, signal);
+    const ok = await deps.insertFrame(
+      { game_id: gameId, seq: mySeq, kind, channel, epoch: deps.epoch, ordinal: mySeq, payload },
+      signal,
+    );
     // 삼순 6차: post-INSERT abort fence 복원 — INSERT 결과 대기 중 abort 가 나면 그 프레임은
     // 다음 tick 이 재발행하도록 lastHash/publishedFull 을 갱신하지 않는다. seq 감산은
     // 하지 않는다(단조 유지) — 이 번호는 gap 으로 버려진다. 단, 누락 감지를 위해 본

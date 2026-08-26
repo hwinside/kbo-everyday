@@ -105,3 +105,24 @@ $$;
 -- EXECUTE 는 service_role(수집기)만. PUBLIC 기본 grant 회수.
 revoke execute on function public.publish_relay_frame(text, text, text, bigint, bigint, bigint, jsonb) from public;
 grant execute on function public.publish_relay_frame(text, text, text, bigint, bigint, bigint, jsonb) to service_role;
+
+-- ── writer epoch 선예약 ───────────────────────────────────────────────────────
+-- 삼순 3-2 확정: seq 를 커밋 시 max+1 로 재계산하지 않는다(lease-loss 동률에서 역전).
+-- 대신 각 cron 인보케이션이 시작 시 DB 단조 epoch 를 선예약하고, 그 인보케이션의
+-- 모든 프레임이 이 epoch 를 싣는다. 나중 인보케이션은 항상 더 큰 epoch → RPC 가
+-- (epoch, ordinal) 로 늦은 이전 인보케이션 프레임을 원자 거부한다(cursor.epoch 미만).
+create sequence public.game_relay_epoch_seq as bigint;
+
+comment on sequence public.game_relay_epoch_seq is
+  '크관 relay 인보케이션 단조 epoch. 인보케이션당 1회 reserve_relay_epoch() 로 발급.';
+
+create function public.reserve_relay_epoch() returns bigint
+language sql
+security invoker
+set search_path = ''
+as $$
+  select nextval('public.game_relay_epoch_seq');
+$$;
+
+revoke execute on function public.reserve_relay_epoch() from public;
+grant execute on function public.reserve_relay_epoch() to service_role;

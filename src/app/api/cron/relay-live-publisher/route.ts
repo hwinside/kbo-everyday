@@ -196,19 +196,42 @@ export async function GET(req: NextRequest) {
     // abort fence. abort 된 A tick 이 ownsLock 대기 뒤 깨어나도 INSERT 하지 않고,
     // Supabase insert 자체에도 abortSignal 을 걸어 진행 중 요청을 취소한다 — 늦은 A row 가
     // B 이후 더 큰 id 로 커밋되어 stale 로 전파되는 역전을 방지한다.
+    // 삼순 3-2 확정: 인보케이션 단조 epoch 선예약. 이 인보케이션의 모든 프레임이 이 epoch 을
+    // 싣고, RPC 가 (epoch, ordinal) <= cursor 를 원자 거부해 durable ordering 을 DB 가 보장한다
+    // (JS 레벨 fence 로는 cross-invocation overlap 을 못 막던 것을 대체).
+    const { data: epochData, error: epochError } = await supabase.rpc("reserve_relay_epoch");
+    const epoch = Number(epochData);
+    if (epochError || !Number.isFinite(epoch)) {
+      return NextResponse.json(
+        { error: "epoch-reserve-failed", detail: epochError?.message ?? String(epochData) },
+        { status: 503 },
+      );
+    }
+
+    // insertFrame: 원자 발행 RPC 호출. 'inserted' = 커밋 성공. 'stale'/'lock_busy' 는 정상
+    // 거부(다른 인보케이션이 앞섬 / 경기 락 경합) → false 로 반환하되 루프 budget 이 재시도를
+    // 상한한다. Redis 토큰 소유(ownsLock)를 RPC 앞단에서 한 번 더 게이트해 old writer 를 막는다.
     const insertFrame = async (row: FrameRow, signal?: AbortSignal): Promise<boolean> => {
       if (lockLost || signal?.aborted) return false;
       if (!(await ownsLock(token))) { lockLost = true; return false; }
-      // ownsLock 은 async — 그 사이에 timeout 이 났을 수 있으므로 insert 직전 재확인(삼순 5차).
       if (signal?.aborted) return false;
-      const query = supabase.from("game_relay_frames").insert(row);
-      const { error } = await (signal ? query.abortSignal(signal) : query);
-      return !error;
+      const rpc = supabase.rpc("publish_relay_frame", {
+        p_game_id: row.game_id,
+        p_channel: row.channel,
+        p_kind: row.kind,
+        p_epoch: row.epoch,
+        p_ordinal: row.ordinal,
+        p_seq: row.seq,
+        p_payload: row.payload,
+      });
+      const { data, error } = await (signal ? rpc.abortSignal(signal) : rpc);
+      return !error && data === "inserted";
     };
 
     const deps = {
       handlers: { relay: getRelay, events: getEvents, live: getLive, detail: getDetail },
       insertFrame,
+      epoch,
       date,
     };
 
