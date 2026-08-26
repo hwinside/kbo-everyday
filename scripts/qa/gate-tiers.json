@@ -520,6 +520,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:relay-ordering",
+      "tier": "ci"
+    },
+    {
       "name": "qa:active-users-contract",
       "tier": "deploy"
     },
