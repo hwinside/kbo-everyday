@@ -71,9 +71,11 @@ function depsWith(overrides: {
       detail: async () => jsonResponse({ detail: true }),
     },
     insertFrame: async (row) => {
-      if (overrides.insertResult === false) return false;
+      // 삼순 확정 설계: insertFrame 반환은 boolean 이 아니라 RelayInsertOutcome.
+      // 'inserted' 만 lastHash/publishedFull 갱신(커밋 성공), 'error' 는 다음 tick 재시도.
+      if (overrides.insertResult === false) return "error";
       rows.push(row);
-      return true;
+      return "inserted";
     },
     date: "2026-08-25",
     rows,
@@ -280,13 +282,17 @@ test("§1 durable ordering — deferred A 는 release 전 await 되어 항상 B 
 });
 
 // 삼순 6차: route 가 release 전 outstanding 을 실제로 await 하는지 소스로 결속(모델↔실코드 바인딩).
-test("§3 route durable ordering — release 전 await Promise.allSettled(outstanding) 결속", () => {
+test("§3 route durable ordering — RPC (epoch,ordinal) 원자거부 결속(await-outstanding 제거)", () => {
   const src = readSrc("src/app/api/cron/relay-live-publisher/route.ts");
-  assert.ok(/const outstanding: Promise<TickResult>\[\] = \[\];/.test(src), "outstanding 수집 배열 존재");
-  assert.ok(/outstanding\.push\(settle\)/.test(src), "각 tick settle 을 outstanding 에 수집");
-  // await-outstanding 이 소유권 재확인(renewLock)·state 저장보다 앞서야 한다(release 전).
-  assert.ok(/await Promise\.allSettled\(outstanding\);[\s\S]*const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src),
-    "await-outstanding 이 state 저장/lock 재확인보다 먼저");
+  // 삼순 확정 설계: durable ordering 은 JS await-outstanding 이 아니라 DB RPC 가 보장한다.
+  // 인보케이션 단조 epoch 선예약 → publish_relay_frame RPC 가 (epoch, ordinal) <= cursor 를
+  // 원자 거부(늦은 인보케이션의 낮은 epoch 프레임은 INSERT 자체가 거부돼 DB id 를 못 받음).
+  assert.ok(/reserve_relay_epoch/.test(src), "인보케이션 단조 epoch 선예약");
+  assert.ok(/publish_relay_frame/.test(src), "원자 발행 RPC(durable ordering 권위)");
+  // await-outstanding 은 제거됨 — RPC 원자거부가 대체하므로 release 전 전량 await 불필요.
+  assert.ok(!/await Promise\.allSettled\(outstanding\)/.test(src), "await-outstanding 제거(RPC 가 durable ordering 대체)");
+  // 저장 직전 소유권 재확인은 유지(새 writer 의 state 를 stale 로 덮지 않기 위함).
+  assert.ok(/const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src), "저장 직전 소유권 재확인 유지");
 });
 
 // (레거시 형태 유지용 참고) 삼순 5차 abort/overlap 스텁 테스트 — 대체됨.
@@ -307,9 +313,9 @@ test("§1 abort/overlap fence(구) — A deferred→abort→B commit→A release
     },
     insertFrame: async (row, signal) => {
       if (gate) await gate;             // A 는 gate 에 걸려 대기
-      if (signal?.aborted) return false; // ownsLock 뒤 abort 재확인 계약
+      if (signal?.aborted) return "skipped"; // ownsLock 뒤 abort 재확인 계약(RelayInsertOutcome)
       db.push(row);
-      return true;
+      return "inserted";
     },
     date: "2026-08-25",
   });
@@ -350,7 +356,7 @@ test("§1 abort fence — abort 이후 채널은 INSERT 시도조차 안 함", a
       live: async () => jsonResponse({ games: [{ x: 1 }] }),
       detail: async () => jsonResponse({ detail: true }),
     },
-    insertFrame: async (row) => { rows.push(row); return true; },
+    insertFrame: async (row) => { rows.push(row); return "inserted"; },
     date: "2026-08-25",
   };
   const state = newGameState();
@@ -621,9 +627,10 @@ test("§3 route lease — 독립 renewal·lockLost INSERT 차단·저장 직전 
   assert.ok(/setInterval\(\(\) => \{[\s\S]*renewLock\(token\)/.test(src), "tick 독립 renewal 타이머");
   assert.ok(/clearInterval\(renewTimer\)/.test(src), "renewal 타이머 정리");
   // 삼순 5차: INSERT 차단은 lockLost 또는 signal.aborted — 둘 다 있어야 한다.
-  assert.ok(/if \(lockLost \|\| signal\?\.aborted\) return false;/.test(src), "락 상실/abort 시 INSERT 차단(old writer)");
+  // 삼순 확정: insertFrame 반환이 RelayInsertOutcome 로 바뀌어 INSERT 차단은 'skipped' 반환.
+  assert.ok(/if \(lockLost \|\| signal\?\.aborted\) return "skipped";/.test(src), "락 상실/abort 시 INSERT 차단(old writer)");
   // 삼순 5차: ownsLock(async) 뒤 abort 재확인 + Supabase insert 에 abortSignal.
-  assert.ok(/if \(!\(await ownsLock\(token\)\)\)[\s\S]*if \(signal\?\.aborted\) return false;/.test(src), "ownsLock 뒤 abort 재확인");
+  assert.ok(/if \(!\(await ownsLock\(token\)\)\)[\s\S]*if \(signal\?\.aborted\) return "skipped";/.test(src), "ownsLock 뒤 abort 재확인");
   assert.ok(/\.abortSignal\(signal\)/.test(src), "Supabase insert 에 abortSignal 전달");
   assert.ok(/const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src), "저장 직전 소유권 재확인");
   assert.ok(/if \(stillOwner\)[\s\S]*SET", stateKey/.test(src), "소유일 때만 state 저장");
