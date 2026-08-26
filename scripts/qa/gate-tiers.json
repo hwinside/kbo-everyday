@@ -740,6 +740,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:favorites-save",
+      "tier": "ci"
+    },
+    {
       "name": "qa:profile-posts-paging:mutations",
       "tier": "ci"
     },

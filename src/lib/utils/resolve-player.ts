@@ -101,7 +101,7 @@ const NAME_ALIASES: Record<string, string> = {
 /* 로스터에서 제거된 레거시 합성 ID → 현행 숫자 ID.
  * DB(최애선수 favorite_players·게시판 board_id)·캐시·알림 payload 등에 구 ID가
  * 잔존해도 카드/상세/href가 깨지지 않도록 구제(forward-only 이관 마이그레이션과 이중 방어). */
-const LEGACY_RETIRED_IDS: Record<string, string> = {
+export const LEGACY_RETIRED_IDS: Record<string, string> = {
   AQ008: "56548", // 교야마 마사야(구 합성 ID) → 쿄야마 (2026-07-21 중복 항목 통합)
 };
 
