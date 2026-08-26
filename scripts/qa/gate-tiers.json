@@ -692,6 +692,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:admin-auth-loading",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:cpu-upstash-store",
       "tier": "deploy"
     },
