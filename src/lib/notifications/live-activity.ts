@@ -11,6 +11,7 @@ import {
 } from "@/lib/notifications/apns";
 import {
   decideChannelPush,
+  isScoreStateRetreat,
   decideStartReissue,
   scoreStateOf,
   fullStateHashOf,
@@ -358,12 +359,16 @@ export async function pushLiveActivityUpdates(
     const scoreState = scoreStateOf(cs);
     const fullHash = fullStateHashOf(cs);
     stateStringsByGame.set(gid, { score: scoreState, hash: fullHash });
-    decisionByGame.set(gid, decideChannelPush({
-      scoreState,
-      fullStateHash: fullHash,
-      lastScoreState: last?.score ?? null,
-      lastStateHash: last?.hash ?? null,
-    }));
+    // 되감기 가드(#1311 삼순 B② 3축 적용): 직전 발송보다 점수/이닝이 뒤로 가는 스냅샷은
+    // 발송 skip — Naver→KBO(stale) fallback 틱이 레거시 카드를 8→5로 되감는 걸 막는다.
+    decisionByGame.set(gid, isScoreStateRetreat(last?.score ?? null, scoreState)
+      ? { send: false }
+      : decideChannelPush({
+          scoreState,
+          fullStateHash: fullHash,
+          lastScoreState: last?.score ?? null,
+          lastStateHash: last?.hash ?? null,
+        }));
   }
 
   let pushed = 0;

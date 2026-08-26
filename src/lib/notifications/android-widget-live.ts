@@ -3,6 +3,7 @@ import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { sendFcmToUsers, WIDGET_STREAM, type PushPayload } from "@/lib/notifications/fcm";
 import { fansOfTeams, teamIdByShortName } from "@/lib/notifications/game-status";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
+import { isWidgetScoreRetreat } from "@/lib/notifications/ios-widget-policy";
 import type { KboRawGame } from "@/types/api";
 
 function safeInt(v: unknown): number {
@@ -53,10 +54,13 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 // 모듈 레벨 in-memory 캐시라 같은 서버리스 인스턴스의 사이클 간(그리고 warm 재사용
 // 시 분 간)만 유효 — cold start면 비어서 무조건 발사(현행 동작 보존). 직전 payload.data 시그니처와 비교.
 const lastWidgetSig = new Map<string, string>();
+// 되감기 가드(#1311 삼순 B② 3축)용 — 경기별 마지막 발송 점수 "away|home".
+const lastWidgetScore = new Map<string, string>();
 
 /** 테스트 전용 — fast-refresh dedupe 캐시 초기화(프로덕션 미사용). */
 export function __resetWidgetSigCacheForTest(): void {
   lastWidgetSig.clear();
+  lastWidgetScore.clear();
 }
 
 /** 주입 가능 의존성 — QA 스모크가 supabase/FCM/network 없이 분기를 검증(삼순 #718 테스트 요구). */
@@ -305,6 +309,16 @@ export async function pushAndroidWidgetLiveUpdates(
       };
     }
 
+    // 되감기 가드(#1311 삼순 B② 3축 적용): live 점수가 직전 발송보다 뒤로 가면 skip.
+    // Naver→KBO(stale) fallback 틱이 위젯 점수를 8→5로 되감는 걸 막는다(점수는 단조).
+    if (isLive) {
+      const scoreKey = `${safeInt(g.T_SCORE_CN)}|${safeInt(g.B_SCORE_CN)}`;
+      const prevScore = lastWidgetScore.get(g.G_ID as string);
+      if (prevScore !== undefined && isWidgetScoreRetreat(prevScore, scoreKey)) {
+        skipped += fans.ids.length;
+        continue;
+      }
+    }
     // fast-refresh 추가 사이클 — canonical 상태(w_source_at 제외) 미변경이면 재발사 생략(배터리 보호).
     const sig = widgetStateSignature(payload.data as Record<string, unknown>);
     if (shouldSkipWidgetPush(lastWidgetSig.get(g.G_ID as string), sig, dedupe)) {
@@ -323,7 +337,12 @@ export async function pushAndroidWidgetLiveUpdates(
     // FCM 인프라 성공(res.ok) 확인 후에만 시그니처 기록 — 실패 시 다음 사이클이 동일 상태를
     // 재시도할 수 있게 한다(삼순 blocker③ — 실패 dedupe 오염 방지).
     const transientFailed = res.retryableFailed ?? 0;
-    if (res.ok && transientFailed === 0) lastWidgetSig.set(g.G_ID as string, sig);
+    if (res.ok && transientFailed === 0) {
+      lastWidgetSig.set(g.G_ID as string, sig);
+      if (isLive) {
+        lastWidgetScore.set(g.G_ID as string, `${safeInt(g.T_SCORE_CN)}|${safeInt(g.B_SCORE_CN)}`);
+      }
+    }
     sent += res.sent;
     failed += res.failed;
     cleaned += res.cleaned;

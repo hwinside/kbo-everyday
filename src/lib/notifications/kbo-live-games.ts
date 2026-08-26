@@ -53,6 +53,10 @@ export type LiveGamesTrace = {
 
 type NaverLiveEvidence = {
   hasRealPlay: boolean;
+  // relay currentGameState 의 점수(homeScore/awayScore) — 중계 한 줄·볼카운트와 같은 relay
+  // 피드라 schedule 피드(fetchNaverGames)보다 신선하다. 없으면(첫 투구 전 등) null.
+  awayScore: number | null;
+  homeScore: number | null;
   balls: number;
   strikes: number;
   outs: number;
@@ -75,6 +79,13 @@ type NaverLiveEvidenceFetcher = (
 function safeCount(value: unknown): number {
   const parsed = Number.parseInt(String(value ?? "0"), 10);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// relay 점수는 없을 수 있으므로 0 대신 null 로 구분(schedule 점수를 0 으로 덮어쓰지 않게).
+function safeScoreOrNull(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function naverRunnerOrder(value: unknown): number {
@@ -147,6 +158,8 @@ export async function fetchNaverLiveEvidence(
   const runner3bOrder = naverRunnerOrder(state.base3);
   return {
     hasRealPlay: actualPlay.length > 0,
+    awayScore: safeScoreOrNull(state.awayScore),
+    homeScore: safeScoreOrNull(state.homeScore),
     balls: safeCount(state.ball),
     strikes: safeCount(state.strike),
     outs: safeCount(state.out),
@@ -249,6 +262,10 @@ async function enrichNaverLiveGames(
       // (삼순 2차 리뷰 P0).
       return {
         ...game,
+        // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 피드)에서 뽑는다.
+        // schedule 점수가 relay 보다 느린 구간에서 "중계 최신 + 점수 stale" 재발 방지. relay 점수 부재시 schedule 유지.
+        awayScore: evidence.awayScore ?? game.awayScore,
+        homeScore: evidence.homeScore ?? game.homeScore,
         balls: evidence.balls,
         strikes: evidence.strikes,
         outs: evidence.outs,
@@ -417,13 +434,16 @@ function overlayKboQuasiStatic(naverBase: KboGame[], kboGames: KboGame[]): KboGa
   return naverBase.map((base) => {
     const k = kboById.get(base.gameId);
     if (!k) return base;
+    // 승/패/세이브 투수는 양쪽 final 일 때만 실는다(games-user-facing 과 동일 규칙 — P2).
+    // 선발/순위는 status 무관 준정적 필드라 항상 오버레이.
+    const bothFinal = base.status === "final" && k.status === "final";
     return {
       ...base,
       awayStarterName: base.awayStarterName || k.awayStarterName,
       homeStarterName: base.homeStarterName || k.homeStarterName,
-      winPitcher: base.winPitcher || k.winPitcher,
-      losePitcher: base.losePitcher || k.losePitcher,
-      savePitcher: base.savePitcher || k.savePitcher,
+      winPitcher: bothFinal ? (base.winPitcher || k.winPitcher) : base.winPitcher,
+      losePitcher: bothFinal ? (base.losePitcher || k.losePitcher) : base.losePitcher,
+      savePitcher: bothFinal ? (base.savePitcher || k.savePitcher) : base.savePitcher,
       awayRank: base.awayRank || k.awayRank,
       homeRank: base.homeRank || k.homeRank,
     };

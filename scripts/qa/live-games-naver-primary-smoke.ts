@@ -28,6 +28,10 @@ import {
   isScoreStateRetreat,
   resolveChannelUpdateDecision,
 } from "../../src/lib/notifications/live-activity-channel-policy";
+import {
+  decideWidgetPushClaim,
+  isWidgetScoreRetreat,
+} from "../../src/lib/notifications/ios-widget-policy";
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
 process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
@@ -105,6 +109,8 @@ const kbo503: typeof fetch = (async () => new Response(null, { status: 503 })) a
 
 const freshEvidence = {
   hasRealPlay: true,
+  awayScore: null as number | null,
+  homeScore: null as number | null,
   balls: 0,
   strikes: 0,
   outs: 0,
@@ -253,6 +259,43 @@ async function main() {
   assert.equal(g7.games[0].B_SCORE_CN, "8", "P7 라이브 점수는 Naver 유지");
   pass += 1;
 
+  // P8) 근본 수정 — relay currentGameState 점수가 schedule 점수를 덮어쓴다(schedule↔relay 지연차 해소).
+  // schedule은 0:5(느림), relay evidence는 0:8(신선) → raw 는 relay 8.
+  const staleScheduleNaver: NaverImpl = async () => [naverGame({ awayScore: 0, homeScore: 5 })];
+  const relayFreshScore: EvidenceImpl = (async () => ({
+    ...freshEvidence,
+    awayScore: 0,
+    homeScore: 8,
+  })) as EvidenceImpl;
+  const g8 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    staleScheduleNaver,
+    relayFreshScore,
+    kboEnrichNone,
+  );
+  assert.equal(g8.games[0].B_SCORE_CN, "8", "P8 relay 점수(8)가 schedule 점수(5)를 override");
+  assert.equal(g8.games[0].T_SCORE_CN, "0", "P8 relay away 점수");
+  pass += 1;
+
+  // W) 위젯 되감기 가드(B② 3축) — iOS 위젯 away|home 포맷.
+  assert.equal(isWidgetScoreRetreat("0|8", "0|5"), true, "W iOS 위젯 점수 후퇴 감지");
+  assert.equal(isWidgetScoreRetreat("0|8", "0|9"), false, "W iOS 위젯 전진 허용");
+  assert.equal(decideWidgetPushClaim("0|8", "0|5"), "skip", "W 되감김은 claim-update 아니라 skip");
+  assert.equal(decideWidgetPushClaim("0|8", "0|9"), "claim-update", "W 전진은 claim-update");
+  assert.equal(decideWidgetPushClaim(null, "0|5"), "claim-insert", "W 최초 live는 insert");
+  pass += 1;
+
+  // G) 3축 가드 배선 소스가드 — 레거시·안드 소비자가 되감기 가드를 실제 호출하는지.
+  const legacySrc = readFileSync("src/lib/notifications/live-activity.ts", "utf8");
+  assert.match(legacySrc, /isScoreStateRetreat\(/, "G 레거시 per-토큰 LA 가 isScoreStateRetreat 호출");
+  const androidSrc = readFileSync("src/lib/notifications/android-widget-live.ts", "utf8");
+  assert.match(androidSrc, /isWidgetScoreRetreat\(/, "G 안드 위젯이 isWidgetScoreRetreat 호출");
+  const iosPolicySrc = readFileSync("src/lib/notifications/ios-widget-policy.ts", "utf8");
+  assert.match(iosPolicySrc, /isWidgetScoreRetreat\(prevState, nextState\)/, "G iOS decideWidgetPushClaim 이 가드 호출");
+  pass += 1;
+
   // R) 되감김 가드(B②) — 예측/배선 둘 다.
   // scoreStateOf 포맷: away|home|inning|isTop|on1|on2|on3|status
   const lastSent = "0|8|7|false|false|false|false|live";
@@ -261,6 +304,10 @@ async function main() {
   assert.equal(isScoreStateRetreat(lastSent, "0|8|6|false|false|false|false|live"), true, "R 이닝 후퇴 감지");
   assert.equal(isScoreStateRetreat(null, "0|5|7|false|false|false|false|live"), false, "R 첫 발송은 후퇴 아님");
   assert.equal(isScoreStateRetreat(lastSent, "0|8|7|false|true|false|false|live"), false, "R 주자 변화는 후퇴 아님");
+  // B① 핵심: 이닝교대 lag — 7말 0:8 → 8초 0:5(nRank>pRank 지만 점수 후퇴)는 되감김.
+  assert.equal(isScoreStateRetreat(lastSent, "0|5|8|true|false|false|false|live"), true, "R 이닝 전진+점수 후퇴 = 되감김(B①)");
+  // 이닝 전진+점수 유지는 전진.
+  assert.equal(isScoreStateRetreat(lastSent, "0|8|8|true|false|false|false|live"), false, "R 이닝 전진+점수 유지 = 전진");
   // 배선: 되감김은 forceCatchup(지명 catch-up)이어도 broadcast skip.
   const retreatDecision = resolveChannelUpdateDecision({
     scoreState: "0|5|7|false|false|false|false|live",
@@ -306,8 +353,8 @@ async function main() {
   assert.doesNotMatch(routeSrc, /fetchKboLiveGames\(/, "warmup 에 fetchKboLiveGames() 직호출 없음");
   pass += 1;
 
-  assert.equal(pass, 10, `expected 10 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/10 PASS`);
+  assert.equal(pass, 13, `expected 13 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/13 PASS`);
 }
 
 main().catch((error) => {
