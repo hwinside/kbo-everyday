@@ -3444,6 +3444,14 @@ function dismissesDetectedBaseballTerm(question: string, terms: readonly string[
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
+  /**
+   * 톤 준수 **관측값** (2026-08-26 하린아빠 결정). `kind === "answer"` 일 때만 의미가 있다.
+   *
+   * 서빙 여부를 가르는 값이 아니라 **계측값**이다 — RAG `validateRagResponse` 의 동명
+   * 필드와 같은 역할·같은 이름을 쓴다. 소비처는 log/envelope 에 실어 보내기만 하고
+   * **분기 조건으로 쓰지 않는다.**
+   */
+  toneCompliant?: boolean;
 }
 
 /**
@@ -3721,13 +3729,25 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
     /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
-    !isBaseballGeniusToneCompliant(answer) ||
     // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
     !answerInQuestionScope(question, answer)
   ) {
     return { kind: "unsure" };
   }
-  return { kind: "answer", answer };
+  // 🔴 2026-08-26 하린아빠 결정 — **톤은 폐기 사유가 아니라 관측값이다.**
+  //
+  // 종전엔 해요체가 섞이면 답 전체를 버리고 `UNCLEAR_ANSWER`("질문을 정확히 이해하지
+  // 못했습니다")를 보냈다. 48h 원장 실측으로 **127런**이 이렇게 버려졌고, 그 안내는
+  // 사실이 아니었다 — 봇은 질문을 이해했고 내용도 맞는 답을 만들었는데 말투 때문에
+  // 우리가 버렸다. 그러면 유저는 자기 질문이 이상했다고 믿고 문장을 고쳐 다시 쓴다 — 고칠 게 없는데.
+  //
+  // 네 RAG 경로(`validateRagResponse`)는 이미 톤을 **관측만 하고 해요체를 그대로 서빙**한다.
+  // LLM 경로만 다른 잣대를 쓰고 있었다 — 두 경로를 같은 계약으로 맞춘다.
+  //
+  // ⚠️ 여기서 문자열 교정을 시도하지 않는다. 한국어 활용형은 유한하지 않아 어절 매핑으로는
+  //    원리적으로 닫힐 수 없다(#1300 에서 반례마다 룰이 쌓이고 회수율이 떨어지는 것을
+  //    실측했다). 톤 개선은 생성 프롬프트의 일이고, 이 자리는 **재기만** 한다.
+  return { kind: "answer", answer, toneCompliant: isBaseballGeniusToneCompliant(answer) };
 }
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
@@ -6105,13 +6125,17 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         //   (message 단위 final 저장과 global 캐시는 별개의 계층이다).
         if (deps.storeLlm) {
           await deps.storeLlm(packStoredQaFinal(
-            { answer: revalidated.answer, source: "llm", statRuleTermVerified: true },
+            {
+              answer: revalidated.answer, source: "llm", statRuleTermVerified: true,
+              toneCompliant: revalidated.toneCompliant,
+            },
             { text: reasked.text, ...tokens },
           ));
         }
         await deps.log({
           userId, question, questionNorm, matchPath: "llm",
           answer: revalidated.answer, ...tokens,
+          toneCompliant: revalidated.toneCompliant,
         });
         return { status: 200, answer: revalidated.answer, source: "llm", remaining };
       }
@@ -6165,11 +6189,19 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 성질이지 질문 하나의 성질이 아니다.
   if (deps.storeLlm) {
     await deps.storeLlm(packStoredQaFinal(
-      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },
+      {
+        answer: validated.answer, source: "llm",
+        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,
+        toneCompliant: validated.toneCompliant,
+      },
       llm,
     ));
   }
   if (!context && !scopeGate && !rosterBlock && !statNumericGuard) await deps.setCache(questionNorm, validated.answer);
-  await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  await deps.log({
+    userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
+    inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    toneCompliant: validated.toneCompliant,
+  });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }

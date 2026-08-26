@@ -970,9 +970,18 @@ for (const question of ["잔루만루가 뭔데", "순위 결정 규칙 알려�
   assert.equal(routeQuestion(question, seedEntries, players), "baseball_rule_term", question);
 }
 
+// 🔴 2026-08-26 #1310 — 톤은 폐기 사유가 아니라 **관측값**이다(RAG 와 동일 계약).
+//    `toneCompliant` 를 양방향으로 고정한다 — 항상 false 로 고정되면 분모가 무너져
+//    "프롬프트 준수율" 을 재는 의미가 없어진다.
 assert.deepEqual(
   validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작입니다."}'),
-  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작입니다." },
+  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작입니다.", toneCompliant: true },
+);
+// 해요체는 서빙되되 `toneCompliant: false` 로 관측된다 — 종전엔 `unsure` 로 버려졌고
+// 그 런은 유저에게 "질문을 정확히 이해하지 못했습니다" 를 받았다(48h 실측 127런).
+assert.deepEqual(
+  validateLlmResponse('{"status":"ANSWER","answer":"보크는 투수의 반칙 투구 동작이에요."}'),
+  { kind: "answer", answer: "보크는 투수의 반칙 투구 동작이에요.", toneCompliant: false },
 );
 assert.equal(validateLlmResponse("not-json").kind, "unsure");
 assert.equal(validateLlmResponse('{"status":"ANSWER","answer":"https://bad.example"}').kind, "unsure");
@@ -990,7 +999,7 @@ assert.deepEqual(
   validateLlmResponse(
     `{"status":"${RULE_TERM_SENTINEL}","answer":"잔루는 공격이 끝났을 때 루상에 남은 주자입니다."}`,
   ),
-  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자입니다." },
+  { kind: "answer", answer: "잔루는 공격이 끝났을 때 루상에 남은 주자입니다.", toneCompliant: true },
 );
 // RULE_TERM이어도 출력에 야구 신호가 없으면 2차 가드가 unsure로 돌린다.
 assert.equal(
