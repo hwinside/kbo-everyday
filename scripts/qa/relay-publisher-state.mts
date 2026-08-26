@@ -18,13 +18,23 @@
  * env 불필요. 실패 시 exit 1.
  */
 import { readFileSync } from "node:fs";
-import {
-  publishGameTick,
-  newGameState,
-  type TickDeps,
-  type RelayInsertOutcome,
-  type PersistedGameState,
+import type {
+  TickDeps,
+  RelayInsertOutcome,
+  PersistedGameState,
 } from "../../src/lib/game/relay-live-publisher.ts";
+
+// publisher 모듈은 supabase admin 클라이언트를 모듈 로드 시점에 eager 생성한다
+// (src/lib/supabase/admin.ts top-level). CI 에는 supabase env 가 없으므로 그대로 static
+// import 하면 "supabaseUrl is required" 로 로드 크래시한다. 이 게이트는 insertFrame 을
+// mock 으로 대체해 실제 supabase 를 전혀 안 쓰므로, 로드 전에 더미 env 를 선주입하고
+// dynamic import 한다(로컬·deploy 에 실 env 가 있으면 ||= 로 유지). — 삼순 ci 티어 안전성.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= "http://127.0.0.1:1";
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= "ci-dummy-service-role-not-used";
+
+const { publishGameTick, newGameState } = await import(
+  "../../src/lib/game/relay-live-publisher.ts"
+);
 
 let pass = 0;
 let fail = 0;
