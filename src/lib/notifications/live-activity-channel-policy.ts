@@ -163,6 +163,8 @@ export function resolveChannelUpdateDecision(
 export interface LegacyTokenUpdateInput {
   /** 경기 단위 skip/priority 판정(decideChannelPush 결과). null = 판정 재료 없음. */
   decision: ChannelPushDecision | null;
+  /** 되감김 스냅샷 여부(#1311 삼순 B②) — true 면 catch-up 보다 우선해 무조건 skip. */
+  isRetreat?: boolean;
   /** 토큰 등록/갱신 시각(ms). null = updated_at 미기록(레거시 행). */
   tokenUpdatedAtMs: number | null;
   /** 직전 상태 기록 시각(ms) — 상태 행 updated_at. null = 상태 행 없음. */
@@ -195,6 +197,9 @@ export type LegacyTokenUpdateDecision =
  * 과다 발송은 경기당 bootstrap 틱 1회로 유계(cursor 생성 전 = 기존 매분 p10과 동일 동작).
  */
 export function decideLegacyTokenUpdate(input: LegacyTokenUpdateInput): LegacyTokenUpdateDecision {
+  // 되감김은 catch-up(늦은 토큰/bootstrap)보다 우선한다 — 후퇴 스냅샷은 어떤 경로로도 발송하지
+  // 않는다(#1311 삼순 B①: broadcast forceCatchup 우회와 동일 클래스, 여기선 catch-up 이 못 뚫게).
+  if (input.isRetreat === true) return { send: false };
   const isCatchUp =
     input.lastWriteAtMs === null
       // bootstrap 미완료 — 비교 기준(cursor)이 없어 늦은 토큰을 구분할 수 없다. 전 토큰

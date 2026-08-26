@@ -139,8 +139,9 @@ export async function fetchNaverLiveEvidence(
     ))
     .sort((a, b) => (b.seqno ?? 0) - (a.seqno ?? 0));
   // 현재 상태는 top-level currentGameState 우선(가장 최신), 없으면 최신 투구 옵션의 것.
+  const topLevelState = (relayData.currentGameState ?? null) as Record<string, unknown> | null;
   const state = (
-    relayData.currentGameState ?? actualPlay[0]?.currentGameState ?? {}
+    topLevelState ?? actualPlay[0]?.currentGameState ?? {}
   ) as Record<string, unknown>;
   const roster: Array<{ pcode?: unknown; name?: unknown }> = [];
   for (const side of [relayData.awayLineup, relayData.homeLineup] as Array<NaverRelayLineupSide | undefined>) {
@@ -158,8 +159,11 @@ export async function fetchNaverLiveEvidence(
   const runner3bOrder = naverRunnerOrder(state.base3);
   return {
     hasRealPlay: actualPlay.length > 0,
-    awayScore: safeScoreOrNull(state.awayScore),
-    homeScore: safeScoreOrNull(state.homeScore),
+    // 점수는 top-level currentGameState 에서만 취한다(#1311 삼순 B②). actualPlay[0] 폴백은
+    // relay?inning=1 의 1회 투구라 8회 경기에 1회 점수(0:0)를 실을 수 있어 점수 override 오염이 된다.
+    // top-level 부재 → null → enrich 에서 schedule 점수 유지(count/base/투타는 기존대로 state 폴백 허용).
+    awayScore: safeScoreOrNull(topLevelState?.awayScore),
+    homeScore: safeScoreOrNull(topLevelState?.homeScore),
     balls: safeCount(state.ball),
     strikes: safeCount(state.strike),
     outs: safeCount(state.out),
@@ -239,6 +243,9 @@ async function enrichNaverLiveGames(
   games: KboGame[],
   absoluteDeadlineAtMs: number,
   fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher,
+  // 점수를 relay(evidence)로 override 할지 — Naver-primary(warmup) 경로만 true(#1311 삼순 P1 스코프).
+  // fetchKboLiveGames failover 는 false(기본값) → watchdog·관제 등 공유 소비자는 기존 동작 유지.
+  overrideScoreFromRelay = false,
 ): Promise<KboRawGame[]> {
   const verifiedGames = await Promise.all(games.map(async (game) => {
     if (game.status !== "live") return game;
@@ -262,10 +269,11 @@ async function enrichNaverLiveGames(
       // (삼순 2차 리뷰 P0).
       return {
         ...game,
-        // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 피드)에서 뽑는다.
+        // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 top-level 피드)에서 뽑는다.
         // schedule 점수가 relay 보다 느린 구간에서 "중계 최신 + 점수 stale" 재발 방지. relay 점수 부재시 schedule 유지.
-        awayScore: evidence.awayScore ?? game.awayScore,
-        homeScore: evidence.homeScore ?? game.homeScore,
+        // Naver-primary 경로만 override(공유 failover 경로는 기존대로 schedule 점수 — 삼순 P1 스코프).
+        awayScore: overrideScoreFromRelay ? (evidence.awayScore ?? game.awayScore) : game.awayScore,
+        homeScore: overrideScoreFromRelay ? (evidence.homeScore ?? game.homeScore) : game.homeScore,
         balls: evidence.balls,
         strikes: evidence.strikes,
         outs: evidence.outs,
@@ -515,6 +523,7 @@ export async function fetchLiveGamesNaverPrimary(
       enrichedBase,
       absoluteDeadlineAtMs,
       fetchNaverEvidenceImpl,
+      true, // Naver-primary — 점수도 relay 로 override(warmup 한정 스코프)
     );
     return {
       ok: true,

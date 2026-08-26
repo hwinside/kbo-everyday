@@ -27,6 +27,7 @@ import type { KboRawGame } from "../../src/types/api";
 import {
   isScoreStateRetreat,
   resolveChannelUpdateDecision,
+  decideLegacyTokenUpdate,
 } from "../../src/lib/notifications/live-activity-channel-policy";
 import {
   decideWidgetPushClaim,
@@ -129,7 +130,7 @@ const okEvidence: EvidenceImpl = (async () => freshEvidence) as EvidenceImpl;
 const kboEnrichNone: KboGamesImpl = (async () => []) as KboGamesImpl;
 
 async function main() {
-  const { fetchLiveGamesNaverPrimary, fetchKboLiveGames } = (await import(
+  const { fetchLiveGamesNaverPrimary, fetchKboLiveGames, fetchNaverLiveEvidence } = (await import(
     "../../src/lib/notifications/kbo-live-games"
   )) as Mod;
 
@@ -287,13 +288,56 @@ async function main() {
   assert.equal(decideWidgetPushClaim(null, "0|5"), "claim-insert", "W 최초 live는 insert");
   pass += 1;
 
-  // G) 3축 가드 배선 소스가드 — 레거시·안드 소비자가 되감기 가드를 실제 호출하는지.
-  const legacySrc = readFileSync("src/lib/notifications/live-activity.ts", "utf8");
-  assert.match(legacySrc, /isScoreStateRetreat\(/, "G 레거시 per-토큰 LA 가 isScoreStateRetreat 호출");
+  // G) 레거시 축 행동 테스트(삼순 B① — 소스 grep 이 아니라 decideLegacyTokenUpdate 까지 태움).
+  // 되감김(isRetreat)은 catch-up(bootstrap lastWriteAtMs=null · 늦은 토큰)을 뚫지 못한다.
+  assert.deepEqual(
+    decideLegacyTokenUpdate({ decision: { send: false }, isRetreat: true, tokenUpdatedAtMs: 100, lastWriteAtMs: null }),
+    { send: false },
+    "G 되감김은 bootstrap catch-up 도 발송 안 함",
+  );
+  assert.deepEqual(
+    decideLegacyTokenUpdate({ decision: { send: false }, isRetreat: true, tokenUpdatedAtMs: 200, lastWriteAtMs: 100 }),
+    { send: false },
+    "G 되감김은 늦은 토큰 catch-up 도 발송 안 함",
+  );
+  // 대조: 후퇴 아닌 no-diff skip 은 bootstrap catch-up 이 정상 동작(기존 #664 보존).
+  assert.deepEqual(
+    decideLegacyTokenUpdate({ decision: { send: false }, isRetreat: false, tokenUpdatedAtMs: 100, lastWriteAtMs: null }),
+    { send: true, priority: "10" },
+    "G 비후퇴 no-diff + bootstrap 은 catch-up p10 유지",
+  );
+  // 안드는 call-site 배선(전체 push 플로우 필요)이라 소스 grep 으로 보완.
   const androidSrc = readFileSync("src/lib/notifications/android-widget-live.ts", "utf8");
   assert.match(androidSrc, /isWidgetScoreRetreat\(/, "G 안드 위젯이 isWidgetScoreRetreat 호출");
-  const iosPolicySrc = readFileSync("src/lib/notifications/ios-widget-policy.ts", "utf8");
-  assert.match(iosPolicySrc, /isWidgetScoreRetreat\(prevState, nextState\)/, "G iOS decideWidgetPushClaim 이 가드 호출");
+  pass += 1;
+
+  // B2) relay 점수 top-level 한정(삼순 B②) — fetchNaverLiveEvidence 가 actualPlay[0] 폴백 점수를 안 취한다.
+  const origFetch = globalThis.fetch;
+  const relayJson = (obj: unknown) =>
+    (async () => new Response(JSON.stringify(obj), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+  // top-level 없음 + actualPlay[0] 에만 점수(1회 0:0) → 점수 null(오염 미취득), count 는 폴백에서 취득.
+  globalThis.fetch = relayJson({
+    result: { textRelayData: {
+      textRelays: [{ textOptions: [{ pitchNum: 3, currentGameState: { homeScore: "0", awayScore: "0", ball: "1", strike: "2", out: "1", base1: "0", base2: "0", base3: "0" } }] }],
+      awayLineup: {}, homeLineup: {},
+    } },
+  });
+  const evFallback = await fetchNaverLiveEvidence(GID, new AbortController().signal);
+  assert.equal(evFallback.awayScore, null, "B2 top-level 없으면 away 점수 null(폴백 점수 미취득)");
+  assert.equal(evFallback.homeScore, null, "B2 top-level 없으면 home 점수 null(1회 점수 오염 차단)");
+  assert.equal(evFallback.balls, 1, "B2 count 는 폴백에서 취득(기존 동작)");
+  // top-level 있음 → 점수 취득.
+  globalThis.fetch = relayJson({
+    result: { textRelayData: {
+      currentGameState: { homeScore: "8", awayScore: "0", ball: "2", strike: "0", out: "1", base1: "0", base2: "0", base3: "0" },
+      textRelays: [{ textOptions: [{ pitchNum: 1, currentGameState: { homeScore: "0", awayScore: "0" } }] }],
+      awayLineup: {}, homeLineup: {},
+    } },
+  });
+  const evTop = await fetchNaverLiveEvidence(GID, new AbortController().signal);
+  globalThis.fetch = origFetch;
+  assert.equal(evTop.homeScore, 8, "B2 top-level 있으면 점수 취득(8)");
+  assert.equal(evTop.awayScore, 0, "B2 top-level away 점수");
   pass += 1;
 
   // R) 되감김 가드(B②) — 예측/배선 둘 다.
@@ -353,8 +397,8 @@ async function main() {
   assert.doesNotMatch(routeSrc, /fetchKboLiveGames\(/, "warmup 에 fetchKboLiveGames() 직호출 없음");
   pass += 1;
 
-  assert.equal(pass, 13, `expected 13 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/13 PASS`);
+  assert.equal(pass, 14, `expected 14 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/14 PASS`);
 }
 
 main().catch((error) => {

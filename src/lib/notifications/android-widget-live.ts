@@ -55,6 +55,8 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 // 시 분 간)만 유효 — cold start면 비어서 무조건 발사(현행 동작 보존). 직전 payload.data 시그니처와 비교.
 const lastWidgetSig = new Map<string, string>();
 // 되감기 가드(#1311 삼순 B② 3축)용 — 경기별 마지막 발송 점수 "away|home".
+// lastWidgetSig 와 동일하게 모듈 in-memory 이라 cold start 면 비어서 가드 off(best-effort) —
+// broadcast 축은 DB last_score_state 로 durable 하지만 안드 위젯은 원래 in-memory dedupe 성격.
 const lastWidgetScore = new Map<string, string>();
 
 /** 테스트 전용 — fast-refresh dedupe 캐시 초기화(프로덕션 미사용). */

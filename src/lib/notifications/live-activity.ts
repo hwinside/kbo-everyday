@@ -348,6 +348,9 @@ export async function pushLiveActivityUpdates(
   // 판정은 경기 단위(풀 카드 상태 기준). 직전 상태는 채널 행이 지난 틱에 기록한 값 재사용 —
   // 채널 행이 없으면(전환 전/생성 실패) null → 항상 priority 10 발송 = 기존 동작 그대로.
   const decisionByGame = new Map<string, ChannelPushDecision>();
+  // 되감김 경기 집합(#1311 삼순 B①) — decideLegacyTokenUpdate 의 catch-up 이 후퇴를 못 뚫게
+  // isRetreat 로 넘긴다. {send:false} 만으로는 no-diff skip 과 구분 못 해 catch-up 이 우회한다.
+  const retreatGames = new Set<string>();
   // 이번 틱의 상태 문자열 — 발송 성공 시 경기 단위 폴백 테이블에 기록(다음 틱 스킵 판정용).
   const stateStringsByGame = new Map<string, { score: string; hash: string }>();
   for (const [gid, st] of stateByGame) {
@@ -361,7 +364,10 @@ export async function pushLiveActivityUpdates(
     stateStringsByGame.set(gid, { score: scoreState, hash: fullHash });
     // 되감기 가드(#1311 삼순 B② 3축 적용): 직전 발송보다 점수/이닝이 뒤로 가는 스냅샷은
     // 발송 skip — Naver→KBO(stale) fallback 틱이 레거시 카드를 8→5로 되감는 걸 막는다.
-    decisionByGame.set(gid, isScoreStateRetreat(last?.score ?? null, scoreState)
+    // catch-up 우회 차단은 decideLegacyTokenUpdate(isRetreat)에서(삼순 B①). retreatGames 로 표시.
+    const retreat = isScoreStateRetreat(last?.score ?? null, scoreState);
+    if (retreat) retreatGames.add(gid);
+    decisionByGame.set(gid, retreat
       ? { send: false }
       : decideChannelPush({
           scoreState,
@@ -404,6 +410,7 @@ export async function pushLiveActivityUpdates(
         ? null
         : decideLegacyTokenUpdate({
             decision: decisionByGame.get(t.game_id) ?? null,
+            isRetreat: retreatGames.has(t.game_id),
             tokenUpdatedAtMs: t.updated_at !== null ? new Date(t.updated_at).getTime() : null,
             lastWriteAtMs: lastWriteAtByGame.get(t.game_id) ?? null,
           });
