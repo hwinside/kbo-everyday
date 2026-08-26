@@ -1,0 +1,254 @@
+/**
+ * fetchLiveGamesNaverPrimary(Live Activity 카드·위젯 라이브 소스) 결함주입 회귀.
+ *
+ * 배경(잠금화면 카드 점수 stale — 2026-08-26 하린아빠 제보): warmup cron 의 LA broadcast·
+ * iOS/Android 위젯이 fetchKboLiveGames(KBO-primary)를 썼다. KBO 스코어보드가 200 OK 인데
+ * 점수만 오래된(0:5) 구간에서 그 값을 그대로 카드에 넣고 Naver 를 아예 안 봐서, 알림·중계
+ * 한 줄(Naver, 0:8)은 최신인데 카드 점수만 뒤처졌다. 앱 화면(games-user-facing)은 Naver-primary
+ * 라 빠른데 LA/위젯만 KBO-primary 였던 게 원인.
+ *
+ * 이 스모크는 두 소스를 나란히 구동한다:
+ *  - RED: 기존 warmup 소스 fetchKboLiveGames(KBO-primary) — KBO 200+stale 를 그대로 반환(재현).
+ *  - GREEN: 새 fetchLiveGamesNaverPrimary — Naver-primary 로 최신 점수 반환, Naver 다운 시 KBO fallback.
+ *
+ * 고정 계약:
+ *  - KBO 200+stale(0:5) + Naver 최신(0:8) → GREEN 은 Naver 값(0:8), source="naver". RED 는 KBO(0:5).
+ *  - Naver schedule 다운 → KBO-primary fallback(자체 Naver failover 포함).
+ *  - Naver 무경기(빈 배열) + KBO 경기 있음 → KBO fallback(경기 목록 무손실).
+ *  - Naver relay evidence 로 볼카운트/주자/투타 보강이 raw 게임에 반영.
+ *  - 1회초 0:0 + relay 실제 투구 없음 → scheduled 강등(가짜 live 방지).
+ *  - dual-fail(Naver 다운 + KBO 하드실패) → ok:false, [](fail-close).
+ *  - warmup route 가 fetchLiveGamesNaverPrimary 를 쓰고 fetchKboLiveGames() 직호출이 없다.
+ */
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import type { KboGame } from "../../src/lib/crawler/kbo-api";
+import type { KboRawGame } from "../../src/types/api";
+
+process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+process.env.SUPABASE_SERVICE_ROLE_KEY ??= "smoke-service-role-key";
+
+type Mod = typeof import("../../src/lib/notifications/kbo-live-games");
+type FetchLiveGamesNaverPrimary = Mod["fetchLiveGamesNaverPrimary"];
+type NaverImpl = Parameters<FetchLiveGamesNaverPrimary>[3];
+type EvidenceImpl = Parameters<FetchLiveGamesNaverPrimary>[4];
+
+const GID = "20260826NCLG0";
+
+function naverGame(over: Partial<KboGame> = {}): KboGame {
+  return {
+    gameId: GID,
+    date: "20260826",
+    time: "18:30",
+    stadium: "잠실",
+    awayTeamId: 5,
+    homeTeamId: 3,
+    awayName: "NC",
+    homeName: "LG",
+    awayScore: 0,
+    homeScore: 8,
+    inning: 7,
+    isTop: false,
+    status: "live",
+    awayStarterName: "",
+    homeStarterName: "",
+    winPitcher: "",
+    losePitcher: "",
+    savePitcher: "",
+    strikes: 0,
+    balls: 0,
+    outs: 0,
+    runnersOn: { first: false, second: false, third: false },
+    currentPitcher: "",
+    currentBatter: "",
+    awayRank: 0,
+    homeRank: 0,
+    ...over,
+  };
+}
+
+/** KBO raw 게임(스코어보드 원천 필드). stale 점수 재현용. */
+function kboRaw(over: Partial<KboRawGame> = {}): KboRawGame {
+  return {
+    G_ID: GID,
+    G_DT: "20260826",
+    G_TM: "18:30",
+    S_NM: "잠실",
+    AWAY_ID: "NC",
+    HOME_ID: "LG",
+    AWAY_NM: "NC",
+    HOME_NM: "LG",
+    T_SCORE_CN: "0",
+    B_SCORE_CN: "5", // KBO 스코어보드 stale (실제 8)
+    GAME_INN_NO: 7,
+    GAME_TB_SC: "B",
+    GAME_STATE_SC: "2",
+    CANCEL_SC_ID: "0",
+    ...over,
+  } as KboRawGame;
+}
+
+function kboFetch(rows: KboRawGame[]): typeof fetch {
+  return (async () =>
+    new Response(JSON.stringify({ game: rows }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as typeof fetch;
+}
+
+const kbo503: typeof fetch = (async () => new Response(null, { status: 503 })) as typeof fetch;
+
+const freshEvidence = {
+  hasRealPlay: true,
+  balls: 0,
+  strikes: 0,
+  outs: 0,
+  runner1b: false,
+  runner2b: false,
+  runner3b: false,
+  runner1bOrder: 0,
+  runner2bOrder: 0,
+  runner3bOrder: 0,
+  currentPitcher: "",
+  currentBatter: "",
+};
+
+const okEvidence: EvidenceImpl = (async () => freshEvidence) as EvidenceImpl;
+
+async function main() {
+  const { fetchLiveGamesNaverPrimary, fetchKboLiveGames } = (await import(
+    "../../src/lib/notifications/kbo-live-games"
+  )) as Mod;
+
+  const naverFresh: NaverImpl = async () => [naverGame()]; // 0:8
+  const naverDown: NaverImpl = async () => {
+    throw new Error("naver schedule down");
+  };
+  const naverEmpty: NaverImpl = async () => [];
+
+  let pass = 0;
+  const staleKbo = kboFetch([kboRaw()]); // KBO 200 + 점수 0:5 (stale)
+
+  // ---------- RED: 기존 warmup 소스(KBO-primary)가 stale 를 그대로 반환 ----------
+  // KBO 200+게임 있으면 Naver 를 아예 안 본다 → 카드가 0:5 로 굳는 원인.
+  const red = await fetchKboLiveGames(GID.slice(0, 8), 0 + Date.now() + 10_000, staleKbo, naverFresh, okEvidence);
+  assert.equal(red.ok, true, "RED ok");
+  assert.equal(red.trace.source, "kbo", "RED source=kbo (Naver 미조회)");
+  assert.equal(red.games[0]?.B_SCORE_CN, "5", "RED 홈 점수 stale 5 (버그 재현)");
+  pass += 1;
+
+  // ---------- GREEN P1(핵심): Naver-primary 가 최신 점수 반환 ----------
+  const g1 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFresh,
+    okEvidence,
+  );
+  assert.equal(g1.ok, true, "P1 ok");
+  assert.equal(g1.trace.source, "naver", "P1 source=naver");
+  assert.equal(g1.games.length, 1, "P1 games");
+  assert.equal(g1.games[0].B_SCORE_CN, "8", "P1 홈 점수 최신 8 (Naver)");
+  assert.equal(g1.games[0].GAME_STATE_SC, "2", "P1 live");
+  pass += 1;
+
+  // P2) Naver schedule 다운 → KBO-primary fallback.
+  const g2 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverDown,
+    okEvidence,
+  );
+  assert.equal(g2.ok, true, "P2 ok");
+  assert.equal(g2.trace.source, "kbo", "P2 source=kbo (fallback)");
+  assert.equal(g2.games[0]?.B_SCORE_CN, "5", "P2 KBO 값 (Naver 다운)");
+  pass += 1;
+
+  // P3) Naver 무경기(빈 배열) + KBO 경기 있음 → KBO fallback(경기 목록 무손실).
+  const g3 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverEmpty,
+    okEvidence,
+  );
+  assert.equal(g3.ok, true, "P3 ok");
+  assert.equal(g3.games.length, 1, "P3 KBO 게임 무손실");
+  assert.equal(g3.games[0].G_ID, GID, "P3 game id");
+  pass += 1;
+
+  // P4) Naver relay evidence 로 볼카운트/주자/투타 보강이 raw 게임에 반영.
+  const enrichEvidence: EvidenceImpl = (async () => ({
+    ...freshEvidence,
+    balls: 2,
+    strikes: 1,
+    outs: 1,
+    runner1b: true,
+    runner1bOrder: 3,
+    currentPitcher: "최요한",
+    currentBatter: "문보경",
+  })) as EvidenceImpl;
+  const g4 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFresh,
+    enrichEvidence,
+  );
+  assert.equal(g4.games[0].BALL_CN, 2, "P4 balls from naver relay");
+  assert.equal(g4.games[0].STRIKE_CN, 1, "P4 strikes");
+  assert.equal(g4.games[0].OUT_CN, 1, "P4 outs");
+  assert.equal(g4.games[0].B1_BAT_ORDER_NO, 3, "P4 1루 주자 order");
+  // isTop=false(말) → 홈 LG 공격·어웨이 NC 수비. naverGameToRaw 매핑:
+  //   T_P_NM = currentPitcher(수비=어웨이), B_P_NM = currentBatter(공격=홈).
+  assert.equal(g4.games[0].T_P_NM, "최요한", "P4 현재 투수 (말=어웨이 수비) → T_P_NM");
+  assert.equal(g4.games[0].B_P_NM, "문보경", "P4 현재 타자 (말=홈 공격) → B_P_NM");
+  pass += 1;
+
+  // P5) 1회초 0:0 + relay 실제 투구 없음 → scheduled 강등(가짜 live 방지).
+  const naverFirstPitch: NaverImpl = async () => [
+    naverGame({ awayScore: 0, homeScore: 0, inning: 1, isTop: true }),
+  ];
+  const noPlayEvidence: EvidenceImpl = (async () => ({
+    ...freshEvidence,
+    hasRealPlay: false,
+  })) as EvidenceImpl;
+  const g5 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFirstPitch,
+    noPlayEvidence,
+  );
+  assert.equal(g5.games[0].GAME_STATE_SC, "1", "P5 scheduled 강등 (가짜 live 방지)");
+  pass += 1;
+
+  // P6) dual-fail: Naver 다운 + KBO 하드실패(503) → ok:false, [](fail-close).
+  const g6 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    kbo503,
+    naverDown,
+    okEvidence,
+  );
+  assert.equal(g6.ok, false, "P6 fail-close ok=false");
+  assert.deepEqual(g6.games, [], "P6 empty");
+  assert.equal(g6.trace.stage, "dual-fail", "P6 dual-fail");
+  pass += 1;
+
+  // ---------- 소스 가드: warmup 이 Naver-primary 를 쓰고 KBO-primary 직호출이 없다 ----------
+  const routeSrc = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
+  const naverPrimaryCalls = (routeSrc.match(/fetchLiveGamesNaverPrimary\(/g) ?? []).length;
+  assert.ok(naverPrimaryCalls >= 2, `warmup 이 Naver-primary 를 2곳(본체+fast-path)에서 호출 (found ${naverPrimaryCalls})`);
+  assert.doesNotMatch(routeSrc, /fetchKboLiveGames\(/, "warmup 에 fetchKboLiveGames() 직호출 없음");
+  pass += 1;
+
+  assert.equal(pass, 8, `expected 8 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/8 PASS`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

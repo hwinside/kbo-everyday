@@ -19,7 +19,7 @@ import {
   startWidgetRefreshPipelines,
   FAST_LOOP_DEADLINE_MS,
 } from "@/lib/notifications/widget-fast-loop";
-import { fetchKboLiveGames } from "@/lib/notifications/kbo-live-games";
+import { fetchLiveGamesNaverPrimary } from "@/lib/notifications/kbo-live-games";
 import {
   startLaOrchestration,
   LA_FANOUT_DRAIN_DEADLINE_MS,
@@ -88,7 +88,10 @@ export async function GET(req: NextRequest) {
   const currentTickStartMs = Math.floor(requestStartMs / 60_000) * 60_000;
   // 손상 응답은 정상 "라이브 0"으로 보지 않는다. 본체 알림은 이번 틱 skip하되 fast-loop는
   // +20/+40초 재시도해 일시 KBO parse/schema 오류를 다음 분까지 끌지 않는다.
-  const initialFetch = await fetchKboLiveGames(
+  // LA 카드·위젯의 라이브 점수를 앱 화면(games-user-facing)과 동일하게 Naver-primary 로 둔다.
+  // 기존 fetchKboLiveGames 는 KBO-primary(200 OK 면 stale 점수도 그대로 쓰고 Naver 미조회)라
+  // KBO 스코어보드가 늦밌 때 카드 점수가 stale 된다. Naver 다운 시에만 KBO fallback.
+  const initialFetch = await fetchLiveGamesNaverPrimary(
     date,
     Math.min(deadlineAtMs, Date.now() + 10_000),
   );
@@ -206,7 +209,7 @@ export async function GET(req: NextRequest) {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       fetchLiveGames: () =>
-        fetchKboLiveGames(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+        fetchLiveGamesNaverPrimary(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
       fetchRelayLines: fetchRelayLinesForFastPath,
       ensureChannels: (gs) =>
         ensureLiveActivityChannels(gs, { deadlineAtMs: broadcastDeadlineAtMs }),
