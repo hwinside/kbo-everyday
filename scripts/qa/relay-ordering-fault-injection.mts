@@ -22,9 +22,13 @@ import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+// 삼순 조건부 GO(22:32) 2건: 이 게이트는 실 PostgREST+service_role 이 필요하다(deploy 티어).
+// env 없이 도는 CI 에서 process.exit(2)(RED)로 상시 깨지거나, 운영 env 로 운영 DB 에 QA 프레임을
+// 꽂는 것을 둘 다 막기 위해, env 미설정이면 명시적으로 SKIP(exit 0) 한다. 로컬/deploy 티어에서
+// env 주입 시에만 실제 결함주입을 수행한다(JS 레벨 ⑦⑧축은 relay-publisher-state.mts 가 CI 에서 검증).
 if (!url || !serviceKey) {
-  console.error("env 미설정 (URL/SERVICE_ROLE)");
-  process.exit(2);
+  console.log("SKIP - relay-ordering(실 PG 결함주입): env(NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) 미설정 — deploy/로컬 티어 전용");
+  process.exit(0);
 }
 
 const GAME = `QA-ORD-${Date.now()}`;

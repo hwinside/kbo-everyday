@@ -64,6 +64,7 @@
     "qa:team-fullname-routing": "npm run qa:supabase-peak-readonly:selftest && npm run qa:team-fullname-routing:core && npm run qa:team-fullname-routing:selftest",
     "qa:relay-gameid-guard": "tsx scripts/qa/relay-gameid-guard.ts",
     "qa:relay-ordering": "tsx scripts/qa/relay-ordering-fault-injection.mts",
+    "qa:relay-publisher-state": "tsx scripts/qa/relay-publisher-state.mts",
     "qa:team-rag-wiring": "tsx scripts/qa/team-rag-wiring-smoke.ts",
     "qa:genius-served-metrics": "tsx scripts/qa/genius-served-metrics-smoke.ts",
     "qa:genius-reply-payload-db": "tsx scripts/qa/genius-reply-payload-db-integration.ts",

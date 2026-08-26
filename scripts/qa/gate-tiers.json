@@ -521,6 +521,10 @@
     },
     {
       "name": "qa:relay-ordering",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:relay-publisher-state",
       "tier": "ci"
     },
     {
