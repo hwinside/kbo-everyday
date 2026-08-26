@@ -116,6 +116,16 @@ try {
   check("⑤ frames GC 후 cursor 행 durable 보존", cAfter !== null && cAfter.epoch === cBefore?.epoch, JSON.stringify(cAfter));
   const post = await publish(a, 5, 1, 501); // GC 전 최고 좌표(epoch=5,ord=2) 이하 → stale
   check("⑤ GC 후에도 이전 좌표 stale 거부(cursor durable)", post === "stale", post);
+
+  // ── ⑥ epoch 선예약 단조성: reserve_relay_epoch 연속 호출은 nextval 단조 증가 ──
+  // 인보케이션마다 더 큰 epoch 를 받아야 늦은 이전 인보케이션 프레임이 RPC 에서 stale 거부된다.
+  // nextval 시퀀스라 트랜잭션 롤백에도 되감기지 않는다(동률 lease-loss 역전 방지의 근원).
+  const eps = [
+    Number((await a.rpc("reserve_relay_epoch")).data),
+    Number((await a.rpc("reserve_relay_epoch")).data),
+    Number((await a.rpc("reserve_relay_epoch")).data),
+  ];
+  check("⑥ epoch 선예약 단조 증가(nextval)", eps.every(Number.isFinite) && eps[0] < eps[1] && eps[1] < eps[2], eps.join(","));
 } finally {
   // ── cleanup: QA 전용 game_id 한정 삭제, 잔존 0 ──
   // query-guard: bounded -- QA 전용 game_id(QA-ORD-<ts>) 한정
