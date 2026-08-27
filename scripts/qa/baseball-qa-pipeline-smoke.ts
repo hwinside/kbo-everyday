@@ -1612,7 +1612,23 @@ async function verifyPipeline() {
     assert.equal(result.source, "blocked", `${input}: LLM NOT_BASEBALL 판정으로 닫햘야 함`);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
     assert.equal(state.llmCalls, 1, `${input}: 범위판정 LLM 정확히 1회`);
-    assert.equal(officialRagCalls, 0, `${input}: official RAG 0`);
+    // 🔴 **계약 변경** (2026-08-27 RAG-first ①, 삼순 P0-1 반영의 하류 여파).
+    //   종전 단정은 `officialRagCalls === 0` 이었다. 그건 "범위 밖 질문에 무관한 KBO 조문이
+    //   근거로 붙는다"(삼순 R1)는 **피해**를 `검색을 아예 안 한다`는 **대리 지표**로 잰 것이다.
+    //   RAG-first 는 "근거가 있는지" 를 알아야 라우팅하므로 검색 자체를 막으면 열 수가 없다 —
+    //   실제로 `세이브 조건`·`포스아웃 상황` 도 이 질문들과 **같은 `llm_scope_gate`** 라
+    //   검색을 막는 순간 정본 질문도 같이 막힌다(그게 1차 false-green 의 정체였다).
+    //
+    //   그래서 대리 지표 대신 **피해 자체**를 단정한다: 근거가 붙지 않고(LLM 미호출),
+    //   결론은 그대로 `blocked` 다. 피해 차단은 이제 라우팅 라벨이 아니라 거리 임계가 한다 —
+    //   실측 무관 질문 top1 거리 0.4281~0.5139 > 임계 0.42 라 RPC 가 0행을 준다.
+    //   ⚠️ 비용: scope-gate 질문마다 임베딩 1회가 추가된다(7일 실측 blocked 15.8%).
+    //     이건 RAG-first 의 구조적 비용이지 버그가 아니지만, **완화가 아니라 이동**이라는
+    //     점을 리뷰에서 확인받아야 한다.
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: official RAG 검색이 1회를 넘는다 (${officialRagCalls}회) — 중복 검색`,
+    );
     assert.equal(playerRagCalls, 0, `${input}: player RAG 0`);
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
@@ -2232,7 +2248,17 @@ async function verifyPipeline() {
     const result = await answerQuestion("u1", input, deps);
     assert.equal(result.source, "blocked", input);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
-    assert.equal(officialRagCalls, 0, `${input}: 공식 RAG 0`);
+    // 🔴 위 scope-gate 루프와 **같은 계약 변경**이다 (2026-08-27 RAG-first ①).
+    //   결정론 선차단(`blocked`)에 걸리는 인젝션은 여전히 공식 RAG 0 이다 — 그 경로는
+    //   `routeQuestion` 이 answerQuestion 앞단에서 끝낸다. 여기 남은 것은 **어미 구조만으로는
+    //   지시인지 질문인지 모를** 위임 케이스라 `llm_scope_gate` 로 내려오고, 그건 `세이브 조건`
+    //   과 동일한 라벨이라 검색을 막으면 정본 질문도 같이 막힌다.
+    //   ⚠️ 노출면은 늘지 않는다 — 이 질문들은 이미 같은 provider(Gemini)로 범위판정을 보낸다.
+    //     추가되는 것은 임베딩 1회이고, **근거는 붙지 않는다**(callOfficialRagLlm 호출 시 throw).
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: 공식 RAG 검색이 1회를 넘는다 (${officialRagCalls}회)`,
+    );
     assert.ok(state.llmCalls <= 1, `${input}: LLM 범위판정은 최대 1회`);
     assert.equal(state.cache.size, 0, `${input}: cache write 0`);
   }
@@ -2349,7 +2375,15 @@ async function verifyPipeline() {
     assert.equal(result.source, "blocked", input);
     assert.equal(result.answer, BLOCKED_ANSWER, input);
     assert.equal(state.llmCalls, 1, `${input}: 범위판정 LLM 1회`);
-    assert.equal(officialRagCalls, 0, `${input}: 공식 RAG 0`);
+    // 🔴 위 두 루프와 **같은 계약 변경**이다 (2026-08-27 RAG-first ①). `홈런` 토큰이 실제로
+    //   있어 룰베이스가 못 가리는 질문이라 `llm_scope_gate` 로 내려오고, 그 라벨은
+    //   `세이브 조건` 과 동일하다 — 검색을 막으면 정본 질문도 같이 막힌다.
+    //   피해(무관한 조문이 근거로 붙음)는 거리 임계가 막는다: `callOfficialRagLlm` 은
+    //   호출되면 throw 인데 이 케이스는 통과한다 = **근거가 0건이라 LLM 에 닿지 않았다**.
+    assert.ok(
+      officialRagCalls <= 1,
+      `${input}: 공식 RAG 검색이 1회를 넘는다 (${officialRagCalls}회)`,
+    );
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
   }
