@@ -530,6 +530,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
     standingsImpact?: string | null;
   } | null>(null);
   const [llmLoading, setLlmLoading] = useState(false);
+  const [generationPending, setGenerationPending] = useState(false);
   const [llmError, setLlmError] = useState<"timeout" | "network" | "parse" | null>(null);
   const [retryNonce, setRetryNonce] = useState(0); // manual retry trigger
   const regeneratingRef = useRef(false); // de-dupe: prevent duplicate background POST
@@ -616,7 +617,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
                   signal: controller.signal,
                 });
                 const data = await res.json();
+                if (res.status === 202 && data.source === "generation-in-flight") {
+                  setGenerationPending(true);
+                  return;
+                }
                 if (!res.ok || !data.summary) throw new Error("regeneration-failed");
+                setGenerationPending(false);
                 setLlmSummary(data.summary);
               } finally {
                 regeneratingRef.current = false;
@@ -684,7 +690,12 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
           return;
         }
         const genData = await genRes.json();
+        if (genRes.status === 202 && genData.source === "generation-in-flight") {
+          setGenerationPending(true);
+          return;
+        }
         if (genData.summary) {
+          setGenerationPending(false);
           setLlmSummary(genData.summary);
         } else {
           // summary 필드 없음 → parse 실패로 간주
@@ -717,7 +728,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
   // 최초 생성이 30초를 넘기거나 일시 실패해도 서버 쪽 생성이 뒤늦게 캐시에 저장될 수 있다.
   // 이 경우 사용자에게 에러 카드로 고정하지 않고 잠시 캐시를 자동 확인한다.
   useEffect(() => {
-    if (isAllStar || !llmError || llmSummary || !hasRealBoxScore) {
+    if (isAllStar || (!llmError && !generationPending) || llmSummary || !hasRealBoxScore) {
       cachePollStartedAtRef.current = null;
       return;
     }
@@ -753,6 +764,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
             currentFingerprint,
           );
         if (currentCache) {
+          setGenerationPending(false);
           setLlmSummary(data.summary);
           setLlmError(null);
           cachePollStartedAtRef.current = null;
@@ -764,6 +776,9 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
 
       if (!cancelled && Date.now() - startedAt < MAX_POLL_MS) {
         timer = setTimeout(pollCache, 5_000);
+      } else if (!cancelled && generationPending) {
+        setGenerationPending(false);
+        setLlmError("timeout");
       }
     };
 
@@ -772,7 +787,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [isAllStar, llmError, llmSummary, hasRealBoxScore, gameId, linescore]);
+  }, [isAllStar, llmError, generationPending, llmSummary, hasRealBoxScore, gameId, linescore]);
 
 
   // LLM 요약만 사용 (fallback/숏버전 폐기)
@@ -938,7 +953,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
         ) : (
           <div className="glass-card p-5 text-center">
             {/* 상태 우선순위: 생성중 > 에러(수동재시도) > 데이터없음(집계중) */}
-            {llmLoading ? (
+            {llmLoading || generationPending ? (
               <div className="flex flex-col items-center gap-3 py-4">
                 <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
                 <div>
@@ -959,6 +974,7 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
                 </div>
                 <button
                   onClick={() => {
+                    setGenerationPending(false);
                     setLlmError(null);
                     setRetryNonce(n => n + 1);
                   }}

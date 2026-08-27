@@ -460,13 +460,37 @@ async function getCached(gameId: string): Promise<{ summary: Record<string, unkn
 
 type GenerationToken = string | number;
 
-async function claimGeneration(gameId: string): Promise<GenerationToken | null> {
+interface GenerationClaim {
+  generationToken: GenerationToken;
+  shouldGenerate: boolean;
+}
+
+const GENERATION_CLAIM_STALE_SECONDS = 120;
+
+async function claimGeneration(
+  gameId: string,
+  fingerprint: SummaryFingerprint,
+): Promise<GenerationClaim | null> {
   try {
-    const { data, error } = await supabase.rpc("claim_game_summary_generation", {
+    // query-guard: bounded -- 단일 game_id claim 결과 JSON 객체를 정확히 1개 반환한다.
+    const { data, error } = await supabase.rpc("claim_game_summary_generation_singleflight", {
       p_game_id: cacheKey(gameId),
+      p_source_fingerprint: fingerprint,
+      p_stale_after_seconds: GENERATION_CLAIM_STALE_SECONDS,
     });
-    if (error || (typeof data !== "string" && typeof data !== "number")) return null;
-    return data;
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return null;
+    const result = data as Record<string, unknown>;
+    const generationToken = result.generation_token;
+    if (
+      (typeof generationToken !== "string" && typeof generationToken !== "number") ||
+      typeof result.should_generate !== "boolean"
+    ) {
+      return null;
+    }
+    return {
+      generationToken,
+      shouldGenerate: result.should_generate,
+    };
   } catch {
     return null;
   }
@@ -594,15 +618,46 @@ export async function POST(req: NextRequest) {
     // legacy 또는 fingerprint stale → 아래에서 canonical 데이터로 재생성한다.
   }
 
-  // DB sequence claim이 서버리스 인스턴스 간 생성 순서를 선형화한다.
-  // 이후 더 새 claim이 생기면 save RPC의 row-lock token 확인에서 이 요청은 superseded 된다.
-  const generationToken = await claimGeneration(body.gameId);
-  if (generationToken == null) {
+  // 동일 final fingerprint는 DB single-flight로 한 요청만 생성한다. follower는 active
+  // token을 덮지 않고 cache를 다시 확인한 뒤 202로 클라이언트 cache poll에 합류한다.
+  // fingerprint가 바뀌었거나 claim이 stale일 때만 새 token으로 takeover한다.
+  const generationClaim = await claimGeneration(body.gameId, generationFingerprint);
+  if (generationClaim == null) {
     return NextResponse.json(
       { error: "generation-claim-failed", source: "generation-claim" },
       { status: 503 },
     );
   }
+  if (!generationClaim.shouldGenerate) {
+    const followerCache = await getCached(body.gameId);
+    if (
+      followerCache &&
+      !followerCache.outdated &&
+      !isFingerprintStale(cacheFingerprint(followerCache.summary), generationFingerprint)
+    ) {
+      return NextResponse.json({
+        summary: publicSummary(followerCache.summary),
+        fingerprint: generationFingerprint,
+        source: "cache",
+      });
+    }
+    return NextResponse.json(
+      {
+        summary: null,
+        fingerprint: generationFingerprint,
+        source: "generation-in-flight",
+        retryAfterMs: 3_000,
+      },
+      {
+        status: 202,
+        headers: {
+          "Cache-Control": "no-store",
+          "Retry-After": "3",
+        },
+      },
+    );
+  }
+  const generationToken = generationClaim.generationToken;
 
   // 맥락 데이터 병렬 조회 (실패해도 진행)
   const meta = parseGameMeta(body.gameId);

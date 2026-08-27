@@ -347,6 +347,7 @@
     "qa:scheduled-seen-monotonic": "bash scripts/qa/notify-scheduled-seen-monotonic.sh",
     "qa:venue-story-seen": "tsx scripts/qa/venue-story-seen-smoke.ts",
     "qa:game-summary-cache": "tsx scripts/qa/game-summary-cache-validation-smoke.ts",
+    "qa:game-summary-single-flight-pg": "bash scripts/qa/game-summary-single-flight-pg17.sh",
     "qa:game-summary-kbo": "tsx scripts/qa/game-summary-kbo-integration.ts",
     "qa:notif-terminal-group": "tsx scripts/qa/notif-terminal-group-smoke.ts",
     "qa:relay-inning-snapshot": "tsx scripts/qa/relay-inning-snapshot-smoke.ts",

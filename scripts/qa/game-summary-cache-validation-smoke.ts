@@ -143,42 +143,79 @@ ok("stale/legacy 판단 전에 llmSummary에 캐시를 넣지 않음",
   cacheBranch.includes("if (!hideStale && !cacheData.outdated)"));
 
 async function runAtomicChecks() {
-  console.log("[⑥ DB-linearized generation + poll fail-close]");
+  console.log("[⑥ DB single-flight generation + poll fail-close]");
   const migrationSource = readFileSync(
+    resolve(process.cwd(), "supabase/migrations/20260728_game_summary_single_flight.sql"),
+    "utf8",
+  );
+  const singleFlightFunction = migrationSource.slice(
+    migrationSource.indexOf("create or replace function public.claim_game_summary_generation_singleflight"),
+  );
+  const fenceMigrationSource = readFileSync(
     resolve(process.cwd(), "supabase/migrations/20260726_game_summary_generation_fence.sql"),
     "utf8",
   );
-  ok("generation claim은 DB sequence로 발급",
-    migrationSource.includes("nextval('public.game_summary_generation_seq')") &&
-    migrationSource.includes("game_summary_generation_claims.generation_token < excluded.generation_token"));
+  ok("game별 advisory lock 뒤에만 token 발급",
+    singleFlightFunction.indexOf("pg_advisory_xact_lock") <
+      singleFlightFunction.indexOf("nextval('public.game_summary_generation_seq')"));
+  ok("동일 fingerprint fresh claim은 기존 token follower",
+    singleFlightFunction.includes("v_source_fingerprint = p_source_fingerprint") &&
+    singleFlightFunction.includes("'should_generate', false"));
+  ok("stale TTL 또는 fingerprint 변경에서만 새 token takeover",
+    singleFlightFunction.includes("make_interval(secs => v_stale_after_seconds)") &&
+    singleFlightFunction.includes("'should_generate', true"));
   ok("save는 claim row lock + current token exact-match 후 upsert",
-    migrationSource.includes("for update;") &&
-    migrationSource.includes("v_current_token is distinct from p_generation_token") &&
-    migrationSource.includes("on conflict (game_id) do update"));
-  ok("route는 stale cache 판정 뒤 DB claim, save는 같은 token RPC",
-    postSource.indexOf("claimGeneration(body.gameId)") > postSource.indexOf("isFingerprintStale(") &&
+    fenceMigrationSource.includes("for update;") &&
+    fenceMigrationSource.includes("v_current_token is distinct from p_generation_token") &&
+    fenceMigrationSource.includes("on conflict (game_id) do update"));
+  ok("route는 stale cache 판정 뒤 fingerprint claim, follower는 Gemini 전에 202",
+    postSource.indexOf("claimGeneration(body.gameId, generationFingerprint)") >
+      postSource.indexOf("isFingerprintStale(") &&
+    postSource.indexOf("if (!generationClaim.shouldGenerate)") <
+      postSource.indexOf("fetch(GEMINI_URL") &&
+    postSource.includes('source: "generation-in-flight"') &&
     postSource.includes("saveCache(body.gameId, summary, generationToken)"));
 
-  function simulateDbClaims(oldClientClock: number, newClientClock: number) {
-    void oldClientClock;
-    void newClientClock;
-    let sequence = 0;
-    let currentToken = 0;
-    const claim = () => {
-      currentToken = ++sequence;
-      return currentToken;
-    };
-    const save = (token: number) => token === currentToken;
-    const oldToken = claim();
-    const newToken = claim();
-    return { oldSaved: save(oldToken), newSaved: save(newToken) };
+  type ClaimState = {
+    token: number;
+    fingerprint: string;
+    claimedAt: number;
+  } | null;
+  function simulateSingleFlight(
+    state: ClaimState,
+    fingerprint: string,
+    now: number,
+    staleAfter: number,
+  ) {
+    if (
+      state &&
+      state.fingerprint === fingerprint &&
+      state.claimedAt > now - staleAfter
+    ) {
+      return { state, token: state.token, shouldGenerate: false };
+    }
+    const token = (state?.token ?? 0) + 1;
+    const next = { token, fingerprint, claimedAt: now };
+    return { state: next, token, shouldGenerate: true };
   }
-  const equalClock = simulateDbClaims(200, 200);
-  ok("equal client clocks에서도 DB claim 순서로 old reject",
-    !equalClock.oldSaved && equalClock.newSaved);
-  const reversedClock = simulateDbClaims(300, 200);
-  ok("cross-instance reversed clock에서도 DB claim 순서로 old reject",
-    !reversedClock.oldSaved && reversedClock.newSaved);
+
+  const leader = simulateSingleFlight(null, "final:3-5", 1_000, 120);
+  const follower = simulateSingleFlight(leader.state, "final:3-5", 1_001, 120);
+  ok("동일 fingerprint 동시 요청은 1 leader + 기존 token follower",
+    leader.shouldGenerate && !follower.shouldGenerate && follower.token === leader.token);
+  const staleTakeover = simulateSingleFlight(leader.state, "final:3-5", 1_121, 120);
+  ok("동일 fingerprint도 TTL 경과 후 takeover",
+    staleTakeover.shouldGenerate && staleTakeover.token > leader.token);
+  const changedTakeover = simulateSingleFlight(leader.state, "final:4-5", 1_010, 120);
+  ok("fingerprint 변경은 fresh claim이어도 즉시 takeover",
+    changedTakeover.shouldGenerate && changedTakeover.token > leader.token);
+  ok("takeover 뒤 old token save 차단",
+    leader.token !== changedTakeover.token);
+
+  ok("클라이언트는 follower 202를 pending으로 전환해 cache poll",
+    componentSource.includes('genRes.status === 202 && genData.source === "generation-in-flight"') &&
+    componentSource.includes("setGenerationPending(true)") &&
+    componentSource.includes("(!llmError && !generationPending)"));
 
   const pollSource = componentSource.slice(componentSource.indexOf("const pollCache = async"));
   ok("poll도 outdated + fingerprint current 검증 후에만 렌더",
