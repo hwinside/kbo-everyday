@@ -348,6 +348,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-rag-first:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },

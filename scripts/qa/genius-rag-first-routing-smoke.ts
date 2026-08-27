@@ -2,36 +2,56 @@
  * 야잘알봇 **RAG-first 라우팅** 계약 게이트 (하린아빠 2026-08-27 "최대한 RAG을 활용하고
  * LLM을 활용하는 방향으로 전면적으로 수정해줘" — Phase ①).
  *
- * ⚠️ 무엇을 바꿨고 왜 위험한가
- *   종전에는 `isSupportedRuleTermQuestion` 이라는 **닫힌 단어 사전**이 통과시킨 질문만
- *   공식 근거(tier1)를 탈 수 있었다. 사전에 없는 표현은 정본 근거가 있어도 도달조차
- *   못 했고, 7일 실측 1,981건 중 `unsure` 15.6% · `blocked` 15.8% 가 거기서 죽었다
- *   (`세이브 조건`·`포스아웃 상황`·`이닝 교대 조건`·`피치가뭐야` = 공식야구규칙에 정의가 있다).
+ * ⚠️ 이 게이트는 **삼순 2026-08-27 NO-GO 로 통째로 다시 썼다.**
+ *   1차 버전은 전부 소스 grep 이었다. 그래서 "공식 RAG 진입 조건에서 `isSupportedRuleTermQuestion`
+ *   이 빠졌다" 는 것만 보고 GREEN 을 냈는데, 실제로는 `routeQuestion` 이 사전 밖 표현을 전부
+ *   `llm_scope_gate` 로 보내고 진입 조건이 `!scopeGate` 라 **같은 문이 그대로 닫혀 있었다.**
+ *   즉 제거한 조건은 거의 중복 조건이었고 라우팅은 열리지 않았다 — 소스가 바뀌었다는 사실은
+ *   동작이 바뀌었다는 증거가 아니다(M90 `게이트가 종단 실행 경로를 안 태우면 통과는 무의미`).
  *
- *   그래서 게이트를 열었다. 그런데 **여는 것 자체가 위험**하다:
- *     RPC 는 `ORDER BY ... LIMIT n` 뿐이라 무슨 질문이든 n건을 돌려준다. 실측에서
- *     "오늘 점심 뭐 먹지?"·"파이썬 리스트 정렬하는 법" 도 12건을 받았다.
- *     즉 **개수로 근거 유무를 판정하면 100% 통과 = 전 질문 환각 통로**가 된다.
+ *   그래서 판정을 **`answerQuestion` 종단 실행**으로 옮겼다. 아래 positive/negative 는 삼순이
+ *   지정한 최소축 그대로다.
  *
- *   이 게이트는 그 위험이 막혀 있는지를 본다 — 열린 문에 자물쇠가 걸렸는지.
+ * ── 종단 축 (실행) ──────────────────────────────────────────────────────────
+ *   P1  `세이브 조건`       → 공식 검색을 타고 rag 로 서빙된다
+ *   P2  `포스아웃 상황`     → 〃
+ *   P3  `이닝 교대 조건`    → 〃
+ *   N1  `오늘 점심`         → 공식 근거 0건 → official 미서빙
+ *   N2  `파워히터`          → 〃
+ *   N3  `고춧가루 시리즈`   → 〃
+ *   O1  `문보경 별명`       → **선수 RAG**(tier2). 공식 LLM 호출 0
+ *   O2  `문보경 보크 규칙`  → **공식 RAG**(tier1). 선수 RAG 호출 0
  *
- * 검증 축
- *   A  라우팅이 실제로 열렸다 — 룰 사전에 없는 질문도 공식 RAG 를 **탄다**
- *   B  🔴 근거 판정이 **개수가 아니다** — 거리 임계 상수가 RPC 호출에 실려야 한다
- *   C  🔴 임계는 **낮추는 방향만** 안전하다 — 코드 상수 고정, env 주입 불가
- *   D  🔴 배포 순서 방어 — RPC 시그니처 부재(PGRST202)는 예외가 아니라 **근거 0건**
- *   E  🔴 구 시그니처 재시도 금지 — 재시도는 임계 없는 상태로 되돌아가는 것이다
- *   F  범위 밖(`scopeGate`) 질문은 여전히 공식 RAG 를 타지 않는다(Phase② 이전 계약 유지)
- *   G  근거가 없으면 종전 경로가 그대로 이어진다 — 라우팅을 넓히되 종결을 뺏지 않는다
+ * ── 구조 축 (실행으로 못 보는 것만) ────────────────────────────────────────
+ *   B  거리 임계가 RPC 호출에 실린다 (개수 판정 폐기)
+ *   C  임계는 코드 상수 — env 로 무력화 불가 + 실측 경계 안
+ *   D  배포 순서 fail-close — PGRST202 는 예외가 아니라 근거 0건
+ *   E  구 시그니처 재시도 금지
+ *   S  migration 이 상한을 SQL 에서 다시 강제한다 (앱이 임계를 풀 수 없다)
+ *   W  소유권 판정 불능(거리 미제공)은 **선수 유지** — migration 이전 배포에서 뒤집히지 않는다
+ *
+ * ⚠️ 거리 fixture 는 **프로덕션 코퍼스 실측값**이다(2026-08-27, `genius_rag_serving_chunks`
+ *   tier1 top1 코사인 거리). 가짜 RPC 는 SQL 이 하는 일과 같은 일만 한다 — 임계 밖 행을
+ *   반환하지 않는다. 임계 자체를 시험하는 게 아니라 **임계가 걸린 세계에서 라우팅이 맞는가**
+ *   를 시험한다(임계값 타당성은 C 축, SQL 강제는 S 축).
  *
  * `--selftest`: 판정 키가 RED 를 낼 수 있는지 증명한다(검증력 증명은 mutations 가 한다).
  *
  * 실행: npm run qa:genius-rag-first
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import {
+  answerQuestion,
+  type GlossaryEntry,
+  type PlayerRef,
+  type QaDeps,
+} from "../../src/lib/baseball-qa/pipeline";
 import {
   RAG_DOCUMENT_MAX_DISTANCE,
+  RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE,
+  RAG_GROUNDED_SENTINEL,
+  type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const SELFTEST = process.argv.includes("--selftest");
@@ -44,82 +64,352 @@ const stripComments = (text: string) => text
   .replace(/\/\*[\s\S]*?\*\//g, (m) => " ".repeat(m.length))
   .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
 
-function main() {
+/**
+ * 프로덕션 코퍼스 실측 거리 (2026-08-27, tier1 top1).
+ *
+ * 🔴 **검색어 기준**이다 — 소유권 판정은 이름을 지운 잔여 질문으로 검색하므로
+ *   `문보경 보크 규칙` 은 여기 없고 `보크 규칙` 이 있다. 그게 이 PR 의 핵심 설계라
+ *   fixture 도 같은 키를 쓴다(원문 키를 넣어두면 잔여 검색을 안 태워도 통과해버린다).
+ */
+const MEASURED_DISTANCE: Record<string, number> = {
+  // 정본이 있는 질문 — 임계 안
+  "세이브 조건": 0.3680,
+  "포스아웃 상황": 0.2689,
+  "이닝 교대 조건": 0.2830,
+  "보크 규칙": 0.2849,
+  "보크 규칙 알려줘": 0.3006,
+  // 후보가 안 잡히는 형태 — 원문 그대로 공식 검색을 탄다(잔여 치환 없음).
+  "문보경 보크 규칙": 0.3349,
+  // 야구 무관 / tier1 에 정의가 없는 질문 — 임계 밖
+  "오늘 점심": 0.4480,
+  "파워히터": 0.5029,
+  "고춧가루 시리즈": 0.4491,
+  // 선수 문서가 정본인 잔여 질문 — 소유권 임계(0.38) 밖
+  "별명": 0.4109,
+  "별명 알려줘": 0.4399,
+};
+
+const OFFICIAL_CONTENT =
+  "5.09 아웃 — 인필드 플라이가 선고된 타구가 베이스에서 떨어져 있는 주자에게 닿았을 때는 타자와 주자가 모두 아웃된다.";
+const PLAYER_CONTENT = "문보경은 LG 트윈스 소속 내야수로 팬들이 부르는 별명이 있다.";
+
+const PLAYERS: PlayerRef[] = [{ kboId: "69102", name: "문보경", team: "LG" } as PlayerRef];
+
+interface Calls {
+  officialSearch: string[];
+  officialLlm: number;
+  playerSearch: number;
+  playerLlm: number;
+  genericLlm: number;
+  logged: string[];
+}
+
+/**
+ * 가짜 공식 RPC. **SQL 이 하는 일만 한다** — 실측 거리가 임계 밖이면 행을 돌려주지 않는다.
+ * 임계 안이면 `distance` 를 실어 돌려준다(호출자 관측 계약과 동일).
+ */
+function officialSearchFor(calls: Calls, distanceOverride?: (q: string) => number | undefined) {
+  return async (question: string): Promise<RagEvidence[]> => {
+    calls.officialSearch.push(question);
+    const d = distanceOverride ? distanceOverride(question) : MEASURED_DISTANCE[question];
+    if (d === undefined) return [];
+    if (d > RAG_DOCUMENT_MAX_DISTANCE) return [];
+    return [{
+      content: OFFICIAL_CONTENT,
+      pageTitle: "2026 공식야구규칙",
+      canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+      revision: "sha256:8f2c6d595f48b",
+      sectionPath: "5.09 아 웃",
+      asOf: "2026-08-01",
+      sourceGrade: "tier1",
+      distance: d,
+    }];
+  };
+}
+
+function makeDeps(calls: Calls, overrides: Partial<QaDeps> = {}): QaDeps {
+  const glossary: GlossaryEntry[] = [];
+  return {
+    loadGlossary: async () => glossary,
+    loadPlayers: async () => PLAYERS,
+    getCache: async () => null,
+    setCache: async () => {},
+    reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
+    log: async (row) => { calls.logged.push(row.matchPath); },
+    now: () => Date.parse("2026-08-27T10:00:00+09:00"),
+    callLlm: async () => {
+      calls.genericLlm += 1;
+      return {
+        text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: "일반 지식으로 답합니다." }),
+        inputTokens: 1, outputTokens: 1,
+      };
+    },
+    searchOfficialRag: officialSearchFor(calls),
+    callOfficialRagLlm: async () => {
+      calls.officialLlm += 1;
+      return {
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식 자료 기준으로 그렇습니다." }),
+        inputTokens: 10, outputTokens: 5,
+      };
+    },
+    enablePlayerRag: true,
+    searchRag: async () => {
+      calls.playerSearch += 1;
+      return [{
+        content: PLAYER_CONTENT,
+        pageTitle: "문보경",
+        canonicalUrl: "https://namu.wiki/w/문보경",
+        revision: "42103021",
+        sectionPath: "본문",
+        asOf: "2026-08-01",
+        sourceGrade: "tier2",
+      }] as RagEvidence[];
+    },
+    callRagLlm: async () => {
+      calls.playerLlm += 1;
+      return {
+        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "LG 트윈스 내야수입니다." }),
+        inputTokens: 3, outputTokens: 2,
+      };
+    },
+    ...overrides,
+  } as QaDeps;
+}
+
+async function run(question: string, overrides: Partial<QaDeps> = {}) {
+  const calls: Calls = {
+    officialSearch: [], officialLlm: 0, playerSearch: 0, playerLlm: 0, genericLlm: 0, logged: [],
+  };
+  const result = await answerQuestion("u-ragfirst", question, makeDeps(calls, overrides));
+  return { result, calls };
+}
+
+async function main() {
   const pipeline = stripComments(src("pipeline.ts"));
   const server = stripComments(src("server.ts"));
 
-  // ── A. 라우팅이 실제로 열렸는가 ────────────────────────────────────────────
-  //   공식 RAG 진입 조건에서 닫힌 단어 사전 판정이 빠져야 한다. 이게 남아 있으면
-  //   임계·프롬프트를 아무리 고쳐도 사전 밖 질문은 근거에 **도달조차** 못 한다.
-  const officialCall = pipeline.indexOf("answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps)");
-  assert.ok(officialCall > 0, "A0: 공식 RAG 호출 지점을 찾지 못했다 — 게이트 앵커가 깨졌다");
-  const gateBlock = pipeline.slice(Math.max(0, officialCall - 400), officialCall);
-  assert.ok(
-    SELFTEST ? false : !/isSupportedRuleTermQuestion\s*\(/.test(gateBlock),
-    "A: 공식 RAG 진입이 아직 닫힌 단어 사전(isSupportedRuleTermQuestion)에 막혀 있다 — "
-    + "사전 밖 질문은 정본 근거가 있어도 도달하지 못한다(라우팅이 안 열렸다)",
-  );
-  pass("A 라우팅 개방 — 닫힌 단어 사전이 공식 RAG 를 막지 않는다");
+  // ── P. 라우팅이 실제로 열렸는가 (종단 실행) ────────────────────────────────
+  //   1차 버전이 소스 grep 으로 GREEN 을 냈던 바로 그 자리다. 사전에 없는 표현이
+  //   **공식 검색을 태우고 rag 로 서빙되는지**를 실행으로 고정한다.
+  for (const q of ["세이브 조건", "포스아웃 상황", "이닝 교대 조건"]) {
+    const { result, calls } = await run(q);
+    assert.ok(
+      calls.officialSearch.includes(q),
+      `P(${q}): 공식 RAG 검색을 아예 타지 않는다 — 라우팅이 열리지 않았다. `
+      + "사전 밖 표현은 llm_scope_gate 로 가고 진입 조건이 그걸 다시 제외하면 문은 닫힌 채다",
+    );
+    assert.equal(
+      SELFTEST ? "llm" : result.source, "rag",
+      `P(${q}): 정본 근거가 있는데 rag 로 서빙되지 않았다 (실제: ${result.source})`,
+    );
+    assert.equal(calls.genericLlm, 0, `P(${q}): 근거가 있는데 generic LLM 을 태웠다`);
+  }
+  pass("P 라우팅 개방 — 사전 밖 정본 질문 3종이 공식 근거로 서빙된다");
 
-  // ── B. 🔴 근거 판정이 개수가 아니라 거리다 ────────────────────────────────
+  // ── N. 열었다고 아무 질문이나 통과시키지 않는다 (거리 임계) ────────────────
+  //   RPC 가 상한만큼 무조건 돌려주던 시절엔 개수로 판정이 불가능했다. 임계가 걸린
+  //   세계에서 무관한 질문이 official 로 서빙되지 않는지 실행으로 본다.
+  for (const q of ["오늘 점심", "파워히터", "고춧가루 시리즈"]) {
+    const { result, calls } = await run(q);
+    assert.notEqual(
+      result.source, "rag",
+      `N(${q}): 정본 근거가 없는데 rag 로 서빙됐다 — 거리 임계가 무력화됐다`,
+    );
+    assert.equal(
+      SELFTEST ? 1 : calls.officialLlm, 0,
+      `N(${q}): 근거 0건인데 공식 RAG LLM 을 소비했다 (호출 ${calls.officialLlm}회)`,
+    );
+    // 🔴 **넓히되 뺏지 않는다** 를 종단으로 고정한다 (mutation r12 가 뚫은 자리).
+    //   근거가 없으면 공식 경로는 양보하고 종전 경로가 이어져야 한다. 여기서 종결해버리면
+    //   `source !== "rag"` 는 여전히 참이라 소스 grep 도, 위 두 assert 도 못 잡는다 —
+    //   기존에 답하던 질문이 조용히 unsure 로 바뀌는 기능 퇴행이다.
+    assert.ok(
+      SELFTEST ? false : calls.genericLlm > 0,
+      `N(${q}): 근거가 없는데 종전 경로로 내려가지 않고 여기서 종결했다 `
+      + `(source=${result.source}, genericLlm=${calls.genericLlm}) — 라우팅을 넓히는 게 아니라 `
+      + "기존 종결을 빼앗는 것이다",
+    );
+  }
+  pass("N 근거 없는 질문 3종 — official 미서빙 + 공식 LLM 0 + 종전 경로 유지");
+
+  // ── O. 선수 결속 질문의 소유권 (삼순 P0-2) ────────────────────────────────
+  //   O1 은 선수 문서가 정본, O2 는 선수가 예시 행위자일 뿐 tier1 조문이 정본이다.
+  //   판정은 룰이 아니라 **이름을 지운 잔여 질문의 근거 거리**로 한다.
+  {
+    const { result, calls } = await run("문보경 별명");
+    assert.equal(
+      SELFTEST ? "rag" : result.source, "rag",
+      "O1: 선수 서술형 질문이 rag 로 서빙되지 않았다",
+    );
+    assert.ok(
+      calls.playerLlm > 0,
+      "O1: 선수 RAG 를 타지 않았다 — 선수 문서가 정본인 질문을 규칙집이 가로챘다",
+    );
+    assert.equal(
+      SELFTEST ? 1 : calls.officialLlm, 0,
+      `O1: 공식 RAG LLM 을 소비했다 (호출 ${calls.officialLlm}회) — 소유권이 규칙집으로 넘어갔다`,
+    );
+    // 잔여 질문으로 소유권을 물어본 사실 자체를 고정한다 — 이게 없으면 판정이 룰로 돌아간 것이다.
+    assert.ok(
+      calls.officialSearch.includes("별명"),
+      `O1: 잔여 질문("별명")으로 소유권을 판정하지 않았다 (검색: ${JSON.stringify(calls.officialSearch)})`,
+    );
+  }
+  {
+    // 🔴 삼순이 지명한 입력이다. `알려줘` 때문에 **선수 후보로 잡히는** 질문이라
+    //   종전 `Boolean(enabledPlayerCandidate)` 계약에서는 선수 RAG 가 가져갔다.
+    //   `문보경 보크 규칙`(알려줘 없음)은 애초에 후보가 안 잡혀 이 축을 시험하지 못한다 —
+    //   무대가 없는 입력을 고르면 mutation 이 결함이 아니라 무증상이 된다(M90).
+    const { result, calls } = await run("문보경 보크 규칙 알려줘");
+    assert.ok(
+      calls.officialSearch.includes("보크 규칙 알려줘"),
+      `O2: 잔여 질문("보크 규칙 알려줘")으로 소유권을 판정하지 않았다 (검색: ${JSON.stringify(calls.officialSearch)})`,
+    );
+    assert.equal(
+      SELFTEST ? "llm" : result.source, "rag",
+      `O2: tier1 조문이 정본인 질문이 rag 로 서빙되지 않았다 (실제: ${result.source})`,
+    );
+    assert.ok(
+      calls.officialLlm > 0,
+      "O2: 공식 RAG 를 타지 않았다 — 선수가 예시 행위자일 뿐인 룰 질문을 선수 경로가 가져갔다"
+      + "(삼순 2026-08-07 P0-1 라우팅 역전의 선수 버전)",
+    );
+    assert.equal(
+      calls.playerLlm, 0,
+      "O2: 선수 RAG LLM 까지 소비했다 — 소유권이 갈리지 않고 양쪽을 다 태웠다",
+    );
+  }
+  {
+    // O2b — 후보가 안 잡히는 형태(`알려줘` 없음)도 **결론은 같아야** 한다.
+    //   소유권 판정기 자체가 아니라 "어미가 달라졌다고 정본이 바뀌지 않는다"를 고정한다.
+    const { result, calls } = await run("문보경 보크 규칙");
+    assert.equal(
+      result.source, "rag",
+      `O2b: 어미만 다른 같은 룰 질문이 다른 결론을 낸다 (실제: ${result.source})`,
+    );
+    assert.equal(calls.playerLlm, 0, "O2b: 룰 질문을 선수 RAG 가 가져갔다");
+  }
+  pass("O 소유권 — `문보경 별명`→선수 / `문보경 보크 규칙 (알려줘)`→공식 (잔여 근거 거리 판정)");
+
+  // ── W. 소유권 판정 불능은 선수 유지 (fail-safe 방향) ──────────────────────
+  //   migration 이전 배포에서는 RPC 가 distance 를 안 준다. 그때 소유권을 규칙집에
+  //   넘기면 선수 질문 전체가 조용히 뒤집힌다. 부재는 0 이 아니다.
+  {
+    const calls: Calls = {
+      officialSearch: [], officialLlm: 0, playerSearch: 0, playerLlm: 0, genericLlm: 0, logged: [],
+    };
+    const legacySearch = async (question: string): Promise<RagEvidence[]> => {
+      calls.officialSearch.push(question);
+      // 레거시 RPC: 거리를 안 실어준다(무조건 상한만큼 돌려주던 시절의 형태).
+      return [{
+        content: OFFICIAL_CONTENT,
+        pageTitle: "2026 공식야구규칙",
+        canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+        revision: "sha256:8f2c6d595f48b",
+        sectionPath: "5.09 아 웃",
+        asOf: "2026-08-01",
+        sourceGrade: "tier1",
+      }];
+    };
+    const result = await answerQuestion(
+      "u-ragfirst", "문보경 별명",
+      makeDeps(calls, { searchOfficialRag: legacySearch }),
+    );
+    assert.equal(
+      SELFTEST ? 1 : calls.officialLlm, 0,
+      `W: 거리 미제공(레거시 RPC)인데 공식 RAG 가 선수 질문을 가져갔다 (호출 ${calls.officialLlm}회) — `
+      + "부재를 0(가장 가까움)으로 읽으면 migration 이전 배포에서 소유권이 통째로 뒤집힌다",
+    );
+    assert.ok(calls.playerLlm > 0, `W: 선수 경로가 유지되지 않았다 (source=${result.source})`);
+  }
+  pass("W 판정 불능(거리 미제공) → 선수 유지");
+
+  // ── B. 근거 판정이 개수가 아니라 거리다 ───────────────────────────────────
   assert.ok(
     /p_max_distance:\s*RAG_DOCUMENT_MAX_DISTANCE/.test(server),
     "B: RPC 호출에 거리 임계(p_max_distance)가 실리지 않는다 — 개수로만 판정하면 "
     + "무관한 질문도 상한만큼 근거를 받아 100% 통과한다(실측: '오늘 점심 뭐 먹지?' 12건)",
   );
-  pass("B 근거 판정 = 거리 임계 (개수 판정 폐기)");
+  // 거리를 호출자까지 실어 올리지 않으면 소유권 판정도, 72시간 재보정도 불가능하다(삼순 지적).
+  assert.ok(
+    /distance:\s*typeof row\.distance === "number" \? row\.distance : undefined/.test(server),
+    "B2: RPC 가 준 distance 를 RagEvidence 로 전달하지 않는다 — 임계 재보정 근거가 없고 "
+    + "소유권 판정도 불가능하다. 부재를 0 으로 응급처리하는 것도 금지(가장 가까움으로 읽힌다)",
+  );
+  pass("B 근거 판정 = 거리 임계 + 호출자 관측 전달");
 
-  // ── C. 🔴 임계는 코드 상수여야 한다 — env 로 풀 수 있으면 방어가 아니다 ────
+  // ── C. 임계는 코드 상수여야 한다 — env 로 풀 수 있으면 방어가 아니다 ──────
   const retrieveSrc = stripComments(readFileSync(
     new URL("../../src/lib/baseball-qa/rag/retrieve.ts", import.meta.url), "utf8",
   ));
-  const decl = /export const RAG_DOCUMENT_MAX_DISTANCE\s*=\s*([0-9.]+)\s*;/.exec(retrieveSrc);
-  assert.ok(decl, "C: RAG_DOCUMENT_MAX_DISTANCE 가 리터럴 상수 선언이 아니다");
+  for (const [name, runtime, lo, hi] of [
+    ["RAG_DOCUMENT_MAX_DISTANCE", RAG_DOCUMENT_MAX_DISTANCE, 0.3787, 0.4281],
+    ["RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE", RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE, 0.3540, 0.4103],
+  ] as const) {
+    const decl = new RegExp(`export const ${name}\\s*=\\s*([0-9.]+)\\s*;`).exec(retrieveSrc);
+    assert.ok(decl, `C: ${name} 가 리터럴 상수 선언이 아니다`);
+    assert.ok(
+      !/process\.env/.test(decl![0]),
+      `C2(${name}): 임계가 env 로 주입된다 — 운영에서 무력화하면 근거 없는 답이 그대로 나간다`,
+    );
+    const value = Number(decl![1]);
+    assert.equal(value, runtime, `C3(${name}): 선언값과 런타임 값이 다르다`);
+    assert.ok(
+      SELFTEST ? value > 99 : (value >= lo && value <= hi),
+      `C4(${name}): 임계 ${value} 가 실측 경계 [${lo}, ${hi}] 밖이다`,
+    );
+  }
+  // 소유권 임계는 서빙 임계보다 **엄격**해야 한다 — 소유권을 빼앗는 건 더 강한 주장이다.
   assert.ok(
-    !/process\.env/.test(decl![0]),
-    "C2: 임계가 env 로 주입된다 — 운영에서 임계를 무력화하면 근거 없는 답이 그대로 나간다",
+    RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE < RAG_DOCUMENT_MAX_DISTANCE,
+    "C5: 소유권 임계가 서빙 임계보다 느슨하다 — 선수 문서가 정본인 질문을 규칙집이 뺏는다",
   );
-  // 실측 경계(진짜 근거 ≤0.3787 / 무관 ≥0.4281) 안에 있어야 한다. 벗어나면 둘 중 하나가 깨진다.
-  const value = Number(decl![1]);
-  assert.equal(value, RAG_DOCUMENT_MAX_DISTANCE, "C3: 선언값과 런타임 값이 다르다");
-  assert.ok(
-    SELFTEST ? value > 99 : (value > 0.3787 && value < 0.4281),
-    `C4: 임계 ${value} 가 실측 경계 밖이다 — 0.3787(진짜 근거 최대) < x < 0.4281(무관 최소) `
-    + "이어야 한다. 높이면 근거 없는 답이 늘고, 낮추면 정당한 근거가 버려진다",
-  );
-  pass(`C 임계 코드 상수 고정 (${value}, 실측 경계 내)`);
+  pass(`C 임계 코드 상수 고정 (서빙 ${RAG_DOCUMENT_MAX_DISTANCE} / 소유권 ${RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE})`);
 
-  // ── D·E. 🔴 배포 순서 방어 + 구 시그니처 재시도 금지 ──────────────────────
-  //   이 PR 은 RPC 시그니처를 바꾼다. 앱이 migration 보다 먼저 배포되면 PGRST202 404 다
-  //   (실측 확인). throw 하면 공식 RAG 가 통째로 예외가 되어 유저에게 오류가 나간다.
+  // ── D·E. 배포 순서 방어 + 구 시그니처 재시도 금지 ─────────────────────────
   const fnStart = server.indexOf("export async function searchOfficialRag");
   assert.ok(fnStart > 0, "D0: searchOfficialRag 를 찾지 못했다");
-  const fnBody = server.slice(fnStart, fnStart + 2000);
+  const fnBody = server.slice(fnStart, fnStart + 2600);
   assert.ok(
     /PGRST202/.test(fnBody) && /return \[\]/.test(fnBody),
     "D: RPC 시그니처 부재(PGRST202)를 근거 0건으로 접지 않는다 — migration 보다 앱이 먼저 "
     + "배포되면 공식 RAG 경로가 통째로 예외가 되어 유저에게 오류가 나간다",
   );
-  // 🔴 구 시그니처로 재시도하면 **임계 없는 상태로 되돌아간다** = 이 PR 이 막으려던 결함 그 자체.
   assert.ok(
     !/p_limit[^}]*\}\s*\)\s*;[\s\S]{0,300}supabaseAdmin\.rpc\(\s*"search_baseball_genius_official_chunks"/.test(fnBody),
-    "E: 구 시그니처로 재시도한다 — 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼 돌려준다. "
-    + "재시도는 '근거 없음을 근거 있음으로 만드는' 결함으로 되돌아가는 것이다",
+    "E: 구 시그니처로 재시도한다 — 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼 돌려준다",
   );
   pass("D·E 배포 순서 fail-close (PGRST202 → 근거 0건, 구 시그니처 재시도 없음)");
 
-  // ── F. 범위 밖은 여전히 공식 RAG 를 타지 않는다 (Phase② 이전 계약 유지) ────
+  // ── S. SQL 이 상한을 다시 강제한다 ────────────────────────────────────────
+  //   앱 상수만으로는 방어가 아니다 — 호출자가 1.0 을 넣으면 임계가 사라진다.
+  //   ⚠️ 파일명을 하드코딩하지 않는다 — 이름이 바뀌면 게이트가 ENOENT 로 죽는데, 그건
+  //     "계약 위반"이 아니라 "게이트 고장"이라 원인이 흐려진다. 대신 **디렉터리에서 찾고
+  //     못 찾으면 명시적으로 FAIL** 한다(조용한 skip 금지).
+  const migrationDir = new URL("../../supabase/migrations/", import.meta.url);
+  const migrationName = readdirSync(migrationDir)
+    .filter((f) => /official_chunk_distance_threshold\.sql$/.test(f))
+    .sort()
+    .at(-1);
   assert.ok(
-    /!scopeGate\s*&&/.test(pipeline.slice(Math.max(0, officialCall - 400), officialCall)),
-    "F: scopeGate 가 풀렸다 — 비야구 질문에 무관한 KBO 조문이 근거로 붙는다(삼순 R1 실측). "
-    + "범위 판정을 LLM 으로 옮기는 것은 Phase② 이며, 한 번에 하나씩 바꾼다",
+    migrationName,
+    "S0: 거리 임계 migration 을 찾지 못했다 — RPC 상한 강제 계약을 검증할 수 없다(fail-close)",
   );
-  pass("F 범위 밖(scopeGate) 계약 유지");
+  const migration = readFileSync(new URL(migrationName!, migrationDir), "utf8");
+  assert.ok(
+    /p_max_distance/.test(migration) && /least\s*\(/i.test(migration),
+    "S: migration 이 p_max_distance 상한을 clamp 하지 않는다 — 앱이 임계를 무력화할 수 있다",
+  );
+  assert.ok(
+    /distance/.test(migration.slice(migration.indexOf("RETURNS TABLE"), migration.indexOf("LANGUAGE"))),
+    "S2: RPC 가 distance 를 반환하지 않는다 — 관측 없이는 재보정도 소유권 판정도 못 한다",
+  );
+  pass("S migration 이 SQL 에서 상한 재강제 + distance 반환");
 
   // ── G. 근거가 없으면 종전 경로가 이어진다 ─────────────────────────────────
-  //   `if (official) return official;` 형태여야 한다. 무조건 return 이면 근거가 없을 때도
-  //   여기서 종결되어 기존 경로(사전·구단 RAG·선수 RAG·LLM)를 전부 뺏는다.
-  const afterCall = pipeline.slice(officialCall, officialCall + 200);
+  const officialCall = pipeline.indexOf("const official = await answerOfficialDocumentQuestion(");
+  assert.ok(officialCall > 0, "G0: 공식 RAG 호출 지점을 찾지 못했다 — 게이트 앵커가 깨졌다");
+  const afterCall = pipeline.slice(officialCall, officialCall + 300);
   assert.ok(
     /if\s*\(\s*official\s*\)\s*return official\s*;/.test(afterCall),
     "G: 근거가 없어도 공식 RAG 경로에서 종결한다 — 라우팅을 넓히는 게 아니라 "
@@ -130,17 +420,21 @@ function main() {
   console.log(`\ngenius-rag-first-routing-smoke PASS (${passed} checks)`);
 }
 
-if (SELFTEST) {
-  let threw: Error | null = null;
-  try { main(); } catch (e) { threw = e as Error; }
-  if (!threw) {
-    console.error("\ngenius-rag-first-routing-smoke SELFTEST FAIL: 결함을 주입했는데 통과했다");
-    process.exit(1);
+async function entry() {
+  if (SELFTEST) {
+    let threw: Error | null = null;
+    try { await main(); } catch (e) { threw = e as Error; }
+    if (!threw) {
+      console.error("\ngenius-rag-first-routing-smoke SELFTEST FAIL: 결함을 주입했는데 통과했다");
+      process.exit(1);
+    }
+    console.log(`\ngenius-rag-first-routing-smoke SELFTEST PASS — 주입 결함 검출: ${threw.message.slice(0, 80)}`);
+    return;
   }
-  console.log(`\ngenius-rag-first-routing-smoke SELFTEST PASS — 주입 결함 검출: ${threw.message.slice(0, 80)}`);
-} else {
-  try { main(); } catch (e) {
+  try { await main(); } catch (e) {
     console.error(`\ngenius-rag-first-routing-smoke FAIL: ${(e as Error).message}`);
     process.exit(1);
   }
 }
+
+void entry();

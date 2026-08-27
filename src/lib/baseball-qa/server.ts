@@ -568,6 +568,13 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
     // 공식 문서는 나무위키가 아니므로 정제 대상이 아니다. RPC 가 값을 주면 그대로 쓰고,
     // 안 주면 `kbo_ebook` 으로 고정한다 — 이 RPC 는 공식 e북만 반환하는 경로다.
     sourceKind: (row.source_kind as RagSourceKind | undefined) ?? "kbo_ebook",
+    // 🔴 거리를 호출자까지 실어 올린다 (삼순 2026-08-27 "distance 가 RagEvidence/로그로 전달되지
+    //   않아 72시간 재보정 근거가 약하다"). 임계를 값으로 두면서 그 값이 실제로 어떤
+    //   분포를 자르고 있는지를 관측 안 하면, 재보정은 영원히 "감"으로 한다.
+    //   ⚠️ **부재와 0 을 섞지 않는다** — RPC 가 값을 안 주면 undefined 로 둔다.
+    //     소유권 판정이 이 값을 쓰는데, 미제공을 0 으로 응급처리하면 "가장 가까움"으로
+    //     읽혀 migration 이전 배포에서 소유권이 통째로 뒤집힌다.
+    distance: typeof row.distance === "number" ? row.distance : undefined,
   }));
 }
 

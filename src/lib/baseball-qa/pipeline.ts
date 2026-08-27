@@ -39,6 +39,7 @@ import {
   isRagAttemptPath,
   isRagDiscardReason,
   numericTokenCount,
+  RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE,
   type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
@@ -4450,18 +4451,83 @@ async function answerPlayerDescriptiveQuestion(
  * 그래서 이 함수는 **LLM 경계에 들어가기 전에만** null을 돌릴 수 있다(근거 0건).
  * 경계를 지나면 그 호출을 이미 소비했으므로 아래 일반 LLM로 내려보내지 않고 여기서 종결한다.
  */
+/**
+ * 질문에서 **결속된 선수 이름을 지운 잔여 문장**을 만든다.
+ *
+ * 왜 이름을 지우는가 — 이름이 남아 있으면 질문 벡터가 그 선수 문서 쪽으로 끌려가서
+ * "이 사람을 묻는 질문인가, 이 규칙을 묻는 질문인가" 가 흐려진다. 실측(2026-08-27):
+ *   `문보경 보크 규칙 알려줘` 원문 → tier1 0.3374 / tier2 0.3242 — 선수가 이긴다(오답)
+ *   잔여 `보크 규칙 알려줘`      → tier1 0.3006 / tier2 0.4531 — 규칙집이 이긴다(정답)
+ *
+ * ⚠️ 이름만 지우고 조사는 그대로 둔다(`문보경의 별명` → `의 별명`). 조사까지 지우려면
+ *   한국어 조사 사전이 필요한데 그건 닫힌 집합이 아니라 또 룰 핑퐁이다. 임베딩은 고립 조사에
+ *   둔감하다 — 위 실측 11케이스가 그 상태에서 나온 값이다.
+ * ⚠️ 잔여가 너무 짧으면(이름이 질문의 거의 전부) 원문을 그대로 쓴다. `문보경` 같은 질문의
+ *   잔여는 빈 문자열이라 어떤 문서와도 무의미하게 가까워질 수 있다.
+ */
+export function officialOwnershipProbeQuestion(question: string, playerName: string): string {
+  if (playerName.length < 2) return question;
+  // 정규화 없이 원문에서 지운다 — 임베딩은 원문을 받으므로 정규화형을 넘기면 다른 문장이 된다.
+  const stripped = question.split(playerName).join(" ").replace(/\s+/g, " ").trim();
+  return stripped.length >= 2 ? stripped : question;
+}
+
+/**
+ * 선수가 결속된 질문의 **정본이 공식 문서(tier1)인가**를 근거 거리로 판정한다.
+ *
+ * 반환값이 근거 배열이면 공식 문서가 소유권을 가진다(그 근거를 그대로 답변에 쓴다).
+ * `null` 이면 선수 경로가 소유권을 유지한다.
+ *
+ * 🔴 판정 기준은 룰이 아니라 **잔여 질문의 tier1 top1 거리**다(삼순 2026-08-27 P0-2).
+ *   종전 `Boolean(enabledPlayerCandidate)` 는 `문보경 보크 규칙 알려줘` 처럼 선수가 예시
+ *   행위자일 뿐인 질문까지 선수 RAG 에 넘겼다.
+ *
+ * ⚠️ **판정 불능은 전부 선수 유지**다 — 검색 실패·근거 0건·거리 미제공(레거시 RPC) 모두
+ *   `null`. 소유권을 빼앗는 것은 "근거가 있다" 보다 강한 주장이라 확실할 때만 한다.
+ *   특히 거리 미제공을 통과시키면 migration 이전 배포에서 소유권이 통째로 뒤집힌다.
+ */
+async function resolveOfficialOwnership(
+  question: string,
+  candidateName: string,
+  deps: QaDeps,
+): Promise<RagEvidence[] | null> {
+  const probe = officialOwnershipProbeQuestion(question, candidateName);
+  let evidence: RagEvidence[];
+  try {
+    evidence = selectEvidence(await deps.searchOfficialRag!(probe));
+  } catch {
+    return null; // 조회 실패 = 판정 불능 → 선수 유지.
+  }
+  const top = evidence[0];
+  if (!top) return null;
+  // 거리 미제공(레거시 RPC·미배선)은 0 과 섞지 않는다 — 관측값일 때만 판정한다.
+  if (typeof top.distance !== "number") return null;
+  if (top.distance > RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE) return null;
+  if (!allowsNumericAnswer(evidence)) return null;
+  return evidence;
+}
+
 async function answerOfficialDocumentQuestion(
   userId: string,
   question: string,
   questionNorm: string,
   remaining: number,
   deps: QaDeps,
+  /**
+   * 소유권 판정이 이미 확보한 근거. 있으면 **재검색하지 않는다** — 같은 질문에 벡터 검색을
+   * 두 번 태우면 비용이 두 배가 되고, 두 번의 결과가 다르면 판정과 답변의 근거가 갈린다.
+   */
+  preselectedEvidence: RagEvidence[] | null = null,
 ): Promise<QaResult | null> {
   let evidence: RagEvidence[];
-  try {
-    evidence = selectEvidence(await deps.searchOfficialRag!(question));
-  } catch {
-    return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
+  if (preselectedEvidence) {
+    evidence = preselectedEvidence;
+  } else {
+    try {
+      evidence = selectEvidence(await deps.searchOfficialRag!(question));
+    } catch {
+      return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
+    }
   }
   // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
   if (evidence.length === 0) return null;
@@ -5787,34 +5853,64 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   둘 다 통과하지 못하면 `answerOfficialDocumentQuestion` 이 null 을 주고 **종전 경로가
   //   그대로 이어진다.** 즉 이 변경은 라우팅을 **넓히기만** 하고 기존 종결을 뺏지 않는다.
   //
-  //   ⚠️ `scopeGate` 는 유지한다. 그건 "야구 범위 밖" 판정이라 근거 유무와 다른 축이고,
-  //     여기서 풀면 비야구 질문에 무관한 KBO 조문이 근거로 붙는다(삼순 R1 실측).
-  //     범위 판정 자체를 LLM 으로 옮기는 건 Phase② 의 일이다 — 한 번에 하나씩 바꾼다.
-  //   🔴 **엔티티가 결속된 질문은 공식 RAG 가 가져가지 않는다** (게이트 RED 로 잡힌 실제 회귀).
-  //     사전을 걷어내자마자 `문보경 별명 알려줘` 가 공식 RAG 로 새어 `ragAttemptPath="official"`
-  //     이 됐다 — 선수 문서(tier2)가 답해야 할 질문을 KBO 규칙집이 가로챈 것이다.
-  //     "넓히되 뺏지 않는다" 는 이 PR 의 계약이라 소유권을 되돌려준다.
+  //   🔴 **`scopeGate` 도 여기서 푼다** (삼순 2026-08-27 P0-1).
+  //     1차 시도에서 나는 사전 조건만 지우고 `!scopeGate` 를 남겼는데, `routeQuestion` 은
+  //     사전 밖 표현을 전부 `llm_scope_gate` 로 보내므로 **두 조건이 사실상 같은 문**이었다.
+  //     실측으로 확인했다 — `세이브 조건`·`포스아웃 상황`·`이닝 교대 조건`·`피치가뭐야` 는
+  //     전부 `llm_scope_gate` 다. 즉 문을 연 줄 알았지만 열린 게 없었다.
   //
-  //     ⚠️ 여기서 **단어 사전을 다시 넣지 않는다.** 판정 기준은 룰이 아니라 **roster SSOT
-  //       결속 여부**다 — `enabledPlayerCandidate` 는 실제 선수로 특정됐다는 *사실*이고,
-  //       특정된 선수가 있으면 그 사람의 문서가 정본이지 규칙집이 아니다.
+  //     ⚠️ 그때 `scopeGate` 를 남긴 이유(삼순 R1: 비야구 질문에 무관한 KBO 조문이 붙는다)는
+  //       사라진 게 아니라 **다른 축이 막는다.** 종전에는 RPC 가 무슨 질문이든 상한만큼
+  //       돌려줘서 라우팅 조건 말고는 방어가 없었지만, 이제 거리 임계가 무관한 chunk 를
+  //       아예 반환하지 않는다. 실측(같은 코퍼스 top1 거리):
+  //         야구 무관   0.4281~0.5139 (주식·날씨·점심·파이썬·아이폰) → 임계 0.42 밖 = 0건
+  //         정본 존재   0.2689~0.3787 (포스아웃·이닝교대·인필드플라이·세이브 조건) → 통과
+  //       그리고 명시적 비야구(`서울 날씨 어때`·`야구 말고 …`)는 여기 오기 전에 `blocked`
+  //       로 이미 종결한다(실측). 즉 방어를 **라우팅 라벨에서 근거 거리로 옮긴 것**이지
+  //       없앤 것이 아니다.
+  //
+  //   🔴 **선수 결속 질문의 소유권은 이름을 지운 잔여 질문의 근거 거리로 가른다** (삼순 P0-2).
+  //     1차 시도의 `ownedByEntityRag = Boolean(enabledPlayerCandidate)` 는 양보 폭이 너무
+  //     넓었다 — `문보경 보크 규칙 알려줘`·`임찬규 투구판 이탈 규칙` 처럼 **선수는 예시
+  //     행위자일 뿐 정본이 tier1 조문**인 질문까지 선수 RAG 가 가져갔다. 이건 `LG 투수 보크
+  //     규칙` 을 구단 문서가 뺏으면 안 된다는 삼순 2026-08-07 P0-1 의 선수 버전이다.
+  //
+  //     판정은 다시 룰이 아니라 **근거**로 한다(`resolveOfficialOwnership`). 이름을 지운
+  //     잔여 질문이 tier1 조문에 충분히 가까우면 정본은 규칙집이고, 아니면 선수 문서다.
+  //     이름을 지우는 이유는 이름이 남으면 벡터가 그 선수 문서 쪽으로 끌려가 "무엇을 묻는
+  //     질문인가" 가 흐려지기 때문이다 — 실측으로 뒤집힌다:
+  //       `문보경 보크 규칙` 원문 → tier1 0.3374 / tier2 0.3242 (선수가 이김 = 오답)
+  //       잔여 `보크 규칙 알려줘` → tier1 0.3006 / tier2 0.4531 (규칙집이 이김 = 정답)
+  //
+  //     ⚠️ 임계는 서빙 임계(0.42)보다 **엄격한 0.38** 이다. 소유권을 빼앗는 것은 "근거가
+  //       있다" 보다 강한 주장이므로 더 확실할 때만 한다. 실측 경계는 tier1 정본
+  //       0.2698~0.3540 / 선수 정본 0.4103~0.4817 이고 11케이스 중 11 정답이다.
+  //     ⚠️ 거리를 못 받으면(레거시·조회 실패) **선수가 유지**한다 — 부재와 0 을 섞지 않는다.
   //
   //     ⚠️⚠️ **구단·뉴스는 여기 넣지 않는다** (1차 시도에서 게이트가 잡은 내 오류).
   //       처음엔 "엔티티가 있으면 다 양보" 로 짰는데, `LG 경기에서 점수가 같으면 연장전
-  //       규칙은?` 이 구단 소유로 읽혀 공식 조문 경로를 잃었다. 구단명이 붙었다는 이유로
-  //       룰 질문을 구단 문서로 답하는 것은 **삼순 2026-08-07 P0-1 이 명시적으로 금지한
-  //       라우팅 역전**이다(`LG 투수 보크 규칙` → tier1 조문이 정본). 구단 RAG 블록이
-  //       공식 RAG **뒤에** 놓인 것 자체가 그 계약이라, 여기서 앞당기면 계약이 뒤집힌다.
-  //       선수만 다른 이유: 선수는 자기 문서(tier2)가 정본인 서술형 질문의 주인이고,
-  //       그 경로는 신원 결속·오귀속 검증까지 붙어 있어 규칙집이 대신할 수 없다.
-  const ownedByEntityRag = Boolean(enabledPlayerCandidate);
+  //       규칙은?` 이 구단 소유로 읽혀 공식 조문 경로를 잃었다. 구단 RAG 블록이 공식 RAG
+  //       **뒤에** 놓인 것 자체가 그 계약이라, 여기서 앞당기면 계약이 뒤집힌다.
+  //     🔴 **구단도 같은 방식으로 가른다** — 1차 수정에서 선수만 다루고 구단을 빼놓았다가
+  //       `qa:genius-discard-reason` 이 회귀를 잡았다: `LG 트윈스 역사 알려줘` 가
+  //       `ragAttemptPath="official"` 로 새서 구단 문서 대신 규칙집이 답했다.
+  //       종전에는 `!scopeGate` 가 이걸 막았는데, 그 조건을 푸니 보호가 같이 풀렸다.
+  //       ⚠️ `isTeamRagServableQuestion` 으로 가르지 않는다 — 실측해보니 `LG 날씨 알려줘`
+  //         까지 true 라 판별력이 0 이다(그 술어는 다른 일을 한다).
+  const officialOwnershipTarget =
+    enabledPlayerCandidate?.name ?? resolveRagTeamCandidate(question)?.name ?? null;
+  const officialOwnership = officialOwnershipTarget && deps.searchOfficialRag && deps.callOfficialRagLlm
+    ? await resolveOfficialOwnership(question, officialOwnershipTarget, deps)
+    : null;
+  const ownedByEntityRag = Boolean(officialOwnershipTarget) && officialOwnership === null;
   if (
-    !scopeGate &&
     !ownedByEntityRag &&
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
+    const official = await answerOfficialDocumentQuestion(
+      userId, question, questionNorm, remaining, deps, officialOwnership,
+    );
     if (official) return official;
   }
 
