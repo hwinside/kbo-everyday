@@ -1,5 +1,15 @@
 {
   "label": "수비",
   "reads": 3,
-  "rows": {}
+  "rows": {
+    "66162|좌익수": {
+      "observed": 2,
+      "missStreak": 0
+    },
+    "66162|중견수": {
+      "observed": 3,
+      "missStreak": 0,
+      "viaGroup": true
+    }
+  }
 }
