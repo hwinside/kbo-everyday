@@ -154,6 +154,7 @@ export function internalGetRequest(
  */
 export const VOLATILE_HASH_KEYS: ReadonlySet<string> = new Set([
   "sourceAtMs",
+  "updatedAt",
   "fetchedAtMs",
   "deadlineAtMs",
   "remainingMs",
