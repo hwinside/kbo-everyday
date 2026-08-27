@@ -442,6 +442,10 @@ function ragDeps(llmAnswer: string): { deps: QaDeps; counters: { llm: number } }
     getCache: async () => null,
     setCache: async () => {},
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축(답변 길이 상한)과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => RAG_EVIDENCE as never,
     callRagLlm: async () => {
       counters.llm++;

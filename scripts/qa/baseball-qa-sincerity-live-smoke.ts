@@ -214,6 +214,11 @@ function makeLiveDeps(evidence: RagEvidence[], trace: CallTrace = newTrace()): Q
     getCache: async () => null,
     setCache: async () => {},
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축(답변 성의·길이)과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    // 신원 귀속 자체의 검증력은 `qa:genius-rag-identity` 가 전담한다.
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => evidence,
     callRagLlm: makeRealCallRagLlm(trace),
     callLlm: async () => { throw new Error("선수 RAG 질문에서 generic LLM 금지"); },
