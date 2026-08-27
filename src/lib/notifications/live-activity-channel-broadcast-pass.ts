@@ -202,6 +202,14 @@ export async function runChannelBroadcastPass(
       const lastSendAtMs = row.last_send_at ? new Date(row.last_send_at).getTime() : null;
       const hasLastContent =
         row.last_content_state != null && typeof row.last_content_state === "object";
+      // p5 코얼레싱 자격(삼순 재리뷰 P1): *볼/스트라이크만* 바뀐 틱만. lastPlay(중계 한 줄)·
+      // 타자·투수·아웃 변화는 즉시성 유지라 비대상. 보존 콘텐츠 없으면(구 행) 비대상.
+      const lc = hasLastContent ? (row.last_content_state as Record<string, unknown>) : null;
+      const p5CoalesceEligible = lc !== null
+        && cs.outs === lc.outs
+        && cs.pitcherName === lc.pitcherName
+        && cs.batterName === lc.batterName
+        && (cs.lastPlay ?? "") === (lc.lastPlay ?? "");
       const { decision, isHeartbeat, isForcedCatchup: forcedCatchup, skipReason, resendLastContent } =
         resolveChannelUpdateDecision({
           scoreState,
@@ -213,6 +221,7 @@ export async function runChannelBroadcastPass(
           forceCatchup: opts.forceCurrentStateGameIds?.has(row.game_id) === true,
           lastSendAtMs,
           hasLastContent,
+          p5CoalesceEligible,
         });
       if (!decision.send) {
         skipped += 1;
@@ -243,9 +252,14 @@ export async function runChannelBroadcastPass(
           : {
               last_score_state: scoreState,
               last_state_hash: fullHash,
-              // 마지막 성공 발송 콘텐츠 보존 — retreat 중 heartbeat 재전송 재료(삼순 ①).
-              last_content_state: cs,
             };
+        // 마지막 성공 발송 콘텐츠 보존(삼순 ① 재료) — 삼순 재리뷰 Blocker② 반영: score축이
+        // *전진(변화)했을 때만* 갱신. stale-equal p5 틱(점수 동일·relay 폴백)의 낡은 스냅샷이
+        // 복구 재료를 오염시켜 "옛 값 2분 재방송"이 되는 경로 차단. retreat 는 위에서 이미
+        // skip/재전송이라 여기 도달하는 score 변화 = 전진뿐이다.
+        if (!resendLastContent && scoreState !== row.last_score_state) {
+          patch.last_content_state = cs;
+        }
         patch.last_send_at = new Date(now).toISOString();
         // last_p10_at은 *성공한 p10*만 전진(transient 실패/p5는 미전진 — 삼순 ②).
         if (decision.priority === "10") patch.last_p10_at = new Date(now).toISOString();

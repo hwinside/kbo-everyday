@@ -247,6 +247,10 @@ async function enrichNaverLiveGames(
   // fetchKboLiveGames failover 는 false(기본값) → watchdog·관제 등 공유 소비자는 기존 동작 유지.
   overrideScoreFromRelay = false,
 ): Promise<KboRawGame[]> {
+  // relay enrich 관측(삼순 2026-08-27 재리뷰 — "조용한 schedule 폴백" 사각지대 폐쇄):
+  // per-game relay 실패/deadline 잘림과 이번 틱 점수 출처(relay|schedule)를 카운트해
+  // 로그로 남긴다. stale-equal(mode B) 발생 여부를 다음 라이브에서 즉시 판정하는 재료.
+  const enrichObs: string[] = [];
   const verifiedGames = await Promise.all(games.map(async (game) => {
     if (game.status !== "live") return game;
     // 1회초 0:0(스케줄 증거 없음)만 첫 투구 검증 대상. 그 외 live 는 relay 조회가
@@ -254,6 +258,7 @@ async function enrichNaverLiveGames(
     const needsFirstPitchCheck = !hasSchedulePlayEvidence(game);
     const evidenceRemainingMs = absoluteDeadlineAtMs - Date.now();
     if (evidenceRemainingMs <= 0) {
+      enrichObs.push(`${game.gameId}:deadline-cut`);
       return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
     }
     try {
@@ -274,6 +279,7 @@ async function enrichNaverLiveGames(
         // Naver-primary 경로만 override(공유 failover 경로는 기존대로 schedule 점수 — 삼순 P1 스코프).
         awayScore: overrideScoreFromRelay ? (evidence.awayScore ?? game.awayScore) : game.awayScore,
         homeScore: overrideScoreFromRelay ? (evidence.homeScore ?? game.homeScore) : game.homeScore,
+        // (관측 push 는 아래 spread 밖 — object literal 이라 여기서 side effect 불가)
         balls: evidence.balls,
         strikes: evidence.strikes,
         outs: evidence.outs,
@@ -291,9 +297,15 @@ async function enrichNaverLiveGames(
         currentBatter: evidence.currentBatter || game.currentBatter,
       };
     } catch {
+      enrichObs.push(`${game.gameId}:relay-failed`);
       return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
     }
   }));
+  // 점수 출처 로깅 — override 경로에서 relay 점수가 실제로 쓰였는지(relay) schedule 로
+  // 남았는지(schedule)를 틱마다 남긴다. relay-failed/deadline-cut 은 위에서 push 됨.
+  if (enrichObs.length > 0) {
+    console.log(`[naver-enrich] override=${overrideScoreFromRelay} ${enrichObs.join(" ")}`);
+  }
   return verifiedGames.map(naverGameToRaw);
 }
 

@@ -123,6 +123,12 @@ export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
    * heartbeat 를 "마지막 성공값 재발송"으로 살릴 수 있는지. false 면 기존대로 skip.
    */
   hasLastContent: boolean;
+  /**
+   * p5 코얼레싱 자격(삼순 2026-08-27 재리뷰 P1) — *볼/스트라이크만* 바뀐 틱만 true.
+   * lastPlay(중계 한 줄)·타자·투수·아웃 변화는 즉시성 유지 대상이라 false → 코얼레싱 비대상.
+   * 호출측(pass)이 last_content_state 와 대조해 계산. 미보존(구 행)은 false = diet 미적용.
+   */
+  p5CoalesceEligible?: boolean;
 }
 
 /** 스킵 사유 — 관제/원장 로깅용 (삼순 2026-08-27 게이트 ⓐ). */
@@ -145,11 +151,12 @@ export interface ChannelUpdateResolution {
 }
 
 /**
- * p5(볼카운트/타자/lastPlay-only 변화) 코얼레싱 간격 — 마지막 성공 발송 후 이 간격이
- * 지나기 전의 p5 는 스킵한다(발사율 다이어트, 삼순 2026-08-27 조건②).
- * 트레이드오프(명시): 볼카운트-only 변화의 카드 반영 지연 상한이 기존 ~20s(서브틱)에서
- * 최대 60s+서브틱 = ~80s 로 늘어난다. 점수/이닝/주자/상태(p10)·heartbeat·지명 catch-up
- * 은 코얼레싱 대상이 아니라 즉시성 그대로다.
+ * p5 코얼레싱 간격 — 마지막 성공 발송 후 이 간격이 지나기 전의 *볼/스트라이크-only*
+ * p5 는 스킵한다(발사율 다이어트, 삼순 2026-08-27 조건②).
+ * 범위(삼순 재리뷰 P1 반영): p5CoalesceEligible=true(볼/스트라이크만 변화)일 때만 —
+ * lastPlay(중계 한 줄)·타자·투수·아웃 변화 p5 는 코얼레싱 비대상으로 즉시 발송 유지.
+ * 트레이드오프(명시): 볼/스트라이크 카드 반영 지연 상한이 기존 ~20s(서브틱)에서
+ * 최대 60s+서브틱 = ~80s. 점수/이닝/주자/상태(p10)·heartbeat·지명 catch-up 은 그대로.
  */
 export const P5_COALESCE_MS = 60 * 1000;
 
@@ -211,6 +218,7 @@ export function resolveChannelUpdateDecision(
   if (
     decision.send &&
     decision.priority === "5" &&
+    i.p5CoalesceEligible === true &&
     i.lastSendAtMs !== null &&
     i.nowMs - i.lastSendAtMs < P5_COALESCE_MS
   ) {
