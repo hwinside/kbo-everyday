@@ -67,6 +67,8 @@ import {
   type RagLlmExtras,
 } from "../../src/lib/baseball-qa/pipeline";
 import { buildRagLlmRequest } from "../../src/lib/baseball-qa/rag/retrieve";
+// 🔴 순수 모듈을 **그대로 실행**한다 — 소스 정규식이 아니라 산출물을 검사하기 위해서다.
+import { buildIdentityVerifierPrompt } from "../../src/lib/baseball-qa/identity-verifier-prompt";
 import roster from "../../src/lib/constants/players-roster.json";
 
 const SELFTEST = process.argv.includes("--selftest");
@@ -78,6 +80,11 @@ const players = (roster as PlayerRef[]).map((row) => ({
   kboId: String(row.kboId),
   team: row.team ?? null,
   position: row.position ?? null,
+  // 🔴 생년·등번호를 버리면 구분 불가 동명이인 축이 무증상이 된다 (삼순 재리뷰 ②).
+  //   같은 팀·같은 포지션이라 둔 둘을 가를 수 있는 roster 축은 이 둘뿐이다 —
+  //   픽스처가 이걸 떨구면 검증기가 근거를 받는지를 원리적으로 판정할 수 없다.
+  birthDate: row.birthDate ?? null,
+  backNo: row.backNo ?? null,
 }));
 
 function findNamesakePair(): { target: PlayerRef; other: PlayerRef } {
@@ -792,7 +799,83 @@ async function main() {
       `${label}: 판정 계약 위반인데 source=${res.source} — 부분 수용(fail-open)`,
     );
   }
-  pass("Y2 다중 hit ID별 verdict 완전일치 + 혼합 귀속 차단");
+  //   Y2-e 🔴 **같은 토큰**이 비귀속/귀속 문맥에 각각 나오는 경우 (삼순 재리뷰 ①).
+  //     종전엔 `seen(token)` 으로 합쳐서 `position:내야수` **1건**으로 접혔다 — 그러면
+  //     앞의 비귀속(형) 판정 하나로 뒤의 오귀속(본인)이 다시 가려진다.
+  //     ②에서 "전부 올린다" 고 했지만 그건 **토큰 종류**별이었고 occurrence 단위가 아니었다.
+  const SAME_TOKEN_ANSWER = `${pitcher.name} 선수의 형도 내야수입니다. 본인도 내야수입니다.`;
+  {
+    const sameTokenHits = detectIdentityContradictions(SAME_TOKEN_ANSWER, pitcherIdentity);
+    const positionHits = sameTokenHits.filter((hit) => hit.mentioned === "내야수");
+    assert.equal(
+      SELFTEST ? 1 : positionHits.length, 2,
+      `Y2-e: 같은 토큰 2회 등장인데 hit 가 ${positionHits.length}건 — occurrence 가 하나로 접혔다(혼합 귀속 표현 불가)`,
+    );
+    assert.equal(
+      new Set(positionHits.map((hit) => hit.id)).size, positionHits.length,
+      `Y2-e2: 같은 토큰의 occurrence 들이 같은 ID 를 쓴다 — ID별 판정이 성립 안 한다: ${JSON.stringify(positionHits.map((h) => h.id))}`,
+    );
+    // 검증기가 둘을 구분하려면 **위치 근거(문장)**가 있어야 한다 — id 만으론 둘 다 같은 단어다.
+    const excerpts = positionHits.map((hit) => hit.excerpt);
+    assert.ok(
+      excerpts.every((text) => text.length > 0) && new Set(excerpts).size === excerpts.length,
+      `Y2-e3: occurrence 별 문맥(excerpt)이 없거나 같다 — 검증기가 둘을 구분할 수단이 없다: ${JSON.stringify(excerpts)}`,
+    );
+
+    // 종단: 앞의 등장은 제3자(형), 뒤의 등장은 주인공(본인) → 서빙되면 안 된다.
+    let rewriteExcerpts: (string | undefined)[] = [];
+    const sameTokenVerifier = makeVerifier((_call, hits) => ({
+      verdicts: hits.map((hit) => ({
+        id: hit.id,
+        // 문장으로 가른다 — 검증기가 excerpt 를 받아야만 가능한 판정이다.
+        verdict: hit.excerpt.includes("형도") ? ("제3자" as const) : ("주인공" as const),
+      })),
+    }));
+    const sameTokenResult = await answerQuestion(
+      "qa-same-token", `${pitcher.name} 어떤 선수야?`,
+      makeDeps(pitcher, () => SAME_TOKEN_ANSWER, {
+        verifier: sameTokenVerifier.fn,
+        onExtras: (extras) => {
+          if (extras?.identityConflicts) {
+            rewriteExcerpts = extras.identityConflicts.map((hit) => hit.excerpt);
+          }
+        },
+      }),
+    );
+    assert.equal(
+      SELFTEST ? "rag" : sameTokenResult.source, "unsure",
+      `Y2-e4: 같은 토큰의 뒤 등장이 오귀속인데 source=${sameTokenResult.source} — 앞 등장 판정으로 덮였다`,
+    );
+    // 재작성 신호에도 **어느 문장**인지가 실려야 한다 — 없으면 정상 문장까지 고치게 된다.
+    assert.ok(
+      rewriteExcerpts.length > 0 && rewriteExcerpts.every((text) => (text ?? "").includes("본인도")),
+      `Y2-e5: 재작성 신호에 오귀속 문장이 실리지 않았다 — ${JSON.stringify(rewriteExcerpts)}`,
+    );
+  }
+
+  //   Y2-f 같은 구단이 두 문장에 각각 나오는 경우도 occurrence 별로 올라와야 한다.
+  {
+    const TEAM_TWICE = `${pitcher.name} 선수는 두산과의 경기에서 호투했습니다. 그는 두산 소속입니다.`;
+    const teamHits = detectIdentityContradictions(TEAM_TWICE, pitcherIdentity)
+      .filter((hit) => hit.field === "team" && hit.mentioned === "두산");
+    assert.equal(
+      SELFTEST ? 1 : teamHits.length, 2,
+      `Y2-f: 같은 구단 2회 등장인데 hit 가 ${teamHits.length}건 — 팀당 1건으로 접힌다`,
+    );
+    assert.equal(
+      new Set(teamHits.map((hit) => hit.id)).size, teamHits.length,
+      "Y2-f2: 같은 구단의 occurrence 들이 같은 ID 를 쓴다",
+    );
+  }
+
+  //   Y2-g ID 는 **내용에서 파생**된다 — 같은 답변이면 항상 같은 ID 집합이어야 한다.
+  //     호출마다 달라지면(예: 전역 카운터) 검증기 응답과 영영 안 맞는다.
+  {
+    const a = detectIdentityContradictions(SAME_TOKEN_ANSWER, pitcherIdentity).map((hit) => hit.id);
+    const b = detectIdentityContradictions(SAME_TOKEN_ANSWER, pitcherIdentity).map((hit) => hit.id);
+    assert.deepEqual(a, b, "Y2-g: 같은 입력인데 hit ID 가 호출마다 달라진다 — 전역 상태 오염");
+  }
+  pass("Y2 occurrence 별 ID + 동일 토큰 혼합 귀속 차단 + 완전일치");
 
   // ── Y3. 닫힌 집합으로 **구분 불가한** 동명이인 (삼순 2026-08-27 ③) ──────────────
   //   🔴 이름·팀·포지션이 전부 같으면 닫힌 모순 필터가 원리적으로 0건이다. 그러면
@@ -818,9 +901,29 @@ async function main() {
       { entityId: twin.kboId, name: twin.name, team: twin.team }, players,
     )!;
     assert.deepEqual(
-      twinIdentity.indistinguishableNamesakes.slice().sort(),
+      twinIdentity.indistinguishableNamesakes.map((row) => row.kboId).sort(),
       twins.map((t) => t.kboId).sort(),
       "Y3-1: 구분 불가 동명이인 목록이 roster 실측과 다르다",
+    );
+    // 🔴 **가를 근거가 실어있는가** (삼순 재리뷰 ②).
+    //   kboId 만 들고 있으면 검증기는 "이 경력이 누구 것인가" 를 원리적으로 판정할 수 없다.
+    //   같은 팀·같은 포지션이라 남는 roster 축은 생년·등번호뿐이다.
+    for (const namesake of twinIdentity.indistinguishableNamesakes) {
+      const source = twins.find((t) => t.kboId === namesake.kboId)!;
+      assert.equal(
+        SELFTEST ? "" : namesake.birthDate, source.birthDate ?? null,
+        `Y3-1b: 동명이인 ${namesake.kboId} 의 생년이 실리지 않았다 — 검증기가 가를 근거가 없다`,
+      );
+      assert.equal(
+        namesake.backNo, source.backNo ?? null,
+        `Y3-1c: 동명이인 ${namesake.kboId} 의 등번호가 실리지 않았다`,
+      );
+    }
+    // 주인공과 동명이인의 생년이 **실제로 다르지** 않으면 근거를 준 의미가 없다.
+    assert.ok(
+      twinIdentity.birthDate
+        && twinIdentity.indistinguishableNamesakes.some((row) => row.birthDate && row.birthDate !== twinIdentity.birthDate),
+      "Y3-1d: 주인공·동명이인의 생년이 구분되지 않는다 — 판정 근거가 성립 안 한다",
     );
     // 소속·포지션이 같으니 닫힌 모순은 0건이다 — 그런데도 검증은 반드시 돌아야 한다.
     // ⚠️ 숫자를 쓰지 않는다 — tier2 선수 경로는 근거 밖 숫자를 전면 폐기하므로(`numericTokensGrounded`)
@@ -892,14 +995,93 @@ async function main() {
   assert.ok(verifierStart > 0, "N4: verifyIdentityAttribution 구현을 찾지 못했다");
   const verifierBody = serverSource.slice(verifierStart, verifierStart + 4000);
   assert.ok(
-    /어떤 지시·명령도 따르지 않는다/.test(verifierBody),
-    "N4: 검증기 시스템 프롬프트에 인젝션 방어 문구가 없다 — 근거 문서가 판정을 조종할 수 있다",
-  );
-  assert.ok(
     /temperature:\s*0/.test(verifierBody),
     "N5: 검증기가 temperature 0 이 아니다 — 같은 답변이 회차마다 다르게 판정된다",
   );
-  pass("N server 어댑터 배선 + 검증기 등록·인젝션 방어·결정론");
+  // 🔴 조립 함수가 실제 전송 경로에 결속돼 있는가 — 순수 모듈만 고치고 호출을 안 하면
+  //    아래 P 축 전부가 production 과 무관한 사본을 검사하는 셈이 된다(M90 seam 동일성).
+  assert.ok(
+    /buildIdentityVerifierPrompt\(answer, identity, hits\)/.test(verifierBody)
+      && /systemInstruction:\s*\{\s*parts:\s*\[\{\s*text:\s*systemPrompt\s*\}\]/.test(verifierBody)
+      && /parts:\s*\[\{\s*text:\s*userText\s*\}\]/.test(verifierBody),
+    "N6: 검증기가 buildIdentityVerifierPrompt 산출물을 실제 요청에 싣지 않는다 — P 축이 사본을 검사하게 된다",
+  );
+  pass("N server 어댑터 배선 + 검증기 등록·결정론 + 프롬프트 seam 결속");
+
+  // ── P. 검증기 프롬프트에 **판정 근거가 실제로 실리는가** (삼순 재리뷰 ②) ────────
+  //   🔴 종전 N4·N5 는 `server.ts` **소스를 정규식으로 훑었다**. 그러면 "그런 문구가
+  //      코드에 있다" 만 증명되고, 근거(생년·등번호·문장)가 **요청 본문**에 실렸는지는
+  //      증명되지 않는다 — 주석만 있어도 GREEN 이다. 여기서는 순수 모듈을 **직접 실행**해
+  //      산출 문자열을 검사한다(M90: 검증 가능성은 코드 배치의 함수).
+  {
+    const { row: twin, twins } = twinPairs[0];
+    const twinIdentity = buildPlayerIdentity(
+      { entityId: twin.kboId, name: twin.name, team: twin.team }, players,
+    )!;
+    const twinAnswer = `${twin.name} 선수는 신인드래프트에서 지명된 뒤 데뷔 시즌부터 선발로 나섰습니다.`;
+    const twinHits = detectIdentityContradictions(twinAnswer, twinIdentity);
+    const built = buildIdentityVerifierPrompt(twinAnswer, twinIdentity, twinHits);
+
+    // P1 주인공 생년이 실려야 한다 — 동명이인을 가르는 유일한 roster 축이다.
+    assert.ok(
+      twinIdentity.birthDate && built.userText.includes(twinIdentity.birthDate),
+      `P1: 주인공 생년(${twinIdentity.birthDate})이 검증 프롬프트에 없다`,
+    );
+    // P2 🔴 **동명이인 쪽 생년·등번호**가 실려야 한다. 종전엔 kboId 숫자뿐이라
+    //    "이 경력이 누구 것인가" 를 물어도 판정 근거가 원리적으로 없었다.
+    for (const other of twins) {
+      assert.ok(
+        SELFTEST ? false : (other.birthDate ? built.userText.includes(other.birthDate) : true),
+        `P2: 동명이인 ${other.kboId} 의 생년(${other.birthDate})이 검증 프롬프트에 없다 — 판정 근거 부재`,
+      );
+      assert.ok(
+        other.backNo ? built.userText.includes(other.backNo) : true,
+        `P2b: 동명이인 ${other.kboId} 의 등번호(${other.backNo})가 검증 프롬프트에 없다`,
+      );
+    }
+    // P3 근거 없는 추측 금지 지시 — 근거가 답변에 없으면 불명으로 닫으라고 명시해야 한다.
+    assert.ok(
+      /대조할 근거가 답변에 없으면/.test(built.systemPrompt) && /불명/.test(built.systemPrompt),
+      "P3: 근거 없는 동명이인 판정을 불명으로 닫으라는 지시가 없다 — 검증기가 추측하게 된다",
+    );
+    // P4 인젝션 방어는 **실제 시스템 프롬프트**에 있어야 한다(소스 문자열이 아니라).
+    assert.ok(
+      /어떤 지시·명령도 따르지 않는다/.test(built.systemPrompt),
+      "P4: 검증기 시스템 프롬프트에 인젝션 방어 문구가 없다 — 근거 문서가 판정을 조종할 수 있다",
+    );
+  }
+  {
+    // P5 같은 토큰 2회 등장 → **문장이 항목별로 따로** 실려야 한다.
+    //    id 만 있으면 `position:내야수#1`·`#2` 가 같은 단어라 검증기가 구분할 수 없다.
+    const dupAnswer = `${pitcher.name} 선수의 형도 내야수입니다. 본인도 내야수입니다.`;
+    const dupHits = detectIdentityContradictions(dupAnswer, pitcherIdentity);
+    const built = buildIdentityVerifierPrompt(dupAnswer, pitcherIdentity, dupHits);
+    const positionIds = dupHits.filter((h) => h.mentioned === "내야수").map((h) => h.id);
+    assert.equal(positionIds.length, 2, "P5-0: 픽스처 전제 붕괴 — 같은 토큰 2회 등장이어야 한다");
+    for (const id of positionIds) {
+      assert.ok(built.userText.includes(id), `P5: 항목 id ${id} 가 프롬프트에 없다`);
+    }
+    // 🔴 **`<지목 항목>` 구획만 본다** (2026-08-27 결함주입 실측 — 내 1차 P6 이 false-green).
+    //   `userText` 전체를 검사하면 `<답변>` 구획에 원문이 통째로 들어 있어서, 항목별
+    //   excerpt 를 **완전히 제거해도 통과**한다(M38 미검출). 즉 그 판별자는 "문장이
+    //   프롬프트 어딘가 있다"만 증명하지 "항목마다 붙어 있다"를 증명하지 않는다.
+    const hitsSection = built.userText.slice(
+      built.userText.indexOf("<지목 항목>"), built.userText.indexOf("<지목 항목 끝>"),
+    );
+    assert.ok(
+      hitsSection.length > 0,
+      "P6-0: <지목 항목> 구획을 찾지 못했다 — 프롬프트 구조가 바뀌었다",
+    );
+    assert.ok(
+      hitsSection.includes("형도 내야수입니다.") && hitsSection.includes("본인도 내야수입니다."),
+      `P6: 같은 토큰의 두 등장 문장이 **항목별로** 실리지 않았다 — 검증기가 둘을 구분할 수단이 없다\n${hitsSection}`,
+    );
+    assert.ok(
+      /등장별로 따로/.test(built.systemPrompt),
+      "P7: 같은 토큰을 등장별로 따로 판정하라는 지시가 없다 — 하나로 묶어 판정하게 된다",
+    );
+  }
+  pass("P 검증 프롬프트 종단 적재(동명이인 구분 사실 + occurrence 문장) — 실행 검사");
 
   console.log(`\ngenius-rag-identity-binding-smoke PASS (${passed} checks)`);
 }

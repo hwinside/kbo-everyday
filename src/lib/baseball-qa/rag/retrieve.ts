@@ -807,6 +807,12 @@ export interface RagRequestExtras {
     field: "position" | "team" | "biography";
     expected: string;
     mentioned: string;
+    /**
+     * 오귀속으로 판정된 **그 문장**. 같은 토큰이 여러 번 나온 답변에서
+     * "포지션을 내야수로 썬 것이 틀렸다" 만 말하면 정상이었던 등장까지 고치게
+     * 된다 — 어느 문장이 문제인지를 같이 준다 (삼순 재리뷰 ①).
+     */
+    excerpt?: string;
   }[];
 }
 
@@ -856,14 +862,16 @@ export function buildRagLlmRequest(
   // 재생성 신호는 주인공 블록 **바로 뒤**에 둔다 — 무엇이 틀렸는지가 주인공 사실과 붙어 읽혀야 한다.
   // 🔴 오귀속으로 판정된 항목을 **전부** 싱는다 (삼순 2026-08-27 ②).
   if (extras.identityConflicts && extras.identityConflicts.length > 0) {
-    const lines = extras.identityConflicts.map(({ field, expected, mentioned }) => {
+    const lines = extras.identityConflicts.map(({ field, expected, mentioned, excerpt }) => {
       if (field === "biography") {
         // 같은 팀·같은 포지션 동명이인 — 소속·포지션은 같아서 구분될 수 없고
         // 경력·생년·기록이 섞인다. 누구의 이력인지를 명시해 다시 쓰게 한다.
         return `직전 답변은 동명이인(kboId ${mentioned})의 경력·생년·기록을 질문 대상(kboId ${expected})의 것으로 서술했다. 질문 대상 본인의 이력만 쓴다.`;
       }
       const label = field === "team" ? "소속 구단" : "포지션";
-      return `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.`;
+      // 어느 등장이 문제인지를 문장으로 특정한다 — 정상 문장까지 고치게 하지 않는다.
+      const where = excerpt ? ` 해당 문장: "${excerpt}"` : "";
+      return `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.${where}`;
     });
     sections.push(
       "<재작성 지시 — 직전 답변이 질문 대상이 아닌 인물의 속성을 붙였다>",

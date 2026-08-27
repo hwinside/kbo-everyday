@@ -3861,8 +3861,19 @@ export interface PlayerIdentity {
    *   실측 3쌍: 69516/56664(김현수 KIA 투수) · 52731/56709(박준영 한화 투수) ·
    *        60146/51454(이승현 삼성 투수).
    *   이 배열이 비었으면 모순 토큰과 무관하게 **무조건 검증을 태운다**.
+   *
+   * 🔴 **kboId 만 들고 있으면 검증기가 판정할 수 없다** (삼순 재리뷰 ②).
+   *   "이 경력이 누구 것인가" 를 묻는데 상대방 정보가 숫자 ID 뿐이면 모른다는 답밖에
+   *   나올 수 없다. 그래서 **양쪽을 가르는 roster 사실**(생년·등번호)를 함께 싣는다.
    */
-  indistinguishableNamesakes: string[];
+  indistinguishableNamesakes: NamesakeFacts[];
+}
+
+/** 구분 불가 동명이인을 가르는 roster 사실 — 검증 LLM 의 유일한 판정 근거다. */
+export interface NamesakeFacts {
+  kboId: string;
+  birthDate: string | null;
+  backNo: string | null;
 }
 
 /** 주인공 결속 — 블록과 검증값을 **한 번에** 만들어 둘이 어긋나지 않게 한다. */
@@ -3876,12 +3887,17 @@ export function buildPlayerIdentity(
   // 🔴 닫힌 모순 필터로는 **원리적으로 구분 불가**한 동명이인 (삼순 2026-08-27 ③).
   //   이름·팀·포지션이 전부 같으면 모순 토큰이 0건이라 검증 LLM 이 한 번도 안 돌고,
   //   동명이인의 경력·생년·기록 서술이 주인공 것처럼 그대로 서빙된다.
-  const indistinguishableNamesakes = players
+  const indistinguishableNamesakes: NamesakeFacts[] = players
     .filter((row) => row.kboId !== player.kboId
       && row.name === player.name
       && (row.team ?? null) === (player.team ?? null)
       && (row.position ?? null) === (player.position ?? null))
-    .map((row) => row.kboId);
+    // 양쪽을 가르는 사실까지 싣는다 — kboId 만 주면 검증기가 판정 근거가 없다.
+    .map((row) => ({
+      kboId: row.kboId,
+      birthDate: row.birthDate ?? null,
+      backNo: row.backNo ?? null,
+    }));
   return {
     block,
     kboId: player.kboId,
@@ -3986,11 +4002,26 @@ export function renderIdentitySentence(identity: PlayerIdentity): string | null 
  *   ID 는 내용에서 파생된다(순서·인덱스 아님) — 같은 답변이면 항상 같은 ID 집합이다.
  */
 export interface IdentityContradiction {
-  /** 안정 ID — `position:내야수` · `team:두산` · `biography:56664` 형식. */
+  /**
+   * 안정 ID — `position:내야수#1` · `team:두산#2` · `biography:56664` 형식.
+   *
+   * 🔴 **토큰이 아니라 occurrence 단위**다 (삼순 2026-08-27 재리뷰 ①).
+   *   종전엔 `seen(token)` 으로 같은 토큰을 합쳐서 `형도 내야수 / 본인도 내야수` 가
+   *   `position:내야수` **1건**으로 접혔다 — 그러면 앞의 비귀속 판정 하나로 뒤의
+   *   오귀속이 다시 가려진다(②에서 고쳤다고 한 바로 그 구조가 토큰 층에 남아 있었다).
+   *   같은 토큰의 n번째 등장에 `#n` 을 붙여 **혼합 귀속을 표현 가능**하게 만든다.
+   *   `#n` 은 등장 순서(문자 위치 오름차순)라 같은 답변이면 항상 같은 ID 집합이다.
+   */
   id: string;
   field: "position" | "team" | "biography";
   expected: string;
   mentioned: string;
+  /**
+   * 이 occurrence 가 들어있는 **문장**. 검증 LLM 이 같은 토큰의 서로 다른 등장을
+   * 구분하려면 위치 정보가 필요하다 — ID 만 주면 둘 다 같은 문자열이라 판정 불가다.
+   * `biography` 는 답변 전체가 대상이라 빈 문자열이다.
+   */
+  excerpt: string;
 }
 
 /** 검증 LLM 의 판정 — strict JSON 밖의 모든 결과는 "불명" 으로 접는다(fail-close). */
@@ -4064,17 +4095,24 @@ export function detectIdentityContradictions(
 ): IdentityContradiction[] {
   if (!identity || !answer) return [];
   const found: IdentityContradiction[] = [];
+  // occurrence 를 (문자 위치, 토큰) 으로 모은 뒤 위치 오름차순으로 `#n` 을 매긴다.
+  // 정렬 키가 위치라 같은 답변이면 항상 같은 ID 집합이다(순서 의존 아님).
+  const ordinal = new Map<string, number>();
+  const nextId = (prefix: string) => {
+    const n = (ordinal.get(prefix) ?? 0) + 1;
+    ordinal.set(prefix, n);
+    return `${prefix}#${n}`;
+  };
+  type Raw = { key: string; index: number; field: "position" | "team"; expected: string; mentioned: string };
+  const raws: Raw[] = [];
   if (identity.position) {
-    // 🔴 **모든 occurrence** 를 올린다 (삼순 2026-08-27 ② — 종전 `.find` 는 첫 건만 봤다).
-    //   `형은 내야수입니다. 본인은 포수입니다` 에서 첫 건만 보면 그게 제3자로 판정될 때
-    //   뒤의 오귀속이 그대로 나간다. 토큰 단위로 중복제거해 전부 검증 LLM 에 올린다.
-    const seen = new Set<string>();
+    // 🔴 **모든 occurrence** 를 올린다 (삼순 ② + 재리뷰 ①).
+    //   토큰 중복제거를 하지 않는다 — `형도 내야수 / 본인도 내야수` 의 두 등장은
+    //   서로 다른 판정 대상이고, 하나로 접으면 혼합 귀속을 표현할 수 없다.
     for (const token of tokenizePositions(answer)) {
       if (positionCompatible(identity.position, token.token)) continue;
-      if (seen.has(token.token)) continue;
-      seen.add(token.token);
-      found.push({
-        id: `position:${token.token}`,
+      raws.push({
+        key: `position:${token.token}`, index: token.index,
         field: "position", expected: identity.position, mentioned: token.token,
       });
     }
@@ -4086,29 +4124,65 @@ export function detectIdentityContradictions(
       const lowered = answer.toLowerCase();
       // 🔴 첫 팀에서 `break` 하지 않는다 (삼순 ②) — `두산전 호투 + 롯데 소속` 처럼
       //   비귀속과 귀속이 섞이면 앞에 나온 비귀속 하나로 뒤의 오귀속이 가려진다.
+      // 🔴 그리고 **팀당 1건도 아니다** (재리뷰 ①) — 같은 구단이 두 문장에 각각
+      //   상대팀/소속으로 나오면 둘 다 올려야 한다. 별칭별·등장별로 전부 수집한다.
       for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
         if (canonical === subjectTeam) continue;
-        if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) {
-          found.push({
-            id: `team:${canonical}`,
-            field: "team", expected: identity.team, mentioned: canonical,
-          });
+        for (const alias of [...shorts, ...nicks]) {
+          const needle = alias.toLowerCase();
+          let at = lowered.indexOf(needle);
+          while (at >= 0) {
+            raws.push({
+              key: `team:${canonical}`, index: at,
+              field: "team", expected: identity.team, mentioned: canonical,
+            });
+            at = lowered.indexOf(needle, at + needle.length);
+          }
         }
       }
     }
+  }
+  raws.sort((a, b) => (a.index - b.index) || a.key.localeCompare(b.key));
+  for (const raw of raws) {
+    found.push({
+      id: nextId(raw.key), field: raw.field,
+      expected: raw.expected, mentioned: raw.mentioned,
+      excerpt: sentenceAt(answer, raw.index),
+    });
   }
   // 🔴 **닫힌 집합으로는 구분 불가한 동명이인** (삼순 2026-08-27 ③).
   //   이름·팀·포지션이 전부 같으면 위 두 축은 원리적으로 0건이다 — 그럼 검증 LLM 이
   //   한 번도 안 돌고 동명이인의 **경력·생년·기록**이 주인공 것처럼 서빙된다(설계상 통과).
   //   닫힌 토큰으로는 잡을 수 없는 곳이라 **모순 유무와 무관하게** 검증을 강제한다.
   //   비용은 실측 6명(3쌍)에만 붙는다 — 나머지 답변은 종전대로 모순 0건이면 호출 0회다.
-  for (const namesakeId of identity.indistinguishableNamesakes) {
+  for (const namesake of identity.indistinguishableNamesakes) {
     found.push({
-      id: `biography:${namesakeId}`,
-      field: "biography", expected: identity.kboId, mentioned: namesakeId,
+      id: `biography:${namesake.kboId}`,
+      field: "biography", expected: identity.kboId, mentioned: namesake.kboId,
+      excerpt: "",
     });
   }
   return found;
+}
+
+/**
+ * `index` 가 속한 **문장**을 돌려준다 — 검증 LLM 이 occurrence 를 구분할 위치 근거.
+ *
+ * 문장 경계는 한국어 종결부호(`.!?`)와 줄바꿈으로만 자른다. 못 자르면 답변 전체가
+ * 한 문장이라는 뜻이라 그대로 돌려준다(길면 잘라 토큰 비용을 막는다).
+ */
+function sentenceAt(text: string, index: number): string {
+  const MAX = 160;
+  let start = 0;
+  for (let i = Math.min(index, text.length - 1); i >= 0; i -= 1) {
+    if (/[.!?\n]/.test(text[i]!)) { start = i + 1; break; }
+  }
+  let end = text.length;
+  for (let i = index; i < text.length; i += 1) {
+    if (/[.!?\n]/.test(text[i]!)) { end = i + 1; break; }
+  }
+  const sentence = text.slice(start, end).trim();
+  return sentence.length > MAX ? `${sentence.slice(0, MAX)}…` : sentence;
 }
 
 /**
