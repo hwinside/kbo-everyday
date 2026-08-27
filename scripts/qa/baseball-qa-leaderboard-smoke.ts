@@ -544,11 +544,25 @@ const FULL_ANSWER =
   "맛자욱이라는 별명은 먹방 예능에서 보여준 남다른 먹성 때문에 팬들이 붙인 것입니다. " +
   "데뷔 초 방송 출연이 화제가 된 뒤 응원단이 먼저 부르기 시작했고, 홈 경기 응원가에도 등장하면서 널리 퍼졌다고 알려져 있습니다. " +
   "본인도 그 별명을 마음에 들어 해 인터뷰에서 직접 언급할 만큼 지금까지 정착했다고 합니다.";
+
+/**
+ * 🔴 신원 첫 문장은 **코드가 roster 로 렌더해 본문 앞에 붙인다** (D안, 2026-08-20).
+ *   그래서 서빙 답변은 `<신원문장> <LLM 본문> …출처` 구조가 된다.
+ *   이 게이트가 보는 계약은 "**본문이 잘리지 않는다**" 이지 "답변이 본문으로 시작한다" 가
+ *   아니므\ë¡œ, `startsWith` 를 `includes` 로 낮추는 대신 **신원문장+본문 exact 접두**로
+ *   고정한다 — 그래야 앞단에 다른 것이 끼어드는 회귀도 같이 잡힌다.
+ */
+const RAG_IDENTITY_SENTENCE = "맛자욱 선수는 LG 소속 내야수입니다.";
+const servedPrefix = (body: string) => `${RAG_IDENTITY_SENTENCE} ${body}`;
+
 checkAsync("E2E: 이유·배경 질문의 세 문장 답변이 잘리지 않고 그대로 나간다 (캡처 성의 축)", async () => {
   const { deps, counters } = ragDeps(FULL_ANSWER);
   const result = await answerQuestion("u1", "맛자욱 별명이 생긴 이유가 뭐야?", deps);
-  // 본문 세 문장이 한 글자도 잃지 않고 나가고, 출처 표기만 뒤에 붙는다.
-  assert.ok(result.answer.startsWith(FULL_ANSWER), `세 문장 전체가 그대로 나가야 한다: ${result.answer}`);
+  // 본문 세 문장이 한 글자도 잃지 않고 나가고, 앞에 roster 신원문장·뒤에 출처만 붙는다.
+  assert.ok(
+    result.answer.startsWith(servedPrefix(FULL_ANSWER)),
+    `신원문장 + 세 문장 전체가 그대로 나가야 한다: ${result.answer}`,
+  );
   assert.ok(result.answer.includes("출처"), "출처 표기 유지");
   assert.ok(FULL_ANSWER.length > 160, "종전 상한(160)을 실제로 넘는 표본이어야 상향이 검증된다");
   assert.equal(counters.llm, 1);
@@ -567,7 +581,10 @@ checkAsync("E2E 실효축: 종전 상한(320)을 넘는 풍부한 답변이 잘�
   assert.ok(rich.length <= RAG_ANSWER_MAX_CHARS, "표본이 새 상한 안이어야 통과가 정상이다");
   const { deps } = ragDeps(rich);
   const result = await answerQuestion("u1", "맛자욱 별명이 생긴 이유가 뭐야?", deps);
-  assert.ok(result.answer.startsWith(rich), `본문 전체가 그대로 나가야 한다: ${result.answer}`);
+  assert.ok(
+    result.answer.startsWith(servedPrefix(rich)),
+    `신원문장 + 본문 전체가 그대로 나가야 한다: ${result.answer}`,
+  );
 });
 
 (async () => {
