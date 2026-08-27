@@ -39,7 +39,6 @@ import {
   isRagAttemptPath,
   isRagDiscardReason,
   numericTokenCount,
-  RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE,
   type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
@@ -1301,6 +1300,19 @@ export interface QaDeps {
      *   폐기가 "구제 가능한 정답이었는가"의 분류는 **표본 감사**로만 확정한다.
      */
     ragDiscardNumericCount?: number | null;
+    /**
+     * 서빙 근거의 **top1 코사인 거리** (2026-08-27, 삼순 재GO 조건 ③).
+     *
+     * 이 PR 은 `RAG_DOCUMENT_MAX_DISTANCE = 0.42` 로 "근거가 있는가" 를 가른다. 임계를
+     * 값으로 두면서 그 값이 실제로 무엇을 자르는지 관측하지 않으면 재보정이 감이 된다 —
+     * 0.42 는 표본 15건 파일럿이라 프로덕션 분포를 모아야 확정할 수 있다.
+     *
+     * ⚠️ **관측값이다** — 읽고 분기하는 서빙 로직을 만들지 않는다.
+     * ⚠️ `null` = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
+     *   **0 과 섞지 않는다** — 0 은 완전 일치라 부재를 0 으로 적으면 분포가 왼쪽으로
+     *   오염되고 임계가 실제보다 느슨해 보인다.
+     */
+    ragEvidenceTopDistance?: number | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -1340,6 +1352,20 @@ export interface RagObservation {
   ragQuestionNumericCount: number;
   ragDiscardReason: RagDiscardReason | null;
   ragDiscardNumericCount: number | null;
+  /**
+   * 서빙에 쓰인 근거의 **top1 코사인 거리** (2026-08-27, 삼순 재GO 조건 ③).
+   *
+   * 🔴 왜 남기는가 — 이 PR 은 `RAG_DOCUMENT_MAX_DISTANCE = 0.42` 로 "근거가 있는가" 를
+   *   가른다. 그런데 그 임계가 실제로 어떤 분포를 자르고 있는지 **관측하지 않으면
+   *   재보정이 영원히 감이 된다.** 0.42 는 표본 15건 파일럿이지 캘리브레이션이 아니므로
+   *   프로덕션 분포를 모아야 확정할 수 있다.
+   *
+   * ⚠️ **관측값이다** — 이 칸을 읽고 분기하는 서빙 로직을 만들지 않는다.
+   * ⚠️ `null` = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
+   *   **0 과 섞지 않는다** — 0 은 "완전 일치" 라서 부재를 0 으로 적으면 분포가 왼쪽으로
+   *   오염되고 임계가 실제보다 느슨해 보인다.
+   */
+  ragEvidenceTopDistance: number | null;
 }
 
 /**
@@ -1359,13 +1385,30 @@ function ragObservation(
   attemptPath: RagAttemptPath,
   question: string,
   validated: ValidatedRagAnswer,
+  /**
+   * 서빙 근거. top1 거리를 관측값으로 남긴다(삼순 재GO ③).
+   * 생략하면 `null` — 부재를 0 으로 응급처리하지 않는다.
+   */
+  evidence?: readonly RagEvidence[],
 ): RagObservation {
   return {
     ragAttemptPath: attemptPath,
     ragQuestionNumericCount: numericTokenCount(question),
     ragDiscardReason: discardReasonOf(validated),
     ragDiscardNumericCount: discardNumericCountOf(validated),
+    ragEvidenceTopDistance: evidenceTopDistanceOf(evidence),
   };
+}
+
+/**
+ * 근거 배열의 top1 거리 — **관측값일 때만** 숫자를 돌려준다.
+ *
+ * ⚠️ 부재(레거시 RPC·선수/구단/뉴스 경로처럼 거리를 안 싣는 경로)는 `null` 이다.
+ *   0 으로 응급처리하면 "가장 가까운 근거" 로 읽혀 임계 재보정이 반대로 간다.
+ */
+function evidenceTopDistanceOf(evidence?: readonly RagEvidence[]): number | null {
+  const top = evidence?.[0]?.distance;
+  return typeof top === "number" && Number.isFinite(top) ? top : null;
 }
 
 /**
@@ -3504,6 +3547,12 @@ export interface StoredQaFinal {
   ragDiscardReason?: RagDiscardReason | null;
   ragDiscardNumericCount?: number | null;
   /**
+   * 서빙 근거 top1 거리 — 위 4칸과 **같은 이유**로 envelope 에 보존한다.
+   * `store 성공 → log 전 crash → retry` 에서 재생 경로가 envelope 만 보고 로그를 쓰므로
+   * 여기 없으면 임계 재보정 관측이 그 턴만 조용히 null 이 된다.
+   */
+  ragEvidenceTopDistance?: number | null;
+  /**
    * 가드 소유 질문이지만 **`RULE_TERM` 재질의 답이 정규 검증을 통과**했음 표식
    * (2026-08-22, 삼순 NO-GO P0②).
    *
@@ -3579,6 +3628,12 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
       ? { ragQuestionNumericCount: final.ragQuestionNumericCount } : {}),
     ...(isNonNegativeInteger(final.ragDiscardNumericCount)
       ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
+    // 거리는 정수가 아니라 0~2 실수다. **유한 실수일 때만** 복원하고 그 외는 버린다 —
+    // 부재를 0 으로 응급처리하면 "완전 일치" 로 읽혀 임계 재보정이 반대로 간다.
+    ...(typeof final.ragEvidenceTopDistance === "number"
+      && Number.isFinite(final.ragEvidenceTopDistance)
+      && final.ragEvidenceTopDistance >= 0
+      ? { ragEvidenceTopDistance: final.ragEvidenceTopDistance } : {}),
     // ⚠️ `=== true` 로만 복원한다 — 구버전·손상 envelope 의 truthy 값이 검증 통과로
     //   오인되면 자유문장 서빙 0 계약이 조용히 뚚린다(provenance 는 값과 같은 조건에 결속).
     ...(final.statRuleTermVerified === true ? { statRuleTermVerified: true } : {}),
@@ -4461,83 +4516,18 @@ async function answerPlayerDescriptiveQuestion(
  * 그래서 이 함수는 **LLM 경계에 들어가기 전에만** null을 돌릴 수 있다(근거 0건).
  * 경계를 지나면 그 호출을 이미 소비했으므로 아래 일반 LLM로 내려보내지 않고 여기서 종결한다.
  */
-/**
- * 질문에서 **결속된 선수 이름을 지운 잔여 문장**을 만든다.
- *
- * 왜 이름을 지우는가 — 이름이 남아 있으면 질문 벡터가 그 선수 문서 쪽으로 끌려가서
- * "이 사람을 묻는 질문인가, 이 규칙을 묻는 질문인가" 가 흐려진다. 실측(2026-08-27):
- *   `문보경 보크 규칙 알려줘` 원문 → tier1 0.3374 / tier2 0.3242 — 선수가 이긴다(오답)
- *   잔여 `보크 규칙 알려줘`      → tier1 0.3006 / tier2 0.4531 — 규칙집이 이긴다(정답)
- *
- * ⚠️ 이름만 지우고 조사는 그대로 둔다(`문보경의 별명` → `의 별명`). 조사까지 지우려면
- *   한국어 조사 사전이 필요한데 그건 닫힌 집합이 아니라 또 룰 핑퐁이다. 임베딩은 고립 조사에
- *   둔감하다 — 위 실측 11케이스가 그 상태에서 나온 값이다.
- * ⚠️ 잔여가 너무 짧으면(이름이 질문의 거의 전부) 원문을 그대로 쓴다. `문보경` 같은 질문의
- *   잔여는 빈 문자열이라 어떤 문서와도 무의미하게 가까워질 수 있다.
- */
-export function officialOwnershipProbeQuestion(question: string, playerName: string): string {
-  if (playerName.length < 2) return question;
-  // 정규화 없이 원문에서 지운다 — 임베딩은 원문을 받으므로 정규화형을 넘기면 다른 문장이 된다.
-  const stripped = question.split(playerName).join(" ").replace(/\s+/g, " ").trim();
-  return stripped.length >= 2 ? stripped : question;
-}
-
-/**
- * 선수가 결속된 질문의 **정본이 공식 문서(tier1)인가**를 근거 거리로 판정한다.
- *
- * 반환값이 근거 배열이면 공식 문서가 소유권을 가진다(그 근거를 그대로 답변에 쓴다).
- * `null` 이면 선수 경로가 소유권을 유지한다.
- *
- * 🔴 판정 기준은 룰이 아니라 **잔여 질문의 tier1 top1 거리**다(삼순 2026-08-27 P0-2).
- *   종전 `Boolean(enabledPlayerCandidate)` 는 `문보경 보크 규칙 알려줘` 처럼 선수가 예시
- *   행위자일 뿐인 질문까지 선수 RAG 에 넘겼다.
- *
- * ⚠️ **판정 불능은 전부 선수 유지**다 — 검색 실패·근거 0건·거리 미제공(레거시 RPC) 모두
- *   `null`. 소유권을 빼앗는 것은 "근거가 있다" 보다 강한 주장이라 확실할 때만 한다.
- *   특히 거리 미제공을 통과시키면 migration 이전 배포에서 소유권이 통째로 뒤집힌다.
- */
-async function resolveOfficialOwnership(
-  question: string,
-  candidateName: string,
-  deps: QaDeps,
-): Promise<RagEvidence[] | null> {
-  const probe = officialOwnershipProbeQuestion(question, candidateName);
-  let evidence: RagEvidence[];
-  try {
-    evidence = selectEvidence(await deps.searchOfficialRag!(probe));
-  } catch {
-    return null; // 조회 실패 = 판정 불능 → 선수 유지.
-  }
-  const top = evidence[0];
-  if (!top) return null;
-  // 거리 미제공(레거시 RPC·미배선)은 0 과 섞지 않는다 — 관측값일 때만 판정한다.
-  if (typeof top.distance !== "number") return null;
-  if (top.distance > RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE) return null;
-  if (!allowsNumericAnswer(evidence)) return null;
-  return evidence;
-}
-
 async function answerOfficialDocumentQuestion(
   userId: string,
   question: string,
   questionNorm: string,
   remaining: number,
   deps: QaDeps,
-  /**
-   * 소유권 판정이 이미 확보한 근거. 있으면 **재검색하지 않는다** — 같은 질문에 벡터 검색을
-   * 두 번 태우면 비용이 두 배가 되고, 두 번의 결과가 다르면 판정과 답변의 근거가 갈린다.
-   */
-  preselectedEvidence: RagEvidence[] | null = null,
 ): Promise<QaResult | null> {
   let evidence: RagEvidence[];
-  if (preselectedEvidence) {
-    evidence = preselectedEvidence;
-  } else {
-    try {
-      evidence = selectEvidence(await deps.searchOfficialRag!(question));
-    } catch {
-      return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
-    }
+  try {
+    evidence = selectEvidence(await deps.searchOfficialRag!(question));
+  } catch {
+    return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
   }
   // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
   if (evidence.length === 0) return null;
@@ -4594,13 +4584,13 @@ async function answerOfficialDocumentQuestion(
   if (validated.kind === "general") {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
       answer: validated.answer, source: "llm",
-      toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated),
+      toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
       toneCompliant: validated.toneCompliant,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: validated.answer, source: "llm", remaining };
   }
@@ -4609,12 +4599,12 @@ async function answerOfficialDocumentQuestion(
     // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
     // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated),
+      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
@@ -4624,13 +4614,13 @@ async function answerOfficialDocumentQuestion(
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
     answer, source: "rag", sourceUrl,
-    toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated),
+    toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
   }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
-    ...ragObservation("official", question, validated),
+    ...ragObservation("official", question, validated, evidence),
   });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -5879,48 +5869,40 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //       로 이미 종결한다(실측). 즉 방어를 **라우팅 라벨에서 근거 거리로 옮긴 것**이지
   //       없앤 것이 아니다.
   //
-  //   🔴 **선수 결속 질문의 소유권은 이름을 지운 잔여 질문의 근거 거리로 가른다** (삼순 P0-2).
-  //     1차 시도의 `ownedByEntityRag = Boolean(enabledPlayerCandidate)` 는 양보 폭이 너무
-  //     넓었다 — `문보경 보크 규칙 알려줘`·`임찬규 투구판 이탈 규칙` 처럼 **선수는 예시
-  //     행위자일 뿐 정본이 tier1 조문**인 질문까지 선수 RAG 가 가져갔다. 이건 `LG 투수 보크
-  //     규칙` 을 구단 문서가 뺏으면 안 된다는 삼순 2026-08-07 P0-1 의 선수 버전이다.
+  //   🔴 **엔티티(선수·구단)가 결속된 질문은 이 PR 이 건드리지 않는다** (하린아빠 2026-08-27 ⓒ).
+  //     이 PR 의 목적은 "사전 밖 **순수 룰 질문**이 정본 근거에 도달하게" 하는 것 하나다.
+  //     엔티티가 결속된 질문의 소유권(`문보경 보크 규칙 알려줘` 가 선수냐 규칙집이냐)은
+  //     **별개 문제**이고, 실측 결과 이 PR 안에서 풀 수 없다는 것이 확인됐다:
   //
-  //     판정은 다시 룰이 아니라 **근거**로 한다(`resolveOfficialOwnership`). 이름을 지운
-  //     잔여 질문이 tier1 조문에 충분히 가까우면 정본은 규칙집이고, 아니면 선수 문서다.
-  //     이름을 지우는 이유는 이름이 남으면 벡터가 그 선수 문서 쪽으로 끌려가 "무엇을 묻는
-  //     질문인가" 가 흐려지기 때문이다 — 실측으로 뒤집힌다:
-  //       `문보경 보크 규칙` 원문 → tier1 0.3374 / tier2 0.3242 (선수가 이김 = 오답)
-  //       잔여 `보크 규칙 알려줘` → tier1 0.3006 / tier2 0.4531 (규칙집이 이김 = 정답)
+  //       잔여 질문 기준 상대 비교(margin = 엔티티 근거 거리 − tier1 거리, 20케이스):
+  //         official 이 정본인 것들의 margin 최소 = 0.0759 (`연장전 규칙 알려줘`)
+  //         엔티티가 정본인 것들의 margin 최대 = 0.0850 (`삼진 당한 경기 알려줘`)
+  //       **두 분포가 뒤집혀 있다.** 어떤 임계를 잡아도 한쪽이 틀린다. 단독 임계도 같다 —
+  //       `삼진 당한 경기 알려줘` 는 tier1 0.2918 로 진짜 규칙 질문보다 더 가깝다.
   //
-  //     ⚠️ 임계는 서빙 임계(0.42)보다 **엄격한 0.38** 이다. 소유권을 빼앗는 것은 "근거가
-  //       있다" 보다 강한 주장이므로 더 확실할 때만 한다. 실측 경계는 tier1 정본
-  //       0.2698~0.3540 / 선수 정본 0.4103~0.4817 이고 11케이스 중 11 정답이다.
-  //     ⚠️ 거리를 못 받으면(레거시·조회 실패) **선수가 유지**한다 — 부재와 0 을 섞지 않는다.
+  //     이유: 임베딩 거리는 "무슨 단어가 있나" 에 반응하고 **"무엇을 묻나" 에는 반응하지
+  //     않는다.** `삼진 당한 경기` 는 룰 어휘를 쓰지만 사건을 묻는 문장이다. 여기서 임계를
+  //     더 조이는 것은 반례를 하나 옮기는 것일 뿐이라
+  //     (`open_language_never_closes_with_rules` 의 거리 버전) 하지 않는다.
   //
-  //     ⚠️⚠️ **구단·뉴스는 여기 넣지 않는다** (1차 시도에서 게이트가 잡은 내 오류).
-  //       처음엔 "엔티티가 있으면 다 양보" 로 짰는데, `LG 경기에서 점수가 같으면 연장전
-  //       규칙은?` 이 구단 소유로 읽혀 공식 조문 경로를 잃었다. 구단 RAG 블록이 공식 RAG
-  //       **뒤에** 놓인 것 자체가 그 계약이라, 여기서 앞당기면 계약이 뒤집힌다.
-  //     🔴 **구단도 같은 방식으로 가른다** — 1차 수정에서 선수만 다루고 구단을 빼놓았다가
-  //       `qa:genius-discard-reason` 이 회귀를 잡았다: `LG 트윈스 역사 알려줘` 가
-  //       `ragAttemptPath="official"` 로 새서 구단 문서 대신 규칙집이 답했다.
-  //       종전에는 `!scopeGate` 가 이걸 막았는데, 그 조건을 푸니 보호가 같이 풀렸다.
-  //       ⚠️ `isTeamRagServableQuestion` 으로 가르지 않는다 — 실측해보니 `LG 날씨 알려줘`
-  //         까지 true 라 판별력이 0 이다(그 술어는 다른 일을 한다).
-  const officialOwnershipTarget =
-    enabledPlayerCandidate?.name ?? resolveRagTeamCandidate(question)?.name ?? null;
-  const officialOwnership = officialOwnershipTarget && deps.searchOfficialRag && deps.callOfficialRagLlm
-    ? await resolveOfficialOwnership(question, officialOwnershipTarget, deps)
-    : null;
-  const ownedByEntityRag = Boolean(officialOwnershipTarget) && officialOwnership === null;
+  //     그래서 **엔티티 결속 질문은 main 계약 그대로 둔다** — 소유권 판정을 새로 만들지
+  //     않고, `isSupportedRuleTermQuestion` 이 종전처럼 진입을 가른다. 이러면
+  //     `문보경 보크 규칙 알려줘` 는 main 과 동일하게 official 로 가고(이 술어가 true),
+  //     `문보경 별명 알려줘` 는 동일하게 선수 RAG 로 간다.
+  //     ⚠️ 즉 이 PR 은 엔티티 결속 질문에 대해 **새 결함을 만들지도, 기존 결함을 고치지도
+  //       않는다.** 삼순 P0-2 가 지적한 개선은 혼합 라벨셋이 필요한 별도 PR 로 이월한다.
+  const ownedByEntityRag =
+    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;
   if (
-    !ownedByEntityRag &&
+    // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은
+    // 엔티티가 없는 순수 룰 질문에만 적용된다.
+    (ownedByEntityRag
+      ? isSupportedRuleTermQuestion(question, glossary, players)
+      : true) &&
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(
-      userId, question, questionNorm, remaining, deps, officialOwnership,
-    );
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;
   }
 

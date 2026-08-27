@@ -19,8 +19,8 @@
  *   N1  `오늘 점심`         → 공식 근거 0건 → official 미서빙
  *   N2  `파워히터`          → 〃
  *   N3  `고춧가루 시리즈`   → 〃
- *   O1  `문보경 별명`       → **선수 RAG**(tier2). 공식 LLM 호출 0
- *   O2  `문보경 보크 규칙`  → **공식 RAG**(tier1). 선수 RAG 호출 0
+ *   E1~E5 **엔티티 결속 질문은 main 계약 그대로**(하린아빠 2026-08-27 ⓒ) —
+ *         이 PR 의 개방은 엔티티가 없는 순수 룰 질문에만 적용된다.
  *
  * ── 구조 축 (실행으로 못 보는 것만) ────────────────────────────────────────
  *   B  거리 임계가 RPC 호출에 실린다 (개수 판정 폐기)
@@ -49,7 +49,6 @@ import {
 } from "../../src/lib/baseball-qa/pipeline";
 import {
   RAG_DOCUMENT_MAX_DISTANCE,
-  RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE,
   RAG_GROUNDED_SENTINEL,
   type RagEvidence,
 } from "../../src/lib/baseball-qa/rag/retrieve";
@@ -77,8 +76,17 @@ const MEASURED_DISTANCE: Record<string, number> = {
   "포스아웃 상황": 0.2689,
   "이닝 교대 조건": 0.2830,
   "보크 규칙": 0.2849,
-  "보크 규칙 알려줘": 0.3006,
-  // 후보가 안 잡히는 형태 — 원문 그대로 공식 검색을 탄다(잔여 치환 없음).
+  // 🔴 엔티티 결속 질문 — **원문 그대로** 검색된다(소유권 probe 폐기 후 잔여 치환 없음).
+  //   전부 서빙 임계 0.42 **안**이라는 것이 E 축의 무대다: 거리로는 안 갈리므로
+  //   라우팅을 가르는 것은 사전 계약(`isSupportedRuleTermQuestion`)뿐이다.
+  //   즉 이 fixture 는 "개방이 엔티티 질문까지 새면 전부 official 로 간다"는 조건을
+  //   실제로 성립시킨다 — 무대가 없으면 E·V 축이 무증상이 된다(M90).
+  "문보경 보크 규칙 알려줘": 0.3374,
+  "임찬규 투구판 이탈 규칙": 0.3082,
+  "LG 경기에서 점수가 같으면 연장전 규칙은?": 0.2953,
+  "문보경 별명 알려줘": 0.3090,
+  "LG 트윈스 역사 알려줘": 0.3017,
+  "문보경 삼진 당한 경기 알려줘": 0.2965,
   "문보경 보크 규칙": 0.3349,
   // 야구 무관 / tier1 에 정의가 없는 질문 — 임계 밖
   "오늘 점심": 0.4480,
@@ -232,97 +240,63 @@ async function main() {
   }
   pass("N 근거 없는 질문 3종 — official 미서빙 + 공식 LLM 0 + 종전 경로 유지");
 
-  // ── O. 선수 결속 질문의 소유권 (삼순 P0-2) ────────────────────────────────
-  //   O1 은 선수 문서가 정본, O2 는 선수가 예시 행위자일 뿐 tier1 조문이 정본이다.
-  //   판정은 룰이 아니라 **이름을 지운 잔여 질문의 근거 거리**로 한다.
-  {
-    const { result, calls } = await run("문보경 별명");
+  // ── E. 엔티티 결속 질문은 main 계약 그대로 (하린아빠 2026-08-27 ⓒ) ────────
+  //
+  //   🔴 이 PR 은 엔티티(선수·구단)가 결속된 질문의 라우팅을 **바꾸지 않는다.**
+  //     앞선 커밋에서 나는 소유권을 근거 거리로 가르려 했는데(잔여 질문 probe + 임계),
+  //     실측으로 그 접근이 원리적으로 안 갈린다는 게 확인됐다 — 잔여 질문 상대 비교에서
+  //       official 정본 margin 최소 0.0759 (`연장전 규칙 알려줘`)
+  //       엔티티 정본 margin 최대 0.0850 (`삼진 당한 경기 알려줘`)
+  //     로 **두 분포가 뒤집힌다.** 임베딩 거리는 "무슨 단어가 있나"에 반응하고 "무엇을
+  //     묻나"에는 반응하지 않아서, 룰 어휘를 쓴 사건 질문이 진짜 규칙 질문보다 가깝다.
+  //
+  //   그래서 엔티티 결속 질문은 `isSupportedRuleTermQuestion`(main 계약)이 그대로 가른다.
+  //   이 축은 **그 동치가 실제로 성립하는지**를 종단 실행으로 고정한다 — 소유권을 "고쳤다"가
+  //   아니라 "건드리지 않았다"가 이 PR 의 주장이므로, 그 주장 자체를 게이트로 만든다.
+  //   ⚠️ 삼순 P0-2 가 지적한 개선(`문보경 보크 규칙 알려줘`)은 여기서 해결되지 않는다.
+  //     main 과 동일하게 official 로 가고, 진짜 소유권 문제는 별도 PR 로 이월된다.
+  const ENTITY_PARITY: Array<{ q: string; want: "official" | "entity"; why: string }> = [
+    // 사전이 룰 질문으로 인정 → main 과 동일하게 공식 RAG
+    { q: "문보경 보크 규칙 알려줘", want: "official", why: "사전 true(선수 결속) — main 동일" },
+    { q: "임찬규 투구판 이탈 규칙", want: "official", why: "사전 true(후보 미결속) — main 동일" },
+    { q: "LG 경기에서 점수가 같으면 연장전 규칙은?", want: "official", why: "사전 true(구단 결속) — main 동일" },
+    // 사전이 룰 질문으로 안 봄 → main 과 동일하게 엔티티 경로
+    { q: "문보경 별명 알려줘", want: "entity", why: "사전 false — 선수 문서가 정본" },
+    { q: "LG 트윈스 역사 알려줘", want: "entity", why: "사전 false — 구단 문서가 정본" },
+  ];
+  for (const { q, want, why } of ENTITY_PARITY) {
+    const { calls } = await run(q);
+    // 🔴 판정은 **공식 LLM 소비 여부**로 한다. 검색 호출 수가 아니라 "공식 경로가 이 질문을
+    //   가져갔는가"가 계약이고, durable LLM 경계를 넘으면 되돌릴 수 없기 때문이다.
+    const tookOfficial = calls.officialLlm > 0;
     assert.equal(
-      SELFTEST ? "rag" : result.source, "rag",
-      "O1: 선수 서술형 질문이 rag 로 서빙되지 않았다",
+      SELFTEST ? !tookOfficial : tookOfficial, want === "official",
+      `E(${q}): 기대 ${want} 인데 공식 LLM ${calls.officialLlm}회 — ${why}. `
+      + "엔티티 결속 질문의 라우팅은 이 PR 이 바꾸지 않는다(main 계약 유지)",
     );
-    assert.ok(
-      calls.playerLlm > 0,
-      "O1: 선수 RAG 를 타지 않았다 — 선수 문서가 정본인 질문을 규칙집이 가로챘다",
-    );
-    assert.equal(
-      SELFTEST ? 1 : calls.officialLlm, 0,
-      `O1: 공식 RAG LLM 을 소비했다 (호출 ${calls.officialLlm}회) — 소유권이 규칙집으로 넘어갔다`,
-    );
-    // 잔여 질문으로 소유권을 물어본 사실 자체를 고정한다 — 이게 없으면 판정이 룰로 돌아간 것이다.
-    assert.ok(
-      calls.officialSearch.includes("별명"),
-      `O1: 잔여 질문("별명")으로 소유권을 판정하지 않았다 (검색: ${JSON.stringify(calls.officialSearch)})`,
-    );
+    if (want === "entity") {
+      assert.equal(
+        calls.officialLlm, 0,
+        `E(${q}): 엔티티 문서가 정본인 질문을 규칙집이 가져갔다 — durable 호출을 소비하면 `
+        + "엔티티 경로로 되돌아갈 수 없다",
+      );
+    }
   }
-  {
-    // 🔴 삼순이 지명한 입력이다. `알려줘` 때문에 **선수 후보로 잡히는** 질문이라
-    //   종전 `Boolean(enabledPlayerCandidate)` 계약에서는 선수 RAG 가 가져갔다.
-    //   `문보경 보크 규칙`(알려줘 없음)은 애초에 후보가 안 잡혀 이 축을 시험하지 못한다 —
-    //   무대가 없는 입력을 고르면 mutation 이 결함이 아니라 무증상이 된다(M90).
-    const { result, calls } = await run("문보경 보크 규칙 알려줘");
-    assert.ok(
-      calls.officialSearch.includes("보크 규칙 알려줘"),
-      `O2: 잔여 질문("보크 규칙 알려줘")으로 소유권을 판정하지 않았다 (검색: ${JSON.stringify(calls.officialSearch)})`,
-    );
-    assert.equal(
-      SELFTEST ? "llm" : result.source, "rag",
-      `O2: tier1 조문이 정본인 질문이 rag 로 서빙되지 않았다 (실제: ${result.source})`,
-    );
-    assert.ok(
-      calls.officialLlm > 0,
-      "O2: 공식 RAG 를 타지 않았다 — 선수가 예시 행위자일 뿐인 룰 질문을 선수 경로가 가져갔다"
-      + "(삼순 2026-08-07 P0-1 라우팅 역전의 선수 버전)",
-    );
-    assert.equal(
-      calls.playerLlm, 0,
-      "O2: 선수 RAG LLM 까지 소비했다 — 소유권이 갈리지 않고 양쪽을 다 태웠다",
-    );
-  }
-  {
-    // O2b — 후보가 안 잡히는 형태(`알려줘` 없음)도 **결론은 같아야** 한다.
-    //   소유권 판정기 자체가 아니라 "어미가 달라졌다고 정본이 바뀌지 않는다"를 고정한다.
-    const { result, calls } = await run("문보경 보크 규칙");
-    assert.equal(
-      result.source, "rag",
-      `O2b: 어미만 다른 같은 룰 질문이 다른 결론을 낸다 (실제: ${result.source})`,
-    );
-    assert.equal(calls.playerLlm, 0, "O2b: 룰 질문을 선수 RAG 가 가져갔다");
-  }
-  pass("O 소유권 — `문보경 별명`→선수 / `문보경 보크 규칙 (알려줘)`→공식 (잔여 근거 거리 판정)");
+  pass("E 엔티티 결속 5종 — main 계약(사전 판정) 그대로 라우팅된다");
 
-  // ── W. 소유권 판정 불능은 선수 유지 (fail-safe 방향) ──────────────────────
-  //   migration 이전 배포에서는 RPC 가 distance 를 안 준다. 그때 소유권을 규칙집에
-  //   넘기면 선수 질문 전체가 조용히 뒤집힌다. 부재는 0 이 아니다.
+  // ── V. 엔티티 결속 질문에는 이 PR 의 개방이 적용되지 않는다 ────────────────
+  //   `문보경 삼진 당한 경기 알려줘` 는 사전 false 다. 개방이 엔티티 질문까지 새면
+  //   이 질문이 공식 RAG 로 가는데, 그건 정확히 삼순 P0-2 가 지적한 선점이다.
   {
-    const calls: Calls = {
-      officialSearch: [], officialLlm: 0, playerSearch: 0, playerLlm: 0, genericLlm: 0, logged: [],
-    };
-    const legacySearch = async (question: string): Promise<RagEvidence[]> => {
-      calls.officialSearch.push(question);
-      // 레거시 RPC: 거리를 안 실어준다(무조건 상한만큼 돌려주던 시절의 형태).
-      return [{
-        content: OFFICIAL_CONTENT,
-        pageTitle: "2026 공식야구규칙",
-        canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
-        revision: "sha256:8f2c6d595f48b",
-        sectionPath: "5.09 아 웃",
-        asOf: "2026-08-01",
-        sourceGrade: "tier1",
-      }];
-    };
-    const result = await answerQuestion(
-      "u-ragfirst", "문보경 별명",
-      makeDeps(calls, { searchOfficialRag: legacySearch }),
-    );
+    const { calls } = await run("문보경 삼진 당한 경기 알려줘");
     assert.equal(
       SELFTEST ? 1 : calls.officialLlm, 0,
-      `W: 거리 미제공(레거시 RPC)인데 공식 RAG 가 선수 질문을 가져갔다 (호출 ${calls.officialLlm}회) — `
-      + "부재를 0(가장 가까움)으로 읽으면 migration 이전 배포에서 소유권이 통째로 뒤집힌다",
+      `V: 사건 질문(사전 false)이 공식 RAG 를 탔다 (${calls.officialLlm}회) — 개방이 `
+      + "엔티티 결속 질문까지 샜다. 이 질문의 tier1 거리는 0.2918 로 진짜 규칙 질문보다 "
+      + "가까워서, 거리로는 막을 수 없다(그래서 사전 계약을 유지하는 것이다)",
     );
-    assert.ok(calls.playerLlm > 0, `W: 선수 경로가 유지되지 않았다 (source=${result.source})`);
   }
-  pass("W 판정 불능(거리 미제공) → 선수 유지");
+  pass("V 사건 질문(엔티티 결속·사전 false) — 개방이 새지 않는다");
 
   // ── B. 근거 판정이 개수가 아니라 거리다 ───────────────────────────────────
   assert.ok(
@@ -344,7 +318,6 @@ async function main() {
   ));
   for (const [name, runtime, lo, hi] of [
     ["RAG_DOCUMENT_MAX_DISTANCE", RAG_DOCUMENT_MAX_DISTANCE, 0.3787, 0.4281],
-    ["RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE", RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE, 0.3540, 0.4103],
   ] as const) {
     const decl = new RegExp(`export const ${name}\\s*=\\s*([0-9.]+)\\s*;`).exec(retrieveSrc);
     assert.ok(decl, `C: ${name} 가 리터럴 상수 선언이 아니다`);
@@ -359,12 +332,7 @@ async function main() {
       `C4(${name}): 임계 ${value} 가 실측 경계 [${lo}, ${hi}] 밖이다`,
     );
   }
-  // 소유권 임계는 서빙 임계보다 **엄격**해야 한다 — 소유권을 빼앗는 건 더 강한 주장이다.
-  assert.ok(
-    RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE < RAG_DOCUMENT_MAX_DISTANCE,
-    "C5: 소유권 임계가 서빙 임계보다 느슨하다 — 선수 문서가 정본인 질문을 규칙집이 뺏는다",
-  );
-  pass(`C 임계 코드 상수 고정 (서빙 ${RAG_DOCUMENT_MAX_DISTANCE} / 소유권 ${RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE})`);
+  pass(`C 임계 코드 상수 고정 (서빙 ${RAG_DOCUMENT_MAX_DISTANCE})`);
 
   // ── D·E. 배포 순서 방어 + 구 시그니처 재시도 금지 ─────────────────────────
   const fnStart = server.indexOf("export async function searchOfficialRag");

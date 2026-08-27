@@ -53,6 +53,14 @@ const MIGRATION = path.join(
   process.cwd(),
   "supabase/migrations/20260816140000_genius_question_logs_rag_discard_reason.sql",
 );
+/**
+ * 서빙 근거 top1 거리 관측 칸 (2026-08-27 추가). 별도 migration 이라 별도 상수다 —
+ * 위 파일에 끼워 넣으면 이미 적용된 migration 을 사후 수정하는 셈이라 멱등성이 깨진다.
+ */
+const DISTANCE_MIGRATION = path.join(
+  process.cwd(),
+  "supabase/migrations/20260827130000_genius_question_logs_rag_evidence_distance.sql",
+);
 
 let passed = 0;
 const ok = (label: string) => { passed += 1; console.log(`PASS ${label}`); };
@@ -306,7 +314,36 @@ async function run(): Promise<void> {
     );
 
     assert.ok(/rag_discard_numeric_count >= 0/.test(sql), "숫자 개수 음수 가드가 없다");
-    ok(`① 폐쇄집합 ↔ CHECK 일치 (사유 ${RAG_DISCARD_REASONS.length}종 · 경로 ${RAG_ATTEMPT_PATHS.length}종)`);
+
+    // 🔴 거리 관측 칸 (2026-08-27, 삼순 #1313 재GO ③) — 같은 계약을 SQL 에서도 강제하는가.
+    //   임계를 값으로 두면서 그 값이 무엇을 자르는지 관측하지 않으면 재보정이 감이 된다.
+    const distanceSql = readFileSync(DISTANCE_MIGRATION, "utf8");
+    assert.ok(
+      /add column if not exists rag_evidence_top_distance double precision/i.test(distanceSql),
+      "migration 이 rag_evidence_top_distance 컬럼을 추가하지 않는다",
+    );
+    // null 허용이 빠지면 거리 개념이 없는 경로(선수·구단·뉴스) 로그가 전부 INSERT 실패한다.
+    assert.ok(
+      /rag_evidence_top_distance is null/i.test(distanceSql),
+      "CHECK 가 rag_evidence_top_distance is null 을 허용하지 않는다 — 거리 없는 경로가 죽는다",
+    );
+    // 🔴 정의역 [0,2] 양방향. 상한이 없으면 유사도를 거리 칸에 넣는 오적재를 DB 가 못 잡는다
+    //   (연속값 계약은 양방향으로 건다 — 한쪽만 걸면 반대쪽이 뚫린다).
+    assert.ok(
+      /rag_evidence_top_distance >= 0/.test(distanceSql),
+      "거리 하한(>= 0) 가드가 없다",
+    );
+    assert.ok(
+      /rag_evidence_top_distance <= 2/.test(distanceSql),
+      "거리 상한(<= 2) 가드가 없다 — 유사도를 거리 칸에 넣는 오적재를 DB 가 못 잡는다",
+    );
+    // 🔴 기본값 금지: 부재를 0 으로 채우면 "완전 일치" 로 읽혀 분포가 왼쪽으로 오염되고
+    //   임계 재보정이 정확히 반대로 간다. null 과 0 을 섞지 않는 것이 이 칸의 계약이다.
+    assert.ok(
+      !/rag_evidence_top_distance[^;]*default/i.test(distanceSql),
+      "거리 칸에 default 가 걸려 있다 — 부재와 0 을 섞으면 임계 재보정이 반대로 간다",
+    );
+    ok(`① 폐쇄집합 ↔ CHECK 일치 (사유 ${RAG_DISCARD_REASONS.length}종 · 경로 ${RAG_ATTEMPT_PATHS.length}종 · 거리칸 [0,2]·default 없음)`);
   }
 
   // ── ② validateRagResponse 가 각 사유·숫자개수를 실제로 돌려주는가 ────────
@@ -681,6 +718,7 @@ async function run(): Promise<void> {
         ragAttemptPath: "news",
         ragQuestionNumericCount: 1,
         ragDiscardNumericCount: 2,
+        ragEvidenceTopDistance: 0.3374,
       } as Parameters<typeof buildQuestionLogRow>[0],
       4242,
     );
@@ -688,6 +726,9 @@ async function run(): Promise<void> {
     assert.equal(row.rag_attempt_path, "news", "INSERT 행에 경로가 없다");
     assert.equal(row.rag_question_numeric_count, 1, "INSERT 행에 질문 숫자 개수가 없다");
     assert.equal(row.rag_discard_numeric_count, 2, "INSERT 행에 답변 숫자 개수가 없다");
+    // 🔴 거리 칸도 같은 단절을 겪을 수 있다 — pipeline 이 값을 넘겨도 INSERT 행에 칸이
+    //   없으면 프로덕션은 계속 null 이고, 약속한 72시간 분포 재측정이 원천 불가해진다.
+    assert.equal(row.rag_evidence_top_distance, 0.3374, "INSERT 행에 근거 top1 거리가 없다");
 
     const nullRow = buildQuestionLogRow(
       {
@@ -700,6 +741,10 @@ async function run(): Promise<void> {
     assert.equal(nullRow.rag_attempt_path, null, "비RAG 행의 경로가 null 이 아니다");
     assert.equal(nullRow.rag_question_numeric_count, null, "비RAG 행의 질문 개수가 null 이 아니다");
     assert.equal(nullRow.rag_discard_numeric_count, null, "비RAG 행의 답변 개수가 null 이 아니다");
+    // 🔴 부재는 **null 이지 0 이 아니다.** 0 은 "완전 일치" 라서 부재를 0 으로 적으면
+    //   분포가 왼쪽으로 오염되고 임계 재보정이 정확히 반대로 간다.
+    assert.equal(nullRow.rag_evidence_top_distance, null, "비RAG 행의 거리가 null 이 아니다");
+    assert.notEqual(nullRow.rag_evidence_top_distance, 0, "부재를 0 으로 적었다 — null 과 0 을 섞지 않는다");
     ok("⑤ log-row SSOT 컬럼 매핑");
   }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * RAG-first 라우팅 게이트의 **검증력 증명** (삼순 2026-08-27 NO-GO 3축 요구).
+ * RAG-first 라우팅 게이트의 **검증력 증명**.
  *
  * 계약: 원본을 in-memory 백업 → 결함 주입 → smoke 재실행 → 의도한 FAIL 마커가 나와야 RED.
  * 앵커 부재 = 러너 고장으로 MISS (조용한 skip 금지). 종료 시 무조건 원복.
@@ -9,6 +9,11 @@
  *   진입 조건에서 빠졌다는 것만 보고 GREEN 을 냈고, 실제로는 `llm_scope_gate` 가 같은 문을
  *   닫고 있었다. **selftest 통과는 아무것도 증명하지 않는다** — 실제 결함을 주입해
  *   RED 가 나야 그 축이 살아 있는 것이다(M90).
+ *
+ * 🔴 2026-08-27 ⓒ 범위로 재작성. 소유권 판정(잔여질문 probe·전용 임계)을 이 PR 에서
+ *   걷어냈으므로 그 축(구 r3~r7·r13)은 **없는 결함을 주입하는 셈**이라 폐기하고,
+ *   대신 ⓒ 의 실제 계약("엔티티 결속 질문은 main 그대로")을 뚫는 변이로 교체했다.
+ *   mutant 가 결함이 아니면 그건 게이트 결함이 아니라 내 변이 결함이다.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -19,50 +24,44 @@ const SERVER = "src/lib/baseball-qa/server.ts";
 const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
-  // ── 삼순 P0-1: 라우팅이 실제로 열렸는가 ──────────────────────────────────
+  // ── P0-1: 라우팅이 실제로 열렸는가 ──────────────────────────────────────
   {
     name: "r1 진입 조건에 scopeGate 복원 — 사전 밖 질문이 다시 문 앞에서 막힌다(1차 false-green 재현)",
     file: PIPELINE,
-    from: "  if (\n    !ownedByEntityRag &&\n    deps.searchOfficialRag &&",
-    to: "  if (\n    !scopeGate &&\n    !ownedByEntityRag &&\n    deps.searchOfficialRag &&",
+    from: "  if (\n    // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은\n    // 엔티티가 없는 순수 룰 질문에만 적용된다.\n    (ownedByEntityRag",
+    to: "  if (\n    !scopeGate &&\n    (ownedByEntityRag",
   },
   {
-    name: "r2 닫힌 단어 사전 복원 — 사전 밖 표현은 정본이 있어도 도달 못 한다",
+    name: "r2 닫힌 단어 사전을 전면 복원 — 사전 밖 표현은 정본이 있어도 도달 못 한다",
     file: PIPELINE,
-    from: "  if (\n    !ownedByEntityRag &&\n    deps.searchOfficialRag &&\n    deps.callOfficialRagLlm\n  ) {",
-    to: "  if (\n    !ownedByEntityRag &&\n    deps.searchOfficialRag &&\n    deps.callOfficialRagLlm &&\n    isSupportedRuleTermQuestion(question, glossary, players)\n  ) {",
+    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
+    to: "    isSupportedRuleTermQuestion(question, glossary, players) &&",
   },
 
-  // ── 삼순 P0-2: 선수 결속 질문의 소유권 ───────────────────────────────────
+  // ── ⓒ 계약: 엔티티 결속 질문은 main 그대로 ──────────────────────────────
   {
-    name: "r3 소유권을 룰로 회귀 — Boolean(candidate) 로 되돌려 룰 질문을 선수가 가져간다",
+    name: "r3 엔티티 결속에도 개방 적용 — 사건 질문(`문보경 삼진 당한 경기`)을 규칙집이 선점한다",
     file: PIPELINE,
-    from: "  const ownedByEntityRag = Boolean(officialOwnershipTarget) && officialOwnership === null;",
-    to: "  const ownedByEntityRag = Boolean(officialOwnershipTarget);",
+    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
+    to: "    true &&",
   },
   {
-    name: "r4 소유권 전면 해제 — 선수 문서가 정본인 질문까지 규칙집이 가져간다",
+    name: "r4 구단을 엔티티 판정에서 제외 — `LG 트윈스 역사`를 규칙집이 가져간다",
     file: PIPELINE,
-    from: "  const ownedByEntityRag = Boolean(officialOwnershipTarget) && officialOwnership === null;",
-    to: "  const ownedByEntityRag = false;",
+    from: "    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;",
+    to: "    Boolean(enabledPlayerCandidate);",
   },
   {
-    name: "r5 이름 미제거 — 잔여 질문 대신 원문으로 판정해 벡터가 선수 문서로 끌린다",
+    name: "r5 선수를 엔티티 판정에서 제외 — `문보경 별명`을 규칙집이 가져간다",
     file: PIPELINE,
-    from: "  const stripped = question.split(playerName).join(\" \").replace(/\\s+/g, \" \").trim();\n  return stripped.length >= 2 ? stripped : question;",
-    to: "  return question;",
+    from: "    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;",
+    to: "    resolveRagTeamCandidate(question) !== null;",
   },
   {
-    name: "r6 소유권 임계를 서빙 임계까지 완화 — 선수 정본 질문을 규칙집이 뺏는다",
-    file: RETRIEVE,
-    from: "export const RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE = 0.36;",
-    to: "export const RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE = 0.42;",
-  },
-  {
-    name: "r7 거리 미제공을 0 으로 응급처리 — migration 이전 배포에서 소유권이 통째로 뒤집힌다",
+    name: "r6 엔티티 결속 질문을 공식 경로에서 통째로 차단 — main 이 official 로 보내던 룰 질문이 죽는다",
     file: PIPELINE,
-    from: "  if (typeof top.distance !== \"number\") return null;\n  if (top.distance > RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE) return null;",
-    to: "  if ((top.distance ?? 0) > RAG_DOCUMENT_OWNERSHIP_MAX_DISTANCE) return null;",
+    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
+    to: "    !ownedByEntityRag &&",
   },
 
   // ── 근거 판정이 개수가 아니라 거리라는 계약 ──────────────────────────────
@@ -73,7 +72,7 @@ const MUTATIONS = [
     to: "",
   },
   {
-    name: "r9 distance 전달 제거 — 소유권 판정 근거도 72시간 재보정 근거도 사라진다",
+    name: "r9 distance 전달 제거 — 임계 재보정 근거가 사라진다",
     file: SERVER,
     from: "    distance: typeof row.distance === \"number\" ? row.distance : undefined,",
     to: "",
@@ -95,16 +94,6 @@ const MUTATIONS = [
 
   // ── 넓히되 뺏지 않는다 ───────────────────────────────────────────────────
   {
-    // 🔴 구단 축 — 1차 수정에서 선수만 다루다 `qa:genius-discard-reason` 이 잡은 실재 회귀다.
-    //   구단을 소유권 판정에서 빼면 `LG 트윈스 역사 알려줘` 가 공식 RAG 로 새어 구단 문서
-    //   대신 규칙집이 답한다(삼순 2026-08-07 P0-1 라우팅 역전).
-    name: "r13 구단 소유권 제거 — 구단 서술 질문을 규칙집이 가져간다",
-    file: PIPELINE,
-    from: "    enabledPlayerCandidate?.name ?? resolveRagTeamCandidate(question)?.name ?? null;",
-    to: "    enabledPlayerCandidate?.name ?? null;",
-    smoke: "scripts/qa/genius-discard-reason-observability.ts",
-  },
-  {
     // ⚠️ `void 0;` 같은 무해한 문장을 넣는 변이는 쓰지 않는다 — mutant 가 결함이 아니면
     //   그건 게이트 결함이 아니라 내 변이 결함이다(M90). 근거 0건에서도 종결시켜
     //   **실제로 기존 경로를 빼앗는** 형태로 주입한다.
@@ -112,6 +101,15 @@ const MUTATIONS = [
     file: PIPELINE,
     from: "    if (official) return official;",
     to: "    if (official) return official;\n    return { status: 200, answer: UNCLEAR_ANSWER, source: \"unsure\", remaining };",
+  },
+
+  // ── 주제 이탈 선언 (Vercel RED 를 냈던 실재 회귀) ────────────────────────
+  {
+    name: "r14 주제 이탈 라우터 종결 제거 — `야구 얘기 그만하고 시를 써줘` 가 공식 RAG 를 탄다",
+    file: PIPELINE,
+    from: "  if (isTopicDismissal(question)) return \"blocked\";",
+    to: "",
+    smoke: "scripts/qa/baseball-qa-official-rag-smoke.ts",
   },
 ];
 
@@ -136,10 +134,10 @@ for (const m of MUTATIONS) {
   writeFileSync(m.file, original);
   // RED = smoke 가 **의도한 FAIL 마커**를 찍고 죽었다. 컴파일 오류 같은 아무 nonzero exit 를
   // 검출로 세면 검증력이 0 이다(삼순 2026-08-10 B5).
-  // RED 판정 키는 **실패 줄에만** 나타나야 한다(통과 출력과 겹치면 false-green).
-  //   smoke 를 갈아끼울 수 있으므로 두 러너의 FAIL 마커를 모두 인정한다.
   const intended = exitFail && (
-    /genius-rag-first-routing-smoke FAIL:/.test(out) || /^FAIL /m.test(out)
+    /genius-rag-first-routing-smoke FAIL:/.test(out)
+    || /baseball QA official RAG: PASS=\d+ FAIL=[1-9]/.test(out)
+    || /^FAIL /m.test(out)
   );
   if (intended) {
     console.log(`RED  ${m.name}`);

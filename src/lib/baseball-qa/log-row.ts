@@ -49,6 +49,15 @@ export function buildQuestionLogRow(
     rag_question_numeric_count: entry.ragQuestionNumericCount ?? null,
     // 폐기된 답변의 숫자 토큰 **개수**만 (삼순 익명집계 조건). 본문·값은 저장하지 않는다.
     rag_discard_numeric_count: entry.ragDiscardNumericCount ?? null,
+    // 서빙 근거의 **top1 코사인 거리** (2026-08-27, 삼순 재GO 조건 ③).
+    // 이 PR 은 `RAG_DOCUMENT_MAX_DISTANCE = 0.42` 로 "근거가 있는가" 를 가르는데, 그 임계가
+    // 실제로 어떤 분포를 자르는지 관측하지 않으면 재보정이 영원히 감이 된다. 0.42 는
+    // 표본 15건 파일럿이라 프로덕션 분포를 모아야 확정할 수 있다.
+    // ⚠️ **관측값이다** — 읽고 분기하는 서빙 로직을 만들지 않는다.
+    // ⚠️ null = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
+    //   **0 과 섞지 않는다** — 0 은 완전 일치라 부재를 0 으로 적으면 분포가 왼쪽으로
+    //   오염돼 임계가 실제보다 느슨해 보인다.
+    rag_evidence_top_distance: entry.ragEvidenceTopDistance ?? null,
     match_path: entry.matchPath,
     answer: entry.answer,
     input_tokens: entry.inputTokens,
