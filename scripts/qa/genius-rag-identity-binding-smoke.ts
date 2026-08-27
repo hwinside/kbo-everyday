@@ -59,6 +59,8 @@ import {
   buildPlayerIdentity,
   detectIdentityContradictions,
   renderIdentitySentence,
+  type IdentityAttributionVerdict,
+  type IdentityContradiction,
   type IdentityVerdictResult,
   type PlayerRef,
   type QaDeps,
@@ -109,7 +111,7 @@ function promptHasRewriteInstruction(extras?: RagLlmExtras): boolean {
     canonicalUrl: "https://namu.wiki/w/x", sourceGrade: "tier2",
   } as never], undefined, {
     identityBlock: extras.identityBlock,
-    identityConflict: extras.identityConflict,
+    identityConflicts: extras.identityConflicts,
   });
   return String(req.contents[0].parts[0].text).includes("<재작성 지시");
 }
@@ -117,23 +119,33 @@ function promptHasRewriteInstruction(extras?: RagLlmExtras): boolean {
 /** 검증 LLM 스텁 — 호출 횟수·입력을 호출자가 관측한다. */
 interface VerifierStub {
   calls: number;
-  seen: { answer: string; hitFields: string[] }[];
+  seen: { answer: string; hitFields: string[]; hitIds: string[] }[];
   fn: NonNullable<QaDeps["verifyIdentityAttribution"]>;
 }
 function makeVerifier(
-  respond: (call: number) => IdentityVerdictResult | Promise<IdentityVerdictResult>,
+  respond: (call: number, hits: IdentityContradiction[]) => IdentityVerdictResult | Promise<IdentityVerdictResult>,
 ): VerifierStub {
   const stub: VerifierStub = {
     calls: 0,
     seen: [],
     fn: async (input) => {
       stub.calls += 1;
-      stub.seen.push({ answer: input.answer, hitFields: input.hits.map((h) => h.field) });
-      return respond(stub.calls);
+      stub.seen.push({
+        answer: input.answer,
+        hitFields: input.hits.map((h) => h.field),
+        hitIds: input.hits.map((h) => h.id),
+      });
+      return respond(stub.calls, input.hits);
     },
   };
   return stub;
 }
+/** 모든 hit 에 같은 verdict 를 주는 응답기 — 계약상 **전수 일치**가 기본이다. */
+const allVerdict = (verdict: IdentityAttributionVerdict, tokens?: { inputTokens: number; outputTokens: number }) =>
+  (_call: number, hits: IdentityContradiction[]): IdentityVerdictResult => ({
+    verdicts: hits.map((hit) => ({ id: hit.id, verdict })),
+    ...(tokens ?? {}),
+  });
 
 /**
  * 종단 `answerQuestion` 을 태우기 위한 deps 팩토리.
@@ -159,7 +171,9 @@ function makeDeps(
   const evidenceRow = {
     pageTitle: `${subject.name} 문서`, sectionPath: "개요",
     // 실측 사고 재현: 주인공 문서 안에 **동명이인의 다른 포지션** 서술이 함께 있다.
-    content: `${subject.name}. ${subject.team ?? ""} 소속 ${subject.position ?? ""}. 같은 팀에 동명이인인 선수가 있습니다. 데뷔 이후 꾸준히 출전하고 있습니다.`,
+    // 경력 서술도 넣는다 — 같은 팀·같은 포지션 동명이인 축(Y3)은 포지션·구단이 아니라
+    // **경력·생년**이 새는 경로라 근거에 그 서술이 있어야 생성이 성립한다.
+    content: `${subject.name}. ${subject.team ?? ""} 소속 ${subject.position ?? ""}. 같은 팀에 동명이인인 선수가 있습니다. 신인드래프트에서 지명된 뒤 데뷔 시즌부터 선발로 나섬습니다. 데뷔 이후 꾸준히 출전하고 있습니다.`,
     canonicalUrl: "https://namu.wiki/w/test", sourceGrade: "tier2",
   };
   const tokens = options.llmTokens ?? { inputTokens: 1, outputTokens: 1 };
@@ -273,7 +287,7 @@ async function main() {
   // 🔴 검증기를 **배선해 둔다**. 정상 답변이라 모순 후보가 0건이므로 올바른 구현에서는
   //   호출되지 않는다. 그런데 배선을 비워두면 "모순 0건에도 검증을 부르는" 결함이
   //   이 축에서 먼저 `불명 → unsure` 로 터져 X2 의 비용 계약이 관측 불가가 된다.
-  const seamVerifier = makeVerifier(() => ({ verdict: "제3자" }));
+  const seamVerifier = makeVerifier(allVerdict("제3자"));
   const seamDeps = makeDeps(target, () => cleanAnswer(target), {
     verifier: seamVerifier.fn,
     onExtras: (extras) => { observed = extras; },
@@ -445,7 +459,7 @@ async function main() {
   pass("X1 존재판정 닫힌 집합 + 귀속 판정 금지(룰 회귀 차단)");
 
   // ── X2. 모순 토큰 0건이면 검증 LLM 을 부르지 않는다 (비용 계약) ───────────────
-  const quietVerifier = makeVerifier(() => ({ verdict: "주인공" }));
+  const quietVerifier = makeVerifier(allVerdict("주인공"));
   const cleanResult = await answerQuestion(
     "qa-clean", `${pitcher.name} 어떤 선수야?`,
     makeDeps(pitcher, () => cleanAnswer(pitcher), { verifier: quietVerifier.fn }),
@@ -460,7 +474,7 @@ async function main() {
   // ── X3. verdict `제3자` → 그대로 서빙 (정상 답변 과잉 차단 금지) ──────────────
   //   상대팀·과거 이력·동료 서술은 정상이다. 종전 룰 구조가 다섯 왕복 동안 못 닫은 축이
   //   이제 LLM 판정 한 줄로 닫힌다 — 그 결속이 실제로 살아있는지 종단으로 본다.
-  const thirdParty = makeVerifier(() => ({ verdict: "제3자" }));
+  const thirdParty = makeVerifier(allVerdict("제3자"));
   const thirdPartyAnswer = `${pitcher.name} 선수는 투수입니다. 두산과의 경기에서 호투했습니다.`;
   const thirdPartyResult = await answerQuestion(
     "qa-3rd", `${pitcher.name} 어떤 선수야?`,
@@ -482,7 +496,7 @@ async function main() {
   //   🔴 재생성 신호를 **프롬프트 본문에서 읽고** 고치는 stub 을 쓴다.
   //      `extras.identityConflict` 를 직접 보게 하면 적재 계약을 훼손해도(신호를 프롬프트에
   //      안 실어도) stub 이 고쳐버려 게이트가 GREEN 이 된다.
-  const fixVerifier = makeVerifier(() => ({ verdict: "주인공" }));
+  const fixVerifier = makeVerifier(allVerdict("주인공"));
   let fixCalls = 0;
   const fixed = await answerQuestion(
     "qa-fix", `${pitcher.name} 어떤 선수야?`,
@@ -508,7 +522,7 @@ async function main() {
     { id: "53893", wrong: "투수", label: "X5 53893 내야수 → 투수 오귀속" },
   ]) {
     const row = rosterRow(id, label);
-    const stubbornVerifier = makeVerifier(() => ({ verdict: "주인공" }));
+    const stubbornVerifier = makeVerifier(allVerdict("주인공"));
     let calls = 0;
     const stubborn = await answerQuestion(
       "qa-stubborn", `${row.name} 어떤 선수야?`,
@@ -538,7 +552,7 @@ async function main() {
   const FAIL_CLOSE_CASES: { label: string; verifier?: QaDeps["verifyIdentityAttribution"] }[] = [
     {
       label: "X6 verdict 불명 → unsure",
-      verifier: makeVerifier(() => ({ verdict: "불명" })).fn,
+      verifier: makeVerifier(allVerdict("불명")).fn,
     },
     {
       label: "X7 검증기 미배선 → unsure",
@@ -551,7 +565,7 @@ async function main() {
     {
       // strict JSON 밖의 값 — 런타임에 무엇이 오든 "불명"으로 접혀야 한다.
       label: "X9 검증기 malformed verdict → unsure",
-      verifier: async () => ({ verdict: "아마도?" } as unknown as IdentityVerdictResult),
+      verifier: async ({ hits }) => ({ verdicts: hits.map((h) => ({ id: h.id, verdict: "아마도?" })) } as unknown as IdentityVerdictResult),
     },
     {
       // 🔴 검증기가 **객체가 아닌 것**을 돌려주는 경우. 실제 구현은 외부 JSON 파싱
@@ -588,7 +602,7 @@ async function main() {
   //   보조판정이 공짜로 보이면 "검증이 얼마나 비싼가"의 분모가 깨진다. 종단 로그로 본다.
   let loggedInput: number | null = null;
   let loggedOutput: number | null = null;
-  const costVerifier = makeVerifier(() => ({ verdict: "제3자", inputTokens: 700, outputTokens: 11 }));
+  const costVerifier = makeVerifier(allVerdict("제3자", { inputTokens: 700, outputTokens: 11 }));
   const costDeps = makeDeps(pitcher, () => thirdPartyAnswer, {
     verifier: costVerifier.fn,
     llmTokens: { inputTokens: 100, outputTokens: 20 },
@@ -626,6 +640,229 @@ async function main() {
   );
   pass("X11 신원 첫 문장 코드 렌더(roster SSOT)");
 
+  // ── Y1. identity 미결속은 **종단 unsure** (삼순 2026-08-27 ①) ──────────────────
+  //   🔴 종전에는 `buildPlayerIdentity` 가 null 을 주면 **빈 extras 로 RAG 를 그대로 탔다**.
+  //      그러면 생성 답변 검증도, 코드 렌더 신원문장도 없이 답이 나간다 — 오귀속을 막는
+  //      장치가 전부 꺼진 상태로 서빙되는 fail-open 이다. helper 가 null 을 준 것은
+  //      "결속할 사실이 없다" 는 뜻이므로 답하지 않는 것이 맞다.
+  //   재현: kboId 는 같은데 이름이 다른 행이 섞인 손상 로스터(상류 버그·pick payload 손상).
+  //
+  //   🔴 **행 순서가 계약이다** (1차 실측에서 이 축이 false-green 이었다).
+  //     `buildIdentityBlock` 은 kboId 로 `find` 해 **첫 행**을 잡고 그 이름과 candidate.name 을
+  //     비교한다. 둘이 같은 이름이면 fail-close 가 안 돌고, 그런데도 다른 이유로 unsure 가
+  //     나오면 게이트는 "잡았다"고 착각한다(종전 결함 주입 M31 이 미검출로 드러냈다).
+  //     그래서 `다른이름` 을 **먼저** 두고, 질문은 `결속실패선수`(둘째 행)로 물어
+  //     candidate.name ≠ 첫 행 이름 이 되게 한다.
+  const corruptedRoster: PlayerRef[] = [
+    { name: "다른이름", kboId: "99999", team: "LG", position: "투수" },
+    { name: "결속실패선수", kboId: "99999", team: "LG", position: "투수" },
+  ] as PlayerRef[];
+  {
+    // 손상 로스터에서 이름 충돌이 실제로 발생하는지 먼저 고정한다(전제 붕괴 방지).
+    assert.equal(
+      buildPlayerIdentity({ entityId: "99999", name: "결속실패선수" }, corruptedRoster),
+      null,
+      "Y1-0: 이름 충돌인데 identity 가 만들어졌다 — 재현 전제 붕괴",
+    );
+    let ragCalls = 0;
+    // 🔴 **searchRag 호출 여부가 유일하게 신뢰할 수 있는 판별자다** (M31 결함주입 실측).
+    //   fail-close 를 지우면 unsure 는 여전히 나온다 — 근거가 비어 generic 으로 새고
+    //   거기서 또 unsure 가 되기 때문이다. 즉 `source==="unsure"` 만 보면 이 축은
+    //   **원인을 구분하지 못하는 false-green** 이다(내 1차 게이트가 정확히 그랬다).
+    //   fail-close 는 `answerPlayerDescriptiveQuestion` **진입 전에** 종결하므로
+    //   근거 검색 자체가 일어나지 않는다. 그 차이만이 결함을 관측 가능하게 만든다.
+    let searchRagCalls = 0;
+    const unboundDeps = {
+      loadGlossary: async () => [],
+      loadPlayers: async () => corruptedRoster,
+      getCache: async () => null,
+      loadPreviousTurn: async () => null,
+      setCache: async () => {},
+      callLlm: async () => ({ text: "{}", inputTokens: null, outputTokens: null }),
+      reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
+      log: async () => {},
+      now: () => Date.now(),
+      enablePlayerRag: true,
+      searchRag: async () => {
+        searchRagCalls += 1;
+        return [{
+          pageTitle: "문서", sectionPath: "개요", content: "LG 소속 투수입니다.",
+          canonicalUrl: "https://namu.wiki/w/test", sourceGrade: "tier2",
+        }];
+      },
+      verifyIdentityAttribution: makeVerifier(allVerdict("제3자")).fn,
+      callRagLlm: async () => {
+        ragCalls += 1;
+        return {
+          text: JSON.stringify({ status: "GROUNDED", answer: "데뷔 이후 꾸준히 출전하고 있습니다." }),
+          inputTokens: 1, outputTokens: 1,
+        };
+      },
+    } as unknown as QaDeps;
+    const unboundResult = await answerQuestion("qa-unbound", "결속실패선수 어떤 선수야?", unboundDeps);
+    assert.equal(
+      SELFTEST ? "rag" : unboundResult.source, "unsure",
+      `Y1: identity 미결속인데 source=${unboundResult.source} — 검증·신원문장 없이 서빙(fail-open)`,
+    );
+    // 결속이 안 됐으면 **생성 자체를 하지 않는다** — 못 쓸 답에 공급자 비용을 쓰지 않는다.
+    assert.equal(ragCalls, 0, `Y1-2: identity 미결속인데 callRagLlm 을 ${ragCalls}회 호출했다`);
+    // 🔴 원인 판별자 — fail-close 가 없으면 근거 검색까지 들어갔다가 다른 이유로 unsure 가 된다.
+    assert.equal(
+      SELFTEST ? 1 : searchRagCalls, 0,
+      `Y1-3: identity 미결속인데 근거 검색이 ${searchRagCalls}회 일어났다 — 종단 fail-close 가 아니라 다른 경로로 새고 있다`,
+    );
+  }
+  pass("Y1 identity 미결속 → 종단 unsure (RAG 미호출)");
+
+  // ── Y2. 여러 hit 는 **ID별 verdict 완전일치**로 판정한다 (삼순 2026-08-27 ②) ──────
+  //   🔴 종전에는 첫 hit 만 보고(`.find`/`break`) 단일 verdict 로 접었다. 그래서
+  //      `형은 내야수입니다. 본인은 포수입니다` 에서 첫 hit(내야수)가 제3자로 판정되면
+  //      뒤의 **주인공 오귀속(포수)이 그대로 서빙**됐다. 혼합 귀속을 표현할 수가 없었다.
+  const MIXED_ANSWER = `${pitcher.name} 선수의 형은 내야수입니다. 본인은 포수입니다.`;
+  const mixedHits = detectIdentityContradictions(MIXED_ANSWER, pitcherIdentity);
+  assert.ok(
+    mixedHits.length >= 2,
+    `Y2-0: 혼합 문장에서 hit 가 ${mixedHits.length}건 — 여러 occurrence 를 못 올리고 있다(첫 건만 보는 구조)`,
+  );
+  assert.equal(
+    new Set(mixedHits.map((hit) => hit.id)).size, mixedHits.length,
+    "Y2-0b: hit ID 가 중복된다 — ID별 판정이 성립하지 않는다",
+  );
+
+  //   Y2-a 첫 hit 제3자 + 뒤 hit 주인공 → **서빙되면 안 된다**.
+  {
+    let rewriteHitIds: string[] = [];
+    const mixedVerifier = makeVerifier((_call, hits) => ({
+      // 앞의 `내야수`(형) 는 제3자, 뒤의 `포수`(본인) 는 주인공 — 실제 혼합 귀속 재현.
+      verdicts: hits.map((hit) => ({
+        id: hit.id,
+        verdict: hit.mentioned === "내야수" ? ("제3자" as const) : ("주인공" as const),
+      })),
+    }));
+    const mixed = await answerQuestion(
+      "qa-mixed", `${pitcher.name} 어떤 선수야?`,
+      makeDeps(pitcher, () => MIXED_ANSWER, {
+        verifier: mixedVerifier.fn,
+        onExtras: (extras) => {
+          if (extras?.identityConflicts) rewriteHitIds = extras.identityConflicts.map((hit) => hit.id);
+        },
+      }),
+    );
+    assert.equal(
+      SELFTEST ? "rag" : mixed.source, "unsure",
+      `Y2-a: 뒤쪽 hit 가 주인공인데 source=${mixed.source} — 첫 hit 판정으로 덮였다(fail-open)`,
+    );
+    // 재작성 신호에는 **주인공으로 판정된 hit 만, 그리고 전부** 실려야 한다.
+    assert.ok(
+      rewriteHitIds.length > 0 && rewriteHitIds.every((id) => id !== "position:내야수"),
+      `Y2-b: 재작성 신호가 비었거나 제3자 hit 가 섞였다 — ${JSON.stringify(rewriteHitIds)}`,
+    );
+  }
+
+  //   Y2-c 누락·중복·미지 ID·비정상 verdict 는 **전부 fail-close**.
+  //     "7개 중 6개만 판정됐다" 를 부분 신뢰하면 판정 안 된 hit 가 조용히 안전 처리된다.
+  const MALFORMED_CASES: { label: string; fn: NonNullable<QaDeps["verifyIdentityAttribution"]> }[] = [
+    {
+      label: "Y2-c 일부 hit 판정 누락 → unsure",
+      fn: async ({ hits }) => ({ verdicts: hits.slice(1).map((h) => ({ id: h.id, verdict: "제3자" as const })) }),
+    },
+    {
+      label: "Y2-d 동일 ID 중복 판정 → unsure",
+      fn: async ({ hits }) => ({
+        verdicts: [
+          { id: hits[0].id, verdict: "제3자" as const },
+          { id: hits[0].id, verdict: "제3자" as const },
+        ],
+      }),
+    },
+    {
+      label: "Y2-e 존재하지 않는 ID 반환 → unsure",
+      fn: async ({ hits }) => ({
+        verdicts: hits.map((h, index) => ({ id: index === 0 ? "position:없는토큰" : h.id, verdict: "제3자" as const })),
+      }),
+    },
+  ];
+  for (const { label, fn } of MALFORMED_CASES) {
+    const res = await answerQuestion(
+      "qa-verdict-shape", `${pitcher.name} 어떤 선수야?`,
+      makeDeps(pitcher, () => MIXED_ANSWER, { verifier: fn }),
+    );
+    assert.equal(
+      SELFTEST ? "rag" : res.source, "unsure",
+      `${label}: 판정 계약 위반인데 source=${res.source} — 부분 수용(fail-open)`,
+    );
+  }
+  pass("Y2 다중 hit ID별 verdict 완전일치 + 혼합 귀속 차단");
+
+  // ── Y3. 닫힌 집합으로 **구분 불가한** 동명이인 (삼순 2026-08-27 ③) ──────────────
+  //   🔴 이름·팀·포지션이 전부 같으면 닫힌 모순 필터가 원리적으로 0건이다. 그러면
+  //      검증 LLM 이 한 번도 안 돌고 동명이인의 **경력·생년·기록** 서술이 그대로 서빙된다
+  //      (설계상 통과). 실측 3쌍: 69516/56664(김현수 KIA 투수) · 52731/56709(박준영 한화
+  //      투수) · 60146/51454(이승현 삼성 투수).
+  const twinPairs = players
+    .map((row) => ({
+      row,
+      twins: players.filter((other) => other.kboId !== row.kboId
+        && other.name === row.name
+        && (other.team ?? null) === (row.team ?? null)
+        && (other.position ?? null) === (row.position ?? null)),
+    }))
+    .filter((entry) => entry.twins.length > 0);
+  assert.ok(
+    twinPairs.length > 0,
+    "Y3-0: 같은 팀·같은 포지션 동명이인이 로스터에 없다 — 픽스처 전제 갱신 필요",
+  );
+  {
+    const { row: twin, twins } = twinPairs[0];
+    const twinIdentity = buildPlayerIdentity(
+      { entityId: twin.kboId, name: twin.name, team: twin.team }, players,
+    )!;
+    assert.deepEqual(
+      twinIdentity.indistinguishableNamesakes.slice().sort(),
+      twins.map((t) => t.kboId).sort(),
+      "Y3-1: 구분 불가 동명이인 목록이 roster 실측과 다르다",
+    );
+    // 소속·포지션이 같으니 닫힌 모순은 0건이다 — 그런데도 검증은 반드시 돌아야 한다.
+    // ⚠️ 숫자를 쓰지 않는다 — tier2 선수 경로는 근거 밖 숫자를 전면 폐기하므로(`numericTokensGrounded`)
+    //   숫자가 섞이면 신원 검증 **이전 단계**에서 죽어 이 축이 관측 불가가 된다(1차 실측 RED).
+    const cleanTwinAnswer = `${twin.name} 선수는 신인드래프트에서 지명된 뒤 데뷔 시즌부터 선발로 나섬습니다.`;
+    const twinHits = detectIdentityContradictions(cleanTwinAnswer, twinIdentity);
+    assert.equal(
+      twinHits.filter((hit) => hit.field !== "biography").length, 0,
+      "Y3-2: 재현 전제 붕괴 — 닫힌 모순이 0건이어야 이 축이 의미가 있다",
+    );
+    assert.ok(
+      twinHits.some((hit) => hit.field === "biography" && twins.some((t) => t.kboId === hit.mentioned)),
+      "Y3-3: 구분 불가 동명이인인데 검증 대상(biography hit)이 만들어지지 않았다 — 설계상 통과",
+    );
+
+    // 종단: 동명이인의 경력이 주인공 것으로 서술됐다고 판정되면 서빙되지 않아야 한다.
+    const twinVerifier = makeVerifier(allVerdict("주인공"));
+    const twinResult = await answerQuestion(
+      "qa-twin", `${twin.name} 어떤 선수야?`,
+      makeDeps(twin, () => cleanTwinAnswer, { verifier: twinVerifier.fn }),
+    );
+    assert.ok(
+      twinVerifier.calls > 0,
+      "Y3-4: 구분 불가 동명이인인데 검증 LLM 이 한 번도 호출되지 않았다 — 경력 오귀속 무검증 통과",
+    );
+    assert.equal(
+      SELFTEST ? "rag" : twinResult.source, "unsure",
+      `Y3-5: 경력 오귀속 확정인데 source=${twinResult.source}`,
+    );
+
+    // 반대 방향: 제3자(그런 서술 없음) 판정이면 정상 서빙돼야 한다(과잉 차단 금지).
+    const twinSafe = await answerQuestion(
+      "qa-twin-safe", `${twin.name} 어떤 선수야?`,
+      makeDeps(twin, () => cleanTwinAnswer, { verifier: makeVerifier(allVerdict("제3자")).fn }),
+    );
+    assert.equal(
+      twinSafe.source, "rag",
+      `Y3-6: 오귀속이 없다고 판정됐는데 source=${twinSafe.source} — 과잉 차단`,
+    );
+  }
+  pass("Y3 구분 불가 동명이인 경력·생년 오귀속 종단 차단");
+
   // ── N. server 어댑터 종단 배선 + 검증기 계약 (삼순 4차 P0) ────────────────────
   //   🔴 게이트가 `buildRagLlmRequest` 를 직접 부르면, 실제 전송 경로인 server 어댑터가
   //      extras 를 빠뜨려도 잡지 못한다 — 재생성이 직전과 **같은 프롬프트**가 된다.
@@ -636,8 +873,8 @@ async function main() {
   const adapterEnd = serverSource.indexOf("async function", adapterStart + 10);
   const adapter = serverSource.slice(adapterStart, adapterEnd);
   assert.ok(
-    /identityConflict:\s*extras\?\.identityConflict/.test(adapter),
-    "N: server 어댑터가 실제 Gemini 요청에 identityConflict 를 전달하지 않는다 — 재생성이 같은 프롬프트가 된다",
+    /identityConflicts:\s*extras\?\.identityConflicts/.test(adapter),
+    "N: server 어댑터가 실제 Gemini 요청에 identityConflicts 를 전달하지 않는다 — 재생성이 같은 프롬프트가 된다",
   );
   assert.ok(
     /identityBlock:\s*extras\?\.identityBlock/.test(adapter),

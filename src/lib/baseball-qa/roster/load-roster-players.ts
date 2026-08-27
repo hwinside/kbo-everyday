@@ -25,6 +25,9 @@ export const ROSTER_PLAYERS: PlayerRef[] = playersRoster.map((player) => ({
   team: player.team ?? null,
   position: player.position ?? null,
   backNo: player.backNo ?? null,
+  // 같은 팀·같은 포지션 동명이인을 가르는 유일한 roster 축이다(실측 3쌍) — 신원 검증
+  // LLM 이 "이 경력·생년 서술이 주인공 것인가" 를 판정할 때 근거로 쓴다.
+  birthDate: player.birthDate ?? null,
   // ⚠️ **별도 파일**에서 온다(`players-draft.json`). roster JSON 에 넣지 않는 이유:
   //   상시 크롤(`crawl-roster-v2.mjs`)이 roster 를 고정 필드 목록으로 재조립하므로
   //   거기 얹으면 다음 크롤에 통째로 날아간다(실측 확인). 게다가 roster 파일 해시는

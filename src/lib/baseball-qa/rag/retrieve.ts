@@ -799,8 +799,15 @@ export interface RagRequestExtras {
    *
    * 재생성에 같은 프롬프트를 그대로 다시 보내면 같은 답이 나올 확률이 높다 — 무엇이 왜
    * 틀렸는지를 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
+   *
+   * 🔴 **복수**다 (삼순 2026-08-27 ②). 한 답변에 오귀속이 여러 개일 때 첫 개만 고치라고
+   *   하면 나머지는 모른 채 같은 오답을 반복한다.
    */
-  identityConflict?: { field: "position" | "team"; expected: string; mentioned: string };
+  identityConflicts?: {
+    field: "position" | "team" | "biography";
+    expected: string;
+    mentioned: string;
+  }[];
 }
 
 export function buildRagLlmRequest(
@@ -847,13 +854,21 @@ export function buildRagLlmRequest(
     );
   }
   // 재생성 신호는 주인공 블록 **바로 뒤**에 둔다 — 무엇이 틀렸는지가 주인공 사실과 붙어 읽혀야 한다.
-  if (extras.identityConflict) {
-    const { field, expected, mentioned } = extras.identityConflict;
-    const label = field === "team" ? "소속 구단" : "포지션";
+  // 🔴 오귀속으로 판정된 항목을 **전부** 싱는다 (삼순 2026-08-27 ②).
+  if (extras.identityConflicts && extras.identityConflicts.length > 0) {
+    const lines = extras.identityConflicts.map(({ field, expected, mentioned }) => {
+      if (field === "biography") {
+        // 같은 팀·같은 포지션 동명이인 — 소속·포지션은 같아서 구분될 수 없고
+        // 경력·생년·기록이 섞인다. 누구의 이력인지를 명시해 다시 쓰게 한다.
+        return `직전 답변은 동명이인(kboId ${mentioned})의 경력·생년·기록을 질문 대상(kboId ${expected})의 것으로 서술했다. 질문 대상 본인의 이력만 쓴다.`;
+      }
+      const label = field === "team" ? "소속 구단" : "포지션";
+      return `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.`;
+    });
     sections.push(
       "<재작성 지시 — 직전 답변이 질문 대상이 아닌 인물의 속성을 붙였다>",
-      `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.`,
-      `동명이인이나 자료에 함께 등장하는 다른 인물의 ${label}을 질문 대상에게 붙이지 말고 다시 답한다.`,
+      ...lines,
+      "동명이인이나 자료에 함께 등장하는 다른 인물의 속성을 질문 대상에게 붙이지 말고 다시 답한다.",
       "<재작성 지시 끝>",
     );
   }

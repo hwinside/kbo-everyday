@@ -51,14 +51,19 @@ for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { restore(); proc
  *
  *  [결속]      M1 seam 배선 · M2 프롬프트 미적재 · M3 포지션 누락 · M4 동명이인 누락
  *              M5 엉뚱한 kboId 결속 · M6 배치 역전 · M7 미결속 빈 블록 · M8 이름충돌 fail-close 제거
+ *              M31 미결속을 빈 extras 로 서빙 (삼순 ① 종전 결함)
  *  [존재판정]  M9 포지션 모순 미검출 · M10 구단 모순 미검출 · M11 상위범주 오인(내야수⊅야수)
  *              M12 별칭 미정규화(정상 답변 사망) · M13 **귀속 판정 회귀**(룰 핑퐁 재발)
+ *              M32 포지션 첫 hit 만(.find 회귀) · M33 구단 첫 팀에서 break (삼순 ②)
  *  [결속 배선]  M14 검증 결과 무시(항상 서빙) · M15 제3자를 차단(과잉 차단)
  *              M16 주인공인데 재생성 안 함 · M17 재생성 신호 미적재
+ *              M34 첫 verdict 하나로 접기(단일 verdict 회귀, 삼순 ②)
  *  [fail-close] M18 불명을 서빙 · M19 미배선을 서빙 · M20 예외를 서빙 · M21 malformed 를 통과
+ *              M35 누락·중복·미지 ID 부분 수용(완전일치 계약 제거, 삼순 ②)
  *  [비용]      M22 모순 0건에도 검증 호출 · M23 검증 토큰 미누적 · M24 재생성 무한
  *  [코드 렌더]  M25 신원 문장 미부착
- *  [어댑터]    M26 identityConflict 미전달 · M27 identityBlock 미전달 · M28 검증기 미등록
+ *  [구분불가]  M36 같은팀·같은포지션 동명이인 검증 생략 (삼순 ③ 설계상 통과)
+ *  [어댑터]    M26 identityConflicts 미전달 · M27 identityBlock 미전달 · M28 검증기 미등록
  *              M29 인젝션 방어 제거 · M30 temperature 비결정론
  */
 const MUTATIONS = [
@@ -66,10 +71,9 @@ const MUTATIONS = [
   {
     id: "M1 seam 배선 끊김",
     file: PIPELINE,
-    find: `          ...(() => {
-            const identity = buildPlayerIdentity(playerCandidate, players);
-            return identity ? { identityBlock: identity.block, identity, identityPlayers: players } : {};
-          })(),`,
+    find: `          identityBlock: identity.block,
+          identity,
+          identityPlayers: players,`,
     replace: "",
     expect: "종단 answerQuestion 이 callRagLlm 에 identityBlock 을 넘기지 않았다",
   },
@@ -126,9 +130,31 @@ const MUTATIONS = [
   {
     id: "M8 이름충돌 fail-close 제거",
     file: PIPELINE,
-    find: "  if (candidate.name && player.name !== candidate.name) return null;",
-    replace: "",
+    find: "  if (candidate.name && player.name !== candidate.name) return null;\n  const team = player.team ?? candidate.team ?? null;",
+    replace: "  const team = player.team ?? candidate.team ?? null;",
     expect: "kboId↔이름 불일치인데 블록을 만들었다",
+  },
+  {
+    // 🔴 삼순 2026-08-27 ① — helper 가 null 을 돌려도 **빈 extras 로 RAG 를 그대로 타던** 결함.
+    //   검증도 신원문장도 없는 채 답이 나가 "fail-close" 가 실제로는 fail-open 이었다.
+    id: "M31 identity 미결속을 빈 extras 로 서빙(종전 결함 재현)",
+    file: PIPELINE,
+    find: `      if (!identity) {
+        await deps.log({
+          userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
+          inputTokens: null, outputTokens: null,
+        });
+        return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+      }`,
+    replace: "",
+    also: [{
+      file: PIPELINE,
+      find: `          identityBlock: identity.block,
+          identity,
+          identityPlayers: players,`,
+      replace: `          ...(identity ? { identityBlock: identity.block, identity, identityPlayers: players } : {}),`,
+    }],
+    expect: "Y1-3: identity 미결속인데 근거 검색이",
   },
 
   // ── [존재판정] 닫힌 집합 모순 탐지 ─────────────────────────────────────────
@@ -136,18 +162,26 @@ const MUTATIONS = [
     // 포지션 축을 통째로 죽이면 실측 사고(투수→내야수)가 그대로 나간다.
     id: "M9 포지션 모순 미검출",
     file: PIPELINE,
-    find: `  if (identity.position) {
-    const bad = tokenizePositions(answer)
-      .find((t) => !positionCompatible(identity.position!, t.token));
-    if (bad) found.push({ field: "position", expected: identity.position, mentioned: bad.token });
-  }`,
+    find: `    const seen = new Set<string>();
+    for (const token of tokenizePositions(answer)) {
+      if (positionCompatible(identity.position, token.token)) continue;
+      if (seen.has(token.token)) continue;
+      seen.add(token.token);
+      found.push({
+        id: \`position:\${token.token}\`,
+        field: "position", expected: identity.position, mentioned: token.token,
+      });
+    }`,
     replace: "",
     expect: "포지션 모순 토큰(내야수)이 존재판정에서 잡히지 않았다",
   },
   {
     id: "M10 구단 모순 미검출",
     file: PIPELINE,
-    find: '          found.push({ field: "team", expected: identity.team, mentioned: canonical });',
+    find: `          found.push({
+            id: \`team:\${canonical}\`,
+            field: "team", expected: identity.team, mentioned: canonical,
+          });`,
     replace: "",
     expect: "구단 모순 토큰(두산)이 존재판정에서 잡히지 않았다",
   },
@@ -208,15 +242,22 @@ const MUTATIONS = [
     // 반대 방향 — 제3자 판정(정상 서술)까지 차단하면 멀쩡한 답변이 unsure 로 죽는다.
     id: "M15 제3자를 차단(과잉 차단)",
     file: PIPELINE,
-    find: `    if (first.verdict === "제3자") {`,
-    replace: `    if (false) {`,
+    find: `    } else if (firstFold.ownedHits.length > 0) {
+      // 재생성 경로가 없는데 오귀속이 확정됐다 — 그대로 내보내면 fail-open 이다.
+      identityUnsafe = true;
+    }`,
+    replace: `    } else if (firstFold.ownedHits.length > 0) {
+      identityUnsafe = true;
+    } else {
+      identityUnsafe = true;
+    }`,
     expect: "제3자 판정인데 source=unsure",
   },
   {
     // 주인공 확정인데 재생성을 안 하면 고칠 기회 없이 바로 닫힌다 — 과잉 차단.
     id: "M16 주인공 확정인데 재생성 생략",
     file: PIPELINE,
-    find: `    } else if (first.verdict === "주인공" && deps.callRagLlm) {`,
+    find: `    } else if (firstFold.ownedHits.length > 0 && deps.callRagLlm) {`,
     replace: `    } else if (false) {`,
     // 재생성 자체가 안 일어나므로 호출 횟수 계약(1회)이 먼저 깨진다.
     expect: "X4: callRagLlm 1회",
@@ -225,8 +266,8 @@ const MUTATIONS = [
     // 재생성 신호를 안 실으면 두 번째 시도가 첫 번째와 같은 조건이 된다 — 고칠 기회가 없다.
     id: "M17 재생성 신호 미적재",
     file: RETRIEVE,
-    find: "  if (extras.identityConflict) {",
-    replace: "  if (false && extras.identityConflict) {",
+    find: "  if (extras.identityConflicts && extras.identityConflicts.length > 0) {",
+    replace: "  if (false && extras.identityConflicts && extras.identityConflicts.length > 0) {",
     expect: "재생성이 고쳤는데 source=unsure — 과잉 차단",
   },
 
@@ -235,37 +276,37 @@ const MUTATIONS = [
     // `불명` 을 안전하다고 보면 검증 LLM 이 모르는 답변이 전부 서빙된다.
     id: "M18 불명을 서빙",
     file: PIPELINE,
-    find: `    } else {
-      // 불명·검증기 미배선·예외 — 판정 불능은 서빙하지 않는다(fail-close).
+    find: `    if (firstFold.unknown) {
+      // 불명·검증기 미배선·예외·계약위반 — 판정 불능은 서빙하지 않는다(fail-close).
       identityUnsafe = true;
-    }`,
-    replace: `    } else {
-      identityUnsafe = false;
-    }`,
+    } else if`,
+    replace: `    if (false) {
+      identityUnsafe = true;
+    } else if`,
     expect: "판정 불능인데 source=rag — fail-open",
   },
   {
     // 검증기 미배선을 "검증 통과"로 접으면, 배선이 끊긴 채 전 답변이 무검증 서빙된다.
     id: "M19 검증기 미배선을 통과로 처리",
     file: PIPELINE,
-    find: `  if (!deps.verifyIdentityAttribution) return { verdict: "불명" };`,
-    replace: `  if (!deps.verifyIdentityAttribution) return { verdict: "제3자" };`,
+    find: `  if (!deps.verifyIdentityAttribution) return allUnknown();
+  let res: IdentityVerdictResult;`,
+    replace: `  if (!deps.verifyIdentityAttribution) return { verdicts: hits.map((hit) => ({ id: hit.id, verdict: "제3자" as const })) };
+  let res: IdentityVerdictResult;`,
     expect: "X7 검증기 미배선 → unsure: 판정 불능인데 source=rag",
   },
   {
     // 예외·timeout 을 통과로 접으면 장애 시 오귀속이 열린다 — 가장 조용한 fail-open.
     id: "M20 검증기 예외를 통과로 처리",
     file: PIPELINE,
-    find: `    return { verdict: "불명" };
-  } catch {
-    return { verdict: "불명" };
+    find: `  } catch {
+    return allUnknown();
   }
-}`,
-    replace: `    return { verdict: "불명" };
-  } catch {
-    return { verdict: "제3자" };
+  // 🔴 **ID별 verdict 완전일치**`,
+    replace: `  } catch {
+    return { verdicts: hits.map((hit) => ({ id: hit.id, verdict: "제3자" as const })) };
   }
-}`,
+  // 🔴 **ID별 verdict 완전일치**`,
     expect: "X8 검증기 예외/timeout → unsure: 판정 불능인데 source=rag",
   },
   {
@@ -276,11 +317,9 @@ const MUTATIONS = [
     //   `first.verdict` 접근이 TypeError 로 죽어 유저에게 500 이 나간다. X9-2 가 그 지점이다.
     id: "M21 non-object verdict 를 그대로 신뢰(예외 유발)",
     file: PIPELINE,
-    find: `    if (res && (res.verdict === "주인공" || res.verdict === "제3자" || res.verdict === "불명")) {
-      return res;
-    }
-    return { verdict: "불명" };`,
-    replace: `    return res;`,
+    find: `  if (!res || !Array.isArray(res.verdicts)) return allUnknown();`,
+    replace: `  if (!res) return res as unknown as IdentityVerdictResult;
+  if (!Array.isArray(res.verdicts)) return res;`,
     expect: "검증 결과 정규화가 없어 파이프라인이 예외로 죽었다",
   },
 
@@ -298,11 +337,11 @@ const MUTATIONS = [
     // 보조판정 토큰을 안 세면 "검증이 얼마나 비싼가"의 분모가 깨진다.
     id: "M23 검증 LLM 토큰 미누적",
     file: PIPELINE,
-    find: `      llm = {
-        ...llm!,
-        inputTokens: (llm!.inputTokens ?? 0) + (res.inputTokens ?? 0),
-        outputTokens: (llm!.outputTokens ?? 0) + (res.outputTokens ?? 0),
-      };`,
+    find: `    llm = {
+      ...llm!,
+      inputTokens: (llm!.inputTokens ?? 0) + (res.inputTokens ?? 0),
+      outputTokens: (llm!.outputTokens ?? 0) + (res.outputTokens ?? 0),
+    };`,
     replace: "",
     expect: "입력 토큰 누적이",
   },
@@ -312,14 +351,14 @@ const MUTATIONS = [
     file: PIPELINE,
     find: `      let retryLlm: LlmResult | null = null;
       try {
-        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflict: firstHits[0] });
+        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflicts: firstFold.ownedHits });
       } catch {
         retryLlm = null;
       }`,
     replace: `      let retryLlm: LlmResult | null = null;
       try {
-        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflict: firstHits[0] });
-        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflict: firstHits[0] });
+        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflicts: firstFold.ownedHits });
+        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflicts: firstFold.ownedHits });
       } catch {
         retryLlm = null;
       }`,
@@ -343,9 +382,9 @@ const MUTATIONS = [
     //   같은 프롬프트가 된다 — 비용만 쓰고 같은 오답을 받는다.
     id: "M26 server 어댑터 identityConflict 미전달",
     file: SERVER,
-    find: "          identityConflict: extras?.identityConflict,",
+    find: "          identityConflicts: extras?.identityConflicts,",
     replace: "",
-    expect: "server 어댑터가 실제 Gemini 요청에 identityConflict",
+    expect: "server 어댑터가 실제 Gemini 요청에 identityConflicts",
   },
   {
     id: "M27 server 어댑터 identityBlock 미전달",
@@ -382,6 +421,89 @@ const MUTATIONS = [
     replace: "          temperature: 1,\n          maxOutputTokens: 512,",
     expect: "검증기가 temperature 0 이 아니다",
   },
+
+  // ── 삼순 2026-08-27 NO-GO 3축 — 종전 구조를 그대로 재현해 게이트가 잡는지 본다 ─────
+  {
+    // 🔴 ②-a 종전은 포지션 모순을 `.find` 로 **첫 건만** 올렸다. 그러면
+    //   `형은 내야수입니다. 본인은 포수입니다` 에서 첫 hit 가 제3자로 판정되면
+    //   뒤의 주인공 오귀속이 검증 대상에서 통째로 빠져 그대로 서빙된다.
+    id: "M32 포지션 첫 hit 만 올림(.find 회귀)",
+    file: PIPELINE,
+    find: `    const seen = new Set<string>();
+    for (const token of tokenizePositions(answer)) {
+      if (positionCompatible(identity.position, token.token)) continue;
+      if (seen.has(token.token)) continue;
+      seen.add(token.token);
+      found.push({
+        id: \`position:\${token.token}\`,
+        field: "position", expected: identity.position, mentioned: token.token,
+      });
+    }`,
+    replace: `    const bad = tokenizePositions(answer)
+      .find((t) => !positionCompatible(identity.position!, t.token));
+    if (bad) found.push({
+      id: \`position:\${bad.token}\`,
+      field: "position", expected: identity.position, mentioned: bad.token,
+    });`,
+    expect: "Y2-0: 혼합 문장에서 hit 가",
+  },
+  {
+    // 🔴 ②-b 종전은 구단도 첫 팀에서 `break` 했다 — `두산전 호투 + 롯데 소속` 처럼
+    //   비귀속이 앞에 나오면 뒤의 오귀속이 후보에서 사라진다.
+    id: "M33 구단 첫 팀에서 break(종전 회귀)",
+    file: PIPELINE,
+    find: `          found.push({
+            id: \`team:\${canonical}\`,
+            field: "team", expected: identity.team, mentioned: canonical,
+          });
+        }`,
+    replace: `          found.push({
+            id: \`team:\${canonical}\`,
+            field: "team", expected: identity.team, mentioned: canonical,
+          });
+          break;
+        }`,
+    // 두 구단이 들어간 혼합 답변에서 hit 개수가 줄어 ID 집합이 달라진다.
+    expect: "Y2",
+  },
+  {
+    // 🔴 ②-c 종전은 여러 hit 를 **단일 verdict** 하나로 접었다.
+    //   첫 판정만 보면 혼합 귀속(제3자+주인공)을 표현할 수 없어 오귀속이 생단된다.
+    id: "M34 첫 verdict 하나로 접기(단일 verdict 회귀)",
+    file: PIPELINE,
+    find: `    const owned = res.verdicts.filter((row) => row.verdict === "주인공");
+    const unknown = res.verdicts.some((row) => row.verdict === "불명");`,
+    replace: `    const owned = res.verdicts[0]?.verdict === "주인공" ? [res.verdicts[0]] : [];
+    const unknown = res.verdicts[0]?.verdict === "불명";`,
+    expect: "Y2-a: 뒤쪽 hit 가 주인공인데 source=rag",
+  },
+  {
+    // 🔴 ②-d 완전일치 검사를 빼면 "7개 중 6개만 판정" 같은 부분 응답이 수용된다.
+    //   판정 안 된 hit 는 조용히 안전 처리되어 fail-open 이 된다.
+    id: "M35 누락·중복·미지 ID 부분 수용(완전일치 계약 제거)",
+    file: PIPELINE,
+    // ⚠️ 블록을 **통째로** 지우면 X9(malformed verdict `아마도?`)가 먼저 터져
+    //   기대 문구가 안 나온다 — 결함 주입은 "누가 먼저 소비하는지"까지 설계해야 한다(M90).
+    //   그래서 이 변이는 **누락 검사 한 줄만** 뚫는다. verdict 값 검사는 살아 있으므로
+    //   X9 는 그대로 PASS 하고, Y2-c(누락)만 RED 가 된다 — 축이 정확히 하나에 대응한다.
+    find: `  if (seen.size !== expected.size) return allUnknown();      // 누락`,
+    replace: "",
+    expect: "Y2-c 일부 hit 판정 누락 → unsure",
+  },
+  {
+    // 🔴 ③ 같은 팀·같은 포지션 동명이인은 닫힌 모순이 원리적으로 0건이다 —
+    //   검증 강제를 빼면 검증 LLM 이 한 번도 안 돌고 경력·생년 오귀속이 그대로 나간다.
+    id: "M36 구분불가 동명이인 검증 생략(설계상 통과)",
+    file: PIPELINE,
+    find: `  for (const namesakeId of identity.indistinguishableNamesakes) {
+    found.push({
+      id: \`biography:\${namesakeId}\`,
+      field: "biography", expected: identity.kboId, mentioned: namesakeId,
+    });
+  }`,
+    replace: "",
+    expect: "Y3-3: 구분 불가 동명이인인데 검증 대상(biography hit)이 만들어지지 않았다",
+  },
 ];
 
 /**
@@ -389,7 +511,7 @@ const MUTATIONS = [
  *   실제로 블록 재작성 때 다른 변이를 날리고도 남은 것만 PASS 해 누락을 못 봤다.
  *   따라서 실행 전에 고정 기대 ID 와 **완전일치**하고 중복이 0인지 먼저 증명한다.
  */
-const EXPECTED_MUTATION_IDS = Array.from({ length: 30 }, (_, index) => `M${index + 1}`);
+const EXPECTED_MUTATION_IDS = Array.from({ length: 36 }, (_, index) => `M${index + 1}`);
 
 function mutationIdOf(mutation) {
   const match = /^M\d+\b/.exec(mutation.id);
