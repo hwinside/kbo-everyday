@@ -1300,6 +1300,19 @@ export interface QaDeps {
      *   폐기가 "구제 가능한 정답이었는가"의 분류는 **표본 감사**로만 확정한다.
      */
     ragDiscardNumericCount?: number | null;
+    /**
+     * 서빙 근거의 **top1 코사인 거리** (2026-08-27, 삼순 재GO 조건 ③).
+     *
+     * 이 PR 은 `RAG_DOCUMENT_MAX_DISTANCE = 0.42` 로 "근거가 있는가" 를 가른다. 임계를
+     * 값으로 두면서 그 값이 실제로 무엇을 자르는지 관측하지 않으면 재보정이 감이 된다 —
+     * 0.42 는 표본 15건 파일럿이라 프로덕션 분포를 모아야 확정할 수 있다.
+     *
+     * ⚠️ **관측값이다** — 읽고 분기하는 서빙 로직을 만들지 않는다.
+     * ⚠️ `null` = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
+     *   **0 과 섞지 않는다** — 0 은 완전 일치라 부재를 0 으로 적으면 분포가 왼쪽으로
+     *   오염되고 임계가 실제보다 느슨해 보인다.
+     */
+    ragEvidenceTopDistance?: number | null;
     matchPath: MatchPath;
     answer: string | null;
     inputTokens: number | null;
@@ -1339,6 +1352,20 @@ export interface RagObservation {
   ragQuestionNumericCount: number;
   ragDiscardReason: RagDiscardReason | null;
   ragDiscardNumericCount: number | null;
+  /**
+   * 서빙에 쓰인 근거의 **top1 코사인 거리** (2026-08-27, 삼순 재GO 조건 ③).
+   *
+   * 🔴 왜 남기는가 — 이 PR 은 `RAG_DOCUMENT_MAX_DISTANCE = 0.42` 로 "근거가 있는가" 를
+   *   가른다. 그런데 그 임계가 실제로 어떤 분포를 자르고 있는지 **관측하지 않으면
+   *   재보정이 영원히 감이 된다.** 0.42 는 표본 15건 파일럿이지 캘리브레이션이 아니므로
+   *   프로덕션 분포를 모아야 확정할 수 있다.
+   *
+   * ⚠️ **관측값이다** — 이 칸을 읽고 분기하는 서빙 로직을 만들지 않는다.
+   * ⚠️ `null` = 거리 미제공(레거시 RPC·migration 이전) 또는 거리 개념이 없는 경로.
+   *   **0 과 섞지 않는다** — 0 은 "완전 일치" 라서 부재를 0 으로 적으면 분포가 왼쪽으로
+   *   오염되고 임계가 실제보다 느슨해 보인다.
+   */
+  ragEvidenceTopDistance: number | null;
 }
 
 /**
@@ -1358,13 +1385,34 @@ function ragObservation(
   attemptPath: RagAttemptPath,
   question: string,
   validated: ValidatedRagAnswer,
+  /**
+   * 서빙 근거. top1 거리를 관측값으로 남긴다(삼순 재GO ③).
+   * 생략하면 `null` — 부재를 0 으로 응급처리하지 않는다.
+   */
+  evidence?: readonly RagEvidence[],
 ): RagObservation {
   return {
     ragAttemptPath: attemptPath,
     ragQuestionNumericCount: numericTokenCount(question),
     ragDiscardReason: discardReasonOf(validated),
     ragDiscardNumericCount: discardNumericCountOf(validated),
+    ragEvidenceTopDistance: evidenceTopDistanceOf(evidence),
   };
+}
+
+/**
+ * 근거 배열의 top1 거리 — **관측값일 때만** 숫자를 돌려준다.
+ *
+ * ⚠️ 부재(레거시 RPC·선수/구단/뉴스 경로처럼 거리를 안 싣는 경로)는 `null` 이다.
+ *   0 으로 응급처리하면 "가장 가까운 근거" 로 읽혀 임계 재보정이 반대로 간다.
+ */
+function evidenceTopDistanceOf(evidence?: readonly RagEvidence[]): number | null {
+  const top = evidence?.[0]?.distance;
+  // 🔴 정의역 `[0, 2]` **양방향**으로 거른다 (삼순 2026-08-27 ②). DB CHECK 가 `[0,2]` 인데
+  //   앱이 하한만 보면, 상한 밖 값(유사도를 거리 칸에 넣는 오적재·오염 envelope)이 그대로
+  //   INSERT 로 가서 **로그 쓰기 자체가 23514 로 죽는다.** 관측 유실이 서빙 실패보다 낫다 —
+  //   범위 밖은 버리고 `null`(=관측 없음)로 남긴다.
+  return typeof top === "number" && Number.isFinite(top) && top >= 0 && top <= 2 ? top : null;
 }
 
 /**
@@ -3249,6 +3297,16 @@ export function routeQuestion(
   // 않고 아래 기존 판정(비야구면 LLM NOT_BASEBALL → blocked)으로 그대로 내려간다.
   // 단독 인사말(`안녕`)도 같은 자리에서 같은 이유로 받는다 — 질문이 아니라 대화 시작이다.
   if (isAckPhrase(question) || isGreetingPhrase(question)) return "ack";
+  // 🔴 **주제 이탈 선언은 라우터가 끝낸다** (2026-08-27 RAG-first ①, CI 가 잡은 회귀).
+  //   `야구 얘기 그만하고 시를 써줘` 는 야구 질문이 아니라 **야구를 배제하는** 문장이다.
+  //   종전에는 이 판정이 `isSupportedRuleTermQuestion` 안에만 있어서 "룰 용어가 아니다"만
+  //   말했고, 실제 차단은 진입 조건의 `!scopeGate` 가 대신 하고 있었다. 그 조건을 풀자
+  //   `llm_scope_gate` 로 흘러 공식 RAG 검색을 태웠다(삼순 R2 #3 재현).
+  //   ⚠️ 형제 4문장(`야구 말고 날씨`·`야구는 됐고 주식`…)은 `isOutOfScopeIntent` 가 우연히
+  //     잡고 있었을 뿐이다(`날씨`·`추천` 이 denylist 에 있어서). `시를 써줘` 는 없어서 샜다 —
+  //     **의도 판정을 목적어 사전에 의존시키면 목적어마다 구멍이 난다.** 그래서 판정을
+  //     "야구를 배제했다"는 **문장 구조** 쪽으로 올린다.
+  if (isTopicDismissal(question)) return "blocked";
   // 범위 되묻기(`야구 룰`·`뭐 물어볼 수 있어`)는 질문이 아니라 **우리 안내문에 대한 반응**이다.
   // 외부 조회 없이 결정론으로 닫는다 — `ack` 과 같은 자리에 두는 이유도 같다(둘 다 대화 행위).
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
@@ -3493,6 +3551,12 @@ export interface StoredQaFinal {
   ragDiscardReason?: RagDiscardReason | null;
   ragDiscardNumericCount?: number | null;
   /**
+   * 서빙 근거 top1 거리 — 위 4칸과 **같은 이유**로 envelope 에 보존한다.
+   * `store 성공 → log 전 crash → retry` 에서 재생 경로가 envelope 만 보고 로그를 쓰므로
+   * 여기 없으면 임계 재보정 관측이 그 턴만 조용히 null 이 된다.
+   */
+  ragEvidenceTopDistance?: number | null;
+  /**
    * 가드 소유 질문이지만 **`RULE_TERM` 재질의 답이 정규 검증을 통과**했음 표식
    * (2026-08-22, 삼순 NO-GO P0②).
    *
@@ -3568,6 +3632,16 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
       ? { ragQuestionNumericCount: final.ragQuestionNumericCount } : {}),
     ...(isNonNegativeInteger(final.ragDiscardNumericCount)
       ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
+    // 거리는 정수가 아니라 0~2 실수다. **유한 실수일 때만** 복원하고 그 외는 버린다 —
+    // 부재를 0 으로 응급처리하면 "완전 일치" 로 읽혀 임계 재보정이 반대로 간다.
+    // 🔴 `[0, 2]` **양방향** — 하한만 보면 오염 envelope 의 2 초과 값이 복원돼 로그 INSERT 가
+    //   23514 로 죽는다(삼순 2026-08-27 ②). envelope 는 **이전 배포가 쓴 것**일 수 있으므로
+    //   여기서 신뢰하지 않고 매번 정의역을 다시 판정한다.
+    ...(typeof final.ragEvidenceTopDistance === "number"
+      && Number.isFinite(final.ragEvidenceTopDistance)
+      && final.ragEvidenceTopDistance >= 0
+      && final.ragEvidenceTopDistance <= 2
+      ? { ragEvidenceTopDistance: final.ragEvidenceTopDistance } : {}),
     // ⚠️ `=== true` 로만 복원한다 — 구버전·손상 envelope 의 truthy 값이 검증 통과로
     //   오인되면 자유문장 서빙 0 계약이 조용히 뚚린다(provenance 는 값과 같은 조건에 결속).
     ...(final.statRuleTermVerified === true ? { statRuleTermVerified: true } : {}),
@@ -4518,13 +4592,13 @@ async function answerOfficialDocumentQuestion(
   if (validated.kind === "general") {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
       answer: validated.answer, source: "llm",
-      toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated),
+      toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
       toneCompliant: validated.toneCompliant,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: validated.answer, source: "llm", remaining };
   }
@@ -4533,12 +4607,12 @@ async function answerOfficialDocumentQuestion(
     // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
     // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated),
+      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
       userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
@@ -4548,13 +4622,13 @@ async function answerOfficialDocumentQuestion(
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
   if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
     answer, source: "rag", sourceUrl,
-    toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated),
+    toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
   }, llm));
   await deps.log({
     userId, question, questionNorm, matchPath: "rag", answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
     toneCompliant: validated.toneCompliant,
-    ...ragObservation("official", question, validated),
+    ...ragObservation("official", question, validated, evidence),
   });
   return { status: 200, answer, source: "rag", remaining, sourceUrl };
 }
@@ -5770,11 +5844,86 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
   // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
   // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
+  // 🔴 **RAG-first 라우팅** (하린아빠 2026-08-27 "최대한 RAG을 활용하고 LLM을 활용하는 방향").
+  //
+  //   종전에는 `isSupportedRuleTermQuestion` 이라는 **닫힌 단어 사전**(RULE_TERM_HINT_WORDS ·
+  //   RULE_SCOPE_SIGNAL_WORDS · RULE_ACTOR_WORDS + 정규식)이 통과시킨 질문만 공식 근거를
+  //   탈 수 있었다. 그래서 사전에 없는 표현은 **정본 근거가 있어도 도달조차 못 했다.**
+  //   7일 실측(1,981건)에서 `unsure` 15.6% · `blocked` 15.8% 였고, 표본을 열어보니
+  //   `세이브 조건` · `포스아웃 상황` · `이닝 교대 조건` · `피치가뭐야` 처럼 공식야구규칙에
+  //   **정의가 그대로 있는** 질문들이 여기서 죽고 있었다.
+  //
+  //   이제 순서를 뒤집는다 — **근거를 먼저 찾고, 근거가 있으면 RAG 로 답한다.**
+  //   "근거가 있는가" 의 판정은 룰이 아니라 두 축이 한다:
+  //     ① 벡터 거리 임계(`RAG_DOCUMENT_MAX_DISTANCE`) — RPC 가 무관한 chunk 를 아예 안 준다.
+  //        이게 없으면 무슨 질문이든 상한만큼 돌려주므로 개수로는 판정이 불가능하다(실측).
+  //     ② `GROUNDED` LLM 판정 — 근거가 질문에 답하지 못하면 스스로 근거부족을 선언한다.
+  //   둘 다 통과하지 못하면 `answerOfficialDocumentQuestion` 이 null 을 주고 **종전 경로가
+  //   그대로 이어진다.** 즉 이 변경은 라우팅을 **넓히기만** 하고 기존 종결을 뺏지 않는다.
+  //
+  //   🔴 **`scopeGate` 도 여기서 푼다** (삼순 2026-08-27 P0-1).
+  //     1차 시도에서 나는 사전 조건만 지우고 `!scopeGate` 를 남겼는데, `routeQuestion` 은
+  //     사전 밖 표현을 전부 `llm_scope_gate` 로 보내므로 **두 조건이 사실상 같은 문**이었다.
+  //     실측으로 확인했다 — `세이브 조건`·`포스아웃 상황`·`이닝 교대 조건`·`피치가뭐야` 는
+  //     전부 `llm_scope_gate` 다. 즉 문을 연 줄 알았지만 열린 게 없었다.
+  //
+  //     ⚠️ 그때 `scopeGate` 를 남긴 이유(삼순 R1: 비야구 질문에 무관한 KBO 조문이 붙는다)는
+  //       사라진 게 아니라 **다른 축이 막는다.** 종전에는 RPC 가 무슨 질문이든 상한만큼
+  //       돌려줘서 라우팅 조건 말고는 방어가 없었지만, 이제 거리 임계가 무관한 chunk 를
+  //       아예 반환하지 않는다. 실측(같은 코퍼스 top1 거리):
+  //         야구 무관   0.4281~0.5139 (주식·날씨·점심·파이썬·아이폰) → 임계 0.42 밖 = 0건
+  //         정본 존재   0.2689~0.3787 (포스아웃·이닝교대·인필드플라이·세이브 조건) → 통과
+  //       그리고 명시적 비야구(`서울 날씨 어때`·`야구 말고 …`)는 여기 오기 전에 `blocked`
+  //       로 이미 종결한다(실측). 즉 방어를 **라우팅 라벨에서 근거 거리로 옮긴 것**이지
+  //       없앤 것이 아니다.
+  //
+  //   🔴 **엔티티(선수·구단)가 결속된 질문은 이 PR 이 건드리지 않는다** (하린아빠 2026-08-27 ⓒ).
+  //     이 PR 의 목적은 "사전 밖 **순수 룰 질문**이 정본 근거에 도달하게" 하는 것 하나다.
+  //     엔티티가 결속된 질문의 소유권(`문보경 보크 규칙 알려줘` 가 선수냐 규칙집이냐)은
+  //     **별개 문제**이고, 실측 결과 이 PR 안에서 풀 수 없다는 것이 확인됐다:
+  //
+  //       잔여 질문 기준 상대 비교(margin = 엔티티 근거 거리 − tier1 거리, 20케이스):
+  //         official 이 정본인 것들의 margin 최소 = 0.0759 (`연장전 규칙 알려줘`)
+  //         엔티티가 정본인 것들의 margin 최대 = 0.0850 (`삼진 당한 경기 알려줘`)
+  //       **두 분포가 뒤집혀 있다.** 어떤 임계를 잡아도 한쪽이 틀린다. 단독 임계도 같다 —
+  //       `삼진 당한 경기 알려줘` 는 tier1 0.2918 로 진짜 규칙 질문보다 더 가깝다.
+  //
+  //     이유: 임베딩 거리는 "무슨 단어가 있나" 에 반응하고 **"무엇을 묻나" 에는 반응하지
+  //     않는다.** `삼진 당한 경기` 는 룰 어휘를 쓰지만 사건을 묻는 문장이다. 여기서 임계를
+  //     더 조이는 것은 반례를 하나 옮기는 것일 뿐이라
+  //     (`open_language_never_closes_with_rules` 의 거리 버전) 하지 않는다.
+  //
+  //     그래서 **엔티티 결속 질문은 main 계약 그대로 둔다** — 소유권 판정을 새로 만들지
+  //     않고, `isSupportedRuleTermQuestion` 이 종전처럼 진입을 가른다. 이러면
+  //     `문보경 보크 규칙 알려줘` 는 main 과 동일하게 official 로 가고(이 술어가 true),
+  //     `문보경 별명 알려줘` 는 동일하게 선수 RAG 로 간다.
+  //     ⚠️ 즉 이 PR 은 엔티티 결속 질문에 대해 **새 결함을 만들지도, 기존 결함을 고치지도
+  //       않는다.** 삼순 P0-2 가 지적한 개선은 혼합 라벨셋이 필요한 별도 PR 로 이월한다.
+  //
+  //   🔴 **판정 기준은 "지명 존재" 이지 "서빙 가능한 후보" 가 아니다** (삼순 2026-08-27 ①).
+  //     직전 구현은 `enabledPlayerCandidate || resolveRagTeamCandidate(...)` 였는데, 전자는
+  //     **단일·RAG 서빙 가능** 선수만, 후자는 **단일** 구단만 잡는다. 그래서
+  //       · `문보경 어제 무슨 일 있었어?` (선수명은 있으나 서술 후보가 아님)
+  //       · 복수 선수 지명
+  //       · `LG 랑 두산 …` (복수 구단)
+  //     이 전부 `false` 로 떨어져, official 근거가 0.42 안이기만 하면 **신규 경로가
+  //     durable LLM 을 선점**해 main 과 달라진다. 후보 해석기의 null 은 "엔티티가 없다" 가
+  //     아니라 "**있는데 단일 후보로 못 좁혔다**" 이므로, 그 null 을 개방 신호로 쓰면 안 된다.
+  //
+  //     그래서 이름·구단명이 **언급되기만 해도** main 계약으로 되돌린다. 방향이 보수적이다 —
+  //     과탐(엔티티 아닌 문자열을 지명으로 오인)은 그냥 종전 동작 유지라 손해가 없고,
+  //     미탐이 곧 계약 위반이다.
+  const ownedByEntityRag =
+    mentionsAnyRosterName(question, players)
+    || mentionedTeamCanonicals(question).length > 0;
   if (
-    !scopeGate &&
+    // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은
+    // 엔티티가 없는 순수 룰 질문에만 적용된다.
+    (ownedByEntityRag
+      ? isSupportedRuleTermQuestion(question, glossary, players)
+      : true) &&
     deps.searchOfficialRag &&
-    deps.callOfficialRagLlm &&
-    isSupportedRuleTermQuestion(question, glossary, players)
+    deps.callOfficialRagLlm
   ) {
     const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;

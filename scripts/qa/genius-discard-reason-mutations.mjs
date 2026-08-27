@@ -85,6 +85,24 @@ const MUTATIONS = [
     expect: "폐쇄집합 밖 사유가 살아남았다",
   },
   {
+    // 🔴 삼순 2026-08-27 ②. DB CHECK 는 `[0,2]` 인데 앱이 하한만 보면, 오염 envelope 의
+    //   2 초과 값이 복원돼 **로그 INSERT 자체가 23514 로 죽는다**. 연속값 계약은 양방향이다.
+    name: "M6b 거리 상한(<=2) 제거 — 오염 envelope 의 정의역 밖 값이 복원돼 23514 로 로그가 죽는다",
+    file: "pipeline",
+    from: `      && final.ragEvidenceTopDistance <= 2
+`,
+    to: ``,
+    expect: "정의역 [0,2] 밖 거리가 살아남았다",
+  },
+  {
+    name: "M6c 거리 하한(>=0) 제거 — 음수 거리가 살아남는다(양방향 계약 위반)",
+    file: "pipeline",
+    from: `      && final.ragEvidenceTopDistance >= 0
+`,
+    to: ``,
+    expect: "정의역 밖 거리(-0.5)가 살아남았다",
+  },
+  {
     name: "M7 log-row 가 사유 칸을 빠뜨린다 (production 은 영원히 null — 8/13 단절 축)",
     file: "logrow",
     from: `    rag_discard_reason: entry.ragDiscardReason ?? null,`,
@@ -154,8 +172,11 @@ const MUTATIONS = [
   {
     name: "M20 official GENERAL 출구가 경로 라벨을 안 남긴다 (공식 실패율 분모 소실 — 삼순 2차 ②)",
     file: "pipeline",
+    // ⚠️ 앵커는 `ragObservation` 의 **현재 시그니처**를 따라간다 (2026-08-27: 거리 관측
+    //   인자 `evidence` 추가). 게이트 핀이 내 시그니처 변경을 잡으면 그건 게이트가 옳은
+    //   것이므로 같은 PR 에서 동기화한다 — 앵커를 느슨하게 만들면 검출력이 떨어진다.
     from: `      toneCompliant: validated.toneCompliant,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: validated.answer, source: "llm", remaining };`,
     to: `      toneCompliant: validated.toneCompliant,
