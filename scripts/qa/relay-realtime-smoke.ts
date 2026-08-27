@@ -164,7 +164,7 @@ test("§1 handler 실패(비 2xx)는 프레임 미기록 + 에러 집계", async
 test("§1 canonical hash — volatile trace(sourceAtMs 등)가 바뀌어도 무변경이면 INSERT 0", async () => {
   // game-live 형 응답: sourceAtMs/fetchedAtMs/deadlineAtMs 가 매 tick 바뀌지만 내용은 동일
   let liveTs = 100;
-  const liveData = () => ({ games: [{ gameId: "g1", score: "3:2" }], trace: { stage: "ok" }, sourceAtMs: liveTs, fetchedAtMs: liveTs + 1, deadlineAtMs: liveTs + 999 });
+  const liveData = () => ({ games: [{ gameId: "g1", score: "3:2" }], trace: { stage: "ok" }, updatedAt: new Date(liveTs).toISOString(), sourceAtMs: liveTs, fetchedAtMs: liveTs + 1, deadlineAtMs: liveTs + 999 });
   const deps = depsWith({});
   deps.handlers.live = async () => jsonResponse(liveData());
   const state = newGameState();
@@ -185,8 +185,10 @@ test("§1 canonical hash — volatile trace(sourceAtMs 등)가 바뀌어도 무�
 
 test("§1 canonicalizeForHash — volatile 키 재귀 제거, 실제 변경은 반영", () => {
   assert.ok(VOLATILE_HASH_KEYS.has("sourceAtMs") && VOLATILE_HASH_KEYS.has("trace"));
-  const a = { x: 1, sourceAtMs: 100, nested: { y: 2, fetchedAtMs: 5 } };
-  const b = { x: 1, sourceAtMs: 999, nested: { y: 2, fetchedAtMs: 88 } };
+  // 8/27 shadow NO-GO 원인: KBO 응답 data.updatedAt 이 매 tick 바뀌어 무변경 발행 폭증 → volatile 등재
+  assert.ok(VOLATILE_HASH_KEYS.has("updatedAt"), "updatedAt 은 volatile 키여야 한다 (8/27 shadow 15.8f/분 근원)");
+  const a = { x: 1, sourceAtMs: 100, nested: { y: 2, fetchedAtMs: 5, updatedAt: "2026-08-27T11:20:48.213Z" } };
+  const b = { x: 1, sourceAtMs: 999, nested: { y: 2, fetchedAtMs: 88, updatedAt: "2026-08-27T11:20:51.184Z" } };
   assert.equal(frameHash(a), frameHash(b), "volatile 만 다르면 동일 hash");
   const c = { x: 2, sourceAtMs: 100, nested: { y: 2, fetchedAtMs: 5 } };
   assert.notEqual(frameHash(a), frameHash(c), "실제 값이 다르면 상이 hash");
