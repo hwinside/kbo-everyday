@@ -113,7 +113,20 @@ export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
   nowMs: number;
   /** fast-path 유실 catch-up 지명 경기 여부 (forceCurrentStateGameIds). */
   forceCatchup: boolean;
+  /**
+   * 마지막 *성공* 발송 시각(ms, p10/p5 불문) — p5 코얼레싱 기준. null = 미기록(구 행
+   * backfill 전) → 코얼레싱 미적용(기존 동작 유지, fail-open이 아니라 diet 미적용일 뿐).
+   */
+  lastSendAtMs: number | null;
+  /**
+   * 마지막 성공 발송 콘텐츠 보존 여부(row.last_content_state 존재) — retreat 중
+   * heartbeat 를 "마지막 성공값 재발송"으로 살릴 수 있는지. false 면 기존대로 skip.
+   */
+  hasLastContent: boolean;
 }
+
+/** 스킵 사유 — 관제/원장 로깅용 (삼순 2026-08-27 게이트 ⓐ). */
+export type ChannelSkipReason = "retreat" | "p5_coalesced" | "no_change";
 
 export interface ChannelUpdateResolution {
   decision: ChannelPushDecision;
@@ -121,7 +134,24 @@ export interface ChannelUpdateResolution {
   isHeartbeat: boolean;
   /** 지명 catch-up으로 p10 승격된 발송(관제 catchups 카운터용). */
   isForcedCatchup: boolean;
+  /** send=false 일 때의 사유. send=true 면 undefined. */
+  skipReason?: ChannelSkipReason;
+  /**
+   * true = 현재 스냅샷 대신 *마지막 성공 발송 콘텐츠*(row.last_content_state)를 p10
+   * 재발송하라(retreat 중 heartbeat 복구 — 삼순 2026-08-27 조건①). 후퇴 스냅샷을 보내는
+   * 게 아니라 이미 성공한 더 높은 값을 재전송하므로 되감김이 아니다. 유실 단말 복구용.
+   */
+  resendLastContent: boolean;
 }
+
+/**
+ * p5(볼카운트/타자/lastPlay-only 변화) 코얼레싱 간격 — 마지막 성공 발송 후 이 간격이
+ * 지나기 전의 p5 는 스킵한다(발사율 다이어트, 삼순 2026-08-27 조건②).
+ * 트레이드오프(명시): 볼카운트-only 변화의 카드 반영 지연 상한이 기존 ~20s(서브틱)에서
+ * 최대 60s+서브틱 = ~80s 로 늘어난다. 점수/이닝/주자/상태(p10)·heartbeat·지명 catch-up
+ * 은 코얼레싱 대상이 아니라 즉시성 그대로다.
+ */
+export const P5_COALESCE_MS = 60 * 1000;
 
 /**
  * 채널 update 최종 판정 — base diff → heartbeat → 지명 catch-up 순 합성 (순수 함수,
@@ -146,17 +176,50 @@ export function resolveChannelUpdateDecision(
   // 성공발송(더 높은 값)에 머물고, Naver 회복·실제 전진(점수 ↑) 시 갱신된다. 유실 단말은
   // 다음 실제 변화에서 복구(이미 높은 값을 1회 성공발송한 뒤 후퇴 구간에 진입한 것).
   if (isScoreStateRetreat(i.lastScoreState, i.scoreState)) {
-    return { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false };
+    // retreat 중 heartbeat 복구(삼순 2026-08-27 조건①): 후퇴 지속이 heartbeat 간격을
+    // 넘기면 *마지막 성공 발송 콘텐츠*를 p10 재발송해 "카드 수 분 정지"의 안전망을 건다.
+    // 후퇴 스냅샷 전송이 아니므로 되감김 없음. 보존 콘텐츠가 없으면(구 행) 기존대로 skip.
+    const heartbeatDue =
+      i.lastP10AtMs === null || i.nowMs - i.lastP10AtMs >= CHANNEL_HEARTBEAT_INTERVAL_MS;
+    if (heartbeatDue && i.hasLastContent) {
+      return {
+        decision: { send: true, priority: "10" },
+        isHeartbeat: true,
+        isForcedCatchup: false,
+        resendLastContent: true,
+      };
+    }
+    return {
+      decision: { send: false },
+      isHeartbeat: false,
+      isForcedCatchup: false,
+      skipReason: "retreat",
+      resendLastContent: false,
+    };
   }
   const base = decideChannelPush(i);
   const heartbeat = applyChannelHeartbeat(base, i.lastP10AtMs, i.nowMs);
   const naturalP10 = heartbeat.send && heartbeat.priority === "10";
   const isForcedCatchup = i.forceCatchup && !naturalP10;
-  const decision: ChannelPushDecision = isForcedCatchup
+  let decision: ChannelPushDecision = isForcedCatchup
     ? { send: true, priority: "10" }
     : heartbeat;
+  let skipReason: ChannelSkipReason | undefined;
+  // p5 코얼레싱(삼순 2026-08-27 조건②): heartbeat 승격도 catch-up 승격도 아닌 순수 p5
+  // (볼카운트/타자/lastPlay-only 변화)는 마지막 성공 발송 후 P5_COALESCE_MS 이내면 스킵.
+  // last_send_at 미기록(구 행)은 코얼레싱 미적용 — diet 는 opt-in 관측 후 좁힌다.
+  if (
+    decision.send &&
+    decision.priority === "5" &&
+    i.lastSendAtMs !== null &&
+    i.nowMs - i.lastSendAtMs < P5_COALESCE_MS
+  ) {
+    decision = { send: false };
+    skipReason = "p5_coalesced";
+  }
+  if (!decision.send && skipReason === undefined) skipReason = "no_change";
   const isHeartbeat = naturalP10 && !(base.send && base.priority === "10");
-  return { decision, isHeartbeat, isForcedCatchup };
+  return { decision, isHeartbeat, isForcedCatchup, skipReason, resendLastContent: false };
 }
 
 /** 레거시 per-토큰 update 발송 판정 입력 (#664 catch-up). */

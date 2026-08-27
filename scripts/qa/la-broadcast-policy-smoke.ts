@@ -621,28 +621,82 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
   };
   check("resolve: 지명 catch-up + base p5(lastPlay만) + fresh p10 → p10 승격(R2③ 핵심)",
-    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
   check("resolve: 지명 catch-up + 무변화 skip + fresh p10 → p10 승격",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
   check("resolve: 지명 catch-up + 자연 p10(점수 변화) → 그 발송이 겸함(이중 승격 아님)",
     resolveChannelUpdateDecision({
       scoreState: scoreStateOf({ ...baseCs, homeScore: 2 }),
       fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 2 }),
       lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
-      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true,
+      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false,
     }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false });
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 지명 catch-up + heartbeat 만료 p10 → heartbeat가 겸함(catchup 카운트 아님)",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 비지명 + base p5 + fresh p10 → p5 그대로(예산 경로 보존)",
-    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
-    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 61_000, hasLastContent: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 비지명 + 무변화 + fresh p10 → skip 그대로",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
-    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "no_change", resendLastContent: false });
+}
+
+// ── resolveChannelUpdateDecision — p5 코얼레싱 + retreat 중 heartbeat 복구 (삼순 2026-08-27) ──
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 20_000_000;
+  const lastPlayOnly = { ...baseCs, lastPlay: "박동원 안타" };
+  const p5Base = {
+    scoreState: scoreStateOf(lastPlayOnly), fullStateHash: fullStateHashOf(lastPlayOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // C1) p5 + 마지막 발송 60s 미만 → 코얼레싱 스킵.
+  check("resolve C1: p5 + lastSend 59s 전 → p5_coalesced 스킵",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 59_000, hasLastContent: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "p5_coalesced", resendLastContent: false });
+  // C2) p5 + 60s 경과 → 발송(경계 포함).
+  check("resolve C2: p5 + lastSend 정확히 60s 전 → p5 발송(경계)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 60_000, hasLastContent: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
+  // C3) last_send_at 미기록(구 행) → 코얼레싱 미적용(기존 동작 보존).
+  check("resolve C3: p5 + lastSendAtMs null(구 행) → p5 발송(diet 미적용)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: null, hasLastContent: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
+  // C4) 지명 catch-up 은 코얼레싱 비대상(p10 승격이 우선).
+  check("resolve C4: p5 + fresh send + 지명 catch-up → p10(코얼레싱에 안 먹힘)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
+  // C5) heartbeat 승격은 코얼레싱 비대상.
+  check("resolve C5: p5 + fresh send + heartbeat 만료 → p10(코얼레싱에 안 먹힘)",
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: false });
+
+  // retreat 스냅샷(점수 후퇴) — lastScoreState 가 더 높은 값.
+  const retreat = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf({ ...baseCs, homeScore: 3 }),
+    lastStateHash: fullStateHashOf({ ...baseCs, homeScore: 3 }),
+  };
+  // R1) retreat + heartbeat 미만료 → 스킵(사유 retreat).
+  check("resolve R1: retreat + fresh p10 → skip(reason=retreat)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 30_000, hasLastContent: true }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
+  // R2) retreat + heartbeat 만료 + 보존 콘텐츠 있음 → 마지막 성공값 p10 재전송(복구 핵심).
+  check("resolve R2: retreat + HB 만료 + 보존 콘텐츠 → 마지막 성공값 p10 재전송",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - HB, hasLastContent: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: true });
+  // R3) retreat + heartbeat 만료 + 보존 콘텐츠 없음(구 행) → 기존대로 스킵(fail-safe).
+  check("resolve R3: retreat + HB 만료 + 콘텐츠 없음 → skip(fail-safe, 기존 동작)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - HB, hasLastContent: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
+  // R4) retreat + 지명 catch-up 이어도 후퇴 스냅샷 강제발송 금지(기존 B② 계약 유지).
+  check("resolve R4: retreat + forceCatchup → 여전히 skip(후퇴값 강제발송 금지)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 30_000, hasLastContent: true }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
 }
 
 // ── runChannelBroadcastPass — 요청-절대 deadline 유계 종료·재-arm (삼순 R4 blocker②) ──
@@ -665,6 +719,7 @@ function channelRow(gameId: string, environment: "production" | "sandbox"): Chan
   return {
     game_id: gameId, environment, channel_id: `chan-${gameId}-${environment}`,
     status: "active", last_score_state: null, last_state_hash: null, last_p10_at: null,
+    last_send_at: null, last_content_state: null,
     attempt_count: 0, next_retry_at: null,
     created_at: new Date(0).toISOString(), ending_at: null,
   };

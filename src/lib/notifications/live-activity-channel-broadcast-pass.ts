@@ -30,6 +30,12 @@ export interface ChannelBroadcastStats {
   heartbeats: number;
   catchups: number;
   skipped: number;
+  /** skip 사유별 분해(삼순 2026-08-27 게이트 ⓐ) — skipped = 세 값의 합. */
+  retreatSkipped: number;
+  coalescedSkipped: number;
+  noChangeSkipped: number;
+  /** retreat 중 heartbeat 복구 발송(마지막 성공 콘텐츠 재전송) 수 — heartbeats 에도 포함. */
+  retreatHeartbeats: number;
   ends: number;
   deleted: number;
   /**
@@ -90,6 +96,10 @@ export async function runChannelBroadcastPass(
   let heartbeats = 0;
   let catchups = 0;
   let skipped = 0;
+  let retreatSkipped = 0;
+  let coalescedSkipped = 0;
+  let noChangeSkipped = 0;
+  let retreatHeartbeats = 0;
   let ends = 0;
   let deleted = 0;
   let deadlineSkipped = 0;
@@ -189,7 +199,10 @@ export async function runChannelBroadcastPass(
       // 항상 p10으로 승격(relay lastPlay만 달라진 p5 틱이 catch-up을 삼켜 놓친 단말이
       // 2분 heartbeat까지 stale로 남던 구멍 폐쇄). 자연 p10이면 그 발송이 겸한다.
       const lastP10AtMs = row.last_p10_at ? new Date(row.last_p10_at).getTime() : null;
-      const { decision, isHeartbeat, isForcedCatchup: forcedCatchup } =
+      const lastSendAtMs = row.last_send_at ? new Date(row.last_send_at).getTime() : null;
+      const hasLastContent =
+        row.last_content_state != null && typeof row.last_content_state === "object";
+      const { decision, isHeartbeat, isForcedCatchup: forcedCatchup, skipReason, resendLastContent } =
         resolveChannelUpdateDecision({
           scoreState,
           fullStateHash: fullHash,
@@ -198,26 +211,42 @@ export async function runChannelBroadcastPass(
           lastP10AtMs,
           nowMs: now,
           forceCatchup: opts.forceCurrentStateGameIds?.has(row.game_id) === true,
+          lastSendAtMs,
+          hasLastContent,
         });
       if (!decision.send) {
         skipped += 1;
+        if (skipReason === "retreat") retreatSkipped += 1;
+        else if (skipReason === "p5_coalesced") coalescedSkipped += 1;
+        else noChangeSkipped += 1;
         continue;
       }
+      // retreat 중 heartbeat 복구(삼순 2026-08-27 조건①): 현재 스냅샷(후퇴값)이 아니라
+      // 마지막 성공 발송 콘텐츠를 그대로 재전송 — 유실 단말만 복구하고 되감김은 불가능.
+      const sendContent = resendLastContent
+        ? (row.last_content_state as Record<string, unknown>)
+        : cs;
       const res = await deps.send({
         env: row.environment,
         channelId: row.channel_id,
         event: "update",
-        contentState: cs,
+        contentState: sendContent,
         priority: decision.priority,
       });
       if (res.ok) {
         updates += 1;
         if (isHeartbeat) heartbeats += 1;
+        if (resendLastContent) retreatHeartbeats += 1;
         if (forcedCatchup) catchups += 1;
-        const patch: Record<string, unknown> = {
-          last_score_state: scoreState,
-          last_state_hash: fullHash,
-        };
+        const patch: Record<string, unknown> = resendLastContent
+          ? {} // 재전송은 상태 무이동 — hash/score/content 모두 마지막 성공값 그대로.
+          : {
+              last_score_state: scoreState,
+              last_state_hash: fullHash,
+              // 마지막 성공 발송 콘텐츠 보존 — retreat 중 heartbeat 재전송 재료(삼순 ①).
+              last_content_state: cs,
+            };
+        patch.last_send_at = new Date(now).toISOString();
         // last_p10_at은 *성공한 p10*만 전진(transient 실패/p5는 미전진 — 삼순 ②).
         if (decision.priority === "10") patch.last_p10_at = new Date(now).toISOString();
         await deps.updateChannel(row, patch); // generation fence — 새 채널에 옛 hash 기록 방지
@@ -241,7 +270,9 @@ export async function runChannelBroadcastPass(
   }
 
   return {
-    updates, heartbeats, catchups, skipped, ends, deleted,
+    updates, heartbeats, catchups, skipped,
+    retreatSkipped, coalescedSkipped, noChangeSkipped, retreatHeartbeats,
+    ends, deleted,
     failedGameIds: [...failedGameIds],
     deadlineSkipped,
   };
