@@ -247,6 +247,10 @@ async function enrichNaverLiveGames(
   // fetchKboLiveGames failover 는 false(기본값) → watchdog·관제 등 공유 소비자는 기존 동작 유지.
   overrideScoreFromRelay = false,
 ): Promise<KboRawGame[]> {
+  // relay enrich 관측(삼순 2026-08-27 재리뷰 — "조용한 schedule 폴백" 사각지대 폐쇄):
+  // per-game relay 실패/deadline 잘림과 이번 틱 점수 출처(relay|schedule)를 카운트해
+  // 로그로 남긴다. stale-equal(mode B) 발생 여부를 다음 라이브에서 즉시 판정하는 재료.
+  const enrichObs: string[] = [];
   const verifiedGames = await Promise.all(games.map(async (game) => {
     if (game.status !== "live") return game;
     // 1회초 0:0(스케줄 증거 없음)만 첫 투구 검증 대상. 그 외 live 는 relay 조회가
@@ -254,6 +258,7 @@ async function enrichNaverLiveGames(
     const needsFirstPitchCheck = !hasSchedulePlayEvidence(game);
     const evidenceRemainingMs = absoluteDeadlineAtMs - Date.now();
     if (evidenceRemainingMs <= 0) {
+      enrichObs.push(`${game.gameId}:deadline-cut`);
       return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
     }
     try {
@@ -267,6 +272,12 @@ async function enrichNaverLiveGames(
       // Naver schedule 은 볼카운트/주자/현재 투타를 안 줌 → relay currentGameState 로
       // 모든 live 경기를 보강해 경기방·LA·위젯이 경기 내내 0/0/0 으로 굳는 걸 막는다
       // (삼순 2차 리뷰 P0).
+      // 점수 출처 관측(삼순 재리뷰2): relay 성공이어도 top-level 점수가 null 이면 schedule
+      // 점수가 조용히 쓰인다 — mode B(stale-equal) 판정의 결정 재료라 반드시 기록한다.
+      if (overrideScoreFromRelay) {
+        const usedRelay = evidence.awayScore !== null && evidence.homeScore !== null;
+        enrichObs.push(`${game.gameId}:score-src=${usedRelay ? "relay" : "schedule"}`);
+      }
       return {
         ...game,
         // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 top-level 피드)에서 뽑는다.
@@ -291,9 +302,15 @@ async function enrichNaverLiveGames(
         currentBatter: evidence.currentBatter || game.currentBatter,
       };
     } catch {
+      enrichObs.push(`${game.gameId}:relay-failed`);
       return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
     }
   }));
+  // 점수 출처 로깅 — override 경로에서 relay 점수가 실제로 쓰였는지(relay) schedule 로
+  // 남았는지(schedule)를 틱마다 남긴다. relay-failed/deadline-cut 은 위에서 push 됨.
+  if (enrichObs.length > 0) {
+    console.log(`[naver-enrich] override=${overrideScoreFromRelay} ${enrichObs.join(" ")}`);
+  }
   return verifiedGames.map(naverGameToRaw);
 }
 

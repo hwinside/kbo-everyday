@@ -18,6 +18,7 @@ import {
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
+  isBallStrikeOnlyChange,
   resolveChannelUpdateDecision,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
@@ -621,28 +622,95 @@ check("cursor: invalidToken + retryable 혼합(성공 無) → 보류",
     lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
   };
   check("resolve: 지명 catch-up + base p5(lastPlay만) + fresh p10 → p10 승격(R2③ 핵심)",
-    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
   check("resolve: 지명 catch-up + 무변화 skip + fresh p10 → p10 승격",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
   check("resolve: 지명 catch-up + 자연 p10(점수 변화) → 그 발송이 겸함(이중 승격 아님)",
     resolveChannelUpdateDecision({
       scoreState: scoreStateOf({ ...baseCs, homeScore: 2 }),
       fullStateHash: fullStateHashOf({ ...baseCs, homeScore: 2 }),
       lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
-      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true,
+      lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false,
     }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false });
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 지명 catch-up + heartbeat 만료 p10 → heartbeat가 겸함(catchup 카운트 아님)",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true }),
-    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - HB, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 비지명 + base p5 + fresh p10 → p5 그대로(예산 경로 보존)",
-    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
-    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...p5Base, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 61_000, hasLastContent: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
   check("resolve: 비지명 + 무변화 + fresh p10 → skip 그대로",
-    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false }),
-    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false });
+    resolveChannelUpdateDecision({ ...same, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 10_000, hasLastContent: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "no_change", resendLastContent: false });
+}
+
+// ── resolveChannelUpdateDecision — p5 코얼레싱 + retreat 중 heartbeat 복구 (삼순 2026-08-27) ──
+// 재리뷰 P1 반영: 코얼레싱 자격 = *볼/스트라이크만* 변화(p5CoalesceEligible). lastPlay(중계
+// 한 줄)·타자·투수·아웃 변화 p5 는 비대상 — 즉시성 유지.
+{
+  const HB = CHANNEL_HEARTBEAT_INTERVAL_MS;
+  const t = 20_000_000;
+  // 볼카운트만 변화 = 코얼레싱 자격 있는 p5.
+  const ballsOnly = { ...baseCs, balls: 2 };
+  const p5Balls = {
+    scoreState: scoreStateOf(ballsOnly), fullStateHash: fullStateHashOf(ballsOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // lastPlay(중계 한 줄) 변화 = 자격 없는 p5(즉시 발송 유지).
+  const lastPlayOnly = { ...baseCs, lastPlay: "박동원 안타" };
+  const p5LastPlay = {
+    scoreState: scoreStateOf(lastPlayOnly), fullStateHash: fullStateHashOf(lastPlayOnly),
+    lastScoreState: scoreStateOf(baseCs), lastStateHash: fullStateHashOf(baseCs),
+  };
+  // C1) 볼카운트-only p5 + 마지막 발송 60s 미만 → 코얼레싱 스킵.
+  check("resolve C1: 볼카운트-only p5 + lastSend 59s 전 → p5_coalesced 스킵",
+    resolveChannelUpdateDecision({ ...p5Balls, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 59_000, hasLastContent: true, p5CoalesceEligible: true }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "p5_coalesced", resendLastContent: false });
+  // C2) 볼카운트-only p5 + 60s 경과 → 발송(경계 포함).
+  check("resolve C2: 볼카운트-only p5 + lastSend 정확히 60s 전 → p5 발송(경계)",
+    resolveChannelUpdateDecision({ ...p5Balls, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 60_000, hasLastContent: true, p5CoalesceEligible: true }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
+  // C3) last_send_at 미기록(구 행) → 코얼레싱 미적용(기존 동작 보존).
+  check("resolve C3: 볼카운트-only p5 + lastSendAtMs null(구 행) → p5 발송(diet 미적용)",
+    resolveChannelUpdateDecision({ ...p5Balls, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: null, hasLastContent: false, p5CoalesceEligible: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
+  // C4) 지명 catch-up 은 코얼레싱 비대상(p10 승격이 우선).
+  check("resolve C4: 볼카운트-only p5 + fresh send + 지명 catch-up → p10(코얼레싱에 안 먹힘)",
+    resolveChannelUpdateDecision({ ...p5Balls, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 10_000, hasLastContent: true, p5CoalesceEligible: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: false, isForcedCatchup: true, resendLastContent: false });
+  // C5) heartbeat 승격은 코얼레싱 비대상.
+  check("resolve C5: 볼카운트-only p5 + fresh send + heartbeat 만료 → p10(코얼레싱에 안 먹힘)",
+    resolveChannelUpdateDecision({ ...p5Balls, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - 10_000, hasLastContent: true, p5CoalesceEligible: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: false });
+  // C6, 삼순 재리뷰 P1) lastPlay(중계 한 줄)-only p5 는 자격 없음 → fresh send 여도 즉시 발송.
+  check("resolve C6: lastPlay-only p5 + lastSend 10s 전 + 자격 없음 → p5 즉시 발송(코얼레싱 비대상)",
+    resolveChannelUpdateDecision({ ...p5LastPlay, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 10_000, hasLastContent: true, p5CoalesceEligible: false }),
+    { decision: { send: true, priority: "5" }, isHeartbeat: false, isForcedCatchup: false, resendLastContent: false });
+
+  // retreat 스냅샷(점수 후퇴) — lastScoreState 가 더 높은 값.
+  const retreat = {
+    scoreState: scoreStateOf(baseCs), fullStateHash: fullStateHashOf(baseCs),
+    lastScoreState: scoreStateOf({ ...baseCs, homeScore: 3 }),
+    lastStateHash: fullStateHashOf({ ...baseCs, homeScore: 3 }),
+  };
+  // R1) retreat + heartbeat 미만료 → 스킵(사유 retreat).
+  check("resolve R1: retreat + fresh p10 → skip(reason=retreat)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: false, lastSendAtMs: t - 30_000, hasLastContent: true }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
+  // R2) retreat + heartbeat 만료 + 보존 콘텐츠 있음 → 마지막 성공값 p10 재전송(복구 핵심).
+  check("resolve R2: retreat + HB 만료 + 보존 콘텐츠 → 마지막 성공값 p10 재전송",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - HB, hasLastContent: true }),
+    { decision: { send: true, priority: "10" }, isHeartbeat: true, isForcedCatchup: false, resendLastContent: true });
+  // R3) retreat + heartbeat 만료 + 보존 콘텐츠 없음(구 행) → 기존대로 스킵(fail-safe).
+  check("resolve R3: retreat + HB 만료 + 콘텐츠 없음 → skip(fail-safe, 기존 동작)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - HB, nowMs: t, forceCatchup: false, lastSendAtMs: t - HB, hasLastContent: false }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
+  // R4) retreat + 지명 catch-up 이어도 후퇴 스냅샷 강제발송 금지(기존 B② 계약 유지).
+  check("resolve R4: retreat + forceCatchup → 여전히 skip(후퇴값 강제발송 금지)",
+    resolveChannelUpdateDecision({ ...retreat, lastP10AtMs: t - 30_000, nowMs: t, forceCatchup: true, lastSendAtMs: t - 30_000, hasLastContent: true }),
+    { decision: { send: false }, isHeartbeat: false, isForcedCatchup: false, skipReason: "retreat", resendLastContent: false });
 }
 
 // ── runChannelBroadcastPass — 요청-절대 deadline 유계 종료·재-arm (삼순 R4 blocker②) ──
@@ -665,6 +733,7 @@ function channelRow(gameId: string, environment: "production" | "sandbox"): Chan
   return {
     game_id: gameId, environment, channel_id: `chan-${gameId}-${environment}`,
     status: "active", last_score_state: null, last_state_hash: null, last_p10_at: null,
+    last_send_at: null, last_content_state: null,
     attempt_count: 0, next_retry_at: null,
     created_at: new Date(0).toISOString(), ending_at: null,
   };
@@ -752,6 +821,143 @@ function passDeps(clock: { now(): number }, send: (env: string) => Promise<{ ok:
       stats.failedGameIds.slice().sort().join(","),
       GIDS.slice(1, 3).sort().join(","));
     check("pass: 혼합 — 성공 2건(g1 양 env) 집계", stats.updates, 2);
+  }
+
+  // ── 삼순 재리뷰 Blocker②: stale-equal p5 틱이 last_content_state 를 오염시키지 않는다 ──
+  // 시나리오: 카드 3:0 발송 완료(보존 콘텐츠=3:0 신선본) → 다음 틱 relay 실패로 schedule
+  // 점수 3:0(stale-equal) + lastPlay 만 변화 = p5 발송. 이 틱이 last_content_state 를
+  // 덮으면 복구 재료가 낡은 스냅샷으로 오염된다 → score축 무변화 발송은 content 미갱신.
+  {
+    let nowMs = 1_000_000;
+    const { deps, updated } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const gid = GIDS[0];
+    // 현재 틱: 볼카운트만 변화(BALL_CN 0→2) = score축 동일·full축 변화 → base p5.
+    // (fixture buildContentState 는 lastPlay 를 반영하지 않으므로 볼카운트로 p5 유발 —
+    //  stale-equal 의 본질인 "score축 무변화 발송" 검증에는 동일.)
+    const g = { ...liveGame(gid), BALL_CN: 2 };
+    const prevCs = deps.buildContentState(liveGame(gid), "live", undefined, true) as Record<string, unknown>;
+    const row: ChannelRow = {
+      ...channelRow(gid, "production"),
+      last_score_state: scoreStateOf(prevCs),
+      last_state_hash: fullStateHashOf(prevCs),
+      last_p10_at: new Date(nowMs - 30_000).toISOString(),
+      last_send_at: new Date(nowMs - 90_000).toISOString(), // 코얼레싱 창(60s) 밖 → p5 발송됨
+      last_content_state: prevCs,
+    };
+    const stats = await runChannelBroadcastPass([row], [g], undefined, {}, deps);
+    check("pass B②: stale-equal p5 발송 자체는 나감(중계 즉시성)", stats.updates, 1);
+    const patch = updated[0]?.patch ?? {};
+    check("pass B②: score축 무변화 발송은 last_content_state 미갱신(오염 차단)",
+      "last_content_state" in patch, false);
+    check("pass B②: last_send_at 은 전진(코얼레싱 커서)", "last_send_at" in patch, true);
+  }
+  // ── 점수 전진 발송은 content 갱신(복구 재료 신선화) ──
+  {
+    let nowMs = 2_000_000;
+    const { deps, updated } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const gid = GIDS[0];
+    const g = liveGame(gid); // 1:0
+    const prev = { ...liveGame(gid), T_SCORE_CN: "0" }; // 직전 발송은 0:0
+    const prevCs = deps.buildContentState(prev, "live", undefined, true) as Record<string, unknown>;
+    const row: ChannelRow = {
+      ...channelRow(gid, "production"),
+      last_score_state: scoreStateOf(prevCs),
+      last_state_hash: fullStateHashOf(prevCs),
+      last_p10_at: new Date(nowMs - 30_000).toISOString(),
+      last_send_at: new Date(nowMs - 30_000).toISOString(),
+      last_content_state: prevCs,
+    };
+    const stats = await runChannelBroadcastPass([row], [g], undefined, {}, deps);
+    check("pass B②: 점수 전진 p10 발송", stats.updates, 1);
+    check("pass B②: 점수 전진 발송은 last_content_state 갱신(재료 신선화)",
+      "last_content_state" in (updated[0]?.patch ?? {}), true);
+  }
+  // ── retreat + HB 만료 → 보존 콘텐츠 p10 재전송(복구) — pass 레벨 종단 ──
+  {
+    let nowMs = 3_000_000;
+    const sent: Record<string, unknown>[] = [];
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const origSend = deps.send;
+    deps.send = (p: { env: "production" | "sandbox"; contentState: Record<string, unknown> }) => {
+      sent.push(p.contentState);
+      return origSend(p);
+    };
+    const gid = GIDS[0];
+    const g = liveGame(gid); // 현재 스냅샷 1:0
+    const higher = { ...liveGame(gid), T_SCORE_CN: "3" }; // 직전 성공 발송은 3:0(더 높음) → retreat
+    const higherCs = deps.buildContentState(higher, "live", undefined, true) as Record<string, unknown>;
+    const row: ChannelRow = {
+      ...channelRow(gid, "production"),
+      last_score_state: scoreStateOf(higherCs),
+      last_state_hash: fullStateHashOf(higherCs),
+      last_p10_at: new Date(nowMs - CHANNEL_HEARTBEAT_INTERVAL_MS).toISOString(), // HB 만료
+      last_send_at: new Date(nowMs - CHANNEL_HEARTBEAT_INTERVAL_MS).toISOString(),
+      last_content_state: higherCs,
+    };
+    const stats = await runChannelBroadcastPass([row], [g], undefined, {}, deps);
+    check("pass R②: retreat+HB만료 → 복구 발송 1건(retreatHeartbeats)", stats.retreatHeartbeats, 1);
+    check("pass R②: 재전송 콘텐츠 = 마지막 성공값(후퇴 스냅샷 아님)",
+      sent[0] === higherCs, true);
+  }
+
+  // ── 삼순 재리뷰2 Blocker③: 코얼레싱 커서는 last_state_hash(매 발송 전진) 기준 ──
+  // 시나리오: 득점(content 갱신) → 타자 변경 p5 발송(content 는 그대로) → 볼카운트-only 틱.
+  // 구 코드(content 대조)는 타자 변경 순간부터 다음 득점까지 코얼레싱 영구 비활성이었다.
+  {
+    let nowMs = 4_000_000;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const gid = GIDS[0];
+    const g = { ...liveGame(gid), BALL_CN: 2 }; // 이번 틱: 볼카운트만 변화
+    // 직전 발송 = 볼 0 (같은 타자·같은 아웃) — last_state_hash 는 직전 발송 것.
+    const prevSentCs = deps.buildContentState(liveGame(gid), "live", undefined, true) as Record<string, unknown>;
+    // 복구 재료(content)는 더 옛날 득점 시점(0:0, 다른 상황) — Blocker② 이후의 실제 배선.
+    const oldScoreCs = deps.buildContentState(
+      { ...liveGame(gid), T_SCORE_CN: "0", OUT_CN: 0 }, "live", undefined, true,
+    ) as Record<string, unknown>;
+    const row: ChannelRow = {
+      ...channelRow(gid, "production"),
+      last_score_state: scoreStateOf(prevSentCs),
+      last_state_hash: fullStateHashOf(prevSentCs),
+      last_p10_at: new Date(nowMs - 30_000).toISOString(),
+      last_send_at: new Date(nowMs - 10_000).toISOString(), // 코얼레싱 창 안
+      last_content_state: oldScoreCs, // 낡은 복구 재료여도 코얼레싱은 걸려야 함
+    };
+    const stats = await runChannelBroadcastPass([row], [g], undefined, {}, deps);
+    check("pass B③: content 가 옛 득점 시점이어도 볼카운트-only p5 는 코얼레싱 스킵",
+      stats.coalescedSkipped, 1);
+    check("pass B③: 발송 0(diet 실작동)", stats.updates, 0);
+  }
+  // ── isBallStrikeOnlyChange 단위 계약 ──
+  {
+    const prev = fullStateHashOf(baseCs);
+    check("bsOnly: 볼만 변화 → true",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, balls: 2 })), true);
+    check("bsOnly: 스트라이크만 변화 → true",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, strikes: 0 })), true);
+    check("bsOnly: 아웃 변화 → false(즉시성 유지)",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, outs: 1 })), false);
+    check("bsOnly: 타자 변화 → false",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, batterName: "김현수" })), false);
+    check("bsOnly: lastPlay 변화 → false(중계 즉시성)",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, lastPlay: "안타" })), false);
+    check("bsOnly: lastPlay 에 | 포함돼도 원문 비교(밀림 오판 없음)",
+      isBallStrikeOnlyChange(
+        fullStateHashOf({ ...baseCs, lastPlay: "1루|2루 동시 도루" }),
+        fullStateHashOf({ ...baseCs, lastPlay: "1루|2루 동시 도루", balls: 2 }),
+      ), true);
+    check("bsOnly: 직전 hash null(첫 발송 전) → false", isBallStrikeOnlyChange(null, prev), false);
   }
 
   console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);
