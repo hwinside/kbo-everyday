@@ -48,14 +48,24 @@ const MUTATIONS = [
   {
     name: "r4 구단을 엔티티 판정에서 제외 — `LG 트윈스 역사`를 규칙집이 가져간다",
     file: PIPELINE,
-    from: "    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;",
-    to: "    Boolean(enabledPlayerCandidate);",
+    from: "    mentionsAnyRosterName(question, players)\n    || mentionedTeamCanonicals(question).length > 0;",
+    to: "    mentionsAnyRosterName(question, players);",
   },
   {
     name: "r5 선수를 엔티티 판정에서 제외 — `문보경 별명`을 규칙집이 가져간다",
     file: PIPELINE,
-    from: "    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;",
-    to: "    resolveRagTeamCandidate(question) !== null;",
+    from: "    mentionsAnyRosterName(question, players)\n    || mentionedTeamCanonicals(question).length > 0;",
+    to: "    mentionedTeamCanonicals(question).length > 0;",
+  },
+  {
+    // 🔴 삼순 2026-08-27 ① 회귀 변이. 직전 exact 가 정확히 이 상태였고 게이트는 GREEN 이었다.
+    //   후보 해석기의 null 은 "엔티티 없음"이 아니라 "단일 후보로 못 좁힘"이라, 이 변이는
+    //   `문보경 어제 무슨 일 있었어?`(0.3210)·복수 선수(0.3086)·복수 구단(0.2830)을 전부
+    //   공식 RAG 로 흘린다 — 셋 다 임계 0.42 안이라 실제로 durable LLM 을 선점한다.
+    name: "r15 지명 존재 → 단일·서빙가능 후보로 되돌림 (직전 exact 회귀 — 후보 null 집합이 샌다)",
+    file: PIPELINE,
+    from: "    mentionsAnyRosterName(question, players)\n    || mentionedTeamCanonicals(question).length > 0;",
+    to: "    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;",
   },
   {
     name: "r6 엔티티 결속 질문을 공식 경로에서 통째로 차단 — main 이 official 로 보내던 룰 질문이 죽는다",

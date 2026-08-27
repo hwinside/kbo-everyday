@@ -1408,7 +1408,11 @@ function ragObservation(
  */
 function evidenceTopDistanceOf(evidence?: readonly RagEvidence[]): number | null {
   const top = evidence?.[0]?.distance;
-  return typeof top === "number" && Number.isFinite(top) ? top : null;
+  // 🔴 정의역 `[0, 2]` **양방향**으로 거른다 (삼순 2026-08-27 ②). DB CHECK 가 `[0,2]` 인데
+  //   앱이 하한만 보면, 상한 밖 값(유사도를 거리 칸에 넣는 오적재·오염 envelope)이 그대로
+  //   INSERT 로 가서 **로그 쓰기 자체가 23514 로 죽는다.** 관측 유실이 서빙 실패보다 낫다 —
+  //   범위 밖은 버리고 `null`(=관측 없음)로 남긴다.
+  return typeof top === "number" && Number.isFinite(top) && top >= 0 && top <= 2 ? top : null;
 }
 
 /**
@@ -3630,9 +3634,13 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
       ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
     // 거리는 정수가 아니라 0~2 실수다. **유한 실수일 때만** 복원하고 그 외는 버린다 —
     // 부재를 0 으로 응급처리하면 "완전 일치" 로 읽혀 임계 재보정이 반대로 간다.
+    // 🔴 `[0, 2]` **양방향** — 하한만 보면 오염 envelope 의 2 초과 값이 복원돼 로그 INSERT 가
+    //   23514 로 죽는다(삼순 2026-08-27 ②). envelope 는 **이전 배포가 쓴 것**일 수 있으므로
+    //   여기서 신뢰하지 않고 매번 정의역을 다시 판정한다.
     ...(typeof final.ragEvidenceTopDistance === "number"
       && Number.isFinite(final.ragEvidenceTopDistance)
       && final.ragEvidenceTopDistance >= 0
+      && final.ragEvidenceTopDistance <= 2
       ? { ragEvidenceTopDistance: final.ragEvidenceTopDistance } : {}),
     // ⚠️ `=== true` 로만 복원한다 — 구버전·손상 envelope 의 truthy 값이 검증 통과로
     //   오인되면 자유문장 서빙 0 계약이 조용히 뚚린다(provenance 는 값과 같은 조건에 결속).
@@ -5891,8 +5899,23 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //     `문보경 별명 알려줘` 는 동일하게 선수 RAG 로 간다.
   //     ⚠️ 즉 이 PR 은 엔티티 결속 질문에 대해 **새 결함을 만들지도, 기존 결함을 고치지도
   //       않는다.** 삼순 P0-2 가 지적한 개선은 혼합 라벨셋이 필요한 별도 PR 로 이월한다.
+  //
+  //   🔴 **판정 기준은 "지명 존재" 이지 "서빙 가능한 후보" 가 아니다** (삼순 2026-08-27 ①).
+  //     직전 구현은 `enabledPlayerCandidate || resolveRagTeamCandidate(...)` 였는데, 전자는
+  //     **단일·RAG 서빙 가능** 선수만, 후자는 **단일** 구단만 잡는다. 그래서
+  //       · `문보경 어제 무슨 일 있었어?` (선수명은 있으나 서술 후보가 아님)
+  //       · 복수 선수 지명
+  //       · `LG 랑 두산 …` (복수 구단)
+  //     이 전부 `false` 로 떨어져, official 근거가 0.42 안이기만 하면 **신규 경로가
+  //     durable LLM 을 선점**해 main 과 달라진다. 후보 해석기의 null 은 "엔티티가 없다" 가
+  //     아니라 "**있는데 단일 후보로 못 좁혔다**" 이므로, 그 null 을 개방 신호로 쓰면 안 된다.
+  //
+  //     그래서 이름·구단명이 **언급되기만 해도** main 계약으로 되돌린다. 방향이 보수적이다 —
+  //     과탐(엔티티 아닌 문자열을 지명으로 오인)은 그냥 종전 동작 유지라 손해가 없고,
+  //     미탐이 곧 계약 위반이다.
   const ownedByEntityRag =
-    Boolean(enabledPlayerCandidate) || resolveRagTeamCandidate(question) !== null;
+    mentionsAnyRosterName(question, players)
+    || mentionedTeamCanonicals(question).length > 0;
   if (
     // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은
     // 엔티티가 없는 순수 룰 질문에만 적용된다.

@@ -92,16 +92,31 @@ const MEASURED_DISTANCE: Record<string, number> = {
   "오늘 점심": 0.4480,
   "파워히터": 0.5029,
   "고춧가루 시리즈": 0.4491,
-  // 선수 문서가 정본인 잔여 질문 — 소유권 임계(0.38) 밖
+  // 선수 문서가 정본인 잔여 질문
   "별명": 0.4109,
   "별명 알려줘": 0.4399,
+  // 🔴 삼순 2026-08-27 ① 이 지목한 **후보 해석기가 null 을 주는** 엔티티 질문 3종.
+  //   전부 임계 0.42 **안**이다 — 즉 가드가 "지명 존재"가 아니라 "단일·서빙가능 후보"에
+  //   걸려 있으면 이 질문들이 실제로 공식 RAG 를 선점한다. 무대가 성립한다는 실측 근거다.
+  //   (2026-08-27 tier1 top1 실측)
+  "문보경 어제 무슨 일 있었어?": 0.3210,          // 선수명 있으나 서술 후보 아님
+  "문보경이랑 김현수 중에 누가 더 잘해?": 0.3086,  // 복수 선수
+  "LG랑 두산 경기 어땠어?": 0.2830,               // 복수 구단
+  // 같은 null 집합인데 사전이 룰 질문으로 인정하는 짝 — main 계약이면 official 이 맞다.
+  "문보경이랑 김현수 보크 규칙 알려줘": 0.3354,
+  "LG랑 두산 연장전 규칙 알려줘": 0.3133,
 };
 
 const OFFICIAL_CONTENT =
   "5.09 아웃 — 인필드 플라이가 선고된 타구가 베이스에서 떨어져 있는 주자에게 닿았을 때는 타자와 주자가 모두 아웃된다.";
 const PLAYER_CONTENT = "문보경은 LG 트윈스 소속 내야수로 팬들이 부르는 별명이 있다.";
 
-const PLAYERS: PlayerRef[] = [{ kboId: "69102", name: "문보경", team: "LG" } as PlayerRef];
+// 김현수를 함께 둔다 — **복수 선수 지명**을 만들려면 로스터에 둘 다 있어야 한다.
+// (없으면 `mentionsAnyRosterName` 이 한 명만 보고 "복수" 무대가 성립하지 않는다.)
+const PLAYERS: PlayerRef[] = [
+  { kboId: "69102", name: "문보경", team: "LG" } as PlayerRef,
+  { kboId: "50072", name: "김현수", team: "LG" } as PlayerRef,
+];
 
 interface Calls {
   officialSearch: string[];
@@ -297,6 +312,44 @@ async function main() {
     );
   }
   pass("V 사건 질문(엔티티 결속·사전 false) — 개방이 새지 않는다");
+
+  // ── E3. 후보 해석기가 null 을 주는 엔티티 질문도 막힌다 (삼순 2026-08-27 ①) ──
+  //
+  //   🔴 이 축이 없어서 직전 exact 가 GREEN 이었다. 가드를
+  //     `enabledPlayerCandidate || resolveRagTeamCandidate(...)` 로 두면
+  //       · 선수명은 있는데 **서술 후보가 아닌** 질문
+  //       · **복수 선수** 지명
+  //       · **복수 구단** 지명
+  //     이 전부 `false` 로 떨어진다. 후보 해석기의 null 은 "엔티티가 없다" 가 아니라
+  //     "**있는데 단일 후보로 못 좁혔다**" 인데, 그 null 을 개방 신호로 읽은 것이다.
+  //
+  //   무대가 실제로 성립한다 — 세 질문 모두 tier1 top1 거리가 **임계 0.42 안**이다
+  //   (0.3210 / 0.3086 / 0.2830, 2026-08-27 실측). 즉 가드가 느슨하면 그냥 이론적
+  //   위험이 아니라 **실제로 공식 RAG 가 durable LLM 을 선점한다.**
+  //
+  //   ⚠️ 사전이 룰 질문으로 인정하는 짝(`… 보크 규칙 알려줘`)도 같이 태운다. "전부
+  //     막혔다" 는 것만 보면 가드를 `false` 로 고정해도 통과하므로, main 계약이
+  //     살아있다는 반대 방향을 함께 고정해야 축이 판별력을 갖는다.
+  {
+    const NULL_CANDIDATE: Array<{ q: string; want: "official" | "entity"; why: string }> = [
+      { q: "문보경 어제 무슨 일 있었어?", want: "entity", why: "단일 선수·비후보 (사전 false)" },
+      { q: "문보경이랑 김현수 중에 누가 더 잘해?", want: "entity", why: "복수 선수 (사전 false)" },
+      { q: "LG랑 두산 경기 어땠어?", want: "entity", why: "복수 구단 (사전 false)" },
+      { q: "문보경이랑 김현수 보크 규칙 알려줘", want: "official", why: "복수 선수·사전 true — main 동일" },
+      { q: "LG랑 두산 연장전 규칙 알려줘", want: "official", why: "복수 구단·사전 true — main 동일" },
+    ];
+    for (const { q, want, why } of NULL_CANDIDATE) {
+      const { calls } = await run(q);
+      const tookOfficial = calls.officialLlm > 0;
+      assert.equal(
+        SELFTEST ? !tookOfficial : tookOfficial, want === "official",
+        `E3(${q}): 기대 ${want} 인데 공식 LLM ${calls.officialLlm}회 — ${why}. `
+        + "후보 해석기의 null 은 '엔티티 없음'이 아니라 '단일 후보로 못 좁힘'이다 — "
+        + "그 null 을 개방 신호로 쓰면 신규 경로가 durable LLM 을 선점한다",
+      );
+    }
+    pass("E3 후보 null 엔티티 5종 — 지명 존재로 가른다 (비후보·복수선수·복수구단 + 반대축 2)");
+  }
 
   // ── B. 근거 판정이 개수가 아니라 거리다 ───────────────────────────────────
   assert.ok(

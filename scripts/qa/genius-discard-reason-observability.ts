@@ -690,11 +690,19 @@ async function run(): Promise<void> {
         ragDiscardReason: "totally_new_reason" as RagDiscardReason,
         ragQuestionNumericCount: 1.5,
         ragDiscardNumericCount: -3,
+        // 🔴 거리는 코사인 정의역 `[0, 2]` 다. 2 초과 값(유사도를 거리 칸에 넣은 오적재·
+        //   구버전 오염)이 복원되면 DB CHECK 에서 23514 로 **로그 INSERT 자체가 죽는다**
+        //   (삼순 2026-08-27 ②). 앱이 DB 와 같은 정의역을 봐야 한다.
+        ragEvidenceTopDistance: 7.5,
       },
       { text: "", inputTokens: 1, outputTokens: 1 },
     );
     const restored = unpackStoredQaFinal(poisoned.text);
     assert.ok(restored, "오염 envelope 복원 실패");
+    assert.ok(
+      restored.ragEvidenceTopDistance === undefined,
+      `정의역 [0,2] 밖 거리가 살아남았다: ${restored.ragEvidenceTopDistance} — DB CHECK 에서 23514 로 로그가 죽는다`,
+    );
     assert.ok(restored.ragAttemptPath === undefined, `폐쇄집합 밖 경로가 살아남았다: ${restored.ragAttemptPath}`);
     assert.ok(restored.ragDiscardReason === undefined, `폐쇄집합 밖 사유가 살아남았다: ${restored.ragDiscardReason}`);
     assert.ok(restored.ragDiscardNumericCount === undefined, `음수 개수가 살아남았다: ${restored.ragDiscardNumericCount}`);
@@ -702,7 +710,20 @@ async function run(): Promise<void> {
       restored.ragQuestionNumericCount === undefined,
       `소수 질문 개수가 살아남았다: ${restored.ragQuestionNumericCount}`,
     );
-    ok("④-c 오염 envelope 폐쇄집합 밖 값 폐기 (23514 차단)");
+    // 하한·비유한도 같은 축이다 — 연속값 계약은 **양방향**으로 건다(한쪽만 걸면 반대쪽이 뚫린다).
+    for (const bad of [-0.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      const p2 = packStoredQaFinal(
+        { answer: "테스트 답변이에요.", source: "team_rag", ragEvidenceTopDistance: bad },
+        { text: "", inputTokens: 1, outputTokens: 1 },
+      );
+      const r2 = unpackStoredQaFinal(p2.text);
+      assert.ok(r2, "오염 envelope 복원 실패");
+      assert.ok(
+        r2.ragEvidenceTopDistance === undefined,
+        `정의역 밖 거리(${bad})가 살아남았다: ${r2.ragEvidenceTopDistance}`,
+      );
+    }
+    ok("④-c 오염 envelope 폐쇄집합 밖 값 폐기 (23514 차단 · 거리 [0,2] 양방향)");
   }
 
   // ── ⑤ log-row SSOT 가 그 값을 실제 컬럼으로 옮기는가 ────────────────────
