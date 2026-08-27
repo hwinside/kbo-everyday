@@ -83,7 +83,7 @@ const CHAT_TRANSPORT_SHA256 = {
   "src/components/game/LiveChat.tsx": "7bd019886e682c9d930729b25ee99dec780109ec4f1a85fb21d8217a9496548c",
   "src/app/api/admin/today-detail/route.ts": "206e50ea9ec78992179ed061f91da473913fd8ae09a685b0c617e24d2e8bc10b",
   "src/app/api/admin/supabase-usage/route.ts": "4db90091a59b99da9dc3d1e0937359a4ab1da4f752addf41756ef4c07e0decb5",
-  "src/app/api/admin/content/route.ts": "b1d1ecf0e8a8474485561fd8f09f11a7eda2433c1b5d6b657e66487749ccab02",
+  "src/app/api/admin/content/route.ts": "476ff88f7467eb3121be0b5361078dafc08f0dd67244fab390adcf04773b821e",
   "src/app/api/admin/reports/route.ts": "990c3a42e40c337d45f1ac7023efc339a4562036fd4ae775d8e3a9b678e7f442",
   "src/app/api/contextual-stats/route.ts": "81d430b3a0af4e01261a8e1de8f2e8206713a2af363b6e4f53b42f5490674b77",
   "src/app/api/report/route.ts": "7162fc6bde6e7ea2747c7877281ccf0857b05eded5d409d24ab5e02608986bf3",

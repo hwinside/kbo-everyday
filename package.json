@@ -96,6 +96,7 @@
     "qa:roster-crawl-completion": "node scripts/qa/roster-crawl-completion-smoke.mjs",
     "qa:roster-scope-trust": "node scripts/qa/roster-scope-trust-smoke.mjs",
     "qa:admin-view": "tsx scripts/qa/admin-view-smoke.ts",
+    "qa:admin-auth-loading": "tsx scripts/qa/admin-auth-loading-smoke.ts",
     "qa:content-views": "tsx scripts/qa/content-views-smoke.ts",
     "qa:content-views:news-wiring": "tsx --test scripts/qa/content-views-news-wiring-smoke.ts",
     "qa:content-views:news-wiring:mutations": "tsx scripts/qa/content-views-news-wiring-mutations.ts",

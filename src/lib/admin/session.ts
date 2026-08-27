@@ -1,5 +1,8 @@
 import { createHash, randomBytes } from "crypto";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { classifyAdminSessionRow, type AdminSessionCheck } from "./session-policy";
+
+export type { AdminSessionCheck } from "./session-policy";
 
 /**
  * 어드민 세션 (2026-07-18, PR #681 삼순 P0 반영).
@@ -34,18 +37,37 @@ export async function createAdminSession(userAgent: string | null): Promise<stri
   return token;
 }
 
-/** 쿠키 토큰 검증 — 미폐기 + 미만료 행 존재 시에만 true. last_used_at은 1시간 스로틀로 갱신 */
-export async function verifyAdminSessionToken(token: string): Promise<boolean> {
-  if (!token || token.length < 32) return false;
+/**
+ * 인스턴스 메모리 TTL 캐시 (2026-08-26 삼순 P1).
+ * 동시 다발 요청이 admin_sessions를 매번 때리지 않게 valid 토큰만 짧게 캐시한다.
+ * ⚠️ 트레이드오프: revoke/expire가 최대 TTL(45초)만큼 지연 반영된다. invalid/error는 캐시하지 않아
+ * (a) 잘못된 401이 굳지 않고 (b) transient 에러가 valid로 승격되지 않는다.
+ */
+const SESSION_CACHE_TTL_MS = 45 * 1000;
+const sessionCache = new Map<string, number>(); // tokenHash -> expiresAt(ms)
+
+/** 쿠키 토큰 검증 — 미폐기 + 미만료 행 존재 시 "valid". last_used_at은 1시간 스로틀로 갱신 */
+export async function checkAdminSessionToken(token: string): Promise<AdminSessionCheck> {
+  if (!token || token.length < 32) return "invalid";
   const tokenHash = hashToken(token);
+
+  const cachedUntil = sessionCache.get(tokenHash);
+  if (cachedUntil && cachedUntil > Date.now()) return "valid";
+  if (cachedUntil) sessionCache.delete(tokenHash);
+
   const { data, error } = await supabase
     .from("admin_sessions")
     .select("id,last_used_at,expires_at,revoked_at")
     .eq("token_hash", tokenHash)
     .maybeSingle();
-  if (error || !data) return false;
-  if (data.revoked_at) return false;
-  if (!data.expires_at || new Date(data.expires_at).getTime() <= Date.now()) return false;
+
+  const verdict = classifyAdminSessionRow(data, error);
+  if (verdict === "error") {
+    // transient PostgREST/커넥션 에러를 "토큰 무효"와 분리 — 조용한 401/유령 로그아웃 방지 + 진단 로그.
+    console.error("[admin-session] token lookup failed", error?.message || error);
+    return "error";
+  }
+  if (verdict !== "valid" || !data) return "invalid";
 
   const lastUsed = data.last_used_at ? new Date(data.last_used_at).getTime() : 0;
   if (Date.now() - lastUsed > 60 * 60 * 1000) {
@@ -55,7 +77,13 @@ export async function verifyAdminSessionToken(token: string): Promise<boolean> {
       .update({ last_used_at: new Date().toISOString() })
       .eq("id", data.id);
   }
-  return true;
+  sessionCache.set(tokenHash, Date.now() + SESSION_CACHE_TTL_MS);
+  return "valid";
+}
+
+/** back-compat boolean 래퍼 — 기존 호출부(auth/route 등) 유지. transient error는 무효와 동일하게 false. */
+export async function verifyAdminSessionToken(token: string): Promise<boolean> {
+  return (await checkAdminSessionToken(token)) === "valid";
 }
 
 /** Request 헤더에서 세션 쿠키 추출 (NextRequest 외 plain Request도 지원) */

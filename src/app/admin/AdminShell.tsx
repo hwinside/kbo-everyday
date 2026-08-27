@@ -28,16 +28,16 @@ import {
 } from "lucide-react";
 import { useAdminUnreadDMCount } from "@/lib/admin/useAdminUnreadDMCount";
 import { useAdminBatchHealthCount } from "@/lib/admin/useAdminBatchHealthCount";
+import { ADMIN_SESSION_SENTINEL } from "@/lib/admin/constants";
 
 // 인증 유지 = 서버 발급 HttpOnly 세션 쿠키 (2026-07-18, PR #681 삼순 P0 반영).
 // PIN 원문은 어떤 클라 storage에도 저장하지 않는다. 기존 어드민 페이지들은
 // sessionStorage.getItem("admin_pin")을 읽어 x-admin-pin 헤더로 보내므로(빈값이면
 // fetch 자체를 skip하는 가드도 있음), 비밀이 아닌 센티넬 "session"을 시드해 호환을
-// 유지한다 — 서버는 PIN 검증 실패 시 세션 쿠키로 인증한다(isAdminAuthedRequest).
-const SESSION_SENTINEL = "session";
-
+// 유지한다 — 서버는 PIN 검증 실패(또는 센티넬 skip) 시 세션 쿠키로 인증한다(isAdminAuthedRequest).
+// 센티넬 값은 constants.ts SSOT — 서버 pin.ts가 동일 상수로 scrypt skip 판정을 한다.
 function seedSessionSentinel() {
-  sessionStorage.setItem("admin_pin", SESSION_SENTINEL);
+  sessionStorage.setItem("admin_pin", ADMIN_SESSION_SENTINEL);
 }
 
 async function syncAdminPushSubscription(sub: PushSubscription): Promise<boolean> {
@@ -362,7 +362,7 @@ export default function AdminShell({ children }: { children: ReactNode }) {
     // 2) 아니면 HttpOnly 세션 쿠키만으로 재인증 (PIN 재입력 없음)
     const legacyPin = sessionStorage.getItem("admin_pin");
     const body =
-      legacyPin && legacyPin !== SESSION_SENTINEL ? { pin: legacyPin } : {};
+      legacyPin && legacyPin !== ADMIN_SESSION_SENTINEL ? { pin: legacyPin } : {};
     fetch("/api/admin/auth", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

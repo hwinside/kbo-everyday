@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { requireAdmin } from "@/lib/admin/pin";
 import { ga4Report, getGa4AccessToken } from "@/lib/admin/ga4";
 
-async function verifyPin(req: NextRequest): Promise<boolean> {
-  return isAdminAuthedRequest(req);
-}
+
 
 // GA4 "20260405" → "04/05"
 function fmtGa4Date(d: string): string {
@@ -20,9 +18,8 @@ type Ga4Rows = {
 const GA4_LAUNCH_DATE = process.env.GA4_LAUNCH_DATE ?? "2026-01-01";
 
 export async function GET(req: NextRequest) {
-  if (!(await verifyPin(req))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = await requireAdmin(req);
+  if (denied) return denied;
 
   const type = req.nextUrl.searchParams.get("type") ?? "dau";
 

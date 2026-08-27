@@ -2,12 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PostgrestError } from "@supabase/supabase-js";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { supabaseErrorResponse } from "@/lib/supabase/error";
-import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { requireAdmin } from "@/lib/admin/pin";
 import { getKSTToday, toKSTDateString } from "@/lib/utils/date-kst";
-
-async function verifyPin(req: NextRequest): Promise<boolean> {
-  return isAdminAuthedRequest(req);
-}
 
 // Supabase는 쿼리당 최대 1000행만 반환 → 초과분은 range 페이지네이션으로 수집
 const PAGE_SIZE = 1000;
@@ -25,9 +21,8 @@ async function fetchAllRows<T>(
 }
 
 export async function GET(req: NextRequest) {
-  if (!(await verifyPin(req))) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const denied = await requireAdmin(req);
+  if (denied) return denied;
 
   const days = Number(req.nextUrl.searchParams.get("days") ?? "30");
   const todayKST = getKSTToday();
