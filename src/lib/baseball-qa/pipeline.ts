@@ -5770,11 +5770,49 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // `baseball_rule_term`으로 폴백하므로, 비야구 질문도 이 라벨로 내려온다. 그걸 공식 RAG에
   // 통과시키면 비야구가 blocked 대신 unsure로 바뀌고 적대적 provider에서는 무관한 KBO 조문이
   // 근거로 붙은 답이 나간다(삼순 R1 재현). 폴백 질문은 종전대로 LLM NOT_BASEBALL 분류로 보낸다.
+  // 🔴 **RAG-first 라우팅** (하린아빠 2026-08-27 "최대한 RAG을 활용하고 LLM을 활용하는 방향").
+  //
+  //   종전에는 `isSupportedRuleTermQuestion` 이라는 **닫힌 단어 사전**(RULE_TERM_HINT_WORDS ·
+  //   RULE_SCOPE_SIGNAL_WORDS · RULE_ACTOR_WORDS + 정규식)이 통과시킨 질문만 공식 근거를
+  //   탈 수 있었다. 그래서 사전에 없는 표현은 **정본 근거가 있어도 도달조차 못 했다.**
+  //   7일 실측(1,981건)에서 `unsure` 15.6% · `blocked` 15.8% 였고, 표본을 열어보니
+  //   `세이브 조건` · `포스아웃 상황` · `이닝 교대 조건` · `피치가뭐야` 처럼 공식야구규칙에
+  //   **정의가 그대로 있는** 질문들이 여기서 죽고 있었다.
+  //
+  //   이제 순서를 뒤집는다 — **근거를 먼저 찾고, 근거가 있으면 RAG 로 답한다.**
+  //   "근거가 있는가" 의 판정은 룰이 아니라 두 축이 한다:
+  //     ① 벡터 거리 임계(`RAG_DOCUMENT_MAX_DISTANCE`) — RPC 가 무관한 chunk 를 아예 안 준다.
+  //        이게 없으면 무슨 질문이든 상한만큼 돌려주므로 개수로는 판정이 불가능하다(실측).
+  //     ② `GROUNDED` LLM 판정 — 근거가 질문에 답하지 못하면 스스로 근거부족을 선언한다.
+  //   둘 다 통과하지 못하면 `answerOfficialDocumentQuestion` 이 null 을 주고 **종전 경로가
+  //   그대로 이어진다.** 즉 이 변경은 라우팅을 **넓히기만** 하고 기존 종결을 뺏지 않는다.
+  //
+  //   ⚠️ `scopeGate` 는 유지한다. 그건 "야구 범위 밖" 판정이라 근거 유무와 다른 축이고,
+  //     여기서 풀면 비야구 질문에 무관한 KBO 조문이 근거로 붙는다(삼순 R1 실측).
+  //     범위 판정 자체를 LLM 으로 옮기는 건 Phase② 의 일이다 — 한 번에 하나씩 바꾼다.
+  //   🔴 **엔티티가 결속된 질문은 공식 RAG 가 가져가지 않는다** (게이트 RED 로 잡힌 실제 회귀).
+  //     사전을 걷어내자마자 `문보경 별명 알려줘` 가 공식 RAG 로 새어 `ragAttemptPath="official"`
+  //     이 됐다 — 선수 문서(tier2)가 답해야 할 질문을 KBO 규칙집이 가로챈 것이다.
+  //     "넓히되 뺏지 않는다" 는 이 PR 의 계약이라 소유권을 되돌려준다.
+  //
+  //     ⚠️ 여기서 **단어 사전을 다시 넣지 않는다.** 판정 기준은 룰이 아니라 **roster SSOT
+  //       결속 여부**다 — `enabledPlayerCandidate` 는 실제 선수로 특정됐다는 *사실*이고,
+  //       특정된 선수가 있으면 그 사람의 문서가 정본이지 규칙집이 아니다.
+  //
+  //     ⚠️⚠️ **구단·뉴스는 여기 넣지 않는다** (1차 시도에서 게이트가 잡은 내 오류).
+  //       처음엔 "엔티티가 있으면 다 양보" 로 짰는데, `LG 경기에서 점수가 같으면 연장전
+  //       규칙은?` 이 구단 소유로 읽혀 공식 조문 경로를 잃었다. 구단명이 붙었다는 이유로
+  //       룰 질문을 구단 문서로 답하는 것은 **삼순 2026-08-07 P0-1 이 명시적으로 금지한
+  //       라우팅 역전**이다(`LG 투수 보크 규칙` → tier1 조문이 정본). 구단 RAG 블록이
+  //       공식 RAG **뒤에** 놓인 것 자체가 그 계약이라, 여기서 앞당기면 계약이 뒤집힌다.
+  //       선수만 다른 이유: 선수는 자기 문서(tier2)가 정본인 서술형 질문의 주인이고,
+  //       그 경로는 신원 결속·오귀속 검증까지 붙어 있어 규칙집이 대신할 수 없다.
+  const ownedByEntityRag = Boolean(enabledPlayerCandidate);
   if (
     !scopeGate &&
+    !ownedByEntityRag &&
     deps.searchOfficialRag &&
-    deps.callOfficialRagLlm &&
-    isSupportedRuleTermQuestion(question, glossary, players)
+    deps.callOfficialRagLlm
   ) {
     const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
     if (official) return official;

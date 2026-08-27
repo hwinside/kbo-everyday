@@ -488,7 +488,8 @@
     "qa:profile-posts-paging:mutations": "node scripts/qa/profile-posts-paging-gate.mjs --mutations",
     "qa:stat-clarify-misfire": "tsx scripts/qa/stat-clarify-misfire-gate.ts",
     "qa:stat-clarify-misfire:selftest": "tsx scripts/qa/stat-clarify-misfire-gate.ts --selftest",
-    "qa:stat-clarify-misfire:mutations": "node scripts/qa/stat-clarify-misfire-mutations.mjs"
+    "qa:stat-clarify-misfire:mutations": "node scripts/qa/stat-clarify-misfire-mutations.mjs",
+    "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

@@ -52,6 +52,7 @@ import {
   RAG_SYSTEM_PROMPT,
   RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
+  RAG_DOCUMENT_MAX_DISTANCE,
   RAG_NEWS_CANDIDATE_LIMIT,
   RAG_NEWS_SYSTEM_PROMPT,
   RAG_OFFICIAL_SYSTEM_PROMPT,
@@ -311,6 +312,11 @@ interface RagOfficialChunkRow {
   source_grade: string;
   /** RPC 가 아직 안 돌려줄 수 있으므로 optional. 없으면 sanitizer 가 URL 로 판정한다. */
   source_kind?: string;
+  /**
+   * 질문 임베딩과의 코사인 거리(작을수록 가깝다). RPC 가 임계로 이미 걸렀지만,
+   * 호출자가 **관측**할 수 있어야 임계를 나중에 재보정할 수 있다(2026-08-27 실측 도입).
+   */
+  distance?: number;
 }
 
 /**
@@ -529,8 +535,27 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
   const { data, error } = await supabaseAdmin.rpc("search_baseball_genius_official_chunks", {
     p_query_embedding: JSON.stringify(embedded.vector),
     p_limit: RAG_DOCUMENT_CANDIDATE_LIMIT,
+    // 🔴 **유사도 임계**를 넘겨준다 (2026-08-27 실측 도입).
+    //   임계가 없으면 RPC 는 무슨 질문이든 상한만큼 돌려준다 — "오늘 점심 뭐 먹지?" 도
+    //   12건을 받았다. 개수로는 근거 유무를 판정할 수 없고, RAG-first 라우팅은
+    //   그 판정 위에 서 있으므로 임계가 없으면 전 질문이 환각 통로가 된다.
+    //   값은 앱 상수 SSOT 이며, RPC 가 0.60 상한을 다시 강제한다(무력화 방지).
+    p_max_distance: RAG_DOCUMENT_MAX_DISTANCE,
   });
-  if (error) throw error;
+  // 🔴 **배포 순서 방어** (2026-08-27 프로덕션 실측으로 확인한 실제 위험).
+  //   이 PR 은 RPC 시그니처를 바꾼다(`p_max_distance` 추가). 앱이 migration 보다 **먼저**
+  //   배포되면 PostgREST 가 함수를 못 찾아 `PGRST202` 404 를 낸다 — 실측:
+  //     구 시그니처 → HTTP 200 / 신 시그니처 → HTTP 404 PGRST202
+  //   여기서 throw 하면 공식 RAG 경로가 통째로 예외가 되어 유저에게 오류가 나간다.
+  //
+  //   ⚠️ 구 시그니처로 **재시도하지 않는다.** 구 RPC 는 임계가 없어 무슨 질문이든 상한만큼
+  //     돌려주므로, 재시도는 "근거 없음을 근거 있음으로 만드는" 바로 그 결함으로 되돌아간다.
+  //     대신 **근거 0건으로 접는다** — 라우팅은 종전 경로로 그대로 흘러 오늘과 같은 동작이
+  //     되고(기능 손실 없음), migration 이 적용되는 순간 자동으로 새 동작이 켜진다.
+  if (error) {
+    if (error.code === "PGRST202") return [];
+    throw error;
+  }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
     content: row.content,
     pageTitle: row.page_title,
