@@ -1084,7 +1084,6 @@ export interface QaDeps {
   verifyIdentityAttribution?: (input: {
     answer: string;
     identity: PlayerIdentity;
-    hits: IdentityContradiction[];
   }) => Promise<IdentityVerdictResult>;
   /**
    * 구단 tier2 근거 재서술 호출. 선수 경로(`callRagLlm`)와 분리한 이유는
@@ -3784,10 +3783,12 @@ export interface RagLlmExtras {
    * 같은 프롬프트를 그대로 재전송하면 같은 오답이 나올 확률이 높다 — 무엇이 왜 틀렸는지를
    * 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
    *
-   * 🔴 **복수**다 (삼순 2026-08-27 ②). 종전 단건(`firstHits[0]`)은 한 답변에 오귀속이
-   *   여러 개일 때 첫 개만 고치라고 하고 나머지는 알려주지도 않았다.
+   * 🔴 **검증 LLM 이 준 문장 그대로**다 (2026-08-27 룰 제거). 종전에는 코드가 만든
+   *   구조체(`{field, expected, mentioned}`)를 코드가 다시 문장으로 조립했는데,
+   *   그 조립 규칙이 곧 룰이라 필드가 늘 때마다 분기가 자랐다. 이제 코드는 이 문자열을
+   *   **해석하지 않고 그대로 싣는다** — 해석하는 순간 거기서 룰이 다시 자란다.
    */
-  identityConflicts?: IdentityContradiction[];
+  identityIssues?: string[];
   /** 제3자 문장 배제용 로스터 — 답변에 다른 선수가 등장했는지 보는 데만 쓴다. */
   identityPlayers?: PlayerRef[];
 }
@@ -3853,11 +3854,11 @@ export interface PlayerIdentity {
   position: string | null;
   birthDate: string | null;
   /**
-   * 🔴 **닫힌 집합으로는 구분할 수 없는 동명이인** (삼순 2026-08-27 ③).
+   * 🔴 **이름·팀·포지션이 전부 같은 동명이인** (삼순 2026-08-27 ③).
    *
-   *   같은 이름·같은 팀·같은 포지션이라 `detectIdentityContradictions` 의 닫힌 필터가
-   *   원리적으로 0건을 낸다 — 그러면 검증 LLM 이 한 번도 안 돌고, 동명이인의
-   *   **경력·생년·기록** 서술이 그대로 서빙된다(설계상 통과).
+   *   roster 필드만으로는 서로 구분되지 않아서, 검증 LLM 에게 "이 경력이 누구
+   *   것인가" 를 물어도 **판정 근거가 없다** — kboId 숫자만으로는 아무것도 못 가린다.
+   *   그래서 양쪽을 실제로 가르는 사실(생년·등번호)을 함께 실어 보낸다.
    *   실측 3쌍: 69516/56664(김현수 KIA 투수) · 52731/56709(박준영 한화 투수) ·
    *        60146/51454(이승현 삼성 투수).
    *   이 배열이 비었으면 모순 토큰과 무관하게 **무조건 검증을 태운다**.
@@ -3909,69 +3910,8 @@ export function buildPlayerIdentity(
   };
 }
 
-/**
- * 포지션 상하위 — `야수` 는 내야·외야·포수를 포함하는 **상위 범주**다.
- *
- * roster 의 position 값은 닫힌 집합 5종(투수·내야수·외야수·야수·포수)이다. `야수` 로
- * 등록된 선수가 답변에서 `내야수` 로 서술되는 것은 모순이 아니므로 충돌로 세지 않는다.
- * 반대로 `투수` ↔ `내야수` 는 서로 성립할 수 없다 — 이게 이번 사고의 축이다.
- */
-function positionCompatible(subject: string, mentioned: string): boolean {
-  if (subject === mentioned) return true;
-  // `야수` 는 상위 범주 — 어느 쪽이 상위여도 모순이 아니다.
-  const fielders = ["내야수", "외야수", "포수", "야수"];
-  if (subject === "야수" && fielders.includes(mentioned)) return true;
-  if (mentioned === "야수" && fielders.includes(subject)) return true;
-  return false;
-}
 
-/**
- * 포지션 토큰화 — **최장 우선 단일 매칭** (삼순 2026-08-19 4차 P0).
- *
- * 🔴 `내야수` 는 문자열로 `야수` 를 포함한다. 종전처럼 토큰마다 `includes` 를 돌리면
- *   "외야수인 선수를 내야수라고 서술한" 답변에서 `[내야수, 야수]` 가 함께 잡히고,
- *   그 중 `야수` 가 외야수와 호환이라 **충돌이 통과해버린다**(확정 false-negative).
- *   부분 문자열이 상위 범주로 오인되는 구조라, 임계 조정이 아니라 **토큰화 자체**를
- *   고쳐야 한다. 정규식 교체는 leftmost 매칭에서 먼저 나열된 대안을 취하므로 3글자를
- *   앞에 둔다 — `내야수` 위치에서 `야수` 가 따로 잡히지 않는다.
- */
-const POSITION_PATTERN = /내야수|외야수|포수|투수|야수/g;
-function tokenizePositions(text: string): { token: string; index: number }[] {
-  const found: { token: string; index: number }[] = [];
-  for (const match of text.matchAll(POSITION_PATTERN)) {
-    found.push({ token: match[0], index: match.index ?? 0 });
-  }
-  return found;
-}
 
-/**
- * 문장에서 **주인공의 소속으로 서술된** 구단만 골라 정규 코드로 돌려준다.
- *
- * 🔴 왜 "등장한 구단" 이 아닌가 (삼순 2026-08-19 5차, 실측 재현).
- *   `김민준 선수는 투수입니다. 두산과의 경기에서 호투했습니다.` 에서 `두산` 은 **상대팀**이다.
- *   등장만으로 소속으로 세면 이 정상 답변이 conflict → 재생성 → unsure 로 죽는다.
- *   상대팀·과거팀·롤모델 구단은 답변에 정상적으로 등장하므로, 소속 판정은 **귀속 표현이
- *   붙은 자리**에서만 한다(포지션을 서술어 위치로만 본 것과 같은 축).
- *
- *   화이트리스트라 놓치는 표현이 있을 수 있다 — 그건 fail-open 이고(오귀속 1건 통과),
- *   반대(정상 답변을 죽이는 것)보다 낫다. 여기 있는 건 전부 **닫힌 형태소**다.
- */
-/**
- * 구단 표기를 정규 코드로 접는다 — 없으면 `null`.
- *
- * 🔴 왜 필요한가 (2026-08-19 회귀 실측).
- *   `identity.team` 은 호출자가 준 값이라 `삼성`(roster) 일 수도 `삼성 라이온즈`(풀네임)
- *   일 수도 있다. 문장 쪽만 정규화하고 이쪽을 raw 로 비교하면 **정상 답변이 오귀속으로**
- *   판정된다(`["삼성"]` vs `"삼성 라이온즈"` 불일치). 양쪽을 같은 함수로 접어야 한다.
- */
-function canonicalizeTeam(value: string): string | null {
-  const lowered = value.toLowerCase();
-  for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-    if (canonical.toLowerCase() === lowered) return canonical;
-    if ([...shorts, ...nicks].some((alias) => lowered.includes(alias.toLowerCase()))) return canonical;
-  }
-  return null;
-}
 
 /**
  * 질문 대상의 신원(이름·소속·포지션) 첫 문장 — **코드가 소유한다** (삼순 D안, 2026-08-20).
@@ -3992,198 +3932,64 @@ export function renderIdentitySentence(identity: PlayerIdentity): string | null 
 }
 
 /**
- * 닫힌 사전필터가 찾은 모순 후보 — 귀속 여부 판정은 검증 LLM 의 몫이다.
+ * 검증 LLM 의 신원 귀속 판정 — **코드는 존재판정도 귀속판정도 하지 않는다.**
  *
- * 🔴 `id` 가 필수인 이유 (삼순 2026-08-27 ②).
- *   종전에는 여러 hit 를 검증 LLM 의 **단일 verdict** 하나로 접었다. 그러면
- *   `형은 내야수입니다. 본인은 포수입니다` 에서 첫 hit 가 제3자로 판정되면
- *   뒤의 **주인공 오귀속이 그대로 서빙**된다. 혼합 귀속을 표현할 수가 없었다.
- *   이제 hit 마다 안정 ID 를 붙이고 **ID별 verdict 완전일치**를 요구한다.
- *   ID 는 내용에서 파생된다(순서·인덱스 아님) — 같은 답변이면 항상 같은 ID 집합이다.
+ * 🔴 왜 룰 사전필터를 통째로 없앴는가 (하린아빠 2026-08-27 15:52 "룰베이스 핑퐁은 하지 말고").
+ *   D안은 "존재는 닫힌 집합이니 룰, 귀속은 열렸으니 LLM" 이라는 분리였는데, **존재판정도
+ *   실제로는 열려 있었다.** 반례가 층을 바꿔가며 계속 나왔다:
+ *     ① `.find`/`break` 로 첫 건만 봄 → ② 토큰 dedup 으로 다시 접힘 → ③ 별칭 경계 →
+ *     ④ 문장 분리 규칙 → ⑤ 상위범주(`야수`⊃`내야수`) → ⑥ 팀명 정규화…
+ *   매번 "이번엔 진짜 닫혔다" 고 판단했고 매번 틀렸다. 룰을 고칠 게 아니라 **없애야 한다**.
+ *
+ *   룰을 둔 유일한 근거는 비용("모순 0건이면 검증을 안 탄다")이었는데, 프로덕션 7일
+ *   실측에서 그 전제가 무너졌다 — 전체 질문 1,989건 중 **RAG 경로는 51건(2.6%)**,
+ *   하루 7건이다. 전건 검증해도 하루 7회라 절약할 비용이 애초에 없었다.
+ *
+ *   그래서 이제 답변 전문 + roster 신원(동명이인 생년·등번호 포함)을 검증 LLM 에
+ *   통째로 주고 한 번에 묻는다. 판정 실패·미배선·예외·계약위반은 전부 `불명`(fail-close).
  */
-export interface IdentityContradiction {
-  /**
-   * 안정 ID — `position:내야수#1` · `team:두산#2` · `biography:56664` 형식.
-   *
-   * 🔴 **토큰이 아니라 occurrence 단위**다 (삼순 2026-08-27 재리뷰 ①).
-   *   종전엔 `seen(token)` 으로 같은 토큰을 합쳐서 `형도 내야수 / 본인도 내야수` 가
-   *   `position:내야수` **1건**으로 접혔다 — 그러면 앞의 비귀속 판정 하나로 뒤의
-   *   오귀속이 다시 가려진다(②에서 고쳤다고 한 바로 그 구조가 토큰 층에 남아 있었다).
-   *   같은 토큰의 n번째 등장에 `#n` 을 붙여 **혼합 귀속을 표현 가능**하게 만든다.
-   *   `#n` 은 등장 순서(문자 위치 오름차순)라 같은 답변이면 항상 같은 ID 집합이다.
-   */
-  id: string;
-  field: "position" | "team" | "biography";
-  expected: string;
-  mentioned: string;
-  /**
-   * 이 occurrence 가 들어있는 **문장**. 검증 LLM 이 같은 토큰의 서로 다른 등장을
-   * 구분하려면 위치 정보가 필요하다 — ID 만 주면 둘 다 같은 문자열이라 판정 불가다.
-   * `biography` 는 답변 전체가 대상이라 빈 문자열이다.
-   */
-  excerpt: string;
-}
+export type IdentityAttributionVerdict = "안전" | "오귀속" | "불명";
 
-/** 검증 LLM 의 판정 — strict JSON 밖의 모든 결과는 "불명" 으로 접는다(fail-close). */
-export type IdentityAttributionVerdict = "주인공" | "제3자" | "불명";
-/**
- * hit 별 판정. **모든 field 에서 귀속 극성은 동일하다** —
- * `주인공` = "지목한 것이 주인공 본인의 속성·이력으로 서술됐다" = **오귀속 확정**.
- * `제3자` = 상대팀·과거·동료·동명이인의 것이거나 그런 서술 자체가 없다 = 안전.
- * `biography` 도 같다 — `mentioned` 가 동명이인이므로 "그 사람의 경력이 주인공 것으로
- * 서술됐는가" 를 묻고, 그런 서술이 없으면 `제3자`(안전)가 된다.
- */
-export interface IdentityHitVerdict {
-  id: string;
-  verdict: IdentityAttributionVerdict;
-}
 export interface IdentityVerdictResult {
-  verdicts: IdentityHitVerdict[];
+  verdict: IdentityAttributionVerdict;
+  /**
+   * 오귀속으로 판정된 서술들 — 재작성 프롬프트에 **그대로** 실린다.
+   * 코드는 이 문자열을 해석하지 않는다(해석하는 순간 룰이 다시 생긴다).
+   */
+  issues?: string[];
   inputTokens?: number;
   outputTokens?: number;
 }
 
 /**
- * 닫힌 사전필터 — 답변에 roster 와 **모순되는 토큰이 존재하는가**만 본다.
+ * 검증 LLM 호출을 fail-close 로 감싸는 헬퍼 — 미배선·예외·계약위반은 전부 `불명`.
  *
- * 🔴 여기서 귀속(주인공 것인가)을 판정하지 않는다 (삼순 D안).
- *   "존재하는가"는 닫힌 집합(포지션 5종·구단 10개+별칭)이라 룰이 맞고,
- *   "주인공에게 붙였는가"는 열린 자연어라 검증 LLM 에 위임한다.
- *   모순 토큰이 없으면 검증 호출 자체가 없다 — 대부분의 답변은 여기서 끝난다.
- */
-/**
- * 검증 LLM 호출을 fail-close 로 감싸는 헬퍼 — 미배선·예외·비정상 verdict 는 전부 "불명".
+ * ⚠️ 여기서 답변 내용을 들여다보지 않는다. 이 함수가 하는 일은 **호출과 정규화**뿐이다.
  */
 async function runIdentityVerdict(
-  deps: { verifyIdentityAttribution?: (input: { answer: string; identity: PlayerIdentity; hits: IdentityContradiction[] }) => Promise<IdentityVerdictResult> },
+  deps: { verifyIdentityAttribution?: (input: { answer: string; identity: PlayerIdentity }) => Promise<IdentityVerdictResult> },
   identity: PlayerIdentity,
   answer: string,
-  hits: IdentityContradiction[],
 ): Promise<IdentityVerdictResult> {
-  // 모든 hit 를 "불명" 으로 접는 fail-close 응답 — 호출자는 항상 전수 verdict 를 받는다.
-  const allUnknown = (): IdentityVerdictResult => ({
-    verdicts: hits.map((hit) => ({ id: hit.id, verdict: "불명" as const })),
-  });
-  if (!deps.verifyIdentityAttribution) return allUnknown();
+  if (!deps.verifyIdentityAttribution) return { verdict: "불명" };
   let res: IdentityVerdictResult;
   try {
-    res = await deps.verifyIdentityAttribution({ answer, identity, hits });
+    res = await deps.verifyIdentityAttribution({ answer, identity });
   } catch {
-    return allUnknown();
+    return { verdict: "불명" };
   }
-  // 🔴 **ID별 verdict 완전일치** (삼순 2026-08-27 ②).
-  //   누락·중복·미지 ID·비정상 verdict 가 하나라도 있으면 부분 수용하지 않고
-  //   전체를 불명으로 접는다. "7개 중 6개만 판정됐다" 를 부분 신뢰하면
-  //   판정 안 된 hit 가 조용히 안전으로 처리된다(fail-open).
-  if (!res || !Array.isArray(res.verdicts)) return allUnknown();
-  const expected = new Set(hits.map((hit) => hit.id));
-  const seen = new Set<string>();
-  for (const row of res.verdicts) {
-    if (!row || typeof row.id !== "string") return allUnknown();
-    if (!expected.has(row.id)) return allUnknown();          // 미지 ID
-    if (seen.has(row.id)) return allUnknown();               // 중복
-    if (row.verdict !== "주인공" && row.verdict !== "제3자" && row.verdict !== "불명") return allUnknown();
-    seen.add(row.id);
+  // 토큰은 응답이 깨졌어도 이미 썼다 — 비용 분모에서 빼지 않는다.
+  const cost = { inputTokens: res?.inputTokens, outputTokens: res?.outputTokens };
+  if (!res || (res.verdict !== "안전" && res.verdict !== "오귀속" && res.verdict !== "불명")) {
+    return { verdict: "불명", ...cost };
   }
-  if (seen.size !== expected.size) return allUnknown();      // 누락
-  return res;
+  const issues = Array.isArray(res.issues)
+    ? res.issues.filter((row): row is string => typeof row === "string" && row.trim().length > 0)
+    : [];
+  return { verdict: res.verdict, issues, ...cost };
 }
 
-export function detectIdentityContradictions(
-  answer: string,
-  identity: PlayerIdentity | null | undefined,
-): IdentityContradiction[] {
-  if (!identity || !answer) return [];
-  const found: IdentityContradiction[] = [];
-  // occurrence 를 (문자 위치, 토큰) 으로 모은 뒤 위치 오름차순으로 `#n` 을 매긴다.
-  // 정렬 키가 위치라 같은 답변이면 항상 같은 ID 집합이다(순서 의존 아님).
-  const ordinal = new Map<string, number>();
-  const nextId = (prefix: string) => {
-    const n = (ordinal.get(prefix) ?? 0) + 1;
-    ordinal.set(prefix, n);
-    return `${prefix}#${n}`;
-  };
-  type Raw = { key: string; index: number; field: "position" | "team"; expected: string; mentioned: string };
-  const raws: Raw[] = [];
-  if (identity.position) {
-    // 🔴 **모든 occurrence** 를 올린다 (삼순 ② + 재리뷰 ①).
-    //   토큰 중복제거를 하지 않는다 — `형도 내야수 / 본인도 내야수` 의 두 등장은
-    //   서로 다른 판정 대상이고, 하나로 접으면 혼합 귀속을 표현할 수 없다.
-    for (const token of tokenizePositions(answer)) {
-      if (positionCompatible(identity.position, token.token)) continue;
-      raws.push({
-        key: `position:${token.token}`, index: token.index,
-        field: "position", expected: identity.position, mentioned: token.token,
-      });
-    }
-  }
-  if (identity.team) {
-    const subjectTeam = canonicalizeTeam(identity.team);
-    // 주인공 구단을 못 접으면 판정 근거가 없다 — 억지로 모순을 만들지 않는다.
-    if (subjectTeam) {
-      const lowered = answer.toLowerCase();
-      // 🔴 첫 팀에서 `break` 하지 않는다 (삼순 ②) — `두산전 호투 + 롯데 소속` 처럼
-      //   비귀속과 귀속이 섞이면 앞에 나온 비귀속 하나로 뒤의 오귀속이 가려진다.
-      // 🔴 그리고 **팀당 1건도 아니다** (재리뷰 ①) — 같은 구단이 두 문장에 각각
-      //   상대팀/소속으로 나오면 둘 다 올려야 한다. 별칭별·등장별로 전부 수집한다.
-      for (const { canonical, shorts, nicks } of TEAM_ALIASES) {
-        if (canonical === subjectTeam) continue;
-        for (const alias of [...shorts, ...nicks]) {
-          const needle = alias.toLowerCase();
-          let at = lowered.indexOf(needle);
-          while (at >= 0) {
-            raws.push({
-              key: `team:${canonical}`, index: at,
-              field: "team", expected: identity.team, mentioned: canonical,
-            });
-            at = lowered.indexOf(needle, at + needle.length);
-          }
-        }
-      }
-    }
-  }
-  raws.sort((a, b) => (a.index - b.index) || a.key.localeCompare(b.key));
-  for (const raw of raws) {
-    found.push({
-      id: nextId(raw.key), field: raw.field,
-      expected: raw.expected, mentioned: raw.mentioned,
-      excerpt: sentenceAt(answer, raw.index),
-    });
-  }
-  // 🔴 **닫힌 집합으로는 구분 불가한 동명이인** (삼순 2026-08-27 ③).
-  //   이름·팀·포지션이 전부 같으면 위 두 축은 원리적으로 0건이다 — 그럼 검증 LLM 이
-  //   한 번도 안 돌고 동명이인의 **경력·생년·기록**이 주인공 것처럼 서빙된다(설계상 통과).
-  //   닫힌 토큰으로는 잡을 수 없는 곳이라 **모순 유무와 무관하게** 검증을 강제한다.
-  //   비용은 실측 6명(3쌍)에만 붙는다 — 나머지 답변은 종전대로 모순 0건이면 호출 0회다.
-  for (const namesake of identity.indistinguishableNamesakes) {
-    found.push({
-      id: `biography:${namesake.kboId}`,
-      field: "biography", expected: identity.kboId, mentioned: namesake.kboId,
-      excerpt: "",
-    });
-  }
-  return found;
-}
 
-/**
- * `index` 가 속한 **문장**을 돌려준다 — 검증 LLM 이 occurrence 를 구분할 위치 근거.
- *
- * 문장 경계는 한국어 종결부호(`.!?`)와 줄바꿈으로만 자른다. 못 자르면 답변 전체가
- * 한 문장이라는 뜻이라 그대로 돌려준다(길면 잘라 토큰 비용을 막는다).
- */
-function sentenceAt(text: string, index: number): string {
-  const MAX = 160;
-  let start = 0;
-  for (let i = Math.min(index, text.length - 1); i >= 0; i -= 1) {
-    if (/[.!?\n]/.test(text[i]!)) { start = i + 1; break; }
-  }
-  let end = text.length;
-  for (let i = index; i < text.length; i += 1) {
-    if (/[.!?\n]/.test(text[i]!)) { end = i + 1; break; }
-  }
-  const sentence = text.slice(start, end).trim();
-  return sentence.length > MAX ? `${sentence.slice(0, MAX)}…` : sentence;
-}
 
 /**
  * roster 필드(팀·포지션·등번호)로 **완전히 검증 가능한** 질문인가 (삼순 2026-08-10 P0-2).
@@ -4845,11 +4651,12 @@ async function answerPlayerDescriptiveQuestion(
     // 구분되지 않아 "숫자 금지가 얼마나 손해인가" 를 분모부터 만들 수 없다(2026-08-16).
     return failClose(llm, ragObservation("player", question, validated));
   }
-  // 🔴 생성 답변 신원 검증 — D안 (삼순 2026-08-20): 닫힌 사전필터 + 검증 LLM 보조판정.
-  //   문법 정규식으로 귀속을 판정하던 종전 구조는 열린 자연어라 반례가 끝나지 않았다
-  //   (NO-GO 7~11차 다섯 왕복, 룰 핑톡 종결). 이제 코드는 모순 토큰의 **존재**만 본다
-  //   (포지션 5종·구단 10개+별칭, 폐쇄집합) — 귀속(주인공 것인가)은 검증 LLM 이 판정한다.
-  //   불명·호출불가·timeout·malformed 는 전부 unsure(fail-close), 재생성은 1회만.
+  // 🔴 생성 답변 신원 검증 — **검증 LLM 단독 판정** (하린아빠 2026-08-27 "룰베이스 핑퐁은 하지 말고").
+  //   종전 D안은 "존재는 룰, 귀속은 LLM" 이었는데 그 존재판정도 열려 있어서 반례가
+  //   층을 바꿔가며 계속 나왔다(첫건만 봄 → 토큰 dedup → 별칭 경계 → 문장 분리 → 상위범주…).
+  //   이제 코드는 답변 내용을 **한 글자도 해석하지 않는다** — 답변 전문과 roster 신원을
+  //   통째로 넘기고 판정만 받는다. 불명·미배선·예외·계약위반은 전부 unsure(fail-close).
+  //   재생성은 1회, 재생성분도 같은 방식으로 다시 검증한다.
   let finalValidated = validated;
   let identityUnsafe = false;
   const accumulate = (res: IdentityVerdictResult) => {
@@ -4860,70 +4667,51 @@ async function answerPlayerDescriptiveQuestion(
       outputTokens: (llm!.outputTokens ?? 0) + (res.outputTokens ?? 0),
     };
   };
-  /**
-   * hit 전수의 판정을 하나로 접는다 (삼순 2026-08-27 ②).
-   *   - 하나라도 `주인공` → 오귀속 확정(재작성 대상)
-   *   - 하나라도 `불명` → 판정 불능(fail-close)
-   *   - 전부 `제3자` → 안전
-   * 종전에는 단일 verdict 였어서 첫 hit 가 제3자면 뒤의 주인공 오귀속이 그대로 나갔다.
-   */
-  const foldVerdicts = (res: IdentityVerdictResult, hits: IdentityContradiction[]) => {
-    const owned = res.verdicts.filter((row) => row.verdict === "주인공");
-    const unknown = res.verdicts.some((row) => row.verdict === "불명");
-    return {
-      // 재작성 신호는 **주인공으로 판정된 hit 전부** — `firstHits[0]` 단건 계약 제거.
-      ownedHits: hits.filter((hit) => owned.some((row) => row.id === hit.id)),
-      unknown,
-    };
-  };
-  const firstHits = detectIdentityContradictions(validated.answer, extras.identity);
-  if (firstHits.length > 0 && extras.identity) {
-    const first = await runIdentityVerdict(deps, extras.identity, validated.answer, firstHits);
+  if (extras.identity) {
+    // 🔴 모든 RAG 답변을 검증한다 — 사전필터로 호출을 줄이지 않는다.
+    //   프로덕션 7일 실측: 전체 1,989건 중 RAG 경로 51건(2.6%, 하루 7건)이라
+    //   전건 검증의 비용이 무시 가능하다. 절약하려고 룰을 두는 순간 그 룰이 결함면이 된다.
+    const first = await runIdentityVerdict(deps, extras.identity, validated.answer);
     accumulate(first);
-    const firstFold = foldVerdicts(first, firstHits);
-    if (firstFold.unknown) {
-      // 불명·검증기 미배선·예외·계약위반 — 판정 불능은 서빙하지 않는다(fail-close).
+    if (first.verdict === "불명") {
+      // 판정 불능은 서빙하지 않는다 — 모른다고 말하는 편이 오귀속보다 낫다.
       identityUnsafe = true;
-    } else if (firstFold.ownedHits.length > 0 && deps.callRagLlm) {
-      // 확정 충돌만 1회 재생성 — 무엇이 왜 틀렸는지를 명시해 조건을 바꾼다.
+    } else if (first.verdict === "오귀속") {
       identityUnsafe = true;
-      let retryLlm: LlmResult | null = null;
-      try {
-        retryLlm = await deps.callRagLlm(question, evidence, { ...extras, identityConflicts: firstFold.ownedHits });
-      } catch {
-        retryLlm = null;
-      }
-      if (retryLlm) {
-        // 재생성 토큰은 반드시 누적한다 — 재시도가 공짜로 보이면 비용 분모가 깨진다.
-        llm = {
-          ...retryLlm,
-          inputTokens: (llm.inputTokens ?? 0) + (retryLlm.inputTokens ?? 0),
-          outputTokens: (llm.outputTokens ?? 0) + (retryLlm.outputTokens ?? 0),
-        };
-        const revalidated = validateRagResponse(retryLlm.text);
-        if (revalidated.kind === "grounded") {
-          const retryHits = detectIdentityContradictions(revalidated.answer, extras.identity);
-          if (retryHits.length === 0) {
-            finalValidated = revalidated;
-            identityUnsafe = false;
-          } else {
-            const second = await runIdentityVerdict(deps, extras.identity, revalidated.answer, retryHits);
+      if (deps.callRagLlm) {
+        // 무엇이 왜 틀렸는지는 **검증 LLM 이 준 문장 그대로** 넘긴다.
+        // 코드가 이 문자열을 해석하면 거기서 룰이 다시 자란다.
+        let retryLlm: LlmResult | null = null;
+        try {
+          retryLlm = await deps.callRagLlm(question, evidence, {
+            ...extras, identityIssues: first.issues ?? [],
+          });
+        } catch {
+          retryLlm = null;
+        }
+        if (retryLlm) {
+          // 재생성 토큰도 누적한다 — 재시도가 공짜로 보이면 비용 분모가 깨진다.
+          llm = {
+            ...retryLlm,
+            inputTokens: (llm.inputTokens ?? 0) + (retryLlm.inputTokens ?? 0),
+            outputTokens: (llm.outputTokens ?? 0) + (retryLlm.outputTokens ?? 0),
+          };
+          const revalidated = validateRagResponse(retryLlm.text);
+          if (revalidated.kind === "grounded") {
+            // 재생성분도 **같은 방식으로** 검증한다 — "고쳐졌겠지" 를 가정하지 않는다.
+            const second = await runIdentityVerdict(deps, extras.identity, revalidated.answer);
             accumulate(second);
-            const secondFold = foldVerdicts(second, retryHits);
-            if (!secondFold.unknown && secondFold.ownedHits.length === 0) {
+            if (second.verdict === "안전") {
               finalValidated = revalidated;
               identityUnsafe = false;
             }
-            // 주인공·불명이면 identityUnsafe 유지 — 두 번 틀린 것은 프롬프트로 못 고친다.
+            // 오귀속·불명이면 유지 — 두 번 틀린 것은 프롬프트로 못 고친다.
           }
+          // grounded 가 아니면 identityUnsafe 유지 — 아래에서 닫는다.
         }
-        // grounded 가 아니면 identityUnsafe 유지 — 아래에서 닫는다.
       }
-    } else if (firstFold.ownedHits.length > 0) {
-      // 재생성 경로가 없는데 오귀속이 확정됐다 — 그대로 내보내면 fail-open 이다.
-      identityUnsafe = true;
     }
-    // 전부 제3자 — 상대팀·이력·동료 등 정상 서술이라 그대로 서빙한다.
+    // "안전" — 상대팀·이력·동료 등 정상 서술이라 그대로 서빙한다.
   }
   if (identityUnsafe) {
     // 주인공이 아닌 사람의 속성이 붙었거나 판정 불능인 답변은 **서빙하지 않는다.**

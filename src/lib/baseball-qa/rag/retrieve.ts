@@ -800,20 +800,13 @@ export interface RagRequestExtras {
    * 재생성에 같은 프롬프트를 그대로 다시 보내면 같은 답이 나올 확률이 높다 — 무엇이 왜
    * 틀렸는지를 명시해야 두 번째 시도가 첫 번째와 다른 조건에서 이뤄진다.
    *
-   * 🔴 **복수**다 (삼순 2026-08-27 ②). 한 답변에 오귀속이 여러 개일 때 첫 개만 고치라고
-   *   하면 나머지는 모른 채 같은 오답을 반복한다.
+   * 🔴 **검증 LLM 이 쓴 문장 그대로**다 (2026-08-27 룰 제거).
+   *   종전에는 코드가 만든 구조체(`{field, expected, mentioned, excerpt}`)를 코드가
+   *   다시 문장으로 조립했다 — `field === "biography"` 분기, `team`/`position` 라벨
+   *   매핑, excerpt 유무 분기… 그 조립 규칙이 곧 룰이라 판정 축이 늘 때마다 분기가
+   *   자랐다. 이제 여기서는 **문자열을 그대로 나열**한다. 해석하지 않는다.
    */
-  identityConflicts?: {
-    field: "position" | "team" | "biography";
-    expected: string;
-    mentioned: string;
-    /**
-     * 오귀속으로 판정된 **그 문장**. 같은 토큰이 여러 번 나온 답변에서
-     * "포지션을 내야수로 썬 것이 틀렸다" 만 말하면 정상이었던 등장까지 고치게
-     * 된다 — 어느 문장이 문제인지를 같이 준다 (삼순 재리뷰 ①).
-     */
-    excerpt?: string;
-  }[];
+  identityIssues?: string[];
 }
 
 export function buildRagLlmRequest(
@@ -860,22 +853,13 @@ export function buildRagLlmRequest(
     );
   }
   // 재생성 신호는 주인공 블록 **바로 뒤**에 둔다 — 무엇이 틀렸는지가 주인공 사실과 붙어 읽혀야 한다.
-  // 🔴 오귀속으로 판정된 항목을 **전부** 싱는다 (삼순 2026-08-27 ②).
-  if (extras.identityConflicts && extras.identityConflicts.length > 0) {
-    const lines = extras.identityConflicts.map(({ field, expected, mentioned, excerpt }) => {
-      if (field === "biography") {
-        // 같은 팀·같은 포지션 동명이인 — 소속·포지션은 같아서 구분될 수 없고
-        // 경력·생년·기록이 섞인다. 누구의 이력인지를 명시해 다시 쓰게 한다.
-        return `직전 답변은 동명이인(kboId ${mentioned})의 경력·생년·기록을 질문 대상(kboId ${expected})의 것으로 서술했다. 질문 대상 본인의 이력만 쓴다.`;
-      }
-      const label = field === "team" ? "소속 구단" : "포지션";
-      // 어느 등장이 문제인지를 문장으로 특정한다 — 정상 문장까지 고치게 하지 않는다.
-      const where = excerpt ? ` 해당 문장: "${excerpt}"` : "";
-      return `직전 답변은 질문 대상의 ${label}을 "${mentioned}"로 서술했다. 질문 대상의 ${label}은 "${expected}"다.${where}`;
-    });
+  // 🔴 검증 LLM 이 지목한 문장을 **가공 없이 그대로** 싣는다 (2026-08-27 룰 제거).
+  //   여기서 문장을 조립하면 그 조립 규칙이 새 룰이 된다.
+  if (extras.identityIssues && extras.identityIssues.length > 0) {
     sections.push(
       "<재작성 지시 — 직전 답변이 질문 대상이 아닌 인물의 속성을 붙였다>",
-      ...lines,
+      ...extras.identityIssues.map((issue) => `- ${issue}`),
+      "위에 지적된 곳만 질문 대상 본인의 사실로 바로잡고, 지적되지 않은 내용은 그대로 유지한다.",
       "동명이인이나 자료에 함께 등장하는 다른 인물의 속성을 질문 대상에게 붙이지 말고 다시 답한다.",
       "<재작성 지시 끝>",
     );
