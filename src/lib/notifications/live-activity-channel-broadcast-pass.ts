@@ -3,6 +3,7 @@ import {
   resolveChannelUpdateDecision,
   scoreStateOf,
   fullStateHashOf,
+  isBallStrikeOnlyChange,
   endRetryDelayMinutes,
   CHANNEL_END_RETENTION_MS,
 } from "@/lib/notifications/live-activity-channel-policy";
@@ -202,14 +203,11 @@ export async function runChannelBroadcastPass(
       const lastSendAtMs = row.last_send_at ? new Date(row.last_send_at).getTime() : null;
       const hasLastContent =
         row.last_content_state != null && typeof row.last_content_state === "object";
-      // p5 코얼레싱 자격(삼순 재리뷰 P1): *볼/스트라이크만* 바뀐 틱만. lastPlay(중계 한 줄)·
-      // 타자·투수·아웃 변화는 즉시성 유지라 비대상. 보존 콘텐츠 없으면(구 행) 비대상.
-      const lc = hasLastContent ? (row.last_content_state as Record<string, unknown>) : null;
-      const p5CoalesceEligible = lc !== null
-        && cs.outs === lc.outs
-        && cs.pitcherName === lc.pitcherName
-        && cs.batterName === lc.batterName
-        && (cs.lastPlay ?? "") === (lc.lastPlay ?? "");
+      // p5 코얼레싱 자격(삼순 재리뷰 P1·재리뷰2 Blocker③): *볼/스트라이크만* 바뀐 틱만.
+      // 기준 = 매 성공 발송마다 전진하는 last_state_hash(직전 발송 전체축) — last_content_state
+      // (복구 재료, 득점 시에만 갱신)와 용도 분리. content 기준이면 득점 후 타자가 바뀌는
+      // 순간부터 다음 득점까지 코얼레싱이 영구 비활성이 된다(diet 무력화).
+      const p5CoalesceEligible = isBallStrikeOnlyChange(row.last_state_hash, fullHash);
       const { decision, isHeartbeat, isForcedCatchup: forcedCatchup, skipReason, resendLastContent } =
         resolveChannelUpdateDecision({
           scoreState,

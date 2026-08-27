@@ -124,9 +124,10 @@ export interface ChannelUpdateResolutionInput extends ChannelPushDecisionInput {
    */
   hasLastContent: boolean;
   /**
-   * p5 코얼레싱 자격(삼순 2026-08-27 재리뷰 P1) — *볼/스트라이크만* 바뀐 틱만 true.
-   * lastPlay(중계 한 줄)·타자·투수·아웃 변화는 즉시성 유지 대상이라 false → 코얼레싱 비대상.
-   * 호출측(pass)이 last_content_state 와 대조해 계산. 미보존(구 행)은 false = diet 미적용.
+   * p5 코얼레싱 자격(삼순 2026-08-27 재리뷰 P1·재리뷰2 Blocker③) — *볼/스트라이크만*
+   * 바뀐 틱만 true. lastPlay(중계 한 줄)·타자·투수·아웃 변화는 즉시성 유지라 false.
+   * 호출측(pass)이 isBallStrikeOnlyChange(직전 발송 last_state_hash, 이번 fullHash)로
+   * 계산 — last_content_state(복구 재료, 득점 시에만 갱신) 기준이 아님에 주의.
    */
   p5CoalesceEligible?: boolean;
 }
@@ -398,6 +399,36 @@ export function fullStateHashOf(cs: Record<string, unknown>): string {
     scoreStateOf(cs),
     cs.balls, cs.strikes, cs.outs, cs.pitcherName, cs.batterName, cs.lastPlay ?? "",
   ].join("|");
+}
+
+/**
+ * 직전 발송 fullStateHash 대비 이번 스냅샷이 *볼/스트라이크만* 바뀐 변화인지
+ * (p5 코얼레싱 자격 — 삼순 2026-08-27 재리뷰2 Blocker③).
+ *
+ * 기준을 last_content_state(점수 전진 시에만 갱신 — 복구 재료)가 아니라 *매 성공 발송마다
+ * 전진하는* last_state_hash 로 잡는다. 복구 재료와 코얼레싱 커서는 용도가 달라 분리해야
+ * 득점 후에도 코얼레싱이 살아있다(content 기준이면 타자 한 번 바뀌는 순간 다음 득점까지
+ * 영구 비활성 = diet 무력화).
+ *
+ * 필드 인덱스는 fullStateHashOf 의 join 순서에 결속: [0..7]=scoreStateOf 8필드,
+ * [8]=balls, [9]=strikes, [10]=outs, [11]=pitcherName, [12]=batterName, [13..]=lastPlay
+ * (중계 텍스트에 "|" 가 있으면 뒤로 밀리므로 slice(13).join 으로 원문 복원 비교).
+ * score축 동일(=base p5)은 호출측 판정이 보장하므로 여기선 [10..] 만 본다.
+ */
+export function isBallStrikeOnlyChange(
+  prevFullHash: string | null,
+  nextFullHash: string,
+): boolean {
+  if (prevFullHash === null) return false;
+  const prev = prevFullHash.split("|");
+  const next = nextFullHash.split("|");
+  if (prev.length < 14 || next.length < 14) return false; // 구 포맷/파싱 불가 → 비대상(fail-open)
+  return (
+    prev[10] === next[10] && // outs
+    prev[11] === next[11] && // pitcherName
+    prev[12] === next[12] && // batterName
+    prev.slice(13).join("|") === next.slice(13).join("|") // lastPlay 원문
+  );
 }
 
 /**

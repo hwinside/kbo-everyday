@@ -18,6 +18,7 @@ import {
   startTokenChangePatch,
   shouldAdvanceFallbackCursor,
   applyChannelHeartbeat,
+  isBallStrikeOnlyChange,
   resolveChannelUpdateDecision,
   CHANNEL_HEARTBEAT_INTERVAL_MS,
   activeChannelKeySet,
@@ -906,6 +907,57 @@ function passDeps(clock: { now(): number }, send: (env: string) => Promise<{ ok:
     check("pass R②: retreat+HB만료 → 복구 발송 1건(retreatHeartbeats)", stats.retreatHeartbeats, 1);
     check("pass R②: 재전송 콘텐츠 = 마지막 성공값(후퇴 스냅샷 아님)",
       sent[0] === higherCs, true);
+  }
+
+  // ── 삼순 재리뷰2 Blocker③: 코얼레싱 커서는 last_state_hash(매 발송 전진) 기준 ──
+  // 시나리오: 득점(content 갱신) → 타자 변경 p5 발송(content 는 그대로) → 볼카운트-only 틱.
+  // 구 코드(content 대조)는 타자 변경 순간부터 다음 득점까지 코얼레싱 영구 비활성이었다.
+  {
+    let nowMs = 4_000_000;
+    const { deps } = passDeps({ now: () => nowMs }, async () => {
+      nowMs += 100;
+      return { ok: true };
+    });
+    const gid = GIDS[0];
+    const g = { ...liveGame(gid), BALL_CN: 2 }; // 이번 틱: 볼카운트만 변화
+    // 직전 발송 = 볼 0 (같은 타자·같은 아웃) — last_state_hash 는 직전 발송 것.
+    const prevSentCs = deps.buildContentState(liveGame(gid), "live", undefined, true) as Record<string, unknown>;
+    // 복구 재료(content)는 더 옛날 득점 시점(0:0, 다른 상황) — Blocker② 이후의 실제 배선.
+    const oldScoreCs = deps.buildContentState(
+      { ...liveGame(gid), T_SCORE_CN: "0", OUT_CN: 0 }, "live", undefined, true,
+    ) as Record<string, unknown>;
+    const row: ChannelRow = {
+      ...channelRow(gid, "production"),
+      last_score_state: scoreStateOf(prevSentCs),
+      last_state_hash: fullStateHashOf(prevSentCs),
+      last_p10_at: new Date(nowMs - 30_000).toISOString(),
+      last_send_at: new Date(nowMs - 10_000).toISOString(), // 코얼레싱 창 안
+      last_content_state: oldScoreCs, // 낡은 복구 재료여도 코얼레싱은 걸려야 함
+    };
+    const stats = await runChannelBroadcastPass([row], [g], undefined, {}, deps);
+    check("pass B③: content 가 옛 득점 시점이어도 볼카운트-only p5 는 코얼레싱 스킵",
+      stats.coalescedSkipped, 1);
+    check("pass B③: 발송 0(diet 실작동)", stats.updates, 0);
+  }
+  // ── isBallStrikeOnlyChange 단위 계약 ──
+  {
+    const prev = fullStateHashOf(baseCs);
+    check("bsOnly: 볼만 변화 → true",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, balls: 2 })), true);
+    check("bsOnly: 스트라이크만 변화 → true",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, strikes: 0 })), true);
+    check("bsOnly: 아웃 변화 → false(즉시성 유지)",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, outs: 1 })), false);
+    check("bsOnly: 타자 변화 → false",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, batterName: "김현수" })), false);
+    check("bsOnly: lastPlay 변화 → false(중계 즉시성)",
+      isBallStrikeOnlyChange(prev, fullStateHashOf({ ...baseCs, lastPlay: "안타" })), false);
+    check("bsOnly: lastPlay 에 | 포함돼도 원문 비교(밀림 오판 없음)",
+      isBallStrikeOnlyChange(
+        fullStateHashOf({ ...baseCs, lastPlay: "1루|2루 동시 도루" }),
+        fullStateHashOf({ ...baseCs, lastPlay: "1루|2루 동시 도루", balls: 2 }),
+      ), true);
+    check("bsOnly: 직전 hash null(첫 발송 전) → false", isBallStrikeOnlyChange(null, prev), false);
   }
 
   console.log(`\nla-broadcast-policy-smoke: ${pass} PASS / ${fail} FAIL`);

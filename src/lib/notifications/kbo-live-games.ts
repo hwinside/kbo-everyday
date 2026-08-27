@@ -272,6 +272,12 @@ async function enrichNaverLiveGames(
       // Naver schedule 은 볼카운트/주자/현재 투타를 안 줌 → relay currentGameState 로
       // 모든 live 경기를 보강해 경기방·LA·위젯이 경기 내내 0/0/0 으로 굳는 걸 막는다
       // (삼순 2차 리뷰 P0).
+      // 점수 출처 관측(삼순 재리뷰2): relay 성공이어도 top-level 점수가 null 이면 schedule
+      // 점수가 조용히 쓰인다 — mode B(stale-equal) 판정의 결정 재료라 반드시 기록한다.
+      if (overrideScoreFromRelay) {
+        const usedRelay = evidence.awayScore !== null && evidence.homeScore !== null;
+        enrichObs.push(`${game.gameId}:score-src=${usedRelay ? "relay" : "schedule"}`);
+      }
       return {
         ...game,
         // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 top-level 피드)에서 뽑는다.
@@ -279,7 +285,6 @@ async function enrichNaverLiveGames(
         // Naver-primary 경로만 override(공유 failover 경로는 기존대로 schedule 점수 — 삼순 P1 스코프).
         awayScore: overrideScoreFromRelay ? (evidence.awayScore ?? game.awayScore) : game.awayScore,
         homeScore: overrideScoreFromRelay ? (evidence.homeScore ?? game.homeScore) : game.homeScore,
-        // (관측 push 는 아래 spread 밖 — object literal 이라 여기서 side effect 불가)
         balls: evidence.balls,
         strikes: evidence.strikes,
         outs: evidence.outs,
