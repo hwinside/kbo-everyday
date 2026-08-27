@@ -7,6 +7,7 @@ import { ChevronRight, MessageCircle } from "lucide-react";
 import Link from "next/link";
 import PullToRefresh from "@/components/PullToRefresh";
 import GlassCard from "@/components/ui/GlassCard";
+import GeniusEntryButton from "@/components/ui/GeniusEntryButton";
 import OnboardingFlow from "@/components/onboarding/OnboardingFlow";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
 import LoginSheet from "@/components/auth/LoginSheet";
@@ -85,6 +86,8 @@ interface ApiGameData {
   awayScore?: number | null;
   homeScore?: number | null;
   status: HomeGame["status"];
+  /** 취소 사유 원문(KBO `CANCEL_SC_NM`). 미수신이면 부재 — "사유 없음"으로 단정하지 않는다. */
+  cancelReason?: string | null;
   inning?: number | string | null;
   isTop?: boolean;
   awayStarterName?: string | null;
@@ -149,6 +152,8 @@ function mapApiGame(g: ApiGameData): HomeGame {
     homeScore: g.homeScore ?? 0,
     awayScore: g.awayScore ?? 0,
     status: g.status,
+    // 사유는 취소 상태일 때만 실는다(값-플래그 결속) — 상태가 바뀌면 사유도 함께 사라진다.
+    cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
     inning: g.status === "live" && g.inning ? `${g.inning}회${g.isTop ? "초" : "말"}` : null,
     awayStarterName: g.awayStarterName ?? null,
     homeStarterName: g.homeStarterName ?? null,
@@ -291,12 +296,22 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       currentBatter: myTeamLive?.currentBatter ?? null,
       currentPitcher: myTeamLive?.currentPitcher ?? null,
       isTop: myTeamLive?.isTop ?? true,
-      ...(myTeamLive ? {
-        homeScore: myTeamLive.homeScore,
-        awayScore: myTeamLive.awayScore,
-        status: myTeamLive.status ?? (myTeamLive.isLive ? "live" as const : myTeamGameBase.status),
-        inning: (myTeamLive.status ?? (myTeamLive.isLive ? "live" : myTeamGameBase.status)) === "live" ? (myTeamLive.currentInning || null) : null,
-      } : {}),
+      ...(myTeamLive ? (() => {
+        // status 를 한 번만 확정해 사유와 **같은 값**으로 판정한다(값-플래그 결속).
+        // 상태 표현식을 세 번 재계산하면 사유만 다른 분기를 타는 불일치가 생긴다.
+        const merged = myTeamLive.status ?? (myTeamLive.isLive ? "live" as const : myTeamGameBase.status);
+        return {
+          homeScore: myTeamLive.homeScore,
+          awayScore: myTeamLive.awayScore,
+          status: merged,
+          inning: merged === "live" ? (myTeamLive.currentInning || null) : null,
+          // 취소 사유 — live 병합 결과가 cancelled 일 때만 실는다. live 값이 없으면
+          // base(SSR/클라이언트 경기목록) 사유로 fallback — 둘 다 없으면 null(고정문구).
+          cancelReason: merged === "cancelled"
+            ? (myTeamLive.cancelReason ?? myTeamGameBase.cancelReason ?? null)
+            : null,
+        };
+      })() : {}),
     };
   }, [myTeamGameBase, myTeamLive]);
   // 1분마다 현재 시각 갱신 → 홈을 켜둔 채 06:00을 넘겨도 경기카드가 자동 전환됨.
@@ -650,8 +665,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         className="sticky top-0 z-30 -mx-5 px-5 border-b bg-bg-primary mb-2"
         style={{
           borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)',
-          paddingTop: "env(safe-area-inset-top, 0px)",
-          marginTop: "calc(env(safe-area-inset-top, 0px) * -1)",
+          paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))",
+          marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)",
         }}
       >
         <div className="flex items-center justify-between min-h-[44px]">
@@ -661,6 +676,10 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
         </div>
         <div className="flex items-center gap-1">
           {user ? (
+            <>
+            {/* 야잘알봇 진입점 — 쪽지 아이콘 **왼쪽** (2026-08-21 하린아빠 "홈에 야잘알봇 꺼내기").
+                비로그인 미노출은 버튼 내부 가드가 책임진다(여기서는 user 분기 안이라 이중 보강). */}
+            <GeniusEntryButton />
             <Link prefetch={false} href="/messages" aria-label="쪽지" className="relative flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
               <MessageCircle size={22} />
               {unreadDMCount > 0 && (
@@ -669,6 +688,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
                 </span>
               )}
             </Link>
+            </>
           ) : (
             <button
               onClick={() => setShowLogin(true)}

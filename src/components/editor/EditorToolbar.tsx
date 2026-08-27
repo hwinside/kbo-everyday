@@ -54,7 +54,7 @@ export default function EditorToolbar({ canvas, addText, addSvg, addImage, clear
 
       {/* Tab bar */}
       <div className="flex items-center justify-around bg-bg-secondary border-t border-border py-2 px-4"
-        style={{ paddingBottom: "max(env(safe-area-inset-bottom, 0px), 8px)" }}
+        style={{ paddingBottom: "max(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)), 8px)" }}
       >
         {TOOLS.map(({ id, icon: Icon, label }) => (
           <button

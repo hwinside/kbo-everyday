@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
@@ -16,7 +16,8 @@ import { setWidgetMyTeam } from "@/lib/capacitor/game-notification";
 import { ID_TO_KBO_CODE } from "@/lib/native-live-activity";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { updateProfile } from "@/lib/supabase/auth";
+import { saveMyFavorites, ownedRow, ProfileSaveError, type SavedProfileRow } from "@/lib/profile/save-my-profile";
+import { getAuthIdentity, isSameAuthIdentity, isAuthIdentityForUser } from "@/lib/supabase/auth-identity";
 import { supabase } from "@/lib/supabase/client";
 import LoginSheet from "@/components/auth/LoginSheet";
 import AvatarSelectSheet from "@/components/profile/AvatarSelectSheet";
@@ -116,35 +117,104 @@ export default function MyPage() {
 
   const team = teamId ? getTeamById(teamId) ?? null : null;
 
+  // 2026-08-24 최애선수 설정 유실 수정: 로그인 유저는 서버 저장 **성공 후에만**
+  // 로컬 commit(성공 전 낙관 반영 금지 — 실패 시 DB 옛 값으로 조용히 롤백되던
+  // 결함). seq 가드는 연속 저장에서 이전 응답이 최신 선택을 덮는 것을 막는다.
+  const saveSeqRef = useRef(0);
+
+  // 저장 실패 시 마지막 성공값(= DB 현재값)으로 로컬 정합 — A 성공/B 실패에서
+  // 로컬=기존값·DB=A로 갈라지는 불일치 방지(삼순 3차 리뷰).
+  const commitServerRow = (row: SavedProfileRow) => {
+    setMyTeamId(row.team_id);
+    const code = ID_TO_KBO_CODE[row.team_id];
+    if (code) void setWidgetMyTeam(code);
+    setTeamId(row.team_id);
+    const favs = Array.isArray(row.favorite_players) ? row.favorite_players : [];
+    setFavoritePlayers(favs);
+    setFavPlayers(favs);
+  };
+
   const handleTeamChange = async (newTeamId: number) => {
+    setShowTeamSelect(false);
+    const seq = ++saveSeqRef.current;
+    // 요청 시작 시점 신원 스냅샷{uid,epoch} — commit 직전 동일 epoch 대조(A→B→A·동일 UID 재인증 차단)
+    const reqIdentity = getAuthIdentity();
+    if (user) {
+      // PUT 전 fail-close(삼순 8차): auth 모듈 신원이 현재(uid+epoch)이고 React user.id와
+      // uid가 일치할 때만 저장. 전환 중 stale closure(모듈 B / React A)면 저장 안 함.
+      if (!isAuthIdentityForUser(reqIdentity, user.id)) return;
+      const reqUid = reqIdentity.uid as string;
+      const reqSnap = { uid: reqUid, epoch: reqIdentity.epoch };
+      let saved;
+      try {
+        saved = await saveMyFavorites({ team_id: newTeamId, favorite_players: [] }, reqSnap);
+      } catch (e) {
+        if (seq !== saveSeqRef.current) return; // 더 최신 저장이 진행됨 — 이 응답 폐기
+        // 계정 전환 가드: 요청 시작 신원과 현재 신원(uid+epoch) 불일치면 실패 commit도 차단.
+        if (!isSameAuthIdentity(reqSnap)) return;
+        // 소유 fail-close: 현재 계정 row일 때만 정합 commit(계정 전환 오염 차단)
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, reqUid) : null;
+        if (last) commitServerRow(last);
+        alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
+        return; // 로컬 = 마지막 성공값(DB 현재값) 또는 기존값 — 오류 노출
+      }
+      if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
+      if (seq !== saveSeqRef.current) return;
+      // 계정 전환 가드: A 200 응답이 B 전환/재인증 뒤 도착하면 동일 epoch가 아니므로 skip
+      if (!isSameAuthIdentity(reqSnap)) return;
+    }
     setMyTeamId(newTeamId);
-    // 위젯/워치 최애팀 즉시 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
+    // 위젯/워치 최애팀 동기화 — 홈 재진입 전에도 네이티브(App Group·WCSession) 반영
     const newTeamCode = ID_TO_KBO_CODE[newTeamId];
     if (newTeamCode) void setWidgetMyTeam(newTeamCode);
     setTeamId(newTeamId);
-    setShowTeamSelect(false);
     setFavoritePlayers([]);
     setFavPlayers([]);
     setShowPlayerSelect(true);
-    if (user) {
-      await updateProfile(user.id, { team_id: newTeamId, favorite_players: [] });
-      await refreshProfile();
-    }
+    if (user) await refreshProfile();
   };
 
   const handlePlayerChange = async (players: FavoritePlayer[]) => {
-    setFavoritePlayers(players);
-    setFavPlayers(players);
     setShowPlayerSelect(false);
+    const seq = ++saveSeqRef.current;
+    // 요청 시작 시점 신원 스냅샷{uid,epoch} — commit 직전 동일 epoch 대조
+    const reqIdentity = getAuthIdentity();
     if (user) {
-      await updateProfile(user.id, { favorite_players: players });
+      // PUT 전 fail-close(삼순 8차): auth 모듈 신원이 현재(uid+epoch)이고 React user.id와
+      // uid가 일치할 때만 저장. 전환 중 stale closure(모듈 B / React A)면 저장 안 함.
+      if (!isAuthIdentityForUser(reqIdentity, user.id)) return;
+      const reqUid = reqIdentity.uid as string;
+      const reqSnap = { uid: reqUid, epoch: reqIdentity.epoch };
+      let saved;
+      try {
+        saved = await saveMyFavorites({ favorite_players: players }, reqSnap);
+      } catch (e) {
+        if (seq !== saveSeqRef.current) return;
+        // 계정 전환 가드: 요청 시작 신원과 현재 신원(uid+epoch) 불일치면 실패 commit도 차단
+        if (!isSameAuthIdentity(reqSnap)) return;
+        const last = e instanceof ProfileSaveError ? ownedRow(e.lastSaved as SavedProfileRow | null, reqUid) : null;
+        if (last) commitServerRow(last);
+        alert(e instanceof ProfileSaveError ? e.message : "저장에 실패했어요. 잠시 후 다시 시도해주세요.");
+        return;
+      }
+      if (!saved) return; // superseded — 더 최신 요청이 commit을 담당
+      if (seq !== saveSeqRef.current) return;
+      // 계정 전환 가드: A 200 응답이 B 전환/재인증 뒤 도착하면 동일 epoch가 아니므로 skip
+      if (!isSameAuthIdentity(reqSnap)) return;
+      // 서버가 반환한 저장된 row(exact)로만 로컬 확정
+      const savedPlayers = Array.isArray(saved.favorite_players) ? saved.favorite_players : [];
+      setFavoritePlayers(savedPlayers);
+      setFavPlayers(savedPlayers);
       await refreshProfile();
+    } else {
+      setFavoritePlayers(players);
+      setFavPlayers(players);
     }
   };
 
   return (
     <div className="mx-auto max-w-lg px-5 pb-24">
-      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 border-b -mx-5 px-5 bg-bg-primary" style={{ borderColor: profile?.team_id ? getTeamBorderColorById(profile.team_id) : 'var(--color-border)', paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
         <header className="min-h-[44px] flex items-center gap-3">
           <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors"><ChevronLeft size={24} /></button>
           <h1 className="text-lg font-semibold leading-[26px] text-text-primary flex-1">마이페이지</h1>

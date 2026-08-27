@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
-import { summarizeSystemMetrics, type HealthLevel } from "@/lib/admin/system-health";
+import {
+  computeInstantCpuFromStore,
+  computeStaleCpuFromStore,
+  summarizeSystemMetrics,
+  type HealthLevel,
+} from "@/lib/admin/system-health";
+import { loadRecentCpuSnapshots } from "@/lib/admin/cpu-snapshot-store-redis";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +33,7 @@ function combineLevel(metricLevel: HealthLevel, services: Array<{ level: Service
   return "healthy";
 }
 
-async function fetchMetrics(ref: string) {
+async function fetchMetricsText(ref: string) {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!serviceRole) throw new Error("SUPABASE_SERVICE_ROLE_KEY 미설정");
   const auth = Buffer.from(`service_role:${serviceRole}`).toString("base64");
@@ -37,7 +43,44 @@ async function fetchMetrics(ref: string) {
     signal: AbortSignal.timeout(8_000),
   });
   if (!response.ok) throw new Error(`Metrics HTTP ${response.status}`);
-  return summarizeSystemMetrics(await response.text());
+  return response.text();
+}
+
+/**
+ * 메트릭 요약 + 저장 baseline 기반 즉시 CPU% (2026-08-21, 삼순 NO-GO 반영 v2).
+ * Supabase scrape가 ~60초 주기라 브라우저 단독으로는 첫 ~60초간 "측정 중"이 된다.
+ * 1분 cron이 Vercel Edge Config(감시 대상 Supabase 밖)에 적재해둔 스냅샷과의
+ * delta로 첫 응답부터 값을 채운다.
+ * 계약: 이 경로는 읽기 전용(write 없음)·bounded timeout. 저장소 실패는 즉시값만
+ * 비활성(null)하고 기존 클라이언트 60초 경로는 그대로 동작한다.
+ * freshness: rate 종료 시각(sampleEndedAt) 기준 90초 상한(computeInstantCpuFromStore) —
+ * counter가 멈추거나 오래된 평균이면 현재값으로 표시하지 않는다(삼순 2차 NO-GO 반영).
+ */
+async function fetchMetrics(ref: string) {
+  const [text, stored] = await Promise.all([fetchMetricsText(ref), loadRecentCpuSnapshots()]);
+  const summary = summarizeSystemMetrics(text);
+  const counter = summary.cpuCounter;
+  if (!counter) return summary;
+  if (summary.cpuUsedPercent === null && stored !== null) {
+    const now = Date.now();
+    const instant = computeInstantCpuFromStore(stored, counter, now);
+    if (instant) {
+      summary.cpuUsedPercent = Math.round(instant.usedPercent * 10) / 10;
+      summary.cpuSampleSeconds = Math.round(instant.windowSeconds * 10) / 10;
+      summary.cpuSampleEndedAt = new Date(instant.sampleEndedAtMs).toISOString();
+    } else {
+      // cron 회차 누락·스케줄러 지터로 baseline 이 90초 상한을 넘긴 구간(2026-08-22 라이브 실측:
+      // 저장 최신 나이 107초)에서도 화면을 "측정 중"으로 비우지 않는다. 현재값은 여전히 null 로
+      // 두고(계약 유지), 직전 서버 실측값만 별도 필드로 내려 "N초 전 측정 · 실시간 아님" 표기.
+      // 계약: cpuUsedPercent 와 배타 · 건강도/알림 미사용 · 현재 counter 미사용(now 재각인 금지).
+      const stale = computeStaleCpuFromStore(stored, counter, now);
+      if (stale) {
+        summary.cpuStalePercent = Math.round(stale.usedPercent * 10) / 10;
+        summary.cpuStaleEndedAt = new Date(stale.sampleEndedAtMs).toISOString();
+      }
+    }
+  }
+  return summary;
 }
 
 async function fetchServices(ref: string) {

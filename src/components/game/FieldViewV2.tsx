@@ -59,9 +59,13 @@ function PlayerMarker({
     type === "runner" ? "var(--field-runner-text)" : type === "batter" ? "var(--field-highlight-text)" : type === "pitcher" ? "var(--field-highlight-text)" : "var(--field-label-text)";
 
   // Player link/photo lookup must not fall back to name-only for 동명이인.
-  const rosterPlayer = resolveRosterPlayer({ name, kboId, teamId });
+  // 마커 역할로 같은 팀 동명이인(투/야)을 분리: 투수 마커(P 포함)는 투수,
+  // 야수 수비/타석/주자 마커는 야수 힌트. (수비 마커의 P 는 posLabel 로 구분)
+  const positionHint =
+    type === "pitcher" || posLabel === "P" ? ("투수" as const) : ("야수" as const);
+  const rosterPlayer = resolveRosterPlayer({ name, kboId, teamId, positionHint });
   const playerHref = rosterPlayer ? `/community/players/${rosterPlayer.kboId}` : null;
-  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId);
+  const photoUrl = getPlayerPhotoUrl(name, rosterPlayer?.kboId, teamId, positionHint);
 
   const content = (
     <>

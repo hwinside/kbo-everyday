@@ -28,6 +28,7 @@ import { generateRelayEvents } from "@/lib/relay-event-generator";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
 import type { LineupEntry } from "@/lib/hooks/useGameDetail";
 import { deriveGameState } from "@/lib/utils/game-derived";
+import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 import { shouldKeepCancelledGameChat } from "@/lib/game-chat-visibility";
 import GameDetailHeader from "@/components/game/GameDetailHeader";
 import BroadcastBadges from "@/components/game/BroadcastBadges";
@@ -191,8 +192,14 @@ export default function GameDetailPage() {
     if (tabParam) setActiveTab(tabParam);
   }, [tabParam]);
   const [isFieldCollapsed, setIsFieldCollapsed] = useState(false);
-  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = useLiveGame(gameId, 10000);
-  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = useGameDetail(gameId, 30000);
+  const [multiplexActive, setMultiplexActive] = useState(false);
+  const liveHook = useLiveGame(gameId, multiplexActive ? 0 : 10000);
+  const detailHook = useGameDetail(gameId, multiplexActive ? 0 : 30000);
+  const { game: liveGame, snapshot: liveSnapshot, refetch: refetchLive } = liveHook;
+  const { data: gameDetail, snapshot: detailSnapshot, refetch: refetchDetail } = detailHook;
+  useEffect(() => {
+    setMultiplexActive(liveGame?.isLive === true);
+  }, [liveGame?.isLive]);
   // 당겨서 새로고침 시 증가 → KgwanTab 종료 요약이 GET 재조회(오류 카드 stuck 해소). 채팅 등 다른 state 무관.
   const [summaryRefreshEpoch, setSummaryRefreshEpoch] = useState(0);
   const liveIsFinal = !!liveGame && !liveGame.isLive && (liveGame.awayScore > 0 || liveGame.homeScore > 0);
@@ -212,6 +219,10 @@ export default function GameDetailPage() {
     relayPollInterval,
     liveGame?.inning ?? 0,
     liveIsFinal,
+    {
+      onLiveFrame: liveHook.ingestExternal,
+      onDetailFrame: detailHook.ingestExternal,
+    },
   );
   const clientEventStateRef = useRef<PrevGameState | null>(null);
 
@@ -405,7 +416,8 @@ export default function GameDetailPage() {
   const myTeamInGame = myTeamId && (myTeamId === game.homeTeamId || myTeamId === game.awayTeamId);
   const tabIndicatorTeam = myTeamInGame ? getTeamById(myTeamId)! : homeTeam;
 
-  const d = deriveGameState(liveGame, game, gameDetail);
+  // gameRelay 교체·수비위치 이벤트를 넘겨 필드뷰 수비 배치를 소스 진실(타임라인) 기반으로 확정한다.
+  const d = deriveGameState(liveGame, game, gameDetail, gameRelay?.innings);
   // 두 API의 요청시각은 payload revision이 아니다. live 성공 여부만 전달하고,
   // 불일치 시 confirmed lineup 우선 정책은 resolveLineupStarter가 담당한다.
   const liveStarterFresh = Boolean(liveSnapshot);
@@ -476,7 +488,11 @@ export default function GameDetailPage() {
         <div className="px-5 py-5">
           <div className="rounded-2xl border border-border bg-bg-secondary px-4 py-5 text-center">
             <p className="text-base font-semibold text-text-primary">경기가 취소되었습니다</p>
-            <p className="text-sm text-text-tertiary mt-1">우천 등 경기 운영 사유로 정상 진행되지 않았습니다.</p>
+            {/* 사유를 받았을 때만 원문 노출. 못 받았으면(폴백 경로 등) 기존 고정 문구로 fallback —
+                사유 부재를 "사유 없음"으로 단정하지 않는다(provenance 계약). */}
+            <p className="text-sm text-text-tertiary mt-1">
+              {cancelReasonDetail(d.cancelReason) ?? "우천 등 경기 운영 사유로 정상 진행되지 않았습니다."}
+            </p>
           </div>
         </div>
       ) : d.isLive ? (
@@ -651,6 +667,7 @@ export default function GameDetailPage() {
                     gameDate={game.date}
                     gameStartTime={gameDetail?.meta?.startTime || liveGame?.time || game.time}
                     status={d.derivedStatus}
+                    cancelReason={d.cancelReason}
                     gameEvents={gameEvents}
                     plays={plays}
                     teamColor={battingTeamColor}

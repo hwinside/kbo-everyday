@@ -35,6 +35,107 @@ async function guestSmoke() {
   pass("guest ON→OFF→reload→ON, 390px");
 }
 
+// 크관 자동 포커싱 토글 (PR #1291) — 순서/overflow(320·390px) + 스크롤 ON/OFF/영속/복귀.
+// 스크롤 축은 라이브 경기 없이 재현하기 위해 /qa/kgwan-autofocus 픽스처(실제 hook +
+// 실제 CurrentAtBatCard scrollOnUpdate 배선)를 태운다.
+async function autofocusSmoke() {
+  // ① 게임 페이지 — 버튼 순서(토글이 채팅 끄기 왼쪽) + 가로 overflow, 390/320px.
+  for (const width of [390, 320]) {
+    const page = await browser.newPage({ viewport: { width, height: 844 } });
+    await page.goto(`${baseUrl}${gamePath}`, { waitUntil: "networkidle" });
+    const toggle = page.getByRole("button", { name: /자동 포커싱 (끄기|켜기)/ });
+    const hide = page.getByRole("button", { name: "전체 채팅 끄기" });
+    await toggle.waitFor({ state: "visible" });
+    await hide.waitFor({ state: "visible" });
+    const [toggleBox, hideBox] = [await toggle.boundingBox(), await hide.boundingBox()];
+    assert.ok(toggleBox && hideBox, `${width}px: 두 버튼 bounding box`);
+    assert.ok(toggleBox.x + toggleBox.width <= hideBox.x, `${width}px: 토글이 채팅 끄기 왼쪽에 있어야 한다`);
+    assert.ok(Math.abs(toggleBox.y - hideBox.y) < Math.max(toggleBox.height, hideBox.height), `${width}px: 같은 행에 있어야 한다(줄바꿈 금지)`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, `${width}px 가로 overflow가 없어야 한다`);
+    await page.close();
+    pass(`autofocus 버튼 순서/행/overflow @${width}px`);
+  }
+
+  // ② 픽스처 — 새 투구 자동 스크롤 ON/OFF 실제 거동 + reload 영속 + ON 복귀.
+  const fixturePath = "/qa/kgwan-autofocus";
+  const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  // sr-only 버튼은 viewport 밖이어도 동작해야 하므로 DOM click 이벤트로 발화.
+  const addPitch = () => page.locator('[data-qa="add-live-pitch"]').dispatchEvent("click");
+  const scrollY = () => page.evaluate(() => window.scrollY);
+  const settle = async () => { await page.waitForTimeout(700); };
+
+  await page.goto(`${baseUrl}${fixturePath}`, { waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  assert.equal(await scrollY(), 0, "픽스처 초기 scrollY=0");
+  await addPitch();
+  await page.waitForFunction(() => window.scrollY > 0, undefined, { timeout: 3000 });
+  pass("기본 ON: 새 투구 → 자동 스크롤 발생");
+
+  await page.getByRole("button", { name: "자동 포커싱 끄기" }).click();
+  await page.getByRole("button", { name: "자동 포커싱 켜기" }).waitFor({ state: "visible" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
+  await addPitch();
+  await settle();
+  assert.equal(await scrollY(), 0, "OFF: 새 투구가 자동 스크롤을 만들면 안 된다");
+  assert.equal(await page.evaluate(() => window.localStorage.getItem("***")), "off", "OFF가 localStorage에 영속되어야 한다");
+  pass("OFF: 새 투구 무스크롤 + localStorage 영속");
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.getByRole("button", { name: "자동 포커싱 켜기" }).waitFor({ state: "visible" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
+  await addPitch();
+  await settle();
+  assert.equal(await scrollY(), 0, "reload 후에도 OFF 유지(무스크롤)");
+  pass("reload 영속: OFF 유지");
+
+  await page.getByRole("button", { name: "자동 포커싱 켜기" }).click();
+  await page.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible" });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
+  await addPitch();
+  await page.waitForFunction(() => window.scrollY > 0, undefined, { timeout: 3000 });
+  pass("ON 복귀: 새 투구 → 자동 스크롤 재개");
+  await page.close();
+
+  // ③ localStorage.setItem throw actual — 쓰기 실패 환경(사파리 시크릿 등)에서도
+  //    세션 내 토글이 실제로 동작해야 한다 (삼순 blocker — 정적 검사 아닌 행위 실측).
+  const throwPage = await browser.newPage({ viewport: { width: 390, height: 844 } });
+  await throwPage.addInitScript(() => {
+    const orig = Storage.prototype.setItem;
+    Storage.prototype.setItem = function setItemBlocked(key, ...args) {
+      if (key === "***") throw new Error("qa: setItem blocked");
+      return orig.call(this, key, ...args);
+    };
+  });
+  const throwPitch = () => throwPage.locator('[data-qa="add-live-pitch"]').dispatchEvent("click");
+  await throwPage.goto(`${baseUrl}${fixturePath}`, { waitUntil: "networkidle" });
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible" });
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).click();
+  // 쓰기가 throw해도 버튼 상태가 전환되어야 한다(메모리 1차 소스 계약).
+  await throwPage.getByRole("button", { name: "자동 포커싱 켜기" }).waitFor({ state: "visible", timeout: 3000 });
+  assert.equal(
+    await throwPage.evaluate(() => window.localStorage.getItem("***")),
+    null,
+    "setItem이 실제로 차단되었는지 확인(영속 안 됨) — 안 막혔으면 이 축 자체가 무효",
+  );
+  await throwPage.evaluate(() => window.scrollTo(0, 0));
+  await throwPage.waitForTimeout(100);
+  await throwPitch();
+  await throwPage.waitForTimeout(700);
+  assert.equal(await throwPage.evaluate(() => window.scrollY), 0, "쓰기 실패 환경에서도 OFF가 적용되어 무스크롤이어야 한다");
+  await throwPage.getByRole("button", { name: "자동 포커싱 켜기" }).click();
+  await throwPage.getByRole("button", { name: "자동 포커싱 끄기" }).waitFor({ state: "visible", timeout: 3000 });
+  await throwPage.evaluate(() => window.scrollTo(0, 0));
+  await throwPage.waitForTimeout(100);
+  await throwPitch();
+  await throwPage.waitForFunction(() => window.scrollY > 0, undefined, { timeout: 3000 });
+  pass("localStorage.setItem throw: 토글 OFF→무스크롤→ON 복귀 세션 내 정상(영속만 포기)");
+  await throwPage.close();
+}
+
 async function injectSession(context, session) {
   await context.addInitScript(
     ([accessToken, refreshToken]) => {
@@ -183,7 +284,8 @@ async function authActualSmoke() {
 try {
   if (authActual) await authActualSmoke();
   else await guestSmoke();
-  console.log(`ui-smoke-game-chat-visibility: PASS (${authActual ? "auth actual" : "guest"})`);
+  await autofocusSmoke();
+  console.log(`ui-smoke-game-chat-visibility: PASS (${authActual ? "auth actual" : "guest"} + autofocus)`);
 } finally {
   await browser.close();
 }

@@ -14,7 +14,9 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # P0(삼순 #1282): gates-green ci 티어 전체 실행이 추가되어 예산 상향(30→60) —
+    # 실측 pre-PR ~15분 + unsharded full 11분+ → 30분은 스탬프 전 timeout 위험.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -277,12 +279,61 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
+      # gates-green enforcement (#1276 삼순 P0): 봇 PR은 pull_request 워크플로가 안 돌아
+      # qa-ci-gates가 실행되지 않으므로, 봇 스스로 exact head에서 ci 티어 전체를 실제
+      # 실행하고 결과를 gates-green commit status로 fail-close 스탬프한다.
+      # 성공 도장만 찍는 것 금지 — 실패/미실행이면 failure 스탬프 + exit 1(auto-merge 미활성).
+      - name: Setup Node 24 (gates-green ci 티어 런타임 정렬)
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # P0(삼순 #1282): 의존성은 Node 22에서 설치됨 — qa-ci와 동일 증명이 되려면
+      # Node 24 전환 후 npm ci 재설치가 필요하다(네이티브 모듈/engines 불일치 방지).
+      - name: Reinstall deps under Node 24 (gates-green 런타임 정합)
+        if: steps.changes.outputs.changed == 'true'
+        run: npm ci
+
+      - name: gates-green — ci 티어 전체 실행 + fail-close 스탬프 (exact head)
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_URL="${{ steps.pr.outputs.pr_url }}"
+          # P1(삼순 #1282): changed=true인데 PR_URL 미확보는 이상 상태 — fail-close(exit 1)
+          if [ -z "$PR_URL" ]; then echo "❌ gates-green: PR URL 미확보 — fail-close"; exit 1; fi
+          HEAD_SHA="${{ steps.pr.outputs.head_sha }}"
+          LOCAL_SHA=$(git rev-parse HEAD)
+          if [ -z "$HEAD_SHA" ] || [ "$LOCAL_SHA" != "$HEAD_SHA" ]; then
+            echo "❌ gates-green: 로컬 HEAD($LOCAL_SHA) ≠ 게이트 대상 SHA($HEAD_SHA) — 스탬프 없이 fail-close"
+            exit 1
+          fi
+          set +e
+          node scripts/qa/run-gate-tiers.mjs --tier ci
+          RC=$?
+          set -e
+          if [ "$RC" -eq 0 ]; then
+            STATE=success; DESC="ci 티어 게이트 전체 PASS (run ${GITHUB_RUN_ID})"
+          else
+            STATE=failure; DESC="ci 티어 게이트 FAIL exit=${RC} (run ${GITHUB_RUN_ID})"
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="$STATE" \
+            -f context=gates-green \
+            -f description="$DESC" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          echo "gates-green 스탬프: $STATE @ $HEAD_SHA"
+          exit "$RC"
+
       - name: Enable SHA-bound native auto-merge
         if: steps.changes.outputs.changed == 'true'
         run: |
           PR_URL="${{ steps.pr.outputs.pr_url }}"
+          # P1(삼순 #1282): changed=true인데 PR_URL 미확보는 이상 상태 — fail-close(exit 1)
           if [ -z "$PR_URL" ]; then
-            echo "No PR URL captured"; exit 0
+            echo "❌ auto-merge: PR URL 미확보 — fail-close"; exit 1
           fi
 
           # 운영 원칙 개정 (2026-07-18, 하린아빠 지시):

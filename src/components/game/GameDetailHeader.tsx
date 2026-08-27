@@ -22,7 +22,7 @@ export default function GameDetailHeader({ title }: GameDetailHeaderProps) {
   return (
     <div
       className="sticky top-0 z-[100] border-b border-border bg-bg-primary"
-      style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}
+      style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}
     >
       <div className="flex min-h-[44px] items-center gap-3 px-5">
         <button

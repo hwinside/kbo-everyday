@@ -721,21 +721,21 @@
   },
   {
     "name": "김동현",
-    "kboId": "56143",
-    "teamId": 1,
-    "position": "투수",
-    "backNo": "43",
-    "team": "LG",
-    "birthDate": "2005-03-03"
-  },
-  {
-    "name": "김동현",
     "kboId": "55040",
     "teamId": 3,
     "position": "투수",
     "backNo": "40",
     "team": "KT",
     "birthDate": "2006-01-21"
+  },
+  {
+    "name": "김동현",
+    "kboId": "56143",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "43",
+    "team": "LG",
+    "birthDate": "2005-03-03"
   },
   {
     "name": "김명규",
@@ -1879,6 +1879,15 @@
     "backNo": "64",
     "team": "KIA",
     "birthDate": "2007-11-08"
+  },
+  {
+    "name": "김현재",
+    "kboId": "55895",
+    "teamId": 4,
+    "position": "투수",
+    "backNo": "09",
+    "team": "SSG",
+    "birthDate": "2006-07-03"
   },
   {
     "name": "김현종",

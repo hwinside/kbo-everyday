@@ -56,6 +56,52 @@ export interface InningRelay {
     batOrder?: number;
     pitches: PitchDetail[];
   };
+  /**
+   * 교체·수비위치 변경 이벤트(이닝 내 시간순). Naver textRelay 원문의
+   * "{pos} {A} : {pos} {B} (으)로 교체" / "{pos} {A} : {pos}(으)로 수비위치 변경"을
+   * 구조화한 것. 필드뷰 수비 배치의 독립 소스 진실(추정 아님). 이벤트 없으면 생략.
+   */
+  fielding?: FieldingEvent[];
+}
+
+/**
+ * 교체(replace) 또는 수비위치 변경(reposition) 이벤트. 포지션은 Naver 원문 한글 그대로.
+ * `playIndex`는 이 이벤트가 속한 이닝의 `plays` 배열 기준 삽입 위치 — “이 인덱스의
+ * 타석(결과) *직전*에 일어났다”는 시간순 결속. 진행 중 타석(아직 plays 미확정)의
+ * 교체는 `playIndex === plays.length`로 떨어져 피드 맨 끝에 붙는다(라이브 즉시 노출).
+ * 구버전 캐시 응답에는 없을 수 있어 optional — 소비처는 미정의 시 인라인 렌더를 생략(fail-safe).
+ */
+export type FieldingEvent =
+  | { kind: "replace"; outName: string; outPosKr: string; inName: string; inPosKr: string; playIndex?: number }
+  | { kind: "reposition"; name: string; fromPosKr: string; toPosKr: string; playIndex?: number };
+
+// 교체 공지 텍스트의 역할 토큰(폐쇄집합) — 이름에 공백이 있는 외국인 선수(예: "밴 헤켄")를
+// 위해 \S+ 대신 토큰 집합으로 경계를 잡는다.
+// ⚠️ 문자열 리터럴이므로 정규식 이스케이프는 \\d 처럼 이중 백슬래시로 써야 한다("\d"는 "d"로 소실).
+const FIELDING_POS_TOKEN = "(?:투수|포수|[123]루수|유격수|좌익수|중견수|우익수|지명타자|대타|대주자|\\d+번타자|[123]루주자)";
+const FIELDING_REPLACE_RE = new RegExp(
+  `^(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*:\\s*(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*\\(으\\)로 교체$`,
+);
+const FIELDING_REPOSITION_RE = new RegExp(
+  `^(${FIELDING_POS_TOKEN})\\s+(.+?)\\s*:\\s*(${FIELDING_POS_TOKEN})\\(으\\)로 수비위치 변경$`,
+);
+
+/**
+ * textOption 한 줄을 FieldingEvent로 파싱. 교체/수비위치 변경 패턴이 아니면 null.
+ * type 코드가 아니라 텍스트 패턴으로 판별한다(원문이 type:2 범용 텍스트로 옴 — 실측).
+ */
+export function parseFieldingEvent(text: string): FieldingEvent | null {
+  const t = text.trim();
+  if (!t) return null;
+  const rep = FIELDING_REPLACE_RE.exec(t);
+  if (rep) {
+    return { kind: "replace", outPosKr: rep[1], outName: rep[2].trim(), inPosKr: rep[3], inName: rep[4].trim() };
+  }
+  const mov = FIELDING_REPOSITION_RE.exec(t);
+  if (mov) {
+    return { kind: "reposition", fromPosKr: mov[1], name: mov[2].trim(), toPosKr: mov[3] };
+  }
+  return null;
 }
 
 export interface MatchupStats {
@@ -358,6 +404,18 @@ export function parseInningRelays(textRelays: NaverTextRelay[]): InningRelay[] {
     // skip.
 
     for (const opt of relay.textOptions) {
+      // 교체·수비위치 변경 공지(type:2 범용 텍스트)는 패턴으로 식별해 이닝 시간순으로 적재.
+      // 타석 파싱 상태머신(pendingPitches 등)과 무관하므로 소비 후 다음 옵션으로 넘어간다.
+      if (typeof opt.text === "string") {
+        const fieldingEvent = parseFieldingEvent(opt.text);
+        if (fieldingEvent) {
+          // playIndex = 현재 plays 길이 — 이 교체 공지는 아직 terminal(13/23)이 안 온
+          // 현재 타석에 속하므로, 그 타석이 확정되면 정확히 이 인덱스에 push 된다.
+          // 클라이언트는 plays[playIndex] 직전에 교체 행을 끼워 시간순을 복원한다.
+          (current.fielding ??= []).push({ ...fieldingEvent, playIndex: current.plays.length });
+          continue;
+        }
+      }
       if (opt.type === 8) {
         // 새 타석 시작 마커("5번타자 한준수"/"대타 문정빈" 등). 직전 타석이 정상
         // terminal(13/23) 없이 끝났다면(외부 relay 스키마 변형) 남은 투구가 다음

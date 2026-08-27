@@ -64,7 +64,7 @@ const ptr = readSrc("src/components/PullToRefresh.tsx");
 ok("인디케이터가 PTR_INDICATOR_Z 사용", /zIndex:\s*PTR_INDICATOR_Z/.test(ptr));
 ok("인디케이터 fixed 오버레이(page scroll 독립)", /fixed[^"]*left-0[^"]*right-0/.test(ptr));
 ok("인디케이터 z-[60] 하드코딩 잔존 없음", !/z-\[60\][^]*?transition-\[height\]/.test(ptr));
-ok("인디케이터 safe-area top 유지", /top:\s*"env\(safe-area-inset-top/.test(ptr));
+ok("인디케이터 safe-area top 유지", /top:\s*"var\(--safe-area-inset-top, env\(safe-area-inset-top/.test(ptr));
 
 // ── 3. jsdom 실 stacking: 경기상세 헤더 아래에 인디케이터가 가려지지 않음 ──
 // getComputedStyle의 z-index를 각 요소에 부여하고, "인디케이터가 경기상세 헤더보다

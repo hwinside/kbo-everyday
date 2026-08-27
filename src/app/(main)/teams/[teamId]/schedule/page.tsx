@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import HeaderProfileLink from "@/components/ui/HeaderProfileLink";
 import { getTeamBySlug, getTeamBgColor } from "@/lib/constants/teams";
 import TeamLogo from "@/components/ui/TeamLogo";
+import { cancelReasonBadge } from "@/lib/utils/cancel-reason";
 import {
   RESULT_TONE_BG,
   gameResultTone,
@@ -19,6 +20,8 @@ interface ScheduleDay {
   opponent: { id: number; slug: string; shortName: string; name: string };
   home: boolean;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /** 취소 사유 원문. status=cancelled 일 때만 유의미며, 미수신이면 기존 `취소` 문구로 fallback. */
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   score: { for: number | null; against: number | null };
   stadium: string;
@@ -102,7 +105,7 @@ export default function TeamSchedulePage() {
 
   return (
     <div className="mx-auto max-w-lg pb-24">
-      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary" style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
       <header className="flex items-center gap-2 px-5 min-h-[44px]">
         <button onClick={() => { if (window.history.length > 1) router.back(); else router.push(`/teams/${teamSlug}`); }} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
           <ChevronLeft size={24} />
@@ -218,7 +221,7 @@ export default function TeamSchedulePage() {
                         : game.status === "live"
                         ? "LIVE"
                         : game.status === "cancelled"
-                        ? "취소"
+                        ? cancelReasonBadge(game.cancelReason)
                         : game.home ? "홈" : "@"}
                     </span>
                   )}

@@ -194,6 +194,50 @@ export const STAT_NARRATIVE_ANSWER =
 export const SERVICE_REDIRECT_ANSWER =
   "크보팬 서비스 관련 문의는 마이페이지 > 피드백 보내기에서 운영팀이 확인합니다. 저는 야구 이야기를 함께 살펴보겠습니다.";
 /**
+ * **우리 앱에 실재하는 기능**을 물었을 때의 경로 안내 (2026-08-23 하린아빠 확정).
+ *
+ * #1288 배포 후 종단 QA 실측: `직관기록` 은 되묻기(`stat_clarify`)는 멈추었지만
+ * 실 provider 가 3/3 로 **범위 밖(BLOCKED)** 으로 판정해 "제가 확인할 수 있는 범위는
+ * …" 를 내보냈다. 그런데 `직관 기록` 은 **우리 앱의 기능**(마이페이지 > 직관 기록)
+ * 이다 — 유저는 우리가 가진 것을 물었는데 "범위 밖" 이라고 답하는 셈이라 여전히 어깋나가 있다.
+ *
+ * ⚠️ `SERVICE_REDIRECT_ANSWER`(피드백 안내)와 **같은 칸을 쓰지 않는다**. 그쪽은
+ *   "운영팀에게 문의하세요"(= 나는 모른다)이고, 이쪽은 "그 기능은 여기 있습니다"
+ *   (= 바로 다음 행동이 가능하다)다. 유저의 다음 행동이 다르면 문구도 라벨도 나눈다.
+ */
+/**
+ * ⚠️ **단일 registry** — 판정 키와 안내 문구를 한 자리에서 선언한다 (삼순 NO-GO ①).
+ *
+ *   종전에는 판정이 `Set`, 문구가 별도 `Map` 이었다. 그러면 `Set` 에만 기능을
+ *   추가했을 때 **라우팅은 성공으로 잡히고 문구는 없는** 상태가 되어, 유저에겐
+ *   `BLOCKED_ANSWER`(범위 밖)를 보내면서 로그는 `product_feature_guide` 성공으로
+ *   남는다. 감사 지표가 거짓말을 하게 되므로 구조적으로 막는다.
+ *
+ *   키를 값에서 파생시키면(`as const` 객체) 둘이 갈라질 수 있는 표면 자체가 없어진다.
+ */
+const PRODUCT_FEATURE_REGISTRY = {
+  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
+  //   문구는 실제 화면을 근거로 한다 — `/my/venue-stats` 에 승률·구장별 통계가 실재한다.
+  "직관기록":
+    "직관 기록은 마이페이지에서 확인하실 수 있습니다. 직관한 경기가 쌓이면 승률·구장별 통계도 함께 보실 수 있습니다.",
+} as const;
+
+/** registry 키 — 문구가 없는 기능명은 **타입상 존재할 수 없다**. */
+export type ProductFeatureKey = keyof typeof PRODUCT_FEATURE_REGISTRY;
+
+/**
+ * 기능명 → 안내 문구. **총함수(total)** 라 반환형에 `undefined` 가 없다.
+ *   호출처가 `?? BLOCKED_ANSWER` 같은 fallback 을 쓸 자리가 생기지 않는다.
+ */
+export function productFeatureGuideAnswer(feature: ProductFeatureKey): string {
+  return PRODUCT_FEATURE_REGISTRY[feature];
+}
+
+/** 게이트·감사용 전수 열거(단일 SSOT 에서 파생). */
+export const PRODUCT_FEATURE_KEYS = Object.keys(
+  PRODUCT_FEATURE_REGISTRY,
+) as readonly ProductFeatureKey[];
+/**
  * **지원 allowlist 밖 지표** 전용 안내.
  *
  * ⚠️ 이전 문구(`선수나 구단 기록은 제가 아직 정확히 답해드리기 어려워요 … 앱의 기록 탭`)는
@@ -258,8 +302,8 @@ export const LLM_AMBIGUOUS_ANSWER =
  * 골라야 하고, 그 고르는 부담 때문에 그냥 나간다.
  */
 export const SCOPE_GUIDE_ANSWER =
-  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식입니다. " +
-  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단 이야기, 선수, 일부 기록, 최근 소식, 일부 앱 기능 안내입니다. " +
+  "예: \"보크가 뭐야?\" \"3피트 룰 알려줘\" \"LG 어떤 구단이야?\" \"김도영 타율\" \"요즘 삼성 어때?\" \"직관기록\"";
 // 직전 답변에 대한 감사·확인 인사 — 질문이 아니라 대화 행위다. 차단 문구를 보내면 안 된다.
 export const ACK_ANSWER = "도움이 됐다니 기쁩니다!";
 
@@ -684,6 +728,12 @@ export type QuestionRoute =
   | "event_record"
   // 실측된 이름 오타(`임창규`) — 생성 없이 그 이름을 되묻는다.
   | "name_suggest"
+  // 우리 앱에 실재하는 기능을 물은 질문 — 서비스 경로를 안내한다(2026-08-23).
+  //
+  // ⚠️ 이 라벨은 `match_path` 로도 그대로 기록된다 — DB CHECK 확장 migration 이 필요하다.
+  //   `blocked`·`service_redirect` 에 섮지 않는 이유는 감사 축이 다르기 때문이다:
+  //   "우리 기능을 물었는데 못 찾아준 건이 몇 건인가" 를 세려면 전용 라벨이 유일한 식별자다.
+  | "product_feature_guide"
   | "baseball_rule_term"
   // 룰베이스가 야구인지 아닌지 확정하지 못한 나머지 — 종결하지 않고 LLM 범위판정에 위임한다.
   // 이 라벨로는 로그를 쓰지 않는다(아래 answerQuestion에서 dictionary/cache/llm/blocked/unsure 중
@@ -749,6 +799,8 @@ export type MatchPath =
   //   `unsure` 는 LLM 까지 갔는데 확신 못 한 것, 이것은 애초에 대상을 특정 못 한 것이다.
   //   원인도 처방도 달라 한 칸에 두면 과차단 감사의 분모를 만들 수 없다.
   | "stat_clarify"
+  // 우리 앱에 실재하는 기능을 물어 서비스 경로를 안내한 경로 (2026-08-23).
+  | "product_feature_guide"
   | "limited"
   | "error"
   // LLM winner가 다른 worker — 이 worker는 답변 발송 없이 물러난다 (로그/DB 미기록).
@@ -1359,6 +1411,31 @@ export function isServiceInquiry(normalized: string): boolean {
   return SERVICE_WORDS.some((word) => normalized.includes(word));
 }
 /**
+ * 질문이 **우리 앱에 실재하는 기능**을 가리키는가 — 가리킨다면 그 기능명을 돌려준다.
+ *
+ * ⚠️ 판정·문구 SSOT 는 `PRODUCT_FEATURE_REGISTRY` **하나**다.
+ *   반환값이 `ProductFeatureKey` 라 호출처는 문구를 **반드시 받을 수 있다**(총함수).
+ *   어휘를 따로 열거하면 "결합형은 용어로 열리는데 안내는 안 나가는" 반쪽 상태가 된다.
+ * ⚠️ 공백은 제거하고 비교한다 — 유저는 `직관기록`·`직관 기록` 둘 다 쓰고,
+ *   LLM 표기 정규화가 그 사이를 오가는 것이 #1288 의 근원이었다.
+ * ⚠️ **부분문자열이 아니라 토큰 포함**으로 본다. `includes` 로 두면
+ *   `직관기록이 아니라 선수 기록` 같은 문장까지 가로채다.
+ */
+export function resolveProductFeature(question: string): ProductFeatureKey | null {
+  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+  for (const feature of PRODUCT_FEATURE_KEYS) {
+    if (!compact.startsWith(feature)) continue;
+    // 기능명 뒤에 남는 것이 **문법 꾸리뿐**일 때만 인정한다.
+    //   `직관기록`·`직관 기록이 뭐야`·`직관기록은` → 기능 질문 ⭕️
+    //   `직관기록보다 중요한거`             → 잔여가 문법 꾸리가 아니므로 ❌
+    // ⚠️ 새 어휘 열거를 만들지 않고 기존 폐쇄집합을 그대로 쓴다 — 그 집합은
+    //   `아웃도어`·`도루묵` 같은 범위 밖 합성어를 닫기 위해 설계·검증된 것이고,
+    //   여기서도 정확히 같은 성질이 필요하다(반례마다 자라는 표면을 만들지 않는다).
+    if (isGrammaticalTail(compact.slice(feature.length))) return feature;
+  }
+  return null;
+}
+/**
  * 리그 통산·역대 순위 질문인가 (`통산 안타 1위 누구야?`).
  *
  * ⚠️ 이 질문 부류는 **generic LLM 위임 금지**다 (삼순 2026-08-10 NO-GO). 숫자 가드는
@@ -1621,6 +1698,16 @@ function mentionsTeam(tokens: string[]): boolean {
           rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
       })));
 }
+/**
+ * 우리 앱에 **실재하는 기능명**의 `<head><metric>` 결합형 폐쇄집합 (2026-08-23).
+ *
+ * `<X> <지표>` 정규식이 잡는 head 는 지표어 바로 앞 토큰이라, 기능명이 띄어 써지면
+ * (`직관 기록`) head 가 기능명의 앞부분(`직관`)이 되어 미결속 엔티티로 오인된다.
+ *
+ * ⚠️ **결합형 exact 일치 전용**이다. 구성 낱말을 어휘집에 넣으면 동음이의 일반어까지
+ *   야구 어휘로 승격된다(`직관` = 直觀 intuition). 그 축은 여기서 열지 않는다.
+ * ⚠️ 항목 추가 기준은 "우리 앱에 그 기능이 실제로 있는가" 하나다 — 표현 변이를 쫓지 않는다.
+ */
 const BASEBALL_WORDS = [
   "야구", "투수", "타자", "포수", "주자", "심판", "스트라이크", "아웃", "안타",
   "홈런", "이닝", "베이스", "타석", "투구", "수비", "보크", "파울", "번트",
@@ -1737,6 +1824,11 @@ const HEAD_NON_ENTITY_UNITS: readonly string[] = [
   "그러면", "그래서", "그리고", "그런데", "그럼", "근데", "혹시", "일단",
   "무엇", "무슨", "어떤", "어느", "언제", "어디", "누구", "얼마", "뭔지", "뭔가", "뭔데",
   "뭐라고", "뭐라", "뭐야", "뭐지", "뭐", "뭔", "왜", "몇",
+  // `누` — `누가` 는 `누구+가` 의 축약형이라 `stripNameParticle` 이 조사 `가` 를 떼면
+  //   `누` 만 남고, 그랬 `누구` 항목으로는 안 잡힌다 (2026-08-22 48h 로그 실측:
+  //   `오늘 롯데 경기 누가 안타쳐서 7점 득점 낸거야` 가 head=`누가` → 미결속 → 되묻기).
+  // ⚠️ 의문사는 위 주석과 같은 근거로 **문법적으로 닫힌 부류**라 이 항목 추가로 열거가 자라지 않는다.
+  "누",
   "이랑", "하고", "이고", "이며", "예요", "에요", "인가", "인지",
   "고", "랑", "며", "은", "는", "이", "가", "을", "를", "도", "만", "과", "와",
   "의", "에", "요", "야", "나",
@@ -1834,6 +1926,19 @@ function classifyOneNamedStat(
   if (matchGlossary(glossary, combined) !== null) return "term_question";
   if (BASEBALL_VOCABULARY.includes(head.toLowerCase())) return "term_question";
   if (BASEBALL_VOCABULARY.includes(combined.toLowerCase())) return "term_question";
+  // ②-a **우리 서비스 기능명 결합형**(2026-08-23 배포 후 end-user QA).
+  //
+  //   `직관 기록` 은 head `직관` 이 로스터·사전·어휘집 어디에도 없어 미결속으로 떨어졌고,
+  //   실 provider 의도 프로브가 3/3 `RECORD` 를 내서 **질문에 사람 이름이 없는데 "앞말이
+  //   선수 이름인지 확인하지 못했습니다"** 로 끝났다(프로덕션 3/3 고정 재현).
+  //
+  // ⚠️ **결합형 exact 일치로만 판정한다** — bare `직관` 을 어휘집에 넣으면 'intuition'
+  //   일반어(`내 직관이 맞아?`·`직관은 논리와 달라?`)까지 라우터·validator 어휘로 승격된다
+  //   (삼순 2026-08-23 NO-GO ②). 여기서 여는 것은 `직관`+`기록` 이 붙은 그 한 결합형뿐이고,
+  //   `직관` 단독은 종전 그대로 야구 어휘가 아니다.
+  //
+  // ⚠️ 폐쇄집합이다 — 우리 앱에 실재하는 기능명만 넣는다. 반례를 따라 자랄 자리가 없다.
+  if (resolveProductFeature(combined) !== null) return "term_question";
 
   // ②-b **head 가 지시어·의문사뿐이면 `<X>` 자체가 없다**(2026-08-08 전건 감사 실측).
   //   `그 안타 기준이 머야`·`안타는 뭐고 홈런은 뭐에요?` 는 지시어/의문사 + 지표어일 뿐인데
@@ -1847,6 +1952,21 @@ function classifyOneNamedStat(
   // ⚠️ 분해 단위도 **문법 표지만** 쓴다(`HEAD_NON_ENTITY_UNITS`). 요청 동사(`주`·`해`)까지
   //   섞은 일반 집합을 쓰면 같은 함정이 되살아난다(`GRAMMATICAL_TAIL_UNITS` 주석의 `도어`).
   if (decomposesToUnits(head, HEAD_NON_ENTITY_LONGEST_FIRST)) return "none";
+
+  // ②-c **숫자로 시작하는 head 는 엔티티일 수 없다**(2026-08-22 48h 로그 전수 실측).
+  //
+  //   `31호 홈런`·`무사 주자1루 4점차면 세이브`·`1루타 2루타 3루카 홈런` 에서 정규식이 잡는
+  //   head 는 `31호`·`4점차면`·`3루카` 다. 전부 수사(數詞)인데 로스터·구단·사전 어디에도
+  //   없어 미결속으로 떨어졌고, 그 결과 **질문에 사람 이름이 아예 없는데 "앞말이 선수
+  //   이름인지 확인하지 못했습니다" 되묻기**가 나갔다(48h 로그 stat_clarify 11건 중 3건).
+  //
+  // ⚠️ 이 판정은 **닫힌 집합**이다 — KBO 등록 선수명·구단명·별칭은 숫자로 시작하지 않는다.
+  //   열거가 자랄 자리가 없으므로 `open_language_never_closes_with_rules` 축과 무관하다.
+  //   열린 축(문장이 룰 질문인지 기록 요청인지)은 아래 ③ + LLM 3분기가 맡는다.
+  //
+  // ⚠️ 순서가 계약이다. ②-b 와 같은 이유로 **근거 검사 뒤**여야 한다. 앞에 두면 사전에
+  //   실제로 수록된 수사형 용어(`3루타`·`1루타`·`2사만루`)가 근거 확인 전에 잘려 나간다.
+  if (/^[0-9]/u.test(head)) return "none";
 
   // ③ 근거가 없다 — **미결속**. 여기서 판정을 멈춘다 (2026-08-10 하린아빠 방향 확정).
   //
@@ -3145,6 +3265,13 @@ export function routeQuestion(
   // ⚠️ `ack` 보다 뒤에 둔다 — 두 집합은 서로 섞이지 않지만, 섞이게 되더라도
   // 감사 인사가 범위 안내문을 받는 쪽보다 그 반대가 덜 이상하다.
   if (isScopeAskPhrase(question)) return "scope_guide";
+  // 우리 기능을 물은 질문은 서비스 경로를 안내한다 (2026-08-23 하린아빠 확정).
+  //
+  // ⚠️ `service_redirect`(피드백 안내) **앞**에 둔다. 둘 다 "서비스 이야기"지만
+  //   유저의 다음 행동이 다르다 — 기능을 물은 사람은 그 기능을 쓰러 가면 되고,
+  //   피드백으로 보내면 한 단계 멀어진다. 구체적인 판정이 먼저다.
+  // ⚠️ `blocked` 보다는 뒤다 — 인젝션 차단은 어떤 안내보다도 앞이다(fail-close 우선).
+  if (resolveProductFeature(question) !== null) return "product_feature_guide";
   if (isServiceInquiry(normalized)) return "service_redirect";
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
@@ -3328,6 +3455,14 @@ function dismissesDetectedBaseballTerm(question: string, terms: readonly string[
 export interface ValidatedLlmAnswer {
   kind: "answer" | "blocked" | "unsure";
   answer?: string;
+  /**
+   * 톤 준수 **관측값** (2026-08-26 하린아빠 결정). `kind === "answer"` 일 때만 의미가 있다.
+   *
+   * 서빙 여부를 가르는 값이 아니라 **계측값**이다 — RAG `validateRagResponse` 의 동명
+   * 필드와 같은 역할·같은 이름을 쓴다. 소비처는 log/envelope 에 실어 보내기만 하고
+   * **분기 조건으로 쓰지 않는다.**
+   */
+  toneCompliant?: boolean;
 }
 
 /**
@@ -3368,14 +3503,33 @@ export interface StoredQaFinal {
   ragQuestionNumericCount?: number | null;
   ragDiscardReason?: RagDiscardReason | null;
   ragDiscardNumericCount?: number | null;
+  /**
+   * 가드 소유 질문이지만 **`RULE_TERM` 재질의 답이 정규 검증을 통과**했음 표식
+   * (2026-08-22, 삼순 NO-GO P0②).
+   *
+   * 왜 필요한가 — `replayStoredFinalResult` 는 가드 소유 질문의 `llm` envelope 를
+   * 고정 응대문 exact 만 허용하고 나머지를 전량 거절한다(자유문장 서빙 0 계약).
+   * 그 계약을 그대로 둔 채 재질의 답을 저장하면 **재생이 정상답을 되묻기로 덮어쓴다**.
+   * 반대로 저장을 생략하면 `답 생성 → log 전 crash → 재시도` 에서 정상답을 잃고
+   * LLM 을 다시 태우거나 되묻기로 끝난다(message 단위 1회 소비 계약 위반).
+   *
+   * ⚠️ 이 표식은 **원시점 검증 결과**이지 재생 시점 재판정이 아니다(`toneCompliant` 와 같은 축).
+   *   재생 경로는 이 값이 `true` 일 때만 `llm` envelope 를 통과시킨다 — 구버전 envelope 에는
+   *   이 칸이 없으므로 자동으로 거절된다(fail-close 방향 기본값).
+   */
+  statRuleTermVerified?: boolean;
 }
 /**
- * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안).
+ * 가드 소유 경로의 LLM 응답에서 의도 토큰만 추출한다 (#1132 A안, 2026-08-22 `rule_term` 추가).
  *
- * 반환이 "record"/"narrative" 가 아니면 무조건 null — 호출측이 되묻기로 fail-close 한다.
- * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(서빙 경로 없음).
+ * 반환이 폐쇄집합 3토큰 밖이면 무조건 null — 호출측이 되묻기로 fail-close 한다.
+ * 자유문장·파싱 실패·예상 밖 status 전부 동일 취급이다(자유문장 서빙 경로 없음 — 이 계약은 불변).
+ *
+ * ⚠️ `rule_term` 은 **자유문장을 서빙하라는 토큰이 아니다**. "이 질문은 대상의 값이
+ *   아니라 룰·용어를 묻는다" 는 **가드 소유 부정** 신호일 뿐이고, 호출측은 그 신호를 받으면
+ *   일반 경로로 **재질의**해 `validateLlmResponse` 전수 검증을 그대로 통과시킨다.
  */
-export function parseStatIntentToken(rawText: string): "record" | "narrative" | null {
+export function parseStatIntentToken(rawText: string): "record" | "narrative" | "rule_term" | null {
   let row: Record<string, unknown>;
   try {
     row = JSON.parse(rawText.trim()) as Record<string, unknown>;
@@ -3389,6 +3543,7 @@ export function parseStatIntentToken(rawText: string): "record" | "narrative" | 
   const token = row.answer.trim();
   if (token === "RECORD") return "record";
   if (token === "NARRATIVE") return "narrative";
+  if (token === "RULE_TERM") return "rule_term";
   return null;
 }
 
@@ -3424,6 +3579,9 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
       ? { ragQuestionNumericCount: final.ragQuestionNumericCount } : {}),
     ...(isNonNegativeInteger(final.ragDiscardNumericCount)
       ? { ragDiscardNumericCount: final.ragDiscardNumericCount } : {}),
+    // ⚠️ `=== true` 로만 복원한다 — 구버전·손상 envelope 의 truthy 값이 검증 통과로
+    //   오인되면 자유문장 서빙 0 계약이 조용히 뚚린다(provenance 는 값과 같은 조건에 결속).
+    ...(final.statRuleTermVerified === true ? { statRuleTermVerified: true } : {}),
   };
 }
 
@@ -3444,13 +3602,23 @@ async function replayStoredFinalResult(
   // 삼순 2026-08-14 재생 P0 + 결속 ③: 가드 소유 질문의 저장 envelope 재생은 수사 파서가
   // 아니라 **구조 판정**으로 닫는다 (A안과 동일 축 — 자유문장 서빙 0):
   //   · `cache` envelope → 전량 거절 (가드 소유 질문은 캐시 밖이다 — 존재 자체가 구버전)
-  //   · `llm` envelope → 현행 고정 응대문(`STAT_NARRATIVE_ANSWER`) exact 만 허용
+  //   · `llm` envelope → 현행 고정 응대문(`STAT_NARRATIVE_ANSWER`) exact,
+  //     또는 **원시점 검증을 통과한 `RULE_TERM` 재질의 답**(`statRuleTermVerified === true`)만 허용
   //   · 그 외는 전부 되묻기로 교체·재저장 (구버전 `374개` 단정 envelope 포함)
   // (소유 판정 재계산은 fail-close 방향 전용이다 — cacheable 재계산 금지 계약과 무관.)
+  //
+  // ⚠️ `statRuleTermVerified` 는 **자유문장 서빙 허가가 아니라 원시점 검증 완료 표식**이다
+  //   (2026-08-22 삼순 NO-GO P0②). 그 답은 생성 시점에 `validateLlmResponse`(톤·길이·링크·
+  //   범위)를 이미 전수 통과했고, 그 사실을 envelope 에 결속해 보존한 것이다. 이게 없으면
+  //   `답 생성 → log 전 crash → 재시도` 에서 정상답이 되묻기로 덮어쓰여 유저가 답을 잃는다.
+  //   구버전 envelope 에는 이 칸이 없으므로 자동 거절된다(fail-close 기본값).
   if (storedFinal.source === "llm" || storedFinal.source === "cache") {
     const [glossary, players] = await Promise.all([deps.loadGlossary(), deps.loadPlayers()]);
     if (statGuardOwnsQuestion(question, glossary, players) && !(
-      storedFinal.source === "llm" && storedFinal.answer === STAT_NARRATIVE_ANSWER
+      storedFinal.source === "llm" && (
+        storedFinal.answer === STAT_NARRATIVE_ANSWER ||
+        storedFinal.statRuleTermVerified === true
+      )
     )) {
       if (deps.storeLlm) {
         await deps.storeLlm(packStoredQaFinal({ answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" }, llm));
@@ -3572,13 +3740,25 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
     answer.length === 0 ||
     answer.length > BASEBALL_GENIUS_MAX_ANSWER_LENGTH ||
     /https?:\/\/|www\.|(?:^|\s)\[[^\]]+\]\([^)]+\)|```|<a\b/i.test(answer) ||
-    !isBaseballGeniusToneCompliant(answer) ||
     // ⚠️ 답변 문자열만 보지 않고 **원질문 맥락**과 함께 판정한다(삼순 4차 P0-1).
     !answerInQuestionScope(question, answer)
   ) {
     return { kind: "unsure" };
   }
-  return { kind: "answer", answer };
+  // 🔴 2026-08-26 하린아빠 결정 — **톤은 폐기 사유가 아니라 관측값이다.**
+  //
+  // 종전엔 해요체가 섞이면 답 전체를 버리고 `UNCLEAR_ANSWER`("질문을 정확히 이해하지
+  // 못했습니다")를 보냈다. 48h 원장 실측으로 **127런**이 이렇게 버려졌고, 그 안내는
+  // 사실이 아니었다 — 봇은 질문을 이해했고 내용도 맞는 답을 만들었는데 말투 때문에
+  // 우리가 버렸다. 그러면 유저는 자기 질문이 이상했다고 믿고 문장을 고쳐 다시 쓴다 — 고칠 게 없는데.
+  //
+  // 네 RAG 경로(`validateRagResponse`)는 이미 톤을 **관측만 하고 해요체를 그대로 서빙**한다.
+  // LLM 경로만 다른 잣대를 쓰고 있었다 — 두 경로를 같은 계약으로 맞춘다.
+  //
+  // ⚠️ 여기서 문자열 교정을 시도하지 않는다. 한국어 활용형은 유한하지 않아 어절 매핑으로는
+  //    원리적으로 닫힐 수 없다(#1300 에서 반례마다 룰이 쌓이고 회수율이 떨어지는 것을
+  //    실측했다). 톤 개선은 생성 프롬프트의 일이고, 이 자리는 **재기만** 한다.
+  return { kind: "answer", answer, toneCompliant: isBaseballGeniusToneCompliant(answer) };
 }
 
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
@@ -5727,7 +5907,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   if (route !== "baseball_rule_term" && !scopeGate) {
     const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
+    // 기능 안내 문구는 **같은 판정기**로 다시 푸는다 — `name_suggest` 와 같은 계약이다.
+    //   라우터는 라벨만 돌려주므로 문구에 넣을 기능명이 여기에 없다.
+    //   판정기와 문구 생성이 갈라지면 "안내하기로 라우팅해놓고 정작 문구가 없는" 모순이 되므로
+    //   그 경우 fail-close(범위 안내)한다.
+    // ⚠️ registry 가 총함수라 **문구 미존재로 인한 fallback 이 없다**(삼순 NO-GO ①).
+    //   종전에는 `?? null` 로 떨어져 `BLOCKED_ANSWER` 를 보내면서도 로그는
+    //   성공 라벨로 남는 구멍이 있었다. 이제 타입상 닫혀 있다.
+    const productFeature = route === "product_feature_guide" ? resolveProductFeature(question) : null;
+    const productFeatureAnswer = productFeature === null
+      ? null
+      : productFeatureGuideAnswer(productFeature);
     let answer =
+      // ⚠️ 문구가 없으면 안내를 내지 않는다 — 빈 안내보다 기존 범위 안내가 낫다.
+      route === "product_feature_guide" && productFeatureAnswer !== null ? productFeatureAnswer :
       route === "service_redirect" ? SERVICE_REDIRECT_ANSWER :
       route === "history_hold" ? resolveHoldAnswer(question) :
       route === "context_missing" ? CONTEXT_MISSING_ANSWER :
@@ -6205,18 +6398,107 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  // ── statNumericGuard 의도 2분기 (#1132 A안 — 하린아빠 2026-08-14 확정, 삼순 구조 제안) ──
+  // ── statNumericGuard 의도 3분기 (#1132 A안 — 2026-08-22 `RULE_TERM` 추가) ──
   //
-  // 가드 소유 질문은 LLM 자유문장을 **절대 서빙하지 않는다**. LLM 은 의도 토큰만
-  // 반환하고(RECORD/NARRATIVE), 유저 노출 문구는 코드 고정문 2개뿐이다:
+  // 가드 소유 질문은 의도 판정 응답의 **자유문장을 절대 그대로 서빙하지 않는다**.
+  // LLM 은 의도 토큰만 반환하고, 유저 노출 문구는 코드가 정한다:
   //   · RECORD(기록 요구) → `STAT_CLARIFY_ANSWER` 되묻기 (미결속 대상은 값을 못 준다)
   //   · NARRATIVE(서사·매체) → `STAT_NARRATIVE_ANSWER` 고정 응대
+  //   · RULE_TERM(룰·용어 질문) → **가드 소유 부정** → 일반 경로로 재질의(아래)
   //   · 토큰 외 출력(자유문장·파싱 실패 포함) → 되묻기 fail-close
+  //     (⚠️ 이 줄은 **의도 판정 응답 자체**가 계약 밖일 때만 해당한다. 재질의 단계의
+  //      오류·판정은 되묻기가 아니라 `error`/`blocked`/`unsure` 로 간다 — 아래 주석 참조.)
   // 이로써 숫자·한글 수사·단위 등 표현 열거 축이 구조적으로 소멸한다(룰 추가 0).
   // 저장 envelope 방어는 replayStoredFinalResult 의 구조 판정(cache 전량 거절 ·
   // llm 은 고정 응대문 exact 만)이 담당한다 — 수사 파서 의존 0.
+  //
+  // ⚠️ **`RULE_TERM` 은 왜 필요한가** (2026-08-22 48h 로그 실측). 가드는 `<X> <지표>` 의
+  //   X 가 미결속이면 소유하는데, 그 X 가 애초에 엔티티가 아닌 문장이 있다 —
+  //   `점수 차가 많이 날때 도루를 왜 하면 안 돼?` 같은 **룰 질문**이다. 이걸 어떤 토큰을
+  //   받아도 되묻기로 끝내면, 질문에 사람 이름이 없는데 이름을 되묻는 동문서답이 된다.
+  //   `열린 자연어`(룰 질문인가 기록 요구인가)는 룰로 닫을 수 없으므로 판정 주체를 LLM 으로
+  //   옮기고, 출력 표면은 그대로 닫아둔다(`open_language_never_closes_with_rules`).
+  //
+  // ⚠️ `RULE_TERM` 은 **판정 응답의 자유문장을 서빙하지 않는다**. 그 응답은 의도 토큰용
+  //   프롬프트로 받은 것이라 톤·길이·범위 검증을 거치지 않았다. 대신 **가드를 내려놓고
+  //   일반 프롬프트로 다시 묻는다** — 그래야 아래 `validateLlmResponse`(톤·길이·링크·범위)가
+  //   종전과 똑같은 강도로 적용된다.
+  //
+  // ⚠️ 재질의 단계의 결과는 **되묻기로 뭉개지 않고 일반 경로의 의미 그대로** 종결한다
+  //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
+  //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
+  //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
   if (statNumericGuard) {
     const intent = parseStatIntentToken(llm.text);
+    if (intent === "rule_term") {
+      // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
+      //
+      // ⚠️ 오류 의미를 지킨다 (2026-08-22 삼순 NO-GO P0③). 재질의 timeout·공급자 오류는
+      //   **우리 쪽 고장**이다 — `stat_clarify`(="앞말이 선수 이름인지 모르겠다")로 접으면
+      //   멀정한 문장을 유저 탓으로 돌리고 고쳐 다시 쓰게 만든다(삼순 2026-08-08 ①과 같은 축).
+      //   위 1차 `callLlm` 실패 처리와 **동일하게** `error` 로 종결한다.
+      let reasked: LlmResult | null = null;
+      try {
+        reasked = await deps.callLlm(question, context ?? undefined, rosterBlock, false);
+      } catch {
+        await deps.log({
+          userId, question, questionNorm, matchPath: "error", answer: null,
+          // 두 호출 토큰 합산 — 1차는 이미 소비됐다(과금 관측 누락 방지).
+          inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+        });
+        return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+      }
+      // ⚠️ 재질의 결과는 **일반 경로의 의미 그대로** 종결한다(삼순 P0③).
+      //   종전에는 blocked·unsure 를 전부 되묻기로 접어 "범위 밖"·"못 알아들음" 이 전부
+      //   "앞말이 선수 이름인지 모르겠다" 로 둘갑했다 — 세 상황은 유저의 다음 행동이 다르다.
+      // 토큰 계측은 두 호출을 합산한다 — 한 질문에 LLM 을 두 번 태웠으므로 한 쪽만 적으면 과소계측이다.
+      const sumIn = (llm.inputTokens ?? 0) + (reasked.inputTokens ?? 0);
+      const sumOut = (llm.outputTokens ?? 0) + (reasked.outputTokens ?? 0);
+      const tokens = {
+        inputTokens: llm.inputTokens === null && reasked.inputTokens === null ? null : sumIn,
+        outputTokens: llm.outputTokens === null && reasked.outputTokens === null ? null : sumOut,
+      };
+      const revalidated = validateLlmResponse(reasked.text, question);
+      if (revalidated.kind === "answer" && revalidated.answer) {
+        // ⚠️ **durable store 를 먼저**, 그 다음 log (삼순 P0② — store-before-log).
+        //   검증 완료 표식(`statRuleTermVerified`)을 envelope 에 결속해, `log 전 crash → 재시도`
+        //   에서 재생 경로가 이 정상답을 그대로 복원하게 한다(미저장이면 정상답을 잃는다).
+        // ⚠️ `cacheable` 은 붙이지 않는다 — global 캐시 미저장 계약은 그대로이다
+        //   (message 단위 final 저장과 global 캐시는 별개의 계층이다).
+        if (deps.storeLlm) {
+          await deps.storeLlm(packStoredQaFinal(
+            {
+              answer: revalidated.answer, source: "llm", statRuleTermVerified: true,
+              toneCompliant: revalidated.toneCompliant,
+            },
+            { text: reasked.text, ...tokens },
+          ));
+        }
+        await deps.log({
+          userId, question, questionNorm, matchPath: "llm",
+          answer: revalidated.answer, ...tokens,
+          toneCompliant: revalidated.toneCompliant,
+        });
+        return { status: 200, answer: revalidated.answer, source: "llm", remaining };
+      }
+      if (revalidated.kind === "blocked") {
+        if (deps.storeLlm) {
+          await deps.storeLlm(packStoredQaFinal(
+            { answer: BLOCKED_ANSWER, source: "blocked" }, { text: reasked.text, ...tokens },
+          ));
+        }
+        await deps.log({ userId, question, questionNorm, matchPath: "blocked", answer: null, ...tokens });
+        return { status: 200, answer: BLOCKED_ANSWER, source: "blocked", remaining };
+      }
+      // unsure — 재질의 답이 검증을 못 넘었다. 일반 경로와 같은 의미로 보류 안내.
+      if (deps.storeLlm) {
+        await deps.storeLlm(packStoredQaFinal(
+          { answer: UNCLEAR_ANSWER, source: "unsure" }, { text: reasked.text, ...tokens },
+        ));
+      }
+      await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, ...tokens });
+      return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    }
     const final: StoredQaFinal = intent === "narrative"
       ? { answer: STAT_NARRATIVE_ANSWER, source: "llm" }
       : { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };
@@ -6249,11 +6531,19 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 성질이지 질문 하나의 성질이 아니다.
   if (deps.storeLlm) {
     await deps.storeLlm(packStoredQaFinal(
-      { answer: validated.answer, source: "llm", cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard },
+      {
+        answer: validated.answer, source: "llm",
+        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,
+        toneCompliant: validated.toneCompliant,
+      },
       llm,
     ));
   }
   if (!context && !scopeGate && !rosterBlock && !statNumericGuard) await deps.setCache(questionNorm, validated.answer);
-  await deps.log({ userId, question, questionNorm, matchPath: "llm", answer: validated.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+  await deps.log({
+    userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
+    inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    toneCompliant: validated.toneCompliant,
+  });
   return { status: 200, answer: validated.answer, source: "llm", remaining };
 }

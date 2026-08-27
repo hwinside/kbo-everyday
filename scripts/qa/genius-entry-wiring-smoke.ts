@@ -1,9 +1,12 @@
-// 야잘알봇 헤더 진입점 핫픽스 회귀 (2026-08-03 하린아빠 지시).
+// 야잘알봇 헤더 진입점 배선 계약.
 //
-// 답변 실패 경로를 고치는 동안 헤더 진입점을 노출하지 않는 계약을 검사한다.
+// 이력: 2026-08-02 헤더 노출(#1057) → 2026-08-03 핫픽스로 미노출 계약 →
+// **2026-08-21 하린아빠 "홈에 야잘알봇 꺼내기"로 재노출**. 홈 헤더(HomeClientShell)
+// 쪽지 아이콘 왼쪽에 반드시 배선되어야 하고, 그 외 헤더(HeaderProfileLink)에는
+// 붙이지 않는다(지시 범위가 "홈"). 같은 지시로 쪽지함 고정방은 제거됐으므로
+// 이 버튼이 유일한 진입점이다 — 배선 누락은 진입점 증발이라 계약으로 잡는다.
 // 브라우저 E2E(qa:genius-entry-browser)와 역할이 다르다 — 여기는 배선 계약,
-// 저기는 실제 렌더/클릭. 배선 계약을 따로 두는 이유는 컴포넌트만 만들고
-// 헤더에 안 붙이거나, 라우팅을 /messages 목록으로 되돌리는 회귀를 잡기 위함.
+// 저기는 실제 렌더/클릭.
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -22,18 +25,92 @@ function check(name: string, fn: () => void) {
 
 const read = (p: string) => readFileSync(path.join(process.cwd(), p), "utf8");
 const entry = read("src/components/ui/GeniusEntryButton.tsx");
+const HOME_HEADER = "src/components/home/HomeClientShell.tsx";
 const HEADERS_WITH_DM = [
   "src/components/ui/HeaderProfileLink.tsx",
-  "src/components/home/HomeClientShell.tsx",
+  HOME_HEADER,
 ] as const;
 
-for (const file of HEADERS_WITH_DM) {
-  const header = read(file);
-  check(`[${path.basename(file)}] GeniusEntryButton을 노출하지 않는다`, () => {
+// 홈 헤더: 반드시 노출 (2026-08-21 지시)
+{
+  const home = read(HOME_HEADER);
+  check("[HomeClientShell] GeniusEntryButton을 노출한다", () => {
+    assert.ok(/import\s+GeniusEntryButton\s+from/.test(home), "import 없음");
+    assert.ok(/<GeniusEntryButton\s*\/>/.test(home), "렌더 없음");
+  });
+  check("[HomeClientShell] 버튼이 쪽지 링크 **왼쪽**에 있다", () => {
+    const btnIdx = home.indexOf("<GeniusEntryButton");
+    const dmIdx = home.indexOf('aria-label="\ucabd\uc9c0"');
+    assert.ok(btnIdx >= 0 && dmIdx >= 0, "버튼 또는 쪽지 링크를 찾지 못함");
+    assert.ok(btnIdx < dmIdx, "버튼이 쪽지 링크 뒤에 있다(지시: 왼쪽)");
+  });
+}
+
+// 홈 외 헤더: 미노출 유지 (지시 범위는 홈)
+{
+  const header = read("src/components/ui/HeaderProfileLink.tsx");
+  check("[HeaderProfileLink.tsx] GeniusEntryButton을 노출하지 않는다", () => {
     assert.ok(!/import\s+GeniusEntryButton\s+from/.test(header), "import가 남아 있음");
     assert.ok(!/<GeniusEntryButton\s*\/>/.test(header), "렌더가 남아 있음");
   });
 }
+
+// 쪽지함 목록: 야잘알봇 고정방 제거 (2026-08-21 "기본 쪽지함에서 야잘알봇 대화창 제거")
+{
+  const dmHook = read("src/lib/supabase/useDM.ts");
+  check("[useDM.ts] 야잘알봇 고정방(pinnedGenius)이 없다", () => {
+    assert.ok(!/pinnedGenius/.test(dmHook), "고정방이 남아 있음");
+  });
+  check("[useDM.ts] 목록에서 야잘알봇 대화를 필터한다", () => {
+    assert.ok(
+      /filter\(\(conversation\) => conversation\.other_user_id !== BASEBALL_GENIUS_USER_ID\)/.test(dmHook),
+      "야잘알봇 제외 필터 없음",
+    );
+  });
+  const unreadHook = read("src/lib/supabase/useUnreadDMCount.ts");
+  // ⚠️ 문자열 존재 검사는 필터를 지워도 PASS 하는 false-green 이었다(삼순 NO-GO ②).
+  // 실제 필터 **식**을 검사한다 — 서버쪽 .not() 양쪽 participant 제외 + 클라 방어 필터.
+  // NULL-safe 제외식: `IS NULL OR != bot`. `.not(col,"eq",v)` 는 탈퇴(participant NULL)
+  // 대화까지 사라지게 하는 NULL 비안전 식이라 금지한다(삼순 NO-GO 2차).
+  const SERVER_NOT_U1 = /\.or\(`user1_id\.is\.null,user1_id\.neq\.\$\{BASEBALL_GENIUS_USER_ID\}`\)/;
+  const SERVER_NOT_U2 = /\.or\(`user2_id\.is\.null,user2_id\.neq\.\$\{BASEBALL_GENIUS_USER_ID\}`\)/;
+  const NULL_UNSAFE_NOT = /\.not\(\s*"user[12]_id"\s*,\s*"eq"\s*,\s*BASEBALL_GENIUS_USER_ID\s*\)/;
+  check("[useUnreadDMCount.ts] 서버쪽 쿼리에서 야잘알봇 양쪽 participant 를 NULL-safe 로 제외한다", () => {
+    assert.ok(SERVER_NOT_U1.test(unreadHook), "user1_id NULL-safe 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(unreadHook), "user2_id NULL-safe 제외 없음");
+    assert.ok(!NULL_UNSAFE_NOT.test(unreadHook), "NULL 비안전 .not(eq) 잔존");
+  });
+  check("[useUnreadDMCount.ts] 클라 방어 필터도 양쪽 participant 를 본다", () => {
+    assert.ok(
+      /c\.user1_id !== BASEBALL_GENIUS_USER_ID && c\.user2_id !== BASEBALL_GENIUS_USER_ID/.test(unreadHook),
+      "클라 방어 필터 없음",
+    );
+  });
+  check("[useDM.ts] 목록 서버쪽 쿼리도 야잘알봇을 NULL-safe 로 제외한다(limit 500 경계)", () => {
+    // 클라 필터만 있으면 봇방이 500개 한도에서 일반방 1칸을 먹는다.
+    assert.ok(SERVER_NOT_U1.test(dmHook), "useDMList user1_id NULL-safe 제외 없음");
+    assert.ok(SERVER_NOT_U2.test(dmHook), "useDMList user2_id NULL-safe 제외 없음");
+    assert.ok(!NULL_UNSAFE_NOT.test(dmHook), "NULL 비안전 .not(eq) 잔존");
+  });
+}
+
+// 세로 크기: 마스코트 그림은 이웃 아이콘(쪽지 22·아바타 22px)과 동일해야 한다
+// (2026-08-21 하린아빠 "헤더가 커지지 않게 아이콘과 세로 크기를 맞춰줘").
+check("마스코트 그림 높이 = 29px (22px 정합 → 23:06 하린아빠 '30% 키워줘')", () => {
+  // 22×1.3≈29. 폭 ~40px로 44px 슬롯 안 — 헤더 불증가(20:48 지시)는 유지.
+  assert.ok(/h-\[29px\]/.test(entry), "h-[29px] 아님 — 30% 확대 규격 불일치");
+  assert.ok(!/\bh-10\b/.test(entry) && !/h-\[22px\]/.test(entry), "구 크기 클래스 잔존");
+});
+
+// hit-area: 마스코트 overflow 가 이웃 버튼 탭을 가로채면 안 된다 (삼순 NO-GO ①)
+check("마스코트 이미지는 pointer-events-none — 탭 판정은 44px 버튼만", () => {
+  // 268×192 프레임은 h-10 에서 폭 ~56px 로 44px 슬롯을 넘친다. overflow 가
+  // 쪽지 버튼 위에 그려지므로 이미지가 이벤트를 먹으면 가장자리 탭이 오동작한다.
+  const pictureIdx = entry.indexOf("<picture");
+  assert.ok(pictureIdx >= 0, "picture 요소 없음");
+  const pictureTag = entry.slice(pictureIdx, entry.indexOf(">", pictureIdx));
+  assert.ok(/pointer-events-none/.test(pictureTag), "picture 에 pointer-events-none 없음");
+});
 
 check("쪽지 링크를 가진 헤더가 회귀 목록에서 누락되지 않는다", () => {
   const found: string[] = [];

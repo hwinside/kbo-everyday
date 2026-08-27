@@ -1,5 +1,7 @@
 import {
   fetchKboGamesOnly,
+  isKboGameCancelled,
+  parseCancelReason,
   parseGameLinescoreResponse,
   type KboGame,
 } from "@/lib/crawler/kbo-api";
@@ -36,6 +38,12 @@ function findPlayerByNumericId(numericId: string): { name: string } | undefined 
 export interface GameDetailResponse {
   gameId: string;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(KBO `CANCEL_SC_NM`, 예: `우천취소`/`폭염취소`/`그라운드사정`).
+   * `status === "cancelled"` 일 때만 채우며, 사유를 못 받았으면 null(= 미확인).
+   * null 을 "사유 없음"으로 단정하지 말 것 — Naver 폴백에는 이 필드가 원리적으로 없다.
+   */
+  cancelReason?: string | null;
   meta: {
     stadium: string;
     crowd: string | null;
@@ -208,9 +216,10 @@ function parseScoreBoardImpl(data: unknown[]): {
   meta: GameDetailResponse["meta"];
   linescore: GameDetailResponse["linescore"];
   status: GameDetailResponse["status"];
+  cancelReason: string | null;
 } {
   if (!Array.isArray(data) || data.length === 0) {
-    return { meta: null, linescore: null, status: "scheduled" };
+    return { meta: null, linescore: null, status: "scheduled", cancelReason: null };
   }
 
   // data[0] = meta array
@@ -221,7 +230,13 @@ function parseScoreBoardImpl(data: unknown[]): {
   if (m) {
     const cancelNm = safeStr(m.CANCEL_SC_NM);
     const endTm = safeStr(m.END_TM);
-    if (cancelNm.includes("취소") || cancelNm.includes("우천")) {
+    // 취소 판정은 **코드(CANCEL_SC_ID) 우선**, 사유명은 보조 신호다(삼순 NO-GO ②).
+    // 이유: 실측 사유 중 `그라운드사정`(ID 6)은 "취소"도 "우천"도 포함하지 않아
+    // 문자열 포함 검사만으로는 scheduled 로 오판된다. 사유명은 열린 집합이라
+    // 문자열 룰을 늘리는 방향은 반례마다 룰이 쌓인다 — 닫힌 집합인 코드에 결속한다.
+    // 사유명 검사를 남기는 이유: 이 응답은 ID 가 결측될 수 있고(2026-08-22 실측상
+    // ScoreBoard meta 에는 CANCEL_* 가 아예 없다), 그때 기존 판정을 잃지 않기 위해.
+    if (isKboGameCancelled(m.CANCEL_SC_ID) || cancelNm.includes("취소") || cancelNm.includes("우천")) {
       status = "cancelled";
     } else if (endTm) {
       // END_TM이 있으면 경기 종료
@@ -240,12 +255,16 @@ function parseScoreBoardImpl(data: unknown[]): {
   } : null;
 
   const sharedLinescore = parseGameLinescoreResponse(data);
+  const finalStatus = sharedLinescore?.status ?? status;
   return {
     meta,
     linescore: sharedLinescore
       ? { away: sharedLinescore.away, home: sharedLinescore.home }
       : null,
-    status: sharedLinescore?.status ?? status,
+    status: finalStatus,
+    // 사유는 취소 판정과 **같은 조건**으로만 실는다(값-플래그 결속).
+    // 정상 경기에 사유가 남아 UI 가 취소로 오표기하는 경로를 구조적으로 막는다.
+    cancelReason: parseCancelReason(finalStatus, m ? safeStr(m.CANCEL_SC_NM) : null),
   };
 }
 
@@ -732,7 +751,11 @@ export async function getGameDetailRouteResult(params: {
 
     const parsedScoreBoard = parseScoreBoard(scoreBoardRes ?? []);
     let meta = parsedScoreBoard.meta;
-    const { linescore: kboLinescore, status: scoreBoardStatus } = parsedScoreBoard;
+    const {
+      linescore: kboLinescore,
+      status: scoreBoardStatus,
+      cancelReason: scoreBoardCancelReason,
+    } = parsedScoreBoard;
     let lineup = parseLineup(lineupRes ?? []);
     if (lineup) lineupSource = lineup.isToday ? "kbo-confirmed" : "kbo-unconfirmed";
     // KBO GetLineUpAnalysis 열화(204/빈응답/타임아웃)면 Naver preview 라인업으로 표시 폴백.
@@ -880,9 +903,26 @@ export async function getGameDetailRouteResult(params: {
       scoreBoardStatus === "scheduled" && hasRealBoxScoreFinal ? "final" :
       liveListStatus ?? scoreBoardStatus;
 
+    // 사유 출처는 세 곳(scoreBoard 메타 / KBO 경기목록 / canonical listGame)이다.
+    //
+    // **kboListGame 을 listGame 보다 먼저 본다**(삼순 3차 NO-GO): detail 이 열화하면
+    // canonical status source 가 Naver 로 바뀌는데, Naver 매퍼는 사유를 원리적으로
+    // 모르므로(cancelReason: null) 같은 deadline 안에 정상 settle 된 KBO 목록의 사유까지
+    // 버려진다. 상태와 사유는 독립 축이다 — 방송채널(broadcastChannels)이 이미 똑같은
+    // 이유로 kboListGame 우선 병합을 하고 있고, 사유도 동일 계약을 따른다.
+    //
+    // 단 **최종 status 가 cancelled 일 때만** 실어 값과 판정을 같은 조건에 묶는다 — 상태가
+    // 뒤집힌(live/final) 경기에 사유가 남으면 UI 가 취소로 오표기한다.
+    // 세 곳 모두 없으면 null(= 미확인) — 빈 문자열로 합성하지 않고 소비처가 고정 문구로 fallback.
+    const cancelReason =
+      status === "cancelled"
+        ? (scoreBoardCancelReason ?? kboListGame?.cancelReason ?? listGame?.cancelReason ?? null)
+        : null;
+
     const response: GameDetailResponse = {
       gameId,
       status,
+      cancelReason,
       meta,
       linescore,
       lineup: (() => {

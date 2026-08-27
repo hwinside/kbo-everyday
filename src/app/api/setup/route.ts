@@ -144,11 +144,13 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "초대코드 등록에 실패했습니다" }, { status: 500 });
       }
 
+      // 파운더 배지 부여 중단 (2026-08-24 하린아빠 지시)
+      // — "초창기 멤버" 취지와 달리 초대 가입만으로 계속 부여되고 있어 신규 부여를 멈춘다.
+      // 기존 보유자(is_founder / user_badges)는 건드리지 않는다.
       const { error: profileInviteError } = await admin
         .from("profiles")
         .update({
           invited_by: invite.inviter_id,
-          is_founder: true,
         })
         .eq("id", userId);
 
@@ -158,10 +160,6 @@ export async function POST(request: NextRequest) {
         await admin.from("profiles").delete().eq("id", userId);
         return NextResponse.json({ error: "초대코드 등록에 실패했습니다" }, { status: 500 });
       }
-
-      await admin
-        .from("user_badges")
-        .upsert({ user_id: userId, badge_id: "founder" }, { onConflict: "user_id,badge_id" });
     }
 
     return NextResponse.json({ ok: true });

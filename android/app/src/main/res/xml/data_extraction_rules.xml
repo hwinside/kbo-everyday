@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+ 백업/기기이전 규칙 (android:dataExtractionRules).
+     SecureSessionStore(EncryptedSharedPreferences)는 Keystore 마스터키 비이전으로
+     복호화 불가 — 클라우드 백업·기기 간 이전 모두 제외 (PR #1265 ②설치 생명주기). -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="fan.keubo.secure-session-store.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="fan.keubo.secure-session-store.xml" />
+    </device-transfer>
+</data-extraction-rules>

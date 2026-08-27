@@ -1,9 +1,15 @@
 #!/usr/bin/env node
 /**
- * 야잘알봇 헤더 진입점 미노출 실브라우저 검증 (2026-08-03 하린아빠 지시).
+ * 야잘알봇 홈 헤더 진입점 실브라우저 검증
+ * (2026-08-03 미노출 계약 → 2026-08-21 하린아빠 "홈에 야잘알봇 꺼내기"로 재노출).
  *
- * 배선 회귀(qa:genius-entry)는 소스 계약만 본다. 여기서는 로그인 여부와 무관하게
- * 헤더에서 실제로 사라졌는지, 헤더가 안 깨지는지, 직접 대화 URL은 유지되는지 본다.
+ * 새 계약:
+ *  · 비로그인 → 어느 헤더에도 미노출 (2026-08-02 "비로그인 진입 불가" 유지)
+ *  · 로그인·홈 → 쪽지 아이콘 왼쪽에 노출, 스윙/투구 모션 WebP 중 하나, 탭하면 대화창 직행
+ *  · 로그인·뉴스(HeaderProfileLink) → 미노출 유지 (지시 범위는 홈)
+ *  · 쪽지함 목록 → 야잘알봇 카드 없음 (2026-08-21 "기본 쪽지함에서 야잘알봇 대화창 제거")
+ *
+ * 배선 회귀(qa:genius-entry)는 소스 계약만 본다. 여기서는 실제 렌더/클릭을 본다.
  *
  * 로그인 축은 전용 테스트 계정을 그때그때 만들어 쓰고 끝나면 지운다
  * (AGENTS P0: 하린아빠 개인/공유 계정으로 실사용 QA 금지).
@@ -15,7 +21,8 @@ import playwright from "playwright";
 import { SUPABASE_URL, ANON, SERVICE_ROLE, REF, BASE } from "./_env.mjs";
 
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
-const EXPECT_SRC = "/mascot/yajalal-avatar.png";
+// 진입점은 스윙/투구 모션 WebP 중 하나를 랜덤 노출한다 (2026-08-21 지시).
+const MOTION_SRC_RE = /^\/mascot\/motion\/(swing|pitching)\.webp$/;
 const GENIUS_ID = "45ae7419-6a9a-4c6b-9101-8d65df7e242e";
 const PAGES = [
   { label: "홈", path: "/" },
@@ -60,15 +67,18 @@ async function measure(page) {
       imgSrc: img?.getAttribute("src") ?? null,
       imgNaturalWidth: img?.naturalWidth ?? 0,
       imgRect: r(img),
-      srcMatches: img?.getAttribute("src") === expectSrc,
+      srcMatches: expectSrc ? new RegExp(expectSrc).test(img?.getAttribute("src") ?? "") : false,
       docOverflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
     };
-  }, EXPECT_SRC);
+  }, MOTION_SRC_RE.source);
 }
 
 async function main() {
   const browser = await playwright.chromium.launch();
   let testUser = null;
+  let buddyUser = null;
+  const qaConvIds = [];
+  let anonHomeHeaderH = null; // 비로그인 홈 헤더 높이 — 로그인(버튼 있음)과 동일해야 한다
 
   try {
     // ---------- 비로그인: 진입 자체가 불가능해야 한다 ----------
@@ -97,6 +107,7 @@ async function main() {
         m.headerRect ? `${Math.round(m.headerRect.height)}px` : "(헤더 없음)",
       );
       ok(`${T} 가로 overflow 없음`, !m.docOverflowX);
+      if (pg.path === "/" && m.headerRect) anonHomeHeaderH = Math.round(m.headerRect.height);
 
       await ctx.close();
     }
@@ -196,14 +207,179 @@ async function main() {
     ]);
     await ctx.addInitScript(([k, v]) => window.localStorage.setItem(k, v), [authKey, sessionValue]);
     const page = await ctx.newPage();
-    for (const target of PAGES) {
-      await page.goto(`${BASE_URL}${target.path}`, { waitUntil: "networkidle" });
+    // 홈: 버튼 노출 + 모션 자산 + 쪽지 아이콘 왼쪽 (2026-08-21 지시)
+    {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(1500); // AuthContext 세션 확정 대기
       const measured = await measure(page);
-      ok(`[로그인·${target.label}] 헤더에 마스코트 버튼 미노출`, !measured.hasBtn);
+      ok("[로그인·홈] 헤더에 마스코트 버튼 노출", measured.hasBtn);
       ok(
-        `[로그인·${target.label}] 헤더 높이 규격`,
+        "[로그인·홈] 스윙/투구 모션 WebP 중 하나를 렌더",
+        measured.srcMatches,
+        `src=${measured.imgSrc}`,
+      );
+      ok(
+        "[로그인·홈] 모션 자산 실제 로드됨(404 아님)",
+        measured.imgNaturalWidth > 0,
+        `naturalWidth=${measured.imgNaturalWidth}`,
+      );
+      ok(
+        "[로그인·홈] 버튼이 쪽지 아이콘 왼쪽",
+        !!measured.btnRect && !!measured.dmRect && measured.btnRect.x < measured.dmRect.x,
+        measured.btnRect && measured.dmRect ? `btn.x=${Math.round(measured.btnRect.x)} dm.x=${Math.round(measured.dmRect.x)}` : "",
+      );
+      ok(
+        "[로그인·홈] 헤더 높이 규격(진입점 추가로 레이아웃 안 깨짐)",
+        !!measured.headerRect && measured.headerRect.height >= HEADER_MIN && measured.headerRect.height <= HEADER_MAX,
+        measured.headerRect ? `${Math.round(measured.headerRect.height)}px` : "",
+      );
+      // 헤더 전후 동일: 진입점 없는 비로그인 홈과 있는 로그인 홈이 같은 높이여야 한다
+      // (2026-08-21 하린아빠 "야잘알봇 때문에 헤더가 커지지 않게").
+      ok(
+        "[로그인·홈] 헤더 높이가 진입점 없는 헤더와 동일(커지지 않음)",
+        anonHomeHeaderH !== null && !!measured.headerRect && Math.round(measured.headerRect.height) === anonHomeHeaderH,
+        `비로그인 ${anonHomeHeaderH}px vs 로그인 ${measured.headerRect ? Math.round(measured.headerRect.height) : "?"}px`,
+      );
+      // 세 아이콘 세로 크기 정합: 마스코트 그림·쪽지 아이콘·마이페이지 아이콘 전부 22px
+      const iconHeights = await page.evaluate(() => {
+        const r = (el) => (el ? Math.round(el.getBoundingClientRect().height) : null);
+        const mascot = document.querySelector('[data-testid="genius-entry-button"] img');
+        const dmSvg = document.querySelector('header a[href="/messages"] svg');
+        const myLink = document.querySelector('header a[href="/my"]');
+        const myIcon = myLink?.querySelector("img, svg, div");
+        return { mascot: r(mascot), dm: r(dmSvg), my: r(myIcon) };
+      });
+      ok(
+        "[로그인·홈] 아이콘 세로 규격(마스코트 29px·30% 확대·쪽지/마이페이지 22px)",
+        iconHeights.mascot === 29 && iconHeights.dm === 22 && iconHeights.my === 22,
+        `mascot=${iconHeights.mascot} dm=${iconHeights.dm} my=${iconHeights.my}`,
+      );
+      ok("[로그인·홈] 가로 overflow 없음", !measured.docOverflowX);
+
+      // 탭하면 대화창 직행 (목록 경유 금지)
+      await page.click('[data-testid="genius-entry-button"]');
+      await page.waitForURL(/\/messages\/(new-)?[0-9a-f-]+/, { timeout: 8000 });
+      const clickUrl = new URL(page.url()).pathname;
+      ok(
+        "[로그인·홈] 탭 → 야잘알봇 대화창 직행(목록 경유 안 함)",
+        clickUrl.startsWith("/messages/") && clickUrl !== "/messages",
+        clickUrl,
+      );
+    }
+
+    // edge-click 회귀 (삼순 NO-GO ①): 마스코트 overflow(폭 ~56px)가 쪽지 버튼 위에
+    // 그려져도 탭 판정은 44px 버튼만 해야 한다. 쪽지 버튼 왼쪽 가장자리(overflow 겁침
+    // 영역)를 클릭하면 야잘알봇이 아니라 쪽지 목록으로 가야 한다.
+    {
+      await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(1500);
+      const m = await measure(page);
+      if (!m.dmRect) {
+        ok("[로그인·홈] edge-click 회귀: 쪽지 버튼 좌표 확보", false, "dmRect 없음");
+      } else {
+        // 쪽지 버튼 왼쪽 가장자리 안쪽 2px — 마스코트 overflow 가 겁치는 지점이다.
+        await page.mouse.click(m.dmRect.x + 2, m.dmRect.y + m.dmRect.height / 2);
+        await page.waitForTimeout(2500);
+        const edgePath = new URL(page.url()).pathname;
+        ok(
+          "[로그인·홈] 쪽지 버튼 왼쪽 가장자리 탭 → 쪽지 목록(마스코트 overflow 가 탭을 안 먹음)",
+          edgePath === "/messages",
+          `path=${edgePath} clickX=${Math.round(m.dmRect.x + 2)}`,
+        );
+      }
+    }
+
+    // 배지 동작 검증 (삼순 NO-GO ②): 봇 unread 는 배지에서 제외, 일반 unread 는 유지.
+    // service-role 로 봇방 unread 1건 + 일반방 unread 1건을 만들고 홈 배지가 1인지 본다.
+    {
+      const { data: buddy, error: buddyErr } = await admin.auth.admin.createUser({
+        email: `qa-genius-buddy-${Date.now()}@keubo-qa.invalid`,
+        email_confirm: true,
+        password: `Qa!${Math.random().toString(36).slice(2)}Bb2`,
+      });
+      if (buddyErr) throw new Error(`buddy 계정 생성 실패: ${buddyErr.message}`);
+      buddyUser = buddy.user;
+      const { error: buddyProfErr } = await admin.from("profiles").upsert(
+        { id: buddyUser.id, nickname: `QA버디${Date.now() % 100000}`, team_id: 2 },
+        { onConflict: "id" },
+      );
+      if (buddyProfErr) throw new Error(`buddy 프로필 생성 실패: ${buddyProfErr.message}`);
+
+      const mkConv = async (a, b, lastMessage) => {
+        // b=null 은 탈퇴 상대(participant NULL) fixture — NULL-safe 제외식 검증용(삼순 NO-GO 2차).
+        const [u1, u2] = b === null ? [a, null] : [a, b].sort();
+        const { data: conv, error } = await admin
+          .from("dm_conversations")
+          .insert({ user1_id: u1, user2_id: u2, last_message: lastMessage, last_message_at: new Date().toISOString() })
+          .select("id")
+          .single();
+        if (error) throw new Error(`conv 생성 실패: ${error.message}`);
+        qaConvIds.push(conv.id);
+        return conv.id;
+      };
+      // ⚠️ 절대값(=1) 판정은 하니스 결함이었다 — 홈 진입 시 useHomeInit 이 운영팀
+      // 웰컴 쪽지(/api/welcome-dm)를 보내 신규 QA 계정 배지에 +1 이 섞인다.
+      // 그래서 **baseline 대비 delta** 로 판정한다: 봇 unread 1 + 일반 unread 1 을
+      // 넣었을 때 delta 가 정확히 +1(일반만)이면 봇 제외·일반 유지 둘 다 증명된다.
+      // 봇이 세지면 +2, 일반까지 새면 +0 이라 양방향 모두 걸린다.
+      const readBadge = async () => {
+        await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
+        await page.waitForTimeout(2500); // 배지 load + realtime 안정화
+        return page.evaluate(() => {
+          const dm = document.querySelector('header a[href="/messages"]');
+          const span = dm?.querySelector("span");
+          const text = span ? span.textContent.trim() : null;
+          return text === null ? 0 : text === "9+" ? 10 : Number(text);
+        });
+      };
+      const baseline = await readBadge();
+
+      const geniusConv = await mkConv(testUser.id, GENIUS_ID, "[QA] 봇 unread");
+      const buddyConv = await mkConv(testUser.id, buddyUser.id, "[QA] 일반 unread");
+      // 탈퇴 상대 fixture: participant NULL + sender NULL unread. NULL 비안전 제외식이면
+      // 이 방이 목록·배지에서 통째로 사라진다(삼순 NO-GO 2차).
+      const departedConv = await mkConv(testUser.id, null, "[QA] 탈퇴 unread");
+      const { error: msgErr } = await admin.from("dm_messages").insert([
+        { conversation_id: geniusConv, sender_id: GENIUS_ID, content: "[QA] 봇 unread", is_read: false },
+        { conversation_id: buddyConv, sender_id: buddyUser.id, content: "[QA] 일반 unread", is_read: false },
+        { conversation_id: departedConv, sender_id: null, content: "[QA] 탈퇴 unread", is_read: false },
+      ]);
+      if (msgErr) throw new Error(`unread 메시지 생성 실패: ${msgErr.message}`);
+
+      const after = await readBadge();
+      ok(
+        "[로그인·배지] 봇 제외·일반 유지·탈퇴(NULL) 유지 — delta 정확히 +2",
+        after - baseline === 2,
+        `baseline=${baseline} after=${after} (봇이 세면 +3, 탈퇴가 사라지면 +1, 전부 빠지면 +0)`,
+      );
+    }
+
+    // 뉴스(HeaderProfileLink 헤더): 미노출 유지 — 지시 범위는 홈이다.
+    {
+      await page.goto(`${BASE_URL}/news`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(1200);
+      const measured = await measure(page);
+      ok("[로그인·뉴스] 헤더에 마스코트 버튼 미노출(홈 한정 지시)", !measured.hasBtn);
+      ok(
+        "[로그인·뉴스] 헤더 높이 규격",
         !!measured.headerRect && measured.headerRect.height >= HEADER_MIN && measured.headerRect.height <= HEADER_MAX,
       );
+    }
+
+    // 쪽지함 목록: 야잘알봇 카드가 없어야 한다 (2026-08-21 지시)
+    {
+      await page.goto(`${BASE_URL}/messages`, { waitUntil: "networkidle" });
+      await page.waitForTimeout(2000); // 목록 로드 대기
+      const inbox = await page.evaluate(() => ({
+        hasGeniusCard: document.body.innerText.includes("야잘알봇"),
+        hasMascotImg: !!document.querySelector('img[src*="/mascot/"]'),
+        hasDeparted: document.body.innerText.includes("탈퇴한 사용자"),
+      }));
+      ok("[로그인·쪽지함] 야잘알봇 카드 미노출", !inbox.hasGeniusCard && !inbox.hasMascotImg,
+         `text=${inbox.hasGeniusCard} img=${inbox.hasMascotImg}`);
+      // NULL-safe 제외식 종단 검증: 탈퇴 상대 대화는 목록에 살아 있어야 한다.
+      ok("[로그인·쪽지함] 탈퇴 상대(participant NULL) 대화는 목록에 유지", inbox.hasDeparted,
+         `departed=${inbox.hasDeparted}`);
     }
 
     await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
@@ -254,6 +430,22 @@ async function main() {
 
     await ctx.close();
   } finally {
+    // QA 대화/메시지 정리 — 유저 삭제보다 먼저(FK). 삭제 실패는 예외로 드러낸다(fail-open 금지).
+    for (const convId of qaConvIds) {
+      const { error: msgDelErr } = await admin.from("dm_messages").delete().eq("conversation_id", convId);
+      if (msgDelErr) throw new Error(`dm_messages cleanup: ${msgDelErr.message}`);
+      const { error: convDelErr } = await admin.from("dm_conversations").delete().eq("id", convId);
+      if (convDelErr) throw new Error(`dm_conversations cleanup: ${convDelErr.message}`);
+      const { count: convLeft, error: convChkErr } = await admin
+        .from("dm_conversations").select("id", { count: "exact", head: true }).eq("id", convId);
+      if (convChkErr || convLeft !== 0) throw new Error(`conv cleanup postcondition: ${convChkErr?.message ?? convLeft}`);
+    }
+    if (buddyUser?.id) {
+      const { error: buddyProfDelErr } = await admin.from("profiles").delete().eq("id", buddyUser.id);
+      if (buddyProfDelErr) throw new Error(`buddy profile cleanup: ${buddyProfDelErr.message}`);
+      const { error: buddyAuthDelErr } = await admin.auth.admin.deleteUser(buddyUser.id);
+      if (buddyAuthDelErr) throw new Error(`buddy auth cleanup: ${buddyAuthDelErr.message}`);
+    }
     if (testUser?.id) {
       const { error: profileDeleteError } = await admin.from("profiles").delete().eq("id", testUser.id);
       if (profileDeleteError) throw new Error(`profile cleanup: ${profileDeleteError.message}`);

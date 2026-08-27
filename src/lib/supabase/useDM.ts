@@ -80,10 +80,16 @@ export function useDMList() {
     if (!user) return;
 
     // query-guard: bounded -- 쪽지함은 최신 대화 500개 UI 페이지만 제공한다.
+    // 야잘알봇 제외는 서버쪽에서 한다(삼순 NO-GO ②) — 클라 필터만 있으면 봇방이
+    // limit(500) 안에서 일반방 1칸을 먹는다. 아래 클라 필터는 방어용.
     const { data } = await supabase
       .from("dm_conversations")
       .select("*")
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+      // ⚠️ `.not(col, "eq", v)` 는 NULL 비안전 — 탈퇴 상대(participant NULL) 대화까지
+      // 사라진다(삼순 NO-GO). `IS NULL OR != bot` 으로 NULL-safe 제외.
+      .or(`user1_id.is.null,user1_id.neq.${BASEBALL_GENIUS_USER_ID}`)
+      .or(`user2_id.is.null,user2_id.neq.${BASEBALL_GENIUS_USER_ID}`)
       .not("last_message", "is", null)
       .order("last_message_at", { ascending: false })
       .limit(500);
@@ -147,23 +153,13 @@ export function useDMList() {
         !blockedIds.has(conv.other_user_id)
       );
 
-    const geniusConversation = mapped.find(
-      (conversation) => conversation.other_user_id === BASEBALL_GENIUS_USER_ID,
+    // 야잘알봇은 쪽지함 목록에서 **제외**한다 (2026-08-21 하린아빠 "기본 쪽지함에서
+    // 야잘알봇 대화창 제거"). 진입점은 홈 헤더의 GeniusEntryButton 단일화 —
+    // 종전 최상단 고정방(#1090)은 이 지시로 폐기됐다.
+    // 대화 row 자체는 DB에 그대로 있고 /messages/{convId} 직접 진입은 계속 동작한다.
+    setConversations(
+      mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
     );
-    const pinnedGenius: DMConversation = geniusConversation ?? {
-      id: `new-${BASEBALL_GENIUS_USER_ID}`,
-      other_user_id: BASEBALL_GENIUS_USER_ID,
-      other_nickname: BASEBALL_GENIUS_NAME,
-      other_team_id: null,
-      other_avatar_url: null,
-      last_message: "야구 룰이나 용어를 물어보세요 ⚾",
-      last_message_at: new Date(0).toISOString(),
-      unread_count: 0,
-    };
-    setConversations([
-      pinnedGenius,
-      ...mapped.filter((conversation) => conversation.other_user_id !== BASEBALL_GENIUS_USER_ID),
-    ]);
     setLoading(false);
   }, [user, blockedIds]);
 

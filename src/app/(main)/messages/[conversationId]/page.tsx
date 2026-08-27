@@ -21,7 +21,12 @@ import { resolveGeniusThinkingRender } from "@/lib/baseball-qa/thinking-bubble";
 import GeniusPlayerPicker from "@/components/dm/GeniusPlayerPicker";
 import GeniusQuestionCorrectionPicker from "@/components/dm/GeniusQuestionCorrectionPicker";
 import GeniusAnswerFeedback from "@/components/dm/GeniusAnswerFeedback";
-import { isNewsClippingPayload } from "@/types/news-clipping";
+import {
+  isNewsClippingPayload,
+  isRefNewsClippingPayload,
+  toNewsClippingView,
+} from "@/types/news-clipping";
+import { useNewsClippingDigests } from "@/hooks/useNewsClippingDigests";
 import {
   BASEBALL_GENIUS_NAME,
   BASEBALL_GENIUS_MAX_QUESTION_LENGTH,
@@ -78,6 +83,10 @@ export default function DMChatPage() {
   // + 13:53 "이전 답변은 정적 마스코트도 안되고 아예 마스코트가 없어야 함"). 모션은 그
   // 최신 답변의 payload 에 유효 모션이 있을 때만 입힌다. 메시지 목록에서 순수 파생하므로
   // 상태·localStorage 없이 결정론이고 Realtime 순서 역전·reload 에서도 같은 답이 나온다.
+  // 참조형 클리핑 쪽지가 가리키는 기사 묶음(digest)을 배치 조회한다. 정규화 이전 쪽지는
+  // payload 안에 articles 를 그대로 갖고 있어 이 조회가 필요 없다(dual-read).
+  const clippingPayloads = useMemo(() => messages.map((m) => m.payload), [messages]);
+  const clippingDigests = useNewsClippingDigests(clippingPayloads);
   const latestGeniusMessageId = useMemo(() => {
     let latest: number | null = null;
     for (const m of messages) {
@@ -515,7 +524,19 @@ export default function DMChatPage() {
             const trustedSender =
               msg.sender_id !== null &&
               (NEWS_CLIPPER_IDS.has(msg.sender_id) || msg.sender_id === OPERATOR_USER_ID);
-            const clipping = trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            // 2026-08-20 dual-read: legacy(payload 안에 articles) / ref(digest 참조) 둘 다 렌더한다.
+            // ref 인데 digest 가 아직 안 왔거나 조회 실패하면 toNewsClippingView 가 null 을 돌려
+            // 카드 대신 텍스트 본문을 렌더한다(fail-close) — 빈 카드는 "오늘 기사 없음"으로 읽힌다.
+            const clippingPayload =
+              trustedSender && isNewsClippingPayload(msg.payload) ? msg.payload : null;
+            const clipping = clippingPayload
+              ? toNewsClippingView(
+                  clippingPayload,
+                  isRefNewsClippingPayload(clippingPayload)
+                    ? clippingDigests.get(clippingPayload.digest_id)
+                    : null,
+                )
+              : null;
             // 답변 유형별 마스코트 — 봇 발신일 때만 신뢰한다(유저가 payload 를 훌내내도 붙지 않게).
             const geniusReply =
               msg.sender_id === BASEBALL_GENIUS_USER_ID && isGeniusReplyPayload(msg.payload)
@@ -596,7 +617,7 @@ export default function DMChatPage() {
                     </div>
                   )}
                   {clipping ? (
-                    <NewsClippingCard payload={clipping} />
+                    <NewsClippingCard view={clipping} />
                   ) : (
                   <div
                     className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${

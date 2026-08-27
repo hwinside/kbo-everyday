@@ -39,6 +39,12 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
       base.awayScore === k.awayScore && base.homeScore === k.homeScore;
     // 결과 투수(승/패/세이브)는 양쪽 종료일 때만 의미.
     const bothFinal = base.status === "final" && k.status === "final";
+    // 취소 사유는 KBO 에만 있다(Naver schedule 피드에 해당 필드가 없어 base 는 항상 null).
+    // primary 가 Naver 이므로 여기서 오버레이 하지 않으면 사유가 영영 유저에게 안 닿는다.
+    // 단 **양쪽이 모두 cancelled** 일 때만 실는다 — 상태는 base(Naver) 가 canonical 이라
+    // KBO 만 cancelled 인 시점 불일치 구간에서 사유만 새어나오면 base.status(live/final) 와
+    // 모순된 표기가 된다(값-플래그 결속, liveDetailFromKbo 와 동일 축).
+    const bothCancelled = base.status === "cancelled" && k.status === "cancelled";
     return {
       ...base,
       strikes: sameLiveMoment ? k.strikes : base.strikes,
@@ -51,6 +57,7 @@ export function mergeKboEnrichment(naverBase: KboGame[], kboGames: KboGame[]): K
       // 남는 값은 Naver degrade(0/false) 이므로 base 의 플래그(false)를 그대로 유지해야 한다.
       // 값과 플래그를 같은 조건으로 묶어야 "값은 degrade 인데 플래그만 true" 가 구조적으로 불가능해진다.
       liveDetailFromKbo: sameLiveMoment ? k.liveDetailFromKbo : base.liveDetailFromKbo,
+      cancelReason: bothCancelled ? (k.cancelReason ?? base.cancelReason) : base.cancelReason,
       // 준정적(시점 무관): 선발/랭크/방송 — KBO 값 있으면 채움
       awayStarterName: k.awayStarterName || base.awayStarterName,
       homeStarterName: k.homeStarterName || base.homeStarterName,

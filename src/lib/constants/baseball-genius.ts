@@ -45,7 +45,7 @@ export const BASEBALL_GENIUS_MAX_QUESTION_LENGTH = 200;
  * 반대 방향으로 다시 만드는 셈이다.
  */
 export const BASEBALL_GENIUS_FALLBACK_ANSWER =
-  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식입니다. 예: \"보크가 뭐야?\"";
+  "제가 확인할 수 있는 범위는 야구 룰·용어, 구단, 선수, 일부 기록, 최근 소식, 일부 앱 기능 안내입니다. 예: \"보크가 뭐야?\"";
 
 /**
  * **답변 가능 경로 → 유저에게 밝혀야 하는 범위어** (SSOT).
@@ -93,6 +93,16 @@ export const ANSWER_PATH_SCOPE_WORD = {
   //   믿을 수 없는 지표(타석·희생타 등)·팀 단위 집계는 전부 fail-close 한다.
   //   범위어를 넓게 적으면 거절 문구가 **반대 방향의 거짓말**이 된다.
   kbo_structured: "일부 기록",
+  //
+  // 우리 앱 기능 안내 (2026-08-23). `answer` 경로라 범위어가 **필수**다 —
+  //   tsc 가 `Record<AnswerableMatchPath, string>` 으로 누락을 잡는다.
+  // ⚠️ 범위를 넓히는 문구이므로 "그 경로가 실제로 배포된 뒤에만 넣는다"는
+  //   이 표의 계약을 지킨다 — 이 PR 이 바로 그 경로를 배포한다.
+  //   반대로 여기 안 넣으면 답할 수 있는데 못 한다고 말하는 종전 사고의 재발이다.
+  // ⚠️ **`일부 앱 기능`** 이지 `앱 기능` 이 아니다(삼순 2026-08-23 5차 ② — 과장 방지).
+  //   registry 에 등록된 기능만 안내한다. 넓게 적으면 위 `kbo_structured` 의
+  //   `일부 기록` 과 정확히 같은 사고를 반대 방향으로 다시 만드는 셈이다.
+  product_feature_guide: "일부 앱 기능",
 } satisfies Record<AnswerableMatchPath, string>;
 
 /**
@@ -263,6 +273,15 @@ export const MATCH_PATH_REPLY_KIND = {
   context_missing: "unavailable",
   service_redirect: "unavailable",
   history_hold: "unavailable",
+  // 우리 앱에 실재하는 기능을 물어 그 경로를 안내한 경로 (2026-08-23).
+  //
+  // ⚠️ `answer` 다 — 종전 `ack` 은 틀렸다(삼순 NO-GO ②).
+  //   `ack` 은 인사·감사 같은 **대화 행위**에 대한 반응이고,
+  //   이건 질문에 대해 **실제 내용을 담은 유효한 답**을 준 경우다.
+  //   `unavailable` 을 피하려다 `answer` 라는 선택지를 빠뜨렸다.
+  // ⚠️ #983 모니터의 "못 답한 질문" 분모에도 들어가면 안 된다 — 들어가면
+  //   개선한 케이스가 실패로 집계돼 지표가 거꾸로 움직인다.
+  product_feature_guide: "answer",
   // `satisfies` 가 계약을 **컴파일타임에** 강제한다:
   //  - 새 MatchPath 를 추가하고 여기 안 적으면 → 타입 에러(누락 불가)
   //  - union 에 없는 키를 적으면 → 타입 에러(죽은 키 불가)

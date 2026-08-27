@@ -22,6 +22,8 @@ import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
 import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
+import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
+import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 
 interface KgwanTabProps {
   /** 당겨서 새로고침 epoch — 증가 시 종료 요약(FinalView)이 GET 재조회(오류 카드 stuck 해소). */
@@ -32,6 +34,11 @@ interface KgwanTabProps {
   gameDate?: string | null;
   gameStartTime?: string | null;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(`우천취소`/`폭염취소`/`그라운드사정` 등). status=cancelled 일 때만 유의미.
+   * 미수신(null/undefined)이면 기존 고정 문구로 fallback 한다.
+   */
+  cancelReason?: string | null;
   gameEvents: GameEvent[];
   plays: GamePlay[];
   teamColor: string;
@@ -334,6 +341,9 @@ function LiveView({
 }) {
   const [expandedInning, setExpandedInning] = useState<string | null>(null);
   const [showPreviousInnings, setShowPreviousInnings] = useState(false);
+  // 자동 포커싱(새 투구 시 현재 타석으로 scrollIntoView) 사용자 설정 — 채팅 카드의
+  // "자동 포커싱 끄기" 버튼(GameChat)과 localStorage+이벤트로 동기화된다.
+  const { enabled: autoFocusEnabled } = useKgwanAutoFocus();
 
   // 네이버 relay가 있으면 이닝별 상세 표시, 없으면 diff 이벤트 fallback
   const hasRelay = gameRelay && gameRelay.innings.length > 0;
@@ -455,7 +465,7 @@ function LiveView({
                     strikes={strikes}
                     outs={outs}
                     updatedAt={gameRelay?.updatedAt}
-                    scrollOnUpdate
+                    scrollOnUpdate={autoFocusEnabled}
                   />
                 )}
               </div>
@@ -981,12 +991,15 @@ function FinalView({ gameId, homeTeamId, awayTeamId, boxScore, linescore, refres
   );
 }
 
-function CancelledView() {
+function CancelledView({ cancelReason }: { cancelReason?: string | null }) {
+  // 사유를 받았을 때만 원문 노출. 받지 못했으면(폴백 경로) 기존 고정 문구 —
+  // 부재를 "사유 없음"으로 단정하지 않는다(provenance 계약).
+  const detail = cancelReasonDetail(cancelReason);
   return (
     <div className="px-4 py-6">
       <div className="glass-card p-5 text-center space-y-3">
         <p className="text-base font-bold text-text-primary">경기가 취소되었습니다</p>
-        <p className="text-sm text-text-tertiary">우천 등 경기 운영 사유로 취소된 경기입니다.</p>
+        <p className="text-sm text-text-tertiary">{detail ?? "우천 등 경기 운영 사유로 취소된 경기입니다."}</p>
       </div>
     </div>
   );
@@ -1013,6 +1026,7 @@ export default function KgwanTab({
   gameDate,
   gameStartTime,
   status,
+  cancelReason,
   gameEvents,
   teamColor: _teamColor,
   plays: _plays,
@@ -1065,7 +1079,7 @@ export default function KgwanTab({
     return (
       <>
         {allStarNotice}
-        <CancelledView />
+        <CancelledView cancelReason={cancelReason} />
       </>
     );
   }

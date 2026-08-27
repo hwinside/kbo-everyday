@@ -188,6 +188,9 @@ export function mapNaverGameToKbo(g: NaverScheduleGame, date: string, now: Date 
     currentPitcher: "",
     currentBatter: "",
     liveDetailFromKbo: false,
+    // Naver schedule 피드는 취소 여부(cancel/suspended/statusCode)만 주고 **사유 문자열은 없다**.
+    // 빈 문자열로 채우면 "사유 없는 취소"로 오독되므로 null(= 미확인) 을 유지한다.
+    cancelReason: null,
     awayRank: 0,
     homeRank: 0,
     broadcastChannels: broadcastChannels.length > 0 ? broadcastChannels : undefined,

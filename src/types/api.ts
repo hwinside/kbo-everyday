@@ -80,6 +80,11 @@ export interface KboRawGame {
   GAME_TB_SC: string;
   GAME_STATE_SC: string;
   CANCEL_SC_ID: string;
+  /**
+   * 취소 사유 원문(예: `우천취소`/`폭염취소`/`그라운드사정`). 정상 경기는 빈 문자열.
+   * optional 인 이유: KBO 응답 부분열화/폴백 경로에서 필드 자체가 없을 수 있다.
+   */
+  CANCEL_SC_NM?: string;
   T_PIT_P_NM: string;
   B_PIT_P_NM: string;
   W_PIT_P_NM: string;

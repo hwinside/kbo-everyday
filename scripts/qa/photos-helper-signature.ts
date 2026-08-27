@@ -12,6 +12,11 @@
  *     (name, kboId?, teamId?) + resolvePlayerIdentity().
  *   - Result: TS build failed on auto/update-roster-stats-20260516.
  *
+ * 2026-08-20 (PR #1269): signature SSOT extended to 4 args —
+ *   (name, kboId?, teamId?, positionHint?) — positionHint("투수"|"야수") disambiguates
+ *   same-team duplicate names (삼성 김태훈 투수 62360 vs 야수 65040). This gate now
+ *   enforces the 4-arg shape; a generator rewriting it back to 2- or 3-arg fails here.
+ *
  * Now the generator only replaces the GENERATED:PHOTO_MAP / GENERATED:PHOTO_ID_SET
  * sentinel blocks. This check enforces:
  *   1. Both sentinel pairs are present and balanced.
@@ -34,11 +39,12 @@ const REQUIRED_MARKERS = [
   "// === GENERATED:PHOTO_ID_SET:END ===",
 ];
 
-// Match the multi-line 3-arg signature (PR #86 SSOT)
+// Match the multi-line 4-arg signature (PR #86 SSOT + PR #1269 positionHint)
 const SIGNATURE_PATTERN =
-  /export function getPlayerPhotoUrl\(\s*name:\s*string,\s*kboId\?:\s*string\s*\|\s*null,\s*teamId\?:\s*number\s*\|\s*string\s*\|\s*null,?\s*\):\s*string\s*\|\s*null/;
+  /export function getPlayerPhotoUrl\(\s*name:\s*string,\s*kboId\?:\s*string\s*\|\s*null,\s*teamId\?:\s*number\s*\|\s*string\s*\|\s*null,\s*positionHint\?:\s*"투수"\s*\|\s*"야수"\s*\|\s*null,?\s*\):\s*string\s*\|\s*null/;
+// resolvePlayerIdentity 가 named import 목록 안에 있으면 통과 (PR #1269 부터 rosterNameMatchCount 동반)
 const RESOLVE_IMPORT_PATTERN =
-  /import\s*\{\s*resolvePlayerIdentity\s*\}\s*from\s*["']@\/lib\/utils\/resolve-player["']/;
+  /import\s*\{[^}]*\bresolvePlayerIdentity\b[^}]*\}\s*from\s*["']@\/lib\/utils\/resolve-player["']/;
 
 function fail(msg: string): never {
   console.error(`✗ photos-helper-signature FAILED:\n  ${msg}`);
@@ -61,13 +67,13 @@ for (const marker of REQUIRED_MARKERS) {
   cursor = idx + marker.length;
 }
 
-// 2. 3-arg signature intact
+// 2. 4-arg signature intact
 if (!SIGNATURE_PATTERN.test(source)) {
   fail(
-    `getPlayerPhotoUrl signature has drifted from the PR #86 SSOT shape:\n` +
-      `    (name: string, kboId?: string | null, teamId?: number | string | null) => string | null\n` +
+    `getPlayerPhotoUrl signature has drifted from the SSOT shape (PR #86 + PR #1269):\n` +
+      `    (name: string, kboId?: string | null, teamId?: number | string | null, positionHint?: "투수" | "야수" | null) => string | null\n` +
       `  Most likely cause: scripts/update-player-photos.mjs (or another generator) rewrote\n` +
-      `  the helper to the old 2-arg template. Restore the 3-arg signature + resolvePlayerIdentity\n` +
+      `  the helper to an old 2-/3-arg template. Restore the 4-arg signature + resolvePlayerIdentity\n` +
       `  resolver, and confirm the generator only touches the GENERATED:* sentinel blocks.`,
   );
 }
@@ -82,5 +88,5 @@ if (!RESOLVE_IMPORT_PATTERN.test(source)) {
 
 console.log("✓ photos-helper-signature PASSED");
 console.log("  sentinel markers present (4/4)");
-console.log("  getPlayerPhotoUrl signature: (name, kboId?, teamId?) ✓");
+console.log("  getPlayerPhotoUrl signature: (name, kboId?, teamId?, positionHint?) ✓");
 console.log("  resolvePlayerIdentity import ✓");

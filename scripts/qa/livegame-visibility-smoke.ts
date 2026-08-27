@@ -70,11 +70,13 @@ function installFetch(score = 3) {
   fetchCount = 0;
   g.fetch = async () => {
     fetchCount++;
+    const now = Date.now();
     return {
       ok: true,
       json: async () => ({
         games: [game("20260729WOLG0", score)],
         error: null,
+        trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
       }),
     } as unknown as Response;
   };
@@ -101,9 +103,14 @@ function installDeferredFetch() {
         signal: init?.signal ?? undefined,
         resolve: (games) => {
           active--;
+          const now = Date.now();
           resolve({
             ok: true,
-            json: async () => ({ games, error: null }),
+            json: async () => ({
+              games,
+              error: null,
+              trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
+            }),
           } as Response);
         },
       });
@@ -291,10 +298,17 @@ async function main() {
       [game("20260730WOLG0", 3, "final")],
     ];
     fetchCount = 0;
-    g.fetch = async () => ({
-      ok: true,
-      json: async () => ({ games: responses[Math.min(fetchCount++, responses.length - 1)], error: null }),
-    } as Response);
+    g.fetch = async () => {
+      const now = Date.now();
+      return {
+        ok: true,
+        json: async () => ({
+          games: responses[Math.min(fetchCount++, responses.length - 1)],
+          error: null,
+          trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
+        }),
+      } as Response;
+    };
     hidden = false;
     const out = dom.window.document.createElement("div");
     dom.window.document.body.appendChild(out);
@@ -318,22 +332,39 @@ async function main() {
     g.fetch = async () => {
       calls++;
       if (calls === 1) {
+        const now = Date.now();
         return {
           ok: true,
-          json: async () => ({ games: [game(gameId, 2, "live")], error: null }),
+          json: async () => ({
+            games: [game(gameId, 2, "live")],
+            error: null,
+            trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
+          }),
         } as Response;
       }
       if (calls === 2) {
         return await new Promise<Response>((resolve) => {
-          pendingFinalResolve = () => resolve({
-            ok: true,
-            json: async () => ({ games: [game(gameId, 3, "final")], error: null }),
-          } as Response);
+          pendingFinalResolve = () => {
+            const now = Date.now();
+            resolve({
+              ok: true,
+              json: async () => ({
+                games: [game(gameId, 3, "final")],
+                error: null,
+                trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
+              }),
+            } as Response);
+          };
         });
       }
+      const now = Date.now();
       return {
         ok: true,
-        json: async () => ({ games: [game(gameId, 3, "final")], error: null }),
+        json: async () => ({
+          games: [game(gameId, 3, "final")],
+          error: null,
+          trace: { source: "qa", stage: "qa", sourceAtMs: now, fetchedAtMs: now },
+        }),
       } as Response;
     };
     hidden = false;

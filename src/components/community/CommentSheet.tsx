@@ -861,7 +861,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
             )}
 
             {/* Input area + GIF Picker overlay */}
-            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom))" }}>
+            <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))" }}>
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (

@@ -36,7 +36,7 @@ export default function GamePredictPage() {
   return (
     <div className="min-h-screen bg-bg-primary pb-24">
       {/* Header (page-root 직속 child로 명시적 분리 — 짧은 hero wrapper에 sticky가 갇히지 않도록) */}
-      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary px-5 flex items-center gap-3 min-h-[44px]" style={{ paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 border-b border-border bg-bg-primary px-5 flex items-center gap-3 min-h-[44px]" style={{ paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
         <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center -ml-2">
           <ArrowLeft size={24} className="text-text-primary" />
         </button>

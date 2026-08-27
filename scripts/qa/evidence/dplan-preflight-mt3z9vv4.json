@@ -1,0 +1,210 @@
+{
+ "stamp": "mt3z9vv4",
+ "mode": "preflight",
+ "room": "game:20260821-qa-p95run",
+ "gameId": "20260821LGHH0",
+ "supabaseRef": "kygfpcvtszkwdxdspjnv",
+ "builds": {
+  "baseline": "500d053d88c081564368015c2049a92da9fa1ea6",
+  "a1": "b8b9b9a97899345ae216ba8aba76ca97da9fc0af"
+ },
+ "fixtures": {
+  "game-live.json": "949ffd9c7f8069f2c79da60de61b5e08f57b918496b360bcbcad601c10395375",
+  "game-detail.json": "cf5a2743f90e94657925c0c92aaf981ae146a47ffc5ddfdb8ccf8dcbcbde7eaf",
+  "game-relay.json": "d270272ad9849c84c3fc791093712f14f10aa7c9201836240d802a94ab7f3297"
+ },
+ "patchSha256": "98df29ca4bfa8e7291437cc3c7761010b91b8ee2ff4f1d2fd96f8d1dd90ca7e9",
+ "pairs": 2,
+ "warmupPairs": 1,
+ "signatureWindowMs": 60963,
+ "signature": {
+  "baseline": {
+   "windowMs": 60000,
+   "ndjson": 4,
+   "embedded": 0,
+   "incEvents": 0,
+   "incLive": 0,
+   "incDetail": 0,
+   "standaloneLive": 6,
+   "standaloneDetail": 2,
+   "standaloneRelay": 16
+  },
+  "a1": {
+   "windowMs": 60000,
+   "ndjson": 9,
+   "embedded": 8,
+   "incEvents": 4,
+   "incLive": 7,
+   "incDetail": 2,
+   "standaloneLive": 0,
+   "standaloneDetail": 0,
+   "standaloneRelay": 11
+  }
+ },
+ "baseline": {
+  "n": 2,
+  "p50": 548,
+  "p95": 588,
+  "samples": [
+   588,
+   548
+  ],
+  "sendFail": 0,
+  "missing": 0,
+  "dups": 0
+ },
+ "a1": {
+  "n": 2,
+  "p50": 171,
+  "p95": 527,
+  "samples": [
+   527,
+   171
+  ],
+  "sendFail": 0,
+  "missing": 0,
+  "dups": 0
+ },
+ "blockedWrites": 0,
+ "dbProof": {
+  "expected": 8,
+  "fetched": 8,
+  "cap": 24,
+  "distinct": 8,
+  "over": 0,
+  "missing": 0,
+  "error": null
+ },
+ "results": [
+  {
+   "name": "[baseline:A] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[baseline:B] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1:A] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1:B] composer 표시 (실제 GameChat DOM)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[DB] 조회 성공 (error 없음 · 전수 전제)",
+   "ok": true,
+   "detail": "fetched=8"
+  },
+  {
+   "name": "[DB] 포화 아님 (fetched < cap — 상한 도달은 전수 아님)",
+   "ok": true,
+   "detail": "fetched=8 cap=24"
+  },
+  {
+   "name": "[DB] 전송 content 별 exact-1 (서버 중복 insert 0)",
+   "ok": true,
+   "detail": "all 1"
+  },
+  {
+   "name": "[DB] 총 건수 == 전송 건수",
+   "ok": true,
+   "detail": "db=8 sent=8"
+  },
+  {
+   "name": "[DB] 누락된 전송 0",
+   "ok": true,
+   "detail": "missing=0"
+  },
+  {
+   "name": "[baseline] draft 보존 (미전송 입력이 폴링에 안 날아감)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "[a1] draft 보존 (미전송 입력이 폴링에 안 날아감)",
+   "ok": true,
+   "detail": ""
+  },
+  {
+   "name": "측정 중 chat write 차단 0 (전부 QA room 으로만 나감)",
+   "ok": true,
+   "detail": "blocked=0"
+  },
+  {
+   "name": "send 실패 0",
+   "ok": true,
+   "detail": "{\"baseline\":0,\"a1\":0}"
+  },
+  {
+   "name": "누락 0",
+   "ok": true,
+   "detail": "b=0 a1=0"
+  },
+  {
+   "name": "중복 0 (DOM 노출 1회)",
+   "ok": true,
+   "detail": "b=0 a1=0"
+  },
+  {
+   "name": "[a1] relay-family 총량 18~22 (고정 60s 창)",
+   "ok": true,
+   "detail": "famA1=20 {\"windowMs\":60000,\"ndjson\":9,\"embedded\":8,\"incEvents\":4,\"incLive\":7,\"incDetail\":2,\"standaloneLive\":0,\"standaloneDetail\":0,\"standaloneRelay\":11}"
+  },
+  {
+   "name": "[baseline] relay-family 총량 18~22 (동일 cadence 확인)",
+   "ok": true,
+   "detail": "famBl=20 {\"windowMs\":60000,\"ndjson\":4,\"embedded\":0,\"incEvents\":0,\"incLive\":0,\"incDetail\":0,\"standaloneLive\":6,\"standaloneDetail\":2,\"standaloneRelay\":16}"
+  },
+  {
+   "name": "[a1] standalone live == 0 (fail-close)",
+   "ok": true,
+   "detail": "0"
+  },
+  {
+   "name": "[a1] standalone detail == 0 (fail-close)",
+   "ok": true,
+   "detail": "0"
+  },
+  {
+   "name": "[a1] include=live 5~8 (shouldEmbedLive: pollIndex%3)",
+   "ok": true,
+   "detail": "incLive=7 fam=20"
+  },
+  {
+   "name": "[a1] include=detail 1~3 (shouldEmbedDetail: pollIndex%10)",
+   "ok": true,
+   "detail": "incDetail=2 fam=20"
+  },
+  {
+   "name": "[a1] include=events 3~5 (shouldCombineGameEvents: pollIndex%5)",
+   "ok": true,
+   "detail": "incEvents=4 fam=20"
+  },
+  {
+   "name": "[baseline] embedded == 0 (대조군은 멀티플렉스 미사용)",
+   "ok": true,
+   "detail": "0"
+  },
+  {
+   "name": "[baseline] standalone live+detail > 0 (A1 감소가 유의미함을 보장)",
+   "ok": true,
+   "detail": "8"
+  },
+  {
+   "name": "signature 관측창 ≥ 60s",
+   "ok": true,
+   "detail": "61s"
+  },
+  {
+   "name": "표본 집계 성립 (n>0 — n=0 false-GREEN 방지)",
+   "ok": true,
+   "detail": "baseline=2 a1=2"
+  }
+ ]
+}

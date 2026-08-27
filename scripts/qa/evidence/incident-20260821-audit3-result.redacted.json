@@ -1,0 +1,155 @@
+{
+  "generatedAt": "2026-08-22T02:57:16.887Z",
+  "manifest": [
+    {
+      "file": "ab-1274-mt2w0wbp.json",
+      "sha256": "29f90c113b6867c60968b187e7c65bdef40b2662115722e5b6e4f151588fa4d9",
+      "mtime": "2026-08-21T11:54:21.248Z",
+      "stamp": "mt2w0wbp",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 21,
+      "recvFail": 3
+    },
+    {
+      "file": "ab-1274-mt2wg51y.json",
+      "sha256": "87715568e5a705992abed32a60045d4ae207d0fab09f0a9787e604c00d2bd9b2",
+      "mtime": "2026-08-21T12:05:20.776Z",
+      "stamp": "mt2wg51y",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 22,
+      "recvFail": 2
+    },
+    {
+      "file": "ab-1274-mt2x3b8z.json",
+      "sha256": "a4e5c15d69c7af96081472965358418dc3f8868398b65b5ba98412ab3bc19e77",
+      "mtime": "2026-08-21T12:34:39.737Z",
+      "stamp": "mt2x3b8z",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 0,
+      "recvFail": 24
+    },
+    {
+      "file": "ab-1274-mt2xo6z8.json",
+      "sha256": "d0e1c2e72fad87b28c329f9371aa3cf1f7319d2e5923be3f9b8f2cc65ccb857c",
+      "mtime": "2026-08-21T12:50:48.713Z",
+      "stamp": "mt2xo6z8",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 0,
+      "recvFail": 24
+    },
+    {
+      "file": "ab-1274-mt2y7t7h.json",
+      "sha256": "9cd96b41c4aa1dae7222420f494d9b59e50ce7bebc06c23e3ac6f1b030aa9e2a",
+      "mtime": "2026-08-21T13:06:04.323Z",
+      "stamp": "mt2y7t7h",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 0,
+      "recvFail": 24
+    },
+    {
+      "file": "ab-1274-mt2yt03h.json",
+      "sha256": "507f9f26bf87651c678f35aa15ab88ddcaee7d81b4fe162a31d602780f9b6d0f",
+      "mtime": "2026-08-21T13:12:40.153Z",
+      "stamp": "mt2yt03h",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 4,
+      "previewOrA1SendAttempts": 4,
+      "recvPass": 0,
+      "recvFail": 8
+    },
+    {
+      "file": "ab-1274-mt2yzhy0.json",
+      "sha256": "a19476385a5b22d8d04c4e18f8dad96c8553bf139eaec27ebf7156bd931a23a3",
+      "mtime": "2026-08-21T13:16:23.881Z",
+      "stamp": "mt2yzhy0",
+      "gameId": "20260821KTSK0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 23,
+      "recvFail": 1
+    },
+    {
+      "file": "ab-1274-mt2z4g2c.json",
+      "sha256": "96433af822dd987db425cf6850fcf397d726903425cb1ef8a6aa5a33c92cf6ed",
+      "mtime": "2026-08-21T13:21:52.040Z",
+      "stamp": "mt2z4g2c",
+      "gameId": "20260821LGHH0",
+      "prodSendAttempts": 20,
+      "previewOrA1SendAttempts": 20,
+      "recvPass": 38,
+      "recvFail": 2
+    },
+    {
+      "file": "paired-1274-mt2zcnoo.json",
+      "sha256": "bc721ca56aefc6e56ab1fbb3e8c9388d838246d0af430995c55a8654f8d1a790",
+      "mtime": "2026-08-21T13:25:16.948Z",
+      "stamp": "mt2zcnoo",
+      "gameId": "20260821LGHH0",
+      "prodSendAttempts": 12,
+      "previewOrA1SendAttempts": 12,
+      "recvPass": 23,
+      "recvFail": 1
+    }
+  ],
+  "stamps": [
+    "mt2w0wbp",
+    "mt2wg51y",
+    "mt2x3b8z",
+    "mt2xo6z8",
+    "mt2y7t7h",
+    "mt2yt03h",
+    "mt2yzhy0",
+    "mt2z4g2c",
+    "mt2zcnoo"
+  ],
+  "sendAttempts": 216,
+  "recvPass": 127,
+  "recvFail": 89,
+  "failBreakdown": {
+    "send 실패": 4,
+    "timeout(수신 누락)": 85
+  },
+  "exactInsertDelete": "미확인 — 원장 JSON 이 cleanup 전 저장됨 · before/after 스냅샷 부재. 발송 시도 전체를 노출 상한으로 간주.",
+  "rooms": [
+    {
+      "room": "game:20260821KTSK0",
+      "qaStampResidual": 0,
+      "perStamp": {}
+    },
+    {
+      "room": "game:20260821LGHH0",
+      "qaStampResidual": 0,
+      "perStamp": {}
+    },
+    {
+      "room": "game:20260821SSNC0",
+      "qaStampResidual": 0,
+      "perStamp": {}
+    },
+    {
+      "room": "game:20260821HTWO0",
+      "qaStampResidual": 0,
+      "perStamp": {}
+    },
+    {
+      "room": "game:20260821LTOB0",
+      "qaStampResidual": 0,
+      "perStamp": {}
+    }
+  ],
+  "qaResidualAtSnapshot": 0,
+  "qaProfileResidual": 0,
+  "userMessageVerdict": "QA UUID 한정 구조 · 오삭제 증거 없음 (before 스냅샷 부재 명시)",
+  "sendProcessesRunning": 0,
+  "verdict": "발송 시도 216 / exact insert·delete 미확인 / 2026-08-22T02:57:16.887Z 감사 스냅샷 잔존 0"
+}

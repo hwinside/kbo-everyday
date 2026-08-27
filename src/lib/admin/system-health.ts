@@ -1,8 +1,30 @@
 export type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 
+export interface CpuCounterSnapshot {
+  totalSeconds: number;
+  idleSeconds: number;
+  seriesFingerprint: string;
+}
+
 export interface SystemMetricSummary {
-  cpuLoadPercent: number | null;
+  cpuUsedPercent: number | null;
+  cpuSampleSeconds: number | null;
+  /** cpuUsedPercent가 기반한 rate의 종료 시각(ISO). 소비처는 이 시각으로 freshness를 판정한다. */
+  cpuSampleEndedAt: string | null;
+  /**
+   * 신선도 상한(90초)을 넘겨 `cpuUsedPercent`로 쓸 수 없는 **직전 서버 실측값**.
+   * cron 회차 누락·스케줄러 지터로 baseline이 잠시 닭을 때, 화면을 "측정 중"으로
+   * 비우지 않고 "N초 전 측정"으로 정직하게 보이기 위해 분리해 내려보낸다.
+   * 계약: 현재값이 아니므로 소비처는 건강도 판정·알림에 사용하지 않고 정보성으로만 표시한다.
+   * `cpuUsedPercent`가 채워진 응답에서는 항상 null이다(둘 중 하나만 존재).
+   */
+  cpuStalePercent: number | null;
+  /** cpuStalePercent가 기반한 rate의 종료 시각(ISO). 나이 표기는 이 값 기준. */
+  cpuStaleEndedAt: string | null;
+  cpuCounter: CpuCounterSnapshot | null;
   cpuCores: number | null;
+  load1: number | null;
+  load1PerCore: number | null;
   memoryUsedPercent: number | null;
   diskUsedPercent: number | null;
   postgresUp: boolean | null;
@@ -83,8 +105,213 @@ function round(value: number | null): number | null {
   return value === null ? null : Math.round(value * 10) / 10;
 }
 
-export function summarizeSystemMetrics(text: string): SystemMetricSummary {
+function cpuCounterSnapshot(samples: PrometheusSample[]) {
+  const cpu = values(samples, "node_cpu_seconds_total");
+  if (cpu.length === 0) return null;
+  const seriesFingerprint = cpu
+    .map((sample) =>
+      Object.entries(sample.labels)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([name, value]) => `${name}=${value}`)
+        .join("|"),
+    )
+    .sort()
+    .join(";");
+  const totalSeconds = cpu.reduce((sum, sample) => sum + sample.value, 0);
+  const idleSeconds = cpu
+    .filter((sample) => sample.labels.mode === "idle")
+    .reduce((sum, sample) => sum + sample.value, 0);
+  return { totalSeconds, idleSeconds, seriesFingerprint };
+}
+
+/** Prometheus 텍스트에서 CPU counter 스냅샷만 추출 (cron/route 공용). */
+export function extractCpuCounterSnapshot(text: string): CpuCounterSnapshot | null {
+  return cpuCounterSnapshot(parsePrometheusText(text));
+}
+
+export interface StoredCpuSnapshot extends CpuCounterSnapshot {
+  capturedAtMs: number;
+}
+
+export interface InstantCpuResult {
+  usedPercent: number;
+  windowSeconds: number;
+  /** 이 rate가 끝난 시각(최신 쪽 스냅샷의 시각). freshness 판정은 이 값 기준. */
+  sampleEndedAtMs: number;
+}
+
+/** freshness 상한: rate 종료 시각이 이보다 오래되면 현재값으로 표시 금지 (삼순 게이트 ≤90초). */
+export const CPU_SAMPLE_MAX_AGE_SECONDS = 90;
+/** delta 창 상한: cron 1분 주기 + 지터. 초과는 장기 평균이라 순간값으로 부적합. */
+export const CPU_SAMPLE_MAX_WINDOW_SECONDS = 150;
+/**
+ * 직전값(stale) 표시 상한. 신선도 90초를 넘어도 이 상한 이내면 "N초 전 측정"으로
+ * 보여준다(현재값 아님을 명시). 이것도 넘으면 측정 불능으로 취급한다.
+ * 근거(2026-08-22 라이브 실측): cron 회차 누락으로 baseline 나이가 일시적으로
+ * 107초까지 밀렸다(90초 초과 → 화면이 "측정 중"으로 비는 공백 재현).
+ */
+export const CPU_SAMPLE_STALE_MAX_AGE_SECONDS = 300;
+
+/**
+ * 저장 스냅샷 + 현재 counter로 즉시 CPU%를 계산한다 (삼순 2차 NO-GO 반영).
+ *
+ * freshness는 baseline 나이가 아니라 **rate가 끝난 시각(sampleEndedAt)** 기준이다:
+ * - 현재 counter가 최신 저장분보다 전진 → (현재, stored[0]) 쌍, endedAt = now.
+ * - 현재가 최신 저장분과 동일(같은 scrape tick) → (stored[0], stored[1]) 쌍,
+ *   endedAt = stored[0] 시각. ← "최신 C=-31초·직전 B=-91초"에서도 C 기준 신선도로
+ *   값을 유지해 주기마다 "측정 중" 공백이 생기던 blocker 1을 닫는다.
+ * 공통 검증: fingerprint 일치·counter 전진(역전/리셋 거부), 창 ≤ maxWindow,
+ * 나이(now-endedAt) ≤ maxAge. 미충족은 null (fail-close — counter가 멈추면
+ * endedAt이 공진하므로 오래된 값이 현재값으로 위장되지 않는다).
+ */
+export function computeInstantCpuFromStore(
+  stored: StoredCpuSnapshot[],
+  current: CpuCounterSnapshot,
+  nowMs: number,
+  maxAgeSeconds = CPU_SAMPLE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+
+  const latest = rows[0];
+  if (!latest) return null;
+
+  const sameCounter = (left: CpuCounterSnapshot, right: CpuCounterSnapshot) =>
+    left.seriesFingerprint === right.seriesFingerprint &&
+    left.totalSeconds === right.totalSeconds &&
+    left.idleSeconds === right.idleSeconds;
+
+  const evaluate = (
+    newer: CpuCounterSnapshot,
+    newerAtMs: number,
+    older: StoredCpuSnapshot,
+  ): InstantCpuResult | null => {
+    const usedPercent = cpuUsedPercentFromSnapshots(newer, older);
+    if (usedPercent === null) return null; // 동일 tick·역전·fingerprint 불일치
+    const windowSeconds = (newerAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) return null;
+    const ageSeconds = (nowMs - newerAtMs) / 1_000;
+    if (ageSeconds > maxAgeSeconds) return null;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newerAtMs };
+  };
+
+  if (sameCounter(current, latest)) {
+    // 현재 counter가 최신 저장분과 **정확히 동일**한 경우에만 과거 쌍(latest, prev)으로 대체한다.
+    // (삼순 3차 P0-1: 첫 쌍이 실패했다고 무조건 fallback 하면 current 리셋·fingerprint
+    //  변경 상황에서 과거 rate를 실시간처럼 보여준다.)
+    const previous = rows[1];
+    if (!previous) return null;
+    return evaluate(latest, latest.capturedAtMs, previous);
+  }
+
+  // current ↔ stored[0] 경로: 현재 scrape 시각을 모르므로 baseline 신선도를 별도로 제한한다.
+  // (삼순 3차 P0-2: C가 정지해도 sampleEndedAt=now로 매번 찍혀 90초 freshness를
+  //  150초 window까지 우회하는 경로 차단.)
+  const baselineAgeSeconds = (nowMs - latest.capturedAtMs) / 1_000;
+  if (baselineAgeSeconds > maxAgeSeconds) return null;
+  return evaluate(current, nowMs, latest);
+}
+
+/**
+ * 신선도 상한을 넘겨 현재값으로 쓸 수 없을 때, **저장된 스냅샷끼리의 마지막 유효 rate**를
+ * 돌려준다(직전 실측값). 현재 counter 의 **값**은 rate 계산에 쓰지 않는다 — now 를 종료
+ * 시각으로 찍으면 멈춘 counter 가 영우히 "현재값"으로 위장되기 때문이다(삼순 3차 P0-2 계약).
+ *
+ * 단 **현재 counter 와의 호환성은 게이트로 검사**한다(삼순 #1283 P1):
+ * - `newer` 는 반드시 **최신 저장 row 하나에 고정**한다. 더 오래된 pre-reset 쌍으로
+ *   내려가면, reset 직후에 과거 구간의 rate 를 "직전값"으로 내보내게 된다.
+ * - 최신 row 가 current 와 다른 series 면(fingerprint 불일치) 즉시 null.
+ * - **fingerprint 가 같아도** current 의 total/idle 이 최신 저장분보다 작으면 counter reset
+ *   이므로 즉시 null (fingerprint 는 CPU label 집합이라 reset 에도 그대로일 수 있다).
+ *   이때 current 의 값은 **호환성 게이트에만** 쓰고 rate 계산엔 여전히 쓰지 않는다.
+ *
+ * 사용처 계약: 반환값은 `cpuUsedPercent`가 아니라 정보성 표시전용이며, 건강도 판정·알림에
+ * 쓰지 않는다. 나이가 staleMaxAgeSeconds 를 넘으면 null(측정 불능).
+ */
+export function computeStaleCpuFromStore(
+  stored: StoredCpuSnapshot[],
+  current: CpuCounterSnapshot,
+  nowMs: number,
+  staleMaxAgeSeconds = CPU_SAMPLE_STALE_MAX_AGE_SECONDS,
+  maxWindowSeconds = CPU_SAMPLE_MAX_WINDOW_SECONDS,
+): InstantCpuResult | null {
+  const rows = [...stored]
+    .filter((row) => Number.isFinite(row.capturedAtMs) && row.capturedAtMs <= nowMs)
+    .sort((left, right) => right.capturedAtMs - left.capturedAtMs);
+
+  const newest = rows[0];
+  // 최신 저장분이 현재 series 가 아니면(fingerprint 변경) 과거를 뒤지지 않고 fail-close.
+  if (!newest || newest.seriesFingerprint !== current.seriesFingerprint) return null;
+  // fingerprint 가 같아도 current 가 최신 저장분보다 작으면 counter reset — 즉시 fail-close.
+  // (값은 호환성 게이트에만 사용, rate 계산엔 미사용 — now 재각인 금지 계약 유지.)
+  if (current.totalSeconds < newest.totalSeconds || current.idleSeconds < newest.idleSeconds) return null;
+
+  // newer 는 최신 row 하나에 고정한다 — 더 오래된 pre-reset 쌍으로 내려가지 않는다.
+  const ageSeconds = (nowMs - newest.capturedAtMs) / 1_000;
+  if (ageSeconds > staleMaxAgeSeconds) return null;
+
+  for (const older of rows.slice(1)) {
+    if (older.seriesFingerprint !== current.seriesFingerprint) continue;
+    const usedPercent = cpuUsedPercentFromSnapshots(newest, older);
+    if (usedPercent === null) continue; // 동일 tick·역전(reset)
+    const windowSeconds = (newest.capturedAtMs - older.capturedAtMs) / 1_000;
+    if (windowSeconds <= 0 || windowSeconds > maxWindowSeconds) continue;
+    return { usedPercent, windowSeconds, sampleEndedAtMs: newest.capturedAtMs };
+  }
+  return null;
+}
+
+export function cpuUsedPercentFromSnapshots(
+  current: CpuCounterSnapshot,
+  previous: CpuCounterSnapshot,
+): number | null {
+  if (current.seriesFingerprint !== previous.seriesFingerprint) return null;
+  const totalDelta = current.totalSeconds - previous.totalSeconds;
+  const idleDelta = current.idleSeconds - previous.idleSeconds;
+  if (totalDelta <= 0 || idleDelta < 0 || idleDelta > totalDelta) return null;
+  return percent(totalDelta - idleDelta, totalDelta);
+}
+
+function cpuUsedPercentFromCounters(
+  currentSamples: PrometheusSample[],
+  previousSamples: PrometheusSample[] | null,
+): number | null {
+  if (!previousSamples) return null;
+
+  const current = values(currentSamples, "node_cpu_seconds_total");
+  const previous = values(previousSamples, "node_cpu_seconds_total");
+  if (current.length === 0 || current.length !== previous.length) return null;
+
+  const seriesKey = (sample: PrometheusSample) =>
+    Object.entries(sample.labels)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name}=${value}`)
+      .join("|");
+  const previousByKey = new Map(previous.map((sample) => [seriesKey(sample), sample.value]));
+  let totalDelta = 0;
+  let idleDelta = 0;
+  for (const sample of current) {
+    const key = seriesKey(sample);
+    const before = previousByKey.get(key);
+    if (before === undefined) return null;
+    const delta = sample.value - before;
+    if (!Number.isFinite(delta) || delta < 0) return null;
+    totalDelta += delta;
+    if (sample.labels.mode === "idle") idleDelta += delta;
+  }
+  if (totalDelta <= 0) return null;
+  return percent(totalDelta - idleDelta, totalDelta);
+}
+
+export function summarizeSystemMetrics(
+  text: string,
+  previousText?: string,
+  cpuSampleSeconds?: number,
+): SystemMetricSummary {
   const samples = parsePrometheusText(text);
+  const previousSamples = previousText === undefined ? null : parsePrometheusText(previousText);
   const totalMemory = firstValue(samples, "node_memory_MemTotal_bytes");
   const freeMemory = firstValue(samples, "node_memory_MemFree_bytes");
   const buffers = firstValue(samples, "node_memory_Buffers_bytes") ?? 0;
@@ -113,7 +340,9 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   );
   const cpuCores = cpuCoresSet.size || null;
   const load1 = firstValue(samples, "node_load1");
-  const cpuLoadPercent = load1 !== null && cpuCores ? percent(load1, cpuCores) : null;
+  const load1PerCore = load1 !== null && cpuCores ? load1 / cpuCores : null;
+  const cpuCounter = cpuCounterSnapshot(samples);
+  const cpuUsedPercent = cpuUsedPercentFromCounters(samples, previousSamples);
 
   // Multiple exporters/instances may emit these gauges. Any explicit down sample
   // must fail closed instead of being hidden by a healthy sibling sample.
@@ -153,20 +382,17 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
     if (diskUsedPercent >= 85) critical(`디스크 ${round(diskUsedPercent)}%`);
     else if (diskUsedPercent >= 75) warn(`디스크 ${round(diskUsedPercent)}%`);
   }
-  if (cpuLoadPercent !== null) {
-    if (cpuLoadPercent >= 85) critical(`CPU 부하 ${round(cpuLoadPercent)}%`);
-    else if (cpuLoadPercent >= 70) warn(`CPU 부하 ${round(cpuLoadPercent)}%`);
-  }
-
+  // The CPU value is a one-second point-in-time sample. Keep it informational:
+  // production alerts require sustained 70%/5m or 85%/3m, so applying those
+  // thresholds here would recreate "dashboard critical, no alert" contradictions.
   const missingCoreMetrics = [
-    cpuLoadPercent === null ? "CPU" : null,
     memoryUsedPercent === null ? "메모리" : null,
     diskUsedPercent === null ? "디스크" : null,
     pgUpValue === null ? "PostgreSQL" : null,
     poolerUpValue === null ? "PgBouncer" : null,
   ].filter((name): name is string => name !== null);
 
-  if (missingCoreMetrics.length === 5) {
+  if (missingCoreMetrics.length === 4) {
     reasons.push("핵심 메트릭 없음");
     if (!hasCritical) level = "unknown";
   } else if (missingCoreMetrics.length > 0) {
@@ -174,8 +400,18 @@ export function summarizeSystemMetrics(text: string): SystemMetricSummary {
   }
 
   return {
-    cpuLoadPercent: round(cpuLoadPercent),
+    cpuUsedPercent: round(cpuUsedPercent),
+    cpuSampleSeconds:
+      cpuUsedPercent === null || cpuSampleSeconds === undefined || !Number.isFinite(cpuSampleSeconds)
+        ? null
+        : round(cpuSampleSeconds),
+    cpuSampleEndedAt: null,
+    cpuStalePercent: null,
+    cpuStaleEndedAt: null,
+    cpuCounter,
     cpuCores,
+    load1: round(load1),
+    load1PerCore: round(load1PerCore),
     memoryUsedPercent: round(memoryUsedPercent),
     diskUsedPercent: round(diskUsedPercent),
     postgresUp: pgUpValue === null ? null : pgUpValue >= 1,

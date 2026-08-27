@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  CPU_SAMPLE_MAX_AGE_SECONDS,
+  CPU_SAMPLE_MAX_WINDOW_SECONDS,
+  cpuUsedPercentFromSnapshots,
+  type CpuCounterSnapshot,
+} from "@/lib/admin/system-health";
 import {
   Activity,
   AlertTriangle,
@@ -21,8 +27,15 @@ type HealthLevel = "healthy" | "warning" | "critical" | "unknown";
 interface SystemHealthResponse {
   level: HealthLevel;
   metrics: {
-    cpuLoadPercent: number | null;
+    cpuUsedPercent: number | null;
+    cpuSampleSeconds: number | null;
+    cpuSampleEndedAt: string | null;
+    cpuStalePercent?: number | null;
+    cpuStaleEndedAt?: string | null;
+    cpuCounter: CpuCounterSnapshot | null;
     cpuCores: number | null;
+    load1: number | null;
+    load1PerCore: number | null;
     memoryUsedPercent: number | null;
     diskUsedPercent: number | null;
     postgresUp: boolean | null;
@@ -53,6 +66,39 @@ const SERVICE_LABELS = {
 function getPin(): string {
   if (typeof window === "undefined") return "";
   return sessionStorage.getItem("admin_pin") || "";
+}
+
+// 마지막 유효 CPU값 보존 (삼순 게이트: 소스 실패 시 last-good+시각 표시, 현재값 위장 금지)
+const CPU_LAST_GOOD_KEY = "admin_cpu_last_good";
+const CPU_LAST_GOOD_TTL_MS = 30 * 60_000;
+
+interface CpuLastGood {
+  percent: number;
+  atMs: number;
+}
+
+function readCpuLastGood(): CpuLastGood | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(CPU_LAST_GOOD_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<CpuLastGood>;
+    if (typeof parsed.percent !== "number" || typeof parsed.atMs !== "number") return null;
+    if (!Number.isFinite(parsed.percent) || !Number.isFinite(parsed.atMs)) return null;
+    if (Date.now() - parsed.atMs > CPU_LAST_GOOD_TTL_MS) return null; // TTL 초과 = 미표시
+    return { percent: parsed.percent, atMs: parsed.atMs };
+  } catch {
+    return null;
+  }
+}
+
+function writeCpuLastGood(entry: CpuLastGood): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(CPU_LAST_GOOD_KEY, JSON.stringify(entry));
+  } catch {
+    // 저장 불가는 기능 비활성일 뿐
+  }
 }
 
 function levelStyle(level: HealthLevel) {
@@ -105,7 +151,7 @@ function MetricCard({
   label: string;
   value: string;
   detail: string;
-  level: HealthLevel;
+  level: HealthLevel | null;
 }) {
   return (
     <div className="rounded-xl bg-white/[0.04] border border-white/[0.06] p-4">
@@ -114,10 +160,14 @@ function MetricCard({
           <Icon className="w-4 h-4" />
           <span className="text-xs">{label}</span>
         </div>
-        <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
-          <LevelIcon level={level} className="w-3.5 h-3.5" />
-          {levelLabel(level)}
-        </span>
+        {level === null ? (
+          <span className="text-[11px] text-[#636366]">순간값</span>
+        ) : (
+          <span className={`inline-flex items-center gap-1 text-[11px] ${level === "unknown" ? "text-[#636366]" : levelStyle(level).split(" ")[0]}`}>
+            <LevelIcon level={level} className="w-3.5 h-3.5" />
+            {levelLabel(level)}
+          </span>
+        )}
       </div>
       <p className="mt-3 text-2xl font-bold tabular-nums">{value}</p>
       <p className="mt-1 text-xs text-[#636366]">{detail}</p>
@@ -130,8 +180,15 @@ export default function SystemHealthPanel() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const cpuBaseline = useRef<{ counter: CpuCounterSnapshot; checkedAt: string } | null>(null);
+  // sampleEndedAtMs = 이 rate가 끝난 시각. 재사용 시에도 갱신하지 않고 그 시각으로
+  // freshness를 판정한다(삼순 2차 blocker 2: counter 정지 시 오래된 값이 순간값으로 위장되는 경로 차단).
+  const lastCpuSample = useRef<{ usedPercent: number; sampleSeconds: number; sampleEndedAtMs: number } | null>(null);
+  const latestRequest = useRef(0);
+  const latestAppliedAt = useRef(Number.NEGATIVE_INFINITY);
 
   const load = useCallback(async (background = false) => {
+    const requestId = ++latestRequest.current;
     if (background) setRefreshing(true);
     try {
       const response = await fetch("/api/admin/system-health", {
@@ -139,13 +196,83 @@ export default function SystemHealthPanel() {
         cache: "no-store",
       });
       if (!response.ok) throw new Error(`서버 상태 조회 실패 (${response.status})`);
-      setData((await response.json()) as SystemHealthResponse);
+      const next = (await response.json()) as SystemHealthResponse;
+      const checkedAtMs = Date.parse(next.checkedAt);
+      if (requestId !== latestRequest.current || checkedAtMs < latestAppliedAt.current) return;
+      latestAppliedAt.current = checkedAtMs;
+      const counter = next.metrics?.cpuCounter ?? null;
+      if (counter && next.metrics) {
+        const previous = cpuBaseline.current;
+        if (previous) {
+          const sameSnapshot =
+            counter.seriesFingerprint === previous.counter.seriesFingerprint &&
+            counter.totalSeconds === previous.counter.totalSeconds &&
+            counter.idleSeconds === previous.counter.idleSeconds;
+          const used = cpuUsedPercentFromSnapshots(counter, previous.counter);
+          const seconds = (Date.parse(next.checkedAt) - Date.parse(previous.checkedAt)) / 1_000;
+          const serverFilled =
+            next.metrics.cpuUsedPercent !== null && next.metrics.cpuUsedPercent !== undefined;
+          if (used !== null && seconds > 0 && seconds <= CPU_SAMPLE_MAX_WINDOW_SECONDS) {
+            const sample = {
+              usedPercent: Math.round(used * 10) / 10,
+              sampleSeconds: Math.round(seconds * 10) / 10,
+              sampleEndedAtMs: checkedAtMs,
+            };
+            next.metrics.cpuUsedPercent = sample.usedPercent;
+            next.metrics.cpuSampleSeconds = sample.sampleSeconds;
+            next.metrics.cpuSampleEndedAt = next.checkedAt;
+            lastCpuSample.current = sample;
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+          } else if (sameSnapshot && lastCpuSample.current && !serverFilled) {
+            // 동일 scrape tick 재사용 — 단, rate 종료 시각 기준 90초까지만.
+            const ageSeconds = (checkedAtMs - lastCpuSample.current.sampleEndedAtMs) / 1_000;
+            if (ageSeconds <= CPU_SAMPLE_MAX_AGE_SECONDS) {
+              next.metrics.cpuUsedPercent = lastCpuSample.current.usedPercent;
+              next.metrics.cpuSampleSeconds = lastCpuSample.current.sampleSeconds;
+              next.metrics.cpuSampleEndedAt = new Date(lastCpuSample.current.sampleEndedAtMs).toISOString();
+            } else {
+              lastCpuSample.current = null; // 정지된 counter를 현재값으로 위장하지 않는다
+            }
+          } else if (!sameSnapshot) {
+            cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+            lastCpuSample.current = null;
+          }
+        } else {
+          cpuBaseline.current = { counter, checkedAt: next.checkedAt };
+        }
+        // 서버가 즉시값을 채운 경우에도 재사용 기준을 그 rate 종료 시각로 맞춘다.
+        const serverEndedAtMs = next.metrics.cpuSampleEndedAt ? Date.parse(next.metrics.cpuSampleEndedAt) : NaN;
+        if (
+          next.metrics.cpuUsedPercent !== null &&
+          next.metrics.cpuUsedPercent !== undefined &&
+          Number.isFinite(serverEndedAtMs) &&
+          (!lastCpuSample.current || lastCpuSample.current.sampleEndedAtMs < serverEndedAtMs)
+        ) {
+          lastCpuSample.current = {
+            usedPercent: next.metrics.cpuUsedPercent,
+            sampleSeconds: next.metrics.cpuSampleSeconds ?? 0,
+            sampleEndedAtMs: serverEndedAtMs,
+          };
+        }
+      }
+      if (next.metrics && next.metrics.cpuUsedPercent !== null && next.metrics.cpuUsedPercent !== undefined) {
+        // last-good 시각은 응답 시각(checkedAt)이 아니라 **rate 종료 시각**으로 고정한다.
+        const endedAtMs = next.metrics.cpuSampleEndedAt ? Date.parse(next.metrics.cpuSampleEndedAt) : NaN;
+        if (Number.isFinite(endedAtMs)) {
+          writeCpuLastGood({ percent: next.metrics.cpuUsedPercent, atMs: endedAtMs });
+        }
+      }
+      setData(next);
       setError(null);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      if (requestId === latestRequest.current) {
+        setError(loadError instanceof Error ? loadError.message : "서버 상태 조회 실패");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === latestRequest.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -216,12 +343,71 @@ export default function SystemHealthPanel() {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        {(() => {
+          const current = metrics?.cpuUsedPercent;
+          if (current !== null && current !== undefined) {
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`${current}%`}
+                detail={metrics?.cpuSampleSeconds ? `${metrics.cpuSampleSeconds}초 실측 · 알림 70% 5분 / 85% 3분` : "실측치"}
+                level={null}
+              />
+            );
+          }
+          // 서버가 내려보낸 직전 실측값(90초 상한 초과) — cron 회차 누락 구간에도 화면을 비우지 않는다.
+          const staleServer = metrics?.cpuStalePercent;
+          if (staleServer !== null && staleServer !== undefined) {
+            const endedAtMs = metrics?.cpuStaleEndedAt ? Date.parse(metrics.cpuStaleEndedAt) : NaN;
+            const ageSeconds = Number.isFinite(endedAtMs)
+              ? Math.max(1, Math.round((Date.now() - endedAtMs) / 1_000))
+              : null;
+            const ageLabel =
+              ageSeconds === null
+                ? "직전 측정"
+                : ageSeconds < 120
+                  ? `${ageSeconds}초 전 측정`
+                  : `${Math.round(ageSeconds / 60)}분 전 측정`;
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`${staleServer}%`}
+                detail={`${ageLabel} · 실시간 아님 · 새 실측 대기 중`}
+                level={"unknown"}
+              />
+            );
+          }
+          const lastGood = readCpuLastGood();
+          if (lastGood) {
+            const ageMinutes = Math.max(1, Math.round((Date.now() - lastGood.atMs) / 60_000));
+            return (
+              <MetricCard
+                icon={Cpu}
+                label="CPU 사용률"
+                value={`직전 ${lastGood.percent}%`}
+                detail={`직전 측정 ${ageMinutes}분 전 · 실시간 아님 · 새 실측 대기 중`}
+                level={"unknown"}
+              />
+            );
+          }
+          return (
+            <MetricCard
+              icon={Cpu}
+              label="CPU 사용률"
+              value="측정 중"
+              detail="첫 샘플 수집 중 · 약 1~2분 후 표시"
+              level={null}
+            />
+          );
+        })()}
         <MetricCard
-          icon={Cpu}
-          label="CPU 부하 (1분)"
-          value={metrics?.cpuLoadPercent === null || metrics?.cpuLoadPercent === undefined ? "—" : `${metrics.cpuLoadPercent}%`}
-          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores 기준` : "코어 정보 없음"}
-          level={percentLevel(metrics?.cpuLoadPercent ?? null, 70, 85)}
+          icon={Activity}
+          label="시스템 Load (1분)"
+          value={metrics?.load1 === null || metrics?.load1 === undefined ? "—" : `${metrics.load1}`}
+          detail={metrics?.cpuCores ? `${metrics.cpuCores} cores · 코어당 ${metrics.load1PerCore ?? "—"} · CPU와 별도` : "코어 정보 없음"}
+          level={null}
         />
         <MetricCard
           icon={MemoryStick}

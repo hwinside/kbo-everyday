@@ -26,6 +26,11 @@ interface GameData {
   awayScore: number | null;
   homeScore: number | null;
   status: "scheduled" | "live" | "final" | "cancelled";
+  /**
+   * 취소 사유 원문(`우천취소`/`폭염취소`/`그라운드사정` 등). status=cancelled 일 때만 유의미.
+   * 미수신(undefined/null)은 "사유 없음"이 아니라 "못 받았다" — 고정 문구로 fallback 한다.
+   */
+  cancelReason?: string | null;
   time: string;
   stadium: string;
   inning?: string;
@@ -107,13 +112,15 @@ export default function GamesPage() {
         const res = await fetch(`/api/games?date=${formatDate(date)}`, { signal });
         const data = await res.json();
         if (data.error) throw new Error(data.error);
-        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean }) => ({
+        const mapped: GameData[] = (data.games ?? []).map((g: { gameId: string; awayTeamId: number; homeTeamId: number; awayScore: number | null; homeScore: number | null; status: "scheduled" | "live" | "final" | "cancelled"; time: string; stadium: string; inning?: string; isTop?: boolean; awayStarterName?: string; homeStarterName?: string; broadcastChannels?: BroadcastChannel[]; balls?: number; strikes?: number; outs?: number; runnersOn?: { first: boolean; second: boolean; third: boolean }; currentPitcher?: string; currentBatter?: string; lastPlay?: string; liveDetailFromKbo?: boolean; cancelReason?: string | null }) => ({
           id: g.gameId,
           awayTeamId: g.awayTeamId,
           homeTeamId: g.homeTeamId,
           awayScore: g.awayScore,
           homeScore: g.homeScore,
           status: g.status,
+          // 사유는 취소 상태일 때만 실는다(값-플래그 결속).
+          cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
           time: g.time,
           stadium: g.stadium,
           inning: g.status === "live" ? `${g.inning}회${g.isTop ? "초" : "말"}` : undefined,
@@ -266,7 +273,7 @@ export default function GamesPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "env(safe-area-inset-top, 0px)", marginTop: "calc(env(safe-area-inset-top, 0px) * -1)" }}>
+      <div className="sticky top-0 z-30 border-b bg-bg-primary" style={{ borderColor: myTeamId ? getTeamBorderColorById(myTeamId) : 'var(--color-border)', paddingTop: "var(--safe-area-inset-top, env(safe-area-inset-top, 0px))", marginTop: "calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) * -1)" }}>
         <div className="flex items-center gap-3 px-5 min-h-[44px]">
           <button onClick={goBack} aria-label="뒤로가기" className="flex h-11 w-11 items-center justify-center rounded-full text-text-secondary hover:bg-bg-tertiary transition-colors">
             <ChevronLeft size={24} />

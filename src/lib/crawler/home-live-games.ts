@@ -44,6 +44,10 @@ export function liveGamesFromKboGames(games: KboGame[]): LiveGameData[] {
       currentInning: g.inning ? `${g.inning}회${g.isTop ? "초" : "말"}` : "",
       stadium: g.stadium,
       status: g.status,
+      // 취소 사유 — 홈 SSR 초기 진입 경로도 사유를 실어야 한다(삼순 NO-GO ①).
+      // useHomeInit 은 initialGames 가 있으면 클라이언트 재조회를 건너뛰므로,
+      // 여기서 누락되면 첫 화면은 영영 고정 문구로 남는다.
+      cancelReason: g.status === "cancelled" ? (g.cancelReason ?? null) : null,
       isLive: g.status === "live",
       time: g.time,
       awayStarterName: g.awayStarterName || null,

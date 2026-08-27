@@ -116,6 +116,14 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/system-metrics-snapshot",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/relay-live-publisher",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cron/report-blind-notify",
       "schedule": "*/5 * * * *"
     },

@@ -1,0 +1,18 @@
+diff --git a/src/components/game/GameChat.tsx b/src/components/game/GameChat.tsx
+index 2eaa9c114..c6f608cb2 100644
+--- a/src/components/game/GameChat.tsx
++++ b/src/components/game/GameChat.tsx
+@@ -61,7 +61,12 @@ function MoodGauge({ homeTeamId, awayTeamId, homePct }: { homeTeamId: number; aw
+ 
+ /* ===== Room ID builder ===== */
+ function getRoomId(gameId: string): string {
+-  return `game:${gameId}`;
++  // [QA TEST-ONLY PATCH — 커밋되지 않는다. scripts/qa/patches/test-only-room.patch]
++  // 측정 하니스가 실제 GameChat 구독/write 를 격리 QA room 으로 보내기 위한 유일한 접점.
++  // 패턴은 game:<YYYYMMDD>-qa-<slug> 로 고정 — 실제 KBO gameId 는 '-qa-' 를 포함할 수
++  // 없으므로 실경기방과 구조적으로 충돌 불가. env 미설정이면 원본 동작 그대로다.
++  const t = process.env.NEXT_PUBLIC_QA_TEST_ROOM;
++  return t && /^game:\d{8}-qa-[a-z0-9-]{4,}$/.test(t) ? t : `game:${gameId}`;
+ }
+ 
+ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggleDisabled = false }: GameChatProps) {

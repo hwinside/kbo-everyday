@@ -19,5 +19,6 @@ class MainViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(NewsArticleBrowserPlugin())
         bridge?.registerPluginInstance(PushDeepLinkPlugin())
         bridge?.registerPluginInstance(VenueMediaLibraryPlugin())
+        bridge?.registerPluginInstance(SecureSessionStorePlugin())
     }
 }

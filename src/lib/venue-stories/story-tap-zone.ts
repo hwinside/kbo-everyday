@@ -19,7 +19,7 @@ export type StoryTapZone = "prev" | "next" | "pill" | "none";
 
 /** safe-area 포함 bottom calc 문자열 — 컴포넌트가 이 상수로 CSS 를 만들게 해 분류기와 값이 어긋나지 않게. */
 export function safeBottomCalc(offsetPx: number): string {
-  return `calc(env(safe-area-inset-bottom, 0px) + ${offsetPx}px)`;
+  return `calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + ${offsetPx}px)`;
 }
 
 /**
