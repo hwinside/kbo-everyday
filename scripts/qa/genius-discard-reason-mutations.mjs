@@ -154,8 +154,11 @@ const MUTATIONS = [
   {
     name: "M20 official GENERAL 출구가 경로 라벨을 안 남긴다 (공식 실패율 분모 소실 — 삼순 2차 ②)",
     file: "pipeline",
+    // ⚠️ 앵커는 `ragObservation` 의 **현재 시그니처**를 따라간다 (2026-08-27: 거리 관측
+    //   인자 `evidence` 추가). 게이트 핀이 내 시그니처 변경을 잡으면 그건 게이트가 옳은
+    //   것이므로 같은 PR 에서 동기화한다 — 앵커를 느슨하게 만들면 검출력이 떨어진다.
     from: `      toneCompliant: validated.toneCompliant,
-      ...ragObservation("official", question, validated),
+      ...ragObservation("official", question, validated, evidence),
     });
     return { status: 200, answer: validated.answer, source: "llm", remaining };`,
     to: `      toneCompliant: validated.toneCompliant,
