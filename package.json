@@ -212,6 +212,7 @@
     "qa:push-score-events": "tsx scripts/qa/push-score-events-smoke.ts",
     "qa:start-watchdog": "tsx scripts/qa/game-start-watchdog-smoke.ts",
     "qa:kbo-live-games-failover": "tsx scripts/qa/kbo-live-games-failover-smoke.ts",
+    "qa:live-games-naver-primary": "tsx scripts/qa/live-games-naver-primary-smoke.ts",
     "qa:starter-era": "tsx scripts/qa/starter-era-smoke.ts",
     "qa:stats-snapshot-guard": "node scripts/qa/stats-snapshot-guard-smoke.mjs",
     "qa:stats-source-truth": "node scripts/qa/stats-source-truth-verify.mjs",

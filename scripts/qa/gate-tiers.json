@@ -456,6 +456,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:live-games-naver-primary",
+      "tier": "ci"
+    },
+    {
       "name": "qa:live-multiplex",
       "tier": "deploy"
     },
