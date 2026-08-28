@@ -203,11 +203,34 @@ export const RAG_NEWS_CANDIDATE_LIMIT = 20;
  * 정답 chunk 를 후보에서 통째로 날려버린다. 그래서 `fetchBySourceKind` 구현체는
  * **질문 벡터 기준 상위 N**을 돌려줘야 하며, 그래서 queryVector 를 함께 넘긴다.
  */
+export type SeasonLaneMode = "any" | "year" | "yearless";
+
+/**
+ * 시즌 lane 계획 — 어떤 lane 들을 **DB 절단 전에** 각각 확보할지.
+ *
+ * 🔴 왜 lane 이 필요한가 (삼순 2026-08-28 P0-①):
+ *   RPC 가 순수 코사인 상위 40 을 먼저 자른 뒤 앱이 가중한다. 목표 시즌 청크가 41위
+ *   밖이면 앱에서 아무리 가중해도 **복구 불가**다. 절단 전에 lane 을 확보해야 한다.
+ *   (2026-08-05 무순서 절단 사고와 같은 축 — 그때는 정렬을, 이번엔 lane 을 DB 로 내린다.)
+ */
+export function seasonLanePlan(target: SeasonTarget, currentSeason: number): Array<{
+  mode: SeasonLaneMode;
+  year?: number;
+}> {
+  // 개입하지 않는 target 은 lane 도 나누지 않는다 — 종전 단일 조회 그대로다.
+  if (target.kind === "none" || target.kind === "historical") return [{ mode: "any" }];
+  const year = target.kind === "year" ? target.year : currentSeason;
+  // general(any) lane 을 항상 함께 둔다 — 목표 연도 문서가 실제로는 답이 아닐 수 있고,
+  // lane 만 남기면 "그 해에 그 얘기가 없으면 아무 답도 못 하는" 상태가 된다.
+  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];
+}
+
 export async function searchSourcePriorityCandidates(
   fetchBySourceKind: (
     sourceKind: RagDocumentSourceKind,
     limit: number,
     queryVector: number[],
+    lane?: { mode: SeasonLaneMode; year?: number },
   ) => Promise<RagEvidenceCandidate[]>,
   queryVector: number[],
   /**
@@ -218,17 +241,39 @@ export async function searchSourcePriorityCandidates(
   /** 상위 N 절단 **앞**에서 돌 근거 projection. `rankEvidenceByQuery` 참조. */
   project?: EvidenceProjector,
   /**
-   * 현재 시즌(KST 연도). 주면 문서 경로의 시즌으로 재점수화한다(`seasonRecencyWeight`).
+   * 현재 시즌(KST 연도). 주면 문서 경로의 시즌으로 재점수화한다.
    * 생략하면 종전 거동 그대로 — 호출자가 명시적으로 켤 때만 시즌 축이 생긴다.
    */
   currentSeason?: number,
+  /** 질문 시점 target. 생략하면 `none`(개입 없음). */
+  seasonTarget?: SeasonTarget,
 ): Promise<RagEvidence[]> {
-  const [wikipediaRows, namuRows] = await Promise.all([
-    fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
-    fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
-  ]);
+  const target: SeasonTarget = seasonTarget ?? { kind: "none" };
+  const lanes = currentSeason === undefined
+    ? [{ mode: "any" as const }]
+    : seasonLanePlan(target, currentSeason);
+
+  const batches = await Promise.all(
+    (["wikipedia_document", "namu_document"] as const).flatMap((sourceKind) =>
+      lanes.map((lane) =>
+        // lane 이 하나뿐이면 종전과 동일한 단일 조회다(인자도 안 넘긴다).
+        lanes.length === 1
+          ? fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector)
+          : fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector, lane))));
+
+  // lane 이 겹치면 같은 chunk 가 중복된다(`year` lane 의 행은 `any` lane 에도 있다).
+  // 근거 중복은 프롬프트 낭비이자 "같은 말이 여러 근거에 있다"는 착시를 만든다.
+  const deduped: RagEvidenceCandidate[] = [];
+  const seen = new Set<string>();
+  for (const row of batches.flat()) {
+    const key = `${row.canonicalUrl}\u0000${row.sectionPath}\u0000${row.content}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
   return rankEvidenceByQuery(
-    [...wikipediaRows, ...namuRows], queryVector, weightFor, project, currentSeason,
+    deduped, queryVector, weightFor, project, currentSeason, target,
   );
 }
 /**
@@ -1405,14 +1450,36 @@ export function cosineSimilarity(left: number[], right: number[]): number {
  *   반대가설이 없다(M90 기준: 반대가설을 만들 수 없는 것만 코드로 막는다).
  */
 export function parseEvidenceSeason(
-  row: Pick<RagEvidence, "sectionPath" | "pageTitle">,
+  row: Pick<RagEvidence, "sectionPath" | "pageTitle" | "canonicalUrl">,
 ): number | null {
-  const hay = `${row.sectionPath ?? ""} ${row.pageTitle ?? ""}`;
-  const years = [...hay.matchAll(/(19\d{2}|20\d{2})/g)].map((match) => Number(match[1]));
-  if (years.length === 0) return null;
+  const yearsIn = (text: string): number[] =>
+    [...(text ?? "").matchAll(/(19\d{2}|20\d{2})/g)].map((match) => Number(match[1]));
+
+  // 🔴 문서 identity 우선 (삼순 2026-08-28): `pageTitle`·`canonicalUrl` 이 문서의 정체다.
+  //   하위 section 에 다른 연도가 스쳐도(`한화 이글스/2026년` 문서의 `2017년 대비` 문단)
+  //   상위 문서 시즌을 덮으면 안 된다. 문서가 곧 시점인 경우가 나무위키 구단 문서다.
+  const identity = [
+    ...yearsIn(row.pageTitle ?? ""),
+    // URL 은 퍼센트 인코딩돼 있어도 4자리 연도는 그대로 남는다(`%20` 은 숫자가 아님).
+    ...yearsIn(decodeSafely(row.canonicalUrl ?? "")),
+  ];
+  if (identity.length > 0) return Math.max(...identity);
+
+  // identity 에 연도가 없을 때만 section 경로를 본다.
+  const section = yearsIn(row.sectionPath ?? "");
+  if (section.length === 0) return null;
   // 경로에 연도가 여럿이면 가장 최신을 문서 시점으로 본다 — 경로는 상위→하위로 좁혀지므로
   // 더 구체적인 쪽이 문서 주제에 가깝다.
-  return Math.max(...years);
+  return Math.max(...section);
+}
+
+/** URL 디코드 실패는 원문 그대로 — 판정을 예외로 죽이지 않는다. */
+function decodeSafely(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 // 🔴 가중 폭은 **의도적으로 좁다**. 초안은 boost 1.35 / 하한 0.6 이었는데, 그러면
@@ -1442,6 +1509,100 @@ export function seasonRecencyWeight(season: number | null, currentSeason: number
   return Math.max(SEASON_RECENCY_MIN_WEIGHT, 1 - age * SEASON_RECENCY_DECAY_PER_YEAR);
 }
 
+// ── 질문 시점 target (삼순 2026-08-28 P0-②) ──────────────────────────────────
+//
+// 🔴 초안은 season 가중을 **모든 질문에 무조건** 적용했다. 그러면 `2018년 한화`·
+//   `2027 한화 전망`·`한화 역대 감독` 도 올해 문서가 비슷하기만 하면 뒤집힌다.
+//   가중을 걸기 전에 **유저가 언제를 물었는지**부터 정해야 한다.
+//
+// 판정 입력이 폐쇄집합인가? — 그렇다. 여기서 하는 일은 의도 분류가 아니라
+//   ① 문장에 4자리 연도가 있나(문자 존재) ② 역대·통산·역사 같은 **명시 어휘**가 있나
+//   둘 다 반대가설을 만들기 어렵다. 애매하면 `current` 가 아니라 **`none`(중립)** 으로
+//   떨어뜨려 "모르면 개입하지 않는다"가 기본값이 되게 한다.
+
+export type SeasonTarget =
+  /** 유저가 연도를 명시했다 — 그 연도 문서를 우선한다. */
+  | { kind: "year"; year: number }
+  /** 현재 현황을 물었다 — 현재 시즌 문서를 우선한다. */
+  | { kind: "current" }
+  /** 역대·통산·역사 — recency 개입 없음(전 시즌 동등). */
+  | { kind: "historical" }
+  /** 판정 불가 — 개입하지 않는다(종전 순수 유사도). */
+  | { kind: "none" };
+
+/** 역대·통산 어휘 — 있으면 recency 를 끈다. 특정 시점이 아니라 전체를 묻는 질문이다. */
+const HISTORICAL_SCOPE_WORDS = [
+  "역대", "통산", "역사", "연혁", "창단", "originally", "레전드",
+  "지금까지", "이제까지", "모든 시즌", "전 시즌",
+];
+
+/**
+ * 현재 현황을 묻는 신호. **무연도 + 현황 어휘**일 때만 current 다.
+ *
+ * ⚠️ `한화 응원가` 처럼 시점과 무관한 질문까지 current 로 밀면, 시즌 가중이
+ *   응원가 문서(연도 없음=중립)와 올해 경기 문서(boost) 사이를 흔든다.
+ *   그래서 현황 어휘가 있을 때만 개입하고 나머지는 `none` 이다.
+ */
+const CURRENT_SCOPE_WORDS = [
+  "지금", "현재", "요즘", "올해", "이번 시즌", "이번시즌", "올 시즌", "올시즌",
+  "최근", "오늘", "감독", "선발", "로테이션", "순위", "성적", "잘하", "못하",
+  "가을야구", "포스트시즌", "진출", "우승 가능", "부진", "연승", "연패",
+  "라인업", "엔트리", "주전", "불펜", "타선", "전망",
+];
+
+/**
+ * 질문의 시점 target 을 정한다.
+ *
+ * @param nowSeason 현재 시즌(KST 연도) — `current` 판정에 쓴다.
+ */
+export function resolveSeasonTarget(question: string, nowSeason: number): SeasonTarget {
+  const normalized = question.normalize("NFKC").toLowerCase();
+
+  // ① 역대·통산이 먼저다. `한화 역대 감독 알려줘` 는 연도가 없어도 current 가 아니다.
+  //    `2024 역대 우승` 처럼 연도와 같이 와도 "전체"를 묻는 쪽이 강하다.
+  if (HISTORICAL_SCOPE_WORDS.some((word) => normalized.includes(word))) {
+    return { kind: "historical" };
+  }
+
+  // ② 명시 연도 — 문자 존재 판정이라 반대가설이 없다.
+  //    복수 연도(`2018년과 2019년`)면 하나로 좁힐 수 없으므로 개입하지 않는다.
+  const years = [...normalized.matchAll(/(19\d{2}|20\d{2})/g)].map((m) => Number(m[1]));
+  const uniqueYears = [...new Set(years)];
+  if (uniqueYears.length === 1) return { kind: "year", year: uniqueYears[0] };
+  if (uniqueYears.length > 1) return { kind: "none" };
+
+  // ③ 무연도 + 현황 어휘 → 현재.
+  if (CURRENT_SCOPE_WORDS.some((word) => normalized.includes(word))) {
+    return { kind: "current" };
+  }
+
+  // ④ 그 외는 개입하지 않는다 — 모르면 종전 순서가 기본값이다.
+  void nowSeason;
+  return { kind: "none" };
+}
+
+/**
+ * target 기준 시즌 가중치. `resolveSeasonTarget` 결과를 그대로 받는다.
+ *
+ * · `year`       → 그 연도 boost, 다른 연도는 거리만큼 감점, 연도 없음은 중립
+ * · `current`    → 현재 시즌 boost (`seasonRecencyWeight`)
+ * · `historical` → 전부 중립 (역대 질문에 올해를 밀어올리면 오히려 오답)
+ * · `none`       → 전부 중립
+ */
+export function seasonTargetWeight(
+  season: number | null,
+  target: SeasonTarget,
+  currentSeason: number,
+): number {
+  if (target.kind === "historical" || target.kind === "none") return 1;
+  if (season === null) return 1;
+  if (target.kind === "current") return seasonRecencyWeight(season, currentSeason);
+  // `year` — 목표 연도에서 멀수록 감점. 미래/과거 방향 대칭이다(유저가 그 해를 콕 집었다).
+  if (season === target.year) return SEASON_RECENCY_CURRENT_BOOST;
+  const distance = Math.abs(season - target.year);
+  return Math.max(SEASON_RECENCY_MIN_WEIGHT, 1 - distance * SEASON_RECENCY_DECAY_PER_YEAR);
+}
+
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
@@ -1464,7 +1625,13 @@ export function rankEvidenceByQuery(
    * 생략하면 종전 거동 그대로 — 시즌 가중이 없다.
    */
   currentSeason?: number,
+  /**
+   * 질문 시점 target. 생략하면 `current`(종전 거동) — 단, `currentSeason` 이 없으면
+   * 시즌 축 자체가 꺼진다.
+   */
+  seasonTarget?: SeasonTarget,
 ): RagEvidence[] {
+  const target: SeasonTarget = seasonTarget ?? { kind: "current" };
   const ranked = rows
     .map((row) => {
       const vector = parseEmbedding(row.embedding);
@@ -1475,7 +1642,7 @@ export function rankEvidenceByQuery(
       // 시즌 가중은 소스 가중과 **곱**한다 — 둘은 독립 축이다(어느 소스냐 / 언제 문서냐).
       const seasonWeight = currentSeason === undefined
         ? 1
-        : seasonRecencyWeight(parseEvidenceSeason(row), currentSeason);
+        : seasonTargetWeight(parseEvidenceSeason(row), target, currentSeason);
       return { row, score: base * weight * seasonWeight };
     })
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>

@@ -49,6 +49,16 @@ export interface TeamRecordsPayload {
   season?: number;
   batting?: TeamRecordRow[];
   pitching?: TeamRecordRow[];
+  /**
+   * upstream 에서 **실제로 받은** 시각(ISO). `/api/team-records` 가 실어 보낸다.
+   *
+   * 🔴 왜 우리 시계를 쓰면 안 되는가 (삼순 2026-08-28 P0-③): 그 라우트는 upstream 이
+   *   죽으면 **만료된 메모리 캐시를 200 으로** 돌려준다. 응답 수신 시각을 신선도로 쓰면
+   *   몇 시간 묵은 값이 방금 값이 된다 — 200 은 신선도의 증거가 아니다.
+   *   optional 인 이유는 구버전 배포·다른 소비자가 아직 안 실어보낼 수 있어서다.
+   *   **부재는 0 이 아니라 "모름"** 이고, 모르면 현재를 단정하지 않는다(fail-close).
+   */
+  fetchedAt?: string;
 }
 
 /**
@@ -265,8 +275,22 @@ async function getJson<T>(path: string): Promise<T> {
   }
 }
 
+/**
+ * 순위표 스냅샷 — 행 + **그 행을 upstream 에서 받은 시각**.
+ *
+ * 🔴 왜 배열이 아니라 스냅샷인가 (삼순 2026-08-28 P0-③):
+ *   `/api/standings` 는 CDN 이 최대 15분(`s-maxage=300` + `stale-while-revalidate=600`)
+ *   캐시한다. 응답을 받은 시각을 신선도로 쓰면 캐시된 값이 방금 값이 된다.
+ *   값과 provenance 는 **별도 축**이어야 하고(M90), 그래서 함께 옮긴다.
+ *   `fetchedAt` 부재는 0 이 아니라 **모름**이고, 모르면 현재를 단정하지 않는다.
+ */
+export interface StandingsSnapshot {
+  rows: StandingsRow[];
+  fetchedAt?: string;
+}
+
 export interface TeamRecordFetchers {
-  fetchStandings: () => Promise<StandingsRow[]>;
+  fetchStandings: () => Promise<StandingsSnapshot>;
   fetchTeamRecords: () => Promise<TeamRecordsPayload>;
 }
 
@@ -279,9 +303,11 @@ export interface TeamRecordFetchers {
 export function createTeamRecordFetchers(): TeamRecordFetchers {
   return {
     fetchStandings: async () => {
-      const payload = await getJson<{ standings?: StandingsRow[] }>("/api/standings");
+      const payload = await getJson<{ standings?: StandingsRow[]; fetchedAt?: string }>("/api/standings");
       if (!Array.isArray(payload.standings)) throw new Error("standings payload has no standings array");
-      return payload.standings;
+      // fetchedAt 은 **응답 본문**에서 가져온다 — 여기서 `Date.now()` 를 찍으면
+      // CDN 캐시에서 온 15분 전 값이 방금 값이 된다(삼순 P0-③).
+      return { rows: payload.standings, fetchedAt: payload.fetchedAt };
     },
     fetchTeamRecords: () => getJson<TeamRecordsPayload>("/api/team-records"),
   };
@@ -443,7 +469,14 @@ export function resolveLiveTeamScope(question: string): LiveTeamScope {
  *   provenance 를 **값과 별도 축**으로 싫고 실패 시 현재 단정을 금지한다.
  */
 export interface LiveTeamProvenance {
-  /** 이 값을 **우리가 관측한** 시각(ms). 원천 계산 시각이 아니다 — 그건 API 가 안 준다. */
+  /**
+   * 이 값을 **upstream 에서 받은** 시각(ms).
+   *
+   * 🔴 우리가 응답을 받은 시각이 아니다 (삼순 2026-08-28 P0-③). `/api/team-records` 는
+   *   upstream 장애 시 만료 캐시를 200 으로 돌려주므로, 수신 시각을 쓰면 몇 시간 묵은
+   *   값이 방금 값이 된다. 소스가 실어보낸 `fetchedAt` 을 결속해야 TTL 이 의미를 갖는다.
+   *   소스가 안 실어보내면 **모름**이고, 모르면 현재를 단정하지 않는다.
+   */
   fetchedAt: number;
   /** 판정 기준 시각(ms). */
   now: number;

@@ -4686,18 +4686,33 @@ async function buildLiveTeamBlockForCandidate(
   // 모델이 그걸 답에 끌어다 쓰고(응원가 질문에 성적 서술), 외부 호출도 낭비다.
   const scope = resolveLiveTeamScope(question);
   if (scope === "none") return null;
-  const now = (deps.now ?? Date.now)();
   try {
     const [standings, records] = await Promise.all([
       deps.fetchTeamRecord.fetchStandings(),
       deps.fetchTeamRecord.fetchTeamRecords(),
     ]);
-    // 관측 시각은 **응답을 받은 직후**다. upstream 이 만료 캐시를 돌려도 그건 알 수 없으므로
-    // 여기서의 TTL 은 "우리가 본 지 얼마나 지났나" 만 보장한다 — 시즌 불일치는 별도 축이다.
+    // 🔴 시각 축 2건 정정 (삼순 2026-08-28 P0-③).
+    //   ① `now` 를 fetch **전**에, `fetchedAt` 을 fetch **후**에 찍고 있었다.
+    //      프로덕션은 `deps.now = Date.now` 라 fetch 소요시간만큼 age 가 **음수**가 되고,
+    //      `ageMs < 0` fail-close 에 걸려 블록이 **항상 죽는다**. 게이트는 `deps.now` 가
+    //      고정 상수라 두 시각이 같아 못 봤다 — 고정 시계가 시각 결함을 가린 것이다.
+    //      → 판정 기준 시각은 조회가 **끝난 뒤** 한 번만 읽는다.
+    //   ② 신선도를 우리 수신 시각으로 재지 않는다. `/api/team-records` 는 upstream 장애 시
+    //      **만료된 메모리 캐시를 200 으로** 돌려주므로 수신 시각을 쓰면 몇 시간 묵은 값이
+    //      방금 값이 된다. 소스가 실어보낸 `fetchedAt` 을 결속하고, 없으면 **모름**이라
+    //      현재를 단정하지 않는다(fail-close).
+    const now = (deps.now ?? Date.now)();
+    // 두 소스를 함께 싣는 블록이므로 신선도는 **둘 중 오래된 쪽**이 기준이다.
+    // 한 쪽만 신선해도 블록 전체가 신선하다고 말하면 뭐가 묵은 것인지 구분되지 않는다.
+    // 한 쪽이라도 timestamp 가 없으면 **모름**이므로 현재를 단정하지 않고 닫는다.
+    const recordsFetchedAt = Date.parse(records.fetchedAt ?? "");
+    const standingsFetchedAt = Date.parse(standings.fetchedAt ?? "");
+    if (!Number.isFinite(recordsFetchedAt) || !Number.isFinite(standingsFetchedAt)) return null;
+    const sourceFetchedAt = Math.min(recordsFetchedAt, standingsFetchedAt);
     const outcome = buildLiveTeamBlock(
-      canonicalTeam, standings, records, teamIdOfCanonical, scope,
+      canonicalTeam, standings.rows, records, teamIdOfCanonical, scope,
       {
-        fetchedAt: (deps.now ?? Date.now)(),
+        fetchedAt: sourceFetchedAt,
         now,
         maxAgeMs: LIVE_TEAM_BLOCK_MAX_AGE_MS,
         expectedSeason: kstSeasonOf(now),
@@ -5604,7 +5619,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       const pair = resolveTeamPairRecord(
         intent.metric,
         [mentionedTeams[0], mentionedTeams[1]],
-        pairStandings,
+        pairStandings.rows,
         pairRecords,
         teamIdOfCanonical,
       );
@@ -5649,7 +5664,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 조회 실패를 "기록 없음"으로 둔갓하지 않는다 — 재시도 가능한 실패다.
       return settleTeam(SYSTEM_ERROR_ANSWER, "error");
     }
-    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings, records, teamIdOfCanonical);
+    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings.rows, records, teamIdOfCanonical);
     if (outcome.kind === "ok") {
       return settleTeam(composeTeamRecordAnswer(outcome), "kbo_structured");
     }

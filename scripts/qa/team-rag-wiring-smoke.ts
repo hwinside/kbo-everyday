@@ -178,10 +178,14 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
       // `rank` 로 쓰면 정본 조회가 missing 으로 떨어져 안내문이 나간다.
       fetchStandings: async () => {
         calls.standingsFetches++;
-        return [{
-          teamName: "LG", teamId: 1, ranking: 3,
-          wins: 55, losses: 45, draws: 2, winRate: 0.55, games: 102, gamesBehind: 2.5,
-        }];
+        // 순위표는 **행 + 소스 수신 시각** 스냅샷이다 (삼순 2026-08-28 P0-③).
+        return {
+          rows: [{
+            teamName: "LG", teamId: 1, ranking: 3,
+            wins: 55, losses: 45, draws: 2, winRate: 0.55, games: 102, gamesBehind: 2.5,
+          }],
+          fetchedAt: new Date().toISOString(),
+        };
       },
       fetchTeamRecords: async () => ({
         season: 2026,

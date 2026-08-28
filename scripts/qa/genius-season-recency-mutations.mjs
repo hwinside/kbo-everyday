@@ -20,14 +20,14 @@ const MUTATIONS = [
   {
     name: "m1 시즌 추출을 본문 기준으로 — `1999년 우승` 서술이 문서 시점이 된다(S2)",
     file: RETRIEVE,
-    from: '  const hay = `${row.sectionPath ?? ""} ${row.pageTitle ?? ""}`;',
-    to: '  const hay = `${row.sectionPath ?? ""} ${row.pageTitle ?? ""} ${(row as { content?: string }).content ?? ""}`;',
+    from: "  const section = yearsIn(row.sectionPath ?? \"\");",
+    to: "  const section = yearsIn(`${row.sectionPath ?? \"\"} ${(row as { content?: string }).content ?? \"\"}`);",
   },
   {
     name: "m2 경로 연도 중 최소값 채택 — `2023 시즌/…/2024년` 이 옛 시점으로 잡힌다(S1)",
     file: RETRIEVE,
-    from: "  return Math.max(...years);",
-    to: "  return Math.min(...years);",
+    from: "  if (identity.length > 0) return Math.max(...identity);",
+    to: "  if (identity.length > 0) return Math.min(...identity);",
   },
   {
     name: "m3 시즌 가중 자체를 제거 — 과거 문서가 다시 top1(S5b)",
@@ -62,26 +62,70 @@ const MUTATIONS = [
   {
     name: "m8 currentSeason 미주입에도 가중 적용 — 기본 거동이 바뀐다(S6)",
     file: RETRIEVE,
-    from: "      const seasonWeight = currentSeason === undefined\n        ? 1\n        : seasonRecencyWeight(parseEvidenceSeason(row), currentSeason);",
-    to: "      const seasonWeight = seasonRecencyWeight(parseEvidenceSeason(row), currentSeason ?? 2026);",
+    from: "      const seasonWeight = currentSeason === undefined\n        ? 1\n        : seasonTargetWeight(parseEvidenceSeason(row), target, currentSeason);",
+    to: "      const seasonWeight = seasonTargetWeight(parseEvidenceSeason(row), target, currentSeason ?? 2026);",
   },
   {
     name: "m9 하류 전달 누락 — 랭커가 시즌을 영영 못 받는다(S7c)",
     file: RETRIEVE,
-    from: "  return rankEvidenceByQuery(\n    [...wikipediaRows, ...namuRows], queryVector, weightFor, project, currentSeason,\n  );",
-    to: "  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor, project);",
+    from: "  return rankEvidenceByQuery(\n    deduped, queryVector, weightFor, project, currentSeason, target,\n  );",
+    to: "  return rankEvidenceByQuery(deduped, queryVector, weightFor, project);",
   },
   {
     name: "m10 searchRag 배선 제거 — 프로덕션 경로만 조용히 종전으로 회귀(S7)",
     file: SERVER,
-    from: "    kstSeasonOf(now()),",
-    to: "",
+    from: "    seasonAware ? currentSeason : undefined,\n    seasonTarget,",
+    to: "    undefined,\n    { kind: \"none\" },",
   },
   {
     name: "m11 now seam 을 고정 — 게이트가 경계 시각을 주입할 수 없다(S7b)",
     file: SERVER,
     from: "  now: () => number = Date.now,",
     to: "  _now?: undefined,",
+  },
+
+  // ── 삼순 2026-08-28 P0-① lane / P0-② target ──────────────────────────────
+  {
+    name: "m12 lane 계획 제거 — DB 절단 전 목표 시즌 확보가 사라진다(L-lane)",
+    file: RETRIEVE,
+    from: '  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];',
+    to: '  return [{ mode: "any" }];',
+  },
+  {
+    name: "m13 general lane 제거 — 목표 연도에 답이 없으면 아무 답도 못 한다(L-lane)",
+    file: RETRIEVE,
+    from: '  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];',
+    to: '  return [{ mode: "year", year }];',
+  },
+  {
+    name: "m14 lane 중복 제거 해제 — 같은 chunk 가 여러 근거로 중복된다(L-lane)",
+    file: RETRIEVE,
+    from: "    if (seen.has(key)) continue;",
+    to: "    if (false) continue;",
+  },
+  {
+    name: "m15 역대 질문에도 recency 적용 — `한화 역대 감독`이 올해로 쏠린다(T-target)",
+    file: RETRIEVE,
+    from: '  if (target.kind === "historical" || target.kind === "none") return 1;',
+    to: '  if (target.kind === "none") return 1;',
+  },
+  {
+    name: "m16 명시 연도를 무시하고 현재로 — `2018년 한화`가 올해 문서로 간다(T-target)",
+    file: RETRIEVE,
+    from: '  if (uniqueYears.length === 1) return { kind: "year", year: uniqueYears[0] };',
+    to: '  if (uniqueYears.length === 1) return { kind: "current" };',
+  },
+  {
+    name: "m17 무판정을 current 로 — 시점 무관 질문까지 올해가 밀린다(T-target)",
+    file: RETRIEVE,
+    from: '  void nowSeason;\n  return { kind: "none" };',
+    to: '  void nowSeason;\n  return { kind: "current" };',
+  },
+  {
+    name: "m18 선수 경로에도 시즌 축 적용 — 전제(연도 분할 문서)가 없는 곳에 개입(T-target)",
+    file: SERVER,
+    from: '  const seasonAware = candidate.entityType === "team";',
+    to: "  const seasonAware = true;",
   },
 ];
 

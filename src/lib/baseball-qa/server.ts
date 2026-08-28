@@ -50,7 +50,6 @@ import {
 import {
   buildRagLlmRequest,
   RAG_SYSTEM_PROMPT,
-  RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_DOCUMENT_MAX_DISTANCE,
   RAG_NEWS_CANDIDATE_LIMIT,
@@ -58,6 +57,9 @@ import {
   RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
+  resolveSeasonTarget,
+  type SeasonLaneMode,
+  type SeasonTarget,
   type RagDocumentSourceKind,
   type RagEntityCandidate,
   type RagEvidence,
@@ -338,6 +340,12 @@ export interface RagSearchRuntime {
      * DB 가 이 벡터 기준으로 정렬한 상위 N 을 돌려주게 하기 위해 시그니처에 박는다.
      */
     queryVector: number[],
+    /**
+     * 시즌 lane. **DB 절단 전에** 목표 시즌 후보를 확보하기 위해 필요하다 —
+     * 앱에서 재정렬하면 목표 청크가 상위 40 밖일 때 복구 불가다(삼순 2026-08-28 P0-①).
+     * 생략하면 종전 단일 조회(전 시즌 대상 상위 N).
+     */
+    lane?: { mode: SeasonLaneMode; year?: number },
   ) => Promise<RagEvidenceCandidate[]>;
 }
 
@@ -356,19 +364,23 @@ export function createProductionRagSearchRuntime(
 ): RagSearchRuntime {
   return {
     embed: embedQuery,
-    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector) => {
+    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector, lane) => {
       // ⚠️ 여기서 **정렬 없이** `.from(...).limit(40)` 을 쓰면 안 된다 (2026-08-05 production 사고).
       //   문보경 나무위키 chunk 는 133건인데 무순서 40건만 받아오면 '문보물' 이 든 chunk_index 51 이
       //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
       //   그래서 **DB(pgvector)가 질문 벡터 기준으로 정렬한 상위 N** 만 받는다.
       //   최종 근거 4건 선택과 소스 우선순위는 종전대로 앱이 하므로 embedding 도 함께 받는다.
       // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+      // 🔴 lane 은 **DB 인자**다 (삼순 2026-08-28 P0-①). 앱에서 거르면 이미 잘린 뒤라
+      //   목표 시즌 청크가 상위 40 밖이면 영원히 복구되지 않는다. lane 없이 부르면
+      //   종전 5인자 오버로드가 그대로 돌아 기존 경로(선수·뉴스)는 무영향이다.
       const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
         p_entity_type: candidate.entityType,
         p_entity_id: candidate.entityId,
         p_source_kind: sourceKind,
         p_query_embedding: JSON.stringify(queryVector),
         p_limit: limit,
+        ...(lane ? { p_season_mode: lane.mode, p_season_year: lane.year ?? null } : {}),
       });
       if (error) throw error;
       return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
@@ -414,9 +426,19 @@ export async function searchRag(
   // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
   // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
   // 각 source_kind 안에서도 **질문 벡터 기준 상위 40건**이어야 한다(무순서 40건 금지).
+  const currentSeason = kstSeasonOf(now());
+  // 🔴 시즌 축은 **구단 경로에만** 켠다 (삼순 2026-08-28 P0-②).
+  //   선수 문서는 `문보경/2025년` 처럼 시즌으로 쪼개져 있지 않고, 별명·프로필·학교 같은
+  //   시점 무관 서술이 대부분이라 시즌 가중이 득보다 실이 크다. 구단 문서만 연도로
+  //   쪼개져 있다는 것이 이 축의 전제이므로 전제가 성립하는 곳에만 적용한다.
+  const seasonAware = candidate.entityType === "team";
+  const seasonTarget: SeasonTarget = seasonAware
+    ? resolveSeasonTarget(question, currentSeason)
+    : { kind: "none" };
+
   return searchSourcePriorityCandidates(
-    (sourceKind) =>
-      runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT, embedded.vector),
+    (sourceKind, limit, vector, lane) =>
+      runtime.fetchBySourceKind(candidate, sourceKind, limit, vector, lane),
     embedded.vector,
     // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
@@ -426,7 +448,8 @@ export async function searchRag(
     //   순수 코사인으로는 작년 문서가 올해를 이긴다 — `롯데 가을야구 갈 수 있을까?` 의
     //   top1 이 `롯데 자이언츠/2025년/9월`("진출 가능성 거의 사라진 상황")이었다.
     //   환각이 아니라 과거 문서를 정확히 읽은 것이므로, 고칠 지점은 생성이 아니라 검색이다.
-    kstSeasonOf(now()),
+    seasonAware ? currentSeason : undefined,
+    seasonTarget,
   );
 }
 

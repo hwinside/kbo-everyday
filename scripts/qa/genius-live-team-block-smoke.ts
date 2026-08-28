@@ -65,6 +65,7 @@ import {
   resolveTeamRecord,
   type LiveTeamProvenance,
   type StandingsRow,
+  type StandingsSnapshot,
   type TeamRecordsPayload,
 } from "../../src/lib/baseball-qa/stats/team-record";
 import {
@@ -100,12 +101,25 @@ const SEASON = kstSeasonOf(NOW);
 //   픽스처는 상수에서 기계적으로 끈어온다.
 const LG_ID = teamIdOfCanonical("LG")!;
 const LOTTE_ID = teamIdOfCanonical("롯데")!;
-const STANDINGS: StandingsRow[] = [
+const STANDINGS_ROWS: StandingsRow[] = [
   { teamName: "LG", teamId: LG_ID, games: 120, wins: 70, losses: 48, draws: 2, winRate: 0.593, gamesBehind: 0, ranking: 1 },
   { teamName: "롯데", teamId: LOTTE_ID, games: 121, wins: 58, losses: 61, draws: 2, winRate: 0.487, gamesBehind: 12.5, ranking: 7 },
 ];
+/**
+ * 🔴 순위표도 **소스가 실어보낸 수신 시각**을 함께 준다 (삼순 2026-08-28 P0-③).
+ *   `/api/standings` 는 CDN 이 최대 15분(`s-maxage=300`+`swr=600`) 캐시하므로
+ *   우리가 응답을 받은 시각으로 신선도를 재면 캐시된 값이 방금 값이 된다.
+ */
+const STANDINGS: StandingsSnapshot = {
+  rows: STANDINGS_ROWS,
+  fetchedAt: new Date(NOW - 60_000).toISOString(),
+};
+// 🔴 `fetchedAt` 은 **소스가 실어보낸** upstream 수신 시각이다 (삼순 2026-08-28 P0-③).
+//   우리가 응답을 받은 시각이 아니다 — `/api/team-records` 는 upstream 장애 시 만료
+//   캐시를 200 으로 돌려주므로, 수신 시각을 신선도로 쓰면 몇 시간 묵은 값이 방금 값이 된다.
 const RECORDS: TeamRecordsPayload = {
   season: SEASON,
+  fetchedAt: new Date(NOW - 60_000).toISOString(),
   batting: [{ teamId: LOTTE_ID, slug: "lotte", avg: ".271", ops: ".740", hr: 88, runs: 520, sb: 71, hits: 1050 }],
   pitching: [{ teamId: LOTTE_ID, slug: "lotte", era: "4.35", whip: "1.42", so: 890, sv: 30 }],
 };
@@ -126,7 +140,7 @@ function blockCarriesLiveValues(block: string | null, canonical: string): string
   const errs: string[] = [];
   if (block === null) return ["블록이 null"];
   for (const metric of ["ranking", "record"] as const) {
-    const outcome = resolveTeamRecord(metric, canonical, STANDINGS, RECORDS, teamIdOf);
+    const outcome = resolveTeamRecord(metric, canonical, STANDINGS_ROWS, RECORDS, teamIdOf);
     if (outcome.kind !== "ok") { errs.push(`${metric} 조회 실패`); continue; }
     if (!block.includes(`${outcome.label}: ${outcome.value}`)) {
       errs.push(`${metric} 원값 부재: 기대 "${outcome.label}: ${outcome.value}"`);
@@ -201,7 +215,7 @@ async function main() {
   const retrieve = stripComments(src("rag/retrieve.ts"));
 
   // ══ 순수 판정 축 ═══════════════════════════════════════════════════════
-  const ok = buildLiveTeamBlock("롯데", STANDINGS, RECORDS, teamIdOf, "standing", freshProvenance());
+  const ok = buildLiveTeamBlock("롯데", STANDINGS_ROWS, RECORDS, teamIdOf, "standing", freshProvenance());
   assert.equal(ok.kind, "ok");
   const block = ok.kind === "ok" ? ok.block : null;
 
@@ -212,10 +226,10 @@ async function main() {
   const noRanking = buildLiveTeamBlock("롯데", [], RECORDS, teamIdOf, "standing", freshProvenance());
   check("L2 순위 부재 → skip(no_ranking)",
     noRanking.kind === "skip" && noRanking.reason === "no_ranking", JSON.stringify(noRanking));
-  const unknownTeam = buildLiveTeamBlock("없는팀", STANDINGS, RECORDS, () => null, "standing", freshProvenance());
+  const unknownTeam = buildLiveTeamBlock("없는팀", STANDINGS_ROWS, RECORDS, () => null, "standing", freshProvenance());
   check("L2b 미해석 구단 → skip", unknownTeam.kind === "skip", JSON.stringify(unknownTeam));
 
-  const rankOutcome = resolveTeamRecord("ranking", "롯데", STANDINGS, RECORDS, teamIdOf);
+  const rankOutcome = resolveTeamRecord("ranking", "롯데", STANDINGS_ROWS, RECORDS, teamIdOf);
   assert.equal(rankOutcome.kind, "ok");
   if (rankOutcome.kind === "ok") {
     const structuredAnswer = composeTeamRecordAnswer(rankOutcome);
@@ -227,15 +241,15 @@ async function main() {
   // ── L9. freshness / season fail-close (삼순 착수조건 ②) ───────────────────
   //   "tier L = 항상 최신" 은 틀렸다. `/api/team-records` 는 시즌 기본값이 고정이고
   //   장애 시 만료된 메모리 캐시를 그대로 돌려준다 — 200 은 신선도의 증거가 아니다.
-  const stale = buildLiveTeamBlock("롯데", STANDINGS, RECORDS, teamIdOf, "standing",
+  const stale = buildLiveTeamBlock("롯데", STANDINGS_ROWS, RECORDS, teamIdOf, "standing",
     freshProvenance({ fetchedAt: NOW - LIVE_TEAM_BLOCK_MAX_AGE_MS - 1 }));
   check("L9 TTL 초과 → skip(stale)",
     stale.kind === "skip" && stale.reason === "stale", JSON.stringify(stale));
-  const futureFetch = buildLiveTeamBlock("롯데", STANDINGS, RECORDS, teamIdOf, "standing",
+  const futureFetch = buildLiveTeamBlock("롯데", STANDINGS_ROWS, RECORDS, teamIdOf, "standing",
     freshProvenance({ fetchedAt: NOW + 60_000 }));
   check("L9b 미래 관측시각 → skip (시계 이상은 신선함이 아니다)",
     futureFetch.kind === "skip" && futureFetch.reason === "stale", JSON.stringify(futureFetch));
-  const wrongSeason = buildLiveTeamBlock("롯데", STANDINGS,
+  const wrongSeason = buildLiveTeamBlock("롯데", STANDINGS_ROWS,
     { ...RECORDS, season: SEASON - 1 }, teamIdOf, "batting", freshProvenance());
   check("L9c 시즌 불일치 → skip(season_mismatch)",
     wrongSeason.kind === "skip" && wrongSeason.reason === "season_mismatch", JSON.stringify(wrongSeason));
@@ -260,7 +274,7 @@ async function main() {
     check(`L10 scope — ${q} → ${expected}`, resolveLiveTeamScope(q) === expected,
       `실제 ${resolveLiveTeamScope(q)}`);
   }
-  const scopeNone = buildLiveTeamBlock("롯데", STANDINGS, RECORDS, teamIdOf, "none", freshProvenance());
+  const scopeNone = buildLiveTeamBlock("롯데", STANDINGS_ROWS, RECORDS, teamIdOf, "none", freshProvenance());
   check("L10b scope=none → 블록 없음", scopeNone.kind === "skip", JSON.stringify(scopeNone));
 
   // ── L11. 가을야구 = 확률 아니라 잔여 경기까지 (삼순 착수조건 ③) ─────────
@@ -279,7 +293,7 @@ async function main() {
   // T2. 순위를 못 읽어도 team_rag 호출은 유지 — 양방향 고정.
   const t2 = await run("롯데 요즘 어때?", {
     fetchTeamRecord: {
-      fetchStandings: async () => [],
+      fetchStandings: async () => ({ ...STANDINGS, rows: [] }),
       fetchTeamRecords: async () => RECORDS,
     },
   } as Partial<QaDeps>);
@@ -306,6 +320,82 @@ async function main() {
   check("T4b scope=none → 순위 조회 0회",
     t4.calls.standingsFetch === 0 && t4.calls.recordsFetch === 0,
     `standings=${t4.calls.standingsFetch} records=${t4.calls.recordsFetch}`);
+
+  // ── T6. source timestamp 결속 (삼순 2026-08-28 P0-③) ────────────────────
+  //   `/api/team-records` 는 upstream 장애 시 **만료 캐시를 200 으로** 돌려준다.
+  //   우리가 응답을 받은 시각으로 신선도를 재면 몇 시간 묵은 값이 방금 값이 된다.
+  const staleSource = await run("롯데 요즘 어때?", {
+    fetchTeamRecord: {
+      fetchStandings: async () => STANDINGS,
+      // 소스가 "2시간 전에 받은 데이터"라고 말한다 — 우리 수신 시각은 방금이다.
+      fetchTeamRecords: async () => ({
+        ...RECORDS,
+        fetchedAt: new Date(NOW - 2 * 60 * 60 * 1000).toISOString(),
+      }),
+    },
+  } as Partial<QaDeps>);
+  check("T6 소스가 stale 이라 말하면 블록 미주입",
+    staleSource.calls.teamExtras[0]?.liveTeamBlock === undefined,
+    JSON.stringify(staleSource.calls.teamExtras[0]));
+  check("T6b 그래도 team_rag 는 유지", staleSource.result.source === "team_rag",
+    String(staleSource.result.source));
+
+  //   소스가 수신 시각을 안 실어보내면 **모름**이다 — 모르면 현재를 단정하지 않는다.
+  const noTimestamp = await run("롯데 요즘 어때?", {
+    fetchTeamRecord: {
+      fetchStandings: async () => STANDINGS,
+      fetchTeamRecords: async () => {
+        const { fetchedAt: _drop, ...rest } = RECORDS;
+        void _drop;
+        return rest;
+      },
+    },
+  } as Partial<QaDeps>);
+  check("T6c 소스 timestamp 부재 → 블록 미주입 (부재 ≠ 방금)",
+    noTimestamp.calls.teamExtras[0]?.liveTeamBlock === undefined,
+    JSON.stringify(noTimestamp.calls.teamExtras[0]));
+
+  //   🔴 순위표 축도 **대칭**으로 닫는다. 블록은 두 소스를 함께 실으므로 한쪽만 신선해도
+  //   전체가 신선하다고 말하면 무엇이 묵은 것인지 구분되지 않는다.
+  const staleStandings = await run("롯데 요즘 어때?", {
+    fetchTeamRecord: {
+      fetchStandings: async () => ({
+        ...STANDINGS,
+        fetchedAt: new Date(NOW - 2 * 60 * 60 * 1000).toISOString(),
+      }),
+      fetchTeamRecords: async () => RECORDS,
+    },
+  } as Partial<QaDeps>);
+  check("T6e 순위표가 stale 이면 블록 미주입 (둘 중 오래된 쪽 기준)",
+    staleStandings.calls.teamExtras[0]?.liveTeamBlock === undefined,
+    JSON.stringify(staleStandings.calls.teamExtras[0]));
+
+  const noStandingsTimestamp = await run("롯데 요즘 어때?", {
+    fetchTeamRecord: {
+      fetchStandings: async () => ({ rows: STANDINGS_ROWS }),
+      fetchTeamRecords: async () => RECORDS,
+    },
+  } as Partial<QaDeps>);
+  check("T6f 순위표 timestamp 부재 → 블록 미주입",
+    noStandingsTimestamp.calls.teamExtras[0]?.liveTeamBlock === undefined,
+    JSON.stringify(noStandingsTimestamp.calls.teamExtras[0]));
+
+  //   🔴 회귀 축: 판정 기준 시각을 조회 **전**에 읽으면 프로덕션(`Date.now`)에서 age 가
+  //   음수가 되어 블록이 항상 죽는다. 고정 시계 게이트는 이걸 못 본다 —
+  //   그래서 여기서만 **실제로 흐르는 시계**를 주입해 조회 지연을 만든다.
+  const flowing = await run("롯데 요즘 어때?", {
+    now: undefined,
+    fetchTeamRecord: {
+      fetchStandings: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return { rows: STANDINGS_ROWS, fetchedAt: new Date().toISOString() };
+      },
+      fetchTeamRecords: async () => ({ ...RECORDS, fetchedAt: new Date().toISOString() }),
+    },
+  } as Partial<QaDeps>);
+  check("T6d 흐르는 시계 + 조회 지연에도 블록이 산다 (음수 age 회귀)",
+    typeof flowing.calls.teamExtras[0]?.liveTeamBlock === "string",
+    JSON.stringify(flowing.calls.teamExtras[0]));
 
   // T5. 주입 시 요청 본문이 실제로 달라진다 — 무증상 방지(1차 L6 의 결함).
   const injected = buildRagLlmRequest("롯데 요즘 어때?", TEAM_EVIDENCE, RAG_TEAM_SYSTEM_PROMPT,

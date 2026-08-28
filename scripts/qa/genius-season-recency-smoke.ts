@@ -31,11 +31,17 @@ import { readFileSync } from "node:fs";
 import {
   parseEvidenceSeason,
   rankEvidenceByQuery,
+  resolveSeasonTarget,
+  searchSourcePriorityCandidates,
+  seasonLanePlan,
   seasonRecencyWeight,
+  seasonTargetWeight,
   SEASON_RECENCY_CURRENT_BOOST,
   SEASON_RECENCY_DECAY_PER_YEAR,
   SEASON_RECENCY_MIN_WEIGHT,
   type RagEvidence,
+  type RagEvidenceCandidate,
+  type SeasonLaneMode,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const SELFTEST = process.argv.includes("--selftest");
@@ -76,7 +82,7 @@ function evidence(
   } as RagEvidence & { embedding: number[] };
 }
 
-function main() {
+async function main() {
   const retrieve = stripComments(
     readFileSync(new URL("../../src/lib/baseball-qa/rag/retrieve.ts", import.meta.url), "utf8"));
   const server = stripComments(
@@ -101,9 +107,27 @@ function main() {
     ["NC 다이노스/2011~2012년", 2012],
   ];
   for (const [path, expected] of seasonCases) {
-    const got = parseEvidenceSeason({ sectionPath: path, pageTitle: "" });
+    const got = parseEvidenceSeason({ sectionPath: path, pageTitle: "", canonicalUrl: "" });
     check(`S1 시즌 추출 — ${path} → ${expected}`, got === expected, `실제 ${got}`);
   }
+
+  // 🔴 S1b 문서 identity 우선 (삼순 2026-08-28). `pageTitle`·`canonicalUrl` 이 문서의
+  //   정체다 — 하위 section 에 다른 연도가 스쳐도 상위 문서 시즌을 덮으면 안 된다.
+  check("S1b identity(pageTitle)가 section 을 덮는다",
+    parseEvidenceSeason({
+      pageTitle: "한화 이글스/2026년",
+      sectionPath: "3.2. 2017년 대비 개선점",
+      canonicalUrl: "",
+    }) === 2026);
+  check("S1c identity 안 다년 표기는 최신 채택",
+    parseEvidenceSeason({
+      pageTitle: "NC 다이노스/2011~2012년", sectionPath: "", canonicalUrl: "",
+    }) === 2012);
+  check("S1d canonicalUrl(퍼센트 인코딩)에서도 연도를 읽는다",
+    parseEvidenceSeason({
+      pageTitle: "", sectionPath: "",
+      canonicalUrl: "https://namu.wiki/w/%ED%95%9C%ED%99%94%20%EC%9D%B4%EA%B8%80%EC%8A%A4/2024%EB%85%84",
+    }) === 2024);
 
   // ── S2. 판정 입력은 경로다 (본문 연도 무시) ──────────────────────────────
   //    🔴 본문에서 연도를 긁으면 `1999년 한국시리즈 우승` 서술이 문서 시점이 된다.
@@ -113,8 +137,9 @@ function main() {
   const bodyYearRow = {
     sectionPath: "한화 이글스",
     pageTitle: "한화 이글스",
+    canonicalUrl: "https://namu.wiki/w/%ED%95%9C%ED%99%94%20%EC%9D%B4%EA%B8%80%EC%8A%A4",
     content: "1986년 3월 8일 빙그레 이글스라는 이름으로 창단했으며, 1999년 한국시리즈에서 우승했다.",
-  } as unknown as Pick<RagEvidence, "sectionPath" | "pageTitle">;
+  } as unknown as Pick<RagEvidence, "sectionPath" | "pageTitle" | "canonicalUrl">;
   check("S2 본문 연도는 판정에 안 쓴다", parseEvidenceSeason(bodyYearRow) === null,
     String(parseEvidenceSeason(bodyYearRow)));
 
@@ -196,11 +221,147 @@ function main() {
   //    존재 확인이 아니라 **현재 시즌이 실제로 넘어가는지** + 시각이 주입 가능한지.
   check("S7 searchRag 가 현재 시즌을 전달", /kstSeasonOf\(now\(\)\)/.test(server));
   check("S7b now 가 주입 가능한 seam", /now:\s*\(\)\s*=>\s*number\s*=\s*Date\.now/.test(server));
-  check("S7c searchSourcePriorityCandidates 가 currentSeason 을 하류로 전달",
-    /rankEvidenceByQuery\(\s*\[\.\.\.wikipediaRows,\s*\.\.\.namuRows\],\s*queryVector,\s*weightFor,\s*project,\s*currentSeason,?\s*\)/
+  check("S7c searchSourcePriorityCandidates 가 currentSeason·target 을 하류로 전달",
+    /rankEvidenceByQuery\(\s*deduped,\s*queryVector,\s*weightFor,\s*project,\s*currentSeason,\s*target,?\s*\)/
       .test(retrieve));
   check("S7d 시즌 가중이 랭킹 점수에 곱해진다",
     /base \* weight \* seasonWeight/.test(retrieve));
+
+  // ══ T. 질문 시점 target (삼순 2026-08-28 P0-②) ═══════════════════════════
+  //   초안은 season 가중을 **모든 질문에 무조건** 적용했다. `2018년 한화`·`2027 전망`·
+  //   `역대 감독` 이 올해 문서에 밀리면 안 된다. 가중 전에 "언제를 물었나"부터 정한다.
+  const targetCases: ReadonlyArray<[string, string, number | undefined]> = [
+    ["2018년 한화 어땠어?", "year", 2018],
+    ["2027 한화 전망 알려줘", "year", 2027],
+    ["한화 역대 감독 알려줘", "historical", undefined],
+    ["롯데 통산 우승 횟수", "historical", undefined],
+    ["한화 이글스 연혁", "historical", undefined],
+    ["한화 감독 누구여", "current", undefined],
+    ["롯데 요즘 어때?", "current", undefined],
+    ["롯데 가을야구 갈 수 있을까?", "current", undefined],
+    ["롯데 투수 선발진을 알려줘", "current", undefined],
+    // 시점 무관 — 개입하지 않는다(모르면 종전 순서가 기본값).
+    ["한화 대표 응원가 불러줘", "none", undefined],
+    ["엔씨 04번 누구야?", "none", undefined],
+    // 복수 연도는 하나로 못 좁힌다 → 개입 없음.
+    ["2018년과 2019년 한화 비교해줘", "none", undefined],
+  ];
+  for (const [question, kind, year] of targetCases) {
+    const target = resolveSeasonTarget(question, CURRENT_SEASON);
+    const ok = target.kind === kind
+      && (year === undefined || (target.kind === "year" && target.year === year));
+    check(`T1 target — ${question} → ${kind}${year ? `(${year})` : ""}`, ok,
+      JSON.stringify(target));
+  }
+
+  // 역대·명시연도 질문에서 **올해 문서가 boost 받지 않는지** 를 값으로 고정한다.
+  check("T2 역대 질문은 전 시즌 중립",
+    seasonTargetWeight(CURRENT_SEASON, { kind: "historical" }, CURRENT_SEASON) === 1
+    && seasonTargetWeight(1999, { kind: "historical" }, CURRENT_SEASON) === 1);
+  check("T2b 명시 연도는 그 해가 boost, 올해는 아님",
+    seasonTargetWeight(2018, { kind: "year", year: 2018 }, CURRENT_SEASON)
+      === SEASON_RECENCY_CURRENT_BOOST
+    && seasonTargetWeight(CURRENT_SEASON, { kind: "year", year: 2018 }, CURRENT_SEASON) < 1);
+  check("T2c none 은 전부 중립",
+    seasonTargetWeight(CURRENT_SEASON, { kind: "none" }, CURRENT_SEASON) === 1);
+
+  // 종단: `2018년 한화` 질문에서 2018 문서가 실제로 올라오는가(유사도는 올해가 근소 우위).
+  const y2018 = rankEvidenceByQuery(
+    [evidence("한화 이글스/2026년", 0.82), evidence("한화 이글스/2018년", 0.80)],
+    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "year", year: 2018 },
+  );
+  check("T3 명시 연도 종단 — 2018 문서가 top1", y2018[0].sectionPath.includes("2018년"),
+    y2018[0].sectionPath);
+  const historical = rankEvidenceByQuery(
+    [evidence("한화 이글스", 0.80), evidence("한화 이글스/2026년", 0.79)],
+    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "historical" },
+  );
+  check("T3b 역대 종단 — 순수 유사도 순서 유지(올해 boost 없음)",
+    historical[0].sectionPath === "한화 이글스", historical[0].sectionPath);
+
+  // ══ L. 시즌 lane (삼순 2026-08-28 P0-①) ══════════════════════════════════
+  //   🔴 RPC 가 순수 코사인 상위 40 을 먼저 자른 뒤 앱이 가중한다. 목표 시즌 청크가
+  //   41위 밖이면 앱에서 아무리 가중해도 복구 불가다 — lane 은 **DB 절단 전**이어야 한다.
+  const planCurrent = seasonLanePlan({ kind: "current" }, CURRENT_SEASON);
+  check("L1 current lane 계획 — year/yearless/any 3 lane",
+    planCurrent.length === 3
+    && planCurrent[0].mode === "year" && planCurrent[0].year === CURRENT_SEASON
+    && planCurrent.some((l) => l.mode === "yearless")
+    && planCurrent.some((l) => l.mode === "any"),
+    JSON.stringify(planCurrent));
+  const planYear = seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON);
+  check("L1b 명시 연도 lane 은 그 해로", planYear[0].mode === "year" && planYear[0].year === 2018,
+    JSON.stringify(planYear));
+  check("L1c 역대·none 은 단일 any lane (개입 없음)",
+    seasonLanePlan({ kind: "historical" }, CURRENT_SEASON).length === 1
+    && seasonLanePlan({ kind: "none" }, CURRENT_SEASON).length === 1);
+  check("L1d general(any) lane 을 항상 함께 둔다 — 목표 연도에 답이 없어도 답이 나온다",
+    planCurrent.some((l) => l.mode === "any") && planYear.some((l) => l.mode === "any"));
+
+  // 종단: lane 이 **DB 호출 인자로** 나가고, 절단 밖 목표 시즌 청크가 복구되는가.
+  const laneCalls: Array<{ mode?: SeasonLaneMode; year?: number }> = [];
+  const CAP = 2; // DB 절단을 작게 흉내낸다 — 목표 시즌 문서가 순수 코사인 밖에 있다.
+  // 🔴 무대 설계 — mutation 이 결함이 되려면 픽스처가 경계를 실제로 걸쳐야 한다(M90).
+  //   ① `2026년/9월` 은 any lane 절단(상위 2) **밖**이라 lane 없이는 영영 못 본다 → L2b
+  //   ② `2026년/8월` 은 any lane 안에도 있고 year lane 에도 있다 → **중복** 발생 → L2c
+  const corpus: Array<RagEvidenceCandidate> = [
+    evidence("롯데 자이언츠/2026년/8월", 0.90),  // any lane 1위 + year lane
+    evidence("롯데 자이언츠/2019년", 0.89),      // any lane 2위
+    evidence("롯데 자이언츠/2020년", 0.88),
+    evidence("롯데 자이언츠/2026년/9월", 0.70),  // 목표 시즌인데 any lane 절단 밖
+  ];
+  const laneFetch = async (
+    _sourceKind: "wikipedia_document" | "namu_document",
+    _limit: number,
+    _vector: number[],
+    lane?: { mode: SeasonLaneMode; year?: number },
+  ): Promise<RagEvidenceCandidate[]> => {
+    laneCalls.push({ mode: lane?.mode, year: lane?.year });
+    if (_sourceKind === "wikipedia_document") return [];
+    const pool = lane?.mode === "year"
+      ? corpus.filter((row) => (row.sectionPath ?? "").includes(String(lane.year)))
+      : lane?.mode === "yearless"
+        ? corpus.filter((row) => !/(19|20)\d{2}/.test(row.sectionPath ?? ""))
+        : corpus;
+    // DB 는 순수 코사인 상위 N 만 돌려준다.
+    return pool.slice(0, CAP);
+  };
+  const laneRanked = await searchSourcePriorityCandidates(
+    laneFetch, QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "current" },
+  );
+  check("L2 lane 이 DB 인자로 나간다 (year/yearless/any)",
+    laneCalls.some((c) => c.mode === "year" && c.year === CURRENT_SEASON)
+    && laneCalls.some((c) => c.mode === "yearless")
+    && laneCalls.some((c) => c.mode === "any"),
+    JSON.stringify(laneCalls));
+  check("L2b 절단 밖 목표 시즌 문서가 복구된다",
+    laneRanked.some((row) => (row.sectionPath ?? "").includes("2026년/9월")),
+    laneRanked.map((r) => r.sectionPath).join("|"));
+  check("L2c lane 중복이 제거된다 (같은 chunk 가 두 번 안 실린다)",
+    new Set(laneRanked.map((r) => `${r.canonicalUrl}\u0000${r.sectionPath}`)).size
+      === laneRanked.length,
+    laneRanked.map((r) => r.sectionPath).join("|"));
+
+  // lane 을 안 쓰는 경로(none·historical)는 종전처럼 **단일 조회**여야 한다.
+  const singleCalls: Array<{ mode?: SeasonLaneMode }> = [];
+  await searchSourcePriorityCandidates(
+    async (sourceKind, _l, _v, lane) => {
+      singleCalls.push({ mode: lane?.mode });
+      return sourceKind === "namu_document" ? [evidence("롯데 자이언츠", 0.5)] : [];
+    },
+    QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "historical" },
+  );
+  check("L2d 역대 질문은 lane 없이 단일 조회 (인자도 안 넘긴다)",
+    singleCalls.length === 2 && singleCalls.every((c) => c.mode === undefined),
+    JSON.stringify(singleCalls));
+
+  // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
+  check("W1 시즌 축은 team 경로 한정",
+    /const seasonAware = candidate\.entityType === "team";/.test(server));
+  check("W1b seasonAware 가 실제로 전달된다",
+    /seasonAware \? currentSeason : undefined,\s*\n\s*seasonTarget,/.test(server));
+  check("W1c lane 이 RPC 인자로 나간다",
+    /p_season_mode: lane\.mode/.test(server) && /p_season_year: lane\.year/.test(server));
 
   if (SELFTEST) {
     console.log("\n── selftest (판정 경계) ──");
@@ -216,4 +377,7 @@ function main() {
   if (failures > 0) process.exit(1);
 }
 
-main();
+main().catch((error) => {
+  console.error("FAIL 게이트 실행 실패", error);
+  process.exit(1);
+});

@@ -305,7 +305,8 @@ function snapshotFetchers(
   const frozenStandings = cloneSnapshot(standings);
   const frozenRecords = cloneSnapshot(teamRecords);
   return {
-    fetchStandings: async () => cloneSnapshot(frozenStandings),
+    // 순위표는 **행 + 소스 수신 시각** 스냅샷이다 (삼순 2026-08-28 P0-③).
+    fetchStandings: async () => ({ rows: cloneSnapshot(frozenStandings), fetchedAt: new Date().toISOString() }),
     fetchTeamRecords: async () => cloneSnapshot(frozenRecords),
   };
 }
@@ -366,7 +367,7 @@ async function captureTeamSnapshot(
     source.fetchStandings(),
     source.fetchTeamRecords(),
   ]);
-  const standings = cloneSnapshot(liveStandings);
+  const standings = cloneSnapshot(liveStandings.rows);
   const teamRecords = cloneSnapshot(liveTeamRecords);
   assertTeamSnapshotContract(standings, teamRecords);
   return { standings, teamRecords, fetchers: snapshotFetchers(standings, teamRecords) };
@@ -406,7 +407,7 @@ async function verifyTeamNumericAnswers() {
         standingsReads += 1;
         const rows = cloneSnapshot(standings);
         if (standingsReads > 1) rows[0].wins += 1;
-        return rows;
+        return { rows, fetchedAt: new Date().toISOString() };
       },
       fetchTeamRecords: async () => {
         recordsReads += 1;
@@ -1019,10 +1020,11 @@ async function verifyTeamPairEndToEnd() {
     TEAM_PAIR_METRICS, isTeamPairMetric, mentionsUnservedTeamTopic, resolveTeamRecordIntent,
   } = await import("@/lib/baseball-qa/stats/team-record");
   const fetchers = createTeamRecordFetchers();
-  const [standings, teamRecords] = await Promise.all([
+  const [standingsSnapshot, teamRecords] = await Promise.all([
     fetchers.fetchStandings(),
     fetchers.fetchTeamRecords(),
   ]);
+  const standings = standingsSnapshot.rows;
   const byName = (name: string) => {
     const row = standings.find((r) => r.teamName === name);
     assert.ok(row, `표본 팀 행이 없다: ${name}`);
@@ -1057,7 +1059,7 @@ async function verifyTeamPairEndToEnd() {
     // 조회 호출 수를 센다 — 값을 받아놓고 버리는 형태도 나중에 누수 통로가 된다.
     let fetchCalls = 0;
     const countingFetchers = {
-      fetchStandings: async () => { fetchCalls += 1; return standings; },
+      fetchStandings: async () => { fetchCalls += 1; return { rows: standings, fetchedAt: new Date().toISOString() }; },
       fetchTeamRecords: async () => teamRecords,
     };
     const result = await answerQuestion("u-team-pair", question, {
@@ -1275,7 +1277,10 @@ async function verifyTeamPairEndToEnd() {
     const state: RunState = { llmCalls: 0, logs: [] };
     const result = await answerQuestion("u-team-pair-missing", "엘지랑 두산이랑 몇게임 차야?", {
       ...makeDeps(state),
-      fetchTeamRecord: { fetchStandings: async () => partial, fetchTeamRecords: async () => teamRecords },
+      fetchTeamRecord: {
+        fetchStandings: async () => ({ rows: partial, fetchedAt: new Date().toISOString() }),
+        fetchTeamRecords: async () => teamRecords,
+      },
     } as QaDeps);
     assert.equal(result.source, "history_hold", `한 행이 없는데 source=${result.source}`);
     assert.equal(result.answer, TEAM_STAT_HOLD_ANSWER, `안내문이 아니다 — "${result.answer}"`);
