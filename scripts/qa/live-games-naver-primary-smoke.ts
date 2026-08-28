@@ -165,6 +165,13 @@ async function main() {
   assert.equal(g1.games.length, 1, "P1 games");
   assert.equal(g1.games[0].B_SCORE_CN, "8", "P1 홈 점수 최신 8 (Naver)");
   assert.equal(g1.games[0].GAME_STATE_SC, "2", "P1 live");
+  // 관측 노출(삼순 2026-08-28 분리 선배포): relay 점수가 null 이면 schedule 점수가 쓰인다는
+  // 사실이 trace.enrichObs 에 score-src=schedule 로 남아야 한다(응답 JSON 판독 계약).
+  assert.equal(
+    g1.trace.enrichObs?.includes(`${GID}:score-src=schedule`),
+    true,
+    `P1 enrichObs score-src=schedule 기록 (실제: ${JSON.stringify(g1.trace.enrichObs)})`,
+  );
   pass += 1;
 
   // P2) Naver schedule 다운 → KBO-primary fallback.
@@ -278,6 +285,12 @@ async function main() {
   );
   assert.equal(g8.games[0].B_SCORE_CN, "8", "P8 relay 점수(8)가 schedule 점수(5)를 override");
   assert.equal(g8.games[0].T_SCORE_CN, "0", "P8 relay away 점수");
+  // 관측 노출: relay 점수가 실제 쓰인 틱은 score-src=relay 로 기록되어야 한다.
+  assert.equal(
+    g8.trace.enrichObs?.includes(`${GID}:score-src=relay`),
+    true,
+    `P8 enrichObs score-src=relay 기록 (실제: ${JSON.stringify(g8.trace.enrichObs)})`,
+  );
   pass += 1;
 
   // W) 위젯 되감기 가드(B② 3축) — iOS 위젯 away|home 포맷.

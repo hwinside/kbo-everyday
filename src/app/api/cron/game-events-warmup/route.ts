@@ -426,6 +426,12 @@ export async function GET(req: NextRequest) {
     date,
     polled: liveGameIds.length,
     liveGameIds,
+    // 소스 관측(삼순 2026-08-28 분리 선배포) — mode B(stale-equal) 판독을 tail 가시성과
+    // 무관하게 응답에서 직접 한다. 기각/확정 판정은 score-src 단독이 아니라
+    // relay-failed/deadline-cut(조건 발현 여부)와 source/stage(소스 경로)를 함께 읽는다.
+    liveSource: initialFetch.trace.source,
+    liveStage: initialFetch.trace.stage,
+    enrichObs: initialFetch.trace.enrichObs ?? [],
     gameNotify,
     rankNotify,
     scoreNotify,

@@ -49,6 +49,11 @@ export type LiveGamesTrace = {
   sourceAtMs: number;
   fetchedAtMs: number;
   deadlineAtMs: number;
+  // relay enrich 관측(삼순 2026-08-28 분리 선배포) — 콘솔 로그와 동일한 enrichObs 를
+  // 응답 JSON 까지 올려 tail 가시성과 무관하게 mode B 판독이 가능하게 한다.
+  // 항목 형식: "<gameId>:score-src=relay|schedule" | "<gameId>:relay-failed" | "<gameId>:deadline-cut".
+  // Naver-primary 경로에서만 채워진다(failover 로 KBO-primary 로 넘어가면 부재).
+  enrichObs?: string[];
 };
 
 type NaverLiveEvidence = {
@@ -246,6 +251,8 @@ async function enrichNaverLiveGames(
   // 점수를 relay(evidence)로 override 할지 — Naver-primary(warmup) 경로만 true(#1311 삼순 P1 스코프).
   // fetchKboLiveGames failover 는 false(기본값) → watchdog·관제 등 공유 소비자는 기존 동작 유지.
   overrideScoreFromRelay = false,
+  // 관측 수집기(optional) — 호출자가 넘기면 콘솔과 동일한 enrichObs 항목을 여기에도 받는다.
+  obsOut?: string[],
 ): Promise<KboRawGame[]> {
   // relay enrich 관측(삼순 2026-08-27 재리뷰 — "조용한 schedule 폴백" 사각지대 폐쇄):
   // per-game relay 실패/deadline 잘림과 이번 틱 점수 출처(relay|schedule)를 카운트해
@@ -311,6 +318,7 @@ async function enrichNaverLiveGames(
   if (enrichObs.length > 0) {
     console.log(`[naver-enrich] override=${overrideScoreFromRelay} ${enrichObs.join(" ")}`);
   }
+  obsOut?.push(...enrichObs);
   return verifiedGames.map(naverGameToRaw);
 }
 
@@ -536,11 +544,13 @@ export async function fetchLiveGamesNaverPrimary(
     const enrichedBase = kboResult.status === "fulfilled"
       ? overlayKboQuasiStatic(naverResult.value, kboResult.value)
       : naverResult.value;
+    const enrichObs: string[] = [];
     const rawGames = await enrichNaverLiveGames(
       enrichedBase,
       absoluteDeadlineAtMs,
       fetchNaverEvidenceImpl,
       true, // Naver-primary — 점수도 relay 로 override(warmup 한정 스코프)
+      enrichObs,
     );
     return {
       ok: true,
@@ -551,6 +561,7 @@ export async function fetchLiveGamesNaverPrimary(
         sourceAtMs,
         fetchedAtMs: Date.now(),
         deadlineAtMs: absoluteDeadlineAtMs,
+        enrichObs,
       },
     };
   } catch {
