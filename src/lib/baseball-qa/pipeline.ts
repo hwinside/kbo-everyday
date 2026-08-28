@@ -94,7 +94,10 @@ import {
   composeTeamRecordAnswer,
   isTeamPairMetric,
   isTeamScoreQuestion,
+  kstSeasonOf,
+  LIVE_TEAM_BLOCK_MAX_AGE_MS,
   mentionsUnservedTeamTopic,
+  resolveLiveTeamScope,
   resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
@@ -4675,15 +4678,32 @@ async function answerOfficialDocumentQuestion(
  */
 async function buildLiveTeamBlockForCandidate(
   canonicalTeam: string,
+  question: string,
   deps: QaDeps,
 ): Promise<string | null> {
   if (!deps.fetchTeamRecord) return null;
+  // 질문이 현재성 정본을 안 요구하면 **조회도 하지 않는다** — 무관한 정본을 넣으면
+  // 모델이 그걸 답에 끌어다 쓰고(응원가 질문에 성적 서술), 외부 호출도 낭비다.
+  const scope = resolveLiveTeamScope(question);
+  if (scope === "none") return null;
+  const now = (deps.now ?? Date.now)();
   try {
     const [standings, records] = await Promise.all([
       deps.fetchTeamRecord.fetchStandings(),
       deps.fetchTeamRecord.fetchTeamRecords(),
     ]);
-    return buildLiveTeamBlock(canonicalTeam, standings, records, teamIdOfCanonical);
+    // 관측 시각은 **응답을 받은 직후**다. upstream 이 만료 캐시를 돌려도 그건 알 수 없으므로
+    // 여기서의 TTL 은 "우리가 본 지 얼마나 지났나" 만 보장한다 — 시즌 불일치는 별도 축이다.
+    const outcome = buildLiveTeamBlock(
+      canonicalTeam, standings, records, teamIdOfCanonical, scope,
+      {
+        fetchedAt: (deps.now ?? Date.now)(),
+        now,
+        maxAgeMs: LIVE_TEAM_BLOCK_MAX_AGE_MS,
+        expectedSeason: kstSeasonOf(now),
+      },
+    );
+    return outcome.kind === "ok" ? outcome.block : null;
   } catch {
     // 조회 실패는 블록 미설정이지 경로 차단이 아니다(위 주석).
     return null;
@@ -6094,7 +6114,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // ⚠️ 조회 실패는 **경로를 막지 않는다**. 블록이 없으면 프롬프트가 "현재 단정 금지"
     //   계약으로 동작한다 — 종전 거동보다 나빠지지 않고, 순위 조회 장애가 구단 서술 질문을
     //   통째로 죽이는 것이 더 나쁘다(배포 가용성을 외부 API 에 위임하지 않는다).
-    const liveTeamBlock = await buildLiveTeamBlockForCandidate(teamRagCandidate.name, deps);
+    const liveTeamBlock = await buildLiveTeamBlockForCandidate(teamRagCandidate.name, question, deps);
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
       { context: context ?? undefined, liveTeamBlock: liveTeamBlock ?? undefined },

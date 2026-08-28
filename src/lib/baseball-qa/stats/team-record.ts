@@ -396,10 +396,83 @@ export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { ki
 //     (`null`) — 반쪽 블록으로 "현재"를 주장하게 하는 것이 안 주는 것보다 나쁘다.
 //   · 조회 실패는 호출부가 처리한다. 이 함수는 순수 함수다(게이트가 직접 태울 수 있어야 한다).
 
-/** tier L 블록에 싣는 지표 — 구단의 **현재 상태**를 서술하는 데 필요한 최소 집합. */
-const LIVE_TEAM_BLOCK_METRICS: readonly TeamMetricKey[] = [
-  "ranking", "record", "winRate", "gamesBehind", "avg", "era",
-];
+/**
+ * 질문이 요구하는 **현재성 종류**(claim scope). 삼순 2026-08-28 착수 조건 ③ —
+ * 순위·로스터·상대전적을 **모든 team_rag 프롬프트에 통째로 넣지 않는다**.
+ *
+ * 🔴 왜 범위를 가르는가: 무관한 정본을 넣으면 모델이 그걸 답에 끌어다 쓴다.
+ *   `한화 응원가 알려줘` 에 순위표를 주면 응원가 서술에 성적 이야기가 섞인다.
+ *   그리고 범위 밖 주제(감독·등번호·선발로테이션)는 **우리가 정본을 안 가졌으므로**
+ *   블록이 없는 것이 맞다 — 그때는 프롬프트의 "현재 확인 불가 + 역사 맥락 명시" 계약이 받는다.
+ */
+export type LiveTeamScope = "standing" | "batting" | "pitching" | "none";
+
+/** scope 별 주입 지표 — 닫힌 집합. 여기 없는 지표는 블록에 들어가지 않는다. */
+const LIVE_SCOPE_METRICS: Record<Exclude<LiveTeamScope, "none">, readonly TeamMetricKey[]> = {
+  standing: ["ranking", "record", "winRate", "gamesBehind", "games"],
+  batting: ["ranking", "avg", "ops", "hr", "runs"],
+  pitching: ["ranking", "era", "whip", "so", "sv"],
+};
+
+/**
+ * 질문 → 필요한 현재성 scope.
+ *
+ * ⚠️ 이 판정은 **닫힌 집합**이라 룰이 맞다(M90 기준: 입력이 지표어 폐쇄집합).
+ *   의도를 분류하는 게 아니라 **어떤 정본을 같이 줄까**를 고를 뿐이고,
+ *   잘못 골라도 안전하다(과탐=무관한 정본 1줄, 미탐=종전 계약인 "현재 확인 불가").
+ *   반면 자유 서술을 뜼어보는 것은 LLM 의 몫이다 — 여기서 하지 않는다.
+ */
+export function resolveLiveTeamScope(question: string): LiveTeamScope {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  // 투구·마운드 축이 먼저 — `선발진 방어율` 같은 복합어에서 타격으로 밀리면 안 된다.
+  if (/투수|마운드|불펜|방어율|평균자책|era|whip|탈삼진|세이브|실점/.test(normalized)) return "pitching";
+  if (/타격|타선|타율|홈런|득점|출루|장타|ops|도루|타당/.test(normalized)) return "batting";
+  if (
+    /순위|몇\s*위|등수|랭킹|게임\s*차|승차|성적|전적|승률|가을야구|포스트시즌|진출|떨어질|탈락|우승\s*가능|요즘\s*어때|요증\s*어때|잘하|못하|부진|상승세|연승|연패/
+      .test(normalized)
+  ) return "standing";
+  return "none";
+}
+
+/**
+ * tier L 근거의 **provenance envelope** (삼순 2026-08-28 착수 조건 ②).
+ *
+ * 🔴 "tier L = 항상 최신" 은 틀렸다. `/api/team-records` 는 기본 시즌이 **고정 2026**이고
+ *   장애 시 **만료된 메모리 캐시**를 그대로 돌려준다(route 실측). 즉 응답 200 은
+ *   신선도의 증거가 아니다 — M90 `값으로는 결측을 판정할 수 없다` 와 같은 축이라
+ *   provenance 를 **값과 별도 축**으로 싫고 실패 시 현재 단정을 금지한다.
+ */
+export interface LiveTeamProvenance {
+  /** 이 값을 **우리가 관측한** 시각(ms). 원천 계산 시각이 아니다 — 그건 API 가 안 준다. */
+  fetchedAt: number;
+  /** 판정 기준 시각(ms). */
+  now: number;
+  /** 허용 최대 나이(ms). 초과는 "현재"를 말할 근거 상실로 보고 fail-close. */
+  maxAgeMs: number;
+  /** 기대 시즌(KST 연도). `records.season` 과 불일치면 fail-close. */
+  expectedSeason: number;
+}
+
+/**
+ * tier L 블록 상한 — upstream 캐시(team-records 30분 + SWR)보다 넓게 잡으면 의미가 없고,
+ * 좁게 잡으면 정상 응답을 계속 버린다. 상수로 박고 env 로 느슨하지 않는다(M90).
+ */
+export const LIVE_TEAM_BLOCK_MAX_AGE_MS = 45 * 60 * 1000;
+
+/** 정규시즌 총 경기 수 (KBO 2026 = 팀당 144). 잔여 경기 산출의 유일한 근거. */
+export const KBO_REGULAR_SEASON_GAMES = 144;
+
+/** KST 기준 연도 — 시즌 결속 판정의 SSOT. */
+export function kstSeasonOf(nowMs: number): number {
+  return Number(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul", year: "numeric",
+  }).format(new Date(nowMs)));
+}
+
+/** 블록 생성 실패 사유 — 게이트가 어느 축이 닫혔는지 구분해 고정한다. */
+export type LiveTeamBlockOutcome =
+  | { kind: "ok"; block: string }
+  | { kind: "skip"; reason: "scope_none" | "stale" | "season_mismatch" | "no_ranking" | "no_metrics" };
 
 /**
  * 구단의 **현재 시즌 상황** 블록을 만든다 (tier L).
@@ -407,24 +480,66 @@ const LIVE_TEAM_BLOCK_METRICS: readonly TeamMetricKey[] = [
  * 반환 문자열은 프롬프트에 데이터 구획으로 들어간다. 지시문은 넣지 않는다 —
  * 지시는 systemInstruction 에만 둔다(프롬프트 인젝션 경계 계약).
  *
- * @returns 블록 문자열. 순위조차 못 읽으면 `null`.
+ * fail-close 축 4개 — 하나라도 걸리면 블록을 만들지 않는다:
+ *   · `scope_none`     질문이 이 정본을 안 요구함(감독·응원가·등번호…)
+ *   · `stale`          관측 시각이 TTL 밖 → 현재 단정 금지
+ *   · `season_mismatch` 응답 시즌 ≠ 현재 시즌 → 작년 값을 오늘로 말하지 않는다
+ *   · `no_ranking`     순위를 못 읽음 → 반쪽 블록으로 "현재"를 주장하게 두지 않는다
  */
 export function buildLiveTeamBlock(
   canonicalTeam: string,
   standings: StandingsRow[],
   records: TeamRecordsPayload,
   teamIdOf: (canonical: string) => number | null,
-): string | null {
+  scope: LiveTeamScope,
+  provenance: LiveTeamProvenance,
+): LiveTeamBlockOutcome {
+  if (scope === "none") return { kind: "skip", reason: "scope_none" };
+
+  // ① 신선도 — 응답 200 은 신선하다는 뜻이 아니다(upstream 만료 캐시 fail-soft).
+  const ageMs = provenance.now - provenance.fetchedAt;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > provenance.maxAgeMs) {
+    return { kind: "skip", reason: "stale" };
+  }
+  // ② 시즌 결속 — `/api/team-records` 기본 시즌이 고정값이라 해가 바뀌면 조용히 작년을 준다.
+  //    batting/pitching 을 쓰는 scope 에서만 강제한다 — standings 는 season 필드가 없다.
+  if (scope !== "standing") {
+    if (records.season !== provenance.expectedSeason) {
+      return { kind: "skip", reason: "season_mismatch" };
+    }
+  }
+
   const lines: string[] = [];
-  for (const metric of LIVE_TEAM_BLOCK_METRICS) {
+  for (const metric of LIVE_SCOPE_METRICS[scope]) {
     const outcome = resolveTeamRecord(metric, canonicalTeam, standings, records, teamIdOf);
     if (outcome.kind !== "ok") continue;
     lines.push(`${outcome.label}: ${outcome.value}`);
   }
-  // 순위를 못 읽으면 "현재"를 말할 근거가 없다 — 블록을 만들지 않는다(fail-close).
-  const hasRanking = resolveTeamRecord("ranking", canonicalTeam, standings, records, teamIdOf).kind === "ok";
-  if (!hasRanking || lines.length === 0) return null;
-  return [`${canonicalTeam} (현재 시즌 진행 중)`, ...lines].join("\n");
+  // 순위를 못 읽으면 "현재"를 말할 근거가 없다.
+  const rankOutcome = resolveTeamRecord("ranking", canonicalTeam, standings, records, teamIdOf);
+  if (rankOutcome.kind !== "ok") return { kind: "skip", reason: "no_ranking" };
+  if (lines.length === 0) return { kind: "skip", reason: "no_metrics" };
+
+  // 잔여 경기 — 삼순 착수 조건 ③: `가을야구 확률` 은 확률 모델이 없으므로
+  // 순위·게임차·잔여경기까지만 답해야 한다. 그 세 번째 값을 공급한다.
+  if (scope === "standing") {
+    const row = standings.find((entry) => entry.teamId === teamIdOf(canonicalTeam));
+    const played = Number(row?.games);
+    if (Number.isFinite(played) && played >= 0 && played <= KBO_REGULAR_SEASON_GAMES) {
+      lines.push(`잔여 경기: ${KBO_REGULAR_SEASON_GAMES - played}`);
+    }
+  }
+
+  const observedKst = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(provenance.fetchedAt));
+  return {
+    kind: "ok",
+    block: [
+      `${canonicalTeam} — ${provenance.expectedSeason} 정규시즌 진행 중 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,
+      ...lines,
+    ].join("\n"),
+  };
 }
 
 // ── 복수 구단 구조화 경로 (2026-08-16 삼순 NO-GO 반영) ────────────────────────────
