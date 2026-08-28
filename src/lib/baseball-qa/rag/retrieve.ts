@@ -217,12 +217,19 @@ export async function searchSourcePriorityCandidates(
   weightFor: (canonicalUrl: string) => number,
   /** 상위 N 절단 **앞**에서 돌 근거 projection. `rankEvidenceByQuery` 참조. */
   project?: EvidenceProjector,
+  /**
+   * 현재 시즌(KST 연도). 주면 문서 경로의 시즌으로 재점수화한다(`seasonRecencyWeight`).
+   * 생략하면 종전 거동 그대로 — 호출자가 명시적으로 켤 때만 시즌 축이 생긴다.
+   */
+  currentSeason?: number,
 ): Promise<RagEvidence[]> {
   const [wikipediaRows, namuRows] = await Promise.all([
     fetchBySourceKind("wikipedia_document", RAG_CANDIDATE_LIMIT, queryVector),
     fetchBySourceKind("namu_document", RAG_CANDIDATE_LIMIT, queryVector),
   ]);
-  return rankEvidenceByQuery([...wikipediaRows, ...namuRows], queryVector, weightFor, project);
+  return rankEvidenceByQuery(
+    [...wikipediaRows, ...namuRows], queryVector, weightFor, project, currentSeason,
+  );
 }
 /**
  * 근거 1건당 프롬프트에 넣는 최대 길이. chunk 상한(`MAX_CHUNK_CHARS` 900자)보다 짧게 잡아
@@ -1375,6 +1382,66 @@ export function cosineSimilarity(left: number[], right: number[]): number {
  * entity 필터로 좀혀진 후보를 질문 임베딩 기준으로 정렬해 상위만 남긴다.
  * 임베딩이 깨진 행은 버린다 — 검색 불가능한 근거로 답하지 않는다.
  */
+// ── 시즌 인식 랭킹 (2026-08-28 하린아빠 "한화 팀 나무위키에서 확인 가능할텐데") ──────
+//
+// 🔴 설계 정정: 나는 `한화 감독`·`롯데 선발진`을 "정본이 없는 질문"으로 분류했으나
+//   프로덕션 코퍼스 실측으로 **틀렸다**. 근거는 있었고, 검색이 연도를 안 본 것이다:
+//     · `롯데 가을야구 갈 수 있을까?` top1 = `롯데 자이언츠/2025년/9월`
+//       → "이젠 자력으로 가을야구 진출 가능성은 거의 사라진 상황" (작년 문서를 정확히 읽음)
+//     · `롯데 투수 선발진을 알려줘` top1~3 = `/2023년`·`/2025년`·`/2024년/총평`
+//   즉 환각이 아니라 **과거 시즌 문서를 그대로 재서술**한 것이다. 나무위키 구단 문서는
+//   `구단명/연도[/월]` 로 쪼개져 있고(한화 8,494청크 중 연도 문서가 2022~2026 각 300~600),
+//   문장이 해마다 비슷해서 순수 코사인으로는 작년이 올해를 이긴다.
+//
+// ⚠️ hard sort 가 아니라 **재점수화**다(`TIER2_INTENT_BOOST` 와 같은 축).
+//   과거 문서를 탈락시키지 않는다 — `2018년 한화 어땠어?` 처럼 유저가 과거를 명시하면
+//   그쪽이 유사도에서 분명히 앞서므로 가중치로도 뒤집히지 않는다.
+
+/**
+ * 근거의 **시즌 연도**를 문서 경로에서 뽑는다. 없으면 `null`(상위 문서·역대 표 = 중립).
+ *
+ * ⚠️ 판정 입력은 **문서 경로**이지 본문이 아니다 — 본문에서 연도를 긁으면
+ *   `1999년 우승` 같은 서술이 문서 시점으로 오인된다. 경로는 수집기가 붙인 구조 메타라
+ *   반대가설이 없다(M90 기준: 반대가설을 만들 수 없는 것만 코드로 막는다).
+ */
+export function parseEvidenceSeason(
+  row: Pick<RagEvidence, "sectionPath" | "pageTitle">,
+): number | null {
+  const hay = `${row.sectionPath ?? ""} ${row.pageTitle ?? ""}`;
+  const years = [...hay.matchAll(/(19\d{2}|20\d{2})/g)].map((match) => Number(match[1]));
+  if (years.length === 0) return null;
+  // 경로에 연도가 여럿이면 가장 최신을 문서 시점으로 본다 — 경로는 상위→하위로 좁혀지므로
+  // 더 구체적인 쪽이 문서 주제에 가깝다.
+  return Math.max(...years);
+}
+
+// 🔴 가중 폭은 **의도적으로 좁다**. 초안은 boost 1.35 / 하한 0.6 이었는데, 그러면
+//   최대 스윙비가 2.25배라 유사도 0.95 인 `2018년` 문서가 0.50 인 올해 문서에 밀렸다
+//   (게이트 S4 가 실제로 잡았다). 그건 재점수화가 아니라 **사실상 hard sort** 다 —
+//   `2018년 한화 어땠어?` 처럼 유저가 과거를 명시한 질문의 근거를 죽인다.
+//   지금 스윙비는 1.20/0.85 ≈ 1.41 배: "비슷하면 최신을 앞에" 까지만 하고
+//   유사도가 41% 이상 앞서는 문서는 절대 뒤집지 못한다(게이트 S4d 가 이 상한을 고정).
+/** 현재 시즌 문서 boost. */
+export const SEASON_RECENCY_CURRENT_BOOST = 1.2;
+/** 과거 시즌 1년당 감점. */
+export const SEASON_RECENCY_DECAY_PER_YEAR = 0.05;
+/** 과거 문서 가중치 하한 — 0 으로 죽이면 과거를 명시한 질문에 답할 근거가 사라진다. */
+export const SEASON_RECENCY_MIN_WEIGHT = 0.85;
+
+/**
+ * 시즌 근접성 가중치. `1.0` 이면 개입 없음.
+ *
+ * · 연도 없음(상위 문서·역대 감독표·연혁) → 1.0 중립
+ * · 현재 시즌 → boost / 과거 시즌 → 해가 멀수록 감점(하한) / 미래 연도 → 중립
+ */
+export function seasonRecencyWeight(season: number | null, currentSeason: number): number {
+  if (season === null) return 1;
+  if (season > currentSeason) return 1;
+  if (season === currentSeason) return SEASON_RECENCY_CURRENT_BOOST;
+  const age = currentSeason - season;
+  return Math.max(SEASON_RECENCY_MIN_WEIGHT, 1 - age * SEASON_RECENCY_DECAY_PER_YEAR);
+}
+
 export function rankEvidenceByQuery(
   rows: (RagEvidence & { embedding: string | number[] | null })[],
   queryVector: number[],
@@ -1392,6 +1459,11 @@ export function rankEvidenceByQuery(
    *   clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a). 그래서 순서가 계약이다.
    */
   project?: EvidenceProjector,
+  /**
+   * 현재 시즌(KST 연도). 주면 문서 경로의 시즌으로 재점수화한다(`seasonRecencyWeight`).
+   * 생략하면 종전 거동 그대로 — 시즌 가중이 없다.
+   */
+  currentSeason?: number,
 ): RagEvidence[] {
   const ranked = rows
     .map((row) => {
@@ -1400,7 +1472,11 @@ export function rankEvidenceByQuery(
       const base = cosineSimilarity(vector, queryVector);
       if (!(base > 0)) return null;
       const weight = weightFor ? weightFor(row.canonicalUrl) : 1;
-      return { row, score: base * weight };
+      // 시즌 가중은 소스 가중과 **곱**한다 — 둘은 독립 축이다(어느 소스냐 / 언제 문서냐).
+      const seasonWeight = currentSeason === undefined
+        ? 1
+        : seasonRecencyWeight(parseEvidenceSeason(row), currentSeason);
+      return { row, score: base * weight * seasonWeight };
     })
     .filter((entry): entry is { row: RagEvidence & { embedding: string | number[] | null }; score: number } =>
       entry !== null)

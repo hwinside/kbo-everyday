@@ -372,6 +372,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-season-recency",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-season-recency:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-served-metrics",
       "tier": "deploy"
     },

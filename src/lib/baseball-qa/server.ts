@@ -76,7 +76,7 @@ import { createEventRecordFetcher } from "@/lib/baseball-qa/stats/event-records"
 import eventRecordSnapshot from "@/../data/baseball-qa/kbo-event-records-2026.json";
 import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
-import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
+import { createTeamRecordFetchers, kstSeasonOf } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { renderTeamFanCopy } from "@/lib/constants/baseball-genius-team-copy";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
@@ -403,6 +403,11 @@ export async function searchRag(
    */
   project?: EvidenceProjector,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
+  /**
+   * 현재 시즌(KST 연도) 주입 seam. 게이트가 경계값을 넣을 수 있어야 하므로 인자다 —
+   * 함수 안에서 `new Date()` 를 부르면 "작년에도 같은 판정이 나오는가"를 못 태운다.
+   */
+  now: () => number = Date.now,
 ): Promise<RagEvidence[]> {
   const embedded = await runtime.embed(question);
   if (!embedded.ok) return [];
@@ -417,6 +422,11 @@ export async function searchRag(
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
     tier2WeightForQuestion(question),
     project,
+    // 🔴 시즌 인식 (2026-08-28). 나무위키 구단 문서는 `구단명/연도[/월]` 로 쪼개져 있어
+    //   순수 코사인으로는 작년 문서가 올해를 이긴다 — `롯데 가을야구 갈 수 있을까?` 의
+    //   top1 이 `롯데 자이언츠/2025년/9월`("진출 가능성 거의 사라진 상황")이었다.
+    //   환각이 아니라 과거 문서를 정확히 읽은 것이므로, 고칠 지점은 생성이 아니라 검색이다.
+    kstSeasonOf(now()),
   );
 }
 
