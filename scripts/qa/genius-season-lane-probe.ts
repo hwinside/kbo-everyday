@@ -50,6 +50,7 @@ async function fetchLane(
   vector: number[],
   lane?: { mode: string; year?: number },
 ): Promise<{ rows: Row[]; error: string | null }> {
+  // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
   const { data, error } = await admin.rpc(RPC, {
     p_entity_type: "team",
     p_entity_id: entityId,

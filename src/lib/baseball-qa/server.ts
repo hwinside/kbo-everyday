@@ -370,10 +370,12 @@ export function createProductionRagSearchRuntime(
       //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
       //   그래서 **DB(pgvector)가 질문 벡터 기준으로 정렬한 상위 N** 만 받는다.
       //   최종 근거 4건 선택과 소스 우선순위는 종전대로 앱이 하므로 embedding 도 함께 받는다.
-      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
       // 🔴 lane 은 **DB 인자**다 (삼순 2026-08-28 P0-①). 앱에서 거르면 이미 잘린 뒤라
       //   목표 시즌 청크가 상위 40 밖이면 영원히 복구되지 않는다. lane 없이 부르면
       //   종전 5인자 오버로드가 그대로 돌아 기존 경로(선수·뉴스)는 무영향이다.
+      // ⚠️ 아래 주석은 호출문 **바로 앞**에 있어야 한다 — query-guard 는 직전 4줄만 읽는다.
+      //   이번에 설명 주석을 사이에 끼워 넣었다가 CI 가 unbounded_rpc 로 잡았다.
+      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
       const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
         p_entity_type: candidate.entityType,
         p_entity_id: candidate.entityId,
