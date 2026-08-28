@@ -408,6 +408,14 @@ async function main() {
   const naverPrimaryCalls = (routeSrc.match(/fetchLiveGamesNaverPrimary\(/g) ?? []).length;
   assert.ok(naverPrimaryCalls >= 2, `warmup 이 Naver-primary 를 2곳(본체+fast-path)에서 호출 (found ${naverPrimaryCalls})`);
   assert.doesNotMatch(routeSrc, /fetchKboLiveGames\(/, "warmup 에 fetchKboLiveGames() 직호출 없음");
+  // 관측 배선(삼순 #1317 P1) — 서브틱 fetch 가 enrichObsTicks 에 수집되고 응답에 노출된다.
+  assert.match(
+    routeSrc,
+    /enrichObsTicks\.push\(\{ atMs: r\.trace\.fetchedAtMs, obs: r\.trace\.enrichObs \}\)/,
+    "fast-loop 클로저가 서브틱 trace.enrichObs 를 enrichObsTicks 에 수집",
+  );
+  assert.match(routeSrc, /enrichObsTicks,\s*\n/, "응답 JSON 에 enrichObsTicks 노출");
+  assert.match(routeSrc, /enrichObs: initialFetch\.trace\.enrichObs \?\? \[\]/, "응답 JSON 에 초기틱 enrichObs 노출");
   pass += 1;
 
   assert.equal(pass, 14, `expected 14 checks, ran ${pass}`);

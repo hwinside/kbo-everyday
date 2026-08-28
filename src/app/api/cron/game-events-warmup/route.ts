@@ -219,12 +219,21 @@ export async function GET(req: NextRequest) {
   // in-flight send 1건만 +8s → 상한 68s = drain deadline). 미발송 라이브 경기는
   // failedGameIds로 보고돼 fast path가 다음 틱 catch-up p10으로 재-arm한다.
   const broadcastDeadlineAtMs = requestStartMs + LA_BROADCAST_DEADLINE_MS;
+  // 서브틱 enrich 관측 수집(삼순 #1317 P1) — fast loop 가 +15/30/45s 마다 다시 fetch 하므로
+  // 초기 1회만 응답에 실으면 분당 relay 라운드의 25%만 보이고, 서브틱에서 mode B 가
+  // 터져도 응답은 깨끗한 0으로 오독된다. 서브틱 trace.enrichObs 를 전부 모아 노출한다.
+  const enrichObsTicks: { atMs: number; obs: string[] }[] = [];
   const laOrchestration = startLaOrchestration(
     {
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      fetchLiveGames: () =>
-        fetchLiveGamesNaverPrimary(date, Math.min(deadlineAtMs, Date.now() + 10_000)),
+      fetchLiveGames: async () => {
+        const r = await fetchLiveGamesNaverPrimary(date, Math.min(deadlineAtMs, Date.now() + 10_000));
+        if (r.trace.enrichObs !== undefined) {
+          enrichObsTicks.push({ atMs: r.trace.fetchedAtMs, obs: r.trace.enrichObs });
+        }
+        return r;
+      },
       fetchRelayLines: fetchRelayLinesForFastPath,
       ensureChannels: (gs) =>
         ensureLiveActivityChannels(gs, { deadlineAtMs: broadcastDeadlineAtMs }),
@@ -432,6 +441,9 @@ export async function GET(req: NextRequest) {
     liveSource: initialFetch.trace.source,
     liveStage: initialFetch.trace.stage,
     enrichObs: initialFetch.trace.enrichObs ?? [],
+    // 서브틱(fast loop) 관측 — 초기 fetch 이후의 relay 라운드까지 전부(삼순 #1317 P1).
+    // 빈 배열 = 서브틱 경로가 Naver-primary 가 아니었거나(failover) fast loop 미진입.
+    enrichObsTicks,
     gameNotify,
     rankNotify,
     scoreNotify,
