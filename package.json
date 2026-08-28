@@ -489,6 +489,7 @@
     "qa:stat-clarify-misfire": "tsx scripts/qa/stat-clarify-misfire-gate.ts",
     "qa:stat-clarify-misfire:selftest": "tsx scripts/qa/stat-clarify-misfire-gate.ts --selftest",
     "qa:stat-clarify-misfire:mutations": "node scripts/qa/stat-clarify-misfire-mutations.mjs",
+    "qa:genius-live-team-block": "tsx scripts/qa/genius-live-team-block-smoke.ts",
     "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts",
     "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs"
   },

@@ -89,6 +89,7 @@ import {
   type EventRecordAnswer,
 } from "./stats/event-records";
 import {
+  buildLiveTeamBlock,
   composeTeamPairAnswer,
   composeTeamRecordAnswer,
   isTeamPairMetric,
@@ -3829,6 +3830,11 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 export interface RagLlmExtras {
   context?: ContextTurn;
   rosterBlock?: string;
+  /**
+   * 현재 시즌 구단 상황 블록 (tier L). `buildLiveTeamBlock` 산출물 그대로.
+   * 조회 실패·순위 부재면 미설정이고, 그때 프롬프트는 종전 계약(현재 단정 금지)로 동작한다.
+   */
+  liveTeamBlock?: string;
 }
 
 /**
@@ -4656,6 +4662,34 @@ async function answerOfficialDocumentQuestion(
  * LLM durable 경계는 동일하다 — 경계를 지나면 이미 호출을 소비했으므로 null 을 돌려
  * 기존 경로로 내려보내지 않고 여기서 종결한다.
  */
+/**
+ * 구단 RAG 후보의 **현재 시즌 상황 블록**을 만든다 (tier L 주입 seam).
+ *
+ * 🔴 왜 이 함수가 별도로 있는가: 호출부에 인라인 lambda 로 넣으면 게이트가 "호출문 존재"만
+ *   보는 정규식으로 전락한다(`createTeamRecordFetchers` 와 같은 이유 — 삼순 3차 P0-3).
+ *   게이트는 이 함수를 직접 태워 "조회 실패 → null", "순위 부재 → null" 을 고정한다.
+ *
+ * ⚠️ **조회 실패가 경로를 막지 않는다.** 순위 API 장애가 구단 서술 질문을 통째로 죽이면
+ *   가용성을 외부 소스에 위임한 것이다(M90 `시간에 따라 변하는 값을 관문에 두지 마라`).
+ *   블록이 없으면 프롬프트의 종전 계약(현재 단정 금지)이 그대로 살아있다.
+ */
+async function buildLiveTeamBlockForCandidate(
+  canonicalTeam: string,
+  deps: QaDeps,
+): Promise<string | null> {
+  if (!deps.fetchTeamRecord) return null;
+  try {
+    const [standings, records] = await Promise.all([
+      deps.fetchTeamRecord.fetchStandings(),
+      deps.fetchTeamRecord.fetchTeamRecords(),
+    ]);
+    return buildLiveTeamBlock(canonicalTeam, standings, records, teamIdOfCanonical);
+  } catch {
+    // 조회 실패는 블록 미설정이지 경로 차단이 아니다(위 주석).
+    return null;
+  }
+}
+
 async function answerTeamRagQuestion(
   userId: string,
   question: string,
@@ -6050,10 +6084,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       ? resolveRagTeamCandidate(question)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
-    // 구단 서술 질문 — RAG 재서술 (원계약 그대로: 로스터 블록 미주입·숫자 전면 HOLD).
+    // 구단 서술 질문 — RAG 재서술 (숫자 전면 HOLD 유지).
+    //
+    // 🔴 tier L 주입 (2026-08-28): 나무위키 스냅샷은 시점이 없어 모델이 과거를 현재로
+    //   단정하는 것이 이 경로 최대 결함이었다(48h 전수 judge: team_rag GOOD 29%).
+    //   순위표·팀기록 정본을 블록으로 함께 준다 — 같은 코드베이스의 뉴스클리핑·프리뷰가
+    //   `standings-guard` 로 이미 하는 일을 야잘알봇만 안 하고 있었다.
+    //
+    // ⚠️ 조회 실패는 **경로를 막지 않는다**. 블록이 없으면 프롬프트가 "현재 단정 금지"
+    //   계약으로 동작한다 — 종전 거동보다 나빠지지 않고, 순위 조회 장애가 구단 서술 질문을
+    //   통째로 죽이는 것이 더 나쁘다(배포 가용성을 외부 API 에 위임하지 않는다).
+    const liveTeamBlock = await buildLiveTeamBlockForCandidate(teamRagCandidate.name, deps);
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
-      { context: context ?? undefined },
+      { context: context ?? undefined, liveTeamBlock: liveTeamBlock ?? undefined },
     );
     if (teamAnswer) return teamAnswer;
   }

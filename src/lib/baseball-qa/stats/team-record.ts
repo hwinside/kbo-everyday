@@ -371,6 +371,62 @@ export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { ki
   return `${outcome.team} ${outcome.label}${topicParticle} ${outcome.value}입니다.`;
 }
 
+// ── 현재 구단 상황 블록 (tier L — 2026-08-28 답변 품질 실측 반영) ──────────────────
+//
+// 🔴 왜 필요한가 (48시간 원장 645건 judge 전수 실측):
+//   `team_rag` 38건 중 GOOD 이 11건(29%)뿐이었다. 나머지는 STALE·WRONG 이고 전부 같은
+//   모양이다 — **나무위키 스냅샷에는 시점이 없어서** 모델이 과거 서술을 현재로 단정한다.
+//     · `롯데 가을야구 갈 수 있을까?` → "이미 진출이 좌절되었어요" (시즌 진행 중인데 과거완료)
+//     · `한화 감독 누구여` → 역대 감독 나열 (현 감독 없음)
+//     · `롯데 투수 선발진` → 과거 시즌 로테이션
+//
+//   근본 원인은 프롬프트 문구가 아니라 **입력에 현재가 없다**는 것이다. 같은 코드베이스의
+//   뉴스클리핑·프리뷰·경기요약은 이미 `standings-guard` 로 공식 순위표를 주입하는데
+//   야잘알봇 파이프라인만 안 하고 있었다(2026-08-28 배선 실측).
+//
+// ⚠️ 이 블록은 **숫자 계약을 열지 않는다.** tier2 출력의 숫자 전면 HOLD 는 그대로다
+//   (`validateRagResponse` 미변경). 블록의 역할은 모델이 *현재를 알고 서술하게* 하는 것이지
+//   수치를 옮겨 적게 하는 것이 아니다. "근거에 있다 ≠ 근거가 그렇게 진술했다"(2026-08-07
+//   4라운드 결론)는 정본 블록에도 똑같이 적용된다 — 블록에 `3위`·`55승` 이 있다고
+//   `3승` 조합이 막히지 않는다. 그래서 숫자는 계속 코드가 기계적으로 버린다.
+//
+// 계약:
+//   · 값은 `resolveTeamRecord` 와 **같은 원값**을 쓴다(재계산·재포맷 금지, 앱 순위표와 동일).
+//   · 한 지표라도 못 읽으면 그 줄을 빼고, 순위 줄조차 못 만들면 **블록 자체를 만들지 않는다**
+//     (`null`) — 반쪽 블록으로 "현재"를 주장하게 하는 것이 안 주는 것보다 나쁘다.
+//   · 조회 실패는 호출부가 처리한다. 이 함수는 순수 함수다(게이트가 직접 태울 수 있어야 한다).
+
+/** tier L 블록에 싣는 지표 — 구단의 **현재 상태**를 서술하는 데 필요한 최소 집합. */
+const LIVE_TEAM_BLOCK_METRICS: readonly TeamMetricKey[] = [
+  "ranking", "record", "winRate", "gamesBehind", "avg", "era",
+];
+
+/**
+ * 구단의 **현재 시즌 상황** 블록을 만든다 (tier L).
+ *
+ * 반환 문자열은 프롬프트에 데이터 구획으로 들어간다. 지시문은 넣지 않는다 —
+ * 지시는 systemInstruction 에만 둔다(프롬프트 인젝션 경계 계약).
+ *
+ * @returns 블록 문자열. 순위조차 못 읽으면 `null`.
+ */
+export function buildLiveTeamBlock(
+  canonicalTeam: string,
+  standings: StandingsRow[],
+  records: TeamRecordsPayload,
+  teamIdOf: (canonical: string) => number | null,
+): string | null {
+  const lines: string[] = [];
+  for (const metric of LIVE_TEAM_BLOCK_METRICS) {
+    const outcome = resolveTeamRecord(metric, canonicalTeam, standings, records, teamIdOf);
+    if (outcome.kind !== "ok") continue;
+    lines.push(`${outcome.label}: ${outcome.value}`);
+  }
+  // 순위를 못 읽으면 "현재"를 말할 근거가 없다 — 블록을 만들지 않는다(fail-close).
+  const hasRanking = resolveTeamRecord("ranking", canonicalTeam, standings, records, teamIdOf).kind === "ok";
+  if (!hasRanking || lines.length === 0) return null;
+  return [`${canonicalTeam} (현재 시즌 진행 중)`, ...lines].join("\n");
+}
+
 // ── 복수 구단 구조화 경로 (2026-08-16 삼순 NO-GO 반영) ────────────────────────────
 //
 // 🔴 종전 종단은 `resolveMentionedTeam()` 이 **구단 정확히 1개**일 때만 통과했다.
