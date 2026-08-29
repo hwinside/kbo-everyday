@@ -547,6 +547,30 @@ async function fetchTeamEntry(
   return { snapshotDate, players: rows.map((row) => row.player_name as string) };
 }
 
+/**
+ * production 요청 본문 조립 — `callRagLlmWithPrompt` 가 Gemini 에 실제로 보내는 바로 그 payload.
+ *
+ * 🔴 왜 별도 export 함수인가 (삼순 2026-08-28 4차 NO-GO ① — 실재했던 결함):
+ *   종전에는 fetch 안에서 `{ context, rosterBlock }` 만 손으로 재조립했다. 그래서
+ *   pipeline 이 `liveTeamBlock`·`evidenceTime` 을 넘겨도 **여기서 조용히 버려졌고**,
+ *   이 PR 은 프로덕션에서 아무 일도 하지 않고 있었다. 게이트는 mock extras 캐처와
+ *   builder 직접 호출을 **따로** 태워서 GREEN 이었다(전형적인 false-green).
+ *
+ *   근본 원인은 "extras 를 손으로 옮기는 지점"이 존재한다는 것이다 — 필드를 추가할 때마다
+ *   여기를 같이 고쳐야 하고, 안 고쳐도 타입이 통과한다. 그래서 **재조립을 없앨다** —
+ *   extras 를 그대로 넘기면 필드 추가 시 자동으로 하류까지 간다(구조적으로 누락 불가).
+ *   그리고 게이트가 **배포되는 바로 이 함수**를 태워 payload 를 검사할 수 있게 export 한다.
+ */
+export function buildProductionRagRequest(
+  question: string,
+  evidence: RagEvidence[],
+  systemPrompt?: string,
+  extras?: RagLlmExtras,
+): ReturnType<typeof buildRagLlmRequest> {
+  // ⚠️ 여기서 필드를 골라 적지 않는다. `extras` 를 통째로 넘긴다 — 그게 계약이다.
+  return buildRagLlmRequest(question, evidence, systemPrompt ?? RAG_SYSTEM_PROMPT, extras ?? {});
+}
+
 async function callRagLlmWithPrompt(
   question: string,
   evidence: RagEvidence[],
@@ -558,12 +582,7 @@ async function callRagLlmWithPrompt(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      buildRagLlmRequest(
-        question,
-        evidence,
-        systemPrompt ?? RAG_SYSTEM_PROMPT,
-        { context: extras?.context, rosterBlock: extras?.rosterBlock },
-      ),
+      buildProductionRagRequest(question, evidence, systemPrompt, extras),
     ),
     signal: AbortSignal.timeout(15000),
   });

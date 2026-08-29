@@ -287,6 +287,14 @@ async function getJson<T>(path: string): Promise<T> {
 export interface StandingsSnapshot {
   rows: StandingsRow[];
   fetchedAt?: string;
+  /**
+   * 이 순위표가 **어느 시즌의 것인가** (삼순 2026-08-28 4차 NO-GO ②).
+   *
+   * 🔴 upstream URL 이 `seasons/2026` 고정이라, 해가 바뀌어도 2026 최종 순위가 계속 온다.
+   *   시즌 표기를 버리면 소비자는 그걸 `2027 진행 중` 으로 말한다 — 값은 작년 것인데.
+   *   **부재는 0 이 아니라 모름**이므로 optional 이고, 모르면 현재를 단정하지 않는다.
+   */
+  season?: number;
 }
 
 export interface TeamRecordFetchers {
@@ -303,11 +311,14 @@ export interface TeamRecordFetchers {
 export function createTeamRecordFetchers(): TeamRecordFetchers {
   return {
     fetchStandings: async () => {
-      const payload = await getJson<{ standings?: StandingsRow[]; fetchedAt?: string }>("/api/standings");
+      const payload = await getJson<{
+        standings?: StandingsRow[]; fetchedAt?: string; season?: number;
+      }>("/api/standings");
       if (!Array.isArray(payload.standings)) throw new Error("standings payload has no standings array");
-      // fetchedAt 은 **응답 본문**에서 가져온다 — 여기서 `Date.now()` 를 찍으면
-      // CDN 캐시에서 온 15분 전 값이 방금 값이 된다(삼순 P0-③).
-      return { rows: payload.standings, fetchedAt: payload.fetchedAt };
+      // fetchedAt·season 은 **응답 본문**에서 가져온다 — 여기서 `Date.now()` 를 찍거나
+      // 시즌을 버리면 CDN 캐시에서 온 15분 전 값이 방금 값이 되고(삼순 P0-③),
+      // 작년 최종 순위가 올해 현황으로 둔갑한다(삼순 4차 ②).
+      return { rows: payload.standings, fetchedAt: payload.fetchedAt, season: payload.season };
     },
     fetchTeamRecords: () => getJson<TeamRecordsPayload>("/api/team-records"),
   };
@@ -484,6 +495,16 @@ export interface LiveTeamProvenance {
   maxAgeMs: number;
   /** 기대 시즌(KST 연도). `records.season` 과 불일치면 fail-close. */
   expectedSeason: number;
+  /**
+   * 순위표가 실어보낸 시즌 (삼순 2026-08-28 4차 NO-GO ②).
+   *
+   * 🔴 종전에는 standing scope 만 시즌 검사를 **건너뛰었다** — `/api/standings` 가 시즌을
+   *   안 실어보냈기 때문인데, 그 결과 `2027 정규시즌 진행 중` 이라 적으면서 2026 최종
+   *   순위를 보여주는 반례가 열려 있었다. 이제 API 가 실어보내므로 전 scope 에서 검사한다.
+   *
+   * ⚠️ **부재는 0 이 아니라 모름**이다. 없으면 현재를 단정하지 않는다(fail-close).
+   */
+  standingsSeason?: number;
 }
 
 /**
@@ -534,12 +555,22 @@ export function buildLiveTeamBlock(
   if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > provenance.maxAgeMs) {
     return { kind: "skip", reason: "stale" };
   }
-  // ② 시즌 결속 — `/api/team-records` 기본 시즌이 고정값이라 해가 바뀌면 조용히 작년을 준다.
-  //    batting/pitching 을 쓰는 scope 에서만 강제한다 — standings 는 season 필드가 없다.
-  if (scope !== "standing") {
-    if (records.season !== provenance.expectedSeason) {
-      return { kind: "skip", reason: "season_mismatch" };
-    }
+  // ② 시즌 결속 — **전 scope** 에서 강제한다 (삼순 2026-08-28 4차 NO-GO ②).
+  //
+  //    🔴 종전에는 `scope !== "standing"` 으로 순위 질문만 검사를 건너뛰었다. 이유는
+  //      "standings 에 season 필드가 없어서" 였는데, 그건 소스의 한계가 아니라 **우리가
+  //      안 실어보낸 것**이었다. 그 결과 해가 바뀌면 2026 최종 순위를 `2027 진행 중` 으로
+  //      말하는 반례가 그대로 열려 있었다. 검사를 건너뛰는 예외가 곧 구멍이었다.
+  //
+  //    ⚠️ 부재(`undefined`)는 0 이 아니라 **모름**이다 — 모르면 현재를 단정하지 않는다.
+  //      값으로는 결측을 판정할 수 없으므로 provenance 를 별도 축으로 본다(M90).
+  const usesRecords = scope !== "standing";
+  if (usesRecords && records.season !== provenance.expectedSeason) {
+    return { kind: "skip", reason: "season_mismatch" };
+  }
+  // 순위표는 모든 scope 가 쓴다(ranking 지표가 전 scope 에 들어 있다).
+  if (provenance.standingsSeason !== provenance.expectedSeason) {
+    return { kind: "skip", reason: "season_mismatch" };
   }
 
   const lines: string[] = [];
@@ -566,10 +597,16 @@ export function buildLiveTeamBlock(
   const observedKst = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date(provenance.fetchedAt));
+  // 🔴 `정규시즌 진행 중` 을 쓰지 않는다 (삼순 2026-08-28 4차 NO-GO ②).
+  //   우리는 phase(정규시즌/포스트시즌/종료)를 **어디서도 관측하지 않는다**. 관측하지 않은
+  //   것을 문장으로 단정하면 그건 값이 아니라 우리가 지어낸 것이다 — 순위표가 최종 순위를
+  //   주는 시즌 종료 후에도 "진행 중" 이라고 말하게 된다.
+  //   시즌 결속(위 ②)이 보장하는 것은 **"이 값은 그 시즌의 것"** 까지이지 "그 시즌이 지금
+  //   진행 중" 이 아니다. 그래서 관측한 것(시즌·관측일·출처)만 적는다.
   return {
     kind: "ok",
     block: [
-      `${canonicalTeam} — ${provenance.expectedSeason} 정규시즌 진행 중 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,
+      `${canonicalTeam} — ${provenance.expectedSeason} 시즌 기준 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,
       ...lines,
     ].join("\n"),
   };

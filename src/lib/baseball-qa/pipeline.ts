@@ -4723,6 +4723,10 @@ async function buildLiveTeamBlockForCandidate(
         now,
         maxAgeMs: LIVE_TEAM_BLOCK_MAX_AGE_MS,
         expectedSeason: kstSeasonOf(now),
+        // 🔴 순위표가 실어보낸 시즌을 그대로 넘긴다 (삼순 2026-08-28 4차 ②).
+        //   여기서 기본값을 채우면(예: `?? kstSeasonOf(now)`) "모름"이 "일치"로 둔갑해
+        //   fail-close 가 통째로 무력화된다 — 부재는 0 이 아니라 모름이다.
+        standingsSeason: standings.season,
       },
     );
     return outcome.kind === "ok" ? outcome.block : null;

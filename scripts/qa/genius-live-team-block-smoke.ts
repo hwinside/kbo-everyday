@@ -46,6 +46,10 @@
  *
  * 실행: npm run qa:genius-live-team-block
  */
+// ⚠️ 반드시 server.ts 보다 **먼저** 로드돼야 한다 — server 는 트랜지티브로 supabase/admin
+//   싱글톤을 끌어오고, 그 싱글톤이 모듈 로드 시점에 env 를 요구한다(ESM 평가 순서).
+//   프로덕션 무변경이며, 여기서 태우는 것은 순수 요청 조립 함수다.
+import "./_smoke-env";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
@@ -76,6 +80,10 @@ import {
   type RagEvidence,
   type RagLlmExtras,
 } from "../../src/lib/baseball-qa/rag/retrieve";
+// 🔴 production 요청 조립 seam — Gemini 에 실제로 보내는 payload 를 만드는 그 함수다.
+//   사본이 아니라 이걸 태워야 "extras 를 손으로 재조립하다 필드를 잃는" 결함이 잡힌다
+//   (삼순 2026-08-28 4차 NO-GO ① — 실제로 그 결함이 있었다).
+import { buildProductionRagRequest } from "../../src/lib/baseball-qa/server";
 
 const SELFTEST = process.argv.includes("--selftest");
 let failures = 0;
@@ -113,6 +121,10 @@ const STANDINGS_ROWS: StandingsRow[] = [
 const STANDINGS: StandingsSnapshot = {
   rows: STANDINGS_ROWS,
   fetchedAt: new Date(NOW - 60_000).toISOString(),
+  // 🔴 순위표도 **자기 시즌**을 실어보낸다 (삼순 2026-08-28 4차 ②).
+  //   upstream URL 이 연도 고정이라, 시즌 표기가 없으면 작년 최종 순위를 올해 현황으로
+  //   말하게 된다. 부재는 0 이 아니라 모름이므로 소비처가 fail-close 한다.
+  season: SEASON,
 };
 // 🔴 `fetchedAt` 은 **소스가 실어보낸** upstream 수신 시각이다 (삼순 2026-08-28 P0-③).
 //   우리가 응답을 받은 시각이 아니다 — `/api/team-records` 는 upstream 장애 시 만료
@@ -131,6 +143,8 @@ const freshProvenance = (over: Partial<LiveTeamProvenance> = {}): LiveTeamProven
   now: NOW,
   maxAgeMs: LIVE_TEAM_BLOCK_MAX_AGE_MS,
   expectedSeason: SEASON,
+  // 순위표가 실어보낸 시즌 — 전 scope 가 이걸 검사한다(삼순 2026-08-28 4차 ②).
+  standingsSeason: SEASON,
   ...over,
 });
 
@@ -213,6 +227,8 @@ async function run(question: string, overrides: Partial<QaDeps> = {}) {
 async function main() {
   const pipeline = stripComments(src("pipeline.ts"));
   const retrieve = stripComments(src("rag/retrieve.ts"));
+  // 🔴 주석은 blank 처리한다 — 주석 문면이 assertion 을 만족시키는 false-green 방지(M90).
+  const server = stripComments(src("server.ts"));
 
   // ══ 순수 판정 축 ═══════════════════════════════════════════════════════
   const ok = buildLiveTeamBlock("롯데", STANDINGS_ROWS, RECORDS, teamIdOf, "standing", freshProvenance());
@@ -388,7 +404,7 @@ async function main() {
     fetchTeamRecord: {
       fetchStandings: async () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
-        return { rows: STANDINGS_ROWS, fetchedAt: new Date().toISOString() };
+        return { rows: STANDINGS_ROWS, fetchedAt: new Date().toISOString(), season: kstSeasonOf(Date.now()) };
       },
       fetchTeamRecords: async () => ({ ...RECORDS, fetchedAt: new Date().toISOString() }),
     },
@@ -442,6 +458,47 @@ async function main() {
     { maxChars: 400 },
   );
   check("L7b 숫자 없는 서술은 통과", textualAnswer.kind === "grounded", JSON.stringify(textualAnswer));
+
+  // ══ L13. 🔴 production 요청 종단 (삼순 2026-08-28 4차 NO-GO ① — 실재했던 결함) ══
+  //
+  //   종전 게이트는 ⓐ mock 으로 extras 캡처 ⓑ builder 직접 호출 을 **따로** 태웠다.
+  //   그 사이에 있는 `callRagLlmWithPrompt` 가 extras 를 손으로 재조립하며
+  //   `{ context, rosterBlock }` 만 넘기고 있었는데도 둘 다 GREEN 이었다 —
+  //   즉 이 PR 은 프로덕션에서 **아무 일도 안 하고 있었다**(전형적 false-green).
+  //
+  //   그래서 이제 **Gemini 에 실제로 보내는 payload 를 만드는 그 함수**를 태운다.
+  //   ⚠️ 판정은 "필드가 payload 문자열 안에 있는가" 다 — 시그니처 존재가 아니다.
+  const prodExtras: RagLlmExtras = {
+    liveTeamBlock: t1.calls.teamExtras[0]?.liveTeamBlock,
+    evidenceTime: t1.calls.teamExtras[0]?.evidenceTime,
+    context: { question: "직전 질문", answer: "직전 답변" },
+  };
+  const prodRequest = buildProductionRagRequest(
+    "롯데 요즘 어때?", TEAM_EVIDENCE, RAG_TEAM_SYSTEM_PROMPT, prodExtras);
+  const prodUserText = prodRequest.contents[0].parts[0].text;
+  check("L13 production payload 에 tier L 블록이 실린다",
+    typeof prodExtras.liveTeamBlock === "string"
+    && prodUserText.includes(prodExtras.liveTeamBlock)
+    && prodUserText.includes("<현재 시즌 상황"),
+    prodUserText.slice(0, 200));
+  check("L13b production payload 에 시점 주석이 실린다",
+    /현재성: (최신|과거 시즌|확인 불가)/.test(prodUserText),
+    prodUserText.split("\n").slice(0, 3).join(" | "));
+  check("L13c 직전 대화도 함께 산다 (재조립으로 기존 필드를 잃지 않았다)",
+    prodUserText.includes("직전 질문") && prodUserText.includes("직전 답변"));
+  // 🔴 extras 미주입이면 **종전과 byte 동일** — 선수·뉴스·공식 경로 무영향 양방향 고정.
+  check("L13d extras 없으면 종전 요청과 byte 동일",
+    JSON.stringify(buildProductionRagRequest("롯데 요즘 어때?", TEAM_EVIDENCE, RAG_TEAM_SYSTEM_PROMPT))
+    === JSON.stringify(buildRagLlmRequest("롯데 요즘 어때?", TEAM_EVIDENCE, RAG_TEAM_SYSTEM_PROMPT)));
+  check("L13e 주입/미주입이 실제로 다르다 (무증상 방지)",
+    JSON.stringify(prodRequest)
+    !== JSON.stringify(buildProductionRagRequest("롯데 요즘 어때?", TEAM_EVIDENCE, RAG_TEAM_SYSTEM_PROMPT)));
+  // production 호출부가 그 함수를 **실제로** 쓰는지 — seam 동일성(M90: 사본을 태우면 무의미).
+  check("L13f callRagLlmWithPrompt 가 buildProductionRagRequest 를 호출한다",
+    /buildProductionRagRequest\(question, evidence, systemPrompt, extras\)/.test(server));
+  check("L13g 그 함수는 extras 를 통째로 넘긴다 (필드 재조립 금지)",
+    /buildRagLlmRequest\(question, evidence, systemPrompt \?\? RAG_SYSTEM_PROMPT, extras \?\? \{\}\)/
+      .test(server));
 
   // 소스 결속은 **보조**다 — 위 종단 축이 주 판정이고, 이건 seam 이름이 바뀌었을 때의 힌트.
   check("L8 seam 정의(보조)", /async function buildLiveTeamBlockForCandidate\(/.test(pipeline));

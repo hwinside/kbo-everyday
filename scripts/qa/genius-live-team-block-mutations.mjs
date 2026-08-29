@@ -34,8 +34,8 @@ const MUTATIONS = [
   {
     name: "m2 구단명 누락 — 어느 팀 상황인지 사라진다(L1b)",
     file: TEAM_RECORD,
-    from: "      `${canonicalTeam} — ${provenance.expectedSeason} 정규시즌 진행 중 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,",
-    to: "      `${provenance.expectedSeason} 정규시즌 진행 중 (관측 ${observedKst})`,",
+    from: "      `${canonicalTeam} — ${provenance.expectedSeason} 시즌 기준 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,",
+    to: "      `${provenance.expectedSeason} 시즌 기준 (관측 ${observedKst})`,",
   },
 
   // ── fail-close 축 ──────────────────────────────────────────────────────
@@ -54,8 +54,8 @@ const MUTATIONS = [
   {
     name: "m5 시즌 결속 해제 — 작년 팀기록을 올해로 말한다(L9 season)",
     file: TEAM_RECORD,
-    from: "    if (records.season !== provenance.expectedSeason) {\n      return { kind: \"skip\", reason: \"season_mismatch\" };\n    }",
-    to: "    if (false) {\n      return { kind: \"skip\", reason: \"season_mismatch\" };\n    }",
+    from: "  if (usesRecords && records.season !== provenance.expectedSeason) {\n    return { kind: \"skip\", reason: \"season_mismatch\" };\n  }",
+    to: "  if (false) {\n    return { kind: \"skip\", reason: \"season_mismatch\" };\n  }",
   },
   {
     name: "m6 TTL 상한을 env 로 열어둠 — 계약을 런타임이 무를 수 있다(L9 상수 고정)",
