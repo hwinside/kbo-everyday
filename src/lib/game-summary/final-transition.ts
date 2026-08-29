@@ -64,8 +64,12 @@ export function selectSummaryBackfillGames(
 export const SUMMARY_BACKFILL_MAX_ATTEMPTS = 10;
 
 export function backfillBackoffMs(attempts: number): number {
-  if (attempts <= 3) return 0; // 1~3회차 이후에도 다음 틱 즉시(60s 크론 간격이 자연 하한)
-  if (attempts <= 6) return 4 * 60_000;
+  // attempts = 지금까지 *완료된* 시도 수. 다음 시도(attempts+1회차)까지의 최소 간격을 돌려준다.
+  // 1~3회차(attempts 0~2) 즉시 → 4~6회차(attempts 3~5) 4분 → 7~10회차(attempts 6~9) 14분.
+  // 실소진 타임라인 ≈ 즉시×3(~2분) + 4분×3(+12분) + 14분×4(+56분) = 약 70분 후 exhausted
+  // (삼순 재리뷰: 종전 경계가 attempts<=3 이라 4회차도 즉시 = 문서와 불일치했던 것 수정).
+  if (attempts <= 2) return 0;
+  if (attempts <= 5) return 4 * 60_000;
   return 14 * 60_000;
 }
 

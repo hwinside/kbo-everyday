@@ -184,24 +184,45 @@ export async function GET(req: NextRequest) {
       );
       return { ok: true, states };
     },
-    recordAttempt: async (gameId, nextAttempts) => {
-      const { error } = await supabaseAdmin.from("game_summary_backfill_state").upsert({
-        game_id: gameId,
-        attempts: nextAttempts,
-        last_attempt_at: new Date().toISOString(),
-      });
-      if (error) {
-        console.error(`[warmup] summary-backfill recordAttempt failed (${gameId}):`, error.message);
-        return { ok: false };
+    claimAttempt: async (gameId, expectedAttempts) => {
+      // 원자 CAS(삼순 재리뷰 ②): 겹친 분 크론이 카운터를 되감지 못하게 exact-match 조건부
+      // 증가만 허용. 첫 시도는 insert-only(중복 키 = 패배), 이후는 attempts exact-match update.
+      const nowIso = new Date().toISOString();
+      if (expectedAttempts === 0) {
+        const { error } = await supabaseAdmin
+          .from("game_summary_backfill_state")
+          .insert({ game_id: gameId, attempts: 1, last_attempt_at: nowIso });
+        if (!error) return { ok: true, won: true };
+        if (error.code === "23505") return { ok: true, won: false }; // 다른 run 이 선점
+        console.error(`[warmup] summary-backfill claimAttempt insert failed (${gameId}):`, error.message);
+        return { ok: false, won: false };
       }
-      return { ok: true };
+      const { data, error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .update({ attempts: expectedAttempts + 1, last_attempt_at: nowIso })
+        .eq("game_id", gameId)
+        .eq("attempts", expectedAttempts)
+        .eq("gave_up", false)
+        .select("game_id");
+      if (error) {
+        console.error(`[warmup] summary-backfill claimAttempt failed (${gameId}):`, error.message);
+        return { ok: false, won: false };
+      }
+      return { ok: true, won: (data ?? []).length === 1 };
     },
     markGaveUp: async (gameId) => {
-      const { error } = await supabaseAdmin
+      // CAS(false→true): 승자만 경보를 쏘게 한다. 오류는 error 로 구분(러너가 fail-open 경보).
+      const { data, error } = await supabaseAdmin
         .from("game_summary_backfill_state")
         .update({ gave_up: true })
-        .eq("game_id", gameId);
-      if (error) console.error(`[warmup] summary-backfill markGaveUp failed (${gameId}):`, error.message);
+        .eq("game_id", gameId)
+        .eq("gave_up", false)
+        .select("game_id");
+      if (error) {
+        console.error(`[warmup] summary-backfill markGaveUp failed (${gameId}):`, error.message);
+        return { won: false, error: true };
+      }
+      return { won: (data ?? []).length === 1, error: false };
     },
     postSummary: async (gameId) => {
       const r = await fetch(`${baseUrl}/api/game-summary`, {
@@ -215,9 +236,10 @@ export async function GET(req: NextRequest) {
       const j = (await r.json().catch(() => null)) as { source?: string; error?: string } | null;
       return { status: r.status, result: j?.source ?? j?.error ?? "?" };
     },
-    reportGiveUp: (gameId, attempts) => {
+    reportGiveUp: async (gameId, attempts) => {
+      // 러너가 await 하고 러너 promise 는 after() 가 수명을 보장 — 경보 1회가 응답 종료에 안 잘린다(삼순 재리뷰 ③).
       const c = classifyGenerationFailure("backfill-exhausted");
-      void trackApiDegradation(
+      await trackApiDegradation(
         c.apiName,
         c.reason,
         { errorMessage: `${gameId}: stage=backfill-exhausted attempts=${attempts} — 자동복구 상한 소진` },
