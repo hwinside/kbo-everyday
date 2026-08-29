@@ -135,6 +135,7 @@
     "venue_story_view_marks",
     "video_transcode_jobs",
     "videos",
+    "warmup_enrich_obs",
     "watch_pings",
     "youtube_quota_ledger"
   ],

@@ -26,6 +26,10 @@ import {
   LA_BROADCAST_DEADLINE_MS,
 } from "@/lib/notifications/live-fast-path";
 import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
+import {
+  persistWarmupEnrichObs,
+  type WarmupEnrichObsTick,
+} from "@/lib/notifications/warmup-enrich-obs";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 
 /**
@@ -222,7 +226,7 @@ export async function GET(req: NextRequest) {
   // 서브틱 enrich 관측 수집(삼순 #1317 P1) — fast loop 가 +15/30/45s 마다 다시 fetch 하므로
   // 초기 1회만 응답에 실으면 분당 relay 라운드의 25%만 보이고, 서브틱에서 mode B 가
   // 터져도 응답은 깨끗한 0으로 오독된다. 서브틱 trace.enrichObs 를 전부 모아 노출한다.
-  const enrichObsTicks: { atMs: number; obs: string[] }[] = [];
+  const enrichObsTicks: { atMs: number; obs: string[]; source: string; stage: string }[] = [];
   const laOrchestration = startLaOrchestration(
     {
       now: () => Date.now(),
@@ -230,7 +234,12 @@ export async function GET(req: NextRequest) {
       fetchLiveGames: async () => {
         const r = await fetchLiveGamesNaverPrimary(date, Math.min(deadlineAtMs, Date.now() + 10_000));
         if (r.trace.enrichObs !== undefined) {
-          enrichObsTicks.push({ atMs: r.trace.fetchedAtMs, obs: r.trace.enrichObs });
+          enrichObsTicks.push({
+            atMs: r.trace.fetchedAtMs,
+            obs: r.trace.enrichObs,
+            source: r.trace.source,
+            stage: r.trace.stage,
+          });
         }
         return r;
       },
@@ -423,6 +432,34 @@ export async function GET(req: NextRequest) {
     channelBornReconcilePromise,
   ]);
   const { lastPlayByGame, laChannels, laBroadcast } = laCritical;
+
+  // ⓕ enrichObs 발현 틱 DB 적재(삼순 2026-08-28 설계 주문) — 모든 발송/fanout 이 끝난 뒤라
+  // broadcast critical path 를 못 막는다. 발현 틱(score-src=schedule/frames·relay-failed·
+  // deadline-cut)만 기록("무발현 = 행 없음"), 실패는 삼킨다(fire-and-forget — 3s 상한).
+  const enrichObsAllTicks: WarmupEnrichObsTick[] = [
+    {
+      atMs: initialFetch.trace.fetchedAtMs,
+      tickKind: "initial",
+      liveSource: initialFetch.trace.source,
+      liveStage: initialFetch.trace.stage,
+      obs: initialFetch.trace.enrichObs ?? [],
+    },
+    ...enrichObsTicks.map((tick): WarmupEnrichObsTick => ({
+      atMs: tick.atMs,
+      tickKind: "subtick",
+      liveSource: tick.source,
+      liveStage: tick.stage,
+      obs: tick.obs,
+    })),
+  ];
+  const enrichObsPersist = await Promise.race([
+    persistWarmupEnrichObs(enrichObsAllTicks),
+    new Promise<{ error: string }>((resolve) =>
+      setTimeout(() => resolve({ error: "persist_timeout" }), 3_000),
+    ),
+  ]).catch((e): { error: string } => ({
+    error: e instanceof Error ? e.message : "persist_failed",
+  }));
   const laFanout = laFanoutDrain.results;
   const cycle0Fanout = laFanout.find((f) => f.label === "cycle0")?.result as
     | { legacyLa?: unknown; liveActivityStart?: unknown; iosWidget?: unknown }
@@ -444,6 +481,8 @@ export async function GET(req: NextRequest) {
     // 서브틱(fast loop) 관측 — 초기 fetch 이후의 relay 라운드까지 전부(삼순 #1317 P1).
     // 빈 배열 = 서브틱 경로가 Naver-primary 가 아니었거나(failover) fast loop 미진입.
     enrichObsTicks,
+    // ⓕ 발현 틱 DB 적재 결과 — { persisted: n } | { error }. 실패해도 본체 동작 무영향(관측 전용).
+    enrichObsPersist,
     gameNotify,
     rankNotify,
     scoreNotify,

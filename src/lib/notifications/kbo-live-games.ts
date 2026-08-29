@@ -17,6 +17,19 @@ const NAVER_PRIMARY_BUDGET_MS = 3_000;
 // Naver-primary 때 KBO 준정적 필드(선발·승패투·순위) enrich 조회 상한. 비차단·베스트이포트—
 // 실패해도 Naver-only 로 진행(선발만 빈 값, 라이브 상태는 Naver 유지).
 const KBO_ENRICH_BUDGET_MS = 1_500;
+// ⓓ relay 보호 예산(#1315 후속, 삼순 2026-08-28 ⓓⓔⓕ 스코프): per-game relay evidence 조회 상한.
+// 종전엔 evidence 가 절대 deadline(최대 10s)까지 매달릴 수 있어, relay 열화 시 실패 확정이
+// 늦고(그 틱 통째 소모) frames 폴백을 시도할 예산이 남지 않았다. 이 상한 안에 안 끝나면
+// 빠르게 실패 확정 → 남은 예산으로 ⓔ frames 폴백을 태운다.
+export const RELAY_EVIDENCE_BUDGET_MS = 2_500;
+// ⓔ frames 폴백 조회 상한 — 우리 DB(game_relay_frames) 조회라 짧게 유계.
+export const FRAMES_FALLBACK_BUDGET_MS = 1_200;
+// frames 'live' 프레임의 카운트/주자/투타 사용 허용 age. content-only 발행이라 무변경 구간엔
+// 프레임이 없지만, 볼카운트는 수십 초면 낡으므로 최근 프레임일 때만 쓴다.
+export const FRAMES_FALLBACK_COUNT_MAX_AGE_MS = 45_000;
+// frames 점수 사용 허용 age. 점수는 단조 전진 가드(schedule 이상일 때만)와 결합돼
+// 낡은 프레임이 점수를 되감을 수 없어 카운트보다 창을 넓게 잡는다.
+export const FRAMES_FALLBACK_SCORE_MAX_AGE_MS = 10 * 60_000;
 const SOURCE_SETTLE_RESERVE_MS = 100;
 
 async function runSourceBeforeDeadline<T>(
@@ -80,6 +93,133 @@ type NaverLiveEvidenceFetcher = (
   gameId: string,
   signal: AbortSignal,
 ) => Promise<NaverLiveEvidence>;
+
+/**
+ * ⓔ frames 폴백 상태 — relay-live-publisher 가 game_relay_frames 에 적재한 최신 'live'
+ * 프레임(/api/game-live 응답)에서 뽑은 해당 경기 스냅샷. 직접 Naver relay 조회가 실패한
+ * 틱에서 stale schedule 점수 대신 쓸 수 있는 2차 신선 소스다(퍼블리셔 cron 이 3초 tick
+ * 으로 따로 돌고 있어, warmup 의 relay 실패와 퍼블리셔의 성공은 독립).
+ */
+export type RelayFramesFallback = {
+  /** 프레임 age(ms). content-only 발행이라 age 는 "마지막 변경 이후 경과"에 가깝다. */
+  ageMs: number;
+  awayScore: number | null;
+  homeScore: number | null;
+  balls: number;
+  strikes: number;
+  outs: number;
+  runner1b: boolean;
+  runner2b: boolean;
+  runner3b: boolean;
+  runner1bOrder: number;
+  runner2bOrder: number;
+  runner3bOrder: number;
+  currentPitcher: string;
+  currentBatter: string;
+};
+
+export type RelayFramesFallbackFetcher = (
+  gameId: string,
+  signal: AbortSignal,
+) => Promise<RelayFramesFallback | null>;
+
+/**
+ * 기본 frames 폴백 구현 — game_relay_frames 최신 'live' 프레임 1건(bounded)에서 해당
+ * 경기를 뽑는다. supabase admin 은 호출 시점 dynamic import(모듈 로드 시 싱글톤 env 요구
+ * 없음 — 스모크가 이 모듈을 env 스텁만으로 import 할 수 있게).
+ */
+export async function fetchRelayFramesFallbackFromDb(
+  gameId: string,
+  signal: AbortSignal,
+): Promise<RelayFramesFallback | null> {
+  const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
+  // query-guard: bounded -- 단일 game_id 의 최신 'live' 프레임 1건만(limit 1, id desc 인덱스 사용).
+  const { data, error } = await getSupabaseAdmin()
+    .from("game_relay_frames")
+    .select("payload, created_at")
+    .eq("game_id", gameId)
+    .eq("kind", "live")
+    .order("id", { ascending: false })
+    .limit(1)
+    .abortSignal(signal);
+  if (error || !data || data.length === 0) return null;
+  const row = data[0] as { payload: unknown; created_at: string };
+  const createdAtMs = Date.parse(row.created_at);
+  if (!Number.isFinite(createdAtMs)) return null;
+  const games = (row.payload as { data?: { games?: unknown[] } } | null)?.data?.games;
+  if (!Array.isArray(games)) return null;
+  const g = games.find(
+    (x) => (x as { gameId?: unknown }).gameId === gameId,
+  ) as Record<string, unknown> | undefined;
+  // live 프레임인데 이 경기가 live 가 아니면(종료 직후 등) 폴백 부적격 — fail-close.
+  if (!g || g.status !== "live") return null;
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  return {
+    ageMs: Math.max(0, Date.now() - createdAtMs),
+    awayScore: num(g.awayScore),
+    homeScore: num(g.homeScore),
+    balls: num(g.balls) ?? 0,
+    strikes: num(g.strikes) ?? 0,
+    outs: num(g.outs) ?? 0,
+    runner1b: g.runner1b === true,
+    runner2b: g.runner2b === true,
+    runner3b: g.runner3b === true,
+    runner1bOrder: num(g.runner1bOrder) ?? 0,
+    runner2bOrder: num(g.runner2bOrder) ?? 0,
+    runner3bOrder: num(g.runner3bOrder) ?? 0,
+    currentPitcher: typeof g.currentPitcher === "string" ? g.currentPitcher : "",
+    currentBatter: typeof g.currentBatter === "string" ? g.currentBatter : "",
+  };
+}
+
+/**
+ * frames 폴백 병합(순수 — 게이트가 직접 태운다).
+ * - 점수: age ≤ SCORE_MAX_AGE + 양측 모두 schedule 이상 + 한쪽이라도 전진일 때만 사용
+ *   (단조 가드 — 낡은 프레임이 점수를 되감는 경로를 원리적으로 차단).
+ * - 카운트/주자/투타: age ≤ COUNT_MAX_AGE 인 최근 프레임일 때만(낡은 볼카운트는 무정보보다 나쁨).
+ *   includeCounts=false 면 점수만 병합(직접 evidence 성공·점수만 null 인 틱 — 카운트는 evidence 가 더 신선).
+ */
+export function applyRelayFramesFallback(
+  game: KboGame,
+  fallback: RelayFramesFallback,
+  opts: { includeCounts: boolean },
+): { game: KboGame; scoreFromFrames: boolean } {
+  const baseAway = game.awayScore ?? 0;
+  const baseHome = game.homeScore ?? 0;
+  const scoreFromFrames =
+    fallback.ageMs <= FRAMES_FALLBACK_SCORE_MAX_AGE_MS
+    && fallback.awayScore !== null
+    && fallback.homeScore !== null
+    && fallback.awayScore >= baseAway
+    && fallback.homeScore >= baseHome
+    && (fallback.awayScore > baseAway || fallback.homeScore > baseHome);
+  let out = game;
+  if (scoreFromFrames) {
+    out = { ...out, awayScore: fallback.awayScore, homeScore: fallback.homeScore };
+  }
+  if (opts.includeCounts && fallback.ageMs <= FRAMES_FALLBACK_COUNT_MAX_AGE_MS) {
+    out = {
+      ...out,
+      balls: fallback.balls,
+      strikes: fallback.strikes,
+      outs: fallback.outs,
+      runnersOn: {
+        first: fallback.runner1b,
+        second: fallback.runner2b,
+        third: fallback.runner3b,
+      },
+      runnerOrders: {
+        first: fallback.runner1bOrder,
+        second: fallback.runner2bOrder,
+        third: fallback.runner3bOrder,
+      },
+      currentPitcher: fallback.currentPitcher || out.currentPitcher,
+      currentBatter: fallback.currentBatter || out.currentBatter,
+    };
+  }
+  return { game: out, scoreFromFrames };
+}
 
 function safeCount(value: unknown): number {
   const parsed = Number.parseInt(String(value ?? "0"), 10);
@@ -253,6 +393,9 @@ async function enrichNaverLiveGames(
   overrideScoreFromRelay = false,
   // 관측 수집기(optional) — 호출자가 넘기면 콘솔과 동일한 enrichObs 항목을 여기에도 받는다.
   obsOut?: string[],
+  // ⓔ frames 폴백(optional) — override(Naver-primary/warmup) 경로에서만 주입된다.
+  // relay evidence 실패·점수 null 틱에 stale schedule 점수 대신 game_relay_frames 를 쓴다.
+  fetchFramesFallbackImpl?: RelayFramesFallbackFetcher,
 ): Promise<KboRawGame[]> {
   // relay enrich 관측(삼순 2026-08-27 재리뷰 — "조용한 schedule 폴백" 사각지대 폐쇄):
   // per-game relay 실패/deadline 잘림과 이번 틱 점수 출처(relay|schedule)를 카운트해
@@ -268,10 +411,30 @@ async function enrichNaverLiveGames(
       enrichObs.push(`${game.gameId}:deadline-cut`);
       return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
     }
+    // ⓔ frames 폴백 시도(보조 함수) — 실패는 삼킨다(per-game fail-soft 유지).
+    // 반환: 폴백 적용 결과 게임(미적용 시 원본) + 점수 출처 표식.
+    const tryFramesFallback = async (
+      base: KboGame,
+      includeCounts: boolean,
+    ): Promise<{ game: KboGame; scoreFromFrames: boolean }> => {
+      if (!fetchFramesFallbackImpl) return { game: base, scoreFromFrames: false };
+      try {
+        const fallback = await runSourceBeforeDeadline(
+          (signal) => fetchFramesFallbackImpl(base.gameId, signal),
+          Math.min(absoluteDeadlineAtMs, Date.now() + FRAMES_FALLBACK_BUDGET_MS),
+        );
+        if (!fallback) return { game: base, scoreFromFrames: false };
+        return applyRelayFramesFallback(base, fallback, { includeCounts });
+      } catch {
+        return { game: base, scoreFromFrames: false };
+      }
+    };
     try {
+      // ⓓ relay 보호 예산 — evidence 조회는 절대 deadline 이 아니라 per-game 상한 안에서만.
+      // relay 열화 시 빠르게 실패 확정하고 남은 예산으로 frames 폴백을 태운다.
       const evidence = await runSourceBeforeDeadline(
         (signal) => fetchNaverEvidenceImpl(game.gameId, signal),
-        absoluteDeadlineAtMs,
+        Math.min(absoluteDeadlineAtMs, Date.now() + RELAY_EVIDENCE_BUDGET_MS),
       );
       if (needsFirstPitchCheck && !evidence.hasRealPlay) {
         return { ...game, status: "scheduled" as const };
@@ -281,17 +444,29 @@ async function enrichNaverLiveGames(
       // (삼순 2차 리뷰 P0).
       // 점수 출처 관측(삼순 재리뷰2): relay 성공이어도 top-level 점수가 null 이면 schedule
       // 점수가 조용히 쓰인다 — mode B(stale-equal) 판정의 결정 재료라 반드시 기록한다.
+      let scheduleBase = game;
       if (overrideScoreFromRelay) {
         const usedRelay = evidence.awayScore !== null && evidence.homeScore !== null;
-        enrichObs.push(`${game.gameId}:score-src=${usedRelay ? "relay" : "schedule"}`);
+        if (!usedRelay) {
+          // ⓔ evidence 성공이지만 top-level 점수 부재 → schedule 점수로 남기 전에 frames 점수를
+          // 시도한다(카운트는 방금 받은 evidence 가 더 신선하므로 점수만 — includeCounts=false).
+          const fb = await tryFramesFallback(game, false);
+          scheduleBase = fb.game;
+          enrichObs.push(
+            `${game.gameId}:score-src=${fb.scoreFromFrames ? "frames" : "schedule"}`,
+          );
+        } else {
+          enrichObs.push(`${game.gameId}:score-src=relay`);
+        }
       }
       return {
-        ...game,
+        ...scheduleBase,
         // 근본 수정(#1311 삼순 근본질문): 점수도 relay(중계·카운트와 같은 신선 top-level 피드)에서 뽑는다.
         // schedule 점수가 relay 보다 느린 구간에서 "중계 최신 + 점수 stale" 재발 방지. relay 점수 부재시 schedule 유지.
         // Naver-primary 경로만 override(공유 failover 경로는 기존대로 schedule 점수 — 삼순 P1 스코프).
-        awayScore: overrideScoreFromRelay ? (evidence.awayScore ?? game.awayScore) : game.awayScore,
-        homeScore: overrideScoreFromRelay ? (evidence.homeScore ?? game.homeScore) : game.homeScore,
+        // relay 점수 부재 시 폴백 기준은 scheduleBase — ⓔ frames 폴백이 점수를 반영했으면 그 값이 살아야 한다.
+        awayScore: overrideScoreFromRelay ? (evidence.awayScore ?? scheduleBase.awayScore) : game.awayScore,
+        homeScore: overrideScoreFromRelay ? (evidence.homeScore ?? scheduleBase.homeScore) : game.homeScore,
         balls: evidence.balls,
         strikes: evidence.strikes,
         outs: evidence.outs,
@@ -310,7 +485,18 @@ async function enrichNaverLiveGames(
       };
     } catch {
       enrichObs.push(`${game.gameId}:relay-failed`);
-      return needsFirstPitchCheck ? { ...game, status: "scheduled" as const } : game;
+      if (needsFirstPitchCheck) return { ...game, status: "scheduled" as const };
+      // ⓔ relay 실패 틱 — stale schedule 점수로 발사하기 전에 frames(퍼블리셔가 3초 tick 으로
+      // 따로 적재한 2차 신선 소스)를 시도한다. 카운트/주자/투타도 evidence 가 없으므로
+      // 최근 프레임이면 함께 적용(includeCounts=true).
+      if (overrideScoreFromRelay) {
+        const fb = await tryFramesFallback(game, true);
+        enrichObs.push(
+          `${game.gameId}:score-src=${fb.scoreFromFrames ? "frames" : "schedule"}`,
+        );
+        return fb.game;
+      }
+      return game;
     }
   }));
   // 점수 출처 로깅 — override 경로에서 relay 점수가 실제로 쓰였는지(relay) schedule 로
@@ -503,6 +689,8 @@ export async function fetchLiveGamesNaverPrimary(
   fetchNaverImpl: typeof fetchNaverGames = fetchNaverGames,
   fetchNaverEvidenceImpl: NaverLiveEvidenceFetcher = fetchNaverLiveEvidence,
   fetchKboGamesImpl: typeof fetchKboGamesOnly = fetchKboGamesOnly,
+  // ⓔ frames 폴백 seam — 기본은 game_relay_frames DB 조회. 게이트는 스텁 주입.
+  fetchFramesFallbackImpl: RelayFramesFallbackFetcher = fetchRelayFramesFallbackFromDb,
 ): Promise<{
   ok: boolean;
   games: KboRawGame[];
@@ -551,6 +739,7 @@ export async function fetchLiveGamesNaverPrimary(
       fetchNaverEvidenceImpl,
       true, // Naver-primary — 점수도 relay 로 override(warmup 한정 스코프)
       enrichObs,
+      fetchFramesFallbackImpl, // ⓔ relay 실패·점수 null 틱의 frames 폴백(warmup 한정)
     );
     return {
       ok: true,
