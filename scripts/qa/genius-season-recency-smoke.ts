@@ -39,9 +39,11 @@ import {
   SEASON_RECENCY_CURRENT_BOOST,
   SEASON_RECENCY_DECAY_PER_YEAR,
   SEASON_RECENCY_MIN_WEIGHT,
+  RAG_EVIDENCE_LIMIT,
   type RagEvidence,
   type RagEvidenceCandidate,
   type SeasonLaneMode,
+  type SeasonTarget,
 } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const SELFTEST = process.argv.includes("--selftest");
@@ -158,20 +160,59 @@ async function main() {
     && SEASON_RECENCY_MIN_WEIGHT > 0);
   check("S3g 감쇠율이 양수", SEASON_RECENCY_DECAY_PER_YEAR > 0);
 
-  // ── S5. 종단 랭킹 — 비슷하면 최신이 앞선다 ───────────────────────────────
-  //    실측 재현: `롯데 가을야구 갈 수 있을까?` 에서 2025/9월 문서가 top1 이었다.
-  //    두 문서의 유사도를 **2025 가 근소하게 높게** 두어 종전 결함을 재현한 뒤,
-  //    시즌 가중이 순서를 바로잡는지 본다.
+  // ── S5. 종단 — 올해 문서가 **LLM 에 도달**한다 ───────────────────────────
+  //
+  //    🔴 계약이 바뀌었다 (삼순 2026-08-29 5차 이후). 종전 S5b 는 "시즌 가중 후 올해
+  //    문서가 top1" 이었는데, 그건 **어휘 목록으로 '현재를 물었다'를 맞혔을 때만** 성립한다.
+  //    그 판정이 열린 집합이라 목록을 없앴고, 없애니 순위 조작의 근거도 함께 사라졌다.
+  //
+  //    새 계약: 순위를 조작해 답을 정하지 않는다. 대신 **양쪽을 다 보여준다** —
+  //    올해 문서와 무연도 문서를 근거 집합에 예약해 넣고, 어느 쪽이 답인지는 근거 시점
+  //    주석(`문서 시점 · 수집일 · 현재성`)을 보는 LLM 이 정한다.
+  //    실측 재현(`롯데 가을야구 갈 수 있을까?`)에서 진짜 문제는 top1 이 아니라
+  //    **올해 문서가 근거 4~6건 안에 아예 없었다**는 것이었다.
   const rows = [
     evidence("롯데 자이언츠/2025년/9월", 0.82),
     evidence("롯데 자이언츠/2026년/8월", 0.80),
   ];
   const withoutSeason = rankEvidenceByQuery([...rows], QUERY);
-  check("S5 종전 거동 재현 — 과거 문서가 top1", withoutSeason[0].sectionPath.includes("2025년"),
-    withoutSeason[0].sectionPath);
+  check("S5 유사도 순서는 그대로 (순위 조작 없음)",
+    withoutSeason[0].sectionPath.includes("2025년"), withoutSeason[0].sectionPath);
   const withSeason = rankEvidenceByQuery([...rows], QUERY, undefined, undefined, CURRENT_SEASON);
-  check("S5b 시즌 가중 후 — 현재 시즌 문서가 top1", withSeason[0].sectionPath.includes("2026년"),
-    withSeason[0].sectionPath);
+  check("S5b 시즌 축을 켜도 순서를 뒤집지 않는다 (boost 폐기 확인)",
+    withSeason[0].sectionPath.includes("2025년"), withSeason[0].sectionPath);
+  check("S5b2 그래도 올해 문서는 근거에 남는다",
+    withSeason.some((r) => r.sectionPath.includes("2026년")),
+    withSeason.map((r) => r.sectionPath).join("|"));
+
+  // 🔴 S5c 핵심 축 — 후보가 cap 보다 많을 때 **올해 문서가 절단으로 사라지지 않는다**.
+  //   과거 시즌 문서가 유사도 상위를 독점하는 것이 실측에서 관찰된 그 상황이다.
+  const crowded = [
+    evidence("롯데 자이언츠/2025년/9월", 0.90),
+    evidence("롯데 자이언츠/2025년/8월", 0.89),
+    evidence("롯데 자이언츠/2024년/총평", 0.88),
+    evidence("롯데 자이언츠/2023년", 0.87),
+    evidence("롯데 자이언츠/2022년", 0.86),
+    evidence("롯데 자이언츠/2021년", 0.85),
+    evidence("롯데 자이언츠/2026년/8월", 0.60),          // 올해 — 유사도 최하위
+    evidence("롯데 자이언츠", 0.55, { pageTitle: "롯데 자이언츠" }), // 무연도 상위문서
+  ];
+  const crowdedPlain = rankEvidenceByQuery([...crowded], QUERY);
+  check("S5c 종전 거동 재현 — 올해 문서가 절단 밖으로 사라진다",
+    !crowdedPlain.some((r) => r.sectionPath.includes("2026년")),
+    crowdedPlain.map((r) => r.sectionPath).join("|"));
+  const crowdedDiverse = rankEvidenceByQuery(
+    [...crowded], QUERY, undefined, undefined, CURRENT_SEASON);
+  check("S5c2 시점 다양성 — 올해 문서가 근거에 도달한다",
+    crowdedDiverse.some((r) => r.sectionPath.includes("2026년")),
+    crowdedDiverse.map((r) => r.sectionPath).join("|"));
+  check("S5c3 무연도 문서(역대표·등번호)도 함께 도달한다",
+    crowdedDiverse.some((r) => r.sectionPath === "롯데 자이언츠"),
+    crowdedDiverse.map((r) => r.sectionPath).join("|"));
+  check("S5c4 예약이 상한을 넘기지 않는다",
+    crowdedDiverse.length === RAG_EVIDENCE_LIMIT, String(crowdedDiverse.length));
+  check("S5c5 유사도 최상위는 여전히 top1 (예약은 포함만 보장, 순위 조작 아님)",
+    crowdedDiverse[0].sectionPath.includes("2025년/9월"), crowdedDiverse[0].sectionPath);
 
   // ── S4. 재점수화이지 hard sort 가 아니다 ─────────────────────────────────
   //    🔴 유저가 과거를 명시하면(`2018년 한화 어땠어?`) 그 문서가 유사도에서 분명히
@@ -227,22 +268,26 @@ async function main() {
   check("S7d 시즌 가중이 랭킹 점수에 곱해진다",
     /base \* weight \* seasonWeight/.test(retrieve));
 
-  // ══ T. 질문 시점 target (삼순 2026-08-28 P0-②) ═══════════════════════════
-  //   초안은 season 가중을 **모든 질문에 무조건** 적용했다. `2018년 한화`·`2027 전망`·
-  //   `역대 감독` 이 올해 문서에 밀리면 안 된다. 가중 전에 "언제를 물었나"부터 정한다.
+  // ══ T. 질문 시점 target — 어휘 목록 전면 제거 후 계약 (삼순 2026-08-29 5차) ═══
+  //
+  //   🔴 종전에는 HISTORICAL/PAST_TENSE/CURRENT 세 어휘 목록이 시점을 판정했다.
+  //   `감독` 이 CURRENT 에 있어 `김성근 감독 시절` 이 새고, 막으려 PAST_TENSE 를 넣으니
+  //   `현재 한화 감독 경질 가능성?` 이 반대로 샜다 — 반례마다 목록이 느는 룰 핑퐁이다.
+  //   이제 판정은 **4자리 연도 존재** 하나뿐이고, 시점 해석은 근거 시점 주석 + LLM 이 한다.
   const targetCases: ReadonlyArray<[string, string, number | undefined]> = [
+    // 명시 연도 — 문자 존재라 반대가설이 없는 유일한 닫힌 집합.
     ["2018년 한화 어땠어?", "year", 2018],
     ["2027 한화 전망 알려줘", "year", 2027],
-    ["한화 역대 감독 알려줘", "historical", undefined],
-    ["롯데 통산 우승 횟수", "historical", undefined],
-    ["한화 이글스 연혁", "historical", undefined],
-    ["한화 감독 누구여", "current", undefined],
-    ["롯데 요즘 어때?", "current", undefined],
-    ["롯데 가을야구 갈 수 있을까?", "current", undefined],
-    ["롯데 투수 선발진을 알려줘", "current", undefined],
-    // 시점 무관 — 개입하지 않는다(모르면 종전 순서가 기본값).
+    // 🔴 삼순이 준 양방향 반례 — 어휘 목록이 없으므로 둘 다 개입하지 않는다.
+    ["김성근 감독이 맡았던 한화", "none", undefined],
+    ["현재 한화 감독 경질 가능성?", "none", undefined],
+    // 종전에 어휘로 갈리던 것들 — 전부 none 이다(룰이 시제를 맞히지 않는다).
+    ["한화 역대 감독 알려줘", "none", undefined],
+    ["롯데 통산 우승 횟수", "none", undefined],
+    ["한화 감독 누구여", "none", undefined],
+    ["롯데 요즘 어때?", "none", undefined],
+    ["롯데 가을야구 갈 수 있을까?", "none", undefined],
     ["한화 대표 응원가 불러줘", "none", undefined],
-    ["엔씨 04번 누구야?", "none", undefined],
     // 복수 연도는 하나로 못 좁힌다 → 개입 없음.
     ["2018년과 2019년 한화 비교해줘", "none", undefined],
   ];
@@ -254,16 +299,22 @@ async function main() {
       JSON.stringify(target));
   }
 
-  // 역대·명시연도 질문에서 **올해 문서가 boost 받지 않는지** 를 값으로 고정한다.
-  check("T2 역대 질문은 전 시즌 중립",
-    seasonTargetWeight(CURRENT_SEASON, { kind: "historical" }, CURRENT_SEASON) === 1
-    && seasonTargetWeight(1999, { kind: "historical" }, CURRENT_SEASON) === 1);
+  // 🔴 T1z 어휘 목록이 **소스에 존재하지 않는다**. 반례를 추가할 자리가 없어야 계약이다.
+  //   (문면이 아니라 구조로 막는다 — 목록이 살아 있으면 언제든 되살아난다.)
+  check("T1z 시점 어휘 목록이 소스에서 제거됐다",
+    !/PAST_TENSE_SCOPE_WORDS|HISTORICAL_SCOPE_WORDS|CURRENT_SCOPE_WORDS/.test(retrieve));
+  check("T1y SeasonTarget 은 year|none 두 갈래뿐",
+    !/kind:\s*"current"|kind:\s*"historical"/.test(retrieve));
+
+  // 가중 계약 — none 은 전 시즌 중립, year 만 개입.
+  check("T2 none 은 전 시즌 중립 (개입 0)",
+    seasonTargetWeight(CURRENT_SEASON, { kind: "none" }, CURRENT_SEASON) === 1
+    && seasonTargetWeight(1999, { kind: "none" }, CURRENT_SEASON) === 1
+    && seasonTargetWeight(null, { kind: "none" }, CURRENT_SEASON) === 1);
   check("T2b 명시 연도는 그 해가 boost, 올해는 아님",
     seasonTargetWeight(2018, { kind: "year", year: 2018 }, CURRENT_SEASON)
       === SEASON_RECENCY_CURRENT_BOOST
     && seasonTargetWeight(CURRENT_SEASON, { kind: "year", year: 2018 }, CURRENT_SEASON) < 1);
-  check("T2c none 은 전부 중립",
-    seasonTargetWeight(CURRENT_SEASON, { kind: "none" }, CURRENT_SEASON) === 1);
 
   // 종단: `2018년 한화` 질문에서 2018 문서가 실제로 올라오는가(유사도는 올해가 근소 우위).
   const y2018 = rankEvidenceByQuery(
@@ -272,31 +323,50 @@ async function main() {
   );
   check("T3 명시 연도 종단 — 2018 문서가 top1", y2018[0].sectionPath.includes("2018년"),
     y2018[0].sectionPath);
-  const historical = rankEvidenceByQuery(
+  // 🔴 무연도 질문 종단 — 올해로 쏠리지 않는다(순수 유사도 유지).
+  const noneRanked = rankEvidenceByQuery(
     [evidence("한화 이글스", 0.80), evidence("한화 이글스/2026년", 0.79)],
-    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "historical" },
+    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "none" },
   );
-  check("T3b 역대 종단 — 순수 유사도 순서 유지(올해 boost 없음)",
-    historical[0].sectionPath === "한화 이글스", historical[0].sectionPath);
+  check("T3b 무연도 종단 — 순수 유사도 순서 유지(올해 boost 없음)",
+    noneRanked[0].sectionPath === "한화 이글스", noneRanked[0].sectionPath);
+  // 반대 방향도 고정: 유사도가 올해 쪽이면 올해가 이긴다(가중이 아니라 유사도가 정한다).
+  const noneRanked2 = rankEvidenceByQuery(
+    [evidence("한화 이글스", 0.79), evidence("한화 이글스/2026년", 0.80)],
+    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "none" },
+  );
+  check("T3c 무연도 종단 — 유사도가 뒤집히면 결과도 뒤집힌다(가중 개입 0 증명)",
+    noneRanked2[0].sectionPath === "한화 이글스/2026년", noneRanked2[0].sectionPath);
 
   // ══ L. 시즌 lane (삼순 2026-08-28 P0-①) ══════════════════════════════════
   //   🔴 RPC 가 순수 코사인 상위 40 을 먼저 자른 뒤 앱이 가중한다. 목표 시즌 청크가
   //   41위 밖이면 앱에서 아무리 가중해도 복구 불가다 — lane 은 **DB 절단 전**이어야 한다.
-  const planCurrent = seasonLanePlan({ kind: "current" }, CURRENT_SEASON);
-  check("L1 current lane 계획 — year/yearless/any 3 lane",
-    planCurrent.length === 3
-    && planCurrent[0].mode === "year" && planCurrent[0].year === CURRENT_SEASON
-    && planCurrent.some((l) => l.mode === "yearless")
-    && planCurrent.some((l) => l.mode === "any"),
-    JSON.stringify(planCurrent));
+  //
+  //   🔴 lane 은 **항상 3개**다 (삼순 2026-08-29 5차 NO-GO 반영).
+  //   종전에는 target 에 따라 1개(any) 또는 3개로 갈려서, 시점 판정이 틀리면 대가가
+  //   "가중치가 흔들린다"가 아니라 **목표 시즌 근거가 절단 전에 사라진다**(recall 소실)
+  //   였다. 이제 후보 집합은 target 과 무관하게 같고 순위 가중만 달라진다.
+  const planNone = seasonLanePlan({ kind: "none" }, CURRENT_SEASON);
+  check("L1 none lane 계획 — year(올해)/yearless/any 3 lane",
+    planNone.length === 3
+    && planNone[0].mode === "year" && planNone[0].year === CURRENT_SEASON
+    && planNone.some((l) => l.mode === "yearless")
+    && planNone.some((l) => l.mode === "any"),
+    JSON.stringify(planNone));
   const planYear = seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON);
   check("L1b 명시 연도 lane 은 그 해로", planYear[0].mode === "year" && planYear[0].year === 2018,
     JSON.stringify(planYear));
-  check("L1c 역대·none 은 단일 any lane (개입 없음)",
-    seasonLanePlan({ kind: "historical" }, CURRENT_SEASON).length === 1
-    && seasonLanePlan({ kind: "none" }, CURRENT_SEASON).length === 1);
+  // 🔴 L1c 비대칭 금지 — 어떤 target 이든 lane 집합 크기가 같아야 한다.
+  //   이게 깨지면 시점 오분류가 다시 recall 을 좌우한다(삼순 5차 지적의 핵심).
+  check("L1c lane 개수는 target 과 무관하게 3개 (recall 비대칭 금지)",
+    seasonLanePlan({ kind: "none" }, CURRENT_SEASON).length === 3
+    && seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON).length === 3
+    && seasonLanePlan({ kind: "year", year: CURRENT_SEASON }, CURRENT_SEASON).length === 3);
+  check("L1c2 lane mode 집합도 동일 (year 값만 다르다)",
+    JSON.stringify(planNone.map((l) => l.mode)) === JSON.stringify(planYear.map((l) => l.mode)),
+    `${JSON.stringify(planNone.map((l) => l.mode))} vs ${JSON.stringify(planYear.map((l) => l.mode))}`);
   check("L1d general(any) lane 을 항상 함께 둔다 — 목표 연도에 답이 없어도 답이 나온다",
-    planCurrent.some((l) => l.mode === "any") && planYear.some((l) => l.mode === "any"));
+    planNone.some((l) => l.mode === "any") && planYear.some((l) => l.mode === "any"));
 
   // 종단: lane 이 **DB 호출 인자로** 나가고, 절단 밖 목표 시즌 청크가 복구되는가.
   const laneCalls: Array<{ mode?: SeasonLaneMode; year?: number }> = [];
@@ -327,7 +397,7 @@ async function main() {
     return pool.slice(0, CAP);
   };
   const laneRanked = await searchSourcePriorityCandidates(
-    laneFetch, QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "current" },
+    laneFetch, QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "none" },
   );
   check("L2 lane 이 DB 인자로 나간다 (year/yearless/any)",
     laneCalls.some((c) => c.mode === "year" && c.year === CURRENT_SEASON)
@@ -342,18 +412,30 @@ async function main() {
       === laneRanked.length,
     laneRanked.map((r) => r.sectionPath).join("|"));
 
-  // lane 을 안 쓰는 경로(none·historical)는 종전처럼 **단일 조회**여야 한다.
-  const singleCalls: Array<{ mode?: SeasonLaneMode }> = [];
-  await searchSourcePriorityCandidates(
-    async (sourceKind, _l, _v, lane) => {
-      singleCalls.push({ mode: lane?.mode });
-      return sourceKind === "namu_document" ? [evidence("롯데 자이언츠", 0.5)] : [];
-    },
-    QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "historical" },
-  );
-  check("L2d 역대 질문은 lane 없이 단일 조회 (인자도 안 넘긴다)",
-    singleCalls.length === 2 && singleCalls.every((c) => c.mode === undefined),
-    JSON.stringify(singleCalls));
+  // 🔴 L2d 후보 집합 대칭 — target 이 달라도 **같은 lane 을 조회**한다(삼순 5차 핵심).
+  //   종전에는 target 에 따라 lane 이 1개로 줄어 시점 오분류가 recall 을 죽였다.
+  //   이제 판정이 틀려도 조회되는 lane 집합은 동일하고 순위 가중만 달라진다.
+  const modesFor = async (target: SeasonTarget): Promise<string[]> => {
+    const seen: string[] = [];
+    await searchSourcePriorityCandidates(
+      async (sourceKind, _l, _v, lane) => {
+        if (sourceKind === "namu_document") seen.push(`${lane?.mode}:${lane?.year ?? "-"}`);
+        return sourceKind === "namu_document" ? [evidence("롯데 자이언츠", 0.5)] : [];
+      },
+      QUERY, () => 1, undefined, CURRENT_SEASON, target,
+    );
+    return seen;
+  };
+  const modesNone = await modesFor({ kind: "none" });
+  const modesYear = await modesFor({ kind: "year", year: 2018 });
+  check("L2d lane mode 집합이 target 과 무관하게 동일 (recall 비대칭 금지)",
+    JSON.stringify(modesNone.map((m) => m.split(":")[0]))
+      === JSON.stringify(modesYear.map((m) => m.split(":")[0]))
+    && modesNone.length === 3,
+    `${JSON.stringify(modesNone)} vs ${JSON.stringify(modesYear)}`);
+  check("L2e year lane 의 연도만 target 을 따른다",
+    modesNone[0] === `year:${CURRENT_SEASON}` && modesYear[0] === "year:2018",
+    `${modesNone[0]} / ${modesYear[0]}`);
 
   // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
   check("W1 시즌 축은 team 경로 한정",

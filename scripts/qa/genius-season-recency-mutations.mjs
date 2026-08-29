@@ -60,10 +60,10 @@ const MUTATIONS = [
     to: "  if (season > currentSeason) return SEASON_RECENCY_CURRENT_BOOST;",
   },
   {
-    name: "m8 currentSeason 미주입에도 가중 적용 — 기본 거동이 바뀐다(S6)",
+    name: "m8 currentSeason 미주입에도 시점 다양성 적용 — 기본 거동이 바뀐다(S6)",
     file: RETRIEVE,
-    from: "      const seasonWeight = currentSeason === undefined\n        ? 1\n        : seasonTargetWeight(parseEvidenceSeason(row), target, currentSeason);",
-    to: "      const seasonWeight = seasonTargetWeight(parseEvidenceSeason(row), target, currentSeason ?? 2026);",
+    from: "  if (!project) {\n    return currentSeason === undefined\n      ? ranked.slice(0, RAG_EVIDENCE_LIMIT)\n      : pickWithSeasonDiversity(ranked, RAG_EVIDENCE_LIMIT, currentSeason);\n  }",
+    to: "  if (!project) {\n    return pickWithSeasonDiversity(ranked, RAG_EVIDENCE_LIMIT, currentSeason ?? 2026);\n  }",
   },
   {
     name: "m9 하류 전달 누락 — 랭커가 시즌을 영영 못 받는다(S7c)",
@@ -104,22 +104,59 @@ const MUTATIONS = [
     to: "    if (false) continue;",
   },
   {
-    name: "m15 역대 질문에도 recency 적용 — `한화 역대 감독`이 올해로 쏠린다(T-target)",
+    // 🔴 삼순 2026-08-29 5차 핵심: lane 비대칭이 곧 recall 소실이다.
+    //   시점 판정이 lane 개수를 좌우하면, 오분류의 대가가 "가중이 흔들린다"가 아니라
+    //   "목표 시즌 근거가 DB 절단 전에 통째로 사라진다"가 된다.
+    name: "m15 lane 비대칭 부활 — 시점 오분류가 다시 recall 을 죽인다(L1c/L2d)",
     file: RETRIEVE,
-    from: '  if (target.kind === "historical" || target.kind === "none") return 1;',
-    to: '  if (target.kind === "none") return 1;',
+    from: '  const year = target.kind === "year" ? target.year : currentSeason;\n'
+      + '  // general(any) lane 을 항상 함께 둔다',
+    to: '  if (target.kind === "none") return [{ mode: "any" }];\n'
+      + '  const year = target.kind === "year" ? target.year : currentSeason;\n'
+      + '  // general(any) lane 을 항상 함께 둔다',
   },
   {
-    name: "m16 명시 연도를 무시하고 현재로 — `2018년 한화`가 올해 문서로 간다(T-target)",
+    name: "m16 명시 연도를 무시 — `2018년 한화`가 목표 lane 을 잃는다(T-target)",
     file: RETRIEVE,
-    from: '  if (uniqueYears.length === 1) return { kind: "year", year: uniqueYears[0] };',
-    to: '  if (uniqueYears.length === 1) return { kind: "current" };',
+    from: '  return uniqueYears.length === 1 ? { kind: "year", year: uniqueYears[0] } : { kind: "none" };',
+    to: '  return { kind: "none" };',
   },
   {
-    name: "m17 무판정을 current 로 — 시점 무관 질문까지 올해가 밀린다(T-target)",
+    // 🔴 어휘 목록으로 시점을 맞히려는 시도 자체를 금지한다(룰 핑퐁 재시작 방지).
+    //   `현재` 를 current 로 보는 순간 `현재 한화 감독 경질 가능성?` 이 다시 흔들리고,
+    //   막으려 과거 어휘를 넣으면 `김성근 감독이 맡았던 한화` 가 반대로 샌다.
+    name: "m17 시점 어휘 판정 부활 — 룰 핑퐁이 재시작된다(T1z/T1y)",
     file: RETRIEVE,
-    from: '  void nowSeason;\n  return { kind: "none" };',
-    to: '  void nowSeason;\n  return { kind: "current" };',
+    from: '  const uniqueYears = [...new Set(years)];\n  void nowSeason;',
+    to: '  const uniqueYears = [...new Set(years)];\n'
+      + '  const CURRENT_SCOPE_WORDS = ["현재", "지금", "감독"];\n'
+      + '  if (CURRENT_SCOPE_WORDS.some((w) => normalized.includes(w))) return { kind: "year", year: nowSeason };\n'
+      + '  void nowSeason;',
+  },
+  {
+    // 🔴 시점 다양성 예약이 없으면, 과거 시즌 문서가 유사도 상위를 독점할 때
+    //   올해 문서가 근거에 **아예 도달하지 못한다**(실측에서 관찰된 그 상황).
+    name: "m19 시점 다양성 예약 제거 — 올해 문서가 절단으로 사라진다(S5c2)",
+    file: RETRIEVE,
+    from: '  const currentIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === currentSeason);\n'
+      + '  if (currentIdx >= 0) chosen.add(currentIdx);',
+    to: '  const currentIdx = -1;\n  if (currentIdx >= 0) chosen.add(currentIdx);',
+  },
+  {
+    name: "m20 무연도 예약 제거 — 역대표·등번호 문서가 근거에서 밀린다(S5c3)",
+    file: RETRIEVE,
+    from: '  const yearlessIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === null);\n'
+      + '  if (yearlessIdx >= 0) chosen.add(yearlessIdx);',
+    to: '  const yearlessIdx = -1;\n  if (yearlessIdx >= 0) chosen.add(yearlessIdx);',
+  },
+  {
+    // 예약이 순위를 조작하면 그건 다시 hard sort 다 — 포함만 보장해야 한다.
+    name: "m21 예약을 맨 앞으로 당김 — 포함 보장이 순위 조작이 된다(S5c5)",
+    file: RETRIEVE,
+    from: '  return [...chosen].sort((a, b) => a - b).slice(0, limit).map((i) => ranked[i]);',
+    to: '  const reservedFirst = [currentIdx, yearlessIdx].filter((i) => i >= 0);\n'
+      + '  const rest = [...chosen].sort((a, b) => a - b).filter((i) => !reservedFirst.includes(i));\n'
+      + '  return [...reservedFirst, ...rest].slice(0, limit).map((i) => ranked[i]);',
   },
   {
     name: "m18 선수 경로에도 시즌 축 적용 — 전제(연도 분할 문서)가 없는 곳에 개입(T-target)",
