@@ -372,6 +372,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-season-lane-parity",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-season-recency",
       "tier": "deploy"
     },

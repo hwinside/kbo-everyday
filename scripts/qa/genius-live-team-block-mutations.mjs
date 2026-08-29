@@ -88,8 +88,8 @@ const MUTATIONS = [
   {
     name: "m10 extras 전달 누락 — seam 은 돌지만 LLM 은 못 본다(L8 종단)",
     file: PIPELINE,
-    from: "      { context: context ?? undefined, liveTeamBlock: liveTeamBlock ?? undefined },",
-    to: "      { context: context ?? undefined },",
+    from: "        liveTeamBlock: liveTeamBlock ?? undefined,\n",
+    to: "",
   },
   {
     name: "m11 조회 실패가 경로를 막음 — 순위 API 장애로 구단 질문이 통째로 죽는다(L12)",
@@ -122,7 +122,7 @@ const MUTATIONS = [
   {
     name: "m15 '현재 확인 불가' 계약 제거 — 정본 없는 현재 질문에 과거 답을 내놓는다(L4)",
     file: RETRIEVE,
-    from: "  \"유저가 현재를 물었는데 <현재 시즌 상황> 블록에 그 항목이 없으면, 자료의 과거 내용을 답으로 내놓지 않는다. 현재는 확인해 드리기 어렵다고 먼저 밝힌 뒤, 자료로 아는 범위를 과거 맥락임을 명시해 덧붙인다.\",",
+    from: "  \"유저가 현재를 물었는데 <현재 시즌 상황> 블록에도 그 항목이 없고 ‘현재성: 최신’ 자료도 없으면, 자료의 과거 내용을 답으로 내놓지 않는다. 현재는 확인해 드리기 어렵다고 먼저 밝힌 뒤, 자료로 아는 범위를 과거 맥락임을 명시해 덧붙인다.\",",
     to: "",
   },
   {

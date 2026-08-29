@@ -35,6 +35,7 @@ import {
   selectEvidence,
   projectPlayerDescriptiveRow,
   type EvidenceProjector,
+  type EvidenceTimeContext,
   validateRagResponse,
   isRagAttemptPath,
   isRagDiscardReason,
@@ -3838,6 +3839,12 @@ export interface RagLlmExtras {
    * 조회 실패·순위 부재면 미설정이고, 그때 프롬프트는 종전 계약(현재 단정 금지)로 동작한다.
    */
   liveTeamBlock?: string;
+  /**
+   * 근거 시점 주석 기준 (삼순 2026-08-28 재리뷰 P0-①).
+   * 설정하면 각 근거 헤더에 `문서 시점 · 수집일 · 현재성` 이 붙는다.
+   * 미설정이면 종전과 byte 동일(선수·뉴스·공식 경로 무영향).
+   */
+  evidenceTime?: EvidenceTimeContext;
 }
 
 /**
@@ -6130,9 +6137,18 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     //   계약으로 동작한다 — 종전 거동보다 나빠지지 않고, 순위 조회 장애가 구단 서술 질문을
     //   통째로 죽이는 것이 더 나쁘다(배포 가용성을 외부 API 에 위임하지 않는다).
     const liveTeamBlock = await buildLiveTeamBlockForCandidate(teamRagCandidate.name, question, deps);
+    // 🔴 근거 시점 주석 (삼순 2026-08-28 재리뷰 P0-①): lane 이 최신 문서를 가져와도
+    //   생성 계약이 "자료로는 현재를 말하지 말라" 이면 그 근거는 쓸모가 없다.
+    //   문서 시점·수집일·현재성을 값과 함께 실어 모델이 시점을 알고 서술하게 한다.
+    //   판정(최신/과거/모름)은 모델이 아니라 코드가 한다 — `classifyEvidenceCurrency`.
+    const teamNowMs = (deps.now ?? Date.now)();
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
-      { context: context ?? undefined, liveTeamBlock: liveTeamBlock ?? undefined },
+      {
+        context: context ?? undefined,
+        liveTeamBlock: liveTeamBlock ?? undefined,
+        evidenceTime: { currentSeason: kstSeasonOf(teamNowMs), nowMs: teamNowMs },
+      },
     );
     if (teamAnswer) return teamAnswer;
   }

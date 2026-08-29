@@ -353,6 +353,20 @@ export interface RagSearchRuntime {
 export const RAG_PLAYER_CHUNK_SEARCH_RPC = "search_baseball_genius_player_chunks" as const;
 
 /**
+ * PostgREST 가 "그 시그니처의 함수를 못 찾았다"고 말하는 코드.
+ *
+ * 🔴 왜 이걸 따로 다루는가 (삼순 2026-08-28 재리뷰 P0-③ "배포 순서도 fail-open"):
+ *   migration 보다 앱이 먼저 뜼면 7인자 오버로드가 아직 없어 `PGRST202` 가 난다.
+ *   그런데 이 경로는 throw 를 상위에서 잡아 **team RAG 를 조용히 양보한다** —
+ *   즉 배포 순서 하나로 구단 서술 경로가 통째로 죽는다(유저는 이유를 모른다).
+ *
+ * 계약: **lane 은 최적화지 전제가 아니다.** 오버로드가 없으면 종전 5인자로 **한 번만**
+ * 내려가 답한다(bounded — 재시도 루프 없음). recall 은 종전 수준으로 떨어지지만
+ * 그것이 지금 리이브에 배포된 상태고, **아무 답도 안 하는 것보다 난다**.
+ */
+const PGRST_FUNCTION_NOT_FOUND = "PGRST202";
+
+/**
  * production RAG 후보 검색 런타임 팩토리.
  *
  * client 를 인자로 받는 이유는 테스트 전용 경로를 만들기 위해서가 아니라,
@@ -375,15 +389,27 @@ export function createProductionRagSearchRuntime(
       //   종전 5인자 오버로드가 그대로 돌아 기존 경로(선수·뉴스)는 무영향이다.
       // ⚠️ 아래 주석은 호출문 **바로 앞**에 있어야 한다 — query-guard 는 직전 4줄만 읽는다.
       //   이번에 설명 주석을 사이에 끼워 넣었다가 CI 가 unbounded_rpc 로 잡았다.
-      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
-      const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+      const baseArgs = {
         p_entity_type: candidate.entityType,
         p_entity_id: candidate.entityId,
         p_source_kind: sourceKind,
         p_query_embedding: JSON.stringify(queryVector),
         p_limit: limit,
+      };
+      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+      let { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+        ...baseArgs,
         ...(lane ? { p_season_mode: lane.mode, p_season_year: lane.year ?? null } : {}),
       });
+      // 🔴 migration-before-app 이 깨졌을 때의 bounded fallback (삼순 2026-08-28 P0-③).
+      //   lane 오버로드가 아직 없으면 team RAG 가 통째로 사라진다 — 그건 배포 순서라는
+      //   **우리 쪽 사정**을 유저 답변 손실로 전가하는 것이다. lane 없이 한 번만 다시 부른다.
+      //   ⚠️ 재시도는 **정확히 1회**이고 lane 이 있을 때만 한다 — lane 없는 호출의
+      //   PGRST202 는 종전 함수조차 없다는 뜻이라 다시 불러도 같은 오류다(무한루프 방지).
+      if (error && lane && (error as { code?: string }).code === PGRST_FUNCTION_NOT_FOUND) {
+        // query-guard: bounded -- 같은 RPC 의 종전 5인자 오버로드이며 p_limit 은 동일하게 bounded 다.
+        ({ data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs));
+      }
       if (error) throw error;
       return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
         content: row.content,

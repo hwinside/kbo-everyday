@@ -426,13 +426,23 @@ export function teamCardRank(standings: TeamStanding[], teamId: number): number 
   return buildRankMap(standings).get(teamId) ?? null;
 }
 
+/**
+ * 순위표가 대표하는 시즌 — upstream URL 에 박힌 값의 SSOT.
+ *
+ * 🔴 왜 상수로 빼냈는가 (삼순 2026-08-28 재리뷰 P0-④): 이 값은 URL 문자열 안에만
+ *   있어서 **소비자가 볼 수 없었다**. 그래서 해가 바뀌면 2026 최종 순위를 받아놓고
+ *   `2027 진행 중` 이라 말하는 사고가 구조적으로 가능했다. 값과 시점을 같은 곳에서 파생시켜
+ *   둘이 갈라질 수 없게 한다 — 시즌을 올릴 땐 이 상수 하나만 바꾸면 URL 도 함께 올라간다.
+ */
+export const STANDINGS_SEASON = 2026;
+
 /** 팀 순위 (HTML 파싱) */
 /** 팀 순위 (네이버 API → KBO HTML 폴백) */
 export async function fetchStandings(): Promise<TeamStanding[]> {
   try {
     // Primary: 네이버 실시간 API (빠름)
     const naverRes = await fetch(
-      "https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/2026/teams?gameType=REGULAR_SEASON",
+      `https://api-gw.sports.naver.com/statistics/categories/kbo/seasons/${STANDINGS_SEASON}/teams?gameType=REGULAR_SEASON`,
       {
         headers: {
           "Referer": "https://sports.news.naver.com/",

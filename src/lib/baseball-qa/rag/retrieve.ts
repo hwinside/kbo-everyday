@@ -825,7 +825,7 @@ export const RAG_TEAM_SYSTEM_PROMPT = [
   // 🔴 삼순 2026-08-28 착수 조건 ④: 과거형 강제만으로는 부족하다.
   //   `한화 감독 누구여` 에 역대 감독을 과거형으로 나열해도 유저는 현재 감독을 못 받는다.
   //   현재를 물었는데 정본이 없으면 **없다고 말하는 것**이 정확한 다음 행동이다.
-  "유저가 현재를 물었는데 <현재 시즌 상황> 블록에 그 항목이 없으면, 자료의 과거 내용을 답으로 내놓지 않는다. 현재는 확인해 드리기 어렵다고 먼저 밝힌 뒤, 자료로 아는 범위를 과거 맥락임을 명시해 덧붙인다.",
+  "유저가 현재를 물었는데 <현재 시즌 상황> 블록에도 그 항목이 없고 ‘현재성: 최신’ 자료도 없으면, 자료의 과거 내용을 답으로 내놓지 않는다. 현재는 확인해 드리기 어렵다고 먼저 밝힌 뒤, 자료로 아는 범위를 과거 맥락임을 명시해 덧붙인다.",
   "예: 현재 감독은 확인해 드리기 어려운데, 과거에는 … 감독이 팀을 이끌었습니다.",
   "<직전 대화> 블록이 주어지고 이번 질문이 그 주제의 후속이면 이어서 답한다. 무관한 새 질문이면 직전 대화는 무시한다.",
   // ⚠️ 2026-08-07 (삼순 P0-2 4라운드): 종전에는 "자료에 적힌 값만 쓴다" 였다.
@@ -886,6 +886,77 @@ export interface RagRequestExtras {
    * 단정한다(2026-08-28 전수 실측: team_rag GOOD 29%). 값의 정본은 순위표·팀기록 API 다.
    */
   liveTeamBlock?: string;
+  /**
+   * 근거에 **문서 시점·수집일·현재성**을 붙여 데이터 구획에 싫는다 (삼순 2026-08-28 재리뷰 P0-①).
+   *
+   * 🔴 왜 필요한가: 검색은 lane 로 최신 문서를 골라오는데 **생성 계약이 그 근거의 사용을
+   *   금지**하고 있었다. 프롬프트가 "자료로는 현재를 단정하지 않는다" 고만 말하면,
+   *   오늘 수집한 2026 문서를 받아도 `한화 감독` 을 여전히 못 답한다 — 검색을 고쳐도
+   *   출구가 닫혀 있으면 유저에겐 달라지는 게 없다.
+   *
+   * ⚠️ 그렇다고 "자료면 무조건 현재"로 열지 않는다. **문서 시점과 수집일을 값과 같이 실어**
+   *   모델이 "언제 자료인지"를 알게 하고, 신선도를 통과한 것만 현재로 말하게 한다.
+   *   신선도 판정은 모델이 아니라 **코드**가 한다(`classifyEvidenceCurrency`).
+   */
+  evidenceTime?: EvidenceTimeContext;
+}
+
+/** 근거 시점 주석의 판정 기준. */
+export interface EvidenceTimeContext {
+  /** 현재 시즌(KST 연도). */
+  currentSeason: number;
+  /** 판정 기준 시각(ms). 주입 seam — 게이트가 경계를 넣을 수 있어야 한다. */
+  nowMs: number;
+}
+
+/**
+ * tier2 문서를 "현재"로 말해도 되는 **수집일 상한**.
+ *
+ * 🔴 왜 상수인가: env 로 열면 느슨해지는 방향으로만 조정된다(M90). 나무위키 구단 문서는
+ *   시즌 중 수시로 갱신되므로 한 달이면 감독·선발진 같은 준정적 사실은 유효하고,
+ *   그보다 오래되면 "현재"라고 말할 근거가 없다.
+ */
+export const TIER2_CURRENT_CLAIM_MAX_AGE_DAYS = 30;
+
+/**
+ * 근거의 **현재성** — 이 근거로 현재를 말해도 되는가.
+ *
+ * · `current` 문서 시점이 현재 시즌이거나 무연도(상위 문서)이고 수집일이 TTL 안 → 현재 가능
+ * · `past`    문서 시점이 과거 시즌 → 그 시즌의 이야기로만
+ * · `stale`   수집일이 없거나(모름) TTL 밖 → 현재 단정 금지
+ *
+ * ⚠️ **부재는 0 이 아니라 모름**이다(M90). `asOf` 가 없으면 `stale` 이지 `current` 가 아니다.
+ */
+export type EvidenceCurrency = "current" | "past" | "stale";
+
+export function classifyEvidenceCurrency(
+  row: Pick<RagEvidence, "sectionPath" | "pageTitle" | "canonicalUrl" | "asOf">,
+  context: EvidenceTimeContext,
+): EvidenceCurrency {
+  const season = parseEvidenceSeason(row);
+  // 과거 시즌 문서는 수집일이 아무리 최신이어도 과거다 — 문서가 곧 시점이다.
+  if (season !== null && season !== context.currentSeason) return "past";
+  const asOfMs = Date.parse(row.asOf ?? "");
+  if (!Number.isFinite(asOfMs)) return "stale";
+  const ageMs = context.nowMs - asOfMs;
+  // 미래 수집일은 시계 이상이다 — 모름으로 처리한다(음수 age fail-close, tier L 과 동일 축).
+  if (ageMs < 0) return "stale";
+  return ageMs <= TIER2_CURRENT_CLAIM_MAX_AGE_DAYS * 24 * 60 * 60 * 1000 ? "current" : "stale";
+}
+
+/** 근거 헤더에 붙는 시점 주석. 데이터 구획 안에서만 쓰인다(지시문 아님). */
+export function formatEvidenceTimeAnnotation(
+  row: Pick<RagEvidence, "sectionPath" | "pageTitle" | "canonicalUrl" | "asOf">,
+  context: EvidenceTimeContext,
+): string {
+  const season = parseEvidenceSeason(row);
+  const currency = classifyEvidenceCurrency(row, context);
+  const seasonLabel = season === null ? "연도 표기 없음" : `${season}년 문서`;
+  const asOfLabel = row.asOf ? `수집 ${row.asOf}` : "수집일 미상";
+  const currencyLabel = currency === "current"
+    ? "현재성: 최신"
+    : currency === "past" ? "현재성: 과거 시즌" : "현재성: 확인 불가";
+  return `${seasonLabel} · ${asOfLabel} · ${currencyLabel}`;
 }
 
 export function buildRagLlmRequest(
@@ -894,8 +965,16 @@ export function buildRagLlmRequest(
   systemPrompt: string = RAG_SYSTEM_PROMPT,
   extras: RagRequestExtras = {},
 ) {
+  // 🔴 근거 헤더에 **시점 주석**을 붙인다 (삼순 2026-08-28 재리뷰 P0-①).
+  //   검색이 lane 으로 최신을 골라와도 모델이 "이게 언제 자료인지"를 모르면 쓸 수 없다.
+  //   주석은 **데이터 구획 안**에만 들어간다 — 지시문은 systemInstruction 에만 둔다(인젝션 경계).
+  //   `evidenceTime` 이 없으면 종전과 **byte 동일**하다(선수·뉴스·공식 경로 무영향).
   const block = evidence
-    .map((row, index) => `[자료${index + 1}] ${row.pageTitle} / ${row.sectionPath}\n${row.content}`)
+    .map((row, index) => {
+      const head = `[자료${index + 1}] ${row.pageTitle} / ${row.sectionPath}`;
+      if (!extras.evidenceTime) return `${head}\n${row.content}`;
+      return `${head} (${formatEvidenceTimeAnnotation(row, extras.evidenceTime)})\n${row.content}`;
+    })
     .join("\n\n");
   // 직전 대화·로스터도 자료와 같은 **데이터 구획**으로만 전달한다 — 지시는 systemInstruction에만.
   const sections = [
@@ -1537,6 +1616,21 @@ const HISTORICAL_SCOPE_WORDS = [
 ];
 
 /**
+ * **과거 시점 지시어** — 현황 어휘와 같이 와도 `historical` 로 끌어내린다.
+ *
+ * 🔴 삼순 2026-08-28 반대축: `김성근 감독 시절` 은 `감독` 한 단어 때문에 `current` 로
+ *   오분류됐다. 현황 어휘는 "무엇을" 묻는지를 말할 뿐 "언제"를 말하지 않는다 —
+ *   시점은 이 어휘들이 정한다. 그래서 `CURRENT_SCOPE_WORDS` 보다 **먼저** 판정한다.
+ *
+ * ⚠️ 여전히 닫힌 집합 판정이다(문자 존재). 애매하면 `current` 가 아니라 `none` 으로
+ *   떨어지는 기본값은 그대로라, 미탐은 종전 거동이고 과탐은 중립이다.
+ */
+const PAST_TENSE_SCOPE_WORDS = [
+  "시절", "당시", "과거", "예전", "옛날", "전임", "직전 감독", "역임",
+  "때는", "때의", "이었을 때", "였을 때", "시기에", "물러난", "떠난", "사퇴", "경질",
+];
+
+/**
  * 현재 현황을 묻는 신호. **무연도 + 현황 어휘**일 때만 current 다.
  *
  * ⚠️ `한화 응원가` 처럼 시점과 무관한 질문까지 current 로 밀면, 시즌 가중이
@@ -1564,12 +1658,21 @@ export function resolveSeasonTarget(question: string, nowSeason: number): Season
     return { kind: "historical" };
   }
 
+  // ①' 과거 시점 지시어도 현황 어휘보다 먼저다 (삼순 2026-08-28 반대축).
+  //    `김성근 감독 시절` 은 `감독` 이 있어도 current 가 아니다 — 시점을 정하는 것은
+  //    지표어가 아니라 시제 어휘다. 명시 연도보다는 뒤에 둔다 — `2018년 당시 한화` 처럼
+  //    둘이 같이 오면 연도 쪽이 더 구체적이다.
+  const pastTense = PAST_TENSE_SCOPE_WORDS.some((word) => normalized.includes(word));
+
   // ② 명시 연도 — 문자 존재 판정이라 반대가설이 없다.
   //    복수 연도(`2018년과 2019년`)면 하나로 좁힐 수 없으므로 개입하지 않는다.
   const years = [...normalized.matchAll(/(19\d{2}|20\d{2})/g)].map((m) => Number(m[1]));
   const uniqueYears = [...new Set(years)];
   if (uniqueYears.length === 1) return { kind: "year", year: uniqueYears[0] };
   if (uniqueYears.length > 1) return { kind: "none" };
+
+  // ②' 연도가 없는데 과거 지시어만 있으면 historical — 특정 연도를 모르니 recency 를 끈는다.
+  if (pastTense) return { kind: "historical" };
 
   // ③ 무연도 + 현황 어휘 → 현재.
   if (CURRENT_SCOPE_WORDS.some((word) => normalized.includes(word))) {

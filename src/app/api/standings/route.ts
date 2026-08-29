@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchStandings } from "@/lib/crawler/kbo-api";
+import { fetchStandings, STANDINGS_SEASON } from "@/lib/crawler/kbo-api";
 
 export async function GET() {
   try {
@@ -7,6 +7,15 @@ export async function GET() {
     return NextResponse.json({
       count: standings.length,
       standings,
+      /**
+       * 이 순위표가 **어느 시즌의 것인가**.
+       *
+       * 🔴 왜 필요한가 (삼순 2026-08-28 재리뷰 P0-④): upstream URL 이 `seasons/2026` 으로
+       *   **고정**이라 해가 바뀌어도 2026 최종 순위를 계속 돌려준다. 시즌 표기가 없으면
+       *   소비자는 그걸 `2027 정규시즌 진행 중` 으로 말하게 된다 — 값은 작년 것인데.
+       *   값과 그 값의 시점은 **별도 축**이므로 함께 싣어 보낸다(M90).
+       */
+      season: STANDINGS_SEASON,
       /**
        * upstream(Naver/KBO)에서 **실제로 받은** 시각(ISO).
        *
