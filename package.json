@@ -18,6 +18,8 @@
     "qa:games-card-render": "tsx scripts/qa/featured-card-render-capture.mts",
     "qa:games-card-render:mutations": "node scripts/qa/games-card-render-mutations.mjs",
     "qa:cancel-reason": "tsx scripts/qa/cancel-reason-gate.mjs",
+    "qa:summary-final-transition": "tsx scripts/qa/summary-final-transition-gate.mjs",
+    "qa:summary-final-transition:selftest": "tsx scripts/qa/summary-final-transition-gate.mjs --selftest",
     "qa:cancel-reason:selftest": "tsx scripts/qa/cancel-reason-gate.mjs --selftest",
     "qa:relay-substitution": "tsx scripts/qa/relay-substitution-gate.ts",
     "qa:relay-substitution:selftest": "tsx scripts/qa/relay-substitution-gate.ts --selftest",

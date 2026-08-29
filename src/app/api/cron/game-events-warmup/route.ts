@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import type { KboRawGame } from "@/types/api";
 import type { GameEvent } from "@/types/game-events";
 import type { StartPlateAppearanceEvidence } from "@/lib/notifications/start-freshness-policy";
@@ -27,6 +27,11 @@ import {
 } from "@/lib/notifications/live-fast-path";
 import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
 import { runBeforeDeadline } from "@/lib/async-deadline";
+import { supabaseAdmin } from "@/lib/supabase/admin";
+import {
+  selectSummaryBackfillGames,
+  KBO_GAME_STATE_FINAL,
+} from "@/lib/game-summary/final-transition";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -127,6 +132,56 @@ export async function GET(req: NextRequest) {
       : process.env.VERCEL_URL
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
+
+  // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 C안) final 전이 백필 — final 인데 요약
+  // row 가 없는 경기를 응답 이후(after)에 /api/game-summary POST 로 생성 트리거한다.
+  // KBO 가 final 전이를 늦게 내려도(콜드/서스펜디드) 전이 후 최대 ~1분 안에 자동 생성된다
+  // (기존 prewarm 매시 :15 = 최대 60분 공백). 수렴 확인·생성·저장 정합성은 전부 POST 의
+  // canonicalGate + claim lease + fingerprint fence 가 담당 — 여기선 선정·발사만.
+  // bounded retry: per-tick 상한(selectSummaryBackfillGames) + row 생기면 자연 종료.
+  const summaryBackfillCandidates = games.map((g) => ({
+    gameId: (g.G_ID as string) ?? "",
+    gameStateSc: (g.GAME_STATE_SC as string | undefined) ?? null,
+  }));
+  after(async () => {
+    try {
+      const finalIds = summaryBackfillCandidates
+        .filter((c) => c.gameId && c.gameStateSc === KBO_GAME_STATE_FINAL)
+        .map((c) => c.gameId);
+      if (finalIds.length === 0) return;
+      const { data, error } = await supabaseAdmin
+        .from("game_summaries")
+        .select("game_id")
+        .in("game_id", finalIds);
+      // 존재 조회 실패 = "없다"가 아니라 "모른다" — fail-close(발사 0). 다음 틱이 재시도.
+      if (error) {
+        console.error("[warmup] summary-backfill existence query failed:", error.message);
+        return;
+      }
+      const existing = new Set((data ?? []).map((r) => r.game_id as string));
+      const targets = selectSummaryBackfillGames(summaryBackfillCandidates, existing);
+      for (const gameId of targets) {
+        try {
+          const r = await fetch(`${baseUrl}/api/game-summary`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "User-Agent": "kbo-everyday-warmup/1.0" },
+            body: JSON.stringify({ gameId }),
+            cache: "no-store",
+            // Gemini 생성(수초~십수초) + 검증 재시도 여유. 순차 발사라 최악 3쀀45s로 maxDuration(300s) 내.
+            signal: AbortSignal.timeout(45_000),
+          });
+          const j = (await r.json().catch(() => null)) as { source?: string; error?: string } | null;
+          console.log(
+            `[warmup] summary-backfill ${gameId}: http=${r.status} result=${j?.source ?? j?.error ?? "?"}`,
+          );
+        } catch (e) {
+          console.error(`[warmup] summary-backfill ${gameId} failed:`, (e as Error).message);
+        }
+      }
+    } catch (e) {
+      console.error("[warmup] summary-backfill crashed:", (e as Error).message);
+    }
+  });
 
   // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
   // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이

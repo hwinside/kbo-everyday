@@ -704,6 +704,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:summary-final-transition",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:summary-final-transition:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:team-fullname-routing",
       "tier": "deploy"
     },
