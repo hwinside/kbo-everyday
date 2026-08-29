@@ -51,3 +51,35 @@ export function selectSummaryBackfillGames(
   }
   return out;
 }
+
+// ===== 유계 재시도 (삼순 NO-GO ②축: row 부재 매분 영구 재시도 금지) =====
+//
+// per-game 시도 카운터를 durable(game_summary_backfill_state)로 보관하고, 매 틱은
+// 이 순수 판정으로 attempt/backoff/exhausted 를 가른다. 스케줄:
+//   1~3회차: 매 틱(즉시 — final 직후 수렴 지연/일시 플레이크 흡수)
+//   4~6회차: 4분 backoff (지속 장애면 Gemini/소스가 문제 — 툴을 쓴다)
+//   7~10회차: 14분 backoff → 총 ~70분 커버 후 exhausted(영구 종결 + durable give-up 기록).
+// 성공(row 생성)은 존재 조회에서 자연 종료라 이 판정까지 오지 않는다.
+
+export const SUMMARY_BACKFILL_MAX_ATTEMPTS = 10;
+
+export function backfillBackoffMs(attempts: number): number {
+  if (attempts <= 3) return 0; // 1~3회차 이후에도 다음 틱 즉시(60s 크론 간격이 자연 하한)
+  if (attempts <= 6) return 4 * 60_000;
+  return 14 * 60_000;
+}
+
+export type BackfillDecision = "attempt" | "backoff" | "exhausted";
+
+export function backfillRetryDecision(
+  attempts: number,
+  lastAttemptAtMs: number | null,
+  nowMs: number,
+  maxAttempts: number = SUMMARY_BACKFILL_MAX_ATTEMPTS,
+): BackfillDecision {
+  if (attempts >= maxAttempts) return "exhausted";
+  if (attempts > 0 && lastAttemptAtMs != null && nowMs - lastAttemptAtMs < backfillBackoffMs(attempts)) {
+    return "backoff";
+  }
+  return "attempt";
+}

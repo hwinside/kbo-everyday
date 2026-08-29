@@ -23,37 +23,28 @@ import {
   winnerFieldMismatch,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
+import {
+  classifyGenerationFailure,
+  canonicalFailureStage,
+  type GenerationFailureStage,
+} from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
 
 // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
 // 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
-// 없었다(22:21 final 전이 → 22:31 복구 사이 생성 실패 2~3회 미확정). api_fallback_events 에
-// 단계별로 기록해 다음 인시던트부터는 즉시 원인 판정이 가능하게 한다.
-// 게이트 사전 거부(not-final 등)는 정상 fail-close 라 기록하지 않는다(지연 경기에서
-// 유저 POST 마다 쌓여 노이즈가 된다 — 그 구간은 frames 로 관측 가능). after() 로 응답
-// 이후 실행해 latency 무영향, 실패해도 응답에 영향 없음(track 내부 catch).
-type GenerationFailureStage =
-  | "claim-contention"
-  | "gemini-api"
-  | "gemini-empty"
-  | "gemini-parse"
-  | "score-mismatch"
-  | "winner-mismatch"
-  | "consistency-violation"
-  | "canonical-race"
-  | "save-superseded"
-  | "save-failed"
-  | "generation-exception";
+// 없었다(22:21 final 전이 → 22:31 복구 사이 생성 실패 2~3회 미확정). 분류(실패축 vs 정상
+// 동시요청축 비경보)는 failure-observability 순수 모듈이 담당 — 게이트가 같은 seam 을 태운다.
+// after() 로 응답 이후 실행해 latency 무영향, 실패해도 응답에 영향 없음(track 내부 catch).
 function reportGenerationFailure(gameId: string, stage: GenerationFailureStage, detail: string) {
+  const c = classifyGenerationFailure(stage);
   after(() =>
     trackApiDegradation(
-      "game-summary-generation",
-      stage === "gemini-api" ? "http-error" : "schema-error",
+      c.apiName,
+      c.reason,
       { errorMessage: `${gameId}: stage=${stage} ${detail}`.slice(0, 500) },
-      // 경보는 보수적(30분 3회)으로 — 일시 플레이크 단건은 기록만 남기고 경보는 반복 실패에만.
-      { windowMinutes: 30, threshold: 3, cooldownMinutes: 60, leaseSeconds: 120 },
+      c.policy,
     ),
   );
 }
@@ -592,6 +583,13 @@ export async function POST(req: NextRequest) {
   // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
   const canonicalSource = await fetchCanonicalSummarySource(requestBody.gameId, true);
   if (canonicalSource.reason !== "ok" || !canonicalSource.input || !canonicalSource.fingerprint) {
+    // 삼순 NO-GO ①축: 꼬리 원인 후보였던 *초기 canonical 실패*(final 인데 미수렴·boxscore
+    // 불가·조회 실패)도 durable 기록한다. not-final(라이브 중 정상 fail-close)·invalid-gameid 는
+    // canonicalFailureStage 가 null 을 돌려 제외된다(지연 경기 유저 POST 노이즈 방지).
+    const stage = canonicalFailureStage(canonicalSource.reason);
+    if (stage) {
+      reportGenerationFailure(requestBody.gameId, stage, `http=${canonicalSource.httpStatus}`);
+    }
     return NextResponse.json(
       { error: canonicalSource.reason, source: canonicalSource.reason },
       { status: canonicalSource.httpStatus },

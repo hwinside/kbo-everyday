@@ -28,10 +28,9 @@ import {
 import { reconcileChannelBornFromAcks } from "@/lib/notifications/live-activity-channel-born-reconcile";
 import { runBeforeDeadline } from "@/lib/async-deadline";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import {
-  selectSummaryBackfillGames,
-  KBO_GAME_STATE_FINAL,
-} from "@/lib/game-summary/final-transition";
+import { runSummaryBackfill } from "@/lib/game-summary/backfill-runner";
+import { classifyGenerationFailure } from "@/lib/game-summary/failure-observability";
+import { trackApiDegradation } from "@/lib/monitoring/api-fallback-tracker";
 
 /**
  * Warm up the in-memory prevState cache of /api/game-events for every
@@ -133,55 +132,109 @@ export async function GET(req: NextRequest) {
         ? `https://${process.env.VERCEL_URL}`
         : req.nextUrl.origin);
 
-  // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 C안) final 전이 백필 — final 인데 요약
-  // row 가 없는 경기를 응답 이후(after)에 /api/game-summary POST 로 생성 트리거한다.
-  // KBO 가 final 전이를 늦게 내려도(콜드/서스펜디드) 전이 후 최대 ~1분 안에 자동 생성된다
-  // (기존 prewarm 매시 :15 = 최대 60분 공백). 수렴 확인·생성·저장 정합성은 전부 POST 의
-  // canonicalGate + claim lease + fingerprint fence 가 담당 — 여기선 선정·발사만.
-  // bounded retry: per-tick 상한(selectSummaryBackfillGames) + row 생기면 자연 종료.
+  // (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A+C) final 전이 백필 — final 인데 요약
+  // row 가 없는 경기를 /api/game-summary POST 로 생성 트리거한다. KBO 가 final 전이를
+  // 늦게 내려도(콜드/서스펜디드) 전이 후 최대 ~1분 안에 자동 생성된다(기존 prewarm 매시
+  // :15 = 최대 60분 공백). 수렴 확인·생성·저장 정합성은 전부 POST 의 canonicalGate +
+  // claim lease + fingerprint fence 가 담당 — 여기선 선정·유계 재시도·발사만(runSummaryBackfill).
+  //
+  // 즉시 실행(삼순 NO-GO ②): warmup 본작업(fanout drain ~68s)이 끝난 뒤가 아니라 *지금*
+  // 시작한다. promise 를 after() 에 넘겨 응답 이후에도 함수 수명을 보장(waitUntil semantics)
+  // — 실행 시점은 즉시, 응답 latency 영향은 0.
+  // 유계 재시도(삼순 NO-GO ②): per-game 시도 상한 10회 + backoff(1~3회 매틱 → 4분 → 14분),
+  // durable 카운터(game_summary_backfill_state). 상한 소진 시 markGaveUp + 즉시 경보 1회.
   const summaryBackfillCandidates = games.map((g) => ({
     gameId: (g.G_ID as string) ?? "",
     gameStateSc: (g.GAME_STATE_SC as string | undefined) ?? null,
   }));
-  after(async () => {
-    try {
-      const finalIds = summaryBackfillCandidates
-        .filter((c) => c.gameId && c.gameStateSc === KBO_GAME_STATE_FINAL)
-        .map((c) => c.gameId);
-      if (finalIds.length === 0) return;
+  const summaryBackfillPromise = runSummaryBackfill(summaryBackfillCandidates, {
+    listExistingSummaries: async (ids) => {
+      // query-guard: bounded -- 당일 경기 gameId IN 목록(하루 최대 ~10경기) 존재 조회
       const { data, error } = await supabaseAdmin
         .from("game_summaries")
         .select("game_id")
-        .in("game_id", finalIds);
-      // 존재 조회 실패 = "없다"가 아니라 "모른다" — fail-close(발사 0). 다음 틱이 재시도.
+        .in("game_id", ids)
+        .limit(20);
       if (error) {
         console.error("[warmup] summary-backfill existence query failed:", error.message);
-        return;
+        return { ok: false, existing: new Set<string>() };
       }
-      const existing = new Set((data ?? []).map((r) => r.game_id as string));
-      const targets = selectSummaryBackfillGames(summaryBackfillCandidates, existing);
-      for (const gameId of targets) {
-        try {
-          const r = await fetch(`${baseUrl}/api/game-summary`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "User-Agent": "kbo-everyday-warmup/1.0" },
-            body: JSON.stringify({ gameId }),
-            cache: "no-store",
-            // Gemini 생성(수초~십수초) + 검증 재시도 여유. 순차 발사라 최악 3쀀45s로 maxDuration(300s) 내.
-            signal: AbortSignal.timeout(45_000),
-          });
-          const j = (await r.json().catch(() => null)) as { source?: string; error?: string } | null;
-          console.log(
-            `[warmup] summary-backfill ${gameId}: http=${r.status} result=${j?.source ?? j?.error ?? "?"}`,
-          );
-        } catch (e) {
-          console.error(`[warmup] summary-backfill ${gameId} failed:`, (e as Error).message);
-        }
+      return { ok: true, existing: new Set((data ?? []).map((r) => r.game_id as string)) };
+    },
+    readAttemptStates: async (ids) => {
+      // query-guard: bounded -- 당일 경기 gameId IN 목록(하루 최대 ~10경기) 시도상태 조회
+      const { data, error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .select("game_id, attempts, last_attempt_at, gave_up")
+        .in("game_id", ids)
+        .limit(20);
+      if (error) {
+        console.error("[warmup] summary-backfill state query failed:", error.message);
+        return { ok: false, states: new Map() };
       }
-    } catch (e) {
-      console.error("[warmup] summary-backfill crashed:", (e as Error).message);
-    }
-  });
+      const states = new Map(
+        (data ?? []).map((r) => [
+          r.game_id as string,
+          {
+            attempts: (r.attempts as number) ?? 0,
+            lastAttemptAtMs: r.last_attempt_at ? new Date(r.last_attempt_at as string).getTime() : null,
+            gaveUp: (r.gave_up as boolean) ?? false,
+          },
+        ]),
+      );
+      return { ok: true, states };
+    },
+    recordAttempt: async (gameId, nextAttempts) => {
+      const { error } = await supabaseAdmin.from("game_summary_backfill_state").upsert({
+        game_id: gameId,
+        attempts: nextAttempts,
+        last_attempt_at: new Date().toISOString(),
+      });
+      if (error) {
+        console.error(`[warmup] summary-backfill recordAttempt failed (${gameId}):`, error.message);
+        return { ok: false };
+      }
+      return { ok: true };
+    },
+    markGaveUp: async (gameId) => {
+      const { error } = await supabaseAdmin
+        .from("game_summary_backfill_state")
+        .update({ gave_up: true })
+        .eq("game_id", gameId);
+      if (error) console.error(`[warmup] summary-backfill markGaveUp failed (${gameId}):`, error.message);
+    },
+    postSummary: async (gameId) => {
+      const r = await fetch(`${baseUrl}/api/game-summary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "kbo-everyday-warmup/1.0" },
+        body: JSON.stringify({ gameId }),
+        cache: "no-store",
+        // Gemini 생성(수초~십수초) + 검증 재시도 여유. 순차 발사라 최악 3×45s로 maxDuration(300s) 내.
+        signal: AbortSignal.timeout(45_000),
+      });
+      const j = (await r.json().catch(() => null)) as { source?: string; error?: string } | null;
+      return { status: r.status, result: j?.source ?? j?.error ?? "?" };
+    },
+    reportGiveUp: (gameId, attempts) => {
+      const c = classifyGenerationFailure("backfill-exhausted");
+      void trackApiDegradation(
+        c.apiName,
+        c.reason,
+        { errorMessage: `${gameId}: stage=backfill-exhausted attempts=${attempts} — 자동복구 상한 소진` },
+        c.policy,
+      );
+    },
+    nowMs: () => Date.now(),
+  })
+    .then((r) => {
+      if (r.launched.length > 0 || r.gaveUp.length > 0 || r.backedOff.length > 0 || r.failClosed) {
+        console.log(
+          `[warmup] summary-backfill launched=${JSON.stringify(r.launched)} gaveUp=${r.gaveUp.join(",")} backedOff=${r.backedOff.join(",")} failClosed=${r.failClosed}`,
+        );
+      }
+    })
+    .catch((e) => console.error("[warmup] summary-backfill crashed:", (e as Error).message));
+  after(summaryBackfillPromise);
 
   // 시작알림의 authoritative 첫 타석 근거와 highlight payload를 초기 KBO fetch 직후
   // 즉시 수집한다. 아래 LA/widget 파이프라인 조립과 병렬로 진행하되 highlight는 이

@@ -54,6 +54,7 @@
     "game_starter_notify_state",
     "game_starter_observation",
     "game_summaries",
+    "game_summary_backfill_state",
     "game_summary_generation_claims",
     "games",
     "genius_answer_feedback",
