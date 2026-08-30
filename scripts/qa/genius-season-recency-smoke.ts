@@ -252,14 +252,22 @@ async function main() {
     && eraFinal.some((r) => r.sectionPath.includes("2026년"))
     && eraFinal.some((r) => r.sectionPath === "한화 이글스"),
     eraFinal.map((r) => r.sectionPath).join("|"));
-  // sanitize 로 탈락할 chunk 는 cap **앞**에서 걸러야 예약이 살아남는 행만 고른다.
+  // 🔴 D2b 무대 — 예약 대상 시점의 **최상위 행이 sanitize 로 탈락**하는 경우.
+  //   나무위키 광고 슬롯만 든 chunk 는 raw 길이는 충분하지만 정제 후 빈 문자열이 된다.
+  //   sanitize 가 cap **뒤**에 있으면 예약이 이 광고행을 잡고 → 하류에서 탈락 →
+  //   1999 근거가 최종에서 사라진다(보충 경로 없음 = 삼순 7차 P0-2 그 시나리오).
+  const ADS_ONLY = ["명품시계대출", "blog.naver.com/nicewatch_kr", "당일대출 가능"].join("\n");
   const withJunk = rankEvidenceByQuery(
-    [...mixedEra, evidence("한화 이글스/2020년", 0.95, { content: "광고" })],
+    [...mixedEra, evidence("한화 이글스/1999년", 0.55, { content: ADS_ONLY })],
     QUERY, undefined, undefined, CURRENT_SEASON, { kind: "year", year: 1999 });
-  check("D2b sanitize 탈락은 cap 앞에서 끝난다 (짧은 chunk 가 자리를 먹지 않는다)",
-    !withJunk.some((r) => r.content === "광고")
+  check("D2b sanitize 탈락은 cap 앞에서 끝난다 (광고 chunk 가 예약 자리를 먹지 않는다)",
+    !withJunk.some((r) => r.content.includes("nicewatch"))
     && withJunk.some((r) => r.sectionPath.includes("1999년")),
-    withJunk.map((r) => r.sectionPath).join("|"));
+    withJunk.map((r) => `${r.sectionPath}#${r.content.slice(0, 12)}`).join("|"));
+  check("D2b2 종단 — 광고행이 섞여도 최종 evidence 에 1999 본문이 남는다",
+    selectEvidence(withJunk).some((r) => r.sectionPath.includes("1999년")
+      && !r.content.includes("nicewatch")),
+    selectEvidence(withJunk).map((r) => r.sectionPath).join("|"));
 
   // ── S4. 재점수화이지 hard sort 가 아니다 ─────────────────────────────────
   //    🔴 유저가 과거를 명시하면(`2018년 한화 어땠어?`) 그 문서가 유사도에서 분명히
@@ -524,6 +532,137 @@ async function main() {
     && modesYear.includes("year:2018")
     && modesYear.length === modesNone.length + 1,
     `${JSON.stringify(modesNone)} / ${JSON.stringify(modesYear)}`);
+
+  // ══ P. production runtime 종단 — 배포되는 팩토리를 실제로 태운다 (삼순 7차) ══
+  //   🔴 앞의 D 축은 synthetic 랭커만 태웠다. 그러면 production adapter 가 lane 을 버리거나
+  //     sanitize 순서를 되돌려도 GREEN 이다(6차에 실제로 그렇게 새어나갔다).
+  //     여기서는 `createProductionRagSearchRuntime` + `searchRag` 를 그대로 실행하고,
+  //     `client.rpc` 에 spy 를 걸어 **실제 RPC 호출 수**를 센다.
+  process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+  process.env.SUPABASE_SERVICE_ROLE_KEY ??= "genius-season-recency-smoke-key";
+  const { createProductionRagSearchRuntime, searchRag, RAG_MAX_RPC_PER_SOURCE } =
+    await import("../../src/lib/baseball-qa/server");
+
+  type RpcArgs = {
+    p_source_kind: string;
+    p_season_mode?: string;
+    p_season_year?: number | null;
+  };
+  /** 한 구단 코퍼스를 서빙 뷰 행 형태로 — production mapping 을 그대로 태우기 위함. */
+  const servingRow = (sectionPath: string, cos: number, content?: string) => ({
+    content: content ?? `${sectionPath} 근거 본문입니다. 최소 길이를 넘기기 위한 문장입니다.`,
+    page_title: "한화 이글스",
+    canonical_url: "https://namu.wiki/w/한화 이글스",
+    revision: "1",
+    section_path: sectionPath,
+    as_of: "2026-08-29",
+    source_grade: "tier2",
+    source_kind: "namu_document",
+    embedding: JSON.stringify(unit(cos)),
+  });
+  // 무대: 명시 연도(1999) 문서는 유사도 최하위 + **year lane 에서만** 나온다.
+  //   any lane 절단(2건) 밖이므로 lane 이 죽거나 예약이 없으면 최종 근거에 못 온다.
+  const PROD_CORPUS = [
+    servingRow("한화 이글스/2025년/9월", 0.90),
+    servingRow("한화 이글스/2025년/8월", 0.89),
+    servingRow("한화 이글스/2024년", 0.88),
+    servingRow("한화 이글스/2026년/8월", 0.60),
+    servingRow("한화 이글스", 0.58),
+    servingRow("한화 이글스/1999년", 0.50),
+  ];
+  const DB_CAP = 2; // DB 가 lane 당 돌려주는 상위 N (절단을 작게 흉내낸다)
+  const makeSpyClient = (opts: { legacyOnly?: boolean; delayMs?: number } = {}) => {
+    const calls: RpcArgs[] = [];
+    return {
+      calls,
+      client: {
+        rpc: async (_name: string, args: RpcArgs) => {
+          calls.push(args);
+          if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
+          // 구 시그니처만 배포된 상태 흉내 — lane 인자가 있으면 PGRST202.
+          if (opts.legacyOnly && args.p_season_mode !== undefined) {
+            return { data: null, error: { code: "PGRST202", message: "no function" } };
+          }
+          if (args.p_source_kind !== "namu_document") return { data: [], error: null };
+          const mode = args.p_season_mode;
+          const pool = mode === "year"
+            ? PROD_CORPUS.filter((r) => r.section_path.includes(String(args.p_season_year)))
+            : mode === "yearless"
+              ? PROD_CORPUS.filter((r) => !/(19|20)\d{2}/.test(r.section_path))
+              : PROD_CORPUS;
+          return { data: pool.slice(0, DB_CAP), error: null };
+        },
+      },
+    };
+  };
+  const runProd = async (question: string, opts: Parameters<typeof makeSpyClient>[0] = {}) => {
+    const spy = makeSpyClient(opts);
+    const runtime = createProductionRagSearchRuntime(
+      spy.client as unknown as Parameters<typeof createProductionRagSearchRuntime>[0]);
+    const started = Date.now();
+    const rows = await searchRag(
+      { entityType: "team", entityId: "1", name: "한화" } as never,
+      question,
+      undefined,
+      { ...runtime, embed: async () => ({ ok: true as const, vector: QUERY }) },
+      () => Date.UTC(CURRENT_SEASON, 7, 29, 3, 0, 0),
+    );
+    return { rows, calls: spy.calls, elapsed: Date.now() - started };
+  };
+
+  // 🔴 P1 반례 ① — 명시 연도 + 현재가 섞인 질문. 두 시점이 **모두** 최종 근거에 있어야 한다.
+  const era = await runProd("1999년 우승팀 한화의 현재 감독은?");
+  const eraPaths = era.rows.map((r) => r.sectionPath);
+  const eraServed = selectEvidence(era.rows).map((r) => r.sectionPath);
+  check("P1 production 종단 — 명시 연도(1999) 문서가 최종 evidence 에 온다",
+    eraServed.some((p) => p.includes("1999년")), eraServed.join("|"));
+  check("P1b production 종단 — 올해(2026) 문서도 함께 온다 (lane 교체 회귀 감지)",
+    eraServed.some((p) => p.includes("2026년")), eraServed.join("|"));
+  check("P1c production 종단 — 무연도 상위문서도 온다",
+    eraServed.some((p) => p === "한화 이글스"), eraServed.join("|"));
+  check("P1d 유사도 top1 은 그대로 (예약이 순위를 조작하지 않는다)",
+    eraPaths[0]?.includes("2025년/9월"), eraPaths.join("|"));
+
+  // 🔴 P2 반례 ② — 연도 없는 현재형 질문. target=none 이라도 기본 lane 은 그대로다.
+  const nowQ = await runProd("현재 한화 감독 경질 가능성?");
+  const nowServed = selectEvidence(nowQ.rows).map((r) => r.sectionPath);
+  check("P2 production 종단 — 무연도 질문에서도 올해·무연도 문서가 근거에 온다",
+    nowServed.some((p) => p.includes("2026년")) && nowServed.some((p) => p === "한화 이글스"),
+    nowServed.join("|"));
+  check("P2b 무연도 질문은 lane 이 늘지 않는다 (기본 3 lane × 2 source)",
+    nowQ.calls.length === 6, `${nowQ.calls.length} calls`);
+
+  // 🔴 P3 호출 예산 — **실제 client.rpc 호출 수**를 센다.
+  //   6차에는 바깥 `fetchBySourceKind` 만 세서 lane 팬아웃을 못 봤다(삼순 7차 지적).
+  const perSource = (calls: RpcArgs[], kind: string) =>
+    calls.filter((c) => c.p_source_kind === kind).length;
+  check("P3 정상 경로 RPC 총량 — 소스당 예산 이내",
+    perSource(era.calls, "namu_document") <= RAG_MAX_RPC_PER_SOURCE
+    && perSource(era.calls, "wikipedia_document") <= RAG_MAX_RPC_PER_SOURCE,
+    `namu=${perSource(era.calls, "namu_document")} wiki=${perSource(era.calls, "wikipedia_document")} budget=${RAG_MAX_RPC_PER_SOURCE}`);
+  check("P3b 정상 경로 총 RPC 는 lane 수 × source 수와 정확히 일치 (증폭 없음)",
+    era.calls.length === 8, `${era.calls.length} calls`);
+  // 구 시그니처만 배포된 상태 — lane 호출이 전부 PGRST202 여도 fallback 은 **소스당 1회**.
+  const legacyRun = await runProd("1999년 우승팀 한화의 현재 감독은?", { legacyOnly: true });
+  const legacyFallbacks = legacyRun.calls.filter((c) => c.p_season_mode === undefined);
+  check("P3c PGRST202 fallback 은 소스당 정확히 1회 (lane 마다 재시도 금지)",
+    legacyFallbacks.length === 2
+    && perSource(legacyFallbacks, "namu_document") === 1
+    && perSource(legacyFallbacks, "wikipedia_document") === 1,
+    `${legacyFallbacks.length} fallbacks / total ${legacyRun.calls.length}`);
+  check("P3d PGRST202 경로도 소스당 예산 이내",
+    perSource(legacyRun.calls, "namu_document") <= RAG_MAX_RPC_PER_SOURCE
+    && perSource(legacyRun.calls, "wikipedia_document") <= RAG_MAX_RPC_PER_SOURCE,
+    `namu=${perSource(legacyRun.calls, "namu_document")} budget=${RAG_MAX_RPC_PER_SOURCE}`);
+  check("P3e fallback 경로도 답을 낸다 (배포 순서가 답변 손실이 되지 않는다)",
+    legacyRun.rows.length > 0, `${legacyRun.rows.length} rows`);
+  // 🔴 P3f wall-clock — lane 을 **병렬**로 부르므로 지연이 lane 수에 비례하지 않는다.
+  //   직렬로 되돌리면 lane 4개 × 60ms = 240ms 를 넘어 RED 가 된다.
+  const LANE_DELAY_MS = 60;
+  const timed = await runProd("1999년 우승팀 한화의 현재 감독은?", { delayMs: LANE_DELAY_MS });
+  check("P3f lane 조회는 병렬 — 지연이 lane 수에 비례하지 않는다",
+    timed.elapsed < LANE_DELAY_MS * 3,
+    `${timed.elapsed}ms (lane delay ${LANE_DELAY_MS}ms × 4 lanes)`);
 
   // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
   check("W1 시즌 축은 team 경로 한정",

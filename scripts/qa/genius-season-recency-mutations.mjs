@@ -190,6 +190,46 @@ const MUTATIONS = [
       + '  return [...reservedFirst, ...rest].slice(0, limit).map((i) => ranked[i]);',
   },
   {
+    // 🔴 삼순 7차 P0-2: sanitize 를 cap **뒤**로 되돌리는 회귀.
+    //   예약행이 selectEvidence 에서 탈락해도 rank7+ 를 보충할 경로가 없어진다.
+    //   D2b/P1 이 잡아야 한다 — 안 잡히면 다음 사람이 조용히 되돌릴 수 있다.
+    name: "m22 sanitize 를 cap 뒤로 되돌림 — 예약행이 하류에서 탈락하면 보충이 없다(D2b/P1)",
+    file: RETRIEVE,
+    from: "  const projector: EvidenceProjector = project\n"
+      + "    ?? ((row) => sanitizeEvidenceContent(row.content, row));",
+    to: "  const projector: EvidenceProjector = project ?? ((row) => row.content);",
+  },
+  {
+    // 🔴 삼순 7차 P0-3: lane 마다 따로 fallback → 오버로드 부재 시 호출 2배.
+    name: "m23 PGRST202 fallback 을 lane 마다 재시도 — 호출이 lane 수만큼 튄다(P3c)",
+    file: SERVER,
+    from: "        const failed = results.find((result) => result.error);",
+    to: "        let failed = results.find((result) => result.error);\n"
+      + "        for (const lane of planned) {\n"
+      + "          if (!failed) break;\n"
+      + "          void lane;\n"
+      + "          const retry = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);\n"
+      + "          if (!retry.error) failed = undefined;\n"
+      + "        }\n"
+      + "        failed = results.find((result) => result.error);",
+  },
+  {
+    // 🔴 삼순 7차 P0-3: lane 조회를 직렬화 → 지연이 lane 수에 비례한다.
+    name: "m24 lane 조회를 직렬화 — 지연이 lane 수에 비례한다(P3f)",
+    file: SERVER,
+    from: "        const results = await Promise.all(planned.map((lane) =>",
+    to: "        const results = await planned.reduce(async (acc, lane) => {\n"
+      + "          const prev = await acc;\n"
+      + "          return [...prev, await ((l) =>",
+  },
+  {
+    // 🔴 삼순 7차 P0-3: 예산 clamp 제거 → lane 이 늘면 호출이 그대로 늘어난다.
+    name: "m25 호출 예산 clamp 제거 — lane 수만큼 RPC 가 무제한 증가(P3/P3b)",
+    file: SERVER,
+    from: "      const planned = (lanes ?? []).slice(0, RAG_MAX_RPC_PER_SOURCE - 1);",
+    to: "      const planned = [...(lanes ?? []), ...(lanes ?? [])];",
+  },
+  {
     name: "m18 선수 경로에도 시즌 축 적용 — 전제(연도 분할 문서)가 없는 곳에 개입(T-target)",
     file: SERVER,
     from: '  const seasonAware = candidate.entityType === "team";',
