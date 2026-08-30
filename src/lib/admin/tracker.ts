@@ -112,6 +112,15 @@ let dwellResumeAt: number | null = null;
  * tracking). Set by DwellTracker on auth/route changes. */
 export function dwellSetAuth(token: string | null) {
   dwellToken = token;
+  // Logged out: drop anything queued — the population is logged-in users only
+  // and we no longer hold a token to authenticate the batch.
+  if (token == null) {
+    dwellQueue = [];
+    if (dwellFlushTimer != null) {
+      clearTimeout(dwellFlushTimer);
+      dwellFlushTimer = null;
+    }
+  }
 }
 
 function settleDwell() {
@@ -127,7 +136,7 @@ function emitDwell() {
   const path = dwellPath;
   dwellActiveMs = 0;
   if (!path || ms < MIN_DWELL_MS) return;
-  sendPageDwell(path, ms);
+  enqueueDwell(path, ms);
 }
 
 /** Finalize the page being left, then begin timing the new one. */
@@ -141,9 +150,11 @@ export function dwellStartPage(path: string) {
       : null;
 }
 
-/** Tab hidden / page hide: flush what we've accumulated so far. */
+/** Tab hidden / page hide: settle the current interval and flush the queue
+ * immediately — the page may be about to die and sendBeacon survives unload. */
 export function dwellPause() {
   emitDwell();
+  flushDwellQueue();
 }
 
 /** Tab visible again: resume timing the same page. */
@@ -157,18 +168,62 @@ export function dwellResume() {
   }
 }
 
-function sendPageDwell(path: string, dwellMs: number) {
+// ---- Batched dwell delivery ----
+// Route changes used to fire one POST each (~180K requests/day at current
+// traffic). Finished intervals are now queued and delivered as one batched
+// POST every DWELL_FLUSH_INTERVAL_MS, plus an immediate flush on
+// pagehide/tab-hide (sendBeacon survives unload) so leaving never loses data.
+const DWELL_FLUSH_INTERVAL_MS = 30_000;
+const DWELL_QUEUE_MAX = 20; // safety cap; flush early if a burst piles up
+
+let dwellQueue: { path: string; dwellMs: number }[] = [];
+let dwellFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function enqueueDwell(path: string, dwellMs: number) {
+  if (!dwellToken) return; // logged-out / no session → not tracked
+  const last = dwellQueue[dwellQueue.length - 1];
+  if (last && last.path === path) {
+    // Repeated intervals on the same page (visibility toggles): merge instead
+    // of growing the queue. Server caps a row at MAX_DWELL_MS either way.
+    last.dwellMs = Math.min(last.dwellMs + Math.round(dwellMs), MAX_DWELL_MS);
+  } else {
+    dwellQueue.push({ path, dwellMs: Math.round(dwellMs) });
+  }
+  if (dwellQueue.length >= DWELL_QUEUE_MAX) {
+    flushDwellQueue();
+    return;
+  }
+  if (dwellFlushTimer == null) {
+    dwellFlushTimer = setTimeout(flushDwellQueue, DWELL_FLUSH_INTERVAL_MS);
+  }
+}
+
+/** Send everything queued in a single POST. Safe to call any time; no-op when
+ * the queue is empty. Exposed for DwellTracker's unload path. */
+export function flushDwellQueue() {
+  if (dwellFlushTimer != null) {
+    clearTimeout(dwellFlushTimer);
+    dwellFlushTimer = null;
+  }
+  if (dwellQueue.length === 0) return;
   const token = dwellToken;
-  if (!token) return; // logged-out / no session → not tracked
+  if (!token) {
+    dwellQueue = [];
+    return;
+  }
   const visitorId = getVisitorId();
-  if (!visitorId) return;
+  if (!visitorId) {
+    dwellQueue = [];
+    return;
+  }
+  const events = dwellQueue;
+  dwellQueue = [];
 
   const body = JSON.stringify({
     visitorId,
-    path,
     platform: getPlatform(),
-    dwellMs: Math.round(dwellMs),
     accessToken: token,
+    events,
   });
   const url = "/api/telemetry/page-dwell";
 
