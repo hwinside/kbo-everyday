@@ -42,6 +42,7 @@ type FetchLiveGamesNaverPrimary = Mod["fetchLiveGamesNaverPrimary"];
 type NaverImpl = Parameters<FetchLiveGamesNaverPrimary>[3];
 type EvidenceImpl = Parameters<FetchLiveGamesNaverPrimary>[4];
 type KboGamesImpl = Parameters<FetchLiveGamesNaverPrimary>[5];
+type FramesImpl = Parameters<FetchLiveGamesNaverPrimary>[6];
 
 const GID = "20260826NCLG0";
 
@@ -128,6 +129,8 @@ const freshEvidence = {
 const okEvidence: EvidenceImpl = (async () => freshEvidence) as EvidenceImpl;
 // KBO enrich seam — 기본값(실 fetchKboGamesOnly)이 네트워크를 타지 않게 게이트에서 반드시 주입.
 const kboEnrichNone: KboGamesImpl = (async () => []) as KboGamesImpl;
+// ⓔ frames 폴백 seam — 기본값(game_relay_frames DB 조회)이 네트워크를 타지 않게 반드시 주입.
+const framesNone: FramesImpl = (async () => null) as FramesImpl;
 
 async function main() {
   const { fetchLiveGamesNaverPrimary, fetchKboLiveGames, fetchNaverLiveEvidence } = (await import(
@@ -159,6 +162,7 @@ async function main() {
     naverFresh,
     okEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g1.ok, true, "P1 ok");
   assert.equal(g1.trace.source, "naver", "P1 source=naver");
@@ -182,6 +186,7 @@ async function main() {
     naverDown,
     okEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g2.ok, true, "P2 ok");
   assert.equal(g2.trace.source, "kbo", "P2 source=kbo (fallback)");
@@ -196,6 +201,7 @@ async function main() {
     naverEmpty,
     okEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g3.ok, true, "P3 ok");
   assert.equal(g3.games.length, 1, "P3 KBO 게임 무손실");
@@ -220,6 +226,7 @@ async function main() {
     naverFresh,
     enrichEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g4.games[0].BALL_CN, 2, "P4 balls from naver relay");
   assert.equal(g4.games[0].STRIKE_CN, 1, "P4 strikes");
@@ -246,6 +253,7 @@ async function main() {
     naverFirstPitch,
     noPlayEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g5.games[0].GAME_STATE_SC, "1", "P5 scheduled 강등 (가짜 live 방지)");
   pass += 1;
@@ -261,6 +269,7 @@ async function main() {
     async () => [naverGame({ awayStarterName: "", homeStarterName: "" })],
     okEvidence,
     kboEnrichStarters,
+    framesNone,
   );
   assert.equal(g7.games[0].T_PIT_P_NM, "박세웅", "P7 KBO 선발 enrich (어웨이)");
   assert.equal(g7.games[0].B_PIT_P_NM, "손주영", "P7 KBO 선발 enrich (홈)");
@@ -282,6 +291,7 @@ async function main() {
     staleScheduleNaver,
     relayFreshScore,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g8.games[0].B_SCORE_CN, "8", "P8 relay 점수(8)가 schedule 점수(5)를 override");
   assert.equal(g8.games[0].T_SCORE_CN, "0", "P8 relay away 점수");
@@ -397,10 +407,258 @@ async function main() {
     naverDown,
     okEvidence,
     kboEnrichNone,
+    framesNone,
   );
   assert.equal(g6.ok, false, "P6 fail-close ok=false");
   assert.deepEqual(g6.games, [], "P6 empty");
   assert.equal(g6.trace.stage, "dual-fail", "P6 dual-fail");
+  pass += 1;
+
+  // ---------- ⓓⓔ relay 보호 예산 + frames 폴백 (2026-08-29) ----------
+  const {
+    RELAY_EVIDENCE_BUDGET_MS,
+    applyRelayFramesFallback,
+    FRAMES_FALLBACK_COUNT_MAX_AGE_MS,
+    FRAMES_FALLBACK_SCORE_MAX_AGE_MS,
+  } = (await import("../../src/lib/notifications/kbo-live-games")) as Mod;
+
+  // F1) relay evidence 실패 + frames 신선(점수 전진) → frames 점수 사용, obs 에 relay-failed + score-src=frames.
+  const evidenceDown: EvidenceImpl = (async () => {
+    throw new Error("relay down");
+  }) as EvidenceImpl;
+  const framesFresh: FramesImpl = (async () => ({
+    ageMs: 5_000,
+    awayScore: 0,
+    homeScore: 9,
+    balls: 1,
+    strikes: 2,
+    outs: 2,
+    runner1b: true,
+    runner2b: false,
+    runner3b: false,
+    runner1bOrder: 5,
+    runner2bOrder: 0,
+    runner3bOrder: 0,
+    currentPitcher: "고우석",
+    currentBatter: "오지환",
+  })) as FramesImpl;
+  const f1 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFresh, // schedule 0:8
+    evidenceDown,
+    kboEnrichNone,
+    framesFresh, // frames 0:9 (전진)
+  );
+  assert.equal(f1.ok, true, "F1 ok");
+  assert.equal(f1.games[0].B_SCORE_CN, "9", "F1 frames 점수(9)가 stale schedule(8)을 대체");
+  assert.equal(f1.games[0].BALL_CN, 1, "F1 frames 카운트 적용(relay 실패 틱)");
+  assert.equal(f1.games[0].B1_BAT_ORDER_NO, 5, "F1 frames 주자 적용");
+  assert.equal(
+    f1.trace.enrichObs?.includes(`${GID}:relay-failed`),
+    true,
+    `F1 relay-failed 기록 (실제: ${JSON.stringify(f1.trace.enrichObs)})`,
+  );
+  assert.equal(
+    f1.trace.enrichObs?.includes(`${GID}:score-src=frames`),
+    true,
+    `F1 score-src=frames 기록 (실제: ${JSON.stringify(f1.trace.enrichObs)})`,
+  );
+  pass += 1;
+
+  // F2) evidence 성공·점수만 null + frames 신선(전진) → 점수만 frames, 카운트는 evidence 유지.
+  const evidenceNullScoreCounts: EvidenceImpl = (async () => ({
+    ...freshEvidence,
+    balls: 3,
+    strikes: 0,
+    outs: 1,
+  })) as EvidenceImpl;
+  const f2 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFresh,
+    evidenceNullScoreCounts,
+    kboEnrichNone,
+    framesFresh,
+  );
+  assert.equal(f2.games[0].B_SCORE_CN, "9", "F2 점수는 frames(9)");
+  assert.equal(f2.games[0].BALL_CN, 3, "F2 카운트는 evidence(더 신선) 유지");
+  assert.equal(
+    f2.trace.enrichObs?.includes(`${GID}:score-src=frames`),
+    true,
+    `F2 score-src=frames 기록 (실제: ${JSON.stringify(f2.trace.enrichObs)})`,
+  );
+  pass += 1;
+
+  // F3) relay 실패 + frames 미스(null) → 기존 동작(schedule 유지) + score-src=schedule 기록.
+  const f3 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 10_000,
+    staleKbo,
+    naverFresh,
+    evidenceDown,
+    kboEnrichNone,
+    framesNone,
+  );
+  assert.equal(f3.games[0].B_SCORE_CN, "8", "F3 frames 미스면 schedule 유지");
+  assert.equal(
+    f3.trace.enrichObs?.includes(`${GID}:score-src=schedule`),
+    true,
+    `F3 score-src=schedule 기록 (실제: ${JSON.stringify(f3.trace.enrichObs)})`,
+  );
+  pass += 1;
+
+  // F4) 단조 가드(순수) — 낡은/후퇴 frames 는 점수를 못 바꾼다. 카운트도 age 초과면 미적용.
+  const baseGame = naverGame(); // 0:8
+  const retreatFrames = {
+    ageMs: 5_000,
+    awayScore: 0,
+    homeScore: 5, // 후퇴
+    balls: 2,
+    strikes: 2,
+    outs: 2,
+    runner1b: false,
+    runner2b: false,
+    runner3b: false,
+    runner1bOrder: 0,
+    runner2bOrder: 0,
+    runner3bOrder: 0,
+    currentPitcher: "",
+    currentBatter: "",
+  };
+  const r1 = applyRelayFramesFallback(baseGame, retreatFrames, { includeCounts: true });
+  assert.equal(r1.scoreFromFrames, false, "F4 후퇴 frames 점수 미사용");
+  assert.equal(r1.game.homeScore, 8, "F4 schedule 점수 유지");
+  assert.equal(r1.game.balls, 2, "F4 신선 frames 카운트는 적용(점수 독립)");
+  const staleFrames = { ...retreatFrames, homeScore: 9, ageMs: FRAMES_FALLBACK_SCORE_MAX_AGE_MS + 1 };
+  const r2 = applyRelayFramesFallback(baseGame, staleFrames, { includeCounts: true });
+  assert.equal(r2.scoreFromFrames, false, "F4 age 초과 frames 점수 미사용");
+  assert.equal(r2.game.balls, baseGame.balls, "F4 age 초과면 카운트도 미적용");
+  const equalFrames = { ...retreatFrames, homeScore: 8 };
+  const r3 = applyRelayFramesFallback(baseGame, equalFrames, { includeCounts: false });
+  assert.equal(r3.scoreFromFrames, false, "F4 동점 frames 는 정보 없음 → schedule 출처 유지");
+  assert.ok(
+    FRAMES_FALLBACK_COUNT_MAX_AGE_MS < FRAMES_FALLBACK_SCORE_MAX_AGE_MS,
+    "F4 카운트 창 < 점수 창(계약)",
+  );
+  pass += 1;
+
+  // D1) ⓓ relay 보호 예산 — evidence 가 행이어도 전체 deadline(10s)이 아니라 예산(2.5s) 안에 실패 확정.
+  const evidenceHang: EvidenceImpl = ((
+    _gameId: string,
+    signal: AbortSignal,
+  ) =>
+    new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    })) as EvidenceImpl;
+  const dStart = Date.now();
+  const d1 = await fetchLiveGamesNaverPrimary(
+    GID.slice(0, 8),
+    Date.now() + 20_000,
+    staleKbo,
+    naverFresh,
+    evidenceHang,
+    kboEnrichNone,
+    framesFresh,
+  );
+  const dElapsed = Date.now() - dStart;
+  assert.ok(
+    dElapsed < RELAY_EVIDENCE_BUDGET_MS + 2_500,
+    `D1 보호 예산 안 실패 확정 (elapsed ${dElapsed}ms < ${RELAY_EVIDENCE_BUDGET_MS + 2_500}ms)`,
+  );
+  assert.equal(
+    d1.trace.enrichObs?.includes(`${GID}:relay-failed`),
+    true,
+    "D1 예산 초과는 relay-failed 로 기록",
+  );
+  assert.equal(d1.games[0].B_SCORE_CN, "9", "D1 실패 확정 후 frames 폴백 동작");
+  pass += 1;
+
+  // ⓕ) 발현 틱 선별(순수) — 발현 마커 있는 틱만 남고, 정상 relay 틱·무관측 틱은 버려진다.
+  const { selectEmergentObsTicks } = await import(
+    "../../src/lib/notifications/warmup-enrich-obs"
+  );
+  const tick = (obs: string[], kind: "initial" | "subtick" = "subtick") => ({
+    atMs: Date.now(),
+    tickKind: kind,
+    liveSource: "naver",
+    liveStage: "naver",
+    obs,
+  });
+  const selected = selectEmergentObsTicks([
+    tick([`${GID}:score-src=relay`]), // 정상 — 제외
+    tick([]), // 무관측 — 제외
+    tick([`${GID}:score-src=schedule`], "initial"), // 발현
+    tick([`${GID}:relay-failed`]), // 발현
+    tick([`${GID}:deadline-cut`]), // 발현
+    tick([`${GID}:score-src=frames`]), // 발현(폴백 작동 = relay 이상 있음)
+    tick([`${GID}:score-src=relay`, `${GID}:relay-failed`]), // 혼합(한 경기 정상·한 경기 실패) — 발현
+  ]);
+  assert.equal(selected.length, 5, `ⓕ 발현 틱 5개 선별 (실제 ${selected.length})`);
+  assert.equal(selected[0].tickKind, "initial", "ⓕ initial 틱 보존");
+  pass += 1;
+
+  // ⓕ-GC 회귀(삼순 NO-GO 2026-08-30) — 정시 GC 는 발현 유무와 분리: 정시+발현 0건에서도 retention delete 가 호출된다.
+  const { persistWarmupEnrichObs, WARMUP_ENRICH_OBS_RETENTION_MS } = await import(
+    "../../src/lib/notifications/warmup-enrich-obs"
+  );
+  const adminCalls: string[] = [];
+  const fakeAdmin = {
+    from(table: string) {
+      return {
+        insert: async (rows: unknown[]) => {
+          adminCalls.push(`insert:${table}:${rows.length}`);
+          return { error: null };
+        },
+        delete() {
+          return {
+            lt: async (column: string, value: string) => {
+              adminCalls.push(`delete:${table}:${column}:${value}`);
+              return {};
+            },
+          };
+        },
+      };
+    },
+  };
+  const onTheHourMs = Date.UTC(2026, 7, 30, 12, 0, 30); // 분==0 (정시 틱)
+  const offHourMs = Date.UTC(2026, 7, 30, 12, 30, 0); // 비정시 틱
+  // 1) 정시 + 발현 0건(정상 relay 만) → delete 호출, insert 없음, persisted 0. ← NO-GO blocker 재현 방지
+  const gcOnly = await persistWarmupEnrichObs(
+    [tick([`${GID}:score-src=relay`])],
+    onTheHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(gcOnly, { persisted: 0 }, "ⓕ-GC 정시+발현 0건 persisted 0");
+  const expectedCutoff = new Date(onTheHourMs - WARMUP_ENRICH_OBS_RETENTION_MS).toISOString();
+  assert.equal(
+    adminCalls.length === 1 &&
+      adminCalls[0] === `delete:warmup_enrich_obs:observed_at:${expectedCutoff}`,
+    true,
+    `ⓕ-GC 정시+발현 0건에서도 retention delete 호출 (실제 ${JSON.stringify(adminCalls)})`,
+  );
+  // 2) 비정시 + 발현 0건 → admin 무접촉 조기 return 유지
+  adminCalls.length = 0;
+  const noop = await persistWarmupEnrichObs(
+    [tick([`${GID}:score-src=relay`])],
+    offHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(noop, { persisted: 0 }, "ⓕ-GC 비정시+발현 0건 persisted 0");
+  assert.equal(adminCalls.length, 0, "ⓕ-GC 비정시+발현 0건은 admin 무접촉");
+  // 3) 정시 + 발현 있음 → delete 선행 + insert, persisted 반영
+  adminCalls.length = 0;
+  const both = await persistWarmupEnrichObs(
+    [tick([`${GID}:relay-failed`])],
+    onTheHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(both, { persisted: 1 }, "ⓕ-GC 정시+발현 1건 persisted 1");
+  assert.equal(adminCalls.length, 2, "ⓕ-GC 정시+발현 시 delete+insert 2호출");
+  assert.ok(adminCalls[0].startsWith("delete:warmup_enrich_obs:"), "ⓕ-GC delete 가 insert 보다 선행(오류 경로 독립)");
+  assert.ok(adminCalls[1].startsWith("insert:warmup_enrich_obs:1"), "ⓕ-GC 발현 틱 insert 배선");
   pass += 1;
 
   // ---------- 소스 가드: warmup 이 Naver-primary 를 쓰고 KBO-primary 직호출이 없다 ----------
@@ -411,15 +669,23 @@ async function main() {
   // 관측 배선(삼순 #1317 P1) — 서브틱 fetch 가 enrichObsTicks 에 수집되고 응답에 노출된다.
   assert.match(
     routeSrc,
-    /enrichObsTicks\.push\(\{ atMs: r\.trace\.fetchedAtMs, obs: r\.trace\.enrichObs \}\)/,
-    "fast-loop 클로저가 서브틱 trace.enrichObs 를 enrichObsTicks 에 수집",
+    /enrichObsTicks\.push\(\{\s*atMs: r\.trace\.fetchedAtMs,\s*obs: r\.trace\.enrichObs,\s*source: r\.trace\.source,\s*stage: r\.trace\.stage,\s*\}\)/,
+    "fast-loop 클로저가 서브틱 trace.enrichObs(+source/stage) 를 enrichObsTicks 에 수집",
   );
   assert.match(routeSrc, /enrichObsTicks,\s*\n/, "응답 JSON 에 enrichObsTicks 노출");
   assert.match(routeSrc, /enrichObs: initialFetch\.trace\.enrichObs \?\? \[\]/, "응답 JSON 에 초기틱 enrichObs 노출");
+  // ⓕ 발현 틱 DB 적재 배선 — persist 호출이 Promise.all(모든 발송 완료) 뒤에 있고 응답에 결과 노출.
+  assert.match(routeSrc, /persistWarmupEnrichObs\(enrichObsAllTicks\)/, "ⓕ persistWarmupEnrichObs 호출 배선");
+  assert.match(routeSrc, /enrichObsPersist,\s*\n/, "ⓕ 응답 JSON 에 enrichObsPersist 노출");
+  assert.ok(
+    routeSrc.indexOf("persistWarmupEnrichObs(enrichObsAllTicks)") >
+      routeSrc.indexOf("laOrchestration.drainFanout"),
+    "ⓕ persist 는 fanout drain 뒤(critical path 밖)",
+  );
   pass += 1;
 
-  assert.equal(pass, 14, `expected 14 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/14 PASS`);
+  assert.equal(pass, 21, `expected 21 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/21 PASS`);
 }
 
 main().catch((error) => {
