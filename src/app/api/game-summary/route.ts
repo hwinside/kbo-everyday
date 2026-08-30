@@ -23,9 +23,31 @@ import {
   winnerFieldMismatch,
   type SummaryFingerprint,
 } from "@/lib/game-summary/cache-validation";
+import {
+  classifyGenerationFailure,
+  canonicalFailureStage,
+  type GenerationFailureStage,
+} from "@/lib/game-summary/failure-observability";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 const PROMPT_VERSION = 13; // v13: 순위 환각 방지 가드(공식 순위표 기준 규칙 + 조회 실패 fallback) — 기존 캐시 재생성
+
+// (2026-08-29 LG:롯데 콜드게임 인시던트, 삼순 A안) 생성 단계 실패의 durable 관측.
+// 기존엔 console.error 만 남아 Vercel 로그 보존창을 놔치면 실패 지점을 소급 판정할 수
+// 없었다(22:21 final 전이 → 22:31 복구 사이 생성 실패 2~3회 미확정). 분류(실패축 vs 정상
+// 동시요청축 비경보)는 failure-observability 순수 모듈이 담당 — 게이트가 같은 seam 을 태운다.
+// after() 로 응답 이후 실행해 latency 무영향, 실패해도 응답에 영향 없음(track 내부 catch).
+function reportGenerationFailure(gameId: string, stage: GenerationFailureStage, detail: string) {
+  const c = classifyGenerationFailure(stage);
+  after(() =>
+    trackApiDegradation(
+      c.apiName,
+      c.reason,
+      { errorMessage: `${gameId}: stage=${stage} ${detail}`.slice(0, 500) },
+      c.policy,
+    ),
+  );
+}
 
 // ===== Types =====
 
@@ -561,6 +583,13 @@ export async function POST(req: NextRequest) {
   // gameId만 받아 KBO 경기목록+스코어보드+박스스코어를 서버에서 독립 재조회한다.
   const canonicalSource = await fetchCanonicalSummarySource(requestBody.gameId, true);
   if (canonicalSource.reason !== "ok" || !canonicalSource.input || !canonicalSource.fingerprint) {
+    // 삼순 NO-GO ①축: 꼬리 원인 후보였던 *초기 canonical 실패*(final 인데 미수렴·boxscore
+    // 불가·조회 실패)도 durable 기록한다. not-final(라이브 중 정상 fail-close)·invalid-gameid 는
+    // canonicalFailureStage 가 null 을 돌려 제외된다(지연 경기 유저 POST 노이즈 방지).
+    const stage = canonicalFailureStage(canonicalSource.reason);
+    if (stage) {
+      reportGenerationFailure(requestBody.gameId, stage, `http=${canonicalSource.httpStatus}`);
+    }
     return NextResponse.json(
       { error: canonicalSource.reason, source: canonicalSource.reason },
       { status: canonicalSource.httpStatus },
@@ -598,6 +627,9 @@ export async function POST(req: NextRequest) {
   // 이후 더 새 claim이 생기면 save RPC의 row-lock token 확인에서 이 요청은 superseded 된다.
   const generationToken = await claimGeneration(body.gameId);
   if (generationToken == null) {
+    // 다른 생성이 lease 보유 중 = 정상 backoff 일 수 있으나, 반복되면 "선행 생성이 계속
+    // 실패 중" 시그널이라 durable 기록(경보는 임계치 팔터가 걸러줌).
+    reportGenerationFailure(body.gameId, "claim-contention", "active lease held by another generation");
     return NextResponse.json(
       { error: "generation-claim-failed", source: "generation-claim" },
       { status: 503 },
@@ -637,7 +669,10 @@ export async function POST(req: NextRequest) {
       if (!geminiRes.ok) {
         const errText = await geminiRes.text();
         console.error(`Gemini API error (attempt ${attempt}):`, geminiRes.status, errText);
-        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
+        if (attempt === MAX_ATTEMPTS) {
+          reportGenerationFailure(body.gameId, "gemini-api", `http=${geminiRes.status} ${errText.slice(0, 200)}`);
+          return NextResponse.json({ error: "Gemini API failed" }, { status: 502 });
+        }
         continue;
       }
 
@@ -647,7 +682,10 @@ export async function POST(req: NextRequest) {
       const rawText = textParts.length > 0 ? textParts[textParts.length - 1].text : null;
 
       if (!rawText) {
-        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
+        if (attempt === MAX_ATTEMPTS) {
+          reportGenerationFailure(body.gameId, "gemini-empty", "no text part in response");
+          return NextResponse.json({ error: "Empty Gemini response" }, { status: 502 });
+        }
         continue;
       }
 
@@ -660,12 +698,18 @@ export async function POST(req: NextRequest) {
           try { summary = JSON.parse(jsonMatch[0]); }
           catch {
             console.error("JSON parse failed:", jsonMatch[0].slice(0, 500));
-            if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+            if (attempt === MAX_ATTEMPTS) {
+              reportGenerationFailure(body.gameId, "gemini-parse", "JSON.parse failed on extracted braces");
+              return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+            }
             continue;
           }
         } else {
           console.error("No JSON found:", rawText.slice(0, 500));
-          if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+          if (attempt === MAX_ATTEMPTS) {
+            reportGenerationFailure(body.gameId, "gemini-parse", "no JSON object in response text");
+            return NextResponse.json({ error: "Invalid Gemini response format" }, { status: 502 });
+          }
           continue;
         }
       }
@@ -679,7 +723,10 @@ export async function POST(req: NextRequest) {
       const headlineSaysZero = /0대0|0-0/.test(headlineStr) || /득점\s*없/.test(headlineStr);
       if (!isZeroZero && headlineSaysZero) {
         console.error(`Score mismatch (attempt ${attempt}): actual ${body.awayScore}-${body.homeScore}, headline says 0-0.`);
-        if (attempt === MAX_ATTEMPTS) return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+        if (attempt === MAX_ATTEMPTS) {
+          reportGenerationFailure(body.gameId, "score-mismatch", `actual ${finalAwayScore}-${finalHomeScore}, headline claims 0-0`);
+          return NextResponse.json({ error: "Generated summary score mismatch, discarded" }, { status: 422 });
+        }
         continue;
       }
 
@@ -707,6 +754,7 @@ export async function POST(req: NextRequest) {
 
       if (winnerMismatch) {
         if (attempt === MAX_ATTEMPTS) {
+          reportGenerationFailure(body.gameId, "winner-mismatch", `score=${finalAwayScore}-${finalHomeScore} llmWinner=${String(llmWinner)}`);
           return NextResponse.json({ error: "Generated summary winner mismatch after retries, discarded" }, { status: 422 });
         }
         continue;
@@ -729,6 +777,7 @@ export async function POST(req: NextRequest) {
       if (consistencyViolation) {
         console.error(`Consistency violation (attempt ${attempt}): bases-loaded homer arithmetic. headline="${summary.headline}"`);
         if (attempt === MAX_ATTEMPTS) {
+          reportGenerationFailure(body.gameId, "consistency-violation", "bases-loaded homer arithmetic in narrative");
           return NextResponse.json({ error: "Generated summary internal contradiction after retries, discarded" }, { status: 422 });
         }
         continue;
@@ -755,6 +804,12 @@ export async function POST(req: NextRequest) {
         latestCanonical.reason !== "ok" ||
         !shouldSaveGeneratedSummary(generationFingerprint, latestCanonical.fingerprint)
       ) {
+        // final 전이 직후 게임목록↔스코어보드 수렴 시차 구간에서 반복될 수 있는 핵심 관측 대상.
+        reportGenerationFailure(
+          body.gameId,
+          "canonical-race",
+          `latest=${latestCanonical.reason} generationFp=${JSON.stringify(generationFingerprint)} latestFp=${JSON.stringify(latestCanonical.fingerprint ?? null)}`,
+        );
         return NextResponse.json(
           { error: "canonical-changed-during-generation", source: "canonical-race" },
           { status: 409 },
@@ -765,6 +820,11 @@ export async function POST(req: NextRequest) {
       summary._cacheFingerprint = generationFingerprint;
       const saveResult = await saveCache(body.gameId, summary, generationToken);
       if (saveResult !== "saved") {
+        reportGenerationFailure(
+          body.gameId,
+          saveResult === "superseded" ? "save-superseded" : "save-failed",
+          `token=${String(generationToken)}`,
+        );
         return NextResponse.json(
           {
             error: saveResult === "superseded"
@@ -783,6 +843,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.error(`Game summary generation error (attempt ${attempt}):`, err);
       if (attempt === MAX_ATTEMPTS) {
+        reportGenerationFailure(body.gameId, "generation-exception", (err as Error)?.message?.slice(0, 200) ?? "unknown");
         return NextResponse.json({ error: "Generation failed" }, { status: 500 });
       }
     }
