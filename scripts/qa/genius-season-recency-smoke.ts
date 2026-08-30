@@ -764,6 +764,70 @@ async function main() {
         new URL("../../src/lib/baseball-qa/pipeline.ts", import.meta.url), "utf8"))),
     "pipeline team RAG catch → return null");
 
+  // 🔴 P4g 종단 — timeout throw 가 실제 `answerQuestion` 까지 흘러 generic 으로 양보하는가.
+  //   P4f 는 pipeline 소스 정규식이라 "코드가 그렇게 생겼다"만 보고 **실행**을 안 한다.
+  //   여기서는 searchRag 가 deadline 오류를 던지게 하고 답변 경로 종결 칸을 판정한다.
+  const { answerQuestion } = await import("../../src/lib/baseball-qa/pipeline");
+  const yieldDeps = (searchRagImpl: () => Promise<never>) => {
+    const calls = { genericLlm: 0, teamRagLlm: 0, logs: [] as string[] };
+    return {
+      calls,
+      deps: {
+        loadGlossary: async () => [],
+        loadPlayers: async () => [],
+        getCache: async () => null,
+        setCache: async () => {},
+        callLlm: async () => {
+          calls.genericLlm += 1;
+          // generic 경로 계약대로 sentinel JSON 을 돌려준다 — 평문이면 validator 가
+          // unsure 로 접어 "양보했는데 종결 칸은 unsure" 가 된다(실측으로 확인).
+          return {
+            text: JSON.stringify({
+              status: "ANSWER",
+              answer: "기아 타이거즈는 광주를 연고로 하는 구단이에요.",
+            }),
+            inputTokens: 1,
+            outputTokens: 1,
+          };
+        },
+        reserveDaily: async (_u: string, limit: number) => ({ allowed: true, remaining: limit - 1 }),
+        log: async (entry: { matchPath: string }) => { calls.logs.push(entry.matchPath); },
+        loadPreviousTurn: async () => null,
+        enableTeamRag: true,
+        searchRag: searchRagImpl,
+        callTeamRagLlm: async () => {
+          calls.teamRagLlm += 1;
+          return { text: '{"status":"GROUNDED","answer":"광주 연고 구단입니다."}', inputTokens: 1, outputTokens: 1 };
+        },
+      } as never,
+    };
+  };
+  const TEAM_Q = "기아 타이거즈는 어떤 구단이야?";
+  const timedOut = yieldDeps(async () => {
+    throw new Error("rag_search_deadline_exceeded");
+  });
+  const yielded = await answerQuestion("u-deadline", TEAM_Q, timedOut.deps);
+  check("P4g 종단 — deadline throw 가 generic 경로로 양보한다 (source=llm)",
+    yielded.source === "llm", `source=${yielded.source} logs=${timedOut.calls.logs.join(",")}`);
+  check("P4g2 양보 시 team RAG LLM 을 소비하지 않는다 (근거 없이 재서술 금지)",
+    timedOut.calls.teamRagLlm === 0 && timedOut.calls.genericLlm === 1,
+    `teamRagLlm=${timedOut.calls.teamRagLlm} genericLlm=${timedOut.calls.genericLlm}`);
+  // 양방향 — 검색이 정상이면 team_rag 로 종결한다(과잉 양보 금지).
+  const healthy = yieldDeps((async () => [{
+    content: "KIA 타이거즈는 광주를 연고로 하는 구단이다. 오랜 역사를 가진 팀이다.",
+    pageTitle: "KIA 타이거즈",
+    canonicalUrl: "https://namu.wiki/w/KIA",
+    revision: "1",
+    sectionPath: "개요",
+    asOf: "2026-01-01",
+    sourceGrade: "tier2",
+    sourceKind: "namu_document",
+  }]) as never);
+  const served = await answerQuestion("u-healthy", TEAM_Q, healthy.deps);
+  check("P4g3 양방향 — 검색이 정상이면 team_rag 로 종결한다 (과잉 양보 금지)",
+    served.source === "team_rag" && healthy.calls.genericLlm === 0,
+    `source=${served.source} genericLlm=${healthy.calls.genericLlm}`);
+
   // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
   check("W1 시즌 축은 team 경로 한정",
     /const seasonAware = candidate\.entityType === "team";/.test(server));

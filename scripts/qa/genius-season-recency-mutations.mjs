@@ -78,10 +78,15 @@ const MUTATIONS = [
     to: "    undefined,\n    { kind: \"none\" },",
   },
   {
-    name: "m11 now seam 을 고정 — 게이트가 경계 시각을 주입할 수 없다(S7b)",
+    // 🔴 삼순 2026-08-30 8차 tsc 선검사로 드러남: 종전 m11 은 파라미터를 지우면서
+    //   호출부(`searchRagInner(..., now)`)를 남겨 **컴파일조차 안 되는** 변조였다.
+    //   그런데도 runner 가 RED 로 세어 "검출했다"고 보고했다 — 이제 tsc 가 먼저 막는다.
+    //   대신 **컴파일되면서 실제로 seam 을 죽이는** 변조로 바꾼다: 주입된 now 를 버리고
+    //   `Date.now()` 를 직접 읽는다. 그러면 게이트가 경계 시각을 넣어도 무시된다.
+    name: "m11 now seam 무력화 — 주입된 시각을 버리고 Date.now 를 직접 읽는다(S7)",
     file: SERVER,
-    from: "  now: () => number = Date.now,",
-    to: "  _now?: undefined,",
+    from: "  const currentSeason = kstSeasonOf(now());",
+    to: "  void now;\n  const currentSeason = kstSeasonOf(Date.now());",
   },
 
   // ── 삼순 2026-08-28 P0-① lane / P0-② target ──────────────────────────────
@@ -308,6 +313,25 @@ const restore = () => { for (const [f, s] of originals) writeFileSync(f, s); };
 process.on("exit", restore);
 process.on("SIGINT", () => { restore(); process.exit(130); });
 
+/**
+ * 🔴 변조본 타입 선검사 (삼순 2026-08-30 8차).
+ *
+ * runner 가 smoke 실행 결과만 보면 **문법·타입이 깨진 변조**도 RED 로 세어
+ * "검출했다"고 보고하게 된다. 실제로 m24 가 그랬다 — 닫는 괄호를 남긴 채
+ * reduce 조각만 끼워넣어 parse error 를 냈고, 그 축은 검증력이 0 이었다.
+ *
+ * 계약: **mutant 는 컴파일되어 다른 동작을 해야 mutant 다.**
+ *   tsc 가 실패하면 그건 검출이 아니라 **runner 고장(FAIL)** 이다 — 조용히 통과시키지 않는다.
+ */
+function typeChecks() {
+  try {
+    execSync("npx tsc --noEmit -p tsconfig.json", { encoding: "utf8", stdio: "pipe" });
+    return { ok: true, out: "" };
+  } catch (error) {
+    return { ok: false, out: `${error.stdout ?? ""}${error.stderr ?? ""}` };
+  }
+}
+
 function smokeIsRed() {
   try {
     const out = execSync(`npx tsx ${SMOKE}`, { encoding: "utf8", stdio: "pipe" });
@@ -335,6 +359,16 @@ for (const mutation of MUTATIONS) {
     continue;
   }
   writeFileSync(mutation.file, original.replace(mutation.from, mutation.to));
+  // 🔴 tsc 선검사 — 변조본이 컴파일되지 않으면 그건 mutant 가 아니라 runner 고장이다.
+  //   여기서 smoke 를 돌리면 parse/type 오류가 RED 로 잡혀 "검출했다"는 거짓 신호가 된다.
+  const typed = typeChecks();
+  if (!typed.ok) {
+    writeFileSync(mutation.file, original);
+    console.error(`FAIL ${mutation.name}\n     변조본 tsc 실패 — mutant 가 컴파일되지 않는다(검출 아님)`);
+    console.error(typed.out.split("\n").filter((l) => /error TS/.test(l)).slice(0, 3).join("\n"));
+    missed += 1;
+    continue;
+  }
   const { red } = smokeIsRed();
   writeFileSync(mutation.file, original);
   if (red) { detected += 1; console.log(`RED  ${mutation.name}`); }
