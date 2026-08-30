@@ -600,6 +600,67 @@ async function main() {
   assert.equal(selected[0].tickKind, "initial", "ⓕ initial 틱 보존");
   pass += 1;
 
+  // ⓕ-GC 회귀(삼순 NO-GO 2026-08-30) — 정시 GC 는 발현 유무와 분리: 정시+발현 0건에서도 retention delete 가 호출된다.
+  const { persistWarmupEnrichObs, WARMUP_ENRICH_OBS_RETENTION_MS } = await import(
+    "../../src/lib/notifications/warmup-enrich-obs"
+  );
+  const adminCalls: string[] = [];
+  const fakeAdmin = {
+    from(table: string) {
+      return {
+        insert: async (rows: unknown[]) => {
+          adminCalls.push(`insert:${table}:${rows.length}`);
+          return { error: null };
+        },
+        delete() {
+          return {
+            lt: async (column: string, value: string) => {
+              adminCalls.push(`delete:${table}:${column}:${value}`);
+              return {};
+            },
+          };
+        },
+      };
+    },
+  };
+  const onTheHourMs = Date.UTC(2026, 7, 30, 12, 0, 30); // 분==0 (정시 틱)
+  const offHourMs = Date.UTC(2026, 7, 30, 12, 30, 0); // 비정시 틱
+  // 1) 정시 + 발현 0건(정상 relay 만) → delete 호출, insert 없음, persisted 0. ← NO-GO blocker 재현 방지
+  const gcOnly = await persistWarmupEnrichObs(
+    [tick([`${GID}:score-src=relay`])],
+    onTheHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(gcOnly, { persisted: 0 }, "ⓕ-GC 정시+발현 0건 persisted 0");
+  const expectedCutoff = new Date(onTheHourMs - WARMUP_ENRICH_OBS_RETENTION_MS).toISOString();
+  assert.equal(
+    adminCalls.length === 1 &&
+      adminCalls[0] === `delete:warmup_enrich_obs:observed_at:${expectedCutoff}`,
+    true,
+    `ⓕ-GC 정시+발현 0건에서도 retention delete 호출 (실제 ${JSON.stringify(adminCalls)})`,
+  );
+  // 2) 비정시 + 발현 0건 → admin 무접촉 조기 return 유지
+  adminCalls.length = 0;
+  const noop = await persistWarmupEnrichObs(
+    [tick([`${GID}:score-src=relay`])],
+    offHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(noop, { persisted: 0 }, "ⓕ-GC 비정시+발현 0건 persisted 0");
+  assert.equal(adminCalls.length, 0, "ⓕ-GC 비정시+발현 0건은 admin 무접촉");
+  // 3) 정시 + 발현 있음 → delete 선행 + insert, persisted 반영
+  adminCalls.length = 0;
+  const both = await persistWarmupEnrichObs(
+    [tick([`${GID}:relay-failed`])],
+    onTheHourMs,
+    () => fakeAdmin,
+  );
+  assert.deepEqual(both, { persisted: 1 }, "ⓕ-GC 정시+발현 1건 persisted 1");
+  assert.equal(adminCalls.length, 2, "ⓕ-GC 정시+발현 시 delete+insert 2호출");
+  assert.ok(adminCalls[0].startsWith("delete:warmup_enrich_obs:"), "ⓕ-GC delete 가 insert 보다 선행(오류 경로 독립)");
+  assert.ok(adminCalls[1].startsWith("insert:warmup_enrich_obs:1"), "ⓕ-GC 발현 틱 insert 배선");
+  pass += 1;
+
   // ---------- 소스 가드: warmup 이 Naver-primary 를 쓰고 KBO-primary 직호출이 없다 ----------
   const routeSrc = readFileSync("src/app/api/cron/game-events-warmup/route.ts", "utf8");
   const naverPrimaryCalls = (routeSrc.match(/fetchLiveGamesNaverPrimary\(/g) ?? []).length;
@@ -623,8 +684,8 @@ async function main() {
   );
   pass += 1;
 
-  assert.equal(pass, 20, `expected 20 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/20 PASS`);
+  assert.equal(pass, 21, `expected 21 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/21 PASS`);
 }
 
 main().catch((error) => {

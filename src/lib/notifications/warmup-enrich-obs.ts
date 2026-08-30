@@ -51,6 +51,14 @@ export type PersistWarmupEnrichObsResult =
   | { persisted: number }
   | { error: string };
 
+/** persist 가 쓰는 최소 admin 표면 — 게이트 회귀 테스트가 주입해 동일 seam 을 태운다. */
+export type WarmupObsAdminLike = {
+  from(table: string): {
+    insert(rows: unknown[]): PromiseLike<{ error: { message: string } | null }>;
+    delete(): { lt(column: string, value: string): PromiseLike<unknown> };
+  };
+};
+
 /**
  * 발현 틱을 warmup_enrich_obs 에 적재한다. 어떤 실패도 throw 하지 않는다(fire-and-forget).
  * supabase admin 은 호출 시점 dynamic import — 게이트가 이 모듈을 env 스텁 없이 import 해도
@@ -59,12 +67,29 @@ export type PersistWarmupEnrichObsResult =
 export async function persistWarmupEnrichObs(
   ticks: WarmupEnrichObsTick[],
   nowMs: number = Date.now(),
+  getAdmin?: () => WarmupObsAdminLike,
 ): Promise<PersistWarmupEnrichObsResult> {
   try {
     const emergent = selectEmergentObsTicks(ticks);
+    // 기회적 GC 는 발현 유무와 **분리**해 정시(분==0)면 항상 시도한다(삼순 NO-GO 2026-08-30).
+    // 정상 relay 만 나오는 날엔 발현 0건 조기 return 이 GC 를 영영 막아 행이 무기한 누적된다.
+    const gcDue = new Date(nowMs).getUTCMinutes() === 0;
+    if (emergent.length === 0 && !gcDue) return { persisted: 0 };
+    const admin: WarmupObsAdminLike = getAdmin
+      ? getAdmin()
+      : (await import("@/lib/supabase/admin")).getSupabaseAdmin();
+    // GC 먼저 — insert 오류 return 경로가 GC 를 건너뛰지 못하게 순서로 독립성 보장.
+    // delete 실패는 supabase 가 throw 하지 않으므로 삼킨다(다음 정시에 재시도).
+    if (gcDue) {
+      await admin
+        .from("warmup_enrich_obs")
+        .delete()
+        .lt(
+          "observed_at",
+          new Date(nowMs - WARMUP_ENRICH_OBS_RETENTION_MS).toISOString(),
+        );
+    }
     if (emergent.length === 0) return { persisted: 0 };
-    const { getSupabaseAdmin } = await import("@/lib/supabase/admin");
-    const admin = getSupabaseAdmin();
     const rows = emergent.map((tick) => ({
       tick_at_ms: tick.atMs,
       tick_kind: tick.tickKind,
@@ -74,16 +99,6 @@ export async function persistWarmupEnrichObs(
     }));
     const { error } = await admin.from("warmup_enrich_obs").insert(rows);
     if (error) return { error: error.message };
-    // 기회적 GC — 정시 틱에서만 1회(경기당 수 행 규모라 부하 무시 가능, 인덱스 있는 observed_at).
-    if (new Date(nowMs).getUTCMinutes() === 0) {
-      await admin
-        .from("warmup_enrich_obs")
-        .delete()
-        .lt(
-          "observed_at",
-          new Date(nowMs - WARMUP_ENRICH_OBS_RETENTION_MS).toISOString(),
-        );
-    }
     return { persisted: rows.length };
   } catch (e) {
     return { error: e instanceof Error ? e.message : "persist_failed" };
