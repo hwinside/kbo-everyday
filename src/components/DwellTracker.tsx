@@ -8,7 +8,7 @@ import {
   dwellStartPage,
   dwellPause,
   dwellResume,
-  dwellSetAuth,
+  dwellSetIdentity,
 } from "@/lib/admin/tracker";
 
 /** Drives accurate per-page active-dwell tracking for *logged-in* users (same
@@ -22,14 +22,24 @@ export function DwellTracker() {
 
   useEffect(() => {
     if (!user?.id) {
-      dwellSetAuth(null); // logged out → stop sending
+      dwellSetIdentity(null, null); // logged out → stop sending, drop queue
       return;
     }
     let active = true;
-    // Refresh the cached token on each navigation so flushes during unload can
-    // attach it synchronously (a stale/expired token just drops that event).
+    // Refresh the cached identity on each navigation so flushes during unload
+    // can attach it synchronously (a stale/expired token just drops that event).
+    // 삼순 P1(#1323): 세션 uid와 React 컨텍스트 uid를 대조 — 전환 레이스로 둘이
+    // 어긋나면 fail-closed(null)로 떨구서 이전 계정 체류가 새 계정 토큰으로
+    // 전송되는 경로를 원천 차단한다.
     supabase.auth.getSession().then(({ data }) => {
-      if (active) dwellSetAuth(data.session?.access_token ?? null);
+      if (!active) return;
+      const sessUid = data.session?.user?.id ?? null;
+      const token = data.session?.access_token ?? null;
+      if (sessUid && token && sessUid === user.id) {
+        dwellSetIdentity(sessUid, token);
+      } else {
+        dwellSetIdentity(null, null);
+      }
     });
     dwellStartPage(pathname);
     return () => {

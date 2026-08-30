@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { verifyAccessToken } from "@/lib/auth/verified-user";
 
-interface DwellEvent {
-  path?: string;
-  dwellMs?: number;
-}
+import { normalizeDwellEvents } from "./normalize";
 
 interface DwellPayload {
   visitorId?: string;
@@ -14,19 +11,11 @@ interface DwellPayload {
   dwellMs?: number;
   /** Batched intervals (new client). When present, takes precedence over the
    * legacy single path/dwellMs pair — old clients keep working during rollout. */
-  events?: DwellEvent[];
+  events?: unknown;
   /** Caller's Supabase access token. user_id is derived from the verified JWT,
    * never from a client-claimed id. */
   accessToken?: string;
 }
-
-// Sub-second hits are noise; cap a single interval to guard against an
-// idle-but-visible tab inflating the mean (the client already pauses on hide).
-const MIN_DWELL_MS = 1000;
-const MAX_DWELL_MS = 30 * 60 * 1000;
-// Batch bound: the client caps its queue at 20; anything larger is abuse or a
-// bug — excess entries are dropped, never inserted.
-const MAX_EVENTS = 20;
 
 export async function POST(req: NextRequest) {
   let payload: DwellPayload;
@@ -46,23 +35,9 @@ export async function POST(req: NextRequest) {
       : null;
 
   // Normalize to a batch: new clients send `events[]`, legacy clients a single
-  // path/dwellMs pair. Per-event validation mirrors the old single-event rules.
-  const rawEvents: DwellEvent[] = Array.isArray(payload.events)
-    ? payload.events.slice(0, MAX_EVENTS)
-    : [{ path: payload.path, dwellMs: payload.dwellMs }];
-  const events = rawEvents
-    .map((e) => ({
-      path:
-        typeof e?.path === "string" && e.path ? e.path.slice(0, 512) : null,
-      dwellMs:
-        typeof e?.dwellMs === "number" && Number.isFinite(e.dwellMs)
-          ? Math.round(e.dwellMs)
-          : NaN,
-    }))
-    .filter(
-      (e): e is { path: string; dwellMs: number } =>
-        e.path != null && Number.isFinite(e.dwellMs) && e.dwellMs >= MIN_DWELL_MS,
-    );
+  // path/dwellMs pair. Validation lives in ./normalize (순수 모듈) so the QA
+  // gate exercises the exact production seam.
+  const events = normalizeDwellEvents(payload);
 
   // Quietly drop noise/garbage so beacons never surface as client errors.
   if (!visitorId || !accessToken || events.length === 0) {
@@ -90,7 +65,7 @@ export async function POST(req: NextRequest) {
       user_id: user.id,
       path: e.path,
       platform,
-      dwell_ms: Math.min(e.dwellMs, MAX_DWELL_MS),
+      dwell_ms: e.dwellMs, // normalize에서 MAX cap 적용 완료
     })),
   );
 

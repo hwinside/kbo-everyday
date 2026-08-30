@@ -100,22 +100,40 @@ export async function trackPageView(userId?: string) {
 // send when we hold an auth token, and the server derives user_id from the
 // verified JWT rather than trusting any client-claimed id.
 
-const MAX_DWELL_MS = 30 * 60 * 1000; // cap a single visible interval (idle guard)
+import {
+  DwellQueue,
+  DWELL_FLUSH_INTERVAL_MS,
+  DWELL_MAX_MS as MAX_DWELL_MS,
+} from "@/lib/admin/dwell-queue";
+
 const MIN_DWELL_MS = 1000; // skip sub-second noise
 
 let dwellPath: string | null = null;
 let dwellToken: string | null = null;
+let dwellUid: string | null = null;
 let dwellActiveMs = 0;
 let dwellResumeAt: number | null = null;
 
-/** Supply the current access token (logged in) or null (logged out → no
- * tracking). Set by DwellTracker on auth/route changes. */
-export function dwellSetAuth(token: string | null) {
+/** Supply the current identity: verified uid + access token (logged in) or
+ * null/null (logged out → no tracking). Set by DwellTracker on auth/route
+ * changes.
+ *
+ * 삼순 P1(#1323): 큐는 uid 스냅샷에 결속된다. uid가 바뀌면(A→B 직접 전환
+ * 포함) 기존 큐와 진행 중 dwell을 fail-closed 폐기해 A 체류가 B의 토큰으로
+ * 서버 검증되어 B user_id로 귀속되는 레이스를 원천 차단한다. 토큰 문자열만
+ * 바뀌는 건 같은 uid의 refresh라 큐를 보존한다. */
+export function dwellSetIdentity(uid: string | null, token: string | null) {
   dwellToken = token;
-  // Logged out: drop anything queued — the population is logged-in users only
-  // and we no longer hold a token to authenticate the batch.
-  if (token == null) {
-    dwellQueue = [];
+  const changed = dwellQueue.setIdentity(uid);
+  if (changed) {
+    dwellUid = uid;
+    // 진행 중이던 구간도 이전 신원 소유 — 폐기하고 지금부터 새 신원으로 재시작.
+    dwellActiveMs = 0;
+    dwellResumeAt =
+      dwellPath != null &&
+      (typeof document === "undefined" || document.visibilityState === "visible")
+        ? Date.now()
+        : null;
     if (dwellFlushTimer != null) {
       clearTimeout(dwellFlushTimer);
       dwellFlushTimer = null;
@@ -173,27 +191,17 @@ export function dwellResume() {
 // traffic). Finished intervals are now queued and delivered as one batched
 // POST every DWELL_FLUSH_INTERVAL_MS, plus an immediate flush on
 // pagehide/tab-hide (sendBeacon survives unload) so leaving never loses data.
-const DWELL_FLUSH_INTERVAL_MS = 30_000;
-const DWELL_QUEUE_MAX = 20; // safety cap; flush early if a burst piles up
-
-let dwellQueue: { path: string; dwellMs: number }[] = [];
+const dwellQueue = new DwellQueue();
 let dwellFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 function enqueueDwell(path: string, dwellMs: number) {
-  if (!dwellToken) return; // logged-out / no session → not tracked
-  const last = dwellQueue[dwellQueue.length - 1];
-  if (last && last.path === path) {
-    // Repeated intervals on the same page (visibility toggles): merge instead
-    // of growing the queue. Server caps a row at MAX_DWELL_MS either way.
-    last.dwellMs = Math.min(last.dwellMs + Math.round(dwellMs), MAX_DWELL_MS);
-  } else {
-    dwellQueue.push({ path, dwellMs: Math.round(dwellMs) });
-  }
-  if (dwellQueue.length >= DWELL_QUEUE_MAX) {
+  if (!dwellToken || !dwellUid) return; // logged-out / no session → not tracked
+  const result = dwellQueue.enqueue(dwellUid, path, dwellMs);
+  if (result === "flush-now") {
     flushDwellQueue();
     return;
   }
-  if (dwellFlushTimer == null) {
+  if (result === "queued" && dwellFlushTimer == null) {
     dwellFlushTimer = setTimeout(flushDwellQueue, DWELL_FLUSH_INTERVAL_MS);
   }
 }
@@ -205,19 +213,14 @@ export function flushDwellQueue() {
     clearTimeout(dwellFlushTimer);
     dwellFlushTimer = null;
   }
-  if (dwellQueue.length === 0) return;
+  // 신원 불일치 방어의 마지막 층: drain은 현재 uid가 큐 결속 uid와 일치할 때만
+  // 이벤트를 내준다(불일치는 fail-closed 폐기).
   const token = dwellToken;
-  if (!token) {
-    dwellQueue = [];
-    return;
-  }
+  const events = dwellQueue.drain(dwellUid);
+  if (events.length === 0) return;
+  if (!token) return;
   const visitorId = getVisitorId();
-  if (!visitorId) {
-    dwellQueue = [];
-    return;
-  }
-  const events = dwellQueue;
-  dwellQueue = [];
+  if (!visitorId) return;
 
   const body = JSON.stringify({
     visitorId,
