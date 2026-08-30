@@ -215,12 +215,77 @@ const MUTATIONS = [
   },
   {
     // 🔴 삼순 7차 P0-3: lane 조회를 직렬화 → 지연이 lane 수에 비례한다.
+    // 🔴 삼순 7차: 종전 m24 는 닫는 괄호를 남긴 채 reduce 조각만 끼워넣어 **문법이 깨진**
+    //   코드를 만들었다. runner 가 parse error 도 RED 로 세니 검증력이 0 이었다.
+    //   mutant 는 **컴파일되어 다른 동작을 해야** mutant 다 — 아래는 실제로 도는 직렬 루프다.
     name: "m24 lane 조회를 직렬화 — 지연이 lane 수에 비례한다(P3f)",
     file: SERVER,
-    from: "        const results = await Promise.all(planned.map((lane) =>",
-    to: "        const results = await planned.reduce(async (acc, lane) => {\n"
-      + "          const prev = await acc;\n"
-      + "          return [...prev, await ((l) =>",
+    from: "        const results = await Promise.all(planned.map((lane) =>\n"
+      + "          // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.\n"
+      + "          client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {\n"
+      + "            ...baseArgs,\n"
+      + "            p_season_mode: lane.mode,\n"
+      + "            p_season_year: lane.year ?? null,\n"
+      + "          })));",
+    to: "        const results = [];\n"
+      + "        for (const lane of planned) {\n"
+      + "          // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.\n"
+      + "          results.push(await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {\n"
+      + "            ...baseArgs,\n"
+      + "            p_season_mode: lane.mode,\n"
+      + "            p_season_year: lane.year ?? null,\n"
+      + "          }));\n"
+      + "        }",
+  },
+  {
+    // 🔴 하린아빠 A안(2026-08-30): 절대 deadline 제거 → never-settle 이 무한 정지가 된다.
+    name: "m26 절대 deadline 제거 — RPC 하나가 멈추면 검색이 무기한 정지(P4a/P4b)",
+    file: SERVER,
+    from: "  return withAbsoluteDeadline(\n"
+      + "    () => searchRagInner(candidate, question, project, runtime, now),\n"
+      + "    deadlineMs,\n"
+      + '    "rag_search",\n'
+      + "  );",
+    to: "  void deadlineMs;\n"
+      + "  return searchRagInner(candidate, question, project, runtime, now);",
+  },
+  {
+    // deadline 을 embed **뒤**로 옮기면 임베딩 never-settle 이 안 걸린다(P4b 전용 축).
+    name: "m27 deadline 이 embed 를 감싸지 않음 — 임베딩 무한대기가 통과한다(P4b)",
+    file: SERVER,
+    from: "  return withAbsoluteDeadline(\n"
+      + "    () => searchRagInner(candidate, question, project, runtime, now),\n"
+      + "    deadlineMs,\n"
+      + '    "rag_search",\n'
+      + "  );",
+    to: "  const embedded = await runtime.embed(question);\n"
+      + "  if (!embedded.ok) return [];\n"
+      + "  return withAbsoluteDeadline(\n"
+      + "    () => searchRagInner(candidate, question, project, runtime, now),\n"
+      + "    deadlineMs,\n"
+      + '    "rag_search",\n'
+      + "  );",
+  },
+  {
+    // throw 대신 빈 배열이면 "근거 없음"으로 오독돼 team RAG 가 조용히 죽는다.
+    name: "m28 deadline 초과를 fail-open(빈 배열)으로 — 검색 실패가 근거 없음으로 오독된다(P4a)",
+    file: SERVER,
+    from: "        timer = setTimeout(() => reject(new Error(`${label}_deadline_exceeded`)), deadlineMs);",
+    to: "        timer = setTimeout(() => (_resolve as (v: unknown) => void)([]), deadlineMs);",
+  },
+  {
+    // 타이머를 해제하지 않으면 정상 종료 후에도 이벤트 루프가 붙잡힌다.
+    name: "m29 타이머 미해제 — 정상 종료 후 이벤트 루프 누수(P4e)",
+    file: SERVER,
+    from: "  } finally {\n    if (timer !== undefined) clearTimeout(timer);\n  }\n}",
+    to: "  } finally {\n    void timer;\n  }\n}",
+  },
+  {
+    // deadline 을 사실상 무한대로 키우면 계약이 이름만 남는다.
+    name: "m30 deadline 을 상한 밖으로 키움 — 계약이 이름만 남는다(P4d)",
+    file: SERVER,
+    from: "export const RAG_SEARCH_DEADLINE_MS = 8_000;",
+    to: "export const RAG_SEARCH_DEADLINE_MS = 600_000;",
   },
   {
     // 🔴 삼순 7차 P0-3: 예산 clamp 제거 → lane 이 늘면 호출이 그대로 늘어난다.

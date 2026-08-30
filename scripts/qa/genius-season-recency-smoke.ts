@@ -664,6 +664,106 @@ async function main() {
     timed.elapsed < LANE_DELAY_MS * 3,
     `${timed.elapsed}ms (lane delay ${LANE_DELAY_MS}ms × 4 lanes)`);
 
+  // ══ P4. 절대 deadline — never-settle 방어 (삼순 7차 P0-3 → 하린아빠 A안) ══
+  //   🔴 P3f 는 "응답이 오기만 하면" 통과하므로 **영원히 안 오는** 경우를 못 본다.
+  //     여기서는 절대 settle 되지 않는 promise 를 주입해, deadline 이 실행으로 끊는지 본다.
+  const { RAG_SEARCH_DEADLINE_MS, RAG_SEARCH_DEADLINE_MAX_MS } =
+    await import("../../src/lib/baseball-qa/server");
+  const NEVER = () => new Promise<never>(() => {});
+  const DEADLINE_TEST_MS = 120;
+
+  /** 절대 settle 되지 않는 client.rpc 를 가진 production runtime. */
+  const hangingRpcRuntime = createProductionRagSearchRuntime(
+    { rpc: NEVER } as unknown as Parameters<typeof createProductionRagSearchRuntime>[0]);
+  const runWithDeadline = async (
+    runtimeOverride: Partial<Awaited<ReturnType<typeof createProductionRagSearchRuntime>>> & {
+      embed?: () => Promise<{ ok: true; vector: number[] } | { ok: false; reason: string }>;
+    },
+    deadline = DEADLINE_TEST_MS,
+  ) => {
+    const started = Date.now();
+    // 🔴 테스트측 watchdog — 피검사 deadline 이 **없어졌을 때** 여기서 판정을 낸다.
+    //   watchdog 이 없으면 never-settle promise 만 남아 이벤트 루프가 비고 node 가
+    //   **조용히 종료**한다. 그러면 게이트는 RED 도 GREEN 도 못 찍고 사라지는데,
+    //   그 침묵을 통과로 세면 fail-open 이다(mutation m26·m27 이 이걸로 빠져나갔다).
+    //   실제 타이머라 루프를 붙잡으므로 프로세스가 죽지 않고 FAIL 을 찍는다.
+    const WATCHDOG_MS = deadline * 8;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    const hung = new Promise<"watchdog">((resolve) => {
+      watchdog = setTimeout(() => resolve("watchdog"), WATCHDOG_MS);
+    });
+    try {
+      const outcome = await Promise.race([
+        searchRag(
+          { entityType: "team", entityId: "1", name: "한화" } as never,
+          "한화 요즘 어때?",
+          undefined,
+          {
+            embed: async () => ({ ok: true as const, vector: QUERY }),
+            fetchBySourceKind: hangingRpcRuntime.fetchBySourceKind,
+            ...runtimeOverride,
+          } as never,
+          () => Date.UTC(CURRENT_SEASON, 7, 29, 3, 0, 0),
+          deadline,
+        ).then(() => "settled" as const),
+        hung,
+      ]);
+      return {
+        threw: false,
+        hung: outcome === "watchdog",
+        elapsed: Date.now() - started,
+        message: outcome === "watchdog" ? "watchdog: never settled" : "",
+      };
+    } catch (error) {
+      return {
+        threw: true,
+        hung: false,
+        elapsed: Date.now() - started,
+        message: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (watchdog !== undefined) clearTimeout(watchdog);
+    }
+  };
+
+  // 🔴 P4a RPC 가 영원히 안 돌아오는 경우 — deadline 이 끊어야 한다.
+  const hungRpc = await runWithDeadline({});
+  check("P4a RPC never-settle — 절대 deadline 이 throw 한다",
+    hungRpc.threw && !hungRpc.hung && /deadline_exceeded/.test(hungRpc.message),
+    `threw=${hungRpc.threw} hung=${hungRpc.hung} msg=${hungRpc.message} ${hungRpc.elapsed}ms`);
+  check("P4a2 deadline 근처에서 끊는다 (무한 대기 아님)",
+    hungRpc.elapsed < DEADLINE_TEST_MS * 5, `${hungRpc.elapsed}ms`);
+
+  // 🔴 P4b embed 가 영원히 안 돌아오는 경우 — deadline 이 embed 를 **포함**해야 한다.
+  //   embed 밖에 두면 "타임아웃이 있다"는 말만 있고 실제로는 안 걸리는 구간이 남는다.
+  const hungEmbed = await runWithDeadline({ embed: NEVER as never });
+  check("P4b embed never-settle — deadline 이 embed 도 감싼다",
+    hungEmbed.threw && !hungEmbed.hung && /deadline_exceeded/.test(hungEmbed.message),
+    `threw=${hungEmbed.threw} hung=${hungEmbed.hung} msg=${hungEmbed.message} ${hungEmbed.elapsed}ms`);
+
+  // 정상 경로는 deadline 이 있어도 그대로 답한다(양방향 — 과잉 차단 금지).
+  const normalUnderDeadline = await runProd("1999년 우승팀 한화의 현재 감독은?");
+  check("P4c 정상 경로는 deadline 영향 없음 (근거를 그대로 돌려준다)",
+    normalUnderDeadline.rows.length > 0, `${normalUnderDeadline.rows.length} rows`);
+
+  // 🔴 P4d 타임아웃 값은 상수 SSOT 이고 상한이 assertion 으로 박혀 있다.
+  //   조용히 키우면(예: 60s) 유저가 빈 화면을 보는 시간이 그만큼 늘어난다.
+  check("P4d deadline 은 상수 SSOT 이며 상한 이내",
+    RAG_SEARCH_DEADLINE_MS > 0 && RAG_SEARCH_DEADLINE_MS <= RAG_SEARCH_DEADLINE_MAX_MS,
+    `${RAG_SEARCH_DEADLINE_MS}ms / max ${RAG_SEARCH_DEADLINE_MAX_MS}ms`);
+  // 🔴 P4e 타이머 누수 — 정상 종료 후 이벤트 루프에 타이머가 남으면 안 된다.
+  //   남으면 서버리스 인스턴스가 늦게 정리된다. `finally { clearTimeout }` 을 지우면 RED.
+  check("P4e 정상 종료 시 타이머를 해제한다 (이벤트 루프 누수 없음)",
+    /finally\s*\{\s*\n?\s*if \(timer !== undefined\) clearTimeout\(timer\);/.test(server),
+    "withAbsoluteDeadline finally clearTimeout");
+  // 🔴 P4f 호출자가 throw 를 **기존 경로 양보**로 받는지 — fail-open(빈 배열) 이면 안 된다.
+  //   빈 배열이면 "근거 없음"으로 오독돼 team RAG 가 조용히 죽는다.
+  check("P4f pipeline 이 검색 실패를 catch 해 기존 경로로 양보한다",
+    /evidence = selectEvidence\(await deps\.searchRag\(candidate, question\)\);\s*\n\s*\} catch \{\s*\n\s*return null;/
+      .test(stripComments(readFileSync(
+        new URL("../../src/lib/baseball-qa/pipeline.ts", import.meta.url), "utf8"))),
+    "pipeline team RAG catch → return null");
+
   // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
   check("W1 시즌 축은 team 경로 한정",
     /const seasonAware = candidate\.entityType === "team";/.test(server));

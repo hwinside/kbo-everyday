@@ -465,6 +465,51 @@ export function createProductionRagSearchRuntime(
 
 const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
+/**
+ * team/player RAG 검색 **전체**에 걸리는 절대 deadline (삼순 2026-08-30 7차 P0-3, A안).
+ *
+ * 🔴 왜 개별 타임아웃으로 부족한가:
+ *   embed 는 `AbortSignal` 로 10s 를 걸지만 RPC(`client.rpc`)에는 abort 신호가 없다.
+ *   `Promise.all(planned.map(client.rpc))` 에서 **하나만 영원히 settle 되지 않으면**
+ *   검색 전체가 무기한 정지하고, 유저는 응답 자체를 못 받는다. 병렬성 측정(P3f)은
+ *   "응답이 오기만 하면" 통과하므로 never-settle 을 원리적으로 못 본다.
+ *
+ * 계약: 초과하면 **throw** 한다. 호출자(`pipeline.ts` team/player RAG)는 검색 실패를
+ * catch 해 기존 generic 경로로 양보하므로, 유저는 늦은 답 대신 **다른 답**을 받는다.
+ * 부분 근거로 답하지 않는다 — 근거 일부만으로 답하면 "왜 그 얘기가 빠졌나"가 된다(B안 기각).
+ *
+ * ⚠️ 이 값을 늘리려면 그만큼 유저가 빈 화면을 보는 시간이 늘어난다. 게이트가 상한을
+ *   assertion 으로 박아둔다(P4a) — 조용히 키우면 RED 다.
+ */
+export const RAG_SEARCH_DEADLINE_MS = 8_000;
+
+/** 게이트가 상한을 판정하는 기준. 이 위로 올리는 변경은 게이트를 통과하지 못한다. */
+export const RAG_SEARCH_DEADLINE_MAX_MS = 15_000;
+
+/**
+ * 절대 deadline 래퍼. 초과 시 reject 하고, 정상 종료 시 타이머를 반드시 해제한다.
+ *
+ * ⚠️ `finally` 의 `clearTimeout` 이 없으면 요청이 끝나도 타이머가 이벤트 루프를 붙잡아
+ *   서버리스 인스턴스가 늦게 정리된다. 성공·실패·타임아웃 세 경로 모두에서 해제된다.
+ */
+async function withAbsoluteDeadline<T>(
+  work: () => Promise<T>,
+  deadlineMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_deadline_exceeded`)), deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function searchRag(
   candidate: RagEntityCandidate,
   question: string,
@@ -482,6 +527,29 @@ export async function searchRag(
    * 함수 안에서 `new Date()` 를 부르면 "작년에도 같은 판정이 나오는가"를 못 태운다.
    */
   now: () => number = Date.now,
+  /**
+   * 절대 deadline 주입 seam. 게이트가 짧은 값을 넣어 **초과 경로를 실제로 실행**할 수
+   * 있어야 하므로 인자다 — 안에서 상수를 직접 읽으면 never-settle 축을 태울 수 없다.
+   */
+  deadlineMs: number = RAG_SEARCH_DEADLINE_MS,
+): Promise<RagEvidence[]> {
+  // 🔴 절대 deadline 은 embed 까지 **함께** 감싼다 (삼순 7차 P0-3, A안).
+  //   never-settle 은 RPC 뿐 아니라 임베딩 fetch 에서도 난다 — embed 밖에 두면
+  //   "타임아웃이 있다"는 말만 있고 실제로는 안 걸리는 구간이 남는다.
+  return withAbsoluteDeadline(
+    () => searchRagInner(candidate, question, project, runtime, now),
+    deadlineMs,
+    "rag_search",
+  );
+}
+
+/** deadline 안에서 도는 실제 검색 본문. 계약은 `searchRag` 주석 참조. */
+async function searchRagInner(
+  candidate: RagEntityCandidate,
+  question: string,
+  project: EvidenceProjector | undefined,
+  runtime: RagSearchRuntime,
+  now: () => number,
 ): Promise<RagEvidence[]> {
   const embedded = await runtime.embed(question);
   if (!embedded.ok) return [];
