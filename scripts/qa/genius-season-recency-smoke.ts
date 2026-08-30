@@ -40,6 +40,8 @@ import {
   SEASON_RECENCY_DECAY_PER_YEAR,
   SEASON_RECENCY_MIN_WEIGHT,
   RAG_EVIDENCE_LIMIT,
+  RAG_MAX_SEASON_LANES,
+  selectEvidence,
   type RagEvidence,
   type RagEvidenceCandidate,
   type SeasonLaneMode,
@@ -214,6 +216,51 @@ async function main() {
   check("S5c5 유사도 최상위는 여전히 top1 (예약은 포함만 보장, 순위 조작 아님)",
     crowdedDiverse[0].sectionPath.includes("2025년/9월"), crowdedDiverse[0].sectionPath);
 
+  // ══ D. 명시 연도 예약 — 유저가 콕 집은 해가 최종 근거에 닿는가 (삼순 6차 P0-2) ══
+  //   무대: `1999년 우승팀 한화의 현재 감독은?` 처럼 **명시 연도 + 현재**가 섞인 질문.
+  //   1999 문서는 유사도 최하위라 cap(6) 밖이다 — 예약이 없으면 콕 집은 해가 사라진다.
+  const mixedEra = [
+    evidence("한화 이글스/2025년/9월", 0.90),
+    evidence("한화 이글스/2025년/8월", 0.89),
+    evidence("한화 이글스/2024년", 0.88),
+    evidence("한화 이글스/2023년", 0.87),
+    evidence("한화 이글스/2022년", 0.86),
+    evidence("한화 이글스/2021년", 0.85),
+    evidence("한화 이글스/2026년/8월", 0.60),
+    evidence("한화 이글스", 0.58, { pageTitle: "한화 이글스" }),
+    evidence("한화 이글스/1999년", 0.50),
+  ];
+  const eraTarget = rankEvidenceByQuery(
+    [...mixedEra], QUERY, undefined, undefined, CURRENT_SEASON, { kind: "year", year: 1999 });
+  check("D1 명시 연도 문서가 최종 근거에 도달한다 (cap 밖이어도)",
+    eraTarget.some((r) => r.sectionPath.includes("1999년")),
+    eraTarget.map((r) => r.sectionPath).join("|"));
+  check("D1b 명시 연도를 예약해도 올해·무연도 예약이 사라지지 않는다",
+    eraTarget.some((r) => r.sectionPath.includes("2026년"))
+    && eraTarget.some((r) => r.sectionPath === "한화 이글스"),
+    eraTarget.map((r) => r.sectionPath).join("|"));
+  check("D1c 예약 3개가 상한을 넘기지 않는다",
+    eraTarget.length === RAG_EVIDENCE_LIMIT, String(eraTarget.length));
+  check("D1d 예약은 포함만 보장 — 유사도 top1 은 그대로",
+    eraTarget[0].sectionPath.includes("2025년/9월"), eraTarget[0].sectionPath);
+  // D2 종단 — production 이 뒤에 돌리는 `selectEvidence` 를 통과해도 예약 3시점이 남는가.
+  //   예약이 sanitize 앞에서 이뤄지지 않으면 여기서 탈락해도 rank 7 이하를 보충할 경로가
+  //   없다(삼순 6차 P0-2 지적 그대로).
+  const eraFinal = selectEvidence(eraTarget);
+  check("D2 sanitize 후 최종 evidence 에도 명시연도·올해·무연도가 모두 남는다",
+    eraFinal.some((r) => r.sectionPath.includes("1999년"))
+    && eraFinal.some((r) => r.sectionPath.includes("2026년"))
+    && eraFinal.some((r) => r.sectionPath === "한화 이글스"),
+    eraFinal.map((r) => r.sectionPath).join("|"));
+  // sanitize 로 탈락할 chunk 는 cap **앞**에서 걸러야 예약이 살아남는 행만 고른다.
+  const withJunk = rankEvidenceByQuery(
+    [...mixedEra, evidence("한화 이글스/2020년", 0.95, { content: "광고" })],
+    QUERY, undefined, undefined, CURRENT_SEASON, { kind: "year", year: 1999 });
+  check("D2b sanitize 탈락은 cap 앞에서 끝난다 (짧은 chunk 가 자리를 먹지 않는다)",
+    !withJunk.some((r) => r.content === "광고")
+    && withJunk.some((r) => r.sectionPath.includes("1999년")),
+    withJunk.map((r) => r.sectionPath).join("|"));
+
   // ── S4. 재점수화이지 hard sort 가 아니다 ─────────────────────────────────
   //    🔴 유저가 과거를 명시하면(`2018년 한화 어땠어?`) 그 문서가 유사도에서 분명히
   //    앞선다. 그때 시즌 가중이 뒤집으면 질문에 답할 근거가 사라진다.
@@ -354,17 +401,40 @@ async function main() {
     && planNone.some((l) => l.mode === "any"),
     JSON.stringify(planNone));
   const planYear = seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON);
-  check("L1b 명시 연도 lane 은 그 해로", planYear[0].mode === "year" && planYear[0].year === 2018,
+  // 🔴 L1b 명시 연도는 **단조 추가**다 (삼순 2026-08-29 6차 P0-1).
+  //   종전에는 year lane 의 *값*을 target.year 로 바꿔치기해 lane 개수만 같았고,
+  //   `1999년 우승팀 한화의 현재 감독은?` 에서 올해 lane 이 통째로 사라졌다.
+  check("L1b 명시 연도 lane 은 추가로 붙는다 (교체 아님)",
+    planYear.some((l) => l.mode === "year" && l.year === 2018),
     JSON.stringify(planYear));
-  // 🔴 L1c 비대칭 금지 — 어떤 target 이든 lane 집합 크기가 같아야 한다.
-  //   이게 깨지면 시점 오분류가 다시 recall 을 좌우한다(삼순 5차 지적의 핵심).
-  check("L1c lane 개수는 target 과 무관하게 3개 (recall 비대칭 금지)",
-    seasonLanePlan({ kind: "none" }, CURRENT_SEASON).length === 3
-    && seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON).length === 3
-    && seasonLanePlan({ kind: "year", year: CURRENT_SEASON }, CURRENT_SEASON).length === 3);
-  check("L1c2 lane mode 집합도 동일 (year 값만 다르다)",
-    JSON.stringify(planNone.map((l) => l.mode)) === JSON.stringify(planYear.map((l) => l.mode)),
-    `${JSON.stringify(planNone.map((l) => l.mode))} vs ${JSON.stringify(planYear.map((l) => l.mode))}`);
+  // 🔴 L1c 기본 lane 은 어떤 target 에서도 **사라지지 않는다**(부분집합 계약).
+  //   개수 같음으로는 값 교체를 못 잡는다 — 실제로 5차 게이트가 그래서 GREEN 이었다.
+  const laneKey = (l: { mode: SeasonLaneMode; year?: number }) => `${l.mode}:${l.year ?? "-"}`;
+  const baseKeys = planNone.map(laneKey);
+  const supersetOfBase = (target: SeasonTarget) => {
+    const keys = seasonLanePlan(target, CURRENT_SEASON).map(laneKey);
+    return baseKeys.every((k) => keys.includes(k));
+  };
+  check("L1c 기본 lane(올해/무연도/any)은 어떤 target 에서도 보존된다 (recall 비대칭 금지)",
+    supersetOfBase({ kind: "none" })
+    && supersetOfBase({ kind: "year", year: 2018 })
+    && supersetOfBase({ kind: "year", year: 1999 })
+    && supersetOfBase({ kind: "year", year: CURRENT_SEASON }),
+    `base=${JSON.stringify(baseKeys)} year2018=${JSON.stringify(planYear.map(laneKey))}`);
+  check("L1c2 올해 lane 이 명시 연도로 교체되지 않는다",
+    planYear.some((l) => l.mode === "year" && l.year === CURRENT_SEASON),
+    JSON.stringify(planYear));
+  // 🔴 L1c3 호출 예산 — 단조 추가가 무제한 증폭이 되지 않음을 상수로 결속한다.
+  check("L1c3 lane 수는 예산 상한 이내",
+    [
+      seasonLanePlan({ kind: "none" }, CURRENT_SEASON),
+      seasonLanePlan({ kind: "year", year: 2018 }, CURRENT_SEASON),
+      seasonLanePlan({ kind: "year", year: CURRENT_SEASON }, CURRENT_SEASON),
+    ].every((plan) => plan.length <= RAG_MAX_SEASON_LANES),
+    `max=${RAG_MAX_SEASON_LANES}`);
+  check("L1c4 target 이 올해면 lane 이 늘지 않는다 (중복 금지)",
+    seasonLanePlan({ kind: "year", year: CURRENT_SEASON }, CURRENT_SEASON).length
+      === planNone.length);
   check("L1d general(any) lane 을 항상 함께 둔다 — 목표 연도에 답이 없어도 답이 나온다",
     planNone.some((l) => l.mode === "any") && planYear.some((l) => l.mode === "any"));
 
@@ -380,21 +450,28 @@ async function main() {
     evidence("롯데 자이언츠/2020년", 0.88),
     evidence("롯데 자이언츠/2026년/9월", 0.70),  // 목표 시즌인데 any lane 절단 밖
   ];
+  // 구현체는 **소스당 1회** 불리고 lane 팬아웃을 안에서 합친다(삼순 6차 P0-3).
+  //   상위 호출자가 lane 마다 따로 부르면 PGRST202 fallback 도 lane 마다 돌아 호출이 2배로 뛴다.
+  const sourceCalls: string[] = [];
   const laneFetch = async (
     _sourceKind: "wikipedia_document" | "namu_document",
     _limit: number,
     _vector: number[],
-    lane?: { mode: SeasonLaneMode; year?: number },
+    lanes?: Array<{ mode: SeasonLaneMode; year?: number }>,
   ): Promise<RagEvidenceCandidate[]> => {
-    laneCalls.push({ mode: lane?.mode, year: lane?.year });
+    sourceCalls.push(_sourceKind);
+    const plan = lanes ?? [{ mode: "any" as const }];
+    for (const lane of plan) laneCalls.push({ mode: lane.mode, year: lane.year });
     if (_sourceKind === "wikipedia_document") return [];
-    const pool = lane?.mode === "year"
-      ? corpus.filter((row) => (row.sectionPath ?? "").includes(String(lane.year)))
-      : lane?.mode === "yearless"
-        ? corpus.filter((row) => !/(19|20)\d{2}/.test(row.sectionPath ?? ""))
-        : corpus;
-    // DB 는 순수 코사인 상위 N 만 돌려준다.
-    return pool.slice(0, CAP);
+    // DB 는 lane 마다 순수 코사인 상위 N 을 돌려주고, 구현체가 그걸 합친다.
+    return plan.flatMap((lane) => {
+      const pool = lane.mode === "year"
+        ? corpus.filter((row) => (row.sectionPath ?? "").includes(String(lane.year)))
+        : lane.mode === "yearless"
+          ? corpus.filter((row) => !/(19|20)\d{2}/.test(row.sectionPath ?? ""))
+          : corpus;
+      return pool.slice(0, CAP);
+    });
   };
   const laneRanked = await searchSourcePriorityCandidates(
     laneFetch, QUERY, () => 1, undefined, CURRENT_SEASON, { kind: "none" },
@@ -407,6 +484,12 @@ async function main() {
   check("L2b 절단 밖 목표 시즌 문서가 복구된다",
     laneRanked.some((row) => (row.sectionPath ?? "").includes("2026년/9월")),
     laneRanked.map((r) => r.sectionPath).join("|"));
+  // 🔴 L2b2 호출 예산 — lane 을 늘려도 소스당 fetch 는 1회여야 한다(삼순 6차 P0-3).
+  check("L2b2 소스당 fetch 호출은 1회 (lane 팬아웃이 호출을 증폭하지 않는다)",
+    sourceCalls.length === 2
+    && sourceCalls.filter((k) => k === "namu_document").length === 1
+    && sourceCalls.filter((k) => k === "wikipedia_document").length === 1,
+    JSON.stringify(sourceCalls));
   check("L2c lane 중복이 제거된다 (같은 chunk 가 두 번 안 실린다)",
     new Set(laneRanked.map((r) => `${r.canonicalUrl}\u0000${r.sectionPath}`)).size
       === laneRanked.length,
@@ -418,8 +501,10 @@ async function main() {
   const modesFor = async (target: SeasonTarget): Promise<string[]> => {
     const seen: string[] = [];
     await searchSourcePriorityCandidates(
-      async (sourceKind, _l, _v, lane) => {
-        if (sourceKind === "namu_document") seen.push(`${lane?.mode}:${lane?.year ?? "-"}`);
+      async (sourceKind, _l, _v, lanes) => {
+        if (sourceKind === "namu_document") {
+          for (const lane of lanes ?? []) seen.push(`${lane.mode}:${lane.year ?? "-"}`);
+        }
         return sourceKind === "namu_document" ? [evidence("롯데 자이언츠", 0.5)] : [];
       },
       QUERY, () => 1, undefined, CURRENT_SEASON, target,
@@ -428,14 +513,17 @@ async function main() {
   };
   const modesNone = await modesFor({ kind: "none" });
   const modesYear = await modesFor({ kind: "year", year: 2018 });
-  check("L2d lane mode 집합이 target 과 무관하게 동일 (recall 비대칭 금지)",
-    JSON.stringify(modesNone.map((m) => m.split(":")[0]))
-      === JSON.stringify(modesYear.map((m) => m.split(":")[0]))
-    && modesNone.length === 3,
+  // 🔴 L2d 종단 부분집합 — target 이 무엇이든 기본 lane 은 그대로 조회된다.
+  //   mode 이름만 비교하면 `year:2026 → year:2018` 교체를 못 잡는다(5차 false-green).
+  check("L2d 기본 lane 이 target 과 무관하게 전부 조회된다 (recall 비대칭 금지)",
+    modesNone.length === 3 && modesNone.every((key) => modesYear.includes(key)),
     `${JSON.stringify(modesNone)} vs ${JSON.stringify(modesYear)}`);
-  check("L2e year lane 의 연도만 target 을 따른다",
-    modesNone[0] === `year:${CURRENT_SEASON}` && modesYear[0] === "year:2018",
-    `${modesNone[0]} / ${modesYear[0]}`);
+  check("L2e 명시 연도 lane 은 기본 위에 추가된다",
+    modesNone.includes(`year:${CURRENT_SEASON}`)
+    && modesYear.includes(`year:${CURRENT_SEASON}`)
+    && modesYear.includes("year:2018")
+    && modesYear.length === modesNone.length + 1,
+    `${JSON.stringify(modesNone)} / ${JSON.stringify(modesYear)}`);
 
   // ══ W. 배선 — 구단 경로에만 시즌 축을 켠다 ═══════════════════════════════
   check("W1 시즌 축은 team 경로 한정",

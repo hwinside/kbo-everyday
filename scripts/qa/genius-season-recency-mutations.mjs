@@ -62,8 +62,8 @@ const MUTATIONS = [
   {
     name: "m8 currentSeason 미주입에도 시점 다양성 적용 — 기본 거동이 바뀐다(S6)",
     file: RETRIEVE,
-    from: "  if (!project) {\n    return currentSeason === undefined\n      ? ranked.slice(0, RAG_EVIDENCE_LIMIT)\n      : pickWithSeasonDiversity(ranked, RAG_EVIDENCE_LIMIT, currentSeason);\n  }",
-    to: "  if (!project) {\n    return pickWithSeasonDiversity(ranked, RAG_EVIDENCE_LIMIT, currentSeason ?? 2026);\n  }",
+    from: "  return currentSeason === undefined\n    ? survivors.slice(0, RAG_EVIDENCE_LIMIT)\n    : pickWithSeasonDiversity(survivors, RAG_EVIDENCE_LIMIT, currentSeason, target);",
+    to: "  return pickWithSeasonDiversity(survivors, RAG_EVIDENCE_LIMIT, currentSeason ?? 2026, target);",
   },
   {
     name: "m9 하류 전달 누락 — 랭커가 시즌을 영영 못 받는다(S7c)",
@@ -88,14 +88,41 @@ const MUTATIONS = [
   {
     name: "m12 lane 계획 제거 — DB 절단 전 목표 시즌 확보가 사라진다(L-lane)",
     file: RETRIEVE,
-    from: '  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];',
-    to: '  return [{ mode: "any" }];',
+    from: '  const lanes: Array<{ mode: SeasonLaneMode; year?: number }> = [\n'
+      + '    { mode: "year", year: currentSeason },\n'
+      + '    { mode: "yearless" },\n'
+      + '    { mode: "any" },\n'
+      + '  ];',
+    to: '  const lanes: Array<{ mode: SeasonLaneMode; year?: number }> = [{ mode: "any" }];',
   },
   {
     name: "m13 general lane 제거 — 목표 연도에 답이 없으면 아무 답도 못 한다(L-lane)",
     file: RETRIEVE,
-    from: '  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];',
-    to: '  return [{ mode: "year", year }];',
+    from: '    { mode: "yearless" },\n    { mode: "any" },\n  ];',
+    to: '    { mode: "yearless" },\n  ];',
+  },
+  {
+    // 🔴 삼순 2026-08-29 6차 P0-1: 명시 연도를 **교체**로 되돌리는 변조.
+    //   lane 개수는 그대로 3 개라 5차 게이트는 이걸 GREEN 으로 봤다 — 그래서 부분집합으로 바꿔 잡는다.
+    name: "m12b 명시 연도가 올해 lane 을 교체 — `1999년 … 현재 감독` 에서 올해 근거가 사라진다(L1c/L2d)",
+    file: RETRIEVE,
+    from: '  const lanes: Array<{ mode: SeasonLaneMode; year?: number }> = [\n'
+      + '    { mode: "year", year: currentSeason },',
+    to: '  const lanes: Array<{ mode: SeasonLaneMode; year?: number }> = [\n'
+      + '    { mode: "year", year: target.kind === "year" ? target.year : currentSeason },',
+  },
+  {
+    // 🔴 삼순 6차 P0-3: lane 이 늘어도 호출은 소스당 1회여야 한다.
+    name: "m12c lane 마다 따로 호출 — RPC 가 lane 수만큼 증폭된다(L2b2)",
+    file: RETRIEVE,
+    from: '      lanes === undefined\n'
+      + '        ? fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector)\n'
+      + '        : fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector, lanes)));',
+    to: '      lanes === undefined\n'
+      + '        ? fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector)\n'
+      + '        : Promise.all(lanes.map((lane) =>\n'
+      + '            fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector, [lane])))\n'
+      + '            .then((chunks) => chunks.flat())));',
   },
   {
     name: "m14 lane 중복 제거 해제 — 같은 chunk 가 여러 근거로 중복된다(L-lane)",
@@ -109,11 +136,9 @@ const MUTATIONS = [
     //   "목표 시즌 근거가 DB 절단 전에 통째로 사라진다"가 된다.
     name: "m15 lane 비대칭 부활 — 시점 오분류가 다시 recall 을 죽인다(L1c/L2d)",
     file: RETRIEVE,
-    from: '  const year = target.kind === "year" ? target.year : currentSeason;\n'
-      + '  // general(any) lane 을 항상 함께 둔다',
+    from: '  // 기본 lane — target 과 무관하게 항상 이 셋을 확보한다.',
     to: '  if (target.kind === "none") return [{ mode: "any" }];\n'
-      + '  const year = target.kind === "year" ? target.year : currentSeason;\n'
-      + '  // general(any) lane 을 항상 함께 둔다',
+      + '  // 기본 lane — target 과 무관하게 항상 이 셋을 확보한다.',
   },
   {
     name: "m16 명시 연도를 무시 — `2018년 한화`가 목표 lane 을 잃는다(T-target)",
@@ -138,23 +163,29 @@ const MUTATIONS = [
     //   올해 문서가 근거에 **아예 도달하지 못한다**(실측에서 관찰된 그 상황).
     name: "m19 시점 다양성 예약 제거 — 올해 문서가 절단으로 사라진다(S5c2)",
     file: RETRIEVE,
-    from: '  const currentIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === currentSeason);\n'
-      + '  if (currentIdx >= 0) chosen.add(currentIdx);',
-    to: '  const currentIdx = -1;\n  if (currentIdx >= 0) chosen.add(currentIdx);',
+    from: '  wanted.push(currentSeason, null);',
+    to: '  wanted.push(null);',
   },
   {
     name: "m20 무연도 예약 제거 — 역대표·등번호 문서가 근거에서 밀린다(S5c3)",
     file: RETRIEVE,
-    from: '  const yearlessIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === null);\n'
-      + '  if (yearlessIdx >= 0) chosen.add(yearlessIdx);',
-    to: '  const yearlessIdx = -1;\n  if (yearlessIdx >= 0) chosen.add(yearlessIdx);',
+    from: '  wanted.push(currentSeason, null);',
+    to: '  wanted.push(currentSeason);',
+  },
+  {
+    // 🔴 삼순 2026-08-29 6차 P0-2: 명시 연도 예약을 빼면 질문이 콕 집은 해가
+    //   최종 근거에서 사라진다(sanitize 뒤 보충 경로가 없다).
+    name: "m19b 명시 연도 예약 제거 — 유저가 콕 집은 해가 근거에서 빠진다(D-target)",
+    file: RETRIEVE,
+    from: '  if (target.kind === "year" && target.year !== currentSeason) wanted.push(target.year);',
+    to: '  void target;',
   },
   {
     // 예약이 순위를 조작하면 그건 다시 hard sort 다 — 포함만 보장해야 한다.
     name: "m21 예약을 맨 앞으로 당김 — 포함 보장이 순위 조작이 된다(S5c5)",
     file: RETRIEVE,
     from: '  return [...chosen].sort((a, b) => a - b).slice(0, limit).map((i) => ranked[i]);',
-    to: '  const reservedFirst = [currentIdx, yearlessIdx].filter((i) => i >= 0);\n'
+    to: '  const reservedFirst = [...chosen];\n'
       + '  const rest = [...chosen].sort((a, b) => a - b).filter((i) => !reservedFirst.includes(i));\n'
       + '  return [...reservedFirst, ...rest].slice(0, limit).map((i) => ranked[i]);',
   },

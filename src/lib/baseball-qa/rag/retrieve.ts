@@ -223,26 +223,55 @@ export type SeasonLaneMode = "any" | "year" | "yearless";
  *
  * ⚠️ 여기에 "target 이 X 면 lane 을 줄인다" 분기를 다시 넣지 마라. 그 순간 시점 판정이
  *   recall 을 좌우하는 구조로 되돌아간다.
+ *
+ * 🔴 명시 연도는 **대체가 아니라 단조 추가**다 (삼순 2026-08-29 6차 P0-1).
+ *   종전에는 year lane 의 *값*을 `현재연도 ↔ target.year` 로 바꿔치기했다. lane 개수는
+ *   같아 보였지만 `1999년 우승팀 한화의 현재 감독은?` 에서 2026 lane 이 통째로 사라져,
+ *   현재 청크가 any lane 상위 40 밖이면 그대로 recall 소실이었다 — 즉 대칭화가 mode 이름
+ *   수준에서만 이뤄져 있었다. 이제 기본 lane 집합(올해/무연도/any)은 **항상 그대로 두고**,
+ *   명시 연도는 그 위에 lane 을 하나 더 얹는다. 후보 집합은 단조 증가만 하므로 시점
+ *   판정 오류의 대가는 어떤 경우에도 recall 소실이 될 수 없다.
  */
 export function seasonLanePlan(target: SeasonTarget, currentSeason: number): Array<{
   mode: SeasonLaneMode;
   year?: number;
 }> {
-  // 명시 연도가 있으면 그 해, 없으면 현재 시즌을 year lane 으로 삼는다.
-  // (무연도 질문에서 올해를 확보해 두는 것은 손해가 아니다 — any lane 이 같이 있으므로
-  //  과거 문서가 탈락하지 않고, 순위는 아래 가중이 정한다.)
-  const year = target.kind === "year" ? target.year : currentSeason;
-  // general(any) lane 을 항상 함께 둔다 — 목표 연도 문서가 실제로는 답이 아닐 수 있고,
-  // lane 만 남기면 "그 해에 그 얘기가 없으면 아무 답도 못 하는" 상태가 된다.
-  return [{ mode: "year", year }, { mode: "yearless" }, { mode: "any" }];
+  // 기본 lane — target 과 무관하게 항상 이 셋을 확보한다.
+  //   · year(올해)  현재를 물었다면 여기 답이 있다
+  //   · yearless    역대 감독표·등번호·연혁
+  //   · any         목표 연도에 답이 없어도 답이 나오게 하는 general lane
+  const lanes: Array<{ mode: SeasonLaneMode; year?: number }> = [
+    { mode: "year", year: currentSeason },
+    { mode: "yearless" },
+    { mode: "any" },
+  ];
+  // 명시 연도가 올해와 다르면 **추가**한다(교체가 아니다 — 위 P0-1 주석 참조).
+  if (target.kind === "year" && target.year !== currentSeason) {
+    lanes.push({ mode: "year", year: target.year });
+  }
+  return lanes;
 }
 
+/**
+ * lane 계획이 만들어낼 수 있는 최대 lane 수 — RPC 호출 예산의 SSOT.
+ *
+ * 게이트가 이 상수로 "호출이 조용히 늘지 않았는가"를 판정한다(삼순 2026-08-29 6차 P0-3).
+ * lane 을 늘리려면 이 상수와 예산 계약을 같이 올려야 한다.
+ */
+export const RAG_MAX_SEASON_LANES = 4;
+
 export async function searchSourcePriorityCandidates(
+  /**
+   * 소스 1개당 **딱 한 번** 불린다. lane 팬아웃과 fallback 합치기는 구현체(production
+   * runtime)가 책임진다 — 그래야 호출 예산을 한 곳에서 지키고, `PGRST202` fallback 을
+   * lane 마다 따로 재시도하는 증폭(최대 12 RPC)이 구조적으로 불가능해진다
+   * (삼순 2026-08-29 6차 P0-3).
+   */
   fetchBySourceKind: (
     sourceKind: RagDocumentSourceKind,
     limit: number,
     queryVector: number[],
-    lane?: { mode: SeasonLaneMode; year?: number },
+    lanes?: Array<{ mode: SeasonLaneMode; year?: number }>,
   ) => Promise<RagEvidenceCandidate[]>,
   queryVector: number[],
   /**
@@ -262,16 +291,15 @@ export async function searchSourcePriorityCandidates(
 ): Promise<RagEvidence[]> {
   const target: SeasonTarget = seasonTarget ?? { kind: "none" };
   const lanes = currentSeason === undefined
-    ? [{ mode: "any" as const }]
+    ? undefined
     : seasonLanePlan(target, currentSeason);
 
   const batches = await Promise.all(
-    (["wikipedia_document", "namu_document"] as const).flatMap((sourceKind) =>
-      lanes.map((lane) =>
-        // lane 이 하나뿐이면 종전과 동일한 단일 조회다(인자도 안 넘긴다).
-        lanes.length === 1
-          ? fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector)
-          : fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector, lane))));
+    (["wikipedia_document", "namu_document"] as const).map((sourceKind) =>
+      // 시즌 축이 꿐져 있으면 종전과 동일한 단일 조회다(인자도 안 넘긴다).
+      lanes === undefined
+        ? fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector)
+        : fetchBySourceKind(sourceKind, RAG_CANDIDATE_LIMIT, queryVector, lanes)));
 
   // lane 이 겹치면 같은 chunk 가 중복된다(`year` lane 의 행은 `any` lane 에도 있다).
   // 근거 중복은 프롬프트 낭비이자 "같은 말이 여러 근거에 있다"는 착시를 만든다.
@@ -1738,18 +1766,22 @@ export function rankEvidenceByQuery(
       //   나무위키 판정이 URL 추정으로 떨어졌다(게이트는 직접 주입해 못 봤다).
       sourceKind: row.sourceKind,
     }));
-  if (!project) {
-    return currentSeason === undefined
-      ? ranked.slice(0, RAG_EVIDENCE_LIMIT)
-      : pickWithSeasonDiversity(ranked, RAG_EVIDENCE_LIMIT, currentSeason);
-  }
-  // projection 을 쓰는 경로는 `selectEvidence` 와 **동일한 계약**을 cap 앞에서 적용한다:
+  // 🔴 projection 이 없어도 **하류 sanitize 와 같은 계약**을 cap 앞에서 적용한다
+  //   (삼순 2026-08-29 6차 P0-2). 종전에는 이 경로가 sanitize 없이 6건을 고른 뒤
+  //   production 이 `selectEvidence` 로 다시 sanitize 했다 — 예약한 행이 거기서 탈락하면
+  //   rank 7 이하를 보충할 경로가 없어 "예약했는데 최종 근거에는 없다"가 될 수 있었다.
+  //   탈락을 cap **앞**에서 끝내면 예약은 살아남는 행 중에서만 고르므로
+  //   예약 = 최종 evidence 포함이 구조적으로 동치된다. 하류 `selectEvidence` 는
+  //   이미 sanitize 된 내용·단일 등급을 받으므로 멱등적이다(중복 적용 무해).
+  const projector: EvidenceProjector = project
+    ?? ((row) => sanitizeEvidenceContent(row.content, row));
+  // 등급 단일화 + 명분 없는 근거 탈락을 cap 앞에서 적용한다:
   //   등급 단일화(섮으면 tier2 서술을 tier1 근거로 착각) + 명분 없는 근거 탈락 + 상위 N.
   //   후처리로 바꾸면 rank 7 이하 clean 근거가 영원히 도달하지 못한다(삼순 2026-08-16 P1-a).
   const survivors: RagEvidence[] = [];
   let lockedGrade: SourceGrade | null = null;
   for (const row of ranked) {
-    const content = project(row);
+    const content = projector(row);
     if (content.length < 20) continue;
     if (lockedGrade === null) lockedGrade = row.sourceGrade;
     else if (row.sourceGrade !== lockedGrade) continue;
@@ -1759,7 +1791,7 @@ export function rankEvidenceByQuery(
   }
   return currentSeason === undefined
     ? survivors.slice(0, RAG_EVIDENCE_LIMIT)
-    : pickWithSeasonDiversity(survivors, RAG_EVIDENCE_LIMIT, currentSeason);
+    : pickWithSeasonDiversity(survivors, RAG_EVIDENCE_LIMIT, currentSeason, target);
 }
 
 /**
@@ -1786,21 +1818,29 @@ export function pickWithSeasonDiversity(
   ranked: RagEvidence[],
   limit: number,
   currentSeason: number,
+  /** 질문이 명시한 연도. 있으면 그 해도 함께 예약한다(삼순 2026-08-29 6차 P0-2). */
+  target: SeasonTarget = { kind: "none" },
 ): RagEvidence[] {
   if (ranked.length <= limit) return ranked.slice(0, limit);
+  // 예약할 시점들 — 순서가 우선순위다.
+  //   · 명시 연도(있다면)  유저가 콕 집은 해 — 이게 빠지면 질문 자체가 무시된다
+  //   · 현재 시즌            현재를 물었다면 여기 답이 있다
+  //   · 무연도              역대 감독표·등번호·연혁
+  const wanted: Array<number | null> = [];
+  if (target.kind === "year" && target.year !== currentSeason) wanted.push(target.year);
+  wanted.push(currentSeason, null);
+
   const chosen = new Set<number>();
-  // 유사도 상위부터 기본 채움 — 단, 예약 슬롯 수만큼 남겨둔다.
-  const reserved = 2;
-  for (let i = 0; i < ranked.length && chosen.size < Math.max(0, limit - reserved); i += 1) {
-    chosen.add(i);
+  // 예약을 먼저 잡는다 — "기본 채움 뒤 추가"로 하면 상한이 꿉 차서 예약이 무시된다.
+  //   ⚠️ 해당 시점 문서가 후보에 없으면 슬롯을 낭비하지 않는다(부재가 결과를 줄이지 않는다).
+  for (const season of wanted) {
+    if (chosen.size >= limit) break;
+    const idx = ranked.findIndex((row, i) =>
+      !chosen.has(i) && parseEvidenceSeason(row) === season);
+    if (idx >= 0) chosen.add(idx);
   }
-  // 예약 ①: 현재 시즌 문서 중 가장 유사한 1건.
-  const currentIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === currentSeason);
-  if (currentIdx >= 0) chosen.add(currentIdx);
-  // 예약 ②: 무연도(상위 문서·역대표) 중 가장 유사한 1건.
-  const yearlessIdx = ranked.findIndex((row) => parseEvidenceSeason(row) === null);
-  if (yearlessIdx >= 0) chosen.add(yearlessIdx);
-  // 남은 자리는 다시 유사도 순으로.
+  // 남은 자리는 유사도 순으로.
   for (let i = 0; i < ranked.length && chosen.size < limit; i += 1) chosen.add(i);
+  // 순서는 유사도 순을 유지한다 — 예약은 *포함*만 보장하고 순위를 조작하지 않는다.
   return [...chosen].sort((a, b) => a - b).slice(0, limit).map((i) => ranked[i]);
 }

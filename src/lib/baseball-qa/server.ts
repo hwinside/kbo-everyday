@@ -58,6 +58,7 @@ import {
   RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
   resolveSeasonTarget,
+  RAG_MAX_SEASON_LANES,
   type SeasonLaneMode,
   type SeasonTarget,
   type RagDocumentSourceKind,
@@ -341,13 +342,26 @@ export interface RagSearchRuntime {
      */
     queryVector: number[],
     /**
-     * 시즌 lane. **DB 절단 전에** 목표 시즌 후보를 확보하기 위해 필요하다 —
+     * 시즌 lane 집합. **DB 절단 전에** 목표 시즌 후보를 확보하기 위해 필요하다 —
      * 앱에서 재정렬하면 목표 청크가 상위 40 밖일 때 복구 불가다(삼순 2026-08-28 P0-①).
      * 생략하면 종전 단일 조회(전 시즌 대상 상위 N).
+     *
+     * 🔴 lane 팬아웃을 **구현체 안으로** 내린 이유(삼순 2026-08-29 6차 P0-3):
+     *   호출자가 lane 마다 따로 부르면 `PGRST202` fallback 도 lane 마다 따로 돌아
+     *   최악 2×lane×source 호출이 된다. 한 소스의 lane 을 한 번에 받으면 fallback 을
+     *   소스당 1회로 합칠 수 있고, 호출 예산을 여기 한 곳에서 강제할 수 있다.
      */
-    lane?: { mode: SeasonLaneMode; year?: number },
+    lanes?: Array<{ mode: SeasonLaneMode; year?: number }>,
   ) => Promise<RagEvidenceCandidate[]>;
 }
+
+/**
+ * 한 소스당 허용하는 최대 RPC 호출 수 — lane 팬아웃 + `PGRST202` fallback 1회.
+ *
+ * 게이트가 이 상수로 호출 증폭을 판정한다(삼순 2026-08-29 6차 P0-3).
+ * 바꾸려면 게이트와 같이 올려야 하므로 "조용한 증폭"이 구조적으로 불가능하다.
+ */
+export const RAG_MAX_RPC_PER_SOURCE = RAG_MAX_SEASON_LANES + 1;
 
 /** 선수(tier2) 후보 정렬 RPC 이름 — 게이트가 이 상수로 production 배선을 결속한다. */
 export const RAG_PLAYER_CHUNK_SEARCH_RPC = "search_baseball_genius_player_chunks" as const;
@@ -378,7 +392,7 @@ export function createProductionRagSearchRuntime(
 ): RagSearchRuntime {
   return {
     embed: embedQuery,
-    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector, lane) => {
+    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector, lanes) => {
       // ⚠️ 여기서 **정렬 없이** `.from(...).limit(40)` 을 쓰면 안 된다 (2026-08-05 production 사고).
       //   문보경 나무위키 chunk 는 133건인데 무순서 40건만 받아오면 '문보물' 이 든 chunk_index 51 이
       //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
@@ -396,22 +410,42 @@ export function createProductionRagSearchRuntime(
         p_query_embedding: JSON.stringify(queryVector),
         p_limit: limit,
       };
-      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
-      let { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
-        ...baseArgs,
-        ...(lane ? { p_season_mode: lane.mode, p_season_year: lane.year ?? null } : {}),
-      });
-      // 🔴 migration-before-app 이 깨졌을 때의 bounded fallback (삼순 2026-08-28 P0-③).
-      //   lane 오버로드가 아직 없으면 team RAG 가 통째로 사라진다 — 그건 배포 순서라는
-      //   **우리 쪽 사정**을 유저 답변 손실로 전가하는 것이다. lane 없이 한 번만 다시 부른다.
-      //   ⚠️ 재시도는 **정확히 1회**이고 lane 이 있을 때만 한다 — lane 없는 호출의
-      //   PGRST202 는 종전 함수조차 없다는 뜻이라 다시 불러도 같은 오류다(무한루프 방지).
-      if (error && lane && (error as { code?: string }).code === PGRST_FUNCTION_NOT_FOUND) {
-        // query-guard: bounded -- 같은 RPC 의 종전 5인자 오버로드이며 p_limit 은 동일하게 bounded 다.
-        ({ data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs));
+      // 🔴 호출 예산 (삼순 2026-08-29 6차 P0-3). lane 이 예산을 넘으면 **잘라서** 부른다 —
+      //   lane 은 최적화라 못 도는 lane 이 있어도 any lane 이 답을 낸다. 예산을 액수로
+      //   둘 수가 없으므로 여기서 구조적으로 강제한다(fallback 몴을 1회 남긴다).
+      const planned = (lanes ?? []).slice(0, RAG_MAX_RPC_PER_SOURCE - 1);
+      let rows: RagServingChunkRow[];
+      if (planned.length === 0) {
+        // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+        const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+        if (error) throw error;
+        rows = (data ?? []) as RagServingChunkRow[];
+      } else {
+        const results = await Promise.all(planned.map((lane) =>
+          // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+          client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+            ...baseArgs,
+            p_season_mode: lane.mode,
+            p_season_year: lane.year ?? null,
+          })));
+        const failed = results.find((result) => result.error);
+        // 🔴 migration-before-app 이 깨졌을 때의 bounded fallback (삼순 2026-08-28 P0-③).
+        //   lane 오버로드가 아직 없으면 team RAG 가 통째로 사라진다 — 그건 배포 순서라는
+        //   **우리 쪽 사정**을 유저 답변 손실로 전가하는 것이다. lane 없이 다시 부른다.
+        //   ⚠️ 재시도는 **소스당 정확히 1회**다 — lane 마다 따로 재시도하면 오버로드가
+        //   없는 순간 호출이 2배로 튀는다(삼순 6차 P0-3). lane 준 호출의 PGRST202 만
+        //   fallback 하고, fallback 자체의 PGRST202 는 종전 함수조차 없다는 뜻이라 던진다.
+        if (failed && (failed.error as { code?: string } | null)?.code === PGRST_FUNCTION_NOT_FOUND) {
+          // query-guard: bounded -- 같은 RPC 의 종전 5인자 오버로드이며 p_limit 은 동일하게 bounded 다.
+          const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+          if (error) throw error;
+          rows = (data ?? []) as RagServingChunkRow[];
+        } else {
+          if (failed?.error) throw failed.error;
+          rows = results.flatMap((result) => (result.data ?? []) as RagServingChunkRow[]);
+        }
       }
-      if (error) throw error;
-      return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+      return rows.map((row) => ({
         content: row.content,
         pageTitle: row.page_title,
         canonicalUrl: row.canonical_url,
@@ -465,8 +499,8 @@ export async function searchRag(
     : { kind: "none" };
 
   return searchSourcePriorityCandidates(
-    (sourceKind, limit, vector, lane) =>
-      runtime.fetchBySourceKind(candidate, sourceKind, limit, vector, lane),
+    (sourceKind, limit, vector, lanes) =>
+      runtime.fetchBySourceKind(candidate, sourceKind, limit, vector, lanes),
     embedded.vector,
     // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
