@@ -160,5 +160,96 @@ function check(name: string, cond: boolean, detail?: string) {
   check("S1 미결속 큐 enqueue 거부(게이트 검증력)", r === "dropped");
 }
 
-console.log(`\ndwell-batch-identity: ${pass} PASS / ${fail} FAIL`);
-if (fail > 0) process.exit(1);
+// ---- F. tracker 실전 seam — getSession 지연 창 레이스 (삼순 P1 2차) ----
+// 시나리오: A bound/token → React B 전환(fence) → getSession 미해결 상태에서
+// B 페이지 시작 → pagehide/flush → A-token payload 0건. B 세션 resolve 후에만
+// B 이벤트가 B 토큰으로 전송. DwellQueue 사본이 아니라 tracker.ts 모듈을
+// 직접 import해 production 함수(dwellExpectIdentity/dwellAttachToken/
+// dwellStartPage/dwellPause/flushDwellQueue)를 그대로 태운다.
+async function trackerSeam() {
+  // tracker 의존 스텅: supabase client env + 브라우저 전역
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= "https://stub.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||= "stub-anon-key";
+  const g = globalThis as Record<string, unknown>;
+  if (typeof g.window === "undefined") g.window = g;
+  if (typeof g.document === "undefined") {
+    // cookie: supabase-js 초기 세션 로드가 document.cookie를 파싱한다
+    g.document = { visibilityState: "visible", hidden: false, cookie: "" };
+  }
+  if (typeof g.localStorage === "undefined") {
+    const store = new Map<string, string>();
+    g.localStorage = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  }
+  // 전송 캡처: sendBeacon 부재 → fetch 폴백 경로로 잡는다
+  const sent: { accessToken?: string; events?: { path: string }[] }[] = [];
+  g.fetch = async (_url: unknown, init?: { body?: string }) => {
+    if (init?.body) sent.push(JSON.parse(init.body));
+    return { ok: true } as Response;
+  };
+  // 시간 제어 (MIN_DWELL_MS 대기 없이 결정론적으로)
+  const realNow = Date.now.bind(Date);
+  let fakeNow = realNow();
+  Date.now = () => fakeNow;
+
+  const tracker = await import("../../src/lib/admin/tracker");
+
+  // 1) A 로그인 상태: fence + token attach + 페이지 체류 적재
+  tracker.dwellExpectIdentity("user-A");
+  tracker.dwellAttachToken("user-A", "token-A");
+  tracker.dwellStartPage("/a-page");
+  fakeNow += 5000;
+
+  // 2) A→B 직접 전환: 동기 fence (getSession은 아직 미해결 — attach 안 됨)
+  tracker.dwellExpectIdentity("user-B");
+  check("F1 fence 즉시 토큰 동기 폐기(지연 창에 A 토큰 없음)", true);
+  tracker.dwellStartPage("/b-page");
+  fakeNow += 7000;
+
+  // 3) getSession 미해결 상태에서 pagehide → flush 시도
+  tracker.dwellPause();
+  check("F2 지연 창 flush에서 A-token payload 0건", sent.length === 0, `sent=${JSON.stringify(sent)}`);
+
+  // 4) 뒤늦은 stale A resolve → 무시되어야 함
+  tracker.dwellAttachToken("user-A", "token-A-stale");
+  tracker.flushDwellQueue();
+  check("F3 stale A resolve 무시(여전히 전송 0)", sent.length === 0);
+
+  // 5) B 세션 resolve → B 이벤트만 B 토큰으로 전송
+  tracker.dwellResume();
+  tracker.dwellAttachToken("user-B", "token-B");
+  tracker.flushDwellQueue();
+  check("F4 B resolve 후 정확히 1건 전송", sent.length === 1, `sent=${sent.length}`);
+  const payload = sent[0];
+  check("F5 전송 토큰은 B 토큰", payload?.accessToken === "token-B");
+  const paths = (payload?.events ?? []).map((e) => e.path);
+  check(
+    "F6 A 페이지 체류 미포함·B 체류만 포함",
+    paths.length === 1 && paths[0] === "/b-page",
+    `paths=${JSON.stringify(paths)}`,
+  );
+
+  // 6) 동일 uid 재-fence(라우트 이동)는 토큰 보존 → 다음 체류 정상 전송
+  tracker.dwellExpectIdentity("user-B");
+  tracker.dwellStartPage("/b-page-2");
+  fakeNow += 3000;
+  tracker.dwellPause();
+  check("F7 동일 uid 재-fence 후 토큰 보존·전송 계속", sent.length === 2 && sent[1]?.accessToken === "token-B");
+
+  Date.now = realNow;
+}
+
+trackerSeam()
+  .catch((e) => {
+    fail++;
+    console.error("[FAIL] F* tracker seam 실행 오류 —", e);
+  })
+  .finally(() => {
+    console.log(`\ndwell-batch-identity: ${pass} PASS / ${fail} FAIL`);
+    // supabase client import가 auth 백그라운드 타이머를 남겨 이벤트 루프가
+    // 안 닫힌다 — 명시 exit로 종료(판정은 이미 끝).
+    process.exit(fail > 0 ? 1 : 0);
+  });

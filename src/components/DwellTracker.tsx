@@ -8,7 +8,8 @@ import {
   dwellStartPage,
   dwellPause,
   dwellResume,
-  dwellSetIdentity,
+  dwellExpectIdentity,
+  dwellAttachToken,
 } from "@/lib/admin/tracker";
 
 /** Drives accurate per-page active-dwell tracking for *logged-in* users (same
@@ -21,24 +22,24 @@ export function DwellTracker() {
   const { user } = useAuth();
 
   useEffect(() => {
-    if (!user?.id) {
-      dwellSetIdentity(null, null); // logged out → stop sending, drop queue
-      return;
-    }
+    // 삼순 P1 2차(#1323): 페이지 타이밍 시작 *전에* 동기 fence — getSession
+    // promise가 아직 안 돌아온 창에서 pagehide/route change가 나도 이전 계정
+    // 토큰·큐는 이미 폐기된 상태라 B 체류가 A 토큰으로 flush될 수 없다.
+    dwellExpectIdentity(user?.id ?? null);
+    if (!user?.id) return; // logged out → fence가 큐·토큰 이미 폐기
     let active = true;
-    // Refresh the cached identity on each navigation so flushes during unload
-    // can attach it synchronously (a stale/expired token just drops that event).
-    // 삼순 P1(#1323): 세션 uid와 React 컨텍스트 uid를 대조 — 전환 레이스로 둘이
-    // 어긋나면 fail-closed(null)로 떨구서 이전 계정 체류가 새 계정 토큰으로
-    // 전송되는 경로를 원천 차단한다.
+    // 토큰은 검증된 세션 uid가 React 컨텍스트 uid와 일치할 때만 attach한다.
+    // 불일치(전환 레이스)는 fail-closed — fence(null)로 떨구고 다음 effect가
+    // 정합 상태에서 재시작한다. 지연 중 쌓인 B 이벤트는 B uid에 결속된 채
+    // 대기하다 attach 후에만 전송된다.
     supabase.auth.getSession().then(({ data }) => {
       if (!active) return;
       const sessUid = data.session?.user?.id ?? null;
       const token = data.session?.access_token ?? null;
       if (sessUid && token && sessUid === user.id) {
-        dwellSetIdentity(sessUid, token);
+        dwellAttachToken(sessUid, token);
       } else {
-        dwellSetIdentity(null, null);
+        dwellExpectIdentity(null);
       }
     });
     dwellStartPage(pathname);
