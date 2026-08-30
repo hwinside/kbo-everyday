@@ -103,6 +103,7 @@ export async function trackPageView(userId?: string) {
 import {
   DwellQueue,
   DWELL_FLUSH_INTERVAL_MS,
+  DWELL_QUEUE_MAX,
   DWELL_MAX_MS as MAX_DWELL_MS,
 } from "@/lib/admin/dwell-queue";
 
@@ -152,8 +153,11 @@ export function dwellExpectIdentity(uid: string | null) {
 export function dwellAttachToken(uid: string, token: string) {
   if (!uid || uid !== dwellUid) return; // stale resolve → ignore
   dwellToken = token;
-  // 토큰 대기 중 쌓인 이벤트가 있으면 이제 보낼 수 있다 — 타이머 재가동.
-  if (dwellQueue.size > 0 && dwellFlushTimer == null) {
+  // 토큰 대기 중 큐가 가득 찼으면(hard-bound 도달) 즉시 flush — 더 모으면
+  // 새 이벤트만 드롭된다. 그 외엔 타이머 재가동.
+  if (dwellQueue.size >= DWELL_QUEUE_MAX) {
+    flushDwellQueue();
+  } else if (dwellQueue.size > 0 && dwellFlushTimer == null) {
     dwellFlushTimer = setTimeout(flushDwellQueue, DWELL_FLUSH_INTERVAL_MS);
   }
 }

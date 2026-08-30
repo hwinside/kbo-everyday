@@ -19,6 +19,7 @@ import {
   DWELL_QUEUE_MAX,
   DWELL_MAX_MS,
 } from "../../src/lib/admin/dwell-queue";
+// (G축은 tracker 모듈을 F축과 같은 인스턴스로 재사용 — dynamic import 캐시)
 import {
   normalizeDwellEvents,
   MAX_EVENTS,
@@ -242,10 +243,59 @@ async function trackerSeam() {
   Date.now = realNow;
 }
 
+// ---- G. 토큰 대기 모드 큐 hard-bound (삼순 P1 3차) ----
+// getSession 지연 중 distinct 이벤트가 DWELL_QUEUE_MAX를 넘어도 큐·payload가
+// 무제한 증가하지 않고(20 이후 append 금지), token attach 시 full queue는
+// 즉시 flush되며 client payload ≤20을 tracker seam으로 확인한다.
+async function hardBound() {
+  // G-unit: DwellQueue 단위 — 25 distinct enqueue에도 size ≤20
+  const q = new DwellQueue();
+  q.setIdentity("u");
+  for (let i = 0; i < 25; i++) q.enqueue("u", `/hb${i}`, 2000);
+  check(`G1 큐 hard-bound(25 distinct → size ≤${DWELL_QUEUE_MAX})`, q.size <= DWELL_QUEUE_MAX, `size=${q.size}`);
+  check("G2 상한 도달 후 새 이벤트는 드롭(size 정확히 20)", q.size === DWELL_QUEUE_MAX);
+  check("G3 상한 초과 enqueue는 flush-now 신호", q.enqueue("u", "/hb-extra", 2000) === "flush-now" && q.size === DWELL_QUEUE_MAX);
+  // 같은 path merge는 append 아니라 상한과 무관하게 허용
+  const before = q.size;
+  q.enqueue("u", `/hb24`, 3000); // 마지막 path와 동일 → merge
+  check("G4 동일 path merge는 상한 무관 허용", q.size === before);
+
+  // G-seam: tracker 실전 — B fence/no token → distinct 25건+flush 반복 →
+  // attach 후 B-only 1배치 ≤20
+  const g = globalThis as Record<string, unknown>;
+  const sent: { accessToken?: string; events?: { path: string }[] }[] = [];
+  g.fetch = async (_url: unknown, init?: { body?: string }) => {
+    if (init?.body) sent.push(JSON.parse(init.body));
+    return { ok: true } as Response;
+  };
+  const realNow = Date.now.bind(Date);
+  let fakeNow = realNow();
+  Date.now = () => fakeNow;
+  const tracker = await import("../../src/lib/admin/tracker");
+
+  tracker.dwellExpectIdentity("user-G"); // fence만, 토큰 미도착 상태
+  for (let i = 0; i < 25; i++) {
+    tracker.dwellStartPage(`/g${i}`);
+    fakeNow += 2000;
+    tracker.dwellPause(); // 매번 flush 시도 — 토큰 없으므로 보존만
+    tracker.dwellResume();
+  }
+  check("G5 토큰 대기 중 flush 반복에도 전송 0", sent.length === 0);
+
+  tracker.dwellAttachToken("user-G", "token-G"); // full queue → 즉시 flush
+  check("G6 attach 시 full queue 즉시 flush(1배치)", sent.length === 1, `sent=${sent.length}`);
+  const evts = sent[0]?.events ?? [];
+  check(`G7 client payload ≤${DWELL_QUEUE_MAX}`, evts.length <= DWELL_QUEUE_MAX && evts.length === DWELL_QUEUE_MAX, `events=${evts.length}`);
+  check("G8 전송 토큰은 G 토큰", sent[0]?.accessToken === "token-G");
+
+  Date.now = realNow;
+}
+
 trackerSeam()
+  .then(() => hardBound())
   .catch((e) => {
     fail++;
-    console.error("[FAIL] F* tracker seam 실행 오류 —", e);
+    console.error("[FAIL] F*/G* tracker seam 실행 오류 —", e);
   })
   .finally(() => {
     console.log(`\ndwell-batch-identity: ${pass} PASS / ${fail} FAIL`);

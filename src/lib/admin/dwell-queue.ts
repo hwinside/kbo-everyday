@@ -49,7 +49,13 @@ export class DwellQueue {
   /** Enqueue under the caller's uid. Dropped unless it matches the bound
    * identity (null identity ⇒ logged out ⇒ not tracked). Consecutive events
    * for the same path merge (visibility toggles), capped like a single
-   * interval server-side. */
+   * interval server-side.
+   *
+   * 삼순 P1 3차(#1323): 큐는 hard-bound — DWELL_QUEUE_MAX 이후 append 금지.
+   * 토큰 대기 모드(flush가 이벤트를 보존하는 동안)에도 큐·payload가
+   * 무제한 증가하지 않도록 과융분은 드롭하고 flush-now 신호만 낸다
+   * (서버도 20개 초과를 버리므로 클라이언트에서 먼저 막는다). 같은 path
+   * 연속 구간 merge는 append가 아니라 허용. */
   enqueue(uid: string | null, path: string, dwellMs: number): EnqueueResult {
     if (!uid || uid !== this.uid) return "dropped";
     const ms = Math.round(dwellMs);
@@ -57,6 +63,9 @@ export class DwellQueue {
     if (last && last.path === path) {
       last.dwellMs = Math.min(last.dwellMs + ms, DWELL_MAX_MS);
     } else {
+      if (this.events.length >= DWELL_QUEUE_MAX) {
+        return "flush-now"; // hard-bound: 새 이벤트 드롭, flush만 재촉구
+      }
       this.events.push({ path, dwellMs: ms });
     }
     return this.events.length >= DWELL_QUEUE_MAX ? "flush-now" : "queued";
