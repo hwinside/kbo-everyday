@@ -16,7 +16,9 @@ done
 if [ -z "$PGBIN" ]; then echo "SKIP: local PostgreSQL(initdb/psql) not found" >&2; exit 2; fi
 
 MIGRATION="$(cd "$(dirname "$0")/../.." && pwd)/supabase/migrations/20260729_lineup_confirm_notify.sql"
+MIGRATION_RETRY="$(cd "$(dirname "$0")/../.." && pwd)/supabase/migrations/20260731212000_lineup_notify_retry_outcome.sql"
 [ -f "$MIGRATION" ] || { echo "migration not found: $MIGRATION" >&2; exit 1; }
+[ -f "$MIGRATION_RETRY" ] || { echo "migration not found: $MIGRATION_RETRY" >&2; exit 1; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/lineup-notify-qa.XXXXXX")"
 DATADIR="$WORK/data"; SOCKDIR="$WORK/sock"; mkdir -p "$SOCKDIR"
@@ -41,6 +43,7 @@ INSERT INTO profiles(id, team_id) SELECT gen_random_uuid(), 1 FROM generate_seri
 INSERT INTO device_push_tokens(user_id, fcm_token, platform) SELECT id, 'tok_'||id, 'ios' FROM profiles;
 SQL
 "${PSQL[@]}" -f "$MIGRATION" >/dev/null
+"${PSQL[@]}" -f "$MIGRATION_RETRY" >/dev/null
 
 pass=0; fail=0
 check() { if [ "$2" = "$3" ]; then pass=$((pass+1)); echo "  ✅ $1"; else fail=$((fail+1)); echo "  ❌ $1 (got: $2 / want: $3)"; fi; }
