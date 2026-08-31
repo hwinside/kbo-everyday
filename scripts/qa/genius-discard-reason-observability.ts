@@ -155,6 +155,10 @@ function makeDeps(answers: {
   const stored: { value: LlmResult | null } = { value: null };
   const deps = {
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     enableTeamRag: true,
     enableNewsRag: true,
     now: () => NOW_MS,

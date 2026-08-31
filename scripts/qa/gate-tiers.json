@@ -248,6 +248,18 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-rag-identity",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-rag-identity:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-rag-identity:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-draft-year",
       "tier": "ci"
     },

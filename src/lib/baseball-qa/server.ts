@@ -4,6 +4,7 @@
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
+import { buildIdentityVerifierPrompt } from "@/lib/baseball-qa/identity-verifier-prompt";
 import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
 import {
@@ -25,6 +26,10 @@ import {
   type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
 import type { TodayGameStarters } from "@/lib/baseball-qa/pipeline";
+import type {
+  PlayerIdentity,
+  IdentityVerdictResult,
+} from "@/lib/baseball-qa/pipeline";
 import { adaptTodayStarters } from "@/lib/baseball-qa/pipeline";
 import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
@@ -501,7 +506,18 @@ async function callRagLlmWithPrompt(
         question,
         evidence,
         systemPrompt ?? RAG_SYSTEM_PROMPT,
-        { context: extras?.context, rosterBlock: extras?.rosterBlock },
+        // identityBlock 은 선수 경로에서만 온다(구단·공식 경로는 미주입) — 여기서는 그대로 전달한다.
+        //
+        // 🔴 `identityIssues` 를 빠뜨리면 재생성이 **직전과 완전히 같은 프롬프트**가 된다
+        //    (삼순 2026-08-19 4차). 검증 LLM 이 "무엇이 왜 틀렸는지" 를 문장으로 돌려줘도
+        //    실제 Gemini 요청에 안 실리면 두 번째 시도가 첫 번째와 같은 조건이라 고칠 기회가
+        //    없다 — 재생성 비용만 쓰고 같은 오답을 받는다. 여기가 유일한 실제 전송 지점이다.
+        {
+          context: extras?.context,
+          rosterBlock: extras?.rosterBlock,
+          identityBlock: extras?.identityBlock,
+          identityIssues: extras?.identityIssues,
+        },
       ),
     ),
     signal: AbortSignal.timeout(15000),
@@ -515,6 +531,79 @@ async function callRagLlmWithPrompt(
     inputTokens: data.usageMetadata?.promptTokenCount ?? null,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
   };
+}
+
+/**
+ * 신원 귀속 보조검증 (D안, 삼순 2026-08-20) — 닫힌 사전필터가 모순 토큰을 찾았을 때만 호출된다.
+ *
+ * "그 토큰이 주인공에게 귀속됐는가"는 열린 자연어 판정이라 LLM 에 위임한다
+ * (문법 정규식 판정은 NO-GO 7~11차 룰 핑톡으로 폐기). 계약:
+ *  - strict JSON `{"attribution":"주인공|제3자|불명"}` 밖의 모든 결과는 "불명".
+ *  - timeout·HTTP 실패·파싱 실패·키 부재 전부 "불명" — 파이프라인이 unsure 로 닫는다(fail-close).
+ *  - 토큰은 파이프라인이 llm 토큰에 누적한다 — 보조판정이 공짜로 보이면 비용 분모가 깨진다.
+ */
+export async function verifyIdentityAttribution(input: {
+  answer: string;
+  identity: PlayerIdentity;
+}): Promise<IdentityVerdictResult> {
+  const { answer, identity } = input;
+  if (!GEMINI_API_KEY) return { verdict: "불명" };
+  const { systemPrompt, userText } = buildIdentityVerifierPrompt(answer, identity);
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: userText }] }],
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 512,
+          responseMimeType: "application/json",
+        },
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    return await parseIdentityVerifierResponse(res);
+  } catch {
+    return { verdict: "불명" };  // timeout · network — fail-close
+  }
+}
+
+/** 검증 LLM 응답 파싱 — 모든 실패는 불명(fail-close), 토큰은 썼다면 그대로 실어보낸다. */
+async function parseIdentityVerifierResponse(res: Response): Promise<IdentityVerdictResult> {
+  try {
+    if (!res.ok) return { verdict: "불명" };
+    const data = await res.json();
+    const text: string =
+      data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
+    const inputTokens = data.usageMetadata?.promptTokenCount ?? undefined;
+    const outputTokens = data.usageMetadata?.candidatesTokenCount ?? undefined;
+    // 응답이 깨졌어도 **토큰은 이미 썼다** — 비용 분모에서 빼지 않는다.
+    const unknownWithCost = (): IdentityVerdictResult => ({ verdict: "불명", inputTokens, outputTokens });
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return unknownWithCost();  // malformed → 불명 (fail-close)
+    }
+    const attribution = (parsed as { attribution?: unknown })?.attribution;
+    if (attribution !== "안전" && attribution !== "오귀속") return unknownWithCost();
+    // 오귀속 사유는 **모델이 쓴 문장 그대로** 넘긴다 — 코드가 파싱·재조립하지 않는다.
+    // 재조립하는 순간 그 조립 규칙이 룰이 되고, 필드가 늘 때마다 분기가 자란다.
+    const rawIssues = (parsed as { issues?: unknown })?.issues;
+    const issues = Array.isArray(rawIssues)
+      ? rawIssues
+        .filter((row): row is string => typeof row === "string" && row.trim().length > 0)
+        .slice(0, 8)   // 프롬프트 폭주 방지 — 개수 상한만 두고 내용은 건드리지 않는다
+      : [];
+    // 오귀속인데 사유가 하나도 없으면 재작성 신호가 비어 같은 프롬프트가 재전송된다.
+    // 판정을 신뢰할 수 없는 상태이므로 불명으로 닫는다(fail-close).
+    if (attribution === "오귀속" && issues.length === 0) return unknownWithCost();
+    return { verdict: attribution, issues, inputTokens, outputTokens };
+  } catch {
+    return { verdict: "불명" };
+  }
 }
 
 /**
@@ -778,6 +867,9 @@ export function makeDeps(
     correctionDeclined: correctionDeclined === true,
     searchRag,
     callRagLlm,
+    // 신원 귀속 보조검증 (D안) — 모순 토큰 존재 시에만 호출된다. 미배선이면 파이프라인이
+    // 판정 불능으로 보고 unsure 로 닫는다(fail-close).
+    verifyIdentityAttribution,
     // 선수 서술형 RAG 개통 (하린아빠 2026-08-03: "RAG을 확장했기 때문에 '문보경 별명이 뭐야?'도
     // 답변 되어야 해"). 미수집 선수는 근거 0행이라 그대로 fail-close 된다 — 없는 말을 지어내지 않는다.
     enablePlayerRag: true,

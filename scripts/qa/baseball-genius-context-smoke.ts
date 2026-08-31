@@ -405,6 +405,10 @@ async function verifyProductionShapedRecordRouting() {
     log: async () => {},
     // ⬇️ production 배선 — 이 둘이 있어야 앞단 가로채기가 동작한다.
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     now: () => Date.now(),
     searchRag: async () => {
       counts.rag++;
@@ -564,6 +568,10 @@ async function verifyProductionRosterLoaderSeam() {
     reserveDaily: async (_userId, limit) => ({ allowed: true, remaining: limit - 1 }),
     log: async () => {},
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     now: () => Date.now(),
     searchRag: async () => {
       counts.rag++;
@@ -1241,6 +1249,10 @@ async function verifyLlmDelegation() {
   const playerDeps: QaDeps = {
     ...delegationDeps(playerState),
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => [{
       content: "최형우는 KBO 리그에서 오래 활약한 베테랑 외야수로, 정교한 타격과 꾸준한 활약으로 잘 알려져 있다.",
       pageTitle: "최형우", canonicalUrl: "https://namu.wiki/w/최형우", revision: "1",
@@ -1273,6 +1285,10 @@ async function verifyLlmDelegation() {
   const chainDeps: QaDeps = {
     ...delegationDeps(chainState),
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => [], // 최형우 chunk 0건 (Production 실측) → generic 양보
     callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
   };
@@ -1324,6 +1340,10 @@ async function verifyLlmDelegation() {
   const yieldDeps: QaDeps = {
     ...delegationDeps(yieldState),
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => [],
     callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
   };
@@ -1341,6 +1361,10 @@ async function verifyLlmDelegation() {
   const descResult = await answerQuestion("u-desc", "최형우 별명이 뭐야?", {
     ...delegationDeps(descState),
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     searchRag: async () => [],
     callRagLlm: async () => { throw new Error("근거 0건이면 rag LLM 을 소비하면 안 된다"); },
   });

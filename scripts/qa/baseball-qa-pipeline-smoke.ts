@@ -1658,6 +1658,10 @@ async function verifyPipeline() {
     const ragDeps = (state: MockState): QaDeps => ({
       ...makeDeps(state),
       enablePlayerRag: true,
+      // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+      // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+      // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+      verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
       searchRag: async () => evidence as never,
       callRagLlm: async () => ({
         text: '{"status":"GROUNDED","answer":"럭키보이라고 불립니다."}',
@@ -1776,6 +1780,10 @@ async function verifyPipeline() {
     ): QaDeps => ({
       ...makeDeps(state),
       enablePlayerRag: true,
+      // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+      // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+      // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+      verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
       now: () => NOW,
       fetchSeasonRecord: async () => rows as never,
       // 기록 경로는 RAG를 써서는 안 된다 — 호출되면 즉시 터지게 한다.
@@ -2172,6 +2180,10 @@ async function verifyPipeline() {
     const noRecordResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", {
       ...makeDeps(noRecord),
       enablePlayerRag: true,
+      // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+      // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+      // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+      verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
       searchRag: async () => [],
       callRagLlm: async () => { throw new Error("근거 0이면 호출 안 됨"); },
     });
@@ -3913,6 +3925,10 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   const richDeps = (state: MockState): QaDeps => ({
     ...makeDeps(state),
     enablePlayerRag: true,
+    // 신원 검증기는 production(`server.ts`)에 항상 배선돼 있다. 미배선은 fail-close 라
+    // 픽스처가 이걸 빼면 이 게이트의 축과 무관하게 전부 unsure 로 닫힌다
+    // (2026-08-27 룰 층 제거로 **모든 RAG 답변**이 검증을 타게 됐다).
+    verifyIdentityAttribution: async () => ({ verdict: "안전" as const, issues: [] }),
     // 구단 RAG 도 켠다 — `team_rag` 는 `rag` 에서 분리된 별도 경로라 probe 가 따로 필요하다
     // (2026-08-07 감사 식별자 분리). 안 켜면 아래 probe 가 조용히 다른 경로로 떨어진다.
     enableTeamRag: true,
