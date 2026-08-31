@@ -396,14 +396,6 @@
       "tier": "deploy"
     },
     {
-      "name": "qa:genius-team-binding",
-      "tier": "ci"
-    },
-    {
-      "name": "qa:genius-team-binding:selftest",
-      "tier": "ci"
-    },
-    {
       "name": "qa:genius-team-copy",
       "tier": "ci"
     },
