@@ -47,6 +47,7 @@ import {
   buildBaseballQaGeminiRequest,
   GLOSSARY_MAPPER_SYSTEM_PROMPT,
 } from "@/lib/baseball-qa/gemini-request";
+import { INTENT_CLASSIFIER_PROMPT } from "@/lib/baseball-qa/intent";
 import {
   buildRagLlmRequest,
   RAG_SYSTEM_PROMPT,
@@ -170,6 +171,56 @@ export async function callLlm(
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   return {
     text,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
+/**
+ * 의도 라우팅 분류기 — pipeline `classifyIntent` seam 구현 (2026-08-31).
+ *
+ * official RAG 검색보다 **먼저** 돌아 잡담·후속을 가른다. 이 호출이 생기는 이유는
+ * `intent.ts` 헤더에 실측과 함께 있다 — 거리 임계는 한국어 짧은 구어를 걸러내지 못한다.
+ *
+ * ⚠️ `temperature: 0` 이다 — 같은 질문이 회차마다 다른 경로로 가면 유저는 불안정한
+ *   봇을 겪고, 게이트도 판정을 고정할 수 없다(#1318 Q4 가 회차마다 갈린 것과 같은 축).
+ * ⚠️ timeout 은 짧게 잡는다 — 이 단계는 **추가** 지연이므로 느리면 전체 응답이 느려진다.
+ *   실패하면 호출부가 `BASEBALL` 로 fail-open 해 기존 경로 그대로 간다.
+ */
+export async function classifyIntent(
+  question: string,
+  context?: ContextTurn,
+): Promise<{ text: string; inputTokens: number | null; outputTokens: number | null }> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  // 직전 대화는 **데이터**로 구획해 넣는다 — 지시는 systemInstruction 에만 둔다
+  // (`buildBaseballQaGeminiRequest` 의 로스터 블록과 같은 규약).
+  const userText = context
+    ? [
+        "<직전 대화>",
+        `질문: ${context.question}`,
+        `답변: ${context.answer}`,
+        "</직전 대화>",
+        `이번 메시지: ${question}`,
+      ].join("\n")
+    : `이번 메시지: ${question}`;
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: INTENT_CLASSIFIER_PROMPT }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 256,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  return {
+    text: data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "",
     inputTokens: data.usageMetadata?.promptTokenCount ?? null,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
   };
@@ -1037,6 +1088,8 @@ export function makeDeps(
     fetchSeriesPrizeHtml: createSeriesPrizeHtmlFetcher(),
     searchOfficialRag,
     callOfficialRagLlm,
+    // 의도 라우팅 분류기 — official RAG 앞에서 잡담·후속을 가른다(2026-08-31).
+    classifyIntent,
     recordRagDemand: async (sourceKeys) => {
       // query-guard: bounded -- RPC가 source_keys 상한(20)을 강제하는 단일 갱신이다.
       const { error } = await supabaseAdmin
@@ -1204,6 +1257,51 @@ export function makeDeps(
         })
         .eq("message_id", messageId);
       if (error) throw error;
+    },
+    // ── 의도 판정 durable 재생 (삼순 2026-08-31 ①) ────────────────────────────
+    //   키가 `message_id` 라 **이 메시지 전용**이다 — 전역 캐시가 아니다.
+    //   fingerprint 대조는 파이프라인(`replayableIntent`)이 하므로 여기선 행만 읽는다.
+    //
+    //   ⚠️ 컬럼 부재(migration 미적용)를 **기능 장애로 만들지 않는다.** 앱이 migration 보다
+    //     먼저 배포되는 창에서 42703/PGRST204 가 나는데, 그때 throw 하면 라우팅이 통째로
+    //     죽는다. "판정 없음"(null)으로 접으면 매번 새로 분류할 뿐 동작은 유지된다
+    //     (#1317 의 PGRST202 fail-soft 와 같은 축).
+    getIntentDecision: async () => {
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify")
+        .eq("message_id", messageId)
+        .maybeSingle();
+      if (error) {
+        if (error.code === "42703" || error.code === "PGRST204") return null;
+        throw error;
+      }
+      if (!data) return null;
+      return {
+        verdict: (data.intent_verdict as string | null) ?? null,
+        fingerprint: (data.intent_fingerprint as string | null) ?? null,
+        answer: (data.intent_answer as string | null) ?? null,
+        clarify: (data.intent_clarify as string | null) ?? null,
+      };
+    },
+    storeIntentDecision: async ({ verdict, fingerprint, answer, clarify }) => {
+      const { error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({
+          intent_verdict: verdict,
+          intent_fingerprint: fingerprint,
+          intent_answer: answer,
+          intent_clarify: clarify,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("message_id", messageId)
+        // 🔴 **최초 판정만 쓴다.** 이미 값이 있으면 덮지 않는다 — 덮으면 재생의 의미가 없다
+        //   (재처리마다 최신 판정으로 갈아엎으면 provider 비결정성이 그대로 통과한다).
+        .is("intent_verdict", null);
+      if (error) {
+        if (error.code === "42703" || error.code === "PGRST204") return;
+        throw error;
+      }
     },
     log: async (entry) => {
       const { error } = await supabaseAdmin
