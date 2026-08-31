@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LayoutDashboard, GripVertical, Lock, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
+import { LayoutDashboard, Menu, Lock, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -121,7 +121,7 @@ function SortableSectionRow({
         className="flex-shrink-0 touch-none cursor-grab active:cursor-grabbing text-text-tertiary p-1 -ml-1"
         aria-label={`${def.label} 순서 이동`}
       >
-        <GripVertical size={18} />
+        <Menu size={18} />
       </button>
       <div className="flex-1 min-w-0 text-left">
         <span className="text-[15px] text-text-primary">{def.label}</span>
