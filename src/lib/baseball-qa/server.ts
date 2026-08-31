@@ -24,7 +24,7 @@ import {
   type QaResult,
   type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
-import type { TodayGameStarters } from "@/lib/baseball-qa/pipeline";
+import type { TodayGameStarters, NormalizeStatus } from "@/lib/baseball-qa/pipeline";
 import { adaptTodayStarters } from "@/lib/baseball-qa/pipeline";
 import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
@@ -1266,10 +1266,68 @@ export function makeDeps(
     //     먼저 배포되는 창에서 42703/PGRST204 가 나는데, 그때 throw 하면 라우팅이 통째로
     //     죽는다. "판정 없음"(null)으로 접으면 매번 새로 분류할 뿐 동작은 유지된다
     //     (#1317 의 PGRST202 fail-soft 와 같은 축).
+    // ── 최초 정규화 판정 snapshot (삼순 2026-08-31 NO-GO ②) ────────────────
+    //   판정 재생의 시작점을 정규화까지 끌어올린다 — 정규화가 흔들리면 fingerprint 가
+    //   달라져 판정 재생이 아예 발동하지 않기 때문이다.
+    getNormalizeSnapshot: async () => {
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .select("normalize_snapshot_question, normalize_snapshot_status, normalize_snapshot_accepted, normalize_snapshot_suggestion")
+        .eq("message_id", messageId)
+        .maybeSingle();
+      if (error) {
+        // 컬럼 미배포 창에서는 "snapshot 없음" 으로 접는다(라우팅을 죽이지 않는다).
+        if (error.code === "42703" || error.code === "PGRST204") return null;
+        throw error;
+      }
+      const q = (data?.normalize_snapshot_question as string | null) ?? null;
+      const st = (data?.normalize_snapshot_status as string | null) ?? null;
+      if (!q || !st) return null;
+      return {
+        originalQuestion: q,
+        status: st as NormalizeStatus,
+        acceptedText: (data?.normalize_snapshot_accepted as string | null) ?? null,
+        suggestionText: (data?.normalize_snapshot_suggestion as string | null) ?? null,
+      };
+    },
+    storeNormalizeSnapshot: async (snapshot) => {
+      // 최초 1회만 쓴다. 이미 있으면 내가 CAS 패자이므로 winner 를 읽어 돌려준다
+      // (판정 저장과 같은 계약 — 두 worker 가 서로 다른 문장으로 답하면 재생이 깨진다).
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({
+          normalize_snapshot_question: snapshot.originalQuestion,
+          normalize_snapshot_status: snapshot.status,
+          normalize_snapshot_accepted: snapshot.acceptedText,
+          normalize_snapshot_suggestion: snapshot.suggestionText,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("message_id", messageId)
+        .is("normalize_snapshot_status", null)
+        .select("normalize_snapshot_status");
+      if (error) {
+        if (error.code === "42703" || error.code === "PGRST204") return null;
+        throw error;
+      }
+      if ((data?.length ?? 0) > 0) return null; // winner — 내 판정을 쓴다
+
+      const { data: won, error: readErr } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .select("normalize_snapshot_question, normalize_snapshot_status, normalize_snapshot_accepted, normalize_snapshot_suggestion")
+        .eq("message_id", messageId)
+        .maybeSingle();
+      if (readErr || !won?.normalize_snapshot_status) return null; // 읽기 실패는 내 판정 유지
+      return {
+        originalQuestion: (won.normalize_snapshot_question as string | null) ?? snapshot.originalQuestion,
+        status: won.normalize_snapshot_status as NormalizeStatus,
+        acceptedText: (won.normalize_snapshot_accepted as string | null) ?? null,
+        suggestionText: (won.normalize_snapshot_suggestion as string | null) ?? null,
+      };
+    },
     getIntentDecision: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team")
+        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team, intent_verdict_known")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) {
@@ -1283,9 +1341,11 @@ export function makeDeps(
         answer: (data.intent_answer as string | null) ?? null,
         clarify: (data.intent_clarify as string | null) ?? null,
         team: (data.intent_team as string | null) ?? null,
+        // 구 행은 컬럼이 NULL 이다 — `replayableIntent` 가 false 로 접는다(모름 → 개방 철회).
+        verdictKnown: (data.intent_verdict_known as boolean | null) ?? null,
       };
     },
-    storeIntentDecision: async ({ verdict, fingerprint, answer, clarify, team }) => {
+    storeIntentDecision: async ({ verdict, fingerprint, answer, clarify, team, verdictKnown }) => {
       // ── 원자적 CAS (삼순 2026-08-31 P0-2) ──────────────────────────────────
       //
       // 🔴 초안은 `.is("intent_verdict", null)` 이었는데 그게 **결함**이었다.
@@ -1308,6 +1368,10 @@ export function makeDeps(
           intent_answer: answer,
           intent_clarify: clarify,
           intent_team: team,
+          // 🔴 provenance 는 판정과 **같은 update** 에 실린다 (삼순 NO-GO ①).
+          //   따로 쓰면 "판정은 저장됐는데 provenance 만 없는" 행이 생겨, 재생 때
+          //   모름을 판정으로 오인한다(값과 provenance 를 같은 조건에 결속한다, M90).
+          intent_verdict_known: verdictKnown,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
@@ -1322,7 +1386,7 @@ export function makeDeps(
       // CAS 패자 — 이미 저장된 winner 판정을 읽어 돌려준다.
       const { data: won, error: readErr } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team")
+        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team, intent_verdict_known")
         .eq("message_id", messageId)
         .maybeSingle();
       if (readErr || !won) return null; // 읽기 실패는 내 판정 유지(fail-open)
@@ -1332,6 +1396,7 @@ export function makeDeps(
         answer: (won.intent_answer as string | null) ?? null,
         clarify: (won.intent_clarify as string | null) ?? null,
         team: (won.intent_team as string | null) ?? null,
+        verdictKnown: (won.intent_verdict_known as boolean | null) ?? null,
       };
     },
     // 되묻기 렌더 결과 고정 (삼순 2026-08-31 P0-3).

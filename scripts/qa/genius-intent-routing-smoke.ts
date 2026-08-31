@@ -592,30 +592,193 @@ async function main() {
   }, null, 1));
   console.log(`[증거] ${EVIDENCE_OUT}`);
 
-  // A3 — durable replay: 같은 messageId 를 3회 처리해 **바이트 동일**을 요구한다.
-  //   provider 가 비결정적이어도(실측 확인) 재생이 돌면 결과가 고정돼야 한다.
+  // ── A3 durable replay — **종단 계약** (삼순 2026-08-31 NO-GO ③) ─────────────
+  //
+  // 🔴 이전 A3 는 `getIntentDecision`/`storeIntentDecision` 만 스텁했다. 그러면 계약의
+  //   절반만 태운다 — 실제로 재생이 깨지는 자리는 그 바깥이었다:
+  //     · CAS 패자가 자기 판정을 쓰는가 (winner 를 안 받아 쓰면 두 답이 나간다)
+  //     · fingerprint 가 바뀌면 새 판정이 저장되는가 (`.is(verdict,null)` 이면 영원히 안 됨)
+  //     · 되묻기 렌더가 **실제로 고정**되는가 (`Date.now()` 로 매번 다시 그리면 문구가 변함)
+  //     · provenance 가 재생되는가 (fail-open 회차가 "판정 있었다" 로 둔갑하면 개방이 부활)
+  //   그래서 각 축을 **종단 실행**으로 세운다. 스텁은 server.ts 배선과 같은 계약을 흉내낸다.
   const REPLAY_Q = ["방금 점수 어떻게 냈어?", "안해주면", "질문답헤줘", "사랑해요"];
   const replayFails: string[] = [];
-  for (const q of REPLAY_Q) {
-    // messageId 스코프 durable 저장소를 in-memory 로 흉내낸다 — server.ts 배선과 같은 계약
-    // (최초 판정만 쓰고, 이미 있으면 덮지 않는다).
-    let stored: { verdict: string; fingerprint: string; answer: string | null; clarify: string | null } | null = null;
-    const seen = new Set<string>();
-    for (let i = 0; i < 3; i += 1) {
-      const c = zero();
-      const deps = {
+
+  /** server.ts 의 durable 계약을 그대로 흉내낸 in-memory 저장소. */
+  type Snap = {
+    verdict: string; fingerprint: string; answer: string | null;
+    clarify: string | null; team: string | null; verdictKnown: boolean | null;
+  };
+  function makeStore() {
+    let stored: Snap | null = null;
+    return {
+      get: () => stored,
+      deps: (c: ReturnType<typeof zero>) => ({
         ...(makeDeps(c, true) as unknown as Record<string, unknown>),
         getIntentDecision: async () => stored,
-        storeIntentDecision: async (d: { verdict: string; fingerprint: string; answer: string | null; clarify: string | null }) => {
-          if (!stored) stored = d; // 최초 판정만
+        storeIntentDecision: async (d: Snap) => {
+          // 이 fingerprint 의 최초 판정만 쓴다 — 다른 fingerprint 면 교체(server.ts 와 동일).
+          if (!stored || stored.fingerprint !== d.fingerprint) { stored = d; return null; }
+          return stored; // CAS 패자 — winner 를 돌려준다
         },
-      } as unknown as QaDeps;
-      const r = await answerQuestion(`replay-${q}-fixed`, q, deps);
+        storeIntentRender: async (fp: string, rendered: string) => {
+          if (stored && stored.fingerprint === fp && stored.answer === null) {
+            stored = { ...stored, answer: rendered };
+            return null; // winner
+          }
+          return stored?.answer ?? null; // 패자는 winner 문구를 받는다
+        },
+      } as unknown as QaDeps),
+    };
+  }
+
+  for (const q of REPLAY_Q) {
+    const store = makeStore();
+    const seen = new Set<string>();
+    for (let i = 0; i < 3; i += 1) {
+      const r = await answerQuestion(`replay-${q}-fixed`, q, store.deps(zero()));
       seen.add(`${(r as { source?: string }).source}|${(r as { answer?: string }).answer}`);
     }
     if (seen.size > 1) replayFails.push(`${q.slice(0, 16)}:${seen.size}변형`);
   }
   check("A3 durable replay 3회 바이트 동일", replayFails.length === 0, replayFails);
+
+  // A3-CAS — **패자는 winner 판정을 쓴다.** 저장소에 이미 다른 판정이 있는 상태에서
+  //   처리하면, 이번 회차 provider 결과가 무엇이든 winner 문구가 나와야 한다.
+  //   (안 그러면 동시 처리 시 같은 messageId 가 서로 다른 답을 내보낸다.)
+  const casFails: string[] = [];
+  for (const q of ["질문답헤줘", "사랑해요"]) {
+    // 1회차로 winner 를 만든다.
+    const store = makeStore();
+    const first = await answerQuestion(`cas-${q}`, q, store.deps(zero()));
+    const firstKey = `${(first as { source?: string }).source}|${(first as { answer?: string }).answer}`;
+    // 2회차는 같은 저장소를 보되 **provider 를 강제로 다르게** 만든다(주입).
+    const c2 = zero();
+    const forced = {
+      ...(store.deps(c2) as unknown as Record<string, unknown>),
+      classifyIntent: async () => ({
+        // 이번 회차 provider 가 전혀 다른 판정을 낸 상황을 만든다.
+        text: JSON.stringify({ intent: "SMALLTALK_SCOPE", answer: "", clarify: "", standalone: true, team: "" }),
+        inputTokens: 1, outputTokens: 1,
+      }),
+    } as unknown as QaDeps;
+    const second = await answerQuestion(`cas-${q}`, q, forced);
+    const secondKey = `${(second as { source?: string }).source}|${(second as { answer?: string }).answer}`;
+    if (firstKey !== secondKey) casFails.push(`${q.slice(0, 14)}: winner 판정 미사용`);
+  }
+  check("A3-CAS 저장된 winner 판정이 이번 회차 provider 결과를 이긴다", casFails.length === 0, casFails);
+
+  // A3-FP — **fingerprint 가 바뀌면 새 판정이 저장된다.** 프롬프트·맥락이 바뀐 뒤에도
+  //   옛 판정이 남아 있으면 그 messageId 는 영원히 재분류되며 매번 흔들린다
+  //   (`.is("intent_verdict", null)` 조건이 정확히 그 결함이었다).
+  {
+    const store = makeStore();
+    await answerQuestion("fp-test", "사랑해요", store.deps(zero()));
+    const before = store.get();
+    // 맥락을 붙여 fingerprint 를 바꾼다.
+    const c = zero();
+    const withCtx = {
+      ...(store.deps(c) as unknown as Record<string, unknown>),
+      loadPreviousTurn: async () => previousTurnRowFor({ question: "방금 점수 어떻게 냈어?", answer: "3점입니다." }),
+    } as unknown as QaDeps;
+    await answerQuestion("fp-test", "사랑해요", withCtx);
+    const after = store.get();
+    check("A3-FP fingerprint 변경 시 새 판정이 저장된다",
+      before !== null && after !== null && before.fingerprint !== after.fingerprint,
+      before && after && before.fingerprint === after.fingerprint
+        ? [`fingerprint 가 그대로다(${before.fingerprint.slice(0, 8)}) — 새 계약의 판정이 영원히 저장 안 됨`] : []);
+  }
+
+  // A3-RENDER — **되묻기 문구가 실제로 고정되는가.** 두 번째 회차에서 오늘 경기 목록을
+  //   일부러 바꿔도(자정 경계·경기 취소 상황) 저장된 문구가 그대로 나와야 한다.
+  //   이전 계약은 `Date.now()` 로 매번 다시 그려서 같은 messageId 가 다른 문구를 받았다.
+  {
+    const store = makeStore();
+    const mk = (games: unknown) => ({
+      ...(store.deps(zero()) as unknown as Record<string, unknown>),
+      classifyIntent: async () => ({
+        text: JSON.stringify({ intent: "NEEDS_CLARIFICATION", answer: "", clarify: "game", standalone: true, team: "" }),
+        inputTokens: 1, outputTokens: 1,
+      }),
+      fetchTodayStarters: async () => games,
+    } as unknown as QaDeps);
+    const a = await answerQuestion("render-test", "그거 알려줘", mk([
+      { homeTeam: "LG", awayTeam: "KIA", homeStarter: "손주영", awayStarter: "양현종" },
+    ]));
+    // 2회차: 경기 목록이 통째로 달라진 상황(취소·일자 전환)
+    const b = await answerQuestion("render-test", "그거 알려줘", mk([]));
+    const same = (a as { answer?: string }).answer === (b as { answer?: string }).answer;
+    check("A3-RENDER 되묻기 렌더가 목록 변경에도 바이트 동일", same,
+      same ? [] : ["경기 목록이 바뀌자 문구가 달라졌다 — 렌더가 고정되지 않았다"]);
+  }
+
+  // ── A3-PROV — provenance 재생 (삼순 NO-GO ①) ────────────────────────────
+  //
+  // 🔴 **이 축의 1차 작성은 false-green 이었다**(2026-08-31 결함주입으로 발각).
+  //   분류기가 throw 하면 파이프라인은 저장 전에 fail-open 으로 빠져나가므로 저장이
+  //   아예 없다(`snap === null`) → 검사는 무조건 통과하고, **재생 경로를 한 번도 안 탄다.**
+  //   그래서 `verdictKnown` 재생을 `true` 로 하드코딩하는 회귀를 주입해도 조용했다.
+  //   ("검증기는 실제 산출물을 읽고 결함주입 RED 로 검증력을 증명한다", M90)
+  //
+  //   고친 방식: 저장소에 **provenance=false 인 판정을 직접 심고** 재처리시킨다.
+  //   그래야 재생 경로가 실제로 실행되고, 하드코딩 회귀가 official 개방을 되살리는 것이
+  //   관측된다. 질문은 사전 후보가 없는 룰 질문이라 개방이 열리면 official 을 반드시 탄다.
+  {
+    // ① 저장은 안 되지만 fail-open 자체는 유지되는가(장애 시 기존 경로로 답한다).
+    const store0 = makeStore();
+    const cFail = zero();
+    const failing = {
+      ...(store0.deps(cFail) as unknown as Record<string, unknown>),
+      classifyIntent: async () => { throw new Error("injected classifier failure"); },
+    } as unknown as QaDeps;
+    await answerQuestion("prov-fail", "질문답헤줘", failing);
+    const snap0 = store0.get();
+    check("A3-PROV-a 분류기 장애 회차가 '판정 있음'으로 저장되지 않는다",
+      snap0 === null || snap0.verdictKnown !== true,
+      snap0 === null ? [] : [`verdictKnown=${snap0.verdictKnown}`]);
+
+    // ② **재생 경로 종단** — provenance=false 판정을 심고 재처리한다.
+    //   `BASEBALL`(= 야구 질문) 이지만 provenance 가 false 이므로, 이 PR 이 연 개방은
+    //   철회되어야 한다. 하드코딩 회귀가 들어오면 여기서 official 이 열린다.
+    // 🔴 **판별자 조건**(2026-08-31 실측으로 픽스처 정정): 이 축은 "이 PR 이 연 개방이
+    //   철회되는가"를 재므로, 종전 계약(`isSupportedRuleTermQuestion`)이 **false** 인
+    //   질문이어야 한다. true 면 개방과 무관하게 official 이 열려서 RED 가 뜨는데
+    //   그건 결함이 아니라 종전 계약의 정상 동작이다.
+    //   실측: `심판이 판정을 번복할 수 있어?`=true(판별 불가) / 아래 질문=false(판별 가능).
+    const RULE_Q = "경기가 비로 중단되면 기록은 어떻게 처리해?";
+    const seeded = {
+      verdict: "BASEBALL",
+      fingerprint: intentFingerprint(RULE_Q, null),
+      answer: null, clarify: null, team: null,
+      verdictKnown: false, // ← fail-open 으로 남은 판정
+    };
+    const cSeed = zero();
+    const seededDeps = {
+      ...(makeDeps(cSeed, true) as unknown as Record<string, unknown>),
+      getIntentDecision: async () => seeded,
+      storeIntentDecision: async () => null,
+      // 재생이 돌면 분류기를 부르지 않는다 — 부르면 그 자체가 재생 실패다.
+      classifyIntent: async () => { throw new Error("재생이 돌아야 하는데 분류기를 불렀다"); },
+    } as unknown as QaDeps;
+    await answerQuestion("prov-replay", RULE_Q, seededDeps);
+    check("A3-PROV-b provenance=false 재생분은 official 개방이 철회된다",
+      cSeed.officialSearch === 0,
+      cSeed.officialSearch === 0 ? [] : [`officialSearch=${cSeed.officialSearch} — 재생이 개방을 되살렸다(하드코딩 회귀)`]);
+
+    // ③ **반대 방향** — provenance=true 면 개방이 열린다(기능 생존).
+    //   ②만 있으면 "개방을 통째로 없애도 통과"하므로 양방향으로 닫는다.
+    const cOpen = zero();
+    const openDeps = {
+      ...(makeDeps(cOpen, true) as unknown as Record<string, unknown>),
+      getIntentDecision: async () => ({ ...seeded, verdictKnown: true }),
+      storeIntentDecision: async () => null,
+      classifyIntent: async () => { throw new Error("재생이 돌아야 하는데 분류기를 불렀다"); },
+    } as unknown as QaDeps;
+    await answerQuestion("prov-open", RULE_Q, openDeps);
+    check("A3-PROV-c provenance=true 재생분은 official 개방이 열린다(기능 생존)",
+      cOpen.officialSearch > 0,
+      cOpen.officialSearch > 0 ? [] : ["official=0 — 개방이 통째로 죽었다"]);
+  }
 
   // A5 — 관측 전용(판정 아님): 재분류 3건이 어느 경로로 가는가.
   //   삼순 지적대로 team 이 맞는데 `호걸이`·`몬스터월` 은 엔티티 해석기에 없어 official 로 샌다.
@@ -625,6 +788,100 @@ async function main() {
     if (hit) {
       console.log(`[A5 관측] ${e.question.slice(0, 24).padEnd(26)} source=${hit.r.source} official=${hit.r.counters.officialSearch} team=${hit.r.counters.teamLlm}`);
     }
+  }
+
+  // ── A6 team 귀속 → team RAG **연결** 종단 검증 (삼순 NO-GO ④) ──────────────
+  //
+  // 🔴 held-out(`genius-team-binding-heldout.ts`)은 "분류기가 구단을 맞히는가"만 본다.
+  //   그건 판정의 정확도이지 **그 판정이 실제로 쓰이는가**가 아니다. 귀속이 맞아도
+  //   파이프라인이 그 신호를 안 쓰면 질문은 그대로 official 로 샌다 — 어휘 목록을 지운
+  //   자리가 그 연결이라, 연결이 끊기면 이 PR 이 고친 게 없어진다.
+  //
+  //   그래서 **종단 실행**으로 본다: 구단의 것을 묻는데 문장에 구단명이 없는 질문이
+  //   official 로 가지 않아야 한다(team 경로로 가거나, 근거가 없으면 닫힌다).
+  {
+    const teamLinkFails: string[] = [];
+    for (const q of ["호걸이 이름 뜻이뭐야?", "한화 몬스터월은 뭐야?"]) {
+      const o = await run(q);
+      // official 진입 0 이 계약이다. team RAG 를 탔는지까지 요구하지 않는 이유는
+      // 그 문서에 근거가 없으면 `unsure` 로 닫는 것이 정상 계약이기 때문이다.
+      if (o.counters.officialSearch > 0) {
+        teamLinkFails.push(`${q.slice(0, 16)}: official=${o.counters.officialSearch} (귀속 신호가 안 쓰였다)`);
+      }
+    }
+    check("A6 구단 귀속 질문이 official RAG 로 새지 않는다(연결 종단)",
+      teamLinkFails.length === 0, teamLinkFails);
+  }
+
+  // ── A7 cue 없는 질문에 경기 목록이 붙지 않는다 (삼순 NO-GO ④) ──────────────
+  //
+  // 🔴 하린아빠 지시로 `hasGameCue` 정규식을 지웠다. 판정은 분류기에 맡기되, **안전은
+  //   게이트가 관측으로 지킨다** — 그게 룰을 지운 대가를 치르는 방식이다.
+  //   경기 얘기가 없는 질문에 오늘 경기 목록을 들이밀면 유저는 묻지도 않은 것을 받는다.
+  //
+  // ⚠️ 판정을 룰로 재현하지 않는다. `fetchTodayStarters` **호출 여부**로 본다 —
+  //   목록을 붙이려면 반드시 이 seam 을 타야 하므로, 호출 0 이면 목록도 0 이다.
+  {
+    const cueFails: string[] = [];
+    for (const q of ["안녕", "고마워", "너 뭐야", "사랑해요", "파이썬 코드 짜줘"]) {
+      let starterCalls = 0;
+      const c = zero();
+      const deps = {
+        ...(makeDeps(c, true) as unknown as Record<string, unknown>),
+        fetchTodayStarters: async () => { starterCalls += 1; return []; },
+      } as unknown as QaDeps;
+      await answerQuestion(`cue-${q}`, q, deps);
+      if (starterCalls > 0) cueFails.push(`${q.slice(0, 14)}: 오늘 경기 조회 ${starterCalls}회`);
+    }
+    check("A7 경기 cue 없는 질문에 오늘 경기 조회 0", cueFails.length === 0, cueFails);
+  }
+
+  // ── A8 분류기 장애 **양방향** + outer oracle (삼순 NO-GO ⑤) ─────────────────
+  //
+  // 🔴 지금까지는 "장애 때 official 이 안 열린다"(한 방향)만 봤다. 그것만 보면
+  //   **개방을 통째로 없애도 통과**한다 — 즉 이 PR 의 기능이 죽어도 게이트가 조용하다.
+  //   반대 방향(정상 판정이면 개방이 실제로 열린다)을 같이 세워야 계약이 양쪽으로 닫힌다.
+  //
+  // outer oracle: 게이트 내부 카운터가 아니라 **유저가 받는 결과**로도 확인한다.
+  //   카운터만 보면 계측이 고장났을 때 둘 다 0 이 되어 통과해 버린다.
+  {
+    // 🔴 두 질문을 **나눠 쓴다**(2026-08-31 실측 정정).
+    //   · 개방 축(a·b)은 종전 계약이 false 인 질문이어야 "개방 덕분에 열렸다"가 증명된다.
+    //   · fail-open 축(c)은 반대로 종전 계약이 true 인 질문이어야 "장애에도 답이 나간다"가
+    //     증명된다. 한 질문으로 둘 다 재려다 판별력을 잃었다.
+    const RULE_Q = "경기가 비로 중단되면 기록은 어떻게 처리해?";
+    const FALLBACK_Q = "심판이 판정을 번복할 수 있어?"; // supportedRuleTerm=true (실측)
+    // 정상 — 개방이 열려 official 근거로 답한다.
+    const okRun = await run(RULE_Q);
+    check("A8a 정상 판정에서는 official 개방이 열린다(기능 생존)",
+      okRun.counters.officialSearch > 0,
+      okRun.counters.officialSearch > 0 ? [] : ["official=0 — 개방이 통째로 죽었다(장애 축만 보면 못 잡는다)"]);
+    // outer oracle — 카운터가 고장나도 잡히도록 **다른 계층**으로 확인한다.
+    //
+    // 🔴 1차 작성은 `ANSWERED.has(source)` 를 요구했는데 그건 틀린 기대였다(실측):
+    //   official 근거를 받아 LLM 까지 갔어도 근거가 부족하면 `unsure` 로 닫는 것이
+    //   **이 서비스의 정상 계약**이다(없는 답을 지어내지 않는다). 그래서 이 축은
+    //   provider 사정에 따라 흔들렸다 — MUTANT 와 무관한 FAIL 이 그 증거다.
+    //
+    //   개방 축이 재야 하는 것은 "답 내용"이 아니라 **개방이 끝까지 이어졌는가**다:
+    //   근거 검색(officialSearch)에서 멈추지 않고 official LLM 까지 도달했는가.
+    //   유저 노출 문자열은 비어 있지 않은지만 본다(빈 응답은 어느 경로로도 계약 위반).
+    check("A8b 개방이 official LLM 까지 이어진다(outer oracle)",
+      okRun.counters.officialLlm > 0 && okRun.answer.trim().length > 0,
+      { source: okRun.source, officialLlm: okRun.counters.officialLlm, len: okRun.answer.trim().length });
+
+    // 장애 — 같은 질문인데 분류기가 죽으면 개방이 철회된다.
+    const cFail = zero();
+    const failing = {
+      ...(makeDeps(cFail, true) as unknown as Record<string, unknown>),
+      classifyIntent: async () => { throw new Error("injected classifier failure"); },
+    } as unknown as QaDeps;
+    const failRun = await answerQuestion(`fault-${FALLBACK_Q}`, FALLBACK_Q, failing);
+    // ⚠️ 이 질문은 사전에 있는 룰 용어라 **종전 계약으로도 답이 나간다** — 즉 장애가
+    //   기능을 죽이지 않는다는 것까지 같이 본다(fail-open 의 원래 취지).
+    check("A8c 분류기 장애에도 기존 경로가 답을 준다(fail-open 취지 유지)",
+      ANSWERED.has((failRun as { source?: string }).source ?? ""),
+      { source: (failRun as { source?: string }).source });
   }
 
   // A4 — durable 재생이 실제로 판정을 고정하는가(순수 함수 축, provider 무관)
@@ -670,7 +927,13 @@ async function main() {
     { q: "2018년 한화 어땠어?", expect: (o) => ANSWERED.has(o.source ?? ""), why: "#1318 Q3 회귀 금지" },
     { q: "1999년 우승팀 한화의 현재 감독은?", expect: (o) => ANSWERED.has(o.source ?? ""), why: "#1318 Q4 회귀 금지" },
     { q: "보크가 뭐야?", expect: (o) => ANSWERED.has(o.source ?? ""), why: "룰 질문 정상 답변 유지" },
-    { q: "승리 투수의 조건이 뭐야?", expect: (o) => o.counters.officialSearch > 0, why: "official RAG 도달 유지(막지 않았다)" },
+    // 🔴 픽스처 정정 (2026-08-31 실측): 종전 `승리 투수의 조건이 뭐야?` 는 사전 후보
+    //   `승리투수` 를 갖고 있어서 `mapGlossaryDefinition` 이 **8회 중 2회** 그 용어로
+    //   매핑했다 → dictionary 로 종결 → `officialSearch=0` → 이 행이 25% 확률로 RED.
+    //   이 PR 과 무관한 **기존 흔들림**이며, 원인은 픽스처가 두 경로 경계에 걸쳐 있는 것이다.
+    //   행의 의도("official 도달을 막지 않았다")를 더 정확히 재려면 사전 후보가 **없는**
+    //   질문이어야 한다 — 그래야 dictionary 가 선점할 수 없다(실측: 후보 0건).
+    { q: "심판이 판정을 번복할 수 있어?", expect: (o) => o.counters.officialSearch > 0, why: "official RAG 도달 유지(막지 않았다)" },
   ];
   const regRes = await pooled(REGRESSION, async (t) => ({ t, r: await run(t.q) }), CONCURRENCY);
   for (const { t, r } of regRes) {

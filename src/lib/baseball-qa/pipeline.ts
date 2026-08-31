@@ -1105,6 +1105,25 @@ export interface QaDeps {
   normalizeQuestionLlm?: (
     question: string,
   ) => Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  /**
+   * 최초 정규화 판정 snapshot 조회 (삼순 2026-08-31 NO-GO ②).
+   *
+   * 🔴 왜 필요한가 — **정규화가 intent fingerprint 보다 먼저 흔들린다.**
+   *   `intentFingerprint` 는 정규화가 끝난 `question` 으로 계산한다. 그런데 정규화 자체가
+   *   LLM 이라 회차마다 다른 후보를 낼 수 있고, 그러면 fingerprint 가 달라져 **판정 재생이
+   *   아예 발동하지 않는다.** durable replay 를 만들어 놓고 그 앞단이 입력을 바꿔버리는 것이라,
+   *   재생 계약이 종이 위에서만 성립한다.
+   *
+   *   그래서 재생의 시작점을 **정규화 판정**으로 끌어올린다. 최초 1회 판정을 저장하고
+   *   이후 재처리는 그것을 재생한다 — 그러면 라우팅 입력이 고정되고, 그 위에서 계산되는
+   *   fingerprint 도 고정된다.
+   */
+  getNormalizeSnapshot?: () => Promise<StoredNormalizeSnapshot | null>;
+  /**
+   * 최초 정규화 판정 저장. 반환값이 계약이다 — `null` 이면 내가 winner(내 판정을 쓴다),
+   * 값이 있으면 내가 CAS 패자이고 **그 판정을 써야 한다**(판정 저장과 같은 계약).
+   */
+  storeNormalizeSnapshot?: (snapshot: StoredNormalizeSnapshot) => Promise<StoredNormalizeSnapshot | null>;
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
   /**
@@ -1321,6 +1340,11 @@ export interface QaDeps {
   storeIntentDecision?: (d: {
     verdict: string; fingerprint: string; answer: string | null;
     clarify: string | null; team: string | null;
+    /**
+     * 판정 provenance — 분류기 명시 응답이면 true, fail-open 이면 false.
+     * 판정과 **같은 쓰기**에 실어야 "판정은 있는데 provenance 만 없는" 행이 안 생긴다.
+     */
+    verdictKnown: boolean;
   }) => Promise<StoredIntentDecision | null>;
   /**
    * 되묻기 **렌더 결과**를 이 fingerprint 의 판정에 고정한다 (삼순 2026-08-31 P0-3).
@@ -4757,6 +4781,9 @@ async function resolveIntentRoute(args: {
         const winner = await deps.storeIntentDecision({
           verdict: decision.intent, fingerprint, answer: decision.answer,
           clarify: decision.clarify, team: decision.team,
+          // 🔴 provenance 를 함께 싣는다 — 이게 없으면 재생 때 fail-open 회차가
+          //   "판정 있었다" 로 둔갑해 official 개방이 되살아난다(삼순 NO-GO ①).
+          verdictKnown: decision.verdictKnown,
         });
         // 패자면 winner 판정으로 교체한다. fingerprint 가 같을 때만 유효하다
         // (`replayableIntent` 가 그 검증을 이미 갖고 있으므로 재사용한다).
@@ -5328,6 +5355,28 @@ export function digitSequencesMatch(a: string, b: string): boolean {
 }
 
 /** 정규화 관측 상태 — 미호출(null)·교정없음·거절·장애를 분리해야 발동률·오교정 감사가 가능하다. */
+/**
+ * 최초 정규화 판정 snapshot — 라우팅 **입력**을 durable 로 고정한다 (삼순 NO-GO ②).
+ *
+ * 🔴 왜 판정 재생만으로는 부족한가.
+ *   `intentFingerprint` 는 **정규화가 끝난** question 으로 계산한다. 정규화 자체가 LLM 이라
+ *   회차마다 다른 후보를 낼 수 있고, 그러면 fingerprint 가 달라져 판정 재생이 **아예 발동하지
+ *   않는다.** 재생 계약을 만들어 놓고 그 앞단이 입력을 바꿔버리면 계약은 종이 위에만 있다.
+ *
+ *   그래서 재생 시작점을 정규화 판정까지 끌어올린다. 이 snapshot 이 고정되면
+ *   `question` → `fingerprint` → `intent` → `render` 가 모두 결정론이 된다.
+ */
+export interface StoredNormalizeSnapshot {
+  /** 최초 판정 당시의 **원문**. 이게 다르면 다른 입력이므로 재생하지 않는다. */
+  originalQuestion: string;
+  /** 최초 판정 상태. `accepted_surface`·`suggested`·`rejected`·`no_change`·`error`. */
+  status: NormalizeStatus;
+  /** 수용된 문장(수용이 아니면 null). */
+  acceptedText: string | null;
+  /** 제안 문구(제안이 아니면 null). */
+  suggestionText: string | null;
+}
+
 export type NormalizeAcceptStatus = "accepted_surface" | "rejected";
 export type NormalizeStatus =
   | NormalizeAcceptStatus
@@ -5608,11 +5657,35 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
   if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm
       && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+    // ── 최초 정규화 판정 재생 (삼순 2026-08-31 NO-GO ②) ────────────────────
+    //
+    // 🔴 판정 재생만으로는 부족했다. `intentFingerprint` 는 **정규화가 끝난** question 으로
+    //   계산하는데, 정규화 자체가 LLM 이라 회차마다 다른 후보를 낼 수 있다. 그러면
+    //   fingerprint 가 달라져 판정 재생이 **아예 발동하지 않는다** — 재생 계약을 만들어
+    //   놓고 그 앞단이 입력을 바꿔버리는 구조였다.
+    //
+    //   그래서 재생 시작점을 여기로 끌어올린다. snapshot 이 고정되면
+    //   `question` → `fingerprint` → `intent` → `render` 가 전부 결정론이 된다.
+    //
+    // ⚠️ 원문이 다르면 재생하지 않는다 — 다른 입력에 남의 판정을 씌우면 안 된다.
+    let replayedSnapshot: StoredNormalizeSnapshot | null = null;
+    if (deps.getNormalizeSnapshot) {
+      try {
+        const stored = await deps.getNormalizeSnapshot();
+        if (stored && stored.originalQuestion === question) replayedSnapshot = stored;
+      } catch {
+        replayedSnapshot = null; // 조회 실패는 새로 판정한다(fail-open — 종전 동작).
+      }
+    }
+
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
-    try {
-      norm = await deps.normalizeQuestionLlm(question);
-    } catch {
-      norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
+    // 재생분은 provider 를 다시 태우지 않는다 — 태우면 결정론이 깨지고 비용도 두 번 든다.
+    if (!replayedSnapshot) {
+      try {
+        norm = await deps.normalizeQuestionLlm(question);
+      } catch {
+        norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
+      }
     }
     const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
     // 관측 상태는 미호출(null)·교정없음·거절·장애를 구분해 기록한다 — `question_normalized`
@@ -5654,6 +5727,37 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         normStatus = "suggested";
       }
     }
+    // ── snapshot 재생/고정 (삼순 2026-08-31 NO-GO ②) ──────────────────────
+    //
+    // 이 지점이 정규화 판정의 **확정 지점**이다(복원 fallback 까지 끝났다).
+    // 재생분이 있으면 그것으로 덮고, 없으면 최초 판정을 저장한다.
+    if (replayedSnapshot) {
+      normStatus = replayedSnapshot.status;
+      accepted = replayedSnapshot.status === "accepted_surface";
+      suggested = replayedSnapshot.status === "suggested";
+      suggestionText = replayedSnapshot.suggestionText;
+    } else if (deps.storeNormalizeSnapshot) {
+      try {
+        // CAS 패자는 winner 판정을 받아 쓴다 — 두 worker 가 서로 다른 문장으로 답하면
+        // 재생 계약이 깨진다(판정 저장과 같은 계약).
+        const winner = await deps.storeNormalizeSnapshot({
+          originalQuestion: question,
+          status: normStatus,
+          acceptedText: accepted ? candidate : null,
+          suggestionText,
+        });
+        if (winner && winner.originalQuestion === question) {
+          normStatus = winner.status;
+          accepted = winner.status === "accepted_surface";
+          suggested = winner.status === "suggested";
+          suggestionText = winner.suggestionText;
+          replayedSnapshot = winner;
+        }
+      } catch {
+        // 저장 실패는 재현성만 잃는다 — 이번 응답은 그대로 진행한다.
+      }
+    }
+
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
     // 고정하고 정규화문을 별도 필드(questionNormalized)로 남긴다 — 원문 없이는
@@ -5666,7 +5770,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 관측 분리 (삼순 2026-08-13 ③): `question_normalized` 는 **수용된 문장** 전용 칸이다.
       // 제안만 한 후보는 별도 칸(`correction_candidate`)에 남긴다 — 같은 칸에 섞으면
       // "이 문장으로 답했다" 와 "이 문장을 제안했다" 를 구분할 수 없어 오교정 감사가 깨진다.
-      const acceptedText = accepted ? candidate : null;
+      const acceptedText = accepted ? (replayedSnapshot?.acceptedText ?? candidate) : null;
       const suggestedText = suggestionText;
       deps = {
         ...deps,
@@ -5682,8 +5786,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       };
     }
     if (accepted) {
-      question = candidate;
-      questionNorm = normalizeQuestion(candidate);
+      // 재생분이면 **저장된 문장**을 쓴다 — 이번 회차 후보(candidate)는 provider 를
+      // 안 태웠으므로 비어 있다. 여기서 후보를 재계산하면 재생의 의미가 없어진다.
+      const acceptedQuestion = replayedSnapshot?.acceptedText ?? candidate;
+      question = acceptedQuestion;
+      questionNorm = normalizeQuestion(acceptedQuestion);
     } else if (suggested) {
       // ⚠️ 여기서 `releaseDaily` 를 부르지 않는다 (삼순 2026-08-13 quota/crash).
       //

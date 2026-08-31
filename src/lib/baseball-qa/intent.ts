@@ -431,6 +431,18 @@ export interface StoredIntentDecision {
   answer: string | null;
   clarify: string | null;
   team: string | null;
+  /**
+   * 저장 당시 그 판정이 **분류기의 명시 응답**이었는가 (삼순 2026-08-31 NO-GO ①).
+   *
+   * 🔴 초안은 이 값을 저장하지 않고 재생 시 `true` 로 하드코딩했다. 그러면
+   *   **판정 실패로 fail-open 된 회차를 재처리할 때 "판정이 있었다" 로 둔갑**한다 —
+   *   provenance 를 만든 이유가 정확히 그걸 막으려는 것이었는데 재생 경로가 그걸 지웠다.
+   *   ("값으로는 결측을 판정할 수 없다 — provenance 를 별도 축으로 싣는다", M90)
+   *
+   *   미저장(구 행)은 `null` 이고, 그때는 **알 수 없음 → false 로 접는다.**
+   *   모르는 상태를 "판정 있음" 으로 올리면 개방이 열리므로, 덜 나쁜 쪽으로 내린다.
+   */
+  verdictKnown: boolean | null;
 }
 
 /**
@@ -454,7 +466,10 @@ export function replayableIntent(
       ? (stored.clarify as ClarifyTarget) : null,
     // 재생분은 이미 강등까지 끝난 판정이다 — 다시 강등하지 않는다.
     standalone: true,
-    verdictKnown: true,
+    // 🔴 provenance 는 **저장된 값을 그대로 재생**한다(하드코딩 금지 — 삼순 NO-GO ①).
+    //   미저장(구 행)은 알 수 없으므로 false 로 접는다: 모름을 "판정 있음"으로 올리면
+    //   fail-open 회차의 재처리에서 official 개방이 되살아난다.
+    verdictKnown: stored.verdictKnown === true,
     team: stored.team && (KBO_TEAM_CANONICALS as readonly string[]).includes(stored.team)
       ? (stored.team as KboTeamCanonical) : null,
     answer: stored.answer ?? null,

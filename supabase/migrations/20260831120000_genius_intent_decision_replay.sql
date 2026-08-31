@@ -37,7 +37,21 @@ ALTER TABLE public.genius_question_jobs
   -- 질문이 어느 KBO 구단의 것을 묻는가(구단 10개 canonical 또는 NULL).
   --   마스코트·구장 시설처럼 구단명이 문장에 없는 경우까지 LLM 이 귀속을 판정한다 —
   --   코드에 이름 목록을 두면 반례마다 어휘가 자라기 때문이다(하린아빠 2026-08-31).
-  ADD COLUMN IF NOT EXISTS intent_team text;
+  ADD COLUMN IF NOT EXISTS intent_team text,
+  -- 그 판정이 **분류기의 명시 응답**이었는가(= provenance).
+  --   NULL = 구 행(알 수 없음). 재생 시 false 로 접어 개방을 철회한다 —
+  --   "모름"을 "판정 있음"으로 올리면 fail-open 회차의 재처리에서 official 문이 되살아난다.
+  --   판정과 **같은 UPDATE** 에 실어서 "판정은 있는데 provenance 만 없는" 행을 원천 차단한다.
+  ADD COLUMN IF NOT EXISTS intent_verdict_known boolean,
+  -- ── 최초 정규화 판정 snapshot (삼순 2026-08-31 NO-GO ②) ────────────────────
+  --   판정 재생만으로는 부족했다: `intent_fingerprint` 는 **정규화가 끝난** question 으로
+  --   계산하는데 정규화 자체가 LLM 이라 회차마다 후보가 달라질 수 있고, 그러면 fingerprint 가
+  --   달라져 재생이 아예 발동하지 않는다. 재생 시작점을 정규화까지 끌어올려 라우팅 입력을
+  --   고정한다 — 그래야 question → fingerprint → intent → render 전체가 결정론이 된다.
+  ADD COLUMN IF NOT EXISTS normalize_snapshot_question text,
+  ADD COLUMN IF NOT EXISTS normalize_snapshot_status text,
+  ADD COLUMN IF NOT EXISTS normalize_snapshot_accepted text,
+  ADD COLUMN IF NOT EXISTS normalize_snapshot_suggestion text;
 
 COMMENT ON COLUMN public.genius_question_jobs.intent_verdict IS
   '의도 라우팅 최초 판정 sentinel. 같은 messageId 재처리 시 이 값을 재생해 경로를 고정한다(provider 비결정성 방어).';
@@ -49,3 +63,9 @@ COMMENT ON COLUMN public.genius_question_jobs.intent_clarify IS
   '되묻기 대상(game|other). 코드가 폐쇄집합으로 접어 저장하므로 그 밖의 값은 들어오지 않는다.';
 COMMENT ON COLUMN public.genius_question_jobs.intent_team IS
   '질문이 귀속되는 KBO 구단 canonical(LG/KIA/두산/롯데/삼성/한화/키움/KT/SSG/NC) 또는 NULL. 코드가 폐쇄집합으로 접어 저장한다.';
+COMMENT ON COLUMN public.genius_question_jobs.intent_verdict_known IS
+  '판정 provenance — 분류기 명시 응답이면 true, fail-open(파싱 실패·형식 위반)이면 false, 구 행은 NULL(재생 시 false 로 접는다).';
+COMMENT ON COLUMN public.genius_question_jobs.normalize_snapshot_question IS
+  '최초 정규화 판정 당시의 원문. 지금 원문과 다르면 재생하지 않는다(다른 입력에 남의 판정을 씌우지 않는다).';
+COMMENT ON COLUMN public.genius_question_jobs.normalize_snapshot_status IS
+  '최초 정규화 판정 상태(accepted_surface/suggested/rejected/no_change/error). 재처리는 이 값을 재생한다.';
