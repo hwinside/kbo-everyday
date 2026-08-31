@@ -33,7 +33,11 @@ ALTER TABLE public.genius_question_jobs
   ADD COLUMN IF NOT EXISTS intent_answer text,
   -- 되묻기 대상 폐쇄집합(`game`|`other`). NEEDS_CLARIFICATION 일 때만 채워진다.
   --   재생 시 이 값도 복원해야 같은 messageId 가 같은 문구(경기 목록 포함 여부)를 받는다.
-  ADD COLUMN IF NOT EXISTS intent_clarify text;
+  ADD COLUMN IF NOT EXISTS intent_clarify text,
+  -- 질문이 어느 KBO 구단의 것을 묻는가(구단 10개 canonical 또는 NULL).
+  --   마스코트·구장 시설처럼 구단명이 문장에 없는 경우까지 LLM 이 귀속을 판정한다 —
+  --   코드에 이름 목록을 두면 반례마다 어휘가 자라기 때문이다(하린아빠 2026-08-31).
+  ADD COLUMN IF NOT EXISTS intent_team text;
 
 COMMENT ON COLUMN public.genius_question_jobs.intent_verdict IS
   '의도 라우팅 최초 판정 sentinel. 같은 messageId 재처리 시 이 값을 재생해 경로를 고정한다(provider 비결정성 방어).';
@@ -43,3 +47,5 @@ COMMENT ON COLUMN public.genius_question_jobs.intent_answer IS
   '사실주장 가드를 통과한 생성 답변. 가드 미통과·해당없음은 NULL(코드 고정 문안이 나간다).';
 COMMENT ON COLUMN public.genius_question_jobs.intent_clarify IS
   '되묻기 대상(game|other). 코드가 폐쇄집합으로 접어 저장하므로 그 밖의 값은 들어오지 않는다.';
+COMMENT ON COLUMN public.genius_question_jobs.intent_team IS
+  '질문이 귀속되는 KBO 구단 canonical(LG/KIA/두산/롯데/삼성/한화/키움/KT/SSG/NC) 또는 NULL. 코드가 폐쇄집합으로 접어 저장한다.';

@@ -1269,7 +1269,7 @@ export function makeDeps(
     getIntentDecision: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify")
+        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) {
@@ -1282,26 +1282,84 @@ export function makeDeps(
         fingerprint: (data.intent_fingerprint as string | null) ?? null,
         answer: (data.intent_answer as string | null) ?? null,
         clarify: (data.intent_clarify as string | null) ?? null,
+        team: (data.intent_team as string | null) ?? null,
       };
     },
-    storeIntentDecision: async ({ verdict, fingerprint, answer, clarify }) => {
-      const { error } = await supabaseAdmin
+    storeIntentDecision: async ({ verdict, fingerprint, answer, clarify, team }) => {
+      // ── 원자적 CAS (삼순 2026-08-31 P0-2) ──────────────────────────────────
+      //
+      // 🔴 초안은 `.is("intent_verdict", null)` 이었는데 그게 **결함**이었다.
+      //   fingerprint 가 바뀌면(프롬프트 수정·맥락 변경) `replayableIntent` 는 재생을
+      //   거부하고 재분류하는데, 저장은 "verdict 가 null 일 때만" 이라 **옛 판정이 영원히
+      //   남는다.** 그러면 그 messageId 는 재시도마다 새로 분류되고 매번 흔들린다 —
+      //   재현성을 위해 만든 층이 정확히 재현성을 잃는 자리였다.
+      //
+      // 그래서 조건을 "**이 fingerprint 의 최초 판정**" 으로 바꾼다:
+      //   verdict 가 없거나(최초) · 저장된 fingerprint 가 지금 것과 다르면(계약이 바뀜) 쓴다.
+      //   이미 같은 fingerprint 의 판정이 있으면 0행 → 내가 CAS 패자다.
+      //
+      // ⚠️ 패자는 **DB winner 를 읽어 그 판정을 쓴다.** 자기 판정을 쓰면 두 worker 가 서로
+      //   다른 답을 내보내 재생 계약이 깨진다(경합은 드물지만 durable 재처리에서 실재한다).
+      const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
         .update({
           intent_verdict: verdict,
           intent_fingerprint: fingerprint,
           intent_answer: answer,
           intent_clarify: clarify,
+          intent_team: team,
           updated_at: new Date().toISOString(),
         })
         .eq("message_id", messageId)
-        // 🔴 **최초 판정만 쓴다.** 이미 값이 있으면 덮지 않는다 — 덮으면 재생의 의미가 없다
-        //   (재처리마다 최신 판정으로 갈아엎으면 provider 비결정성이 그대로 통과한다).
-        .is("intent_verdict", null);
+        .or(`intent_verdict.is.null,intent_fingerprint.neq.${fingerprint}`)
+        .select("intent_verdict");
       if (error) {
-        if (error.code === "42703" || error.code === "PGRST204") return;
+        if (error.code === "42703" || error.code === "PGRST204") return null;
         throw error;
       }
+      if ((data?.length ?? 0) > 0) return null; // 내가 winner — 내 판정을 쓴다
+
+      // CAS 패자 — 이미 저장된 winner 판정을 읽어 돌려준다.
+      const { data: won, error: readErr } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team")
+        .eq("message_id", messageId)
+        .maybeSingle();
+      if (readErr || !won) return null; // 읽기 실패는 내 판정 유지(fail-open)
+      return {
+        verdict: (won.intent_verdict as string | null) ?? null,
+        fingerprint: (won.intent_fingerprint as string | null) ?? null,
+        answer: (won.intent_answer as string | null) ?? null,
+        clarify: (won.intent_clarify as string | null) ?? null,
+        team: (won.intent_team as string | null) ?? null,
+      };
+    },
+    // 되묻기 렌더 결과 고정 (삼순 2026-08-31 P0-3).
+    //   조건이 `intent_answer.is.null` 인 이유: 판정 저장(`storeIntentDecision`)이 이미
+    //   이 fingerprint 를 확정해 놨고, 렌더는 그 뒤에 **한 번만** 붙는다. 이미 문구가
+    //   있으면 내가 CAS 패자이므로 그 문구를 읽어 돌려준다.
+    storeIntentRender: async (fingerprint, rendered) => {
+      const { data, error } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .update({ intent_answer: rendered, updated_at: new Date().toISOString() })
+        .eq("message_id", messageId)
+        .eq("intent_fingerprint", fingerprint)
+        .is("intent_answer", null)
+        .select("intent_answer");
+      if (error) {
+        if (error.code === "42703" || error.code === "PGRST204") return null;
+        throw error;
+      }
+      if ((data?.length ?? 0) > 0) return null; // winner — 내 렌더를 쓴다
+
+      const { data: won, error: readErr } = await supabaseAdmin
+        .from("genius_question_jobs")
+        .select("intent_answer")
+        .eq("message_id", messageId)
+        .eq("intent_fingerprint", fingerprint)
+        .maybeSingle();
+      if (readErr || !won) return null; // 읽기 실패는 내 렌더 유지(fail-open)
+      return (won.intent_answer as string | null) ?? null;
     },
     log: async (entry) => {
       const { error } = await supabaseAdmin

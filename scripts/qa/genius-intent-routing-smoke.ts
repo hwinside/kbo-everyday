@@ -35,6 +35,7 @@
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import {
@@ -71,26 +72,56 @@ const EVIDENCE_OUT = "/Users/harinclaw/.openclaw/workspace/state/yaj-48h/intent-
  * ⚠️ body 는 프로덕션 코드가 만든 것을 `fetch` 래퍼로 **복사만** 한다. 앱에 QA 분기를
  *   심으면 측정 대상이 오염된다(2026-08-22 M90).
  */
-const bodyHashes: string[] = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  if (typeof init?.body === "string") {
-    bodyHashes.push(createHash("sha256").update(init.body).digest("hex").slice(0, 16));
-  }
-  return realFetch(input, init);
-}) as typeof fetch;
-
+/**
+ * 🔴 **run 별 캡처** — 전역 배열 + `slice(mark)` 는 쓰지 않는다 (삼순 2026-08-31 P1).
+ *
+ *   앞선 원장이 정확히 그 방식이었고, 동시 실행(conc=4)에서 다른 run 의 요청이 섞여
+ *   `bodyHashes` 가 29/30/31개로 부풀었다 — **입력 동등성을 증명하려고 만든 것이
+ *   자기 입력을 못 가렸다.** 무효 처리했는데 메인 게이트에 같은 코드가 남아 있었다.
+ *
+ *   이제 각 run 이 자기 sink 를 만들어 `AsyncLocalStorage` 로 귀속시킨다. 동시 실행이어도
+ *   섞이지 않고, seam 별로 1:1 로 쌓인다.
+ */
 function sha16(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
+type SeamKind = "intent" | "other";
+interface RunSink { intent: string[]; other: string[] }
+const runStore = new AsyncLocalStorage<RunSink>();
+/** 지금 어떤 seam 을 호출 중인지 — deps 래퍼가 설정한다. */
+const seamStore = new AsyncLocalStorage<SeamKind>();
+
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (typeof init?.body === "string") {
+    const sink = runStore.getStore();
+    if (sink) sink[seamStore.getStore() ?? "other"].push(sha16(init.body));
+  }
+  return realFetch(input, init);
+}) as typeof fetch;
+
 function arg(name: string, dflt: string): string {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : dflt;
+  if (i >= 0 && process.argv[i + 1]) return process.argv[i + 1];
+  // `--name=value` 형식도 받는다. 한쪽만 지원하면 오타 한 번에 플래그가 조용히 무시되고,
+  // "주입했는데 아무 일도 없었다" 가 결론이 된다(2026-08-31 실제로 그럴 뻔했다).
+  const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
+  return eq ? eq.slice(name.length + 3) : dflt;
 }
 const REPS = Number(arg("reps", "3"));
 const SELFTEST = process.argv.includes("--selftest");
 const CONCURRENCY = Number(arg("conc", "4"));
+/**
+ * `--fault-intent=<질문>` — 그 질문에서만 분류기가 **throw** 하게 만든다.
+ *
+ * 🔴 왜 필요한가: `verdictKnown=false`(분류기 장애) 경로는 실행 중 우연히만 발생해
+ *   관측이 안 된다. 그러면 "장애 때 어디로 떨어지는가" 를 추측으로 말하게 된다.
+ *   주입해서 **인과를 직접 확인**한다(상관 아님).
+ *
+ * ⚠️ 앱 코드에 QA 분기를 넣지 않는다 — 하니스가 deps 를 갈아끼울 뿐이다(2026-08-22 M90).
+ */
+const FAULT_INTENT = arg("fault-intent", "");
 
 let pass = 0;
 const failures: string[] = [];
@@ -106,6 +137,8 @@ interface Counters {
   playerSearch: number; playerLlm: number; teamLlm: number;
   genericLlm: number; cacheWrites: number;
   intentCalls: number;
+  /** 분류기가 **던진** 횟수(타임아웃·API 오류). fail-open 경로를 관측 가능하게 만든다. */
+  intentErrors: number;
   intentInTokens: number; intentOutTokens: number;
   otherInTokens: number; otherOutTokens: number;
 }
@@ -113,7 +146,7 @@ interface Counters {
 function zero(): Counters {
   return {
     officialSearch: 0, officialLlm: 0, playerSearch: 0, playerLlm: 0, teamLlm: 0,
-    genericLlm: 0, cacheWrites: 0, intentCalls: 0,
+    genericLlm: 0, cacheWrites: 0, intentCalls: 0, intentErrors: 0,
     intentInTokens: 0, intentOutTokens: 0, otherInTokens: 0, otherOutTokens: 0,
   };
 }
@@ -178,10 +211,25 @@ function makeDeps(
       ? {
           classifyIntent: async (...a: Parameters<typeof classifyIntent>) => {
             c.intentCalls += 1;
-            const r = await classifyIntent(...a);
-            c.intentInTokens += r.inputTokens ?? 0;
-            c.intentOutTokens += r.outputTokens ?? 0;
-            return r;
+            // 이 호출이 낸 요청은 `intent` seam 으로 귀속시킨다(1:1 기록).
+            //
+            // 🔴 **throw 를 세되 삼키지 않는다** — production 은 이 예외를 fail-open 으로
+            //   받으므로 하니스가 대신 처리하면 종단 경로가 달라진다. 우리는 관측만 하고
+            //   그대로 다시 던진다. 이 카운터가 없으면 "분류기가 죽어서 생긴 결과" 와
+            //   "분류기가 그렇게 판정한 결과" 가 원장에서 구분되지 않는다.
+            if (FAULT_INTENT && String(a[0]).includes(FAULT_INTENT)) {
+              c.intentErrors += 1;
+              throw new Error("injected: intent classifier failure");
+            }
+            try {
+              const r = await seamStore.run("intent", () => classifyIntent(...a));
+              c.intentInTokens += r.inputTokens ?? 0;
+              c.intentOutTokens += r.outputTokens ?? 0;
+              return r;
+            } catch (e) {
+              c.intentErrors += 1;
+              throw e;
+            }
           },
         }
       : {}),
@@ -200,8 +248,8 @@ interface Outcome {
     contextHash: string | null;
     /** production `selectContextTurn` 이 그 턴을 **실제로 통과시켰는가**. */
     contextEligible: boolean;
-    /** 이 실행에서 나간 request body 들의 sha256(순서 보존). */
-    bodyHashes: string[];
+    /** 이 실행에서 나간 request body 들의 sha256 — **seam 별 1:1**. */
+    bodyHashes: { intent: string[]; other: string[] };
   };
 }
 
@@ -211,29 +259,29 @@ async function run(
   ctx?: { question: string; answer: string } | null,
 ): Promise<Outcome> {
   const c = zero();
-  // 이 실행이 낸 요청만 떼어낸다 — 동시 실행이 섞이지 않도록 길이로 자른다.
-  const bodyMark = bodyHashes.length;
   // production 자격 판정을 **그대로** 태운다. 하니스가 통과시켜 버리면 게이트가 실제보다
   // 관대해진다("게이트가 종단 경로를 안 태우면 통과는 아무 뜻이 없다", M90).
   const row = previousTurnRowFor(ctx);
   const eligible = row ? selectContextTurn(row) !== null : false;
+  const sink: RunSink = { intent: [], other: [] };
   const evidence = {
     contextId: ctx ? sha16(ctx.question).slice(0, 8) : null,
     contextHash: ctx ? sha16(`${ctx.question}\u0000${ctx.answer}`) : null,
     contextEligible: eligible,
-    bodyHashes: [] as string[],
+    bodyHashes: sink,
   };
-  try {
-    const r = await answerQuestion(`intent-gate-${Math.random().toString(36).slice(2)}`, question, makeDeps(c, withIntent, ctx));
-    evidence.bodyHashes = bodyHashes.slice(bodyMark);
-    return {
-      source: (r as { source?: string }).source ?? null,
-      answer: (r as { answer?: string }).answer ?? "", counters: c, error: null, evidence,
-    };
-  } catch (e) {
-    evidence.bodyHashes = bodyHashes.slice(bodyMark);
-    return { source: null, answer: "", counters: c, error: (e as Error).message, evidence };
-  }
+  // 이 run 의 모든 fetch 가 이 sink 로만 귀속된다 — 동시 실행이어도 섞이지 않는다.
+  return runStore.run(sink, async () => {
+    try {
+      const r = await answerQuestion(`intent-gate-${Math.random().toString(36).slice(2)}`, question, makeDeps(c, withIntent, ctx));
+      return {
+        source: (r as { source?: string }).source ?? null,
+        answer: (r as { answer?: string }).answer ?? "", counters: c, error: null, evidence,
+      };
+    } catch (e) {
+      return { source: null, answer: "", counters: c, error: (e as Error).message, evidence };
+    }
+  });
 }
 
 /** 유저가 실제로 내용을 받은 경로. */
@@ -468,6 +516,62 @@ async function main() {
   const ctxDrift = [...ctxHashByQ.entries()].filter(([, v]) => v.size > 1);
   check("A3e 같은 질문의 회차들이 동일 맥락을 봤다", ctxDrift.length === 0,
     ctxDrift.slice(0, 4).map(([q]) => `DRIFT:${q.slice(0, 16)}`));
+
+  // A3f — **body hash 동일성**(삼순 2026-08-31 P1). context 만 보는 것으로는 부족하다.
+  //   "회차마다 결과가 갈린다" 를 말하려면 **실제 나간 요청이 같았음**을 보여야 한다.
+  //   분류기 seam 은 입력이 고정이므로(질문 + 맥락) 같은 질문의 회차들은 같은 해시를
+  //   내야 한다. 다르면 그 순간부터 뒤 축들의 판정은 근거를 잃는다.
+  //
+  //   ⚠️ `other` seam 은 제외한다 — 그쪽은 경로에 따라 호출 수가 달라지는 것이 정상이고
+  //     (RAG 를 타면 요청이 늘어난다) 그 차이는 판정 대상 자체다.
+  const intentBodyByQ = new Map<string, Set<string>>();
+  for (const { e, r } of results) {
+    const key = r.evidence.bodyHashes.intent.join("|") || "none";
+    if (!intentBodyByQ.has(e.question)) intentBodyByQ.set(e.question, new Set());
+    intentBodyByQ.get(e.question)!.add(key);
+  }
+  const bodyDrift = [...intentBodyByQ.entries()].filter(([, v]) => v.size > 1);
+  // 🔴 **PASS 조건이 아니다 — 진단 전용** (삼순 2026-08-31 ⓒ-③).
+  //
+  //   내가 처음엔 이걸 check 로 걸었는데 삼순이 막았다. body hash 가 갈린다는 건
+  //   "상류가 입력을 바꿨다" 는 **원인 정보**이지 그 자체가 계약 위반이 아니고, 반대로
+  //   이걸 PASS 조건으로 쓰면 **같은 hash 끼리만 비교하고 싶어지는 유혹**이 생긴다 —
+  //   그러면 상류 흔들림이 분모에서 지워져 진짜 실패를 가린다.
+  //
+  //   안전 불변식(A1·A3b)은 **body hash 와 무관하게 매 회차 전부** 적용된다.
+  console.log(`[A3f 진단] 분류기 body 변형 있는 질문 ${bodyDrift.length}건` +
+    (bodyDrift.length ? ` :: ${bodyDrift.slice(0, 6).map(([q, v]) => `${q.slice(0, 14)}(${v.size})`).join(", ")}` : ""));
+
+  // A3g — seam 1:1 기록이 실제로 되고 있는가. 분류기를 부른 회차는 intent 해시가 정확히
+  //   그 횟수만큼 있어야 한다. 0이면 캡처가 죽은 것이고, 그러면 A3f 가 공허하게 통과한다
+  //   (검증기가 자기 검증력을 증명해야 한다는 계약).
+  //   ⚠️ A3g 는 **계약으로 남긴다** — 이건 원인 진단이 아니라 **캡처가 살아있는지**를 보는
+  //     자기검증이다. 0이면 위 진단이 공허하게 조용해진다(검증기는 자기 검증력을 증명해야 한다).
+  //   ⚠️ throw 한 호출은 **요청이 나가기 전에** 죽으므로 body 해시가 없다(주입·실장애 공통).
+  //     그래서 기대값은 `calls - errors` 다. 이걸 빼먹으면 결함주입 자체가 게이트를 RED 로
+  //     만들어, 주입으로 검증하려던 축이 주입 때문에 못 돌아간다.
+  const seamMismatch = results.filter(({ r }) =>
+    r.counters.intentCalls - r.counters.intentErrors !== r.evidence.bodyHashes.intent.length);
+  check("A3g seam 1:1 — 분류기 호출 수 = intent body 해시 수", seamMismatch.length === 0,
+    seamMismatch.slice(0, 4).map((x) =>
+      `SEAM:${x.e.question.slice(0, 14)}:calls=${x.r.counters.intentCalls}/hash=${x.r.evidence.bodyHashes.intent.length}/err=${x.r.counters.intentErrors}`));
+
+  // A3h — **분류기 throw 관측**(삼순 2026-08-31 ⓒ-①). throw 는 `verdictKnown=false` 로
+  //   fail-open 하므로 official 개방이 철회된다. 즉 결과가 달라져도 그건 **설명 가능한**
+  //   변동이다. 이 숫자가 없으면 provider 판정 흔들림과 구분이 안 된다(진단 전용).
+  if (FAULT_INTENT) {
+    const injected = results.filter((x) => x.r.counters.intentErrors > 0);
+    check(`[결함주입] --fault-intent="${FAULT_INTENT}" 가 실제로 발화`, injected.length > 0,
+      injected.length === 0 ? ["주입 플래그가 어떤 행에도 안 걸렸다 — 매칭 실패"] : []);
+    // 🔴 **분류기가 죽어도 official 개방은 철회된다** — 이 PR 안전 계약의 핵심.
+    //   장애 시 열린 채로 두면 조각 질문이 KBO 규칙집 근거를 받아 답하게 된다.
+    const leakUnderFault = injected.filter((x) => x.r.counters.officialSearch > 0);
+    check("[결함주입] 분류기 장애 회차에도 official RAG 진입 0", leakUnderFault.length === 0,
+      leakUnderFault.slice(0, 3).map((x) => `FAULT-LEAK:${x.e.question.slice(0, 16)}`));
+  }
+  const errRows = results.filter((x) => x.r.counters.intentErrors > 0);
+  console.log(`[A3h 진단] 분류기 throw 발생 행 ${errRows.length}건` +
+    (errRows.length ? ` :: ${errRows.slice(0, 6).map((x) => `${x.e.question.slice(0, 12)}(${x.r.counters.intentErrors})`).join(", ")}` : ""));
 
   // 원장 — 전 행의 입력 동등성 증거를 남긴다(주장 없이 숫자만).
   writeFileSync(EVIDENCE_OUT, JSON.stringify({

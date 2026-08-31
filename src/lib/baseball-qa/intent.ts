@@ -138,6 +138,18 @@ export const INTENT_CLASSIFIER_PROMPT = [
   "  그 반대보다 나쁘다.",
   "",
   "",
+  "그리고 **team** 을 함께 답한다 — 이 질문이 **특정 KBO 구단의 것**을 묻고 있는가.",
+  "  구단의 것 = 그 구단의 선수·기록·역사·성적뿐 아니라 **마스코트·홈구장과 그 시설물·",
+  "  응원단·응원가·유니폼·굿즈·구단 행사**까지 포함한다.",
+  "  → 해당하면 아래 열 개 중 하나를 그대로 쓴다:",
+  "     LG · KIA · 두산 · 롯데 · 삼성 · 한화 · 키움 · KT · SSG · NC",
+  "  → 특정 구단의 것이 아니면(야구 규칙·용어·일반 질문·잡담) 빈 문자열.",
+  "  ⚠️ 구단명이 문장에 없어도 된다 — 그 구단 것이면 고른다.",
+  "    예: '호걸이 이름 뜻이 뭐야?'(KIA 마스코트) → KIA",
+  "        '몬스터월이 뭐야?'(대전 한화생명볼파크 시설) → 한화",
+  "  ⚠️ 반대로 구단명이 있어도 그 구단의 것을 묻는 게 아니면 빈 문자열이다.",
+  "    예: '한화 경기에서 보크가 뭐야?' → 보크는 규칙이므로 빈 문자열.",
+  "",
   "그리고 **standalone** 을 함께 답한다 — **이번 메시지 하나만 놓고** 무엇을 묻는지가",
   "  정해지는가(앞 대화를 빌리지 않고).",
   "  true  = 정해진다. '보크가 뭐야' · '오늘 LG 선발 누구야'.",
@@ -146,7 +158,7 @@ export const INTENT_CLASSIFIER_PROMPT = [
   "  ⚠️ FOLLOWUP 은 이 값과 무관하다 — 직전 답변을 다시 설명하는 것은 새 조회가 아니다.",
   "  ⚠️ 짧다고 false 가 아니다. '보크?' 는 짧지만 단독으로 완결이다.",
   "",
-  '반드시 JSON 하나만 출력한다: {"intent":"위 다섯 중 하나","answer":"SMALLTALK_SAFE·FOLLOWUP 일 때만, 아니면 빈 문자열","clarify":"NEEDS_CLARIFICATION 일 때만 game 또는 other","standalone":true 또는 false}',
+  '반드시 JSON 하나만 출력한다: {"intent":"위 다섯 중 하나","answer":"SMALLTALK_SAFE·FOLLOWUP 일 때만, 아니면 빈 문자열","clarify":"NEEDS_CLARIFICATION 일 때만 game 또는 other","standalone":true 또는 false,"team":"위 열 개 중 하나 또는 빈 문자열"}',
 ].join("\n");
 
 /**
@@ -157,6 +169,19 @@ export const INTENT_CLASSIFIER_PROMPT = [
  * (입력은 열고 출력은 코드가 닫는다).
  */
 export const CLARIFY_TARGETS = ["game", "other"] as const;
+
+/**
+ * KBO 구단 canonical — **폐쇄집합**. `TEAMS` 의 표기와 같아야 한다.
+ *
+ * 🔴 이건 어휘 목록이 아니라 **출력 정의역**이다. 분류기가 자유 문자열로 구단을 쓰면
+ *   `엘지`·`LG트윈스`·`엘지트윈스` 가 뒤섞여 하류가 못 받는다. 입력은 열어 두고
+ *   (무엇이 그 구단 것인지는 LLM 이 판단) 출력만 이 열 개로 닫는다.
+ *   구단 수가 늘지 않는 한 이 배열은 자라지 않는다 — 반례마다 늘어나는 어휘 목록과 다르다.
+ */
+export const KBO_TEAM_CANONICALS = [
+  "LG", "KIA", "두산", "롯데", "삼성", "한화", "키움", "KT", "SSG", "NC",
+] as const;
+export type KboTeamCanonical = (typeof KBO_TEAM_CANONICALS)[number];
 export type ClarifyTarget = (typeof CLARIFY_TARGETS)[number];
 
 export interface IntentDecision {
@@ -166,6 +191,19 @@ export interface IntentDecision {
    * `game` 이면 코드가 **오늘 경기 목록**을 붙여 되묻는다.
    */
   clarify: ClarifyTarget | null;
+  /**
+   * 이 질문이 **어느 KBO 구단의 것**을 묻는가 (없으면 null).
+   *
+   * 🔴 왜 코드 목록이 아니라 LLM 판정인가 (하린아빠 2026-08-31).
+   *   `호걸이`(KIA 마스코트)·`몬스터월`(한화 구장 시설)이 구단 문서가 아니라 KBO 규칙집으로
+   *   새고 있었다. 초안에서 나는 마스코트 이름 목록(`TEAM_ALIASES.assets`)을 만들어 막았는데,
+   *   그건 **빠진 이름이 나올 때마다 자라는 어휘 목록**이다 — 응원가·굿즈·시설물까지 치면
+   *   끝이 없고, 정확히 `open_language_never_closes_with_rules` 가 말하는 축이다.
+   *
+   *   "무엇이 그 구단의 것인가" 는 열린 집합이라 LLM 이 판단하고, **출력만 10개 폐쇄집합**
+   *   으로 닫는다. 계약 밖 값은 null 로 접으므로 미탐의 대가는 종전 동작이다.
+   */
+  team: KboTeamCanonical | null;
   /**
    * 이번 메시지 **하나만으로** 무엇을 묻는지가 정해지는가 (삼순 2026-08-31).
    *
@@ -184,28 +222,27 @@ export interface IntentDecision {
    *   모를 때 열어두는 쪽이 종전 동작(fail-open)이다.
    */
   standalone: boolean;
+  /**
+   * 이 판정이 **분류기의 실제 응답**에서 나왔는가 (삼순 2026-08-31 ⓒ-①).
+   *
+   * 🔴 `BASEBALL` 은 두 가지 서로 다른 것을 뜻해 왔다:
+   *   ① 분류기가 "야구 질문이다" 라고 **명시적으로 답했다**
+   *   ② 파싱 실패·계약 밖 sentinel·응답 없음 → **모르겠다**(fail-open 기본값)
+   *
+   *   지금까지 소비자는 둘을 구분할 수 없었고, 그래서 ②일 때도 official RAG 가
+   *   열렸다. `질문답헤줘` 의 official 누수 1회가 정확히 그 경로다 —
+   *   분류기 판정 20회 중 BASEBALL 은 0회인데도 누수가 났다.
+   *
+   *   값이 `false` 면 "판정 없음" 이므로 **개방 결정의 근거로 쓰면 안 된다.**
+   *   판정이 없을 때는 이 PR 이 연 문을 닫고 종전 계약(사전·엔티티 게이트)으로 돌아간다.
+   */
+  verdictKnown: boolean;
   /** `SMALLTALK_SAFE`·`FOLLOWUP` 일 때만 채워진다. 가드 미통과면 null. */
   answer: string | null;
   /** 가드가 답을 버렸는가 — 관측용(값이 아니라 provenance 를 따로 남긴다). */
   answerRejected: boolean;
   /** 답을 버린 이유. 관측 전용이며 유저에게 나가지 않는다. */
   rejectReason: string | null;
-}
-
-/**
- * 이번 입력·적격 맥락이 **경기·점수 화제**인가 (삼순 2026-08-31 `clarify=game` 조건).
- *
- * ⚠️ 이건 "무엇을 묻는지" 를 정하는 판정이 아니라, **경기 목록을 붙일지 말지**를 정하는
- *   좁은 게이트다. 그래서 룰이어도 된다 — 판정 대상이 `game`/`other` 둘뿐이고,
- *   미탐의 대가가 "목록 없이 되묻기"(종전 동작)라 반례가 쌓이지 않는다.
- *   의도 판정 자체를 룰로 하는 것(`open_language_never_closes_with_rules` 위반)과는 다르다.
- *
- * ⚠️ 직전 **답변**까지 보는 이유: `방금 점수 어떻게 냈어?` 는 질문에 경기가 없지만
- *   직전 턴이 경기 얘기였으면 유저는 그 경기를 가리키는 것이다.
- */
-function hasGameCue(question: string, previousQuestion: string, previousAnswer: string): boolean {
-  const haystack = `${question} ${previousQuestion} ${previousAnswer}`.normalize("NFKC").toLowerCase();
-  return /경기|점수|스코어|이겼|졌|승패|승리|패배|역전|동점|이닝|타석|끝났|중계|선발|맞대결|vs/.test(haystack);
 }
 
 /** 숫자 토큰(연속 숫자열 + 소수점). `numericTokensSubsetOf` 와 같은 규칙이다. */
@@ -276,8 +313,9 @@ export function parseIntentResponse(
     question?: string;
   } = {},
 ): IntentDecision {
+  // 판정 미확정 — `verdictKnown: false` 로 표시한다. 소비자는 이걸 개방 근거로 쓰지 않는다.
   const fallback: IntentDecision = {
-    intent: "BASEBALL", clarify: null, standalone: true,
+    intent: "BASEBALL", clarify: null, standalone: true, team: null, verdictKnown: false,
     answer: null, answerRejected: false, rejectReason: null,
   };
   let value: unknown;
@@ -304,13 +342,16 @@ export function parseIntentResponse(
         : "other"
       : null;
 
-    // 🔴 `game` 강등 (삼순 2026-08-31): 경기 목록을 붙이려면 **이번 입력이나 적격 맥락에
-    //   경기·점수 cue 가 실제로 있어야** 한다. 없는데 목록을 들이밀면 유저는 묻지도 않은
-    //   경기 목록을 받는다. 판정 불가일 때 `other` 로 내려가므로 **강등 방향**이다 —
-    //   미탐의 대가는 고정 문구로 되묻기(= 종전 동작)라 새 결함을 만들지 않는다.
-    if (clarify === "game" && !hasGameCue(options.question ?? "", options.previousQuestion ?? "", options.previousAnswer ?? "")) {
-      clarify = "other";
-    }
+    // 🔴 `clarify` 판정은 **분류기에 맡긴다** (하린아빠 2026-08-31: 룰베이스로 블로커를
+    //   풀지 말 것). 초안에서 나는 `경기|점수|스코어|이겼|…` 정규식으로 `game` 을 한 번 더
+    //   검사했는데, 그건 프롬프트가 이미 요구한 것을 코드에서 **이중 판정**하는 것이고
+    //   반례가 나올 때마다 어휘가 자라는 축이다(`open_language_never_closes_with_rules`).
+    //   안전은 룰이 아니라 **게이트**로 지킨다 — "cue 없는 질문에 경기 목록이 붙지 않는다"
+    //   를 관측으로 고정하면 판정은 열려 있고 검증만 닫힌다.
+
+    // 구단 귀속 — 폐쇄집합 밖은 null 로 접는다(미탐 = 종전 동작).
+    const team = (KBO_TEAM_CANONICALS as readonly string[]).includes(String(row.team))
+      ? (String(row.team) as KboTeamCanonical) : null;
 
     // 미수신·형식 위반은 true 로 접는다(fail-open — 기존 경로 유지).
     const standalone = row.standalone === false ? false : true;
@@ -320,12 +361,12 @@ export function parseIntentResponse(
     //   되묻기는 유저에게 한 번 더 적게 하지만, 엉뚱한 근거로 답하는 것보다 낫다.
     if (intent === "BASEBALL" && !standalone) {
       return {
-        intent: "NEEDS_CLARIFICATION", clarify: "other", standalone: false,
+        intent: "NEEDS_CLARIFICATION", clarify: "other", standalone: false, team, verdictKnown: true,
         answer: null, answerRejected: false, rejectReason: null,
       };
     }
     return {
-      intent: intent as QuestionIntent, clarify, standalone,
+      intent: intent as QuestionIntent, clarify, standalone, team, verdictKnown: true,
       answer: null, answerRejected: false, rejectReason: null,
     };
   }
@@ -340,13 +381,15 @@ export function parseIntentResponse(
       intent: intent as QuestionIntent,
       clarify: null,
       standalone: true,
+      team: null,
+      verdictKnown: true,
       answer: null,
       answerRejected: true,
       rejectReason: violation,
     };
   }
   return {
-    intent: intent as QuestionIntent, clarify: null, standalone: true,
+    intent: intent as QuestionIntent, clarify: null, standalone: true, team: null, verdictKnown: true,
     answer, answerRejected: false, rejectReason: null,
   };
 }
@@ -387,6 +430,7 @@ export interface StoredIntentDecision {
   fingerprint: string | null;
   answer: string | null;
   clarify: string | null;
+  team: string | null;
 }
 
 /**
@@ -410,6 +454,9 @@ export function replayableIntent(
       ? (stored.clarify as ClarifyTarget) : null,
     // 재생분은 이미 강등까지 끝난 판정이다 — 다시 강등하지 않는다.
     standalone: true,
+    verdictKnown: true,
+    team: stored.team && (KBO_TEAM_CANONICALS as readonly string[]).includes(stored.team)
+      ? (stored.team as KboTeamCanonical) : null,
     answer: stored.answer ?? null,
     answerRejected: false,
     rejectReason: null,
