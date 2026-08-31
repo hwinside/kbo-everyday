@@ -720,7 +720,12 @@ export async function POST(req: NextRequest) {
       // 스코어 검증
       const headlineStr = (summary.headline || "").toLowerCase();
       const isZeroZero = body.awayScore === 0 && body.homeScore === 0;
-      const headlineSaysZero = /0대0|0-0/.test(headlineStr) || /득점\s*없/.test(headlineStr);
+      // 완봉(한 팀만 0점) 경기는 헤드라인에 "OO 타선 득점 없이" 같은 정상 서술이 나와
+      // /득점 없/ 휴리스틱이 0-0 환각으로 오탐한다(KTNC0 KT 10:0 NC 완봉승 사고).
+      // "득점 없" 신호는 양 팀 모두 득점한 경기에서만 0-0 환각으로 취급하고,
+      // 명시적 "0대0|0-0"은 (완봉 포함) 항상 스코어 오류로 잡는다.
+      const bothTeamsScored = (body.awayScore ?? 0) > 0 && (body.homeScore ?? 0) > 0;
+      const headlineSaysZero = /0대0|0-0/.test(headlineStr) || (bothTeamsScored && /득점\s*없/.test(headlineStr));
       if (!isZeroZero && headlineSaysZero) {
         console.error(`Score mismatch (attempt ${attempt}): actual ${body.awayScore}-${body.homeScore}, headline says 0-0.`);
         if (attempt === MAX_ATTEMPTS) {
