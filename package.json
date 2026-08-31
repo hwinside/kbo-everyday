@@ -342,6 +342,7 @@
     "qa:kgwan-live-state": "tsx scripts/qa/kgwan-live-state-smoke.ts",
     "qa:ui:score-layout": "node scripts/qa/ui-smoke-score-layout.mjs",
     "qa:ui:venue-diary": "node scripts/qa/ui-smoke-venue-diary.mjs",
+    "qa:ui:post-scope-label": "node scripts/qa/ui-smoke-post-scope-label.mjs",
     "qa:widget-fast": "tsx scripts/qa/widget-fast-refresh-smoke.ts",
     "qa:la-fastpath": "tsx scripts/qa/live-fast-path-smoke.ts",
     "qa:game-cancel-status": "tsx --test scripts/qa/game-cancel-status-smoke.ts",
