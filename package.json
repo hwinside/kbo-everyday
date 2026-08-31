@@ -51,6 +51,8 @@
     "qa:ui:dm-draft": "node scripts/qa/ui-smoke-dm-draft.mjs",
     "qa:genius-avatar-static": "node scripts/qa/genius-avatar-static-gate.mjs",
     "qa:genius-rag-match-path": "node scripts/qa/genius-rag-match-path-e2e.mjs",
+    "qa:genius-intent-routing": "tsx --require ./scripts/qa/_a0-preload.cjs scripts/qa/genius-intent-routing-smoke.ts",
+    "qa:genius-intent-routing:selftest": "tsx --require ./scripts/qa/_a0-preload.cjs scripts/qa/genius-intent-routing-smoke.ts --selftest",
     "qa:genius-avatar-static:selftest": "node scripts/qa/genius-avatar-static-gate.mjs --selftest",
     "qa:genius-avatar": "node scripts/qa/genius-avatar-ui-smoke.mjs",
     "qa:genius-entry": "tsx scripts/qa/genius-entry-wiring-smoke.ts",
