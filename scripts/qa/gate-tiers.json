@@ -572,6 +572,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:dwell-batch",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:profile-posts-paging",
       "tier": "deploy"
     },

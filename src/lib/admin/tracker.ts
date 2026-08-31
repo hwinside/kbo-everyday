@@ -100,18 +100,66 @@ export async function trackPageView(userId?: string) {
 // send when we hold an auth token, and the server derives user_id from the
 // verified JWT rather than trusting any client-claimed id.
 
-const MAX_DWELL_MS = 30 * 60 * 1000; // cap a single visible interval (idle guard)
+import {
+  DwellQueue,
+  DWELL_FLUSH_INTERVAL_MS,
+  DWELL_QUEUE_MAX,
+  DWELL_MAX_MS as MAX_DWELL_MS,
+} from "@/lib/admin/dwell-queue";
+
 const MIN_DWELL_MS = 1000; // skip sub-second noise
 
 let dwellPath: string | null = null;
 let dwellToken: string | null = null;
+let dwellUid: string | null = null;
 let dwellActiveMs = 0;
 let dwellResumeAt: number | null = null;
 
-/** Supply the current access token (logged in) or null (logged out → no
- * tracking). Set by DwellTracker on auth/route changes. */
-export function dwellSetAuth(token: string | null) {
+/** Synchronous identity fence — MUST run before dwellStartPage() on every
+ * auth/route effect, *before* any async session lookup resolves.
+ *
+ * 삼순 P1 2차(#1323): getSession()이 비동기라 A→B 직후 promise 대기 중에는
+ * tracker가 아직 A uid/token을 들고 있고, 그 창에서 pagehide/route change가
+ * 나면 B 체류가 A 토큰으로 flush된다. 그래서 React user.id를 본 즉시 —
+ * 페이지 타이밍 시작 전에 — 동기로 경계를 긋는다: uid가 바뀌면 큐·진행 중
+ * dwell·토큰을 모두 동기 폐기(fail-closed). 토큰은 검증된 세션 uid가 fence
+ * uid와 일치할 때만 dwellAttachToken으로 나중에 붙는다. 동일 uid 재호출
+ * (라우트 이동·토큰 refresh)은 큐와 토큰을 보존한다. */
+export function dwellExpectIdentity(uid: string | null) {
+  const changed = dwellQueue.setIdentity(uid);
+  if (changed) {
+    dwellUid = uid;
+    // 이전 신원의 토큰으로는 단 한 번도 flush되면 안 된다 — 동기 폐기.
+    dwellToken = null;
+    // 진행 중이던 구간도 이전 신원 소유 — 폐기하고 지금부터 새 신원으로 재시작.
+    dwellActiveMs = 0;
+    dwellResumeAt =
+      dwellPath != null &&
+      uid != null &&
+      (typeof document === "undefined" || document.visibilityState === "visible")
+        ? Date.now()
+        : null;
+    if (dwellFlushTimer != null) {
+      clearTimeout(dwellFlushTimer);
+      dwellFlushTimer = null;
+    }
+  }
+}
+
+/** Attach the verified access token once getSession() resolves. Fail-closed:
+ * the token only attaches when its uid matches the currently fenced uid — a
+ * stale resolve from a previous identity is ignored, so a token can never be
+ * paired with another user's queued events. */
+export function dwellAttachToken(uid: string, token: string) {
+  if (!uid || uid !== dwellUid) return; // stale resolve → ignore
   dwellToken = token;
+  // 토큰 대기 중 큐가 가득 찼으면(hard-bound 도달) 즉시 flush — 더 모으면
+  // 새 이벤트만 드롭된다. 그 외엔 타이머 재가동.
+  if (dwellQueue.size >= DWELL_QUEUE_MAX) {
+    flushDwellQueue();
+  } else if (dwellQueue.size > 0 && dwellFlushTimer == null) {
+    dwellFlushTimer = setTimeout(flushDwellQueue, DWELL_FLUSH_INTERVAL_MS);
+  }
 }
 
 function settleDwell() {
@@ -127,7 +175,7 @@ function emitDwell() {
   const path = dwellPath;
   dwellActiveMs = 0;
   if (!path || ms < MIN_DWELL_MS) return;
-  sendPageDwell(path, ms);
+  enqueueDwell(path, ms);
 }
 
 /** Finalize the page being left, then begin timing the new one. */
@@ -141,9 +189,11 @@ export function dwellStartPage(path: string) {
       : null;
 }
 
-/** Tab hidden / page hide: flush what we've accumulated so far. */
+/** Tab hidden / page hide: settle the current interval and flush the queue
+ * immediately — the page may be about to die and sendBeacon survives unload. */
 export function dwellPause() {
   emitDwell();
+  flushDwellQueue();
 }
 
 /** Tab visible again: resume timing the same page. */
@@ -157,18 +207,52 @@ export function dwellResume() {
   }
 }
 
-function sendPageDwell(path: string, dwellMs: number) {
+// ---- Batched dwell delivery ----
+// Route changes used to fire one POST each (~180K requests/day at current
+// traffic). Finished intervals are now queued and delivered as one batched
+// POST every DWELL_FLUSH_INTERVAL_MS, plus an immediate flush on
+// pagehide/tab-hide (sendBeacon survives unload) so leaving never loses data.
+const dwellQueue = new DwellQueue();
+let dwellFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function enqueueDwell(path: string, dwellMs: number) {
+  // 큐입은 fence된 uid만 있으면 된다(토큰은 전송 조건). getSession 지연 중에도
+  // B 이벤트는 B uid로 결속돼 쌓이고, 토큰이 검증·attach된 뒤에만 나간다.
+  if (!dwellUid) return; // logged-out → not tracked
+  const result = dwellQueue.enqueue(dwellUid, path, dwellMs);
+  if (result === "flush-now") {
+    flushDwellQueue();
+    return;
+  }
+  if (result === "queued" && dwellFlushTimer == null) {
+    dwellFlushTimer = setTimeout(flushDwellQueue, DWELL_FLUSH_INTERVAL_MS);
+  }
+}
+
+/** Send everything queued in a single POST. Safe to call any time; no-op when
+ * the queue is empty. Exposed for DwellTracker's unload path. */
+export function flushDwellQueue() {
+  if (dwellFlushTimer != null) {
+    clearTimeout(dwellFlushTimer);
+    dwellFlushTimer = null;
+  }
+  // 토큰 미도착(getSession 검증 대기 중)이면 이벤트를 보존하고 attach 후 전송.
+  // 이 창에서 페이지가 죽으면 그 배치는 유실되지만, 오귀속보다 유실이 낫다
+  // (fail-closed — telemetry다).
   const token = dwellToken;
-  if (!token) return; // logged-out / no session → not tracked
+  if (!token) return;
+  // 신원 불일치 방어의 마지막 층: drain은 현재 uid가 큐 결속 uid와 일치할 때만
+  // 이벤트를 내준다(불일치는 fail-closed 폐기).
+  const events = dwellQueue.drain(dwellUid);
+  if (events.length === 0) return;
   const visitorId = getVisitorId();
   if (!visitorId) return;
 
   const body = JSON.stringify({
     visitorId,
-    path,
     platform: getPlatform(),
-    dwellMs: Math.round(dwellMs),
     accessToken: token,
+    events,
   });
   const url = "/api/telemetry/page-dwell";
 

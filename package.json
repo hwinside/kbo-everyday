@@ -426,6 +426,7 @@
     "qa:post-scope-all-teams-confirm": "tsx scripts/qa/post-scope-all-teams-confirm-smoke.ts",
     "qa:post-scope-all-teams-confirm:selftest": "tsx scripts/qa/post-scope-all-teams-confirm-smoke.ts --selftest",
     "qa:post-scope-label": "tsx scripts/qa/post-scope-label-render.ts",
+    "qa:dwell-batch": "tsx scripts/qa/dwell-batch-identity-smoke.ts",
     "qa:post-scope-label:selftest": "tsx scripts/qa/post-scope-label-render.ts --selftest",
     "qa:post-scope-db-trigger": "tsx scripts/qa/post-scope-db-trigger-integration.ts",
     "qa:news-rag-wiring": "tsx scripts/qa/news-rag-wiring-smoke.ts",

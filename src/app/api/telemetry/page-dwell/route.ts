@@ -2,20 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { verifyAccessToken } from "@/lib/auth/verified-user";
 
+import { normalizeDwellEvents } from "./normalize";
+
 interface DwellPayload {
   visitorId?: string;
   path?: string;
   platform?: string;
   dwellMs?: number;
+  /** Batched intervals (new client). When present, takes precedence over the
+   * legacy single path/dwellMs pair — old clients keep working during rollout. */
+  events?: unknown;
   /** Caller's Supabase access token. user_id is derived from the verified JWT,
    * never from a client-claimed id. */
   accessToken?: string;
 }
-
-// Sub-second hits are noise; cap a single interval to guard against an
-// idle-but-visible tab inflating the mean (the client already pauses on hide).
-const MIN_DWELL_MS = 1000;
-const MAX_DWELL_MS = 30 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
   let payload: DwellPayload;
@@ -29,17 +29,18 @@ export async function POST(req: NextRequest) {
     typeof payload.visitorId === "string" && payload.visitorId.trim()
       ? payload.visitorId.trim()
       : null;
-  const dwellMs =
-    typeof payload.dwellMs === "number" && Number.isFinite(payload.dwellMs)
-      ? Math.round(payload.dwellMs)
-      : NaN;
   const accessToken =
     typeof payload.accessToken === "string" && payload.accessToken
       ? payload.accessToken
       : null;
 
+  // Normalize to a batch: new clients send `events[]`, legacy clients a single
+  // path/dwellMs pair. Validation lives in ./normalize (순수 모듈) so the QA
+  // gate exercises the exact production seam.
+  const events = normalizeDwellEvents(payload);
+
   // Quietly drop noise/garbage so beacons never surface as client errors.
-  if (!visitorId || !accessToken || !Number.isFinite(dwellMs) || dwellMs < MIN_DWELL_MS) {
+  if (!visitorId || !accessToken || events.length === 0) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
@@ -57,18 +58,16 @@ export async function POST(req: NextRequest) {
     typeof payload.platform === "string" && payload.platform
       ? payload.platform.slice(0, 32)
       : null;
-  const path =
-    typeof payload.path === "string" && payload.path
-      ? payload.path.slice(0, 512)
-      : null;
 
-  const { error } = await supabase.from("admin_page_dwell").insert({
-    visitor_id: visitorId,
-    user_id: user.id,
-    path,
-    platform,
-    dwell_ms: Math.min(dwellMs, MAX_DWELL_MS),
-  });
+  const { error } = await supabase.from("admin_page_dwell").insert(
+    events.map((e) => ({
+      visitor_id: visitorId,
+      user_id: user.id,
+      path: e.path,
+      platform,
+      dwell_ms: e.dwellMs, // normalize에서 MAX cap 적용 완료
+    })),
+  );
 
   if (error) {
     console.warn("[page-dwell] insert failed", error.message);
