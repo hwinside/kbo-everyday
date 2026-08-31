@@ -270,6 +270,7 @@
     "qa:videos-rss-status": "tsx scripts/qa/videos-rss-status-smoke.ts",
     "qa:postgame-interviews": "tsx scripts/qa/postgame-interviews-smoke.ts",
     "qa:youtube-quota": "tsx scripts/qa/youtube-quota-smoke.ts",
+    "qa:team-videos-select": "tsx scripts/qa/team-videos-select-smoke.ts",
     "qa:naver-relay-counts": "tsx scripts/qa/naver-relay-counts-smoke.ts",
     "qa:relay-inning-runs": "tsx scripts/qa/relay-inning-runs-smoke.ts",
     "qa:pitch-parser": "tsx scripts/qa/pitch-parser-smoke.ts",
