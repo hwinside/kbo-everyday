@@ -255,10 +255,23 @@ async function hardBound() {
   check(`G1 큐 hard-bound(25 distinct → size ≤${DWELL_QUEUE_MAX})`, q.size <= DWELL_QUEUE_MAX, `size=${q.size}`);
   check("G2 상한 도달 후 새 이벤트는 드롭(size 정확히 20)", q.size === DWELL_QUEUE_MAX);
   check("G3 상한 초과 enqueue는 flush-now 신호", q.enqueue("u", "/hb-extra", 2000) === "flush-now" && q.size === DWELL_QUEUE_MAX);
-  // 같은 path merge는 append 아니라 상한과 무관하게 허용
+  // 같은 path merge는 append 아니라 상한과 무관하게 허용.
+  // 삼순 4차(#1323): /hb24는 이미 드롭된 path라 재-enqueue도 드롭돼 size만으로는
+  // merge와 드롭을 구분 못 한다(false-positive). 실제 마지막 보존 이벤트인
+  // /hb19를 재-enqueue한 뒤 drain으로 20건 유지 + dwellMs 2000→5000 병합까지 실증.
   const before = q.size;
-  q.enqueue("u", `/hb24`, 3000); // 마지막 path와 동일 → merge
-  check("G4 동일 path merge는 상한 무관 허용", q.size === before);
+  const mergeRes = q.enqueue("u", `/hb19`, 3000); // 실제 마지막 보존 path → merge
+  const merged = q.drain("u");
+  const lastEvt = merged[merged.length - 1];
+  check(
+    "G4 동일 path merge는 상한 무관 허용(드롭 아님 — dwellMs 병합 실증)",
+    mergeRes !== "dropped" &&
+      before === DWELL_QUEUE_MAX &&
+      merged.length === DWELL_QUEUE_MAX &&
+      lastEvt?.path === "/hb19" &&
+      lastEvt?.dwellMs === 5000,
+    `res=${mergeRes} drained=${merged.length} last=${lastEvt?.path}:${lastEvt?.dwellMs}`,
+  );
 
   // G-seam: tracker 실전 — B fence/no token → distinct 25건+flush 반복 →
   // attach 후 B-only 1배치 ≤20
