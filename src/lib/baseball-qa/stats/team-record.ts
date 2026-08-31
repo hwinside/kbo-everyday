@@ -49,6 +49,16 @@ export interface TeamRecordsPayload {
   season?: number;
   batting?: TeamRecordRow[];
   pitching?: TeamRecordRow[];
+  /**
+   * upstream 에서 **실제로 받은** 시각(ISO). `/api/team-records` 가 실어 보낸다.
+   *
+   * 🔴 왜 우리 시계를 쓰면 안 되는가 (삼순 2026-08-28 P0-③): 그 라우트는 upstream 이
+   *   죽으면 **만료된 메모리 캐시를 200 으로** 돌려준다. 응답 수신 시각을 신선도로 쓰면
+   *   몇 시간 묵은 값이 방금 값이 된다 — 200 은 신선도의 증거가 아니다.
+   *   optional 인 이유는 구버전 배포·다른 소비자가 아직 안 실어보낼 수 있어서다.
+   *   **부재는 0 이 아니라 "모름"** 이고, 모르면 현재를 단정하지 않는다(fail-close).
+   */
+  fetchedAt?: string;
 }
 
 /**
@@ -265,8 +275,30 @@ async function getJson<T>(path: string): Promise<T> {
   }
 }
 
+/**
+ * 순위표 스냅샷 — 행 + **그 행을 upstream 에서 받은 시각**.
+ *
+ * 🔴 왜 배열이 아니라 스냅샷인가 (삼순 2026-08-28 P0-③):
+ *   `/api/standings` 는 CDN 이 최대 15분(`s-maxage=300` + `stale-while-revalidate=600`)
+ *   캐시한다. 응답을 받은 시각을 신선도로 쓰면 캐시된 값이 방금 값이 된다.
+ *   값과 provenance 는 **별도 축**이어야 하고(M90), 그래서 함께 옮긴다.
+ *   `fetchedAt` 부재는 0 이 아니라 **모름**이고, 모르면 현재를 단정하지 않는다.
+ */
+export interface StandingsSnapshot {
+  rows: StandingsRow[];
+  fetchedAt?: string;
+  /**
+   * 이 순위표가 **어느 시즌의 것인가** (삼순 2026-08-28 4차 NO-GO ②).
+   *
+   * 🔴 upstream URL 이 `seasons/2026` 고정이라, 해가 바뀌어도 2026 최종 순위가 계속 온다.
+   *   시즌 표기를 버리면 소비자는 그걸 `2027 진행 중` 으로 말한다 — 값은 작년 것인데.
+   *   **부재는 0 이 아니라 모름**이므로 optional 이고, 모르면 현재를 단정하지 않는다.
+   */
+  season?: number;
+}
+
 export interface TeamRecordFetchers {
-  fetchStandings: () => Promise<StandingsRow[]>;
+  fetchStandings: () => Promise<StandingsSnapshot>;
   fetchTeamRecords: () => Promise<TeamRecordsPayload>;
 }
 
@@ -279,9 +311,14 @@ export interface TeamRecordFetchers {
 export function createTeamRecordFetchers(): TeamRecordFetchers {
   return {
     fetchStandings: async () => {
-      const payload = await getJson<{ standings?: StandingsRow[] }>("/api/standings");
+      const payload = await getJson<{
+        standings?: StandingsRow[]; fetchedAt?: string; season?: number;
+      }>("/api/standings");
       if (!Array.isArray(payload.standings)) throw new Error("standings payload has no standings array");
-      return payload.standings;
+      // fetchedAt·season 은 **응답 본문**에서 가져온다 — 여기서 `Date.now()` 를 찍거나
+      // 시즌을 버리면 CDN 캐시에서 온 15분 전 값이 방금 값이 되고(삼순 P0-③),
+      // 작년 최종 순위가 올해 현황으로 둔갑한다(삼순 4차 ②).
+      return { rows: payload.standings, fetchedAt: payload.fetchedAt, season: payload.season };
     },
     fetchTeamRecords: () => getJson<TeamRecordsPayload>("/api/team-records"),
   };
@@ -369,6 +406,210 @@ function hasFinalConsonant(word: string): boolean {
 export function composeTeamRecordAnswer(outcome: Extract<TeamRecordOutcome, { kind: "ok" }>): string {
   const topicParticle = hasFinalConsonant(outcome.label) ? "은" : "는";
   return `${outcome.team} ${outcome.label}${topicParticle} ${outcome.value}입니다.`;
+}
+
+// ── 현재 구단 상황 블록 (tier L — 2026-08-28 답변 품질 실측 반영) ──────────────────
+//
+// 🔴 왜 필요한가 (48시간 원장 645건 judge 전수 실측):
+//   `team_rag` 38건 중 GOOD 이 11건(29%)뿐이었다. 나머지는 STALE·WRONG 이고 전부 같은
+//   모양이다 — **나무위키 스냅샷에는 시점이 없어서** 모델이 과거 서술을 현재로 단정한다.
+//     · `롯데 가을야구 갈 수 있을까?` → "이미 진출이 좌절되었어요" (시즌 진행 중인데 과거완료)
+//     · `한화 감독 누구여` → 역대 감독 나열 (현 감독 없음)
+//     · `롯데 투수 선발진` → 과거 시즌 로테이션
+//
+//   근본 원인은 프롬프트 문구가 아니라 **입력에 현재가 없다**는 것이다. 같은 코드베이스의
+//   뉴스클리핑·프리뷰·경기요약은 이미 `standings-guard` 로 공식 순위표를 주입하는데
+//   야잘알봇 파이프라인만 안 하고 있었다(2026-08-28 배선 실측).
+//
+// ⚠️ 이 블록은 **숫자 계약을 열지 않는다.** tier2 출력의 숫자 전면 HOLD 는 그대로다
+//   (`validateRagResponse` 미변경). 블록의 역할은 모델이 *현재를 알고 서술하게* 하는 것이지
+//   수치를 옮겨 적게 하는 것이 아니다. "근거에 있다 ≠ 근거가 그렇게 진술했다"(2026-08-07
+//   4라운드 결론)는 정본 블록에도 똑같이 적용된다 — 블록에 `3위`·`55승` 이 있다고
+//   `3승` 조합이 막히지 않는다. 그래서 숫자는 계속 코드가 기계적으로 버린다.
+//
+// 계약:
+//   · 값은 `resolveTeamRecord` 와 **같은 원값**을 쓴다(재계산·재포맷 금지, 앱 순위표와 동일).
+//   · 한 지표라도 못 읽으면 그 줄을 빼고, 순위 줄조차 못 만들면 **블록 자체를 만들지 않는다**
+//     (`null`) — 반쪽 블록으로 "현재"를 주장하게 하는 것이 안 주는 것보다 나쁘다.
+//   · 조회 실패는 호출부가 처리한다. 이 함수는 순수 함수다(게이트가 직접 태울 수 있어야 한다).
+
+/**
+ * 질문이 요구하는 **현재성 종류**(claim scope). 삼순 2026-08-28 착수 조건 ③ —
+ * 순위·로스터·상대전적을 **모든 team_rag 프롬프트에 통째로 넣지 않는다**.
+ *
+ * 🔴 왜 범위를 가르는가: 무관한 정본을 넣으면 모델이 그걸 답에 끌어다 쓴다.
+ *   `한화 응원가 알려줘` 에 순위표를 주면 응원가 서술에 성적 이야기가 섞인다.
+ *   그리고 범위 밖 주제(감독·등번호·선발로테이션)는 **우리가 정본을 안 가졌으므로**
+ *   블록이 없는 것이 맞다 — 그때는 프롬프트의 "현재 확인 불가 + 역사 맥락 명시" 계약이 받는다.
+ */
+export type LiveTeamScope = "standing" | "batting" | "pitching" | "none";
+
+/** scope 별 주입 지표 — 닫힌 집합. 여기 없는 지표는 블록에 들어가지 않는다. */
+const LIVE_SCOPE_METRICS: Record<Exclude<LiveTeamScope, "none">, readonly TeamMetricKey[]> = {
+  standing: ["ranking", "record", "winRate", "gamesBehind", "games"],
+  batting: ["ranking", "avg", "ops", "hr", "runs"],
+  pitching: ["ranking", "era", "whip", "so", "sv"],
+};
+
+/**
+ * 질문 → 필요한 현재성 scope.
+ *
+ * ⚠️ 이 판정은 **닫힌 집합**이라 룰이 맞다(M90 기준: 입력이 지표어 폐쇄집합).
+ *   의도를 분류하는 게 아니라 **어떤 정본을 같이 줄까**를 고를 뿐이고,
+ *   잘못 골라도 안전하다(과탐=무관한 정본 1줄, 미탐=종전 계약인 "현재 확인 불가").
+ *   반면 자유 서술을 뜼어보는 것은 LLM 의 몫이다 — 여기서 하지 않는다.
+ */
+export function resolveLiveTeamScope(question: string): LiveTeamScope {
+  const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+  // 투구·마운드 축이 먼저 — `선발진 방어율` 같은 복합어에서 타격으로 밀리면 안 된다.
+  if (/투수|마운드|불펜|방어율|평균자책|era|whip|탈삼진|세이브|실점/.test(normalized)) return "pitching";
+  if (/타격|타선|타율|홈런|득점|출루|장타|ops|도루|타당/.test(normalized)) return "batting";
+  if (
+    /순위|몇\s*위|등수|랭킹|게임\s*차|승차|성적|전적|승률|가을야구|포스트시즌|진출|떨어질|탈락|우승\s*가능|요즘\s*어때|요증\s*어때|잘하|못하|부진|상승세|연승|연패/
+      .test(normalized)
+  ) return "standing";
+  return "none";
+}
+
+/**
+ * tier L 근거의 **provenance envelope** (삼순 2026-08-28 착수 조건 ②).
+ *
+ * 🔴 "tier L = 항상 최신" 은 틀렸다. `/api/team-records` 는 기본 시즌이 **고정 2026**이고
+ *   장애 시 **만료된 메모리 캐시**를 그대로 돌려준다(route 실측). 즉 응답 200 은
+ *   신선도의 증거가 아니다 — M90 `값으로는 결측을 판정할 수 없다` 와 같은 축이라
+ *   provenance 를 **값과 별도 축**으로 싫고 실패 시 현재 단정을 금지한다.
+ */
+export interface LiveTeamProvenance {
+  /**
+   * 이 값을 **upstream 에서 받은** 시각(ms).
+   *
+   * 🔴 우리가 응답을 받은 시각이 아니다 (삼순 2026-08-28 P0-③). `/api/team-records` 는
+   *   upstream 장애 시 만료 캐시를 200 으로 돌려주므로, 수신 시각을 쓰면 몇 시간 묵은
+   *   값이 방금 값이 된다. 소스가 실어보낸 `fetchedAt` 을 결속해야 TTL 이 의미를 갖는다.
+   *   소스가 안 실어보내면 **모름**이고, 모르면 현재를 단정하지 않는다.
+   */
+  fetchedAt: number;
+  /** 판정 기준 시각(ms). */
+  now: number;
+  /** 허용 최대 나이(ms). 초과는 "현재"를 말할 근거 상실로 보고 fail-close. */
+  maxAgeMs: number;
+  /** 기대 시즌(KST 연도). `records.season` 과 불일치면 fail-close. */
+  expectedSeason: number;
+  /**
+   * 순위표가 실어보낸 시즌 (삼순 2026-08-28 4차 NO-GO ②).
+   *
+   * 🔴 종전에는 standing scope 만 시즌 검사를 **건너뛰었다** — `/api/standings` 가 시즌을
+   *   안 실어보냈기 때문인데, 그 결과 `2027 정규시즌 진행 중` 이라 적으면서 2026 최종
+   *   순위를 보여주는 반례가 열려 있었다. 이제 API 가 실어보내므로 전 scope 에서 검사한다.
+   *
+   * ⚠️ **부재는 0 이 아니라 모름**이다. 없으면 현재를 단정하지 않는다(fail-close).
+   */
+  standingsSeason?: number;
+}
+
+/**
+ * tier L 블록 상한 — upstream 캐시(team-records 30분 + SWR)보다 넓게 잡으면 의미가 없고,
+ * 좁게 잡으면 정상 응답을 계속 버린다. 상수로 박고 env 로 느슨하지 않는다(M90).
+ */
+export const LIVE_TEAM_BLOCK_MAX_AGE_MS = 45 * 60 * 1000;
+
+/** 정규시즌 총 경기 수 (KBO 2026 = 팀당 144). 잔여 경기 산출의 유일한 근거. */
+export const KBO_REGULAR_SEASON_GAMES = 144;
+
+/** KST 기준 연도 — 시즌 결속 판정의 SSOT. */
+export function kstSeasonOf(nowMs: number): number {
+  return Number(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul", year: "numeric",
+  }).format(new Date(nowMs)));
+}
+
+/** 블록 생성 실패 사유 — 게이트가 어느 축이 닫혔는지 구분해 고정한다. */
+export type LiveTeamBlockOutcome =
+  | { kind: "ok"; block: string }
+  | { kind: "skip"; reason: "scope_none" | "stale" | "season_mismatch" | "no_ranking" | "no_metrics" };
+
+/**
+ * 구단의 **현재 시즌 상황** 블록을 만든다 (tier L).
+ *
+ * 반환 문자열은 프롬프트에 데이터 구획으로 들어간다. 지시문은 넣지 않는다 —
+ * 지시는 systemInstruction 에만 둔다(프롬프트 인젝션 경계 계약).
+ *
+ * fail-close 축 4개 — 하나라도 걸리면 블록을 만들지 않는다:
+ *   · `scope_none`     질문이 이 정본을 안 요구함(감독·응원가·등번호…)
+ *   · `stale`          관측 시각이 TTL 밖 → 현재 단정 금지
+ *   · `season_mismatch` 응답 시즌 ≠ 현재 시즌 → 작년 값을 오늘로 말하지 않는다
+ *   · `no_ranking`     순위를 못 읽음 → 반쪽 블록으로 "현재"를 주장하게 두지 않는다
+ */
+export function buildLiveTeamBlock(
+  canonicalTeam: string,
+  standings: StandingsRow[],
+  records: TeamRecordsPayload,
+  teamIdOf: (canonical: string) => number | null,
+  scope: LiveTeamScope,
+  provenance: LiveTeamProvenance,
+): LiveTeamBlockOutcome {
+  if (scope === "none") return { kind: "skip", reason: "scope_none" };
+
+  // ① 신선도 — 응답 200 은 신선하다는 뜻이 아니다(upstream 만료 캐시 fail-soft).
+  const ageMs = provenance.now - provenance.fetchedAt;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > provenance.maxAgeMs) {
+    return { kind: "skip", reason: "stale" };
+  }
+  // ② 시즌 결속 — **전 scope** 에서 강제한다 (삼순 2026-08-28 4차 NO-GO ②).
+  //
+  //    🔴 종전에는 `scope !== "standing"` 으로 순위 질문만 검사를 건너뛰었다. 이유는
+  //      "standings 에 season 필드가 없어서" 였는데, 그건 소스의 한계가 아니라 **우리가
+  //      안 실어보낸 것**이었다. 그 결과 해가 바뀌면 2026 최종 순위를 `2027 진행 중` 으로
+  //      말하는 반례가 그대로 열려 있었다. 검사를 건너뛰는 예외가 곧 구멍이었다.
+  //
+  //    ⚠️ 부재(`undefined`)는 0 이 아니라 **모름**이다 — 모르면 현재를 단정하지 않는다.
+  //      값으로는 결측을 판정할 수 없으므로 provenance 를 별도 축으로 본다(M90).
+  const usesRecords = scope !== "standing";
+  if (usesRecords && records.season !== provenance.expectedSeason) {
+    return { kind: "skip", reason: "season_mismatch" };
+  }
+  // 순위표는 모든 scope 가 쓴다(ranking 지표가 전 scope 에 들어 있다).
+  if (provenance.standingsSeason !== provenance.expectedSeason) {
+    return { kind: "skip", reason: "season_mismatch" };
+  }
+
+  const lines: string[] = [];
+  for (const metric of LIVE_SCOPE_METRICS[scope]) {
+    const outcome = resolveTeamRecord(metric, canonicalTeam, standings, records, teamIdOf);
+    if (outcome.kind !== "ok") continue;
+    lines.push(`${outcome.label}: ${outcome.value}`);
+  }
+  // 순위를 못 읽으면 "현재"를 말할 근거가 없다.
+  const rankOutcome = resolveTeamRecord("ranking", canonicalTeam, standings, records, teamIdOf);
+  if (rankOutcome.kind !== "ok") return { kind: "skip", reason: "no_ranking" };
+  if (lines.length === 0) return { kind: "skip", reason: "no_metrics" };
+
+  // 잔여 경기 — 삼순 착수 조건 ③: `가을야구 확률` 은 확률 모델이 없으므로
+  // 순위·게임차·잔여경기까지만 답해야 한다. 그 세 번째 값을 공급한다.
+  if (scope === "standing") {
+    const row = standings.find((entry) => entry.teamId === teamIdOf(canonicalTeam));
+    const played = Number(row?.games);
+    if (Number.isFinite(played) && played >= 0 && played <= KBO_REGULAR_SEASON_GAMES) {
+      lines.push(`잔여 경기: ${KBO_REGULAR_SEASON_GAMES - played}`);
+    }
+  }
+
+  const observedKst = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(provenance.fetchedAt));
+  // 🔴 `정규시즌 진행 중` 을 쓰지 않는다 (삼순 2026-08-28 4차 NO-GO ②).
+  //   우리는 phase(정규시즌/포스트시즌/종료)를 **어디서도 관측하지 않는다**. 관측하지 않은
+  //   것을 문장으로 단정하면 그건 값이 아니라 우리가 지어낸 것이다 — 순위표가 최종 순위를
+  //   주는 시즌 종료 후에도 "진행 중" 이라고 말하게 된다.
+  //   시즌 결속(위 ②)이 보장하는 것은 **"이 값은 그 시즌의 것"** 까지이지 "그 시즌이 지금
+  //   진행 중" 이 아니다. 그래서 관측한 것(시즌·관측일·출처)만 적는다.
+  return {
+    kind: "ok",
+    block: [
+      `${canonicalTeam} — ${provenance.expectedSeason} 시즌 기준 (관측 ${observedKst}, 출처 KBO 순위표·팀기록)`,
+      ...lines,
+    ].join("\n"),
+  };
 }
 
 // ── 복수 구단 구조화 경로 (2026-08-16 삼순 NO-GO 반영) ────────────────────────────

@@ -272,6 +272,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-live-team-block",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-live-team-block:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-mascot-assets:mutations",
       "tier": "ci"
     },
@@ -362,6 +370,18 @@
     {
       "name": "qa:genius-reply-payload-db",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-season-lane-parity",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-season-recency",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-season-recency:mutations",
+      "tier": "ci"
     },
     {
       "name": "qa:genius-served-metrics",

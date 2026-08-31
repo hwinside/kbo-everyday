@@ -50,7 +50,6 @@ import {
 import {
   buildRagLlmRequest,
   RAG_SYSTEM_PROMPT,
-  RAG_CANDIDATE_LIMIT,
   RAG_DOCUMENT_CANDIDATE_LIMIT,
   RAG_DOCUMENT_MAX_DISTANCE,
   RAG_NEWS_CANDIDATE_LIMIT,
@@ -58,6 +57,10 @@ import {
   RAG_OFFICIAL_SYSTEM_PROMPT,
   RAG_TEAM_SYSTEM_PROMPT,
   searchSourcePriorityCandidates,
+  resolveSeasonTarget,
+  RAG_MAX_SEASON_LANES,
+  type SeasonLaneMode,
+  type SeasonTarget,
   type RagDocumentSourceKind,
   type RagEntityCandidate,
   type RagEvidence,
@@ -76,7 +79,7 @@ import { createEventRecordFetcher } from "@/lib/baseball-qa/stats/event-records"
 import eventRecordSnapshot from "@/../data/baseball-qa/kbo-event-records-2026.json";
 import { fetchServedCareerSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createSeriesPrizeHtmlFetcher } from "@/lib/baseball-qa/awards/series-prize";
-import { createTeamRecordFetchers } from "@/lib/baseball-qa/stats/team-record";
+import { createTeamRecordFetchers, kstSeasonOf } from "@/lib/baseball-qa/stats/team-record";
 import type { SeasonRecordClient } from "@/lib/baseball-qa/stats/fetch-season-record";
 import { renderTeamFanCopy } from "@/lib/constants/baseball-genius-team-copy";
 import { embedQuery } from "@/lib/baseball-qa/rag/embed";
@@ -338,11 +341,44 @@ export interface RagSearchRuntime {
      * DB 가 이 벡터 기준으로 정렬한 상위 N 을 돌려주게 하기 위해 시그니처에 박는다.
      */
     queryVector: number[],
+    /**
+     * 시즌 lane 집합. **DB 절단 전에** 목표 시즌 후보를 확보하기 위해 필요하다 —
+     * 앱에서 재정렬하면 목표 청크가 상위 40 밖일 때 복구 불가다(삼순 2026-08-28 P0-①).
+     * 생략하면 종전 단일 조회(전 시즌 대상 상위 N).
+     *
+     * 🔴 lane 팬아웃을 **구현체 안으로** 내린 이유(삼순 2026-08-29 6차 P0-3):
+     *   호출자가 lane 마다 따로 부르면 `PGRST202` fallback 도 lane 마다 따로 돌아
+     *   최악 2×lane×source 호출이 된다. 한 소스의 lane 을 한 번에 받으면 fallback 을
+     *   소스당 1회로 합칠 수 있고, 호출 예산을 여기 한 곳에서 강제할 수 있다.
+     */
+    lanes?: Array<{ mode: SeasonLaneMode; year?: number }>,
   ) => Promise<RagEvidenceCandidate[]>;
 }
 
+/**
+ * 한 소스당 허용하는 최대 RPC 호출 수 — lane 팬아웃 + `PGRST202` fallback 1회.
+ *
+ * 게이트가 이 상수로 호출 증폭을 판정한다(삼순 2026-08-29 6차 P0-3).
+ * 바꾸려면 게이트와 같이 올려야 하므로 "조용한 증폭"이 구조적으로 불가능하다.
+ */
+export const RAG_MAX_RPC_PER_SOURCE = RAG_MAX_SEASON_LANES + 1;
+
 /** 선수(tier2) 후보 정렬 RPC 이름 — 게이트가 이 상수로 production 배선을 결속한다. */
 export const RAG_PLAYER_CHUNK_SEARCH_RPC = "search_baseball_genius_player_chunks" as const;
+
+/**
+ * PostgREST 가 "그 시그니처의 함수를 못 찾았다"고 말하는 코드.
+ *
+ * 🔴 왜 이걸 따로 다루는가 (삼순 2026-08-28 재리뷰 P0-③ "배포 순서도 fail-open"):
+ *   migration 보다 앱이 먼저 뜼면 7인자 오버로드가 아직 없어 `PGRST202` 가 난다.
+ *   그런데 이 경로는 throw 를 상위에서 잡아 **team RAG 를 조용히 양보한다** —
+ *   즉 배포 순서 하나로 구단 서술 경로가 통째로 죽는다(유저는 이유를 모른다).
+ *
+ * 계약: **lane 은 최적화지 전제가 아니다.** 오버로드가 없으면 종전 5인자로 **한 번만**
+ * 내려가 답한다(bounded — 재시도 루프 없음). recall 은 종전 수준으로 떨어지지만
+ * 그것이 지금 리이브에 배포된 상태고, **아무 답도 안 하는 것보다 난다**.
+ */
+const PGRST_FUNCTION_NOT_FOUND = "PGRST202";
 
 /**
  * production RAG 후보 검색 런타임 팩토리.
@@ -356,22 +392,60 @@ export function createProductionRagSearchRuntime(
 ): RagSearchRuntime {
   return {
     embed: embedQuery,
-    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector) => {
+    fetchBySourceKind: async (candidate, sourceKind, limit, queryVector, lanes) => {
       // ⚠️ 여기서 **정렬 없이** `.from(...).limit(40)` 을 쓰면 안 된다 (2026-08-05 production 사고).
       //   문보경 나무위키 chunk 는 133건인데 무순서 40건만 받아오면 '문보물' 이 든 chunk_index 51 이
       //   후보에조차 못 들어와, 앱에서 코사인을 아무리 정확히 계산해도 복구할 수 없다.
       //   그래서 **DB(pgvector)가 질문 벡터 기준으로 정렬한 상위 N** 만 받는다.
       //   최종 근거 4건 선택과 소스 우선순위는 종전대로 앱이 하므로 embedding 도 함께 받는다.
-      // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
-      const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+      // 🔴 lane 은 **DB 인자**다 (삼순 2026-08-28 P0-①). 앱에서 거르면 이미 잘린 뒤라
+      //   목표 시즌 청크가 상위 40 밖이면 영원히 복구되지 않는다. lane 없이 부르면
+      //   종전 5인자 오버로드가 그대로 돌아 기존 경로(선수·뉴스)는 무영향이다.
+      // ⚠️ 아래 주석은 호출문 **바로 앞**에 있어야 한다 — query-guard 는 직전 4줄만 읽는다.
+      //   이번에 설명 주석을 사이에 끼워 넣었다가 CI 가 unbounded_rpc 로 잡았다.
+      const baseArgs = {
         p_entity_type: candidate.entityType,
         p_entity_id: candidate.entityId,
         p_source_kind: sourceKind,
         p_query_embedding: JSON.stringify(queryVector),
         p_limit: limit,
-      });
-      if (error) throw error;
-      return ((data ?? []) as RagServingChunkRow[]).map((row) => ({
+      };
+      // 🔴 호출 예산 (삼순 2026-08-29 6차 P0-3). lane 이 예산을 넘으면 **잘라서** 부른다 —
+      //   lane 은 최적화라 못 도는 lane 이 있어도 any lane 이 답을 낸다. 예산을 액수로
+      //   둘 수가 없으므로 여기서 구조적으로 강제한다(fallback 몴을 1회 남긴다).
+      const planned = (lanes ?? []).slice(0, RAG_MAX_RPC_PER_SOURCE - 1);
+      let rows: RagServingChunkRow[];
+      if (planned.length === 0) {
+        // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+        const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+        if (error) throw error;
+        rows = (data ?? []) as RagServingChunkRow[];
+      } else {
+        const results = await Promise.all(planned.map((lane) =>
+          // query-guard: bounded -- RPC 가 1..50 으로 clamp 하는 정렬 조회이며 caller 는 RAG_CANDIDATE_LIMIT(40) 을 준다.
+          client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, {
+            ...baseArgs,
+            p_season_mode: lane.mode,
+            p_season_year: lane.year ?? null,
+          })));
+        const failed = results.find((result) => result.error);
+        // 🔴 migration-before-app 이 깨졌을 때의 bounded fallback (삼순 2026-08-28 P0-③).
+        //   lane 오버로드가 아직 없으면 team RAG 가 통째로 사라진다 — 그건 배포 순서라는
+        //   **우리 쪽 사정**을 유저 답변 손실로 전가하는 것이다. lane 없이 다시 부른다.
+        //   ⚠️ 재시도는 **소스당 정확히 1회**다 — lane 마다 따로 재시도하면 오버로드가
+        //   없는 순간 호출이 2배로 튀는다(삼순 6차 P0-3). lane 준 호출의 PGRST202 만
+        //   fallback 하고, fallback 자체의 PGRST202 는 종전 함수조차 없다는 뜻이라 던진다.
+        if (failed && (failed.error as { code?: string } | null)?.code === PGRST_FUNCTION_NOT_FOUND) {
+          // query-guard: bounded -- 같은 RPC 의 종전 5인자 오버로드이며 p_limit 은 동일하게 bounded 다.
+          const { data, error } = await client.rpc(RAG_PLAYER_CHUNK_SEARCH_RPC, baseArgs);
+          if (error) throw error;
+          rows = (data ?? []) as RagServingChunkRow[];
+        } else {
+          if (failed?.error) throw failed.error;
+          rows = results.flatMap((result) => (result.data ?? []) as RagServingChunkRow[]);
+        }
+      }
+      return rows.map((row) => ({
         content: row.content,
         pageTitle: row.page_title,
         canonicalUrl: row.canonical_url,
@@ -391,6 +465,51 @@ export function createProductionRagSearchRuntime(
 
 const productionRagSearchRuntime: RagSearchRuntime = createProductionRagSearchRuntime(supabaseAdmin);
 
+/**
+ * team/player RAG 검색 **전체**에 걸리는 절대 deadline (삼순 2026-08-30 7차 P0-3, A안).
+ *
+ * 🔴 왜 개별 타임아웃으로 부족한가:
+ *   embed 는 `AbortSignal` 로 10s 를 걸지만 RPC(`client.rpc`)에는 abort 신호가 없다.
+ *   `Promise.all(planned.map(client.rpc))` 에서 **하나만 영원히 settle 되지 않으면**
+ *   검색 전체가 무기한 정지하고, 유저는 응답 자체를 못 받는다. 병렬성 측정(P3f)은
+ *   "응답이 오기만 하면" 통과하므로 never-settle 을 원리적으로 못 본다.
+ *
+ * 계약: 초과하면 **throw** 한다. 호출자(`pipeline.ts` team/player RAG)는 검색 실패를
+ * catch 해 기존 generic 경로로 양보하므로, 유저는 늦은 답 대신 **다른 답**을 받는다.
+ * 부분 근거로 답하지 않는다 — 근거 일부만으로 답하면 "왜 그 얘기가 빠졌나"가 된다(B안 기각).
+ *
+ * ⚠️ 이 값을 늘리려면 그만큼 유저가 빈 화면을 보는 시간이 늘어난다. 게이트가 상한을
+ *   assertion 으로 박아둔다(P4a) — 조용히 키우면 RED 다.
+ */
+export const RAG_SEARCH_DEADLINE_MS = 8_000;
+
+/** 게이트가 상한을 판정하는 기준. 이 위로 올리는 변경은 게이트를 통과하지 못한다. */
+export const RAG_SEARCH_DEADLINE_MAX_MS = 15_000;
+
+/**
+ * 절대 deadline 래퍼. 초과 시 reject 하고, 정상 종료 시 타이머를 반드시 해제한다.
+ *
+ * ⚠️ `finally` 의 `clearTimeout` 이 없으면 요청이 끝나도 타이머가 이벤트 루프를 붙잡아
+ *   서버리스 인스턴스가 늦게 정리된다. 성공·실패·타임아웃 세 경로 모두에서 해제된다.
+ */
+async function withAbsoluteDeadline<T>(
+  work: () => Promise<T>,
+  deadlineMs: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}_deadline_exceeded`)), deadlineMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export async function searchRag(
   candidate: RagEntityCandidate,
   question: string,
@@ -403,20 +522,64 @@ export async function searchRag(
    */
   project?: EvidenceProjector,
   runtime: RagSearchRuntime = productionRagSearchRuntime,
+  /**
+   * 현재 시즌(KST 연도) 주입 seam. 게이트가 경계값을 넣을 수 있어야 하므로 인자다 —
+   * 함수 안에서 `new Date()` 를 부르면 "작년에도 같은 판정이 나오는가"를 못 태운다.
+   */
+  now: () => number = Date.now,
+  /**
+   * 절대 deadline 주입 seam. 게이트가 짧은 값을 넣어 **초과 경로를 실제로 실행**할 수
+   * 있어야 하므로 인자다 — 안에서 상수를 직접 읽으면 never-settle 축을 태울 수 없다.
+   */
+  deadlineMs: number = RAG_SEARCH_DEADLINE_MS,
+): Promise<RagEvidence[]> {
+  // 🔴 절대 deadline 은 embed 까지 **함께** 감싼다 (삼순 7차 P0-3, A안).
+  //   never-settle 은 RPC 뿐 아니라 임베딩 fetch 에서도 난다 — embed 밖에 두면
+  //   "타임아웃이 있다"는 말만 있고 실제로는 안 걸리는 구간이 남는다.
+  return withAbsoluteDeadline(
+    () => searchRagInner(candidate, question, project, runtime, now),
+    deadlineMs,
+    "rag_search",
+  );
+}
+
+/** deadline 안에서 도는 실제 검색 본문. 계약은 `searchRag` 주석 참조. */
+async function searchRagInner(
+  candidate: RagEntityCandidate,
+  question: string,
+  project: EvidenceProjector | undefined,
+  runtime: RagSearchRuntime,
+  now: () => number,
 ): Promise<RagEvidence[]> {
   const embedded = await runtime.embed(question);
   if (!embedded.ok) return [];
   // query-guard: bounded -- entity + source_kind 폐쇄집합 각각 최대 40행. entity 전체를
   // 먼저 limit(40)하면 Namu 41건 뒤의 Wikipedia가 DB에서 소실된다.
   // 각 source_kind 안에서도 **질문 벡터 기준 상위 40건**이어야 한다(무순서 40건 금지).
+  const currentSeason = kstSeasonOf(now());
+  // 🔴 시즌 축은 **구단 경로에만** 켠다 (삼순 2026-08-28 P0-②).
+  //   선수 문서는 `문보경/2025년` 처럼 시즌으로 쪼개져 있지 않고, 별명·프로필·학교 같은
+  //   시점 무관 서술이 대부분이라 시즌 가중이 득보다 실이 크다. 구단 문서만 연도로
+  //   쪼개져 있다는 것이 이 축의 전제이므로 전제가 성립하는 곳에만 적용한다.
+  const seasonAware = candidate.entityType === "team";
+  const seasonTarget: SeasonTarget = seasonAware
+    ? resolveSeasonTarget(question, currentSeason)
+    : { kind: "none" };
+
   return searchSourcePriorityCandidates(
-    (sourceKind) =>
-      runtime.fetchBySourceKind(candidate, sourceKind, RAG_CANDIDATE_LIMIT, embedded.vector),
+    (sourceKind, limit, vector, lanes) =>
+      runtime.fetchBySourceKind(candidate, sourceKind, limit, vector, lanes),
     embedded.vector,
     // 순서 강제가 아니라 **질문 의도별 가중**이다(삼순 P0).
     // 별명·여담은 나무위키를, 소속·프로필은 위키피디아를 살짝 올릴 뿐 반대편을 탈락시키지 않는다.
     tier2WeightForQuestion(question),
     project,
+    // 🔴 시즌 인식 (2026-08-28). 나무위키 구단 문서는 `구단명/연도[/월]` 로 쪼개져 있어
+    //   순수 코사인으로는 작년 문서가 올해를 이긴다 — `롯데 가을야구 갈 수 있을까?` 의
+    //   top1 이 `롯데 자이언츠/2025년/9월`("진출 가능성 거의 사라진 상황")이었다.
+    //   환각이 아니라 과거 문서를 정확히 읽은 것이므로, 고칠 지점은 생성이 아니라 검색이다.
+    seasonAware ? currentSeason : undefined,
+    seasonTarget,
   );
 }
 
@@ -486,6 +649,30 @@ async function fetchTeamEntry(
   return { snapshotDate, players: rows.map((row) => row.player_name as string) };
 }
 
+/**
+ * production 요청 본문 조립 — `callRagLlmWithPrompt` 가 Gemini 에 실제로 보내는 바로 그 payload.
+ *
+ * 🔴 왜 별도 export 함수인가 (삼순 2026-08-28 4차 NO-GO ① — 실재했던 결함):
+ *   종전에는 fetch 안에서 `{ context, rosterBlock }` 만 손으로 재조립했다. 그래서
+ *   pipeline 이 `liveTeamBlock`·`evidenceTime` 을 넘겨도 **여기서 조용히 버려졌고**,
+ *   이 PR 은 프로덕션에서 아무 일도 하지 않고 있었다. 게이트는 mock extras 캐처와
+ *   builder 직접 호출을 **따로** 태워서 GREEN 이었다(전형적인 false-green).
+ *
+ *   근본 원인은 "extras 를 손으로 옮기는 지점"이 존재한다는 것이다 — 필드를 추가할 때마다
+ *   여기를 같이 고쳐야 하고, 안 고쳐도 타입이 통과한다. 그래서 **재조립을 없앨다** —
+ *   extras 를 그대로 넘기면 필드 추가 시 자동으로 하류까지 간다(구조적으로 누락 불가).
+ *   그리고 게이트가 **배포되는 바로 이 함수**를 태워 payload 를 검사할 수 있게 export 한다.
+ */
+export function buildProductionRagRequest(
+  question: string,
+  evidence: RagEvidence[],
+  systemPrompt?: string,
+  extras?: RagLlmExtras,
+): ReturnType<typeof buildRagLlmRequest> {
+  // ⚠️ 여기서 필드를 골라 적지 않는다. `extras` 를 통째로 넘긴다 — 그게 계약이다.
+  return buildRagLlmRequest(question, evidence, systemPrompt ?? RAG_SYSTEM_PROMPT, extras ?? {});
+}
+
 async function callRagLlmWithPrompt(
   question: string,
   evidence: RagEvidence[],
@@ -497,12 +684,7 @@ async function callRagLlmWithPrompt(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      buildRagLlmRequest(
-        question,
-        evidence,
-        systemPrompt ?? RAG_SYSTEM_PROMPT,
-        { context: extras?.context, rosterBlock: extras?.rosterBlock },
-      ),
+      buildProductionRagRequest(question, evidence, systemPrompt, extras),
     ),
     signal: AbortSignal.timeout(15000),
   });

@@ -155,7 +155,8 @@ async function runE2E(): Promise<void> {
         saves: 26, holds: 5, wins: 8, losses: 4, era: "2.11", ip: "60.0", so: 70, bb: 20, wpct: ".667",
       }] as never),
       fetchTeamRecord: {
-        fetchStandings: async () => STANDINGS,
+        // 순위표는 **행 + 소스 수신 시각** 스냅샷이다 (삼순 2026-08-28 P0-③).
+        fetchStandings: async () => ({ rows: STANDINGS, fetchedAt: new Date(NOW - 60_000).toISOString() }),
         fetchTeamRecords: async () => TEAM_RECORDS,
       },
     } as unknown as QaDeps;

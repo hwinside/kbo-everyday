@@ -35,6 +35,7 @@ import {
   selectEvidence,
   projectPlayerDescriptiveRow,
   type EvidenceProjector,
+  type EvidenceTimeContext,
   validateRagResponse,
   isRagAttemptPath,
   isRagDiscardReason,
@@ -89,11 +90,15 @@ import {
   type EventRecordAnswer,
 } from "./stats/event-records";
 import {
+  buildLiveTeamBlock,
   composeTeamPairAnswer,
   composeTeamRecordAnswer,
   isTeamPairMetric,
   isTeamScoreQuestion,
+  kstSeasonOf,
+  LIVE_TEAM_BLOCK_MAX_AGE_MS,
   mentionsUnservedTeamTopic,
+  resolveLiveTeamScope,
   resolveTeamPairRecord,
   resolveTeamRecord,
   resolveTeamRecordIntent,
@@ -3829,6 +3834,17 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 export interface RagLlmExtras {
   context?: ContextTurn;
   rosterBlock?: string;
+  /**
+   * 현재 시즌 구단 상황 블록 (tier L). `buildLiveTeamBlock` 산출물 그대로.
+   * 조회 실패·순위 부재면 미설정이고, 그때 프롬프트는 종전 계약(현재 단정 금지)로 동작한다.
+   */
+  liveTeamBlock?: string;
+  /**
+   * 근거 시점 주석 기준 (삼순 2026-08-28 재리뷰 P0-①).
+   * 설정하면 각 근거 헤더에 `문서 시점 · 수집일 · 현재성` 이 붙는다.
+   * 미설정이면 종전과 byte 동일(선수·뉴스·공식 경로 무영향).
+   */
+  evidenceTime?: EvidenceTimeContext;
 }
 
 /**
@@ -4656,6 +4672,70 @@ async function answerOfficialDocumentQuestion(
  * LLM durable 경계는 동일하다 — 경계를 지나면 이미 호출을 소비했으므로 null 을 돌려
  * 기존 경로로 내려보내지 않고 여기서 종결한다.
  */
+/**
+ * 구단 RAG 후보의 **현재 시즌 상황 블록**을 만든다 (tier L 주입 seam).
+ *
+ * 🔴 왜 이 함수가 별도로 있는가: 호출부에 인라인 lambda 로 넣으면 게이트가 "호출문 존재"만
+ *   보는 정규식으로 전락한다(`createTeamRecordFetchers` 와 같은 이유 — 삼순 3차 P0-3).
+ *   게이트는 이 함수를 직접 태워 "조회 실패 → null", "순위 부재 → null" 을 고정한다.
+ *
+ * ⚠️ **조회 실패가 경로를 막지 않는다.** 순위 API 장애가 구단 서술 질문을 통째로 죽이면
+ *   가용성을 외부 소스에 위임한 것이다(M90 `시간에 따라 변하는 값을 관문에 두지 마라`).
+ *   블록이 없으면 프롬프트의 종전 계약(현재 단정 금지)이 그대로 살아있다.
+ */
+async function buildLiveTeamBlockForCandidate(
+  canonicalTeam: string,
+  question: string,
+  deps: QaDeps,
+): Promise<string | null> {
+  if (!deps.fetchTeamRecord) return null;
+  // 질문이 현재성 정본을 안 요구하면 **조회도 하지 않는다** — 무관한 정본을 넣으면
+  // 모델이 그걸 답에 끌어다 쓰고(응원가 질문에 성적 서술), 외부 호출도 낭비다.
+  const scope = resolveLiveTeamScope(question);
+  if (scope === "none") return null;
+  try {
+    const [standings, records] = await Promise.all([
+      deps.fetchTeamRecord.fetchStandings(),
+      deps.fetchTeamRecord.fetchTeamRecords(),
+    ]);
+    // 🔴 시각 축 2건 정정 (삼순 2026-08-28 P0-③).
+    //   ① `now` 를 fetch **전**에, `fetchedAt` 을 fetch **후**에 찍고 있었다.
+    //      프로덕션은 `deps.now = Date.now` 라 fetch 소요시간만큼 age 가 **음수**가 되고,
+    //      `ageMs < 0` fail-close 에 걸려 블록이 **항상 죽는다**. 게이트는 `deps.now` 가
+    //      고정 상수라 두 시각이 같아 못 봤다 — 고정 시계가 시각 결함을 가린 것이다.
+    //      → 판정 기준 시각은 조회가 **끝난 뒤** 한 번만 읽는다.
+    //   ② 신선도를 우리 수신 시각으로 재지 않는다. `/api/team-records` 는 upstream 장애 시
+    //      **만료된 메모리 캐시를 200 으로** 돌려주므로 수신 시각을 쓰면 몇 시간 묵은 값이
+    //      방금 값이 된다. 소스가 실어보낸 `fetchedAt` 을 결속하고, 없으면 **모름**이라
+    //      현재를 단정하지 않는다(fail-close).
+    const now = (deps.now ?? Date.now)();
+    // 두 소스를 함께 싣는 블록이므로 신선도는 **둘 중 오래된 쪽**이 기준이다.
+    // 한 쪽만 신선해도 블록 전체가 신선하다고 말하면 뭐가 묵은 것인지 구분되지 않는다.
+    // 한 쪽이라도 timestamp 가 없으면 **모름**이므로 현재를 단정하지 않고 닫는다.
+    const recordsFetchedAt = Date.parse(records.fetchedAt ?? "");
+    const standingsFetchedAt = Date.parse(standings.fetchedAt ?? "");
+    if (!Number.isFinite(recordsFetchedAt) || !Number.isFinite(standingsFetchedAt)) return null;
+    const sourceFetchedAt = Math.min(recordsFetchedAt, standingsFetchedAt);
+    const outcome = buildLiveTeamBlock(
+      canonicalTeam, standings.rows, records, teamIdOfCanonical, scope,
+      {
+        fetchedAt: sourceFetchedAt,
+        now,
+        maxAgeMs: LIVE_TEAM_BLOCK_MAX_AGE_MS,
+        expectedSeason: kstSeasonOf(now),
+        // 🔴 순위표가 실어보낸 시즌을 그대로 넘긴다 (삼순 2026-08-28 4차 ②).
+        //   여기서 기본값을 채우면(예: `?? kstSeasonOf(now)`) "모름"이 "일치"로 둔갑해
+        //   fail-close 가 통째로 무력화된다 — 부재는 0 이 아니라 모름이다.
+        standingsSeason: standings.season,
+      },
+    );
+    return outcome.kind === "ok" ? outcome.block : null;
+  } catch {
+    // 조회 실패는 블록 미설정이지 경로 차단이 아니다(위 주석).
+    return null;
+  }
+}
+
 async function answerTeamRagQuestion(
   userId: string,
   question: string,
@@ -5550,7 +5630,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       const pair = resolveTeamPairRecord(
         intent.metric,
         [mentionedTeams[0], mentionedTeams[1]],
-        pairStandings,
+        pairStandings.rows,
         pairRecords,
         teamIdOfCanonical,
       );
@@ -5595,7 +5675,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 조회 실패를 "기록 없음"으로 둔갓하지 않는다 — 재시도 가능한 실패다.
       return settleTeam(SYSTEM_ERROR_ANSWER, "error");
     }
-    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings, records, teamIdOfCanonical);
+    const outcome = resolveTeamRecord(intent.metric, canonicalTeam, standings.rows, records, teamIdOfCanonical);
     if (outcome.kind === "ok") {
       return settleTeam(composeTeamRecordAnswer(outcome), "kbo_structured");
     }
@@ -6050,10 +6130,29 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       ? resolveRagTeamCandidate(question)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
-    // 구단 서술 질문 — RAG 재서술 (원계약 그대로: 로스터 블록 미주입·숫자 전면 HOLD).
+    // 구단 서술 질문 — RAG 재서술 (숫자 전면 HOLD 유지).
+    //
+    // 🔴 tier L 주입 (2026-08-28): 나무위키 스냅샷은 시점이 없어 모델이 과거를 현재로
+    //   단정하는 것이 이 경로 최대 결함이었다(48h 전수 judge: team_rag GOOD 29%).
+    //   순위표·팀기록 정본을 블록으로 함께 준다 — 같은 코드베이스의 뉴스클리핑·프리뷰가
+    //   `standings-guard` 로 이미 하는 일을 야잘알봇만 안 하고 있었다.
+    //
+    // ⚠️ 조회 실패는 **경로를 막지 않는다**. 블록이 없으면 프롬프트가 "현재 단정 금지"
+    //   계약으로 동작한다 — 종전 거동보다 나빠지지 않고, 순위 조회 장애가 구단 서술 질문을
+    //   통째로 죽이는 것이 더 나쁘다(배포 가용성을 외부 API 에 위임하지 않는다).
+    const liveTeamBlock = await buildLiveTeamBlockForCandidate(teamRagCandidate.name, question, deps);
+    // 🔴 근거 시점 주석 (삼순 2026-08-28 재리뷰 P0-①): lane 이 최신 문서를 가져와도
+    //   생성 계약이 "자료로는 현재를 말하지 말라" 이면 그 근거는 쓸모가 없다.
+    //   문서 시점·수집일·현재성을 값과 함께 실어 모델이 시점을 알고 서술하게 한다.
+    //   판정(최신/과거/모름)은 모델이 아니라 코드가 한다 — `classifyEvidenceCurrency`.
+    const teamNowMs = (deps.now ?? Date.now)();
     const teamAnswer = await answerTeamRagQuestion(
       userId, question, questionNorm, teamRagCandidate, remaining, deps, false,
-      { context: context ?? undefined },
+      {
+        context: context ?? undefined,
+        liveTeamBlock: liveTeamBlock ?? undefined,
+        evidenceTime: { currentSeason: kstSeasonOf(teamNowMs), nowMs: teamNowMs },
+      },
     );
     if (teamAnswer) return teamAnswer;
   }
