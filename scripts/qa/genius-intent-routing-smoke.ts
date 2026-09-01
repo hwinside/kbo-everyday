@@ -609,13 +609,40 @@ async function main() {
     verdict: string; fingerprint: string; answer: string | null;
     clarify: string | null; team: string | null; verdictKnown: boolean | null;
   };
-  function makeStore() {
+  /**
+   * @param blindGet `true` 면 `getIntentDecision` 이 항상 null 을 돌린다 — **CAS 패자**의 상황이다.
+   *
+   * 🔴 삼순 NO-GO (2026-08-31 P0-B): 직전 CAS 축은 `get` 이 이미 저장값을 돌려서
+   *   2회차가 **재생 경로로 조기 종결**했다. 그러면 주입한 provider 도 `storeIntentDecision`
+   *   도 한 번도 안 타므로, "패자가 winner 를 받아 쓰는가" 를 전혀 검증하지 못한다.
+   *   실제 레이스는 **두 worker 가 둘 다 null 을 읽고** 둘 다 쓰려다 하나가 지는 것이다.
+   *   `blindGet` 이 그 순간을 재현한다 — 읽기는 null, 쓰기에서 winner 를 맞는다.
+   */
+  type NormSnap = {
+    originalQuestion: string; status: string;
+    acceptedText: string | null; suggestionText: string | null;
+  };
+  function makeStore(blindGet = false) {
     let stored: Snap | null = null;
+    let normStored: NormSnap | null = null;
     return {
       get: () => stored,
+      seed: (s: Snap) => { stored = s; },
+      normGet: () => normStored,
+      normSeed: (s: NormSnap) => { normStored = s; },
       deps: (c: ReturnType<typeof zero>) => ({
         ...(makeDeps(c, true) as unknown as Record<string, unknown>),
-        getIntentDecision: async () => stored,
+        // 정규화 snapshot 도 server.ts 와 **같은 계약**으로 묶는다 — 최초 1회만 쓰고,
+        // 패자는 winner 를 돌려받는다. 이게 없으면 fingerprint 입력이 흔들어 판정 재생이
+        // 아예 발동하지 않는다(삼순 NO-GO P0-C — 직전 하니스에 이 배선이 0건이었다).
+        getNormalizeSnapshot: async () => (blindGet ? null : normStored),
+        storeNormalizeSnapshot: async (s: NormSnap) => {
+          if (!normStored || normStored.originalQuestion !== s.originalQuestion) {
+            normStored = s; return null; // winner
+          }
+          return normStored; // CAS 패자 — winner 를 돌려준다
+        },
+        getIntentDecision: async () => (blindGet ? null : stored),
         storeIntentDecision: async (d: Snap) => {
           // 이 fingerprint 의 최초 판정만 쓴다 — 다른 fingerprint 면 교체(server.ts 와 동일).
           if (!stored || stored.fingerprint !== d.fingerprint) { stored = d; return null; }
@@ -666,7 +693,48 @@ async function main() {
     const secondKey = `${(second as { source?: string }).source}|${(second as { answer?: string }).answer}`;
     if (firstKey !== secondKey) casFails.push(`${q.slice(0, 14)}: winner 판정 미사용`);
   }
-  check("A3-CAS 저장된 winner 판정이 이번 회차 provider 결과를 이긴다", casFails.length === 0, casFails);
+  check("A3-CAS 저장된 winner 판정이 이번 회차 provider 결과를 이긴다(재생 경로)",
+    casFails.length === 0, casFails);
+
+  // A3-CAS2 — **진짜 CAS 패자**: 읽기는 null 인데 쓰기에서 winner 를 맞는다 (삼순 P0-B).
+  //
+  // 🔴 위 A3-CAS 는 2회차가 `getIntentDecision` 재생으로 조기 종결해 `storeIntentDecision`
+  //   을 아예 안 탔다 — 즉 "패자가 winner 를 받아 쓰는가" 를 한 번도 검증하지 않았다.
+  //   여기서는 읽기를 **의도적으로 눈멀게** 해(두 worker 가 동시에 null 을 읽은 순간)
+  //   provider 는 다른 판정을 내고, 저장에서 winner 를 받아 그것으로 답하는지 본다.
+  //
+  // 검증력 증명: winner 를 무시하도록 회귀를 주입하면 이 축이 RED 가 된다
+  //   (`--fault-cas-ignore-winner`).
+  {
+    const cas2Fails: string[] = [];
+    for (const q of ["질문답헤줘", "사랑해요"]) {
+      // 기준선 — 정상 경로에서 이 질문이 받는 답.
+      const base = makeStore();
+      const baseRun = await answerQuestion(`cas2-base-${q}`, q, base.deps(zero()));
+      const winnerSnap = base.get();
+      if (!winnerSnap) { cas2Fails.push(`${q.slice(0, 14)}: 기준선 판정 저장 없음`); continue; }
+      const baseKey = `${(baseRun as { source?: string }).source}|${(baseRun as { answer?: string }).answer}`;
+
+      // 패자 회차 — get 은 null(눈먼 읽기), 저장소엔 이미 winner 가 있고,
+      // 이번 회차 provider 는 **다른 판정**을 낸다.
+      const loser = makeStore(true);
+      loser.seed(winnerSnap);
+      const forced = {
+        ...(loser.deps(zero()) as unknown as Record<string, unknown>),
+        classifyIntent: async () => ({
+          text: JSON.stringify({ intent: "SMALLTALK_SCOPE", answer: "", clarify: "", standalone: true, team: "" }),
+          inputTokens: 1, outputTokens: 1,
+        }),
+      } as unknown as QaDeps;
+      const loserRun = await answerQuestion(`cas2-${q}`, q, forced);
+      const loserKey = `${(loserRun as { source?: string }).source}|${(loserRun as { answer?: string }).answer}`;
+      if (loserKey !== baseKey) {
+        cas2Fails.push(`${q.slice(0, 14)}: 패자가 자기 판정으로 답했다 (winner=${baseKey.slice(0, 24)} / loser=${loserKey.slice(0, 24)})`);
+      }
+    }
+    check("A3-CAS2 CAS 패자가 winner 판정을 받아 쓴다(눈먼 읽기 = 실제 레이스)",
+      cas2Fails.length === 0, cas2Fails);
+  }
 
   // A3-FP — **fingerprint 가 바뀌면 새 판정이 저장된다.** 프롬프트·맥락이 바뀐 뒤에도
   //   옛 판정이 남아 있으면 그 messageId 는 영원히 재분류되며 매번 흔들린다
@@ -687,6 +755,71 @@ async function main() {
       before !== null && after !== null && before.fingerprint !== after.fingerprint,
       before && after && before.fingerprint === after.fingerprint
         ? [`fingerprint 가 그대로다(${before.fingerprint.slice(0, 8)}) — 새 계약의 판정이 영원히 저장 안 됨`] : []);
+  }
+
+  // ── A3-NORM — **정규화 snapshot 이 라우팅 입력을 고정하는가** (삼순 NO-GO P0-C) ────
+  //
+  // 🔴 판정 재생(`A3`/`A3-CAS`)만으로는 부족하다. `intentFingerprint` 는 **정규화가 끝난**
+  //   question 으로 계산하는데 정규화 자체가 LLM 이라, 후보가 흔들리면 fingerprint 가
+  //   달라져 **판정 재생이 아예 발동하지 않는다.** 즉 재생 계약이 종이 위에서만 성립한다.
+  //   직전 하니스에는 `get/storeNormalizeSnapshot` 배선이 **0건**이라 이 축을 한 번도
+  //   안 태웠다(삼순 실측).
+  //
+  // 검증 방식: 1회차와 2회차에서 `normalizeQuestionLlm` 이 **서로 다른 후보**를 내도록
+  //   주입한다. snapshot 이 고정돼 있으면 2회차는 provider 를 아예 안 타야 하고(호출 0),
+  //   답도 바이트 동일해야 한다. 고정이 없으면 정규화가 갈려 답이 흔들린다.
+  {
+    const normFails: string[] = [];
+    for (const q of ["보끄가모야", "질문답헤줘"]) {
+      const store = makeStore();
+      let normCalls = 0;
+      const mk = (candidate: string) => ({
+        ...(store.deps(zero()) as unknown as Record<string, unknown>),
+        normalizeQuestionLlm: async () => {
+          normCalls += 1;
+          return { text: candidate, inputTokens: 1, outputTokens: 1 };
+        },
+      } as unknown as QaDeps);
+      const first = await answerQuestion(`norm-${q}`, q, mk("보크가 뭐야"));
+      const callsAfterFirst = normCalls;
+      // 2회차 — provider 가 **전혀 다른 후보**를 내는 상황.
+      const second = await answerQuestion(`norm-${q}`, q, mk("질문 답해줘"));
+      if (normCalls !== callsAfterFirst) {
+        normFails.push(`${q.slice(0, 12)}: 재처리에서 정규화 provider 재호출 ${normCalls - callsAfterFirst}회 — snapshot 미재생`);
+      }
+      const a = (first as { answer?: string }).answer;
+      const b = (second as { answer?: string }).answer;
+      if (a !== b) normFails.push(`${q.slice(0, 12)}: 정규화가 흔들려 답이 달라졌다`);
+      const snap = store.normGet();
+      if (snap === null) normFails.push(`${q.slice(0, 12)}: 정규화 snapshot 이 저장되지 않았다`);
+      else if (snap.originalQuestion !== q) {
+        normFails.push(`${q.slice(0, 12)}: snapshot 원문이 다르다(${snap.originalQuestion.slice(0, 12)})`);
+      }
+    }
+    check("A3-NORM 정규화 snapshot 이 재처리 입력을 고정한다(provider 재호출 0)",
+      normFails.length === 0, normFails);
+  }
+
+  // A3-NORM2 — **CAS 패자는 winner 정규화 판정을 쓴다.** 두 worker 가 동시에 null 을 읽고
+  //   서로 다른 후보를 내면, 진 쪽이 자기 후보로 답하면 안 된다(같은 질문 두 답).
+  {
+    const q = "보끄가모야";
+    const base = makeStore();
+    const baseRun = await answerQuestion(`norm2-base-${q}`, q, {
+      ...(base.deps(zero()) as unknown as Record<string, unknown>),
+      normalizeQuestionLlm: async () => ({ text: "보크가 뭐야", inputTokens: 1, outputTokens: 1 }),
+    } as unknown as QaDeps);
+    const winnerSnap = base.normGet();
+    const loser = makeStore(true); // 눈먼 읽기 = 실제 레이스
+    if (winnerSnap) loser.normSeed(winnerSnap);
+    const loserRun = await answerQuestion(`norm2-${q}`, q, {
+      ...(loser.deps(zero()) as unknown as Record<string, unknown>),
+      normalizeQuestionLlm: async () => ({ text: "보크 가모야", inputTokens: 1, outputTokens: 1 }),
+    } as unknown as QaDeps);
+    const same = (baseRun as { answer?: string }).answer === (loserRun as { answer?: string }).answer;
+    check("A3-NORM2 정규화 CAS 패자가 winner snapshot 을 받아 쓴다", same && winnerSnap !== null,
+      same ? (winnerSnap === null ? ["winner snapshot 미저장"] : [])
+        : ["패자가 자기 정규화 후보로 답했다 — 같은 질문에 두 답이 나간다"]);
   }
 
   // A3-RENDER — **되묻기 문구가 실제로 고정되는가.** 두 번째 회차에서 오늘 경기 목록을
@@ -882,6 +1015,54 @@ async function main() {
     check("A8c 분류기 장애에도 기존 경로가 답을 준다(fail-open 취지 유지)",
       ANSWERED.has((failRun as { source?: string }).source ?? ""),
       { source: (failRun as { source?: string }).source });
+
+    // A8d — **같은 개방 질문의 양방향** (삼순 NO-GO 2026-08-31 P0-D).
+    //
+    // 🔴 a·b 는 `RULE_Q`, c 는 `FALLBACK_Q` 로 **다른 질문**을 썼다. 그러면 "개방이 열렸다" 와
+    //   "장애에 닫혔다" 가 같은 대상을 말하지 않아, **개방을 열어준 바로 그 질문이
+    //   장애 때 닫히는가** 를 끝내 안 재었다. 진짜 계약은 그것이다.
+    //
+    //   `RULE_Q` 는 종전 계약이 false 라 개방 덕분에 official 이 열렸다(a·b 실측).
+    //   그렇다면 분류기가 죽을 때는 **그 개방이 철회돼 official=0** 이어야 한다.
+    const cFail2 = zero();
+    const failingSame = {
+      ...(makeDeps(cFail2, true) as unknown as Record<string, unknown>),
+      // ⚠️ 카운터를 **여기서 직접** 올린다. `makeDeps` 의 래퍼를 통째로 교체하므로
+      //   그쪽 카운터는 영원히 0 이고, 그러면 자기검증이 "주입 미발화"로 오판한다
+      //   (2026-08-31 실측 — 내가 정확히 그 함정을 밟았다).
+      classifyIntent: async () => {
+        cFail2.intentErrors += 1;
+        throw new Error("injected classifier failure");
+      },
+    } as unknown as QaDeps;
+    await answerQuestion(`fault-same-${RULE_Q}`, RULE_Q, failingSame);
+    check("A8d 개방을 열어준 **같은 질문**이 분류기 장애에서 official=0 으로 닫힌다",
+      cFail2.intentErrors > 0 && cFail2.officialSearch === 0,
+      cFail2.intentErrors === 0
+        ? ["주입이 발화하지 않았다 — 이 축은 무효다(자기검증)"]
+        : [`official=${cFail2.officialSearch} — 장애인데 개방이 살아있다`]);
+
+    // A8e — outer oracle 을 **내부 카운터 밖**으로 둔다 (삼순 P0-D).
+    //
+    // 🔴 A8b 는 `officialLlm > 0` + `answer.length > 0` 이라 둘 다 하니스 내부 산물이어서
+    //   독립 oracle 이 아니다. 여기서는 **어떤 근거 문서가 실제로 프롬프트에 들어갔는지**를
+    //   official LLM 호출 인자에서 직접 관측한다 — 카운터가 고장나도 이쪽은 바뀐다.
+    {
+      let officialDocChars = 0;
+      const cObs = zero();
+      const observed = {
+        ...(makeDeps(cObs, true) as unknown as Record<string, unknown>),
+        callOfficialRagLlm: async (...a: unknown[]) => {
+          // 근거 인자의 부피를 재는다 — 빈 근거로 LLM 을 불렀다면 개방은 형해화된 것이다.
+          officialDocChars += JSON.stringify(a.slice(1) ?? []).length;
+          return callOfficialRagLlm(...(a as Parameters<typeof callOfficialRagLlm>));
+        },
+      } as unknown as QaDeps;
+      await answerQuestion(`oracle-${RULE_Q}`, RULE_Q, observed);
+      check("A8e outer oracle — official LLM 이 실제 근거 문서를 받았다(카운터 무관)",
+        officialDocChars > 0,
+        { officialDocChars, officialLlm: cObs.officialLlm });
+    }
   }
 
   // A4 — durable 재생이 실제로 판정을 고정하는가(순수 함수 축, provider 무관)

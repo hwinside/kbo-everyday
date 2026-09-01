@@ -1831,6 +1831,24 @@ export function resolveRagTeamCandidate(question: string): RagTeamCandidate | nu
     [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
   if (mentionsOtherTeam) return null;
 
+  return teamCandidateOfCanonical(canonical);
+}
+
+/**
+ * canonical 구단명 → RAG 후보. **문자열 결속과 분류기 귀속이 같은 구조체를 만든다.**
+ *
+ * 🔴 삼순 NO-GO (2026-08-31): 직전 구현은 `intentTeam` 을 official **차단**에만 쓰고,
+ *   정작 team RAG 후보는 뒤에서 다시 `resolveRagTeamCandidate(question)` — 즉 **원문
+ *   문자열** — 으로 구했다. 그래서 `호걸이 이름 뜻이뭐야?` 는 분류기가 KIA 로 판정해도
+ *   official 이 닫히기만 하고 **KIA 문서로 이어지지 않았다.** 판정을 만들어 놓고 쓰지 않은
+ *   것이라, 게이트가 `official=0` 만 보면 연결이 끊겨도 GREEN 이었다.
+ *
+ *   여기서 후보 생성을 한 함수로 모아, 문자열 경로와 분류기 경로가 **같은 entityId·
+ *   sourceKey 규약**을 쓰게 한다. 매핑표를 새로 만들지 않는다 — `TEAM_ALIASES.teamId` 하나다.
+ */
+export function teamCandidateOfCanonical(canonical: string): RagTeamCandidate | null {
+  const teamId = teamIdOfCanonical(canonical);
+  if (teamId === null) return null;
   return {
     entityType: "team",
     entityId: String(teamId),
@@ -6677,9 +6695,21 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return answerNewsRagQuestion(userId, question, questionNorm, newsRagCandidate, remaining, deps);
   }
 
+  // 🔴 **분류기 귀속 판정을 실제 team RAG 후보로 잇는다** (삼순 NO-GO 2026-08-31 P0-A).
+  //
+  //   직전 구현은 `intentTeam` 을 official **차단**에만 쓰고, 정작 team 후보는 여기서 다시
+  //   `resolveRagTeamCandidate(question)` — **원문 문자열** — 으로 구했다. 그래서
+  //   `호걸이 이름 뜻이뭐야?` 는 분류기가 KIA 로 판정해도 문장에 `KIA` 가 없으니 후보가
+  //   null 이었고, official 이 닫히는 것 말고는 **아무 데도 연결되지 않았다.**
+  //   판정을 만들어 놓고 쓰지 않은 것이라, 어휘 목록을 지운 자리가 비어 있었다.
+  //
+  //   ⚠️ 우선순위는 **문자열 결속이 먼저**다. 문장에 구단명이 있으면 그것이 더 강한 근거이고
+  //     비교 질문 방어(`mentionsOtherTeam`)도 그 경로에만 있다. 분류기 귀속은 문자열이
+  //     아무것도 못 잡았을 때의 **보강**으로만 쓴다 — 미탐의 대가는 종전 동작이다.
   const teamRagCandidate =
     deps.enableTeamRag && !enabledPlayerCandidate && route !== "baseball_rule_term"
-      ? resolveRagTeamCandidate(question)
+      ? (resolveRagTeamCandidate(question)
+        ?? (intentTeam !== null ? teamCandidateOfCanonical(intentTeam) : null))
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
     // 구단 서술 질문 — RAG 재서술 (숫자 전면 HOLD 유지).

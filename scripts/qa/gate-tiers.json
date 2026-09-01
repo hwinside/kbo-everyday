@@ -276,6 +276,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-intent-durable",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-intent-durable:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-live-team-block",
       "tier": "deploy"
     },
