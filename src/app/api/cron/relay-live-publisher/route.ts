@@ -16,6 +16,7 @@ import {
   TICK_INTERVAL_MS,
   type FrameRow,
   type PersistedGameState,
+  selectPersistableStaleMarkers,
   type RelayInsertOutcome,
   type TickResult,
 } from "@/lib/game/relay-live-publisher";
@@ -327,9 +328,33 @@ export async function GET(req: NextRequest) {
     // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
     // 위함(삼순 3차 lease: 저장 직전 소유권 재확인).
-    // frames-stale 관측 적재 — 발행 critical path 밖(loop 종료 후), 실패는 삼킨다
-    // (fire-and-forget — 3s 상한, warmup 의 ⓕ 적재와 동일 계약). 마커 없으면 무호출.
-    const framesStalePersist = framesStaleMarkers.length
+    const stillOwner = !lockLost && (await renewLock(token));
+    // state SET 결과를 경기별로 검증해 obs 적재와 결속한다(삼순 #1331 NO-GO ② —
+    // 순서: owner 확인 → state SET 성공 검증 → obs 적재). streak 의 SSOT 는 Redis state 라,
+    // 저장이 안 된 streak 의 마커를 적재하면 다음 인보케이션이 같은 임계 행(20)을
+    // 반복 적재해 배증 상한이 깨진다 — 마커는 state 와 운명을 같이한다.
+    const stateSetOk = new Map<string, boolean>();
+    if (stillOwner) {
+      await Promise.all(
+        gameIds.map(async (gameId) => {
+          const setResult = await redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]);
+          stateSetOk.set(gameId, setResult === "OK");
+        }),
+      );
+    } else {
+      lockLost = true;
+    }
+
+    // frames-stale 관측 적재 — 발행 critical path 밖(loop·state 저장 후), 실패는 삼킨다
+    // (fire-and-forget — 3s 상한, warmup 의 ⓕ 적재와 동일 계약). lockLost·비소유·
+    // state SET 실패 경기의 마커는 선별에서 탈락(순수 함수 — 게이트가 결함주입 검증).
+    const persistableMarkers = selectPersistableStaleMarkers({
+      markers: framesStaleMarkers,
+      lockLost,
+      stillOwner,
+      stateSetOk: (gameId) => stateSetOk.get(gameId) === true,
+    });
+    const framesStalePersist = persistableMarkers.length
       ? await Promise.race([
           persistWarmupEnrichObs([
             {
@@ -337,7 +362,7 @@ export async function GET(req: NextRequest) {
               tickKind: "publisher",
               liveSource: "relay-publisher",
               liveStage: "relay-publisher",
-              obs: framesStaleMarkers,
+              obs: persistableMarkers,
             },
           ]),
           new Promise<{ error: string }>((resolve) =>
@@ -348,25 +373,15 @@ export async function GET(req: NextRequest) {
         }))
       : { persisted: 0 };
 
-    const stillOwner = !lockLost && (await renewLock(token));
-    if (stillOwner) {
-      await Promise.all(
-        gameIds.map((gameId) =>
-          redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
-        ),
-      );
-    } else {
-      lockLost = true;
-    }
-
     return NextResponse.json({
       ok: true,
       liveGames: gameIds.length,
       lockLost,
       gc: gcError ? `error:${gcError.message}` : "ok",
       ...totals,
-      // frames-stale 관측 — 발현 마커와 적재 결과({persisted}|{error}). 관측 전용, 본체 무영향.
+      // frames-stale 관측 — 수집/적재허용 마커와 적재 결과({persisted}|{error}). 관측 전용.
       framesStale: framesStaleMarkers,
+      framesStalePersisted: persistableMarkers,
       framesStalePersist,
       errors: totals.errors.slice(0, 20),
     });

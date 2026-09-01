@@ -159,6 +159,30 @@ export function stateKey(gameId: string): string {
   return `${STATE_KEY_PREFIX}${gameId}`;
 }
 
+/**
+ * obs 적재 허용 마커 선별(순수) — 삼순 #1331 NO-GO ②.
+ *
+ * streak 의 SSOT 는 Redis 에 저장된 state 다. 적재만 되고 state 저장이 안 되면(락 상실·
+ * SET 실패) 다음 인보케이션이 같은 streak 을 재생산해 임계 행(20)이 반복 적재되고
+ * 배증 상한이 깨진다. 계약: **owner 확인 → state SET 성공 검증 → obs 적재** 순서로,
+ * 폐기되는 streak 의 마커는 함께 폐기한다(마커↔state 원자적 동반).
+ * 마커 형식 `<gameId>:frames-stale=<streak>` 의 gameId 로 state SET 결과와 결속.
+ */
+export function selectPersistableStaleMarkers(params: {
+  markers: string[];
+  lockLost: boolean;
+  stillOwner: boolean;
+  stateSetOk: (gameId: string) => boolean;
+}): string[] {
+  const { markers, lockLost, stillOwner, stateSetOk } = params;
+  if (lockLost || !stillOwner) return [];
+  return markers.filter((marker) => {
+    const sep = marker.indexOf(":");
+    if (sep <= 0) return false;
+    return stateSetOk(marker.slice(0, sep)) === true;
+  });
+}
+
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
 export async function listLiveGameIds(date: string): Promise<string[]> {
   const games = await fetchNaverGames(date);
@@ -275,15 +299,24 @@ export interface TickResult {
   errors: string[];
 }
 
+/**
+ * degraded 신호 헤더 — game-relay 가 일부 이닝 실패 시 last-good 을 섞은 200 에 붙인다.
+ * frames-stale 은 "완전 fresh 200 + 내용 동일"만 stale-equal 증거로 센다(삼순 #1331 ①).
+ */
+export const RELAY_DEGRADED_HEADER = "x-kbo-relay-degraded";
+
 async function envelopeFrom(
   channel: LivePollEnvelope["channel"],
   task: Promise<Response>,
-): Promise<LivePollEnvelope | null> {
+): Promise<{ envelope: LivePollEnvelope; degraded: boolean } | null> {
   try {
     const response = await task;
     if (!response.ok) return null; // 실패 프레임은 쓰지 않는다 — 클라이언트 last-good 유지 계약과 동일
     const data: unknown = await response.json();
-    return { channel, ok: true, status: response.status, data };
+    return {
+      envelope: { channel, ok: true, status: response.status, data },
+      degraded: response.headers.get(RELAY_DEGRADED_HEADER) === "1",
+    };
   } catch {
     return null;
   }
@@ -330,23 +363,26 @@ export async function publishGameTick(
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    const envelope = await promise;
+    const fetched = await promise;
     if (signal?.aborted) {
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    if (!envelope) {
+    if (!fetched) {
       result.errors.push(`${gameId}:${channel}:fetch-failed`);
       continue;
     }
+    const { envelope, degraded } = fetched;
 
     const hash = frameHash(envelope.data);
     if (state.lastHash[channel] === hash) {
       result.skippedUnchanged += 1;
-      // frames-stale 관측: relay 채널의 "fetch 성공 + 내용 동일"만 센다 — 업스트림이
-      // 살아있는데 데이터가 멎은 stale-equal(mode B)의 직접 증거. events/live/detail 은
-      // cadence 가 달라 섞으면 streak 의미가 흐려진다.
-      if (channel === "relay") {
+      // frames-stale 관측: relay 채널의 "**완전 fresh** fetch 성공 + 내용 동일"만 센다 —
+      // 업스트림이 살아있는데 데이터가 멎은 stale-equal(mode B)의 직접 증거.
+      // degraded 200(last-good 혼입 — 일부 이닝 fetch 실패)은 업스트림 실패 구간이므로
+      // 불가산(삼순 #1331 NO-GO ①) — 단, 리셋도 안 한다(실패는 무변경 '관측'이 아님).
+      // events/live/detail 은 cadence 가 달라 섞으면 streak 의미가 흐려진다.
+      if (channel === "relay" && !degraded) {
         state.relayUnchangedStreak += 1;
         if (shouldEmitFramesStale(state.relayUnchangedStreak)) {
           result.framesStaleStreak = state.relayUnchangedStreak;

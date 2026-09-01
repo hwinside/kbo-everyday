@@ -13,7 +13,12 @@
  *  S7 selectEmergentObsTicks 가 frames-stale= prefix 마커를 발현으로 판정(양방향)
  *  S8 persistWarmupEnrichObs 실적재: tick_kind='publisher' 행 + 무발현 시 insert 0 (주입 admin,
  *     production seam — 게이트가 사본이 아니라 실제 persist 함수를 태운다)
- *  S9 route 배선: 마커 수집 + persist 호출이 실제 소스에 존재 (주석 blank 처리 후 구조 판정)
+ *  S9 route 배선: 마커 수집 + persist 호출이 실제 소스에 존재 + **owner→state SET→적재 순서**
+ *     (주석 blank 처리 후 구조 판정)
+ *  S10 degraded-200 불가산(삼순 NO-GO ①): x-kbo-relay-degraded=1 이면 무변경이어도
+ *     streak 불가산·불리셋 — fresh 무변경 대조군으로 양방향 검증
+ *  S11 적재 허용 선별(삼순 NO-GO ②): lock-lost / 비소유(owner 상실) / state-SET 실패
+ *     결함주입 시 그 마커 탈락(RED) — 정상 경로 대조군 포함
  *
  * env 불필요(더미 선주입). 실패 시 exit 1.
  */
@@ -33,7 +38,9 @@ const {
   serializeState,
   deserializeState,
   shouldEmitFramesStale,
+  selectPersistableStaleMarkers,
   FRAMES_STALE_THRESHOLD_TICKS,
+  RELAY_DEGRADED_HEADER,
 } = await import("../../src/lib/game/relay-live-publisher.ts");
 const { selectEmergentObsTicks, persistWarmupEnrichObs } = await import(
   "../../src/lib/notifications/warmup-enrich-obs.ts"
@@ -46,15 +53,18 @@ function check(name: string, ok: boolean, detail: unknown = ""): void {
   else { fail += 1; console.error(`FAIL - ${name} :: ${JSON.stringify(detail)}`); }
 }
 
-function relayResponse(marker: number, httpOk = true): Response {
+function relayResponse(marker: number, httpOk = true, degraded = false): Response {
   return new Response(JSON.stringify({ innings: [{ inning: 1, marker }] }), {
     status: httpOk ? 200 : 502,
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(degraded ? { [RELAY_DEGRADED_HEADER]: "1" } : {}),
+    },
   });
 }
 
-function makeDeps(outcome: RelayInsertOutcome, marker: number, httpOk = true): TickDeps {
-  const handler = (): Promise<Response> => Promise.resolve(relayResponse(marker, httpOk));
+function makeDeps(outcome: RelayInsertOutcome, marker: number, httpOk = true, degraded = false): TickDeps {
+  const handler = (): Promise<Response> => Promise.resolve(relayResponse(marker, httpOk, degraded));
   return {
     handlers: { relay: handler, events: handler, live: handler, detail: handler },
     insertFrame: (): Promise<RelayInsertOutcome> => Promise.resolve(outcome),
@@ -203,10 +213,49 @@ async function run() {
       .replace(/^[ \t]*\/\/[^\n]*/gm, (m) => " ".repeat(m.length));
     const collects = /framesStaleMarkers\.push\(\s*`\$\{gameIds\[i\]\}:frames-stale=\$\{r\.framesStaleStreak\}`/.test(src);
     const persists = /persistWarmupEnrichObs\(\[/.test(src) && /tickKind:\s*"publisher"/.test(src);
-    const guarded = /framesStaleMarkers\.length\s*\?/.test(src);
+    const guarded = /persistableMarkers\.length\s*\?/.test(src);
     check("S9 route: tick 결과 → 마커 수집 배선 존재", collects, collects);
     check("S9 route: persistWarmupEnrichObs(publisher tick) 호출 존재", persists, persists);
-    check("S9 route: 마커 0건이면 무호출 가드", guarded, guarded);
+    check("S9 route: 적재허용 마커 0건이면 무호출 가드", guarded, guarded);
+    // 순서 계약(삼순 NO-GO ②): owner 확인(stillOwner) → state SET(stateSetOk) → 적재 선별
+    // (selectPersistableStaleMarkers) → persist 호출이 소스 순서상 이 순서여야 한다.
+    const iOwner = src.indexOf("const stillOwner");
+    const iSetOk = src.indexOf("stateSetOk.set(");
+    const iSelect = src.indexOf("selectPersistableStaleMarkers({");
+    const iPersist = src.indexOf("persistWarmupEnrichObs([");
+    const ordered = iOwner >= 0 && iSetOk > iOwner && iSelect > iSetOk && iPersist > iSelect;
+    check("S9 route: owner→state SET 검증→선별→적재 순서", ordered, { iOwner, iSetOk, iSelect, iPersist });
+    const selectorWired = /lockLost,\s*\n?\s*stillOwner,/.test(src) && /stateSetOk\.get\(gameId\) === true/.test(src);
+    check("S9 route: 선별기가 lockLost·stillOwner·stateSetOk 실값에 결속", selectorWired, selectorWired);
+  }
+
+  // ── S10: degraded-200 불가산 (삼순 NO-GO ①) — fresh 대조군으로 양방향 ──
+  {
+    const state: PersistedGameState = newGameState();
+    await publishGameTick(makeDeps("inserted", 50), state, "g1", RELAY_ONLY_TICK, undefined);
+    // fresh 무변경 → +1 (대조군)
+    await publishGameTick(makeDeps("inserted", 50), state, "g1", RELAY_ONLY_TICK, undefined);
+    check("S10 대조군: fresh 무변경 → streak +1", state.relayUnchangedStreak === 1, state.relayUnchangedStreak);
+    // degraded 무변경(같은 내용 + degraded 헤더) → 불가산·불리셋
+    const r = await publishGameTick(makeDeps("inserted", 50, true, true), state, "g1", RELAY_ONLY_TICK, undefined);
+    check("S10 degraded 무변경: streak 불가산(불변)", state.relayUnchangedStreak === 1, state.relayUnchangedStreak);
+    check("S10 degraded 무변경: skippedUnchanged 집계는 유지(발행 안 함)", r.skippedUnchanged === 1, r.skippedUnchanged);
+    check("S10 degraded 무변경: 발현 없음", r.framesStaleStreak === null, r.framesStaleStreak);
+    // degraded 가 해소되면 fresh 무변경이 다시 가산된다
+    await publishGameTick(makeDeps("inserted", 50), state, "g1", RELAY_ONLY_TICK, undefined);
+    check("S10 degraded 해소 후 fresh 무변경: 재가산 +1", state.relayUnchangedStreak === 2, state.relayUnchangedStreak);
+  }
+
+  // ── S11: 적재 허용 선별 결함주입 (삼순 NO-GO ②) ──
+  {
+    const markers = ["g1:frames-stale=20", "g2:frames-stale=40"];
+    const allOk = { markers, lockLost: false, stillOwner: true, stateSetOk: () => true };
+    check("S11 대조군(정상): 전마커 허용", selectPersistableStaleMarkers(allOk).length === 2, selectPersistableStaleMarkers(allOk));
+    check("S11 lock-lost 주입: 전마커 탈락(RED)", selectPersistableStaleMarkers({ ...allOk, lockLost: true }).length === 0, "lockLost");
+    check("S11 비소유(owner 상실) 주입: 전마커 탈락(RED)", selectPersistableStaleMarkers({ ...allOk, stillOwner: false }).length === 0, "notOwner");
+    const partial = selectPersistableStaleMarkers({ ...allOk, stateSetOk: (g: string) => g === "g2" });
+    check("S11 state-SET 실패(g1) 주입: g1 탈락·g2 유지", partial.length === 1 && partial[0] === "g2:frames-stale=40", partial);
+    check("S11 기형 마커(gameId 없음): 탈락", selectPersistableStaleMarkers({ ...allOk, markers: ["frames-stale=20"] }).length === 0, "malformed");
   }
 
   console.log(`\nRESULT ${fail === 0 ? "PASS" : "FAIL"} — ${pass} pass / ${fail} fail`);
