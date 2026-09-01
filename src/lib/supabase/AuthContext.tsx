@@ -15,8 +15,8 @@ import {
   clearSessionBackup,
 } from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
-import { beginBootLoad, settleBootLoad, invalidateBootCache } from "@/lib/boot-cache";
-import { isNativeRuntime } from "@/lib/capacitor/platform";
+import { invalidateBootCache } from "@/lib/boot-cache";
+import { performBootLoad } from "@/lib/boot-loader";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -86,30 +86,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  다른 유저 상태를 덮지 못하게 모든 setProfile 적용 직전에 확인한다. */
   async function loadProfileNow(accessToken: string, userId: string, isCurrent: () => boolean): Promise<boolean> {
     // 1차: 서버 부트 번들 API (Bearer 토큰 + service role — 가장 안정적)
-    // PR④: /api/me → /api/me/boot. prefs 는 네이티브 런타임만 include=prefs 로 요청해
-    // 웹 유저 DB read 증가 0. begin/settle 프로토콜로 소비자(NativePushMount 등
-    // AuthProvider 보다 먼저 뜨는 쪽)가 부트 완료를 기다렸다 소비한다.
-    // 실패 시에도 반드시 settle(null) — 대기 중 소비자를 타임아웃까지 묶어두지 않는다.
-    const wantPrefs = isNativeRuntime();
-    beginBootLoad(userId);
-    let bootSettled = false;
-    try {
-      const res = await fetch(wantPrefs ? "/api/me/boot?include=prefs" : "/api/me/boot", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.profile) {
-          if (!isCurrent()) { settleBootLoad(userId, null); return false; } // 세대 교체됨 — 옛 응답 폐기
-          settleBootLoad(userId, json.prefs ?? null);
-          bootSettled = true;
-          setProfile(json.profile);
-          syncProfileToLocal(json.profile);
-          return true;
-        }
-      }
-    } catch { /* continue to fallback */ }
-    if (!bootSettled) settleBootLoad(userId, null); // 실패 fail-open — 대기 소비자 즉시 해제
+    // PR④: /api/me → /api/me/boot. 순수 로직은 boot-loader.performBootLoad 로 분리 —
+    // qa:user-boot-bundle 종단 게이트가 이 실제 seam(AuthContext→boot route→소비자)을 태운다.
+    // prefs 는 네이티브 런타임만 include=prefs. 실패 시에도 반드시 settle(null).
+    const boot = await performBootLoad(accessToken, userId, isCurrent);
+    if (boot.status === "stale") return false; // 세대 교체됨 — 옛 응답 폐기
+    if (boot.status === "ok") {
+      const bootProfile = boot.profile as unknown as Profile;
+      setProfile(bootProfile);
+      syncProfileToLocal(bootProfile);
+      return true;
+    }
 
     // 2차: Supabase REST API 직접 호출 (access_token 명시 전달)
     try {
