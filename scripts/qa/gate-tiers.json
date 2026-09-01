@@ -280,6 +280,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-intent-durable-db",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-intent-durable-db:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-intent-durable:selftest",
       "tier": "ci"
     },

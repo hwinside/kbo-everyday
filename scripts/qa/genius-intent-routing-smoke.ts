@@ -457,48 +457,33 @@ async function main() {
   check("A3b 절대 불변식② 잡담·후속 35건 선수/구단 RAG 진입 0", ragViolations.length === 0,
     ragViolations.slice(0, 5).map((x) => `VIOL-RAG:${x.e.question.slice(0, 16)}`));
 
-  /**
-   * 행별 허용 terminal — **blanket 등가가 아니다**(삼순 NO-GO).
-   *
-   * 각 행이 도달할 수 있는 종착지를 명시한다. 여기 적히지 않은 행은 흔들리면 RED 이고,
-   * 적힌 행도 **명시된 집합 밖**으로 나가면 RED 다. 새 행을 추가하려면 이 목록을 고쳐야
-   * 하므로 허용이 조용히 자라지 않는다.
-   *
-   * 판정 근거: 이 행들은 전부 **답을 주지 않는 종착지**(안내·되묻기) 사이에서만 오간다.
-   * 유저가 받는 차이는 문구뿐이고 부수효과는 A3b 가 이미 0 으로 못박았다.
-   */
-  const ALLOWED_TERMINALS: Record<string, string[]> = {
-    "보트": ["scope_guide", "needs_clarification"],
-    "Mvpca": ["scope_guide", "needs_clarification"],
-    "병신": ["scope_guide", "blocked", "needs_clarification"],
-    "승령엽에있는 거무": ["needs_clarification", "unsure", "name_suggest"],
-    "기아타이거즈에서": ["needs_clarification", "context_missing"],
-    "그런게 돼?": ["llm", "context_missing", "needs_clarification"],
-    "안해주면": ["needs_clarification", "context_missing", "scope_guide"],
-    "질문답헤줘": ["scope_guide", "needs_clarification", "ack"],
-    "그거 한사람 누구누구 있어?": ["llm", "context_missing", "needs_clarification"],
-    // 욕설이 섞인 불만 표현 — 안내(`scope_guide`)든 인사 응대(`ack`)든 둘 다 답을
-    // 주지 않는 종착지다. 부수효과는 A3b 가 0 으로 못박았다.
-    "아니 ㅅㅂ 잘 좀 대답해": ["ack", "scope_guide", "blocked"],
-    // 직전 턴("빨리")만 있는 조각. `llm` 은 **분류기가 낸 FOLLOWUP 재설명**이다 —
-    // 증거 원장 실측 `genericLlm=0`, 즉 추가 생성 호출 없이 직전 답변만으로 답했다.
-    // 되묻기와 재설명 중 무엇이 나가도 근거 없는 주장은 생기지 않는다.
-    "안해주면": ["needs_clarification", "context_missing", "scope_guide", "llm"],
-    // 뜻이 갈리는 약어. 되묻기든 범위 안내든 둘 다 답을 주지 않는다.
-    // (삼순 계약: 명시적 게임 용어면 scope, 애매하면 되묻기 — 이 행은 그 경계에 걸쳐 있다)
-    "OVR": ["needs_clarification", "scope_guide"],
-    // 구단 랜드마크. **두 결과 모두 team RAG 를 탄다**(증거 원장 `teamLlm=1` 동일).
-    // 갈리는 것은 경로가 아니라 그 문서에 근거가 있었는가이며, 근거가 없을 때 `unsure` 로
-    // 닫는 것은 이 서비스의 정상 계약이다(없는 답을 지어내지 않는다).
-    "한화 몬스터월은 뭐야?": ["team_rag", "unsure"],
-  };
-  const terminalFails = [...bySource.entries()].filter(([q, v]) => {
-    const allowed = ALLOWED_TERMINALS[q];
-    if (!allowed) return v.size > 1;                      // 미등록 행은 흔들림 자체가 RED
-    return ![...v].every((src) => allowed.includes(src)); // 등록 행은 집합 밖이면 RED
-  });
-  check(`A3c ${REPS}rep 행별 허용 terminal(등록 밖 흔들림 0)`, terminalFails.length === 0,
-    terminalFails.slice(0, 5).map(([q, v]) => `TERM:${q.slice(0, 16)}:${[...v].join(" vs ")}`));
+  // ── A3c → **비차단 관측**으로 강등 (삼순 확정 판정 2026-09-01) ──────────────
+  //
+  // 🔴 이 축은 게이트가 아니라 **관측**이다. 판정 근거를 남겨둔다:
+  //
+  //   · 이 축이 재는 것은 **독립 messageId** 반복이다. 서로 다른 유저의 서로 다른
+  //     메시지에 provider 가 다른 라벨을 내는 것은 그 자체로 결함이 아니다
+  //     (production idempotency 계약은 **같은 messageId** 에 대한 것이고, 그건 A3 가
+  //     바이트 동일로 못박는다).
+  //   · 안전은 이미 **A1 · A3b** 가 절대 불변식으로 닫았다 — 어떤 회차에도 official RAG
+  //     진입 0, 잡담·후속 35건 선수/구단 RAG 진입 0. terminal 이 `ack` 든
+  //     `needs_clarification` 이든 그 둘 사이에서는 부수효과가 0 이다.
+  //   · **허용목록을 늘리는 대응은 하지 않는다.** 반례가 나올 때마다 문장을 추가하면
+  //     그건 정확히 `open_language_never_closes_with_rules` 가 말하는 자라나는 목록이고,
+  //     게이트가 스스로를 형해화하는 길이다(M90).
+  //   · 실측 근거: 이 축은 **내 변경 이전 exact(37bd3f8b5) 에서도 FAIL** 했다
+  //     (`윤현중 입니다: scope_guide vs needs_clarification`). 즉 이번 회귀가 아니라
+  //     provider-live 게이트의 구조적 성질이다. 배포를 provider 비결정성에 위임하면
+  //     안 된다(`live_vs_live_comparison_is_not_a_build_gate`, 8/18).
+  //
+  // ⚠️ **관측을 없애지는 않는다.** drift 가 커지거나 성격이 바뀌면 사람이 봐야 하므로
+  //   숫자와 행을 그대로 출력한다. 판정만 안 한다.
+  const terminalDrift = [...bySource.entries()].filter(([, v]) => v.size > 1);
+  console.log(`[A3c 관측·비차단] ${REPS}rep terminal drift ${terminalDrift.length}건 / ${bySource.size}행`
+    + (terminalDrift.length
+      ? ` :: ${terminalDrift.slice(0, 6).map(([q, v]) => `${q.slice(0, 14)}(${[...v].join("|")})`).join(", ")}`
+      : ""));
+  console.log("[A3c 관측·비차단] 판정 아님 — 안전 불변식은 A1·A3b, 재현성은 A3(같은 messageId)가 소유한다");
 
   // A3d — **입력 동등성 증거**(삼순 2026-08-31). 이게 통과해야 위 두 축의 판정이 의미를 갖는다.
   //   맥락이 있는 행은 production `selectContextTurn` 을 실제로 통과했어야 하고,

@@ -1813,10 +1813,35 @@ export function teamIdOfCanonical(canonical: string): number | null {
  * 여기서 별도 매핑표를 두지 않는다 — 둘을 이어주는 계약은 게이트가 실 corpus 로 고정한다.
  */
 export function resolveRagTeamCandidate(question: string): RagTeamCandidate | null {
-  const canonical = resolveMentionedTeam(question);
-  if (canonical === null) return null;
-  const teamId = teamIdOfCanonical(canonical);
-  if (teamId === null) return null;
+  const r = resolveRagTeamBinding(question);
+  return r.kind === "single" ? r.candidate : null;
+}
+
+/**
+ * 구단 문자열 결속의 **3상태** 판정.
+ *
+ * 🔴 삼순 NO-GO (2026-09-01): `resolveRagTeamCandidate` 의 `null` 은 두 가지를 겸한다 —
+ *   ① 구단이 언급되지 않았다 ② **복수 구단이라 거부했다**. 그 둘을 구분 안 한 채
+ *   분류기 귀속으로 보강(`?? intentTeam`)하면, `LG랑 두산 중 누가 더 잘해?` 같은 **비교
+ *   질문이 한 구단 문서로 부활**한다. 거부를 미탐으로 바꿔치기하는 사고다.
+ *
+ *   이 PR 초안에 내가 직접 적어둔 계약이기도 하다 — "후보 해석기의 null 은 '엔티티가
+ *   없다' 가 아니라 '있는데 단일 후보로 못 좁혔다' 이므로, 그 null 을 개방 신호로 쓰면
+ *   안 된다." 그럼에도 team 경로에서 또 같은 실수를 했다.
+ *
+ * ⚠️ **새 어휘·정규식을 만들지 않는다.** 기존 판정기(`mentionedTeamCanonicals`,
+ *   `TEAM_ALIASES`)를 그대로 쓰고 **반환 타입만** 나눈다.
+ */
+export type RagTeamBinding =
+  /** 문장이 구단 하나를 특정했다. */
+  | { kind: "single"; candidate: RagTeamCandidate }
+  /** 구단 언급이 없다 — 분류기 귀속으로 **보강해도 되는** 유일한 상태. */
+  | { kind: "none" }
+  /** 복수 구단이라 거부했다 — 어떤 경로로도 되살리지 않는다. */
+  | { kind: "refused"; reason: "multi_team"; teams: string[] };
+export function resolveRagTeamBinding(question: string): RagTeamBinding {
+  const hits = mentionedTeamCanonicals(question);
+  if (hits.length >= 2) return { kind: "refused", reason: "multi_team", teams: hits };
 
   // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다. 그래서
   // `LG랑 두산 중 누가 더 잘해?` 는 두산 **하나만** 지명된 것처럼 보인다.
@@ -1825,13 +1850,26 @@ export function resolveRagTeamCandidate(question: string): RagTeamCandidate | nu
   // 선수 경로(`buildCandidate` 의 `mentionsOther`)와 같은 보수 규칙을 쓴다 —
   // 조사와 무관하게 다른 구단의 약칭·별칭이 문자열로 등장하면 단일 entity 로 보지 않는다.
   // 과탐지는 RAG 미서빙(기존 경로 유지)일 뿐이고, 놓치면 남의 문서로 답하는 사고다.
+  //
+  // 🔴 그리고 이 경우도 **`refused`** 다 — "문자열로는 한 팀이지만 다른 팀이 거론된다" 는
+  //   구단 미언급이 아니다. `none` 으로 접으면 분류기가 되살린다.
   const normalized = question.normalize("NFKC").toLowerCase();
-  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
-    team.canonical !== canonical &&
+  const others = TEAM_ALIASES.filter((team) =>
+    team.canonical !== hits[0] &&
     [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
-  if (mentionsOtherTeam) return null;
+  if (others.length > 0) {
+    return {
+      kind: "refused",
+      reason: "multi_team",
+      teams: [...hits, ...others.map((t) => t.canonical)],
+    };
+  }
 
-  return teamCandidateOfCanonical(canonical);
+  if (hits.length === 0) return { kind: "none" };
+  const candidate = teamCandidateOfCanonical(hits[0]);
+  // canonical 이 폐쇄집합 밖이라 변환이 안 되는 경우 — 지명은 있었으므로 `none` 이 아니다.
+  if (candidate === null) return { kind: "refused", reason: "multi_team", teams: hits };
+  return { kind: "single", candidate };
 }
 
 /**
@@ -6656,6 +6694,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     );
   }
 
+  // ⚠️ 여기는 **보강하지 않는다.** 엔트리(등록명단)는 구조화 정본 조회라 문장이 구단을
+  //   명시했을 때만 답한다 — 분류기 귀속을 여기까지 넘기면 이 PR 범위 밖의 경로가 바뀐다.
   const entryQuestionCandidate =
     deps.fetchTeamEntry && !enabledPlayerCandidate && isTeamEntryQuestion(question)
       ? resolveRagTeamCandidate(question)
@@ -6703,13 +6743,22 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   null 이었고, official 이 닫히는 것 말고는 **아무 데도 연결되지 않았다.**
   //   판정을 만들어 놓고 쓰지 않은 것이라, 어휘 목록을 지운 자리가 비어 있었다.
   //
-  //   ⚠️ 우선순위는 **문자열 결속이 먼저**다. 문장에 구단명이 있으면 그것이 더 강한 근거이고
-  //     비교 질문 방어(`mentionsOtherTeam`)도 그 경로에만 있다. 분류기 귀속은 문자열이
-  //     아무것도 못 잡았을 때의 **보강**으로만 쓴다 — 미탐의 대가는 종전 동작이다.
+  //   ⚠️ 우선순위는 **문자열 결속이 먼저**다. 문장에 구단명이 있으면 그것이 더 강한 근거다.
+  //     분류기 귀속은 문자열이 아무것도 못 잡았을 때의 **보강**으로만 쓴다.
+  //
+  //   🔴 **그러나 `null` 을 보강 신호로 쓰면 안 된다** (삼순 NO-GO 2026-09-01).
+  //     직전 구현은 `resolveRagTeamCandidate(question) ?? intentTeam` 이었는데, 그 null 은
+  //     "구단 언급 없음" 과 "**복수 구단이라 거부**" 를 겸한다. 그래서
+  //     `LG랑 두산 중 누가 더 잘해?` 처럼 비교 방어가 거부한 질문을 분류기 귀속이
+  //     **한 구단 문서로 부활**시킨다 — 거부를 미탐으로 바꿔치기한 사고다.
+  //     3상태(`resolveRagTeamBinding`)로 받아 **`none` 일 때만** 보강한다.
+  const teamBinding = resolveRagTeamBinding(question);
   const teamRagCandidate =
     deps.enableTeamRag && !enabledPlayerCandidate && route !== "baseball_rule_term"
-      ? (resolveRagTeamCandidate(question)
-        ?? (intentTeam !== null ? teamCandidateOfCanonical(intentTeam) : null))
+      ? (teamBinding.kind === "single" ? teamBinding.candidate
+        : teamBinding.kind === "none" && intentTeam !== null
+          ? teamCandidateOfCanonical(intentTeam)
+          : null)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
     // 구단 서술 질문 — RAG 재서술 (숫자 전면 HOLD 유지).

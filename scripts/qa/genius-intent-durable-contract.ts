@@ -86,12 +86,22 @@ interface Obs {
   officialQueries: string[];
   /** team RAG 검색 seam 이 받은 후보 이름들 — T1 의 종단 관측점. */
   teamCandidates: string[];
+  /**
+   * 분류기가 받은 **질문 문자열** — 정규화 snapshot 의 독립 oracle.
+   *
+   * 정규화 결과가 그대로 라우팅 입력이 되므로, "어느 문장으로 라우팅했는가" 를
+   * 최종 answer 가 아니라 **입력 자체**로 판정할 수 있다(삼순 NO-GO 2026-09-01).
+   */
+  classifyQuestions: string[];
   normalizeCalls: number;
   classifyCalls: number;
   classifyThrows: number;
 }
 function obs(): Obs {
-  return { officialQueries: [], teamCandidates: [], normalizeCalls: 0, classifyCalls: 0, classifyThrows: 0 };
+  return {
+    officialQueries: [], teamCandidates: [], classifyQuestions: [],
+    normalizeCalls: 0, classifyCalls: 0, classifyThrows: 0,
+  };
 }
 
 type Snap = {
@@ -160,8 +170,10 @@ function makeDeps({ verdict, normalizeTo, o }: DepOpts): Record<string, unknown>
     },
     pickedNormalizedQuestion: null,
     correctionDeclined: false,
-    classifyIntent: async () => {
+    classifyIntent: async (...a: unknown[]) => {
       o.classifyCalls += 1;
+      // 분류기가 본 질문 = 이 회차의 **라우팅 입력**. T5 의 독립 oracle 이다.
+      o.classifyQuestions.push(String(a[0] ?? ""));
       if (verdict === "THROW") {
         o.classifyThrows += 1;
         throw new Error("injected classifier failure");
@@ -271,20 +283,32 @@ async function main() {
   // 🔴 `intentFingerprint` 는 **정규화가 끝난** question 으로 계산한다. 정규화가 LLM 이라
   //   후보가 흔들리면 fingerprint 가 달라져 **판정 재생이 아예 발동하지 않는다**.
   //   즉 판정 재생 계약이 종이 위에서만 성립한다.
+  //
+  // 🔴 픽스처 선택이 계약이다 (2026-09-01 실측으로 교체). 첫 작성은 `보끄가모야` 를 썼는데
+  //   그 문장은 교정 **제안**(`question_correction`)으로 종결돼 분류기까지 **가지도 않는다** —
+  //   라우팅 입력 고정을 재려는데 라우팅을 안 타는 문장을 고른 것이다(무대가 없으면
+  //   mutation 은 결함이 아니라 무증상이 된다, M90). 중복공백 교정은 `accepted_surface` 로
+  //   수용돼 **정규화된 문장이 그대로 라우팅 입력**이 된다 — 그 무대에서만 재생을 재다.
+  const NORM_RAW = "그  상황에서   어떻게 되는지 궁금해";  // 중복 공백 — 표면 교정 대상
+  const NORM_WINNER = "그 상황에서 어떻게 되는지 궁금해";
+  const NORM_LOSER = "그 상황에서 어떻게 되는지 궁금해?"; // 같은 수용 상태지만 **다른 문자열**
   {
-    const q = "보끄가모야";
     const s = makeStore();
     const o1 = obs();
-    const first = await answerQuestion("t4", q,
-      s.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: "보크가 뭐야", o: o1 })) as unknown as QaDeps);
+    const first = await answerQuestion("t4", NORM_RAW,
+      s.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: NORM_WINNER, o: o1 })) as unknown as QaDeps);
     const callsAfterFirst = o1.normalizeCalls;
 
     const o2 = obs();
-    let secondDeps = s.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: "질문 답해줘", o: o2 }));
+    let secondDeps = s.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: NORM_LOSER, o: o2 }));
     if (MUTATE === "norm-replay-off") {
       secondDeps = { ...secondDeps, getNormalizeSnapshot: async () => null }; // 재생 끄기
     }
-    const second = await answerQuestion("t4", q, secondDeps as unknown as QaDeps);
+    const second = await answerQuestion("t4", NORM_RAW, secondDeps as unknown as QaDeps);
+    // 자기검증 — 1회차가 실제로 분류기까지 갔는가. 안 갔으면 이 축은 무대가 없는 것이다.
+    check("T4-self", "픽스처가 실제로 라우팅을 태운다(교정 제안으로 새지 않는다)",
+      o1.classifyQuestions.length > 0,
+      { first: (first as { source?: string }).source, seen: o1.classifyQuestions });
     check("T4", "정규화 snapshot 이 재처리 입력을 고정한다(provider 재호출 0 · 답 동일)",
       o2.normalizeCalls === 0
         && (first as { answer?: string }).answer === (second as { answer?: string }).answer,
@@ -292,21 +316,37 @@ async function main() {
   }
   {
     // T5 — 정규화 CAS 패자.
-    const q = "보끄가모야";
+    //
+    // 🔴 삼순 NO-GO (2026-09-01): 1차 작성은 **최종 answer 동일**만 봤다. 그건
+    //   false-green 이다 — 두 후보가 같은 경로로 가 같은 문구를 내면 snapshot 을
+    //   무시해도 통과한다. 재야 하는 것은 결과가 아니라 **어느 문장이 라우팅
+    //   입력으로 들어갔는가** 다.
+    //
+    //   그래서 **분류기가 받은 질문 문자열**을 직접 관측한다(독립 oracle).
+    //   정규화 결과가 라우팅 입력이 되므로, 패자가 winner snapshot 을 썼다면
+    //   분류기는 winner 의 문장을 본다. 자기 후보를 썼다면 다른 문장을 본다.
     const w = makeStore();
     const oW = obs();
-    const winnerRun = await answerQuestion("t5", q,
-      w.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: "보크가 뭐야", o: oW })) as unknown as QaDeps);
+    await answerQuestion("t5", NORM_RAW,
+      w.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: NORM_WINNER, o: oW })) as unknown as QaDeps);
     const winnerSnap = w.getNorm();
+    const winnerSeen = oW.classifyQuestions.at(-1) ?? "";
+
     const l = makeStore({ blindGet: true });
     if (winnerSnap) l.seedNorm(winnerSnap);
     const oL = obs();
-    const loserRun = await answerQuestion("t5", q,
-      l.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: "보크 가모야", o: oL })) as unknown as QaDeps);
-    check("T5", "정규화 CAS 패자가 winner snapshot 을 받아 쓴다",
-      winnerSnap !== null
-        && (winnerRun as { answer?: string }).answer === (loserRun as { answer?: string }).answer,
-      { winner: winnerSnap?.status });
+    await answerQuestion("t5", NORM_RAW,
+      l.wire(makeDeps({ verdict: { intent: "BASEBALL" }, normalizeTo: NORM_LOSER, o: oL })) as unknown as QaDeps);
+    const loserSeen = oL.classifyQuestions.at(-1) ?? "";
+
+    // 자기검증 — 두 후보가 실제로 다르고, 양쪽 모두 분류기까지 갔는가.
+    //   관측값이 비면 이 축은 무엇도 가리지 못한다(빈 문자열끼리 같아서 통과해버린다).
+    check("T5-self", "winner/loser 정규화 후보가 서로 다르고 둘 다 라우팅을 타욉다(판별력 자기검증)",
+      NORM_WINNER !== NORM_LOSER && winnerSeen.length > 0 && loserSeen.length > 0,
+      { winnerSeen, loserSeen });
+    check("T5", "정규화 CAS 패자가 winner snapshot 을 라우팅 입력으로 쓴다(입력 직접 oracle)",
+      winnerSnap !== null && loserSeen === winnerSeen,
+      { winnerSnap: winnerSnap?.status, winnerSeen, loserSeen });
   }
 
   // ── T6/T7 — 개방의 **양방향** (P0-D) ──────────────────────────────────────
