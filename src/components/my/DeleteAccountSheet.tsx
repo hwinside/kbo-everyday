@@ -50,6 +50,7 @@ export default function DeleteAccountSheet({
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[90] bg-black/60"
             onClick={onClose}
+            aria-hidden
           />
           <motion.div
             initial={{ y: "100%" }}
@@ -57,6 +58,9 @@ export default function DeleteAccountSheet({
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-[91] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-5 pb-safe"
+            role="dialog"
+            aria-modal="true"
+            aria-label="계정 삭제"
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-red-500 flex items-center gap-2">
@@ -65,6 +69,7 @@ export default function DeleteAccountSheet({
               </h2>
               <button
                 onClick={onClose}
+                aria-label="닫기"
                 className="p-1 rounded-full hover:bg-bg-tertiary"
               >
                 <X size={20} className="text-text-tertiary" />
@@ -96,6 +101,8 @@ export default function DeleteAccountSheet({
                 value={confirmText}
                 onChange={(e) => setConfText(e.target.value)}
                 placeholder="탈퇴"
+                aria-label="탈퇴 확인 문구 입력"
+                aria-required="true"
                 className="w-full rounded-xl border border-white/10 bg-bg-tertiary px-4 py-3 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none focus:ring-2 focus:ring-red-500/50"
               />
             </div>

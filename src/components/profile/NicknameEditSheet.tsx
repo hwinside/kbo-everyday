@@ -139,6 +139,7 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
             exit={{ opacity: 0 }}
             onClick={onClose}
             className="fixed inset-0 z-[60] bg-black/60"
+            aria-hidden
           />
 
           <motion.div
@@ -147,12 +148,15 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
             exit={{ y: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10"
+            role="dialog"
+            aria-modal="true"
+            aria-label="닉네임 변경"
           >
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
 
             <div className="flex items-center justify-between px-5 mb-3">
               <h2 className="text-lg font-bold text-text-primary">닉네임 변경</h2>
-              <button onClick={onClose} className="rounded-full p-1 hover:bg-bg-tertiary transition-colors">
+              <button onClick={onClose} aria-label="닫기" className="rounded-full p-1 hover:bg-bg-tertiary transition-colors">
                 <X size={22} className="text-text-secondary" />
               </button>
             </div>
