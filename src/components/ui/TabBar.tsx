@@ -38,7 +38,7 @@ export default function TabBar() {
   }
 
   return (
-    <nav data-global-tabbar className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]">
+    <nav data-global-tabbar aria-label="주요 메뉴" className="fixed bottom-0 left-0 right-0 z-50 rounded-none border-t border-border pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))]">
       {/*
         Defensive iOS WKWebView hardening: keep the fixed <nav> free of compositing
         effects while preserving the glass appearance on an inner absolute layer.
@@ -57,6 +57,7 @@ export default function TabBar() {
             <Link prefetch={false}
               key={tab.href}
               href={tab.href}
+              aria-current={active ? "page" : undefined}
               className={clsx(
                 "relative flex flex-col items-center gap-0.5 px-1.5 py-1.5 transition-colors min-w-0",
                 active ? (teamColor ? "" : "text-accent") : "text-text-secondary",

@@ -8,6 +8,7 @@ import Cropper, { type Area } from "react-easy-crop";
 import { PRESET_AVATARS, getPresetKey, isCustomAvatar } from "@/lib/constants/avatars";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { TEAMS } from "@/lib/constants/teams";
 
 const AVATAR_SIZE = 400; // 크롭 결과 px
@@ -77,6 +78,7 @@ async function getCroppedBlob(imageSrc: string, crop: Area): Promise<Blob> {
 }
 
 export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, teamId, nickname }: Props) {
+  const dialogRef = useDialogFocus(isOpen);
   const { user, refreshProfile } = useAuth();
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -237,6 +239,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             exit={{ opacity: 0 }}
             onClick={() => cropImage ? setCropImage(null) : onClose()}
             className="fixed inset-0 z-[60] bg-black/60"
+            aria-hidden
           />
 
           {/* Sheet */}
@@ -247,6 +250,11 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
             className="fixed bottom-0 left-0 right-0 z-[60] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary border-t border-black/10 dark:border-white/10 flex flex-col"
             style={{ maxHeight: "80dvh" }}
+            role="dialog"
+            aria-modal="true"
+            aria-label={cropImage ? "사진 자르기" : "아바타 선택"}
+            ref={dialogRef}
+            tabIndex={-1}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
@@ -258,6 +266,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
               </h2>
               <button
                 onClick={() => cropImage ? setCropImage(null) : onClose()}
+                aria-label="닫기"
                 className="rounded-full p-1 hover:bg-bg-tertiary transition-colors"
               >
                 <X size={22} className="text-text-secondary" />
@@ -290,6 +299,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                     step={0.05}
                     value={zoom}
                     onChange={(e) => setZoom(Number(e.target.value))}
+                    aria-label="확대/축소"
                     className="w-full accent-accent"
                   />
                 </div>
@@ -322,6 +332,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   {/* 사진 업로드 옵션 */}
                   <button
                     onClick={() => fileInputRef.current?.click()}
+                    aria-pressed={selected === "custom"}
                     className={`w-full mb-3 p-3 rounded-2xl flex items-center gap-3 transition-colors ${
                       selected === "custom"
                         ? "bg-accent/10 border border-accent/30"
@@ -355,6 +366,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                   {/* 기본(이니셜) 옵션 */}
                   <button
                     onClick={() => handleSelect(null)}
+                    aria-pressed={selected === null}
                     className={`w-full mb-4 p-3 rounded-2xl flex items-center gap-3 transition-colors ${
                       selected === null ? "bg-accent/10 border border-accent/30" : "bg-bg-glass"
                     }`}
@@ -375,6 +387,7 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
                       <button
                         key={avatar.key}
                         onClick={() => handleSelect(avatar.key)}
+                        aria-pressed={selected === avatar.key}
                         className={`relative flex flex-col items-center gap-1.5 p-2 rounded-xl transition-all ${
                           selected === avatar.key
                             ? "bg-accent/10 ring-2 ring-accent scale-105"

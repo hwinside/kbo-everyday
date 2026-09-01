@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { signInWithApple, signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { detectInApp } from "@/lib/detect-inapp";
 import InAppBrowserModal from "./InAppBrowserModal";
 
@@ -21,6 +22,8 @@ type Provider = "apple" | "naver" | "kakao" | "google";
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
   const { user } = useAuth();
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
+  // 인앱 브라우저 안내 모달이 위에 열리는 동안은 trap 정지 (초점이 자식 쪽에서 순환)
+  const dialogRef = useDialogFocus(isOpen, { trapEnabled: !inAppModalOpen });
   // EULA(이용약관) 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 필수.
   const [agreed, setAgreed] = useState(false);
   const [agreeError, setAgreeError] = useState(false);
@@ -92,6 +95,7 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[10000] bg-black/60"
               onClick={onClose}
+              aria-hidden
             />
             <motion.div
               initial={{ y: "100%" }}
@@ -99,10 +103,15 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               exit={{ y: "100%" }}
               transition={{ type: "spring", damping: 25, stiffness: 300 }}
               className="fixed bottom-0 left-0 right-0 z-[10001] mx-auto max-w-lg rounded-t-3xl bg-bg-secondary p-5 pb-safe"
+              role="dialog"
+              aria-modal="true"
+              aria-label="로그인"
+              ref={dialogRef}
+              tabIndex={-1}
             >
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-text-primary">로그인</h2>
-                <button onClick={onClose} className="p-1 rounded-full hover:bg-bg-tertiary">
+                <button onClick={onClose} aria-label="닫기" className="p-1 rounded-full hover:bg-bg-tertiary">
                   <X size={20} className="text-text-tertiary" />
                 </button>
               </div>
