@@ -11,6 +11,11 @@ import { useEffect, useRef } from "react";
  * 3) 닫힐 때 이전 포커스 요소로 복귀
  *
  * 사용: 컨테이너(motion.div 등)에 `ref={dialogRef}` + `tabIndex={-1}` 부착.
+ *
+ * 중첩 대화상자: 부모 위에 자식 모달이 열리는 동안 부모는
+ * `trapEnabled: false`로 trap만 정지시킨다 (열림 lifecycle은 유지).
+ * 자식이 닫히면 자식 훅이 트리거(부모 내부 요소)로 포커스를 복귀시키고,
+ * 부모가 닫히면 부모 훅이 원 opener로 복귀시킨다.
  */
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -25,9 +30,16 @@ function isVisible(el: HTMLElement): boolean {
   return el.getClientRects().length > 0;
 }
 
-export function useDialogFocus(isOpen: boolean) {
+export function useDialogFocus(
+  isOpen: boolean,
+  options?: { trapEnabled?: boolean },
+) {
+  const trapEnabled = options?.trapEnabled ?? true;
   const dialogRef = useRef<HTMLDivElement | null>(null);
 
+  // 열림 lifecycle: 초기 포커스 이동 + 닫힐 때 이전 포커스 복귀.
+  // trap suspend(자식 모달 열림)와 무관하게 isOpen 에만 결속한다 —
+  // suspend 때 복귀가 실행되면 포커스가 부모 밖으로 새기 때문.
   useEffect(() => {
     if (!isOpen) return;
     const dialog = dialogRef.current;
@@ -36,8 +48,19 @@ export function useDialogFocus(isOpen: boolean) {
     const previouslyFocused =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-    // 초기 포커스: 대화상자 컨테이너 (tabIndex=-1 필요)
     dialog.focus({ preventScroll: true });
+
+    return () => {
+      previouslyFocused?.focus({ preventScroll: true });
+    };
+  }, [isOpen]);
+
+  // focus trap: Tab / Shift+Tab 내부 순환. 자식 모달이 위에 열린 동안
+  // trapEnabled=false 로 정지시켜 초점이 자식 쪽에서 순환하게 한다.
+  useEffect(() => {
+    if (!isOpen || !trapEnabled) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
@@ -67,9 +90,8 @@ export function useDialogFocus(isOpen: boolean) {
     document.addEventListener("keydown", onKeyDown, true);
     return () => {
       document.removeEventListener("keydown", onKeyDown, true);
-      previouslyFocused?.focus({ preventScroll: true });
     };
-  }, [isOpen]);
+  }, [isOpen, trapEnabled]);
 
   return dialogRef;
 }

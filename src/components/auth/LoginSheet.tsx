@@ -20,9 +20,10 @@ interface LoginSheetProps {
 type Provider = "apple" | "naver" | "kakao" | "google";
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
-  const dialogRef = useDialogFocus(isOpen);
   const { user } = useAuth();
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
+  // 인앱 브라우저 안내 모달이 위에 열리는 동안은 trap 정지 (초점이 자식 쪽에서 순환)
+  const dialogRef = useDialogFocus(isOpen, { trapEnabled: !inAppModalOpen });
   // EULA(이용약관) 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 필수.
   const [agreed, setAgreed] = useState(false);
   const [agreeError, setAgreeError] = useState(false);
