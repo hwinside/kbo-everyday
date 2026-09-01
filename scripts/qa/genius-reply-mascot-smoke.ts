@@ -158,14 +158,6 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
     ["news_rag", "generated"],
     ["blocked", "canned"],         // UNSUPPORTED_SEASON/UNTRUSTED_METRIC 삼항식
     ["kbo_structured", "generated"], // 운영 DB 원값 렌더 결과
-    // 되묻기 — **코드가 만든 고정 문구**다(LLM 생성문 아님). 오늘 경기 목록이 붙을 수 있어
-    // 문자열이 매번 같지는 않지만, 그건 structured 정본을 코드 템플릿에 끼운 결과이지
-    // 모델이 쓴 문장이 아니다. 답을 주지 않는 종착지이므로 `unavailable` 분류가 맞다.
-    //   · settle(decision.answer) = 이전 처리에서 코드가 렌더한 결과의 durable 재생
-    //   · settle(rendered)        = 이번 회차 렌더 결과
-    //   · settle(winner)          = CAS 패자가 받아 쓰는 winner 의 렌더 결과
-    // 셋 다 같은 렌더러(`renderNeedsClarificationAnswer`)의 산출물이다.
-    ["needs_clarification", "canned"],
   ]);
   const NON_LITERAL = new Set(["route"]);
 
@@ -200,13 +192,6 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
     const path = call[2];
     if (canned.has(expr)) continue;
     if (expr === "answer" || GENERATED.has(expr)) { answering.add(path); continue; }
-    // 지역 변수로 넘기는 형태도 **경로 분류 등록**으로 판정한다 (2026-08-31).
-    //   상수 이름(`canned`)으로만 가르면, 렌더 결과를 변수에 담는 순간 게이트 밖으로
-    //   빠지거나 미등록 RED 가 된다. 등록제의 취지는 "새 표현이 생기면 사람이 분류를
-    //   명시한다" 이므로, 그 명시를 **경로 단위**로 받는다(문자열 화이트리스트가 아니다).
-    const kind = LOCAL_ANSWER_PATHS.get(path);
-    if (kind === "canned") continue;
-    if (kind === "generated") { answering.add(path); continue; }
     unknown.push(`${path}: settle(${expr})`);
   }
 
