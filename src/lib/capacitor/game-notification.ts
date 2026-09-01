@@ -10,7 +10,7 @@ import {
   type WidgetTapModeReason,
 } from "../native-live-activity";
 import { supabase } from "../supabase/client";
-import { takeBootPrefs } from "@/lib/boot-cache";
+import { awaitBootPrefs } from "@/lib/boot-cache";
 import {
   createLockCardGateFence,
   advanceLockCardGateFence,
@@ -230,10 +230,12 @@ export async function bootstrapAndroidLockCardGate(): Promise<void> {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) return;
-    // PR④: 부트 번들 캠시 우선(60s TTL·1회·userId 결속). 토글(PUT)은 setLiveActivityEnabledCache 경유로
-    // 부트 캠시를 무효화하므로, 캠시 적중 = 캠시 이후 토글 없음 → gen fence 계약 유지. 미스면 종전 fetch.
+    // PR④: 부트 번들 로드를 기다렸다 소비(begin 유예→settle 대기 — NativePushMount 가
+    // AuthProvider 보다 먼저 뜨는 race 흘수). 토글(PUT)은 setLiveActivityEnabledCache 경유로
+    // 부트 캠시를 무효화하므로, 캠시 적중 = 캠시 이후 토글 없음 → gen fence 계약 유지(fence 는
+    // await 전에 capture 되어 대기 중 토글도 폐기된다). 미스면 종전 fetch(fail-open).
     const bootUserId = session?.user?.id;
-    const bootPrefs = bootUserId ? takeBootPrefs(bootUserId, "androidLockCardGate") : null;
+    const bootPrefs = bootUserId ? await awaitBootPrefs(bootUserId, "androidLockCardGate") : null;
     if (bootPrefs) {
       await applyAndroidLockCardGateFromLoad(bootPrefs.live_activity !== false, gen);
       return;

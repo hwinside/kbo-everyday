@@ -4,7 +4,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
 import { createSignatureCache, createSingleFlight, shouldCacheRegisterResponse } from "@/lib/client-dedupe";
-import { takeBootPrefs, invalidateBootCache } from "@/lib/boot-cache";
+import { awaitBootPrefs, invalidateBootCache } from "@/lib/boot-cache";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -174,9 +174,10 @@ async function isLiveActivityEnabled(): Promise<boolean> {
       liveActivityPrefCache = true; // 비로그인 → 기본 on (토큰 등록 자체가 로그인 필요라 무해)
       return true;
     }
-    // PR④: 부트 번들 캠시 우선(60s TTL·1회·userId 결속) — 미스면 종전 fetch 그대로
+    // PR④: 부트 번들 로드를 기다렸다 소비(begin 유예→settle 대기·60s TTL·1회·userId 결속).
+    // 미스(타임아웃·실패·늦은 소비)면 종전 fetch 그대로(fail-open).
     const bootUserId = session?.user?.id;
-    const bootPrefs = bootUserId ? takeBootPrefs(bootUserId, "liveActivityGate") : null;
+    const bootPrefs = bootUserId ? await awaitBootPrefs(bootUserId, "liveActivityGate") : null;
     if (bootPrefs) {
       liveActivityPrefCache = bootPrefs.live_activity !== false; // 디폴트 on
       return liveActivityPrefCache;
@@ -192,6 +193,18 @@ async function isLiveActivityEnabled(): Promise<boolean> {
     liveActivityPrefCache = true;
   }
   return liveActivityPrefCache;
+}
+
+/** QA 전용 seam — qa:user-boot-bundle 종단 게이트가 iOS 런타임 가드 밖(node)에서
+ *  실제 isLiveActivityEnabled 경로(부트 번들 소비 vs fetch fallback)를 구동하기 위한 export.
+ *  프로덕션 코드는 호출하지 않는다. */
+export function __qaIsLiveActivityEnabled(): Promise<boolean> {
+  return isLiveActivityEnabled();
+}
+
+/** QA 전용 — 모듈 스코프 pref 캐시 리셋 (시나리오 격리). 프로덕션 코드는 호출하지 않는다. */
+export function __qaResetLiveActivityPrefCache(): void {
+  liveActivityPrefCache = null;
 }
 
 /** 마이페이지 토글이 즉시 클라 캐시를 갱신 → 다음 start/update 게이트에 반영. */

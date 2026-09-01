@@ -15,7 +15,8 @@ import {
   clearSessionBackup,
 } from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
-import { setBootCache, invalidateBootCache } from "@/lib/boot-cache";
+import { beginBootLoad, settleBootLoad, invalidateBootCache } from "@/lib/boot-cache";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -29,6 +30,8 @@ interface Profile {
   avatar_url: string | null;
   invited_by: string | null;
   is_operator?: boolean | null;
+  // PR④: game-chat 노출은 profile 파생 (useGameChatVisibility — select * 라 런타임엔 항상 존재)
+  game_chat_enabled?: boolean | null;
 }
 
 interface AuthContextType {
@@ -83,27 +86,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  다른 유저 상태를 덮지 못하게 모든 setProfile 적용 직전에 확인한다. */
   async function loadProfileNow(accessToken: string, userId: string, isCurrent: () => boolean): Promise<boolean> {
     // 1차: 서버 부트 번들 API (Bearer 토큰 + service role — 가장 안정적)
-    // PR④: /api/me → /api/me/boot 로 전환해 profile+prefs+gameChatVisible 을 1콜로 받고,
-    // 부트 직후 각자 fetch 하던 소비자용으로 boot-cache 에 심는다. 실패 시 종전 fallback 체인 그대로.
+    // PR④: /api/me → /api/me/boot. prefs 는 네이티브 런타임만 include=prefs 로 요청해
+    // 웹 유저 DB read 증가 0. begin/settle 프로토콜로 소비자(NativePushMount 등
+    // AuthProvider 보다 먼저 뜨는 쪽)가 부트 완료를 기다렸다 소비한다.
+    // 실패 시에도 반드시 settle(null) — 대기 중 소비자를 타임아웃까지 묶어두지 않는다.
+    const wantPrefs = isNativeRuntime();
+    beginBootLoad(userId);
+    let bootSettled = false;
     try {
-      const res = await fetch("/api/me/boot", {
+      const res = await fetch(wantPrefs ? "/api/me/boot?include=prefs" : "/api/me/boot", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (res.ok) {
         const json = await res.json();
         if (json.profile) {
-          if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
-          setBootCache({
-            userId,
-            prefs: json.prefs ?? null,
-            gameChatVisible: typeof json.gameChatVisible === "boolean" ? json.gameChatVisible : null,
-          });
+          if (!isCurrent()) { settleBootLoad(userId, null); return false; } // 세대 교체됨 — 옛 응답 폐기
+          settleBootLoad(userId, json.prefs ?? null);
+          bootSettled = true;
           setProfile(json.profile);
           syncProfileToLocal(json.profile);
           return true;
         }
       }
     } catch { /* continue to fallback */ }
+    if (!bootSettled) settleBootLoad(userId, null); // 실패 fail-open — 대기 소비자 즉시 해제
 
     // 2차: Supabase REST API 직접 호출 (access_token 명시 전달)
     try {

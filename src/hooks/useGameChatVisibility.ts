@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { takeBootGameChatVisible, invalidateBootCache } from "@/lib/boot-cache";
 import type { GameChatVisibilityState } from "@/lib/game-chat-visibility";
 
 const GUEST_STORAGE_KEY = "kbo-game-chat-visible:guest";
@@ -15,7 +14,7 @@ function readGuestPreference(): boolean {
 }
 
 export function useGameChatVisibility() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile } = useAuth();
   const [state, setState] = useState<GameChatVisibilityState>({ status: "loading", visible: false });
   const [saving, setSaving] = useState(false);
   const requestGeneration = useRef(0);
@@ -32,16 +31,17 @@ export function useGameChatVisibility() {
       return;
     }
 
-    setState({ status: "loading", visible: false });
-
-    // PR④: 부트 번들 캠시 1회 소비(60s TTL·userId 결속) — 부트 직후 첫 마운트만 커버,
-    // 이후 마운트/reload 는 종전 fetch 그대로(타기기 변경 반영 계약 보존).
-    const bootVisible = takeBootGameChatVisible(user.id);
-    if (typeof bootVisible === "boolean") {
+    // PR④: game_chat_enabled 는 profiles 컴럼이라 AuthContext profile 에서 파생 —
+    // 부트·늦은 경기방 진입 모두 추가 fetch 0. 신선도는 profile ledger 계약을 따른다
+    // (TTL 10분 + visibility 복귀 재동기화; 종전은 마운트마다 fetch = 타기기 변경 즉시 반영).
+    // 토글(PUT) 성공 시 refreshProfile 로 컨텍스트 재동기화해 stale 재파생 차단.
+    if (profile && profile.id === user.id) {
       if (generation !== requestGeneration.current) return;
-      setState({ status: "ready", visible: bootVisible });
+      setState({ status: "ready", visible: profile.game_chat_enabled !== false });
       return;
     }
+
+    setState({ status: "loading", visible: false });
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -59,7 +59,7 @@ export function useGameChatVisibility() {
         setState({ status: "error", visible: false });
       }
     }
-  }, [authLoading, user]);
+  }, [authLoading, user, profile]);
 
   useEffect(() => {
     void load();
@@ -101,7 +101,8 @@ export function useGameChatVisibility() {
         body: JSON.stringify({ visible }),
       });
       if (!res.ok) throw new Error("preference save failed");
-      invalidateBootCache(); // PR④: 토글 성공 → 부트 창 내 stale 재사용 방지
+      // PR④: 컨텍스트 profile 재동기화 — 다음 마운트가 stale game_chat_enabled 를 파생하지 않게
+      void refreshProfile();
     } catch {
       setState({ status: "ready", visible: previous });
     } finally {
