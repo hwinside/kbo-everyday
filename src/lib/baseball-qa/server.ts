@@ -24,7 +24,7 @@ import {
   type QaResult,
   type RagLlmExtras,
 } from "@/lib/baseball-qa/pipeline";
-import type { TodayGameStarters } from "@/lib/baseball-qa/pipeline";
+import type { TodayGameStarters, NormalizeStatus } from "@/lib/baseball-qa/pipeline";
 import { adaptTodayStarters } from "@/lib/baseball-qa/pipeline";
 import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
@@ -47,6 +47,7 @@ import {
   buildBaseballQaGeminiRequest,
   GLOSSARY_MAPPER_SYSTEM_PROMPT,
 } from "@/lib/baseball-qa/gemini-request";
+import { INTENT_CLASSIFIER_PROMPT } from "@/lib/baseball-qa/intent";
 import {
   buildRagLlmRequest,
   RAG_SYSTEM_PROMPT,
@@ -170,6 +171,56 @@ export async function callLlm(
     data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "";
   return {
     text,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? null,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
+  };
+}
+
+/**
+ * 의도 라우팅 분류기 — pipeline `classifyIntent` seam 구현 (2026-08-31).
+ *
+ * official RAG 검색보다 **먼저** 돌아 잡담·후속을 가른다. 이 호출이 생기는 이유는
+ * `intent.ts` 헤더에 실측과 함께 있다 — 거리 임계는 한국어 짧은 구어를 걸러내지 못한다.
+ *
+ * ⚠️ `temperature: 0` 이다 — 같은 질문이 회차마다 다른 경로로 가면 유저는 불안정한
+ *   봇을 겪고, 게이트도 판정을 고정할 수 없다(#1318 Q4 가 회차마다 갈린 것과 같은 축).
+ * ⚠️ timeout 은 짧게 잡는다 — 이 단계는 **추가** 지연이므로 느리면 전체 응답이 느려진다.
+ *   실패하면 호출부가 `BASEBALL` 로 fail-open 해 기존 경로 그대로 간다.
+ */
+export async function classifyIntent(
+  question: string,
+  context?: ContextTurn,
+): Promise<{ text: string; inputTokens: number | null; outputTokens: number | null }> {
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
+  // 직전 대화는 **데이터**로 구획해 넣는다 — 지시는 systemInstruction 에만 둔다
+  // (`buildBaseballQaGeminiRequest` 의 로스터 블록과 같은 규약).
+  const userText = context
+    ? [
+        "<직전 대화>",
+        `질문: ${context.question}`,
+        `답변: ${context.answer}`,
+        "</직전 대화>",
+        `이번 메시지: ${question}`,
+      ].join("\n")
+    : `이번 메시지: ${question}`;
+  const res = await fetch(GEMINI_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: INTENT_CLASSIFIER_PROMPT }] },
+      contents: [{ role: "user", parts: [{ text: userText }] }],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 256,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
+  const data = await res.json();
+  return {
+    text: data.candidates?.[0]?.content?.parts?.find((part: { text?: string }) => part.text)?.text ?? "",
     inputTokens: data.usageMetadata?.promptTokenCount ?? null,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? null,
   };
@@ -937,6 +988,200 @@ async function prepareQuestionCorrectionSelection(
 }
 
 /** messageId에 바인딩된 deps — quota/LLM을 job 행 기준 durable idempotent로 만든다. */
+/**
+ * 의도 라우팅 durable 저장 어댑터 — **production 배선 그 자체**.
+ *
+ * 🔴 왜 팩토리로 떼는가 (삼순 NO-GO 2026-09-01)
+ *   게이트가 자체 `makeStore` in-memory 스텁만 태우면 "정답을 복제한 사본"을 검사하는
+ *   것이라, 실제 `SELECT`/`UPDATE`/CAS 조건(`.or(...)`·`.is(...)`)이 깨져도 RED 가 안 된다.
+ *   실제로 지금 이 계약의 결함들(`.is("intent_verdict", null)` 이 fingerprint 교체를 막던 것,
+ *   provenance 를 별도 UPDATE 로 쓰던 것)은 전부 **여기 쿼리 모양**에 있었다.
+ *
+ *   그래서 client 를 주입 가능하게 만든다. production 은 `supabaseAdmin` 을 주고,
+ *   게이트는 PGlite(실 PostgreSQL 17)에 실 migration 을 적용한 클라이언트를 준다 —
+ *   **같은 함수**가 양쪽에서 돈다(seam 동일성, M90).
+ *
+ * ⚠️ 앱 코드에 QA 분기를 넣지 않는다. 여기 있는 것은 전부 production 이 쓰는 경로다.
+ */
+export function createIntentDurableAdapters(
+  client: Pick<typeof supabaseAdmin, "from">,
+  messageId: number,
+): Required<Pick<QaDeps,
+  | "getNormalizeSnapshot" | "storeNormalizeSnapshot"
+  | "getIntentDecision" | "storeIntentDecision" | "storeIntentRender"
+>> {
+  return {
+  // ── 의도 판정 durable 재생 (삼순 2026-08-31 ①) ────────────────────────────
+  //   키가 `message_id` 라 **이 메시지 전용**이다 — 전역 캐시가 아니다.
+  //   fingerprint 대조는 파이프라인(`replayableIntent`)이 하므로 여기선 행만 읽는다.
+  //
+  //   ⚠️ 컬럼 부재(migration 미적용)를 **기능 장애로 만들지 않는다.** 앱이 migration 보다
+  //     먼저 배포되는 창에서 42703/PGRST204 가 나는데, 그때 throw 하면 라우팅이 통째로
+  //     죽는다. "판정 없음"(null)으로 접으면 매번 새로 분류할 뿐 동작은 유지된다
+  //     (#1317 의 PGRST202 fail-soft 와 같은 축).
+  // ── 최초 정규화 판정 snapshot (삼순 2026-08-31 NO-GO ②) ────────────────
+  //   판정 재생의 시작점을 정규화까지 끌어올린다 — 정규화가 흔들리면 fingerprint 가
+  //   달라져 판정 재생이 아예 발동하지 않기 때문이다.
+  getNormalizeSnapshot: async () => {
+    const { data, error } = await client
+      .from("genius_question_jobs")
+      .select("normalize_snapshot_question, normalize_snapshot_status, normalize_snapshot_accepted, normalize_snapshot_suggestion")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (error) {
+      // 컬럼 미배포 창에서는 "snapshot 없음" 으로 접는다(라우팅을 죽이지 않는다).
+      if (error.code === "42703" || error.code === "PGRST204") return null;
+      throw error;
+    }
+    const q = (data?.normalize_snapshot_question as string | null) ?? null;
+    const st = (data?.normalize_snapshot_status as string | null) ?? null;
+    if (!q || !st) return null;
+    return {
+      originalQuestion: q,
+      status: st as NormalizeStatus,
+      acceptedText: (data?.normalize_snapshot_accepted as string | null) ?? null,
+      suggestionText: (data?.normalize_snapshot_suggestion as string | null) ?? null,
+    };
+  },
+  storeNormalizeSnapshot: async (snapshot) => {
+    // 최초 1회만 쓴다. 이미 있으면 내가 CAS 패자이므로 winner 를 읽어 돌려준다
+    // (판정 저장과 같은 계약 — 두 worker 가 서로 다른 문장으로 답하면 재생이 깨진다).
+    const { data, error } = await client
+      .from("genius_question_jobs")
+      .update({
+        normalize_snapshot_question: snapshot.originalQuestion,
+        normalize_snapshot_status: snapshot.status,
+        normalize_snapshot_accepted: snapshot.acceptedText,
+        normalize_snapshot_suggestion: snapshot.suggestionText,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("message_id", messageId)
+      .is("normalize_snapshot_status", null)
+      .select("normalize_snapshot_status");
+    if (error) {
+      if (error.code === "42703" || error.code === "PGRST204") return null;
+      throw error;
+    }
+    if ((data?.length ?? 0) > 0) return null; // winner — 내 판정을 쓴다
+
+    const { data: won, error: readErr } = await client
+      .from("genius_question_jobs")
+      .select("normalize_snapshot_question, normalize_snapshot_status, normalize_snapshot_accepted, normalize_snapshot_suggestion")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (readErr || !won?.normalize_snapshot_status) return null; // 읽기 실패는 내 판정 유지
+    return {
+      originalQuestion: (won.normalize_snapshot_question as string | null) ?? snapshot.originalQuestion,
+      status: won.normalize_snapshot_status as NormalizeStatus,
+      acceptedText: (won.normalize_snapshot_accepted as string | null) ?? null,
+      suggestionText: (won.normalize_snapshot_suggestion as string | null) ?? null,
+    };
+  },
+  getIntentDecision: async () => {
+    const { data, error } = await client
+      .from("genius_question_jobs")
+      .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team, intent_verdict_known")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (error) {
+      if (error.code === "42703" || error.code === "PGRST204") return null;
+      throw error;
+    }
+    if (!data) return null;
+    return {
+      verdict: (data.intent_verdict as string | null) ?? null,
+      fingerprint: (data.intent_fingerprint as string | null) ?? null,
+      answer: (data.intent_answer as string | null) ?? null,
+      clarify: (data.intent_clarify as string | null) ?? null,
+      team: (data.intent_team as string | null) ?? null,
+      // 구 행은 컬럼이 NULL 이다 — `replayableIntent` 가 false 로 접는다(모름 → 개방 철회).
+      verdictKnown: (data.intent_verdict_known as boolean | null) ?? null,
+    };
+  },
+  storeIntentDecision: async ({ verdict, fingerprint, answer, clarify, team, verdictKnown }) => {
+    // ── 원자적 CAS (삼순 2026-08-31 P0-2) ──────────────────────────────────
+    //
+    // 🔴 초안은 `.is("intent_verdict", null)` 이었는데 그게 **결함**이었다.
+    //   fingerprint 가 바뀌면(프롬프트 수정·맥락 변경) `replayableIntent` 는 재생을
+    //   거부하고 재분류하는데, 저장은 "verdict 가 null 일 때만" 이라 **옛 판정이 영원히
+    //   남는다.** 그러면 그 messageId 는 재시도마다 새로 분류되고 매번 흔들린다 —
+    //   재현성을 위해 만든 층이 정확히 재현성을 잃는 자리였다.
+    //
+    // 그래서 조건을 "**이 fingerprint 의 최초 판정**" 으로 바꾼다:
+    //   verdict 가 없거나(최초) · 저장된 fingerprint 가 지금 것과 다르면(계약이 바뀜) 쓴다.
+    //   이미 같은 fingerprint 의 판정이 있으면 0행 → 내가 CAS 패자다.
+    //
+    // ⚠️ 패자는 **DB winner 를 읽어 그 판정을 쓴다.** 자기 판정을 쓰면 두 worker 가 서로
+    //   다른 답을 내보내 재생 계약이 깨진다(경합은 드물지만 durable 재처리에서 실재한다).
+    const { data, error } = await client
+      .from("genius_question_jobs")
+      .update({
+        intent_verdict: verdict,
+        intent_fingerprint: fingerprint,
+        intent_answer: answer,
+        intent_clarify: clarify,
+        intent_team: team,
+        // 🔴 provenance 는 판정과 **같은 update** 에 실린다 (삼순 NO-GO ①).
+        //   따로 쓰면 "판정은 저장됐는데 provenance 만 없는" 행이 생겨, 재생 때
+        //   모름을 판정으로 오인한다(값과 provenance 를 같은 조건에 결속한다, M90).
+        intent_verdict_known: verdictKnown,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("message_id", messageId)
+      .or(`intent_verdict.is.null,intent_fingerprint.neq.${fingerprint}`)
+      .select("intent_verdict");
+    if (error) {
+      if (error.code === "42703" || error.code === "PGRST204") return null;
+      throw error;
+    }
+    if ((data?.length ?? 0) > 0) return null; // 내가 winner — 내 판정을 쓴다
+
+    // CAS 패자 — 이미 저장된 winner 판정을 읽어 돌려준다.
+    const { data: won, error: readErr } = await client
+      .from("genius_question_jobs")
+      .select("intent_verdict, intent_fingerprint, intent_answer, intent_clarify, intent_team, intent_verdict_known")
+      .eq("message_id", messageId)
+      .maybeSingle();
+    if (readErr || !won) return null; // 읽기 실패는 내 판정 유지(fail-open)
+    return {
+      verdict: (won.intent_verdict as string | null) ?? null,
+      fingerprint: (won.intent_fingerprint as string | null) ?? null,
+      answer: (won.intent_answer as string | null) ?? null,
+      clarify: (won.intent_clarify as string | null) ?? null,
+      team: (won.intent_team as string | null) ?? null,
+      verdictKnown: (won.intent_verdict_known as boolean | null) ?? null,
+    };
+  },
+  // 되묻기 렌더 결과 고정 (삼순 2026-08-31 P0-3).
+  //   조건이 `intent_answer.is.null` 인 이유: 판정 저장(`storeIntentDecision`)이 이미
+  //   이 fingerprint 를 확정해 놨고, 렌더는 그 뒤에 **한 번만** 붙는다. 이미 문구가
+  //   있으면 내가 CAS 패자이므로 그 문구를 읽어 돌려준다.
+  storeIntentRender: async (fingerprint, rendered) => {
+    const { data, error } = await client
+      .from("genius_question_jobs")
+      .update({ intent_answer: rendered, updated_at: new Date().toISOString() })
+      .eq("message_id", messageId)
+      .eq("intent_fingerprint", fingerprint)
+      .is("intent_answer", null)
+      .select("intent_answer");
+    if (error) {
+      if (error.code === "42703" || error.code === "PGRST204") return null;
+      throw error;
+    }
+    if ((data?.length ?? 0) > 0) return null; // winner — 내 렌더를 쓴다
+
+    const { data: won, error: readErr } = await client
+      .from("genius_question_jobs")
+      .select("intent_answer")
+      .eq("message_id", messageId)
+      .eq("intent_fingerprint", fingerprint)
+      .maybeSingle();
+    if (readErr || !won) return null; // 읽기 실패는 내 렌더 유지(fail-open)
+    return (won.intent_answer as string | null) ?? null;
+  },
+  };
+}
+
 export function makeDeps(
   messageId: number,
   pickedPlayerKboId?: string | null,
@@ -1037,6 +1282,8 @@ export function makeDeps(
     fetchSeriesPrizeHtml: createSeriesPrizeHtmlFetcher(),
     searchOfficialRag,
     callOfficialRagLlm,
+    // 의도 라우팅 분류기 — official RAG 앞에서 잡담·후속을 가른다(2026-08-31).
+    classifyIntent,
     recordRagDemand: async (sourceKeys) => {
       // query-guard: bounded -- RPC가 source_keys 상한(20)을 강제하는 단일 갱신이다.
       const { error } = await supabaseAdmin
@@ -1205,6 +1452,9 @@ export function makeDeps(
         .eq("message_id", messageId);
       if (error) throw error;
     },
+    // 의도 라우팅 durable 저장 — production 배선은 `createIntentDurableAdapters` 가 SSOT 다.
+    //   게이트가 **같은 함수**를 PGlite 로 태워 실제 CAS/필터 회귀를 잡는다(삼순 NO-GO).
+    ...createIntentDurableAdapters(supabaseAdmin, messageId),
     log: async (entry) => {
       const { error } = await supabaseAdmin
         .from("genius_question_logs")

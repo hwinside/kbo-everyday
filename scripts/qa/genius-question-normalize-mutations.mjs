@@ -106,8 +106,8 @@ const mutations = [
   {
     // 삼순 ③ 관측 분리: 제안문을 수용문 칸에 섮으면 오교정 감사 분모가 깨진다.
     name: "M10 제안 후보를 수용문 칸에 섮음",
-    find: 'const acceptedText = accepted ? candidate : null;',
-    replace: 'const acceptedText = accepted || suggested ? candidate : null;',
+    find: 'const acceptedText = accepted ? (replayedSnapshot?.acceptedText ?? candidate) : null;',
+    replace: 'const acceptedText = accepted || suggested ? (replayedSnapshot?.acceptedText ?? candidate) : null;',
   },
   {
     name: "M11 제안 전용 관측 칸 기록 제거",

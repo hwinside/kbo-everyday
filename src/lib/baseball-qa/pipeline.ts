@@ -20,6 +20,13 @@ import {
 } from "./roster/draft";
 import { normalizeKey, normalizeQuestion } from "./normalize";
 import {
+  parseIntentResponse,
+  intentFingerprint,
+  replayableIntent,
+  type IntentDecision,
+  type StoredIntentDecision,
+} from "./intent";
+import {
   kstYear,
   parseSeriesPrize,
   renderSeriesPrizeAnswer,
@@ -290,6 +297,46 @@ export const NEWS_UNAVAILABLE_ANSWER =
 // 후속형인데 이어붙일 직전 turn이 없을 때 — 차단 문구가 아니라 정중한 되묻기다 (spec §4.3 AC4).
 export const CONTEXT_MISSING_ANSWER =
   "어떤 내용에 이어서 물으신 건지 궁금한 내용을 한 번만 더 적어 주시면 답변하겠습니다.";
+
+/**
+ * **되묻기 문안** — 새로 조회해야 답할 수 있는데 무엇을 조회할지 특정이 안 될 때
+ * (삼순 2026-08-31 지시 ③, `NEEDS_CLARIFICATION`).
+ *
+ * `CONTEXT_MISSING_ANSWER` 와 나누는 이유: 그쪽은 "무엇에 **이어서**" 물었는지를 묻고,
+ * 이쪽은 "어느 **경기·선수**"인지를 묻는다. 유저가 다음에 적어야 할 것이 서로 다르다.
+ * 실측(10회)에서 `방금 점수 어떻게 냈어?` 가 FOLLOWUP 5 : BASEBALL 5 로 갈렸는데,
+ * 그건 두 해석이 다 맞기 때문이라 한쪽으로 몰면 절반은 틀린다 — 되묻기가 항상 옳다.
+ */
+/**
+ * "어느 경기?" 되묻기 문안을 **오늘 경기 목록과 함께** 만든다
+ * (하린아빠 2026-08-31 19:49: "오늘 진행중인 경기는 이러이런 경기들이 있는데요 이중에?").
+ *
+ * 삼순 계약대로 후보 수 0/1/N 을 각각 다르게 처리한다 — 셋을 한 문장으로 뭉개면
+ * 경기가 없는 날에도 "이 중에 어느 경기인가요" 라고 묻는 사고가 난다.
+ *
+ *   N개 → 목록을 붙여 고르게 한다(유저가 한 단어로 답할 수 있다)
+ *   1개 → **되묻지 않는다.** 후보가 하나뿐이면 물어볼 것이 없다. 그 경기를 명시하고
+ *          무엇이 궁금한지만 묻는다(되묻기 왕복을 한 번 줄인다)
+ *   0개 → 목록 없이 되묻는다. 없는 목록을 지어내지 않는다
+ *
+ * ⚠️ 취소 경기는 후보에서 뺀다 — "방금 점수" 의 대상이 될 수 없다.
+ * ⚠️ 조회 실패는 **0개와 다르다**. 실패는 호출부가 목록 없이 되묻도록 null 을 넘긴다
+ *   ("오늘 경기가 없다"고 단정하면 거짓 안내다 — 값으로 결측을 판정하지 않는다).
+ */
+export function renderNeedsClarificationAnswer(games: TodayGameStarters[] | null): string {
+  if (games === null) return NEEDS_CLARIFICATION_ANSWER;
+  const live = games.filter((g) => g.status !== "cancelled");
+  if (live.length === 0) return NEEDS_CLARIFICATION_ANSWER;
+  if (live.length === 1) {
+    const g = live[0]!;
+    return `${g.awayName} vs ${g.homeName} 경기 말씀이실까요? 어떤 점이 궁금한지 한 번만 더 알려주시면 확인해 드리겠습니다.`;
+  }
+  const lines = live.map((g) => `· ${g.awayName} vs ${g.homeName}`).join("\n");
+  return `어떤 경기 말씀이실까요? 오늘은 이런 경기들이 있습니다.\n${lines}\n이 중에 어느 경기인지 알려주시면 바로 확인해 드리겠습니다.`;
+}
+
+export const NEEDS_CLARIFICATION_ANSWER =
+  "어느 경기·선수 이야기인지 한 번만 더 알려주시면 바로 확인해 드리겠습니다.";
 
 export const LLM_AMBIGUOUS_ANSWER =
   "답변을 저장하는 과정에서 문제가 생겨 이번 질문에는 답변하지 못했습니다. 같은 질문을 다시 보내 주시면 새로 확인하겠습니다.";
@@ -773,6 +820,14 @@ export type MatchPath =
   //   감사 축도 다르다: "오타 교정이 얼마나 나갔고 그중 오제안은 몇 건인가" 를 세려면
   //   전용 라벨이 유일한 식별자다(`scope_guide` 를 `ack` 에서 분리한 것과 같은 축).
   | "name_suggest"
+  // 조회 대상이 특정되지 않아 **생성 없이** 되물은 경로 (2026-08-31 의도 라우팅).
+  //
+  // ⚠️ `context_missing` 과 분리하는 이유는 `scope_guide` 를 `ack` 에서 분리한 것과 같다.
+  //   `context_missing` = "무엇에 이어서 물으셨나요"  (직전 턴이 없다)
+  //   `needs_clarification` = "어느 경기·선수인가요" (직전 턴은 있으나 대상이 안 잡힌다)
+  //   유저가 다음에 적어야 할 것이 다르고, "되묻기가 얼마나 나갔고 그중 과잉 되묻기는
+  //   몇 건인가" 를 세려면 전용 라벨이 유일한 식별자다.
+  | "needs_clarification"
   // 선수 서술형 질문을 수집된 tier2 문서 근거로 답한 경로 (S2b).
   | "rag"
   // 구단 서술형 질문을 적재된 구단 문서 근거로 답한 경로.
@@ -1050,6 +1105,25 @@ export interface QaDeps {
   normalizeQuestionLlm?: (
     question: string,
   ) => Promise<{ text: string | null; inputTokens: number | null; outputTokens: number | null }>;
+  /**
+   * 최초 정규화 판정 snapshot 조회 (삼순 2026-08-31 NO-GO ②).
+   *
+   * 🔴 왜 필요한가 — **정규화가 intent fingerprint 보다 먼저 흔들린다.**
+   *   `intentFingerprint` 는 정규화가 끝난 `question` 으로 계산한다. 그런데 정규화 자체가
+   *   LLM 이라 회차마다 다른 후보를 낼 수 있고, 그러면 fingerprint 가 달라져 **판정 재생이
+   *   아예 발동하지 않는다.** durable replay 를 만들어 놓고 그 앞단이 입력을 바꿔버리는 것이라,
+   *   재생 계약이 종이 위에서만 성립한다.
+   *
+   *   그래서 재생의 시작점을 **정규화 판정**으로 끌어올린다. 최초 1회 판정을 저장하고
+   *   이후 재처리는 그것을 재생한다 — 그러면 라우팅 입력이 고정되고, 그 위에서 계산되는
+   *   fingerprint 도 고정된다.
+   */
+  getNormalizeSnapshot?: () => Promise<StoredNormalizeSnapshot | null>;
+  /**
+   * 최초 정규화 판정 저장. 반환값이 계약이다 — `null` 이면 내가 winner(내 판정을 쓴다),
+   * 값이 있으면 내가 CAS 패자이고 **그 판정을 써야 한다**(판정 저장과 같은 계약).
+   */
+  storeNormalizeSnapshot?: (snapshot: StoredNormalizeSnapshot) => Promise<StoredNormalizeSnapshot | null>;
   /** 유저가 교정 카드에서 선택하고 서버 후보 membership 검증까지 끝낸 exact 후보. */
   pickedNormalizedQuestion?: string | null;
   /**
@@ -1220,6 +1294,69 @@ export interface QaDeps {
   acquireLlmStart?: () => Promise<boolean>;
   /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
   storeLlm?: (result: LlmResult) => Promise<void>;
+  /**
+   * 의도 라우팅 분류기 (2026-08-31 하린아빠 "C로 가자" 확정).
+   *
+   * official RAG **앞**에서 잡담·후속을 가른다. 실측 근거는 `intent.ts` 헤더에 있다 —
+   * L4/L5 실패 38건 전수가 거리 임계 0.42 를 통과해 공식 간행물 프롬프트로 갔다.
+   *
+   * ⚠️ durable 단일-LLM 계약(getLlmState/acquireLlmStart) **밖**의 호출이다
+   *   (`mapGlossaryDefinition`·`normalizeQuestionLlm` 과 같은 자리).
+   *   결과를 저장하지 않으므로 crash 재처리 시 재호출될 수 있지만, 이 단계의 산출은
+   *   ①라우팅 라벨(결정론적 재계산 가능) ②가드를 통과한 짧은 문장뿐이라 중복 노출·
+   *   분기 불일치가 생기지 않는다. 하린아빠 2026-08-31: "답변 퀄리티가 중요하지
+   *   호출수가 중요하진 않아" — 비용은 실측해 보고한다.
+   *
+   * 미주입이면 이 단계 자체가 비활성(기존 동작 그대로).
+   */
+  classifyIntent?: (
+    question: string,
+    context?: ContextTurn,
+  ) => Promise<{ text: string; inputTokens: number | null; outputTokens: number | null }>;
+  /**
+   * 이 messageId 의 **최초 의도 판정** 조회 (2026-08-31 삼순 지시 ①).
+   *
+   * 🔴 전역 캐시가 아니다. 키는 `message_id`(job 행) + `intent_fingerprint`(질문 + 주입된
+   *   직전 대화 + 프롬프트 버전)다. 같은 문장이라도 맥락이 다르면 fingerprint 가 달라
+   *   재생되지 않는다 — 남의 판정을 물려받는 경로가 구조적으로 없다.
+   *
+   * 왜 필요한가: `temperature: 0` 에서도 **동일 request body 로 판정이 갈린다**(실측 10회,
+   * `방금 점수 어떻게 냈어?` FOLLOWUP 5 : BASEBALL 5). durable 재처리(cron drain)가 같은
+   * 메시지를 다시 태울 때 답이 바뀌면 안 되므로 최초 판정을 고정한다.
+   *
+   * 조회 실패·컬럼 부재는 "판정 없음" 으로 접는다(migration 이 늦어도 기능이 죽지 않는다).
+   */
+  getIntentDecision?: () => Promise<StoredIntentDecision | null>;
+  /**
+   * 이 fingerprint 의 **최초 판정**을 원자적으로 저장한다 (삼순 2026-08-31 P0-2).
+   *
+   * 반환값이 계약이다:
+   *   · `null`  = 내가 CAS winner. 내 판정을 그대로 쓴다.
+   *   · 판정 객체 = 내가 **패자**이고, 이미 저장된 winner 판정이다. **그것을 써야 한다** —
+   *     내 판정을 쓰면 두 worker 가 서로 다른 답을 내보내 재생 계약이 깨진다.
+   *
+   * 실패해도 라우팅을 막지 않는다(재현성만 잃고 동작은 유지).
+   */
+  storeIntentDecision?: (d: {
+    verdict: string; fingerprint: string; answer: string | null;
+    clarify: string | null; team: string | null;
+    /**
+     * 판정 provenance — 분류기 명시 응답이면 true, fail-open 이면 false.
+     * 판정과 **같은 쓰기**에 실어야 "판정은 있는데 provenance 만 없는" 행이 안 생긴다.
+     */
+    verdictKnown: boolean;
+  }) => Promise<StoredIntentDecision | null>;
+  /**
+   * 되묻기 **렌더 결과**를 이 fingerprint 의 판정에 고정한다 (삼순 2026-08-31 P0-3).
+   *
+   * 되묻기 문구는 오늘 경기 목록을 담을 수 있어 **시간에 따라 변한다**. 재처리 때 다시
+   * 렌더하면 자정 경계·경기 상태 변경에서 같은 messageId 의 답이 달라지므로, 최초 렌더를
+   * 저장하고 이후엔 재생한다.
+   *
+   * 반환값이 계약이다: `null` = 내가 winner(내 렌더를 쓴다) · 문자열 = 이미 저장된 winner
+   * 문구이며 **그것을 써야 한다**.
+   */
+  storeIntentRender?: (fingerprint: string, rendered: string) => Promise<string | null>;
   log: (entry: {
     userId: string;
     question: string;
@@ -1676,10 +1813,35 @@ export function teamIdOfCanonical(canonical: string): number | null {
  * 여기서 별도 매핑표를 두지 않는다 — 둘을 이어주는 계약은 게이트가 실 corpus 로 고정한다.
  */
 export function resolveRagTeamCandidate(question: string): RagTeamCandidate | null {
-  const canonical = resolveMentionedTeam(question);
-  if (canonical === null) return null;
-  const teamId = teamIdOfCanonical(canonical);
-  if (teamId === null) return null;
+  const r = resolveRagTeamBinding(question);
+  return r.kind === "single" ? r.candidate : null;
+}
+
+/**
+ * 구단 문자열 결속의 **3상태** 판정.
+ *
+ * 🔴 삼순 NO-GO (2026-09-01): `resolveRagTeamCandidate` 의 `null` 은 두 가지를 겸한다 —
+ *   ① 구단이 언급되지 않았다 ② **복수 구단이라 거부했다**. 그 둘을 구분 안 한 채
+ *   분류기 귀속으로 보강(`?? intentTeam`)하면, `LG랑 두산 중 누가 더 잘해?` 같은 **비교
+ *   질문이 한 구단 문서로 부활**한다. 거부를 미탐으로 바꿔치기하는 사고다.
+ *
+ *   이 PR 초안에 내가 직접 적어둔 계약이기도 하다 — "후보 해석기의 null 은 '엔티티가
+ *   없다' 가 아니라 '있는데 단일 후보로 못 좁혔다' 이므로, 그 null 을 개방 신호로 쓰면
+ *   안 된다." 그럼에도 team 경로에서 또 같은 실수를 했다.
+ *
+ * ⚠️ **새 어휘·정규식을 만들지 않는다.** 기존 판정기(`mentionedTeamCanonicals`,
+ *   `TEAM_ALIASES`)를 그대로 쓰고 **반환 타입만** 나눈다.
+ */
+export type RagTeamBinding =
+  /** 문장이 구단 하나를 특정했다. */
+  | { kind: "single"; candidate: RagTeamCandidate }
+  /** 구단 언급이 없다 — 분류기 귀속으로 **보강해도 되는** 유일한 상태. */
+  | { kind: "none" }
+  /** 복수 구단이라 거부했다 — 어떤 경로로도 되살리지 않는다. */
+  | { kind: "refused"; reason: "multi_team"; teams: string[] };
+export function resolveRagTeamBinding(question: string): RagTeamBinding {
+  const hits = mentionedTeamCanonicals(question);
+  if (hits.length >= 2) return { kind: "refused", reason: "multi_team", teams: hits };
 
   // ⚠️ 토큰 매칭은 허용 조사 목록 밖의 결합형(`LG랑`)을 놓친다. 그래서
   // `LG랑 두산 중 누가 더 잘해?` 는 두산 **하나만** 지명된 것처럼 보인다.
@@ -1688,12 +1850,43 @@ export function resolveRagTeamCandidate(question: string): RagTeamCandidate | nu
   // 선수 경로(`buildCandidate` 의 `mentionsOther`)와 같은 보수 규칙을 쓴다 —
   // 조사와 무관하게 다른 구단의 약칭·별칭이 문자열로 등장하면 단일 entity 로 보지 않는다.
   // 과탐지는 RAG 미서빙(기존 경로 유지)일 뿐이고, 놓치면 남의 문서로 답하는 사고다.
+  //
+  // 🔴 그리고 이 경우도 **`refused`** 다 — "문자열로는 한 팀이지만 다른 팀이 거론된다" 는
+  //   구단 미언급이 아니다. `none` 으로 접으면 분류기가 되살린다.
   const normalized = question.normalize("NFKC").toLowerCase();
-  const mentionsOtherTeam = TEAM_ALIASES.some((team) =>
-    team.canonical !== canonical &&
+  const others = TEAM_ALIASES.filter((team) =>
+    team.canonical !== hits[0] &&
     [...team.shorts, ...team.nicks].some((word) => normalized.includes(word)));
-  if (mentionsOtherTeam) return null;
+  if (others.length > 0) {
+    return {
+      kind: "refused",
+      reason: "multi_team",
+      teams: [...hits, ...others.map((t) => t.canonical)],
+    };
+  }
 
+  if (hits.length === 0) return { kind: "none" };
+  const candidate = teamCandidateOfCanonical(hits[0]);
+  // canonical 이 폐쇄집합 밖이라 변환이 안 되는 경우 — 지명은 있었으므로 `none` 이 아니다.
+  if (candidate === null) return { kind: "refused", reason: "multi_team", teams: hits };
+  return { kind: "single", candidate };
+}
+
+/**
+ * canonical 구단명 → RAG 후보. **문자열 결속과 분류기 귀속이 같은 구조체를 만든다.**
+ *
+ * 🔴 삼순 NO-GO (2026-08-31): 직전 구현은 `intentTeam` 을 official **차단**에만 쓰고,
+ *   정작 team RAG 후보는 뒤에서 다시 `resolveRagTeamCandidate(question)` — 즉 **원문
+ *   문자열** — 으로 구했다. 그래서 `호걸이 이름 뜻이뭐야?` 는 분류기가 KIA 로 판정해도
+ *   official 이 닫히기만 하고 **KIA 문서로 이어지지 않았다.** 판정을 만들어 놓고 쓰지 않은
+ *   것이라, 게이트가 `official=0` 만 보면 연결이 끊겨도 GREEN 이었다.
+ *
+ *   여기서 후보 생성을 한 함수로 모아, 문자열 경로와 분류기 경로가 **같은 entityId·
+ *   sourceKey 규약**을 쓰게 한다. 매핑표를 새로 만들지 않는다 — `TEAM_ALIASES.teamId` 하나다.
+ */
+export function teamCandidateOfCanonical(canonical: string): RagTeamCandidate | null {
+  const teamId = teamIdOfCanonical(canonical);
+  if (teamId === null) return null;
   return {
     entityType: "team",
     entityId: String(teamId),
@@ -4540,6 +4733,221 @@ async function answerPlayerDescriptiveQuestion(
  * 그래서 이 함수는 **LLM 경계에 들어가기 전에만** null을 돌릴 수 있다(근거 0건).
  * 경계를 지나면 그 호출을 이미 소비했으므로 아래 일반 LLM로 내려보내지 않고 여기서 종결한다.
  */
+/**
+ * 의도 라우팅 게이트 — 잡담·후속이면 여기서 종결하고, 아니면 null 로 기존 경로를 이어준다.
+ *
+ * 설계 근거는 호출부 주석과 `intent.ts` 헤더에 있다.
+ *
+ * 🔴 **이 함수는 durable LLM 경계 밖이다.** `mapGlossaryDefinition`·`normalizeQuestionLlm`
+ *   과 같은 자격이다 — 결과를 `storeLlm` 으로 저장하지 않으므로 그 다음 경로가 쓰는
+ *   "1 messageId = 1 호출" 경계를 소비하지 않는다. 즉 기존 경로로 양보해도 official/team/
+ *   generic 이 정상적으로 LLM 을 쓸 수 있다(미양보 시에도 중복 소비 없음).
+ *   대가는 호출 1회 추가이며, 하린아빠 2026-08-31 확정("답변 퀄리티가 중요하지 호출수가
+ *   중요하진 않아")에 따라 감수한다. 비용은 게이트가 실측해 보고한다.
+ *
+ * 🔴 **호출 실패는 fail-open** 이다. 분류기가 죽었다고 정상 야구 질문을 잡담로 보내면
+ *   새 결함이 되지만, 기존 경로로 흔리면 오늘과 같은 동작이라 손해가 없다.
+ */
+/**
+ * 의도 라우팅 결과.
+ *
+ * `result` 가 있으면 이 경로가 질문을 종결한 것이고, null 이면 기존 경로로 내려간다.
+ * `team` 은 **종결 여부와 무관하게** 하류에 전달된다 — `BASEBALL` 로 내려보내는 질문도
+ * "어느 구단의 것인가" 는 알아야 official 게이트가 옳게 판정한다.
+ */
+interface IntentRouteOutcome {
+  result: QaResult | null;
+  /** 분류기가 판정한 구단 귀속(폐쇄집합). 판정 없음·미주입이면 null. */
+  team: string | null;
+  /**
+   * 분류기가 **명시적으로 판정**했는가 (삼순 2026-08-31 ⓒ-①).
+   *
+   * 🔴 이 PR 이 official RAG 로 가는 문을 열었는데, 그 문은 **판정이 있을 때만** 열려야
+   *   한다. 분류기가 죽거나(throw) 응답이 계약을 어기면 `BASEBALL` 로 fail-open 하는데,
+   *   그건 "야구 질문이다" 가 아니라 "**모르겠다**" 다. 모르는 상태에서 문을 열면
+   *   `질문답헤줘` 같은 조각이 KBO 규칙집 근거를 받아 답하게 된다 —
+   *   실측으로 확인했다(분류기 판정 20회 중 BASEBALL 0회인데 게이트에선 official 1회).
+   *
+   *   false 면 이 PR 이 연 개방을 **철회**하고 종전 계약(사전·엔티티 게이트)으로 돌아간다.
+   *   방향이 보수적이다 — 판정 불가의 대가가 "새 기능 없음"이지 "새 결함"이 아니다.
+   */
+  verdictKnown: boolean;
+}
+
+async function resolveIntentRoute(args: {
+  userId: string;
+  question: string;
+  questionNorm: string;
+  remaining: number;
+  context: ContextTurn | null;
+  players: PlayerRef[];
+  deps: QaDeps;
+}): Promise<IntentRouteOutcome> {
+  const { userId, question, questionNorm, remaining, context, players, deps } = args;
+
+  // ── durable 재생 (삼순 2026-08-31 ①) ──────────────────────────────────────
+  //   같은 messageId 를 다시 처리할 때 **최초 판정을 그대로 재생**한다. provider 가
+  //   비결정적이라(실측 10회) 재분류하면 답이 바뀔 수 있고, 유저는 같은 질문에 다른
+  //   답을 받게 된다. fingerprint 가 다르면(맥락·프롬프트가 바뀜) 재생하지 않는다.
+  const fingerprint = intentFingerprint(question, context);
+  let decision: IntentDecision | null = null;
+  let raw: { text: string; inputTokens: number | null; outputTokens: number | null } = {
+    text: "", inputTokens: null, outputTokens: null,
+  };
+  if (deps.getIntentDecision) {
+    try {
+      decision = replayableIntent(await deps.getIntentDecision(), fingerprint);
+    } catch {
+      // 조회 실패는 "판정 없음" 으로 접는다 — 재현성은 잃지만 라우팅은 살아 있어야 한다.
+      decision = null;
+    }
+  }
+
+  if (!decision) {
+    try {
+      raw = await deps.classifyIntent!(question, context ?? undefined);
+    } catch {
+      // 판정 불가 → 기존 경로. **개방은 철회한다**(verdictKnown=false).
+      return { result: null, team: null, verdictKnown: false };
+    }
+  }
+
+  // 사실주장 가드에 넘길 엔티티 이름은 **질문에 실제로 들어있는 것**이 아니라
+  // 답변에 새로 등장하면 안 되는 것이다 — 로스터·구단 SSOT 에서 온다.
+  // 이 모듈이 사전을 소유하지 않는다(어휘 목록이 자라는 축을 만들지 않기 위해).
+  const entityNames = [
+    ...players.map((p) => p.name ?? "").filter((n) => n.length >= 2),
+    ...TEAM_ALIASES.flatMap((t) => [t.canonical, ...t.shorts, ...t.nicks]),
+  ];
+  if (!decision) {
+    decision = parseIntentResponse(raw.text, {
+      entityNames,
+      previousQuestion: context?.question ?? null,
+      previousAnswer: context?.answer ?? null,
+      question,
+    });
+    // 이 fingerprint 의 최초 판정을 저장한다. BASEBALL 도 저장한다 — 재처리 때
+    // "그때는 야구로 봤다" 를 재생해야 경로가 고정된다(저장 안 하면 그 케이스만 매번 흔들린다).
+    //
+    // 🔴 **CAS 패자는 자기 판정을 버린다** (삼순 2026-08-31 P0-2). 동시에 두 worker 가
+    //   같은 messageId 를 처리하면 각자 다른 판정을 낼 수 있는데(provider 비결정성),
+    //   각자 자기 것을 쓰면 유저가 받는 답이 갈린다. 먼저 쓴 쪽이 winner 다.
+    if (deps.storeIntentDecision) {
+      try {
+        const winner = await deps.storeIntentDecision({
+          verdict: decision.intent, fingerprint, answer: decision.answer,
+          clarify: decision.clarify, team: decision.team,
+          // 🔴 provenance 를 함께 싣는다 — 이게 없으면 재생 때 fail-open 회차가
+          //   "판정 있었다" 로 둔갑해 official 개방이 되살아난다(삼순 NO-GO ①).
+          verdictKnown: decision.verdictKnown,
+        });
+        // 패자면 winner 판정으로 교체한다. fingerprint 가 같을 때만 유효하다
+        // (`replayableIntent` 가 그 검증을 이미 갖고 있으므로 재사용한다).
+        const replayed = winner ? replayableIntent(winner, fingerprint) : null;
+        if (replayed) decision = replayed;
+      } catch {
+        // 저장 실패는 재현성만 잃는다 — 이번 응답은 그대로 진행한다.
+      }
+    }
+  }
+
+  // BASEBALL 은 기존 경로가 답한다. 다만 **구단 귀속은 넘긴다** — official 게이트가
+  // "이건 구단 문서 소유" 를 알아야 규칙집으로 새지 않는다(하린아빠 2026-08-31:
+  // 마스코트 이름 목록 대신 LLM 귀속 판정을 쓴다).
+  if (decision.intent === "BASEBALL") {
+    return { result: null, team: decision.team, verdictKnown: decision.verdictKnown };
+  }
+
+  const settle = async (answer: string, matchPath: MatchPath): Promise<IntentRouteOutcome> => {
+    await deps.log({
+      userId, question, questionNorm, matchPath, answer,
+      inputTokens: raw.inputTokens, outputTokens: raw.outputTokens,
+    });
+    return {
+      result: { status: 200, answer, source: matchPath, remaining },
+      team: decision!.team, verdictKnown: decision!.verdictKnown,
+    };
+  };
+
+  // 범위 밖 — 유저 문구는 코드가 낸다(생성문 미수신). 종전 `scope_guide` 와 같은 문안이라
+  // 유저 경험이 갑자기 바뀌지 않는다.
+  if (decision.intent === "SMALLTALK_SCOPE") {
+    return settle(SCOPE_GUIDE_ANSWER, "scope_guide");
+  }
+
+  // 되묻기 — 조회 대상이 특정되지 않았다(삼순 2026-08-31 ③).
+  //   ⚠️ **추가 LLM·RAG·cache 를 쓰지 않는다.** 여기서 official RAG 로 흘리면
+  //     "무엇을 물었는지 모르는 채로 근거를 찾는" 꼴이 되고, 그게 이 PR 이 고치는 결함이다.
+  //   ⚠️ `context_missing` 과 라벨을 나눈다 — 감사 축이 다르다("이어붙일 맥락이 없었다"
+  //     vs "조회 대상이 모호했다"). 같은 칸에 넣으면 어느 쪽이 얼마나 나갔는지 분모를 못 만든다.
+  if (decision.intent === "NEEDS_CLARIFICATION") {
+    // ── 되묻기 문구 durable 고정 (삼순 2026-08-31 P0-3) ──────────────────────
+    //
+    // 🔴 초안은 재처리마다 `Date.now()` 로 날짜를 새로 구하고 오늘 경기를 다시 조회해
+    //   렌더했다. 그러면 **자정 경계**(KST 일자 전환)나 **경기 상태 변경**(취소·종료)에서
+    //   같은 messageId 의 답이 달라진다 — durable replay 를 만든 이유가 바로 그건데,
+    //   정작 이 경로만 그 계약 밖에 있었다.
+    //
+    // 그래서 렌더 **결과 문자열 자체**를 최초 1회만 저장하고 이후엔 그것을 재생한다.
+    // 저장은 판정과 같은 행(`intent_answer`)이라 fingerprint 계약을 그대로 물려받는다.
+    //
+    // ⚠️ 여기 저장되는 값은 **코드가 만든 고정 문구**다(LLM 생성문 아님). `parseIntentResponse`
+    //   가 이 경로의 생성문을 항상 버리므로, `decision.answer` 에 값이 있다는 것은
+    //   "이전 처리에서 코드가 렌더한 결과를 재생 중" 이라는 뜻이다.
+    if (decision.answer) return settle(decision.answer, "needs_clarification");
+
+    // `game` 일 때만 오늘 경기를 조회한다 — `other`(약어·조각)에 경기 목록을 붙이면
+    // 유저가 묻지도 않은 것을 들이미는 꼴이다.
+    //
+    // ⚠️ 이 조회는 **structured 정본**(`/api/games` 와 같은 소스)이다. LLM·RAG·캐시를
+    //   쓰지 않으므로 "추가 answer LLM/RAG/cache 0" 계약(삼순 ③)을 지킨다.
+    let games: TodayGameStarters[] | null = null;
+    if (decision.clarify === "game" && deps.fetchTodayStarters) {
+      try {
+        // ⚠️ 날짜 산출은 선발 경로(`STARTER_DATE_SCOPES`)와 **같은 방식**이다 —
+        //   UTC 밀리초에 +9h 를 더한 뒤 날짜를 떼어낸다. 방식이 갈리면 자정 근처에
+        //   두 경로가 다른 날짜를 보게 된다.
+        const kstMs = (deps.now?.() ?? Date.now()) + 9 * 3_600_000;
+        const dateYyyymmdd = new Date(kstMs).toISOString().slice(0, 10).replace(/-/g, "");
+        games = await deps.fetchTodayStarters(dateYyyymmdd);
+      } catch {
+        // 조회 실패를 "오늘 경기 없음"으로 둔갑시키지 않는다 — null 이면 목록 없이 되묻는다.
+        games = null;
+      }
+    }
+    const rendered = renderNeedsClarificationAnswer(games);
+    // 렌더 결과를 이 fingerprint 의 판정에 붙여 고정한다. 저장 실패는 재현성만 잃는다.
+    if (deps.storeIntentRender) {
+      try {
+        const winner = await deps.storeIntentRender(fingerprint, rendered);
+        // CAS 패자면 winner 가 이미 저장한 문구를 쓴다 — 같은 messageId 가 두 문구를
+        // 내보내지 않게 한다(P0-2 와 같은 계약).
+        if (winner) return settle(winner, "needs_clarification");
+      } catch {
+        // 무시하고 이번 렌더를 그대로 내보낸다.
+      }
+    }
+    return settle(rendered, "needs_clarification");
+  }
+
+  // 가드 미통과 — 생성문을 버리고 고정 문안으로 떨어진다.
+  //   ⚠️ 여기서 기존 경로로 양보하지 **않는다**. 분류기가 잡담이라고 판정한 질문을
+  //   official RAG 에 다시 보내면 이 PR 이 고치려는 바로 그 경로로 되돌아간다.
+  if (decision.answer === null) {
+    return settle(
+      decision.intent === "FOLLOWUP" ? CONTEXT_MISSING_ANSWER : SCOPE_GUIDE_ANSWER,
+      decision.intent === "FOLLOWUP" ? "context_missing" : "scope_guide",
+    );
+  }
+
+  // FOLLOWUP 은 직전 답변이 있을 때만 성립한다 — 맥락이 없으면 되묻는다(종전 AC4 계약).
+  if (decision.intent === "FOLLOWUP" && !context) {
+    return settle(CONTEXT_MISSING_ANSWER, "context_missing");
+  }
+
+  return settle(decision.answer, decision.intent === "FOLLOWUP" ? "llm" : "ack");
+}
+
 async function answerOfficialDocumentQuestion(
   userId: string,
   question: string,
@@ -5003,6 +5411,28 @@ export function digitSequencesMatch(a: string, b: string): boolean {
 }
 
 /** 정규화 관측 상태 — 미호출(null)·교정없음·거절·장애를 분리해야 발동률·오교정 감사가 가능하다. */
+/**
+ * 최초 정규화 판정 snapshot — 라우팅 **입력**을 durable 로 고정한다 (삼순 NO-GO ②).
+ *
+ * 🔴 왜 판정 재생만으로는 부족한가.
+ *   `intentFingerprint` 는 **정규화가 끝난** question 으로 계산한다. 정규화 자체가 LLM 이라
+ *   회차마다 다른 후보를 낼 수 있고, 그러면 fingerprint 가 달라져 판정 재생이 **아예 발동하지
+ *   않는다.** 재생 계약을 만들어 놓고 그 앞단이 입력을 바꿔버리면 계약은 종이 위에만 있다.
+ *
+ *   그래서 재생 시작점을 정규화 판정까지 끌어올린다. 이 snapshot 이 고정되면
+ *   `question` → `fingerprint` → `intent` → `render` 가 모두 결정론이 된다.
+ */
+export interface StoredNormalizeSnapshot {
+  /** 최초 판정 당시의 **원문**. 이게 다르면 다른 입력이므로 재생하지 않는다. */
+  originalQuestion: string;
+  /** 최초 판정 상태. `accepted_surface`·`suggested`·`rejected`·`no_change`·`error`. */
+  status: NormalizeStatus;
+  /** 수용된 문장(수용이 아니면 null). */
+  acceptedText: string | null;
+  /** 제안 문구(제안이 아니면 null). */
+  suggestionText: string | null;
+}
+
 export type NormalizeAcceptStatus = "accepted_surface" | "rejected";
 export type NormalizeStatus =
   | NormalizeAcceptStatus
@@ -5053,6 +5483,39 @@ export const CORRECTION_SUGGESTABLE_ROUTES: readonly QuestionRoute[] = [
   "career_leaderboard",
 ];
 
+/**
+ * 교정 후보가 **엔티티 결속을 보존하는가** (2026-08-31).
+ *
+ * 표기 교정은 "무엇에 대한 질문인가" 를 바꾸면 안 된다. 구단·선수 지명이 교정 전후로
+ * 동일해야 같은 경로가 그 질문을 소유한다.
+ *
+ * ⚠️ 집합 비교다 — 순서가 아니라 원소가 같아야 한다. 그리고 **양방향**으로 본다:
+ *   결속이 사라지는 것(`한화` 소멸)뿐 아니라 **없던 결속이 생기는 것**도 막는다.
+ *   후자는 교정이 엉뚱한 구단을 만들어내 다른 문서를 근거로 붙이는 경로다.
+ */
+function preservesEntityBinding(question: string, candidate: string, players: PlayerRef[]): boolean {
+  const teamsBefore = new Set(mentionedTeamCanonicals(question));
+  const teamsAfter = new Set(mentionedTeamCanonicals(candidate));
+  if (teamsBefore.size !== teamsAfter.size) return false;
+  for (const t of teamsBefore) if (!teamsAfter.has(t)) return false;
+
+  // 🔴 선수 축은 **KBO ID 집합의 단조 보존**으로 본다 (삼순 2026-08-31 P0-1).
+  //
+  //   초안은 `mentionsAnyRosterName` boolean 을 비교했는데 그건 false-green 이었다.
+  //   그 술어는 공백을 지우고 판정하므로 `김도영 홈런 몇 개` → `김도영홈런몇개` 가
+  //   **true → true** 로 통과하지만, 실제 소유권을 정하는 `findPlayerReferences` 는
+  //   `[김도영] → []` 다(토큰 경계가 무너져 이름을 못 찾는다). 앞선 `한화 김서현` 통과는
+  //   **팀 축**이 잡은 것이라 선수 축 증거가 아니었다.
+  //
+  //   그래서 판정 주체와 **같은 함수**로 집합을 뽑고, before 의 모든 KBO ID 가 after 에도
+  //   남아 있는지 본다(단조 보존). 사라지면 그 선수 질문의 소유권이 교정으로 증발한다.
+  const before = findPlayerReferences(questionTokens(question), players);
+  const after = new Set(
+    findPlayerReferences(questionTokens(candidate), players).map((p) => p.kboId),
+  );
+  return before.every((p) => after.has(p.kboId));
+}
+
 /** Tier A만 자동 수용한다. Tier B는 유저 선택 전까지 질문으로 쓰지 않고 제안만 한다. */
 export function classifyQuestionCorrectionCandidate(
   question: string,
@@ -5068,7 +5531,27 @@ export function classifyQuestionCorrectionCandidate(
   if (candidateRoute === "blocked") return "rejected";
   // Tier A(표기만 변경)는 #1151 계약 그대로 자동 수용한다 — 문자 구성이 같아 의미 드리프트가
   // 구조적으로 불가능하고, 재라우팅 결과가 residual 이어도 종전 동작과 동일하다.
-  if (normalizeKey(candidate) === normalizeKey(question)) return "accepted_surface";
+  //
+  // 🔴 **단, 엔티티 결속이 보존될 때만이다** (2026-08-31 실측 재현, 100rep 중 1회).
+  //
+  //   #1151 의 전제 "문자 구성이 같으면 의미가 안 바뀐다" 는 **부분적으로 틀렸다.**
+  //   `normalizeKey` 는 공백을 지우고 비교하는데, **엔티티 해석기는 공백으로 토큰을 자른다.**
+  //   그래서 공백만 사라진 후보는 Tier A 로 자동 수용되지만, 그 순간 두 토큰이 한 토큰으로
+  //   합쳐져 구단·선수 결속이 **소멸**한다:
+  //
+  //     "한화 몬스터월은 뭐야?"  → teams=[한화] · ownedByEntityRag=true  → team RAG
+  //     "한화몬스터월은 뭐야?"   → teams=[]     · ownedByEntityRag=false → official RAG(규칙집)
+  //
+  //   규칙집에 마스코트 근거가 있을 리 없으니 유저는 `unsure` 를 받는다. 즉 "표기만 바뀌었다"
+  //   가 아니라 **라우팅이 통째로 뒤집힌다.** 문자 구성 불변이 의미 불변을 함의하려면
+  //   판정이 문자 집합에만 의존해야 하는데, 라우팅은 **토큰 경계**에 의존한다.
+  //
+  //   그래서 결속 집합(구단 canonical · 로스터 이름)이 교정 전후로 같을 때만 수용한다.
+  //   깨지면 수용하지 않고 원문을 유지한다 — 미수용의 대가는 **종전 동작**이라 보수적이다.
+  //   `normalizeKey` 자체는 건드리지 않는다(캐시 키·사전 매칭 전반이 이 함수에 걸려 있다).
+  if (normalizeKey(candidate) === normalizeKey(question)) {
+    return preservesEntityBinding(question, candidate, players) ? "accepted_surface" : "rejected";
+  }
   // Tier B(문자 구성 변경)는 **답변 가능 폐쇄 allowlist 에 착지했을 때만** 제안한다.
   return CORRECTION_SUGGESTABLE_ROUTES.includes(candidateRoute) ? "suggest" : "rejected";
 }
@@ -5230,11 +5713,35 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
   if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm
       && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+    // ── 최초 정규화 판정 재생 (삼순 2026-08-31 NO-GO ②) ────────────────────
+    //
+    // 🔴 판정 재생만으로는 부족했다. `intentFingerprint` 는 **정규화가 끝난** question 으로
+    //   계산하는데, 정규화 자체가 LLM 이라 회차마다 다른 후보를 낼 수 있다. 그러면
+    //   fingerprint 가 달라져 판정 재생이 **아예 발동하지 않는다** — 재생 계약을 만들어
+    //   놓고 그 앞단이 입력을 바꿔버리는 구조였다.
+    //
+    //   그래서 재생 시작점을 여기로 끌어올린다. snapshot 이 고정되면
+    //   `question` → `fingerprint` → `intent` → `render` 가 전부 결정론이 된다.
+    //
+    // ⚠️ 원문이 다르면 재생하지 않는다 — 다른 입력에 남의 판정을 씌우면 안 된다.
+    let replayedSnapshot: StoredNormalizeSnapshot | null = null;
+    if (deps.getNormalizeSnapshot) {
+      try {
+        const stored = await deps.getNormalizeSnapshot();
+        if (stored && stored.originalQuestion === question) replayedSnapshot = stored;
+      } catch {
+        replayedSnapshot = null; // 조회 실패는 새로 판정한다(fail-open — 종전 동작).
+      }
+    }
+
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
-    try {
-      norm = await deps.normalizeQuestionLlm(question);
-    } catch {
-      norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
+    // 재생분은 provider 를 다시 태우지 않는다 — 태우면 결정론이 깨지고 비용도 두 번 든다.
+    if (!replayedSnapshot) {
+      try {
+        norm = await deps.normalizeQuestionLlm(question);
+      } catch {
+        norm = null; // 정규화 장애는 원문 진행 — 새 경로가 기존 답변을 죽이면 안 된다.
+      }
     }
     const candidate = typeof norm?.text === "string" ? norm.text.trim() : "";
     // 관측 상태는 미호출(null)·교정없음·거절·장애를 구분해 기록한다 — `question_normalized`
@@ -5276,6 +5783,37 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         normStatus = "suggested";
       }
     }
+    // ── snapshot 재생/고정 (삼순 2026-08-31 NO-GO ②) ──────────────────────
+    //
+    // 이 지점이 정규화 판정의 **확정 지점**이다(복원 fallback 까지 끝났다).
+    // 재생분이 있으면 그것으로 덮고, 없으면 최초 판정을 저장한다.
+    if (replayedSnapshot) {
+      normStatus = replayedSnapshot.status;
+      accepted = replayedSnapshot.status === "accepted_surface";
+      suggested = replayedSnapshot.status === "suggested";
+      suggestionText = replayedSnapshot.suggestionText;
+    } else if (deps.storeNormalizeSnapshot) {
+      try {
+        // CAS 패자는 winner 판정을 받아 쓴다 — 두 worker 가 서로 다른 문장으로 답하면
+        // 재생 계약이 깨진다(판정 저장과 같은 계약).
+        const winner = await deps.storeNormalizeSnapshot({
+          originalQuestion: question,
+          status: normStatus,
+          acceptedText: accepted ? candidate : null,
+          suggestionText,
+        });
+        if (winner && winner.originalQuestion === question) {
+          normStatus = winner.status;
+          accepted = winner.status === "accepted_surface";
+          suggested = winner.status === "suggested";
+          suggestionText = winner.suggestionText;
+          replayedSnapshot = winner;
+        }
+      } catch {
+        // 저장 실패는 재현성만 잃는다 — 이번 응답은 그대로 진행한다.
+      }
+    }
+
     // 관측 계약 (mapGlossaryDefinition ④축과 동일): 정규화도 LLM 호출이다 — 수용 여부와
     // 무관하게 토큰을 최종 로그 행에 합산한다. 수용 시에는 로그의 question 을 **원문**으로
     // 고정하고 정규화문을 별도 필드(questionNormalized)로 남긴다 — 원문 없이는
@@ -5288,7 +5826,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // 관측 분리 (삼순 2026-08-13 ③): `question_normalized` 는 **수용된 문장** 전용 칸이다.
       // 제안만 한 후보는 별도 칸(`correction_candidate`)에 남긴다 — 같은 칸에 섞으면
       // "이 문장으로 답했다" 와 "이 문장을 제안했다" 를 구분할 수 없어 오교정 감사가 깨진다.
-      const acceptedText = accepted ? candidate : null;
+      const acceptedText = accepted ? (replayedSnapshot?.acceptedText ?? candidate) : null;
       const suggestedText = suggestionText;
       deps = {
         ...deps,
@@ -5304,8 +5842,11 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       };
     }
     if (accepted) {
-      question = candidate;
-      questionNorm = normalizeQuestion(candidate);
+      // 재생분이면 **저장된 문장**을 쓴다 — 이번 회차 후보(candidate)는 provider 를
+      // 안 태웠으므로 비어 있다. 여기서 후보를 재계산하면 재생의 의미가 없어진다.
+      const acceptedQuestion = replayedSnapshot?.acceptedText ?? candidate;
+      question = acceptedQuestion;
+      questionNorm = normalizeQuestion(acceptedQuestion);
     } else if (suggested) {
       // ⚠️ 여기서 `releaseDaily` 를 부르지 않는다 (삼순 2026-08-13 quota/crash).
       //
@@ -5993,13 +6534,80 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //     그래서 이름·구단명이 **언급되기만 해도** main 계약으로 되돌린다. 방향이 보수적이다 —
   //     과탐(엔티티 아닌 문자열을 지명으로 오인)은 그냥 종전 동작 유지라 손해가 없고,
   //     미탐이 곧 계약 위반이다.
-  const ownedByEntityRag =
+  // 문자열 기반 결속 — 구단명·선수명이 **문장에 그대로 있을 때** 잡힌다.
+  const ownedByEntityRagLiteral =
     mentionsAnyRosterName(question, players)
     || mentionedTeamCanonicals(question).length > 0;
+  // 분류기가 판정한 구단 귀속. 문장에 구단명이 없어도(마스코트·구장 시설) 채워진다.
+  let intentTeam: string | null = null;
+  // 분류기가 명시 판정을 냈는가. 분류기 미주입이면 이 PR 의 개방 자체가 없으므로 무관하다.
+  let intentVerdictKnown = false;
+
+  // ── 의도 라우팅 게이트 (2026-08-31) ─────────────────────────────
+  //
+  // 🔴 **위치가 계약이다** — official RAG **바로 앞**이면서 그 앞의 것은 전부 살려둔다.
+  //   앞에 있는 것(종결 라우트·검수 사전·정본 조회·선수 RAG)은 이미 정확히 답하고 있으므로
+  //   거기에 분류기를 끼워넣으면 바뀜 것 없이 호출만 늘어난다.
+  //
+  // 왜 여기인가 (2026-08-31 실측, `state/yaj-48h/route-distance-20260831.json`):
+  //   L4(대화 후속)·L5(페르소나·잡담) 실패 **38건 전수**가 거리 임계 0.42 를 통과해
+  //   official RAG 로 갔다 — `사랑해요` 0.3803 · `병신` 0.3494 · `어이` 0.3664.
+  //   즉 `병신` 이 KBO 공식야구규칙 12개를 근거로 받아 LLM 에 들어간다. 그 경우
+  //   모델이 INSUFFICIENT 를 고르는 것은 **정상 동작**이다 — 프롬프트 결함이 아니라
+  //   잘못된 프롬프트에 **도착**한 것이다.
+  //
+  // ⚠️ #1317 은 "방어를 라우팅 라벨에서 근거 거리로 즍긴 것이지 없앱 것이 아니다" 라고
+  //   적었고 근거는 비야구 5샘플(주식·날씨·점심·파이썬·아이폰)의 0.4281~0.5139 였다.
+  //   그 5개가 실유저 잡담을 대표하지 않았다 — 영어·타 도메인 명사는 멀지만 한국어 짧은
+  //   구어는 야구 코퍼스와 가깝다. `오늘 대구 날씨 어떨거 같아` 도 0.3753 로 통과한다 —
+  //   **그 PR 이 막혔다고 주장한 바로 그 날씨 질문이다.**
+  //
+  // 임계 조정도 어휘 목록도 안 된다 — 근거는 `intent.ts` 헤더에 있다.
+  //   분포가 겹치고(`야구 용어` 0.2402 가 잡담보다 가깝다), 폐쇄집합은 48h 에서
+  //   후속 25건 중 **0건** 적중했다.
+  //
+  // 따라서 판정은 LLM 에 맡기고(열린 자연어), **출력 표면은 코드가 닫는다** —
+  // sentinel 폐쇄집합 + 사실주장 가드(`intent.ts`). 판정 실패는 `BASEBALL` fail-open 이라
+  // 기존 경로 그대로 간다(정상 질문을 잡담 취급하는 옆이 더 나쁘다).
+  if (deps.classifyIntent) {
+    const intentOutcome = await resolveIntentRoute({
+      userId, question, questionNorm, remaining, context, players, deps,
+    });
+    if (intentOutcome.result) return intentOutcome.result;
+    // 종결하지 않았어도 **구단 귀속은 받아 둔다.** 이 신호가 official 게이트를 가른다.
+    intentTeam = intentOutcome.team;
+    // 판정이 없었으면 이 PR 이 연 개방을 철회한다(아래 official 게이트).
+    intentVerdictKnown = intentOutcome.verdictKnown;
+  }
+
+  // 🔴 구단 소유 판정 = 문자열 결속 **또는** 분류기의 귀속 판정 (하린아빠 2026-08-31).
+  //
+  //   `호걸이 이름 뜻이뭐야?`·`몬스터월이 뭐야?` 는 구단 문서가 소유하는데 문장에 구단명이
+  //   없어서 문자열 결속이 false 였고, 그대로 KBO 규칙집(official)으로 샜다.
+  //   초안에서 나는 마스코트 이름 목록을 코드에 넣어 막았지만 그건 **반례마다 자라는
+  //   어휘 목록**이다(응원가·굿즈·시설물까지 치면 끝이 없다). 그래서 "무엇이 그 구단의
+  //   것인가" 는 LLM 이 판정하고 코드는 **출력 폐쇄집합만** 강제한다.
+  //
+  //   ⚠️ 방향이 보수적이다 — 귀속 판정이 붙으면 main 계약(사전 판정)으로 **되돌아가는**
+  //     것이라, 오탐의 대가는 종전 동작이고 미탐도 종전 동작이다. 새 결함을 만들지 않는다.
+  const ownedByEntityRag = ownedByEntityRagLiteral || intentTeam !== null;
+
+  // 🔴 **개방은 명시 판정이 있을 때만** (삼순 2026-08-31 ⓒ-① first-decision 누수 0).
+  //
+  //   `intentOpened` 가 false 면 이 PR 이 연 문을 닫고 **종전 계약**(사전 판정)이 진입을
+  //   가른다. 두 경우가 여기 걸린다:
+  //     ① 분류기가 죽었다(throw·형식 위반) → `BASEBALL` fail-open 은 "모르겠다" 다
+  //     ② 분류기 미주입(deps 없음) → 이 PR 의 라우팅 자체가 없는 실행이다
+  //   ①이 실제 누수의 정체였다 — 판정 20회 중 BASEBALL 0회인데 official 진입이 났다.
+  //
+  //   ⚠️ 이건 예외 목록이 아니라 **개방 조건의 정정**이다. "판정이 있다" 는 어휘가 아니라
+  //     분류기 응답의 유무이므로 반례마다 자라지 않는다.
+  const intentOpened = deps.classifyIntent ? intentVerdictKnown : true;
+
   if (
     // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은
     // 엔티티가 없는 순수 룰 질문에만 적용된다.
-    (ownedByEntityRag
+    ((ownedByEntityRag || !intentOpened)
       ? isSupportedRuleTermQuestion(question, glossary, players)
       : true) &&
     deps.searchOfficialRag &&
@@ -6086,6 +6694,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     );
   }
 
+  // ⚠️ 여기는 **보강하지 않는다.** 엔트리(등록명단)는 구조화 정본 조회라 문장이 구단을
+  //   명시했을 때만 답한다 — 분류기 귀속을 여기까지 넘기면 이 PR 범위 밖의 경로가 바뀐다.
   const entryQuestionCandidate =
     deps.fetchTeamEntry && !enabledPlayerCandidate && isTeamEntryQuestion(question)
       ? resolveRagTeamCandidate(question)
@@ -6125,9 +6735,30 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return answerNewsRagQuestion(userId, question, questionNorm, newsRagCandidate, remaining, deps);
   }
 
+  // 🔴 **분류기 귀속 판정을 실제 team RAG 후보로 잇는다** (삼순 NO-GO 2026-08-31 P0-A).
+  //
+  //   직전 구현은 `intentTeam` 을 official **차단**에만 쓰고, 정작 team 후보는 여기서 다시
+  //   `resolveRagTeamCandidate(question)` — **원문 문자열** — 으로 구했다. 그래서
+  //   `호걸이 이름 뜻이뭐야?` 는 분류기가 KIA 로 판정해도 문장에 `KIA` 가 없으니 후보가
+  //   null 이었고, official 이 닫히는 것 말고는 **아무 데도 연결되지 않았다.**
+  //   판정을 만들어 놓고 쓰지 않은 것이라, 어휘 목록을 지운 자리가 비어 있었다.
+  //
+  //   ⚠️ 우선순위는 **문자열 결속이 먼저**다. 문장에 구단명이 있으면 그것이 더 강한 근거다.
+  //     분류기 귀속은 문자열이 아무것도 못 잡았을 때의 **보강**으로만 쓴다.
+  //
+  //   🔴 **그러나 `null` 을 보강 신호로 쓰면 안 된다** (삼순 NO-GO 2026-09-01).
+  //     직전 구현은 `resolveRagTeamCandidate(question) ?? intentTeam` 이었는데, 그 null 은
+  //     "구단 언급 없음" 과 "**복수 구단이라 거부**" 를 겸한다. 그래서
+  //     `LG랑 두산 중 누가 더 잘해?` 처럼 비교 방어가 거부한 질문을 분류기 귀속이
+  //     **한 구단 문서로 부활**시킨다 — 거부를 미탐으로 바꿔치기한 사고다.
+  //     3상태(`resolveRagTeamBinding`)로 받아 **`none` 일 때만** 보강한다.
+  const teamBinding = resolveRagTeamBinding(question);
   const teamRagCandidate =
     deps.enableTeamRag && !enabledPlayerCandidate && route !== "baseball_rule_term"
-      ? resolveRagTeamCandidate(question)
+      ? (teamBinding.kind === "single" ? teamBinding.candidate
+        : teamBinding.kind === "none" && intentTeam !== null
+          ? teamCandidateOfCanonical(intentTeam)
+          : null)
       : null;
   if (teamRagCandidate && isTeamRagServableQuestion(question)) {
     // 구단 서술 질문 — RAG 재서술 (숫자 전면 HOLD 유지).

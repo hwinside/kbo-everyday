@@ -164,6 +164,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:dwell-batch",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:event-records",
       "tier": "ci"
     },
@@ -270,6 +274,22 @@
     {
       "name": "qa:genius-glossary-map",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-intent-durable",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-intent-durable-db",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-intent-durable-db:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-intent-durable:selftest",
+      "tier": "ci"
     },
     {
       "name": "qa:genius-live-team-block",
@@ -570,10 +590,6 @@
     {
       "name": "qa:post-scope-label",
       "tier": "ci"
-    },
-    {
-      "name": "qa:dwell-batch",
-      "tier": "deploy"
     },
     {
       "name": "qa:profile-posts-paging",

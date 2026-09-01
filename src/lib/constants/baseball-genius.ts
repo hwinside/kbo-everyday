@@ -271,6 +271,11 @@ export const MATCH_PATH_REPLY_KIND = {
   limited: "unavailable",
   error: "unavailable",
   context_missing: "unavailable",
+  // 조회 대상이 특정되지 않아 되물은 경로 (2026-08-31 의도 라우팅 `NEEDS_CLARIFICATION`).
+  //
+  // ⚠️ `unavailable` 이다 — 유저는 아직 답을 못 받았다. `context_missing` 과 같은 성격이라
+  //   같은 kind 를 쓰되, MatchPath 라벨은 분리해 둔다(감사 축이 다르다).
+  needs_clarification: "unavailable",
   service_redirect: "unavailable",
   history_hold: "unavailable",
   // 우리 앱에 실재하는 기능을 물어 그 경로를 안내한 경로 (2026-08-23).
