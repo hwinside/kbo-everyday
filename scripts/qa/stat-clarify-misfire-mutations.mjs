@@ -112,8 +112,8 @@ const mutations = [
   {
     name: "M11 정규화 seam 결과를 버리고 원문으로 진행 (full seam 무력화)",
     file: PIPELINE,
-    re: /\n    if \(accepted\) \{\n(\s*\/\/[^\n]*\n)*\s*const acceptedQuestion = replayedSnapshot\?\.acceptedText \?\? candidate;\n      question = acceptedQuestion;\n      questionNorm = normalizeQuestion\(acceptedQuestion\);/,
-    to: "\n    if (false) {\n      const acceptedQuestion = replayedSnapshot?.acceptedText ?? candidate;\n      question = acceptedQuestion;\n      questionNorm = normalizeQuestion(acceptedQuestion);",
+    re: /\n    if \(accepted\) \{\n      question = candidate;\n      questionNorm = normalizeQuestion\(candidate\);/,
+    to: "\n    if (false) {\n      question = candidate;\n      questionNorm = normalizeQuestion(candidate);",
     why: "정규화가 수용돼도 재라우팅이 안 일어난다 — B2 full seam 축(로그 필드·최종 source)이 잡아야 한다",
   },
   {
