@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { takeBootGameChatVisible, invalidateBootCache } from "@/lib/boot-cache";
 import type { GameChatVisibilityState } from "@/lib/game-chat-visibility";
 
 const GUEST_STORAGE_KEY = "kbo-game-chat-visible:guest";
@@ -32,6 +33,16 @@ export function useGameChatVisibility() {
     }
 
     setState({ status: "loading", visible: false });
+
+    // PR④: 부트 번들 캠시 1회 소비(60s TTL·userId 결속) — 부트 직후 첫 마운트만 커버,
+    // 이후 마운트/reload 는 종전 fetch 그대로(타기기 변경 반영 계약 보존).
+    const bootVisible = takeBootGameChatVisible(user.id);
+    if (typeof bootVisible === "boolean") {
+      if (generation !== requestGeneration.current) return;
+      setState({ status: "ready", visible: bootVisible });
+      return;
+    }
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error("missing session");
@@ -90,6 +101,7 @@ export function useGameChatVisibility() {
         body: JSON.stringify({ visible }),
       });
       if (!res.ok) throw new Error("preference save failed");
+      invalidateBootCache(); // PR④: 토글 성공 → 부트 창 내 stale 재사용 방지
     } catch {
       setState({ status: "ready", visible: previous });
     } finally {

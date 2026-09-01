@@ -15,6 +15,7 @@ import {
   clearSessionBackup,
 } from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
+import { setBootCache, invalidateBootCache } from "@/lib/boot-cache";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -81,15 +82,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  isCurrent(): ledger 세대 가드 — 늦게 도착한 옛 응답이 force 갱신 결과나
    *  다른 유저 상태를 덮지 못하게 모든 setProfile 적용 직전에 확인한다. */
   async function loadProfileNow(accessToken: string, userId: string, isCurrent: () => boolean): Promise<boolean> {
-    // 1차: 서버 API (Bearer 토큰 + service role — 가장 안정적)
+    // 1차: 서버 부트 번들 API (Bearer 토큰 + service role — 가장 안정적)
+    // PR④: /api/me → /api/me/boot 로 전환해 profile+prefs+gameChatVisible 을 1콜로 받고,
+    // 부트 직후 각자 fetch 하던 소비자용으로 boot-cache 에 심는다. 실패 시 종전 fallback 체인 그대로.
     try {
-      const res = await fetch("/api/me", {
+      const res = await fetch("/api/me/boot", {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
       if (res.ok) {
         const json = await res.json();
         if (json.profile) {
           if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
+          setBootCache({
+            userId,
+            prefs: json.prefs ?? null,
+            gameChatVisible: typeof json.gameChatVisible === "boolean" ? json.gameChatVisible : null,
+          });
           setProfile(json.profile);
           syncProfileToLocal(json.profile);
           return true;
@@ -252,6 +260,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           // SIGNED_OUT 포함 no-session — 장부 무효화(동일 UID 재로그인 시 재조회 보장)
           profileLedger.invalidate();
+          invalidateBootCache(); // PR④: 부트 번들 캠시도 함께 폐기(계정 전환 오염 방지)
           setProfile(null);
         }
         setLoading(false);
@@ -284,6 +293,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         beginLogoutFence();
         // 로그아웃 = 활성 사용자 즉시 null(in-flight 저장 응답의 commit 차단)
         commitAuthIdentity(null);
+        invalidateBootCache(); // PR④: 부트 번들 캠시 폐기
         try { await clearSessionBackup(); } catch { /* ignore */ }
         // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
         // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게

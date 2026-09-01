@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase/client";
 import { getMyTeamId } from "@/lib/store/myteam";
 import { parseGameIdCodes, pickMyTeamStartableGame } from "@/lib/notifications/la-autostart-policy";
 import { createSignatureCache, createSingleFlight, shouldCacheRegisterResponse } from "@/lib/client-dedupe";
+import { takeBootPrefs, invalidateBootCache } from "@/lib/boot-cache";
 
 // Live Activity 네이티브 브리지 (W2) — 잠금화면 라이브 스코어 카드.
 // 경기룸 진입 시 game-live 데이터로 start, 폴링으로 update, 종료 시 end.
@@ -173,6 +174,13 @@ async function isLiveActivityEnabled(): Promise<boolean> {
       liveActivityPrefCache = true; // 비로그인 → 기본 on (토큰 등록 자체가 로그인 필요라 무해)
       return true;
     }
+    // PR④: 부트 번들 캠시 우선(60s TTL·1회·userId 결속) — 미스면 종전 fetch 그대로
+    const bootUserId = session?.user?.id;
+    const bootPrefs = bootUserId ? takeBootPrefs(bootUserId, "liveActivityGate") : null;
+    if (bootPrefs) {
+      liveActivityPrefCache = bootPrefs.live_activity !== false; // 디폴트 on
+      return liveActivityPrefCache;
+    }
     const res = await fetch("/api/push/prefs", { headers: { Authorization: `Bearer ${token}` } });
     if (res.ok) {
       const { prefs } = await res.json();
@@ -189,6 +197,8 @@ async function isLiveActivityEnabled(): Promise<boolean> {
 /** 마이페이지 토글이 즉시 클라 캐시를 갱신 → 다음 start/update 게이트에 반영. */
 export function setLiveActivityEnabledCache(enabled: boolean): void {
   liveActivityPrefCache = enabled;
+  // PR④: 명시 토글 반영 시점에 부트 번들 캠시 무효화 — 부트 창 내 토글 직후 stale 적용 방지
+  invalidateBootCache();
 }
 
 // W3: Activity push token이 발급되면(네이티브 이벤트) 서버에 등록 →
