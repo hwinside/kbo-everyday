@@ -16,9 +16,11 @@ import {
   TICK_INTERVAL_MS,
   type FrameRow,
   type PersistedGameState,
+  saveStatesAndSelectPersistable,
   type RelayInsertOutcome,
   type TickResult,
 } from "@/lib/game/relay-live-publisher";
+import { persistWarmupEnrichObs } from "@/lib/notifications/warmup-enrich-obs";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -259,6 +261,9 @@ export async function GET(req: NextRequest) {
       errors: [] as string[],
       ticks: 0,
     };
+    // frames-stale 발현 마커 수집 — 같은 경기가 한 인보케이션 안에서 여러 발현 지점을
+    // 지나도(임계→배증) 각 지점이 한 번씩만 쌓인다(shouldEmitFramesStale 이 상한).
+    const framesStaleMarkers: string[] = [];
     const startedAt = Date.now();
     // inFlight (목적 재정의 — 삼순 확정): durable ordering 은 이제 DB RPC 가 (epoch, ordinal)
     // <= cursor 원자 거부로 보장한다(늦은 A 는 INSERT 자체가 거부돼 DB id 를 못 받으므로 역전
@@ -277,7 +282,7 @@ export async function GET(req: NextRequest) {
         const tickResults = await Promise.all(
           gameIds.map((gameId) => {
             if (inFlight.has(gameId)) {
-              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:overlap-skip`] });
+              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:overlap-skip`] });
             }
             inFlight.add(gameId);
             const ac = new AbortController();
@@ -289,20 +294,23 @@ export async function GET(req: NextRequest) {
               settle,
               new Promise<TickResult>((resolve) =>
                 setTimeout(
-                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
+                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
                   TICK_TIMEOUT_MS,
                 ),
               ),
             ]);
           }),
         );
-        for (const r of tickResults) {
+        for (const [i, r] of tickResults.entries()) {
           totals.inserted += r.inserted;
           totals.skippedUnchanged += r.skippedUnchanged;
           totals.skippedOversize += r.skippedOversize;
           totals.stale += r.stale;
           totals.lockBusy += r.lockBusy;
           totals.errors.push(...r.errors);
+          if (r.framesStaleStreak !== null) {
+            framesStaleMarkers.push(`${gameIds[i]}:frames-stale=${r.framesStaleStreak}`);
+          }
         }
         totals.ticks += 1;
 
@@ -321,15 +329,44 @@ export async function GET(req: NextRequest) {
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
     // 위함(삼순 3차 lease: 저장 직전 소유권 재확인).
     const stillOwner = !lockLost && (await renewLock(token));
-    if (stillOwner) {
-      await Promise.all(
-        gameIds.map((gameId) =>
-          redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]),
-        ),
-      );
-    } else {
+    // 순서 계약(삼순 #1331 NO-GO ②): owner 확인 → state SET 성공 검증 → obs 적재.
+    // SET 결과 판정(`=== "OK"`)과 선별은 saveStatesAndSelectPersistable(단일 seam)이
+    // 수행한다 — route 는 setState 만 주입하므로 게이트가 이 seam 을 SET 실패 결함주입으로
+    // 직접 실행한다(삼순 3차 — 판정을 route 본문에 두면 mutation 이 관측 불가).
+    // streak 의 SSOT 는 Redis state — 저장 안 된 streak 의 마커를 적재하면 다음
+    // 인보케이션이 같은 임계 행(20)을 반복 적재해 배증 상한이 깨진다.
+    const { persistable: persistableMarkers } = await saveStatesAndSelectPersistable({
+      gameIds,
+      serializedStateFor: (gameId) => serializeState(states.get(gameId)!),
+      // live getter(삼순 4차): boolean 캐처는 SET await 중 renew timer 가 lockLost 를
+      // false→true 로 바꿔도 옆 값을 보는 race — seam 이 SET 완료 후 재확인한다.
+      isLockLost: () => lockLost,
+      stillOwner,
+      markers: framesStaleMarkers,
+      setState: (gameId, serialized) =>
+        redisCommand(["SET", stateKey(gameId), serialized, "EX", STATE_TTL_SECONDS]),
+    });
+    if (!stillOwner) {
       lockLost = true;
     }
+    const framesStalePersist = persistableMarkers.length
+      ? await Promise.race([
+          persistWarmupEnrichObs([
+            {
+              atMs: Date.now(),
+              tickKind: "publisher",
+              liveSource: "relay-publisher",
+              liveStage: "relay-publisher",
+              obs: persistableMarkers,
+            },
+          ]),
+          new Promise<{ error: string }>((resolve) =>
+            setTimeout(() => resolve({ error: "persist_timeout" }), 3_000),
+          ),
+        ]).catch((e): { error: string } => ({
+          error: e instanceof Error ? e.message : "persist_failed",
+        }))
+      : { persisted: 0 };
 
     return NextResponse.json({
       ok: true,
@@ -337,6 +374,10 @@ export async function GET(req: NextRequest) {
       lockLost,
       gc: gcError ? `error:${gcError.message}` : "ok",
       ...totals,
+      // frames-stale 관측 — 수집/적재허용 마커와 적재 결과({persisted}|{error}). 관측 전용.
+      framesStale: framesStaleMarkers,
+      framesStalePersisted: persistableMarkers,
+      framesStalePersist,
       errors: totals.errors.slice(0, 20),
     });
   } finally {

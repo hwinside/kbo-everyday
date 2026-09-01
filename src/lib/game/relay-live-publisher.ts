@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
+import { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
@@ -42,6 +43,29 @@ export const STATE_KEY_PREFIX = "kbo:relay:publisher:state:v1:";
 export const STATE_TTL_SECONDS = 6 * 3_600;
 
 export type FrameKind = "relay-full" | "relay-delta" | "events" | "live" | "detail";
+
+/**
+ * frames-stale 발현 임계(연속 무변경 relay tick 수). relay 채널은 매 tick(3초) fetch
+ * 하므로 20틱 ≈ 60초. 이닝 교대·투수 교체 같은 정상 무변경 구간도 이 임계를 넘을 수
+ * 있으므로 이 마커는 **판독용 관측**이지 장애 단정이 아니다 — streak 값과 경기 맥락을
+ * 함께 읽는다(2026-09-01 LG:OB 볼카운트 고착 조사: fetch 성공+무변경(stale-equal)이
+ * 발현 마커 집합에 없어 mode B 를 원리적으로 관측 못 하던 맹점의 해소).
+ */
+export const FRAMES_STALE_THRESHOLD_TICKS = 20;
+
+/**
+ * frames-stale 마커를 이 streak 에서 발행할지(순수). 임계 도달 시점 + 이후 배증
+ * 시점(20, 40, 80, …)에만 true — 임계 초과 구간에서 틱마다 행을 쌓지 않도록 상한.
+ */
+export function shouldEmitFramesStale(
+  streak: number,
+  threshold: number = FRAMES_STALE_THRESHOLD_TICKS,
+): boolean {
+  if (!Number.isFinite(streak) || streak < threshold) return false;
+  let mark = threshold;
+  while (mark < streak) mark *= 2;
+  return mark === streak;
+}
 
 /**
  * Realtime 메시지 월 비용 적분 추정 (B2 비용 게이트).
@@ -97,10 +121,16 @@ export interface PersistedGameState {
   seq: number;
   /** relay-full 을 이미 한 번이라도 발행했는가 */
   publishedFull: boolean;
+  /**
+   * relay 채널 연속 무변경(fetch 성공 + hash 동일) tick 수 — frames-stale 관측 전용.
+   * inserted 에서만 0 리셋. fetch 실패·abort·insert 거부(stale/lock_busy/error)는
+   * "무변경 관측"이 아니므로 증가도 리셋도 하지 않는다.
+   */
+  relayUnchangedStreak: number;
 }
 
 export function newGameState(): PersistedGameState {
-  return { lastHash: {}, relayChanges: 0, seq: 0, publishedFull: false };
+  return { lastHash: {}, relayChanges: 0, seq: 0, publishedFull: false, relayUnchangedStreak: 0 };
 }
 
 export function serializeState(state: PersistedGameState): string {
@@ -116,6 +146,10 @@ export function deserializeState(raw: unknown): PersistedGameState {
       relayChanges: typeof parsed.relayChanges === "number" ? parsed.relayChanges : 0,
       seq: typeof parsed.seq === "number" ? parsed.seq : 0,
       publishedFull: parsed.publishedFull === true,
+      relayUnchangedStreak:
+        typeof parsed.relayUnchangedStreak === "number" && parsed.relayUnchangedStreak >= 0
+          ? parsed.relayUnchangedStreak
+          : 0,
     };
   } catch {
     return newGameState();
@@ -124,6 +158,80 @@ export function deserializeState(raw: unknown): PersistedGameState {
 
 export function stateKey(gameId: string): string {
   return `${STATE_KEY_PREFIX}${gameId}`;
+}
+
+/**
+ * obs 적재 허용 마커 선별(순수) — 삼순 #1331 NO-GO ②.
+ *
+ * streak 의 SSOT 는 Redis 에 저장된 state 다. 적재만 되고 state 저장이 안 되면(락 상실·
+ * SET 실패) 다음 인보케이션이 같은 streak 을 재생산해 임계 행(20)이 반복 적재되고
+ * 배증 상한이 깨진다. 계약: **owner 확인 → state SET 성공 검증 → obs 적재** 순서로,
+ * 폐기되는 streak 의 마커는 함께 폐기한다(마커↔state 원자적 동반).
+ * 마커 형식 `<gameId>:frames-stale=<streak>` 의 gameId 로 state SET 결과와 결속.
+ */
+export function selectPersistableStaleMarkers(params: {
+  markers: string[];
+  lockLost: boolean;
+  stillOwner: boolean;
+  stateSetOk: (gameId: string) => boolean;
+}): string[] {
+  const { markers, lockLost, stillOwner, stateSetOk } = params;
+  if (lockLost || !stillOwner) return [];
+  return markers.filter((marker) => {
+    const sep = marker.indexOf(":");
+    if (sep <= 0) return false;
+    return stateSetOk(marker.slice(0, sep)) === true;
+  });
+}
+
+/**
+ * state 저장 + 적재 허용 선별의 단일 seam (삼순 #1331 3차 — route 의 `=== "OK"` 판정을
+ * 순수 selector 밖 route 본문에 두면 게이트가 그 판정을 실행으로 못 태워 mutation 이
+ * 조용히 GREEN 이 된다). Redis SET 결과 판정(`=== "OK"`)이 이 함수 안에 있고 route 는
+ * setState 주입만 한다 — 게이트가 SET 실패(null/"ERR"/throw)를 주입해 이 seam 을 직접
+ * 실행한다.
+ *
+ * 계약:
+ * - lockLost 또는 !stillOwner 면 SET 을 시도하지 않는다(stale writer 가 새 writer 의 state 를
+ *   덮지 않는 기존 계약 유지) + persistable 도 빈 배열.
+ * - **lockLost 는 live getter 로 받는다**(삼순 4차 — boolean 캐처는 SET await 중 renew
+ *   timer 가 false→true 로 바꿔도 옆 값을 보는 race). SET 완료 후 재확인해 대기 중
+ *   상실된 경우도 적재를 폐기한다(streak 와 마커의 운명 동반).
+ * - SET 결과가 정확히 "OK" 인 경기만 stateSetOk — null(미설정/오류)·예외는 실패로 세어
+ *   그 경기 마커를 탈락시킨다.
+ */
+export async function saveStatesAndSelectPersistable(params: {
+  gameIds: string[];
+  serializedStateFor: (gameId: string) => string;
+  /** live getter — 호출 시점마다 현재 값을 읽는다(boolean 캐처 금지, 삼순 4차). */
+  isLockLost: () => boolean;
+  stillOwner: boolean;
+  markers: string[];
+  setState: (gameId: string, serialized: string) => Promise<unknown>;
+}): Promise<{ stateSetOk: Map<string, boolean>; persistable: string[] }> {
+  const { gameIds, serializedStateFor, isLockLost, stillOwner, markers, setState } = params;
+  const stateSetOk = new Map<string, boolean>();
+  if (!isLockLost() && stillOwner) {
+    await Promise.all(
+      gameIds.map(async (gameId) => {
+        try {
+          const setResult = await setState(gameId, serializedStateFor(gameId));
+          stateSetOk.set(gameId, setResult === "OK");
+        } catch {
+          stateSetOk.set(gameId, false);
+        }
+      }),
+    );
+  }
+  // SET await 중 락 상실 전이(false→true)를 재확인 — 상실널으면 저장된 state 자체가
+  // 의심스러워지므로(새 writer 와 경합 가능) 마커도 함께 폐기한다.
+  const persistable = selectPersistableStaleMarkers({
+    markers,
+    lockLost: isLockLost(),
+    stillOwner,
+    stateSetOk: (gameId) => stateSetOk.get(gameId) === true,
+  });
+  return { stateSetOk, persistable };
 }
 
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
@@ -230,6 +338,11 @@ export interface TickResult {
   inserted: number;
   skippedUnchanged: number;
   skippedOversize: number;
+  /**
+   * frames-stale 발현 streak — relay 채널이 이 tick 에서 발현 지점(임계·배증)에 도달했으면
+   * 그 streak 값, 아니면 null. route 가 `${gameId}:frames-stale=<streak>` 마커로 적재한다.
+   */
+  framesStaleStreak: number | null;
   /** RPC 가 stale 로 원자 거부한 프레임 수(정상 — 이미 더 최신 커밋). */
   stale: number;
   /** advisory xact lock 경합으로 거부된 프레임 수(정상 — 다른 인보케이션이 씀). */
@@ -237,15 +350,22 @@ export interface TickResult {
   errors: string[];
 }
 
+// degraded 신호 헤더 SSOT 는 relay-degraded-header.ts — producer(game-relay)와 이
+// consumer 가 같은 상수를 import 해 오타 mutation 축을 원리적으로 제거(삼순 #1331 3차).
+export { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
+
 async function envelopeFrom(
   channel: LivePollEnvelope["channel"],
   task: Promise<Response>,
-): Promise<LivePollEnvelope | null> {
+): Promise<{ envelope: LivePollEnvelope; degraded: boolean } | null> {
   try {
     const response = await task;
     if (!response.ok) return null; // 실패 프레임은 쓰지 않는다 — 클라이언트 last-good 유지 계약과 동일
     const data: unknown = await response.json();
-    return { channel, ok: true, status: response.status, data };
+    return {
+      envelope: { channel, ok: true, status: response.status, data },
+      degraded: response.headers.get(RELAY_DEGRADED_HEADER) === "1",
+    };
   } catch {
     return null;
   }
@@ -269,6 +389,7 @@ export async function publishGameTick(
     inserted: 0,
     skippedUnchanged: 0,
     skippedOversize: 0,
+    framesStaleStreak: null,
     stale: 0,
     lockBusy: 0,
     errors: [],
@@ -291,19 +412,31 @@ export async function publishGameTick(
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    const envelope = await promise;
+    const fetched = await promise;
     if (signal?.aborted) {
       result.errors.push(`${gameId}:${channel}:aborted`);
       continue;
     }
-    if (!envelope) {
+    if (!fetched) {
       result.errors.push(`${gameId}:${channel}:fetch-failed`);
       continue;
     }
+    const { envelope, degraded } = fetched;
 
     const hash = frameHash(envelope.data);
     if (state.lastHash[channel] === hash) {
       result.skippedUnchanged += 1;
+      // frames-stale 관측: relay 채널의 "**완전 fresh** fetch 성공 + 내용 동일"만 센다 —
+      // 업스트림이 살아있는데 데이터가 멎은 stale-equal(mode B)의 직접 증거.
+      // degraded 200(last-good 혼입 — 일부 이닝 fetch 실패)은 업스트림 실패 구간이므로
+      // 불가산(삼순 #1331 NO-GO ①) — 단, 리셋도 안 한다(실패는 무변경 '관측'이 아님).
+      // events/live/detail 은 cadence 가 달라 섞으면 streak 의미가 흐려진다.
+      if (channel === "relay" && !degraded) {
+        state.relayUnchangedStreak += 1;
+        if (shouldEmitFramesStale(state.relayUnchangedStreak)) {
+          result.framesStaleStreak = state.relayUnchangedStreak;
+        }
+      }
       continue;
     }
 
@@ -370,6 +503,7 @@ export async function publishGameTick(
       // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;
       if (kind === "relay-full") state.publishedFull = true;
+      if (channel === "relay") state.relayUnchangedStreak = 0;
       result.inserted += 1;
     } else if (outcome === "stale") {
       // RPC 원자 거부(이미 더 최신 커밋) — 정상 흐름. 해시 미갱신으로 다음 tick 재시도.

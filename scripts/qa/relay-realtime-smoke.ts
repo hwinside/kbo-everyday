@@ -635,7 +635,12 @@ test("§3 route lease — 독립 renewal·lockLost INSERT 차단·저장 직전 
   assert.ok(/if \(!\(await ownsLock\(token\)\)\)[\s\S]*if \(signal\?\.aborted\) return "skipped";/.test(src), "ownsLock 뒤 abort 재확인");
   assert.ok(/\.abortSignal\(signal\)/.test(src), "Supabase insert 에 abortSignal 전달");
   assert.ok(/const stillOwner = !lockLost && \(await renewLock\(token\)\);/.test(src), "저장 직전 소유권 재확인");
-  assert.ok(/if \(stillOwner\)[\s\S]*SET", stateKey/.test(src), "소유일 때만 state 저장");
+  // #1331: state 저장은 saveStatesAndSelectPersistable seam 으로 이동 — route 는 setState 를
+  // 주입하고 seam 이 isLockLost()/stillOwner 게이트 후에만 SET 을 실행한다(live getter —
+  // boolean 캐처 race 방지, 삼순 #1331 4차). 상세 결함주입은 qa:relay-frames-stale S11.
+  assert.ok(/await saveStatesAndSelectPersistable\(\{[\s\S]*isLockLost: \(\) => lockLost,[\s\S]*stillOwner,[\s\S]*SET", stateKey/.test(src), "소유일 때만 state 저장(seam 위임 + live isLockLost 배선)");
+  const seamSrc = readSrc("src/lib/game/relay-live-publisher.ts");
+  assert.ok(/if \(!isLockLost\(\) && stillOwner\) \{[\s\S]*setState\(gameId/.test(seamSrc), "seam: 비소유·락상실이면 SET 미실행");
   assert.ok(/Promise\.race<TickResult>/.test(src), "tick handler timeout");
   // 삼순 5차: 같은 경기 non-overlap — in-flight 중이면 skip.
   assert.ok(/inFlight\.has\(gameId\)[\s\S]*overlap-skip/.test(src), "같은 경기 non-overlap 가드");
