@@ -194,20 +194,24 @@ export function selectPersistableStaleMarkers(params: {
  * 계약:
  * - lockLost 또는 !stillOwner 면 SET 을 시도하지 않는다(stale writer 가 새 writer 의 state 를
  *   덮지 않는 기존 계약 유지) + persistable 도 빈 배열.
+ * - **lockLost 는 live getter 로 받는다**(삼순 4차 — boolean 캐처는 SET await 중 renew
+ *   timer 가 false→true 로 바꿔도 옆 값을 보는 race). SET 완료 후 재확인해 대기 중
+ *   상실된 경우도 적재를 폐기한다(streak 와 마커의 운명 동반).
  * - SET 결과가 정확히 "OK" 인 경기만 stateSetOk — null(미설정/오류)·예외는 실패로 세어
- *   그 경기 마커를 탈락시킨다(streak 와 마커의 운명 동반).
+ *   그 경기 마커를 탈락시킨다.
  */
 export async function saveStatesAndSelectPersistable(params: {
   gameIds: string[];
   serializedStateFor: (gameId: string) => string;
-  lockLost: boolean;
+  /** live getter — 호출 시점마다 현재 값을 읽는다(boolean 캐처 금지, 삼순 4차). */
+  isLockLost: () => boolean;
   stillOwner: boolean;
   markers: string[];
   setState: (gameId: string, serialized: string) => Promise<unknown>;
 }): Promise<{ stateSetOk: Map<string, boolean>; persistable: string[] }> {
-  const { gameIds, serializedStateFor, lockLost, stillOwner, markers, setState } = params;
+  const { gameIds, serializedStateFor, isLockLost, stillOwner, markers, setState } = params;
   const stateSetOk = new Map<string, boolean>();
-  if (!lockLost && stillOwner) {
+  if (!isLockLost() && stillOwner) {
     await Promise.all(
       gameIds.map(async (gameId) => {
         try {
@@ -219,9 +223,11 @@ export async function saveStatesAndSelectPersistable(params: {
       }),
     );
   }
+  // SET await 중 락 상실 전이(false→true)를 재확인 — 상실널으면 저장된 state 자체가
+  // 의심스러워지므로(새 writer 와 경합 가능) 마커도 함께 폐기한다.
   const persistable = selectPersistableStaleMarkers({
     markers,
-    lockLost,
+    lockLost: isLockLost(),
     stillOwner,
     stateSetOk: (gameId) => stateSetOk.get(gameId) === true,
   });

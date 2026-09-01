@@ -227,8 +227,8 @@ async function run() {
     const iPersist = src.indexOf("persistWarmupEnrichObs([");
     const ordered = iOwner >= 0 && iSeam > iOwner && iPersist > iSeam;
     check("S9 route: owner→state 저장/선별 seam→적재 순서", ordered, { iOwner, iSeam, iPersist });
-    const selectorWired = /lockLost,\s*\n?\s*stillOwner,/.test(src) && /markers: framesStaleMarkers,/.test(src);
-    check("S9 route: seam 이 lockLost·stillOwner·수집 마커 실값에 결속", selectorWired, selectorWired);
+    const selectorWired = /isLockLost: \(\) => lockLost,/.test(src) && /stillOwner,/.test(src) && /markers: framesStaleMarkers,/.test(src);
+    check("S9 route: seam 이 live isLockLost getter·stillOwner·수집 마커 실값에 결속", selectorWired, selectorWired);
   }
 
   // ── S10: degraded-200 불가산 (삼순 NO-GO ①) — producer 실 seam 실행 + consumer 결속 ──
@@ -276,7 +276,7 @@ async function run() {
     const base = {
       gameIds: ["g1", "g2"],
       serializedStateFor: () => "{}",
-      lockLost: false,
+      isLockLost: () => false,
       stillOwner: true,
       markers,
     };
@@ -292,10 +292,27 @@ async function run() {
     check("S11 SET throw(g1) 주입: g1 탈락·예외 삼킴(RED)", throwFail.persistable.length === 1 && throwFail.persistable[0] === "g2:frames-stale=40", throwFail.persistable);
     // lock-lost / 비소유: 마커 전마커 탈락 + 비소유는 SET 자체를 시도하지 않는다(stale writer 보호).
     let setCalls = 0;
-    const lockLostRes = await saveStatesAndSelectPersistable({ ...base, lockLost: true, setState: async () => { setCalls += 1; return "OK"; } });
+    const lockLostRes = await saveStatesAndSelectPersistable({ ...base, isLockLost: () => true, setState: async () => { setCalls += 1; return "OK"; } });
     check("S11 lock-lost 주입: 전마커 탈락 + SET 무호출(RED)", lockLostRes.persistable.length === 0 && setCalls === 0, { persistable: lockLostRes.persistable, setCalls });
     const notOwnerRes = await saveStatesAndSelectPersistable({ ...base, stillOwner: false, setState: async () => { setCalls += 1; return "OK"; } });
     check("S11 비소유 주입: 전마커 탈락 + SET 무호출(RED)", notOwnerRes.persistable.length === 0 && setCalls === 0, { persistable: notOwnerRes.persistable, setCalls });
+    // 삼순 4차: SET await **대기 중** lockLost false→true 전이 결함주입 — boolean 캐처면
+    // 옆 false 를 보고 적재되는 race. live getter 계약에서는 persistable 0 이어야 한다.
+    {
+      let lost = false;
+      const transition = await saveStatesAndSelectPersistable({
+        ...base,
+        isLockLost: () => lost,
+        setState: async () => {
+          // SET 이 성공적으로 완료되지만, 대기 중 renew timer 가 락 상실을 감지한 상황.
+          await new Promise((r) => setTimeout(r, 5));
+          lost = true;
+          return "OK";
+        },
+      });
+      check("S11 SET 대기 중 lock 상실 전이: persistable 0(RED)", transition.persistable.length === 0, transition.persistable);
+      check("S11 SET 대기 중 lock 상실 전이: SET 결과는 기록됨(별개 축)", transition.stateSetOk.get("g1") === true, transition.stateSetOk.get("g1"));
+    }
     // 순수 selector 단독 축(기형 마커 방어) — seam 내부에서 재사용되는 함수의 경계 검증.
     check("S11 기형 마커(gameId 없음): 탈락", selectPersistableStaleMarkers({ markers: ["frames-stale=20"], lockLost: false, stillOwner: true, stateSetOk: () => true }).length === 0, "malformed");
     // route 배선 구조 판정: route 는 seam 을 호출할 뿐 `=== "OK"` 판정을 본문에 복제하지 않는다.

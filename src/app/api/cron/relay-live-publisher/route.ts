@@ -338,7 +338,9 @@ export async function GET(req: NextRequest) {
     const { persistable: persistableMarkers } = await saveStatesAndSelectPersistable({
       gameIds,
       serializedStateFor: (gameId) => serializeState(states.get(gameId)!),
-      lockLost,
+      // live getter(삼순 4차): boolean 캐처는 SET await 중 renew timer 가 lockLost 를
+      // false→true 로 바꿔도 옆 값을 보는 race — seam 이 SET 완료 후 재확인한다.
+      isLockLost: () => lockLost,
       stillOwner,
       markers: framesStaleMarkers,
       setState: (gameId, serialized) =>
