@@ -16,7 +16,7 @@ import {
   TICK_INTERVAL_MS,
   type FrameRow,
   type PersistedGameState,
-  selectPersistableStaleMarkers,
+  saveStatesAndSelectPersistable,
   type RelayInsertOutcome,
   type TickResult,
 } from "@/lib/game/relay-live-publisher";
@@ -329,31 +329,24 @@ export async function GET(req: NextRequest) {
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
     // 위함(삼순 3차 lease: 저장 직전 소유권 재확인).
     const stillOwner = !lockLost && (await renewLock(token));
-    // state SET 결과를 경기별로 검증해 obs 적재와 결속한다(삼순 #1331 NO-GO ② —
-    // 순서: owner 확인 → state SET 성공 검증 → obs 적재). streak 의 SSOT 는 Redis state 라,
-    // 저장이 안 된 streak 의 마커를 적재하면 다음 인보케이션이 같은 임계 행(20)을
-    // 반복 적재해 배증 상한이 깨진다 — 마커는 state 와 운명을 같이한다.
-    const stateSetOk = new Map<string, boolean>();
-    if (stillOwner) {
-      await Promise.all(
-        gameIds.map(async (gameId) => {
-          const setResult = await redisCommand(["SET", stateKey(gameId), serializeState(states.get(gameId)!), "EX", STATE_TTL_SECONDS]);
-          stateSetOk.set(gameId, setResult === "OK");
-        }),
-      );
-    } else {
-      lockLost = true;
-    }
-
-    // frames-stale 관측 적재 — 발행 critical path 밖(loop·state 저장 후), 실패는 삼킨다
-    // (fire-and-forget — 3s 상한, warmup 의 ⓕ 적재와 동일 계약). lockLost·비소유·
-    // state SET 실패 경기의 마커는 선별에서 탈락(순수 함수 — 게이트가 결함주입 검증).
-    const persistableMarkers = selectPersistableStaleMarkers({
-      markers: framesStaleMarkers,
+    // 순서 계약(삼순 #1331 NO-GO ②): owner 확인 → state SET 성공 검증 → obs 적재.
+    // SET 결과 판정(`=== "OK"`)과 선별은 saveStatesAndSelectPersistable(단일 seam)이
+    // 수행한다 — route 는 setState 만 주입하므로 게이트가 이 seam 을 SET 실패 결함주입으로
+    // 직접 실행한다(삼순 3차 — 판정을 route 본문에 두면 mutation 이 관측 불가).
+    // streak 의 SSOT 는 Redis state — 저장 안 된 streak 의 마커를 적재하면 다음
+    // 인보케이션이 같은 임계 행(20)을 반복 적재해 배증 상한이 깨진다.
+    const { persistable: persistableMarkers } = await saveStatesAndSelectPersistable({
+      gameIds,
+      serializedStateFor: (gameId) => serializeState(states.get(gameId)!),
       lockLost,
       stillOwner,
-      stateSetOk: (gameId) => stateSetOk.get(gameId) === true,
+      markers: framesStaleMarkers,
+      setState: (gameId, serialized) =>
+        redisCommand(["SET", stateKey(gameId), serialized, "EX", STATE_TTL_SECONDS]),
     });
+    if (!stillOwner) {
+      lockLost = true;
+    }
     const framesStalePersist = persistableMarkers.length
       ? await Promise.race([
           persistWarmupEnrichObs([

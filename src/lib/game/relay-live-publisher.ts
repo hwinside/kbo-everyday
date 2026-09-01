@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { NextRequest } from "next/server";
+import { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
@@ -183,6 +184,50 @@ export function selectPersistableStaleMarkers(params: {
   });
 }
 
+/**
+ * state 저장 + 적재 허용 선별의 단일 seam (삼순 #1331 3차 — route 의 `=== "OK"` 판정을
+ * 순수 selector 밖 route 본문에 두면 게이트가 그 판정을 실행으로 못 태워 mutation 이
+ * 조용히 GREEN 이 된다). Redis SET 결과 판정(`=== "OK"`)이 이 함수 안에 있고 route 는
+ * setState 주입만 한다 — 게이트가 SET 실패(null/"ERR"/throw)를 주입해 이 seam 을 직접
+ * 실행한다.
+ *
+ * 계약:
+ * - lockLost 또는 !stillOwner 면 SET 을 시도하지 않는다(stale writer 가 새 writer 의 state 를
+ *   덮지 않는 기존 계약 유지) + persistable 도 빈 배열.
+ * - SET 결과가 정확히 "OK" 인 경기만 stateSetOk — null(미설정/오류)·예외는 실패로 세어
+ *   그 경기 마커를 탈락시킨다(streak 와 마커의 운명 동반).
+ */
+export async function saveStatesAndSelectPersistable(params: {
+  gameIds: string[];
+  serializedStateFor: (gameId: string) => string;
+  lockLost: boolean;
+  stillOwner: boolean;
+  markers: string[];
+  setState: (gameId: string, serialized: string) => Promise<unknown>;
+}): Promise<{ stateSetOk: Map<string, boolean>; persistable: string[] }> {
+  const { gameIds, serializedStateFor, lockLost, stillOwner, markers, setState } = params;
+  const stateSetOk = new Map<string, boolean>();
+  if (!lockLost && stillOwner) {
+    await Promise.all(
+      gameIds.map(async (gameId) => {
+        try {
+          const setResult = await setState(gameId, serializedStateFor(gameId));
+          stateSetOk.set(gameId, setResult === "OK");
+        } catch {
+          stateSetOk.set(gameId, false);
+        }
+      }),
+    );
+  }
+  const persistable = selectPersistableStaleMarkers({
+    markers,
+    lockLost,
+    stillOwner,
+    stateSetOk: (gameId) => stateSetOk.get(gameId) === true,
+  });
+  return { stateSetOk, persistable };
+}
+
 /** 오늘 라이브 상태인 경기 gameId 목록. 실패는 그대로 throw (cron 이 5xx 로 노출). */
 export async function listLiveGameIds(date: string): Promise<string[]> {
   const games = await fetchNaverGames(date);
@@ -299,11 +344,9 @@ export interface TickResult {
   errors: string[];
 }
 
-/**
- * degraded 신호 헤더 — game-relay 가 일부 이닝 실패 시 last-good 을 섞은 200 에 붙인다.
- * frames-stale 은 "완전 fresh 200 + 내용 동일"만 stale-equal 증거로 센다(삼순 #1331 ①).
- */
-export const RELAY_DEGRADED_HEADER = "x-kbo-relay-degraded";
+// degraded 신호 헤더 SSOT 는 relay-degraded-header.ts — producer(game-relay)와 이
+// consumer 가 같은 상수를 import 해 오타 mutation 축을 원리적으로 제거(삼순 #1331 3차).
+export { RELAY_DEGRADED_HEADER } from "./relay-degraded-header";
 
 async function envelopeFrom(
   channel: LivePollEnvelope["channel"],

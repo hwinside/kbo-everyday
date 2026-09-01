@@ -7,6 +7,7 @@ import {
 import { isAllStarGameId } from "@/lib/constants/teams";
 import { GAME_ID_FORMAT_HINT, isCanonicalKboGameId } from "@/lib/game/game-id";
 import { parseNaverPitch, type PitchDetail } from "@/lib/game/pitch-provider";
+import { buildRelayJsonResponse } from "@/lib/game/relay-degraded-header";
 import { toDeltaResponse } from "@/lib/game/relay-delta";
 import {
   NO_STORE_HEADERS,
@@ -1423,16 +1424,14 @@ export async function GET(req: NextRequest) {
     }
     // 엣지 캡시는 route 내부 캐시와 **정확히 같은 조건**으로 건다. degraded 응답을
     // 엣지에 올리면 TTL 동안 열화 응답이 고정되어 다음 폴링의 자가복구를 막는다.
-    // x-kbo-relay-degraded: last-good 이 섞인 200 을 소비자(relay 퍼블리셔 frames-stale
-    // 판정)가 fresh 와 구분하게 하는 명시 신호(삼순 #1331 NO-GO ① — degraded 200 을
-    // "fetch 성공+무변경"으로 세면 stale-equal 직접 증거가 무너진다). body 에 넣지 않는
-    // 이유: 값 토글이 frameHash 를 바꿔 무변경 tick 재발행을 유발하기 때문.
-    return NextResponse.json(toDeltaResponse(response, sinceInning), {
-      headers: {
-        ...liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
-        ...(anyInningDegraded ? { "x-kbo-relay-degraded": "1" } : {}),
-      },
-    });
+    // degraded 명시 헤더(삼순 #1331 NO-GO ①)는 buildRelayJsonResponse(producer seam 순수
+    // 함수)가 부착한다 — 게이트가 이 함수를 직접 실행해 양방향 검증(헤더 삭제·오타
+    // mutation 이 실행으로 RED). 이 경로에서 NextResponse.json 직접 호출 금지.
+    return buildRelayJsonResponse(
+      toDeltaResponse(response, sinceInning),
+      liveCacheHeaders(!anyInningDegraded, RELAY_EDGE_TTL_SECONDS),
+      anyInningDegraded,
+    );
   } catch (e) {
     if (e instanceof RelayUpstreamError) {
       return NextResponse.json(e.body, {
