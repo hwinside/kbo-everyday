@@ -44,6 +44,29 @@ export const STATE_TTL_SECONDS = 6 * 3_600;
 export type FrameKind = "relay-full" | "relay-delta" | "events" | "live" | "detail";
 
 /**
+ * frames-stale 발현 임계(연속 무변경 relay tick 수). relay 채널은 매 tick(3초) fetch
+ * 하므로 20틱 ≈ 60초. 이닝 교대·투수 교체 같은 정상 무변경 구간도 이 임계를 넘을 수
+ * 있으므로 이 마커는 **판독용 관측**이지 장애 단정이 아니다 — streak 값과 경기 맥락을
+ * 함께 읽는다(2026-09-01 LG:OB 볼카운트 고착 조사: fetch 성공+무변경(stale-equal)이
+ * 발현 마커 집합에 없어 mode B 를 원리적으로 관측 못 하던 맹점의 해소).
+ */
+export const FRAMES_STALE_THRESHOLD_TICKS = 20;
+
+/**
+ * frames-stale 마커를 이 streak 에서 발행할지(순수). 임계 도달 시점 + 이후 배증
+ * 시점(20, 40, 80, …)에만 true — 임계 초과 구간에서 틱마다 행을 쌓지 않도록 상한.
+ */
+export function shouldEmitFramesStale(
+  streak: number,
+  threshold: number = FRAMES_STALE_THRESHOLD_TICKS,
+): boolean {
+  if (!Number.isFinite(streak) || streak < threshold) return false;
+  let mark = threshold;
+  while (mark < streak) mark *= 2;
+  return mark === streak;
+}
+
+/**
  * Realtime 메시지 월 비용 적분 추정 (B2 비용 게이트).
  * DB change 는 listener 1명당 1 메시지이므로 월 메시지 ≈
  *   (변경 프레임/분) × (평균 CCU) × (경기일 라이브 분/월) × (동시 경기 수) × 일수.
@@ -97,10 +120,16 @@ export interface PersistedGameState {
   seq: number;
   /** relay-full 을 이미 한 번이라도 발행했는가 */
   publishedFull: boolean;
+  /**
+   * relay 채널 연속 무변경(fetch 성공 + hash 동일) tick 수 — frames-stale 관측 전용.
+   * inserted 에서만 0 리셋. fetch 실패·abort·insert 거부(stale/lock_busy/error)는
+   * "무변경 관측"이 아니므로 증가도 리셋도 하지 않는다.
+   */
+  relayUnchangedStreak: number;
 }
 
 export function newGameState(): PersistedGameState {
-  return { lastHash: {}, relayChanges: 0, seq: 0, publishedFull: false };
+  return { lastHash: {}, relayChanges: 0, seq: 0, publishedFull: false, relayUnchangedStreak: 0 };
 }
 
 export function serializeState(state: PersistedGameState): string {
@@ -116,6 +145,10 @@ export function deserializeState(raw: unknown): PersistedGameState {
       relayChanges: typeof parsed.relayChanges === "number" ? parsed.relayChanges : 0,
       seq: typeof parsed.seq === "number" ? parsed.seq : 0,
       publishedFull: parsed.publishedFull === true,
+      relayUnchangedStreak:
+        typeof parsed.relayUnchangedStreak === "number" && parsed.relayUnchangedStreak >= 0
+          ? parsed.relayUnchangedStreak
+          : 0,
     };
   } catch {
     return newGameState();
@@ -230,6 +263,11 @@ export interface TickResult {
   inserted: number;
   skippedUnchanged: number;
   skippedOversize: number;
+  /**
+   * frames-stale 발현 streak — relay 채널이 이 tick 에서 발현 지점(임계·배증)에 도달했으면
+   * 그 streak 값, 아니면 null. route 가 `${gameId}:frames-stale=<streak>` 마커로 적재한다.
+   */
+  framesStaleStreak: number | null;
   /** RPC 가 stale 로 원자 거부한 프레임 수(정상 — 이미 더 최신 커밋). */
   stale: number;
   /** advisory xact lock 경합으로 거부된 프레임 수(정상 — 다른 인보케이션이 씀). */
@@ -269,6 +307,7 @@ export async function publishGameTick(
     inserted: 0,
     skippedUnchanged: 0,
     skippedOversize: 0,
+    framesStaleStreak: null,
     stale: 0,
     lockBusy: 0,
     errors: [],
@@ -304,6 +343,15 @@ export async function publishGameTick(
     const hash = frameHash(envelope.data);
     if (state.lastHash[channel] === hash) {
       result.skippedUnchanged += 1;
+      // frames-stale 관측: relay 채널의 "fetch 성공 + 내용 동일"만 센다 — 업스트림이
+      // 살아있는데 데이터가 멎은 stale-equal(mode B)의 직접 증거. events/live/detail 은
+      // cadence 가 달라 섞으면 streak 의미가 흐려진다.
+      if (channel === "relay") {
+        state.relayUnchangedStreak += 1;
+        if (shouldEmitFramesStale(state.relayUnchangedStreak)) {
+          result.framesStaleStreak = state.relayUnchangedStreak;
+        }
+      }
       continue;
     }
 
@@ -370,6 +418,7 @@ export async function publishGameTick(
       // 해시는 INSERT 성공 후에만 갱신 — 실패 시 다음 tick 재시도(fail-closed retry). seq 는 불감.
       state.lastHash[channel] = hash;
       if (kind === "relay-full") state.publishedFull = true;
+      if (channel === "relay") state.relayUnchangedStreak = 0;
       result.inserted += 1;
     } else if (outcome === "stale") {
       // RPC 원자 거부(이미 더 최신 커밋) — 정상 흐름. 해시 미갱신으로 다음 tick 재시도.

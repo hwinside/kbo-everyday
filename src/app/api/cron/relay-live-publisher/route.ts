@@ -19,6 +19,7 @@ import {
   type RelayInsertOutcome,
   type TickResult,
 } from "@/lib/game/relay-live-publisher";
+import { persistWarmupEnrichObs } from "@/lib/notifications/warmup-enrich-obs";
 
 const CRON_SECRET = process.env.CRON_SECRET || "";
 
@@ -259,6 +260,9 @@ export async function GET(req: NextRequest) {
       errors: [] as string[],
       ticks: 0,
     };
+    // frames-stale 발현 마커 수집 — 같은 경기가 한 인보케이션 안에서 여러 발현 지점을
+    // 지나도(임계→배증) 각 지점이 한 번씩만 쌓인다(shouldEmitFramesStale 이 상한).
+    const framesStaleMarkers: string[] = [];
     const startedAt = Date.now();
     // inFlight (목적 재정의 — 삼순 확정): durable ordering 은 이제 DB RPC 가 (epoch, ordinal)
     // <= cursor 원자 거부로 보장한다(늦은 A 는 INSERT 자체가 거부돼 DB id 를 못 받으므로 역전
@@ -277,7 +281,7 @@ export async function GET(req: NextRequest) {
         const tickResults = await Promise.all(
           gameIds.map((gameId) => {
             if (inFlight.has(gameId)) {
-              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:overlap-skip`] });
+              return Promise.resolve<TickResult>({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:overlap-skip`] });
             }
             inFlight.add(gameId);
             const ac = new AbortController();
@@ -289,20 +293,23 @@ export async function GET(req: NextRequest) {
               settle,
               new Promise<TickResult>((resolve) =>
                 setTimeout(
-                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
+                  () => { ac.abort(); resolve({ inserted: 0, skippedUnchanged: 0, skippedOversize: 0, framesStaleStreak: null, stale: 0, lockBusy: 0, errors: [`${gameId}:tick-timeout`] }); },
                   TICK_TIMEOUT_MS,
                 ),
               ),
             ]);
           }),
         );
-        for (const r of tickResults) {
+        for (const [i, r] of tickResults.entries()) {
           totals.inserted += r.inserted;
           totals.skippedUnchanged += r.skippedUnchanged;
           totals.skippedOversize += r.skippedOversize;
           totals.stale += r.stale;
           totals.lockBusy += r.lockBusy;
           totals.errors.push(...r.errors);
+          if (r.framesStaleStreak !== null) {
+            framesStaleMarkers.push(`${gameIds[i]}:frames-stale=${r.framesStaleStreak}`);
+          }
         }
         totals.ticks += 1;
 
@@ -320,6 +327,27 @@ export async function GET(req: NextRequest) {
     // 상태 저장 (다음 인보케이션이 이어받음). 저장 직전 소유권을 한 번 더 재확인해
     // 내 토큰일 때만 저장한다 — 새 writer 의 최신 state 를 stale 값으로 덮어쓰지 않기
     // 위함(삼순 3차 lease: 저장 직전 소유권 재확인).
+    // frames-stale 관측 적재 — 발행 critical path 밖(loop 종료 후), 실패는 삼킨다
+    // (fire-and-forget — 3s 상한, warmup 의 ⓕ 적재와 동일 계약). 마커 없으면 무호출.
+    const framesStalePersist = framesStaleMarkers.length
+      ? await Promise.race([
+          persistWarmupEnrichObs([
+            {
+              atMs: Date.now(),
+              tickKind: "publisher",
+              liveSource: "relay-publisher",
+              liveStage: "relay-publisher",
+              obs: framesStaleMarkers,
+            },
+          ]),
+          new Promise<{ error: string }>((resolve) =>
+            setTimeout(() => resolve({ error: "persist_timeout" }), 3_000),
+          ),
+        ]).catch((e): { error: string } => ({
+          error: e instanceof Error ? e.message : "persist_failed",
+        }))
+      : { persisted: 0 };
+
     const stillOwner = !lockLost && (await renewLock(token));
     if (stillOwner) {
       await Promise.all(
@@ -337,6 +365,9 @@ export async function GET(req: NextRequest) {
       lockLost,
       gc: gcError ? `error:${gcError.message}` : "ok",
       ...totals,
+      // frames-stale 관측 — 발현 마커와 적재 결과({persisted}|{error}). 관측 전용, 본체 무영향.
+      framesStale: framesStaleMarkers,
+      framesStalePersist,
       errors: totals.errors.slice(0, 20),
     });
   } finally {

@@ -616,6 +616,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:relay-frames-stale",
+      "tier": "ci"
+    },
+    {
       "tier": "deploy",
       "name": "qa:relay-realtime"
     },

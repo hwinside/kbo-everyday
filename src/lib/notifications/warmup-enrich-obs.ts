@@ -21,10 +21,18 @@ export const EMERGENT_OBS_MARKERS: ReadonlySet<string> = new Set([
   "deadline-cut",
 ]);
 
+/**
+ * 값이 붙는 발현 마커 접두사 — `frames-stale=<streak>` (relay 퍼블리셔의 stale-equal 관측,
+ * 2026-09-01 LG:OB 볼카운트 고착 조사 후속). exact 집합으로는 가변 suffix 를 못 묶으므로
+ * prefix 로 판정한다.
+ */
+export const EMERGENT_OBS_MARKER_PREFIXES: readonly string[] = ["frames-stale="];
+
 export type WarmupEnrichObsTick = {
   /** trace.fetchedAtMs — 그 라운드의 관측 시각. */
   atMs: number;
-  tickKind: "initial" | "subtick";
+  /** 'publisher' = relay-live-publisher 인보케이션 단위 관측(frames-stale). */
+  tickKind: "initial" | "subtick" | "publisher";
   liveSource: string;
   liveStage: string;
   obs: string[];
@@ -40,7 +48,13 @@ export function selectEmergentObsTicks(
   ticks: WarmupEnrichObsTick[],
 ): WarmupEnrichObsTick[] {
   return ticks.filter((tick) =>
-    tick.obs.some((entry) => EMERGENT_OBS_MARKERS.has(obsMarker(entry))),
+    tick.obs.some((entry) => {
+      const marker = obsMarker(entry);
+      return (
+        EMERGENT_OBS_MARKERS.has(marker) ||
+        EMERGENT_OBS_MARKER_PREFIXES.some((prefix) => marker.startsWith(prefix))
+      );
+    }),
   );
 }
 
