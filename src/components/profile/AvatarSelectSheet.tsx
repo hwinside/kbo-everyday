@@ -8,6 +8,7 @@ import Cropper, { type Area } from "react-easy-crop";
 import { PRESET_AVATARS, getPresetKey, isCustomAvatar } from "@/lib/constants/avatars";
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { TEAMS } from "@/lib/constants/teams";
 
 const AVATAR_SIZE = 400; // 크롭 결과 px
@@ -77,6 +78,7 @@ async function getCroppedBlob(imageSrc: string, crop: Area): Promise<Blob> {
 }
 
 export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, teamId, nickname }: Props) {
+  const dialogRef = useDialogFocus(isOpen);
   const { user, refreshProfile } = useAuth();
   const team = teamId ? TEAMS.find(t => t.id === teamId) : null;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -251,6 +253,8 @@ export default function AvatarSelectSheet({ isOpen, onClose, currentAvatarUrl, t
             role="dialog"
             aria-modal="true"
             aria-label={cropImage ? "사진 자르기" : "아바타 선택"}
+            ref={dialogRef}
+            tabIndex={-1}
           >
             {/* Handle */}
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />

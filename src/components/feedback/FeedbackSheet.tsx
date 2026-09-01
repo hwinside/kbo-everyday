@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Send } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { supabase } from "@/lib/supabase/client";
 
 type FeedbackType = "bug" | "data" | "feature" | "android_test" | "other";
@@ -23,6 +24,7 @@ const TYPES: { value: FeedbackType; label: string }[] = [
 ];
 
 export default function FeedbackSheet({ isOpen, onClose, defaultType }: FeedbackSheetProps) {
+  const dialogRef = useDialogFocus(isOpen);
   const { user } = useAuth();
 
   useEffect(() => {
@@ -124,6 +126,8 @@ export default function FeedbackSheet({ isOpen, onClose, defaultType }: Feedback
             role="dialog"
             aria-modal="true"
             aria-label="피드백 보내기"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-bold text-text-primary">📮 피드백 보내기</h2>

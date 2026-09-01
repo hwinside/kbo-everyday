@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Check } from "lucide-react";
 import { signInWithApple, signInWithGoogle, signInWithKakao, signInWithNaver } from "@/lib/supabase/auth";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { detectInApp } from "@/lib/detect-inapp";
 import InAppBrowserModal from "./InAppBrowserModal";
 
@@ -19,6 +20,7 @@ interface LoginSheetProps {
 type Provider = "apple" | "naver" | "kakao" | "google";
 
 export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
+  const dialogRef = useDialogFocus(isOpen);
   const { user } = useAuth();
   const [inAppModalOpen, setInAppModalOpen] = useState(false);
   // EULA(이용약관) 동의 게이트 — Apple 1.2: 가입/로그인 전 약관 동의 필수.
@@ -103,6 +105,8 @@ export default function LoginSheet({ isOpen, onClose }: LoginSheetProps) {
               role="dialog"
               aria-modal="true"
               aria-label="로그인"
+              ref={dialogRef}
+              tabIndex={-1}
             >
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-lg font-bold text-text-primary">로그인</h2>

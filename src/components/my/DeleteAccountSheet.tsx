@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle } from "lucide-react";
 import { useAuth } from "@/lib/supabase/AuthContext";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 
 interface DeleteAccountSheetProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ export default function DeleteAccountSheet({
   isOpen,
   onClose,
 }: DeleteAccountSheetProps) {
+  const dialogRef = useDialogFocus(isOpen);
   const [confirmText, setConfText] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +63,8 @@ export default function DeleteAccountSheet({
             role="dialog"
             aria-modal="true"
             aria-label="계정 삭제"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-red-500 flex items-center gap-2">

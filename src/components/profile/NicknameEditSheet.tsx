@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useDialogFocus } from "@/lib/a11y/useDialogFocus";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Pencil, X } from "lucide-react";
@@ -59,6 +60,7 @@ function formatResetAt(resetAt: string | null) {
 }
 
 export default function NicknameEditSheet({ isOpen, onClose, currentNickname, status, onSaved }: Props) {
+  const dialogRef = useDialogFocus(isOpen);
   const [nickname, setNickname] = useState(currentNickname);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -151,6 +153,8 @@ export default function NicknameEditSheet({ isOpen, onClose, currentNickname, st
             role="dialog"
             aria-modal="true"
             aria-label="닉네임 변경"
+            ref={dialogRef}
+            tabIndex={-1}
           >
             <div className="mx-auto mt-3 mb-2 h-1 w-10 rounded-full bg-text-tertiary/30" />
 
