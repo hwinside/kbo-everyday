@@ -552,6 +552,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:player-career",
+      "tier": "ci"
+    },
+    {
       "name": "qa:player-stats-parser",
       "tier": "ci"
     },
