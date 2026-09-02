@@ -34,6 +34,7 @@ import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import type { PlayerCareerPayload, CareerTeamSpan, CareerSeasonRow } from "@/lib/services/player-career";
 import { formatBirthDisplay } from "@/lib/utils/birthdate";
 import { getPlayerNationality } from "@/lib/utils/player-nationality";
 import CountryFlag from "@/components/player/CountryFlag";
@@ -102,25 +103,25 @@ export default function PlayerBoardPage() {
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
   // 통산 뷰 토글 — 기본은 시즌 기록, 선택 시 같은 UI로 KBO 공식 통산 기록 표시.
   const [showCareer, setShowCareer] = useState(false);
-  // undefined = 아직 미조회 · null = 조회했으나 기록 없음 · object = 통산 값.
-  const [careerStats, setCareerStats] = useState<Record<string, string> | null | undefined>(undefined);
+  // undefined = 아직 미조회 · null = 조회했으나 기록 없음 · object = 통산 payload.
+  const [career, setCareer] = useState<PlayerCareerPayload | null | undefined>(undefined);
   // 통합 피드: 글·사진 한 스트림 (선수 게시판 직접글 + 다른 게시판에서 이 선수 태그된 글).
   const [feedPosts, setFeedPosts] = useState<Post[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
 
-  // 통산 기록 로드 — KBO 공식 통산 행(Total.aspx) 재사용. 통산 뷰를 켤 때만 1회 조회.
+  // 통산 기록 로드 — KBO 공식 통산행+연도행(Total.aspx) 재사용. 통산 뷰를 켤 때만 1회 조회.
   useEffect(() => {
     if (!showCareer || !player || !numericKboId) return;
-    if (careerStats !== undefined) return;
+    if (career !== undefined) return;
     let cancelled = false;
     fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}`)
       .then(r => r.json())
-      .then(d => { if (!cancelled) setCareerStats(d.stats ?? null); })
-      .catch(() => { if (!cancelled) setCareerStats(null); });
+      .then(d => { if (!cancelled) setCareer(d.payload ?? null); })
+      .catch(() => { if (!cancelled) setCareer(null); });
     return () => { cancelled = true; };
-  }, [showCareer, player, numericKboId, careerStats]);
+  }, [showCareer, player, numericKboId, career]);
   const { user } = useAuth();
   const { checkBadges } = useBadgeCheck();
 
@@ -531,40 +532,96 @@ export default function PlayerBoardPage() {
             );
           })()}
 
-          {/* 통산 기록 드 — 시즌 종 을 그대로설 KBO 공식 통산 행 (동일 UI) */}
+          {/* 통산 뷰 — 누적 그리드(동일 UI) + 통산 전용 섹션(소속 이력 · 연도별 추이) */}
           {showCareer && (
-            careerStats === undefined ? (
+            career === undefined ? (
               <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
                 통산 기록 불러오는 중…
               </div>
-            ) : careerStats ? (
-              <div className="glass-card p-4 mb-4">
-                <h3 className="text-sm font-bold text-text-primary mb-3">
-                  통산 기록{careerStats.seasons ? ` (${careerStats.seasons})` : ""}
-                </h3>
-                <div className="grid grid-cols-3 gap-3">
-                  {(player.position === "투수"
-                    ? [
-                        ["ERA", careerStats.era], ["경기", careerStats.games], ["승", careerStats.wins],
-                        ["패", careerStats.losses], ["세이브", careerStats.saves], ["홀드", careerStats.holds],
-                        ["승률", careerStats.wpct], ["이닝", careerStats.ip], ["삼진", careerStats.so],
-                        ["WHIP", careerStats.whip], ["피안타", careerStats.h], ["피홈런", careerStats.hr],
-                        ["볼넷", careerStats.bb], ["자책", careerStats.er],
-                      ]
-                    : [
-                        ["타율", careerStats.avg], ["경기", careerStats.games], ["안타", careerStats.hits],
-                        ["홈런", careerStats.hr], ["타점", careerStats.rbi], ["득점", careerStats.runs],
-                        ["2루타", careerStats.doubles], ["3루타", careerStats.triples], ["도루", careerStats.sb],
-                        ["루타", careerStats.tb], ["타수", careerStats.ab],
-                      ]
-                  )
-                    .filter(([, v]) => v !== undefined)
-                    .map(([label, v]) => (
-                      <StatItem key={label} label={label!} value={v!} color={teamColor} />
+            ) : career && (career.totals || career.series.length > 0) ? (
+              <>
+                {/* 소속 이력 칩 */}
+                {career.teams.length > 0 && (
+                  <div className="flex gap-2 overflow-x-auto pb-2 mb-3 no-scrollbar">
+                    {career.teams.map((t: CareerTeamSpan) => (
+                      <span
+                        key={`${t.team}-${t.from}`}
+                        className="flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold bg-bg-tertiary text-text-secondary"
+                      >
+                        {t.team} <span className="font-bold">{t.from === t.to ? t.from : `${t.from}~${t.to}`}</span>
+                      </span>
                     ))}
-                </div>
-                <p className="text-[11px] text-text-tertiary mt-3">KBO 공식 기록 기준</p>
-              </div>
+                  </div>
+                )}
+
+                {/* 통산 누적 그리드 — 존재하는 누적 지표만(빈칸 생략) */}
+                {career.totals && (
+                  <div className="glass-card p-4 mb-4">
+                    <h3 className="text-sm font-bold text-text-primary mb-3">
+                      통산 기록{career.totals.seasons ? ` (${career.totals.seasons})` : ""}
+                    </h3>
+                    <div className="grid grid-cols-3 gap-3">
+                      {(player.position === "투수"
+                        ? [
+                            ["ERA", career.totals.era], ["경기", career.totals.games], ["승", career.totals.wins],
+                            ["패", career.totals.losses], ["세이브", career.totals.saves], ["홀드", career.totals.holds],
+                            ["승률", career.totals.wpct], ["이닝", career.totals.ip], ["삼진", career.totals.so],
+                            ["WHIP", career.totals.whip], ["피안타", career.totals.h], ["피홈런", career.totals.hr],
+                            ["볼넷", career.totals.bb], ["자책", career.totals.er],
+                          ]
+                        : [
+                            ["타율", career.totals.avg], ["경기", career.totals.games], ["안타", career.totals.hits],
+                            ["홈런", career.totals.hr], ["타점", career.totals.rbi], ["득점", career.totals.runs],
+                            ["2루타", career.totals.doubles], ["3루타", career.totals.triples], ["도루", career.totals.sb],
+                            ["루타", career.totals.tb], ["타수", career.totals.ab],
+                          ]
+                      )
+                        .filter(([, v]) => v !== undefined)
+                        .map(([label, v]) => (
+                          <StatItem key={label} label={label!} value={v!} color={teamColor} />
+                        ))}
+                    </div>
+                    <p className="text-[11px] text-text-tertiary mt-3">종 가 한 지표는 통산 공식 기록에 없어 생략합니다 · KBO 공식 기록 기준</p>
+                  </div>
+                )}
+
+                {/* 연도별 추이 — 통산의 강점(시즌 단일 카드로는 불가능한 표현) */}
+                {career.series.length > 0 && (() => {
+                  const cols = player.position === "투수"
+                    ? [["ERA", "era"], ["G", "games"], ["승", "wins"], ["패", "losses"], ["SV", "saves"], ["이닝", "ip"], ["삼진", "so"]] as const
+                    : [["타율", "avg"], ["G", "games"], ["안타", "hits"], ["홈런", "hr"], ["타점", "rbi"], ["도루", "sb"]] as const;
+                  return (
+                    <div className="glass-card p-4 mb-4">
+                      <h3 className="text-sm font-bold text-text-primary mb-3">연도별 추이</h3>
+                      <div className="overflow-x-auto no-scrollbar">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="text-text-tertiary">
+                              <th className="text-left font-medium py-1 pr-2 whitespace-nowrap">연도</th>
+                              <th className="text-left font-medium py-1 pr-2 whitespace-nowrap">팀</th>
+                              {cols.map(([label]) => (
+                                <th key={label} className="text-right font-medium py-1 pl-2 whitespace-nowrap">{label}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {career.series.map((row: CareerSeasonRow) => (
+                              <tr key={row.year} className="border-t border-white/5">
+                                <td className="text-left py-1.5 pr-2 text-text-secondary whitespace-nowrap">{row.year}</td>
+                                <td className="text-left py-1.5 pr-2 text-text-tertiary whitespace-nowrap">{row.team}</td>
+                                {cols.map(([label, key]) => (
+                                  <td key={label} className="text-right py-1.5 pl-2 text-text-primary tabular-nums whitespace-nowrap">{row.values[key] ?? "-"}</td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[11px] text-text-tertiary mt-3">KBO 공식 연도별 기록</p>
+                    </div>
+                  );
+                })()}
+              </>
             ) : (
               <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
                 통산 기록을 찾을 수 없습니다
