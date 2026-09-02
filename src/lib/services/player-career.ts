@@ -60,11 +60,26 @@ function mapColumns(
   return out;
 }
 
-/** CareerRecord → 통산/연도/소속 payload. 통산행·연도행이 모두 없으면 null. */
+/** 선수명 대조용 정규화 — 공백/영문 대소문자 차이를 흡수한다. */
+function normalizeName(name: string): string {
+  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+}
+
+/**
+ * CareerRecord → 통산/연도/소속 payload. 통산행·연도행이 모두 없으면 null.
+ *
+ * `expectedName` 이 주어지면 페이지 상단 선수명(record.playerName)과 **identity 대조**한다.
+ * KBO 가 같은 playerId 에 다른 선수를 반환하거나 roster 매핑이 어긋나면 타 선수 통산이
+ * 노출될 수 있으므로(삼순 NO-GO ①), 불일치 시 fail-close(null) 한다.
+ */
 export function mapCareerRecord(
   record: CareerRecord,
   table: CareerStatsTable,
+  expectedName?: string,
 ): PlayerCareerPayload | null {
+  if (expectedName && normalizeName(record.playerName) !== normalizeName(expectedName)) {
+    return null;
+  }
   // 통산 누적
   let totals: PlayerCareerStats | null = null;
   if (record.career) {
@@ -99,6 +114,7 @@ const CACHE_TTL_MS = 3_600_000;
 export async function getPlayerCareerResult(
   rawId: string | null,
   pos = "타자",
+  expectedName?: string,
 ): Promise<{
   body: { payload?: PlayerCareerPayload | null; cached?: boolean; error?: string };
   status?: number;
@@ -108,7 +124,8 @@ export async function getPlayerCareerResult(
     return { body: { error: "numeric id required" }, status: 400, headers: { "Cache-Control": "no-store" } };
   }
   const table: CareerStatsTable = pos === "투수" ? "pitcher" : "batter";
-  const cacheKey = `career-${rawId}-${table}`;
+  const nameKey = expectedName ? normalizeName(expectedName) : "-";
+  const cacheKey = `career-${rawId}-${table}-${nameKey}`;
   const okHeaders = { "Cache-Control": "public, s-maxage=300" } as const;
   const cached = cache[cacheKey];
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
@@ -117,7 +134,7 @@ export async function getPlayerCareerResult(
   try {
     const fetcher = createCareerRecordFetcher();
     const record = await fetcher(table, rawId);
-    const payload = record ? mapCareerRecord(record, table) : null;
+    const payload = record ? mapCareerRecord(record, table, expectedName) : null;
     cache[cacheKey] = { data: payload, ts: Date.now() };
     return { body: { payload, cached: false }, headers: okHeaders };
   } catch (e: unknown) {

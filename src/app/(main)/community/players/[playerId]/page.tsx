@@ -116,12 +116,12 @@ export default function PlayerBoardPage() {
     if (!showCareer || !player || !numericKboId) return;
     if (career !== undefined) return;
     let cancelled = false;
-    fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}`)
+    fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}&name=${encodeURIComponent(playerName || player.name)}`)
       .then(r => r.json())
       .then(d => { if (!cancelled) setCareer(d.payload ?? null); })
       .catch(() => { if (!cancelled) setCareer(null); });
     return () => { cancelled = true; };
-  }, [showCareer, player, numericKboId, career]);
+  }, [showCareer, player, numericKboId, playerName, career]);
   const { user } = useAuth();
   const { checkBadges } = useBadgeCheck();
 
@@ -581,7 +581,7 @@ export default function PlayerBoardPage() {
                           <StatItem key={label} label={label!} value={v!} color={teamColor} />
                         ))}
                     </div>
-                    <p className="text-[11px] text-text-tertiary mt-3">종 가 한 지표는 통산 공식 기록에 없어 생략합니다 · KBO 공식 기록 기준</p>
+                    <p className="text-[11px] text-text-tertiary mt-3">OPS·WAR 등 통산 공식 기록에 없는 지표는 생략됩니다 · KBO 공식 기록 기준</p>
                   </div>
                 )}
 
@@ -682,14 +682,17 @@ export default function PlayerBoardPage() {
             <PlayerHomeAway playerId={kboId} position={player.position} teamColor={teamColor} />
           )}
 
-          <NicheStats
-            playerId={numericKboId}
-            position={player.position}
-            teamColor={teamColor}
-            playerName={player.name}
-            season={statSeason}
-            stats={realStats ?? undefined}
-          />
+          {/* 세이버·스플릿은 시즌 전용 — 통산 뷰에서는 숨긴다(통산/시즌 혼재 방지, 삼순 NO-GO ②) */}
+          {!showCareer && (
+            <NicheStats
+              playerId={numericKboId}
+              position={player.position}
+              teamColor={teamColor}
+              playerName={player.name}
+              season={statSeason}
+              stats={realStats ?? undefined}
+            />
+          )}
           
           {/* 관련 기사 */}
           <div className="px-5">
