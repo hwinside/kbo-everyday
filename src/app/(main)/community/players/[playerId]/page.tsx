@@ -34,6 +34,7 @@ import PlayerRadar from "@/components/player/PlayerRadar";
 import PlayerNews from "@/components/player/PlayerNews";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
+import { visibleSeasonColumns } from "@/lib/services/player-career";
 import type { PlayerCareerPayload, CareerTeamSpan, CareerSeasonRow } from "@/lib/services/player-career";
 import { formatBirthDisplay } from "@/lib/utils/birthdate";
 import { getPlayerNationality } from "@/lib/utils/player-nationality";
@@ -590,9 +591,12 @@ export default function PlayerBoardPage() {
 
                 {/* 연도별 추이 — 통산의 강점(시즌 단일 카드로는 불가능한 표현) */}
                 {career.series.length > 0 && (() => {
-                  const cols = player.position === "투수"
-                    ? [["ERA", "era"], ["G", "games"], ["승", "wins"], ["패", "losses"], ["SV", "saves"], ["이닝", "ip"], ["삼진", "so"], ["WHIP", "whip"]] as const
-                    : [["타율", "avg"], ["G", "games"], ["안타", "hits"], ["홈런", "hr"], ["타점", "rbi"], ["도루", "sb"], ["OBP", "obp"], ["SLG", "slg"]] as const;
+                  const allCols: readonly (readonly [string, string])[] = player.position === "투수"
+                    ? [["ERA", "era"], ["G", "games"], ["승", "wins"], ["패", "losses"], ["SV", "saves"], ["이닝", "ip"], ["삼진", "so"], ["WHIP", "whip"]]
+                    : [["타율", "avg"], ["G", "games"], ["안타", "hits"], ["홈런", "hr"], ["타점", "rbi"], ["도루", "sb"], ["OBP", "obp"], ["SLG", "slg"]];
+                  // 실제 값이 있는 컬럼만 렌더(삼순 #1334 ②: WHIP 등 전 행 `-` 방지).
+                  const cols = visibleSeasonColumns(career.series, allCols);
+                  if (cols.length === 0) return null;
                   return (
                     <div className="glass-card p-4 mb-4">
                       <h3 className="text-sm font-bold text-text-primary mb-3">연도별 추이</h3>

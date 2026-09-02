@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCareerTotalsHtml, type CareerRecord } from "../../src/lib/baseball-qa/stats/career-series";
-import { mapCareerRecord, getPlayerCareerResult, resolveExpectedPlayerName, recordIdentityMatches } from "../../src/lib/services/player-career";
+import { mapCareerRecord, getPlayerCareerResult, resolveExpectedPlayerName, recordIdentityMatches, visibleSeasonColumns } from "../../src/lib/services/player-career";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BATTER_HTML = readFileSync(join(here, "fixtures", "kbo-career-batter.html"), "utf-8");
@@ -57,6 +57,37 @@ check("① 부분 포함 없을 때 유니크 resolve→numericId 일치로 구�
 });
 check("① 1글자 잡음은 포함 판정에서 배제(과잉 매칭 방지)", () => {
   assert.equal(recordIdentityMatches("김", "72443", "최형우", () => null), false);
+});
+check("① 부분포함이어도 다른 numericId 실존 선수로 resolve 되면 거절 (삼순 반례 박민→박민우)", () => {
+  // KBO 응답 `박민`(50657 실존) ≠ 대상 `박민우`(62907). 부분문자열이지만 별개 선수 → false.
+  const resolveUnique = (n: string) => (n === "박민" ? { numericId: "50657" } : null);
+  assert.equal(recordIdentityMatches("박민", "62907", "박민우", resolveUnique), false);
+  // 같은 ID 로 resolve 되면 본인 → true
+  const resolveSelf = (n: string) => (n === "박민우" ? { numericId: "62907" } : null);
+  assert.equal(recordIdentityMatches("박민우", "62907", "박민우", resolveSelf), true);
+});
+check("① 외국인은 유니크 resolve 불가할 때만 부분포함 허용(numericId 우선)", () => {
+  // `웰스` 가 유니크하게 55348 로 resolve → 그 ID 일치만 허용
+  const resolveUnique = (n: string) => (n === "웰스" ? { numericId: "55348" } : null);
+  assert.equal(recordIdentityMatches("웰스", "55348", "라클란 웰스", resolveUnique), true);
+  assert.equal(recordIdentityMatches("웰스", "99999", "라클란 웰스", resolveUnique), false);
+  // resolve 모호(null)일 때만 부분포함으로 구제
+  assert.equal(recordIdentityMatches("웰스", "55348", "라클란 웰스", () => null), true);
+});
+
+// ── ② 연도별 컬럼 가시성 — 값 없는 컬럼(예 WHIP) 전 행 대시 방지 ──────────────
+check("② series 전 행에 값 없는 컬럼은 렌더 목록에서 제거(WHIP 전행 대시 방지)", () => {
+  const p = mapCareerRecord(pitcher, "pitcher")!;
+  const allCols = [["ERA", "era"], ["삼진", "so"], ["WHIP", "whip"]] as const;
+  const cols = visibleSeasonColumns(p.series, allCols);
+  const keys = cols.map(([, k]) => k);
+  assert(keys.includes("era"), "era must remain");
+  assert(!keys.includes("whip"), "whip(전행 미존재)는 제거되어야 함");
+});
+check("② 모든 행이 `-` 인 컬럼도 제거", () => {
+  const series = [{ year: 2024, team: "LG", values: { a: "1", b: "-" } }];
+  const cols = visibleSeasonColumns(series, [["A", "a"], ["B", "b"]] as const);
+  assert.deepEqual(cols.map(([, k]) => k), ["a"]);
 });
 
 // ── ② UI 공식 컬럼 allowlist — 시즌 UI 공통 지표 노출 + 파생지표 배제 ──────────

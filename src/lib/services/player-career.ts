@@ -102,11 +102,34 @@ export function recordIdentityMatches(
 ): boolean {
   const rec = normalizeName(recordName);
   const exp = normalizeName(expectedName);
-  if (rec.length >= 2 && exp.length >= 2 && (rec === exp || exp.includes(rec) || rec.includes(exp))) {
-    return true;
-  }
+  if (rec.length < 2 || exp.length < 2) return false;
+
+  // ① 정확 일치 → 즉시 통과.
+  if (rec === exp) return true;
+
+  // ② numericId 검증을 부분포함보다 **먼저** 한다(삼순 #1334):
+  //    KBO 등록명이 다른 실존 선수로 유니크 resolve 되면, 부분포함이더라도 거절.
+  //    예) `박민`(50657) 은 대상 `박민우`(62907) 의 부분문자열이지만 별개 선수 → false.
   const u = resolveUnique(recordName);
-  return u != null && String(u.numericId) === String(rawId);
+  if (u != null) {
+    return String(u.numericId) === String(rawId);
+  }
+
+  // ③ 유니크 resolve 불가(모호/미등록)일 때만 roster 풀네임 ↔ KBO 등록명 부분포함 허용.
+  //    외국인 축(`웰스`⊂`라클란 웰스`·`스기모토`⊂`스기모토 고우키`)만 안전하게 통과.
+  return exp.includes(rec) || rec.includes(exp);
+}
+
+/**
+ * 연도별 표에서 **실제 값이 하나라도 있는** 컬럼만 남긴다(삼순 #1334 ②).
+ * 통산행엔 없고 연도행엔 존재하거나(반대도) 하는 컬럼의 전 행 `-` 노출을 막는다.
+ * @param cols [라벨, 정규화키] 후보 컬럼
+ */
+export function visibleSeasonColumns<T extends readonly [string, string]>(
+  series: readonly CareerSeasonRow[],
+  cols: readonly T[],
+): T[] {
+  return cols.filter(([, key]) => series.some((r) => r.values[key] !== undefined && r.values[key] !== "-"));
 }
 
 /**
