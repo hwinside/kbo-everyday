@@ -1,30 +1,51 @@
 import {
   createCareerRecordFetcher,
-  CAREER_METRIC_COLUMNS,
   type CareerRecord,
   type CareerRecordFetcher,
 } from "@/lib/baseball-qa/stats/career-series";
-import { resolvePlayer } from "@/lib/utils/resolve-player";
+import { resolvePlayer, resolveUniquePlayerByName } from "@/lib/utils/resolve-player";
 
 /**
  * 선수 페이지 "통산" 뷰용 서비스.
  *
- * 야잘알봇이 쓰는 KBO 공식 연도/통산 파서(`career-series.ts`)를 **그대로 재사용**한다.
+ * 야잘알봇이 쓰는 KBO 공식 연도/통산 파서(`career-series.ts`)의 **HTML 파서를 재사용**한다.
  * 새 수집 경로를 만들지 않는다 — 같은 `Total.aspx` 통산 행/연도 행을 읽어 선수 페이지가
  * 쓰는 정규화 키(realStats 와 동일 shape)로만 매핑한다. 계산·추정 없음, 결측이면 fail-close.
  *
- * ⚠️ identity 정본화(삼순 #1334 ①): 대상 선수명은 **클라이언트 입력을 신뢰하지 않고**
- * 서버 roster SSOT(kboId → name)에서 정한다. KBO 가 같은 playerId 에 다른 선수를 주거나
- * roster 매핑이 어긋나면 타 선수 통산이 노출되므로, roster 로 못 정하면 fail-close 한다.
+ * ⚠️ 봇용 `CAREER_METRIC_COLUMNS` 는 재사용하지 않는다(삼순 #1334 ②): 봇은 파생 계산
+ * 가능성 때문에 BB/SLG/OBP·CG/SHO 를 배제했지만, 이 값들은 Total.aspx 통산행에 **원값으로
+ * 실재**하고 시즌 UI 가 이미 노출한다. UI 전용 공식 컬럼 allowlist(`CAREER_UI_COLUMNS`)로
+ * 원값만 서빙한다.
+ *
+ * ⚠️ identity(삼순 #1334 ①): 대상 선수는 서버 roster SSOT 로 정하고, KBO record.playerName 이
+ * 그 선수인지 대조한다. 외국인은 roster 풀네임(`라클란 웰스`)과 KBO 등록명(`웰스`)이 달라
+ * 정확 일치로는 전부 fail-close 되므로, roster 이름과의 **부분 포함**(prefix/suffix) 또는
+ * 이름→유니크 resolve 의 numericId 일치로 판정한다.
  */
 
 export type CareerStatsTable = "batter" | "pitcher";
 
-/** 통산 누적 값 — 키는 선수 페이지 realStats 와 동일(문자열 원값 그대로). */
-export type PlayerCareerStats = Record<string, string> & {
-  /** 통산이 걸친 시즌 범위(첫~마지막). */
-  seasons?: string;
+/**
+ * UI 전용 공식 컬럼 allowlist — KBO Total.aspx 헤더명(값) 그대로.
+ * 시즌 UI 공통 지표(볼넷·완투·완봉·출루율·장타율)를 포함한다. 파생 계산 없음(원값만).
+ * OPS 는 통산행에 컬럼이 없어(OBP·SLG 만 존재) 넣지 않는다 — 계산으로 만들지 않는다.
+ */
+export const CAREER_UI_COLUMNS: Readonly<Record<CareerStatsTable, Readonly<Record<string, string>>>> = {
+  batter: {
+    avg: "AVG", games: "G", ab: "AB", runs: "R", hits: "H",
+    doubles: "2B", triples: "3B", hr: "HR", tb: "TB", rbi: "RBI",
+    sb: "SB", cs: "CS", bb: "BB", hbp: "HBP", so: "SO", gdp: "GDP",
+    slg: "SLG", obp: "OBP",
+  },
+  pitcher: {
+    era: "ERA", games: "G", cg: "CG", sho: "SHO", wins: "W", losses: "L",
+    saves: "SV", holds: "HLD", wpct: "WPCT", ip: "IP", h: "H", hr: "HR",
+    bb: "BB", hbp: "HBP", so: "SO", r: "R", er: "ER", whip: "WHIP",
+  },
 };
+
+/** 통산 누적 값 — 키는 선수 페이지 realStats 와 동일(문자열 원값 그대로). */
+export type PlayerCareerStats = Record<string, string> & { seasons?: string };
 
 /** 연도별 한 행 — 그 해 소속 + 정규화 지표 원값. */
 export interface CareerSeasonRow {
@@ -41,22 +62,15 @@ export interface CareerTeamSpan {
 }
 
 export interface PlayerCareerPayload {
-  /** 통산 누적 그리드용. 통산 행이 없으면 null. */
   totals: PlayerCareerStats | null;
-  /** 연도별 추이(오름차순). 통산 행만 있고 연도 행이 없으면 빈 배열. */
   series: CareerSeasonRow[];
-  /** 소속 이력(연도 행 파생). */
   teams: CareerTeamSpan[];
 }
 
 const KBO_FIRST_SEASON = 1982;
 
-/** 공식 컬럼(값) → 정규화 키. CAREER_METRIC_COLUMNS 등재 지표만 신뢰(파생·미검증 배제). */
-function mapColumns(
-  source: Record<string, string>,
-  table: CareerStatsTable,
-): Record<string, string> {
-  const columns = CAREER_METRIC_COLUMNS[table];
+function mapColumns(source: Record<string, string>, table: CareerStatsTable): Record<string, string> {
+  const columns = CAREER_UI_COLUMNS[table];
   const out: Record<string, string> = {};
   for (const [key, column] of Object.entries(columns)) {
     const value = source[column];
@@ -66,27 +80,40 @@ function mapColumns(
   return out;
 }
 
-/** 선수명 대조용 정규화 — 공백/영문 대소문자 차이를 흡수한다. */
 function normalizeName(name: string): string {
   return name.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 }
 
+/** 이름→유니크 resolve 주입 타입(테스트 대체용). */
+export type UniqueNameResolver = (name: string) => { numericId: string } | null;
+
+/**
+ * KBO record.playerName 이 rawId 의 대상 선수인지 판정한다.
+ *
+ * ① 정확 일치 ② roster 풀네임 ↔ KBO 등록명 부분 포함(외국인: `웰스`⊂`라클란 웰스`,
+ * `스기모토`⊂`스기모토 고우키`) ③ 이름→유니크 resolve 의 numericId 일치.
+ * 셋 중 하나도 성립 안 하면 false → 호출부가 fail-close.
+ */
+export function recordIdentityMatches(
+  recordName: string,
+  rawId: string,
+  expectedName: string,
+  resolveUnique: UniqueNameResolver = resolveUniquePlayerByName,
+): boolean {
+  const rec = normalizeName(recordName);
+  const exp = normalizeName(expectedName);
+  if (rec.length >= 2 && exp.length >= 2 && (rec === exp || exp.includes(rec) || rec.includes(exp))) {
+    return true;
+  }
+  const u = resolveUnique(recordName);
+  return u != null && String(u.numericId) === String(rawId);
+}
+
 /**
  * CareerRecord → 통산/연도/소속 payload. 통산행·연도행이 모두 없으면 null.
- *
- * `expectedName` 이 주어지면 페이지 상단 선수명(record.playerName)과 **identity 대조**한다.
- * 불일치 시 fail-close(null) — 타 선수 통산 노출을 구조로 차단한다(삼순 #1334 ①).
+ * identity 대조는 호출부(getPlayerCareerResult)가 수행한다 — 여기선 순수 매핑만.
  */
-export function mapCareerRecord(
-  record: CareerRecord,
-  table: CareerStatsTable,
-  expectedName?: string,
-): PlayerCareerPayload | null {
-  if (expectedName && normalizeName(record.playerName) !== normalizeName(expectedName)) {
-    return null;
-  }
-
-  // 통산 누적
+export function mapCareerRecord(record: CareerRecord, table: CareerStatsTable): PlayerCareerPayload | null {
   let totals: PlayerCareerStats | null = null;
   if (record.career) {
     const mapped = mapColumns(record.career, table);
@@ -97,12 +124,10 @@ export function mapCareerRecord(
     }
   }
 
-  // 연도별 추이
   const series: CareerSeasonRow[] = record.rows
     .filter((r) => r.year >= KBO_FIRST_SEASON)
     .map((r) => ({ year: r.year, team: r.team, values: mapColumns(r.values, table) }));
 
-  // 소속 이력 — 연속 동일 팀을 하나의 구간으로 압축.
   const teams: CareerTeamSpan[] = [];
   for (const row of series) {
     const last = teams[teams.length - 1];
@@ -114,19 +139,15 @@ export function mapCareerRecord(
   return { totals, series, teams };
 }
 
-/**
- * kboId → 대상 선수의 **정본 이름**(roster SSOT). 없으면 null.
- * 클라이언트가 보낸 이름을 신뢰하지 않기 위한 서버측 identity 앵커.
- */
+/** kboId → 대상 선수의 정본 이름(roster SSOT). 없으면 null. */
 export function resolveExpectedPlayerName(rawId: string): string | null {
   return resolvePlayer(rawId)?.name ?? null;
 }
 
 export interface CareerServiceDeps {
-  /** 테스트 주입용 — production 은 KBO 공식 fetcher. */
   fetcher?: CareerRecordFetcher;
-  /** 테스트 주입용 — production 은 roster 정본. */
   resolveName?: (rawId: string) => string | null;
+  resolveUnique?: UniqueNameResolver;
 }
 
 const cache: Record<string, { data: PlayerCareerPayload | null; ts: number }> = {};
@@ -134,7 +155,8 @@ const CACHE_TTL_MS = 3_600_000;
 
 /**
  * 라우트 진입점. rawId(=KBO playerId, 숫자) + pos 만 받는다.
- * 대상 선수명은 **서버 roster 에서 정한다**(클라 입력 미신뢰). roster 로 못 정하면 fail-close.
+ * 대상 선수명은 서버 roster 에서 정하고(클라 입력 미신뢰), KBO 응답이 그 선수인지 대조한다.
+ * roster 미해석 → 404, KBO 응답이 다른 선수 → payload null(오매핑 노출 차단).
  */
 export async function getPlayerCareerResult(
   rawId: string | null,
@@ -151,12 +173,7 @@ export async function getPlayerCareerResult(
   const resolveName = deps.resolveName ?? resolveExpectedPlayerName;
   const expectedName = resolveName(rawId);
   if (!expectedName) {
-    // roster 로 대상 선수를 정하지 못하면 통산을 서빙하지 않는다(오매핑 노출 차단).
-    return {
-      body: { payload: null, error: "unknown player" },
-      status: 404,
-      headers: { "Cache-Control": "no-store" },
-    };
+    return { body: { payload: null, error: "unknown player" }, status: 404, headers: { "Cache-Control": "no-store" } };
   }
 
   const table: CareerStatsTable = pos === "투수" ? "pitcher" : "batter";
@@ -169,14 +186,13 @@ export async function getPlayerCareerResult(
   try {
     const fetcher = deps.fetcher ?? createCareerRecordFetcher();
     const record = await fetcher(table, rawId);
-    const payload = record ? mapCareerRecord(record, table, expectedName) : null;
+    let payload: PlayerCareerPayload | null = null;
+    if (record && recordIdentityMatches(record.playerName, rawId, expectedName, deps.resolveUnique)) {
+      payload = mapCareerRecord(record, table);
+    }
     cache[cacheKey] = { data: payload, ts: Date.now() };
     return { body: { payload, cached: false }, headers: okHeaders };
   } catch (e: unknown) {
-    return {
-      body: { error: (e as Error).message, payload: null },
-      status: 500,
-      headers: { "Cache-Control": "no-store" },
-    };
+    return { body: { error: (e as Error).message, payload: null }, status: 500, headers: { "Cache-Control": "no-store" } };
   }
 }

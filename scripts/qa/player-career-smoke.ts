@@ -16,7 +16,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCareerTotalsHtml, type CareerRecord } from "../../src/lib/baseball-qa/stats/career-series";
-import { mapCareerRecord, getPlayerCareerResult, resolveExpectedPlayerName } from "../../src/lib/services/player-career";
+import { mapCareerRecord, getPlayerCareerResult, resolveExpectedPlayerName, recordIdentityMatches } from "../../src/lib/services/player-career";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BATTER_HTML = readFileSync(join(here, "fixtures", "kbo-career-batter.html"), "utf-8");
@@ -34,50 +34,61 @@ const batter = parseCareerTotalsHtml(BATTER_HTML, SEASON);
 const pitcher = parseCareerTotalsHtml(PITCHER_HTML, SEASON);
 assert(batter && pitcher, "fixture parse precondition failed");
 
-// ── ① identity 대조 ─────────────────────────────────────────────────────────
-check("① 이름 일치 시 payload 반환", () => {
-  const p = mapCareerRecord(batter, "batter", batter.playerName);
-  assert(p && p.totals, "expected payload for matching name");
+// ── ① identity 대조 (recordIdentityMatches) ──────────────────────────────────
+check("① 정확 일치 → true", () => {
+  assert.equal(recordIdentityMatches("최형우", "72443", "최형우"), true);
 });
-check("① 이름 불일치 시 fail-close(null) — 타 선수 통산 노출 차단", () => {
-  const p = mapCareerRecord(batter, "batter", "김도영");
-  assert.equal(p, null, "mismatched name must fail-close");
+check("① 무관한 선수 → false (타 선수 통산 차단)", () => {
+  assert.equal(recordIdentityMatches("김도영", "72443", "최형우"), false);
 });
-check("① 공백·대소문자 차이는 흡수(정규화 대조)", () => {
-  const spaced = `  ${batter.playerName} `;
-  const p = mapCareerRecord(batter, "batter", spaced);
-  assert(p && p.totals, "whitespace-only diff must still match");
+check("① 외국인 KBO 등록명(부분 포함) → true: 웰스⊂라클란 웰스", () => {
+  assert.equal(recordIdentityMatches("웰스", "55348", "라클란 웰스"), true);
+  assert.equal(recordIdentityMatches("디아즈", "54400", "르윈 디아즈"), true);
+  assert.equal(recordIdentityMatches("스기모토", "56011", "스기모토 고우키"), true);
 });
-check("① expectedName 미지정 시 대조 생략(순수 함수 계약)", () => {
-  const p = mapCareerRecord(batter, "batter");
-  assert(p && p.totals, "no-name call should not fail-close at pure layer");
+check("① 부분 포함 없을 때 유니크 resolve→numericId 일치로 구제", () => {
+  // 포함관계가 없는 이름 쌍(record ≠ expected 부분문자열)에서만 fallback 경로 검증.
+  const resolveUnique = (n: string) => (n === "스미스" ? { numericId: "53827" } : null);
+  assert.equal(recordIdentityMatches("스미스", "53827", "기예르모 에레디아", resolveUnique), true);
+  // numericId 불일치면 false
+  assert.equal(recordIdentityMatches("스미스", "99999", "기예르모 에레디아", resolveUnique), false);
+  // resolve 도 모호면(null) false
+  assert.equal(recordIdentityMatches("미상", "53827", "기예르모 에레디아", () => null), false);
+});
+check("① 1글자 잡음은 포함 판정에서 배제(과잉 매칭 방지)", () => {
+  assert.equal(recordIdentityMatches("김", "72443", "최형우", () => null), false);
 });
 
-// ── ② 정규화 계약 — 미검증 지표 누수 0 ───────────────────────────────────────
-check("② 타자 통산에 OPS/OBP/SLG/WAR/wRC+ 누수 없음", () => {
-  const p = mapCareerRecord(batter, "batter", batter.playerName)!;
-  for (const leaked of ["ops", "obp", "slg", "war", "wrc_plus"]) {
-    assert.equal(p.totals![leaked], undefined, `leaked ${leaked}`);
+// ── ② UI 공식 컬럼 allowlist — 시즌 UI 공통 지표 노출 + 파생지표 배제 ──────────
+check("② 타자 통산에 볼넷·출루율·장타율 노출(시즌 UI 공통)", () => {
+  const p = mapCareerRecord(batter, "batter")!;
+  for (const k of ["bb", "obp", "slg"]) {
+    assert(p.totals![k] !== undefined, `missing UI metric ${k}`);
   }
-  // 등재 지표는 존재
   for (const k of ["avg", "hits", "hr", "rbi", "games"]) {
     assert(p.totals![k] !== undefined, `missing ${k}`);
   }
-});
-check("② 투수 통산에 FIP/K9/완투/완봉 누수 없음", () => {
-  const p = mapCareerRecord(pitcher, "pitcher", pitcher.playerName)!;
-  for (const leaked of ["fip", "k9", "cg", "sho"]) {
+  // OPS/WAR/wRC+ 는 통산행에 없거나 파생 → 배제(계산 금지)
+  for (const leaked of ["ops", "war", "wrc_plus"]) {
     assert.equal(p.totals![leaked], undefined, `leaked ${leaked}`);
   }
-  // fixture 통산행에 실재하는 등재 지표만 확인(WHIP 등 컬럼 부재분은 정상 생략).
+});
+check("② 투수 통산에 완투·완봉·볼넷 노출(시즌 UI 공통)", () => {
+  const p = mapCareerRecord(pitcher, "pitcher")!;
+  for (const k of ["cg", "sho", "bb"]) {
+    assert(p.totals![k] !== undefined, `missing UI metric ${k}`);
+  }
   for (const k of ["era", "wins", "losses", "so", "games", "ip"]) {
     assert(p.totals![k] !== undefined, `missing ${k}`);
+  }
+  for (const leaked of ["fip", "k9"]) {
+    assert.equal(p.totals![leaked], undefined, `leaked ${leaked}`);
   }
 });
 
 // ── ③ 소속 이력 압축 + 연도별 ────────────────────────────────────────────────
 check("③ 연속 동일 팀은 한 구간, 팀 이동은 분리", () => {
-  const p = mapCareerRecord(batter, "batter", batter.playerName)!;
+  const p = mapCareerRecord(batter, "batter")!;
   assert(p.teams.length >= 1, "expected team spans");
   for (const t of p.teams) assert(t.from <= t.to, `span order ${t.team}`);
   // 인접 구간은 서로 다른 팀이어야 압축이 된 것
@@ -86,7 +97,7 @@ check("③ 연속 동일 팀은 한 구간, 팀 이동은 분리", () => {
   }
 });
 check("③ 연도별 series 오름차순 + seasons 범위 표기", () => {
-  const p = mapCareerRecord(batter, "batter", batter.playerName)!;
+  const p = mapCareerRecord(batter, "batter")!;
   assert(p.series.length > 0, "expected series rows");
   for (let i = 1; i < p.series.length; i += 1) {
     assert(p.series[i].year > p.series[i - 1].year, "series must be ascending");
@@ -95,7 +106,7 @@ check("③ 연도별 series 오름차순 + seasons 범위 표기", () => {
 });
 check("③ 통산행·연도행 모두 없으면 null", () => {
   const empty = { playerName: "테스트", rows: [], career: null };
-  assert.equal(mapCareerRecord(empty, "batter", "테스트"), null);
+  assert.equal(mapCareerRecord(empty, "batter"), null);
 });
 
 // ── ①-종단: route→service 실경로 identity 결속 (삼순 #1334 재NO-GO) ──────────
@@ -117,6 +128,7 @@ function fakeFetcher(record: CareerRecord | null) {
   return async () => record;
 }
 const wrongRecord: CareerRecord = { playerName: "김도영", rows: batter.rows, career: batter.career };
+const foreignRecord: CareerRecord = { playerName: "웰스", rows: batter.rows, career: batter.career };
 
 checkAsync("①-종단 실경로: 정본과 다른 선수 응답이면 payload null (타 선수 통산 차단)", async () => {
   const res = await getPlayerCareerResult(REAL_ID, "타자", { fetcher: fakeFetcher(wrongRecord) });
@@ -125,6 +137,14 @@ checkAsync("①-종단 실경로: 정본과 다른 선수 응답이면 payload n
 checkAsync("①-종단 실경로: 정본과 같은 선수면 payload 서빙", async () => {
   const res = await getPlayerCareerResult(REAL_ID, "타자", { fetcher: fakeFetcher(batter) });
   assert(res.body.payload && res.body.payload.totals, "matching record must serve");
+});
+checkAsync("①-종단 실경로: 외국인(roster 풀네임 vs KBO 등록명)도 서빙", async () => {
+  // rawId 55348=라클란 웰스, KBO 응답 playerName=웰스 → 부분 포함으로 통과해야 함
+  const res = await getPlayerCareerResult("55348", "타자", {
+    fetcher: fakeFetcher(foreignRecord),
+    resolveName: () => "라클란 웰스",
+  });
+  assert(res.body.payload && res.body.payload.totals, "foreign player must serve");
 });
 checkAsync("①-종단 실경로: roster 미등록 id 는 404 fail-close (오매핑 노출 차단)", async () => {
   const res = await getPlayerCareerResult("99999", "타자", { fetcher: fakeFetcher(batter) });

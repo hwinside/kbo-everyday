@@ -569,12 +569,14 @@ export default function PlayerBoardPage() {
                             ["승률", career.totals.wpct], ["이닝", career.totals.ip], ["삼진", career.totals.so],
                             ["WHIP", career.totals.whip], ["피안타", career.totals.h], ["피홈런", career.totals.hr],
                             ["볼넷", career.totals.bb], ["자책", career.totals.er],
+                            ["완투", career.totals.cg], ["완봉", career.totals.sho],
                           ]
                         : [
                             ["타율", career.totals.avg], ["경기", career.totals.games], ["안타", career.totals.hits],
                             ["홈런", career.totals.hr], ["타점", career.totals.rbi], ["득점", career.totals.runs],
                             ["2루타", career.totals.doubles], ["3루타", career.totals.triples], ["도루", career.totals.sb],
-                            ["루타", career.totals.tb], ["타수", career.totals.ab],
+                            ["루타", career.totals.tb], ["타수", career.totals.ab], ["볼넷", career.totals.bb],
+                            ["출루율", career.totals.obp], ["장타율", career.totals.slg],
                           ]
                       )
                         .filter(([, v]) => v !== undefined)
@@ -582,15 +584,15 @@ export default function PlayerBoardPage() {
                           <StatItem key={label} label={label!} value={v!} color={teamColor} />
                         ))}
                     </div>
-                    <p className="text-[11px] text-text-tertiary mt-3">OPS·WAR 등 통산 공식 기록에 없는 지표는 생략됩니다 · KBO 공식 기록 기준</p>
+                    <p className="text-[11px] text-text-tertiary mt-3">OPS·WAR 등 통산 공식 기록에 없거나 파생 계산이 필요한 지표는 생략됩니다 · KBO 공식 기록 기준</p>
                   </div>
                 )}
 
                 {/* 연도별 추이 — 통산의 강점(시즌 단일 카드로는 불가능한 표현) */}
                 {career.series.length > 0 && (() => {
                   const cols = player.position === "투수"
-                    ? [["ERA", "era"], ["G", "games"], ["승", "wins"], ["패", "losses"], ["SV", "saves"], ["이닝", "ip"], ["삼진", "so"]] as const
-                    : [["타율", "avg"], ["G", "games"], ["안타", "hits"], ["홈런", "hr"], ["타점", "rbi"], ["도루", "sb"]] as const;
+                    ? [["ERA", "era"], ["G", "games"], ["승", "wins"], ["패", "losses"], ["SV", "saves"], ["이닝", "ip"], ["삼진", "so"], ["WHIP", "whip"]] as const
+                    : [["타율", "avg"], ["G", "games"], ["안타", "hits"], ["홈런", "hr"], ["타점", "rbi"], ["도루", "sb"], ["OBP", "obp"], ["SLG", "slg"]] as const;
                   return (
                     <div className="glass-card p-4 mb-4">
                       <h3 className="text-sm font-bold text-text-primary mb-3">연도별 추이</h3>
