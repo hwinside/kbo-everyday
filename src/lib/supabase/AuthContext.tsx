@@ -15,6 +15,8 @@ import {
   clearSessionBackup,
 } from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
+import { invalidateBootCache } from "@/lib/boot-cache";
+import { performBootLoad } from "@/lib/boot-loader";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -28,6 +30,8 @@ interface Profile {
   avatar_url: string | null;
   invited_by: string | null;
   is_operator?: boolean | null;
+  // PR④: game-chat 노출은 profile 파생 (useGameChatVisibility — select * 라 런타임엔 항상 존재)
+  game_chat_enabled?: boolean | null;
 }
 
 interface AuthContextType {
@@ -81,21 +85,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
    *  isCurrent(): ledger 세대 가드 — 늦게 도착한 옛 응답이 force 갱신 결과나
    *  다른 유저 상태를 덮지 못하게 모든 setProfile 적용 직전에 확인한다. */
   async function loadProfileNow(accessToken: string, userId: string, isCurrent: () => boolean): Promise<boolean> {
-    // 1차: 서버 API (Bearer 토큰 + service role — 가장 안정적)
-    try {
-      const res = await fetch("/api/me", {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.profile) {
-          if (!isCurrent()) return false; // 세대 교체됨 — 옛 응답 폐기
-          setProfile(json.profile);
-          syncProfileToLocal(json.profile);
-          return true;
-        }
-      }
-    } catch { /* continue to fallback */ }
+    // 1차: 서버 부트 번들 API (Bearer 토큰 + service role — 가장 안정적)
+    // PR④: /api/me → /api/me/boot. 순수 로직은 boot-loader.performBootLoad 로 분리 —
+    // qa:user-boot-bundle 종단 게이트가 이 실제 seam(AuthContext→boot route→소비자)을 태운다.
+    // prefs 는 네이티브 런타임만 include=prefs. 실패 시에도 반드시 settle(null).
+    const boot = await performBootLoad(accessToken, userId, isCurrent);
+    if (boot.status === "stale") return false; // 세대 교체됨 — 옛 응답 폐기
+    if (boot.status === "ok") {
+      const bootProfile = boot.profile as unknown as Profile;
+      setProfile(bootProfile);
+      syncProfileToLocal(bootProfile);
+      return true;
+    }
 
     // 2차: Supabase REST API 직접 호출 (access_token 명시 전달)
     try {
@@ -252,6 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           // SIGNED_OUT 포함 no-session — 장부 무효화(동일 UID 재로그인 시 재조회 보장)
           profileLedger.invalidate();
+          invalidateBootCache(); // PR④: 부트 번들 캠시도 함께 폐기(계정 전환 오염 방지)
           setProfile(null);
         }
         setLoading(false);
@@ -284,6 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         beginLogoutFence();
         // 로그아웃 = 활성 사용자 즉시 null(in-flight 저장 응답의 commit 차단)
         commitAuthIdentity(null);
+        invalidateBootCache(); // PR④: 부트 번들 캠시 폐기
         try { await clearSessionBackup(); } catch { /* ignore */ }
         // 네이티브 auth 락이 멈추면 signOut()이 영구 hang → 이후 정리/이동이 안 돼
         // 로그아웃 버튼이 "안 먹는" 것처럼 보인다. 타임아웃을 걸어 락 hang과 무관하게

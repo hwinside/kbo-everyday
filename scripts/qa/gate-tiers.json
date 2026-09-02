@@ -164,6 +164,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:dwell-batch",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:event-records",
       "tier": "ci"
     },
@@ -572,10 +576,6 @@
       "tier": "ci"
     },
     {
-      "name": "qa:dwell-batch",
-      "tier": "deploy"
-    },
-    {
       "name": "qa:profile-posts-paging",
       "tier": "deploy"
     },
@@ -750,6 +750,10 @@
     {
       "name": "qa:team-rag-wiring",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:user-boot-bundle",
+      "tier": "ci"
     },
     {
       "name": "qa:venue-attendance",
