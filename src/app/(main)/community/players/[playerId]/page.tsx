@@ -100,11 +100,27 @@ export default function PlayerBoardPage() {
   const [showPoll, setShowPoll] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [statSeason, setStatSeason] = useState<2025 | 2026>(2026);
+  // 통산 뷰 토글 — 기본은 시즌 기록, 선택 시 같은 UI로 KBO 공식 통산 기록 표시.
+  const [showCareer, setShowCareer] = useState(false);
+  // undefined = 아직 미조회 · null = 조회했으나 기록 없음 · object = 통산 값.
+  const [careerStats, setCareerStats] = useState<Record<string, string> | null | undefined>(undefined);
   // 통합 피드: 글·사진 한 스트림 (선수 게시판 직접글 + 다른 게시판에서 이 선수 태그된 글).
   const [feedPosts, setFeedPosts] = useState<Post[]>([]);
   const [feedLoading, setFeedLoading] = useState(true);
   const [realStats, setRealStats] = useState<Record<string, string | number> | null>(null);
   const [playerRanks, setPlayerRanks] = useState<PlayerRanks>({});
+
+  // 통산 기록 로드 — KBO 공식 통산 행(Total.aspx) 재사용. 통산 뷰를 켤 때만 1회 조회.
+  useEffect(() => {
+    if (!showCareer || !player || !numericKboId) return;
+    if (careerStats !== undefined) return;
+    let cancelled = false;
+    fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}`)
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setCareerStats(d.stats ?? null); })
+      .catch(() => { if (!cancelled) setCareerStats(null); });
+    return () => { cancelled = true; };
+  }, [showCareer, player, numericKboId, careerStats]);
   const { user } = useAuth();
   const { checkBadges } = useBadgeCheck();
 
@@ -447,23 +463,31 @@ export default function PlayerBoardPage() {
           <PlayerProfile playerName={playerName || player.name} teamColor={teamColor} kboId={kboId} />
           <CheerSong playerName={playerName || player.name} teamColor={teamColor} />
 
-          {/* Season toggle */}
+          {/* Season toggle (기본=시즌) + 통산 뷰 */}
           <div className="flex gap-2 mb-4 mt-2">
             {([2025, 2026] as const).map(y => (
               <button
                 key={y}
-                onClick={() => setStatSeason(y)}
+                onClick={() => { setShowCareer(false); setStatSeason(y); }}
                 className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
-                  statSeason === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+                  !showCareer && statSeason === y ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
                 }`}
               >
                 {y}
               </button>
             ))}
+            <button
+              onClick={() => setShowCareer(true)}
+              className={`px-3 py-1 rounded-full text-sm font-medium transition-all ${
+                showCareer ? "bg-accent text-white" : "bg-bg-tertiary text-text-tertiary"
+              }`}
+            >
+              통산
+            </button>
           </div>
 
           {/* 리그 순위 배너 */}
-          {statSeason === 2026 && (() => {
+          {!showCareer && statSeason === 2026 && (() => {
             const PITCHER_RANK_CATS = [
               { key: "era", label: "평균자책", asc: true },
               { key: "whip", label: "WHIP", asc: true },
@@ -507,7 +531,48 @@ export default function PlayerBoardPage() {
             );
           })()}
 
-          {realStats ? (
+          {/* 통산 기록 드 — 시즌 종 을 그대로설 KBO 공식 통산 행 (동일 UI) */}
+          {showCareer && (
+            careerStats === undefined ? (
+              <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
+                통산 기록 불러오는 중…
+              </div>
+            ) : careerStats ? (
+              <div className="glass-card p-4 mb-4">
+                <h3 className="text-sm font-bold text-text-primary mb-3">
+                  통산 기록{careerStats.seasons ? ` (${careerStats.seasons})` : ""}
+                </h3>
+                <div className="grid grid-cols-3 gap-3">
+                  {(player.position === "투수"
+                    ? [
+                        ["ERA", careerStats.era], ["경기", careerStats.games], ["승", careerStats.wins],
+                        ["패", careerStats.losses], ["세이브", careerStats.saves], ["홀드", careerStats.holds],
+                        ["승률", careerStats.wpct], ["이닝", careerStats.ip], ["삼진", careerStats.so],
+                        ["WHIP", careerStats.whip], ["피안타", careerStats.h], ["피홈런", careerStats.hr],
+                        ["볼넷", careerStats.bb], ["자책", careerStats.er],
+                      ]
+                    : [
+                        ["타율", careerStats.avg], ["경기", careerStats.games], ["안타", careerStats.hits],
+                        ["홈런", careerStats.hr], ["타점", careerStats.rbi], ["득점", careerStats.runs],
+                        ["2루타", careerStats.doubles], ["3루타", careerStats.triples], ["도루", careerStats.sb],
+                        ["루타", careerStats.tb], ["타수", careerStats.ab],
+                      ]
+                  )
+                    .filter(([, v]) => v !== undefined)
+                    .map(([label, v]) => (
+                      <StatItem key={label} label={label!} value={v!} color={teamColor} />
+                    ))}
+                </div>
+                <p className="text-[11px] text-text-tertiary mt-3">KBO 공식 기록 기준</p>
+              </div>
+            ) : (
+              <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
+                통산 기록을 찾을 수 없습니다
+              </div>
+            )
+          )}
+
+          {!showCareer && (realStats ? (
             <div className="glass-card p-4 mb-4">
               <h3 className="text-sm font-bold text-text-primary mb-3">{statSeason} 시즌 기록</h3>
               <div className="grid grid-cols-3 gap-3">
@@ -548,15 +613,15 @@ export default function PlayerBoardPage() {
             <div className="glass-card p-4 mb-4 text-center text-text-tertiary text-sm">
               {statSeason} 시즌 데이터를 찾을 수 없습니다
             </div>
-          )}
+          ))}
 
           {/* 주간 추이 — 시즌기록 ↔ 세이버메트릭스 사이 (game_logs 2026 한정) */}
-          {statSeason === 2026 && (
+          {!showCareer && statSeason === 2026 && (
             <PlayerWeeklyTrend playerId={kboId} position={player.position} teamColor={teamColor} />
           )}
 
           {/* 홈/원정 — V1.5, game_logs 파생 (2026 한정) */}
-          {statSeason === 2026 && (
+          {!showCareer && statSeason === 2026 && (
             <PlayerHomeAway playerId={kboId} position={player.position} teamColor={teamColor} />
           )}
 
