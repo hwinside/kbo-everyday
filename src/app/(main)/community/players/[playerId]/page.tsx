@@ -116,12 +116,13 @@ export default function PlayerBoardPage() {
     if (!showCareer || !player || !numericKboId) return;
     if (career !== undefined) return;
     let cancelled = false;
-    fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}&name=${encodeURIComponent(playerName || player.name)}`)
+    // 대상 선수 identity 는 서버 roster 정본으로 대조한다(클라 name 미전달).
+    fetch(`/api/player-career?id=${numericKboId}&pos=${encodeURIComponent(player.position)}`)
       .then(r => r.json())
       .then(d => { if (!cancelled) setCareer(d.payload ?? null); })
       .catch(() => { if (!cancelled) setCareer(null); });
     return () => { cancelled = true; };
-  }, [showCareer, player, numericKboId, playerName, career]);
+  }, [showCareer, player, numericKboId, career]);
   const { user } = useAuth();
   const { checkBadges } = useBadgeCheck();
 
