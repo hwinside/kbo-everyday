@@ -21,7 +21,7 @@ import type { GameEvent } from "@/types/game-events";
 import type { GamePlay } from "@/lib/types";
 import type { GameDetailResponse } from "@/app/api/game-detail/route";
 import type { GameRelayResponse } from "@/app/api/game-relay/route";
-import { resolveCurrentAtBat } from "@/lib/game/current-at-bat";
+import { resolveCurrentAtBat, resolveCurrentAtBatCardPitcher } from "@/lib/game/current-at-bat";
 import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
 import { cancelReasonDetail } from "@/lib/utils/cancel-reason";
 
@@ -324,6 +324,7 @@ function LiveView({
   gameRelay,
   currentPitcher,
   currentBatter,
+  boxScore,
   balls = 0,
   strikes = 0,
   outs = 0,
@@ -335,6 +336,7 @@ function LiveView({
   gameRelay?: GameRelayResponse | null;
   currentPitcher?: string | null;
   currentBatter?: string | null;
+  boxScore: GameDetailResponse["boxScore"] | null;
   balls?: number;
   strikes?: number;
   outs?: number;
@@ -366,6 +368,10 @@ function LiveView({
     latestInning,
     currentBatter,
   });
+  // 현재타석 카드 *전용* 투수명: relay 타자(3초)와 game-live 투수(10초)가 섞이는 유일한 지점이라
+  // 하프 전환 window 에 교차팀(같은 팀 타자 vs 투수)이 난다 → relay half 기준 정합성 결속.
+  // 이 카드에만 적용(삼순 ①) — FieldView/Matchup/LiveStats 는 game-live 단일 스냅샷이라 무관.
+  const cardPitcher = resolveCurrentAtBatCardPitcher({ latestInning, currentPitcher, boxScore });
 
   return (
     <div className="flex flex-col h-full">
@@ -459,7 +465,7 @@ function LiveView({
                   <CurrentAtBatCard
                     batterName={currentAtBat.batterName}
                     batOrder={currentAtBat.batOrder}
-                    pitcherName={currentPitcher}
+                    pitcherName={cardPitcher}
                     pitches={currentAtBat.pitches}
                     balls={balls}
                     strikes={strikes}
@@ -1067,6 +1073,7 @@ export default function KgwanTab({
           gameRelay={gameRelay}
           currentPitcher={currentPitcher}
           currentBatter={currentBatter}
+          boxScore={boxScore}
           balls={balls}
           strikes={strikes}
           outs={outs}

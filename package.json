@@ -31,6 +31,8 @@
     "qa:live-multiplex:ci": "tsx scripts/qa/live-multiplex-gate.mjs --ci",
     "qa:live-multiplex:selftest": "tsx scripts/qa/live-multiplex-gate.mjs --selftest",
     "qa:kgwan-autofocus": "node scripts/qa/kgwan-autofocus-gate.mjs",
+    "qa:current-pitcher-consistency": "tsx scripts/qa/current-pitcher-consistency-gate.mjs",
+    "qa:current-pitcher-consistency:selftest": "tsx scripts/qa/current-pitcher-consistency-gate.mjs --selftest",
     "qa:kgwan-autofocus:selftest": "node scripts/qa/kgwan-autofocus-gate.mjs --selftest",
     "qa:send-guard": "node scripts/qa/send-guard-gate.mjs",
     "qa:player-link-prefetch": "node scripts/qa/player-link-prefetch-gate.mjs",

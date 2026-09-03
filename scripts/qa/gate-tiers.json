@@ -468,6 +468,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:current-pitcher-consistency",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:current-pitcher-consistency:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:live-detail-provenance",
       "tier": "deploy"
     },
