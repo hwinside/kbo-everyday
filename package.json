@@ -502,7 +502,9 @@
     "qa:genius-live-team-block:mutations": "node scripts/qa/genius-live-team-block-mutations.mjs",
     "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts",
     "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs",
-    "qa:player-career": "tsx scripts/qa/player-career-smoke.ts"
+    "qa:player-career": "tsx scripts/qa/player-career-smoke.ts",
+    "qa:chat-profanity": "tsx scripts/qa/chat-profanity.mjs",
+    "qa:chat-profanity:selftest": "tsx scripts/qa/chat-profanity.mjs --selftest"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
