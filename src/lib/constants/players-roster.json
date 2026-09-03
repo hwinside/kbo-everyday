@@ -7963,5 +7963,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "고우석",
+    "kboId": "67119",
+    "teamId": 1,
+    "position": "투수",
+    "backNo": "19",
+    "team": "LG",
+    "birthDate": "1998-08-06"
   }
 ]
