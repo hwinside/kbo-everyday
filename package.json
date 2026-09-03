@@ -501,7 +501,8 @@
     "qa:genius-season-recency:mutations": "node scripts/qa/genius-season-recency-mutations.mjs",
     "qa:genius-live-team-block:mutations": "node scripts/qa/genius-live-team-block-mutations.mjs",
     "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts",
-    "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs"
+    "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs",
+    "qa:player-career": "tsx scripts/qa/player-career-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

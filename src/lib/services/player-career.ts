@@ -1,0 +1,245 @@
+import {
+  createCareerRecordFetcher,
+  type CareerRecord,
+  type CareerRecordFetcher,
+} from "@/lib/baseball-qa/stats/career-series";
+import { resolvePlayer, resolveUniquePlayerByName } from "@/lib/utils/resolve-player";
+
+/**
+ * 선수 페이지 "통산" 뷰용 서비스.
+ *
+ * 야잘알봇이 쓰는 KBO 공식 연도/통산 파서(`career-series.ts`)의 **HTML 파서를 재사용**한다.
+ * 새 수집 경로를 만들지 않는다 — 같은 `Total.aspx` 통산 행/연도 행을 읽어 선수 페이지가
+ * 쓰는 정규화 키(realStats 와 동일 shape)로만 매핑한다. 계산·추정 없음, 결측이면 fail-close.
+ *
+ * ⚠️ 봇용 `CAREER_METRIC_COLUMNS` 는 재사용하지 않는다(삼순 #1334 ②): 봇은 파생 계산
+ * 가능성 때문에 BB/SLG/OBP·CG/SHO 를 배제했지만, 이 값들은 Total.aspx 통산행에 **원값으로
+ * 실재**하고 시즌 UI 가 이미 노출한다. UI 전용 공식 컬럼 allowlist(`CAREER_UI_COLUMNS`)로
+ * 원값만 서빙한다.
+ *
+ * ⚠️ identity(삼순 #1334 ①): 대상 선수는 서버 roster SSOT 로 정하고, KBO record.playerName 이
+ * 그 선수인지 대조한다. 외국인은 roster 풀네임(`라클란 웰스`)과 KBO 등록명(`웰스`)이 달라
+ * 정확 일치로는 전부 fail-close 되므로, roster 이름과의 **부분 포함**(prefix/suffix) 또는
+ * 이름→유니크 resolve 의 numericId 일치로 판정한다.
+ */
+
+export type CareerStatsTable = "batter" | "pitcher";
+
+/**
+ * UI 전용 공식 컬럼 allowlist — KBO Total.aspx 헤더명(값) 그대로.
+ * 시즌 UI 공통 지표(볼넷·완투·완봉·출루율·장타율)를 포함한다. 파생 계산 없음(원값만).
+ * OPS 는 통산행에 컬럼이 없어(OBP·SLG 만 존재) 넣지 않는다 — 계산으로 만들지 않는다.
+ */
+export const CAREER_UI_COLUMNS: Readonly<Record<CareerStatsTable, Readonly<Record<string, string>>>> = {
+  batter: {
+    avg: "AVG", games: "G", ab: "AB", runs: "R", hits: "H",
+    doubles: "2B", triples: "3B", hr: "HR", tb: "TB", rbi: "RBI",
+    sb: "SB", cs: "CS", bb: "BB", hbp: "HBP", so: "SO", gdp: "GDP",
+    slg: "SLG", obp: "OBP",
+  },
+  pitcher: {
+    era: "ERA", games: "G", cg: "CG", sho: "SHO", wins: "W", losses: "L",
+    saves: "SV", holds: "HLD", wpct: "WPCT", ip: "IP", h: "H", hr: "HR",
+    bb: "BB", hbp: "HBP", so: "SO", r: "R", er: "ER", whip: "WHIP",
+  },
+};
+
+/** 통산 누적 값 — 키는 선수 페이지 realStats 와 동일(문자열 원값 그대로). */
+export type PlayerCareerStats = Record<string, string> & { seasons?: string };
+
+/** 연도별 한 행 — 그 해 소속 + 정규화 지표 원값. */
+export interface CareerSeasonRow {
+  year: number;
+  team: string;
+  values: Record<string, string>;
+}
+
+/** 소속 이력 한 구간(연속 동일 팀). */
+export interface CareerTeamSpan {
+  team: string;
+  from: number;
+  to: number;
+}
+
+export interface PlayerCareerPayload {
+  totals: PlayerCareerStats | null;
+  series: CareerSeasonRow[];
+  teams: CareerTeamSpan[];
+}
+
+const KBO_FIRST_SEASON = 1982;
+
+function mapColumns(source: Record<string, string>, table: CareerStatsTable): Record<string, string> {
+  const columns = CAREER_UI_COLUMNS[table];
+  const out: Record<string, string> = {};
+  for (const [key, column] of Object.entries(columns)) {
+    const value = source[column];
+    if (value === undefined || value === "-") continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+function normalizeName(name: string): string {
+  return name.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+}
+
+/** 이름→유니크 resolve 주입 타입(테스트 대체용). */
+export type UniqueNameResolver = (name: string) => { numericId: string } | null;
+
+/**
+ * KBO record.playerName 이 rawId 의 대상 선수인지 판정한다.
+ *
+ * ① 정확 일치 ② roster 풀네임 ↔ KBO 등록명 부분 포함(외국인: `웰스`⊂`라클란 웰스`,
+ * `스기모토`⊂`스기모토 고우키`) ③ 이름→유니크 resolve 의 numericId 일치.
+ * 셋 중 하나도 성립 안 하면 false → 호출부가 fail-close.
+ */
+export function recordIdentityMatches(
+  recordName: string,
+  rawId: string,
+  expectedName: string,
+  resolveUnique: UniqueNameResolver = resolveUniquePlayerByName,
+): boolean {
+  const rec = normalizeName(recordName);
+  const exp = normalizeName(expectedName);
+  if (rec.length < 2 || exp.length < 2) return false;
+
+  // ① 정확 일치 → 즉시 통과.
+  if (rec === exp) return true;
+
+  // ② numericId 검증을 부분포함보다 **먼저** 한다(삼순 #1334):
+  //    KBO 등록명이 다른 실존 선수로 유니크 resolve 되면, 부분포함이더라도 거절.
+  //    예) `박민`(50657) 은 대상 `박민우`(62907) 의 부분문자열이지만 별개 선수 → false.
+  const u = resolveUnique(recordName);
+  if (u != null) {
+    return String(u.numericId) === String(rawId);
+  }
+
+  // ③ 유니크 resolve 불가(모호/미등록)일 때만 **외국인 축**의 부분포함 허용(삼순 #1334 재NO-GO).
+  //    핵심: 한국인 이름은 공백이 없어(`박민우`) 단일 토큰이라, 공백-정규화된 부분포함으로
+  //    판정하면 `박민`⊂`박민우` 같은 별개 선수가 fail-open 으로 통과한다.
+  //    → 부분포함을 **공백 토큰 경계**로 한정한다. 외국인 풀네임(`라클란 웰스`·`스기모토 고우키`)만
+  //      공백을 가지므로, KBO 등록명이 그 풀네임의 **한 토큰과 정확히 일치**할 때만 통과.
+  //      한국인 단일 토큰 이름은 이 경로에 원리적으로 걸리지 않는다(공백 부재).
+  return foreignTokenMatch(recordName, expectedName);
+}
+
+/**
+ * 외국인 축 전용 부분포함 판정(삼순 #1334 재NO-GO 해소).
+ * roster 풀네임을 공백으로 토큰화해, KBO 등록명이 그 토큰 중 하나와 **정확 일치**할 때만 true.
+ * 공백이 없는 한국인 이름(단일 토큰)은 풀네임==등록명일 때만 매치되는데, 그건 ① 정확일치에서
+ * 이미 걸러졌으므로 이 경로로는 통과 불가 → 한국인 부분문자열 fail-open 원천 차단.
+ *   `웰스` ∈ tokens(`라클란 웰스`)=[`라클란`,`웰스`] → true
+ *   `스기모토` ∈ tokens(`스기모토 고우키`)=[`스기모토`,`고우키`] → true
+ *   `박민` ∈ tokens(`박민우`)=[`박민우`] → false (공백 없어 토큰 1개, 정확불일치)
+ */
+function foreignTokenMatch(recordName: string, expectedName: string): boolean {
+  const rec = normalizeName(recordName);
+  const tokens = expectedName
+    .split(/\s+/)
+    .map((t) => normalizeName(t))
+    .filter((t) => t.length >= 2);
+  // 풀네임이 단일 토큰(공백 없음=한국인 이름)이면 외국인 축이 아니므로 불허.
+  if (tokens.length < 2) return false;
+  return tokens.includes(rec);
+}
+
+/**
+ * 연도별 표에서 **실제 값이 하나라도 있는** 컬럼만 남긴다(삼순 #1334 ②).
+ * 통산행엔 없고 연도행엔 존재하거나(반대도) 하는 컬럼의 전 행 `-` 노출을 막는다.
+ * @param cols [라벨, 정규화키] 후보 컬럼
+ */
+export function visibleSeasonColumns<T extends readonly [string, string]>(
+  series: readonly CareerSeasonRow[],
+  cols: readonly T[],
+): T[] {
+  return cols.filter(([, key]) => series.some((r) => r.values[key] !== undefined && r.values[key] !== "-"));
+}
+
+/**
+ * CareerRecord → 통산/연도/소속 payload. 통산행·연도행이 모두 없으면 null.
+ * identity 대조는 호출부(getPlayerCareerResult)가 수행한다 — 여기선 순수 매핑만.
+ */
+export function mapCareerRecord(record: CareerRecord, table: CareerStatsTable): PlayerCareerPayload | null {
+  let totals: PlayerCareerStats | null = null;
+  if (record.career) {
+    const mapped = mapColumns(record.career, table);
+    if (Object.keys(mapped).length > 0) {
+      totals = mapped as PlayerCareerStats;
+      const years = record.rows.map((r) => r.year).filter((y) => y >= KBO_FIRST_SEASON);
+      if (years.length > 0) totals.seasons = `${Math.min(...years)}~${Math.max(...years)}`;
+    }
+  }
+
+  const series: CareerSeasonRow[] = record.rows
+    .filter((r) => r.year >= KBO_FIRST_SEASON)
+    .map((r) => ({ year: r.year, team: r.team, values: mapColumns(r.values, table) }));
+
+  const teams: CareerTeamSpan[] = [];
+  for (const row of series) {
+    const last = teams[teams.length - 1];
+    if (last && last.team === row.team) last.to = row.year;
+    else teams.push({ team: row.team, from: row.year, to: row.year });
+  }
+
+  if (!totals && series.length === 0) return null;
+  return { totals, series, teams };
+}
+
+/** kboId → 대상 선수의 정본 이름(roster SSOT). 없으면 null. */
+export function resolveExpectedPlayerName(rawId: string): string | null {
+  return resolvePlayer(rawId)?.name ?? null;
+}
+
+export interface CareerServiceDeps {
+  fetcher?: CareerRecordFetcher;
+  resolveName?: (rawId: string) => string | null;
+  resolveUnique?: UniqueNameResolver;
+}
+
+const cache: Record<string, { data: PlayerCareerPayload | null; ts: number }> = {};
+const CACHE_TTL_MS = 3_600_000;
+
+/**
+ * 라우트 진입점. rawId(=KBO playerId, 숫자) + pos 만 받는다.
+ * 대상 선수명은 서버 roster 에서 정하고(클라 입력 미신뢰), KBO 응답이 그 선수인지 대조한다.
+ * roster 미해석 → 404, KBO 응답이 다른 선수 → payload null(오매핑 노출 차단).
+ */
+export async function getPlayerCareerResult(
+  rawId: string | null,
+  pos = "타자",
+  deps: CareerServiceDeps = {},
+): Promise<{
+  body: { payload?: PlayerCareerPayload | null; cached?: boolean; error?: string };
+  status?: number;
+  headers?: HeadersInit;
+}> {
+  if (!rawId || !/^\d+$/.test(rawId)) {
+    return { body: { error: "numeric id required" }, status: 400, headers: { "Cache-Control": "no-store" } };
+  }
+  const resolveName = deps.resolveName ?? resolveExpectedPlayerName;
+  const expectedName = resolveName(rawId);
+  if (!expectedName) {
+    return { body: { payload: null, error: "unknown player" }, status: 404, headers: { "Cache-Control": "no-store" } };
+  }
+
+  const table: CareerStatsTable = pos === "투수" ? "pitcher" : "batter";
+  const cacheKey = `career-${rawId}-${table}-${normalizeName(expectedName)}`;
+  const okHeaders = { "Cache-Control": "public, s-maxage=300" } as const;
+  const cached = cache[cacheKey];
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return { body: { payload: cached.data, cached: true }, headers: okHeaders };
+  }
+  try {
+    const fetcher = deps.fetcher ?? createCareerRecordFetcher();
+    const record = await fetcher(table, rawId);
+    let payload: PlayerCareerPayload | null = null;
+    if (record && recordIdentityMatches(record.playerName, rawId, expectedName, deps.resolveUnique)) {
+      payload = mapCareerRecord(record, table);
+    }
+    cache[cacheKey] = { data: payload, ts: Date.now() };
+    return { body: { payload, cached: false }, headers: okHeaders };
+  } catch (e: unknown) {
+    return { body: { error: (e as Error).message, payload: null }, status: 500, headers: { "Cache-Control": "no-store" } };
+  }
+}
