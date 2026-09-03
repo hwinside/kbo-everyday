@@ -36,12 +36,27 @@ export interface PitcherConsistencyInput {
 }
 
 function norm(name: string | null | undefined): string {
-  return (name ?? "").trim();
+  // 공백 제거 정규화. 외국인 단축형(game-live `비슬리`) vs 풀네임(boxScore `제러미 비슬리`)
+  // 비교를 위해 공백까지 지운다.
+  return (name ?? "").replace(/\s+/g, "").trim();
+}
+
+/**
+ * 이름 매칭. exact 불가(실측: game-live `비슬리` ≠ boxScore `제러미 비슬리`) →
+ * 공백 제거 후 양방향 containment(짧은 쪽이 긴 쪽에 포함). 비어있는 토큰은 불및.
+ */
+function nameMatches(a: string, b: string): boolean {
+  const na = norm(a);
+  const nb = norm(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
 }
 
 function hasName(list: readonly string[] | null | undefined, target: string): boolean {
   if (!list || list.length === 0) return false;
-  return list.some((n) => norm(n) === target);
+  const t = norm(target);
+  if (!t) return false;
+  return list.some((n) => nameMatches(n, t));
 }
 
 /**

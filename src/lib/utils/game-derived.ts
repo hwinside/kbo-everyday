@@ -1,30 +1,6 @@
 import type { GameDetailResponse, LineupEntry, PitcherRecord, BatterRecord } from "@/lib/hooks/useGameDetail";
 import type { LiveGameData } from "@/lib/hooks/useLiveGame";
 import type { FieldingEvent } from "@/app/api/game-relay/route";
-import { resolveConsistentPitcher, type RelayHalf } from "@/lib/game/current-pitcher-consistency";
-
-/**
- * relay 이닝 목록에서 현재(최신) 하프를 구한다. 이닝 번호 최대, 같은 이닝이면 top<bottom.
- * 미상(빈 목록·half 결측)면 null → 하프 가드 미적용(fail-safe).
- */
-function latestRelayHalf(
-  relayInnings?: Array<{ inning?: number; half?: "top" | "bottom" }> | null,
-): RelayHalf | null {
-  if (!relayInnings || relayInnings.length === 0) return null;
-  let best: { inning: number; half: RelayHalf } | null = null;
-  for (const inn of relayInnings) {
-    if (inn.half !== "top" && inn.half !== "bottom") continue;
-    const inning = typeof inn.inning === "number" ? inn.inning : 0;
-    if (
-      !best ||
-      inning > best.inning ||
-      (inning === best.inning && best.half === "top" && inn.half === "bottom")
-    ) {
-      best = { inning, half: inn.half };
-    }
-  }
-  return best?.half ?? null;
-}
 
 interface GameBase {
   inning?: string | null;
@@ -392,13 +368,8 @@ export function deriveGameState(
   liveGame: LiveGameData | undefined,
   game: GameBase,
   gameDetail: GameDetailResponse | null,
-  /**
-   * game-relay 응답의 이닝별 교체·수비위치 이벤트 + 하프.
-   * - fielding: 필드뷰 수비 배치의 소스 진실.
-   * - inning/half: 현재 하프의 SSOT(빠른 3초 소스). currentPitcher(느린 10초 소스)와
-   *   하프 정합성을 결속해 폴링 skew 로 인한 교차팀 매치업을 방어한다(2026-09-03).
-   */
-  relayInnings?: Array<{ inning?: number; half?: "top" | "bottom"; fielding?: FieldingEvent[] }> | null,
+  /** game-relay 응답의 이닝별 교체·수비위치 이벤트. 있으면 필드뷰 수비 배치의 소스 진실로 사용. */
+  relayInnings?: Array<{ fielding?: FieldingEvent[] }> | null,
 ) {
   const currentBalls = liveGame?.balls ?? 0;
   const currentStrikes = liveGame?.strikes ?? 0;
@@ -407,7 +378,7 @@ export function deriveGameState(
   const currentRunner2b = liveGame?.runner2b ?? false;
   const currentRunner3b = liveGame?.runner3b ?? false;
   const currentBatter = liveGame?.currentBatter ?? null;
-  const rawCurrentPitcher = liveGame?.currentPitcher ?? null;
+  const currentPitcher = liveGame?.currentPitcher ?? null;
   const currentInning = liveGame?.currentInning || game.inning || "";
   // 점수 소스 우선순위: liveGame > gameDetail linescore > game (static)
   const awayScore = liveGame?.awayScore ?? gameDetail?.linescore?.away?.R ?? game.awayScore;
@@ -428,16 +399,6 @@ export function deriveGameState(
     : null;
 
   const isTop = currentInning.includes("초");
-  // relay(3초, 빠름)의 최신 하프 = 현재 하프 SSOT. currentPitcher(game-live 10초, 느림)가
-  // 이전 하프의 공격팀 투수로 stale 하면 교차팀 매치업이 되므로 하프 정합성으로 결속한다.
-  // relay 하프 미상이거나 투수를 어느 팀에도 못 붙이면 폐기하지 않는다(fail-safe).
-  const relayHalf = latestRelayHalf(relayInnings);
-  const currentPitcher = resolveConsistentPitcher({
-    currentPitcher: rawCurrentPitcher,
-    relayHalf,
-    awayPitcherNames: gameDetail?.boxScore?.awayPitchers?.map((p) => p.name) ?? null,
-    homePitcherNames: gameDetail?.boxScore?.homePitchers?.map((p) => p.name) ?? null,
-  });
   const detailLineup = gameDetail?.lineup ?? null;
   const detailBoxScore = gameDetail?.boxScore ?? null;
   const defensiveTeamId = isTop ? game.homeTeamId : game.awayTeamId;
