@@ -103,6 +103,42 @@ const cases = [
     catchesNoGuard: false,
   },
   {
+    // 삼순 P0: `강건`(공격팀) vs `강건우`(수비팀) — 부분문자열 오인으로
+    // 수비팀 매칭(inDefense=true) 처리되면 stale 이 보존되어 원버그 누출. 토큰 exact 로 가드.
+    name: "강건/강건우 오인 방지(정방향): 공격팀 강건 stale, 수비팀 강건우 → 폐기",
+    args: {
+      latestInning: inn("top"),
+      currentPitcher: "강건", // 공격팀(away) 투수 — stale
+      boxScore: { awayPitchers: [{ name: "강건" }], homePitchers: [{ name: "강건우" }] },
+    },
+    expect: null, // 강건⊂강건우 오인이 없으면 inDefense=false → stale 폐기
+    catchesNoHalf: true,
+    catchesNoGuard: true,
+  },
+  {
+    name: "강건/강건우 오인 방지(역방향): 수비팀 강건우 → 오억제 없이 유지",
+    args: {
+      latestInning: inn("top"),
+      currentPitcher: "강건우", // 수비팀(home) 투수 — 정상
+      boxScore: { awayPitchers: [{ name: "강건" }], homePitchers: [{ name: "강건우" }] },
+    },
+    expect: "강건우", // 강건우⊂강건 오인이 없으면 inAttack=false → 유지
+    catchesNoHalf: false,
+    catchesNoGuard: false,
+  },
+  {
+    // 삼순: 반환은 원문 trim 보존(공백 제거 norm 값 반환 금지).
+    name: "풀네임 공백 보존: 입력 `제러미 비슬리`(수비팀) → 그대로 유지",
+    args: {
+      latestInning: inn("top"),
+      currentPitcher: "제러미 비슬리", // 공백 포함 — 수비팀(home)
+      boxScore: { awayPitchers: [{ name: "박정민" }], homePitchers: [{ name: "제러미 비슬리" }] },
+    },
+    expect: "제러미 비슬리", // 공백 제거 `제러미비슬리` 아님
+    catchesNoHalf: false,
+    catchesNoGuard: false,
+  },
+  {
     name: "relay half 미상(latestInning null) → 가드 미적용(유지)",
     args: { latestInning: null, currentPitcher: "비슬리", boxScore: BOX },
     expect: "비슬리",

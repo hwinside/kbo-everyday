@@ -35,26 +35,39 @@ export interface PitcherConsistencyInput {
   homePitcherNames: readonly string[] | null | undefined;
 }
 
-function norm(name: string | null | undefined): string {
-  // 공백 제거 정규화. 외국인 단축형(game-live `비슬리`) vs 풀네임(boxScore `제러미 비슬리`)
-  // 비교를 위해 공백까지 지운다.
-  return (name ?? "").replace(/\s+/g, "").trim();
+function trimName(name: string | null | undefined): string {
+  return (name ?? "").trim();
+}
+
+function tokens(name: string): string[] {
+  return trimName(name).split(/\s+/).filter(Boolean);
+}
+
+function isSubset(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length === 0) return false;
+  const set = new Set(b);
+  return a.every((t) => set.has(t));
 }
 
 /**
  * 이름 매칭. exact 불가(실측: game-live `비슬리` ≠ boxScore `제러미 비슬리`) →
- * 공백 제거 후 양방향 containment(짧은 쪽이 긴 쪽에 포함). 비어있는 토큰은 불및.
+ * **공백으로 분리된 완전 토큰 alias** 만 허용한다(삼순 P0):
+ * 한쪽 이름의 토큰집합이 다른 쪽의 토큰집합에 전부 포함될 때만 동일인물로 본다.
+ *  - `비슬리`(={비슬리}) ⊆ `제러미 비슬리`(={제러미,비슬리}) → match ✅
+ *  - `강건`(={강건}) vs `강건우`(={강건우}) → 토큰 exact 불일치 → no match ✅ (부분문자열 오인 방지)
+ * 공백 제거 부분문자열 매칭은 `강건`⊂`강건우` 오인이 있어 쓰지 않는다.
  */
 function nameMatches(a: string, b: string): boolean {
-  const na = norm(a);
-  const nb = norm(b);
-  if (!na || !nb) return false;
-  return na === nb || na.includes(nb) || nb.includes(na);
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.length === 0 || tb.length === 0) return false;
+  if (trimName(a) === trimName(b)) return true;
+  return isSubset(ta, tb) || isSubset(tb, ta);
 }
 
 function hasName(list: readonly string[] | null | undefined, target: string): boolean {
   if (!list || list.length === 0) return false;
-  const t = norm(target);
+  const t = trimName(target);
   if (!t) return false;
   return list.some((n) => nameMatches(n, t));
 }
@@ -64,7 +77,7 @@ function hasName(list: readonly string[] | null | undefined, target: string): bo
  * 판정 불가·정합이면 false(= 폐기하지 않음, fail-safe).
  */
 export function isPitcherHalfStale(input: PitcherConsistencyInput): boolean {
-  const pitcher = norm(input.currentPitcher);
+  const pitcher = trimName(input.currentPitcher);
   if (!pitcher) return false; // 투수명 없음 → 판정 대상 아님
   const half = input.relayHalf;
   if (half !== "top" && half !== "bottom") return false; // 하프 미상 → 가드 미적용
@@ -87,7 +100,8 @@ export function isPitcherHalfStale(input: PitcherConsistencyInput): boolean {
 export function resolveConsistentPitcher(
   input: PitcherConsistencyInput,
 ): string | null {
-  const pitcher = norm(input.currentPitcher);
+  // 반환은 원문 trim 값 유지(삼순: 공백 제거 norm 값을 반환하면 `제러미 비슬리`→`제러미비슬리` 부작용).
+  const pitcher = trimName(input.currentPitcher);
   if (!pitcher) return null;
   return isPitcherHalfStale(input) ? null : pitcher;
 }
