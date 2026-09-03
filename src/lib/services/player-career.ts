@@ -115,9 +115,33 @@ export function recordIdentityMatches(
     return String(u.numericId) === String(rawId);
   }
 
-  // ③ 유니크 resolve 불가(모호/미등록)일 때만 roster 풀네임 ↔ KBO 등록명 부분포함 허용.
-  //    외국인 축(`웰스`⊂`라클란 웰스`·`스기모토`⊂`스기모토 고우키`)만 안전하게 통과.
-  return exp.includes(rec) || rec.includes(exp);
+  // ③ 유니크 resolve 불가(모호/미등록)일 때만 **외국인 축**의 부분포함 허용(삼순 #1334 재NO-GO).
+  //    핵심: 한국인 이름은 공백이 없어(`박민우`) 단일 토큰이라, 공백-정규화된 부분포함으로
+  //    판정하면 `박민`⊂`박민우` 같은 별개 선수가 fail-open 으로 통과한다.
+  //    → 부분포함을 **공백 토큰 경계**로 한정한다. 외국인 풀네임(`라클란 웰스`·`스기모토 고우키`)만
+  //      공백을 가지므로, KBO 등록명이 그 풀네임의 **한 토큰과 정확히 일치**할 때만 통과.
+  //      한국인 단일 토큰 이름은 이 경로에 원리적으로 걸리지 않는다(공백 부재).
+  return foreignTokenMatch(recordName, expectedName);
+}
+
+/**
+ * 외국인 축 전용 부분포함 판정(삼순 #1334 재NO-GO 해소).
+ * roster 풀네임을 공백으로 토큰화해, KBO 등록명이 그 토큰 중 하나와 **정확 일치**할 때만 true.
+ * 공백이 없는 한국인 이름(단일 토큰)은 풀네임==등록명일 때만 매치되는데, 그건 ① 정확일치에서
+ * 이미 걸러졌으므로 이 경로로는 통과 불가 → 한국인 부분문자열 fail-open 원천 차단.
+ *   `웰스` ∈ tokens(`라클란 웰스`)=[`라클란`,`웰스`] → true
+ *   `스기모토` ∈ tokens(`스기모토 고우키`)=[`스기모토`,`고우키`] → true
+ *   `박민` ∈ tokens(`박민우`)=[`박민우`] → false (공백 없어 토큰 1개, 정확불일치)
+ */
+function foreignTokenMatch(recordName: string, expectedName: string): boolean {
+  const rec = normalizeName(recordName);
+  const tokens = expectedName
+    .split(/\s+/)
+    .map((t) => normalizeName(t))
+    .filter((t) => t.length >= 2);
+  // 풀네임이 단일 토큰(공백 없음=한국인 이름)이면 외국인 축이 아니므로 불허.
+  if (tokens.length < 2) return false;
+  return tokens.includes(rec);
 }
 
 /**

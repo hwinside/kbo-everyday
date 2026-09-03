@@ -66,6 +66,25 @@ check("① 부분포함이어도 다른 numericId 실존 선수로 resolve 되�
   const resolveSelf = (n: string) => (n === "박민우" ? { numericId: "62907" } : null);
   assert.equal(recordIdentityMatches("박민우", "62907", "박민우", resolveSelf), true);
 });
+check("① [삼순 재NO-GO] resolveUnique=null 이어도 한국인 단일토큰 부분문자열은 fail-open 안됨", () => {
+  // 핵심 반례: resolve 가 null 이면 예전엔 부분포함이 모든 이름에 허용되어
+  // `박민`⊂`박민우` 가 true 였다. `박민우`는 공백이 없는 단일 토큰이므로
+  // 외국인 토큰 경계 판정에서 걸리지 않아야 한다(삼순 #1334 재NO-GO).
+  assert.equal(recordIdentityMatches("박민", "62907", "박민우", () => null), false);
+  // 역방향도: expected 가 record 의 부분문자열이어도(한국인 단일토큰) 불허.
+  assert.equal(recordIdentityMatches("김상수", "11111", "김상", () => null), false);
+  // 유사 반례: `강\ubฐฑ호` 유형(단일토큰) 동생동명 계열도 공백 없으면 불허.
+  assert.equal(recordIdentityMatches("이정", "22222", "이정후", () => null), false);
+});
+check("① [삼순 재NO-GO] 외국인 풀네임(공백 토큰)은 resolveUnique=null 에서도 유지", () => {
+  // 외국인 풀네임은 공백이 있어 토큰 경계 정확일치로 통과해야 한다.
+  assert.equal(recordIdentityMatches("웰스", "55348", "라클란 웰스", () => null), true);
+  assert.equal(recordIdentityMatches("디아즈", "54400", "르윈 디아즈", () => null), true);
+  assert.equal(recordIdentityMatches("스기모토", "56011", "스기모토 고우키", () => null), true);
+  // 단, 풀네임 토큰 중 어느 것과도 정확일치 안 하면(부분문자열만) 불허.
+  assert.equal(recordIdentityMatches("웰", "55348", "라클란 웰스", () => null), false);
+  assert.equal(recordIdentityMatches("라클", "55348", "라클란 웰스", () => null), false);
+});
 check("① 외국인은 유니크 resolve 불가할 때만 부분포함 허용(numericId 우선)", () => {
   // `웰스` 가 유니크하게 55348 로 resolve → 그 ID 일치만 허용
   const resolveUnique = (n: string) => (n === "웰스" ? { numericId: "55348" } : null);
