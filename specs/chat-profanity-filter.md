@@ -1,8 +1,9 @@
-# 크관 채팅 비속어 자동 필터 — Spec rev0.3
+# 크관 채팅 비속어 자동 필터 — Spec rev0.4
 
-> Status: DRAFT (삼순 재리뷰 NO-GO 5개 blocker 반영본) · Owner: 삼식이 · Review: 삼순이
+> Status: DRAFT (삼순 rev0.3 재리뷰 NO-GO 4개 blocker 반영본) · Owner: 삼식이 · Review: 삼순이
 > 근거 데이터: 9/1~9/2 KST 크관 채팅 전수 (원장 `state/qa/chat-2d.json`, 스캔 `state/qa/profanity-scan.py`)
-> 현행 코드 실측 base: `5f2155038` (`src/lib/moderation/content-filter.ts`)
+> Notion SSOT: https://www.notion.so/3d0c901bb37281f89025c2eb4cc52978
+> 현행 코드 실측 base: current main `39e2a652b` (`src/lib/moderation/content-filter.ts`, 5f2155038 대비 필터 코드 동일 확인)
 
 ## 0. 배경 / 문제
 
@@ -12,14 +13,14 @@
   - 명확한 인신공격·위협·퇴출성 **26건 안팎(0.33%)**
   - 패드립·성적·지역·인종 비하는 이번 표본 미발견.
 
-## 0.1 현행 필터 실측 (blocker①: §9(a) 해소 — main `5f2155038`)
+## 0.1 현행 필터 실측 (blocker①: §9(a) 해소 — current main `39e2a652b`)
 
 - 공용 모듈 `src/lib/moderation/content-filter.ts` — `checkObjectionableContent({title,content})`.
 - `BLOCKED_WORDS` 12개: `시발 씨발 좆 병신 미친놈 꺼져 ㅅㅂ ㅂㅅ ㅈㄹ ㅆㅂ 지랄 새끼`.
 - 정규화: NFKC + 공백/제로폭 제거 + 문자·숫자만. 우회 탐지 `buildFlexiblePattern`(글자 사이 0~3자 삽입 매칭) **이미 존재**.
 - **사용처(공용)**: `useChat.ts`(채팅), `usePosts.ts`(글·댓글), `api/polls/route.ts`·`api/polls/[postId]/route.ts`(투표), `api/content-filter/route.ts`(서버 라우트 이미 존재).
 - 채팅 전송 현행 경로: `useChat` 클라 사전검사 → **클라가 `chat_messages`에 직접 insert**(RLS 허용).
-- ⚠️ **현행 오탐 리스크 실측**: `새끼`가 substring+0~3자 삽입 매칭이라 `새끼손가락`·`손 새끼줄` 등 오탐 가능. rev0.3에서 어절/경계 판정으로 교정.
+- ⚠️ **현행 오탐 리스크 실측**: `새끼`가 substring+0~3자 삽입 매칭이라 `새끼손가락`·`손 새끼줄` 등 오탐 가능. rev0.4에서 어절/경계 판정으로 교정.
 
 > **회귀 계약(blocker①)**: 채팅 필터 강화가 **글·댓글·투표 동작을 바꾸지 않아야** 한다. 공용 `checkObjectionableContent` 시그니처/결과는 타 UGC 대해 byte 동일 유지, 채팅 전용 강화는 별도 모듈(`lib/chat/profanity/`)로 분리하고 "타 UGC 비회귀" 골든 회귀를 게이트에 포함.
 
@@ -34,11 +35,11 @@
 > "정상 응원을 막는 비용 > 욕 하나 놓치는 비용." **Precision을 Recall보다 우선.**
 
 1. **기본값 PASS.** 확신 없으면 통과. 애매하면 차단 금지.
-2. **allowlist(정상 반례) 우선순위 > blocklist.** 반례에 걸리면 blocklist 매칭이어도 무조건 통과(`강한남자`·`못보지`·`바보지`·`아니미친`·`정신병(단독)`·`새끼손가락`·`귀여워 죽어`·`죽어라 뛰자` 등).
+2. **allowlist는 span 단위로만 무효화 (blocker① rev0.4 — 전체 PASS 금지).** 반례 매칭은 **그 반례와 겹치는 span의 동일 rule HARD 후보만** 무효화하고, 문장 나머지의 다른 span·다른 rule HARD 후보는 계속 검사한다. ⚠️ "allowlist 하나라도 걸리면 메시지 전체 PASS"는 우회 취약점(`새끼손가락 ㅆ벌`, `강한남자 김경문 죽어`가 통과) → 금지. 반례 예: `강한남자`·`못보지`·`바보지`·`아니미친`·`정신병(단독)`·`새끼손가락`·`귀여워 죽어`·`죽어라 뛰자`는 **해당 span만** 면책.
 3. **HARD 사전은 좁고 고신뢰만.** 문맥 없이 100% 욕만. 정상 용법 조금이라도 있으면 HARD 금지 → shadow.
 4. **문맥어(`미친/ㅈㄴ/개-`)는 V1 자동 하드차단 절대 안 함.** shadow 로깅으로 오탐률 실측 후에만 승격.
-5. **정량 게이트**: P0 합성 골든셋 정상 반례군 **오탐 0건**(미충족 시 머지 불가). shadow 승격은 관측 오탐률 **< 1%**일 때만.
-6. **즉시 롤백**: 오탐 신고 1건이라도 뜨면 해당 term shadow 강등/allowlist 추가 핫패치(P1 포함).
+5. **정량 게이트**: P0 합성 골든셋 정상 반례군 **오탐 0건**(미충족 시 머지 불가). shadow 승격은 관측 오탐률 **< 1%**일 때만(§8 정의).
+6. **즉시 롤백**: 전역 enforce→shadow **kill switch**(코드 핫패치 아님, §8).
 7. 대상 지목(로스터/닉네임)은 **가중치로만** — 단독 차단 트리거 금지.
 
 ## 2. 정책 (3단계 강도)
@@ -55,8 +56,9 @@
 
 - **`죽어` 계열**: 단독/위협 대상 co-occurrence만 HARD. 반례 통과 필수: `귀여워 죽어`, `죽어라 뛰자`, `좋아 죽겠다`, `죽여주네(칭찬)`. → 어절 경계 + 부정/명령/위협 문맥 신호 없으면 PASS.
 - **의도적 `ㅗ`**: 단독 또는 반복(`ㅗㅗ`)·문장 끝 욕설 문맥만 HARD. 반례 통과: `해주세ㅗ오`(오타), 이모지/자소 분리 오타. → 어절 내 정상 음절 결합이면 PASS.
-- **`ㅅㄲ/쌔끼/새기`**: 어절 경계 판정, `새끼손가락`·`손새끼줄` allowlist.
+- **`ㅅㄲ/쌔끼/새기`**: 어절 경계 판정, `새끼손가락`·`손새끼줄` span 면책.
 - 모든 HARD 규칙은 반례를 **골든셋 정상 반례군**에 넣어 오탐 0을 게이트로 증명.
+- **우회 취약 무효화 mutation 회귀(blocker①)**: `새끼손가락 ㅆ벌`(→ `ㅆ벌` span HARD 검출) · `강한남자 김경문 죽어`(→ `죽어` span 위협 HARD 검출) 두 문장을 골든셋에 추가해 전체 PASS 우회가 재발하면 RED.
 
 ## 3. 서버 강제 경로 (blocker② ③ 반영 — 정책 집행 핵심)
 
@@ -66,44 +68,48 @@
 1. **인증된 API route로 고정** — 채팅 전송을 `POST /api/chat/messages`(신설, TS 순수함수 `lib/chat/profanity/` 재사용)로 강제. RPC 안 씀. 서버에서 필터 적용 후 저장.
 2. **HARD = 완전 거부 + raw 미보존**(blocker②). 게시되지 않은 입력 원문 저장 금지(개인정보·보안). 감사 로그는 **비원문 메타만**: `rule_id / action / filter_version / user_id / room_id / created_at`.
 3. **idempotency 키 + 서버 rate-limit**(현행 클라 3초 쿨다운·60초/10건 서버 이관). **장애 시 direct insert fallback 금지**(막히면 실패 반환, 우회 저장 없음).
-4. **direct insert 회수 = P1 완료 게이트**(blocker③, P2로 미룸 금지). RLS insert 정책 폐기 후 클라 직접 insert 차단이 P1 DoD.
-   - 구버전 앱 병존 관측 기간 동안은 신·구 경로 트래픽 비율 관측 후 회수.
+4. **direct insert 회수는 릴리스 2단계로 분리**(blocker② rev0.4):
+   - **P1a**: `POST /api/chat/messages` route + 클라 전환 + 서버가 `ingest_path`/`filter_version` 고정 기록. 배포 후 **신·구 경로 트래픽 비율 관측**.
+   - **P1b**: direct insert 비율 **0 확인 후 별도 migration으로 RLS insert 정책 회수**. (한 릴리스에 API배포+관측+회수 동시 금지.)
 
 ## 4. 기술 접근 (오탐 방지 최우선)
 
 - 정규화: 자모(`ㅅㅂ`)·반복문자(`씨이발`)·특수문자 삽입(`시,발`)·초성 우회 흡수(현행 로직 재사용·확장).
-- 매칭: **어절/형태소 경계** 기준. HARD는 경계+정규화 후 판정, allowlist 최우선.
+- 매칭: **어절/형태소 경계** 기준. HARD는 경계+정규화 후 판정, allowlist는 **span 단위 면책**(§1.5.2).
 - 채팅 전용 순수 함수 모듈 `lib/chat/profanity/`로 분리 → 결정적 버전·회귀. 공용 `content-filter`는 미개변(타 UGC 비회귀).
 
 ## 5. SSOT (blocker⑤)
 
 - **V1 = 코드 상수** SSOT(순수 함수·버전·회귀 결정적).
-- 문서 SSOT = **Notion**(생성 후 URL 본 스펙·스레드에 링크) + repo `specs/chat-profanity-filter.md`(exact SHA로 재리뷰).
+- 문서 SSOT = **Notion**(URL 본 스펙·스레드에 링크) + repo `specs/chat-profanity-filter.md`(exact SHA로 재리뷰).
 - DB 튜닝(`term/category/action/version/audit` 테이블 + 검증·캐시)은 **P2**에서 개방.
 
 ## 6. 골든셋 (커밋 안전)
 
-- 라벨: **비속어 후보 117 / 엄격 공격 26 / 정상 반례(오탐군)**. 기존 48건 폐기.
+- 라벨: **비속어 후보 117 / 엄격 공격 26 / 정상 반례(오탐군)** + **우회 취약 2건**(`새끼손가락 ㅆ벌`·`강한남자 김경문 죽어`). 기존 48건 폐기.
 - **운영 원문·닉네임 커밋 금지.** 합성·비식별 fixture만 저장소에(실 원문은 `state/qa/` 로컬).
-- 결함주입 테스트로 오탐0(정상 반례 전건 통과) + 미탐(HARD 전건 검출) **양방향 게이트**.
+- 결함주입 테스트로 오탐0(정상 반례 전건 통과) + 미탐(HARD 전건 검출) + 우회 무효화(전체 PASS 재발 시 RED) **다방향 게이트**.
 
 ## 7. 구현 순서 (얇은 수직 슬라이스)
 
-- **P0** 채팅 전용 필터 코어(정규화+HARD 사전+allowlist+어절 경계) 순수 모듈 + 합성 골든셋 회귀(오탐0·HARD 전건 검출·타 UGC 비회귀).
-- **P1** `POST /api/chat/messages` 신설 → HARD 완전거부 + 비원문 감사 로그 + 문맥어 shadow 로깅 + **direct insert 회수(RLS 폐기)**. 종료 경기방 QA. 라이브 1~2경기 shadow 관측.
-- **P1.5** shadow 오탐률 실측(<1%) → 문맥어 소프트 가림 승격 판정.
+- **P0** 채팅 전용 필터 코어(정규화+HARD 사전+span allowlist+어절 경계) 순수 모듈 + 합성 골든셋 회귀(오탐0·HARD 전건 검출·우회 무효화·타 UGC 비회귀).
+- **P1a** `POST /api/chat/messages` 신설 → HARD 완전거부 + 비원문 감사 로그 + 문맥어 shadow 로깅 + `ingest_path`/`filter_version` 서버 기록. 종료 경기방 QA. 라이브 shadow 관측.
+- **P1b** direct insert 비율 0 확인 → 별도 migration으로 RLS insert 회수.
+- **P1.5** shadow 오탐률 실측(§8) → 문맥어 소프트 가림 승격 판정.
 - **P2** 관리자 대시보드(감지/신고 통계, DB 사전 튜닝 UI).
 - **P3** 신고 가중·정책 확장.
 
-## 8. 검증 / 게이트
+## 8. 검증 / 게이트 (blocker③ 정량 정의)
 
-- 합성 골든셋 회귀: **정상 반례군 오탐 0건**(하드 게이트, 미충족 시 머지 불가) + HARD 전건 검출 + **타 UGC(글/댓글/투표) 비회귀** + 결함주입 RED 확인.
-- shadow 승격 게이트: 라이브 1~2경기 관측, **HARD 오탐 0 · 경로 우회 0 · 관측 오탐률 <1%**, 수동 라벨링 기준. 미충족 시 shadow 유지(rollback).
-- P1 완료 DoD: direct insert 회수(RLS insert 폐기) 실측.
+- 합성 골든셋 회귀: **정상 반례군 오탐 0건**(하드 게이트, 미충족 시 머지 불가) + HARD 전건 검출 + 우회 무효화 mutation + **타 UGC(글/댓글/투표) 비회귀** + 결함주입 RED 확인.
+- **오탐률 정의**: `FP / 전체 flagged`(shadow 로그에서 수동 라벨).
+- **shadow→소프트 승격 게이트**: **최소 2개 전체 경기일 + 수동 라벨 100건 이상** 확보, 그 표본에서 **HARD 오탐 0 · 경로 우회 0 · 오탐률 < 1%**. 표본 미달이면 승격 금지(유지).
+- **rollback = kill switch**: 전역 enforce→shadow 전환 스위치(서버 발급 런타임 플래그). 오탐 급증 시 코드 배포 없이 즉시 shadow로 강등. HARD 완전 OFF 경로도 스위치에 포함.
+- P1b 완료 DoD: direct insert 회수(RLS insert 폐기) 실측.
 - 종료된 과거 경기방/더미 room_id로만 QA(라이브 유저방 발송 금지 — P0).
 - 삼순 리뷰 게이트 → 하린아빠 머지 승인.
 
 ## 9. 하린아빠 결정 완료 / 잔여
 
 - ✅ HARD 저장 정책: **완전 거부 + raw 미보존, 비원문 메타만 감사 로그**(삼순 blocker② 추천 채택).
-- 잔여: 없음(rev0.3 기준 blocker 전건 반영). shadow→소프트 승격 시점만 실측 후 재보고.
+- 잔여: 없음(rev0.4 기준 blocker 전건 반영). shadow→소프트 승격 시점만 실측 후 재보고.
