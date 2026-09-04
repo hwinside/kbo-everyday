@@ -119,6 +119,61 @@ const UNTRUSTED_EXEMPT_PATTERNS: ReadonlyArray<RegExp> = [
   /wrc\+?/gi,
 ];
 
+/**
+ * untrusted 지표에 대해 **값을 명시적으로 요구**하는 표현 (2026-09-04).
+ *
+ * 🔴 왜 이게 필요한가. 종전은 지표어가 **글자로 있기만 하면** 차단했다. 그래서
+ *   `희생번트는 타수에 들어가?`·`타석이랑 타수 차이가 뭐야?` 처럼 **뜻을 물은** 질문에
+ *   "그 기록은 아직 정확하게 안내할 수 없습니다" 가 나갔다(정의 질문 8/8 차단, 실측).
+ *   검수 사전에 용어가 있어도 이 판정이 사전보다 앞이라 못 간다.
+ *
+ * ⚠️ **열린 쪽을 룰로 닫지 않는다** (M90 `open_language_never_closes_with_rules`).
+ *   "정의 질문인가" 를 맞히려 들면 반례마다 룰이 쌓인다 — 8월에 세 번 겪은 축이다.
+ *   대신 반대를 닫는다: **수량을 요구하는 표현**은 폐쇄적이다(몇·개수·얼마…).
+ *
+ * ⚠️ `알려`·`보여` 를 넣지 않는다 — `희생번트랑 희생플라이 차이 알려줘` 는 정의 요청이다.
+ *   `NUMERIC_QUESTION` 을 그대로 재사용하지 않는 이유가 이것이다(그쪽은 값/서술 분기용).
+ */
+const UNTRUSTED_VALUE_ASK =
+  /몇|얼마|개수|개야|개나|개는|개\?|수는|성적|기록은\s*어때|쳋|덧|총\s*몇/;
+
+/**
+ * untrusted 지표의 **뜻·규칙**을 묻는 술어. 있으면 값 요구가 아니므로 양보한다.
+ *
+ * ⚠️ 이 집합은 "정의 질문 감지기" 가 아니다 — 그건 열린 문제다. 여기서는 값 요구가
+ *   없다는 것을 이미 확인한 뒤의 **보조 신호**로만 쓴다. 놓쳐도 손실은
+ *   "사전 대신 차단 안내" 로 종전과 같을 뿐이라 fail-safe 방향이다.
+ */
+const UNTRUSTED_DEFINITION_ASK =
+  /뭐|뭔|무엇|뜻|의미|정의|설명|차이|다른\s*점|들어가|포함|영향|계산|세는|치는|기록돼|기록되|기록하|규칙|룰\b|어떻게/;
+
+/**
+ * untrusted 지표 질문이 **값을 요구**하는가 — 차단/양보의 단일 술어 (삼순 2026-09-04).
+ *
+ * 계약(삼순 조건부 GO 문면 그대로):
+ * ```
+ * 차단 = untrusted 지표 AND ( 명시적 값 요구  OR  선수+지표 bare query )
+ * 양보 = 정의 술어가 붙고 값 요구가 없을 때
+ * 차단 = 혼합(`희생번트가 뭐야, 김도영은 몇 개야?`) — 값 요구가 이긴다
+ * ```
+ *
+ * 🔴 **선수명만으로 값 요구로 보지 않는다** (삼순 NO-GO 포인트). 내가 처음 제안한
+ *   `수량 요구 ∪ 선수 결속` 은 합집합이라 `김도영 희생번트가 뭐야?` 를 다시 막는다 —
+ *   정의 질문을 열어주려던 수정이 정의 질문을 막는 꼴이었다. 선수 결속은
+ *   **정의 술어가 없을 때만**(= bare query) 값 요구로 읽는다.
+ *
+ * ⚠️ 순서가 계약이다: 명시적 값 요구를 **먼저** 보므로 혼합 질문은 자연히 차단된다.
+ */
+export function untrustedValueAsk(question: string, playerBound: boolean): boolean {
+  const spaced = normalizeWithSpaces(question);
+  // ① 명시적 값 요구 — 정의 술어가 같이 있어도 이긴다(혼합 질문 차단).
+  if (UNTRUSTED_VALUE_ASK.test(spaced)) return true;
+  // ② 선수+지표 bare query — 정의 술어가 **없을 때만**. `김도영 희생번트`(값 요구)
+  //   와 `김도영 희생번트가 뭐야?`(정의)를 가르는 것이 이 조건이다.
+  if (playerBound && !UNTRUSTED_DEFINITION_ASK.test(spaced)) return true;
+  return false;
+}
+
 /** 시즌 표현. 올해만 답한다 — 과거 시즌 row 가 DB 에 없기 때문이다. */
 const CURRENT_SEASON_WORDS = ["올해", "올시즌", "이번시즌", "금년", "올해의", String(SUPPORTED_SEASON)];
 const UNSUPPORTED_SEASON_WORDS = [
@@ -322,6 +377,22 @@ export type CareerSpan =
   | { type: "career" }
   | { type: "year"; year: number };
 
+/**
+ * `resolveSeasonRecordIntent` 의 부가 문맥 — 질문 문자열만으로는 모르는 것.
+ *
+ * 🔴 `playerBound` 는 **파이프라인이 이미 계산한 사실**을 넘겨받는 것이지,
+ *   이 모듈이 이름을 다시 푸는 게 아니다. 로스터 매칭을 여기서 재구현하면 두 곳이
+ *   갈라지고, 그 드리프트가 곱 9월 하니스 사고의 구조였다.
+ *
+ * ⚠️ 기본값 `false` 는 **안전한 쪽**이 아니라 보수적인 쪽이다(양보). 호출부가
+ *   선수 결속을 안 넘기면 bare query 축이 꺼져 값 요구가 사전으로 샐다 —
+ *   그래서 호출부 두 곳을 모두 게이트로 묶어 둔다.
+ */
+export interface SeasonRecordIntentOptions {
+  /** 질문이 로스터 선수에 결속됐는가(파이프라인 판정 결과). */
+  playerBound?: boolean;
+}
+
 export type SeasonRecordIntent =
   | { kind: "none" }
   /** 신뢰할 수 없는 지표(pa/sac/sf) — 명시적으로 답변 거절. */
@@ -344,6 +415,7 @@ export type SeasonRecordIntent =
 export function resolveSeasonRecordIntent(
   question: string,
   preferredTable?: "batter" | "pitcher",
+  options?: SeasonRecordIntentOptions,
 ): SeasonRecordIntent {
   const compact = normalize(question);
 
@@ -354,7 +426,13 @@ export function resolveSeasonRecordIntent(
     compact,
   );
   if (UNTRUSTED_METRIC_ALIASES.some((alias) => untrustedTarget.includes(normalize(alias)))) {
-    return { kind: "untrusted_metric" };
+    // 🔴 **지표어 존재 → 값 요구** 로 바꾸었다 (2026-09-04, 삼순 조건부 GO).
+    //   종전은 글자만 있으면 차단해서 뜻을 물은 질문에도 "기록을 안내할 수 없다" 가 나갔다.
+    if (untrustedValueAsk(question, options?.playerBound === true)) {
+      return { kind: "untrusted_metric" };
+    }
+    // 값 요구가 아니면 이 경로의 소관이 아니다 — `none` 으로 양보해 사전·RAG·LLM 이 받는다.
+    return { kind: "none" };
   }
   // 서술·평가형은 지표어가 섞여 있어도 숫자 질문이 아니다 — 서술형 RAG 담당.
   if (DESCRIPTIVE_ASK.test(compact)) return { kind: "none" };

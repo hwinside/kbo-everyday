@@ -2824,6 +2824,29 @@ export function mentionsAnyRosterName(question: string, players: PlayerRef[]): b
   });
 }
 
+/**
+ * `resolveSeasonRecordIntent` 를 부르는 **단일 진입점** (2026-09-04).
+ *
+ * 🔴 왜 함수로 떼는가. untrusted 판정이 "지표어 존재" → "값 요구" 로 바뀌면서
+ *   `playerBound`(로스터 선수 결속) 라는 문맥이 필요해졌다. 그런데 호출부가 두 곳이라
+ *   한쪽만 넘기면 **조용히 다른 판정**이 난다 — `김도영 희생번트`(bare query = 값 요구)가
+ *   결속 정보 없이 판정되면 사전으로 새고, 그러면 위키 숫자가 정본인 척 나갈 수 있다.
+ *   같은 뜻의 인자를 두 곳에서 각각 조립하는 구조가 곧 드리프트의 원인이므로
+ *   (2026-09-03 하니스 사고와 같은 축) 결속 계산과 호출을 여기 하나로 묶는다.
+ *
+ * @param preferredTable 선수 확정 후 로스터 포지션으로 타자/투수를 결속할 때만 준다.
+ * @param forcePlayerBound 선수가 이미 확정된 경로면 `true` — 이름 재매칭 없이 사실을 전달한다.
+ */
+export function resolveSeasonRecordIntentFor(
+  question: string,
+  players: PlayerRef[],
+  preferredTable?: "batter" | "pitcher",
+  forcePlayerBound?: boolean,
+): ReturnType<typeof resolveSeasonRecordIntent> {
+  const playerBound = forcePlayerBound === true || mentionsAnyRosterName(question, players);
+  return resolveSeasonRecordIntent(question, preferredTable, { playerBound });
+}
+
 export function resolveNamedPlayerCandidate(
   question: string,
   players: PlayerRef[],
@@ -5417,8 +5440,12 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     : null;
   // 기록(수치) 질문은 서술형 게이트에 걸리므로 이름 기반 후보를 따로 붙잡는다.
   // 서술형 게이트는 "tier2 문서로 답해도 되는가" 조건이지 "어느 선수인가" 조건이 아니다.
+  // 🔴 단일 진입점으로 부른다 (2026-09-04). untrusted 지표 판정이 "지표어 존재" 에서
+  //   "값 요구" 로 바뀌면서 선수 결속 여부가 필요해졌는데, 호출부마다 인자를 따로
+  //   조립하면 한쪽이 조용히 다른 판정을 낸다 — `resolveSeasonRecordIntentFor` 가
+  //   결속 계산까지 소유한다.
   const recordIntent = deps.fetchSeasonRecord
-    ? resolveSeasonRecordIntent(question)
+    ? resolveSeasonRecordIntentFor(question, players)
     : { kind: "none" as const };
 
   // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 답 못 할 질문은
@@ -6203,7 +6230,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     if (deps.fetchSeasonRecord) {
       const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
       const preferredTable = rosterPlayer?.position?.includes("투수") ? "pitcher" : "batter";
-      const boundIntent = resolveSeasonRecordIntent(question, preferredTable);
+      // 이 지점은 선수가 **확정된** 경로다 — playerBound 는 정의상 true.
+      const boundIntent = resolveSeasonRecordIntentFor(question, players, preferredTable, true);
       const record = await answerSeasonRecordQuestion(
         userId, question, questionNorm, playerCandidate, remaining, deps, boundIntent,
       );
