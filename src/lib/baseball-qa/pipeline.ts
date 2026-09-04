@@ -4288,7 +4288,13 @@ async function answerSeasonRecordQuestion(
   deps: QaDeps,
   intentOverride?: ReturnType<typeof resolveSeasonRecordIntent>,
 ): Promise<QaResult | null> {
-  const intent = intentOverride ?? resolveSeasonRecordIntent(question);
+  // 🔴 fallback 도 **결속을 넘긴다** (삼순 2026-09-04 2차 NO-GO — wrapper 우회 축).
+  //   종전엔 `resolveSeasonRecordIntent(question)` 를 그냥 불러서, override 없이 들어오면
+  //   playerBound 가 빠진 채 판정됐다 — 공용 wrapper 를 만들어 놓고 이 경로가 그걸
+  //   우회하고 있었다. 이 함수는 **선수 후보(candidate)를 이미 받은** 경로이므로
+  //   결속은 정의상 true 다(그 사실을 인자로 전달한다).
+  const intent = intentOverride
+    ?? resolveSeasonRecordIntent(question, undefined, { playerBound: true });
   if (intent.kind === "none") return null;
 
   const settle = async (answer: string, matchPath: MatchPath, source: MatchPath): Promise<QaResult> => {

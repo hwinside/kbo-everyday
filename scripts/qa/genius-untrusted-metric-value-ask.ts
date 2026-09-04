@@ -35,6 +35,9 @@
  *
  * 실행: npm run qa:genius-untrusted-metric
  */
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { resolveSeasonRecordIntentFor } from "../../src/lib/baseball-qa/pipeline";
 import {
   resolveSeasonRecordIntent,
@@ -78,6 +81,25 @@ const CASES: Case[] = [
   { axis: "player_bound_bare", question: "김도영 희생번트", playerBound: true, want: "untrusted_metric" },
   { axis: "player_bound_bare", question: "김도영 타석", playerBound: true, want: "untrusted_metric" },
 
+  // ── ③-b 카운트 명사 문법 (삼순 2026-09-04 2차 NO-GO 3건) ─────────────────────
+  //
+  // 🔴 1차 구현은 `수는`·`기록` 을 **단어 포함**으로 값 요구라 판정해 양쪽으로 샜다.
+  //   `수`·`기록`·`횟수` 는 명사일 뿐이고 **뒤에 오는 술어**가 뜻을 정한다.
+  //     · `수는 + 어떻게 세는`  → 정의 (종전엔 차단됐다)
+  //     · `기록이 + 뭐야`       → 값 요구 (종전엔 `뭐` 가 이겨 샜다)
+  {
+    axis: "count_noun_grammar", question: "타석 수는 어떻게 세는 거야?",
+    playerBound: false, want: "none",
+  },
+  {
+    axis: "count_noun_grammar", question: "희생번트 수는 어떻게 계산해?",
+    playerBound: false, want: "none",
+  },
+  {
+    axis: "count_noun_grammar", question: "김도영 희생번트 기록이 뭐야?",
+    playerBound: true, want: "untrusted_metric",
+  },
+
   // ── ④ 혼합 (삼순 신규 1건) — 값 요구가 정의 술어를 이긴다 ────────────────────
   {
     axis: "mixed", question: "희생번트가 뭐야, 김도영은 몇 개야?",
@@ -108,7 +130,7 @@ const CASES: Case[] = [
 function assertAxisCoverage(): string[] {
   const required = [
     "definition", "player_bound_definition", "player_bound_bare",
-    "mixed", "value_ask", "control",
+    "count_noun_grammar", "mixed", "value_ask", "control",
   ];
   return required.filter((axis) => !CASES.some((c) => c.axis === axis))
     .map((axis) => `${FAIL_ID} 분모 0 축: ${axis} — vacuous PASS 방지 fail-close`);
@@ -127,6 +149,12 @@ function predicateChecks(): string[] {
     ["김도영 희생번트", true, true],
     ["희생번트가 뭐야, 김도영은 몇 개야?", true, true],
     ["희생번트 몇 개야?", false, true],
+    // 🔴 카운트 명사 문법 (삼순 2차 NO-GO) — 명사 존재가 아니라 술어가 뜻을 정한다.
+    ["타석 수는 어떻게 세는 거야?", false, false],
+    ["희생번트 수는 어떻게 계산해?", false, false],
+    ["김도영 희생번트 기록이 뭐야?", true, true],
+    // 명사만·술어만으로는 값 요구가 아니다 — 둘이 함께여야 한다.
+    ["희생번트 기록", false, false],
   ];
   for (const [q, pb, want] of rows) {
     const got = untrustedValueAsk(q, pb);
@@ -176,8 +204,67 @@ function pipelineEntryChecks(): string[] {
   return out;
 }
 
+/**
+ * **배선 불변식** — 파이프라인이 wrapper 를 우회해 원함수를 부르지 못하게 한다
+ * (삼순 2026-09-04 2차 NO-GO).
+ *
+ * 🔴 왜 소스를 읽는가. 앞의 검사들은 `resolveSeasonRecordIntentFor` 를 **직접** 부르므로,
+ *   실제 파이프라인 호출부가 그 wrapper 를 통째로 우회해도 전부 GREEN 이다. 실제로
+ *   mutation 3종(M7·M8·M9)이 그렇게 살아남았고, 그 설계 중에
+ *   `answerSeasonRecordQuestion` 의 fallback 이 **정말로 결속 없이** 원함수를 부르고
+ *   있던 것을 발견했다(코드도 같이 고침). 배선은 계약의 일부다.
+ *
+ * 계약: `resolveSeasonRecordIntent(` 직접 호출은 **두 곳만** 허용한다.
+ *   ① wrapper 내부(`resolveSeasonRecordIntentFor`) — 여기가 결속을 계산한다
+ *   ② `answerSeasonRecordQuestion` 의 override fallback — `playerBound` 를 명시해야 한다
+ *   그 외 호출부는 전부 wrapper 를 거쳐야 한다.
+ *
+ * ⚠️ 주석·문자열 문면은 **blank 처리**하고 센다(오프셋 보존). 주석에 함수명을 적었다는
+ *   이유로 RED 가 나면 게이트가 자기 문서를 검사하는 꼴이다(M90 2026-08-19 사고).
+ */
+function wiringInvariantChecks(): string[] {
+  const out: string[] = [];
+  const src = readFileSync(
+    path.join(process.cwd(), "src/lib/baseball-qa/pipeline.ts"), "utf8",
+  );
+  // 주석을 공백으로 치환 — 길이는 보존해 줄 번호가 어긋나지 않게 한다.
+  const blanked = src
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length));
+
+  // `resolveSeasonRecordIntentFor` 는 이 정규식에 걸리지 않게 뒤에 `(` 를 요구한다.
+  const direct = [...blanked.matchAll(/resolveSeasonRecordIntent\s*\(/g)];
+  if (direct.length !== 2) {
+    out.push(
+      `${FAIL_ID} [wiring] resolveSeasonRecordIntent 직접 호출 ${direct.length}곳 — `
+      + "허용은 wrapper 내부 1 + answerSeasonRecordQuestion fallback 1, 총 2곳뿐이다. "
+      + "다른 호출부는 resolveSeasonRecordIntentFor 를 거쳐야 한다(wrapper 우회 금지)",
+    );
+  }
+  // fallback 은 결속을 **명시**해야 한다 — 인자 없이 부르면 종단에서 다른 판정이 난다.
+  if (!/\?\?\s*resolveSeasonRecordIntent\(\s*question,\s*undefined,\s*\{\s*playerBound:\s*true\s*\}\s*\)/.test(blanked)) {
+    out.push(
+      `${FAIL_ID} [wiring] answerSeasonRecordQuestion fallback 이 playerBound 를 명시하지 않는다 — `
+      + "override 없이 들어오는 경로가 결속을 빠뜨리면 bare query 축이 죽는다",
+    );
+  }
+  // wrapper 를 거치는 호출부가 실제로 존재해야 한다(둘 다 지워지면 위 카운트만으론 못 잡는다).
+  const viaWrapper = [...blanked.matchAll(/resolveSeasonRecordIntentFor\s*\(/g)];
+  // 정의 1 + 호출 2 = 3
+  if (viaWrapper.length < 3) {
+    out.push(
+      `${FAIL_ID} [wiring] resolveSeasonRecordIntentFor 참조 ${viaWrapper.length}곳 — `
+      + "정의 1 + 호출부 2 = 최소 3곳이어야 한다",
+    );
+  }
+  return out;
+}
+
 function run(): string[] {
-  const failures = [...assertAxisCoverage(), ...predicateChecks(), ...pipelineEntryChecks()];
+  const failures = [
+    ...assertAxisCoverage(), ...predicateChecks(),
+    ...pipelineEntryChecks(), ...wiringInvariantChecks(),
+  ];
   for (const c of CASES) {
     const got = resolveSeasonRecordIntent(c.question, undefined, { playerBound: c.playerBound }).kind;
     if (got !== c.want) {
