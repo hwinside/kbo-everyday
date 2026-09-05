@@ -107,6 +107,10 @@ check("H4-gen-first", /const gen = \+\+genRef\.current/.test(hook) && (hook.matc
 check("H4-gen-more", /const gen = genRef\.current;[\s\S]*?fillVisible\(fetchBatch,\s*cursorRef\.current[\s\S]*?if \(gen !== genRef\.current\) return/.test(hook), "더보기 응답 세대 보호 없음");
 check("H4-gen-unmount", /const gen = genRef;[\s\S]*?return \(\) => \{\s*gen\.current\+\+;\s*\}/.test(hook), "언마운트·키 교체 시 세대를 올리지 않는다");
 check("H4-blocked-refill", /\[loadFirst,\s*blockedSig\]/.test(hook), "차단 목록 변경 시 첫 페이지를 다시 채우지 않는다");
+check("H4-more-lock-gen", /finally\s*\{[\s\S]*?if \(gen === genRef\.current\) \{\s*fetchingRef\.current = false;\s*setLoadingMore\(false\);/.test(hook), "옛 더보기 finally 가 세대 확인 없이 잠금을 건드린다(삼순 3차 ②)");
+check("H4-reload-unlock", /const gen = \+\+genRef\.current;[\s\S]{0,400}?fetchingRef\.current = false;\s*setLoadingMore\(false\);\s*setLoading\(true\);/.test(hook), "새 세대(loadFirst)가 옛 더보기 잠금을 풀지 않는다(삼순 3차 ②)");
+check("H4-fill-zero-no-cap", /if \(rows\.length > 0 && batch \+ 1 >= maxBatches\)/.test(hook), "0행에서 상한이 적용된다(0행·hasMore=true 섹션 소실, 삼순 3차 ①)");
+check("H4-peek-eligible", /if \(rest\.some\(eligible\)\) return \{ rows, cursor, exhausted: false \};/.test(hook), "확인행이 노출 필터 없이 raw 로 hasMore 를 결정한다(삼순 3차 ③)");
 
 console.log("── F fillVisible(순수) — 소진·채우기·커서");
 const P = (id, popularity, author = `a${id}`) => ({ id, popularity, author_id: author, team_tags: ["lg"], player_tags: [] });
@@ -148,10 +152,40 @@ const ok = () => true;
   check("F4-peek-row-not-skipped", r.rows.map((p) => p.id).join() === "95,94" && r.exhausted === true, `rows=${r.rows.map((p) => p.id)} exhausted=${r.exhausted}`);
 }
 {
-  // 창 안 글 전부 부적합 → 상한(4회)에서 멈추되 소진으로 오판하지 않는다.
+  // 창 안 글 전부 부적합 → 0행·hasMore=true(섹션 소실) 금지. 소진될 때까지 읽어 exhausted=true 로 확정한다.
   const s = server(seq(100, 1000, 500, "bad"));
   const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
-  check("F5-max-batches-cap", r.rows.length === 0 && r.exhausted === false && s.calls.length === MAX_FILL_BATCHES, `calls=${s.calls.length} exhausted=${r.exhausted}`);
+  check("F5-zero-rows-never-hasmore", r.rows.length === 0 && r.exhausted === true && s.calls.length > MAX_FILL_BATCHES, `calls=${s.calls.length} exhausted=${r.exhausted}`);
+}
+{
+  // 첫 20건 부적합 + 21번째부터 적합 → 상한과 무관하게 21번째 글로 이어간다(삼순 3차 ①).
+  const s = server([...seq(20, 1000, 500, "bad"), ...seq(6, 900, 400)]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F5b-reach-21st", r.rows.map((p) => p.id).join() === "900,899,898,897,896" && r.exhausted === false, `rows=${r.rows.map((p) => p.id)} exhausted=${r.exhausted}`);
+}
+{
+  // 1건이라도 채운 뒤에는 상한이 적용된다(무한 조회 방지) — 남은 부적합 행이 많아도 4묶음에서 멈추고 hasMore 유지.
+  const s = server([P(1000, 500), ...seq(100, 900, 400, "bad")]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F5c-cap-after-first-row", r.rows.length === 1 && r.exhausted === false && s.calls.length === MAX_FILL_BATCHES, `rows=${r.rows.length} calls=${s.calls.length} exhausted=${r.exhausted}`);
+}
+{
+  // 적합 5건 + 확인행 1건이 부적합(차단) → raw 행이 아니라 다음 적합 글 존재로 판정: 소진(삼순 3차 ③).
+  const s = server([...seq(5, 100, 50), P(95, 45, "bad")]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F8-peek-invisible-exhausted", r.rows.length === 5 && r.exhausted === true, `exhausted=${r.exhausted}`);
+}
+{
+  // 적합 5건 + 부적합 확인행 + 그 뒤 적합 글 → 뒤를 더 읽어 hasMore=true, 커서는 여전히 마지막 소비 행(96).
+  const s = server([...seq(5, 100, 50), P(95, 45, "bad"), P(94, 44)]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F8b-probe-beyond-invisible-peek", r.rows.length === 5 && r.exhausted === false && r.cursor.id === 96 && s.calls.length === 2, `exhausted=${r.exhausted} cursor=${r.cursor?.id} calls=${s.calls.length}`);
+}
+{
+  // 부적합 확인행 뒤가 전부 부적합 → 끝까지 probe 후 소진 확정.
+  const s = server([...seq(5, 100, 50), ...seq(12, 95, 45, "bad")]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F8c-probe-all-invisible-exhausted", r.rows.length === 5 && r.exhausted === true, `exhausted=${r.exhausted} calls=${s.calls.length}`);
 }
 {
   // seen(화면에 이미 있는 id) 은 건너뛰고 채운다 — 순위 이동 재등장 dedupe.
@@ -221,6 +255,10 @@ if (SELFTEST) {
     ["S11-no-refill", HOOK, "if (!hasBeyond) return { rows, cursor, exhausted: true };", "return { rows, cursor, exhausted: !hasBeyond };", "탈락분 보충 없이 1묶음에서 종료 → 전부 탈락 시 섹션 소실"],
     ["S12-more-no-gen", HOOK, "if (gen !== genRef.current) return; // 팀 전환·새로고침이 끼어들었다", "if (false) return; // 팀 전환·새로고침이 끼어들었다", "더보기 응답 세대 보호 제거 → 옛 응답이 새 목록 오염"],
     ["S13-blocked-not-visible", HOOK, "!blockedRef.current.has(p.author_id) && (", "true && (", "차단 작성자를 채우기 판정에서 제외하지 않음"],
+    ["S14-cap-with-zero-rows", HOOK, "if (rows.length > 0 && batch + 1 >= maxBatches)", "if (batch + 1 >= maxBatches)", "0행에서도 상한 적용 → 0행·hasMore=true 섹션 소실 회귀"],
+    ["S15-peek-raw-hasmore", HOOK, "if (rest.some(eligible)) return { rows, cursor, exhausted: false };", "if (rest.length) return { rows, cursor, exhausted: false };", "확인행을 노출 필터 없이 raw 존재로 hasMore 판정"],
+    ["S16-old-gen-unlocks", HOOK, "if (gen === genRef.current) {\n        fetchingRef.current = false;", "if (true) {\n        fetchingRef.current = false;", "옛 더보기 finally 가 새 세대 잠금을 건드림"],
+    ["S17-reload-keeps-lock", HOOK, "fetchingRef.current = false;\n    setLoadingMore(false);\n    setLoading(true);", "setLoading(true);", "reload 가 옛 더보기 잠금을 풀지 않음 → 새 세대 버튼 비활성"],
   ];
   let selftestFailed = 0;
   for (const [id, rel, anchor, replace, desc] of MUTATIONS) {

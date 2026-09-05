@@ -13,10 +13,11 @@ import { scopeInputForPost } from "@/lib/utils/post-scope-input";
 export const POPULAR_WINDOW_DAYS = 7;
 
 /**
- * 화면 글 수를 채우기 위해 한 번의 loadFirst/loadMore 안에서 서버를 읽는 최대 횟수.
- * 단독 공개·차단·중복 재확인으로 한 묶음이 통째로 탈락해도 뒤의 적합 글을 이어 읽되(삼순 #1343 ③),
- * 창 안 글이 전부 부적합인 극단에서 무한 조회하지 않도록 상한을 둔다. 상한에 걸리면 hasMore=true 로
- * 남겨 다음 '더 보기'가 이어 읽는다.
+ * 화면 글 수를 채우기 위해 한 번의 loadFirst/loadMore 안에서 서버를 읽는 묶음 수 상한.
+ * 단독 공개·차단·중복 재확인으로 한 묶음이 통째로 탈락해도 뒤의 적합 글을 이어 읽는다(삼순 #1343 ③).
+ * 상한은 **적합 글을 1건 이상 채운 뒤**에만 적용한다 — 0행·hasMore=true 는 섹션 소실이라 금지(삼순 3차 ①).
+ * 0행이면 적합 글이 나오거나 창이 소진될 때까지 읽는다(커서가 매 묶음 전진하므로 유한). 상한에 걸리면
+ * hasMore=true 로 남겨 다음 '더 보기'가 이어 읽는다.
  */
 export const MAX_FILL_BATCHES = 4;
 
@@ -92,8 +93,9 @@ export async function fillVisible(
 ): Promise<FillResult> {
   const rows: Post[] = [];
   const picked = new Set<number>();
+  const eligible = (p: Post) => !seen.has(p.id) && !picked.has(p.id) && isVisible(p);
   let cursor = start;
-  for (let batch = 0; batch < maxBatches; batch++) {
+  for (let batch = 0; ; batch++) {
     const need = want - rows.length;
     const fetched = await fetchBatch(cursor, need + 1);
     const hasBeyond = fetched.length > need;
@@ -101,7 +103,7 @@ export async function fillVisible(
     let consumedTo = page.length ? page.length - 1 : -1;
     for (let i = 0; i < page.length; i++) {
       const p = page[i];
-      if (seen.has(p.id) || picked.has(p.id) || !isVisible(p)) continue;
+      if (!eligible(p)) continue;
       picked.add(p.id);
       rows.push(p);
       if (rows.length === want) {
@@ -111,17 +113,30 @@ export async function fillVisible(
     }
     if (consumedTo >= 0) cursor = cursorOf(page[consumedTo]);
     if (rows.length === want) {
-      // 채웠다. 소비한 행 뒤에 남은 행(같은 묶음의 나머지 또는 확인 행)이 있으면 다음 글이 있다.
-      const leftover = consumedTo < page.length - 1 || hasBeyond;
-      return { rows, cursor, exhausted: !leftover };
+      // 채웠다. 소진은 raw 행이 아니라 **다음 적합 글 존재**로 판정한다(삼순 #1343 3차 ③):
+      // 소비한 행 뒤에 남은 행(같은 묶음의 나머지 + 확인 행) 중 적합 글이 있으면 hasMore.
+      // 남은 행이 전부 부적합인데 서버에 더 있을 수 있으면(확인 행까지 부적합) 뒤를 더 읽어 확인한다 —
+      // 반환 커서는 마지막 소비 행 그대로라 다음 '더 보기'가 그 행들을 다시 읽어도 누락은 없다.
+      const rest = [...page.slice(consumedTo + 1), ...fetched.slice(page.length)];
+      if (rest.some(eligible)) return { rows, cursor, exhausted: false };
+      if (!hasBeyond) return { rows, cursor, exhausted: true };
+      let probe = cursorOf(fetched[fetched.length - 1]);
+      for (;;) {
+        const more = await fetchBatch(probe, want + 1);
+        if (more.some(eligible)) return { rows, cursor, exhausted: false };
+        if (more.length < want + 1) return { rows, cursor, exhausted: true };
+        probe = cursorOf(more[more.length - 1]);
+      }
     }
     if (!hasBeyond) return { rows, cursor, exhausted: true };
     // 묶음을 다 봤는데 아직 모자라고 뒤에 더 있다 → 확인 행부터 이어 읽는다(확인 행은 아직 안 봤으므로
     // 커서는 소비한 마지막 행 = page 의 끝).
     cursor = cursorOf(page[page.length - 1]);
+    // 상한은 **최소 1건을 채운 뒤**에만 적용한다(삼순 #1343 3차 ①) — 0행·hasMore=true 로 돌려주면 섹션이
+    // 통째로 숨어 21번째 적합 글로 이어갈 길이 없다. 0행이면 적합 글이 나오거나 창이 소진될 때까지 계속 읽는다
+    // (매 묶음 커서가 전진하므로 유한).
+    if (rows.length > 0 && batch + 1 >= maxBatches) return { rows, cursor, exhausted: false };
   }
-  // 상한 도달 — 못 채웠지만 소진은 아니다(다음 '더 보기'가 이어 읽는다).
-  return { rows, cursor, exhausted: false };
 }
 
 /**
@@ -207,6 +222,9 @@ export function useHomePopularFeedCore(
   /** 첫 페이지. 세대를 올려 진행 중이던 초기 조회·더보기 응답을 전부 무효화한다. */
   const loadFirst = useCallback(async () => {
     const gen = ++genRef.current;
+    // 새 세대는 옛 더보기 잠금과 무관하게 시작한다(삼순 #1343 3차 ②) — 옛 요청의 finally 는 세대가 다르면 잠금을 건드리지 않는다.
+    fetchingRef.current = false;
+    setLoadingMore(false);
     setLoading(true);
     windowStartRef.current = popularWindowStart();
     let result: FillResult;
@@ -253,8 +271,11 @@ export function useHomePopularFeedCore(
     } catch {
       // 조회 실패: cursor/hasMore 그대로 → 버튼이 남아 재시도할 수 있다(삼순 #1343 ②).
     } finally {
-      fetchingRef.current = false;
-      setLoadingMore(false);
+      // 옛 세대의 완료가 새 세대의 잠금을 풀거나 잠그지 않는다(삼순 #1343 3차 ②).
+      if (gen === genRef.current) {
+        fetchingRef.current = false;
+        setLoadingMore(false);
+      }
     }
   }, [hasMore, loading, posts, fetchBatch, stepSize, isVisible]);
 
