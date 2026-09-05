@@ -276,6 +276,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-untrusted-metric",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-untrusted-metric:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-live-team-block",
       "tier": "deploy"
     },
