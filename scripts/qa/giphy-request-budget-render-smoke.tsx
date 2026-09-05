@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 // @ts-expect-error -- jsdom is a test-only dependency without bundled declarations.
 import { JSDOM } from "jsdom";
+import { StrictMode, act } from "react";
 
 async function main() {
   process.env.NEXT_PUBLIC_GIPHY_GIFS_API_KEY = "test-gifs-key";
@@ -23,7 +24,6 @@ async function main() {
     value: dom.window.navigator,
   });
 
-  const { act, StrictMode } = await import("react");
   const { createRoot } = await import("react-dom/client");
 
   const calls: string[] = [];
