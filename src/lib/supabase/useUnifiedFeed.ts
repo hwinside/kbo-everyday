@@ -34,11 +34,13 @@ export function buildTeamFeedOrParts(slug: string, kboIds: string[]): string[] {
   return orParts;
 }
 
-/** 피드가 바라보는 보드 컨텍스트. 전체글/팀/선수가 같은 훅을 source만 바꿔 재사용. */
-export type FeedBoard =
-  | { kind: "all" }
-  | { kind: "team"; teamId: string }
-  | { kind: "player"; kboId: string };
+/**
+ * 보드 컨텍스트·검색어 정규화·피드 키는 순수 모듈 `@/lib/community/feed-search` 에 있다(회귀 스모크가 env 없이 import).
+ * `all.q` 는 전체글 검색어(커뮤니티 검색 v1). 값이 있으면 `posts` 직접 조회 대신 RPC `search_posts` 로
+ * 같은 SELECT(프로필 임베딩 포함)를 받아 나머지 경로(좋아요·차단·복원)는 그대로 탄다.
+ */
+import { feedKeyFor, normalizeSearchQuery, type FeedBoard } from "@/lib/community/feed-search";
+export { feedKeyFor, normalizeSearchQuery, SEARCH_MIN_LEN, type FeedBoard } from "@/lib/community/feed-search";
 
 /** PostgREST query builder 중 피드 필터에 쓰는 메서드만 추린 최소 인터페이스(회귀 mock 공유). */
 export type FeedFilterQuery<Q> = {
@@ -85,17 +87,6 @@ function mapRow(p: Record<string, unknown>): Post {
   };
 }
 
-function boardKey(board: FeedBoard): string {
-  switch (board.kind) {
-    case "team":
-      return `team:${board.teamId}`;
-    case "player":
-      return `player:${board.kboId}`;
-    case "all":
-      return "all";
-  }
-}
-
 /**
  * 통합 커뮤니티 피드 훅.
  * - content_type 필터 없음 → 글/사진 한 스트림.
@@ -127,10 +118,15 @@ export function useUnifiedFeed(
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
-  const key = boardKey(board);
+  const key = feedKeyFor(board);
+  // 전체글 검색어(정규화 후). null 이면 일반 피드. key 에 이미 포함돼 있어 loadPage 의존성은 key 로 충분하다.
+  const searchQ = board.kind === "all" ? normalizeSearchQuery(board.q) : null;
   const cursorRef = useRef<number | null>(null);
   // 동시 페이지 요청 가드 (스크롤 연타 race 방지).
   const fetchingRef = useRef(false);
+  // 요청 세대. key(보드/검색어)가 바뀔 때마다 증가 — 이전 세대의 loadMore 응답이 늦게 도착해
+  // 새 검색 결과 뒤에 이어붙는 것을 막는다(삼순 리뷰 ④). 초기 로드는 effect 의 cancelled 가 같은 역할.
+  const genRef = useRef(0);
 
   const fetchLikedFor = useCallback(
     async (ids: number[]) => {
@@ -153,6 +149,17 @@ export function useUnifiedFeed(
 
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
+      if (searchQ !== null) {
+        // 검색 모드: 필터·숨김 제외·길이 가드·이스케이프·키셋·limit 상한(50)은 전부 RPC 안(단일 지점).
+        // 클라는 원문(trim)만 넘긴다. returns setof posts 라 같은 SELECT(프로필 임베딩)가 그대로 붙는다.
+        // query-guard: bounded -- search_posts 는 boundedRpcAllowlist 등록(limit ≤ 50, id desc 키셋).
+        const { data } = await supabase
+          .rpc("search_posts", { q: searchQ, before_id: cursor, page_size: pageSize })
+          .select(SELECT);
+        // 생성 타입에 없는 함수라 rpc().select() 추론이 단일객체|배열 유니언으로 나온다 → setof 라 항상 배열.
+        const rows = (data ?? []) as unknown as Record<string, unknown>[];
+        return rows.map(mapRow);
+      }
       // query-guard: bounded -- id desc keyset(.lt("id",cursor)) + .limit(pageSize). board_type 목록에
       // 'poll' 추가(S3)는 필터 확장일 뿐 페이지 경계 불변(성장 무한 아님).
       let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
@@ -193,6 +200,7 @@ export function useUnifiedFeed(
 
   useEffect(() => {
     let cancelled = false;
+    genRef.current += 1;
     if (restorePath) ensurePopStateListener();
     setLoading(true);
     setPosts([]);
@@ -275,8 +283,11 @@ export function useUnifiedFeed(
     if (fetchingRef.current || !hasMore || loading) return;
     fetchingRef.current = true;
     setLoadingMore(true);
+    const gen = genRef.current;
     try {
       const rows = await loadPage(cursorRef.current);
+      // 요청 도중 보드/검색어가 바뀌었으면(세대 증가) 이 응답은 이전 피드의 것 — 폐기.
+      if (gen !== genRef.current) return;
       setPosts((prev) => {
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...rows.filter((r) => !seen.has(r.id))];
