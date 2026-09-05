@@ -3,6 +3,7 @@ import Script from "next/script";
 import "@/styles/globals.css";
 import { AuthProvider } from "@/lib/supabase/AuthContext";
 import { ThemeProvider, themeScript } from "@/components/ThemeProvider";
+import StatusBarThemeSync from "@/components/StatusBarThemeSync";
 import { AdAttributionMount } from "@/components/AdAttributionMount";
 import { NativePushMount } from "@/components/NativePushMount";
 import { PageViewTracker } from "@/components/PageViewTracker";
@@ -106,6 +107,7 @@ export default function RootLayout({
         <AdAttributionMount />
         <NativePushMount />
         <ThemeProvider>
+          <StatusBarThemeSync />
           <AuthProvider>
             <AuthErrorNotice />
             <PageViewTracker />
