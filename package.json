@@ -482,6 +482,8 @@
     "qa:genius-mascot-assets:mutations:full": "node scripts/qa/genius-mascot-asset-mutations.mjs --with-source",
     "qa:client-dedupe": "tsx scripts/qa/client-dedupe-gate.ts",
     "qa:client-dedupe:selftest": "tsx scripts/qa/client-dedupe-gate.ts --selftest",
+    "qa:giphy-request-budget": "tsx scripts/qa/giphy-request-budget-smoke.ts",
+    "qa:giphy-request-budget:render": "tsx scripts/qa/giphy-request-budget-render-smoke.tsx",
     "qa:self-fetch-internal:cleanup": "node scripts/qa/self-fetch-cleanup-selftest.mjs",
     "qa:supabase-peak-readonly:selftest": "python3 scripts/qa/supabase-peak-readonly.py --selftest",
     "qa:team-fullname-routing:core": "tsx scripts/qa/team-fullname-routing-smoke.ts",
