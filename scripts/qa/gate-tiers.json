@@ -284,6 +284,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-product-feature-guide",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-product-feature-guide:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-live-team-block",
       "tier": "deploy"
     },

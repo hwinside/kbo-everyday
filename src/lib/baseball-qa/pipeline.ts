@@ -220,12 +220,156 @@ export const SERVICE_REDIRECT_ANSWER =
  *
  *   키를 값에서 파생시키면(`as const` 객체) 둘이 갈라질 수 있는 표면 자체가 없어진다.
  */
+/**
+ * 기능 항목 — 문구와 **판정 트리거**를 한 자리에 둔다 (2026-09-05, 48h 원장 19건).
+ *
+ * 🔴 왜 트리거가 데이터인가. 9/3~9/5 원장에서 `워치 설정 어떻게 해?`·`gps인증 어떻게 해요`·
+ *   `배경화면에 스코어 띄울수있나요`·`최애선수 등록 어케해` 같은 **우리 기능 질문 19건**이
+ *   전부 실패하거나 동문서답(전광판 규정·KBO 선수등록 규정)으로 나갔다. registry 키가
+ *   `직관기록` 하나뿐이었고, 매처가 "문장 머리 = 기능명" 이라 문장 중간의 기능명은 구조상
+ *   못 잡았다. 기능명은 라우팅 룰이 아니라 **우리 앱에 실재하는 것의 목록**이다 — 기능이
+ *   생기면 항목이 늘고, 없어지면 준다. 반례를 따라 자라는 표면이 아니다.
+ *
+ * 🔴 **단어 존재 ≠ 기능 이용 의도** (삼순 2026-09-05 조건부 GO ①). `최애선수 홈런 몇 개?`·
+ *   `최애팀 몇 위?` 는 기능명이 있어도 기록 질문이다. 그래서 트리거 경로는
+ *   ⓐ 이용 방법·가능 여부를 묻는 술어(`PRODUCT_FEATURE_USAGE_ASK`)가 있어야 열리고,
+ *   ⓑ 수치·인물을 묻는 술어(`PRODUCT_FEATURE_STAT_ASK`)가 있으면 방법 술어가 없는 한 닫힌다.
+ *
+ * 🔴 **앱 사용법과 외부 영상 시청을 나눈다** (삼순 ②). `TV 중계 어디서 봐?`·`랜더스 인터뷰 어디서 봐?`
+ *   를 문자중계·경기카드로 일괄 안내하면 또 동문서답이다. 영상은 앱 안에서 재생되지 않는다는
+ *   사실을 먼저 말하고, 앱이 제공하는 것(중계 방송사 표시·인터뷰 카드)과 외부 시청처를 구분한다.
+ *
+ * ⚠️ 문구의 **버전·OS·메뉴 경로는 출시본 FAQ(`constants/faq-items.ts`)에 실재하는 문장**만 쓴다.
+ *   CS 캐시(`state/cs-reply-style.md`)는 stale 할 수 있다 — 실측(2026-09-05): 캐시는 "잠금화면
+ *   중계 아이폰 전용·마이페이지 > 알림설정" 이었지만 출시본은 iOS 18+/Android 16+ 이고 메뉴는
+ *   `마이페이지 > 잠금화면` 이다. 게이트가 FAQ 문장과 부분문자열로 대조한다.
+ * ⚠️ 앱 최소 버전(1.0.x)은 적지 않는다 — 현 출시본(iOS 1.0.13 / Android 1.0.17)이 전부 넘겼고
+ *   FAQ 도 "최신 앱" 으로만 말한다. 미출시·미지원 단정 금지("스마트워치 미지원" 오답 사고).
+ * ⚠️ 서버는 질문자의 플랫폼을 모른다(`server.ts` 에 신호 없음) → iOS/Android 조건을
+ *   문구에 **함께** 적는다. 플랫폼 조회 결속은 후속.
+ */
+interface ProductFeatureSpec {
+  readonly answer: string;
+  /**
+   * 토큰 **시작** 일치 트리거(NFKC·소문자·공백 분리). `스타일` 은 `타일` 로 시작하지 않으므로
+   * 안 잡힌다. 4글자 이상은 붙여쓴 결합형(`잠금화면에`·`애플워치는`)도 본다.
+   */
+  readonly triggers: readonly string[];
+  /**
+   * 야구 어휘와 겹치는 트리거(`순위`) — **앱 문맥**(`크보팬`·`앱에서`)이 함께 있을 때만
+   * 기능 질문이다. `올해 순위 어떻게 돼?` 는 아니다.
+   */
+  readonly needsAppContext?: true;
+  /**
+   * 변경 요청 동사(`바꾸`·`등록`·`설정`)가 함께 있을 때만 — `너의 최애 선수는 누구니` 는
+   * 봇에게 묻는 잡담이지 기능 질문이 아니다.
+   */
+  readonly requiresChangeAsk?: true;
+  /**
+   * 시청처 질문(`어디서 봐`·`채널`)이 함께 있을 때만 — **외부 영상 시청** 안내 항목.
+   * `감독 인터뷰에서 뭐라고 했어`(내용)·`중계권료가 얼마야`(사실)는 아니다.
+   */
+  readonly viewingAsk?: true;
+}
+
 const PRODUCT_FEATURE_REGISTRY = {
-  // 마이페이지 > 직관 기록(직접 관람 경기 기록). `api/me/venue-attendance`·`venue-diary`.
-  //   문구는 실제 화면을 근거로 한다 — `/my/venue-stats` 에 승률·구장별 통계가 실재한다.
-  "직관기록":
-    "직관 기록은 마이페이지에서 확인하실 수 있습니다. 직관한 경기가 쌓이면 승률·구장별 통계도 함께 보실 수 있습니다.",
-} as const;
+  // 마이페이지 > 직관 다이어리(`VenueDiaryCard`·`VenueDiaryAddGameSheet` '지난 경기 추가'). 진입은 홈 우상단
+  //   프로필 아이콘(`HeaderProfileLink` aria-label 마이페이지). `/my/venue-stats` 에 승률·구장별 통계 실재.
+  "직관기록": {
+    answer:
+      "직관 기록은 홈 오른쪽 위 프로필 아이콘 > 마이페이지 > 직관 다이어리에서 보실 수 있습니다. "
+      + "직관한 경기가 쌓이면 승률·구장별 통계도 함께 보이고, 지난 직관은 '지난 경기 추가'에서 시즌과 경기를 골라 직접 남길 수 있습니다.",
+    triggers: ["직관기록", "직관다이어리", "직관 다이어리"],
+  },
+  // 경기장 GPS 인증 — 경기 상세 `VenueStorySection`('직관 라이브', 앱 전용) 업로드가 지오펜스로 확인되면
+  //   같은 트랜잭션에서 attendance 생성(위키 직관-다이어리 §자동 생성).
+  "직관인증": {
+    answer:
+      "직관 인증은 경기 당일 구장 안에서 앱의 경기 상세 > 직관 라이브에 사진·영상을 올리면 GPS로 위치가 확인되어 "
+      + "마이페이지 > 직관 다이어리에 자동으로 기록됩니다(앱 전용, 웹에서는 올릴 수 없습니다). "
+      + "지난 직관은 직관 다이어리 > 지난 경기 추가에서 직접 남길 수 있습니다.",
+    triggers: ["gps", "직관인증", "직관 인증", "직관라이브", "직관 라이브", "직관스토리"],
+  },
+  // 출시본 FAQ: 애플워치 watchOS 10+ (Watch 앱 설치) · 갤럭시워치 4+/Wear OS 3+ (워치 Play 스토어). 밴드형 불가(CS §갤럭시 핏).
+  "스마트워치": {
+    answer:
+      "스마트워치는 지금 바로 쓰실 수 있습니다. 애플워치(watchOS 10 이상)는 아이폰 크보팬 앱 마이페이지에서 최애팀을 설정한 뒤 "
+      + "아이폰 Watch 앱에서 크보팬을 설치하고 워치 앱을 한 번 열면 워치페이스에 경기·순위 컴플리케이션을 추가할 수 있습니다. "
+      + "갤럭시워치(갤럭시워치 4 이상·Wear OS 3 이상)는 휴대폰 크보팬 앱에서 최애팀을 설정한 뒤 워치 Play 스토어에서 크보팬을 설치하고, "
+      + "워치의 타일 편집에서 크보팬 경기 타일이나 컴플리케이션을 추가하면 됩니다. "
+      + "최애팀은 폰에서 바꾸면 워치에 자동 반영되고, 갤럭시 핏 같은 밴드형은 앱 설치가 되지 않습니다.",
+    triggers: ["워치", "갤럭시워치", "애플워치", "스마트워치", "타일", "컴플리케이션", "watch"],
+  },
+  // 출시본 FAQ: iOS 편집 > 위젯 추가 > 크보팬('크보팬 경기'·'팀 순위' iOS 16.1+, '최애선수 카드' iOS 17+) ·
+  //   Android 위젯 > 크보팬(경기 중계·팀 순위·최애선수 카드). 웹/PWA 불가(CS §PWA).
+  "홈위젯": {
+    answer:
+      "홈 화면 위젯은 iOS·Android 크보팬 앱에서 쓸 수 있습니다. 아이폰은 홈 화면 빈 곳을 길게 누른 뒤 편집 > 위젯 추가 > 크보팬에서 "
+      + "'크보팬 경기'·'팀 순위'(iOS 16.1 이상)·'최애선수 카드'(iOS 17 이상)를, 안드로이드는 홈 화면을 길게 누른 뒤 위젯 > 크보팬에서 "
+      + "경기 중계·팀 순위·최애선수 카드를 고르면 됩니다. 목록에 없으면 최신 앱을 설치하고 앱을 한 번 열어 주세요. "
+      + "웹·PWA에서는 위젯을 쓸 수 없으니 App Store·Play 스토어에서 앱을 설치해 주세요.",
+    triggers: ["위젯", "홈위젯", "배경화면", "바탕화면", "홈화면"],
+  },
+  // 출시본 FAQ: iOS 18+ Live Activity · Android 16+ 나우바(미지원 기기는 일반 잠금화면 카드). 메뉴 마이페이지 > 잠금화면
+  //   (`LockScreenCard` — 2026-07-18 알림 설정에서 승격). '잠금화면 카드 다시 표시' 버튼 실재.
+  "잠금화면중계": {
+    answer:
+      "잠금화면 실시간 중계는 아이폰(iOS 18 이상)과 안드로이드(Android 16 이상 지원 기기는 나우바·카드 스타일, 그 외 기기는 일반 잠금화면 카드) 모두 됩니다. "
+      + "최신 크보팬 앱에 로그인한 뒤 마이페이지 > 잠금화면 > 잠금화면 실시간 중계를 켜면 최애팀 경기 시작 30분 전부터 종료까지 스코어가 표시됩니다. "
+      + "카드가 안 뜨면 기기의 알림·실시간 현황 권한을 확인하고 마이페이지 > 잠금화면에서 '잠금화면 카드 다시 표시'를 눌러 주세요.",
+    triggers: ["잠금화면", "잠금 화면", "다이나믹아일랜드", "다이나믹 아일랜드", "라이브액티비티", "나우바"],
+  },
+  // 최애팀(응원팀) — 마이페이지에서 변경. 워치·위젯·알림이 새 팀 기준(FAQ: 구단 변경 시 최애선수 재선택).
+  //   ⚠️ `최애선수` 보다 **앞**에 둔다 — `최애팀 바꾸는 법` 이 `최애` 트리거에 먼저 잡히지 않게.
+  "최애팀": {
+    answer:
+      "응원팀(최애팀)은 마이페이지에서 언제든 바꿀 수 있습니다. 바꾸면 홈 MY TEAM 카드와 알림, 위젯, 워치가 새 팀 기준으로 바뀌고, "
+      + "새 구단의 최애선수를 다시 선택하게 됩니다.",
+    triggers: ["최애팀", "최애 팀", "응원팀", "응원 팀", "마이팀"],
+    requiresChangeAsk: true,
+  },
+  // 출시본 FAQ: 마이페이지 > 최애 선수, 최대 5명. 홈 CTA `최애선수 설정하고 홈을 꾸며보세요`(`HomeClientShell`).
+  "최애선수": {
+    answer:
+      "최애선수는 로그인 후 마이페이지 > 최애 선수에서 최대 5명까지 지정하거나 바꿀 수 있고, "
+      + "홈의 '최애선수 설정하고 홈을 꾸며보세요' 카드로도 같은 화면이 열립니다. 응원 구단을 바꾸면 새 구단의 최애선수를 다시 선택하게 됩니다.",
+    triggers: ["최애선수", "최애 선수", "관심선수", "관심 선수", "최애"],
+    requiresChangeAsk: true,
+  },
+  // 순위 — 홈 MY TEAM 카드(`MyTeamHero`) + 탭바 순위(`/standings`, 팀명 아래 오늘 결과 반영 표시). 야구 어휘와 겹치므로 앱 문맥 필수.
+  "순위보기": {
+    answer:
+      "구단 순위는 홈 상단 MY TEAM 카드와 아래 탭바의 순위 탭에서 보실 수 있습니다. 순위 탭에서는 팀명 아래에 오늘 경기 결과가 반영됐는지도 표시됩니다.",
+    triggers: ["순위", "순위표"],
+    needsAppContext: true,
+  },
+  // 문자중계 — 경기 상세 크관 탭(`KgwanTab`, 투구별) + 경기 목록 라이브 카드 최근 플레이 한 줄(`CompactGameCard`).
+  //   ⚠️ `영상중계시청` 보다 **앞** — `문자중계 어디서 보는거야` 가 영상 안내로 가지 않게.
+  "문자중계": {
+    answer:
+      "문자중계는 크보팬 경기 상세의 크관 탭에서 투구별로 보실 수 있고, 경기 목록의 라이브 카드에도 최근 플레이 한 줄이 표시됩니다. "
+      + "앱에서는 홈 위젯과 잠금화면 실시간 중계로도 스코어를 확인할 수 있습니다. 영상 중계는 앱 안에서 재생되지 않습니다.",
+    triggers: ["문자중계", "문자 중계"],
+  },
+  // 영상 중계 시청 — **앱 사용법이 아니다**(삼순 ②). 앱이 주는 것은 예정 경기 상세 상단의 중계 방송사 표시(`BroadcastBadges`)뿐.
+  "영상중계시청": {
+    answer:
+      "TV·온라인 영상 중계는 크보팬 안에서 재생되지 않습니다. 예정 경기의 경기 상세 화면 상단에 그 경기의 중계 방송사가 표시되니, "
+      + "해당 채널이나 온라인 중계 플랫폼에서 시청해 주세요. 점수만 빠르게 보려면 경기 상세 크관 탭의 문자중계와 앱 홈 위젯·잠금화면 실시간 중계를 이용하실 수 있습니다.",
+    triggers: ["중계", "tv", "티비", "방송", "실시간", "경기보", "경기 보", "경기를 보", "생중계"],
+    viewingAsk: true,
+  },
+  // 수훈선수 인터뷰 — 종료 경기 상세 `PostgameInterviewSection`(방송사·구단 채널 유튜브 영상 모음, 영상 확인된 경기만).
+  //   인터뷰 영상 자체는 외부 채널이다 — 앱 카드와 외부 시청처를 나눠 말한다(삼순 ②).
+  "수훈선수인터뷰": {
+    answer:
+      "선수·감독 인터뷰 영상은 크보팬이 직접 제공하지 않습니다. 경기가 끝난 뒤 경기 상세 화면의 '수훈선수 인터뷰' 카드에 "
+      + "방송사·구단 채널에 올라온 인터뷰 영상이 모이니(영상이 확인된 경기만) 그곳에서 보시고, "
+      + "그 밖의 인터뷰는 구단 공식 유튜브나 중계 방송사 채널에서 보실 수 있습니다.",
+    triggers: ["인터뷰"],
+    viewingAsk: true,
+  },
+} as const satisfies Record<string, ProductFeatureSpec>;
 
 /** registry 키 — 문구가 없는 기능명은 **타입상 존재할 수 없다**. */
 export type ProductFeatureKey = keyof typeof PRODUCT_FEATURE_REGISTRY;
@@ -235,7 +379,7 @@ export type ProductFeatureKey = keyof typeof PRODUCT_FEATURE_REGISTRY;
  *   호출처가 `?? BLOCKED_ANSWER` 같은 fallback 을 쓸 자리가 생기지 않는다.
  */
 export function productFeatureGuideAnswer(feature: ProductFeatureKey): string {
-  return PRODUCT_FEATURE_REGISTRY[feature];
+  return PRODUCT_FEATURE_REGISTRY[feature].answer;
 }
 
 /** 게이트·감사용 전수 열거(단일 SSOT 에서 파생). */
@@ -1463,17 +1607,75 @@ export function isServiceInquiry(normalized: string): boolean {
  * ⚠️ **부분문자열이 아니라 토큰 포함**으로 본다. `includes` 로 두면
  *   `직관기록이 아니라 선수 기록` 같은 문장까지 가로채다.
  */
+/**
+ * 이용 방법·가능 여부 술어 — 트리거 경로를 여는 **공통 열쇠** (삼순 ①: 단어 존재가 아니라 기능 이용 의도).
+ *   `워치 설정 어떻게 해?`·`이 웹은 위젯 없어?`·`배경화면에 스코어띄울수있나요?`·`타일 추가` 에는 있고,
+ *   `최애팀 몇 위?`·`응원팀이 삼성인데 오늘 이길까` 에는 없다.
+ */
+const PRODUCT_FEATURE_USAGE_ASK =
+  /어떻게|어케|어떡|어찌|방법|법(?:\s|$|[?!.])|어디|되나|되요|돼요|될까|될\s*수|되는|가능|있나|있어|있음|있냐|있다|없어|없나|없냐|없음|지원|설정|연동|설치|추가|등록|바꾸|바꿔|바꿀|변경|켜|끄|띄우|띄울|나오게|보고\s*싶|보는|볼\s*수|봐|보나|보냐|알려|해줘|하고\s*싶|하는|할\s*수/u;
+/**
+ * 수치·인물 술어 — 있으면 **기록 질문**이다. 방법 술어(`어떻게`·`띄우`)가 같이 있을 때만 기능 질문으로 본다.
+ *   `최애선수 홈런 몇 개?`·`최애팀 몇 위?`·`너의 최애 선수는 누구니` 를 닫는다(삼순 ①).
+ */
+const PRODUCT_FEATURE_STAT_ASK =
+  /몇\s*(?:개|위|승|패|점|할|푼|명|경기|년|살|호|번)|홈런|타율|방어율|평균자책|ops|승률|타점|안타|출루율|누구/u;
+const PRODUCT_FEATURE_HOW_ASK = /어떻게|어케|어떡|방법|법(?:\s|$|[?!.])|띄우|띄울|나오게|설정하는|추가하는|등록하는/u;
+/** 앱 문맥 — `needsAppContext` 트리거를 연다. `크보팬 앱에서 순위 어떻게 봐?` 에는 있고 `올해 순위 어떻게 돼?` 에는 없다. */
+const PRODUCT_FEATURE_APP_CONTEXT = /크보팬|앱에서|앱으로|앱은|앱\s*안|앱(?:에|이|을|도)|이\s*앱|웹에서|이\s*웹/u;
+/** 변경 요청 — `requiresChangeAsk` 트리거를 연다. */
+const PRODUCT_FEATURE_CHANGE_ASK = /바꾸|바꿀|바꿔|변경|등록|설정|추가|고르|골라|선택|지정/u;
+/**
+ * 시청처 질문 — `viewingAsk` 트리거를 연다. `랜더스 인터뷰는 어디서 봐?`·`야구경기 실시간으로 보고싶은데 어디서 어떻게 봐?`
+ * 에는 있고 `감독 인터뷰에서 뭐라고 했어`·`중계권료가 얼마야`·`실시간 순위 알려줘` 에는 없다.
+ */
+const PRODUCT_FEATURE_VIEWING_ASK =
+  /어디서|어디에서|어디로|어디\s*(?:서|가면|있|봐|보)|볼\s*수|볼수|보는\s*(?:곳|법|방법|거)|보고\s*싶|보고싶|봐\s*(?:\?|$|요)|보나요|보냐|볼까|채널|시청|어떻게\s*봐|어케\s*봐/u;
+/**
+ * 토큰이 `X보다`·`X말고` 면 X 는 화제가 아니라 **비교·배제 대상**이다(`직관기록보다 중요한거`).
+ * 문법 꼬리 집합의 `보다` 는 조사로만 보지만, 여기서는 그 조사가 붙은 순간 기능 질문이 아니다.
+ */
+const PRODUCT_FEATURE_EXCLUDED_TAIL = /^(?:보다|보단|말고|빼고)/u;
+
+/**
+ * 트리거가 토큰 시작(또는 4글자 이상이면 붙여쓴 결합형)에 있고, 뒤가 비교·배제 조사가 아닌가.
+ *   조사는 붙여쓰기(`위젯말고`)도, 띄어쓰기(`위젯 말고`)도 있다 — 토큰 잔여가 비면 **다음 토큰**을 본다.
+ */
+function productFeatureTriggerHits(trigger: string, tokens: readonly string[], compact: string): boolean {
+  const compactTrigger = trigger.replace(/\s+/gu, "");
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (!token.startsWith(compactTrigger)) continue;
+    const rest = token.slice(compactTrigger.length);
+    const tail = rest.length > 0 ? rest : (tokens[i + 1] ?? "");
+    if (!PRODUCT_FEATURE_EXCLUDED_TAIL.test(tail)) return true;
+  }
+  if (compactTrigger.length < 4) return false;
+  const at = compact.indexOf(compactTrigger);
+  return at >= 0 && !PRODUCT_FEATURE_EXCLUDED_TAIL.test(compact.slice(at + compactTrigger.length));
+}
+
 export function resolveProductFeature(question: string): ProductFeatureKey | null {
-  const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/gu, "");
+  const normalized = question.normalize("NFKC").toLowerCase();
+  const compact = normalized.replace(/\s+/gu, "");
+  const tokens = normalized.split(/\s+/u).filter((token) => token.length > 0);
+  // 트리거 경로 공통 조건 — 이용 의도가 있고, 기록 질문이 아니다(삼순 ①).
+  const usageAsk = PRODUCT_FEATURE_USAGE_ASK.test(normalized);
+  const statOnly = PRODUCT_FEATURE_STAT_ASK.test(normalized) && !PRODUCT_FEATURE_HOW_ASK.test(normalized);
   for (const feature of PRODUCT_FEATURE_KEYS) {
-    if (!compact.startsWith(feature)) continue;
-    // 기능명 뒤에 남는 것이 **문법 꾸리뿐**일 때만 인정한다.
+    // ① 종전 경로 그대로 — 기능명이 문장 머리이고 뒤가 **문법 꼬리뿐**일 때.
     //   `직관기록`·`직관 기록이 뭐야`·`직관기록은` → 기능 질문 ⭕️
-    //   `직관기록보다 중요한거`             → 잔여가 문법 꾸리가 아니므로 ❌
-    // ⚠️ 새 어휘 열거를 만들지 않고 기존 폐쇄집합을 그대로 쓴다 — 그 집합은
-    //   `아웃도어`·`도루묵` 같은 범위 밖 합성어를 닫기 위해 설계·검증된 것이고,
-    //   여기서도 정확히 같은 성질이 필요하다(반례마다 자라는 표면을 만들지 않는다).
-    if (isGrammaticalTail(compact.slice(feature.length))) return feature;
+    //   `직관기록보다 중요한거`             → 잔여가 문법 꼬리가 아니므로 ❌
+    if (compact.startsWith(feature) && isGrammaticalTail(compact.slice(feature.length))) return feature;
+    // ② 트리거 — 문장 어디에 있든 **토큰 시작**이면서 이용 의도가 있을 때(2026-09-05).
+    //   `워치 설정 어떻게 해?`·`나의 폰 배경화면에 팀 순위 위젯을 하는 방법`·`gps인증 어떻게 해요`.
+    if (!usageAsk || statOnly) continue;
+    const spec: ProductFeatureSpec = PRODUCT_FEATURE_REGISTRY[feature];
+    if (!spec.triggers.some((trigger) => productFeatureTriggerHits(trigger, tokens, compact))) continue;
+    if (spec.needsAppContext === true && !PRODUCT_FEATURE_APP_CONTEXT.test(normalized)) continue;
+    if (spec.requiresChangeAsk === true && !PRODUCT_FEATURE_CHANGE_ASK.test(normalized)) continue;
+    if (spec.viewingAsk === true && !PRODUCT_FEATURE_VIEWING_ASK.test(normalized)) continue;
+    return feature;
   }
   return null;
 }
