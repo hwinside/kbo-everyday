@@ -2,21 +2,20 @@
   "label": "수비",
   "reads": 3,
   "rows": {
-    "69992|3루수": {
+    "66409|1루수": {
       "observed": 2,
       "missStreak": 0
     },
-    "69992|중견수": {
+    "66409|우익수": {
+      "observed": 2,
+      "missStreak": 0
+    },
+    "66409|좌익수": {
       "observed": 3,
       "missStreak": 0,
       "viaGroup": true
     },
-    "69992|2루수": {
-      "observed": 3,
-      "missStreak": 0,
-      "viaGroup": true
-    },
-    "69992|좌익수": {
+    "66409|중견수": {
       "observed": 3,
       "missStreak": 0,
       "viaGroup": true
