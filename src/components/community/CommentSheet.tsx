@@ -874,6 +874,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                     transition={{ type: "spring", damping: 28, stiffness: 300 }}
                   >
                     <GifPicker
+                      context="community_gif"
                       onSelect={handleGifSelect}
                       onClose={() => setShowGifPicker(false)}
                     />

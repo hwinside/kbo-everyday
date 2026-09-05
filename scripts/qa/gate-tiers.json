@@ -448,6 +448,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:giphy-request-budget",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:giphy-request-budget:render",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:home-header-signup-button",
       "tier": "ci"
     },
