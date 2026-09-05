@@ -5,23 +5,12 @@ import { supabase } from "./client";
 import { useBlockedIds } from "./useBlock";
 import type { Post } from "./usePosts";
 import { applyBoardFilter, FEED_SELECT, mapFeedRow, type FeedBoard } from "./useUnifiedFeed";
-import { getTeamBySlug } from "@/lib/constants/teams";
-import { resolvePostScope } from "@/lib/utils/post-scope";
-import { scopeInputForPost } from "@/lib/utils/post-scope-input";
+import { kboIdsForTeamSlug, playerNameForKboId } from "@/lib/utils/player-roster";
 
 /** 인기글 집계 창(일). 하린아빠 스펙 2026-09-05: 최근 일주일 인기글. */
 export const POPULAR_WINDOW_DAYS = 7;
 
-/**
- * 화면 글 수를 채우기 위해 한 번의 loadFirst/loadMore 안에서 서버를 읽는 묶음 수 상한.
- * 단독 공개·차단·중복 재확인으로 한 묶음이 통째로 탈락해도 뒤의 적합 글을 이어 읽는다(삼순 #1343 ③).
- * 상한은 **적합 글을 1건 이상 채운 뒤**에만 적용한다 — 0행·hasMore=true 는 섹션 소실이라 금지(삼순 3차 ①).
- * 0행이면 적합 글이 나오거나 창이 소진될 때까지 읽는다(커서가 매 묶음 전진하므로 유한). 상한에 걸리면
- * hasMore=true 로 남겨 다음 '더 보기'가 이어 읽는다.
- */
-export const MAX_FILL_BATCHES = 4;
-
-/** 인기도 keyset 커서 — (popularity desc, id desc) 순서의 마지막으로 소비한 행. */
+/** 인기도 keyset 커서 — (popularity desc, id desc) 순서의 마지막 행. */
 export type PopularCursor = { popularity: number; id: number };
 
 /** 집계 창 시작 시각(ISO). 페이지 간 창이 흔들리지 않도록 마운트 시 1회 고정해 쓴다. */
@@ -52,13 +41,20 @@ export function teamOnlyTagsValue(slug: string): string {
 }
 
 /**
- * 화면 라벨 SSOT(resolvePostScope)로 "최애팀 단독" 을 재확인한다.
- * team_tags 는 [최애팀] 이어도 다른 팀 선수 태그가 섞이면 배지는 2팀으로 뜬다 — 서버 eq 필터가
- * 놓치는 그 경우를 여기서 걸러 "홈 인기글 = 최애팀 단독 배지" 를 보장한다.
+ * 최애팀 단독 판정의 나머지 반쪽 — 선수 태그가 **전부 최애팀 로스터**여야 한다(PostgREST jsonb `cd`, contained-by).
+ * team_tags 가 [최애팀] 이어도 다른 팀 선수 태그가 섞이면 배지 SSOT(resolvePostScope)는 2팀으로 뜬다.
+ * 그 경우를 클라이언트에서 걸러내면 페이지가 부분 채움되므로(삼순 #1343 4차, 하린아빠 A 선택) 서버에서 거른다.
+ *
+ * 값 = 로스터의 `kboId:이름` 태그 전체(쓰기 화면 formatPlayerTag 와 같은 형식). 빈 배열([])은 `cd` 에 항상 포함된다.
+ * 실측(prod 9/5, LG 단독 378건): 타팀 선수 태그 0 · 로스터 이름 불일치 0 · player_tags null 0 → 이 필터로 유실 0.
  */
-export function isTeamOnlyPost(post: Post, teamId: number): boolean {
-  const scope = resolvePostScope(scopeInputForPost(post));
-  return (scope.kind === "team" || scope.kind === "player") && scope.teamId === teamId;
+export function teamOnlyPlayerTagsValue(slug: string): string {
+  return JSON.stringify(kboIdsForTeamSlug(slug).map((kboId) => `${kboId}:${playerNameForKboId(kboId) ?? ""}`));
+}
+
+/** PostgREST `not.in.(…)` 값. 문자열(uuid)은 큰따옴표로 감싼다. */
+export function notInListValue(values: ReadonlyArray<string | number>): string {
+  return `(${values.map((v) => (typeof v === "number" ? String(v) : `"${v}"`)).join(",")})`;
 }
 
 /** 행 → 커서. 생성 컬럼이 select 에 없거나 null 이면(마이그레이션 전) 카운터 합으로 대체. */
@@ -67,77 +63,8 @@ export function cursorOf(post: Post): PopularCursor {
   return { popularity, id: post.id };
 }
 
-/** 서버 한 묶음 읽기 — 커서 다음부터 `limit` 행. 실패는 throw(호출자가 오류/소진을 구분한다). */
-export type FetchBatch = (cursor: PopularCursor | null, limit: number) => Promise<Post[]>;
-
-/** 한 번의 채우기 결과. `exhausted` = 창 안에 다음 적합 글이 더 없음이 서버 응답으로 확인됨. */
-export type FillResult = { rows: Post[]; cursor: PopularCursor | null; exhausted: boolean };
-
-/**
- * 화면에 실제로 보일 글을 `want` 개 채운다(삼순 #1343 ②③ — 순수 함수로 분리해 게이트가 직접 실행).
- *
- * - 서버는 `want + 1` 행을 읽어 마지막 1행을 "다음 글 존재" 확인용으로 쓴다. 정확히 5·20·35건이면
- *   확인 행이 비어 그 자리에서 exhausted=true → 버튼이 즉시 숨는다.
- * - `isVisible` 을 통과하고 `seen` 에 없는 행만 담는다. 한 묶음이 전부 탈락해도 마지막 행 커서로
- *   이어 읽어 `want` 를 채운다(최대 MAX_FILL_BATCHES 회).
- * - 커서는 항상 **마지막으로 소비한 행**(want 를 채운 행)이다. 그 뒤에 남은 행은 다음 호출이 다시 읽는다.
- * - 조회 오류는 그대로 throw — 호출자가 커서/hasMore 를 보존해 재시도 가능하게 한다.
- */
-export async function fillVisible(
-  fetchBatch: FetchBatch,
-  start: PopularCursor | null,
-  want: number,
-  isVisible: (post: Post) => boolean,
-  seen: ReadonlySet<number>,
-  maxBatches: number = MAX_FILL_BATCHES,
-): Promise<FillResult> {
-  const rows: Post[] = [];
-  const picked = new Set<number>();
-  const eligible = (p: Post) => !seen.has(p.id) && !picked.has(p.id) && isVisible(p);
-  let cursor = start;
-  for (let batch = 0; ; batch++) {
-    const need = want - rows.length;
-    const fetched = await fetchBatch(cursor, need + 1);
-    const hasBeyond = fetched.length > need;
-    const page = hasBeyond ? fetched.slice(0, need) : fetched;
-    let consumedTo = page.length ? page.length - 1 : -1;
-    for (let i = 0; i < page.length; i++) {
-      const p = page[i];
-      if (!eligible(p)) continue;
-      picked.add(p.id);
-      rows.push(p);
-      if (rows.length === want) {
-        consumedTo = i;
-        break;
-      }
-    }
-    if (consumedTo >= 0) cursor = cursorOf(page[consumedTo]);
-    if (rows.length === want) {
-      // 채웠다. 소진은 raw 행이 아니라 **다음 적합 글 존재**로 판정한다(삼순 #1343 3차 ③):
-      // 소비한 행 뒤에 남은 행(같은 묶음의 나머지 + 확인 행) 중 적합 글이 있으면 hasMore.
-      // 남은 행이 전부 부적합인데 서버에 더 있을 수 있으면(확인 행까지 부적합) 뒤를 더 읽어 확인한다 —
-      // 반환 커서는 마지막 소비 행 그대로라 다음 '더 보기'가 그 행들을 다시 읽어도 누락은 없다.
-      const rest = [...page.slice(consumedTo + 1), ...fetched.slice(page.length)];
-      if (rest.some(eligible)) return { rows, cursor, exhausted: false };
-      if (!hasBeyond) return { rows, cursor, exhausted: true };
-      let probe = cursorOf(fetched[fetched.length - 1]);
-      for (;;) {
-        const more = await fetchBatch(probe, want + 1);
-        if (more.some(eligible)) return { rows, cursor, exhausted: false };
-        if (more.length < want + 1) return { rows, cursor, exhausted: true };
-        probe = cursorOf(more[more.length - 1]);
-      }
-    }
-    if (!hasBeyond) return { rows, cursor, exhausted: true };
-    // 묶음을 다 봤는데 아직 모자라고 뒤에 더 있다 → 확인 행부터 이어 읽는다(확인 행은 아직 안 봤으므로
-    // 커서는 소비한 마지막 행 = page 의 끝).
-    cursor = cursorOf(page[page.length - 1]);
-    // 상한은 **최소 1건을 채운 뒤**에만 적용한다(삼순 #1343 3차 ①) — 0행·hasMore=true 로 돌려주면 섹션이
-    // 통째로 숨어 21번째 적합 글로 이어갈 길이 없다. 0행이면 적합 글이 나오거나 창이 소진될 때까지 계속 읽는다
-    // (매 묶음 커서가 전진하므로 유한).
-    if (rows.length > 0 && batch + 1 >= maxBatches) return { rows, cursor, exhausted: false };
-  }
-}
+/** 한 페이지 결과 — 서버가 이미 노출 조건을 전부 걸렀으므로 rows 가 곧 화면 글이다. */
+export type PopularPage = { rows: Post[]; hasMore: boolean };
 
 /**
  * 홈 '커뮤니티 인기글' 훅 — 최근 7일 글을 인기도(하트+댓글) 순으로, `initialSize` 개 먼저 보여주고
@@ -152,13 +79,14 @@ export function useHomePopularFeed(board: FeedBoard, initialSize: number, stepSi
 /**
  * 차단 목록을 주입받는 코어(회귀 게이트가 AuthProvider 없이 직접 마운트한다).
  *
- * 삼순 #1343 재리뷰 반영:
- *  ① 응답 세대(genRef) — 팀 전환·새로고침·pull-to-refresh 마다 세대를 올리고, 늦게 도착한 옛 응답은
- *     posts/cursor/hasMore/loading 어느 것도 갱신하지 못한다(초기 조회·더보기·reload 모두).
- *  ② 오류·소진 분리 — 조회 실패는 cursor/hasMore 를 보존해 재시도 가능하게 두고, 소진은 서버가
- *     "다음 글 없음" 을 돌려줬을 때만(fillVisible 확인 행) 확정한다.
- *  ③ 화면 글 수 채우기 — 단독 공개·차단·중복 재확인 후 실제 보이는 글이 5/15개가 되도록 fillVisible 이
- *     이어 읽는다. 차단 목록이 늦게 도착해 첫 묶음이 뒤늦게 탈락하는 경우도 첫 페이지를 다시 채운다.
+ * 설계 A(하린아빠 2026-09-05 15:16 선택, 삼순 #1343 4차): **페이지당 서버 조회 1회, 정확히 5/15개, 정확 소진.**
+ * 노출 조건은 전부 서버 필터로 건다 — 클라이언트에서 걸러내는 행이 없으므로 부분 채움·보충 조회·무한 보충이 없다.
+ *  - 최애팀 단독: team_tags = [최애팀] AND player_tags ⊆ 최애팀 로스터 태그(`cd`)
+ *  - 차단 작성자: author_id not.in (차단 목록) — 목록이 늦게 도착하면 첫 페이지를 다시 읽는다
+ *  - 순위 이동 재등장: id not.in (화면에 있는 id) — 더보기에서만
+ *  - 소진: `want + 1` 행을 읽어 마지막 1행이 있으면 hasMore. 정확히 5·20·35건이면 즉시 false
+ *  - 응답 세대(genRef): 팀 전환·reload·언마운트마다 +1, 옛 응답은 posts/cursor/hasMore/loading 을 못 건드린다
+ *  - 오류: throw 로 올려 cursor/hasMore 보존(버튼 유지·같은 커서로 재시도)
  */
 export function useHomePopularFeedCore(
   board: FeedBoard,
@@ -172,9 +100,7 @@ export function useHomePopularFeedCore(
   const [hasMore, setHasMore] = useState(true);
 
   const key = board.kind === "team" ? `team:${board.teamId}` : board.kind === "player" ? `player:${board.kboId}` : "all";
-  // 최애팀 단독 판정용 팀 id(팀 보드일 때만). slug 가 정규 구단이 아니면 null → 클라이언트 재확인은 건너뛴다.
-  const teamOnlyId = board.kind === "team" ? (getTeamBySlug(board.teamId)?.id ?? null) : null;
-  // 차단 목록은 Set 참조가 매 refresh 바뀌므로 내용 서명으로 안정화 — 내용이 바뀔 때만 첫 페이지를 다시 채운다.
+  // 차단 목록은 Set 참조가 매 refresh 바뀌므로 내용 서명으로 안정화 — 내용이 바뀔 때만 첫 페이지를 다시 읽는다.
   const blockedSig = useMemo(() => Array.from(blockedIds).sort().join(","), [blockedIds]);
   const blockedRef = useRef(blockedIds);
   blockedRef.current = blockedIds;
@@ -186,9 +112,9 @@ export function useHomePopularFeedCore(
   // 창 시작은 페이지 사이에서 고정 — 매 페이지 now() 를 다시 잡으면 경계 글이 빠지며 keyset 이 어긋난다.
   const windowStartRef = useRef<string>(popularWindowStart());
 
-  const fetchBatch = useCallback<FetchBatch>(
-    async (cursor, limit) => {
-      // query-guard: bounded -- (popularity,id) keyset + .limit(limit) + created_at 7일 창.
+  const fetchPage = useCallback(
+    async (cursor: PopularCursor | null, want: number, seenIds: ReadonlyArray<number>): Promise<PopularPage> => {
+      // query-guard: bounded -- (popularity,id) keyset + .limit(want+1) + created_at 7일 창.
       let query = supabase
         .from("posts")
         // popularity 는 홈 인기글만 쓰는 생성 컬럼 — 공통 FEED_SELECT 에 넣으면 마이그레이션 전 preview 에서
@@ -196,27 +122,31 @@ export function useHomePopularFeedCore(
         .select(`${FEED_SELECT}, popularity`)
         .neq("is_hidden", true)
         .gte("created_at", windowStartRef.current);
-      // 팀 보드 = 최애팀 **단독** 공개 글만(team_tags 가 정확히 [최애팀]). 팀 피드의 포함(cs) 필터인
-      // applyBoardFilter 는 전체구단 공개·다팀 글까지 잡아 스펙과 어긋난다 — 최애팀 미선택(all)일 때만 공용 필터.
-      query = board.kind === "team" ? query.filter("team_tags", "eq", teamOnlyTagsValue(board.teamId)) : applyBoardFilter(query, board);
+      if (board.kind === "team") {
+        // 최애팀 **단독** 공개 글만: team_tags 가 정확히 [최애팀] AND 선수 태그가 전부 최애팀 로스터.
+        // 팀 피드의 포함(cs) 필터인 applyBoardFilter 는 전체구단 공개·다팀 글까지 잡아 스펙과 어긋난다.
+        query = query
+          .filter("team_tags", "eq", teamOnlyTagsValue(board.teamId))
+          .filter("player_tags", "cd", teamOnlyPlayerTagsValue(board.teamId));
+      } else {
+        query = applyBoardFilter(query, board);
+      }
+      const blocked = Array.from(blockedRef.current);
+      if (blocked.length) query = query.not("author_id", "in", notInListValue(blocked));
+      if (seenIds.length) query = query.not("id", "in", notInListValue(seenIds));
       if (cursor) query = query.or(popularCursorFilter(cursor));
       const { data, error } = await query
         .order("popularity", { ascending: false })
         .order("id", { ascending: false })
-        .limit(limit);
+        .limit(want + 1);
       // 조회 오류는 소진이 아니다 — throw 해서 호출자가 커서/hasMore 를 보존하게 한다(삼순 #1343 ②).
       if (error) throw error;
-      return (data ?? []).map((r) => mapFeedRow(r as Record<string, unknown>));
+      const fetched = (data ?? []).map((r) => mapFeedRow(r as Record<string, unknown>));
+      return { rows: fetched.slice(0, want), hasMore: fetched.length > want };
     },
-    // board 는 매 렌더 새 객체라 안정 키(key)로 대체(teamOnlyId 는 key 에서 파생).
+    // board 는 매 렌더 새 객체라 안정 키(key)로 대체.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [key],
-  );
-
-  // 화면 노출 판정 = 최애팀 단독(배지 SSOT) AND 비차단. 차단 목록은 ref 로 읽어 채우기 도중 최신값을 쓴다.
-  const isVisible = useCallback(
-    (p: Post) => !blockedRef.current.has(p.author_id) && (teamOnlyId == null || isTeamOnlyPost(p, teamOnlyId)),
-    [teamOnlyId],
   );
 
   /** 첫 페이지. 세대를 올려 진행 중이던 초기 조회·더보기 응답을 전부 무효화한다. */
@@ -227,9 +157,9 @@ export function useHomePopularFeedCore(
     setLoadingMore(false);
     setLoading(true);
     windowStartRef.current = popularWindowStart();
-    let result: FillResult;
+    let page: PopularPage;
     try {
-      result = await fillVisible(fetchBatch, null, initialSize, isVisible, new Set());
+      page = await fetchPage(null, initialSize, []);
     } catch {
       if (gen !== genRef.current) return;
       // 첫 조회 실패: 섹션은 비우되 hasMore 는 남겨 pull-to-refresh(reload)가 다시 시도할 수 있게 한다.
@@ -239,13 +169,13 @@ export function useHomePopularFeedCore(
       return;
     }
     if (gen !== genRef.current) return; // 옛 세대 응답 폐기(삼순 #1343 ①)
-    cursorRef.current = result.cursor;
-    setPosts(result.rows);
-    setHasMore(!result.exhausted);
+    cursorRef.current = page.rows.length ? cursorOf(page.rows[page.rows.length - 1]) : null;
+    setPosts(page.rows);
+    setHasMore(page.hasMore);
     setLoading(false);
-  }, [fetchBatch, initialSize, isVisible]);
+  }, [fetchPage, initialSize]);
 
-  // blockedSig: 차단 목록 내용이 바뀌면(로그인 직후 늦게 도착 포함) 첫 페이지를 다시 채운다(삼순 #1343 ③).
+  // blockedSig: 차단 목록 내용이 바뀌면(로그인 직후 늦게 도착 포함) 서버 필터를 바꿔 첫 페이지를 다시 읽는다.
   useEffect(() => {
     const gen = genRef;
     void loadFirst();
@@ -261,13 +191,12 @@ export function useHomePopularFeedCore(
     fetchingRef.current = true;
     setLoadingMore(true);
     try {
-      // 인기도는 실시간으로 바뀌므로 페이지 사이에 순위가 움직인 글이 재등장할 수 있다 → 화면의 id 로 dedupe.
-      const seen = new Set(posts.map((p) => p.id));
-      const result = await fillVisible(fetchBatch, cursorRef.current, stepSize, isVisible, seen);
+      // 인기도는 실시간으로 바뀌므로 페이지 사이에 순위가 내려간 글이 커서 뒤에 재등장할 수 있다 → 화면 id 는 서버에서 제외.
+      const page = await fetchPage(cursorRef.current, stepSize, posts.map((p) => p.id));
       if (gen !== genRef.current) return; // 팀 전환·새로고침이 끼어들었다 → 옛 더보기 응답 폐기(삼순 #1343 ①)
-      cursorRef.current = result.cursor;
-      setPosts((prev) => [...prev, ...result.rows]);
-      setHasMore(!result.exhausted);
+      if (page.rows.length) cursorRef.current = cursorOf(page.rows[page.rows.length - 1]);
+      setPosts((prev) => [...prev, ...page.rows]);
+      setHasMore(page.hasMore);
     } catch {
       // 조회 실패: cursor/hasMore 그대로 → 버튼이 남아 재시도할 수 있다(삼순 #1343 ②).
     } finally {
@@ -277,7 +206,7 @@ export function useHomePopularFeedCore(
         setLoadingMore(false);
       }
     }
-  }, [hasMore, loading, posts, fetchBatch, stepSize, isVisible]);
+  }, [hasMore, loading, posts, fetchPage, stepSize]);
 
   return {
     posts,
