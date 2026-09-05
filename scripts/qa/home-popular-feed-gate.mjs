@@ -12,6 +12,9 @@
  *  H5. 홈 섹션 배선 — CommunityLatestPosts 가 useHomePopularFeed 를 쓰고, '접기'가 없으며
  *      hasMore 일 때만 '15개 더 보기' 를 그리고, 하단 링크 문구는 '커뮤니티 최신글 보기'(경로 동일).
  *  H6. 마이그레이션 — popularity 는 coalesce(like,0)+coalesce(comment,0) STORED 생성 컬럼.
+ *  H7. 최애팀 **단독** 공개만(하린아빠 2026-09-05 추가 스펙) — 팀 보드는 team_tags = [최애팀] jsonb eq 로
+ *      서버 필터하고(포함 cs 필터 금지), 배지 SSOT(resolvePostScope)로 단일팀=최애팀을 재확인한다.
+ *      hasMore/커서는 서버가 돌려준 행 수 기준(재확인으로 빠진 행이 있어도 keyset 전진).
  *
  * 순수 함수는 직접 실행하고 배선만 소스 검사한다. 소스 검사 구간은 주석을 blank 처리해
  * "주석이 assertion 을 만족시키는" false-green 을 차단한다.
@@ -48,7 +51,7 @@ const HOOK = "src/lib/supabase/useHomePopularFeed.ts";
 const SECTION = "src/components/home/CommunityLatestPosts.tsx";
 const MIGRATION = "supabase/migrations/20260905043000_posts_popularity.sql";
 
-const { popularCursorFilter, popularWindowStart, cursorOf, POPULAR_WINDOW_DAYS } = await import(
+const { popularCursorFilter, popularWindowStart, cursorOf, POPULAR_WINDOW_DAYS, teamOnlyTagsValue, isTeamOnlyPost } = await import(
   "../../" + HOOK
 );
 
@@ -74,11 +77,28 @@ check("H3-fallback", cursorOf({ id: 9, like_count: 2, comment_count: 3 }).popula
 check("H3-column", cursorOf({ id: 9, like_count: 2, comment_count: 3, popularity: 11 }).popularity === 11, "생성 컬럼 값을 무시했다");
 check("H3-null", cursorOf({ id: 9, like_count: 2, comment_count: 3, popularity: null }).popularity === 5, "popularity null 이 NaN/null 로 샜다");
 
+console.log("── H7 최애팀 단독 공개 판정(순수)");
+check("H7-eq-value", teamOnlyTagsValue("lg") === '["lg"]', `→ ${teamOnlyTagsValue("lg")}`);
+// LG(id 1) 기준. 배지 SSOT(resolvePostScope)와 같은 판정이어야 한다.
+const LG = 1;
+check("H7-only", isTeamOnlyPost({ id: 1, team_tags: ["lg"], player_tags: [] }, LG) === true, "[lg] 단독이 통과하지 않는다");
+check("H7-only-player", isTeamOnlyPost({ id: 1, team_tags: ["lg"], player_tags: ["79109:오지환"] }, LG) === true, "[lg]+LG 선수 태그가 통과하지 않는다");
+check("H7-multi", isTeamOnlyPost({ id: 1, team_tags: ["lg", "doosan"], player_tags: [] }, LG) === false, "다팀(최애팀 포함)이 통과했다");
+check("H7-all", isTeamOnlyPost({ id: 1, team_tags: ["lg", "doosan", "kt", "ssg", "nc", "kia", "lotte", "samsung", "hanwha", "kiwoom"], player_tags: [] }, LG) === false, "전체구단 공개가 통과했다");
+check("H7-other-team", isTeamOnlyPost({ id: 1, team_tags: ["doosan"], player_tags: [] }, LG) === false, "다른 팀 단독이 통과했다");
+check("H7-empty", isTeamOnlyPost({ id: 1, team_tags: [], player_tags: [] }, LG) === false, "무태그(전체구단 개념)가 통과했다");
+
 console.log("── H4 쿼리 배선(소스)");
 const hook = readStripped(HOOK);
 check("H4-window", /\.gte\("created_at",\s*windowStartRef\.current\)/.test(hook), "created_at ≥ 창 시작 필터 없음");
 check("H4-window-fixed", /windowStartRef\s*=\s*useRef/.test(hook), "창 시작이 ref 로 고정되지 않음");
-check("H4-board", /applyBoardFilter\(query,\s*board\)/.test(hook), "보드(최애팀) 필터 미적용");
+check(
+  "H4-team-only",
+  /board\.kind\s*===\s*"team"\s*\?\s*query\.filter\("team_tags",\s*"eq",\s*teamOnlyTagsValue\(board\.teamId\)\)\s*:\s*applyBoardFilter\(query,\s*board\)/.test(hook),
+  "팀 보드가 team_tags = [최애팀] 단독 필터가 아니다(포함 필터 applyBoardFilter 로 회귀)",
+);
+check("H4-team-only-client", /all\.filter\(\(p\)\s*=>\s*isTeamOnlyPost\(p,\s*teamOnlyId\)\)/.test(hook), "배지 SSOT 재확인(isTeamOnlyPost) 미적용");
+check("H4-hasmore-fetched", /setHasMore\(page\.fetched\s*===\s*initialSize\)/.test(hook) && /setHasMore\(page\.fetched\s*===\s*stepSize\)/.test(hook), "hasMore 가 서버 행 수(fetched)가 아니라 필터 후 행 수로 판정된다");
 check("H4-hidden", /\.neq\("is_hidden",\s*true\)/.test(hook), "숨김 글 제외 없음");
 check(
   "H4-order",
@@ -124,6 +144,8 @@ if (SELFTEST) {
     ["S4-collapse-back", SECTION, "{HOME_POPULAR_STEP}개 더 보기", "접기", "'접기' 부활"],
     ["S5-link-label", SECTION, "커뮤니티 최신글 보기", "커뮤니티 더보기", "하단 링크 문구 회귀"],
     ["S6-migration-expr", MIGRATION, "coalesce(like_count, 0) + coalesce(comment_count, 0)", "coalesce(like_count, 0)", "인기도에서 댓글수 누락"],
+    ["S7-team-cs", HOOK, 'query.filter("team_tags", "eq", teamOnlyTagsValue(board.teamId))', "applyBoardFilter(query, board)", "최애팀 포함(cs) 필터로 회귀 → 전체구단 공개 글 재노출"],
+    ["S8-scope-multi", HOOK, 'return (scope.kind === "team" || scope.kind === "player") && scope.teamId === teamId;', "return true;", "배지 SSOT 재확인 무력화 → 타팀 선수 태그 섞인 글 노출"],
   ];
   let selftestFailed = 0;
   for (const [id, rel, anchor, replace, desc] of MUTATIONS) {

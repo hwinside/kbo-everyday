@@ -288,8 +288,8 @@ function PostRow({ post }: { post: Post }) {
  * 종전 '최신글' 대체). 정렬·페이징은 useHomePopularFeed(popularity 생성 컬럼 keyset).
  */
 export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
-  // 홈 인기글은 '최애팀 태그된 글'만 노출(하린아빠 스펙 2026-07-25, 최신글 시절부터 유지). 전체글이 너무 많아진 데 대한 대응.
-  // 최애팀이 있으면 팀 피드(team_tags·해당 팀 선수 태그·레거시 팀/선수 보드 OR 쿼리)로 서버 필터,
+  // 홈 인기글은 '최애팀 **단독** 공개' 글만 노출(하린아빠 스펙 2026-09-05: 최애팀까지 포함한 다팀·전체구단
+  // 공개 글은 제외). 최애팀이 있으면 useHomePopularFeed 가 team_tags = [최애팀] 로 서버 필터 후 배지 SSOT 로 재확인,
   // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
   const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
   const myTeamSlug = myTeam?.slug ?? null;
