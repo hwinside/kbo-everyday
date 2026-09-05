@@ -28,9 +28,32 @@ async function main() {
 
   const calls: string[] = [];
   let responseStatus = 200;
+  let deferStickerLoadMore = false;
+  let resolveStickerLoadMore: ((response: Response) => void) | undefined;
+  const stickerPage = Array.from({ length: 20 }, (_, index) => ({
+    id: `sticker-${index}`,
+    title: `Sticker ${index}`,
+    images: {
+      fixed_width_small: { url: `https://media.giphy.com/${index}.gif`, width: "100", height: "100" },
+      fixed_width_small_still: { url: `https://media.giphy.com/${index}.png`, width: "100", height: "100" },
+      original_still: { url: `https://media.giphy.com/${index}.png`, width: "100", height: "100" },
+      original: { url: `https://media.giphy.com/${index}.gif`, width: "100", height: "100" },
+      fixed_width: { url: `https://media.giphy.com/${index}.gif`, width: "100", height: "100" },
+    },
+  }));
   globalThis.fetch = (async (input: string | URL | Request) => {
-    calls.push(String(input));
-    return new Response(JSON.stringify({ data: responseStatus === 200 ? [] : undefined }), {
+    const url = String(input);
+    calls.push(url);
+    if (deferStickerLoadMore && url.includes("/v1/stickers/") && url.includes("offset=20")) {
+      return new Promise<Response>((resolve) => {
+        resolveStickerLoadMore = resolve;
+      });
+    }
+    const isStickerTrending = url.includes("/v1/stickers/trending");
+    return new Response(JSON.stringify({
+      data: responseStatus === 200 ? (isStickerTrending ? stickerPage : []) : undefined,
+      pagination: isStickerTrending ? { total_count: 40 } : undefined,
+    }), {
       status: responseStatus,
       headers: { "Content-Type": "application/json" },
     });
@@ -44,7 +67,11 @@ async function main() {
   await act(async () => {
     root.render(
       <StrictMode>
-        <GifPicker onSelect={() => undefined} onClose={() => undefined} />
+        <GifPicker
+          context="community_gif"
+          onSelect={() => undefined}
+          onClose={() => undefined}
+        />
       </StrictMode>,
     );
   });
@@ -134,6 +161,28 @@ async function main() {
   assert.equal(calls.length, 4, "StrictMode sticker panel must issue one Trending request");
   assert.match(calls[3], /\/v1\/stickers\/trending/);
 
+  const loadMore = Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === "더보기",
+  );
+  assert.ok(loadMore);
+  deferStickerLoadMore = true;
+  await act(async () => {
+    loadMore.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    loadMore.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+  });
+  assert.equal(calls.length, 5, "identical concurrent requests must share one network call");
+  assert.match(calls[4], /\/v1\/stickers\/trending.*offset=20/);
+  assert.ok(resolveStickerLoadMore);
+  await act(async () => {
+    resolveStickerLoadMore?.(new Response(JSON.stringify({
+      data: [],
+      pagination: { total_count: 40 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    await Promise.resolve();
+  });
+  deferStickerLoadMore = false;
+
   const stickerInput = container.querySelector("input");
   assert.ok(stickerInput);
   await act(async () => {
@@ -143,8 +192,8 @@ async function main() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 750));
   });
-  assert.equal(calls.length, 5, "settled sticker search must issue one request");
-  assert.match(calls[4], /\/v1\/stickers\/search/);
+  assert.equal(calls.length, 6, "settled sticker search must issue one request");
+  assert.match(calls[5], /\/v1\/stickers\/search/);
 
   await act(async () => stickerRoot.unmount());
   console.log("PASS giphy request budget render smoke");

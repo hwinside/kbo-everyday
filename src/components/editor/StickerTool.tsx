@@ -7,6 +7,7 @@ import { trackEvent } from "@/lib/analytics";
 import {
   GIPHY_MIN_QUERY_LENGTH,
   GIPHY_SEARCH_DEBOUNCE_MS,
+  getGiphyApiKey,
   getGiphyCooldownRemainingMs,
   hashGiphyQuery,
   normalizeGiphyQuery,
@@ -36,11 +37,10 @@ interface StickerToolProps {
   addImage: (url: string) => Promise<unknown>;
 }
 
-const GIPHY_API_KEY =
-  process.env.NEXT_PUBLIC_GIPHY_STICKERS_API_KEY ?? process.env.NEXT_PUBLIC_GIPHY_API_KEY;
 const GIPHY_CONTEXT = "editor_sticker" as const;
 
 export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
+  const giphyApiKey = getGiphyApiKey(GIPHY_CONTEXT);
   const [tab, setTab] = useState<"default" | "giphy">("default");
   const [activeCategory, setActiveCategory] = useState(STICKER_CATEGORIES[0].id);
 
@@ -58,7 +58,7 @@ export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
         >
           기본 스티커
         </button>
-        {GIPHY_API_KEY && (
+        {giphyApiKey && (
           <button
             onClick={() => setTab("giphy")}
             className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${
@@ -132,7 +132,8 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
   const hasRequestedTrendingRef = useRef(false);
 
   const fetchStickers = useCallback(async (searchQuery: string, offset = 0) => {
-    if (!GIPHY_API_KEY) return;
+    const apiKey = getGiphyApiKey(GIPHY_CONTEXT);
+    if (!apiKey) return;
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
     const endpointName = normalizedQuery ? "search" : "trending";
     const requestKey = `${endpointName}:${normalizedQuery}:${offset}`;
@@ -164,8 +165,8 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
 
     try {
       const base = normalizedQuery
-        ? `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(normalizedQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
-        : `https://api.giphy.com/v1/stickers/trending?api_key=${GIPHY_API_KEY}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
+        ? `https://api.giphy.com/v1/stickers/search?api_key=${apiKey}&q=${encodeURIComponent(normalizedQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
+        : `https://api.giphy.com/v1/stickers/trending?api_key=${apiKey}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
       const res = await fetch(base, { signal: controller.signal, cache: "no-store" });
       responseStatus = res.status;
       if (res.status === 429) {

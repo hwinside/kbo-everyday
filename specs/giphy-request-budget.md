@@ -25,9 +25,20 @@ Reduce avoidable GIPHY Search API requests while keeping the integration complia
 
 ## Keys
 
-- Community GIFs prefer `NEXT_PUBLIC_GIPHY_GIFS_API_KEY`.
-- Meme-editor stickers prefer `NEXT_PUBLIC_GIPHY_STICKERS_API_KEY`.
-- `NEXT_PUBLIC_GIPHY_API_KEY` remains a temporary fallback so deployment can migrate without disabling the feature.
+- GIPHY usage is split by platform (`WEB`, `IOS`, `ANDROID`) and section
+  (`COMMUNITY`, `GAME_CHAT`, `STICKERS`), for nine keys in total.
+- Community comments and GameChat share the `GifPicker` implementation but pass distinct request contexts.
+- The nine primary variables follow
+  `NEXT_PUBLIC_GIPHY_{WEB|IOS|ANDROID}_{COMMUNITY|GAME_CHAT|STICKERS}_API_KEY`.
+- `NEXT_PUBLIC_GIPHY_GIFS_API_KEY`, `NEXT_PUBLIC_GIPHY_STICKERS_API_KEY`, and
+  `NEXT_PUBLIC_GIPHY_API_KEY` remain temporary fallbacks so an incomplete rollout does not disable the UI.
+- **Deployment prerequisite:** provision and register all nine primary variables in Vercel before production rollout.
+  Until that is done, fallback traffic can still share the legacy 100 requests/hour budget, so this change alone
+  does not increase production capacity.
+
+## Attribution
+
+- `Powered by GIPHY` remains rendered in both `GifPicker` and the editor `GiphyPanel`.
 
 ## Observability
 
