@@ -94,6 +94,7 @@ async function explainInline(label, q, beforeId) {
 (async () => {
   console.log(`커뮤니티 검색 성능 게이트 — N=${N}, 기준 p95≤${P95_MS}ms, p50≤대조군×${RATIO}`);
 
+  // query-guard: bounded -- 대조군 = useUnifiedFeed 일반 피드 1페이지와 동일 쿼리(id desc, .limit(20) 고정, 1페이지만 측정).
   const baseline = await timeIt("대조군: 일반 피드 1페이지", () =>
     anon.from("posts").select(SELECT).neq("is_hidden", true).in("board_type", ["team", "player", "free", "poll"]).order("id", { ascending: false }).limit(20),
   );

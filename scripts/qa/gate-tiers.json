@@ -204,6 +204,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:community-search",
+      "tier": "ci"
+    },
+    {
       "name": "qa:foreign-photo",
       "tier": "ci"
     },
