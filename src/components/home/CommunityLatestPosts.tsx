@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, ChevronDown, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
-import type { FeedBoard } from "@/lib/supabase/useUnifiedFeed";
-import { useHomePopularFeed } from "@/lib/supabase/useHomePopularFeed";
+import { useHomePopularFeed, type HomePopularBoard } from "@/lib/supabase/useHomePopularFeed";
+
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamById } from "@/lib/constants/teams";
@@ -293,7 +293,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
   const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
   const myTeamSlug = myTeam?.slug ?? null;
-  const board: FeedBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
+  const board: HomePopularBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
   // 최애팀 필터 적용 중임을 타이틀에 명시: '커뮤니티 인기글(LG)'. 미선택 시 괄호 없음.
   const sectionTitle = myTeam ? `커뮤니티 인기글(${myTeam.shortName})` : "커뮤니티 인기글";
   const { posts, loading, loadingMore, hasMore, loadMore, reload } = useHomePopularFeed(board, HOME_POPULAR_INITIAL, HOME_POPULAR_STEP);
