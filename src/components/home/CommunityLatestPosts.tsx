@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { MessageCircle, Heart, ChevronRight, ChevronDown, ChevronUp, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
-import { useUnifiedFeed, type FeedBoard } from "@/lib/supabase/useUnifiedFeed";
+import { MessageCircle, Heart, ChevronRight, ChevronDown, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
+import type { FeedBoard } from "@/lib/supabase/useUnifiedFeed";
+import { useHomePopularFeed } from "@/lib/supabase/useHomePopularFeed";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
 import { getTeamById } from "@/lib/constants/teams";
@@ -18,10 +19,11 @@ import type { Post } from "@/lib/supabase/usePosts";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
-const HOME_LATEST_COUNT = 20;
-// 홈 최신글 접힘 기본 노출 수. 20개 전량은 목록만 ~1,520px라 스크롤 부담(삼순 리뷰).
-// 기본 5개만 노출하고 '15개 더 보기/접기'로 나머지를 토글한다.
-const HOME_LATEST_COLLAPSED = 5;
+// 홈 인기글 기본 노출 수. 20개 전량은 목록만 ~1,520px라 스크롤 부담(삼순 리뷰) → 5개.
+const HOME_POPULAR_INITIAL = 5;
+// '15개 더 보기' 1회당 이어 붙이는 수. 접기 없이 누를 때마다 계속 이어 붙인다(5 → 20 → 35 …,
+// 최근 7일 글이 소진되면 버튼 숨김) — 하린아빠 스펙 2026-09-05.
+const HOME_POPULAR_STEP = 15;
 
 // 홈 최신글에서 글을 열었다는 표식(sessionStorage, pending). 클릭 시점엔 아직
 // "뒤로가기로 돌아왔는지" 알 수 없으므로 대기 상태로만 남긴다.
@@ -281,29 +283,28 @@ function PostRow({ post }: { post: Post }) {
 }
 
 /**
- * 홈 '커뮤니티 최신글' 섹션 — 커뮤니티 유입 레버.
- * 전체 통합피드(자유+팀+선수) 최신 HOME_LATEST_COUNT개를 세로 compact 리스트로 노출.
- * 신규 API·테이블 없이 useUnifiedFeed를 재사용한다.
+ * 홈 '커뮤니티 인기글' 섹션 — 커뮤니티 유입 레버.
+ * 최근 7일 글을 인기도(하트+댓글) 순으로 세로 compact 리스트로 노출(하린아빠 스펙 2026-09-05,
+ * 종전 '최신글' 대체). 정렬·페이징은 useHomePopularFeed(popularity 생성 컬럼 keyset).
  */
 export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
-  // 홈 최신글은 '최애팀 태그된 글'만 노출(하린아빠 스펙 2026-07-25). 전체글이 너무 많아진 데 대한 대응.
+  // 홈 인기글은 '최애팀 태그된 글'만 노출(하린아빠 스펙 2026-07-25, 최신글 시절부터 유지). 전체글이 너무 많아진 데 대한 대응.
   // 최애팀이 있으면 팀 피드(team_tags·해당 팀 선수 태그·레거시 팀/선수 보드 OR 쿼리)로 서버 필터,
   // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
   const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
   const myTeamSlug = myTeam?.slug ?? null;
   const board: FeedBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
-  // 최애팀 필터 적용 중임을 타이틀에 명시: '커뮤니티 최신글(LG)'. 미선택 시 괄호 없음.
-  const sectionTitle = myTeam ? `커뮤니티 최신글(${myTeam.shortName})` : "커뮤니티 최신글";
-  const { posts, loading, reload } = useUnifiedFeed(board, HOME_LATEST_COUNT);
+  // 최애팀 필터 적용 중임을 타이틀에 명시: '커뮤니티 인기글(LG)'. 미선택 시 괄호 없음.
+  const sectionTitle = myTeam ? `커뮤니티 인기글(${myTeam.shortName})` : "커뮤니티 인기글";
+  const { posts, loading, loadingMore, hasMore, loadMore, reload } = useHomePopularFeed(board, HOME_POPULAR_INITIAL, HOME_POPULAR_STEP);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
-  const [expanded, setExpanded] = useState(false);
   const sectionRef = useRef<HTMLElement | null>(null);
   const didFocusRef = useRef(false);
 
   const showList = !loading && posts.length > 0;
 
-  // Pull-to-refresh: refreshNonce가 증가하면 통합피드를 실제로 재조회(reload). 초기 mount(0)엔 미호출.
+  // Pull-to-refresh: refreshNonce가 증가하면 인기글을 실제로 재조회(reload, 첫 페이지로 복귀). 초기 mount(0)엔 미호출.
   useEffect(() => {
     if (refreshNonce > 0) reload();
     // reload identity 변동으로인 중복 호출 방지 — nonce 변경 시에만 1회.
@@ -351,10 +352,6 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;
 
-  const latest = posts.slice(0, HOME_LATEST_COUNT);
-  const visible = expanded ? latest : latest.slice(0, HOME_LATEST_COLLAPSED);
-  const hiddenCount = latest.length - HOME_LATEST_COLLAPSED;
-
   return (
     <section ref={sectionRef} className="scroll-mt-4">
       <div className="flex items-center justify-between mb-1">
@@ -368,23 +365,21 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
       </div>
 
       <div className="divide-y divide-black/5 dark:divide-white/5">
-        {visible.map((post) => (
+        {posts.map((post) => (
           <PostRow key={post.id} post={post} />
         ))}
       </div>
 
-      {/* 기본 5개 노출, 나머지는 '더 보기/접기'로 토글(삼순 리뷰 — 20개 전량 스크롤 부담 완화). */}
-      {hiddenCount > 0 && (
+      {/* 기본 5개 노출, 누를 때마다 인기도 순으로 15개씩 이어 붙임(접기 없음). 7일 창 소진 시 숨김. */}
+      {hasMore && (
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="mt-1 flex items-center justify-center gap-1 w-full py-2 text-[13px] font-medium text-text-secondary active:opacity-70 transition-opacity"
+          onClick={() => void loadMore()}
+          disabled={loadingMore}
+          aria-busy={loadingMore}
+          className="mt-1 flex items-center justify-center gap-1 w-full py-2 text-[13px] font-medium text-text-secondary active:opacity-70 transition-opacity disabled:opacity-50"
         >
-          {expanded ? (
-            <>접기 <ChevronUp size={15} /></>
-          ) : (
-            <>{hiddenCount}개 더 보기 <ChevronDown size={15} /></>
-          )}
+          {HOME_POPULAR_STEP}개 더 보기 <ChevronDown size={15} />
         </button>
       )}
 
@@ -403,10 +398,10 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
         href="/community/all-posts"
         className="mt-2 flex items-center justify-center gap-1 w-full py-2.5 rounded-xl bg-bg-secondary text-[13px] font-medium text-text-secondary active:scale-[0.99] transition-transform"
       >
-        커뮤니티 더보기 <ChevronRight size={15} />
+        커뮤니티 최신글 보기 <ChevronRight size={15} />
       </Link>
 
-      {/* 페이지 이동 없이 그 자리에서 뜨는 글쓰기 플로우. 작성 성공 시 홈 최신글 즉시 갱신. */}
+      {/* 페이지 이동 없이 그 자리에서 뜨는 글쓰기 플로우. 작성 성공 시 홈 인기글 즉시 갱신. */}
       <CommunityWriteFlow mode={writeMode} onClose={() => setWriteMode(null)} onPosted={reload} />
     </section>
   );

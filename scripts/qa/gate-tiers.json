@@ -116,6 +116,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:home-popular-feed",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-popular-feed:selftest",
+      "tier": "ci"
+    },
+    {
       "name": "qa:career-metrics",
       "tier": "ci"
     },
