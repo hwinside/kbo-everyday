@@ -132,6 +132,7 @@ try {
   }
 
   // 서버 원장에도 기능 안내 라우팅이 남았는지(화면 ↔ 로그 일치).
+  // query-guard: bounded -- 이 QA 전용 테스트 계정 1명, CASES 문항 수(≤20건)로 자연 상한된 행만 대상.
   const { data: logs, error: logErr } = await admin
     .from("genius_question_logs").select("question, match_path, answer").eq("user_id", user.id).order("created_at", { ascending: true });
   if (logErr) console.log(`  (log 조회 실패: ${logErr.message})`);
