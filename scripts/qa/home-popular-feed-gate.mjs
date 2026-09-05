@@ -51,7 +51,7 @@ const HOOK = "src/lib/supabase/useHomePopularFeed.ts";
 const SECTION = "src/components/home/CommunityLatestPosts.tsx";
 const MIGRATION = "supabase/migrations/20260905043000_posts_popularity.sql";
 
-const { popularCursorFilter, popularWindowStart, cursorOf, POPULAR_WINDOW_DAYS, teamOnlyTagsValue, isTeamOnlyPost } = await import(
+const { popularCursorFilter, popularWindowStart, cursorOf, POPULAR_WINDOW_DAYS, teamOnlyTagsValue, isTeamOnlyPost, fillVisible, MAX_FILL_BATCHES } = await import(
   "../../" + HOOK
 );
 
@@ -97,8 +97,78 @@ check(
   /board\.kind\s*===\s*"team"\s*\?\s*query\.filter\("team_tags",\s*"eq",\s*teamOnlyTagsValue\(board\.teamId\)\)\s*:\s*applyBoardFilter\(query,\s*board\)/.test(hook),
   "팀 보드가 team_tags = [최애팀] 단독 필터가 아니다(포함 필터 applyBoardFilter 로 회귀)",
 );
-check("H4-team-only-client", /all\.filter\(\(p\)\s*=>\s*isTeamOnlyPost\(p,\s*teamOnlyId\)\)/.test(hook), "배지 SSOT 재확인(isTeamOnlyPost) 미적용");
-check("H4-hasmore-fetched", /setHasMore\(page\.fetched\s*===\s*initialSize\)/.test(hook) && /setHasMore\(page\.fetched\s*===\s*stepSize\)/.test(hook), "hasMore 가 서버 행 수(fetched)가 아니라 필터 후 행 수로 판정된다");
+check("H4-team-only-client", /teamOnlyId\s*==\s*null\s*\|\|\s*isTeamOnlyPost\(p,\s*teamOnlyId\)/.test(hook), "배지 SSOT 재확인(isTeamOnlyPost) 미적용");
+check("H4-blocked-visible", /!blockedRef\.current\.has\(p\.author_id\)/.test(hook), "차단 작성자가 채우기 판정(isVisible)에서 빠지지 않는다");
+check("H4-error-throw", /if\s*\(error\)\s*throw\s+error/.test(hook), "조회 오류를 throw 하지 않는다(오류가 소진으로 오판된다)");
+check("H4-fill-first", /fillVisible\(fetchBatch,\s*null,\s*initialSize,\s*isVisible,\s*new Set\(\)\)/.test(hook), "첫 페이지가 fillVisible 로 채워지지 않는다");
+check("H4-fill-more", /fillVisible\(fetchBatch,\s*cursorRef\.current,\s*stepSize,\s*isVisible,\s*seen\)/.test(hook), "더보기가 fillVisible 로 채워지지 않는다");
+check("H4-hasmore-exhausted", (hook.match(/setHasMore\(!result\.exhausted\)/g) ?? []).length === 2, "hasMore 가 fillVisible 의 소진 판정(exhausted)에서 오지 않는다");
+check("H4-gen-first", /const gen = \+\+genRef\.current/.test(hook) && (hook.match(/if \(gen !== genRef\.current\) return/g) ?? []).length >= 3, "첫 페이지 응답 세대 보호(genRef) 없음");
+check("H4-gen-more", /const gen = genRef\.current;[\s\S]*?fillVisible\(fetchBatch,\s*cursorRef\.current[\s\S]*?if \(gen !== genRef\.current\) return/.test(hook), "더보기 응답 세대 보호 없음");
+check("H4-gen-unmount", /const gen = genRef;[\s\S]*?return \(\) => \{\s*gen\.current\+\+;\s*\}/.test(hook), "언마운트·키 교체 시 세대를 올리지 않는다");
+check("H4-blocked-refill", /\[loadFirst,\s*blockedSig\]/.test(hook), "차단 목록 변경 시 첫 페이지를 다시 채우지 않는다");
+
+console.log("── F fillVisible(순수) — 소진·채우기·커서");
+const P = (id, popularity, author = `a${id}`) => ({ id, popularity, author_id: author, team_tags: ["lg"], player_tags: [] });
+const seq = (n, base, pop, author) => Array.from({ length: n }, (_, i) => P(base - i, pop - i, author));
+/** 인메모리 서버: (popularity desc, id desc) 정렬된 rows 에서 커서 다음부터 limit 행. 호출 기록을 남긴다. */
+function server(all) {
+  const calls = [];
+  const fetchBatch = async (cursor, limit) => {
+    calls.push({ cursor, limit });
+    const after = cursor ? all.filter((r) => r.popularity < cursor.popularity || (r.popularity === cursor.popularity && r.id < cursor.id)) : all;
+    return after.slice(0, limit);
+  };
+  return { fetchBatch, calls };
+}
+const ok = () => true;
+{
+  const s = server(seq(5, 100, 50));
+  const r = await fillVisible(s.fetchBatch, null, 5, ok, new Set());
+  check("F1-exact-5-exhausted", r.rows.length === 5 && r.exhausted === true && s.calls[0].limit === 6, `rows=${r.rows.length} exhausted=${r.exhausted} limit=${s.calls[0]?.limit}`);
+}
+{
+  const s = server(seq(6, 100, 50));
+  const r = await fillVisible(s.fetchBatch, null, 5, ok, new Set());
+  check("F2-6-rows-has-more", r.rows.length === 5 && r.exhausted === false && r.cursor.id === 96, `exhausted=${r.exhausted} cursor=${JSON.stringify(r.cursor)}`);
+  const r2 = await fillVisible(s.fetchBatch, r.cursor, 15, ok, new Set(r.rows.map((p) => p.id)));
+  check("F2-next-page-1-row-exhausted", r2.rows.length === 1 && r2.rows[0].id === 95 && r2.exhausted === true, `rows=${r2.rows.map((p) => p.id)} exhausted=${r2.exhausted}`);
+}
+{
+  // 첫 묶음 5건 전부 차단 작성자 → 뒤의 정상 글로 5개를 채운다(삼순 #1343 ③).
+  const s = server([...seq(5, 100, 50, "bad"), ...seq(6, 90, 40)]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F3-refill-after-drop", r.rows.map((p) => p.id).join() === "90,89,88,87,86" && r.exhausted === false, `rows=${r.rows.map((p) => p.id)} exhausted=${r.exhausted}`);
+  check("F3-cursor-last-consumed", r.cursor.id === 86 && s.calls.length === 2 && s.calls[1].cursor.id === 96, `cursor=${JSON.stringify(r.cursor)} calls=${JSON.stringify(s.calls)}`);
+}
+{
+  // 확인행을 커서로 잡으면 그 행이 영영 빠진다 — 커서는 마지막 소비 행이어야 한다.
+  const s = server([...seq(5, 100, 50, "bad"), P(95, 45), P(94, 44)]);
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F4-peek-row-not-skipped", r.rows.map((p) => p.id).join() === "95,94" && r.exhausted === true, `rows=${r.rows.map((p) => p.id)} exhausted=${r.exhausted}`);
+}
+{
+  // 창 안 글 전부 부적합 → 상한(4회)에서 멈추되 소진으로 오판하지 않는다.
+  const s = server(seq(100, 1000, 500, "bad"));
+  const r = await fillVisible(s.fetchBatch, null, 5, (p) => p.author_id !== "bad", new Set());
+  check("F5-max-batches-cap", r.rows.length === 0 && r.exhausted === false && s.calls.length === MAX_FILL_BATCHES, `calls=${s.calls.length} exhausted=${r.exhausted}`);
+}
+{
+  // seen(화면에 이미 있는 id) 은 건너뛰고 채운다 — 순위 이동 재등장 dedupe.
+  const s = server([P(100, 50), ...seq(6, 90, 40)]);
+  const r = await fillVisible(s.fetchBatch, null, 5, ok, new Set([100]));
+  check("F6-seen-dedupe", r.rows.map((p) => p.id).join() === "90,89,88,87,86" && r.exhausted === false, `rows=${r.rows.map((p) => p.id)}`);
+}
+{
+  // 조회 오류는 그대로 전파(소진 아님) — 호출자가 커서/hasMore 를 보존한다.
+  let threw = false;
+  try {
+    await fillVisible(async () => { throw new Error("boom"); }, null, 5, ok, new Set());
+  } catch {
+    threw = true;
+  }
+  check("F7-error-propagates", threw, "조회 오류가 삼켜져 소진/빈 결과로 둔갑했다");
+}
 check("H4-hidden", /\.neq\("is_hidden",\s*true\)/.test(hook), "숨김 글 제외 없음");
 check(
   "H4-order",
@@ -146,6 +216,11 @@ if (SELFTEST) {
     ["S6-migration-expr", MIGRATION, "coalesce(like_count, 0) + coalesce(comment_count, 0)", "coalesce(like_count, 0)", "인기도에서 댓글수 누락"],
     ["S7-team-cs", HOOK, 'query.filter("team_tags", "eq", teamOnlyTagsValue(board.teamId))', "applyBoardFilter(query, board)", "최애팀 포함(cs) 필터로 회귀 → 전체구단 공개 글 재노출"],
     ["S8-scope-multi", HOOK, 'return (scope.kind === "team" || scope.kind === "player") && scope.teamId === teamId;', "return true;", "배지 SSOT 재확인 무력화 → 타팀 선수 태그 섞인 글 노출"],
+    ["S9-error-as-empty", HOOK, "if (error) throw error;", "if (error) return [];", "조회 오류를 빈 결과(소진)로 처리 → 재시도 불가"],
+    ["S10-peek-cursor", HOOK, "const page = hasBeyond ? fetched.slice(0, need) : fetched;", "const page = fetched;", "확인행을 소비 → 정확 소진 판정·커서 붕괴"],
+    ["S11-no-refill", HOOK, "if (!hasBeyond) return { rows, cursor, exhausted: true };", "return { rows, cursor, exhausted: !hasBeyond };", "탈락분 보충 없이 1묶음에서 종료 → 전부 탈락 시 섹션 소실"],
+    ["S12-more-no-gen", HOOK, "if (gen !== genRef.current) return; // 팀 전환·새로고침이 끼어들었다", "if (false) return; // 팀 전환·새로고침이 끼어들었다", "더보기 응답 세대 보호 제거 → 옛 응답이 새 목록 오염"],
+    ["S13-blocked-not-visible", HOOK, "!blockedRef.current.has(p.author_id) && (", "true && (", "차단 작성자를 채우기 판정에서 제외하지 않음"],
   ];
   let selftestFailed = 0;
   for (const [id, rel, anchor, replace, desc] of MUTATIONS) {

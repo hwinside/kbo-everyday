@@ -21,6 +21,7 @@
     "qa:cancel-reason": "tsx scripts/qa/cancel-reason-gate.mjs",
     "qa:home-popular-feed": "tsx scripts/qa/home-popular-feed-gate.mjs",
     "qa:home-popular-feed:selftest": "tsx scripts/qa/home-popular-feed-gate.mjs --selftest",
+    "qa:home-popular-feed:hook": "tsx scripts/qa/home-popular-feed-hook-smoke.ts",
     "qa:summary-final-transition": "tsx scripts/qa/summary-final-transition-gate.mjs",
     "qa:summary-final-transition:selftest": "tsx scripts/qa/summary-final-transition-gate.mjs --selftest",
     "qa:cancel-reason:selftest": "tsx scripts/qa/cancel-reason-gate.mjs --selftest",

@@ -124,6 +124,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:home-popular-feed:hook",
+      "tier": "ci"
+    },
+    {
       "name": "qa:career-metrics",
       "tier": "ci"
     },
