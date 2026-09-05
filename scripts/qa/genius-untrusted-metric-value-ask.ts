@@ -100,6 +100,32 @@ const CASES: Case[] = [
     playerBound: true, want: "untrusted_metric",
   },
 
+  // ── ③-c 국소 결속 (삼순 2026-09-05 3차 NO-GO 2건) ────────────────────────────
+  //
+  // 🔴 2차 구현은 `COUNT_NOUN && VALUE_PREDICATE` 로 두 정규식을 따로 돌려 **문장 전체
+  //   공존**이 됐다. `기록 규칙`·`기록 방식` 은 `기록` 이 뒤 명사를 수식하는 복합 명사구라
+  //   술어(`알려`·`뭐`)는 `규칙`·`방식` 에 걸린 것인데, 공존 검사는 위치를 잃어 차단했다.
+  //   값 술어는 카운트 명사 **바로 뒤**에만 결속한다 — 사이에 다른 명사가 끼면 양보.
+  {
+    axis: "count_noun_local_binding", question: "희생번트 기록 규칙 알려줘",
+    playerBound: false, want: "none",
+  },
+  {
+    axis: "count_noun_local_binding", question: "희생번트 기록 방식이 뭐야?",
+    playerBound: false, want: "none",
+  },
+  // 선수 결속이 있어도 결속이 끊긴 채 정의 술어가 붙으면 양보다(bare query 가 아니다).
+  {
+    axis: "count_noun_local_binding", question: "김도영 희생번트 기록 규칙 알려줘",
+    playerBound: true, want: "none",
+  },
+  // 🔴 반대 방향 — 국소 결속이 **살아있는** 값 요구는 여전히 차단이어야 한다.
+  //   이 축이 없으면 "카운트 명사 축 통째로 제거" 가 위 3건을 GREEN 으로 통과한다.
+  {
+    axis: "count_noun_local_binding", question: "김도영 희생번트 성적 알려줘",
+    playerBound: true, want: "untrusted_metric",
+  },
+
   // ── ④ 혼합 (삼순 신규 1건) — 값 요구가 정의 술어를 이긴다 ────────────────────
   {
     axis: "mixed", question: "희생번트가 뭐야, 김도영은 몇 개야?",
@@ -130,7 +156,7 @@ const CASES: Case[] = [
 function assertAxisCoverage(): string[] {
   const required = [
     "definition", "player_bound_definition", "player_bound_bare",
-    "count_noun_grammar", "mixed", "value_ask", "control",
+    "count_noun_grammar", "count_noun_local_binding", "mixed", "value_ask", "control",
   ];
   return required.filter((axis) => !CASES.some((c) => c.axis === axis))
     .map((axis) => `${FAIL_ID} 분모 0 축: ${axis} — vacuous PASS 방지 fail-close`);
@@ -155,6 +181,13 @@ function predicateChecks(): string[] {
     ["김도영 희생번트 기록이 뭐야?", true, true],
     // 명사만·술어만으로는 값 요구가 아니다 — 둘이 함께여야 한다.
     ["희생번트 기록", false, false],
+    // 🔴 국소 결속 (삼순 3차 NO-GO) — 함께 있는 것으로도 부족하다. 술어가 명사 바로 뒤여야 한다.
+    ["희생번트 기록 규칙 알려줘", false, false],
+    ["희생번트 기록 방식이 뭐야?", false, false],
+    ["희생번트 기록 계산 방법 알려줘", false, false],
+    // 술어만 위치를 옮겨도 결속이 살면 값 요구다 — 위 셋과 짝이 되는 반대 방향.
+    ["희생번트 기록 알려줘", false, true],
+    ["김도영 희생번트 성적 어때?", true, true],
   ];
   for (const [q, pb, want] of rows) {
     const got = untrustedValueAsk(q, pb);

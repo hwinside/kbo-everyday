@@ -52,15 +52,24 @@ const MUTATIONS = [
     name: "M11 카운트 명사 문법 → 명사 단독 판정 (1차 결함 복원)",
     why: "`수는`·`기록` 이 글자만으로 값 요구가 되면 정의 질문이 다시 막힌다",
     file: SEASON,
-    re: /  if \(UNTRUSTED_COUNT_NOUN\.test\(spaced\) && UNTRUSTED_COUNT_VALUE_PREDICATE\.test\(spaced\)\) \{/,
-    to: "  if (UNTRUSTED_COUNT_NOUN.test(spaced)) { // [mutant M11]",
+    re: /  if \(UNTRUSTED_COUNT_NOUN_VALUE_ASK\.test\(spaced\)\) \{/,
+    to: "  if (/(?:^|\\s)(?:개수|횟수|기록|성적)|\\s수(?:는|가|를|은|도)?(?:\\s|$)/.test(spaced)) { // [mutant M11]",
   },
   {
     name: "M12 카운트 명사 값 술어 제거",
     why: "`기록이 뭐야?` 가 값 요구로 안 잡혀 사전으로 샌다(삼순 2차 NO-GO 반대 방향)",
     file: SEASON,
-    re: /  if \(UNTRUSTED_COUNT_NOUN\.test\(spaced\) && UNTRUSTED_COUNT_VALUE_PREDICATE\.test\(spaced\)\) \{\n    return true;\n  \}/,
+    re: /  if \(UNTRUSTED_COUNT_NOUN_VALUE_ASK\.test\(spaced\)\) \{\n    return true;\n  \}/,
     to: "  // [mutant M12] 카운트 명사+술어 축 제거",
+  },
+  {
+    // 🔴 삼순 3차 NO-GO 축. 정규식 안의 `\s*`(인접) 를 `.*?`(문장 어디든) 로 풀면 2차
+    //   구현의 "문장 전체 공존" 이 그대로 복원된다 — 정확히 그 결함이 RED 여야 한다.
+    name: "M13 국소 결속 → 문장 전체 공존 (2차 결함 복원)",
+    why: "`희생번트 기록 규칙 알려줘` 가 `기록`+`알려` 공존만으로 다시 차단된다(삼순 3차 NO-GO)",
+    file: SEASON,
+    re: /(\(\?:는\|가\|를\|은\|도\|이\)\?)\\s\*(\(\?:뭐\|뭔\|무엇\|얼마)/,
+    to: "$1.*?$2",
   },
   {
     name: "M3 양보 제거 (종전 결함 복원)",
