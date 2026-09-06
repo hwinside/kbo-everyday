@@ -593,8 +593,8 @@ export async function callRagLlm(
 }
 
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
-export async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+export async function callOfficialRagLlm(question: string, evidence: RagEvidence[], extras?: RagLlmExtras): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
 }
 
 /**

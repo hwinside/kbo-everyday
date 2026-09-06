@@ -1,3 +1,5 @@
+import { isStatDefinitionQuestion } from "./definition-intent";
+
 /**
  * 야잘알봇 시즌 기록 질의 (kbo_structured).
  *
@@ -447,6 +449,7 @@ export function resolveSeasonRecordIntent(
   preferredTable?: "batter" | "pitcher",
   options?: SeasonRecordIntentOptions,
 ): SeasonRecordIntent {
+  if (isStatDefinitionQuestion(question)) return { kind: "none" };
   const compact = normalize(question);
 
   // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
@@ -749,7 +752,9 @@ export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, 
   const asOf = formatAsOf(outcome.asOf);
   const who = outcome.team ? `${outcome.name}(${outcome.team})` : outcome.name;
   const suffix = asOf ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
-  return `${who} 선수의 ${SUPPORTED_SEASON} 시즌 ${outcome.label}은 ${outcome.value}입니다.${suffix}`;
+  const syllable = outcome.label.charCodeAt(outcome.label.length - 1) - 0xac00;
+  const topicParticle = syllable >= 0 && syllable <= 11171 && syllable % 28 === 0 ? "는" : "은";
+  return `${who} 선수의 ${SUPPORTED_SEASON} 시즌 ${outcome.label}${topicParticle} ${outcome.value}입니다.${suffix}`;
 }
 
 export const UNTRUSTED_METRIC_ANSWER =
