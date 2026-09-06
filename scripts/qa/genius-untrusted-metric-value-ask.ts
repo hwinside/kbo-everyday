@@ -144,12 +144,10 @@ const CASES: Case[] = [
   // ── ⑥ 대조군 — untrusted 아닌 지표는 이 변경과 무관해야 한다 ────────────────
   { axis: "control", question: "김도영 홈런 몇 개야?", playerBound: true, want: "query" },
   { axis: "control", question: "김도영 타율 알려줘", playerBound: true, want: "query" },
-  // ⚠️ `query` 가 맞다 — 내가 처음 `none` 으로 적었다가 이 게이트에 잡혔고,
-  //   `git stash` 로 main 을 직접 태워 확인했다(변경 전에도 `query`).
-  //   신뢰 지표의 정의 질문도 기록 경로로 판정되지만, `query` 는 **종결하지 않는다** —
-  //   선수 후보가 없으면 사전·RAG 로 내려간다. 반면 `untrusted_metric` 은 그 자리에서
-  //   고정 안내문으로 **닫는다**. 이 PR 이 그쪽만 건드리는 이유가 이것이다.
-  { axis: "control", question: "홈런이 무슨 뜻이야?", playerBound: false, want: "query" },
+  // #1351: 신뢰 지표도 정의 질문은 사전·RAG에 양보한다. 선수 결속 여부와
+  // 무관하게 값을 렌더하지 않으며, 위의 수치 요구 대조군은 query를 유지한다.
+  { axis: "control", question: "홈런이 무슨 뜻이야?", playerBound: false, want: "none" },
+  { axis: "control", question: "김도영 홈런이 무슨 뜻이야?", playerBound: true, want: "none" },
 ];
 
 /** 축 커버리지 — 분모 0 축이 있으면 그 축은 검사되지 않았다(fail-close). */

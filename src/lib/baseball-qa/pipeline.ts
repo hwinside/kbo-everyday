@@ -3552,7 +3552,10 @@ export function routeQuestion(
   if (resolveProductFeature(question) !== null) return "product_feature_guide";
   if (isServiceInquiry(normalized)) return "service_redirect";
   if (isStatDefinitionQuestion(question) && !isOutOfScopeIntent(normalized, mentionsTeam(tokens))) {
-    return "baseball_rule_term";
+    // Definitions must not enter history_hold, but an unknown expression still
+    // needs the existing LLM scope/normalization contract, not a glossary label.
+    return isSupportedRuleTermQuestion(question, glossary, players)
+      ? "baseball_rule_term" : "llm_scope_gate";
   }
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));

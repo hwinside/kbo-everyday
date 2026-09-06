@@ -28,21 +28,21 @@ const MUTATIONS = [
   {
     name: "r1 진입 조건에 scopeGate 복원 — 사전 밖 질문이 다시 문 앞에서 막힌다(1차 false-green 재현)",
     file: PIPELINE,
-    from: "  if (\n    // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은\n    // 엔티티가 없는 순수 룰 질문에만 적용된다.\n    (ownedByEntityRag",
-    to: "  if (\n    !scopeGate &&\n    (ownedByEntityRag",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    !scopeGate &&\n    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
   },
   {
     name: "r2 닫힌 단어 사전을 전면 복원 — 사전 밖 표현은 정본이 있어도 도달 못 한다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
-    to: "    isSupportedRuleTermQuestion(question, glossary, players) &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    (statDefinition || isSupportedRuleTermQuestion(question, glossary, players)) &&",
   },
 
   // ── ⓒ 계약: 엔티티 결속 질문은 main 그대로 ──────────────────────────────
   {
     name: "r3 엔티티 결속에도 개방 적용 — 사건 질문(`문보경 삼진 당한 경기`)을 규칙집이 선점한다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
     to: "    true &&",
   },
   {
@@ -70,8 +70,8 @@ const MUTATIONS = [
   {
     name: "r6 엔티티 결속 질문을 공식 경로에서 통째로 차단 — main 이 official 로 보내던 룰 질문이 죽는다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
-    to: "    !ownedByEntityRag &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    (statDefinition || !ownedByEntityRag) &&",
   },
 
   // ── 근거 판정이 개수가 아니라 거리라는 계약 ──────────────────────────────
