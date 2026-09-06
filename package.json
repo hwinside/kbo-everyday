@@ -44,6 +44,7 @@
     "qa:readonly-api-edge-cache:selftest": "node scripts/qa/readonly-api-edge-cache-gate.mjs --selftest",
     "qa:feed-scroll-restore": "tsx scripts/qa/feed-scroll-restore-smoke.ts",
     "qa:community-search": "tsx scripts/qa/community-search-smoke.ts",
+    "qa:community-search:retry": "node scripts/qa/community-search-retry-smoke.mjs",
     "qa:community-search:live": "tsx scripts/qa/community-search-smoke.ts --live",
     "qa:community-search:perf": "node scripts/qa/community-search-perf-gate.mjs",
     "qa:ui:community-search": "node scripts/qa/ui-smoke-community-search.mjs",

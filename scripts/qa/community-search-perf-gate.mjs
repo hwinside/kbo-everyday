@@ -109,10 +109,13 @@ async function explainInline(label, q, beforeId) {
   const q2Pre = await anon.rpc("search_posts", { q: Q2, before_id: null, page_size: 20 }).select("id");
   if (q2Pre.error) throw new Error(`Q2 사전 조회 실패: ${q2Pre.error.message}`);
   const q2Cursor = q2Pre.data?.length ? q2Pre.data[q2Pre.data.length - 1].id : null;
-  if (!q2Cursor) {
-    console.error(`✗ Q2("${Q2}") 1페이지 결과 없음 — 2페이지 표본 확보 불가. PERF_Q2 를 결과가 있는 검색어로 변경하세요.`);
+  if (q2Pre.data?.length !== 20 || !q2Cursor) {
+    console.error(`✗ Q2("${Q2}") 1페이지가 20건 미만 — PERF_Q2 를 최소 21건 있는 검색어로 변경하세요.`);
     process.exit(1);
   }
+  const q2Next = await anon.rpc("search_posts", { q: Q2, before_id: q2Cursor, page_size: 20 }).select("id");
+  if (q2Next.error) throw new Error(`Q2 2페이지 사전 조회 실패: ${q2Next.error.message}`);
+  if (!q2Next.data?.length) throw new Error(`Q2("${Q2}") 2페이지 표본 없음 — 최소 21건 필요`);
 
   // query-guard: bounded -- 대조군 = useUnifiedFeed 일반 피드 1페이지와 동일 쿼리(id desc, .limit(20) 고정, 1페이지만 측정).
   const baseline = await timeIt("대조군: 일반 피드 1페이지", () =>

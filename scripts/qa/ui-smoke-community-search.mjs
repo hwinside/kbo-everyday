@@ -360,7 +360,9 @@ async function waitRpcSettled(page) {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await sleep(600); // IntersectionObserver 발동 여유
       // loadMore 인-플라이트 중 검색어 지우기 → 일반 피드로 전환
+      await page.evaluate(() => window.scrollTo(0, 0));
       await page.getByTestId("post-search-clear").click();
+      await page.waitForFunction(() => window.scrollY === 0);
       await sleep(3500); // 지연 응답 도착 대기
       await waitRpcSettled(page);
       check("2페이지 인터셉트 확인", page2Intercepted, "route not triggered");

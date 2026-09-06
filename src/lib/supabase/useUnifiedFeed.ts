@@ -118,6 +118,7 @@ export function useUnifiedFeed(
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [fetchError, setFetchError] = useState<Error | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
 
   const key = feedKeyFor(board);
   // 전체글 검색어(정규화 후). null 이면 일반 피드. key 에 이미 포함돼 있어 loadPage 의존성은 key 로 충분하다.
@@ -202,10 +203,13 @@ export function useUnifiedFeed(
 
   useEffect(() => {
     let cancelled = false;
-    genRef.current += 1;
+    const gen = ++genRef.current;
+    fetchingRef.current = false;
+    setLoadingMore(false);
     if (restorePath) ensurePopStateListener();
     setLoading(true);
     setFetchError(null);
+    setLoadMoreError(null);
     setPosts([]);
     setLikedIds(new Set());
     cursorRef.current = null;
@@ -241,7 +245,7 @@ export function useUnifiedFeed(
     (async () => {
       try {
         const rows = await loadPage(null);
-        if (cancelled) return;
+        if (cancelled || gen !== genRef.current) return;
         let acc = rows;
         let cursor = rows.length ? rows[rows.length - 1].id : null;
         let more = rows.length === pageSize;
@@ -250,7 +254,7 @@ export function useUnifiedFeed(
         // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
         while (saved && more && pages < saved.pageCount) {
           const next = await loadPage(cursor);
-          if (cancelled) return;
+          if (cancelled || gen !== genRef.current) return;
           if (!next.length) {
             more = false;
             break;
@@ -276,8 +280,9 @@ export function useUnifiedFeed(
           setPendingScrollY(saved.scrollY);
         }
       } catch (e) {
-        if (!cancelled) {
+        if (!cancelled && gen === genRef.current) {
           setFetchError(e instanceof Error ? e : new Error(String(e)));
+          setHasMore(false);
           setLoading(false);
         }
       }
@@ -289,8 +294,9 @@ export function useUnifiedFeed(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, pageSize, user?.id, restorePath]);
 
-  const loadMore = useCallback(async () => {
-    if (fetchingRef.current || !hasMore || loading) return;
+  const loadNextPage = useCallback(async (retry: boolean) => {
+    if (fetchingRef.current || loading) return;
+    if (retry ? !loadMoreError : (!hasMore || loadMoreError)) return;
     fetchingRef.current = true;
     setLoadingMore(true);
     const gen = genRef.current;
@@ -298,7 +304,7 @@ export function useUnifiedFeed(
       const rows = await loadPage(cursorRef.current);
       // 요청 도중 보드/검색어가 바뀌었으면(세대 증가) 이 응답은 이전 피드의 것 — 폐기.
       if (gen !== genRef.current) return;
-      setFetchError(null);
+      setLoadMoreError(null);
       setPosts((prev) => {
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...rows.filter((r) => !seen.has(r.id))];
@@ -311,28 +317,35 @@ export function useUnifiedFeed(
       }
       fetchLikedFor(rows.map((r) => r.id));
     } catch (e) {
-      // 추가 페이지 실패(주로 검색 RPC): 폐기된 세대면 무시. 유효 세대면 오류를 노출하고
-      // hasMore=false 로 내려 센티넬 재교차마다 같은 실패를 무한 재요청하는 것을 끊는다
-      // (미처리 rejection 방지). 재시도는 검색어 변경/reload 로 새 세대에서 이뤄진다(삼순 NO-GO ①).
+      // 목록·커서는 유지하고 자동 재요청만 중단한다. 명시적 재시도는 같은 커서에서 이어간다.
       if (gen === genRef.current) {
-        setFetchError(e instanceof Error ? e : new Error(String(e)));
+        setLoadMoreError(e instanceof Error ? e : new Error(String(e)));
         setHasMore(false);
       }
     } finally {
-      setLoadingMore(false);
-      fetchingRef.current = false;
+      if (gen === genRef.current) {
+        setLoadingMore(false);
+        fetchingRef.current = false;
+      }
     }
-  }, [hasMore, loading, loadPage, pageSize, fetchLikedFor]);
+  }, [hasMore, loading, loadMoreError, loadPage, pageSize, fetchLikedFor]);
+
+  const loadMore = useCallback(() => loadNextPage(false), [loadNextPage]);
+  const retryLoadMore = useCallback(() => loadNextPage(true), [loadNextPage]);
 
   const reload = useCallback(async () => {
     setLoading(true);
     setFetchError(null);
+    setLoadMoreError(null);
+    fetchingRef.current = false;
+    setLoadingMore(false);
     cursorRef.current = null;
     // reload 도 새 요청 세대로 취급 — 진행 중이던 loadMore 응답이 늦게 도착해 새로고침 결과 뒤에
     // 이어붙는 것을 막는다.
-    genRef.current += 1;
+    const gen = ++genRef.current;
     try {
       const rows = await loadPage(null);
+      if (gen !== genRef.current) return;
       setPosts(rows);
       cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
       setHasMore(rows.length === pageSize);
@@ -342,9 +355,12 @@ export function useUnifiedFeed(
       fetchLikedFor(rows.map((r) => r.id));
     } catch (e) {
       // 새로고침 실패 시 loading 을 반드시 내려 무한 스피너(영구 고정)를 막는다(삼순 NO-GO ①).
-      setFetchError(e instanceof Error ? e : new Error(String(e)));
+      if (gen === genRef.current) {
+        setFetchError(e instanceof Error ? e : new Error(String(e)));
+        setHasMore(false);
+      }
     } finally {
-      setLoading(false);
+      if (gen === genRef.current) setLoading(false);
     }
   }, [loadPage, pageSize, fetchLikedFor]);
 
@@ -373,10 +389,13 @@ export function useUnifiedFeed(
     loadingMore,
     hasMore,
     loadMore,
+    retryLoadMore,
     reload,
     setPostLiked,
-    /** 검색 RPC 오류. null 이면 정상(오류 없음). 오류 시 '결과 없음'과 구분하기 위해 노출. */
+    /** 첫 페이지/새로고침 오류. 추가 페이지 실패는 loadMoreError로 분리. */
     fetchError,
+    /** 추가 페이지 오류. 기존 목록·커서를 보존하고 명시적으로 재시도한다. */
+    loadMoreError,
     /** 피드 식별자 — 복원 상태 저장 키. */
     feedKey: key,
     /** 현재까지 로드된 페이지 수(복원 저장용). */

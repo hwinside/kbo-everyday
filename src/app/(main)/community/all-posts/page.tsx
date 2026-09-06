@@ -29,6 +29,7 @@ function AllPostsPageContent() {
   const {
     posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload,
     feedKey, pageCountRef, pendingScrollY, consumePendingScroll, fetchError,
+    loadMoreError, retryLoadMore,
   } = useUnifiedFeed({ kind: "all", q }, 20, { restorePath: feedPath });
 
   // 글 상세 진입 후 뒤로가기로 돌아오면 보던 위치·분량 복원(#cs 제보).
@@ -120,24 +121,41 @@ function AllPostsPageContent() {
         )}
       </div>
 
-      {q !== null && !loading && fetchError ? (
+      {q !== null && !loading && fetchError && posts.length === 0 ? (
         <div
           className="flex flex-col items-center justify-center py-20 text-text-tertiary"
           data-testid="post-search-error"
         >
           <p className="text-base">검색 중 오류가 발생했어요.</p>
           <p className="mt-1 text-sm">잠시 후 다시 시도해 주세요.</p>
+          <button type="button" onClick={() => void reload()} className="mt-3 min-h-11 px-4 text-sm text-accent">
+            다시 시도
+          </button>
         </div>
       ) : q !== null && !loading && posts.length === 0 ? (
         <div
           className="flex flex-col items-center justify-center py-20 text-text-tertiary"
           data-testid="post-search-empty"
         >
-          <p className="text-base">’{q}’ 검색 결과가 없어요.</p>
+          <p className="text-base">‘{q}’ 검색 결과가 없어요.</p>
           <p className="mt-1 text-sm">다른 검색어로 다시 찾아보세요.</p>
         </div>
       ) : (
         <PhotoFeed posts={posts} loading={loading} onLike={handleLike} likedIds={likedIds} />
+      )}
+
+      {q !== null && !loading && (loadMoreError || (fetchError && posts.length > 0)) && (
+        <div role="alert" className="px-5 py-4 text-center text-sm text-text-tertiary" data-testid="post-search-more-error">
+          <p>{loadMoreError ? "다음 글을 불러오지 못했어요." : "글을 새로 불러오지 못했어요."}</p>
+          <button
+            type="button"
+            disabled={loadingMore}
+            onClick={() => void (loadMoreError ? retryLoadMore() : reload())}
+            className="mt-2 min-h-11 px-4 text-accent disabled:opacity-50"
+          >
+            {loadingMore ? "불러오는 중…" : "다시 시도"}
+          </button>
+        </div>
       )}
 
       {hasMore && (
