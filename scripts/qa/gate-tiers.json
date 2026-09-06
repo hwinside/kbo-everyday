@@ -32,6 +32,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:auth-session-transient",
+      "tier": "ci"
+    },
+    {
       "name": "qa:auth-es256-e2e",
       "tier": "deploy"
     },

@@ -227,6 +227,12 @@ export interface AuthErrorLike {
   code?: string;
 }
 
+/** A retryable refresh failure does not mean the stored session is absent. */
+export function isRetryableSessionError(error: unknown): error is AuthErrorLike {
+  return typeof error === "object" && error !== null
+    && "name" in error && error.name === "AuthRetryableFetchError";
+}
+
 /**
  * "이 refresh token 은 서버가 확정적으로 거부했다"인 경우에만 true.
  * supabase-js 는 일시적 네트워크 실패도 throw 가 아니라 error 로 반환하므로
@@ -335,7 +341,7 @@ export interface SessionLike {
 }
 
 export interface SessionLadderDeps<S extends SessionLike> {
-  /** ① 쿠키 기반 세션 (supabase.auth.getSession) */
+  /** ① Cookie session. Throw retryable errors so stale backups are not replayed. */
   getCookieSession(): Promise<S | null>;
   /** ② sessionStorage 의 1회성 pending 토큰 — 읽고 즉시 제거 (기존 semantics) */
   consumePendingTokens(): SessionTokens | null;
@@ -385,7 +391,10 @@ async function acquireSessionOnce<S extends SessionLike>(
   // ① 쿠키 세션
   try {
     session = await deps.getCookieSession();
-  } catch {
+  } catch (error) {
+    // A current cookie still exists on transient failure. Do not consume pending
+    // tokens or replay an older native backup in place of that live session.
+    if (isRetryableSessionError(error)) throw error;
     /* getSession 실패 → 다음 단계 */
   }
 
