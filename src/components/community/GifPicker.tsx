@@ -51,12 +51,30 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   const [loading, setLoading] = useState(true);
   const [listTitle, setListTitle] = useState(context === "game_chat_gif" ? "크보팬 인기 GIF" : "");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [visibleViewportHeight, setVisibleViewportHeight] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const activeRequestRef = useRef<AbortController | null>(null);
   const inFlightKeyRef = useRef<string | null>(null);
   const hasRequestedTrendingRef = useRef(false);
   const dragStartY = useRef(0);
+
+  // Size all three mounts here. On iOS the keyboard can shrink only the visual
+  // viewport, not dvh; cap the panel without moving the page or its composer.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      if (Number.isFinite(height) && height > 0) setVisibleViewportHeight(height);
+    };
+    updateHeight();
+    viewport?.addEventListener("resize", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      viewport?.removeEventListener("resize", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
@@ -215,7 +233,15 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div
+      className="flex flex-col min-h-0"
+      style={{
+        height: "clamp(320px, 70dvh, 480px)",
+        // Reserve space for the composer/tab bar and device safe areas. In a
+        // very short viewport keep the controls usable; only the grid shrinks.
+        maxHeight: `max(160px, calc(${visibleViewportHeight == null ? "100dvh" : `${visibleViewportHeight}px`} - 8rem - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))))`,
+      }}
+    >
       {/* Header: drag handle (swipe down to dismiss) + close */}
       <div
         className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1 cursor-grab"

@@ -601,13 +601,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
               exit={{ height: 0, opacity: 0 }}
               className="max-w-[640px] mx-auto overflow-hidden border-t border-border"
             >
-              <div className="h-[clamp(280px,55dvh,480px)]">
-                <GifPicker
-                  context="game_chat_gif"
-                  onSelect={handleGifSelect}
-                  onClose={() => setShowGifPicker(false)}
-                />
-              </div>
+              <GifPicker
+                context="game_chat_gif"
+                onSelect={handleGifSelect}
+                onClose={() => setShowGifPicker(false)}
+              />
             </motion.div>
           )}
         </AnimatePresence>
