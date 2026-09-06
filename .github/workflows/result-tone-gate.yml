@@ -56,6 +56,10 @@ on:
       - "src/app/(main)/page.tsx"
       - "src/components/home/**"
       - "scripts/qa/rsc-gate-trigger-contract.mjs"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "scripts/qa/home-popular-posts-rpc-pg17.sh"
+      - "scripts/qa/home-popular-posts-rpc-pglite-gate.ts"
+      - "src/lib/supabase/useHomePopularFeed.ts"
   push:
     branches:
       - main
@@ -100,6 +104,10 @@ on:
       - "src/app/(main)/page.tsx"
       - "src/components/home/**"
       - "scripts/qa/rsc-gate-trigger-contract.mjs"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "scripts/qa/home-popular-posts-rpc-pg17.sh"
+      - "scripts/qa/home-popular-posts-rpc-pglite-gate.ts"
+      - "src/lib/supabase/useHomePopularFeed.ts"
 
 jobs:
   result-tone:
@@ -127,6 +135,15 @@ jobs:
           docker cp scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh "$PG17_CONTAINER":/tmp/genius-positive-ending/scripts/qa/
           docker cp supabase/migrations/20260814154000_baseball_genius_positive_ending_ledger.sql "$PG17_CONTAINER":/tmp/genius-positive-ending/supabase/migrations/
           docker exec -u postgres -w /tmp/genius-positive-ending "$PG17_CONTAINER" bash scripts/qa/baseball-genius-positive-ending-concurrency-pg17.sh
+
+      - name: Run home-popular-posts RPC gate (PostgreSQL 17, fail-closed)
+        env:
+          PG17_CONTAINER: ${{ job.services.postgres17.id }}
+        run: |
+          docker exec "$PG17_CONTAINER" mkdir -p /tmp/home-popular-rpc/scripts/qa /tmp/home-popular-rpc/supabase/migrations
+          docker cp scripts/qa/home-popular-posts-rpc-pg17.sh "$PG17_CONTAINER":/tmp/home-popular-rpc/scripts/qa/
+          docker cp supabase/migrations/20260905043000_posts_popularity.sql "$PG17_CONTAINER":/tmp/home-popular-rpc/supabase/migrations/
+          docker exec -u postgres -w /tmp/home-popular-rpc "$PG17_CONTAINER" bash scripts/qa/home-popular-posts-rpc-pg17.sh
 
       - name: Setup Node
         uses: actions/setup-node@v4

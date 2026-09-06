@@ -132,6 +132,14 @@
       "tier": "ci"
     },
     {
+      "name": "qa:home-popular-feed:pglite",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:ui:home-popular-feed",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:career-metrics",
       "tier": "ci"
     },

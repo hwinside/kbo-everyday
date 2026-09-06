@@ -446,6 +446,30 @@ async function main() {
     h.root.unmount();
   }
 
+  // ── R6-auth ── (Supabase 2.98.0+ getSession 지연 — Promise.race 독립 timeout 회귀)
+  // 기존 pending 메커니즘 사용: 80ms 안에 settle 안 하면 timeoutRace 가 먼저 reject.
+  // abort 이벤트와 Promise.race 중 먼저 오는 쪽이 fetchPage 를 종료한다.
+  // abort 이벤트가 settle(→{data:null,error:AbortError})보다 먼저 오면 동일 효과.
+  console.log("── R6-auth 인증 지연(getSession hang) → Promise.race 독립 timeout");
+  {
+    pending.length = 0;
+    const h = mount({ board: LG, timeoutMs: 80 });
+    await waitPending(1, "R6-auth 초기 조회");
+    const q = last();
+    // settled 없이 80ms 대기 → timeoutRace 가 먼저 reject(or abort 먼저 경쟁)
+    await waitFor(() => q.aborted || !h.text().startsWith("L|"), "R6-auth timeout → abort or loading 해제", 600);
+    await waitFor(() => !h.text().startsWith("L|"), "R6-auth loading 해제", 200);
+    check("R6-auth Promise.race 독립 timeout → 빈 목록·loading 해제(재시도 가능)", h.text() === "|more=true|lm=false", h.text());
+    // reload 로 복구 확인
+    pending.length = 0;
+    h.click("reload");
+    await waitPending(1, "R6-auth reload");
+    settle(last(), rows(2, 500));
+    await waitFor(() => h.text() === "500,499|more=false|lm=false", "R6-auth 복구");
+    check("R6-auth reload 로 복구", h.text() === "500,499|more=false|lm=false", h.text());
+    h.root.unmount();
+  }
+
   // ───────────────────────── 실제 섹션 DOM ─────────────────────────
   console.log("── D 실제 섹션(CommunityLatestPosts) DOM");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");

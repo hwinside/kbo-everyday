@@ -117,22 +117,33 @@ export function useHomePopularFeedCore(
     async (want: number, exclude: ReadonlyArray<number>): Promise<PopularPage> => {
       const controller = new AbortController();
       inflightRef.current.add(controller);
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      // Supabase 2.98.0+ calls getSession() before HTTP — controller.abort() alone only cancels the
+      // HTTP layer. Promise.race with an independent timeout catches auth/pre-HTTP hangs too.
+      let timerId: ReturnType<typeof setTimeout>;
+      const timeoutRace = new Promise<never>((_, reject) => {
+        timerId = setTimeout(() => {
+          controller.abort();
+          reject(Object.assign(new Error("PopularFetchTimeout"), { name: "AbortError" }));
+        }, timeoutMs);
+      });
       try {
         // query-guard: bounded -- RPC 내부 limit(want+1, 상한 100) + created_at 7일 창.
-        const { data, error } = await supabase
-          .rpc("home_popular_posts", homePopularRpcArgs(board, windowStartRef.current, want, Array.from(blockedRef.current), exclude))
-          // popularity 는 홈 인기글만 쓰는 생성 컬럼 — 공통 FEED_SELECT 에 넣으면 마이그레이션 전 preview 에서
-          // 커뮤니티 피드 전체가 400 으로 죽는다. 이 훅에서만 추가 select 한다.
-          .select(`${FEED_SELECT}, popularity`)
-          .abortSignal(controller.signal);
+        const { data, error } = await Promise.race([
+          supabase
+            .rpc("home_popular_posts", homePopularRpcArgs(board, windowStartRef.current, want, Array.from(blockedRef.current), exclude))
+            // popularity 는 홈 인기글만 쓰는 생성 컬럼 — 공통 FEED_SELECT 에 넣으면 마이그레이션 전 preview 에서
+            // 커뮤니티 피드 전체가 400 으로 죽는다. 이 훅에서만 추가 select 한다.
+            .select(`${FEED_SELECT}, popularity`)
+            .abortSignal(controller.signal),
+          timeoutRace,
+        ]);
         // 조회 오류(abort·timeout 포함)는 소진이 아니다 — throw 해서 호출자가 상태를 보존하게 한다(삼순 #1343 ②).
         if (error) throw error;
         // rpc().select() 의 타입은 행/배열 union 으로 추론된다 — setof 함수라 항상 배열이다.
         const fetched = ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => mapFeedRow(r));
         return { rows: fetched.slice(0, want), hasMore: fetched.length > want };
       } finally {
-        clearTimeout(timer);
+        clearTimeout(timerId!);
         inflightRef.current.delete(controller);
       }
     },
