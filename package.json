@@ -519,7 +519,9 @@
     "qa:genius-untrusted-metric": "tsx scripts/qa/genius-untrusted-metric-value-ask.ts",
     "qa:genius-untrusted-metric:mutations": "node scripts/qa/genius-untrusted-metric-mutations.mjs",
     "qa:genius-product-feature-guide": "tsx scripts/qa/genius-product-feature-guide.ts",
-    "qa:genius-product-feature-guide:mutations": "node scripts/qa/genius-product-feature-guide-mutations.mjs"
+    "qa:genius-product-feature-guide:mutations": "node scripts/qa/genius-product-feature-guide-mutations.mjs",
+    "qa:chat-profanity": "tsx scripts/qa/chat-profanity.mjs",
+    "qa:chat-profanity:selftest": "tsx scripts/qa/chat-profanity.mjs --selftest"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

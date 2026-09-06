@@ -894,6 +894,10 @@
     {
       "name": "qa:war-benchmark-coverage",
       "tier": "ci"
+    },
+    {
+      "name": "qa:chat-profanity",
+      "tier": "ci"
     }
   ],
   "_comment": "배포/CI 게이트 티어 SSOT. 새 qa 게이트 추가 시 반드시 여기에 tier와 함께 등록해야 한다(미등록 qa:* 스크립트는 runner가 fail-close). tier=deploy: Vercel prebuild마다 실행. tier=ci: GitHub Actions PR required check + nightly full에서 실행."
