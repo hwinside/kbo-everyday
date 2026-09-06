@@ -97,11 +97,11 @@ async function seed() {
     users[k] = data.user;
   }
   // A: 제목 매치 1건. B: 제목 매치 1건 + 본문 매치 1건.
-  // team_tags / player_tags 는 posts 테이블의 필수 JSONB 컬럼 — 기존 트리거가 null 을 거부함.
+  // team_tags / player_tags 는 posts 테이블의 필수 JSONB 컬럼 — team_tags 는 canonical KBO 구단 slug 1개 이상 필수(posts_require_team_scope) — 배열 길이 아닌 canonical slug 존재 판정이라 빈 배열 []도 거부된다. 그래서 시드는 ['lg']로 태그한다(삼순 NO-GO ②).
   const rows = [
-    { author_id: users.A.id, board_type: "free", board_id: "general", title: `${TOKEN} A 제목`, content: "본문 A", team_tags: [], player_tags: [] },
-    { author_id: users.B.id, board_type: "free", board_id: "general", title: `${TOKEN} B 제목`, content: "본문 B", team_tags: [], player_tags: [] },
-    { author_id: users.B.id, board_type: "free", board_id: "general", title: "B 두번째 글", content: `본문에 ${TOKEN} 포함`, team_tags: [], player_tags: [] },
+    { author_id: users.A.id, board_type: "free", board_id: "general", title: `${TOKEN} A 제목`, content: "본문 A", team_tags: ["lg"], player_tags: [] },
+    { author_id: users.B.id, board_type: "free", board_id: "general", title: `${TOKEN} B 제목`, content: "본문 B", team_tags: ["lg"], player_tags: [] },
+    { author_id: users.B.id, board_type: "free", board_id: "general", title: "B 두번째 글", content: `본문에 ${TOKEN} 포함`, team_tags: ["lg"], player_tags: [] },
   ];
   const { data: posts, error } = await admin.from("posts").insert(rows).select("id, author_id, title");
   if (error) throw new Error("post insert failed: " + error.message);
@@ -110,7 +110,7 @@ async function seed() {
   // 페이지네이션 테스트용 추가 글 — TOKEN 이 있어야 검색에서 나온다(pageSize=20 초과).
   const extra = Array.from({ length: 18 }, (_, i) => ({
     author_id: users.A.id, board_type: "free", board_id: "general",
-    title: `${TOKEN} 추가${i + 1}`, content: "본문", team_tags: [], player_tags: [],
+    title: `${TOKEN} 추가${i + 1}`, content: "본문", team_tags: ["lg"], player_tags: [],
   }));
   const { data: extraPosts, error: eErr } = await admin.from("posts").insert(extra).select("id");
   if (eErr) throw new Error("extra post insert failed: " + eErr.message);
@@ -168,6 +168,16 @@ async function waitRpcSettled(page) {
       const n1 = await visibleTokenCount(page);
       check("검색 결과 3건 노출(제목2+본문1)", n1 >= 3, `visible=${n1}`);
       check("초기 진입 RPC 1회", calls.length === 1, `calls=${calls.length}`);
+
+      // 복원 판별력(삼순 NO-GO ③): 상세로 떠나기 전 2페이지까지 로드해 둔다(전체 21건). 그래야 뒤로가기
+      // 복원이 '1페이지·최상단으로 퇴화'해도 통과하지 않는다. 검색은 id desc 라 2페이지에만 있는 글은
+      // 최고령 시드 "TOKEN A 제목"(id 최소) — 복원 후에도 이 글과 스크롤 위치가 살아있으면 분량이 복원된 것.
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await page.waitForFunction((t) => (document.body.innerText || "").includes(t), `${TOKEN} A 제목`, { timeout: 15000 });
+      const beforeCount = await visibleTokenCount(page);
+      const beforeScroll = await page.evaluate(() => window.scrollY);
+      check("떠나기 전 2페이지 로드(전체 21건)", beforeCount >= 20 && beforeScroll > 0, `count=${beforeCount} scrollY=${beforeScroll}`);
+
       // 상세 진입: TOKEN 이 있는 첫 링크
       const link = page.locator(`a[href*="/community/"]`).filter({ hasText: TOKEN }).first();
       await link.click();
@@ -175,9 +185,16 @@ async function waitRpcSettled(page) {
       check("상세 진입", true, page.url().replace(BASE, ""));
       await page.goBack({ waitUntil: "networkidle" });
       await waitRpcSettled(page);
+      // 복원(분량·스크롤)이 적용될 때까지 기다린다. 회귀(정상)면 빨리 충족, 퇴화(버그)면 타임아웃 후 검사 실패.
+      await page.waitForFunction((t) => (document.body.innerText || "").includes(t), `${TOKEN} A 제목`, { timeout: 10000 }).catch(() => {});
+      await page.waitForFunction((min) => window.scrollY >= min, Math.floor(beforeScroll * 0.5), { timeout: 10000 }).catch(() => {});
       const u = new URL(page.url());
+      const afterText = await page.evaluate(() => document.body.innerText || "");
+      const afterCount = await visibleTokenCount(page);
+      const afterScroll = await page.evaluate(() => window.scrollY);
       check("뒤로가기 후 ?q= 유지", u.pathname === FEED && u.searchParams.get("q") === TOKEN, u.search);
-      check("뒤로가기 후 결과 유지", (await visibleTokenCount(page)) >= 3);
+      check("뒤로가기 후 2페이지 분량 복원(1페이지 퇴화 아님)", afterText.includes(`${TOKEN} A 제목`) && afterCount >= beforeCount, `before=${beforeCount} after=${afterCount}`);
+      check("뒤로가기 후 스크롤 위치 복원(최상단 퇴화 아님)", afterScroll >= beforeScroll * 0.5, `before=${beforeScroll} after=${afterScroll}`);
       check("뒤로가기 후 입력창 값 유지", (await page.getByTestId("post-search-input").inputValue()) === TOKEN);
       await ctx.close();
     }
@@ -348,11 +365,13 @@ async function waitRpcSettled(page) {
       await waitRpcSettled(page);
       check("2페이지 인터셉트 확인", page2Intercepted, "route not triggered");
       check("검색어 지움 후 ?q 없음(세대 교체)", !new URL(page.url()).searchParams.has("q"), new URL(page.url()).search);
-      // 지연된 2페이지 결과(TOKEN 추가N)가 append 됐으면 일반 피드보다 TOKEN 이 많이 보여야 함 — 그래선 안 된다.
-      const extraVisible = await page.evaluate((tok) =>
-        (document.body.innerText.match(new RegExp(tok, "g")) || []).length,
-      TOKEN);
-      check("지연 2페이지 결과 append 없음(세대 폐기)", extraVisible === 0, `token visible=${extraVisible}`);
+      // 일반 피드 첫 페이지엔 방금 넣은 시드 글(TOKEN 제목)이 그대로 나오므로 'TOKEN 0건'은 정상 동작에서도
+      // 실패한다(삼순 NO-GO ③). 대신 **검색 2페이지에만 있는 글**로 누수를 판별한다: 검색은 id desc 라
+      // 2페이지 = 최고령 시드 "TOKEN A 제목"(id 최소) 1건뿐, 이 글은 일반 피드 첫 페이지(최신 20건)엔 없다
+      // (A제목은 21번째로 밀림). 세대 폐기가 정상이면 전환 후에도 이 글이 안 보여야 한다.
+      const afterText = await page.evaluate(() => document.body.innerText || "");
+      const leaked = afterText.includes(`${TOKEN} A 제목`);
+      check("지연 2페이지(검색) 결과 append 없음(세대 폐기)", !leaked, `A제목 leaked=${leaked}`);
       await ctx.close();
     }
 

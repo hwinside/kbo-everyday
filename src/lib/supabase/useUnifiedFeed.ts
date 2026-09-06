@@ -298,6 +298,7 @@ export function useUnifiedFeed(
       const rows = await loadPage(cursorRef.current);
       // 요청 도중 보드/검색어가 바뀌었으면(세대 증가) 이 응답은 이전 피드의 것 — 폐기.
       if (gen !== genRef.current) return;
+      setFetchError(null);
       setPosts((prev) => {
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...rows.filter((r) => !seen.has(r.id))];
@@ -309,6 +310,14 @@ export function useUnifiedFeed(
         setPageCount(pageCountRef.current);
       }
       fetchLikedFor(rows.map((r) => r.id));
+    } catch (e) {
+      // 추가 페이지 실패(주로 검색 RPC): 폐기된 세대면 무시. 유효 세대면 오류를 노출하고
+      // hasMore=false 로 내려 센티넬 재교차마다 같은 실패를 무한 재요청하는 것을 끊는다
+      // (미처리 rejection 방지). 재시도는 검색어 변경/reload 로 새 세대에서 이뤄진다(삼순 NO-GO ①).
+      if (gen === genRef.current) {
+        setFetchError(e instanceof Error ? e : new Error(String(e)));
+        setHasMore(false);
+      }
     } finally {
       setLoadingMore(false);
       fetchingRef.current = false;
@@ -317,16 +326,26 @@ export function useUnifiedFeed(
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
     cursorRef.current = null;
-    const rows = await loadPage(null);
-    setPosts(rows);
-    cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
-    setHasMore(rows.length === pageSize);
-    pageCountRef.current = 1;
-    setPageCount(1);
-    setLikedIds(new Set());
-    setLoading(false);
-    fetchLikedFor(rows.map((r) => r.id));
+    // reload 도 새 요청 세대로 취급 — 진행 중이던 loadMore 응답이 늦게 도착해 새로고침 결과 뒤에
+    // 이어붙는 것을 막는다.
+    genRef.current += 1;
+    try {
+      const rows = await loadPage(null);
+      setPosts(rows);
+      cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
+      setHasMore(rows.length === pageSize);
+      pageCountRef.current = 1;
+      setPageCount(1);
+      setLikedIds(new Set());
+      fetchLikedFor(rows.map((r) => r.id));
+    } catch (e) {
+      // 새로고침 실패 시 loading 을 반드시 내려 무한 스피너(영구 고정)를 막는다(삼순 NO-GO ①).
+      setFetchError(e instanceof Error ? e : new Error(String(e)));
+    } finally {
+      setLoading(false);
+    }
   }, [loadPage, pageSize, fetchLikedFor]);
 
   /** 좋아요 optimistic 토글 — likedIds Set + 해당 post like_count 즉시 반영. */

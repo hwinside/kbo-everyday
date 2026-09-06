@@ -20,6 +20,13 @@ import { SUPABASE_URL, ANON, REF } from "./_env.mjs";
 
 const MGMT = process.env.SUPABASE_MANAGEMENT_TOKEN || "";
 const N = Number(process.env.PERF_N || 12);
+// PERF_N 비정상(0·음수·소수·NaN) 시 timeIt 의 for 루프가 0회 돌아 times=[] → p50/p95=undefined →
+// `undefined > 기준` 이 모두 false 로 vacuous PASS 가 난다. 반드시 각 케이스를 N회 실측해야 하므로
+// N이 1 미만이거나 정수가 아니면 측정 자체를 거부한다(삼순 NO-GO ④).
+if (!Number.isInteger(N) || N < 1) {
+  console.error(`✗ PERF_N 비정상: "${process.env.PERF_N}" — 1 이상 정수여야 합니다(반복 0회면 측정 없이 PASS 되므로 차단).`);
+  process.exit(2);
+}
 const P95_MS = Number(process.env.PERF_P95_MS || 800);
 const RATIO = Number(process.env.PERF_RATIO || 2.5);
 const Q2 = process.env.PERF_Q2 || "직관";
@@ -137,14 +144,17 @@ async function explainInline(label, q, beforeId) {
     if (c.p95 > P95_MS) fails.push(`${c.label}: p95 ${c.p95}ms > ${P95_MS}ms`);
     if (c.p50 > baseline.p50 * RATIO) fails.push(`${c.label}: p50 ${c.p50}ms > 대조군 ${baseline.p50}ms × ${RATIO}`);
   }
-  // explain 판정 — 측정 실패(토큰 없음·HTTP 오류)는 FAIL, Seq Scan 감지도 FAIL.
+  // explain 판정(삼순 NO-GO ④ — 기준 역전 수정):
+  //  · 측정 자체 실패(토큰 없음·HTTP 오류)만 FAIL — 판을 봅 수 없으면 게이트 의미 없음.
+  //  · 인덱스 미사용·Seq Scan 자체는 FAIL 이 아니다. 소규모·무결과에서는 플래너가 Seq Scan 을
+  //    정당하게 고르므로, 합의된 판정 기준은 응답시간(E2E p95/p50)만이다. 계획(indexUsed·
+  //    seqScan·buffers·execMs)는 위 explain 표로 **기록만** 하고 판정은 지연한다.
   for (const e of ex) {
-    if (e.failed) {
-      fails.push(`explain ${e.label}: 측정 실패 — ${e.note}`);
-    } else {
-      if (!e.indexUsed) fails.push(`explain ${e.label}: trgm 인덱스 미사용`);
-      if (e.seqScan) fails.push(`explain ${e.label}: Seq Scan 감지 — 인덱스 미적용 가능`);
-    }
+    if (e.failed) fails.push(`explain ${e.label}: 측정 실패 — ${e.note}`);
+  }
+  const seqNote = ex.filter((e) => !e.failed && (e.seqScan || !e.indexUsed)).map((e) => e.label);
+  if (seqNote.length) {
+    console.log(`ℹ 인덱스 미사용/Seq Scan 감지(판정 안 함, 응답시간만으로 판정): ${seqNote.join(", ")}. 소규모·무결과면 정상일 수 있음.`);
   }
   if (fails.length) {
     console.error("\n✗ 성능 게이트 FAIL\n  - " + fails.join("\n  - "));
