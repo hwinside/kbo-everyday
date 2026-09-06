@@ -608,6 +608,7 @@
     "reserve_relay_epoch": "returns one monotonic bigint epoch (nextval on game_relay_epoch_seq) — single scalar, no rows",
     "reserve_youtube_quota": "returns one atomic quota decision",
     "save_game_summary_if_current": "conditionally saves one game summary and returns one boolean",
+    "search_posts": "community post search — id desc keyset (before_id) with page_size clamped to 1..50 inside the function; returns at most 50 posts rows",
     "upsert_baseball_genius_news_articles": "upserts a jsonb batch (hard-capped at 500 rows inside the function) and returns exactly one summary row",
     "upsert_naver_identity": "upserts one authenticated identity",
     "upsert_news_clipping_digest": "insert-once digest for one (clip_date, team_id) pair and returns exactly one bigint id",
