@@ -31,10 +31,22 @@ try {
     assert.equal(getClientIp(request(), { fallback: "" }), "");
   });
   check("OFF leaves response object, status and every header unchanged", () => {
-    const response = json(); const before = [...response.headers];
-    assert.equal(withCloudflarePublicCache(request({ cookie: "fixture=1" }), response), response);
-    assert.deepEqual([...response.headers], before);
-    assert.equal(response.status, 200);
+    for (const flag of [undefined, "0", "false"]) {
+      if (flag === undefined) delete process.env.CLOUDFLARE_PUBLIC_API_CACHE;
+      else process.env.CLOUDFLARE_PUBLIC_API_CACHE = flag;
+      for (const headers of [{}, { cookie: "fixture=1" }] as Record<string, string>[]) {
+        const response = json("public, s-maxage=60", 200, {
+          "CDN-Cache-Control": "public, s-maxage=45",
+          "Vercel-CDN-Cache-Control": "public, s-maxage=30",
+          "Cloudflare-CDN-Cache-Control": "public, max-age=15",
+        });
+        const before = [...response.headers];
+        assert.equal(withCloudflarePublicCache(request(headers), response), response);
+        assert.deepEqual([...response.headers], before);
+        assert.equal(response.status, 200);
+      }
+    }
+    delete process.env.CLOUDFLARE_PUBLIC_API_CACHE;
   });
   process.env.CLOUDFLARE_TRUST_CLIENT_IP = "1";
   delete process.env.VERCEL;
@@ -82,16 +94,50 @@ try {
     assert.match(withCloudflarePublicCache(request({}, "/api/stats", "HEAD"), json()).headers.get("Cloudflare-CDN-Cache-Control")!, /max-age=60/);
   });
   function bypass(req: Request, response = json()) {
+    const expectedHeaders = new Headers(response.headers);
+    expectedHeaders.set("Cloudflare-CDN-Cache-Control", "no-store");
+    const requestHeaders = [...req.headers];
+    const body = response.body;
+    const status = response.status;
     const result = withCloudflarePublicCache(req, response);
+    assert.equal(result, response);
+    assert.equal(result.body, body);
+    assert.equal(result.bodyUsed, false);
+    assert.equal(result.status, status);
     assert.equal(result.headers.get("Cloudflare-CDN-Cache-Control"), "no-store");
-    assert.equal(result.headers.get("Vercel-CDN-Cache-Control"), "no-store");
-    assert.equal(result.headers.get("Cache-Control"), "private, no-store, max-age=0");
+    assert.deepEqual([...result.headers], [...expectedHeaders], "only the CF-specific policy may change");
+    assert.deepEqual([...req.headers], requestHeaders, "Cookie/Authorization must not be stripped");
   }
   check("Cookie/Authorization and every RSC discriminator bypass", () => {
     for (const name of ["cookie", "authorization", "rsc", "next-router-state-tree", "next-router-prefetch"]) {
       bypass(request({ [name]: "fixture" })); bypass(request({ [name]: "" }));
     }
     bypass(request({}, "/api/stats?_rsc=fixture"));
+  });
+  check("ineligible public/private cache policies keep every original downstream header", () => {
+    const policies: Record<string, string>[] = [
+      { "Cache-Control": "public, s-maxage=7" },
+      { "Cache-Control": "private, no-store, max-age=0" },
+      { "CDN-Cache-Control": "public, s-maxage=23" },
+      { "Vercel-CDN-Cache-Control": "public, s-maxage=11" },
+      { "Vercel-CDN-Cache-Control": "no-store", "CDN-Cache-Control": "public, s-maxage=19" },
+      { "Vercel-CDN-Cache-Control": "public, s-maxage=13", "CDN-Cache-Control": "no-store" },
+    ];
+    for (const policy of policies) {
+      for (const headers of [{ cookie: "fixture=1" }, { authorization: "fixture" }] as Record<string, string>[]) {
+        bypass(request(headers), json("public, s-maxage=60", 200, {
+          ...policy, "Cloudflare-CDN-Cache-Control": "public, max-age=300",
+          ETag: '"fixture"', "X-Contract-Fixture": "unchanged",
+        }));
+      }
+    }
+  });
+  check("ineligible response without a browser TTL does not acquire a Vercel policy", () => {
+    const response = Response.json({ counts: {} });
+    bypass(request({ cookie: "fixture=1" }), response);
+    assert.equal(response.headers.has("Cache-Control"), false);
+    assert.equal(response.headers.has("CDN-Cache-Control"), false);
+    assert.equal(response.headers.has("Vercel-CDN-Cache-Control"), false);
   });
   check("non-allowlisted HTML, image, live, private API, POST and preview bypass", () => {
     for (const path of ["/", "/_next/image?url=fixture", "/api/game-live", "/api/admin/auth", "/api/stats/", "/api/stats.css"]) bypass(request({}, path));
