@@ -25,6 +25,27 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r18 정의 fallback을 RECORD 분류기로 복귀 — 빈 검색 4턴이 정의답을 잃는다",
+    file: PIPELINE,
+    from: "rosterBlock, statNumericGuard && !statDefinition)",
+    to: "rosterBlock, statNumericGuard)",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r19 정의 fallback 숫자 검증 제거 — 오타니 환각값이 유출된다",
+    file: PIPELINE,
+    from: "!numericTokensSubsetOf(definitionFallback.answer, question)",
+    to: "false",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r20 정의 검증 표식 제거 — log crash 재생이 정상답을 되묻기로 바꾼다",
+    file: PIPELINE,
+    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard),",
+    to: "statRuleTermVerified: false,",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
     name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
     file: PIPELINE,
     from: "{ context: definition?.context }",

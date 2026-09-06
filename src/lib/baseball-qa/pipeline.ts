@@ -41,6 +41,7 @@ import {
   isRagAttemptPath,
   isRagDiscardReason,
   numericTokenCount,
+  numericTokensSubsetOf,
   type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
@@ -6544,7 +6545,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     try {
-      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard);
+      // A definition needs an actual explanation, not the RECORD/NARRATIVE
+      // classifier's token. Keep ownership for cache/replay, and validate the
+      // resulting ungrounded answer below instead of rejecting the question.
+      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard && !statDefinition);
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
       //   종전에는 `unsure`(판정 불명확)로 접었는데, 그러면 유저는 "질문을 못 알아들었다" 를
@@ -6584,7 +6588,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
   //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
   //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
-  if (statNumericGuard) {
+  const definitionFallback = statDefinition ? validateLlmResponse(llm.text, question) : null;
+  if (definitionFallback?.kind === "answer" && definitionFallback.answer &&
+      !numericTokensSubsetOf(definitionFallback.answer, question)) {
+    // Same contract as official RAG's GENERAL fallback: user-quoted numbers
+    // may be explained, but no new number may be asserted without evidence.
+    const final: StoredQaFinal = { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({
+      userId, question, questionNorm, matchPath: final.source, answer: final.answer,
+      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    });
+    return { status: 200, answer: final.answer, source: final.source, remaining };
+  }
+  if (statNumericGuard && !statDefinition) {
     const intent = parseStatIntentToken(llm.text);
     if (intent === "rule_term") {
       // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
@@ -6666,7 +6683,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
-  const validated = validateLlmResponse(llm.text, question);
+  const validated = definitionFallback ?? validateLlmResponse(llm.text, question);
   if (validated.kind === "blocked") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: BLOCKED_ANSWER, source: "blocked" }, llm));
@@ -6689,6 +6706,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     await deps.storeLlm(packStoredQaFinal(
       {
         answer: validated.answer, source: "llm",
+        statRuleTermVerified: Boolean(statDefinition && statNumericGuard),
         cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,
         toneCompliant: validated.toneCompliant,
       },

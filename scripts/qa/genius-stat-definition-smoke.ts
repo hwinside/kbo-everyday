@@ -24,6 +24,94 @@ const EVIDENCE: RagEvidence = {
 };
 const llmResult = (): LlmResult => ({ text: JSON.stringify({ status: "GROUNDED", answer: ANSWER }), inputTokens: 1, outputTokens: 1 });
 
+async function verifyEmptyRetrievalFallback() {
+  const explanation = `야구에서 ${ANSWER}`;
+  const generic = (answer: string): LlmResult => ({
+    text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer }), inputTokens: 1, outputTokens: 1,
+  });
+  const base: QaDeps = {
+    loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
+    getCache: async () => null, setCache: async () => {},
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+    searchOfficialRag: async () => [],
+    callOfficialRagLlm: async () => { throw new Error("Empty retrieval must not call the RAG model"); },
+    callLlm: async () => generic(explanation),
+    fetchSeasonRecord: async () => { throw new Error("Definition fell into record lookup"); },
+  };
+  // R3's green fixture always supplied evidence and never visited this path.
+  // Model the observed empty searches, including the T3 -> T4 source boundary.
+  let previous: PreviousTurnRow | null = null;
+  let turn = 0;
+  let genericCalls = 0;
+  const deps: QaDeps = {
+    ...base, loadPreviousTurn: async () => previous,
+    searchOfficialRag: async (query) => { assert.match(query, /홀드/); return []; },
+    callLlm: async (_question, context, _roster, statMode) => {
+      genericCalls++;
+      if (turn > 0) assert.equal(context?.question, QUESTIONS[turn - 1], "Empty-retrieval followup lost its topic");
+      // The existing stat-mode prompt asks for a token, not an explanation.
+      return generic(statMode ? "RECORD" : explanation);
+    },
+  };
+  for (turn = 0; turn < QUESTIONS.length; turn++) {
+    const result = await answerQuestion("qa-definition-empty", QUESTIONS[turn], deps);
+    assert.equal(result.source, "llm", `Empty retrieval T${turn + 1}: ${result.source}`);
+    assert.equal(result.answer, explanation, `Empty retrieval T${turn + 1} lost the definition`);
+    previous = {
+      question: QUESTIONS[turn], answer: result.answer, jobSource: result.source,
+      answeredAt: "2026-09-06T13:00:00Z", currentCreatedAt: "2026-09-06T13:00:01Z",
+    };
+  }
+  assert.equal(genericCalls, 4);
+
+  for (const hallucination of [
+    "야구 기록으로 오타니 선수는 홈런 374개를 기록했습니다.",
+    "야구 기록으로 오타니 선수는 홈런 ３７４개를 기록했습니다.",
+    "야구 기록으로 오타니 선수는 타율 0.312를 기록했습니다.",
+  ]) {
+    let cacheWrites = 0;
+    const result = await answerQuestion("qa-definition-number", "오타니 홈런이 뭐야", {
+      ...base, callLlm: async () => generic(hallucination),
+      setCache: async () => { cacheWrites++; },
+    });
+    assert.equal(result.source, "stat_clarify", "Definition fallback leaked a new number");
+    assert.notEqual(result.answer, hallucination);
+    assert.equal(cacheWrites, 0);
+  }
+
+  // A quoted quantity can be explained, not replaced by a new invented value.
+  const quoted = "야구에서 여기서 말한 9는 홀드 횟수라는 뜻이지, 실제 선수 기록을 확인한 값은 아닙니다.";
+  for (const answer of [quoted, quoted.replace("9", "19")]) {
+    const result = await answerQuestion("qa-definition-quoted", QUESTIONS[3], {
+      ...base, loadPreviousTurn: async () => ({ ...previous!, question: QUESTIONS[2] }),
+      callLlm: async () => generic(answer),
+    });
+    assert.equal(result.source, answer === quoted ? "llm" : "stat_clarify");
+    if (answer === quoted) assert.equal(result.answer, quoted);
+  }
+
+  // A crash after durable storage must not replace a verified definition with
+  // stat_clarify, nor make a second model call or populate the global cache.
+  let stored: LlmResult | null = null;
+  let calls = 0;
+  let failLog = true;
+  const replayDeps: QaDeps = {
+    ...base,
+    getLlmState: async () => ({ started: stored !== null, result: stored }),
+    beginLlm: async () => true,
+    storeLlm: async (result) => { stored = result; },
+    callLlm: async () => { calls++; return generic(explanation); },
+    setCache: async () => { throw new Error("Guard-owned definition entered global cache"); },
+    log: async () => { if (failLog) { failLog = false; throw new Error("fixture log crash"); } },
+  };
+  await assert.rejects(answerQuestion("qa-definition-replay", QUESTIONS[2], replayDeps), /fixture log crash/);
+  assert.ok(stored, "Validated definition was not stored before logging");
+  const replay = await answerQuestion("qa-definition-replay", QUESTIONS[2], replayDeps);
+  assert.equal(replay.source, "llm");
+  assert.equal(replay.answer, explanation, "Definition replay lost its verification");
+  assert.equal(calls, 1);
+}
+
 async function main() {
   const live = process.argv.includes("--live");
   const out = process.argv.find((arg) => arg.startsWith("--out="))?.slice(6);
@@ -82,7 +170,7 @@ async function main() {
     };
     deps.callLlm = async (question, context, roster, statMode) => {
       const raw = await server.callLlm(question, context, roster, statMode);
-      traces.push({ stage: "generic_model", question, context, raw });
+      traces.push({ stage: "generic_model", question, context, statMode, raw });
       return raw;
     };
   }
@@ -143,6 +231,7 @@ async function main() {
       assert.equal(seen, undefined);
     }
     assert.match(composeSeasonRecordAnswer({ kind: "ok", name: "박정민", team: "롯데", label: "홀드", value: "10", asOf: "2026-09-06" }), /홀드는 10/);
+    await verifyEmptyRetrievalFallback();
     console.log("Fixture routing/context assertions passed. Semantic and End-User QA still required.");
   } finally {
     if (out) writeFileSync(out, JSON.stringify({ mode: live ? "live-diagnostic-NOT-QA-PASS" : "fixture", traces }, null, 2), { mode: 0o600 });
