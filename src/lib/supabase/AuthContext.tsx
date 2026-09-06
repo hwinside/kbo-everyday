@@ -247,6 +247,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Deferred B's load must not leave A's in-flight profile writable.
           profileLedger.invalidate();
           setProfile(null);
+          if (nextUid) setLoading(true);
         }
         const identity = commitAuthIdentity(nextUid);
         setUser(session?.user ?? null);

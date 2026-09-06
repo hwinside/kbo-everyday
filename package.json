@@ -233,6 +233,7 @@
     "qa:team-card-graph": "tsx scripts/qa/team-card-graph-smoke.ts",
     "qa:pagination": "tsx scripts/qa/pagination-fail-closed-smoke.ts",
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
+    "qa:auth-callback-lock": "NODE_ENV=development tsx scripts/qa/auth-callback-lock-render.tsx",
     "qa:auth-token-precheck": "tsx scripts/qa/auth-token-precheck-smoke.ts",
     "qa:auth-es256-e2e": "tsx scripts/qa/auth-es256-e2e-smoke.ts",
     "qa:advisor-step1-migration": "tsx scripts/qa/advisor-step1-migration-gate.ts",

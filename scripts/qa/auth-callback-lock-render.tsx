@@ -1,7 +1,7 @@
 /**
  * Actual AuthProvider + installed Supabase auth-js lock + jsdom cookie storage.
  * Only HTTP is stubbed; no auth/getSession/subscriber mocks and no live accounts.
- * Run (QA owner): npx tsx scripts/qa/auth-callback-lock-render.tsx
+ * Run (QA owner / CI): npm run qa:auth-callback-lock
  * Run this same script against the parent AuthContext too: the fallback case
  * must time out there. Nothing is fetched from the network or logged as tokens.
  */
@@ -145,6 +145,22 @@ async function main() {
   });
   assert.equal(container.textContent, `${activeUser.id}|${activeUser.id}|false`);
   console.log("PASS account switch fences delayed old profile response");
+
+  // A fully loaded account switching to B must not look like a new profile
+  // before B's request settles (ProfileSetupWrapper gates on !loading).
+  mode = "delayed";
+  releaseProfile = null;
+  activeUser = user("fixture-loading");
+  await act(async () => {
+    await deadline(setSession(false), "loaded account switch");
+    await pause(20);
+  });
+  assert.ok(releaseProfile, "new account profile request is actually pending");
+  assert.equal(container.textContent, `${activeUser.id}|none|true`, "pending profile must keep onboarding hidden");
+  const releaseNext = releaseProfile as () => void;
+  await act(async () => { releaseNext(); await pause(40); });
+  assert.equal(container.textContent, `${activeUser.id}|${activeUser.id}|false`);
+  console.log("PASS loaded account switch keeps loading until the new profile resolves");
 
   await act(async () => { await deadline(supabase.auth.signOut({ scope: "local" }), "final logout"); root.unmount(); });
   subscription.unsubscribe();
