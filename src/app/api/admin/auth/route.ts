@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { hasAdminPinConfig, verifyAdminPinValue } from "@/lib/admin/pin";
@@ -10,10 +11,6 @@ import {
 } from "@/lib/admin/session";
 
 const MAX_BACKOFF_SECONDS = 15 * 60;
-
-function getClientIp(req: NextRequest): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-}
 
 export async function POST(req: NextRequest) {
   const { pin } = await req.json().catch(() => ({}));

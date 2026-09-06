@@ -136,6 +136,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:cloudflare-phase0",
+      "tier": "ci"
+    },
+    {
       "name": "qa:collector-author-team",
       "tier": "ci"
     },

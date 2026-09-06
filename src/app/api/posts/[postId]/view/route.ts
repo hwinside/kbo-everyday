@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { allowViewRequest } from "@/lib/community/view-rate-limit";
@@ -35,9 +36,7 @@ export async function POST(
   // 경량 abuse cap(인스턴스 로컬 best-effort): 같은 요청자+post+kind 1초 폭주 차단.
   // 실제 오염 방어의 주축은 RPC service_role only(v2 마이그레이션)이다.
   const viewerToken =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown";
+    getClientIp(request, { allowRealIp: true });
   if (!allowViewRequest(viewerToken, id, kind)) {
     return NextResponse.json({ ok: false, throttled: true }, { status: 200 });
   }
