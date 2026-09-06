@@ -28,7 +28,7 @@ function AllPostsPageContent() {
 
   const {
     posts, likedIds, loading, loadingMore, hasMore, loadMore, setPostLiked, reload,
-    feedKey, pageCountRef, pendingScrollY, consumePendingScroll,
+    feedKey, pageCountRef, pendingScrollY, consumePendingScroll, fetchError,
   } = useUnifiedFeed({ kind: "all", q }, 20, { restorePath: feedPath });
 
   // 글 상세 진입 후 뒤로가기로 돌아오면 보던 위치·분량 복원(#cs 제보).
@@ -120,12 +120,20 @@ function AllPostsPageContent() {
         )}
       </div>
 
-      {q !== null && !loading && posts.length === 0 ? (
+      {q !== null && !loading && fetchError ? (
+        <div
+          className="flex flex-col items-center justify-center py-20 text-text-tertiary"
+          data-testid="post-search-error"
+        >
+          <p className="text-base">검색 중 오류가 발생했어요.</p>
+          <p className="mt-1 text-sm">잠시 후 다시 시도해 주세요.</p>
+        </div>
+      ) : q !== null && !loading && posts.length === 0 ? (
         <div
           className="flex flex-col items-center justify-center py-20 text-text-tertiary"
           data-testid="post-search-empty"
         >
-          <p className="text-base">‘{q}’ 검색 결과가 없어요.</p>
+          <p className="text-base">’{q}’ 검색 결과가 없어요.</p>
           <p className="mt-1 text-sm">다른 검색어로 다시 찾아보세요.</p>
         </div>
       ) : (

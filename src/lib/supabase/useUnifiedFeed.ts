@@ -117,6 +117,7 @@ export function useUnifiedFeed(
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [fetchError, setFetchError] = useState<Error | null>(null);
 
   const key = feedKeyFor(board);
   // 전체글 검색어(정규화 후). null 이면 일반 피드. key 에 이미 포함돼 있어 loadPage 의존성은 key 로 충분하다.
@@ -153,9 +154,10 @@ export function useUnifiedFeed(
         // 검색 모드: 필터·숨김 제외·길이 가드·이스케이프·키셋·limit 상한(50)은 전부 RPC 안(단일 지점).
         // 클라는 원문(trim)만 넘긴다. returns setof posts 라 같은 SELECT(프로필 임베딩)가 그대로 붙는다.
         // query-guard: bounded -- search_posts 는 boundedRpcAllowlist 등록(limit ≤ 50, id desc 키셋).
-        const { data } = await supabase
+        const { data, error } = await supabase
           .rpc("search_posts", { q: searchQ, before_id: cursor, page_size: pageSize })
           .select(SELECT);
+        if (error) throw error;
         // 생성 타입에 없는 함수라 rpc().select() 추론이 단일객체|배열 유니언으로 나온다 → setof 라 항상 배열.
         const rows = (data ?? []) as unknown as Record<string, unknown>[];
         return rows.map(mapRow);
@@ -203,6 +205,7 @@ export function useUnifiedFeed(
     genRef.current += 1;
     if (restorePath) ensurePopStateListener();
     setLoading(true);
+    setFetchError(null);
     setPosts([]);
     setLikedIds(new Set());
     cursorRef.current = null;
@@ -236,40 +239,47 @@ export function useUnifiedFeed(
     }
 
     (async () => {
-      const rows = await loadPage(null);
-      if (cancelled) return;
-      let acc = rows;
-      let cursor = rows.length ? rows[rows.length - 1].id : null;
-      let more = rows.length === pageSize;
-      let pages = 1;
-
-      // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
-      while (saved && more && pages < saved.pageCount) {
-        const next = await loadPage(cursor);
+      try {
+        const rows = await loadPage(null);
         if (cancelled) return;
-        if (!next.length) {
-          more = false;
-          break;
-        }
-        const seen = new Set(acc.map((p) => p.id));
-        acc = [...acc, ...next.filter((r) => !seen.has(r.id))];
-        cursor = next[next.length - 1].id;
-        more = next.length === pageSize;
-        pages += 1;
-      }
+        let acc = rows;
+        let cursor = rows.length ? rows[rows.length - 1].id : null;
+        let more = rows.length === pageSize;
+        let pages = 1;
 
-      setPosts(acc);
-      cursorRef.current = cursor;
-      setHasMore(more);
-      pageCountRef.current = pages;
-      setPageCount(pages);
-      setLoading(false);
-      fetchLikedFor(acc.map((r) => r.id));
-      if (saved) {
-        // sessionStorage 는 여기서 비운다(다음 진입에 재사용 금지). 이번 문서 안에서의 재실행은
-        // ref 의 intent 로 이어지므로 지워도 복원이 끊기지 않는다.
-        clearFeedRestore(key);
-        setPendingScrollY(saved.scrollY);
+        // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
+        while (saved && more && pages < saved.pageCount) {
+          const next = await loadPage(cursor);
+          if (cancelled) return;
+          if (!next.length) {
+            more = false;
+            break;
+          }
+          const seen = new Set(acc.map((p) => p.id));
+          acc = [...acc, ...next.filter((r) => !seen.has(r.id))];
+          cursor = next[next.length - 1].id;
+          more = next.length === pageSize;
+          pages += 1;
+        }
+
+        setPosts(acc);
+        cursorRef.current = cursor;
+        setHasMore(more);
+        pageCountRef.current = pages;
+        setPageCount(pages);
+        setLoading(false);
+        fetchLikedFor(acc.map((r) => r.id));
+        if (saved) {
+          // sessionStorage 는 여기서 비운다(다음 진입에 재사용 금지). 이번 문서 안에서의 재실행은
+          // ref 의 intent 로 이어지므로 지워도 복원이 끊기지 않는다.
+          clearFeedRestore(key);
+          setPendingScrollY(saved.scrollY);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setFetchError(e instanceof Error ? e : new Error(String(e)));
+          setLoading(false);
+        }
       }
     })();
 
@@ -346,6 +356,8 @@ export function useUnifiedFeed(
     loadMore,
     reload,
     setPostLiked,
+    /** 검색 RPC 오류. null 이면 정상(오류 없음). 오류 시 '결과 없음'과 구분하기 위해 노출. */
+    fetchError,
     /** 피드 식별자 — 복원 상태 저장 키. */
     feedKey: key,
     /** 현재까지 로드된 페이지 수(복원 저장용). */

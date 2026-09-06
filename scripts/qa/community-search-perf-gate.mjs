@@ -54,8 +54,9 @@ async function timeIt(label, fn) {
 
 // plpgsql 함수를 explain 하면 최상위 plan 이 Function Scan 으로만 보여 내부 인덱스 사용이 안 드러난다.
 // 그래서 함수 본문과 동일한 SQL 을 직접 explain 한다(E2E 지연은 위 timeIt 이 실제 RPC 로 측정).
+// HTTP 오류·파싱 실패는 { failed: true } 로 반환 — 호출자가 판정에 포함시킨다.
 async function explainInline(label, q, beforeId) {
-  if (!MGMT) return { label, note: "SUPABASE_MANAGEMENT_TOKEN 없음 — explain 생략" };
+  if (!MGMT) return { label, failed: true, note: "SUPABASE_MANAGEMENT_TOKEN 없음" };
   const esc = q.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_").replace(/'/g, "''");
   const sql = `explain (analyze, buffers, format json)
     select p.* from public.posts p
@@ -68,9 +69,10 @@ async function explainInline(label, q, beforeId) {
     headers: { Authorization: `Bearer ${MGMT}`, "Content-Type": "application/json", "User-Agent": "curl/8.4.0" },
     body: JSON.stringify({ query: sql }),
   });
-  if (!r.ok) return { label, note: `explain HTTP ${r.status}` };
+  if (!r.ok) return { label, failed: true, note: `explain HTTP ${r.status}` };
   const body = await r.json();
   const root = body?.[0]?.["QUERY PLAN"]?.[0];
+  if (!root) return { label, failed: true, note: "explain 응답 파싱 실패" };
   const nodes = [];
   let hit = 0;
   let read = 0;
@@ -83,6 +85,7 @@ async function explainInline(label, q, beforeId) {
   })(root?.Plan);
   return {
     label,
+    failed: false,
     execMs: root?.["Execution Time"] != null ? Number(root["Execution Time"]).toFixed(1) : undefined,
     indexUsed: nodes.some((x) => /idx_posts_(title|content)_trgm/.test(x)),
     seqScan: nodes.some((x) => x.startsWith("Seq Scan")),
@@ -94,13 +97,24 @@ async function explainInline(label, q, beforeId) {
 (async () => {
   console.log(`커뮤니티 검색 성능 게이트 — N=${N}, 기준 p95≤${P95_MS}ms, p50≤대조군×${RATIO}`);
 
+  // 2페이지 측정 전 실제 커서 확보 — before_id=null 로 1페이지 사전 조회.
+  // 결과 없으면 Q2 가 DB 에 없는 것 → PERF_Q2 를 실존하는 검색어로 교체해야 함.
+  const q2Pre = await anon.rpc("search_posts", { q: Q2, before_id: null, page_size: 20 }).select("id");
+  if (q2Pre.error) throw new Error(`Q2 사전 조회 실패: ${q2Pre.error.message}`);
+  const q2Cursor = q2Pre.data?.length ? q2Pre.data[q2Pre.data.length - 1].id : null;
+  if (!q2Cursor) {
+    console.error(`✗ Q2("${Q2}") 1페이지 결과 없음 — 2페이지 표본 확보 불가. PERF_Q2 를 결과가 있는 검색어로 변경하세요.`);
+    process.exit(1);
+  }
+
   // query-guard: bounded -- 대조군 = useUnifiedFeed 일반 피드 1페이지와 동일 쿼리(id desc, .limit(20) 고정, 1페이지만 측정).
   const baseline = await timeIt("대조군: 일반 피드 1페이지", () =>
     anon.from("posts").select(SELECT).neq("is_hidden", true).in("board_type", ["team", "player", "free", "poll"]).order("id", { ascending: false }).limit(20),
   );
   const cases = [
     await timeIt(`2자 "${Q2}" 1페이지`, () => anon.rpc("search_posts", { q: Q2, before_id: null, page_size: 20 }).select(SELECT)),
-    await timeIt(`2자 "${Q2}" 후속 페이지`, (cursor) => anon.rpc("search_posts", { q: Q2, before_id: cursor, page_size: 20 }).select(SELECT)),
+    // q2Cursor 고정 — timeIt 의 extra(동적 cursor) 대신 사전 확보한 실제 2페이지 커서를 씀.
+    await timeIt(`2자 "${Q2}" 후속 페이지(cursor=${q2Cursor})`, () => anon.rpc("search_posts", { q: Q2, before_id: q2Cursor, page_size: 20 }).select(SELECT)),
     await timeIt(`3자 "${Q3}" 1페이지`, () => anon.rpc("search_posts", { q: Q3, before_id: null, page_size: 20 }).select(SELECT)),
     await timeIt(`무결과 "${QNONE}"`, () => anon.rpc("search_posts", { q: QNONE, before_id: null, page_size: 20 }).select(SELECT)),
   ];
@@ -110,16 +124,27 @@ async function explainInline(label, q, beforeId) {
 
   console.log("\n[DB explain (analyze, buffers) — 함수 본문과 동일 SQL]");
   const ex = [
-    await explainInline(`2자 "${Q2}"`, Q2, null),
-    await explainInline(`3자 "${Q3}"`, Q3, null),
+    await explainInline(`2자 "${Q2}" 1페이지`, Q2, null),
+    await explainInline(`2자 "${Q2}" 2페이지(cursor=${q2Cursor})`, Q2, q2Cursor),
+    await explainInline(`3자 "${Q3}" 1페이지`, Q3, null),
     await explainInline(`무결과 "${QNONE}"`, QNONE, null),
   ];
   console.table(ex);
 
   const fails = [];
+  // E2E 지연 판정
   for (const c of cases) {
     if (c.p95 > P95_MS) fails.push(`${c.label}: p95 ${c.p95}ms > ${P95_MS}ms`);
     if (c.p50 > baseline.p50 * RATIO) fails.push(`${c.label}: p50 ${c.p50}ms > 대조군 ${baseline.p50}ms × ${RATIO}`);
+  }
+  // explain 판정 — 측정 실패(토큰 없음·HTTP 오류)는 FAIL, Seq Scan 감지도 FAIL.
+  for (const e of ex) {
+    if (e.failed) {
+      fails.push(`explain ${e.label}: 측정 실패 — ${e.note}`);
+    } else {
+      if (!e.indexUsed) fails.push(`explain ${e.label}: trgm 인덱스 미사용`);
+      if (e.seqScan) fails.push(`explain ${e.label}: Seq Scan 감지 — 인덱스 미적용 가능`);
+    }
   }
   if (fails.length) {
     console.error("\n✗ 성능 게이트 FAIL\n  - " + fails.join("\n  - "));

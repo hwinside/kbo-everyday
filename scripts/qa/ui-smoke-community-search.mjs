@@ -97,14 +97,25 @@ async function seed() {
     users[k] = data.user;
   }
   // A: 제목 매치 1건. B: 제목 매치 1건 + 본문 매치 1건.
+  // team_tags / player_tags 는 posts 테이블의 필수 JSONB 컬럼 — 기존 트리거가 null 을 거부함.
   const rows = [
-    { author_id: users.A.id, board_type: "free", board_id: "general", title: `${TOKEN} A 제목`, content: "본문 A" },
-    { author_id: users.B.id, board_type: "free", board_id: "general", title: `${TOKEN} B 제목`, content: "본문 B" },
-    { author_id: users.B.id, board_type: "free", board_id: "general", title: "B 두번째 글", content: `본문에 ${TOKEN} 포함` },
+    { author_id: users.A.id, board_type: "free", board_id: "general", title: `${TOKEN} A 제목`, content: "본문 A", team_tags: [], player_tags: [] },
+    { author_id: users.B.id, board_type: "free", board_id: "general", title: `${TOKEN} B 제목`, content: "본문 B", team_tags: [], player_tags: [] },
+    { author_id: users.B.id, board_type: "free", board_id: "general", title: "B 두번째 글", content: `본문에 ${TOKEN} 포함`, team_tags: [], player_tags: [] },
   ];
   const { data: posts, error } = await admin.from("posts").insert(rows).select("id, author_id, title");
   if (error) throw new Error("post insert failed: " + error.message);
   cleanupPosts.push(...posts.map((p) => p.id));
+
+  // 페이지네이션 테스트용 추가 글 — TOKEN 이 있어야 검색에서 나온다(pageSize=20 초과).
+  const extra = Array.from({ length: 18 }, (_, i) => ({
+    author_id: users.A.id, board_type: "free", board_id: "general",
+    title: `${TOKEN} 추가${i + 1}`, content: "본문", team_tags: [], player_tags: [],
+  }));
+  const { data: extraPosts, error: eErr } = await admin.from("posts").insert(extra).select("id");
+  if (eErr) throw new Error("extra post insert failed: " + eErr.message);
+  cleanupPosts.push(...extraPosts.map((p) => p.id));
+
   return { users, posts };
 }
 
@@ -206,9 +217,11 @@ async function waitRpcSettled(page) {
       await page.goto(`${BASE}${FEED}`, { waitUntil: "networkidle" });
       const input = page.getByTestId("post-search-input");
       await input.focus();
-      // 브라우저 IME 를 흉내: compositionstart → (isComposing) input × N → compositionend → 마지막 input
-      await page.evaluate(
-        ([tok]) => {
+
+      // [1단계] compositionstart + 조합 중 입력만 (compositionend 없음).
+      // compositionstart 가 디바운스 타이머를 취소해야 함을 검증한다.
+      // 300ms 이상 기다려도 RPC 가 안 나가야 정상 — 순수 디바운스 구현이면 여기서 요청이 나간다(버그 포착).
+      await page.evaluate(() => {
           const el = document.querySelector('[data-testid="post-search-input"]');
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
           const fire = (type, init) => el.dispatchEvent(new (type.startsWith("composition") ? CompositionEvent : InputEvent)(type, { bubbles: true, ...init }));
@@ -218,15 +231,23 @@ async function waitRpcSettled(page) {
             setter.call(el, p);
             fire("input", { isComposing: true, inputType: "insertCompositionText", data: p });
           }
+        });
+      await sleep(400); // 300ms 디바운스를 충분히 초과 — 타이머가 살아있었다면 이미 발화
+      check("조합 중(compositionstart 후 400ms) RPC 0회 — 타이머 취소 확인", calls.length === 0, `calls=${calls.length}`);
+
+      // [2단계] compositionend 발화 → 디바운스 예약 → 300ms 후 RPC 1회
+      await page.evaluate(
+        ([tok]) => {
+          const el = document.querySelector('[data-testid="post-search-input"]');
+          const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+          const fire = (type, init) => el.dispatchEvent(new (type.startsWith("composition") ? CompositionEvent : InputEvent)(type, { bubbles: true, ...init }));
           setter.call(el, tok);
           fire("compositionend", { data: tok });
           fire("input", { isComposing: false, inputType: "insertText", data: tok });
         },
         [TOKEN],
       );
-      await sleep(150);
-      check("조합 중 RPC 0회(150ms 시점)", calls.length === 0, `calls=${calls.length}`);
-      await sleep(800);
+      await sleep(500); // compositionend 후 디바운스(300ms) 통과 여유
       await waitRpcSettled(page);
       check("조합 종료 후 RPC 1회(최종 검색어)", calls.length === 1 && calls[0].q === TOKEN, `calls=${JSON.stringify(calls.map((c) => c.q))}`);
       await ctx.close();
@@ -300,21 +321,82 @@ async function waitRpcSettled(page) {
       await ctx.close();
     }
 
+    // ───────── 7. loadMore 지연 경합: 2페이지 응답이 늦게 와도 1페이지 결과 유지 ─────────
+    {
+      console.log("7. loadMore 지연 경합 — 피드 전환 시 지연 응답 폐기");
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await ctx.newPage();
+      let page2Intercepted = false;
+      await page.route(RPC_RE, async (route) => {
+        const body = JSON.parse(route.request().postData() || "{}");
+        if (body.before_id !== null && body.before_id !== undefined) {
+          page2Intercepted = true;
+          await sleep(3000); // 2페이지만 3초 지연
+        }
+        await route.continue();
+      });
+      await page.goto(`${BASE}${FEED}?q=${encodeURIComponent(TOKEN)}`, { waitUntil: "networkidle" });
+      await waitRpcSettled(page);
+      const n1 = await visibleTokenCount(page);
+      check("loadMore 전 1페이지 결과 노출(20건)", n1 >= 20, `visible=${n1}`);
+      // 스크롤 최하단 → sentinel → loadMore 발동
+      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      await sleep(600); // IntersectionObserver 발동 여유
+      // loadMore 인-플라이트 중 검색어 지우기 → 일반 피드로 전환
+      await page.getByTestId("post-search-clear").click();
+      await sleep(3500); // 지연 응답 도착 대기
+      await waitRpcSettled(page);
+      check("2페이지 인터셉트 확인", page2Intercepted, "route not triggered");
+      check("검색어 지움 후 ?q 없음(세대 교체)", !new URL(page.url()).searchParams.has("q"), new URL(page.url()).search);
+      // 지연된 2페이지 결과(TOKEN 추가N)가 append 됐으면 일반 피드보다 TOKEN 이 많이 보여야 함 — 그래선 안 된다.
+      const extraVisible = await page.evaluate((tok) =>
+        (document.body.innerText.match(new RegExp(tok, "g")) || []).length,
+      TOKEN);
+      check("지연 2페이지 결과 append 없음(세대 폐기)", extraVisible === 0, `token visible=${extraVisible}`);
+      await ctx.close();
+    }
+
+    // ───────── 8. RPC 오류 → '결과 없음' 아닌 오류 문구(오류 은폐 회귀 방지) ─────────
+    {
+      console.log("8. RPC 500 오류 → post-search-error 노출(post-search-empty 아님)");
+      const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await ctx.newPage();
+      // RPC 를 500 으로 모킹
+      await page.route(RPC_RE, (route) =>
+        route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ message: "internal error" }) }),
+      );
+      await page.goto(`${BASE}${FEED}?q=${encodeURIComponent(TOKEN)}`, { waitUntil: "networkidle" });
+      await waitRpcSettled(page);
+      check("RPC 500 → 오류 UI 노출", await page.getByTestId("post-search-error").isVisible().catch(() => false));
+      check("RPC 500 → 결과없음 UI 미노출(오류 은폐 금지)", !(await page.getByTestId("post-search-empty").isVisible().catch(() => false)));
+      await ctx.close();
+    }
+
     void posts;
   } catch (e) {
     failures++;
     console.error("FATAL:", e?.message || e);
   } finally {
     if (browser) await browser.close().catch(() => {});
-    // 정리: 차단 → 글 → 계정
+    // 정리: 차단 → 글 → 계정. 삭제 오류는 catch 후 실패 처리, 잔여 0 건을 확인한다.
     try {
       if (cleanupUsers.length === 2) {
-        await admin.from("user_blocks").delete().eq("blocker_id", cleanupUsers[0]).eq("blocked_id", cleanupUsers[1]);
+        const { error: blkErr } = await admin.from("user_blocks").delete().eq("blocker_id", cleanupUsers[0]).eq("blocked_id", cleanupUsers[1]);
+        if (blkErr) throw new Error("block delete failed: " + blkErr.message);
       }
-      if (cleanupPosts.length) await admin.from("posts").delete().in("id", cleanupPosts);
+      if (cleanupPosts.length) {
+        const { error: postDelErr } = await admin.from("posts").delete().in("id", cleanupPosts);
+        if (postDelErr) throw new Error("post delete failed: " + postDelErr.message);
+        // 잔여 0 검증 — soft-delete 컬럼이 없을 때 간단히 count 로 확인.
+        const { count, error: cntErr } = await admin.from("posts").select("id", { count: "exact", head: true }).in("id", cleanupPosts);
+        if (cntErr) throw new Error("post count check failed: " + cntErr.message);
+        if (count !== 0) throw new Error(`post cleanup 잔여 ${count}건 — 삭제 미완료`);
+      }
       for (const uid of cleanupUsers) {
-        await admin.from("profiles").delete().eq("id", uid);
-        await admin.auth.admin.deleteUser(uid);
+        const { error: profErr } = await admin.from("profiles").delete().eq("id", uid);
+        if (profErr) throw new Error("profile delete failed: " + profErr.message);
+        const { error: authErr } = await admin.auth.admin.deleteUser(uid);
+        if (authErr) throw new Error("auth user delete failed: " + authErr.message);
       }
       console.log(`[qa] cleanup done: posts=${cleanupPosts.length} users=${cleanupUsers.length}`);
     } catch (e) {
