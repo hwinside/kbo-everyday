@@ -21,12 +21,12 @@
 
 ## 2. 쿠키 트래픽 정책 — 리뷰 제안 결정
 
-**Cookie/Authorization을 제거하지 않는다. CF lookup 단계에서 우회하고 Vercel의 기존 캐시 계약을 보존한다.** “ineligible이면 모든 헤더 무변경”도 그대로 채택하지 않는다. 브라우저/Vercel 계약은 보존하되 CF 전용 `no-store`를 명시해야 의도치 않은 CF 저장을 막을 수 있다.
+**API의 Cookie/Authorization을 제거하지 않는다. 해당 API는 CF lookup 단계에서 우회하고 Vercel의 기존 캐시 계약을 보존한다.** 세션 무관 immutable 정적 파일의 R1은 별도 조건(§3)이다. “ineligible이면 모든 헤더 무변경”도 그대로 채택하지 않는다. 부적격 API의 브라우저/Vercel 계약은 보존하되 CF 전용 `no-store`를 명시해야 의도치 않은 CF 저장을 막을 수 있다.
 
 | 경우 | Cloudflare | Vercel / 브라우저 | 구현 요구 |
 | --- | --- | --- | --- |
 | 플래그 OFF | 현행 그대로 | 응답 객체·모든 헤더 그대로 | OFF 보호 앵커 유지 |
-| ON + 익명 허용 API + 유효 200 JSON/기존 TTL | 기존 remaining TTL로만 캐시 | Vercel no-store, browser private/no-store | 현재 eligible 분기 계약 유지 |
+| ON + 익명 허용 API + 유효 200 JSON/기존 TTL | 기존 remaining TTL로만 캐시 | Vercel no-store; browser는 OFF의 `public`에서 `private, no-store, max-age=0`으로 **명시 변경** | #1349에 준비된 ON eligible 분기 계약. 현재 OFF 브라우저 계약과 동일하다는 뜻이 아님 |
 | ON + Cookie/Authorization/RSC 등 부적격 요청 | lookup BYPASS + origin `Cloudflare-CDN-Cache-Control: no-store` | **원래 Cache-Control/CDN-Cache-Control/Vercel-CDN-Cache-Control 보존** | 현재 부적격 분기의 일괄 no-store를 수정하는 후속 코드 필요 |
 | ON + 오류/degraded/Set-Cookie/Vary/TTL 이상 등 부적격 응답 | 저장 금지 | 원본 no-store/private 등 더 엄격한 계약도 그대로 보존 | 인증·개인화 안전성 선행 확인; 원본 계약에 결함이 있으면 활성화 차단 |
 
@@ -43,14 +43,17 @@
 
 Phase 1-A = `/_next/static/`만. Phase 1-B = 검증·코드 보완 후 `/api/stats`, `/api/news/discussion/counts` 두 경로만 추가. 한 번에 이미지/다른 API로 넓히지 않는다.
 
-공통 positive predicate: 승인된 canonical HTTPS host, GET/HEAD, Cookie/Authorization 헤더 **존재 자체가 없음**(빈 값도 제외), RSC/Next router prefetch/state 헤더 없음, `_rsc` 쿼리 없음, 정확한 허용 path. encoded path·trailing slash·유사 suffix·리다이렉트 변형은 허용하지 않고 실제 Cloudflare 정규화 결과를 검증한다.
+공통 범위: 승인된 canonical HTTPS host, GET/HEAD, 정확한 허용 path. encoded path·trailing slash·유사 suffix·리다이렉트 변형은 허용하지 않고 실제 Cloudflare 정규화 결과를 검증한다.
+
+- **R1 정적 predicate**: 공통 범위 + 검증된 `/_next/static/` 빌드 산출물 path만. Cookie/Authorization/RSC 헤더 유무로 제외하지 않는다. same-origin 로그인 브라우저는 JS/CSS에도 쿠키를 보내므로 쿠키 없음 조건을 두면 정적 HIT를 불필요하게 차단한다. 해시/버전으로 식별되는 public immutable 산출물이 세션에 따라 변하지 않는다는 것이 예외 근거이며, 익명·두 계정의 동일 bytes/헤더와 실제 HIT를 검증한다. 개인화된 파일이나 Set-Cookie 응답에는 예외를 확대하지 않는다.
+- **R2 API predicate**: 공통 범위 + stats/counts exact path + Cookie/Authorization 헤더 **존재 자체가 없음**(빈 값도 제외) + RSC/Next router prefetch/state 헤더 없음 + `_rsc` 쿼리 없음. 정적 파일과 API의 인증 경계를 혼용하지 않는다.
 
 | 순서 | 대상/조건 | 동작 |
 | --- | --- | --- |
 | R0 | 서비스 대상 host 전체 | 기본 BYPASS |
-| R1 | 공통 조건 + 정확한 `/_next/static/` 하위 정적 산출물 | Eligible, origin TTL 존중, 오류 저장 금지 |
-| R2 | 공통 조건 + stats/counts exact path | 초기 disabled. Phase 1-B 게이트 후 Eligible, remaining TTL만 |
-| R3 | 인증/Cookie/RSC/비 GET·HEAD/검증 경로 등 hard deny | 최종 BYPASS. 이후 이를 덮는 cache rule 없음 |
+| R1 | R1 정적 predicate (Cookie/Authorization/RSC 헤더 조건 없음) | Eligible, origin TTL 존중, 오류 저장 금지 |
+| R2 | R2 API predicate (인증/Cookie/RSC 제외) | 초기 disabled. Phase 1-B 게이트 후 Eligible, remaining TTL만 |
+| R3 | 비 GET·HEAD/검증·민감 경로; API의 인증/Cookie/RSC 조건 및 R1 밖 HTML/RSC 경로 | 최종 BYPASS. **R1 정적 요청은 Cookie/Authorization/RSC 헤더만으로 다시 차단하지 않음.** 이후 이를 덮는 cache rule 없음 |
 
 - Cloudflare Cache Rules는 마지막 일치 설정이 우선이다. 최초 catch-all BYPASS 다음에 좁은 허용 규칙을 놓고 마지막 hard deny로 보호한다. **catch-all BYPASS를 맨 마지막에 놓아 허용까지 전부 무효화하지 않는다.** 실제 UI/Trace 결과와 export로 검증.
 - Edge TTL은 `bypass_by_default`(cache-control 있으면 존중, 없으면 BYPASS). `respect_origin`의 헤더 없는 응답 기본 TTL fallback과 구분. 200 TTL override·minimum TTL 강제·SWR/stale-if-error·Always Online 금지.
@@ -58,7 +61,7 @@ Phase 1-A = `/_next/static/`만. Phase 1-B = 검증·코드 보완 후 `/api/sta
 - `public`만 있고 명시 freshness 없는 API 응답이 캐시되지 않음을 검증한다. `bypass_by_default` 하나가 모든 부적격 응답을 해결한다고 가정하지 않는다. API는 origin CF 전용 positive TTL 또는 no-store 계약과 구캐시 제거가 필수.
 - Browser TTL은 origin 존중. Cache Response Rules/Workers/Page Rules/Transform Rules가 헤더 또는 캐시 결정을 덮지 않는지 전수 확인. 현재 존재/가용성은 미확인.
 - 키는 scheme + host + path + **전체 query 값** 구분. query 제거/무조건 정렬/host 합치기/계정 Cookie 포함 금지. query 순서별 중복 저장은 초기 수용하되 요청 혼합은 금지.
-- 모든 HTML/RSC, `/_next/image`, 기타 API, 로그인/OAuth callback/admin/업로드/실시간 경로, `/.well-known/acme-challenge/*`, `/.well-known/vercel/*`는 BYPASS. 정적 확장자만으로 예외를 열지 않는다.
+- 모든 HTML/RSC 응답 경로, `/_next/image`, 기타 API, 로그인/OAuth callback/admin/업로드/실시간 경로, `/.well-known/acme-challenge/*`, `/.well-known/vercel/*`는 BYPASS. R1의 immutable JS/CSS 요청에 RSC 헤더가 붙은 경우와 실제 RSC 응답 경로를 구분한다. 정적 확장자만으로 예외를 열지 않는다.
 
 ## 4. 존 구성 체크리스트 (실행 전 확인용, 아직 적용 안 함)
 
@@ -81,10 +84,10 @@ Phase 1-A = `/_next/static/`만. Phase 1-B = 검증·코드 보완 후 `/api/sta
 | ID | 검증 | PASS 조건 / 실패 시 |
 | --- | --- | --- |
 | G1 | OFF 회귀 + 새 쿠키 보존 정책 + mutation | OFF 객체/헤더 불변, eligible 단일 TTL, ineligible 원본 Vercel 계약 보존+CF no-store, Cookie strip 없음. 새 분기 mutation RED. 기존 R2 숫자를 후속 SHA에 이월하지 않음 |
-| G2 | 실제 ingress 신뢰 | 직결/preview/CF 경유에서 XFF·cf-connecting-ip·x-vercel-forwarded-for 위조와 IPv4/6·리스트/port/zone ID 경계. 플랫폼 덮어쓰기/정규화가 실제 코드 가정에 맞고 두 테스트 클라이언트가 CF IP 버킷으로 합쳐지지 않음 |
-| G3 | Cache lookup hard deny | 먼저 익명으로 warm한 뒤 Cookie·Authorization·RSC·다른 method·쿼리 변형을 요청해 HIT 오염 없음. origin no-store만 보고 통과시키지 않음 |
+| G2 | 실제 ingress 신뢰·버킷 분리 | 직결/preview/CF 경유에서 XFF·cf-connecting-ip·x-vercel-forwarded-for 위조와 IPv4/6·리스트/port/zone ID 경계. 플랫폼 덮어쓰기/정규화가 코드 가정과 일치. **서로 다른 실제 클라이언트 IP의 전용 2계정에서 rate-limit 버킷이 분리됨을 실측**, 정상 요청이 unknown/CF-IP 버킷으로 합쳐지거나 예기치 않은 429를 받지 않음. 같은 NAT IP의 두 계정이 같은 IP 버킷을 쓰는 것은 정상 대조군이며 계정별 분리를 강제하지 않음 |
+| G3 | Cache lookup 경계 | R2 API를 익명으로 warm한 뒤 Cookie·Authorization·RSC·다른 method·쿼리 변형을 요청해 HIT 오염 없음. 반대로 R1 정적은 익명/로그인/Cookie/Authorization/RSC 헤더가 있어도 동일 bytes의 안전한 HIT를 유지하고 R3에 다시 막히지 않음. origin no-store만 보고 통과시키지 않음 |
 | G4 | 혼합 캐시 순서 | Cookie→익명/익명→Cookie/A→B/B→A 및 실제 Vercel HIT 응답. CF no-store marker 유지·세션 데이터 혼합 없음·쿠키 요청의 기존 Vercel 캐시 가능성 불필요 상실 없음 |
-| G5 | 실제 TTL/형식/오류 | 같은 key·POP의 MISS→HIT와 Age/데이터 시각, 소스 캐시 잔여 TTL 이내, 만료/5xx 시 stale 미서빙. 3xx/4xx/5xx/degraded/Set-Cookie/Vary/public-only/TTL 누락·중복·0·음수·상한 초과는 저장 안 됨 |
+| G5 | 헤더 전달·실제 TTL/형식/오류 | **origin→Vercel→CF ingress에서 CF 전용 positive TTL/no-store 헤더가 보존되어 도달함을 관측**하고, 동일 요청의 진단 증거·CF-Cache-Status·Age를 결속(§5.1). 같은 key·POP의 MISS→HIT와 소스 잔여 TTL, 만료/5xx 시 stale 미서빙. 3xx/4xx/5xx/degraded/Set-Cookie/Vary/public-only/TTL 누락·중복·0·음수·상한 초과는 저장 안 됨. CF 전용 헤더 유실/관측 불가 시 R2 HOLD |
 | G6 | 사용자 흐름 | 전용 두 계정으로 웹/iOS/Android 로그인·계정전환·조회수·초대·admin rate limit·워치/실시간 신선도·업로드·callback 확인. 개인/공유 실사용 계정 금지 |
 | G7 | DNS/TLS/메일 | 전수 레코드 일치, DNSSEC/CAA/IPv6, 사이트·메일 동작, plain-HTTP ACME/검증 경로 확인. 짧은 스모크는 인증서 실제 갱신 PASS가 아님 |
 | G8 | purge/롤백 리허설 | CF rule BYPASS→대상 purge→헤더/데이터 재조회, Vercel 구캐시 제거 증거, proxy OFF 및 IP 플래그 rollback 순서 확인. 캐시 삭제 범위/종류 식별 없이 “재배포면 전부 purge” 가정 금지 |
@@ -93,23 +96,36 @@ Phase 1-A = `/_next/static/`만. Phase 1-B = 검증·코드 보완 후 `/api/sta
 
 `Vercel-CDN-Cache-Control`은 Vercel이 소비하고 `Cloudflare-CDN-Cache-Control`은 CF가 소비할 수 있다. 최종 클라이언트에서 헤더가 안 보이는 것을 OFF/부재의 단독 증거로 삼지 않는다. 배포 설정·오리진 fixture/진단·실제 Age/캐시 상태/로그를 결합한다. 임시 진단 경로는 비공개·최소 출력·검증 후 제거.
 
+### 5.1 CF 전용 헤더 전달의 실제 증거와 대체안
+
+- 승인된 진단 경로/요청 한정 edge 관측으로 ①origin이 설정한 캐시 헤더 ②Vercel 경유 후 응답 ③CF가 실제 수신한 origin 응답 헤더를 동일 요청 식별자·deployment/rule revision으로 결속한다. positive TTL과 no-store 양쪽, Vercel MISS와 HIT를 모두 확인한다. CF-Cache-Status/Age는 동작 증거이며 **그 값만으로 특정 헤더의 전달을 증명하지 않는다**. 실제 CF ingress 관측 수단이 없으면 G5 미통과로 기록한다.
+- CF 전용 헤더가 Vercel에서 제거/변조되면 R2를 켜지 않는다. `CDN-Cache-Control` 대체를 별도 코드 변경·리뷰 대상으로 삼고, Vercel 이후 전달/CF 소비를 같은 방식으로 재검증한다. 플랜에 없는 관측 기능이나 새 Worker 도입을 기정사실로 두지 않는다.
+- **`CDN-Cache-Control: no-store`만 맹목적으로 추가하면 Vercel에도 적용돼 기존 캐시 보존 목적을 깨뜨린다.** 대체 구현은 원본 유효 Vercel 정책(Vercel-CDN → CDN → Cache-Control 우선순위)을 먼저 평가해 `Vercel-CDN-Cache-Control`에 명시하고, CF/외부 CDN용 `CDN-Cache-Control`과 브라우저 정책을 분리해야 한다. 익명 eligible은 inner no-store/outer 잔여 TTL, ineligible은 원래 inner 정책/outer no-store를 각각 검증한다. 정책을 안전하게 보존할 수 없으면 이 대체안도 HOLD이며 캐시 범위를 넓히지 않는다.
+
+### 5.2 프록시 ON 직후 IP/429 카나리
+
+- 측정 대상: `/api/news/discussion`·`/api/news/discussion/counts`의 요청수/429수·비율, admin/auth 정상 입력의 예상 밖 백오프, 유효 클라이언트 IP를 가진 요청 중 `unknown`/CF 대역 IP로 계산된 rate-limit 버킷의 요청 점유율. IP/쿠키 원문 대신 분류와 비식별 버킷 식별자만 기록한다.
+- 즉시 중단 기준: 다른 실제 IP를 가진 전용 두 계정 카나리의 버킷 충돌 **1건**, 유효 IP가 unknown/CF-IP 버킷으로 귀속 **1건**, 제한에 도달하지 않은 정상 카나리의 예상 밖 429 **1건**. 이 경우 5xx가 없어도 NO-GO다.
+- 운영 집계 기준: 429 비율 및 unknown/CF-IP 버킷 점유율을 **60초 창**으로 비교한다. 경로별 직전 matched baseline, 최소 표본수, 허용 상승폭/상한의 숫자를 컷오버 기록에 사전 확정한다. **한 창이라도 승인 임계 초과 시 즉시 proxy OFF**; 표본 부족이면 두 계정 능동 카나리를 계속 검증하며 이를 집계 PASS로 대신 표기하지 않는다. 기준 숫자/관측 수단이 빈칸이면 프록시 ON 금지.
+- 중단 실행: 삼식/지정 실행자가 즉시 proxy OFF를 적용하고 R1/R2 BYPASS 및 필요 purge를 수행한다. IP 플래그는 direct ingress 복구가 관측될 때까지 유지한다(§7). DNS 캐시 때문에 기존 CF 요청이 남을 수 있으므로 429/버킷 회복 확인 전 복구 완료로 쓰지 않는다.
+
 ## 6. 단계적 실행 순서와 중단 조건
 
 1. **지금 가능한 준비**: 스펙 작성·삼식 리뷰, 쿠키 정책 후속 코드 요구사항 확정. 계정 결정과 독립. Notion 반영은 후속이며, 이 Draft PR의 review GO는 아직 미완료.
 2. 후속 코드가 필요하면 삼순 구현→commit/push/PR→삼식 GO→하린아빠 exact 머지 승인→삼순 머지/배포. OFF 회귀 유지. QA 실행은 삼식.
 3. 실행자·계정·창 결정 및 필요한 실제 변경 승인 후 존 DNS-only 구성/레코드 전수검증→NS 변경/전파 검증. 코드 머지 승인을 존/NS/플래그 승인으로 확대하지 않음.
 4. 승인된 검증 환경에서 ingress G2 입증. IP 플래그를 켜면 직결 동작도 달라질 수 있으므로 direct/preview 회귀를 먼저 확인하고, **프록시 경유가 시작될 때 검증된 IP 처리 코드/설정이 이미 서빙**되도록 배포 결속. ingress 확인 수단이 없으면 프록시 ON HOLD.
-5. CF 캐시 전부 BYPASS 상태의 제한 프록시 컷오버→G2/G6/G7 확인→static만 R1 활성화. IP 회귀·네이티브 차단·인증서/메일 실패 시 즉시 단계 중단. proxy ON만으로 절감 주장 금지.
+5. CF 캐시 전부 BYPASS 상태의 제한 프록시 컷오버→G2/G6/G7 및 **§5.2의 429 비율·unknown/CF-IP 버킷 점유율/2계정 분리 카나리** 확인→static만 R1 활성화. 버킷 붕괴/예상 밖 카나리 429/운영 임계 초과는 **즉시 proxy OFF**, IP 회귀·네이티브 차단·인증서/메일 실패도 즉시 단계 중단. proxy ON만으로 절감 주장 금지.
 6. API Phase 1-B는 쿠키 수정 배포+G1~G8 필수 범위 GO 후 별도 승인. R2 BYPASS 유지→필요한 env 배포→이전 Vercel/CF cache key 제거 및 적용 확인→origin 헤더·혼합순서 검증→R2 활성화. flag 변경 뒤 미구현 헤더를 가진 구 Vercel HIT가 남으면 중단.
 7. 48h는 최초 관찰창일 뿐. 경기일 매칭이 없으면 연장하며, 인증서 갱신 및 2계정 네이티브 검증 미완료면 부분 PASS/HOLD로 남긴다.
 
 ## 7. 롤백 — 캐시와 ingress를 분리
 
 - **캐시 문제**: R2(필요시 R1 포함) BYPASS → 대상 CF purge → 오염 중단 확인 → API 캐시 플래그 OFF 배포 → Vercel 원래 계약·구캐시 상태 확인. API 불가 시 CF 전체 BYPASS/proxy OFF로 우회하며 무조건 정상으로 간주하지 않음.
-- **IP/프록시 문제**: CF 뒤에서 IP 플래그만 먼저 OFF하지 않는다. proxy OFF 등으로 trusted direct ingress를 복구하고 resolver/실제 경로 확인 후 IP 플래그 OFF 재배포. DNS 전파 중 기존 CF 경로가 남는 동안 검증된 IP 처리를 유지.
+- **IP/프록시 문제**: §5.2의 429/unknown·CF-IP 버킷/카나리 충돌 임계 초과 시 **즉시 proxy OFF**. CF 뒤에서 IP 플래그만 먼저 OFF하지 않는다. trusted direct ingress를 복구하고 resolver/실제 경로·429 및 버킷 정상화 확인 후 IP 플래그 OFF 재배포. DNS 전파 중 기존 CF 경로가 남는 동안 검증된 IP 처리를 유지.
 - **DNS/메일 문제**: 전환 전 레코드·NS/DS 스냅샷 기준 별도 복구. NS 원복은 최후 단계이며 효과가 즉시 나타난다고 주장하지 않음.
 - CF proxy OFF 콘솔 조작시간과 최종 사용자 복구시간은 다르다. authoritative TTL·resolver/로컬 캐시를 포함해 관찰한다.
-- 신규 5xx/인증·계정격리 실패/실시간 신선도 회귀/인증서·메일 장애는 즉시 NO-GO. 수치형 오류율/지연 budget은 컷오버 전 matched baseline으로 정해 서명하며 빈값으로 전환하지 않는다.
+- 신규 5xx/**429 임계 초과·unknown/CF-IP 버킷 붕괴**/인증·계정격리 실패/실시간 신선도 회귀/인증서·메일 장애는 즉시 NO-GO. 수치형 오류율/지연 budget과 §5.2 운영 카나리 기준은 컷오버 전 matched baseline으로 정해 서명하며 빈값으로 전환하지 않는다.
 
 ## 8. 계측·비용 기준
 
