@@ -32,8 +32,15 @@ async function main() {
   } });
   const calls: string[] = [];
   let responseStatus = 200;
+  let deferGifTrending = false;
+  let resolveGifTrending: ((response: Response) => void) | undefined;
   let deferStickerLoadMore = false;
   let resolveStickerLoadMore: ((response: Response) => void) | undefined;
+  const gifPage = [{
+    id: "qa-trending",
+    title: "QA opening GIF",
+    images: { fixed_height: { url: "https://media.giphy.com/qa-trending.gif", width: "100", height: "100" } },
+  }];
   const stickerPage = Array.from({ length: 20 }, (_, index) => ({
     id: `sticker-${index}`,
     title: `Sticker ${index}`,
@@ -48,6 +55,9 @@ async function main() {
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
     calls.push(url);
+    if (deferGifTrending && url.includes("/v1/gifs/trending")) {
+      return new Promise<Response>((resolve) => { resolveGifTrending = resolve; });
+    }
     if (deferStickerLoadMore && url.includes("/v1/stickers/") && url.includes("offset=20")) {
       return new Promise<Response>((resolve) => {
         resolveStickerLoadMore = resolve;
@@ -201,16 +211,18 @@ async function main() {
 
   await act(async () => stickerRoot.unmount());
 
-  // Actual game-chat picker: opening/typing spends zero quota; explicit actions spend one.
+  // Actual game-chat picker: one automatic Trending, no extra click or typeahead calls.
   for (const platform of ["ios", "android"] as const) {
     process.env[`NEXT_PUBLIC_GIPHY_${platform.toUpperCase()}_GAME_CHAT_API_KEY`] = `fixture-${platform}-chat`;
     Object.assign(window, { Capacitor: { getPlatform: () => platform } });
     responseStatus = 200;
+    deferGifTrending = true;
     let baseCalls: number = calls.length;
     const chatRoot = createRoot(container);
     await act(async () => chatRoot.render(<StrictMode><GifPicker context="game_chat_gif" onSelect={() => undefined} onClose={() => undefined} /></StrictMode>));
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
-    assert.equal(calls.length, baseCalls, "game-chat opening must not call Trending");
+    assert.equal(calls.length, ++baseCalls, "game-chat opening must call Trending exactly once in StrictMode");
+    assert.match(calls.at(-1)!, /\/v1\/gifs\/trending/);
     assert.ok(container.textContent?.includes("인기 GIF 보기"));
     assert.ok(container.textContent?.includes("Powered by GIPHY"));
     const chatInput = container.querySelector("input");
@@ -221,6 +233,15 @@ async function main() {
     });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 750)); });
     assert.equal(calls.length, baseCalls, "game-chat typing does not auto-search");
+    assert.ok(resolveGifTrending);
+    await act(async () => {
+      resolveGifTrending?.(new Response(JSON.stringify({ data: gifPage }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+      await Promise.resolve();
+    });
+    deferGifTrending = false;
+    assert.ok(container.querySelector('img[alt="QA opening GIF"]'), "opening GIFs render without another click, even while typing");
     const form = container.querySelector("form");
     assert.ok(form);
     await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
@@ -245,6 +266,9 @@ async function main() {
     await act(async () => chatRoot.unmount());
     const reopened = createRoot(container);
     await act(async () => reopened.render(<GifPicker context="game_chat_gif" onSelect={() => undefined} onClose={() => undefined} />));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    assert.equal(calls.length, baseCalls, "automatic Trending on reopen respects cooldown");
+    assert.ok(container.textContent?.includes("5분"), "reopening explains the active cooldown without a retry click");
     const retry = Array.from(container.querySelectorAll("button")).find((b) => b.textContent === "인기 GIF 보기");
     assert.ok(retry);
     await act(async () => { retry.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
@@ -254,7 +278,7 @@ async function main() {
   const recorded = JSON.stringify(events);
   assert.ok(!recorded.includes("fixture-") && !recorded.includes("test-gifs-key") && !recorded.includes("test-stickers-key"));
   assert.ok(!recorded.includes("승리") && !recorded.includes("api_key"));
-  console.log("PASS giphy request budget render smoke + iOS/Android explicit-action/cooldown/telemetry");
+  console.log("PASS giphy request budget render smoke + iOS/Android automatic-Trending/explicit-search/cooldown/telemetry");
 }
 
 void main();

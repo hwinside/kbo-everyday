@@ -45,7 +45,7 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   const [query, setQuery] = useState("");
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
   const [completedQuery, setCompletedQuery] = useState<string | null>(null);
-  const [loading, setLoading] = useState(context !== "game_chat_gif");
+  const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -142,22 +142,29 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     }
   }, [context]);
 
-  // Game-chat has a shared 100/h Beta budget: opening/typing must not spend it.
-  // Community retains the existing one-Trending + debounced-search contract.
+  // Every picker opens with one Trending request so GIFs need no extra click.
+  // Game-chat searches remain explicit; typing must not spend additional quota.
+  useEffect(() => {
+    if (context !== "game_chat_gif") return;
+    const timer = setTimeout(() => void fetchGifs(""), 0);
+    return () => clearTimeout(timer);
+  }, [context, fetchGifs]);
+
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (context === "game_chat_gif") return;
+    const normalizedQuery = normalizeGiphyQuery(query);
     activeRequestRef.current?.abort();
     setErrorMessage(null);
-    const normalizedQuery = normalizeGiphyQuery(query);
 
     if (!normalizedQuery) {
-      setLoading(false);
       if (!hasRequestedTrendingRef.current) {
         debounceRef.current = setTimeout(() => {
           hasRequestedTrendingRef.current = true;
           void fetchGifs("");
         }, 0);
+      } else {
+        setLoading(false);
       }
     } else if (normalizedQuery.length >= GIPHY_MIN_QUERY_LENGTH) {
       debounceRef.current = setTimeout(
@@ -210,7 +217,7 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
             type="text"
             value={query}
             onChange={(e) => {
-              if (context === "game_chat_gif") {
+              if (context === "game_chat_gif" && inFlightKeyRef.current?.startsWith("search:")) {
                 activeRequestRef.current?.abort();
                 setLoading(false);
               }
@@ -221,7 +228,13 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
             className="min-w-0 flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
           />
           {query && (
-            <button type="button" onClick={() => { activeRequestRef.current?.abort(); setLoading(false); setQuery(""); }} className="text-text-tertiary">
+            <button type="button" onClick={() => {
+              if (inFlightKeyRef.current?.startsWith("search:")) {
+                activeRequestRef.current?.abort();
+                setLoading(false);
+              }
+              setQuery("");
+            }} className="text-text-tertiary">
               <X size={14} />
             </button>
           )}
