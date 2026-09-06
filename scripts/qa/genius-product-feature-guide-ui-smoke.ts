@@ -2,16 +2,18 @@
 /**
  * 야잘알봇 앱 기능 안내 — End-User Level QA (#1344, 삼순 HOLD ③ "전용 계정 UI 증거").
  *
- * 실제 배포본(프리뷰/프로덕션)의 쪽지방 UI 에서 전용 테스트 계정으로 질문을 보내고,
+ * 실제 LLM을 사용할 수 있는 프로덕션 또는 로컬 dev의 쪽지방 UI에서 전용 테스트 계정으로 질문을 보내고,
  * 봇이 화면에 렌더한 답변 원문이 `PRODUCT_FEATURE_REGISTRY` 문구와 **완전 일치**하는지 본다.
  *
  *  - 하린아빠 개인/공유 계정 사용 금지(AGENTS.md P0) → 실행마다 전용 계정 생성 → 종료 시 삭제(postcondition 확인)
  *  - 스텁 종단 게이트(`genius-product-feature-guide.ts`)와 달리 여기서는 서버·DB·LLM 경로를 우회하지 않는다
- *  - 음성 질문은 화면 ↔ 질문별 서버 로그가 일치하고 정상 야구 경로여야 한다(error/unsure 는 실패).
+ *  - 음성 질문은 화면 ↔ 질문별 서버 로그의 표시 본문이 일치하고 정상 야구 경로여야 한다(error/unsure 는 실패).
  *  - 웹 메뉴 이동만 자동화한다. 네이티브 잠금화면·OS 위젯·워치 동작은 삼식의 실기기 QA가 별도 필요하다.
  *  - 배포 SHA 결속은 실행자가 배포 메타데이터로 별도 확인한다. 로컬 HEAD나 URL만으로 동일 exact를 주장하지 않는다.
  *
- * 사용: QA_BASE_URL=https://<preview>.vercel.app npx tsx scripts/qa/genius-product-feature-guide-ui-smoke.ts
+ * 사용: QA_BASE_URL=http://localhost:3000 npx tsx scripts/qa/genius-product-feature-guide-ui-smoke.ts
+ *   QA_BASE_URL은 프로덕션 또는 실제 LLM이 설정된 로컬 dev origin으로 지정한다.
+ *   LLM이 없는 프리뷰는 기본 음성 케이스를 통과할 수 없으며, 기능 안내만의 진단 결과로 전체 PASS를 대신하지 않는다.
  *   프리뷰 보호는 .env.local 의 VERCEL_PROTECTION_BYPASS_TOKEN 으로 우회(값은 출력하지 않는다).
  */
 import { createClient, type Session, type User } from "@supabase/supabase-js";
@@ -20,6 +22,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { ANON, BASE, REF, SERVICE_ROLE, SUPABASE_URL } from "./_env.mjs";
 import { PRODUCT_FEATURE_KEYS, productFeatureGuideAnswer, type ProductFeatureKey } from "../../src/lib/baseball-qa/pipeline";
+import { splitProvenanceForDisplay } from "../../src/lib/baseball-qa/genius-reply-provenance";
 
 const BASE_URL = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1] ?? BASE;
 const BYPASS = process.env.VERCEL_PROTECTION_BYPASS_TOKEN;
@@ -30,7 +33,7 @@ type QaCase = { q: string; expect: ProductFeatureKey | null };
 const BASEBALL_PATHS = new Set(["llm", "rag", "team_rag", "dictionary", "kbo_structured"]);
 const registryAnswers = new Set(PRODUCT_FEATURE_KEYS.map(productFeatureGuideAnswer));
 
-/** 실유저 원장(state/yaj-48h/failure-ledger-20260905) 문장 그대로. */
+/** 기능 안내 양성은 실유저 원장 문장 그대로. 음성은 명시적 구단 순위 + 실제 RAG 질문. */
 const DEFAULT_CASES: ReadonlyArray<QaCase> = [
   { q: "워치 연동 어떻게 해요?", expect: "스마트워치" },
   { q: "배경화면에 스코어 띄울 수 있나요", expect: "홈위젯" },
@@ -38,11 +41,11 @@ const DEFAULT_CASES: ReadonlyArray<QaCase> = [
   { q: "gps인증 어떻게 해요", expect: "직관인증" },
   { q: "최애선수 등록 어케해", expect: "최애선수" },
   { q: "TV 중계 어디서 봐?", expect: "영상중계시청" },
-  // 음성: 기록 술어 — 기능 안내로 새면 안 된다(삼순 조건부 GO ①).
-  { q: "최애팀 몇 위야?", expect: null },
+  // 음성: "최애팀"의 LLM scope 판정 편차를 피하고, 기능 안내 누출과 실제 RAG 경로를 검증한다.
+  { q: "KIA 몇 위야?", expect: null },
   { q: "희생플라이는 어느 때 치는거야", expect: null },
 ];
-/** 진단용 오버라이드: QA_CASES='[{"q":"…","expect":null}]' (기본은 위 원장 문장). */
+/** 진단용 오버라이드: QA_CASES='[{"q":"…","expect":null}]' (기본은 위 양성/음성 세트). */
 function readCases(): ReadonlyArray<QaCase> {
   const input: unknown = process.env.QA_CASES ? JSON.parse(process.env.QA_CASES) : DEFAULT_CASES;
   if (!Array.isArray(input) || input.length < 1 || input.length > 20
@@ -120,7 +123,10 @@ async function checkWebMenus(page: playwright.Page) {
   await page.screenshot({ path: `${SHOT_DIR}/menu-favorite-players.png` });
   ok("마이페이지 → 최애 선수 클릭 → 로그인 사용자 5명 선택 화면", true);
 
-  await page.goto(`${BASE_URL}/my`, { waitUntil: "domcontentloaded" });
+  // 실제 닫기 동선으로 modal history를 정리한 뒤 설정 이동을 검사한다.
+  await page.getByRole("button", { name: "나중에 할게요", exact: true }).click();
+  await page.getByRole("heading", { name: "최애 선수를 골라주세요", exact: true }).waitFor({ state: "hidden" });
+  ok("최애 선수 모달 닫힘 확인", true);
   await page.getByRole("button", { name: "설정", exact: true }).click();
   await page.waitForURL((url) => url.pathname === "/settings");
   await page.getByRole("heading", { name: "설정", exact: true }).waitFor();
@@ -196,8 +202,10 @@ try {
       const row = rows[0];
       const normalPath = row && (c.expect === null
         ? BASEBALL_PATHS.has(row.match_path) : row.match_path === "product_feature_guide");
-      ok(`「${c.q}」 화면↔로그 원문·정상 경로 일치`, rows.length === 1 && !!replies.get(c.q)
-        && row.answer === replies.get(c.q) && !!normalPath, row?.match_path ?? "로그 없음");
+      // 메시지 UI와 같은 출처 분리기를 사용한다. 출처는 별도 렌더되므로 표시 본문만 대조한다.
+      const loggedBody = typeof row?.answer === "string" ? splitProvenanceForDisplay(row.answer).body.trim() : null;
+      ok(`「${c.q}」 화면↔로그 표시 본문·정상 경로 일치`, rows.length === 1 && !!replies.get(c.q)
+        && loggedBody === replies.get(c.q) && !!normalPath, row?.match_path ?? "로그 없음");
     }
     if (CASES.some((c) => c.expect === null)) {
       ok("음성 회귀 중 실제 LLM/RAG 경로 응답 존재", (logs ?? []).some((l) =>
