@@ -19,6 +19,7 @@ import {
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
 import { STAT_DEFINITION_PROMPT, statDefinitionData, type StatDefinitionFrame } from "../stats/definition-intent";
+import { normalizeSinoKoreanQuantities, sinoKoreanQuantities } from "./sino-korean-quantity";
 // 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
@@ -1149,7 +1150,7 @@ export type ValidatedRagAnswer =
    */
   | { kind: "insufficient"; reason: RagDiscardReason; numericCount?: number };
 
-/** 문자열의 숫자 토큰 개수 — `numericTokensSubsetOf` 와 **같은 토큰 규칙**을 쓴다. */
+/** Raw numeric-character count: keep deployed telemetry semantics unchanged. */
 export function numericTokenCount(text: string): number {
   return (text.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []).length;
 }
@@ -1162,7 +1163,8 @@ export function numericTokenCount(text: string): number {
  *
  * 판정 단위는 **숫자 토큰**이다(예: `5.10`, `45`, `2026`). 근거 원문에 같은 토큰이 그대로
  * 들어 있어야 통과한다. 한 글자씩 비교하면 "1"이 아무 데나 있어서 전부 통과되므로 의미가 없다.
- * 순서리(한글 숫자 표현)는 대상이 아니다 — 아라비아 숫자만 검사한다.
+ * 한자어 수량의 명시적 표기는 동일한 숫자로 정규화한다. 이름·단독 수사·자연어
+ * 수량 전반을 판독하는 정책이 아니며 tier2의 문자 전용 금지는 바꾸지 않는다.
  */
 const KOREAN_NUMERALS: Record<string, string> = {
   한: "1", 두: "2", 세: "3", 서너: "3", 네: "4",
@@ -1277,13 +1279,14 @@ export function hasNumericCharacter(answer: string): boolean {
  *
  * 근거 없는 일반 지식 답변은 수치를 새로 만들면 안 되고, 유저가 직접 준 수치
  * (`wRC+ 88`·`WAR 4`)를 되받아 해석하는 것만 허용한다. 판정 단위는 숫자 토큰
- * (연속 숫자열 + 소수점)이다 — 문자 단위로 비교하면 `8`이 `88` 안에 있어 무의미해진다.
+ * (연속 숫자열 + 소수점)이다. 명시적 한자어 수량은 표기만 정규화한 뒤 같은
+ * 토큰 기준을 적용한다 — 문자 단위로 비교하면 `8`이 `88` 안에 있어 무의미해진다.
  * 반대가설 없는 기계 대조(문자열 포함 확인)라 코드 가드 자격이 있다.
  */
 export function numericTokensSubsetOf(answer: string, baseText: string): boolean {
-  const tokens = answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [];
+  const tokens = normalizeSinoKoreanQuantities(answer, QUANTITY_COUNTERS).match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [];
   if (tokens.length === 0) return true;
-  const baseTokens = new Set(baseText.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []);
+  const baseTokens = new Set(normalizeSinoKoreanQuantities(baseText, QUANTITY_COUNTERS).match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? []);
   // ⚠️ strict subset 만 허용한다 — 예외 없음 (삼순 2026-08-10 NO-GO ①).
   //   초안의 "정수 0~12 룰 어휘 허용"은 `WAR이 5`·`홈런 5개`를 통과시켰고,
   //   `5,000개`는 콤마 분할된 토큰 `5`·`000`이 각각 범위 안이라 통과했다 —
@@ -1294,6 +1297,7 @@ export function numericTokensSubsetOf(answer: string, baseText: string): boolean
 
 /** 답변에 한글 수사 기반 수량 주장(`세 번`)이 있는가 — 아라비아 숫자가 없어도 수치 주장이다. */
 function hasKoreanQuantityClaim(answer: string): boolean {
+  if (sinoKoreanQuantities(answer, QUANTITY_COUNTERS).length > 0) return true;
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
   return new RegExp(
     `(?<![\uac00-\ud7a3])(?:${koreanWord})\\s*(?:이|가|은|는|을|를)?\\s*(?:${QUANTITY_COUNTERS})`,
@@ -1309,6 +1313,7 @@ export interface NumericQuantityMatch {
 /** Diagnostic view of the same normalized matches used by the grounding check. */
 export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
   const normalized = text.replace(/,/g, "");
+  const sino = sinoKoreanQuantities(normalized, QUANTITY_COUNTERS);
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
   // 한글 수사 앞에 다른 한글 음절이 붙으면 수사가 아니다.
   // 이 가드가 없으면 "모두 아웃"의 `두`가 수사로 잡혀 숫자 없는 답까지 차단된다
@@ -1321,19 +1326,20 @@ export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
     `(?:(\\d+)|(?<![가-힣])(${koreanWord}))\\s*(?:이|가|은|는|을|를)?\\s*(${QUANTITY_COUNTERS})`,
     "g",
   );
-  const result: NumericQuantityMatch[] = [];
+  const result: Array<NumericQuantityMatch & { index: number }> = [...sino];
   for (const m of normalized.matchAll(quantityRe)) {
+    if (sino.some((match) => m.index >= match.index && m.index < match.index + match.token.length)) continue;
     const value = m[1] ?? KOREAN_NUMERALS[m[2]];
     if (!value) continue;
-    result.push({ token: m[0], value, counter: m[3] });
+    result.push({ token: m[0], value, counter: m[3], index: m.index });
   }
-  return result;
+  return result.sort((a, b) => a.index - b.index).map(({ token, value, counter }) => ({ token, value, counter }));
 }
 
 /** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
 function groundedAgainst(answer: string, raw: string): boolean {
-  const answerNorm = answer.replace(/,/g, "");
-  const haystackForQuantity = raw.replace(/,/g, "");
+  const answerNorm = normalizeSinoKoreanQuantities(answer.replace(/,/g, ""), QUANTITY_COUNTERS);
+  const haystackForQuantity = normalizeSinoKoreanQuantities(raw.replace(/,/g, ""), QUANTITY_COUNTERS);
   const quantitySet = (text: string): Set<string> => {
     const out = new Set<string>();
     for (const match of numericQuantityMatches(text)) {
@@ -1393,7 +1399,8 @@ export interface ValidateRagOptions {
    * 그 답변은 `{ kind: "general" }` 로 돌아간다. 숫자 계약은 근거 대조가 아니라
    * **질문 대조**다 — 답변의 숫자 토큰은 전부 질문 안에 있어야 한다(유저가 직접 쓴
    * `wRC+ 88`·`WAR 4` 를 되받는 것만 허용, 모델이 지어낸 수치는 기계적으로 폐기).
-   * 한글 수사는 프롬프트 몷이다(2026-08-07 확정 원칙: 반대가설 가능한 것은 코드로 막지 않는다).
+   * 명시적인 한자어 수량 표기는 정규화 후 같은 질문 대조를 적용한다. 단독 수사·
+   * 이름·자연어 수량 전반의 해석은 여전히 프롬프트 몫이다.
    */
   generalFallback?: { question: string };
   /**

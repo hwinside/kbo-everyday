@@ -25,6 +25,34 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r29 무문맥 참조 질문 가드 제거 — 없는 직전 주제를 생성한다",
+    file: PIPELINE,
+    from: '  if (!hasContext && isReferenceMeaningQuestion(question)) return "context_missing";',
+    to: '',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r30 일반 답변 한글 수량 정규화 제거 — 질문 밖 177을 허용한다",
+    file: RETRIEVE,
+    from: 'const tokens = normalizeSinoKoreanQuantities(answer, QUANTITY_COUNTERS).match(',
+    to: 'const tokens = answer.match(',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r31 한자어 수량 파싱 제거 — 표기별 검증 결과가 갈린다",
+    file: "src/lib/baseball-qa/rag/sino-korean-quantity.ts",
+    from: 'const value = cardinalValue(match[1]);',
+    to: 'const value = null;',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r32 재작성 메타 발언 금지 제거 — 내부 검증을 유저 지적으로 오인한다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '  "재작성 피드백은 내부 검증 결과이지 사용자의 지적이 아니다. 감사·사과·실수 인정·수정 예고·검증 과정 같은 메타 발언을 하지 말고 질문에 대한 설명만 답한다.",',
+    to: '',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
     name: "r24 공식 정의 재작성 제거 — 관형 한 폐기 후 정상 설명을 복구하지 못한다",
     file: PIPELINE,
     from: 'if (generatedOfficialNow && definition && validated.kind === "insufficient" &&',

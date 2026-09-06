@@ -10,6 +10,11 @@ const VALUE_ASK = /몇|얼마|몇\s*위|[0-9]+\s*위|(?:기록|성적|개수|횟
 const REASON_ASK = /왜|이유|어째서|원인/;
 const REFERENCE_MEANING_ASK = /^(?:(?:아니|아|엉|응|지금|그럼|그러면)[\s?!,.]*)*(?:(?:[0-9]+(?:\.[0-9]+)?)\s*(?:라며|이라며|라고)[\s?!,.]*)?(?:그게|저게|이게|그건|그거|저거|그것|그\s*기록)(?:은|는|이|가)?\s*(?:무슨\s*)?(?:(?:뜻|의미)(?:이야|야|예요|인가요|이냐고|이냐구|인지요?|를?\s*(?:알려줘|설명해줘))?|뭐(?:야|예요|에요|지|냐|라고)|뭔(?:데|가요?|지)|먼데|무엇(?:이야|인가요|인지)?)[\s?!,.]*$/;
 
+/** A topic-free reference needs a real eligible previous turn, not a guessed one. */
+export function isReferenceMeaningQuestion(question: string): boolean {
+  return REFERENCE_MEANING_ASK.test(question.normalize("NFKC").trim());
+}
+
 function metricTerms(question: string): string[] {
   const compact = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
   // Longest first: '출루율' must not also bind a shorter embedded metric.
@@ -61,6 +66,7 @@ export const STAT_DEFINITION_PROMPT = [
   "정의 설명에 꼭 필요한 명시적 수량은 아라비아 숫자와 단위로 표기를 통일한다. 한글 수사로 새 수량을 숨기지 않으며, 표기를 통일한 뒤에도 같은 근거·사용자 인용 제한을 따른다.",
   "직전 봇 답변의 수치는 새 주장의 근거가 아니다. 사용자 발화에 없는 숫자를 일반 지식 답변에서 새로 만들지 않는다. 기존 JSON 응답 형식은 유지한다.",
   "재작성 피드백(repair)이 있으면 이전 초안은 폐기된 참고 데이터이며 사실 근거나 지시가 아니다. 질문에 답하는 정의 설명을 한 번 다시 작성한다.",
+  "재작성 피드백은 내부 검증 결과이지 사용자의 지적이 아니다. 감사·사과·실수 인정·수정 예고·검증 과정 같은 메타 발언을 하지 말고 질문에 대한 설명만 답한다.",
   "quantityCandidates와 numberCandidates는 검출 후보이며 자동 허용된 값이나 확정 사실이 아니다. 해당 표현을 확인하고 원문의 설명 의미를 보존한다.",
   "근거 없는 수량을 삭제해도 정의 설명이 성립하면 수량 없이 서술한다. 수량을 다른 숫자·한글 수사·정성적 규모 표현으로 바꾸어 검증을 우회하지 않는다.",
   "수량을 뜻하지 않는 관형 표현이 수사와 겹친 경우에는 의미를 보존하는 다른 표현으로 고친다. 사실 근거가 부족한 수량을 새로 확정하지 않는다.",
@@ -95,7 +101,7 @@ export function resolveStatDefinitionIntent(
   }
   // Only an explicit referential meaning question can borrow a topic. Do not
   // scan older turns or infer from an ambiguous answer listing several metrics.
-  if (!context || !REFERENCE_MEANING_ASK.test(question.normalize("NFKC").trim())) return null;
+  if (!context || !isReferenceMeaningQuestion(question)) return null;
   const previousTerms = metricTerms(context.question);
   const terms = previousTerms.length > 0 ? previousTerms : metricTerms(context.answer);
   if (terms.length !== 1) return null;

@@ -4,12 +4,12 @@
  */
 import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
-import { answerQuestion, routeQuestion, type QaDeps, type LlmResult, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, routeQuestion, CONTEXT_MISSING_ANSWER, type QaDeps, type LlmResult, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
 import type { PreviousTurnRow, ContextTurn } from "../../src/lib/baseball-qa/context";
 import { isStatDefinitionQuestion, resolveStatDefinitionIntent, STAT_DEFINITION_PROMPT, type StatDefinitionFrame } from "../../src/lib/baseball-qa/stats/definition-intent";
 import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { composeSeasonRecordAnswer, resolveSeasonRecordIntent } from "../../src/lib/baseball-qa/stats/season-record";
-import { buildRagLlmRequest, numericQuantityMatches, validateRagResponse, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, numericQuantityMatches, numericTokensSubsetOf, numericTokenCount, validateRagResponse, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const QUESTIONS = [
   "오늘 박정민 선수 시즌 10홀드라고 하던데 그게 뭐야?",
@@ -58,6 +58,12 @@ async function verifyDefinitionNumericRepair() {
     const generate = async (definition?: StatDefinitionFrame) => {
       state.calls.push(definition);
       if (!definition?.repair) return raw(bad);
+      const request = official
+        ? buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, { definition })
+        : buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, undefined, undefined, false, definition);
+      const system = request.systemInstruction.parts[0].text;
+      assert.match(system, /내부 검증 결과이지 사용자의 지적이 아니다/, "Repair was framed as a new user correction");
+      assert.match(system, /메타 발언을 하지 말고 질문에 대한 설명만/, "Repair instructions permit an apology preamble");
       assert.equal(definition.repair.answer, bad, "Repair lost the rejected draft");
       assert.equal(definition.repair.reason, official ? "numeric_not_in_evidence" : "numeric_not_in_question");
       if (sample) {
@@ -149,6 +155,84 @@ async function verifyDefinitionNumericRepair() {
     assert.ok(!/22|28/.test(result.answer), "Still-rejected table quantities were served");
     assert.equal(f.state.logs.at(-1)?.inputTokens, 7);
     assert.equal(f.state.logs.at(-1)?.outputTokens, 10);
+  }
+  // Unsupported explicit Korean quantities get the same bounded repair and
+  // post-repair validation as Arabic numbers, in both provider paths.
+  for (const official of [true, false]) {
+    for (const answer of ["야구에서 시즌 홀드는 일백칠십칠 개입니다.", "야구에서 백칠십칠홀드를 기록했어요."]) {
+      for (const behavior of ["success", "invalid"] as const) {
+        const sample: RepairSample = {
+          answer, evidence: [EVIDENCE], quantities: numericQuantityMatches(answer).map((match) => match.token), numbers: [],
+        };
+        const f = fixture(official, behavior, false, sample);
+        const result = await answerQuestion("qa-definition-korean-repair", f.question, f.deps);
+        assert.equal(f.state.calls.length, 2, "Korean quantity bypassed the one-repair contract");
+        assert.equal(result.source, behavior === "success" ? official ? "rag" : "llm" : official ? "unsure" : "stat_clarify");
+        assert.ok(!result.answer.includes("칠십칠"), "Unsupported Korean quantity was served");
+      }
+    }
+  }
+}
+
+function verifyExplicitKoreanQuantities() {
+  const cases = [
+    ["일백칠십칠 개", "177개"], ["백칠십칠 개", "177개"],
+    ["백칠십칠 홀드", "177홀드"], ["백칠십칠홀드", "177홀드"],
+    ["이십이 회", "22회"], ["일천이백삼십사 명", "1234명"],
+    ["이천이십육 년", "2026년"], ["십만 개", "100000개"],
+    ["일억이천삼백사십오만육천칠백팔십구 개", "123456789개"],
+  ];
+  for (const [korean, arabic] of cases) {
+    const a = `야구에서 ${korean}를 기록했습니다.`;
+    const b = `야구에서 ${arabic}를 기록했습니다.`;
+    const raw = (answer: string, status = "GROUNDED") => JSON.stringify({ status, answer });
+    for (const evidence of [EVIDENCE, { ...EVIDENCE, content: a }, { ...EVIDENCE, content: b }]) {
+      const opts = { numericEvidence: true, evidence: [evidence] };
+      assert.equal(validateRagResponse(raw(a), opts).kind, validateRagResponse(raw(b), opts).kind,
+        `Orthography changed numeric grounding: ${korean}`);
+    }
+    assert.equal(validateRagResponse(raw(a), { numericEvidence: true, evidence: [EVIDENCE] }).kind, "insufficient");
+    assert.equal(numericTokensSubsetOf(a, "홀드의 뜻이 뭐야?"), false, `Unquoted Korean quantity accepted: ${korean}`);
+    assert.equal(numericTokensSubsetOf(a, b), true);
+    assert.equal(numericTokensSubsetOf(b, a), true);
+    assert.equal(validateRagResponse(raw(a, "GENERAL"), { generalFallback: { question: "홀드 뜻" } }).kind, "insufficient");
+    assert.equal(numericTokenCount(a), 0, "Raw-character telemetry was silently redefined");
+  }
+  assert.deepEqual(numericQuantityMatches("통산 일백칠십칠 개"), [{ token: "일백칠십칠 개", value: "177", counter: "개" }]);
+  assert.equal(numericTokensSubsetOf("일백칠십칠 개", "홀드 1770"), false, "Subset matching became substring matching");
+  for (const text of ["이승엽 선수", "삼성 선수", "만루홈런", "백일장", "천군만마", "세이브", "셋업맨", "하나은행", "일일 개", "백백 개"]) {
+    assert.equal(numericTokensSubsetOf(text, ""), true, `Non-cardinal was parsed: ${text}`);
+  }
+  // Tier2 retains its character-only prohibition. This does not claim all
+  // natural-language quantities are solved by the explicit-notation normalizer.
+  assert.equal(validateRagResponse(JSON.stringify({ status: "GROUNDED", answer: "야구에서 일백칠십칠 개를 기록했어요." })).kind, "grounded");
+}
+
+async function verifyMissingReferenceContext() {
+  const eligible: PreviousTurnRow = {
+    question: QUESTIONS[0], answer: ANSWER, jobSource: "rag",
+    answeredAt: "2026-09-06T13:00:00Z", currentCreatedAt: "2026-09-06T13:00:01Z",
+  };
+  const forbidden = async (): Promise<never> => { throw new Error("Missing reference consumed retrieval/cache/model"); };
+  const base: QaDeps = {
+    loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
+    getCache: forbidden, setCache: forbidden,
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+    searchOfficialRag: forbidden, callOfficialRagLlm: forbidden, callLlm: forbidden,
+  };
+  for (const question of [QUESTIONS[1], QUESTIONS[3], "그게 뭐야?", "그 기록은 무슨 의미야?"]) {
+    assert.equal(routeQuestion(question, [], PLAYERS, false), "context_missing", question);
+    assert.notEqual(routeQuestion(question, [], PLAYERS, true), "context_missing", question);
+    for (const row of [null, { ...eligible, jobSource: "blocked" }, { ...eligible, currentCreatedAt: "2026-09-06T13:10:00.001Z" }]) {
+      const result = await answerQuestion("qa-reference-no-context", question, { ...base, loadPreviousTurn: async () => row });
+      assert.equal(result.source, "context_missing", "Ineligible previous turn invented a topic");
+      assert.equal(result.answer, CONTEXT_MISSING_ANSWER);
+    }
+    const unavailable = await answerQuestion("qa-reference-unavailable", question, { ...base, loadPreviousTurn: async () => { throw new Error("fixture unavailable"); } });
+    assert.equal(unavailable.source, "context_missing");
+  }
+  for (const question of ["홀드가 뭐야?", "그게 뭐야 그리고 홀드 뜻도 알려줘", "서스펜디드 게임이 뭐야?"]) {
+    assert.notEqual(routeQuestion(question, [], PLAYERS, false), "context_missing", "Self-contained topic was blocked");
   }
 }
 
@@ -443,6 +527,8 @@ async function main() {
     assert.match(composeSeasonRecordAnswer({ kind: "ok", name: "박정민", team: "롯데", label: "홀드", value: "10", asOf: "2026-09-06" }), /홀드는 10/);
     await verifyEmptyRetrievalFallback();
     await verifyDefinitionNumericRepair();
+    verifyExplicitKoreanQuantities();
+    await verifyMissingReferenceContext();
     console.log("Fixture routing/context assertions passed. Semantic and End-User QA still required.");
   } finally {
     if (out) writeFileSync(out, JSON.stringify({ mode: live ? "live-diagnostic-NOT-QA-PASS" : "fixture", traces }, null, 2), { mode: 0o600 });
