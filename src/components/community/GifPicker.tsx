@@ -51,12 +51,30 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   const [loading, setLoading] = useState(true);
   const [listTitle, setListTitle] = useState(context === "game_chat_gif" ? "크보팬 인기 GIF" : "");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [visibleViewportHeight, setVisibleViewportHeight] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const activeRequestRef = useRef<AbortController | null>(null);
   const inFlightKeyRef = useRef<string | null>(null);
   const hasRequestedTrendingRef = useRef(false);
   const dragStartY = useRef(0);
+
+  // Size all three mounts here. On iOS the keyboard can shrink only the visual
+  // viewport, not dvh; cap the panel without moving the page or its composer.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const updateHeight = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      if (Number.isFinite(height) && height > 0) setVisibleViewportHeight(height);
+    };
+    updateHeight();
+    viewport?.addEventListener("resize", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      viewport?.removeEventListener("resize", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+    };
+  }, []);
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
@@ -215,10 +233,18 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col min-h-0"
+      style={{
+        height: "clamp(320px, 70dvh, 480px)",
+        // Reserve space for the composer/tab bar and device safe areas. In a
+        // very short viewport keep the controls usable; only the grid shrinks.
+        maxHeight: `max(160px, calc(${visibleViewportHeight == null ? "100dvh" : `${visibleViewportHeight}px`} - 8rem - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px))))`,
+      }}
+    >
       {/* Header: drag handle (swipe down to dismiss) + close */}
       <div
-        className="flex items-center justify-between px-3 pt-2 pb-1 cursor-grab"
+        className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1 cursor-grab"
         onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
         onTouchEnd={(e) => {
           const delta = e.changedTouches[0].clientY - dragStartY.current;
@@ -282,12 +308,12 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
       </div>
 
       {context === "game_chat_gif" && (
-        <div className="px-3 pb-1 text-xs text-text-tertiary" aria-live="polite">
+        <div className="shrink-0 px-3 pb-1 text-xs text-text-tertiary" aria-live="polite">
           {listTitle}{listTitle === "크보팬 인기 GIF" ? " · 최근 30일 경기채팅" : ""}
         </div>
       )}
       {/* Grid */}
-      <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
         {errorMessage && (
           <div className="px-2 py-2 text-center text-xs text-text-tertiary" role="status">
             {errorMessage}

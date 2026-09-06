@@ -867,7 +867,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
                 {showGifPicker && (
                   <motion.div
                     className="absolute left-0 right-0 border-t border-border bg-bg-secondary z-10"
-                    style={{ height: 280, bottom: "100%" }}
+                    style={{ bottom: "100%" }}
                     initial={{ y: "100%" }}
                     animate={{ y: 0 }}
                     exit={{ y: "100%" }}

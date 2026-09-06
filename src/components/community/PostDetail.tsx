@@ -829,7 +829,6 @@ export default function PostDetail({ postId }: PostDetailProps) {
           <motion.div
             data-postdetail-gif
             className="fixed left-0 right-0 bg-bg-secondary border-t border-border z-40"
-            style={{ height: 280 }}
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
