@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { answerQuestion, routeQuestion, type QaDeps, type LlmResult, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
 import type { PreviousTurnRow, ContextTurn } from "../../src/lib/baseball-qa/context";
-import { isStatDefinitionQuestion, resolveStatDefinitionIntent, STAT_DEFINITION_PROMPT } from "../../src/lib/baseball-qa/stats/definition-intent";
+import { isStatDefinitionQuestion, resolveStatDefinitionIntent, STAT_DEFINITION_PROMPT, type StatDefinitionFrame } from "../../src/lib/baseball-qa/stats/definition-intent";
 import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { composeSeasonRecordAnswer, resolveSeasonRecordIntent } from "../../src/lib/baseball-qa/stats/season-record";
-import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, numericQuantityMatches, validateRagResponse, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const QUESTIONS = [
   "오늘 박정민 선수 시즌 10홀드라고 하던데 그게 뭐야?",
@@ -24,6 +24,108 @@ const EVIDENCE: RagEvidence = {
   revision: "fixture", sectionPath: "홀드", asOf: "2026-09-06", sourceGrade: "tier1",
 };
 const llmResult = (): LlmResult => ({ text: JSON.stringify({ status: "GROUNDED", answer: ANSWER }), inputTokens: 1, outputTokens: 1 });
+
+function quantityTrace(raw: LlmResult) {
+  try {
+    const parsed = JSON.parse(raw.text) as { answer?: unknown };
+    return typeof parsed.answer === "string"
+      ? numericQuantityMatches(parsed.answer) : [];
+  } catch { return []; }
+}
+
+async function verifyDefinitionNumericRepair() {
+  // Keep the parser strict. Even the tempting object + 한 + noun exception
+  // would misclassify a real count: "이닝을 한 투수가 던졌다".
+  const captured = "야구에서 홀드는 리드를 유지하는 데 결정적인 역할을 한 투수에게 주어지는 기록입니다.";
+  assert.deepEqual(numericQuantityMatches(captured), [{ token: "한 투수", value: "1", counter: "투수" }]);
+  for (const answer of [captured, "야구에서 이닝을 한 투수가 던졌습니다.", "야구에서 한 점을 기록했습니다.", "야구에서 1홀드가 기록됩니다."]) {
+    const result = validateRagResponse(JSON.stringify({ status: "GROUNDED", answer }), { numericEvidence: true, evidence: [EVIDENCE] });
+    assert.equal(result.kind, "insufficient", "The existing numeric grounding contract was weakened");
+  }
+  function fixture(official: boolean, behavior: "success" | "general" | "invalid" | "error", legacy = false) {
+    const question = official ? QUESTIONS[2] : QUESTIONS[0];
+    const bad = official ? captured : "야구에서 리드를 지키면 1홀드가 기록됩니다.";
+    const good = `야구에서 ${ANSWER}`;
+    const raw = (answer: string, inputTokens = 2, outputTokens = 3): LlmResult => ({
+      text: JSON.stringify({ status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens, outputTokens,
+    });
+    const state = {
+      calls: [] as Array<StatDefinitionFrame | undefined>, logs: [] as Array<Parameters<QaDeps["log"]>[0]>,
+      stored: null as LlmResult | null, started: legacy, acquires: 0, cacheWrites: 0, failLog: false,
+    };
+    const generate = async (definition?: StatDefinitionFrame) => {
+      state.calls.push(definition);
+      if (!definition?.repair) return raw(bad);
+      assert.equal(definition.repair.answer, bad, "Repair lost the rejected draft");
+      assert.equal(definition.repair.reason, official ? "numeric_not_in_evidence" : "numeric_not_in_question");
+      if (official) assert.deepEqual(definition.repair.quantityCandidates, ["한 투수"]);
+      else assert.deepEqual(definition.repair.numberCandidates, ["1"]);
+      assert.deepEqual(definition.terms, ["홀드"]);
+      if (behavior === "error") throw new Error("fixture repair timeout");
+      if (behavior === "general") return { ...raw(good, 5, 7), text: JSON.stringify({ status: "GENERAL", answer: good }) };
+      return raw(behavior === "success" ? good : "야구에서 홀드는 999개라는 기록입니다.", 5, 7);
+    };
+    const deps: QaDeps = {
+      loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
+      getCache: async () => null, setCache: async () => { state.cacheWrites++; },
+      reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+      getLlmState: async () => ({ started: state.started, result: legacy ? raw(bad) : state.stored }),
+      acquireLlmStart: async () => { state.acquires++; if (state.started) return false; state.started = true; return true; },
+      storeLlm: async (result) => { state.stored = result; },
+      log: async (entry) => { if (state.failLog) { state.failLog = false; throw new Error("fixture log crash"); } state.logs.push(entry); },
+      searchOfficialRag: async () => official ? [EVIDENCE] : [],
+      callOfficialRagLlm: async (_q, evidence, extras) => { assert.deepEqual(evidence, [EVIDENCE]); return generate(extras?.definition); },
+      callLlm: async (_q, _context, _roster, statMode, definition) => { assert.equal(statMode, false); return generate(definition); },
+    };
+    return { question, bad, good, state, deps };
+  }
+  for (const official of [true, false]) {
+    const behaviors = official ? ["success", "general", "invalid", "error"] as const : ["success", "invalid", "error"] as const;
+    for (const behavior of behaviors) {
+      const f = fixture(official, behavior);
+      const result = await answerQuestion("qa-definition-repair", f.question, f.deps);
+      assert.equal(f.state.calls.length, 2, "Definition repair must be exactly one additional attempt");
+      assert.equal(f.state.acquires, 1, "Repair acquired another winner instead of remaining in the same attempt");
+      const finalLog = f.state.logs[f.state.logs.length - 1];
+      assert.equal(finalLog.inputTokens, behavior === "error" ? 2 : 7);
+      assert.equal(finalLog.outputTokens, behavior === "error" ? 3 : 10);
+      if (behavior === "success" || behavior === "general") {
+        assert.equal(result.source, official && behavior !== "general" ? "rag" : "llm");
+        assert.ok(result.answer.startsWith(f.good));
+      } else {
+        assert.equal(result.source, behavior === "error" ? "error" : official ? "unsure" : "stat_clarify");
+        assert.ok(!result.answer.includes("999"), "Unverified rewritten quantity was served");
+      }
+      const replay = await answerQuestion("qa-definition-repair", f.question, f.deps);
+      assert.equal(replay.source, result.source);
+      assert.equal(replay.answer, result.answer);
+      assert.equal(f.state.calls.length, 2, "A replay consumed another model call");
+    }
+    const legacy = fixture(official, "success", true);
+    await answerQuestion("qa-definition-legacy", legacy.question, legacy.deps);
+    assert.equal(legacy.state.calls.length, 0, "A stored raw answer retriggered a provider call");
+    const loser = fixture(official, "success");
+    const pending = await answerQuestion("qa-definition-loser", loser.question, {
+      ...loser.deps, getLlmState: async () => ({ started: true, result: null, ownerActive: true }),
+    });
+    assert.equal(pending.source, "pending");
+    assert.equal(loser.state.calls.length, 0);
+    assert.equal(loser.state.acquires, 0);
+    const crash = fixture(official, "success");
+    crash.state.failLog = true;
+    await assert.rejects(answerQuestion("qa-definition-crash", crash.question, crash.deps), /fixture log crash/);
+    assert.ok(crash.state.stored, "Repair was not stored before logging");
+    const resumed = await answerQuestion("qa-definition-crash", crash.question, crash.deps);
+    assert.equal(resumed.source, official ? "rag" : "llm");
+    assert.ok(resumed.answer.startsWith(crash.good));
+    assert.equal(crash.state.calls.length, 2);
+  }
+  const ordinary = fixture(true, "success");
+  const question = "야구에서 스트라이크존은 어디야?";
+  assert.equal(resolveStatDefinitionIntent(question), null);
+  await answerQuestion("qa-non-definition", question, ordinary.deps);
+  assert.equal(ordinary.state.calls.length, 1, "Non-definition RAG unexpectedly gained a repair call");
+}
 
 function assertDefinitionRequest(request: ReturnType<typeof buildBaseballQaGeminiRequest>, question: string) {
   const system = request.systemInstruction.parts[0].text;
@@ -178,7 +280,7 @@ async function verifyEmptyRetrievalFallback() {
   const replayDeps: QaDeps = {
     ...base,
     getLlmState: async () => ({ started: stored !== null, result: stored }),
-    beginLlm: async () => true,
+    acquireLlmStart: async () => true,
     storeLlm: async (result) => { stored = result; },
     callLlm: async () => { calls++; return generic(explanation); },
     setCache: async () => { throw new Error("Guard-owned definition entered global cache"); },
@@ -246,7 +348,8 @@ async function main() {
     deps.callOfficialRagLlm = async (question, evidence, extras) => {
       const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
       const raw = await server.callOfficialRagLlm(question, evidence, extras);
-      traces.push({ stage: "model", question, evidence, extras, request, raw });
+      traces.push({ stage: "model", question, evidence, extras, request, raw,
+        quantityMatches: quantityTrace(raw) });
       return raw;
     };
     deps.callLlm = async (question, context, roster, statMode, definition) => {
@@ -314,6 +417,7 @@ async function main() {
     }
     assert.match(composeSeasonRecordAnswer({ kind: "ok", name: "박정민", team: "롯데", label: "홀드", value: "10", asOf: "2026-09-06" }), /홀드는 10/);
     await verifyEmptyRetrievalFallback();
+    await verifyDefinitionNumericRepair();
     console.log("Fixture routing/context assertions passed. Semantic and End-User QA still required.");
   } finally {
     if (out) writeFileSync(out, JSON.stringify({ mode: live ? "live-diagnostic-NOT-QA-PASS" : "fixture", traces }, null, 2), { mode: 0o600 });

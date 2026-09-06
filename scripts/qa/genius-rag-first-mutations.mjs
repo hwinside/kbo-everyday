@@ -25,6 +25,41 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r24 공식 정의 재작성 제거 — 관형 한 폐기 후 정상 설명을 복구하지 못한다",
+    file: PIPELINE,
+    from: 'if (generatedOfficialNow && definition && validated.kind === "insufficient" &&',
+    to: 'if (false && generatedOfficialNow && definition && validated.kind === "insufficient" &&',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r25 generic 정의 재작성 제거 — 새 1을 허용하지 않고 설명을 복구하는 경로 소실",
+    file: PIPELINE,
+    from: "if (generatedGenericNow && statDefinition && definitionNumberUnsupported())",
+    to: "if (false && generatedGenericNow && statDefinition && definitionNumberUnsupported())",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r26 저장된 RAG 원답도 재호출 — 재생의 단일 winner 경계 우회",
+    file: PIPELINE,
+    from: 'generatedOfficialNow && definition && validated.kind === "insufficient"',
+    to: 'definition && validated.kind === "insufficient"',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r27 저장된 generic 원답도 재호출 — 재생에서 추가 과금",
+    file: PIPELINE,
+    from: "generatedGenericNow && statDefinition && definitionNumberUnsupported()",
+    to: "statDefinition && definitionNumberUnsupported()",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r28 재작성 뒤 근거 검사 제거 — 재작성된 환각 수량 유출",
+    file: PIPELINE,
+    from: "      validated = validateOfficial(llm);",
+    to: '      validated = { kind: "grounded", answer: JSON.parse(llm.text).answer, toneCompliant: true };',
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
     name: "r21 직전 사용자 숫자 제거 — 후속 10홀드 인용이 차단된다",
     file: "src/lib/baseball-qa/stats/definition-intent.ts",
     from: "return definition?.context ? `${question}\\n${definition.context.question}` : question;",

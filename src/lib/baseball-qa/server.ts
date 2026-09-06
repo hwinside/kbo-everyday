@@ -3,7 +3,7 @@
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import type { StatDefinitionFrame } from "./stats/definition-intent";
+import { DEFINITION_REPAIR_TIMEOUT_MS, type StatDefinitionFrame } from "./stats/definition-intent";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
@@ -125,7 +125,7 @@ const SYSTEM_PROMPT = BASEBALL_QA_SYSTEM_PROMPT;
 export const MAX_DELIVERY_ATTEMPTS = 5;
 /**
  * LLM 시작 fence (삼순 5차 P1): llm_started=true·결과 없음이어도 시작 후 이 창 안에서는
- * winner의 callLlm(15s timeout)이 아직 진행 중일 수 있으므로 loser는 답변 없이 물러난다.
+ * winner의 callLlm(15s) 및 정의 검증 재작성(최대 8s)이 진행 중일 수 있으므로 loser는 답변 없이 물러난다.
  * fence 경과 후에만(winner는 이미 성공 저장 또는 사망) ambiguous fail-closed 복구가 동작한다.
  */
 export const LLM_START_FENCE_MS = 30_000;
@@ -164,7 +164,7 @@ export async function callLlm(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode, definition)),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(definition?.repair ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
@@ -688,7 +688,7 @@ async function callRagLlmWithPrompt(
     body: JSON.stringify(
       buildProductionRagRequest(question, evidence, systemPrompt, extras),
     ),
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(extras?.definition?.repair ? DEFINITION_REPAIR_TIMEOUT_MS : 15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
   const data = await res.json();
