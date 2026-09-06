@@ -47,6 +47,11 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Install isolated HTTP gate dependencies
         run: |
+          # PG17 is provided by PGDG, not the Ubuntu runner's default apt sources.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update -qq
           sudo apt-get install -y postgresql-17
           mkdir -p "$RUNNER_TEMP/postgrest"

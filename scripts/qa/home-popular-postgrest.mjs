@@ -24,7 +24,11 @@ async function freePort() {
 }
 const dbPort = await freePort();
 const httpPort = await freePort();
-const runPg = (bin, args) => execFileSync(path.join(pg, bin), args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+// Homebrew PG17 can crash after fork under the host locale; pin every PG subprocess.
+const runPg = (bin, args) => execFileSync(path.join(pg, bin), args, {
+  encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  env: { ...process.env, LC_ALL: "C", LANG: "C" },
+});
 const sql = (args) => runPg("psql", ["-h", "127.0.0.1", "-p", String(dbPort), "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-qtA", ...args]);
 let started = false, http, logFd;
 try {
@@ -78,6 +82,7 @@ try {
   const since=new Date(Date.now()-7*86400000).toISOString();
   const args={p_since:since,p_limit:6,p_team_slug:"lg",p_other_kbo_ids:[],p_blocked:[],p_exclude:[]};
   async function call(c, extra={}) {
+    // query-guard: bounded -- RPC enforces a 100-row cap and a seven-day created_at window.
     const {data,error}=await c.rpc("home_popular_posts",{...args,...extra}).select(select)
       .abortSignal(AbortSignal.timeout(10_000));
     assert.equal(error,null,error?.code);

@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /** Real browser fixture smoke. SQL/RLS is verified separately, not mocked as PASS here. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
 import { HOME_POPULAR_IDS, HOME_POPULAR_LINKS, installHomePopularFixture } from "./fixtures/home-popular-feed.mjs";
 
 const base = process.env.BASE || "http://127.0.0.1:3061";
+const roster = JSON.parse(readFileSync(new URL("../../src/lib/constants/players-roster.json", import.meta.url), "utf8"));
+const ownPlayer = roster.find((player) => player.teamId === 1);
+const otherPlayer = roster.find((player) => player.teamId === 2);
+assert.ok(ownPlayer?.kboId && otherPlayer?.kboId, "current roster has LG and opposing-team fixtures");
 const browser = await chromium.launch();
 try {
   const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -21,7 +26,8 @@ try {
   const age = Date.now() - Date.parse(first.p_since);
   assert.ok(Math.abs(age - 7 * 86400000) < 60000, "7-day window");
   assert.equal(first.p_team_slug, "lg", "returning guest's favorite team");
-  assert.ok(first.p_other_kbo_ids.includes("63123") && !first.p_other_kbo_ids.includes("79109"));
+  assert.ok(first.p_other_kbo_ids.includes(String(otherPlayer.kboId)), "opposing-team roster ID is excluded");
+  assert.ok(!first.p_other_kbo_ids.includes(String(ownPlayer.kboId)), "LG roster ID remains eligible");
   console.log("PASS F1 actual RPC args: 7-day window / limit 6 / no excluded ids");
   const ids = () => links.evaluateAll((items) => items.map((a) => Number(a.getAttribute("href").split("/").pop())));
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));

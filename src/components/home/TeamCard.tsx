@@ -279,7 +279,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
   return (
     <GlassCard className="p-5 mb-3">
       {/* 헤더 — 팀명 옆 화살표 클릭 시 팀 페이지 */}
-      <Link href={`/teams/${team.slug}`} className="flex items-center gap-2.5 mb-3.5">
+      <Link href={`/teams/${team.slug}`} prefetch={false} className="flex items-center gap-2.5 mb-3.5">
         <TeamLogo team={team} size={34} />
         <span className="text-base font-bold text-text-primary">{team.name}</span>
         <ChevronRight size={18} className="text-text-tertiary -ml-1" />
@@ -294,7 +294,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
           {(st || (data?.recentForm?.length ?? 0) > 0) && (
             <div className="flex items-start gap-3">
               {st && (
-                <Link href="/standings" className="flex-1 min-w-0 block">
+                <Link href="/standings" prefetch={false} className="flex-1 min-w-0 block">
                   <div className="flex items-end gap-2">
                     <span className="text-[34px] font-extrabold leading-none text-text-primary">{st.rank}위</span>
                     {streak && <span className="text-[12px] font-bold pb-1" style={{ color: streak.hot ? "#ff6b6b" : "var(--text-tertiary)" }}>{streak.hot ? "🔥" : ""}{streak.text}</span>}
@@ -335,7 +335,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             <div className="mt-4 border-t border-border/40 pt-3.5">
               <div className="flex items-stretch gap-2">
                 {/* 좌: 순위 변동 — 클릭 → 팀 순위 페이지. Y축에 1~10위 라벨 + 빗금 */}
-                <Link href="/standings" className="flex h-[136px] flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
+                <Link href="/standings" prefetch={false} className="flex h-[136px] flex-1 flex-col rounded-[10px] bg-bg-secondary/60 px-1.5 py-2">
                   <span className="px-0.5 text-[10.5px] leading-[14px] text-text-tertiary">시즌 순위 변동</span>
                   <div className="mt-2 flex min-h-0 flex-1 gap-1.5">
                     <div className="flex h-full flex-col justify-between py-[6px] text-[8px] leading-none text-text-tertiary/80">
@@ -352,7 +352,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                   </div>
                 </Link>
                 {/* 우: 타율 / 방어율 — 클릭 → 팀 기록 페이지 */}
-                <Link href={`/teams/${team.slug}/records`} className="flex h-[136px] flex-1 flex-col gap-2">
+                <Link href={`/teams/${team.slug}/records`} prefetch={false} className="flex h-[136px] flex-1 flex-col gap-2">
                   <MiniStatChart title="주간 팀 타율" values={(data?.weeklyBatting ?? []).map((w) => w.avg)} fmt={(v) => v.toFixed(3).replace(/^0\./, ".")} higherIsBetter accent={accent} rank={data?.weeklyBattingRank ?? null} />
                   <MiniStatChart title="주간 팀 방어율" values={(data?.weeklyPitching ?? []).map((w) => w.era)} fmt={(v) => v.toFixed(2)} higherIsBetter={false} accent={accent} rank={data?.weeklyPitchingRank ?? null} />
                 </Link>
@@ -406,7 +406,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             ) : currentRosterMoves.status === "error" ? (
               <p className="text-[12px] text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
             ) : currentRosterMoves.moves.length === 0 ? (
-              <Link href={teamHomeHref(team.slug)} className="block text-[12px] text-text-tertiary">
+              <Link href={teamHomeHref(team.slug)} prefetch={false} className="block text-[12px] text-text-tertiary">
                 최근 7일 변동이 없어요.
               </Link>
             ) : (
@@ -416,6 +416,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                     {/* 행 배경(날짜·chevron 영역) → 팀홈. absolute 형제라 중첩 anchor 없음 */}
                     <Link
                       href={teamHomeHref(team.slug)}
+                      prefetch={false}
                       aria-label={`${team.name} 팀 페이지`}
                       className="absolute inset-0 z-0"
                     />
@@ -467,6 +468,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
                   <li>
                     <Link
                       href={teamHomeHref(team.slug)}
+                      prefetch={false}
                       className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
                     >
                       <span>외 {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>
@@ -480,7 +482,7 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
 
           {/* 6. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
           {(data?.communityNewPosts ?? 0) > 0 && (
-            <Link href="/community" className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
+            <Link href="/community" prefetch={false} className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
               <span className="text-[12.5px] text-text-secondary">💬 최근 1주 새 글 <b className="text-text-primary">{data!.communityNewPosts}</b>개</span>
               <ChevronRight size={15} className="text-text-tertiary" />
             </Link>
