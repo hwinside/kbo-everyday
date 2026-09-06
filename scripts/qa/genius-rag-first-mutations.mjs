@@ -24,6 +24,20 @@ const SERVER = "src/lib/baseball-qa/server.ts";
 const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
+  {
+    name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
+    file: PIPELINE,
+    from: "{ context: definition?.context }",
+    to: "{ context: undefined }",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r17 이유 질문 배제 제거 — 도루 불문율을 지표 정의로 오분류한다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: " && !REASON_ASK.test(text)",
+    to: "",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
   // ── P0-1: 라우팅이 실제로 열렸는가 ──────────────────────────────────────
   {
     name: "r1 진입 조건에 scopeGate 복원 — 사전 밖 질문이 다시 문 앞에서 막힌다(1차 false-green 재현)",
