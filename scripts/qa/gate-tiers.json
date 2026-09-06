@@ -468,6 +468,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:giphy-popular-ids:pg17",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:giphy-request-budget",
       "tier": "deploy"
     },

@@ -3,12 +3,14 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { STICKER_CATEGORIES } from "./stickerData";
-import { trackEvent } from "@/lib/analytics";
 import {
   GIPHY_MIN_QUERY_LENGTH,
   GIPHY_SEARCH_DEBOUNCE_MS,
   getGiphyApiKey,
   getGiphyCooldownRemainingMs,
+  getGiphyRequestConfig,
+  giphyCooldownMessage,
+  trackGiphyEvent,
   hashGiphyQuery,
   normalizeGiphyQuery,
   startGiphyCooldown,
@@ -132,16 +134,18 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
   const hasRequestedTrendingRef = useRef(false);
 
   const fetchStickers = useCallback(async (searchQuery: string, offset = 0) => {
-    const apiKey = getGiphyApiKey(GIPHY_CONTEXT);
+    const requestConfig = getGiphyRequestConfig(GIPHY_CONTEXT);
+    const apiKey = requestConfig.apiKey;
     if (!apiKey) return;
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
     const endpointName = normalizedQuery ? "search" : "trending";
     const requestKey = `${endpointName}:${normalizedQuery}:${offset}`;
-    if (inFlightKeyRef.current === requestKey) return;
-    if (getGiphyCooldownRemainingMs(GIPHY_CONTEXT) > 0) {
+    if (inFlightKeyRef.current === requestKey && !activeRequestRef.current?.signal.aborted) return;
+    const cooldownMs = getGiphyCooldownRemainingMs(requestConfig);
+    if (cooldownMs > 0) {
       setLoading(false);
       setLoadingMore(false);
-      setErrorMessage("요청이 많아요. 잠시 후 다시 시도해 주세요");
+      setErrorMessage(giphyCooldownMessage(cooldownMs));
       return;
     }
 
@@ -155,12 +159,13 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
     const startedAt = performance.now();
     let responseStatus = 0;
     void hashGiphyQuery(normalizedQuery).then((queryHash) => {
-      trackEvent("giphy_api_request", {
-        context: GIPHY_CONTEXT,
+      trackGiphyEvent("giphy_api_request", requestConfig, {
         endpoint: endpointName,
         offset,
         query_hash: queryHash,
       });
+    }).catch(() => {
+      trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset });
     });
 
     try {
@@ -170,10 +175,9 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
       const res = await fetch(base, { signal: controller.signal, cache: "no-store" });
       responseStatus = res.status;
       if (res.status === 429) {
-        startGiphyCooldown(GIPHY_CONTEXT, res.headers.get("Retry-After"));
-        setErrorMessage("요청이 많아요. 잠시 후 다시 시도해 주세요");
-        trackEvent("giphy_api_result", {
-          context: GIPHY_CONTEXT,
+        const retryMs = startGiphyCooldown(requestConfig, res.headers.get("Retry-After"));
+        if (!controller.signal.aborted) setErrorMessage(giphyCooldownMessage(retryMs));
+        trackGiphyEvent("giphy_api_result", requestConfig, {
           endpoint: endpointName,
           offset,
           status: 429,
@@ -186,6 +190,7 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
       const json = await res.json();
       const newData: GiphySticker[] = json.data ?? [];
       const total = json.pagination?.total_count ?? 0;
+      if (controller.signal.aborted) return;
       if (isLoadMore) {
         setStickers((prev) => [...prev, ...newData]);
       } else {
@@ -193,18 +198,16 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
         lastQueryRef.current = searchQuery;
       }
       setHasMore(offset + newData.length < total && newData.length === PAGE_SIZE);
-      trackEvent("giphy_api_result", {
-        context: GIPHY_CONTEXT,
+      trackGiphyEvent("giphy_api_result", requestConfig, {
         endpoint: endpointName,
         offset,
         status: res.status,
         latency_ms: Math.round(performance.now() - startedAt),
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
       setErrorMessage("스티커를 불러올 수 없어요");
-      trackEvent("giphy_api_result", {
-        context: GIPHY_CONTEXT,
+      trackGiphyEvent("giphy_api_result", requestConfig, {
         endpoint: endpointName,
         offset,
         status: responseStatus,
