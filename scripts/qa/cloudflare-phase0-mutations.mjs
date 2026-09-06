@@ -19,6 +19,11 @@ const mutations = [
   ["Cookie bypass", "cloudflare-cache.ts", ' && !request.headers.has("cookie")', ""],
   ["single cache layer", "cloudflare-cache.ts", 'set("Vercel-CDN-Cache-Control", "no-store")', 'set("Vercel-CDN-Cache-Control", "public, s-maxage=60")'],
   ["remaining TTL not refreshed", "cloudflare-cache.ts", 'max-age=${ttl}', 'max-age=60'],
+  ["ineligible branch required", "cloudflare-cache.ts", 'if (!eligible) {', 'if (false) {'],
+  ["ineligible browser contract preserved", "cloudflare-cache.ts", 'if (!eligible) {', 'if (!eligible) { response.headers.set("Cache-Control", "no-store");'],
+  ["ineligible Vercel contract preserved", "cloudflare-cache.ts", 'if (!eligible) {', 'if (!eligible) { response.headers.set("Vercel-CDN-Cache-Control", "no-store");'],
+  ["ineligible generic CDN contract preserved", "cloudflare-cache.ts", 'if (!eligible) {', 'if (!eligible) { response.headers.set("CDN-Cache-Control", "no-store");'],
+  ["ineligible CF storage denied", "cloudflare-cache.ts", 'set("Cloudflare-CDN-Cache-Control", "no-store")', 'set("Cloudflare-CDN-Cache-Control", "public, max-age=60")'],
 ];
 
 async function runCase(mutation, index) {
