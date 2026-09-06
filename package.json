@@ -248,6 +248,7 @@
     "qa:query-guard": "node scripts/qa/query-pagination-guard.mjs",
     "qa:auth-callback-lock": "NODE_ENV=development tsx scripts/qa/auth-callback-lock-render.tsx",
     "qa:auth-session-transient": "NODE_ENV=development tsx scripts/qa/auth-session-transient-render.tsx",
+    "qa:auth-server-session-diagnostics": "tsx scripts/qa/auth-server-session-diagnostics.ts",
     "qa:auth-session-diagnostics": "NODE_ENV=development tsx scripts/qa/auth-session-diagnostics.ts",
     "qa:auth-token-precheck": "tsx scripts/qa/auth-token-precheck-smoke.ts",
     "qa:auth-es256-e2e": "tsx scripts/qa/auth-es256-e2e-smoke.ts",
