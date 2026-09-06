@@ -74,3 +74,22 @@ resetGiphyCooldownsForTest();
 assert.equal(startGiphyCooldown(chat, "0", now), 60_000);
 assert.equal(getGiphyCooldownRemainingMs(chat, now + 1), 59_999);
 console.log("PASS GIPHY 9-slot routing, same-key cooldown, reload, Retry-After and storage denial");
+
+
+async function checkPopularIds() {
+  const { normalizePopularGiphyIds, loadPopularGiphyIds } = await import("../../src/lib/community/giphy");
+  assert.deepEqual(normalizePopularGiphyIds(["a", "a", "b", "https://media.giphy.com/a.gif", "", null, "x".repeat(79)]), ["a", "b"]);
+  assert.equal(normalizePopularGiphyIds(Array.from({ length: 100 }, (_, n) => `id${n}`)).length, 24);
+  assert.deepEqual(normalizePopularGiphyIds({ ids: ["a"] }), []);
+  const abortedLookup = new AbortController();
+  abortedLookup.abort();
+  const originalFetch = globalThis.fetch;
+  let catalogFetches = 0;
+  globalThis.fetch = async () => { catalogFetches++; throw new Error("aborted lookup must not fetch"); };
+  try {
+    assert.deepEqual(await loadPopularGiphyIds(abortedLookup.signal), []);
+    assert.equal(catalogFetches, 0);
+  } finally { globalThis.fetch = originalFetch; }
+  console.log("PASS own popular-ID validation and pre-aborted lookup");
+}
+void checkPopularIds();

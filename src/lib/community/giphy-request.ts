@@ -10,7 +10,7 @@ const GIPHY_MIN_COOLDOWN_MS = 60_000;
 const COOLDOWN_STORAGE_PREFIX = "giphy-cooldown-v2:";
 
 export type GiphyRequestContext = "community_gif" | "game_chat_gif" | "editor_sticker";
-export type GiphyEndpoint = "trending" | "search";
+export type GiphyEndpoint = "trending" | "search" | "ids";
 export type GiphyPlatform = "web" | "ios" | "android";
 
 const cooldownUntilByKey = new Map<string, number>();

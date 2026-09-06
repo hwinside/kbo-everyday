@@ -13,7 +13,10 @@ import {
   normalizeGiphyQuery,
   startGiphyCooldown,
   type GiphyRequestContext,
+  type GiphyEndpoint,
 } from "@/lib/community/giphy-request";
+
+import { loadPopularGiphyIds } from "@/lib/community/giphy";
 
 const SWIPE_THRESHOLD = 60;
 
@@ -46,6 +49,7 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
   const [completedQuery, setCompletedQuery] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listTitle, setListTitle] = useState(context === "game_chat_gif" ? "크보팬 인기 GIF" : "");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -56,8 +60,8 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
 
   const fetchGifs = useCallback(async (searchQuery: string) => {
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
-    const endpointName = normalizedQuery ? "search" : "trending";
-    const requestKey = `${endpointName}:${normalizedQuery}`;
+    const isPopular = context === "game_chat_gif" && !normalizedQuery;
+    const requestKey = `${isPopular ? "popular" : normalizedQuery ? "search" : "trending"}:${normalizedQuery}`;
     const requestConfig = getGiphyRequestConfig(context);
     const apiKey = requestConfig.apiKey;
 
@@ -80,59 +84,87 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     inFlightKeyRef.current = requestKey;
     setLoading(true);
     setErrorMessage(null);
-    const startedAt = performance.now();
-    let responseStatus = 0;
-    void hashGiphyQuery(normalizedQuery).then((queryHash) => {
-      trackGiphyEvent("giphy_api_request", requestConfig, {
-        endpoint: endpointName,
-        offset: 0,
-        query_hash: queryHash,
+
+    // Every actual provider call has its own telemetry. The first-party ID
+    // lookup is not a GIPHY request and never receives its API key.
+    const request = async (endpointName: GiphyEndpoint, value = ""): Promise<GiphyGif[] | null> => {
+      if (controller.signal.aborted) return null;
+      // Another picker/tab may have hit 429 while the ID lookup was pending.
+      const remaining = getGiphyCooldownRemainingMs(requestConfig);
+      if (remaining > 0) {
+        setErrorMessage(giphyCooldownMessage(remaining));
+        return null;
+      }
+      const startedAt = performance.now();
+      let responseStatus = 0;
+      void hashGiphyQuery(endpointName === "search" ? value : "").then((queryHash) => {
+        trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset: 0, query_hash: queryHash });
+      }).catch(() => {
+        trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset: 0 });
       });
-    }).catch(() => {
-      // A failed optional hash must not make a real request disappear from telemetry.
-      trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset: 0 });
-    });
+      try {
+        const params = new URLSearchParams({ api_key: apiKey, rating: "g" });
+        if (endpointName === "ids") params.set("ids", value);
+        else params.set("limit", String(GIPHY_LIMIT));
+        if (endpointName === "search") { params.set("q", value); params.set("lang", "ko"); }
+        const path = endpointName === "ids" ? "" : `/${endpointName}`;
+        const res = await fetch(`https://api.giphy.com/v1/gifs${path}?${params}`, {
+          signal: controller.signal, cache: "no-store",
+        });
+        responseStatus = res.status;
+        if (res.status === 429) {
+          const retryMs = startGiphyCooldown(requestConfig, res.headers.get("Retry-After"));
+          if (!controller.signal.aborted) setErrorMessage(giphyCooldownMessage(retryMs));
+          trackGiphyEvent("giphy_api_result", requestConfig, {
+            endpoint: endpointName, offset: 0, status: 429, latency_ms: Math.round(performance.now() - startedAt),
+          });
+          return null; // No fallback/retry after a provider failure.
+        }
+        if (!res.ok) throw new Error("GIPHY request failed");
+        const json = await res.json();
+        if (!Array.isArray(json.data)) throw new Error("Invalid GIPHY response");
+        trackGiphyEvent("giphy_api_result", requestConfig, {
+          endpoint: endpointName, offset: 0, status: res.status, latency_ms: Math.round(performance.now() - startedAt),
+        });
+        return controller.signal.aborted ? null : json.data;
+      } catch (error) {
+        if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return null;
+        setErrorMessage("GIF을 불러올 수 없어요");
+        trackGiphyEvent("giphy_api_result", requestConfig, {
+          endpoint: endpointName, offset: 0, status: responseStatus, latency_ms: Math.round(performance.now() - startedAt),
+        });
+        return null;
+      }
+    };
 
     try {
-      const endpoint = normalizedQuery
-        ? `https://api.giphy.com/v1/gifs/search?api_key=${apiKey}&q=${encodeURIComponent(normalizedQuery)}&limit=${GIPHY_LIMIT}&rating=g&lang=ko`
-        : `https://api.giphy.com/v1/gifs/trending?api_key=${apiKey}&limit=${GIPHY_LIMIT}&rating=g`;
-
-      const res = await fetch(endpoint, { signal: controller.signal, cache: "no-store" });
-      responseStatus = res.status;
-      if (res.status === 429) {
-        const retryMs = startGiphyCooldown(requestConfig, res.headers.get("Retry-After"));
-        if (!controller.signal.aborted) setErrorMessage(giphyCooldownMessage(retryMs));
-        trackGiphyEvent("giphy_api_result", requestConfig, {
-          endpoint: endpointName,
-          offset: 0,
-          status: 429,
-          latency_ms: Math.round(performance.now() - startedAt),
-        });
-        return;
+      let result: GiphyGif[] | null;
+      let title = normalizedQuery ? "검색 결과" : "인기 GIF";
+      if (isPopular) {
+        const ids = await loadPopularGiphyIds(controller.signal);
+        if (controller.signal.aborted) return;
+        title = "크보팬 인기 GIF";
+        result = ids.length ? await request("ids", ids.join(",")) : [];
+        if (result) {
+          // Only by-ID metadata is arranged in our usage order. Search and
+          // Trending responses are never reordered or filtered.
+          const resolved = new Map(result.map((gif) => [gif.id, gif]));
+          result = ids.flatMap((id) => resolved.has(id) ? [resolved.get(id)!] : []);
+        }
+        if (result?.length === 0) {
+          // No usage yet / removed or rating-restricted IDs. Never manufacture
+          // popular results or fetch Trending. Keep Search's returned order.
+          title = "야구 GIF";
+          result = await request("search", "야구");
+        }
+      } else {
+        result = await request(normalizedQuery ? "search" : "trending", normalizedQuery);
       }
-      if (!res.ok) throw new Error(`GIPHY request failed: ${res.status}`);
-
-      const json = await res.json();
-      if (!controller.signal.aborted) {
-        setGifs(json.data ?? []);
+      if (result && !controller.signal.aborted) {
+        setGifs(result);
+        setListTitle(title);
         setCompletedQuery(normalizedQuery);
       }
-      trackGiphyEvent("giphy_api_result", requestConfig, {
-        endpoint: endpointName,
-        offset: 0,
-        status: res.status,
-        latency_ms: Math.round(performance.now() - startedAt),
-      });
-    } catch (error) {
-      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
-      setErrorMessage("GIF을 불러올 수 없어요");
-      trackGiphyEvent("giphy_api_result", requestConfig, {
-        endpoint: endpointName,
-        offset: 0,
-        status: responseStatus,
-        latency_ms: Math.round(performance.now() - startedAt),
-      });
     } finally {
       if (activeRequestRef.current === controller) {
         activeRequestRef.current = null;
@@ -142,8 +174,8 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     }
   }, [context]);
 
-  // Every picker opens with one Trending request so GIFs need no extra click.
-  // Game-chat searches remain explicit; typing must not spend additional quota.
+  // Game chat opens on our usage-derived IDs, not GIPHY Trending.
+  // Typing must not cancel the initial catalog/metadata request or auto-search.
   useEffect(() => {
     if (context !== "game_chat_gif") return;
     const timer = setTimeout(() => void fetchGifs(""), 0);
@@ -245,10 +277,15 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
         </form>
         {context === "game_chat_gif" && (
           <button type="button" onClick={() => { setQuery(""); void fetchGifs(""); }}
-            className="mt-2 text-xs text-text-secondary">인기 GIF 보기</button>
+            className="mt-2 text-xs text-text-secondary">크보팬 인기 GIF</button>
         )}
       </div>
 
+      {context === "game_chat_gif" && (
+        <div className="px-3 pb-1 text-xs text-text-tertiary" aria-live="polite">
+          {listTitle}{listTitle === "크보팬 인기 GIF" ? " · 최근 30일 경기채팅" : ""}
+        </div>
+      )}
       {/* Grid */}
       <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
         {errorMessage && (
@@ -268,7 +305,7 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
                 ? "검색하거나 인기 GIF를 둘러보세요"
               : query
                 ? "검색 결과가 없어요"
-                : context === "game_chat_gif" ? "검색하거나 인기 GIF를 둘러보세요" : "GIF를 불러올 수 없어요"}
+                : "표시할 GIF가 없어요. 검색어를 입력해 주세요"}
           </div>
         ) : (
           <div className="columns-2 gap-1.5">
