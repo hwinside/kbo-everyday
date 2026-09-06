@@ -18,6 +18,7 @@ import {
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
 import { invalidateBootCache } from "@/lib/boot-cache";
 import { performBootLoad } from "@/lib/boot-loader";
+import { authSessionDiagnostics } from "@/lib/auth/session-diagnostics";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -197,7 +198,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         session = await acquireSession<Session>({
           getCookieSession: async () => {
-            const result = await supabase.auth.getSession();
+            const observation = authSessionDiagnostics.beginSessionRead();
+            let result: Awaited<ReturnType<typeof supabase.auth.getSession>>;
+            try {
+              result = await supabase.auth.getSession();
+            } catch (error) {
+              if (!disposed) authSessionDiagnostics.sessionRead(observation.before, false, error);
+              throw error;
+            } finally { observation.finish(); }
+            if (!disposed) authSessionDiagnostics.sessionRead(observation.before, !!result.data.session, result.error);
             if (result.error) throw result.error;
             return result.data.session;
           },
@@ -352,6 +361,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       disposed = true;
+      authSessionDiagnostics.cancelPendingReads();
       cancelSessionRetry();
       if (profileLoadTimer !== null) clearTimeout(profileLoadTimer);
       subscription.unsubscribe();
@@ -366,6 +376,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
+        authSessionDiagnostics.intentionalLogout();
         // 명시적 로그아웃 = 네이티브 세션 백업도 제거. fence 를 먼저 올려 signOut 과
         // 동시에 도착하는 TOKEN_REFRESHED/SIGNED_IN 이 백업을 되살리는 race 를 차단하고
         // (이후 backupSessionTokens 전부 no-op), 마지막에 한 번 더 지운다. best-effort.
