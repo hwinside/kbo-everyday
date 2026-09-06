@@ -41,6 +41,7 @@ import {
   isRagAttemptPath,
   isRagDiscardReason,
   numericTokenCount,
+  numericQuantityMatches,
   numericTokensSubsetOf,
   type RagAttemptPath,
   type RagDiscardReason,
@@ -851,6 +852,27 @@ export interface LlmResult {
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
+}
+
+function combineLlmAttempts(first: LlmResult, next: LlmResult): LlmResult {
+  const sum = (a: number | null, b: number | null) => a === null && b === null ? null : (a ?? 0) + (b ?? 0);
+  return { text: next.text, inputTokens: sum(first.inputTokens, next.inputTokens), outputTokens: sum(first.outputTokens, next.outputTokens) };
+}
+
+function definitionRepairFrame(
+  definition: StatDefinitionIntent,
+  llm: LlmResult,
+  reason: "numeric_not_in_evidence" | "numeric_not_in_question",
+): StatDefinitionFrame | null {
+  try {
+    const value = JSON.parse(llm.text) as { answer?: unknown };
+    if (typeof value.answer !== "string") return null;
+    return { terms: definition.terms, followup: definition.followup, repair: {
+      reason, answer: value.answer,
+      quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
+      numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
+    } };
+  } catch { return null; }
 }
 
 export type QuestionRoute =
@@ -4800,11 +4822,12 @@ async function answerOfficialDocumentQuestion(
   if (!allowsNumericAnswer(evidence)) return null;
 
   // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
-  const failCloseError = async (): Promise<QaResult> => {
-    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: null, outputTokens: null });
+  const failCloseError = async (spent: LlmResult | null = null): Promise<QaResult> => {
+    await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: spent?.inputTokens ?? null, outputTokens: spent?.outputTokens ?? null });
     return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
   };
   let llm: LlmResult | null = null;
+  let generatedOfficialNow = false;
   if (deps.getLlmState) {
     let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
@@ -4834,13 +4857,33 @@ async function answerOfficialDocumentQuestion(
     }
     try {
       llm = await deps.callOfficialRagLlm!(question, evidence, { context: definition?.context, definition: definition ?? undefined });
+      generatedOfficialNow = true;
     } catch {
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
       return failCloseError();
     }
   }
 
-  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence, generalFallback: { question: definitionNumericSource(question, definition) } });
+  const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
+    numericEvidence: true, evidence,
+    generalFallback: { question: definitionNumericSource(question, definition) },
+  });
+  let validated = validateOfficial(llm);
+  // One repair by this invocation's winner only. A stored raw response or a
+  // loser/retry must never consume a new provider call. The validator is not
+  // relaxed: both genuine quantities and ambiguous Korean forms still pass
+  // through the same original grounding rules after the rewrite.
+  if (generatedOfficialNow && definition && validated.kind === "insufficient" &&
+      (validated.reason === "numeric_not_in_evidence" || validated.reason === "numeric_not_in_question")) {
+    const repair = definitionRepairFrame(definition, llm, validated.reason);
+    if (repair) {
+      try {
+        const rewritten = await deps.callOfficialRagLlm!(question, evidence, { context: definition.context, definition: repair });
+        llm = combineLlmAttempts(llm, rewritten);
+      } catch { return failCloseError(llm); }
+      validated = validateOfficial(llm);
+    }
+  }
   // GENERAL — 공식 간행물에 답이 없어 일반 야구 지식으로 답했다 (2026-08-10 unsure 함정 제거).
   //   종전에는 여기서 무조건 unsure 하드 종결이었다 — 그 결과 `지명 타자의 DH 약자`·
   //   `잔루만루`·`ph 포지션`·`wRC+ 해석` 같은 정상 질문이 전부 "이해 못함"을 받았다.
@@ -4849,6 +4892,7 @@ async function answerOfficialDocumentQuestion(
   if (validated.kind === "general") {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
       answer: validated.answer, source: "llm",
+      statRuleTermVerified: Boolean(definition),
       toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
@@ -6498,13 +6542,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  // ③ 미매칭만 LLM (단발, 이력 미전송). durable job 상태로 동일 messageId의 LLM 소비를
-  // 1회로 고정한다 (4차 P1 + 5차 P1): 저장된 결과가 있으면 재사용 → 없으면 atomic
+  // ③ 미매칭 LLM. 기본 1회, 정의 수치 검증 실패에는 같은 winner만 1회 재작성한다.
+  // durable job 상태로 동일 messageId의 실행 worker를 고정한다 (4차 P1 + 5차 P1): 저장된 결과가 있으면 재사용 → 없으면 atomic
   // CAS(acquireLlmStart)로 정확히 한 worker만 winner가 되어 callLlm을 실행한다.
   // started인데 결과가 없으면 fence로 구분한다: winner가 아직 살아있을 수 있는 창
   // (ownerActive)에는 답변 발송 없이 물러나고(job은 winner 소유), fence가 지나면
   // (응답 수신 후 저장 실패/crash) 자동 재호출 없이 fail-closed 안내로 종결한다.
   let llm: LlmResult | null = null;
+  let generatedGenericNow = false;
   if (deps.getLlmState) {
     let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {
@@ -6550,6 +6595,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // classifier's token. Keep ownership for cache/replay, and validate the
       // resulting ungrounded answer below instead of rejecting the question.
       llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined);
+      generatedGenericNow = true;
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
       //   종전에는 `unsure`(판정 불명확)로 접었는데, 그러면 유저는 "질문을 못 알아들었다" 를
@@ -6589,9 +6635,24 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
   //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
   //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
-  const definitionFallback = statDefinition ? validateLlmResponse(llm.text, question) : null;
-  if (definitionFallback?.kind === "answer" && definitionFallback.answer &&
-      !numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition))) {
+  let definitionFallback = statDefinition ? validateLlmResponse(llm.text, question) : null;
+  const definitionNumberUnsupported = () => Boolean(definitionFallback?.kind === "answer" && definitionFallback.answer &&
+    !numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition)));
+  if (generatedGenericNow && statDefinition && definitionNumberUnsupported()) {
+    const repair = definitionRepairFrame(statDefinition, llm, "numeric_not_in_question");
+    if (repair) {
+      try {
+        const rewritten = await deps.callLlm(question, context ?? undefined, rosterBlock, false, repair);
+        llm = combineLlmAttempts(llm, rewritten);
+      } catch {
+        await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null,
+          inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+        return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
+      }
+      definitionFallback = validateLlmResponse(llm.text, question);
+    }
+  }
+  if (definitionNumberUnsupported()) {
     // Same contract as official RAG's GENERAL fallback: eligible user-quoted numbers
     // may be explained, but no new number may be asserted without evidence.
     const final: StoredQaFinal = { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };

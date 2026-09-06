@@ -1300,12 +1300,15 @@ function hasKoreanQuantityClaim(answer: string): boolean {
   ).test(answer);
 }
 
-/** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
-function groundedAgainst(answer: string, raw: string): boolean {
-  const answerNorm = answer.replace(/,/g, "");
-  const haystackForQuantity = raw.replace(/,/g, "");
+export interface NumericQuantityMatch {
+  token: string;
+  value: string;
+  counter: string;
+}
 
-  // ── (1) 단위가 붙은 수량 ─────────────────────────────────────────────────
+/** Diagnostic view of the same normalized matches used by the grounding check. */
+export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
+  const normalized = text.replace(/,/g, "");
   const koreanWord = Object.keys(KOREAN_NUMERALS).join("|");
   // 한글 수사 앞에 다른 한글 음절이 붙으면 수사가 아니다.
   // 이 가드가 없으면 "모두 아웃"의 `두`가 수사로 잡혀 숫자 없는 답까지 차단된다
@@ -1318,12 +1321,23 @@ function groundedAgainst(answer: string, raw: string): boolean {
     `(?:(\\d+)|(?<![가-힣])(${koreanWord}))\\s*(?:이|가|은|는|을|를)?\\s*(${QUANTITY_COUNTERS})`,
     "g",
   );
+  const result: NumericQuantityMatch[] = [];
+  for (const m of normalized.matchAll(quantityRe)) {
+    const value = m[1] ?? KOREAN_NUMERALS[m[2]];
+    if (!value) continue;
+    result.push({ token: m[0], value, counter: m[3] });
+  }
+  return result;
+}
+
+/** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
+function groundedAgainst(answer: string, raw: string): boolean {
+  const answerNorm = answer.replace(/,/g, "");
+  const haystackForQuantity = raw.replace(/,/g, "");
   const quantitySet = (text: string): Set<string> => {
     const out = new Set<string>();
-    for (const m of text.matchAll(quantityRe)) {
-      const value = m[1] ?? KOREAN_NUMERALS[m[2]];
-      if (!value) continue;
-      out.add(`${value}\u0000${m[3]}`);
+    for (const match of numericQuantityMatches(text)) {
+      out.add(`${match.value}\u0000${match.counter}`);
     }
     return out;
   };
