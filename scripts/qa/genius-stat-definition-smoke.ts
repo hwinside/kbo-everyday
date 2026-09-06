@@ -42,9 +42,11 @@ async function verifyDefinitionNumericRepair() {
     const result = validateRagResponse(JSON.stringify({ status: "GROUNDED", answer }), { numericEvidence: true, evidence: [EVIDENCE] });
     assert.equal(result.kind, "insufficient", "The existing numeric grounding contract was weakened");
   }
-  function fixture(official: boolean, behavior: "success" | "general" | "invalid" | "error", legacy = false) {
+  type RepairSample = { answer: string; evidence: RagEvidence[]; quantities: string[]; numbers: string[] };
+  function fixture(official: boolean, behavior: "success" | "general" | "invalid" | "error", legacy = false, sample?: RepairSample) {
     const question = official ? QUESTIONS[2] : QUESTIONS[0];
-    const bad = official ? captured : "야구에서 리드를 지키면 1홀드가 기록됩니다.";
+    const bad = sample?.answer ?? (official ? captured : "야구에서 리드를 지키면 1홀드가 기록됩니다.");
+    const evidence = sample?.evidence ?? [EVIDENCE];
     const good = `야구에서 ${ANSWER}`;
     const raw = (answer: string, inputTokens = 2, outputTokens = 3): LlmResult => ({
       text: JSON.stringify({ status: official ? "GROUNDED" : "BASEBALL_RULE_TERM", answer }), inputTokens, outputTokens,
@@ -58,12 +60,15 @@ async function verifyDefinitionNumericRepair() {
       if (!definition?.repair) return raw(bad);
       assert.equal(definition.repair.answer, bad, "Repair lost the rejected draft");
       assert.equal(definition.repair.reason, official ? "numeric_not_in_evidence" : "numeric_not_in_question");
-      if (official) assert.deepEqual(definition.repair.quantityCandidates, ["한 투수"]);
+      if (sample) {
+        assert.deepEqual(definition.repair.quantityCandidates, sample.quantities);
+        assert.deepEqual(definition.repair.numberCandidates, sample.numbers);
+      } else if (official) assert.deepEqual(definition.repair.quantityCandidates, ["한 투수"]);
       else assert.deepEqual(definition.repair.numberCandidates, ["1"]);
       assert.deepEqual(definition.terms, ["홀드"]);
       if (behavior === "error") throw new Error("fixture repair timeout");
       if (behavior === "general") return { ...raw(good, 5, 7), text: JSON.stringify({ status: "GENERAL", answer: good }) };
-      return raw(behavior === "success" ? good : "야구에서 홀드는 999개라는 기록입니다.", 5, 7);
+      return raw(behavior === "success" ? good : sample ? bad : "야구에서 홀드는 999개라는 기록입니다.", 5, 7);
     };
     const deps: QaDeps = {
       loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
@@ -73,8 +78,8 @@ async function verifyDefinitionNumericRepair() {
       acquireLlmStart: async () => { state.acquires++; if (state.started) return false; state.started = true; return true; },
       storeLlm: async (result) => { state.stored = result; },
       log: async (entry) => { if (state.failLog) { state.failLog = false; throw new Error("fixture log crash"); } state.logs.push(entry); },
-      searchOfficialRag: async () => official ? [EVIDENCE] : [],
-      callOfficialRagLlm: async (_q, evidence, extras) => { assert.deepEqual(evidence, [EVIDENCE]); return generate(extras?.definition); },
+      searchOfficialRag: async () => official ? evidence : [],
+      callOfficialRagLlm: async (_q, selected, extras) => { assert.deepEqual(selected, evidence); return generate(extras?.definition); },
       callLlm: async (_q, _context, _roster, statMode, definition) => { assert.equal(statMode, false); return generate(definition); },
     };
     return { question, bad, good, state, deps };
@@ -125,6 +130,26 @@ async function verifyDefinitionNumericRepair() {
   assert.equal(resolveStatDefinitionIntent(question), null);
   await answerQuestion("qa-non-definition", question, ordinary.deps);
   assert.equal(ordinary.state.calls.length, 1, "Non-definition RAG unexpectedly gained a repair call");
+
+  // Minimized excerpt of kbo1351-holdlive-merged-10b98be.json T3: the
+  // table DOES contain 22/28. The existing literal quantity check cannot
+  // attach the table's column heading to the generated 22개/28개. Do not
+  // label those numbers fabricated or exempt quantities to pass this case.
+  const tableSample: RepairSample = {
+    answer: "시즌 홀드는 구원 투수가 적립한 홀드의 총합을 뜻해요. 자료에 따르면 2004년에는 가장 많았던 선수가 22개를 기록하였고 2005년에는 28개를 기록했어요.",
+    evidence: [{ ...EVIDENCE, content: `${ANSWER}\n2004\n선수 소속 홀드\n임경완 롯데 22\n2005\n선수 소속 홀드\n이재우 두산 28` }],
+    quantities: ["2004년", "22개", "2005년", "28개"], numbers: ["2004", "22", "2005", "28"],
+  };
+  for (const behavior of ["success", "invalid"] as const) {
+    const f = fixture(true, behavior, false, tableSample);
+    const result = await answerQuestion("qa-definition-table-quantity", f.question, f.deps);
+    assert.equal(f.state.calls.length, 2, "Table-unit mismatch did not get exactly one rewrite");
+    assert.equal(result.source, behavior === "success" ? "rag" : "unsure");
+    if (behavior === "success") assert.ok(result.answer.startsWith(f.good));
+    assert.ok(!/22|28/.test(result.answer), "Still-rejected table quantities were served");
+    assert.equal(f.state.logs.at(-1)?.inputTokens, 7);
+    assert.equal(f.state.logs.at(-1)?.outputTokens, 10);
+  }
 }
 
 function assertDefinitionRequest(request: ReturnType<typeof buildBaseballQaGeminiRequest>, question: string) {
