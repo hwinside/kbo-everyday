@@ -3,7 +3,7 @@
  * UI 스모크: 커뮤니티 검색 v1 (전체글 탭) — End-User Level (Playwright 실브라우저, 전용 테스트 계정 2개).
  *
  * 고정하는 계약(삼순 계획 리뷰 ④ + 정정 ①):
- *  1. `?q=` 진입 → 결과 카드 → 상세 → 뒤로가기: `?q=` 유지 + 검색 결과가 그대로(검색어별 복원 키).
+ *  1. 일반/검색 피드 2페이지 → 화면 안 작성자 프로필 → 뒤로가기: URL·분량·스크롤 복원.
  *  2. 타이핑 → 300ms 디바운스 → RPC `search_posts` 요청 1회. 1자만 입력하면 요청 0회 + 안내 문구.
  *  3. iOS/안드 한글 IME: 조합 중(compositionstart~end) 요청 0회, 조합 종료 후 1회.
  *  4. 빠른 재입력 race: 앞 검색어 응답이 늦게 도착해도 화면은 뒤 검색어 결과(이전 응답 폐기).
@@ -149,6 +149,30 @@ async function waitRpcSettled(page) {
   await sleep(300);
 }
 
+/** 실제 뷰포트 안 프로필 링크를 좌표 클릭한다. locator.click의 자동 최상단 스크롤을 허용하지 않는다. */
+async function openViewportProfile(page) {
+  const target = await page.locator('a[href^="/profile/"]').evaluateAll((anchors) => {
+    const candidates = anchors.flatMap((anchor) => {
+      const rect = anchor.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      // 고정 헤더/탭바를 피해 실제 클릭 가능한 링크만 고른다.
+      if (rect.width <= 0 || rect.height <= 0 || x <= 0 || x >= window.innerWidth || y <= 120 || y >= window.innerHeight - 120) return [];
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || !anchor.contains(hit)) return [];
+      return [{ x, y, href: anchor.getAttribute("href"), distance: Math.abs(y - window.innerHeight / 2) }];
+    });
+    return candidates.sort((a, b) => a.distance - b.distance)[0] ?? null;
+  });
+  if (!target) throw new Error("현재 뷰포트에 클릭 가능한 작성자 프로필 링크가 없음");
+  const beforeScroll = await page.evaluate(() => window.scrollY);
+  await Promise.all([
+    page.waitForURL((u) => u.pathname === target.href, { timeout: 15000 }),
+    page.mouse.click(target.x, target.y),
+  ]);
+  return beforeScroll;
+}
+
 (async () => {
   let browser;
   try {
@@ -156,46 +180,47 @@ async function waitRpcSettled(page) {
     const { users, posts } = await seed();
     browser = await chromium.launch();
 
-    // ───────── 1. ?q= 진입 → 상세 → 뒤로가기 (익명) ─────────
-    {
-      console.log("1. ?q= 진입 → 상세 → 뒤로가기");
+    // ───────── 1. 일반/검색 피드 → 프로필 → 뒤로가기 (익명) ─────────
+    // 텍스트 카드 탭은 댓글 시트다. 없는 '텍스트 글 상세 <a>' 대신 두 피드 모두 실제
+    // 작성자 프로필로 이탈해 라우트 복귀를 검증한다(삼식 P0 일반 피드 회귀 포함).
+    for (const query of [null, TOKEN]) {
+      const mode = query === null ? "일반 피드" : "검색 피드";
+      console.log(`1. ${mode} 2페이지 → 프로필 → 뒤로가기`);
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
       const page = await ctx.newPage();
       const calls = trackRpc(page);
-      await page.goto(`${BASE}${FEED}?q=${encodeURIComponent(TOKEN)}`, { waitUntil: "networkidle" });
+      await page.goto(`${BASE}${FEED}${query ? `?q=${encodeURIComponent(query)}` : ""}`, { waitUntil: "networkidle" });
       await waitRpcSettled(page);
-      check("입력창에 q 복원", (await page.getByTestId("post-search-input").inputValue()) === TOKEN);
+      check(`${mode}: 입력창 q`, (await page.getByTestId("post-search-input").inputValue()) === (query ?? ""));
       const n1 = await visibleTokenCount(page);
-      check("검색 결과 3건 노출(제목2+본문1)", n1 >= 3, `visible=${n1}`);
-      check("초기 진입 RPC 1회", calls.length === 1, `calls=${calls.length}`);
+      check(`${mode}: 1페이지 시드 결과 노출`, n1 >= 20, `visible=${n1}`);
+      check(`${mode}: 초기 검색 RPC ${query ? 1 : 0}회`, calls.length === (query ? 1 : 0), `calls=${calls.length}`);
 
-      // 복원 판별력(삼순 NO-GO ③): 상세로 떠나기 전 2페이지까지 로드해 둔다(전체 21건). 그래야 뒤로가기
+      // 복원 판별력: 프로필로 떠나기 전 2페이지까지 로드해 둔다(시드 21건). 그래야 뒤로가기
       // 복원이 '1페이지·최상단으로 퇴화'해도 통과하지 않는다. 검색은 id desc 라 2페이지에만 있는 글은
       // 최고령 시드 "TOKEN A 제목"(id 최소) — 복원 후에도 이 글과 스크롤 위치가 살아있으면 분량이 복원된 것.
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
       await page.waitForFunction((t) => (document.body.innerText || "").includes(t), `${TOKEN} A 제목`, { timeout: 15000 });
       const beforeCount = await visibleTokenCount(page);
-      const beforeScroll = await page.evaluate(() => window.scrollY);
-      check("떠나기 전 2페이지 로드(전체 21건)", beforeCount >= 20 && beforeScroll > 0, `count=${beforeCount} scrollY=${beforeScroll}`);
-
-      // 상세 진입: TOKEN 이 있는 첫 링크
-      const link = page.locator(`a[href*="/community/"]`).filter({ hasText: TOKEN }).first();
-      await link.click();
-      await page.waitForURL((u) => /\/community\/.+\/\d+/.test(u.pathname), { timeout: 15000 });
-      check("상세 진입", true, page.url().replace(BASE, ""));
+      // 자동 스크롤 없는 실제 좌표 클릭: 첫 카드 클릭으로 진짜 scrollY=0을 만들어
+      // 복원 상태를 지워버리는 테스트 결함을 막는다.
+      const beforeScroll = await openViewportProfile(page);
+      check(`${mode}: 떠나기 전 2페이지 로드(시드 21건)`, beforeCount >= 21 && beforeScroll > 0, `count=${beforeCount} scrollY=${beforeScroll}`);
+      check(`${mode}: 작성자 프로필 진입`, true, new URL(page.url()).pathname);
       await page.goBack({ waitUntil: "networkidle" });
       await waitRpcSettled(page);
       // 복원(분량·스크롤)이 적용될 때까지 기다린다. 회귀(정상)면 빨리 충족, 퇴화(버그)면 타임아웃 후 검사 실패.
       await page.waitForFunction((t) => (document.body.innerText || "").includes(t), `${TOKEN} A 제목`, { timeout: 10000 }).catch(() => {});
-      await page.waitForFunction((min) => window.scrollY >= min, Math.floor(beforeScroll * 0.5), { timeout: 10000 }).catch(() => {});
+      const tolerance = Math.max(100, beforeScroll * 0.15);
+      await page.waitForFunction(({ before, tolerance }) => Math.abs(window.scrollY - before) <= tolerance, { before: beforeScroll, tolerance }, { timeout: 10000 }).catch(() => {});
       const u = new URL(page.url());
       const afterText = await page.evaluate(() => document.body.innerText || "");
       const afterCount = await visibleTokenCount(page);
       const afterScroll = await page.evaluate(() => window.scrollY);
-      check("뒤로가기 후 ?q= 유지", u.pathname === FEED && u.searchParams.get("q") === TOKEN, u.search);
-      check("뒤로가기 후 2페이지 분량 복원(1페이지 퇴화 아님)", afterText.includes(`${TOKEN} A 제목`) && afterCount >= beforeCount, `before=${beforeCount} after=${afterCount}`);
-      check("뒤로가기 후 스크롤 위치 복원(최상단 퇴화 아님)", afterScroll >= beforeScroll * 0.5, `before=${beforeScroll} after=${afterScroll}`);
-      check("뒤로가기 후 입력창 값 유지", (await page.getByTestId("post-search-input").inputValue()) === TOKEN);
+      check(`${mode}: 뒤로가기 후 URL 유지`, u.pathname === FEED && u.searchParams.get("q") === query, u.search);
+      check(`${mode}: 뒤로가기 후 2페이지 분량 복원`, afterText.includes(`${TOKEN} A 제목`) && afterCount >= beforeCount, `before=${beforeCount} after=${afterCount}`);
+      check(`${mode}: 뒤로가기 후 스크롤 위치 복원`, Math.abs(afterScroll - beforeScroll) <= tolerance, `before=${beforeScroll} after=${afterScroll} tolerance=${tolerance}`);
+      check(`${mode}: 뒤로가기 후 입력창 값 유지`, (await page.getByTestId("post-search-input").inputValue()) === (query ?? ""));
       await ctx.close();
     }
 
@@ -310,7 +335,8 @@ async function waitRpcSettled(page) {
       await waitRpcSettled(pageA);
       await sleep(800); // blockedIds 로드(별도 쿼리) 여유
       const textA = await pageA.evaluate(() => document.body.innerText);
-      check("A: 본인 글 노출", textA.includes(`${TOKEN} A 제목`));
+      // 'A 제목'은 2페이지 전용이다. 1페이지 차단 판정은 최신 A 글로 확인한다.
+      check("A: 본인 글 노출", textA.includes(`${TOKEN} 추가18`));
       check("A: B 제목글 미노출", !textA.includes(`${TOKEN} B 제목`));
       check("A: B 본문매치글 미노출", !textA.includes("B 두번째 글"));
       await ctxA.close();
@@ -323,7 +349,7 @@ async function waitRpcSettled(page) {
       await sleep(800);
       const textB = await pageB.evaluate(() => document.body.innerText);
       check("B: 본인 글 2건 노출", textB.includes(`${TOKEN} B 제목`) && textB.includes("B 두번째 글"));
-      check("B: A 글도 노출(차단은 A→B 단방향)", textB.includes(`${TOKEN} A 제목`));
+      check("B: A 글도 노출(차단은 A→B 단방향)", textB.includes(`${TOKEN} 추가18`));
       await ctxB.close();
     }
 

@@ -55,6 +55,8 @@ try {
       import { createRoot } from 'react-dom/client';
       import Page from './src/app/(main)/community/all-posts/page';
       import { useUnifiedFeed } from './src/lib/supabase/useUnifiedFeed';
+      export * as restore from './src/lib/community/feed-restore';
+      export { feedKeyFor } from './src/lib/community/feed-search';
       export { createRoot, Page }; export const act=React.act;
       export const page=()=>React.createElement(Page);
       const Hook=({q})=>{globalThis.__searchQA.feed=useUnifiedFeed({kind:'all',q});return null;};
@@ -73,12 +75,46 @@ try {
       if (process.env.QA_MUTATION === "restart-cursor") b.onLoad({ filter: /useUnifiedFeed\.ts$/ }, (args) => ({
         contents: readFileSync(args.path, "utf8").replace("loadPage(cursorRef.current)", "loadPage(null)"), loader: "ts",
       }));
+      if (process.env.QA_MUTATION === "late-popstate") b.onLoad({ filter: /feed-restore\.ts$/ }, (args) => {
+        const source = readFileSync(args.path, "utf8");
+        assert.ok(source.includes("}, { capture: true });"), "capture mutation target must exist");
+        return { contents: source.replace("}, { capture: true });", "});"), loader: "ts" };
+      });
     } }],
   });
   const compiled = join(scratch, "entry.cjs");
   writeFileSync(compiled, bundle.outputFiles[0].text);
   const app = createRequire(resolve(root, "package.json"))(compiled);
   const { act } = app;
+
+  // 실제 DOM 이벤트 순서 회귀: 라우터 리스너를 먼저 등록하고 그 핸들러 안에서
+  // 초기 effect의 복원 의사를 동기 확정한다(Suspense/useSearchParams 경로 실측 순서).
+  // non-capture로 되돌리면 소비가 기록보다 빨라져 일반/검색 피드 모두 복원을 잃는다.
+  for (const q of [null, "직관"]) {
+    const feedPath = "/community/all-posts";
+    const feedKey = app.feedKeyFor({ kind: "all", q });
+    window.history.replaceState(null, "", feedPath + (q ? `?q=${encodeURIComponent(q)}` : ""));
+    sessionStorage.clear();
+    app.restore.saveFeedRestore(feedKey, 3, 14504);
+    let observed;
+    const routerPop = () => {
+      observed = app.restore.resolveFeedRestoreIntent({
+        prev: null, feedKey,
+        consumeBack: () => app.restore.consumeBackNavigation(feedPath),
+        readSaved: () => app.restore.readFeedRestore(feedKey),
+      }).intent.state;
+    };
+    window.addEventListener("popstate", routerPop);
+    app.restore.ensurePopStateListener();
+    window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    window.removeEventListener("popstate", routerPop);
+    assert.equal(observed?.pageCount, 3, `${feedKey}: router must see pop before synchronous restore decision`);
+    assert.equal(observed?.scrollY, 14504, `${feedKey}: deep scroll intent survives`);
+    assert.equal(app.restore.consumeBackNavigation(feedPath), false, "pop flag must not leak into a later push entry");
+  }
+  sessionStorage.clear();
+  console.log("PASS capture popstate precedes earlier router listener, normal/search restore intent, no leftover flag");
+
   const rows = (first, count) => Array.from({ length: count }, (_, i) => ({
     id: first - i, author_id: "qa-author", title: `직관 ${first - i}`, content: "fixture",
     board_type: "free", board_id: "general", profiles: { nickname: "QA" },
