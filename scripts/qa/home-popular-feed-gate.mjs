@@ -98,7 +98,7 @@ const hook = readStripped(HOOK);
 check("H4-rpc", /\.rpc\("home_popular_posts",\s*homePopularRpcArgs\(board,\s*windowStartRef\.current,\s*want,\s*Array\.from\(blockedRef\.current\),\s*exclude\)\)/.test(hook), "home_popular_posts RPC 를 homePopularRpcArgs 인자로 호출하지 않는다");
 check("H4-select-popularity", /\.select\(`\$\{FEED_SELECT\}, popularity`\)/.test(hook), "RPC 결과 select 가 FEED_SELECT + popularity 가 아니다");
 check("H4-abort-signal", /\.abortSignal\(controller\.signal\)/.test(hook), "요청에 AbortSignal 이 실리지 않는다");
-check("H4-timeout", /Promise\.race\(\[/.test(hook) && /timeoutRace/.test(hook) && /controller\.abort\(\)/.test(hook) && /clearTimeout\(timerId/.test(hook), "요청 전체(auth 지연 포함)에 독립 timeout Promise.race 가 없다 — Supabase 2.98.0 getSession 대기 시 잠금 미해제");
+check("H4-timeout", /Promise\.race\(\[/.test(hook) && /\.abortSignal\(controller\.signal\),\s*timeoutRace,/.test(hook) && /controller\.abort\(\)/.test(hook) && /clearTimeout\(timerId/.test(hook), "요청 전체(auth 지연 포함)에 독립 timeout Promise.race 가 없다 — Supabase 2.98.0 getSession 대기 시 잠금 미해제");
 check("H4-inflight-abort", /const abortInflight = useCallback\(\(\) => \{\s*for \(const c of inflightRef\.current\) c\.abort\(\);/.test(hook), "진행 중 요청 abort 헬퍼가 없다");
 check("H4-first-aborts", /const gen = \+\+genRef\.current;\s*abortInflight\(\);/.test(hook), "새 세대(loadFirst)가 진행 중 요청을 abort 하지 않는다");
 check("H4-unmount-aborts", /return \(\) => \{\s*gen\.current\+\+;\s*abortInflight\(\);\s*\}/.test(hook), "언마운트·키 교체 시 abort 하지 않는다");
@@ -168,7 +168,7 @@ if (SELFTEST) {
     ["S15-no-abort-signal", HOOK, ".abortSignal(controller.signal)", ".abortSignal(new AbortController().signal)", "요청에 abort 신호 미연결 → 무응답 잠금"],
     ["S16-old-gen-unlocks", HOOK, "if (gen === genRef.current) {\n        fetchingRef.current = false;", "if (true) {\n        fetchingRef.current = false;", "옛 더보기 finally 가 새 세대 잠금을 건드림"],
     ["S17-reload-keeps-lock", HOOK, "    fetchingRef.current = false;\n    setLoadingMore(false);\n    setLoading(true);", "    setLoading(true);", "reload 가 옛 더보기 잠금을 풀지 않음 → 새 세대 버튼 비활성"],
-    ["S18-no-timeout", HOOK, "        const { data, error } = await Promise.race([", "        const { data, error } = await /* race-removed */ (", "독립 timeout Promise 제거 → 인증 지연 시 잠금 지속"],
+    ["S18-no-timeout", HOOK, "          timeoutRace,", "          new Promise<never>(() => {}),", "독립 timeout Promise 제거 → 인증 지연 시 잠금 지속"],
     ["S19-first-no-abort", HOOK, "const gen = ++genRef.current;\n    abortInflight();", "const gen = ++genRef.current;", "새 세대가 옛 요청을 abort 하지 않음"],
     ["S20-client-filter-back", HOOK, "const fetched = ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => mapFeedRow(r));", "const fetched = ((data ?? []) as unknown as Record<string, unknown>[]).map((r) => mapFeedRow(r)).filter((p) => p.id > 0);", "클라이언트 필터 부활 → 부분 채움 회귀(설계 A 위반)"],
     ["S21-rpc-drop-exclude", MIGRATION, "and not (p.id = any (coalesce(p_exclude, '{}')))", "", "RPC 제외 목록 무시 → 중복·순위 상승 글 처리 붕괴"],
@@ -187,8 +187,12 @@ if (SELFTEST) {
       execFileSync("npx", ["tsx", "scripts/qa/home-popular-feed-gate.mjs"], { cwd: ROOT, stdio: "pipe", encoding: "utf8" });
       selftestFailed++;
       console.error(`  ❌ ${id}: 결함 주입에도 GREEN — 게이트에 검출력이 없다 (${desc})`);
-    } catch {
-      console.log(`  PASS  ${id}: RED 확인 — ${desc}`);
+    } catch (error) {
+      const output = `${error.stdout ?? ""}\n${error.stderr ?? ""}`;
+      if (!output.includes("❌ home-popular-feed-gate FAIL")) {
+        selftestFailed++;
+        console.error(`  ❌ ${id}: assertion RED가 아닌 실행 실패`);
+      } else console.log(`  PASS  ${id}: RED 확인 — ${desc}`);
     } finally {
       writeFileSync(abs, original, "utf8");
     }

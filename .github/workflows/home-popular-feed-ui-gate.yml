@@ -9,7 +9,9 @@ on:
     paths:
       - "src/components/home/CommunityLatestPosts.tsx"
       - "src/lib/supabase/useHomePopularFeed.ts"
-      - "scripts/qa/ui-smoke-home-popular-feed.mjs"
+      - "scripts/qa/*home-popular*"
+      - "scripts/qa/fixtures/home-popular*"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
       - "package.json"
       - ".github/workflows/home-popular-feed-ui-gate.yml"
   push:
@@ -17,29 +19,53 @@ on:
     paths:
       - "src/components/home/CommunityLatestPosts.tsx"
       - "src/lib/supabase/useHomePopularFeed.ts"
-      - "scripts/qa/ui-smoke-home-popular-feed.mjs"
+      - "scripts/qa/*home-popular*"
+      - "scripts/qa/fixtures/home-popular*"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
       - "package.json"
       - ".github/workflows/home-popular-feed-ui-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-popular-feed-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   home-popular-feed-ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
       - run: npm ci --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
+      - name: Install isolated HTTP gate dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-17
+          mkdir -p "$RUNNER_TEMP/postgrest"
+          curl --fail --silent --show-error --location https://github.com/PostgREST/postgrest/releases/download/v16.2/postgrest-v16.2-linux-static-x86-64.tar.xz -o "$RUNNER_TEMP/postgrest/archive.tar.xz"
+          tar -xJf "$RUNNER_TEMP/postgrest/archive.tar.xz" -C "$RUNNER_TEMP/postgrest"
+      - name: Real RPC HTTP roles and profiles embedding (PG17 + PostgREST)
+        env:
+          POSTGREST_BIN: ${{ runner.temp }}/postgrest/postgrest
+          PG17_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/qa/home-popular-postgrest.mjs
       - name: Typecheck
         run: npx tsc --noEmit
       - name: Focused lint
-        run: npx eslint --quiet src/components/home/CommunityLatestPosts.tsx src/lib/supabase/useHomePopularFeed.ts scripts/qa/ui-smoke-home-popular-feed.mjs
+        run: npx eslint --max-warnings=0 src/components/home/CommunityLatestPosts.tsx src/lib/supabase/useHomePopularFeed.ts scripts/qa/ui-smoke-home-popular-feed.mjs
       - name: Start browser fixture (dev server)
         env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: fixture-unused
+          SUPABASE_SERVICE_ROLE_KEY: fixture-unused
         run: npm run dev -- --hostname 127.0.0.1 --port 3061 > /tmp/home-popular-ui-next.log 2>&1 &
       - name: Wait for fixture
         run: |
@@ -47,7 +73,7 @@ jobs:
             curl --fail --silent http://127.0.0.1:3061/ >/dev/null && exit 0
             sleep 1
           done
-          cat /tmp/home-popular-ui-next.log
+          tail -n 20 /tmp/home-popular-ui-next.log
           exit 1
       - name: Home popular feed UI smoke (F1~F4)
         env:

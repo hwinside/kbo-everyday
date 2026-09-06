@@ -48,6 +48,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { HOME_POPULAR_IDS, HOME_POPULAR_LINKS, installHomePopularFixture } from "./fixtures/home-popular-feed.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "../..");
@@ -172,6 +173,9 @@ async function measure(chromium) {
   try {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await ctx.newPage();
+    const popularFixture = await installHomePopularFixture(page, {
+      empty: process.env.RSC_GATE_FORCE_NO_COMMUNITY === "1",
+    });
     // `/api/games` 를 고정 fixture 로 가로챈다 — 경기 없는 날에도 카드가 렌더되도록.
     await page.route("**/api/games*", (route) =>
       route.fulfill({
@@ -188,6 +192,13 @@ async function measure(chromium) {
     await page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 });
     await page.waitForTimeout(6000);
     const load = rsc.length;
+    // Explicitly expose this measured surface; a changing home layout must not leave
+    // the community mutation below the viewport and silently pass.
+    const community = page.locator("section").filter({ has: page.getByRole("heading", { name: /커뮤니티 인기글/ }) });
+    if (await community.count()) {
+      await community.scrollIntoViewIfNeeded();
+      await page.waitForTimeout(1500);
+    }
     for (let i = 0; i < 3; i++) {
       await page.mouse.wheel(0, 4000); await page.waitForTimeout(1200);
       await page.mouse.wheel(0, -4000); await page.waitForTimeout(1200);
@@ -203,8 +214,12 @@ async function measure(chromium) {
     // 렌더돼야 하고, 0장이면 카드 미렌더 상태의 측정이라 무효다(월요일 no-op 재발 방지).
     const gameLinks = await page.evaluate(
       () => document.querySelectorAll('a[href^="/games/2026"]').length);
+    const communityIds = await community.locator(HOME_POPULAR_LINKS).evaluateAll(
+      (links) => links.map((link) => Number(link.getAttribute("href").split("/").pop())));
+    const communityPrefetch = rsc.filter((p) => HOME_POPULAR_IDS.some((id) => p === `/community/teams/lg/posts/${id}`)).length;
     await ctx.close();
-    return { load, scroll, navLinks, gameLinks, paths: rsc };
+    return { load, scroll, navLinks, gameLinks, communityIds, communityPrefetch,
+      communityRequests: popularFixture.requests.length, paths: rsc };
   } finally {
     await browser.close();
   }
@@ -218,6 +233,8 @@ function judge(m) {
     fails.push(`홈 로드 직후 _rsc ${m.load}건 > 예산 ${RSC_BUDGET_LOAD}`);
   if (m.scroll > RSC_BUDGET_SCROLL)
     fails.push(`스크롤 3왕복 후 _rsc ${m.scroll}건 > 예산 ${RSC_BUDGET_SCROLL}`);
+  if (m.communityPrefetch > 0)
+    fails.push(`홈 글 상세 자동 prefetch ${m.communityPrefetch}건 > 예산 0`);
   return fails;
 }
 
@@ -269,6 +286,11 @@ async function runOnce() {
       log(`  HARNESS-FAIL[RSC_INCOMPLETE_RENDER] 마운트된 내비 Link ${m.navLinks}개(<4) — 페이지가 제대로 안 그려졌다. 측정 무효`);
       return EXIT_HARNESS_FAILURE;
     }
+    if (!m.communityRequests || m.communityIds.join() !== HOME_POPULAR_IDS.slice(0, 5).join()) {
+      log(`HARNESS-FAIL[RSC_NO_COMMUNITY_POSTS] 홈 RPC/5행 렌더 불완전 — 측정 무효`);
+      return EXIT_HARNESS_FAILURE;
+    }
+    log(`  홈 인기글 ${m.communityIds.length}행 · 상세 prefetch ${m.communityPrefetch}건`);
     log(`  홈 로드 직후 _rsc ${m.load}건 (예산 ${RSC_BUDGET_LOAD})`);
     log(`  스크롤 3왕복 후  _rsc ${m.scroll}건 (예산 ${RSC_BUDGET_SCROLL})`);
     const uniq = new Set(m.paths);

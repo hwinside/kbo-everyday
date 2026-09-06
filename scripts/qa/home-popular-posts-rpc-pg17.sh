@@ -17,7 +17,7 @@ done
 # ci-tier 러너(ubuntu)에는 postgresql@17 이 없다 — 선례(player-popularity-rpc-pg17.sh)와 같이 SKIP 으로 명시하고 0 종료.
 # 실제 SQL 판정은 로컬(postgresql@17)·result-tone 워크플로의 PG17 docker 단계에서 돈다. SKIP 은 PASS 가 아니다.
 [[ -n "${PGBIN:-}" ]] || { echo "SKIP: postgresql@17 binaries not found — home_popular_posts RPC SQL 검증 미실행(로컬/PG17 docker 에서 실행)"; exit 0; }
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/home-popular-rpc.XXXXXX")"
+WORK="$(mktemp -d "${OPENCLAW_REVIEW_ROOT:-${TMPDIR:-/tmp}}/home-popular-rpc.XXXXXX")"
 trap '"$PGBIN/pg_ctl" -D "$WORK/data" -m immediate stop >/dev/null 2>&1 || true; rm -rf "$WORK"' EXIT
 PORT=$((59500 + RANDOM % 100))
 "$PGBIN/initdb" -D "$WORK/data" -A trust -U postgres --locale=C --encoding=UTF8 >/dev/null
@@ -90,7 +90,8 @@ echo "── P6 창·숨김·전체 보드"
 check "P6 창 밖(992)·숨김(991) 제외" "$(q 50 "'lg'" "$OTHER" "'{}'" "'{}'" | tr ',' '\n' | grep -c -E '^(992|991)$' || true)" "0"
 check "P6 전체(all) 보드는 팀 무관 board_type 4종·창·숨김만" "$(q 50 "null" "'{}'" "'{}'" "'{}'")" "1000,999,998,997,996,995,994,993,990,989,988,987"
 echo "── P7 상한·grant"
-check "P7 limit 상한 100" "$("${PSQL[@]}" -c "select count(*) from public.home_popular_posts($SINCE, 1000, null, '{}', '{}', '{}')")" "12"
+"${PSQL[@]}" -c "insert into public.posts(id,author_id,team_tags) select i,'$A1','[\"lg\"]' from generate_series(10000,10124) i" >/dev/null
+check "P7 limit 상한 100 (후보 125건 초과)" "$("${PSQL[@]}" -c "select count(*) from public.home_popular_posts($SINCE, 1000, null, '{}', '{}', '{}')")" "100"
 check "P7 limit 음수 → 0" "$("${PSQL[@]}" -c "select count(*) from public.home_popular_posts($SINCE, -5, null, '{}', '{}', '{}')")" "0"
 check "P7 anon·authenticated execute grant" "$("${PSQL[@]}" -c "select string_agg(r, ',' order by r) from (select unnest(array['anon','authenticated']) r) x where has_function_privilege(r, 'public.home_popular_posts(timestamptz,integer,text,text[],uuid[],bigint[])', 'execute')")" "anon,authenticated"
 check "P7 security invoker(정의자 아님)" "$("${PSQL[@]}" -c "select prosecdef from pg_proc where proname = 'home_popular_posts'")" "f"
