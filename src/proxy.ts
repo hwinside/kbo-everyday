@@ -1,4 +1,5 @@
 import { getClientIp } from "@/lib/http/client-ip";
+import { createServerSessionDiagnostics } from "@/lib/auth/server-session-diagnostics";
 import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
@@ -155,6 +156,10 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   }
 
   let supabaseResponse = NextResponse.next({ request });
+  const diagnostics = createServerSessionDiagnostics(
+    supabaseUrl!, request.cookies.getAll().map(({ name }) => name),
+    request.headers.get("user-agent") || "",
+  );
 
   const supabase = createServerClient(
     supabaseUrl!,
@@ -179,7 +184,8 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
 
   // ES256 JWT는 JWKS로 로컬 검증한다. 만료 임박 세션 갱신은 getClaims 경로에서 유지되며,
   // 매 RSC/prefetch 요청마다 갱신을 트리거하던 증폭은 top-level 게이트로 제거한다.
-  await supabase.auth.getClaims();
+  const { error } = await supabase.auth.getClaims();
+  diagnostics.record(supabaseResponse.cookies.getAll(), error, event);
 
   return supabaseResponse;
 }
