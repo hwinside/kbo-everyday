@@ -400,6 +400,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-stat-definition",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },

@@ -1917,7 +1917,7 @@ async function verifyPipeline() {
     const doubles = freshState();
     const doublesResult = await answerQuestion("u1", "문보경 올해 2루타 몇개 칩어?", statsDeps(doubles));
     assert.equal(doublesResult.source, "kbo_structured", "시즌 기록은 구조화 DB 경로");
-    assert.match(doublesResult.answer, /2루타은? 8/, `원값 8 그대로: ${doublesResult.answer}`);
+    assert.match(doublesResult.answer, /2루타는 8/, `원값 8 그대로: ${doublesResult.answer}`);
     // KST 변환 확인: 08-02T21:00Z + 9h = 08-03 06:00 KST → `08/03`
     assert.match(doublesResult.answer, /08\/03/, "기준시각 표시(KST)");
     assert.equal(doubles.llmCalls, 0, "기록 경로는 LLM 0");
@@ -1989,7 +1989,7 @@ async function verifyPipeline() {
       { ...moonRow, updated_at: "2026-07-28T21:00:00.000+00:00" },
     ]));
     assert.notEqual(staleResult.source, "kbo_structured", "stale 값은 답변 금지");
-    assert.doesNotMatch(staleResult.answer, /2루타은? 8/, "stale 값 노출 금지");
+    assert.doesNotMatch(staleResult.answer, /2루타(?:은|는)? 8/, "stale 값 노출 금지");
     // 공지 계약은 24h. 25h row가 통과하면 안 된다(기존 30h 구현 회귀).
     const stale25h = freshState();
     const stale25hResult = await answerQuestion("u1", "문보경 올해 2루타 몇개야?", statsDeps(stale25h, [

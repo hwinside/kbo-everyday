@@ -1,3 +1,4 @@
+import { definitionNumericSource, isStatDefinitionQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
@@ -40,6 +41,7 @@ import {
   isRagAttemptPath,
   isRagDiscardReason,
   numericTokenCount,
+  numericTokensSubsetOf,
   type RagAttemptPath,
   type RagDiscardReason,
   type ValidatedRagAnswer,
@@ -1158,7 +1160,7 @@ export interface QaDeps {
    */
   pickTeamFanCopy?: () => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
-  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean) => Promise<LlmResult>;
+  callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean, definition?: StatDefinitionFrame) => Promise<LlmResult>;
   /**
    * 검수 사전 정의 질문 매핑 (C 질문 정규화, 2026-08-11).
    *
@@ -1334,7 +1336,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[]) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -3550,6 +3552,12 @@ export function routeQuestion(
   // ⚠️ `blocked` 보다는 뒤다 — 인젝션 차단은 어떤 안내보다도 앞이다(fail-close 우선).
   if (resolveProductFeature(question) !== null) return "product_feature_guide";
   if (isServiceInquiry(normalized)) return "service_redirect";
+  if (isStatDefinitionQuestion(question) && !isOutOfScopeIntent(normalized, mentionsTeam(tokens))) {
+    // Definitions must not enter history_hold, but an unknown expression still
+    // needs the existing LLM scope/normalization contract, not a glossary label.
+    return isSupportedRuleTermQuestion(question, glossary, players)
+      ? "baseball_rule_term" : "llm_scope_gate";
+  }
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
@@ -4058,6 +4066,7 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
   context?: ContextTurn;
+  definition?: StatDefinitionFrame;
   rosterBlock?: string;
   /**
    * 현재 시즌 구단 상황 블록 (tier L). `buildLiveTeamBlock` 산출물 그대로.
@@ -4777,10 +4786,11 @@ async function answerOfficialDocumentQuestion(
   questionNorm: string,
   remaining: number,
   deps: QaDeps,
+  definition?: StatDefinitionIntent | null,
 ): Promise<QaResult | null> {
   let evidence: RagEvidence[];
   try {
-    evidence = selectEvidence(await deps.searchOfficialRag!(question));
+    evidence = selectEvidence(await deps.searchOfficialRag!(definition?.searchQuestion ?? question));
   } catch {
     return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
   }
@@ -4823,14 +4833,14 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callOfficialRagLlm!(question, evidence);
+      llm = await deps.callOfficialRagLlm!(question, evidence, { context: definition?.context, definition: definition ?? undefined });
     } catch {
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.
       return failCloseError();
     }
   }
 
-  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence, generalFallback: { question } });
+  const validated = validateRagResponse(llm.text, { numericEvidence: true, evidence, generalFallback: { question: definitionNumericSource(question, definition) } });
   // GENERAL — 공식 간행물에 답이 없어 일반 야구 지식으로 답했다 (2026-08-10 unsure 함정 제거).
   //   종전에는 여기서 무조건 unsure 하드 종결이었다 — 그 결과 `지명 타자의 DH 약자`·
   //   `잔루만루`·`ph 포지션`·`wRC+ 해석` 같은 정상 질문이 전부 "이해 못함"을 받았다.
@@ -5591,6 +5601,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
+  // Safety/service gates keep precedence over the definition routing exception.
+  const baseRoute = routeQuestion(question, glossary, players, context !== null);
+  const statDefinition = ["baseball_rule_term", "llm_scope_gate", "context_missing"].includes(baseRoute)
+    ? resolveStatDefinitionIntent(question, context) : null;
   const rosterBlock = rosterMembershipBlock(question, context, players) ?? undefined;
   // ── `<X> <지표>` 미결속 fail-close 를 **앞단에서** 종결한다 (삼순 2026-08-08 P0) ──
   //
@@ -5621,7 +5635,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const hasBoundClause =
     namedStatKinds.includes("entity_stat") || mentionsTeamForGate(question);
   const mixedBoundAndUnbound = namedStatKinds.includes("ambiguous") && hasBoundClause;
-  if (mixedBoundAndUnbound) {
+  if (mixedBoundAndUnbound && !statDefinition) {
     await deps.log({
       userId, question, questionNorm, matchPath: "stat_clarify",
       answer: STAT_CLARIFY_ANSWER, inputTokens: null, outputTokens: null,
@@ -5637,12 +5651,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   · 기록 요청(`이대호 홈런 몇개`) → LLM 이 근거 없이 숫자를 내면 → 게이트가 되묻기로 교체
   // 문장 유형(서사/요청) 판정을 룰로 하지 않기 위해 판정 주체를 LLM 으로 옮긴 것이므로,
   // 이 플래그 계산은 **구조**(엔티티 결속 실패)만 본다.
+  // Definition intent may bypass record lookup, never the ungrounded generic
+  // fallback's numeric guard (e.g. "오타니 홈런이 뭐야" without official evidence).
   const statNumericGuard = statGuardOwnsQuestion(question, glossary, players);
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
   // 이름으로 다시 풀면 또 동명이인으로 갈라져 picker가 무한 반복된다.
-  const pickedCandidate = deps.enablePlayerRag && deps.pickedPlayerKboId &&
+  const pickedCandidate = !statDefinition && deps.enablePlayerRag && deps.pickedPlayerKboId &&
     isPickedPlayerAllowed(question, deps.pickedPlayerKboId, players)
     ? resolvePickedPlayerCandidate(deps.pickedPlayerKboId, players)
     : null;
@@ -5714,7 +5730,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const draftContextCandidate = deps.enablePlayerRag && draftFollowup && draftContext
     ? resolveNamedPlayerCandidate(draftContext.question, players)
     : null;
-  const enabledPlayerCandidate = pickedCandidate ?? (deps.enablePlayerRag
+  const enabledPlayerCandidate = pickedCandidate ?? (!statDefinition && deps.enablePlayerRag
     ? (resolveRagPlayerCandidate(question, players) ??
       (recordIntent.kind !== "none" || isDraftQuestion(question)
         ? resolveNamedPlayerCandidate(question, players)
@@ -5726,7 +5742,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // ⚠️ **답변 전 단계**이므로 공식/선수 RAG·LLM·cache 어느 것도 소비하지 않는다.
   // quota도 되돌려준다 — "어느 김동현이에요?"를 물어본 것만으로 하루 한도를 깎으면
   // 동명이인 선수만 두 배를 내는 꼴이 된다. 반납은 이 분기에서만 일어난다.
-  if (!enabledPlayerCandidate && deps.enablePlayerRag) {
+  if (!statDefinition && !enabledPlayerCandidate && deps.enablePlayerRag) {
     // 기록 질문도 picker 대상이다 — 오히려 동명이인은 서술형보다 기록을 더 잘 답한다
     // (Production 실측: 동명이인 72명 중 28명이 타자기록 보유, 위키 chunks 는 0).
     const options = resolvePlayerPickerOptions(question, players, recordIntent.kind !== "none");
@@ -5752,7 +5768,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  const route = enabledPlayerCandidate
+  const route = (statDefinition || enabledPlayerCandidate)
     ? "baseball_rule_term"
     : routeQuestion(question, glossary, players, context !== null);
   // `llm_scope_gate`는 종결 라우트가 아니라 **판정 위임**이다. 여기서 끝내지 않고 아래로 흘려보내되,
@@ -6234,13 +6250,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   if (
     // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은
     // 엔티티가 없는 순수 룰 질문에만 적용된다.
-    (ownedByEntityRag
+    (statDefinition || (ownedByEntityRag
       ? isSupportedRuleTermQuestion(question, glossary, players)
-      : true) &&
+      : true)) &&
     deps.searchOfficialRag &&
     deps.callOfficialRagLlm
   ) {
-    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps);
+    const official = await answerOfficialDocumentQuestion(userId, question, questionNorm, remaining, deps, statDefinition);
     if (official) return official;
   }
 
@@ -6530,7 +6546,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
     }
     try {
-      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard);
+      // A definition needs an actual explanation, not the RECORD/NARRATIVE
+      // classifier's token. Keep ownership for cache/replay, and validate the
+      // resulting ungrounded answer below instead of rejecting the question.
+      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined);
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
       //   종전에는 `unsure`(판정 불명확)로 접었는데, 그러면 유저는 "질문을 못 알아들었다" 를
@@ -6570,7 +6589,20 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
   //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
   //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
-  if (statNumericGuard) {
+  const definitionFallback = statDefinition ? validateLlmResponse(llm.text, question) : null;
+  if (definitionFallback?.kind === "answer" && definitionFallback.answer &&
+      !numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition))) {
+    // Same contract as official RAG's GENERAL fallback: eligible user-quoted numbers
+    // may be explained, but no new number may be asserted without evidence.
+    const final: StoredQaFinal = { answer: STAT_CLARIFY_ANSWER, source: "stat_clarify" };
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({
+      userId, question, questionNorm, matchPath: final.source, answer: final.answer,
+      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+    });
+    return { status: 200, answer: final.answer, source: final.source, remaining };
+  }
+  if (statNumericGuard && !statDefinition) {
     const intent = parseStatIntentToken(llm.text);
     if (intent === "rule_term") {
       // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
@@ -6652,7 +6684,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
-  const validated = validateLlmResponse(llm.text, question);
+  const validated = definitionFallback ?? validateLlmResponse(llm.text, question);
   if (validated.kind === "blocked") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: BLOCKED_ANSWER, source: "blocked" }, llm));
@@ -6675,6 +6707,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     await deps.storeLlm(packStoredQaFinal(
       {
         answer: validated.answer, source: "llm",
+        statRuleTermVerified: Boolean(statDefinition && statNumericGuard),
         cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,
         toneCompliant: validated.toneCompliant,
       },

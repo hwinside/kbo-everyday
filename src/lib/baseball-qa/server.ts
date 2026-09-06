@@ -3,6 +3,7 @@
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
+import type { StatDefinitionFrame } from "./stats/definition-intent";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
@@ -156,12 +157,13 @@ export async function callLlm(
   context?: ContextTurn,
   rosterBlock?: string,
   statIntentMode = false,
+  definition?: StatDefinitionFrame,
 ): Promise<LlmResult> {
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY missing");
   const res = await fetch(GEMINI_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode)),
+    body: JSON.stringify(buildBaseballQaGeminiRequest(question, SYSTEM_PROMPT, context, rosterBlock, statIntentMode, definition)),
     signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`Gemini API failed: ${res.status}`);
@@ -593,8 +595,8 @@ export async function callRagLlm(
 }
 
 /** 공식 간행물(tier1) 근거 전용 호출 — 프롬프트만 다르고 경계는 동일하다. */
-export async function callOfficialRagLlm(question: string, evidence: RagEvidence[]): Promise<LlmResult> {
-  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT);
+export async function callOfficialRagLlm(question: string, evidence: RagEvidence[], extras?: RagLlmExtras): Promise<LlmResult> {
+  return callRagLlmWithPrompt(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
 }
 
 /**
