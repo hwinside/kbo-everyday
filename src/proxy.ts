@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
@@ -110,7 +111,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     );
     if (platform) {
       const ip =
-        request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "";
+        getClientIp(request, { fallback: "" });
       recordWatchPing(event, ip, platform);
     }
     return NextResponse.next({ request });

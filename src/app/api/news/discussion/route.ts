@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
@@ -10,7 +11,7 @@ import { isNewsDiscussionUser } from "@/lib/news/discussion-auth";
 import { ALL_TEAM_SLUGS } from "@/lib/utils/post-scope";
 
 function requesterKey(req: NextRequest): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  return getClientIp(req);
 }
 
 async function existingDiscussion(input: ParsedNewsDiscussionInput) {
