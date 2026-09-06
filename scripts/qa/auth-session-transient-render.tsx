@@ -141,8 +141,8 @@ async function main() {
   }
 }
 
-main().catch(error => {
+main().then(() => process.exit(0)).catch(error => {
   Date.now = realNow;
   console.error(error instanceof Error ? error.message : "Fixture failed");
-  process.exitCode = 1;
+  process.exit(1);
 });
