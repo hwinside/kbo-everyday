@@ -215,10 +215,10 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
   useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Header: drag handle (swipe down to dismiss) + close */}
       <div
-        className="flex items-center justify-between px-3 pt-2 pb-1 cursor-grab"
+        className="flex shrink-0 items-center justify-between px-3 pt-2 pb-1 cursor-grab"
         onTouchStart={(e) => { dragStartY.current = e.touches[0].clientY; }}
         onTouchEnd={(e) => {
           const delta = e.changedTouches[0].clientY - dragStartY.current;
@@ -282,12 +282,12 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
       </div>
 
       {context === "game_chat_gif" && (
-        <div className="px-3 pb-1 text-xs text-text-tertiary" aria-live="polite">
+        <div className="shrink-0 px-3 pb-1 text-xs text-text-tertiary" aria-live="polite">
           {listTitle}{listTitle === "크보팬 인기 GIF" ? " · 최근 30일 경기채팅" : ""}
         </div>
       )}
       {/* Grid */}
-      <div className="flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-2">
         {errorMessage && (
           <div className="px-2 py-2 text-center text-xs text-text-tertiary" role="status">
             {errorMessage}
