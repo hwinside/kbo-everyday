@@ -34,6 +34,7 @@
     "qa:channel-discovery",
     "qa:chat-count-delta",
     "qa:chat-count-hook",
+    "qa:cloudflare-phase0:mutations",
     "qa:collector-backfill:self-test",
     "qa:collector-e2e-cleanup:self-test",
     "qa:conditional-etag",
