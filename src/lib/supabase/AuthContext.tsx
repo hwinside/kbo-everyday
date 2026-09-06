@@ -6,17 +6,19 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import { clearUserScopedStores } from "@/lib/store/user-scope";
-import { commitAuthIdentity, beginAuthDispatch, commitAuthIdentityIfCurrent } from "@/lib/supabase/auth-identity";
+import { commitAuthIdentity, beginAuthDispatch, commitAuthIdentityIfCurrent, getAuthIdentity, isSameAuthIdentity } from "@/lib/supabase/auth-identity";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
 import {
   acquireSession,
   backupSessionTokens,
   beginLogoutFence,
   clearSessionBackup,
+  isRetryableSessionError,
 } from "@/lib/capacitor/session-backup";
 import { createProfileLoadLedger } from "@/lib/client-dedupe";
 import { invalidateBootCache } from "@/lib/boot-cache";
 import { performBootLoad } from "@/lib/boot-loader";
+import { authSessionDiagnostics } from "@/lib/auth/session-diagnostics";
 import type { User } from "@supabase/supabase-js";
 import type { FavoritePlayer } from "@/lib/store/favorites";
 
@@ -160,6 +162,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    let disposed = false;
+    let authEventRevision = 0;
+    let profileLoadTimer: ReturnType<typeof setTimeout> | null = null;
+    let sessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    let sessionRetryAttempt = 0;
+
+    function cancelSessionRetry() {
+      if (sessionRetryTimer !== null) clearTimeout(sessionRetryTimer);
+      sessionRetryTimer = null;
+    }
+
+    function retrySessionLater() {
+      const delays = [1000, 3000, 10000];
+      if (disposed || sessionRetryTimer !== null || sessionRetryAttempt >= delays.length
+        || document.visibilityState !== "visible") return;
+      sessionRetryTimer = setTimeout(() => {
+        sessionRetryTimer = null;
+        void syncSession();
+      }, delays[sessionRetryAttempt++]);
+    }
+
     async function syncSession() {
       // 세션 획득 사다리: ① 쿠키 → ② pending 토큰 → ③ 네이티브 백업 복원.
       // 기존 1·2차 로직을 semantics 그대로 acquireSession 으로 이동 — 상위 단계에서
@@ -168,24 +191,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 늘은 syncSession fence(삼순 7차): async 조회 시작 전 티켓 발급 → 결과 게시 직전
       // 더 최신 auth 이벤트가 왔으면 이 조회 결과를 폐기한다.
       const dispatchTicket = beginAuthDispatch();
-      const session = await acquireSession<
-        NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]>
-      >({
-        getCookieSession: async () => (await supabase.auth.getSession()).data.session,
-        consumePendingTokens: () => {
-          // (iOS Safari에서 쿠키가 안 붙을 때의 fallback — 사용 후 제거, 1회성)
-          if (typeof window === "undefined") return null;
-          try {
-            const pending = sessionStorage.getItem("kbo-pending-session");
-            if (!pending) return null;
-            sessionStorage.removeItem("kbo-pending-session");
-            const { access_token, refresh_token } = JSON.parse(pending);
-            if (access_token && refresh_token) return { access_token, refresh_token };
-          } catch { sessionStorage.removeItem("kbo-pending-session"); }
-          return null;
-        },
-        setSession: tokens => supabase.auth.setSession(tokens),
-      });
+      const eventRevision = authEventRevision;
+      const identityBefore = getAuthIdentity();
+      type Session = NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]>;
+      let session: Session | null;
+      try {
+        session = await acquireSession<Session>({
+          getCookieSession: async () => {
+            const observation = authSessionDiagnostics.beginSessionRead();
+            let result: Awaited<ReturnType<typeof supabase.auth.getSession>>;
+            try {
+              result = await supabase.auth.getSession();
+            } catch (error) {
+              if (!disposed) authSessionDiagnostics.sessionRead(observation.before, false, error);
+              throw error;
+            } finally { observation.finish(); }
+            if (!disposed) authSessionDiagnostics.sessionRead(observation.before, !!result.data.session, result.error);
+            if (result.error) throw result.error;
+            return result.data.session;
+          },
+          consumePendingTokens: () => {
+            // (iOS Safari에서 쿠키가 안 붙을 때의 fallback — 사용 후 제거, 1회성)
+            if (typeof window === "undefined") return null;
+            try {
+              const pending = sessionStorage.getItem("kbo-pending-session");
+              if (!pending) return null;
+              sessionStorage.removeItem("kbo-pending-session");
+              const { access_token, refresh_token } = JSON.parse(pending);
+              if (access_token && refresh_token) return { access_token, refresh_token };
+            } catch { sessionStorage.removeItem("kbo-pending-session"); }
+            return null;
+          },
+          setSession: tokens => supabase.auth.setSession(tokens),
+        });
+      } catch (error) {
+        if (!disposed && eventRevision === authEventRevision && isSameAuthIdentity(identityBefore)
+          && isRetryableSessionError(error)) {
+          // Keep a known identity during an outage; a cold start stays unresolved
+          // until a successful read or an authoritative SIGNED_OUT event arrives.
+          if (!identityBefore.uid) setLoading(true);
+          retrySessionLater();
+        }
+        return;
+      }
+      if (disposed) return;
 
       // 동기 활성 사용자 신원 즉시 갱신(setUser React state는 렌더 뒤 — stale 창 방지)
       // 동기 신원 게시(fence) — 시작 티켓 이후 더 최신 이벤트가 왔으면 폐기하고 setUser·loadProfile도 생략
@@ -193,6 +242,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // 늘은 syncSession 폐기 — loading은 최신 이벤트 경로가 관리(건드리지 않음, 삼순 8차)
         return;
       }
+      cancelSessionRetry();
+      sessionRetryAttempt = 0;
       setUser(session?.user ?? null);
       if (session?.user && session.access_token) {
         // 계정 전환 감지 (syncSession 경로) — 이전 계정 로컬을 공식 clear helper로
@@ -221,7 +272,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     registerDeepLinkListener();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
+        if (disposed) return;
+        // auth-js also emits INITIAL_SESSION(null) when a refresh request fails.
+        // The error-aware syncSession read owns the initial no-session decision.
+        if (_event === "INITIAL_SESSION" && !session) return;
+        const eventRevision = ++authEventRevision;
+        cancelSessionRetry();
+        sessionRetryAttempt = 0;
+        if (profileLoadTimer !== null) clearTimeout(profileLoadTimer);
+        profileLoadTimer = null;
         // 로그인/토큰 갱신마다 네이티브 백업을 최신화 (refresh token rotation 대응).
         // SIGNED_OUT(session=null)에서는 백업을 지우지 않는다 — 일시적 세션 소실에서
         // 백업이 유일한 복구 수단이라, 제거는 명시적 signOut()에서만 수행.
@@ -233,7 +293,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         // 동기 활성 사용자 신원 즉시 갱신 — auth 이벤트 tick에 값 확정(setUser 렌더 전)
         // 동기 신원 권위 게시 — auth 이벤트 tick에 값 확정(revision↑, uid 변경 시 epoch↑)
-        commitAuthIdentity(session?.user?.id ?? null);
+        const nextUid = session?.user?.id ?? null;
+        if (getAuthIdentity().uid !== nextUid) {
+          // Deferred B's load must not leave A's in-flight profile writable.
+          profileLedger.invalidate();
+          setProfile(null);
+          if (nextUid) setLoading(true);
+        }
+        const identity = commitAuthIdentity(nextUid);
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
           // 계정 전환 감지: userId가 바뀌면 이전 계정 로컬을 공식 clear helper로 즉시 정리
@@ -246,7 +313,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem('kbo-auth-uid', session.user.id);
           } catch { /* SSR safety */ }
 
-          await loadProfile(session.access_token, session.user.id);
+          // Supabase awaits subscribers while holding its auth lock. The last
+          // profile fallback calls supabase.from(), which needs getSession()
+          // and that same lock. Never await profile I/O in this callback:
+          // refresh -> subscriber -> profile -> getSession -> refresh is a cycle.
+          // A macrotask lets the auth notification/lock finish first.
+          profileLoadTimer = setTimeout(() => {
+            profileLoadTimer = null;
+            if (disposed || !isSameAuthIdentity(identity)) return;
+            void loadProfile(session.access_token, session.user.id)
+              .catch(() => { /* profile errors must not reject auth refresh */ })
+              .finally(() => {
+                if (!disposed && eventRevision === authEventRevision && isSameAuthIdentity(identity)) {
+                  setLoading(false);
+                }
+              });
+          }, 0);
 
           // Google Ads 전환은 ProfileSetupModal.handleComplete()에서 발화함
           // (닉네임+팀 선택 완료 시점 = 실제 회원가입 완료)
@@ -255,22 +337,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           profileLedger.invalidate();
           invalidateBootCache(); // PR④: 부트 번들 캠시도 함께 폐기(계정 전환 오염 방지)
           setProfile(null);
+          setLoading(false);
         }
-        setLoading(false);
       }
     );
 
     // iOS PWA: OAuth 완료 후 PWA 복귀 시 세션 재확인
     function handleVisibilityChange() {
       if (document.visibilityState === "visible") {
-        syncSession();
+        resumeSession();
+      } else {
+        cancelSessionRetry();
       }
     }
+    function resumeSession() {
+      if (disposed) return;
+      cancelSessionRetry();
+      sessionRetryAttempt = 0;
+      void syncSession();
+    }
     document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", resumeSession);
 
     return () => {
+      disposed = true;
+      authSessionDiagnostics.cancelPendingReads();
+      cancelSessionRetry();
+      if (profileLoadTimer !== null) clearTimeout(profileLoadTimer);
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", resumeSession);
     };
   }, []);
 
@@ -280,6 +376,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile,
       loading,
       signOut: async () => {
+        authSessionDiagnostics.intentionalLogout();
         // 명시적 로그아웃 = 네이티브 세션 백업도 제거. fence 를 먼저 올려 signOut 과
         // 동시에 도착하는 TOKEN_REFRESHED/SIGNED_IN 이 백업을 되살리는 race 를 차단하고
         // (이후 backupSessionTokens 전부 no-op), 마지막에 한 번 더 지운다. best-effort.

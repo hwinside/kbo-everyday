@@ -7972,5 +7972,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "김태균",
+    "kboId": "55507",
+    "teamId": 7,
+    "position": "투수",
+    "backNo": "14",
+    "team": "롯데",
+    "birthDate": "2006-07-31"
   }
 ]

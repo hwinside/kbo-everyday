@@ -34,8 +34,11 @@
     "qa:channel-discovery",
     "qa:chat-count-delta",
     "qa:chat-count-hook",
+    "qa:cloudflare-phase0:mutations",
     "qa:collector-backfill:self-test",
     "qa:collector-e2e-cleanup:self-test",
+    "qa:community-search:live",
+    "qa:community-search:perf",
     "qa:conditional-etag",
     "qa:contextual-naver-failover",
     "qa:contextual-split-inline",
@@ -218,6 +221,7 @@
     "qa:title-orphan",
     "qa:ui:collector-author-team",
     "qa:ui:comment-crud",
+    "qa:ui:community-search",
     "qa:ui:dm-draft",
     "qa:ui:feed-scroll-restore-auth",
     "qa:ui:game-chat-visibility",
@@ -276,6 +280,7 @@
     "qa:watch-telemetry",
     "qa:widget-fast",
     "qa:widget-tap-mode",
-    "qa:youtube-quota"
+    "qa:youtube-quota",
+    "qa:chat-profanity:selftest"
   ]
 }

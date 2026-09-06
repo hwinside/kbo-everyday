@@ -34,11 +34,13 @@ export function buildTeamFeedOrParts(slug: string, kboIds: string[]): string[] {
   return orParts;
 }
 
-/** 피드가 바라보는 보드 컨텍스트. 전체글/팀/선수가 같은 훅을 source만 바꿔 재사용. */
-export type FeedBoard =
-  | { kind: "all" }
-  | { kind: "team"; teamId: string }
-  | { kind: "player"; kboId: string };
+/**
+ * 보드 컨텍스트·검색어 정규화·피드 키는 순수 모듈 `@/lib/community/feed-search` 에 있다(회귀 스모크가 env 없이 import).
+ * `all.q` 는 전체글 검색어(커뮤니티 검색 v1). 값이 있으면 `posts` 직접 조회 대신 RPC `search_posts` 로
+ * 같은 SELECT(프로필 임베딩 포함)를 받아 나머지 경로(좋아요·차단·복원)는 그대로 탄다.
+ */
+import { feedKeyFor, normalizeSearchQuery, type FeedBoard } from "@/lib/community/feed-search";
+export { feedKeyFor, normalizeSearchQuery, SEARCH_MIN_LEN, type FeedBoard } from "@/lib/community/feed-search";
 
 /** PostgREST query builder 중 피드 필터에 쓰는 메서드만 추린 최소 인터페이스(회귀 mock 공유). */
 export type FeedFilterQuery<Q> = {
@@ -86,17 +88,6 @@ export function mapFeedRow(p: Record<string, unknown>): Post {
   };
 }
 
-function boardKey(board: FeedBoard): string {
-  switch (board.kind) {
-    case "team":
-      return `team:${board.teamId}`;
-    case "player":
-      return `player:${board.kboId}`;
-    case "all":
-      return "all";
-  }
-}
-
 /**
  * 통합 커뮤니티 피드 훅.
  * - content_type 필터 없음 → 글/사진 한 스트림.
@@ -127,11 +118,18 @@ export function useUnifiedFeed(
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [fetchError, setFetchError] = useState<Error | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<Error | null>(null);
 
-  const key = boardKey(board);
+  const key = feedKeyFor(board);
+  // 전체글 검색어(정규화 후). null 이면 일반 피드. key 에 이미 포함돼 있어 loadPage 의존성은 key 로 충분하다.
+  const searchQ = board.kind === "all" ? normalizeSearchQuery(board.q) : null;
   const cursorRef = useRef<number | null>(null);
   // 동시 페이지 요청 가드 (스크롤 연타 race 방지).
   const fetchingRef = useRef(false);
+  // 요청 세대. key(보드/검색어)가 바뀔 때마다 증가 — 이전 세대의 loadMore 응답이 늦게 도착해
+  // 새 검색 결과 뒤에 이어붙는 것을 막는다(삼순 리뷰 ④). 초기 로드는 effect 의 cancelled 가 같은 역할.
+  const genRef = useRef(0);
 
   const fetchLikedFor = useCallback(
     async (ids: number[]) => {
@@ -154,6 +152,18 @@ export function useUnifiedFeed(
 
   const loadPage = useCallback(
     async (cursor: number | null): Promise<Post[]> => {
+      if (searchQ !== null) {
+        // 검색 모드: 필터·숨김 제외·길이 가드·이스케이프·키셋·limit 상한(50)은 전부 RPC 안(단일 지점).
+        // 클라는 원문(trim)만 넘긴다. returns setof posts 라 같은 SELECT(프로필 임베딩)가 그대로 붙는다.
+        // query-guard: bounded -- search_posts 는 boundedRpcAllowlist 등록(limit ≤ 50, id desc 키셋).
+        const { data, error } = await supabase
+          .rpc("search_posts", { q: searchQ, before_id: cursor, page_size: pageSize })
+          .select(FEED_SELECT);
+        if (error) throw error;
+        // 생성 타입에 없는 함수라 rpc().select() 추론이 단일객체|배열 유니언으로 나온다 → setof 라 항상 배열.
+        const rows = (data ?? []) as unknown as Record<string, unknown>[];
+        return rows.map(mapFeedRow);
+      }
       // query-guard: bounded -- id desc keyset(.lt("id",cursor)) + .limit(pageSize). board_type 목록에
       // 'poll' 추가(S3)는 필터 확장일 뿐 페이지 경계 불변(성장 무한 아님).
       let query = supabase.from("posts").select(FEED_SELECT).neq("is_hidden", true);
@@ -191,11 +201,24 @@ export function useUnifiedFeed(
   const restorePath = restore?.restorePath ?? null;
   // 확정된 복원 의사. auth hydration 등으로 effect 가 재실행돼도 살아남아야 한다.
   const restoreIntentRef = useRef<FeedRestoreIntent | null>(null);
+  // 아직 pop 여부를 판단하지 않은 저장본. 초기 렌더의 스크롤 이벤트가 storage를 바꿔도
+  // 이전 화면에서 저장한 분량은 보존한다. auth hydration 재실행에서도 같은 키는 재사용한다.
+  const restoreCandidateRef = useRef<FeedRestoreIntent | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (restorePath) ensurePopStateListener();
+    const gen = ++genRef.current;
+    fetchingRef.current = false;
+    setLoadingMore(false);
+    if (restorePath) {
+      ensurePopStateListener();
+      if (restoreCandidateRef.current?.feedKey !== key) {
+        restoreCandidateRef.current = { feedKey: key, state: readFeedRestore(key) };
+      }
+    }
     setLoading(true);
+    setFetchError(null);
+    setLoadMoreError(null);
     setPosts([]);
     setLikedIds(new Set());
     cursorRef.current = null;
@@ -213,71 +236,91 @@ export function useUnifiedFeed(
     // 재실행이 1회용 플래그를 다시 소비하려 하면 false 가 되고, 저장값까지 지우면서 첫 복원 load 를
     // cleanup 으로 죽여 원 사고가 그대로 재현된다(삼순 실측 12972 → 1243, cards 31 → 12).
     // 그래서 확정본(intent)을 ref 에 남기고 재실행은 그것을 재사용한다.
-    let saved: FeedRestoreState | null = null;
-    if (restorePath) {
-      const { intent, fresh } = resolveFeedRestoreIntent({
-        prev: restoreIntentRef.current,
-        feedKey: key,
-        consumeBack: () => consumeBackNavigation(restorePath),
-        readSaved: () => readFeedRestore(key),
-      });
-      restoreIntentRef.current = intent;
-      saved = intent.state;
-      // 복원 대상이 아닌 **최초** 진입(push)에서만 상태를 버린다. 재실행은 아무것도 지우지 않는다.
-      // 복원을 쓰지 않는 소비자(홈 최신글)도 남의 상태를 지우면 안 되므로 restorePath 안에서만 한다.
-      if (fresh && !saved) clearFeedRestore(key);
-    }
+    const initialize = async () => {
+      if (cancelled || gen !== genRef.current) return;
+      let saved: FeedRestoreState | null = null;
+      if (restorePath) {
+        const { intent, fresh } = resolveFeedRestoreIntent({
+          prev: restoreIntentRef.current,
+          feedKey: key,
+          consumeBack: () => consumeBackNavigation(restorePath),
+          readSaved: () => restoreCandidateRef.current?.state ?? null,
+        });
+        restoreIntentRef.current = intent;
+        saved = intent.state;
+        // 복원 대상이 아닌 최초 push에서만 버린다. 판단과 삭제 모두 popstate 종료 후 실행한다.
+        if (fresh && !saved) clearFeedRestore(key);
+      }
+      try {
+        const rows = await loadPage(null);
+        if (cancelled || gen !== genRef.current) return;
+        let acc = rows;
+        let cursor = rows.length ? rows[rows.length - 1].id : null;
+        let more = rows.length === pageSize;
+        let pages = 1;
 
-    (async () => {
-      const rows = await loadPage(null);
-      if (cancelled) return;
-      let acc = rows;
-      let cursor = rows.length ? rows[rows.length - 1].id : null;
-      let more = rows.length === pageSize;
-      let pages = 1;
-
-      // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
-      while (saved && more && pages < saved.pageCount) {
-        const next = await loadPage(cursor);
-        if (cancelled) return;
-        if (!next.length) {
-          more = false;
-          break;
+        // 저장된 페이지 수까지 순차 복원. 서버 왕복이 늘지만 뒤로가기 1회에 한정된다.
+        while (saved && more && pages < saved.pageCount) {
+          const next = await loadPage(cursor);
+          if (cancelled || gen !== genRef.current) return;
+          if (!next.length) {
+            more = false;
+            break;
+          }
+          const seen = new Set(acc.map((p) => p.id));
+          acc = [...acc, ...next.filter((r) => !seen.has(r.id))];
+          cursor = next[next.length - 1].id;
+          more = next.length === pageSize;
+          pages += 1;
         }
-        const seen = new Set(acc.map((p) => p.id));
-        acc = [...acc, ...next.filter((r) => !seen.has(r.id))];
-        cursor = next[next.length - 1].id;
-        more = next.length === pageSize;
-        pages += 1;
-      }
 
-      setPosts(acc);
-      cursorRef.current = cursor;
-      setHasMore(more);
-      pageCountRef.current = pages;
-      setPageCount(pages);
-      setLoading(false);
-      fetchLikedFor(acc.map((r) => r.id));
-      if (saved) {
-        // sessionStorage 는 여기서 비운다(다음 진입에 재사용 금지). 이번 문서 안에서의 재실행은
-        // ref 의 intent 로 이어지므로 지워도 복원이 끊기지 않는다.
-        clearFeedRestore(key);
-        setPendingScrollY(saved.scrollY);
+        setPosts(acc);
+        cursorRef.current = cursor;
+        setHasMore(more);
+        pageCountRef.current = pages;
+        setPageCount(pages);
+        setLoading(false);
+        fetchLikedFor(acc.map((r) => r.id));
+        if (saved) {
+          // sessionStorage 는 여기서 비운다(다음 진입에 재사용 금지). 이번 문서 안에서의 재실행은
+          // ref 의 intent 로 이어지므로 지워도 복원이 끊기지 않는다.
+          clearFeedRestore(key);
+          setPendingScrollY(saved.scrollY);
+        }
+      } catch (e) {
+        if (!cancelled && gen === genRef.current) {
+          setFetchError(e instanceof Error ? e : new Error(String(e)));
+          setHasMore(false);
+          setLoading(false);
+        }
       }
-    })();
+    };
+
+    // Next의 먼저 등록된 popstate 핸들러 안에서 이 effect까지 동기 실행될 수 있다.
+    // window target의 capture는 등록 순서를 바꾸지 않으며, microtask도 리스너 사이에
+    // 실행될 수 있다. 다음 task에서만 복원 의사를 확정해야 뒤의 앱 리스너 기록을 볼 수 있다.
+    let initTimer: ReturnType<typeof setTimeout> | undefined;
+    if (restorePath) initTimer = setTimeout(initialize, 0);
+    else void initialize();
 
     return () => {
       cancelled = true;
+      if (initTimer !== undefined) clearTimeout(initTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, pageSize, user?.id, restorePath]);
 
-  const loadMore = useCallback(async () => {
-    if (fetchingRef.current || !hasMore || loading) return;
+  const loadNextPage = useCallback(async (retry: boolean) => {
+    if (fetchingRef.current || loading) return;
+    if (retry ? !loadMoreError : (!hasMore || loadMoreError)) return;
     fetchingRef.current = true;
     setLoadingMore(true);
+    const gen = genRef.current;
     try {
       const rows = await loadPage(cursorRef.current);
+      // 요청 도중 보드/검색어가 바뀌었으면(세대 증가) 이 응답은 이전 피드의 것 — 폐기.
+      if (gen !== genRef.current) return;
+      setLoadMoreError(null);
       setPosts((prev) => {
         const seen = new Set(prev.map((p) => p.id));
         return [...prev, ...rows.filter((r) => !seen.has(r.id))];
@@ -289,24 +332,52 @@ export function useUnifiedFeed(
         setPageCount(pageCountRef.current);
       }
       fetchLikedFor(rows.map((r) => r.id));
+    } catch (e) {
+      // 목록·커서는 유지하고 자동 재요청만 중단한다. 명시적 재시도는 같은 커서에서 이어간다.
+      if (gen === genRef.current) {
+        setLoadMoreError(e instanceof Error ? e : new Error(String(e)));
+        setHasMore(false);
+      }
     } finally {
-      setLoadingMore(false);
-      fetchingRef.current = false;
+      if (gen === genRef.current) {
+        setLoadingMore(false);
+        fetchingRef.current = false;
+      }
     }
-  }, [hasMore, loading, loadPage, pageSize, fetchLikedFor]);
+  }, [hasMore, loading, loadMoreError, loadPage, pageSize, fetchLikedFor]);
+
+  const loadMore = useCallback(() => loadNextPage(false), [loadNextPage]);
+  const retryLoadMore = useCallback(() => loadNextPage(true), [loadNextPage]);
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setFetchError(null);
+    setLoadMoreError(null);
+    fetchingRef.current = false;
+    setLoadingMore(false);
     cursorRef.current = null;
-    const rows = await loadPage(null);
-    setPosts(rows);
-    cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
-    setHasMore(rows.length === pageSize);
-    pageCountRef.current = 1;
-    setPageCount(1);
-    setLikedIds(new Set());
-    setLoading(false);
-    fetchLikedFor(rows.map((r) => r.id));
+    // reload 도 새 요청 세대로 취급 — 진행 중이던 loadMore 응답이 늦게 도착해 새로고침 결과 뒤에
+    // 이어붙는 것을 막는다.
+    const gen = ++genRef.current;
+    try {
+      const rows = await loadPage(null);
+      if (gen !== genRef.current) return;
+      setPosts(rows);
+      cursorRef.current = rows.length ? rows[rows.length - 1].id : null;
+      setHasMore(rows.length === pageSize);
+      pageCountRef.current = 1;
+      setPageCount(1);
+      setLikedIds(new Set());
+      fetchLikedFor(rows.map((r) => r.id));
+    } catch (e) {
+      // 새로고침 실패 시 loading 을 반드시 내려 무한 스피너(영구 고정)를 막는다(삼순 NO-GO ①).
+      if (gen === genRef.current) {
+        setFetchError(e instanceof Error ? e : new Error(String(e)));
+        setHasMore(false);
+      }
+    } finally {
+      if (gen === genRef.current) setLoading(false);
+    }
   }, [loadPage, pageSize, fetchLikedFor]);
 
   /** 좋아요 optimistic 토글 — likedIds Set + 해당 post like_count 즉시 반영. */
@@ -334,8 +405,13 @@ export function useUnifiedFeed(
     loadingMore,
     hasMore,
     loadMore,
+    retryLoadMore,
     reload,
     setPostLiked,
+    /** 첫 페이지/새로고침 오류. 추가 페이지 실패는 loadMoreError로 분리. */
+    fetchError,
+    /** 추가 페이지 오류. 기존 목록·커서를 보존하고 명시적으로 재시도한다. */
+    loadMoreError,
     /** 피드 식별자 — 복원 상태 저장 키. */
     feedKey: key,
     /** 현재까지 로드된 페이지 수(복원 저장용). */

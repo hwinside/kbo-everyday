@@ -1,3 +1,4 @@
+import { getClientIp } from "@/lib/http/client-ip";
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { allowViewRequest } from "@/lib/community/view-rate-limit";
@@ -43,9 +44,7 @@ export async function POST(request: NextRequest) {
 
   // 경량 abuse cap(인스턴스 로컬 best-effort): 같은 요청자+콘텐츠 1초 폭주 차단.
   const viewerToken =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "unknown";
+    getClientIp(request, { allowRealIp: true });
   if (!allowViewRequest(viewerToken, 0, `content:${type}:${id}`)) {
     return NextResponse.json({ ok: false, throttled: true }, { status: 200 });
   }

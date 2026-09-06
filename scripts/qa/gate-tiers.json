@@ -28,6 +28,18 @@
       "tier": "ci"
     },
     {
+      "name": "qa:auth-callback-lock",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:auth-session-transient",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:auth-session-diagnostics",
+      "tier": "ci"
+    },
+    {
       "name": "qa:auth-es256-e2e",
       "tier": "deploy"
     },
@@ -152,6 +164,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:cloudflare-phase0",
+      "tier": "ci"
+    },
+    {
       "name": "qa:collector-author-team",
       "tier": "ci"
     },
@@ -221,6 +237,14 @@
     },
     {
       "name": "qa:feed-scroll-restore",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:community-search",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:community-search:retry",
       "tier": "ci"
     },
     {
@@ -301,6 +325,14 @@
     },
     {
       "name": "qa:genius-untrusted-metric:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-product-feature-guide",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-product-feature-guide:mutations",
       "tier": "ci"
     },
     {
@@ -392,6 +424,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-stat-definition",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },
@@ -474,6 +510,10 @@
     {
       "name": "qa:genius-unbound-name:mutations",
       "tier": "ci"
+    },
+    {
+      "name": "qa:giphy-popular-ids:pg17",
+      "tier": "deploy"
     },
     {
       "name": "qa:giphy-request-budget",
@@ -885,6 +925,10 @@
     },
     {
       "name": "qa:war-benchmark-coverage",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:chat-profanity",
       "tier": "ci"
     }
   ],

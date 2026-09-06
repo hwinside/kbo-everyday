@@ -24,25 +24,81 @@ const SERVER = "src/lib/baseball-qa/server.ts";
 const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
+  {
+    name: "r21 직전 사용자 숫자 제거 — 후속 10홀드 인용이 차단된다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: "return definition?.context ? `${question}\\n${definition.context.question}` : question;",
+    to: "return question;",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r22 generic 정의 대상 미전달 — 후속 지표·인용 의미를 잃는다",
+    file: PIPELINE,
+    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !statDefinition, undefined)",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r23 공식 RAG 정의 대상 미전달 — 인용 숫자가 순위표로 흐른다",
+    file: PIPELINE,
+    from: "{ context: definition?.context, definition: definition ?? undefined }",
+    to: "{ context: definition?.context, definition: undefined }",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r18 정의 fallback을 RECORD 분류기로 복귀 — 빈 검색 4턴이 정의답을 잃는다",
+    file: PIPELINE,
+    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard, statDefinition ?? undefined)",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r19 정의 fallback 숫자 검증 제거 — 오타니 환각값이 유출된다",
+    file: PIPELINE,
+    from: "!numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition))",
+    to: "false",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r20 정의 검증 표식 제거 — log crash 재생이 정상답을 되묻기로 바꾼다",
+    file: PIPELINE,
+    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard),",
+    to: "statRuleTermVerified: false,",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
+    file: PIPELINE,
+    from: "{ context: definition?.context, definition: definition ?? undefined }",
+    to: "{ context: undefined, definition: definition ?? undefined }",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r17 이유 질문 배제 제거 — 도루 불문율을 지표 정의로 오분류한다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: " && !REASON_ASK.test(text)",
+    to: "",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
   // ── P0-1: 라우팅이 실제로 열렸는가 ──────────────────────────────────────
   {
     name: "r1 진입 조건에 scopeGate 복원 — 사전 밖 질문이 다시 문 앞에서 막힌다(1차 false-green 재현)",
     file: PIPELINE,
-    from: "  if (\n    // 엔티티가 결속되면 main 계약(사전 판정)이 그대로 진입을 가른다 — 이 PR 의 개방은\n    // 엔티티가 없는 순수 룰 질문에만 적용된다.\n    (ownedByEntityRag",
-    to: "  if (\n    !scopeGate &&\n    (ownedByEntityRag",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    !scopeGate &&\n    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
   },
   {
     name: "r2 닫힌 단어 사전을 전면 복원 — 사전 밖 표현은 정본이 있어도 도달 못 한다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
-    to: "    isSupportedRuleTermQuestion(question, glossary, players) &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    (statDefinition || isSupportedRuleTermQuestion(question, glossary, players)) &&",
   },
 
   // ── ⓒ 계약: 엔티티 결속 질문은 main 그대로 ──────────────────────────────
   {
     name: "r3 엔티티 결속에도 개방 적용 — 사건 질문(`문보경 삼진 당한 경기`)을 규칙집이 선점한다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
     to: "    true &&",
   },
   {
@@ -70,8 +126,8 @@ const MUTATIONS = [
   {
     name: "r6 엔티티 결속 질문을 공식 경로에서 통째로 차단 — main 이 official 로 보내던 룰 질문이 죽는다",
     file: PIPELINE,
-    from: "    (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true) &&",
-    to: "    !ownedByEntityRag &&",
+    from: "    (statDefinition || (ownedByEntityRag\n      ? isSupportedRuleTermQuestion(question, glossary, players)\n      : true)) &&",
+    to: "    (statDefinition || !ownedByEntityRag) &&",
   },
 
   // ── 근거 판정이 개수가 아니라 거리라는 계약 ──────────────────────────────
