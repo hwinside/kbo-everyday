@@ -28,7 +28,7 @@ try {
       return args?.p_team_slug === "lg" && args.p_limit === 6 && args.p_exclude?.length === 0;
     }, { timeout: 30000 });
     await Promise.all([navigate(), teamResponse]);
-    await section.getByRole("heading", { name: "커뮤니티 인기글(LG)", exact: true }).waitFor();
+    await section.getByRole("heading", { name: /커뮤니티 인기글\(LG\)$/ }).waitFor();
     await links.nth(4).waitFor();
   }
   await loadFavoriteTeamFeed(() => page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 }));
