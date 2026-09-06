@@ -16,10 +16,22 @@ try {
   const runtimeErrors = [];
   page.on("pageerror", (e) => runtimeErrors.push(e.message));
   const fixture = await installHomePopularFixture(page);
-  await page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 });
   const section = page.locator("section").filter({ has: page.getByRole("heading", { name: /커뮤니티 인기글/ }) });
   const links = section.locator(HOME_POPULAR_LINKS);
-  await links.nth(4).waitFor();
+  async function loadFavoriteTeamFeed(navigate) {
+    // useHomeInit restores the saved team after auth loading. The fixture also
+    // answers the initial all-team RPC, so five links alone do not prove LG loaded.
+    // Register before navigation and fail on timeout if the real LG RPC never occurs.
+    const teamResponse = page.waitForResponse((response) => {
+      if (!response.url().includes("/rpc/home_popular_posts") || response.status() !== 200) return false;
+      const args = response.request().postDataJSON();
+      return args?.p_team_slug === "lg" && args.p_limit === 6 && args.p_exclude?.length === 0;
+    }, { timeout: 30000 });
+    await Promise.all([navigate(), teamResponse]);
+    await section.getByRole("heading", { name: "커뮤니티 인기글(LG)", exact: true }).waitFor();
+    await links.nth(4).waitFor();
+  }
+  await loadFavoriteTeamFeed(() => page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 }));
   const first = fixture.requests.at(-1);
   assert.equal(first.p_limit, 6);
   assert.deepEqual(first.p_exclude, []);
@@ -51,8 +63,7 @@ try {
   assert.ok(fixture.requests.length > before, "failure request actually issued");
   console.log("PASS F4 actual RPC 500 → section hidden");
   fixture.fail = false;
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await links.nth(4).waitFor();
+  await loadFavoriteTeamFeed(() => page.reload({ waitUntil: "domcontentloaded" }));
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));
   assert.deepEqual(runtimeErrors, []);
   console.log("PASS F5 reload recovery / no browser runtime errors");
