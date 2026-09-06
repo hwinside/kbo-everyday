@@ -200,13 +200,21 @@ export function useUnifiedFeed(
   const restorePath = restore?.restorePath ?? null;
   // 확정된 복원 의사. auth hydration 등으로 effect 가 재실행돼도 살아남아야 한다.
   const restoreIntentRef = useRef<FeedRestoreIntent | null>(null);
+  // 아직 pop 여부를 판단하지 않은 저장본. 초기 렌더의 스크롤 이벤트가 storage를 바꿔도
+  // 이전 화면에서 저장한 분량은 보존한다. auth hydration 재실행에서도 같은 키는 재사용한다.
+  const restoreCandidateRef = useRef<FeedRestoreIntent | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const gen = ++genRef.current;
     fetchingRef.current = false;
     setLoadingMore(false);
-    if (restorePath) ensurePopStateListener();
+    if (restorePath) {
+      ensurePopStateListener();
+      if (restoreCandidateRef.current?.feedKey !== key) {
+        restoreCandidateRef.current = { feedKey: key, state: readFeedRestore(key) };
+      }
+    }
     setLoading(true);
     setFetchError(null);
     setLoadMoreError(null);
@@ -227,22 +235,21 @@ export function useUnifiedFeed(
     // 재실행이 1회용 플래그를 다시 소비하려 하면 false 가 되고, 저장값까지 지우면서 첫 복원 load 를
     // cleanup 으로 죽여 원 사고가 그대로 재현된다(삼순 실측 12972 → 1243, cards 31 → 12).
     // 그래서 확정본(intent)을 ref 에 남기고 재실행은 그것을 재사용한다.
-    let saved: FeedRestoreState | null = null;
-    if (restorePath) {
-      const { intent, fresh } = resolveFeedRestoreIntent({
-        prev: restoreIntentRef.current,
-        feedKey: key,
-        consumeBack: () => consumeBackNavigation(restorePath),
-        readSaved: () => readFeedRestore(key),
-      });
-      restoreIntentRef.current = intent;
-      saved = intent.state;
-      // 복원 대상이 아닌 **최초** 진입(push)에서만 상태를 버린다. 재실행은 아무것도 지우지 않는다.
-      // 복원을 쓰지 않는 소비자(홈 최신글)도 남의 상태를 지우면 안 되므로 restorePath 안에서만 한다.
-      if (fresh && !saved) clearFeedRestore(key);
-    }
-
-    (async () => {
+    const initialize = async () => {
+      if (cancelled || gen !== genRef.current) return;
+      let saved: FeedRestoreState | null = null;
+      if (restorePath) {
+        const { intent, fresh } = resolveFeedRestoreIntent({
+          prev: restoreIntentRef.current,
+          feedKey: key,
+          consumeBack: () => consumeBackNavigation(restorePath),
+          readSaved: () => restoreCandidateRef.current?.state ?? null,
+        });
+        restoreIntentRef.current = intent;
+        saved = intent.state;
+        // 복원 대상이 아닌 최초 push에서만 버린다. 판단과 삭제 모두 popstate 종료 후 실행한다.
+        if (fresh && !saved) clearFeedRestore(key);
+      }
       try {
         const rows = await loadPage(null);
         if (cancelled || gen !== genRef.current) return;
@@ -286,10 +293,18 @@ export function useUnifiedFeed(
           setLoading(false);
         }
       }
-    })();
+    };
+
+    // Next의 먼저 등록된 popstate 핸들러 안에서 이 effect까지 동기 실행될 수 있다.
+    // window target의 capture는 등록 순서를 바꾸지 않으며, microtask도 리스너 사이에
+    // 실행될 수 있다. 다음 task에서만 복원 의사를 확정해야 뒤의 앱 리스너 기록을 볼 수 있다.
+    let initTimer: ReturnType<typeof setTimeout> | undefined;
+    if (restorePath) initTimer = setTimeout(initialize, 0);
+    else void initialize();
 
     return () => {
       cancelled = true;
+      if (initTimer !== undefined) clearTimeout(initTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, pageSize, user?.id, restorePath]);

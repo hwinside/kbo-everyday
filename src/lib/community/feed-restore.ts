@@ -223,12 +223,10 @@ let popListenerAttached = false;
 export function ensurePopStateListener(): void {
   if (popListenerAttached || typeof window === "undefined") return;
   popListenerAttached = true;
-  // Next의 non-capture popstate 핸들러가 Suspense 경계를 동기 재렌더하면 피드의 초기
-  // effect까지 이 이벤트 안에서 실행될 수 있다. 등록 순서에 맡기면 복원 의사가 먼저
-  // 'push'로 확정돼 저장분이 지워진다. target의 capture 단계에서 먼저 표시해야
-  // 라우터의 렌더/커밋 시점과 무관하게 소비자가 같은 popstate를 볼 수 있다.
+  // window 자체가 target인 popstate는 capture로도 선행 리스너를 앞지를 수 없다.
+  // 소비자는 다음 task에서 의사를 확정한다(useUnifiedFeed). 여기서는 도착지만 기록한다.
   window.addEventListener("popstate", () => {
     // popstate 시점의 location 은 이미 도착지로 갱신돼 있다(실측) → 그대로 경로를 남긴다.
     safeSet(POP_KEY, window.location.pathname);
-  }, { capture: true });
+  });
 }

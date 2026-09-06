@@ -31,12 +31,43 @@ globalThis.__searchQA = {
     assert.equal(name, "search_posts");
     return { select: () => new Promise((resolveRequest) => calls.push({ args, resolveRequest })) };
   },
+  from(table) {
+    assert.ok(table === "posts" || table === "likes", `unexpected table: ${table}`);
+    const args = { before_id: null };
+    const query = {
+      select() { return query; }, neq() { return query; },
+      eq() { return query; },
+      in() { return table === "likes" ? Promise.resolve({ data: [] }) : query; },
+      lt(column, value) { assert.equal(column, "id"); args.before_id = value; return query; },
+      order() { return query; },
+      limit(pageSize) {
+        args.page_size = pageSize;
+        return new Promise((resolveRequest) => calls.push({ args, resolveRequest }));
+      },
+    };
+    return query;
+  },
+};
+
+// Hold zero-delay tasks explicitly. The regression controls when the *next task* begins;
+// it does not infer browser listener order from jsdom's dispatchEvent implementation.
+const realSetTimeout = globalThis.setTimeout;
+const realClearTimeout = globalThis.clearTimeout;
+const initTasks = new Map();
+globalThis.setTimeout = (callback, delay, ...args) => {
+  if (delay !== 0) return realSetTimeout(callback, delay, ...args);
+  const id = {};
+  initTasks.set(id, () => callback(...args));
+  return id;
+};
+globalThis.clearTimeout = (id) => {
+  if (!initTasks.delete(id)) realClearTimeout(id);
 };
 
 const stubs = {
   "next/navigation": 'export const useSearchParams=()=>new URLSearchParams(window.location.search); export const useRouter=()=>({push(){}});',
-  "./client": 'export const supabase={rpc:(...args)=>globalThis.__searchQA.rpc(...args)};',
-  "AuthContext": 'export const useAuth=()=>({user:null,loading:false});',
+  "./client": 'export const supabase={rpc:(...args)=>globalThis.__searchQA.rpc(...args),from:(...args)=>globalThis.__searchQA.from(...args)};',
+  "AuthContext": 'export const useAuth=()=>({user:globalThis.__searchQA.user??null,loading:false});',
   "useBlock": 'const blockedIds=new Set(); export const useBlockedIds=()=>({blockedIds});',
   "player-roster": 'export const kboIdsForTeamSlug=()=>[];',
   "usePosts": 'export const createPost=async()=>{}; export const toggleLike=async()=>{};',
@@ -59,8 +90,8 @@ try {
       export { feedKeyFor } from './src/lib/community/feed-search';
       export { createRoot, Page }; export const act=React.act;
       export const page=()=>React.createElement(Page);
-      const Hook=({q})=>{globalThis.__searchQA.feed=useUnifiedFeed({kind:'all',q});return null;};
-      export const hook=q=>React.createElement(Hook,{q});
+      const Hook=({q,restorePath})=>{globalThis.__searchQA.feed=useUnifiedFeed({kind:'all',q},20,restorePath?{restorePath}:undefined);return null;};
+      export const hook=(q,restorePath)=>React.createElement(Hook,{q,restorePath});
     ` },
     plugins: [{ name: "rpc-boundary", setup(b) {
       b.onResolve({ filter: /.*/ }, (args) => {
@@ -75,10 +106,18 @@ try {
       if (process.env.QA_MUTATION === "restart-cursor") b.onLoad({ filter: /useUnifiedFeed\.ts$/ }, (args) => ({
         contents: readFileSync(args.path, "utf8").replace("loadPage(cursorRef.current)", "loadPage(null)"), loader: "ts",
       }));
-      if (process.env.QA_MUTATION === "late-popstate") b.onLoad({ filter: /feed-restore\.ts$/ }, (args) => {
+      if (["late-popstate", "microtask-popstate", "live-restore-snapshot"].includes(process.env.QA_MUTATION)) b.onLoad({ filter: /useUnifiedFeed\.ts$/ }, (args) => {
         const source = readFileSync(args.path, "utf8");
-        assert.ok(source.includes("}, { capture: true });"), "capture mutation target must exist");
-        return { contents: source.replace("}, { capture: true });", "});"), loader: "ts" };
+        const target = process.env.QA_MUTATION === "live-restore-snapshot"
+          ? "readSaved: () => restoreCandidateRef.current?.state ?? null"
+          : "if (restorePath) initTimer = setTimeout(initialize, 0);";
+        const replacement = process.env.QA_MUTATION === "live-restore-snapshot"
+          ? "readSaved: () => readFeedRestore(key)"
+          : process.env.QA_MUTATION === "microtask-popstate"
+            ? "if (restorePath) void Promise.resolve().then(initialize);"
+            : "if (restorePath) void initialize();";
+        assert.ok(source.includes(target), "restore mutation target must exist");
+        return { contents: source.replace(target, replacement), loader: "ts" };
       });
     } }],
   });
@@ -86,34 +125,6 @@ try {
   writeFileSync(compiled, bundle.outputFiles[0].text);
   const app = createRequire(resolve(root, "package.json"))(compiled);
   const { act } = app;
-
-  // 실제 DOM 이벤트 순서 회귀: 라우터 리스너를 먼저 등록하고 그 핸들러 안에서
-  // 초기 effect의 복원 의사를 동기 확정한다(Suspense/useSearchParams 경로 실측 순서).
-  // non-capture로 되돌리면 소비가 기록보다 빨라져 일반/검색 피드 모두 복원을 잃는다.
-  for (const q of [null, "직관"]) {
-    const feedPath = "/community/all-posts";
-    const feedKey = app.feedKeyFor({ kind: "all", q });
-    window.history.replaceState(null, "", feedPath + (q ? `?q=${encodeURIComponent(q)}` : ""));
-    sessionStorage.clear();
-    app.restore.saveFeedRestore(feedKey, 3, 14504);
-    let observed;
-    const routerPop = () => {
-      observed = app.restore.resolveFeedRestoreIntent({
-        prev: null, feedKey,
-        consumeBack: () => app.restore.consumeBackNavigation(feedPath),
-        readSaved: () => app.restore.readFeedRestore(feedKey),
-      }).intent.state;
-    };
-    window.addEventListener("popstate", routerPop);
-    app.restore.ensurePopStateListener();
-    window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
-    window.removeEventListener("popstate", routerPop);
-    assert.equal(observed?.pageCount, 3, `${feedKey}: router must see pop before synchronous restore decision`);
-    assert.equal(observed?.scrollY, 14504, `${feedKey}: deep scroll intent survives`);
-    assert.equal(app.restore.consumeBackNavigation(feedPath), false, "pop flag must not leak into a later push entry");
-  }
-  sessionStorage.clear();
-  console.log("PASS capture popstate precedes earlier router listener, normal/search restore intent, no leftover flag");
 
   const rows = (first, count) => Array.from({ length: count }, (_, i) => ({
     id: first - i, author_id: "qa-author", title: `직관 ${first - i}`, content: "fixture",
@@ -128,12 +139,91 @@ try {
   });
   const fail = (i) => respond(i, null, { message: "injected RPC failure" });
   const click = (button) => act(async () => { assert.ok(button, "retry button exists"); button.click(); });
-  const mount = async (element) => {
+  const flushInitTasks = () => act(async () => {
+    const ready = [...initTasks.values()];
+    initTasks.clear();
+    for (const run of ready) run();
+  });
+  const mount = async (element, defer = false) => {
     if (mounted) await act(async () => mounted.unmount());
     calls.length = 0;
     mounted = app.createRoot(document.getElementById("root"));
     await act(async () => mounted.render(element));
+    if (!defer) await flushInitTasks();
   };
+
+  // Mount the actual hook *before* recording the pop flag, including a microtask checkpoint.
+  // This is the production failure sequence, deliberately independent of jsdom listener ordering.
+  const feedPath = "/community/all-posts";
+  for (const q of [null, "직관"]) {
+    const feedKey = app.feedKeyFor({ kind: "all", q });
+    window.history.replaceState(null, "", feedPath + (q ? `?q=${encodeURIComponent(q)}` : ""));
+    sessionStorage.clear();
+    app.restore.saveFeedRestore(feedKey, 3, 14504);
+    await mount(app.hook(q, feedPath), true);
+    await act(async () => { await Promise.resolve(); });
+    assert.equal(calls.length, 0, `${feedKey}: do not initialize before popstate dispatch ends`);
+    assert.equal(app.restore.readFeedRestore(feedKey)?.pageCount, 3, "do not clear before deciding pop vs push");
+    // Browser/scroll-hook initial paint can overwrite storage before the deferred task runs.
+    if (q) app.restore.clearFeedRestore(feedKey);
+    else app.restore.saveFeedRestore(feedKey, 1, 1247);
+    window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+    await flushInitTasks();
+    await respond(0, rows(200, 20));
+    assert.ok(calls[1], `${feedKey}: must reload saved page two, not the overwritten snapshot`);
+    assert.equal(calls[1].args.before_id, 181);
+    await respond(1, rows(180, 20));
+    assert.equal(calls[2]?.args.before_id, 161);
+    await respond(2, rows(160, 5));
+    assert.equal(globalThis.__searchQA.feed.posts.length, 45);
+    assert.equal(globalThis.__searchQA.feed.pageCountRef.current, 3);
+    assert.equal(globalThis.__searchQA.feed.pendingScrollY, 14504);
+    assert.equal(app.restore.consumeBackNavigation(feedPath), false, "pop flag must not leak into a later push");
+    assert.equal(app.restore.readFeedRestore(feedKey), null, "successful restore consumes storage");
+
+    // A later push with saved state but no pop must still start at page one.
+    app.restore.saveFeedRestore(feedKey, 3, 14504);
+    await mount(app.hook(q, feedPath));
+    await respond(0, rows(200, 20));
+    assert.equal(calls.length, 1, "push must not replay the saved pages");
+    assert.equal(globalThis.__searchQA.feed.pendingScrollY, null);
+    assert.equal(app.restore.readFeedRestore(feedKey), null, "push clears stale storage after deciding");
+  }
+  console.log("PASS actual normal/search hook: late pop + overwritten snapshot → 3 pages/scroll intent; push stays fresh");
+
+  // Auth hydration cancels the first task without consuming the flag/snapshot; the next generation owns it.
+  sessionStorage.clear();
+  const hydrateKey = app.feedKeyFor({ kind: "all", q: "직관" });
+  app.restore.saveFeedRestore(hydrateKey, 2, 9000);
+  await mount(app.hook("직관", feedPath), true);
+  app.restore.clearFeedRestore(hydrateKey);
+  window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+  globalThis.__searchQA.user = { id: "qa-hydrated" };
+  await act(async () => mounted.render(app.hook("직관", feedPath)));
+  await flushInitTasks();
+  assert.equal(calls.length, 1, "cancelled initialization must not issue a duplicate request");
+  await respond(0, rows(200, 20));
+  await respond(1, rows(180, 1));
+  assert.equal(globalThis.__searchQA.feed.pageCountRef.current, 2);
+  assert.equal(globalThis.__searchQA.feed.pendingScrollY, 9000);
+  assert.equal(app.restore.consumeBackNavigation(feedPath), false);
+  await act(async () => mounted.unmount());
+  mounted = null;
+  globalThis.__searchQA.user = null;
+
+  // Unmount before the task begins: no request, no consumption or deletion by a dead generation.
+  app.restore.saveFeedRestore(hydrateKey, 2, 9000);
+  await mount(app.hook("직관", feedPath), true);
+  window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+  await act(async () => mounted.unmount());
+  mounted = null;
+  await flushInitTasks();
+  assert.equal(calls.length, 0);
+  assert.equal(app.restore.readFeedRestore(hydrateKey)?.pageCount, 2);
+  assert.equal(app.restore.consumeBackNavigation(feedPath), true, "unmounted initialization must not consume the flag");
+  sessionStorage.clear();
+  window.history.replaceState(null, "", `${feedPath}?q=직관`);
+  console.log("PASS cancelled task: auth hydration preserves original intent; unmount neither loads nor consumes");
 
   await mount(app.page());
   await respond(0, rows(200, 20));
@@ -202,6 +292,9 @@ try {
   }
   console.log("PASS pending retry/reload → new search: stale success/failure ignored; active lock preserved");
 } finally {
+  globalThis.setTimeout = realSetTimeout;
+  globalThis.clearTimeout = realClearTimeout;
+  initTasks.clear();
   if (mounted) {
     const { act } = await import("react");
     await act(async () => mounted.unmount());
