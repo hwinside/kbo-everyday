@@ -8,7 +8,8 @@ const ZERO_WIDTH = /[\u200B-\u200F\u2028-\u202F\uFEFF]/g;
  * - NFKC + 소문자
  * - 제로폭/공백 제거
  * - 문자·숫자·한글 자모(ㄱ-ㅎ, ㅏ-ㅣ)만 남김 (특수문자 삽입 우회 흡수)
- * - 3연속 이상 동일 문자 반복은 2개로 축약 (씨이이이발 → 씨이발 수준)
+ * - 고신뢰 '씨이발/시이발' 장음만 원형으로 축약
+ * - 3연속 이상 동일 문자 반복은 2개로 축약
  * 주의: 모음/음절 삽입 우회(시__발)는 특수문자 제거로만 흡수하며,
  *       과도한 flexible 매칭은 오탐을 유발하므로 P0에서는 도입하지 않는다.
  */
@@ -18,6 +19,7 @@ export function normalizeToken(token: string): string {
     .toLowerCase()
     .replace(ZERO_WIDTH, "")
     .replace(/[^\p{L}\p{N}\u3131-\u3163]/gu, "")
+    .replace(/([씨시])이+(?=발)/gu, "$1")
     .replace(/(.)\1{2,}/gu, "$1$1");
 }
 

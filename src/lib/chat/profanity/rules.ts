@@ -6,7 +6,8 @@ export type Tier = "hard_legacy" | "hard_new" | "soft";
 export type Verdict = "pass" | "hard_legacy" | "hard_new" | "soft";
 
 /**
- * 기존 검증 12어(enforce). 어절 정규화 후 substring 매칭.
+ * 기존 12어 분류. 어절 경계/허용 어미와 정상 span을 함께 검사한다.
+ * P0는 분류만 반환하며 enforce/shadow 집행은 아직 연결하지 않는다.
  * "새끼"는 어절 경계 규칙(§2.1)으로 별도 처리한다(새끼손가락 오탐 방지).
  */
 export const HARD_LEGACY: readonly string[] = [
@@ -31,19 +32,40 @@ export const THREAT_WORDS: readonly string[] = ["죽어", "닥쳐", "뒤져", "�
 
 /** 위협어 앞에 오면 응원/감탄으로 간주해 면책하는 긍정 접두 어절. */
 export const THREAT_POSITIVE_PREFIX: readonly string[] = [
-  "귀여워", "귀엽", "좋아", "이뻐", "예뻐", "사랑", "최고", "잘한다", "멋져",
+  "귀여워", "좋아", "이뻐", "예뻐", "멋져", "웃겨", "행복해", "배불러", "힘들어",
 ];
 
 /** 위협어와 결합해도 욕이 아닌 정상 어절(응원 구호·관용). */
 export const THREAT_ALLOW_EXACT: readonly string[] = [
-  "죽어라", "죽여", "죽여주네", "죽여준다", "죽여줘", "죽겠다", "죽겠네", "죽을것같아",
+  "죽여", "죽여주네", "죽여준다", "죽여줘", "죽겠다", "죽겠네", "죽을것같아",
 ];
 
 /**
  * 의도적 모음 자모 욕설(ㅗ). 어절이 자모 ㅗ 단독/반복일 때만 HARD.
  * 정상 음절과 결합(해주세ㅗ오 등)이면 오타로 보고 PASS.
  */
-export const JAMO_HARD_RE = /^ㅗ+$/;
+export const JAMO_HARD_RE = /^[\u1169]+$/;
+
+/** 명령형과 상태 서술을 구분한다. 불명확한 활용형은 P0에서 PASS. */
+export const THREAT_FORMS: Readonly<Record<string, readonly string[]>> = {
+  "죽어": ["죽어", "죽어라", "죽어버려"],
+  "닥쳐": ["닥쳐", "닥쳐라"],
+  "뒤져": ["뒤져", "뒤져라", "뒤져버려"],
+  "멸종돼라": ["멸종돼라"],
+};
+export const CHEER_NEXT: readonly string[] = ["뛰자", "뛰어", "달리자", "응원하자", "해보자"];
+export const STATE_SUBJECTS: readonly string[] = [
+  "공이", "공은", "불이", "불은", "전광판이", "전광판은", "화면이", "화면은",
+  "배터리가", "기계가", "컴퓨터가", "핸드폰이", "휴대폰이", "생중계가",
+];
+
+/** 일반 문자열 중간 매칭 대신 제한된 접두/어미만 인정한다. */
+export const HARD_PREFIXES: readonly string[] = ["개", "이", "저", "그", "아", "하", "와", "진짜"];
+export const HARD_SUFFIXES: readonly string[] = [
+  "아", "야", "들", "들아", "놈", "놈아", "놈들", "놈들아", "년", "년아", "년들",
+  "새끼", "새끼야", "이", "이다", "이네", "이냐", "이야", "같네", "같은", "같아",
+  "하네", "하냐", "한다", "하지마", "하지마라",
+];
 
 /**
  * SOFT 문맥어(미친/ㅈㄴ/존나/졸라/개-). shadow(무동작) → 오탐 실측 후 소프트 가림.
@@ -67,12 +89,13 @@ export const KAE_PREFIX_ALLOW: readonly string[] = [
 ];
 
 /**
- * allowlist 반례(어절 span 면책). 정규화된 어절이 이 중 하나와 일치하거나,
- * 이 항목을 포함하면 해당 어절의 HARD 후보를 면책한다(전체 PASS 아님 — 그 어절만).
+ * 정상 표현이 덮는 동일 rule 후보 구간만 면책한다.
+ * 같은 어절의 다른 위치에 있는 동일 rule은 면책하지 않는다.
  */
 export const ALLOWLIST: readonly string[] = [
   "새끼손가락", "손새끼줄", "새끼발가락", "새끼손",
   "강한남자", "만루에강한남자",
   "못보지", "바보지", "믿어보지", "믿어보지무니", "보지",
   "아니미친", "정신병",
+  "시발점", "시발역",
 ];

@@ -279,6 +279,7 @@
     "qa:watch-telemetry",
     "qa:widget-fast",
     "qa:widget-tap-mode",
-    "qa:youtube-quota"
+    "qa:youtube-quota",
+    "qa:chat-profanity:selftest"
   ]
 }
