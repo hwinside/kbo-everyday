@@ -5649,7 +5649,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   · 기록 요청(`이대호 홈런 몇개`) → LLM 이 근거 없이 숫자를 내면 → 게이트가 되묻기로 교체
   // 문장 유형(서사/요청) 판정을 룰로 하지 않기 위해 판정 주체를 LLM 으로 옮긴 것이므로,
   // 이 플래그 계산은 **구조**(엔티티 결속 실패)만 본다.
-  const statNumericGuard = !statDefinition && statGuardOwnsQuestion(question, glossary, players);
+  // Definition intent may bypass record lookup, never the ungrounded generic
+  // fallback's numeric guard (e.g. "오타니 홈런이 뭐야" without official evidence).
+  const statNumericGuard = statGuardOwnsQuestion(question, glossary, players);
   // 선수 RAG는 후속 출시용 explicit flag가 켜진 테스트/환경에서만 현재 룰·용어 경계를 우회한다.
   // Production은 server.ts에서 false로 고정되어 선수·구단 질문이 provider/cache에 닿지 않는다.
   // 유저가 picker에서 고른 kboId가 있으면 이름 매칭을 건너뛰고 그 선수로 직행한다.
