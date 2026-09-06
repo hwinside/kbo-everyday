@@ -6,7 +6,7 @@ import { setMyTeamId } from "@/lib/store/myteam";
 import { setFavoritePlayers } from "@/lib/store/favorites";
 import { setOnboardingStatus } from "@/lib/store/onboarding";
 import { clearUserScopedStores } from "@/lib/store/user-scope";
-import { commitAuthIdentity, beginAuthDispatch, commitAuthIdentityIfCurrent } from "@/lib/supabase/auth-identity";
+import { commitAuthIdentity, beginAuthDispatch, commitAuthIdentityIfCurrent, getAuthIdentity, isSameAuthIdentity } from "@/lib/supabase/auth-identity";
 import { registerDeepLinkListener } from "@/lib/capacitor/auth";
 import {
   acquireSession,
@@ -160,6 +160,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
+    let disposed = false;
+    let authEventRevision = 0;
+    let profileLoadTimer: ReturnType<typeof setTimeout> | null = null;
+
     async function syncSession() {
       // 세션 획득 사다리: ① 쿠키 → ② pending 토큰 → ③ 네이티브 백업 복원.
       // 기존 1·2차 로직을 semantics 그대로 acquireSession 으로 이동 — 상위 단계에서
@@ -186,6 +190,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
         setSession: tokens => supabase.auth.setSession(tokens),
       });
+      if (disposed) return;
 
       // 동기 활성 사용자 신원 즉시 갱신(setUser React state는 렌더 뒤 — stale 창 방지)
       // 동기 신원 게시(fence) — 시작 티켓 이후 더 최신 이벤트가 왔으면 폐기하고 setUser·loadProfile도 생략
@@ -221,7 +226,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     registerDeepLinkListener();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
+        if (disposed) return;
+        const eventRevision = ++authEventRevision;
+        if (profileLoadTimer !== null) clearTimeout(profileLoadTimer);
+        profileLoadTimer = null;
         // 로그인/토큰 갱신마다 네이티브 백업을 최신화 (refresh token rotation 대응).
         // SIGNED_OUT(session=null)에서는 백업을 지우지 않는다 — 일시적 세션 소실에서
         // 백업이 유일한 복구 수단이라, 제거는 명시적 signOut()에서만 수행.
@@ -233,7 +242,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         // 동기 활성 사용자 신원 즉시 갱신 — auth 이벤트 tick에 값 확정(setUser 렌더 전)
         // 동기 신원 권위 게시 — auth 이벤트 tick에 값 확정(revision↑, uid 변경 시 epoch↑)
-        commitAuthIdentity(session?.user?.id ?? null);
+        const nextUid = session?.user?.id ?? null;
+        if (getAuthIdentity().uid !== nextUid) {
+          // Deferred B's load must not leave A's in-flight profile writable.
+          profileLedger.invalidate();
+          setProfile(null);
+          if (nextUid) setLoading(true);
+        }
+        const identity = commitAuthIdentity(nextUid);
         setUser(session?.user ?? null);
         if (session?.user && session.access_token) {
           // 계정 전환 감지: userId가 바뀌면 이전 계정 로컬을 공식 clear helper로 즉시 정리
@@ -246,7 +262,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             localStorage.setItem('kbo-auth-uid', session.user.id);
           } catch { /* SSR safety */ }
 
-          await loadProfile(session.access_token, session.user.id);
+          // Supabase awaits subscribers while holding its auth lock. The last
+          // profile fallback calls supabase.from(), which needs getSession()
+          // and that same lock. Never await profile I/O in this callback:
+          // refresh -> subscriber -> profile -> getSession -> refresh is a cycle.
+          // A macrotask lets the auth notification/lock finish first.
+          profileLoadTimer = setTimeout(() => {
+            profileLoadTimer = null;
+            if (disposed || !isSameAuthIdentity(identity)) return;
+            void loadProfile(session.access_token, session.user.id)
+              .catch(() => { /* profile errors must not reject auth refresh */ })
+              .finally(() => {
+                if (!disposed && eventRevision === authEventRevision && isSameAuthIdentity(identity)) {
+                  setLoading(false);
+                }
+              });
+          }, 0);
 
           // Google Ads 전환은 ProfileSetupModal.handleComplete()에서 발화함
           // (닉네임+팀 선택 완료 시점 = 실제 회원가입 완료)
@@ -255,8 +286,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           profileLedger.invalidate();
           invalidateBootCache(); // PR④: 부트 번들 캠시도 함께 폐기(계정 전환 오염 방지)
           setProfile(null);
+          setLoading(false);
         }
-        setLoading(false);
       }
     );
 
@@ -269,6 +300,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
+      disposed = true;
+      if (profileLoadTimer !== null) clearTimeout(profileLoadTimer);
       subscription.unsubscribe();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };

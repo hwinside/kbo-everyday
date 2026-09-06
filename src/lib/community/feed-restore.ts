@@ -223,6 +223,8 @@ let popListenerAttached = false;
 export function ensurePopStateListener(): void {
   if (popListenerAttached || typeof window === "undefined") return;
   popListenerAttached = true;
+  // window 자체가 target인 popstate는 capture로도 선행 리스너를 앞지를 수 없다.
+  // 소비자는 다음 task에서 의사를 확정한다(useUnifiedFeed). 여기서는 도착지만 기록한다.
   window.addEventListener("popstate", () => {
     // popstate 시점의 location 은 이미 도착지로 갱신돼 있다(실측) → 그대로 경로를 남긴다.
     safeSet(POP_KEY, window.location.pathname);

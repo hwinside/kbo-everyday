@@ -3,6 +3,18 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { STICKER_CATEGORIES } from "./stickerData";
+import {
+  GIPHY_MIN_QUERY_LENGTH,
+  GIPHY_SEARCH_DEBOUNCE_MS,
+  getGiphyApiKey,
+  getGiphyCooldownRemainingMs,
+  getGiphyRequestConfig,
+  giphyCooldownMessage,
+  trackGiphyEvent,
+  hashGiphyQuery,
+  normalizeGiphyQuery,
+  startGiphyCooldown,
+} from "@/lib/community/giphy-request";
 
 interface GiphyImage {
   url: string;
@@ -27,9 +39,10 @@ interface StickerToolProps {
   addImage: (url: string) => Promise<unknown>;
 }
 
-const GIPHY_API_KEY = process.env.NEXT_PUBLIC_GIPHY_API_KEY;
+const GIPHY_CONTEXT = "editor_sticker" as const;
 
 export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
+  const giphyApiKey = getGiphyApiKey(GIPHY_CONTEXT);
   const [tab, setTab] = useState<"default" | "giphy">("default");
   const [activeCategory, setActiveCategory] = useState(STICKER_CATEGORIES[0].id);
 
@@ -47,7 +60,7 @@ export default function StickerTool({ addSvg, addImage }: StickerToolProps) {
         >
           기본 스티커
         </button>
-        {GIPHY_API_KEY && (
+        {giphyApiKey && (
           <button
             onClick={() => setTab("giphy")}
             className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${
@@ -113,21 +126,71 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const lastQueryRef = useRef("");
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const inFlightKeyRef = useRef<string | null>(null);
+  const hasRequestedTrendingRef = useRef(false);
 
   const fetchStickers = useCallback(async (searchQuery: string, offset = 0) => {
-    if (!GIPHY_API_KEY) return;
+    const requestConfig = getGiphyRequestConfig(GIPHY_CONTEXT);
+    const apiKey = requestConfig.apiKey;
+    if (!apiKey) return;
+    const normalizedQuery = normalizeGiphyQuery(searchQuery);
+    const endpointName = normalizedQuery ? "search" : "trending";
+    const requestKey = `${endpointName}:${normalizedQuery}:${offset}`;
+    if (inFlightKeyRef.current === requestKey && !activeRequestRef.current?.signal.aborted) return;
+    const cooldownMs = getGiphyCooldownRemainingMs(requestConfig);
+    if (cooldownMs > 0) {
+      setLoading(false);
+      setLoadingMore(false);
+      setErrorMessage(giphyCooldownMessage(cooldownMs));
+      return;
+    }
+
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    inFlightKeyRef.current = requestKey;
     const isLoadMore = offset > 0;
     if (isLoadMore) setLoadingMore(true); else setLoading(true);
+    setErrorMessage(null);
+    const startedAt = performance.now();
+    let responseStatus = 0;
+    void hashGiphyQuery(normalizedQuery).then((queryHash) => {
+      trackGiphyEvent("giphy_api_request", requestConfig, {
+        endpoint: endpointName,
+        offset,
+        query_hash: queryHash,
+      });
+    }).catch(() => {
+      trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset });
+    });
+
     try {
-      const base = searchQuery
-        ? `https://api.giphy.com/v1/stickers/search?api_key=${GIPHY_API_KEY}&q=${encodeURIComponent(searchQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
-        : `https://api.giphy.com/v1/stickers/trending?api_key=${GIPHY_API_KEY}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
-      const res = await fetch(base);
+      const base = normalizedQuery
+        ? `https://api.giphy.com/v1/stickers/search?api_key=${apiKey}&q=${encodeURIComponent(normalizedQuery)}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`
+        : `https://api.giphy.com/v1/stickers/trending?api_key=${apiKey}&limit=${PAGE_SIZE}&offset=${offset}&rating=g`;
+      const res = await fetch(base, { signal: controller.signal, cache: "no-store" });
+      responseStatus = res.status;
+      if (res.status === 429) {
+        const retryMs = startGiphyCooldown(requestConfig, res.headers.get("Retry-After"));
+        if (!controller.signal.aborted) setErrorMessage(giphyCooldownMessage(retryMs));
+        trackGiphyEvent("giphy_api_result", requestConfig, {
+          endpoint: endpointName,
+          offset,
+          status: 429,
+          latency_ms: Math.round(performance.now() - startedAt),
+        });
+        return;
+      }
+      if (!res.ok) throw new Error(`GIPHY request failed: ${res.status}`);
+
       const json = await res.json();
       const newData: GiphySticker[] = json.data ?? [];
       const total = json.pagination?.total_count ?? 0;
+      if (controller.signal.aborted) return;
       if (isLoadMore) {
         setStickers((prev) => [...prev, ...newData]);
       } else {
@@ -135,33 +198,59 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
         lastQueryRef.current = searchQuery;
       }
       setHasMore(offset + newData.length < total && newData.length === PAGE_SIZE);
-    } catch {
-      if (!isLoadMore) setStickers([]);
-      setHasMore(false);
+      trackGiphyEvent("giphy_api_result", requestConfig, {
+        endpoint: endpointName,
+        offset,
+        status: res.status,
+        latency_ms: Math.round(performance.now() - startedAt),
+      });
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
+      setErrorMessage("스티커를 불러올 수 없어요");
+      trackGiphyEvent("giphy_api_result", requestConfig, {
+        endpoint: endpointName,
+        offset,
+        status: responseStatus,
+        latency_ms: Math.round(performance.now() - startedAt),
+      });
     } finally {
-      if (isLoadMore) setLoadingMore(false); else setLoading(false);
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+        inFlightKeyRef.current = null;
+        if (isLoadMore) setLoadingMore(false); else setLoading(false);
+      }
     }
   }, []);
 
-  // Load trending on mount
-  useEffect(() => {
-    fetchStickers("");
-  }, [fetchStickers]);
-
-  // Debounced search
+  // One initial Trending request, then debounced Search requests only.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (!query) {
-      fetchStickers("");
-      return;
+    activeRequestRef.current?.abort();
+    setErrorMessage(null);
+    const normalizedQuery = normalizeGiphyQuery(query);
+
+    if (!normalizedQuery) {
+      setLoading(false);
+      if (!hasRequestedTrendingRef.current) {
+        debounceRef.current = setTimeout(() => {
+          hasRequestedTrendingRef.current = true;
+          void fetchStickers("");
+        }, 0);
+      }
+    } else if (normalizedQuery.length >= GIPHY_MIN_QUERY_LENGTH) {
+      debounceRef.current = setTimeout(() => {
+        void fetchStickers(normalizedQuery);
+      }, GIPHY_SEARCH_DEBOUNCE_MS);
+    } else {
+      setLoading(false);
     }
-    debounceRef.current = setTimeout(() => {
-      fetchStickers(query);
-    }, 300);
+
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, fetchStickers]);
+
+  useEffect(() => () => activeRequestRef.current?.abort(), []);
 
   return (
     <div className="space-y-3">
@@ -173,9 +262,19 @@ function GiphyPanel({ addImage }: { addImage: (url: string) => Promise<unknown> 
         className="w-full px-3 py-2 rounded-xl bg-bg-tertiary text-text-primary placeholder:text-text-tertiary text-sm outline-none focus:ring-2 focus:ring-accent"
       />
 
+      {errorMessage && (
+        <div className="text-center text-xs text-text-tertiary" role="status">
+          {errorMessage}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex items-center justify-center py-8">
           <Loader2 size={24} className="animate-spin text-text-tertiary" />
+        </div>
+      ) : stickers.length === 0 && query && normalizeGiphyQuery(query).length < GIPHY_MIN_QUERY_LENGTH ? (
+        <div className="flex items-center justify-center py-8 text-sm text-text-tertiary">
+          두 글자 이상 입력해 주세요
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-2">

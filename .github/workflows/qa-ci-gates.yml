@@ -49,3 +49,22 @@ jobs:
             echo "ci-tier gates failed: ${{ needs.gates.result }}"; exit 1
           fi
           echo ok
+
+  # main ruleset의 필수 context. GitHub가 이 잡의 check-run을 보고하므로
+  # 일반 PR에도 별도 status API/쓰기 토큰 없이 실제 CI 결과를 결속한다.
+  # 기존 gates-green은 봇 PR·외부 참조와의 호환을 위해 유지한다.
+  auto-merge-gate:
+    name: auto-merge-gate
+    needs: gates-green
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: require successful ci-tier aggregate
+        env:
+          CI_GATES_RESULT: ${{ needs.gates-green.result }}
+        run: |
+          if [ "$CI_GATES_RESULT" != "success" ]; then
+            echo "auto-merge-gate blocked: gates-green=$CI_GATES_RESULT"
+            exit 1
+          fi

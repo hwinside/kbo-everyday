@@ -836,6 +836,7 @@ export default function PostDetail({ postId }: PostDetailProps) {
             transition={{ type: "spring", damping: 28, stiffness: 300 }}
           >
             <GifPicker
+              context="community_gif"
               onSelect={handleGifSelect}
               onClose={() => setShowGifPicker(false)}
             />

@@ -94,8 +94,10 @@ const mutations = [
     file: PIPELINE,
     // ⚠️ registry 통합(삼순 NO-GO ①)으로 선언 형태가 바뀌었다 — 종전 `Set` 앵커를
     //   그대로 뒀다면 MISS 로 검증력 0 이 됐을 자리다. 항목만 비워 키 부재를 만든다.
-    re: /const PRODUCT_FEATURE_REGISTRY = \{[\s\S]*?\} as const;/,
-    to: "const PRODUCT_FEATURE_REGISTRY = {} as unknown as { readonly \u0022\uc9c1\uad00\uae30\ub85d\u0022: string };",
+    // ⚠️ 2026-09-05 #1344: 선언 끝이 `as const satisfies Record<…>` 로 바뀜 — 옛 `} as const;` 앵커는 MISS.
+    //   두 형태 모두 잡도록 종결부를 선택적으로 둔다(항목만 비워 키 부재를 만드는 의도는 동일).
+    re: /const PRODUCT_FEATURE_REGISTRY = \{[\s\S]*?\} as const(?: satisfies [^;]+)?;/,
+    to: "const PRODUCT_FEATURE_REGISTRY = {} as unknown as { readonly \u0022\uc9c1\uad00\uae30\ub85d\u0022: ProductFeatureSpec };",
     why: "`직관기록`·`직관 기록` 이 다시 미결속이 되어 안내가 사라진다 — 프로덕션 3/3 재현 축",
   },
   {

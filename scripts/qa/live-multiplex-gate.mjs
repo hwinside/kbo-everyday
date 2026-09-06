@@ -79,7 +79,7 @@ function stripComments(src) {
 // 게이트 시작 시점에 항상 검사하므로 핀 누락/윴여는 fallback 경로와 무관하게 즉시 RED).
 const CHAT_TRANSPORT_SHA256 = {
   "src/lib/supabase/useChat.ts": "1a3253dfb9bb01c94ddd820673661c2f6ac226c97e9887932904c0a24b388548",
-  "src/components/game/GameChat.tsx": "d2a5b69a077fa67a228ac0f98081c2f7003ea7bbecec23ce9fe6028870119987",
+  "src/components/game/GameChat.tsx": "9270d8051c67891e848ce290a147a25950d03d2cfbb1265e57123bc3a2268495",
   "src/components/game/LiveChat.tsx": "7bd019886e682c9d930729b25ee99dec780109ec4f1a85fb21d8217a9496548c",
   "src/app/api/admin/today-detail/route.ts": "206e50ea9ec78992179ed061f91da473913fd8ae09a685b0c617e24d2e8bc10b",
   "src/app/api/admin/supabase-usage/route.ts": "4db90091a59b99da9dc3d1e0937359a4ab1da4f752addf41756ef4c07e0decb5",

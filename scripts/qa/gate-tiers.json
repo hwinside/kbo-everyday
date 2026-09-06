@@ -28,6 +28,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:auth-callback-lock",
+      "tier": "ci"
+    },
+    {
       "name": "qa:auth-es256-e2e",
       "tier": "deploy"
     },
@@ -132,6 +136,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:cloudflare-phase0",
+      "tier": "ci"
+    },
+    {
       "name": "qa:collector-author-team",
       "tier": "ci"
     },
@@ -201,6 +209,14 @@
     },
     {
       "name": "qa:feed-scroll-restore",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:community-search",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:community-search:retry",
       "tier": "ci"
     },
     {
@@ -274,6 +290,22 @@
     {
       "name": "qa:genius-glossary-map",
       "tier": "deploy"
+    },
+    {
+      "name": "qa:genius-untrusted-metric",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-untrusted-metric:mutations",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-product-feature-guide",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:genius-product-feature-guide:mutations",
+      "tier": "ci"
     },
     {
       "name": "qa:genius-live-team-block",
@@ -448,6 +480,18 @@
       "tier": "ci"
     },
     {
+      "name": "qa:giphy-popular-ids:pg17",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:giphy-request-budget",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:giphy-request-budget:render",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:home-header-signup-button",
       "tier": "ci"
     },
@@ -465,6 +509,14 @@
     },
     {
       "name": "qa:kgwan-autofocus:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:current-pitcher-consistency",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:current-pitcher-consistency:selftest",
       "tier": "ci"
     },
     {

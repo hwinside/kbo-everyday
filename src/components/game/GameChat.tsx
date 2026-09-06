@@ -602,6 +602,7 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
               className="max-w-[640px] mx-auto overflow-hidden border-t border-border"
             >
               <GifPicker
+                context="game_chat_gif"
                 onSelect={handleGifSelect}
                 onClose={() => setShowGifPicker(false)}
               />
