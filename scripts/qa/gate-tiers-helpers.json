@@ -223,6 +223,7 @@
     "qa:ui:game-chat-visibility",
     "qa:ui:game-relay-hook",
     "qa:ui:gamechat-giphy",
+    "qa:ui:home-popular-feed",
     "qa:ui:kgwan-pitches",
     "qa:ui:live-multiplex-frames",
     "qa:ui:news-comment-report",

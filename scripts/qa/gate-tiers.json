@@ -136,10 +136,6 @@
       "tier": "ci"
     },
     {
-      "name": "qa:ui:home-popular-feed",
-      "tier": "deploy"
-    },
-    {
       "name": "qa:career-metrics",
       "tier": "ci"
     },

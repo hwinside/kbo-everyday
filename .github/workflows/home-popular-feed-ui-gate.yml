@@ -1,0 +1,55 @@
+name: Home Popular Feed UI Gate
+
+# 홈 '커뮤니티 인기글' 섹션 End-User 스모크(F1~F4) — dev 서버 + 브라우저 전제가 필요하다.
+# page.route 로 home_popular_posts RPC 응답을 주입하므로 운영 DB 불필요(삼순 #1343 ②).
+# deploy 티어(Vercel prebuild)에서는 서버·브라우저가 없어 실행할 수 없어 전용 워크플로로 분리한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/lib/supabase/useHomePopularFeed.ts"
+      - "scripts/qa/ui-smoke-home-popular-feed.mjs"
+      - "package.json"
+      - ".github/workflows/home-popular-feed-ui-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/lib/supabase/useHomePopularFeed.ts"
+      - "scripts/qa/ui-smoke-home-popular-feed.mjs"
+      - "package.json"
+      - ".github/workflows/home-popular-feed-ui-gate.yml"
+
+jobs:
+  home-popular-feed-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Focused lint
+        run: npx eslint --quiet src/components/home/CommunityLatestPosts.tsx src/lib/supabase/useHomePopularFeed.ts scripts/qa/ui-smoke-home-popular-feed.mjs
+      - name: Start browser fixture (dev server)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run dev -- --hostname 127.0.0.1 --port 3061 > /tmp/home-popular-ui-next.log 2>&1 &
+      - name: Wait for fixture
+        run: |
+          for attempt in $(seq 1 120); do
+            curl --fail --silent http://127.0.0.1:3061/ >/dev/null && exit 0
+            sleep 1
+          done
+          cat /tmp/home-popular-ui-next.log
+          exit 1
+      - name: Home popular feed UI smoke (F1~F4)
+        env:
+          BASE: http://127.0.0.1:3061
+        run: npm run qa:ui:home-popular-feed

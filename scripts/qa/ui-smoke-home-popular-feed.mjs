@@ -96,8 +96,10 @@ try {
     check("F1 RPC 요청 캡처됨", false, "route handler 미호출 — 서버사이드 RPC 또는 라우팅 미일치");
   }
 
-  // F2 실제 글 렌더
-  const postLinks = page.locator('section:has-text("커뮤니티 인기글") a[href*="/community/"]');
+  // F2 실제 글 렌더 — 셀션 안 '커뮤니티 최신글 보기'(/community/all-posts) 링크는 제외하고
+  // 실제 글 상세 링크(/community/teams/<slug>/posts/<id>) 만 센다(삼순 #1343 ②-b 카운트 오류).
+  const POST_LINK = 'section:has-text("커뮤니티 인기글") a[href*="/posts/"]';
+  const postLinks = page.locator(POST_LINK);
   const linkCount = await postLinks.count().catch(() => 0);
   check("F2 '커뮤니티 인기글' 섹션 표시", await page.locator('section:has-text("커뮤니티 인기글")').count() > 0);
   check("F2 픽스처 글 5개 렌더(링크 5개)", linkCount === 5, `count=${linkCount}`);
@@ -118,7 +120,7 @@ try {
     } else {
       check("F3 더보기 RPC 호출됨", false, "더보기 route handler 미호출");
     }
-    const afterLinks = await page.locator('section:has-text("커뮤니티 인기글") a[href*="/community/"]').count().catch(() => 0);
+    const afterLinks = await page.locator(POST_LINK).count().catch(() => 0);
     check("F3 더보기 후 글 20개", afterLinks === 20, `count=${afterLinks}`);
   } else {
     check("F3 더보기 버튼 존재 전제", false, "버튼 없음 — F2 실패 후 건너뜀");
