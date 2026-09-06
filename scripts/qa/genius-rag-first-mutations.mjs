@@ -25,16 +25,37 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r21 직전 사용자 숫자 제거 — 후속 10홀드 인용이 차단된다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: "return definition?.context ? `${question}\\n${definition.context.question}` : question;",
+    to: "return question;",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r22 generic 정의 대상 미전달 — 후속 지표·인용 의미를 잃는다",
+    file: PIPELINE,
+    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !statDefinition, undefined)",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
+    name: "r23 공식 RAG 정의 대상 미전달 — 인용 숫자가 순위표로 흐른다",
+    file: PIPELINE,
+    from: "{ context: definition?.context, definition: definition ?? undefined }",
+    to: "{ context: definition?.context, definition: undefined }",
+    smoke: "scripts/qa/genius-stat-definition-smoke.ts",
+  },
+  {
     name: "r18 정의 fallback을 RECORD 분류기로 복귀 — 빈 검색 4턴이 정의답을 잃는다",
     file: PIPELINE,
-    from: "rosterBlock, statNumericGuard && !statDefinition)",
-    to: "rosterBlock, statNumericGuard)",
+    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard, statDefinition ?? undefined)",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
     name: "r19 정의 fallback 숫자 검증 제거 — 오타니 환각값이 유출된다",
     file: PIPELINE,
-    from: "!numericTokensSubsetOf(definitionFallback.answer, question)",
+    from: "!numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition))",
     to: "false",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
@@ -48,8 +69,8 @@ const MUTATIONS = [
   {
     name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
     file: PIPELINE,
-    from: "{ context: definition?.context }",
-    to: "{ context: undefined }",
+    from: "{ context: definition?.context, definition: definition ?? undefined }",
+    to: "{ context: undefined, definition: definition ?? undefined }",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {

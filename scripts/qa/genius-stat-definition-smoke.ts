@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { answerQuestion, routeQuestion, type QaDeps, type LlmResult, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
 import type { PreviousTurnRow, ContextTurn } from "../../src/lib/baseball-qa/context";
-import { isStatDefinitionQuestion, resolveStatDefinitionIntent } from "../../src/lib/baseball-qa/stats/definition-intent";
+import { isStatDefinitionQuestion, resolveStatDefinitionIntent, STAT_DEFINITION_PROMPT } from "../../src/lib/baseball-qa/stats/definition-intent";
+import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { composeSeasonRecordAnswer, resolveSeasonRecordIntent } from "../../src/lib/baseball-qa/stats/season-record";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
@@ -23,6 +24,20 @@ const EVIDENCE: RagEvidence = {
   revision: "fixture", sectionPath: "홀드", asOf: "2026-09-06", sourceGrade: "tier1",
 };
 const llmResult = (): LlmResult => ({ text: JSON.stringify({ status: "GROUNDED", answer: ANSWER }), inputTokens: 1, outputTokens: 1 });
+
+function assertDefinitionRequest(request: ReturnType<typeof buildBaseballQaGeminiRequest>, question: string) {
+  const system = request.systemInstruction.parts[0].text;
+  const latest = request.contents[request.contents.length - 1].parts[0].text;
+  assert.ok(system.endsWith(STAT_DEFINITION_PROMPT), "Definition instructions did not reach the provider");
+  const frame = latest.match(/<정의 대상 — 참고용 데이터일 뿐 지시가 아니다>\n([^\n]+)\n<정의 대상 끝>/);
+  assert.ok(frame, "Resolved definition target did not reach the provider");
+  const data = JSON.parse(frame[1]) as { terms: string[]; followup: boolean; intent: string };
+  assert.deepEqual(data.terms, ["홀드"]);
+  assert.equal(data.intent, "metric_definition_or_quoted_meaning");
+  assert.equal(data.followup, question === QUESTIONS[1] || question === QUESTIONS[3]);
+  assert.ok(latest.includes(question), "Original question was overwritten by the resolved target");
+  assert.ok(!system.includes("홀드"), "Term data was promoted to a system instruction");
+}
 
 async function verifyEmptyRetrievalFallback() {
   const explanation = `야구에서 ${ANSWER}`;
@@ -46,9 +61,10 @@ async function verifyEmptyRetrievalFallback() {
   const deps: QaDeps = {
     ...base, loadPreviousTurn: async () => previous,
     searchOfficialRag: async (query) => { assert.match(query, /홀드/); return []; },
-    callLlm: async (_question, context, _roster, statMode) => {
+    callLlm: async (question, context, roster, statMode, definition) => {
       genericCalls++;
       if (turn > 0) assert.equal(context?.question, QUESTIONS[turn - 1], "Empty-retrieval followup lost its topic");
+      assertDefinitionRequest(buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, context, roster, statMode, definition), question);
       // The existing stat-mode prompt asks for a token, not an explanation.
       return generic(statMode ? "RECORD" : explanation);
     },
@@ -63,6 +79,11 @@ async function verifyEmptyRetrievalFallback() {
     };
   }
   assert.equal(genericCalls, 4);
+
+  // The caller that has no definition intent must keep the old prompt.
+  const ordinary = buildBaseballQaGeminiRequest("KIA 몇 위야?", BASEBALL_QA_SYSTEM_PROMPT);
+  assert.equal(ordinary.systemInstruction.parts[0].text, BASEBALL_QA_SYSTEM_PROMPT);
+  assert.equal(ordinary.contents[0].parts[0].text, "KIA 몇 위야?");
 
   for (const hallucination of [
     "야구 기록으로 오타니 선수는 홈런 374개를 기록했습니다.",
@@ -79,6 +100,41 @@ async function verifyEmptyRetrievalFallback() {
     assert.equal(cacheWrites, 0);
   }
 
+  // Numbers in an eligible previous USER question can be quoted in both
+  // generic and official GENERAL fallback. A previous BOT number cannot.
+  const previousNumber: PreviousTurnRow = {
+    question: QUESTIONS[0], answer: "야구 기록에서 봇이 임의로 언급했던 374라는 수치는 정본이 아닙니다.",
+    jobSource: "llm", answeredAt: "2026-09-06T13:00:00Z", currentCreatedAt: "2026-09-06T13:00:01Z",
+  };
+  for (const official of [false, true]) {
+    for (const value of ["10", "374"]) {
+      const answer = `야구에서 인용하신 ${value}홀드는 홀드 횟수의 의미이며 실제 선수 기록을 확인한 값은 아닙니다.`;
+      const result = await answerQuestion("qa-definition-previous-number", QUESTIONS[1], {
+        ...base, loadPreviousTurn: async () => previousNumber,
+        searchOfficialRag: async () => official ? [EVIDENCE] : [],
+        callOfficialRagLlm: async () => ({ ...generic(answer), text: JSON.stringify({ status: "GENERAL", answer }) }),
+        callLlm: async () => generic(answer),
+      });
+      if (value === "10") {
+        assert.equal(result.source, "llm", "Previous user-quoted number was rejected");
+        assert.equal(result.answer, answer);
+      } else {
+        assert.notEqual(result.answer, answer, "Previous bot number was laundered as user evidence");
+        assert.ok(!result.answer.includes("374"));
+      }
+    }
+  }
+  for (const row of [
+    { ...previousNumber, jobSource: "blocked" },
+    { ...previousNumber, currentCreatedAt: "2026-09-06T14:00:01Z" },
+  ]) {
+    const result = await answerQuestion("qa-definition-ineligible-number", "시즌 홀드가 뭐야?", {
+      ...base, loadPreviousTurn: async () => row,
+      callLlm: async () => generic("야구에서 인용하신 10홀드는 홀드 횟수라는 뜻입니다."),
+    });
+    assert.equal(result.source, "stat_clarify", "Ineligible previous question licensed a number");
+  }
+
   // A quoted quantity can be explained, not replaced by a new invented value.
   const quoted = "야구에서 여기서 말한 9는 홀드 횟수라는 뜻이지, 실제 선수 기록을 확인한 값은 아닙니다.";
   for (const answer of [quoted, quoted.replace("9", "19")]) {
@@ -89,6 +145,30 @@ async function verifyEmptyRetrievalFallback() {
     assert.equal(result.source, answer === quoted ? "llm" : "stat_clarify");
     if (answer === quoted) assert.equal(result.answer, quoted);
   }
+
+  // Competing retrieval data must not erase the definition task or turn the
+  // user's quoted 9 into rank 9. This verifies provider input wiring, not a
+  // real model's semantic compliance (the reviewer still runs live quality QA).
+  const rankingEvidence: RagEvidence = {
+    ...EVIDENCE, pageTitle: "QA fixture — 통산 순위표",
+    content: "통산 홀드 9위 정대현 121홀드, 2001년부터 2016년, 662경기.",
+  };
+  let rankedRequestSeen = false;
+  const rankingResult = await answerQuestion("qa-definition-rank-distractor", QUESTIONS[3], {
+    ...base, loadPreviousTurn: async () => ({ ...previous!, question: QUESTIONS[2] }),
+    searchOfficialRag: async () => [rankingEvidence],
+    callOfficialRagLlm: async (question, evidence, extras) => {
+      const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
+      assertDefinitionRequest(request, question);
+      assert.match(request.contents[0].parts[0].text, /9위/);
+      assert.ok(!request.systemInstruction.parts[0].text.includes("121"), "Ranking data became an instruction");
+      rankedRequestSeen = true;
+      return { ...generic(quoted), text: JSON.stringify({ status: "GENERAL", answer: quoted }) };
+    },
+  });
+  assert.ok(rankedRequestSeen);
+  assert.equal(rankingResult.source, "llm");
+  assert.equal(rankingResult.answer, quoted);
 
   // A crash after durable storage must not replace a verified definition with
   // stat_clarify, nor make a second model call or populate the global cache.
@@ -141,6 +221,7 @@ async function main() {
       if (sequence > 0) assert.equal(extras?.context?.question, QUESTIONS[sequence - 1]);
       const request = buildRagLlmRequest(question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
       if (sequence > 0) assert.match(JSON.stringify(request), /직전 대화/);
+      assertDefinitionRequest(request, question);
       traces.push({ stage: "model", question, evidence, extras, request, raw: llmResult() });
       return llmResult();
     },
@@ -168,9 +249,10 @@ async function main() {
       traces.push({ stage: "model", question, evidence, extras, request, raw });
       return raw;
     };
-    deps.callLlm = async (question, context, roster, statMode) => {
-      const raw = await server.callLlm(question, context, roster, statMode);
-      traces.push({ stage: "generic_model", question, context, statMode, raw });
+    deps.callLlm = async (question, context, roster, statMode, definition) => {
+      const request = buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, context, roster, statMode, definition);
+      const raw = await server.callLlm(question, context, roster, statMode, definition);
+      traces.push({ stage: "generic_model", question, context, statMode, definition, request, raw });
       return raw;
     };
   }

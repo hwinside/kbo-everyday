@@ -18,6 +18,7 @@ import {
   type SourceGrade,
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
+import { STAT_DEFINITION_PROMPT, statDefinitionData, type StatDefinitionFrame } from "../stats/definition-intent";
 // 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
@@ -918,6 +919,8 @@ export const RAG_NEWS_SYSTEM_PROMPT = [
  * 자료는 user turn 안의 구획된 블록에 넣고, 지시는 systemInstruction에만 둔다.
  */
 export interface RagRequestExtras {
+  /** Confirmed definition target; term names are data, not prompt instructions. */
+  definition?: StatDefinitionFrame;
   /** 직전 user turn Q/A — 항상 로드되며(축 A), 관련성 판단은 프롬프트 지시가 한다. */
   context?: { question: string; answer: string };
   /** 현재 로스터 소속 블록 (축 D SSOT). */
@@ -1047,9 +1050,10 @@ export function buildRagLlmRequest(
       "<현재 시즌 상황 끝>",
     );
   }
+  if (extras.definition) sections.push(statDefinitionData(extras.definition));
   sections.push(`질문: ${question}`);
   return {
-    systemInstruction: { parts: [{ text: systemPrompt }] },
+    systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}` : systemPrompt }] },
     contents: [
       {
         role: "user",

@@ -1,5 +1,6 @@
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
+import { STAT_DEFINITION_PROMPT, statDefinitionData, type StatDefinitionFrame } from "./stats/definition-intent";
 
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
@@ -124,6 +125,7 @@ export function buildBaseballQaGeminiRequest(
   context?: { question: string; answer: string },
   rosterBlock?: string,
   statIntentMode = false,
+  definition?: StatDefinitionFrame,
 ) {
   // 로스터 블록은 **데이터**로 user turn 안에 구획해 넣는다 — 지시는 systemInstruction에만.
   const finalQuestion = rosterBlock
@@ -134,16 +136,18 @@ export function buildBaseballQaGeminiRequest(
         question,
       ].join("\n")
     : question;
+  const userQuestion = definition ? `${statDefinitionData(definition)}\n${finalQuestion}` : finalQuestion;
   const contents = context
     ? [
         { role: "user", parts: [{ text: context.question }] },
         { role: "model", parts: [{ text: context.answer }] },
-        { role: "user", parts: [{ text: finalQuestion }] },
+        { role: "user", parts: [{ text: userQuestion }] },
       ]
-    : [{ role: "user", parts: [{ text: finalQuestion }] }];
+    : [{ role: "user", parts: [{ text: userQuestion }] }];
+  const intentPrompt = statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt;
   return {
     systemInstruction: {
-      parts: [{ text: statIntentMode ? `${systemPrompt}\n${STAT_INTENT_PROMPT}` : systemPrompt }],
+      parts: [{ text: definition ? `${intentPrompt}\n${STAT_DEFINITION_PROMPT}` : intentPrompt }],
     },
     contents,
     generationConfig: {
