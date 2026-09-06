@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SOURCE = resolve(ROOT, "src/lib/chat/profanity");
 const core = await import(pathToFileURL(join(SOURCE, "index.ts")).href);
+const { checkObjectionableContent } = await import(pathToFileURL(resolve(ROOT, "src/lib/moderation/content-filter.ts")).href);
 const golden = JSON.parse(readFileSync(resolve(ROOT, "state/qa/chat-profanity-golden.json"), "utf8"));
 const priority = { pass: 0, soft: 1, hard_new: 2, hard_legacy: 3 };
 const registry = [
@@ -24,7 +25,14 @@ assert.deepEqual(golden.rules.map((r) => [r.rule, r.tier]).sort(), registry.sort
 for (const r of golden.rules) {
   assert.ok(r.positive.length && r.negative.length, `양/음성 fixture 없음: ${r.rule}`);
 }
-for (const axis of ["normal_pass", "soft", "bypass"]) assert.ok(golden[axis].length, `빈 축: ${axis}`);
+for (const axis of ["normal_pass", "soft", "bypass", "legacy_recall", "legacy_exceptions"]) assert.ok(golden[axis].length, `빈 축: ${axis}`);
+// 운영 원장은 이미 현행 필터를 통과한 데이터다. 차단 recall은 별도 합성군으로 대조.
+for (const { text } of golden.legacy_recall) {
+  assert.equal(checkObjectionableContent({ content: text }).allowed, false, `현행 차단 양성 아님: ${text}`);
+}
+for (const text of golden.legacy_exceptions) {
+  assert.equal(checkObjectionableContent({ content: text }).allowed, false, `현행 오탐 교정 반례 아님: ${text}`);
+}
 
 function runGate(classify) {
   const failures = [];
@@ -51,10 +59,16 @@ function runGate(classify) {
     for (const text of fixture.negative) check(`negative/${fixture.rule}`, text, (r) => assert.equal(r.verdict, "pass"));
   }
   for (const fixture of golden.bypass) check("span-bypass", fixture.text, (r) => {
-    assert.ok(r.matches.some((m) => ["rule", "tier", "index", "start", "end"].every((key) => m[key] === fixture[key])), "exact span 미검출");
+    const keys = ["rule", "tier", "index", "start", "end", ...(fixture.endIndex === undefined ? [] : ["endIndex"])];
+    assert.ok(r.matches.some((m) => keys.every((key) => m[key] === fixture[key])), "exact span 미검출");
     // 동일 rule의 면책 구간까지 함께 노출시키는 과잉 매칭도 감지.
     assert.equal(r.matches.filter((m) => m.rule === fixture.rule).length, 1);
   });
+  for (const fixture of golden.legacy_recall) check("legacy-recall", fixture.text, (r) => {
+    assert.equal(r.verdict, "hard_legacy", "현행 차단 대비 후퇴");
+    assert.ok(r.matches.some((m) => m.rule === fixture.rule && m.tier === "hard_legacy"), "기존 rule 미검출");
+  });
+  for (const text of golden.legacy_exceptions) check("legacy-fp-correction", text, (r) => assert.equal(r.verdict, "pass"));
   return { checks, failures };
 }
 
@@ -92,6 +106,8 @@ if (process.argv.includes("--selftest")) {
   replace("threat-substring", "classify.ts", '!N(R.THREAT_FORMS[rule] ?? []).includes(norm)', '!norm.includes(normalizeToken(rule))');
   replace("whole-message-pass", "classify.ts", 'const words = splitWords(text);', 'if (text.includes("새끼손가락")) return { verdict: "pass", matches: [] };\n  const words = splitWords(text);');
   replace("positive-prefix-substring", "classify.ts", 'POSITIVE.includes(prev)', 'POSITIVE.some((p) => prev.includes(p))');
+  replace("legacy-boundary-regression", "classify.ts", 'seen.add(key);', 'seen.add(key); if (!hasBoundary(joined, term, span)) continue;');
+  replace("no-legacy-flexible", "classify.ts", 'const flexible = new RegExp(`(?=(${pattern}))`, "giu");', 'const flexible = /a^/g;');
   const sandbox = mkdtempSync(join(process.env.OPENCLAW_REVIEW_ROOT || tmpdir(), "chat-profanity-mutants-"));
   let caught = 0;
   const survivors = [];

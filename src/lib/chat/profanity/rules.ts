@@ -6,18 +6,26 @@ export type Tier = "hard_legacy" | "hard_new" | "soft";
 export type Verdict = "pass" | "hard_legacy" | "hard_new" | "soft";
 
 /**
- * 기존 12어 분류. 어절 경계/허용 어미와 정상 span을 함께 검사한다.
+ * 기존 12어는 현행 substring/flexible 탐지를 유지하고 정상 span만 면책한다.
  * P0는 분류만 반환하며 enforce/shadow 집행은 아직 연결하지 않는다.
- * "새끼"는 어절 경계 규칙(§2.1)으로 별도 처리한다(새끼손가락 오탐 방지).
+ * "새끼"도 같은 탐지를 적용하고 새끼손가락 등 정상 span만 면책한다.
  */
 export const HARD_LEGACY: readonly string[] = [
   "시발", "씨발", "좆", "병신", "미친놈", "꺼져",
   "ㅅㅂ", "ㅂㅅ", "ㅈㄹ", "ㅆㅂ", "지랄",
-  // "새끼" 는 SAEKKI_RULE 로 경계 판정
+  // "새끼" 는 SAEKKI_RULE 에서 같은 legacy 정책으로 검사
 ];
 
-/** "새끼" 계열 — 어절 경계 판정 대상. allowlist 로 정상 복합어 면책. */
+/** "새끼" 계열 — legacy 탐지 유지, allowlist로 정상 복합어 span 면책. */
 export const SAEKKI_RULE = "새끼";
+
+/** 기존 탐지의 명시적 정상 반례. 동일 rule의 해당 후보 구간만 면책. */
+export const LEGACY_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
+  "시발": ["출시발표", "시발점", "시발역"],
+  "씨발": ["씨앗이발아했다"],
+  "병신": ["병신년생"],
+  "꺼져": ["꺼져요", "꺼져가는", "꺼져있다", "꺼져있어"],
+};
 
 /**
  * 신규 HARD(우회 욕설). 배포 시 shadow → 규칙별 게이트 통과 후 enforce.

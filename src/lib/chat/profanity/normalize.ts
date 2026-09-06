@@ -10,8 +10,8 @@ const ZERO_WIDTH = /[\u200B-\u200F\u2028-\u202F\uFEFF]/g;
  * - 문자·숫자·한글 자모(ㄱ-ㅎ, ㅏ-ㅣ)만 남김 (특수문자 삽입 우회 흡수)
  * - 고신뢰 '씨이발/시이발' 장음만 원형으로 축약
  * - 3연속 이상 동일 문자 반복은 2개로 축약
- * 주의: 모음/음절 삽입 우회(시__발)는 특수문자 제거로만 흡수하며,
- *       과도한 flexible 매칭은 오탐을 유발하므로 P0에서는 도입하지 않는다.
+ * 신규 규칙은 이 정규화/어절 경계를 사용한다.
+ * 기존 12어의 raw flexible/공백 삽입 탐지는 classify에서 별도로 보존한다.
  */
 export function normalizeToken(token: string): string {
   return token
