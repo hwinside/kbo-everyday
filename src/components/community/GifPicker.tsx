@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Search, X, Loader2 } from "lucide-react";
-import { trackEvent } from "@/lib/analytics";
 import {
   GIPHY_MIN_QUERY_LENGTH,
   GIPHY_SEARCH_DEBOUNCE_MS,
-  getGiphyApiKey,
   getGiphyCooldownRemainingMs,
+  getGiphyRequestConfig,
+  giphyCooldownMessage,
+  trackGiphyEvent,
   hashGiphyQuery,
   normalizeGiphyQuery,
   startGiphyCooldown,
@@ -43,7 +44,8 @@ interface GifPickerProps {
 export default function GifPicker({ context, onSelect, onClose }: GifPickerProps) {
   const [query, setQuery] = useState("");
   const [gifs, setGifs] = useState<GiphyGif[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [completedQuery, setCompletedQuery] = useState<string | null>(null);
+  const [loading, setLoading] = useState(context !== "game_chat_gif");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -56,17 +58,19 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     const normalizedQuery = normalizeGiphyQuery(searchQuery);
     const endpointName = normalizedQuery ? "search" : "trending";
     const requestKey = `${endpointName}:${normalizedQuery}`;
-    const apiKey = getGiphyApiKey(context);
+    const requestConfig = getGiphyRequestConfig(context);
+    const apiKey = requestConfig.apiKey;
 
     if (!apiKey) {
       setLoading(false);
       setErrorMessage("GIF을 불러올 수 없어요");
       return;
     }
-    if (inFlightKeyRef.current === requestKey) return;
-    if (getGiphyCooldownRemainingMs(context) > 0) {
+    if (inFlightKeyRef.current === requestKey && !activeRequestRef.current?.signal.aborted) return;
+    const cooldownMs = getGiphyCooldownRemainingMs(requestConfig);
+    if (cooldownMs > 0) {
       setLoading(false);
-      setErrorMessage("요청이 많아요. 잠시 후 다시 시도해 주세요");
+      setErrorMessage(giphyCooldownMessage(cooldownMs));
       return;
     }
 
@@ -79,12 +83,14 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     const startedAt = performance.now();
     let responseStatus = 0;
     void hashGiphyQuery(normalizedQuery).then((queryHash) => {
-      trackEvent("giphy_api_request", {
-        context,
+      trackGiphyEvent("giphy_api_request", requestConfig, {
         endpoint: endpointName,
         offset: 0,
         query_hash: queryHash,
       });
+    }).catch(() => {
+      // A failed optional hash must not make a real request disappear from telemetry.
+      trackGiphyEvent("giphy_api_request", requestConfig, { endpoint: endpointName, offset: 0 });
     });
 
     try {
@@ -95,10 +101,9 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
       const res = await fetch(endpoint, { signal: controller.signal, cache: "no-store" });
       responseStatus = res.status;
       if (res.status === 429) {
-        startGiphyCooldown(context, res.headers.get("Retry-After"));
-        setErrorMessage("요청이 많아요. 잠시 후 다시 시도해 주세요");
-        trackEvent("giphy_api_result", {
-          context,
+        const retryMs = startGiphyCooldown(requestConfig, res.headers.get("Retry-After"));
+        if (!controller.signal.aborted) setErrorMessage(giphyCooldownMessage(retryMs));
+        trackGiphyEvent("giphy_api_result", requestConfig, {
           endpoint: endpointName,
           offset: 0,
           status: 429,
@@ -109,19 +114,20 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
       if (!res.ok) throw new Error(`GIPHY request failed: ${res.status}`);
 
       const json = await res.json();
-      setGifs(json.data ?? []);
-      trackEvent("giphy_api_result", {
-        context,
+      if (!controller.signal.aborted) {
+        setGifs(json.data ?? []);
+        setCompletedQuery(normalizedQuery);
+      }
+      trackGiphyEvent("giphy_api_result", requestConfig, {
         endpoint: endpointName,
         offset: 0,
         status: res.status,
         latency_ms: Math.round(performance.now() - startedAt),
       });
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") return;
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) return;
       setErrorMessage("GIF을 불러올 수 없어요");
-      trackEvent("giphy_api_result", {
-        context,
+      trackGiphyEvent("giphy_api_result", requestConfig, {
         endpoint: endpointName,
         offset: 0,
         status: responseStatus,
@@ -136,9 +142,11 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     }
   }, [context]);
 
-  // One initial Trending request, then debounced Search requests only.
+  // Game-chat has a shared 100/h Beta budget: opening/typing must not spend it.
+  // Community retains the existing one-Trending + debounced-search contract.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (context === "game_chat_gif") return;
     activeRequestRef.current?.abort();
     setErrorMessage(null);
     const normalizedQuery = normalizeGiphyQuery(query);
@@ -163,7 +171,7 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, fetchGifs]);
+  }, [query, fetchGifs, context]);
 
   useEffect(() => () => activeRequestRef.current?.abort(), []);
 
@@ -187,22 +195,45 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
 
       {/* Search bar */}
       <div className="flex-none px-3 pb-2">
-        <div className="flex items-center gap-2 bg-bg-tertiary rounded-lg px-3 py-2">
+        <form
+          className="flex items-center gap-2 bg-bg-tertiary rounded-lg px-3 py-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (context === "game_chat_gif" && normalizeGiphyQuery(query).length >= GIPHY_MIN_QUERY_LENGTH) {
+              void fetchGifs(query);
+            }
+          }}
+        >
           <Search size={16} className="text-text-tertiary flex-shrink-0" />
           <input
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              if (context === "game_chat_gif") {
+                activeRequestRef.current?.abort();
+                setLoading(false);
+              }
+              setQuery(e.target.value);
+            }}
+            enterKeyHint="search"
             placeholder="GIF 검색..."
-            className="flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+            className="min-w-0 flex-1 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
           />
           {query && (
-            <button onClick={() => setQuery("")} className="text-text-tertiary">
+            <button type="button" onClick={() => { activeRequestRef.current?.abort(); setLoading(false); setQuery(""); }} className="text-text-tertiary">
               <X size={14} />
             </button>
           )}
-        </div>
+          {context === "game_chat_gif" && (
+            <button type="submit" disabled={normalizeGiphyQuery(query).length < GIPHY_MIN_QUERY_LENGTH}
+              className="shrink-0 text-sm text-text-primary disabled:opacity-40">검색</button>
+          )}
+        </form>
+        {context === "game_chat_gif" && (
+          <button type="button" onClick={() => { setQuery(""); void fetchGifs(""); }}
+            className="mt-2 text-xs text-text-secondary">인기 GIF 보기</button>
+        )}
       </div>
 
       {/* Grid */}
@@ -216,13 +247,15 @@ export default function GifPicker({ context, onSelect, onClose }: GifPickerProps
           <div className="flex items-center justify-center py-12">
             <Loader2 size={24} className="animate-spin text-text-tertiary" />
           </div>
-        ) : gifs.length === 0 ? (
+        ) : gifs.length === 0 && !errorMessage ? (
           <div className="flex items-center justify-center py-12 text-sm text-text-tertiary">
             {query && normalizeGiphyQuery(query).length < GIPHY_MIN_QUERY_LENGTH
               ? "두 글자 이상 입력해 주세요"
+              : context === "game_chat_gif" && completedQuery !== normalizeGiphyQuery(query)
+                ? "검색하거나 인기 GIF를 둘러보세요"
               : query
                 ? "검색 결과가 없어요"
-                : "GIF를 불러올 수 없어요"}
+                : context === "game_chat_gif" ? "검색하거나 인기 GIF를 둘러보세요" : "GIF를 불러올 수 없어요"}
           </div>
         ) : (
           <div className="columns-2 gap-1.5">
