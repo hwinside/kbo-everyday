@@ -176,7 +176,28 @@ function installSupabaseStub(rows: unknown[]) {
       Promise.resolve({ data: table === "posts" ? rows : [], error: null }).then(res);
     return q;
   };
-  return { client: { from: (table: string) => makeQuery(table) }, selected };
+  // 홈 인기글 훅(useHomePopularFeed)은 supabase.rpc("home_popular_posts", args).select(...).abortSignal(sig)
+  // 로 조회한다. .from 만 stub 하면 RPC 가 실제 네트워크로 새 0행 → 홈 0카드가 된다(삼순 #1343 ④).
+  // rpc 도 stub 해 홈 배선이 살아 있을 때만 fixture 가 렌더되게 한다(배선 끊기면 여전히 RED).
+  const rpcCalls: { fn: string; args: unknown }[] = [];
+  const makeRpc = (fn: string, args: unknown) => {
+    rpcCalls.push({ fn, args });
+    const q: Record<string, unknown> = {};
+    const chain = () => q;
+    q.select = (cols?: string) => { if (cols) selected.push(`rpc:${fn}:${cols}`); return chain(); };
+    q.abortSignal = () => chain();
+    q.then = (res: (v: unknown) => unknown) =>
+      Promise.resolve({ data: fn === "home_popular_posts" ? rows : [], error: null }).then(res);
+    return q;
+  };
+  return {
+    client: {
+      from: (table: string) => makeQuery(table),
+      rpc: (fn: string, args: unknown) => makeRpc(fn, args),
+    },
+    selected,
+    rpcCalls,
+  };
 }
 
 /**
@@ -332,7 +353,9 @@ async function main() {
   const stub = installSupabaseStub(fixtures.map((f) => feedRow(f.post)));
   const clientMod = await import("../../src/lib/supabase/client");
   const originalFrom = (clientMod.supabase as unknown as { from: unknown }).from;
+  const originalRpc = (clientMod.supabase as unknown as { rpc: unknown }).rpc;
   (clientMod.supabase as unknown as { from: unknown }).from = stub.client.from;
+  (clientMod.supabase as unknown as { rpc: unknown }).rpc = stub.client.rpc;
 
   const CommunityLatestPosts = (await import("../../src/components/home/CommunityLatestPosts")).default;
 
@@ -376,6 +399,7 @@ async function main() {
 
   await act(async () => { root2.unmount(); });
   (clientMod.supabase as unknown as { from: unknown }).from = originalFrom;
+  (clientMod.supabase as unknown as { rpc: unknown }).rpc = originalRpc;
 
   // ── §3. 선수 페이지 조회 컬럼 — team_tags 포함 ────────────────────────────
   // 조회에서 빠지면 다팀 글이 선수 피드에서만 축소 표시된다(런타임에 안 터지고 조용히 틀림).

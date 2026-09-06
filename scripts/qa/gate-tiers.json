@@ -132,6 +132,26 @@
       "tier": "ci"
     },
     {
+      "name": "qa:home-popular-feed",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-popular-feed:selftest",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-popular-feed:hook",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-popular-feed:pg17",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:home-popular-feed:pglite",
+      "tier": "ci"
+    },
+    {
       "name": "qa:career-metrics",
       "tier": "ci"
     },

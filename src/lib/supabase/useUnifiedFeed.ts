@@ -66,10 +66,11 @@ export function applyBoardFilter<Q extends FeedFilterQuery<Q>>(query: Q, board: 
   return query.in("board_type", ["team", "player", "free", "poll"]);
 }
 
-const SELECT =
+/** 피드 공통 select 컬럼(홈 인기글 훅과 공유). */
+export const FEED_SELECT =
   "id, author_id, board_type, board_id, content_type, title, content, image_urls, video_urls, like_count, comment_count, created_at, is_hidden, game_id, player_tags, team_tags, hashtags, author_team_id_snapshot, click_view_count, impression_view_count, profiles(nickname, team_id, grade, points, avatar_url)";
 
-function mapRow(p: Record<string, unknown>): Post {
+export function mapFeedRow(p: Record<string, unknown>): Post {
   const prof = p.profiles as Record<string, unknown> | null;
   const snap = p.author_team_id_snapshot as number | null | undefined;
   return {
@@ -96,7 +97,7 @@ function mapRow(p: Record<string, unknown>): Post {
 /**
  * 피드 복원 옵션. **restorePath 를 준 소비자만** 뒤로가기 복원에 참여한다.
  *
- * 옵션으로 둔 이유: 이 훅은 홈 '커뮤니티 최신글' 섹션(`CommunityLatestPosts`)도 함께 쓴다.
+ * 옵션으로 둔 이유: 복원을 쓰지 않는 소비자(과거 홈 '커뮤니티 최신글' 섹션 등)도 이 훅을 쓸 수 있다.
  * 복원을 훅 기본 동작으로 두면 restore 훅이 없는 그 소비자가 뒤로가기 플래그를 대신 소비해
  * 정작 피드는 복원되지 않거나, 반대로 무관한 화면에서 복원 상태가 소모된다.
  */
@@ -157,15 +158,15 @@ export function useUnifiedFeed(
         // query-guard: bounded -- search_posts 는 boundedRpcAllowlist 등록(limit ≤ 50, id desc 키셋).
         const { data, error } = await supabase
           .rpc("search_posts", { q: searchQ, before_id: cursor, page_size: pageSize })
-          .select(SELECT);
+          .select(FEED_SELECT);
         if (error) throw error;
         // 생성 타입에 없는 함수라 rpc().select() 추론이 단일객체|배열 유니언으로 나온다 → setof 라 항상 배열.
         const rows = (data ?? []) as unknown as Record<string, unknown>[];
-        return rows.map(mapRow);
+        return rows.map(mapFeedRow);
       }
       // query-guard: bounded -- id desc keyset(.lt("id",cursor)) + .limit(pageSize). board_type 목록에
       // 'poll' 추가(S3)는 필터 확장일 뿐 페이지 경계 불변(성장 무한 아님).
-      let query = supabase.from("posts").select(SELECT).neq("is_hidden", true);
+      let query = supabase.from("posts").select(FEED_SELECT).neq("is_hidden", true);
       // 태그 기반 조회(V3): 팀탭 = "LG가 태그되거나 LG선수가 태그된 모든 글".
       // team_tags 만 보면 레거시·움짤콜렉터 글(board_type='player'/'team' + board_id, team_tags 빈 값)이
       // 누락되므로 3가지를 OR 로 묶는다:
@@ -178,7 +179,7 @@ export function useUnifiedFeed(
       // keyset = id desc 단일 컬럼. id가 BIGSERIAL(삽입=created_at 순 단조증가)이라
       // (created_at,id) 복합 keyset과 동일 순서이면서 tie-break 불필요 → 더 단순·견고. (의도적 선택)
       const { data } = await query.order("id", { ascending: false }).limit(pageSize);
-      const rows = (data ?? []).map((r) => mapRow(r as Record<string, unknown>));
+      const rows = (data ?? []).map((r) => mapFeedRow(r as Record<string, unknown>));
       return rows;
     },
     // board는 매 렌더 새 객체라 안정 키(key)로 대체. key가 바뀌면 loadPage 재생성.

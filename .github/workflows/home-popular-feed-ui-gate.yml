@@ -1,0 +1,86 @@
+name: Home Popular Feed UI Gate
+
+# 홈 '커뮤니티 인기글' 섹션 End-User 스모크(F1~F4) — dev 서버 + 브라우저 전제가 필요하다.
+# page.route 로 home_popular_posts RPC 응답을 주입하므로 운영 DB 불필요(삼순 #1343 ②).
+# deploy 티어(Vercel prebuild)에서는 서버·브라우저가 없어 실행할 수 없어 전용 워크플로로 분리한다.
+
+on:
+  pull_request:
+    paths:
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/lib/supabase/useHomePopularFeed.ts"
+      - "scripts/qa/*home-popular*"
+      - "scripts/qa/fixtures/home-popular*"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "package.json"
+      - ".github/workflows/home-popular-feed-ui-gate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/components/home/CommunityLatestPosts.tsx"
+      - "src/lib/supabase/useHomePopularFeed.ts"
+      - "scripts/qa/*home-popular*"
+      - "scripts/qa/fixtures/home-popular*"
+      - "supabase/migrations/20260905043000_posts_popularity.sql"
+      - "package.json"
+      - ".github/workflows/home-popular-feed-ui-gate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: home-popular-feed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  home-popular-feed-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm ci --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - name: Install isolated HTTP gate dependencies
+        run: |
+          # PG17 is provided by PGDG, not the Ubuntu runner's default apt sources.
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error --location https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-17
+          mkdir -p "$RUNNER_TEMP/postgrest"
+          curl --fail --silent --show-error --location https://github.com/PostgREST/postgrest/releases/download/v16.2/postgrest-v16.2-linux-static-x86-64.tar.xz -o "$RUNNER_TEMP/postgrest/archive.tar.xz"
+          tar -xJf "$RUNNER_TEMP/postgrest/archive.tar.xz" -C "$RUNNER_TEMP/postgrest"
+      - name: Real RPC HTTP roles and profiles embedding (PG17 + PostgREST)
+        env:
+          POSTGREST_BIN: ${{ runner.temp }}/postgrest/postgrest
+          PG17_BIN: /usr/lib/postgresql/17/bin
+        run: node scripts/qa/home-popular-postgrest.mjs
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Focused lint
+        run: npx eslint --max-warnings=0 src/components/home/CommunityLatestPosts.tsx src/lib/supabase/useHomePopularFeed.ts scripts/qa/ui-smoke-home-popular-feed.mjs
+      - name: Start browser fixture (dev server)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: fixture-unused
+          SUPABASE_SERVICE_ROLE_KEY: fixture-unused
+        run: npm run dev -- --hostname 127.0.0.1 --port 3061 > /tmp/home-popular-ui-next.log 2>&1 &
+      - name: Wait for fixture
+        run: |
+          for attempt in $(seq 1 120); do
+            curl --fail --silent http://127.0.0.1:3061/ >/dev/null && exit 0
+            sleep 1
+          done
+          tail -n 20 /tmp/home-popular-ui-next.log
+          exit 1
+      - name: Home popular feed UI smoke (F1~F4)
+        env:
+          BASE: http://127.0.0.1:3061
+        run: npm run qa:ui:home-popular-feed

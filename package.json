@@ -21,6 +21,11 @@
     "qa:games-card-render": "tsx scripts/qa/featured-card-render-capture.mts",
     "qa:games-card-render:mutations": "node scripts/qa/games-card-render-mutations.mjs",
     "qa:cancel-reason": "tsx scripts/qa/cancel-reason-gate.mjs",
+    "qa:home-popular-feed": "tsx scripts/qa/home-popular-feed-gate.mjs",
+    "qa:home-popular-feed:selftest": "tsx scripts/qa/home-popular-feed-gate.mjs --selftest",
+    "qa:home-popular-feed:hook": "tsx scripts/qa/home-popular-feed-hook-smoke.ts",
+    "qa:home-popular-feed:pg17": "bash scripts/qa/home-popular-posts-rpc-pg17.sh",
+    "qa:home-popular-feed:pglite": "tsx scripts/qa/home-popular-posts-rpc-pglite-gate.ts",
     "qa:summary-final-transition": "tsx scripts/qa/summary-final-transition-gate.mjs",
     "qa:summary-final-transition:selftest": "tsx scripts/qa/summary-final-transition-gate.mjs --selftest",
     "qa:cancel-reason:selftest": "tsx scripts/qa/cancel-reason-gate.mjs --selftest",
@@ -45,6 +50,7 @@
     "qa:readonly-api-edge-cache": "node scripts/qa/readonly-api-edge-cache-gate.mjs",
     "qa:readonly-api-edge-cache:selftest": "node scripts/qa/readonly-api-edge-cache-gate.mjs --selftest",
     "qa:feed-scroll-restore": "tsx scripts/qa/feed-scroll-restore-smoke.ts",
+    "qa:ui:home-popular-feed": "node scripts/qa/ui-smoke-home-popular-feed.mjs",
     "qa:community-search": "tsx scripts/qa/community-search-smoke.ts",
     "qa:community-search:retry": "node scripts/qa/community-search-retry-smoke.mjs",
     "qa:community-search:live": "tsx scripts/qa/community-search-smoke.ts --live",
@@ -586,6 +592,7 @@
     "tsx": "^4.22.0",
     "typescript": "^5",
     "@types/ws": "^8.18.1",
-    "ws": "^8.19.0"
+    "ws": "^8.19.0",
+    "playwright": "1.58.2"
   }
 }
