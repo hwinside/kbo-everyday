@@ -932,6 +932,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:home-next-game-poller",
+      "tier": "ci"
+    },
+    {
       "name": "qa:visibility-poller-adoption",
       "tier": "deploy"
     },
