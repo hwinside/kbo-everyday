@@ -5,6 +5,7 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { sendAdminPush } from "@/lib/admin/push";
 import { evaluateTicketReportGuard } from "@/lib/tickets/report-guard";
 import { REPORT_REASONS } from "@/lib/game-reviews/domain";
+import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 import { databaseError, fail, positiveId, ReviewError, reviewJson } from "@/lib/game-reviews/server";
 
 // AI 필터 — 간단한 금칙어 체크 (추후 LLM 연동)
@@ -35,6 +36,7 @@ export async function POST(req: NextRequest) {
   const { targetType, targetId, reason, detail } = input;
 
   if (targetType === "game_review" || targetType === "game_review_comment") {
+    if (!GAME_REVIEWS_ENABLED) return reviewJson({ error: "Not found" }, 404);
     try {
       if (!REPORT_REASONS.includes(reason) || (detail != null && (typeof detail !== "string" || detail.length > 500))) throw new ReviewError("신고 사유를 확인해 주세요");
       const { error } = await supabase.rpc("gr_report", { a: verified.user.id, kind: targetType, target: positiveId(targetId), why: reason, details: detail ?? null });
