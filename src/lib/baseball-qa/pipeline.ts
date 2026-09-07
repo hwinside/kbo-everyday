@@ -868,7 +868,7 @@ function definitionRepairFrame(
   try {
     const value = JSON.parse(llm.text) as { answer?: unknown };
     if (typeof value.answer !== "string") return null;
-    return { terms: definition.terms, followup: definition.followup, evidence: definition.evidence, reexplanation: definition.reexplanation, explanation: definition.explanation, period: definition.period, repair: {
+    return { terms: definition.terms, followup: definition.followup, evidence: definition.evidence, assessment: definition.assessment, reexplanation: definition.reexplanation, explanation: definition.explanation, period: definition.period, repair: {
       reason, answer: value.answer,
       quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
       numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
@@ -4877,13 +4877,16 @@ async function answerOfficialDocumentQuestion(
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
     numericEvidence: true, evidence,
+    // Only compound definitions may echo user quantities, under the same
+    // period boundary as GENERAL. Never license bot prose or record lookups.
+    definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
     generalFallback: { question: definitionNumericSource(question, definition) },
   });
   let validated = validateOfficial(llm);
   // One repair by this invocation's winner only. A stored raw response or a
   // loser/retry must never consume a new provider call. The validator is not
-  // relaxed: both genuine quantities and ambiguous Korean forms still pass
-  // through the same original grounding rules after the rewrite.
+  // bypassed: both genuine quantities and ambiguous Korean forms still pass
+  // through the same value/unit checks and eligible sources after the rewrite.
   if (generatedOfficialNow && definition && validated.kind === "insufficient" &&
       (validated.reason === "numeric_not_in_evidence" || validated.reason === "numeric_not_in_question")) {
     const repair = definitionRepairFrame(definition, llm, validated.reason);
@@ -6132,7 +6135,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
 
   // ① 검수 사전 (토큰 0)
   // A fixed dictionary answer cannot honor a request to explain differently.
-  const hit = scopeGate || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question);
+  const hit = scopeGate || statDefinition?.assessment || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question);
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
@@ -6184,7 +6187,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   우회한다 — 가드 소유 질문은 매퍼를 결정론적으로 건너뛰어 합성 우회를 닫는다.
   if (
     deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
-    !questionMentionsTeam && !startersOwned && !statNumericGuard && statDefinition?.explanation !== "plain_example"
+    !questionMentionsTeam && !startersOwned && !statNumericGuard && !statDefinition?.assessment && statDefinition?.explanation !== "plain_example"
   ) {
     const candidates = glossaryCandidatesIn(glossary, question);
     if (candidates.length > 0) {
@@ -6545,7 +6548,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   도입 이전에 쓰인 `374개` 답이 캐시에 남아 있으면 read 경로가 final gate 앞에서
   //   `source=cache` 로 발송해 게이트를 통째로 우회한다. write 만 막으면 기존 오염이
   //   계속 서빙되므로 read 도 건너뜕다(fail-close).
-  if (!context && !scopeGate && !rosterBlock && !statNumericGuard) {
+  if (!context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment) {
     const cached = await deps.getCache(questionNorm);
     if (cached !== null) {
       // 선종결 CAS 결속 (삼순 5차): 캐시 발송도 durable 경계를 이긴 쪽만 한다.
@@ -6787,13 +6790,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         answer: validated.answer, source: "llm",
         statRuleTermVerified: Boolean(statDefinition && statNumericGuard),
         definitionContext: definitionContextFor(statDefinition),
-        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard,
+        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment,
         toneCompliant: validated.toneCompliant,
       },
       llm,
     ));
   }
-  if (!context && !scopeGate && !rosterBlock && !statNumericGuard) await deps.setCache(questionNorm, validated.answer);
+  if (!context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment) await deps.setCache(questionNorm, validated.answer);
   await deps.log({
     userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,

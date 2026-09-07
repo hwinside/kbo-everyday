@@ -408,9 +408,16 @@ async function main() {
   const live = process.argv.includes("--live");
   const periodSequence = process.argv.includes("--period-sequence");
   const easySequence = process.argv.includes("--easy-sequence");
+  const compoundSequence = process.argv.includes("--compound-sequence");
+  if (compoundSequence && (!live || periodSequence || easySequence)) throw new Error("--compound-sequence requires --live and cannot be combined with other sequences");
   if (easySequence && (!live || periodSequence)) throw new Error("--easy-sequence requires --live and cannot be combined with --period-sequence");
   if (periodSequence && !live) throw new Error("--period-sequence is a live diagnostic; use the period-context gate for deterministic QA");
-  const questions = easySequence ? [
+  const questions = compoundSequence ? [
+    "시즌 홀드가 뭔데, 9개면 잘한 거야?", "그게 뭔데, 9개면 잘한 거야?",
+    "통산은?", "통산 홀드가 뭐야? 몇 개면 좋은 기록이야?",
+    "타율이 뭔데, .300이면 좋은 거야?", "그게 뭔데, 3할이면 잘한 거야?",
+    "시즌 홀드가 뭐야?", "좀 더 쉽게 설명해줘",
+  ] : easySequence ? [
     "시즌 홀드가 뭐야?", "그게 뭔데?", "좀 더 쉽게 설명해줘", "예를 들어줘",
     "통산은?", "그게 뭐야?", "그럼 시즌은?", "아직 이해가 안 돼요",
     "엉? 아니 지금 9라며 저게 무슨 뜻이냐고",

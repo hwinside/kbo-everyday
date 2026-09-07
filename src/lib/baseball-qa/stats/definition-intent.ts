@@ -4,11 +4,48 @@ import { readStatDefinitionContext, type StatDefinitionContext, type DefinitionP
 
 // A narrow routing exception, not an answer dictionary. Unknown/ambiguous asks
 // keep the existing routes; the model still decides what the evidence supports.
-const MEANING_ASK = /뜻|의미|정의|뭘\s*말|무엇을?\s*말|뭐(?:야|예요|에요|지|임|냐|라고)|뭔(?:데|가|지)|무엇|먼데|(?:용어|지표)\s*설명/;
+const MEANING_ASK = /뜻|의미|정의|뭘\s*말|무엇을?\s*말|뭐(?:야|예요|에요|지|임|냐|라고|고)|뭔(?:데|가|지)|무엇|먼데|(?:용어|지표)\s*설명/;
 const VALUE_ASK = /몇|얼마|몇\s*위|[0-9]+\s*위|(?:기록|성적|개수|횟수|순위)(?:은|는|이|가)?\s*(?:뭐|뭔|무엇|어때|알려|보여)/;
 // A metric mentioned in a causal/rules question is not itself a definition ask.
 // Keep e.g. "도루를 하면 안 되는 이유가 뭐야?" on its existing rules path.
 const REASON_ASK = /왜|이유|어째서|원인/;
+// Match a complete evaluation predicate, not adjective stems in requests such
+// as "좋은 예시 들어줘" / "많이 헷갈려" / "적용은 언제 돼?".
+const ASSESSMENT_QUANTITY = /^(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+|몇|얼마|이\s*정도|그\s*정도)\s*(?:개|회|점|할|푼|리|번)?\s*(?:정도)?\s*(?:이?면|은|는|가|이|부터)?\s*/;
+const ASSESSMENT_NOMINAL = /^(?:잘\s*(?:한|하는)|(?:좋|괜찮|많|적|높|낮)은)\s*(?:거|것|기록|성적|편|수준)\s*(?:이?야|예요|이에요|인가요?|이니|이냐|이지|이죠|일까(?:요)?)[?!]*$/;
+const ASSESSMENT_DIRECT = /^(?:(?:좋|괜찮|많|높|낮)아(?:요)?|적어(?:요)?|(?:좋|괜찮|많|적|높|낮)(?:은가(?:요)?|을까(?:요)?|나요?)|잘\s*(?:해(?:요)?|했(?:어(?:요)?|나요?|니)))[?!]*$/;
+function isAssessmentAsk(clause: string, questionSeparator = false): boolean {
+  const text = clause.replace(/^(?:그럼|그러면|그리고)\s*/, "");
+  const quantity = text.match(ASSESSMENT_QUANTITY);
+  const predicate = text.slice(quantity?.[0].length ?? 0).trim();
+  if (ASSESSMENT_NOMINAL.test(predicate)) return true;
+  // Bare "좋아, 그게 뭔데?" is agreement, not a request to assess a record.
+  return Boolean(quantity || questionSeparator || /[?]/.test(predicate)) && ASSESSMENT_DIRECT.test(predicate);
+}
+export function splitStatDefinitionAssessment(question: string): { definition: string; assessment: string } | null {
+  const text = question.normalize("NFKC").toLowerCase().trim();
+  const endings = /뭐(?:야|예요|에요|지|고)|뭔(?:데|가요|지)|무엇인가요|뜻이야|설명해\s*줘|설명해\s*주세요|알려\s*줘/g;
+  for (const match of text.matchAll(endings)) {
+    const end = match.index! + match[0].length;
+    const definition = text.slice(0, end);
+    const assessment = text.slice(end).replace(/^[\s?,;]+/, "");
+    if (REASON_ASK.test(definition) || !isAssessmentAsk(assessment)) continue;
+    const terms = metricTerms(definition);
+    // A different metric in the suffix must not borrow the definition's topic.
+    if (terms.length > 1 || metricTerms(assessment).some((term) => !terms.includes(term))) return null;
+    return { definition, assessment };
+  }
+  // The same two requests may be written in the opposite order.
+  for (const separator of text.matchAll(/[?,;]/g)) {
+    const assessment = text.slice(0, separator.index).trim();
+    const definition = text.slice(separator.index! + 1).replace(/^[\s?,;]+/, "");
+    if (!isAssessmentAsk(assessment, separator[0] === "?") || REASON_ASK.test(definition) || !MEANING_ASK.test(definition)) continue;
+    const terms = metricTerms(definition);
+    if (terms.length > 1 || metricTerms(assessment).some((term) => !terms.includes(term))) return null;
+    return { definition, assessment };
+  }
+  return null;
+}
 const REFERENCE_MEANING_ASK = /^(?:(?:아니|아|엉|응|지금|그럼|그러면)[\s?!,.]*)*(?:(?:[0-9]+(?:\.[0-9]+)?)\s*(?:라며|이라며|라고)[\s?!,.]*)?(?:그게|저게|이게|그건|그거|저거|그것|그\s*기록)(?:은|는|이|가)?\s*(?:무슨\s*)?(?:(?:뜻|의미)(?:이야|야|예요|인가요|이냐고|이냐구|인지요?|를?\s*(?:알려줘|설명해줘))?|뭐(?:야|예요|에요|지|냐|라고)|뭔(?:데|가요?|지)|먼데|무엇(?:이야|인가요|인지)?)[\s?!,.]*$/;
 
 // Whole utterances only: do not steal a value, causal or compound question
@@ -28,7 +65,8 @@ export function isPlainStatExplanationRequest(question: string): boolean {
 
 /** A topic-free reference needs a real eligible previous turn, not a guessed one. */
 export function isReferenceMeaningQuestion(question: string): boolean {
-  return REFERENCE_MEANING_ASK.test(question.normalize("NFKC").trim());
+  const text = splitStatDefinitionAssessment(question)?.definition ?? question;
+  return REFERENCE_MEANING_ASK.test(text.normalize("NFKC").trim());
 }
 
 /** A period-only followup has no metric of its own; never guess one. */
@@ -56,7 +94,7 @@ function metricTerms(question: string): string[] {
 }
 
 export function isStatDefinitionQuestion(question: string): boolean {
-  const text = question.normalize("NFKC").toLowerCase();
+  const text = (splitStatDefinitionAssessment(question)?.definition ?? question).normalize("NFKC").toLowerCase();
   return (MEANING_ASK.test(text) || isPlainStatExplanationRequest(text)) && !VALUE_ASK.test(text) && !REASON_ASK.test(text) && metricTerms(text).length > 0;
 }
 
@@ -69,6 +107,8 @@ export interface StatDefinitionFrame {
   reexplanation?: { approach: DefinitionExplanationApproach; previousAnswer?: string };
   /** Retrieval presence, not proof that the retrieved text answers the question. */
   evidence?: "none" | "retrieved";
+  /** Separate user request, not evidence that the quoted record is correct. */
+  assessment?: { question: string; mode: "context_required" | "grounded_only" };
   period?: {
     scope: DefinitionPeriodScope;
     source: "question" | "previous_definition" | "previous_question" | "previous_answer" | "none";
@@ -95,7 +135,7 @@ export const STAT_DEFINITION_PROMPT = [
   "정의 대상 period는 설명할 집계 기간이다. season은 해당 시즌 안의 기록, career는 선수 경력 전체의 통산 기록이다. 첫 설명 문장에 그 기간과 지표를 함께 명시하고 끝까지 유지한다.",
   "현재 질문에 명시된 기간·연도는 직전 대화보다 우선한다. 통산은?처럼 기간만 바꿔 물으면 직전 정의 지표를 새 기간으로 설명하되, 앞서 인용한 시즌 수치를 통산 수치로 옮기거나 반대로 옮기지 않는다.",
   "period가 mixed면 질문에 나온 기간들을 구분하고, unspecified면 시즌·통산 중 하나를 임의로 단정하지 않는다. previous_answer는 대화 주제 복원용일 뿐 기록값의 사실 근거가 아니다.",
-  "지표의 정의와 인용한 수치의 의미에만 답한다. 자료가 순위표뿐이면 무관한 행을 정답으로 고르지 말고 기존 일반 설명 정책을 따른다.",
+  "assessment가 없으면 지표의 정의와 인용한 수치의 의미에만 답한다. 자료가 순위표뿐이면 무관한 행을 정답으로 고르지 말고 기존 일반 설명 정책을 따른다.",
   "자료에 실제 기록값이 있더라도 정의에 불필요한 특정 선수·연도별 기록 예시는 덧붙이지 않는다. 표의 숫자를 제거해도 지표의 뜻을 설명할 수 있으면 설명만 남긴다.",
   "정의 설명에 꼭 필요한 명시적 수량은 아라비아 숫자와 단위로 표기를 통일한다. 한글 수사로 새 수량을 숨기지 않으며, 표기를 통일한 뒤에도 같은 근거·사용자 인용 제한을 따른다.",
   "직전 봇 답변의 수치는 새 주장의 근거가 아니다. 사용자 발화에 없는 숫자를 일반 지식 답변에서 새로 만들지 않는다. 기존 JSON 응답 형식은 유지한다.",
@@ -114,11 +154,17 @@ export const STAT_DEFINITION_PROMPT = [
   "자료에 명시된 제한·제외 조건은 유지하되, 빠진 조건 목록을 추측해서 완성하지 않는다. 예시에 필요한 요건이 자료에 없으면 기록이 부여된다고 결론내리지 말고 쉬운 뜻 설명까지만 한다.",
   "팀의 최종 승패나 경기 종료 때까지의 결과는 자료가 해당 지표의 요건으로 명시할 때만 말한다. 투수가 물러난 시점의 요건을 이후 팀의 경기 결과까지 임의로 연장하지 않는다. 이전 답변이나 가상 상황에 이런 조건이 있어도 자료의 명시적 근거 없이는 반복하지 않는다.",
   "재설명 요청 자체는 앞선 기록이 틀렸다는 증거가 아니다. 사과·감사·실수 인정·다시 설명하겠다는 예고·검증 과정 없이 설명 본문으로 시작하며, 이해했는지 되묻고 끝내지 않는다.",
+  "assessment가 있으면 뜻 설명과 잘한 기록인지/어느 정도여야 좋은지의 평가를 함께 물은 복합 질문이다. 먼저 기간·지표의 뜻을 짧게 답하고, 이어 평가 요청에도 반드시 답한다. 뜻 설명만 하고 평가를 누락하거나 질문 전체를 되묻지 않는다.",
+  "사용자가 제시한 수량을 되받을 때는 '질문하신 수치' 또는 '말씀하신 기록'처럼 사용자 인용임을 명확히 한다. 질문의 수량은 공식 자료가 확인한 실적·요건·평가 기준값이 아니며, 다른 지표·기간·단위에 옮겨 붙이거나 자료의 수치와 계산하지 않는다.",
+  "assessment.mode가 context_required이거나 GENERAL로 답하면 확인된 비교 근거가 없다. 인용 숫자만으로 잘했다·못했다·많다·적다·평균 이상이라고 판정하거나 임의의 좋은 기록 기준값을 만들지 않는다. 뜻을 답한 뒤 평가하려면 어떤 기간·선수의 기록인지, 지표에 맞는 출장/기회 수와 같은 기간 비교 기록 중 무엇이 더 필요한지 짧게 말한다. 이미 명시된 정보는 다시 묻지 않는다.",
+  "assessment.mode가 grounded_only여도 자료가 해당 지표·평가 대상·집계 기간·출장/기회 수·동일 기간 비교 기준을 실제로 뒷받침할 때만 평가한다. 용어 정의 문서나 무관한 순위표의 존재는 평가 근거가 아니다. 하나라도 확인되지 않으면 뜻을 먼저 설명하고 평가에 필요한 정보만 구체적으로 알려준다. 사용자 주장·직전 봇 답변은 검증된 비교 자료가 아니다.",
+  "복합 질문의 쉬운 예시는 평가 근거가 아니다. 뜻과 평가를 짧은 문단으로 구분하고, 수량 재작성에서도 두 요청을 모두 보존한다. 답할 수 있는 뜻은 유지하면서 근거 없는 평가만 유보한다.",
 ].join("\n");
 
 /** Keep comparison prose, period and repair while limiting unsupported detail. */
 export function definitionWithEvidence<T extends StatDefinitionFrame>(frame: T, hasEvidence: boolean): T {
   return { ...frame, evidence: hasEvidence ? "retrieved" : "none",
+    ...(frame.assessment ? { assessment: { ...frame.assessment, mode: hasEvidence ? "grounded_only" as const : "context_required" as const } } : {}),
     ...(frame.reexplanation && !hasEvidence
       ? { reexplanation: { ...frame.reexplanation, approach: "situation" } } : {}) };
 }
@@ -130,6 +176,7 @@ export function statDefinitionData(input: StatDefinitionFrame): string {
     JSON.stringify({ terms: frame.terms, followup: frame.followup, period: frame.period ?? { scope: "unspecified", source: "none" }, intent: "metric_definition_or_quoted_meaning",
       explanation: frame.explanation ?? "definition",
       evidence: frame.evidence,
+      ...(frame.assessment ? { assessment: frame.assessment } : {}),
       ...(frame.reexplanation ? { reexplanation: frame.reexplanation } : {}),
       ...(frame.repair ? { repair: frame.repair } : {}) }),
     "<정의 대상 끝>",
@@ -210,6 +257,12 @@ export function resolveStatDefinitionIntent(
   question: string,
   context: ContextTurn | null = null,
 ): StatDefinitionIntent | null {
+  const compound = splitStatDefinitionAssessment(question);
+  if (compound) {
+    const definition = resolveStatDefinitionIntent(compound.definition, context);
+    if (!definition) return null;
+    return { ...definition, assessment: { question: compound.assessment, mode: "context_required" } };
+  }
   if (isStatDefinitionQuestion(question)) {
     const terms = metricTerms(question);
     // A self-contained new metric must not inherit an unrelated period/count.
