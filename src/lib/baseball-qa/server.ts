@@ -1117,6 +1117,7 @@ export function makeDeps(
       // Additive deployment/rollback compatibility only. Other DB failures keep
       // the existing no-context behavior; never broaden the previous-turn query.
       if (result.error?.code === "PGRST202" || result.error?.code === "42883") {
+        // query-guard: bounded -- v1 fallback도 동일 messageId의 직전 user turn 최대 1행만 반환한다.
         result = await supabaseAdmin.rpc("baseball_genius_previous_turn", { p_message_id: messageId });
       }
       if (result.error) throw result.error;
