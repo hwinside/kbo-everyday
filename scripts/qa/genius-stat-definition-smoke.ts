@@ -405,6 +405,12 @@ async function verifyEmptyRetrievalFallback() {
 
 async function main() {
   const live = process.argv.includes("--live");
+  const periodSequence = process.argv.includes("--period-sequence");
+  if (periodSequence && !live) throw new Error("--period-sequence is a live diagnostic; use the period-context gate for deterministic QA");
+  const questions = periodSequence ? [
+    "시즌 홀드가 뭐야?", "그게 뭔데?", "통산은?", "그게 뭐야?", "그럼 시즌은?",
+    "엉? 아니 지금 9라며 저게 무슨 뜻이냐고",
+  ] : QUESTIONS;
   const out = process.argv.find((arg) => arg.startsWith("--out="))?.slice(6);
   if (live && !out) throw new Error("Live diagnostics require --out=<local artifact path>");
   const traces: unknown[] = [];
@@ -469,16 +475,16 @@ async function main() {
     };
   }
   try {
-    for (sequence = 0; sequence < QUESTIONS.length; sequence++) {
+    for (sequence = 0; sequence < questions.length; sequence++) {
       const start = Date.now();
-      const result = await answerQuestion("qa-stat-definition-local", QUESTIONS[sequence], deps);
-      traces.push({ stage: "answer", question: QUESTIONS[sequence], result, elapsedMs: Date.now() - start });
+      const result = await answerQuestion("qa-stat-definition-local", questions[sequence], deps);
+      traces.push({ stage: "answer", question: questions[sequence], result, elapsedMs: Date.now() - start });
       if (!live) {
         assert.equal(result.source, "rag");
         assert.ok(result.answer.startsWith(ANSWER));
       }
       previous = {
-        question: QUESTIONS[sequence], answer: result.answer, jobSource: result.source,
+        question: questions[sequence], answer: result.answer, jobSource: result.source,
         answeredAt: "2026-09-06T13:00:00Z", currentCreatedAt: "2026-09-06T13:00:01Z",
       };
     }

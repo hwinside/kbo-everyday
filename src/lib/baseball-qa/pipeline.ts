@@ -1,4 +1,4 @@
-import { definitionNumericSource, isReferenceMeaningQuestion, isStatDefinitionQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
+import { definitionNumericSource, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
@@ -867,7 +867,7 @@ function definitionRepairFrame(
   try {
     const value = JSON.parse(llm.text) as { answer?: unknown };
     if (typeof value.answer !== "string") return null;
-    return { terms: definition.terms, followup: definition.followup, repair: {
+    return { terms: definition.terms, followup: definition.followup, period: definition.period, repair: {
       reason, answer: value.answer,
       quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
       numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
@@ -3577,6 +3577,7 @@ export function routeQuestion(
   // Reuse the definition followup grammar. With no eligible antecedent, never
   // let retrieval or the model invent one; explicit topics keep their routes.
   if (!hasContext && isReferenceMeaningQuestion(question)) return "context_missing";
+  if (isStatPeriodFollowupQuestion(question)) return hasContext ? "llm_scope_gate" : "context_missing";
   if (isStatDefinitionQuestion(question) && !isOutOfScopeIntent(normalized, mentionsTeam(tokens))) {
     // Definitions must not enter history_hold, but an unknown expression still
     // needs the existing LLM scope/normalization contract, not a glossary label.

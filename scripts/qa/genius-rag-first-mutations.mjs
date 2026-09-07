@@ -25,6 +25,41 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r33 정의 기간 전달 제거 — 모델이 시즌/통산 문맥을 잃는다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'period: frame.period ?? { scope: "unspecified", source: "none" }',
+    to: 'period: { scope: "unspecified", source: "none" }',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r34 현재 질문 기간 우선순위 제거 — 통산 전환을 시즌으로 덮는다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '  if (explicit) return { scope: explicit, source: "question" };',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r35 재작성에서 기간 손실 — 수량을 고치며 문맥을 잃는다",
+    file: PIPELINE,
+    from: 'period: definition.period, repair:',
+    to: 'repair:',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r36 무문맥 기간 질문 가드 제거 — 없는 지표를 추측한다",
+    file: PIPELINE,
+    from: '  if (isStatPeriodFollowupQuestion(question)) return hasContext ? "llm_scope_gate" : "context_missing";',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r37 기간 변경 시 이전 수치 인용 허용 — 시즌 숫자를 통산으로 옮긴다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '  if (previous && current && current !== "unspecified" && current !== previous) return question;',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r29 무문맥 참조 질문 가드 제거 — 없는 직전 주제를 생성한다",
     file: PIPELINE,
     from: '  if (!hasContext && isReferenceMeaningQuestion(question)) return "context_missing";',
@@ -90,7 +125,7 @@ const MUTATIONS = [
   {
     name: "r21 직전 사용자 숫자 제거 — 후속 10홀드 인용이 차단된다",
     file: "src/lib/baseball-qa/stats/definition-intent.ts",
-    from: "return definition?.context ? `${question}\\n${definition.context.question}` : question;",
+    from: "return `${question}\\n${definition.context.question}`;",
     to: "return question;",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
