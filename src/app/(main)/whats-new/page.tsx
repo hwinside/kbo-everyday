@@ -36,6 +36,9 @@ function escapeHtml(str: string): string {
 /** 본문 한 줄짜리 이미지 마커: ![alt](url) */
 const IMG_LINE = /^!\[([^\]]*)\]\(([^\s)]+)\)\s*$/;
 
+/** 한 줄 전체를 **제목**으로 감싼 공지 소제목. 인라인 HTML은 해석하지 않는다. */
+const HEADING_LINE = /^\*\*(\S(?:.*\S)?)\*\*\s*$/;
+
 /** 우리 Supabase Storage 공개 photos 경로만 이미지로 렌더 (외부 tracking 이미지 차단) */
 const ALLOWED_IMG_PREFIX = process.env.NEXT_PUBLIC_SUPABASE_URL
   ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/photos/`
@@ -46,8 +49,8 @@ function isAllowedImageUrl(url: string): boolean {
 }
 
 /**
- * 본문을 텍스트/이미지 세그먼트로 파싱해 렌더.
- * 이미지 마커 줄은 <img>로, 나머지 텍스트는 기존처럼 줄바꿈 보존 렌더.
+ * 본문을 제목/텍스트/이미지 세그먼트로 파싱해 렌더.
+ * **제목** 줄은 <h3>, 이미지 마커 줄은 <img>, 나머지는 줄바꿈 보존 텍스트.
  * URL/텍스트는 React가 자동 이스케이프하므로 dangerouslySetInnerHTML 미사용.
  */
 function renderBody(body: string): ReactNode[] {
@@ -71,6 +74,17 @@ function renderBody(body: string): ReactNode[] {
   };
 
   for (const line of body.split("\n")) {
+    const heading = line.match(HEADING_LINE);
+    if (heading) {
+      flushText();
+      nodes.push(
+        <h3 key={`h-${nodes.length}`} className="pt-4 text-base font-bold text-text-primary first:pt-0">
+          {heading[1]}
+        </h3>,
+      );
+      continue;
+    }
+
     const m = line.match(IMG_LINE);
     if (m && isAllowedImageUrl(m[2])) {
       flushText();
