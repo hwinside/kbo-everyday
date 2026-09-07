@@ -701,6 +701,15 @@ try {
       negative: chips.filter({ hasText: /^패$/ }),
       neutral: chips.filter({ hasText: /^무$/ }),
     });
+    // 하단 상세는 기본 접힘. 실제 키보드 동선으로 펼친 뒤 기존 색상 계약을 검증한다.
+    const detailsToggle = page.getByRole("button", { name: /^(펼치기|접기)$/ });
+    await page.getByRole("button", { name: "펼치기", exact: true }).waitFor();
+    check(await detailsToggle.getAttribute("aria-expanded") === "false", "홈 상세 기본 접힘 ARIA");
+    check(await page.getByText("등록", { exact: true }).count() === 0, "접힌 홈 상세 등록 배지 DOM 미노출");
+    await detailsToggle.focus();
+    await detailsToggle.press("Enter");
+    await page.getByRole("button", { name: "접기", exact: true }).waitFor();
+    check(await detailsToggle.getAttribute("aria-expanded") === "true", "Enter로 홈 상세 펼침 ARIA");
     await page.getByText("등록", { exact: true }).first().waitFor();
     const reg = await styleOf(page.getByText("등록", { exact: true }).first());
     const der = await styleOf(page.getByText("말소", { exact: true }).first());
@@ -715,6 +724,13 @@ try {
       sameRgba(der.backgroundColor, EXPECT_BG.negative),
       `홈 인라인 말소 배경 = ${EXPECT_BG.negative} (got ${der.backgroundColor})`,
     );
+    await detailsToggle.press("Space");
+    await page.getByRole("button", { name: "펼치기", exact: true }).waitFor();
+    check(await detailsToggle.getAttribute("aria-expanded") === "false", "Space로 홈 상세 다시 접힘 ARIA");
+    check(await page.getByText("등록", { exact: true }).count() === 0, "다시 접힌 홈 상세 DOM 미노출");
+    await detailsToggle.press("Enter");
+    await page.getByText("등록", { exact: true }).first().waitFor();
+    check(await detailsToggle.getAttribute("aria-expanded") === "true", "홈 상세 반복 펼침 ARIA");
   }
 
   // ── 2) 팀 등록·말소 배지 ─────────────────────────────────────────────────
