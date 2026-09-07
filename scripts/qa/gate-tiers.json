@@ -228,6 +228,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:favorite-today-batch",
+      "tier": "ci"
+    },
+    {
       "name": "qa:favorites-save",
       "tier": "ci"
     },

@@ -11,6 +11,7 @@
     "prebuild": "node scripts/qa/run-gate-tiers.mjs --tier deploy",
     "qa:user-boot-bundle": "tsx scripts/qa/user-boot-bundle-gate.ts",
     "qa:favorites-save": "tsx scripts/qa/favorites-save-regression.mjs",
+    "qa:favorite-today-batch": "tsx scripts/qa/favorite-today-batch-smoke.ts",
     "qa:game-detail-parse-memo": "tsx scripts/qa/game-detail-parse-memo.ts",
     "qa:genius-mascot-render": "tsx scripts/qa/genius-mascot-render-gate.mjs",
     "qa:genius-mascot-render:selftest": "tsx scripts/qa/genius-mascot-render-gate.mjs --selftest",
