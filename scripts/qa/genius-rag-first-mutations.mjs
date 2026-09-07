@@ -25,6 +25,13 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r73 unsupported named rankings fall through to scalar values",
+    file: PIPELINE,
+    from: "hasPlayer && !isRankAsk(question) ? unavailable(RANK_SCOPE_ANSWER) : null;",
+    to: "null;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r69 scalar handlers steal requested operations",
     file: PIPELINE,
     from: "const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);",

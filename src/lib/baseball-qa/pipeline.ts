@@ -4036,9 +4036,14 @@ async function answerRequestedOperation(
     .map(([key]) => key));
   if (!bare && !hasPlayer && !hasTeam && !metricKeys.size && !hasCareerMetricTerm(question)) return null;
   const unavailable = (answer: string): StoredQaFinal => ({ answer, source: "unsure" });
+  // Legacy rank rejection recognizes 1위/누구/최다, but not every 순위/몇등
+  // request. A named unsupported rank must not fall through to a scalar answer.
+  // Preserve legacy guarded ranks and team standings in their own handlers.
+  const rejectUnhandledPlayerRank = (): StoredQaFinal | null =>
+    hasPlayer && !isRankAsk(question) ? unavailable(RANK_SCOPE_ANSWER) : null;
   if (operation === "elapsed") return unavailable(ELAPSED_DATA_ANSWER);
   // Unsupported rank scopes remain owned by the existing exact hold contracts.
-  if (unsupportedOperationScope(question)) return operation === "rank" ? null : unavailable(OPERATION_DATA_ANSWER);
+  if (unsupportedOperationScope(question)) return operation === "rank" ? rejectUnhandledPlayerRank() : unavailable(OPERATION_DATA_ANSWER);
   const currentTeam = resolveRagTeamCandidate(question);
   const now = deps.now ? deps.now() : Date.now();
   if (operation === "remaining") {
@@ -4071,7 +4076,7 @@ async function answerRequestedOperation(
     // Own only supported individual AVG rankings; preserve team standings and
     // unsupported named rankings in their original handlers. Bare follow-ups
     // without usable operands still need this operation-specific clarification.
-    return bare ? unavailable(RANK_SCOPE_ANSWER) : null;
+    return bare ? unavailable(RANK_SCOPE_ANSWER) : rejectUnhandledPlayerRank();
   }
   const league = /전체\s*(?:구단|리그|선수|타자)|리그\s*전체|kbo\s*전체/.test(q);
   const clubPlayers = !!currentTeam && (!player || /(?:선수|타자)(?:들)?\s*(?:중|내|끼리)/.test(q));
