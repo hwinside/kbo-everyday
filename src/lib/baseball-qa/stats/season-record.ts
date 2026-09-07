@@ -721,6 +721,8 @@ export function resolveSeasonRecord(
     if ((query.metric === "avg" || query.metric === "wpct") && Number(value) > 1) {
       return { kind: "inconsistent" };
     }
+    // AVG shares the ranking display precision; accepted input has at most 3 decimals.
+    if (query.metric === "avg") value = Number(value).toFixed(3);
   } else {
     if (typeof raw !== "string") return { kind: "inconsistent" };
     value = raw.trim();

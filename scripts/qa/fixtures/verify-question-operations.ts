@@ -5,6 +5,7 @@ import { selectContextTurn, type PreviousTurnRow } from "../../../src/lib/baseba
 import { previousTurnFromSql } from "../../../src/lib/baseball-qa/previous-turn-row";
 import { renderAverageRank, renderRemainingGames, requestedOperation, readRankRequestContext, OPERATION_DATA_ANSWER } from "../../../src/lib/baseball-qa/stats/question-operation";
 import { validateServedBatterPayload, type ServedBatterSnapshot } from "../../../src/lib/baseball-qa/stats/served-record";
+import { resolveSeasonRecord, type SeasonRecordQuery } from "../../../src/lib/baseball-qa/stats/season-record";
 import type { StandingsSnapshot } from "../../../src/lib/baseball-qa/stats/team-record";
 
 const NOW = Date.parse("2026-09-08T00:00:00+09:00");
@@ -88,6 +89,18 @@ export async function verifyScalarRequestRouting(
 }
 
 export async function verifyQuestionOperations() {
+  const avgQuery: SeasonRecordQuery = { table: "batter", metric: "avg", label: "타율", kind: "rate" };
+  for (const [rawAvg, expected] of [[0.35, "0.350"], ["0.35", "0.350"], [".35", "0.350"], ["0.350", "0.350"], [0, "0.000"], [1, "1.000"]] as const) {
+    const outcome = resolveSeasonRecord([{ ...SNAPSHOT.rows[0], avg: rawAvg }], avgQuery, "12345", NOW, "구자욱", "삼성");
+    assert.equal(outcome.kind, "ok");
+    if (outcome.kind === "ok") assert.equal(outcome.value, expected);
+  }
+  for (const rawAvg of [-0.1, 1.001, "0.3501", "N/A", Infinity]) {
+    assert.equal(resolveSeasonRecord([{ ...SNAPSHOT.rows[0], avg: rawAvg }], avgQuery, "12345", NOW, "구자욱", "삼성").kind, "inconsistent");
+  }
+  const ops = resolveSeasonRecord([{ ...SNAPSHOT.rows[0], ops: "0.95" }], { ...avgQuery, metric: "ops", label: "OPS" }, "12345", NOW, "구자욱", "삼성");
+  assert.equal(ops.kind, "ok");
+  if (ops.kind === "ok") assert.equal(ops.value, "0.95", "AVG padding changed another metric");
   assert.equal(validateServedBatterPayload({ type: "batter", count: SNAPSHOT.rows.length, stats: SNAPSHOT.rows }), null,
     "A partial league list passed the server-side full-snapshot contract");
   assert.equal(requestedOperation("양석환 홈런 몇일만이야?"), "elapsed");
