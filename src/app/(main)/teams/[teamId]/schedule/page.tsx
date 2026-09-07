@@ -222,7 +222,7 @@ export default function TeamSchedulePage() {
                         ? "LIVE"
                         : game.status === "cancelled"
                         ? cancelReasonBadge(game.cancelReason)
-                        : game.home ? "홈" : "@"}
+                        : game.home ? "홈" : "원정"}
                     </span>
                   )}
                 </div>
