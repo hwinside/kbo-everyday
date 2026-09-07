@@ -25,6 +25,13 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r77 exact served-name comparison rejects foreign roster full names",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "if (!player || !rankPlayerNamesMatch(playerId, player.name, target.player.name)) return null;",
+    to: "if (!player || player.name !== target.player.name) return null;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r74 canonical alpha rank IDs regress to numeric-only",
     file: "src/lib/baseball-qa/stats/rank-request-context.ts",
     from: "return /^(?:\\d{1,8}|[A-Z]{2}\\d{3})$/.test(id) ? id : undefined;",

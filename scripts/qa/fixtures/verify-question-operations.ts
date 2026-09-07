@@ -7,6 +7,7 @@ import { renderAverageRank, renderRemainingGames, requestedOperation, readRankRe
 import { validateServedBatterPayload, type ServedBatterSnapshot } from "../../../src/lib/baseball-qa/stats/served-record";
 import { resolveSeasonRecord, type SeasonRecordQuery } from "../../../src/lib/baseball-qa/stats/season-record";
 import { readRankPlayerId } from "../../../src/lib/baseball-qa/stats/rank-request-context";
+import { loadRosterPlayers } from "../../../src/lib/baseball-qa/roster/load-roster-players";
 import type { StandingsSnapshot } from "../../../src/lib/baseball-qa/stats/team-record";
 
 const NOW = Date.parse("2026-09-08T00:00:00+09:00");
@@ -90,7 +91,13 @@ export async function verifyScalarRequestRouting(
 }
 
 export async function verifyQuestionOperations() {
-  const foreignPlayers = [{ kboId: "FP006", name: "디아즈", team: "삼성" }, { kboId: "AQ004", name: "데일", team: "KIA" }];
+  const actualRoster = await loadRosterPlayers();
+  const foreignPlayers = ["FP006", "AQ004"].map((id) => {
+    const player = actualRoster.find((row) => row.kboId === id);
+    assert.ok(player, `Missing production roster fixture ${id}`);
+    return player;
+  });
+  assert.notEqual(foreignPlayers[0].name, "디아즈", "The fixture must exercise roster full-name versus served surname");
   const mixed: ServedBatterSnapshot = { updatedAt: AT, rows: [
     ...structuredClone(SNAPSHOT.rows),
     { player_key: "FP006", kbo_id: "FP006", name: "디아즈", team: "삼성", updated_at: AT, qualifiedRate: 1, avg: "0.370", pa: 500, ab: 450 },
@@ -107,11 +114,19 @@ export async function verifyQuestionOperations() {
     return answer;
   };
   assert.match(mixedAnswer({ player: { id: "FP006", name: "디아즈" } }), /타율 1위.*0\.370/);
+  assert.match(mixedAnswer({ player: { id: "FP006", name: foreignPlayers[0].name } }), /타율 1위.*0\.370/);
   assert.match(mixedAnswer({ player: { id: "12345", name: "구자욱" } }), /타율 3위/,
     "Dropping the qualified foreign leader changes everybody else's rank");
   assert.match(mixedAnswer({ team: { id: 8, name: "삼성" }, player: { id: "12345", name: "구자욱" } }), /타율 2위/);
   assert.match(mixedAnswer({ player: { id: "AQ004", name: "데일" } }), /규정타석 미달/);
+  assert.match(mixedAnswer({ player: { id: "AQ004", name: foreignPlayers[1].name } }), /규정타석 미달/);
   assert.match(mixedAnswer({ player: { id: "12350", name: "무타석선수" } }), /규정타석 미달/);
+  for (const name of ["가짜 디아즈", "아즈", "제리드 데일", "르윈\n디아즈"]) {
+    assert.equal(renderAverageRank(mixed, { player: { id: "FP006", name } }, NOW, teamId), null,
+      "An unrelated or partial name must not borrow a valid canonical ID");
+  }
+  const wrongServedName = structuredClone(mixed); wrongServedName.rows[5].name = "페라자";
+  assert.equal(renderAverageRank(wrongServedName, { player: { id: "FP006", name: foreignPlayers[0].name } }, NOW, teamId), null);
   for (const corrupt of [
     (s: ServedBatterSnapshot) => { s.rows[5].avg = "-"; },
     (s: ServedBatterSnapshot) => { s.rows[6].qualifiedRate = 1; },

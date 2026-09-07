@@ -2,6 +2,7 @@ import { rankByStat } from "../../stats/title-rankings";
 import { STATS_STALE_MS, SUPPORTED_SEASON } from "./season-record";
 import type { ServedBatterSnapshot } from "./served-record";
 import { readRankPlayerId } from "./rank-request-context";
+import { resolvePlayerIdentity } from "../../utils/resolve-player";
 import { KBO_REGULAR_SEASON_GAMES, LIVE_TEAM_BLOCK_MAX_AGE_MS, kstSeasonOf, type StandingsSnapshot } from "./team-record";
 
 /** An operation is not a statistic: a rank/duration/remainder cannot be answered
@@ -40,6 +41,22 @@ function dateOf(value: string): string {
 
 export interface RankTarget { player?: { id: string; name: string }; team?: { id: number; name: string } }
 
+/** A foreign surname is an alias only within the already matched canonical ID. */
+function rankPlayerNamesMatch(playerId: string, servedName: string, requestedName: string): boolean {
+  if (servedName === requestedName) return true;
+  if (!/^[A-Z]{2}\d{3}$/.test(playerId) || /[\r\n<>]/.test(requestedName)) return false;
+  const identity = resolvePlayerIdentity(playerId);
+  if (!identity || readRankPlayerId(identity.kboId) !== playerId) return false;
+  const normalize = (name: string) => name.normalize("NFKC").trim().replace(/\s+/g, " ");
+  const canonicalName = normalize(identity.name);
+  const matches = (name: string) => {
+    const normalized = normalize(name);
+    return normalized === canonicalName || (normalized.length > 0
+      && !normalized.includes(" ") && canonicalName.split(" ").includes(normalized));
+  };
+  return matches(servedName) && matches(requestedName);
+}
+
 /** Use the same qualification, sorting and competition ranks as the app.
  * Unlike the UI's legacy fallback, missing qualification metadata is not proof
  * that a player is eligible. Reject the snapshot instead of inventing a rank. */
@@ -77,7 +94,7 @@ export function renderAverageRank(
     const playerId = readRankPlayerId(target.player.id);
     if (!playerId) return null;
     const player = rows.find((row) => row.kbo_id === playerId);
-    if (!player || player.name !== target.player.name) return null;
+    if (!player || !rankPlayerNamesMatch(playerId, player.name, target.player.name)) return null;
     const result = ranked.find((row) => row.kbo_id === playerId);
     if (!result) return `${stamp}, ${target.player.name} 선수는 규정타석 미달로 타율 순위에 포함되지 않습니다.`;
     return `${stamp}, ${target.player.name} 선수는 ${scope} 규정타석을 채운 선수의 타율 ${result.rank}위입니다(타율 ${Number(result.avg).toFixed(3)}). 같은 타율은 공동 순위입니다.`;
