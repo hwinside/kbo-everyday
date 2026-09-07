@@ -221,6 +221,7 @@
     "qa:title-orphan",
     "qa:ui:collector-author-team",
     "qa:ui:comment-crud",
+    "qa:ui:community-giphy-height",
     "qa:ui:community-search",
     "qa:ui:dm-draft",
     "qa:ui:feed-scroll-restore-auth",
