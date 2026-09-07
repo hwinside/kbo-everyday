@@ -4,6 +4,10 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:auth-boot-trace",
+      "tier": "ci"
+    },
+    {
       "name": "qa:active-users-contract",
       "tier": "deploy"
     },

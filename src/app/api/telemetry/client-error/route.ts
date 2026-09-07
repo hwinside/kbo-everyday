@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { AUTH_DIAGNOSTIC_SOURCE, parseAuthDiagnostic } from "@/lib/auth/session-diagnostic-schema";
+import { AUTH_BOOT_SOURCE, parseAuthBootDiagnostic } from "@/lib/auth/boot-trace-schema";
 
 interface ClientErrorPayload {
   message?: string;
@@ -17,6 +18,7 @@ interface ClientErrorPayload {
 
 const VALID_SOURCES = new Set([
   AUTH_DIAGNOSTIC_SOURCE,
+  AUTH_BOOT_SOURCE,
   "window-error",
   "unhandledrejection",
   "error-boundary",
@@ -46,11 +48,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
-  const authDiagnostic = source === AUTH_DIAGNOSTIC_SOURCE;
+  const authBoot = source === AUTH_BOOT_SOURCE;
+  const authDiagnostic = source === AUTH_DIAGNOSTIC_SOURCE || authBoot;
   if (authDiagnostic) {
     let value: unknown;
     try { value = JSON.parse(message); } catch { value = null; }
-    const diagnostic = parseAuthDiagnostic(value);
+    const diagnostic = authBoot ? parseAuthBootDiagnostic(value) : parseAuthDiagnostic(value);
     if (!diagnostic) return NextResponse.json({ ok: true, skipped: true });
     message = JSON.stringify(diagnostic);
   }
@@ -62,7 +65,7 @@ export async function POST(req: NextRequest) {
     message,
     stack: authDiagnostic ? null : str(payload.stack, 4000),
     source,
-    digest: authDiagnostic ? "auth-session-v1" : str(payload.digest, 128),
+    digest: authBoot ? "auth-boot-v1" : authDiagnostic ? "auth-session-v1" : str(payload.digest, 128),
     path: authDiagnostic ? null : str(payload.path, 512),
     platform: authDiagnostic ? diagnosticPlatform : str(payload.platform, 32),
     app_version: authDiagnostic ? diagnosticVersion : str(payload.appVersion, 64),

@@ -1,5 +1,7 @@
 /**
- * Actual AuthProvider + installed auth-js + jsdom cookies, HTTP fixture only.
+ * Actual AuthProvider + installed auth-js + jsdom cookies, fixture HTTP.
+ * One boot case defers INITIAL_SESSION delivery at the subscription boundary;
+ * session reads, identity publication and diagnostics remain real.
  * QA owner runs: NODE_ENV=development npx tsx scripts/qa/auth-session-transient-render.tsx
  * No live accounts/network. The clock jump models an exhausted refresh retry
  * budget so a transient outage can be tested without 30 seconds of backoff.
@@ -37,6 +39,9 @@ async function main() {
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const traceId = "11111111-2222-4333-8444-555555555555";
+  Object.defineProperty(performance, "getEntriesByType", { configurable: true, value: () => [{ serverTiming: [{ name: "kbo-auth-boot", description: traceId }] }] });
+  const bootReports: Record<string, unknown>[] = [];
   let unavailable = false;
   let invalidRefresh = false;
   let failedRefreshes = 0;
@@ -44,8 +49,13 @@ async function main() {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
     status, headers: { "Content-Type": "application/json" },
   });
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, dom.window.location.href);
+    if (url.pathname === "/api/telemetry/client-error") {
+      const body = JSON.parse(String(init?.body));
+      if (body.source === "auth-boot") bootReports.push(JSON.parse(body.message));
+      return json({ ok: true });
+    }
     if (url.hostname === "auth-fixture.invalid" && url.pathname === "/auth/v1/user") return json(user);
     if (url.hostname === "auth-fixture.invalid" && url.pathname === "/auth/v1/token") {
       if (unavailable) {
@@ -81,8 +91,48 @@ async function main() {
   const container = document.getElementById("root")!;
   const root = createRoot(container);
   try {
-    await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); await pause(30); });
-    await act(async () => { await pause(30); });
+    // Exercise syncSession winning the startup race. The normal SDK ordering
+    // below can always supersede it, so accepting either outcome alone cannot
+    // protect AuthProvider's finish("published", ...) wiring.
+    const originalOnAuthStateChange = supabase.auth.onAuthStateChange;
+    const subscribe = originalOnAuthStateChange.bind(supabase.auth);
+    const deferredInitial: Array<() => void | Promise<void>> = [];
+    let deferInitial = true;
+    try {
+      supabase.auth.onAuthStateChange = callback => subscribe((event, session) => {
+        if (event === "INITIAL_SESSION" && deferInitial) {
+          deferredInitial.push(() => callback(event, session));
+          return;
+        }
+        return callback(event, session);
+      });
+      await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); });
+      for (let attempt = 0; attempt < 100 && container.textContent !== `${uid}|${uid}|false`; attempt++) {
+        await act(async () => { await pause(20); });
+      }
+      assert.equal(deferredInitial.length, 1, "the real SDK initial event is held, not replaced by a fake session");
+      assert.equal(container.textContent, `${uid}|${uid}|false`, "syncSession publishes identity before the initial event");
+      assert.equal(bootReports.length, 1, "actual AuthProvider publish hook must emit the boot result");
+      assert.equal(bootReports[0].event, "boot-result");
+      assert.equal(bootReports[0].boot, traceId);
+      assert.equal(bootReports[0].outcome, "published", "superseded/pending cannot satisfy publish-path coverage");
+      assert.equal(bootReports[0].session, true);
+      deferInitial = false;
+      await act(async () => {
+        for (const deliver of deferredInitial.splice(0)) await deliver();
+        await pause(30);
+      });
+      assert.equal(container.textContent, `${uid}|${uid}|false`, "delayed initial event preserves the published identity");
+      assert.equal(bootReports.length, 1, "delayed initial event must not duplicate the final boot result");
+      console.log("PASS actual AuthProvider publishes boot-result before deferred INITIAL_SESSION");
+    } finally {
+      supabase.auth.onAuthStateChange = originalOnAuthStateChange;
+      deferredInitial.length = 0;
+    }
+
+    // Keep this mounted document: the diagnostic is intentionally once per
+    // document, not once per remount. Restore normal SDK event delivery for all
+    // original outage/recovery, cold-remount and definitive rejection cases.
     assert.equal(container.textContent, `${uid}|${uid}|false`, "baseline is authenticated");
     unavailable = true;
     offset += 3_601_000;
