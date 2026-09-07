@@ -130,6 +130,8 @@ try {
   await db.exec("SET ROLE authenticated");
   try {
     await rejects("UPDATE posts SET comment_count=999 WHERE id=1", "42501", "authenticated direct counter edit remains forbidden");
+    await rejects("UPDATE posts SET report_count=0 WHERE id=1", "42501", "authenticated direct report count edit remains forbidden");
+    await rejects("UPDATE posts SET is_hidden=false WHERE id=1", "42501", "authenticated direct hidden state edit remains forbidden");
   } finally {
     await db.exec("RESET ROLE");
   }
