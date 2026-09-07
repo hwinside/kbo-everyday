@@ -2,6 +2,8 @@
 
 import { AUTH_DIAGNOSTIC_SOURCE, authErrorMetadata, parseAuthDiagnostic, type AuthDiagnostic, type AuthStorageObservation } from "./session-diagnostic-schema";
 import { AUTH_BOOT_SOURCE, parseAuthBootDiagnostic, readBootTraceId, type BootOutcome } from "./boot-trace-schema";
+import { createPreviousExitTracker } from "./previous-exit";
+import type { PreviousAuthExit } from "./previous-exit-schema";
 
 const ENDPOINT = "/api/telemetry/client-error";
 const MAX_EVENTS_PER_PAGE = 4;
@@ -10,7 +12,8 @@ type NativeBridge = { getPlatform?: () => string; isNativePlatform?: () => boole
 const bridge = () => (window as unknown as { Capacitor?: NativeBridge }).Capacitor;
 const safe = <T>(fn: () => T, fallback: T): T => { try { return fn(); } catch { return fallback; } };
 
-/** Independent observer state. No auth SDK calls, storage writes, or body/header reads. */
+/** Independent observer state. No auth SDK calls or token/body reads. The only
+ * storage write is a bounded, diagnostic-only last-observation record. */
 export function createAuthSessionDiagnostics() {
   let prefix = "";
   let origin = "";
@@ -31,6 +34,8 @@ export function createAuthSessionDiagnostics() {
   let cookieSession: boolean | null = null;
   let cookieError = authErrorMetadata(null);
   let cancelBoot: (() => void) | null = null;
+  let exits: ReturnType<typeof createPreviousExitTracker> | null = null;
+  let prevExit: PreviousAuthExit = { state: "unsupported", record: null };
 
   function capture(): AuthStorageObservation {
     const state = unknownStorage();
@@ -71,7 +76,7 @@ export function createAuthSessionDiagnostics() {
       const platform = safe(() => bridge()?.isNativePlatform?.() ? `${bridge()?.getPlatform?.()}_native` : "web", "web");
       const ua = safe(() => navigator.userAgent, "");
       const os = platform === "ios_native" || /iPhone|iPad|iPod/.test(ua) ? "ios" : platform === "android_native" || /Android/.test(ua) ? "android" : "other";
-      const diagnostic = parseAuthDiagnostic({ v: 1, boot, event, os, initial, before, after, session, ...metadata });
+      const diagnostic = parseAuthDiagnostic({ v: 1, boot, event, os, initial, before, after, session, ...metadata, prevExit });
       if (!diagnostic) return;
       seen.add(key);
       const send = transport;
@@ -96,6 +101,13 @@ export function createAuthSessionDiagnostics() {
     transport = fetcher;
     initial = capture();
     boot = safe(() => readBootTraceId(performance), null) ?? safe(() => crypto.randomUUID(), null);
+    // Also supports iPhone-UA web QA. This is origin-local history, not a
+    // persistent device identifier; unknown bridge/UA does not enable writes.
+    if (!exits && safe(() => bridge()?.getPlatform?.() === "ios" || /iPhone|iPad|iPod/.test(navigator.userAgent), false)) {
+      exits = safe(() => createPreviousExitTracker(prefix, capture), null);
+      prevExit = exits?.previous ?? { state: "unreadable", record: null };
+      safe(() => exits?.start(), undefined);
+    }
     return async (input, init) => {
       const isToken = safe(() => {
         const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -103,11 +115,16 @@ export function createAuthSessionDiagnostics() {
         return url.origin === origin && url.pathname === "/auth/v1/token";
       }, false);
       if (!isToken) return fetcher(input, init);
+      const isRefresh = safe(() => {
+        const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        return new URL(raw, window.location.origin).searchParams.get("grant_type") === "refresh_token";
+      }, false);
       const before = capture();
       try {
         const response = await fetcher(input, init);
         const status = safe(() => response.status, 0);
         if (status >= 400) {
+          if (isRefresh) safe(() => exits?.refreshFailed(), undefined);
           failed = true;
           lastFailure = { status, error: null, code: null };
           emit("token-http-error", before, null, lastFailure);
@@ -115,6 +132,7 @@ export function createAuthSessionDiagnostics() {
         // Do not read/clone the response body: success bodies contain credentials.
         return response;
       } catch (error) {
+        if (isRefresh) safe(() => exits?.refreshFailed(), undefined);
         failed = true;
         lastFailure = authErrorMetadata(error);
         emit("token-network-error", before, null, lastFailure);
@@ -157,6 +175,7 @@ export function createAuthSessionDiagnostics() {
   }
 
   function beginSessionRead() {
+    if (!intentionalLogout) safe(() => exits?.start(), undefined);
     const before = capture();
     if (typeof window === "undefined") return { before, finish: () => {} };
     const timer = setTimeout(() => {
@@ -170,6 +189,7 @@ export function createAuthSessionDiagnostics() {
     for (const timer of pendingReads) clearTimeout(timer);
     pendingReads.clear();
     cancelBoot?.();
+    safe(() => exits?.stop(), undefined);
   }
 
   /** One sampled document: at most one pending + one acquisition/publication
@@ -177,6 +197,7 @@ export function createAuthSessionDiagnostics() {
    * Subsequent refresh/online retries keep the existing bounded error/recovery
    * observer, using the same boot ID when Server-Timing is available. */
   function beginBoot() {
+    if (!intentionalLogout) safe(() => exits?.start(), undefined);
     const noop: { finish(outcome: BootOutcome, session: boolean | null, error?: unknown): void } = { finish: () => {} };
     if (typeof window === "undefined" || !transport || bootStarted || bootEnded || intentionalLogout) return noop;
     const trace = safe(() => readBootTraceId(performance), null);
@@ -194,6 +215,7 @@ export function createAuthSessionDiagnostics() {
         const diagnostic = parseAuthBootDiagnostic({
           v: 1, boot: trace, event: outcome === "pending" ? "boot-pending" : "boot-result",
           os: "ios", initial, after: capture(), cookieSession, outcome, session,
+          prevExit,
           ...(error == null ? cookieError : authErrorMetadata(error)),
         });
         if (!diagnostic) return;
@@ -221,7 +243,8 @@ export function createAuthSessionDiagnostics() {
   }
   return {
     capture, observeFetch, sessionRead, beginSessionRead, cancelPendingReads, beginBoot,
-    intentionalLogout: () => { intentionalLogout = true; cancelPendingReads(); },
+    sessionEstablished: (refreshed: boolean) => { if (!intentionalLogout) safe(() => exits?.sessionEstablished(refreshed), undefined); },
+    intentionalLogout: () => { intentionalLogout = true; safe(() => exits?.logout(), undefined); cancelPendingReads(); },
   };
 }
 

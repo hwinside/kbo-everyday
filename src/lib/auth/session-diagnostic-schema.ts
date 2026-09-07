@@ -1,3 +1,5 @@
+import { AUTH_DIAGNOSTIC_MAX_CHARS, isPreviousAuthExit, type PreviousAuthExit } from "./previous-exit-schema";
+
 /** Allowlisted, non-identifying auth observations; never tokens or cookie values. */
 export const AUTH_DIAGNOSTIC_SOURCE = "auth-session";
 export const AUTH_DIAGNOSTIC_EVENTS = [
@@ -27,6 +29,9 @@ export type AuthDiagnostic = {
   status: number | null;
   error: string | null;
   code: string | null;
+  // Optional for deployed older clients. The new reader sends explicit states;
+  // neither an omitted field nor missing/unreadable records imply deletion.
+  prevExit?: PreviousAuthExit;
 };
 const record = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
 const exactKeys = (x: Record<string, unknown>, keys: string[]) => Object.keys(x).length === keys.length && keys.every(k => Object.prototype.hasOwnProperty.call(x, k));
@@ -48,14 +53,20 @@ export function authErrorMetadata(error: unknown): Pick<AuthDiagnostic, "error" 
   } catch { return { error: "OtherError", code: null, status: null }; }
 }
 export function parseAuthDiagnostic(value: unknown): AuthDiagnostic | null {
-  if (!record(value) || !exactKeys(value, ["v", "boot", "event", "os", "initial", "before", "after", "session", "status", "error", "code"])) return null;
+  if (!record(value)) return null;
+  const keys = ["v", "boot", "event", "os", "initial", "before", "after", "session", "status", "error", "code"];
+  if (Object.hasOwn(value, "prevExit")) {
+    if (!isPreviousAuthExit(value.prevExit)) return null;
+    keys.push("prevExit");
+  }
+  if (!exactKeys(value, keys)) return null;
   if (value.v !== 1 || !(value.boot === null || (typeof value.boot === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.boot)))) return null;
   if (!AUTH_DIAGNOSTIC_EVENTS.some(e => e === value.event) || typeof value.os !== "string" || !["ios", "android", "other"].includes(value.os)) return null;
   if (![value.initial, value.before, value.after].every(storage) || !maybeBool(value.session)) return null;
   if (!(value.status === null || (Number.isInteger(value.status) && Number(value.status) >= 100 && Number(value.status) <= 599))) return null;
   if (!(value.error === null || ERROR_NAMES.some(e => e === value.error))) return null;
   if (!(value.code === null || ERROR_CODES.some(c => c === value.code))) return null;
-  // Collector's existing message limit. Reject, never truncate JSON observations.
-  if (JSON.stringify(value).length > 500) return null;
+  // Only these allowlisted sources get the bounded expanded message size.
+  if (JSON.stringify(value).length > AUTH_DIAGNOSTIC_MAX_CHARS) return null;
   return value as unknown as AuthDiagnostic;
 }
