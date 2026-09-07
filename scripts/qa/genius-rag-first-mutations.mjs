@@ -25,6 +25,48 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r55 복합 질문에서 평가 요청 소실",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'return { ...definition, assessment: { question: compound.assessment, mode: "context_required" } };',
+    to: 'return definition;',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r56 모델 데이터에서 평가 요청 누락",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '...(frame.assessment ? { assessment: frame.assessment } : {}),',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r57 수량 재작성에서 평가 요청 소실",
+    file: PIPELINE,
+    from: 'assessment: definition.assessment, ',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r58 근거 없는 경로에서 기존 평가 근거 상태 재사용",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'mode: hasEvidence ? "grounded_only" as const : "context_required" as const',
+    to: 'mode: frame.assessment.mode',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r59 복합 질문을 고정 사전으로 종결",
+    file: PIPELINE,
+    from: 'scopeGate || statDefinition?.assessment || statDefinition?.explanation === "plain_example"',
+    to: 'scopeGate || statDefinition?.explanation === "plain_example"',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r60 복합 임계값 질문을 값 조회로 반환",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'const text = (splitStatDefinitionAssessment(question)?.definition ?? question).normalize("NFKC").toLowerCase();',
+    to: 'const text = question.normalize("NFKC").toLowerCase();',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r52 일반 모델 경계에서 이전 공식 근거 상태 재사용",
     file: "src/lib/baseball-qa/gemini-request.ts",
     from: 'statDefinitionData(definitionWithEvidence(definition, false))',
@@ -69,7 +111,7 @@ const MUTATIONS = [
   {
     name: "r48 재설명 요청에 고정 사전 답변 재사용",
     file: PIPELINE,
-    from: 'scopeGate || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question)',
+    from: 'scopeGate || statDefinition?.assessment || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question)',
     to: 'scopeGate ? null : matchGlossary(glossary, question)',
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
