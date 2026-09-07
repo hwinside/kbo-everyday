@@ -25,6 +25,12 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r68 clip source before official context repair loses closing effect",
+    file: RETRIEVE,
+    from: 'const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);',
+    to: 'const row = repairKnownOfficialRuleContext({ ...original, content: original.content.slice(0, RAG_EVIDENCE_MAX_CHARS) }, RAG_EVIDENCE_MAX_CHARS);',
+  },
+  {
     name: "r65 official appendix presentation repair removed",
     file: RETRIEVE,
     from: 'const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);',

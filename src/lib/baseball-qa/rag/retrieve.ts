@@ -550,7 +550,10 @@ export function sanitizeEvidenceContent(
 export function selectEvidence(rows: RagEvidence[]): RagEvidence[] {
   const selected: RagEvidence[] = [];
   let lockedGrade: SourceGrade | null = null;
-  for (const row of rows) {
+  for (const original of rows) {
+    // Repair before the sanitizer's character cap, while the full closing
+    // clause is still available. The sanitizer remains mandatory afterwards.
+    const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);
     const content = sanitizeEvidenceContent(row.content, row);
     if (content.length < 20) continue;
     if (lockedGrade === null) lockedGrade = row.sourceGrade;
@@ -1019,8 +1022,7 @@ export function buildRagLlmRequest(
   //   주석은 **데이터 구획 안**에만 들어간다 — 지시문은 systemInstruction 에만 둔다(인젝션 경계).
   //   `evidenceTime` 이 없으면 종전과 **byte 동일**하다(선수·뉴스·공식 경로 무영향).
   const block = evidence
-    .map((original, index) => {
-      const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);
+    .map((row, index) => {
       const head = `[자료${index + 1}] ${row.pageTitle} / ${row.sectionPath}`;
       if (!extras.evidenceTime) return `${head}\n${row.content}`;
       return `${head} (${formatEvidenceTimeAnnotation(row, extras.evidenceTime)})\n${row.content}`;
