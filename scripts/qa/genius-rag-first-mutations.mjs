@@ -25,6 +25,27 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r74 canonical alpha rank IDs regress to numeric-only",
+    file: "src/lib/baseball-qa/stats/rank-request-context.ts",
+    from: "return /^(?:\\d{1,8}|[A-Z]{2}\\d{3})$/.test(id) ? id : undefined;",
+    to: "return /^\\d{1,8}$/.test(id) ? id : undefined;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r75 unqualified missing AVG rejects the full snapshot",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "const noAverage = row.avg === \"-\" && Number(row.qualifiedRate) === 0;",
+    to: "const noAverage = false;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r76 qualified foreign players are silently excluded",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "canonicalRows.push({ ...row, kbo_id: id, player_key: id });",
+    to: "if (/^\\d+$/.test(id)) canonicalRows.push({ ...row, kbo_id: id, player_key: id });",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r73 unsupported named rankings fall through to scalar values",
     file: PIPELINE,
     from: "hasPlayer && !isRankAsk(question) ? unavailable(RANK_SCOPE_ANSWER) : null;",
@@ -48,8 +69,8 @@ const MUTATIONS = [
   {
     name: "r71 club request is ranked across the league",
     file: "src/lib/baseball-qa/stats/question-operation.ts",
-    from: 'const ranked = rankByStat(rows, "avg");',
-    to: 'const ranked = rankByStat(snapshot.rows, "avg");',
+    from: 'const ranked = rankByStat(rows.filter((row) => row.avg !== "-"), "avg");',
+    to: 'const ranked = rankByStat(canonicalRows.filter((row) => row.avg !== "-"), "avg");',
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
   {

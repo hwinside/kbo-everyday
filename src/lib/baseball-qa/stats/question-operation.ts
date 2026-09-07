@@ -1,6 +1,7 @@
 import { rankByStat } from "../../stats/title-rankings";
 import { STATS_STALE_MS, SUPPORTED_SEASON } from "./season-record";
 import type { ServedBatterSnapshot } from "./served-record";
+import { readRankPlayerId } from "./rank-request-context";
 import { KBO_REGULAR_SEASON_GAMES, LIVE_TEAM_BLOCK_MAX_AGE_MS, kstSeasonOf, type StandingsSnapshot } from "./team-record";
 
 /** An operation is not a statistic: a rank/duration/remainder cannot be answered
@@ -50,26 +51,34 @@ export function renderAverageRank(
   if (!Number.isFinite(at) || at > now || now - at > STATS_STALE_MS
     || kstSeasonOf(now) !== SUPPORTED_SEASON || kstSeasonOf(at) !== SUPPORTED_SEASON || snapshot.rows.length === 0) return null;
   const ids = new Set<string>();
+  const canonicalRows: ServedBatterSnapshot["rows"] = [];
   for (const row of snapshot.rows) {
-    if (!/^\d{1,8}$/.test(row.kbo_id) || ids.has(row.kbo_id)
+    const id = readRankPlayerId(row.kbo_id);
+    if (!id || readRankPlayerId(row.player_key) !== id || ids.has(id)
       || !row.name || /[\r\n<>]/.test(row.name)
-      || ![0, 1, "0", "1"].includes(row.qualifiedRate as number)
-      || row.avg === null || row.avg === undefined || row.avg === "" || !Number.isFinite(Number(row.avg))
-      || Number(row.avg) < 0 || Number(row.avg) > 1) return null;
-    ids.add(row.kbo_id);
+      || ![0, 1, "0", "1"].includes(row.qualifiedRate as number)) return null;
+    // Full-entry includes pitchers/zero-PA players with no defined AVG. They
+    // cannot affect AVG ranks, but remain available for the unqualified reply.
+    const noAverage = row.avg === "-" && Number(row.qualifiedRate) === 0;
+    if (!noAverage && (row.avg === null || row.avg === undefined || row.avg === ""
+      || !Number.isFinite(Number(row.avg)) || Number(row.avg) < 0 || Number(row.avg) > 1)) return null;
+    ids.add(id);
+    canonicalRows.push({ ...row, kbo_id: id, player_key: id });
   }
   // A club ranking re-ranks that club's qualified players, not league ranks
   // filtered afterwards. An explicit league request supplies no team filter.
-  if (target.team && snapshot.rows.some((row) => !row.team || teamIdOf(row.team) === null)) return null;
-  const rows = target.team ? snapshot.rows.filter((row) => teamIdOf(row.team ?? "") === target.team!.id) : snapshot.rows;
+  if (target.team && canonicalRows.some((row) => !row.team || teamIdOf(row.team) === null)) return null;
+  const rows = target.team ? canonicalRows.filter((row) => teamIdOf(row.team ?? "") === target.team!.id) : canonicalRows;
   if (rows.length === 0) return null;
-  const ranked = rankByStat(rows, "avg");
+  const ranked = rankByStat(rows.filter((row) => row.avg !== "-"), "avg");
   const scope = target.team ? `${target.team.name} 선수 중` : "KBO 전체 타자 중";
   const stamp = `${SUPPORTED_SEASON}시즌 ${dateOf(snapshot.updatedAt)} 수집 기록 기준`;
   if (target.player) {
-    const player = rows.find((row) => row.kbo_id === target.player!.id);
+    const playerId = readRankPlayerId(target.player.id);
+    if (!playerId) return null;
+    const player = rows.find((row) => row.kbo_id === playerId);
     if (!player || player.name !== target.player.name) return null;
-    const result = ranked.find((row) => row.kbo_id === target.player!.id);
+    const result = ranked.find((row) => row.kbo_id === playerId);
     if (!result) return `${stamp}, ${target.player.name} 선수는 규정타석 미달로 타율 순위에 포함되지 않습니다.`;
     return `${stamp}, ${target.player.name} 선수는 ${scope} 규정타석을 채운 선수의 타율 ${result.rank}위입니다(타율 ${Number(result.avg).toFixed(3)}). 같은 타율은 공동 순위입니다.`;
   }
