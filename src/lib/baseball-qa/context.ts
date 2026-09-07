@@ -1,6 +1,7 @@
 // 야잘알봇 멀티턴 맥락 선정 (spec: specs/baseball-genius-v2-hybrid-rag.md §4.1 B1~B5)
 // 후속 질문("또 다른 경우는?")이 blocked로 떨어지던 버그를 exact 계약으로 해소한다.
 // DB 접근은 server.ts가 RPC로 수행하고, 여기서는 그 결과 1행을 순수 판정한다.
+import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 
 /**
  * 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed).
@@ -91,6 +92,8 @@ export function isFollowupPhrase(question: string): boolean {
 
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
 export interface PreviousTurnRow {
+  /** Exact previous job's validated final-envelope topic, not user/model text. */
+  definitionContext?: unknown;
   /** 직전 user turn 질문 본문 */
   question: string | null;
   /** 그 turn의 답변 DM 본문 (dedup_key='baseball-genius:'||q.id) */
@@ -107,6 +110,7 @@ export interface PreviousTurnRow {
 export interface ContextTurn {
   question: string;
   answer: string;
+  definitionContext?: StatDefinitionContext;
 }
 
 /**
@@ -169,5 +173,6 @@ function qualifyContextTurn(
   if (row.jobSource === "unsure") {
     return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)" };
   }
-  return { question, answer };
+  const definitionContext = readStatDefinitionContext(row.definitionContext);
+  return { question, answer, ...(definitionContext ? { definitionContext } : {}) };
 }

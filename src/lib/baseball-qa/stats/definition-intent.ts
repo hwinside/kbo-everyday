@@ -1,5 +1,6 @@
 import type { ContextTurn } from "../context";
 import { KBO_OFFICIAL_METRIC_TERMS } from "./kbo-official-metric-columns";
+import { readStatDefinitionContext, type StatDefinitionContext, type DefinitionPeriodScope } from "./definition-context";
 
 // A narrow routing exception, not an answer dictionary. Unknown/ambiguous asks
 // keep the existing routes; the model still decides what the evidence supports.
@@ -48,8 +49,8 @@ export interface StatDefinitionFrame {
   terms: string[];
   followup: boolean;
   period?: {
-    scope: "season" | "career" | "mixed" | "unspecified";
-    source: "question" | "previous_question" | "previous_answer" | "none";
+    scope: DefinitionPeriodScope;
+    source: "question" | "previous_definition" | "previous_question" | "previous_answer" | "none";
   };
   repair?: {
     reason: "numeric_not_in_evidence" | "numeric_not_in_question";
@@ -103,7 +104,7 @@ export function definitionNumericSource(question: string, definition?: StatDefin
   if (!definition?.context) return question;
   // A quoted count belongs to its original period. A season -> career switch
   // must not turn a previously quoted season count into a career fact.
-  const previous = periodInText(definition.context.question) ?? periodInText(definition.context.answer);
+  const previous = definition.context.definitionContext?.period ?? periodInText(definition.context.question) ?? periodInText(definition.context.answer);
   const current = definition.period?.scope;
   if (previous && current && current !== "unspecified" && current !== previous) return question;
   return `${question}\n${definition.context.question}`;
@@ -122,6 +123,8 @@ function definitionPeriod(question: string, context?: ContextTurn): NonNullable<
   const explicit = periodInText(question);
   if (explicit) return { scope: explicit, source: "question" };
   if (context) {
+    const resolved = readStatDefinitionContext(context.definitionContext);
+    if (resolved) return { scope: resolved.period, source: "previous_definition" };
     const userPeriod = periodInText(context.question);
     if (userPeriod) return { scope: userPeriod, source: "previous_question" };
     const answerPeriod = periodInText(context.answer);
@@ -131,8 +134,14 @@ function definitionPeriod(question: string, context?: ContextTurn): NonNullable<
 }
 
 function contextMetricTerms(context: ContextTurn): string[] {
+  const resolved = readStatDefinitionContext(context.definitionContext);
+  if (resolved) return resolved.terms;
   const terms = metricTerms(context.question);
   return terms.length > 0 ? terms : metricTerms(context.answer);
+}
+
+export function definitionContextFor(frame?: StatDefinitionFrame | null): StatDefinitionContext | undefined {
+  return frame ? readStatDefinitionContext({ version: 1, terms: frame.terms, period: frame.period?.scope ?? "unspecified" }) : undefined;
 }
 
 function definitionIntent(terms: string[], followup: boolean, question: string, context?: ContextTurn): StatDefinitionIntent {
@@ -161,7 +170,7 @@ export function resolveStatDefinitionIntent(
   if (!isReferenceMeaningQuestion(question) && !periodFollowup) return null;
   // "통산은?" after a record-value question still asks for a value. Do not
   // silently convert it to a definition merely because a metric is present.
-  if (periodFollowup && !isStatDefinitionQuestion(context.question) &&
+  if (periodFollowup && !readStatDefinitionContext(context.definitionContext) && !isStatDefinitionQuestion(context.question) &&
       !isReferenceMeaningQuestion(context.question) && !isStatPeriodFollowupQuestion(context.question)) return null;
   const terms = contextMetricTerms(context);
   if (terms.length !== 1) return null;

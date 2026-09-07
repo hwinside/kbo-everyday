@@ -25,6 +25,41 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r38 generic 정의 주제 저장 제거 — 다음 기간 전환이 답변의 다른 지표에 흔들린다",
+    file: PIPELINE,
+    from: 'definitionContext: definitionContextFor(statDefinition),',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r39 공식 grounded 주제 저장 제거 — 같은 주제의 후속 프레임이 소실된다",
+    file: PIPELINE,
+    from: 'answer, source: "rag", sourceUrl,\n    definitionContext: definitionContextFor(definition),',
+    to: 'answer, source: "rag", sourceUrl,',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r40 context selector 주제 전달 제거 — DB에 저장해도 후속으로 못 읽는다",
+    file: "src/lib/baseball-qa/context.ts",
+    from: 'const definitionContext = readStatDefinitionContext(row.definitionContext);',
+    to: 'const definitionContext = undefined;',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r41 SQL row 주제 복원 제거 — 실제 서버 로딩 경로에서 프레임이 사라진다",
+    file: "src/lib/baseball-qa/previous-turn-row.ts",
+    from: 'const definitionContext = final?.source === row.job_source ? final?.definitionContext : undefined;',
+    to: 'const definitionContext = undefined;',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r42 공식 GENERAL 주제 저장 제거 — 빈 근거 fallback 후 문맥을 잃는다",
+    file: PIPELINE,
+    from: 'statRuleTermVerified: Boolean(definition),\n      definitionContext: definitionContextFor(definition),',
+    to: 'statRuleTermVerified: Boolean(definition),',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r33 정의 기간 전달 제거 — 모델이 시즌/통산 문맥을 잃는다",
     file: "src/lib/baseball-qa/stats/definition-intent.ts",
     from: 'period: frame.period ?? { scope: "unspecified", source: "none" }',

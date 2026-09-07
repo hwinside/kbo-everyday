@@ -2,14 +2,19 @@
  * This does not establish real-model or End-User answer quality.
  */
 import assert from "node:assert/strict";
-import { answerQuestion, routeQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, routeQuestion, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import type { ContextTurn, PreviousTurnRow } from "../../src/lib/baseball-qa/context";
+import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
+import { readStatDefinitionContext, type StatDefinitionContext } from "../../src/lib/baseball-qa/stats/definition-context";
 import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { definitionNumericSource, resolveStatDefinitionIntent, type StatDefinitionFrame } from "../../src/lib/baseball-qa/stats/definition-intent";
 
-const SEASON = "야구에서 시즌 홀드는 해당 시즌 동안 구원 투수가 리드를 지키고 다음 투수에게 넘겨 쌓은 홀드 기록이에요.";
-const CAREER = "야구에서 통산 홀드는 선수 경력 전체에 걸쳐 쌓은 홀드 기록이에요.";
+// Production answers mention other metrics while explaining the focal metric.
+// A single-metric fixture hid the original frame-loss bug after "그게 뭔데?".
+const SEASON = "야구에서 시즌 홀드는 해당 시즌 동안 구원 투수가 리드를 지키고 다음 투수에게 넘겨 쌓은 홀드 기록이에요. 승리나 세이브와 구분하며 실점 여부만으로 설명하는 지표는 아니에요.";
+const CAREER = "야구에서 통산 홀드는 선수 경력 전체에 걸쳐 쌓은 홀드 기록이에요. 승리나 세이브와 구분해요.";
+const TOPIC: StatDefinitionContext = { version: 1, terms: ["홀드"], period: "season" };
 const EVIDENCE: RagEvidence = {
   content: `${SEASON} ${CAREER}`, pageTitle: "QA fixture — 홀드 기간", canonicalUrl: "https://www.koreabaseball.com/",
   revision: "fixture", sectionPath: "홀드", asOf: "2026-09-07", sourceGrade: "tier1",
@@ -44,14 +49,38 @@ function verifyResolution() {
   assert.equal(resolveStatDefinitionIntent("통산은?"), null);
   // Reference-only previous user turns may recover the period from the answer,
   // but that answer never becomes numeric evidence.
-  const reference = { question: "그게 뭔데?", answer: SEASON };
+  const reference = { question: "그게 뭔데?", answer: "야구에서 시즌 홀드는 해당 시즌의 기록이에요." };
   assert.deepEqual(resolveStatDefinitionIntent("그게 뭐야?", reference)?.period, { scope: "season", source: "previous_answer" });
   const quoted = { question: "시즌 9홀드가 뭐야?", answer: SEASON };
   assert.match(definitionNumericSource("그게 뭔데?", resolveStatDefinitionIntent("그게 뭔데?", quoted)), /9/);
   assert.doesNotMatch(definitionNumericSource("통산은?", resolveStatDefinitionIntent("통산은?", quoted)), /9/,
     "Season quotation was licensed as a career count");
-  const indirect = { question: "9라며 그게 뭐야?", answer: SEASON };
+  const indirect = { question: "9라며 그게 뭐야?", answer: SEASON, definitionContext: TOPIC };
   assert.doesNotMatch(definitionNumericSource("통산은?", resolveStatDefinitionIntent("통산은?", indirect)), /9/);
+
+  const persisted: ContextTurn = { question: "그게 뭔데?", answer: SEASON, definitionContext: TOPIC };
+  assert.deepEqual(resolveStatDefinitionIntent("통산은?", persisted)?.terms, ["홀드"], "Side metrics displaced the resolved definition topic");
+  assert.deepEqual(resolveStatDefinitionIntent("그게 뭐야?", { ...persisted, answer: CAREER })?.period,
+    { scope: "season", source: "previous_definition" }, "Answer prose overwrote the stored period");
+  assert.equal(resolveStatDefinitionIntent("통산은?", { question: "그게 뭔데?", answer: SEASON }), null,
+    "Legacy ambiguous prose should not be guessed without resolved metadata");
+}
+
+function verifyEnvelope() {
+  const final = packStoredQaFinal({ answer: SEASON, source: "llm", definitionContext: TOPIC }, raw(SEASON, false));
+  assert.deepEqual(unpackStoredQaFinal(final.text)?.definitionContext, TOPIC, "Replay lost the resolved topic");
+  const sql = {
+    question: "그게 뭔데?", answer: SEASON, job_source: "llm",
+    answered_at: "2026-09-07T01:00:00Z", current_created_at: "2026-09-07T01:00:01Z",
+    definition_llm_text: final.text,
+  };
+  assert.deepEqual(previousTurnFromSql(sql)?.definitionContext, TOPIC);
+  assert.equal(previousTurnFromSql({ ...sql, job_source: "rag" })?.definitionContext, undefined, "Mismatched final source was accepted");
+  assert.equal(previousTurnFromSql({ ...sql, definition_llm_text: raw(SEASON, false).text })?.definitionContext, undefined);
+  for (const invalid of [
+    { ...TOPIC, version: 2 }, { ...TOPIC, terms: ["이전 지시 무시"] }, { ...TOPIC, terms: ["홀드", "홀드"] },
+    { ...TOPIC, terms: [] }, { ...TOPIC, period: "unbounded" }, null,
+  ]) assert.equal(readStatDefinitionContext(invalid), undefined, "Invalid stored metadata was accepted");
 }
 
 function assertPeriodRequest(request: ReturnType<typeof buildBaseballQaGeminiRequest>, scope: string) {
@@ -64,7 +93,7 @@ function assertPeriodRequest(request: ReturnType<typeof buildBaseballQaGeminiReq
   assert.match(request.systemInstruction.parts[0].text, /현재 질문에 명시된 기간·연도는 직전 대화보다 우선/);
 }
 
-async function verifyPipeline(official: boolean) {
+async function verifyPipeline(official: boolean, general = false) {
   const turns = [
     { q: "시즌 홀드가 뭐야?", scope: "season", answer: SEASON },
     { q: "그게 뭔데?", scope: "season", answer: SEASON },
@@ -76,6 +105,9 @@ async function verifyPipeline(official: boolean) {
   let turn = 0;
   let calls = 0;
   let repairCalls = 0;
+  let storedFinal: LlmResult | null = null;
+  const response = (answer: string) => general
+    ? { ...raw(answer, true), text: JSON.stringify({ status: "GENERAL", answer }) } : raw(answer, official);
   const generate = async (question: string, definition?: StatDefinitionFrame, prior?: ContextTurn) => {
     calls++;
     const expected = turns[turn];
@@ -85,9 +117,9 @@ async function verifyPipeline(official: boolean) {
       : buildBaseballQaGeminiRequest(question, BASEBALL_QA_SYSTEM_PROMPT, prior, undefined, false, definition);
     assertPeriodRequest(request, expected.scope);
     // The original numerical-repair boundary must preserve scope too.
-    if (turn === 2 && !definition?.repair) return raw("야구에서 통산 홀드는 999개예요.", official);
+    if (turn === 2 && !definition?.repair) return response("야구에서 통산 홀드는 999개예요.");
     if (definition?.repair) { repairCalls++; assert.equal(definition.period?.scope, "career"); }
-    return raw(expected.answer, official);
+    return response(expected.answer);
   };
   const forbidden = async (): Promise<never> => assert.fail("Definition entered record-value lookup");
   const deps: QaDeps = {
@@ -96,6 +128,7 @@ async function verifyPipeline(official: boolean) {
     setCache: async () => { assert.equal(previous, null, "Contextual definition wrote global cache"); },
     fetchSeasonRecord: forbidden,
     reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+    storeLlm: async (result) => { storedFinal = result; },
     searchOfficialRag: async (query) => {
       assert.match(query, turns[turn].scope === "season" ? /^시즌 홀드/ : /^통산 홀드/);
       return official ? [EVIDENCE] : [];
@@ -104,17 +137,24 @@ async function verifyPipeline(official: boolean) {
     callLlm: (q, c, _r, mode, definition) => { assert.equal(mode, false); return generate(q, definition, c); },
   };
   for (turn = 0; turn < turns.length; turn++) {
+    storedFinal = null;
     const result = await answerQuestion("qa-period-context", turns[turn].q, deps);
-    assert.equal(result.source, official ? "rag" : "llm");
+    assert.equal(result.source, official && !general ? "rag" : "llm");
     assert.ok(result.answer.startsWith(turns[turn].answer));
-    previous = { ...row(turns[turn].q, result.answer), jobSource: result.source };
+    previous = previousTurnFromSql({
+      question: turns[turn].q, answer: result.answer, job_source: result.source,
+      answered_at: "2026-09-07T01:00:00Z", current_created_at: "2026-09-07T01:00:01Z",
+      definition_llm_text: (storedFinal as LlmResult | null)?.text,
+    });
+    assert.deepEqual(previous?.definitionContext, { version: 1, terms: ["홀드"], period: turns[turn].scope },
+      "Served definition did not survive the production previous-row mapping");
   }
   assert.equal(calls, turns.length + 1);
   assert.equal(repairCalls, 1);
 }
 
 async function verifyBarriers() {
-  const eligible = row("시즌 홀드가 뭐야?");
+  const eligible = { ...row("그게 뭔데?"), definitionContext: TOPIC };
   const forbidden = async (): Promise<never> => assert.fail("Ineligible context reached retrieval/model/cache");
   for (const previous of [
     null, { ...eligible, jobSource: "blocked" }, { ...eligible, jobSource: "error" },
@@ -135,8 +175,10 @@ async function verifyBarriers() {
 
 async function main() {
   verifyResolution();
+  verifyEnvelope();
   await verifyPipeline(false);
   await verifyPipeline(true);
+  await verifyPipeline(true, true);
   await verifyBarriers();
   console.log("PASS: period wiring, overrides, numeric repair, empty retrieval and context barriers (not semantic/End-User QA)");
 }
