@@ -8,6 +8,7 @@
  */
 import { createClient } from "@supabase/supabase-js";
 import playwright from "playwright";
+import { expect } from "@playwright/test";
 import { SUPABASE_URL, ANON, SERVICE_ROLE } from "./_env.mjs";
 
 const { chromium } = playwright;
@@ -137,16 +138,25 @@ async function main() {
   await gifButton.waitFor({ state: "visible" });
 
   const composer = gifButton.locator('xpath=ancestor::*[@data-composer="game-chat"][1]');
-  const inputBox = await composer.locator('textarea[name="chat-message"]').boundingBox();
-  const gifButtonBox = await gifButton.boundingBox();
-  const sendButtonBox = await composer.locator("button:has(svg.lucide-send)").boundingBox();
   const centerY = (box) => box.y + box.height / 2;
-  assert(
-    inputBox && gifButtonBox && sendButtonBox
-      && Math.abs(centerY(inputBox) - centerY(gifButtonBox)) <= 1
-      && Math.abs(centerY(inputBox) - centerY(sendButtonBox)) <= 1,
-    "작성창 GIF·입력·전송 버튼 중앙 정렬",
-  );
+  // Visibility can precede font/layout settling. Re-read geometry on each
+  // attempt; keep the original 1px tolerance and fail if it never aligns.
+  await expect.poll(async () => {
+    const [inputBox, gifButtonBox, sendButtonBox] = await Promise.all([
+      composer.locator('textarea[name="chat-message"]').boundingBox(),
+      gifButton.boundingBox(),
+      composer.locator("button:has(svg.lucide-send)").boundingBox(),
+    ]);
+    if (!inputBox || !gifButtonBox || !sendButtonBox) return Number.POSITIVE_INFINITY;
+    return Math.max(
+      Math.abs(centerY(inputBox) - centerY(gifButtonBox)),
+      Math.abs(centerY(inputBox) - centerY(sendButtonBox)),
+    );
+  }, {
+    message: "작성창 GIF·입력·전송 버튼 중앙 정렬",
+    timeout: 5_000,
+  }).toBeLessThanOrEqual(1);
+  console.log("  ✅ 작성창 GIF·입력·전송 버튼 중앙 정렬");
 
   await gifButton.click();
   await page.getByAltText("QA root GIF").waitFor({ state: "visible", timeout: 10_000 });
