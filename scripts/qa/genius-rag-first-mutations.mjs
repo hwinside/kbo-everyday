@@ -25,6 +25,27 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r49 재설명 방식 저장 소실 — 다음 질문도 같은 방식 반복",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'explanationApproach: frame.reexplanation?.approach',
+    to: 'explanationApproach: undefined',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r50 직전 답변 비교 데이터 모델 요청 누락",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '...(frame.reexplanation ? { reexplanation: frame.reexplanation } : {}),',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r51 수량 재작성에서 설명 방식·비교 대상 소실",
+    file: PIPELINE,
+    from: 'reexplanation: definition.reexplanation, ',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r48 재설명 요청에 고정 사전 답변 재사용",
     file: PIPELINE,
     from: 'scopeGate || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question)',

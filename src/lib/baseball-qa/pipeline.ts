@@ -868,7 +868,7 @@ function definitionRepairFrame(
   try {
     const value = JSON.parse(llm.text) as { answer?: unknown };
     if (typeof value.answer !== "string") return null;
-    return { terms: definition.terms, followup: definition.followup, explanation: definition.explanation, period: definition.period, repair: {
+    return { terms: definition.terms, followup: definition.followup, reexplanation: definition.reexplanation, explanation: definition.explanation, period: definition.period, repair: {
       reason, answer: value.answer,
       quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
       numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
