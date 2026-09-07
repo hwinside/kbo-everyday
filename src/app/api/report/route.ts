@@ -4,6 +4,8 @@ import { supabaseErrorResponse } from "@/lib/supabase/error";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { sendAdminPush } from "@/lib/admin/push";
 import { evaluateTicketReportGuard } from "@/lib/tickets/report-guard";
+import { REPORT_REASONS } from "@/lib/game-reviews/domain";
+import { databaseError, fail, positiveId, ReviewError, reviewJson } from "@/lib/game-reviews/server";
 
 // AI 필터 — 간단한 금칙어 체크 (추후 LLM 연동)
 const BLOCKED_WORDS = [
@@ -28,7 +30,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "인증이 필요합니다" }, { status: 401 });
   }
 
-  const { targetType, targetId, reason, detail } = await req.json();
+  const input = await req.json().catch(() => null);
+  if (!input || typeof input !== "object") return NextResponse.json({ error: "필수 값 누락" }, { status: 400 });
+  const { targetType, targetId, reason, detail } = input;
+
+  if (targetType === "game_review" || targetType === "game_review_comment") {
+    try {
+      if (!REPORT_REASONS.includes(reason) || (detail != null && (typeof detail !== "string" || detail.length > 500))) throw new ReviewError("신고 사유를 확인해 주세요");
+      const { error } = await supabase.rpc("gr_report", { a: verified.user.id, kind: targetType, target: positiveId(targetId), why: reason, details: detail ?? null });
+      if (error) databaseError(error);
+      return reviewJson({ ok: true });
+    } catch (error) { return fail(error); }
+  }
 
   if (!targetType || !targetId || !reason) {
     return NextResponse.json({ error: "필수 값 누락" }, { status: 400 });
