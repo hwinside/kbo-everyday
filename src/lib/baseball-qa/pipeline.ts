@@ -1,4 +1,4 @@
-import { definitionContextFor, definitionNumericSource, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
+import { definitionContextFor, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
@@ -868,7 +868,7 @@ function definitionRepairFrame(
   try {
     const value = JSON.parse(llm.text) as { answer?: unknown };
     if (typeof value.answer !== "string") return null;
-    return { terms: definition.terms, followup: definition.followup, period: definition.period, repair: {
+    return { terms: definition.terms, followup: definition.followup, explanation: definition.explanation, period: definition.period, repair: {
       reason, answer: value.answer,
       quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
       numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
@@ -3585,6 +3585,7 @@ export function routeQuestion(
     return isSupportedRuleTermQuestion(question, glossary, players)
       ? "baseball_rule_term" : "llm_scope_gate";
   }
+  if (isPlainStatExplanationRequest(question)) return hasContext ? "llm_scope_gate" : "context_missing";
   if (isNoHitNoRunQuestion(question)) return "event_record";
   const hasStat = STAT_WORDS.some((word) => tokenMatches(tokens, word));
   const hasTeam = mentionsTeam(tokens);
@@ -6128,7 +6129,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   }
 
   // ① 검수 사전 (토큰 0)
-  const hit = scopeGate ? null : matchGlossary(glossary, question);
+  // A fixed dictionary answer cannot honor a request to explain differently.
+  const hit = scopeGate || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question);
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
@@ -6180,7 +6182,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   우회한다 — 가드 소유 질문은 매퍼를 결정론적으로 건너뛰어 합성 우회를 닫는다.
   if (
     deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
-    !questionMentionsTeam && !startersOwned && !statNumericGuard
+    !questionMentionsTeam && !startersOwned && !statNumericGuard && statDefinition?.explanation !== "plain_example"
   ) {
     const candidates = glossaryCandidatesIn(glossary, question);
     if (candidates.length > 0) {

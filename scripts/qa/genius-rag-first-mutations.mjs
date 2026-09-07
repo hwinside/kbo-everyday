@@ -25,6 +25,48 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r48 재설명 요청에 고정 사전 답변 재사용",
+    file: PIPELINE,
+    from: 'scopeGate || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question)',
+    to: 'scopeGate ? null : matchGlossary(glossary, question)',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r43 재설명 표현 모드 제거 — 같은 정의만 반복한다",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'return { terms, followup, period, explanation, searchQuestion:',
+    to: 'return { terms, followup, period, explanation: undefined, searchQuestion:',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r44 수량 재작성 시 쉬운 설명 소실",
+    file: PIPELINE,
+    from: 'explanation: definition.explanation, period:',
+    to: 'period:',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r45 무문맥 쉬운 설명 요청 가드 제거",
+    file: PIPELINE,
+    from: '  if (isPlainStatExplanationRequest(question)) return hasContext ? "llm_scope_gate" : "context_missing";',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r46 값 질문 뒤 쉬운 설명을 정의로 강제 전환",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: '  if (plainFollowup && !hasPreviousDefinition(context)) return null;',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r47 모델 요청에서 재설명 모드 누락",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'explanation: frame.explanation ?? "definition",',
+    to: 'explanation: "definition",',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r38 generic 정의 주제 저장 제거 — 다음 기간 전환이 답변의 다른 지표에 흔들린다",
     file: PIPELINE,
     from: 'definitionContext: definitionContextFor(statDefinition),',
