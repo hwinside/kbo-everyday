@@ -21,6 +21,7 @@ interface ReportRow {
   detail: string | null;
   created_at: string;
   ticket: TicketSummary | null;
+  game_review?: { id: number; game_id?: string; content: string; is_hidden: boolean; deleted_at: string | null } | null;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -28,12 +29,28 @@ const TYPE_LABELS: Record<string, string> = {
   post: "게시글",
   comment: "댓글",
   chat: "채팅",
+  game_review: "경기 한줄평",
+  game_review_comment: "한줄평 댓글",
 };
 
 export default function AdminReportsPage() {
   const [items, setItems] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("all");
+  const [moderationError, setModerationError] = useState("");
+  const [moderating, setModerating] = useState(false);
+
+  async function moderate(item: ReportRow) {
+    if (!item.game_review || moderating) return;
+    setModerating(true); setModerationError("");
+    const hidden = !item.game_review.is_hidden;
+    try {
+      const res = await fetch("/api/admin/game-reviews", { method: "POST", headers: { "Content-Type": "application/json", "x-admin-pin": getPin() }, body: JSON.stringify({ targetType: item.target_type, targetId: item.target_id, hidden }) });
+      if (!res.ok) throw new Error("처리에 실패했습니다. 다시 시도해 주세요.");
+      setItems(previous => previous.map(row => row.target_type === item.target_type && row.target_id === item.target_id && row.game_review ? { ...row, game_review: { ...row.game_review, is_hidden: hidden } } : row));
+    } catch (e) { setModerationError((e as Error).message); }
+    finally { setModerating(false); }
+  }
 
   const getPin = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -80,6 +97,7 @@ export default function AdminReportsPage() {
 
   return (
     <div className="space-y-6">
+      {moderationError && <p role="alert">{moderationError}</p>}
       <div className="flex items-center gap-2">
         <ShieldAlert className="w-6 h-6 text-[#FF453A]" />
         <h1 className="text-2xl font-bold">신고 관리</h1>
@@ -136,6 +154,12 @@ export default function AdminReportsPage() {
                   )}
                 </p>
                 {r.detail && <p className="text-xs text-[#8E8E93] mt-1">{r.detail}</p>}
+                {r.game_review && <div className="mt-3 rounded-lg border border-white/10 p-3 text-sm">
+                  {r.game_review.game_id && <a className="underline" href={`/games/${r.game_review.game_id}`}>경기 보기</a>}
+                  <p className="my-2 whitespace-pre-wrap break-words">{r.game_review.content}</p>
+                  <p>{r.game_review.deleted_at ? "작성자가 삭제함" : r.game_review.is_hidden ? "숨김 상태" : "노출 중"}</p>
+                  {!r.game_review.deleted_at && <button className="mt-2 min-h-11 rounded-lg bg-white/10 px-3 disabled:opacity-40" disabled={moderating} onClick={() => void moderate(r)}>{r.game_review.is_hidden ? "숨김 해제" : "운영자 숨김"}</button>}
+                </div>}
               </div>
             ))}
           </div>

@@ -56,6 +56,8 @@ import {
 } from "@/lib/source-snapshot";
 import PullToRefresh from "@/components/PullToRefresh";
 import PostgameInterviewSection from "@/components/game/PostgameInterviewSection";
+import GameReviewSection from "@/components/game/GameReviewSection";
+import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 
 type Tab = "kgwan" | "lineup" | "stats";
 
@@ -620,6 +622,7 @@ export default function GameDetailPage() {
         </div>
       )}
 
+      {GAME_REVIEWS_ENABLED && d.isFinal && <GameReviewSection key={`reviews:${gameId}`} gameId={gameId} />}
       <PostgameInterviewSection key={gameId} gameId={gameId} enabled={d.isFinal} />
 
       {d.derivedStatus === "cancelled" ? (
