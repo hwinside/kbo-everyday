@@ -436,6 +436,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-period-context",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },

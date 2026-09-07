@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import { answerQuestion, routeQuestion, CONTEXT_MISSING_ANSWER, type QaDeps, type LlmResult, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
 import type { PreviousTurnRow, ContextTurn } from "../../src/lib/baseball-qa/context";
+import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { isStatDefinitionQuestion, resolveStatDefinitionIntent, STAT_DEFINITION_PROMPT, type StatDefinitionFrame } from "../../src/lib/baseball-qa/stats/definition-intent";
 import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
 import { composeSeasonRecordAnswer, resolveSeasonRecordIntent } from "../../src/lib/baseball-qa/stats/season-record";
@@ -405,11 +406,18 @@ async function verifyEmptyRetrievalFallback() {
 
 async function main() {
   const live = process.argv.includes("--live");
+  const periodSequence = process.argv.includes("--period-sequence");
+  if (periodSequence && !live) throw new Error("--period-sequence is a live diagnostic; use the period-context gate for deterministic QA");
+  const questions = periodSequence ? [
+    "시즌 홀드가 뭐야?", "그게 뭔데?", "통산은?", "그게 뭐야?", "그럼 시즌은?",
+    "엉? 아니 지금 9라며 저게 무슨 뜻이냐고",
+  ] : QUESTIONS;
   const out = process.argv.find((arg) => arg.startsWith("--out="))?.slice(6);
   if (live && !out) throw new Error("Live diagnostics require --out=<local artifact path>");
   const traces: unknown[] = [];
   let previous: PreviousTurnRow | null = null;
   let sequence = 0;
+  let storedFinal: LlmResult | null = null;
   let searchCalls = 0;
   let modelCalls = 0;
   const noRecords = async (): Promise<never> => { throw new Error("Definition was incorrectly sent to record lookup"); };
@@ -419,6 +427,9 @@ async function main() {
     reserveDaily: async () => ({ allowed: true, remaining: 9 }),
     log: async (entry) => { traces.push({ stage: "final_log", entry }); },
     loadPreviousTurn: async () => previous,
+    // Same durable envelope -> SQL-row mapping as production, kept in memory.
+    // Do not replace this with production storeLlm (which writes the live DB).
+    storeLlm: async (result) => { storedFinal = result; },
     enablePlayerRag: true, fetchSeasonRecord: noRecords,
     searchOfficialRag: async (query) => {
       searchCalls++;
@@ -469,18 +480,20 @@ async function main() {
     };
   }
   try {
-    for (sequence = 0; sequence < QUESTIONS.length; sequence++) {
+    for (sequence = 0; sequence < questions.length; sequence++) {
+      storedFinal = null;
       const start = Date.now();
-      const result = await answerQuestion("qa-stat-definition-local", QUESTIONS[sequence], deps);
-      traces.push({ stage: "answer", question: QUESTIONS[sequence], result, elapsedMs: Date.now() - start });
+      const result = await answerQuestion("qa-stat-definition-local", questions[sequence], deps);
+      traces.push({ stage: "answer", question: questions[sequence], result, elapsedMs: Date.now() - start });
       if (!live) {
         assert.equal(result.source, "rag");
         assert.ok(result.answer.startsWith(ANSWER));
       }
-      previous = {
-        question: QUESTIONS[sequence], answer: result.answer, jobSource: result.source,
-        answeredAt: "2026-09-06T13:00:00Z", currentCreatedAt: "2026-09-06T13:00:01Z",
-      };
+      previous = previousTurnFromSql({
+        question: questions[sequence], answer: result.answer, job_source: result.source,
+        answered_at: "2026-09-06T13:00:00Z", current_created_at: "2026-09-06T13:00:01Z",
+        definition_llm_text: (storedFinal as LlmResult | null)?.text,
+      });
     }
     if (live) return;
     assert.equal(searchCalls, 4);

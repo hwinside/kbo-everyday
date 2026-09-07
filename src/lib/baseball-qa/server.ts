@@ -4,6 +4,7 @@
 // claim → (idempotent quota/LLM) 파이프라인 → ready 저장 → 답변 DM → completed 순으로 진행한다.
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { DEFINITION_REPAIR_TIMEOUT_MS, type StatDefinitionFrame } from "./stats/definition-intent";
+import { previousTurnFromSql, type PreviousTurnRowSql } from "./previous-turn-row";
 import { buildQuestionLogRow } from "@/lib/baseball-qa/log-row";
 import { planQuestionJobReady } from "@/lib/baseball-qa/job-ready-plan";
 import { sendOpsMessageToUser } from "@/lib/cs/send-ops-message";
@@ -31,7 +32,6 @@ import { fetchGamesUserFacingWithMeta } from "@/lib/crawler/games-user-facing";
 import {
   isFollowupPhrase,
   type ContextTurn,
-  type PreviousTurnRow,
 } from "@/lib/baseball-qa/context";
 import {
   BASEBALL_GENIUS_USER_ID,
@@ -853,15 +853,6 @@ export function newsRagEnabled(): boolean {
   return !["1", "true", "yes", "on"].includes(raw);
 }
 
-/** baseball_genius_previous_turn RPC 반환 행 (snake_case SQL 시그니처). */
-interface PreviousTurnRowSql {
-  question: string | null;
-  answer: string | null;
-  job_source: string | null;
-  answered_at: string | null;
-  current_created_at: string | null;
-}
-
 /**
  * picker 선택을 job 행에 고정하거나, 입력이 없으면 이미 고정된 값을 읽어온다.
  *
@@ -1121,18 +1112,16 @@ export function makeDeps(
     // spec §4.1 B1·B2: 바로 직전 user turn 1행만 가져온다 (과거 폴백 없음).
     loadPreviousTurn: async () => {
       // query-guard: bounded -- 직전 turn RPC는 messageId 기준 최대 한 행만 반환한다.
-      const { data, error } = await supabaseAdmin
-        .rpc("baseball_genius_previous_turn", { p_message_id: messageId });
-      if (error) throw error;
-      const row = (data as PreviousTurnRowSql[] | null)?.[0];
-      if (!row) return null;
-      return {
-        question: row.question,
-        answer: row.answer,
-        jobSource: row.job_source,
-        answeredAt: row.answered_at,
-        currentCreatedAt: row.current_created_at,
-      } satisfies PreviousTurnRow;
+      let result = await supabaseAdmin
+        .rpc("baseball_genius_previous_turn_v2", { p_message_id: messageId });
+      // Additive deployment/rollback compatibility only. Other DB failures keep
+      // the existing no-context behavior; never broaden the previous-turn query.
+      if (result.error?.code === "PGRST202" || result.error?.code === "42883") {
+        // query-guard: bounded -- v1 fallback도 동일 messageId의 직전 user turn 최대 1행만 반환한다.
+        result = await supabaseAdmin.rpc("baseball_genius_previous_turn", { p_message_id: messageId });
+      }
+      if (result.error) throw result.error;
+      return previousTurnFromSql((result.data as PreviousTurnRowSql[] | null)?.[0]);
     },
     setCache: async (questionNorm, answer) => {
       const { error } = await supabaseAdmin
