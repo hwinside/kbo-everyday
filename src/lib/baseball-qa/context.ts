@@ -1,3 +1,4 @@
+import { readRankRequestContext, type RankRequestContext } from "./stats/rank-request-context";
 // 야잘알봇 멀티턴 맥락 선정 (spec: specs/baseball-genius-v2-hybrid-rag.md §4.1 B1~B5)
 // 후속 질문("또 다른 경우는?")이 blocked로 떨어지던 버그를 exact 계약으로 해소한다.
 // DB 접근은 server.ts가 RPC로 수행하고, 여기서는 그 결과 1행을 순수 판정한다.
@@ -92,6 +93,7 @@ export function isFollowupPhrase(question: string): boolean {
 
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
 export interface PreviousTurnRow {
+  rankRequestContext?: unknown;
   /** Exact previous job's validated final-envelope topic, not user/model text. */
   definitionContext?: unknown;
   /** 직전 user turn 질문 본문 */
@@ -108,6 +110,7 @@ export interface PreviousTurnRow {
 
 /** LLM 컨텍스트로 주입할 소스 turn 1개 */
 export interface ContextTurn {
+  rankRequestContext?: RankRequestContext;
   question: string;
   answer: string;
   definitionContext?: StatDefinitionContext;
@@ -174,5 +177,8 @@ function qualifyContextTurn(
     return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)" };
   }
   const definitionContext = readStatDefinitionContext(row.definitionContext);
-  return { question, answer, ...(definitionContext ? { definitionContext } : {}) };
+  // Only our structured rank replies can carry this metadata. No global source
+  // allowlist or unsure-definition carryover is opened by the new contract.
+  const rankRequestContext = row.jobSource === "kbo_structured" ? readRankRequestContext(row.rankRequestContext) : undefined;
+  return { question, answer, ...(definitionContext ? { definitionContext } : {}), ...(rankRequestContext ? { rankRequestContext } : {}) };
 }

@@ -16,9 +16,11 @@ export function previousTurnFromSql(row: PreviousTurnRowSql | null | undefined):
   if (!row) return null;
   const final = row.definition_llm_text ? unpackStoredQaFinal(row.definition_llm_text) : null;
   const definitionContext = final?.source === row.job_source ? final?.definitionContext : undefined;
+  const rankRequestContext = final?.source === row.job_source ? final?.rankRequestContext : undefined;
   return {
     question: row.question, answer: row.answer, jobSource: row.job_source,
     answeredAt: row.answered_at, currentCreatedAt: row.current_created_at,
     ...(definitionContext ? { definitionContext } : {}),
+    ...(rankRequestContext ? { rankRequestContext } : {}),
   };
 }

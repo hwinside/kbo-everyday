@@ -71,7 +71,7 @@ import {
 import type { RagSourceKind } from "@/lib/baseball-qa/rag/contracts";
 import type { EvidenceProjector } from "@/lib/baseball-qa/rag/retrieve";
 import { createSeasonRecordFetcher } from "@/lib/baseball-qa/stats/fetch-season-record";
-import { createServedRecordFetcher } from "@/lib/baseball-qa/stats/served-record";
+import { createServedRecordFetcher, fetchServedBatterSnapshot } from "@/lib/baseball-qa/stats/served-record";
 import { createCareerRecordFetcher } from "@/lib/baseball-qa/stats/career-series";
 import { createCareerLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-leaderboard";
 import { createCareerMetricLeaderboardFetcher } from "@/lib/baseball-qa/stats/career-metric-leaderboard";
@@ -997,6 +997,7 @@ export function makeDeps(
      * 여기도 인라인 lambda 대신 seam factory 를 쓴다(게이트가 실제 배포 함수를 실행).
      */
     fetchServedRecord: createServedRecordFetcher(),
+    fetchBatterRanking: fetchServedBatterSnapshot,
     /**
      * 연도별·통산·과거 시즌 — KBO 공식 선수 상세 `Total.aspx` (2026-08-10 캐처:
      * `최형우 연도별 타율 추이`가 올해 단일값으로 오답). 공식 구조화 테이블 조회라

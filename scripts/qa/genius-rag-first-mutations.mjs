@@ -25,6 +25,34 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r69 scalar handlers steal requested operations",
+    file: PIPELINE,
+    from: "const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);",
+    to: "const operationAnswer = null;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r70 remaining request is replaced with games played",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "${KBO_REGULAR_SEASON_GAMES - row.games}경기",
+    to: "${row.games}경기",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r71 club request is ranked across the league",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: 'const ranked = rankByStat(rows, "avg");',
+    to: 'const ranked = rankByStat(snapshot.rows, "avg");',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r72 exact previous-message request metadata is lost",
+    file: "src/lib/baseball-qa/previous-turn-row.ts",
+    from: "...(rankRequestContext ? { rankRequestContext } : {}),",
+    to: "// rank context discarded",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r68 clip source before official context repair loses closing effect",
     file: RETRIEVE,
     from: 'const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);',
