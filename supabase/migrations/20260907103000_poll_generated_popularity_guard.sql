@@ -3,9 +3,10 @@
 -- NEW row to OLD therefore treats the derived popularity value as an illegal edit.
 -- A comment INSERT updates posts.comment_count and rolls back with SQLSTATE 23514;
 -- likes and other legitimate poll post updates can fail by the same path.
--- Exclude only the known database-generated field from the existing strict guard.
--- The generation expression, column privileges, immutable fields and poll rules
--- are unchanged. This also restores already-created polls; no row backfill needed.
+-- Derive the generated-column exclusion from PostgreSQL's catalog, not a field
+-- name allowlist, so the next generated score cannot reintroduce this outage.
+-- Ordinary fields (including newly added ones) remain locked. Generation
+-- expressions, column privileges and poll rules are unchanged. No backfill needed.
 
 CREATE OR REPLACE FUNCTION public.poll_posts_edit_lock()
 RETURNS trigger
@@ -13,6 +14,8 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_generated_columns text[];
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.board_type = 'poll'
@@ -69,13 +72,24 @@ BEGIN
   --     미디어·태그·선지참조·board·game_id·hashtags·author_team_id_snapshot·created_at·author_id 불변.
   --     운영 카운터(report_count/is_hidden/조회·좋아요·댓글)는 제외(정당한 writer/service_role 허용,
   --     클라이언트 위조는 컬럼 REVOKE 가 차단). schema-agnostic: 신규 컬럼도 명시 없이 자동 잠김.
-  IF (to_jsonb(NEW) - 'title' - 'content' - 'updated_at'
+  -- BEFORE triggers cannot compare generated values: PostgreSQL computes them
+  -- after this trigger. Only catalog-declared generated columns are excluded;
+  -- callers cannot opt fields out via payload, role, or session configuration.
+  SELECT coalesce(array_agg(a.attname::text), ARRAY[]::text[])
+    INTO v_generated_columns
+    FROM pg_catalog.pg_attribute AS a
+   WHERE a.attrelid = TG_RELID
+     AND a.attnum > 0
+     AND NOT a.attisdropped
+     AND a.attgenerated <> '';
+
+  IF (to_jsonb(NEW) - v_generated_columns - 'title' - 'content' - 'updated_at'
         - 'report_count' - 'is_hidden' - 'click_view_count' - 'impression_view_count'
-        - 'like_count' - 'comment_count' - 'popularity')
+        - 'like_count' - 'comment_count')
      IS DISTINCT FROM
-     (to_jsonb(OLD) - 'title' - 'content' - 'updated_at'
+     (to_jsonb(OLD) - v_generated_columns - 'title' - 'content' - 'updated_at'
         - 'report_count' - 'is_hidden' - 'click_view_count' - 'impression_view_count'
-        - 'like_count' - 'comment_count' - 'popularity') THEN
+        - 'like_count' - 'comment_count') THEN
     RAISE EXCEPTION 'poll post is locked: only title/content editable (options/tags/media/board immutable)'
       USING ERRCODE = 'check_violation';
   END IF;

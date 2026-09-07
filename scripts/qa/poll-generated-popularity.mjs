@@ -74,6 +74,8 @@ try {
   `);
 
   await rejects("INSERT INTO comments(post_id,content) VALUES (1,'한화')", "23514", "unpatched poll comment reproduces lock failure");
+  await rejects("INSERT INTO likes(post_id) VALUES (1)", "23514", "unpatched poll like reproduces lock failure");
+  await rejects("UPDATE posts SET is_hidden=is_hidden WHERE id=1", "23514", "unpatched no-op update reproduces lock failure");
   await pass("failed comment and counter both roll back", async () => {
     assert.equal((await db.query("SELECT count(*)::int AS n FROM comments WHERE post_id=1")).rows[0].n, 0);
     await counts(0, 0, 0);
@@ -102,6 +104,16 @@ try {
     await db.query("DELETE FROM likes WHERE post_id=1");
     await counts(1, 0, 1);
   });
+  await pass("no-op and moderation updates preserve counters and edit time", async () => {
+    const before = (await db.query("SELECT updated_at FROM posts WHERE id=1")).rows[0].updated_at;
+    await db.query("UPDATE posts SET is_hidden=is_hidden WHERE id=1");
+    await db.query("UPDATE posts SET report_count=report_count+1,is_hidden=true WHERE id=1");
+    const after = (await db.query("SELECT report_count,is_hidden,updated_at FROM posts WHERE id=1")).rows[0];
+    assert.equal(after.report_count, 1);
+    assert.equal(after.is_hidden, true);
+    assert.deepEqual(after.updated_at, before);
+    await counts(1, 0, 1);
+  });
   await pass("valid poll title/content editing remains allowed", async () => {
     await db.query("UPDATE posts SET title='수정한 질문',content='설명' WHERE id=1");
     assert.equal((await db.query("SELECT title FROM posts WHERE id=1")).rows[0].title, "수정한 질문");
@@ -124,6 +136,15 @@ try {
   await pass("ordinary-post updates remain unaffected", async () => {
     await db.query("UPDATE posts SET future_immutable_field='allowed' WHERE id=2");
   });
+  await pass("a future generated column does not break existing poll writes", async () => {
+    await db.exec("ALTER TABLE posts ADD COLUMN future_generated_score integer GENERATED ALWAYS AS (comment_count * 2 + like_count) STORED");
+    await db.query("INSERT INTO comments(post_id,content) VALUES (1,'생성 컬럼 회귀')");
+    await counts(2, 0, 2);
+    assert.equal((await db.query("SELECT future_generated_score FROM posts WHERE id=1")).rows[0].future_generated_score, 4);
+    await db.query("DELETE FROM comments WHERE post_id=1 AND content='생성 컬럼 회귀'");
+    await counts(1, 0, 1);
+  });
+  await rejects("UPDATE posts SET future_immutable_field='changed' WHERE id=1", "23514", "future ordinary fields stay locked after generated-column addition");
   await pass("migration reapplication and final deletion are safe", async () => {
     await db.exec(fix);
     await db.query("DELETE FROM comments WHERE post_id=1");
