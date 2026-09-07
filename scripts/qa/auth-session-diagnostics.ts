@@ -109,9 +109,47 @@ async function main() {
 
     const cookieDescriptor = Object.getOwnPropertyDescriptor(document, "cookie");
     const local = globalThis.localStorage;
+    document.cookie = "sb-auth-fixture-auth-token=private_cookie_fixture; Path=/";
+    const backingCookies = document.cookie;
+    const backingMarker = local.getItem("kbo-auth-uid");
+    const unreadable = make();
+    const abortedRead = make();
+    const readableBefore = unreadable.observer.capture();
+    const unreadableStart = beacons.length;
+    // Actual browsers reproduce this combination after a same-origin document
+    // is detached. The retained live backing store is not cleared here.
+    Object.defineProperty(document, "cookie", { configurable: true, get() { return ""; } });
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem() { throw new TypeError("inactive document"); } } });
+    unreadable.observer.sessionRead(readableBefore, false, null);
+    abortedRead.observer.sessionRead(readableBefore, false, { name: "AbortError" });
+    await pause(30);
+    const unreadableEvents = beacons.slice(unreadableStart).map(x => JSON.parse(String(x.body.message)));
+    assert.equal(unreadableEvents.length, 2, "unavailable reads stay observable, not silently suppressed");
+    for (const diagnostic of unreadableEvents) {
+      assert.equal(diagnostic.event, "storage-unreadable", "empty cookies with denied marker access must not imply storage loss");
+      assert.deepEqual(diagnostic.after, { auth: 0, otherAuth: false, ga: false, marker: null });
+      assert.ok(parseAuthDiagnostic(diagnostic), "collector schema accepts the new event");
+    }
+    assert.equal(unreadableEvents[1].error, "AbortError", "original error category retained");
+    if (cookieDescriptor) Object.defineProperty(document, "cookie", cookieDescriptor);
+    else delete (document as unknown as Record<string, unknown>).cookie;
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: local });
+    assert.equal(document.cookie, backingCookies, "backing cookies were never deleted");
+    assert.equal(local.getItem("kbo-auth-uid"), backingMarker, "backing marker was never deleted");
+    unreadable.observer.sessionRead(readableBefore, true, null);
+    await pause(30);
+    assert.equal(JSON.parse(String(beacons.at(-1)!.body.message)).event, "recovered", "recovery after unavailable reads remains observable");
+    console.log("PASS unavailable context is not classified as storage loss; backing store, errors and recovery preserved");
+
     Object.defineProperty(document, "cookie", { configurable: true, get() { throw new Error("cookie denied"); } });
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem() { throw new Error("storage denied"); } } });
-    assert.deepEqual(make().observer.capture(), { auth: null, otherAuth: null, ga: null, marker: null });
+    const unobserved = make().observer;
+    const unknownBefore = unobserved.capture();
+    assert.deepEqual(unknownBefore, { auth: null, otherAuth: null, ga: null, marker: null });
+    const unknownCount = beacons.length;
+    unobserved.sessionRead(unknownBefore, false, null);
+    await pause(30);
+    assert.equal(beacons.length, unknownCount, "unreadable guest with no auth evidence does not add telemetry volume");
     if (cookieDescriptor) Object.defineProperty(document, "cookie", cookieDescriptor);
     else delete (document as unknown as Record<string, unknown>).cookie;
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: local });
@@ -139,6 +177,10 @@ async function main() {
     assert.equal(inserts.length, 2);
     assert.equal(inserts[1].path, "/fixture", "legacy collector unchanged");
     assert.equal(inserts[1].visitor_id, "fixture-visitor");
+    const unreadableAccepted = await post({ source: "auth-session", message: JSON.stringify(unreadableEvents[1]), platform: "ios_native", appVersion: "1.0.14 (26)" });
+    assert.equal(unreadableAccepted.status, 200);
+    assert.equal(inserts.length, 3, "actual collector stores the unavailable-read observation");
+    assert.equal(JSON.parse(String(inserts[2].message)).event, "storage-unreadable");
     console.log("PASS actual collector strips identity/URL fields and preserves legacy reports");
 
     const cancelled = make();

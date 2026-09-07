@@ -117,7 +117,17 @@ export function createAuthSessionDiagnostics() {
 
   function sessionRead(before: AuthStorageObservation, present: boolean, error: unknown) {
     const after = capture();
-    if (error) {
+    const hadAuthEvidence = initial.marker || initial.otherAuth || (initial.auth ?? 0) > 0 || (before.auth ?? 0) > 0;
+    if (!present && (error || hadAuthEvidence) && (after.auth === null || after.marker === null)) {
+      // Detached documents can return empty cookies while localStorage throws,
+      // even with the origin's live backing store intact. Keep the observation
+      // and error, but do not classify an unreadable context as storage loss.
+      // This also includes access failures in a live document; it is NOT a
+      // detached-document detector and does not suppress potentially real faults.
+      failed = true;
+      if (error) lastFailure = authErrorMetadata(error);
+      emit("storage-unreadable", before, false, lastFailure, after);
+    } else if (error) {
       failed = true;
       lastFailure = authErrorMetadata(error);
       emit("session-read-error", before, present, lastFailure, after);
