@@ -14,6 +14,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import AppDownloadBanner from "@/components/ui/AppDownloadBanner";
 import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
+import { startHomeNextGamePoller } from "@/lib/polling/home-next-game-poller";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
 import { useHomeInit, type HomeGame } from "@/hooks/useHomeInit";
@@ -389,35 +390,28 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       return;
     }
 
-    let cancelled = false;
-
-    async function loadNextGame() {
-      for (let offset = 1; offset <= 14; offset += 1) {
-        const date = formatKSTDateOffset(offset);
-        try {
-          const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
-          const candidate = findWidgetGame(games, teamId);
-          if (candidate) {
-            // 미래 예정 경기는 날짜(YYYY-MM-DD)를 함께 실어 위젯에 '6월 7일 (토)' 표기.
-            if (!cancelled) setNextWidgetGame({ ...candidate, dateISO: date });
-            return;
-          }
-        } catch {
-          // 후보 조회 실패는 위젯 fallback만 건너뛴다.
-        }
-      }
-      if (!cancelled) setNextWidgetGame(null);
-    }
-
-    void loadNextGame();
-    const interval = window.setInterval(loadNextGame, 5 * 60_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
+    // 오늘 경기의 실시간 폴링은 그대로 두고, 다음 경기 탐색만 visibility-aware로.
+    return startHomeNextGamePoller<HomeGame>({
+      isHidden: () => document.visibilityState === "hidden",
+      onVisibilityChange: (handler) => {
+        document.addEventListener("visibilitychange", handler);
+        return () => document.removeEventListener("visibilitychange", handler);
+      },
+      schedule: (fn, ms) => window.setTimeout(fn, ms),
+      cancel: (id) => window.clearTimeout(id),
+      now: () => performance.now(),
+      dateAtOffset: formatKSTDateOffset,
+      fetchGames: async (date, signal) => {
+        const res = await fetch(`/api/games?date=${formatApiDate(date)}`, { signal });
+        if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
+        const data = await res.json();
+        return ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
+      },
+      findGame: (games) => findWidgetGame(games, teamId),
+      onResult: (candidate, date) => {
+        setNextWidgetGame(candidate ? { ...candidate, dateISO: date } : null);
+      },
+    });
   }, [myTeamId, todayGames]);
 
   // 최애선수 목록 → 네이티브 prefs 동기화(선수 카드 위젯 config 선택 목록)
