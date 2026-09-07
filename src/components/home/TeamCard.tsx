@@ -367,12 +367,12 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             aria-expanded={detailsExpanded}
             aria-controls={detailsId}
             onClick={() => setDetailsExpanded((expanded) => !expanded)}
-            className="mt-4 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border-t border-border/40 text-xs font-medium text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="mt-1 flex min-h-6 w-full items-center justify-center gap-1.5 rounded border-t border-border/40 py-0 text-xs font-medium leading-4 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
           >
             {detailsExpanded ? "접기" : "펼치기"}
             {detailsExpanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
           </button>
-          <div id={detailsId} hidden={!detailsExpanded}>
+          <div id={detailsId} hidden={!detailsExpanded} className="[&>:first-child]:mt-0 [&>:first-child]:pt-2">
             {detailsExpanded && (
               <>
                 {/* 4. 순위권 선수 — 선수별 묶음, 클릭 → 선수 페이지 */}
