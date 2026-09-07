@@ -89,7 +89,7 @@ async function verifyPipeline(official: boolean) {
     if (definition?.repair) { repairCalls++; assert.equal(definition.period?.scope, "career"); }
     return raw(expected.answer, official);
   };
-  const forbidden = async (): Promise<never> => { throw new Error("Definition entered record-value lookup"); };
+  const forbidden = async (): Promise<never> => assert.fail("Definition entered record-value lookup");
   const deps: QaDeps = {
     loadGlossary: async () => [], loadPlayers: async () => [], loadPreviousTurn: async () => previous,
     getCache: async () => { assert.equal(previous, null, "Contextual definition read global cache"); return null; },
@@ -115,7 +115,7 @@ async function verifyPipeline(official: boolean) {
 
 async function verifyBarriers() {
   const eligible = row("시즌 홀드가 뭐야?");
-  const forbidden = async (): Promise<never> => { throw new Error("Ineligible context reached retrieval/model/cache"); };
+  const forbidden = async (): Promise<never> => assert.fail("Ineligible context reached retrieval/model/cache");
   for (const previous of [
     null, { ...eligible, jobSource: "blocked" }, { ...eligible, jobSource: "error" },
     { ...eligible, currentCreatedAt: "2026-09-07T01:10:00.001Z" },
@@ -140,4 +140,10 @@ async function main() {
   await verifyBarriers();
   console.log("PASS: period wiring, overrides, numeric repair, empty retrieval and context barriers (not semantic/End-User QA)");
 }
-main().catch((error) => { console.error(error); process.exitCode = 1; });
+main().catch((error: unknown) => {
+  // The mutation runner only accepts explicit assertion failures as evidence
+  // that a contract caught the injected defect. Unexpected runtime/provider
+  // errors must remain MISS, not become false-positive mutation detections.
+  console.error(error instanceof assert.AssertionError ? "FAIL genius-period-context:" : "ERROR genius-period-context:", error);
+  process.exitCode = 1;
+});
