@@ -25,6 +25,34 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r61 공식 복합 정의에서 사용자 인용 수량 소실",
+    file: PIPELINE,
+    from: 'definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,',
+    to: 'definitionQuestion: undefined,',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r62 공식 수량 검증기에 사용자 인용 소스 미전달",
+    file: RETRIEVE,
+    from: 'definitionQuestion: options.definitionQuestion,',
+    to: 'definitionQuestion: undefined,',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r63 동의 접두를 평가 요청으로 오인",
+    file: "src/lib/baseball-qa/stats/definition-intent.ts",
+    from: 'Boolean(quantity || questionSeparator || /[?]/.test(predicate)) && ASSESSMENT_DIRECT.test(predicate)',
+    to: 'ASSESSMENT_DIRECT.test(predicate)',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r64 사용자 인용 라이선스를 일반 정의까지 확장",
+    file: PIPELINE,
+    from: 'definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,',
+    to: 'definitionQuestion: definition ? definitionNumericSource(question, definition) : undefined,',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r55 복합 질문에서 평가 요청 소실",
     file: "src/lib/baseball-qa/stats/definition-intent.ts",
     from: 'return { ...definition, assessment: { question: compound.assessment, mode: "context_required" } };',

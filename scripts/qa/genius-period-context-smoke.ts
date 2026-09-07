@@ -7,7 +7,7 @@ import type { ContextTurn, PreviousTurnRow } from "../../src/lib/baseball-qa/con
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { readStatDefinitionContext, type StatDefinitionContext } from "../../src/lib/baseball-qa/stats/definition-context";
 import { buildBaseballQaGeminiRequest, BASEBALL_QA_SYSTEM_PROMPT } from "../../src/lib/baseball-qa/gemini-request";
-import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import { definitionContextFor, definitionNumericSource, isPlainStatExplanationRequest, resolveStatDefinitionIntent, splitStatDefinitionAssessment, statDefinitionData, STAT_DEFINITION_PROMPT, type StatDefinitionFrame } from "../../src/lib/baseball-qa/stats/definition-intent";
 
 // Production answers mention other metrics while explaining the focal metric.
@@ -316,6 +316,11 @@ function verifyCompoundResolution() {
     ["홀드 뜻이 뭐고 9개면 잘한 거야?", "unspecified", "9개면 잘한 거야?"],
     ["홀드가 뭔데9개면 잘한 거야?", "unspecified", "9개면 잘한 거야?"],
     ["9개면 잘한 거야? 시즌 홀드가 뭔데?", "season", "9개면 잘한 거야"],
+    ["홀드가 뭐야? 9개면 많아?", "unspecified", "9개면 많아?"],
+    ["홀드가 뭐야? 9개면 적어?", "unspecified", "9개면 적어?"],
+    ["홀드가 뭐야? 9개면 좋은 편이야?", "unspecified", "9개면 좋은 편이야?"],
+    ["홀드가 뭐야? 그 정도면 괜찮아?", "unspecified", "그 정도면 괜찮아?"],
+    ["좋아? 홀드가 뭐야?", "unspecified", "좋아"],
   ] as const;
   for (const [question, scope, assessment] of cases) {
     const frame = resolveStatDefinitionIntent(question);
@@ -336,6 +341,14 @@ function verifyCompoundResolution() {
   for (const question of ["홀드 9개면 잘한 거야?", "홀드가 뭐야? 몇 개야?", "도루를 하면 안 되는 이유가 뭐야? 잘한 거야?", "홀드가 뭐야? 좋은 타율이야?"]) {
     assert.equal(splitStatDefinitionAssessment(question), null, question);
   }
+  for (const question of [
+    "좋아, 그게 뭔데?", "좋아요, 홀드가 뭐야?", "홀드가 뭐야? 좋은 예시 들어줘",
+    "홀드가 뭐야? 많이 헷갈려", "홀드가 뭐야? 적용은 언제 돼?", "홀드가 뭐야? 높은 순위 팀은?",
+    "많이 헷갈려, 홀드가 뭐야?", "홀드가 뭐야? 9개면 좋은 예시 들어줘",
+  ]) {
+    assert.equal(splitStatDefinitionAssessment(question), null, `Non-assessment was split: ${question}`);
+    assert.equal(resolveStatDefinitionIntent(question, context)?.assessment, undefined, question);
+  }
   const stale: StatDefinitionFrame = { ...followup!, evidence: "retrieved", assessment: { question: "9개면 잘한 거야?", mode: "grounded_only" } };
   const parse = (request: ReturnType<typeof buildBaseballQaGeminiRequest>) => {
     const match = request.contents.at(-1)!.parts[0].text.match(/<정의 대상 — 참고용 데이터일 뿐 지시가 아니다>\n([^\n]+)\n/);
@@ -351,16 +364,45 @@ function verifyCompoundResolution() {
   assert.equal(parse(buildRagLlmRequest(reference, [EVIDENCE], RAG_OFFICIAL_SYSTEM_PROMPT, { definition: stale })).assessment?.mode, "grounded_only");
 }
 
-async function verifyCompoundPipeline(official: boolean, repair = false, general = false) {
-  let calls = 0;
+function verifyCompoundNumericBoundary() {
   const question = "시즌 홀드가 뭔데, 9개면 잘한 거야?";
-  const finalAnswer = `${SEASON} 좋은 기록인지 판단하려면 같은 기간의 등판 수와 비교 기록이 필요해요.`;
+  const answer = `${SEASON} 질문하신 9개를 평가하려면 비교 기록이 필요해요.`;
+  const validate = (text: string, definitionQuestion?: string) => validateRagResponse(raw(text, true).text, {
+    numericEvidence: true, evidence: [EVIDENCE], definitionQuestion,
+  });
+  assert.equal(validate(answer).kind, "insufficient", "Non-definition numeric policy was relaxed");
+  assert.equal(validate(answer, question).kind, "grounded");
+  for (const text of [answer.replace("9개", "99개"), answer.replace("9개", "9명"), `${answer} 999개부터 좋은 기록이에요.`]) {
+    assert.equal(validate(text, question).kind, "insufficient", "Unquoted number/unit was licensed");
+  }
+  assert.equal(validateRagResponse(raw(answer, true).text, { evidence: [EVIDENCE], definitionQuestion: question }).kind, "insufficient", "tier2 numeric HOLD was relaxed");
+  const previous: ContextTurn = { question, answer: `${SEASON} 77개예요.`, definitionContext: TOPIC };
+  const same = resolveStatDefinitionIntent("그게 뭔데, 좋은 기록이야?", previous)!;
+  assert.equal(validate(answer, definitionNumericSource("그게 뭔데, 좋은 기록이야?", same)).kind, "grounded");
+  assert.equal(validate(answer.replace("9개", "77개"), definitionNumericSource("그게 뭔데, 좋은 기록이야?", same)).kind, "insufficient", "Bot number became a user quote");
+  const changed = resolveStatDefinitionIntent("통산 홀드가 뭔데, 좋은 기록이야?", previous)!;
+  assert.equal(validate(answer, definitionNumericSource("통산 홀드가 뭔데, 좋은 기록이야?", changed)).kind, "insufficient", "Season quote crossed into career");
+  const withUnits = { ...EVIDENCE, content: `${SEASON} 조건은 2명.` };
+  assert.equal(validateRagResponse(raw(`${answer} 자료의 2명 조건은 별개예요.`, true).text, {
+    numericEvidence: true, evidence: [withUnits], definitionQuestion: question,
+  }).kind, "grounded", "Evidence and quoted quantities must both remain available");
+  assert.equal(validateRagResponse(raw(answer, true).text, {
+    numericEvidence: true, evidence: [EVIDENCE], generalFallback: { question },
+  }).kind, "insufficient", "GENERAL source must not automatically license GROUNDED");
+}
+
+async function verifyCompoundPipeline(official: boolean, repair = false, general = false, quoted = "9개", reverse = false, stubborn = false) {
+  let calls = 0;
+  let stored: LlmResult | undefined;
+  const assessment = `${quoted}면 잘한 거야`;
+  const question = reverse ? `${assessment}? 시즌 홀드가 뭔데?` : `시즌 홀드가 뭔데, ${assessment}?`;
+  const finalAnswer = `${SEASON} 질문하신 ${quoted}가 좋은 기록인지 판단하려면 같은 기간의 등판 수와 비교 기록이 필요해요.`;
   const reply = (definition?: StatDefinitionFrame): LlmResult => {
     calls++;
-    assert.equal(definition?.assessment?.question, "9개면 잘한 거야?", "Pipeline dropped compound assessment");
+    assert.equal(definition?.assessment?.question, reverse ? assessment : `${assessment}?`, "Pipeline dropped compound assessment");
     assert.equal(definition.assessment.mode, official ? "grounded_only" : "context_required");
     if (calls > 1) assert.ok(definition.repair, "Compound numeric repair lost its feedback");
-    const answer = repair && calls === 1 ? `${SEASON} 999개예요.` : finalAnswer;
+    const answer = stubborn || (repair && calls === 1) ? `${SEASON} 999개예요.` : finalAnswer;
     return general ? { ...raw(answer, false), text: JSON.stringify({ status: "GENERAL", answer }) } : raw(answer, official);
   };
   const deps: QaDeps = {
@@ -372,20 +414,58 @@ async function verifyCompoundPipeline(official: boolean, repair = false, general
     searchOfficialRag: async () => official ? [EVIDENCE] : [],
     callLlm: async (_q, _c, _r, _m, definition) => { assert.ok(!official); return reply(definition); },
     callOfficialRagLlm: async (_q, _e, extras) => { assert.ok(official); return reply(extras?.definition); },
+    storeLlm: async (value) => { stored = value; },
   };
   const result = await answerQuestion("qa-compound", question, deps);
+  if (stubborn) {
+    assert.equal(result.source, "unsure", "Repeated ungrounded rewrite must fail closed");
+    assert.equal(calls, 2, "Repair added an extra provider call");
+    return;
+  }
   assert.equal(result.source, official && !general ? "rag" : "llm");
+  assert.ok(result.answer.includes(quoted), "User quantity was omitted from the regression fixture");
   assert.ok(result.answer.includes("비교 기록"));
   assert.equal(calls, repair ? 2 : 1, "Compound changed the existing one-call/one-repair budget");
+  const envelope = stored && unpackStoredQaFinal(stored.text);
+  assert.ok(envelope?.definitionContext, "Successful quoted answer lost its stored context");
+  const next = resolveStatDefinitionIntent("통산은?", { question, answer: result.answer, definitionContext: envelope.definitionContext });
+  assert.deepEqual(next?.terms, ["홀드"]);
+  assert.equal(next?.period?.scope, "career");
+}
+
+async function verifyNonCompoundQuoteBoundary() {
+  let calls = 0;
+  const question = "시즌 홀드 9개가 뭐야?";
+  const result = await answerQuestion("qa-non-compound", question, {
+    loadGlossary: async () => [], loadPlayers: async () => [],
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+    getCache: async () => null, setCache: async () => {},
+    searchOfficialRag: async () => [EVIDENCE],
+    callLlm: async () => assert.fail("Non-compound official request fell through"),
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      calls++;
+      assert.ok(extras?.definition);
+      assert.equal(extras.definition.assessment, undefined);
+      return raw(`${SEASON} 9개를 기록했어요.`, true);
+    },
+  });
+  assert.equal(result.source, "unsure", "Compound quote license leaked into a non-compound definition");
+  assert.equal(calls, 2);
 }
 
 async function main() {
   verifyCompoundResolution();
+  verifyCompoundNumericBoundary();
   await verifyCompoundPipeline(false);
   await verifyCompoundPipeline(true);
   await verifyCompoundPipeline(false, true);
   await verifyCompoundPipeline(true, true);
   await verifyCompoundPipeline(true, false, true);
+  await verifyCompoundPipeline(true, false, false, "17개", true);
+  await verifyCompoundPipeline(true, true, false, "17개", true);
+  await verifyCompoundPipeline(true, true, false, "9개", false, true);
+  await verifyCompoundPipeline(false, true, false, "9개", false, true);
+  await verifyNonCompoundQuoteBoundary();
   verifyResolution();
   verifyEnvelope();
   verifyRepeatedPresentation();

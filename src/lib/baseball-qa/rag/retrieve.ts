@@ -1197,6 +1197,8 @@ const QUANTITY_COUNTERS = [
  *     `includes` 부분문자열은 금지 — 근거의 `1982`가 모델의 `198`을 통과시킨다.
  */
 export interface NumericGroundingOptions {
+  /** Eligible compound-definition user input, never bot prose or official evidence. */
+  definitionQuestion?: string;
   /**
    * 수치 근거를 **단일 chunk 안에서만** 인정할지.
    *
@@ -1229,9 +1231,9 @@ export function numericTokensGrounded(
     //   호출부가 사라졌지만 계약 자체는 공식 경로가 나중에 쓸 수 있으므로 남겨둔다.
     //   단, 여기 의존해 숫자를 여는 신규 경로를 만들지 말 것 — 검증력이 부족하다.
     if (!/\d/.test(answer) && !hasKoreanQuantityClaim(answer)) return true;
-    return evidence.some((row) => groundedAgainst(answer, row.content));
+    return evidence.some((row) => groundedAgainst(answer, `${row.content}\n${options.definitionQuestion ?? ""}`));
   }
-  return groundedAgainst(answer, evidence.map((row) => row.content).join("\n"));
+  return groundedAgainst(answer, [...evidence.map((row) => row.content), options.definitionQuestion ?? ""].join("\n"));
 }
 
 /**
@@ -1393,6 +1395,8 @@ export interface ValidateRagOptions {
   numericEvidence?: boolean;
   /** 숫자 대조용 근거. `numericEvidence`가 true일 때 반드시 함께 넘긴다. */
   evidence?: RagEvidence[];
+  /** Compound definitions may echo eligible user quantities; not verified statistics. */
+  definitionQuestion?: string;
   /**
    * 공식 경로 전용 GENERAL 판정 허용 (2026-08-10 unsure 함정 제거).
    *
@@ -1479,7 +1483,8 @@ export function validateRagResponse(
   }
   // §12 수치 계약.
   //  - tier2 근거(기본값): 숫자 자체를 금지한다. 위키류는 수치 정본이 아니다.
-  //  - tier1 근거(KBO 공식 간행물): 숫자를 허용하되 **근거에 적힌 숫자만** 허용한다.
+  //  - tier1 근거(KBO 공식 간행물): 근거의 숫자 + 복합 정의의 사용자 인용 수량만 허용한다.
+  //    사용자 인용은 사실 검증이 아니다. 값·단위 대조는 동일하며 의미·평가 근거는 모델 계약이다.
   //    모델이 지어낸 수치는 tier1 근거를 달고 나가면 더 위험하므로 기계 대조로 막는다.
   if (!options.numericEvidence) {
     // ⚠️ `/\d/` 만으로는 부족하다 (삼순 2026-08-07 P0-2 4라운드).
@@ -1508,6 +1513,7 @@ export function validateRagResponse(
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
     requireSingleSource: options.requireSingleSource,
+    definitionQuestion: options.definitionQuestion,
   })) {
     return {
       kind: "insufficient", reason: "numeric_not_in_evidence",

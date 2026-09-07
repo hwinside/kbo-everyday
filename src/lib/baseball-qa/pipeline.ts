@@ -4877,13 +4877,16 @@ async function answerOfficialDocumentQuestion(
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
     numericEvidence: true, evidence,
+    // Only compound definitions may echo user quantities, under the same
+    // period boundary as GENERAL. Never license bot prose or record lookups.
+    definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
     generalFallback: { question: definitionNumericSource(question, definition) },
   });
   let validated = validateOfficial(llm);
   // One repair by this invocation's winner only. A stored raw response or a
   // loser/retry must never consume a new provider call. The validator is not
-  // relaxed: both genuine quantities and ambiguous Korean forms still pass
-  // through the same original grounding rules after the rewrite.
+  // bypassed: both genuine quantities and ambiguous Korean forms still pass
+  // through the same value/unit checks and eligible sources after the rewrite.
   if (generatedOfficialNow && definition && validated.kind === "insufficient" &&
       (validated.reason === "numeric_not_in_evidence" || validated.reason === "numeric_not_in_question")) {
     const repair = definitionRepairFrame(definition, llm, validated.reason);
