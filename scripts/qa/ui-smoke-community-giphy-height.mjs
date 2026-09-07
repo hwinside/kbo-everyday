@@ -3,6 +3,7 @@
  * Live PostDetail + CommentSheet GIPHY height smoke (reviewer execution).
  * No API/UI mocks, no supplied account, no credentials in argv or reports.
  * Creates one dedicated user/photo post; finally removes and verifies both.
+ * The marked photo post is publicly visible in the Doosan/photo feeds until cleanup.
  * Chromium viewport coverage is NOT real iOS keyboard/rotation/PWA QA.
  * Usage: npm run qa:ui:community-giphy-height -- --base-url=https://keubo.fan
  */
