@@ -1,5 +1,7 @@
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
+import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
+import type { ServedBatterSnapshot } from "./stats/served-record";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
@@ -58,6 +60,8 @@ import { displayProvenanceOf } from "./genius-reply-provenance";
 import { isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
+  BATTER_METRICS,
+  PITCHER_METRICS,
   isServedOnlyMetric,
   RECORD_MISSING_ANSWER,
   resolveSeasonRecord,
@@ -1169,6 +1173,8 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  /** Same complete snapshot as the app's ranking page; no per-player subset. */
+  fetchBatterRanking?: () => Promise<ServedBatterSnapshot>;
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
@@ -2161,6 +2167,13 @@ function classifyOneNamedStat(
   // ⚠️ 수치 의도를 **요구하지 않는다**(2026-08-08 실측). `김도영 홈런` 처럼 bare 로 와도
   //   `<로스터 선수> <지표>` 는 기록 질문이다.
   if (isRosterEntity || isTeamEntity) return "entity_stat";
+
+  // A rank operates on a player set. "삼성 선수들의 타율 순위" does not
+  // name an unknown player called "선수들". Only a bound set/individual may
+  // use this exception; unrelated unknown clauses keep the mixed-entity guard.
+  if (requestedOperation(normalized) === "rank" && /^(?:선수|타자)(?:들)?$/.test(head)
+    && (resolveRagTeamCandidate(normalized) || resolveNamedPlayerCandidate(normalized, players)
+      || /전체\s*(?:구단|리그|선수|타자)|리그\s*전체|kbo\s*전체/.test(normalized))) return "entity_stat";
 
   // ①-b **`팀` 은 엔티티가 아니라 앞서 지명된 구단을 가리키는 대용어다** (2026-08-08 회귀).
   //
@@ -3795,6 +3808,7 @@ export interface StoredQaFinal {
   source: MatchPath;
   /** Exact topic resolved before generation; survives replay and explanatory side terms. */
   definitionContext?: StatDefinitionContext;
+  rankRequestContext?: RankRequestContext;
   sourceUrl?: string;
   /** 원시점 캐시 가능 여부 (generic llm 만 true 가능). 재시도 시점 재계산 금지 —
    * context/scope/roster 를 다시 계산하면 비캐시 답이 global cache 로 샌다 (삼순 2차). */
@@ -3889,6 +3903,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     answer: final.answer,
     source: final.source as MatchPath,
     ...(readStatDefinitionContext(final.definitionContext) ? { definitionContext: readStatDefinitionContext(final.definitionContext) } : {}),
+    ...(readRankRequestContext(final.rankRequestContext) ? { rankRequestContext: readRankRequestContext(final.rankRequestContext) } : {}),
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
     ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
     ...(typeof final.toneCompliant === "boolean" ? { toneCompliant: final.toneCompliant } : {}),
@@ -4000,6 +4015,89 @@ async function replayStoredFinalResult(
  *     winner 의 final 이 재시도에서 재생된다.
  * 상태 조회/CAS 실패는 pending — 저장 여부를 모르는 채 다른 답을 발송하지 않는다.
  */
+/** Fulfil a requested operation before scalar handlers can substitute another
+ * answer. Uses only explicit operands or the qualified exact previous turn. */
+async function answerRequestedOperation(
+  question: string, context: ContextTurn | null, players: PlayerRef[], deps: QaDeps,
+  picked: RagPlayerCandidate | null,
+): Promise<StoredQaFinal | null> {
+  const operation = requestedOperation(question);
+  if (!operation) return null;
+  const q = question.normalize("NFKC").toLowerCase();
+  if (/(?:순위|랭킹).*(?:뜻|정의|의미)|(?:순위|랭킹)란/.test(q)) return null;
+  // Existing supported career leaderboard contracts retain precedence.
+  if (operation === "rank" && resolveCareerMetricIntent(question) !== null) return null;
+  const bare = isBareRankFollowup(question);
+  const hasPlayer = mentionsAnyRosterName(question, players);
+  const hasTeam = mentionsTeamForGate(question);
+  if (isOutOfScopeIntent(q, hasTeam)) return null;
+  const metricKeys = new Set(Object.entries({ ...PITCHER_METRICS, ...BATTER_METRICS })
+    .filter(([, metric]) => metric.aliases.some((alias) => q.includes(alias)))
+    .map(([key]) => key));
+  if (!bare && !hasPlayer && !hasTeam && !metricKeys.size && !hasCareerMetricTerm(question)) return null;
+  const unavailable = (answer: string): StoredQaFinal => ({ answer, source: "unsure" });
+  // Legacy rank rejection recognizes 1위/누구/최다, but not every 순위/몇등
+  // request. A named unsupported rank must not fall through to a scalar answer.
+  // Preserve legacy guarded ranks and team standings in their own handlers.
+  const rejectUnhandledPlayerRank = (): StoredQaFinal | null =>
+    hasPlayer && !isRankAsk(question) ? unavailable(RANK_SCOPE_ANSWER) : null;
+  if (operation === "elapsed") return unavailable(ELAPSED_DATA_ANSWER);
+  // Unsupported rank scopes remain owned by the existing exact hold contracts.
+  if (unsupportedOperationScope(question)) return operation === "rank" ? rejectUnhandledPlayerRank() : unavailable(OPERATION_DATA_ANSWER);
+  const currentTeam = resolveRagTeamCandidate(question);
+  const now = deps.now ? deps.now() : Date.now();
+  if (operation === "remaining") {
+    if (!currentTeam) return unavailable("구단명을 알려 주시면 정규시즌 잔여 경기 수를 확인할 수 있습니다.");
+    try {
+      const snapshot = await deps.fetchTeamRecord?.fetchStandings();
+      const answer = snapshot ? renderRemainingGames(snapshot, { id: Number(currentTeam.entityId), name: currentTeam.name }, now) : null;
+      return answer ? { answer, source: "kbo_structured" } : unavailable(OPERATION_DATA_ANSWER);
+    } catch { return unavailable(OPERATION_DATA_ANSWER); }
+  }
+  const previous = bare ? context : null;
+  // No fact/name extraction from the previous answer. Old scalar envelopes can
+  // supply operands only through their explicit, unambiguous previous question.
+  const old = previous?.rankRequestContext;
+  const priorAvg = previous && !unsupportedOperationScope(previous.question)
+    && /타율|타률|애버리지/.test(previous.question)
+    && !requestedOperation(previous.question);
+  const named = picked ?? resolveNamedPlayerCandidate(question, players);
+  const priorPlayer = priorAvg ? resolveNamedPlayerCandidate(previous.question, players) : null;
+  const playerId = named?.entityId ?? (bare ? old?.playerId ?? priorPlayer?.entityId : undefined);
+  const player = playerId ? players.find((row) => row.kboId === playerId) : undefined;
+  if (hasPlayer && !named && deps.enablePlayerRag && resolvePlayerPickerOptions(question, players, true)) return null;
+  if ((hasPlayer && !named) || (playerId && !player)) return unavailable(RANK_SCOPE_ANSWER);
+  const average = (metricKeys.size === 1 && metricKeys.has("avg")) || (bare && (!!old || !!priorAvg));
+  // Do not silently answer team-average standings, a dated split, a requested
+  // nth-place lookup, or multiple metrics with a top-five individual AVG list.
+  if (!average || /팀\s*타[율률]|\d+\s*(?:위|등)|상위\s*\d+|하위|꼴찌/.test(q)
+    || (hasTeam && !currentTeam)
+    || (currentTeam && !player && !/선수|타자|개인/.test(q))) {
+    // Own only supported individual AVG rankings; preserve team standings and
+    // unsupported named rankings in their original handlers. Bare follow-ups
+    // without usable operands still need this operation-specific clarification.
+    return bare ? unavailable(RANK_SCOPE_ANSWER) : rejectUnhandledPlayerRank();
+  }
+  const league = /전체\s*(?:구단|리그|선수|타자)|리그\s*전체|kbo\s*전체/.test(q);
+  const clubPlayers = !!currentTeam && (!player || /(?:선수|타자)(?:들)?\s*(?:중|내|끼리)/.test(q));
+  const teamId = league ? undefined : clubPlayers ? Number(currentTeam!.entityId) : bare ? old?.teamId : undefined;
+  const teamName = teamId ? TEAM_ALIASES.find((row) => row.teamId === teamId)?.canonical : undefined;
+  if (teamId && !teamName) return unavailable(RANK_SCOPE_ANSWER);
+  try {
+    const snapshot = await deps.fetchBatterRanking?.();
+    const answer = snapshot ? renderAverageRank(snapshot, {
+      ...(player ? { player: { id: player.kboId, name: player.name } } : {}),
+      ...(teamId && teamName ? { team: { id: teamId, name: teamName } } : {}),
+    }, now, (name) => {
+      const canonical = resolveMentionedTeam(name);
+      return canonical ? teamIdOfCanonical(canonical) : null;
+    }) : null;
+    return answer ? { answer, source: "kbo_structured", rankRequestContext: {
+      version: 1, kind: "average_rank", ...(player ? { playerId: player.kboId } : {}), ...(teamId ? { teamId } : {}),
+    } } : unavailable(OPERATION_DATA_ANSWER);
+  } catch { return unavailable(OPERATION_DATA_ANSWER); }
+}
+
 async function settleThroughDurableBoundary(
   final: StoredQaFinal,
   logAnswer: string | null,
@@ -5731,6 +5829,13 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const recordIntent = deps.fetchSeasonRecord
     ? resolveSeasonRecordIntentFor(question, players)
     : { kind: "none" as const };
+
+  // Quota, correction and mixed-entity guards above remain authoritative.
+  // Service/safety routes must never be bypassed by a statistic keyword.
+  if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "career_leaderboard"].includes(baseRoute) && !statDefinition) {
+    const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);
+    if (operationAnswer) return settleThroughDurableBoundary(operationAnswer, operationAnswer.answer, { userId, question, questionNorm, remaining, deps });
+  }
 
   // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 답 못 할 질문은
   // 어느 선수를 골라도 답할 수 없으므로 picker를 띄우는 것 자체가 불필요하다(삼순 P0-3).

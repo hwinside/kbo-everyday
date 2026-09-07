@@ -2,6 +2,7 @@
  * This does not establish real-model or End-User answer quality.
  */
 import assert from "node:assert/strict";
+import { verifyQuestionOperations } from "./fixtures/verify-question-operations";
 import { answerQuestion, routeQuestion, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import type { ContextTurn, PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
@@ -462,6 +463,7 @@ async function verifyNonCompoundQuoteBoundary() {
 }
 
 async function main() {
+  await verifyQuestionOperations();
   verifyCompoundResolution();
   verifyCompoundNumericBoundary();
   await verifyCompoundPipeline(false);
