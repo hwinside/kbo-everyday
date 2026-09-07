@@ -1,6 +1,6 @@
 /** Execute via the existing period-context gate. Reviewer-owned execution. */
 import assert from "node:assert/strict";
-import { answerQuestion, HISTORY_HOLD_ANSWER, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, HISTORY_HOLD_ANSWER, packStoredQaFinal, unpackStoredQaFinal, resolveNamedPlayerCandidate, type QaDeps, type LlmResult } from "../../../src/lib/baseball-qa/pipeline";
 import { selectContextTurn, type PreviousTurnRow } from "../../../src/lib/baseball-qa/context";
 import { previousTurnFromSql } from "../../../src/lib/baseball-qa/previous-turn-row";
 import { renderAverageRank, renderRemainingGames, requestedOperation, readRankRequestContext, OPERATION_DATA_ANSWER } from "../../../src/lib/baseball-qa/stats/question-operation";
@@ -27,7 +27,7 @@ const SNAPSHOT: ServedBatterSnapshot = {
 const STANDINGS: StandingsSnapshot = { fetchedAt: AT, season: 2026, rows: [
   { teamId: 6, teamName: "KIA", games: 120, wins: 60, losses: 55, draws: 5, ranking: 5, winRate: 0.522, gamesBehind: 5 },
 ] };
-const teamId = (name: string) => name === "삼성" ? 8 : name === "LG" ? 1 : name === "두산" ? 2 : name === "KIA" ? 6 : null;
+const teamId = (name: string) => name === "삼성" ? 8 : name === "LG" ? 1 : name === "두산" ? 2 : name === "KIA" ? 6 : name === "한화" ? 9 : null;
 const raw: LlmResult = { text: JSON.stringify({ status: "INSUFFICIENT", answer: "fixture" }), inputTokens: 0, outputTokens: 0 };
 
 function harness(previous: PreviousTurnRow | null = null) {
@@ -92,7 +92,7 @@ export async function verifyScalarRequestRouting(
 
 export async function verifyQuestionOperations() {
   const actualRoster = await loadRosterPlayers();
-  const foreignPlayers = ["FP006", "AQ004"].map((id) => {
+  const foreignPlayers = ["FP006", "AQ004", "FP003"].map((id) => {
     const player = actualRoster.find((row) => row.kboId === id);
     assert.ok(player, `Missing production roster fixture ${id}`);
     return player;
@@ -103,6 +103,7 @@ export async function verifyQuestionOperations() {
     { player_key: "FP006", kbo_id: "FP006", name: "디아즈", team: "삼성", updated_at: AT, qualifiedRate: 1, avg: "0.370", pa: 500, ab: 450 },
     { player_key: "AQ004", kbo_id: "AQ004", name: "데일", team: "KIA", updated_at: AT, qualifiedRate: 0, avg: "-", pa: 0, ab: 0 },
     { player_key: "12350", kbo_id: "12350", name: "무타석선수", team: "삼성", updated_at: AT, qualifiedRate: 0, avg: "-", pa: 0, ab: 0 },
+    { player_key: "FP003", kbo_id: "FP003", name: "페라자", team: "한화", updated_at: AT, qualifiedRate: 1, avg: "0.340", pa: 500, ab: 450 },
   ] };
   assert.equal(readRankPlayerId("56251"), "FP009", "Legacy foreign ID must use the canonical mapping");
   assert.equal(readRankPlayerId("FP006"), "FP006");
@@ -145,6 +146,23 @@ export async function verifyQuestionOperations() {
   const alphaRow = previousTurnFromSql({ question: "디아즈 타율 몇등이야?", answer: "구자욱도 언급된 답변", job_source: "kbo_structured", answered_at: AT, current_created_at: new Date(NOW).toISOString(), definition_llm_text: alphaFirst.final()!.text })!;
   assert.equal(selectContextTurn(alphaRow)?.rankRequestContext?.playerId, "FP006");
   assert.match((await answerQuestion("qa-alpha", "몇등이야?", alphaHarness(alphaRow).deps)).answer, /디아즈.*타율 1위/);
+  const secondSurname = await answerQuestion("qa-alpha", "페라자 타율 순위", alphaHarness().deps);
+  assert.equal(secondSurname.source, "kbo_structured");
+  assert.match(secondSurname.answer, /페라자.*타율 5위/);
+  const colliding = [
+    { kboId: "FP901", name: "미치 화이트", team: "삼성" },
+    { kboId: "FP902", name: "오웬 화이트", team: "LG" },
+  ];
+  assert.equal(resolveNamedPlayerCandidate("화이트 타율 순위", colliding), null);
+  assert.equal(resolveNamedPlayerCandidate("미치 화이트 타율 순위", colliding)?.entityId, "FP901");
+  assert.equal(resolveNamedPlayerCandidate("미치 화이트랑 화이트 타율 순위", colliding), null);
+  assert.equal(resolveNamedPlayerCandidate("르윈 디아즈랑 페라자 타율 순위", foreignPlayers), null);
+  assert.equal(resolveNamedPlayerCandidate("아즈 타율 순위", foreignPlayers), null);
+  const ambiguousSurname = harness(); ambiguousSurname.deps.loadPlayers = async () => colliding;
+  const ambiguousReply = await answerQuestion("qa-alpha", "화이트 타율 순위", ambiguousSurname.deps);
+  assert.notEqual(ambiguousReply.source, "kbo_structured");
+  assert.equal(ambiguousSurname.calls.rank, 0, "Ambiguous surname fell through to a league top-five answer");
+  assert.equal(ambiguousSurname.calls.scalar, 0);
   const avgQuery: SeasonRecordQuery = { table: "batter", metric: "avg", label: "타율", kind: "rate" };
   for (const [rawAvg, expected] of [[0.35, "0.350"], ["0.35", "0.350"], [".35", "0.350"], ["0.350", "0.350"], [0, "0.000"], [1, "1.000"]] as const) {
     const outcome = resolveSeasonRecord([{ ...SNAPSHOT.rows[0], avg: rawAvg }], avgQuery, "12345", NOW, "구자욱", "삼성");

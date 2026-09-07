@@ -1,6 +1,7 @@
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
+import { readRankPlayerId } from "./stats/rank-request-context";
 import type { ServedBatterSnapshot } from "./stats/served-record";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
@@ -2914,16 +2915,31 @@ function tokensContainSequence(tokens: string[], parts: string[]): boolean {
  * 서로 다른 이름 매칭을 쓰면 한쪽만 통과하는 우회가 생긴다.
  */
 export function findPlayerReferences(tokens: string[], players: PlayerRef[]): PlayerRef[] {
-  return players.filter((player) => {
-    const nameParts = questionTokens(player.name);
+  const names = players.map((player) => ({ player, parts: questionTokens(player.name) }));
+  const fullNames = new Set<PlayerRef>();
+  const fullNamePositions = new Set<number>();
+  // A surname inside an explicit full name must not also select every other
+  // player with that surname. A separate bare occurrence remains ambiguous.
+  for (const { player, parts } of names) {
+    if (parts.length < 2) continue;
+    for (let start = 0; start + parts.length <= tokens.length; start++) {
+      if (!tokensContainSequence(tokens.slice(start, start + parts.length), parts)) continue;
+      fullNames.add(player);
+      for (let offset = 0; offset < parts.length; offset++) fullNamePositions.add(start + offset);
+    }
+  }
+  return names.filter(({ player, parts: nameParts }) => {
     const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
     if (kboId.length >= 3 && tokenMatches(tokens, kboId)) return true;
     if (nameParts.length === 0) return false;
     if (nameParts.join("").length < 2) return false;
-    return nameParts.length === 1
-      ? tokenMatches(tokens, nameParts[0])
-      : tokensContainSequence(tokens, nameParts);
-  });
+    if (nameParts.length === 1) return tokenMatches(tokens, nameParts[0]);
+    if (fullNames.has(player)) return true;
+    const canonicalId = readRankPlayerId(player.kboId);
+    const surname = nameParts[nameParts.length - 1];
+    if (!canonicalId || !/^[A-Z]/.test(canonicalId) || surname.length < 2) return false;
+    return tokens.some((token, index) => !fullNamePositions.has(index) && tokenMatches([token], surname));
+  }).map(({ player }) => player);
 }
 
 function hasPlayerReference(tokens: string[], players: PlayerRef[]): boolean {
@@ -3057,9 +3073,10 @@ export function resolveRagPlayerCandidate(
  *   경로 유지일 뿐이고, 미탐이 사고다. 정확 부분문자열만 보고 근접 매칭은 하지 않는다.
  */
 export function mentionsAnyRosterName(question: string, players: PlayerRef[]): boolean {
+  if (findPlayerReferences(questionTokens(question), players).length > 0) return true;
   const normalized = question.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
   return players.some((player) => {
-    const name = player.name?.normalize("NFKC").toLowerCase() ?? "";
+    const name = player.name?.normalize("NFKC").toLowerCase().replace(/\s+/g, "") ?? "";
     return name.length >= 2 && normalized.includes(name);
   });
 }

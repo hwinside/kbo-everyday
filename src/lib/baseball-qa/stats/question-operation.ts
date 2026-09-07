@@ -41,7 +41,8 @@ function dateOf(value: string): string {
 
 export interface RankTarget { player?: { id: string; name: string }; team?: { id: number; name: string } }
 
-/** A foreign surname is an alias only within the already matched canonical ID. */
+/** Display-name compatibility only after canonical ID is fixed. Complete roster
+ * tokens (including a given name) are allowed here, never for player discovery. */
 function rankPlayerNamesMatch(playerId: string, servedName: string, requestedName: string): boolean {
   if (servedName === requestedName) return true;
   if (!/^[A-Z]{2}\d{3}$/.test(playerId) || /[\r\n<>]/.test(requestedName)) return false;
