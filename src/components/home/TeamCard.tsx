@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getTeamById, type TeamData } from "@/lib/constants/teams";
@@ -206,6 +206,8 @@ function MiniStatChart({ title, values, fmt, higherIsBetter, accent, rank }: {
 }
 
 export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardProps) {
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const detailsId = useId();
   const [data, setData] = useState<TeamCardData | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [topPlayers, setTopPlayers] = useState<TopPlayer[]>([]);
@@ -360,133 +362,149 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
             </div>
           )}
 
-          {/* 4. 순위권 선수 — 선수별 묶음, 클릭 → 선수 페이지 */}
-          {topPlayers.length > 0 && (
-            <div className="mt-4 border-t border-border/40 pt-3.5">
-              <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
-              <div className="flex flex-wrap items-start gap-x-1.5 gap-y-0.5">
-                {topPlayers.map((p, i) => {
-                  const isLong = p.titles.length >= 4;
-                  const inner = (
-                    <>
-                      <span className="font-bold text-text-primary">{p.playerName}</span>{" "}
-                      <span className="text-text-secondary">
-                        {p.titles.map((t, j) => (
-                          <span key={j}>
-                            {j > 0 && ", "}
-                            {t.label} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
-                          </span>
-                        ))}
-                      </span>
-                    </>
-                  );
-                  const itemClassName = [
-                    "inline-flex max-w-full items-center gap-0.5 rounded-full border border-border bg-white/[0.05] px-1.5 py-0.5 text-[11px] leading-[15px]",
-                    isLong ? "basis-full rounded-[10px]" : "",
-                  ].join(" ");
-                  return p.href ? (
-                    <Link key={i} href={p.href} prefetch={false} className={itemClassName}>
-                      <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={12} className="text-text-tertiary flex-shrink-0" />
+          <button
+            type="button"
+            aria-expanded={detailsExpanded}
+            aria-controls={detailsId}
+            onClick={() => setDetailsExpanded((expanded) => !expanded)}
+            className="mt-4 flex min-h-11 w-full items-center justify-center gap-1.5 rounded-lg border-t border-border/40 text-xs font-medium text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            {detailsExpanded ? "접기" : "펼치기"}
+            {detailsExpanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
+          </button>
+          <div id={detailsId} hidden={!detailsExpanded}>
+            {detailsExpanded && (
+              <>
+                {/* 4. 순위권 선수 — 선수별 묶음, 클릭 → 선수 페이지 */}
+                {topPlayers.length > 0 && (
+                  <div className="mt-4 border-t border-border/40 pt-3.5">
+                    <p className="text-[11px] text-text-tertiary mb-2">순위권 선수</p>
+                    <div className="flex flex-wrap items-start gap-x-1.5 gap-y-0.5">
+                      {topPlayers.map((p, i) => {
+                        const isLong = p.titles.length >= 4;
+                        const inner = (
+                          <>
+                            <span className="font-bold text-text-primary">{p.playerName}</span>{" "}
+                            <span className="text-text-secondary">
+                              {p.titles.map((t, j) => (
+                                <span key={j}>
+                                  {j > 0 && ", "}
+                                  {t.label} <b style={{ color: t.rank === 1 ? "#ffd24a" : "var(--text-secondary)" }}>{t.rank}위</b>
+                                </span>
+                              ))}
+                            </span>
+                          </>
+                        );
+                        const itemClassName = [
+                          "inline-flex max-w-full items-center gap-0.5 rounded-full border border-border bg-white/[0.05] px-1.5 py-0.5 text-[11px] leading-[15px]",
+                          isLong ? "basis-full rounded-[10px]" : "",
+                        ].join(" ");
+                        return p.href ? (
+                          <Link key={i} href={p.href} prefetch={false} className={itemClassName}>
+                            <span className="min-w-0 whitespace-normal">{inner}</span><ChevronRight size={12} className="text-text-tertiary flex-shrink-0" />
+                          </Link>
+                        ) : (
+                          <div key={i} className={itemClassName}>
+                            <span className="min-w-0 whitespace-normal">{inner}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. 최근 7일 등록·말소 */}
+                <div className="mt-4 border-t border-border/40 pt-3.5">
+                  <p className="text-[11px] text-text-tertiary mb-2">최근 7일 등록·말소</p>
+                  {currentRosterMoves.status === "loading" ? (
+                    <div className="h-7 animate-pulse rounded-lg bg-bg-secondary" />
+                  ) : currentRosterMoves.status === "error" ? (
+                    <p className="text-[12px] text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
+                  ) : currentRosterMoves.moves.length === 0 ? (
+                    <Link href={teamHomeHref(team.slug)} prefetch={false} className="block text-[12px] text-text-tertiary">
+                      최근 7일 변동이 없어요.
                     </Link>
                   ) : (
-                    <div key={i} className={itemClassName}>
-                      <span className="min-w-0 whitespace-normal">{inner}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 5. 최근 7일 등록·말소 */}
-          <div className="mt-4 border-t border-border/40 pt-3.5">
-            <p className="text-[11px] text-text-tertiary mb-2">최근 7일 등록·말소</p>
-            {currentRosterMoves.status === "loading" ? (
-              <div className="h-7 animate-pulse rounded-lg bg-bg-secondary" />
-            ) : currentRosterMoves.status === "error" ? (
-              <p className="text-[12px] text-text-tertiary">등록·말소 내역을 불러오지 못했어요.</p>
-            ) : currentRosterMoves.moves.length === 0 ? (
-              <Link href={teamHomeHref(team.slug)} prefetch={false} className="block text-[12px] text-text-tertiary">
-                최근 7일 변동이 없어요.
-              </Link>
-            ) : (
-              <ul className="flex flex-col gap-1.5">
-                {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).visibleGroups.map((group) => (
-                  <li key={group.date} className="relative">
-                    {/* 행 배경(날짜·chevron 영역) → 팀홈. absolute 형제라 중첩 anchor 없음 */}
-                    <Link
-                      href={teamHomeHref(team.slug)}
-                      prefetch={false}
-                      aria-label={`${team.name} 팀 페이지`}
-                      className="absolute inset-0 z-0"
-                    />
-                    <div className="pointer-events-none relative z-10 flex items-center gap-2 py-0.5">
-                      <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(group.date)}</span>
-                      {/* 한 줄 강제: nowrap + overflow-hidden (삼순 NO-GO 반영 — flex-wrap 제거) */}
-                      <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2 overflow-hidden">
-                        {group.moves.map((move, index) => {
-                          const isRegister = move.moveType === "register";
-                          const label = isRegister ? "등록" : "말소";
-                          // 긍부정 색·배경 모두 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
-                          // ⚠️ 배경을 `${color}1f` 로 파생 생성하면 SSOT 배경값을 우회한다(삼순 3차 지적).
-                          return (
-                            <span
-                              key={`${move.moveType}-${move.kboPlayerId}-${index}`}
-                              className="inline-flex min-w-0 items-center gap-1"
-                            >
-                              <span
-                                className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
-                                style={resultToneChipStyle(isRegister ? "positive" : "negative")}
-                              >
-                                {label}
-                              </span>
-                              {move.href ? (
-                                <Link
-                                  href={move.href}
-                                  prefetch={false}
-                                  className="pointer-events-auto truncate text-[12.5px] font-semibold text-text-primary"
-                                >
-                                  {move.playerName}
-                                </Link>
-                              ) : (
-                                <span className="truncate text-[12.5px] font-semibold text-text-primary">
-                                  {move.playerName}
-                                </span>
+                    <ul className="flex flex-col gap-1.5">
+                      {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).visibleGroups.map((group) => (
+                        <li key={group.date} className="relative">
+                          {/* 행 배경(날짜·chevron 영역) → 팀홈. absolute 형제라 중첩 anchor 없음 */}
+                          <Link
+                            href={teamHomeHref(team.slug)}
+                            prefetch={false}
+                            aria-label={`${team.name} 팀 페이지`}
+                            className="absolute inset-0 z-0"
+                          />
+                          <div className="pointer-events-none relative z-10 flex items-center gap-2 py-0.5">
+                            <span className="w-8 flex-shrink-0 text-[11px] text-text-tertiary">{shortMoveDate(group.date)}</span>
+                            {/* 한 줄 강제: nowrap + overflow-hidden (삼순 NO-GO 반영 — flex-wrap 제거) */}
+                            <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-x-2 overflow-hidden">
+                              {group.moves.map((move, index) => {
+                                const isRegister = move.moveType === "register";
+                                const label = isRegister ? "등록" : "말소";
+                                // 긍부정 색·배경 모두 이 파일 위쪽 `최근 N경기` 칩과 같은 SSOT(@/lib/ui/result-tone).
+                                // ⚠️ 배경을 `${color}1f` 로 파생 생성하면 SSOT 배경값을 우회한다(삼순 3차 지적).
+                                return (
+                                  <span
+                                    key={`${move.moveType}-${move.kboPlayerId}-${index}`}
+                                    className="inline-flex min-w-0 items-center gap-1"
+                                  >
+                                    <span
+                                      className="flex-shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
+                                      style={resultToneChipStyle(isRegister ? "positive" : "negative")}
+                                    >
+                                      {label}
+                                    </span>
+                                    {move.href ? (
+                                      <Link
+                                        href={move.href}
+                                        prefetch={false}
+                                        className="pointer-events-auto truncate text-[12.5px] font-semibold text-text-primary"
+                                      >
+                                        {move.playerName}
+                                      </Link>
+                                    ) : (
+                                      <span className="truncate text-[12.5px] font-semibold text-text-primary">
+                                        {move.playerName}
+                                      </span>
+                                    )}
+                                  </span>
+                                );
+                              })}
+                              {group.hiddenInGroup > 0 && (
+                                <span className="flex-shrink-0 text-[11.5px] text-text-tertiary">외 {group.hiddenInGroup}명</span>
                               )}
-                            </span>
-                          );
-                        })}
-                        {group.hiddenInGroup > 0 && (
-                          <span className="flex-shrink-0 text-[11.5px] text-text-tertiary">외 {group.hiddenInGroup}명</span>
-                        )}
-                      </div>
-                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
-                    </div>
-                  </li>
-                ))}
-                {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount > 0 && (
-                  <li>
-                    <Link
-                      href={teamHomeHref(team.slug)}
-                      prefetch={false}
-                      className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
-                    >
-                      <span>외 {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>
-                      <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
-                    </Link>
-                  </li>
+                            </div>
+                            <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                          </div>
+                        </li>
+                      ))}
+                      {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount > 0 && (
+                        <li>
+                          <Link
+                            href={teamHomeHref(team.slug)}
+                            prefetch={false}
+                            className="flex items-center justify-between py-0.5 text-[12px] text-text-secondary"
+                          >
+                            <span>외 {computeRosterMovesGroupedDisplay(currentRosterMoves.moves).overflowCount}건 더보기</span>
+                            <ChevronRight size={14} className="flex-shrink-0 text-text-tertiary" />
+                          </Link>
+                        </li>
+                      )}
+                    </ul>
+                  )}
+                </div>
+
+                {/* 6. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
+                {(data?.communityNewPosts ?? 0) > 0 && (
+                  <Link href="/community" prefetch={false} className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
+                    <span className="text-[12.5px] text-text-secondary">💬 최근 1주 새 글 <b className="text-text-primary">{data!.communityNewPosts}</b>개</span>
+                    <ChevronRight size={15} className="text-text-tertiary" />
+                  </Link>
                 )}
-              </ul>
+              </>
             )}
           </div>
-
-          {/* 6. 커뮤니티 새 글 — 클릭 → 커뮤니티 */}
-          {(data?.communityNewPosts ?? 0) > 0 && (
-            <Link href="/community" prefetch={false} className="mt-4 border-t border-border/40 pt-3.5 flex items-center justify-between">
-              <span className="text-[12.5px] text-text-secondary">💬 최근 1주 새 글 <b className="text-text-primary">{data!.communityNewPosts}</b>개</span>
-              <ChevronRight size={15} className="text-text-tertiary" />
-            </Link>
-          )}
         </>
       )}
     </GlassCard>
