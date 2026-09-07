@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Heart, MessageCircle, X, ArrowLeft, Flag, Pencil, Trash2 } from "lucide-react";
+import { Heart, MessageCircle, X, ArrowLeft, Flag, Pencil, Trash2, RefreshCw } from "lucide-react";
 import LoginSheet from "@/components/auth/LoginSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
@@ -160,7 +160,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   }
   if (!loading && !active && !error) return null;
   return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-4">
-    <div className="mb-3 flex items-center justify-between"><h2 className="font-bold">경기는 끝나도, 한 줄은 남아</h2><button className={button} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div>
+    <div className="mb-3 flex items-center justify-between"><h2 className="font-bold">경기는 끝나도, 한 줄은 남아</h2><button className={`${button} shrink-0 px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload()}><RefreshCw size={16}/></button><button className={`${button} shrink-0 px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div>
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
     {feed && context && <><div className="mb-3 grid grid-cols-2 gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
@@ -188,7 +188,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
           {user && !commentsError ? <form className="space-y-2" onSubmit={e => { e.preventDefault(); void mutate({ op: "comment", reviewId: sheet.review.id, content }, () => { setContent(""); void loadComments(sheet.review); }); }}><label className="block text-sm">댓글<textarea value={content} onChange={e => setContent(e.target.value)} rows={2} className="mt-1 w-full rounded-xl border border-border bg-bg-secondary p-3 text-base"/></label><p className="text-xs text-text-secondary">{inputIssue} {textLength(content.trim())}/{COMMENT_LIMIT}</p><button className={`${primary} w-full`} disabled={busy || !!inputIssue || !content.trim()}>댓글 남기기</button></form> : !user && <button className={`${primary} w-full`} onClick={() => requireLogin()}>로그인하고 댓글 남기기</button>}</>}
         {sheet?.kind === "delete" && <><p className="text-sm leading-6">{sheet.comment ? "이 댓글을 삭제할까요? 삭제 후 복구할 수 없어요." : "경기마다 한 줄만 남길 수 있어요. 삭제하면 다시 등록할 수 없고 댓글도 함께 보이지 않아요. 복구할 수 없어요."}</p><button className={`${primary} w-full`} disabled={busy} onClick={() => void mutate({ op: sheet.comment ? "comment_delete" : "delete", reviewId: sheet.review.id, commentId: sheet.comment?.id }, () => { if (sheet.comment) { back(); void loadComments(sheet.review); } else close(); })}>삭제하기</button></>}
         {sheet?.kind === "report" && <form className="space-y-3" onSubmit={async e => { e.preventDefault(); if (busy || !requireLogin()) return; setBusy(true); setFormError(""); try { await request("/api/report", { targetType: sheet.targetType, targetId: sheet.target, reason }); setSheet({ ...sheet, kind: "reported" }); await reload(); } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); } }}><fieldset><legend className="mb-2 text-sm">신고 사유</legend>{REPORT_REASONS.map(r => <label key={r} className="flex min-h-11 items-center gap-3 text-sm"><input type="radio" name="review-report-reason" checked={reason === r} onChange={() => setReason(r)}/>{r}</label>)}</fieldset><p className="text-xs text-text-secondary">신고한 사람 정보는 상대에게 비공개예요</p><button className={`${primary} w-full`} disabled={busy}>신고 접수</button></form>}
-        {sheet?.kind === "reported" && <><p>신고를 접수했어요</p><p className="text-sm text-text-secondary">신고 접수만으로 상대 글이 바로 숨겨지진 않아요. 운영정책에 따라 검토해요.</p><button className={`${button} w-full`} onClick={close}>확인</button></>}
+        {sheet?.kind === "reported" && <><p>신고를 접수했어요</p><p className="text-sm text-text-secondary">신고 1건만으로 바로 숨겨지지는 않아요. 서로 다른 사용자 3명이 신고하면 자동으로 숨겨지고, 이후 운영진이 검토해요.</p><button className={`${button} w-full`} onClick={close}>확인</button></>}
       </div>
     </dialog>
   </section>;
