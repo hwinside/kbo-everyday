@@ -418,7 +418,15 @@ async function verifyCompoundPipeline(official: boolean, repair = false, general
   };
   const result = await answerQuestion("qa-compound", question, deps);
   if (stubborn) {
-    assert.equal(result.source, "unsure", "Repeated ungrounded rewrite must fail closed");
+    // Both existing paths fail closed; the generic numeric guard uses its own label.
+    const expectedSource = official ? "unsure" : "stat_clarify";
+    assert.equal(result.source, expectedSource, "Repeated ungrounded rewrite must fail closed");
+    assert.ok(!result.answer.includes("999"), "Rejected quantity leaked into the returned answer");
+    const envelope = stored && unpackStoredQaFinal(stored.text);
+    assert.ok(envelope, "Closed answer was not stored for safe replay");
+    assert.equal(envelope.source, expectedSource, "Stored answer lost the closed source");
+    assert.equal(envelope.answer, result.answer, "Stored answer differs from the safe returned answer");
+    assert.ok(!envelope.answer.includes("999"), "Rejected quantity leaked into the stored answer");
     assert.equal(calls, 2, "Repair added an extra provider call");
     return;
   }
