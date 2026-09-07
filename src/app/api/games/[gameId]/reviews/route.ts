@@ -4,6 +4,7 @@ import { supabaseAdmin } from "@/lib/supabase/admin";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import { COMMENT_LIMIT, validateText } from "@/lib/game-reviews/domain";
 import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
+import { REVIEW_POLICY } from "@/lib/game-reviews/policy";
 import { ReviewError, databaseError, fail, loadReviewContext, positiveId, reviewJson } from "@/lib/game-reviews/server";
 
 type Params = { params: Promise<{ gameId: string }> };
@@ -20,9 +21,10 @@ export async function GET(req: NextRequest, { params }: Params) {
     const filterTeam = filter === null ? null : positiveId(filter);
     if (filterTeam !== null && ![context.awayTeamId, context.homeTeamId].includes(filterTeam)) throw new ReviewError("이 경기의 팀을 선택해 주세요");
     const { data, error } = await supabaseAdmin.rpc("gr_feed", { g: gameId, a: verified?.user.id ?? null,
-      before_id: cursor === null ? null : positiveId(cursor), rid: parent === null ? null : positiveId(parent), filter_team: filterTeam });
+      before_id: cursor === null ? null : positiveId(cursor), rid: parent === null ? null : positiveId(parent), filter_team: filterTeam,
+      p_best_min_likes: REVIEW_POLICY.bestMinLikes });
     if (error) databaseError(error);
-    return reviewJson({ context, feed: data, viewerId: verified?.user.id ?? null });
+    return reviewJson({ context, feed: { ...data, policy: REVIEW_POLICY }, viewerId: verified?.user.id ?? null });
   } catch (error) { return fail(error); }
 }
 export async function POST(req: NextRequest, { params }: Params) {
@@ -47,6 +49,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     }
     let player: { key: string; name: string } | null = null;
     if ((op === "create" || op === "edit") && input.playerKey != null && input.playerKey !== "") {
+      if (REVIEW_POLICY.nominationMode === "disabled") throw new ReviewError("현재 수훈선수 지정은 사용하지 않아요");
       player = context.players.find(p => p.key === input.playerKey) ?? null;
       if (!player) throw new ReviewError("승리팀 출전 선수 중에서 선택해 주세요");
     }
@@ -57,6 +60,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       body, body_key: body ? normalizeForFloodKey(body) : null, desired: op === "like" ? input.liked : null,
       away: context.awayTeamId, home: context.homeTeamId, winner: context.winnerTeamId,
       pkey: player?.key ?? null, pname: player?.name ?? null,
+      p_allow_recreate: REVIEW_POLICY.allowRecreateAfterDelete, p_nomination_mode: REVIEW_POLICY.nominationMode,
     });
     if (error) databaseError(error);
     return reviewJson(data);

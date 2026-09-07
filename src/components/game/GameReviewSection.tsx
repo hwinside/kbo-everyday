@@ -7,6 +7,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { blockUserById } from "@/lib/supabase/useBlock";
+import { reviewDeletionMessage } from "@/lib/game-reviews/policy";
 import { getTeamById } from "@/lib/constants/teams";
 import { canEdit, COMMENT_LIMIT, EDIT_WINDOW_MS, REPORT_REASONS, textLength, validateText, type ReviewContext, type ReviewFeed, type ReviewRow } from "@/lib/game-reviews/domain";
 
@@ -39,6 +40,9 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const feedRequest = useRef(0), commentRequest = useRef(0);
   const active = data?.scope === scope ? data : null;
   const feed = active?.feed, context = active?.context;
+  const policy = feed?.policy;
+  const canCreateAgain = !feed?.own || (feed.own.deleted && !!policy?.allowRecreateAfterDelete);
+  const deletionMessage = reviewDeletionMessage(!!policy?.allowRecreateAfterDelete);
   const sheetOpen = !!sheet;
 
   const request = useCallback(async (path: string, body?: unknown) => {
@@ -89,7 +93,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   function open(next: Sheet) { if (sheet) setHistory(h => [...h, sheet]); setSheet(next); setFormError(""); setContent(""); }
   function back() { const previous = history.at(-1); setHistory(h => h.slice(0, -1)); setSheet(previous ?? null); setContent(""); setFormError(""); }
   function requireLogin() { if (user) return true; close(); setLogin(true); return false; }
-  function compose(review?: ReviewRow) { if (!requireLogin()) return; open({ kind: "compose", review }); setContent(review?.content ?? ""); setPlayerKey(review?.player_key ?? ""); }
+  function compose(review?: ReviewRow) { if (!requireLogin()) return; open({ kind: "compose", review }); setContent(review?.content ?? ""); setPlayerKey(policy?.nominationMode === "disabled" ? "" : review?.player_key ?? ""); }
   async function loadComments(review: ReviewRow, before?: number) {
     const sequence = ++commentRequest.current;
     setCommentsLoading(true); setCommentsError("");
@@ -147,12 +151,13 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const limit = writing ? 100 : COMMENT_LIMIT;
   let inputIssue = "";
   if (content) { try { validateText(content, limit); } catch (e) { inputIssue = (e as Error).message; } }
+  const needsPlayer = writing && policy?.nominationMode === "required_winner_participant" && (sheet.review?.team_id ?? profile?.team_id) === context?.winnerTeamId && !playerKey;
   const composeExpired = writing && !!sheet.review && !canEdit(sheet.review.created_at, sheet.review.edit_count, now);
   const title = sheet?.kind === "list" ? "팬들의 한 줄" : writing ? sheet.review ? "내 한 줄 수정" : "내 한 줄 남기기" : sheet?.kind === "comments" ? "댓글" : sheet?.kind === "full" ? "한 줄 전문" : sheet?.kind === "report" ? "신고하기" : sheet?.kind === "reported" ? "신고 접수 완료" : sheet?.kind === "delete" ? "삭제할까요?" : "댓글 수정";
   function entry() {
     if (!user) return <button className={`${primary} w-full`} onClick={() => { close(); setLogin(true); }}>로그인하고 함께하기</button>;
-    if (feed?.own?.hidden) return <div className="text-sm text-text-secondary">운영 정책 위반으로 숨겨진 내 글이 있어요. 다른 팬에게 보이지 않고 베스트에서 제외돼요.<button className={button} disabled={busy} onClick={() => { if (window.confirm("숨겨진 내 글을 삭제할까요? 삭제 후 재등록·복구는 불가능하고 댓글도 함께 보이지 않아요.")) void mutate({ op: "delete", reviewId: feed.own!.id }); }}>내 글 삭제</button></div>;
-    if (feed?.own?.deleted) return <p className="text-sm text-text-secondary">내 한 줄을 삭제했어요. 이 경기에는 다시 등록할 수 없어요.</p>;
+    if (feed?.own?.hidden && !feed.own.deleted) return <div className="text-sm text-text-secondary">운영 정책 위반으로 숨겨진 내 글이 있어요. 다른 팬에게 보이지 않고 베스트에서 제외돼요.<button className={button} disabled={busy} onClick={() => { if (window.confirm("숨겨진 내 글을 삭제할까요? " + deletionMessage)) void mutate({ op: "delete", reviewId: feed.own!.id }); }}>내 글 삭제</button></div>;
+    if (feed?.own?.deleted && !policy?.allowRecreateAfterDelete) return <p className="text-sm text-text-secondary">내 한 줄을 삭제했어요. 이 경기에는 다시 등록할 수 없어요.</p>;
     if (feed?.ownReview) return <button className={`${button} w-full border border-border`} onClick={() => showFull(feed.ownReview!)}>✓ 내 한 줄 보기</button>;
     if (!profile?.team_id) return <Link className={`${primary} flex items-center justify-center`} href="/my">최애팀 설정하고 한 줄 남기기</Link>;
     if (!eligible) return <p className="text-sm text-text-secondary">한 줄 작성은 {context && `${teamName(context.awayTeamId)}·${teamName(context.homeTeamId)}`} 팬만 가능해요. 댓글·좋아요는 모든 로그인 유저가 참여할 수 있어요.</p>;
@@ -165,7 +170,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
     {feed && context && <><div className="mb-3 grid grid-cols-2 gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
       const best = feed.best.find(r => r.team_id === team);
-      return best ? card(best, true) : <div key={team} className={`${surface} flex min-h-36 flex-col justify-center p-3 text-sm`}><b>{teamName(team)} 팬 BEST</b><p className="mt-2 text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? "공감이 모이면 베스트가 생겨요. 3개부터 올라요." : "아직 한 줄이 없어요."}</p>{eligible && profile?.team_id === team && !feed.own && <button className={`${button} px-0 text-left text-primary`} onClick={() => compose()}>{feed.team_counts?.[team] ? "내 한 줄 남기기" : "첫 한 줄 남기기"}</button>}</div>;
+      return best ? card(best, true) : <div key={team} className={`${surface} flex min-h-36 flex-col justify-center p-3 text-sm`}><b>{teamName(team)} 팬 BEST</b><p className="mt-2 text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? `공감이 모이면 베스트가 생겨요. ${feed.policy.bestMinLikes}개부터 올라요.` : "아직 한 줄이 없어요."}</p>{eligible && profile?.team_id === team && canCreateAgain && <button className={`${button} px-0 text-left text-primary`} onClick={() => compose()}>{feed.team_counts?.[team] ? "내 한 줄 남기기" : "첫 한 줄 남기기"}</button>}</div>;
     })}</div>{entry()}</>}
     {notice && <p role="status" className="mt-2 text-sm text-text-secondary">{notice}</p>}
     <LoginSheet isOpen={login} onClose={() => setLogin(false)}/>
@@ -180,13 +185,13 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
           {writing && <p className="text-sm">{teamName(sheet.review?.team_id ?? profile?.team_id ?? null)} 팬으로 남겨요</p>}
           <label className="block text-sm">{writing ? "한줄평" : "댓글"}<textarea autoFocus value={content} onChange={e => setContent(e.target.value)} rows={4} aria-describedby="game-review-input-help" className="mt-2 w-full resize-y rounded-xl border border-border bg-bg-secondary p-3 text-base"/></label>
           <p id="game-review-input-help" className={`text-xs ${inputIssue ? "text-red-400" : "text-text-secondary"}`}>{inputIssue || (composeExpired ? "수정 가능 시간이 지났거나 1회 수정을 사용했어요" : writing ? "작성 후 10분 안에 1회 수정할 수 있어요" : "모든 로그인 유저가 댓글로 함께할 수 있어요")} · {textLength(content.trim())}/{limit}</p>
-          {writing && context && (sheet.review?.team_id ?? profile?.team_id) === context.winnerTeamId && <label className="block text-sm">나의 수훈선수 (선택)<select className="mt-2 min-h-11 w-full rounded-xl bg-bg-secondary px-3" value={playerKey} onChange={e => setPlayerKey(e.target.value)}><option value="">지정하지 않기</option>{context.players.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>{!context.players.length && <span className="text-xs text-text-secondary">출전 선수 정보를 준비 중이에요. 선수 지정 없이 남길 수 있어요.</span>}</label>}
-          {writing && context && (sheet.review?.team_id ?? profile?.team_id) !== context.winnerTeamId && <p className="text-xs text-text-secondary">{context.winnerTeamId ? "수훈선수는 승리팀 팬만 지정할 수 있어요" : "무승부 경기에는 수훈선수를 지정하지 않아요"}</p>}
-          <button className={`${primary} w-full`} disabled={busy || !content.trim() || !!inputIssue || composeExpired}>{busy ? "저장 중…" : "등록"}</button>
+          {writing && policy?.nominationMode !== "disabled" && context && (sheet.review?.team_id ?? profile?.team_id) === context.winnerTeamId && <label className="block text-sm">나의 수훈선수 ({policy?.nominationMode === "required_winner_participant" ? "필수" : "선택"})<select className="mt-2 min-h-11 w-full rounded-xl bg-bg-secondary px-3" value={playerKey} onChange={e => setPlayerKey(e.target.value)}><option value="">{policy?.nominationMode === "required_winner_participant" ? "선수를 선택해 주세요" : "지정하지 않기"}</option>{context.players.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>{!context.players.length && <span className="text-xs text-text-secondary">{policy?.nominationMode === "required_winner_participant" ? "출전 선수 정보를 불러오지 못했어요. 새로고침 후 다시 시도해 주세요." : "출전 선수 정보를 준비 중이에요. 선수 지정 없이 남길 수 있어요."}</span>}</label>}
+          {writing && policy?.nominationMode !== "disabled" && context && (sheet.review?.team_id ?? profile?.team_id) !== context.winnerTeamId && <p className="text-xs text-text-secondary">{context.winnerTeamId ? "수훈선수는 승리팀 팬만 지정할 수 있어요" : "무승부 경기에는 수훈선수를 지정하지 않아요"}</p>}
+          <button className={`${primary} w-full`} disabled={busy || !content.trim() || !!inputIssue || composeExpired || needsPlayer}>{busy ? "저장 중…" : "등록"}</button>
         </form>}
         {sheet?.kind === "comments" && <>{focused?.id === sheet.review.id && card(focused)}{commentsError && <div role="alert">{commentsError}<button className={button} onClick={() => void loadComments(sheet.review)}>다시 시도</button></div>}{commentsLoading && <p role="status">댓글을 불러오는 중이에요</p>}{comments.map(c => <article key={c.id} className={`${surface} p-3`}><p className="text-xs text-text-secondary">{c.nickname} · {teamName(c.team_id)} 팬 {c.author_id === user?.id && "· 내 댓글"}</p><p className="my-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{c.content}</p>{c.author_id === user?.id ? <><button className={button} onClick={() => { open({ kind: "comment_edit", review: sheet.review, comment: c }); setContent(c.content); }}>수정</button><button className={button} onClick={() => open({ kind: "delete", review: sheet.review, comment: c })}>삭제</button></> : <button className={button} onClick={() => { if (requireLogin()) open({ kind: "report", target: c.id, targetType: "game_review_comment" }); }}>신고</button>}</article>)}{commentNext && <button className={`${button} w-full`} disabled={commentsLoading} onClick={() => void loadComments(sheet.review, commentNext)}>댓글 더 보기</button>}{!commentsLoading && !comments.length && !commentsError && <p className="text-sm text-text-secondary">첫 댓글로 함께해 주세요</p>}
           {user && !commentsError ? <form className="space-y-2" onSubmit={e => { e.preventDefault(); void mutate({ op: "comment", reviewId: sheet.review.id, content }, () => { setContent(""); void loadComments(sheet.review); }); }}><label className="block text-sm">댓글<textarea value={content} onChange={e => setContent(e.target.value)} rows={2} className="mt-1 w-full rounded-xl border border-border bg-bg-secondary p-3 text-base"/></label><p className="text-xs text-text-secondary">{inputIssue} {textLength(content.trim())}/{COMMENT_LIMIT}</p><button className={`${primary} w-full`} disabled={busy || !!inputIssue || !content.trim()}>댓글 남기기</button></form> : !user && <button className={`${primary} w-full`} onClick={() => requireLogin()}>로그인하고 댓글 남기기</button>}</>}
-        {sheet?.kind === "delete" && <><p className="text-sm leading-6">{sheet.comment ? "이 댓글을 삭제할까요? 삭제 후 복구할 수 없어요." : "경기마다 한 줄만 남길 수 있어요. 삭제하면 다시 등록할 수 없고 댓글도 함께 보이지 않아요. 복구할 수 없어요."}</p><button className={`${primary} w-full`} disabled={busy} onClick={() => void mutate({ op: sheet.comment ? "comment_delete" : "delete", reviewId: sheet.review.id, commentId: sheet.comment?.id }, () => { if (sheet.comment) { back(); void loadComments(sheet.review); } else close(); })}>삭제하기</button></>}
+        {sheet?.kind === "delete" && <><p className="text-sm leading-6">{sheet.comment ? "이 댓글을 삭제할까요? 삭제 후 복구할 수 없어요." : deletionMessage}</p><button className={`${primary} w-full`} disabled={busy} onClick={() => void mutate({ op: sheet.comment ? "comment_delete" : "delete", reviewId: sheet.review.id, commentId: sheet.comment?.id }, () => { if (sheet.comment) { back(); void loadComments(sheet.review); } else close(); })}>삭제하기</button></>}
         {sheet?.kind === "report" && <form className="space-y-3" onSubmit={async e => { e.preventDefault(); if (busy || !requireLogin()) return; setBusy(true); setFormError(""); try { await request("/api/report", { targetType: sheet.targetType, targetId: sheet.target, reason }); setSheet({ ...sheet, kind: "reported" }); await reload(); } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); } }}><fieldset><legend className="mb-2 text-sm">신고 사유</legend>{REPORT_REASONS.map(r => <label key={r} className="flex min-h-11 items-center gap-3 text-sm"><input type="radio" name="review-report-reason" checked={reason === r} onChange={() => setReason(r)}/>{r}</label>)}</fieldset><p className="text-xs text-text-secondary">신고한 사람 정보는 상대에게 비공개예요</p><button className={`${primary} w-full`} disabled={busy}>신고 접수</button></form>}
         {sheet?.kind === "reported" && <><p>신고를 접수했어요</p><p className="text-sm text-text-secondary">신고 1건만으로 바로 숨겨지지는 않아요. 서로 다른 사용자 3명이 신고하면 자동으로 숨겨지고, 이후 운영진이 검토해요.</p><button className={`${button} w-full`} onClick={close}>확인</button></>}
       </div>

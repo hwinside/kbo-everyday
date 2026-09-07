@@ -12,10 +12,10 @@ let checks = 0;
 async function query(sql, args = []) { return (await db.query(sql, args)).rows; }
 async function denied(action, code) { await assert.rejects(action, err => err.message.includes(code)); checks++; }
 async function write(actor, op, options = {}) {
-  const { rid = null, cid = null, content = null, key = content, liked = null, player = null } = options;
-  return (await query(`SELECT gr_mutate($1,$2,$3,rid=>$4,cid=>$5,body=>$6,body_key=>$7,desired=>$8,away=>8,home=>1,winner=>1,pkey=>$9,pname=>$9) result`, [actor, game, op, rid, cid, content, key, liked, player]))[0].result;
+  const { rid = null, cid = null, content = null, key = content, liked = null, player = null, recreate = false, nomination = 'optional_winner_participant' } = options;
+  return (await query(`SELECT gr_mutate($1,$2,$3,rid=>$4,cid=>$5,body=>$6,body_key=>$7,desired=>$8,away=>8,home=>1,winner=>1,pkey=>$9,pname=>$9,p_allow_recreate=>$10,p_nomination_mode=>$11) result`, [actor, game, op, rid, cid, content, key, liked, player, recreate, nomination]))[0].result;
 }
-async function feed(actor = null, before = null, parent = null) { return (await query('SELECT gr_feed($1,$2,$3,$4) result', [game, actor, before, parent]))[0].result; }
+async function feed(actor = null, before = null, parent = null, minimum = 3) { return (await query('SELECT gr_feed($1,$2,$3,$4,p_best_min_likes=>$5) result', [game, actor, before, parent, minimum]))[0].result; }
 try {
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;
     CREATE TABLE profiles(id uuid PRIMARY KEY,team_id integer,nickname text);
@@ -43,10 +43,13 @@ try {
   await query("UPDATE game_reviews SET created_at=clock_timestamp()-interval '10 minutes' WHERE id=$1", [opponent.id]);
   await denied(() => write(b, 'edit', { rid: opponent.id, content: '기한 지난 수정' }), 'gr_edit_expired');
   await denied(() => write(c, 'delete', { rid }), 'gr_owner');
+  await denied(() => write(d, 'create', { content: '필수 선수 누락', nomination: 'required_winner_participant' }), 'gr_player_required');
+  await denied(() => write(d, 'create', { content: '비활성 선수 지정', nomination: 'disabled', player: '출전선수' }), 'gr_nomination_disabled');
   await denied(() => write(a, 'like', { rid, liked: true }), 'gr_self');
   for (const actor of [b, c, d]) await write(actor, 'like', { rid, liked: true });
   await write(b, 'like', { rid, liked: true }); // idempotent retry, not a toggle
   assert.equal((await feed()).best[0].like_count, 3); checks++;
+  assert.equal((await feed(null, null, null, 4)).best.length, 0); checks++;
   await write(b, 'like', { rid, liked: false });
   await write(b, 'like', { rid, liked: false });
   assert.equal((await feed()).best.length, 0); checks++;
@@ -88,6 +91,12 @@ try {
   await denied(() => feed(f, null, rid), 'gr_missing');
   for (let i = 0; i < 20; i++) await write(f, 'like', { rid: opponent.id, liked: i % 2 === 0 });
   await denied(() => write(f, 'like', { rid: opponent.id, liked: true }), 'gr_rate');
+  // Alternate recreate policy must create a clean NEW original, not revive old
+  // reactions/comments, while the active unique index still permits only one.
+  await query('UPDATE profiles SET team_id=1 WHERE id=$1', [a]);
+  const renewed = await write(a, 'create', { content: '재등록 허용 정책', recreate: true });
+  assert.notEqual(renewed.id, rid); assert.equal((await feed(a)).ownReview.like_count, 0); assert.equal((await feed(a)).ownReview.comment_count, 0); checks++;
+  await denied(() => write(a, 'create', { content: '활성 중복', recreate: true }), 'gr_exists');
   // No client SQL/RPC bypass of API identity, final-game or content validation.
   await db.exec('SET ROLE authenticated');
   await denied(() => query('SELECT * FROM game_reviews'), 'permission denied');

@@ -1,8 +1,8 @@
 import { firstContentIssue } from "@/lib/moderation/content-filter";
+import type { ReviewPolicy } from "./policy";
 
 export const REVIEW_LIMIT = 100;
 export const COMMENT_LIMIT = 200;
-export const BEST_MIN_LIKES = 3;
 export const EDIT_WINDOW_MS = 600_000;
 export const REPORT_REASONS = ["욕설·비하·혐오", "광고·도배", "개인정보 노출", "기타 운영정책"] as const;
 
@@ -24,6 +24,7 @@ export interface ReviewRow {
   liked: boolean; comment_count: number; player_key: string | null; player_name: string | null;
 }
 export interface ReviewFeed {
+  policy: ReviewPolicy;
   rows: ReviewRow[]; best: ReviewRow[]; total: number;
   team_counts: Record<string, number>;
   own: { id: number; deleted: boolean; hidden: boolean } | null;

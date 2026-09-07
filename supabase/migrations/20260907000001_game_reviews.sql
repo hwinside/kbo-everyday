@@ -12,8 +12,12 @@ CREATE TABLE public.game_reviews (
  edited_at timestamptz, edit_count integer NOT NULL DEFAULT 0 CHECK (edit_count BETWEEN 0 AND 1),
  like_count integer NOT NULL DEFAULT 0 CHECK (like_count >= 0),
  is_hidden boolean NOT NULL DEFAULT false, deleted_at timestamptz,
- UNIQUE(game_id, author_id), CHECK ((player_key IS NULL) = (player_name IS NULL))
+ CHECK ((player_key IS NULL) = (player_name IS NULL))
 );
+-- At most one active original. Historical tombstones persist; the trusted
+-- service policy below decides whether a deleted original permits a NEW id.
+CREATE UNIQUE INDEX game_reviews_one_active ON public.game_reviews(game_id,author_id) WHERE deleted_at IS NULL;
+CREATE INDEX game_reviews_participation ON public.game_reviews(game_id,author_id,id DESC);
 CREATE INDEX game_reviews_feed ON public.game_reviews(game_id,id DESC) WHERE deleted_at IS NULL AND NOT is_hidden;
 CREATE INDEX game_reviews_best ON public.game_reviews(game_id,team_id,like_count DESC,created_at,id) WHERE deleted_at IS NULL AND NOT is_hidden;
 CREATE TABLE public.game_review_likes (
@@ -73,25 +77,28 @@ END $$;
 CREATE FUNCTION public.gr_mutate(a uuid,g text,op text,rid bigint DEFAULT NULL,cid bigint DEFAULT NULL,
  body text DEFAULT NULL,body_key text DEFAULT NULL,desired boolean DEFAULT NULL,
  away integer DEFAULT NULL,home integer DEFAULT NULL,winner integer DEFAULT NULL,
- pkey text DEFAULT NULL,pname text DEFAULT NULL) RETURNS jsonb
+ pkey text DEFAULT NULL,pname text DEFAULT NULL,p_allow_recreate boolean DEFAULT NULL,p_nomination_mode text DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE r public.game_reviews; c public.game_review_comments; tid integer; t timestamptz;
 BEGIN
  IF a IS NULL THEN RAISE EXCEPTION 'gr_auth'; END IF;
+ IF op IN('create','edit') AND (p_allow_recreate IS NULL OR p_nomination_mode IS NULL OR p_nomination_mode NOT IN('disabled','optional_winner_participant','required_winner_participant')) THEN RAISE EXCEPTION 'gr_policy'; END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('gr_actor:'||a::text,0));
  SELECT team_id INTO tid FROM public.profiles WHERE id=a FOR SHARE;
  IF NOT FOUND THEN RAISE EXCEPTION 'gr_profile'; END IF;
  IF op='create' THEN
-   IF EXISTS(SELECT 1 FROM public.game_reviews WHERE game_id=g AND author_id=a) THEN RAISE EXCEPTION 'gr_exists'; END IF;
+   IF EXISTS(SELECT 1 FROM public.game_reviews WHERE game_id=g AND author_id=a AND (deleted_at IS NULL OR NOT p_allow_recreate)) THEN RAISE EXCEPTION 'gr_exists'; END IF;
    IF tid IS NULL OR tid NOT IN(away,home) OR away IS NULL OR home IS NULL OR away=home THEN RAISE EXCEPTION 'gr_team'; END IF;
    IF pkey IS NOT NULL AND tid IS DISTINCT FROM winner THEN RAISE EXCEPTION 'gr_player'; END IF;
+   IF p_nomination_mode='disabled' AND pkey IS NOT NULL THEN RAISE EXCEPTION 'gr_nomination_disabled'; END IF;
+   IF p_nomination_mode='required_winner_participant' AND tid=winner AND pkey IS NULL THEN RAISE EXCEPTION 'gr_player_required'; END IF;
    PERFORM public.gr_rate(a,'create',3);
    INSERT INTO public.game_reviews(game_id,author_id,team_id,content,player_key,player_name)
    VALUES(g,a,tid,body,pkey,pname) RETURNING * INTO r;
  ELSIF op IN('edit','delete','like','comment','comment_edit','comment_delete') THEN
    SELECT * INTO r FROM public.game_reviews WHERE id=rid AND game_id=g FOR UPDATE;
    IF NOT FOUND THEN RAISE EXCEPTION 'gr_missing'; END IF;
-   -- Owners may remove hidden originals, but never revive/re-create tombstones.
+   -- Owners may remove hidden originals. Tombstones are never revived in place.
    IF op='delete' AND r.author_id=a THEN
      UPDATE public.game_reviews SET deleted_at=coalesce(deleted_at,clock_timestamp()) WHERE id=r.id;
      RETURN jsonb_build_object('ok',true);
@@ -103,6 +110,8 @@ BEGIN
      IF r.content=body AND r.player_key IS NOT DISTINCT FROM pkey THEN RETURN jsonb_build_object('ok',true); END IF;
      IF r.edit_count<>0 OR t>=r.created_at+interval '10 minutes' THEN RAISE EXCEPTION 'gr_edit_expired'; END IF;
      IF pkey IS NOT NULL AND r.team_id IS DISTINCT FROM winner THEN RAISE EXCEPTION 'gr_player'; END IF;
+     IF p_nomination_mode='disabled' AND pkey IS NOT NULL THEN RAISE EXCEPTION 'gr_nomination_disabled'; END IF;
+     IF p_nomination_mode='required_winner_participant' AND r.team_id=winner AND pkey IS NULL THEN RAISE EXCEPTION 'gr_player_required'; END IF;
      UPDATE public.game_reviews SET content=body,player_key=pkey,player_name=pname,edit_count=1,edited_at=t WHERE id=r.id;
    ELSIF op='like' THEN
      IF r.author_id=a THEN RAISE EXCEPTION 'gr_self'; END IF;
@@ -136,10 +145,11 @@ BEGIN
  RETURN jsonb_build_object('ok',true,'id',coalesce(c.id,r.id));
 END $$;
 
-CREATE FUNCTION public.gr_feed(g text,a uuid DEFAULT NULL,before_id bigint DEFAULT NULL,rid bigint DEFAULT NULL,filter_team integer DEFAULT NULL)
+CREATE FUNCTION public.gr_feed(g text,a uuid DEFAULT NULL,before_id bigint DEFAULT NULL,rid bigint DEFAULT NULL,filter_team integer DEFAULT NULL,p_best_min_likes integer DEFAULT NULL)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
 DECLARE result jsonb;
 BEGIN
+ IF p_best_min_likes IS NULL OR p_best_min_likes<1 OR p_best_min_likes>10000 THEN RAISE EXCEPTION 'gr_policy'; END IF;
  IF rid IS NOT NULL THEN
    -- Hold the parent while reading children, so concurrent hide/delete cannot
    -- turn a checked parent into an invisible one between statements.
@@ -165,7 +175,7 @@ BEGIN
    SELECT r.*,p.nickname FROM public.game_reviews r JOIN public.profiles p ON p.id=r.author_id
    WHERE r.game_id=g AND r.deleted_at IS NULL AND NOT r.is_hidden AND NOT public.gr_blocked(a,r.author_id)
  ), page AS (SELECT * FROM visible WHERE (before_id IS NULL OR id<before_id) AND (filter_team IS NULL OR team_id=filter_team) ORDER BY id DESC LIMIT 26),
- best AS (SELECT DISTINCT ON(team_id) * FROM visible WHERE like_count>=3 ORDER BY team_id,like_count DESC,created_at,id),
+ best AS (SELECT DISTINCT ON(team_id) * FROM visible WHERE like_count>=p_best_min_likes ORDER BY team_id,like_count DESC,created_at,id),
  needed AS (SELECT id FROM page UNION SELECT id FROM best UNION SELECT id FROM visible WHERE author_id=a),
  dto AS (
   SELECT v.id,v.author_id,v.team_id,v.nickname,v.content,v.created_at,v.edit_count,v.like_count,v.player_key,v.player_name,
@@ -178,7 +188,7 @@ BEGIN
   'best',coalesce((SELECT jsonb_agg(to_jsonb(dto) ORDER BY dto.team_id) FROM dto JOIN best USING(id)),'[]'),
   'total',(SELECT count(*) FROM visible),
   'team_counts',coalesce((SELECT jsonb_object_agg(team_id,n) FROM (SELECT team_id,count(*) n FROM visible GROUP BY team_id) counts),'{}'),
-  'own',(SELECT jsonb_build_object('id',id,'hidden',is_hidden,'deleted',deleted_at IS NOT NULL) FROM public.game_reviews WHERE game_id=g AND author_id=a),
+  'own',(SELECT jsonb_build_object('id',id,'hidden',is_hidden,'deleted',deleted_at IS NOT NULL) FROM public.game_reviews WHERE game_id=g AND author_id=a ORDER BY id DESC LIMIT 1),
   'ownReview',(SELECT to_jsonb(dto) FROM dto WHERE author_id=a),
   'next',CASE WHEN (SELECT count(*) FROM page)>25 THEN (SELECT min(id) FROM shown) ELSE NULL END,
   'server_now',clock_timestamp()) INTO result;
