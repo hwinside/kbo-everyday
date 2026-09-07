@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "./client";
+import { getKSTToday } from "@/lib/utils/date-kst";
+import { resolveTicketStatus } from "@/lib/tickets/auto-complete";
 
 export interface TicketTransfer {
   id: number;
@@ -29,6 +31,29 @@ export interface TicketTransfer {
 export function useTickets(venueId?: string) {
   const [tickets, setTickets] = useState<TicketTransfer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [todayKst, setTodayKst] = useState(getKSTToday);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshDay = () => {
+      clearTimeout(timer);
+      const today = getKSTToday();
+      setTodayKst(today);
+      const nextMidnight = new Date(`${today}T00:00:00+09:00`).getTime() + 86_400_000;
+      timer = setTimeout(refreshDay, Math.max(1, nextMidnight - Date.now()));
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshDay();
+    };
+    refreshDay();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refreshDay);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refreshDay);
+    };
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -65,16 +90,27 @@ export function useTickets(venueId?: string) {
   }, []);
 
   const updateTicketStatus = useCallback(async (id: number, status: string) => {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("ticket_transfers")
       .update({ status })
-      .eq("id", id);
+      .eq("id", id)
+      .select("status")
+      .single();
     if (error) return { error: error.message };
+    // The DB trigger may complete an old ticket instead of accepting a stale
+    // "reserved" write. Also require a returned row (RLS may update zero rows).
     setTickets(prev =>
-      prev.map(t => (t.id === id ? { ...t, status } : t))
+      prev.map(t => (t.id === id ? { ...t, status: data.status } : t))
     );
     return {};
   }, []);
 
-  return { tickets, loading, createTicket, updateTicketStatus };
+  // Keep the raw rows: only the display is projected while the DB sweep catches
+  // up. No per-reader privileged write or extra polling query is needed.
+  const visibleTickets = useMemo(() => tickets.map(ticket => ({
+    ...ticket,
+    status: resolveTicketStatus(ticket, todayKst),
+  })), [tickets, todayKst]);
+
+  return { tickets: visibleTickets, loading, createTicket, updateTicketStatus };
 }
