@@ -407,8 +407,14 @@ async function verifyEmptyRetrievalFallback() {
 async function main() {
   const live = process.argv.includes("--live");
   const periodSequence = process.argv.includes("--period-sequence");
+  const easySequence = process.argv.includes("--easy-sequence");
+  if (easySequence && (!live || periodSequence)) throw new Error("--easy-sequence requires --live and cannot be combined with --period-sequence");
   if (periodSequence && !live) throw new Error("--period-sequence is a live diagnostic; use the period-context gate for deterministic QA");
-  const questions = periodSequence ? [
+  const questions = easySequence ? [
+    "시즌 홀드가 뭐야?", "그게 뭔데?", "좀 더 쉽게 설명해줘", "예를 들어줘",
+    "통산은?", "그게 뭐야?", "그럼 시즌은?", "아직 이해가 안 돼요",
+    "엉? 아니 지금 9라며 저게 무슨 뜻이냐고",
+  ] : periodSequence ? [
     "시즌 홀드가 뭐야?", "그게 뭔데?", "통산은?", "그게 뭐야?", "그럼 시즌은?",
     "엉? 아니 지금 9라며 저게 무슨 뜻이냐고",
   ] : QUESTIONS;
