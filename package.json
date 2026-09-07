@@ -208,6 +208,7 @@
     "qa:urgent-notice": "tsx scripts/qa/urgent-notice-smoke.ts",
     "qa:ticket-open": "tsx scripts/qa/ticket-open-smoke.ts",
     "qa:ticket-report": "tsx scripts/qa/ticket-report-smoke.ts",
+    "qa:ticket-auto-complete": "tsx scripts/qa/ticket-auto-complete.ts",
     "qa:watch-telemetry": "tsx scripts/qa/watch-telemetry-smoke.ts",
     "qa:proxy-auth-refresh": "tsx scripts/qa/proxy-auth-refresh-smoke.ts",
     "qa:proxy-matcher-slim": "tsx scripts/qa/proxy-matcher-slim-gate.ts",
