@@ -1,4 +1,4 @@
-import { definitionContextFor, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
+import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
@@ -868,7 +868,7 @@ function definitionRepairFrame(
   try {
     const value = JSON.parse(llm.text) as { answer?: unknown };
     if (typeof value.answer !== "string") return null;
-    return { terms: definition.terms, followup: definition.followup, reexplanation: definition.reexplanation, explanation: definition.explanation, period: definition.period, repair: {
+    return { terms: definition.terms, followup: definition.followup, evidence: definition.evidence, reexplanation: definition.reexplanation, explanation: definition.explanation, period: definition.period, repair: {
       reason, answer: value.answer,
       quantityCandidates: numericQuantityMatches(value.answer).map((match) => match.token),
       numberCandidates: [...new Set(value.answer.match(/\p{N}+(?:[.]\p{N}+)?/gu) ?? [])],
@@ -4830,6 +4830,8 @@ async function answerOfficialDocumentQuestion(
   // 공식 문서 경로인데 근거가 tier1이 아니면 계약 위반이다 — 숫자 허용을 쓰지 않는다.
   if (!allowsNumericAnswer(evidence)) return null;
 
+  if (definition) definition = definitionWithEvidence(definition, true);
+
   // ── durable LLM 경계 (선수 경로·일반 경로와 동일 계약) ───────────────────────
   const failCloseError = async (spent: LlmResult | null = null): Promise<QaResult> => {
     await deps.log({ userId, question, questionNorm, matchPath: "error", answer: null, inputTokens: spent?.inputTokens ?? null, outputTokens: spent?.outputTokens ?? null });
@@ -5658,7 +5660,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.
   const baseRoute = routeQuestion(question, glossary, players, context !== null);
-  const statDefinition = ["baseball_rule_term", "llm_scope_gate", "context_missing"].includes(baseRoute)
+  let statDefinition = ["baseball_rule_term", "llm_scope_gate", "context_missing"].includes(baseRoute)
     ? resolveStatDefinitionIntent(question, context) : null;
   const rosterBlock = rosterMembershipBlock(question, context, players) ?? undefined;
   // ── `<X> <지표>` 미결속 fail-close 를 **앞단에서** 종결한다 (삼순 2026-08-08 P0) ──
@@ -6562,6 +6564,9 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // (응답 수신 후 저장 실패/crash) 자동 재호출 없이 fail-closed 안내로 종결한다.
   let llm: LlmResult | null = null;
   let generatedGenericNow = false;
+  // This branch has no supporting official evidence. Persist the effective
+  // presentation too, so a stored conditions/contrast plan cannot leak here.
+  if (statDefinition) statDefinition = definitionWithEvidence(statDefinition, false);
   if (deps.getLlmState) {
     let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
     try {

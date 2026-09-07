@@ -18,7 +18,7 @@ import {
   type SourceGrade,
 } from "./contracts";
 import { displayProvenanceOf } from "../genius-reply-provenance";
-import { STAT_DEFINITION_PROMPT, statDefinitionData, type StatDefinitionFrame } from "../stats/definition-intent";
+import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "../stats/definition-intent";
 import { normalizeSinoKoreanQuantities, sinoKoreanQuantities } from "./sino-korean-quantity";
 // 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
@@ -1051,7 +1051,8 @@ export function buildRagLlmRequest(
       "<현재 시즌 상황 끝>",
     );
   }
-  if (extras.definition) sections.push(statDefinitionData(extras.definition));
+  if (extras.definition) sections.push(statDefinitionData(definitionWithEvidence(extras.definition,
+    evidence.some((row) => row.sourceGrade === "tier1" && row.content.trim().length > 0))));
   sections.push(`질문: ${question}`);
   return {
     systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}` : systemPrompt }] },

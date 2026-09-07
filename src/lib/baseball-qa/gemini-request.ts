@@ -1,6 +1,6 @@
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
-import { STAT_DEFINITION_PROMPT, statDefinitionData, type StatDefinitionFrame } from "./stats/definition-intent";
+import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "./stats/definition-intent";
 
 export const BASEBALL_QA_GEMINI_MODEL = "gemini-flash-lite-latest";
 
@@ -136,7 +136,7 @@ export function buildBaseballQaGeminiRequest(
         question,
       ].join("\n")
     : question;
-  const userQuestion = definition ? `${statDefinitionData(definition)}\n${finalQuestion}` : finalQuestion;
+  const userQuestion = definition ? `${statDefinitionData(definitionWithEvidence(definition, false))}\n${finalQuestion}` : finalQuestion;
   const contents = context
     ? [
         { role: "user", parts: [{ text: context.question }] },

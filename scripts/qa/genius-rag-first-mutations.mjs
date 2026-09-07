@@ -25,6 +25,27 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r52 일반 모델 경계에서 이전 공식 근거 상태 재사용",
+    file: "src/lib/baseball-qa/gemini-request.ts",
+    from: 'statDefinitionData(definitionWithEvidence(definition, false))',
+    to: 'statDefinitionData(definition)',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r53 빈 검색 후 조건 나열 프레임·저장 상태 유지",
+    file: PIPELINE,
+    from: 'if (statDefinition) statDefinition = definitionWithEvidence(statDefinition, false);',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r54 수량 재작성에서 공식 근거 상태 소실",
+    file: PIPELINE,
+    from: 'evidence: definition.evidence, ',
+    to: '',
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r49 재설명 방식 저장 소실 — 다음 질문도 같은 방식 반복",
     file: "src/lib/baseball-qa/stats/definition-intent.ts",
     from: 'explanationApproach: frame.reexplanation?.approach',
