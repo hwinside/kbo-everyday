@@ -1,6 +1,7 @@
 "use client";
 
 import { AUTH_DIAGNOSTIC_SOURCE, authErrorMetadata, parseAuthDiagnostic, type AuthDiagnostic, type AuthStorageObservation } from "./session-diagnostic-schema";
+import { AUTH_BOOT_SOURCE, parseAuthBootDiagnostic, readBootTraceId, type BootOutcome } from "./boot-trace-schema";
 
 const ENDPOINT = "/api/telemetry/client-error";
 const MAX_EVENTS_PER_PAGE = 4;
@@ -23,6 +24,13 @@ export function createAuthSessionDiagnostics() {
   let lastFailure: Pick<AuthDiagnostic, "status" | "error" | "code"> = { status: null, error: null, code: null };
   const seen = new Set<string>();
   const pendingReads = new Set<ReturnType<typeof setTimeout>>();
+  let bootStarted = false;
+  let bootEnded = false;
+  let bootPendingSent = false;
+  let cookieObserved = false;
+  let cookieSession: boolean | null = null;
+  let cookieError = authErrorMetadata(null);
+  let cancelBoot: (() => void) | null = null;
 
   function capture(): AuthStorageObservation {
     const state = unknownStorage();
@@ -87,7 +95,7 @@ export function createAuthSessionDiagnostics() {
     prefix = `sb-${base.hostname.split(".")[0]}-auth-token`;
     transport = fetcher;
     initial = capture();
-    boot = safe(() => crypto.randomUUID(), null);
+    boot = safe(() => readBootTraceId(performance), null) ?? safe(() => crypto.randomUUID(), null);
     return async (input, init) => {
       const isToken = safe(() => {
         const raw = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -116,6 +124,11 @@ export function createAuthSessionDiagnostics() {
   }
 
   function sessionRead(before: AuthStorageObservation, present: boolean, error: unknown) {
+    if (bootStarted && !bootEnded && !cookieObserved) {
+      cookieObserved = true;
+      cookieSession = error ? null : present;
+      cookieError = authErrorMetadata(error);
+    }
     const after = capture();
     const hadAuthEvidence = initial.marker || initial.otherAuth || (initial.auth ?? 0) > 0 || (before.auth ?? 0) > 0;
     if (!present && (error || hadAuthEvidence) && (after.auth === null || after.marker === null)) {
@@ -156,9 +169,58 @@ export function createAuthSessionDiagnostics() {
   function cancelPendingReads() {
     for (const timer of pendingReads) clearTimeout(timer);
     pendingReads.clear();
+    cancelBoot?.();
+  }
+
+  /** One sampled document: at most one pending + one acquisition/publication
+   * result. This is auth-state publication, not proof of rendered UI or DAU.
+   * Subsequent refresh/online retries keep the existing bounded error/recovery
+   * observer, using the same boot ID when Server-Timing is available. */
+  function beginBoot() {
+    const noop: { finish(outcome: BootOutcome, session: boolean | null, error?: unknown): void } = { finish: () => {} };
+    if (typeof window === "undefined" || !transport || bootStarted || bootEnded || intentionalLogout) return noop;
+    const trace = safe(() => readBootTraceId(performance), null);
+    if (!trace) return noop;
+    boot = trace;
+    bootStarted = true;
+    cookieObserved = false;
+    cookieSession = null;
+    cookieError = authErrorMetadata(null);
+    let active = true;
+    const send = transport;
+    function report(outcome: BootOutcome | "pending", session: boolean | null, error?: unknown) {
+      try {
+        if (!active || intentionalLogout) return;
+        const diagnostic = parseAuthBootDiagnostic({
+          v: 1, boot: trace, event: outcome === "pending" ? "boot-pending" : "boot-result",
+          os: "ios", initial, after: capture(), cookieSession, outcome, session,
+          ...(error == null ? cookieError : authErrorMetadata(error)),
+        });
+        if (!diagnostic) return;
+        void Promise.resolve().then(async () => {
+          const body = JSON.stringify({ source: AUTH_BOOT_SOURCE, message: JSON.stringify(diagnostic), appVersion: await appVersion(),
+            platform: safe(() => bridge()?.isNativePlatform?.() ? `${bridge()?.getPlatform?.()}_native` : "web", "web") });
+          await send(ENDPOINT, { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true, credentials: "omit" });
+        }).catch(() => {});
+      } catch { /* Preserve original auth outcomes, including errors and fences. */ }
+    }
+    const timer = setTimeout(() => {
+      if (!bootPendingSent && active) { bootPendingSent = true; report("pending", null); }
+    }, 10_000);
+    cancelBoot = () => { active = false; clearTimeout(timer); bootStarted = false; cancelBoot = null; };
+    return {
+      finish(outcome: BootOutcome, session: boolean | null, error?: unknown) {
+        if (!active) return;
+        report(outcome, session, error);
+        bootEnded = true;
+        active = false;
+        clearTimeout(timer);
+        cancelBoot = null;
+      },
+    };
   }
   return {
-    capture, observeFetch, sessionRead, beginSessionRead, cancelPendingReads,
+    capture, observeFetch, sessionRead, beginSessionRead, cancelPendingReads, beginBoot,
     intentionalLogout: () => { intentionalLogout = true; cancelPendingReads(); },
   };
 }

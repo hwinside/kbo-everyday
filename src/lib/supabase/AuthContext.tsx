@@ -193,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const dispatchTicket = beginAuthDispatch();
       const eventRevision = authEventRevision;
       const identityBefore = getAuthIdentity();
+      const bootObservation = authSessionDiagnostics.beginBoot();
       type Session = NonNullable<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]>;
       let session: Session | null;
       try {
@@ -225,6 +226,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSession: tokens => supabase.auth.setSession(tokens),
         });
       } catch (error) {
+        if (!disposed) bootObservation.finish(isRetryableSessionError(error) ? "retryable-error" : "error", null, error);
         if (!disposed && eventRevision === authEventRevision && isSameAuthIdentity(identityBefore)
           && isRetryableSessionError(error)) {
           // Keep a known identity during an outage; a cold start stays unresolved
@@ -240,11 +242,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // 동기 신원 게시(fence) — 시작 티켓 이후 더 최신 이벤트가 왔으면 폐기하고 setUser·loadProfile도 생략
       if (!commitAuthIdentityIfCurrent(session?.user?.id ?? null, dispatchTicket)) {
         // 늘은 syncSession 폐기 — loading은 최신 이벤트 경로가 관리(건드리지 않음, 삼순 8차)
+        bootObservation.finish("superseded", !!getAuthIdentity().uid);
         return;
       }
       cancelSessionRetry();
       sessionRetryAttempt = 0;
       setUser(session?.user ?? null);
+      bootObservation.finish("published", !!session);
       if (session?.user && session.access_token) {
         // 계정 전환 감지 (syncSession 경로) — 이전 계정 로컬을 공식 clear helper로
         // 정리(실제 키 kbo-favorite-players + 팀 localStorage·cookie 모두).

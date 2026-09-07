@@ -1,5 +1,6 @@
 import { getClientIp } from "@/lib/http/client-ip";
 import { createServerSessionDiagnostics } from "@/lib/auth/server-session-diagnostics";
+import { createServerBootTrace } from "@/lib/auth/server-boot-trace";
 import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
@@ -144,15 +145,19 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     supabaseUrl,
   );
 
-  // Public users have no session to refresh.
-  if (!hasAuthCookie) {
-    return NextResponse.next({ request });
-  }
-
   // Only real document navigations refresh the session. RSC/prefetch requests
   // skip it so concurrent prefetches never race the same refresh token (403/429).
   if (!isTopLevelDocumentNavigation(request)) {
     return NextResponse.next({ request });
+  }
+
+  const bootTrace = createServerBootTrace(
+    supabaseUrl!, request.cookies.getAll().map(({ name }) => name),
+    request.headers.get("user-agent") || "",
+  );
+  // Public users still make NO auth calls; observe sampled empty arrivals too.
+  if (!hasAuthCookie) {
+    return bootTrace.record(NextResponse.next({ request }), null, event);
   }
 
   let supabaseResponse = NextResponse.next({ request });
@@ -187,7 +192,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   const { error } = await supabase.auth.getClaims();
   diagnostics.record(supabaseResponse.cookies.getAll(), error, event);
 
-  return supabaseResponse;
+  return bootTrace.record(supabaseResponse, error, event);
 }
 
 /**

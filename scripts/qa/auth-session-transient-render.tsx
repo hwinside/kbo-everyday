@@ -37,6 +37,9 @@ async function main() {
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const traceId = "11111111-2222-4333-8444-555555555555";
+  Object.defineProperty(performance, "getEntriesByType", { configurable: true, value: () => [{ serverTiming: [{ name: "kbo-auth-boot", description: traceId }] }] });
+  const bootReports: Record<string, unknown>[] = [];
   let unavailable = false;
   let invalidRefresh = false;
   let failedRefreshes = 0;
@@ -44,8 +47,13 @@ async function main() {
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
     status, headers: { "Content-Type": "application/json" },
   });
-  globalThis.fetch = (async (input: string | URL | Request) => {
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, dom.window.location.href);
+    if (url.pathname === "/api/telemetry/client-error") {
+      const body = JSON.parse(String(init?.body));
+      if (body.source === "auth-boot") bootReports.push(JSON.parse(body.message));
+      return json({ ok: true });
+    }
     if (url.hostname === "auth-fixture.invalid" && url.pathname === "/auth/v1/user") return json(user);
     if (url.hostname === "auth-fixture.invalid" && url.pathname === "/auth/v1/token") {
       if (unavailable) {
@@ -84,6 +92,10 @@ async function main() {
     await act(async () => { root.render(<AuthProvider><Probe /></AuthProvider>); await pause(30); });
     await act(async () => { await pause(30); });
     assert.equal(container.textContent, `${uid}|${uid}|false`, "baseline is authenticated");
+    assert.equal(bootReports.length, 1, "actual AuthProvider must finalize the sampled boot (not cookie-read only)");
+    assert.equal(bootReports[0].boot, traceId);
+    assert.equal(bootReports[0].session, true);
+    assert.ok(["published", "superseded"].includes(String(bootReports[0].outcome)));
     unavailable = true;
     offset += 3_601_000;
     await act(async () => {
