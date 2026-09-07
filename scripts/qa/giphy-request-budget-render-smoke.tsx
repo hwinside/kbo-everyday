@@ -10,6 +10,10 @@ async function main() {
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", {
     url: "https://keubo.fan/community",
   });
+  let visibleViewportHeight = 844;
+  const visualViewport = new dom.window.EventTarget();
+  Object.defineProperty(visualViewport, "height", { get: () => visibleViewportHeight });
+  Object.defineProperty(dom.window, "visualViewport", { value: visualViewport });
 
   Object.assign(globalThis, {
     window: dom.window,
@@ -240,7 +244,7 @@ async function main() {
     assert.equal(catalogCalls, beforeCatalog + 1, "StrictMode loads the ID catalog once");
     assert.ok(container.textContent?.includes("크보팬 인기 GIF"));
     assert.ok(container.textContent?.includes("Powered by GIPHY"));
-    const chatInput = container.querySelector("input");
+    const chatInput: HTMLInputElement | null = container.querySelector("input");
     assert.ok(chatInput);
     await act(async () => {
       valueSetter.call(chatInput, "승리");
@@ -258,6 +262,25 @@ async function main() {
     deferGifPopular = false;
     assert.deepEqual(Array.from(container.querySelectorAll("img")).map((img) => img.alt), ["QA opening GIF", "QA second GIF"], "by-ID metadata follows local popularity order");
     assert.ok(container.querySelector('img[alt="QA opening GIF"]'), "opening GIFs render without another click, even while typing");
+    const panel = container.firstElementChild as HTMLElement;
+    const fullHeightCap = panel.style.maxHeight;
+    await act(async () => {
+      visibleViewportHeight = 400;
+      visualViewport.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.notEqual(panel.style.maxHeight, fullHeightCap, "keyboard visual-viewport change updates panel sizing");
+    assert.equal(calls.length, baseCalls, "keyboard resize must not refetch GIPHY");
+    assert.equal(catalogCalls, beforeCatalog + 1, "keyboard resize must not reload the popular ID catalog");
+    assert.equal(chatInput.value, "승리", "keyboard resize preserves the draft search");
+    assert.deepEqual(Array.from(container.querySelectorAll("img")).map((img) => img.alt), ["QA opening GIF", "QA second GIF"], "keyboard resize preserves the current GIF results");
+    await act(async () => {
+      visibleViewportHeight = 844;
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.equal(panel.style.maxHeight, fullHeightCap, "window resize restores the panel size cap");
+    assert.equal(calls.length, baseCalls, "orientation/window resize must not refetch GIPHY");
     const form = container.querySelector("form");
     assert.ok(form);
     await act(async () => { form.dispatchEvent(new dom.window.Event("submit", { bubbles: true, cancelable: true })); });
