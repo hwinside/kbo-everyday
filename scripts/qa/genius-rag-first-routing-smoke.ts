@@ -40,6 +40,7 @@
  * 실행: npm run qa:genius-rag-first
  */
 import assert from "node:assert/strict";
+import { verifyRuleSemantics } from "./fixtures/verify-rule-semantics";
 import { readdirSync, readFileSync } from "node:fs";
 import {
   answerQuestion,
@@ -208,6 +209,13 @@ async function run(question: string, overrides: Partial<QaDeps> = {}) {
 }
 
 async function main() {
+  const semanticGlossary = await verifyRuleSemantics();
+  for (const entry of semanticGlossary) {
+    const { result } = await run(entry.term, { loadGlossary: async () => semanticGlossary });
+    assert.equal(result.source, "dictionary");
+    assert.equal(result.answer, entry.answer, "Serve the migrated definition through the real pipeline");
+  }
+  pass("official appendix context and glossary migration semantics");
   const pipeline = stripComments(src("pipeline.ts"));
   const server = stripComments(src("server.ts"));
 

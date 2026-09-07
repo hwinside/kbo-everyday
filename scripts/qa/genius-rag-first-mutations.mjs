@@ -25,6 +25,30 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r68 clip source before official context repair loses closing effect",
+    file: RETRIEVE,
+    from: 'const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);',
+    to: 'const row = repairKnownOfficialRuleContext({ ...original, content: original.content.slice(0, RAG_EVIDENCE_MAX_CHARS) }, RAG_EVIDENCE_MAX_CHARS);',
+  },
+  {
+    name: "r65 official appendix presentation repair removed",
+    file: RETRIEVE,
+    from: 'const row = repairKnownOfficialRuleContext(original, RAG_EVIDENCE_MAX_CHARS);',
+    to: 'const row = original;',
+  },
+  {
+    name: "r66 official appendix repair leaks to other source grades/kinds",
+    file: "src/lib/baseball-qa/rag/official-rule-context.ts",
+    from: 'if (row.sourceGrade !== "tier1" || row.sourceKind !== "kbo_ebook") return row;',
+    to: 'if (false) return row;',
+  },
+  {
+    name: "r67 official appendix repair leaks to other rulebook editions",
+    file: "src/lib/baseball-qa/rag/official-rule-context.ts",
+    from: 'if (row.pageTitle.replace(/\\s/gu, "") !== "2026공식야구규칙") return row;',
+    to: 'if (false) return row;',
+  },
+  {
     name: "r61 공식 복합 정의에서 사용자 인용 수량 소실",
     file: PIPELINE,
     from: 'definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,',
