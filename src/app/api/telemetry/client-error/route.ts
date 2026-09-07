@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { AUTH_DIAGNOSTIC_SOURCE, parseAuthDiagnostic } from "@/lib/auth/session-diagnostic-schema";
 import { AUTH_BOOT_SOURCE, parseAuthBootDiagnostic } from "@/lib/auth/boot-trace-schema";
+import { AUTH_DIAGNOSTIC_MAX_CHARS } from "@/lib/auth/previous-exit-schema";
 
 interface ClientErrorPayload {
   message?: string;
@@ -37,19 +38,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  let message = str(payload.message, 500);
   const source =
     typeof payload.source === "string" && VALID_SOURCES.has(payload.source)
       ? payload.source
       : null;
+
+  const authBoot = source === AUTH_BOOT_SOURCE;
+  const authDiagnostic = source === AUTH_DIAGNOSTIC_SOURCE || authBoot;
+  // Never truncate an auth JSON record into a different observation. Legacy
+  // error sources retain their existing 500-character truncation behavior.
+  let message = authDiagnostic
+    ? typeof payload.message === "string" && payload.message.length <= AUTH_DIAGNOSTIC_MAX_CHARS ? payload.message : null
+    : str(payload.message, 500);
 
   // Quietly drop garbage — telemetry beacons must never surface as errors.
   if (!message || !source) {
     return NextResponse.json({ ok: true, skipped: true });
   }
 
-  const authBoot = source === AUTH_BOOT_SOURCE;
-  const authDiagnostic = source === AUTH_DIAGNOSTIC_SOURCE || authBoot;
   if (authDiagnostic) {
     let value: unknown;
     try { value = JSON.parse(message); } catch { value = null; }

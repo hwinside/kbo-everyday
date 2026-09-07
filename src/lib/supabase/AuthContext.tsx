@@ -281,6 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // auth-js also emits INITIAL_SESSION(null) when a refresh request fails.
         // The error-aware syncSession read owns the initial no-session decision.
         if (_event === "INITIAL_SESSION" && !session) return;
+        if (session) authSessionDiagnostics.sessionEstablished(_event === "TOKEN_REFRESHED");
         const eventRevision = ++authEventRevision;
         cancelSessionRetry();
         sessionRetryAttempt = 0;

@@ -39,6 +39,7 @@ async function main() {
     IS_REACT_ACT_ENVIRONMENT: true,
   });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(dom.window.navigator, "userAgent", { configurable: true, value: "iPhone auth fixture" });
   const traceId = "11111111-2222-4333-8444-555555555555";
   Object.defineProperty(performance, "getEntriesByType", { configurable: true, value: () => [{ serverTiming: [{ name: "kbo-auth-boot", description: traceId }] }] });
   const bootReports: Record<string, unknown>[] = [];
@@ -154,6 +155,9 @@ async function main() {
     assert.ok(successfulRefreshes > 0, "network recovery triggers a real refresh without reload or login");
     assert.equal(container.textContent, `${uid}|${uid}|false`);
     assert.ok(events.includes("TOKEN_REFRESHED"));
+    const previousExit = JSON.parse(localStorage.getItem("kbo-auth-prev-exit-v1:sb-auth-fixture-auth-token") ?? "null");
+    assert.equal(previousExit?.lastRefresh, "ok", "real AuthProvider TOKEN_REFRESHED hook records success after SDK cookie storage");
+    assert.equal(previousExit?.authChunks, 1, "success observation sees the actual SDK cookie");
     console.log("PASS transient refresh preserves identity and online restores session");
 
     // Re-mount with an expired cookie during an outage: INITIAL_SESSION(null)

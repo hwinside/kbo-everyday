@@ -8,6 +8,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:auth-previous-exit",
+      "tier": "ci"
+    },
+    {
       "name": "qa:active-users-contract",
       "tier": "deploy"
     },

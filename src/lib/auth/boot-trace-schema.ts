@@ -1,4 +1,5 @@
 import { parseAuthDiagnostic, type AuthDiagnostic, type AuthStorageObservation } from "./session-diagnostic-schema";
+import { AUTH_DIAGNOSTIC_MAX_CHARS } from "./previous-exit-schema";
 
 export const AUTH_BOOT_SOURCE = "auth-boot";
 export const AUTH_BOOT_SERVER_SOURCE = "auth-boot-server";
@@ -32,6 +33,7 @@ export function parseAuthBootDiagnostic(value: unknown): AuthBootDiagnostic | nu
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const d = value as Record<string, unknown>;
   const keys = ["v", "boot", "event", "os", "initial", "after", "session", "status", "error", "code", "outcome", "cookieSession"];
+  if (Object.hasOwn(d, "prevExit")) keys.push("prevExit");
   if (Object.keys(d).length !== keys.length || !keys.every(k => Object.hasOwn(d, k)) || !isBootTraceId(d.boot)) return null;
   if (!["published", "superseded", "retryable-error", "error", "pending"].includes(String(d.outcome))) return null;
   if (d.event !== "boot-result" && d.event !== "boot-pending") return null;
@@ -44,7 +46,8 @@ export function parseAuthBootDiagnostic(value: unknown): AuthBootDiagnostic | nu
     v: d.v, boot: d.boot, event: "session-read-error", os: d.os,
     initial: d.initial, before, after: d.after, session: d.session,
     status: d.status, error: d.error, code: d.code,
+    ...(Object.hasOwn(d, "prevExit") ? { prevExit: d.prevExit } : {}),
   });
-  if (!checked || JSON.stringify(d).length > 500) return null;
+  if (!checked || JSON.stringify(d).length > AUTH_DIAGNOSTIC_MAX_CHARS) return null;
   return d as unknown as AuthBootDiagnostic;
 }
