@@ -4037,11 +4037,12 @@ async function answerRequestedOperation(
   if (!bare && !hasPlayer && !hasTeam && !metricKeys.size && !hasCareerMetricTerm(question)) return null;
   const unavailable = (answer: string): StoredQaFinal => ({ answer, source: "unsure" });
   if (operation === "elapsed") return unavailable(ELAPSED_DATA_ANSWER);
-  if (unsupportedOperationScope(question)) return unavailable(operation === "rank" ? RANK_SCOPE_ANSWER : OPERATION_DATA_ANSWER);
+  // Unsupported rank scopes remain owned by the existing exact hold contracts.
+  if (unsupportedOperationScope(question)) return operation === "rank" ? null : unavailable(OPERATION_DATA_ANSWER);
   const currentTeam = resolveRagTeamCandidate(question);
   const now = deps.now ? deps.now() : Date.now();
   if (operation === "remaining") {
-    if (!currentTeam) return unavailable("어느 구단의 정규시즌 잔여 경기 수인지 알려 주십시오.");
+    if (!currentTeam) return unavailable("구단명을 알려 주시면 정규시즌 잔여 경기 수를 확인할 수 있습니다.");
     try {
       const snapshot = await deps.fetchTeamRecord?.fetchStandings();
       const answer = snapshot ? renderRemainingGames(snapshot, { id: Number(currentTeam.entityId), name: currentTeam.name }, now) : null;
@@ -4066,7 +4067,12 @@ async function answerRequestedOperation(
   // nth-place lookup, or multiple metrics with a top-five individual AVG list.
   if (!average || /팀\s*타[율률]|\d+\s*(?:위|등)|상위\s*\d+|하위|꼴찌/.test(q)
     || (hasTeam && !currentTeam)
-    || (currentTeam && !player && !/선수|타자|개인/.test(q))) return unavailable(RANK_SCOPE_ANSWER);
+    || (currentTeam && !player && !/선수|타자|개인/.test(q))) {
+    // Own only supported individual AVG rankings; preserve team standings and
+    // unsupported named rankings in their original handlers. Bare follow-ups
+    // without usable operands still need this operation-specific clarification.
+    return bare ? unavailable(RANK_SCOPE_ANSWER) : null;
+  }
   const league = /전체\s*(?:구단|리그|선수|타자)|리그\s*전체|kbo\s*전체/.test(q);
   const clubPlayers = !!currentTeam && (!player || /(?:선수|타자)(?:들)?\s*(?:중|내|끼리)/.test(q));
   const teamId = league ? undefined : clubPlayers ? Number(currentTeam!.entityId) : bare ? old?.teamId : undefined;

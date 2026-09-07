@@ -29,7 +29,7 @@ export function unsupportedOperationScope(question: string): boolean {
     || /통산|역대|지난|작년|내년|최근|오늘|어제|이번\s*(?:주|달)|월간|주간|후반기|전반기|포스트\s*시즌|시범|상대|맞대결|\S+전(?:에서|의|\s)|가을|플레이오프|한국\s*시리즈/.test(q);
 }
 
-export const RANK_SCOPE_ANSWER = "요청하신 조건의 순위를 확인할 자료가 부족합니다. 현재 시즌 누적 타율의 선수 순위는 확인할 수 있습니다. 구단 선수끼리의 순위라면 구단도 함께 알려 주십시오.";
+export const RANK_SCOPE_ANSWER = "요청하신 조건의 순위를 확인할 자료가 부족합니다. 현재 시즌 누적 타율의 선수 순위는 확인할 수 있습니다. 구단별 선수 순위는 구단명이 필요합니다.";
 export const OPERATION_DATA_ANSWER = "요청하신 계산에 필요한 최신 자료를 확인하지 못해 수치를 안내하기 어렵습니다.";
 export const ELAPSED_DATA_ANSWER = "며칠 만의 기록인지는 직전 기록과 이번 기록의 경기 날짜가 모두 필요합니다. 해당 날짜 자료를 확인하지 못해 경과일을 단정할 수 없습니다.";
 

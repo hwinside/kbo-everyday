@@ -1,6 +1,6 @@
 /** Execute via the existing period-context gate. Reviewer-owned execution. */
 import assert from "node:assert/strict";
-import { answerQuestion, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, HISTORY_HOLD_ANSWER, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../../src/lib/baseball-qa/pipeline";
 import { selectContextTurn, type PreviousTurnRow } from "../../../src/lib/baseball-qa/context";
 import { previousTurnFromSql } from "../../../src/lib/baseball-qa/previous-turn-row";
 import { renderAverageRank, renderRemainingGames, requestedOperation, readRankRequestContext, OPERATION_DATA_ANSWER } from "../../../src/lib/baseball-qa/stats/question-operation";
@@ -165,6 +165,19 @@ export async function verifyQuestionOperations() {
   const switched = harness(row);
   assert.match((await answerQuestion("qa-operation-a", "강민호 타율 몇등이야?", switched.deps)).answer, /강민호.*타율 2위/);
   await verifyScalarRequestRouting(answerQuestion, row);
+  const clubRank = harness();
+  const clubReply = await answerQuestion("qa-operation-a", "기아 순위", clubRank.deps);
+  assert.equal(clubReply.source, "kbo_structured"); assert.match(clubReply.answer, /5위/);
+  assert.equal(clubRank.calls.standings, 1); assert.equal(clubRank.calls.rank, 0);
+  const clubMissing = harness(); clubMissing.deps.fetchTeamRecord = undefined;
+  assert.equal((await answerQuestion("qa-operation-a", "기아 순위", clubMissing.deps)).source, "history_hold");
+  assert.equal(clubMissing.calls.rank, 0);
+  for (const question of ["구자욱 2020년 홈런 1위였어?", "통산 타율 1위 누구야?", "구자욱 올해 타율 1위야?", "통산 견제사 1위 누구야?"]) {
+    const legacy = harness(); const reply = await answerQuestion("qa-operation-a", question, legacy.deps);
+    assert.equal(reply.source, "history_hold", question); assert.equal(reply.answer, HISTORY_HOLD_ANSWER, question);
+    assert.equal(legacy.calls.rank, 0, question); assert.equal(legacy.calls.scalar, 0, question);
+    assert.equal(legacy.calls.served, 0, question); assert.equal(legacy.calls.model, 0, question);
+  }
   // A supported historical leaderboard remains owned by its existing handler.
   const career = harness();
   await answerQuestion("qa-operation-a", "통산 안타 1위 누구야?", career.deps);

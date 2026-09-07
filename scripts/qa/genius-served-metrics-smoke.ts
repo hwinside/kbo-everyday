@@ -133,15 +133,36 @@ async function main() {
   await check("served-record 가 /api/stats 를 조회한다", () => {
     assert.ok(/\/api\/stats\?type=batter&full=1/.test(SERVED_SRC), "서빙 엔드포인트 결속이 없다");
   });
-  await check("server.ts 가 createServedRecordFetcher 를 주입한다", () => {
+  await check("server.ts 가 createServedRecordFetcher 를 주입한다", async () => {
     assert.ok(
       /fetchServedRecord:\s*createServedRecordFetcher\(\)/.test(SERVER_SRC),
       "production 주입이 끊겼다",
     );
-    assert.ok(
-      /import\s*\{\s*createServedRecordFetcher\s*\}\s*from\s*"@\/lib\/baseball-qa\/stats\/served-record"/.test(SERVER_SRC),
-      "production import 가 seam 을 가리키지 않는다",
-    );
+    const ts = await import("typescript");
+    const importsServed = (source: string) => {
+      const sf = ts.createSourceFile("server.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      return sf.statements.some((node) => {
+        if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)
+          || node.moduleSpecifier.text !== "@/lib/baseball-qa/stats/served-record"
+          || node.importClause?.isTypeOnly) return false;
+        const bindings = node.importClause?.namedBindings;
+        return bindings !== undefined && ts.isNamedImports(bindings)
+          && bindings.elements.some((specifier) => !specifier.isTypeOnly
+            && specifier.name.text === "createServedRecordFetcher"
+            && (specifier.propertyName?.text ?? specifier.name.text) === "createServedRecordFetcher");
+      });
+    };
+    assert.ok(importsServed(SERVER_SRC), "production import 가 seam 을 가리키지 않는다");
+    const correctModule = '"@/lib/baseball-qa/stats/served-record"';
+    assert.ok(importsServed(`import { createServedRecordFetcher } from ${correctModule};`));
+    for (const broken of [
+      "",
+      'import { createServedRecordFetcher } from "./untrusted-source";',
+      `import type { createServedRecordFetcher } from ${correctModule};`,
+      `import { type createServedRecordFetcher } from ${correctModule};`,
+      `import { otherFetcher as createServedRecordFetcher } from ${correctModule};`,
+      `import { createServedRecordFetcher as otherFetcher } from ${correctModule};`,
+    ]) assert.equal(importsServed(broken), false, `A broken value import passed: ${broken}`);
   });
 
   /**

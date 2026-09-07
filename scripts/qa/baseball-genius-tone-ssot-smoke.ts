@@ -282,6 +282,7 @@ const outputFiles = [
   "src/lib/baseball-qa/roster/draft.ts",
   "src/lib/baseball-qa/awards/series-prize.ts",
   "src/lib/baseball-qa/stats/season-record.ts",
+  "src/lib/baseball-qa/stats/question-operation.ts",
   "src/lib/baseball-qa/stats/team-record.ts",
   "src/lib/baseball-qa/stats/career-series.ts",
   "src/lib/baseball-qa/stats/career-metric-leaderboard.ts",
