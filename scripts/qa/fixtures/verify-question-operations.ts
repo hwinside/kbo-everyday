@@ -28,7 +28,7 @@ const teamId = (name: string) => name === "삼성" ? 8 : name === "LG" ? 1 : nam
 const raw: LlmResult = { text: JSON.stringify({ status: "INSUFFICIENT", answer: "fixture" }), inputTokens: 0, outputTokens: 0 };
 
 function harness(previous: PreviousTurnRow | null = null) {
-  const calls = { rank: 0, scalar: 0, cache: 0, model: 0, standings: 0, store: 0 };
+  const calls = { rank: 0, scalar: 0, served: 0, cache: 0, model: 0, standings: 0, store: 0 };
   let stored: LlmResult | null = null;
   let started = false;
   const deps: QaDeps = {
@@ -38,6 +38,7 @@ function harness(previous: PreviousTurnRow | null = null) {
     getCache: async () => { calls.cache++; return null; }, setCache: async () => {},
     callLlm: async () => { calls.model++; return raw; },
     fetchSeasonRecord: async () => { calls.scalar++; return []; },
+    fetchServedRecord: async () => { calls.served++; return []; },
     fetchBatterRanking: async () => { calls.rank++; return structuredClone(SNAPSHOT); },
     fetchTeamRecord: { fetchStandings: async () => { calls.standings++; return structuredClone(STANDINGS); }, fetchTeamRecords: async () => ({}) },
     getLlmState: async () => ({ started, result: stored }),
@@ -87,6 +88,7 @@ export async function verifyQuestionOperations() {
     const h = harness(); const reply = await answerQuestion("qa-operation-a", question, h.deps);
     assert.match(reply.answer, expected, question);
     assert.equal(h.calls.scalar, 0, "An operation was replaced by a scalar query");
+    assert.equal(h.calls.served, 0, "An operation was replaced by a served scalar query");
     assert.equal(h.calls.cache, 0); assert.equal(h.calls.model, 0);
     const before = { ...h.calls };
     assert.deepEqual(await answerQuestion("qa-operation-a", question, h.deps), reply);
@@ -111,9 +113,22 @@ export async function verifyQuestionOperations() {
   const switched = harness(row);
   assert.match((await answerQuestion("qa-operation-a", "강민호 타율 몇등이야?", switched.deps)).answer, /강민호.*타율 2위/);
   const scalar = harness(row);
-  scalar.deps.fetchSeasonRecord = async () => { scalar.calls.scalar++; return [SNAPSHOT.rows[0]]; };
+  // AVG uses the served snapshot, then cross-checks its integer stats against the DB.
+  scalar.deps.fetchServedRecord = async (kboId) => {
+    scalar.calls.served++;
+    assert.equal(kboId, "12345");
+    return [structuredClone(SNAPSHOT.rows[0])];
+  };
+  scalar.deps.fetchSeasonRecord = async (table, kboId) => {
+    scalar.calls.scalar++;
+    assert.equal(table, "batter");
+    assert.equal(kboId, "12345");
+    return [structuredClone(SNAPSHOT.rows[0])];
+  };
   const scalarReply = await answerQuestion("qa-operation-a", "구자욱 타율 얼마야?", scalar.deps);
   assert.equal(scalarReply.source, "kbo_structured");
+  assert.equal(scalar.calls.served, 1, "An explicit scalar request skipped the served snapshot");
+  assert.equal(scalar.calls.scalar, 1, "The served scalar answer skipped its DB cross-check");
   assert.equal(scalar.calls.rank, 0, "An explicit scalar request inherited ranking intent");
   assert.match(scalarReply.answer, /0\.350/);
   // A supported historical leaderboard remains owned by its existing handler.
