@@ -1,4 +1,4 @@
-import { definitionNumericSource, isStatDefinitionQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
+import { definitionNumericSource, isReferenceMeaningQuestion, isStatDefinitionQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
 // DB/LLM 접근은 deps로 주입 → route가 실제 구현, 스모크는 mock으로 검증.
@@ -3574,6 +3574,9 @@ export function routeQuestion(
   // ⚠️ `blocked` 보다는 뒤다 — 인젝션 차단은 어떤 안내보다도 앞이다(fail-close 우선).
   if (resolveProductFeature(question) !== null) return "product_feature_guide";
   if (isServiceInquiry(normalized)) return "service_redirect";
+  // Reuse the definition followup grammar. With no eligible antecedent, never
+  // let retrieval or the model invent one; explicit topics keep their routes.
+  if (!hasContext && isReferenceMeaningQuestion(question)) return "context_missing";
   if (isStatDefinitionQuestion(question) && !isOutOfScopeIntent(normalized, mentionsTeam(tokens))) {
     // Definitions must not enter history_hold, but an unknown expression still
     // needs the existing LLM scope/normalization contract, not a glossary label.
