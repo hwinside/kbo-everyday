@@ -265,6 +265,7 @@ export default function AdminWhatsNewPage() {
                 placeholder={"1. GIPHY 댓글 달기\n댓글에 움짤을 붙여보세요!\n\n2. 커스텀 아바타\n프로필 사진을 직접 등록하세요."}
               />
               <p className="mt-1 text-[11px] text-text-tertiary">
+                한 줄 전체를 <code>**제목**</code>으로 작성하면 굵은 소제목으로 표시됩니다.{" "}
                 커서 위치에 <code>![](이미지주소)</code> 형태로 삽입됩니다. 원하는 위치에 사진을 끼워넣으세요.
               </p>
             </div>
