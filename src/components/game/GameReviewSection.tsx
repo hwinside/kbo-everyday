@@ -174,7 +174,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     })}</div>{entry()}</>}
     {notice && <p role="status" className="mt-2 text-sm text-text-secondary">{notice}</p>}
     <LoginSheet isOpen={login} onClose={() => setLogin(false)}/>
-    <dialog ref={dialog} aria-labelledby="game-review-title" onCancel={e => { e.preventDefault(); if (!busy) close(); }} className="fixed inset-x-0 bottom-0 top-auto m-0 mx-auto w-full max-w-lg max-h-[90dvh] rounded-t-3xl border border-border bg-bg-primary p-0 pb-[env(safe-area-inset-bottom,0px)] text-text-primary backdrop:bg-black/60">
+    <dialog ref={dialog} aria-labelledby="game-review-title" onCancel={e => { e.preventDefault(); if (!busy) close(); }} className="fixed inset-x-0 bottom-0 top-auto m-0 mx-auto w-full max-w-lg max-h-[90dvh] rounded-t-3xl border border-border bg-bg-primary p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))] text-text-primary backdrop:bg-black/60">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg-primary px-3 py-2">{history.length ? <button className={button} disabled={busy} aria-label="이전 화면" onClick={back}><ArrowLeft size={20}/></button> : <span className="w-11"/>}<h2 ref={heading} tabIndex={-1} id="game-review-title" className="font-bold outline-none">{title}</h2><button className={button} disabled={busy} aria-label="닫기" onClick={close}><X size={20}/></button></header>
       <div className="space-y-4 p-4 pb-6">
         {context && <p className="text-xs text-text-secondary">{teamName(context.awayTeamId)} {context.score} {teamName(context.homeTeamId)} · 종료</p>}
