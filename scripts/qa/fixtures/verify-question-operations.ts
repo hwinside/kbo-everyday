@@ -33,6 +33,8 @@ function harness(previous: PreviousTurnRow | null = null) {
   let started = false;
   const deps: QaDeps = {
     loadGlossary: async () => [], loadPlayers: async () => PLAYERS,
+    // server.ts enables player resolution for structured records as well as RAG.
+    enablePlayerRag: true,
     loadPreviousTurn: async () => previous,
     reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
     getCache: async () => { calls.cache++; return null; }, setCache: async () => {},
@@ -46,6 +48,43 @@ function harness(previous: PreviousTurnRow | null = null) {
     storeLlm: async (result) => { calls.store++; stored = result; }, now: () => NOW,
   };
   return { deps, calls, final: () => stored };
+}
+
+/** Injectable entry point lets the reviewer replay identical deps against base/head. */
+export async function verifyScalarRequestRouting(
+  execute: typeof answerQuestion = answerQuestion,
+  rankTurn: PreviousTurnRow = {
+    question: "구자욱 타율 몇등이야?", answer: "구자욱 타율 2위입니다.",
+    jobSource: "kbo_structured", answeredAt: AT, currentCreatedAt: new Date(NOW).toISOString(),
+    rankRequestContext: { version: 1, kind: "average_rank", playerId: "12345" },
+  },
+) {
+  const observed = [];
+  for (const previous of [null, rankTurn]) {
+    for (const enabled of [undefined, false, true]) {
+      const scalar = harness(previous);
+      if (enabled === undefined) delete scalar.deps.enablePlayerRag;
+      else scalar.deps.enablePlayerRag = enabled;
+      // AVG is a DB metric, not a SERVED_ONLY_BATTER_METRIC.
+      scalar.deps.fetchSeasonRecord = async (table, kboId) => {
+        scalar.calls.scalar++;
+        assert.equal(table, "batter"); assert.equal(kboId, "12345");
+        return [structuredClone(SNAPSHOT.rows[0])];
+      };
+      const reply = await execute("qa-operation-a", "구자욱 타율 얼마야?", scalar.deps);
+      const sample = { previousRank: previous !== null, enabled: enabled ?? "omitted", source: reply.source, calls: scalar.calls };
+      const diagnostic = JSON.stringify(sample);
+      observed.push(sample);
+      assert.equal(reply.source, enabled ? "kbo_structured" : "history_hold", diagnostic);
+      assert.equal(scalar.calls.scalar, enabled ? 1 : 0, diagnostic);
+      assert.equal(scalar.calls.served, 0, "AVG must not use the served-only metric path: " + diagnostic);
+      assert.equal(scalar.calls.rank, 0, "An explicit scalar request inherited ranking intent: " + diagnostic);
+      assert.equal(scalar.calls.cache, 0, diagnostic); assert.equal(scalar.calls.model, 0, diagnostic);
+      if (enabled) assert.match(reply.answer, /0\.350/, diagnostic);
+      else assert.doesNotMatch(reply.answer, /0\.350/, diagnostic);
+    }
+  }
+  return observed;
 }
 
 export async function verifyQuestionOperations() {
@@ -112,25 +151,7 @@ export async function verifyQuestionOperations() {
   }
   const switched = harness(row);
   assert.match((await answerQuestion("qa-operation-a", "강민호 타율 몇등이야?", switched.deps)).answer, /강민호.*타율 2위/);
-  const scalar = harness(row);
-  // AVG uses the served snapshot, then cross-checks its integer stats against the DB.
-  scalar.deps.fetchServedRecord = async (kboId) => {
-    scalar.calls.served++;
-    assert.equal(kboId, "12345");
-    return [structuredClone(SNAPSHOT.rows[0])];
-  };
-  scalar.deps.fetchSeasonRecord = async (table, kboId) => {
-    scalar.calls.scalar++;
-    assert.equal(table, "batter");
-    assert.equal(kboId, "12345");
-    return [structuredClone(SNAPSHOT.rows[0])];
-  };
-  const scalarReply = await answerQuestion("qa-operation-a", "구자욱 타율 얼마야?", scalar.deps);
-  assert.equal(scalarReply.source, "kbo_structured");
-  assert.equal(scalar.calls.served, 1, "An explicit scalar request skipped the served snapshot");
-  assert.equal(scalar.calls.scalar, 1, "The served scalar answer skipped its DB cross-check");
-  assert.equal(scalar.calls.rank, 0, "An explicit scalar request inherited ranking intent");
-  assert.match(scalarReply.answer, /0\.350/);
+  await verifyScalarRequestRouting(answerQuestion, row);
   // A supported historical leaderboard remains owned by its existing handler.
   const career = harness();
   await answerQuestion("qa-operation-a", "통산 안타 1위 누구야?", career.deps);
