@@ -31,6 +31,7 @@ const dom = new JSDOM(`<!DOCTYPE html><html><body></body></html>`, { url: "http:
 const g = globalThis as Record<string, unknown>;
 g.window = dom.window;
 g.document = dom.window.document;
+g.Event = dom.window.Event; g.CustomEvent = dom.window.CustomEvent;
 try {
   Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
 } catch {
@@ -74,7 +75,7 @@ async function waitFor(condition: () => boolean, what: string, timeoutMs = 1_500
 }
 
 type Row = Record<string, unknown> & { id: number; popularity: number };
-type RpcArgs = { p_since: string; p_limit: number; p_team_slug: string | null; p_other_kbo_ids: string[]; p_blocked: string[]; p_exclude: number[] };
+type RpcArgs = { p_since: string; p_limit: number; p_team_slug: string | null; p_other_kbo_ids: string[]; p_blocked: string[]; p_exclude: number[]; p_before_created_at?: string | null; p_before_id?: number | null };
 type Pending = {
   seq: number;
   fn: string;
@@ -474,7 +475,7 @@ async function main() {
   console.log("── D 실제 섹션(CommunityLatestPosts) DOM");
   const { AppRouterContext } = await import("next/dist/shared/lib/app-router-context.shared-runtime");
   const router = { push: () => {}, replace: () => {}, back: () => {}, forward: () => {}, refresh: () => {}, prefetch: () => Promise.resolve() };
-  function mountSection(refreshNonce = 0) {
+  function mountSection(refreshNonce = 0, mode: "latest" | "popular" = "popular", myTeamId: number | null = 1) {
     const container = dom.window.document.createElement("div");
     dom.window.document.body.appendChild(container);
     const root = createRoot(container);
@@ -483,7 +484,7 @@ async function main() {
         React.createElement(
           AppRouterContext.Provider,
           { value: router as never },
-          React.createElement(ThemeProvider, null, React.createElement(CommunityLatestPosts, { myTeamId: 1, refreshNonce: nonce })),
+          React.createElement(ThemeProvider, null, React.createElement(CommunityLatestPosts, { myTeamId, refreshNonce: nonce, mode })),
         ),
       );
     render(refreshNonce);
@@ -505,10 +506,10 @@ async function main() {
     const s = mountSection();
     await waitPending(1, "D1 초기 조회");
     check("D1 로딩 중 섹션 숨김", s.section() === null);
-    check("D1 실제 RPC 인자(LG·거부 목록·p_limit 6)", last().fn === "home_popular_posts" && last().args.p_team_slug === "lg" && isDenyListLg(last().args) && last().args.p_limit === 6);
+    check("D1 실제 RPC 인자(전체팀·p_limit 6)", last().fn === "home_popular_posts" && last().args.p_team_slug === null && last().args.p_other_kbo_ids.length === 0 && last().args.p_limit === 6);
     settle(last(), rows(6, 1000));
     await waitFor(() => s.rowsOf() === 5, "D1 5행 렌더");
-    check("D1 섹션 표시·5행·제목 '커뮤니티 인기글(LG)'", s.section() !== null && s.rowsOf() === 5 && (s.section()?.textContent ?? "").includes("커뮤니티 인기글(LG)"));
+    check("D1 섹션 표시·5행·제목 '최근 24시간 인기글'", s.section() !== null && s.rowsOf() === 5 && (s.section()?.textContent ?? "").includes("최근 24시간 인기글"));
     check("D1 '15개 더 보기' 버튼 노출·활성", s.moreBtn()?.textContent?.includes("15개 더 보기") === true && s.moreBtn()?.disabled === false);
     check("D1 하단 링크 '커뮤니티 최신글 보기'(/community/all-posts)·'접기' 없음", (s.section()?.textContent ?? "").includes("커뮤니티 최신글 보기") && !(s.section()?.textContent ?? "").includes("접기") && s.container.querySelector("a[href='/community/all-posts']") !== null);
     s.root.unmount();
@@ -577,6 +578,53 @@ async function main() {
     await waitFor(() => s.rowsOf() === 5 && s.container.querySelector("a[href*='3000']") !== null, "D4 새 첫 페이지");
     check("D4 새 첫 페이지 렌더·버튼 즉시 활성(옛 더보기 잠금 해제)", s.moreBtn()?.disabled === false);
     s.root.unmount();
+  }
+
+  // D5: latest uses its own RPC, 15-row first page and a chronological cursor.
+  {
+    pending.length = 0;
+    const s = mountSection(0, "latest");
+    await waitPending(1, "D5 latest initial");
+    check("D5 latest RPC / team-only / 16-row peek / no time window", last().fn === "home_team_latest_posts" && last().args.p_team_slug === "lg" && isDenyListLg(last().args) && last().args.p_limit === 16 && !Object.hasOwn(last().args, "p_since") && last().args.p_before_id === null);
+    settle(last(), rows(16, 2000));
+    await waitFor(() => s.rowsOf() === 15, "D5 first 15");
+    check("D5 latest section title", (s.section()?.textContent ?? "").includes("커뮤니티 최신글(LG)"));
+    sectionMoreBtn(s);
+    await waitPending(1, "D5 next page");
+    check("D5 cursor is the last displayed row, not peek", last().args.p_before_id === 1986 && last().args.p_before_created_at === "2026-09-04T00:00:00Z");
+    const failed = last();
+    failed.settled = true;
+    failed.reject({ data: null, error: { message: "latest fixture failure" } });
+    await waitFor(() => s.moreBtn()?.disabled === false, "D5 retry unlocked");
+    check("D5 error preserves rows and retry", s.rowsOf() === 15 && !!s.moreBtn());
+    sectionMoreBtn(s);
+    await waitPending(1, "D5 retry");
+    check("D5 retry keeps same cursor", last().args.p_before_id === 1986);
+    settle(last(), rows(15, 1985));
+    await waitFor(() => s.rowsOf() === 30, "D5 30 rows");
+    check("D5 exact 30 exhaustion hides button", !s.moreBtn());
+    s.root.unmount();
+  }
+
+  {
+    pending.length = 0;
+    const s = mountSection(0, "latest", null);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    check("D6 no favorite team: latest makes no RPC and stays hidden", pending.length === 0 && s.section() === null);
+    s.root.unmount();
+    const pref = await import("../../src/lib/store/home-sections-pref");
+    const saved = ["shorts", "news", "communityLatest", "favPlayers", "allGames", "liveOtherTeams"];
+    localStorage.setItem("kbo-home-sections-order", JSON.stringify(saved));
+    const migrated = pref.getSectionOrder();
+    check("D7 old custom order preserved; popular inserted after latest", migrated.indexOf("communityPopular") === migrated.indexOf("communityLatest") + 1 && JSON.stringify(migrated.filter((k) => k !== "communityPopular")) === JSON.stringify(saved));
+    localStorage.setItem("kbo-home-community-visible", "0");
+    localStorage.removeItem("kbo-home-community-popular-visible");
+    check("D7 previous hidden preference inherited", pref.getSectionVisible("communityPopular") === false);
+    pref.setSectionVisible("communityLatest", true);
+    check("D7 inheritance occurs only once", pref.getSectionVisible("communityPopular") === false);
+    pref.setSectionVisible("communityLatest", false);
+    pref.setSectionVisible("communityPopular", true);
+    check("D7 separate toggles", pref.getSectionVisible("communityPopular") && !pref.getSectionVisible("communityLatest"));
   }
 
   console.log(`\n${fail ? "❌" : "✅"} home-popular-feed-hook-smoke — pass ${pass} / fail ${fail}`);

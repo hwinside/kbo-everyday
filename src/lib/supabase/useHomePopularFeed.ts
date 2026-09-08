@@ -8,8 +8,10 @@ import { FEED_SELECT, mapFeedRow } from "./useUnifiedFeed";
 import { getTeamBySlug, isAllStarTeamId } from "@/lib/constants/teams";
 import PLAYERS_ROSTER from "@/lib/constants/players-roster.json";
 
-/** 인기글 집계 창(일). 하린아빠 스펙 2026-09-05: 최근 일주일 인기글. */
-export const POPULAR_WINDOW_DAYS = 7;
+/** 2026-09-08: 인기글은 최근 24시간, 최신글은 기간 제한 없이 별도 조회한다. */
+export const POPULAR_WINDOW_DAYS = 1;
+export type HomeCommunityFeedMode = "latest" | "popular";
+export type LatestPostCursor = { created_at: string; id: number } | null;
 
 /** 한 페이지 조회 시간 상한. 넘기면 abort → 오류로 처리(첫 페이지: 섹션 숨김·reload 가능, 더보기: 버튼 유지·재시도). */
 export const POPULAR_FETCH_TIMEOUT_MS = 10_000;
@@ -59,14 +61,31 @@ export function homePopularRpcArgs(
   };
 }
 
+/** 최신글은 최애팀 단독 공개만. 복합 커서로 같은 작성 시각·조회 중 신규 글에도 순서를 유지한다. */
+export function homeLatestRpcArgs(
+  board: HomePopularBoard,
+  want: number,
+  blocked: ReadonlyArray<string>,
+  before: LatestPostCursor,
+) {
+  return {
+    p_team_slug: board.kind === "team" ? board.teamId : null,
+    p_limit: want + 1,
+    p_other_kbo_ids: board.kind === "team" ? otherTeamsKboIds(board.teamId) : [],
+    p_blocked: [...blocked],
+    p_before_created_at: before?.created_at ?? null,
+    p_before_id: before?.id ?? null,
+  };
+}
+
 /**
- * 홈 '커뮤니티 인기글' 훅 — 최근 7일 글을 인기도(하트+댓글) 순으로, `initialSize` 개 먼저 보여주고
+ * 홈 커뮤니티 훅 — 최신글은 작성시각순, 최근 24시간 인기글은 하트+댓글순. `initialSize` 개 먼저 보여주고
  * `loadMore()` 마다 `stepSize` 개씩 이어 붙인다(5 → 20 → 35 …). 창 안 글이 소진되면 hasMore=false.
  * 뒤로가기 복원·좋아요 상태는 홈 섹션이 쓰지 않으므로 useUnifiedFeed 대신 얇게 분리했다.
  */
-export function useHomePopularFeed(board: HomePopularBoard, initialSize: number, stepSize: number) {
+export function useHomePopularFeed(board: HomePopularBoard, initialSize: number, stepSize: number, mode: HomeCommunityFeedMode = "popular") {
   const { blockedIds } = useBlockedIds();
-  return useHomePopularFeedCore(board, initialSize, stepSize, blockedIds);
+  return useHomePopularFeedCore(board, initialSize, stepSize, blockedIds, { mode });
 }
 
 /**
@@ -86,19 +105,23 @@ export function useHomePopularFeedCore(
   initialSize: number,
   stepSize: number,
   blockedIds: ReadonlySet<string>,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; mode?: HomeCommunityFeedMode } = {},
 ) {
   const timeoutMs = options.timeoutMs ?? POPULAR_FETCH_TIMEOUT_MS;
+  const mode = options.mode ?? "popular";
+  const enabled = mode === "popular" || board.kind === "team";
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
-  const key = board.kind === "team" ? `team:${board.teamId}` : "all";
+  const key = `${mode}:${board.kind === "team" ? `team:${board.teamId}` : "all"}`;
   // 차단 목록은 Set 참조가 매 refresh 바뀌므로 내용 서명으로 안정화 — 내용이 바뀔 때만 첫 페이지를 다시 읽는다.
   const blockedSig = useMemo(() => Array.from(blockedIds).sort().join(","), [blockedIds]);
   const blockedRef = useRef(blockedIds);
   blockedRef.current = blockedIds;
+  const identity = `${key}:${blockedSig}`;
+  const [loadedIdentity, setLoadedIdentity] = useState("");
 
   const fetchingRef = useRef(false);
   // 응답 세대. loadFirst/reload 마다 +1. 요청이 시작될 때의 세대와 다르면 그 응답은 버린다.
@@ -107,6 +130,7 @@ export function useHomePopularFeedCore(
   const inflightRef = useRef<Set<AbortController>>(new Set());
   // 창 시작은 페이지 사이에서 고정 — 매 페이지 now() 를 다시 잡으면 경계 글이 빠진다.
   const windowStartRef = useRef<string>(popularWindowStart());
+  const latestCursorRef = useRef<LatestPostCursor>(null);
 
   const abortInflight = useCallback(() => {
     for (const c of inflightRef.current) c.abort();
@@ -127,10 +151,12 @@ export function useHomePopularFeedCore(
         }, timeoutMs);
       });
       try {
-        // query-guard: bounded -- RPC 내부 limit(want+1, 상한 100) + created_at 7일 창.
+        // query-guard: bounded -- RPC 내부 limit(want+1, 상한 100). 최신글 복합커서 / 인기글 24시간 창.
+        const query = mode === "latest"
+          ? supabase.rpc("home_team_latest_posts", homeLatestRpcArgs(board, want, Array.from(blockedRef.current), latestCursorRef.current))
+          : supabase.rpc("home_popular_posts", homePopularRpcArgs(board, windowStartRef.current, want, Array.from(blockedRef.current), exclude));
         const { data, error } = await Promise.race([
-          supabase
-            .rpc("home_popular_posts", homePopularRpcArgs(board, windowStartRef.current, want, Array.from(blockedRef.current), exclude))
+          query
             // popularity 는 홈 인기글만 쓰는 생성 컬럼 — 공통 FEED_SELECT 에 넣으면 마이그레이션 전 preview 에서
             // 커뮤니티 피드 전체가 400 으로 죽는다. 이 훅에서만 추가 select 한다.
             .select(`${FEED_SELECT}, popularity`)
@@ -160,7 +186,15 @@ export function useHomePopularFeedCore(
     fetchingRef.current = false;
     setLoadingMore(false);
     setLoading(true);
+    latestCursorRef.current = null;
     windowStartRef.current = popularWindowStart();
+    if (!enabled) {
+      setPosts([]);
+      setHasMore(false);
+      setLoading(false);
+      setLoadedIdentity(identity);
+      return;
+    }
     let page: PopularPage;
     try {
       page = await fetchPage(initialSize, []);
@@ -169,13 +203,16 @@ export function useHomePopularFeedCore(
       // 첫 조회 실패/시간 초과: 섹션은 비우되 hasMore 는 남겨 pull-to-refresh(reload)가 다시 시도할 수 있게 한다.
       setPosts([]);
       setLoading(false);
+      setLoadedIdentity(identity);
       return;
     }
     if (gen !== genRef.current) return; // 옛 세대 응답 폐기(삼순 #1343 ①)
     setPosts(page.rows);
+    latestCursorRef.current = page.rows.at(-1) ?? null;
     setHasMore(page.hasMore);
     setLoading(false);
-  }, [fetchPage, initialSize, abortInflight]);
+    setLoadedIdentity(identity);
+  }, [fetchPage, initialSize, abortInflight, enabled, identity]);
 
   // blockedSig: 차단 목록 내용이 바뀌면(로그인 직후 늦게 도착 포함) 서버 필터가 바뀌므로 첫 페이지를 다시 읽는다.
   useEffect(() => {
@@ -189,7 +226,7 @@ export function useHomePopularFeedCore(
   }, [loadFirst, blockedSig, abortInflight]);
 
   const loadMore = useCallback(async () => {
-    if (fetchingRef.current || !hasMore || loading) return;
+    if (fetchingRef.current || !hasMore || loading || !enabled || loadedIdentity !== identity) return;
     const gen = genRef.current;
     fetchingRef.current = true;
     setLoadingMore(true);
@@ -198,6 +235,7 @@ export function useHomePopularFeedCore(
       const page = await fetchPage(stepSize, posts.map((p) => p.id));
       if (gen !== genRef.current) return; // 팀 전환·새로고침이 끼어들었다 → 옛 더보기 응답 폐기(삼순 #1343 ①)
       setPosts((prev) => [...prev, ...page.rows]);
+      latestCursorRef.current = page.rows.at(-1) ?? latestCursorRef.current;
       setHasMore(page.hasMore);
     } catch {
       // 조회 실패/시간 초과: 목록·hasMore 그대로 → 버튼이 남아 재시도할 수 있다(삼순 #1343 ②).
@@ -208,11 +246,11 @@ export function useHomePopularFeedCore(
         setLoadingMore(false);
       }
     }
-  }, [hasMore, loading, posts, fetchPage, stepSize]);
+  }, [hasMore, loading, posts, fetchPage, stepSize, enabled, loadedIdentity, identity]);
 
   return {
-    posts,
-    loading,
+    posts: enabled && loadedIdentity === identity ? posts : [],
+    loading: enabled && (loading || loadedIdentity !== identity),
     loadingMore,
     hasMore,
     loadMore,

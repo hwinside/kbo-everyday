@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
-import { HOME_POPULAR_IDS, HOME_POPULAR_LINKS, installHomePopularFixture } from "./fixtures/home-popular-feed.mjs";
+import { HOME_POPULAR_IDS, HOME_LATEST_IDS, HOME_POPULAR_LINKS, installHomePopularFixture } from "./fixtures/home-popular-feed.mjs";
 
 const base = process.env.BASE || "http://127.0.0.1:3061";
 const roster = JSON.parse(readFileSync(new URL("../../src/lib/constants/players-roster.json", import.meta.url), "utf8"));
@@ -16,31 +16,53 @@ try {
   const runtimeErrors = [];
   page.on("pageerror", (e) => runtimeErrors.push(e.message));
   const fixture = await installHomePopularFixture(page);
-  const section = page.locator("section").filter({ has: page.getByRole("heading", { name: /커뮤니티 인기글/ }) });
+  const section = page.locator('section[data-home-community="popular"]');
+  const latest = page.locator('section[data-home-community="latest"]');
   const links = section.locator(HOME_POPULAR_LINKS);
-  async function loadFavoriteTeamFeed(navigate) {
-    // useHomeInit restores the saved team after auth loading. The fixture also
-    // answers the initial all-team RPC, so five links alone do not prove LG loaded.
-    // Register before navigation and fail on timeout if the real LG RPC never occurs.
+  async function loadPopularFeed(navigate) {
+    // The popular section is global even before favorite-team hydration.
+    // Latest-team restoration is asserted independently below.
     const teamResponse = page.waitForResponse((response) => {
       if (!response.url().includes("/rpc/home_popular_posts") || response.status() !== 200) return false;
       const args = response.request().postDataJSON();
-      return args?.p_team_slug === "lg" && args.p_limit === 6 && args.p_exclude?.length === 0;
+      return args?.p_team_slug === null && args.p_limit === 6 && args.p_exclude?.length === 0;
     }, { timeout: 30000 });
     await Promise.all([navigate(), teamResponse]);
-    await section.getByRole("heading", { name: /커뮤니티 인기글\(LG\)$/ }).waitFor();
+    await section.getByRole("heading", { name: /최근 24시간 인기글$/ }).waitFor();
     await links.nth(4).waitFor();
   }
-  await loadFavoriteTeamFeed(() => page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 }));
+  await loadPopularFeed(() => page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 }));
+  await latest.locator(HOME_POPULAR_LINKS).nth(14).waitFor();
+  const latestIds = () => latest.locator(HOME_POPULAR_LINKS).evaluateAll((items) => items.map((a) => Number(a.dataset.homePostId)));
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 15));
+  const latestFirst = fixture.latestRequests.at(-1);
+  assert.equal(latestFirst.p_limit, 16);
+  assert.equal(latestFirst.p_team_slug, "lg");
+  assert.equal(latestFirst.p_before_created_at, null);
+  assert.equal(latestFirst.p_before_id, null);
+  assert.equal(Object.hasOwn(latestFirst, "p_since"), false, "latest feed has no 7-day cutoff");
+  assert.ok(latestFirst.p_other_kbo_ids.includes(String(otherPlayer.kboId)));
+  const latestMore = latest.getByRole("button", { name: "15개 더 보기" });
+  fixture.latestRows.unshift({ ...fixture.latestRows[0], id: 9999, created_at: new Date().toISOString() });
+  await latestMore.click();
+  await latest.locator(HOME_POPULAR_LINKS).nth(29).waitFor();
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 30), "new insert must not enter older pages");
+  assert.equal(fixture.latestRequests.at(-1).p_before_id, HOME_LATEST_IDS[14]);
+  assert.equal(await links.count(), 5, "latest pagination leaves popular feed untouched");
+  await latestMore.click();
+  await latest.locator(HOME_POPULAR_LINKS).nth(39).waitFor();
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS);
+  assert.equal(await latestMore.count(), 0);
+  console.log("PASS L1/L2 latest 15→30→40, strict-team args, stable cursor, exhaustion, independent sections");
   const first = fixture.requests.at(-1);
   assert.equal(first.p_limit, 6);
   assert.deepEqual(first.p_exclude, []);
   const age = Date.now() - Date.parse(first.p_since);
-  assert.ok(Math.abs(age - 7 * 86400000) < 60000, "7-day window");
-  assert.equal(first.p_team_slug, "lg", "returning guest's favorite team");
-  assert.ok(first.p_other_kbo_ids.includes(String(otherPlayer.kboId)), "opposing-team roster ID is excluded");
+  assert.ok(Math.abs(age - 86400000) < 60000, "24-hour window");
+  assert.equal(first.p_team_slug, null, "popular feed ignores favorite-team scope");
+  assert.deepEqual(first.p_other_kbo_ids, [], "popular feed includes other-team player scopes");
   assert.ok(!first.p_other_kbo_ids.includes(String(ownPlayer.kboId)), "LG roster ID remains eligible");
-  console.log("PASS F1 actual RPC args: 7-day window / limit 6 / no excluded ids");
+  console.log("PASS F1 actual RPC args: 24-hour window / limit 6 / no excluded ids");
   const ids = () => links.evaluateAll((items) => items.map((a) => Number(a.getAttribute("href").split("/").pop())));
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));
   const more = section.getByRole("button", { name: "15개 더 보기" });
@@ -63,8 +85,10 @@ try {
   assert.ok(fixture.requests.length > before, "failure request actually issued");
   console.log("PASS F4 actual RPC 500 → section hidden");
   fixture.fail = false;
-  await loadFavoriteTeamFeed(() => page.reload({ waitUntil: "domcontentloaded" }));
+  await loadPopularFeed(() => page.reload({ waitUntil: "domcontentloaded" }));
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));
+  await latest.locator(HOME_POPULAR_LINKS).nth(14).waitFor();
+  assert.deepEqual(await latestIds(), [9999, ...HOME_LATEST_IDS.slice(0, 14)], "reload picks up the new latest post");
   assert.deepEqual(runtimeErrors, []);
   console.log("PASS F5 reload recovery / no browser runtime errors");
 } finally {

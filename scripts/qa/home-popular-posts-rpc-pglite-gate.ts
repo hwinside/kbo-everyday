@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
+import { runHomeCommunitySplitCases } from "./home-community-split-rpc-cases";
 
 async function main() {
   const db = new PGlite();
@@ -30,6 +31,7 @@ async function main() {
     assert.equal((await ids("anon", "")).length, 100, "125 eligible rows, hard cap 100");
     assert.deepEqual(await ids("anon", "", -1), []);
     console.log("PASS G3 limit cap 100 with 125 eligible rows / negative limit 0");
+    await runHomeCommunitySplitCases(db);
     await db.exec("drop policy public_posts on public.posts; drop policy own_posts on public.posts");
     assert.deepEqual(await ids("anon", ""), []);
     assert.deepEqual(await ids("authenticated", a), []);

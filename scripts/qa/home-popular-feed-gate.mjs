@@ -2,9 +2,9 @@
 /**
  * home-popular-feed-gate (npm run qa:home-popular-feed / :selftest)
  *
- * 계약 (2026-09-05 #product 하린아빠 스펙 — 홈 커뮤니티 파트를 '최신글' → '최근 7일 인기글'로):
+ * 계약 (2026-09-08 #product: 최애팀 최신글 + 전체팀 24시간 인기글 분리):
  *
- *  H2. 집계 창은 정확히 7일(now - 7d). 창 시작은 훅이 페이지 사이에 고정한다(소스 검사).
+ *  H2. 집계 창은 정확히 24시간(now - 24h). 창 시작은 훅이 페이지 사이에 고정한다(소스 검사).
  *  H4. 훅 배선 — 페이지당 `home_popular_posts` RPC 1회, `p_limit = want+1`, hasMore = 확인행 존재, 인기도 커서 없음
  *      (다음 페이지 = p_exclude 화면 id 제외), 응답 세대 보호(genRef)·진행 중 요청 abort·시간 상한·
  *      오류 throw(상태 보존)·세대별 더보기 잠금(삼순 2·3·5차). 클라이언트 필터/보충 루프 없음(설계 A).
@@ -57,10 +57,10 @@ const { kboIdsForTeamSlug, teamIdForKboId } = await import("../../src/lib/utils/
 const { isAllStarTeamId } = await import("../../src/lib/constants/teams");
 const { resolvePostScope } = await import("../../src/lib/utils/post-scope");
 
-console.log("── H2 7일 창·시간 상한");
+console.log("── H2 24시간 창·시간 상한");
 const NOW = Date.UTC(2026, 8, 5, 4, 30, 0);
-check("H2-days", POPULAR_WINDOW_DAYS === 7, `POPULAR_WINDOW_DAYS=${POPULAR_WINDOW_DAYS}`);
-check("H2-start", popularWindowStart(NOW) === "2026-08-29T04:30:00.000Z", `→ ${popularWindowStart(NOW)}`);
+check("H2-days", POPULAR_WINDOW_DAYS === 1, `POPULAR_WINDOW_DAYS=${POPULAR_WINDOW_DAYS}`);
+check("H2-start", popularWindowStart(NOW) === "2026-09-04T04:30:00.000Z", `→ ${popularWindowStart(NOW)}`);
 check("H2-timeout", Number.isFinite(POPULAR_FETCH_TIMEOUT_MS) && POPULAR_FETCH_TIMEOUT_MS >= 3000 && POPULAR_FETCH_TIMEOUT_MS <= 30000, `timeout=${POPULAR_FETCH_TIMEOUT_MS}`);
 
 console.log("── H7 최애팀 단독 RPC 인자(순수)");
@@ -72,8 +72,8 @@ check("H7-other-no-lg", other.every((id) => !lgIds.has(id)), "거부 목록에 L
 check("H7-other-all-known-teams", other.every((id) => { const t = teamIdForKboId(id); return t != null && t !== LG && !isAllStarTeamId(t); }), "거부 목록에 로스터 밖·올스타·LG ID 가 있다");
 check("H7-other-contains-doosan", other.includes("63123"), "두산 강승호(63123)가 거부 목록에 없다");
 check("H7-other-unknown-slug", otherTeamsKboIds("nope").length === 0, "미지 slug 는 빈 배열이어야 한다");
-const args = homePopularRpcArgs({ kind: "team", teamId: "lg" }, "2026-08-29T04:30:00.000Z", 5, ["u1"], [3, 2]);
-check("H7-args-team", args.p_team_slug === "lg" && args.p_limit === 6 && args.p_since === "2026-08-29T04:30:00.000Z" && args.p_other_kbo_ids.length === other.length && args.p_blocked.join() === "u1" && args.p_exclude.join() === "3,2", JSON.stringify({ ...args, p_other_kbo_ids: args.p_other_kbo_ids.length }));
+const args = homePopularRpcArgs({ kind: "team", teamId: "lg" }, "2026-09-04T04:30:00.000Z", 5, ["u1"], [3, 2]);
+check("H7-args-team", args.p_team_slug === "lg" && args.p_limit === 6 && args.p_since === "2026-09-04T04:30:00.000Z" && args.p_other_kbo_ids.length === other.length && args.p_blocked.join() === "u1" && args.p_exclude.join() === "3,2", JSON.stringify({ ...args, p_other_kbo_ids: args.p_other_kbo_ids.length }));
 const argsAll = homePopularRpcArgs({ kind: "all" }, "x", 15, [], []);
 check("H7-args-all", argsAll.p_team_slug === null && argsAll.p_other_kbo_ids.length === 0 && argsAll.p_limit === 16 && argsAll.p_exclude.length === 0, JSON.stringify(argsAll));
 // 서버 판정(거부 목록 ∩ 태그 ID = ∅)을 로컬 재현 → 배지 SSOT 와 같은 판정이어야 한다.
@@ -103,7 +103,7 @@ check("H4-inflight-abort", /const abortInflight = useCallback\(\(\) => \{\s*for 
 check("H4-first-aborts", /const gen = \+\+genRef\.current;\s*abortInflight\(\);/.test(hook), "새 세대(loadFirst)가 진행 중 요청을 abort 하지 않는다");
 check("H4-unmount-aborts", /return \(\) => \{\s*gen\.current\+\+;\s*abortInflight\(\);\s*\}/.test(hook), "언마운트·키 교체 시 abort 하지 않는다");
 check("H4-window", /windowStartRef\s*=\s*useRef/.test(hook) && /windowStartRef\.current = popularWindowStart\(\)/.test(hook), "창 시작이 ref 로 고정되지 않음");
-check("H4-no-cursor", !/cursor/i.test(hook), "인기도 커서가 남아 있다(순위 상승 글 누락, 삼순 5차 ①)");
+check("H4-no-cursor", !Object.hasOwn(homePopularRpcArgs({kind:"all"}, popularWindowStart(NOW), 5, [], []), "p_before_id"), "인기글은 시간/순위 커서 없이 화면 id 제외로 페이징해야 한다");
 check("H4-no-client-filter", !/mapFeedRow\(r\)\)\s*\.filter\(/.test(hook) && !/fetched\.filter\(|rows\.filter\(|isTeamOnlyPost|fillVisible|MAX_FILL_BATCHES/.test(hook), "클라이언트 필터/보충 루프가 남아 있다(설계 A 위반)");
 check("H4-hasmore-peek", /return \{ rows: fetched\.slice\(0, want\), hasMore: fetched\.length > want \};/.test(hook), "hasMore 가 확인행 존재(fetched.length > want)가 아니다");
 check("H4-hasmore-wired", (hook.match(/setHasMore\(page\.hasMore\)/g) ?? []).length === 2, "첫 페이지·더보기 hasMore 가 page.hasMore 로 배선되지 않았다");
@@ -119,14 +119,14 @@ check("H4-reload-unlock", /abortInflight\(\);\s*fetchingRef\.current = false;\s*
 console.log("── H5 홈 섹션 배선(소스)");
 const section = readStripped(SECTION);
 check("H5-hook", /useHomePopularFeed\(/.test(section) && !/useUnifiedFeed\(/.test(section), "홈 섹션이 인기글 훅을 쓰지 않는다");
-check("H5-board-type", /const board: HomePopularBoard = myTeamSlug \? \{ kind: "team", teamId: myTeamSlug \} : \{ kind: "all" \}/.test(section), "섹션 보드가 최애팀 단독/전체 2종이 아니다");
+check("H5-board-type", /mode === "latest" && myTeamSlug/.test(section), "최신글만 최애팀 필터, 인기글은 전체팀이어야 한다");
 check("H5-no-collapse", !/접기/.test(section), "'접기' 가 남아 있다(계속 이어 붙이기 스펙 위반)");
 check("H5-more-gated", /\{hasMore\s*&&\s*\(/.test(section), "'더 보기' 버튼이 hasMore 로 게이트되지 않는다");
 check("H5-more-load", /onClick=\{\(\)\s*=>\s*void loadMore\(\)\}/.test(section), "'더 보기' 가 loadMore 를 호출하지 않는다");
 check("H5-more-label", /\{HOME_POPULAR_STEP\}개 더 보기/.test(section) && /HOME_POPULAR_STEP\s*=\s*15/.test(section), "'15개 더 보기' 문구/상수 불일치");
 check("H5-link-label", /커뮤니티 최신글 보기/.test(section) && !/커뮤니티 더보기/.test(section), "하단 링크 문구가 '커뮤니티 최신글 보기' 가 아니다");
 check("H5-link-href", (section.match(/href="\/community\/all-posts"/g) ?? []).length >= 2, "하단 링크 경로(/community/all-posts) 변경됨");
-check("H5-title", /커뮤니티 인기글/.test(section) && !/`커뮤니티 최신글\(/.test(section), "섹션 제목이 '커뮤니티 인기글' 이 아니다");
+check("H5-title", /최근 24시간 인기글/.test(section) && /커뮤니티 최신글\(/.test(section) && /HOME_LATEST_INITIAL = 15/.test(section), "최신15개 / 24시간 인기글 분리 제목·초기값 불일치");
 
 console.log("── H6 마이그레이션(소스)");
 const mig = readFileSync(path.join(ROOT, MIGRATION), "utf8").replace(/--[^\n]*/g, "");
@@ -151,7 +151,7 @@ if (SELFTEST) {
   console.log("\n── selftest: 소스 변이 주입 → 자식 게이트 RED 기대");
   /** [id, 파일, 앵커, 치환, 설명] */
   const MUTATIONS = [
-    ["S1-drop-window", HOOK, "windowStartRef.current = popularWindowStart();", "windowStartRef.current = new Date(0).toISOString();", "7일 창 제거 → 전 기간 인기글"],
+    ["S1-drop-window", HOOK, "windowStartRef.current = popularWindowStart();", "windowStartRef.current = new Date(0).toISOString();", "24시간 창 제거 → 전 기간 인기글"],
     ["S2-rpc-name", HOOK, '.rpc("home_popular_posts", homePopularRpcArgs(', '.rpc("home_popular_posts_v0", homePopularRpcArgs(', "다른 RPC 호출"],
     ["S3-allow-list", HOOK, "p_other_kbo_ids: board.kind === \"team\" ? otherTeamsKboIds(board.teamId) : [],", "p_other_kbo_ids: board.kind === \"team\" ? otherTeamsKboIds(board.teamId).slice(0, 10) : [],", "거부 목록 축소 → 타팀 선수 태그 글 노출(SSOT 불일치)"],
     ["S4-collapse-back", SECTION, "{HOME_POPULAR_STEP}개 더 보기", "접기", "'접기' 부활"],

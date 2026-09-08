@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { MessageCircle, Heart, ChevronRight, ChevronDown, PenSquare, FileText, Image as ImageIcon, Video, BarChart3 } from "lucide-react";
-import { useHomePopularFeed, type HomePopularBoard } from "@/lib/supabase/useHomePopularFeed";
+import { useHomePopularFeed, type HomePopularBoard, type HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
 
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getPostDetailPath } from "@/lib/utils/post-share";
@@ -19,11 +19,11 @@ import type { Post } from "@/lib/supabase/usePosts";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
-// 홈 인기글 기본 노출 수. 20개 전량은 목록만 ~1,520px라 스크롤 부담(삼순 리뷰) → 5개.
+// 2026-09-08: 최애팀 최신글은 15개씩, 별도 24시간 인기글은 5개 미리보기 후 15개씩.
+const HOME_LATEST_INITIAL = 15;
 const HOME_POPULAR_INITIAL = 5;
-// '15개 더 보기' 1회당 이어 붙이는 수. 접기 없이 누를 때마다 계속 이어 붙인다(5 → 20 → 35 …,
-// 최근 7일 글이 소진되면 버튼 숨김) — 하린아빠 스펙 2026-09-05.
 const HOME_POPULAR_STEP = 15;
+const HOME_COMMUNITY_POSTED_EVENT = "home-community-posted";
 
 // 홈 최신글에서 글을 열었다는 표식(sessionStorage, pending). 클릭 시점엔 아직
 // "뒤로가기로 돌아왔는지" 알 수 없으므로 대기 상태로만 남긴다.
@@ -38,8 +38,9 @@ const HOME_FOCUS_CONFIRMED_KEY = "kbo:home-focus-confirmed";
 if (typeof window !== "undefined") {
   window.addEventListener("popstate", () => {
     try {
-      if (sessionStorage.getItem(HOME_FOCUS_PENDING_KEY) === "1") {
-        sessionStorage.setItem(HOME_FOCUS_CONFIRMED_KEY, "1");
+      const pending = sessionStorage.getItem(HOME_FOCUS_PENDING_KEY);
+      if (pending) {
+        sessionStorage.setItem(HOME_FOCUS_CONFIRMED_KEY, pending === "1" ? "latest" : pending);
         sessionStorage.removeItem(HOME_FOCUS_PENDING_KEY);
       }
     } catch { /* private mode 무시 */ }
@@ -195,7 +196,7 @@ function PostTypeIcon({ post }: { post: Post }) {
   );
 }
 
-function PostRow({ post }: { post: Post }) {
+function PostRow({ post, mode }: { post: Post; mode: HomeCommunityFeedMode }) {
   const [imgFailed, setImgFailed] = useState(false);
   const thumb = resolveThumb(post);
   const summary = summaryLine(post);
@@ -203,10 +204,11 @@ function PostRow({ post }: { post: Post }) {
   return (
     <Link prefetch={false}
       href={getPostDetailPath(post)}
+      data-home-post-id={post.id}
       onClick={() => {
         // 홈 최신글에서 연 글 → 실제 뒤로가기(popstate)로 나올 때만 이 섹션으로 포커스
         // 복귀시키도록 대기 표식만 남긴다(확정은 popstate 리스너가 담당).
-        try { sessionStorage.setItem(HOME_FOCUS_PENDING_KEY, "1"); } catch { /* private mode 무시 */ }
+        try { sessionStorage.setItem(HOME_FOCUS_PENDING_KEY, mode); } catch { /* private mode 무시 */ }
       }}
       className="flex items-center gap-3 py-2.5 active:opacity-70 transition-opacity"
     >
@@ -283,20 +285,16 @@ function PostRow({ post }: { post: Post }) {
 }
 
 /**
- * 홈 '커뮤니티 인기글' 섹션 — 커뮤니티 유입 레버.
- * 최근 7일 글을 인기도(하트+댓글) 순으로 세로 compact 리스트로 노출(하린아빠 스펙 2026-09-05,
- * 종전 '최신글' 대체). 정렬·페이징은 useHomePopularFeed(popularity 생성 컬럼 keyset).
+ * 서로 독립된 홈 최신글 / 최근 24시간 인기글 섹션. 각 목록의 더보기·복귀 위치를 분리한다.
  */
-export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { myTeamId: number | null; refreshNonce?: number }) {
-  // 홈 인기글은 '최애팀 **단독** 공개' 글만 노출(하린아빠 스펙 2026-09-05: 최애팀까지 포함한 다팀·전체구단
-  // 공개 글은 제외). 최애팀이 있으면 useHomePopularFeed 가 team_tags = [최애팀] 로 서버 필터 후 배지 SSOT 로 재확인,
-  // 최애팀 미선택(비로그인·온보딩 전)이면 필터 기준이 없으므로 기존처럼 전체글을 노출한다.
+export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0, mode = "latest" }: { myTeamId: number | null; refreshNonce?: number; mode?: HomeCommunityFeedMode }) {
+  // 최신글은 최애팀 단독 공개만(미선택이면 조회/노출 없음). 인기글은 팀 범위와 무관하게 공개 글 전체.
   const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
   const myTeamSlug = myTeam?.slug ?? null;
-  const board: HomePopularBoard = myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
-  // 최애팀 필터 적용 중임을 타이틀에 명시: '커뮤니티 인기글(LG)'. 미선택 시 괄호 없음.
-  const sectionTitle = myTeam ? `커뮤니티 인기글(${myTeam.shortName})` : "커뮤니티 인기글";
-  const { posts, loading, loadingMore, hasMore, loadMore, reload } = useHomePopularFeed(board, HOME_POPULAR_INITIAL, HOME_POPULAR_STEP);
+  const board: HomePopularBoard = mode === "latest" && myTeamSlug ? { kind: "team", teamId: myTeamSlug } : { kind: "all" };
+  const sectionTitle = mode === "popular" ? "최근 24시간 인기글" : myTeam ? `커뮤니티 최신글(${myTeam.shortName})` : "커뮤니티 최신글";
+  const initialSize = mode === "latest" ? HOME_LATEST_INITIAL : HOME_POPULAR_INITIAL;
+  const { posts, loading, loadingMore, hasMore, loadMore, reload } = useHomePopularFeed(board, initialSize, HOME_POPULAR_STEP, mode);
   const { user } = useAuth();
   const [writeMode, setWriteMode] = useState<WriteFlowMode>(null);
   const sectionRef = useRef<HTMLElement | null>(null);
@@ -311,16 +309,25 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshNonce]);
 
+  // 어느 섹션에서 작성해도 두 목록 모두 새 첫 페이지로 갱신한다.
+  useEffect(() => {
+    const refresh = () => { void reload(); };
+    window.addEventListener(HOME_COMMUNITY_POSTED_EVENT, refresh);
+    return () => window.removeEventListener(HOME_COMMUNITY_POSTED_EVENT, refresh);
+  }, [reload]);
+
   // 홈 최신글에서 글을 열고 뒤로 나온 경우에 한해, 홈 최상단 대신 이 섹션으로 스크롤 복귀.
   // router.back() 직후엔 뉴스/숏츠 등 상단 섹션이 뒤늦게 로드되며 위치가 아래로 밀리므로,
   // 유저가 직접 스크롤(휠/터치/키)하기 전까지 짧은 창(≤1s) 동안 섹션을 뷰포트 상단에 재고정한다.
   useEffect(() => {
     if (!showList || didFocusRef.current || typeof window === "undefined") return;
     let confirmed = false;
-    try { confirmed = sessionStorage.getItem(HOME_FOCUS_CONFIRMED_KEY) === "1"; } catch { /* 무시 */ }
+    try { confirmed = sessionStorage.getItem(HOME_FOCUS_CONFIRMED_KEY) === mode; } catch { /* 무시 */ }
     // 이 시점까지 confirmed가 안 세팅됐다면 popstate 없이(탭바 홈 등) 도착한 것 — pending이
     // 남아있으면 이후 무관한 popstate에서 오탐하지 않도록 정리한다.
-    try { sessionStorage.removeItem(HOME_FOCUS_PENDING_KEY); } catch { /* 무시 */ }
+    try {
+      if (sessionStorage.getItem(HOME_FOCUS_PENDING_KEY) === mode) sessionStorage.removeItem(HOME_FOCUS_PENDING_KEY);
+    } catch { /* 무시 */ }
     if (!confirmed) return;
     didFocusRef.current = true;
     try { sessionStorage.removeItem(HOME_FOCUS_CONFIRMED_KEY); } catch { /* 무시 */ }
@@ -347,30 +354,30 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
       window.removeEventListener("touchstart", cancel);
       window.removeEventListener("keydown", cancel);
     };
-  }, [showList]);
+  }, [showList, mode]);
 
   // 로딩 중이거나 글이 없으면 섹션 자체를 숨김(빈 박스 방지) — 뉴스 섹션과 동일 패턴.
   if (loading || posts.length === 0) return null;
 
   return (
-    <section ref={sectionRef} className="scroll-mt-4">
+    <section ref={sectionRef} className="scroll-mt-4" data-home-community={mode} aria-label={sectionTitle}>
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-lg font-semibold leading-[26px] text-text-primary">💬 {sectionTitle}</h2>
         <Link prefetch={false}
           href="/community/all-posts"
           className="flex items-center text-xs text-text-tertiary active:opacity-70 transition-opacity"
         >
-          더보기 <ChevronRight size={14} />
+          전체글 <ChevronRight size={14} />
         </Link>
       </div>
 
       <div className="divide-y divide-black/5 dark:divide-white/5">
         {posts.map((post) => (
-          <PostRow key={post.id} post={post} />
+          <PostRow key={post.id} post={post} mode={mode} />
         ))}
       </div>
 
-      {/* 기본 5개 노출, 누를 때마다 인기도 순으로 15개씩 이어 붙임(접기 없음). 7일 창 소진 시 숨김. */}
+      {/* 각 목록의 정렬을 유지해 15개씩 추가. 해당 목록 소진 시 버튼 숨김. */}
       {hasMore && (
         <button
           type="button"
@@ -402,7 +409,7 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0 }: { m
       </Link>
 
       {/* 페이지 이동 없이 그 자리에서 뜨는 글쓰기 플로우. 작성 성공 시 홈 인기글 즉시 갱신. */}
-      <CommunityWriteFlow mode={writeMode} onClose={() => setWriteMode(null)} onPosted={reload} />
+      <CommunityWriteFlow mode={writeMode} onClose={() => setWriteMode(null)} onPosted={() => window.dispatchEvent(new Event(HOME_COMMUNITY_POSTED_EVENT))} />
     </section>
   );
 }
