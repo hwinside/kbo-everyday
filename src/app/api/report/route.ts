@@ -51,6 +51,15 @@ export async function POST(req: NextRequest) {
 
   // 티켓 웃돈 신고: 대상 존재 + 본인 글 신고 차단(UI 우회 호출까지 방어, 2026-07-25)
   if (targetType === "ticket") {
+    // Reject malformed/out-of-range bigint IDs before PostgREST can return a 500.
+    // Decimal strings retain bigint precision; JSON numbers must already be safe.
+    const validTicketId = typeof targetId === "number"
+      ? Number.isSafeInteger(targetId) && targetId > 0
+      : typeof targetId === "string" && /^\d{1,19}$/.test(targetId)
+        && BigInt(targetId) > BigInt(0) && BigInt(targetId) <= BigInt("9223372036854775807");
+    if (!validTicketId) {
+      return NextResponse.json({ error: "올바른 글 번호가 필요해요" }, { status: 400 });
+    }
     const { data: ticket, error: ticketErr } = await supabase
       .from("ticket_transfers")
       .select("author_id")
