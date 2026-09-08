@@ -19,7 +19,7 @@ export function canEdit(createdAt: string, editCount: number, now: number): bool
   return editCount === 0 && now >= Date.parse(createdAt) && now < Date.parse(createdAt) + EDIT_WINDOW_MS;
 }
 export interface ReviewRow {
-  id: number; author_id: string; team_id: number | null; nickname: string;
+  id: number; author_id: string; team_id: number | null; nickname: string; avatar_url?: string | null;
   content: string; created_at: string; edit_count: number; like_count: number;
   liked: boolean; comment_count: number; player_key: string | null; player_name: string | null;
 }
