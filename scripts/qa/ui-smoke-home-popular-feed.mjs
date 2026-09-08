@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { chromium } from "playwright";
+import { expect } from "@playwright/test";
 import { HOME_POPULAR_IDS, HOME_LATEST_IDS, HOME_POPULAR_LINKS, installHomePopularFixture } from "./fixtures/home-popular-feed.mjs";
 
 const base = process.env.BASE || "http://127.0.0.1:3061";
@@ -19,6 +20,22 @@ try {
   const section = page.locator('section[data-home-community="popular"]');
   const latest = page.locator('section[data-home-community="latest"]');
   const links = section.locator(HOME_POPULAR_LINKS);
+  async function assertActions(mode, label) {
+    const owner = mode === "latest" ? latest : section;
+    await owner.getByRole("button", { name: "새 글 올리기", exact: true }).waitFor();
+    // A moved section can remount; retry the count assertions through that transition.
+    await expect(page.getByRole("button", { name: "새 글 올리기", exact: true }), label + " write button once").toHaveCount(1, { timeout: 30000 });
+    await expect(page.getByRole("link", { name: "커뮤니티 최신글 보기", exact: true }), label + " latest link once").toHaveCount(1, { timeout: 30000 });
+    await expect(owner.getByRole("link", { name: "커뮤니티 최신글 보기", exact: true })).toHaveAttribute("href", "/community/all-posts", { timeout: 30000 });
+  }
+  async function setCommunityPreferences(order, latestVisible, popularVisible) {
+    await page.evaluate(({ order, latestVisible, popularVisible }) => {
+      localStorage.setItem("kbo-home-sections-order", JSON.stringify(order));
+      localStorage.setItem("kbo-home-community-visible", latestVisible ? "1" : "0");
+      localStorage.setItem("kbo-home-community-popular-visible", popularVisible ? "1" : "0");
+      window.dispatchEvent(new Event("home-sections-pref-changed"));
+    }, { order, latestVisible, popularVisible });
+  }
   async function loadPopularFeed(navigate) {
     // The popular section is global even before favorite-team hydration.
     // Latest-team restoration is asserted independently below.
@@ -42,6 +59,8 @@ try {
   assert.equal(latestFirst.p_before_id, null);
   assert.equal(Object.hasOwn(latestFirst, "p_since"), false, "latest feed has no 7-day cutoff");
   assert.ok(latestFirst.p_other_kbo_ids.includes(String(otherPlayer.kboId)));
+  await assertActions("popular", "C1 default order");
+  assert.equal(await page.getByRole("link", { name: "전체글", exact: true }).count(), 2, "section header links remain independent");
   const latestMore = latest.getByRole("button", { name: "15개 더 보기" });
   fixture.latestRows.unshift({ ...fixture.latestRows[0], id: 9999, created_at: new Date().toISOString() });
   await latestMore.click();
@@ -86,6 +105,8 @@ try {
   await page.reload({ waitUntil: "domcontentloaded" });
   await response;
   await section.waitFor({ state: "hidden" });
+  await latest.locator(HOME_POPULAR_LINKS).nth(4).waitFor();
+  await assertActions("latest", "C2 later section failed");
   assert.ok(fixture.requests.length > before, "failure request actually issued");
   console.log("PASS F4 actual RPC 500 → section hidden");
   fixture.fail = false;
@@ -93,8 +114,32 @@ try {
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));
   await latest.locator(HOME_POPULAR_LINKS).nth(4).waitFor();
   assert.deepEqual(await latestIds(), [9999, ...HOME_LATEST_IDS.slice(0, 4)], "reload picks up the new latest post");
-  assert.deepEqual(runtimeErrors, []);
   console.log("PASS F5 reload recovery / no browser runtime errors");
+  await assertActions("popular", "C3 recovered later section");
+  await setCommunityPreferences(["communityPopular", "news", "communityLatest"], true, true);
+  // Existing home behavior remounts moved sections and may fetch their first page again.
+  // Assert the settled order/rows/actions, not a zero-refetch contract.
+  await expect(page.locator("section[data-home-community]").last()).toHaveAttribute("data-home-community", "latest", { timeout: 30000 });
+  await latest.locator(HOME_POPULAR_LINKS).nth(4).waitFor();
+  await assertActions("latest", "C4 reversed order with another section between");
+  await setCommunityPreferences(["communityPopular", "communityLatest"], false, true);
+  await latest.waitFor({ state: "hidden" });
+  await assertActions("popular", "C5 latest hidden");
+  await setCommunityPreferences(["communityPopular", "communityLatest"], true, false);
+  await section.waitFor({ state: "hidden" });
+  await assertActions("latest", "C6 popular hidden");
+  await setCommunityPreferences(["communityPopular", "communityLatest"], false, false);
+  await latest.waitFor({ state: "hidden" });
+  await section.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("button", { name: "새 글 올리기", exact: true }).count(), 0, "C7 both hidden: no detached actions");
+  assert.equal(await page.getByRole("link", { name: "커뮤니티 최신글 보기", exact: true }).count(), 0);
+  fixture.latestRows.length = 0;
+  await setCommunityPreferences(["communityPopular", "communityLatest"], true, true);
+  await loadPopularFeed(() => page.reload({ waitUntil: "domcontentloaded" }));
+  await latest.waitFor({ state: "hidden" });
+  await assertActions("popular", "C8 last configured section empty");
+  assert.deepEqual(runtimeErrors, []);
+  console.log("PASS C1-C8 shared actions once: order/toggles/error/empty, header links preserved");
 } finally {
   await browser.close();
 }
