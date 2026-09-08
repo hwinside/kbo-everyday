@@ -2,6 +2,7 @@ import { definitionContextFor, definitionWithEvidence, definitionNumericSource, 
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
 import { readRankPlayerId } from "./stats/rank-request-context";
+import { readRosterRemovalContext, resolveRosterRemovalRequest, type RosterRemovalContext, type RemovalTeam } from "./roster/removal-context";
 import type { ServedBatterSnapshot } from "./stats/served-record";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
 // ①검수 사전(토큰 0) → ②동일질문 캐시 → ③flash-lite LLM(미매칭만).
@@ -3821,6 +3822,7 @@ export interface ValidatedLlmAnswer {
  */
 const STORED_QA_FINAL_MARKER = "__qa_final_v1";
 export interface StoredQaFinal {
+  rosterRemovalContext?: RosterRemovalContext;
   answer: string;
   source: MatchPath;
   /** Exact topic resolved before generation; survives replay and explanatory side terms. */
@@ -3919,6 +3921,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
   return {
     answer: final.answer,
     source: final.source as MatchPath,
+    ...(readRosterRemovalContext(final.rosterRemovalContext) ? { rosterRemovalContext: readRosterRemovalContext(final.rosterRemovalContext) } : {}),
     ...(readStatDefinitionContext(final.definitionContext) ? { definitionContext: readStatDefinitionContext(final.definitionContext) } : {}),
     ...(readRankRequestContext(final.rankRequestContext) ? { rankRequestContext: readRankRequestContext(final.rankRequestContext) } : {}),
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
@@ -5406,6 +5409,41 @@ async function answerNewsRagQuestion(
   return { status: 200, answer, source: "news_rag", remaining, sourceUrl };
 }
 
+/** Owned roster-removal requests retain operands, never facts from an older answer. */
+async function answerRosterRemovalQuestion(
+  userId: string, question: string, questionNorm: string,
+  request: RosterRemovalContext, remaining: number, deps: QaDeps,
+): Promise<QaResult> {
+  const settle = (answer: string, source: "scope_guide" | "unsure") => settleThroughDurableBoundary(
+    { answer, source, rosterRemovalContext: request }, answer,
+    { userId, question, questionNorm, remaining, deps },
+  );
+  const team = TEAM_ALIASES.find((item) => item.teamId === request.teamId);
+  if (!team) return settle("말소된 선수 명단을 확인할 구단명이 필요합니다.", "scope_guide");
+  if (!request.window) return settle("말소된 선수 명단을 확인할 시점이 필요합니다. 오늘·어제·최근 중 원하는 범위를 알려 주시면 확인합니다.", "scope_guide");
+  const resolvedQuestion = `${request.window.label} ${team.canonical}에서 말소된 선수 소식을 기사에서 확인된 범위로 알려 주세요.`;
+  const candidate = resolveRagNewsCandidate(resolvedQuestion, (deps.now ?? Date.now)());
+  if (!candidate || !deps.enableNewsRag || !deps.searchNewsRag || !deps.callNewsRagLlm) {
+    return settle(NEWS_UNAVAILABLE_ANSWER, "unsure");
+  }
+  // Keep the first request's exact time bounds across a team-only follow-up.
+  candidate.since = new Date(request.window.since);
+  candidate.until = new Date(request.window.until);
+  const ownedDeps: QaDeps = {
+    ...deps,
+    // Search/model see the resolved request; logs continue to record what the user typed.
+    log: (entry) => deps.log({ ...entry, question, questionNorm }),
+    ...(deps.storeLlm ? { storeLlm: async (result: LlmResult) => {
+      const final = unpackStoredQaFinal(result.text);
+      const keepRequest = final && ["news_rag", "unsure"].includes(final.source);
+      await deps.storeLlm!(keepRequest ? packStoredQaFinal({ ...final, rosterRemovalContext: request }, result) : result);
+    } } : {}),
+  };
+  // Existing fresh-news failure, validation and single-call/replay contracts apply.
+  // In particular, missing articles never fall through to a club introduction.
+  return answerNewsRagQuestion(userId, resolvedQuestion, normalizeQuestion(resolvedQuestion), candidate, remaining, ownedDeps);
+}
+
 /**
  * 정규화 수용 가드 ③ — 숫자 시퀀스 보존.
  *
@@ -5778,6 +5816,16 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.
   const baseRoute = routeQuestion(question, glossary, players, context !== null);
+  const removalTeam = (text: string): RemovalTeam | undefined => {
+    const candidate = resolveRagTeamCandidate(text);
+    const team = candidate ? TEAM_ALIASES.find((item) => String(item.teamId) === candidate.entityId) : undefined;
+    return team ? { id: team.teamId, aliases: [team.canonical, ...team.shorts, ...team.nicks,
+      ...team.shorts.flatMap((short) => team.nicks.map((nick) => `${short} ${nick}`))] } : undefined;
+  };
+  const removalRequest = baseRoute !== "blocked" ? resolveRosterRemovalRequest(
+    question, context, (deps.now ?? Date.now)(), removalTeam(question), context ? removalTeam(context.question) : undefined,
+  ) : null;
+  if (removalRequest) return answerRosterRemovalQuestion(userId, question, questionNorm, removalRequest, remaining, deps);
   let statDefinition = ["baseball_rule_term", "llm_scope_gate", "context_missing"].includes(baseRoute)
     ? resolveStatDefinitionIntent(question, context) : null;
   const rosterBlock = rosterMembershipBlock(question, context, players) ?? undefined;

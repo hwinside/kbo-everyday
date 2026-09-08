@@ -25,6 +25,27 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r81 roster-removal follow-ups lose their request owner",
+    file: PIPELINE,
+    from: "if (removalRequest) return answerRosterRemovalQuestion(userId, question, questionNorm, removalRequest, remaining, deps);",
+    to: "// request owner removed",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r82 previous-turn removal metadata is dropped",
+    file: "src/lib/baseball-qa/previous-turn-row.ts",
+    from: "...(rosterRemovalContext ? { rosterRemovalContext } : {}),",
+    to: "",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r83 team follow-up shifts the original removal time window",
+    file: PIPELINE,
+    from: "candidate.since = new Date(request.window.since);",
+    to: "// keep the recalculated current-time window",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r80 scalar exact-name comparison rejects foreign roster names",
     file: "src/lib/baseball-qa/stats/season-record.ts",
     from: "!recordPlayerNamesMatch(expectedKboId, row.name, expectedName)",
