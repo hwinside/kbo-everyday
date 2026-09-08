@@ -91,6 +91,40 @@ class Boundaries(unittest.TestCase):
             self.assertIn(reference, rulebook.compact(rows[0]["text"]))
         self.assertFalse(any(r["section"] in ["9.00 참조", "7.01 참조"] for r in self.rows))
 
+    def test_catcher_interference_keeps_first_base_premise_and_choice(self):
+        rows = [r for r in self.rows if r["section"] == "5.05 타자가 주자가 되는 경우 / ⒝ / ⑶"]
+        self.assertGreater(len(rows), 1)  # Operative rule and long notes.
+        for row in rows:
+            text = rulebook.compact(row["text"])
+            self.assertIn("아웃될염려없이안전하게1루에나간다", text)
+            self.assertIn("타자가1루로가서베이스에닿는것을전제로한다", text)
+            self.assertIn("포수또는야수가타자를방해하였을경우", text)
+            self.assertIn("벌칙대신실제의플레이를선택", text)
+            self.assertEqual((row["page"], row["page_end"]), (53, 55))
+        self.assertTrue(any("타격방해" in r["text"] for r in rows))
+
+    def test_interference_captions_and_squeeze_conditions_are_retained(self):
+        catcher = [r for r in self.rows if r["section"] == "6.01 방해, 업스트럭션 / ⒞ 포수방해"]
+        self.assertEqual(len(catcher), 1)
+        self.assertIn("5.05⒝⑶참조", rulebook.compact(catcher[0]["text"]))
+        squeeze = [r for r in self.rows if r["section"] == "6.01 방해, 업스트럭션 / ⒢ 스퀴즈 플레이 또는 도루를 통한 방해"]
+        self.assertGreater(len(squeeze), 1)
+        for row in squeeze:
+            text = rulebook.compact(row["text"])
+            self.assertIn("3루주자가스퀴즈플레이또는도루를통해득점하려고할때", text)
+            self.assertIn("타자는인터피어(타격방해)에의해1루가주어진다", text)
+            self.assertIn("볼데드가된다", text)
+        self.assertFalse(any(r["section"] == "6.01 방해, 업스트럭션" for r in self.rows))
+
+    def test_offensive_interference_penalty_keeps_its_own_subsection(self):
+        # 5.09(b)(3) legitimately repeats this label; the boundary under test
+        # is 6.01's shared penalty, not every occurrence across the rulebook.
+        rows = [r for r in self.rows if r["section"].startswith("6.01 ") and "[방해에 대한 벌칙]" in r["text"]]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["section"], "6.01 방해, 업스트럭션 / ⒜ 타자 또는 주자에 의한 방해")
+            self.assertIn("주자는아웃되고볼데드가된다", rulebook.compact(row["text"]))
+
     def test_chapter_exclusion_and_whole_source_accounting(self):
         chapters = [e for e in self.audit["excluded"] if e["reason"].startswith("standalone chapter")]
         self.assertTrue(any(e["section"] == "1.00 경기의 목적" and e["chars"] > 0 for e in chapters))

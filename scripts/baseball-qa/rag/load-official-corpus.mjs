@@ -257,8 +257,11 @@ function prepareDocument(doc) {
   if (atomic && (doc.file !== "2026_야구규칙.pdf" || doc.title !== "2026 공식야구규칙")) {
     throw new Error("atomic_rulebook_wrong_document");
   }
-  if (atomic && (!sectioned || !doc.pages.every((p) =>
-    p.atomic === true && p.extractorRevision === "kbo-rulebook-boundaries-v3"
+  const atomicRevision = doc.pages[0]?.extractorRevision;
+  if (atomic && (!sectioned
+    || !["kbo-rulebook-boundaries-v3", "kbo-rulebook-boundaries-v3.1"].includes(atomicRevision)
+    || !doc.pages.every((p) =>
+    p.atomic === true && p.extractorRevision === atomicRevision
     && Number.isInteger(p.page) && p.page > 0
     && Number.isInteger(p.pageEnd) && p.pageEnd >= p.page && p.pageEnd <= doc.pagesTotal
     && p.text.length >= MIN_CHUNK_CHARS && p.text.length <= 780))) {
