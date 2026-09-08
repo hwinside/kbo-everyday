@@ -409,10 +409,19 @@ async function main() {
   const periodSequence = process.argv.includes("--period-sequence");
   const easySequence = process.argv.includes("--easy-sequence");
   const compoundSequence = process.argv.includes("--compound-sequence");
+  const shortRuleQuestions = process.argv.includes("--short-rule-questions");
+  if (shortRuleQuestions && (!live || periodSequence || easySequence || compoundSequence)) {
+    throw new Error("--short-rule-questions requires --live and standalone questions, not a context sequence");
+  }
   if (compoundSequence && (!live || periodSequence || easySequence)) throw new Error("--compound-sequence requires --live and cannot be combined with other sequences");
   if (easySequence && (!live || periodSequence)) throw new Error("--easy-sequence requires --live and cannot be combined with --period-sequence");
   if (periodSequence && !live) throw new Error("--period-sequence is a live diagnostic; use the period-context gate for deterministic QA");
-  const questions = compoundSequence ? [
+  const questions = shortRuleQuestions ? [
+    "아웃 원인", "아웃 조건", "아웃되는 경우", "아웃 원인이 뭐야?",
+    "주자가 고의로 송구를 방해하면 아웃이야?",
+    "타격방해가 나오면 기본적으로 어떻게 판정돼?",
+    "아까 그 선수 왜 아웃이야?", "로그아웃 원인",
+  ] : compoundSequence ? [
     "시즌 홀드가 뭔데, 9개면 잘한 거야?", "그게 뭔데, 9개면 잘한 거야?",
     "통산은?", "통산 홀드가 뭐야? 몇 개면 좋은 기록이야?",
     "타율이 뭔데, .300이면 좋은 거야?", "그게 뭔데, 3할이면 잘한 거야?",
@@ -494,6 +503,9 @@ async function main() {
   }
   try {
     for (sequence = 0; sequence < questions.length; sequence++) {
+      // This probe compares short/complete rule asks and missing-scene controls
+      // independently. Earlier answers must not supply the missing scene.
+      if (shortRuleQuestions) previous = null;
       storedFinal = null;
       const start = Date.now();
       const result = await answerQuestion("qa-stat-definition-local", questions[sequence], deps);
@@ -557,7 +569,7 @@ async function main() {
     await verifyMissingReferenceContext();
     console.log("Fixture routing/context assertions passed. Semantic and End-User QA still required.");
   } finally {
-    if (out) writeFileSync(out, JSON.stringify({ mode: live ? "live-diagnostic-NOT-QA-PASS" : "fixture", traces }, null, 2), { mode: 0o600 });
+    if (out) writeFileSync(out, JSON.stringify({ mode: live ? "live-diagnostic-NOT-QA-PASS" : "fixture", ...(shortRuleQuestions ? { suite: "short-rule-standalone", contextMode: "none" } : {}), traces }, null, 2), { mode: 0o600 });
     if (live) console.log("Live diagnostic captured; reviewer must judge answer quality and UI separately.");
   }
 }
