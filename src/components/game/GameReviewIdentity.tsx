@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { Trophy } from "lucide-react";
 import TeamBadge from "@/components/ui/TeamBadge";
 import TeamLogo from "@/components/ui/TeamLogo";
 import { getAvatarPath } from "@/lib/constants/avatars";
 import { getTeamById } from "@/lib/constants/teams";
+
+export function reviewTeamStyle(teamId: number | null): CSSProperties {
+  const team = teamId ? getTeamById(teamId) : null;
+  return { "--review-team-color": team?.colorPrimary ?? "var(--border)",
+    "--review-team-color-dark": team?.colorLight ?? "var(--border)" } as CSSProperties;
+}
 
 export function ReviewTeamIdentity({ teamId }: { teamId: number }) {
   const team = getTeamById(teamId);

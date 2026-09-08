@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Heart, MessageCircle, X, ArrowLeft, Flag, Pencil, Trash2, RefreshCw } from "lucide-react";
 import LoginSheet from "@/components/auth/LoginSheet";
 import TeamLogo from "@/components/ui/TeamLogo";
-import GameReviewIdentity, { ReviewTeamIdentity } from "@/components/game/GameReviewIdentity";
+import GameReviewIdentity, { ReviewTeamIdentity, reviewTeamStyle } from "@/components/game/GameReviewIdentity";
+import GameReviewNominee from "@/components/game/GameReviewNominee";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { getSafeSession } from "@/lib/supabase/client";
 import { blockUserById } from "@/lib/supabase/useBlock";
@@ -20,6 +21,7 @@ type Sheet = { kind: "list" } | { kind: "compose"; review?: ReviewRow } | { kind
 const button = "min-h-11 rounded-xl px-3 text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const primary = `${button} bg-[#FF453A] text-[#160706]`;
 const surface = "rounded-2xl border border-border bg-bg-secondary";
+const teamBorder = "border-t-[3px] [border-top-color:var(--review-team-color)] dark:[border-top-color:var(--review-team-color-dark)]";
 const teamName = (id: number | null) => id ? getTeamById(id)?.shortName ?? getTeamById(id)?.name ?? "팬" : "팬";
 
 export default function GameReviewSection({ gameId }: { gameId: string }) {
@@ -133,13 +135,12 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   function currentReview(row: ReviewRow) { return (focused?.id === row.id ? focused : null) ?? feed?.rows.find(r => r.id === row.id) ?? feed?.best.find(r => r.id === row.id) ?? (feed?.ownReview?.id === row.id ? feed.ownReview : row); }
   function card(source: ReviewRow, preview = false) {
     const row = currentReview(source), own = row.author_id === user?.id;
-    const team = row.team_id ? getTeamById(row.team_id) : null;
-    return <article key={row.id} className={`${surface} flex min-w-0 flex-col border-t-[3px] p-3 ${preview ? "h-full" : ""}`} style={{ borderTopColor: team?.colorPrimary }}>
+    return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col p-3 ${preview ? "h-full" : ""}`} style={reviewTeamStyle(row.team_id)}>
       {preview && row.team_id && <div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={row.team_id} /></div>}
       <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><GameReviewIdentity authorId={row.author_id} nickname={row.nickname} teamId={row.team_id} avatarUrl={row.avatar_url} compact={preview} onNavigate={close} /></div>{own && !preview && <span className="shrink-0 rounded bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">내 글</span>}</div>
       <p className={`my-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 ${preview ? "line-clamp-4" : ""}`}>{row.content}</p>
       {preview && <button className={`${button} self-start px-0 text-text-secondary`} onClick={() => showFull(row)}>전문 보기</button>}
-      {row.player_name && <p className="rounded-lg bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">나의 수훈선수 · {row.player_name}</p>}
+      {row.player_name && <GameReviewNominee name={row.player_name} teamId={row.team_id} playerKey={row.player_key} onNavigate={close} />}
       <div className={`${preview ? "mt-auto pt-2" : "mt-2"} flex flex-wrap items-center gap-1`}>
         <button className={`${button} flex items-center gap-1 px-2 ${row.liked ? "text-[#B42318] dark:text-accent" : "text-text-secondary"}`} aria-label={own ? "내 글 좋아요는 누를 수 없어요" : `좋아요 ${row.like_count}`} aria-pressed={row.liked} disabled={busy || own} onClick={() => void like(row)}><Heart size={16} fill={row.liked ? "currentColor" : "none"} />{row.like_count}</button>
         <button className={`${button} flex items-center gap-1 px-2 text-text-secondary`} onClick={() => showComments(row)} aria-label={`댓글 ${row.comment_count}개 보기`}><MessageCircle size={16}/>{row.comment_count}</button>
@@ -168,12 +169,12 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   }
   if (!loading && !active && !error) return null;
   return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-4">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><div className="min-w-0"><h2 className="font-bold">같은 경기, 두 팬심</h2><p className="mt-1 text-xs text-text-secondary">경기는 끝나도, 한 줄은 남아</p></div><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload()}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">경기는 끝나도, 한 줄은 남아</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload()}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
     {feed && context && <><div className="mb-3 grid grid-cols-2 gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
       const best = feed.best.find(r => r.team_id === team);
-      return best ? card(best, true) : <div key={team} className={`${surface} flex min-h-52 min-w-0 flex-col border-t-[3px] p-3`} style={{ borderTopColor: getTeamById(team)?.colorPrimary }}><div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={team} /></div><div className="flex flex-1 flex-col items-start gap-2"><MessageCircle size={20} className="text-text-tertiary" aria-hidden="true"/><p className="break-keep text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? <>공감이 모이면<br/>BEST가 나타나요.<br/><span className="mt-1 block">좋아요 {feed.policy.bestMinLikes}개부터</span></> : <>{teamName(team)} 팬의<br/>첫 한 줄을 기다려요.</>}</p></div></div>;
+      return best ? card(best, true) : <div key={team} className={`${surface} ${teamBorder} flex min-h-52 min-w-0 flex-col p-3`} style={reviewTeamStyle(team)}><div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={team} /></div><div className="flex flex-1 flex-col items-start gap-2"><MessageCircle size={20} className="text-text-tertiary" aria-hidden="true"/><p className="break-keep text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? <>공감이 모이면 베스트가 생겨요.<br/>{feed.policy.bestMinLikes}개부터 올라요.</> : "아직 한 줄이 없어요."}</p></div></div>;
     })}</div>{entry()}</>}
     {notice && <p role="status" className="mt-2 text-sm text-text-secondary">{notice}</p>}
     <LoginSheet isOpen={login} onClose={() => setLogin(false)}/>
