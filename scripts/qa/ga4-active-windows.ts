@@ -52,7 +52,7 @@ async function loaderChecks() {
 }
 
 async function routeChecks() {
-  const names = ["ADMIN_PIN", "ADMIN_PIN_HASH", "GOOGLE_SERVICE_ACCOUNT_KEY", "GOOGLE_SERVICE_ACCOUNT_KEY_B64", "GA4_PROPERTY_ID"] as const;
+  const names = ["ADMIN_PIN", "ADMIN_PIN_HASH", "GOOGLE_SERVICE_ACCOUNT_KEY", "GOOGLE_SERVICE_ACCOUNT_KEY_B64", "GA4_PROPERTY_ID", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY"] as const;
   const before = names.map(name => [name, process.env[name]] as const);
   const originalFetch = globalThis.fetch;
   // An ephemeral signing key exists only in memory for the local OAuth fixture.
@@ -80,6 +80,10 @@ async function routeChecks() {
     return Response.json(report(days === 7 ? "20111" : "30999"));
   };
   try {
+    // The denied-auth path imports the Supabase admin singleton even without a session.
+    // Initialize it without secrets; the fetch fixture still rejects any Supabase call.
+    process.env.NEXT_PUBLIC_SUPABASE_URL ??= "http://127.0.0.1:54321";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??= "fixture-anon-key";
     const { GET } = await import("../../src/app/api/admin/analytics/route");
     const denied = await GET(new NextRequest("https://fixture.invalid/api/admin/analytics?type=active-user-windows"));
     assert.equal(denied.status, 401); assert.equal(outbound, 0, "unauthorized requests must not query GA");
