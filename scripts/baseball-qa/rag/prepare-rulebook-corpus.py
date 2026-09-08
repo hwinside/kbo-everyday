@@ -14,12 +14,20 @@ from pathlib import Path
 
 TITLE = "2026 공식야구규칙"
 FILE = "2026_야구규칙.pdf"
-REVISION = "kbo-rulebook-boundaries-v3"
+REVISION = "kbo-rulebook-boundaries-v3.1"
 MAX_CHARS = 780  # Below both loader (900) and selected-evidence (800) caps.
 ARTICLE = re.compile(r"(?m)^(\d{1,2}\.\d{2})[ \t]+(?!참조[ \t]*$)([^\n]+)$")
 TERM = re.compile(r"(?m)^\d{1,3}\.\s+[A-Z][A-Z '\-/]{2,40}\s*\([^\n)]{1,40}\)")
 APPENDIX = re.compile(r"(?m)^보칙\s*:\s*볼 데드일 때 주자의 귀루에 관한 조치[^\n]*")
 SUBSECTION = re.compile(r"(?m)^⒜ 타자 아웃|^⒝ 주자 아웃|^⒞ 어필 플레이|^⒟ 선행주자가 베이스에 닿지 못했을 때|^⒠ 공수교대|^투수가 투구할 당시에 점유하고 있던 베이스로 돌아가는 경우|^방해가 발생한 순간 점유하고 있던 베이스로 되돌려 보내는 경우")
+# 5.05's lettered lines are operative premises, not short headings. Keep them
+# in the body/lead so every numbered clause retains the safe-base entitlement.
+# 6.01 has actual lettered captions (e.g. catcher interference versus batter
+# interference); preserve those captions on every continuation instead.
+CLAUSE_SUBSECTIONS = {
+    "5.05": re.compile(r"(?m)^[⒜-⒵](?=[ \t])"),
+    "6.01": re.compile(r"(?m)^[⒜-⒵][ \t]+[^\n]+"),
+}
 ITEM = re.compile(r"(?m)^[⑴-⒇]\s+")
 APPENDIX_ITEM = re.compile(r"(?m)^[⒜-⒵]\s+")
 NOTE = re.compile(r"\[(?:원주|주\d*|예\d*|문|답|부기|규칙설명)\]")
@@ -221,8 +229,9 @@ def prepare(rows):
                 continue
             # A title-only substantive item must be emitted, never silently lost.
             body, start = joined[heading_start:end], heading_start
-        if title.startswith("5.09") or title.startswith("보칙"):
-            subsections = list(SUBSECTION.finditer(body))
+        clause_pattern = CLAUSE_SUBSECTIONS.get(title.split()[0])
+        if clause_pattern or title.startswith("5.09") or title.startswith("보칙"):
+            subsections = list((clause_pattern or SUBSECTION).finditer(body))
             boundaries = [("", body[:subsections[0].start()] if subsections else body, 0, 0)]
             for i, sub in enumerate(subsections):
                 stop = subsections[i+1].start() if i+1 < len(subsections) else len(body)
@@ -230,16 +239,31 @@ def prepare(rows):
             for sub_title, sub_body, delta, sub_heading_start in boundaries:
                 sub_first = len(result)
                 label = " / ".join(t for t in [title, sub_title] if t)
-                items = list((APPENDIX_ITEM if title.startswith("보칙") else ITEM).finditer(sub_body))
+                # 6.01's lettered provisions own their numbered examples and
+                # trailing shared penalties. Do not detach those penalties by
+                # treating every numbered example as an independent provision.
+                items = [] if title.startswith("6.01") else list(
+                    (APPENDIX_ITEM if title.startswith("보칙") else ITEM).finditer(sub_body))
                 if not items:
-                    emit(label, sub_body, start + delta, start + delta + len(sub_body), True)
+                    # 6.01(a) is a long list with shared concluding penalties,
+                    # not an operative paragraph followed only by notes. Keep
+                    # its full text under the common caption without copying
+                    # the first example as the premise for all later examples.
+                    provision = not (title.startswith("6.01") and sub_title.startswith("⒜"))
+                    emit(label, sub_body, start + delta, start + delta + len(sub_body), provision)
                 else:
                     lead = flatten(sub_body[:items[0].start()])
                     for i, item in enumerate(items):
                         stop = items[i+1].start() if i+1 < len(items) else len(sub_body)
                         atom = sub_body[item.start():stop].strip()
+                        item_first = len(result)
                         emit(label + " / " + item.group(0).strip(), (lead + "\n" + atom).strip(),
                              start + delta + item.start(), start + delta + stop, True, lead)
+                        if title.startswith("5.05") and lead:
+                            # Every item carries this operative premise, which
+                            # may originate on the preceding physical page.
+                            for row in result[item_first:]:
+                                row["page"] = page_of(start + delta)
                     cover(start + delta, start + delta + items[0].start())
                 if len(result) > sub_first:
                     cover(start + sub_heading_start, start + delta)

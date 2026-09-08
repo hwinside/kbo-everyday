@@ -87,6 +87,11 @@ t("v3 atomic 조각은 재분할 없이 서빙 행과 1:1", () => {
   const p = prepareDocument(input);
   if (p.chunks.length !== 1 || p.chunks[0].content !== text) throw new Error("atomic chunk was split or changed");
   if (p.chunks[0].pageEnd !== 93) throw new Error("physical page range lost");
+  const current = prepareDocument({ ...input, pages: [{ ...page, extractorRevision: "kbo-rulebook-boundaries-v3.1" }] });
+  if (current.chunks.length !== 1 || current.chunks[0].content !== text || current.chunks[0].pageEnd !== 93) {
+    throw new Error("v3.1 atomic content/provenance changed");
+  }
+  if (current.revision === p.revision) throw new Error("producer revision did not invalidate the document");
   for (const change of [{ text: body(801) }, { pageEnd: 91 }, { extractorRevision: "unknown" }]) {
     let rejected = false;
     try { prepareDocument({ ...input, pages: [{ ...page, ...change }] }); } catch { rejected = true; }
@@ -95,6 +100,9 @@ t("v3 atomic 조각은 재분할 없이 서빙 행과 1:1", () => {
   let mixedRejected = false;
   try { prepareDocument({ ...input, pages: [page, { page: 1, section: "기존", text: body(100) }] }); } catch { mixedRejected = true; }
   if (!mixedRejected) throw new Error("mixed atomic/legacy source accepted");
+  let mixedRevisionRejected = false;
+  try { prepareDocument({ ...input, pages: [page, { ...page, extractorRevision: "kbo-rulebook-boundaries-v3.1" }] }); } catch { mixedRevisionRejected = true; }
+  if (!mixedRevisionRejected) throw new Error("mixed producer revisions accepted");
 });
 
 t("긴 조문이 분할돼도 키가 충돌하지 않는다", () => {
