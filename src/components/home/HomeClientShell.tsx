@@ -23,6 +23,7 @@ import { useHomeSectionsPref, useHomeSectionsOrder } from "@/hooks/useHomeSectio
 import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
+import type { HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
 import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -205,6 +206,17 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   const sections = useHomeSectionsPref();
   // 홈 섹션 순서 (마이페이지 드래그, 기기 로컬). 팀카드는 배열 밖 최상단 고정.
   const sectionOrder = useHomeSectionsOrder();
+  const [visibleCommunitySections, setVisibleCommunitySections] = useState({ latest: false, popular: false });
+  const onCommunityVisibilityChange = useCallback((mode: HomeCommunityFeedMode, visible: boolean) => {
+    setVisibleCommunitySections((previous) => previous[mode] === visible ? previous : { ...previous, [mode]: visible });
+  }, []);
+  // 설정 순서와 실제 목록 노출을 함께 반영해, 마지막 커뮤니티 섹션에만 공통 버튼을 둔다.
+  // 로딩·빈 목록·오류로 마지막 목록이 숨겨져도 앞쪽 목록에서 버튼을 사용할 수 있다.
+  let lastCommunitySection: HomeSectionKey | undefined;
+  for (const key of sectionOrder) {
+    const mode = key === "communityLatest" ? "latest" : key === "communityPopular" ? "popular" : null;
+    if (mode && sections[key] && visibleCommunitySections[mode]) lastCommunitySection = key;
+  }
 
   // 사진기사 필터(마이페이지 토글). on이면 포토·화보 위주 기사를 뉴스 카드에서 숨김.
   const photoFilterOn = useNewsPhotoFilter();
@@ -775,7 +787,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.communityLatest ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={null}>
-                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} />
+                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce}
+                    showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
                 </Suspense>
               </div>
             ) : null;
@@ -783,7 +796,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
             return sections.communityPopular ? (
               <div key={key} className="mb-3">
                 <Suspense fallback={null}>
-                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} mode="popular" />
+                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} mode="popular"
+                    showActions={lastCommunitySection === key} onVisibilityChange={onCommunityVisibilityChange} />
                 </Suspense>
               </div>
             ) : null;

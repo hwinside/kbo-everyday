@@ -287,7 +287,13 @@ function PostRow({ post, mode }: { post: Post; mode: HomeCommunityFeedMode }) {
 /**
  * 서로 독립된 홈 최신글 / 최근 24시간 인기글 섹션. 각 목록의 더보기·복귀 위치를 분리한다.
  */
-export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0, mode = "latest" }: { myTeamId: number | null; refreshNonce?: number; mode?: HomeCommunityFeedMode }) {
+export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0, mode = "latest", showActions = true, onVisibilityChange }: {
+  myTeamId: number | null;
+  refreshNonce?: number;
+  mode?: HomeCommunityFeedMode;
+  showActions?: boolean;
+  onVisibilityChange?: (mode: HomeCommunityFeedMode, visible: boolean) => void;
+}) {
   // 최신글은 최애팀 단독 공개만(미선택이면 조회/노출 없음). 인기글은 팀 범위와 무관하게 공개 글 전체.
   const myTeam = myTeamId != null ? getTeamById(myTeamId) : null;
   const myTeamSlug = myTeam?.slug ?? null;
@@ -301,6 +307,10 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0, mode 
   const didFocusRef = useRef(false);
 
   const showList = !loading && posts.length > 0;
+  useEffect(() => {
+    onVisibilityChange?.(mode, showList);
+    return () => onVisibilityChange?.(mode, false);
+  }, [mode, showList, onVisibilityChange]);
 
   // Pull-to-refresh: refreshNonce가 증가하면 인기글을 실제로 재조회(reload, 첫 페이지로 복귀). 초기 mount(0)엔 미호출.
   useEffect(() => {
@@ -390,23 +400,27 @@ export default function CommunityLatestPosts({ myTeamId, refreshNonce = 0, mode 
         </button>
       )}
 
-      {/* '새 글 올리기' CTA — 내 팀 컬러 배경(미선택 시 앱 액센트). 커뮤니티로 이동하지 않고
-          그 자리에서 글쓰기 모달을 연다(배경 전환 어색함 제거, 하린아빠 스펙). 더보기 바로 위. */}
-      <button
-        type="button"
-        onClick={() => setWriteMode(user ? "entry" : "login")}
-        className="mt-2 flex items-center justify-center gap-1.5 w-full py-3 rounded-xl bg-accent text-[14px] font-semibold text-white active:scale-[0.99] transition-transform"
-        style={myTeamId ? { background: getTeamBgColorById(myTeamId) } : undefined}
-      >
-        <PenSquare size={16} /> 새 글 올리기
-      </button>
+      {/* 공통 버튼은 마지막으로 보이는 커뮤니티 목록 아래 한 벌만. */}
+      {showActions && (
+        <>
+          {/* '새 글 올리기'는 페이지 이동 없이 글쓰기 모달을 연다. */}
+          <button
+            type="button"
+            onClick={() => setWriteMode(user ? "entry" : "login")}
+            className="mt-2 flex items-center justify-center gap-1.5 w-full py-3 rounded-xl bg-accent text-[14px] font-semibold text-white active:scale-[0.99] transition-transform"
+            style={myTeamId ? { background: getTeamBgColorById(myTeamId) } : undefined}
+          >
+            <PenSquare size={16} /> 새 글 올리기
+          </button>
 
-      <Link prefetch={false}
-        href="/community/all-posts"
-        className="mt-2 flex items-center justify-center gap-1 w-full py-2.5 rounded-xl bg-bg-secondary text-[13px] font-medium text-text-secondary active:scale-[0.99] transition-transform"
-      >
-        커뮤니티 최신글 보기 <ChevronRight size={15} />
-      </Link>
+          <Link prefetch={false}
+            href="/community/all-posts"
+            className="mt-2 flex items-center justify-center gap-1 w-full py-2.5 rounded-xl bg-bg-secondary text-[13px] font-medium text-text-secondary active:scale-[0.99] transition-transform"
+          >
+            커뮤니티 최신글 보기 <ChevronRight size={15} />
+          </Link>
+        </>
+      )}
 
       {/* 페이지 이동 없이 그 자리에서 뜨는 글쓰기 플로우. 작성 성공 시 홈 인기글 즉시 갱신. */}
       <CommunityWriteFlow mode={writeMode} onClose={() => setWriteMode(null)} onPosted={() => window.dispatchEvent(new Event(HOME_COMMUNITY_POSTED_EVENT))} />
