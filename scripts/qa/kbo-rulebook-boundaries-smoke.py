@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -70,6 +71,53 @@ class Boundaries(unittest.TestCase):
             rulebook.prepare([r for r in PAGES if r["page"] != 75])
         with self.assertRaisesRegex(ValueError, "duplicate"):
             rulebook.prepare(PAGES + [PAGES[0]])
+
+    def test_inline_clauses_are_body_not_truncated_titles(self):
+        for number, phrase in [("1.02", "공격팀의 목적은"), ("1.05", "각 팀의 목적은"),
+                               ("1.03", "수비팀의 목적은"), ("1.04", "타자가 주자가 되어"),
+                               ("1.06", "정식경기가 끝났을 때")]:
+            rows = [r for r in self.rows if r["section"] == number]
+            self.assertEqual(len(rows), 1, number)
+            self.assertTrue(rows[0]["text"].split("\n", 1)[1].startswith(phrase))
+            self.assertEqual(rows[0]["page"], 25)
+        self.assertIn("주자를진루시키는것이다.", rulebook.compact(next(r["text"] for r in self.rows if r["section"] == "1.02")))
+        self.assertIn("득점하여승리하는데에있다.", rulebook.compact(next(r["text"] for r in self.rows if r["section"] == "1.05")))
+
+    def test_cross_references_stay_with_glossary_terms(self):
+        for term, reference in [("53. OFFICIAL SCORER", "9.00참조"),
+                                ("64. REGULATION GAME", "7.01참조")]:
+            rows = [r for r in self.rows if r["section"].startswith(term)]
+            self.assertEqual(len(rows), 1)
+            self.assertIn(reference, rulebook.compact(rows[0]["text"]))
+        self.assertFalse(any(r["section"] in ["9.00 참조", "7.01 참조"] for r in self.rows))
+
+    def test_chapter_exclusion_and_whole_source_accounting(self):
+        chapters = [e for e in self.audit["excluded"] if e["reason"].startswith("standalone chapter")]
+        self.assertTrue(any(e["section"] == "1.00 경기의 목적" and e["chars"] > 0 for e in chapters))
+        self.assertEqual(self.audit["inputChars"], self.audit["retainedChars"] + self.audit["excludedChars"])
+        self.assertEqual(self.audit["excludedChars"], sum(e["chars"] for e in self.audit["excluded"]))
+        sections = rulebook.sections
+        def dropped_clause(*args):
+            return (unit for unit in sections(*args) if unit[0] != "1.02")
+        with patch.object(rulebook, "sections", dropped_clause):
+            with self.assertRaises(ValueError):
+                rulebook.prepare(PAGES)
+
+    def test_long_inline_line_and_heading_only_item_are_retained(self):
+        text = "1.02 " + "타자는 주자가 된다. " * 10 + "\n2.01 다음 조문\n본문"
+        units = list(rulebook.sections(text, list(rulebook.ARTICLE.finditer(text))))
+        self.assertEqual(units[0][0], "1.02")
+        self.assertEqual(rulebook.compact(units[0][1]), rulebook.compact("타자는 주자가 된다. " * 10))
+        extra = {**PAGES[0], "page": 26, "text": "1.07 제목에만 있는 완결된 규칙 문장을 빠짐없이 원문 그대로 보존하여야 한다.\n"}
+        rows, _ = rulebook.prepare(PAGES + [extra])
+        self.assertTrue(any(r["section"] == "1.07" and "원문 그대로 보존하여야 한다." in r["text"] for r in rows))
+
+    def test_long_bilingual_label_is_not_mistaken_for_a_sentence(self):
+        label = "9.11 더블 플레이(DOUBLE PLAY)·트리플 플레이(TRIPLE PLAY)"
+        text = label + "\n공식기록원은 기록한다."
+        units = list(rulebook.sections(text, list(rulebook.ARTICLE.finditer(text))))
+        self.assertEqual(units[0][0], label)
+        self.assertEqual(units[0][1].strip(), "공식기록원은 기록한다.")
 
 
 if __name__ == "__main__":

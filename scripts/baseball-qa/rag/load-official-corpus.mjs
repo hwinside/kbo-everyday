@@ -213,12 +213,10 @@ function loadCorpus() {
     // `section`이 있으면 그대로 실어 보낸다 — prepareDocument가 조문 단위인지 판정하는 유일한 신호다.
     // 여기서 흘리면 조문 입력이 페이지로 뭉개지고, UNIQUE 키 충돌로 조용히 덮어쓰기가 일어난다.
     const section = typeof row.section === "string" && row.section.trim() ? row.section.trim() : null;
-    doc.pages.push({
-      page: Number(row.page ?? doc.pages.length + 1), text, ...(section ? { section } : {}),
-      ...(row.atomic === true ? {
-        atomic: true, pageEnd: Number(row.page_end), extractorRevision: row.extractorRevision,
-      } : {}),
-    });
+    const atomic = row.atomic === true ? {
+      atomic: true, pageEnd: Number(row.page_end), extractorRevision: row.extractorRevision,
+    } : {};
+    doc.pages.push({ page: Number(row.page ?? doc.pages.length + 1), text, ...(section ? { section } : {}), ...atomic });
   }
 
   let list = [...docs.values()];
