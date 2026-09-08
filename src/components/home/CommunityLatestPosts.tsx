@@ -19,8 +19,8 @@ import type { Post } from "@/lib/supabase/usePosts";
 
 const HERO_APPROVED = new Set<string>(heroApprovedList as string[]);
 
-// 2026-09-08: 최애팀 최신글은 15개씩, 별도 24시간 인기글은 5개 미리보기 후 15개씩.
-const HOME_LATEST_INITIAL = 15;
+// 2026-09-08: 최애팀 최신글과 별도 24시간 인기글 모두 5개 미리보기 후 15개씩.
+const HOME_LATEST_INITIAL = 5;
 const HOME_POPULAR_INITIAL = 5;
 const HOME_POPULAR_STEP = 15;
 const HOME_COMMUNITY_POSTED_EVENT = "home-community-posted";

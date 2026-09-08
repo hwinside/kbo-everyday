@@ -32,11 +32,11 @@ try {
     await links.nth(4).waitFor();
   }
   await loadPopularFeed(() => page.goto(base + "/", { waitUntil: "domcontentloaded", timeout: 90000 }));
-  await latest.locator(HOME_POPULAR_LINKS).nth(14).waitFor();
+  await latest.locator(HOME_POPULAR_LINKS).nth(4).waitFor();
   const latestIds = () => latest.locator(HOME_POPULAR_LINKS).evaluateAll((items) => items.map((a) => Number(a.dataset.homePostId)));
-  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 15));
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 5));
   const latestFirst = fixture.latestRequests.at(-1);
-  assert.equal(latestFirst.p_limit, 16);
+  assert.equal(latestFirst.p_limit, 6);
   assert.equal(latestFirst.p_team_slug, "lg");
   assert.equal(latestFirst.p_before_created_at, null);
   assert.equal(latestFirst.p_before_id, null);
@@ -45,15 +45,19 @@ try {
   const latestMore = latest.getByRole("button", { name: "15개 더 보기" });
   fixture.latestRows.unshift({ ...fixture.latestRows[0], id: 9999, created_at: new Date().toISOString() });
   await latestMore.click();
-  await latest.locator(HOME_POPULAR_LINKS).nth(29).waitFor();
-  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 30), "new insert must not enter older pages");
-  assert.equal(fixture.latestRequests.at(-1).p_before_id, HOME_LATEST_IDS[14]);
+  await latest.locator(HOME_POPULAR_LINKS).nth(19).waitFor();
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 20), "new insert must not enter older pages");
+  assert.equal(fixture.latestRequests.at(-1).p_before_id, HOME_LATEST_IDS[4]);
+  assert.equal(fixture.latestRequests.at(-1).p_limit, 16, "more still requests 15 rows plus peek");
   assert.equal(await links.count(), 5, "latest pagination leaves popular feed untouched");
+  await latestMore.click();
+  await latest.locator(HOME_POPULAR_LINKS).nth(34).waitFor();
+  assert.deepEqual(await latestIds(), HOME_LATEST_IDS.slice(0, 35));
   await latestMore.click();
   await latest.locator(HOME_POPULAR_LINKS).nth(39).waitFor();
   assert.deepEqual(await latestIds(), HOME_LATEST_IDS);
   assert.equal(await latestMore.count(), 0);
-  console.log("PASS L1/L2 latest 15→30→40, strict-team args, stable cursor, exhaustion, independent sections");
+  console.log("PASS L1/L2 latest 5→20→35→40, strict-team args, stable cursor, exhaustion, independent sections");
   const first = fixture.requests.at(-1);
   assert.equal(first.p_limit, 6);
   assert.deepEqual(first.p_exclude, []);
@@ -87,8 +91,8 @@ try {
   fixture.fail = false;
   await loadPopularFeed(() => page.reload({ waitUntil: "domcontentloaded" }));
   assert.deepEqual(await ids(), HOME_POPULAR_IDS.slice(0, 5));
-  await latest.locator(HOME_POPULAR_LINKS).nth(14).waitFor();
-  assert.deepEqual(await latestIds(), [9999, ...HOME_LATEST_IDS.slice(0, 14)], "reload picks up the new latest post");
+  await latest.locator(HOME_POPULAR_LINKS).nth(4).waitFor();
+  assert.deepEqual(await latestIds(), [9999, ...HOME_LATEST_IDS.slice(0, 4)], "reload picks up the new latest post");
   assert.deepEqual(runtimeErrors, []);
   console.log("PASS F5 reload recovery / no browser runtime errors");
 } finally {
