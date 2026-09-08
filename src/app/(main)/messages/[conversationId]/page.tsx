@@ -128,7 +128,7 @@ export default function DMChatPage() {
   const [images, setImages] = useState<{ url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const lastMsgRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -225,6 +225,16 @@ export default function DMChatPage() {
   const showGeniusMascot = isBaseballGeniusConv;
   // 뉴스클리퍼 대화 — 자동 발송 전용, 답장 시 자동응답만 옴 (안내 배너 노출)
   const isClipperConv = otherId != null && NEWS_CLIPPER_IDS.has(otherId);
+  // 클리퍼는 읽기 전용 뉴스 피드: 최신 메시지가 처음부터 위에 있어야 한다.
+  // 공유 훅의 시간순 배열은 보존하고, Realtime 도착 순서가 역전돼도 최신순으로 표시한다.
+  const displayMessages = useMemo(
+    () => isClipperConv
+      ? [...messages].sort((a, b) =>
+          Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id,
+        )
+      : messages,
+    [messages, isClipperConv],
+  );
   // 회신 불가(자동 발송 전용) 계정 — 클리퍼 + 긴급공지. 입력창 비활성 + 안내 배너.
   const isNoReplyConv = isNoReplySender(otherId);
 
@@ -248,15 +258,19 @@ export default function DMChatPage() {
     setFeedbackPending(new Set());
   }
 
-  useEffect(() => {
-    // 클리퍼 대화방은 최신 클리핑 카드가 세로로 길어 하단 착지 시 다시 올려 봐야 함
-    // → 최신 메시지의 '상단'(인트로/헤더)에 포커스 (하린아빠 제보 7/12)
-    if (isClipperConv && lastMsgRef.current) {
-      lastMsgRef.current.scrollIntoView({ block: "start" });
-    } else {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  useLayoutEffect(() => {
+    // 최초 로드/대화 전환 때만 상단으로 이동한다. digest 후착·새 메시지에는 재이동하지 않아
+    // 과거 뉴스를 읽는 위치를 빼앗지 않고, 예전 카드가 나중에 펼쳐져도 최신은 맨 위에 둔다.
+    if (isClipperConv && !loading && messageListRef.current) {
+      messageListRef.current.scrollTop = 0;
     }
-  }, [messages.length, isClipperConv]);
+  }, [conversationId, isClipperConv, loading]);
+
+  useEffect(() => {
+    // 상대 확정 전 일반 DM 하단 이동을 막아, 뒤늦은 클리퍼 판정과 스크롤이 경쟁하지 않게 한다.
+    if (loading || !otherResolved || isClipperConv) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length, isClipperConv, otherResolved, loading]);
 
   // 입력창 내용 길이에 맞춰 세로 자동 확장 (최대 max-h-32 = 128px)
   useEffect(() => {
@@ -498,7 +512,7 @@ export default function DMChatPage() {
       </header>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+      <div ref={messageListRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
         {/* Safety Banner — 클리퍼 대화는 자동 발송 전용 안내로 대체 */}
         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-yellow-500/10 text-yellow-500 text-xs">
           <AlertTriangle size={14} className="flex-shrink-0" />
@@ -511,14 +525,14 @@ export default function DMChatPage() {
           </span>
         </div>
 
-        {loading ? (
+        {loading || !otherResolved ? (
           <div className="text-center text-sm text-text-tertiary py-10">불러오는 중...</div>
         ) : messages.length === 0 ? (
           <div className="text-center text-sm text-text-tertiary py-10">
             첫 쪽지를 보내보세요!
           </div>
         ) : (
-          messages.map((msg, i) => {
+          displayMessages.map((msg) => {
             const isMe = msg.sender_id === user?.id;
             // 클리핑 카드는 클리퍼/운영팀 발신만 신뢰 — 일반 유저가 payload를 흉내내도 텍스트로 렌더 (PR #619 리뷰 blocker 2)
             const trustedSender =
@@ -589,7 +603,6 @@ export default function DMChatPage() {
               <motion.div
                 data-message-id={msg.id}
                 data-genius-question-id={geniusReply?.question_message_id}
-                ref={i === messages.length - 1 ? lastMsgRef : undefined}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`flex ${isMe ? "justify-end" : "justify-start"}`}
