@@ -1,4 +1,5 @@
 import { isStatDefinitionQuestion } from "./definition-intent";
+import { recordPlayerNamesMatch } from "./record-player-identity";
 
 /**
  * 야잘알봇 시즌 기록 질의 (kbo_structured).
@@ -689,7 +690,9 @@ export function resolveSeasonRecord(
     return { kind: "inconsistent" };
   }
   if (expectedName !== undefined &&
-      (row.name !== expectedName || (row.team ?? null) !== (expectedTeam ?? null))) {
+      (typeof row.name !== "string" || /[\r\n<>]/.test(row.name)
+        || !recordPlayerNamesMatch(expectedKboId, row.name, expectedName)
+        || (row.team ?? null) !== (expectedTeam ?? null))) {
     return { kind: "inconsistent" };
   }
 

@@ -2,7 +2,7 @@ import { rankByStat } from "../../stats/title-rankings";
 import { STATS_STALE_MS, SUPPORTED_SEASON } from "./season-record";
 import type { ServedBatterSnapshot } from "./served-record";
 import { readRankPlayerId } from "./rank-request-context";
-import { resolvePlayerIdentity } from "../../utils/resolve-player";
+import { recordPlayerNamesMatch as rankPlayerNamesMatch } from "./record-player-identity";
 import { KBO_REGULAR_SEASON_GAMES, LIVE_TEAM_BLOCK_MAX_AGE_MS, kstSeasonOf, type StandingsSnapshot } from "./team-record";
 
 /** An operation is not a statistic: a rank/duration/remainder cannot be answered
@@ -41,22 +41,6 @@ function dateOf(value: string): string {
 
 export interface RankTarget { player?: { id: string; name: string }; team?: { id: number; name: string } }
 
-/** Display-name compatibility only after canonical ID is fixed. Complete roster
- * tokens (including a given name) are allowed here, never for player discovery. */
-function rankPlayerNamesMatch(playerId: string, servedName: string, requestedName: string): boolean {
-  if (servedName === requestedName) return true;
-  if (!/^[A-Z]{2}\d{3}$/.test(playerId) || /[\r\n<>]/.test(requestedName)) return false;
-  const identity = resolvePlayerIdentity(playerId);
-  if (!identity || readRankPlayerId(identity.kboId) !== playerId) return false;
-  const normalize = (name: string) => name.normalize("NFKC").trim().replace(/\s+/g, " ");
-  const canonicalName = normalize(identity.name);
-  const matches = (name: string) => {
-    const normalized = normalize(name);
-    return normalized === canonicalName || (normalized.length > 0
-      && !normalized.includes(" ") && canonicalName.split(" ").includes(normalized));
-  };
-  return matches(servedName) && matches(requestedName);
-}
 
 /** Use the same qualification, sorting and competition ranks as the app.
  * Unlike the UI's legacy fallback, missing qualification metadata is not proof

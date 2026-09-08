@@ -25,6 +25,13 @@ const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
   {
+    name: "r80 scalar exact-name comparison rejects foreign roster names",
+    file: "src/lib/baseball-qa/stats/season-record.ts",
+    from: "!recordPlayerNamesMatch(expectedKboId, row.name, expectedName)",
+    to: "row.name !== expectedName",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
     name: "r78 foreign surname-only player reference disappears",
     file: "src/lib/baseball-qa/pipeline.ts",
     from: "return tokens.some((token, index) => !fullNamePositions.has(index) && tokenMatches([token], surname));",
