@@ -2,13 +2,18 @@
 
 import { createBrowserClient } from "@supabase/ssr";
 import { authSessionDiagnostics } from "@/lib/auth/session-diagnostics";
+import { createAuthRefreshGuard } from "@/lib/auth/refresh-guard";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
 export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey, {
   global: {
-    fetch: authSessionDiagnostics.observeFetch(supabaseUrl, (...args) => globalThis.fetch(...args)),
+    fetch: createAuthRefreshGuard(
+      supabaseUrl,
+      authSessionDiagnostics.observeFetch(supabaseUrl, (...args) => globalThis.fetch(...args)),
+      "browser",
+    ).fetch,
   },
 });
 

@@ -1,6 +1,7 @@
 import { getClientIp } from "@/lib/http/client-ip";
 import { createServerSessionDiagnostics } from "@/lib/auth/server-session-diagnostics";
 import { createServerBootTrace } from "@/lib/auth/server-boot-trace";
+import { createAuthRefreshGuard } from "@/lib/auth/refresh-guard";
 import { createServerClient } from "@supabase/ssr";
 import {
   NextResponse,
@@ -161,6 +162,7 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
   }
 
   let supabaseResponse = NextResponse.next({ request });
+  const refresh = createAuthRefreshGuard(supabaseUrl!, (...args) => globalThis.fetch(...args), "server");
   const diagnostics = createServerSessionDiagnostics(
     supabaseUrl!, request.cookies.getAll().map(({ name }) => name),
     request.headers.get("user-agent") || "",
@@ -170,11 +172,15 @@ export async function proxy(request: NextRequest, event: NextFetchEvent) {
     supabaseUrl!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: { fetch: refresh.fetch },
       cookies: {
         getAll() {
           return request.cookies.getAll();
         },
         setAll(cookiesToSet) {
+          // 429/408 are not proof of an invalid session. Keep the request and
+          // response cookies intact; getClaims still returns an auth error.
+          if (refresh.preserveSessionCookies()) return;
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
