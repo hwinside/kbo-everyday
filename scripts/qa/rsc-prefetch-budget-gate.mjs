@@ -194,7 +194,7 @@ async function measure(chromium) {
     const load = rsc.length;
     // Explicitly expose this measured surface; a changing home layout must not leave
     // the community mutation below the viewport and silently pass.
-    const community = page.locator("section").filter({ has: page.getByRole("heading", { name: /커뮤니티 인기글/ }) });
+    const community = page.locator("section").filter({ has: page.getByRole("heading", { name: /최근 24시간 인기글/ }) });
     if (await community.count()) {
       await community.scrollIntoViewIfNeeded();
       await page.waitForTimeout(1500);

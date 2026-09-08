@@ -779,6 +779,14 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
                 </Suspense>
               </div>
             ) : null;
+          case "communityPopular":
+            return sections.communityPopular ? (
+              <div key={key} className="mb-3">
+                <Suspense fallback={null}>
+                  <CommunityLatestPosts myTeamId={myTeamId} refreshNonce={refreshNonce} mode="popular" />
+                </Suspense>
+              </div>
+            ) : null;
           case "favPlayers":
             return sections.favPlayers ? (
               <div key={key} className="mb-3">
