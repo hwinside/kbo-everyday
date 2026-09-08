@@ -1,5 +1,6 @@
 /** Execute via the existing period-context gate. Reviewer-owned execution. */
 import assert from "node:assert/strict";
+import { verifyForeignScalarNames } from "./verify-foreign-scalar-names";
 import { answerQuestion, HISTORY_HOLD_ANSWER, packStoredQaFinal, unpackStoredQaFinal, resolveNamedPlayerCandidate, type QaDeps, type LlmResult } from "../../../src/lib/baseball-qa/pipeline";
 import { selectContextTurn, type PreviousTurnRow } from "../../../src/lib/baseball-qa/context";
 import { previousTurnFromSql } from "../../../src/lib/baseball-qa/previous-turn-row";
@@ -91,6 +92,7 @@ export async function verifyScalarRequestRouting(
 }
 
 export async function verifyQuestionOperations() {
+  await verifyForeignScalarNames();
   const actualRoster = await loadRosterPlayers();
   const foreignPlayers = ["FP006", "AQ004", "FP003"].map((id) => {
     const player = actualRoster.find((row) => row.kboId === id);
