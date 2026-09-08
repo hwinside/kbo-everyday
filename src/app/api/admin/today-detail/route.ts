@@ -73,6 +73,7 @@ export async function GET(req: NextRequest) {
 
   if (type === "game_reviews") {
     // 개요 KPI와 동일: KST 오늘 원글, 삭제 제외·숨김 포함. 상세는 최신 100건.
+    // query-guard: bounded -- KST 오늘 원글의 최신 100건만 표시하는 관리자 상세 목록.
     const { data, error } = await supabase
       .from("game_reviews")
       .select("id, game_id, team_id, content, created_at, is_hidden, profiles(nickname)")

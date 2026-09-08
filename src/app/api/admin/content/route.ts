@@ -86,6 +86,7 @@ export async function GET(req: NextRequest) {
   if (likesError) return supabaseErrorResponse(likesError);
 
   // 관리자 작성량: 삭제한 원글 제외, 숨김 원글 포함(일반글과 동일). 댓글은 별도.
+  // query-guard: bounded-page -- days 요청의 since 윈도우를 1000행씩 끝까지 순회하며 (created_at,id) 순서를 유지.
   const { data: gameReviews, error: gameReviewsError } = await fetchAllRows((from, to) =>
     supabase
       .from("game_reviews")
