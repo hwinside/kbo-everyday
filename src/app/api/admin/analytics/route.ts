@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { ga4Report, getGa4AccessToken } from "@/lib/admin/ga4";
+import { GA_DAU_PERIODS, loadGa4Dau, type GaDauPeriod } from "@/lib/admin/ga4-dau";
 
 async function verifyPin(req: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(req);
@@ -25,6 +26,10 @@ export async function GET(req: NextRequest) {
   }
 
   const type = req.nextUrl.searchParams.get("type") ?? "dau";
+  const dailyPeriod = req.nextUrl.searchParams.get("period") ?? "30d";
+  if (type === "daily-active-users" && !GA_DAU_PERIODS.includes(dailyPeriod as GaDauPeriod)) {
+    return NextResponse.json({ error: "Invalid DAU period" }, { status: 400 });
+  }
 
   if ((!process.env.GOOGLE_SERVICE_ACCOUNT_KEY && !process.env.GOOGLE_SERVICE_ACCOUNT_KEY_B64) || !process.env.GA4_PROPERTY_ID) {
     return NextResponse.json(
@@ -41,6 +46,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const accessToken = await getGa4AccessToken();
+
+    if (type === "daily-active-users") {
+      const data = await loadGa4Dau(dailyPeriod as GaDauPeriod, body => ga4Report(accessToken, body));
+      return NextResponse.json(data, { headers: { "Cache-Control": "private, max-age=60", Vary: "Cookie, x-admin-pin" } });
+    }
 
     if (type === "dau") {
       // Daily active users + pageviews for last 30 days
