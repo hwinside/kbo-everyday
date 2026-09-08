@@ -207,10 +207,18 @@ function loadCorpus() {
       });
     }
     const doc = docs.get(entity);
+    if (row.extractorRevision === "kbo-rulebook-boundaries-v3" && row.atomic !== true) {
+      throw new Error(`v3_atomic_flag_missing at line ${lineNo}`);
+    }
     // `section`이 있으면 그대로 실어 보낸다 — prepareDocument가 조문 단위인지 판정하는 유일한 신호다.
     // 여기서 흘리면 조문 입력이 페이지로 뭉개지고, UNIQUE 키 충돌로 조용히 덮어쓰기가 일어난다.
     const section = typeof row.section === "string" && row.section.trim() ? row.section.trim() : null;
-    doc.pages.push({ page: Number(row.page ?? doc.pages.length + 1), text, ...(section ? { section } : {}) });
+    doc.pages.push({
+      page: Number(row.page ?? doc.pages.length + 1), text, ...(section ? { section } : {}),
+      ...(row.atomic === true ? {
+        atomic: true, pageEnd: Number(row.page_end), extractorRevision: row.extractorRevision,
+      } : {}),
+    });
   }
 
   let list = [...docs.values()];
@@ -234,7 +242,13 @@ function loadCorpus() {
  */
 function prepareDocument(doc) {
   const fullClean = doc.pages.map((p) => p.text).join("\n\n");
-  const documentContentHash = sha256(fullClean);
+  const atomic = doc.pages.some((p) => p.atomic === true);
+  // For atomic text, physical-page/section corrections also require a fresh
+  // generation even if the words happen to be unchanged.
+  const documentContentHash = sha256(atomic ? JSON.stringify(doc.pages.map((p) => ({
+    text: p.text, section: p.section, page: p.page, pageEnd: p.pageEnd,
+    extractorRevision: p.extractorRevision,
+  }))) : fullClean);
   const revision = `sha256:${documentContentHash.slice(0, 16)}`;
   const asOf = doc.crawledAt.slice(0, 10);
 
@@ -242,11 +256,24 @@ function prepareDocument(doc) {
   const skips = { page_too_short: 0, chunk_too_short: 0 };
   // section 부여 여부는 문서 단위로 고정한다 — 한 문서 안에서 섮이면 section_path 규칙이 둘로 갈라진다.
   const sectioned = doc.pages.every((p) => typeof p.section === "string" && p.section.trim().length > 0);
+  if (atomic && (doc.file !== "2026_야구규칙.pdf" || doc.title !== "2026 공식야구규칙")) {
+    throw new Error("atomic_rulebook_wrong_document");
+  }
+  if (atomic && (!sectioned || !doc.pages.every((p) =>
+    p.atomic === true && p.extractorRevision === "kbo-rulebook-boundaries-v3"
+    && Number.isInteger(p.page) && p.page > 0
+    && Number.isInteger(p.pageEnd) && p.pageEnd >= p.page && p.pageEnd <= doc.pagesTotal
+    && p.text.length >= MIN_CHUNK_CHARS && p.text.length <= 780))) {
+    throw new Error("invalid_atomic_rulebook: mixed, oversized, or missing page provenance");
+  }
+  if (atomic && LIMIT_CHUNKS) throw new Error("atomic_rulebook_must_load_whole_document");
   // 조문 단위일 때 같은 조문이 여러 조각으로 나누어질 수 있으므로 section별 순번을 개별 관리한다.
   const indexBySection = new Map();
 
   for (const page of doc.pages) {
-    const pageChunks = chunkText(page.text);
+    // The v3 producer already binds each condition/effect within the serving
+    // cap. Re-chunking or truncating it here would reintroduce the v2 defect.
+    const pageChunks = atomic ? [page.text] : chunkText(page.text);
     if (pageChunks.length === 0) {
       skips.page_too_short += 1;
       continue;
@@ -272,6 +299,7 @@ function prepareDocument(doc) {
         sectionPath,
         chunkIndex,
         page: page.page,
+        ...(atomic ? { pageEnd: page.pageEnd, extractorRevision: page.extractorRevision } : {}),
         content,
         contentHash: sha256(content),
       });
@@ -332,6 +360,7 @@ function buildSourceRow(p) {
       pagesWithText: p.doc.pages.length,
       canonicalUrlVerified: p.canonicalUrlVerified,
       loaderRevision: OFFICIAL_LOADER_REVISION,
+      ...(p.doc.pages[0]?.atomic ? { extractorRevision: p.doc.pages[0].extractorRevision } : {}),
     },
   };
 }
@@ -520,6 +549,7 @@ async function main() {
   const started = Date.now();
   const { docs, skips: corpusSkips } = loadCorpus();
   const prepared = docs.map(prepareDocument);
+  if (prepared.length === 0) throw new Error("no_documents_matched: refusing empty corpus operation");
 
   const totalChunks = prepared.reduce((sum, p) => sum + p.chunks.length, 0);
   const totalChunkChars = prepared.reduce(
@@ -713,6 +743,9 @@ async function main() {
               kind: p.doc.kind,
               file: p.doc.file,
               page: chunk.page,
+              ...(chunk.extractorRevision ? {
+                pageEnd: chunk.pageEnd, extractorRevision: chunk.extractorRevision,
+              } : {}),
               pagesTotal: p.doc.pagesTotal,
               canonicalUrlVerified: p.canonicalUrlVerified,
               embeddingModel: EMBED_MODEL,

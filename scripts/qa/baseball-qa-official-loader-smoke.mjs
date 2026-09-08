@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const TARGET = path.join(HERE, "..", "baseball-qa", "rag", "load-official-corpus.mjs");
@@ -72,6 +73,28 @@ t("페이지 단위 입력은 종전 규칙 유지 (회귀 방지)", () => {
   const p = prepareDocument(doc([{ page: 7, text: body(300) }, { page: 8, text: body(300) }], "연감"));
   if (p.chunks.length !== 2) throw new Error(`2건이어야 하는데 ${p.chunks.length}`);
   if (p.chunks[0].sectionPath !== "연감#p7") throw new Error(`페이지 규칙 깨짐: ${p.chunks[0].sectionPath}`);
+});
+
+t("v3 원본 PDF 조각 — 페이지/조항/서빙 경계", () => {
+  const check = spawnSync("python3", [path.join(HERE, "kbo-rulebook-boundaries-smoke.py")], { encoding: "utf8" });
+  if (check.status !== 0) throw new Error(`rulebook boundaries failed: ${check.stderr}`);
+});
+
+t("v3 atomic 조각은 재분할 없이 서빙 행과 1:1", () => {
+  const text = "보칙 — 방해 시 귀루 기준\n" + body(350) + "\n\n" + body(350);
+  const page = { page: 92, pageEnd: 93, section: "보칙", text, atomic: true, extractorRevision: "kbo-rulebook-boundaries-v3" };
+  const input = { ...doc([page], "2026 공식야구규칙"), file: "2026_야구규칙.pdf", pagesTotal: 220 };
+  const p = prepareDocument(input);
+  if (p.chunks.length !== 1 || p.chunks[0].content !== text) throw new Error("atomic chunk was split or changed");
+  if (p.chunks[0].pageEnd !== 93) throw new Error("physical page range lost");
+  for (const change of [{ text: body(801) }, { pageEnd: 91 }, { extractorRevision: "unknown" }]) {
+    let rejected = false;
+    try { prepareDocument({ ...input, pages: [{ ...page, ...change }] }); } catch { rejected = true; }
+    if (!rejected) throw new Error("invalid atomic input accepted");
+  }
+  let mixedRejected = false;
+  try { prepareDocument({ ...input, pages: [page, { page: 1, section: "기존", text: body(100) }] }); } catch { mixedRejected = true; }
+  if (!mixedRejected) throw new Error("mixed atomic/legacy source accepted");
 });
 
 t("긴 조문이 분할돼도 키가 충돌하지 않는다", () => {
