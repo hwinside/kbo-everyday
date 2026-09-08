@@ -4,6 +4,10 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:ga4-active-windows",
+      "tier": "ci"
+    },
+    {
       "name": "qa:auth-refresh-rate-limit",
       "tier": "ci"
     },

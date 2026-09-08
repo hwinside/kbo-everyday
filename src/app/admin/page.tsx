@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import type { FeedbackItem } from "@/lib/admin/types";
 import type { GaDauResponse } from "@/lib/admin/ga4-dau";
+import type { GaActiveWindowsResponse } from "@/lib/admin/ga4-active-windows";
 import { getTeamById } from "@/lib/constants/teams";
 
 /* ── helpers ─────────────────────────────────────────── */
@@ -111,6 +112,7 @@ interface OverviewData {
   jobs: JobsResponse;
   activeUsers: ActiveUsersResponse | null;
   gaDau: GaDauResponse | null;
+  gaWindows: GaActiveWindowsResponse | null;
   ga4Pages: PagesResponse | null;
   ga4Cohort: CohortResponse | null;
 }
@@ -480,12 +482,13 @@ export default function AdminOverviewPage() {
       apiFetch<JobsResponse>("/api/admin/jobs?status=error&today=1"),
       fetchGA4<PagesResponse>("pages"),
       fetchGA4<CohortResponse>("cohort"),
-      // 자체 집계 실패 시 null → fail-close 표시. GA4로 대체하지 않는다(지표 정의가 다름).
+      // 누적 방문자는 자체 원장 유지. GA4 활성 사용자로 대체하지 않는다.
       apiFetch<ActiveUsersResponse>("/api/admin/active-users").catch(() => null),
       fetchGA4<GaDauResponse>("daily-active-users&period=today"),
+      fetchGA4<GaActiveWindowsResponse>("active-user-windows"),
     ])
-      .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau]) => {
-        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau });
+      .then(([users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau, gaWindows]) => {
+        setData({ users, content, stats, feedback, jobs, ga4Pages, ga4Cohort, activeUsers, gaDau, gaWindows });
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -570,13 +573,13 @@ export default function AdminOverviewPage() {
     { label: "크롤러 실패", value: crawlerErrors, icon: <Bot className="w-4 h-4 text-[#FF453A]" /> },
   ];
 
-  /* DAU alone returns to GA; WAU/MAU/total remain the existing internal KPIs.
-     Neither source is a fallback for the other. */
+  /* GA4 window uniques are not daily sums. The cumulative internal ledger
+     remains separate, and neither source is a fallback for the other. */
   const activeKpis: KpiDef[] = [
     { label: "DAU (오늘·GA4)", value: data?.gaDau ? data.gaDau.dau ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#6366F1]" /> },
+    { label: "WAU (7일·GA4)", value: data?.gaWindows ? data.gaWindows.windows.wau.activeUsers ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
+    { label: "MAU (30일·GA4)", value: data?.gaWindows ? data.gaWindows.windows.mau.activeUsers ?? "집계 대기" : "조회 실패", icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
     ...(data?.activeUsers ? [
-        { label: "WAU (7일·앱+웹)", value: data.activeUsers.wau, icon: <TrendingUp className="w-4 h-4 text-[#30D158]" /> },
-        { label: "MAU (30일·앱+웹)", value: data.activeUsers.mau, icon: <TrendingUp className="w-4 h-4 text-[#FF9F0A]" /> },
         { label: "누적 방문자 (앱+웹)", value: data.activeUsers.total, icon: <TrendingUp className="w-4 h-4 text-[#BF5AF2]" /> },
       ] : []),
   ];
@@ -596,17 +599,17 @@ export default function AdminOverviewPage() {
         ))}
       </div>
 
-      {/* DAU is GA4; other KPIs keep the pre-existing source. */}
+      {/* DAU/WAU/MAU are GA4; cumulative visitors retain the internal ledger. */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {activeKpis.map((k) => (
             <KpiCard key={k.label} {...k} />
           ))}
         </div>
-      <p className="text-xs text-[#8E8E93]">오늘 DAU는 GA4 집계 중 수치입니다. 트래픽의 로그인 DAU와는 집계 기준이 다릅니다.</p>
+      <p className="text-xs text-[#8E8E93]">DAU·WAU·MAU는 GA4 활성 사용자입니다. WAU·MAU는 GA4 시간대 기준 오늘 포함 7일·30일의 중복 제거 값이며, 당일 반영 지연으로 다음 조회에서 갱신될 수 있습니다. 누적 방문자와 트래픽의 로그인 지표는 기존 자체 집계입니다.</p>
       {!data?.activeUsers && (
         <div className="glass-card p-4 flex items-center gap-2 text-sm text-[#FF453A]">
           <AlertTriangle className="w-4 h-4 shrink-0" />
-          <span>자체 집계 WAU/MAU/누적 조회 실패 — GA4로 대체하지 않습니다 (지표 정의 상이).</span>
+          <span>자체 집계 누적 방문자 조회 실패 — GA4로 대체하지 않습니다 (지표 정의 상이).</span>
         </div>
       )}
 
