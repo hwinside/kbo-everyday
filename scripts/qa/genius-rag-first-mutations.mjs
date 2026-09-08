@@ -16,7 +16,7 @@
  *   mutant 가 결함이 아니면 그건 게이트 결함이 아니라 내 변이 결함이다.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const RETRIEVE = "src/lib/baseball-qa/rag/retrieve.ts";
@@ -24,6 +24,48 @@ const SERVER = "src/lib/baseball-qa/server.ts";
 const SMOKE = "scripts/qa/genius-rag-first-routing-smoke.ts";
 
 const MUTATIONS = [
+  {
+    name: "r78 foreign surname-only player reference disappears",
+    file: "src/lib/baseball-qa/pipeline.ts",
+    from: "return tokens.some((token, index) => !fullNamePositions.has(index) && tokenMatches([token], surname));",
+    to: "return false;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r79 full-name surname also selects a colliding player",
+    file: "src/lib/baseball-qa/pipeline.ts",
+    from: "!fullNamePositions.has(index) && tokenMatches([token], surname)",
+    to: "tokenMatches([token], surname)",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r77 exact served-name comparison rejects foreign roster full names",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "if (!player || !rankPlayerNamesMatch(playerId, player.name, target.player.name)) return null;",
+    to: "if (!player || player.name !== target.player.name) return null;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r74 canonical alpha rank IDs regress to numeric-only",
+    file: "src/lib/baseball-qa/stats/rank-request-context.ts",
+    from: "return /^(?:\\d{1,8}|[A-Z]{2}\\d{3})$/.test(id) ? id : undefined;",
+    to: "return /^\\d{1,8}$/.test(id) ? id : undefined;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r75 unqualified missing AVG rejects the full snapshot",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "const noAverage = row.avg === \"-\" && Number(row.qualifiedRate) === 0;",
+    to: "const noAverage = false;",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
+  {
+    name: "r76 qualified foreign players are silently excluded",
+    file: "src/lib/baseball-qa/stats/question-operation.ts",
+    from: "canonicalRows.push({ ...row, kbo_id: id, player_key: id });",
+    to: "if (/^\\d+$/.test(id)) canonicalRows.push({ ...row, kbo_id: id, player_key: id });",
+    smoke: "scripts/qa/genius-period-context-smoke.ts",
+  },
   {
     name: "r73 unsupported named rankings fall through to scalar values",
     file: PIPELINE,
@@ -48,8 +90,8 @@ const MUTATIONS = [
   {
     name: "r71 club request is ranked across the league",
     file: "src/lib/baseball-qa/stats/question-operation.ts",
-    from: 'const ranked = rankByStat(rows, "avg");',
-    to: 'const ranked = rankByStat(snapshot.rows, "avg");',
+    from: 'const ranked = rankByStat(rows.filter((row) => row.avg !== "-"), "avg");',
+    to: 'const ranked = rankByStat(canonicalRows.filter((row) => row.avg !== "-"), "avg");',
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
   {
@@ -525,6 +567,33 @@ const MUTATIONS = [
   },
 ];
 
+const hasFailureMarker = (out) => /genius-rag-first-routing-smoke FAIL:/.test(out)
+  || /baseball QA official RAG: PASS=\d+ FAIL=[1-9]/.test(out)
+  || /^FAIL /m.test(out);
+function runSmoke(smoke) {
+  try {
+    return { ok: true, out: execFileSync("npx", ["--no-install", "tsx", smoke], {
+      encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 300000,
+    }) };
+  } catch (error) {
+    return { ok: false, out: `${error.stdout ?? ""}${error.stderr ?? ""}` };
+  }
+}
+
+// Every smoke used by a mutation must be green on this unmodified tree.
+// A failing baseline is a runner abort, never evidence that a mutant was killed.
+const baselineSmokes = [...new Set([SMOKE, ...MUTATIONS.map((m) => m.smoke ?? SMOKE)])];
+for (const smoke of baselineSmokes) {
+  const baseline = runSmoke(smoke);
+  if (!baseline.ok || hasFailureMarker(baseline.out)) {
+    console.error(`BASELINE FAIL ${smoke} — aborted before all mutations; 0 executed`);
+    console.error(baseline.out.slice(-2000));
+    process.exit(1);
+  }
+  console.log(`BASELINE GREEN ${smoke}`);
+}
+if (process.argv.includes("--baseline-only")) process.exit(0);
+
 let red = 0;
 const misses = [];
 for (const m of MUTATIONS) {
@@ -538,19 +607,15 @@ for (const m of MUTATIONS) {
   let out = "";
   let exitFail = false;
   try {
-    out = execSync(`npx tsx ${m.smoke ?? SMOKE}`, { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 300000 });
-  } catch (error) {
-    exitFail = true;
-    out = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    const result = runSmoke(m.smoke ?? SMOKE);
+    out = result.out;
+    exitFail = !result.ok;
+  } finally {
+    writeFileSync(m.file, original);
   }
-  writeFileSync(m.file, original);
   // RED = smoke 가 **의도한 FAIL 마커**를 찍고 죽었다. 컴파일 오류 같은 아무 nonzero exit 를
   // 검출로 세면 검증력이 0 이다(삼순 2026-08-10 B5).
-  const intended = exitFail && (
-    /genius-rag-first-routing-smoke FAIL:/.test(out)
-    || /baseball QA official RAG: PASS=\d+ FAIL=[1-9]/.test(out)
-    || /^FAIL /m.test(out)
-  );
+  const intended = exitFail && hasFailureMarker(out);
   if (intended) {
     console.log(`RED  ${m.name}`);
     red++;

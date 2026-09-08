@@ -3,6 +3,7 @@
  */
 import assert from "node:assert/strict";
 import { verifyQuestionOperations } from "./fixtures/verify-question-operations";
+import { verifyLiveRankingPayload } from "./fixtures/verify-live-ranking-payload";
 import { answerQuestion, routeQuestion, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import type { ContextTurn, PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
@@ -464,6 +465,9 @@ async function verifyNonCompoundQuoteBoundary() {
 
 async function main() {
   await verifyQuestionOperations();
+  if (process.argv.includes("--live-ranking-payload")) {
+    console.log("PASS: live full-entry rank payload contract", await verifyLiveRankingPayload());
+  }
   verifyCompoundResolution();
   verifyCompoundNumericBoundary();
   await verifyCompoundPipeline(false);
