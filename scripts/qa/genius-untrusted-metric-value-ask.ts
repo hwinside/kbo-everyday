@@ -208,7 +208,7 @@ function predicateChecks(): string[] {
  */
 function pipelineEntryChecks(): string[] {
   const out: string[] = [];
-  const players = [{ kboId: 1, name: "김도영", position: "내야수" }] as unknown as
+  const players = [{ kboId: "1", name: "김도영", position: "내야수" }] satisfies
     Parameters<typeof resolveSeasonRecordIntentFor>[1];
 
   // ① 질문에 로스터 이름이 있으면 진입점이 스스로 결속을 계산해야 한다.
