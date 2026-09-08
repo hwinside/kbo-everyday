@@ -347,9 +347,9 @@ async function main() {
 
   await act(async () => { root.unmount(); });
 
-  // ── §2. 실제 홈 최신글(CommunityLatestPosts) 렌더 ─────────────────────────
+  // ── §2. 실제 홈 전체 인기글(CommunityLatestPosts) 렌더 ────────────────────
   // 이전 판본은 배지를 직접 렌더해 홈 배선을 끊어도 GREEN 이었다(삼순 NO-GO).
-  // 이제 홈 컴포넌트를 통째로 마운트하고 useUnifiedFeed 가 supabase stub 을 타게 한다.
+  // 다팀 공개범위 배지는 전체 인기글 모드로 검증한다. 최애팀 없는 최신글은 의도적으로 숨긴다.
   const stub = installSupabaseStub(fixtures.map((f) => feedRow(f.post)));
   const clientMod = await import("../../src/lib/supabase/client");
   const originalFrom = (clientMod.supabase as unknown as { from: unknown }).from;
@@ -370,7 +370,7 @@ async function main() {
         React.createElement(
           ThemeProvider,
           null,
-          React.createElement(CommunityLatestPosts as never, { myTeamId: null } as never),
+          React.createElement(CommunityLatestPosts as never, { myTeamId: null, mode: "popular" } as never),
         ),
       ),
     );
@@ -386,7 +386,7 @@ async function main() {
     homeTexts.length > 0,
     `홈이 카드를 하나도 렌더하지 않음 — 배선 끊김 또는 stub 부적합`,
   );
-  // 홈은 기본 5개만 펼쳐 보여주므로(HOME_LATEST_COLLAPSED) 앞쪽 fixture 만 대조한다.
+  // 전체 인기글은 기본 5개만 보여주므로 앞쪽 fixture 만 대조한다.
   const homeCheckCount = Math.min(homeTexts.length, fixtures.length);
   for (let i = 0; i < homeCheckCount; i++) {
     ok(
