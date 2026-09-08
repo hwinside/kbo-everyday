@@ -5,6 +5,7 @@ import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import { COMMENT_LIMIT, validateText } from "@/lib/game-reviews/domain";
 import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 import { REVIEW_POLICY } from "@/lib/game-reviews/policy";
+import { withAuthorAvatars } from "@/lib/game-reviews/author-avatars";
 import { ReviewError, databaseError, fail, loadReviewContext, positiveId, reviewJson } from "@/lib/game-reviews/server";
 
 type Params = { params: Promise<{ gameId: string }> };
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest, { params }: Params) {
       before_id: cursor === null ? null : positiveId(cursor), rid: parent === null ? null : positiveId(parent), filter_team: filterTeam,
       p_best_min_likes: REVIEW_POLICY.bestMinLikes });
     if (error) databaseError(error);
-    return reviewJson({ context, feed: { ...data, policy: REVIEW_POLICY }, viewerId: verified?.user.id ?? null });
+    const feed = await withAuthorAvatars(data);
+    return reviewJson({ context, feed: { ...feed, policy: REVIEW_POLICY }, viewerId: verified?.user.id ?? null });
   } catch (error) { return fail(error); }
 }
 export async function POST(req: NextRequest, { params }: Params) {
