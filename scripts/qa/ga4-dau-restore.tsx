@@ -73,14 +73,22 @@ async function renderChecks() {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   let gaFails = false;
+  let windowsMode: "ok" | "failed" | "missing" | "zero" = "ok";
+  let internalFails = false;
   globalThis.fetch = async input => {
     const url = String(input); calls.push(url);
+    if (url.includes("type=active-user-windows")) {
+      if (windowsMode === "failed") return new Response(null, { status: 502 });
+      const count = (value: number) => windowsMode === "missing" ? null : windowsMode === "zero" ? 0 : value;
+      return Response.json({ source: "ga4", metric: "activeUsers", timeZone: "Asia/Seoul", includesToday: true,
+        windows: { wau: { activeUsers: count(20111) }, mau: { activeUsers: count(30999) } } });
+    }
     if (url.includes("type=daily-active-users")) {
       if (gaFails) return new Response(null, { status: 502 });
       return Response.json({ source: "ga4", metric: "activeUsers", dau: 16787, daily: [{ date: "2026-09-04", activeUsers: 16787 }], timeZone: "Asia/Seoul", missingDates: [] });
     }
     if (url.startsWith("/api/admin/active-users?")) return Response.json({ series: [{ label: "09/04", users: 13520, pv: 42000 }], cumulative: url.includes("cumulative") });
-    if (url === "/api/admin/active-users") return Response.json({ dau: 13520, wau: 22000, mau: 33000, total: 44000 });
+    if (url === "/api/admin/active-users") return internalFails ? new Response(null, { status: 502 }) : Response.json({ dau: 13520, wau: 22000, mau: 33000, total: 44000 });
     if (url === "/api/admin/users") return Response.json({ totalUsers: 10, todaySignups: 1, recentUsers: [], dailySignups: [{ date: "2026-09-04", count: 1 }], teamDistribution: [] });
     if (url.includes("/api/admin/content")) return Response.json({ dailyPosts: [] });
     if (url.includes("type=pages")) return Response.json({ pages: [] });
@@ -97,14 +105,41 @@ async function renderChecks() {
   };
   try {
     let page = await mount(Overview);
-    const kpi = () => [...page.node.querySelectorAll("p")].find(p => p.textContent === "DAU (오늘·GA4)")?.closest(".glass-card");
+    const kpi = (label = "DAU (오늘·GA4)") => [...page.node.querySelectorAll("p")].find(p => p.textContent === label)?.closest(".glass-card");
     assert.ok(kpi()?.textContent?.includes("16,787"));
     assert.ok(!kpi()?.textContent?.includes("13,520"));
     assert.ok(calls.includes("/api/admin/analytics?type=daily-active-users&period=today"));
     assert.ok(calls.includes("/api/admin/analytics?type=daily-active-users&period=7d"));
     assert.ok(calls.includes("/api/admin/active-users?period=7d"), "PV retains internal source");
-    assert.ok(page.node.textContent?.includes("22,000"), "WAU remains unchanged");
+    assert.ok(kpi("WAU (7일·GA4)")?.textContent?.includes("20,111"));
+    assert.ok(kpi("MAU (30일·GA4)")?.textContent?.includes("30,999"));
+    assert.ok(kpi("누적 방문자 (앱+웹)")?.textContent?.includes("44,000"), "cumulative ledger remains unchanged");
+    assert.ok(calls.includes("/api/admin/analytics?type=active-user-windows"));
+    assert.ok(page.node.textContent?.includes("오늘 포함 7일·30일"));
+    assert.ok(page.node.textContent?.includes("당일 반영 지연"));
     await page.close();
+    windowsMode = "failed"; page = await mount(Overview);
+    assert.ok(kpi("WAU (7일·GA4)")?.textContent?.includes("조회 실패"));
+    assert.ok(kpi("MAU (30일·GA4)")?.textContent?.includes("조회 실패"));
+    assert.ok(!kpi("WAU (7일·GA4)")?.textContent?.includes("22,000"), "GA failure must not fall back to internal WAU");
+    assert.ok(!kpi("MAU (30일·GA4)")?.textContent?.includes("33,000"), "GA failure must not fall back to internal MAU");
+    assert.ok(kpi()?.textContent?.includes("16,787"), "window outage must not hide available DAU");
+    await page.close();
+    windowsMode = "missing"; page = await mount(Overview);
+    assert.ok(kpi("WAU (7일·GA4)")?.textContent?.includes("집계 대기"));
+    assert.ok(kpi("MAU (30일·GA4)")?.textContent?.includes("집계 대기"));
+    await page.close();
+    windowsMode = "zero"; page = await mount(Overview);
+    assert.equal(kpi("WAU (7일·GA4)")?.querySelector(".tabular-nums")?.textContent, "0");
+    assert.equal(kpi("MAU (30일·GA4)")?.querySelector(".tabular-nums")?.textContent, "0");
+    assert.ok(!kpi("WAU (7일·GA4)")?.textContent?.includes("집계 대기"), "explicit zero is not pending");
+    assert.ok(!kpi("MAU (30일·GA4)")?.textContent?.includes("집계 대기"));
+    await page.close();
+    windowsMode = "ok"; internalFails = true; page = await mount(Overview);
+    assert.ok(kpi("WAU (7일·GA4)")?.textContent?.includes("20,111"), "GA windows must not depend on internal ledger availability");
+    assert.ok(kpi("MAU (30일·GA4)")?.textContent?.includes("30,999"));
+    assert.ok(page.node.textContent?.includes("자체 집계 누적 방문자 조회 실패"));
+    await page.close(); internalFails = false;
     gaFails = true; page = await mount(Overview);
     assert.ok(kpi()?.textContent?.includes("조회 실패"));
     assert.ok(!kpi()?.textContent?.includes("13,520"), "failed GA must not use internal DAU");
@@ -120,7 +155,7 @@ async function renderChecks() {
     gaFails = true; page = await mount(Users);
     assert.ok(page.node.textContent?.includes("GA4 DAU를 불러오지 못했습니다"));
     await page.close();
-    console.log("PASS actual overview/users render: common GA DAU, all-history selection, independent internal PV/WAU, visible GA failure");
+    console.log("PASS actual overview/users render: GA DAU/WAU/MAU, range caption, explicit zero/missing/failure, independent internal PV/total, all-history selection");
   } finally { globalThis.fetch = originalFetch; dom.window.close(); }
 }
 loaderChecks().then(renderChecks).then(() => process.exit(0)).catch(error => { console.error(error); process.exit(1); });

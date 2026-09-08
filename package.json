@@ -225,6 +225,7 @@
     "qa:gif-collector-publisher": "tsx scripts/qa/gif-collector-publisher-smoke.ts",
     "qa:collector-author-team": "tsx scripts/qa/collector-author-team-smoke.ts && npm run qa:collector-backfill:self-test && npm run qa:collector-e2e-cleanup:self-test",
     "qa:ga4-dau-restore": "NODE_ENV=development tsx scripts/qa/ga4-dau-restore.tsx",
+    "qa:ga4-active-windows": "NODE_ENV=development tsx scripts/qa/ga4-active-windows.ts",
     "qa:active-users-contract": "node scripts/qa/active-users-contract.mjs",
     "qa:active-users-hybrid": "node --import tsx scripts/qa/active-users-hybrid.mjs",
     "qa:active-users-invariants": "node scripts/qa/active-users-invariants.mjs",

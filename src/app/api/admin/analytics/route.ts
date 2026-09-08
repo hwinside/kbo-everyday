@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
 import { ga4Report, getGa4AccessToken } from "@/lib/admin/ga4";
 import { GA_DAU_PERIODS, loadGa4Dau, type GaDauPeriod } from "@/lib/admin/ga4-dau";
+import { loadGa4ActiveWindows } from "@/lib/admin/ga4-active-windows";
 
 async function verifyPin(req: NextRequest): Promise<boolean> {
   return isAdminAuthedRequest(req);
@@ -46,6 +47,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const accessToken = await getGa4AccessToken();
+
+    if (type === "active-user-windows") {
+      const data = await loadGa4ActiveWindows(body => ga4Report(accessToken, body));
+      return NextResponse.json(data, { headers: { "Cache-Control": "private, max-age=60", Vary: "Cookie, x-admin-pin" } });
+    }
 
     if (type === "daily-active-users") {
       const data = await loadGa4Dau(dailyPeriod as GaDauPeriod, body => ga4Report(accessToken, body));
