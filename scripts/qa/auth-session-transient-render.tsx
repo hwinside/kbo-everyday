@@ -43,7 +43,10 @@ async function main() {
   const traceId = "11111111-2222-4333-8444-555555555555";
   Object.defineProperty(performance, "getEntriesByType", { configurable: true, value: () => [{ serverTiming: [{ name: "kbo-auth-boot", description: traceId }] }] });
   const bootReports: Record<string, unknown>[] = [];
+  const sessionReports: Record<string, unknown>[] = [];
   let unavailable = false;
+  const outageStatus = Number(process.argv[2] ?? 503);
+  assert.ok([503, 429, 408].includes(outageStatus));
   let invalidRefresh = false;
   let failedRefreshes = 0;
   let successfulRefreshes = 0;
@@ -55,6 +58,7 @@ async function main() {
     if (url.pathname === "/api/telemetry/client-error") {
       const body = JSON.parse(String(init?.body));
       if (body.source === "auth-boot") bootReports.push(JSON.parse(body.message));
+      if (body.source === "auth-session") sessionReports.push(JSON.parse(body.message));
       return json({ ok: true });
     }
     if (url.hostname === "auth-fixture.invalid" && url.pathname === "/auth/v1/user") return json(user);
@@ -62,7 +66,12 @@ async function main() {
       if (unavailable) {
         failedRefreshes++;
         offset += 31_000;
-        return json({ message: "Fixture temporary outage" }, 503);
+        return new Response(JSON.stringify({
+          message: "Fixture temporary outage",
+          code: outageStatus === 429 ? "over_request_rate_limit" : outageStatus === 408 ? "request_timeout" : "unexpected_failure",
+        }), {
+          status: outageStatus, headers: { "content-type": "application/json", "retry-after": "60" },
+        });
       }
       if (invalidRefresh) return json({ code: "refresh_token_not_found", message: "Invalid Refresh Token: Refresh Token Not Found" }, 400);
       successfulRefreshes++;
@@ -141,13 +150,15 @@ async function main() {
       document.dispatchEvent(new dom.window.Event("visibilitychange"));
       await pause(80);
     });
-    assert.ok(failedRefreshes > 0, "expired session really attempted refresh and received 503");
+    assert.ok(failedRefreshes > 0, "expired session really attempted refresh and received the configured temporary status");
     assert.ok(document.cookie.includes("sb-"), "retryable failure must preserve the stored session");
     assert.ok(!events.includes("SIGNED_OUT"), "SDK did not emit a real logout");
-    console.log("EVIDENCE refresh=503; stored-session=present; SIGNED_OUT=absent; view=" + container.textContent);
+    console.log(`EVIDENCE refresh=${outageStatus}; stored-session=present; SIGNED_OUT=absent; view=` + container.textContent);
+    assert.ok(sessionReports.some(r => r.event === "token-http-error" && r.status === outageStatus), "original HTTP status remains observable");
     assert.equal(container.textContent, `${uid}|${uid}|false`, "transient refresh failure must not publish a false logout");
 
     unavailable = false;
+    if (outageStatus !== 503) offset += 66_000; // advance beyond Retry-After + jitter
     await act(async () => {
       window.dispatchEvent(new dom.window.Event("online"));
       await pause(80);
@@ -170,7 +181,11 @@ async function main() {
     assert.ok(document.cookie.includes("sb-"));
     assert.equal(container.textContent, "guest|none|true", "initial retryable failure leaves auth unresolved, not signed out");
     unavailable = false;
+    if (outageStatus !== 503) offset += 66_000;
     await act(async () => { window.dispatchEvent(new dom.window.Event("online")); await pause(80); });
+    for (let attempt = 0; attempt < 100 && container.textContent !== `${uid}|${uid}|false`; attempt++) {
+      await act(async () => { await pause(20); });
+    }
     assert.equal(container.textContent, `${uid}|${uid}|false`);
     console.log("PASS initial transient failure resolves on connectivity recovery");
 

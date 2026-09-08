@@ -8,7 +8,7 @@ export const AUTH_DIAGNOSTIC_EVENTS = [
   "session-read-pending", "storage-unreadable",
 ] as const;
 const ERROR_NAMES = ["AuthRetryableFetchError", "AuthApiError", "AuthSessionMissingError", "AuthUnknownError", "NavigatorLockAcquireTimeoutError", "TypeError", "AbortError", "OtherError"] as const;
-const ERROR_CODES = ["refresh_token_already_used", "refresh_token_not_found", "session_not_found", "session_expired", "bad_jwt", "invalid_grant", "request_timeout", "over_request_rate_limit", "unexpected_failure", "other"] as const;
+const ERROR_CODES = ["refresh_token_already_used", "refresh_token_not_found", "session_not_found", "session_expired", "bad_jwt", "invalid_grant", "request_timeout", "over_request_rate_limit", "refresh_backoff", "unexpected_failure", "other"] as const;
 export type AuthStorageObservation = {
   // A count describes this document's JS-visible cookies, not backing-store deletion.
   auth: number | null;

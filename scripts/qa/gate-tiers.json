@@ -4,6 +4,10 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:auth-refresh-rate-limit",
+      "tier": "ci"
+    },
+    {
       "name": "qa:ga4-dau-restore",
       "tier": "ci"
     },
