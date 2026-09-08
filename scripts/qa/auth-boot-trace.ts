@@ -11,7 +11,7 @@ import { AUTH_BOOT_SOURCE, AUTH_BOOT_SERVER_SOURCE, AUTH_BOOT_TIMING, parseAuthB
 const authUrl = "https://auth-fixture.invalid";
 const prefix = "sb-auth-fixture-auth-token";
 const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-const jwt = (exp: number) => `${encoded({ alg: "HS256", typ: "JWT" })}.${encoded({ exp, sub: "fixture-private-user" })}.fixture-signature`;
+const jwt = (exp: number) => `${encoded({ alg: "HS256", typ: "JWT" })}.${encoded({ exp, sub: "fixture-private-user" })}.${encoded("fixture-signature")}`;
 const session = (exp: number) => ({ access_token: jwt(exp), refresh_token: "fixture-private-refresh", expires_at: exp, expires_in: 3600, token_type: "bearer", user: { id: "fixture-private-user" } });
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
@@ -28,6 +28,7 @@ async function main() {
   let accepted = false;
   let collectorFails = false;
   let tokenCalls = 0;
+  let userCalls = 0;
   const rows: Record<string, unknown>[] = [];
   const beacons: { body: Record<string, unknown>; init: RequestInit }[] = [];
   const tasks: Promise<unknown>[] = [];
@@ -40,7 +41,10 @@ async function main() {
       return accepted ? Response.json(session(Math.floor(Date.now() / 1000) + 3600))
         : Response.json({ code: "refresh_token_already_used", message: "fixture-private-error" }, { status: 400, headers: { "x-supabase-api-version": "2024-01-01" } });
     }
-    if (url.origin === authUrl && url.pathname === "/auth/v1/user") return Response.json({ id: "fixture-private-user" });
+    if (url.origin === authUrl && url.pathname === "/auth/v1/user") {
+      userCalls++;
+      return Response.json({ id: "fixture-private-user" });
+    }
     if (url.origin === authUrl && url.pathname === "/rest/v1/admin_client_errors") {
       const headers = new Headers(init?.headers);
       assert.equal(headers.has("cookie"), false); assert.equal(headers.has("user-agent"), false);
@@ -76,6 +80,59 @@ async function main() {
     assert.equal(emptyRow.boot, trace); assert.equal(emptyRow.incomingAuth, 0); assert.equal(emptyRow.remainingAuth, 0);
     const second = await proxy(request("", { "x-kbo-auth-boot": trace }), event); await drain();
     assert.notEqual(idFrom(second), trace, "each document gets a fresh server ID; incoming IDs ignored");
+
+    // Error metadata describes getClaims' return value, not every storage action.
+    // Exercise the real auth-js shape check and SSR cookie adapter, not a mocked
+    // getClaims result or a hand-written diagnostic row. This synthetic contrast
+    // does NOT establish what malformed (or missing) data a real user had.
+    const active = session(Math.floor(Date.now() / 1000) + 3600);
+    const valid = await proxy(request(`${prefix}=base64-${encoded(active)}`), event); await drain();
+    const validRow = JSON.parse(String(traces().at(-1)!.message));
+    assert.equal(validRow.boot, idFrom(valid));
+    assert.deepEqual(
+      [validRow.incomingAuth, validRow.deletedAuth, validRow.writtenAuth, validRow.remainingAuth, validRow.error, validRow.code, validRow.status],
+      [1, 0, 0, 1, null, null, null],
+      "valid unexpired session is retained without a cookie rewrite",
+    );
+    assert.equal(valid.headers.get("set-cookie"), null);
+    assert.equal(tokenCalls, 0);
+    assert.equal(userCalls, 1, "valid HS256 fixture reaches the user validation endpoint");
+
+    for (const missing of ["access_token", "refresh_token", "expires_at"] as const) {
+      const incomplete: Record<string, unknown> = { ...active };
+      delete incomplete[missing];
+      const beforeRows = traces().length;
+      const beforeCalls = tokenCalls + userCalls;
+      const response = await proxy(request(`${prefix}=base64-${encoded(incomplete)}`), event); await drain();
+      assert.equal(response.status, 200);
+      assert.equal(tokenCalls + userCalls, beforeCalls, `${missing}: invalid shape is removed before remote auth`);
+      assert.equal(traces().length, beforeRows + 1, `${missing}: exactly one trace`);
+      const cookie = response.cookies.get(prefix);
+      assert.equal(cookie?.value, "", `${missing}: response clears the original cookie`);
+      assert.equal(cookie?.maxAge, 0, `${missing}: deletion is an actual response cookie`);
+      const row = JSON.parse(String(traces().at(-1)!.message));
+      assert.equal(row.boot, idFrom(response), `${missing}: row joins this response`);
+      assert.deepEqual(
+        [row.incomingAuth, row.deletedAuth, row.writtenAuth, row.remainingAuth, row.error, row.code, row.status],
+        [1, 1, 0, 0, null, null, null],
+        `${missing}: local invalid-session removal can have no returned auth error`,
+      );
+    }
+
+    // A stored JSON null is a separate boundary: auth-js reads no session and
+    // does not remove a non-null invalid shape. Cookie count is NOT validity.
+    const nullSession = await proxy(request(`${prefix}=base64-${encoded(null)}`), event); await drain();
+    const nullRow = JSON.parse(String(traces().at(-1)!.message));
+    assert.equal(nullRow.boot, idFrom(nullSession));
+    assert.equal(nullSession.headers.get("set-cookie"), null);
+    assert.deepEqual(
+      [nullRow.incomingAuth, nullRow.deletedAuth, nullRow.writtenAuth, nullRow.remainingAuth, nullRow.error, nullRow.code, nullRow.status],
+      [1, 0, 0, 1, null, null, null],
+      "cookie present with JSON null is not equivalent to a valid session or an invalid object",
+    );
+    assert.equal(tokenCalls, 0); assert.equal(userCalls, 1);
+    console.log("PASS actual proxy/SDK: valid session retained; three missing-field shapes cleared with null error; JSON-null boundary retained");
+
     const expired = `${prefix}=base64-${encoded(session(1))}`;
     const rejected = await proxy(request(expired), event); await drain();
     assert.equal(rejected.cookies.get(prefix)?.maxAge, 0);
