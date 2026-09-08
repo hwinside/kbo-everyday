@@ -11,7 +11,7 @@ import { AUTH_BOOT_SOURCE, AUTH_BOOT_SERVER_SOURCE, AUTH_BOOT_TIMING, parseAuthB
 const authUrl = "https://auth-fixture.invalid";
 const prefix = "sb-auth-fixture-auth-token";
 const encoded = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-const jwt = (exp: number) => `${encoded({ alg: "HS256", typ: "JWT" })}.${encoded({ exp, sub: "fixture-private-user" })}.fixture-signature`;
+const jwt = (exp: number) => `${encoded({ alg: "HS256", typ: "JWT" })}.${encoded({ exp, sub: "fixture-private-user" })}.${encoded("fixture-signature")}`;
 const session = (exp: number) => ({ access_token: jwt(exp), refresh_token: "fixture-private-refresh", expires_at: exp, expires_in: 3600, token_type: "bearer", user: { id: "fixture-private-user" } });
 const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
