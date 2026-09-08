@@ -86,7 +86,7 @@ const CHAT_TRANSPORT_SHA256 = {
   "src/app/api/admin/content/route.ts": "b1d1ecf0e8a8474485561fd8f09f11a7eda2433c1b5d6b657e66487749ccab02",
   "src/app/api/admin/reports/route.ts": "2f8023871d42d8fdd424e299d6746eb97d5dc93fd4c337df30cc96f91684bfa6",
   "src/app/api/contextual-stats/route.ts": "81d430b3a0af4e01261a8e1de8f2e8206713a2af363b6e4f53b42f5490674b77",
-  "src/app/api/report/route.ts": "939c2edf16d860d57b6b79f9372fc06001424dc26d73dbbf156869de0b822ca9",
+  "src/app/api/report/route.ts": "b2b456527ed53e38ba3fcf166d2c1e3c2d9c47ac50cecfc6f254ffaad6f425f3",
   "src/app/api/slack/gif-collector/route.ts": "155483260ced25cacfa3132a6c4305fc0a86f6eafd5b2aae722f2523d8a0e9d4",
   "src/app/api/game-chat/prefs/route.ts": "036a254346d128c5d12574a66f56b69864a578674b4edfbebb2abb8d827f320d",
   "src/app/api/venue-stories/attendees/route.ts": "e1c21c12d3ce1bbfc25b0f2cb17ef2b6ccb7cbf0cca531bfb1ad055f9d05552a",
