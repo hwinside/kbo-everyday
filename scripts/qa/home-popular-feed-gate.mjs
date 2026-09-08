@@ -126,7 +126,7 @@ check("H5-more-load", /onClick=\{\(\)\s*=>\s*void loadMore\(\)\}/.test(section),
 check("H5-more-label", /\{HOME_POPULAR_STEP\}개 더 보기/.test(section) && /HOME_POPULAR_STEP\s*=\s*15/.test(section), "'15개 더 보기' 문구/상수 불일치");
 check("H5-link-label", /커뮤니티 최신글 보기/.test(section) && !/커뮤니티 더보기/.test(section), "하단 링크 문구가 '커뮤니티 최신글 보기' 가 아니다");
 check("H5-link-href", (section.match(/href="\/community\/all-posts"/g) ?? []).length >= 2, "하단 링크 경로(/community/all-posts) 변경됨");
-check("H5-title", /최근 24시간 인기글/.test(section) && /커뮤니티 최신글\(/.test(section) && /HOME_LATEST_INITIAL = 15/.test(section), "최신15개 / 24시간 인기글 분리 제목·초기값 불일치");
+check("H5-title", /최근 24시간 인기글/.test(section) && /커뮤니티 최신글\(/.test(section) && /HOME_LATEST_INITIAL = 5/.test(section), "최신5개 / 24시간 인기글 분리 제목·초기값 불일치");
 
 console.log("── H6 마이그레이션(소스)");
 const mig = readFileSync(path.join(ROOT, MIGRATION), "utf8").replace(/--[^\n]*/g, "");

@@ -580,29 +580,29 @@ async function main() {
     s.root.unmount();
   }
 
-  // D5: latest uses its own RPC, 15-row first page and a chronological cursor.
+  // D5: latest uses its own RPC, 5-row first page and a chronological cursor.
   {
     pending.length = 0;
     const s = mountSection(0, "latest");
     await waitPending(1, "D5 latest initial");
-    check("D5 latest RPC / team-only / 16-row peek / no time window", last().fn === "home_team_latest_posts" && last().args.p_team_slug === "lg" && isDenyListLg(last().args) && last().args.p_limit === 16 && !Object.hasOwn(last().args, "p_since") && last().args.p_before_id === null);
-    settle(last(), rows(16, 2000));
-    await waitFor(() => s.rowsOf() === 15, "D5 first 15");
+    check("D5 latest RPC / team-only / 6-row peek / no time window", last().fn === "home_team_latest_posts" && last().args.p_team_slug === "lg" && isDenyListLg(last().args) && last().args.p_limit === 6 && !Object.hasOwn(last().args, "p_since") && last().args.p_before_id === null);
+    settle(last(), rows(6, 2000));
+    await waitFor(() => s.rowsOf() === 5, "D5 first 5");
     check("D5 latest section title", (s.section()?.textContent ?? "").includes("커뮤니티 최신글(LG)"));
     sectionMoreBtn(s);
     await waitPending(1, "D5 next page");
-    check("D5 cursor is the last displayed row, not peek", last().args.p_before_id === 1986 && last().args.p_before_created_at === "2026-09-04T00:00:00Z");
+    check("D5 cursor is the last displayed row, not peek; more remains 15+1", last().args.p_before_id === 1996 && last().args.p_before_created_at === "2026-09-04T00:00:00Z" && last().args.p_limit === 16);
     const failed = last();
     failed.settled = true;
     failed.reject({ data: null, error: { message: "latest fixture failure" } });
     await waitFor(() => s.moreBtn()?.disabled === false, "D5 retry unlocked");
-    check("D5 error preserves rows and retry", s.rowsOf() === 15 && !!s.moreBtn());
+    check("D5 error preserves rows and retry", s.rowsOf() === 5 && !!s.moreBtn());
     sectionMoreBtn(s);
     await waitPending(1, "D5 retry");
-    check("D5 retry keeps same cursor", last().args.p_before_id === 1986);
-    settle(last(), rows(15, 1985));
-    await waitFor(() => s.rowsOf() === 30, "D5 30 rows");
-    check("D5 exact 30 exhaustion hides button", !s.moreBtn());
+    check("D5 retry keeps same cursor", last().args.p_before_id === 1996);
+    settle(last(), rows(15, 1995));
+    await waitFor(() => s.rowsOf() === 20, "D5 20 rows");
+    check("D5 exact 20 exhaustion hides button", !s.moreBtn());
     s.root.unmount();
   }
 
