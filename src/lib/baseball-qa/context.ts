@@ -3,6 +3,7 @@ import { readRankRequestContext, type RankRequestContext } from "./stats/rank-re
 // 후속 질문("또 다른 경우는?")이 blocked로 떨어지던 버그를 exact 계약으로 해소한다.
 // DB 접근은 server.ts가 RPC로 수행하고, 여기서는 그 결과 1행을 순수 판정한다.
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
+import { readRosterRemovalContext, type RosterRemovalContext } from "./roster/removal-context";
 
 /**
  * 소스 turn 자격 = genius_question_jobs.source allowlist (B3, fail-closed).
@@ -93,6 +94,7 @@ export function isFollowupPhrase(question: string): boolean {
 
 /** RPC baseball_genius_previous_turn 이 돌려주는 직전 user turn 1행 (B2). */
 export interface PreviousTurnRow {
+  rosterRemovalContext?: unknown;
   rankRequestContext?: unknown;
   /** Exact previous job's validated final-envelope topic, not user/model text. */
   definitionContext?: unknown;
@@ -110,6 +112,7 @@ export interface PreviousTurnRow {
 
 /** LLM 컨텍스트로 주입할 소스 turn 1개 */
 export interface ContextTurn {
+  rosterRemovalContext?: RosterRemovalContext;
   rankRequestContext?: RankRequestContext;
   question: string;
   answer: string;
@@ -173,12 +176,15 @@ function qualifyContextTurn(
   // unsure 턴의 가치는 직전 **질문**(주제)이지 상용구 답변이 아니다. 상용구를 그대로 실으면
   // 모델이 그 사과·얼버무림 톤을 이어받아 정정 질문에 비확정 답을 내는 게 실측됐다
   // (2026-08-10 프로브: 상용구 4/6 → 중립 마커 6/6). 답변은 중립 마커로 치환한다.
+  const removal = ["scope_guide", "news_rag", "unsure"].includes(row.jobSource)
+    ? readRosterRemovalContext(row.rosterRemovalContext) : undefined;
+  const removalMetadata = removal ? { rosterRemovalContext: removal } : {};
   if (row.jobSource === "unsure") {
-    return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)" };
+    return { question, answer: "(직전 턴에서 봇이 질문을 이해하지 못해 답하지 못했음)", ...removalMetadata };
   }
   const definitionContext = readStatDefinitionContext(row.definitionContext);
   // Only our structured rank replies can carry this metadata. No global source
   // allowlist or unsure-definition carryover is opened by the new contract.
   const rankRequestContext = row.jobSource === "kbo_structured" ? readRankRequestContext(row.rankRequestContext) : undefined;
-  return { question, answer, ...(definitionContext ? { definitionContext } : {}), ...(rankRequestContext ? { rankRequestContext } : {}) };
+  return { question, answer, ...removalMetadata, ...(definitionContext ? { definitionContext } : {}), ...(rankRequestContext ? { rankRequestContext } : {}) };
 }
