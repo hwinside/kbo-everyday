@@ -63,6 +63,8 @@ interface ContentResponse {
     photos: number;
     chats: number;
     likes: number;
+    gameReviewCount?: number;
+    gameReviewUserCount?: number;
     postUserCount?: number;
     generalPostUserCount?: number;
     commentUserCount?: number;
@@ -358,6 +360,9 @@ function DetailModal({
           <button onClick={onClose} className="text-[#8E8E93] hover:text-white text-xl">✕</button>
         </div>
         <div className="overflow-y-auto flex-1 p-5">
+          {type === "game_reviews" && (
+            <p className="mb-3 text-xs text-[#8E8E93]">한국시간 오늘 작성 · 삭제 제외 · 숨김 포함 · 최신 100건</p>
+          )}
           {loading ? (
             <div className="flex justify-center py-10">
               <Loader2 className="w-6 h-6 animate-spin text-[#636366]" />
@@ -507,6 +512,8 @@ export default function AdminOverviewPage() {
   const todayPhotos_ = todayEntry?.photos ?? 0;
   const todayPosts = todayPostsAll - todayPhotos_; // 일반글만
   const todayComments = todayEntry?.comments ?? 0;
+  const todayGameReviews = todayEntry?.gameReviewCount ?? 0;
+  const gameReviewUserCount = todayEntry?.gameReviewUserCount ?? 0;
   const todayPhotos = todayPhotos_;
   const todayChats = todayEntry?.chats ?? 0;
   const todayLikes = todayEntry?.likes ?? 0;
@@ -552,6 +559,7 @@ export default function AdminOverviewPage() {
   const kpis: KpiDef[] = [
     { label: "오늘 가입자", value: todaySignups, icon: <Users className="w-4 h-4 text-[#6366F1]" /> },
     { label: "오늘 일반글", value: withUsers(todayPosts, generalPostUserCount), icon: <FileText className="w-4 h-4 text-[#30D158]" />, detailType: "posts" },
+    { label: "오늘 한줄평", value: withUsers(todayGameReviews, gameReviewUserCount), icon: <MessageSquare className="w-4 h-4 text-[#BF5AF2]" />, detailType: "game_reviews" },
     { label: "오늘 댓글", value: withUsers(todayComments, commentUserCount), icon: <MessageSquare className="w-4 h-4 text-[#FFD60A]" />, detailType: "comments" },
     { label: "오늘 사진", value: withUsers(todayPhotos, photoUserCount), icon: <Camera className="w-4 h-4 text-[#FF9F0A]" />, detailType: "photos" },
     { label: "오늘 채팅(크관)", value: withUsers(todayChats, chatUserCount), icon: <MessagesSquare className="w-4 h-4 text-[#32D4EB]" />, detailType: "chats" },

@@ -85,9 +85,24 @@ export async function GET(req: NextRequest) {
 
   if (likesError) return supabaseErrorResponse(likesError);
 
+  // 관리자 작성량: 삭제한 원글 제외, 숨김 원글 포함(일반글과 동일). 댓글은 별도.
+  const { data: gameReviews, error: gameReviewsError } = await fetchAllRows((from, to) =>
+    supabase
+      .from("game_reviews")
+      .select("created_at, author_id")
+      .is("deleted_at", null)
+      .gte("created_at", sinceDate.toISOString())
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+
+  if (gameReviewsError) return supabaseErrorResponse(gameReviewsError);
+
   // Daily aggregation (counts + unique users)
   interface DailyEntry {
     posts: number; comments: number; photos: number; chats: number; likes: number;
+    gameReviewCount: number; gameReviewUsers: Set<string>;
     postUsers: Set<string>; generalPostUsers: Set<string>; commentUsers: Set<string>;
     photoUsers: Set<string>; chatUsers: Set<string>; likeUsers: Set<string>;
   }
@@ -95,6 +110,7 @@ export async function GET(req: NextRequest) {
 
   const makeEntry = (): DailyEntry => ({
     posts: 0, comments: 0, photos: 0, chats: 0, likes: 0,
+    gameReviewCount: 0, gameReviewUsers: new Set(),
     postUsers: new Set(), generalPostUsers: new Set(), commentUsers: new Set(),
     photoUsers: new Set(), chatUsers: new Set(), likeUsers: new Set(),
   });
@@ -137,10 +153,19 @@ export async function GET(req: NextRequest) {
     dailyMap.set(date, entry);
   }
 
+  for (const review of gameReviews ?? []) {
+    const date = toKSTDateString(review.created_at);
+    const entry = dailyMap.get(date) ?? makeEntry();
+    entry.gameReviewCount += 1;
+    if (review.author_id) entry.gameReviewUsers.add(review.author_id);
+    dailyMap.set(date, entry);
+  }
+
   const dailyPosts = Array.from(dailyMap.entries())
     .map(([date, e]) => ({
       date,
       posts: e.posts, comments: e.comments, photos: e.photos, chats: e.chats, likes: e.likes,
+      gameReviewCount: e.gameReviewCount, gameReviewUserCount: e.gameReviewUsers.size,
       postUserCount: e.postUsers.size, generalPostUserCount: e.generalPostUsers.size,
       commentUserCount: e.commentUsers.size, photoUserCount: e.photoUsers.size,
       chatUserCount: e.chatUsers.size, likeUserCount: e.likeUsers.size,

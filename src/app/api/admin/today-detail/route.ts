@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { isAdminAuthedRequest } from "@/lib/admin/pin";
+import { getTeamById } from "@/lib/constants/teams";
 
 /**
- * GET /api/admin/today-detail?type=posts|comments|photos|chats|venue_videos|venue_photos
+ * GET /api/admin/today-detail?type=posts|comments|photos|chats|game_reviews|venue_videos|venue_photos
  * 오늘 KST 기준 상세 목록 반환
  */
 
@@ -64,11 +65,44 @@ export async function GET(req: NextRequest) {
   }
 
   const type = req.nextUrl.searchParams.get("type");
-  if (!type || !["posts", "comments", "photos", "chats", "venue_videos", "venue_photos"].includes(type)) {
+  if (!type || !["posts", "comments", "photos", "chats", "game_reviews", "venue_videos", "venue_photos"].includes(type)) {
     return NextResponse.json({ error: "invalid type" }, { status: 400 });
   }
 
   const { start, end, endExclusive } = getTodayKSTRange();
+
+  if (type === "game_reviews") {
+    // 개요 KPI와 동일: KST 오늘 원글, 삭제 제외·숨김 포함. 상세는 최신 100건.
+    const { data, error } = await supabase
+      .from("game_reviews")
+      .select("id, game_id, team_id, content, created_at, is_hidden, profiles(nickname)")
+      .is("deleted_at", null)
+      .gte("created_at", start)
+      .lt("created_at", endExclusive)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(100);
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+
+    const segmenter = new Intl.Segmenter("ko", { granularity: "grapheme" });
+    const items = (data ?? []).map((review: Record<string, unknown>) => {
+      const gameId = String(review.game_id);
+      const team = getTeamById(Number(review.team_id));
+      const content = String(review.content ?? "");
+      const graphemes = Array.from(segmenter.segment(content));
+      return {
+        id: review.id,
+        time: review.created_at,
+        nickname: (review.profiles as { nickname?: string } | null)?.nickname ?? "익명",
+        title: `${gameLabel(gameId)} · ${team?.shortName ?? "미설정"} 팬${review.is_hidden ? " · 숨김" : ""}`,
+        content: graphemes.slice(0, 40).map((g) => g.segment).join("") + (graphemes.length > 40 ? "…" : ""),
+        link: `/games/${encodeURIComponent(gameId)}`,
+      };
+    });
+
+    return NextResponse.json({ items, topAuthors: topAuthors(items) });
+  }
 
   if (type === "posts") {
     const { data, error } = await supabase
