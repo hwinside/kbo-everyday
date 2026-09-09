@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "qa:admin-inbox": "node --test tests/admin-inbox.test.mjs tests/admin-inbox-api.test.mjs",
     "qa:cloudflare-phase0": "tsx scripts/qa/cloudflare-phase0.ts",
     "qa:cloudflare-phase0:mutations": "node scripts/qa/cloudflare-phase0-mutations.mjs",
     "dev": "next dev",

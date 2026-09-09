@@ -70,11 +70,40 @@ test('admin inbox projection and global read boundary (isolated PostgreSQL)', as
     const totalBefore = Number((await db.query('SELECT admin_dm_unread_total($1) AS n', [system])).rows[0].n);
     assert.equal(totalBefore, 67);
 
+    // Reproduce the production-only overload: named two-argument calls are ambiguous.
+    await db.exec(`CREATE FUNCTION public.admin_dm_inbox_page(
+      p_system_user_id UUID, p_limit INT DEFAULT 51,
+      p_cursor_last_message_at TIMESTAMPTZ DEFAULT NULL,
+      p_cursor_conversation_id UUID DEFAULT NULL
+    ) RETURNS BIGINT LANGUAGE SQL AS $$ SELECT 0::BIGINT $$;`);
+    const namedPageSql = 'SELECT * FROM admin_dm_inbox_page(p_system_user_id => $1::uuid, p_limit => $2::int)';
+    await assert.rejects(db.query(namedPageSql, [system, 50]), { code: '42725' });
+    const canonicalSql = `SELECT oid, pg_get_functiondef(oid) AS definition, proacl::text AS acl
+      FROM pg_proc WHERE oid = 'public.admin_dm_inbox_page(uuid,timestamptz,uuid,integer)'::regprocedure`;
+    const canonicalBefore = (await db.query(canonicalSql)).rows;
+    const cleanup = readFileSync('supabase/migrations/20260909120000_admin_inbox_drop_legacy_overload.sql', 'utf8');
+    await db.exec(`CREATE VIEW inbox_legacy_dependency AS
+      SELECT admin_dm_inbox_page(NULL::uuid, 1::int, NULL::timestamptz, NULL::uuid) AS n;`);
+    await assert.rejects(db.exec(cleanup), { code: '2BP01' });
+    await db.exec('ROLLBACK');
+    assert.deepEqual((await db.query(canonicalSql)).rows, canonicalBefore);
+    await db.exec('DROP VIEW inbox_legacy_dependency');
+    await db.exec(cleanup);
+    await db.exec(cleanup); // fresh databases and deployment retries are safe
+    assert.deepEqual((await db.query(canonicalSql)).rows, canonicalBefore);
+    assert.equal((await db.query(`SELECT count(*)::int AS n FROM pg_proc
+      WHERE proname = 'admin_dm_inbox_page' AND pronamespace = 'public'::regnamespace`)).rows[0].n, 1);
+    assert.equal(Number((await db.query('SELECT admin_dm_unread_total($1) AS n', [system])).rows[0].n), totalBefore);
+
     await db.exec('SET ROLE service_role');
     async function page(at = null, id = null, limit = 50) {
       return (await db.query('SELECT * FROM admin_dm_inbox_page($1,$2,$3,$4)', [system,at,id,limit])).rows;
     }
     const first = await page();
+    assert.deepEqual((await db.query(namedPageSql, [system, 50])).rows, first);
+    assert.deepEqual((await db.query(`SELECT * FROM admin_dm_inbox_page(
+      p_system_user_id => $1::uuid, p_cursor_at => NULL::timestamptz,
+      p_cursor_id => NULL::uuid, p_limit => 50)`, [system])).rows, first);
     assert.equal(first.length, 50);
     assert.equal(first[0].id, uid(302));
     assert.equal(first[0].last_message, '[사진]');
