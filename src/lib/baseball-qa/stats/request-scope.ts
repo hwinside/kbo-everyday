@@ -1,4 +1,4 @@
-import { LIVE_TEAM_BLOCK_MAX_AGE_MS, kstSeasonOf, type StandingsSnapshot } from "./team-record";
+import { LIVE_TEAM_BLOCK_MAX_AGE_MS, kstSeasonOf, resolveTeamRecordIntent, type StandingsSnapshot } from "./team-record";
 
 export interface TransferPeriodContext { version: 1; playerId: string; playerName: string }
 export function readTransferPeriodContext(value: unknown): TransferPeriodContext | undefined {
@@ -46,7 +46,7 @@ export function hasPostseasonCutoff(answer: string): boolean {
 /** Location/calendar dimensions are not additional club names. Until this
  * bot has a split-record data seam, don't replace them with season totals. */
 export function asksTeamRecordSubscope(question: string): boolean {
-  return /전적/.test(question) && /(?:^|\s)(?:홈|원정|\d{1,2}\s*월|주말|주중)(?:\s|전적|의)/.test(question);
+  return /전적/.test(question) && /(?:^|\s)(?:홈|원정|\d{1,2}\s*월|주말|주중)(?:에서|에|의)?(?=\s|전적|$)/.test(question);
 }
 
 export interface ScopeTeam {
@@ -73,8 +73,10 @@ export function unresolvedRecordSubject(question: string, teams: readonly ScopeT
   const isTeam = (s: string) => teams.some((team) => new RegExp(`^(?:${teamPattern(team)})$`, "i").test(s));
   const known = subjects.filter(isTeam);
   const other = subjects.filter((s) => !isTeam(s));
-  // These words specify season/league scope, not another subject.
-  return known.length === 1 && other.some((s) => !/^(?:현재|지금|오늘|올해|이번|시즌|정규시즌|전체|통산|역대|최근|맞대결|상대|\d{4}년?)$/.test(s));
+  // Metric names use the same resolver as record lookup; e.g. 홈런 is a
+  // statistic, not an unknown opponent and not the location dimension 홈.
+  return known.length === 1 && other.some((s) => resolveTeamRecordIntent(s).kind !== "query"
+    && !/^(?:현재|지금|오늘|올해|이번|시즌|정규시즌|전체|통산|역대|최근|맞대결|상대|\d{4}년?)$/.test(s));
 }
 
 export type AssumedResult = "win" | "loss" | "draw";

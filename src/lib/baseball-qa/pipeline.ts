@@ -5074,17 +5074,29 @@ async function answerOfficialDocumentQuestion(
     // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
     // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
     // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
-    const unavailable = requiredRule && validated.kind === "insufficient" && validated.reason === "model_insufficient" ? requiredRule.unavailable : UNCLEAR_ANSWER;
-    const unavailableSource = unavailable === UNCLEAR_ANSWER ? "unsure" : "scope_guide";
+    // Keep source/log routing explicit for the reply-state contract scanner.
+    // Both branches store the same final that they log and return.
+    if (requiredRule && validated.kind === "insufficient" && validated.reason === "model_insufficient") {
+      const answer = requiredRule.unavailable;
+      if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+        answer, source: "scope_guide", ...ragObservation("official", question, validated, evidence),
+      }, llm));
+      await deps.log({
+        userId, question, questionNorm, matchPath: "scope_guide", answer,
+        inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+        ...ragObservation("official", question, validated, evidence),
+      });
+      return { status: 200, answer, source: "scope_guide", remaining };
+    }
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: unavailable, source: unavailableSource, ...ragObservation("official", question, validated, evidence),
+      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
-      userId, question, questionNorm, matchPath: unavailableSource, answer: unavailable,
+      userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
       ...ragObservation("official", question, validated, evidence),
     });
-    return { status: 200, answer: unavailable, source: unavailableSource, remaining };
+    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.

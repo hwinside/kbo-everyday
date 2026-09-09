@@ -6,7 +6,7 @@ import { writeFileSync } from "node:fs";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
-import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, unresolvedRecordSubject, readTransferPeriodContext, requiredAnswerCounter, hasPostseasonCutoff, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
+import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, asksTeamRecordSubscope, unresolvedRecordSubject, readTransferPeriodContext, requiredAnswerCounter, hasPostseasonCutoff, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
 import { requiredRuleEvidence, selectRequiredRuleEvidence } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import type { StandingsSnapshot } from "../../src/lib/baseball-qa/stats/team-record";
@@ -125,11 +125,15 @@ async function deterministic() {
   assert.equal(typo.source, "scope_guide"); assert.doesNotMatch(typo.answer, /승\s*\d+패/);
   const pair = await answerQuestion("qa-v2-memory", "한화 두산 전적", harness().deps);
   assert.match(pair.answer, /한화/); assert.match(pair.answer, /두산/); assert.match(pair.answer, /상대전적/);
-  for (const q of ["두산 홈 전적", "한화 원정 전적", "두산 8월 전적", "LG 9월 전적", "두산 주말 전적"]) {
+  for (const q of ["두산 홈 전적", "한화 원정 전적", "두산 8월 전적", "LG 9월 전적", "두산 주말 전적", "두산 홈에서 전적 어때", "한화 원정에서 전적 어때"]) {
     const h = harness(); const r = await answerQuestion("qa-v2-memory", q, h.deps);
     assert.equal(r.source, "scope_guide"); assert.match(r.answer, /구간/);
     assert.doesNotMatch(r.answer, /구단명 일부를 확인하지 못/); assert.equal(h.calls.standings, 0);
   }
+  assert.equal(asksTeamRecordSubscope("두산 홈런 전적"), false, "홈런 was classified as home games");
+  assert.equal(unresolvedRecordSubject("두산 홈런 전적", TEAMS), false, "A known metric was classified as an unknown club");
+  const homeRuns = await answerQuestion("qa-v2-memory", "두산 홈런 전적", harness().deps);
+  assert.doesNotMatch(homeRuns.answer, /구단명 일부를 확인하지 못|구간을 분리/);
   for (const answer of ["상위 5위까지 진출합니다.", "상위5위까지 진출합니다.", "상위 5개 팀이 진출합니다.", "상위 다섯 팀이 진출합니다.", "상위 5구단이 진출합니다."]) assert.equal(hasPostseasonCutoff(answer), true);
   assert.equal(hasPostseasonCutoff("5개 안타를 친 상위 팀이 진출합니다."), false);
   const cutoff = harness(null, raw("정규시즌 상위 5개 팀이 포스트시즌에 진출합니다."));
