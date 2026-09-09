@@ -220,6 +220,7 @@ export default function AdminMessagesPage() {
 
   const handleMarkAllRead = async () => {
     if (markingAllReadRef.current || unreadTotal === 0) return;
+    if (!confirm("검색·현재 페이지와 관계없이 운영팀이 받은 안읽은 쪽지 전체를 읽음 처리할까요?\n이 작업은 되돌릴 수 없습니다.")) return;
     markingAllReadRef.current = true;
     setMarkingAllRead(true);
     setReadAllResult(null);
