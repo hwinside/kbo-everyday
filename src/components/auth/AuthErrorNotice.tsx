@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Copy, X } from "lucide-react";
 import {
+  AUTH_ERROR_DIAG_CODES,
   AUTH_ERROR_EVENT,
   AUTH_ERROR_MESSAGES,
   AUTH_ERROR_STORAGE_KEY,
+  buildLoginSupportMailto,
   getUserFacingAuthErrorFromUrl,
+  stripAuthErrorNoticeParams,
   type UserFacingAuthErrorCode,
 } from "@/lib/auth-error";
 
@@ -18,6 +21,25 @@ function isUserFacingAuthErrorCode(
 
 export default function AuthErrorNotice() {
   const [errorCode, setErrorCode] = useState<UserFacingAuthErrorCode | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    };
+  }, []);
+
+  const copyDiagCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard 미지원/권한 거부 — 코드는 화면에 그대로 보이므로 수동 입력 가능
+    }
+  };
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -32,9 +54,22 @@ export default function AuthErrorNotice() {
       sessionStorage.removeItem(AUTH_ERROR_STORAGE_KEY);
     }
 
-    if (url.searchParams.has("auth_error")) {
-      url.searchParams.delete("auth_error");
-      window.history.replaceState(window.history.state, "", url.toString());
+    // Next.js App Router re-syncs the canonical URL during hydration and clobbers
+    // a synchronous (or single-frame) replaceState here, so the strip only survives
+    // on a live build if re-asserted across the hydration window. Verified on
+    // deployment: sync/1-frame strip is reverted; bounded rAF re-assert sticks.
+    let stripRaf: number | null = null;
+    if (stripAuthErrorNoticeParams(url)) {
+      let frames = 0;
+      stripRaf = window.requestAnimationFrame(function applyStrip() {
+        const current = new URL(window.location.href);
+        if (stripAuthErrorNoticeParams(current)) {
+          window.history.replaceState(window.history.state, "", current.toString());
+        }
+        if (++frames < 20) {
+          stripRaf = window.requestAnimationFrame(applyStrip);
+        }
+      });
     }
 
     const handleAuthError = (event: Event) => {
@@ -46,28 +81,55 @@ export default function AuthErrorNotice() {
     };
 
     window.addEventListener(AUTH_ERROR_EVENT, handleAuthError);
-    return () => window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
+    return () => {
+      window.removeEventListener(AUTH_ERROR_EVENT, handleAuthError);
+      if (stripRaf !== null) window.cancelAnimationFrame(stripRaf);
+    };
   }, []);
 
   if (!errorCode) return null;
+
+  const diagCode = AUTH_ERROR_DIAG_CODES[errorCode];
 
   return (
     <div
       role="alert"
       aria-live="assertive"
-      className="fixed left-4 right-4 top-[calc(var(--safe-area-inset-top,env(safe-area-inset-top))+1rem)] z-[12000] mx-auto flex max-w-lg items-start gap-3 rounded-2xl border border-red-500/30 bg-bg-secondary px-4 py-3 shadow-xl"
+      className="fixed left-4 right-4 top-[calc(var(--safe-area-inset-top,env(safe-area-inset-top))+1rem)] z-[12000] mx-auto max-w-lg rounded-2xl border border-red-500/30 bg-bg-secondary px-4 py-3 shadow-xl"
     >
-      <p className="flex-1 text-sm leading-5 text-text-primary">
-        {AUTH_ERROR_MESSAGES[errorCode]}
-      </p>
-      <button
-        type="button"
-        aria-label="안내 닫기"
-        onClick={() => setErrorCode(null)}
-        className="-mr-1 -mt-1 rounded-full p-2 text-text-tertiary"
-      >
-        <X size={18} />
-      </button>
+      <div className="flex items-start gap-3">
+        <p className="flex-1 text-sm leading-5 text-text-primary">
+          {AUTH_ERROR_MESSAGES[errorCode]}
+        </p>
+        <button
+          type="button"
+          aria-label="안내 닫기"
+          onClick={() => setErrorCode(null)}
+          className="-mr-1 -mt-1 rounded-full p-2 text-text-tertiary"
+        >
+          <X size={18} />
+        </button>
+      </div>
+      {diagCode && (
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => copyDiagCode(diagCode)}
+            className="flex items-center gap-1.5 rounded-lg border border-border bg-bg-primary px-2.5 py-1.5 font-mono text-xs text-text-secondary"
+            aria-label={`진단코드 ${diagCode} 복사`}
+          >
+            {diagCode}
+            <Copy size={12} className="text-text-tertiary" />
+            {copied && <span className="text-[10px] text-green-400">복사됨</span>}
+          </button>
+          <a
+            href={buildLoginSupportMailto(diagCode)}
+            className="rounded-lg border border-border px-2.5 py-1.5 text-xs text-text-secondary"
+          >
+            문의하기
+          </a>
+        </div>
+      )}
     </div>
   );
 }
