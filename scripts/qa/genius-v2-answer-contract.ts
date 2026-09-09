@@ -2,7 +2,7 @@
  * --live --out=<path> records read-only retrieval/model diagnostics in memory;
  * it never adopts production logging, cache, quota or conversation writes. */
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
@@ -137,8 +137,18 @@ async function deterministic() {
   for (const answer of ["상위 5위까지 진출합니다.", "상위5위까지 진출합니다.", "상위 5개 팀이 진출합니다.", "상위 다섯 팀이 진출합니다.", "상위 5구단이 진출합니다."]) assert.equal(hasPostseasonCutoff(answer), true);
   assert.equal(hasPostseasonCutoff("5개 안타를 친 상위 팀이 진출합니다."), false);
   const cutoff = harness(null, raw("정규시즌 상위 5개 팀이 포스트시즌에 진출합니다."));
-  cutoff.deps.searchOfficialRag = async () => [{ ...EVIDENCE, content: "정규시즌 상위 5개 팀이 포스트시즌에 진출한다." }];
+  // This is a quantity-wording fixture, not a quotation of the real regulation.
+  // The new policy route also requires matching chapter/article provenance.
+  const cutoffSection = "제2장 KBO 와일드카드 결정전 > 제30조 경기방식";
+  cutoff.deps.searchOfficialRag = async () => [{ ...EVIDENCE,
+    sectionPath: EVIDENCE.pageTitle + "#" + cutoffSection,
+    content: EVIDENCE.pageTitle + " / " + cutoffSection + "\n정규시즌 상위 5개 팀이 포스트시즌에 진출한다.",
+  }];
   assert.equal((await answerQuestion("qa-v2-memory", "가을야구 진출 기준", cutoff.deps)).source, "rag");
+  const unscopedCutoff = harness(null, raw("정규시즌 상위 5개 팀이 포스트시즌에 진출합니다."));
+  unscopedCutoff.deps.searchOfficialRag = async () => [{ ...EVIDENCE, content: "정규시즌 상위 5개 팀이 포스트시즌에 진출한다." }];
+  assert.equal((await answerQuestion("qa-v2-memory", "가을야구 진출 기준", unscopedCutoff.deps)).source, "scope_guide");
+  assert.equal(unscopedCutoff.calls.model, 0, "Unscoped rank prose licensed a policy answer");
 
   const req = requiredRuleEvidence("연장 이닝은 몇회가 최대야?", NOW)!;
   const historical = { ...EVIDENCE, pageTitle: "2026 KBO 레코드북", content: "15회 이상 연장전 경기 기록" };
@@ -161,7 +171,17 @@ async function deterministic() {
   assert.deepEqual(selectRequiredRuleEvidence([faGeneral, EVIDENCE], faRequirement), [faGeneral]);
   const qualifiedFa = harness(null, raw("일반 FA 자격의 최초 취득은 정규시즌 활동 요건과 등록일수를 충족해야 합니다."));
   qualifiedFa.deps.searchOfficialRag = async () => [faGeneral];
-  assert.equal((await answerQuestion("qa-v2-memory", "FA 자격 조건은?", qualifiedFa.deps)).source, "rag");
+  assert.equal((await answerQuestion("qa-v2-memory", "FA 자격 조건은?", qualifiedFa.deps)).source, "scope_guide",
+    "General eligibility prose without an operative duration was accepted");
+  assert.equal(qualifiedFa.calls.model, 0);
+  const primaryFa = readFileSync("data/baseball-qa/kbo-required-rules-2026.jsonl", "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line) as { title: string; section: string; text: string; article_number: number })
+    .find((row) => row.article_number === 162 && row.text.includes("\n①"))!;
+  assert.ok(primaryFa, "Missing source-backed FA eligibility fixture");
+  const currentFa = harness(null, raw("2022년 시즌 종료 후부터 일반 FA 자격은 8정규시즌 활동으로 취득합니다."));
+  currentFa.deps.searchOfficialRag = async () => [{ ...EVIDENCE, pageTitle: primaryFa.title,
+    sectionPath: primaryFa.title + "#" + primaryFa.section, content: primaryFa.text }];
+  assert.equal((await answerQuestion("qa-v2-memory", "FA 자격 조건은?", currentFa.deps)).source, "rag");
   assert.equal(requiredRuleEvidence("해외 진출 후 복귀한 선수의 FA 자격 조건은?", NOW), null);
 
   const shared = harness(previous("잠실은 LG와 두산이 같이 써?", "두 팀 모두 잠실을 홈구장으로 사용합니다.", "team_rag"), raw("구장을 함께 쓰더라도 맞대결마다 홈팀과 원정팀을 구분합니다.", "GENERAL"));
