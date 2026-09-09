@@ -636,6 +636,14 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:news-clipping-delivery",
+      "tier": "deploy"
+    },
+    {
+      "name": "qa:news-clipping-delivery:mutations",
+      "tier": "ci"
+    },
+    {
       "name": "qa:news-clip-digest",
       "tier": "deploy"
     },

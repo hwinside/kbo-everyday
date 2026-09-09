@@ -5,7 +5,7 @@
  *  1. **클리핑 필터 이전 분기** — 카드에서 탈락하는 종합기사(`선두 KT, 한화 12-1 완파…(종합)`)도
  *     RAG 근거로는 적재된다. sink 를 *어느* 클리핑 필터 뒤로 옮겨도 RED 여야 한다
  *     (사진/타팀 필터 뒤·제목게이트 앞으로 옮기면 GREEN 이던 결손 — 삼순 P0).
- *  2. **발송 보호** — 적재는 발송이 끝난 뒤에 돌고, 실패해도 던지지 않으며, 예산을 넘기면 멈춘다.
+ *  2. **발송 보호** — 적재는 별도 크론에서 돌고, 실패해도 던지지 않으며, 예산을 넘기면 멈춘다.
  *     문자열이 아니라 실제 함수를 실패/지연 클라이언트로 태워 증명한다.
  *  3. **원자 병합** — team_ids 합집합은 DB 안에서 계산된다. 조회 실패로 덮어쓰는 상태가
  *     존재하지 않고, 동시 실행에서도 합집합이 유실되지 않는다(실제 migration RPC 실행).
@@ -58,6 +58,7 @@ import { RAG_EMBEDDING_DIM } from "../../src/lib/baseball-qa/rag/contracts";
 
 const MIGRATION = "supabase/migrations/20260805180000_baseball_genius_news_articles.sql";
 const CLIPPING_ROUTE = "src/app/api/cron/news-clipping/route.ts";
+const COLLECT_ROUTE = "src/app/api/cron/news-rag-collect/route.ts";
 const CLIPPING_LIB = "src/lib/news-clipping.ts";
 const EMBED_ROUTE = "src/app/api/cron/news-rag-embed/route.ts";
 const NOW = new Date("2026-08-05T09:00:00Z");
@@ -189,41 +190,29 @@ function callPositions(source: ts.SourceFile, names: string[]): Map<string, numb
 }
 
 function verifyWiring(): void {
-  const program = loadProgram([CLIPPING_ROUTE, CLIPPING_LIB, EMBED_ROUTE]);
+  const program = loadProgram([CLIPPING_ROUTE, COLLECT_ROUTE, CLIPPING_LIB, EMBED_ROUTE]);
 
-  // (a) cron route — sink 를 실제로 넘기고, 적재를 **발송 뒤에** 호출한다.
-  const routeSource = program.getSourceFile(path.join(process.cwd(), CLIPPING_ROUTE));
-  assert.ok(routeSource, "cron route 소스를 찾지 못했다");
-
+  // Collection has a separate invocation/budget, so slow or failed delivery
+  // cannot prevent raw candidates and coverage rows from being persisted.
+  const routeSource = program.getSourceFile(path.join(process.cwd(), COLLECT_ROUTE));
+  const deliverySource = program.getSourceFile(path.join(process.cwd(), CLIPPING_ROUTE));
+  assert.ok(routeSource && deliverySource, "daily collector/delivery source missing");
   let sinkArgIdentifier: string | null = null;
   const visitRoute = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "buildTeamClipping" &&
-      node.arguments.length >= 5
-    ) {
-      const arg = node.arguments[4];
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)
+      && node.expression.text === "collectYesterdayCandidates" && node.arguments.length >= 4) {
+      const arg = node.arguments[3];
       if (ts.isIdentifier(arg)) sinkArgIdentifier = arg.text;
     }
     ts.forEachChild(node, visitRoute);
   };
   visitRoute(routeSource!);
-  assert.ok(
-    sinkArgIdentifier,
-    "cron route 가 buildTeamClipping 에 raw 후보 sink 를 넘기지 않는다 — 적재가 영원히 0건이 된다",
-  );
-
-  const routeCalls = callPositions(routeSource!, ["ingestNewsArticles", "sendTeamClipping"]);
-  const ingestPos = routeCalls.get("ingestNewsArticles");
-  const sendPos = routeCalls.get("sendTeamClipping");
-  assert.ok(ingestPos !== undefined, "cron route 가 ingestNewsArticles 를 호출하지 않는다 — 수집만 하고 버린다");
-  assert.ok(sendPos !== undefined, "cron route 가 sendTeamClipping 을 호출하지 않는다 — 발송 경로를 찾을 수 없다");
-  assert.ok(
-    ingestPos! > sendPos!,
-    "적재가 발송보다 앞에 있다 — 적재가 느리면 maxDuration 에 걸려 쪽지가 아예 안 나간다",
-  );
-  pass(`cron route actual binding — sink '${sinkArgIdentifier}' 전달 + 적재는 발송 뒤`);
+  assert.ok(sinkArgIdentifier, "daily collector did not pass the pre-card raw sink");
+  const collectCalls = callPositions(routeSource!, ["ingestNewsArticles", "buildTeamClipping", "sendTeamClipping"]);
+  assert.ok(collectCalls.has("ingestNewsArticles"), "daily collector discarded its collected rows");
+  assert.ok(!collectCalls.has("buildTeamClipping") && !collectCalls.has("sendTeamClipping"), "collection depends on generation/delivery");
+  assert.ok(!callPositions(deliverySource!, ["ingestNewsArticles"]).has("ingestNewsArticles"), "ingest shares the delivery runtime budget");
+  pass(`independent daily collector binding — raw sink '${sinkArgIdentifier}', no delivery dependency`);
 
   // (b) news-clipping — sink 는 카드 전용 필터보다 **앞**, 야구 관련성 가드는 **통과**.
   //     순서만 보면 relevance 를 건너뛴 것도 GREEN 이 되므로 관련성 가드는 별도로 확인한다.
@@ -857,7 +846,7 @@ function verifyBackfillIsolation(): void {
     "백필이 cron 에 등록됐다 — 수동 실행 전용이며 자동 반복은 네이버 호출만 태운다",
   );
   // 반대로 일일 적재·임베딩 cron 은 반드시 등록돼 있어야 한다.
-  assert.ok(registered.includes("/api/cron/news-clipping"), "일일 적재 cron 이 사라졌다");
+  assert.ok(registered.includes("/api/cron/news-rag-collect"), "독립 일일 적재 cron 이 사라졌다");
   assert.ok(registered.includes("/api/cron/news-rag-embed"), "임베딩 cron 이 사라졌다");
   pass("cron 등록 — 백필 미등록 / 일일 적재·임베딩 등록");
 }
