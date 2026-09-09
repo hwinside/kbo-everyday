@@ -5838,7 +5838,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   // These branches never outrank safety, service, quota or correction gates.
   if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "stat_clarify", "career_leaderboard"].includes(baseRoute)
     && !isOutOfScopeIntent(question.normalize("NFKC").toLowerCase(), mentionsTeamForGate(question))) {
-    if (asksTransferPeriod(question)) {
+    if (!isStatDefinitionQuestion(question) && asksTransferPeriod(question)) {
       const currentNames = players.filter((player) => mentionsAnyRosterName(question, [player]));
       const mayBorrow = currentNames.length === 0 && /^(?:이적|트레이드)/.test(question.trim());
       const startsWithTeam = currentNames.length === 0 && TEAM_ALIASES.some((team) => [team.canonical, ...team.shorts, ...team.nicks]
@@ -5853,7 +5853,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       const final: StoredQaFinal = { answer: transferPeriodAnswer(name), source: "scope_guide", ...(transferPeriodContext ? { transferPeriodContext } : {}) };
       return settleThroughDurableBoundary(final, final.answer, { userId, question, questionNorm, remaining, deps });
     }
-    const hypothetical = resolveCounterfactual(question, TEAM_ALIASES);
+    const hypothetical = isStatDefinitionQuestion(question) ? { kind: "none" as const } : resolveCounterfactual(question, TEAM_ALIASES);
     if (hypothetical.kind !== "none") {
       let answer = COUNTERFACTUAL_INPUT_ANSWER;
       let source: StoredQaFinal["source"] = "scope_guide";
@@ -5867,7 +5867,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       }
       return settleThroughDurableBoundary({ answer, source }, answer, { userId, question, questionNorm, remaining, deps });
     }
-    if (unresolvedRecordSubject(question, TEAM_ALIASES)) {
+    if (mentionedTeamCanonicals(question).length === 1 && unresolvedRecordSubject(question, TEAM_ALIASES)) {
       const answer = "전적을 비교할 구단명 일부를 확인하지 못했습니다. 상대전적을 물으신 경우 두 구단명을 정확히 적어 주세요. 인식된 한 구단의 시즌 전적으로 대신 답하지 않겠습니다.";
       return settleThroughDurableBoundary({ answer, source: "scope_guide" }, answer, { userId, question, questionNorm, remaining, deps });
     }
@@ -6132,7 +6132,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     // 단일 구단과 같은 계약: 원값 그대로 · 한 팀이라도 없으면 통째로 fail-close · LLM 미경유.
     // 3개 이상은 열지 않는다(폐쇄집합 2 고정) — 열거 대상이 늘면 질문 의도가 모호해진다.
     const mentionedTeams = mentionedTeamCanonicals(question);
-    if (mentionedTeams.length === 2 && (intent.kind === "query" && intent.metric === "record" || /상대\s*전적|맞대결/.test(question))) {
+    if (mentionedTeams.length === 2 && (intent.kind === "query" && intent.metric === "record" || /상대\s*전적|맞대결\s*전적/.test(question))) {
       return settleTeam(`${mentionedTeams[0]}와 ${mentionedTeams[1]}의 상대전적을 물으셨습니다. 현재 봇의 기록 조회에는 두 팀의 맞대결 집계가 연결되어 있지 않아 수치를 확인하지 못했습니다. 각 구단 페이지의 상대전적에서 확인할 수 있으며, 한 구단의 전체 시즌 전적으로 대신 답하지 않겠습니다.`, "scope_guide");
     }
     // ⚠️ 진입 조건 (2026-08-16 삼순 NO-GO):

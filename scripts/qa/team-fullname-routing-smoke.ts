@@ -1176,14 +1176,14 @@ async function verifyTeamPairEndToEnd() {
   //       B축 **허용 지표 + 맞대결** (주제어 조건이 유일한 방어 — 삭제하면 RED)
   //   그리고 `source !== kbo_structured` 만 보던 것을 **source·answer·logs exact** 로 바꾼다
   //   (`blocked`/`service_redirect`/`error` 로 잘못 끝나도 GREEN 이었다).
-  const forbiddenPairCases: Array<{ question: string; axis: "metric" | "topic"; source: MatchPath; answer: string }> = [
+  const forbiddenPairCases: Array<{ question: string; axis: "metric" | "topic"; source: MatchPath; answer: string | null }> = [
     // A축 — 폐쇄집합 밖 지표
-    { question: "LG와 두산 전적 알려줘", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "LG와 두산 전적 알려줘", axis: "metric", source: "scope_guide", answer: null },
     { question: "엘지랑 두산 팀타율", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
     { question: "엘지랑 두산 홈런", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
     { question: "LG가 두산 상대로 몇 승 했어?", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
-    { question: "엘지랑 두산 맞대결 전적", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
-    { question: "LG 두산 상대전적", axis: "metric", source: "history_hold", answer: TEAM_STAT_HOLD_ANSWER },
+    { question: "엘지랑 두산 맞대결 전적", axis: "metric", source: "scope_guide", answer: null },
+    { question: "LG 두산 상대전적", axis: "metric", source: "scope_guide", answer: null },
     // B축 — **허용 지표 + 미서빙 주제어**. 주제어 조건이 유일한 방어다.
     //   ⚠️ 값 요구어(`몇`·`얼마`)가 붙으면 `resolveTeamRecordIntent` 가 먼저 `unserved` 로
     //     닫아 이 축이 성립하지 않는다(게이트가 먼저 잡았다). 값 요구어 없는 형태만 고른다.
@@ -1196,7 +1196,14 @@ async function verifyTeamPairEndToEnd() {
     await check(`pair 오답 금지 [${c.axis}] "${c.question}"`, async () => {
       const { source, answer, llmCalls, logs, fetchCalls } = await runPair(c.question);
       assert.equal(source, c.source, `${c.question}: source=${source} (기대 ${c.source}) — 답변 "${answer}"`);
-      assert.equal(answer, c.answer, `${c.question}: 안내문 불일치 — "${answer}"`);
+      if (c.answer !== null) assert.equal(answer, c.answer, `${c.question}: 안내문 불일치 — "${answer}"`);
+      else {
+        // V2: both identified clubs survive the limitation answer. It is still
+        // forbidden to answer H2H with either club's season-total statistics.
+        assert.match(answer, /LG/); assert.match(answer, /두산/);
+        assert.match(answer, /상대전적/); assert.match(answer, /집계.*연결되어 있지 않아/);
+        assert.doesNotMatch(answer, /구단명.*확인하지 못|\d+\s*(?:승|패|무|게임)/);
+      }
       assert.deepEqual(logs, [c.source], `${c.question}: log=${JSON.stringify(logs)}`);
       assert.equal(llmCalls, 0, `${c.question}: LLM 을 ${llmCalls}회 태웠다 — 수치 질문 환각 통로`);
       // 조회 자체를 하지 않는다 — 값을 받아놓고 버리면 나중에 누수 통로가 된다.

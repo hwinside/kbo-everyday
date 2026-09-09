@@ -460,6 +460,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-v2-answer-contract",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },

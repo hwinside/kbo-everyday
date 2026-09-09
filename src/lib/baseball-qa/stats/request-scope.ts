@@ -14,6 +14,8 @@ export function readTransferPeriodContext(value: unknown): TransferPeriodContext
  * user's transfer premise. No event date or split statistic is invented. */
 export function asksTransferPeriod(question: string): boolean {
   const q = question.normalize("NFKC");
+  // Explanations/evaluations are not requests for an event-split value.
+  if (/(?:뜻|정의|의미|왜|이유|평가|어때|좋아|나빠|잘하|잘해|못하|못해|부진|활약)/.test(q)) return false;
   return /(?:기록|타율|안타|홈런|타점|성적|방어율|평균자책|출루율|장타율|OPS|ERA|WHIP)/i.test(q)
     && /(?:이적|트레이드)(?:한|하고|을\s*한)?\s*(?:이후|후|뒤)|(?:로|으로|에)\s*(?:오고|온|와서|옮기고|옮긴)\s*(?:나서|이후|후|뒤)/.test(q);
 }
@@ -28,7 +30,7 @@ export function transferPeriodAnswer(playerName?: string): string {
  * semantically by the official prompt; no FA rule is hard-coded here. */
 export function requiredAnswerCounter(question: string): "회" | "위" | null {
   const q = question.normalize("NFKC");
-  if (/몇\s*회|(?:연장|이닝).*(?:최대|한도)|최대.*(?:연장|이닝)/.test(q)) return "회";
+  if (/(?:연장|이닝)/.test(q) && /몇\s*회|최대|한도/.test(q)) return "회";
   if (/몇\s*위.*(?:진출|가을|포스트)|(?:진출|가을|포스트).*몇\s*위|(?:가을야구|포스트시즌)\s*진출\s*(?:기준|조건)/.test(q)) return "위";
   return null;
 }
@@ -58,7 +60,7 @@ export function unresolvedRecordSubject(question: string, teams: readonly ScopeT
   const known = subjects.filter(isTeam);
   const other = subjects.filter((s) => !isTeam(s));
   // These words specify season/league scope, not another subject.
-  return known.length > 0 && other.some((s) => !/^(?:현재|지금|오늘|올해|이번|시즌|정규시즌|전체|통산|역대|최근|\d{4}년?)$/.test(s));
+  return known.length === 1 && other.some((s) => !/^(?:현재|지금|오늘|올해|이번|시즌|정규시즌|전체|통산|역대|최근|맞대결|상대|\d{4}년?)$/.test(s));
 }
 
 export type AssumedResult = "win" | "loss" | "draw";
@@ -71,6 +73,9 @@ export type CounterfactualIntent = { kind: "none" } | { kind: "incomplete" } |
  * they must not fall through to the current standings scalar handler. */
 export function resolveCounterfactual(question: string, teams: readonly ScopeTeam[]): CounterfactualIntent {
   const q = question.normalize("NFKC").toLowerCase();
+  // A general rule ("무승부면 순위는 어떻게 정해?") has no club operands
+  // and stays with official-rule answering, not the simulation input form.
+  if (!teams.some((team) => new RegExp(`(?:^|[\\s,])(?:${teamPattern(team)})(?:은|는|이|가|와|과|랑|이랑)?(?=$|[\\s,?!])`, "i").test(q))) return { kind: "none" };
   if (!/(?:동률|동룰|승률|게임\s*차|경기\s*차|순위|몇\s*위)/.test(q)
     || !/(?:면|경우|가정)/.test(q)
     || !/(?:이기|이겨|지면|지고|져|패배|승리|비기|비겨|무승부)/.test(q)) return { kind: "none" };

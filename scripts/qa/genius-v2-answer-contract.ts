@@ -6,7 +6,7 @@ import { writeFileSync } from "node:fs";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
-import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, unresolvedRecordSubject, readTransferPeriodContext, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
+import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, unresolvedRecordSubject, readTransferPeriodContext, requiredAnswerCounter, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import type { StandingsSnapshot } from "../../src/lib/baseball-qa/stats/team-record";
 
@@ -75,7 +75,7 @@ async function deterministic() {
   for (const q of ["엘지가 지고 기아가 비기지 않으면 동률?", "엘지가 지고 두산이 이기고 기아가 비기면 동률?", "엘지가 2패하고 기아가 비기면 동률?", "2025년 엘지가 지고 기아가 비기면 동률?"]) {
     assert.equal(resolveCounterfactual(q, TEAMS).kind, "incomplete", q);
   }
-  for (const q of ["LG와 KIA 현재 게임차", "무승부면 연장전은 몇 회?", "엘지가 지고 기아가 비기면 팬들은 어떤 반응이야?"]) {
+  for (const q of ["LG와 KIA 현재 게임차", "무승부면 연장전은 몇 회?", "야구 경기 결과가 무승부면 순위는 어떻게 정해?", "엘지가 지고 기아가 비기면 팬들은 어떤 반응이야?"]) {
     assert.equal(resolveCounterfactual(q, TEAMS).kind, "none", q);
   }
   for (const invalid of [
@@ -112,7 +112,10 @@ async function deterministic() {
   const expired = harness({ ...prior, answeredAt: new Date(NOW - 600_001).toISOString() });
   assert.doesNotMatch((await answerQuestion("qa-v2-memory", "기아 이적 후 기록", expired.deps)).answer, /하주석/);
   assert.equal(readTransferPeriodContext({ version: 1, playerId: "oops", playerName: "하주석" }), undefined);
-  for (const q of ["하주석 시즌 타율", "하주석 통산 안타", "이적이 무슨 뜻이야?"]) assert.equal(asksTransferPeriod(q), false);
+  for (const q of ["하주석 시즌 타율", "하주석 통산 안타", "이적이 무슨 뜻이야?", "이적 후 타율은 무슨 뜻이야?", "이적 후 기록이 좋아진 이유가 뭐야?"]) assert.equal(asksTransferPeriod(q), false);
+  assert.equal(requiredAnswerCounter("연장 이닝은 몇회가 최대야?"), "회");
+  assert.equal(requiredAnswerCounter("보크 몇 회면 퇴장당해?"), null);
+  assert.equal(requiredAnswerCounter("도루 시도 몇 회부터 기록돼?"), null);
   assert.equal(unresolvedRecordSubject("힌화 두산 전적", TEAMS), true);
   for (const q of ["한화 두산 전적", "두산 전적", "현재 두산 전적"]) assert.equal(unresolvedRecordSubject(q, TEAMS), false);
   const typo = await answerQuestion("qa-v2-memory", "힌화 두산 전적", harness().deps);
