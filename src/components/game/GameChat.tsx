@@ -14,6 +14,7 @@ import { useBlockedIds, blockUserById } from "@/lib/supabase/useBlock";
 import { supabase } from "@/lib/supabase/client";
 import ReportSheet from "@/components/community/ReportSheet";
 import GifPicker, { isGifComment } from "@/components/community/GifPicker";
+import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import { buildCanonicalGiphyUrl } from "@/lib/community/giphy";
 import { shouldShowVenueBadge, type VenueAttendees } from "@/lib/venue-stories/chat-badge";
 import { useKgwanAutoFocus } from "@/hooks/useKgwanAutoFocus";
@@ -479,6 +480,11 @@ export default function GameChat({ gameId, homeTeamId, awayTeamId, onHide, toggl
         className="border-b border-border bg-bg-secondary/95"
         style={{ backdropFilter: "blur(12px)" }}
       >
+        {canWrite && (
+          <div className="max-w-[640px] mx-auto px-3 pt-1">
+            <EmojiSuggestions inputRef={textareaRef} onChange={setInput} disabled={cooldown} maxLength={120} />
+          </div>
+        )}
         {replyTo && (
           <div className="max-w-[640px] mx-auto px-3 pt-2">
             <div className="flex items-center gap-1.5 rounded-lg bg-bg-tertiary/70 px-2.5 py-1.5 text-xs text-text-tertiary">
