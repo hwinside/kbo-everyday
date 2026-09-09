@@ -6,7 +6,8 @@ import { writeFileSync } from "node:fs";
 import { answerQuestion, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
 import { previousTurnFromSql } from "../../src/lib/baseball-qa/previous-turn-row";
 import { selectContextTurn, type PreviousTurnRow } from "../../src/lib/baseball-qa/context";
-import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, unresolvedRecordSubject, readTransferPeriodContext, requiredAnswerCounter, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
+import { resolveCounterfactual, renderCounterfactual, asksTransferPeriod, unresolvedRecordSubject, readTransferPeriodContext, requiredAnswerCounter, hasPostseasonCutoff, type ScopeTeam } from "../../src/lib/baseball-qa/stats/request-scope";
+import { requiredRuleEvidence, selectRequiredRuleEvidence } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 import type { StandingsSnapshot } from "../../src/lib/baseball-qa/stats/team-record";
 
@@ -23,7 +24,7 @@ const SNAPSHOT: StandingsSnapshot = { fetchedAt: AT, season: 2026, rows: [
   { teamId: 1, teamName: "LG", games: 100, wins: 60, losses: 40, draws: 0, ranking: 1, gamesBehind: 0, winRate: .6 },
   { teamId: 6, teamName: "KIA", games: 101, wins: 60, losses: 41, draws: 0, ranking: 2, gamesBehind: .5, winRate: 60 / 101 },
 ] };
-const EVIDENCE: RagEvidence = { content: "정규시즌 연장전은 최대 12회까지 진행한다.", pageTitle: "QA 규정 fixture", canonicalUrl: "https://www.koreabaseball.com/", revision: "fixture", sectionPath: "연장", asOf: "2026-09-09", sourceGrade: "tier1" };
+const EVIDENCE: RagEvidence = { content: "정규시즌 연장전은 최대 12회까지 진행한다.", pageTitle: "2026 KBO 리그 규정", canonicalUrl: "https://www.koreabaseball.com/", revision: "fixture", sectionPath: "연장", asOf: "2026-09-09", sourceGrade: "tier1" };
 const raw = (answer: string, status = "GROUNDED"): LlmResult => ({ text: JSON.stringify({ status, answer }), inputTokens: 1, outputTokens: 1 });
 const previous = (question: string, answer: string, jobSource = "kbo_structured"): PreviousTurnRow => ({ question, answer, jobSource, answeredAt: AT, currentCreatedAt: new Date(NOW).toISOString() });
 
@@ -94,6 +95,8 @@ async function deterministic() {
   const current = harness();
   const currentReply = await answerQuestion("qa-v2-memory", "엘지랑 기아 몇게임 차야?", current.deps);
   assert.match(currentReply.answer, /0\.5/); assert.doesNotMatch(currentReply.answer, /가정/);
+  const single = await answerQuestion("qa-v2-memory", "엘지가 오늘 지면 몇 위야?", harness().deps);
+  assert.match(single.answer, /경쟁 구단/); assert.doesNotMatch(single.answer, /두 구단.*알려/);
 
   let prior = previous("하주석 타율 몇이야", "하주석 선수 시즌 타율은 0.256입니다.");
   for (const q of ["기아 이적후 기록은???", "기아 이적 후 기록", "하주석이 기아에 이적한 후 기록", "하주석이 기아 이적 후 안타기록", "기아로 오고 나서 기록이야?"]) {
@@ -112,7 +115,7 @@ async function deterministic() {
   const expired = harness({ ...prior, answeredAt: new Date(NOW - 600_001).toISOString() });
   assert.doesNotMatch((await answerQuestion("qa-v2-memory", "기아 이적 후 기록", expired.deps)).answer, /하주석/);
   assert.equal(readTransferPeriodContext({ version: 1, playerId: "oops", playerName: "하주석" }), undefined);
-  for (const q of ["하주석 시즌 타율", "하주석 통산 안타", "이적이 무슨 뜻이야?", "이적 후 타율은 무슨 뜻이야?", "이적 후 기록이 좋아진 이유가 뭐야?"]) assert.equal(asksTransferPeriod(q), false);
+  for (const q of ["하주석 시즌 타율", "하주석 통산 안타", "이적이 무슨 뜻이야?", "이적 후 타율은 무슨 뜻이야?", "이적 후 기록이 좋아진 이유가 뭐야?", "이적 후 기록이 좋은 선수는?"]) assert.equal(asksTransferPeriod(q), false);
   assert.equal(requiredAnswerCounter("연장 이닝은 몇회가 최대야?"), "회");
   assert.equal(requiredAnswerCounter("보크 몇 회면 퇴장당해?"), null);
   assert.equal(requiredAnswerCounter("도루 시도 몇 회부터 기록돼?"), null);
@@ -122,10 +125,53 @@ async function deterministic() {
   assert.equal(typo.source, "scope_guide"); assert.doesNotMatch(typo.answer, /승\s*\d+패/);
   const pair = await answerQuestion("qa-v2-memory", "한화 두산 전적", harness().deps);
   assert.match(pair.answer, /한화/); assert.match(pair.answer, /두산/); assert.match(pair.answer, /상대전적/);
+  for (const q of ["두산 홈 전적", "한화 원정 전적", "두산 8월 전적", "LG 9월 전적", "두산 주말 전적"]) {
+    const h = harness(); const r = await answerQuestion("qa-v2-memory", q, h.deps);
+    assert.equal(r.source, "scope_guide"); assert.match(r.answer, /구간/);
+    assert.doesNotMatch(r.answer, /구단명 일부를 확인하지 못/); assert.equal(h.calls.standings, 0);
+  }
+  for (const answer of ["상위 5위까지 진출합니다.", "상위5위까지 진출합니다.", "상위 5개 팀이 진출합니다.", "상위 다섯 팀이 진출합니다.", "상위 5구단이 진출합니다."]) assert.equal(hasPostseasonCutoff(answer), true);
+  assert.equal(hasPostseasonCutoff("5개 안타를 친 상위 팀이 진출합니다."), false);
+  const cutoff = harness(null, raw("정규시즌 상위 5개 팀이 포스트시즌에 진출합니다."));
+  cutoff.deps.searchOfficialRag = async () => [{ ...EVIDENCE, content: "정규시즌 상위 5개 팀이 포스트시즌에 진출한다." }];
+  assert.equal((await answerQuestion("qa-v2-memory", "가을야구 진출 기준", cutoff.deps)).source, "rag");
+
+  const req = requiredRuleEvidence("연장 이닝은 몇회가 최대야?", NOW)!;
+  const historical = { ...EVIDENCE, pageTitle: "2026 KBO 레코드북", content: "15회 이상 연장전 경기 기록" };
+  const unscoped = { ...EVIDENCE, content: "제46조 경기. 정식경기는 연장전 15회를 마친 경우 성립된다." };
+  const postseason = { ...EVIDENCE, content: "KBO 한국시리즈 연장전은 15회까지 진행한다." };
+  assert.deepEqual(selectRequiredRuleEvidence([historical, unscoped, postseason, EVIDENCE], req), [EVIDENCE]);
+  const postReq = requiredRuleEvidence("포스트시즌 연장 이닝은 몇회가 최대야?", NOW)!;
+  assert.deepEqual(selectRequiredRuleEvidence([historical, unscoped, postseason, EVIDENCE], postReq), [postseason]);
+  assert.deepEqual(selectRequiredRuleEvidence([{ ...EVIDENCE, pageTitle: "2025 KBO 리그 규정" }], req), []);
+  const wrongScope = harness(null, raw("최대 15회까지입니다."));
+  wrongScope.deps.searchOfficialRag = async () => [historical, unscoped];
+  const held = await answerQuestion("qa-v2-memory", "연장 이닝은 몇회가 최대야?", wrongScope.deps);
+  assert.equal(held.source, "scope_guide"); assert.doesNotMatch(held.answer, /15회/); assert.equal(wrongScope.calls.model, 0);
+  const fa = harness(null, raw("해외 복귀 뒤 4 정규시즌을 활동해야 합니다."));
+  fa.deps.searchOfficialRag = async () => [{ ...EVIDENCE, pageTitle: "2026 KBO 야구규약", content: "외국에 진출하였다가 국내로 복귀한 후 4 정규시즌을 활동한 경우 FA자격을 다시 취득한다." }];
+  const faHeld = await answerQuestion("qa-v2-memory", "FA도 자격 조건이 있어? 7년되면 얻어?", fa.deps);
+  assert.equal(faHeld.source, "scope_guide"); assert.match(faHeld.answer, /일반 FA/); assert.equal(fa.calls.model, 0);
+  const faGeneral = { ...EVIDENCE, pageTitle: "2026 KBO 야구규약", content: "일반 FA 자격의 최초 취득은 정규시즌 활동 요건과 등록일수를 충족해야 한다." };
+  const faRequirement = requiredRuleEvidence("FA 자격 조건은?", NOW)!;
+  assert.deepEqual(selectRequiredRuleEvidence([faGeneral, EVIDENCE], faRequirement), [faGeneral]);
+  const qualifiedFa = harness(null, raw("일반 FA 자격의 최초 취득은 정규시즌 활동 요건과 등록일수를 충족해야 합니다."));
+  qualifiedFa.deps.searchOfficialRag = async () => [faGeneral];
+  assert.equal((await answerQuestion("qa-v2-memory", "FA 자격 조건은?", qualifiedFa.deps)).source, "rag");
+  assert.equal(requiredRuleEvidence("해외 진출 후 복귀한 선수의 FA 자격 조건은?", NOW), null);
 
   const shared = harness(previous("잠실은 LG와 두산이 같이 써?", "두 팀 모두 잠실을 홈구장으로 사용합니다.", "team_rag"), raw("구장을 함께 쓰더라도 맞대결마다 홈팀과 원정팀을 구분합니다.", "GENERAL"));
+  const sharedQueries: string[] = [];
+  shared.deps.searchOfficialRag = async (query) => { sharedQueries.push(query); return [EVIDENCE]; };
   await answerQuestion("qa-v2-memory", "둘이 동시에 붙으면 둘다 홈이야?", shared.deps);
   assert.match(JSON.stringify(shared.requests), /직전 질문: 잠실은 LG와 두산이 같이 써/);
+  assert.match(sharedQueries[0], /잠실은 LG와 두산이 같이 써/);
+  assert.match(sharedQueries[0], /둘이 동시에 붙으면 둘다 홈이야/);
+  const independent = harness(previous("잠실은 LG와 두산이 같이 써?", "두 팀 모두 잠실을 홈구장으로 사용합니다.", "team_rag"));
+  const independentQueries: string[] = [];
+  independent.deps.searchOfficialRag = async (query) => { independentQueries.push(query); return [EVIDENCE]; };
+  await answerQuestion("qa-v2-memory", "두 주자가 동시에 같은 베이스에 있으면 누구에게 권리가 있어?", independent.deps);
+  assert.doesNotMatch(independentQueries.join("\n"), /잠실/);
   const noContext = harness();
   await answerQuestion("qa-v2-memory", "연장 이닝은 몇회가 최대야?", noContext.deps);
   assert.doesNotMatch(JSON.stringify(noContext.requests[0]), /직전 질문:/);

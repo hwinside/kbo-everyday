@@ -15,7 +15,7 @@ export function readTransferPeriodContext(value: unknown): TransferPeriodContext
 export function asksTransferPeriod(question: string): boolean {
   const q = question.normalize("NFKC");
   // Explanations/evaluations are not requests for an event-split value.
-  if (/(?:뜻|정의|의미|왜|이유|평가|어때|좋아|나빠|잘하|잘해|못하|못해|부진|활약)/.test(q)) return false;
+  if (/(?:뜻|정의|의미|왜|이유|평가|어때|좋|나쁘|나쁜|나빠|잘하|잘해|못하|못해|부진|활약)/.test(q)) return false;
   return /(?:기록|타율|안타|홈런|타점|성적|방어율|평균자책|출루율|장타율|OPS|ERA|WHIP)/i.test(q)
     && /(?:이적|트레이드)(?:한|하고|을\s*한)?\s*(?:이후|후|뒤)|(?:로|으로|에)\s*(?:오고|온|와서|옮기고|옮긴)\s*(?:나서|이후|후|뒤)/.test(q);
 }
@@ -33,6 +33,20 @@ export function requiredAnswerCounter(question: string): "회" | "위" | null {
   if (/(?:연장|이닝)/.test(q) && /몇\s*회|최대|한도/.test(q)) return "회";
   if (/몇\s*위.*(?:진출|가을|포스트)|(?:진출|가을|포스트).*몇\s*위|(?:가을야구|포스트시즌)\s*진출\s*(?:기준|조건)/.test(q)) return "위";
   return null;
+}
+
+/** A rank cutoff and a number of qualifying teams are equivalent answer
+ * forms; unrelated quantities (e.g. hits) do not satisfy this requirement.
+ * This runs only AFTER the existing numeric grounding validator. */
+export function hasPostseasonCutoff(answer: string): boolean {
+  const number = "(?:\\d+|(?<![가-힣])(?:[일이삼사오육칠팔구십]+|한|두|세|네|다섯|여섯|일곱|여덟|아홉|열))";
+  return new RegExp(`${number}\\s*(?:위|개\\s*(?:팀|구단)|팀|구단)`).test(answer);
+}
+
+/** Location/calendar dimensions are not additional club names. Until this
+ * bot has a split-record data seam, don't replace them with season totals. */
+export function asksTeamRecordSubscope(question: string): boolean {
+  return /전적/.test(question) && /(?:^|\s)(?:홈|원정|\d{1,2}\s*월|주말|주중)(?:\s|전적|의)/.test(question);
 }
 
 export interface ScopeTeam {

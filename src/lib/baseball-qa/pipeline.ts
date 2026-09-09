@@ -2,7 +2,8 @@ import { definitionContextFor, definitionWithEvidence, definitionNumericSource, 
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
 import { readRankPlayerId } from "./stats/rank-request-context";
-import { asksTransferPeriod, transferPeriodAnswer, readTransferPeriodContext, type TransferPeriodContext, unresolvedRecordSubject, resolveCounterfactual, renderCounterfactual, COUNTERFACTUAL_INPUT_ANSWER, COUNTERFACTUAL_DATA_ANSWER, requiredAnswerCounter } from "./stats/request-scope";
+import { asksTransferPeriod, transferPeriodAnswer, readTransferPeriodContext, type TransferPeriodContext, unresolvedRecordSubject, resolveCounterfactual, renderCounterfactual, COUNTERFACTUAL_INPUT_ANSWER, COUNTERFACTUAL_DATA_ANSWER, requiredAnswerCounter, hasPostseasonCutoff, asksTeamRecordSubscope } from "./stats/request-scope";
+import { requiredRuleEvidence, selectRequiredRuleEvidence } from "./rag/required-rule-evidence";
 import { readRosterRemovalContext, resolveRosterRemovalRequest, type RosterRemovalContext, type RemovalTeam } from "./roster/removal-context";
 import type { ServedBatterSnapshot } from "./stats/served-record";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
@@ -4942,11 +4943,22 @@ async function answerOfficialDocumentQuestion(
   context?: ContextTurn | null,
 ): Promise<QaResult | null> {
   let evidence: RagEvidence[];
+  const requiredRule = !definition ? requiredRuleEvidence(question, (deps.now ?? Date.now)()) : null;
+  // A plural demonstrative with no explicit current club needs its two club
+  // operands from the qualified exact prior USER question. Do not mine the
+  // prior bot answer for facts or add its numbers to the grounding license.
+  const relationContext = !definition && context && mentionedTeamCanonicals(question).length === 0
+    && mentionedTeamCanonicals(context.question).length === 2
+    && /^(?:(?:그럼|그러면|근데)\s*)?(?:둘(?:이|은|\s*다)|두\s*팀|두\s*구단|그\s*팀들|서로)(?:\s|[?!.])/.test(question.normalize("NFKC").trim());
+  const searchQuestion = relationContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
-    evidence = selectEvidence(await deps.searchOfficialRag!(definition?.searchQuestion ?? question));
+    const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
+    evidence = selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
   } catch {
+    if (requiredRule) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
     return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
   }
+  if (requiredRule && evidence.length === 0) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
   // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
   if (evidence.length === 0) return null;
   // 공식 문서 경로인데 근거가 tier1이 아니면 계약 위반이다 — 숫자 허용을 쓰지 않는다.
@@ -5020,11 +5032,15 @@ async function answerOfficialDocumentQuestion(
       validated = validateOfficial(llm);
     }
   }
+  // A policy requirement cannot be answered from general knowledge or user
+  // numbers after its evidence has been scoped. Missing policy stays explicit.
+  if (requiredRule && validated.kind === "general") validated = { kind: "insufficient", reason: "model_insufficient" };
   // Completeness cannot waive numeric grounding. Only inspect an already
   // validated answer; missing quantities must not become an empty sourced reply.
   const requiredCounter = !definition ? requiredAnswerCounter(question) : null;
   if (requiredCounter && ((validated.kind === "grounded" || validated.kind === "general")
-      ? !numericQuantityMatches(validated.answer).some((quantity) => quantity.counter === requiredCounter || (requiredCounter === "회" && quantity.counter === "이닝"))
+      ? requiredCounter === "위" ? !hasPostseasonCutoff(validated.answer)
+        : !numericQuantityMatches(validated.answer).some((quantity) => quantity.counter === "회" || quantity.counter === "이닝")
       : validated.kind === "insufficient" && validated.reason === "model_insufficient")) {
     const answer = requiredCounter === "회"
       ? "질문하신 최대 이닝을 확인할 규정 근거가 부족합니다. 시즌과 정규시즌·포스트시즌 등 대회 구분에 맞는 한도를 확인해야 하며, 확인되지 않은 횟수는 단정하지 않겠습니다."
@@ -5058,15 +5074,17 @@ async function answerOfficialDocumentQuestion(
     // 공식 근거로도, 일반 지식으로도 답을 못 만들었다. LLM 호출을 이미 써서 일반 경로 재호출은 안 된다.
     // 폐기 관측을 **envelope 에도 보존**한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash
     // 하면 재생 경로가 관측을 null 로 다시 써서 계측이 유실된다(toneCompliant 와 같은 축).
+    const unavailable = requiredRule && validated.kind === "insufficient" && validated.reason === "model_insufficient" ? requiredRule.unavailable : UNCLEAR_ANSWER;
+    const unavailableSource = unavailable === UNCLEAR_ANSWER ? "unsure" : "scope_guide";
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
-      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
+      answer: unavailable, source: unavailableSource, ...ragObservation("official", question, validated, evidence),
     }, llm));
     await deps.log({
-      userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
+      userId, question, questionNorm, matchPath: unavailableSource, answer: unavailable,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
       ...ragObservation("official", question, validated, evidence),
     });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    return { status: 200, answer: unavailable, source: unavailableSource, remaining };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
@@ -5855,7 +5873,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
     const hypothetical = isStatDefinitionQuestion(question) ? { kind: "none" as const } : resolveCounterfactual(question, TEAM_ALIASES);
     if (hypothetical.kind !== "none") {
-      let answer = COUNTERFACTUAL_INPUT_ANSWER;
+      const assumedTeams = mentionedTeamCanonicals(question);
+      let answer = assumedTeams.length === 1
+        ? `${assumedTeams[0]}의 한 경기 결과만으로는 가정 이후 전체 순위를 확정할 수 없습니다. 경쟁 구단들의 경기 결과와 동률 규정도 필요합니다. 현재 순위를 가정 이후 순위로 대신 안내하지 않겠습니다.`
+        : COUNTERFACTUAL_INPUT_ANSWER;
       let source: StoredQaFinal["source"] = "scope_guide";
       if (hypothetical.kind === "pair") {
         answer = COUNTERFACTUAL_DATA_ANSWER;
@@ -5866,6 +5887,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         } catch { /* A missing baseline is not a claim about actual standings. */ }
       }
       return settleThroughDurableBoundary({ answer, source }, answer, { userId, question, questionNorm, remaining, deps });
+    }
+    if (mentionedTeamCanonicals(question).length > 0 && asksTeamRecordSubscope(question)) {
+      const answer = "요청하신 홈·원정 또는 기간별 전적은 현재 봇의 기록 자료에서 구간을 분리해 확인할 수 없습니다. 구단명을 모르는 문제가 아니며, 해당 구간을 전체 시즌 전적으로 대신 안내하지 않겠습니다.";
+      return settleThroughDurableBoundary({ answer, source: "scope_guide" }, answer, { userId, question, questionNorm, remaining, deps });
     }
     if (mentionedTeamCanonicals(question).length === 1 && unresolvedRecordSubject(question, TEAM_ALIASES)) {
       const answer = "전적을 비교할 구단명 일부를 확인하지 못했습니다. 상대전적을 물으신 경우 두 구단명을 정확히 적어 주세요. 인식된 한 구단의 시즌 전적으로 대신 답하지 않겠습니다.";

@@ -457,8 +457,8 @@ const MUTATIONS = [
   {
     name: "r23 공식 RAG 정의 대상 미전달 — 인용 숫자가 순위표로 흐른다",
     file: PIPELINE,
-    from: "{ context: definition?.context, definition: definition ?? undefined }",
-    to: "{ context: definition?.context, definition: undefined }",
+    from: "{ context: definition?.context ?? context ?? undefined, definition: definition ?? undefined }",
+    to: "{ context: definition?.context ?? context ?? undefined, definition: undefined }",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
@@ -485,7 +485,7 @@ const MUTATIONS = [
   {
     name: "r16 정의 후속 문맥 전달 제거 — 직전 홀드 질문이 모델에 도달하지 않는다",
     file: PIPELINE,
-    from: "{ context: definition?.context, definition: definition ?? undefined }",
+    from: "{ context: definition?.context ?? context ?? undefined, definition: definition ?? undefined }",
     to: "{ context: undefined, definition: definition ?? undefined }",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
