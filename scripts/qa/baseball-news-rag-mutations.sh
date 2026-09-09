@@ -67,20 +67,17 @@ open(p,'w').write(s)
 PY
 }
 
-# M2 — 적재를 발송 앞으로 되돌린다(삼순 P0: 발송 경로 보호).
+# M2 — put ingestion back into the DM invocation (shared runtime budget).
 m2() {
-  python3 - "$ROUTE" <<'PY'
+  python3 - "$ROUTE" <<'PYCODE'
 import sys
 p=sys.argv[1]; s=open(p).read()
-start=s.index("  // 3) 야잘알봇 근거 적재")
-end=s.index("  return NextResponse.json({ ok: true, clipDate, results, ragIngest: ingested });")
-block=s[start:end]
-s=s[:start]+s[end:]
-anchor="  // 2) 발송 — 팀별 전용 클리퍼 계정에서"
-assert anchor in s
-s=s.replace(anchor, block+anchor, 1)
+anchor='  const clipDate = kstDateString(0);'
+assert s.count(anchor)==1
+s='import { ingestNewsArticles } from "@/lib/baseball-qa/rag/news-ingest";\n'+s
+s=s.replace(anchor,anchor+'\n  await ingestNewsArticles(admin, [], clipDate);',1)
 open(p,'w').write(s)
-PY
+PYCODE
 }
 
 # M3 — 적재 실패를 rethrow. 호출측이 try 를 안 감쌌으므로 발송 route 가 통째로 죽는다.

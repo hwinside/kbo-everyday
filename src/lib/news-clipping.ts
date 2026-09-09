@@ -108,11 +108,12 @@ function rosterTitleNames(teamId: number): string[] {
 }
 
 /** 어제(KST) 보도된 팀 관련 기사 후보 수집 — 뉴스카드와 동일 가드 + 사진기사 제외 + 클리핑 제목 게이트 */
-async function collectYesterdayCandidates(
+export async function collectYesterdayCandidates(
   teamShort: string,
   teamId: number,
   yesterday: string,
   onRawCandidates?: RawCandidateSink,
+  deadline = Number.POSITIVE_INFINITY,
 ): Promise<NewsItem[]> {
   const fullName = TEAM_SEARCH[teamShort] || teamShort;
   const mascot = fullName.split(/\s+/).pop() || null;
@@ -124,6 +125,7 @@ async function collectYesterdayCandidates(
   // 나오기 시작하면(date desc 정렬) 그 페이지에서 수집 종료.
   const pages: NewsItem[][] = [];
   for (const start of [1, 101]) {
+    if (Date.now() >= deadline) throw new Error("daily news collection deadline");
     const items = await fetchNaverNews(query, start, 100);
     pages.push(items);
     const last = items[items.length - 1];
@@ -493,7 +495,7 @@ export async function buildTeamClipping(
   if (candidates.length === 0) return null;
 
   const selection = await selectAndSummarize(teamName, yesterday, candidates, standingsText);
-  if (!selection) return null;
+  if (!selection) throw new Error("clipping summary unavailable");
 
   // 선정된 기사에만 OG 썸네일 부착 (언론사 원문 기준 — /api/news와 동일)
   const picked = selection.picks.map((p) => ({ pick: p, item: candidates[p.index - 1] }));
