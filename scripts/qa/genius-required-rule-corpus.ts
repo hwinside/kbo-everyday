@@ -6,8 +6,8 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
-import { requiredRuleEvidence, selectRequiredRuleEvidence } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
+import { answerQuestion, routeQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
+import { requiredRuleEvidence, selectRequiredRuleEvidence, requiredRuleFact } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
 import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const corpus = path.resolve("data/baseball-qa/kbo-required-rules-2026.jsonl");
@@ -96,8 +96,11 @@ async function verifyRuntime() {
   for (const [question, answer, expected] of [
     ["연장 최대 몇 회야?", "KBO 정규시즌 연장전은 11회까지입니다.", "정규시즌"],
     ["포스트시즌 연장 최대 몇 회야?", "KBO 포스트시즌 연장전은 15회까지입니다.", "포스트시즌"],
-    ["FA 자격 조건은?", "일반 FA 자격은 8정규시즌 활동이 필요하며, 현역 등록일수 145일을 기준으로 합니다.", "일반 FA"],
-    ["가을야구 진출 기준", "정규시즌 승률 5위까지 포스트시즌에 참가합니다.", ""],
+    ["FA 자격 조건은?", "2022년 시즌 종료 후부터 일반 FA 자격은 8정규시즌 활동이 필요합니다.", "일반 FA"],
+    ["가을야구 진출 기준", "정규시즌 승률 5위까지 포스트시즌에 참가합니다.", "진출 순위"],
+    ["4년제 대학 졸업하고 프로 오면 FA 몇 시즌 뛰어야 해?", "2022년 시즌 종료 후부터 대학선수로 등록한 4년제 대학 졸업 선수는 7정규시즌 활동으로 FA 자격을 취득합니다.", "일반 FA"],
+    ["FA 한 시즌으로 인정받는 현역 등록일수가 며칠이야?", "2006년 정규시즌부터 현역 등록일수 145일 이상입니다. 이후 최초 등록한 선수는 제3호만 적용합니다.", "일반 FA"],
+    ["포스트시즌은 정규시즌 몇 위까지 올라가?", "정규시즌 5위까지 진출하며 4위와 5위가 와일드카드 결정전을 치릅니다.", "진출 순위"],
   ]) {
     let calls = 0;
     const deps: QaDeps = {
@@ -109,6 +112,13 @@ async function verifyRuntime() {
         calls++;
         const request = buildRagLlmRequest(q, e, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const data = request.contents[0].parts[0].text;
+        if (extras?.ruleRequest?.kind === "fa_general") {
+          assert.ok(extras.ruleRequest.fact, "operative source value omitted from scoped request");
+          assert.ok(data.includes(extras.ruleRequest.fact.quote));
+        } else {
+          assert.equal(request.systemInstruction.parts[0].text, RAG_OFFICIAL_SYSTEM_PROMPT,
+            "FA-only instruction changed an unrelated rule prompt");
+        }
         if (expected) {
           assert.match(data, /<요청 범위/); assert.ok(data.includes(expected));
           scope.add(extras?.ruleRequest?.kind + ":" + extras?.ruleRequest?.competition);
@@ -120,9 +130,65 @@ async function verifyRuntime() {
     assert.equal(result.source, "rag", question + " was not served from the approved evidence");
     assert.ok(result.answer.startsWith(answer)); assert.equal(calls, 1);
   }
-  assert.equal(scope.size, 3);
+  assert.equal(scope.size, 4);
   assert.equal(requiredRuleEvidence("아웃 원인이 뭐야?", NOW), null);
   assert.doesNotMatch(JSON.stringify(buildRagLlmRequest("아웃 원인이 뭐야?", [], RAG_OFFICIAL_SYSTEM_PROMPT)), /<요청 범위/);
+
+  assert.notEqual(routeQuestion("4년제 대학 졸업하고 프로 오면 FA 몇 시즌 뛰어야 해?"), "blocked");
+  assert.equal(routeQuestion("FA 기자회견 몇 시야?"), "blocked", "clock request remains outside scope");
+  assert.equal(routeQuestion("FA 몇 시즌이야? 날씨도 알려줘"), "blocked", "mixed non-baseball request bypassed scope gate");
+  for (const question of ["MLB FA 자격 조건", "해외 복귀 FA 자격", "FA 자격 재취득", "포스트시즌 진출할 확률은?"]) {
+    assert.equal(requiredRuleEvidence(question, NOW), null, question + " overmatched current KBO policy");
+  }
+  const sourceFa = requiredRuleEvidence("FA 자격은 어떻게 얻어?", NOW)!;
+  const sourceDays = requiredRuleEvidence("FA 현역 등록일수가 며칠이야?", NOW)!;
+  const sourceCollege = requiredRuleEvidence("대졸 FA 몇 시즌이야?", NOW)!;
+  for (const [request, value] of [[sourceFa, "8"], [sourceDays, "145"], [sourceCollege, "7"]] as const) {
+    const primary = selectRequiredRuleEvidence(ev, request);
+    assert.equal(requiredRuleFact(primary, request)?.value, value);
+    assert.equal(requiredRuleFact(primary.filter((r) => !r.content.includes("제162조")), request), null);
+  }
+  // Values follow the retrieved operative clause, not an app hard-code. Wrong
+  // year/grade sources remain excluded by the selector before extraction.
+  const changedDays = ev.map((r) => ({ ...r, content: r.content.replace("145일", "146일") }));
+  assert.equal(requiredRuleFact(selectRequiredRuleEvidence(changedDays, sourceDays), sourceDays)?.value, "146");
+  assert.equal(requiredRuleFact(selectRequiredRuleEvidence([...ev, ...changedDays], sourceDays), sourceDays), null,
+    "conflicting operative values accepted by vector rank");
+  const badAnswers = [
+    ["FA 자격은 어떻게 얻어?", "현역 등록일수와 출전 기준에 따라 정규시즌 활동을 인정합니다."],
+    ["FA 현역 등록일수가 며칠이야?", "현역 등록일수가 150일 이상입니다. 연도별로 달리 적용합니다."],
+    ["FA 현역 등록일수가 며칠이야?", "150일 이상입니다. 다만 2006년부터 145일입니다."],
+    ["대졸 FA 몇 시즌이야?", "2022년부터 일반 선수와 같이 8정규시즌입니다."],
+  ];
+  for (const [question, answer] of badAnswers) {
+    let stored: unknown;
+    const deps: QaDeps = {
+      loadGlossary: async () => [], loadPlayers: async () => [], reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+      getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
+      searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
+      callLlm: async () => { throw new Error("generic fallback must not repair policy"); },
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
+    };
+    const result = await answerQuestion("qa-current-criteria", question, deps);
+    assert.equal(result.source, "scope_guide", "obsolete or incomplete policy was served: " + answer);
+    assert.ok(JSON.stringify(stored).includes(result.answer), "durable final differs from served decline");
+  }
+  // Missing primary clause: a bounded second search must fetch it from serving,
+  // never manufacture it from bundled JSONL or the model's own knowledge.
+  for (const recovery of [true, false]) {
+    let searches = 0, calls = 0;
+    const deps: QaDeps = {
+      loadGlossary: async () => [], loadPlayers: async () => [], reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+      getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
+      searchOfficialRag: async () => ++searches === 2 && recovery ? ev : ev.filter((r) => !r.content.includes("① 제25조")),
+      callLlm: async () => { throw new Error("generic fallback"); },
+      callOfficialRagLlm: async () => { calls++; return { text: JSON.stringify({ status: "GROUNDED", answer: "2022년 시즌 종료 후부터 8정규시즌을 활동하면 일반 FA 자격을 취득합니다." }), inputTokens: 1, outputTokens: 1 }; },
+    };
+    const result = await answerQuestion("qa-current-recovery", "FA 자격은 어떻게 얻어?", deps);
+    assert.equal(searches, 2); assert.equal(calls, recovery ? 1 : 0);
+    assert.equal(result.source, recovery ? "rag" : "scope_guide");
+  }
+
   const legacy = { ...ev[0], content: "제46조 경기. 연장전 15회를 마친 경우 성립된다.", sectionPath: "2026 KBO 리그 규정#p48" };
   assert.deepEqual(selectRequiredRuleEvidence([legacy], regular), []);
 }

@@ -3,7 +3,7 @@ import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/d
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
 import { readRankPlayerId } from "./stats/rank-request-context";
 import { asksTransferPeriod, transferPeriodAnswer, readTransferPeriodContext, type TransferPeriodContext, unresolvedRecordSubject, resolveCounterfactual, renderCounterfactual, COUNTERFACTUAL_INPUT_ANSWER, COUNTERFACTUAL_DATA_ANSWER, requiredAnswerCounter, hasPostseasonCutoff, asksTeamRecordSubscope } from "./stats/request-scope";
-import { requiredRuleEvidence, selectRequiredRuleEvidence } from "./rag/required-rule-evidence";
+import { requiredRuleEvidence, selectRequiredRuleEvidence, requiredRuleFact, type RequiredRuleRequest } from "./rag/required-rule-evidence";
 import { readRosterRemovalContext, resolveRosterRemovalRequest, type RosterRemovalContext, type RemovalTeam } from "./roster/removal-context";
 import type { ServedBatterSnapshot } from "./stats/served-record";
 // 야구 용어/룰 질문 3단 파이프라인 (spec: specs/baseball-qa-mvp.md §2, §6)
@@ -1369,7 +1369,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: { kind: "innings" | "fa_general"; season: number; competition?: "regular" | "postseason" } }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: RequiredRuleRequest }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -2018,7 +2018,7 @@ const RULE_TERM_INTENT =
 // 범위 판정은 llm_scope_gate 가 하고(룰 최소화·LLM 위임, 00:53 방향 확정), 실명 환각은
 // name_suggest 가드가, 수치 환각은 프롬프트 근거없음 계약이 각각 이미 막는다.
 const OUT_OF_SCOPE_INTENT =
-  /추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시|시\s*(?:써|하나)|아무거나/;
+  /추천|오늘\s*경기|날씨|주식|코인|요리|프롬프트|비밀번호|영화|메뉴|가방|하늘|음식|맛집|몇\s*시(?!즌)|시\s*(?:써|하나)|아무거나/;
 
 /**
  * 위 denylist 중 **구단이 지명되면 범위 밖이 아닌** 패턴.
@@ -4218,7 +4218,7 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
-  ruleRequest?: { kind: "innings" | "fa_general"; season: number; competition?: "regular" | "postseason" };
+  ruleRequest?: RequiredRuleRequest;
   context?: ContextTurn;
   definition?: StatDefinitionFrame;
   rosterBlock?: string;
@@ -4955,11 +4955,19 @@ async function answerOfficialDocumentQuestion(
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
     evidence = selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
+    if (requiredRule?.kind === "fa_general" && !requiredRuleFact(evidence, requiredRule)) {
+      // One bounded clause-focused search; no local corpus or general-knowledge
+      // fallback. A live serving miss remains a miss, even if the PDF exists.
+      const focused = await deps.searchOfficialRag!(requiredRule.query.split("\n확인할 규정: ")[1]);
+      evidence = selectEvidence(selectRequiredRuleEvidence([...focused, ...searched], requiredRule));
+    }
   } catch {
     if (requiredRule) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
     return null; // 검색 실패는 기존 경로로 양보한다(기능 퇴행 금지).
   }
   if (requiredRule && evidence.length === 0) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
+  const currentRuleFact = requiredRule ? requiredRuleFact(evidence, requiredRule) : null;
+  if (requiredRule?.kind === "fa_general" && !currentRuleFact) return settleThroughDurableBoundary({ answer: requiredRule.unavailable, source: "scope_guide" }, requiredRule.unavailable, { userId, question, questionNorm, remaining, deps });
   // 근거 0건 = 공식 문서에 답이 없는 질문. LLM을 소비하기 전이므로 안전하게 기존 경로로 내려보낸다.
   if (evidence.length === 0) return null;
   // 공식 문서 경로인데 근거가 tier1이 아니면 계약 위반이다 — 숫자 허용을 쓰지 않는다.
@@ -5004,7 +5012,7 @@ async function answerOfficialDocumentQuestion(
     try {
       const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined };
       llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
-        ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition } } : {}),
+        ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
       generatedOfficialNow = true;
     } catch {
@@ -5039,6 +5047,15 @@ async function answerOfficialDocumentQuestion(
   // A policy requirement cannot be answered from general knowledge or user
   // numbers after its evidence has been scoped. Missing policy stays explicit.
   if (requiredRule && validated.kind === "general") validated = { kind: "insufficient", reason: "model_insufficient" };
+  if (currentRuleFact && validated.kind === "grounded") {
+    // Validate AFTER numeric grounding, against the operative source proviso.
+    // The first duration must be the current one, not an obsolete base value.
+    const durationText = currentRuleFact.unit === "시즌" ? validated.answer.replace(/(?:정규\s*)?시즌/g, "회") : validated.answer;
+    const firstDuration = numericQuantityMatches(durationText).find((n) => n.counter === (currentRuleFact.unit === "시즌" ? "회" : "일"));
+    if (firstDuration?.value !== currentRuleFact.value || !validated.answer.includes(String(currentRuleFact.effectiveYear))) {
+      validated = { kind: "insufficient", reason: "model_insufficient" };
+    }
+  }
   // Completeness cannot waive numeric grounding. Only inspect an already
   // validated answer; missing quantities must not become an empty sourced reply.
   const requiredCounter = !definition ? requiredAnswerCounter(question) : null;

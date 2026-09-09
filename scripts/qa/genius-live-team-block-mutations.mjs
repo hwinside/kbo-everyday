@@ -102,8 +102,8 @@ const MUTATIONS = [
   {
     name: "m12 블록을 systemInstruction 으로 승격 — 데이터가 지시가 된다(L5c)",
     file: RETRIEVE,
-    from: "  return {\n    systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\\n${STAT_DEFINITION_PROMPT}` : systemPrompt }] },",
-    to: "  return {\n    systemInstruction: { parts: [{ text: `${extras.definition ? `${systemPrompt}\\n${STAT_DEFINITION_PROMPT}` : systemPrompt}\\n${extras.liveTeamBlock ?? \"\"}` }] },",
+    from: "  return {\n    systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\\n${STAT_DEFINITION_PROMPT}`\n      : extras.ruleRequest?.kind === \"fa_general\" ? `${systemPrompt}\\n${FA_CURRENT_CRITERIA_PROMPT}` : systemPrompt }] },",
+    to: "  return {\n    systemInstruction: { parts: [{ text: (extras.definition ? `${systemPrompt}\\n${STAT_DEFINITION_PROMPT}`\n      : extras.ruleRequest?.kind === \"fa_general\" ? `${systemPrompt}\\n${FA_CURRENT_CRITERIA_PROMPT}` : systemPrompt) + \"\\n\" + (extras.liveTeamBlock ?? \"\") }] },",
   },
   {
     name: "m13 extras 소비 제거 — 블록이 요청에 실리지 않는다(L5/L6b)",
