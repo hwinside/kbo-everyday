@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Heart, MessageCircle, X, ArrowLeft, Flag, Pencil, Trash2, RefreshCw } from "lucide-react";
+import GameReviewCommentSheet from "@/components/game/GameReviewCommentSheet";
 import LoginSheet from "@/components/auth/LoginSheet";
 import TeamLogo from "@/components/ui/TeamLogo";
 import GameReviewIdentity, { ReviewTeamIdentity, reviewTeamStyle } from "@/components/game/GameReviewIdentity";
 import GameReviewNominee from "@/components/game/GameReviewNominee";
 import { useAuth } from "@/lib/supabase/AuthContext";
-import { getSafeSession } from "@/lib/supabase/client";
+import { getSafeSession, supabase } from "@/lib/supabase/client";
 import { blockUserById } from "@/lib/supabase/useBlock";
+import { createReviewTokenReader } from "@/lib/game-reviews/session-token";
 import { reviewDeletionMessage } from "@/lib/game-reviews/policy";
 import { getTeamById } from "@/lib/constants/teams";
 import { canEdit, COMMENT_LIMIT, EDIT_WINDOW_MS, REPORT_REASONS, textLength, validateText, type ReviewContext, type ReviewFeed, type ReviewRow } from "@/lib/game-reviews/domain";
@@ -35,7 +37,6 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const [content, setContent] = useState(""), [playerKey, setPlayerKey] = useState("");
   const [formError, setFormError] = useState(""), [notice, setNotice] = useState("");
   const [reason, setReason] = useState<string>(REPORT_REASONS[0]);
-  const [comments, setComments] = useState<Comment[]>([]), [commentNext, setCommentNext] = useState<number | null>(null);
   const [commentsLoading, setCommentsLoading] = useState(false), [commentsError, setCommentsError] = useState("");
   const [focused, setFocused] = useState<ReviewRow | null>(null);
   const [filter, setFilter] = useState<number | null>(null), filterRef = useRef<number | null>(null);
@@ -46,17 +47,23 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const feed = active?.feed, context = active?.context;
   const policy = feed?.policy;
   const deletionMessage = reviewDeletionMessage(!!policy?.allowRecreateAfterDelete);
-  const sheetOpen = !!sheet;
+  const sheetOpen = !!sheet && sheet.kind !== "comments";
 
+  const tokenReader = useMemo(() => createReviewTokenReader(user?.id ?? null, getSafeSession), [user?.id]);
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => tokenReader.update(session));
+    return () => { subscription.unsubscribe(); tokenReader.update(null); };
+  }, [tokenReader]);
   const request = useCallback(async (path: string, body?: unknown) => {
-    const token = (await getSafeSession())?.access_token;
+    const token = await tokenReader.read();
     const res = await fetch(path, { method: body ? "POST" : "GET", cache: "no-store",
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { "Content-Type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}) });
+    if (res.status === 401) tokenReader.update(null);
     const json = await res.json();
     if (!res.ok) throw new Error(json.error ?? "불러오지 못했어요. 다시 시도해 주세요");
     return json;
-  }, []);
+  }, [tokenReader]);
   const reload = useCallback(async (before?: number, team = filterRef.current) => {
     const sequence = ++feedRequest.current;
     setLoading(true); setError("");
@@ -74,9 +81,9 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   }, [gameId, request, scope, user?.id]);
   useEffect(() => {
     // Auth/game changes must never retain another viewer's private state.
-    setSheet(null); setHistory([]); setComments([]); setFocused(null); setContent(""); setNotice("");
+    setSheet(null); setHistory([]); setFocused(null); setContent(""); setNotice("");
     setFilter(null); filterRef.current = null; void reload();
-    const refresh = () => { setSheet(null); setHistory([]); setComments([]); setFocused(null); commentRequest.current++; void reload(); };
+    const refresh = () => { setSheet(null); setHistory([]); setFocused(null); commentRequest.current++; void reload(); };
     window.addEventListener("kbo:block-changed", refresh);
     return () => { window.removeEventListener("kbo:block-changed", refresh); };
   }, [reload]);
@@ -105,12 +112,11 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
       if (scopeRef.current !== scope || sequence !== commentRequest.current) return;
       if (json.viewerId !== (user?.id ?? null) || !json.feed?.review) throw new Error("현재 댓글을 볼 수 없어요");
       setFocused(json.feed.review);
-      setComments(previous => before ? [...previous, ...json.feed.rows] : json.feed.rows); setCommentNext(json.feed.next);
-    } catch (e) { if (scopeRef.current === scope && sequence === commentRequest.current) { setCommentsError((e as Error).message); setComments([]); setCommentNext(null); setFocused(null); } }
+    } catch (e) { if (scopeRef.current === scope && sequence === commentRequest.current) { setCommentsError((e as Error).message); setFocused(null); } }
     finally { if (scopeRef.current === scope && sequence === commentRequest.current) setCommentsLoading(false); }
   }
   function showFull(review: ReviewRow) { open({ kind: "full", review }); setFocused(null); void loadComments(review); }
-  function showComments(review: ReviewRow) { setFocused(null); open({ kind: "comments", review }); setComments([]); setCommentNext(null); void loadComments(review); }
+  function showComments(review: ReviewRow) { setFocused(null); open({ kind: "comments", review }); }
   async function mutate(body: unknown, done?: () => void) {
     if (busy || !requireLogin()) return;
     setBusy(true); setFormError("");
@@ -133,7 +139,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     finally { setBusy(false); }
   }
   function currentReview(row: ReviewRow) { return (focused?.id === row.id ? focused : null) ?? feed?.rows.find(r => r.id === row.id) ?? feed?.best.find(r => r.id === row.id) ?? (feed?.ownReview?.id === row.id ? feed.ownReview : row); }
-  function card(source: ReviewRow, preview = false) {
+  function card(source: ReviewRow, preview = false, commentContext = false) {
     const row = currentReview(source), own = row.author_id === user?.id;
     return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col p-3 ${preview ? "h-full" : ""}`} style={reviewTeamStyle(row.team_id)}>
       {preview && row.team_id && <div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={row.team_id} /></div>}
@@ -143,7 +149,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
       {row.player_name && <GameReviewNominee name={row.player_name} teamId={row.team_id} playerKey={row.player_key} onNavigate={close} />}
       <div className={`${preview ? "mt-auto pt-2" : "mt-2"} flex flex-wrap items-center gap-1`}>
         <button className={`${button} flex items-center gap-1 px-2 ${row.liked ? "text-[#B42318] dark:text-accent" : "text-text-secondary"}`} aria-label={own ? "내 글 좋아요는 누를 수 없어요" : `좋아요 ${row.like_count}`} aria-pressed={row.liked} disabled={busy || own} onClick={() => void like(row)}><Heart size={16} fill={row.liked ? "currentColor" : "none"} />{row.like_count}</button>
-        <button className={`${button} flex items-center gap-1 px-2 text-text-secondary`} onClick={() => showComments(row)} aria-label={`댓글 ${row.comment_count}개 보기`}><MessageCircle size={16}/>{row.comment_count}</button>
+        {!commentContext && <button className={`${button} flex items-center gap-1 px-2 text-text-secondary`} onClick={() => showComments(row)} aria-label={`댓글 ${row.comment_count}개 보기`}><MessageCircle size={16}/>{row.comment_count}</button>}
         {!preview && (own ? <><button className={button} disabled={!canEdit(row.created_at, row.edit_count, now)} onClick={() => compose(row)}><Pencil size={16}/><span className="sr-only">수정</span></button><button className={button} onClick={() => open({ kind: "delete", review: row })}><Trash2 size={16}/><span className="sr-only">삭제</span></button></> : <button className={button} onClick={() => { if (requireLogin()) open({ kind: "report", target: row.id, targetType: "game_review" }); }}><Flag size={16}/><span className="sr-only">신고</span></button>)}
       </div>
       {!preview && own && <p className="text-xs text-text-secondary">{row.edit_count ? "1회 수정을 사용했어요" : canEdit(row.created_at, row.edit_count, now) ? `수정 가능 ${Math.max(0, Math.ceil((Date.parse(row.created_at) + EDIT_WINDOW_MS - now) / 1000))}초` : "수정 가능 시간이 지났어요"}</p>}
@@ -177,6 +183,16 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
       return best ? card(best, true) : <div key={team} className={`${surface} ${teamBorder} flex min-h-52 min-w-0 flex-col p-3`} style={reviewTeamStyle(team)}><div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={team} /></div><div className="flex flex-1 flex-col items-start gap-2"><MessageCircle size={20} className="text-text-tertiary" aria-hidden="true"/><p className="break-keep text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? <>공감이 모이면 베스트가 생겨요.<br/>{feed.policy.bestMinLikes}개부터 올라요.</> : "아직 한 줄이 없어요."}</p></div></div>;
     })}</div>{entry()}</>}
     {notice && <p role="status" className="mt-2 text-sm text-text-secondary">{notice}</p>}
+    {sheet?.kind === "comments" && <GameReviewCommentSheet
+      key={`${scope}:${sheet.review.id}`}
+      gameId={gameId} reviewId={sheet.review.id} viewerId={user?.id ?? null} teamId={sheet.review.team_id}
+      context={<details className="rounded-xl border border-border p-3">
+        <summary className="cursor-pointer text-xs text-text-secondary">{context && `${teamName(context.awayTeamId)} ${context.score} ${teamName(context.homeTeamId)} · 종료`} · 원글 보기</summary>
+        <div className="mt-3">{card(sheet.review, false, true)}</div>
+      </details>}
+      request={request} onClose={back} onNavigate={close} onChanged={() => { void reload(); }}
+      onReport={id => open({ kind: "report", target: id, targetType: "game_review_comment" })}
+    />}
     <LoginSheet isOpen={login} onClose={() => setLogin(false)}/>
     <dialog ref={dialog} aria-labelledby="game-review-title" onCancel={e => { e.preventDefault(); if (!busy) close(); }} className="fixed inset-x-0 bottom-0 top-auto m-0 mx-auto w-full max-w-lg max-h-[90dvh] rounded-t-3xl border border-border bg-bg-primary p-0 pb-[var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))] text-text-primary backdrop:bg-black/60">
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-bg-primary px-3 py-2">{history.length ? <button className={button} disabled={busy} aria-label="이전 화면" onClick={back}><ArrowLeft size={20}/></button> : <span className="w-11"/>}<h2 ref={heading} tabIndex={-1} id="game-review-title" className="font-bold outline-none">{title}</h2><button className={button} disabled={busy} aria-label="닫기" onClick={close}><X size={20}/></button></header>
@@ -193,8 +209,6 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
           {writing && policy?.nominationMode !== "disabled" && context && (sheet.review?.team_id ?? profile?.team_id) !== context.winnerTeamId && <p className="text-xs text-text-secondary">{context.winnerTeamId ? "수훈선수는 승리팀 팬만 지정할 수 있어요" : "무승부 경기에는 수훈선수를 지정하지 않아요"}</p>}
           <button className={`${primary} w-full`} disabled={busy || !content.trim() || !!inputIssue || composeExpired || needsPlayer}>{busy ? "저장 중…" : "등록"}</button>
         </form>}
-        {sheet?.kind === "comments" && <>{focused?.id === sheet.review.id && card(focused)}{commentsError && <div role="alert">{commentsError}<button className={button} onClick={() => void loadComments(sheet.review)}>다시 시도</button></div>}{commentsLoading && <p role="status">댓글을 불러오는 중이에요</p>}{comments.map(c => <article key={c.id} className={`${surface} p-3`}><div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><GameReviewIdentity authorId={c.author_id} nickname={c.nickname} teamId={c.team_id} avatarUrl={c.avatar_url} onNavigate={close} /></div>{c.author_id === user?.id && <span className="shrink-0 rounded bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">내 댓글</span>}</div><p className="my-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{c.content}</p>{c.author_id === user?.id ? <><button className={button} onClick={() => { open({ kind: "comment_edit", review: sheet.review, comment: c }); setContent(c.content); }}>수정</button><button className={button} onClick={() => open({ kind: "delete", review: sheet.review, comment: c })}>삭제</button></> : <button className={button} onClick={() => { if (requireLogin()) open({ kind: "report", target: c.id, targetType: "game_review_comment" }); }}>신고</button>}</article>)}{commentNext && <button className={`${button} w-full`} disabled={commentsLoading} onClick={() => void loadComments(sheet.review, commentNext)}>댓글 더 보기</button>}{!commentsLoading && !comments.length && !commentsError && <p className="text-sm text-text-secondary">첫 댓글로 함께해 주세요</p>}
-          {user && !commentsError ? <form className="space-y-2" onSubmit={e => { e.preventDefault(); void mutate({ op: "comment", reviewId: sheet.review.id, content }, () => { setContent(""); void loadComments(sheet.review); }); }}><label className="block text-sm">댓글<textarea value={content} onChange={e => setContent(e.target.value)} rows={2} className="mt-1 w-full rounded-xl border border-border bg-bg-secondary p-3 text-base"/></label><p className="text-xs text-text-secondary">{inputIssue} {textLength(content.trim())}/{COMMENT_LIMIT}</p><button className={`${primary} w-full`} disabled={busy || !!inputIssue || !content.trim()}>댓글 남기기</button></form> : !user && <button className={`${primary} w-full`} onClick={() => requireLogin()}>로그인하고 댓글 남기기</button>}</>}
         {sheet?.kind === "delete" && <><p className="text-sm leading-6">{sheet.comment ? "이 댓글을 삭제할까요? 삭제 후 복구할 수 없어요." : deletionMessage}</p><button className={`${primary} w-full`} disabled={busy} onClick={() => void mutate({ op: sheet.comment ? "comment_delete" : "delete", reviewId: sheet.review.id, commentId: sheet.comment?.id }, () => { if (sheet.comment) { back(); void loadComments(sheet.review); } else close(); })}>삭제하기</button></>}
         {sheet?.kind === "report" && <form className="space-y-3" onSubmit={async e => { e.preventDefault(); if (busy || !requireLogin()) return; setBusy(true); setFormError(""); try { await request("/api/report", { targetType: sheet.targetType, targetId: sheet.target, reason }); setSheet({ ...sheet, kind: "reported" }); await reload(); } catch (e) { setFormError((e as Error).message); } finally { setBusy(false); } }}><fieldset><legend className="mb-2 text-sm">신고 사유</legend>{REPORT_REASONS.map(r => <label key={r} className="flex min-h-11 items-center gap-3 text-sm"><input type="radio" name="review-report-reason" checked={reason === r} onChange={() => setReason(r)}/>{r}</label>)}</fieldset><p className="text-xs text-text-secondary">신고한 사람 정보는 상대에게 비공개예요</p><button className={`${primary} w-full`} disabled={busy}>신고 접수</button></form>}
         {sheet?.kind === "reported" && <><p>신고를 접수했어요</p><p className="text-sm text-text-secondary">신고 1건만으로 바로 숨겨지지는 않아요. 서로 다른 사용자 3명이 신고하면 자동으로 숨겨지고, 이후 운영진이 검토해요.</p><button className={`${button} w-full`} onClick={close}>확인</button></>}
