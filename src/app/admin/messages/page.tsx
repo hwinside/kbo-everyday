@@ -111,6 +111,9 @@ export default function AdminMessagesPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [nextCursor, setNextCursor] = useState<InboxCursor | null>(null);
   const [unreadTotal, setUnreadTotal] = useState(0);
+  const [markingAllRead, setMarkingAllRead] = useState(false);
+  const [readAllResult, setReadAllResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const markingAllReadRef = useRef(false);
   const [loadError, setLoadError] = useState(false);
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -150,7 +153,7 @@ export default function AdminMessagesPage() {
     ) => {
       // 더보기가 진행 중일 때 polling/focus refresh는 스킵한다.
       // silent가 append request serial을 무효화하면 버튼이 영구 loading 상태에 남는다.
-      if (silent && loadingMoreRef.current) return;
+      if (markingAllReadRef.current || (silent && loadingMoreRef.current)) return;
       const requestSerial = ++listRequestSerialRef.current;
       if (targetTab === "broadcast") {
         setLoading(false);
@@ -214,6 +217,35 @@ export default function AdminMessagesPage() {
     },
     [getPin]
   );
+
+  const handleMarkAllRead = async () => {
+    if (markingAllReadRef.current || unreadTotal === 0) return;
+    markingAllReadRef.current = true;
+    setMarkingAllRead(true);
+    setReadAllResult(null);
+    // Invalidate older polling/page responses so they cannot restore stale badges.
+    ++listRequestSerialRef.current;
+    loadingMoreRef.current = false;
+    setLoadingMore(false);
+    try {
+      const res = await fetch("/api/admin/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-pin": getPin() },
+        body: JSON.stringify({ action: "mark_all_read" }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.ok) throw new Error("mark all read failed");
+      setReadAllResult({ ok: true, text: `${json.updatedCount}개 쪽지를 읽음 처리했습니다.` });
+      window.dispatchEvent(new Event("admin-dm-read"));
+    } catch {
+      setReadAllResult({ ok: false, text: "읽음 처리하지 못했습니다. 다시 시도해 주세요." });
+    } finally {
+      markingAllReadRef.current = false;
+      // Refetch actual counts, including messages received during the request.
+      await loadConversations("inbox");
+      setMarkingAllRead(false);
+    }
+  };
 
   // PIN 어드민은 Supabase 세션이 없으므로 실시간 채널 대신 가벼워진 첫 페이지를 주기적으로 교체한다.
   // initial load effect보다 먼저 선언해 첫 request 중에도 focus listener가 항상 설치되게 한다.
@@ -569,6 +601,7 @@ export default function AdminMessagesPage() {
         ).map(({ key, label, icon: Icon }) => (
           <button
             key={key}
+            disabled={markingAllRead}
             onClick={() => {
               setTab(key);
               setSelectedConv(null);
@@ -753,20 +786,37 @@ export default function AdminMessagesPage() {
       ) : (
         <>
           {/* 대화 목록 헤더 */}
-          <div className="text-sm text-[#8E8E93]">
-            {loading ? (
-              "로딩 중..."
-            ) : (
-              <>
-                {conversations.length}개 대화
-                {tab === "inbox" && unreadTotal > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-[#8E8E93]">
+            <span>
+              {loading ? (
+                "로딩 중..."
+              ) : (
+                <>
+                  {conversations.length}개 대화
+                  {unreadTotal > 0 && (
                     <span className="ml-1 text-[#FF453A]">
                       · {unreadTotal}개 안 읽음
                     </span>
                   )}
-              </>
-            )}
+                </>
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={handleMarkAllRead}
+              disabled={loading || loadError || markingAllRead || unreadTotal === 0}
+              className="flex items-center gap-2 rounded-lg bg-white/5 px-3 py-2 text-sm hover:bg-white/10 disabled:opacity-40"
+            >
+              {markingAllRead ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {markingAllRead ? "읽음 처리 중..." : "모두 읽음"}
+            </button>
           </div>
+          <p className="text-xs text-[#8E8E93]">단체발송은 목록에서 제외됩니다. 모두 읽음은 모든 페이지의 받은 쪽지에 적용됩니다.</p>
+          {readAllResult && (
+            <p role={readAllResult.ok ? "status" : "alert"} className={`text-sm ${readAllResult.ok ? "text-[#30D158]" : "text-[#FF453A]"}`}>
+              {readAllResult.text}
+            </p>
+          )}
 
           {loading ? (
             <div className="flex items-center justify-center py-32">
@@ -789,6 +839,7 @@ export default function AdminMessagesPage() {
               {conversations.map((conv) => (
                 <button
                   key={conv.id}
+                  disabled={markingAllRead}
                   onClick={() => loadMessages(conv)}
                   className="w-full text-left glass-card p-4 hover:bg-white/5 transition-colors rounded-xl"
                 >
@@ -825,7 +876,7 @@ export default function AdminMessagesPage() {
                 <button
                   type="button"
                   onClick={() => loadConversations("inbox", nextCursor, true)}
-                  disabled={loadingMore}
+                  disabled={loadingMore || markingAllRead}
                   className="w-full rounded-xl border border-white/10 py-3 text-sm text-[#8E8E93] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
                 >
                   {loadingMore ? "불러오는 중..." : "이전 대화 더 보기"}
