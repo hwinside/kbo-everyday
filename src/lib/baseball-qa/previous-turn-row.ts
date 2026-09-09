@@ -18,11 +18,13 @@ export function previousTurnFromSql(row: PreviousTurnRowSql | null | undefined):
   const definitionContext = final?.source === row.job_source ? final?.definitionContext : undefined;
   const rankRequestContext = final?.source === row.job_source ? final?.rankRequestContext : undefined;
   const rosterRemovalContext = final?.source === row.job_source ? final?.rosterRemovalContext : undefined;
+  const transferPeriodContext = final?.source === row.job_source ? final?.transferPeriodContext : undefined;
   return {
     question: row.question, answer: row.answer, jobSource: row.job_source,
     answeredAt: row.answered_at, currentCreatedAt: row.current_created_at,
     ...(definitionContext ? { definitionContext } : {}),
     ...(rankRequestContext ? { rankRequestContext } : {}),
     ...(rosterRemovalContext ? { rosterRemovalContext } : {}),
+    ...(transferPeriodContext ? { transferPeriodContext } : {}),
   };
 }

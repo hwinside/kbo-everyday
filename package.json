@@ -536,6 +536,7 @@
     "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs",
     "qa:genius-stat-definition": "tsx scripts/qa/genius-stat-definition-smoke.ts",
     "qa:genius-period-context": "tsx scripts/qa/genius-period-context-smoke.ts",
+    "qa:genius-v2-answer-contract": "tsx scripts/qa/genius-v2-answer-contract.ts",
     "qa:player-career": "tsx scripts/qa/player-career-smoke.ts",
     "qa:genius-untrusted-metric": "tsx scripts/qa/genius-untrusted-metric-value-ask.ts",
     "qa:genius-untrusted-metric:mutations": "node scripts/qa/genius-untrusted-metric-mutations.mjs",
