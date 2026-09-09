@@ -1369,7 +1369,7 @@ export interface QaDeps {
    */
   searchOfficialRag?: (question: string) => Promise<RagEvidence[]>;
   /** 공식 간행물 근거 전용 재서술 호출. tier1이므로 근거에 적힌 숫자를 쓸 수 있다. */
-  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame }) => Promise<LlmResult>;
+  callOfficialRagLlm?: (question: string, evidence: RagEvidence[], extras?: { context?: ContextTurn; definition?: StatDefinitionFrame; ruleRequest?: { kind: "innings" | "fa_general"; season: number; competition?: "regular" | "postseason" } }) => Promise<LlmResult>;
   /** 수요 기반 ingestion 우선순위용 — 질문이 지목한 source를 기록한다. 실패는 무시한다. */
   recordRagDemand?: (sourceKeys: string[]) => Promise<void>;
   /**
@@ -4218,6 +4218,7 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
 /** 사전에서 정규화 exact 매칭 (term/alias 각각 key·question 두 정규화 레벨로 인덱싱) */
 /** LLM 재서술 호출에 함께 넘기는 부가 맥락 — 직전 턴 + 현재 로스터 블록 (축 A·D). */
 export interface RagLlmExtras {
+  ruleRequest?: { kind: "innings" | "fa_general"; season: number; competition?: "regular" | "postseason" };
   context?: ContextTurn;
   definition?: StatDefinitionFrame;
   rosterBlock?: string;
@@ -5001,7 +5002,10 @@ async function answerOfficialDocumentQuestion(
       if (!won) return { status: 202, answer: "", source: "pending", remaining };
     }
     try {
-      llm = await deps.callOfficialRagLlm!(question, evidence, { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined });
+      const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined };
+      llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
+        ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition } } : {}),
+      });
       generatedOfficialNow = true;
     } catch {
       // LLM 호출 실패. 경계를 이미 소비했을 수 있어 일반 경로로 내려보내지 않는다.

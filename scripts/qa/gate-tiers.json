@@ -468,6 +468,10 @@
       "tier": "deploy"
     },
     {
+      "name": "qa:genius-required-rule-corpus",
+      "tier": "deploy"
+    },
+    {
       "name": "qa:genius-refusal-scope",
       "tier": "ci"
     },

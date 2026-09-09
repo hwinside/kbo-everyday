@@ -55,6 +55,7 @@ const opt = (name, fallback = null) => {
 };
 
 const APPLY = flag("apply");
+const PROTECTED_EGRESS = flag("protected-egress");
 const EMIT_SOURCES = flag("emit-sources");
 const CORPUS = path.resolve(HERE, opt("corpus", "kbo-official.jsonl"));
 const ONLY = opt("only", null);
@@ -63,6 +64,7 @@ const LIMIT_CHUNKS = Number(opt("limit-chunks", "0")) || 0;
 const BATCH = Math.max(1, Math.min(Number(opt("batch", "16")) || 16, 100));
 const LEASE = Math.max(30, Math.min(Number(opt("lease", "900")) || 900, 1800));
 const STATE_PATH = path.resolve(HERE, opt("state", "load-state.json"));
+const PREPARED_OUT = opt("prepared-out", null);
 const RESET_STATE = flag("reset-state");
 // 이미 READY 인 운영 source 를 **재적재 대상으로 되돌린다** (삼순 R4 #1050-1).
 // scoped claim 은 not_started|stale|failed 만 잡으므로, 수정된 로더로 다시 적재하려 해도
@@ -72,7 +74,12 @@ const RESET_STATE = flag("reset-state");
 const REFRESH = flag("refresh");
 
 const EBOOK_BOARD_URL = "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx";
-const MANIFEST_PATH = path.resolve(HERE, "kbo-official-manifest.json");
+const MANIFEST_PATH = path.resolve(HERE, opt("manifest", "kbo-official-manifest.json"));
+const REQUIRED_REVISION = "kbo-required-regulations-v1";
+const REQUIRED_PROFILES = {
+  "2026_리그규정.pdf": { title: "2026 KBO 리그 규정", pages: 106, sha: "9a0c2f21cad8c69b5bbfae3658f3057edbb317feb74c9f2a1dca1931a4d0d156" },
+  "2026_야구규약.pdf": { title: "2026 KBO 야구규약", pages: 268, sha: "127a572cb35b6819f219eea3e5144695403239f4934d36141b40ad63006a9cff" },
+};
 const EMBED_MODEL = "gemini-embedding-2";
 const EMBED_DIM = 768;
 // 원문 해시와 별개인 파서/청킹 계약 버전. 같은 PDF라도 이 값이 바뀌면 1회 재적재한다.
@@ -84,6 +91,17 @@ const sha256 = (text) => crypto.createHash("sha256").update(text, "utf8").digest
 
 // ── env ──────────────────────────────────────────────────────────────────────
 function loadEnv() {
+  if (PROTECTED_EGRESS) {
+    // Gateway-owned opaque sentinels only; never fall back to a plaintext file.
+    for (const key of ["GEMINI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY"]) {
+      if (!/^oc-sent-v2\./.test(process.env[key] ?? "")) throw new Error(`protected_credential_required:${key}`);
+    }
+    if (!process.env.HTTPS_PROXY) throw new Error("protected_proxy_required");
+    const publicUrl = opt("supabase-url", process.env.NEXT_PUBLIC_SUPABASE_URL);
+    const parsed = new URL(publicUrl);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error("protected_supabase_https_origin_required");
+    return { ...process.env, NEXT_PUBLIC_SUPABASE_URL: parsed.origin };
+  }
   const env = { ...process.env };
   const candidates = [
     "/Users/harinclaw/Projects/kbo-everyday/.env.local",
@@ -210,11 +228,16 @@ function loadCorpus() {
     if (row.extractorRevision === "kbo-rulebook-boundaries-v3" && row.atomic !== true) {
       throw new Error(`v3_atomic_flag_missing at line ${lineNo}`);
     }
+    if (row.extractorRevision === REQUIRED_REVISION && row.atomic !== true) throw new Error(`required_atomic_flag_missing at line ${lineNo}`);
     // `section`이 있으면 그대로 실어 보낸다 — prepareDocument가 조문 단위인지 판정하는 유일한 신호다.
     // 여기서 흘리면 조문 입력이 페이지로 뭉개지고, UNIQUE 키 충돌로 조용히 덮어쓰기가 일어난다.
     const section = typeof row.section === "string" && row.section.trim() ? row.section.trim() : null;
     const atomic = row.atomic === true ? {
       atomic: true, pageEnd: Number(row.page_end), extractorRevision: row.extractorRevision,
+      ...(row.extractorRevision === REQUIRED_REVISION ? {
+        sourcePdfSha256: row.sourcePdfSha256, selection: row.selection,
+        documentChunkCount: row.documentChunkCount, documentOrdinal: row.documentOrdinal,
+      } : {}),
     } : {};
     doc.pages.push({ page: Number(row.page ?? doc.pages.length + 1), text, ...(section ? { section } : {}), ...atomic });
   }
@@ -246,6 +269,7 @@ function prepareDocument(doc) {
   const documentContentHash = sha256(atomic ? JSON.stringify(doc.pages.map((p) => ({
     text: p.text, section: p.section, page: p.page, pageEnd: p.pageEnd,
     extractorRevision: p.extractorRevision,
+    ...(p.extractorRevision === REQUIRED_REVISION ? { sourcePdfSha256: p.sourcePdfSha256, documentOrdinal: p.documentOrdinal, documentChunkCount: p.documentChunkCount } : {}),
   }))) : fullClean);
   const revision = `sha256:${documentContentHash.slice(0, 16)}`;
   const asOf = doc.crawledAt.slice(0, 10);
@@ -254,12 +278,26 @@ function prepareDocument(doc) {
   const skips = { page_too_short: 0, chunk_too_short: 0 };
   // section 부여 여부는 문서 단위로 고정한다 — 한 문서 안에서 섮이면 section_path 규칙이 둘로 갈라진다.
   const sectioned = doc.pages.every((p) => typeof p.section === "string" && p.section.trim().length > 0);
-  if (atomic && (doc.file !== "2026_야구규칙.pdf" || doc.title !== "2026 공식야구규칙")) {
+  const atomicRevision = doc.pages[0]?.extractorRevision;
+  const required = atomic && atomicRevision === REQUIRED_REVISION;
+  const requiredProfile = required ? REQUIRED_PROFILES[doc.file] : null;
+  if (required) {
+    if (!requiredProfile || doc.title !== requiredProfile.title || doc.entity !== requiredProfile.title + " 필수 조항"
+      || doc.pagesTotal !== requiredProfile.pages || !doc.canonicalUrlVerified
+      || decodeURI(doc.canonicalUrl) !== "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/" + doc.file
+      || !doc.pages.every((p) => p.selection === "required_articles" && p.sourcePdfSha256 === requiredProfile.sha
+        && p.documentChunkCount === doc.pages.length && Number.isInteger(p.documentOrdinal))
+      || new Set(doc.pages.map((p) => p.documentOrdinal)).size !== doc.pages.length
+      || !doc.pages.every((p, index) => p.documentOrdinal === index)) {
+      throw new Error("invalid_required_supplement: identity, provenance, incomplete or duplicated artifact");
+    }
+    if (APPLY && !PROTECTED_EGRESS) throw new Error("required_supplement_apply_needs_protected_egress");
+  }
+  if (atomic && !required && (doc.file !== "2026_야구규칙.pdf" || doc.title !== "2026 공식야구규칙")) {
     throw new Error("atomic_rulebook_wrong_document");
   }
-  const atomicRevision = doc.pages[0]?.extractorRevision;
   if (atomic && (!sectioned
-    || !["kbo-rulebook-boundaries-v3", "kbo-rulebook-boundaries-v3.1"].includes(atomicRevision)
+    || !["kbo-rulebook-boundaries-v3", "kbo-rulebook-boundaries-v3.1", REQUIRED_REVISION].includes(atomicRevision)
     || !doc.pages.every((p) =>
     p.atomic === true && p.extractorRevision === atomicRevision
     && Number.isInteger(p.page) && p.page > 0
@@ -301,6 +339,7 @@ function prepareDocument(doc) {
         chunkIndex,
         page: page.page,
         ...(atomic ? { pageEnd: page.pageEnd, extractorRevision: page.extractorRevision } : {}),
+        ...(required ? { sourcePdfSha256: page.sourcePdfSha256 } : {}),
         content,
         contentHash: sha256(content),
       });
@@ -362,6 +401,10 @@ function buildSourceRow(p) {
       canonicalUrlVerified: p.canonicalUrlVerified,
       loaderRevision: OFFICIAL_LOADER_REVISION,
       ...(p.doc.pages[0]?.atomic ? { extractorRevision: p.doc.pages[0].extractorRevision } : {}),
+      ...(p.doc.pages[0]?.extractorRevision === REQUIRED_REVISION ? {
+        selection: "required_articles", sourcePdfSha256: p.doc.pages[0].sourcePdfSha256,
+        supplement: true, replacesExistingSource: false,
+      } : {}),
     },
   };
 }
@@ -411,17 +454,21 @@ async function embedBatch(texts, title, apiKey, attempt = 0) {
   };
   let status = 0;
   let detail = "";
+  let retryAfterMs = 0;
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${EMBED_MODEL}:batchEmbedContents`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(60_000),
       },
     );
     status = response.status;
+    const retryAfter = response.headers.get("retry-after");
+    if (retryAfter) retryAfterMs = /^\d+(?:\.\d+)?$/.test(retryAfter)
+      ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now()) || 0;
     if (response.ok) {
       const json = await response.json();
       const vectors = json?.embeddings?.map((entry) => entry?.values);
@@ -435,7 +482,7 @@ async function embedBatch(texts, title, apiKey, attempt = 0) {
       }
       return vectors;
     }
-    detail = (await response.text()).slice(0, 300);
+    detail = PROTECTED_EGRESS ? "provider_request_failed" : (await response.text()).slice(0, 300);
   } catch (error) {
     detail = String(error?.message ?? error);
   }
@@ -444,7 +491,7 @@ async function embedBatch(texts, title, apiKey, attempt = 0) {
   if (!retryable || attempt >= 6) {
     throw new Error(`embed_failed status=${status} attempt=${attempt} ${detail}`);
   }
-  const waitMs = Math.min(60_000, 1_000 * 2 ** attempt) + Math.floor(Math.random() * 500);
+  const waitMs = Math.max(retryAfterMs, Math.min(60_000, 1_000 * 2 ** attempt)) + Math.floor(Math.random() * 500);
   log(`  ! embed retry ${attempt + 1}/6 status=${status} wait=${waitMs}ms ${detail.slice(0, 120)}`);
   await sleep(waitMs);
   return embedBatch(texts, title, apiKey, attempt + 1);
@@ -590,6 +637,11 @@ async function main() {
   if (EMIT_SOURCES) emitSourcesSql(prepared);
 
   if (!APPLY) {
+    if (PREPARED_OUT) {
+      const target = path.resolve(PREPARED_OUT);
+      if ([CORPUS, MANIFEST_PATH, STATE_PATH].includes(target)) throw new Error("prepared_output_overwrites_input_or_state");
+      fs.writeFileSync(target, JSON.stringify({ corpusSha256: sha256(fs.readFileSync(CORPUS, "utf8")), sources: prepared.map((p) => ({ source: buildSourceRow(p), revision: p.revision, documentContentHash: p.documentContentHash, chunks: p.chunks })) }, null, 2) + "\n");
+    }
     log("DRY-RUN 종료 — DB·임베딩 API 호출 없음. 실제 적재는 --apply.");
     log(`소요 ${((Date.now() - started) / 1000).toFixed(1)}s`);
     return;
@@ -747,6 +799,7 @@ async function main() {
               ...(chunk.extractorRevision ? {
                 pageEnd: chunk.pageEnd, extractorRevision: chunk.extractorRevision,
               } : {}),
+              ...(chunk.sourcePdfSha256 ? { sourcePdfSha256: chunk.sourcePdfSha256, selection: "required_articles" } : {}),
               pagesTotal: p.doc.pagesTotal,
               canonicalUrlVerified: p.canonicalUrlVerified,
               embeddingModel: EMBED_MODEL,

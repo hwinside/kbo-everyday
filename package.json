@@ -538,6 +538,7 @@
     "qa:genius-stat-definition": "tsx scripts/qa/genius-stat-definition-smoke.ts",
     "qa:genius-period-context": "tsx scripts/qa/genius-period-context-smoke.ts",
     "qa:genius-v2-answer-contract": "tsx scripts/qa/genius-v2-answer-contract.ts",
+    "qa:genius-required-rule-corpus": "tsx scripts/qa/genius-required-rule-corpus.ts",
     "qa:player-career": "tsx scripts/qa/player-career-smoke.ts",
     "qa:genius-untrusted-metric": "tsx scripts/qa/genius-untrusted-metric-value-ask.ts",
     "qa:genius-untrusted-metric:mutations": "node scripts/qa/genius-untrusted-metric-mutations.mjs",
