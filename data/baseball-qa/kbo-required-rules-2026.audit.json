@@ -1,0 +1,22 @@
+{
+  "league": {
+    "selection": "required_articles_not_full_book",
+    "sourcePdfSha256": "9a0c2f21cad8c69b5bbfae3658f3057edbb317feb74c9f2a1dca1931a4d0d156",
+    "selectedChars": 652,
+    "lostChars": 0,
+    "chunks": 6,
+    "maxChars": 343
+  },
+  "constitution": {
+    "selection": "required_articles_not_full_book",
+    "sourcePdfSha256": "127a572cb35b6819f219eea3e5144695403239f4934d36141b40ad63006a9cff",
+    "selectedChars": 1719,
+    "lostChars": 0,
+    "chunks": 12,
+    "maxChars": 680
+  },
+  "outputSha256": "9778034d1b4b169616495de266417bd45b77f62281dc1bbc46cfe558d006d13a",
+  "parserWarningCount": 378,
+  "sourceIndex": "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx",
+  "sourceSelection": "Declared articles only; separate supplement sources; existing sources unchanged"
+}

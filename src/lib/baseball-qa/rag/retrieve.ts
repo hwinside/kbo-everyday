@@ -928,6 +928,8 @@ export const RAG_NEWS_SYSTEM_PROMPT = [
  * 자료는 user turn 안의 구획된 블록에 넣고, 지시는 systemInstruction에만 둔다.
  */
 export interface RagRequestExtras {
+  /** Typed requested policy scope; never adds source facts or numeric license. */
+  ruleRequest?: { kind: "innings" | "fa_general"; season: number; competition?: "regular" | "postseason" };
   /** Confirmed definition target; term names are data, not prompt instructions. */
   definition?: StatDefinitionFrame;
   /** 직전 user turn Q/A — 항상 로드되며(축 A), 관련성 판단은 프롬프트 지시가 한다. */
@@ -1061,6 +1063,11 @@ export function buildRagLlmRequest(
   }
   if (extras.definition) sections.push(statDefinitionData(definitionWithEvidence(extras.definition,
     evidence.some((row) => row.sourceGrade === "tier1" && row.content.trim().length > 0))));
+  if (extras.ruleRequest) {
+    const scope = extras.ruleRequest.kind === "fa_general" ? "일반 FA 자격 취득 조건"
+      : extras.ruleRequest.competition === "postseason" ? "KBO 포스트시즌 연장 한도" : "KBO 정규시즌 연장 한도";
+    sections.push("<요청 범위 — 답변 대상 데이터>", `${extras.ruleRequest.season}시즌 / ${scope}`, "<요청 범위 끝>");
+  }
   sections.push(`질문: ${question}`);
   return {
     systemInstruction: { parts: [{ text: extras.definition ? `${systemPrompt}\n${STAT_DEFINITION_PROMPT}` : systemPrompt }] },

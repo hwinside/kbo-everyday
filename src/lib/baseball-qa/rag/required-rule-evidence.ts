@@ -41,13 +41,24 @@ export function selectRequiredRuleEvidence(rows: RagEvidence[], request: Require
     const years = title.match(/(?:19|20)\d{2}/g) ?? [];
     if (years.length !== 1 || Number(years[0]) !== request.season) return false;
     const text = row.content.replace(/\s/g, "");
+    const citation = row.sectionPath.replace(/\s/g, "");
+    // Verified supplements preserve a chapter + exact article citation in
+    // sectionPath and copy that same heading into the evidence text. A clause
+    // may legitimately compare two competitions or include historical rules;
+    // those words alone must not reject the correctly scoped primary clause.
+    const headed = row.content.startsWith(row.pageTitle + " / ") && text.includes(citation.split("#").slice(1).join("#"));
     if (request.kind === "fa_general") {
+      const generalArticle = citation.endsWith("#제17장프리에이전트(FA)>제162조[FA자격요건]")
+        || citation.endsWith("#제17장프리에이전트(FA)>제163조[기록의합산]");
+      if (title.includes("야구규약") && headed && generalArticle) return true;
       return title.includes("야구규약") && /FA|프리에이전트/i.test(text)
         && /자격.*취득|취득.*자격/.test(text)
         && /등록일|활동시즌|정규시즌.*활동/.test(text)
         && !/외국에진출|국내로복귀|자격을다시취득/.test(text);
     }
     if (!title.includes("리그규정") || !/연장|이닝/.test(text)) return false;
+    if (request.competition === "regular" && headed
+      && citation.endsWith("#제1장KBO정규시즌>제1조경기방식")) return true;
     // A page's publication year or a bare article number does not establish
     // its competition. Missing chapter context is insufficient evidence.
     return request.competition === "regular"
