@@ -9,6 +9,8 @@ const dir=fs.mkdtempSync(path.join(process.env.OPENCLAW_REVIEW_ROOT||process.env
 const messageInsert=`    INSERT INTO public.dm_messages (conversation_id, sender_id, content, payload, created_at)
     VALUES (v_conversation, p_sender_id, p_content, v_payload, v_now);`;
 const mutations=[
+ ['server timeout removed', "SET statement_timeout = '15s'", ''],
+ ['batch cap widened', 'p_limit NOT BETWEEN 1 AND 200', 'p_limit NOT BETWEEN 1 AND 400'],
  ['missing message',messageInsert,'    PERFORM 1;'],
  ['swallowed message failure',messageInsert,`    BEGIN
 ${messageInsert}

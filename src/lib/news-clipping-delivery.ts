@@ -1,6 +1,6 @@
 /** The RPC is atomic; timeout/unknown response must never fall back to an
  * unclaimed DM insert. Retrying the same delivery day is idempotent. */
-export const CLIPPING_BATCH_SIZE = 400;
+export const CLIPPING_BATCH_SIZE = 200;
 export const CLIPPING_RPC_TIMEOUT_MS = 20_000;
 
 export interface ClippingBatch {

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
-import { runClippingDelivery, CLIPPING_BATCH_SIZE } from "../../src/lib/news-clipping-delivery";
+import { runClippingDelivery, CLIPPING_BATCH_SIZE, CLIPPING_RPC_TIMEOUT_MS } from "../../src/lib/news-clipping-delivery";
 
 const migrationPath = "supabase/migrations/20260909110000_news_clipping_atomic_delivery.sql";
 const sql = readFileSync(process.env.NEWS_CLIPPING_SQL_PATH ?? migrationPath, "utf8");
@@ -38,6 +38,17 @@ async function verifyDatabase() {
       CREATE TRIGGER message_probe AFTER INSERT ON dm_messages FOR EACH ROW EXECUTE FUNCTION probe_message();
     `);
     await db.exec(sql);
+    // Catalog assertion verifies the deployed definition, not just SQL text.
+    // PostgREST must honor this function setting; live HTTP timing is separate QA.
+    const config = (await db.query<{ proconfig: string[]; defaults: string }>(`
+      SELECT proconfig, pg_get_expr(proargdefaults, 0) AS defaults
+      FROM pg_proc WHERE oid =
+        'public.deliver_news_clipping_batch(date,integer,uuid,uuid,uuid[],text,jsonb,text,integer,uuid[])'::regprocedure
+    `)).rows[0];
+    assert.ok(config.proconfig.includes("statement_timeout=15s"), "RPC server timeout missing or changed");
+    assert.ok(15_000 < CLIPPING_RPC_TIMEOUT_MS, "server timeout must precede client abort");
+    assert.equal(CLIPPING_BATCH_SIZE, 200);
+    assert.match(config.defaults, /^200,/, "SQL default must match client batch size");
     const dates = (await db.query<{ day: string; yesterday: string; previous: string }>(`
       SELECT to_char(now() AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS day,
         to_char((now() AT TIME ZONE 'Asia/Seoul')::date-1,'YYYY-MM-DD') AS yesterday,
@@ -97,7 +108,9 @@ async function verifyDatabase() {
     await db.query("INSERT INTO news_clipping_sends VALUES($1::date,$2,9,now())", [dates.day, uuid(903)]);
     assert.equal((await send(9, { ids: [uuid(903)] })).sent, 0);
     await assert.rejects(send(9, { day: dates.yesterday, body: payload(9, dates.previous) }), /invalid current-day/);
-    await assert.rejects(send(9, { limit: 401 }), /invalid current-day/);
+    await assert.rejects(send(9, { limit: CLIPPING_BATCH_SIZE + 1 }), /invalid current-day/);
+    assert.equal((await send(9, { limit: CLIPPING_BATCH_SIZE, ids: [uuid(903)] })).sent, 0);
+    await assert.rejects(send(9, { ids: Array(CLIPPING_BATCH_SIZE + 1).fill(uuid(903)) }), /invalid current-day/);
     await assert.rejects(send(9, { body: { ...payload(9), articles: [] } }), /nonempty/);
 
     // Immutable digest reference and per-recipient intro stay separate.

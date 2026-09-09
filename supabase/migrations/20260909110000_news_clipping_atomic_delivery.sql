@@ -16,12 +16,14 @@ CREATE OR REPLACE FUNCTION public.deliver_news_clipping_batch(
   p_content text,
   p_payload jsonb,
   p_first_intro text,
-  p_limit integer DEFAULT 400,
+  p_limit integer DEFAULT 200,
   p_recipient_ids uuid[] DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
+-- PostgREST function-level timeout, below the client 20s abort budget.
+SET statement_timeout = '15s'
 AS $$
 DECLARE
   v_user record;
@@ -42,9 +44,9 @@ BEGIN
   IF p_clip_date IS DISTINCT FROM (now() AT TIME ZONE 'Asia/Seoul')::date
     OR p_team_id IS NULL OR p_team_id NOT BETWEEN 1 AND 10
     OR p_sender_id IS NULL OR p_system_user_id IS NULL
-    OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 400
+    OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 200
     OR p_excluded_user_ids IS NULL OR cardinality(p_excluded_user_ids) > 32
-    OR (p_recipient_ids IS NOT NULL AND cardinality(p_recipient_ids) > 400)
+    OR (p_recipient_ids IS NOT NULL AND cardinality(p_recipient_ids) > 200)
     OR nullif(btrim(p_content), '') IS NULL
     OR p_payload->>'type' IS DISTINCT FROM 'news_clipping'
     OR p_payload->>'team_id' IS DISTINCT FROM p_team_id::text
