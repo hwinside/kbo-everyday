@@ -156,6 +156,7 @@ check("질문에 실제로 답한 경로는 unavailable 로 분류되지 않는�
     // 최근 기사 RAG. 역시 `composeRagAnswer(...)` 결과라 분류는 같다.
     // 경로를 나눈 이유는 근거 수명(30일)이 달라 감사 축을 분리해야 하기 때문이다(2026-08-08).
     ["news_rag", "generated"],
+    ["scope_guide", "canned"],      // 근거부족 정형 안내
     ["blocked", "canned"],         // UNSUPPORTED_SEASON/UNTRUSTED_METRIC 삼항식
     ["kbo_structured", "generated"], // 운영 DB 원값 렌더 결과
   ]);
