@@ -11,6 +11,11 @@ const SUGGESTIONS = [
   ["😍", "반했어요"],
   ["👍", "최고"],
   ["💪", "힘내요"],
+  ["👀", "눈길"],
+  ["💦", "땀방울"],
+  ["🤬", "화나요"],
+  ["🙏", "기도"],
+  ["🎉", "축하"],
 ] as const;
 
 interface EmojiSuggestionsProps {
