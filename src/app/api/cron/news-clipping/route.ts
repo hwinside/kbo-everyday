@@ -125,6 +125,7 @@ async function sendTeamClipping(
   refPayload: NewsClippingRefPayload | null, deadline: number,
 ): Promise<TeamSendResult> {
   const progress = await runClippingDelivery(async () => {
+    // query-guard: bounded -- RPC returns one scalar JSON summary; SQL rejects batches over 400 recipients.
     const { data, error } = await admin.rpc("deliver_news_clipping_batch", {
       p_clip_date: clipDate, p_team_id: teamId, p_sender_id: senderId,
       p_system_user_id: systemUserId, p_excluded_user_ids: [...NEWS_CLIPPER_IDS],

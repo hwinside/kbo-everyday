@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "28b1fd80659221d4e8f21b7be5aa4e2d188b35c4",
+  "generatedFrom": "d9a767001934043d64063c4949d92415fe3f1472",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -148,13 +148,6 @@
       "file": "src/app/api/venue-stories/route.ts",
       "subject": "profiles",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "20b786bef55b1c0bcb1b": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "news_clipping_sends",
-      "detail": "range pagination must include a full unique order (clip_date + user_id)"
     },
     "2282b961551f1b3fd48b": {
       "count": 1,
@@ -940,13 +933,6 @@
       "subject": "event_leaderboard_snapshot",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
-    "ac36e79f1adfb576dadc": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "dm_conversations",
-      "detail": "range pagination must include a full unique order (id)"
-    },
     "adabe6bdb3e2fb260b44": {
       "count": 1,
       "kind": "unbounded_growing_select",
@@ -1023,20 +1009,6 @@
       "file": "src/lib/notifications/live-activity.ts",
       "subject": "live_activity_game_push_state",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "bdf76cc5268436393b42": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "notification_prefs",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "be23c7666139400d66f6": {
-      "count": 1,
-      "kind": "non_unique_pagination",
-      "file": "src/app/api/cron/news-clipping/route.ts",
-      "subject": "profiles",
-      "detail": "range pagination must include a full unique order (id)"
     },
     "c09a27262f8a1158edf4": {
       "count": 1,
