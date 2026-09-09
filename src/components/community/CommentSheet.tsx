@@ -11,6 +11,7 @@ import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
 import GifPicker from "@/components/community/GifPicker";
+import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
@@ -578,7 +579,7 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
     const target = e.target;
     if (!(target instanceof HTMLElement)) return;
-    if (target.closest("input, textarea")) return;
+    if (target.closest("input, textarea, [aria-label='추천 이모지']")) return;
 
     const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
     const deltaY = e.touches[0].clientY - dragStartY.current;
@@ -862,6 +863,13 @@ export default function CommentSheet({ isOpen, onClose, postId, teamId, onCommen
 
             {/* Input area + GIF Picker overlay */}
             <div className="flex-none relative border-t border-border px-4 py-3" style={{ paddingBottom: "calc(0.75rem + var(--safe-area-inset-bottom, env(safe-area-inset-bottom)))" }}>
+              {user && (
+                <EmojiSuggestions
+                  inputRef={inputRef}
+                  onChange={setInput}
+                  disabled={submitting || uploadingImage || cooldown}
+                />
+              )}
               {/* GIF Picker — pure overlay above input, no layout shift */}
               <AnimatePresence>
                 {showGifPicker && (
