@@ -34,9 +34,17 @@ function pick(name) {
   throw new Error(`${name}: 중괄호 불균형`);
 }
 
+// prepareDocument now depends on the scoped supplement profile as well. Read
+// the real declarations, not a fixture copy, so the legacy atomic checks keep
+// exercising production code with all of its lexical dependencies.
+const profileStart = src.indexOf("const REQUIRED_REVISION =");
+const profileEnd = src.indexOf("const EMBED_MODEL =", profileStart);
+if (profileStart < 0 || profileEnd <= profileStart) throw new Error("required profile declarations missing");
 const prelude = `
 import crypto from "node:crypto";
 const MIN_CHUNK_CHARS = 40, MAX_CHUNK_CHARS = 900, LIMIT_CHUNKS = 0;
+const APPLY = false, PROTECTED_EGRESS = false;
+${src.slice(profileStart, profileEnd)}
 function sha256(t){return crypto.createHash("sha256").update(t,"utf8").digest("hex");}
 function slugify(s){return String(s).trim().toLowerCase().replace(/[^a-z0-9가-힣]+/g,"-").replace(/^-+|-+$/g,"");}
 `;
