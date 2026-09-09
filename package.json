@@ -548,7 +548,8 @@
     "qa:genius-product-feature-guide:mutations": "node scripts/qa/genius-product-feature-guide-mutations.mjs",
     "qa:chat-profanity": "tsx scripts/qa/chat-profanity.mjs",
     "qa:chat-profanity:selftest": "tsx scripts/qa/chat-profanity.mjs --selftest",
-    "qa:admin-game-reviews": "node scripts/qa/admin-game-reviews-smoke.mjs"
+    "qa:admin-game-reviews": "node scripts/qa/admin-game-reviews-smoke.mjs",
+    "qa:game-review-comments": "node scripts/qa/game-review-comments-route.mjs"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",

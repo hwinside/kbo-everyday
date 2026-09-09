@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
+import { gameTeams } from "@/lib/game-reviews/context";
 import { COMMENT_LIMIT, validateText } from "@/lib/game-reviews/domain";
 import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 import { REVIEW_POLICY } from "@/lib/game-reviews/policy";
@@ -15,6 +16,22 @@ export async function GET(req: NextRequest, { params }: Params) {
     const { gameId } = await params;
     const verified = await getVerifiedUserFromRequest(req);
     if (req.headers.has("authorization") && !verified) throw new ReviewError("다시 로그인해 주세요", 401);
+    // Existing parent visibility is checked atomically by gr_feed (game binding,
+    // deleted/hidden parent, blocked author). Reading its comments does not need
+    // a fresh scoreboard/boxscore from the external game-detail pipeline.
+    const parentId = req.nextUrl.searchParams.get("review");
+    if (parentId !== null) {
+      try { gameTeams(gameId); } catch { throw new ReviewError("올바른 경기 정보가 필요해요"); }
+      const before = req.nextUrl.searchParams.get("before");
+      const { data, error } = await supabaseAdmin.rpc("gr_feed", {
+        g: gameId, a: verified?.user.id ?? null, rid: positiveId(parentId),
+        before_id: before === null ? null : positiveId(before), filter_team: null,
+        p_best_min_likes: REVIEW_POLICY.bestMinLikes,
+      });
+      if (error) databaseError(error);
+      const feed = await withAuthorAvatars(data);
+      return reviewJson({ feed: { ...feed, policy: REVIEW_POLICY }, viewerId: verified?.user.id ?? null });
+    }
     const context = await loadReviewContext(gameId);
     if (!context.final) return reviewJson({ context, feed: null, viewerId: verified?.user.id ?? null });
     const cursor = req.nextUrl.searchParams.get("before"), parent = req.nextUrl.searchParams.get("review");
