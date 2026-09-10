@@ -279,5 +279,48 @@ async function verifyQuantityGrounding() {
   }
 }
 
-async function main() { await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
+async function verifyWinParaphrases() {
+  const ev = evidence(rows);
+  const question = "와일드카드 결정전은 몇 위끼리 해?";
+  const request = requiredRuleEvidence(question, NOW)!;
+  const scoped = selectEvidence(selectRequiredRuleEvidence(ev, request));
+  const accepted = "2026시즌 와일드카드 결정전은 4위와 5위 구단 간에 치러집니다. 4위 구단은 한 번의 승리나 무승부만 기록해도 준플레이오프에 진출합니다.";
+  const check = (answer: string, source = scoped, ruleRequest: typeof request | undefined = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:source,ruleRequest});
+  for (const answer of [accepted, "4위 팀은 1번의 승리 또는 무승부만 기록하면 진출합니다.", "5위 구단은 두 번의 승리를 기록해야 진출합니다."]) {
+    assert.equal(check(answer).kind, "grounded", answer);
+  }
+  for (const answer of [
+    "4위 구단은 두 번의 승리를 기록해야 진출합니다.",
+    "5위 구단은 한 번의 승리로 진출합니다.",
+    "5위 구단은 두 번의 승리나 무승부로 진출합니다.",
+    "4위 구단은 한 번의 패배로 진출합니다.",
+    "4위 구단은 한 번의 승리 또는 패배로 진출합니다.",
+    "한 번의 승리로 진출합니다.",
+    accepted + " 한 번 더 도전합니다.",
+    "4위 구단은 상대 팀이 한 번의 승리로 진출합니다.",
+  ]) assert.equal(check(answer).kind, "insufficient", answer);
+  assert.equal(check(accepted, [], request).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer:accepted}),{numericEvidence:true,evidence:scoped}).kind, "insufficient");
+  assert.equal(check(accepted, scoped, {...request,season:2025}).kind, "insufficient");
+  assert.equal(check(accepted, scoped, {...request,postseasonStage:"semi"}).kind, "insufficient");
+  assert.equal(check(accepted, scoped.map(r=>({...r,sourceGrade:"tier2"}))).kind,"insufficient");
+  const changed = scoped.map(r=>({...r,content:r.content.replace("1승 또는 1무승부", "2승 또는 2무승부")}));
+  assert.equal(check(accepted, changed).kind, "insufficient", "hard-coded win requirement");
+  assert.equal(check(accepted, [...scoped,...changed]).kind, "insufficient", "conflicting win requirements");
+  assert.equal(check(accepted.replace("한 번", "두 번"), changed).kind, "grounded", "replacement requirement was not read from evidence");
+  let stored: unknown;
+  const deps: QaDeps = {
+    loadGlossary: async()=>[],loadPlayers:async()=>[],reserveDaily:async()=>({allowed:true,remaining:9}),
+    getCache:async()=>null,setCache:async()=>{},log:async()=>{},now:()=>NOW,
+    searchOfficialRag:async()=>ev,storeLlm:async(result)=>{stored=result;},
+    callLlm:async()=>{throw new Error("generic fallback");},
+    callOfficialRagLlm:async()=>({text:JSON.stringify({status:"GROUNDED",answer:accepted}),inputTokens:1,outputTokens:1}),
+  };
+  const result = await answerQuestion("qa-win-paraphrase", question, deps);
+  assert.equal(result.source,"rag");
+  assert.ok(result.answer.includes("한 번의 승리"),"validation rewrote served answer");
+  assert.ok(JSON.stringify(stored).includes(result.answer),"durable final mismatch");
+}
+
+async function main() { await verifyWinParaphrases(); await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

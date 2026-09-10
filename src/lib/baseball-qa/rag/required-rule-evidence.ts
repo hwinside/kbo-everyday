@@ -187,3 +187,27 @@ export function postseasonTeamCounts(rows: RagEvidence[], request?: RequiredRule
   if (!candidates.length || candidates.some((c) => c.join() !== candidates[0].join())) return [];
   return candidates[0];
 }
+
+/** Narrow WC outcome paraphrase proof. A number appearing elsewhere in the
+ * clause is not enough: bind it to the answer's explicit rank and to the same
+ * retrieved rank's 승/무승부 condition. Conflicting copies fail closed.
+ * Other rounds/first-to-win paraphrases remain outside this verified fix. */
+export function postseasonOutcomeCountMatches(
+  rows: RagEvidence[], request: RequiredRuleRequest, prefix: string, value: string, outcomes: string[],
+): boolean {
+  if (request.kind !== "postseason_entry" || (request.postseasonStage && request.postseasonStage !== "wildcard")) return false;
+  const subjects = [...prefix.matchAll(/(\d+)위\s*(?:구단|팀)(?:은|는|이|가)\s*/g)];
+  const subject = subjects.at(-1);
+  if (!subject || /\d+위|반면|다른|상대|아니/.test(prefix.slice(subject.index! + subject[0].length))) return false;
+  const scoped = selectRequiredRuleEvidence(rows, { ...request, query: "", unavailable: "" })
+    .filter((row) => /제30조/.test(row.sectionPath));
+  if (!scoped.length) return false;
+  const rank = subject[1];
+  return scoped.every((row) => {
+    const text = row.content.replace(/\s/g, "");
+    const pattern = new RegExp(rank + "위구단(?:이|은)(\\d+)승(?:또는(\\d+)무승부)?(?:를|을)기록");
+    const match = text.match(pattern);
+    if (!match) return false;
+    return outcomes.every((outcome) => outcome === "승리" ? match[1] === value : outcome === "무승부" && match[2] === value);
+  });
+}
