@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-/** Reserve the same text/action slots, but only offer expansion for clipped text. */
+/** Reserve a compact two-line text slot, but only offer expansion for clipped text. */
 export default function GameReviewPreviewText({ content, onExpand }: { content: string; onExpand: () => void }) {
   const text = useRef<HTMLParagraphElement>(null);
   const [clipped, setClipped] = useState(false);
@@ -21,10 +21,10 @@ export default function GameReviewPreviewText({ content, onExpand }: { content: 
     return () => { active = false; observer.disconnect(); };
   }, [content]);
 
-  return <>
-    <p ref={text} className="my-3 h-24 shrink-0 line-clamp-4 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{content}</p>
-    <div className="h-11 shrink-0">
+  return <div className="my-1 flex min-w-0 items-center gap-2">
+    <p ref={text} className="h-12 min-w-0 flex-1 line-clamp-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{content}</p>
+    <div className="w-14 shrink-0">
       {clipped && <button className="min-h-11 rounded-xl text-sm font-semibold text-text-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={onExpand}>전문 보기</button>}
     </div>
-  </>;
+  </div>;
 }

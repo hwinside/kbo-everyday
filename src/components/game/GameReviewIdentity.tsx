@@ -14,15 +14,15 @@ export function reviewTeamStyle(teamId: number | null): CSSProperties {
     "--review-team-color-dark": team?.colorLight ?? "var(--border)" } as CSSProperties;
 }
 
-export function ReviewTeamIdentity({ teamId, best = true }: { teamId: number; best?: boolean }) {
+export function ReviewTeamIdentity({ teamId, best = true, compact = false, result }: { teamId: number; best?: boolean; compact?: boolean; result?: string }) {
   const team = getTeamById(teamId);
   if (!team) return null;
   return (
-    <div className="flex min-h-12 min-w-0 items-center gap-2">
+    <div className={`flex min-w-0 items-center gap-2 ${compact ? "min-h-11 shrink-0" : "min-h-12"}`}>
       <TeamLogo team={team} size={32} />
       <div className="min-w-0">
-        <p className="text-sm font-bold text-text-primary">{team.shortName} 팬</p>
-        <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-text-secondary">{best && <Trophy size={12} aria-hidden="true" />}{best ? "BEST" : "팬들의 한 줄"}</p>
+        <p className="text-sm font-bold text-text-primary">{team.shortName} 팬 {result && <span className="rounded bg-bg-tertiary px-1.5 py-0.5 text-xs">{result}</span>}</p>
+        {(!compact || best) && <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-text-secondary">{best && <Trophy size={12} aria-hidden="true" />}{best ? "BEST" : "팬들의 한 줄"}</p>}
       </div>
     </div>
   );

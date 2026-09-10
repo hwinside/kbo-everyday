@@ -6,7 +6,8 @@ import { ChevronRight, UserRound } from "lucide-react";
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import { resolvePlayerIdentity } from "@/lib/utils/resolve-player";
 
-export default function GameReviewNominee({ name, teamId, playerKey, onNavigate }: {
+export default function GameReviewNominee({ name, teamId, playerKey, onNavigate, compact = false }: {
+  compact?: boolean;
   name: string;
   teamId: number | null;
   playerKey: string | null;
@@ -20,6 +21,11 @@ export default function GameReviewNominee({ name, teamId, playerKey, onNavigate 
     return resolved?.teamId === teamId ? resolved : null;
   }, [name, teamId, playerKey]);
   const className = "grid min-h-11 min-w-0 grid-cols-[32px_minmax(0,1fr)] items-center gap-x-2 gap-y-1 rounded-xl border border-[var(--primary-weak-border)] bg-[var(--primary-weak-bg)] p-2 text-text-primary";
+  if (compact) {
+    const compactClass = "flex min-h-11 min-w-0 items-center gap-1 rounded-lg px-1 text-xs text-text-secondary focus-visible:outline-2 focus-visible:outline-accent";
+    const label = <><span className="shrink-0">수훈</span><span className="truncate font-semibold text-text-primary">{name}</span>{player && <ChevronRight size={12} className="shrink-0" />}</>;
+    return player ? <Link href={`/community/players/${player.kboId}`} prefetch={false} onClick={onNavigate} aria-label={`나의 수훈선수 ${name} 선수 상세 보기`} className={compactClass}>{label}</Link> : <div className={compactClass}>{label}</div>;
+  }
   const identity = <>
     <span className="col-span-2 flex items-center justify-between gap-1 text-xs text-text-secondary"><span>나의 수훈선수</span>{player && <ChevronRight size={14} className="shrink-0" aria-hidden="true" />}</span>
     {player ? <PlayerAvatar name={name} teamId={teamId ?? undefined} kboId={player.kboId} size={32} showTeamBadge={false} />

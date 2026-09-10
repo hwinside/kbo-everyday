@@ -151,20 +151,28 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     // A slide may be outside the main list page; keep its optimistic like state too.
     return slideLikes.scope === scope && slideLikes.rows[row.id] ? { ...current, ...slideLikes.rows[row.id] } : current;
   }
+  const winner = context?.final && [context.awayTeamId, context.homeTeamId].includes(context.winnerTeamId ?? -1) ? context.winnerTeamId : null;
+  const orderedTeams = context ? [context.awayTeamId, context.homeTeamId].sort((a, b) => Number(b === winner) - Number(a === winner)) : [];
+  const resultLabel = (team: number) => winner ? (team === winner ? "승" : "패") : (team === context?.awayTeamId ? "원정" : "홈");
   function card(source: ReviewRow, preview = false, commentContext = false, best = true) {
     const row = currentReview(source), own = row.author_id === user?.id;
-    return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col p-3 ${preview ? "flex-1" : ""}`} style={reviewTeamStyle(row.team_id)}>
-      {preview && row.team_id && <div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={row.team_id} best={best} /></div>}
-      <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><GameReviewIdentity authorId={row.author_id} nickname={row.nickname} teamId={row.team_id} avatarUrl={row.avatar_url} compact={preview} onNavigate={close} /></div>{own && !preview && <span className="shrink-0 rounded bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">내 글</span>}</div>
+    return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col ${preview ? "flex-1 p-2" : "p-3"}`} style={reviewTeamStyle(row.team_id)}>
+      <div className={`flex min-w-0 items-center gap-3 ${preview ? "justify-between" : ""}`}>
+        {preview && row.team_id && <ReviewTeamIdentity teamId={row.team_id} best={best} compact result={resultLabel(row.team_id)} />}
+        <div className="min-w-0 flex-1"><GameReviewIdentity authorId={row.author_id} nickname={row.nickname} teamId={row.team_id} avatarUrl={row.avatar_url} compact={preview} onNavigate={close} /></div>
+        {own && !preview && <span className="shrink-0 rounded bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">내 글</span>}
+      </div>
       {preview ? <GameReviewPreviewText content={row.content} onExpand={() => showFull(row)} />
         : <p className="my-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{row.content}</p>}
-      {(preview || row.player_name) && <div className={preview ? "min-h-[74px] shrink-0" : undefined}>
-        {row.player_name && <GameReviewNominee name={row.player_name} teamId={row.team_id} playerKey={row.player_key} onNavigate={close} />}
+      <div className={preview ? "mt-auto flex min-w-0 items-center gap-2" : ""}>
+      {row.player_name && <div className={preview ? "min-w-0 flex-1" : undefined}>
+        <GameReviewNominee name={row.player_name} teamId={row.team_id} playerKey={row.player_key} onNavigate={close} compact={preview} />
       </div>}
-      <div className={`${preview ? "mt-auto grid grid-cols-2 pt-2" : "mt-2 flex flex-wrap"} items-center gap-1`}>
+      <div className={`${preview ? "ml-auto flex shrink-0" : "mt-2 flex flex-wrap"} items-center gap-1`}>
         <button className={`${button} flex min-w-0 items-center gap-1 ${preview ? "px-1!" : "px-2"} ${row.liked ? "text-[#B42318] dark:text-accent" : "text-text-secondary"}`} aria-label={own ? "내 글 좋아요는 누를 수 없어요" : `좋아요 ${row.like_count}`} aria-pressed={row.liked} disabled={busy || own} onClick={() => void like(row)}><Heart size={16} fill={row.liked ? "currentColor" : "none"} />{row.like_count}</button>
         {!commentContext && <button className={`${button} flex min-w-0 items-center gap-1 ${preview ? "px-1!" : "px-2"} text-text-secondary`} onClick={() => showComments(row)} aria-label={`댓글 ${row.comment_count}개 보기`}><MessageCircle size={16}/>{row.comment_count}</button>}
         {!preview && (own ? <><button className={button} disabled={!canEdit(row.created_at, row.edit_count, now)} onClick={() => compose(row)}><Pencil size={16}/><span className="sr-only">수정</span></button><button className={button} onClick={() => open({ kind: "delete", review: row })}><Trash2 size={16}/><span className="sr-only">삭제</span></button></> : <button className={button} onClick={() => { if (requireLogin()) open({ kind: "report", target: row.id, targetType: "game_review" }); }}><Flag size={16}/><span className="sr-only">신고</span></button>)}
+      </div>
       </div>
       {!preview && own && <p className="text-xs text-text-secondary">{row.edit_count ? "1회 수정을 사용했어요" : canEdit(row.created_at, row.edit_count, now) ? `수정 가능 ${Math.max(0, Math.ceil((Date.parse(row.created_at) + EDIT_WINDOW_MS - now) / 1000))}초` : "수정 가능 시간이 지났어요"}</p>}
       {!preview && !own && user && <button className={`${button} self-start text-xs text-text-secondary`} onClick={async () => { if (!window.confirm("이 팬을 차단할까요? 서로의 글을 볼 수 없어요.")) return; if (await blockUserById(user.id, row.author_id)) { close(); setData(null); await reload(undefined, filterRef.current, true); } else setNotice("차단하지 못했어요. 다시 시도해 주세요"); }}>이 팬 차단</button>}
@@ -188,12 +196,12 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     return <button className={`${primary} w-full`} onClick={() => compose()}>내 한 줄 남기기</button>;
   }
   if (!loading && !active && !error) return null;
-  return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-4">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">최고의 한줄평은?</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
+  return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-3">
+    <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">최고의 한줄평은?</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
-    {feed && context && <><div className="mb-3 grid grid-cols-2 items-stretch gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
-      return <GameReviewTeamSlides key={`${scope}:${team}:${slideRevision}`} gameId={gameId} teamId={team}
+    {feed && context && <><div className="mb-2 grid grid-cols-1 auto-rows-fr items-stretch gap-2">{orderedTeams.map(team => {
+      return <GameReviewTeamSlides key={`${scope}:${team}:${slideRevision}`} gameId={gameId} teamId={team} result={resultLabel(team)}
         viewerId={user?.id ?? null} request={request} paused={!!sheet || busy}
         initialPage={!filter && !feed.next ? { rows: feed.rows.filter(row => row.team_id === team), best: feed.best, next: null } : undefined}
         renderCard={row => card(row, true, false, feed.best.some(best => best.id === row.id))} />;
