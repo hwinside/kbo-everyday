@@ -1073,7 +1073,7 @@ export function buildRagLlmRequest(
     evidence.some((row) => row.sourceGrade === "tier1" && row.content.trim().length > 0))));
   if (extras.ruleRequest) {
     const scope = extras.ruleRequest.kind === "fa_general" ? "일반 FA 자격 취득 조건"
-      : extras.ruleRequest.kind === "postseason_entry" ? "KBO 포스트시즌 진출 순위 기준"
+      : extras.ruleRequest.kind === "postseason_entry" ? `KBO ${extras.ruleRequest.postseasonStage ? { wildcard: "와일드카드 결정전", semi: "준플레이오프", playoff: "플레이오프", series: "한국시리즈" }[extras.ruleRequest.postseasonStage] : "포스트시즌"} 진출 순위 기준`
       : extras.ruleRequest.competition === "postseason" ? "KBO 포스트시즌 연장 한도" : "KBO 정규시즌 연장 한도";
     sections.push("<요청 범위 — 답변 대상 데이터>", `${extras.ruleRequest.season}시즌 / ${scope}`, "<요청 범위 끝>");
     if (extras.ruleRequest.fact) {
