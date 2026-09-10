@@ -14,7 +14,7 @@ export function reviewTeamStyle(teamId: number | null): CSSProperties {
     "--review-team-color-dark": team?.colorLight ?? "var(--border)" } as CSSProperties;
 }
 
-export function ReviewTeamIdentity({ teamId }: { teamId: number }) {
+export function ReviewTeamIdentity({ teamId, best = true }: { teamId: number; best?: boolean }) {
   const team = getTeamById(teamId);
   if (!team) return null;
   return (
@@ -22,7 +22,7 @@ export function ReviewTeamIdentity({ teamId }: { teamId: number }) {
       <TeamLogo team={team} size={32} />
       <div className="min-w-0">
         <p className="text-sm font-bold text-text-primary">{team.shortName} 팬</p>
-        <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-text-secondary"><Trophy size={12} aria-hidden="true" />BEST</p>
+        <p className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-text-secondary">{best && <Trophy size={12} aria-hidden="true" />}{best ? "BEST" : "팬들의 한 줄"}</p>
       </div>
     </div>
   );

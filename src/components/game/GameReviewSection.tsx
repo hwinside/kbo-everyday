@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Heart, MessageCircle, X, ArrowLeft, Flag, Pencil, Trash2, RefreshCw } from "lucide-react";
+import GameReviewTeamSlides from "@/components/game/GameReviewTeamSlides";
 import GameReviewCommentSheet from "@/components/game/GameReviewCommentSheet";
 import LoginSheet from "@/components/auth/LoginSheet";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -31,6 +32,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const scope = `${gameId}:${user?.id ?? "guest"}`;
   const scopeRef = useRef(scope); scopeRef.current = scope;
   const [data, setData] = useState<{ scope: string; context: ReviewContext; feed: ReviewFeed } | null>(null);
+  const [slideRevision, setSlideRevision] = useState(0);
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [sheet, setSheet] = useState<Sheet | null>(null), [history, setHistory] = useState<Sheet[]>([]);
   const [login, setLogin] = useState(false), [busy, setBusy] = useState(false);
@@ -73,6 +75,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
       if (scopeRef.current !== scope || sequence !== feedRequest.current) return;
       if (json.viewerId !== (user?.id ?? null)) { setData(null); throw new Error("로그인 상태가 바뀌었어요. 다시 시도해 주세요"); }
       if (!json.feed) { setData(null); return; }
+      if (!before) setSlideRevision(v => v + 1);
       offset.current = Date.parse(json.feed.server_now) - Date.now();
       setData(previous => ({ scope, context: json.context, feed: { ...json.feed,
         rows: before && previous?.scope === scope ? [...previous.feed.rows, ...json.feed.rows].filter((row, index, all) => all.findIndex(r => r.id === row.id) === index) : json.feed.rows } }));
@@ -83,7 +86,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     // Auth/game changes must never retain another viewer's private state.
     setSheet(null); setHistory([]); setFocused(null); setContent(""); setNotice("");
     setFilter(null); filterRef.current = null; void reload();
-    const refresh = () => { setSheet(null); setHistory([]); setFocused(null); commentRequest.current++; void reload(); };
+    const refresh = () => { setSheet(null); setHistory([]); setFocused(null); commentRequest.current++; setSlideRevision(v => v + 1); void reload(); };
     window.addEventListener("kbo:block-changed", refresh);
     return () => { window.removeEventListener("kbo:block-changed", refresh); };
   }, [reload]);
@@ -139,10 +142,10 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     finally { setBusy(false); }
   }
   function currentReview(row: ReviewRow) { return (focused?.id === row.id ? focused : null) ?? feed?.rows.find(r => r.id === row.id) ?? feed?.best.find(r => r.id === row.id) ?? (feed?.ownReview?.id === row.id ? feed.ownReview : row); }
-  function card(source: ReviewRow, preview = false, commentContext = false) {
+  function card(source: ReviewRow, preview = false, commentContext = false, best = true) {
     const row = currentReview(source), own = row.author_id === user?.id;
     return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col p-3 ${preview ? "h-full" : ""}`} style={reviewTeamStyle(row.team_id)}>
-      {preview && row.team_id && <div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={row.team_id} /></div>}
+      {preview && row.team_id && <div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={row.team_id} best={best} /></div>}
       <div className="flex min-w-0 items-center gap-2"><div className="min-w-0 flex-1"><GameReviewIdentity authorId={row.author_id} nickname={row.nickname} teamId={row.team_id} avatarUrl={row.avatar_url} compact={preview} onNavigate={close} /></div>{own && !preview && <span className="shrink-0 rounded bg-[var(--primary-weak-bg)] px-2 py-1 text-xs text-text-primary">내 글</span>}</div>
       <p className={`my-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6 ${preview ? "line-clamp-4" : ""}`}>{row.content}</p>
       {preview && <button className={`${button} self-start px-0 text-text-secondary`} onClick={() => showFull(row)}>전문 보기</button>}
@@ -179,8 +182,9 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
     {feed && context && <><div className="mb-3 grid grid-cols-2 gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
-      const best = feed.best.find(r => r.team_id === team);
-      return best ? card(best, true) : <div key={team} className={`${surface} ${teamBorder} flex min-h-52 min-w-0 flex-col p-3`} style={reviewTeamStyle(team)}><div className="mb-3 border-b border-border pb-2"><ReviewTeamIdentity teamId={team} /></div><div className="flex flex-1 flex-col items-start gap-2"><MessageCircle size={20} className="text-text-tertiary" aria-hidden="true"/><p className="break-keep text-xs leading-5 text-text-secondary">{feed.team_counts?.[team] ? <>공감이 모이면 베스트가 생겨요.<br/>{feed.policy.bestMinLikes}개부터 올라요.</> : "아직 한 줄이 없어요."}</p></div></div>;
+      return <GameReviewTeamSlides key={`${scope}:${team}:${slideRevision}`} gameId={gameId} teamId={team}
+        viewerId={user?.id ?? null} request={request} paused={!!sheet || busy}
+        renderCard={(row, best) => card(row, true, false, best)} />;
     })}</div>{entry()}</>}
     {notice && <p role="status" className="mt-2 text-sm text-text-secondary">{notice}</p>}
     {sheet?.kind === "comments" && <GameReviewCommentSheet
