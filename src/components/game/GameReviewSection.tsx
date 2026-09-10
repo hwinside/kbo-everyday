@@ -186,7 +186,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   }
   if (!loading && !active && !error) return null;
   return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-4">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">경기는 끝나도, 한 줄은 남아</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">최고의 한줄평은?</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
     {feed && context && <><div className="mb-3 grid grid-cols-2 gap-2">{[context.awayTeamId, context.homeTeamId].map(team => {
