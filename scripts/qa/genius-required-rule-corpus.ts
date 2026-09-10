@@ -7,8 +7,8 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { answerQuestion, routeQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
-import { requiredRuleEvidence, selectRequiredRuleEvidence, requiredRuleFact } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
-import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { requiredRuleEvidence, selectRequiredRuleEvidence, requiredRuleFact, postseasonTeamCounts } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
+import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, numericQuantityMatches, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const corpus = path.resolve("data/baseball-qa/kbo-required-rules-2026.jsonl");
 const manifest = path.resolve("data/baseball-qa/kbo-required-rules-2026.manifest.json");
@@ -216,5 +216,58 @@ async function verifyRuntime() {
   assert.deepEqual(selectRequiredRuleEvidence([legacy], regular), []);
 }
 
-async function main() { verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
+async function verifyQuantityGrounding() {
+  const ev = evidence(rows);
+  assert.deepEqual(numericQuantityMatches("열기가 가득한 경기"), []);
+  assert.deepEqual(numericQuantityMatches("열 기" ).map((q) => [q.value,q.counter]), [["10","기"]]);
+  for (const text of ["두 구단은", "두 팀이", "2개 팀", "두개구단"]) {
+    assert.deepEqual(numericQuantityMatches(text).map((q) => [q.value,q.counter]), [["2","팀"]]);
+  }
+  assert.deepEqual(numericQuantityMatches("상위 5개 구단").map((q) => [q.value,q.counter]), [["5","팀"]]);
+  const cases = [
+    ["준플레이오프는 몇 위 팀이 나가?", "열기가 가득한 준PO는 3위 구단과 와일드카드 승리 구단, 두 팀이 맞붙습니다."],
+    ["플레이오프 몇 위야?", "2위 구단과 준플레이오프 승리 구단, 두 구단은 플레이오프에 진출합니다."],
+    ["한국시리즈 몇 위야?", "정규시즌 우승 구단과 플레이오프 승리 구단 두 팀이 한국시리즈를 치릅니다."],
+    ["와일드카드 몇 위야?", "4위와 5위의 두 팀이 와일드카드 결정전을 치릅니다."],
+    ["포스트시즌 몇 위까지 올라가?", "상위 5개 구단이 진출합니다."],
+    ["포스트시즌 진출 기준은?", "상위 다섯 팀이 진출합니다."],
+  ];
+  for (const [question, answer] of cases) {
+    const request = requiredRuleEvidence(question, NOW)!;
+    const scoped = selectRequiredRuleEvidence(ev, request);
+    const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
+    assert.equal(check(answer).kind, "grounded", answer);
+    for (const suffix of [" 아홉 팀이 참가합니다.", " 9개 구단이 진출합니다.", " 9구를 던집니다.", " 5개입니다.", " 10기입니다.", " 99회까지 진행합니다."]) {
+      assert.equal(check(answer+suffix).kind, "insufficient", suffix);
+    }
+    assert.equal(check(answer,[]).kind, "insufficient", "missing evidence licensed quantity");
+    assert.equal(check("두 팀이 참가합니다.", scoped.map((r) => ({...r,sourceGrade:"tier2"}))).kind, "insufficient");
+    let stored: unknown;
+    const deps: QaDeps = {
+      loadGlossary: async () => [], loadPlayers: async () => [], reserveDaily: async () => ({ allowed: true, remaining: 9 }),
+      getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
+      searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
+      callLlm: async () => { throw new Error("generic fallback"); },
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({status:"GROUNDED",answer}), inputTokens:1,outputTokens:1 }),
+    };
+    const result = await answerQuestion("qa-quantity",question,deps);
+    assert.equal(result.source,"rag", "pipeline omitted request context: "+question);
+    assert.ok(JSON.stringify(stored).includes(result.answer), "durable final omitted accepted answer");
+  }
+  const general = requiredRuleEvidence("포스트시즌 몇 위까지?", NOW)!;
+  const wc = selectRequiredRuleEvidence(ev,general);
+  assert.deepEqual(postseasonTeamCounts(wc,general),["2","5"]);
+  const changedCutoff = wc.map((r) => ({...r,content:r.content.replaceAll("5위","7위").replaceAll("4위","6위")}));
+  assert.deepEqual(postseasonTeamCounts(changedCutoff,general),["2","7"],"cutoff hard-coded instead of reading clause");
+  const changed = wc.map((r) => ({...r,content:r.content.replaceAll("4위","5위").replaceAll("5위","6위")}));
+  assert.deepEqual(postseasonTeamCounts([...wc,...changed],general),[],"conflicting clauses combined");
+  assert.deepEqual(postseasonTeamCounts(wc,{...general,season:2025}),[]);
+  assert.deepEqual(postseasonTeamCounts(wc,{...general,postseasonStage:"semi"}),[]);
+  assert.deepEqual(postseasonTeamCounts(wc,undefined),[]);
+  for (const answer of ["두 팀이 참가합니다.","상위 5개 구단이 진출합니다."]) {
+    assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
+  }
+}
+
+async function main() { await verifyQuantityGrounding(); verifyArtifact(); verifyLoader(); await verifyRuntime(); console.log("Required-rule corpus artifact/loader/runtime contracts PASS; live semantic/UI QA remains reviewer-owned."); }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

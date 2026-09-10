@@ -21,7 +21,7 @@ import { displayProvenanceOf } from "../genius-reply-provenance";
 import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "../stats/definition-intent";
 import { normalizeSinoKoreanQuantities, sinoKoreanQuantities } from "./sino-korean-quantity";
 import { repairKnownOfficialRuleContext } from "./official-rule-context";
-import type { RequiredRuleRequest } from "./required-rule-evidence";
+import { postseasonTeamCounts, type RequiredRuleRequest } from "./required-rule-evidence";
 // 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
@@ -1214,7 +1214,7 @@ const KOREAN_NUMERALS: Record<string, string> = {
  * 긴 단위가 먼저 매칭되도록 길이 내림차순으로 둔다(`이닝`이 `이`보다 앞).
  */
 const QUANTITY_COUNTERS = [
-  "이닝", "사람", "선수", "타자", "투수", "주자", "베이스",
+  "개\\s*구단", "개\\s*팀", "구단", "이닝", "사람", "선수", "타자", "투수", "주자", "베이스",
   "명", "번", "루", "개", "회", "장", "구", "볼", "아웃", "점", "타", "배",
   "분", "초", "일", "년", "월", "주", "차", "기", "팀", "군",
 ].sort((a, b) => b.length - a.length).join("|");
@@ -1230,6 +1230,8 @@ const QUANTITY_COUNTERS = [
  *     `includes` 부분문자열은 금지 — 근거의 `1982`가 모델의 `198`을 통과시킨다.
  */
 export interface NumericGroundingOptions {
+  /** Only citation-bound postseason participant paraphrases; not arbitrary numbers. */
+  ruleRequest?: RequiredRuleRequest;
   /** Eligible compound-definition user input, never bot prose or official evidence. */
   definitionQuestion?: string;
   /**
@@ -1264,9 +1266,9 @@ export function numericTokensGrounded(
     //   호출부가 사라졌지만 계약 자체는 공식 경로가 나중에 쓸 수 있으므로 남겨둔다.
     //   단, 여기 의존해 숫자를 여는 신규 경로를 만들지 말 것 — 검증력이 부족하다.
     if (!/\d/.test(answer) && !hasKoreanQuantityClaim(answer)) return true;
-    return evidence.some((row) => groundedAgainst(answer, `${row.content}\n${options.definitionQuestion ?? ""}`));
+    return evidence.some((row) => groundedAgainst(answer, `${row.content}\n${options.definitionQuestion ?? ""}`, postseasonTeamCounts([row], options.ruleRequest)));
   }
-  return groundedAgainst(answer, [...evidence.map((row) => row.content), options.definitionQuestion ?? ""].join("\n"));
+  return groundedAgainst(answer, [...evidence.map((row) => row.content), options.definitionQuestion ?? ""].join("\n"), postseasonTeamCounts(evidence, options.ruleRequest));
 }
 
 /**
@@ -1365,15 +1367,18 @@ export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
   const result: Array<NumericQuantityMatch & { index: number }> = [...sino];
   for (const m of normalized.matchAll(quantityRe)) {
     if (sino.some((match) => m.index >= match.index && m.index < match.index + match.token.length)) continue;
+    // Fused native numeral + 기 is a lexical word (열기), not an
+    // explicit counter claim. Separated 열 기 and numeric 10기 stay checked.
+    if (m[2] && m[3] === "기" && !/\s/.test(m[0])) continue;
     const value = m[1] ?? KOREAN_NUMERALS[m[2]];
     if (!value) continue;
     result.push({ token: m[0], value, counter: m[3], index: m.index });
   }
-  return result.sort((a, b) => a.index - b.index).map(({ token, value, counter }) => ({ token, value, counter }));
+  return result.sort((a, b) => a.index - b.index).map(({ token, value, counter }) => ({ token, value, counter: /^(?:개\s*)?(?:팀|구단)$/.test(counter) ? "팀" : counter }));
 }
 
 /** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
-function groundedAgainst(answer: string, raw: string): boolean {
+function groundedAgainst(answer: string, raw: string, teamCounts: string[] = []): boolean {
   const answerNorm = normalizeSinoKoreanQuantities(answer.replace(/,/g, ""), QUANTITY_COUNTERS);
   const haystackForQuantity = normalizeSinoKoreanQuantities(raw.replace(/,/g, ""), QUANTITY_COUNTERS);
   const quantitySet = (text: string): Set<string> => {
@@ -1384,6 +1389,7 @@ function groundedAgainst(answer: string, raw: string): boolean {
     return out;
   };
   const groundedQuantities = quantitySet(haystackForQuantity);
+  for (const count of teamCounts) groundedQuantities.add(`${count}\u0000팀`);
   for (const q of quantitySet(answerNorm)) {
     if (!groundedQuantities.has(q)) return false;
   }
@@ -1412,6 +1418,7 @@ function groundedAgainst(answer: string, raw: string): boolean {
  *   사유는 `hasNumericCharacter` 위 §정책 주석 참조(파서 12라운드 사고).
  */
 export interface ValidateRagOptions {
+  ruleRequest?: RequiredRuleRequest;
   /**
    * 숫자를 **근거 대조 방식**으로 다룰지 여부. 기본값 false = 숫자 전면 금지.
    *
@@ -1546,6 +1553,7 @@ export function validateRagResponse(
     }
   } else if (!numericTokensGrounded(answer, options.evidence ?? [], {
     requireSingleSource: options.requireSingleSource,
+    ruleRequest: options.ruleRequest,
     definitionQuestion: options.definitionQuestion,
   })) {
     return {

@@ -5045,6 +5045,7 @@ async function answerOfficialDocumentQuestion(
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
     numericEvidence: true, evidence,
+    ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
     // period boundary as GENERAL. Never license bot prose or record lookups.
     definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
