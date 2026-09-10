@@ -86,7 +86,12 @@ export function selectRequiredRuleEvidence(rows: RagEvidence[], request: Require
     // sectionPath and copy that same heading into the evidence text. A clause
     // may legitimately compare two competitions or include historical rules;
     // those words alone must not reject the correctly scoped primary clause.
-    const headed = row.content.startsWith(row.pageTitle + " / ") && text.includes(citation.split("#").slice(1).join("#"));
+    // selectEvidence sanitizes angle brackets to spaces. Compare the copied
+    // heading in that same representation, while the metadata citation below
+    // still binds the exact chapter/article and the title binds the season.
+    const heading = citation.split("#").slice(1).join("#").replace(/[<>]/g, "");
+    const headed = row.content.startsWith(row.pageTitle + " / ")
+      && heading.length > 0 && text.replace(/[<>]/g, "").includes(heading);
     if (request.kind === "fa_general") {
       const generalArticle = citation.endsWith("#제17장프리에이전트(FA)>제162조[FA자격요건]")
         || citation.endsWith("#제17장프리에이전트(FA)>제163조[기록의합산]");
@@ -152,4 +157,33 @@ export function requiredRuleFact(rows: RagEvidence[], request: RequiredRuleEvide
   });
   // Conflicting clauses are not resolved by whichever vector happens to rank first.
   return facts.length && facts.every((f) => f.value === facts[0].value && f.effectiveYear === facts[0].effectiveYear) ? facts[0] : null;
+}
+
+/** Participant counts are aliases of a retrieved, season/article-bound clause.
+ * Never license a bare number or another counter (runs, games, innings).
+ * Text outside the explicit A구단과 B구단간에 relation is not counted.
+ */
+export function postseasonTeamCounts(rows: RagEvidence[], request?: RequiredRuleRequest): string[] {
+  if (request?.kind !== "postseason_entry") return [];
+  const scoped = selectRequiredRuleEvidence(rows, { ...request, query: "", unavailable: "" });
+  const candidates: string[][] = [];
+  for (const row of scoped) {
+    if (!request.postseasonStage && !/제30조/.test(row.sectionPath)) continue;
+    const text = row.content.replace(/\s/g, "");
+    const relation = text.match(/KBO정규시즌([^.!?\n]*?)구단간에/);
+    if (!relation) continue;
+    const participants = (relation[1] + "구단").split(/구단과/);
+    if (participants.length !== 2 || participants.some((p) => !/(?:\d+위|우승|승리)구단$/.test(p + (p.endsWith("구단") ? "" : "구단")))) continue;
+    const counts = [String(participants.length)];
+    // Overall postseason entry includes ranks 1..the WC cutoff. This is NOT
+    // the count of WC participants, and is never offered for a named round.
+    if (!request.postseasonStage && /제30조/.test(row.sectionPath)) {
+      const ranks = [...(relation[1] + "구단").matchAll(/(\d+)위구단/g)].map((m) => Number(m[1]));
+      if (ranks.length === 2 && ranks[1] === ranks[0] + 1) counts.push(String(Math.max(...ranks)));
+    }
+    candidates.push(counts.sort());
+  }
+  // Conflicting revisions must not broaden the permitted values.
+  if (!candidates.length || candidates.some((c) => c.join() !== candidates[0].join())) return [];
+  return candidates[0];
 }
