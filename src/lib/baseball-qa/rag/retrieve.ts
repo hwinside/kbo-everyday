@@ -21,7 +21,7 @@ import { displayProvenanceOf } from "../genius-reply-provenance";
 import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "../stats/definition-intent";
 import { normalizeSinoKoreanQuantities, sinoKoreanQuantities } from "./sino-korean-quantity";
 import { repairKnownOfficialRuleContext } from "./official-rule-context";
-import { postseasonTeamCounts, type RequiredRuleRequest } from "./required-rule-evidence";
+import { postseasonOutcomeCountMatches, postseasonTeamCounts, type RequiredRuleRequest } from "./required-rule-evidence";
 // 구단명 SSOT. 여기서 재열거하면 구단명 변경 시 조용히 어긋난다(게이트가 상수를 재구현하지 않게).
 import { TEAMS as KBO_TEAMS } from "@/lib/constants/teams";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT, isBaseballGeniusToneCompliant } from "../tone";
@@ -1266,9 +1266,9 @@ export function numericTokensGrounded(
     //   호출부가 사라졌지만 계약 자체는 공식 경로가 나중에 쓸 수 있으므로 남겨둔다.
     //   단, 여기 의존해 숫자를 여는 신규 경로를 만들지 말 것 — 검증력이 부족하다.
     if (!/\d/.test(answer) && !hasKoreanQuantityClaim(answer)) return true;
-    return evidence.some((row) => groundedAgainst(answer, `${row.content}\n${options.definitionQuestion ?? ""}`, postseasonTeamCounts([row], options.ruleRequest)));
+    return evidence.some((row) => groundedAgainst(normalizePostseasonOutcomeParaphrases(answer, [row], options.ruleRequest), `${row.content}\n${options.definitionQuestion ?? ""}`, postseasonTeamCounts([row], options.ruleRequest)));
   }
-  return groundedAgainst(answer, [...evidence.map((row) => row.content), options.definitionQuestion ?? ""].join("\n"), postseasonTeamCounts(evidence, options.ruleRequest));
+  return groundedAgainst(normalizePostseasonOutcomeParaphrases(answer, evidence, options.ruleRequest), [...evidence.map((row) => row.content), options.definitionQuestion ?? ""].join("\n"), postseasonTeamCounts(evidence, options.ruleRequest));
 }
 
 /**
@@ -1375,6 +1375,36 @@ export function numericQuantityMatches(text: string): NumericQuantityMatch[] {
     result.push({ token: m[0], value, counter: m[3], index: m.index });
   }
   return result.sort((a, b) => a.index - b.index).map(({ token, value, counter }) => ({ token, value, counter: /^(?:개\s*)?(?:팀|구단)$/.test(counter) ? "팀" : counter }));
+}
+
+/** Only the validation copy is normalized. The served answer and evidence stay
+ * untouched. Each 번 occurrence needs its own outcome/subject-bound proof; an
+ * accepted 승리 phrase must not license another unrelated N번 in the answer. */
+function normalizePostseasonOutcomeParaphrases(answer: string, evidence: RagEvidence[], request?: RequiredRuleRequest): string {
+  if (request?.kind !== "postseason_entry") return answer;
+  let cursor = 0;
+  let result = "";
+  for (const quantity of numericQuantityMatches(answer)) {
+    const index = answer.indexOf(quantity.token, cursor);
+    if (index < cursor) continue;
+    const end = index + quantity.token.length;
+    result += answer.slice(cursor, index);
+    const prefix = answer.slice(0, index).split(/[.!?\n]/).at(-1) ?? "";
+    const suffix = answer.slice(end);
+    // Restrict to explicit outcomes, never generic occurrences, ordinal batting
+    // positions, losses, or arbitrary nearby words. Both sides of OR need proof.
+    const outcome = suffix.match(/^\s*(?:의\s*)?(승리|무승부)(?:\s*(?:나|또는|혹은)\s*(승리|무승부))?(?=만|를|을|로|가|는|도|\s|[.,!?]|$)/);
+    const incompleteAlternative = outcome && /^\s*(?:나|또는|혹은|및|와|과)/.test(suffix.slice(outcome[0].length));
+    const kinds = outcome && !incompleteAlternative ? [...new Set([outcome[1], outcome[2]].filter(Boolean))] : [];
+    if (quantity.counter === "번" && kinds.length && postseasonOutcomeCountMatches(evidence, request, prefix, quantity.value, kinds)) {
+      result += kinds.map((kind) => quantity.value + (kind === "승리" ? "승" : "무승부")).join(" 또는 ");
+      cursor = end + outcome![0].length;
+    } else {
+      result += quantity.token;
+      cursor = end;
+    }
+  }
+  return result + answer.slice(cursor);
 }
 
 /** 답변의 수치 주장이 주어진 근거 텍스트 하나 안에 전부 존재하는가. */
