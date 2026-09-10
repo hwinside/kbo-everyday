@@ -6,24 +6,27 @@ import { ReviewTeamIdentity, reviewTeamStyle } from "./GameReviewIdentity";
 import { getTeamById } from "@/lib/constants/teams";
 import type { ReviewFeed, ReviewRow } from "@/lib/game-reviews/domain";
 
-type Page = { rows: ReviewRow[]; next: string | null; best: ReviewRow[] };
+export type ReviewSlidePage = { rows: ReviewRow[]; next: string | null; best: ReviewRow[] };
 const control = "flex min-h-11 min-w-11 items-center justify-center rounded-lg disabled:opacity-30 focus-visible:outline-2 focus-visible:outline-accent";
 
 /** Each team uses the same authenticated ranked endpoint/cursor as the full list.
  * Do not split the overall first page: the other team's first row may be on page 2.
  */
-export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request, renderCard, paused }: {
+export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request, renderCard, paused, initialPage }: {
   gameId: string; teamId: number; viewerId: string | null;
   request: (path: string) => Promise<{ viewerId: string | null; feed: ReviewFeed | null }>;
   renderCard: (row: ReviewRow, best: boolean) => ReactNode;
   paused: boolean;
+  initialPage?: ReviewSlidePage;
 }) {
-  const [page, setPage] = useState<Page | null>(null);
+  const [page, setPage] = useState<ReviewSlidePage | null>(initialPage ?? null);
   const [index, setIndex] = useState(0);
   const [loading, setLoading] = useState(false), [error, setError] = useState("");
   const [stopped, setStopped] = useState(false), [reduced, setReduced] = useState(true);
   const [visible, setVisible] = useState(false), [foreground, setForeground] = useState(true);
   const rail = useRef<HTMLDivElement>(null), root = useRef<HTMLDivElement>(null);
+  const seeded = useRef(!!initialPage);
+  const indexRef = useRef(index); indexRef.current = index;
   const alive = useRef(true), pending = useRef(false);
 
   const load = useCallback(async (cursor?: string) => {
@@ -47,7 +50,7 @@ export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request
     }
   }, [gameId, teamId, viewerId, request]);
 
-  useEffect(() => { alive.current = true; void load(); return () => { alive.current = false; }; }, [load]);
+  useEffect(() => { alive.current = true; if (!seeded.current) void load(); return () => { alive.current = false; }; }, [load]);
   useEffect(() => {
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const updateMotion = () => setReduced(motion.matches);
@@ -77,9 +80,14 @@ export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request
   useEffect(() => {
     const el = rail.current;
     if (!el) return;
-    const observer = new ResizeObserver(() => el.scrollTo({ left: index * el.clientWidth, behavior: "instant" }));
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      el.scrollTo({ left: indexRef.current * width, behavior: "instant" });
+    });
     observer.observe(el); return () => observer.disconnect();
-  }, [index]);
+  }, []);
 
   return <div ref={root} className="flex min-w-0 flex-col" role="region" aria-label={`${getTeamById(teamId)?.shortName ?? "팀"} 팬 한줄평 슬라이드`}>
     <div ref={rail} className="flex flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]"
