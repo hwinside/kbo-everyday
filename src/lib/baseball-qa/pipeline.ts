@@ -2521,6 +2521,28 @@ export function resolveRagNewsCandidate(question: string, nowMs: number): RagNew
   };
 }
 
+/** Public injury updates concern recent reporting, not a timeless biography.
+ * Require an already resolved roster identity, retain explicit date bounds,
+ * and never turn historical injuries or medical advice into current news. */
+export function resolvePlayerInjuryNewsCandidate(
+  question: string, player: RagPlayerCandidate, nowMs: number,
+): RagNewsCandidate | null {
+  const q = question.normalize("NFKC").toLowerCase();
+  if (!/부상|골절|다쳤|다친|통증|수술|재활|복귀|결장|이탈|근황/.test(q)
+    || /역대|이력|병력|통산|치료법|치료 방법|진단해|약 추천|내\s*(?:무릎|어깨|허리)|mlb|npb/.test(q)
+    || NUMERIC_VALUE_ASK.test(q) || /내일|모레|다음\s*주|\d{1,2}\s*(?:월|일)/.test(q)) return null;
+  const explicit = resolveNewsRecency(question, nowMs);
+  if (explicit.kind === "out_of_window") return null;
+  const window = explicit.kind === "fresh" ? explicit : resolveNewsRecency("최근", nowMs);
+  if (window.kind !== "fresh") return null;
+  const team = player.team ? resolveRagTeamCandidate(player.team) : null;
+  if (!team) return null;
+  const askedTeams = mentionedTeamCanonicals(question);
+  if (askedTeams.some((name) => name !== team.name)) return null;
+  return { entityType: "news", teamId: Number(team.entityId), name: team.name,
+    playerName: player.name, since: window.since, until: window.until };
+}
+
 /**
  * 최신성 질문이긴 한데 기사 보유창(30일) 밖인가.
  * `올해 LG 어때?` 처럼 news 가 소유하면 **안 되는** 질문을 게이트가 직접 보기 위해 노출한다.
@@ -5389,7 +5411,13 @@ async function answerNewsRagQuestion(
 
   let evidence: RagEvidence[];
   try {
-    evidence = selectEvidence(await deps.searchNewsRag!(candidate, question));
+    const searched = await deps.searchNewsRag!(candidate, question);
+    evidence = selectEvidence(candidate.playerName
+      ? searched.filter((row) => `${row.pageTitle} ${row.content}`.includes(candidate.playerName!)
+        && row.sourceKind === "news_article" && row.sourceGrade === "tier2"
+        && Number.isFinite(Date.parse(row.asOf ?? ""))
+        && Date.parse(row.asOf!) >= candidate.since.getTime() && Date.parse(row.asOf!) < candidate.until.getTime())
+      : searched);
   } catch {
     // 검색 실패를 "기사 없음" 으로 둔갑하지 않는다. 재시도 가능한 실패라 error 다.
     // ⚠️ 문구도 `BLOCKED_ANSWER` 가 아니라 ② 다 (삼순 2026-08-08 조건 ①) — 우리 쪽 실패에
@@ -6713,6 +6741,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       inputTokens: null, outputTokens: null,
     });
     return { status: 200, answer, source: matchPath, remaining };
+  }
+
+  // News identity is not the biography RAG's descriptive-intent allowlist.
+  const injuryPlayer = enabledPlayerCandidate ?? resolveNamedPlayerCandidate(question, players);
+  const playerInjuryNews = injuryPlayer && recordIntent.kind === "none" && !statDefinition && deps.enableNewsRag && deps.searchNewsRag && deps.callNewsRagLlm
+    ? resolvePlayerInjuryNewsCandidate(question, injuryPlayer, (deps.now ?? Date.now)()) : null;
+  if (playerInjuryNews) {
+    return answerNewsRagQuestion(userId, question, questionNorm, playerInjuryNews, remaining, deps);
   }
 
   const newsRagCandidate =
