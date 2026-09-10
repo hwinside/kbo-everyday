@@ -29,6 +29,8 @@ import {
   isTeamRagServableQuestion,
   newsRecencyIntentOf,
   resolveRagNewsCandidate,
+  resolvePlayerInjuryNewsCandidate,
+  resolveNamedPlayerCandidate,
   NEWS_UNAVAILABLE_ANSWER,
   TEAM_STAT_HOLD_ANSWER,
   type GlossaryEntry,
@@ -946,6 +948,54 @@ async function run(): Promise<void> {
     assert.ok(!/야구 룰|용어만/.test(NEWS_UNAVAILABLE_ANSWER),
       "기사 안내문이 `룰/용어만 답한다` 고 말한다 — 거짓말이다");
     ok("안내문 — 기사 미확보와 수치 HOLD 를 구분");
+  }
+
+  // Public player injury reporting: real roster identity + a bounded news
+  // window. These are sanitized production questions, not a diagnosis fixture.
+  {
+    const now = Date.parse("2026-09-10T07:42:00Z");
+    const player = resolveNamedPlayerCandidate("김도영", players)!;
+    assert.ok(player, "production roster identity missing");
+    const article: RagEvidence = {
+      ...LG_YESTERDAY, pageTitle: "KIA 김도영, 번트 타구에 코뼈 골절",
+      content: "KIA 김도영, 번트 타구에 코뼈 골절\n김도영이 타구에 얼굴을 맞아 코뼈 골절 소견을 받았다. 치료 방법은 신중하게 결정할 예정이다.",
+      asOf: "2026-09-09T13:14:00Z", sectionPath: "2026-09-09",
+    };
+    const questions = ["김도영 선수 부상 정도는 어때?", "김도영 수술 진짜인가요", "김도영 부상 그거 진짜인가요", "김도영 부상", "김도영 오늘 부상인데 어디가 다친거야"];
+    for (const question of questions) {
+      const candidate = resolvePlayerInjuryNewsCandidate(question, player, now)!;
+      assert.equal(candidate.teamId, 6); assert.equal(candidate.playerName, "김도영");
+      // Explicit 'today' must not silently include yesterday's reporting.
+      const dated = question.includes("오늘") ? { ...article, asOf: "2026-09-10T01:00:00Z" } : article;
+      const { deps, calls } = makeDeps({ now: () => now,
+        searchNewsRag: async (c) => { assert.equal(c.playerName, "김도영"); return [LG_YESTERDAY, dated]; },
+        callNewsRagLlm: async (_q, evidence) => {
+          assert.equal(evidence.length, 1); assert.match(evidence[0].content, /김도영/);
+          return { text: JSON.stringify({ status: "GROUNDED", answer: "공개 보도에 따르면 김도영은 코뼈 골절 소견을 받았습니다. 치료 방법은 신중하게 결정할 예정이며 수술 확정 여부는 이 기사에서 확인되지 않습니다." }), inputTokens: 1, outputTokens: 1 };
+        },
+      });
+      const result = await answerQuestion("qa-injury-news", question, deps);
+      assert.equal(result.source, "news_rag", question);
+      assert.match(result.answer, /코뼈 골절/);
+      assert.equal(calls.genericLlm + calls.playerLlm + calls.teamLlm + calls.cacheReads, 0);
+    }
+    const defaultWindow = resolvePlayerInjuryNewsCandidate(questions[0], player, now)!;
+    assert.equal(defaultWindow.until.getTime(), now);
+    assert.equal(defaultWindow.since.getTime(), now - 7 * 86400000);
+    for (const question of ["김도영 작년 부상 이력", "김도영 부상은 몇 주야?", "김도영 타율 얼마야?", "김도영 별명은?", "김도영 어캄", "김도영 부상 치료법", "김도영 내일 복귀해?", "김도영 8월 부상 소식", "LG와 KIA 김도영 부상 비교"]) {
+      assert.equal(resolvePlayerInjuryNewsCandidate(question, player, now), null, question);
+    }
+    for (const rows of [[], [LG_YESTERDAY], [{ ...article, asOf: "2025-09-09T13:14:00Z" }], [{ ...article, asOf: "2026-09-11T13:14:00Z" }], [{ ...article, sourceKind: "namu_document" as const }]]) {
+      const { deps, calls } = makeDeps({ now: () => now, searchNewsRag: async () => rows });
+      const result = await answerQuestion("qa-injury-empty", questions[0], deps);
+      assert.equal(result.source, "unsure");
+      assert.equal(result.answer, NEWS_UNAVAILABLE_ANSWER);
+      assert.equal(calls.newsLlm.length + calls.genericLlm + calls.playerLlm + calls.teamLlm + calls.cacheReads, 0);
+    }
+    const { deps, calls } = makeDeps({ now: () => now, searchNewsRag: async () => { throw new Error("search unavailable"); } });
+    assert.equal((await answerQuestion("qa-injury-error", questions[0], deps)).source, "error");
+    assert.equal(calls.genericLlm + calls.playerLlm + calls.teamLlm, 0);
+    ok("선수 부상 — 실제 로스터·시점·기사 신원·미확보·오류·타 경로 폴백 금지");
   }
 
   console.log(
