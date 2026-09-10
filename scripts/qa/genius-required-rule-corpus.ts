@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
 import { answerQuestion, routeQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { requiredRuleEvidence, selectRequiredRuleEvidence, requiredRuleFact, postseasonTeamCounts } from "../../src/lib/baseball-qa/rag/required-rule-evidence";
-import { buildRagLlmRequest, RAG_OFFICIAL_SYSTEM_PROMPT, numericQuantityMatches, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { buildRagLlmRequest, selectEvidence, RAG_OFFICIAL_SYSTEM_PROMPT, numericQuantityMatches, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
 
 const corpus = path.resolve("data/baseball-qa/kbo-required-rules-2026.jsonl");
 const manifest = path.resolve("data/baseball-qa/kbo-required-rules-2026.manifest.json");
@@ -234,7 +234,14 @@ async function verifyQuantityGrounding() {
   ];
   for (const [question, answer] of cases) {
     const request = requiredRuleEvidence(question, NOW)!;
-    const scoped = selectRequiredRuleEvidence(ev, request);
+    const rawScoped = selectRequiredRuleEvidence(ev, request);
+    const scoped = selectEvidence(rawScoped);
+    const expectedCounts = request.postseasonStage ? ["2"] : ["2", "5"];
+    assert.deepEqual(postseasonTeamCounts(rawScoped, request), expectedCounts);
+    assert.deepEqual(postseasonTeamCounts(scoped, request), expectedCounts, "sanitized clause lost participant counts: " + question);
+    const badHeading = scoped.map((r) => ({...r, content: r.content.replace(/제(?:30|34|38|42)조/, "제99조")}));
+    assert.deepEqual(postseasonTeamCounts(badHeading, request), [], "metadata alone licensed a mismatched heading");
+    assert.deepEqual(postseasonTeamCounts(scoped.map((r) => ({...r, content: r.content.replace(/제[2-5]장/, "제9장")})), request), [], "wrong chapter licensed counts");
     const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
     assert.equal(check(answer).kind, "grounded", answer);
     for (const suffix of [" 아홉 팀이 참가합니다.", " 9개 구단이 진출합니다.", " 9구를 던집니다.", " 5개입니다.", " 10기입니다.", " 99회까지 진행합니다."]) {
@@ -255,7 +262,7 @@ async function verifyQuantityGrounding() {
     assert.ok(JSON.stringify(stored).includes(result.answer), "durable final omitted accepted answer");
   }
   const general = requiredRuleEvidence("포스트시즌 몇 위까지?", NOW)!;
-  const wc = selectRequiredRuleEvidence(ev,general);
+  const wc = selectEvidence(selectRequiredRuleEvidence(ev,general));
   assert.deepEqual(postseasonTeamCounts(wc,general),["2","5"]);
   const changedCutoff = wc.map((r) => ({...r,content:r.content.replaceAll("5위","7위").replaceAll("4위","6위")}));
   assert.deepEqual(postseasonTeamCounts(changedCutoff,general),["2","7"],"cutoff hard-coded instead of reading clause");

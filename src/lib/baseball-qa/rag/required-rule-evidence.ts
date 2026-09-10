@@ -86,7 +86,12 @@ export function selectRequiredRuleEvidence(rows: RagEvidence[], request: Require
     // sectionPath and copy that same heading into the evidence text. A clause
     // may legitimately compare two competitions or include historical rules;
     // those words alone must not reject the correctly scoped primary clause.
-    const headed = row.content.startsWith(row.pageTitle + " / ") && text.includes(citation.split("#").slice(1).join("#"));
+    // selectEvidence sanitizes angle brackets to spaces. Compare the copied
+    // heading in that same representation, while the metadata citation below
+    // still binds the exact chapter/article and the title binds the season.
+    const heading = citation.split("#").slice(1).join("#").replace(/[<>]/g, "");
+    const headed = row.content.startsWith(row.pageTitle + " / ")
+      && heading.length > 0 && text.replace(/[<>]/g, "").includes(heading);
     if (request.kind === "fa_general") {
       const generalArticle = citation.endsWith("#제17장프리에이전트(FA)>제162조[FA자격요건]")
         || citation.endsWith("#제17장프리에이전트(FA)>제163조[기록의합산]");
