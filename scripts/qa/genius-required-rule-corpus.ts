@@ -269,7 +269,10 @@ async function verifyQuantityGrounding() {
   const changed = wc.map((r) => ({...r,content:r.content.replaceAll("4위","5위").replaceAll("5위","6위")}));
   assert.deepEqual(postseasonTeamCounts([...wc,...changed],general),[],"conflicting clauses combined");
   assert.deepEqual(postseasonTeamCounts(wc,{...general,season:2025}),[]);
-  assert.deepEqual(postseasonTeamCounts(wc,{...general,postseasonStage:"semi"}),[]);
+  const wildcardOnly = wc.filter((r) => /제30조/.test(r.sectionPath));
+  assert.ok(wildcardOnly.length > 0, "wildcard-only negative fixture is empty");
+  assert.deepEqual(postseasonTeamCounts(wildcardOnly,{...general,postseasonStage:"semi"}),[],"wildcard clause licensed semifinal count");
+  assert.deepEqual(postseasonTeamCounts(wc,{...general,postseasonStage:"semi"}),["2"],"full postseason corpus failed to select semifinal clause");
   assert.deepEqual(postseasonTeamCounts(wc,undefined),[]);
   for (const answer of ["두 팀이 참가합니다.","상위 5개 구단이 진출합니다."]) {
     assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
