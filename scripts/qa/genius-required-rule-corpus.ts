@@ -97,6 +97,11 @@ async function verifyRuntime() {
     ["연장 최대 몇 회야?", "KBO 정규시즌 연장전은 11회까지입니다.", "정규시즌"],
     ["포스트시즌 연장 최대 몇 회야?", "KBO 포스트시즌 연장전은 15회까지입니다.", "포스트시즌"],
     ["FA 자격 조건은?", "2022년 시즌 종료 후부터 일반 FA 자격은 8정규시즌 활동이 필요합니다.", "일반 FA"],
+    ["준플레이오프는 몇 위 팀이 나가?", "정규시즌 승률 3위 구단과 와일드카드 결정전 승리구단이 준플레이오프에 참가합니다.", "준플레이오프"],
+    ["준PO 몇 위가 나가?", "정규시즌 승률 3위 구단과 와일드카드 결정전 승리구단이 참가합니다.", "준플레이오프"],
+    ["PO 몇 위 팀이 진출해?", "정규시즌 승률 2위 구단과 준플레이오프 승리구단이 참가합니다.", "플레이오프"],
+    ["한국시리즈 몇 위가 나가?", "정규시즌 우승구단과 플레이오프 승리구단이 한국시리즈에 참가합니다.", "한국시리즈"],
+    ["KS 진출 기준은?", "정규시즌 우승구단과 플레이오프 승리구단이 한국시리즈에 참가합니다.", "한국시리즈"],
     ["가을야구 진출 기준", "정규시즌 승률 5위까지 포스트시즌에 참가합니다.", "진출 순위"],
     ["4년제 대학 졸업하고 프로 오면 FA 몇 시즌 뛰어야 해?", "2022년 시즌 종료 후부터 대학선수로 등록한 4년제 대학 졸업 선수는 7정규시즌 활동으로 FA 자격을 취득합니다.", "일반 FA"],
     ["FA 한 시즌으로 인정받는 현역 등록일수가 며칠이야?", "2006년 정규시즌부터 현역 등록일수 145일 이상입니다. 이후 최초 등록한 선수는 제3호만 적용합니다.", "일반 FA"],
@@ -140,6 +145,23 @@ async function verifyRuntime() {
   for (const question of ["MLB FA 자격 조건", "해외 복귀 FA 자격", "FA 자격 재취득", "포스트시즌 진출할 확률은?"]) {
     assert.equal(requiredRuleEvidence(question, NOW), null, question + " overmatched current KBO policy");
   }
+  // Standalone round names must choose that round's primary article rather
+  // than accepting a wildcard cutoff from a neighbouring round.
+  for (const [question, article] of [["준플레이오프는 몇 위 팀이 나가?", 34], ["준PO 몇 위야?", 34], ["플레이오프 몇 위야?", 38], ["po 몇 위야?", 38], ["한국시리즈 몇 위야?", 42], ["ks 몇 위야?", 42], ["와일드카드 몇 위야?", 30]] as const) {
+    const request = requiredRuleEvidence(question, NOW)!;
+    assert.equal(request.kind, "postseason_entry");
+    assert.ok(request.query.includes(`제${article}조`));
+    const scoped = selectRequiredRuleEvidence(ev, request);
+    assert.ok(scoped.length > 0);
+    assert.ok(scoped.every((row) => row.sectionPath.includes(`제${article}조`)));
+    assert.deepEqual(selectRequiredRuleEvidence(ev.filter((row) => !row.sectionPath.includes(`제${article}조`)), request), []);
+    assert.deepEqual(selectRequiredRuleEvidence(scoped.map((row) => ({ ...row, sourceGrade: "tier2" })), request), []);
+  }
+  for (const question of ["OPS 몇 위야?", "스포츠 몇 위야?", "MLB 플레이오프 몇 위까지?", "대학 플레이오프 몇 위?", "LG 준PO 진출할 확률은?", "한국시리즈 오늘 몇 위 팀이 이길까?"]) {
+    assert.equal(requiredRuleEvidence(question, NOW), null, question);
+  }
+  assert.equal(requiredRuleEvidence("준PO 연장 몇 회야?", NOW)?.competition, "postseason");
+  assert.equal(requiredRuleEvidence("KS 연장 몇 회야?", NOW)?.competition, "postseason");
   const sourceFa = requiredRuleEvidence("FA 자격은 어떻게 얻어?", NOW)!;
   const sourceDays = requiredRuleEvidence("FA 현역 등록일수가 며칠이야?", NOW)!;
   const sourceCollege = requiredRuleEvidence("대졸 FA 몇 시즌이야?", NOW)!;
@@ -155,6 +177,7 @@ async function verifyRuntime() {
   assert.equal(requiredRuleFact(selectRequiredRuleEvidence([...ev, ...changedDays], sourceDays), sourceDays), null,
     "conflicting operative values accepted by vector rank");
   const badAnswers = [
+    ["준플레이오프는 몇 위 팀이 나가?", "와일드카드 결정전 승리구단이 참가합니다."],
     ["FA 자격은 어떻게 얻어?", "현역 등록일수와 출전 기준에 따라 정규시즌 활동을 인정합니다."],
     ["FA 현역 등록일수가 며칠이야?", "현역 등록일수가 150일 이상입니다. 연도별로 달리 적용합니다."],
     ["FA 현역 등록일수가 며칠이야?", "150일 이상입니다. 다만 2006년부터 145일입니다."],

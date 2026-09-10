@@ -5034,7 +5034,7 @@ async function answerOfficialDocumentQuestion(
     try {
       const officialExtras = { context: definition?.context ?? context ?? undefined, definition: definition ?? undefined };
       llm = await deps.callOfficialRagLlm!(question, evidence, { ...officialExtras,
-        ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
+        ...(requiredRule ? { ruleRequest: { kind: requiredRule.kind, season: requiredRule.season, competition: requiredRule.competition, faFocus: requiredRule.faFocus, postseasonStage: requiredRule.postseasonStage, ...(currentRuleFact ? { fact: currentRuleFact } : {}) } } : {}),
       });
       generatedOfficialNow = true;
     } catch {
@@ -5080,14 +5080,15 @@ async function answerOfficialDocumentQuestion(
   }
   // Completeness cannot waive numeric grounding. Only inspect an already
   // validated answer; missing quantities must not become an empty sourced reply.
-  const requiredCounter = !definition ? requiredAnswerCounter(question) : null;
+  const requiredCounter = !definition ? requiredRule?.kind === "postseason_entry" ? "위" : requiredAnswerCounter(question) : null;
   if (requiredCounter && ((validated.kind === "grounded" || validated.kind === "general")
-      ? requiredCounter === "위" ? !hasPostseasonCutoff(validated.answer)
+      ? requiredCounter === "위" ? !(hasPostseasonCutoff(validated.answer)
+        || (requiredRule?.postseasonStage === "series" && /정규\s*시즌\s*(?:우승|1위)/.test(validated.answer)))
         : !numericQuantityMatches(validated.answer).some((quantity) => quantity.counter === "회" || quantity.counter === "이닝")
       : validated.kind === "insufficient" && validated.reason === "model_insufficient")) {
     const answer = requiredCounter === "회"
       ? "질문하신 최대 이닝을 확인할 규정 근거가 부족합니다. 시즌과 정규시즌·포스트시즌 등 대회 구분에 맞는 한도를 확인해야 하며, 확인되지 않은 횟수는 단정하지 않겠습니다."
-      : "포스트시즌에 몇 위까지 진출하는지 현재 규정 근거로 확인하지 못했습니다. 해당 시즌의 진출 순위 기준을 확인해야 정확히 안내할 수 있습니다.";
+      : requiredRule?.unavailable ?? "포스트시즌에 몇 위까지 진출하는지 현재 규정 근거로 확인하지 못했습니다. 해당 시즌의 진출 순위 기준을 확인해야 정확히 안내할 수 있습니다.";
     const observation = ragObservation("official", question, { kind: "insufficient", reason: "model_insufficient" }, evidence);
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer, source: "scope_guide", ...observation }, llm));
     await deps.log({ userId, question, questionNorm, answer, matchPath: "scope_guide", inputTokens: llm.inputTokens, outputTokens: llm.outputTokens, ...observation });
