@@ -3,6 +3,7 @@ import { getVerifiedUserFromRequest } from "@/lib/auth/verified-user";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { normalizeForFloodKey } from "@/lib/utils/normalize-message";
 import { gameTeams } from "@/lib/game-reviews/context";
+import { parseReviewCursor } from "@/lib/game-reviews/ranked-cursor";
 import { COMMENT_LIMIT, validateText } from "@/lib/game-reviews/domain";
 import { GAME_REVIEWS_ENABLED } from "@/lib/game-reviews/feature";
 import { REVIEW_POLICY } from "@/lib/game-reviews/policy";
@@ -34,12 +35,12 @@ export async function GET(req: NextRequest, { params }: Params) {
     }
     const context = await loadReviewContext(gameId);
     if (!context.final) return reviewJson({ context, feed: null, viewerId: verified?.user.id ?? null });
-    const cursor = req.nextUrl.searchParams.get("before"), parent = req.nextUrl.searchParams.get("review");
+    const cursor = parseReviewCursor(req.nextUrl.searchParams.get("cursor") ?? req.nextUrl.searchParams.get("before"));
     const filter = req.nextUrl.searchParams.get("team");
     const filterTeam = filter === null ? null : positiveId(filter);
     if (filterTeam !== null && ![context.awayTeamId, context.homeTeamId].includes(filterTeam)) throw new ReviewError("이 경기의 팀을 선택해 주세요");
-    const { data, error } = await supabaseAdmin.rpc("gr_feed", { g: gameId, a: verified?.user.id ?? null,
-      before_id: cursor === null ? null : positiveId(cursor), rid: parent === null ? null : positiveId(parent), filter_team: filterTeam,
+    const { data, error } = await supabaseAdmin.rpc("gr_feed_ranked", { g: gameId, a: verified?.user.id ?? null,
+      ...cursor, filter_team: filterTeam,
       p_best_min_likes: REVIEW_POLICY.bestMinLikes });
     if (error) databaseError(error);
     const feed = await withAuthorAvatars(data);

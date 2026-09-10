@@ -28,7 +28,7 @@ export interface ReviewFeed {
   rows: ReviewRow[]; best: ReviewRow[]; total: number;
   team_counts: Record<string, number>;
   own: { id: number; deleted: boolean; hidden: boolean } | null;
-  ownReview: ReviewRow | null; next: number | null; server_now: string;
+  ownReview: ReviewRow | null; next: string | null; server_now: string;
 }
 export interface ReviewContext {
   gameId: string; awayTeamId: number; homeTeamId: number; winnerTeamId: number | null;

@@ -64,11 +64,11 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     if (!res.ok) throw new Error(json.error ?? "불러오지 못했어요. 다시 시도해 주세요");
     return json;
   }, [tokenReader]);
-  const reload = useCallback(async (before?: number, team = filterRef.current) => {
+  const reload = useCallback(async (before?: string, team = filterRef.current) => {
     const sequence = ++feedRequest.current;
     setLoading(true); setError("");
     try {
-      const query = new URLSearchParams(); if (before) query.set("before", String(before)); if (team) query.set("team", String(team));
+      const query = new URLSearchParams(); if (before) query.set("cursor", before); if (team) query.set("team", String(team));
       const json = await request(`/api/games/${gameId}/reviews?${query}`);
       if (scopeRef.current !== scope || sequence !== feedRequest.current) return;
       if (json.viewerId !== (user?.id ?? null)) { setData(null); throw new Error("로그인 상태가 바뀌었어요. 다시 시도해 주세요"); }
@@ -100,7 +100,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   useEffect(() => { if (sheet) heading.current?.focus(); }, [sheet]);
 
   function close() { setSheet(null); setHistory([]); setFocused(null); commentRequest.current++; }
-  function open(next: Sheet) { if (sheet) setHistory(h => [...h, sheet]); setSheet(next); setFormError(""); setContent(""); }
+  function open(next: Sheet) { if (next.kind === "list") void reload(); if (sheet) setHistory(h => [...h, sheet]); setSheet(next); setFormError(""); setContent(""); }
   function back() { const previous = history.at(-1); setHistory(h => h.slice(0, -1)); setSheet(previous ?? null); setContent(""); setFormError(""); }
   function requireLogin() { if (user) return true; close(); setLogin(true); return false; }
   function compose(review?: ReviewRow) { if (!requireLogin()) return; open({ kind: "compose", review }); setContent(review?.content ?? ""); setPlayerKey(policy?.nominationMode === "disabled" ? "" : review?.player_key ?? ""); }
@@ -199,7 +199,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
       <div className="space-y-4 p-4 pb-6">
         {context && <p className="text-xs text-text-secondary">{teamName(context.awayTeamId)} {context.score} {teamName(context.homeTeamId)} · 종료</p>}
         {formError && <p role="alert" className="text-sm text-red-400">{formError}</p>}
-        {sheet?.kind === "list" && feed && <><div className="flex gap-2">{[null, context?.awayTeamId, context?.homeTeamId].map((team, i) => <button key={i} aria-pressed={filter === team} className={`${button} flex items-center gap-1.5 border ${filter === team ? "border-[var(--primary-weak-border)] bg-[var(--primary-weak-bg)] text-text-primary" : "border-transparent text-text-secondary"}`} onClick={() => { setFilter(team ?? null); filterRef.current = team ?? null; void reload(); }}>{team && getTeamById(team) && <TeamLogo team={getTeamById(team)!} size={20} />}{team ? `${teamName(team)} 팬` : "전체"}</button>)}</div><p className="text-xs text-text-secondary">최신순 · 팬들의 한 줄 {feed.total}개</p>{feed.rows.filter(r => !filter || r.team_id === filter).map(r => card(r))}{!feed.total && <p className="py-8 text-center text-text-secondary">아직 한 줄이 없어요. 첫 한 줄을 남겨 주세요.</p>}{feed.next && <button className={`${button} w-full`} disabled={loading} onClick={() => void reload(feed.next!)}>더 보기</button>}{entry()}</>}
+        {sheet?.kind === "list" && feed && <><div className="flex gap-2">{[null, context?.awayTeamId, context?.homeTeamId].map((team, i) => <button key={i} aria-pressed={filter === team} className={`${button} flex items-center gap-1.5 border ${filter === team ? "border-[var(--primary-weak-border)] bg-[var(--primary-weak-bg)] text-text-primary" : "border-transparent text-text-secondary"}`} onClick={() => { setFilter(team ?? null); filterRef.current = team ?? null; void reload(); }}>{team && getTeamById(team) && <TeamLogo team={getTeamById(team)!} size={20} />}{team ? `${teamName(team)} 팬` : "전체"}</button>)}</div><p className="text-xs text-text-secondary">좋아요순 · 동점은 최신순 · 팬들의 한 줄 {feed.total}개</p>{feed.rows.filter(r => !filter || r.team_id === filter).map(r => card(r))}{!feed.total && <p className="py-8 text-center text-text-secondary">아직 한 줄이 없어요. 첫 한 줄을 남겨 주세요.</p>}{feed.next && <button className={`${button} w-full`} disabled={loading} onClick={() => void reload(feed.next!)}>더 보기</button>}{entry()}</>}
         {sheet?.kind === "full" && <>{focused?.id === sheet.review.id && card(focused)}{commentsLoading && <p role="status">한 줄을 불러오는 중이에요</p>}{commentsError && <p role="alert">{commentsError}<button className={button} onClick={() => void loadComments(sheet.review)}>다시 시도</button></p>}</>}
         {(writing || editingComment) && <form className="space-y-3" onSubmit={e => { e.preventDefault(); if (writing) void mutate({ op: sheet.review ? "edit" : "create", reviewId: sheet.review?.id, content, playerKey }, () => { setNotice("내 한 줄을 남겼어요"); if (sheet.review) void loadComments(sheet.review); back(); }); else if (editingComment) void mutate({ op: "comment_edit", reviewId: sheet.review.id, commentId: sheet.comment.id, content }, () => { back(); void loadComments(sheet.review); }); }}>
           {writing && <p className="text-sm">{teamName(sheet.review?.team_id ?? profile?.team_id ?? null)} 팬으로 남겨요</p>}
