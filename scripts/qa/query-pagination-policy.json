@@ -639,6 +639,7 @@
     "upsert_naver_identity": "upserts one authenticated identity",
     "upsert_news_clipping_digest": "insert-once digest for one (clip_date, team_id) pair and returns exactly one bigint id",
     "venue_stats_season_team_aggregates": "returns one jsonb aggregate (per-team season totals + per-game ledger verification flags for one season, ~1.5k bounded entries)",
+    "gr_feed_ranked": "one JSON object: 25 ranked page rows, two BEST rows, one own row; service-only composite likes/created_at/id keyset",
     "gr_feed": "one JSON object: at most 25 page rows, two team BEST rows, one own/parent row and scalar counts/cursor; service-only and keyset paginated",
     "gr_mutate": "one JSON result for one actor/game mutation; writes serialize actor and parent and return one id/ok status",
     "gr_report": "void result for one verified reporter and one review/comment target",

@@ -992,6 +992,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:game-review-like-order",
+      "tier": "ci"
+    },
+    {
       "name": "qa:game-review-comments",
       "tier": "ci"
     },

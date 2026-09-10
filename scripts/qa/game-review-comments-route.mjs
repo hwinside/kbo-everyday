@@ -86,3 +86,15 @@ assert.equal(await guest.read(), null);
 const expired = createReviewTokenReader('a', async () => ({ ...session('a'), expires_at: 1 }));
 await assert.rejects(expired.read(), /로그인/);
 console.log('PASS: warm-token reuse, in-flight dedupe, refresh, logout race, account isolation and expiry');
+
+// Ranked-list cursor is separate from the unchanged numeric comment cursor.
+const { parseReviewCursor } = load(resolve('src/lib/game-reviews/ranked-cursor.ts'));
+const rankedCursor = parseReviewCursor('[0,"2026-09-10T00:00:00.123456+00:00",42]');
+assert.equal(rankedCursor.cursor_likes, 0);
+assert.equal(rankedCursor.cursor_created, '2026-09-10T00:00:00.123456+00:00');
+assert.equal(rankedCursor.cursor_id, 42);
+assert.equal(parseReviewCursor(null).cursor_id, null);
+for (const invalid of ['42','[]','[-1,"2026-09-10T00:00:00Z",1]','[0,"bad",1]','[0,"2026-09-10T00:00:00Z",0]','[0,"2026-09-10T00:00:00Z",9007199254740992]']) {
+  assert.throws(() => parseReviewCursor(invalid), /새로고침/);
+}
+console.log('PASS: ranked cursor preserves microseconds and rejects malformed values');
