@@ -21,7 +21,7 @@ export default function GameReviewPreviewText({ content, onExpand }: { content: 
     return () => { active = false; observer.disconnect(); };
   }, [content]);
 
-  return <div className="my-2 flex min-w-0 items-center gap-2">
+  return <div className="my-1 flex min-w-0 items-center gap-2">
     <p ref={text} className="h-12 min-w-0 flex-1 line-clamp-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm leading-6">{content}</p>
     <div className="w-14 shrink-0">
       {clipped && <button className="min-h-11 rounded-xl text-sm font-semibold text-text-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" onClick={onExpand}>전문 보기</button>}

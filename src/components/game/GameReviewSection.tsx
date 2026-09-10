@@ -156,7 +156,7 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
   const resultLabel = (team: number) => winner ? (team === winner ? "승" : "패") : (team === context?.awayTeamId ? "원정" : "홈");
   function card(source: ReviewRow, preview = false, commentContext = false, best = true) {
     const row = currentReview(source), own = row.author_id === user?.id;
-    return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col p-3 ${preview ? "flex-1" : ""}`} style={reviewTeamStyle(row.team_id)}>
+    return <article key={row.id} className={`${surface} ${teamBorder} flex min-w-0 flex-col ${preview ? "flex-1 p-2" : "p-3"}`} style={reviewTeamStyle(row.team_id)}>
       <div className={`flex min-w-0 items-center gap-3 ${preview ? "justify-between" : ""}`}>
         {preview && row.team_id && <ReviewTeamIdentity teamId={row.team_id} best={best} compact result={resultLabel(row.team_id)} />}
         <div className="min-w-0 flex-1"><GameReviewIdentity authorId={row.author_id} nickname={row.nickname} teamId={row.team_id} avatarUrl={row.avatar_url} compact={preview} onNavigate={close} /></div>
@@ -196,11 +196,11 @@ export default function GameReviewSection({ gameId }: { gameId: string }) {
     return <button className={`${primary} w-full`} onClick={() => compose()}>내 한 줄 남기기</button>;
   }
   if (!loading && !active && !error) return null;
-  return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-4">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">최고의 한줄평은?</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
+  return <section aria-label="경기 한줄평" className="mx-4 mb-5 rounded-2xl border border-border p-3">
+    <div className="mb-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-1"><h2 className="min-w-0 font-bold">최고의 한줄평은?</h2><div className="flex shrink-0 items-center"><button className={`${button} px-2`} disabled={loading || busy} aria-label="한줄평 새로고침" onClick={() => void reload(undefined, filterRef.current, true)}><RefreshCw size={16}/></button><button className={`${button} px-2`} disabled={!feed} onClick={() => open({ kind: "list" })}>전체 {feed?.total ?? ""} ›</button></div></div>
     {loading && !active && <div role="status" aria-label="한줄평 불러오는 중" className="h-36 animate-pulse rounded-xl bg-bg-tertiary"/>}
     {error && <div role="alert" className="text-sm text-text-secondary">{error}<button className={button} onClick={() => void reload()}>다시 시도</button></div>}
-    {feed && context && <><div className="mb-3 grid grid-cols-1 auto-rows-fr items-stretch gap-3">{orderedTeams.map(team => {
+    {feed && context && <><div className="mb-2 grid grid-cols-1 auto-rows-fr items-stretch gap-2">{orderedTeams.map(team => {
       return <GameReviewTeamSlides key={`${scope}:${team}:${slideRevision}`} gameId={gameId} teamId={team} result={resultLabel(team)}
         viewerId={user?.id ?? null} request={request} paused={!!sheet || busy}
         initialPage={!filter && !feed.next ? { rows: feed.rows.filter(row => row.team_id === team), best: feed.best, next: null } : undefined}
