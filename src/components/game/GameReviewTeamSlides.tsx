@@ -74,7 +74,7 @@ export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request
   }, [page, index, loading, error, load]);
   useEffect(() => {
     if (paused || stopped || reduced || !visible || !foreground || loading || error || !page || page.rows.length < 2) return;
-    const timer = window.setInterval(() => move(index + 1 < page.rows.length ? index + 1 : 0), 6000);
+    const timer = window.setInterval(() => move(index + 1 < page.rows.length ? index + 1 : 0), 3000);
     return () => window.clearInterval(timer);
   }, [paused, stopped, reduced, visible, foreground, loading, error, page, index, move]);
   useEffect(() => {

@@ -22,7 +22,7 @@ globalThis.ResizeObserver = class { constructor(){ resizeObservers++; } observe(
 Object.defineProperty(HTMLElement.prototype, 'clientWidth', { get: () => 200 });
 HTMLElement.prototype.scrollTo = function({left}) { this.scrollLeft=left; this.dispatchEvent(new window.Event('scroll', {bubbles:true})); };
 const timers = new Map(); let timerId=0;
-window.setInterval = cb => { timers.set(++timerId, cb); return timerId; };
+window.setInterval = (cb, delay) => { assert.equal(delay,3000,'auto advance is 3 seconds'); timers.set(++timerId, cb); return timerId; };
 window.clearInterval = id => timers.delete(id);
 const rows = Array.from({length:25}, (_, i) => ({id:i+1,team_id:1,content:'row'+(i+1)}));
 const calls=[];
