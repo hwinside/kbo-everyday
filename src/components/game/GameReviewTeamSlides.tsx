@@ -89,24 +89,27 @@ export default function GameReviewTeamSlides({ gameId, teamId, viewerId, request
     observer.observe(el); return () => observer.disconnect();
   }, []);
 
-  return <div ref={root} className="flex min-w-0 flex-col" role="region" aria-label={`${getTeamById(teamId)?.shortName ?? "팀"} 팬 한줄평 슬라이드`}>
-    <div ref={rail} className="flex flex-1 snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]"
+  return <div ref={root} className="flex h-full min-w-0 flex-col" role="region" aria-label={`${getTeamById(teamId)?.shortName ?? "팀"} 팬 한줄평 슬라이드`}>
+    {/* Stretch through the rail and each slide; percentage heights cannot align
+        cards across independent team rails with different nominee content. */}
+    <div ref={rail} className="flex flex-1 items-stretch snap-x snap-mandatory overflow-x-auto overscroll-x-contain [scrollbar-width:none]"
       onPointerDown={() => setStopped(true)} onFocusCapture={() => setStopped(true)}
       onScroll={e => { const el = e.currentTarget; if (el.clientWidth) setIndex(Math.round(el.scrollLeft / el.clientWidth)); }}>
-      {page?.rows.map((row, i) => <div key={row.id} className="w-full min-w-0 shrink-0 snap-start snap-always" inert={i !== index}>
+      {page?.rows.map((row, i) => <div key={row.id} className="flex w-full min-w-0 shrink-0 snap-start snap-always" inert={i !== index}>
         {renderCard(row, page.best.some(best => best.id === row.id))}
       </div>)}
-      {!page?.rows.length && <div className="w-full rounded-2xl border border-border border-t-[3px] bg-bg-secondary p-3 [border-top-color:var(--review-team-color)] dark:[border-top-color:var(--review-team-color-dark)]" style={reviewTeamStyle(teamId)}>
+      {!page?.rows.length && <div className="w-full self-stretch rounded-2xl border border-border border-t-[3px] bg-bg-secondary p-3 [border-top-color:var(--review-team-color)] dark:[border-top-color:var(--review-team-color-dark)]" style={reviewTeamStyle(teamId)}>
         <ReviewTeamIdentity teamId={teamId} best={false} />
         <p className="mt-3 min-h-24 border-t border-border pt-3 text-xs leading-5 text-text-secondary" role="status">{error || (loading || !page ? "한 줄을 불러오는 중…" : "아직 한 줄이 없어요.")}</p>
       </div>}
     </div>
-    {!!page?.rows.length && <div className="mt-1 flex flex-wrap items-center justify-between text-xs text-text-secondary">
+    {!!page?.rows.length && <div className="mt-1 grid shrink-0 grid-cols-[44px_minmax(0,1fr)_44px] items-center text-center text-xs text-text-secondary">
       <button className={control} aria-label="이전 한 줄" disabled={index === 0} onClick={() => { setStopped(true); move(index - 1); }}><ChevronLeft size={16}/></button>
       <span>{index + 1} / {page.rows.length}{page.next ? "+" : ""}</span>
       <button className={control} aria-label="다음 한 줄" disabled={index >= page.rows.length - 1} onClick={() => { setStopped(true); move(index + 1); }}><ChevronRight size={16}/></button>
-      {!reduced && page.rows.length > 1 && <button className={control} aria-label={stopped ? "자동 넘김 시작" : "자동 넘김 정지"} onClick={() => setStopped(value => !value)}>{stopped ? <Play size={14}/> : <Pause size={14}/>}</button>}
+      <div className="col-span-3 flex h-11 justify-center">{!reduced && page.rows.length > 1 && <button className={control} aria-label={stopped ? "자동 넘김 시작" : "자동 넘김 정지"} onClick={() => setStopped(value => !value)}>{stopped ? <Play size={14}/> : <Pause size={14}/>}</button>}</div>
     </div>}
+    {!page?.rows.length && <div className="mt-1 h-[88px] shrink-0" aria-hidden="true" />}
     {error && <button className="min-h-11 text-xs text-text-secondary" onClick={() => void load(page?.next ?? undefined)}>다시 불러오기</button>}
     {loading && !!page?.rows.length && <span role="status" className="text-xs text-text-secondary">다음 한 줄을 불러오는 중…</span>}
   </div>;
