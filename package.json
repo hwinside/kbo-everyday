@@ -551,7 +551,8 @@
     "qa:admin-game-reviews": "node scripts/qa/admin-game-reviews-smoke.mjs",
     "qa:game-review-like-order": "node scripts/qa/game-review-like-order.mjs",
     "qa:game-review-comments": "node scripts/qa/game-review-comments-route.mjs",
-    "qa:game-review-team-slides": "node scripts/qa/game-review-team-slides.mjs"
+    "qa:game-review-team-slides": "node scripts/qa/game-review-team-slides.mjs",
+    "qa:genius-innings-glossary": "tsx scripts/qa/baseball-terms-innings-2026.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
