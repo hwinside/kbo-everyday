@@ -1,0 +1,64 @@
+{
+  "source": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_%EB%A6%AC%EA%B7%B8%EA%B7%9C%EC%A0%95.pdf#page=13",
+  "citation": "2026 KBO 리그 규정 제1장 제1조 제2항 및 제2조 (PDF 13쪽/본문 1쪽)",
+  "changes": [
+    {
+      "before": {
+        "term": "무승부",
+        "aliases": [
+          "draw",
+          "무"
+        ],
+        "answer": "KBO는 연장(정규시즌 12회)까지 동점이면 무승부입니다.\n승률 계산에서 무승부는 승수에도 패수에도 넣지 않습니다.\n승률 = 승 ÷ (승+패)로 계산합니다.",
+        "category": "rule",
+        "source_kind": "official_rule",
+        "source_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
+        "rule_version": "2026",
+        "reviewed_at": "2026-07-30"
+      },
+      "after": {
+        "term": "무승부",
+        "aliases": [
+          "draw",
+          "무"
+        ],
+        "answer": "2026 KBO 리그 규정 기준 연장전은 정규시즌 11회, 포스트시즌 15회까지 진행하며, 그때까지 승패를 가리지 못하면 무승부입니다.\n승률 계산에서 무승부는 승수에도 패수에도 넣지 않습니다.\n승률 = 승 ÷ (승+패)로 계산합니다.",
+        "category": "rule",
+        "source_kind": "official_rule",
+        "source_url": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_%EB%A6%AC%EA%B7%B8%EA%B7%9C%EC%A0%95.pdf#page=13",
+        "rule_version": "2026",
+        "reviewed_at": "2026-09-11"
+      }
+    },
+    {
+      "before": {
+        "term": "연장전",
+        "aliases": [
+          "연장",
+          "extra inning",
+          "승부치기"
+        ],
+        "answer": "9회까지 동점이면 연장전에 들어갑니다.\nKBO 정규시즌은 승부치기 없이 12회까지 진행하고, 그래도 동점이면 무승부입니다.",
+        "category": "rule",
+        "source_kind": "official_rule",
+        "source_url": "https://www.koreabaseball.com/Reference/Etc/GameRule.aspx",
+        "rule_version": "2026",
+        "reviewed_at": "2026-07-30"
+      },
+      "after": {
+        "term": "연장전",
+        "aliases": [
+          "연장",
+          "extra inning",
+          "승부치기"
+        ],
+        "answer": "9회까지 동점이면 연장전에 들어갑니다.\n2026 KBO 리그 규정 기준 연장전은 정규시즌 11회, 포스트시즌 15회까지 진행하며, 그때까지 승패를 가리지 못하면 무승부입니다.",
+        "category": "rule",
+        "source_kind": "official_rule",
+        "source_url": "https://6ptotvmi5753.edge.naverncp.com/KBO_FILE/ebook/pdf/2026_%EB%A6%AC%EA%B7%B8%EA%B7%9C%EC%A0%95.pdf#page=13",
+        "rule_version": "2026",
+        "reviewed_at": "2026-09-11"
+      }
+    }
+  ]
+}
