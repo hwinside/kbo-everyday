@@ -2,11 +2,29 @@
   "label": "수비",
   "reads": 3,
   "rows": {
-    "51407|1루수": {
+    "55425|2루수": {
       "observed": 2,
       "missStreak": 0
     },
-    "51407|3루수": {
+    "55417|우익수": {
+      "observed": 1,
+      "missStreak": 0
+    },
+    "55417|좌익수": {
+      "observed": 2,
+      "missStreak": 0
+    },
+    "55425|유격수": {
+      "observed": 3,
+      "missStreak": 0,
+      "viaGroup": true
+    },
+    "55425|3루수": {
+      "observed": 3,
+      "missStreak": 0,
+      "viaGroup": true
+    },
+    "55417|중견수": {
       "observed": 3,
       "missStreak": 0,
       "viaGroup": true
