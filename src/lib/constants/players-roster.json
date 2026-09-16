@@ -7299,6 +7299,15 @@
     "birthDate": "1994-07-01"
   },
   {
+    "name": "클레빈저",
+    "kboId": "56939",
+    "teamId": 5,
+    "position": "투수",
+    "backNo": "39",
+    "team": "NC",
+    "birthDate": "1990-12-21"
+  },
+  {
     "name": "타무라",
     "kboId": "56218",
     "teamId": 2,
