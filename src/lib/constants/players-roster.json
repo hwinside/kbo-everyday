@@ -7999,5 +7999,14 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
+  },
+  {
+    "name": "김시앙",
+    "kboId": "51303",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "35",
+    "team": "키움",
+    "birthDate": "2001-10-31"
   }
 ]
