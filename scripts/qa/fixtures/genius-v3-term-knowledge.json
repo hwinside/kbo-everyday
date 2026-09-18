@@ -1,0 +1,65 @@
+{
+  "scope": "Generic and official RAG; independent provider QA by reviewer. Synthetic prior errors are test inputs, not facts.",
+  "cases": [
+    {
+      "id": "unknown-seven",
+      "question": "세븐히트가 뭐야?",
+      "expected": "TERM_UNVERIFIED"
+    },
+    {
+      "id": "unknown-eleven",
+      "question": "일레븐히트는 뭐야?",
+      "expected": "TERM_UNVERIFIED"
+    },
+    {
+      "id": "unknown-novel",
+      "question": "트웰브캐치라는 야구 용어 뜻 알려줘",
+      "expected": "TERM_UNVERIFIED"
+    },
+    {
+      "id": "withdraw-invented",
+      "question": "세븐히트가 뭐라고?",
+      "previous": {
+        "question": "세븐히트가 뭐야?",
+        "answer": "야구에서 세븐히트는 한 선수가 일곱 안타를 치는 공식 용어입니다."
+      },
+      "expected": "TERM_UNVERIFIED",
+      "correctsPrevious": true
+    },
+    {
+      "id": "repeat-unknown",
+      "question": "그래서 세븐히트 뜻이 뭐야?",
+      "previous": {
+        "question": "세븐히트가 뭐야?",
+        "answer": "야구 용어로 뜻을 확인하지 못했습니다. 사용 상황을 알려주세요."
+      },
+      "expected": "TERM_UNVERIFIED",
+      "correctsPrevious": false
+    },
+    {
+      "id": "known-dh",
+      "question": "DH가 무슨 뜻이야?",
+      "expected": "known definition"
+    },
+    {
+      "id": "known-compound",
+      "question": "잔루만루가 뭐야?",
+      "expected": "known definition"
+    },
+    {
+      "id": "reject-false-correction",
+      "question": "아니 DH는 포수라는 뜻 아니야?",
+      "previous": {
+        "question": "DH가 뭐야?",
+        "answer": "야구에서 DH는 지명타자를 뜻합니다."
+      },
+      "expected": "DH remains designated hitter; do not adopt false user correction"
+    },
+    {
+      "id": "context-inference",
+      "question": "문자에서 친구가 오늘 안타 일곱 개 친 걸 보고 세븐히트라고 농담했대. 여기서는 무슨 말이야?",
+      "expected": "TERM_CONTEXTUAL",
+      "contextMeaningRule": "literal span of current question describing usage; no appended record facts"
+    }
+  ]
+}

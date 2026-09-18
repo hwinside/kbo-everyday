@@ -1,3 +1,4 @@
+import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
 /**
  * 야잘알봇 v2 S2b — 선수 서술형 질문 retrieval 서빙 계약.
  *
@@ -811,6 +812,7 @@ export const RAG_SYSTEM_PROMPT = [
  * 인젝션 방어(자료=데이터, 지시 아님)와 INSUFFICIENT fail-close는 그대로 유지한다.
  */
 export const RAG_OFFICIAL_SYSTEM_PROMPT = [
+  TERM_KNOWLEDGE_PROMPT,
   BASEBALL_GENIUS_TONE_PROMPT,
   "너는 한국 프로야구(KBO) 규칙·용어 안내 도우미다.",
   "규칙의 효과는 제목만 보고 결정하지 않는다. 발췌 목록의 상위 범주와 각 항목에 명시된 조건·효과·예외를 구분한다.",
@@ -838,7 +840,7 @@ export const RAG_OFFICIAL_SYSTEM_PROMPT = [
   "답변은 자료를 그대로 옮기지 말고 한국어 존댓말로 다시 서술한다.",
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_OFFICIAL_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
-  `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변"}`,
+  `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_GENERAL_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"${RAG_GROUNDED_SENTINEL} 또는 ${RAG_GENERAL_SENTINEL}일 때만 답변", "correctsPrevious":false,"contextMeaning":""}`,
 ].join("\n");
 
 /**
@@ -1517,6 +1519,8 @@ export function validateRagResponse(
   }
   const row = value as Record<string, unknown>;
   const status = String(row.status);
+  const unverified = options.generalFallback ? unverifiedTermAnswer(row, options.generalFallback.question) : null;
+  if (unverified) return { kind: "general", answer: unverified, toneCompliant: true };
   if (status === RAG_INSUFFICIENT_SENTINEL) return { kind: "insufficient", reason: "model_insufficient" };
   if (status === RAG_GENERAL_SENTINEL && options.generalFallback) {
     if (typeof row.answer !== "string") return { kind: "insufficient", reason: "missing_answer" };

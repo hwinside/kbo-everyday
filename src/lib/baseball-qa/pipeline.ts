@@ -1,3 +1,4 @@
+import { unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
@@ -3857,6 +3858,7 @@ export interface StoredQaFinal {
   /** 원시점 캐시 가능 여부 (generic llm 만 true 가능). 재시도 시점 재계산 금지 —
    * context/scope/roster 를 다시 계산하면 비캐시 답이 global cache 로 샌다 (삼순 2차). */
   cacheable?: boolean;
+  cacheVersion?: number;
   /**
    * 생성 RAG 답변의 톤 준수 관측값 (2026-08-14 A안, 삼순 1차 재리뷰 P0).
    * 원시점 판정을 envelope 에 보존해야 "store 성공 → log 실패/crash → retry 재생" 에서
@@ -3952,6 +3954,7 @@ export function unpackStoredQaFinal(text: string): StoredQaFinal | null {
     ...(readRankRequestContext(final.rankRequestContext) ? { rankRequestContext: readRankRequestContext(final.rankRequestContext) } : {}),
     ...(typeof final.sourceUrl === "string" ? { sourceUrl: final.sourceUrl } : {}),
     ...(typeof final.cacheable === "boolean" ? { cacheable: final.cacheable } : {}),
+    ...(final.cacheVersion === TERM_KNOWLEDGE_CACHE_VERSION ? { cacheVersion: TERM_KNOWLEDGE_CACHE_VERSION } : {}),
     ...(typeof final.toneCompliant === "boolean" ? { toneCompliant: final.toneCompliant } : {}),
     // 관측 4칸 복원 (삼순 2026-08-16 ②). 🔴 폐쇄집합 밖 값은 **버린다** — envelope 는 이전
     // 배포가 쓴 것일 수 있고, 그 값을 그대로 log 로 보내면 DB CHECK 위반(23514)으로 로그
@@ -4025,8 +4028,8 @@ async function replayStoredFinalResult(
   }
   // crash 복구 완결 — **원시점 cacheable** 일 때만 캐시를 마저 쓴다 (재시도 시점
   // context/scope/roster 재계산 금지 — 비캐시 답이 global cache 로 샌다).
-  if (storedFinal.source === "llm" && storedFinal.cacheable === true) {
-    await deps.setCache(questionNorm, storedFinal.answer);
+  if (storedFinal.source === "llm" && storedFinal.cacheable === true && storedFinal.cacheVersion === TERM_KNOWLEDGE_CACHE_VERSION && !isUnverifiedTermAnswer(storedFinal.answer)) {
+    await deps.setCache(termKnowledgeCacheKey(questionNorm), storedFinal.answer);
   }
   await deps.log({
     userId, question, questionNorm, matchPath: storedFinal.source,
@@ -4201,6 +4204,8 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "unsure" };
   const row = value as Record<string, unknown>;
   const status = String(row.status);
+  const unverified = unverifiedTermAnswer(row, question);
+  if (unverified) return { kind: "answer", answer: unverified, toneCompliant: true };
   // 계약 밖 status는 판정 불명확 → 답변이 아니라 되묻기로 fail-closed 한다.
   if (
     ![RULE_TERM_SENTINEL, LEGACY_ANSWER_SENTINEL, NOT_BASEBALL_SENTINEL, UNSURE_SENTINEL]
@@ -6874,7 +6879,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   `source=cache` 로 발송해 게이트를 통째로 우회한다. write 만 막으면 기존 오염이
   //   계속 서빙되므로 read 도 건너뜕다(fail-close).
   if (!context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment) {
-    const cached = await deps.getCache(questionNorm);
+    const cached = await deps.getCache(termKnowledgeCacheKey(questionNorm));
     if (cached !== null) {
       // 선종결 CAS 결속 (삼순 5차): 캐시 발송도 durable 경계를 이긴 쪽만 한다.
       return settleThroughDurableBoundary(
@@ -7115,13 +7120,14 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         answer: validated.answer, source: "llm",
         statRuleTermVerified: Boolean(statDefinition && statNumericGuard),
         definitionContext: definitionContextFor(statDefinition),
-        cacheable: !context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment,
+        cacheable: !isUnverifiedTermAnswer(validated.answer) && !context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment,
+        cacheVersion: TERM_KNOWLEDGE_CACHE_VERSION,
         toneCompliant: validated.toneCompliant,
       },
       llm,
     ));
   }
-  if (!context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment) await deps.setCache(questionNorm, validated.answer);
+  if (!isUnverifiedTermAnswer(validated.answer) && !context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment) await deps.setCache(termKnowledgeCacheKey(questionNorm), validated.answer);
   await deps.log({
     userId, question, questionNorm, matchPath: "llm", answer: validated.answer,
     inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,

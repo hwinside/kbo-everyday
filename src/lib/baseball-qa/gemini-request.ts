@@ -1,3 +1,4 @@
+import { TERM_KNOWLEDGE_PROMPT } from "./term-knowledge";
 import { BASEBALL_GENIUS_DEPTH_PROMPT, BASEBALL_GENIUS_TONE_PROMPT } from "./tone";
 import { BASEBALL_GENIUS_ANSWER_MAX_CHARS, BASEBALL_GENIUS_MAX_OUTPUT_TOKENS } from "./answer-budget";
 import { STAT_DEFINITION_PROMPT, statDefinitionData, definitionWithEvidence, type StatDefinitionFrame } from "./stats/definition-intent";
@@ -50,7 +51,7 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   "<현재 로스터> 블록이 함께 주어지면 그것이 선수의 현재 소속 구단에 대한 유일한 정본이다.",
   "네 기억이나 문서 근거가 로스터와 다르면 로스터를 따른다. 문서 기준 과거 소속을 현재 소속처럼 말하지 않는다.",
   // 정정 발화 (2026-08-10 00:53 "잘못을 지적하니 모르겠다고 나오는건 더 문제").
-  "유저가 직전 답의 오류를 지적하거나 정정하면(예: '최형우는 현재 삼성 소속인데??') 모르겠다고 하지 않는다.",
+  "유저가 직전 답의 오류를 지적하거나 정정하면 확인된 사실은 회피하지 말고 바로잡는다. 확인되지 않은 용어는 모른다고 밝히고 이전 단정을 철회한다.",
   "지적이 로스터·자료로 확인되면 BASEBALL_RULE_TERM 으로 판정하고, 승인된 실책 인정 문장으로 시작한 뒤 정정한 사실을 답한다.",
   // ⚠️ 2026-08-08 (삼순). 출력측 안전판(`answerInQuestionScope`)은 답변 본문에 야구 신호가
   // 있어야 통과시킨다. 그런데 모델은 질문 맥락을 아는 상태라 답을 짧게 줄여 보낸다:
@@ -61,8 +62,9 @@ export const BASEBALL_QA_SYSTEM_PROMPT = [
   // **답변이 자기 맥락을 담게** 만든다.
   "답변 첫 문장에는 이 답이 야구 이야기임이 드러나야 한다. 야구·KBO·구단명·포지션 같은 말을",
   "최소 한 번 넣어 문장만 떼어 읽어도 야구 답변임을 알 수 있게 쓴다(예: '야구에서 와이어 투 와이어는 …').",
+  TERM_KNOWLEDGE_PROMPT,
   BASEBALL_GENIUS_DEPTH_PROMPT,
-  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변"}`,
+  `반드시 JSON 하나만 출력한다: {"status":"BASEBALL_RULE_TERM|NOT_BASEBALL|UNSURE|TERM_UNVERIFIED|TERM_CONTEXTUAL","answer":"BASEBALL_RULE_TERM일 때만 ${BASEBALL_GENIUS_ANSWER_MAX_CHARS}자 이하 답변", "correctsPrevious":false,"contextMeaning":""}`,
   // ⚠️ 2026-08-08 계약 불일치 수정. 이 줄은 위에서 범위를 ①～④로 선언해 놓고도
   // 판정 기준을 **"룰/용어"만**으로 좁혀 모델에게 지시했다. 즉 구단·선수·기록 질문은
   // 선언상 범위 안인데 마지막 줄이 "룰/용어가 아니면 UNSURE" 로 닫으라고 말하는 꼴이다.
