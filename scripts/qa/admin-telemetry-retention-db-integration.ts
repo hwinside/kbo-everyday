@@ -121,6 +121,19 @@ async function main() {
     await apply(db, migration("20260722_admin_telemetry_retention.sql"));
     await apply(db, migration("20260918_telemetry_retention_preview_scan.sql"));
 
+    // Pin the actual RPC target, not merely whichever function the migration creates.
+    // Renaming the migration target to _preview_v2 must fail even if the old
+    // preview still passes every data-integrity scenario below.
+    const installed = await db.query<{ definition: string }>(
+      "SELECT pg_get_functiondef('public.admin_telemetry_retention_preview(timestamptz)'::regprocedure) AS definition",
+    );
+    const expectedBody = migration("20260918_telemetry_retention_preview_scan.sql")
+      .split("AS $$")[1]!.split("$$;")[0]!.trim();
+    const installedBody = installed.rows[0]!.definition
+      .split("$function$")[1]!.trim();
+    assert.equal(installedBody, expectedBody,
+      "actual preview RPC must contain the complete optimized migration body");
+
     await db.exec(`
     INSERT INTO admin_traffic_daily_visitors (day_kst, platform, visitor_id, pv)
     VALUES ('2026-05-01', 'web', 'already-purged', 1);
