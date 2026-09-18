@@ -1179,6 +1179,15 @@
     "birthDate": "2001-07-07"
   },
   {
+    "name": "김시앙",
+    "kboId": "51303",
+    "teamId": 10,
+    "position": "포수",
+    "backNo": "35",
+    "team": "키움",
+    "birthDate": "2001-10-31"
+  },
+  {
     "name": "김시온",
     "kboId": "53464",
     "teamId": 8,
@@ -2962,21 +2971,21 @@
   },
   {
     "name": "박준영",
-    "kboId": "56709",
-    "teamId": 9,
-    "position": "투수",
-    "backNo": "68",
-    "team": "한화",
-    "birthDate": "2002-06-03"
-  },
-  {
-    "name": "박준영",
     "kboId": "52731",
     "teamId": 9,
     "position": "투수",
     "backNo": "96",
     "team": "한화",
     "birthDate": "2003-03-02"
+  },
+  {
+    "name": "박준영",
+    "kboId": "56709",
+    "teamId": 9,
+    "position": "투수",
+    "backNo": "68",
+    "team": "한화",
+    "birthDate": "2002-06-03"
   },
   {
     "name": "박준우",
@@ -7999,14 +8008,5 @@
     "backNo": "22",
     "team": "키움",
     "birthDate": "1996-08-02"
-  },
-  {
-    "name": "김시앙",
-    "kboId": "51303",
-    "teamId": 10,
-    "position": "포수",
-    "backNo": "35",
-    "team": "키움",
-    "birthDate": "2001-10-31"
   }
 ]
