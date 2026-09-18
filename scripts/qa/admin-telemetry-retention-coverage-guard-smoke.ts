@@ -158,6 +158,7 @@ async function main() {
     );
 
     await apply(db, migration("20260728_retention_coverage_guard_fix.sql"));
+    await apply(db, migration("20260918_telemetry_retention_preview_scan.sql"));
 
     assert.deepEqual(
       await coverage(db),

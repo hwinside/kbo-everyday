@@ -119,6 +119,7 @@ async function main() {
     await apply(db, migration("20260721_admin_traffic_page_view_rollup.sql"));
     await apply(db, migration("20260721_admin_traffic_dwell_rollup.sql"));
     await apply(db, migration("20260722_admin_telemetry_retention.sql"));
+    await apply(db, migration("20260918_telemetry_retention_preview_scan.sql"));
 
     await db.exec(`
     INSERT INTO admin_traffic_daily_visitors (day_kst, platform, visitor_id, pv)
