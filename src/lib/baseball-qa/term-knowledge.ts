@@ -32,7 +32,11 @@ function priorTermAssertion(question: string, previous?: PriorTermTurn | null): 
 }
 
 export function unverifiedTermAnswer(row: Record<string, unknown>, question = "", previous?: PriorTermTurn | null): string | null {
-  const correctsPrevious = row.correctsPrevious === true || priorTermAssertion(question, previous);
+  // Server-rendered uncertainty/context is authoritative: a provider flag must
+  // not invent an assertion in a prior answer that explicitly made none.
+  const alreadyQualified = previous != null && isUnverifiedTermAnswer(previous.answer);
+  const correctsPrevious = !alreadyQualified
+    && (row.correctsPrevious === true || priorTermAssertion(question, previous));
   if (row.status === TERM_CONTEXTUAL) {
     const meaning = typeof row.contextMeaning === "string" ? row.contextMeaning.trim() : "";
     // Only quote a bounded, literal span of the user's usage context. The model

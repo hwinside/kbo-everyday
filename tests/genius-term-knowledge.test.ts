@@ -189,3 +189,68 @@ test('R1 usage exception cannot publish free-form model records or swallow a mix
   const record = await answerQuestion('test-user', question + ' LG 팀타율이랑 오타니 홈런 몇개?', harness().deps);
   assert.equal(record.source, 'stat_clarify');
 });
+
+// Production QA regression: the second turn must use the actual first terminal
+// answer, not a handcrafted prior, even when the provider incorrectly says true.
+for (const official of [false, true]) for (const term of ['세븐히트', '큐에이포틴히트']) {
+  test(`hotfix two-turn ${official ? 'official' : 'generic'} ${term}: qualified answer vetoes provider retraction`, async () => {
+    const h = harness(official);
+    const firstQuestion = `${term}가 뭐라고?`;
+    const usageQuestion = `문자에서 친구가 오늘 안타 일곱 개 친 걸 보고 ${term}라고 농담했대. 여기서는 무슨 말이야?`;
+    let next = raw();
+    let genericCalls = 0;
+    let officialCalls = 0;
+    h.deps.callLlm = async () => { genericCalls++; return next; };
+    if (official) h.deps.callOfficialRagLlm = async () => { officialCalls++; return next; };
+    const first = await answerQuestion('test-user', firstQuestion, h.deps);
+    assert.equal(first.answer, UNVERIFIED_TERM_ANSWER);
+    h.deps.loadPreviousTurn = async () => prior(first.answer, firstQuestion);
+    next = { ...raw(true), text: JSON.stringify({ status: 'TERM_CONTEXTUAL', contextMeaning: '안타 일곱 개 친', correctsPrevious: true }) };
+    const second = await answerQuestion('test-user', usageQuestion, h.deps);
+    const expected = '말씀하신 “안타 일곱 개 친” 상황을 가리킨 표현으로 보입니다. 문맥상 해석이며, 확인된 야구 용어의 정의는 아닙니다.';
+    assert.equal(second.answer, expected);
+    assert.equal(second.source, 'llm');
+    assert.equal(second.sourceUrl, undefined);
+    // A contextual terminal is also qualified on the following turn.
+    h.deps.loadPreviousTurn = async () => prior(second.answer, usageQuestion);
+    const third = await answerQuestion('test-user', usageQuestion, h.deps);
+    assert.equal(third.answer, expected);
+    assert.equal(genericCalls, official ? 0 : 3);
+    assert.equal(officialCalls, official ? 3 : 0);
+    assert.ok(h.stored);
+    const saved = h.stored;
+    const replay = await answerQuestion('test-user', usageQuestion, { ...h.deps, getLlmState: async () => ({ started: true, result: saved }) });
+    assert.equal(replay.answer, expected);
+    assert.equal(genericCalls + officialCalls, 3);
+    assert.equal(h.writes.length, 0);
+  });
+}
+
+test('hotfix both validators: qualified prior veto applies to unknown and invalid context terminals', () => {
+  const question = '세븐히트가 뭐라고?';
+  const contextual = '말씀하신 “안타 일곱 개 친” 상황을 가리킨 표현으로 보입니다. 문맥상 해석이며, 확인된 야구 용어의 정의는 아닙니다.';
+  for (const answer of [UNVERIFIED_TERM_ANSWER, UNVERIFIED_TERM_CORRECTION_ANSWER, contextual]) {
+    for (const status of ['TERM_UNVERIFIED', 'TERM_CONTEXTUAL']) {
+      const text = JSON.stringify({ status, correctsPrevious: true, contextMeaning: '질문에 없는 사용 상황' });
+      const previous = prior(answer);
+      assert.equal(validateLlmResponse(text, question, previous).answer, UNVERIFIED_TERM_ANSWER);
+      const official = validateRagResponse(text, { generalFallback: { question, previous } });
+      assert.equal(official.kind, 'general');
+      if (official.kind === 'general') assert.equal(official.answer, UNVERIFIED_TERM_ANSWER);
+    }
+  }
+});
+
+test('hotfix genuine prior assertion still retracts with either provider flag and valid contextual meaning', async () => {
+  const question = '친구가 안타 일곱 개 친 걸 보고 세븐히트라고 농담했대';
+  for (const official of [false, true]) for (const correctsPrevious of [false, true]) {
+    const h = harness(official);
+    h.deps.loadPreviousTurn = async () => prior('세븐히트는 한 선수가 일곱 안타를 치는 공식 용어입니다.');
+    const call = async () => ({ ...raw(), text: JSON.stringify({ status: 'TERM_CONTEXTUAL', contextMeaning: '안타 일곱 개 친', correctsPrevious }) });
+    h.deps.callLlm = call;
+    if (official) h.deps.callOfficialRagLlm = call;
+    const result = await answerQuestion('test-user', question, h.deps);
+    assert.match(result.answer, /^앞서 확인되지 않은 뜻을 단정한 설명은 철회합니다\. 말씀하신 “안타 일곱 개 친”/);
+    assert.equal(h.writes.length, 0);
+  }
+});
