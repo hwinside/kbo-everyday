@@ -83,3 +83,20 @@ test('routing-only stage accepts 200 cases without fabricated citation evidence'
   validateManifest(routing, { ...manifest, cases: manifest.cases.filter(r => ids.has(r.case_id)) }, baseline.filter(r => ids.has(r.case_id)));
   assert.throws(() => validateCases([{ ...routing[0], current_label: 'BASEBALL' }]), /UNKNOWN_INPUT_FIELD/);
 });
+
+for (const tasks of [
+  ['baseball_scope'], ['stat_intent'], ['citation'],
+  ['baseball_scope', 'citation'], ['stat_intent', 'citation'],
+]) {
+  test(`manifest rejects unsupported task set: ${tasks.join(',')}`, () => {
+    const { rows, manifest, baseline } = population();
+    const selected = rows.filter(r => tasks.includes(r.task));
+    const ids = new Set(selected.map(r => r.case_id));
+    validateCases(selected);
+    assert.throws(() => validateManifest(
+      selected,
+      { ...manifest, cases: manifest.cases.filter(r => ids.has(r.case_id)) },
+      baseline.filter(r => ids.has(r.case_id)),
+    ), /INVALID_TASK_SET/);
+  });
+}

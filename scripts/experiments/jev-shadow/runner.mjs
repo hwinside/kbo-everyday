@@ -58,6 +58,7 @@ export function validateManifest(rows, manifest, baseline) {
   }
   check(rows.every(r => ids.has(r.case_id)), 'MANIFEST_ID_MISMATCH');
   const tasks = [...new Set(rows.map(r => r.task))];
+  check(['baseball_scope,stat_intent', 'baseball_scope,citation,stat_intent'].includes([...tasks].sort().join(',')), 'INVALID_TASK_SET');
   check(rows.length === tasks.length * 100, 'NEED_100_PER_TASK');
   for (const task of tasks) {
     const part = rows.filter(r => r.task === task);
