@@ -17,7 +17,7 @@ The synthetic self-check does not call a model and is not independent QA.
 
 ## Independently prepared data (never commit production samples)
 
-300 de-identified JSONL cases, 100 per task, 50 tune + 50 holdout per task.
+Stage 1: 200 de-identified JSONL cases, 100 per routing task (baseball_scope/stat_intent), 50 tune + 50 holdout per task. Citation is excluded/HOLD until historical evidence exists. The runner also accepts 300 cases when all three tasks are explicitly included.
 Each task includes >=25 questions of <=6 Unicode code points after trimming,
 >=50 independently verified failure/boundary cases and >=20 with prior turns.
 These are overlapping quotas; the runner uses this conservative per-task interpretation.
@@ -47,7 +47,7 @@ Reviewer provides `split.json` with a fixed seed and assignment:
 {"seed":20260919,"cases":[{"case_id":"case-synthetic-1","group_id":"group-001","split":"tune"}]}
 ```
 
-This example is deliberately incomplete and fails the 300-case validator.
+This example is deliberately incomplete and fails the full-dataset validator.
 `group_id` must represent connected components linking BOTH shared conversations and
 normalized near-duplicate questions, including cross-task duplicates. Seed alone does
 not prove grouping; preserve the sampling/normalization procedure in the review protocol.
@@ -68,7 +68,7 @@ For holdout use `--split holdout --frozen-protocol-sha256 <sha256 of reviewed fr
 This binds an attestation, not cryptographic proof of correct tuning; reviewer retains the protocol.
 The output directory must be new and its parent must exist.
 
-Each split calls 150 cases three times (450 calls, 900 total). Serial requests,
+Routing-only: each split calls 100 cases three times (300 calls/split, 600 total). Three-task mode: 150 cases per split three times (450/split, 900 total). Serial requests,
 10s timeout, SDK retries disabled, ZDR enabled. API charges still apply; not “cost 0”.
 At the first provider/schema/auth/rate-limit error, stop with `INCOMPLETE_HOLD`;
 completed rows remain on disk. No retry, silent model fallback, or replacement case.
@@ -86,6 +86,8 @@ and by task. Complete-case and all-case agreement denominators are separate.
 It always leaves quality verdict HOLD. No majority-vote selection of a favorable repeat.
 
 ## Pre-registered quality gates (independent reviewer computes from separate gold)
+
+Citation-specific criteria remain HOLD in the two-task stage; never count them as PASS.
 
 Holdout only, thresholds/abstention policy fixed using tune first:
 - Newly introduced harmful errors: 0 observed (not a zero-population-risk claim).
@@ -127,3 +129,53 @@ only exact persisted RECORD/NARRATIVE tokens become a stat baseline, all else is
 No text/IDs go into the extraction report, only counts and absolute time bounds.
 Exports: candidate-pool.jsonl, baseline.jsonl, groups.jsonl, extraction-report.json.
 Reviewer creates final cases.jsonl / labels.jsonl / split.json after the full audit.
+
+## R1: group-disjoint split without splitting the large connected component
+
+`node propose-routing-split.mjs --dir /protected/export --out /protected/new-proposal`
+creates a **reviewer proposal**, not a frozen evaluation dataset. The large component
+is real: 168 valid conversations linked through common/near-duplicate questions, not
+a shared missing-conversation sentinel. Keep it intact: choose <=50/task exclusively
+for tune, leave all other rows of that component unselected; choose 50/task holdout
+from other components. The proposal has quota counts and pseudonymous unselected IDs
+with reasons. Statistical distribution differs between components; report split-level
+strata and do not claim representative population accuracy. `groups-v2.jsonl` retains
+the original groups; it does not manufacture independence by breaking links.
+
+Missing-conversation rows are outside model candidates and retained separately in
+`exclusion-audit-v2.jsonl` with masked question, candidate task memberships, short/failure
+strata and `multi_turn_status: UNKNOWN_MISSING_CONVERSATION` (not false). No original
+IDs/timestamps are retained. They have independent roots joined only by normalized
+text links; they never share a null-conversation bucket. Review this audit against
+candidate strata before accepting selection bias. `--excluded-out` plus
+`--diagnostic-only` exports the audit without overwriting the original candidates.
+
+## Native incumbent baseline and pre-mapping confusion
+
+```sh
+./node_modules/.bin/tsx baseline.mjs --input /protected/candidate-pool.jsonl --out /protected/baseline-v2.jsonl
+```
+
+Default is validate-only; `--live` runs up to 400 routing candidates with protected
+`GEMINI_API_KEY`. Uses the current pure Gemini prompt/request builder at this source
+revision, not a copied approximation. The same question and supplied prior pairs go
+to the incumbent; the harness extends contents to both supplied pairs, while the
+production builder normally receives one selected pair. No historical roster/context
+snapshot is recreated. This is the incumbent **LLM classifier component** baseline,
+not an end-to-end historical route reproduction. No production pipeline/log/cache/DB
+write imports. One call per candidate, 15s timeout, no retries. Provider HTTP/rate-limit/timeout errors stop the run; classifier schema errors remain explicit rows and do not silently drop remaining cases. Use --task stat_intent to run that task only without recalling completed scope cases.
+Baseline latency includes generation (the incumbent combines classifier and answer).
+
+`native_prediction` is preserved. `RULE_TERM` has `prediction:null`, successful
+provider status, and no silent conversion to NA/NARRATIVE. Native NOT_BASEBALL/UNSURE project to NA in stat_intent under mapping v2; both native and mapped counts stay visible. Scope status projection
+and unmapped intent are recorded in `baseline-mapping.json` with an explicit version.
+Reviewer must version any later RULE_TERM mapping before holdout. Only after independent
+gold is available, produce BOTH raw-native and mapped confusion matrices:
+
+```sh
+node baseline-report.mjs --cases /protected/final/cases.jsonl --baseline /protected/baseline-v2.jsonl --labels /protected/labels.jsonl --manifest /protected/final/split.json --mapping baseline-mapping.json --out /protected/baseline-confusion.json
+```
+
+Counts are per task AND split; errors and unmapped predictions remain visible. A partial
+baseline or missing gold fails the join instead of dropping rows. Input/mapping hashes
+bind the report. The report never generates gold or automatically declares GO.

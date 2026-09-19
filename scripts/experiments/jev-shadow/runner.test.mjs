@@ -74,3 +74,12 @@ test('three-run consistency does not count failures as agreement; p95 includes f
   assert.equal(summary.agreement_complete_cases, 1);
   assert.equal(summary.p95_latency_ms, 10000);
 });
+
+test('routing-only stage accepts 200 cases without fabricated citation evidence', () => {
+  const { rows, manifest, baseline } = population();
+  const routing = rows.filter(r => r.task !== 'citation');
+  const ids = new Set(routing.map(r => r.case_id));
+  validateCases(routing);
+  validateManifest(routing, { ...manifest, cases: manifest.cases.filter(r => ids.has(r.case_id)) }, baseline.filter(r => ids.has(r.case_id)));
+  assert.throws(() => validateCases([{ ...routing[0], current_label: 'BASEBALL' }]), /UNKNOWN_INPUT_FIELD/);
+});

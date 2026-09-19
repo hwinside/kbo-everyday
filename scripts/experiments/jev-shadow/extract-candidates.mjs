@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 const START = '2026-08-20T00:37:59.000Z';
 const END = '2026-09-19T00:37:59.000Z';
-const { values } = parseArgs({ options: { out: { type: 'string' } } });
+const { values } = parseArgs({ options: { out: { type: 'string' }, 'diagnostic-only': { type: 'boolean', default: false }, 'excluded-out': { type: 'string' } } });
 if (!values.out) throw Error('OUT_REQUIRED');
 const out = resolve(values.out);
 const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -98,6 +98,7 @@ async function main() {
     stat_intent: unique.filter(r => intent(r) || r.match_path === 'stat_clarify' || /타율|홈런|타점|방어율|평균자책|출루율|장타율|성적|기록|안타|삼진|도루|승률|ops|war/i.test(r.question)),
     citation: unique.filter(r => r.rag_attempt_path || /rag/.test(r.match_path)),
   };
+  const groupDetails = new Map();
   const candidates = [], baseline = [], groups = [], report = { window: { min: START, max: END }, read_count: logs.length, ...counters, tasks: {} };
   for (const [task, pool] of Object.entries(pools)) {
     // Prioritize observed failures/boundaries, then short/context cases, then seeded rank.
@@ -120,6 +121,9 @@ async function main() {
         observed_match_path: r.match_path, observed_intent_verdict: r._job?.intent_verdict ?? null,
         missing_historical_evidence: task === 'citation', missing_current_label: task !== 'stat_intent' || !intent(r) });
       groups.push({ case_id, group_id: r._group });
+      if (!groupDetails.has(r._group)) groupDetails.set(r._group, { cases: 0, conversations: new Set(), missing_conversation: 0 });
+      const detail = groupDetails.get(r._group); detail.cases++;
+      if (r._conversation) detail.conversations.add(r._conversation); else detail.missing_conversation++;
     }
     const times = selected.map(r => r.created_at).sort();
     report.tasks[task] = { available: pool.length, exported: selected.length, min: times[0] ?? null, max: times.at(-1) ?? null,
@@ -127,10 +131,17 @@ async function main() {
       missing_current_label: baseline.filter(r => selected.some(s => r.case_id === 'case-' + pseudonym(task, s.id).slice(0, 32)) && r.missing_current_label).length,
       duplicate_normalized_questions: selected.length - new Set(selected.map(r => norm(r.question))).size };
   }
+  const excludedAudit = logs.filter(r => !r._conversation && r.question?.trim()).map(r => ({ case_id: 'case-' + pseudonym('excluded', r.id).slice(0,32), question: clean(r.question), prior_turns: [], group_id: 'group-' + pseudonym('group', find(r._index)), exclusion_reason: 'MISSING_CONVERSATION', candidate_tasks: ['baseball_scope', ...((r.match_path === 'stat_clarify' || /타율|홈런|타점|방어율|평균자책|출루율|장타율|성적|기록|안타|삼진|도루|승률|ops|war/i.test(r.question)) ? ['stat_intent'] : []), ...((r.rag_attempt_path || /rag/.test(r.match_path)) ? ['citation'] : [])], stratum: [...([...r.question.trim()].length <= 6 ? ['short'] : []), ...(['blocked','unsure','error','context_missing','needs_clarification','stat_clarify'].includes(r.match_path) || r.rag_discard_reason ? ['failure_boundary'] : [])], multi_turn_status: 'UNKNOWN_MISSING_CONVERSATION', observed_match_path: r.match_path }));
+  if (values['excluded-out']) writeFileSync(resolve(values['excluded-out']), excludedAudit.map(r => JSON.stringify(r)).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
+  if (values['diagnostic-only']) {
+    const diagnostics = [...groupDetails.values()].map(g => ({ cases: g.cases, distinct_valid_conversations: g.conversations.size, missing_conversation: g.missing_conversation })).sort((a,b)=>b.cases-a.cases);
+    console.log(JSON.stringify({ source_missing_conversations_excluded: counters.missing_conversation, selected_largest_groups: diagnostics.slice(0,5) })); return;
+  }
   mkdirSync(out, { recursive: true, mode: 0o700 });
   const save = (name, value) => writeFileSync(resolve(out, name), value, { mode: 0o600, flag: 'wx' });
   save('candidate-pool.jsonl', candidates.map(r => JSON.stringify(r)).join('\n') + '\n');
   save('baseline.jsonl', baseline.map(r => JSON.stringify(r)).join('\n') + '\n');
+  save('excluded-conversation-audit.jsonl', excludedAudit.map(r => JSON.stringify(r)).join('\n') + '\n');
   save('groups.jsonl', groups.map(r => JSON.stringify(r)).join('\n') + '\n');
   save('extraction-report.json', JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));

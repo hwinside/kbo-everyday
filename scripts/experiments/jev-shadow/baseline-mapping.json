@@ -1,0 +1,17 @@
+{
+  "version": "incumbent-native-projection-v2-rule-term-unmapped",
+  "maps": {
+    "baseball_scope": {
+      "BASEBALL_RULE_TERM": "BASEBALL",
+      "NOT_BASEBALL": "NON_BASEBALL",
+      "UNSURE": "AMBIGUOUS"
+    },
+    "stat_intent": {
+      "RECORD": "RECORD",
+      "NARRATIVE": "NARRATIVE",
+      "RULE_TERM": null,
+      "NOT_BASEBALL": "NA",
+      "UNSURE": "NA"
+    }
+  }
+}

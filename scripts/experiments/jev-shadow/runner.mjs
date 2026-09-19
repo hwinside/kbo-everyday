@@ -57,8 +57,9 @@ export function validateManifest(rows, manifest, baseline) {
     groups.set(item.group_id, item.split); ids.set(item.case_id, item);
   }
   check(rows.every(r => ids.has(r.case_id)), 'MANIFEST_ID_MISMATCH');
-  check(rows.length === 300, 'NEED_300_CASES');
-  for (const task of Object.keys(LABELS)) {
+  const tasks = [...new Set(rows.map(r => r.task))];
+  check(rows.length === tasks.length * 100, 'NEED_100_PER_TASK');
+  for (const task of tasks) {
     const part = rows.filter(r => r.task === task);
     check(part.length === 100, 'NEED_100_PER_TASK');
     for (const split of ['tune', 'holdout']) check(part.filter(r => ids.get(r.case_id).split === split).length === 50, 'NEED_50_PER_SPLIT');
@@ -170,7 +171,7 @@ async function main() {
       }
     }
   }
-  const by_task = Object.fromEntries(Object.keys(LABELS).map(task => [task, summarize(runs.map(run => run.filter((_, i) => selected[i].task === task)))]));
+  const by_task = Object.fromEntries([...new Set(selected.map(r => r.task))].map(task => [task, summarize(runs.map(run => run.filter((_, i) => selected[i].task === task)))]));
   save('summary.json', JSON.stringify({ ...summarize(runs), by_task }, null, 2));
   console.log(JSON.stringify({ status: 'COMPLETE_NOT_QUALITY_GO', calls: runs.flat().length }));
 }
