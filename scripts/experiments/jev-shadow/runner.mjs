@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync, appendFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export const MODEL = 'typesafe-ai/jev';
 export const LABELS = {
@@ -110,6 +111,27 @@ export async function runCase(row, evaluate, timeoutMs = 10000) {
   }
 }
 
+export function parseIntervalMs(value) {
+  check(typeof value === 'string' && /^[1-9][0-9]*$/.test(value), 'INVALID_INTERVAL_MS');
+  const intervalMs = Number(value);
+  check(Number.isSafeInteger(intervalMs) && intervalMs <= 2147483647, 'INVALID_INTERVAL_MS');
+  return intervalMs;
+}
+
+export function createPacedRunner(intervalMs, evaluate, wait = sleep) {
+  parseIntervalMs(String(intervalMs));
+  let attempted = false, stopped = false;
+  return async row => {
+    check(!stopped, 'PACED_RUN_STOPPED');
+    // Completion-to-start gap across repeats; excluded from API latency.
+    if (attempted) await wait(intervalMs);
+    attempted = true;
+    const result = await runCase(row, evaluate);
+    stopped = result.provider_status !== 'ok';
+    return result;
+  };
+}
+
 export function summarize(runs) {
   const all = runs.flat();
   const times = all.map(r => r.latency_ms).sort((a, b) => a - b);
@@ -130,9 +152,11 @@ async function main() {
   const { values } = parseArgs({ options: {
     input: { type: 'string' }, baseline: { type: 'string' }, manifest: { type: 'string' }, out: { type: 'string' },
     split: { type: 'string' }, live: { type: 'boolean', default: false },
+    'interval-ms': { type: 'string' },
     'reviewed-input-sha256': { type: 'string' }, 'frozen-protocol-sha256': { type: 'string' },
   } });
   check(values.input && values.baseline && values.manifest && values.out && ['tune', 'holdout'].includes(values.split), 'USAGE_INPUT_MANIFEST_OUT_SPLIT_REQUIRED');
+  const intervalMs = values.live || values['interval-ms'] !== undefined ? parseIntervalMs(values['interval-ms']) : null;
   const inputBytes = readFileSync(values.input);
   const rows = validateCases(jsonl(values.input));
   const manifestBytes = readFileSync(values.manifest);
@@ -145,7 +169,7 @@ async function main() {
     prompt_sha256: hash(JSON.stringify({ descriptions, request: requestFor(selected[0]).questions.decision.instructions })),
   };
   if (!values.live) {
-    console.log(JSON.stringify({ mode: 'validate-only', cases: rows.length, selected: selected.length, split: values.split, ...hashes })); return;
+    console.log(JSON.stringify({ mode: 'validate-only', interval_ms: intervalMs, cases: rows.length, selected: selected.length, split: values.split, ...hashes })); return;
   }
   check(values['reviewed-input-sha256'] === hashes.input_sha256, 'REVIEWED_INPUT_HASH_REQUIRED');
   if (values.split === 'holdout') check(/^[a-f0-9]{64}$/.test(values['frozen-protocol-sha256'] ?? ''), 'FROZEN_PROTOCOL_HASH_REQUIRED');
@@ -156,14 +180,16 @@ async function main() {
   const save = (name, value) => writeFileSync(resolve(values.out, name), value, { flag: 'wx', mode: 0o600 });
   save('run.json', JSON.stringify({ mode: 'live-offline-shadow', model: MODEL, sdk: '7.0.105', split: values.split,
     seed: 20260919, repeats: 3, max_calls: selected.length * 3, maxRetries: 0, timeout_ms: 10000,
+    interval_ms: intervalMs, pacing_policy: 'completion-to-start', automatic_fallback: false,
     started_at: new Date().toISOString(), frozen_protocol_sha256: values['frozen-protocol-sha256'] ?? null,
     confidence_definition: 'TypeSafe native choice confidence; not selected-option probability; null if absent', ...hashes }, null, 2));
+  const pacedRun = createPacedRunner(intervalMs, experimental_evaluate);
   const runs = [];
   for (let repeat = 1; repeat <= 3; repeat++) {
     const run = []; runs.push(run);
     save(`repeat-${repeat}.jsonl`, '');
     for (const row of selected) {
-      const result = await runCase(row, experimental_evaluate); run.push(result);
+      const result = await pacedRun(row); run.push(result);
       appendFileSync(resolve(values.out, `repeat-${repeat}.jsonl`), JSON.stringify(result) + '\n');
       // Stop on authentication, rate limit or provider failure: do not hammer upstream.
       if (result.provider_status !== 'ok') {

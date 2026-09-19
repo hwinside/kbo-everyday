@@ -61,7 +61,7 @@ node runner.mjs --input /protected/cases.jsonl --baseline /protected/baseline.js
 ```
 
 Without `--live`, only validates and prints hashes; no credentials/network required.
-For live evaluation use the same command plus `--live --reviewed-input-sha256 <input hash>`.
+For live evaluation use the same command plus `--live --interval-ms 15000 --reviewed-input-sha256 <input hash>`.
 Configure `AI_GATEWAY_API_KEY` or valid Vercel OIDC in the process's protected environment;
 never put secret values on the command line or in Slack. This runner does not extract credentials.
 For holdout use `--split holdout --frozen-protocol-sha256 <sha256 of reviewed frozen protocol>`.
@@ -69,7 +69,18 @@ This binds an attestation, not cryptographic proof of correct tuning; reviewer r
 The output directory must be new and its parent must exist.
 
 Routing-only: each split calls 100 cases three times (300 calls/split, 600 total). Three-task mode: 150 cases per split three times (450/split, 900 total). Serial requests,
-10s timeout, SDK retries disabled, ZDR enabled. API charges still apply; not “cost 0”.
+10s timeout, SDK retries disabled, ZDR enabled.
+Live runs require an explicit positive integer `--interval-ms` (1..2147483647).
+For example, 15000 adds a fixed 15s gap from each completed request to the next
+request, including across repeat boundaries; the first request has no pacing wait.
+This is an operator-selected interval, not a claimed provider quota or guarantee
+against 429. Pacing is excluded from `latency_ms` / p95 API latency; wall-clock
+runtime includes it (300 calls add 299 gaps, about 75 minutes at 15s).
+`run.json` records `interval_ms`, `pacing_policy: completion-to-start`, and
+`automatic_fallback: false`. Freeze the chosen interval in the reviewed holdout
+protocol. Any provider error, including 429, still stops immediately: no retry,
+automatic fallback, resume, or overwrite. After reviewer-controlled cooldown,
+restart tune from the beginning into a new output directory. API charges still apply; not “cost 0”.
 At the first provider/schema/auth/rate-limit error, stop with `INCOMPLETE_HOLD`;
 completed rows remain on disk. No retry, silent model fallback, or replacement case.
 Do not infer >=99% success from partial outputs; investigate and document any rerun.

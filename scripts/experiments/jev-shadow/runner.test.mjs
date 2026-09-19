@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validateCases, validateManifest, requestFor, runCase, summarize } from './runner.mjs';
+import { validateCases, validateManifest, requestFor, runCase, summarize, parseIntervalMs, createPacedRunner } from './runner.mjs';
 
 const row = { case_id: 'case-synthetic-1', task: 'citation', question: '희생플라이?', prior_turns: [], candidate_answer: '희생플라이는 타수에서 제외합니다.', evidence: ['희생플라이는 타수에 포함하지 않는다.'] };
 
@@ -100,3 +100,37 @@ for (const tasks of [
     ), /INVALID_TASK_SET/);
   });
 }
+
+
+test('live pacing interval must be explicit, positive and timer-safe', () => {
+  for (const value of [undefined, '', '0', '-1', '0.5', '1e3', ' 1000', 'Infinity', '2147483648']) {
+    assert.throws(() => parseIntervalMs(value), /INVALID_INTERVAL_MS/);
+  }
+  assert.equal(parseIntervalMs('15000'), 15000);
+  assert.equal(parseIntervalMs('2147483647'), 2147483647);
+});
+
+test('fixed completion-to-start gap crosses repeat boundaries without initial wait', async () => {
+  const events = [];
+  const paced = createPacedRunner(15000, async request => {
+    assert.equal(request.maxRetries, 0);
+    events.push('call');
+    return { answers: { decision: { choice: 'SUPPORTED' } } };
+  }, async ms => { events.push(`wait:${ms}`); });
+  for (let repeat = 0; repeat < 3; repeat++) await paced(row);
+  assert.deepEqual(events, ['call', 'wait:15000', 'call', 'wait:15000', 'call']);
+});
+
+test('429 stops paced runner without retry, fallback or subsequent sleep/call', async () => {
+  let calls = 0, waits = 0;
+  const paced = createPacedRunner(15000, async () => {
+    calls++;
+    if (calls === 2) throw Object.assign(new Error('PRIVATE'), { statusCode: 429 });
+    return { answers: { decision: { choice: 'SUPPORTED' } } };
+  }, async () => { waits++; });
+  assert.equal((await paced(row)).provider_status, 'ok');
+  assert.equal((await paced(row)).error_code, 'HTTP_429');
+  await assert.rejects(() => paced(row), /PACED_RUN_STOPPED/);
+  assert.equal(calls, 2);
+  assert.equal(waits, 1);
+});
