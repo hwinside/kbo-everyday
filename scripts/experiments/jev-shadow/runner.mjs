@@ -6,6 +6,45 @@ import { parseArgs } from 'node:util';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 export const MODEL = 'typesafe-ai/jev';
+export const DIRECT_MODEL = 'jev-1.13.0';
+const DIRECT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone';
+
+export function selectProvider(value = 'auto', env = process.env) {
+  check(['auto', 'direct', 'gateway'].includes(value), 'INVALID_PROVIDER');
+  return value === 'auto' ? (env.TYPESAFE_API_KEY?.trim() ? 'direct' : 'gateway') : value;
+}
+
+// Persist only a valid Retry-After value, never arbitrary response headers/text.
+export function safeRetryAfter(value) {
+  if (typeof value !== 'string') return null;
+  if (/^\d{1,10}$/.test(value)) return value;
+  if (/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)
+    && Number.isFinite(Date.parse(value))) return value;
+  return null;
+}
+
+export function createDirectEvaluate(apiKey, fetchImpl = fetch) {
+  check(typeof apiKey === 'string' && apiKey.trim().length > 0, 'TYPESAFE_AUTH_MISSING');
+  return async ({ state, questions, abortSignal }) => {
+    const response = await fetchImpl(DIRECT_ENDPOINT, {
+      method: 'POST', redirect: 'error', signal: abortSignal,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state, model: DIRECT_MODEL, questions }),
+    });
+    if (!response.ok) {
+      const retryAfter = safeRetryAfter(response.headers.get('retry-after'));
+      await response.body?.cancel();
+      throw Object.assign(new Error('DIRECT_HTTP_ERROR'), { statusCode: response.status, retryAfter });
+    }
+    const result = await response.json();
+    check(result.model === DIRECT_MODEL, 'DIRECT_MODEL_MISMATCH');
+    check(result.answers?.decision?.type === 'choice', 'INVALID_ANSWER_TYPE');
+    return {
+      answers: result.answers,
+      providerMetadata: { typesafe: { confidence: { decision: result.answers.decision.confidence ?? null } } },
+    };
+  };
+}
 export const LABELS = {
   baseball_scope: ['BASEBALL', 'NON_BASEBALL', 'AMBIGUOUS'],
   stat_intent: ['RECORD', 'NARRATIVE', 'NA'],
@@ -106,8 +145,10 @@ export async function runCase(row, evaluate, timeoutMs = 10000) {
     check(confidence === null || (Number.isFinite(confidence) && confidence >= 0 && confidence <= 1), 'INVALID_CONFIDENCE');
     return { ...base, predicted_label: answer.choice, confidence, latency_ms: performance.now() - start, provider_status: 'ok' };
   } catch (error) {
-    // Never persist SDK error messages, request bodies, response bodies, or headers.
-    return { ...base, latency_ms: performance.now() - start, error_code: safeError(error) };
+    // Never persist error messages/bodies; Retry-After is the sole allowlisted header.
+    const retryAfter = safeRetryAfter(error?.retryAfter);
+    return { ...base, latency_ms: performance.now() - start, error_code: safeError(error),
+      ...(retryAfter === null ? {} : { retry_after: retryAfter }) };
   }
 }
 
@@ -153,10 +194,13 @@ async function main() {
     input: { type: 'string' }, baseline: { type: 'string' }, manifest: { type: 'string' }, out: { type: 'string' },
     split: { type: 'string' }, live: { type: 'boolean', default: false },
     'interval-ms': { type: 'string' },
+    provider: { type: 'string', default: 'auto' },
     'reviewed-input-sha256': { type: 'string' }, 'frozen-protocol-sha256': { type: 'string' },
   } });
   check(values.input && values.baseline && values.manifest && values.out && ['tune', 'holdout'].includes(values.split), 'USAGE_INPUT_MANIFEST_OUT_SPLIT_REQUIRED');
   const intervalMs = values.live || values['interval-ms'] !== undefined ? parseIntervalMs(values['interval-ms']) : null;
+  const provider = selectProvider(values.provider);
+  const model = provider === 'direct' ? DIRECT_MODEL : MODEL;
   const inputBytes = readFileSync(values.input);
   const rows = validateCases(jsonl(values.input));
   const manifestBytes = readFileSync(values.manifest);
@@ -169,21 +213,29 @@ async function main() {
     prompt_sha256: hash(JSON.stringify({ descriptions, request: requestFor(selected[0]).questions.decision.instructions })),
   };
   if (!values.live) {
-    console.log(JSON.stringify({ mode: 'validate-only', interval_ms: intervalMs, cases: rows.length, selected: selected.length, split: values.split, ...hashes })); return;
+    console.log(JSON.stringify({ mode: 'validate-only', provider, model, interval_ms: intervalMs, cases: rows.length, selected: selected.length, split: values.split, ...hashes })); return;
   }
   check(values['reviewed-input-sha256'] === hashes.input_sha256, 'REVIEWED_INPUT_HASH_REQUIRED');
   if (values.split === 'holdout') check(/^[a-f0-9]{64}$/.test(values['frozen-protocol-sha256'] ?? ''), 'FROZEN_PROTOCOL_HASH_REQUIRED');
-  check(Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN), 'GATEWAY_AUTH_MISSING');
-  const { experimental_evaluate } = await import('ai');
-  check(typeof experimental_evaluate === 'function', 'SDK_EVALUATE_MISSING');
+  let evaluate;
+  if (provider === 'direct') {
+    evaluate = createDirectEvaluate(process.env.TYPESAFE_API_KEY);
+  } else {
+    check(Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN), 'GATEWAY_AUTH_MISSING');
+    ({ experimental_evaluate: evaluate } = await import('ai'));
+    check(typeof evaluate === 'function', 'SDK_EVALUATE_MISSING');
+  }
   mkdirSync(values.out, { mode: 0o700 }); // New directory only: no overwrites/resume or mixed runs.
   const save = (name, value) => writeFileSync(resolve(values.out, name), value, { flag: 'wx', mode: 0o600 });
-  save('run.json', JSON.stringify({ mode: 'live-offline-shadow', model: MODEL, sdk: '7.0.105', split: values.split,
+  save('run.json', JSON.stringify({ mode: 'live-offline-shadow', provider, provider_selection: values.provider,
+    model, sdk: provider === 'direct' ? 'node-fetch' : '7.0.105',
+    endpoint: provider === 'direct' ? DIRECT_ENDPOINT : 'vercel-ai-gateway',
+    data_retention: provider === 'direct' ? 'ACCOUNT_POLICY_REQUIRES_INDEPENDENT_REVIEW' : 'gateway-zero-data-retention-requested', split: values.split,
     seed: 20260919, repeats: 3, max_calls: selected.length * 3, maxRetries: 0, timeout_ms: 10000,
     interval_ms: intervalMs, pacing_policy: 'completion-to-start', automatic_fallback: false,
     started_at: new Date().toISOString(), frozen_protocol_sha256: values['frozen-protocol-sha256'] ?? null,
     confidence_definition: 'TypeSafe native choice confidence; not selected-option probability; null if absent', ...hashes }, null, 2));
-  const pacedRun = createPacedRunner(intervalMs, experimental_evaluate);
+  const pacedRun = createPacedRunner(intervalMs, evaluate);
   const runs = [];
   for (let repeat = 1; repeat <= 3; repeat++) {
     const run = []; runs.push(run);
@@ -193,7 +245,8 @@ async function main() {
       appendFileSync(resolve(values.out, `repeat-${repeat}.jsonl`), JSON.stringify(result) + '\n');
       // Stop on authentication, rate limit or provider failure: do not hammer upstream.
       if (result.provider_status !== 'ok') {
-        save('stopped.json', JSON.stringify({ completed_calls: runs.flat().length, error_code: result.error_code, status: 'INCOMPLETE_HOLD' }));
+        save('stopped.json', JSON.stringify({ completed_calls: runs.flat().length, error_code: result.error_code,
+          retry_after: result.retry_after ?? null, status: 'INCOMPLETE_HOLD' }));
         throw new Error('LIVE_RUN_INCOMPLETE_SEE_STOPPED_JSON');
       }
     }
