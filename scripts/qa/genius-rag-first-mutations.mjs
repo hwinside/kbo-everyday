@@ -338,8 +338,8 @@ const MUTATIONS = [
   {
     name: "r42 공식 GENERAL 주제 저장 제거 — 빈 근거 fallback 후 문맥을 잃는다",
     file: PIPELINE,
-    from: 'statRuleTermVerified: Boolean(definition),\n      definitionContext: definitionContextFor(definition),',
-    to: 'statRuleTermVerified: Boolean(definition),',
+    from: 'statRuleTermVerified: Boolean(definition) || isUnverifiedTermAnswer(validated.answer),\n      definitionContext: definitionContextFor(definition),',
+    to: 'statRuleTermVerified: Boolean(definition) || isUnverifiedTermAnswer(validated.answer),',
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
   {
@@ -450,8 +450,8 @@ const MUTATIONS = [
   {
     name: "r22 generic 정의 대상 미전달 — 후속 지표·인용 의미를 잃는다",
     file: PIPELINE,
-    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
-    to: "rosterBlock, statNumericGuard && !statDefinition, undefined)",
+    from: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, undefined)",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
@@ -464,8 +464,8 @@ const MUTATIONS = [
   {
     name: "r18 정의 fallback을 RECORD 분류기로 복귀 — 빈 검색 4턴이 정의답을 잃는다",
     file: PIPELINE,
-    from: "rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined)",
-    to: "rosterBlock, statNumericGuard, statDefinition ?? undefined)",
+    from: "rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, statDefinition ?? undefined)",
+    to: "rosterBlock, statNumericGuard && !reportedTermUsage, statDefinition ?? undefined)",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {
@@ -478,8 +478,8 @@ const MUTATIONS = [
   {
     name: "r20 정의 검증 표식 제거 — log crash 재생이 정상답을 되묻기로 바꾼다",
     file: PIPELINE,
-    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard),",
-    to: "statRuleTermVerified: false,",
+    from: "statRuleTermVerified: Boolean(statDefinition && statNumericGuard) || Boolean(reportedTermUsage && isUnverifiedTermAnswer(validated.answer)),",
+    to: "statRuleTermVerified: Boolean(reportedTermUsage && isUnverifiedTermAnswer(validated.answer)),",
     smoke: "scripts/qa/genius-stat-definition-smoke.ts",
   },
   {

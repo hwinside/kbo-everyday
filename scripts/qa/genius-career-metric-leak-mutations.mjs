@@ -63,8 +63,8 @@ const MUTATIONS = [
   {
     name: "m4e(종단) 선수 결속 route override 제거 — 지원 지표 구조화 실답이 hold 로 죽는다",
     file: PIPELINE,
-    from: "  const route = (statDefinition || enabledPlayerCandidate)",
-    to: "  const route = statDefinition",
+    from: "  const route = (statDefinition || enabledPlayerCandidate || (reportedTermUsage && baseRoute !== \"blocked\"))",
+    to: "  const route = (statDefinition || (reportedTermUsage && baseRoute !== \"blocked\"))",
   },
   {
     name: "m4f(종단) 순위형 가드 제거 — 통산/연도/현재 전부 개인값 오답 변환(431·28·현재값)",
