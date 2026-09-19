@@ -5,6 +5,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import ts from "typescript";
 import { normalizeKey, normalizeQuestion } from "../../src/lib/baseball-qa/normalize";
+import { termKnowledgeCacheKey } from "../../src/lib/baseball-qa/term-knowledge";
 import { selectContextTurn, type ContextTurn } from "../../src/lib/baseball-qa/context";
 import {
   applyBaseballQaPlayerPick,
@@ -1457,7 +1458,7 @@ async function verifyPipeline() {
   );
 
   const cache = freshState();
-  cache.cache.set(normalizeQuestion("체크스윙 룰이 뭐야?"), "캐시 답변");
+  cache.cache.set(termKnowledgeCacheKey(normalizeQuestion("체크스윙 룰이 뭐야?")), "캐시 답변");
   assert.equal((await answerQuestion("u1", "체크스윙 룰이 뭐야?", makeDeps(cache))).source, "cache");
   assert.equal(cache.llmCalls, 0);
 
@@ -1549,7 +1550,7 @@ async function verifyPipeline() {
   for (const [input, expectedSource] of deterministicClosures) {
     const expectedAnswer = expectedSource === "history_hold" ? HISTORY_HOLD_ANSWER : BLOCKED_ANSWER;
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1568,7 +1569,7 @@ async function verifyPipeline() {
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.llmCalls, 0, `${input}: generic LLM 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: cache write 0`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: cache write 0`);
   }
 
   // P0 출시 경계 ② — **2차 가드 위임**(하린아빠 2026-08-03): 룰베이스가 못 가린 비야구 질문.
@@ -1597,7 +1598,7 @@ async function verifyPipeline() {
     const state = freshState({
       llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}`,
     });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     let playerRagCalls = 0;
     const deps: QaDeps = {
@@ -1632,7 +1633,7 @@ async function verifyPipeline() {
     assert.equal(playerRagCalls, 0, `${input}: player RAG 0`);
     assert.equal(state.cacheReads, 0, `${input}: cache read 0`);
     assert.equal(state.cacheWrites, 0, `${input}: cache write 0`);
-    assert.equal(state.cache.get(normalizeQuestion(input)), "오염 캐시", `${input}: 오염 캐시 미노출`);
+    assert.equal(state.cache.get(termKnowledgeCacheKey(normalizeQuestion(input))), "오염 캐시", `${input}: 오염 캐시 미노출`);
   }
 
   // 2차 가드 양성편: 사전 미수록·신호어 미등록인 **정상 룰 질문**은 blocked로 죽지 않고
@@ -2190,7 +2191,7 @@ async function verifyPipeline() {
     "야구 경기 결과가 무승부면 순위는 어떻게 정해?",
   ]) {
     const state = freshState();
-    state.cache.set(normalizeQuestion(input), "검증 캐시 답변");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "검증 캐시 답변");
     const result = await answerQuestion("u1", input, makeDeps(state));
     assert.notEqual(result.source, "blocked", `${input}: 룰 질문 과차단 금지`);
     assert.notEqual(result.answer, BLOCKED_ANSWER, `${input}: exact fallback 금지`);
@@ -2365,7 +2366,7 @@ async function verifyPipeline() {
   {
     const input = "홈런볼 과자 어디서 사";
     const state = freshState({ llmText: `{"status":"${NOT_BASEBALL_SENTINEL}","answer":""}` });
-    state.cache.set(normalizeQuestion(input), "오염 캐시");
+    state.cache.set(termKnowledgeCacheKey(normalizeQuestion(input)), "오염 캐시");
     let officialRagCalls = 0;
     const result = await answerQuestion("u1", input, {
       ...makeDeps(state),
