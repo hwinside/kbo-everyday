@@ -13,7 +13,7 @@ function harness(official = false) {
   let calls = 0;
   const deps: QaDeps = {
     loadGlossary: async () => [], loadPlayers: async () => [],
-    getCache: async key => { reads.push(key); return key.startsWith('term-v1:') ? null : '세븐히트는 일곱 안타입니다.'; },
+    getCache: async key => { reads.push(key); return key.startsWith(`term-v${TERM_KNOWLEDGE_CACHE_VERSION}:`) ? null : '세븐히트는 일곱 안타입니다.'; },
     setCache: async key => { writes.push(key); },
     callLlm: async () => { calls++; return raw(); },
     reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
@@ -70,7 +70,7 @@ test('current cache version survives durable crash recovery', async () => {
   assert.equal(unpackStoredQaFinal(final.text)?.cacheVersion, TERM_KNOWLEDGE_CACHE_VERSION);
   await answerQuestion('test-user', '안타', { ...h.deps, getLlmState: async () => ({ started: true, result: final }) });
   assert.equal(h.writes.length, 1);
-  assert.ok(h.writes[0].startsWith('term-v1:'));
+  assert.ok(h.writes[0].startsWith(`term-v${TERM_KNOWLEDGE_CACHE_VERSION}:`));
   assert.notEqual(termKnowledgeCacheKey('안타'), '안타');
 });
 
@@ -92,7 +92,7 @@ test('pre-policy cached definitions cannot bypass new generation', async () => {
   h.deps.loadGlossary = async () => [{ term: '보크', aliases: [], answer: '야구에서 투수의 반칙 투구입니다.' }];
   const result = await answerQuestion('test-user', '보크 규칙이 왜 필요해?', h.deps);
   assert.ok(h.reads.length > 0, 'exercise cache-eligible rule route, not a scope-gate bypass');
-  assert.ok(h.reads.every(key => key.startsWith('term-v1:')));
+  assert.ok(h.reads.every(key => key.startsWith(`term-v${TERM_KNOWLEDGE_CACHE_VERSION}:`)));
   assert.equal(result.answer, UNVERIFIED_TERM_ANSWER);
   assert.equal(h.writes.length, 0);
 });
@@ -114,4 +114,78 @@ test('contextual interpretation quotes only the user usage span, never model-add
   assert.equal(invented.answer, UNVERIFIED_TERM_ANSWER);
   const unsafe = validateLlmResponse(JSON.stringify({ status: 'TERM_CONTEXTUAL', contextMeaning: 'https://example.com', answer: '' }), 'https://example.com 야구 용어');
   assert.equal(unsafe.answer, UNVERIFIED_TERM_ANSWER);
+});
+
+const prior = (answer: string, question = '세븐히트가 뭐야?') => ({
+  question, answer, jobSource: 'llm', answeredAt: '2026-09-19T00:00:00Z', currentCreatedAt: '2026-09-19T00:01:00Z',
+});
+const response = (status: string, contextMeaning = ''): LlmResult => ({
+  text: JSON.stringify({ status, contextMeaning, correctsPrevious: false, answer: '' }), inputTokens: 10, outputTokens: 10,
+});
+
+test('R1 bare term cannot masquerade as a situation in either full pipeline', async () => {
+  for (const official of [false, true]) {
+    const h = harness(official);
+    h.deps.callLlm = async () => response('TERM_CONTEXTUAL', '세븐히트');
+    if (official) h.deps.callOfficialRagLlm = async () => h.deps.callLlm('unused');
+    const result = await answerQuestion('test-user', '세븐히트가 뭐야?', h.deps);
+    assert.equal(result.answer, UNVERIFIED_TERM_ANSWER);
+    assert.equal(result.source, 'llm');
+  }
+});
+
+test('R1 actual usage passes mixed-stat routing and reaches validated contextual terminal', async () => {
+  const question = '문자에서 친구가 오늘 안타 일곱 개 친 걸 보고 세븐히트라고 농담했대. 여기서는 무슨 말이야?';
+  for (const official of [false, true]) {
+    const h = harness(official);
+    let calls = 0;
+    const call = async () => { calls++; return response('TERM_CONTEXTUAL', '안타 일곱 개 친'); };
+    h.deps.callLlm = call;
+    if (official) h.deps.callOfficialRagLlm = call;
+    const result = await answerQuestion('test-user', question, h.deps);
+    assert.equal(calls, 1);
+    assert.equal(result.source, 'llm');
+    assert.match(result.answer, /“안타 일곱 개 친”.*문맥상 해석/);
+    const replay = await answerQuestion('test-user', question, { ...h.deps, getLlmState: async () => ({ started: true, result: h.stored }) });
+    assert.equal(replay.answer, result.answer);
+    assert.equal(calls, 1);
+    assert.equal(result.sourceUrl, undefined);
+    assert.equal(h.writes.length, 0);
+  }
+});
+
+test('R1 previous same-term assertion is retracted despite false model flag in both terminals', async () => {
+  for (const official of [false, true]) for (const status of ['TERM_UNVERIFIED', 'TERM_CONTEXTUAL']) {
+    const h = harness(official);
+    h.deps.loadPreviousTurn = async () => prior('세븐히트는 한 선수가 일곱 안타를 치는 공식 용어입니다.');
+    h.deps.callLlm = async () => response(status, '세븐히트');
+    if (official) h.deps.callOfficialRagLlm = async () => h.deps.callLlm('unused');
+    const result = await answerQuestion('test-user', '세븐히트가 뭐라고?', h.deps);
+    assert.equal(result.answer, UNVERIFIED_TERM_CORRECTION_ANSWER);
+    assert.equal(h.writes.length, 0);
+    assert.ok(h.stored);
+    const replay = await answerQuestion('test-user', '세븐히트가 뭐라고?', { ...h.deps, getLlmState: async () => ({ started: true, result: h.stored }) });
+    assert.equal(replay.answer, result.answer);
+  }
+});
+
+test('R1 unrelated or already-qualified prior answers are not retracted', async () => {
+  for (const previous of [prior('DH는 지명타자입니다.', 'DH가 뭐야?'), prior(UNVERIFIED_TERM_ANSWER), prior('세븐히트는 문맥상 추정일 뿐입니다.')]) {
+    const h = harness();
+    h.deps.loadPreviousTurn = async () => previous;
+    const result = await answerQuestion('test-user', '세븐히트가 뭐라고?', h.deps);
+    assert.equal(result.answer, UNVERIFIED_TERM_ANSWER);
+  }
+});
+
+
+test('R1 usage exception cannot publish free-form model records or swallow a mixed record request', async () => {
+  const question = '문자에서 친구가 오늘 안타 일곱 개 친 걸 보고 세븐히트라고 농담했대. 여기서는 무슨 말이야?';
+  const h = harness();
+  h.deps.callLlm = async () => ({ text: JSON.stringify({ status: 'BASEBALL_RULE_TERM', answer: '야구에서 세븐히트는 공식 기록이며 역대 최다는 99개입니다.' }), inputTokens: 10, outputTokens: 10 });
+  const rejected = await answerQuestion('test-user', question, h.deps);
+  assert.equal(rejected.source, 'stat_clarify');
+  assert.doesNotMatch(rejected.answer, /99|공식 기록/);
+  const record = await answerQuestion('test-user', question + ' LG 팀타율이랑 오타니 홈런 몇개?', harness().deps);
+  assert.equal(record.source, 'stat_clarify');
 });

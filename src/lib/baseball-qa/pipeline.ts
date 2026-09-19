@@ -1,4 +1,4 @@
-import { unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
+import { hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
@@ -4194,7 +4194,7 @@ async function settleThroughDurableBoundary(
 }
 
 /** JSON 스키마·센티널·출력 안전성 검증을 모두 통과한 답만 캐시 가능하다. */
-export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAnswer {
+export function validateLlmResponse(raw: string, question = "", previous?: ContextTurn | null): ValidatedLlmAnswer {
   let value: unknown;
   try {
     value = JSON.parse(raw.trim());
@@ -4204,7 +4204,7 @@ export function validateLlmResponse(raw: string, question = ""): ValidatedLlmAns
   if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "unsure" };
   const row = value as Record<string, unknown>;
   const status = String(row.status);
-  const unverified = unverifiedTermAnswer(row, question);
+  const unverified = unverifiedTermAnswer(row, question, previous);
   if (unverified) return { kind: "answer", answer: unverified, toneCompliant: true };
   // 계약 밖 status는 판정 불명확 → 답변이 아니라 되묻기로 fail-closed 한다.
   if (
@@ -5054,7 +5054,7 @@ async function answerOfficialDocumentQuestion(
     // Only compound definitions may echo user quantities, under the same
     // period boundary as GENERAL. Never license bot prose or record lookups.
     definitionQuestion: definition?.assessment ? definitionNumericSource(question, definition) : undefined,
-    generalFallback: { question: definitionNumericSource(question, definition) },
+    generalFallback: { question: definitionNumericSource(question, definition), previous: context },
   });
   let validated = validateOfficial(llm);
   // One repair by this invocation's winner only. A stored raw response or a
@@ -5108,7 +5108,7 @@ async function answerOfficialDocumentQuestion(
   if (validated.kind === "general") {
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
       answer: validated.answer, source: "llm",
-      statRuleTermVerified: Boolean(definition),
+      statRuleTermVerified: Boolean(definition) || isUnverifiedTermAnswer(validated.answer),
       definitionContext: definitionContextFor(definition),
       toneCompliant: validated.toneCompliant, ...ragObservation("official", question, validated, evidence),
     }, llm));
@@ -5997,6 +5997,8 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //
   // ⚠️ `routeQuestion` 과 **같은 정규화**를 쓴다(`NFKC` + 소문자). 다르게 정규화하면
   //   두 곳의 판정이 갈라져 "helper 는 되묻기인데 라우터는 통과" 가 되살아난다.
+  const reportedTermUsage = ["baseball_rule_term", "llm_scope_gate", "context_missing", "stat_clarify"].includes(baseRoute)
+    && hasReportedTermUsage(question);
   const routingNormalized = question.normalize("NFKC").toLowerCase();
   const namedStatKinds = classifyNamedStatMatches(routingNormalized, glossary, players);
   // ⚠️ 결속 신호는 **두 갈래**다. 매치로 잡히는 선수·구단(`entity_stat`)과, 매치로는
@@ -6007,7 +6009,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   const hasBoundClause =
     namedStatKinds.includes("entity_stat") || mentionsTeamForGate(question);
   const mixedBoundAndUnbound = namedStatKinds.includes("ambiguous") && hasBoundClause;
-  if (mixedBoundAndUnbound && !statDefinition) {
+  if (mixedBoundAndUnbound && !statDefinition && !reportedTermUsage) {
     await deps.log({
       userId, question, questionNorm, matchPath: "stat_clarify",
       answer: STAT_CLARIFY_ANSWER, inputTokens: null, outputTokens: null,
@@ -6147,7 +6149,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     }
   }
 
-  const route = (statDefinition || enabledPlayerCandidate)
+  const route = (statDefinition || enabledPlayerCandidate || (reportedTermUsage && baseRoute !== "blocked"))
     ? "baseball_rule_term"
     : routeQuestion(question, glossary, players, context !== null);
   // `llm_scope_gate`는 종결 라우트가 아니라 **판정 위임**이다. 여기서 끝내지 않고 아래로 흘려보내되,
@@ -6944,7 +6946,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       // A definition needs an actual explanation, not the RECORD/NARRATIVE
       // classifier's token. Keep ownership for cache/replay, and validate the
       // resulting ungrounded answer below instead of rejecting the question.
-      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard && !statDefinition, statDefinition ?? undefined);
+      llm = await deps.callLlm(question, context ?? undefined, rosterBlock, statNumericGuard && !statDefinition && !reportedTermUsage, statDefinition ?? undefined);
       generatedGenericNow = true;
     } catch {
       // ⚠️ timeout/공급자 오류는 **우리 쪽 고장**이다 (삼순 2026-08-08 ①).
@@ -6985,7 +6987,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
   //   (2026-08-22 삼순 NO-GO P0③). timeout·공급자 오류 → `error`, 범위 밖 → `blocked`,
   //   검증 미통과 → `unsure`. 세 상황은 유저의 다음 행동이 서로 다르므로 한 문구로
   //   둘갑으면 안 된다 — 특히 `error` 를 되묻기로 접으면 우리 고장을 유저 탓으로 돌린다.
-  let definitionFallback = statDefinition ? validateLlmResponse(llm.text, question) : null;
+  let definitionFallback = statDefinition ? validateLlmResponse(llm.text, question, context) : null;
   const definitionNumberUnsupported = () => Boolean(definitionFallback?.kind === "answer" && definitionFallback.answer &&
     !numericTokensSubsetOf(definitionFallback.answer, definitionNumericSource(question, statDefinition)));
   if (generatedGenericNow && statDefinition && definitionNumberUnsupported()) {
@@ -6999,7 +7001,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
           inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
         return { status: 200, answer: SYSTEM_ERROR_ANSWER, source: "error", remaining };
       }
-      definitionFallback = validateLlmResponse(llm.text, question);
+      definitionFallback = validateLlmResponse(llm.text, question, context);
     }
   }
   if (definitionNumberUnsupported()) {
@@ -7013,7 +7015,10 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     });
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
-  if (statNumericGuard && !statDefinition) {
+  // The routing exception may serve only the closed term renderer. It must
+  // not authorize free-form model records when stat intent remains ambiguous.
+  const reportedTermAnswer = reportedTermUsage ? validateLlmResponse(llm.text, question, context) : null;
+  if (statNumericGuard && !statDefinition && !isUnverifiedTermAnswer(reportedTermAnswer?.answer ?? "")) {
     const intent = parseStatIntentToken(llm.text);
     if (intent === "rule_term") {
       // 가드 소유 부정 — 일반 프롬프트로 1회 재질의해 정규 검증 경로로 보낸다.
@@ -7043,7 +7048,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
         inputTokens: llm.inputTokens === null && reasked.inputTokens === null ? null : sumIn,
         outputTokens: llm.outputTokens === null && reasked.outputTokens === null ? null : sumOut,
       };
-      const revalidated = validateLlmResponse(reasked.text, question);
+      const revalidated = validateLlmResponse(reasked.text, question, context);
       if (revalidated.kind === "answer" && revalidated.answer) {
         // ⚠️ **durable store 를 먼저**, 그 다음 log (삼순 P0② — store-before-log).
         //   검증 완료 표식(`statRuleTermVerified`)을 envelope 에 결속해, `log 전 crash → 재시도`
@@ -7095,7 +7100,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     return { status: 200, answer: final.answer, source: final.source, remaining };
   }
 
-  const validated = definitionFallback ?? validateLlmResponse(llm.text, question);
+  const validated = definitionFallback ?? validateLlmResponse(llm.text, question, context);
   if (validated.kind === "blocked") {
     // 저장 실패는 throw 전파 — 재처리는 ambiguous 경로로 fail-close 되어 재호출이 없다.
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: BLOCKED_ANSWER, source: "blocked" }, llm));
@@ -7118,7 +7123,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
     await deps.storeLlm(packStoredQaFinal(
       {
         answer: validated.answer, source: "llm",
-        statRuleTermVerified: Boolean(statDefinition && statNumericGuard),
+        statRuleTermVerified: Boolean(statDefinition && statNumericGuard) || Boolean(reportedTermUsage && isUnverifiedTermAnswer(validated.answer)),
         definitionContext: definitionContextFor(statDefinition),
         cacheable: !isUnverifiedTermAnswer(validated.answer) && !context && !scopeGate && !rosterBlock && !statNumericGuard && !statDefinition?.assessment,
         cacheVersion: TERM_KNOWLEDGE_CACHE_VERSION,

@@ -1,5 +1,5 @@
 {
-  "scope": "Generic and official RAG; independent provider QA by reviewer. Synthetic prior errors are test inputs, not facts.",
+  "scope": "Full answerQuestion generic and official terminals (not provider prompts alone); independent provider QA by reviewer. Synthetic prior errors are test inputs, not facts.",
   "cases": [
     {
       "id": "unknown-seven",
@@ -61,5 +61,16 @@
       "expected": "TERM_CONTEXTUAL",
       "contextMeaningRule": "literal span of current question describing usage; no appended record facts"
     }
-  ]
+  ],
+  "rework1": {
+    "bareContextMeaning": "A TERM_CONTEXTUAL response quoting only 세븐히트 must render confirmation-unavailable, not an interpretation.",
+    "usageTerminal": "context-inference must reach llm through answerQuestion, without stat_clarify; replay must preserve it.",
+    "serverRetraction": "withdraw-invented must retract with correctsPrevious:false for TERM_UNVERIFIED or TERM_CONTEXTUAL.",
+    "negativeControls": [
+      "Unrelated previous DH definition must not be retracted",
+      "Already-qualified unknown answer must not be retracted",
+      "Mixed LG team average + unknown player record remains stat_clarify",
+      "Usage syntax does not authorize free-form provider record claims"
+    ]
+  }
 }

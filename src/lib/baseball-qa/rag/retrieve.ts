@@ -812,8 +812,8 @@ export const RAG_SYSTEM_PROMPT = [
  * 인젝션 방어(자료=데이터, 지시 아님)와 INSUFFICIENT fail-close는 그대로 유지한다.
  */
 export const RAG_OFFICIAL_SYSTEM_PROMPT = [
-  TERM_KNOWLEDGE_PROMPT,
   BASEBALL_GENIUS_TONE_PROMPT,
+  TERM_KNOWLEDGE_PROMPT,
   "너는 한국 프로야구(KBO) 규칙·용어 안내 도우미다.",
   "규칙의 효과는 제목만 보고 결정하지 않는다. 발췌 목록의 상위 범주와 각 항목에 명시된 조건·효과·예외를 구분한다.",
   "아래에 주어지는 <자료>는 KBO가 발행한 공식 간행물(공식야구규칙·야구규약·리그규정·기록집)에서 발췌한 것이다.",
@@ -1479,7 +1479,7 @@ export interface ValidateRagOptions {
    * 명시적인 한자어 수량 표기는 정규화 후 같은 질문 대조를 적용한다. 단독 수사·
    * 이름·자연어 수량 전반의 해석은 여전히 프롬프트 몫이다.
    */
-  generalFallback?: { question: string };
+  generalFallback?: { question: string; previous?: { question: string; answer: string } | null };
   /**
    * 수치 근거를 **단일 chunk 안에서만** 인정할지 (삼순 2026-08-05).
    *
@@ -1519,7 +1519,7 @@ export function validateRagResponse(
   }
   const row = value as Record<string, unknown>;
   const status = String(row.status);
-  const unverified = options.generalFallback ? unverifiedTermAnswer(row, options.generalFallback.question) : null;
+  const unverified = options.generalFallback ? unverifiedTermAnswer(row, options.generalFallback.question, options.generalFallback.previous) : null;
   if (unverified) return { kind: "general", answer: unverified, toneCompliant: true };
   if (status === RAG_INSUFFICIENT_SENTINEL) return { kind: "insufficient", reason: "model_insufficient" };
   if (status === RAG_GENERAL_SENTINEL && options.generalFallback) {

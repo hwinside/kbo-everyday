@@ -1,7 +1,7 @@
 /** Shared by generic and official-document generation; never a term blacklist. */
 export const TERM_UNVERIFIED = "TERM_UNVERIFIED";
 export const TERM_CONTEXTUAL = "TERM_CONTEXTUAL";
-export const TERM_KNOWLEDGE_CACHE_VERSION = 1;
+export const TERM_KNOWLEDGE_CACHE_VERSION = 2;
 export const termKnowledgeCacheKey = (questionNorm: string) => `term-v${TERM_KNOWLEDGE_CACHE_VERSION}:${questionNorm}`;
 
 export const UNVERIFIED_TERM_ANSWER =
@@ -9,21 +9,46 @@ export const UNVERIFIED_TERM_ANSWER =
 export const UNVERIFIED_TERM_CORRECTION_ANSWER =
   "앞서 확인되지 않은 표현을 야구 용어처럼 설명한 것은 잘못입니다. 이전 설명을 철회합니다. 현재 그 표현의 정확한 뜻을 확인하지 못했으며, 다른 뜻으로 바꿔 단정하지 않겠습니다. 사용된 문장이나 상황을 알려주시면 그 맥락을 바탕으로 살펴보겠습니다.";
 
-export function unverifiedTermAnswer(row: Record<string, unknown>, question = ""): string | null {
+/** A reported use has a separate situation clause, not just the queried word.
+ * This narrow syntax exception grants no factual answer: model status and the
+ * literal situation-span check below still govern what can be served. */
+export function hasReportedTermUsage(question: string): boolean {
+  return /(?:걸|것을|모습을|상황을)\s*보고\s+[“"'‘]?[가-힣A-Za-z0-9]+[”"'’]?(?:이?라고)/u.test(question)
+    && !/(?:몇\s*(?:개|위|승)|얼마|누가|최다|순위|기록\s*(?:알려|조회))/u.test(question);
+}
+
+type PriorTermTurn = { question: string; answer: string };
+function priorTermAssertion(question: string, previous?: PriorTermTurn | null): boolean {
+  if (!previous || isUnverifiedTermAnswer(previous.answer)) return false;
+  const definitionTerm = (text: string) => text.match(/([가-힣A-Za-z0-9]+?)(?:이란|라는|란|가|은|는|을|를|이)?\s*(?:뭐|무슨|어떤|뜻|정확)/u)?.[1];
+  const term = definitionTerm(question) ?? definitionTerm(previous.question);
+  if (!term || !question.includes(term) || !previous.question.includes(term)) return false;
+  // Require a same-term declarative definition, not a mention of another
+  // subject, a question, or an already-qualified contextual/unknown answer.
+  const tail = previous.answer.split(term).slice(1).join(term);
+  return /^(?:은|는|이란|란|:|이라는)\s*/u.test(tail)
+    && /(?:용어|뜻|의미|말|표현|가리|입니다|이다)/u.test(tail)
+    && !/(?:확인하지 못|알 수 없|모르|추정|문맥상|철회|단정할 수 없)/u.test(tail);
+}
+
+export function unverifiedTermAnswer(row: Record<string, unknown>, question = "", previous?: PriorTermTurn | null): string | null {
+  const correctsPrevious = row.correctsPrevious === true || priorTermAssertion(question, previous);
   if (row.status === TERM_CONTEXTUAL) {
     const meaning = typeof row.contextMeaning === "string" ? row.contextMeaning.trim() : "";
     // Only quote a bounded, literal span of the user's usage context. The model
     // cannot append an invented record, definition, or proof of nonexistence.
-    if (meaning.length >= 2 && meaning.length <= 60 && question.includes(meaning)
+    if (meaning.length <= 60 && question.includes(meaning)
+        && meaning.split(/\s+/u).length >= 2
+        && /(?:친|치는|던진|던지는|잡은|잡는|나간|나가는|한|하는|된|되는|했|때|상황|모습)(?:\s|$)/u.test(meaning)
         && !/[<>`\[\]{}\n\r\u0000-\u001f]/.test(meaning) && !/https?:|www\./i.test(meaning)) {
-      const correction = row.correctsPrevious === true ? "앞서 확인되지 않은 뜻을 단정한 설명은 철회합니다. " : "";
+      const correction = correctsPrevious ? "앞서 확인되지 않은 뜻을 단정한 설명은 철회합니다. " : "";
       return `${correction}말씀하신 “${meaning}” 상황을 가리킨 표현으로 보입니다. 문맥상 해석이며, 확인된 야구 용어의 정의는 아닙니다.`;
     }
-    return row.correctsPrevious === true ? UNVERIFIED_TERM_CORRECTION_ANSWER : UNVERIFIED_TERM_ANSWER;
+    return correctsPrevious ? UNVERIFIED_TERM_CORRECTION_ANSWER : UNVERIFIED_TERM_ANSWER;
   }
   if (row.status !== TERM_UNVERIFIED) return null;
   // Do not serve provider prose, guessed definitions, or user-supplied term text.
-  return row.correctsPrevious === true ? UNVERIFIED_TERM_CORRECTION_ANSWER : UNVERIFIED_TERM_ANSWER;
+  return correctsPrevious ? UNVERIFIED_TERM_CORRECTION_ANSWER : UNVERIFIED_TERM_ANSWER;
 }
 
 export function isUnverifiedTermAnswer(answer: string): boolean {
