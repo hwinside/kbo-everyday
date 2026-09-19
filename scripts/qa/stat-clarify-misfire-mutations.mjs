@@ -64,7 +64,7 @@ const mutations = [
   {
     name: "M5 재질의 답 검증 우회 (validateLlmResponse 생략)",
     file: PIPELINE,
-    re: /const revalidated = validateLlmResponse\(reasked\.text, question\);/,
+    re: /const revalidated = validateLlmResponse\(reasked\.text, question, context\);/,
     to: 'const revalidated = { kind: "answer", answer: reasked.text } as ReturnType<typeof validateLlmResponse>;',
     why: "검증 없이 원문을 서빙하면 D5(검증 실패→되묻기) 축이 깨진다",
   },
