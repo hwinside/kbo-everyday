@@ -1,0 +1,8 @@
+{
+  "name": "keubofan-jev-offline-shadow",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "selfcheck": "node --test runner.test.mjs" },
+  "dependencies": { "ai": "7.0.105" }
+}
