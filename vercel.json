@@ -177,7 +177,7 @@
     },
     {
       "path": "/api/cron/game-events-warmup",
-      "schedule": "* 5-14 * * *"
+      "schedule": "* 2-14 * * *"
     },
     {
       "path": "/api/cron/lineup-watchdog",
