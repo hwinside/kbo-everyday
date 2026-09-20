@@ -4,6 +4,7 @@ Owner: 삼순 (runner), 삼식 (independent labels, live execution, verdict).
 This is **not** a production integration, model-quality PASS, or merge authorization.
 AI SDK `7.0.105` and its lockfile are isolated here; application dependencies are unchanged.
 Node >=22. Official API: https://vercel.com/changelog/typesafe-ai-jev-now-available-on-ai-gateway
+Direct API: https://docs.typesafe.ai/api ; pinned model: https://docs.typesafe.ai/models
 
 ## Install / implementation self-check
 
@@ -62,14 +63,24 @@ node runner.mjs --input /protected/cases.jsonl --baseline /protected/baseline.js
 
 Without `--live`, only validates and prints hashes; no credentials/network required.
 For live evaluation use the same command plus `--live --interval-ms 15000 --reviewed-input-sha256 <input hash>`.
-Configure `AI_GATEWAY_API_KEY` or valid Vercel OIDC in the process's protected environment;
-never put secret values on the command line or in Slack. This runner does not extract credentials.
+`--provider auto` (default) selects direct TypeSafe when the process has a nonempty
+`TYPESAFE_API_KEY`, otherwise Gateway. Use `--provider direct` or `--provider gateway`
+to pin the route; an explicit route never falls back on missing auth or HTTP failure.
+Direct uses native Node fetch, `POST https://api.typesafe.ai/v1/systemone`, pinned
+`jev-1.13.0`, and no SDK retry layer. Gateway keeps `typesafe-ai/jev` and AI SDK 7.0.105.
+Configure `TYPESAFE_API_KEY` (direct), or `AI_GATEWAY_API_KEY` / valid Vercel OIDC
+(Gateway) in the process's protected environment. Never put values on the command
+line or in Slack. The runner does not load Vercel project env or `.env` files itself;
+registering a key in Vercel alone does not inject it into this local process.
+Before direct live execution, the independent reviewer must verify the account's
+data-handling terms for the approved de-identified dataset: Gateway's ZDR option
+does not apply to direct HTTP. `run.json` records this distinction, not a ZDR claim.
 For holdout use `--split holdout --frozen-protocol-sha256 <sha256 of reviewed frozen protocol>`.
 This binds an attestation, not cryptographic proof of correct tuning; reviewer retains the protocol.
 The output directory must be new and its parent must exist.
 
 Routing-only: each split calls 100 cases three times (300 calls/split, 600 total). Three-task mode: 150 cases per split three times (450/split, 900 total). Serial requests,
-10s timeout, SDK retries disabled, ZDR enabled.
+10s timeout, retries disabled, Gateway ZDR requested (direct: account policy).
 Live runs require an explicit positive integer `--interval-ms` (1..2147483647).
 For example, 15000 adds a fixed 15s gap from each completed request to the next
 request, including across repeat boundaries; the first request has no pacing wait.
@@ -86,12 +97,23 @@ completed rows remain on disk. No retry, silent model fallback, or replacement c
 Do not infer >=99% success from partial outputs; investigate and document any rerun.
 Each row is checkpointed immediately; interrupted runs have no completed summary.
 
-Output per repeat is **only** `case_id,predicted_label,confidence,latency_ms,provider_status,error_code`.
-No source text, raw provider response, headers or SDK error messages are stored.
-`confidence` is native `providerMetadata.typesafe.confidence.decision`, nullable;
+Output per repeat is **only** `case_id,predicted_label,confidence,latency_ms,provider_status,error_code`,
+plus optional `retry_after` on direct failures. `stopped.json` also records `retry_after`.
+Only numeric seconds or an HTTP-date from Retry-After are allowlisted; it is diagnostic,
+never an instruction to automatically wait/retry. No source text, raw response,
+other headers or SDK error messages are stored.
+`confidence` is native `answers.decision.confidence` (direct) or
+`providerMetadata.typesafe.confidence.decision` (Gateway), nullable;
 NOT selected-class probability. Missing confidence is never replaced with 1 or 0.
-`run.json` binds model alias, SDK, input/split/runner/lock/prompt hashes and protocol hash.
-The provider model alias may move; these hashes do not pin provider weights.
+`run.json` binds resolved provider, selection mode, endpoint, model, transport/SDK,
+retention distinction, input/split/runner/lock/prompt hashes and protocol hash.
+Direct validates the returned model matches `jev-1.13.0`; drift stops the run.
+The Gateway alias may move; hashes do not pin its provider weights.
+Freeze provider/model along with interval in the holdout protocol. A route change
+requires a new tune run/output directory; do not combine old partial Gateway results.
+Published limits (2026-09-20: 1,200 requests/minute, 250,000 tokens/second) can change
+without notice and are not proof of this account's quota or 429 resolution. Input
+tokens cost $0.042/M; output tokens are free, but live evaluation is not cost zero.
 `summary.json` gives success, end-to-end per-call p95 and three-repeat agreement overall
 and by task. Complete-case and all-case agreement denominators are separate.
 It always leaves quality verdict HOLD. No majority-vote selection of a favorable repeat.
