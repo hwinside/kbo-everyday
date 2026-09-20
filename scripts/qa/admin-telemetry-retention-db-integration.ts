@@ -98,13 +98,7 @@ async function main() {
        '11111111-1111-1111-1111-111111111111', NULL),
       ('2026-06-01T01:01:00Z', '/qa/skip-delete', 'web', 'visitor-a',
        '11111111-1111-1111-1111-111111111111', NULL),
-      ('2025-07-01T01:00:00Z', '/home', 'ios_native', 'old-device', NULL, '0.9.0'),
-      ('2025-07-21T15:00:00Z', '/home', 'ios_native', 'boundary-device', NULL, '1.0.0'),
-      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0'),
-      ('2025-07-01T02:00:00Z', '/games/20250701SSLT', 'web', 'visitor-lifetime',
-       '44444444-4444-4444-4444-444444444444', NULL),
-      ('2025-07-01T03:00:00Z', '/games/20250701HTWO', 'web', 'visitor-ghost',
-       '55555555-5555-5555-5555-555555555555', NULL);
+      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0');
 
     INSERT INTO admin_page_dwell (
       created_at, visitor_id, platform, dwell_ms
@@ -171,6 +165,21 @@ async function main() {
     await assert.rejects(catchup("2026-06-01", true, freshBackup), /coverage mismatch/);
     assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_views"), beforeRaw);
     await db.exec("UPDATE admin_traffic_daily_visitors SET pv = pv - 1 WHERE day_kst = '2026-06-01'");
+
+    // Seed the historical full-retention fixture only after catch-up scenarios:
+    // those scenarios require 2026-06-01 to be the oldest remaining raw day.
+    // Installed INSERT triggers populate the same historical rollups below.
+    await db.exec(`
+      INSERT INTO admin_page_views (
+        created_at, path, platform, visitor_id, user_id, app_version
+      ) VALUES
+        ('2025-07-01T01:00:00Z', '/home', 'ios_native', 'old-device', NULL, '0.9.0'),
+        ('2025-07-21T15:00:00Z', '/home', 'ios_native', 'boundary-device', NULL, '1.0.0'),
+        ('2025-07-01T02:00:00Z', '/games/20250701SSLT', 'web', 'visitor-lifetime',
+         '44444444-4444-4444-4444-444444444444', NULL),
+        ('2025-07-01T03:00:00Z', '/games/20250701HTWO', 'web', 'visitor-ghost',
+         '55555555-5555-5555-5555-555555555555', NULL);
+    `);
 
     // Pin the actual RPC target, not merely whichever function the migration creates.
     // Renaming the migration target to _preview_v2 must fail even if the old
