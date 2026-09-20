@@ -53,17 +53,26 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   }, [news]);
   const viewCounts = useContentViewCounts(viewCountItems);
 
+  // Parent/live polling recreates news/user objects. Depend only on the count
+  // lookup payload and account identity, not their object references.
+  const countArticlesKey = JSON.stringify(news.slice(0, 10)
+    .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
+    .map((item) => ({
+      lookupId: String(item.id),
+      url: item.sourceUrl,
+      canonicalUrl: item.ogUrl || item.sourceUrl,
+    })));
+  const countUserId = user?.id;
+
   // 홈 카드 댓글 수는 최대 10건을 한 번에 조회한다. 조회만으로 빈 댓글방을 만들지 않는다.
-  // 댓글은 로그인 유저 공개(admin-only 해제 = 전체 로그인 유저)라 미로그인은 count 조회 불필요.
   useEffect(() => {
-    if (!user) return;
-    const articles = news.slice(0, 10)
-      .filter((item) => item.sourceUrl && item.sourceUrl !== "#")
-      .map((item) => ({
-        lookupId: String(item.id),
-        url: item.sourceUrl,
-        canonicalUrl: item.ogUrl || item.sourceUrl,
-      }));
+    if (!countUserId) {
+      setCommentCounts({});
+      return;
+    }
+    const articles = JSON.parse(countArticlesKey) as {
+      lookupId: string; url: string; canonicalUrl: string;
+    }[];
     if (articles.length === 0) return;
 
     let cancelled = false;
@@ -103,7 +112,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
         .catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [news, user]);
+  }, [countArticlesKey, countUserId]);
 
   // 최대 10개 og:image를 단일 batch로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
