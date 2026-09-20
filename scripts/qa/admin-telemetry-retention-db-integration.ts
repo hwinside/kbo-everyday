@@ -98,13 +98,7 @@ async function main() {
        '11111111-1111-1111-1111-111111111111', NULL),
       ('2026-06-01T01:01:00Z', '/qa/skip-delete', 'web', 'visitor-a',
        '11111111-1111-1111-1111-111111111111', NULL),
-      ('2025-07-01T01:00:00Z', '/home', 'ios_native', 'old-device', NULL, '0.9.0'),
-      ('2025-07-21T15:00:00Z', '/home', 'ios_native', 'boundary-device', NULL, '1.0.0'),
-      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0'),
-      ('2025-07-01T02:00:00Z', '/games/20250701SSLT', 'web', 'visitor-lifetime',
-       '44444444-4444-4444-4444-444444444444', NULL),
-      ('2025-07-01T03:00:00Z', '/games/20250701HTWO', 'web', 'visitor-ghost',
-       '55555555-5555-5555-5555-555555555555', NULL);
+      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0');
 
     INSERT INTO admin_page_dwell (
       created_at, visitor_id, platform, dwell_ms
@@ -120,6 +114,72 @@ async function main() {
     await apply(db, migration("20260721_admin_traffic_dwell_rollup.sql"));
     await apply(db, migration("20260722_admin_telemetry_retention.sql"));
     await apply(db, migration("20260918_telemetry_retention_preview_scan.sql"));
+
+    await apply(db, migration("20260920_telemetry_retention_catchup_day.sql"));
+    const catchup = (day: string, execute = false, backup: string | null = null) =>
+      db.query<{ result: { deleted?: { pageViews: number; pageDwell: number } } }>(
+        "SELECT admin_telemetry_retention_catchup_day($1::date, $2, $3) AS result",
+        [day, execute, backup],
+      );
+    await assert.rejects(catchup("2026-06-02"), /oldest remaining/);
+    await assert.rejects(catchup("infinity"), /retention window/);
+    await assert.rejects(catchup("2026-06-01", true), /backup reference/);
+    await assert.rejects(catchup("2026-06-01", true, BACKUP_REF), /not fresh/);
+    const freshBackup = `supabase-physical:1@${new Date().toISOString()}`;
+    const rollupCount = () => scalar(db,
+      "SELECT (SELECT count(*) FROM admin_traffic_daily_visitors) + " +
+      "(SELECT count(*) FROM admin_page_view_user_days) + " +
+      "(SELECT count(*) FROM admin_dwell_session_slices) AS value");
+    const beforeRollups = await rollupCount();
+    const beforeRaw = await scalar(db, "SELECT count(*) AS value FROM admin_page_views");
+    await catchup("2026-06-01");
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_views"), beforeRaw);
+    // Isolate catch-up assertions so the existing full-retention regressions
+    // below continue to exercise their original fixture.
+    await db.exec("BEGIN");
+    const firstBatch = (await catchup("2026-06-01", true, freshBackup)).rows[0]!.result;
+    assert.equal(firstBatch.deleted?.pageDwell, 3);
+    assert.equal(await scalar(db,
+      "SELECT count(*) AS value FROM admin_page_dwell WHERE created_at >= '2026-06-01T15:00:00Z'"), 2,
+      "next KST day must survive the first batch");
+    const retry = (await catchup("2026-06-01", true, freshBackup)).rows[0]!.result;
+    assert.deepEqual(retry.deleted && [retry.deleted.pageViews, retry.deleted.pageDwell], [0, 0]);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_telemetry_retention_runs"), 1);
+    await catchup("2026-06-02", true, freshBackup);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_dwell"), 0);
+    assert.equal(await rollupCount(), beforeRollups, "catch-up never purges rollups");
+    await db.exec("ROLLBACK");
+    await db.exec("BEGIN");
+    await db.exec(`INSERT INTO admin_page_dwell (created_at, visitor_id, platform, dwell_ms)
+      VALUES ('2026-06-01T14:55:00Z', 'cross-midnight', 'web', 1000),
+             ('2026-06-01T15:05:00Z', 'cross-midnight', 'web', 2000)`);
+    await catchup("2026-06-01", true, freshBackup);
+    assert.equal(await scalar(db,
+      "SELECT count(*) AS value FROM admin_page_dwell WHERE visitor_id = 'cross-midnight'"), 1);
+    await catchup("2026-06-02", true, freshBackup);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_dwell"), 0,
+      "cross-midnight session must reconcile after the preceding day is purged");
+    await db.exec("ROLLBACK");
+    // Corruption must block the batch before any deletion.
+    await db.exec("UPDATE admin_traffic_daily_visitors SET pv = pv + 1 WHERE day_kst = '2026-06-01'");
+    await assert.rejects(catchup("2026-06-01", true, freshBackup), /coverage mismatch/);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_views"), beforeRaw);
+    await db.exec("UPDATE admin_traffic_daily_visitors SET pv = pv - 1 WHERE day_kst = '2026-06-01'");
+
+    // Seed the historical full-retention fixture only after catch-up scenarios:
+    // those scenarios require 2026-06-01 to be the oldest remaining raw day.
+    // Installed INSERT triggers populate the same historical rollups below.
+    await db.exec(`
+      INSERT INTO admin_page_views (
+        created_at, path, platform, visitor_id, user_id, app_version
+      ) VALUES
+        ('2025-07-01T01:00:00Z', '/home', 'ios_native', 'old-device', NULL, '0.9.0'),
+        ('2025-07-21T15:00:00Z', '/home', 'ios_native', 'boundary-device', NULL, '1.0.0'),
+        ('2025-07-01T02:00:00Z', '/games/20250701SSLT', 'web', 'visitor-lifetime',
+         '44444444-4444-4444-4444-444444444444', NULL),
+        ('2025-07-01T03:00:00Z', '/games/20250701HTWO', 'web', 'visitor-ghost',
+         '55555555-5555-5555-5555-555555555555', NULL);
+    `);
 
     // Pin the actual RPC target, not merely whichever function the migration creates.
     // Renaming the migration target to _preview_v2 must fail even if the old

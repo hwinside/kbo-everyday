@@ -4,6 +4,15 @@ Repeat the request three times under the unchanged 8-second DB limit.
 The deployed function is NOT replaced; independent DB gates call the actual RPC.
 """
 from pathlib import Path
+import argparse
+from datetime import date, timedelta
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--catchup-day", type=date.fromisoformat)
+args = parser.parse_args()
+preview_now = "now()"
+if args.catchup_day:
+    preview_now = "\'" + str(args.catchup_day + timedelta(days=31)) + "T00:00:00+09:00\'::timestamptz"
 
 migration = Path("supabase/migrations/20260918_telemetry_retention_preview_scan.sql")
 source = migration.read_text()
@@ -12,7 +21,7 @@ assert body.count("RETURN jsonb_build_object(") == 1
 # Match the RPC's default p_now, search_path, declarations, complete CTE,
 # all four expired-rollup counts and final JSON construction. Only RETURN is
 # adapted to a transaction-local result because READ ONLY cannot install DDL.
-body = body.replace("DECLARE\n", "DECLARE\n  p_now timestamptz := now();\n  measured_start timestamptz := clock_timestamp();\n", 1)
+body = body.replace("DECLARE\n", f"DECLARE\n  p_now timestamptz := {preview_now};\n  measured_start timestamptz := clock_timestamp();\n", 1)
 body = body.replace("RETURN jsonb_build_object(",
                     "PERFORM set_config('telemetry.preview_result', (jsonb_build_object(")
 body = body.replace("\n  );\nEND;", "\n  ))::text, true);\nEND;")
