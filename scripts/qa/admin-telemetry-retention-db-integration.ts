@@ -121,6 +121,57 @@ async function main() {
     await apply(db, migration("20260722_admin_telemetry_retention.sql"));
     await apply(db, migration("20260918_telemetry_retention_preview_scan.sql"));
 
+    await apply(db, migration("20260920_telemetry_retention_catchup_day.sql"));
+    const catchup = (day: string, execute = false, backup: string | null = null) =>
+      db.query<{ result: { deleted?: { pageViews: number; pageDwell: number } } }>(
+        "SELECT admin_telemetry_retention_catchup_day($1::date, $2, $3) AS result",
+        [day, execute, backup],
+      );
+    await assert.rejects(catchup("2026-06-02"), /oldest remaining/);
+    await assert.rejects(catchup("infinity"), /retention window/);
+    await assert.rejects(catchup("2026-06-01", true), /backup reference/);
+    await assert.rejects(catchup("2026-06-01", true, BACKUP_REF), /not fresh/);
+    const freshBackup = `supabase-physical:1@${new Date().toISOString()}`;
+    const rollupCount = () => scalar(db,
+      "SELECT (SELECT count(*) FROM admin_traffic_daily_visitors) + " +
+      "(SELECT count(*) FROM admin_page_view_user_days) + " +
+      "(SELECT count(*) FROM admin_dwell_session_slices) AS value");
+    const beforeRollups = await rollupCount();
+    const beforeRaw = await scalar(db, "SELECT count(*) AS value FROM admin_page_views");
+    await catchup("2026-06-01");
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_views"), beforeRaw);
+    // Isolate catch-up assertions so the existing full-retention regressions
+    // below continue to exercise their original fixture.
+    await db.exec("BEGIN");
+    const firstBatch = (await catchup("2026-06-01", true, freshBackup)).rows[0]!.result;
+    assert.equal(firstBatch.deleted?.pageDwell, 3);
+    assert.equal(await scalar(db,
+      "SELECT count(*) AS value FROM admin_page_dwell WHERE created_at >= '2026-06-01T15:00:00Z'"), 2,
+      "next KST day must survive the first batch");
+    const retry = (await catchup("2026-06-01", true, freshBackup)).rows[0]!.result;
+    assert.deepEqual(retry.deleted && [retry.deleted.pageViews, retry.deleted.pageDwell], [0, 0]);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_telemetry_retention_runs"), 1);
+    await catchup("2026-06-02", true, freshBackup);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_dwell"), 0);
+    assert.equal(await rollupCount(), beforeRollups, "catch-up never purges rollups");
+    await db.exec("ROLLBACK");
+    await db.exec("BEGIN");
+    await db.exec(`INSERT INTO admin_page_dwell (created_at, visitor_id, platform, dwell_ms)
+      VALUES ('2026-06-01T14:55:00Z', 'cross-midnight', 'web', 1000),
+             ('2026-06-01T15:05:00Z', 'cross-midnight', 'web', 2000)`);
+    await catchup("2026-06-01", true, freshBackup);
+    assert.equal(await scalar(db,
+      "SELECT count(*) AS value FROM admin_page_dwell WHERE visitor_id = 'cross-midnight'"), 1);
+    await catchup("2026-06-02", true, freshBackup);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_dwell"), 0,
+      "cross-midnight session must reconcile after the preceding day is purged");
+    await db.exec("ROLLBACK");
+    // Corruption must block the batch before any deletion.
+    await db.exec("UPDATE admin_traffic_daily_visitors SET pv = pv + 1 WHERE day_kst = '2026-06-01'");
+    await assert.rejects(catchup("2026-06-01", true, freshBackup), /coverage mismatch/);
+    assert.equal(await scalar(db, "SELECT count(*) AS value FROM admin_page_views"), beforeRaw);
+    await db.exec("UPDATE admin_traffic_daily_visitors SET pv = pv - 1 WHERE day_kst = '2026-06-01'");
+
     // Pin the actual RPC target, not merely whichever function the migration creates.
     // Renaming the migration target to _preview_v2 must fail even if the old
     // preview still passes every data-integrity scenario below.
