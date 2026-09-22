@@ -1,3 +1,4 @@
+import { readClassifierObservation } from "./classifier-observation";
 // 야잘알봇 질문 서버 처리 코어. POST /api/baseball-qa(즉시 경로)와
 // /api/cron/baseball-qa-drain(durable 복구 경로)이 같은 처리기를 공유한다.
 // 질문 INSERT와 같은 트랜잭션에서 trigger가 만든 genius_question_jobs 행을
@@ -1147,7 +1148,7 @@ export function makeDeps(
     getLlmState: async () => {
       const { data, error } = await supabaseAdmin
         .from("genius_question_jobs")
-        .select("llm_started, llm_started_at, llm_text, llm_input_tokens, llm_output_tokens")
+        .select("llm_started, llm_started_at, llm_text, llm_input_tokens, llm_output_tokens, classifier_observation")
         .eq("message_id", messageId)
         .maybeSingle();
       if (error) throw error;
@@ -1155,6 +1156,7 @@ export function makeDeps(
       const result = data?.llm_text
         ? {
             text: data.llm_text as string,
+            classifierObservation: readClassifierObservation(data.classifier_observation),
             inputTokens: data.llm_input_tokens as number | null,
             outputTokens: data.llm_output_tokens as number | null,
           }
@@ -1190,6 +1192,7 @@ export function makeDeps(
         .from("genius_question_jobs")
         .update({
           llm_text: result.text,
+          classifier_observation: readClassifierObservation(result.classifierObservation),
           llm_input_tokens: result.inputTokens,
           llm_output_tokens: result.outputTokens,
           updated_at: new Date().toISOString(),

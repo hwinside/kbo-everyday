@@ -1,3 +1,5 @@
+import { parseStatIntentToken } from "./stat-intent-parser";
+import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
 import { hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
@@ -859,6 +861,7 @@ export interface PlayerRef {
 }
 
 export interface LlmResult {
+  classifierObservation?: ClassifierObservation | null;
   text: string;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -1401,6 +1404,7 @@ export interface QaDeps {
   /** LLM 호출 직후 결과를 durable 저장 — 이후 단계 crash 시 재시도가 LLM을 재소비하지 않게 한다. */
   storeLlm?: (result: LlmResult) => Promise<void>;
   log: (entry: {
+    classifierObservation?: ClassifierObservation | null;
     userId: string;
     question: string;
     questionNorm: string;
@@ -3910,23 +3914,7 @@ export interface StoredQaFinal {
  *   아니라 룰·용어를 묻는다" 는 **가드 소유 부정** 신호일 뿐이고, 호출측은 그 신호를 받으면
  *   일반 경로로 **재질의**해 `validateLlmResponse` 전수 검증을 그대로 통과시킨다.
  */
-export function parseStatIntentToken(rawText: string): "record" | "narrative" | "rule_term" | null {
-  let row: Record<string, unknown>;
-  try {
-    row = JSON.parse(rawText.trim()) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  if (!row || typeof row !== "object" || typeof row.answer !== "string") return null;
-  // 삼순 2026-08-14 결속 ②: status 까지 exact 결속 — 프롬프트 계약과 다른 응답
-  // (NOT_BASEBALL 로 토큰만 내보내는 등)은 의도로 인정하지 않고 되묻기 fail-close.
-  if (row.status !== "BASEBALL_RULE_TERM") return null;
-  const token = row.answer.trim();
-  if (token === "RECORD") return "record";
-  if (token === "NARRATIVE") return "narrative";
-  if (token === "RULE_TERM") return "rule_term";
-  return null;
-}
+export { parseStatIntentToken } from "./stat-intent-parser";
 
 export function packStoredQaFinal(final: StoredQaFinal, llm: LlmResult): LlmResult {
   return {
@@ -5699,6 +5687,11 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
+  const observed = observeQaDeps(deps);
+  return answerQuestionObserved(userId, rawQuestion, observed.deps, observed.setContextSelected);
+}
+
+async function answerQuestionObserved(userId: string, rawQuestion: string, deps: QaDeps, setContextSelected: (selected: boolean) => void): Promise<QaResult> {
   let question = rawQuestion.trim();
   let questionNorm = normalizeQuestion(question);
 
@@ -5917,6 +5910,7 @@ export async function answerQuestion(userId: string, rawQuestion: string, deps: 
       draftContext = null;
     }
   }
+  setContextSelected(context !== null);
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.
   const baseRoute = routeQuestion(question, glossary, players, context !== null);
