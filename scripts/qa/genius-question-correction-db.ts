@@ -99,6 +99,11 @@ async function loadSchema(): Promise<Db> {
     "supabase/migrations/20260813203000_baseball_genius_question_correction_picker.sql", "utf8",
   ).replaceAll("public.", "");
   await db.exec(stripRoleStatements(ours));
+  // buildQuestionLogRow 가 항상 보내는 관측 칸은 실제 migration 으로 적용한다.
+  const observation = readFileSync(
+    "supabase/migrations/20260922030000_classifier_observation.sql", "utf8",
+  );
+  await db.exec(observation);
   return db;
 }
 
