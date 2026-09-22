@@ -14,6 +14,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import AppDownloadBanner from "@/components/ui/AppDownloadBanner";
 import { TEAMS, getTeamById, isAllStarGameId } from "@/lib/constants/teams";
 import { useLiveGame, type LiveGameData } from "@/lib/hooks/useLiveGame";
+import { isNativeRuntime } from "@/lib/capacitor/platform";
 import { startHomeNextGamePoller } from "@/lib/polling/home-next-game-poller";
 import { getTeamBorderColorById } from "@/lib/utils/team-border-color";
 import { getTeamBgColorById, getTeamColor } from "@/lib/utils/team";
@@ -520,6 +521,8 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 위젯이 이미 미래 예정 경기를 보여주는 중이면(rolloverBase 없음) 롤오버 불필요.
   const rolloverBase = (isOvernight && overnightGame) ? overnightGame : myTeamGame;
   useEffect(() => {
+    // This look-ahead only feeds native widget snapshots, never the web UI.
+    if (!isNativeRuntime()) return;
     if (!myTeamId || !rolloverBase) {
       setRolloverNextGame(null);
       return;
