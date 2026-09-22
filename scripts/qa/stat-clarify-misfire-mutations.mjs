@@ -18,7 +18,8 @@ import fs from "node:fs";
 
 const PIPELINE = "src/lib/baseball-qa/pipeline.ts";
 const PROMPT = "src/lib/baseball-qa/gemini-request.ts";
-const TARGETS = [PIPELINE, PROMPT];
+const INTENT_PARSER = "src/lib/baseball-qa/stat-intent-parser.ts";
+const TARGETS = [PIPELINE, PROMPT, INTENT_PARSER];
 
 const originals = new Map(TARGETS.map((f) => [f, fs.readFileSync(f, "utf8")]));
 const restore = () => {
@@ -42,7 +43,7 @@ const mutations = [
   },
   {
     name: "M2 RULE_TERM 토큰 파싱 제거 (수정 ② 무력화)",
-    file: PIPELINE,
+    file: INTENT_PARSER,
     re: /if \(token === "RULE_TERM"\) return "rule_term";/,
     to: "",
     why: "룰 질문 신호를 다시 버려 되묻기 fail-close",
