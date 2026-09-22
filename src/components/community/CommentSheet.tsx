@@ -10,7 +10,7 @@ import LoginSheet from "@/components/auth/LoginSheet";
 import { supabase } from "@/lib/supabase/client";
 import type { Comment } from "@/lib/supabase/usePosts";
 import { getTeamById, getTeamBgColor } from "@/lib/constants/teams";
-import GifPicker from "@/components/community/GifPicker";
+import dynamic from "next/dynamic";
 import EmojiSuggestions from "@/components/community/EmojiSuggestions";
 import CommentImageLightbox from "@/components/community/CommentImageLightbox";
 import { isImageComment, prepareCommentImageForUpload } from "@/lib/community/comment-media";
@@ -28,6 +28,8 @@ export interface CommentSheetSource {
   report: (id: number) => void;
   validate: (content: string) => void;
 }
+
+const GifPicker = dynamic(() => import("@/components/community/GifPicker"), { ssr: false });
 
 interface CommentSheetProps {
   source?: CommentSheetSource;
