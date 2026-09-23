@@ -6949,6 +6949,15 @@
   },
   {
     "name": "최원준",
+    "kboId": "53705",
+    "teamId": 9,
+    "position": "내야수",
+    "backNo": "3",
+    "team": "한화",
+    "birthDate": "2004-05-01"
+  },
+  {
+    "name": "최원준",
     "kboId": "66606",
     "teamId": 3,
     "position": "외야수",
@@ -6964,15 +6973,6 @@
     "backNo": "61",
     "team": "두산",
     "birthDate": "1994-12-21"
-  },
-  {
-    "name": "최원준",
-    "kboId": "53705",
-    "teamId": 9,
-    "position": "내야수",
-    "backNo": "3",
-    "team": "한화",
-    "birthDate": "2004-05-01"
   },
   {
     "name": "최원태",
