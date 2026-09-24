@@ -33,6 +33,7 @@ interface ScheduleDay {
 
 interface Props {
   isOpen: boolean;
+  restoreTarget?: { gameId: string; teamIds: number[]; teamId: number } | null;
   favoriteTeamId: number | null;
   /** 선택된 시즌(카드가 소유). 시트는 이 시즌 일정만 조회한다. */
   season: VenueDiaryManualSeason;
@@ -77,6 +78,7 @@ function formatDateLabel(yyyymmdd: string, stadium: string): string {
 
 export default function VenueDiaryAddGameSheet({
   isOpen,
+  restoreTarget = null,
   favoriteTeamId,
   season,
   onSeasonChange,
@@ -101,8 +103,12 @@ export default function VenueDiaryAddGameSheet({
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (isOpen) setTeamId(favoriteTeamId);
-  }, [isOpen, favoriteTeamId]);
+    if (isOpen) {
+      setTeamId(restoreTarget?.teamId ?? favoriteTeamId);
+      setQuery("");
+      if (restoreTarget) setMonth(Number(restoreTarget.gameId.slice(4, 6)));
+    }
+  }, [isOpen, favoriteTeamId, restoreTarget]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -150,6 +156,7 @@ export default function VenueDiaryAddGameSheet({
     if (!days) return [];
     const q = query.trim().toLowerCase();
     return days
+      .filter((d) => !restoreTarget || d.gameId === restoreTarget.gameId)
       .filter((d) => d.status === "final" && d.date.startsWith(String(season)))
       .filter((d) => {
         if (!q) return true;
@@ -159,7 +166,7 @@ export default function VenueDiaryAddGameSheet({
           d.stadium.toLowerCase().includes(q)
         );
       });
-  }, [days, query, season]);
+  }, [days, query, season, restoreTarget]);
 
   if (!isOpen || typeof document === "undefined") return null;
 
@@ -167,7 +174,7 @@ export default function VenueDiaryAddGameSheet({
   const orderedTeams = [
     ...TEAMS.filter((t) => t.id === favoriteTeamId),
     ...TEAMS.filter((t) => t.id !== favoriteTeamId),
-  ];
+  ].filter((t) => !restoreTarget || restoreTarget.teamIds.includes(t.id));
 
   const handlePick = (day: ScheduleDay) => {
     if (!team) return;
@@ -207,7 +214,7 @@ export default function VenueDiaryAddGameSheet({
               <ChevronLeft size={22} />
             </button>
             <span className="text-base font-semibold text-text-primary">
-              {moveMode ? "경기 변경" : "지난 경기 추가"}
+              {restoreTarget ? "기록 복원" : moveMode ? "경기 변경" : "지난 경기 추가"}
             </span>
             <button onClick={onClose} aria-label="닫기" className="text-text-tertiary">
               <X size={22} />
@@ -216,7 +223,9 @@ export default function VenueDiaryAddGameSheet({
 
           <div className="px-4 pt-3 shrink-0">
             <p className="text-xs text-text-tertiary">
-              {moveMode ? (
+              {restoreTarget ? (
+                <>응원팀을 선택하고 기록을 복원해주세요. 사진·영상은 그대로 유지돼요.</>
+              ) : moveMode ? (
                 <>
                   이 기록을 옮길 <b className="text-text-secondary">{season} 종료 경기</b>를 골라주세요
                 </>
@@ -234,9 +243,10 @@ export default function VenueDiaryAddGameSheet({
                 return (
                   <button
                     key={s}
+                    disabled={restoreTarget != null}
                     onClick={() => onSeasonChange(s)}
                     aria-pressed={on}
-                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold border ${
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold border disabled:opacity-50 disabled:cursor-not-allowed ${
                       on
                         ? "bg-brand-primary border-brand-primary text-white"
                         : "bg-bg-tertiary border-border text-text-secondary"
@@ -252,10 +262,11 @@ export default function VenueDiaryAddGameSheet({
             <div className="mt-2.5 flex items-center gap-2 rounded-xl bg-bg-tertiary border border-border px-3 py-2.5">
               <Search size={15} className="text-text-tertiary shrink-0" />
               <input
+                disabled={restoreTarget != null}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="상대팀 · 구장으로 찾기"
-                className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -287,8 +298,9 @@ export default function VenueDiaryAddGameSheet({
                 return (
                   <button
                     key={m}
+                    disabled={restoreTarget != null}
                     onClick={() => setMonth(m)}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold border ${
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold border disabled:opacity-50 disabled:cursor-not-allowed ${
                       on
                         ? "bg-brand-primary border-brand-primary text-white"
                         : "bg-bg-tertiary border-border text-text-secondary"
@@ -312,7 +324,15 @@ export default function VenueDiaryAddGameSheet({
               </div>
             ) : finalGames.length === 0 ? (
               <div className="py-10 text-center text-sm text-text-tertiary">
-                이 달에 종료된 경기가 없어요
+                {restoreTarget ? (
+                  <>
+                    <p>이 경기는 아직 종료되지 않았거나 일정이 변경되어 지금은 복원할 수 없어요.</p>
+                    <p className="mt-2 text-xs">사진·영상은 그대로 보관됩니다. 경기 종료 후 다시 시도해주세요.</p>
+                    <button type="button" onClick={onClose} className="mt-3 rounded-lg border border-border px-3 py-2 font-bold text-text-secondary">
+                      다이어리로 돌아가기
+                    </button>
+                  </>
+                ) : "이 달에 종료된 경기가 없어요"}
               </div>
             ) : (
               <>
@@ -391,9 +411,9 @@ export default function VenueDiaryAddGameSheet({
                               : "이 경기로 변경"
                           : activeAttendanceGameIds.has(day.gameId)
                             ? "기록됨"
-                            : "기록 추가"}
+                            : restoreTarget ? "기록 복원" : "기록 추가"}
                       </button>
-                      {!moveMode && (
+                      {!moveMode && !restoreTarget && (
                         <button
                           type="button"
                           onClick={() => !selectDisabled && handlePick(day)}

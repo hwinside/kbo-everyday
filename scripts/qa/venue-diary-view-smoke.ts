@@ -192,6 +192,25 @@ async function flush(): Promise<void> {
   assert.equal(diaryShowsComments(false), false);
 }
 
+// 삭제 원장 source는 썸네일 인증과 무관하게 보존하고 활성 기록으로 집계하지 않는다.
+for (const source of ["story_geofence", "diary_manual"] as const) {
+  for (const venueVerified of [true, false]) {
+    const [game] = buildDiaryHomeGames({
+      attendanceGames: [],
+      mediaGroups: [{
+        gameId: "20260521KTSS0", gameDate: "2026-05-21", stadiumName: "포항",
+        deletedAttendanceSource: source,
+        counts: { image: 1, video: 0, total: 1 },
+        thumbnails: [{ id: 1, mediaType: "image", thumbUrl: "https://cdn/1.jpg", venueVerified }],
+      }],
+    });
+    assert.equal(game.deletedAttendanceSource, source);
+    assert.equal(game.attendanceId, null);
+    assert.equal(game.attendanceSource, null);
+    assert.equal(game.result, null);
+  }
+}
+
 // 6) 홈 병합: 미디어 순서 보존 + 성적 join + 썸네일 상한/+N
 {
   const mediaGroups: DiaryMediaGroupInput[] = [
