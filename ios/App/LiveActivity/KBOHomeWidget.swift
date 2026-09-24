@@ -52,6 +52,7 @@ struct WidgetGameSnapshot: Codable {
     /// "live" | "final" | "scheduled" | "cancelled". 구버전 스냅샷엔 없을 수 있어 옵셔널(기본 nil).
     /// 없으면 isFinal로 live/final을 추론(하위호환). "scheduled"/"cancelled"면 다음 경기 카드.
     var status: String? = nil
+    var resultPitchers: String? = nil
     /// 문자중계 최근 플레이 한 줄(1.0.7, 옵셔널) — 잠금 카드와 동일 소스/렌더. 구버전 스냅샷 nil 안전.
     var lastPlay: String? = nil
     /// 예정/취소 경기 표시용 시각 문구(예: "18:30"). live/final이면 빈 문자열.
@@ -271,6 +272,7 @@ struct KBOHomeWidgetEntryView: View {
                     // #278에서 카드를 충분히 컴팩트화해 medium 높이에 수용.
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
+                                      resultPitchers: snap.resolvedStatus == "final" ? snap.resultPitchers : nil,
                                       fillHeight: true,
                                       isStale: snap.isStale == true)
                         .widgetContainerBackground { smallBackground(snap) }
@@ -283,6 +285,7 @@ struct KBOHomeWidgetEntryView: View {
                     // large — 세로 여유가 충분해 잠금화면 카드를 그대로 재사용 (디자인 동일)
                     KBOLockScreenCard(attributes: attributes(from: snap),
                                       state: state(from: snap),
+                                      resultPitchers: snap.resolvedStatus == "final" ? snap.resultPitchers : nil,
                                       isStale: snap.isStale == true)
                         .padding(8)
                         .widgetContainerBackground { Color(hex: 0x0A0A0B) }
@@ -365,6 +368,11 @@ struct HomeWidgetSmallCard: View {
                 smallTeam(code: snap.homeTeamCode, score: snap.homeScore)
             }
 
+            if snap.resolvedStatus == "final", snap.awayScore != snap.homeScore,
+               let result = snap.resultPitchers, !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(result).font(notoKR(9, .bold)).foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(2).minimumScaleFactor(0.75).multilineTextAlignment(.center)
+            }
             Group {
                 if snap.isStale == true {
                     // B안 — 5h 넘게 갱신 안 된 live 스냅샷: LIVE 떼고 중립 표기('경기 종료' 단정 X,

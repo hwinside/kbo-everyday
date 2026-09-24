@@ -1017,14 +1017,21 @@ enum WidgetSnapshotStore {
     /// 경기 종료 무음 push 수신 시(A안) 홈위젯 스냅샷을 최종 스코어로 종료 처리한다.
     /// 현재 위젯이 이 경기(gameId)를 표시 중이고 아직 종료 전일 때만 갱신 — 다른/다음 경기
     /// 스냅샷을 덮어쓰지 않는다. next(06:00 롤오버)는 write()가 보존하며 멱등(이미 final이면 skip).
-    static func markFinal(gameId: String, awayScore: Int, homeScore: Int) {
+    static func markFinal(gameId: String, awayScore: Int, homeScore: Int, resultPitchers: String = "") {
         guard let ud = UserDefaults(suiteName: appGroupId),
               let data = ud.data(forKey: key),
               let obj = try? JSONSerialization.jsonObject(with: data),
               var dict = obj as? [String: Any],
               (dict["hasGame"] as? Bool) == true,
               (dict["gameId"] as? String) == gameId else { return }
-        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" { return }
+        if (dict["isFinal"] as? Bool) == true || (dict["status"] as? String) == "final" {
+            if !resultPitchers.isEmpty && awayScore != homeScore {
+                dict["resultPitchers"] = resultPitchers
+                write(dict)
+            }
+            return
+        }
+        dict["resultPitchers"] = awayScore != homeScore ? resultPitchers : ""
         dict["awayScore"] = awayScore
         dict["homeScore"] = homeScore
         dict["isFinal"] = true

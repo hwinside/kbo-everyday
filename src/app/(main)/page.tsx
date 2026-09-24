@@ -27,7 +27,7 @@ async function getInitialData(): Promise<{
     // 1) 경기 목록 — 유저 대면 하이브리드: Naver primary(스코어/이닝) + KBO enrich(BSO/주자/투타).
     // KBO 열화여도 빠르게 수렴하고, KBO 살아있으면 라이브 상세까지 보존.
     const gamesData = await fetchGamesUserFacing(yyyymmdd);
-    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; cancelReason?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
+    const games: HomeGame[] = gamesData.map((g: { gameId: string; homeTeamId: number; awayTeamId: number; time: string; stadium: string; homeScore?: number | null; awayScore?: number | null; status: string; inning?: number; isTop?: boolean; awayStarterName?: string | null; homeStarterName?: string | null; winPitcher?: string | null; losePitcher?: string | null; savePitcher?: string | null; cancelReason?: string | null; broadcastChannels?: HomeGame["broadcastChannels"] }) => ({
       id: g.gameId,
       homeTeamId: g.homeTeamId,
       awayTeamId: g.awayTeamId,
@@ -44,6 +44,7 @@ async function getInitialData(): Promise<{
       homeStarterName: g.homeStarterName ?? null,
       winPitcher: g.winPitcher ?? null,
       losePitcher: g.losePitcher ?? null,
+      savePitcher: g.savePitcher ?? null,
       broadcastChannels: g.broadcastChannels,
     }));
 
