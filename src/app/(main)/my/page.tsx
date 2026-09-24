@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useSafeBack } from "@/lib/hooks/useSafeBack";
 import { motion } from "framer-motion";
 import Image from "next/image";
-import { ChevronLeft, ChevronRight, RefreshCw, Settings, MessageSquareHeart } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, ShieldBan, Settings, MessageSquareHeart } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamSelectModal from "@/components/onboarding/TeamSelectModal";
 import PlayerSelectModal from "@/components/onboarding/PlayerSelectModal";
@@ -292,6 +292,18 @@ export default function MyPage() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }} className="mt-5">
         <MenuSection />
       </motion.div>
+
+      {user && (
+        <div className="mt-3">
+          <button onClick={() => router.push("/my/blocks")} className="flex w-full items-center justify-between rounded-2xl border border-border bg-bg-secondary p-5 text-left">
+            <span className="flex items-center gap-4 text-base text-text-primary">
+              <ShieldBan size={22} className="text-text-secondary" />
+              차단 관리
+            </span>
+            <ChevronRight size={22} className="text-text-tertiary" />
+          </button>
+        </div>
+      )}
 
       {/* 피드백 보내기 — 기존 안내(마이페이지 → 피드백 보내기)와 일치하도록 명시 노출 (로그인 유저) */}
       {user && (
