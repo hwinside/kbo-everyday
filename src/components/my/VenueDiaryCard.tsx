@@ -825,7 +825,7 @@ export default function VenueDiaryCard() {
                       </div>
                     )}
                     </button>
-                    {game.attendanceId == null && game.label.kind === "manual" && game.total > 0 && (
+                    {game.attendanceId == null && game.total > 0 && (
                       <div className="mt-2.5 border-t border-border pt-2.5">
                         <p className="mb-2 text-xs text-text-tertiary">사진·영상은 남아 있어요. 기록을 복원하면 경기 정보와 관리 메뉴를 다시 볼 수 있어요.</p>
                         <button

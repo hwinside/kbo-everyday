@@ -246,7 +246,7 @@ export default function VenueDiaryAddGameSheet({
                     disabled={restoreTarget != null}
                     onClick={() => onSeasonChange(s)}
                     aria-pressed={on}
-                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold border ${
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-bold border disabled:opacity-50 disabled:cursor-not-allowed ${
                       on
                         ? "bg-brand-primary border-brand-primary text-white"
                         : "bg-bg-tertiary border-border text-text-secondary"
@@ -266,7 +266,7 @@ export default function VenueDiaryAddGameSheet({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="상대팀 · 구장으로 찾기"
-                className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none"
+                className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-tertiary outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -300,7 +300,7 @@ export default function VenueDiaryAddGameSheet({
                     key={m}
                     disabled={restoreTarget != null}
                     onClick={() => setMonth(m)}
-                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold border ${
+                    className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-bold border disabled:opacity-50 disabled:cursor-not-allowed ${
                       on
                         ? "bg-brand-primary border-brand-primary text-white"
                         : "bg-bg-tertiary border-border text-text-secondary"
@@ -324,7 +324,15 @@ export default function VenueDiaryAddGameSheet({
               </div>
             ) : finalGames.length === 0 ? (
               <div className="py-10 text-center text-sm text-text-tertiary">
-                이 달에 종료된 경기가 없어요
+                {restoreTarget ? (
+                  <>
+                    <p>이 경기는 아직 종료되지 않았거나 일정이 변경되어 지금은 복원할 수 없어요.</p>
+                    <p className="mt-2 text-xs">사진·영상은 그대로 보관됩니다. 경기 종료 후 다시 시도해주세요.</p>
+                    <button type="button" onClick={onClose} className="mt-3 rounded-lg border border-border px-3 py-2 font-bold text-text-secondary">
+                      다이어리로 돌아가기
+                    </button>
+                  </>
+                ) : "이 달에 종료된 경기가 없어요"}
               </div>
             ) : (
               <>
