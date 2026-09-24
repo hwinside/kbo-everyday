@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase } from "./client";
 import { useAuth } from "./AuthContext";
 
@@ -73,55 +73,86 @@ export function useBlockUser(targetId: string) {
   return { block, unblock, isBlocked, loading };
 }
 
-// 차단 목록
+// 차단 목록 — 두 진입점에서 공유하며 조회 실패를 빈 목록으로 처리하지 않는다.
 export function useBlockList() {
   const { user } = useAuth();
+  const userId = user?.id;
   const [blockedUsers, setBlockedUsers] = useState<BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const request = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!user) { setLoading(false); return; }
-
-    const { data } = await supabase
-      .from("user_blocks")
-      .select("id, blocked_id, created_at")
-      .eq("blocker_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (!data || data.length === 0) {
+    const version = ++request.current;
+    setLoading(true);
+    setError(null);
+    if (!userId) {
       setBlockedUsers([]);
       setLoading(false);
       return;
     }
+    try {
+      const result: BlockedUser[] = [];
+      // Supabase 응답 상한과 큰 IN 쿼리를 피하면서 전체 차단 목록을 읽는다.
+      for (let offset = 0; ; offset += 100) {
+        const { data, error: blocksError } = await supabase
+          .from("user_blocks")
+          .select("id, blocked_id, created_at")
+          .eq("blocker_id", userId)
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: false })
+          .range(offset, offset + 99);
+        if (version !== request.current) return;
+        if (blocksError) throw blocksError;
+        if (!data?.length) break;
+        const { data: profiles, error: profilesError } = await supabase
+          .from("profiles")
+          .select("id, nickname, team_id")
+          .in("id", data.map((block) => block.blocked_id));
+        if (version !== request.current) return;
+        if (profilesError) throw profilesError;
+        const profileMap = new Map((profiles ?? []).map((profile) => [profile.id, profile]));
+        result.push(...data.map((block) => ({
+          ...block,
+          nickname: profileMap.get(block.blocked_id)?.nickname ?? "알 수 없는 유저",
+          team_id: profileMap.get(block.blocked_id)?.team_id ?? null,
+        })));
+        if (data.length < 100) break;
+      }
+      if (version === request.current) setBlockedUsers(result);
+    } catch {
+      if (version === request.current) setError("차단 목록을 불러오지 못했어요. 다시 시도해 주세요.");
+    } finally {
+      if (version === request.current) setLoading(false);
+    }
+  }, [userId]);
 
-    const blockedIds = data.map((b: { blocked_id: string }) => b.blocked_id);
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, nickname, team_id")
-      .in("id", blockedIds);
+  useEffect(() => {
+    setBlockedUsers([]);
+    void refresh();
+    window.addEventListener(BLOCK_CHANGED_EVENT, refresh);
+    return () => {
+      // This is a request generation counter, not a DOM ref.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      ++request.current;
+      window.removeEventListener(BLOCK_CHANGED_EVENT, refresh);
+    };
+  }, [refresh]);
 
-    const profileMap = new Map(
-      (profiles ?? []).map((p: { id: string; nickname: string; team_id: number | null }) => [p.id, p])
-    );
+  return { blockedUsers, loading, error, refresh };
+}
 
-    const mapped: BlockedUser[] = data.map((b: { id: string; blocked_id: string; created_at: string }) => {
-      const prof = profileMap.get(b.blocked_id);
-      return {
-        id: b.id,
-        blocked_id: b.blocked_id,
-        nickname: prof?.nickname ?? "알 수 없음",
-        team_id: prof?.team_id ?? null,
-        created_at: b.created_at,
-      };
-    });
-
-    setBlockedUsers(mapped);
-    setLoading(false);
-  }, [user]);
-
-  useEffect(() => { refresh(); }, [refresh]); // eslint-disable-line react-hooks/set-state-in-effect
-
-  return { blockedUsers, loading, refresh };
+// 성공한 해제만 피드·채팅·쪽지의 차단 필터에 브로드캐스트한다.
+export async function unblockUserById(blockerId: string, blockedId: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from("user_blocks").delete()
+      .eq("blocker_id", blockerId).eq("blocked_id", blockedId);
+    if (error) return false;
+    emitBlockChanged();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // 차단된 유저 ID 목록 (필터링용)
