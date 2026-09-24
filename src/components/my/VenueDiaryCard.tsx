@@ -541,6 +541,7 @@ export default function VenueDiaryCard() {
   );
 
   const openRestoreSheet = (game: DiaryHomeGame) => {
+    if (game.deletedAttendanceSource === "story_geofence") return;
     const targetSeason = Number(game.gameId.slice(0, 4));
     if (!isVenueDiaryManualSeason(targetSeason)) {
       setAttendanceMessage("지난 경기 추가하기에서 복원할 경기를 확인해주세요.");
@@ -825,7 +826,10 @@ export default function VenueDiaryCard() {
                       </div>
                     )}
                     </button>
-                    {game.attendanceId == null && game.total > 0 && (
+                    {game.attendanceId == null && game.total > 0 && game.deletedAttendanceSource === "story_geofence" && (
+                      <p className="mt-2.5 border-t border-border pt-2.5 text-xs text-text-tertiary">삭제한 GPS 인증 기록은 여기서 복원할 수 없어요. 사진·영상은 그대로 남아 있어요.</p>
+                    )}
+                    {game.attendanceId == null && game.total > 0 && game.deletedAttendanceSource !== "story_geofence" && (
                       <div className="mt-2.5 border-t border-border pt-2.5">
                         <p className="mb-2 text-xs text-text-tertiary">사진·영상은 남아 있어요. 기록을 복원하면 경기 정보와 관리 메뉴를 다시 볼 수 있어요.</p>
                         <button

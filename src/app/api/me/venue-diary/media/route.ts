@@ -423,8 +423,33 @@ async function listResponse(
   }
   const { games, nextCursor, hasMore } = paginateDiaryGames(rows);
 
+  // query-guard: bounded -- 현재 페이지 경기만, 본인 삭제 원장의 출처를 조회한다.
+  // 썸네일 GPS 여부는 삭제된 원장의 source를 대신할 수 없다.
+  const deletedSources = new Map<string, string>();
+  if (games.length > 0) {
+    const { data: deletedRows, error: deletedError } = await supabase
+      .from("venue_attendance")
+      .select("game_id, source")
+      .eq("user_id", userId)
+      .in("game_id", games.map((game) => game.gameId))
+      .not("deleted_at", "is", null)
+      .limit(games.length);
+    if (deletedError) {
+      return NextResponse.json({ error: "삭제된 직관 기록 조회 실패" }, { status: 500 });
+    }
+    for (const row of deletedRows ?? []) deletedSources.set(row.game_id, row.source);
+  }
+
   return NextResponse.json(
-    { season, games, nextCursor, hasMore },
+    {
+      season,
+      games: games.map((game) => ({
+        ...game,
+        deletedAttendanceSource: deletedSources.get(game.gameId) ?? null,
+      })),
+      nextCursor,
+      hasMore,
+    },
     { headers: { "Cache-Control": "private, no-store" } },
   );
 }
