@@ -1,5 +1,6 @@
 /** Independent QA: durable SQL state machine + real broadcast pass, no production writes. */
 import assert from "node:assert/strict";
+import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { runChannelBroadcastPass } from "../../src/lib/notifications/live-activity-channel-broadcast-pass";
@@ -11,6 +12,29 @@ async function main() {
   const db = new PGlite();
   await db.exec("create role anon; create role authenticated; create role service_role;");
   await db.exec(readFileSync("supabase/migrations/20260924_live_activity_score_guard.sql", "utf8"));
+  // Score-guard events must be accepted without relabelling as schema errors.
+  await db.exec("create table public.api_fallback_events(reason text constraint api_fallback_events_reason_check check (reason in ('timeout','http-error','schema-error','network-error')));");
+  await db.exec(readFileSync("supabase/migrations/20260924_live_activity_score_guard_alert_reason.sql", "utf8"));
+  await db.exec("insert into public.api_fallback_events values ('score-guard');");
+  await assert.rejects(db.exec("insert into public.api_fallback_events values ('unknown');"));
+  // Execute the production alert registration body with missing Next request context.
+  const guardSource = readFileSync("src/lib/notifications/live-activity-score-guard.ts", "utf8");
+  const alertStart = guardSource.indexOf("function alert(");
+  const alertEnd = guardSource.indexOf("export async function observe", alertStart);
+  assert.ok(alertStart >= 0 && alertEnd > alertStart);
+  const alertCode = ts.transpileModule(guardSource.slice(alertStart, alertEnd), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let logged = 0;
+  const makeAlert = new Function("after", "trackApiDegradation", "console", alertCode + "; return alert;");
+  const noContextAlert = makeAlert(() => { throw new Error("no request context"); },
+    () => { throw new Error("must not execute"); }, { error: () => { logged++; } });
+  assert.doesNotThrow(() => noContextAlert("test-game", "test"));
+  assert.equal(logged, 1, "registration failure visible but cannot abort APNs");
+  let reason: string | undefined;
+  const validAlert = makeAlert((cb: () => void) => cb(), (_name: string, label: string) => { reason = label; }, console);
+  validAlert("test-game", "test");
+  assert.equal(reason, "score-guard");
   const gameId = "20260924LTLG0";
   const baseline = "1|0|3|true|false|false|false|live";
   const start = Date.now() - 180_000;

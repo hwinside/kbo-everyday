@@ -355,10 +355,12 @@ export async function pushLiveActivityUpdates(
   const scoreGuards: Array<ScoreGuardObservation & { gameId: string }> = [];
   // 이번 틱의 상태 문자열 — 발송 성공 시 경기 단위 폴백 테이블에 기록(다음 틱 스킵 판정용).
   const stateStringsByGame = new Map<string, { score: string; hash: string }>();
-  for (const [gid, st] of stateByGame) {
-    if (st !== "live") continue;
+  // Observe all games concurrently: one RPC timeout budget, not N × 1500ms.
+  // Normal observations must still reset a previous correction probation.
+  await Promise.all([...stateByGame].map(async ([gid, st]) => {
+    if (st !== "live") return;
     const g = gameById.get(gid);
-    if (!g) continue;
+    if (!g) return;
     const cs = buildContentState(g, "live", lastPlayByGame?.get(gid), true);
     const last = lastStateByGame.get(gid);
     const scoreState = scoreStateOf(cs);
@@ -379,7 +381,7 @@ export async function pushLiveActivityUpdates(
           lastScoreState: last?.score ?? null,
           lastStateHash: last?.hash ?? null,
         }));
-  }
+  }));
 
   let pushed = 0;
   let ended = 0;

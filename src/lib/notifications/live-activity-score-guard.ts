@@ -17,9 +17,14 @@ export interface ScoreGuardObservation {
 function alert(gameId: string, detail: string): void {
   // Existing durable outbox handles cooldown, delivery ACK, and retries. Never hold APNs
   // behind the Telegram network call. next/after preserves work beyond the response.
-  after(() => trackApiDegradation(`la-score-guard-${gameId}`, "schema-error",
-    { scope: gameId, errorMessage: detail },
-    { windowMinutes: 5, threshold: 1, cooldownMinutes: 5, leaseSeconds: 30 }));
+  try {
+    after(() => trackApiDegradation(`la-score-guard-${gameId}`, "score-guard",
+      { scope: gameId, errorMessage: detail },
+      { windowMinutes: 5, threshold: 1, cooldownMinutes: 5, leaseSeconds: 30 }));
+  } catch (error) {
+    // Missing request context / after registration failure must never abort APNs.
+    console.error(`[la-score-guard] alert scheduling failed game=${gameId}`, (error as Error).message);
+  }
 }
 
 export async function observeLiveActivityScoreGuard(

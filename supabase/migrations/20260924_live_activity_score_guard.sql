@@ -29,8 +29,7 @@ begin
   if p_observed_at is null or p_observed_at > clock_timestamp() + interval '5 seconds' then
     raise exception 'invalid observation time';
   end if;
-  -- Small bounded season data; observations keep active rows alive, old episodes expire.
-  delete from public.live_activity_score_guards where updated_at < now() - interval '7 days';
+  -- Expired episodes are removed by the daily admin-telemetry-retention cron.
   insert into public.live_activity_score_guards(game_id, baseline) values(p_game_id, p_baseline)
     on conflict do nothing;
   select * into s from public.live_activity_score_guards

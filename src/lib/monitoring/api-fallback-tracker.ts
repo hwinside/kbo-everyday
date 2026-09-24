@@ -12,7 +12,7 @@ import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 
 interface FallbackEvent {
   apiName: string;
-  reason: "timeout" | "http-error" | "schema-error" | "network-error";
+  reason: "timeout" | "http-error" | "schema-error" | "network-error" | "score-guard";
   timestamp: Date;
   statusCode?: number;
   errorMessage?: string;
