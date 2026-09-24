@@ -26,6 +26,7 @@ interface RawGameData {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   broadcastChannels?: BroadcastChannel[];
 }
 
@@ -49,6 +50,7 @@ export interface HomeGame {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   // 중계방송사(TV/IPTV). 없으면 미표시.
   broadcastChannels?: BroadcastChannel[];
 }
@@ -130,6 +132,7 @@ export function useHomeInit(options?: UseHomeInitOptions) {
           homeStarterName: g.homeStarterName ?? null,
           winPitcher: g.winPitcher ?? null,
           losePitcher: g.losePitcher ?? null,
+          savePitcher: g.savePitcher ?? null,
           broadcastChannels: g.broadcastChannels,
         }));
         if (games.length > 0) {

@@ -42,6 +42,7 @@ public class GameScoreWidget extends AppWidgetProvider {
     static final String KEY_AS = "as";
     static final String KEY_HS = "hs";
     static final String KEY_STATUS = "status";
+    static final String KEY_RESULT_PITCHERS = "result_pitchers";
     static final String KEY_PITCHER = "pitcher";
     static final String KEY_PTEAM = "pteam";
     static final String KEY_BATTER = "batter";
@@ -186,6 +187,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         String pitcher = "", pteam = "", batter = "", bteam = "", outs = "", diamond = "000";
         String stadium = "", astarter = "", hstarter = "";
         String lastPlay = "";
+        String resultPitchers = "";
     }
 
     /** prefs 읽기 + 홈 팀카드 06:00 규칙 적용(경기일 다음날 06:00 지나면 다음 예정 경기로 전환).
@@ -200,6 +202,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         e.as = p.getString(KEY_AS, "0");
         e.hs = p.getString(KEY_HS, "0");
         e.status = p.getString(KEY_STATUS, "");
+        e.resultPitchers = p.getString(KEY_RESULT_PITCHERS, "");
         e.pitcher = p.getString(KEY_PITCHER, "");
         e.pteam = p.getString(KEY_PTEAM, "");
         e.batter = p.getString(KEY_BATTER, "");
@@ -381,12 +384,19 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setViewVisibility(R.id.widget_home_starter_col, View.GONE);
         }
 
+        if (layoutRes == R.layout.widget_game_score) {
+            boolean showResult = isFinal && !as.equals(hs) && !e.resultPitchers.trim().isEmpty();
+            v.setViewVisibility(R.id.widget_result_pitchers, showResult ? View.VISIBLE : View.GONE);
+            v.setTextViewText(R.id.widget_result_pitchers, showResult ? e.resultPitchers : "");
+        }
+
         // 하단: OUT + 투수/타자 소속표기 + 다이아몬드 (라이브 정보 없으면 행 숨김)
         int diaRes = draw(context, "diamond_" + diamond);
         boolean hasPitcher = !TextUtils.isEmpty(pitcher);
         boolean hasBatter = !TextUtils.isEmpty(batter);
         boolean hasOuts = !TextUtils.isEmpty(outs);
-        boolean hasLive = hasPitcher || hasBatter || hasOuts || !"000".equals(diamond);
+        boolean hasLive = !isFinal && !isScheduled && !isCancelled
+            && (hasPitcher || hasBatter || hasOuts || !"000".equals(diamond));
         if (hasLive) {
             v.setViewVisibility(R.id.widget_live_row, View.VISIBLE);
 
@@ -506,6 +516,9 @@ public class GameScoreWidget extends AppWidgetProvider {
             v.setImageViewBitmap(R.id.widget_small_away_score, textBitmap(context, as, 19f, 0xFFF5F5F7));
             v.setImageViewBitmap(R.id.widget_small_home_score, textBitmap(context, hs, 19f, 0xFFF5F5F7));
         }
+        boolean showResult = isFinal && !as.equals(hs) && !e.resultPitchers.trim().isEmpty();
+        v.setViewVisibility(R.id.widget_result_pitchers, showResult ? View.VISIBLE : View.GONE);
+        v.setTextViewText(R.id.widget_result_pitchers, showResult ? e.resultPitchers : "");
         // 상태 pill — 예정 "{시각} 경기 예정", 라이브 "● {status}", 종료 "경기 종료"
         if (status.isEmpty() || "SCHEDULED|".equals(status)) {
             v.setViewVisibility(R.id.widget_small_status, View.GONE);
@@ -697,9 +710,10 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String as, String hs, String status, String pitcher, String pteam,
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
-                                String lastPlay) {
-        writeAndRefresh(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
-            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, lastPlay, -1L);
+                                String lastPlay, String resultPitchers) {
+        writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
+            false, "", "", "", "", "", "", "", lastPlay, -1L, resultPitchers);
     }
 
     /** FCM 경로 — seq(서버 send-time ms)로 역전/중복 가드. seq<0이면 가드 비활성(구버전 호환).
@@ -711,7 +725,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String lastPlay, long seq) {
         return writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            false, "", "", "", "", "", "", "", lastPlay, seq);
+            false, "", "", "", "", "", "", "", lastPlay, seq, "");
     }
 
     /** 앱(홈) 경로 — 결과/라이브 경기와 함께 '다음 예정 경기'를 실어 위젯 06:00 자동 전환을 준비. */
@@ -720,10 +734,10 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String batter, String bteam, String outs, String diamond,
                                 String stadium, String astarter, String hstarter, String gameId,
                                 String nAway, String nHome, String nStadium, String nTime,
-                                String nDate, String nAStarter, String nHStarter) {
+                                String nDate, String nAStarter, String nHStarter, String resultPitchers) {
         writeInternal(ctx, myTeam, away, home, as, hs, status, pitcher, pteam,
             batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId,
-            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null, -1L);
+            true, nAway, nHome, nStadium, nTime, nDate, nAStarter, nHStarter, null, -1L, resultPitchers);
     }
 
     private static WidgetUpdatePolicy.ApplyResult writeInternal(Context ctx, String myTeam, String away, String home,
@@ -732,7 +746,7 @@ public class GameScoreWidget extends AppWidgetProvider {
                                 String stadium, String astarter, String hstarter, String gameId,
                                 boolean hasNext, String nAway, String nHome, String nStadium,
                                 String nTime, String nDate, String nAStarter, String nHStarter,
-                                String lastPlay, long seq) {
+                                String lastPlay, long seq, String resultPitchers) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String prevGameId = p.getString(KEY_GAME_ID, "");
         boolean gameChanged = !TextUtils.isEmpty(gameId) && !gameId.equals(prevGameId);
@@ -742,8 +756,10 @@ public class GameScoreWidget extends AppWidgetProvider {
         String effLastPlay = (lastPlay != null)
             ? lastPlay
             : (gameChanged ? "" : p.getString(KEY_LAST_PLAY, ""));
+        String finalPitchers = status != null && status.startsWith("FINAL") && !nz(as).equals(nz(hs))
+            ? nz(resultPitchers) : "";
         String sig = buildSignature(away, home, as, hs, status, pitcher, pteam,
-            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, effLastPlay);
+            batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, effLastPlay) + "|" + finalPitchers;
         WidgetUpdatePolicy.ApplyResult result = WidgetUpdatePolicy.decide(
             seq, prevSeq, gameChanged, sig, p.getString(KEY_SIG, ""),
             WidgetUpdatePolicy.isTerminalStatus(status));
@@ -753,6 +769,7 @@ public class GameScoreWidget extends AppWidgetProvider {
         }
         SharedPreferences.Editor e = p.edit();
         e.putBoolean(KEY_HAS_GAME, true);
+        e.putString(KEY_RESULT_PITCHERS, finalPitchers);
         e.putString(KEY_STADIUM, stadium == null ? "" : stadium);
         e.putString(KEY_ASTARTER, astarter == null ? "" : astarter);
         e.putString(KEY_HSTARTER, hstarter == null ? "" : hstarter);
@@ -862,6 +879,10 @@ public class GameScoreWidget extends AppWidgetProvider {
      *  ① gameId 불일치(다른/이전 경기 종료 신호) → 최신 카드 오종료 방지. ② 저-seq(늦게 도착한 옷 종료) → 무시.
      *  ③ 이미 FINAL이면 중복 no-op. game_end는 live 뒤에 발송되어 seq가 더 큼 → 이후 가드가 저-seq live 무시. */
     static WidgetUpdatePolicy.ApplyResult markFinal(Context ctx, String gameId, long seq) {
+        return markFinal(ctx, gameId, seq, null, null, null);
+    }
+
+    static WidgetUpdatePolicy.ApplyResult markFinal(Context ctx, String gameId, long seq, String resultPitchers, String awayScore, String homeScore) {
         SharedPreferences p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         boolean hasGame = p.getBoolean(KEY_HAS_GAME, false);
         String prevGameId = p.getString(KEY_GAME_ID, "");
@@ -879,11 +900,26 @@ public class GameScoreWidget extends AppWidgetProvider {
                 return WidgetUpdatePolicy.ApplyResult.STALE;
             case RETRY_ADVANCE_SEQ:
                 // 이미 FINAL이지만 더 큰 seq(종료 재전송) → watermark만 전진(후속 저-seq live 차단).
-                p.edit().putLong(KEY_LAST_SEQ, seq).apply();
+                SharedPreferences.Editor retry = p.edit().putLong(KEY_LAST_SEQ, seq);
+                if (resultPitchers != null && !resultPitchers.isEmpty()
+                    && !resultPitchers.equals(p.getString(KEY_RESULT_PITCHERS, ""))) {
+                    if (awayScore != null && homeScore != null) {
+                        retry.putString(KEY_AS, awayScore).putString(KEY_HS, homeScore);
+                    }
+                    retry.putString(KEY_RESULT_PITCHERS, resultPitchers).remove(KEY_SIG).apply();
+                    refresh(ctx);
+                    return WidgetUpdatePolicy.ApplyResult.APPLIED;
+                }
+                retry.apply();
                 return WidgetUpdatePolicy.ApplyResult.NO_CHANGE;
             case APPLY:
             default:
-                SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL");
+                SharedPreferences.Editor e = p.edit().putString(KEY_STATUS, "FINAL")
+                    .putString(KEY_RESULT_PITCHERS, nz(resultPitchers));
+                if (awayScore != null && homeScore != null) {
+                    e.putString(KEY_AS, awayScore);
+                    e.putString(KEY_HS, homeScore);
+                }
                 if (seq >= 0) e.putLong(KEY_LAST_SEQ, seq);
                 // status만 바뀌니 sig 불일치화(다음 live가 정상 재렌더되게).
                 e.remove(KEY_SIG);

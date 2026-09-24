@@ -22,6 +22,7 @@ import {
 // 네이티브 GameNotificationPlugin(@CapacitorPlugin name="GameNotification")과 페어.
 // iOS는 Live Activity(별도)라 여기선 android만 동작.
 interface WidgetData {
+  resultPitchers?: string;
   myTeam: string;
   away: string;
   home: string;
