@@ -113,6 +113,30 @@ export async function runChannelBroadcastPass(
 
   const pastDeadline = () => opts.deadlineAtMs != null && deps.now() >= opts.deadlineAtMs;
 
+  // Resolve guard I/O before the serial APNs pass: ten channels must not add ten
+  // RPC timeouts. Share identical game/baseline observations across environments;
+  // distinct baselines remain isolated, matching the SQL primary key.
+  const observations = new Map<string, Promise<ScoreGuardObservation>>();
+  const prepared = new Map<ChannelRow, {
+    cs: Record<string, unknown>;
+    scoreState: string;
+    scoreGuard: ScoreGuardObservation | undefined;
+  }>();
+  await Promise.all(channels.map(async (row) => {
+    const g = gameById.get(row.game_id);
+    if (pastDeadline() || !g || row.status === "ending" ||
+        deps.gameStatus(g) !== "live" || isKboGameCancelled(g.CANCEL_SC_ID)) return;
+    const cs = deps.buildContentState(g, "live", lastPlayByGame?.get(row.game_id), true);
+    const scoreState = scoreStateOf(cs);
+    const key = JSON.stringify([row.game_id, row.last_score_state, scoreState]);
+    let observation = observations.get(key);
+    if (!observation && deps.observeScoreGuard) {
+      observation = deps.observeScoreGuard(g, row.last_score_state, scoreState);
+      observations.set(key, observation);
+    }
+    prepared.set(row, { cs, scoreState, scoreGuard: await observation });
+  }));
+
   const markDeleted = async (row: ChannelRow) => {
     const ok = await deps.deleteChannel(row.environment, row.channel_id);
     if (!ok) return; // 삭제 실패 → 다음 틱 재시도
@@ -192,15 +216,12 @@ export async function runChannelBroadcastPass(
 
     // ── 라이브 → update broadcast (priority 10/5, 무변화 스킵) ──
     if (status === "live" && g) {
-      const cs = deps.buildContentState(
-        g,
-        "live",
-        lastPlayByGame?.get(row.game_id),
-        true, // 채널 구독자는 빌드 16+ 확정 → 항상 풀 카드
-      );
-      const scoreState = scoreStateOf(cs);
+      const ready = prepared.get(row);
+      if (!ready) {
+        deadlineSkipped += 1; failedGameIds.add(row.game_id); continue;
+      }
+      const { cs, scoreState, scoreGuard } = ready;
       const fullHash = fullStateHashOf(cs);
-      const scoreGuard = await deps.observeScoreGuard?.(g, row.last_score_state, scoreState);
       if (scoreGuard) scoreGuards.push({ gameId: row.game_id, ...scoreGuard });
       if (pastDeadline()) {
         deadlineSkipped += 1; failedGameIds.add(row.game_id); continue;
