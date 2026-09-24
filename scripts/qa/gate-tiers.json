@@ -16,6 +16,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:widget-result-pitchers",
+      "tier": "ci"
+    },
+    {
       "name": "qa:admin-inbox",
       "tier": "ci"
     },

@@ -333,6 +333,7 @@ public class GameNotificationPlugin extends Plugin {
         String astarter = call.getString("awayStarter", "");
         String hstarter = call.getString("homeStarter", "");
         String gameId = call.getString("gameId", "");
+        String resultPitchers = call.getString("resultPitchers", "");
         JSObject next = call.getObject("next");
         if (next != null) {
             GameScoreWidget.writeAndRefreshWithNext(
@@ -341,11 +342,11 @@ public class GameNotificationPlugin extends Plugin {
                 next.optString("away", ""), next.optString("home", ""),
                 next.optString("stadium", ""), next.optString("time", ""),
                 next.optString("date", ""), next.optString("astarter", ""),
-                next.optString("hstarter", ""));
+                next.optString("hstarter", ""), resultPitchers);
         } else {
             GameScoreWidget.writeAndRefresh(
                 getContext(), myTeam, away, home, as, hs, status, pitcher, pteam,
-                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, null);
+                batter, bteam, outs, diamond, stadium, astarter, hstarter, gameId, null, resultPitchers);
         }
         call.resolve();
     }

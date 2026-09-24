@@ -25,6 +25,7 @@ import { useNewsPhotoFilter } from "@/hooks/useNewsPhotoFilter";
 import { isPhotoArticle } from "@/lib/news-relevance";
 import type { HomeSectionKey } from "@/lib/store/home-sections-pref";
 import type { HomeCommunityFeedMode } from "@/lib/supabase/useHomePopularFeed";
+import { widgetResultPitchers } from "@/lib/widget-result-pitchers";
 import { setWidgetFavPlayers, setWidgetMyTeam, updateGameWidget } from "@/lib/capacitor/game-notification";
 import { writeHomeWidgetSnapshot, type HomeWidgetGame } from "@/lib/native-live-activity";
 import { latestRelayLine } from "@/lib/notifications/relay-line";
@@ -97,6 +98,7 @@ interface ApiGameData {
   homeStarterName?: string | null;
   winPitcher?: string | null;
   losePitcher?: string | null;
+  savePitcher?: string | null;
   broadcastChannels?: HomeGame["broadcastChannels"];
 }
 
@@ -162,6 +164,7 @@ function mapApiGame(g: ApiGameData): HomeGame {
     homeStarterName: g.homeStarterName ?? null,
     winPitcher: g.winPitcher ?? null,
     losePitcher: g.losePitcher ?? null,
+    savePitcher: g.savePitcher ?? null,
     broadcastChannels: g.broadcastChannels,
   };
 }
@@ -499,6 +502,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       status,
       gameId: widgetGame.id,
       next: androidNext,
+      resultPitchers: widgetResultPitchers(widgetGame),
       // 예정/종료 경기는 라이브 정보가 없으므로 전부 비워 라이브 행 자체를 숨긴다
       // (빈 다이아몬드 + "O ○○○"가 미시작/종료 경기에 떠서 완성도 떨어져 보이던 문제).
       pitcher: hideLive ? "" : (widgetGame.currentPitcher ?? ""),
@@ -561,7 +565,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
   // 라이브 경기가 없을 때 *다음 예정 경기*가 위젯에 뜨게 하는 핵심 fallback 경로.
   // (네이티브 iOS 외엔 no-op.) 스코어/이닝/주자 등 변할 때만 재기록되도록 signature로 dep.
   const widgetSig = widgetGame
-    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}`
+    ? `${widgetGame.id}|${widgetGame.status}|${widgetGame.awayScore}|${widgetGame.homeScore}|${widgetGame.inning ?? ""}|${widgetGame.outs ?? ""}|${widgetGame.runner1b ? 1 : 0}${widgetGame.runner2b ? 1 : 0}${widgetGame.runner3b ? 1 : 0}|${widgetGame.currentPitcher ?? ""}|${widgetGame.currentBatter ?? ""}|${widgetGame.awayStarterName ?? ""}|${widgetGame.homeStarterName ?? ""}|${widgetResultPitchers(widgetGame)}`
     : "";
   const rolloverSig = rolloverNextGame
     ? `${rolloverNextGame.id}|${rolloverNextGame.dateISO ?? ""}|${rolloverNextGame.time}|${rolloverNextGame.awayStarterName ?? ""}|${rolloverNextGame.homeStarterName ?? ""}`
@@ -612,6 +616,7 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       if (cancelled) return;
       void writeHomeWidgetSnapshot(myTeamId, {
       gameId: widgetGame.id,
+      resultPitchers: widgetResultPitchers(widgetGame),
       awayTeamId: widgetGame.awayTeamId,
       homeTeamId: widgetGame.homeTeamId,
       status: widgetGame.status,

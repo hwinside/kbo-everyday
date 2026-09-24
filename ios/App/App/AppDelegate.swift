@@ -187,7 +187,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
            let hsStr = userInfo["w_hs"] as? String {
             WidgetSnapshotStore.markFinal(gameId: gameId,
                                           awayScore: Int(asStr) ?? 0,
-                                          homeScore: Int(hsStr) ?? 0)
+                                          homeScore: Int(hsStr) ?? 0,
+                                          resultPitchers: userInfo["w_result_pitchers"] as? String ?? "")
         }
         // 1.0.9 build 17 — iOS 홈위젯 무음 갱신: 점수 변화 무음 push로 깨어난 순간 위젯
         // 스냅샷을 갱신한다(현재 위젯이 이 경기 표시 중일 때만, 팀/최애팀/next 보존).

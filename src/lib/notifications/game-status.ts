@@ -1,3 +1,4 @@
+import { widgetResultPitchers } from "@/lib/widget-result-pitchers";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import {
   sendFcmToUsers,
@@ -205,7 +206,7 @@ async function markOnly(
  */
 export function buildTerminalClearPayload(
   gameId: string,
-  scores?: { awayScore: number; homeScore: number },
+  scores?: { awayScore: number; homeScore: number; winPitcher?: string; losePitcher?: string; savePitcher?: string },
 ): PushPayload {
   return {
     title: "",
@@ -217,6 +218,7 @@ export function buildTerminalClearPayload(
       kind: "game_end",
       gameId,
       ...(scores ? { w_as: String(scores.awayScore), w_hs: String(scores.homeScore) } : {}),
+      w_result_pitchers: scores ? widgetResultPitchers({ ...scores, status: "final" }) : "",
       w_final: "1",
     },
   };
@@ -226,7 +228,7 @@ export function buildTerminalClearPayload(
 export async function sendTerminalClear(
   userIds: string[],
   gameId: string,
-  scores?: { awayScore: number; homeScore: number },
+  scores?: { awayScore: number; homeScore: number; winPitcher?: string; losePitcher?: string; savePitcher?: string },
   opts?: {
     prefKey?: PrefKey;
     send?: typeof sendFcmToUsers;
@@ -770,7 +772,7 @@ export async function notifyGameStatusTransitions(
         const clearRes = await sendTerminalClear(
           endFans.ids,
           gameId,
-          { awayScore, homeScore },
+          { awayScore, homeScore, winPitcher: g.W_PIT_P_NM, losePitcher: g.L_PIT_P_NM, savePitcher: g.SV_PIT_P_NM },
         );
         clearOk = clearRes.ok;
       }

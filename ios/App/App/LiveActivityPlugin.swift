@@ -156,6 +156,7 @@ public class LiveActivityPlugin: CAPPlugin, CAPBridgedPlugin {
             "lastPlay": call.getString("lastPlay") ?? "",
             "batterName": call.getString("batterName") ?? "",
             "stadium": call.getString("stadium") ?? "",
+            "resultPitchers": status == "final" ? (call.getString("resultPitchers") ?? "") : "",
             "isFinal": status == "final",
             "status": status,
             "startText": call.getString("startText") ?? "",
