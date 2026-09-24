@@ -75,6 +75,12 @@ test('list pages beyond 100; limits profile fields; distinguishes errors, empty,
   assert.equal(current.error, null);
   assert.deepEqual(requests.filter(q => q.table === 'user_blocks').map(q => q.range), [[0, 99], [100, 199]]);
   assert.ok(requests.filter(q => q.table === 'profiles').every(q => q.fields === 'id, nickname, team_id'));
+  respond = (query) => query.table === 'profiles'
+    ? { error: { message: 'profile denied' }, data: null }
+    : { data: rows.slice(0, 1), error: null };
+  await settle(() => current.refresh());
+  assert.ok(current.error, 'profile lookup failure must not become unknown-user success');
+  assert.equal(current.loading, false);
   respond = () => ({ error: { message: 'denied' }, data: null });
   await settle(() => current.refresh());
   assert.ok(current.error);

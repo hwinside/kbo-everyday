@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedFrom": "d9a767001934043d64063c4949d92415fe3f1472",
+  "generatedFrom": "a0c7711f149a0baf8929824d344172e8478eaf02",
   "violations": {
     "0034fe9a6a6cff327c64": {
       "count": 1,
@@ -161,13 +161,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/transcode-videos.mjs",
       "subject": "posts",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "23d62e24a9191ade223f": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useBlock.ts",
-      "subject": "user_blocks",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "23f32bc3dd83e63a1816": {
@@ -994,13 +987,6 @@
       "kind": "unbounded_growing_select",
       "file": "scripts/batch-badge-check.mjs",
       "subject": "posts",
-      "detail": "add a bound, unique-key lookup, or query-guard annotation"
-    },
-    "ba8d3800e586223d5fd7": {
-      "count": 1,
-      "kind": "unbounded_growing_select",
-      "file": "src/lib/supabase/useBlock.ts",
-      "subject": "profiles",
       "detail": "add a bound, unique-key lookup, or query-guard annotation"
     },
     "bc3b4f5052dc051b98dd": {

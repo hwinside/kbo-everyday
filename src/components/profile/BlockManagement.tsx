@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useAuth } from "@/lib/supabase/AuthContext";
 import { unblockUserById, useBlockList } from "@/lib/supabase/useBlock";
+import { getTeamById } from "@/lib/constants/teams";
 import TeamBadge from "@/components/ui/TeamBadge";
 
 export default function BlockManagement() {
@@ -45,7 +46,7 @@ export default function BlockManagement() {
               <li key={blocked.id} className="flex items-center gap-3 rounded-xl bg-bg-tertiary p-3">
                 <div className="min-w-0 flex-1 space-y-1">
                   <p className="break-words text-sm font-semibold text-text-primary">{blocked.nickname}</p>
-                  {blocked.team_id ? <TeamBadge teamId={blocked.team_id} size="xs" /> : <p className="text-xs text-text-tertiary">응원 구단 미설정</p>}
+                  {blocked.team_id && getTeamById(blocked.team_id) ? <TeamBadge teamId={blocked.team_id} size="xs" /> : <p className="text-xs text-text-tertiary">응원 구단 미설정</p>}
                   <p className="text-xs text-text-tertiary">차단일 {new Date(blocked.created_at).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}</p>
                 </div>
                 <button

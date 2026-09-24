@@ -95,16 +95,19 @@ export function useBlockList() {
       const result: BlockedUser[] = [];
       // Supabase 응답 상한과 큰 IN 쿼리를 피하면서 전체 차단 목록을 읽는다.
       for (let offset = 0; ; offset += 100) {
+        // query-guard: bounded-page -- each 100-row page is accumulated until the final short page; composite unique order breaks timestamp ties
         const { data, error: blocksError } = await supabase
           .from("user_blocks")
           .select("id, blocked_id, created_at")
           .eq("blocker_id", userId)
           .order("created_at", { ascending: false })
-          .order("id", { ascending: false })
+          .order("blocker_id", { ascending: false })
+          .order("blocked_id", { ascending: false })
           .range(offset, offset + 99);
         if (version !== request.current) return;
         if (blocksError) throw blocksError;
         if (!data?.length) break;
+        // query-guard: bounded -- IN contains at most the 100 blocked IDs from this page; profiles.id is unique
         const { data: profiles, error: profilesError } = await supabase
           .from("profiles")
           .select("id, nickname, team_id")
