@@ -8,6 +8,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:block-management",
+      "tier": "ci"
+    },
+    {
       "name": "qa:admin-inbox",
       "tier": "ci"
     },
