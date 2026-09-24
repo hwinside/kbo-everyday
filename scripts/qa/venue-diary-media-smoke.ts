@@ -221,8 +221,8 @@ function dbMedia(overrides: Partial<VenueStoryMediaDbRow> = {}): VenueStoryMedia
   assert.match(route, /getVerifiedUserFromRequest\(req\)/, "검증된 bearer 사용자만 허용");
   assert.equal(
     route.match(/\.eq\("user_id", userId\)/g)?.length,
-    3,
-    "목록·상세·영상 claim 확인 모두 verified owner로 고정",
+    4,
+    "목록·상세·영상 claim 확인·삭제 원장 source 모두 verified owner로 고정",
   );
   assert.doesNotMatch(
     route,

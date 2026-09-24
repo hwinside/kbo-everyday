@@ -423,10 +423,10 @@ async function listResponse(
   }
   const { games, nextCursor, hasMore } = paginateDiaryGames(rows);
 
-  // query-guard: bounded -- 현재 페이지 경기만, 본인 삭제 원장의 출처를 조회한다.
   // 썸네일 GPS 여부는 삭제된 원장의 source를 대신할 수 없다.
   const deletedSources = new Map<string, string>();
   if (games.length > 0) {
+    // query-guard: bounded -- 현재 페이지 경기만, 본인 삭제 원장의 출처를 조회한다.
     const { data: deletedRows, error: deletedError } = await supabase
       .from("venue_attendance")
       .select("game_id, source")
