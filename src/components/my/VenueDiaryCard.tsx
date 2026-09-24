@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CalendarDays, ChevronDown, Play, Plus, RefreshCw, Trophy, Pencil, Trash2 } from "lucide-react";
+import { gameTeams } from "@/lib/game-reviews/context";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
 import {
@@ -194,6 +195,7 @@ export default function VenueDiaryCard() {
   const [gamesOpen, setGamesOpen] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [restoreTarget, setRestoreTarget] = useState<{ gameId: string; teamIds: number[]; teamId: number } | null>(null);
   /** null 이 아니면 시트가 '경기 변경' 모드 — 고른 경기로 이 원장 행을 옮긴다. */
   const [moveTarget, setMoveTarget] = useState<{
     attendanceId: number;
@@ -392,6 +394,7 @@ export default function VenueDiaryCard() {
   const countsReady = diaryCountsReady(countsOwner, currentCountsKey);
   // 열기 액션에서 counts state 를 동기 초기화한 뒤 open → 같은 커밋에 배칭돼 첫 렌더부터 fail-closed.
   const openAddSheet = useCallback(() => {
+    setRestoreTarget(null);
     setMoveTarget(null);
     setAddCounts(new Map());
     setAddAttendanceGameIds(new Set());
@@ -409,6 +412,7 @@ export default function VenueDiaryCard() {
   /** 직접 등록 기록의 경기 자체를 바꾼다 — 같은 경기 선택 시트를 move 모드로 연다. */
   const openMoveSheet = useCallback((game: DiaryHomeGame) => {
     if (game.attendanceId == null || game.attendanceSource !== "diary_manual") return;
+    setRestoreTarget(null);
     setMoveTarget({ attendanceId: game.attendanceId, gameId: game.gameId });
     setAddCounts(new Map());
     setAddAttendanceGameIds(new Set());
@@ -535,6 +539,26 @@ export default function VenueDiaryCard() {
     },
     [load],
   );
+
+  const openRestoreSheet = (game: DiaryHomeGame) => {
+    const targetSeason = Number(game.gameId.slice(0, 4));
+    if (!isVenueDiaryManualSeason(targetSeason)) {
+      setAttendanceMessage("지난 경기 추가하기에서 복원할 경기를 확인해주세요.");
+      return;
+    }
+    try {
+      const teamIds = gameTeams(game.gameId);
+      openAddSheet();
+      setAddSeason(targetSeason);
+      setRestoreTarget({
+        gameId: game.gameId,
+        teamIds,
+        teamId: favoriteTeamId != null && teamIds.includes(favoriteTeamId) ? favoriteTeamId : teamIds[0],
+      });
+    } catch {
+      setAttendanceMessage("경기 정보를 확인할 수 없어요. 지난 경기 추가하기에서 확인해주세요.");
+    }
+  };
 
   const deleteAttendance = useCallback(
     async (game: DiaryHomeGame) => {
@@ -801,6 +825,19 @@ export default function VenueDiaryCard() {
                       </div>
                     )}
                     </button>
+                    {game.attendanceId == null && game.label.kind === "manual" && game.total > 0 && (
+                      <div className="mt-2.5 border-t border-border pt-2.5">
+                        <p className="mb-2 text-xs text-text-tertiary">사진·영상은 남아 있어요. 기록을 복원하면 경기 정보와 관리 메뉴를 다시 볼 수 있어요.</p>
+                        <button
+                          type="button"
+                          disabled={attendanceBusyId != null}
+                          onClick={() => openRestoreSheet(game)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs font-bold text-text-secondary disabled:opacity-50"
+                        >
+                          <RefreshCw size={12} /> 기록 복원
+                        </button>
+                      </div>
+                    )}
                     {game.attendanceId != null && (
                       <div className="mt-2.5 flex items-center justify-end gap-2 border-t border-border pt-2.5">
                         {game.attendanceSource === "diary_manual" && (
@@ -845,6 +882,7 @@ export default function VenueDiaryCard() {
 
       <VenueDiaryAddGameSheet
         isOpen={addOpen}
+        restoreTarget={restoreTarget}
         favoriteTeamId={favoriteTeamId}
         season={addSeason}
         onSeasonChange={handleAddSeasonChange}
@@ -877,7 +915,7 @@ export default function VenueDiaryCard() {
               : {
                   method: "POST",
                   body: { gameId: game.gameId, favoriteTeamId: selectedTeamId },
-                  successMessage: "직관 기록을 추가했어요. 통계에 바로 반영됐습니다.",
+                  successMessage: restoreTarget ? "직관 기록을 복원했어요. 사진·영상은 그대로 유지됩니다." : "직관 기록을 추가했어요. 통계에 바로 반영됐습니다.",
                 },
           ).then((ok) => {
             if (ok) {
