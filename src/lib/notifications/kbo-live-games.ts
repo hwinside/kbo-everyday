@@ -1,4 +1,5 @@
 import type { KboRawGame } from "@/types/api";
+import { recordLiveScoreAgreement, recordLiveScoreObservation } from "./live-activity-score-evidence";
 import { parseKboGameListPayload } from "@/lib/notifications/widget-fast-loop";
 import { fetchNaverGames } from "@/lib/crawler/naver-games";
 import type { KboGame } from "@/lib/crawler/kbo-api";
@@ -401,6 +402,9 @@ async function enrichNaverLiveGames(
   // per-game relay 실패/deadline 잘림과 이번 틱 점수 출처(relay|schedule)를 카운트해
   // 로그로 남긴다. stale-equal(mode B) 발생 여부를 다음 라이브에서 즉시 판정하는 재료.
   const enrichObs: string[] = [];
+  const observedAtMs = Date.now();
+  const agreedScores = new Map<string, { away: number; home: number }>();
+  const directRelayGames = new Set<string>();
   const verifiedGames = await Promise.all(games.map(async (game) => {
     if (game.status !== "live") return game;
     // 1회초 0:0(스케줄 증거 없음)만 첫 투구 검증 대상. 그 외 live 는 relay 조회가
@@ -457,6 +461,11 @@ async function enrichNaverLiveGames(
           );
         } else {
           enrichObs.push(`${game.gameId}:score-src=relay`);
+          if (evidence.hasRealPlay && Number.isInteger(evidence.awayScore) && Number.isInteger(evidence.homeScore) &&
+              evidence.awayScore! >= 0 && evidence.homeScore! >= 0) directRelayGames.add(game.gameId);
+          if (evidence.hasRealPlay && game.awayScore === evidence.awayScore && game.homeScore === evidence.homeScore) {
+            agreedScores.set(game.gameId, { away: evidence.awayScore!, home: evidence.homeScore! });
+          }
         }
       }
       return {
@@ -505,7 +514,13 @@ async function enrichNaverLiveGames(
     console.log(`[naver-enrich] override=${overrideScoreFromRelay} ${enrichObs.join(" ")}`);
   }
   obsOut?.push(...enrichObs);
-  return verifiedGames.map(naverGameToRaw);
+  return verifiedGames.map((game) => {
+    const raw = naverGameToRaw(game);
+    recordLiveScoreObservation(raw, directRelayGames.has(game.gameId), observedAtMs);
+    const agreement = agreedScores.get(game.gameId);
+    if (agreement) recordLiveScoreAgreement(raw, agreement.away, agreement.home, observedAtMs);
+    return raw;
+  });
 }
 
 /**

@@ -1,4 +1,6 @@
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
+import { hasLiveScoreAgreement } from "./live-activity-score-evidence";
+import type { ScoreGuardObservation } from "./live-activity-score-guard";
 import {
   resolveChannelUpdateDecision,
   scoreStateOf,
@@ -27,6 +29,7 @@ import type { ChannelRow } from "@/lib/notifications/live-activity-channels";
 // 마지막으로 시작된 send 1건만 최대 8s를 넘길 수 있어, 상한은 deadline + 8s로 유계.
 
 export interface ChannelBroadcastStats {
+  scoreGuards?: Array<ScoreGuardObservation & { gameId: string }>;
   updates: number;
   heartbeats: number;
   catchups: number;
@@ -41,7 +44,7 @@ export interface ChannelBroadcastStats {
   deleted: number;
   /**
    * update broadcast APNs transient 실패(5xx/timeout 등, ChannelNotRegistered 제외) +
-   * deadline 초과로 발송을 시작하지 못한 라이브 경기 ID — 호출측(live-fast-path)이 이
+   * deadline 초과 또는 정정 가드 보류 중인 라이브 경기 ID — 호출측(live-fast-path)이 이
    * 경기만 catch-up pending으로 재-arm해 stale이 2분 heartbeat까지 남지 않게 한다
    * (삼순 R3 blocker② + R4 blocker②).
    */
@@ -51,6 +54,7 @@ export interface ChannelBroadcastStats {
 }
 
 export interface ChannelBroadcastPassDeps {
+  observeScoreGuard?(game: KboRawGame, lastScoreState: string | null, scoreState: string): Promise<ScoreGuardObservation>;
   now(): number;
   gameStatus(g: KboRawGame): "live" | "final" | "scheduled" | "other";
   buildContentState(
@@ -105,6 +109,7 @@ export async function runChannelBroadcastPass(
   let deleted = 0;
   let deadlineSkipped = 0;
   const failedGameIds = new Set<string>();
+  const scoreGuards: Array<ScoreGuardObservation & { gameId: string }> = [];
 
   const pastDeadline = () => opts.deadlineAtMs != null && deps.now() >= opts.deadlineAtMs;
 
@@ -195,6 +200,11 @@ export async function runChannelBroadcastPass(
       );
       const scoreState = scoreStateOf(cs);
       const fullHash = fullStateHashOf(cs);
+      const scoreGuard = await deps.observeScoreGuard?.(g, row.last_score_state, scoreState);
+      if (scoreGuard) scoreGuards.push({ gameId: row.game_id, ...scoreGuard });
+      if (pastDeadline()) {
+        deadlineSkipped += 1; failedGameIds.add(row.game_id); continue;
+      }
       // 판정 합성(base diff → 2분 heartbeat → 지명 catch-up)은 순수 함수로 — 매트릭스는
       // qa:la-broadcast가 고정. 지명 catch-up(삼순 R2 blocker③)은 base가 skip이든 p5든
       // 항상 p10으로 승격(relay lastPlay만 달라진 p5 틱이 catch-up을 삼켜 놓친 단말이
@@ -212,6 +222,7 @@ export async function runChannelBroadcastPass(
         resolveChannelUpdateDecision({
           scoreState,
           fullStateHash: fullHash,
+          hasCorroboratedScore: scoreGuard?.allowCorrection ?? hasLiveScoreAgreement(g),
           lastScoreState: row.last_score_state,
           lastStateHash: row.last_state_hash,
           lastP10AtMs,
@@ -223,7 +234,10 @@ export async function runChannelBroadcastPass(
         });
       if (!decision.send) {
         skipped += 1;
-        if (skipReason === "retreat") retreatSkipped += 1;
+        if (skipReason === "retreat") {
+          retreatSkipped += 1;
+          failedGameIds.add(row.game_id); // re-arm no-diff sub-tick: probation must keep observing
+        }
         else if (skipReason === "p5_coalesced") coalescedSkipped += 1;
         else noChangeSkipped += 1;
         continue;
@@ -233,6 +247,7 @@ export async function runChannelBroadcastPass(
       const sendContent = resendLastContent
         ? (row.last_content_state as Record<string, unknown>)
         : cs;
+      if (resendLastContent) failedGameIds.add(row.game_id);
       const res = await deps.send({
         env: row.environment,
         channelId: row.channel_id,
@@ -287,5 +302,6 @@ export async function runChannelBroadcastPass(
     ends, deleted,
     failedGameIds: [...failedGameIds],
     deadlineSkipped,
+    ...(deps.observeScoreGuard ? { scoreGuards } : {}),
   };
 }

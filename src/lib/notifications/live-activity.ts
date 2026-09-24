@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { observeLiveActivityScoreGuard, type ScoreGuardObservation } from "./live-activity-score-guard";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
 import { resolveCurrentPlayers } from "@/lib/kbo-player-mapping";
@@ -227,7 +228,7 @@ export async function pushLiveActivityUpdates(
      */
     channelLastStateOverride?: Map<string, { score: string | null; hash: string | null }>;
   },
-): Promise<{ pushed: number; ended: number; cleaned: number } | { error: string }> {
+): Promise<{ pushed: number; ended: number; cleaned: number; scoreGuards?: Array<ScoreGuardObservation & { gameId: string }> } | { error: string }> {
   if (!apnsConfigured()) return { pushed: 0, ended: 0, cleaned: 0 };
 
   // 푸시 대상 = 라이브 + 종료 + 취소 경기. 종료/취소는 토큰 있을 때만 end(반복 방지).
@@ -351,6 +352,7 @@ export async function pushLiveActivityUpdates(
   // 되감김 경기 집합(#1311 삼순 B①) — decideLegacyTokenUpdate 의 catch-up 이 후퇴를 못 뚫게
   // isRetreat 로 넘긴다. {send:false} 만으로는 no-diff skip 과 구분 못 해 catch-up 이 우회한다.
   const retreatGames = new Set<string>();
+  const scoreGuards: Array<ScoreGuardObservation & { gameId: string }> = [];
   // 이번 틱의 상태 문자열 — 발송 성공 시 경기 단위 폴백 테이블에 기록(다음 틱 스킵 판정용).
   const stateStringsByGame = new Map<string, { score: string; hash: string }>();
   for (const [gid, st] of stateByGame) {
@@ -365,7 +367,9 @@ export async function pushLiveActivityUpdates(
     // 되감기 가드(#1311 삼순 B② 3축 적용): 직전 발송보다 점수/이닝이 뒤로 가는 스냅샷은
     // 발송 skip — Naver→KBO(stale) fallback 틱이 레거시 카드를 8→5로 되감는 걸 막는다.
     // catch-up 우회 차단은 decideLegacyTokenUpdate(isRetreat)에서(삼순 B①). retreatGames 로 표시.
-    const retreat = isScoreStateRetreat(last?.score ?? null, scoreState);
+    const guard = await observeLiveActivityScoreGuard(g, last?.score ?? null, scoreState);
+    scoreGuards.push({ gameId: gid, ...guard });
+    const retreat = isScoreStateRetreat(last?.score ?? null, scoreState, guard.allowCorrection);
     if (retreat) retreatGames.add(gid);
     decisionByGame.set(gid, retreat
       ? { send: false }
@@ -516,7 +520,7 @@ export async function pushLiveActivityUpdates(
       .eq("game_id", d.game_id);
   }
 
-  return { pushed, ended, cleaned };
+  return { pushed, ended, cleaned, scoreGuards };
 }
 
 // ── W3b — push-to-start 자동 시작 ──────────────────────────────────────────
