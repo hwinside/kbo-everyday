@@ -21,6 +21,7 @@
  *  - warmup route 가 fetchLiveGamesNaverPrimary 를 쓰고 fetchKboLiveGames() 직호출이 없다.
  */
 import assert from "node:assert/strict";
+import { hasLiveScoreAgreement, SCORE_EVIDENCE_MAX_AGE_MS } from "../../src/lib/notifications/live-activity-score-evidence";
 import { readFileSync } from "node:fs";
 import type { KboGame } from "../../src/lib/crawler/kbo-api";
 import type { KboRawGame } from "../../src/types/api";
@@ -684,8 +685,45 @@ async function main() {
   );
   pass += 1;
 
-  assert.equal(pass, 21, `expected 21 checks, ran ${pass}`);
-  console.log(`live-games-naver-primary: ${pass}/21 PASS`);
+  // 9/24: erroneous 1:0 must not freeze a corroborated 0:4 correction forever.
+  const correctionFetch = async (away: number | null, home: number | null, fail = false) =>
+    fetchLiveGamesNaverPrimary(
+      GID.slice(0, 8), Date.now() + 10_000, kbo503,
+      async () => [naverGame({ awayScore: 0, homeScore: 4, inning: 3, isTop: false })],
+      async () => { if (fail) throw new Error("relay down");
+        return { ...freshEvidence, awayScore: away, homeScore: home }; },
+      kboEnrichNone, async () => null,
+    );
+  const correction = (await correctionFetch(0, 4)).games[0];
+  assert.ok(hasLiveScoreAgreement(correction));
+  const prev = "1|0|3|true|false|false|false|live";
+  const next = "0|4|3|false|false|false|false|live";
+  assert.equal(isScoreStateRetreat(prev, next), true, "no evidence preserves stale-source protection");
+  assert.equal(isScoreStateRetreat(prev, next, hasLiveScoreAgreement(correction)), false);
+  assert.equal(isScoreStateRetreat(prev, next.replace("|3|false|", "|3|true|"), true), false,
+    "same half-inning overturned run is also a valid correction");
+  const resolved = resolveChannelUpdateDecision({
+    lastScoreState: prev, scoreState: next, fullStateHash: "new", lastStateHash: "old",
+    hasCorroboratedScore: hasLiveScoreAgreement(correction), lastP10AtMs: Date.now(),
+    nowMs: Date.now(), lastSendAtMs: Date.now(), forceCatchup: false, hasLastContent: true,
+  });
+  assert.deepEqual(resolved.decision, { send: true, priority: "10" });
+  assert.equal(resolved.resendLastContent, false, "send corrected content, not the frozen heartbeat");
+  assert.equal(isScoreStateRetreat(prev, next.replace("|3|false|", "|2|false|"), true), true);
+  assert.equal(isScoreStateRetreat(prev.replace("|live", "|final"), next, true), true);
+  assert.equal(isScoreStateRetreat(prev, next.replace("|live", "|scheduled"), true), true);
+  assert.equal(hasLiveScoreAgreement(correction, Date.now() + SCORE_EVIDENCE_MAX_AGE_MS + 1), false);
+  assert.equal(hasLiveScoreAgreement(correction, 0), false);
+  assert.equal(hasLiveScoreAgreement({ ...correction }), false, "serialized/copied snapshots carry no proof");
+  for (const [away, home, fail] of [[0, 3, false], [null, 4, false], [0, null, false], [0, 4, true]] as const) {
+    const game = (await correctionFetch(away, home, fail)).games[0];
+    assert.equal(hasLiveScoreAgreement(game), false, "mismatch, partial relay, or fallback cannot permit correction");
+  }
+  correction.T_SCORE_CN = "9";
+  assert.equal(hasLiveScoreAgreement(correction), false, "proof must match the exact content");
+  pass += 1;
+  assert.equal(pass, 22, `expected 22 checks, ran ${pass}`);
+  console.log(`live-games-naver-primary: ${pass}/22 PASS`);
 }
 
 main().catch((error) => {

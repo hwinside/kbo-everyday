@@ -87,6 +87,7 @@
     "live_activity_channel_subscriptions",
     "live_activity_channels",
     "live_activity_game_push_state",
+    "live_activity_score_guards",
     "live_activity_start_tokens",
     "live_activity_started",
     "live_activity_started_users",
@@ -416,6 +417,12 @@
         "game_id"
       ]
     ],
+    "live_activity_score_guards": [
+      [
+        "game_id",
+        "baseline"
+      ]
+    ],
     "live_activity_start_tokens": [
       [
         "user_id"
@@ -603,6 +610,7 @@
     }
   },
   "boundedRpcAllowlist": {
+    "observe_live_activity_score_guard": "locks one game_id/baseline primary-key row and returns one JSONB observation; no row collection is returned",
     "admin_telemetry_retention_run": "returns one retention execution summary object",
     "admin_venue_story_daily": "one aggregated row per KST day (slow-growing daily rollup), same pattern as admin_content_daily",
     "cast_poll_vote": "casts/replaces one user's poll ballot and returns void",

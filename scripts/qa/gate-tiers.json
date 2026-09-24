@@ -4,6 +4,18 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:la-score-correction",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:la-score-guard-latency",
+      "tier": "ci"
+    },
+    {
+      "name": "qa:la-broadcast-score-guard-latency",
+      "tier": "ci"
+    },
+    {
       "name": "qa:widget-result-pitchers",
       "tier": "ci"
     },

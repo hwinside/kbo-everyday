@@ -1,4 +1,5 @@
 import { supabaseAdmin as supabase } from "@/lib/supabase/admin";
+import { observeLiveActivityScoreGuard } from "./live-activity-score-guard";
 import { isKboGameCancelled } from "@/lib/crawler/kbo-status";
 import { apnsConfigured, getProviderTokenSafe } from "@/lib/notifications/apns";
 import {
@@ -257,6 +258,7 @@ export async function pushLiveActivityChannelBroadcasts(
     },
     {
       now: () => Date.now(),
+      observeScoreGuard: observeLiveActivityScoreGuard,
       gameStatus: liveActivityGameStatus,
       buildContentState: (g, status, lastPlay, full) =>
         buildLiveActivityContentState(g, status, lastPlay, full),

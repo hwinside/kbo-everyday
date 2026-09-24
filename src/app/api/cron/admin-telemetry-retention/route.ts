@@ -80,6 +80,16 @@ export async function GET(req: NextRequest) {
 
     const mode = dryRun ? "dry-run" : "executed";
     const deleted = (data as { deleted?: Record<string, number> } | null)?.deleted ?? {};
+    // Score-guard expiry belongs off the live/APNs path. Honor this cron's backup
+    // requirement and dry-run contract; failures are visible in its job status.
+    const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const guards = supabase.from("live_activity_score_guards");
+    const cleanup = dryRun
+      ? guards.select("game_id", { count: "exact", head: true }).lt("updated_at", cutoff)
+      : guards.delete({ count: "exact" }).lt("updated_at", cutoff);
+    const { error: cleanupError, count } = await cleanup.abortSignal(AbortSignal.timeout(5000));
+    if (cleanupError) throw cleanupError;
+    deleted.live_activity_score_guards = count ?? 0;
     await finishJob(logId, "success", `${mode} deleted=${JSON.stringify(deleted)}`);
     return NextResponse.json({ ok: true, mode, result: data });
   } catch (error) {
