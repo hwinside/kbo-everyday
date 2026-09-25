@@ -7,6 +7,8 @@ import {
   type SupabaseBackup,
 } from "@/lib/admin/telemetry-retention";
 
+import { runTelemetryRetentionBatches } from "@/lib/admin/telemetry-retention-batches";
+
 const CRON_SECRET = process.env.CRON_SECRET || "";
 const MANAGEMENT_TOKEN = process.env.SUPABASE_MANAGEMENT_TOKEN || "";
 const PROJECT_REF = "lbmbdjgsnenqjwjotoei";
@@ -72,11 +74,17 @@ export async function GET(req: NextRequest) {
       backupRef = physicalBackupRef(backup);
     }
 
-    const { data, error } = await supabase.rpc("admin_telemetry_retention_run", {
-      p_execute: !dryRun,
-      p_backup_ref: backupRef,
-    });
-    if (error) throw error;
+    const rpc = async (name: string, params: Record<string, unknown>) => {
+      const { data, error } = await supabase.rpc(name, params)
+        .abortSignal(AbortSignal.timeout(10_000));
+      if (error) throw new Error(describeError(error));
+      return data;
+    };
+    // Dry-run keeps the existing complete preview; execution uses independently
+    // committed whole-day/kind batches, then separate annual rollup cleanup.
+    const data = dryRun
+      ? await rpc("admin_telemetry_retention_run", { p_execute: false, p_backup_ref: null })
+      : await runTelemetryRetentionBatches(rpc, backupRef!);
 
     const mode = dryRun ? "dry-run" : "executed";
     const deleted = (data as { deleted?: Record<string, number> } | null)?.deleted ?? {};
