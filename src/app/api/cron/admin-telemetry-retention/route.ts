@@ -75,6 +75,7 @@ export async function GET(req: NextRequest) {
     }
 
     const rpc = async (name: string, params: Record<string, unknown>) => {
+      // query-guard: bounded -- retention batch, rollups and dry-run RPCs each return one jsonb scalar, never a row set.
       const { data, error } = await supabase.rpc(name, params)
         .abortSignal(AbortSignal.timeout(10_000));
       if (error) throw new Error(describeError(error));

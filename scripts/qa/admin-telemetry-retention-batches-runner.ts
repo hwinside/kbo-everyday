@@ -26,6 +26,14 @@ async function main() {
     return {done:false,rawKind:"pageViews",auditId:8,deleted:{pageViews:10}};
   }, "backup",()=>clock), /budget exhausted/);
   assert.equal(budgetCalls,1);
+  const limitCalls: string[] = [];
+  await assert.rejects(runTelemetryRetentionBatches(async name => {
+    limitCalls.push(name);
+    return {done:false,rawKind:"pageViews",auditId:limitCalls.length,deleted:{pageViews:10}};
+  }, "backup", () => 0), /batch limit reached; batches remain; committedAudits=\[1,2,3,4,5,6,7,8\].*no retry/);
+  assert.equal(limitCalls.length,8,"call cap must fail even with time remaining");
+  assert.ok(limitCalls.every(name => name === "admin_telemetry_retention_batch"),
+    "unfinished raw must never call rollup cleanup");
   let invalidCalls = 0;
   await assert.rejects(runTelemetryRetentionBatches(async () => { invalidCalls++; return null; },"backup"), /invalid RPC response/);
   assert.equal(invalidCalls,1);

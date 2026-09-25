@@ -55,9 +55,11 @@ for name in ['20260721_admin_traffic_page_view_rollup.sql',
 sql('ANALYZE;')
 ref = "'supabase-physical:1@'||clock_timestamp()::text"
 batch = f"SELECT admin_telemetry_retention_batch(true,{ref});"
-for lock, expected in [
-    ("SELECT pg_advisory_xact_lock(hashtextextended('admin_telemetry_retention',0));", 'already running'),
-    ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'could not obtain lock'),
+for lock, expected, request in [
+    ("SELECT pg_advisory_xact_lock(hashtextextended('admin_telemetry_retention',0));", 'already running', batch),
+    ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'could not obtain lock', batch),
+    ('LOCK TABLE admin_page_views IN ROW EXCLUSIVE MODE;', 'could not obtain lock',
+     f'SELECT admin_telemetry_retention_rollups({ref});'),
 ]:
     locker = subprocess.Popen(base, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     locker.stdin.write('BEGIN;\n'+lock+'\n\\echo READY\nSELECT pg_sleep(2);\nROLLBACK;\n')
@@ -67,7 +69,7 @@ for lock, expected in [
         assert line != '', 'lock holder failed'
         if 'READY' in line: break
     started = time.monotonic()
-    sql("SET statement_timeout='8s';"+batch, expected)
+    sql("SET statement_timeout='8s';"+request, expected)
     assert time.monotonic()-started < 1.5, 'lock conflict must fail without waiting'
     assert locker.wait(timeout=5) == 0
 assert sql('SELECT count(*) FROM admin_telemetry_retention_runs') == '0'

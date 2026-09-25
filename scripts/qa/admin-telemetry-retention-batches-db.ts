@@ -98,7 +98,8 @@ async function main() {
        '11111111-1111-1111-1111-111111111111', NULL),
       ('2026-06-01T01:01:00Z', '/qa/skip-delete', 'web', 'visitor-a',
        '11111111-1111-1111-1111-111111111111', NULL),
-      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0');
+      ('2026-06-01T03:00:00Z', '/home', 'ios_native', 'new-device', NULL, '2.0.0'),
+      ('2026-06-03T01:00:00Z', '/home', 'web', 'later-day', NULL, NULL);
 
     INSERT INTO admin_page_dwell (
       created_at, visitor_id, platform, dwell_ms
@@ -123,14 +124,17 @@ async function main() {
     const backup = `supabase-physical:1@${new Date().toISOString()}`;
     const batch = (execute = true, ref: string | null = backup) => db.query<{r: any}>(
       "SELECT admin_telemetry_retention_batch($1,$2) AS r", [execute,ref]);
-    const rollups = () => db.query("SELECT admin_telemetry_retention_rollups($1)", [backup]);
+    const rollups = (ref = backup) => db.query("SELECT admin_telemetry_retention_rollups($1)", [ref]);
     const count = (table: string) => scalar(db, `SELECT count(*) AS value FROM ${table}`);
     const rawBefore = await count("admin_page_views");
     const dwellBefore = await count("admin_page_dwell");
     await assert.rejects(batch(true, null), /backup reference/);
     await assert.rejects(batch(true, "supabase-physical:1@infinity"), /not fresh/);
     await assert.rejects(rollups(), /raw batches remain/);
-    assert.equal((await batch(false)).rows[0].r.rawKind, "pageViews");
+    const pvPreview = (await batch(false)).rows[0].r;
+    assert.equal(pvPreview.rawKind, "pageViews");
+    assert.equal(pvPreview.preview.rawCandidates.pageViews, 3);
+    assert.equal(pvPreview.preview.rawCandidates.pageDwell, 0,"PV preview excludes dwell");
     assert.equal(await count("admin_page_views"), rawBefore);
     // Corrupt only PV coverage: selected-kind validation must block deletion.
     await db.exec("BEGIN; UPDATE admin_traffic_daily_visitors SET pv=pv+1;");
@@ -147,7 +151,8 @@ async function main() {
     await db.exec("DROP TRIGGER qa_skip ON admin_page_views;");
     const pv = (await batch()).rows[0].r;
     assert.equal(pv.rawKind, "pageViews");
-    assert.equal(pv.deleted.pageViews, rawBefore);
+    assert.equal(pv.deleted.pageViews, rawBefore - 1);
+    assert.equal(await count("admin_page_views"), 1,"later eligible PV day survives first batch");
     assert.equal(pv.deleted.pageDwell, 0);
     assert.equal(await count("admin_page_dwell"), dwellBefore);
     await assert.rejects(rollups(), /raw batches remain/);
@@ -160,20 +165,32 @@ async function main() {
     await assert.rejects(batch(), /coverage mismatch/);
     await db.exec("ROLLBACK;");
     assert.equal(await count("admin_telemetry_retention_runs"), 1);
+    const dwPreview = (await batch(false)).rows[0].r;
+    assert.equal(dwPreview.rawKind, "pageDwell");
+    assert.equal(dwPreview.preview.rawCandidates.pageViews, 0,"dwell preview excludes PV");
+    assert.equal(dwPreview.preview.rawCandidates.pageDwell, 4);
     const dw = (await batch()).rows[0].r;
     assert.equal(dw.rawKind, "pageDwell");
     assert.equal(dw.deleted.pageDwell, 4);
     assert.equal(dw.batchDay, "2026-06-01");
     assert.equal((await batch()).rows[0].r.deleted.pageDwell, 3);
+    const laterPv = (await batch()).rows[0].r;
+    assert.equal(laterPv.batchDay, "2026-06-03");
+    assert.equal(laterPv.deleted.pageViews, 1);
     assert.equal((await batch()).rows[0].r.done, true);
     const beforeEmpty = await count("admin_telemetry_retention_runs");
     assert.equal((await batch()).rows[0].r.done, true);
     assert.equal(await count("admin_telemetry_retention_runs"), beforeEmpty);
+    const auditsBeforeStale = await count("admin_telemetry_retention_runs");
+    const rollupsBeforeStale = await count("admin_traffic_daily_visitors");
+    await assert.rejects(rollups(`supabase-physical:1@${new Date(Date.now()-31*3600_000).toISOString()}`), /not fresh/);
+    assert.equal(await count("admin_telemetry_retention_runs"), auditsBeforeStale);
+    assert.equal(await count("admin_traffic_daily_visitors"), rollupsBeforeStale);
     await rollups();
     const phases = await db.query<{phase: string, raw_kind: string|null}>(
       "SELECT phase,raw_kind FROM admin_telemetry_retention_runs ORDER BY id");
-    assert.deepEqual(phases.rows.map(r => r.phase), ["raw_batch","raw_batch","raw_batch","rollup_cleanup"]);
-    assert.deepEqual(phases.rows.map(r => r.raw_kind), ["pageViews","pageDwell","pageDwell",null]);
+    assert.deepEqual(phases.rows.map(r => r.phase), ["raw_batch","raw_batch","raw_batch","raw_batch","rollup_cleanup"]);
+    assert.deepEqual(phases.rows.map(r => r.raw_kind), ["pageViews","pageDwell","pageDwell","pageViews",null]);
     // Fresh in-window raw must never be selected.
     await db.exec(`INSERT INTO admin_page_views(created_at,path,visitor_id,platform)
       VALUES (now(),'/home','in-window','web');`);
