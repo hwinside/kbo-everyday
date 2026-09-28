@@ -293,6 +293,7 @@
     "qa:admin-dm-inbox:ui": "node scripts/qa/admin-dm-inbox-ui-smoke.mjs",
     "qa:daily-live": "tsx scripts/qa/daily-analysis-live-smoke.ts",
     "qa:contextual-split-inline": "tsx scripts/qa/contextual-stats-split-inline-smoke.ts",
+    "qa:celebration-player-identity": "tsx scripts/qa/celebration-player-identity.ts",
     "qa:celebration-hit-overcount": "tsx scripts/qa/celebration-hit-overcount-smoke.ts",
     "qa:celebration-client-dedupe": "tsx scripts/qa/celebration-client-dedupe-smoke.ts",
     "qa:celebration-relay-source": "tsx scripts/qa/celebration-relay-source-smoke.ts",
