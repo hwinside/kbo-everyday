@@ -283,6 +283,8 @@ export interface DiaryAttendanceInput {
   stadiumName?: string | null;
   source?: "story_geofence" | "diary_manual";
   favoriteTeamId?: number | null;
+  status?: string;
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -302,6 +304,8 @@ export interface DiaryHomeGame {
   attendanceId: number | null;
   attendanceSource: "story_geofence" | "diary_manual" | null;
   favoriteTeamId: number | null;
+  status?: string;
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   awayTeam: { id: number; name: string; score: number | null } | null;
   homeTeam: { id: number; name: string; score: number | null } | null;
@@ -352,7 +356,9 @@ export function buildDiaryHomeGames(input: {
       attendanceId: attendance?.id ?? null,
       attendanceSource: attendance?.source ?? null,
       favoriteTeamId: attendance?.favoriteTeamId ?? null,
-      result: attendance?.result ?? null,
+      status: attendance?.status,
+      cancelReason: attendance?.cancelReason ?? null,
+      result: attendance?.status === "cancelled" ? null : attendance?.result ?? null,
       awayTeam: attendance?.awayTeam ?? null,
       homeTeam: attendance?.homeTeam ?? null,
     };

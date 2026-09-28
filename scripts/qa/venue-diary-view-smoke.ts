@@ -282,6 +282,27 @@ for (const source of ["story_geofence", "diary_manual"] as const) {
   assert.equal(recordOnly[0].label.kind, "gps", "미디어 없어도 원장 source로 GPS 라벨");
 }
 
+// 취소 원경기와 재편성 경기는 날짜/대진이 아니라 exact gameId로 분리한다.
+{
+  const cancelledId = "20260927LGHT0";
+  const replayId = "20260929LGHT0";
+  const games = buildDiaryHomeGames({
+    mediaGroups: [],
+    attendanceGames: [
+      { gameId: cancelledId, gameDate: "2026-09-27", status: "cancelled", cancelReason: "우천취소",
+        result: "L", awayTeam: { id: 1, name: "LG", score: 2 }, homeTeam: { id: 6, name: "KIA", score: 0 } },
+      { gameId: replayId, gameDate: "2026-09-29", status: "final", result: "W",
+        awayTeam: { id: 1, name: "LG", score: 0 }, homeTeam: { id: 6, name: "KIA", score: 3 } },
+    ],
+  });
+  assert.equal(games.length, 2);
+  const cancelled = games.find((g) => g.gameId === cancelledId)!;
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.cancelReason, "우천취소");
+  assert.equal(cancelled.result, null, "취소 잔여 결과는 뷰에서도 차단");
+  assert.equal(games.find((g) => g.gameId === replayId)?.result, "W");
+}
+
 // 7) 시즌 summary 합산('전체' 세그먼트): winRate 는 합산 표본으로 재계산
 {
   const merged = mergeVenueSummaries([

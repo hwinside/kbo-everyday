@@ -14,6 +14,7 @@ import type { DiaryUploadGame } from "@/components/my/VenueDiaryUploader";
 import { gameResultTone, resultToneTextStyle } from "@/lib/ui/result-tone";
 import {
   VENUE_DIARY_MANUAL_SEASONS,
+  isManualDiaryGameStatus,
   type VenueDiaryManualSeason,
 } from "@/lib/venue-diary/manual-upload";
 
@@ -26,6 +27,7 @@ interface ScheduleDay {
   opponent: { id: number; slug: string; shortName: string; name: string };
   home: boolean;
   status: "scheduled" | "live" | "final" | "cancelled";
+  cancelReason?: string | null;
   result: "W" | "L" | "D" | null;
   score: { for: number | null; against: number | null };
   stadium: string;
@@ -152,12 +154,12 @@ export default function VenueDiaryAddGameSheet({
     };
   }, [isOpen, team, month, season]);
 
-  const finalGames = useMemo(() => {
+  const recordableGames = useMemo(() => {
     if (!days) return [];
     const q = query.trim().toLowerCase();
     return days
       .filter((d) => !restoreTarget || d.gameId === restoreTarget.gameId)
-      .filter((d) => d.status === "final" && d.date.startsWith(String(season)))
+      .filter((d) => isManualDiaryGameStatus(d.status) && d.date.startsWith(String(season)))
       .filter((d) => {
         if (!q) return true;
         return (
@@ -180,14 +182,14 @@ export default function VenueDiaryAddGameSheet({
     if (!team) return;
     const myShort = team.shortName;
     const matchLabel =
-      day.score.for != null && day.score.against != null
+      day.status !== "cancelled" && day.score.for != null && day.score.against != null
         ? `${myShort} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
-        : `${myShort} vs ${day.opponent.shortName}`;
+        : `${myShort} vs ${day.opponent.shortName}${day.status === "cancelled" ? ` · ${day.cancelReason || "경기 취소"}` : ""}`;
     onPick({
       gameId: day.gameId,
       dateLabel: formatDateLabel(day.date, day.stadium),
       matchLabel,
-      result: day.result,
+      result: day.status === "cancelled" ? null : day.result,
       existingCount: countsByGame.get(day.gameId) ?? 0,
     });
   };
@@ -227,11 +229,11 @@ export default function VenueDiaryAddGameSheet({
                 <>응원팀을 선택하고 기록을 복원해주세요. 사진·영상은 그대로 유지돼요.</>
               ) : moveMode ? (
                 <>
-                  이 기록을 옮길 <b className="text-text-secondary">{season} 종료 경기</b>를 골라주세요
+                  이 기록을 옮길 <b className="text-text-secondary">{season} 종료·취소 경기</b>를 골라주세요
                 </>
               ) : (
                 <>
-                  직관했던 <b className="text-text-secondary">{season} 종료 경기</b>를 기록하거나 사진·영상을 올려요
+                  직관했던 <b className="text-text-secondary">{season} 종료·취소 경기</b>를 기록하거나 사진·영상을 올려요
                 </>
               )}
             </p>
@@ -322,17 +324,17 @@ export default function VenueDiaryAddGameSheet({
               <div className="py-10 text-center text-sm text-text-tertiary">
                 경기를 불러오지 못했어요
               </div>
-            ) : finalGames.length === 0 ? (
+            ) : recordableGames.length === 0 ? (
               <div className="py-10 text-center text-sm text-text-tertiary">
                 {restoreTarget ? (
                   <>
-                    <p>이 경기는 아직 종료되지 않았거나 일정이 변경되어 지금은 복원할 수 없어요.</p>
-                    <p className="mt-2 text-xs">사진·영상은 그대로 보관됩니다. 경기 종료 후 다시 시도해주세요.</p>
+                    <p>이 경기는 아직 진행 전·진행 중이거나 일정이 변경되어 지금은 복원할 수 없어요.</p>
+                    <p className="mt-2 text-xs">사진·영상은 그대로 보관됩니다. 경기 종료·취소 확정 후 다시 시도해주세요.</p>
                     <button type="button" onClick={onClose} className="mt-3 rounded-lg border border-border px-3 py-2 font-bold text-text-secondary">
                       다이어리로 돌아가기
                     </button>
                   </>
-                ) : "이 달에 종료된 경기가 없어요"}
+                ) : "이 달에 종료되거나 취소된 경기가 없어요"}
               </div>
             ) : (
               <>
@@ -352,12 +354,12 @@ export default function VenueDiaryAddGameSheet({
                       <Loader2 size={13} className="animate-spin" /> 올린 개수 확인 중…
                     </div>
                   ))}
-                {finalGames.map((day) => {
+                {recordableGames.map((day) => {
                 const count = countsByGame.get(day.gameId) ?? 0;
                 const pick = diaryPickState(count);
                 const selectDisabled = diaryAddSelectDisabled(countsReady, count);
                 const caption = diaryPickCaption(pick);
-                const resultStyle = resultToneTextStyle(gameResultTone(day.result));
+                const resultStyle = resultToneTextStyle(gameResultTone(day.status === "cancelled" ? null : day.result));
                 return (
                   <div
                     key={day.gameId}
@@ -371,7 +373,7 @@ export default function VenueDiaryAddGameSheet({
                         {formatDateLabel(day.date, day.stadium)}
                       </span>
                       <span className="text-sm font-bold text-text-primary truncate">
-                        {day.score.for != null && day.score.against != null
+                        {day.status !== "cancelled" && day.score.for != null && day.score.against != null
                           ? `${getTeamById(teamId ?? 0)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
                           : `vs ${day.opponent.shortName}`}
                       </span>
@@ -379,7 +381,7 @@ export default function VenueDiaryAddGameSheet({
                         className={`text-xs font-bold ${caption ? "text-text-tertiary" : ""}`}
                         style={caption ? undefined : resultStyle}
                       >
-                        {caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
+                        {day.status === "cancelled" ? `${day.cancelReason || "경기 취소"}${caption ? ` · ${caption}` : ""}` : caption ?? (day.result ? (day.result === "W" ? "승" : day.result === "L" ? "패" : "무") : "종료")}
                       </span>
                     </div>
                     <div className="ml-2 flex shrink-0 flex-col gap-1.5">
@@ -395,10 +397,10 @@ export default function VenueDiaryAddGameSheet({
                           gameId: day.gameId,
                           dateLabel: formatDateLabel(day.date, day.stadium),
                           matchLabel:
-                            day.score.for != null && day.score.against != null
+                            day.status !== "cancelled" && day.score.for != null && day.score.against != null
                               ? `${getTeamById(teamId)?.shortName ?? ""} ${day.score.for} : ${day.score.against} ${day.opponent.shortName}`
-                              : `${getTeamById(teamId)?.shortName ?? ""} vs ${day.opponent.shortName}`,
-                          result: day.result,
+                              : `${getTeamById(teamId)?.shortName ?? ""} vs ${day.opponent.shortName}${day.status === "cancelled" ? ` · ${day.cancelReason || "경기 취소"}` : ""}`,
+                          result: day.status === "cancelled" ? null : day.result,
                           existingCount: count,
                         }, teamId)}
                         className="rounded-lg bg-brand-primary px-3 py-1.5 text-[11px] font-bold text-white disabled:bg-bg-secondary disabled:text-text-tertiary"
@@ -441,7 +443,7 @@ export default function VenueDiaryAddGameSheet({
               {moveMode ? (
                 <>ℹ️ 경기를 바꿔도 <b>사진·영상은 원래 경기에 그대로</b> 남아요. 통계 기록만 옮겨집니다.</>
               ) : (
-                <>ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.</>
+                <>ℹ️ 직접 추가 기록은 <b>전체 포함 승률·직관 통계</b>에 바로 반영돼요. 취소 경기는 직관 횟수에만 포함되고 승·패·무와 승률 계산에서는 제외돼요. GPS 인증 수·인증 배지는 별도로 유지됩니다.</>
               )}
             </div>
           </div>

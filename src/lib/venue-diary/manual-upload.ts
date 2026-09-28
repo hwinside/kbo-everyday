@@ -34,9 +34,13 @@ export type ManualAttendanceTeamDecision =
   | { ok: false; status: 400 | 403; error: string };
 
 /**
- * 과거 경기 직접 추가는 허용 시즌(VENUE_DIARY_MANUAL_SEASONS)의 실제 KBO 종료 경기만 허용한다.
- * 시간 경과나 gameId 날짜만으로 종료를 추정하지 않고 crawler의 final 상태를 권위로 쓴다.
+ * 과거 경기 직접 추가는 허용 시즌(VENUE_DIARY_MANUAL_SEASONS)의 실제 KBO 종료·취소 경기만 허용한다.
+ * 시간 경과나 gameId 날짜만으로 종료를 추정하지 않고 crawler의 final/cancelled 상태를 권위로 쓴다.
  */
+export function isManualDiaryGameStatus(status: string | null | undefined): boolean {
+  return status === "final" || status === "cancelled";
+}
+
 export function decideManualDiaryGame(
   venue: Pick<ResolvedVenue, "exists" | "gameDate" | "status">,
 ): ManualDiaryGameDecision {
@@ -53,14 +57,11 @@ export function decideManualDiaryGame(
         .join("·")} 시즌 경기만 직접 추가할 수 있어요`,
     };
   }
-  if (venue.status !== "final") {
+  if (!isManualDiaryGameStatus(venue.status)) {
     return {
       ok: false,
       status: 403,
-      error:
-        venue.status === "cancelled"
-          ? "취소된 경기는 직접 추가할 수 없어요"
-          : "종료된 경기만 직접 추가할 수 있어요",
+      error: "종료되거나 취소된 경기만 직접 추가할 수 있어요",
     };
   }
   return { ok: true };
