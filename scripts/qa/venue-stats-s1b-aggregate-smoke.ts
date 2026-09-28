@@ -95,7 +95,7 @@ const G1 = game({ gameId: "20260601LGOB0", time: "14:00", homeTeamId: LG, awayTe
 const G2 = game({ gameId: "20260605OBLG0", stadium: "고척", homeTeamId: OB, awayTeamId: LG, homeScore: 4, awayScore: 4 });
 const G3 = game({ gameId: "20260610LGKT0", stadium: "수원", homeTeamId: KT, awayTeamId: LG, homeScore: 2, awayScore: 1 });
 const G4 = game({ gameId: "20260615LGOB0", homeTeamId: LG, awayTeamId: OB, homeScore: 7, awayScore: 1 });
-const G5 = game({ gameId: "20260620LGOB0", status: "cancelled" });
+const G5 = game({ gameId: "20260620LGOB0", status: "cancelled", awayScore: 2, homeScore: 0, cancelReason: "우천취소" });
 const G6 = game({ gameId: "20260625LGOB0", time: "17:00", homeTeamId: LG, awayTeamId: OB, homeScore: 3, awayScore: 2 });
 // G7/G8: 직관 안 간 LG 시즌 경기 (E1 일정·시즌 baseline 전용).
 const GAMES = new Map([G1, G2, G3, G4, G5, G6].map((g) => [g.gameId, g]));

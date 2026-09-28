@@ -101,6 +101,7 @@ function matchLabel(game: DiaryHomeGame): string {
   if (!away || !home) return "경기 정보 확인 중";
   const as = game.awayTeam?.score;
   const hs = game.homeTeam?.score;
+  if (game.status === "cancelled") return `${away} vs ${home} · ${game.cancelReason || "경기 취소"}`;
   if (as != null && hs != null) return `${away} ${as} : ${hs} ${home}`;
   return `${away} vs ${home}`;
 }
@@ -234,6 +235,8 @@ export default function VenueDiaryCard() {
           stadiumName: g.stadium,
           source: g.source,
           favoriteTeamId: g.favoriteTeamId,
+          status: g.status,
+          cancelReason: g.cancelReason,
           result: g.result,
           awayTeam: g.awayTeam,
           homeTeam: g.homeTeam,

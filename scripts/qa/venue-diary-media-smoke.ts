@@ -374,7 +374,7 @@ for (const season of VENUE_DIARY_MANUAL_SEASONS) {
     { ok: true },
     `${season} final 허용`,
   );
-  for (const status of ["scheduled", "live", "cancelled"] as const) {
+  for (const status of ["scheduled", "live"] as const) {
     assert.equal(
       decideManualDiaryGame({ exists: true, gameDate: `${season}-07-24`, status })
         .ok,
@@ -382,6 +382,11 @@ for (const season of VENUE_DIARY_MANUAL_SEASONS) {
       `${season} ${status} 거부`,
     );
   }
+  assert.deepEqual(
+    decideManualDiaryGame({ exists: true, gameDate: `${season}-09-27`, status: "cancelled" }),
+    { ok: true },
+    `${season} 취소 경기도 방문 기록 허용`,
+  );
   // 포스트시즌(10~11월)도 같은 시즌으로 허용돼야 한다.
   assert.equal(
     decideManualDiaryGame({
@@ -473,7 +478,7 @@ const diaryRoute = readFileSync(
 );
 const diaryPost =
   diaryRoute.match(/export async function POST[\s\S]*?(?=\/\*\* 조회한 유저)/)?.[0] ?? "";
-assert.match(diaryRoute, /decideManualDiaryGame\(venue\)/, "KBO actual final 검증");
+assert.match(diaryRoute, /decideManualDiaryGame\(venue\)/, "KBO actual final/cancelled 검증");
 assert.doesNotMatch(
   diaryPost,
   /\b(lat|lng|accuracy)\b/,
