@@ -1,4 +1,5 @@
 /** CLI only. Input is an anonymized ConversationInput JSON file; stdout is local evidence, never a DM. */
+import { rankNews, searchWiki, toEvidence, newsPageParams } from "./search-adapters";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runAgentPoc, type Evidence, type SearchRequest } from "../../../src/lib/baseball-qa/agent/poc";
@@ -31,6 +32,18 @@ async function readRows(table: string, params: URLSearchParams, signal: AbortSig
   return data as Record<string, unknown>[];
 }
 
+async function readNewsCandidates(now: string, signal: AbortSignal) {
+  const rows: Record<string, unknown>[] = [];
+  // Time predicates are applied on the server BEFORE paging/ranking. Never top-k then filter.
+  for (let offset = 0; offset <= 10000; offset += 250) {
+    const page = await readRows("genius_news_articles", newsPageParams(now, offset), signal);
+    if (offset === 10000 && page.length) throw new Error("news_candidate_budget_exceeded");
+    rows.push(...page);
+    if (page.length < 250) return rows;
+  }
+  throw new Error("news_candidate_budget_exceeded");
+}
+
 async function search(request: SearchRequest, now: string, signal: AbortSignal): Promise<Evidence[]> {
   if (request.source !== "wiki") {
     const embedded = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${RAG_EMBEDDING_MODEL}:embedContent`, {
@@ -40,12 +53,12 @@ async function search(request: SearchRequest, now: string, signal: AbortSignal):
     if (!embedded.ok) throw new Error("embedding_failed");
     const vector = (await embedded.json()).embedding?.values;
     if (!Array.isArray(vector) || vector.length !== 768 || !vector.every(v => typeof v === "number" && Number.isFinite(v))) throw new Error("invalid_embedding");
-    const news = request.source === "news";
-    const rpc = news ? "search_baseball_genius_news_articles" : "search_baseball_genius_official_chunks";
-    const args = news
-      ? { p_query_embedding: JSON.stringify(vector), p_team_ids: [1,2,3,4,5,6,7,8,9,10], p_limit: 12,
-        p_published_after: new Date(Date.parse(now) - 30 * 86_400_000).toISOString() }
-      : { p_query_embedding: JSON.stringify(vector), p_limit: 6, p_max_distance: 0.42 };
+    if (request.source === "news") {
+      const rows = await readNewsCandidates(now, signal);
+      return rankNews(rows, vector, now).map(row => toEvidence(row, "news"));
+    }
+    const rpc = "search_baseball_genius_official_chunks";
+    const args = { p_query_embedding: JSON.stringify(vector), p_limit: 6, p_max_distance: 0.42 };
     const response = await fetch(new URL(`/rest/v1/rpc/${rpc}`, base), { method: "POST", signal,
       headers: { "Content-Type": "application/json", apikey: databaseKey!, Authorization: `Bearer ${databaseKey}` }, body: JSON.stringify(args) });
     if (!response.ok) throw new Error("search_rpc_failed");
@@ -57,30 +70,8 @@ async function search(request: SearchRequest, now: string, signal: AbortSignal):
       url: String(row.link ?? row.canonical_url ?? ""), asOf: String(row.published_at ?? row.as_of ?? ""),
     }));
   }
-  // Bounded lexical PoC search, not claimed to be full-corpus semantic retrieval.
-  // Each term is passed as a URLSearchParams value, never a PostgREST `or` expression.
-  const collected: Evidence[] = [];
-  for (const term of request.terms) {
-    const cleaned = term.replace(/[\s%*_,()\\]+/g, " ").trim();
-    if (cleaned.length < 2) continue;
-    const params = new URLSearchParams({
-      select: "source_key,page_title,content,canonical_url,revision,as_of",
-      page_title: `ilike.*${cleaned}*`,
-      source_kind: "eq.namu_document",
-      as_of: `lte.${now.slice(0, 10)}`,
-      limit: "6",
-      order: "as_of.desc,source_key.asc,chunk_index.asc",
-    });
-    const rows = await readRows("genius_rag_serving_chunks", params, signal);
-    for (const row of rows) {
-      const content = String(row.content ?? "").slice(0, 6000);
-      const fingerprint = createHash("sha256").update(JSON.stringify([row.source_key ?? row.article_key, row.revision, content])).digest("hex").slice(0, 24);
-      collected.push({ id: `${request.source}:${fingerprint}`, source: request.source,
-        title: String(row.title ?? row.page_title ?? ""), content,
-        url: String(row.link ?? row.canonical_url ?? ""), asOf: String(row.published_at ?? row.as_of ?? "") });
-    }
-  }
-  return [...new Map(collected.map(e => [e.id, e])).values()].slice(0, 6);
+  return searchWiki(request.terms, now, signal, readRows);
+
 }
 
 async function main() {

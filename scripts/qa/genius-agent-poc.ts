@@ -36,3 +36,30 @@ async function main() {
   console.log("agent PoC boundaries PASS; semantic quality and live adapters NOT verified");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
+
+// Adapter regression fixtures: future top-k starvation and document monopolization.
+import { newsPageParams, rankNews, searchWiki } from "../baseball-qa/agent/search-adapters";
+async function adapterRegressions() {
+  for (const day of ["2026-09-11", "2026-09-12"]) {
+    const now = `${day}T12:00:00Z`;
+    const params = newsPageParams(now, 0);
+    assert.ok(params.getAll("published_at").includes(`lte.${now}`));
+    assert.equal(params.get("collected_at"), `lte.${now}`);
+    assert.equal(params.get("embedded_at"), `lte.${now}`);
+    const future = Array.from({ length: 12 }, (_, i) => ({ article_key: `future${i}`, published_at: "2026-09-27T00:00:00Z", embedding: [1, 0] }));
+    const past = { article_key: "past", published_at: "2026-09-10T00:00:00Z", embedding: [0.9, 0.1] };
+    assert.deepEqual(rankNews([...future, past], [1, 0], now), [past]);
+  }
+  let calls = 0;
+  const rows = await searchWiki(["야구", "아시안게임"], input.now, new AbortController().signal, async (_table, params) => {
+    assert.notEqual(params.get("page_title"), "ilike.*야구*");
+    const i = calls++;
+    if (i) assert.ok(params.getAll("source_key").includes('neq."doc0"'));
+    return [0, 1].map(chunk => ({ source_key: `doc${i}`, page_title: `대회${i}`, content: `근거 ${i}-${chunk}`, canonical_url: "https://example.com", as_of: "2026-09-01" }));
+  });
+  assert.equal(calls, 3);
+  assert.equal(rows.length, 6);
+  assert.equal(new Set(rows.map(row => row.title)).size, 3);
+  assert.equal((await searchWiki(["야구", "선수"], input.now, new AbortController().signal, async () => { throw new Error("generic query must not run"); })).length, 0);
+}
+adapterRegressions().catch(error => { console.error(error); process.exitCode = 1; });
