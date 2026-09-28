@@ -240,8 +240,12 @@
       "schedule": "50 23,0 * * *"
     },
     {
+      "path": "/api/cron/news-rag-collect?period=today",
+      "schedule": "0,30 * * * *"
+    },
+    {
       "path": "/api/cron/news-rag-embed",
-      "schedule": "20 * * * *"
+      "schedule": "5,20,35,50 * * * *"
     },
     {
       "path": "/api/cron/roster-moves",
