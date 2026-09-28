@@ -6,7 +6,7 @@ import { X, Plus, XCircle, Loader2, ChevronLeft, Pencil, SkipForward, Play } fro
 import Image from "next/image";
 import imageCompression from "browser-image-compression";
 import { createPost, uploadImages, uploadVideos, computeImageHashes } from "@/lib/supabase/usePosts";
-import MemeEditor from "@/components/editor/MemeEditor";
+import dynamic from "next/dynamic";
 import GamePicker, { type PickedGame } from "./GamePicker";
 import PlayerTagger from "./PlayerTagger";
 import TeamTagger from "./TeamTagger";
@@ -16,6 +16,8 @@ import HashtagInput from "./HashtagInput";
 import { getTeamById, TEAMS } from "@/lib/constants/teams";
 import { formatPlayerTag } from "@/lib/utils/player-tags";
 import { useAuth } from "@/lib/supabase/AuthContext";
+
+const MemeEditor = dynamic(() => import("@/components/editor/MemeEditor"), { ssr: false });
 
 interface WritePhotoPostProps {
   isOpen: boolean;
