@@ -27,8 +27,34 @@ async function main() {
     const { result, calls, logs } = await ask(q);
     assert.equal(result.source, "kbo_structured", q);
     for (const value of ["0.251", "19", "103", "119", "184"]) assert.ok(result.answer.includes(value), `${q}: missing ${value}`);
+    assert.equal((result.answer.match(/📊/g) ?? []).length, 1, "one provenance footer");
+    assert.equal((result.answer.match(/김영웅\(삼성\)/g) ?? []).length, 1, "one player header");
     assert.equal(calls, 1, "bundle fetches same source once");
     assert.deepEqual(logs, ["kbo_structured"], "one final log, no per-metric logs");
+  }
+  const negativeScopes = [
+    "김영웅 포스트시즌 성적", "김영웅 LG전 성적", "김영웅 홈 성적",
+    "김영웅 후반기 성적", "김영웅 좌투수 상대 성적", "김영웅 대표팀 성적",
+    "김영웅 아시안게임 성적", "김영웅 퓨처스 성적", "김영웅 올스타 기록",
+    "김영웅 부상 기록", "김영웅 다음 경기", "김영웅 오늘 경기",
+  ];
+  for (const q of negativeScopes) {
+    assert.ok(["none", "unsupported_season"].includes(resolveSeasonRecordIntent(q, "batter", { playerBound: true }).kind), q);
+    const { result, calls } = await ask(q);
+    assert.notEqual(result.source, "kbo_structured", q);
+    assert.equal(calls, 0, `${q}: no season snapshot fetch`);
+    assert.ok(!result.answer.includes("0.251") && !result.answer.includes("119"), q);
+  }
+  for (const scope of ["PS", "가을야구", "원정", "전반기", "득점권", "주자", "우투수 상대", "국대", "WBC", "2군", "월간", "주간"]) {
+    for (const metric of ["성적", "타율,홈런"]) {
+      assert.equal(resolveSeasonRecordIntent(`김영웅 ${scope} ${metric}`, "batter", { playerBound: true }).kind, "unsupported_season");
+    }
+  }
+  assert.equal(resolveSeasonRecordIntent("김영웅 경기", "batter", { playerBound: true }).kind, "none");
+  for (const separator of [",", "·", "/"]) {
+    const intent = resolveSeasonRecordIntent(`김영웅 타율${separator} 경기`, "batter", { playerBound: true });
+    assert.equal(intent.kind, "query");
+    if (intent.kind === "query") assert.ok(intent.queries?.some((q) => q.metric === "games"));
   }
   const partial = await ask("김영웅 2026 vs 2024 성적 비교");
   assert.equal(partial.result.source, "kbo_structured");

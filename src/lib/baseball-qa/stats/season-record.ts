@@ -453,6 +453,14 @@ export function resolveSeasonRecordIntent(
   if (isStatDefinitionQuestion(question)) return { kind: "none" };
   const compact = normalize(question);
 
+  // A season snapshot cannot answer splits, other competitions or schedules.
+  // Check before metric extraction: e.g. 득점권 must not become 득점.
+  if (/포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
+    || /\b(?:ps|wbc)\b/i.test(question)
+    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact)) {
+    return { kind: "unsupported_season" };
+  }
+
   // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
   // 않지만, 같은 종류의 부분문자열 충돌이 반복되어 명시 면제 목록을 둔다.
   const untrustedTarget = UNTRUSTED_EXEMPT_PATTERNS.reduce(
@@ -548,7 +556,7 @@ export function resolveSeasonRecordIntent(
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.
-    { table: "batter", metric: "games", pattern: /경기\s*수|경기(?=\s*[,·/]|\s*$)/, ambiguous: true },
+    { table: "batter", metric: "games", pattern: /경기\s*수|(?<=[,·/])\s*경기(?=\s*[,·/]|\s*$)/, ambiguous: true },
   ];
 
   const normalized = normalizeWithSpaces(question);
