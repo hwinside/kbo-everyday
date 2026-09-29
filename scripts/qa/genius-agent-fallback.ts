@@ -7,12 +7,12 @@ import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
 const evidence: Evidence = { id: "news:test", source: "news", title: "일정", content: "야구 대표팀은 대회 일정을 추후 발표할 예정입니다.", url: "https://sports.naver.com/news/1", asOf: input.now };
 const claim = { text: evidence.content, citations: [{ id: evidence.id, quote: evidence.content }] };
-function ports(options: { row?: Evidence; text?: string; verified?: boolean; temporal?: boolean } = {}): AgentPorts {
+function ports(options: { row?: Evidence; text?: string; verified?: boolean; temporal?: boolean; core?: boolean } = {}): AgentPorts {
   let turn = 0;
   return { search: async () => [options.row ?? evidence], decide: async () => ++turn === 1
     ? { action: "search", source: options.row?.source ?? evidence.source, query: input.question, terms: ["아시안게임"] }
     : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text }] }
-    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true } };
+    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true } };
 }
 function deps(overrides: Partial<QaDeps> = {}): QaDeps {
   return { loadGlossary: async () => [], loadPlayers: async () => [], getCache: async () => null,
@@ -24,6 +24,9 @@ function deps(overrides: Partial<QaDeps> = {}): QaDeps {
 async function main() {
   await boundedNewsContracts();
   const positive = await runVerifiedFallback(input, ports());
+  assert.equal(await runVerifiedFallback(input, ports({ core: false })), null, "factually supported but not answering core question is rejected");
+  assert.equal(await runVerifiedFallback(input, ports({ text: "제공된 자료에서는 일정을 확인할 수 없습니다." })), null, "internal retrieval language never served");
+  assert.equal(await runVerifiedFallback(input, ports({ text: "개최일은 확인할 수 없으며 선수단 소집만 알려졌습니다." })), null, "camp/departure cannot substitute for schedule even if verifier approves");
   assert.equal(positive?.source, "news_rag");
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
@@ -58,7 +61,7 @@ async function main() {
       ? { action: "search", source: "news", query: input.question, terms: ["아시안게임"] }
       : multiTurn === 2 ? { action: "answer", claims: [{ ...claim, citations: [
         ...claim.citations, { id: other.id, quote: other.content },
-      ] }] } : { supported: true, temporalSupported: true },
+      ] }] } : { supported: true, temporalSupported: true, answersCore: true },
   });
   assert.equal(multi, null, "two valid source URLs cannot be presented as one source");
   assert.equal(multiTurn, 2, "multi-source rejection precedes semantic verifier");

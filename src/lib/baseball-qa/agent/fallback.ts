@@ -8,7 +8,10 @@ export const FALLBACK_VERIFY_PROMPT = [
   "asOf는 게시/수집 시점이지 경기/발생일이 아니다. 날짜·오늘/어제·현재·미래 일정은 반드시 인용 본문에서 사건 시점을 확인한다.",
   "날짜를 추측하거나 게시일을 경기일로 바꾸거나 다른 연도/대회 기록을 현재로 바꾸면 거절한다.",
   "질문에 실제 답하는지, 야구 범위인지 확인한다. 모호하거나 자료가 오래되어 현행 여부를 확인할 수 없으면 거절한다.",
-  "JSON만: {supported:boolean, temporalSupported:boolean}. 두 필드 모두 확신할 때만 true.",
+  "answersCore는 질문의 핵심 의문에 답하는지를 별도로 평가한다. 언제/일정에는 경기·대회 시점, 누구/명단에는 해당 인물, 결과에는 실제 결과가 필요하다.",
+  "개최일 질문에 소집일·출국일만, 경기 결과 질문에 선발 예고만 제시하거나 확인 못했다는 안내만 있으면 사실이 맞아도 answersCore=false다.",
+  "전체 명단 없이 확인된 일부 인물을 답할 수는 있지만 일부라는 범위를 명시해야 한다. 무관한 주변 사실로 핵심 답을 대신하면 안 된다.",
+  "JSON만: {supported:boolean, temporalSupported:boolean, answersCore:boolean}. 세 필드 모두 확신할 때만 true.",
 ].join("\n");
 
 /** Existing successful/blocked/picker/structural-hold routes never enter this fallback. */
@@ -65,12 +68,18 @@ export async function runVerifiedFallback(input: ConversationInput, ports: Agent
     // synthesis to the first document; keep the original unavailable reply instead.
     if (!used.length || new Set(used.map(e => e.url)).size !== 1) return null;
     const answer = result.claims.map(c => c.text).join("\n");
+    // Internal retrieval language is not a user answer, even when quotes are valid.
+    if (/제공된\s*(?:자료|정보)|검색(?:된)?\s*(?:자료|결과)|코퍼스|retrieval/iu.test(answer)) return null;
+    // Known failure: a schedule abstention padded with a camp/departure date.
+    if (/언제|일정|몇\s*월|몇\s*일|몇칠/u.test(input.question)
+      && /소집|출국|합류|차출/u.test(answer)
+      && /확인.{0,15}(?:없|못)|알.{0,8}없|미확인/u.test(answer)) return null;
     if (answer.length > 500 || /https?:|www\.|```|<|\]\(/i.test(answer)) return null;
     const decision = await bounded(ports.decide(FALLBACK_VERIFY_PROMPT,
       { question: input.question, now: input.now, claims: result.claims, evidence: used }, controller.signal));
     if (!decision || typeof decision !== "object" || Array.isArray(decision)) return null;
     const verified = decision as Record<string, unknown>;
-    if (verified.supported !== true || verified.temporalSupported !== true) return null;
+    if (verified.supported !== true || verified.temporalSupported !== true || verified.answersCore !== true) return null;
     const provenance = resolveAllowedSource(used[0].url)!;
     return { answer: `${answer}\n\n📄 출처: ${provenance.label}`, source: used[0].source === "news" ? "news_rag" : "rag", sourceUrl: provenance.url };
   } catch {

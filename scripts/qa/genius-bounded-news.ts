@@ -33,7 +33,7 @@ export async function boundedNewsContracts() {
     assert.equal(url.hostname, "generativelanguage.googleapis.com"); models++;
     const request = JSON.parse(String(init?.body));
     const state = JSON.parse(request.contents[0].parts[0].text);
-    const answer = searchAgain ? { action: "search", source: "wiki", query: input.question, terms: ["아시안게임"] } : state.claims ? { supported: !rejected, temporalSupported: true }
+    const answer = searchAgain ? { action: "search", source: "wiki", query: input.question, terms: ["아시안게임"] } : state.claims ? { supported: !rejected, temporalSupported: true, answersCore: true }
       : { action: "answer", claims: [{ text: state.evidence[0].content, citations: [{ id: state.evidence[0].id, quote: invalid ? "없는 인용을 만들어 냈습니다." : state.evidence[0].content }] }] };
     return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(answer) }] } }] });
   };
