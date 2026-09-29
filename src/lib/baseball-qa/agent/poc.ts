@@ -1,4 +1,4 @@
-/** Offline/shadow experiment only. No production router imports this module. */
+/** Bounded search agent. Production uses the stricter fallback verifier. */
 export type SearchSource = "news" | "wiki" | "official";
 export interface Evidence {
   id: string;
@@ -96,7 +96,7 @@ export function validateClaims(raw: unknown, evidence: Evidence[]): Claim[] | nu
   return result;
 }
 
-export async function runAgentPoc(input: ConversationInput, ports: AgentPorts): Promise<PocResult> {
+export async function runAgentPoc(input: ConversationInput, ports: AgentPorts, timeoutMs = 45_000): Promise<PocResult> {
   const started = Date.now();
   const evidence: Evidence[] = [];
   const trace: Trace[] = [];
@@ -111,7 +111,7 @@ export async function runAgentPoc(input: ConversationInput, ports: AgentPorts): 
     return finish("error", "invalid_input");
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  const timer = setTimeout(() => controller.abort(), Math.min(45_000, Math.max(1, timeoutMs)));
   // Promise race enforces a total budget even for an adapter which ignores cancellation.
   const aborted = new Promise<never>((_, reject) => {
     controller.signal.addEventListener("abort", () => reject(new Error("deadline")), { once: true });

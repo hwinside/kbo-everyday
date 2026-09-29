@@ -1,3 +1,4 @@
+import { productionAgentFallback } from "./agent/production";
 import { readClassifierObservation } from "./classifier-observation";
 // 야잘알봇 질문 서버 처리 코어. POST /api/baseball-qa(즉시 경로)와
 // /api/cron/baseball-qa-drain(durable 복구 경로)이 같은 처리기를 공유한다.
@@ -969,6 +970,7 @@ export function makeDeps(
     // `genius_news_articles` 2,438행 · embedding 2,438/2,438 · 서빙뷰 2,438건 · 커버리지 140/140칸 ok.
     // 적재만 되고 조회 배선이 없으면 근거는 사장된다(#1110 구단 RAG 에서 이미 겪은 사고).
     enableNewsRag: newsRagEnabled(),
+    agentFallback: productionAgentFallback,
     searchNewsRag,
     callNewsRagLlm,
     pickedPlayerKboId: pickedPlayerKboId ?? null,
