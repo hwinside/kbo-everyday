@@ -72,6 +72,13 @@ async function main() {
     ["아시안게임 야구 어떻게 됐어?", "한국 대표팀이 금메달을 획득했습니다.", false],
     ["아시안게임 야구 어떻게 됐어?", "한국 야구 대표팀이 금메달을 획득했습니다.", true],
     ["아시안게임 야구 명단 알려줘", "야구 대표팀 명단은 24명입니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 금메달을 획득했습니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안 게임 야구 대표팀은 금메달을 획득했습니다.", true],
+    ["아시안게임 야구 명단 알려줘", "아시안게임 야구 대표팀 명단은 24명입니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 축구 대표팀이 금메달을 획득했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 영화에 출연했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 모바일 게임을 추천합니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "리그 오브 레전드는 인기 게임입니다.", false],
     ["김도영 최근 근황", "KIA 타이거즈 김도영은 복귀를 준비합니다.", true],
     ["아시안게임 야구 어떻게 됐어?", "축구 대표팀이 금메달을 획득했습니다.", false],
     ["아시안게임 야구 어떻게 됐어?", "LG 티켓 가격은 저렴합니다.", false],
@@ -113,6 +120,19 @@ async function main() {
   assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow, "후쿠오카로 향합니다.",
     ["삼성은 9월 29일 후쿠오카로 출발합니다. 다른 선수는 10월 1일 귀국합니다."]), true,
     "unrelated other event dates do not block same-day travel");
+  const announcedTrip = '삼성은 "10월 1일부터 15일까지 후쿠오카를 방문한다"고 29일 알렸다.';
+  assert.equal(primaryNewsDateSupported("어제 삼성 어디 가?", capturedNow,
+    "삼성은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", [announcedTrip]), true,
+    "announcement day is not a required trip date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow,
+    "삼성은 후쿠오카를 방문합니다.", [announcedTrip]), false,
+    "removing reporting date must retain the off-day event date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow,
+    "삼성은 후쿠오카를 방문합니다.", ['삼성은 "후쿠오카를 방문한다"고 29일 알렸다.']), false,
+    "announcement day alone never establishes same-day travel");
+  assert.equal(primaryNewsDateSupported("어제 김도영 뭐 했어?", capturedNow,
+    "김도영은 금메달을 걸고 귀국했습니다.", ["김도영은 9월 28일 금메달을 걸고 귀국했습니다."]), true,
+    "explicit yesterday return remains supported");
   // Primary news path must reject before durable storage and logging; replay cannot leak it.
   for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?"]) {
     let savedNews: LlmResult | null = null;

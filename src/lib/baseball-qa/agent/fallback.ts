@@ -77,7 +77,11 @@ function primaryEventDates(text: string, now: string): string[] {
   const current = new Date(Date.parse(now) + 9 * 3600000);
   let year = current.getUTCFullYear();
   let month = current.getUTCMonth() + 1;
-  const cleaned = withoutDurations(text).replace(/다음\s*달|내달/gu, `${month === 12 ? year + 1 : year}년 ${month === 12 ? 1 : month + 1}월`);
+  // A reporting date ("29일 알렸다") does not date the quoted trip/event.
+  // Strip only the explicit reporting-date phrase, preserving any event date.
+  const cleaned = withoutDurations(text)
+    .replace(/(?:(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*)?\d{1,2}\s*일(?=\s*(?:알렸|알립|발표했|발표합|밝혔|밝힙|보도했|보도합))/gu, " ")
+    .replace(/다음\s*달|내달/gu, `${month === 12 ? year + 1 : year}년 ${month === 12 ? 1 : month + 1}월`);
   const dates: string[] = [];
   for (const match of cleaned.matchAll(/(?:(\d{4})\s*년\s*)?(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일/gu)) {
     if (match[1]) year = Number(match[1]);

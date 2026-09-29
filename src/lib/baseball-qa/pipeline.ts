@@ -3543,7 +3543,9 @@ export function answerInQuestionScope(_question: string, answer: string): boolea
   //
   //   ⚠️ 다만 denylist 는 **보조**다. 이게 주 판정이 되면 목록에 없는 단어가 무한히
   //     새어나온다 — `수영`·`FC 서울` 을 다 적을 수는 없다. 주 판정은 아래 ①의 양성 신호다.
-  if (ANSWER_OFF_TOPIC.test(normalized)) return false;
+  // The tournament name is not a video-game topic. Keep every other denylist
+  // hit (including a separate 게임 mention) and the baseball-anchor check intact.
+  if (ANSWER_OFF_TOPIC.test(normalized.replace(/아시안\s*게임/gu, " "))) return false;
   const tokens = questionTokens(normalized);
   // ① 답변 자체의 야구 신호 — 룰·용어 어휘, 고정밀 앵커, 또는 KBO 구단명.
   //   `두산 베어스의 홈구장은 잠실야구장입니다.` 처럼 정상 구단 답변에는 룰 어휘가 없고
