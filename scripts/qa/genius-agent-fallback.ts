@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { runVerifiedFallback, quoteSupportsNumbers, citationWithinQuestionDay } from "../../src/lib/baseball-qa/agent/fallback";
+import { runVerifiedFallback, quoteSupportsNumbers, citationWithinQuestionDay, fallbackEligible } from "../../src/lib/baseball-qa/agent/fallback";
 import { answerQuestion, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
 import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
@@ -61,7 +61,7 @@ async function main() {
   assert.equal(multiTurn, 2, "multi-source rejection precedes semantic verifier");
   // Exercise the actual settle boundary, with and without durable ownership.
   const protectedCases: Array<{ question: string; source: string; overrides: Partial<QaDeps> }> = [
-    { question: input.question, source: "cache", overrides: { getCache: async () => "기존 캐시 정답입니다." } },
+    { question: "국제대회 인필드 플라이 뜻", source: "cache", overrides: { getCache: async () => "기존 캐시 정답입니다." } },
     { question: "LG 오늘 지면 몇 위야?", source: "scope_guide", overrides: {} },
     { question: "LG 오늘 소식 알려줘", source: "error", overrides: {
       enableNewsRag: true, searchNewsRag: async () => { throw new Error("search outage"); },
@@ -69,6 +69,7 @@ async function main() {
     } },
   ];
   for (const test of protectedCases) for (const durable of [false, true]) {
+    assert.equal(fallbackEligible(test.question), true, "protected fixture must be fallback eligible");
     let protectedCalls = 0;
     let saved: LlmResult | null = null;
     const baseline = await answerQuestion("test", test.question, deps(test.overrides));
