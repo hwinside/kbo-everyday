@@ -8,7 +8,7 @@ const claim = { text: evidence.content, citations: [{ id: evidence.id, quote: ev
 function ports(options: { row?: Evidence; text?: string; verified?: boolean; temporal?: boolean } = {}): AgentPorts {
   let turn = 0;
   return { search: async () => [options.row ?? evidence], decide: async () => ++turn === 1
-    ? { action: "search", source: "news", query: input.question, terms: ["아시안게임"] }
+    ? { action: "search", source: options.row?.source ?? evidence.source, query: input.question, terms: ["아시안게임"] }
     : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text }] }
     : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true } };
 }
