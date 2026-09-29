@@ -8,12 +8,12 @@ import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
 const evidence: Evidence = { id: "news:test", source: "news", title: "일정", content: "야구 대표팀은 대회 일정을 추후 발표할 예정입니다.", url: "https://sports.naver.com/news/1", asOf: input.now };
 const claim = { text: evidence.content, citations: [{ id: evidence.id, quote: evidence.content }] };
-function ports(options: { row?: Evidence; text?: string; quote?: string; verified?: boolean; temporal?: boolean; core?: boolean } = {}): AgentPorts {
+function ports(options: { row?: Evidence; text?: string; quote?: string; verified?: boolean; temporal?: boolean; core?: boolean; sameDay?: boolean } = {}): AgentPorts {
   let turn = 0;
   return { search: async () => [options.row ?? evidence], decide: async () => ++turn === 1
     ? { action: "search", source: options.row?.source ?? evidence.source, query: input.question, terms: ["아시안게임"] }
     : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text, citations: [{ id: claim.citations[0].id, quote: options.quote ?? claim.citations[0].quote }] }] }
-    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true } };
+    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true, eventDateMatchesQuestion: options.sameDay ?? true } };
 }
 function deps(overrides: Partial<QaDeps> = {}): QaDeps {
   return { loadGlossary: async () => [], loadPlayers: async () => [], getCache: async () => null,
@@ -43,6 +43,26 @@ async function main() {
   assert.equal(quoteSupportsNumbers("2026 아시안게임 금메달입니다.", "아시안게임 금메달입니다."), false, "do not relax uncited year guard");
   assert.equal(quoteSupportsNumbers("아시안게임 금메달입니다.", "아시안게임 금메달입니다."), true);
   assert.equal(quoteSupportsNumbers("9월 21일부터 27일까지입니다.", "9월 21일부터 27일까지"), true);
+  // R2: an approving verifier cannot erase an explicit off-day departure date.
+  const departure = "삼성 퓨처스팀은 10월 1일 일본 후쿠오카로 출발합니다.";
+  const departureRow = { ...evidence, content: departure };
+  for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?"]) {
+    const row = { ...departureRow, asOf: question.startsWith("어제") ? "2026-09-28T03:00:00Z" : input.now };
+    for (const text of ["일본 후쿠오카로 향합니다.", "후쿠오카를 찾아 교류전을 갖습니다."]) {
+      assert.equal(await runVerifiedFallback({ ...input, question }, ports({ row, text, quote: departure })), null,
+        "off-day event date omission rejected even with all verifier approvals");
+    }
+    assert.ok(await runVerifiedFallback({ ...input, question }, ports({ row,
+      text: "10월 1일 일본 후쿠오카로 출발할 예정입니다.", quote: departure, sameDay: false })),
+      "explicit cited future date remains answerable");
+    assert.equal(await runVerifiedFallback({ ...input, question }, ports({ row,
+      text: "일본 후쿠오카로 출발합니다.", quote: "일본 후쿠오카로 출발합니다.", sameDay: false })), null,
+      "cropping the event date from quote cannot bypass verifier off-day finding");
+  }
+  const sameDayText = "삼성 퓨처스팀은 9월 29일 일본 후쿠오카로 출발합니다.";
+  assert.ok(await runVerifiedFallback({ ...input, question: "오늘 삼성 퓨처스팀 어디 가?" },
+    ports({ row: { ...evidence, content: sameDayText }, text: "일본 후쿠오카로 출발합니다.", quote: sameDayText })),
+    "same-day event does not require redundant date in answer");
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
   assert.equal(await runVerifiedFallback(input, ports({ verified: false })), null, "unsupported meaning rejected");

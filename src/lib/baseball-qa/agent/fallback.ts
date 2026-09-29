@@ -12,7 +12,8 @@ export const FALLBACK_VERIFY_PROMPT = [
   "개최일 질문에 소집일·출국일만, 경기 결과 질문에 선발 예고만 제시하거나 확인 못했다는 안내만 있으면 사실이 맞아도 answersCore=false다.",
   "대회명만 물은 짧은 질문은 now 기준 현재 상황을 묻는다. 선발 예고만으로 대체하면 answersCore=false다. 선발 질문이어도 경기 시작 후 예고를 현재 상황으로 제시하면 temporalSupported=false다.",
   "전체 명단 없이 확인된 일부 인물을 답할 수는 있지만 일부라는 범위를 명시해야 한다. 무관한 주변 사실로 핵심 답을 대신하면 안 된다.",
-  "JSON만: {supported:boolean, temporalSupported:boolean, answersCore:boolean}. 세 필드 모두 확신할 때만 true.",
+  "오늘/어제 질문은 now의 한국 날짜 기준이다. eventDateMatchesQuestion은 답하는 사건이 그날 발생하는지이며 기사 게시일과 무관하다. 다른 날 사건이면 false로 두고, 답문에 그 사건 날짜가 명시되어야 temporalSupported=true다. 날짜를 생략한 채 오늘 발생하는 것처럼 읽히면 거절한다. 사건 날짜를 알 수 없어도 거절한다.",
+  "JSON만: {supported:boolean, temporalSupported:boolean, answersCore:boolean, eventDateMatchesQuestion:boolean}. 오늘/어제 질문에서는 eventDateMatchesQuestion도 반드시 판정한다.",
 ].join("\n");
 
 /** Existing successful/blocked/picker/structural-hold routes never enter this fallback. */
@@ -25,6 +26,26 @@ export function quoteSupportsNumbers(text: string, quotes: string): boolean {
   const tokens = text.match(/\d+(?:[.:/-]\d+)*/g) ?? [];
   const available = new Set(quotes.match(/\d+(?:[.:/-]\d+)*/g) ?? []);
   return tokens.every(t => available.has(t));
+}
+
+/** Preserve explicit off-day dates even if the semantic verifier approves an omission. */
+function calendarDates(text: string): string[] {
+  return [...text.matchAll(/(?:(\d{4})[년.\/-]\s*)?(\d{1,2})\s*(?:월\s*|[.\/-])(\d{1,2})\s*일?|(?<!\d)(\d{1,2})\s*일/gu)]
+    .map(match => `${match[1] ?? ""}:${match[2] ? Number(match[2]) : ""}:${Number(match[3] ?? match[4])}`);
+}
+
+function relativeDayDateSupported(question: string, now: string, text: string, quote: string, requireDate = false): boolean {
+  if (!/오늘|어제/u.test(question)) return true;
+  const target = new Date(Date.parse(now) + 9 * 3600000 - (/어제/u.test(question) ? 86400000 : 0));
+  const dates = calendarDates(quote);
+  const answerDates = calendarDates(text);
+  if (requireDate && !dates.some(date => answerDates.includes(date))) return false;
+  return dates.every(date => {
+    const [year, month, day] = date.split(":");
+    const sameDay = (!year || Number(year) === target.getUTCFullYear())
+      && (!month || Number(month) === target.getUTCMonth() + 1) && Number(day) === target.getUTCDate();
+    return sameDay || answerDates.includes(date);
+  });
 }
 
 /** Publication-window check is deterministic; event-date entailment still needs verification. */
@@ -58,7 +79,9 @@ export async function runVerifiedFallback(input: ConversationInput, ports: Agent
     if (result.status !== "answered" || !validateClaims(result.claims, result.evidence)) return null;
     const used: Evidence[] = [];
     for (const claim of result.claims) {
-      if (!quoteSupportsNumbers(claim.text, claim.citations.map(c => c.quote).join(" "))) return null;
+      const quotes = claim.citations.map(c => c.quote).join(" ");
+      if (!quoteSupportsNumbers(claim.text, quotes)) return null;
+      if (!relativeDayDateSupported(input.question, input.now, claim.text, quotes)) return null;
       for (const citation of claim.citations) {
         const row = result.evidence.find(e => e.id === citation.id)!;
         if (!resolveAllowedSource(row.url) || !citationWithinQuestionDay(input.question, input.now, row)) return null;
@@ -86,6 +109,11 @@ export async function runVerifiedFallback(input: ConversationInput, ports: Agent
     if (!decision || typeof decision !== "object" || Array.isArray(decision)) return null;
     const verified = decision as Record<string, unknown>;
     if (verified.supported !== true || verified.temporalSupported !== true || verified.answersCore !== true) return null;
+    if (/오늘|어제/u.test(input.question)) {
+      if (typeof verified.eventDateMatchesQuestion !== "boolean") return null;
+      if (!verified.eventDateMatchesQuestion && !result.claims.every(claim =>
+        relativeDayDateSupported(input.question, input.now, claim.text, claim.citations.map(c => c.quote).join(" "), true))) return null;
+    }
     const provenance = resolveAllowedSource(used[0].url)!;
     return { answer: `${answer}\n\n📄 출처: ${provenance.label}`, source: used[0].source === "news" ? "news_rag" : "rag", sourceUrl: provenance.url };
   } catch {
