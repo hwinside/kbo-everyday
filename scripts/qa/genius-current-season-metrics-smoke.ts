@@ -62,7 +62,7 @@ async function main() {
     ["홈화면에 어떡해 점수 떠?", "product_feature_guide"],
     ["그 아이폰 홈화면에 어떻게 띄워?", "product_feature_guide"],
     ["기아 케이티 상대전적", "scope_guide"],
-    ["주상에서 대주자를 내보내면 다음 공격 타석에서 대주자가 나와야해?", "unsure"],
+    ["주상에서 대주자를 내보내면 다음 공격 타석에서 대주자가 나와야해?", "unsure", "untrusted_metric"],
     ["상대팀에게 빨리 하라고 하는 말", "unsure"],
     ["가을야구 언제부터야??", "unsure"],
     ["다음 올스타전은 언제야?", "unsure"],
@@ -70,9 +70,10 @@ async function main() {
     ["9월4일 삼성 엘지 선발알려줘", "unsure"],
     ["아시안 게임 야구 일정 알려줘", "unsure"],
   ] as const;
-  for (const [q, baseSource] of generalQuestions) {
+  for (const [q, baseSource, boundIntent = "none"] of generalQuestions) {
     for (const playerBound of [false, true]) {
-      assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound }).kind, "none", q);
+      // Base retains the untrusted 타석 guard only when player-bound.
+      assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound }).kind, playerBound ? boundIntent : "none", q);
     }
     const { result, calls } = await ask(q, [row], { searchRag: async () => [] });
     assert.equal(result.source, baseSource, `${q}: preserve base route`);
