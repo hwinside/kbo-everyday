@@ -1,7 +1,7 @@
 import { resolveTermOrigin } from "../src/lib/baseball-qa/term-origin";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { answerQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
+import { answerQuestion, matchGlossary, resolveUnboundName, routeQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
 import { validateRagResponse, type RagEvidence } from '../src/lib/baseball-qa/rag/retrieve';
 import { isTermOriginQuestion, TERM_UNVERIFIED, UNVERIFIED_TERM_ANSWER, UNVERIFIED_TERM_CORRECTION_ANSWER, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from '../src/lib/baseball-qa/term-knowledge';
 
@@ -400,4 +400,60 @@ test('origin uses production 사구 alias and concise dictionary meaning', () =>
   assert.doesNotMatch(answer, /주자에게 진루|추가 설명/);
   assert.match(answer, /역사적 유래는 확인하지 못했습니다/);
   assert.equal(resolveTermOrigin('보크가 뭐야', glossary), null);
+});
+
+
+test('quantity definitions preserve attached RBI/rate values without provider or shared cache', async () => {
+  const glossary = [
+    { term: '적시타', aliases: [], answer: '야구에서 주자를 홈으로 불러들여 득점을 만드는 안타입니다.' },
+    { term: '타율', aliases: [], answer: '타수에 대한 안타의 비율입니다.' },
+  ];
+  for (const [question, expected] of [
+    ['2타점적시타가 뭐야?', '2타점을'], ['3 타점 적시타 뜻', '3타점을'],
+    ['1할 6푼이 뭐야?', '0.160'], ['타율 2할8푼5리 알려줘', '0.285'],
+    ['0할 0푼은 뭐야?', '0.000'],
+  ]) {
+    const h = harness();
+    const result = await answerQuestion('qa-quantity', question, {
+      ...h.deps, loadGlossary: async () => glossary,
+      normalizeQuestionLlm: async () => assert.fail('closed notation must not need correction'),
+      callLlm: async () => assert.fail('closed notation must not generate facts'),
+      getCache: async () => assert.fail('dictionary must precede shared cache'),
+    });
+    assert.equal(result.source, 'dictionary', question);
+    assert.ok(result.answer.includes(expected), result.answer);
+    assert.equal(h.writes.length, 0);
+  }
+  for (const question of [
+    '김도영 2타점적시타 언제 쳤어?', '2타점적시타 유래', '4타점적시타',
+    '1할 6푼이면 잘하는 거야?', '1할 16푼', '1할 할인 뭐야?', '타율 1할 6푼과 OPS 차이',
+    '2타점적시타랑 보크 알려줘', '1할6푼 영화 추천',
+  ]) assert.equal(matchGlossary(glossary, question), null, question);
+  assert.equal(matchGlossary([], '2타점적시타'), null);
+  assert.equal(matchGlossary([], '1할6푼'), null);
+  assert.equal(matchGlossary(glossary, '적시타가 뭐야?')?.answer, glossary[0].answer);
+});
+
+test('given-name nickname asks for roster confirmation without binding to guessed identity', async () => {
+  const players = [{ kboId: '52401', name: '김영웅', team: '삼성 라이온즈' }];
+  for (const question of ['영웅이 누구야?', '내가 영웅이 언제까지 믿어줘야할까', '영웅이는 어떤 선수야?']) {
+    assert.deepEqual(resolveUnboundName(question, players), { token: '영웅이', suggestion: '김영웅' });
+    assert.equal(routeQuestion(question, [], players), 'name_suggest', question);
+    const h = harness();
+    const result = await answerQuestion('qa-nickname', question, { ...h.deps,
+      loadPlayers: async () => players,
+      callLlm: async () => assert.fail('nickname cannot generate an unbound player story'),
+    });
+    assert.equal(result.source, 'name_suggest');
+    assert.match(result.answer, /김영웅/);
+    assert.equal(h.calls, 0);
+  }
+  const duplicates = [...players, { kboId: '52402', name: '박영웅' }];
+  assert.equal(resolveUnboundName('영웅이 누구야?', duplicates), null);
+  assert.equal(resolveUnboundName('영웅이 누구야?', [...players, { kboId: '52402', name: '김영웅' }]), null);
+  assert.equal(resolveUnboundName('영웅이 누구야?', []), null);
+  assert.equal(resolveUnboundName('김영웅이 누구야?', players), null);
+  assert.equal(resolveUnboundName('영웅이라는 영화', players), null);
+  assert.equal(resolveUnboundName('영웅이야기', players), null);
+  assert.equal(routeQuestion('영웅이 영화 추천', [], players), 'blocked');
 });

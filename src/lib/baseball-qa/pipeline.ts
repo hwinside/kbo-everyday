@@ -2315,6 +2315,9 @@ export function classifyNamedStatMatches(
   glossary: GlossaryEntry[],
   players: PlayerRef[],
 ): NamedStatKind[] {
+  // The entire utterance is a quantity definition, not an unknown person
+  // named "3" in "3 타점 적시타". Mixed/record questions never match here.
+  if (matchQuantityGlossary(glossary, normalized)) return ["term_question"];
   NAMED_STAT_HEAD.lastIndex = 0;
   const matches: RegExpExecArray[] = [];
   let m: RegExpExecArray | null;
@@ -3085,6 +3088,23 @@ export function resolveUnboundName(
       if (!rosterNames.has(suggestion)) continue;
       return { token, suggestion };
     }
+  }
+  // Affectionate given-name forms are suggestions, never identity bindings.
+  // Only the live roster can supply candidates; duplicates and explicit full
+  // names must not silently collapse onto another player.
+  if (!findPlayerReferences(tokens, players).length) {
+    const candidates = new Map<string, UnboundName>();
+    for (const raw of tokens) {
+      for (const token of stripTokenSuffix(raw)) {
+        if (!/^[가-힣]{2}이$/u.test(token) || rosterNames.has(token)) continue;
+        const given = token.slice(0, -1);
+        const matches = players.filter((p) => /^[가-힣]{3}$/u.test(p.name) && p.name.slice(1) === given);
+        if (matches.length > 1) return null;
+        if (matches.length === 0) continue;
+        candidates.set(matches[0].kboId, { token, suggestion: matches[0].name });
+      }
+    }
+    if (candidates.size === 1) return [...candidates.values()][0];
   }
   return null;
 }
@@ -4667,7 +4687,32 @@ export function matchGlossary(entries: GlossaryEntry[], question: string): Gloss
       index.set(normalizeQuestion(name), entry);
     }
   }
-  return index.get(normalizeKey(question)) ?? index.get(normalizeQuestion(question)) ?? null;
+  const key = normalizeQuestion(question);
+  const exact = index.get(normalizeKey(question)) ?? index.get(key);
+  if (exact) return exact;
+  return matchQuantityGlossary(entries, question);
+}
+
+function matchQuantityGlossary(entries: GlossaryEntry[], question: string): GlossaryEntry | null {
+  const index = new Map(entries.flatMap((entry) =>
+    [entry.term, ...entry.aliases].map((name) => [normalizeKey(name), entry] as const)));
+  const key = normalizeQuestion(question);
+  // Closed quantity notation, whole definition only. Do not strip a quantity
+  // and return the base term: that would silently drop the user's question.
+  const quantityKey = key.replace(/(?:의)?뜻$/u, "");
+  const timely = quantityKey.match(/^([1-3])타점적시타$/u);
+  const timelyEntry = index.get("적시타");
+  if (timely && timelyEntry) return {
+    ...timelyEntry,
+    answer: `${timely[1]}타점 적시타는 그 안타로 ${timely[1]}타점을 올렸다는 뜻입니다. ${timelyEntry.answer}`,
+  };
+  const rate = quantityKey.match(/^(?:타율)?([0-9])할(?:([0-9])푼)?(?:([0-9])리)?$/u);
+  const averageEntry = index.get("타율");
+  if (rate && averageEntry) return {
+    ...averageEntry,
+    answer: `타율 표기에서 ${rate[1]}할${rate[2] ? ` ${rate[2]}푼` : ""}${rate[3] ? ` ${rate[3]}리` : ""}는 0.${rate[1]}${rate[2] ?? "0"}${rate[3] ?? "0"}을 뜻합니다. ${averageEntry.answer}`,
+  };
+  return null;
 }
 
 /**
