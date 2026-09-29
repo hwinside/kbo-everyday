@@ -1,3 +1,4 @@
+import { officialEventContracts } from "./genius-official-events";
 import { boundedNewsContracts } from "./genius-bounded-news";
 import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import assert from "node:assert/strict";
@@ -23,6 +24,7 @@ function deps(overrides: Partial<QaDeps> = {}): QaDeps {
 }
 async function main() {
   await boundedNewsContracts();
+  await officialEventContracts();
   const positive = await runVerifiedFallback(input, ports());
   assert.equal(await runVerifiedFallback(input, ports({ core: false })), null, "factually supported but not answering core question is rejected");
   assert.equal(await runVerifiedFallback(input, ports({ text: "제공된 자료에서는 일정을 확인할 수 없습니다." })), null, "internal retrieval language never served");

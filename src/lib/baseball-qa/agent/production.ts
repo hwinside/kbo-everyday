@@ -3,6 +3,7 @@ import { searchWiki, toEvidence } from "./search-adapters";
 import { runVerifiedFallback, FALLBACK_VERIFY_PROMPT } from "./fallback";
 import { AGENT_POC_PROMPT, type AgentPorts, type ConversationInput, type Evidence } from "./poc";
 import { tournamentSearch, newsTermFilter, newsIntentFilter } from "./bounded-news";
+import { officialEventRequest, officialEventEvidence } from "./official-events";
 
 /** Read-only, bounded production adapters. No CLI import, full-corpus scan or writes. */
 export function createProductionAgentPorts(): AgentPorts {
@@ -22,8 +23,10 @@ export function createProductionAgentPorts(): AgentPorts {
   return {
     decide: async (system, state, signal) => {
       const context = state && typeof state === "object" ? state as Record<string, unknown> : {};
+      const curated = typeof context.question === "string" && typeof context.now === "string"
+        ? officialEventRequest(context.question, context.now) : null;
       const seeded = system === AGENT_POC_PROMPT && typeof context.question === "string"
-        ? tournamentSearch(context.question) : null;
+        ? curated ?? tournamentSearch(context.question) : null;
       if (seeded && Array.isArray(context.trace) && context.trace.length === 0) return { action: "search", ...seeded };
       // One synthesis plus the unchanged independent verifier. No repeated planning/repair loop.
       if (seeded && context.citationFeedback) return { action: "insufficient", reason: "invalid_citations" };
@@ -34,7 +37,7 @@ export function createProductionAgentPorts(): AgentPorts {
         : system;
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent`, {
         method: "POST", signal, headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: prompt + "\n운영 보조 검색에서는 official 도구가 연결되지 않았다. news 또는 wiki만 사용한다." }] },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: prompt + (curated ? "\n운영 official 근거는 명시된 대회·연도의 검수된 일정/명단 스냅샷이다. KBO 규정으로 국제대회 일정을 대신하지 않는다. 수집 시각과 경기 날짜를 구분하고 실제 경기 결과는 추측하지 않는다." : "\n운영 보조 검색에서는 official 도구가 연결되지 않았다. news 또는 wiki만 사용한다.") }] },
           contents: [{ role: "user", parts: [{ text: JSON.stringify(state) }] }],
           generationConfig: { temperature: 0, responseMimeType: "application/json", maxOutputTokens: 2500 } }),
       });
@@ -47,9 +50,9 @@ export function createProductionAgentPorts(): AgentPorts {
       return action;
     },
     search: async (request, now, signal) => {
+      if (request.source === "official") return officialEventEvidence(request, now);
       if (request.source === "wiki") return searchWiki(request.terms, now, signal, read);
-      // KBO rules cannot establish international tournament schedules/results. Production
-      // fallback deliberately has no official adapter; existing official RAG is unchanged.
+      // The official branch above is a reviewed event snapshot, never the KBO rules corpus.
       if (request.source !== "news") return [];
       if (!tournamentSearch(request.query)) {
         // Non-tournament path is byte-for-byte the deployed retrieval policy.
