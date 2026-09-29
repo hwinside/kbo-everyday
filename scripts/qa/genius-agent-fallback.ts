@@ -1,3 +1,5 @@
+import { boundedNewsContracts } from "./genius-bounded-news";
+import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import assert from "node:assert/strict";
 import { runVerifiedFallback, quoteSupportsNumbers, citationWithinQuestionDay, fallbackEligible } from "../../src/lib/baseball-qa/agent/fallback";
 import { answerQuestion, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
@@ -20,6 +22,7 @@ function deps(overrides: Partial<QaDeps> = {}): QaDeps {
     callLlm: async () => ({ text: JSON.stringify({ status: "UNSURE" }), inputTokens: 1, outputTokens: 1 }), ...overrides };
 }
 async function main() {
+  await boundedNewsContracts();
   const positive = await runVerifiedFallback(input, ports());
   assert.equal(positive?.source, "news_rag");
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
@@ -92,11 +95,13 @@ async function main() {
     callLlm: async () => ({ text: JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: evidence.content }), inputTokens: 1, outputTokens: 1 }) }));
   assert.equal(success.source, "llm"); assert.equal(calls, 0, "existing answer untouched");
   let stored: LlmResult | null = null;
-  const owned = deps({ agentFallback: fallback, getLlmState: async () => ({ started: false, result: stored }),
+  const logRows: Record<string, unknown>[] = [];
+  const owned = deps({ log: async entry => { logRows.push(buildQuestionLogRow(entry, 123)); }, agentFallback: fallback, getLlmState: async () => ({ started: false, result: stored }),
     acquireLlmStart: async () => true, storeLlm: async value => { stored = value; } });
   const filled = await answerQuestion("test", input.question, owned);
   assert.equal(filled.source, "news_rag"); assert.equal(calls, 1);
   assert.equal(unpackStoredQaFinal(stored!.text)?.answer, filled.answer, "durable stores served answer");
+  assert.equal((logRows.at(-1)?.classifier_observation as Record<string, unknown>)?.agentFallbackOutcome, "used", "actual log row records accepted supplement");
   const replay = await answerQuestion("test", input.question, owned);
   assert.equal(replay.answer, filled.answer); assert.equal(calls, 1, "no repeat on replay");
   const loser = await answerQuestion("test", input.question, deps({ agentFallback: fallback,
@@ -110,6 +115,7 @@ async function main() {
   assert.deepEqual(failure, baseline, "failure preserves original response");
   const blocked = await answerQuestion("test", "오늘 비밀번호 알려줘", deps({ agentFallback: fallback,
     callLlm: async () => ({ text: JSON.stringify({ status: "NOT_BASEBALL" }), inputTokens: 1, outputTokens: 1 }) }));
+  assert.equal((stored?.classifierObservation as Record<string, unknown>)?.agentFallbackOutcome, "used", "durable observation preserves supplement marker");
   assert.equal(blocked.source, "blocked"); assert.equal(calls, 1);
   assert.equal(await runVerifiedFallback(input, ports(), 1), null, "expired budget skips calls");
   console.log("agent fallback: evidence, date, URL, primary preservation, durable replay, loser, failure boundaries PASS");
