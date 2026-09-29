@@ -5787,6 +5787,12 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
   return [...repaired].at(0) ?? null;
 }
 
+/** Keep navigation recognition identical before correction and at settlement. */
+function liveScoreGuideForQuestion(question: string) {
+  // Local spelling adaptation only; never rewrite the question or shared entity grammar.
+  return liveScoreGuide(question, mentionsTeamForGate(question.replace(/vs\.?/gi, " ")));
+}
+
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
   // Total wall budget starts before quota/search/model work and remains inside the
   // existing 30s durable ownership fence. Slow primary answers simply skip fallback.
@@ -5888,7 +5894,12 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // 이 지점(직전 턴 로드·전용 경로 계산 **앞**)이 계약이다 — 뒤로 옮기면 기록·draft·선발 등
   //   전용 경로가 원문 기준으로 이미 판정을 끝내 정규화가 무의미해진다.
   if (!deps.pickedNormalizedQuestion && !deps.correctionDeclined && deps.normalizeQuestionLlm
-      && routeQuestion(question, glossary, players, false) === "llm_scope_gate") {
+      && routeQuestion(question, glossary, players, false) === "llm_scope_gate"
+      // A recognized game-navigation question already has an answer. Do not let
+      // an optional LLM spelling rewrite (키움vs롯데 → 키움 대 롯데) interpose a card.
+      // This skips correction only: context/entity/safety guards and durable
+      // settlement below still run. Tier B candidate acceptance is unchanged.
+      && !liveScoreGuideForQuestion(question)) {
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
@@ -6153,7 +6164,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "career_leaderboard"].includes(baseRoute) && !statDefinition) {
     // Versus punctuation is local to game navigation; do not change the
     // shared entity/stat grammar or resolve a two-team query as one team.
-    const scoreGuide = liveScoreGuide(question, mentionsTeamForGate(question.replace(/vs\.?/gi, " ")));
+    const scoreGuide = liveScoreGuideForQuestion(question);
     if (scoreGuide) return settleThroughDurableBoundary(
       { ...scoreGuide, source: "scope_guide" }, scoreGuide.answer,
       { userId, question, questionNorm, remaining, deps },
