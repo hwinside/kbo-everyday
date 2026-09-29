@@ -417,6 +417,18 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
       cancel: (id) => window.clearTimeout(id),
       now: () => performance.now(),
       dateAtOffset: formatKSTDateOffset,
+      fetchNext: async (signal) => {
+        const from = formatApiDate(formatKSTDateOffset(1));
+        const to = formatApiDate(formatKSTDateOffset(14));
+        const res = await fetch(`/api/games/next?from=${from}&to=${to}&teamId=${teamId}`, { signal });
+        if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
+        const data = await res.json();
+        const date = data.date as string | undefined;
+        return {
+          game: data.game ? mapApiGame(data.game as ApiGameData) : null,
+          date: date ? `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}` : undefined,
+        };
+      },
       fetchGames: async (date, signal) => {
         const res = await fetch(`/api/games?date=${formatApiDate(date)}`, { signal });
         if (!res.ok) throw new Error(`Next game lookup: ${res.status}`);
@@ -533,31 +545,24 @@ export default function HomeClientShell({ initialGames, initialLiveGames, initia
     }
     const teamId = myTeamId;
     const excludeId = rolloverBase.id;
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
-      // offset 0(오늘)부터 스캔 — 전날 결과(overnight) 표시 중엔 오늘 경기가 곧 다음 예정이다.
-      for (let offset = 0; offset <= 14; offset += 1) {
-        const date = formatKSTDateOffset(offset);
-        try {
-          const res = await fetch(`/api/games?date=${formatApiDate(date)}`);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const games = ((data.games ?? []) as ApiGameData[]).map(mapApiGame);
-          const candidate = games.find(
-            (g) => (g.homeTeamId === teamId || g.awayTeamId === teamId) &&
-              g.status === "scheduled" && g.id !== excludeId,
-          );
-          if (candidate) {
-            if (!cancelled) setRolloverNextGame({ ...candidate, dateISO: date });
-            return;
-          }
-        } catch {
-          /* 다음 경기 조회 실패는 무시 — 롤오버 폴백만 비활성 */
-        }
-      }
-      if (!cancelled) setRolloverNextGame(null);
+      try {
+        // Preserve today's game through D+14, scheduled-only and exclude the current game.
+        const from = formatApiDate(formatKSTDateOffset(0));
+        const to = formatApiDate(formatKSTDateOffset(14));
+        const res = await fetch(`/api/games/next?from=${from}&to=${to}&teamId=${teamId}&mode=scheduled&excludeId=${encodeURIComponent(excludeId)}`, { signal: controller.signal });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (controller.signal.aborted) return;
+        const date = data.date as string | undefined;
+        setRolloverNextGame(data.game && date ? {
+          ...mapApiGame(data.game as ApiGameData),
+          dateISO: `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`,
+        } : null);
+      } catch { if (!controller.signal.aborted) setRolloverNextGame(null); }
     })();
-    return () => { cancelled = true; };
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myTeamId, rolloverBase?.id]);
 
