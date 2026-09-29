@@ -184,6 +184,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:home-latest-rls-plan:pg17",
+      "tier": "ci"
+    },
+    {
       "name": "qa:home-popular-feed:pg17",
       "tier": "ci"
     },
