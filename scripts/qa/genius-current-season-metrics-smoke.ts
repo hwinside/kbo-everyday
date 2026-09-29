@@ -1,6 +1,6 @@
 /** Synthetic boundary fixtures, not production accuracy measurements. Reviewer-run. */
 import assert from "node:assert/strict";
-import { answerQuestion, type QaDeps, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, HISTORY_HOLD_ANSWER, type QaDeps, type PlayerRef } from "../../src/lib/baseball-qa/pipeline";
 import { resolveSeasonRecordIntent, type SeasonRecordRow } from "../../src/lib/baseball-qa/stats/season-record";
 const now = Date.parse("2026-09-29T12:00:00Z");
 const player = { kboId: "52402", name: "김영웅", team: "삼성", position: "내야수" };
@@ -86,6 +86,16 @@ async function main() {
   assert.equal(resolveSeasonRecordIntent("오늘 경기 몇시에 시작했어?", "batter", { playerBound: true }).kind, "none");
   assert.equal(resolveSeasonRecordIntent("김영웅 득점권", "batter", { playerBound: true }).kind, "none");
   assert.equal(resolveSeasonRecordIntent("김영웅 득점권 타율", "batter", { playerBound: true }).kind, "unsupported_season");
+  for (const q of ["김영웅 통산 기록 알려줘", "김영웅 통산 성적", "김영웅 커리어 기록", "김영웅 작년 성적", "김영웅 2024 성적"]) {
+    assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound: true }).kind, "none", q);
+    const { result, calls } = await ask(q);
+    assert.equal(result.source, "history_hold", `${q}: preserve history guide`);
+    assert.equal(result.answer, HISTORY_HOLD_ANSWER, q);
+    assert.equal(calls, 0, q);
+  }
+  for (const q of ["김영웅 2024~2026 성적", "김영웅 2024부터 2026까지 성적 비교"]) {
+    assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound: true }).kind, "none", q);
+  }
   const partial = await ask("김영웅 2026 vs 2024 성적 비교");
   assert.equal(partial.result.source, "kbo_structured");
   assert.match(partial.result.answer, /0\.251/);
@@ -103,7 +113,7 @@ async function main() {
   assert.equal(error.result.source, "error");
   const unsafe = await ask("김영웅 타율,타석");
   assert.equal(unsafe.result.source, "blocked"); assert.equal(unsafe.calls, 0);
-  for (const q of ["김영웅 오늘 성적", "김영웅 어제 성적", "김영웅 2024 성적", "김영웅 2024~2026 성적", "김영웅 최근 3경기 성적", "김영웅 2024부터 2026까지 성적 비교", "김영웅 2026 vs 2024 최고 타율 비교"]) {
+  for (const q of ["김영웅 오늘 성적", "김영웅 어제 성적", "김영웅 최근 3경기 성적", "김영웅 2026 vs 2024 최고 타율 비교"]) {
     assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound: true }).kind, "unsupported_season", q);
   }
   for (const [q, keys] of [["김영웅 2루타", ["doubles"]], ["김영웅 도루실패", ["cs"]], ["김영웅 장타율", ["slg"]], ["김영웅 피홈런", ["hr"]]] as const) {

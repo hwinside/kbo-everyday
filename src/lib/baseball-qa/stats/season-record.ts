@@ -568,9 +568,21 @@ export function resolveSeasonRecordIntent(
       selected.push({ table, metric: entry.metric, label: def.label, kind: def.kind });
     }
   }
+  const scan = scanTemporalRefs(question);
+  const years = [...new Set([...normalized.matchAll(/(?:19|20)\d{2}/g)].map((m) => Number(m[0])))];
+  const partialSeasonComparison = options?.playerBound && scan.refTotal > 1
+    && /비교|\bvs\b|대비/i.test(normalized) && years.includes(SUPPORTED_SEASON)
+    && years.length === scan.refTotal && !scan.rangeMarker && !scan.seriesWord && !scan.careerWord
+    && !/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced);
   // A roster-bound summary asks for our trusted basic season fields, not a
   // subjective assessment. Explicit metric requests retain their own scope.
   if (!selected.length && options?.playerBound && /성적|기록/.test(compact) && !/경신|신기록|최초|달성|세운|세웠/.test(compact)) {
+    // Generic historical summaries belong to the existing history guide.
+    // Keep the separately labelled current-vs-past partial comparison contract.
+    if (!partialSeasonComparison && (scan.careerWord || scan.seriesWord || scan.pastDelta !== null
+      || scan.refTotal > 1 || (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON))) {
+      return { kind: "none" };
+    }
     if (/오늘|어제|그제|내일|\d+월|\d+일|이번경기|지난경기/.test(compact)) return { kind: "unsupported_season" };
     const table = preferredTable ?? "batter";
     const definitions = table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
@@ -603,7 +615,6 @@ export function resolveSeasonRecordIntent(
   //   시점 참조(명시연도·상대연도·현재·최근범위·cutoff)를 **먼저 전부 추출**하고,
   //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
   //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
-  const scan = scanTemporalRefs(question);
   // ⓪-a 월별/경기별 축 — 우리 정본은 연도별 테이블뿐이다. 월·경기 단위 시계열은
   //   서빙 데이터가 없으므로 어느 쪽으로도 축소하지 않고 fail-close (삼순 10차).
   if (/월별|경기별/.test(scan.spaced)) return { kind: "unsupported_season" };
@@ -617,11 +628,7 @@ export function resolveSeasonRecordIntent(
   if (scan.refTotal > 1) {
     // Only explicit discrete season comparisons get a labelled partial answer.
     // Ranges, career aggregates and extrema must never become a current total.
-    const years = [...new Set([...normalized.matchAll(/(?:19|20)\d{2}/g)].map((m) => Number(m[0])))];
-    const discreteComparison = /비교|\bvs\b|대비/i.test(normalized);
-    if (options?.playerBound && discreteComparison && years.includes(SUPPORTED_SEASON)
-      && years.length === scan.refTotal && !scan.rangeMarker && !scan.seriesWord && !scan.careerWord
-      && !/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced)) {
+    if (partialSeasonComparison) {
       return { kind: "query", query, queries: selected, unavailableSeasons: years.filter((y) => y !== SUPPORTED_SEASON) };
     }
     return { kind: "unsupported_season" };
