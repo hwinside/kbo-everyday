@@ -382,3 +382,22 @@ test('origin binding rejects ambiguous topics and preserves longer dictionary id
   assert.match(resolveTermOrigin('병살 유래', glossary)!.answer, /倂殺/);
   assert.equal(resolveTermOrigin('불펜이 뭐야', glossary), null);
 });
+
+
+test('origin uses production 사구 alias and concise dictionary meaning', () => {
+  const glossary = [
+    { term: '몸에 맞는 공', aliases: ['사구', 'HBP'], answer: '투구가 타자의 몸에 맞는 것입니다.' },
+    { term: '보크', aliases: [], answer: '주자가 있을 때 투수가 규칙을 어기는 동작입니다. 주자에게 진루가 주어집니다. 추가 설명입니다.' },
+  ];
+  for (const q of ['사구 어원', '사구 유래']) {
+    assert.match(resolveTermOrigin(q, glossary)!.answer, /몸에 맞는 공.*볼넷.*확인/);
+  }
+  assert.match(resolveTermOrigin('그 단어의 유래', glossary, '사구가 뭐야')!.answer, /볼넷.*확인/);
+  assert.doesNotMatch(resolveTermOrigin('몸에 맞는 공 유래', glossary)!.answer, /볼넷.*확인/);
+  assert.doesNotMatch(resolveTermOrigin('HBP 유래', glossary)!.answer, /볼넷.*확인/);
+  const answer = resolveTermOrigin('보크 유래', glossary)!.answer;
+  assert.match(answer, /현재 뜻: 주자가 있을 때 투수가 규칙을 어기는 동작입니다\./);
+  assert.doesNotMatch(answer, /주자에게 진루|추가 설명/);
+  assert.match(answer, /역사적 유래는 확인하지 못했습니다/);
+  assert.equal(resolveTermOrigin('보크가 뭐야', glossary), null);
+});
