@@ -28,6 +28,7 @@
     "qa:home-popular-feed": "tsx scripts/qa/home-popular-feed-gate.mjs",
     "qa:home-popular-feed:selftest": "tsx scripts/qa/home-popular-feed-gate.mjs --selftest",
     "qa:home-popular-feed:hook": "tsx scripts/qa/home-popular-feed-hook-smoke.ts",
+    "qa:home-latest-rls-plan:pg17": "bash scripts/qa/home-latest-rls-plan-pg17.sh",
     "qa:home-popular-feed:pg17": "bash scripts/qa/home-popular-posts-rpc-pg17.sh",
     "qa:home-popular-feed:pglite": "tsx scripts/qa/home-popular-posts-rpc-pglite-gate.ts",
     "qa:summary-final-transition": "tsx scripts/qa/summary-final-transition-gate.mjs",

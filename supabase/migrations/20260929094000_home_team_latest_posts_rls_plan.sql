@@ -4,6 +4,8 @@
 -- SQL-language generic plans can still choose bitmap + sort after RLS bypass.
 -- PL/pgSQL + per-function custom plans keep the actual team/limit/cursor visible
 -- to the planner, including callers that force generic plans in their session.
+-- Custom plans pay per-call planning cost (~2ms in production measurements)
+-- to avoid the much larger generic-plan scan/sort (~94ms for kia).
 -- Future posts visibility policies must update this definer RPC as well.
 -- Fail closed if the current public-read premise or owner privileges drift.
 DO $guard$
