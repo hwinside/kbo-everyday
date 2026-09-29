@@ -48,6 +48,84 @@ function relativeDayDateSupported(question: string, now: string, text: string, q
   });
 }
 
+/** "Today's news" asks for publication freshness, not the event's day.
+ * An explicit event question still wins if it also happens to mention news.
+ */
+export function asksRelativeEventDay(question: string): boolean {
+  if (!/오늘|어제/u.test(question)) return false;
+  const eventQuestion = /어디.{0,12}(?:가|갔|향|떠|출)|(?:경기|시합).{0,8}(?:있|없|하|했|해|열)|(?:출발|출국|귀국|복귀).{0,8}(?:했|하|해|합|예정)|언제|했어|했나|했니|됐어|됐나/u.test(question);
+  return eventQuestion || !/뉴스|소식|기사|보도/u.test(question);
+}
+
+// Event families identify the action; subject words such as "삼성" alone must not
+// bind an unrelated sentence's date to a trip/game/injury answer.
+const PRIMARY_EVENT_ACTIONS = [
+  /출발|출국|떠나|떠났|향하|향합|향했|방문|찾아|교류전/u,
+  /귀국|돌아왔|돌아옵|돌아온/u,
+  /경기|시합|맞대결|대결|승리|패배|이겼|졌습/u,
+  /부상|재활|복귀|회복/u,
+];
+function eventSentences(text: string): string[] {
+  return text.split(/(?<=[다요])\.\s*|[!?]\s*|[\r\n]+/u).map(s => s.trim()).filter(Boolean);
+}
+function withoutDurations(text: string): string {
+  return text.replace(/\d+\s*박\s*\d+\s*일(?:간)?|\d+\s*일\s*(?:간|동안)/gu, " ");
+}
+
+/** Normalize explicit/relative-month calendar dates; durations are not event days. */
+function primaryEventDates(text: string, now: string): string[] {
+  const current = new Date(Date.parse(now) + 9 * 3600000);
+  let year = current.getUTCFullYear();
+  let month = current.getUTCMonth() + 1;
+  // A reporting date ("29일 알렸다") does not date the quoted trip/event.
+  // Strip only the explicit reporting-date phrase, preserving any event date.
+  const cleaned = withoutDurations(text)
+    .replace(/(?:(?:\d{4}\s*년\s*)?\d{1,2}\s*월\s*)?\d{1,2}\s*일(?=\s*(?:알렸|알립|발표했|발표합|밝혔|밝힙|보도했|보도합))/gu, " ")
+    .replace(/다음\s*달|내달/gu, `${month === 12 ? year + 1 : year}년 ${month === 12 ? 1 : month + 1}월`);
+  const dates: string[] = [];
+  for (const match of cleaned.matchAll(/(?:(\d{4})\s*년\s*)?(?:(\d{1,2})\s*월\s*)?(\d{1,2})\s*일/gu)) {
+    if (match[1]) year = Number(match[1]);
+    if (match[2]) month = Number(match[2]);
+    const day = Number(match[3]);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) continue;
+    dates.push(`${year}:${month}:${day}`);
+  }
+  return dates;
+}
+
+/** Compare only source sentences describing the answer's action, not every article date.
+ * No matching dated event sentence => defer to the independently verified supplement.
+ * Publication questions preserve the existing news route and its publication-window check.
+ */
+export function primaryNewsDateSupported(question: string, now: string, answer: string, bodies: string[]): boolean {
+  if (!asksRelativeEventDay(question)) return true;
+  if (!Number.isFinite(Date.parse(now)) || /오늘/u.test(question) && /어제/u.test(question)) return false;
+  const claims = eventSentences(answer);
+  return claims.length > 0 && claims.every(claim => {
+    const actions = PRIMARY_EVENT_ACTIONS.filter(action => action.test(claim));
+    if (!actions.length) return false;
+    const sentences = bodies.flatMap(eventSentences).filter(sentence => actions.some(action => action.test(sentence)));
+    // Prefer sentences sharing the answer's concrete subject/place, where available.
+    const anchors = (claim.match(/[가-힣A-Za-z]{2,}/gu) ?? [])
+      .map(word => word.replace(/(?:으로|에서|에게|까지|부터|은|는|이|가|을|를|의|로|와|과)$/u, ""))
+      .filter(word => word.length >= 2 && !actions.some(action => action.test(word))
+        && !/^(?:오늘|어제|예정|입니다|합니다|있습니다|없습니다|않습니다|아니라)$/u.test(word));
+    const matching = sentences.filter(sentence => (!anchors.length || anchors.some(anchor => sentence.includes(anchor)))
+      && primaryEventDates(sentence, now).length > 0);
+    if (!matching.length) return false;
+    // Choose the best lexical match to this claim, not unrelated retrieved articles.
+    const score = (sentence: string) => anchors.filter(anchor => sentence.includes(anchor)).length;
+    const best = Math.max(...matching.map(score));
+    const supporting = matching.filter(sentence => score(sentence) === best);
+    const target = new Date(Date.parse(now) + 9 * 3600000 - (/어제/u.test(question) ? 86400000 : 0));
+    const targetDay = `${target.getUTCFullYear()}:${target.getUTCMonth() + 1}:${target.getUTCDate()}`;
+    const answerDates = primaryEventDates(claim, now);
+    return supporting.every(sentence => primaryEventDates(sentence, now)
+      .every(date => date === targetDay || answerDates.includes(date)));
+  });
+}
+
 /** Publication-window check is deterministic; event-date entailment still needs verification. */
 export function citationWithinQuestionDay(question: string, now: string, row: Evidence): boolean {
   const current = Date.parse(now);

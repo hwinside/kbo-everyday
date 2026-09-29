@@ -1,4 +1,4 @@
-import { fallbackEligible, type FallbackAnswer } from "./agent/fallback";
+import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
@@ -2538,7 +2538,10 @@ export function resolvePlayerInjuryNewsCandidate(
   question: string, player: RagPlayerCandidate, nowMs: number,
 ): RagNewsCandidate | null {
   const q = question.normalize("NFKC").toLowerCase();
-  if (!/부상|골절|다쳤|다친|통증|수술|재활|복귀|결장|이탈|근황/.test(q)
+  // Explicit publication-day questions may use ordinary news vocabulary, but
+  // still require the resolved roster identity and publication window below.
+  const publicationDayNews = /오늘|어제/u.test(q) && /뉴스|소식|기사|보도/u.test(q);
+  if ((!/부상|골절|다쳤|다친|통증|수술|재활|복귀|결장|이탈|근황/.test(q) && !publicationDayNews)
     || /역대|이력|병력|통산|치료법|치료 방법|진단해|약 추천|내\s*(?:무릎|어깨|허리)|mlb|npb/.test(q)
     || NUMERIC_VALUE_ASK.test(q) || /내일|모레|다음\s*주|\d{1,2}\s*(?:월|일)/.test(q)) return null;
   const explicit = resolveNewsRecency(question, nowMs);
@@ -3543,7 +3546,9 @@ export function answerInQuestionScope(_question: string, answer: string): boolea
   //
   //   ⚠️ 다만 denylist 는 **보조**다. 이게 주 판정이 되면 목록에 없는 단어가 무한히
   //     새어나온다 — `수영`·`FC 서울` 을 다 적을 수는 없다. 주 판정은 아래 ①의 양성 신호다.
-  if (ANSWER_OFF_TOPIC.test(normalized)) return false;
+  // The tournament name is not a video-game topic. Keep every other denylist
+  // hit (including a separate 게임 mention) and the baseball-anchor check intact.
+  if (ANSWER_OFF_TOPIC.test(normalized.replace(/아시안\s*게임/gu, " "))) return false;
   const tokens = questionTokens(normalized);
   // ① 답변 자체의 야구 신호 — 룰·용어 어휘, 고정밀 앵커, 또는 KBO 구단명.
   //   `두산 베어스의 홈구장은 잠실야구장입니다.` 처럼 정상 구단 답변에는 룰 어휘가 없고
@@ -5498,17 +5503,25 @@ async function answerNewsRagQuestion(
 
   // 숫자는 구단 tier2 와 동일하게 전면 HOLD 다(`numericEvidence` 미지정 = 기본값 금지).
   const validated = validateRagResponse(llm.text, { maxChars: RAG_ANSWER_MAX_CHARS });
-  if (validated.kind !== "grounded") {
+  // A publication window cannot establish the event day. Keep tier2 numeric HOLD;
+  // date omissions/unknown dates instead enter the existing verified supplement.
+  const dateSupported = validated.kind === "grounded" && primaryNewsDateSupported(
+    question, new Date(deps.now ? deps.now() : Date.now()).toISOString(),
+    validated.answer, evidence.map(row => row.content),
+  );
+  if (validated.kind !== "grounded" || !dateSupported) {
+    const observation = ragObservation("news", question, validated.kind === "grounded"
+      ? { kind: "insufficient", reason: "event_date_unverified" } : validated);
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②).
     // 🔴 뉴스가 이 계측의 최대 관심축이다 — 기사에는 숫자가 거의 항상 있어 숫자 HOLD 손해가
     //   여기에 몰려 있을 가능성이 크다. 경로 라벨이 없으면 그 손실을 unsure 더미에서 못 꺼낸다.
     const final = await supplementUnavailable({
-      answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...ragObservation("news", question, validated),
+      answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...observation,
     }, question, deps);
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
     await deps.log({ userId, question, questionNorm, matchPath: final.source,
       answer: final.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("news", question, validated) });
+      ...observation });
     return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);

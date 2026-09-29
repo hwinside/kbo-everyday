@@ -73,14 +73,14 @@ const NOW_MS = Date.parse("2026-08-08T03:00:00.000Z");
 /**
  * 기사 근거 fixture.
  *
- * ⚠️ 내용·URL 형식은 production 적재분 실측 그대로다(2026-08-08 백필).
+ * ⚠️ URL 형식은 production 적재분 기준이며 본문은 날짜 검증용 합성 fixture다.
  * `canonicalUrl` 은 출처 allowlist 를 통과해야 하므로 실제 네이버 재송고 링크 형식을 쓴다 —
  * 가짜 URL 을 쓰면 출처가 안 붙는 게 정상인데 게이트가 그걸 결함으로 오판한다.
  */
 const LG_YESTERDAY: RagEvidence = {
   content:
     "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-    "지난해 LG 트윈스는 프로야구 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+    "8월 7일 LG 트윈스의 젊은 타자들이 경기에서 승리했습니다.",
   pageTitle: "천성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
   canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
   revision: "article:2b1c9f",
@@ -141,7 +141,7 @@ function makeDeps(overrides: Partial<QaDeps> = {}): {
       return {
         text: JSON.stringify({
           status: RAG_GROUNDED_SENTINEL,
-          answer: "젊은 타자들이 홈런을 합작하며 떠난 주전 외야수 자리를 메우고 있습니다.",
+          answer: "어제 LG 트윈스의 젊은 타자들이 경기에서 승리했습니다.",
         }),
         inputTokens: 10,
         outputTokens: 5,
@@ -329,8 +329,30 @@ async function run(): Promise<void> {
     // 숫자 전면 HOLD — 본문에 숫자가 남으면 언론사 헤드라인 재발행이다.
     assert.ok(!/\d/.test(result.answer.split("📄")[0]),
       `기사 답변 본문에 숫자가 남았다: ${result.answer}`);
+    assert.match(result.answer, /어제 LG/, "답문에도 기준일(어제)이 명시되어야 한다");
     assert.equal(logs.at(-1)?.matchPath, "news_rag");
     ok("최신 서술형 — news 후보 → 기사 근거 조회 → source=news_rag + 출처 + cache 0");
+  }
+
+  // 같은 게시시각·답문이라도 본문의 사건 날짜가 없으면 거절한다.
+  {
+    let supplements = 0;
+    let reason: unknown;
+    const { deps, calls } = makeDeps({
+      searchNewsRag: async () => [{ ...LG_YESTERDAY,
+        content: LG_YESTERDAY.content.replace("8월 7일 ", "") }],
+      agentFallback: async () => { supplements++; return null; },
+      log: async entry => { reason = entry.ragDiscardReason; },
+    });
+    const result = await answerQuestion("u-undated", "어제 LG 무슨 일 있었어?", deps);
+    assert.equal(calls.newsLlm.length, 1);
+    assert.equal(result.source, "unsure", "무날짜 사건 본문은 게시일만으로 서빙할 수 없다");
+    assert.equal(result.answer, NEWS_UNAVAILABLE_ANSWER);
+    assert.equal(supplements, 1, "날짜 폐기는 검증 보강 경로로 진입해야 한다");
+    assert.equal(reason, "event_date_unverified");
+    assert.equal(calls.genericLlm, 0);
+    assert.equal(calls.teamLlm, 0);
+    ok("무날짜 사건 본문 — 날짜 폐기 관측·검증 보강 진입·unsure 유지");
   }
 
   // ── ⑤ fresh 근거 0건이면 폴백 금지, 명시 fail-close (삼순 ②) ────────────
@@ -539,7 +561,7 @@ async function run(): Promise<void> {
       ...LG_YESTERDAY,
       content:
         "'11이닝 무실점' 키움 전준표·'20안타' LG 손용준, 프로야구 7월 퓨처스 신인왕\n" +
-        "LG 트윈스가 3대 2로 이겼다. 손용준은 20안타를 기록했다.",
+        "8월 7일 LG 트윈스가 3대 2로 이겼습니다. 손용준은 20안타를 기록했다.",
     };
     for (const answerText of [
       "LG가 3대 2로 이겼어요.",           // 근거에 그대로 적힌 스코어
@@ -565,7 +587,7 @@ async function run(): Promise<void> {
         callNewsRagLlm: async () => ({
           text: JSON.stringify({
             status: RAG_GROUNDED_SENTINEL,
-            answer: "키움 전준표와 LG 손용준이 퓨처스 월간 신인왕으로 뽑혔습니다.",
+            answer: "어제 LG 트윈스가 경기에서 이겼습니다.",
           }),
           inputTokens: 1, outputTokens: 1,
         }),
@@ -966,12 +988,14 @@ async function run(): Promise<void> {
       const candidate = resolvePlayerInjuryNewsCandidate(question, player, now)!;
       assert.equal(candidate.teamId, 6); assert.equal(candidate.playerName, "김도영");
       // Explicit 'today' must not silently include yesterday's reporting.
-      const dated = question.includes("오늘") ? { ...article, asOf: "2026-09-10T01:00:00Z" } : article;
+      // Synthetic same-day event fixture, not a claim about the real player's timeline.
+      const dated = question.includes("오늘") ? { ...article, asOf: "2026-09-10T01:00:00Z",
+        content: "9월 10일 김도영은 부상으로 코뼈 골절 소견을 받았습니다." } : article;
       const { deps, calls } = makeDeps({ now: () => now,
         searchNewsRag: async (c) => { assert.equal(c.playerName, "김도영"); return [LG_YESTERDAY, dated]; },
         callNewsRagLlm: async (_q, evidence) => {
           assert.equal(evidence.length, 1); assert.match(evidence[0].content, /김도영/);
-          return { text: JSON.stringify({ status: "GROUNDED", answer: "공개 보도에 따르면 김도영은 코뼈 골절 소견을 받았습니다. 치료 방법은 신중하게 결정할 예정이며 수술 확정 여부는 이 기사에서 확인되지 않습니다." }), inputTokens: 1, outputTokens: 1 };
+          return { text: JSON.stringify({ status: "GROUNDED", answer: question.includes("오늘") ? "오늘 김도영은 부상으로 코뼈 골절 소견을 받았습니다." : "공개 보도에 따르면 김도영은 코뼈 골절 소견을 받았습니다. 치료 방법은 신중하게 결정할 예정이며 수술 확정 여부는 이 기사에서 확인되지 않습니다." }), inputTokens: 1, outputTokens: 1 };
         },
       });
       const result = await answerQuestion("qa-injury-news", question, deps);

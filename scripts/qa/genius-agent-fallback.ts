@@ -1,19 +1,20 @@
+import primaryNewsBodies from "./fixtures/genius-primary-news-dates-20260929.json";
 import { officialEventContracts } from "./genius-official-events";
 import { boundedNewsContracts } from "./genius-bounded-news";
 import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import assert from "node:assert/strict";
-import { runVerifiedFallback, quoteSupportsNumbers, citationWithinQuestionDay, fallbackEligible } from "../../src/lib/baseball-qa/agent/fallback";
-import { answerQuestion, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
+import { runVerifiedFallback, primaryNewsDateSupported, quoteSupportsNumbers, citationWithinQuestionDay, fallbackEligible } from "../../src/lib/baseball-qa/agent/fallback";
+import { answerQuestion, resolveNamedPlayerCandidate, resolvePlayerInjuryNewsCandidate, validateLlmResponse, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
 import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
 const evidence: Evidence = { id: "news:test", source: "news", title: "일정", content: "야구 대표팀은 대회 일정을 추후 발표할 예정입니다.", url: "https://sports.naver.com/news/1", asOf: input.now };
 const claim = { text: evidence.content, citations: [{ id: evidence.id, quote: evidence.content }] };
-function ports(options: { row?: Evidence; text?: string; quote?: string; verified?: boolean; temporal?: boolean; core?: boolean; sameDay?: boolean } = {}): AgentPorts {
+function ports(options: { row?: Evidence; text?: string; quote?: string; verified?: boolean; temporal?: boolean; core?: boolean; sameDay?: boolean | null } = {}): AgentPorts {
   let turn = 0;
   return { search: async () => [options.row ?? evidence], decide: async () => ++turn === 1
     ? { action: "search", source: options.row?.source ?? evidence.source, query: input.question, terms: ["아시안게임"] }
     : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text, citations: [{ id: claim.citations[0].id, quote: options.quote ?? claim.citations[0].quote }] }] }
-    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true, eventDateMatchesQuestion: options.sameDay ?? true } };
+    : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true, ...(options.sameDay === null ? {} : { eventDateMatchesQuestion: options.sameDay ?? true }) } };
 }
 function deps(overrides: Partial<QaDeps> = {}): QaDeps {
   return { loadGlossary: async () => [], loadPlayers: async () => [], getCache: async () => null,
@@ -63,6 +64,142 @@ async function main() {
   assert.ok(await runVerifiedFallback({ ...input, question: "오늘 삼성 퓨처스팀 어디 가?" },
     ports({ row: { ...evidence, content: sameDayText }, text: "일본 후쿠오카로 출발합니다.", quote: sameDayText })),
     "same-day event does not require redundant date in answer");
+  assert.equal(await runVerifiedFallback({ ...input, question: "오늘 삼성 퓨처스팀 어디 가?" },
+    ports({ row: { ...evidence, content: sameDayText }, text: sameDayText, quote: sameDayText, sameDay: null })), null,
+    "missing eventDateMatchesQuestion rejected even when every date is present and matches today");
+  // Final production validation, not just runVerifiedFallback, defines a served answer.
+  for (const [question, body, accepted] of [
+    ["아시안게임 야구 어떻게 됐어?", "한국 대표팀이 금메달을 획득했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "한국 야구 대표팀이 금메달을 획득했습니다.", true],
+    ["아시안게임 야구 명단 알려줘", "야구 대표팀 명단은 24명입니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 금메달을 획득했습니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안 게임 야구 대표팀은 금메달을 획득했습니다.", true],
+    ["아시안게임 야구 명단 알려줘", "아시안게임 야구 대표팀 명단은 24명입니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 축구 대표팀이 금메달을 획득했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 영화에 출연했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "아시안게임 야구 대표팀은 모바일 게임을 추천합니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "리그 오브 레전드는 인기 게임입니다.", false],
+    ["김도영 최근 근황", "KIA 타이거즈 김도영은 복귀를 준비합니다.", true],
+    ["아시안게임 야구 어떻게 됐어?", "축구 대표팀이 금메달을 획득했습니다.", false],
+    ["아시안게임 야구 어떻게 됐어?", "LG 티켓 가격은 저렴합니다.", false],
+  ] as const) {
+    const checked = validateLlmResponse(JSON.stringify({ status: "BASEBALL_RULE_TERM", answer: body }), question);
+    assert.equal(checked.kind === "answer", accepted, body);
+    const result = await answerQuestion("test", question, deps({ agentFallback: async () => ({
+      answer: body + "\n\n📄 출처: 네이버 스포츠", source: "news_rag", sourceUrl: evidence.url,
+    }) }));
+    assert.equal(result.answer.includes(body), accepted, "actual supplement boundary: " + body);
+  }
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", [departure]), false);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "10월 1일 출발합니다.", [departure]), true);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", [sameDayText]), true);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", ["후쿠오카를 방문합니다."]), false);
+  assert.equal(primaryNewsDateSupported("최근 삼성 소식", input.now, "후쿠오카로 향합니다.", [departure]), true);
+  // Reviewer production snapshots: multiple documents, relative-month dates, durations,
+  // an unrelated MMA article and date-free reports must not poison publication questions.
+  const capturedNow = primaryNewsBodies.capturedAt;
+  for (const [question, text, bodies] of [
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 일본 소프트뱅크와 교류전을 치릅니다.", primaryNewsBodies.samsung],
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", primaryNewsBodies.samsung],
+    ["오늘 김도영 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+    ["오늘 김도영 복귀 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+    ["어제 김도영 기사 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+  ] as const) assert.equal(primaryNewsDateSupported(question, capturedNow, text, bodies), true, question);
+  for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?", "오늘 삼성 어디 가는지 뉴스 알려줘"]) {
+    for (const text of ["일본 후쿠오카로 향합니다.", "후쿠오카를 방문하여 교류전을 치릅니다."]) {
+      assert.equal(primaryNewsDateSupported(question, capturedNow, text, primaryNewsBodies.samsung), false,
+        "publication noun must not bypass explicit event question");
+    }
+    assert.equal(primaryNewsDateSupported(question, capturedNow,
+      "삼성 퓨처스팀은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", primaryNewsBodies.samsung), true,
+      "actual event dates suffice; unrelated dates and 14박 15일 are not required");
+  }
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow, "후쿠오카로 향합니다.",
+    ["삼성은 9월 29일 훈련했습니다. 삼성은 10월 1일 후쿠오카로 출발합니다."]), false,
+    "an unrelated same-day training sentence cannot establish trip date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow, "후쿠오카로 향합니다.",
+    ["삼성은 9월 29일 후쿠오카로 출발합니다. 다른 선수는 10월 1일 귀국합니다."]), true,
+    "unrelated other event dates do not block same-day travel");
+  const announcedTrip = '삼성은 "10월 1일부터 15일까지 후쿠오카를 방문한다"고 29일 알렸다.';
+  assert.equal(primaryNewsDateSupported("어제 삼성 어디 가?", capturedNow,
+    "삼성은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", [announcedTrip]), true,
+    "announcement day is not a required trip date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow,
+    "삼성은 후쿠오카를 방문합니다.", [announcedTrip]), false,
+    "removing reporting date must retain the off-day event date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow,
+    "삼성은 후쿠오카를 방문합니다.", ['삼성은 "후쿠오카를 방문한다"고 29일 알렸다.']), false,
+    "announcement day alone never establishes same-day travel");
+  assert.equal(primaryNewsDateSupported("어제 김도영 뭐 했어?", capturedNow,
+    "김도영은 금메달을 걸고 귀국했습니다.", ["김도영은 9월 28일 금메달을 걸고 귀국했습니다."]), true,
+    "explicit yesterday return remains supported");
+  // Primary news path must reject before durable storage and logging; replay cannot leak it.
+  for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?"]) {
+    let savedNews: LlmResult | null = null;
+    let supplements = 0;
+    const newsLogs: Array<string | null> = [];
+    const discardReasons: unknown[] = [];
+    const newsDeps = deps({ enableNewsRag: true,
+      searchNewsRag: async () => primaryNewsBodies.samsung.map(content => ({ content, pageTitle: "삼성 퓨처스팀", canonicalUrl: evidence.url,
+        revision: "test", sectionPath: "news", asOf: question.startsWith("어제") ? "2026-09-28T03:00:00Z" : input.now,
+        sourceGrade: "tier2", sourceKind: "news_article" })),
+      callNewsRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer: "후쿠오카를 방문하여 교류전을 치릅니다." }), inputTokens: 1, outputTokens: 1 }),
+      agentFallback: async () => { supplements++; return null; },
+      log: async entry => { newsLogs.push(entry.answer); discardReasons.push(entry.ragDiscardReason); },
+      getLlmState: async () => ({ started: false, result: savedNews }), acquireLlmStart: async () => true,
+      storeLlm: async value => { savedNews = value; },
+    });
+    const result = await answerQuestion("test", question, newsDeps);
+    assert.equal(result.source, "unsure");
+    assert.equal(supplements, 1, "date failure enters verified supplement");
+    assert.ok(savedNews);
+    assert.equal(unpackStoredQaFinal((savedNews as LlmResult).text)?.answer, result.answer);
+    assert.ok(newsLogs.every(answer => !answer?.includes("교류전을 치릅니다")));
+    assert.equal((await answerQuestion("test", question, newsDeps)).answer, result.answer);
+    assert.equal(supplements, 1, "durable replay does not rerun fallback");
+    assert.deepEqual(discardReasons, ["event_date_unverified", "event_date_unverified"], "date discard reason survives log and replay");
+    assert.equal(unpackStoredQaFinal((savedNews as LlmResult).text)?.ragDiscardReason, "event_date_unverified");
+  }
+  for (const [question, content] of [["오늘 삼성 퓨처스팀 어디 가?", sameDayText], ["최근 삼성 퓨처스팀 소식", departure]]) {
+    let newsCalls = 0;
+    const result = await answerQuestion("test", question, deps({ enableNewsRag: true,
+      searchNewsRag: async () => [{ content, pageTitle: "삼성 퓨처스팀", canonicalUrl: evidence.url,
+        revision: "test", sectionPath: "news", asOf: input.now, sourceGrade: "tier2", sourceKind: "news_article" }],
+      callNewsRagLlm: async () => { newsCalls++; return { text: JSON.stringify({ status: "GROUNDED", answer: "후쿠오카를 방문하여 교류전을 치릅니다." }), inputTokens: 1, outputTokens: 1 }; },
+      agentFallback: async () => { throw new Error("successful primary must not call supplement"); },
+    }));
+    assert.equal(newsCalls, 1);
+    assert.equal(result.source, "news_rag", "same-day and non-relative primary answers preserved");
+    assert.ok(result.answer.includes("교류전을 치릅니다"));
+  }
+  for (const [question, answer, bodies] of [
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 일본 소프트뱅크와 교류전을 치릅니다.", primaryNewsBodies.samsung],
+    ["오늘 김도영 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+  ] as const) {
+    let supplements = 0;
+    let newsCalls = 0;
+    const result = await answerQuestion("test", question, deps({ enableNewsRag: true,
+      enablePlayerRag: true,
+      loadPlayers: async () => [{ name: "김도영", kboId: "52605", team: "KIA" }],
+      searchNewsRag: async () => bodies.map(content => ({ content, pageTitle: question, canonicalUrl: evidence.url,
+        revision: "snapshot", sectionPath: "news", asOf: "2026-09-29T02:59:00Z", sourceGrade: "tier2", sourceKind: "news_article" })),
+      callNewsRagLlm: async () => { newsCalls++; return { text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }; },
+      agentFallback: async () => { supplements++; return null; },
+    }));
+    assert.equal(newsCalls, 1, "publication question must reach the primary news LLM: " + question);
+    assert.equal(result.source, "news_rag", "multi-article publication question retains primary answer: " + question + " / " + result.answer);
+    assert.ok(result.answer.includes(answer));
+    assert.equal(supplements, 0);
+  }
+  const newsPlayer = { entityType: "player" as const, entityId: "52605", name: "김도영", team: "KIA", sourceKey: "namu:player:52605" };
+  for (const question of ["김도영 소식 알려줘", "내일 김도영 뉴스", "오늘 김도영 타율 얼마인지 소식", "오늘 LG 김도영 소식", "오늘 김도영 치료법 소식"]) {
+    assert.equal(resolvePlayerInjuryNewsCandidate(question, newsPlayer, Date.parse(input.now)), null,
+      "publication extension must not bypass recency/stat/team/medical guards: " + question);
+  }
+  assert.equal(resolveNamedPlayerCandidate("오늘 김도영 소식 알려줘", []), null, "missing roster identity cannot enter player news");
+  assert.equal(resolveNamedPlayerCandidate("오늘 김도영 소식 알려줘", [
+    { name: "김도영", kboId: "52605", team: "KIA" }, { name: "김도영", kboId: "other", team: "LG" },
+  ]), null, "ambiguous player identity cannot enter player news");
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
   assert.equal(await runVerifiedFallback(input, ports({ verified: false })), null, "unsupported meaning rejected");

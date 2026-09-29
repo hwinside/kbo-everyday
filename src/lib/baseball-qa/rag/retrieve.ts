@@ -1145,6 +1145,7 @@ export const RAG_DISCARD_REASONS = [
   "numeric_claim_ungrounded",
   "numeric_not_in_evidence",
   "numeric_not_in_question",
+  "event_date_unverified",
 ] as const;
 
 export type RagDiscardReason = (typeof RAG_DISCARD_REASONS)[number];
