@@ -8,11 +8,11 @@ import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
 const evidence: Evidence = { id: "news:test", source: "news", title: "일정", content: "야구 대표팀은 대회 일정을 추후 발표할 예정입니다.", url: "https://sports.naver.com/news/1", asOf: input.now };
 const claim = { text: evidence.content, citations: [{ id: evidence.id, quote: evidence.content }] };
-function ports(options: { row?: Evidence; text?: string; verified?: boolean; temporal?: boolean; core?: boolean } = {}): AgentPorts {
+function ports(options: { row?: Evidence; text?: string; quote?: string; verified?: boolean; temporal?: boolean; core?: boolean } = {}): AgentPorts {
   let turn = 0;
   return { search: async () => [options.row ?? evidence], decide: async () => ++turn === 1
     ? { action: "search", source: options.row?.source ?? evidence.source, query: input.question, terms: ["아시안게임"] }
-    : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text }] }
+    : turn === 2 ? { action: "answer", claims: [{ ...claim, text: options.text ?? claim.text, citations: [{ id: claim.citations[0].id, quote: options.quote ?? claim.citations[0].quote }] }] }
     : { supported: options.verified ?? true, temporalSupported: options.temporal ?? true, answersCore: options.core ?? true } };
 }
 function deps(overrides: Partial<QaDeps> = {}): QaDeps {
@@ -30,6 +30,19 @@ async function main() {
   assert.equal(await runVerifiedFallback(input, ports({ text: "제공된 자료에서는 일정을 확인할 수 없습니다." })), null, "internal retrieval language never served");
   assert.equal(await runVerifiedFallback(input, ports({ text: "개최일은 확인할 수 없으며 선수단 소집만 알려졌습니다." })), null, "camp/departure cannot substitute for schedule even if verifier approves");
   assert.equal(positive?.source, "news_rag");
+  // R1: all model approvals are true; generic tournament updates must still reject previews.
+  const preview = "곽빈이 선발로 예고되었습니다.";
+  for (const question of ["아시안게임은?", "아시안게임 야구 어떻게 됐어?", "아시안게임 결과"]) {
+    assert.equal(await runVerifiedFallback({ ...input, question, now: "2026-09-21T11:49:00Z" },
+      ports({ row: { ...evidence, content: evidence.content + preview, asOf: "2026-09-21T08:00:00Z" }, text: preview, quote: preview })), null,
+    "pregame starter preview cannot answer an in-progress tournament update");
+  }
+  assert.ok(await runVerifiedFallback({ ...input, question: "아시안게임 선발 누구?" },
+    ports({ row: { ...evidence, content: preview }, text: preview, quote: preview })),
+  "explicit starter query keeps the verifier path rather than blanket blocking previews");
+  assert.equal(quoteSupportsNumbers("2026 아시안게임 금메달입니다.", "아시안게임 금메달입니다."), false, "do not relax uncited year guard");
+  assert.equal(quoteSupportsNumbers("아시안게임 금메달입니다.", "아시안게임 금메달입니다."), true);
+  assert.equal(quoteSupportsNumbers("9월 21일부터 27일까지입니다.", "9월 21일부터 27일까지"), true);
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
   assert.equal(await runVerifiedFallback(input, ports({ verified: false })), null, "unsupported meaning rejected");
