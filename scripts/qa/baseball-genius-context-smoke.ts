@@ -3,6 +3,7 @@
 // 같은 케이스 안에서 대조한다. DB 축(직전 turn 선정 SQL)은 실제 migration을 PGlite에 적재해
 // 검증하고, 판정 축(자격·TTL·closed-set·cache bypass)은 pipeline/context 순수 함수로 검증한다.
 import assert from "node:assert/strict";
+import { RECORD_MISSING_ANSWER } from "../../src/lib/baseball-qa/stats/season-record";
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -588,7 +589,7 @@ async function verifyProductionRosterLoaderSeam() {
   // ⚠️ 2차 교체 2026-08-05: `WAR` 도 답변 가능해졌다 — 저장 컬럼이 아니라 기본 스탯에서
   // 파생되는 값이고(`calcBatterSaber`), 앱이 이미 선수 상세·기록실에서 보여주고 있었다.
   // "DB 에 컬럼이 없다"를 "데이터가 없다"로 읽은 게 `도루`·`OPS` 때와 똑같은 오판이었다.
-  for (const metric of ["스탯 알려줘", "기록 알려줘"]) {
+  for (const metric of ["스탯 알려줘"]) {
     const question = `${subject.name} ${metric}`;
     for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
     const result = await answerQuestion("u-prod-roster", question, prodDeps());
@@ -598,6 +599,42 @@ async function verifyProductionRosterLoaderSeam() {
     assert.notEqual(result.answer, BLOCKED_ANSWER,
       `${question}: 기록 질문에 '룰/용어만' 안내를 보내지 않는다`);
     assert.equal(counts.llm, 0, `${question}: generic LLM 0`);
+    assert.equal(counts.cacheGet, 0, `${question}: cache read 0`);
+    assert.equal(counts.cacheSet, 0, `${question}: cache write 0`);
+    assert.equal(counts.rag, 0, `${question}: 선수 RAG 0`);
+  }
+
+  // 2026-09-29 #1475: 기록 알려줘는 현재 시즌 묶음 지원으로 계약 변경.
+  // 실제 로스터 결속과 generic LLM 차단은 행 유무 양쪽에서 계속 검증한다.
+  const question = `${subject.name} 기록 알려줘`;
+  for (const hasSeasonRow of [false, true]) {
+    for (const key of Object.keys(counts) as Array<keyof typeof counts>) counts[key] = 0;
+    const deps = prodDeps();
+    if (hasSeasonRow) {
+      deps.fetchSeasonRecord = async () => {
+        counts.season++;
+        return [{
+          player_key: subject.kboId, kbo_id: subject.kboId,
+          name: subject.name, team: subject.team ?? null,
+          updated_at: new Date(Date.now() - 3_600_000).toISOString(),
+          avg: "0.325", hr: 19, rbi: 65, hits: 103, games: 90, tb: 184,
+          era: "2.75", wins: 11, losses: 4, ip: "120.1", so: 123, saves: 2, holds: 3,
+        }];
+      };
+    }
+    const result = await answerQuestion("u-prod-roster", question, deps);
+    if (hasSeasonRow) {
+      assert.equal(result.source, "kbo_structured", `${question}: 시즌 묶음 지원`);
+      assert.ok(result.answer.includes("90"), `${question}: 경기 수 포함`);
+      assert.ok(result.answer.includes(subject.position?.includes("투수") ? "2.75" : "0.325"),
+        `${question}: 로스터 포지션에 맞는 기록 수치 포함`);
+    } else {
+      assert.equal(result.source, "blocked", `${question}: 미수집 기록은 추측하지 않는다`);
+      assert.equal(result.answer, RECORD_MISSING_ANSWER, `${question}: 선수 기록 미확인 안내`);
+    }
+    assert.notEqual(result.answer, BLOCKED_ANSWER, `${question}: 룰/용어 안내 금지`);
+    assert.equal(counts.llm, 0, `${question}: generic LLM 0`);
+    assert.equal(counts.season, 1, `${question}: 시즌 조회 1회`);
     assert.equal(counts.cacheGet, 0, `${question}: cache read 0`);
     assert.equal(counts.cacheSet, 0, `${question}: cache write 0`);
     assert.equal(counts.rag, 0, `${question}: 선수 RAG 0`);

@@ -434,7 +434,7 @@ export type SeasonRecordIntent =
   | { kind: "unsupported_season" }
   /** 연도별 시리즈·통산·과거 시즌 — KBO 공식 Total.aspx 조회. */
   | { kind: "career"; query: SeasonRecordQuery; span: CareerSpan }
-  | { kind: "query"; query: SeasonRecordQuery };
+  | { kind: "query"; query: SeasonRecordQuery; queries?: SeasonRecordQuery[]; unavailableSeasons?: number[] };
 
 /**
  * 질문에서 "올해 시즌 기록" 의도를 뽑는다.
@@ -548,31 +548,64 @@ export function resolveSeasonRecordIntent(
     // `출장`은 타자 전용 표현. 공통어 `경기 수`보다 먼저 매칭돼야 표현이 보존된다.
     { table: "batter", metric: "games", pattern: /출장(?:\s*(?:경기|수))?/ },
     // 공통어 — 여기서만 포지션 결속이 허용된다.
-    { table: "batter", metric: "games", pattern: /경기\s*수/, ambiguous: true },
+    { table: "batter", metric: "games", pattern: /경기\s*수|(?<=[,·/])\s*경기(?=\s*[,·/]|\s*$)/, ambiguous: true },
   ];
 
   const normalized = normalizeWithSpaces(question);
-  let best = patterns.find((entry) => entry.pattern.test(normalized));
-  // 지표어가 없으면 이 경로 대상이 아니다. 의문사만 있고 지표가 없는 문장(`김도영 어때?`)은
-  // 여기서 걸러져 서술형 RAG 로 간다.
-  if (!best) return { kind: "none" };
-  // 지표어는 잡혔는데 의문 표현이 전혀 없고, 지표명 외의 서술 요구도 없는 경우 —
-  // `김도영 타율` 같은 형태다. 이건 값 요청으로 본다(위 주석 참조).
+  // Consume matched spans so 피홈런/도루실패/2루타 do not also request
+  // 홈런/도루/루타. Preserve distinct, non-overlapping requested metrics.
+  // 득점권 names a split, not the 득점 (runs) metric. Keep normalized
+  // intact for scope detection, but remove the compound during extraction.
+  let rest = normalized.replace(/득점\s*권/g, " ");
+  const selected: SeasonRecordQuery[] = [];
+  for (const entry of patterns) {
+    if (!entry.pattern.test(rest)) continue;
+    rest = rest.replace(new RegExp(entry.pattern.source, entry.pattern.flags + "g"), " ");
+    const table = entry.ambiguous && preferredTable ? preferredTable : entry.table;
+    const definitions = table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+    const def = definitions[entry.metric as keyof typeof definitions] as { label: string; kind: SeasonRecordQuery["kind"] };
+    if (!selected.some((q) => q.table === table && q.metric === entry.metric)) {
+      selected.push({ table, metric: entry.metric, label: def.label, kind: def.kind });
+    }
+  }
+  const scan = scanTemporalRefs(question);
+  const years = [...new Set([...normalized.matchAll(/(?:19|20)\d{2}/g)].map((m) => Number(m[0])))];
+  const partialSeasonComparison = options?.playerBound && scan.refTotal > 1
+    && /비교|\bvs\b|대비/i.test(normalized) && years.includes(SUPPORTED_SEASON)
+    && years.length === scan.refTotal && !scan.rangeMarker && !scan.seriesWord && !scan.careerWord
+    && !/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced);
+  // A roster-bound summary asks for our trusted basic season fields, not a
+  // subjective assessment. Explicit metric requests retain their own scope.
+  if (!selected.length && options?.playerBound && /성적|기록/.test(compact) && !/경신|신기록|최초|달성|세운|세웠/.test(compact)) {
+    // Generic historical summaries belong to the existing history guide.
+    // Keep the separately labelled current-vs-past partial comparison contract.
+    if (!partialSeasonComparison && (scan.careerWord || scan.seriesWord || scan.pastDelta !== null
+      || scan.refTotal > 1 || (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON))) {
+      return { kind: "none" };
+    }
+    if (/오늘|어제|그제|내일|\d+월|\d+일|이번경기|지난경기/.test(compact)) return { kind: "unsupported_season" };
+    const table = preferredTable ?? "batter";
+    const definitions = table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
+    const keys = table === "pitcher"
+      ? ["era", "games", "wins", "losses", "ip", "so", "saves", "holds"]
+      : ["avg", "hr", "rbi", "hits", "games", "tb"];
+    for (const metric of keys) {
+      const def = definitions[metric as keyof typeof definitions] as { label: string; kind: SeasonRecordQuery["kind"] };
+      selected.push({ table, metric, label: def.label, kind: def.kind });
+    }
+  }
+  if (!selected.length) return { kind: "none" };
+  // A season snapshot cannot answer splits, other competitions or schedules.
+  // Only claim this scope AFTER a metric or player-bound summary exists.
+  // Otherwise general product/rules/news questions must retain their own route.
+  if (/포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
+    || /\b(?:ps|wbc)\b/i.test(question)
+    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact)) {
+    return { kind: "unsupported_season" };
+  }
+
   void explicitlyNumeric;
-  // 공통어 `경기 수`만 이름으로 확정된 로스터 포지션에 결속한다(투수면 pitcher).
-  // explicit `등판`/`출장`까지 뒤집으면 `문보경 등판 수`에 타자 경기 수를 답하는 오답이 된다.
-  if (best.ambiguous && preferredTable) best = { ...best, table: preferredTable };
-  const metrics = best.table === "pitcher" ? PITCHER_METRICS : BATTER_METRICS;
-  const def = metrics[best.metric as keyof typeof metrics] as {
-    label: string;
-    kind: SeasonRecordQuery["kind"];
-  };
-  const query: SeasonRecordQuery = {
-    table: best.table,
-    metric: best.metric,
-    label: def.label,
-    kind: def.kind,
-  };
+  const query = selected[0];
 
   // ── 시점 판정 (2026-08-10 캐처: `연도별 타율 추이`가 올해 단일값으로 오답) ──────
   // 종전에는 통산·과거 시즌을 "준비 중" fail-close 로 닫았다. 정본이 없어서가 아니라
@@ -582,7 +615,6 @@ export function resolveSeasonRecordIntent(
   //   시점 참조(명시연도·상대연도·현재·최근범위·cutoff)를 **먼저 전부 추출**하고,
   //   복수/범위/미지원 조합이면 축소하지 말고 fail-close 한다. series/career/year 선택은
   //   그 다음이다. "좁은 한정이 넓은 시점어를 이긴다" 를 문장 나열이 아니라 구조로 강제.
-  const scan = scanTemporalRefs(question);
   // ⓪-a 월별/경기별 축 — 우리 정본은 연도별 테이블뿐이다. 월·경기 단위 시계열은
   //   서빙 데이터가 없으므로 어느 쪽으로도 축소하지 않고 fail-close (삼순 10차).
   if (/월별|경기별/.test(scan.spaced)) return { kind: "unsupported_season" };
@@ -593,7 +625,14 @@ export function resolveSeasonRecordIntent(
   if (scan.recentRange) return { kind: "unsupported_season" };
   // ② 시점 참조 2개 이상 = 비교·범위 질의 (`작년과 올해`·`작년과 재작년`·`2025년과 2026년`).
   //   단일값으로 축소하면 오답이다.
-  if (scan.refTotal > 1) return { kind: "unsupported_season" };
+  if (scan.refTotal > 1) {
+    // Only explicit discrete season comparisons get a labelled partial answer.
+    // Ranges, career aggregates and extrema must never become a current total.
+    if (partialSeasonComparison) {
+      return { kind: "query", query, queries: selected, unavailableSeasons: years.filter((y) => y !== SUPPORTED_SEASON) };
+    }
+    return { kind: "unsupported_season" };
+  }
   // ③ cutoff·범위 표지(까지·이후·이전·부터·~)가 시점 참조/통산어에 붙으면 부분합·구간
   //   질의다 — 현재 통산 행(올해 포함)·단일 연도와 다른 값이라 fail-close.
   if (scan.rangeMarker && (scan.refTotal > 0 || scan.careerWord)) {
@@ -602,6 +641,12 @@ export function resolveSeasonRecordIntent(
   // ④ 최고/최저(커리어하이) — 통산 **평균/누계**와 다른 극값이다. 규정타석 판정이 필요해
   //   정본 조회가 아니다 → fail-close.
   if (/최고|최저|최악|커리어\s*하이|하이라이트|베스트|기록\s*경신/.test(scan.spaced)) {
+    return { kind: "unsupported_season" };
+  }
+  // Historical bundles are not implemented here: never silently emit only
+  // the first field. Existing single-field career queries remain supported.
+  if (selected.length > 1 && (scan.seriesWord || scan.careerWord || scan.pastDelta !== null
+    || (scan.explicitYear !== null && scan.explicitYear !== SUPPORTED_SEASON))) {
     return { kind: "unsupported_season" };
   }
   // ⑤ 여기부터 시점 참조는 0개 또는 1개다.
@@ -627,7 +672,7 @@ export function resolveSeasonRecordIntent(
     return { kind: "career", query, span: { type: "year", year: scan.explicitYear } };
   }
   // 현재 시즌 지목(올해) 또는 시점 표현 없음 → 기존 현재 시즌 경로.
-  return { kind: "query", query };
+  return { kind: "query", query, ...(selected.length > 1 ? { queries: selected } : {}) };
 }
 
 /** 명시적으로 올해를 지목했는가. 시즌 표현이 아예 없으면 현재 시즌으로 본다. */

@@ -69,6 +69,9 @@ import { displayProvenanceOf } from "./genius-reply-provenance";
 import { isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
+  formatAsOf,
+  SUPPORTED_SEASON,
+  type SeasonRecordOutcome,
   BATTER_METRICS,
   PITCHER_METRICS,
   isServedOnlyMetric,
@@ -4699,6 +4702,7 @@ async function answerSeasonRecordQuestion(
   remaining: number,
   deps: QaDeps,
   intentOverride?: ReturnType<typeof resolveSeasonRecordIntent>,
+  onValidated?: (outcome: Extract<SeasonRecordOutcome, { kind: "ok" }>) => void,
 ): Promise<QaResult | null> {
   // 🔴 fallback 도 **결속을 넘긴다** (삼순 2026-09-04 2차 NO-GO — wrapper 우회 축).
   //   종전엔 `resolveSeasonRecordIntent(question)` 를 그냥 불러서, override 없이 들어오면
@@ -4756,6 +4760,50 @@ async function answerSeasonRecordQuestion(
     return settle(answer, "kbo_structured", "kbo_structured");
   }
 
+  if (intent.queries || intent.unavailableSeasons) {
+    // Reuse the exact single-field source/identity/freshness validators. Fetch
+    // each source once for the bundle and persist only the final combined answer.
+    const fetched = new Map<string, Promise<SeasonRecordRow[]>>();
+    const once = (key: string, fetch: () => Promise<SeasonRecordRow[]>) => {
+      if (!fetched.has(key)) fetched.set(key, fetch());
+      return fetched.get(key)!;
+    };
+    const bundleDeps: QaDeps = {
+      ...deps,
+      log: async () => {},
+      fetchSeasonRecord: (table, id) => once(`${table}:${id}`, () => deps.fetchSeasonRecord!(table, id)),
+      fetchServedRecord: deps.fetchServedRecord
+        ? (id) => once(`served:${id}`, () => deps.fetchServedRecord!(id)) : undefined,
+    };
+    const answers: string[] = [];
+    const dates = new Set<string>();
+    let answered = false;
+    let errored = false;
+    for (const query of intent.queries ?? [intent.query]) {
+      const result = await answerSeasonRecordQuestion(userId, question, questionNorm, candidate, remaining, bundleDeps, { kind: "query", query }, (outcome) => {
+        answers.push(`${outcome.label} ${outcome.value}`);
+        dates.add(formatAsOf(outcome.asOf));
+      });
+      if (result?.source === "kbo_structured") {
+        answered = true;
+      } else {
+        errored ||= result?.source === "error";
+        answers.push(`${query.label}: ${result?.source === "error" ? "조회 오류" : "검증된 기록을 확인하지 못했습니다"}.`);
+      }
+    }
+    if (!answered && !errored) {
+      return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    }
+    const who = candidate.team ? `${candidate.name}(${candidate.team})` : candidate.name;
+    let answer = `${who} 선수의 ${SUPPORTED_SEASON} 시즌 기록: ${answers.join(" · ")}`;
+    if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${[...dates].sort().join("·")} 기준`;
+    if (intent.unavailableSeasons?.length) {
+      answer += "\n\n" + `${intent.unavailableSeasons.join("·")} 시즌은 이 비교 답변에서 제공하지 못했습니다. 위 수치는 현재 시즌만이며 시즌 간 비교 결과가 아닙니다.`;
+    }
+    const source = answered ? "kbo_structured" : errored ? "error" : "blocked";
+    return settle(answer, source, source);
+  }
+
   // ── 소스 선택 ──────────────────────────────────────────────────────────────
   // 도루·출루율·장타율·OPS 는 `player_stats_batter` 에 **컬럼이 없다**. 앱 화면이 쓰는
   // 정본은 `stats-2026-batters.json`(=`/api/stats`)이라 그쪽을 본다
@@ -4804,6 +4852,7 @@ async function answerSeasonRecordQuestion(
     candidate.team ?? null,
   );
   if (outcome.kind === "ok") {
+    onValidated?.(outcome);
     const answer = composeSeasonRecordAnswer(outcome);
     return settle(answer, "kbo_structured", "kbo_structured");
   }
@@ -6089,7 +6138,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // Quota, correction and mixed-entity guards above remain authoritative.
   // Service/safety routes must never be bypassed by a statistic keyword.
   if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "career_leaderboard"].includes(baseRoute) && !statDefinition) {
-    const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);
+    const operationAnswer = recordIntent.kind === "query" && recordIntent.unavailableSeasons
+      ? null : await answerRequestedOperation(question, context, players, deps, pickedCandidate);
     if (operationAnswer) return settleThroughDurableBoundary(operationAnswer, operationAnswer.answer, { userId, question, questionNorm, remaining, deps });
   }
 
