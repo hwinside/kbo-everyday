@@ -1,3 +1,4 @@
+import { leaderboardGuide, LEADERBOARD_GUIDE_URL } from "./stats/leaderboard-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
@@ -6141,6 +6142,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     const operationAnswer = recordIntent.kind === "query" && recordIntent.unavailableSeasons
       ? null : await answerRequestedOperation(question, context, players, deps, pickedCandidate);
     if (operationAnswer) return settleThroughDurableBoundary(operationAnswer, operationAnswer.answer, { userId, question, questionNorm, remaining, deps });
+    // Preserve supported AVG/career answers; unsupported league rankings get
+    // honest navigation, not a scalar value or ungrounded generated winner.
+    const guide = !mentionsAnyRosterName(question, players) && resolveCareerMetricIntent(question) === null
+      ? leaderboardGuide(question) : null;
+    if (guide) return settleThroughDurableBoundary(
+      { answer: guide, source: "scope_guide", sourceUrl: /안타/.test(question) ? "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx" : LEADERBOARD_GUIDE_URL }, guide,
+      { userId, question, questionNorm, remaining, deps },
+    );
   }
 
   // **picker보다 먼저** 종결한다. `김동현 통산 홈런`처럼 이름이 모호해도 답 못 할 질문은
