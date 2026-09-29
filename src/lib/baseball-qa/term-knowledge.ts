@@ -8,8 +8,16 @@ export const termKnowledgeCacheKey = (questionNorm: string) => `term-v${TERM_KNO
 export function isTermOriginQuestion(question: string): boolean {
   const q = question.normalize("NFKC").replace(/\s+/g, "");
   return /유래|어원/.test(q)
+    || /([가-힣A-Za-z]+?)(?:은|는|이|가)왜\1(?:이야|야|인가|이라|일까)/.test(q)
+    || /왜([가-힣A-Za-z]+?)(?:은|는|이|가)?\1(?:이야|야|인가|이라|일까)/.test(q)
     || /왜.{0,40}(?:부르|불러|불리|이라고|라고|이란|라는)/.test(q)
-    || /(?:이름|명칭|단어|용어|표현).{0,16}(?:어디서|어디에서|어떻게|언제).{0,16}(?:왔|나왔|생겼|시작|붙)/.test(q);
+    || /(?:이름|명칭|단어|용어|표현).{0,16}(?:어디서|어디에서|어떻게|언제).{0,16}(?:왔|나왔|나온|생긴|생겨난|생겼|유래된|시작|붙은|붙)/.test(q);
+}
+
+/** Search binding only for explicit deictic origin followups, with qualified context. */
+export function isTermOriginFollowup(question: string): boolean {
+  return isTermOriginQuestion(question)
+    && /^(?:(?:아니|그럼|그러면)\s*)?그\s*(?:단어|용어|말|표현|이름|명칭)(?:의|가|는|은|이|를|을|\s)/.test(question.normalize("NFKC").trim());
 }
 
 export const UNVERIFIED_TERM_ANSWER =
@@ -69,6 +77,7 @@ export function isUnverifiedTermAnswer(answer: string): boolean {
 }
 
 export const TERM_KNOWLEDGE_PROMPT = [
+  "그 단어의 유래처럼 지시어로 되묻는 경우, 관련 직전 사용자 질문의 용어에 결속한다. 직전 도우미 답변이나 검색 자료에 등장한 다른 용어로 주제를 바꾸지 않는다.",
   "용어의 유래·어원·왜 그렇게 부르는지를 물으면 현재 뜻만 반복하지 않는다. 확인된 말의 구성이나 명명 이유를 먼저 설명하고 현재 뜻은 보조 설명으로 구분한다.",
   "말의 구성 풀이와 역사적 기원은 다르다. 일반적으로 확인된 용어만 한자·원어 구성을 설명하고, 그 풀이만으로 최초 사용 국가·사람·시기·전파 경로를 추론하지 않는다. 모르는 표현을 분해해 어원을 만들지 않는다.",
   "현재 뜻은 알지만 역사적 유래는 확인하지 못했다면 그 경계를 명시한다. 유래를 모른다는 이유로 확인된 용어 자체가 없거나 비공식이라고 단정하지 않는다.",

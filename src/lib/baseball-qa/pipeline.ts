@@ -4,7 +4,7 @@ import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from 
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
-import { isTermOriginQuestion, hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
+import { isTermOriginFollowup, isTermOriginQuestion, hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
@@ -5060,7 +5060,8 @@ async function answerOfficialDocumentQuestion(
   const relationContext = !definition && context && mentionedTeamCanonicals(question).length === 0
     && mentionedTeamCanonicals(context.question).length === 2
     && /^(?:(?:그럼|그러면|근데)\s*)?(?:둘(?:이|은|\s*다)|두\s*팀|두\s*구단|그\s*팀들|서로)(?:\s|[?!.])/.test(question.normalize("NFKC").trim());
-  const searchQuestion = relationContext ? `${context!.question}\n후속 질문: ${question}` : question;
+  const originContext = context && isTermOriginFollowup(question);
+  const searchQuestion = relationContext || originContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
     evidence = selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);

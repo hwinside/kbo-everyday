@@ -257,7 +257,7 @@ test('hotfix genuine prior assertion still retracts with either provider flag an
 
 
 test('origin intent is not a rule-effect or ordinary definition request', () => {
-  for (const q of ['적시타 단어 유래', '적시타 어원', '홈런은 왜 홈런이라고 불러?', '보크라는 용어는 어디서 왔어?', '이 이름은 어떻게 생겼어?']) {
+  for (const q of ['적시타 단어 유래', '적시타 어원', '홈런은 왜 홈런이라고 불러?', '보크라는 용어는 어디서 왔어?', '이 이름은 어떻게 생겼어?', '불펜이라는 단어가 어떻게 하다가 생긴말이야 억양이 안좋길래..', '불펜은 왜 불펜이야?', '왜 불펜은 불펜이야?', '그 단어의 유래를 알려달라니깐', '이 용어가 어디서 유래된 거야', '그 명칭이 어떻게 붙은 거야', '그 단어가 어디서 나온 말이야', '이 표현은 어떻게 생겨난 말이야']) {
     assert.equal(isTermOriginQuestion(q), true, q);
   }
   for (const q of ['적시타 뜻', '보크하면 왜 주자가 진루해?', '왜 인필드플라이가 아웃이야?', '오늘 한화 선발', '김도영 타율']) {
@@ -268,13 +268,14 @@ test('origin intent is not a rule-effect or ordinary definition request', () => 
 test('origin bypasses even an over-eager definition mapper; original question reaches one generator and durable replay', async () => {
   const glossary = [
     { term: '적시타', aliases: [], answer: '주자를 득점시키는 안타입니다.' },
+    { term: '불펜', aliases: ['bullpen'], answer: '구원 투수들이 몸을 푸는 곳입니다.' },
     { term: '홈런', aliases: [], answer: '타자가 모든 베이스를 돌아 득점하는 안타입니다.' },
     { term: '보크', aliases: [], answer: '투수의 반칙 동작입니다.' },
   ];
   // These are injected provider responses, not evidence of live-model accuracy.
   const explanation = '야구 용어의 이름과 현재 뜻은 구분해서 설명해야 합니다. 역사적 최초 사용은 확인하지 못했습니다.';
   for (const official of [false, true]) {
-    for (const question of ['적시타 단어 유래', '홈런은 왜 홈런이라고 불러?', '보크 어원']) {
+    for (const question of ['적시타 단어 유래', '홈런은 왜 홈런이라고 불러?', '보크 어원', '불펜이라는 단어가 어떻게 하다가 생긴말이야 억양이 안좋길래..', '불펜은 왜 불펜이야?']) {
       const h = harness(official);
       const generated: string[] = [];
       const searched: string[] = [];
@@ -340,4 +341,35 @@ test('a pre-origin-policy durable answer cannot repopulate the new shared cache'
   const replay = await answerQuestion('test-user', '적시타 단어 유래', { ...h.deps, getLlmState: async () => ({ started: true, result: old }) });
   assert.equal(replay.answer, '주자를 득점시키는 안타입니다.', 'same message remains idempotent');
   assert.equal(h.writes.length, 0, 'old message must not contaminate future questions');
+});
+
+
+test('deictic origin followup binds the previous USER term in retrieval and generation, never the prior bot assertion', async () => {
+  for (const official of [false, true]) {
+    for (const eligible of [true, false]) {
+      const h = harness(official);
+      const question = '그 단어의 유래를 알려달라니깐';
+      const prior = '불펜이 머임';
+      const searches: string[] = [];
+      const contexts: unknown[] = [];
+      h.deps.loadGlossary = async () => [{ term: '불펜', aliases: ['bullpen'], answer: '구원 투수들이 몸을 푸는 곳입니다.' }];
+      h.deps.loadPreviousTurn = async () => ({
+        question: prior, answer: '다른 용어의 무관한 일화입니다.', jobSource: eligible ? 'dictionary' : 'blocked',
+        answeredAt: '2026-09-29T12:00:00Z', currentCreatedAt: '2026-09-29T12:01:00Z',
+      });
+      h.deps.callLlm = async (q, context) => { assert.equal(q, question); contexts.push(context); return raw(); };
+      if (official) {
+        h.deps.searchOfficialRag = async q => { searches.push(q); return [evidence]; };
+        h.deps.callOfficialRagLlm = async (q, _rows, extras) => { assert.equal(q, question); contexts.push(extras?.context); return raw(); };
+      }
+      await answerQuestion('test-user', question, h.deps);
+      assert.equal(contexts.length, 1);
+      if (eligible) assert.equal((contexts[0] as { question: string }).question, prior);
+      else assert.ok(contexts[0] == null, 'blocked previous turn is not usable context');
+      if (official) {
+        assert.deepEqual(searches, [eligible ? prior + '\n후속 질문: ' + question : question]);
+        assert.ok(searches.every(q => !q.includes('무관한 일화')));
+      }
+    }
+  }
 });
