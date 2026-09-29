@@ -497,6 +497,28 @@ async function main() {
       assert.notEqual(picked.term, "와일드카드결정전", "a stale card cannot bypass revalidation");
     }
     assert.equal(classifyQuestionCorrectionCandidate("와일드업에 뭐야?", "와인드업이 뭐야?", identityGlossary, players), "suggest");
+    // #1487 P2: recover from rejected unrelated provider output using raw input.
+    const repairGlossary = [...prodGlossary, ...identityGlossary];
+    assert.equal(repairGlossaryTermTypo("와일드업에 뭐야?", repairGlossary), "와인드업이 뭐야?");
+    for (const provider of ["와일드카드란 뭐야?", null, "와일드업에 뭐야?"]) {
+      const state = freshState({ normReply: provider });
+      const result = await answerQuestion("u1", "와일드업에 뭐야?", makeDeps(state, true, repairGlossary));
+      assert.equal(result.source, "question_correction");
+      assert.deepEqual(result.correctionOptions, ["와인드업이 뭐야?"]);
+      assert.equal(state.logs.at(-1)?.question, "와일드업에 뭐야?");
+      assert.equal(state.logs.at(-1)?.questionNormalized ?? null, null, "never auto-accept repair");
+      const picked = await answerQuestion("u1", "와일드업에 뭐야?", {
+        ...makeDeps(freshState(), true, repairGlossary), pickedNormalizedQuestion: "와인드업이 뭐야?",
+      });
+      assert.equal(picked.term, "와인드업");
+    }
+    for (const question of ["야구 전광판 보는 법 알려줘", "오늘 와일드업에 뭐야?", "와일드업에 누가 있어?", "와일드업에 뭐야 2", "와인드업에 뭐야?"]) {
+      assert.equal(repairGlossaryTermTypo(question, repairGlossary), null, question);
+    }
+    assert.equal(repairGlossaryTermTypo("와일드업에 뭐야?", [
+      ...repairGlossary, { term: "와일드앱", aliases: [], answer: "ambiguous fixture" },
+    ]), null, "multiple one-substitution destinations fail closed");
+
     assert.equal(classifyQuestionCorrectionCandidate("보크가 모야", "도루가 뭐야", identityGlossary, players), "rejected");
     // Include short production aliases that used to collide with 뭐야.
     const productionShape = [...identityGlossary,
