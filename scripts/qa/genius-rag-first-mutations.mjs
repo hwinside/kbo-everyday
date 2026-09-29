@@ -104,7 +104,7 @@ const MUTATIONS = [
   {
     name: "r69 scalar handlers steal requested operations",
     file: PIPELINE,
-    from: "const operationAnswer = await answerRequestedOperation(question, context, players, deps, pickedCandidate);",
+    from: 'const operationAnswer = recordIntent.kind === "query" && recordIntent.unavailableSeasons\n      ? null : await answerRequestedOperation(question, context, players, deps, pickedCandidate);',
     to: "const operationAnswer = null;",
     smoke: "scripts/qa/genius-period-context-smoke.ts",
   },
