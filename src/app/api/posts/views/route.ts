@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         ok = false;
         console.error("[post-view-batch] increment_post_view failed", { postId: id,
-          error: error instanceof Error ? error.message : "RPC failed" });
+          error: error && typeof error === "object" && "message" in error && typeof error.message === "string"
+            ? error.message : "RPC failed" });
       }
     }));
   }
