@@ -1,4 +1,5 @@
 import { leaderboardGuide } from "./stats/leaderboard-guide";
+import { liveScoreGuide } from "./stats/live-score-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
@@ -6150,6 +6151,13 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // Quota, correction and mixed-entity guards above remain authoritative.
   // Service/safety routes must never be bypassed by a statistic keyword.
   if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "career_leaderboard"].includes(baseRoute) && !statDefinition) {
+    // Versus punctuation is local to game navigation; do not change the
+    // shared entity/stat grammar or resolve a two-team query as one team.
+    const scoreGuide = liveScoreGuide(question, mentionsTeamForGate(question.replace(/vs\.?/gi, " ")));
+    if (scoreGuide) return settleThroughDurableBoundary(
+      { ...scoreGuide, source: "scope_guide" }, scoreGuide.answer,
+      { userId, question, questionNorm, remaining, deps },
+    );
     const operationAnswer = recordIntent.kind === "query" && recordIntent.unavailableSeasons
       ? null : await answerRequestedOperation(question, context, players, deps, pickedCandidate);
     if (operationAnswer) return settleThroughDurableBoundary(operationAnswer, operationAnswer.answer, { userId, question, questionNorm, remaining, deps });
