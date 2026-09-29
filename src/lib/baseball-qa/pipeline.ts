@@ -1,4 +1,4 @@
-import { fallbackEligible, type FallbackAnswer } from "./agent/fallback";
+import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
@@ -5498,7 +5498,13 @@ async function answerNewsRagQuestion(
 
   // 숫자는 구단 tier2 와 동일하게 전면 HOLD 다(`numericEvidence` 미지정 = 기본값 금지).
   const validated = validateRagResponse(llm.text, { maxChars: RAG_ANSWER_MAX_CHARS });
-  if (validated.kind !== "grounded") {
+  // A publication window cannot establish the event day. Keep tier2 numeric HOLD;
+  // date omissions/unknown dates instead enter the existing verified supplement.
+  const dateSupported = validated.kind === "grounded" && primaryNewsDateSupported(
+    question, new Date(deps.now ? deps.now() : Date.now()).toISOString(),
+    validated.answer, evidence.map(row => row.content),
+  );
+  if (validated.kind !== "grounded" || !dateSupported) {
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②).
     // 🔴 뉴스가 이 계측의 최대 관심축이다 — 기사에는 숫자가 거의 항상 있어 숫자 HOLD 손해가
     //   여기에 몰려 있을 가능성이 크다. 경로 라벨이 없으면 그 손실을 unsure 더미에서 못 꺼낸다.

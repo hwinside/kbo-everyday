@@ -48,6 +48,17 @@ function relativeDayDateSupported(question: string, now: string, text: string, q
   });
 }
 
+/** Primary news has no claim-level event verifier. Fail closed on missing or omitted dates.
+ * Scan all supplied bodies: the primary response does not identify its supporting excerpt.
+ * Ambiguous/multi-date articles defer to the citation + semantic verified fallback.
+ */
+export function primaryNewsDateSupported(question: string, now: string, answer: string, bodies: string[]): boolean {
+  if (!/오늘|어제/u.test(question)) return true;
+  if (!Number.isFinite(Date.parse(now)) || /오늘/u.test(question) && /어제/u.test(question)) return false;
+  return bodies.length > 0 && bodies.every(body => calendarDates(body).length > 0
+    && relativeDayDateSupported(question, now, answer, body));
+}
+
 /** Publication-window check is deterministic; event-date entailment still needs verification. */
 export function citationWithinQuestionDay(question: string, now: string, row: Evidence): boolean {
   const current = Date.parse(now);
