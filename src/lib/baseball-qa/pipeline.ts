@@ -5510,16 +5510,18 @@ async function answerNewsRagQuestion(
     validated.answer, evidence.map(row => row.content),
   );
   if (validated.kind !== "grounded" || !dateSupported) {
+    const observation = ragObservation("news", question, validated.kind === "grounded"
+      ? { kind: "insufficient", reason: "event_date_unverified" } : validated);
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②).
     // 🔴 뉴스가 이 계측의 최대 관심축이다 — 기사에는 숫자가 거의 항상 있어 숫자 HOLD 손해가
     //   여기에 몰려 있을 가능성이 크다. 경로 라벨이 없으면 그 손실을 unsure 더미에서 못 꺼낸다.
     const final = await supplementUnavailable({
-      answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...ragObservation("news", question, validated),
+      answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...observation,
     }, question, deps);
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
     await deps.log({ userId, question, questionNorm, matchPath: final.source,
       answer: final.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("news", question, validated) });
+      ...observation });
     return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);

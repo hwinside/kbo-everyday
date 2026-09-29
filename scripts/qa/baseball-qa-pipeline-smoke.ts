@@ -3893,7 +3893,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   }];
   const statsRow = {
     player_key: "69102", kbo_id: "69102", name: "문보경", team: "LG",
-    updated_at: new Date(Date.now() - 3_600_000).toISOString(), doubles: 8,
+    updated_at: "2026-08-08T02:00:00Z", doubles: 8,
   };
   // 구단 서술형 근거 — 선수 근거와 **다른 문서**여야 경로가 섞이지 않는다.
   const teamEvidence = [{
@@ -3905,7 +3905,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   // canonicalUrl 은 출처 allowlist 를 통과하는 네이버 재송고 링크다(production 적재 형식 그대로).
   const newsEvidence = [{
     content: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는\n" +
-      "지난해 LG 트윈스는 통합 우승을 차지했다. 떠난 주전 외야수 자리를 젊은 타자들이 메우고 있다.",
+      "8월 7일 LG 트윈스 문보경과 젊은 타자들이 경기에서 승리했습니다.",
     pageTitle: "체성호→송찬의→문정빈 홈런 합작…FA 김현수 떠난 자리는",
     canonicalUrl: "https://m.sports.naver.com/kbaseball/article/109/0005585034",
     revision: "article:2b1c9f", sectionPath: "2026-08-07",
@@ -3920,7 +3920,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     // 최근 기사 RAG 도 같은 이유로 켜다 — `news_rag` 는 `team_rag` 에서 분리된 별도 경로다
     // (2026-08-08 감사 식별자 분리 — 근거 수명이 30일이라 문서 경로와 감사 축을 나눈다).
     enableNewsRag: true,
-    now: () => Date.now(),
+    now: () => Date.parse("2026-08-08T03:00:00Z"),
     searchRag: async (candidate: { entityType?: string }) =>
       (candidate?.entityType === "team" ? teamEvidence : evidence) as never,
     searchNewsRag: async () => newsEvidence as never,
@@ -3934,7 +3934,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     }),
     callNewsRagLlm: async () => ({
       // 기사 tier2 는 숫자 전면 HOLD 라 모델도 숫자 없이 서술한다.
-      text: '{"status":"GROUNDED","answer":"젊은 타자들이 홈런을 합작하며 떠난 자리를 메우고 있습니다."}',
+      text: '{"status":"GROUNDED","answer":"LG 트윈스의 젊은 타자들이 경기에서 승리했습니다."}',
       inputTokens: 10, outputTokens: 5,
     }),
     fetchSeasonRecord: async () => [statsRow] as never,
@@ -3945,6 +3945,8 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
     { question: "보크가 뭐야?", deps: richDeps },                       // dictionary
     { question: "문보경 별명이 뭐야?", deps: richDeps },                // rag
     { question: "LG 트윈스 역사 알려줘", deps: richDeps },              // team_rag
+    { question: "어제 문보경 소식 알려줘", deps: richDeps },
+    { question: "오늘 문보경 뉴스 알려줘", deps: s => ({ ...richDeps(s), searchNewsRag: async () => newsEvidence.map(row => ({ ...row, asOf: "2026-08-08T01:00:00Z" })) as never }) },
     { question: "어제 LG 무슨 일 있었어?", deps: richDeps },           // news_rag
     { question: "문보경 올해 2루타 몇개 칩어?", deps: richDeps },      // kbo_structured
     { question: "김동현 별명이 뭐야?", deps: richDeps },                // player_picker
@@ -4010,6 +4012,7 @@ async function verifyReplyKindMatchesActualPipelineOutcome() {
   for (const probe of probes) {
     const state = freshState(probe.state ?? {});
     const result = await answerQuestion("u-behavioral", probe.question, probe.deps(state));
+    if (/^(오늘|어제) 문보경/u.test(probe.question)) assert.equal(result.source, "news_rag", `선수 게시일 probe 실패: ${probe.question}`);
     if (result.source === "pending") continue;
     observed.set(result.source, {
       answer: result.answer,

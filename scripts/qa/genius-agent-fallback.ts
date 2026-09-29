@@ -138,13 +138,14 @@ async function main() {
     let savedNews: LlmResult | null = null;
     let supplements = 0;
     const newsLogs: Array<string | null> = [];
+    const discardReasons: unknown[] = [];
     const newsDeps = deps({ enableNewsRag: true,
       searchNewsRag: async () => primaryNewsBodies.samsung.map(content => ({ content, pageTitle: "삼성 퓨처스팀", canonicalUrl: evidence.url,
         revision: "test", sectionPath: "news", asOf: question.startsWith("어제") ? "2026-09-28T03:00:00Z" : input.now,
         sourceGrade: "tier2", sourceKind: "news_article" })),
       callNewsRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer: "후쿠오카를 방문하여 교류전을 치릅니다." }), inputTokens: 1, outputTokens: 1 }),
       agentFallback: async () => { supplements++; return null; },
-      log: async entry => { newsLogs.push(entry.answer); },
+      log: async entry => { newsLogs.push(entry.answer); discardReasons.push(entry.ragDiscardReason); },
       getLlmState: async () => ({ started: false, result: savedNews }), acquireLlmStart: async () => true,
       storeLlm: async value => { savedNews = value; },
     });
@@ -156,6 +157,8 @@ async function main() {
     assert.ok(newsLogs.every(answer => !answer?.includes("교류전을 치릅니다")));
     assert.equal((await answerQuestion("test", question, newsDeps)).answer, result.answer);
     assert.equal(supplements, 1, "durable replay does not rerun fallback");
+    assert.deepEqual(discardReasons, ["event_date_unverified", "event_date_unverified"], "date discard reason survives log and replay");
+    assert.equal(unpackStoredQaFinal((savedNews as LlmResult).text)?.ragDiscardReason, "event_date_unverified");
   }
   for (const [question, content] of [["오늘 삼성 퓨처스팀 어디 가?", sameDayText], ["최근 삼성 퓨처스팀 소식", departure]]) {
     let newsCalls = 0;
