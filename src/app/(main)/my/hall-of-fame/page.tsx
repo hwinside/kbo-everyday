@@ -423,7 +423,7 @@ function RankRow({
           {medal ?? rank}
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
-          <Link
+          <Link prefetch={false}
             href={`/profile/${row.user_id}`}
             className="-my-1 truncate rounded-sm py-1 font-semibold text-text-primary transition-colors hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:text-accent"
           >
