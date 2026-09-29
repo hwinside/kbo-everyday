@@ -542,6 +542,7 @@
     "qa:genius-live-team-block:mutations": "node scripts/qa/genius-live-team-block-mutations.mjs",
     "qa:genius-rag-first": "tsx scripts/qa/genius-rag-first-routing-smoke.ts",
     "qa:genius-rag-first:mutations": "node scripts/qa/genius-rag-first-mutations.mjs",
+    "qa:genius-current-season-source": "tsx scripts/qa/genius-current-season-source-smoke.ts",
     "qa:genius-current-season-metrics": "tsx scripts/qa/genius-current-season-metrics-smoke.ts",
     "qa:genius-stat-definition": "tsx scripts/qa/genius-stat-definition-smoke.ts",
     "qa:genius-period-context": "tsx scripts/qa/genius-period-context-smoke.ts",

@@ -71,6 +71,7 @@ import { isBaseballGeniusToneCompliant } from "./tone";
 import {
   composeSeasonRecordAnswer,
   formatAsOf,
+  formatSnapshotAsOf,
   SUPPORTED_SEASON,
   type SeasonRecordOutcome,
   BATTER_METRICS,
@@ -1323,6 +1324,8 @@ export interface QaDeps {
    * 동명이인을 섞어버리므로 금지다(삼순 조건 ①). 미주입이면 기록 경로 자체가 비활성이라
    * 기존 동작(서술형 RAG 또는 차단) 그대로다.
    */
+  /** Authoritative current-season app snapshot; failure never falls back to daily DB. */
+  fetchCurrentSeasonRecord?: (table: "batter" | "pitcher", kboId: string) => Promise<SeasonRecordRow[]>;
   fetchSeasonRecord?: (
     table: "batter" | "pitcher",
     kboId: string,
@@ -4772,6 +4775,8 @@ async function answerSeasonRecordQuestion(
     const bundleDeps: QaDeps = {
       ...deps,
       log: async () => {},
+      fetchCurrentSeasonRecord: deps.fetchCurrentSeasonRecord
+        ? (table, id) => once(`current:${table}:${id}`, () => deps.fetchCurrentSeasonRecord!(table, id)) : undefined,
       fetchSeasonRecord: (table, id) => once(`${table}:${id}`, () => deps.fetchSeasonRecord!(table, id)),
       fetchServedRecord: deps.fetchServedRecord
         ? (id) => once(`served:${id}`, () => deps.fetchServedRecord!(id)) : undefined,
@@ -4783,7 +4788,7 @@ async function answerSeasonRecordQuestion(
     for (const query of intent.queries ?? [intent.query]) {
       const result = await answerSeasonRecordQuestion(userId, question, questionNorm, candidate, remaining, bundleDeps, { kind: "query", query }, (outcome) => {
         answers.push(`${outcome.label} ${outcome.value}`);
-        dates.add(formatAsOf(outcome.asOf));
+        dates.add(deps.fetchCurrentSeasonRecord ? formatSnapshotAsOf(outcome.asOf) : formatAsOf(outcome.asOf));
       });
       if (result?.source === "kbo_structured") {
         answered = true;
@@ -4797,7 +4802,7 @@ async function answerSeasonRecordQuestion(
     }
     const who = candidate.team ? `${candidate.name}(${candidate.team})` : candidate.name;
     let answer = `${who} 선수의 ${SUPPORTED_SEASON} 시즌 기록: ${answers.join(" · ")}`;
-    if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${[...dates].sort().join("·")} 기준`;
+    if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${deps.fetchCurrentSeasonRecord ? "앱 기록 스냅샷 " : ""}${[...dates].sort().join("·")} ${deps.fetchCurrentSeasonRecord ? "갱신 (경기 반영 완료 시각은 아님)" : "기준"}`;
     if (intent.unavailableSeasons?.length) {
       answer += "\n\n" + `${intent.unavailableSeasons.join("·")} 시즌은 이 비교 답변에서 제공하지 못했습니다. 위 수치는 현재 시즌만이며 시즌 간 비교 결과가 아닙니다.`;
     }
@@ -4806,6 +4811,9 @@ async function answerSeasonRecordQuestion(
   }
 
   // ── 소스 선택 ──────────────────────────────────────────────────────────────
+  // Production current-season queries use one authoritative app snapshot for all metrics.
+  // The DB/served split below remains only for legacy callers without the new dependency.
+  // A failed authoritative fetch never takes that legacy branch.
   // 도루·출루율·장타율·OPS 는 `player_stats_batter` 에 **컬럼이 없다**. 앱 화면이 쓰는
   // 정본은 `stats-2026-batters.json`(=`/api/stats`)이라 그쪽을 본다
   // (하린아빠 2026-08-04 20:42 "우리가 다 제공하고 있는 데이터인데").
@@ -4813,7 +4821,8 @@ async function answerSeasonRecordQuestion(
   // ⚠️ 두 소스를 섞는 이상 **한쪽만 갱신된 상태**가 위험하다. 봇이 앱과 다른 숫자를
   // 말하는 게 최악이므로, 스냅샷으로 답할 때는 DB row 와 겹치는 지표를 교차검증하고
   // 하나라도 어긋나면 답하지 않는다.
-  const useServed = intent.query.table === "batter" && isServedOnlyMetric(intent.query.metric);
+  const useCurrent = !!deps.fetchCurrentSeasonRecord;
+  const useServed = !useCurrent && intent.query.table === "batter" && isServedOnlyMetric(intent.query.metric);
   if (useServed && !deps.fetchServedRecord) {
     // 주입이 없으면 이 지표는 아직 답할 수 없다 — 없는 컬럼을 DB 에서 읽어 봐야 missing 이다.
     return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
@@ -4821,7 +4830,9 @@ async function answerSeasonRecordQuestion(
 
   let rows: SeasonRecordRow[];
   try {
-    rows = useServed
+    rows = useCurrent
+      ? await deps.fetchCurrentSeasonRecord!(intent.query.table, candidate.entityId)
+      : useServed
       ? await deps.fetchServedRecord!(candidate.entityId)
       : await deps.fetchSeasonRecord!(intent.query.table, candidate.entityId);
   } catch {
@@ -4854,7 +4865,7 @@ async function answerSeasonRecordQuestion(
   );
   if (outcome.kind === "ok") {
     onValidated?.(outcome);
-    const answer = composeSeasonRecordAnswer(outcome);
+    const answer = composeSeasonRecordAnswer(outcome, useCurrent);
     return settle(answer, "kbo_structured", "kbo_structured");
   }
   // stale · missing · inconsistent — 전부 안내로 닫는다. 추정값을 내지 않는다.
@@ -6132,7 +6143,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   //   "값 요구" 로 바뀌면서 선수 결속 여부가 필요해졌는데, 호출부마다 인자를 따로
   //   조립하면 한쪽이 조용히 다른 판정을 낸다 — `resolveSeasonRecordIntentFor` 가
   //   결속 계산까지 소유한다.
-  const recordIntent = deps.fetchSeasonRecord
+  const recordIntent = (deps.fetchCurrentSeasonRecord || deps.fetchSeasonRecord)
     ? resolveSeasonRecordIntentFor(question, players)
     : { kind: "none" as const };
 
@@ -6943,7 +6954,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     // ②-0 시즌 기록(수치) 질문은 위키가 아니라 **구조화 DB** 를 본다 (kbo_structured).
     // 나무위키 숫자는 정본이 아니므로(§12 수치 계약) tier2 로 답하면 안 되고,
     // 그렇다고 차단해도 안 된다 — 하린아빠 2026-08-03 "기록도 레퍼런스하는거야?".
-    if (deps.fetchSeasonRecord) {
+    if (deps.fetchCurrentSeasonRecord || deps.fetchSeasonRecord) {
       const rosterPlayer = players.find((player) => player.kboId === playerCandidate.entityId);
       const preferredTable = rosterPlayer?.position?.includes("투수") ? "pitcher" : "batter";
       // 이 지점은 선수가 **확정된** 경로다 — playerBound 는 정의상 true.
