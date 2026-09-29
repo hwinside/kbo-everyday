@@ -65,6 +65,11 @@ const mutations = [
     replace: '  "career_leaderboard",\n  "ack",\n  "history_hold",\n];',
   },
   {
+    name: "M29 교정 용어 동일성 가드 제거",
+    find: '  if (!preservesCorrectionTermIdentity(question, candidate, glossary)) return "rejected";',
+    replace: '  // mutation: unrelated glossary substitutions are allowed',
+  },
+  {
     // 2026-08-14 hotfix 축: 복원 배선을 죽이면 Production QA FAIL 실데이터(provider 가
     // `보끄가 뭐야` 까지만 교정)가 다시 카드 도달 불가가 된다.
     name: "M22 결정론 사전 복원 배선 제거",
