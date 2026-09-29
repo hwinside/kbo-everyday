@@ -1,8 +1,16 @@
 /** Shared by generic and official-document generation; never a term blacklist. */
 export const TERM_UNVERIFIED = "TERM_UNVERIFIED";
 export const TERM_CONTEXTUAL = "TERM_CONTEXTUAL";
-export const TERM_KNOWLEDGE_CACHE_VERSION = 2;
+export const TERM_KNOWLEDGE_CACHE_VERSION = 3;
 export const termKnowledgeCacheKey = (questionNorm: string) => `term-v${TERM_KNOWLEDGE_CACHE_VERSION}:${questionNorm}`;
+
+/** Only prevents a definition-only shortcut; never grants baseball scope or facts. */
+export function isTermOriginQuestion(question: string): boolean {
+  const q = question.normalize("NFKC").replace(/\s+/g, "");
+  return /유래|어원/.test(q)
+    || /왜.{0,40}(?:부르|불러|불리|이라고|라고|이란|라는)/.test(q)
+    || /(?:이름|명칭|단어|용어|표현).{0,16}(?:어디서|어디에서|어떻게|언제).{0,16}(?:왔|나왔|생겼|시작|붙)/.test(q);
+}
 
 export const UNVERIFIED_TERM_ANSWER =
   "질문하신 표현의 뜻을 야구 용어로 확인하지 못했습니다. 단어를 나눠 뜻을 추측하거나 공식 용어라고 단정하지 않겠습니다. 어디에서 보신 표현인지 문장이나 사용 상황을 알려주시면 그 맥락을 바탕으로 살펴보겠습니다.";
@@ -61,6 +69,9 @@ export function isUnverifiedTermAnswer(answer: string): boolean {
 }
 
 export const TERM_KNOWLEDGE_PROMPT = [
+  "용어의 유래·어원·왜 그렇게 부르는지를 물으면 현재 뜻만 반복하지 않는다. 확인된 말의 구성이나 명명 이유를 먼저 설명하고 현재 뜻은 보조 설명으로 구분한다.",
+  "말의 구성 풀이와 역사적 기원은 다르다. 일반적으로 확인된 용어만 한자·원어 구성을 설명하고, 그 풀이만으로 최초 사용 국가·사람·시기·전파 경로를 추론하지 않는다. 모르는 표현을 분해해 어원을 만들지 않는다.",
+  "현재 뜻은 알지만 역사적 유래는 확인하지 못했다면 그 경계를 명시한다. 유래를 모른다는 이유로 확인된 용어 자체가 없거나 비공식이라고 단정하지 않는다.",
   "용어 질문은 먼저 확인된 의미 / 문맥상 추정 / 모름을 구분한다. 야구처럼 들린다는 이유만으로 실제 용어라고 간주하지 않는다.",
   "확인된 일반 야구 용어는 정상적으로 설명한다. 사전에 없다는 사실만으로 모르는 말이라고 판정하지 않는다.",
   "사용 상황 없이 모르는 표현을 숫자·영단어·야구 단어로 분해해 정의를 만들지 않는다. 예를 들어 세븐히트·일레븐히트라는 단어만 보고 안타 수나 타석 수로 풀어 확정하지 않는다. 다른 낯선 합성어에도 같은 원칙을 적용한다.",
