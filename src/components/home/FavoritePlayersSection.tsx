@@ -5,13 +5,13 @@ import { fetchLeagueStats } from "@/lib/stats/client-league-stats";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 
 import { useVisibilityAwareInterval } from "@/lib/hooks/useVisibilityAwareInterval";
 import { fetchTodayGameBatch } from "@/lib/player-today-game-batch";
 
 import PlayerAvatar from "@/components/ui/PlayerAvatar";
 import SectionHeader from "@/components/ui/SectionHeader";
-import MiniTrendSparkline from "@/components/home/MiniTrendSparkline";
 import { getPlayerPhotoUrl } from "@/lib/constants/player-photos";
 import { getTeamById } from "@/lib/constants/teams";
 import { getTeamColor } from "@/lib/utils/team";
@@ -30,6 +30,13 @@ import type { FavoritePlayer } from "@/lib/store/favorites";
 import batterStats from "@/lib/constants/stats-2026-batters.json";
 import pitcherStats from "@/lib/constants/stats-2026-pitchers.json";
 import rosterData from "@/lib/constants/players-roster.json";
+
+// Only load recharts when a favorite has enough weekly data to render a chart.
+// Reserve its height while loading so the surrounding card does not shift.
+const MiniTrendSparkline = dynamic(() => import("@/components/home/MiniTrendSparkline"), {
+  ssr: false,
+  loading: () => <div className="h-[34px] w-full" aria-hidden="true" />,
+});
 
 interface RosterEntry {
   name: string;
