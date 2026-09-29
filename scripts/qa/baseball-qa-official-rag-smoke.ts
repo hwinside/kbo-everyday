@@ -241,6 +241,27 @@ for (const [name, question, content, answer, expected] of [
     assert.equal(result.kind, expected);
   });
 }
+// Every supplied chunk must bind the requested competition. A matching first
+// row cannot license an unscoped second row (every -> some mutation).
+for (const [second, expected] of [
+  ["대표팀 3승 1패", "insufficient"],
+  ["아시안게임 대표팀 3승 1패", "grounded"],
+] as const) {
+  check(`대회 결속 다중 청크 ${expected}`, () => {
+    const result = validateRagResponse(JSON.stringify({
+      status: RAG_GROUNDED_SENTINEL,
+      answer: "아시안게임 우승, 대표팀 3승 1패입니다.",
+    }), {
+      officialQuestion: "아시안게임 야구 결과 알려줘",
+      numericEvidence: true,
+      evidence: ["아시안게임 우승", second].map((content) => ({
+        ...OFFICIAL, sectionPath: "국제대회", content,
+      })),
+    });
+    assert.equal(result.kind, expected);
+  });
+}
+
 for (const status of [RAG_GROUNDED_SENTINEL, RAG_GENERAL_SENTINEL]) {
   for (const available of [false, true]) {
     checkAsync(`명단 오귀속 서빙 차단·보강·durable ${status}/${available}`, async () => {
