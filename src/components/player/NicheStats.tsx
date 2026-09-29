@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchPlayerResource } from "@/lib/stats/player-resource-client";
+
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
@@ -228,7 +230,7 @@ export default function NicheStats({
     }
 
     // 1차: KBO 개별 선수 상세 크롤링
-    fetch(`/api/player-stats?id=${playerId}&pos=${encodeURIComponent(position)}`)
+    fetchPlayerResource("player-stats", playerId, position)
       .then(r => r.json())
       .then(d => {
         if (d.stats) {

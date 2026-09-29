@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchPlayerResource } from "@/lib/stats/player-resource-client";
+
 import { useState, useEffect } from "react";
 import GlassCard from "@/components/ui/GlassCard";
 import { getTeamById } from "@/lib/constants/teams";
@@ -80,7 +82,7 @@ export default function PlayerGameLogs({
     let alive = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    fetch(`/api/player-game-logs?id=${encodeURIComponent(playerId)}&pos=${encodeURIComponent(position)}`)
+    fetchPlayerResource("player-game-logs", playerId, position)
       .then((r) => (r.ok ? r.json() : { rows: [] }))
       .then((d) => {
         if (alive) setRows(Array.isArray(d.rows) ? d.rows : []);
