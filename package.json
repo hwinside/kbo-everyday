@@ -563,7 +563,8 @@
     "qa:classifier-observation": "tsx scripts/qa/classifier-observation-gate.ts",
     "qa:genius-agent-fallback": "tsx scripts/qa/genius-agent-fallback.ts",
     "qa:genius-leaderboard-guide": "tsx scripts/qa/genius-leaderboard-guide-smoke.ts",
-    "qa:genius-live-score-guide": "tsx scripts/qa/genius-live-score-guide-smoke.ts"
+    "qa:genius-live-score-guide": "tsx scripts/qa/genius-live-score-guide-smoke.ts",
+    "qa:venue-story-auto-flight": "tsx scripts/qa/venue-story-auto-flight-smoke.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.3.0",
