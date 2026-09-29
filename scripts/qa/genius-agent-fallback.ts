@@ -1,3 +1,4 @@
+import primaryNewsBodies from "./fixtures/genius-primary-news-dates-20260929.json";
 import { officialEventContracts } from "./genius-official-events";
 import { boundedNewsContracts } from "./genius-bounded-news";
 import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
@@ -82,20 +83,45 @@ async function main() {
     }) }));
     assert.equal(result.answer.includes(body), accepted, "actual supplement boundary: " + body);
   }
-  assert.equal(primaryNewsDateSupported("오늘 삼성 소식", input.now, "후쿠오카로 향합니다.", [departure]), false);
-  assert.equal(primaryNewsDateSupported("오늘 삼성 소식", input.now, "10월 1일 출발합니다.", [departure]), true);
-  assert.equal(primaryNewsDateSupported("오늘 삼성 소식", input.now, "후쿠오카로 향합니다.", [sameDayText]), true);
-  assert.equal(primaryNewsDateSupported("오늘 삼성 소식", input.now, "후쿠오카로 향합니다.", ["후쿠오카를 방문합니다."]), false);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", [departure]), false);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "10월 1일 출발합니다.", [departure]), true);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", [sameDayText]), true);
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", input.now, "후쿠오카로 향합니다.", ["후쿠오카를 방문합니다."]), false);
   assert.equal(primaryNewsDateSupported("최근 삼성 소식", input.now, "후쿠오카로 향합니다.", [departure]), true);
+  // Reviewer production snapshots: multiple documents, relative-month dates, durations,
+  // an unrelated MMA article and date-free reports must not poison publication questions.
+  const capturedNow = primaryNewsBodies.capturedAt;
+  for (const [question, text, bodies] of [
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 일본 소프트뱅크와 교류전을 치릅니다.", primaryNewsBodies.samsung],
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", primaryNewsBodies.samsung],
+    ["오늘 김도영 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+    ["오늘 김도영 복귀 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+    ["어제 김도영 기사 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+  ] as const) assert.equal(primaryNewsDateSupported(question, capturedNow, text, bodies), true, question);
+  for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?", "오늘 삼성 어디 가는지 뉴스 알려줘"]) {
+    for (const text of ["일본 후쿠오카로 향합니다.", "후쿠오카를 방문하여 교류전을 치릅니다."]) {
+      assert.equal(primaryNewsDateSupported(question, capturedNow, text, primaryNewsBodies.samsung), false,
+        "publication noun must not bypass explicit event question");
+    }
+    assert.equal(primaryNewsDateSupported(question, capturedNow,
+      "삼성 퓨처스팀은 10월 1일부터 15일까지 후쿠오카를 방문합니다.", primaryNewsBodies.samsung), true,
+      "actual event dates suffice; unrelated dates and 14박 15일 are not required");
+  }
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow, "후쿠오카로 향합니다.",
+    ["삼성은 9월 29일 훈련했습니다. 삼성은 10월 1일 후쿠오카로 출발합니다."]), false,
+    "an unrelated same-day training sentence cannot establish trip date");
+  assert.equal(primaryNewsDateSupported("오늘 삼성 어디 가?", capturedNow, "후쿠오카로 향합니다.",
+    ["삼성은 9월 29일 후쿠오카로 출발합니다. 다른 선수는 10월 1일 귀국합니다."]), true,
+    "unrelated other event dates do not block same-day travel");
   // Primary news path must reject before durable storage and logging; replay cannot leak it.
   for (const question of ["오늘 삼성 퓨처스팀 어디 가?", "어제 삼성 퓨처스팀 어디 가?"]) {
     let savedNews: LlmResult | null = null;
     let supplements = 0;
     const newsLogs: Array<string | null> = [];
     const newsDeps = deps({ enableNewsRag: true,
-      searchNewsRag: async () => [{ content: departure, pageTitle: "삼성 퓨처스팀", canonicalUrl: evidence.url,
+      searchNewsRag: async () => primaryNewsBodies.samsung.map(content => ({ content, pageTitle: "삼성 퓨처스팀", canonicalUrl: evidence.url,
         revision: "test", sectionPath: "news", asOf: question.startsWith("어제") ? "2026-09-28T03:00:00Z" : input.now,
-        sourceGrade: "tier2", sourceKind: "news_article" }],
+        sourceGrade: "tier2", sourceKind: "news_article" })),
       callNewsRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer: "후쿠오카를 방문하여 교류전을 치릅니다." }), inputTokens: 1, outputTokens: 1 }),
       agentFallback: async () => { supplements++; return null; },
       log: async entry => { newsLogs.push(entry.answer); },
@@ -122,6 +148,21 @@ async function main() {
     assert.equal(newsCalls, 1);
     assert.equal(result.source, "news_rag", "same-day and non-relative primary answers preserved");
     assert.ok(result.answer.includes("교류전을 치릅니다"));
+  }
+  for (const [question, answer, bodies] of [
+    ["오늘 삼성 뉴스 뭐 있어?", "삼성 퓨처스팀은 일본 소프트뱅크와 교류전을 치릅니다.", primaryNewsBodies.samsung],
+    ["오늘 김도영 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
+  ] as const) {
+    let supplements = 0;
+    const result = await answerQuestion("test", question, deps({ enableNewsRag: true,
+      searchNewsRag: async () => bodies.map(content => ({ content, pageTitle: question, canonicalUrl: evidence.url,
+        revision: "snapshot", sectionPath: "news", asOf: input.now, sourceGrade: "tier2", sourceKind: "news_article" })),
+      callNewsRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
+      agentFallback: async () => { supplements++; return null; },
+    }));
+    assert.equal(result.source, "news_rag", "multi-article publication question retains primary answer");
+    assert.ok(result.answer.includes(answer));
+    assert.equal(supplements, 0);
   }
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
