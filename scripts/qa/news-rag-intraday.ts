@@ -100,7 +100,10 @@ async function main() {
       assert.equal(today.response.status, 200);
       assert.equal(rows.size, TEAMS.length * 2);
       for (const team of TEAMS) {
-        assert.notEqual(rows.get(`2026-09-28:${team.id}`)?.status, "ok");
+        const retained = rows.get(`2026-09-28:${team.id}`);
+        assert.ok(retained);
+        assert.equal(retained.status, previousMode === "collect_failed" ? "collect_failed" : "ok");
+        assert.equal(retained.truncated, previousMode === "truncated");
         assert.equal(rows.get(`2026-09-29:${team.id}`)?.status, "ok");
       }
       // The following morning finalizes the same article day, not the new run day.
