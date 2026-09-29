@@ -4,7 +4,7 @@ import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from 
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
-import { hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
+import { isTermOriginFollowup, isTermOriginQuestion, hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
 import { definitionContextFor, definitionWithEvidence, definitionNumericSource, isPlainStatExplanationRequest, isReferenceMeaningQuestion, isStatDefinitionQuestion, isStatPeriodFollowupQuestion, resolveStatDefinitionIntent, type StatDefinitionFrame, type StatDefinitionIntent } from "./stats/definition-intent";
 import { readStatDefinitionContext, type StatDefinitionContext } from "./stats/definition-context";
 import { requestedOperation, isBareRankFollowup, unsupportedOperationScope, readRankRequestContext, renderAverageRank, renderRemainingGames, RANK_SCOPE_ANSWER, OPERATION_DATA_ANSWER, ELAPSED_DATA_ANSWER, type RankRequestContext } from "./stats/question-operation";
@@ -5060,7 +5060,8 @@ async function answerOfficialDocumentQuestion(
   const relationContext = !definition && context && mentionedTeamCanonicals(question).length === 0
     && mentionedTeamCanonicals(context.question).length === 2
     && /^(?:(?:그럼|그러면|근데)\s*)?(?:둘(?:이|은|\s*다)|두\s*팀|두\s*구단|그\s*팀들|서로)(?:\s|[?!.])/.test(question.normalize("NFKC").trim());
-  const searchQuestion = relationContext ? `${context!.question}\n후속 질문: ${question}` : question;
+  const originContext = context && isTermOriginFollowup(question);
+  const searchQuestion = relationContext || originContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
     evidence = selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
@@ -6588,7 +6589,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
 
   // ① 검수 사전 (토큰 0)
   // A fixed dictionary answer cannot honor a request to explain differently.
-  const hit = scopeGate || statDefinition?.assessment || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question);
+  const hit = isTermOriginQuestion(question) || scopeGate || statDefinition?.assessment || statDefinition?.explanation === "plain_example" ? null : matchGlossary(glossary, question);
   if (hit) {
     await deps.log({ userId, question, questionNorm, matchPath: "dictionary", answer: hit.answer, inputTokens: null, outputTokens: null });
     return { status: 200, answer: hit.answer, source: "dictionary", term: hit.term, remaining };
@@ -6639,7 +6640,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   //   선택하면 `dictionary` 로 선반환해 종단 statNumericGuard(답 숫자 ⊆ 질문 숫자)를 통째로
   //   우회한다 — 가드 소유 질문은 매퍼를 결정론적으로 건너뛰어 합성 우회를 닫는다.
   if (
-    deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
+    !isTermOriginQuestion(question) && deps.mapGlossaryDefinition && !enabledPlayerCandidate && !questionMentionsRosterPlayer &&
     !questionMentionsTeam && !startersOwned && !statNumericGuard && !statDefinition?.assessment && statDefinition?.explanation !== "plain_example"
   ) {
     const candidates = glossaryCandidatesIn(glossary, question);
