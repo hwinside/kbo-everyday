@@ -1,3 +1,5 @@
+import { selectOriginContextTurn } from "./context";
+import { resolveTermOrigin } from "./term-origin";
 import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { liveScoreGuide } from "./stats/live-score-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
@@ -5900,7 +5902,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       // an optional LLM spelling rewrite (키움vs롯데 → 키움 대 롯데) interpose a card.
       // This skips correction only: context/entity/safety guards and durable
       // settlement below still run. Tier B candidate acceptance is unchanged.
-      && !liveScoreGuideForQuestion(question)) {
+      && !liveScoreGuideForQuestion(question) && !isTermOriginQuestion(question)) {
     let norm: { text: string | null; inputTokens: number | null; outputTokens: number | null } | null = null;
     try {
       norm = await deps.normalizeQuestionLlm(question);
@@ -6004,6 +6006,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   // 누수 경로는 종전과 동일(selectContextTurn 이 allowlist·TTL·본인 turn 만 통과).
   // 조회 실패는 맥락 없음으로 fail-closed 한다.
   let context: ContextTurn | null = null;
+  let originContext: ContextTurn | null = null;
   let draftContext: ContextTurn | null = null;
   // 입단 후속 재결속(#1140)은 상시 로드된 같은 row 를 쓰되 **전용 selector 로만** 자격을
   // 본다 — 글로벌 allowlist(확장판)가 통과시킨 row 라도 draft 재결속 자격(rag·
@@ -6017,6 +6020,8 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const row = await deps.loadPreviousTurn();
       // 글로벌: LLM 프롬프트 맥락 주입용 (답변이 실린 모든 source + unsure).
       context = selectContextTurn(row);
+      originContext = isTermOriginFollowup(question) ? selectOriginContextTurn(row) : null;
+      if (originContext && routeQuestion(originContext.question, glossary, players, false) === "blocked") originContext = null;
       // 인젝션 문장은 맥락으로도 싣지 않는다 (삼순 2026-08-10 — unsure 확장의 반례 축).
       // unsure 턴이 자격을 얻으면서 "이전 지시 무시" 류가 unsure 로 떨어진 뒤 다음 턴의
       // 프롬프트에 데이터로 실릴 수 있게 됐다. 현재 질문과 같은 인젝션 판정을 재사용한다.
@@ -6033,7 +6038,22 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   setContextSelected(context !== null);
   // 축 D — 질문·직전 턴이 지목한 선수의 현재 소속(로스터 SSOT)을 모든 LLM 경로에 준다.
   // Safety/service gates keep precedence over the definition routing exception.
-  const baseRoute = routeQuestion(question, glossary, players, context !== null);
+  const origin = resolveTermOrigin(question, glossary, originContext?.question);
+  // Bind an explicit deictic followup to a single prior USER term before routing.
+  // Safety and off-topic decisions on the original question still have precedence.
+  const rawRoute = routeQuestion(question, glossary, players, context !== null);
+  const originAllowed = origin && ["baseball_rule_term", "llm_scope_gate", "context_missing"].includes(rawRoute)
+    && !isOutOfScopeIntent(question.normalize("NFKC").toLowerCase(), mentionsTeamForGate(question))
+    && !mentionsAnyRosterName(question, players) && mentionedTeamCanonicals(question).length === 0;
+  const baseRoute = originAllowed ? routeQuestion(origin.question, glossary, players, true) : rawRoute;
+  if (originAllowed) {
+    // No origin LLM/RAG/cache path: neither irrelevant GROUNDED chunks nor
+    // generated word composition can override the vetted dictionary fields.
+    return settleThroughDurableBoundary(
+      { answer: origin.answer, source: origin.term ? "dictionary" : "scope_guide" }, origin.answer,
+      { userId, question, questionNorm, remaining, deps },
+    );
+  }
   // Preserve explicit record scope before mixed-entity and scalar handlers.
   // These branches never outrank safety, service, quota or correction gates.
   if (["baseball_rule_term", "llm_scope_gate", "context_missing", "team_record", "history_hold", "stat_clarify", "career_leaderboard"].includes(baseRoute)
