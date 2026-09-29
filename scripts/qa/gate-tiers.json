@@ -116,6 +116,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:news-rag-intraday",
+      "tier": "ci"
+    },
+    {
       "name": "qa:baseball-news-rag",
       "tier": "ci"
     },

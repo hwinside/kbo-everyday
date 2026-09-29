@@ -278,6 +278,7 @@
     "qa:baseball-source-inventory:db": "bash scripts/qa/baseball-qa-source-inventory-pg17.sh",
     "qa:baseball-rag-contract": "tsx scripts/qa/baseball-qa-rag-contract-smoke.ts",
     "qa:baseball-rag-serving": "tsx scripts/qa/baseball-qa-rag-serving-smoke.ts",
+    "qa:news-rag-intraday": "tsx scripts/qa/news-rag-intraday.ts",
     "qa:baseball-news-rag": "tsx scripts/qa/baseball-news-rag-ingest-smoke.ts",
     "qa:baseball-official-loader": "node scripts/qa/baseball-qa-official-loader-smoke.mjs",
     "qa:kbo-rulebook-boundaries": "python3 -m unittest scripts/qa/kbo-rulebook-boundaries-smoke.py",

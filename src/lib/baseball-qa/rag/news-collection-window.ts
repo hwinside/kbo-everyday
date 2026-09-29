@@ -1,4 +1,4 @@
-/** Coverage is the latest collection snapshot keyed by RUN day/team, not a cumulative total. */
+/** clipDate is the run day; coverage is keyed by articleDate/team, not a cumulative total. */
 export function newsCollectionWindow(period: string | null, now = Date.now()) {
   if (period !== null && period !== "yesterday" && period !== "today") return null;
   if (!Number.isFinite(now)) return null;

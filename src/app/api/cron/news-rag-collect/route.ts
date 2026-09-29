@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
     }
   });
   const cells = [...collections.values()];
-  const result = await ingestNewsArticles(getSupabaseAdmin(), cells, clipDate, { budgetMs: 60_000 });
+  const result = await ingestNewsArticles(getSupabaseAdmin(), cells, articleDate, { budgetMs: 60_000 });
   const failedTeams = cells.filter((c) => c.error).map((c) => c.teamId);
   const truncatedTeams = cells.filter((c) => c.truncated).map((c) => c.teamId);
   const ok = failedTeams.length === 0 && truncatedTeams.length === 0 && result.failedRows === 0 && !result.timedOut

@@ -26,7 +26,7 @@ const code = ts.transpileModule(readFileSync("src/app/api/cron/news-rag-collect/
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 type Mode = "ok" | "collect_failed" | "truncated" | "ingest_failed" | "coverage_failed";
-async function probe(period: string | null, mode: Mode = "ok", authorized = true) {
+async function probe(period: string | null, mode: Mode = "ok", authorized = true, now = Date.now()) {
   const dates: string[] = [];
   const coverage: CoverageRow[] = [];
   const client: NewsIngestClient = { rpc: async (name, args) => {
@@ -54,7 +54,7 @@ async function probe(period: string | null, mode: Mode = "ok", authorized = true
     } },
     "@/lib/baseball-qa/rag/news-articles": { toNewsArticleRows },
     "@/lib/baseball-qa/rag/news-ingest": { ingestNewsArticles },
-    "@/lib/baseball-qa/rag/news-collection-window": { newsCollectionWindow },
+    "@/lib/baseball-qa/rag/news-collection-window": { newsCollectionWindow: (value: string | null) => newsCollectionWindow(value, now) },
   };
   const exports: { GET?: (req: NextRequest) => Promise<Response> } = {};
   new Function("require", "exports", code)((name: string) => {
@@ -78,6 +78,7 @@ async function main() {
       assert.equal(result.dates.length, TEAMS.length);
       assert.ok(result.dates.every(date => date === newsCollectionWindow(period)!.articleDate));
       assert.equal(result.coverage.length, TEAMS.length);
+      assert.ok(result.coverage.every(row => row.clip_date === result.body.articleDate));
       assert.ok(result.coverage.every(row => row.detail?.includes(`article_date=${result.body.articleDate}`)));
       assert.ok(result.coverage.every(row => row.detail?.includes(`period=${period ?? "yesterday"}`)));
     }
@@ -86,6 +87,27 @@ async function main() {
       assert.equal(result.response.status, 503, mode);
       assert.equal(result.body.ok, false, mode);
       assert.ok(result.coverage.every(row => row.detail?.includes("period=today")), mode);
+    }
+    // Reproduce the real coverage RPC conflict key across the morning boundary.
+    for (const previousMode of ["collect_failed", "truncated"] as const) {
+      const previous = await probe(null, previousMode, true, Date.parse("2026-09-28T23:50:00Z"));
+      const today = await probe("today", "ok", true, Date.parse("2026-09-29T00:00:00Z"));
+      const rows = new Map<string, CoverageRow>();
+      for (const result of [previous, today]) {
+        for (const row of result.coverage) rows.set(`${row.clip_date}:${row.team_id}`, row);
+      }
+      assert.equal(previous.response.status, 503);
+      assert.equal(today.response.status, 200);
+      assert.equal(rows.size, TEAMS.length * 2);
+      for (const team of TEAMS) {
+        assert.notEqual(rows.get(`2026-09-28:${team.id}`)?.status, "ok");
+        assert.equal(rows.get(`2026-09-29:${team.id}`)?.status, "ok");
+      }
+      // The following morning finalizes the same article day, not the new run day.
+      const finalized = await probe(null, "collect_failed", true, Date.parse("2026-09-29T23:50:00Z"));
+      for (const row of finalized.coverage) rows.set(`${row.clip_date}:${row.team_id}`, row);
+      assert.equal(rows.size, TEAMS.length * 2);
+      for (const team of TEAMS) assert.notEqual(rows.get(`2026-09-29:${team.id}`)?.status, "ok");
     }
     const rejected = await probe("today", "ok", false);
     assert.equal(rejected.response.status, 401);
