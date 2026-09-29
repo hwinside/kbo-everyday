@@ -23,6 +23,22 @@ export function quoteSupportsNumbers(text: string, quotes: string): boolean {
   return tokens.every(t => available.has(t));
 }
 
+/** Publication-window check is deterministic; event-date entailment still needs verification. */
+export function citationWithinQuestionDay(question: string, now: string, row: Evidence): boolean {
+  const current = Date.parse(now);
+  const published = Date.parse(row.asOf);
+  if (!Number.isFinite(current) || !Number.isFinite(published) || published > current) return false;
+  const today = /오늘/.test(question);
+  const yesterday = /어제/.test(question);
+  if (!today && !yesterday) return true;
+  // A single-day fallback cannot establish a two-day comparison.
+  if (today && yesterday || row.source !== "news") return false;
+  const dayMs = 86_400_000;
+  const kstOffset = 9 * 3_600_000;
+  const start = Math.floor((current + kstOffset) / dayMs) * dayMs - kstOffset - (yesterday ? dayMs : 0);
+  return published >= start && published < start + dayMs;
+}
+
 export async function runVerifiedFallback(input: ConversationInput, ports: AgentPorts, budgetMs = 15_000): Promise<FallbackAnswer | null> {
   if (!fallbackEligible(input.question) || budgetMs < 3000) return null;
   const controller = new AbortController();
@@ -41,7 +57,7 @@ export async function runVerifiedFallback(input: ConversationInput, ports: Agent
       if (!quoteSupportsNumbers(claim.text, claim.citations.map(c => c.quote).join(" "))) return null;
       for (const citation of claim.citations) {
         const row = result.evidence.find(e => e.id === citation.id)!;
-        if (!resolveAllowedSource(row.url) || Date.parse(row.asOf) > Date.parse(input.now)) return null;
+        if (!resolveAllowedSource(row.url) || !citationWithinQuestionDay(input.question, input.now, row)) return null;
         used.push(row);
       }
     }

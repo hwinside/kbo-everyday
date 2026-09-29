@@ -7133,7 +7133,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
     const final = await supplementUnavailable({ answer: UNCLEAR_ANSWER, source: "unsure" }, question, deps);
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
-    await deps.log({ userId, question, questionNorm, matchPath: final.source, answer: final.answer,
+    await deps.log({ userId, question, questionNorm, matchPath: final.source, answer: final.source === "unsure" ? null : final.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
     return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
