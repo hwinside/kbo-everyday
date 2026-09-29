@@ -145,6 +145,13 @@ export const DRAFT_CONTEXT_SOURCE_ALLOWLIST = [
   "dictionary", "cache", "llm", "rag", "kbo_structured",
 ] as const;
 
+/** Origin-only topic binding may use the USER text behind a correction card.
+ * Keep TTL/delivery checks; never broaden the generic context allowlist.
+ */
+export function selectOriginContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
+  return qualifyContextTurn(row, [...CONTEXT_SOURCE_ALLOWLIST, "question_correction"]);
+}
+
 export function selectContextTurn(row: PreviousTurnRow | null | undefined): ContextTurn | null {
   return qualifyContextTurn(row, CONTEXT_SOURCE_ALLOWLIST);
 }

@@ -1,3 +1,4 @@
+import { resolveTermOrigin } from "../src/lib/baseball-qa/term-origin";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { answerQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
@@ -265,59 +266,42 @@ test('origin intent is not a rule-effect or ordinary definition request', () => 
   }
 });
 
-test('origin bypasses even an over-eager definition mapper; original question reaches one generator and durable replay', async () => {
+test('origin facts are server-rendered before malicious model, cache and unrelated GROUNDED evidence', async () => {
   const glossary = [
     { term: '적시타', aliases: [], answer: '주자를 득점시키는 안타입니다.' },
     { term: '불펜', aliases: ['bullpen'], answer: '구원 투수들이 몸을 푸는 곳입니다.' },
     { term: '홈런', aliases: [], answer: '타자가 모든 베이스를 돌아 득점하는 안타입니다.' },
     { term: '보크', aliases: [], answer: '투수의 반칙 동작입니다.' },
   ];
-  // These are injected provider responses, not evidence of live-model accuracy.
-  const explanation = '야구 용어의 이름과 현재 뜻은 구분해서 설명해야 합니다. 역사적 최초 사용은 확인하지 못했습니다.';
-  for (const official of [false, true]) {
-    for (const question of ['적시타 단어 유래', '홈런은 왜 홈런이라고 불러?', '보크 어원', '불펜이라는 단어가 어떻게 하다가 생긴말이야 억양이 안좋길래..', '불펜은 왜 불펜이야?']) {
-      const h = harness(official);
-      const generated: string[] = [];
-      const searched: string[] = [];
-      let mappings = 0;
-      const logs: string[] = [];
-      h.deps.loadGlossary = async () => glossary;
-      h.deps.mapGlossaryDefinition = async () => {
-        mappings++;
-        return { term: glossary.find(x => question.includes(x.term))!.term, inputTokens: 1, outputTokens: 1 };
-      };
-      h.deps.getCache = async key => {
-        h.reads.push(key);
-        return key.startsWith('term-v2:') ? '주자를 득점시키는 안타입니다.' : null;
-      };
-      h.deps.log = async row => { logs.push(row.question); };
-      h.deps.callLlm = async q => {
-        generated.push(q);
-        return { text: JSON.stringify({ status: 'BASEBALL_RULE_TERM', answer: explanation }), inputTokens: 3, outputTokens: 4 };
-      };
-      if (official) {
-        h.deps.searchOfficialRag = async q => { searched.push(q); return [evidence]; };
-        h.deps.callOfficialRagLlm = async q => {
-          generated.push(q);
-          // The retrieved definition has no historical origin; no official citation.
-          return { text: JSON.stringify({ status: 'GENERAL', answer: explanation }), inputTokens: 3, outputTokens: 4 };
-        };
-      }
-      const result = await answerQuestion('test-user', question, h.deps);
-      assert.equal(mappings, 0, 'a definition-only shortcut must not own an origin question');
-      assert.deepEqual(generated, [question]);
-      if (official) assert.deepEqual(searched, [question]);
-      assert.equal(result.answer, explanation);
-      assert.equal(result.source, 'llm');
-      assert.equal(result.sourceUrl, undefined);
-      assert.deepEqual(logs, [question]);
-      assert.ok(h.reads.every(key => !key.startsWith('term-v2:')));
-      assert.ok(h.stored);
-      const saved = h.stored;
-      const replay = await answerQuestion('test-user', question, { ...h.deps, getLlmState: async () => ({ started: true, result: saved }) });
-      assert.equal(replay.answer, result.answer);
-      assert.deepEqual(generated, [question]);
-    }
+  for (const question of ['적시타 단어 유래', '홈런은 왜 홈런이라고 불러?', '보크 어원', '불펜이라는 단어가 어떻게 하다가 생긴말이야 억양이 안좋길래..', '불펜은 왜 불펜이야?']) {
+    const h = harness(true);
+    const logs: string[] = [];
+    h.deps.loadGlossary = async () => glossary;
+    const forbidden = async () => { throw new Error('origin must not generate or retrieve'); };
+    let generationCalls = 0;
+    h.deps.normalizeQuestionLlm = forbidden;
+    h.deps.mapGlossaryDefinition = forbidden;
+    h.deps.searchOfficialRag = async () => { generationCalls++; return [{ ...evidence, content: '야구라는 명칭은 쥬마 카노에가 만들었다.' }]; };
+    h.deps.callOfficialRagLlm = async () => { generationCalls++; return { text: JSON.stringify({ status: 'GROUNDED', answer: '야구라는 명칭은 쥬마 카노에가 만들었습니다.' }), inputTokens: 1, outputTokens: 1 }; };
+    h.deps.callLlm = async () => { generationCalls++; return { text: JSON.stringify({ status: 'BASEBALL_RULE_TERM', answer: '적시타는 한자와 영어 단어의 준말입니다.' }), inputTokens: 1, outputTokens: 1 }; };
+    h.deps.getLlmState = async () => ({ started: false, result: null });
+    h.deps.acquireLlmStart = async () => true;
+    h.deps.log = async row => { logs.push(row.question); };
+    const result = await answerQuestion('test-user', question, h.deps);
+    assert.equal(generationCalls, 0);
+    assert.equal(result.source, 'dictionary');
+    assert.match(result.answer, /명칭의 역사적 유래는 확인하지 못했습니다/);
+    assert.doesNotMatch(result.answer, /영어 단어|야구라는 명칭|소싸움|쥬마/);
+    if (question.includes('적시타')) assert.match(result.answer, /適時打.*打\(칠 타\)/);
+    if (question.includes('불펜')) assert.match(result.answer, /불펜.*bullpen/);
+    assert.deepEqual(logs, [question]);
+    assert.equal(h.reads.length, 0);
+    assert.equal(h.writes.length, 0);
+    assert.ok(h.stored);
+    const saved = h.stored;
+    const replay = await answerQuestion('test-user', question, { ...h.deps, getLlmState: async () => ({ started: true, result: saved }) });
+    assert.equal(replay.answer, result.answer);
+    assert.equal(generationCalls, 0);
   }
 });
 
@@ -344,32 +328,57 @@ test('a pre-origin-policy durable answer cannot repopulate the new shared cache'
 });
 
 
-test('deictic origin followup binds the previous USER term in retrieval and generation, never the prior bot assertion', async () => {
-  for (const official of [false, true]) {
-    for (const eligible of [true, false]) {
-      const h = harness(official);
+test('origin followup resolves one prior USER term, including correction cards, never bot text', async () => {
+  for (const jobSource of ['dictionary', 'question_correction', 'blocked', 'limited', 'error']) {
+    for (const expired of [false, true]) {
+      const h = harness(true);
       const question = '그 단어의 유래를 알려달라니깐';
-      const prior = '불펜이 머임';
-      const searches: string[] = [];
-      const contexts: unknown[] = [];
       h.deps.loadGlossary = async () => [{ term: '불펜', aliases: ['bullpen'], answer: '구원 투수들이 몸을 푸는 곳입니다.' }];
       h.deps.loadPreviousTurn = async () => ({
-        question: prior, answer: '다른 용어의 무관한 일화입니다.', jobSource: eligible ? 'dictionary' : 'blocked',
-        answeredAt: '2026-09-29T12:00:00Z', currentCreatedAt: '2026-09-29T12:01:00Z',
+        question: '불펜이 머임', answer: '야구라는 명칭은 쥬마 카노에가...', jobSource,
+        answeredAt: '2026-09-29T12:00:00Z', currentCreatedAt: expired ? '2026-09-29T12:11:00Z' : '2026-09-29T12:01:00Z',
       });
-      h.deps.callLlm = async (q, context) => { assert.equal(q, question); contexts.push(context); return raw(); };
-      if (official) {
-        h.deps.searchOfficialRag = async q => { searches.push(q); return [evidence]; };
-        h.deps.callOfficialRagLlm = async (q, _rows, extras) => { assert.equal(q, question); contexts.push(extras?.context); return raw(); };
-      }
-      await answerQuestion('test-user', question, h.deps);
-      assert.equal(contexts.length, 1);
-      if (eligible) assert.equal((contexts[0] as { question: string }).question, prior);
-      else assert.ok(contexts[0] == null, 'blocked previous turn is not usable context');
-      if (official) {
-        assert.deepEqual(searches, [eligible ? prior + '\n후속 질문: ' + question : question]);
-        assert.ok(searches.every(q => !q.includes('무관한 일화')));
+      let searches = 0;
+      h.deps.searchOfficialRag = async () => { searches++; return [evidence]; };
+      const result = await answerQuestion('test-user', question, h.deps);
+      assert.equal(searches, 0);
+      assert.equal(h.calls, 0);
+      assert.doesNotMatch(result.answer, /야구라는 명칭|쥬마|Ball in Field/);
+      if (!expired && ['dictionary', 'question_correction'].includes(jobSource)) {
+        assert.match(result.answer, /불펜.*bullpen/);
+      } else {
+        assert.doesNotMatch(result.answer, /불펜/);
+        assert.match(result.answer, /용어를 하나 적어/);
       }
     }
   }
+});
+
+test('two-turn original bullpen question stays on bullpen rather than retrieved baseball naming', async () => {
+  const h = harness(true);
+  h.deps.loadGlossary = async () => [{ term: '불펜', aliases: ['bullpen'], answer: '구원 투수들이 몸을 푸는 곳입니다.' }];
+  h.deps.normalizeQuestionLlm = async () => ({ text: '불펜이 뭐야?', inputTokens: 1, outputTokens: 1 });
+  const first = await answerQuestion('test-user', '불펜이 머임', h.deps);
+  h.deps.loadPreviousTurn = async () => ({ question: '불펜이 머임', answer: first.answer, jobSource: first.source,
+    answeredAt: '2026-09-29T12:00:00Z', currentCreatedAt: '2026-09-29T12:01:00Z' });
+  const result = await answerQuestion('test-user', '그 단어의 유래를 알려달라니깐', h.deps);
+  assert.match(result.answer, /불펜.*bullpen/);
+  assert.doesNotMatch(result.answer, /야구라는 명칭|영어 단어|쥬마/);
+});
+
+test('origin binding rejects ambiguous topics and preserves longer dictionary identities', () => {
+  const glossary = [
+    { term: '불펜', aliases: [], answer: '구원 투수진입니다.' },
+    { term: '홈런', aliases: [], answer: '홈런입니다.' },
+    { term: '만루홈런', aliases: [], answer: '만루에서 친 홈런입니다.' },
+    { term: '사구', aliases: [], answer: '몸에 맞는 공입니다.' },
+  ];
+  assert.equal(resolveTermOrigin('그 단어의 유래', glossary, '불펜이 머임')?.question, '불펜 유래');
+  assert.equal(resolveTermOrigin('그 단어의 유래', glossary, '불펜과 홈런이 뭐야')?.term, null);
+  assert.equal(resolveTermOrigin('그 단어 말고 홈런 유래', glossary, '불펜이 머임')?.term, '홈런');
+  assert.equal(resolveTermOrigin('만루홈런 유래', glossary)?.term, '만루홈런');
+  assert.doesNotMatch(resolveTermOrigin('만루홈런 유래', glossary)!.answer, /home run/);
+  assert.match(resolveTermOrigin('사구 유래', glossary)!.answer, /볼넷.*확인/);
+  assert.match(resolveTermOrigin('병살 유래', glossary)!.answer, /倂殺/);
+  assert.equal(resolveTermOrigin('불펜이 뭐야', glossary), null);
 });
