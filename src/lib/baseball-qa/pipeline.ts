@@ -1,3 +1,5 @@
+import { fallbackEligible, type FallbackAnswer } from "./agent/fallback";
+import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
 import { observeQaDeps, type ClassifierObservation } from "./classifier-observation";
 import { hasReportedTermUsage, unverifiedTermAnswer, isUnverifiedTermAnswer, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from "./term-knowledge";
@@ -1181,6 +1183,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  agentFallback?: (input: ConversationInput, budgetMs: number) => Promise<FallbackAnswer | null>;
   /** Same complete snapshot as the app's ranking page; no per-player subset. */
   fetchBatterRanking?: () => Promise<ServedBatterSnapshot>;
   loadGlossary: () => Promise<GlossaryEntry[]>;
@@ -4135,6 +4138,20 @@ async function answerRequestedOperation(
   } catch { return unavailable(OPERATION_DATA_ANSWER); }
 }
 
+/** Called only by an owned unavailable branch, BEFORE durable final storage. */
+async function supplementUnavailable(final: StoredQaFinal, question: string, deps: QaDeps): Promise<StoredQaFinal> {
+  if (final.source !== "unsure" || !deps.agentFallback || !fallbackEligible(question)) return final;
+  try {
+    const extra = await deps.agentFallback({ question, now: new Date(deps.now ? deps.now() : Date.now()).toISOString(), history: [] }, 15_000);
+    if (!extra) return final;
+    // Reuse production scope/output checks; agent provenance is appended separately.
+    const body = extra.answer.split("\n\n📄 출처:")[0];
+    const checked = validateLlmResponse(JSON.stringify({ status: RULE_TERM_SENTINEL, answer: body }), question);
+    if (checked.kind !== "answer") return final;
+    return { ...final, ...extra, cacheable: false, toneCompliant: checked.toneCompliant };
+  } catch { return final; }
+}
+
 async function settleThroughDurableBoundary(
   final: StoredQaFinal,
   logAnswer: string | null,
@@ -4153,7 +4170,11 @@ async function settleThroughDurableBoundary(
     };
   };
   // durable 배선이 없는 환경(단위 하니스 등)은 경합 자체가 없다 — 그대로 발송.
-  if (!deps.getLlmState || !deps.acquireLlmStart) return send();
+  if (!deps.getLlmState || !deps.acquireLlmStart) {
+    final = await supplementUnavailable(final, question, deps);
+    if (final.source !== "unsure") logAnswer = final.answer;
+    return send();
+  }
   let state: { started: boolean; result: LlmResult | null; ownerActive?: boolean };
   try {
     state = await deps.getLlmState();
@@ -4175,6 +4196,8 @@ async function settleThroughDurableBoundary(
     return pending;
   }
   if (!won) return pending;
+  final = await supplementUnavailable(final, question, deps);
+  if (final.source !== "unsure") logAnswer = final.answer;
   if (deps.storeLlm) {
     await deps.storeLlm(packStoredQaFinal(final, { text: "", inputTokens: null, outputTokens: null }));
   }
@@ -5126,15 +5149,14 @@ async function answerOfficialDocumentQuestion(
       });
       return { status: 200, answer, source: "scope_guide", remaining };
     }
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    const final = await supplementUnavailable({
       answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
-    }, llm));
-    await deps.log({
-      userId, question, questionNorm, matchPath: "unsure", answer: UNCLEAR_ANSWER,
+    }, question, deps);
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: final.source, answer: final.answer,
       inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("official", question, validated, evidence),
-    });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+      ...ragObservation("official", question, validated, evidence) });
+    return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   // 본문에는 표시명만 들어간다. 링크는 payload 로 실어 클라가 그 문구에 앵커를 씌운다.
@@ -5476,15 +5498,14 @@ async function answerNewsRagQuestion(
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②).
     // 🔴 뉴스가 이 계측의 최대 관심축이다 — 기사에는 숫자가 거의 항상 있어 숫자 HOLD 손해가
     //   여기에 몰려 있을 가능성이 크다. 경로 라벨이 없으면 그 손실을 unsure 더미에서 못 꺼낸다.
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({
+    const final = await supplementUnavailable({
       answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", ...ragObservation("news", question, validated),
-    }, llm));
-    await deps.log({
-      userId, question, questionNorm, matchPath: "unsure",
-      answer: NEWS_UNAVAILABLE_ANSWER, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
-      ...ragObservation("news", question, validated),
-    });
-    return { status: 200, answer: NEWS_UNAVAILABLE_ANSWER, source: "unsure", remaining };
+    }, question, deps);
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: final.source,
+      answer: final.answer, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens,
+      ...ragObservation("news", question, validated) });
+    return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
   const answer = composeRagAnswer(validated.answer, evidence[0]);
   const sourceUrl = displayProvenanceOf(evidence[0])?.url;
@@ -5687,7 +5708,14 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
 }
 
 export async function answerQuestion(userId: string, rawQuestion: string, deps: QaDeps): Promise<QaResult> {
-  const observed = observeQaDeps(deps);
+  // Total wall budget starts before quota/search/model work and remains inside the
+  // existing 30s durable ownership fence. Slow primary answers simply skip fallback.
+  const deadline = Date.now() + 25_000;
+  const baseFallback = deps.agentFallback;
+  const observed = observeQaDeps({ ...deps, agentFallback: baseFallback ? (input, budget) => {
+    const left = Math.min(budget, deadline - Date.now());
+    return left < 3000 ? Promise.resolve(null) : baseFallback(input, left);
+  } : undefined });
   return answerQuestionObserved(userId, rawQuestion, observed.deps, observed.setContextSelected);
 }
 
@@ -7103,9 +7131,11 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   }
   if (validated.kind === "unsure" || !validated.answer) {
     // 추측 금지 → 보류. 캐시 미저장(사전 보강 후 정답 제공 여지).
-    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal({ answer: UNCLEAR_ANSWER, source: "unsure" }, llm));
-    await deps.log({ userId, question, questionNorm, matchPath: "unsure", answer: null, inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
-    return { status: 200, answer: UNCLEAR_ANSWER, source: "unsure", remaining };
+    const final = await supplementUnavailable({ answer: UNCLEAR_ANSWER, source: "unsure" }, question, deps);
+    if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
+    await deps.log({ userId, question, questionNorm, matchPath: final.source, answer: final.source === "unsure" ? null : final.answer,
+      inputTokens: llm.inputTokens, outputTokens: llm.outputTokens });
+    return { status: 200, answer: final.answer, source: final.source, remaining, sourceUrl: final.sourceUrl };
   }
 
   // 맥락 의존 답변은 global 캐시에 쓰지 않는다 (spec §4.1 B5).
