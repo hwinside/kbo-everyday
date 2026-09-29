@@ -1,8 +1,59 @@
 import assert from "node:assert/strict";
 import { scanDates, scanNextGame } from "../../src/lib/games/next-game-scan";
 import { startHomeNextGamePoller } from "../../src/lib/polling/home-next-game-poller";
+import { fetchSharedDateGames } from "../../src/lib/games/shared-date-games";
+
+async function checkDateCacheBoundary() {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  let fail = false;
+  globalThis.fetch = async (input, init) => {
+    const url = new URL(String(input));
+    requests.push(url.toString());
+    assert.equal(url.pathname, "/api/games");
+    assert.deepEqual([...url.searchParams.keys()], ["date"], "no team/mode/range cache-key fanout");
+    assert.equal(init?.cache, "no-store");
+    assert.ok(init?.signal, "self-fetch has a bounded timeout");
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    return fail ? new Response("failed", { status: 503 }) : Response.json({
+      date: url.searchParams.get("date"), games: [],
+    });
+  };
+  try {
+    const dates = scanDates("20261008", "20261022")!;
+    const results = await Promise.all(Array.from({ length: 10 }, (_, team) => scanNextGame({
+      dates, signal: new AbortController().signal,
+      fetchGames: (date) => fetchSharedDateGames("https://example.test", date),
+      matches: (game) => game.homeTeamId === team + 1,
+    })));
+    assert.equal(requests.length, 15, "ten simultaneous team scans share each date, not 150 origin fetches");
+    assert.ok(results.every((result) => result.game === null && result.failedDates.length === 0));
+    await fetchSharedDateGames("https://example.test", dates[0]);
+    assert.equal(requests.length, 16, "completed data is not cached in process; CDN owns freshness");
+    await fetchSharedDateGames("https://another.test", dates[0]);
+    assert.equal(requests.length, 17, "origins are isolated");
+    fail = true;
+    const failures = await Promise.allSettled([
+      fetchSharedDateGames("https://example.test", dates[0]),
+      fetchSharedDateGames("https://example.test", dates[0]),
+    ]);
+    assert.ok(failures.every((result) => result.status === "rejected"));
+    assert.equal(requests.length, 18);
+    const partial = await scanNextGame({
+      dates: [dates[0]], signal: new AbortController().signal,
+      fetchGames: (date) => fetchSharedDateGames("https://example.test", date), matches: () => true,
+    });
+    assert.deepEqual(partial.failedDates, [dates[0]], "failed date remains partial, not cached as empty");
+    fail = false;
+    assert.deepEqual(await fetchSharedDateGames("https://example.test", dates[0]), []);
+    assert.equal(requests.length, 20, "failed flights are cleared for retry");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
 
 async function main() {
+  await checkDateCacheBoundary();
   assert.equal(scanDates("20260230", "20260302"), null);
   assert.equal(scanDates("20261009", "20261008"), null);
   assert.equal(scanDates("20261008", "20261023"), null);

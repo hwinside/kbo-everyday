@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchGamesUserFacing } from "@/lib/crawler/games-user-facing";
+import { fetchSharedDateGames } from "@/lib/games/shared-date-games";
 import { TEAMS } from "@/lib/constants/teams";
 import { scanDates, scanNextGame } from "@/lib/games/next-game-scan";
 
-// At most 15 sequential dates, each using the existing bounded hybrid fetch.
+// At most 15 sequential dates through the existing date-only CDN cache.
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     const result = await scanNextGame({
       dates,
       signal: request.signal,
-      fetchGames: fetchGamesUserFacing,
+      fetchGames: (date) => fetchSharedDateGames(request.nextUrl.origin, date),
       matches: (game) => (game.homeTeamId === teamId || game.awayTeamId === teamId) &&
         game.gameId !== excludeId &&
         (game.status === "scheduled" || (mode === "active" && game.status === "live")),
