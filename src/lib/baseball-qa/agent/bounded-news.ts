@@ -24,7 +24,7 @@ export function newsTermFilter(term: string): string | null {
 
 /** Narrow before LIMIT; broad lane remains available when exact intent is absent. */
 export function newsIntentFilter(query: string): string | null {
-  const words = /결과|스코어|이겼|졌|승리|패배/u.test(query) ? ["결과", "승리", "패배", "꺾", "승", "패"]
+  const words = /결과|스코어|이겼|졌|승리|패배|어떻게\s*(?:됐|되었|끝)|어찌\s*됐/u.test(query) ? ["결과", "승리", "패배", "꺾", "금메달", "우승", "준우승", "동메달"]
     : /일정|언제|몇\s*월|몇\s*일|몇칠|개막|결승/u.test(query) ? ["일정", "개막", "결승", "시작", "개최", "첫 경기", "조별"]
     : /명단|누구|선발|엔트리/u.test(query) ? ["명단", "선발", "엔트리", "감독", "발탁"] : [];
   return words.length ? words.flatMap(word => [`title.ilike.*${word}*`, `content.ilike.*${word}*`]).join(",") : null;

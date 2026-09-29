@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createProductionAgentPorts } from "../../src/lib/baseball-qa/agent/production";
-import { tournamentSearch, newsTermFilter } from "../../src/lib/baseball-qa/agent/bounded-news";
+import { tournamentSearch, newsTermFilter, newsIntentFilter } from "../../src/lib/baseball-qa/agent/bounded-news";
 import { runVerifiedFallback } from "../../src/lib/baseball-qa/agent/fallback";
 
 /** Actual production adapter wiring, with transport only replaced. No external requests. */
@@ -10,6 +10,9 @@ export async function boundedNewsContracts() {
   assert.ok(tournamentSearch("아시안게임 일정"));
   assert.ok(newsTermFilter("아시안게임")?.includes("title.ilike.*아시안*"));
   assert.equal(newsTermFilter("오늘"), null);
+  assert.ok(newsIntentFilter("아시안게임 야구 어떻게 됐어?")?.includes("content.ilike.*금메달*"));
+  assert.ok(newsIntentFilter("아시안게임 어떻게 끝났어")?.includes("title.ilike.*우승*"));
+  assert.equal(newsIntentFilter("아시안게임 어떻게 참가해"), null, "process question is not a result");
   assert.ok(!newsTermFilter('LG),or(secret.eq.true')?.includes('secret.eq.true'));
   const keys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "GEMINI_API_KEY"] as const;
   const saved = keys.map(key => process.env[key]); const originalFetch = globalThis.fetch;

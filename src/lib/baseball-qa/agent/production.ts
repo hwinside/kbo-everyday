@@ -3,6 +3,7 @@ import { searchWiki, toEvidence } from "./search-adapters";
 import { runVerifiedFallback, FALLBACK_VERIFY_PROMPT } from "./fallback";
 import { AGENT_POC_PROMPT, type AgentPorts, type ConversationInput, type Evidence } from "./poc";
 import { tournamentSearch, newsTermFilter, newsIntentFilter } from "./bounded-news";
+import { officialEventRequest, officialEventEvidence } from "./official-events";
 
 /** Read-only, bounded production adapters. No CLI import, full-corpus scan or writes. */
 export function createProductionAgentPorts(): AgentPorts {
@@ -22,19 +23,21 @@ export function createProductionAgentPorts(): AgentPorts {
   return {
     decide: async (system, state, signal) => {
       const context = state && typeof state === "object" ? state as Record<string, unknown> : {};
+      const curated = typeof context.question === "string" && typeof context.now === "string"
+        ? officialEventRequest(context.question, context.now) : null;
       const seeded = system === AGENT_POC_PROMPT && typeof context.question === "string"
-        ? tournamentSearch(context.question) : null;
+        ? curated ?? tournamentSearch(context.question) : null;
       if (seeded && Array.isArray(context.trace) && context.trace.length === 0) return { action: "search", ...seeded };
       // One synthesis plus the unchanged independent verifier. No repeated planning/repair loop.
       if (seeded && context.citationFeedback) return { action: "insufficient", reason: "invalid_citations" };
-      const partialPolicy = "질문의 핵심에 답하는 부분 사실만 단일 기사에서 확인해 답한다. 누구/명단 질문에는 확인된 발탁 선수만 일부로 소개할 수 있다. 언제/일정 질문에는 실제 경기·대회 시점이 필요하며 소집일·출국일·합류일로 대신하지 않는다. 결과 질문에는 실제 결과가 필요하며 선발 예고로 대신하지 않는다. 핵심 정보를 확인하지 못하면 주변 사실로 꾸미지 말고 insufficient를 반환한다. 단순 근거 부족 안내는 answer가 아니다. 답변에 '제공된 자료', '검색 자료', '검색 결과', '코퍼스' 같은 내부 표현을 쓰지 않는다. 실제 답할 수 있는 범위와 확인하지 못한 범위를 구분하되 전체 명단·전체 일정으로 과장하지 않는다. 인용은 한 문서의 원문 그대로 유지한다.";
+      const partialPolicy = "질문의 핵심에 답하는 부분 사실만 단일 기사에서 확인해 답한다. 누구/명단 질문에는 확인된 발탁 선수만 일부로 소개할 수 있다. 언제/일정 질문에는 실제 경기·대회 시점이 필요하며 소집일·출국일·합류일로 대신하지 않는다. 결과 질문에는 실제 결과가 필요하며 선발 예고로 대신하지 않는다. 대회명만 물은 짧은 질문도 현재 상황을 묻는 것이며 선발 예고만으로 대신하지 않는다. 명시적인 선발 질문에도 now 기준 이미 시작한 경기의 예고를 현재 사실로 답하지 않는다. 핵심 정보를 확인하지 못하면 주변 사실로 꾸미지 말고 insufficient를 반환한다. 단순 근거 부족 안내는 answer가 아니다. 답변에 '제공된 자료', '검색 자료', '검색 결과', '코퍼스' 같은 내부 표현을 쓰지 않는다. 실제 답할 수 있는 범위와 확인하지 못한 범위를 구분하되 전체 명단·전체 일정으로 과장하지 않는다. 인용은 한 문서의 원문 그대로 유지한다.";
       const tournament = typeof context.question === "string" && tournamentSearch(context.question);
       const prompt = seeded ? system + "\n검색은 이미 완료되었다. 추가 search는 금지한다. " + partialPolicy
         : tournament && system === FALLBACK_VERIFY_PROMPT ? system + "\n" + partialPolicy
         : system;
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${BASEBALL_QA_GEMINI_MODEL}:generateContent`, {
         method: "POST", signal, headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: prompt + "\n운영 보조 검색에서는 official 도구가 연결되지 않았다. news 또는 wiki만 사용한다." }] },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: prompt + (curated ? "\n운영 official 근거는 명시된 대회·연도의 검수된 일정/명단 스냅샷이다. KBO 규정으로 국제대회 일정을 대신하지 않는다. 수집 시각과 경기 날짜를 구분하고 실제 경기 결과는 추측하지 않는다. 언제 했는지 물으면 야구 일정의 해당 기간만 원문 표기 그대로 인용하여 공식 일정 기준으로 답한다. 예정표를 실제 개최·종료 확인으로 단정하지 않는다." : "\n운영 보조 검색에서는 official 도구가 연결되지 않았다. news 또는 wiki만 사용한다.") }] },
           contents: [{ role: "user", parts: [{ text: JSON.stringify(state) }] }],
           generationConfig: { temperature: 0, responseMimeType: "application/json", maxOutputTokens: 2500 } }),
       });
@@ -47,9 +50,9 @@ export function createProductionAgentPorts(): AgentPorts {
       return action;
     },
     search: async (request, now, signal) => {
+      if (request.source === "official") return officialEventEvidence(request, now);
       if (request.source === "wiki") return searchWiki(request.terms, now, signal, read);
-      // KBO rules cannot establish international tournament schedules/results. Production
-      // fallback deliberately has no official adapter; existing official RAG is unchanged.
+      // The official branch above is a reviewed event snapshot, never the KBO rules corpus.
       if (request.source !== "news") return [];
       if (!tournamentSearch(request.query)) {
         // Non-tournament path is byte-for-byte the deployed retrieval policy.
