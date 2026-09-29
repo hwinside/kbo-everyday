@@ -2,6 +2,37 @@ import { normalizeKey } from "./normalize";
 
 type TermEntry = { term: string; aliases: string[] };
 
+// Align the proposed spelling to the original question. A destination term
+// must be explained at its edited location, not by an unrelated nearby word.
+function originalPositions(original: string, proposed: string): number[] {
+  const distance = Array.from({ length: original.length + 1 }, () => new Uint32Array(proposed.length + 1));
+  for (let i = 0; i <= original.length; i++) distance[i][0] = i;
+  for (let j = 0; j <= proposed.length; j++) distance[0][j] = j;
+  for (let i = 1; i <= original.length; i++) {
+    for (let j = 1; j <= proposed.length; j++) {
+      distance[i][j] = Math.min(
+        distance[i - 1][j - 1] + Number(original[i - 1] !== proposed[j - 1]),
+        distance[i - 1][j] + 1,
+        distance[i][j - 1] + 1,
+      );
+    }
+  }
+  const positions = Array<number>(proposed.length).fill(-1);
+  let i = original.length;
+  let j = proposed.length;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && distance[i][j] === distance[i - 1][j - 1] + Number(original[i - 1] !== proposed[j - 1])) {
+      positions[j - 1] = i - 1;
+      i--; j--;
+    } else if (i > 0 && distance[i][j] === distance[i - 1][j] + 1) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return positions;
+}
+
 /** Bound spelling suggestions to glossary identity, not merely a valid destination.
  * This is not a general semantic-equivalence classifier. Non-term requests keep
  * their existing correction policy; this function never auto-accepts a rewrite.
@@ -18,19 +49,25 @@ export function preservesCorrectionTermIdentity(question: string, candidate: str
   if (existing.some(entry => !present(proposed, entry.keys))) return false;
   const introduced = terms.filter(entry => present(proposed, entry.keys) && !present(original, entry.keys));
   if (introduced.length === 0) return true;
-  // A known name may be repaired by one same-length character substitution,
-  // only when its glossary identity is unique. No insertion/deletion, numeric
-  // changes, or short Latin acronym fuzzy-matching is authorized here.
-  const nearby = terms.filter(entry => !present(original, entry.keys) && entry.keys.some(key => {
-    if (/[^가-힣]/u.test(key) || /[0-9]/.test(key)) return false;
-    for (let i = 0; i + key.length <= original.length; i++) {
-      const window = original.slice(i, i + key.length);
-      if (/[^가-힣]/u.test(window)) continue;
+  // Check only identities actually introduced by this candidate. Unchanged
+  // question endings and other glossary entries cannot make a repair ambiguous.
+  const positions = originalPositions(original, proposed);
+  return introduced.every(entry => entry.keys.some(key => {
+    if (/[^가-힣]/u.test(key)) return false;
+    for (let at = proposed.indexOf(key); at !== -1; at = proposed.indexOf(key, at + 1)) {
+      const start = positions[at];
+      if (start < 0) continue;
       let different = 0;
-      for (let j = 0; j < key.length; j++) if (window[j] !== key[j]) different++;
-      if (different === 1) return true;
+      let contiguous = true;
+      for (let j = 0; j < key.length; j++) {
+        if (positions[at + j] !== start + j || !/[가-힣]/u.test(original[start + j] ?? "")) {
+          contiguous = false;
+          break;
+        }
+        if (original[start + j] !== key[j]) different++;
+      }
+      if (contiguous && different === 1) return true;
     }
     return false;
   }));
-  return nearby.length === 1 && introduced.every(entry => entry.term === nearby[0].term);
 }

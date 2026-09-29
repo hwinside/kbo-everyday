@@ -16,6 +16,7 @@
  * 실행: npm run qa:genius-question-normalize
  */
 import assert from "node:assert/strict";
+import { preservesCorrectionTermIdentity } from "../../src/lib/baseball-qa/correction-term-identity";
 import { readFileSync } from "node:fs";
 import {
   answerQuestion,
@@ -497,7 +498,35 @@ async function main() {
     }
     assert.equal(classifyQuestionCorrectionCandidate("와일드업에 뭐야?", "와인드업이 뭐야?", identityGlossary, players), "suggest");
     assert.equal(classifyQuestionCorrectionCandidate("보크가 모야", "도루가 뭐야", identityGlossary, players), "rejected");
-    assert.equal(classifyQuestionCorrectionCandidate("보루가 모야", "보크가 뭐야", identityGlossary, players), "rejected", "ambiguous near terms fail closed");
+    // Include short production aliases that used to collide with 뭐야.
+    const productionShape = [...identityGlossary,
+      { term: "내야수", aliases: ["내야"], answer: "내야 수비수" },
+      { term: "외야수", aliases: ["외야"], answer: "외야 수비수" },
+      { term: "홀드", aliases: [], answer: "투수 기록" },
+      { term: "커터", aliases: [], answer: "구종" },
+      { term: "만루홈런", aliases: ["그랜드슬램"], answer: "만루 홈런" },
+      { term: "파울", aliases: [], answer: "파울" },
+      { term: "OPS", aliases: [], answer: "타격 지표" },
+      { term: "인필드플라이", aliases: [], answer: "내야 뜬공 규칙" },
+    ];
+    for (const [raw, fixed] of [
+      ["쿼터가 뭐야?", "커터가 뭐야?"],
+      ["보그가 뭐야", "보크가 뭐야"],
+      ["만류홈런과 그랜드슬램", "만루홈런과 그랜드슬램"],
+      ["와일드업에 뭐야?", "와인드업이 뭐야?"],
+      ["백투백 홈런이 뭐애", "백투백 홈런이 뭐야"],
+      ["OPS거 뭐야", "OPS가 뭐야"],
+      ["파울는 뭐야", "파울은 뭐야"],
+      ["인필드플라이 머야", "인필드플라이 뭐야"],
+    ]) assert.equal(preservesCorrectionTermIdentity(raw, fixed, productionShape), true, `${raw} -> ${fixed}`);
+    for (const [raw, fixed] of [
+      ["쿼터가 뭐야?", "커터가 뭐야?"],
+      ["보그가 뭐야", "보크가 뭐야"],
+      ["와일드업에 뭐야?", "와인드업이 뭐야?"],
+    ]) assert.equal(classifyQuestionCorrectionCandidate(raw, fixed, productionShape, players), "suggest");
+    assert.equal(preservesCorrectionTermIdentity("와일드업에 뭐야?", "와일드카드란 뭐야?", productionShape), false);
+    assert.equal(preservesCorrectionTermIdentity("보그가 뭐야", "보그가 보크야", productionShape), false, "an unrelated window cannot justify the destination");
+    assert.equal(preservesCorrectionTermIdentity("보그가 뭐야", "보크와 커터가 뭐야", productionShape), false, "new term insertion is not a spelling repair");
     assert.equal(classifyQuestionCorrectionCandidate("wind up이 뭐애", "와인드업이 뭐야", identityGlossary, players), "suggest", "same canonical term alias survives");
     const correct = freshState({ normReply: "백투백 홈런이 뭐야" });
     const card = await answerQuestion("u1", "백투백 홈런이 뭐애", makeDeps(correct, true, identityGlossary));
