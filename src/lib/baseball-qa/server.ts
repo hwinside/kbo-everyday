@@ -1,3 +1,4 @@
+import { createCurrentSeasonRecordFetcher } from "@/lib/baseball-qa/stats/current-season-source";
 import { productionAgentFallback } from "./agent/production";
 import { readClassifierObservation } from "./classifier-observation";
 // 야잘알봇 질문 서버 처리 코어. POST /api/baseball-qa(즉시 경로)와
@@ -990,6 +991,8 @@ export function makeDeps(
      */
     // 인라인 lambda 대신 seam factory를 쓴다 — 테스트가 이 같은 함수를 그대로 실행해
     // table/kboId/row 전달을 actual 검증한다(정규식만 보는 false-green 제거, 삼순 3차 P0-3).
+    // Request-scoped app snapshot takes precedence over legacy DB/served dependencies.
+    fetchCurrentSeasonRecord: createCurrentSeasonRecordFetcher(),
     fetchSeasonRecord: createSeasonRecordFetcher(
       supabaseAdmin as unknown as SeasonRecordClient,
     ),

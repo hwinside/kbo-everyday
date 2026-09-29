@@ -798,10 +798,20 @@ export function formatAsOf(iso: string): string {
   return `${mm}/${dd}`;
 }
 
-export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, { kind: "ok" }>): string {
+/** Snapshot publication time, not a claim that every game on this date is included. */
+export function formatSnapshotAsOf(iso: string): string {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+  const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000);
+  return `${formatAsOf(iso)} ${String(kst.getUTCHours()).padStart(2, "0")}:${String(kst.getUTCMinutes()).padStart(2, "0")} KST`;
+}
+
+export function composeSeasonRecordAnswer(outcome: Extract<SeasonRecordOutcome, { kind: "ok" }>, appSnapshot = false): string {
   const asOf = formatAsOf(outcome.asOf);
   const who = outcome.team ? `${outcome.name}(${outcome.team})` : outcome.name;
-  const suffix = asOf ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
+  const suffix = asOf ? appSnapshot
+    ? `\n\n📊 ${SUPPORTED_SEASON} 시즌 · 앱 기록 스냅샷 ${formatSnapshotAsOf(outcome.asOf)} 갱신 (경기 반영 완료 시각은 아님)`
+    : `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${asOf} 기준` : "";
   const syllable = outcome.label.charCodeAt(outcome.label.length - 1) - 0xac00;
   const topicParticle = syllable >= 0 && syllable <= 11171 && syllable % 28 === 0 ? "는" : "은";
   return `${who} 선수의 ${SUPPORTED_SEASON} 시즌 ${outcome.label}${topicParticle} ${outcome.value}입니다.${suffix}`;
