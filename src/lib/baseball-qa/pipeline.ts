@@ -4791,6 +4791,9 @@ async function answerSeasonRecordQuestion(
         answers.push(`${query.label}: ${result?.source === "error" ? "조회 오류" : "검증된 기록을 확인하지 못했습니다"}.`);
       }
     }
+    if (!answered && !errored) {
+      return settle(RECORD_MISSING_ANSWER, "blocked", "blocked");
+    }
     const who = candidate.team ? `${candidate.name}(${candidate.team})` : candidate.name;
     let answer = `${who} 선수의 ${SUPPORTED_SEASON} 시즌 기록: ${answers.join(" · ")}`;
     if (answered) answer += `\n\n📊 ${SUPPORTED_SEASON} 시즌 · ${[...dates].sort().join("·")} 기준`;
