@@ -75,7 +75,11 @@ async function main() {
       // Base retains the untrusted 타석 guard only when player-bound.
       assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound }).kind, playerBound ? boundIntent : "none", q);
     }
-    const { result, calls } = await ask(q, [row], { searchRag: async () => [] });
+    const { result, calls } = await ask(q, [row], {
+      searchRag: async () => [],
+      // General questions may legitimately reach the LLM on both base and head.
+      callLlm: async () => ({ text: JSON.stringify({ status: "UNSURE" }), inputTokens: 1, outputTokens: 1 }),
+    });
     assert.equal(result.source, baseSource, `${q}: preserve base route`);
     assert.equal(calls, 0, `${q}: not a season-record request`);
   }
