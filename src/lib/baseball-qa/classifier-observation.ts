@@ -3,7 +3,11 @@ import { parseStatIntentToken } from "./stat-intent-parser";
 
 export const PROVIDER_OUTCOMES = ["not_called", "ok", "timeout", "http_5xx", "http_error", "provider_error", "legacy_unknown"] as const;
 export type ProviderOutcome = typeof PROVIDER_OUTCOMES[number];
+export const AGENT_FALLBACK_OUTCOMES = ["not_called", "attempted", "no_answer", "rejected", "used", "error"] as const;
+export type AgentFallbackOutcome = typeof AGENT_FALLBACK_OUTCOMES[number];
 export interface ClassifierObservation {
+  /** Absent on legacy snapshots; used means final output guards accepted the supplement. */
+  agentFallbackOutcome?: AgentFallbackOutcome;
   version: 1;
   statIntentMode: boolean | null;
   contextSelected: boolean | null;
@@ -22,6 +26,7 @@ export function readClassifierObservation(value: unknown): ClassifierObservation
     || !Number.isSafeInteger(o.providerFailures) || o.providerFailures < 0 || o.providerFailures > o.calls
     || ![null, "record", "narrative", "rule_term", "out_of_scope", "unsure", "invalid_json", "invalid_status", "invalid_answer"].includes(o.intentOutcome)) return null;
   return { version: 1, statIntentMode: o.statIntentMode, contextSelected: o.contextSelected,
+    ...(AGENT_FALLBACK_OUTCOMES.includes(o.agentFallbackOutcome!) ? { agentFallbackOutcome: o.agentFallbackOutcome } : {}),
     providerOutcome: o.providerOutcome, calls: o.calls, providerFailures: o.providerFailures, intentOutcome: o.intentOutcome };
 }
 
@@ -50,9 +55,10 @@ export function providerFailure(error: unknown): ProviderOutcome {
 /** Per-request wrapper; never mutates caller deps or changes response/routing decisions. */
 export function observeQaDeps(original: QaDeps) {
   let observation: ClassifierObservation = { version: 1, statIntentMode: false, contextSelected: null,
-    providerOutcome: "not_called", calls: 0, providerFailures: 0, intentOutcome: null };
+    agentFallbackOutcome: "not_called", providerOutcome: "not_called", calls: 0, providerFailures: 0, intentOutcome: null };
   const snapshot = () => ({ ...observation });
   const deps = { ...original };
+  deps.observeAgentFallback = outcome => { observation.agentFallbackOutcome = outcome; };
   const invoke = async (call: () => Promise<LlmResult>, intent = false) => {
     observation.calls++;
     if (intent) observation.statIntentMode = true;

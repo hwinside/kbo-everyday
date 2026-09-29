@@ -1183,6 +1183,8 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  /** Internal observation only; never controls serving. */
+  observeAgentFallback?: (outcome: import("./classifier-observation").AgentFallbackOutcome) => void;
   agentFallback?: (input: ConversationInput, budgetMs: number) => Promise<FallbackAnswer | null>;
   /** Same complete snapshot as the app's ranking page; no per-player subset. */
   fetchBatterRanking?: () => Promise<ServedBatterSnapshot>;
@@ -4142,14 +4144,16 @@ async function answerRequestedOperation(
 async function supplementUnavailable(final: StoredQaFinal, question: string, deps: QaDeps): Promise<StoredQaFinal> {
   if (final.source !== "unsure" || !deps.agentFallback || !fallbackEligible(question)) return final;
   try {
+    deps.observeAgentFallback?.("attempted");
     const extra = await deps.agentFallback({ question, now: new Date(deps.now ? deps.now() : Date.now()).toISOString(), history: [] }, 15_000);
-    if (!extra) return final;
+    if (!extra) { deps.observeAgentFallback?.("no_answer"); return final; }
     // Reuse production scope/output checks; agent provenance is appended separately.
     const body = extra.answer.split("\n\n📄 출처:")[0];
     const checked = validateLlmResponse(JSON.stringify({ status: RULE_TERM_SENTINEL, answer: body }), question);
-    if (checked.kind !== "answer") return final;
+    if (checked.kind !== "answer") { deps.observeAgentFallback?.("rejected"); return final; }
+    deps.observeAgentFallback?.("used");
     return { ...final, ...extra, cacheable: false, toneCompliant: checked.toneCompliant };
-  } catch { return final; }
+  } catch { deps.observeAgentFallback?.("error"); return final; }
 }
 
 async function settleThroughDurableBoundary(
