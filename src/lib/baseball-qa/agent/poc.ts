@@ -29,6 +29,7 @@ export interface PocResult {
   trace: Trace[];
   elapsedMs: number;
   modelCalls: number;
+  citationRepairAttempts: number;
 }
 export interface AgentPorts {
   decide: (system: string, state: unknown, signal: AbortSignal) => Promise<unknown>;
@@ -38,6 +39,7 @@ export interface AgentPorts {
 export const AGENT_POC_PROMPT = [
   "한국어 야구 국제대회 질문을 근거로 답하는 실험 에이전트다.",
   "현재 질문과 history를 함께 이해하되 새 주제에 이전 대화를 억지로 연결하지 마라.",
+  "retrievalContext는 짧은 후속 질문의 직전 질문 문맥이다. 검색어에 대회/대상과 후속 의도를 함께 넣어라.",
   "history의 과거 답은 사실 근거가 아니다. 상대적 날짜는 now 기준이며 다른 대회/연도를 대체하지 마라.",
   "도구 news는 최근 30일 기사 발췌, wiki는 수집된 문서, official은 KBO 규정이다.",
   "구단명이 없어도 news를 검색할 수 있다. 국제대회 일정/명단/결과를 KBO 소집 규정이나 과거 대회 기록으로 대체하지 마라.",
@@ -46,6 +48,8 @@ export const AGENT_POC_PROMPT = [
   "최대 3회 검색할 수 있다. 검색 결과가 질문을 뒷받침하지 않으면 다른 소스나 검색어를 선택한다.",
   "검색 JSON: {action:'search',source:'news|wiki|official',query:'문맥을 반영한 질문',terms:['핵심 문서명/대회명 최대3개']}.",
   "완료 JSON: {action:'answer',claims:[{text:'한국어 존댓말 사실 문장',citations:[{id:'검색 결과 ID',quote:'해당 결과에 실제 있는 원문 인용'}]}]}.",
+  "quote는 content의 연속된 부분을 띄어쓰기까지 그대로 복사한다. 요약·말줄임·제목 인용·여러 구절 합치기는 금지한다.",
+  "citationFeedback이 있으면 인용 검사가 실패한 것이다. 제공된 근거에서 정확한 ID/원문으로 답을 다시 작성하거나 insufficient를 반환한다.",
   "답변의 모든 사실 문장은 해당 인용으로 의미까지 뒷받침되어야 한다. 기사 제목만으로 본문을 추측하지 마라.",
   "asOf는 자료 시점이며 경기 날짜가 아니다. 최신 자료라도 과거 사건을 설명할 수 있다. 현재 사실의 적용 시점을 확인하라.",
   "자료가 부족하면 {action:'insufficient',reason:'확인 불가능한 구체적 정보'}를 반환한다.",
@@ -56,6 +60,13 @@ const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const short = (v: unknown, max: number): v is string =>
   typeof v === "string" && v.trim().length > 0 && v.length <= max;
+
+/** Only unmistakably elliptical questions inherit the previous QUESTION, never its answer. */
+export function retrievalContext(input: ConversationInput): string | null {
+  const question = input.question.trim().replace(/[?？.!]+$/u, "").trim();
+  if (!input.history.length || !/^(?:(?:그럼|그러면|그래서)\s*)?(?:(?:야구|일정|결승|그거)(?:는|은)?\s*)?(?:언제(?:야|예요|인가요)?|어디(?:야|예요|인가요)?|몇\s*시(?:야|예요|인가요)?|누가(?:\s*나와)?|어떻게\s*됐어)$/u.test(question)) return null;
+  return input.history[input.history.length - 1].question;
+}
 
 function parseSearch(v: Record<string, unknown>): SearchRequest | null {
   if (!["news", "wiki", "official"].includes(String(v.source)) || !short(v.query, 500)
@@ -90,8 +101,10 @@ export async function runAgentPoc(input: ConversationInput, ports: AgentPorts): 
   const evidence: Evidence[] = [];
   const trace: Trace[] = [];
   let modelCalls = 0;
+  let citationRepairAttempts = 0;
+  let citationFeedback: string | null = null;
   const finish = (status: PocResult["status"], reason: string, claims: Claim[] = []): PocResult =>
-    ({ status, reason, claims, evidence, trace, elapsedMs: Date.now() - started, modelCalls });
+    ({ status, reason, claims, evidence, trace, elapsedMs: Date.now() - started, modelCalls, citationRepairAttempts });
   if (!short(input.question, 1000) || !Number.isFinite(Date.parse(input.now))
     || !Array.isArray(input.history) || input.history.length > 6
     || input.history.some(t => !short(t.question, 1000) || !short(t.answer, 3000))) {
@@ -105,17 +118,28 @@ export async function runAgentPoc(input: ConversationInput, ports: AgentPorts): 
   });
   const bounded = <T>(p: Promise<T>): Promise<T> => Promise.race([p, aborted]);
   try {
-    for (let turn = 0; turn < 4; turn++) {
+    for (let turn = 0; turn < 4 + citationRepairAttempts; turn++) {
       modelCalls++;
       const action = object(await bounded(ports.decide(AGENT_POC_PROMPT,
-        { ...input, evidence, trace, searchesRemaining: 3 - trace.length }, controller.signal)));
+        { ...input, retrievalContext: retrievalContext(input), evidence, trace,
+          citationFeedback, searchesRemaining: 3 - trace.length }, controller.signal)));
       if (action.action === "insufficient" && short(action.reason, 500)) return finish("insufficient", action.reason);
       if (action.action === "answer") {
         const claims = validateClaims(action.claims, evidence);
-        return claims && trace.length > 0 ? finish("answered", "", claims) : finish("error", "invalid_citations");
+        if (claims && trace.length > 0) return finish("answered", "", claims);
+        if (evidence.length && trace.length && citationRepairAttempts === 0) {
+          citationRepairAttempts++;
+          citationFeedback = "invalid_citations: 모든 사실 문장의 인용 ID와 content 원문을 다시 확인하세요. 정확한 인용이 불가능하면 insufficient로 답하세요.";
+          continue;
+        }
+        return finish("error", "invalid_citations");
       }
+      // A repair turn may only answer or abstain; it cannot expand the search budget.
+      if (citationFeedback) return finish("error", "invalid_citation_repair_action");
       const request = action.action === "search" ? parseSearch(action) : null;
       if (!request) return finish("error", "invalid_action");
+      const context = retrievalContext(input);
+      if (context) request.query = `${context}\n후속 질문: ${request.query}`.slice(0, 1500);
       if (trace.length >= 3) return finish("insufficient", "search_budget_exhausted");
       if (trace.some(t => JSON.stringify(t.request) === JSON.stringify(request))) return finish("insufficient", "repeated_search");
       const searchStarted = Date.now();

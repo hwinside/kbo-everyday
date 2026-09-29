@@ -1,5 +1,5 @@
 /** CLI only. Input is an anonymized ConversationInput JSON file; stdout is local evidence, never a DM. */
-import { rankNews, searchWiki, toEvidence, newsPageParams } from "./search-adapters";
+import { rankNews, searchWiki, toEvidence, newsPageParams, prefersRecentNews } from "./search-adapters";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runAgentPoc, type Evidence, type SearchRequest } from "../../../src/lib/baseball-qa/agent/poc";
@@ -55,7 +55,7 @@ async function search(request: SearchRequest, now: string, signal: AbortSignal):
     if (!Array.isArray(vector) || vector.length !== 768 || !vector.every(v => typeof v === "number" && Number.isFinite(v))) throw new Error("invalid_embedding");
     if (request.source === "news") {
       const rows = await readNewsCandidates(now, signal);
-      return rankNews(rows, vector, now).map(row => toEvidence(row, "news"));
+      return rankNews(rows, vector, now, prefersRecentNews(request.query)).map(row => toEvidence(row, "news"));
     }
     const rpc = "search_baseball_genius_official_chunks";
     const args = { p_query_embedding: JSON.stringify(vector), p_limit: 6, p_max_distance: 0.42 };
@@ -93,8 +93,8 @@ async function main() {
       return JSON.parse(text);
     },
   });
-  process.stdout.write(JSON.stringify({ experiment: "international-agent-poc-v1", model,
-    retrieval: "news_official_vector_wiki_title_lexical", productionServing: false, ...result }, null, 2) + "\n");
+  process.stdout.write(JSON.stringify({ experiment: "international-agent-poc-v2", model,
+    retrieval: "news_recency_official_vector_wiki_title_content_lexical", productionServing: false, ...result }, null, 2) + "\n");
   if (result.status === "error") process.exitCode = 1;
 }
 main().catch(() => { process.stderr.write("PoC failed; credentials and provider response suppressed\n"); process.exitCode = 1; });
