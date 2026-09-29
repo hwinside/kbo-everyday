@@ -453,14 +453,6 @@ export function resolveSeasonRecordIntent(
   if (isStatDefinitionQuestion(question)) return { kind: "none" };
   const compact = normalize(question);
 
-  // A season snapshot cannot answer splits, other competitions or schedules.
-  // Check before metric extraction: e.g. 득점권 must not become 득점.
-  if (/포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
-    || /\b(?:ps|wbc)\b/i.test(question)
-    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact)) {
-    return { kind: "unsupported_season" };
-  }
-
   // ⚠️ 지표어를 먼저 오려낸다 — `wrc` 는 untrusted 알리아스 `pa` 를 문자열로 포함하진
   // 않지만, 같은 종류의 부분문자열 충돌이 반복되어 명시 면제 목록을 둔다.
   const untrustedTarget = UNTRUSTED_EXEMPT_PATTERNS.reduce(
@@ -562,7 +554,9 @@ export function resolveSeasonRecordIntent(
   const normalized = normalizeWithSpaces(question);
   // Consume matched spans so 피홈런/도루실패/2루타 do not also request
   // 홈런/도루/루타. Preserve distinct, non-overlapping requested metrics.
-  let rest = normalized;
+  // 득점권 names a split, not the 득점 (runs) metric. Keep normalized
+  // intact for scope detection, but remove the compound during extraction.
+  let rest = normalized.replace(/득점\s*권/g, " ");
   const selected: SeasonRecordQuery[] = [];
   for (const entry of patterns) {
     if (!entry.pattern.test(rest)) continue;
@@ -589,6 +583,15 @@ export function resolveSeasonRecordIntent(
     }
   }
   if (!selected.length) return { kind: "none" };
+  // A season snapshot cannot answer splits, other competitions or schedules.
+  // Only claim this scope AFTER a metric or player-bound summary exists.
+  // Otherwise general product/rules/news questions must retain their own route.
+  if (/포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
+    || /\b(?:ps|wbc)\b/i.test(question)
+    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact)) {
+    return { kind: "unsupported_season" };
+  }
+
   void explicitlyNumeric;
   const query = selected[0];
 

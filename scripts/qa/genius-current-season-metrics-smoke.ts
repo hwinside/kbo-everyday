@@ -56,6 +56,31 @@ async function main() {
     assert.equal(intent.kind, "query");
     if (intent.kind === "query") assert.ok(intent.queries?.some((q) => q.metric === "games"));
   }
+  // Frozen base cfe47e4a routes from reviewer replay; empty RAG fixture does
+  // not claim production answer quality, only preservation of route ownership.
+  const generalQuestions = [
+    ["홈화면에 어떡해 점수 떠?", "product_feature_guide"],
+    ["그 아이폰 홈화면에 어떻게 띄워?", "product_feature_guide"],
+    ["기아 케이티 상대전적", "scope_guide"],
+    ["주상에서 대주자를 내보내면 다음 공격 타석에서 대주자가 나와야해?", "unsure"],
+    ["상대팀에게 빨리 하라고 하는 말", "unsure"],
+    ["가을야구 언제부터야??", "unsure"],
+    ["다음 올스타전은 언제야?", "unsure"],
+    ["채은성 부상", "unsure"],
+    ["9월4일 삼성 엘지 선발알려줘", "unsure"],
+    ["아시안 게임 야구 일정 알려줘", "unsure"],
+  ] as const;
+  for (const [q, baseSource] of generalQuestions) {
+    for (const playerBound of [false, true]) {
+      assert.equal(resolveSeasonRecordIntent(q, "batter", { playerBound }).kind, "none", q);
+    }
+    const { result, calls } = await ask(q, [row], { searchRag: async () => [] });
+    assert.equal(result.source, baseSource, `${q}: preserve base route`);
+    assert.equal(calls, 0, `${q}: not a season-record request`);
+  }
+  assert.equal(resolveSeasonRecordIntent("오늘 경기 몇시에 시작했어?", "batter", { playerBound: true }).kind, "none");
+  assert.equal(resolveSeasonRecordIntent("김영웅 득점권", "batter", { playerBound: true }).kind, "none");
+  assert.equal(resolveSeasonRecordIntent("김영웅 득점권 타율", "batter", { playerBound: true }).kind, "unsupported_season");
   const partial = await ask("김영웅 2026 vs 2024 성적 비교");
   assert.equal(partial.result.source, "kbo_structured");
   assert.match(partial.result.answer, /0\.251/);
