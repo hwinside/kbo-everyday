@@ -76,10 +76,12 @@ export default function StandingsPage() {
 
   useEffect(() => {
     // 2025 시즌은 확정 데이터 사용, API fetch 불필요
-    if (season !== 2026) { setRealStandings(null); return; } // eslint-disable-line react-hooks/set-state-in-effect
-    fetch("/api/standings", { cache: "no-store" })
-      .then(r => r.json())
+    if (season !== 2026) { setRealStandings(null); setStatusMap(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
+    let active = true;
+    const standingsRequest = fetch("/api/standings", { cache: "no-store" }).then(r => r.json());
+    standingsRequest
       .then(data => {
+        if (!active) return;
         if (data.standings?.length) {
           // API 원본 ranking 우선 사용, 없으면 승률 기반 공동순위 계산
           const hasRanking = data.standings.some((s: RawStanding & { ranking?: number }) => s.ranking != null && s.ranking > 0);
@@ -117,21 +119,19 @@ export default function StandingsPage() {
         }
       })
       .catch(() => {});
-  }, [season]);
 
   // '오늘 결과 반영' 판정:
   // baseline = 오늘(KST) 날짜의 daily_standings_snapshot (01:00 KST cron이 저장 → 오늘 경기 이전 누적 경기수)
   // 현재 = /api/standings 의 팀별 누적 경기수(승+패+무)
   // 오늘 final 경기수만큼 누적이 늘었으면(현재 >= baseline + 오늘 final) → 반영됨.
   // baseline 부재/오늘 경기 없음 등 불확실 시 보수적으로 '반영 전'(false)로 둔다.
-  useEffect(() => {
-    if (season !== 2026) { setStatusMap(new Map()); return; } // eslint-disable-line react-hooks/set-state-in-effect
     const today = getKSTToday().replace(/-/g, "");
     Promise.all([
       fetch(`/api/games?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => null),
-      fetch("/api/standings", { cache: "no-store" }).then(r => r.json()).catch(() => null),
+      standingsRequest.catch(() => null),
       fetch(`/api/standings-snapshot?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => null),
     ]).then(([gamesData, standingsData, snapshotData]) => {
+      if (!active) return;
       // 오늘 팀별 final 경기수
       const todayFinals = new Map<number, number>();
       if (Array.isArray(gamesData?.games)) {
@@ -186,6 +186,7 @@ export default function StandingsPage() {
       }
       setStatusMap(m);
     });
+    return () => { active = false; };
   }, [season]);
 
   const standings = season === 2025 ? STANDINGS_2025 : (realStandings ?? MOCK_STANDINGS);
