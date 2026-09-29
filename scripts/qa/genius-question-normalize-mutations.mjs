@@ -42,6 +42,11 @@ const GATES = {
 
 const mutations = [
   {
+    name: "M30 단일 정의형 조사 복구 제거",
+    find: '        restored = `${term}${particle} 뭐야?`;',
+    replace: '        void particle;',
+  },
+  {
     name: "M1 발동 라우트 조건 제거",
     find: 'routeQuestion(question, glossary, players, false) === "llm_scope_gate"',
     replace: 'routeQuestion(question, glossary, players, false) !== "__never__"',

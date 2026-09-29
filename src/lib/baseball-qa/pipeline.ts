@@ -5772,7 +5772,14 @@ export function repairGlossaryTermTypo(text: string, glossary: GlossaryEntry[]):
         if (window[j] !== term[j]) diff++;
       }
       if (diff !== 1) continue;
-      const restored = source.slice(0, i) + term + source.slice(i + term.length);
+      let restored = source.slice(0, i) + term + source.slice(i + term.length);
+      // Local repair only: a sole Hangul term followed by the mistyped definition
+      // ending "에 뭐야?". Do not strip 에 globally (locations/other intents).
+      if (i === 0 && /^[가-힣]+$/u.test(term)
+          && /^에\s*뭐야[?!]*$/u.test(source.slice(i + term.length).trim())) {
+        const particle = (term.charCodeAt(term.length - 1) - 0xac00) % 28 === 0 ? "가" : "이";
+        restored = `${term}${particle} 뭐야?`;
+      }
       // A′ 정의형 축약 guard (삼순 2026-08-14 NO-GO — 배포 후 오제안 실측).
       //
       // 치환 1 만으로는 사전 term 대부분이 2글자(보크·도루·스윕)라 `보는` 같은 흔한
