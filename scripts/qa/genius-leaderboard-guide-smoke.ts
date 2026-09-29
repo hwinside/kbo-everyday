@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { answerQuestion, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { leaderboardGuide } from "../../src/lib/baseball-qa/stats/leaderboard-guide";
 async function main() {
-  for (const question of ["가장 안타가 많은 선수", "WAR 제일 높은 투수", "2026 시즌 홈런 상위 5명", "안타 순위 알려줘"]) {
+  for (const question of ["가장 안타가 많은 선수", "WAR 제일 높은 투수", "2026 시즌 홈런 상위 5명", "안타 순위 알려줘", "장타율1위", "올해 도루 저지율 순위", "장타율과 홈런 순위"]) {
     let stored: unknown = null;
     const logs: string[] = [];
     let owns = false;
@@ -25,9 +25,10 @@ async function main() {
     assert.match(result.answer, /직접 확인하지 못했습니다/);
     assert.deepEqual(logs, ["scope_guide"]);
     assert.ok(stored, "navigation must survive durable storage");
-    if (question.includes("안타")) {
-      assert.match(result.answer, /안타 정렬 항목이 없습니다/);
-      assert.equal(result.sourceUrl, "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx");
+    if (/안타|장타율|도루 저지율/.test(question)) {
+      assert.match(result.answer, /정렬 항목이 없습니다/);
+      assert.doesNotMatch(result.answer, /원하는 지표를 누르면/);
+      assert.equal(result.sourceUrl, question.includes("저지율") ? "https://www.koreabaseball.com" : "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx");
     } else {
       assert.equal(result.sourceUrl, "https://keubo.fan/players/records");
     }
@@ -36,7 +37,7 @@ async function main() {
     assert.equal(replay.answer, result.answer);
     assert.equal(replay.sourceUrl, result.sourceUrl);
   }
-  for (const question of ["통산 안타 1위 누구야", "2024 홈런 순위", "WAR 뜻", "타율 순위 규정은?", "LG전 안타 순위", "포스트시즌 홈런 상위 5명", "안타 많이 쳤던 선수", "홈런이 높은 이유", "오늘 홈런 순위", "메이저리그 홈런 순위"]) {
+  for (const question of ["통산 안타 1위 누구야", "2024 홈런 순위", "WAR 뜻", "타율 순위 규정은?", "LG전 안타 순위", "포스트시즌 홈런 상위 5명", "안타 많이 쳤던 선수", "홈런이 높은 이유", "오늘 홈런 순위", "메이저리그 홈런 순위", "팀 홈런 1위는 누구야?", "연타석 홈런 최고기록이 뭐야", "한경기 한 선수 최다타점 알려줘", "최고의 홈런왕은?", "경기당 홈런 순위", "연속 안타 최고기록", "역대급 홈런왕", "안타 많았던 선수"]) {
     assert.equal(leaderboardGuide(question), null, question);
   }
   console.log("PASS leaderboard navigation / provenance / durable replay / negative scopes");

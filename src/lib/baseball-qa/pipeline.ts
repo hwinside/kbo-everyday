@@ -1,4 +1,4 @@
-import { leaderboardGuide, LEADERBOARD_GUIDE_URL } from "./stats/leaderboard-guide";
+import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { fallbackEligible, primaryNewsDateSupported, type FallbackAnswer } from "./agent/fallback";
 import type { ConversationInput } from "./agent/poc";
 import { parseStatIntentToken } from "./stat-intent-parser";
@@ -6147,7 +6147,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
     const guide = !mentionsAnyRosterName(question, players) && resolveCareerMetricIntent(question) === null
       ? leaderboardGuide(question) : null;
     if (guide) return settleThroughDurableBoundary(
-      { answer: guide, source: "scope_guide", sourceUrl: /안타/.test(question) ? "https://www.koreabaseball.com/Record/Player/HitterBasic/Basic1.aspx" : LEADERBOARD_GUIDE_URL }, guide,
+      { ...guide, source: "scope_guide" }, guide.answer,
       { userId, question, questionNorm, remaining, deps },
     );
   }
