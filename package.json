@@ -205,6 +205,7 @@
     "qa:ios-news-webview": "zsh scripts/qa/ios-news-webview-typecheck.sh",
     "qa:ui:news-comment-report": "node scripts/qa/ui-smoke-news-comment-report.mjs",
     "qa:news-roundup": "tsx scripts/qa/news-roundup-filter-smoke.ts",
+    "qa:og-preview-cache": "tsx scripts/qa/og-preview-cache-smoke.ts",
     "qa:og-meta-stability": "tsx scripts/qa/og-meta-stability-smoke.ts",
     "qa:share-og": "tsx scripts/qa/share-og-missing-post-smoke.ts",
     "qa:news-clip-title": "tsx scripts/qa/news-clipping-title-signal-smoke.ts",

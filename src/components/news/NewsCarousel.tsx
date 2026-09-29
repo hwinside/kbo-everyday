@@ -38,6 +38,7 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
   // 기사 og:image를 클라이언트에서 점진 로드 — 뉴스 텍스트는 즉시 뜨고 사진은
   // 뒤따라 채워져 홈 로딩이 og 추출에 막히지 않게 한다(서버 블로킹 회피).
   const [ogThumbs, setOgThumbs] = useState<Record<string, string | null>>({});
+  const ogThumbsRef = useRef<Record<string, string | null>>({});
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -114,57 +115,40 @@ export default function NewsCarousel({ news }: NewsCarouselProps) {
     return () => { cancelled = true; };
   }, [countArticlesKey, countUserId]);
 
+  // Parent polling/visibility refresh can replace news with equivalent objects.
+  // A stable URL set keeps an in-flight batch alive across those renders.
+  const ogTargetsKey = JSON.stringify(Array.from(new Set(slides.flatMap((item) => {
+    if (item.thumbnailUrl) return [];
+    const url = item.ogUrl || item.sourceUrl;
+    return url && url !== "#" ? [url] : [];
+  }))).sort());
+
   // 최대 10개 og:image를 단일 batch로 비동기 조회(텍스트 렌더 비차단).
   useEffect(() => {
     let cancelled = false;
-    const targets = slides.flatMap((item) => {
-      if (item.thumbnailUrl) return [];
-      // OG 추출은 언론사 원문(ogUrl) 우선 — 클릭 타깃(sourceUrl=네이버)과 분리
-      const ogTarget = item.ogUrl || item.sourceUrl;
-      if (!ogTarget || ogTarget === "#" || ogThumbs[ogTarget] !== undefined) return [];
-      return [ogTarget];
-    });
-    const urls = Array.from(new Set(targets));
+    const targets = JSON.parse(ogTargetsKey) as string[];
+    const urls = targets.filter((url) => ogThumbsRef.current[url] === undefined);
     if (urls.length === 0) return;
 
+    const apply = (items?: Record<string, { image?: string | null } | null>) => {
+      if (cancelled) return;
+      const next: Record<string, string | null> = {};
+      for (const url of targets) {
+        next[url] = items?.[url]?.image ?? ogThumbsRef.current[url] ?? null;
+      }
+      ogThumbsRef.current = next;
+      setOgThumbs(next);
+    };
     fetch("/api/og-meta", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ urls }),
     })
       .then((response) => (response.ok ? response.json() : null))
-      .then((result) => {
-        if (cancelled) return;
-        const items = result?.items as Record<string, { image?: string | null } | null> | undefined;
-        setOgThumbs((prev) => {
-          const next: Record<string, string | null> = {};
-          for (const item of slides) {
-            if (item.thumbnailUrl) continue;
-            const url = item.ogUrl || item.sourceUrl;
-            if (!url || url === "#") continue;
-            next[url] = items?.[url]?.image ?? prev[url] ?? null;
-          }
-          return next;
-        });
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setOgThumbs((prev) => {
-          const next: Record<string, string | null> = {};
-          for (const item of slides) {
-            if (item.thumbnailUrl) continue;
-            const url = item.ogUrl || item.sourceUrl;
-            if (!url || url === "#") continue;
-            next[url] = prev[url] ?? null;
-          }
-          return next;
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [news]);
+      .then((result) => apply(result?.items))
+      .catch(() => apply());
+    return () => { cancelled = true; };
+  }, [ogTargetsKey]);
 
   // len 변경 시 current clamp
   useEffect(() => {
