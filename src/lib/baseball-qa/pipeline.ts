@@ -2538,7 +2538,10 @@ export function resolvePlayerInjuryNewsCandidate(
   question: string, player: RagPlayerCandidate, nowMs: number,
 ): RagNewsCandidate | null {
   const q = question.normalize("NFKC").toLowerCase();
-  if (!/부상|골절|다쳤|다친|통증|수술|재활|복귀|결장|이탈|근황/.test(q)
+  // Explicit publication-day questions may use ordinary news vocabulary, but
+  // still require the resolved roster identity and publication window below.
+  const publicationDayNews = /오늘|어제/u.test(q) && /뉴스|소식|기사|보도/u.test(q);
+  if ((!/부상|골절|다쳤|다친|통증|수술|재활|복귀|결장|이탈|근황/.test(q) && !publicationDayNews)
     || /역대|이력|병력|통산|치료법|치료 방법|진단해|약 추천|내\s*(?:무릎|어깨|허리)|mlb|npb/.test(q)
     || NUMERIC_VALUE_ASK.test(q) || /내일|모레|다음\s*주|\d{1,2}\s*(?:월|일)/.test(q)) return null;
   const explicit = resolveNewsRecency(question, nowMs);

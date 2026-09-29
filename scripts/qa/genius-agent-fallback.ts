@@ -4,7 +4,7 @@ import { boundedNewsContracts } from "./genius-bounded-news";
 import { buildQuestionLogRow } from "../../src/lib/baseball-qa/log-row";
 import assert from "node:assert/strict";
 import { runVerifiedFallback, primaryNewsDateSupported, quoteSupportsNumbers, citationWithinQuestionDay, fallbackEligible } from "../../src/lib/baseball-qa/agent/fallback";
-import { answerQuestion, validateLlmResponse, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, resolveNamedPlayerCandidate, resolvePlayerInjuryNewsCandidate, validateLlmResponse, type QaDeps, type LlmResult, unpackStoredQaFinal } from "../../src/lib/baseball-qa/pipeline";
 import type { AgentPorts, Evidence } from "../../src/lib/baseball-qa/agent/poc";
 const input = { question: "아시안게임 야구 일정 알려줘", now: "2026-09-29T03:00:00Z", history: [] };
 const evidence: Evidence = { id: "news:test", source: "news", title: "일정", content: "야구 대표팀은 대회 일정을 추후 발표할 예정입니다.", url: "https://sports.naver.com/news/1", asOf: input.now };
@@ -174,16 +174,29 @@ async function main() {
     ["오늘 김도영 소식 알려줘", "KIA 타이거즈 김도영은 금메달을 걸고 돌아왔습니다.", primaryNewsBodies.kdy],
   ] as const) {
     let supplements = 0;
+    let newsCalls = 0;
     const result = await answerQuestion("test", question, deps({ enableNewsRag: true,
+      enablePlayerRag: true,
+      loadPlayers: async () => [{ name: "김도영", kboId: "52605", team: "KIA" }],
       searchNewsRag: async () => bodies.map(content => ({ content, pageTitle: question, canonicalUrl: evidence.url,
-        revision: "snapshot", sectionPath: "news", asOf: input.now, sourceGrade: "tier2", sourceKind: "news_article" })),
-      callNewsRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
+        revision: "snapshot", sectionPath: "news", asOf: "2026-09-29T02:59:00Z", sourceGrade: "tier2", sourceKind: "news_article" })),
+      callNewsRagLlm: async () => { newsCalls++; return { text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }; },
       agentFallback: async () => { supplements++; return null; },
     }));
-    assert.equal(result.source, "news_rag", "multi-article publication question retains primary answer");
+    assert.equal(newsCalls, 1, "publication question must reach the primary news LLM: " + question);
+    assert.equal(result.source, "news_rag", "multi-article publication question retains primary answer: " + question + " / " + result.answer);
     assert.ok(result.answer.includes(answer));
     assert.equal(supplements, 0);
   }
+  const newsPlayer = { entityType: "player" as const, entityId: "52605", name: "김도영", team: "KIA", sourceKey: "namu:player:52605" };
+  for (const question of ["김도영 소식 알려줘", "내일 김도영 뉴스", "오늘 김도영 타율 얼마인지 소식", "오늘 LG 김도영 소식", "오늘 김도영 치료법 소식"]) {
+    assert.equal(resolvePlayerInjuryNewsCandidate(question, newsPlayer, Date.parse(input.now)), null,
+      "publication extension must not bypass recency/stat/team/medical guards: " + question);
+  }
+  assert.equal(resolveNamedPlayerCandidate("오늘 김도영 소식 알려줘", []), null, "missing roster identity cannot enter player news");
+  assert.equal(resolveNamedPlayerCandidate("오늘 김도영 소식 알려줘", [
+    { name: "김도영", kboId: "52605", team: "KIA" }, { name: "김도영", kboId: "other", team: "LG" },
+  ]), null, "ambiguous player identity cannot enter player news");
   const wiki = await runVerifiedFallback(input, ports({ row: { ...evidence, source: "wiki", url: "https://namu.wiki/w/야구" } }));
   assert.equal(wiki?.source, "rag", "wiki fallback stays in the existing non-news RAG bucket");
   assert.equal(await runVerifiedFallback(input, ports({ verified: false })), null, "unsupported meaning rejected");
