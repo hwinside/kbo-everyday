@@ -1,5 +1,7 @@
 "use client";
 
+import { fetchLeagueStats } from "@/lib/stats/client-league-stats";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -170,9 +172,8 @@ export default function FavoritePlayersSection({ favPlayers, refreshNonce = 0 }:
     const needPitcher = favPlayers.some((p) => classifyIsPitcher(p));
     // 부문 랭킹(타이틀 라벨)은 랭킹 페이지와 동일한 /api/stats 리그 전체에서 산출
     const fetchLeague = (type: "batter" | "pitcher") =>
-      fetch(`/api/stats?type=${type}&season=2026`)
-        .then((res) => (res.ok ? res.json() : { stats: [] }))
-        .then((data) => (Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
+      fetchLeagueStats(type, 2026)
+        .then((data) => (!Array.isArray(data) && Array.isArray(data?.stats) ? (data.stats as StatLike[]) : []))
         .catch(() => [] as StatLike[]);
     (async () => {
       const [results, batterLeague, pitcherLeague] = await Promise.all([

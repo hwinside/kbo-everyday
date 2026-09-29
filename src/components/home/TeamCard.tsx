@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { fetchLeagueStats } from "@/lib/stats/client-league-stats";
 import { ChevronDown, ChevronRight, ChevronUp } from "lucide-react";
 import GlassCard from "@/components/ui/GlassCard";
 import TeamLogo from "@/components/ui/TeamLogo";
@@ -232,8 +233,8 @@ export default function TeamCard({ team, gameSlot, refreshNonce = 0 }: TeamCardP
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      fetch(`/api/stats?type=batter&season=2026`).then((r) => (r.ok ? r.json() : [])),
-      fetch(`/api/stats?type=pitcher&season=2026`).then((r) => (r.ok ? r.json() : [])),
+      fetchLeagueStats("batter", 2026),
+      fetchLeagueStats("pitcher", 2026),
     ])
       .then(([b, p]) => {
         if (cancelled) return;
