@@ -221,6 +221,56 @@ check("미배선이면 기존 동작 불변", async () => {
 const asyncChecks: { name: string; fn: () => Promise<void> }[] = [];
 function checkAsync(name: string, fn: () => Promise<void>) { asyncChecks.push({ name, fn }); }
 
+// Synthetic adversarial fixtures: exact provider status must not waive event identity.
+for (const [name, question, content, answer, expected] of [
+  ["WBC→AG", "아시안게임 야구 결과 알려줘", "WBC 사이판 캠프 류현진", "아시안게임 대표는 류현진입니다.", "insufficient"],
+  ["AG→WBC", "WBC 야구 결과 알려줘", "아시안게임 우승", "WBC 우승입니다.", "insufficient"],
+  ["mixed", "아시안게임 야구 결과 알려줘", "아시안게임 기록. WBC 사이판 캠프", "아시안게임 우승입니다.", "insufficient"],
+  ["no identity", "아시안게임 야구 결과 알려줘", "대표팀 우승", "대표팀 우승입니다.", "insufficient"],
+  ["answer mismatch", "아시안게임 야구 결과 알려줘", "아시안게임 우승", "WBC 우승입니다.", "insufficient"],
+  ["same event", "아시안게임 야구 결과 알려줘", "아시안게임 우승", "아시안게임 우승입니다.", "grounded"],
+  ["historical roster", "아시안게임 야구 대표팀 명단 알려줘", "방콕 아시안게임 대표 선수 홍길동", "홍길동입니다.", "insufficient"],
+  ["alias", "아시안 게임 야구 명단 알려줘", "아시안게임 대표 선수 홍길동", "홍길동입니다.", "insufficient"],
+  ["unrelated rule", "보크란?", "투수 반칙", "투수 반칙입니다.", "grounded"],
+] as const) {
+  check(`대회 결속 ${name}`, () => {
+    const result = validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer }), {
+      officialQuestion: question, numericEvidence: true,
+      evidence: [{ ...OFFICIAL, sectionPath: "국제대회", content }],
+    });
+    assert.equal(result.kind, expected);
+  });
+}
+for (const status of [RAG_GROUNDED_SENTINEL, RAG_GENERAL_SENTINEL]) {
+  for (const available of [false, true]) {
+    checkAsync(`명단 오귀속 서빙 차단·보강·durable ${status}/${available}`, async () => {
+      let supplements = 0;
+      let primary = 0;
+      const { deps, calls } = makeDeps({
+        searchOfficialRag: async () => [{ ...OFFICIAL, sectionPath: "국제대회", content: "WBC 사이판 캠프 류현진. 방콕 아시안게임 기록." }],
+        callOfficialRagLlm: async () => {
+          primary++;
+          return { text: JSON.stringify({ status, answer: "아시안게임 야구 대표팀은 류현진입니다." }), inputTokens: 1, outputTokens: 1 };
+        },
+        agentFallback: async () => {
+          supplements++;
+          return available ? { answer: "아시안게임 야구 대표팀 명단은 공식 발표로 확인했습니다.", source: "rag", sourceUrl: "https://olympics.com/", cacheable: false } : null;
+        },
+      });
+      const question = "아시안게임 야구 대표팀 명단 알려줘";
+      const result = await answerQuestion("u1", question, deps);
+      assert.equal(result.source, available ? "rag" : "unsure");
+      assert.doesNotMatch(result.answer, /류현진|사이판|방콕/);
+      assert.equal(supplements, 1);
+      assert.equal(primary, 1);
+      assert.ok(!calls.includes("callLlm"), "generic must not rescue rejected roster");
+      const replay = await answerQuestion("u1", question, deps);
+      assert.equal(replay.answer, result.answer);
+      assert.equal(supplements, 1, "stored final must replay without new supplement");
+    });
+  }
+}
+
 checkAsync("공식 근거 0건 — fail-close 하지 않고 일반 LLM으로 내려간다", async () => {
   const { deps, calls } = makeDeps({
     searchOfficialRag: async () => [],

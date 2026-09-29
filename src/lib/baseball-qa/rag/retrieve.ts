@@ -1451,6 +1451,8 @@ function groundedAgainst(answer: string, raw: string, teamCounts: string[] = [])
  *   사유는 `hasNumericCharacter` 위 §정책 주석 참조(파서 12라운드 사고).
  */
 export interface ValidateRagOptions {
+  /** Official RAG must bind competition identity before accepting any model status. */
+  officialQuestion?: string;
   ruleRequest?: RequiredRuleRequest;
   /**
    * 숫자를 **근거 대조 방식**으로 다룰지 여부. 기본값 false = 숫자 전면 금지.
@@ -1501,6 +1503,33 @@ export interface ValidateRagOptions {
   maxChars?: number;
 }
 
+// Official almanacs combine unrelated competitions and historical editions.
+// Numeric membership alone must never turn that mixture into a current roster.
+const INTERNATIONAL_EVENTS = [
+  /아시안\s*게임|아시아\s*경기\s*대회|asian\s*games|\bAG\b/i,
+  /\bWBC\b|월드\s*베이스볼\s*클래식|world\s*baseball\s*classic/i,
+  /프리미어\s*12|premier\s*12/i,
+  /올림픽|olympics?/i,
+] as const;
+
+function officialEventEvidenceSupported(question: string, evidence: RagEvidence[], answer: string): boolean {
+  const requested = INTERNATIONAL_EVENTS.filter((pattern) => pattern.test(question));
+  if (!requested.length) return true;
+  // Roster editions cannot be established from a pooled historical book chunk.
+  // Let the existing bounded, verified official-event fallback answer instead.
+  if (/명단|엔트리|로스터|roster|누구|누가|선수\s*구성|멤버/i.test(question)) return false;
+  if (requested.length !== 1 || !evidence.length) return false;
+  const target = requested[0];
+  const other = INTERNATIONAL_EVENTS.filter((pattern) => pattern !== target);
+  if (other.some((pattern) => pattern.test(answer))) return false;
+  // All supplied chunks can influence the model; a single matching heading
+  // must not license WBC/AG mixtures or competition-less numeric fragments.
+  return evidence.every((row) => {
+    const text = `${row.sectionPath}\n${row.content}`;
+    return target.test(text) && !other.some((pattern) => pattern.test(text));
+  });
+}
+
 export function validateRagResponse(
   raw: string,
   options: ValidateRagOptions = {},
@@ -1520,6 +1549,10 @@ export function validateRagResponse(
   }
   const row = value as Record<string, unknown>;
   const status = String(row.status);
+  if (options.officialQuestion && !officialEventEvidenceSupported(
+    options.officialQuestion, options.evidence ?? [], typeof row.answer === "string" ? row.answer : "",
+  )) return { kind: "insufficient", reason: "model_insufficient" };
+
   const unverified = options.generalFallback ? unverifiedTermAnswer(row, options.generalFallback.question, options.generalFallback.previous) : null;
   if (unverified) return { kind: "general", answer: unverified, toneCompliant: true };
   if (status === RAG_INSUFFICIENT_SENTINEL) return { kind: "insufficient", reason: "model_insufficient" };

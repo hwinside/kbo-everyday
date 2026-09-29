@@ -5069,6 +5069,7 @@ async function answerOfficialDocumentQuestion(
   }
 
   const validateOfficial = (raw: LlmResult) => validateRagResponse(raw.text, {
+    officialQuestion: question,
     numericEvidence: true, evidence,
     ruleRequest: requiredRule ?? undefined,
     // Only compound definitions may echo user quantities, under the same
