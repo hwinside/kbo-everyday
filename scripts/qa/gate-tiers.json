@@ -4,6 +4,10 @@
   "source_audit": "state/prebuild-gate-audit-20260820.md",
   "gates": [
     {
+      "name": "qa:genius-correction-contract",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-live-score-guide",
       "tier": "ci"
     },
