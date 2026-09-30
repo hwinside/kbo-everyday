@@ -35,8 +35,8 @@ games는 해당 날짜의 앱 일정입니다. 경기 인덱스를 고르지 않
 오늘 관람 의도는 분명하나 대상이 모호하면 clarify입니다. games=null은 조회 실패이며 빈 일정과 다릅니다.
 attendanceEvidence에는 관람 행동·계획을 드러내는 원문 구절을 그대로 복사합니다. 단순 팀명·구장명은 근거가 될 수 없습니다. 현재 발화에 계획이 있으면 evidenceSource=question, 직전 관람 계획의 대상 정정/후속이면 evidenceSource=context_question으로 하고 직전 질문의 관람 구절을 복사합니다. 관람 근거가 없으면 action=other, evidenceSource=none, attendanceEvidence=""입니다.
 관람 의도의 근거(attendanceEvidence)와 관람 대상(target)은 별개입니다. 직전 관람 계획을 이어도 현재 발화가 대상을 바꾸면 target.source=question입니다. 이전 구장과 프로필은 현재 대상에 덧붙이지 않습니다.
-target은 {source:question|context_question|profile|none,quote:대상을 명시한 해당 출처의 원문,teams:대상 구단 canonical 배열,excludedTeams:명시적으로 제외한 구단 배열,backgroundTeams:팬이라는 배경 등 관람 대상을 뜻하지 않는 구단 배열,stadium:명시한 구장 또는 빈 문자열}입니다. 구단 이름은 제공된 teamNames의 해당 출처 값만 씁니다. 현재 구단 언급은 teams/excludedTeams/backgroundTeams에서 빠뜨리지 않습니다. 부정한 팀을 관람 대상으로 뒤집지 않습니다. 팀과 구장 모두 현재 명시했으면 두 조건을 모두 유지합니다. 구장명은 games의 명칭을 사용하되 원문에 없는 구장을 만들어내지 않습니다.
-대상이 생략됐을 때만 직전 질문 또는 프로필로 보완합니다. 프로필 선택 시 quote는 favoriteTeam 원문입니다. 대상 불명확·다른 주제면 source=none, quote/stadium은 빈 문자열, teams/excludedTeams/backgroundTeams는 빈 배열입니다.
+target은 {source:question|context_question|profile|none,quote:대상을 명시한 해당 출처의 원문,teams:대상 구단 canonical 배열,excludedTeams:명시적으로 제외한 구단 배열,backgroundTeams:팬이라는 배경 등 관람 대상을 뜻하지 않는 구단 배열,stadium:명시한 관람 구장 또는 빈 문자열,excludedStadiums:명시적으로 제외한 구장 배열}입니다. 구단 이름은 제공된 teamNames의 해당 출처 값만 씁니다. 구장에서 홈팀이나 상대팀을 추론해 teams에 넣지 않습니다. backgroundTeams는 팬 배경이며 일정 조회 조건이 아닙니다. 구장을 바꾸면 이전 구장은 excludedStadiums, 새 관람 구장은 stadium에 넣습니다. 현재 구단 언급은 teams/excludedTeams/backgroundTeams에서 빠뜨리지 않습니다. 부정한 팀을 관람 대상으로 뒤집지 않습니다. 팀과 구장 모두 현재 명시했으면 두 조건을 모두 유지합니다. 구장명은 games의 명칭을 사용하되 원문에 없는 구장을 만들어내지 않습니다.
+대상이 생략됐을 때만 직전 질문 또는 프로필로 보완합니다. 프로필 선택 시 quote는 favoriteTeam 원문입니다. 대상 불명확·다른 주제면 source=none, quote/stadium은 빈 문자열, teams/excludedTeams/backgroundTeams/excludedStadiums는 빈 배열입니다.
 JSON만 출력합니다. action은 match/clarify/unavailable/other 중 하나입니다. 일정의 존재 여부와 조회 성공 여부는 코드가 판단하므로, 대상 조건을 확인했으면 games가 비어 있거나 null이어도 match로 반환합니다.` }] },
     contents: [{ role: "user", parts: [{ text: JSON.stringify(input) }] }],
     generationConfig: {
@@ -56,7 +56,8 @@ JSON만 출력합니다. action은 match/clarify/unavailable/other 중 하나입
             excludedTeams: { type: "ARRAY", items: { type: "STRING" } },
             backgroundTeams: { type: "ARRAY", items: { type: "STRING" } },
             stadium: { type: "STRING" },
-          }, required: ["source", "quote", "teams", "excludedTeams", "backgroundTeams", "stadium"] },
+            excludedStadiums: { type: "ARRAY", items: { type: "STRING" } },
+          }, required: ["source", "quote", "teams", "excludedTeams", "backgroundTeams", "stadium", "excludedStadiums"] },
         },
         required: ["evidenceSource", "attendanceEvidence", "action", "target"],
       },
@@ -84,6 +85,7 @@ export function renderGameConversation(text: string, input: GameConversationInpu
   if (!Array.isArray(target.teams) || !target.teams.every((t) => typeof t === "string")
     || !Array.isArray(target.excludedTeams) || !target.excludedTeams.every((t) => typeof t === "string")
     || !Array.isArray(target.backgroundTeams) || !target.backgroundTeams.every((t) => typeof t === "string")
+    || !Array.isArray(target.excludedStadiums) || !target.excludedStadiums.every((s) => typeof s === "string")
     || typeof target.stadium !== "string" || typeof target.quote !== "string") return null;
   if (value.action === "clarify") return clarify();
   if (value.action !== "match" && value.action !== "unavailable") return null;
@@ -93,29 +95,38 @@ export function renderGameConversation(text: string, input: GameConversationInpu
     : source === "context_question" ? input.context?.question : input.favoriteTeam;
   if (!target.quote.trim() || !sourceText?.includes(target.quote)) return null;
   const names = input.teamNames[source];
-  const teams = target.teams as string[];
-  const excluded = target.excludedTeams as string[];
+  // Project the model proposal onto source-grounded constraints. A guessed
+  // home/opponent team must not discard a correctly quoted venue.
+  const teams = (target.teams as string[]).filter((t) => names.includes(t));
+  const excluded = (target.excludedTeams as string[]).filter((t) => names.includes(t));
   const background = target.backgroundTeams as string[];
   // Every current entity must receive an explicit role. An old attendance quote
   // cannot authorize an old team/venue when this turn supplies a new team.
   if (input.teamNames.question.length && (source !== "question"
     || !input.teamNames.question.every((t) => teams.includes(t) || excluded.includes(t) || background.includes(t)))) return clarify();
-  if ([...teams, ...excluded, ...background].some((t) => !names.includes(t))
-    || teams.some((t) => excluded.includes(t) || background.includes(t))
-    || excluded.some((t) => background.includes(t))) return null;
-  if (target.stadium && !target.quote.includes(target.stadium)) return null;
-  if (!teams.length && !excluded.length && !target.stadium) return clarify();
+  if (teams.some((t) => excluded.includes(t) || background.includes(t))
+    || excluded.some((t) => background.includes(t))) return clarify();
+  const stadium = target.stadium && sourceText.includes(target.stadium) ? target.stadium : "";
+  const excludedStadiums = (target.excludedStadiums as string[])
+    .filter((s) => s.trim() && sourceText.includes(s));
+  if (stadium && excludedStadiums.includes(stadium)) return clarify();
+  // As with teams, a current venue cannot silently disappear into old context.
+  // Use app venue names, not a new expression-specific language heuristic.
+  const currentVenues = [...new Set((input.games ?? []).map((g) => g.stadium))]
+    .filter((s) => s && input.question.includes(s));
+  if (!currentVenues.every((s) => s === stadium || excludedStadiums.includes(s))) return clarify();
+  if (!teams.length && !excluded.length && !stadium && !excludedStadiums.length) return clarify();
   // Missing app data is not an empty schedule, irrespective of model action.
   if (input.games === null) return {
     answer: "오늘 경기 일정을 조회하지 못했습니다. 앱의 경기 일정에서 다시 확인해 주세요.", source: "history_hold",
   };
-  const stadium = target.stadium;
   // Select facts deterministically from the dated snapshot. No model-chosen
   // index can preserve yesterday's/previous turn's opponent or omit a DH leg.
   const games = input.games.filter((g) =>
     (!teams.length || teams.some((t) => g.awayName === t || g.homeName === t))
     && !excluded.some((t) => g.awayName === t || g.homeName === t)
-    && (!stadium || g.stadium === stadium));
+    && (!stadium || g.stadium === stadium)
+    && !excludedStadiums.includes(g.stadium));
   if (!games.length) return {
     answer: input.games.length === 0
       ? `오늘(${input.date}) 등록된 KBO 경기가 없습니다.`

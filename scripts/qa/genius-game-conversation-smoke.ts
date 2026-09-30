@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { answerQuestion, GREETING_ANSWER, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, mentionedTeamCanonicals, GREETING_ANSWER, type QaDeps } from "../../src/lib/baseball-qa/pipeline";
 import { gameConversationRequest, renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
 
 const input: GameConversationInput = {
@@ -8,7 +8,7 @@ const input: GameConversationInput = {
   games: [{ awayName: "키움", homeName: "롯데", stadium: "사직", time: "18:30", status: "scheduled" }],
 };
 const plan = { evidenceSource: "question", attendanceEvidence: input.question,
-  target: { source: "question", quote: input.question, teams: [], excludedTeams: [], backgroundTeams: [], stadium: "사직" } };
+  target: { source: "question", quote: input.question, teams: [], excludedTeams: [], backgroundTeams: [], excludedStadiums: [], stadium: "사직" } };
 const match = JSON.stringify({ ...plan, action: "match", gameIndexes: [0] });
 const rendered = renderGameConversation(match, input)!;
 assert.equal(rendered.source, "kbo_structured");
@@ -44,7 +44,7 @@ const schedule = [input.games![0], { awayName: "NC", homeName: "두산", stadium
 const followup: GameConversationInput = { ...input, question: "두산", games: schedule,
   context: { question: input.question, answer: rendered.answer },
   teamNames: { question: ["두산"], context_question: [], profile: ["롯데"] } };
-const currentTarget = { source: "question", quote: "두산", teams: ["두산"], excludedTeams: [], backgroundTeams: [], stadium: "" };
+const currentTarget = { source: "question", quote: "두산", teams: ["두산"], excludedTeams: [], backgroundTeams: [], excludedStadiums: [], stadium: "" };
 const followupPlan = { evidenceSource: "context_question", attendanceEvidence: input.question, action: "match", target: currentTarget };
 const currentAnswer = renderGameConversation(JSON.stringify({ ...followupPlan, gameIndexes: [0] }), followup)!;
 assert.match(currentAnswer.answer, /NC vs 두산.*잠실/);
@@ -63,6 +63,56 @@ assert.match(renderGameConversation(JSON.stringify(followupPlan), { ...followup,
 assert.equal(renderGameConversation(JSON.stringify(followupPlan), { ...followup, games: null })?.source, "history_hold");
 const dh = renderGameConversation(JSON.stringify(followupPlan), { ...followup, games: [...schedule, { ...schedule[1], time: "20:00" }] })!;
 assert.ok(dh.answer.includes("18:30") && dh.answer.includes("20:00"), "all DH legs from snapshot, not model indexes");
+
+// R1: production NO-GO proposals, including the model's spurious team claims.
+const r1Schedule = [...schedule,
+  { awayName: "한화", homeName: "삼성", stadium: "대구", time: "18:30", status: "scheduled" },
+  { awayName: "LG", homeName: "SSG", stadium: "문학", time: "18:30", status: "scheduled" }];
+const r1Cases = [
+  { question: "나 오늘 사직 드", stadium: "사직", teams: ["롯데"], backgroundTeams: [], excludedStadiums: [], expected: /키움 vs 롯데/ },
+  { question: "사직야구장 간다고", stadium: "사직", teams: ["롯데"], backgroundTeams: [], excludedStadiums: [], expected: /키움 vs 롯데/ },
+  { question: "나 롯데팬인데 오늘 대구 가", stadium: "대구", teams: [], backgroundTeams: ["롯데"], excludedStadiums: [], expected: /한화 vs 삼성/ },
+  { question: "아 잠실 말고 문학으로 바꿨어", stadium: "문학", teams: ["LG", "SSG"], backgroundTeams: [], excludedStadiums: ["잠실"], expected: /LG vs SSG/ },
+];
+for (const q of ["롯데팬인데", "롯데자이언츠팬인데", "기아팬이라도", "LG팬이고"]) {
+  assert.equal(mentionedTeamCanonicals(q).length, 1, q);
+}
+for (const q of ["롯데마트", "삼성전자", "롯데팬케이크", "LG라이온즈팬인데"]) {
+  assert.deepEqual(mentionedTeamCanonicals(q), [], q);
+}
+for (const row of r1Cases) {
+  const target = { ...plan.target, quote: row.question, ...row };
+  const reply = JSON.stringify({ ...plan, action: "match", attendanceEvidence: row.question, target });
+  const result = renderGameConversation(reply, { ...input, question: row.question, games: r1Schedule,
+    teamNames: { ...input.teamNames, question: mentionedTeamCanonicals(row.question) } });
+  assert.equal(result?.source, "kbo_structured", row.question);
+  assert.match(result!.answer, row.expected);
+}
+// Both reported stale-card follow-ups must remain bound to the current team.
+for (const [question, team] of [["두산", "두산"], ["기아", "KIA"]]) {
+  const games = [...r1Schedule, { awayName: "KT", homeName: "KIA", stadium: "광주", time: "18:30", status: "scheduled" }];
+  const next = { ...followup, question, games, teamNames: { ...followup.teamNames, question: [team] } };
+  const result = renderGameConversation(JSON.stringify({ ...followupPlan,
+    target: { ...currentTarget, quote: question, teams: [team] } }), next)!;
+  assert.ok(result.answer.includes(team));
+  assert.doesNotMatch(result.answer, /키움 vs 롯데|한화 vs 삼성/);
+  assert.equal(renderGameConversation(JSON.stringify({ ...followupPlan,
+    target: { ...plan.target, source: "context_question" } }), next)?.source, "context_missing");
+}
+// Background claims are not lookup constraints, even if the resolver misses one.
+assert.match(renderGameConversation(JSON.stringify({ ...plan, action: "match", attendanceEvidence: "나 롯데팬인데 오늘 대구 가",
+  target: { ...plan.target, quote: "대구", stadium: "대구", backgroundTeams: ["롯데"] } }),
+  { ...input, question: "나 롯데팬인데 오늘 대구 가", games: r1Schedule })!.answer, /한화 vs 삼성/);
+// An unsupported-only proposal clarifies rather than selecting every game.
+assert.equal(renderGameConversation(JSON.stringify({ ...plan, action: "match",
+  target: { ...plan.target, teams: ["LG"], stadium: "" } }), input)?.source, "context_missing");
+const changedVenue = { ...input, question: "아 잠실 말고 문학으로 바꿨어", games: r1Schedule };
+assert.equal(renderGameConversation(JSON.stringify({ ...plan, action: "match", attendanceEvidence: changedVenue.question,
+  target: { ...plan.target, quote: changedVenue.question, stadium: "문학" } }), changedVenue)?.source,
+  "context_missing", "an unaccounted current venue must not silently vanish");
+assert.doesNotMatch(renderGameConversation(JSON.stringify({ ...plan, action: "match", attendanceEvidence: "오늘 잠실 말고 갈래",
+  target: { ...plan.target, quote: "잠실 말고", stadium: "", excludedStadiums: ["잠실"] } }),
+  { ...input, question: "오늘 잠실 말고 갈래", games: r1Schedule })!.answer, /NC vs 두산/);
 
 function deps(calls: string[], reply = match): QaDeps {
   return {
@@ -83,6 +133,18 @@ function deps(calls: string[], reply = match): QaDeps {
   };
 }
 async function main() {
+  for (const row of r1Cases) {
+    const testDeps = deps([]);
+    testDeps.loadGameConversation = async () => ({ games: r1Schedule, favoriteTeam: input.favoriteTeam });
+    testDeps.callGameConversation = async (value) => {
+      assert.deepEqual(value.teamNames.question, mentionedTeamCanonicals(row.question));
+      return { text: JSON.stringify({ ...plan, action: "match", attendanceEvidence: row.question,
+        target: { ...plan.target, ...row, quote: row.question } }), inputTokens: 1, outputTokens: 1 };
+    };
+    const result = await answerQuestion("qa-game-context", row.question, testDeps);
+    assert.equal(result.source, "kbo_structured", row.question);
+    assert.match(result.answer!, row.expected);
+  }
   for (const q of ["나 오늘 사직 드", "나 오늘 사직 가", "사직야구장 간다고", "오늘 야구 보러간다"]) {
     const calls: string[] = [];
     const answer = await answerQuestion("qa-game-context", q, deps(calls));

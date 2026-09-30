@@ -1979,7 +1979,13 @@ export function mentionedTeamCanonicals(question: string): string[] {
         return nicks.some((nick) =>
           rest.startsWith(nick) && isGrammaticalTail(rest.slice(nick.length)));
       }));
-    if (direct || combined) hits.add(canonical);
+    // Fan affiliation is still a mentioned entity, not necessarily a game
+    // target. Recognize the compositional <team>팬<grammatical tail> form
+    // without making arbitrary substrings (롯데마트, 삼성전자) team mentions.
+    const fanAffiliation = tokens.some((token) =>
+      [...shorts, ...nicks, ...shorts.flatMap((short) => nicks.map((nick) => short + nick))]
+        .some((word) => token.startsWith(`${word}팬`) && isGrammaticalTail(token.slice(word.length + 1))));
+    if (direct || combined || fanAffiliation) hits.add(canonical);
   }
   return [...hits];
 }
