@@ -20,8 +20,6 @@ async function main() {
   }
   const rows: Row[] = JSON.parse(fs.readFileSync(arg("input")!, "utf8"));
   const snapshots: Record<string, Snapshot> = JSON.parse(fs.readFileSync(arg("snapshots")!, "utf8"));
-  const { makeDeps } = await import("../../src/lib/baseball-qa/server");
-  const production = makeDeps(0); // No personal account identity is passed to any production port.
   const runners: Array<[string, typeof answerQuestion]> = [["head", answerQuestion]];
   if (arg("base-root")) {
     const base = await import(pathToFileURL(path.resolve(arg("base-root")!, "src/lib/baseball-qa/pipeline.ts")).href);
@@ -29,6 +27,13 @@ async function main() {
   }
   const output: unknown[] = [];
   for (const [variant, run] of runners) {
+    // A changed response schema must be paired with its own provider/prompt.
+    // Sharing head's provider with base would invalidate the comparison.
+    const serverPath = variant === "base"
+      ? path.resolve(arg("base-root")!, "src/lib/baseball-qa/server.ts")
+      : path.resolve(import.meta.dirname, "../../src/lib/baseball-qa/server.ts");
+    const { makeDeps } = await import(pathToFileURL(serverPath).href);
+    const production: QaDeps = makeDeps(0); // No real user identity, write ports never copied.
     const previous = new Map<string, { row: Row; result: QaResult }>();
     for (const row of rows) {
       const start = Date.now();

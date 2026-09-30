@@ -6779,7 +6779,11 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const result = await Promise.race([
         (async () => {
           const snapshot = await deps.loadGameConversation!(date);
-          const input: GameConversationInput = { question, context: context ?? undefined, date, ...snapshot };
+          const input: GameConversationInput = { question, context: context ?? undefined, date, ...snapshot,
+            teamNames: { question: mentionedTeamCanonicals(question),
+              context_question: mentionedTeamCanonicals(context?.question ?? ""),
+              profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
+          };
           const model = await deps.callGameConversation!(input);
           return { model, served: renderGameConversation(model.text, input) };
         })(),
