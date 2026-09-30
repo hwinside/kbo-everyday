@@ -1,3 +1,4 @@
+import { RAG_EVIDENCE_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
 /**
  * 야잘알봇 KBO 공식 간행물(tier1) 서빙 회귀.
  *
@@ -368,7 +369,7 @@ checkAsync("공식 근거로도 답을 못 만들면 unsure로 종결한다(일�
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "unsure");
   // 공식 근거로 답을 못 만든 것뿐이다 — 룰 질문에 "야구 질문만 하라"고 답하면 안 된다.
-  assert.equal(result.answer, UNCLEAR_ANSWER);
+  assert.equal(result.answer, RAG_EVIDENCE_HOLD);
   assert.notEqual(result.answer, BLOCKED_ANSWER, "근거 부족에 범위밖 문구 금지");
   assert.ok(!calls.includes("callLlm"), "LLM 호출 1회 계약 — 재호출 금지");
 });
@@ -640,7 +641,7 @@ checkAsync("파이프라인: 공식 경로 GENERAL 은 unsure 가 아니라 llm 
   assert.notEqual(result.answer, UNCLEAR_ANSWER);
 });
 
-checkAsync("파이프라인: malformed 응답은 최종 answer 가 UNCLEAR exact — 손상 문자열 미발송 (삼순 NO-GO ②)", async () => {
+checkAsync("파이프라인: malformed 응답은 최종 answer 가 검증 실패 안내 exact — 손상 문자열 미발송 (삼순 NO-GO ②)", async () => {
   const { deps } = makeDeps({
     searchOfficialRag: async () => [OFFICIAL],
     callOfficialRagLlm: async () => ({
@@ -649,7 +650,7 @@ checkAsync("파이프라인: malformed 응답은 최종 answer 가 UNCLEAR exact
     }),
   });
   const result = await answerQuestion("u1", "야구 포지션 중에 ph가 뭐야?", deps);
-  assert.equal(result.answer, UNCLEAR_ANSWER, "kind 만 보지 말고 최종 answer exact 로 고정");
+  assert.equal(result.answer, RAG_RESPONSE_HOLD, "kind 만 보지 말고 최종 answer exact 로 고정");
   assert.ok(!result.answer.includes("ub2n4"), "손상 문자열이 발송되면 안 된다");
   assert.equal(result.source, "unsure");
 });
@@ -704,9 +705,10 @@ checkAsync("순수 요청 빌더 — 공식 기준일 주입과 기본 서버 �
     { referenceTimeMs: Date.parse("2026-12-31T15:00:00Z") });
   assert.ok(fixed.contents[0].parts[0].text.includes("2027-01-01 (Asia/Seoul)"));
   const schema = fixed.generationConfig.responseSchema!;
+  assert.ok("calendarClaims" in schema.properties, "official schema, not team correction schema");
   assert.equal(schema.properties.calendarClaims.items.properties.season.type, "INTEGER");
   assert.equal(schema.properties.calendarClaims.items.properties.evidence.type, "INTEGER");
-  assert.ok(schema.required.includes("calendarClaims"));
+  assert.ok(schema.required.some((key: string) => key === "calendarClaims"));
   assert.ok(fixed.contents[0].parts[0].text.includes('"evidence":1'));
   assert.equal(buildRagLlmRequest("선수 소개", [OFFICIAL]).generationConfig.responseSchema, undefined);
   const { toKSTDateString } = await import("../../src/lib/utils/date-kst");
