@@ -835,4 +835,4 @@ export const RECORD_MISSING_ANSWER =
 
 /** Split-specific copy; not the fallback for missing historical metrics. */
 export const UNSUPPORTED_SPLIT_ANSWER =
-  "요청하신 상황·대회·기간으로 나눈 기록은 현재 제공하지 않습니다. 질문을 나눠 다시 물으셔도 같은 조건의 기록은 확인할 수 없으며, 제공 시점은 정해지지 않았습니다. 대신 정규시즌의 특정 연도(예: 2019년 타율), 통산, 연도별 기록을 질문해 주십시오.";
+  "요청하신 상황·대회·기간으로 나눈 기록은 현재 제공하지 않습니다. 질문을 나눠 다시 물으셔도 같은 조건의 기록은 확인할 수 없으며, 제공 시점은 정해지지 않았습니다. 대신 지원되는 정규시즌의 특정 연도(예: 2019년 타율), 통산, 연도별 기록은 확인할 수 있습니다.";
