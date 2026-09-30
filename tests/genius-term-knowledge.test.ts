@@ -1,7 +1,7 @@
 import { resolveTermOrigin } from "../src/lib/baseball-qa/term-origin";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { answerQuestion, matchGlossary, resolveUnboundName, routeQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
+import { answerQuestion, resolveHoldAnswer, HISTORY_HOLD_ANSWER, matchGlossary, resolveUnboundName, routeQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
 import { validateRagResponse, type RagEvidence } from '../src/lib/baseball-qa/rag/retrieve';
 import { isTermOriginQuestion, TERM_UNVERIFIED, UNVERIFIED_TERM_ANSWER, UNVERIFIED_TERM_CORRECTION_ANSWER, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from '../src/lib/baseball-qa/term-knowledge';
 
@@ -497,9 +497,16 @@ test('R1 split record rejection explains unsupported scope without retry/update 
       loadPlayers: async () => [{ name: '전의산', kboId: '50854' }, { name: '김영웅', kboId: '52401' }],
       callLlm: async () => assert.fail('unsupported split must not generate records'),
     });
-    assert.equal(result.source, 'blocked');
+    assert.equal(result.source, 'history_hold');
     assert.match(result.answer, /질문을 나눠 다시 물으셔도/);
     assert.match(result.answer, /제공 시점은 정해지지 않았습니다/);
     assert.doesNotMatch(result.answer, /그 기간 형태로는|조금 뒤|다시 확인하겠습니다/);
+  }
+});
+
+
+test('R2 split copy does not replace historical metric or prize fallbacks', () => {
+  for (const question of ['문보경 작년 2루타', '문보경 통산 OPS', '한국시리즈 MVP']) {
+    assert.equal(resolveHoldAnswer(question), HISTORY_HOLD_ANSWER, question);
   }
 });

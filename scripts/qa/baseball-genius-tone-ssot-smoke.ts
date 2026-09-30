@@ -45,6 +45,7 @@ import { renderDraftAnswer, renderDraftUnavailable } from "../../src/lib/basebal
 import {
   RECORD_MISSING_ANSWER,
   UNSUPPORTED_SEASON_ANSWER,
+  UNSUPPORTED_SPLIT_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
 } from "../../src/lib/baseball-qa/stats/season-record";
 import { composeTeamRecordAnswer } from "../../src/lib/baseball-qa/stats/team-record";
@@ -95,6 +96,7 @@ const staticAnswers = [
   TODAY_NO_GAMES_ANSWER,
   UNTRUSTED_METRIC_ANSWER,
   UNSUPPORTED_SEASON_ANSWER,
+  UNSUPPORTED_SPLIT_ANSWER,
   RECORD_MISSING_ANSWER,
   renderTodayStartersAnswer([], "LG"),
   renderDraftAnswer("홍길동", { year: 2020, team: "LG", detail: "1차 지명" }),

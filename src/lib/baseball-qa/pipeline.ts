@@ -85,6 +85,8 @@ import {
   resolveSeasonRecord,
   resolveSeasonRecordIntent,
   UNSUPPORTED_SEASON_ANSWER,
+  UNSUPPORTED_SPLIT_ANSWER,
+  hasSeasonRecordSplitQualifier,
   UNTRUSTED_METRIC_ANSWER,
   isCulturalTopicQuestion,
   type SeasonRecordRow,
@@ -2587,7 +2589,12 @@ export function newsRecencyIntentOf(question: string, nowMs: number): NewsRecenc
 export function resolveHoldAnswer(question: string): string {
   const normalized = question.normalize("NFKC").toLowerCase();
   const tokens = questionTokens(normalized);
-  return mentionsTeam(tokens) ? TEAM_STAT_HOLD_ANSWER : HISTORY_HOLD_ANSWER;
+  if (mentionsTeam(tokens)) return TEAM_STAT_HOLD_ANSWER;
+  if (hasSeasonRecordSplitQualifier(question)
+    && /성적|기록|타율|출루율|장타율|ops|홈런|안타|타점|득점|방어율|평균자책|탈삼진|이닝|승률/iu.test(question)) {
+    return UNSUPPORTED_SPLIT_ANSWER;
+  }
+  return HISTORY_HOLD_ANSWER;
 }
 
 /**
@@ -4786,7 +4793,7 @@ async function answerSeasonRecordQuestion(
     return settle(UNTRUSTED_METRIC_ANSWER, "blocked", "blocked");
   }
   if (intent.kind === "unsupported_season") {
-    return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+    return settle(hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
   }
 
   // ── 연도별·통산·과거 시즌: KBO 공식 연도별 테이블 (2026-08-10 캐처) ────────────
@@ -4799,7 +4806,7 @@ async function answerSeasonRecordQuestion(
     // 미배선·미지원 지표는 종전 "준비 중" 안내가 정확하다 — RECORD_MISSING("올 시즌
     // 기록을 못 찾았어요")은 과거·통산 질문에 엉뚱한 안내다.
     if (!column || !deps.fetchCareerRecord) {
-      return settle(UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
+      return settle(hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER, "blocked", "blocked");
     }
     let record: CareerRecord | null;
     try {
@@ -6306,7 +6313,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   ) {
     const answer = recordIntent.kind === "untrusted_metric"
       ? UNTRUSTED_METRIC_ANSWER
-      : UNSUPPORTED_SEASON_ANSWER;
+      : hasSeasonRecordSplitQualifier(question) ? UNSUPPORTED_SPLIT_ANSWER : UNSUPPORTED_SEASON_ANSWER;
     await deps.log({
       userId, question, questionNorm, matchPath: "blocked", answer,
       inputTokens: null, outputTokens: null,
