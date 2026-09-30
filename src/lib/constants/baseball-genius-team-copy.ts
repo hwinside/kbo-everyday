@@ -9,7 +9,7 @@
  *   · 활성 30종 = 10팀 × 3종 exact. 예비(NC-4)는 로테이션에 넣지 않는다.
  *   · 모든 행은 `sourceId` 로 소스 레지스트리(17건)에 개별 결속된다. 섹션 결속 금지.
  *   · 톤 = 합니다체 종결. 절대표현(최고·최강·유일 등) 0. 팀 편향·조롱·연민 0.
- *   · 렌더 규칙: 첫 문장 `{팀명}를 응원하신다니 반갑습니다.` **정확히 1회**, 그 뒤 카피 1종.
+ *   · 렌더 규칙: 첫 문장 `안녕하세요! {팀명} 이야기도 함께 나눠요.` **정확히 1회**, 그 뒤 카피 1종.
  *   · 로테이션은 **결정론**이다 — messageId 를 시드로 쓰므로 durable 재처리(cron drain)가
  *     같은 카피를 재생한다. `Math.random()`·`Date.now()` 금지 (M90 다중 instance 계약).
  *
@@ -115,9 +115,9 @@ export const TEAM_FAN_COPY_SPARE: TeamFanCopyRow = {
   sourceId: "NC_VI_MASCOT",
 };
 
-/** 공통 렌더 규칙 첫 문장 — 문서 v4 리터럴 그대로. 정확히 1회만 붙인다. */
+/** 공통 렌더 규칙 첫 문장 — 프로필을 현재 발화의 선언으로 간주하지 않는다. 정확히 1회만 붙인다. */
 export function teamFanGreeting(teamName: string): string {
-  return `${teamName}를 응원하신다니 반갑습니다.`;
+  return `안녕하세요! ${teamName} 이야기도 함께 나눠요.`;
 }
 
 /**

@@ -1,3 +1,4 @@
+import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
 import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
 import { preservesCorrectionTermIdentity } from "./correction-term-identity";
@@ -1195,6 +1196,8 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
+  loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam">>;
+  callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
   /** Internal observation only; never controls serving. */
   observeAgentFallback?: (outcome: import("./classifier-observation").AgentFallbackOutcome) => void;
   agentFallback?: (input: ConversationInput, budgetMs: number) => Promise<FallbackAnswer | null>;
@@ -1203,15 +1206,7 @@ export interface QaDeps {
   loadGlossary: () => Promise<GlossaryEntry[]>;
   loadPlayers: () => Promise<PlayerRef[]>;
   getCache: (questionNorm: string) => Promise<string | null>;
-  /**
-   * 팀별 팬 카피 렌더 (rev2, 2026-08-14 — 삼순 최종 GO exact `05c16623…`).
-   *
-   * 단독 인사(greeting)일 때만 호출된다. 반환이 문자열이면 그 문구가 인사 답변이 되고,
-   * null·미주입·throw 는 전부 기존 `GREETING_ANSWER` 로 진행한다(fail-open — 팀 미설정·
-   * 조회 장애가 인사 자체를 죽이면 안 된다). 렌더 내용·로테이션은 호출부(server.ts)가
-   * SSOT(`constants/baseball-genius-team-copy`)와 messageId 시드로 결정론화한다 —
-   * pipeline 은 어떤 팀·어떤 카피인지 모른다(관심사 분리, durable 재처리 동일 재생).
-   */
+  /** Greeting-only profile copy; neutral lead-in, approved body and durable rotation preserved. */
   pickTeamFanCopy?: () => Promise<string | null>;
   setCache: (questionNorm: string, answer: string) => Promise<void>;
   callLlm: (question: string, context?: ContextTurn, rosterBlock?: string, statIntentMode?: boolean, definition?: StatDefinitionFrame) => Promise<LlmResult>;
@@ -6625,14 +6620,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
           : NAME_SUGGEST_ANSWER(unbound.suggestion)))
         :
       BLOCKED_ANSWER;
-    // ── 팀별 팬 카피 (rev2) — **단독 인사에만** 적용한다 ─────────────────────────
-    //   `안녕` 류 단독 인사에서 유저의 응원팀이 확인되면 중립 인사 대신
-    //   `{팀명}를 응원하신다니 반갑습니다. {검수 카피 1종}` 을 낸다.
-    //   · ack(감사 인사)에는 붙이지 않는다 — "도움이 됐다니 기쁩니다" 뒤에 구단 소개가
-    //     이어지면 대화가 어긋난다(GREETING/ACK 분리와 같은 축).
-    //   · 실패·팀 미설정·미주입은 전부 기존 GREETING_ANSWER 그대로(fail-open).
-    //   · 카피 선택은 호출부가 messageId 시드로 결정론화한다 — durable 재처리에서도 같은
-    //     문구가 재생되어 저장/발송 분기 불일치가 생기지 않는다.
+    // A profile preference is not a declaration in the current greeting.
     // §7.4 연속 4회부터 짧은 고정문 — 팀 카피·시그니처보다 **먼저** 판정한다.
     //   고정문이 적용되면 둘 다 건너린다(짧게 유지가 목적이다). 실패·미주입은 정상 경로.
     let streakFixed = false;
@@ -6774,6 +6762,43 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
           }),
         };
       }
+    }
+  }
+
+  // Interpret attendance using dated app facts before document RAG can mistake it
+  // for a stadium encyclopedia request. No venue/verb keyword routing is added.
+  // Existing terminal routes, dictionary and structured record owners stay first.
+  if (!statDefinition && !enabledPlayerCandidate && deps.loadGameConversation && deps.callGameConversation) {
+    const date = new Date((deps.now?.() ?? Date.now()) + 9 * 3_600_000).toISOString().slice(0, 10);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        (async () => {
+          const snapshot = await deps.loadGameConversation!(date);
+          const input: GameConversationInput = { question, context: context ?? undefined, date, ...snapshot };
+          const model = await deps.callGameConversation!(input);
+          return { model, served: renderGameConversation(model.text, input) };
+        })(),
+        new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
+      ]);
+      if (result) {
+        const { model, served } = result;
+        if (served) {
+          await deps.log({ userId, question, questionNorm, matchPath: served.source, answer: served.answer,
+            inputTokens: model.inputTokens, outputTokens: model.outputTokens });
+          return { status: 200, ...served, remaining };
+        }
+        // Preserve paid classifier tokens even when it yields to the existing path.
+        const baseLog = deps.log;
+        deps = { ...deps, log: (entry) => baseLog({ ...entry,
+          inputTokens: (entry.inputTokens ?? 0) + (model.inputTokens ?? 0),
+          outputTokens: (entry.outputTokens ?? 0) + (model.outputTokens ?? 0),
+        }) };
+      }
+    } catch {
+      // Infrastructure/schema errors do not replace an existing answer with a hold.
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
