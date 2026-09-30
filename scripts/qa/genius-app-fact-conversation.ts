@@ -21,6 +21,8 @@ function proposal(question: string, kind: string, period: string, teams: string[
       teams, excludedTeams: [], backgroundTeams: [], stadium: "", excludedStadiums: [] } };
 }
 const cases = [
+  { q: "오늘 경기 일정 알려줘", kind: "schedule", period: "today", teams: [], includes: /KT vs 삼성/, source: "kbo_structured" },
+  { q: "삼성 경기 몇 시에 시작해?", kind: "schedule", period: "today", teams: ["삼성"], includes: /18:30/, source: "kbo_structured" },
   { q: "오늘 삼성과 kt경기 예측", kind: "prediction", period: "today", teams: ["삼성", "KT"], includes: /승패를 예측해 단정할 수는 없지만/, source: "kbo_structured" },
   { q: "야잘알이면 경기예측도 할 줄 알아야지", kind: "prediction", period: "current", teams: [], includes: /KT vs 삼성/, source: "kbo_structured" },
   { q: "고객님의물품이국제운송접수가완료되었습니다 삼성라이온즈 1번타자 누구?", kind: "lineup", period: "current", teams: ["삼성"], includes: /과거 라인업으로 대신 답하지 않겠습니다/, source: "history_hold" },

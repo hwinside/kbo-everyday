@@ -140,7 +140,7 @@ async function verifyRuntime() {
   assert.doesNotMatch(JSON.stringify(buildRagLlmRequest("아웃 원인이 뭐야?", [], RAG_OFFICIAL_SYSTEM_PROMPT)), /<요청 범위/);
 
   assert.notEqual(routeQuestion("4년제 대학 졸업하고 프로 오면 FA 몇 시즌 뛰어야 해?"), "blocked");
-  assert.equal(routeQuestion("FA 기자회견 몇 시야?"), "blocked", "clock request remains outside scope");
+  assert.equal(requiredRuleEvidence("FA 기자회견 몇 시야?", NOW), null, "event clock request must not become an FA eligibility answer");
   assert.equal(routeQuestion("FA 몇 시즌이야? 날씨도 알려줘"), "blocked", "mixed non-baseball request bypassed scope gate");
   for (const question of ["MLB FA 자격 조건", "해외 복귀 FA 자격", "FA 자격 재취득", "포스트시즌 진출할 확률은?"]) {
     assert.equal(requiredRuleEvidence(question, NOW), null, question + " overmatched current KBO policy");
