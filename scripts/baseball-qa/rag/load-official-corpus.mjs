@@ -39,8 +39,10 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { bindCalendarSeasons } from "./official-calendar-seasons.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const calendarProfiles = JSON.parse(fs.readFileSync(path.join(HERE, "official-calendar-seasons.json"), "utf8"));
 
 // ── PR #1044 src/lib/baseball-qa/rag/ingest.ts 규칙 (동일 값) ────────────────
 const MAX_CHUNK_CHARS = 900;
@@ -83,7 +85,7 @@ const REQUIRED_PROFILES = {
 const EMBED_MODEL = "gemini-embedding-2";
 const EMBED_DIM = 768;
 // 원문 해시와 별개인 파서/청킹 계약 버전. 같은 PDF라도 이 값이 바뀌면 1회 재적재한다.
-const OFFICIAL_LOADER_REVISION = "kbo-ebook-sections-v2";
+const OFFICIAL_LOADER_REVISION = "kbo-ebook-calendar-v1";
 const STALE_AFTER_DAYS = 365; // 공식 e북은 연 단위 개정이다. 30일 재수집은 무의미하다.
 
 const log = (...parts) => console.log(...parts);
@@ -271,7 +273,12 @@ function prepareDocument(doc) {
     extractorRevision: p.extractorRevision,
     ...(p.extractorRevision === REQUIRED_REVISION ? { sourcePdfSha256: p.sourcePdfSha256, documentOrdinal: p.documentOrdinal, documentChunkCount: p.documentChunkCount } : {}),
   }))) : fullClean);
-  const revision = `sha256:${documentContentHash.slice(0, 16)}`;
+  const calendarBindings = bindCalendarSeasons(doc, documentContentHash, calendarProfiles);
+  // Metadata changes need a new snapshot even when the original words do not.
+  const revisionHash = calendarBindings.size
+    ? sha256(JSON.stringify({ documentContentHash, calendarBindings: [...calendarBindings] }))
+    : documentContentHash;
+  const revision = `sha256:${revisionHash.slice(0, 16)}`;
   const asOf = doc.crawledAt.slice(0, 10);
 
   const chunks = [];
@@ -338,6 +345,7 @@ function prepareDocument(doc) {
         sectionPath,
         chunkIndex,
         page: page.page,
+        calendarSeason: calendarBindings.get(page.page) ?? null,
         ...(atomic ? { pageEnd: page.pageEnd, extractorRevision: page.extractorRevision } : {}),
         ...(required ? { sourcePdfSha256: page.sourcePdfSha256 } : {}),
         content,
@@ -615,6 +623,8 @@ async function main() {
   log("=".repeat(78));
   for (const p of prepared) {
     const chars = p.chunks.reduce((s, c) => s + c.content.length, 0);
+    const calendarBound = p.chunks.filter(chunk => chunk.calendarSeason !== null).length;
+    log(`${p.sourceKey} calendarSeason: verified=${calendarBound} unknown=${p.chunks.length - calendarBound}`);
     log(
       `${p.sourceKey.padEnd(42)} pages=${String(p.doc.pages.length).padStart(5)} ` +
         `clean=${String(p.cleanChars).padStart(9)} chunks=${String(p.chunks.length).padStart(6)} ` +
@@ -796,6 +806,7 @@ async function main() {
               kind: p.doc.kind,
               file: p.doc.file,
               page: chunk.page,
+              calendarSeason: chunk.calendarSeason,
               ...(chunk.extractorRevision ? {
                 pageEnd: chunk.pageEnd, extractorRevision: chunk.extractorRevision,
               } : {}),

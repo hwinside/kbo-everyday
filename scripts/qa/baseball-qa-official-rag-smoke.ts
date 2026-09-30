@@ -29,6 +29,7 @@ import {
   type QaDeps,
 } from "../../src/lib/baseball-qa/pipeline";
 import {
+  buildRagLlmRequest,
   allowsNumericAnswer,
   evidenceGrade,
   numericTokensGrounded,
@@ -100,7 +101,7 @@ check("등급 분리 — 방어적 혼합 판정은 보수적인 tier2로 떨어
 
 // ── 2. tier2 숫자 금지 유지 (회귀 방지) ────────────────────────────────────────
 check("tier2 숫자 금지 — 기존 계약이 느슨해지지 않았다", () => {
-  const numeric = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤습니다." });
+  const numeric = JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "2024년에 20홈런을 쳤습니다." });
   assert.equal(validateRagResponse(numeric).kind, "insufficient");
   assert.equal(
     (validateRagResponse(numeric) as { reason: string }).reason,
@@ -112,13 +113,13 @@ check("tier2 숫자 금지 — 기존 계약이 느슨해지지 않았다", () =
 
 // ── 3. tier1 숫자는 "근거에 적힌 것만" ────────────────────────────────────────
 check("tier1 숫자 허용 — 근거에 있는 조문 번호는 통과", () => {
-  const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 5.09에 따르면 인필드 플라이 상황에서 타구가 주자에게 닿으면 둘 다 아웃입니다." });
+  const raw = JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 5.09에 따르면 인필드 플라이 상황에서 타구가 주자에게 닿으면 둘 다 아웃입니다." });
   const result = validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] });
   assert.equal(result.kind, "grounded", "근거에 5.09가 있으므로 통과해야 한다");
 });
 
 check("tier1 숫자 차단 — 근거에 없는 숫자는 모델 창작이므로 거부", () => {
-  const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 7.13에 따르면 그렇습니다." });
+  const raw = JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 7.13에 따르면 그렇습니다." });
   const result = validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] });
   assert.equal(result.kind, "insufficient");
   assert.equal((result as { reason: string }).reason, "numeric_not_in_evidence");
@@ -150,21 +151,21 @@ check("길이 상한 — tier1·tier2가 같은 값이고, 초과는 거부", ()
   //    조용히 "상한 안 표본을 거절 기대로" 검사하는 false-green 이 되지 않는다.
   // 장문 복붙 방지 상한 자체는 양쪽 다 유지된다.
   const long = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 3)}입니다.`;
-  const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long });
+  const raw = JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: long });
   assert.equal(validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] }).kind, "insufficient");
   const ok = `${"가".repeat(RAG_OFFICIAL_ANSWER_MAX_CHARS - 4)}입니다.`;
   assert.equal(
-    validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok }), { numericEvidence: true, evidence: [OFFICIAL] }).kind,
+    validateRagResponse(JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: ok }), { numericEvidence: true, evidence: [OFFICIAL] }).kind,
     "grounded",
   );
   // tier2 도 같은 상한까지 허용, 초과는 거부 (숨은 무제한화 방지)
   assert.equal(RAG_ANSWER_MAX_CHARS, RAG_OFFICIAL_ANSWER_MAX_CHARS, "tier1·tier2 상한이 갈라지면 같은 질문이 경로별로 다르게 잘린다");
-  assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: ok })).kind, "grounded");
-  assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: long })).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: ok })).kind, "grounded");
+  assert.equal(validateRagResponse(JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: long })).kind, "insufficient");
 });
 
 check("tier1이어도 URL 출력은 계속 차단된다", () => {
-  const raw = JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "https://example.com 참고하세요" });
+  const raw = JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "https://example.com 참고하세요" });
   assert.equal(validateRagResponse(raw, { numericEvidence: true, evidence: [OFFICIAL] }).kind, "insufficient");
 });
 
@@ -182,6 +183,38 @@ check("source_kind → 등급 매핑", () => {
   assert.equal(gradeForSourceKind("kbo_structured"), "tier1");
   assert.equal(gradeForSourceKind("namu_document"), "tier2");
   assert.equal(gradeForSourceKind("wikipedia_document"), "tier2");
+});
+
+// Request-boundary checks are not a semantic verdict. The live replay owns that.
+check("공식 기준일 — KST 자정·연도 경계이며 숫자 근거로 승격하지 않는다", () => {
+  for (const [time, date] of [
+    ["2026-12-31T14:59:59Z", "2026-12-31"],
+    ["2026-12-31T15:00:00Z", "2027-01-01"],
+  ]) {
+    const request = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,
+      { referenceTimeMs: Date.parse(time) });
+    assert.ok(request.contents[0].parts[0].text.includes(`${date} (Asia/Seoul)`));
+  }
+  assert.equal(numericTokensGrounded("2027년 10월 6일입니다.", [OFFICIAL]), false);
+});
+check("공식 메타데이터 — 발행연도를 대상 시즌으로 만들지 않고 혼합 본문 보존", () => {
+  const historical = { ...OFFICIAL, pageTitle: "2026 KBO 연감", sectionPath: "기록",
+    content: "2020시즌 기록과 2025시즌 경기, 2026 FA 자격 명단이 함께 실렸다." };
+  const before = JSON.stringify(historical);
+  const request = buildRagLlmRequest("올해 가을야구는?", [historical], RAG_OFFICIAL_SYSTEM_PROMPT,
+    { referenceTimeMs: Date.parse("2026-09-30T00:00:00Z") });
+  const text = request.contents[0].parts[0].text;
+  assert.ok(text.includes('"calendarSeason":null'));
+  assert.ok(text.includes('"collectedAt":"2026-08-01"'));
+  assert.ok(text.includes(historical.content));
+  assert.ok(!text.includes("현재성: 최신"));
+  assert.equal(JSON.stringify(historical), before);
+});
+check("비공식 경로 — 공식 기준일·메타데이터 형식이 새지 않는다", () => {
+  const base = buildRagLlmRequest("문보경은 누구야?", [WIKI]);
+  const timed = buildRagLlmRequest("문보경은 누구야?", [WIKI], undefined,
+    { referenceTimeMs: Date.parse("2026-09-30T00:00:00Z") });
+  assert.deepEqual(timed, base);
 });
 
 // ── 5. 파이프라인 배선 ────────────────────────────────────────────────────────
@@ -234,7 +267,7 @@ for (const [name, question, content, answer, expected] of [
   ["unrelated rule", "보크란?", "투수 반칙", "투수 반칙입니다.", "grounded"],
 ] as const) {
   check(`대회 결속 ${name}`, () => {
-    const result = validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer }), {
+    const result = validateRagResponse(JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer }), {
       officialQuestion: question, numericEvidence: true,
       evidence: [{ ...OFFICIAL, sectionPath: "국제대회", content }],
     });
@@ -249,7 +282,7 @@ for (const [second, expected] of [
 ] as const) {
   check(`대회 결속 다중 청크 ${expected}`, () => {
     const result = validateRagResponse(JSON.stringify({
-      status: RAG_GROUNDED_SENTINEL,
+      calendarClaims: [], status: RAG_GROUNDED_SENTINEL,
       answer: "아시안게임 우승, 대표팀 3승 1패입니다.",
     }), {
       officialQuestion: "아시안게임 야구 결과 알려줘",
@@ -271,7 +304,7 @@ for (const status of [RAG_GROUNDED_SENTINEL, RAG_GENERAL_SENTINEL]) {
         searchOfficialRag: async () => [{ ...OFFICIAL, sectionPath: "국제대회", content: "WBC 사이판 캠프 류현진. 방콕 아시안게임 기록." }],
         callOfficialRagLlm: async () => {
           primary++;
-          return { text: JSON.stringify({ status, answer: "아시안게임 야구 대표팀은 류현진입니다." }), inputTokens: 1, outputTokens: 1 };
+          return { text: JSON.stringify({ calendarClaims: [], status, answer: "아시안게임 야구 대표팀은 류현진입니다." }), inputTokens: 1, outputTokens: 1 };
         },
         agentFallback: async () => {
           supplements++;
@@ -306,7 +339,7 @@ checkAsync("공식 근거 있으면 rag로 답하고 출처가 붙는다", async
   const { deps, calls } = makeDeps({
     searchOfficialRag: async () => [OFFICIAL],
     callOfficialRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "5.09에 따라 타자와 주자가 모두 아웃입니다." }),
+      text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "5.09에 따라 타자와 주자가 모두 아웃입니다." }),
       inputTokens: 10, outputTokens: 5,
     }),
   });
@@ -399,7 +432,7 @@ checkAsync("모델이 지어낸 숫자는 tier1이어도 서빙하지 않는다"
   const { deps } = makeDeps({
     searchOfficialRag: async () => [OFFICIAL],
     callOfficialRagLlm: async () => ({
-      text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "규칙 7.13에 따라 3명이 아웃됩니다." }),
+      text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "규칙 7.13에 따라 3명이 아웃됩니다." }),
       inputTokens: 10, outputTokens: 5,
     }),
   });
@@ -429,7 +462,7 @@ checkAsync("오염 캐시가 있어도 공식 tier1 근거가 이긴다", async 
     searchOfficialRag: async () => [OFFICIAL],
     callOfficialRagLlm: async () => ({
       text: JSON.stringify({
-        status: RAG_GROUNDED_SENTINEL,
+        calendarClaims: [], status: RAG_GROUNDED_SENTINEL,
         // ⚠️ `둘이 아웃`(수량 2+아웃)은 근거의 `모두 아웃`과 다른 수치 주장이라 정상 차단된다.
         // 내 첫 fixture 가 그 표현이라 구현이 멀쩡한데 FAIL 로 보였다 — 근거와 같은 뜻인 표현을 쓴다.
         answer: "공식야구규칙 5.09에 따르면 인필드 플라이 타구가 주자에게 닿으면 둘 다 아웃입니다.",
@@ -468,7 +501,7 @@ for (const hostile of [
     const { deps } = makeDeps({
       searchOfficialRag: async () => { officialSearches += 1; return [OFFICIAL]; },
       callOfficialRagLlm: async () => ({
-        text: JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 5.09에 따릅니다." }),
+        text: JSON.stringify({ calendarClaims: [], status: RAG_GROUNDED_SENTINEL, answer: "공식야구규칙 5.09에 따릅니다." }),
         inputTokens: 1, outputTokens: 1,
       }),
       // 적대적 provider: LLM 이 비야구를 제대로 판정하는 정상 케이스.
@@ -488,7 +521,7 @@ checkAsync("정상 룰 질문은 여전히 공식 RAG 를 탄다 (과잉 차단 
     searchOfficialRag: async () => { officialSearches += 1; return [OFFICIAL]; },
     callOfficialRagLlm: async () => ({
       text: JSON.stringify({
-        status: RAG_GROUNDED_SENTINEL,
+        calendarClaims: [], status: RAG_GROUNDED_SENTINEL,
         answer: "공식야구규칙 5.09에 따르면 인필드 플라이 타구가 주자에게 닿으면 둘 다 아웃입니다.",
       }),
       inputTokens: 1, outputTokens: 1,
@@ -632,6 +665,55 @@ checkAsync("파이프라인: 공식 경로 GENERAL 답의 질문 밖 숫자는 �
   });
   const result = await answerQuestion("u1", "지명 타자의 DH 는 뭐의 약자야?", deps);
   assert.equal(result.source, "unsure", "지어낸 수치가 GENERAL 로 새면 안 된다");
+});
+
+check("공식 일정 계약 — 요청 연도/자료 연도 불일치·미상·누락 차단, 정상 과거·현재 보존", () => {
+  const referenceTimeMs = Date.parse("2026-09-30T00:00:00Z");
+  const proof = { season: 2025, axis: "calendar_event" as const, heading: "2025 KBO 일지", headingPage: 23, pageTextSha256: "synthetic", sourcePdfSha256: "synthetic" };
+  const evidence = [{ ...OFFICIAL, content: "2025년 경기는 10월 6일 개최했다.", calendarSeason: proof }];
+  const validate = (claims: unknown, question: string, rows = evidence) => validateRagResponse(JSON.stringify({
+    status: RAG_GROUNDED_SENTINEL, answer: "10월 6일입니다.", calendarClaims: claims,
+  }), { numericEvidence: true, officialQuestion: question, evidence: rows, calendarContract: { referenceTimeMs } });
+  const current = [{ basis: "current", season: 2026, evidence: 1 }];
+  const past = [{ basis: "question", season: 2025, evidence: 1 }];
+  assert.equal(validate(current, "올해 일정은?").kind, "insufficient");
+  assert.equal(validate([{ ...current[0], season: 2025 }], "올해 일정은?").kind, "insufficient");
+  assert.equal(validate(past, "2026년 일정은?").kind, "insufficient");
+  assert.equal(validate(past, "2025년 일정은?").kind, "grounded");
+  for (const invalid of [
+    { ...past[0], season: "2025" }, { ...past[0], evidence: "1" },
+    { ...past[0], evidence: "자료1" }, { ...past[0], evidence: 0 },
+    { ...past[0], evidence: 1.5 }, { ...past[0], season: 2025.5 },
+    { ...past[0], basis: "unknown" },
+  ]) assert.equal(validate([invalid], "2025년 일정은?").kind, "insufficient");
+  assert.equal(validate(past, "올해 일정은?").kind, "insufficient");
+  assert.equal(validate(undefined, "올해 일정은?").kind, "insufficient");
+  assert.equal(validate([{ ...past[0], evidence: 2 }], "2025년 일정은?").kind, "insufficient");
+  assert.equal(validate(current, "올해 일정은?", [{ ...evidence[0], calendarSeason: { ...proof, season: 2026 } }]).kind, "grounded");
+  const unknown = { ...evidence[0], calendarSeason: undefined };
+  assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "10월 6일입니다.", calendarClaims: current }), {
+    numericEvidence: true, officialQuestion: "올해 일정은?", evidence: [unknown], calendarContract: { referenceTimeMs },
+  }).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({ status: RAG_GROUNDED_SENTINEL, answer: "야구 규칙입니다.", calendarClaims: [] }), {
+    numericEvidence: true, officialQuestion: "이 규칙은 뭐야?", evidence, calendarContract: { referenceTimeMs },
+  }).kind, "grounded");
+});
+
+checkAsync("순수 요청 빌더 — 공식 기준일 주입과 기본 서버 시계 (env 불필요)", async () => {
+  const fixed = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT,
+    { referenceTimeMs: Date.parse("2026-12-31T15:00:00Z") });
+  assert.ok(fixed.contents[0].parts[0].text.includes("2027-01-01 (Asia/Seoul)"));
+  const schema = fixed.generationConfig.responseSchema!;
+  assert.equal(schema.properties.calendarClaims.items.properties.season.type, "INTEGER");
+  assert.equal(schema.properties.calendarClaims.items.properties.evidence.type, "INTEGER");
+  assert.ok(schema.required.includes("calendarClaims"));
+  assert.ok(fixed.contents[0].parts[0].text.includes('"evidence":1'));
+  assert.equal(buildRagLlmRequest("선수 소개", [OFFICIAL]).generationConfig.responseSchema, undefined);
+  const { toKSTDateString } = await import("../../src/lib/utils/date-kst");
+  const before = toKSTDateString(new Date().toISOString());
+  const liveClock = buildRagLlmRequest("올해 일정은?", [OFFICIAL], RAG_OFFICIAL_SYSTEM_PROMPT);
+  const after = toKSTDateString(new Date().toISOString());
+  assert.ok([before, after].some(date => liveClock.contents[0].parts[0].text.includes(`${date} (Asia/Seoul)`)));
 });
 
 (async () => {

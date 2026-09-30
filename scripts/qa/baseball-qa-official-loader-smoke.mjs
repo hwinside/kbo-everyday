@@ -14,7 +14,8 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { bindCalendarSeasons } from "../baseball-qa/rag/official-calendar-seasons.mjs";
 import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 
@@ -43,6 +44,8 @@ if (profileStart < 0 || profileEnd <= profileStart) throw new Error("required pr
 const prelude = `
 import crypto from "node:crypto";
 const MIN_CHUNK_CHARS = 40, MAX_CHUNK_CHARS = 900, LIMIT_CHUNKS = 0;
+import { bindCalendarSeasons } from ${JSON.stringify(pathToFileURL(path.join(HERE, "../baseball-qa/rag/official-calendar-seasons.mjs")).href)};
+const calendarProfiles = ${readFileSync(path.join(HERE, "../baseball-qa/rag/official-calendar-seasons.json"), "utf8")};
 const APPLY = false, PROTECTED_EGRESS = false;
 ${src.slice(profileStart, profileEnd)}
 function sha256(t){return crypto.createHash("sha256").update(t,"utf8").digest("hex");}
@@ -63,6 +66,23 @@ const body = (n) => "가나다라마바사아자차카타파하".repeat(Math.cei
 const doc = (pages, title = "규칙") => ({
   title, entity: title, crawledAt: "2026-08-01T00:00:00Z",
   canonicalUrl: "https://example.test", canonicalUrlVerified: false, pages,
+});
+
+t("일정 시즌은 원문 해시·머리글·페이지 해시 일치에서만 결속", () => {
+  const text = "2025 KBO 일지\n9일 준플레이오프 개최";
+  const pageHash = crypto.createHash("sha256").update(text).digest("hex");
+  const profile = { documents: [{ documentContentHash: "verified-document", sourcePdfSha256: "verified-pdf", sections: [{
+    calendarSeason: 2025, headingPage: 23, heading: "2025 KBO 일지", pages: [{ page: 23, textSha256: pageHash }],
+  }] }] };
+  const input = doc([{ page: 23, text }], "2026 KBO 연감");
+  const bound = bindCalendarSeasons(input, "verified-document", profile);
+  if (bound.get(23)?.season !== 2025 || bound.get(24) !== undefined) throw new Error("wrong season or propagated outside verified section");
+  if (bindCalendarSeasons(input, "changed-document", profile).size) throw new Error("title-year fallback must not bind");
+  for (const changed of [text.replace("2025", "2026"), text + " changed"]) {
+    let rejected = false;
+    try { bindCalendarSeasons(doc([{ page: 23, text: changed }]), "verified-document", profile); } catch { rejected = true; }
+    if (!rejected) throw new Error("changed heading/page must be rejected");
+  }
 });
 
 t("사고 재현 — 같은 페이지의 조문 3개가 각각 살아남는다", () => {
@@ -218,6 +238,7 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
     if (!/genius_rag_sources|genius_rag_chunks|complete_baseball_genius_rag/.test(sql)) continue;
     await db.exec(sql);
   }
+  await db.exec(readFileSync(path.join(migDir, "20260930060000_official_calendar_season_evidence.sql"), "utf8"));
 
   const KEY = "kbo:ebook:test-0";
   const vec = () => JSON.stringify(Array.from({ length: 768 }, () => 0.01));
@@ -300,9 +321,10 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
     for (let i = 0; i < n; i++) {
       await db.query(
         `SELECT public.upsert_baseball_genius_rag_chunk($1,$2,$3,'document','doc-0','규칙 0','https://example.test/0',
-           $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,'{}'::jsonb)`,
+           $4,$5,$6,$7,$8,$9,'tier1',$11::timestamptz,current_date,$10::vector,$12::jsonb)`,
         [KEY, c.claim_token, c.claim_generation, revision, `sec-${i}`, 0,
-         `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT],
+         `본문 ${i} `.repeat(20), `dochash-${revision}`, `chunkhash-${revision}-${i}`, vec(), CRAWLED_AT,
+         JSON.stringify(i === 0 ? { calendarSeason: { axis: "calendar_event", season: 2025 } } : {})],
       );
     }
     return c;
@@ -373,6 +395,16 @@ t("source ensure가 APPLY 경로에서 claim보다 먼저 실행된다", () => {
   });
 
   const afterMeta = await db.query("SELECT metadata FROM public.genius_rag_sources WHERE source_key=$1", [KEY]);
+  const retrieved = await db.query("SELECT calendar_season FROM public.search_baseball_genius_official_chunks($1,12,0.42)", [vec()]);
+  t("검색 RPC는 결속 시즌과 미상 NULL을 보존", () => {
+    if (retrieved.rows.length !== 3) throw new Error("snapshot result count changed");
+    if (retrieved.rows.filter(row => row.calendar_season?.season === 2025).length !== 1) throw new Error("calendar metadata lost");
+    if (retrieved.rows.filter(row => row.calendar_season === null).length !== 2) throw new Error("unknown calendar inferred");
+  });
+  const permissions = await db.query("SELECT has_function_privilege('anon','public.search_baseball_genius_official_chunks(text,integer,double precision)','EXECUTE') AS anon, has_function_privilege('authenticated','public.search_baseball_genius_official_chunks(text,integer,double precision)','EXECUTE') AS authenticated");
+  t("시즌 메타데이터 RPC는 일반 계정에 노출하지 않는다", () => {
+    if (permissions.rows[0].anon || permissions.rows[0].authenticated) throw new Error("official RPC privileges broadened");
+  });
   t("complete가 pending loaderRevision을 원자 승격", () => {
     if (afterMeta.rows[0].metadata.loaderRevision !== "kbo-ebook-sections-v2") throw new Error("loaderRevision 승격 안 됨");
     if ("pendingLoaderRevision" in afterMeta.rows[0].metadata) throw new Error("pendingLoaderRevision 잔존");

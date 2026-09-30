@@ -338,6 +338,7 @@ interface RagServingChunkRow {
  * 768차원 벡터 12개를 \uc automation으로 끌어오면 응답만 무거워진다.
  */
 interface RagOfficialChunkRow {
+  calendar_season?: RagEvidence["calendarSeason"];
   content: string;
   page_title: string;
   canonical_url: string;
@@ -771,6 +772,7 @@ export async function searchOfficialRag(question: string): Promise<RagEvidence[]
     throw error;
   }
   return ((data ?? []) as RagOfficialChunkRow[]).map((row) => ({
+    calendarSeason: row.calendar_season ?? null,
     content: row.content,
     pageTitle: row.page_title,
     canonicalUrl: row.canonical_url,

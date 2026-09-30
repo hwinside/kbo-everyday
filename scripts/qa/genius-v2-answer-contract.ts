@@ -25,7 +25,7 @@ const SNAPSHOT: StandingsSnapshot = { fetchedAt: AT, season: 2026, rows: [
   { teamId: 6, teamName: "KIA", games: 101, wins: 60, losses: 41, draws: 0, ranking: 2, gamesBehind: .5, winRate: 60 / 101 },
 ] };
 const EVIDENCE: RagEvidence = { content: "정규시즌 연장전은 최대 12회까지 진행한다.", pageTitle: "2026 KBO 리그 규정", canonicalUrl: "https://www.koreabaseball.com/", revision: "fixture", sectionPath: "연장", asOf: "2026-09-09", sourceGrade: "tier1" };
-const raw = (answer: string, status = "GROUNDED"): LlmResult => ({ text: JSON.stringify({ status, answer }), inputTokens: 1, outputTokens: 1 });
+const raw = (answer: string, status = "GROUNDED"): LlmResult => ({ text: JSON.stringify({ calendarClaims: [], status, answer }), inputTokens: 1, outputTokens: 1 });
 const previous = (question: string, answer: string, jobSource = "kbo_structured"): PreviousTurnRow => ({ question, answer, jobSource, answeredAt: AT, currentCreatedAt: new Date(NOW).toISOString() });
 
 function harness(prior: PreviousTurnRow | null = null, model = raw("정규시즌 연장전은 최대 12회까지입니다.")) {
