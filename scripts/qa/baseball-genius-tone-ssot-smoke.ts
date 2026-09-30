@@ -6,6 +6,7 @@ import ts from "typescript";
 import {
   BASEBALL_GENIUS_FALLBACK_ANSWER,
   BASEBALL_GENIUS_NAME_SUGGEST_ANSWER,
+  BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER,
   BASEBALL_GENIUS_NAME_UNKNOWN_ANSWER,
   BASEBALL_GENIUS_SYSTEM_ERROR_ANSWER,
   BASEBALL_GENIUS_UNCLEAR_ANSWER,
@@ -341,3 +342,5 @@ assert.equal(
 assert.equal(staticAnswers.some((answer) => answer.includes("⚾")), false, "⚾를 승인 언어 시그니처로 오인하지 않는다");
 
 console.log(`PASS baseball genius tone SSOT: ${staticAnswers.length} static outputs, 5 prompts, 136 dictionary answers, generated-output fail-close`);
+
+assert.equal(isBaseballGeniusToneCompliant(BASEBALL_GENIUS_NAME_CANDIDATES_ANSWER(["김영웅(삼성)", "정영웅(KT)"])), true);

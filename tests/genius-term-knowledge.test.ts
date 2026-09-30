@@ -1,3 +1,5 @@
+import { ROSTER_PLAYERS } from "../src/lib/baseball-qa/roster/load-roster-players";
+import { isBaseballGeniusToneCompliant } from "../src/lib/baseball-qa/tone";
 import { resolveTermOrigin } from "../src/lib/baseball-qa/term-origin";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -449,8 +451,8 @@ test('given-name nickname asks for roster confirmation without binding to guesse
     assert.equal(h.calls, 0);
   }
   const duplicates = [...players, { kboId: '52402', name: '박영웅' }];
-  assert.equal(resolveUnboundName('영웅이 타율', duplicates), null);
-  assert.equal(resolveUnboundName('영웅이 타율', [...players, { kboId: '52402', name: '김영웅' }]), null);
+  assert.deepEqual(resolveUnboundName('영웅이 타율', duplicates)?.candidates, duplicates);
+  assert.equal(resolveUnboundName('영웅이 타율', [...players, { kboId: '52402', name: '김영웅' }])?.candidates?.length, 2);
   assert.equal(resolveUnboundName('영웅이 누구야?', []), null);
   assert.equal(resolveUnboundName('김영웅이 누구야?', players), null);
   assert.equal(resolveUnboundName('영웅이라는 영화', players), null);
@@ -509,4 +511,31 @@ test('R2 split copy does not replace historical metric or prize fallbacks', () =
   for (const question of ['문보경 작년 2루타', '문보경 통산 OPS', '한국시리즈 MVP']) {
     assert.equal(resolveHoldAnswer(question), HISTORY_HOLD_ANSWER, question);
   }
+});
+
+
+test('production roster ambiguous nickname asks for both players without team RAG or LLM', async () => {
+  for (const question of ['영웅이 잘해?', '영웅이 요즘 잘해?', '영웅이 타율 알려줘', '영웅이 타율', '영웅이 못하지?', '영웅이는 어떤 선수야?']) {
+    const candidates = resolveUnboundName(question, ROSTER_PLAYERS)?.candidates;
+    assert.ok(candidates?.some(player => player.name === '김영웅' && player.team?.includes('삼성')));
+    assert.ok(candidates?.some(player => player.name === '정영웅' && player.team?.includes('KT')));
+    assert.equal(routeQuestion(question, [], ROSTER_PLAYERS), 'name_suggest');
+    const h = harness();
+    const result = await answerQuestion('qa-real-roster-nickname', question, {
+      ...h.deps, loadPlayers: async () => ROSTER_PLAYERS,
+      callLlm: async () => assert.fail('ambiguous nickname must not reach LLM'),
+      searchOfficialRag: async () => assert.fail('ambiguous nickname must not reach RAG'),
+      callOfficialRagLlm: async () => assert.fail('ambiguous nickname must not generate'),
+    });
+    assert.equal(result.source, 'name_suggest');
+    assert.match(result.answer, /김영웅\(삼성/);
+    assert.match(result.answer, /정영웅\(KT/);
+    assert.match(result.answer, /중 누구/);
+    assert.equal(isBaseballGeniusToneCompliant(result.answer), true);
+    assert.equal(h.calls, 0);
+  }
+  assert.equal(resolveUnboundName('김영웅 타율', ROSTER_PLAYERS), null);
+  assert.equal(resolveUnboundName('정영웅 타율', ROSTER_PLAYERS), null);
+  assert.equal(resolveUnboundName('기준이 타율', ROSTER_PLAYERS), null);
+  assert.equal(resolveUnboundName('영웅이 영화 추천', ROSTER_PLAYERS), null);
 });
