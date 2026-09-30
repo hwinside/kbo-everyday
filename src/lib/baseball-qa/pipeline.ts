@@ -1,5 +1,5 @@
 import { selectOriginContextTurn } from "./context";
-import { resolveTermOrigin } from "./term-origin";
+import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
 import { preservesCorrectionTermIdentity } from "./correction-term-identity";
 import { leaderboardGuide } from "./stats/leaderboard-guide";
 import { liveScoreGuide } from "./stats/live-score-guide";
@@ -2981,7 +2981,7 @@ export function findPlayerReferences(tokens: string[], players: PlayerRef[]): Pl
     }
   }
   return names.filter(({ player, parts: nameParts }) => {
-    const kboId = player.kboId.normalize("NFKC").toLowerCase().trim();
+    const kboId = String(player.kboId ?? "").normalize("NFKC").toLowerCase().trim();
     if (kboId.length >= 3 && tokenMatches(tokens, kboId)) return true;
     if (nameParts.length === 0) return false;
     if (nameParts.join("").length < 2) return false;
@@ -3070,6 +3070,7 @@ const MEASURED_TYPO_ALIASES: ReadonlyMap<string, string> = new Map([
 export function resolveUnboundName(
   question: string,
   players: PlayerRef[],
+  glossary: GlossaryEntry[] = [],
 ): UnboundName | null {
   const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
   const rosterNames = new Set(players.map((p) => p.name));
@@ -3092,12 +3093,16 @@ export function resolveUnboundName(
   // Affectionate given-name forms are suggestions, never identity bindings.
   // Only the live roster can supply candidates; duplicates and explicit full
   // names must not silently collapse onto another player.
-  if (!findPlayerReferences(tokens, players).length) {
+  const playerContext = /(?:선수|성적|타율|출루율|장타율|ops|평균자책|방어율|탈삼진|못하|못해|못하지|잘하|잘해|잘하지|믿어)/iu.test(question);
+  const commonNouns = new Set(["기준", "마음", "사람", "생각", "이름", "기분", "내용", "수준", "상황", "규칙", "기록"]);
+  const glossaryNames = new Set(glossary.flatMap(entry => [entry.term, ...entry.aliases]).map(normalizeKey));
+  if (playerContext && !findPlayerReferences(tokens, players).length) {
     const candidates = new Map<string, UnboundName>();
     for (const raw of tokens) {
       for (const token of stripTokenSuffix(raw)) {
         if (!/^[가-힣]{2}이$/u.test(token) || rosterNames.has(token)) continue;
         const given = token.slice(0, -1);
+        if (commonNouns.has(given) || glossaryNames.has(normalizeKey(given)) || glossaryNames.has(normalizeKey(token))) continue;
         const matches = players.filter((p) => /^[가-힣]{3}$/u.test(p.name) && p.name.slice(1) === given);
         if (matches.length > 1) return null;
         if (matches.length === 0) continue;
@@ -3817,7 +3822,7 @@ export function routeQuestion(
   // ⚠️ 순서가 계약이다. **결속된 선수는 이미 위에서 전부 빠졌다**(`history_hold`·
   //   `hasPlayerReference` 분기 · 그리고 `answerQuestion` 앞단의 선수 RAG·기록 경로).
   //   즉 여기 오는 이름은 정의상 로스터에 없다.
-  if (resolveUnboundName(question, players) !== null) return "name_suggest";
+  if (resolveUnboundName(question, players, glossary) !== null) return "name_suggest";
 
   // ── 2차 가드 위임 (하린아빠 2026-08-03 지시) ─────────────────────────────────
   // 여기까지 온 질문은 "결정론적으로 야구가 아니라고 확정된" 게 아니라 **룰베이스 신호어
@@ -4701,7 +4706,10 @@ function matchQuantityGlossary(entries: GlossaryEntry[], question: string): Glos
   // and return the base term: that would silently drop the user's question.
   const quantityKey = key.replace(/(?:의)?뜻$/u, "");
   const timely = quantityKey.match(/^([1-3])타점적시타$/u);
-  const timelyEntry = index.get("적시타");
+  const verifiedTimely = VERIFIED_TERM_ORIGINS.find(entry => entry.term === "적시타");
+  const timelyEntry = index.get("적시타") ?? (verifiedTimely ? {
+    term: verifiedTimely.term, aliases: verifiedTimely.aliases, answer: verifiedTimely.meaning,
+  } : undefined);
   if (timely && timelyEntry) return {
     ...timelyEntry,
     answer: `${timely[1]}타점 적시타는 그 안타로 ${timely[1]}타점을 올렸다는 뜻입니다. ${timelyEntry.answer}`,
@@ -4710,7 +4718,7 @@ function matchQuantityGlossary(entries: GlossaryEntry[], question: string): Glos
   const averageEntry = index.get("타율");
   if (rate && averageEntry) return {
     ...averageEntry,
-    answer: `타율 표기에서 ${rate[1]}할${rate[2] ? ` ${rate[2]}푼` : ""}${rate[3] ? ` ${rate[3]}리` : ""}는 0.${rate[1]}${rate[2] ?? "0"}${rate[3] ?? "0"}을 뜻합니다. ${averageEntry.answer}`,
+    answer: `타율 표기에서 ${rate[1]}할${rate[2] ? ` ${rate[2]}푼` : ""}${rate[3] ? ` ${rate[3]}리` : ""}${rate[3] ? "는" : "은"} 0.${rate[1]}${rate[2] ?? "0"}${rate[3] ?? "0"}을 뜻합니다. ${averageEntry.answer}`,
   };
   return null;
 }
@@ -6567,7 +6575,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
   }
 
   if (route !== "baseball_rule_term" && !scopeGate) {
-    const unbound = route === "name_suggest" ? resolveUnboundName(question, players) : null;
+    const unbound = route === "name_suggest" ? resolveUnboundName(question, players, glossary) : null;
     // 기능 안내 문구는 **같은 판정기**로 다시 푸는다 — `name_suggest` 와 같은 계약이다.
     //   라우터는 라벨만 돌려주므로 문구에 넣을 기능명이 여기에 없다.
     //   판정기와 문구 생성이 갈라지면 "안내하기로 라우팅해놓고 정작 문구가 없는" 모순이 되므로
