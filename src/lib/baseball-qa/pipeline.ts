@@ -1968,6 +1968,14 @@ export function resolveMentionedTeam(question: string): string | null {
  * 질문이 언급한 구단 canonical 전체. `resolveMentionedTeam`(단일 결속)과 판정기를 공유한다 —
  * 소비자가 "0개(전체)"와 "2개 이상(모호)"를 구분해야 할 때 이것을 쓴다(삼순 #1147 복수팀 축).
  */
+/** Closed team alias identity, not a natural-language intent classifier. */
+export function isBareTeamName(text: string): boolean {
+  const name = normalizeKey(text);
+  return TEAM_ALIASES.some(({ shorts, nicks }) =>
+    [...shorts, ...nicks, ...shorts.flatMap((short) => nicks.map((nick) => short + nick))]
+      .some((alias) => normalizeKey(alias) === name));
+}
+
 export function mentionedTeamCanonicals(question: string): string[] {
   const tokens = questionTokens(question.normalize("NFKC").toLowerCase());
   const hits = new Set<string>();
@@ -6793,7 +6801,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
           };
           const model = await deps.callGameConversation!(input);
-          return { model, served: renderGameConversation(model.text, input) };
+          return { model, served: renderGameConversation(model.text, input, { resolve: mentionedTeamCanonicals, isBare: isBareTeamName }) };
         })(),
         new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 4500); }),
       ]);

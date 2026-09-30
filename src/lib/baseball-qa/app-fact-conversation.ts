@@ -1,4 +1,4 @@
-import type { GameConversationInput } from "./game-conversation";
+import type { GameConversationInput, ConversationEntityResolver } from "./game-conversation";
 import { LIVE_TEAM_BLOCK_MAX_AGE_MS, type StandingsSnapshot } from "./stats/team-record";
 
 export interface AppFactSnapshot {
@@ -10,26 +10,36 @@ export const APP_FACT_PROMPT = `관람 외에도 현재 앱 데이터로 답할 
 appRequest.informationNeed를 kind보다 먼저 판단합니다. 사용자가 원하는 사실은 game_schedule(개별 경기 일정/시간), starting_pitchers(선발투수), team_standing(순위/전적), qualification(구단의 진출 가능성), batting_order(타순), match_prediction(승패 예상), event_date(대회·행사 시작/종료 날짜), none 중 하나입니다. 대회의 시작 시점을 묻는 요청은 event_date이며 팀의 진출 가능성이나 오늘 경기 일정으로 바꾸지 않습니다. event_date는 action=other로 문서 근거 경로에 양보합니다. 짧은 후속도 직전 질문에서 생략된 요청 사실만 보완합니다.
 appRequest.kind는 schedule(경기 일정), starters(특정 경기 선발투수), standings(현재 순위/전적), postseason(지금의 가을야구 진출 가능성), lineup(현재 경기 타순/타자), prediction(앞으로 경기 승패 예상), none 중 하나입니다.
 appRequest.period는 today/tomorrow/current/unsupported입니다. 명시된 오늘·내일을 보존하고, 시점 없는 일정은 current(오늘과 내일 범위), 순위·진출은 current입니다. 그 밖의 날짜/과거 시즌/주간·월간 일정은 unsupported이며 임의로 오늘로 바꾸지 않습니다. 단어 뜻·규칙·과거 기록·사건·감독·행사·불꽃놀이 정보는 app_facts가 아니라 other입니다. 포스트시즌 시작 날짜는 진출 가능성(postseason)이 아닙니다.
+팀/구장 이름만 있고 현재 또는 직전 질문에 앱 데이터 요청이 없으면 action=other입니다. 프로필·games의 존재는 요청 근거가 아닙니다. 단독 구단 소개·이름 정정은 일정 요청이 아닙니다.
+appRequest.intentSource는 question/context_question/none이며 intentQuote에는 일정·선발·순위 등 원하는 사실을 드러내는 원문 구절을 복사합니다. 구단명만은 요청 근거가 아닙니다. 생략된 후속의 요청 목적은 직전 질문의 실제 요청에서만 가져오며 이 경우 context_question으로 표시합니다. 요청 근거가 없으면 none, 빈 문자열이며 app_facts로 처리하지 않습니다. 현재 발화가 원하는 사실이 바뀌면 현재 요청이 우선합니다. 출전 선수 전체를 묻는 요청은 선발투수만으로 축소하지 않고 lineup으로 분류합니다.
 appRequest.quote는 현재 발화에서 요청 의도를 드러내는 원문 그대로입니다. 후속이면 생략된 목적만 직전 질문으로 해석하되 quote에는 현재 발화를 인용합니다.
-사실 답변·숫자·경기 인덱스는 생성하지 않습니다. target에는 원문에 결속된 대상 조건만 씁니다. 현재 발화에 팀이 있으면 target.source=question이며 모든 현재 팀을 teams/excludedTeams/backgroundTeams 역할 중 하나에 넣습니다. 배경 팬은 조회 조건이 아닙니다. 대상이 생략된 후속이면 context_question, 그 밖의 대상 생략은 profile을 쓸 수 있습니다. 전체 일정/순위 요청이면 target.source=none, teams=[]입니다.
+사실 답변·숫자·경기 인덱스는 생성하지 않습니다. target에는 원문에 결속된 대상 조건만 씁니다. 현재 발화에 팀이 있으면 target.source=question이며 모든 현재 팀을 teams/excludedTeams/backgroundTeams 역할 중 하나에 넣습니다. 배경 팬은 조회 조건이 아닙니다. 대상이 생략된 후속이면 context_question으로 하고 직전 질문의 구단을 유지합니다. 요청 사실이 선발투수에서 출전 선수로 바뀌어도 같은 경기의 대상은 유지합니다. 현재 명시한 다른 팀이나 전체 경기 요청이 우선이며 무관한 주제에서는 이전 구단을 가져오지 않습니다. 그 밖의 대상 생략은 profile을 쓸 수 있습니다. 전체 일정/순위 요청이면 target.source=none, teams=[]입니다.
 두 팀의 맞대결 요청이면 teams에 두 팀을 모두 넣습니다. 자료가 없거나 선발 미발표여도 요청 종류를 바꾸지 않습니다. 코드는 미조회·빈 일정·미발표를 구별합니다.
 lineup은 현재 연결된 데이터에 타순이 없으므로 옛 라인업 대신 확인 불가와 실제 경기만 안내합니다. prediction/postseason은 승패/진출을 단정하지 않고 실제 경기/현재 순위만 안내합니다. 조회 결과가 질문을 바꾸지는 않습니다.
-app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 kind="none", period="unsupported"입니다. event_date 요청은 informationNeed="event_date"와 현재 요청 원문 quote를 유지하며, 그 외에는 informationNeed="none", quote=""입니다.`;
+app_facts에서는 attendanceEvidence="", evidenceSource=none입니다. 이 evidenceSource는 관람 근거만 뜻하며 target.source와 무관합니다. 현재 질문의 teamNames.question은 코드가 조회 대상으로 사용합니다. 모델은 제외·배경 역할을 원문에 근거해 구분하며, evidenceSource=none 때문에 target을 비우지 않습니다. 현재 시각·영업시간 등 야구와 무관한 시간 질문은 other이며, 앱 일정이나 프로필을 보고 야구 질문으로 바꾸지 않습니다. 기존 관람 계획은 원래 match/clarify/other 계약을 유지합니다. 행사 정보 요청을 관람 계획으로 간주하지 않습니다. app_facts가 아니면 kind="none", period="unsupported", intentSource="none", intentQuote=""입니다. event_date 요청은 informationNeed="event_date"와 현재 요청 원문 quote를 유지하며, 그 외에는 informationNeed="none", quote=""입니다.`;
 
 export const APP_REQUEST_SCHEMA = { type: "OBJECT", properties: {
   informationNeed: { type: "STRING", enum: ["game_schedule", "starting_pitchers", "team_standing", "qualification", "batting_order", "match_prediction", "event_date", "none"] },
   kind: { type: "STRING", enum: ["schedule", "starters", "standings", "postseason", "lineup", "prediction", "none"] },
   period: { type: "STRING", enum: ["today", "tomorrow", "current", "unsupported"] },
   quote: { type: "STRING" },
-}, required: ["informationNeed", "kind", "period", "quote"] } as const;
+  intentSource: { type: "STRING", enum: ["question", "context_question", "none"] },
+  intentQuote: { type: "STRING" },
+}, required: ["informationNeed", "kind", "period", "quote", "intentSource", "intentQuote"] } as const;
 
 /** Source projection, not generated facts. Unknown date/entity/provenance never
  * becomes today's schedule or a claim that a game/team does not exist. */
-export function renderAppFacts(value: Record<string, unknown>, input: GameConversationInput):
+export function renderAppFacts(value: Record<string, unknown>, input: GameConversationInput, entities?: ConversationEntityResolver):
   { answer: string; source: "kbo_structured" | "context_missing" | "history_hold" } | null {
   const req = value.appRequest as Record<string, unknown> | undefined;
   const target = value.target as Record<string, unknown> | undefined;
   if (!req || !target || typeof req.quote !== "string" || !req.quote.trim() || !input.question.includes(req.quote)) return null;
+  const intentText = req.intentSource === "question" ? input.question
+    : req.intentSource === "context_question" ? input.context?.question : undefined;
+  if (typeof req.intentQuote !== "string" || !req.intentQuote.trim() || !intentText?.includes(req.intentQuote)) return null;
+  // The request and its entity have independent provenance; a team mention
+  // alone cannot authorize a schedule inferred from the available snapshot.
+  if (entities?.isBare(req.intentQuote)) return null;
   if (!["schedule", "starters", "standings", "postseason", "lineup", "prediction"].includes(String(req.kind))
     || !["today", "tomorrow", "current", "unsupported"].includes(String(req.period))) return null;
   // Project the requested fact onto the app capability. A date request cannot
@@ -53,7 +63,15 @@ export function renderAppFacts(value: Record<string, unknown>, input: GameConver
   }
   if (typeof target.stadium !== "string") return null;
   const proposedTeams = target.teams as string[], excluded = target.excludedTeams as string[], background = target.backgroundTeams as string[];
-  const names = hasCurrentTeams ? input.teamNames.question : source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
+  let names = hasCurrentTeams ? input.teamNames.question : source === "none" ? [] : input.teamNames[source as keyof typeof input.teamNames];
+  // Accept spacing repair only, never substituted entities or answer-derived
+  // names. Use the existing closed team resolver, not a new keyword list.
+  const compact = (text: string) => Array.from(text).filter((character) => character.trim().length > 0).join("");
+  if (!hasCurrentTeams && !names.length && source === "context_question" && sourceText && entities
+    && typeof target.segmentedSource === "string"
+    && compact(target.segmentedSource) === compact(sourceText)) {
+    names = entities.resolve(target.segmentedSource);
+  }
   if ([...proposedTeams, ...excluded, ...background].some((t) => !names.includes(t))) return clarify();
   if ((excluded.length || background.length) && (!target.quote.trim() || !sourceText?.includes(target.quote))) return clarify();
   if (proposedTeams.some((t) => excluded.includes(t) || background.includes(t)) || excluded.some((t) => background.includes(t))) return clarify();

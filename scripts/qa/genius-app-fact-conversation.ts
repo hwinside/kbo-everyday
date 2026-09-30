@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { answerQuestion, type QaDeps, type LlmResult, mentionedTeamCanonicals } from "../../src/lib/baseball-qa/pipeline";
+import { answerQuestion, type QaDeps, type LlmResult, mentionedTeamCanonicals, isBareTeamName } from "../../src/lib/baseball-qa/pipeline";
 import { renderGameConversation, type GameConversationInput } from "../../src/lib/baseball-qa/game-conversation";
 
 const now = Date.parse("2026-09-30T10:00:00Z");
@@ -17,7 +17,7 @@ const snapshot: GameConversationInput = {
 };
 function proposal(question: string, kind: string, period: string, teams: string[]) {
   return { action: "app_facts", evidenceSource: "none", attendanceEvidence: "",
-    appRequest: { informationNeed: ({ schedule: "game_schedule", starters: "starting_pitchers", standings: "team_standing", postseason: "qualification", lineup: "batting_order", prediction: "match_prediction" } as Record<string, string>)[kind], kind, period, quote: question }, target: { source: teams.length ? "question" : "none", quote: teams.length ? question : "",
+    appRequest: { informationNeed: ({ schedule: "game_schedule", starters: "starting_pitchers", standings: "team_standing", postseason: "qualification", lineup: "batting_order", prediction: "match_prediction" } as Record<string, string>)[kind], kind, period, quote: question, intentSource: "question", intentQuote: question }, target: { source: teams.length ? "question" : "none", quote: teams.length ? question : "",
       teams, excludedTeams: [], backgroundTeams: [], stadium: "", excludedStadiums: [] } };
 }
 const cases = [
@@ -114,4 +114,43 @@ export async function checkAppFactConversation() {
   assert.doesNotMatch(renderGameConversation(JSON.stringify({ ...exceptPlan, target: { ...exceptPlan.target, source: "question", quote: exceptInput.question, excludedTeams: ["삼성"] } }), exceptInput)!.answer, /KT vs 삼성/);
   // Real lexical entity resolver remains the authority, not model-proposed team names.
   assert.deepEqual(mentionedTeamCanonicals("내일 케이티 투수 ㄴㄱ?"), ["KT"]);
+}
+
+// #1505 P1: intent grounding and spacing-only context entity projection.
+{
+  const entities = { resolve: mentionedTeamCanonicals, isBare: isBareTeamName };
+  const render = (plan: unknown, input: GameConversationInput) => renderGameConversation(JSON.stringify(plan), input, entities);
+  for (const q of ["두산", "기아", "KIA", "한화 이글스"]) {
+    const names = mentionedTeamCanonicals(q);
+    const input = { ...snapshot, question: q, teamNames: { ...snapshot.teamNames, question: names } };
+    const plan = proposal(q, "schedule", "current", names);
+    assert.equal(render(plan, input), null, "a bare team is not schedule intent");
+    assert.equal(render({ ...plan, appRequest: { ...plan.appRequest, intentSource: "none", intentQuote: "" } }, input), null);
+  }
+  const q = "오늘 경기 선수 누구누구였어?";
+  const prior = "오늘 한화경기 선발 누구였어)";
+  const input: GameConversationInput = { ...snapshot, question: q,
+    context: { question: prior, answer: "직전 선발 안내" },
+    games: [todayGame, { ...todayGame, awayName: "한화", homeName: "롯데" }],
+    teamNames: { question: [], context_question: mentionedTeamCanonicals(prior), profile: [] } };
+  const plan = proposal(q, "lineup", "today", ["한화"]);
+  const followup = { ...plan, target: { ...plan.target, source: "context_question", quote: "한화",
+    segmentedSource: "오늘 한화 경기 선발 누구였어)" } };
+  const result = render(followup, input)!;
+  assert.equal(result.source, "history_hold");
+  assert.match(result.answer, /한화 vs 롯데/);
+  assert.doesNotMatch(result.answer, /어느 구단|KT vs 삼성|선발:/);
+  for (const segmentedSource of ["오늘 삼성 경기 선발 누구였어)", "오늘 한화 경기 선발 누구였어?", "한화"]) {
+    assert.equal(render({ ...followup, target: { ...followup.target, segmentedSource } }, input)?.source, "context_missing");
+  }
+  assert.equal(render(followup, { ...input, context: undefined }), null);
+  assert.equal(render({ ...followup, appRequest: { ...followup.appRequest, intentQuote: "없는 요청" } }, input), null);
+  const current = { ...input, question: "오늘 삼성 선수 누구였어?", teamNames: { ...input.teamNames, question: ["삼성"] } };
+  const currentPlan = proposal(current.question, "lineup", "today", ["삼성"]);
+  assert.doesNotMatch(render(currentPlan, current)!.answer, /한화 vs 롯데/);
+  const teamFollowup = { ...snapshot, question: "두산", context: { question: "오늘 경기 일정 알려줘", answer: "일정 안내" },
+    games: [{ ...todayGame, awayName: "두산" }], teamNames: { ...snapshot.teamNames, question: ["두산"] } };
+  const schedule = proposal("두산", "schedule", "today", ["두산"]);
+  assert.match(render({ ...schedule, appRequest: { ...schedule.appRequest,
+    intentSource: "context_question", intentQuote: "경기 일정 알려줘" } }, teamFollowup)!.answer, /두산 vs 삼성/);
 }
