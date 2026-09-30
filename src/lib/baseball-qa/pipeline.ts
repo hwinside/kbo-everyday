@@ -1,3 +1,4 @@
+import { renderRagHold } from "./rag/hold-answer";
 import { renderGameConversation, type GameConversationInput, type GameConversationResult } from "./game-conversation";
 import { selectOriginContextTurn } from "./context";
 import { resolveTermOrigin, VERIFIED_TERM_ORIGINS } from "./term-origin";
@@ -5296,7 +5297,7 @@ async function answerOfficialDocumentQuestion(
       return { status: 200, answer, source: "scope_guide", remaining };
     }
     const final = await supplementUnavailable({
-      answer: UNCLEAR_ANSWER, source: "unsure", ...ragObservation("official", question, validated, evidence),
+      answer: renderRagHold(validated), source: "unsure", ...ragObservation("official", question, validated, evidence),
     }, question, deps);
     if (deps.storeLlm) await deps.storeLlm(packStoredQaFinal(final, llm));
     await deps.log({ userId, question, questionNorm, matchPath: final.source, answer: final.answer,
@@ -5516,7 +5517,7 @@ async function answerTeamRagQuestion(
     // ⚠️ 비수치 실패는 `BLOCKED_ANSWER` 가 아니다 (삼순 2026-08-08 ①). 유저는 구단을
     //   정확히 물었고 우리가 근거로 답을 못 만든 것이다 — "야구 이야기만 답할 수 있어요" 는
     //   질문을 탓하는 말이다.
-    const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : UNCLEAR_ANSWER;
+    const answer = numericQuestion ? TEAM_STAT_HOLD_ANSWER : renderRagHold(validated);
     const matchPath: MatchPath = numericQuestion ? "history_hold" : "unsure";
     // 폐기 관측을 envelope 에도 보존한다 (삼순 2026-08-16 ②) — store 성공 후 log 전 crash 시
     // 재생 경로가 관측을 null 로 덮어써 계측이 유실된다.

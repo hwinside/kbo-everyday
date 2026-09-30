@@ -495,6 +495,7 @@
     "qa:genius-correction-dm-race": "tsx scripts/qa/genius-correction-dm-race.ts",
     "qa:event-records": "tsx scripts/qa/baseball-qa-event-records-smoke.ts",
     "qa:event-records:mutations": "node scripts/qa/baseball-qa-event-records-mutations.mjs",
+    "qa:genius-evidence-hold": "tsx scripts/qa/genius-evidence-hold-smoke.ts",
     "qa:genius-game-conversation": "tsx scripts/qa/genius-game-conversation-smoke.ts",
     "qa:genius-correction-contract": "tsx scripts/qa/genius-correction-contract.ts",
     "qa:genius-tone-ssot": "tsx scripts/qa/baseball-genius-tone-ssot-smoke.ts",
