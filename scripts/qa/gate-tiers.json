@@ -8,6 +8,10 @@
       "tier": "ci"
     },
     {
+      "name": "qa:genius-game-conversation",
+      "tier": "ci"
+    },
+    {
       "name": "qa:genius-correction-contract",
       "tier": "ci"
     },
