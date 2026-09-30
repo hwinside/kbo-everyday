@@ -1066,7 +1066,7 @@ const RECORDBOOK_PROMPT = [
   "현재 누계, 최신 순위, 과거 기록이 지금까지도 유지되는지의 확인은 current다. 과거 시즌이나 통산이라는 표현이 함께 있어도 현재 확인 요구가 우선한다. current는 반드시 INSUFFICIENT이며 과거 기록으로 대체하지 않는다.",
   "현재 확인을 요구하지 않는 통산·역대·과거 기록 조회는 historical이다. 기록 조회인지 불명확하면 unknown이다. unknown도 INSUFFICIENT다.",
   "historical일 때만 선수·리그·기록종류·요청 기간을 직접 뒷받침하는 단일 자료를 골라 recordEvidence에 번호를 넣는다. 자료에 없는 숫자, 다른 선수의 숫자, 여러 자료의 합산은 금지한다. 기간이 한정된 질문에 그 기간을 분리하지 못하는 전체 누계로 답하지 않는다.",
-  "recordSubject에는 자료 속 선수의 순수 이름만 넣는다. 별표·순위·괄호·구단은 제외한다. recordFacts에는 표의 머리글(label)과 해당 선수 행의 값(value)을 그대로 추출한다. label과 value 각각은 인용 자료 본문에 연속으로 존재해야 한다. 서술형 answer를 만들지 않는다. 서버가 항목: 값 형식으로 표시한다.",
+  "recordSubject에는 자료 속 선수의 순수 이름만 넣는다. 별표·순위·괄호·구단은 제외한다. recordFacts는 최대 6개이며, 달성 이정표보다 요청한 시즌/통산 순위 표에서 필요한 수치 항목을 우선한다. recordFacts에는 표의 머리글(label)과 해당 선수 행의 값(value)을 그대로 추출한다. label과 value 각각은 인용 자료 본문에 연속으로 존재해야 한다. 서술형 answer를 만들지 않는다. 서버가 항목: 값 형식으로 표시한다.",
   "숫자는 반드시 원문 그대로 아라비아 숫자로 쓴다. 한글 수사로 풀어 쓰지 않는다. 표의 숫자에 원문에 붙어 있지 않은 단위를 붙이지 않는다. 표는 '항목: 값' 형식으로 설명한다. 예: '연도: 2024, 안타: 202'. 이는 형식 예시일 뿐 사실 근거가 아니다.",
   "넓은 기록 질문은 모든 지표가 없어도 직접 확인되는 통산 항목을 답한다. 전체 기록이라고 주장하지 않고 확인된 항목만 recordFacts로 추출한다. 통산 기록 표가 있으면 달성 이정표보다 그 표를 우선한다.",
   "표의 머리글과 선수 행의 연결이 명확할 때만 답한다. OCR 때문에 열·선수 연결이 불명확하면 INSUFFICIENT다. 통산 달성 이정표만 있으면 최종 누계로 단정하지 말고 확인 가능한 달성 기록이라고 명시한다.",
@@ -1658,6 +1658,39 @@ function officialCalendarClaimsMatch(value: unknown, options: ValidateRagOptions
   });
 }
 
+/** Decode only complete, unambiguous record-table rows. OCR fragments and
+ * unsupported column layouts confer no license, even when both strings occur.
+ * Header order owns the binding; model labels never define cell boundaries. */
+function recordTableRows(content: string, subject: string): Map<string, string>[] {
+  const numberCell = String.raw`[0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?`;
+  const columns: Record<string, string> = {
+    순위: String.raw`[0-9]+\*?`, 선수명: String.raw`\*?\s*[^\s()]+(?:\([^\s()]+\))?`,
+    "선수명(팀)": String.raw`\*?\s*[^\s()]+\([^\s()]+\)`,
+    세이브: numberCell, 안타: numberCell, 홈런: numberCell, 타점: numberCell,
+    경기수: numberCell, 연도: String.raw`(?:19|20)[0-9]{2}`,
+    "경기 출장 연도": String.raw`(?:19|20)[0-9]{2}(?:\s*~\s*(?:19|20)[0-9]{2})?(?:,\s*(?:19|20)[0-9]{2}(?:\s*~\s*(?:19|20)[0-9]{2})?)*(?:\s*\((?:19|20)[0-9]{2}\s*~\s*(?:19|20)[0-9]{2}\s+해외진출\))?`,
+  };
+  const lines = content.split(/\r?\n/).map(line => line.trim().replace(/\s+/g, " "));
+  const rows: Map<string, string>[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const headers = lines[i].replace(/경기 출장 연도/g, "경기_출장_연도")
+      .split(" ").map(label => label.replace(/_/g, " "));
+    if (!headers.some(label => label === "선수명" || label === "선수명(팀)")
+      || headers.length < 2 || new Set(headers).size !== headers.length
+      || headers.some(label => !Object.hasOwn(columns, label))) continue;
+    const pattern = new RegExp(`^${headers.map(label => `(${columns[label]})`).join("\\s+")}$`);
+    for (let j = i + 1; j < lines.length; j++) {
+      const matched = lines[j].match(pattern);
+      if (!matched) break; // new table, wrap, or ambiguous OCR: stop here
+      const cells = new Map(headers.map((label, index) => [label, matched[index + 1]]));
+      const player = (cells.get("선수명(팀)") ?? cells.get("선수명") ?? "")
+        .replace(/^\*\s*/, "").replace(/\([^()]*\)$/, "");
+      if (player === subject) rows.push(cells);
+    }
+  }
+  return rows;
+}
+
 export function validateRagResponse(
   raw: string,
   options: ValidateRagOptions = {},
@@ -1685,8 +1718,7 @@ export function validateRagResponse(
       || !selected || !isRecordbookEvidence(selected)) {
       return { kind: "insufficient", reason: "model_insufficient" };
     }
-    // Extracted table cells, not model-generated numeric prose. Binding remains
-    // semantic (reviewed in replay); exact source values and numeric gates are mandatory.
+    // Both the player row and header/value position must bind in one table.
     const source = selected.content.replace(/\s+/g, " ");
     const subject = row.recordSubject;
     const facts = row.recordFacts;
@@ -1695,8 +1727,17 @@ export function validateRagResponse(
       || !Array.isArray(facts) || facts.length < 1 || facts.length > 6) {
       return { kind: "insufficient", reason: "model_insufficient" };
     }
+    const tables = recordTableRows(selected.content, subject);
+    const matchingFacts = tables.map(table => facts.filter(fact =>
+      fact && typeof fact.label === "string" && typeof fact.value === "string"
+      && table.get(fact.label) === fact.value));
+    // Never combine cells from different tables/periods within the same passage.
+    const boundFacts = matchingFacts.sort((a, b) => b.length - a.length)[0] ?? [];
+    if (!boundFacts.some(fact => !["순위", "선수명", "선수명(팀)", "연도", "경기 출장 연도"].includes(fact.label))) {
+      return { kind: "insufficient", reason: "numeric_not_in_evidence" };
+    }
     const lines: string[] = [];
-    for (const fact of facts) {
+    for (const fact of boundFacts) {
       if (!fact || typeof fact.label !== "string" || typeof fact.value !== "string"
         || !fact.label.trim() || !fact.value.trim() || fact.label.length > 40 || fact.value.length > 80
         || /[\n\r]/.test(fact.label + fact.value)

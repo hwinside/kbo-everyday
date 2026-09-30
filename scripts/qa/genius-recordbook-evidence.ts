@@ -21,12 +21,25 @@ async function main() {
     assert.equal(validated(response(value)).kind, "insufficient", value);
     // Even source-surface reuse must not serve malformed/Hangul-number output.
     assert.equal(validated(response(value), [{ ...evidence[0], content: evidence[0].content + "\n" + value }]).kind,
-      value === "999" ? "grounded" : "insufficient", value);
+      "insufficient", value);
   }
   assert.equal(validated(response("999"), [...evidence, { ...evidence[0], content: "다른 선수 999" }]).kind, "insufficient", "cannot borrow numbers from uncited passage");
   assert.equal(validated(response(), [{ ...evidence[0], sourceGrade: "tier2" }]).kind, "insufficient");
   assert.equal(validated(response(), [{ ...evidence[0], pageTitle: "2026 KBO 연감" }]).kind, "insufficient");
   assert.equal(validated(response("202", "historical", 1, "레이예스", "안타")).kind, "grounded");
+  const career = [{ ...evidence[0], content: "통산 세이브 순위\n순위 선수명(팀) 세이브 경기 출장 연도 경기수\n1 오승환(삼) 427 2005 ~ 2013, 2020 ~ 2025 (2014 ~ 2019 해외진출) 738\n2 손승락(롯) 271 2005 ~ 2006, 2010 ~ 2019 601" }];
+  const misbound = JSON.stringify({ status: "GROUNDED", recordScope: "historical", recordEvidence: 1,
+    recordSubject: "오승환", recordFacts: [{ label: "세이브", value: "427" }, { label: "연도", value: "738" }] });
+  const partial = validated(misbound, career);
+  assert.equal(partial.kind, "grounded");
+  if (partial.kind === "grounded") { assert.match(partial.answer, /세이브: 427/); assert.doesNotMatch(partial.answer, /연도: 738/); }
+  assert.equal(validated(response("738", "historical", 1, "오승환", "연도"), career).kind, "insufficient");
+  assert.equal(validated(response("271"), career).kind, "insufficient", "other player row cannot license a value");
+  assert.equal(validated(response("738", "historical", 1, "오승환", "세이브"), career).kind, "insufficient", "same-row wrong column");
+  assert.equal(validated(response(), [{ ...career[0], content: career[0].content.replace("세이브 경기", "기록 경기") }]).kind, "insufficient", "unknown columns fail closed");
+  const season = [{ ...evidence[0], content: "시즌 최다 안타 순위\n순위 선수명(팀) 안타 연도\n1* 레이예스(롯) 202 2024\n2 *서건창(넥) 201 2014" }];
+  assert.equal(validated(response("202", "historical", 1, "레이예스", "안타"), season).kind, "grounded");
+  assert.equal(validated(response("2024", "historical", 1, "레이예스", "안타"), season).kind, "insufficient");
   const selected = selectRecordbookEvidence([{ ...evidence[0], pageTitle: "2015 KBO 기록대백과" },
     { ...evidence[0], content: "표 설명 ".repeat(170) + "\n오승환 427" }]);
   assert.equal(selected[0].pageTitle, "2026 KBO 레코드북");
@@ -57,6 +70,20 @@ async function main() {
     const replay = await answerQuestion("qa-recordbook", question, deps);
     assert.equal(replay.answer, result.answer); assert.equal(calls, 1);
   }
+  let recordOnly = false;
+  const filler = await answerQuestion("qa-recordbook-filler", "홈보살 많이 한 선수는?", {
+    loadGlossary: async () => [], loadPlayers: async () => [],
+    reserveDaily: async () => ({ allowed: true, remaining: 9 }), log: async () => {},
+    getCache: async () => null, setCache: async () => {},
+    callLlm: async () => { throw new Error("must not fall back to model knowledge"); },
+    searchOfficialRag: async () => evidence,
+    callOfficialRagLlm: async (_q, _e, extras) => {
+      recordOnly = extras?.recordbookRequest === true;
+      return { text: JSON.stringify({ status: "GROUNDED", answer: "홈 보살 부문 순위에 오른 선수들이 확인됩니다.", calendarClaims: [] }), inputTokens: 1, outputTokens: 1 };
+    },
+  });
+  assert.equal(recordOnly, true, "ordinary official route with only recordbook evidence uses record contract");
+  assert.notEqual(filler.source, "rag", "unsupported filler cannot serve");
   console.log("recordbook scope/citation/numeric/durable contracts PASS");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

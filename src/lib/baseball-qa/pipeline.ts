@@ -68,6 +68,7 @@ import {
   type RagEntityCandidate,
   type RagEvidence,
   selectRecordbookEvidence,
+  isRecordbookEvidence,
   type RagNewsCandidate,
   type RagPlayerCandidate,
   type RagTeamCandidate,
@@ -5141,6 +5142,13 @@ async function answerOfficialDocumentQuestion(
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
     evidence = recordbookRequest ? selectRecordbookEvidence(searched) : selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
+    // Retrieval provenance, not question keywords, closes the ordinary-official
+    // escape hatch: record tables cannot authorize free-form filler prose.
+    if (!recordbookRequest && !definition && !requiredRule && evidence.length > 0
+      && evidence.every(isRecordbookEvidence)) {
+      recordbookRequest = true;
+      evidence = selectRecordbookEvidence(searched);
+    }
     if (requiredRule?.kind === "fa_general" && !requiredRuleFact(evidence, requiredRule)) {
       // One bounded clause-focused search; no local corpus or general-knowledge
       // fallback. A live serving miss remains a miss, even if the PDF exists.
