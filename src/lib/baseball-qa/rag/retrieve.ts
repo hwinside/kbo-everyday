@@ -1,3 +1,4 @@
+import { TEAM_CORRECTION_PROMPT, TEAM_CORRECTION_RESPONSE_SCHEMA } from "./correction";
 import { TERM_KNOWLEDGE_PROMPT, unverifiedTermAnswer } from "../term-knowledge";
 /**
  * 야잘알봇 v2 S2b — 선수 서술형 질문 retrieval 서빙 계약.
@@ -904,7 +905,8 @@ export const RAG_TEAM_SYSTEM_PROMPT = [
   // 성의 계약 (2026-08-10 하린아빠 12:06 + 삼순: 선수·뉴스만 고치고 구단을 빼면 미완):
   BASEBALL_GENIUS_DEPTH_PROMPT,
   `답변은 ${RAG_ANSWER_MAX_CHARS}자 이하이며 URL·링크·마크다운을 포함하지 않는다.`,
-  `반드시 JSON 하나만 출력한다: {"status":"${RAG_GROUNDED_SENTINEL}|${RAG_INSUFFICIENT_SENTINEL}","answer":"${RAG_GROUNDED_SENTINEL}일 때만 답변"}`,
+  TEAM_CORRECTION_PROMPT,
+  "반드시 지정된 응답 스키마의 JSON 하나만 출력한다.",
 ].join("\n");
 
 /**
@@ -1150,6 +1152,7 @@ export function buildRagLlmRequest(
       // ⚠️ 리터럴 금지 — 문자 상한과 같은 예산에서 파생한다(삼순 2026-08-16 P0).
       maxOutputTokens: BASEBALL_GENIUS_MAX_OUTPUT_TOKENS,
       responseMimeType: "application/json",
+      ...(systemPrompt === RAG_TEAM_SYSTEM_PROMPT ? { responseSchema: TEAM_CORRECTION_RESPONSE_SCHEMA } : {}),
       ...(official ? { responseSchema: OFFICIAL_RAG_RESPONSE_SCHEMA } : {}),
     },
   };
