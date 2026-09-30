@@ -5,7 +5,7 @@
  * does NOT claim to exercise routing, durable delivery, UI or cache behavior.
  * No production account, message, quota, cache or log writes.
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   RAG_OFFICIAL_SYSTEM_PROMPT, buildRagLlmRequest, validateRagResponse,
@@ -17,6 +17,7 @@ type Sample = {
   question: string;
   content: string;
   documentTitle?: string;
+  calendarYear?: number;
   review: string;
   context?: { question: string; answer: string };
 };
@@ -39,18 +40,22 @@ const samples: Sample[] = [
   { id: "postseason-schedule-missing", question: "올해 가을야구는 언제 시작해?", content: postseason,
     review: "Do not infer a current date/month from historical narrative. Missing date must be explicit." },
   { id: "postseason-schedule-supported", question: "2026년 가을야구는 언제 시작해?",
+    calendarYear: 2026,
     content: "가상의 테스트 일정: 2026년 포스트시즌 시작일은 10월 5일이다.",
     review: "Synthetic positive control: answer the supplied date, no blanket schedule refusal. Not a real calendar fact." },
   { id: "postseason-past-season", question: "올해 가을야구는 언제 시작해?",
+    calendarYear: 2025,
     documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
     review: "2026 publication title is not the subject season. Do not offer the 2025 date as this year's date." },
   { id: "postseason-explicit-year", question: "2026년 가을야구는 언제 시작해?",
+    calendarYear: 2025,
     documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
     review: "Explicit 2026 also cannot be answered with a 2025 event." },
   { id: "postseason-unknown-season", question: "올해 가을야구는 언제 시작해?",
     documentTitle: "2026 KBO 연감", content: "와일드카드 결정전 1차전은 10월 6일 대구에서 열렸다.",
     review: "Do not fill an absent event season from the publication title or collection date." },
   { id: "postseason-historical-date", question: "2025년 가을야구는 언제 시작했어?",
+    calendarYear: 2025,
     documentTitle: "2026 KBO 연감", content: "2025시즌 가을 무대 첫판은 10월 6일 대구에서 시작했다.",
     review: "Positive historical control: answer supported 2025 date despite today's different year." },
   { id: "interference-out", question: "주자가 고의로 송구를 방해하면 아웃이야?", content: interference,
@@ -84,6 +89,12 @@ async function main() {
   const retrieval = process.argv.includes("--retrieval");
   const server = await import("../../src/lib/baseball-qa/server");
   const traces: unknown[] = [];
+  // Optional undeployed ingestion overlay: real retrieval, not production E2E.
+  // Bind ONLY an exact revision + section + production-sanitized content match.
+  const calendarPreparedPath = process.argv.find(a => a.startsWith("--calendar-prepared="))?.split("=").slice(1).join("=");
+  const calendarPrepared = calendarPreparedPath ? JSON.parse(readFileSync(calendarPreparedPath, "utf8")) as {
+    sources: { documentContentHash: string; chunks: { sectionPath: string; content: string; calendarSeason?: RagEvidence["calendarSeason"] }[] }[];
+  } : undefined;
   let errors = 0;
   const referenceTimeMs = Date.now();
   const startedAt = new Date(referenceTimeMs).toISOString();
@@ -91,6 +102,7 @@ async function main() {
   const diff = execFileSync("git", ["diff", "--", "src/lib/baseball-qa/rag/retrieve.ts"], { encoding: "utf8" });
   const save = () => writeFileSync(out, JSON.stringify({
     mode: "diagnostic-NOT-SEMANTIC-OR-UI-PASS", head, diff, startedAt,
+    calendarOverlay: calendarPreparedPath ?? null,
     evidenceMode: retrieval ? "production-read-only-search" : "SYNTHETIC-CONTRAST-PAIRS",
     total: samples.length, completed: traces.length, errors, traces,
   }, null, 2), { mode: 0o600 });
@@ -104,7 +116,17 @@ async function main() {
         content: sample.content, pageTitle: sample.documentTitle ?? "SYNTHETIC QA — not an official document",
         canonicalUrl: "https://www.koreabaseball.com/", revision: "synthetic-v1",
         sectionPath: "synthetic contrast pair", asOf: "2026-09-30", sourceGrade: "tier1",
+        calendarSeason: sample.calendarYear ? { season: sample.calendarYear, axis: "calendar_event", heading: "SYNTHETIC", headingPage: 1, pageTextSha256: "synthetic", sourcePdfSha256: "synthetic" } : null,
       } satisfies RagEvidence]);
+      if (calendarPrepared && retrieval) {
+        for (const row of evidence) {
+          const source = calendarPrepared.sources.find(s => row.revision === `sha256:${s.documentContentHash.slice(0, 16)}`);
+          if (!source) continue;
+          const matches = source.chunks.filter(c => c.sectionPath === row.sectionPath && selectEvidence([{ ...row, content: c.content }])[0]?.content === row.content);
+          if (matches.length !== 1) throw new Error("calendar_overlay_content_mismatch");
+          row.calendarSeason = matches[0].calendarSeason ?? null;
+        }
+      }
       if (evidence.length === 0) {
         traces.push({ id: sample.id, question: sample.question, review: sample.review, evidence,
           result: "NO_EVIDENCE", latencyMs: Date.now() - started });
@@ -113,6 +135,7 @@ async function main() {
         const request = buildRagLlmRequest(sample.question, evidence, RAG_OFFICIAL_SYSTEM_PROMPT, extras);
         const raw = await server.callOfficialRagLlm(sample.question, evidence, extras);
         const validated = validateRagResponse(raw.text, {
+          calendarContract: { referenceTimeMs },
           officialQuestion: sample.question, numericEvidence: true, evidence,
           generalFallback: { question: sample.question, previous: sample.context },
         });

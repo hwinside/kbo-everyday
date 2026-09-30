@@ -128,7 +128,7 @@ async function verifyRuntime() {
           assert.match(data, /<요청 범위/); assert.ok(data.includes(expected));
           scope.add(extras?.ruleRequest?.kind + ":" + extras?.ruleRequest?.competition);
         } else assert.doesNotMatch(data, /<요청 범위/);
-        return { text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 };
+        return { text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 };
       },
     };
     const result = await answerQuestion("qa-required-rules-memory", question, deps);
@@ -190,7 +190,7 @@ async function verifyRuntime() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
       callLlm: async () => { throw new Error("generic fallback must not repair policy"); },
-      callOfficialRagLlm: async () => ({ text: JSON.stringify({ status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer }), inputTokens: 1, outputTokens: 1 }),
     };
     const result = await answerQuestion("qa-current-criteria", question, deps);
     assert.equal(result.source, "scope_guide", "obsolete or incomplete policy was served: " + answer);
@@ -205,7 +205,7 @@ async function verifyRuntime() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ++searches === 2 && recovery ? ev : ev.filter((r) => !r.content.includes("① 제25조")),
       callLlm: async () => { throw new Error("generic fallback"); },
-      callOfficialRagLlm: async () => { calls++; return { text: JSON.stringify({ status: "GROUNDED", answer: "2022년 시즌 종료 후부터 8정규시즌을 활동하면 일반 FA 자격을 취득합니다." }), inputTokens: 1, outputTokens: 1 }; },
+      callOfficialRagLlm: async () => { calls++; return { text: JSON.stringify({ calendarClaims: [], status: "GROUNDED", answer: "2022년 시즌 종료 후부터 8정규시즌을 활동하면 일반 FA 자격을 취득합니다." }), inputTokens: 1, outputTokens: 1 }; },
     };
     const result = await answerQuestion("qa-current-recovery", "FA 자격은 어떻게 얻어?", deps);
     assert.equal(searches, 2); assert.equal(calls, recovery ? 1 : 0);
@@ -242,7 +242,7 @@ async function verifyQuantityGrounding() {
     const badHeading = scoped.map((r) => ({...r, content: r.content.replace(/제(?:30|34|38|42)조/, "제99조")}));
     assert.deepEqual(postseasonTeamCounts(badHeading, request), [], "metadata alone licensed a mismatched heading");
     assert.deepEqual(postseasonTeamCounts(scoped.map((r) => ({...r, content: r.content.replace(/제[2-5]장/, "제9장")})), request), [], "wrong chapter licensed counts");
-    const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
+    const check = (text: string, source = scoped, ruleRequest = request) => validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:text}), {numericEvidence:true,evidence:source,ruleRequest});
     assert.equal(check(answer).kind, "grounded", answer);
     for (const suffix of [" 아홉 팀이 참가합니다.", " 9개 구단이 진출합니다.", " 9구를 던집니다.", " 5개입니다.", " 10기입니다.", " 99회까지 진행합니다."]) {
       assert.equal(check(answer+suffix).kind, "insufficient", suffix);
@@ -255,7 +255,7 @@ async function verifyQuantityGrounding() {
       getCache: async () => null, setCache: async () => {}, log: async () => {}, now: () => NOW,
       searchOfficialRag: async () => ev, storeLlm: async (result) => { stored = result; },
       callLlm: async () => { throw new Error("generic fallback"); },
-      callOfficialRagLlm: async () => ({ text: JSON.stringify({status:"GROUNDED",answer}), inputTokens:1,outputTokens:1 }),
+      callOfficialRagLlm: async () => ({ text: JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}), inputTokens:1,outputTokens:1 }),
     };
     const result = await answerQuestion("qa-quantity",question,deps);
     assert.equal(result.source,"rag", "pipeline omitted request context: "+question);
@@ -275,7 +275,7 @@ async function verifyQuantityGrounding() {
   assert.deepEqual(postseasonTeamCounts(wc,{...general,postseasonStage:"semi"}),["2"],"full postseason corpus failed to select semifinal clause");
   assert.deepEqual(postseasonTeamCounts(wc,undefined),[]);
   for (const answer of ["두 팀이 참가합니다.","상위 5개 구단이 진출합니다."]) {
-    assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
+    assert.equal(validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}),{numericEvidence:true,evidence:wc}).kind,"insufficient","generic path received participant aliases");
   }
 }
 
@@ -285,7 +285,7 @@ async function verifyWinParaphrases() {
   const request = requiredRuleEvidence(question, NOW)!;
   const scoped = selectEvidence(selectRequiredRuleEvidence(ev, request));
   const accepted = "2026시즌 와일드카드 결정전은 4위와 5위 구단 간에 치러집니다. 4위 구단은 한 번의 승리나 무승부만 기록해도 준플레이오프에 진출합니다.";
-  const check = (answer: string, source = scoped, ruleRequest: typeof request | undefined = request) => validateRagResponse(JSON.stringify({status:"GROUNDED",answer}),{numericEvidence:true,evidence:source,ruleRequest});
+  const check = (answer: string, source = scoped, ruleRequest: typeof request | undefined = request) => validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer}),{numericEvidence:true,evidence:source,ruleRequest});
   for (const answer of [accepted, "4위 팀은 1번의 승리 또는 무승부만 기록하면 진출합니다.", "5위 구단은 두 번의 승리를 기록해야 진출합니다."]) {
     assert.equal(check(answer).kind, "grounded", answer);
   }
@@ -300,7 +300,7 @@ async function verifyWinParaphrases() {
     "4위 구단은 상대 팀이 한 번의 승리로 진출합니다.",
   ]) assert.equal(check(answer).kind, "insufficient", answer);
   assert.equal(check(accepted, [], request).kind, "insufficient");
-  assert.equal(validateRagResponse(JSON.stringify({status:"GROUNDED",answer:accepted}),{numericEvidence:true,evidence:scoped}).kind, "insufficient");
+  assert.equal(validateRagResponse(JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:accepted}),{numericEvidence:true,evidence:scoped}).kind, "insufficient");
   assert.equal(check(accepted, scoped, {...request,season:2025}).kind, "insufficient");
   assert.equal(check(accepted, scoped, {...request,postseasonStage:"semi"}).kind, "insufficient");
   assert.equal(check(accepted, scoped.map(r=>({...r,sourceGrade:"tier2"}))).kind,"insufficient");
@@ -314,7 +314,7 @@ async function verifyWinParaphrases() {
     getCache:async()=>null,setCache:async()=>{},log:async()=>{},now:()=>NOW,
     searchOfficialRag:async()=>ev,storeLlm:async(result)=>{stored=result;},
     callLlm:async()=>{throw new Error("generic fallback");},
-    callOfficialRagLlm:async()=>({text:JSON.stringify({status:"GROUNDED",answer:accepted}),inputTokens:1,outputTokens:1}),
+    callOfficialRagLlm:async()=>({text:JSON.stringify({calendarClaims:[],status:"GROUNDED",answer:accepted}),inputTokens:1,outputTokens:1}),
   };
   const result = await answerQuestion("qa-win-paraphrase", question, deps);
   assert.equal(result.source,"rag");
