@@ -1,7 +1,7 @@
 import { resolveTermOrigin } from "../src/lib/baseball-qa/term-origin";
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { answerQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
+import { answerQuestion, resolveHoldAnswer, HISTORY_HOLD_ANSWER, matchGlossary, resolveUnboundName, routeQuestion, validateLlmResponse, packStoredQaFinal, unpackStoredQaFinal, type QaDeps, type LlmResult } from '../src/lib/baseball-qa/pipeline';
 import { validateRagResponse, type RagEvidence } from '../src/lib/baseball-qa/rag/retrieve';
 import { isTermOriginQuestion, TERM_UNVERIFIED, UNVERIFIED_TERM_ANSWER, UNVERIFIED_TERM_CORRECTION_ANSWER, termKnowledgeCacheKey, TERM_KNOWLEDGE_CACHE_VERSION } from '../src/lib/baseball-qa/term-knowledge';
 
@@ -400,4 +400,113 @@ test('origin uses production 사구 alias and concise dictionary meaning', () =>
   assert.doesNotMatch(answer, /주자에게 진루|추가 설명/);
   assert.match(answer, /역사적 유래는 확인하지 못했습니다/);
   assert.equal(resolveTermOrigin('보크가 뭐야', glossary), null);
+});
+
+
+test('quantity definitions preserve attached RBI/rate values without provider or shared cache', async () => {
+  const glossary = [
+    { term: '적시타', aliases: [], answer: '야구에서 주자를 홈으로 불러들여 득점을 만드는 안타입니다.' },
+    { term: '타율', aliases: [], answer: '타수에 대한 안타의 비율입니다.' },
+  ];
+  for (const [question, expected] of [
+    ['2타점적시타가 뭐야?', '2타점을'], ['3 타점 적시타 뜻', '3타점을'],
+    ['1할 6푼이 뭐야?', '0.160'], ['타율 2할8푼5리 알려줘', '0.285'],
+    ['0할 0푼은 뭐야?', '0.000'],
+  ]) {
+    const h = harness();
+    const result = await answerQuestion('qa-quantity', question, {
+      ...h.deps, loadGlossary: async () => glossary,
+      normalizeQuestionLlm: async () => assert.fail('closed notation must not need correction'),
+      callLlm: async () => assert.fail('closed notation must not generate facts'),
+      getCache: async () => assert.fail('dictionary must precede shared cache'),
+    });
+    assert.equal(result.source, 'dictionary', question);
+    assert.ok(result.answer.includes(expected), result.answer);
+    assert.equal(h.writes.length, 0);
+  }
+  for (const question of [
+    '김도영 2타점적시타 언제 쳤어?', '2타점적시타 유래', '4타점적시타',
+    '1할 6푼이면 잘하는 거야?', '1할 16푼', '1할 할인 뭐야?', '타율 1할 6푼과 OPS 차이',
+    '2타점적시타랑 보크 알려줘', '1할6푼 영화 추천',
+  ]) assert.equal(matchGlossary(glossary, question), null, question);
+  assert.match(matchGlossary([], '2타점적시타')!.answer, /2타점을/);
+  assert.equal(matchGlossary([], '1할6푼'), null);
+  assert.equal(matchGlossary(glossary, '적시타가 뭐야?')?.answer, glossary[0].answer);
+});
+
+test('given-name nickname asks for roster confirmation without binding to guessed identity', async () => {
+  const players = [{ kboId: '52401', name: '김영웅', team: '삼성 라이온즈' }];
+  for (const question of ['영웅이 못하지?', '영웅이 타율', '내가 영웅이 언제까지 믿어줘야할까', '영웅이는 어떤 선수야?']) {
+    assert.deepEqual(resolveUnboundName(question, players), { token: '영웅이', suggestion: '김영웅' });
+    assert.equal(routeQuestion(question, [], players), 'name_suggest', question);
+    const h = harness();
+    const result = await answerQuestion('qa-nickname', question, { ...h.deps,
+      loadPlayers: async () => players,
+      callLlm: async () => assert.fail('nickname cannot generate an unbound player story'),
+    });
+    assert.equal(result.source, 'name_suggest');
+    assert.match(result.answer, /김영웅/);
+    assert.equal(h.calls, 0);
+  }
+  const duplicates = [...players, { kboId: '52402', name: '박영웅' }];
+  assert.equal(resolveUnboundName('영웅이 타율', duplicates), null);
+  assert.equal(resolveUnboundName('영웅이 타율', [...players, { kboId: '52402', name: '김영웅' }]), null);
+  assert.equal(resolveUnboundName('영웅이 누구야?', []), null);
+  assert.equal(resolveUnboundName('김영웅이 누구야?', players), null);
+  assert.equal(resolveUnboundName('영웅이라는 영화', players), null);
+  assert.equal(resolveUnboundName('영웅이야기', players), null);
+  assert.equal(routeQuestion('영웅이 영화 추천', [], players), 'blocked');
+});
+
+
+test('R1 live dictionary without timely-hit entry still answers quantity definitions', async () => {
+  for (const question of ['2타점적시타', '2타점 적시타가 뭐야?']) {
+    const h = harness();
+    const result = await answerQuestion('qa-r1', question, { ...h.deps,
+      loadGlossary: async () => [{ term: '타율', aliases: [], answer: '타수에 대한 안타의 비율입니다.' }],
+      callLlm: async () => assert.fail('verified definition must precede provider'),
+      getCache: async () => assert.fail('verified definition must precede cache'),
+    });
+    assert.equal(result.source, 'dictionary');
+    assert.match(result.answer, /2타점을/);
+    assert.match(result.answer, /주자를 득점시키는 안타/);
+  }
+  const glossary = [{ term: '타율', aliases: [], answer: '타수에 대한 안타의 비율입니다.' }];
+  assert.match(matchGlossary(glossary, '1할 6푼이 무슨 말이야')!.answer, /1할 6푼은 0.160/);
+  assert.match(matchGlossary(glossary, '1할 뜻')!.answer, /1할은 0.100/);
+  assert.match(matchGlossary(glossary, '1할6푼5리 뜻')!.answer, /5리는 0.165/);
+});
+
+test('R1 nickname excludes ordinary nouns and dictionary identities even with stat context', () => {
+  const players = ['김기준', '김마음', '김사람', '김보크', '김영웅'].map((name, i) => ({ name, kboId: String(50000 + i) }));
+  for (const question of ['홈런 기준이 뭐야 알려줘', '기준이 타율', '마음이 성적', '사람이 잘하지', '영웅이 누구야?']) {
+    assert.equal(resolveUnboundName(question, players), null, question);
+  }
+  const glossary = [{ term: '보크', aliases: [], answer: '투수의 반칙 투구입니다.' }];
+  assert.equal(resolveUnboundName('보크이 타율', players, glossary), null);
+  assert.notEqual(routeQuestion('보크이 타율', glossary, players), 'name_suggest');
+  // Runtime legacy fixtures can contain numeric IDs; explicit full names must still win.
+  const legacyPlayers = [{ name: '김영웅', kboId: 52401 }] as unknown as typeof players;
+  assert.equal(resolveUnboundName('김영웅이 타율', legacyPlayers), null);
+});
+
+test('R1 split record rejection explains unsupported scope without retry/update promises', async () => {
+  for (const question of ['전의산의 득점권 타율', '김영웅 포스트시즌 성적']) {
+    const h = harness();
+    const result = await answerQuestion('qa-r1-split', question, { ...h.deps,
+      loadPlayers: async () => [{ name: '전의산', kboId: '50854' }, { name: '김영웅', kboId: '52401' }],
+      callLlm: async () => assert.fail('unsupported split must not generate records'),
+    });
+    assert.equal(result.source, 'history_hold');
+    assert.match(result.answer, /질문을 나눠 다시 물으셔도/);
+    assert.match(result.answer, /제공 시점은 정해지지 않았습니다/);
+    assert.doesNotMatch(result.answer, /그 기간 형태로는|조금 뒤|다시 확인하겠습니다/);
+  }
+});
+
+
+test('R2 split copy does not replace historical metric or prize fallbacks', () => {
+  for (const question of ['문보경 작년 2루타', '문보경 통산 OPS', '한국시리즈 MVP']) {
+    assert.equal(resolveHoldAnswer(question), HISTORY_HOLD_ANSWER, question);
+  }
 });

@@ -598,9 +598,7 @@ export function resolveSeasonRecordIntent(
   // A season snapshot cannot answer splits, other competitions or schedules.
   // Only claim this scope AFTER a metric or player-bound summary exists.
   // Otherwise general product/rules/news questions must retain their own route.
-  if (/포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
-    || /\b(?:ps|wbc)\b/i.test(question)
-    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact)) {
+  if (hasSeasonRecordSplitQualifier(question)) {
     return { kind: "unsupported_season" };
   }
 
@@ -823,7 +821,18 @@ export const UNTRUSTED_METRIC_ANSWER =
 // 지원된다. 종전 문구("통산 기록은 아직 준비 중")는 지원 기능을 미지원으로 안내하는 거짓말이다.
 // 이 문구가 닫는 건 frozen contract 밖 상대 기간 표현(`데뷔 후 3년`·`최근 5경기`)뿐이므로
 // 지원하는 질문 형태를 정확히 안내한다.
+export function hasSeasonRecordSplitQualifier(question: string): boolean {
+  const compact = normalize(question);
+  return /포스트시즌|가을야구|플레이오프|한국시리즈|와일드카드|대표팀|국가대표|국대|아시안게임|퓨처스|2군|올스타|부상|상대|원정|전반기|후반기|득점권|주자|좌투|우투|월간|주간|월별|주별|홈(?!런|란)|(?:오늘|어제|그제|내일|다음|이번|지난)경기|\d+월|\d+일/.test(compact)
+    || /\b(?:ps|wbc)\b/i.test(question)
+    || /(?:[가-힣a-z]+)전(?:성적|기록|타율|홈런|안타|경기|타점)/.test(compact);
+}
+
 export const UNSUPPORTED_SEASON_ANSWER =
   "그 기간 형태로는 아직 집계할 수 없습니다. 확인 가능한 범위는 특정 연도(예: 2019년 타율), 통산 기록, 연도별 기록입니다.";
 export const RECORD_MISSING_ANSWER =
   "그 선수의 올 시즌 기록을 아직 찾지 못했습니다. 조금 뒤 다시 질문하면 최신 상태로 확인하겠습니다.";
+
+/** Split-specific copy; not the fallback for missing historical metrics. */
+export const UNSUPPORTED_SPLIT_ANSWER =
+  "요청하신 상황·대회·기간으로 나눈 기록은 현재 제공하지 않습니다. 질문을 나눠 다시 물으셔도 같은 조건의 기록은 확인할 수 없으며, 제공 시점은 정해지지 않았습니다. 대신 지원되는 정규시즌의 특정 연도(예: 2019년 타율), 통산, 연도별 기록은 확인할 수 있습니다.";
