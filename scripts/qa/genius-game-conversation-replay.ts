@@ -8,11 +8,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { answerQuestion, type QaDeps, type QaResult } from "../../src/lib/baseball-qa/pipeline";
+import type { AppFactSnapshot } from "../../src/lib/baseball-qa/app-fact-conversation";
 import type { ConversationGame } from "../../src/lib/baseball-qa/game-conversation";
 import type { PreviousTurnRow } from "../../src/lib/baseball-qa/context";
 
 type Row = { id: string; kst: string; user_id: string; q: string; a: string; mp: string };
-type Snapshot = { games: ConversationGame[] | null; favoriteTeams?: Record<string, string>; source?: string; capturedAt?: string };
+type Snapshot = { games: ConversationGame[] | null; favoriteTeams?: Record<string, string>; appFacts?: AppFactSnapshot; source?: string; capturedAt?: string };
 const arg = (name: string) => process.argv.find((x) => x.startsWith(`--${name}=`))?.slice(name.length + 3);
 async function main() {
   if (!process.argv.includes("--live") || !arg("input") || !arg("snapshots") || !arg("out")) {
@@ -59,7 +60,7 @@ async function main() {
         getCache: async () => null, setCache: async () => {}, log: async () => {},
         reserveDaily: async () => ({ allowed: true, remaining: 99 }),
         now: () => now, loadPreviousTurn: async () => context,
-        loadGameConversation: async () => ({ games: snapshot.games, favoriteTeam: snapshot.favoriteTeams?.[row.user_id] ?? null }),
+        loadGameConversation: async () => ({ games: snapshot.games, appFacts: snapshot.appFacts, favoriteTeam: snapshot.favoriteTeams?.[row.user_id] ?? null }),
         callGameConversation: async (input) => {
           const result = await production.callGameConversation!(input);
           selector = { input, result };
@@ -86,7 +87,7 @@ async function main() {
         output.push({ variant, id: row.id, question: row.q, error: error instanceof Error ? error.name : "Error", elapsedMs: Date.now() - start, grade: null });
       }
       fs.writeFileSync(arg("out")!, JSON.stringify({ inputCount: rows.length, outputCount: output.length,
-        scope: "read-only pipeline replay; dated schedule overlay; no cache/durable/UI; manually grade all rows", output }, null, 2));
+        scope: "read-only pipeline replay; dated app-fact overlay (missing appFacts is missing data, never fetched from current time); no cache/durable/UI; manually grade all rows", output }, null, 2));
     }
   }
   console.log(`Collected ${output.length} results. No quality PASS is implied.`);

@@ -1197,7 +1197,7 @@ export function answerPlayerRoleForTarget(
 }
 
 export interface QaDeps {
-  loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam">>;
+  loadGameConversation?: (date: string) => Promise<Pick<GameConversationInput, "games" | "favoriteTeam" | "appFacts">>;
   callGameConversation?: (input: GameConversationInput) => Promise<GameConversationResult>;
   /** Internal observation only; never controls serving. */
   observeAgentFallback?: (outcome: import("./classifier-observation").AgentFallbackOutcome) => void;
@@ -6786,7 +6786,7 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       const result = await Promise.race([
         (async () => {
           const snapshot = await deps.loadGameConversation!(date);
-          const input: GameConversationInput = { question, context: context ?? undefined, date, ...snapshot,
+          const input: GameConversationInput = { question, context: context ?? undefined, date, nowMs: deps.now?.() ?? Date.now(), ...snapshot,
             teamNames: { question: mentionedTeamCanonicals(question),
               context_question: mentionedTeamCanonicals(context?.question ?? ""),
               profile: mentionedTeamCanonicals(snapshot.favoriteTeam ?? "") },
@@ -6799,9 +6799,14 @@ async function answerQuestionObserved(userId: string, rawQuestion: string, deps:
       if (result) {
         const { model, served } = result;
         if (served) {
-          await deps.log({ userId, question, questionNorm, matchPath: served.source, answer: served.answer,
-            inputTokens: model.inputTokens, outputTokens: model.outputTokens });
-          return { status: 200, ...served, remaining };
+          const log = deps.log;
+          return settleThroughDurableBoundary(served, served.answer, {
+            userId, question, questionNorm, remaining,
+            deps: { ...deps, log: (entry) => log({ ...entry,
+              inputTokens: (entry.inputTokens ?? 0) + (model.inputTokens ?? 0),
+              outputTokens: (entry.outputTokens ?? 0) + (model.outputTokens ?? 0),
+            }) },
+          });
         }
         // Preserve paid classifier tokens even when it yields to the existing path.
         const baseLog = deps.log;

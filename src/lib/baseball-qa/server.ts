@@ -979,8 +979,11 @@ export function makeDeps(
     callLlm,
     callGameConversation,
     loadGameConversation: async (date) => {
-      const [games, favoriteTeam] = await Promise.all([
+      const tomorrowDate = new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      const [games, tomorrowGames, standings, favoriteTeam] = await Promise.all([
         boundedGameContext<GameConversationInput["games"]>(fetchTodayStarters(date.replaceAll("-", "")), null),
+        boundedGameContext<GameConversationInput["games"]>(fetchTodayStarters(tomorrowDate.replaceAll("-", "")), null),
+        boundedGameContext(createTeamRecordFetchers().fetchStandings(), null),
         boundedGameContext<string | null>((async () => {
           if (!signatureUserId) return null;
           // query-guard: bounded -- own profile by primary key, used only as context.
@@ -990,9 +993,11 @@ export function makeDeps(
           return data?.team_id == null ? null : getTeamById(Number(data.team_id))?.name ?? null;
         })(), null),
       ]);
-      // Explicitly project schedule facts: no starter facts or profile identifiers.
-      return { favoriteTeam, games: games?.map(({ awayName, homeName, stadium, time, status }) =>
-        ({ awayName, homeName, stadium, time, status })) ?? null };
+      // Same app adapters preserve starter provenance, schedule dates and
+      // upstream standings freshness. Never relabel retrieval time as freshness.
+      return { favoriteTeam, games, appFacts: {
+        tomorrow: { date: tomorrowDate, games: tomorrowGames }, standings,
+      } };
     },
     // C 질문 정규화 (2026-08-11): 사전 exact 매칭이 잉여어로 놓친 정의 질문을
     // 폐쇄집합 후보 + LLM 의도판정으로 사전 답변에 결속한다. 후보 밖 반환은 pipeline 이 버린다.
