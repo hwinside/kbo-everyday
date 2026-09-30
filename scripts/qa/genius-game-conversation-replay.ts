@@ -47,6 +47,8 @@ async function main() {
         answeredAt: last.row.kst.replace(" ", "T") + "+09:00", currentCreatedAt: new Date(now).toISOString(),
       } : null;
       let selector: unknown = null;
+      const officialTrace: unknown[] = [];
+      const pipelineLog: unknown[] = [];
       // Deliberate read-port allowlist. Never spread makeDeps: it includes writes.
       const deps: QaDeps = {
         loadGlossary: production.loadGlossary, loadPlayers: production.loadPlayers,
@@ -56,8 +58,17 @@ async function main() {
         callTeamRagLlm: production.callTeamRagLlm, enablePlayerRag: production.enablePlayerRag,
         enableTeamRag: production.enableTeamRag, searchNewsRag: production.searchNewsRag,
         callNewsRagLlm: production.callNewsRagLlm, enableNewsRag: production.enableNewsRag,
-        searchOfficialRag: production.searchOfficialRag, callOfficialRagLlm: production.callOfficialRagLlm,
-        getCache: async () => null, setCache: async () => {}, log: async () => {},
+        searchOfficialRag: production.searchOfficialRag ? async (question) => {
+          const rows = await production.searchOfficialRag!(question);
+          officialTrace.push({ stage: "search", question, rows });
+          return rows;
+        } : undefined,
+        callOfficialRagLlm: production.callOfficialRagLlm ? async (question, evidence, extras) => {
+          const result = await production.callOfficialRagLlm!(question, evidence, extras);
+          officialTrace.push({ stage: "generate", question, evidence, extras, result });
+          return result;
+        } : undefined,
+        getCache: async () => null, setCache: async () => {}, log: async (entry) => { pipelineLog.push(entry); },
         reserveDaily: async () => ({ allowed: true, remaining: 99 }),
         now: () => now, loadPreviousTurn: async () => context,
         loadGameConversation: async () => ({ games: snapshot.games, appFacts: snapshot.appFacts, favoriteTeam: snapshot.favoriteTeams?.[row.user_id] ?? null }),
@@ -81,7 +92,7 @@ async function main() {
         const result = await run("qa-game-conversation-replay", row.q, deps);
         previous.set(row.user_id, { row, result });
         output.push({ variant, id: row.id, question: row.q, originalAnswer: row.a, originalSource: row.mp,
-          result, selector, elapsedMs: Date.now() - start, grade: null });
+          result, selector, officialTrace, pipelineLog, elapsedMs: Date.now() - start, grade: null });
       } catch (error) {
         previous.delete(row.user_id); // Failure is a context barrier, never silently skip backwards.
         output.push({ variant, id: row.id, question: row.q, error: error instanceof Error ? error.name : "Error", elapsedMs: Date.now() - start, grade: null });

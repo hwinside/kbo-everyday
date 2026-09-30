@@ -67,7 +67,7 @@ import {
   type ValidatedRagAnswer,
   type RagEntityCandidate,
   type RagEvidence,
-  isRecordbookEvidence,
+  selectRecordbookEvidence,
   type RagNewsCandidate,
   type RagPlayerCandidate,
   type RagTeamCandidate,
@@ -5140,7 +5140,7 @@ async function answerOfficialDocumentQuestion(
   const searchQuestion = relationContext || originContext ? `${context!.question}\n후속 질문: ${question}` : question;
   try {
     const searched = await deps.searchOfficialRag!(definition?.searchQuestion ?? requiredRule?.query ?? searchQuestion);
-    evidence = selectEvidence(recordbookRequest ? searched.filter(isRecordbookEvidence) : requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
+    evidence = recordbookRequest ? selectRecordbookEvidence(searched) : selectEvidence(requiredRule ? selectRequiredRuleEvidence(searched, requiredRule) : searched);
     if (requiredRule?.kind === "fa_general" && !requiredRuleFact(evidence, requiredRule)) {
       // One bounded clause-focused search; no local corpus or general-knowledge
       // fallback. A live serving miss remains a miss, even if the PDF exists.
