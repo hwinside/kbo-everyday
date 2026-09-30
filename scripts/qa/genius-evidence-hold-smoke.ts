@@ -1,8 +1,8 @@
 /** Reviewer-run: real pipeline validation, final storage and retry replay. No network. */
 import assert from "node:assert/strict";
 import { answerQuestion, unpackStoredQaFinal, type QaDeps, type LlmResult } from "../../src/lib/baseball-qa/pipeline";
-import { RAG_DISCARD_REASONS, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
-import { renderRagHold, RAG_DATE_HOLD, RAG_NUMBER_HOLD, RAG_EVIDENCE_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
+import { RAG_DISCARD_REASONS, validateRagResponse, type RagEvidence } from "../../src/lib/baseball-qa/rag/retrieve";
+import { renderRagHold, RAG_DATE_HOLD, RAG_NUMBER_HOLD, RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
 
 const official: RagEvidence = { content: "2025년 포스트시즌은 10월 6일 시작했다.", pageTitle: "연감", sectionPath: "포스트시즌",
   canonicalUrl: "https://www.koreabaseball.com/kbo/board/ebook/ebookpublication.aspx", revision: "fixture", asOf: "2026-09-30", sourceGrade: "tier1",
@@ -14,6 +14,24 @@ for (const reason of RAG_DISCARD_REASONS) {
   const answer = renderRagHold({ kind: "insufficient", reason });
   assert.doesNotMatch(answer, /이해하지 못|구체적으로|다시 작성|공식 자료가 없/);
 }
+// The same validator result must not diagnose the user's intent or blame
+// the available evidence. No expression classifier is added to production.
+for (const question of ["음 그렇구나", "응 너 야알못", "나 혈압 120나옴", "왤케 억양이 안조아", "미안한데 프사바꾸는법도 아니..?"]) {
+  const value = validateRagResponse(JSON.stringify({ status: "INSUFFICIENT" }),
+    { numericEvidence: true, evidence: [official], generalFallback: { question } });
+  assert.deepEqual(value, { kind: "insufficient", reason: "model_insufficient" });
+  assert.equal(renderRagHold(value), RAG_NEUTRAL_HOLD);
+  assert.doesNotMatch(renderRagHold(value), /질문|자료|근거|수치|날짜|이해|구체/);
+}
+for (const question of ["이해가 안돼… 예를 들어줘", "그니까 어떻게 읽냐고"]) {
+  const value = validateRagResponse(JSON.stringify({ status: "GENERAL", answer: "7이라고 읽습니다." }),
+    { numericEvidence: true, evidence: [official], generalFallback: { question } });
+  assert.equal(value.kind, "insufficient");
+  assert.equal(value.kind === "insufficient" && value.reason, "numeric_not_in_question");
+  assert.equal(renderRagHold(value), RAG_NEUTRAL_HOLD);
+}
+assert.equal(renderRagHold({ kind: "insufficient", reason: "numeric_claim_ungrounded" }), RAG_NEUTRAL_HOLD);
+assert.doesNotMatch(RAG_NUMBER_HOLD, /필요한|질문하신|자료가 없/);
 async function run(path: "official" | "team", question: string, raw: string, expected: string, reason: string) {
   let stored: LlmResult | null = null;
   let calls = 0;
@@ -50,10 +68,12 @@ async function run(path: "official" | "team", question: string, raw: string, exp
 }
 async function main() {
   await run("official", "2026년 가을야구는 언제 시작해?", JSON.stringify({ status: "GROUNDED", answer: "10월 6일 시작합니다.", calendarClaims: [{ basis: "question", season: 2026, evidence: 1 }] }), RAG_DATE_HOLD, "event_date_unverified");
-  await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_EVIDENCE_HOLD, "model_insufficient");
+  await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
   await run("official", "인필드 플라이 규칙 알려줘", "not-json", RAG_RESPONSE_HOLD, "malformed_json");
   await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "GROUNDED", answer: "7명이 아웃됩니다.", calendarClaims: [] }), RAG_NUMBER_HOLD, "numeric_not_in_evidence");
-  await run("team", "두산 홈구장은 사직이야?", JSON.stringify({ status: "INSUFFICIENT" }), RAG_EVIDENCE_HOLD, "model_insufficient");
+  await run("team", "두산 홈구장은 사직이야?", JSON.stringify({ status: "INSUFFICIENT" }), RAG_NEUTRAL_HOLD, "model_insufficient");
+  await run("team", "두산 홈구장은 어디야?", JSON.stringify({ status: "GROUNDED", answer: "7개의 구장을 사용합니다." }), RAG_NEUTRAL_HOLD, "numeric_claim_ungrounded");
+  await run("official", "인필드 플라이 규칙 알려줘", JSON.stringify({ status: "GENERAL", answer: "7명이 아웃됩니다." }), RAG_NEUTRAL_HOLD, "numeric_not_in_question");
   console.log("evidence hold pipeline/storage/replay checks passed; factual answer recovery NOT evaluated");
 }
 void main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -1,4 +1,4 @@
-import { RAG_EVIDENCE_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
+import { RAG_NEUTRAL_HOLD, RAG_RESPONSE_HOLD } from "../../src/lib/baseball-qa/rag/hold-answer";
 /**
  * 야잘알봇 KBO 공식 간행물(tier1) 서빙 회귀.
  *
@@ -369,7 +369,7 @@ checkAsync("공식 근거로도 답을 못 만들면 unsure로 종결한다(일�
   const result = await answerQuestion("u1", "인필드 플라이 규칙 알려줘", deps);
   assert.equal(result.source, "unsure");
   // 공식 근거로 답을 못 만든 것뿐이다 — 룰 질문에 "야구 질문만 하라"고 답하면 안 된다.
-  assert.equal(result.answer, RAG_EVIDENCE_HOLD);
+  assert.equal(result.answer, RAG_NEUTRAL_HOLD);
   assert.notEqual(result.answer, BLOCKED_ANSWER, "근거 부족에 범위밖 문구 금지");
   assert.ok(!calls.includes("callLlm"), "LLM 호출 1회 계약 — 재호출 금지");
 });
